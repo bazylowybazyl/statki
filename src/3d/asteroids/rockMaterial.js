@@ -34,6 +34,9 @@ import {
   min, max, dot, cross, normalize, reflect, step, dFdx, dFdy, fwidth, diffuseColor, Discard, length
 } from 'three/tsl';
 import { ROCK_TYPES, ROCK_TYPE_INDEX as TI, SHAPE_COUNT } from '../../game/asteroidRockKinds.js';
+// Dla modułów pasa bez własnego importu z gry (szew renderu — tests/szewRenderu.test.mjs): indeksy typów skał i liczba
+// kształtów banku (warpDebris.js).
+export { TI as ROCK_TYPE_INDEX, SHAPE_COUNT };
 import { octTexUv, quatRotate, quatMul } from './tslCommon.js';
 import { rockSpinQuat } from './rockSpin.tsl.js';
 import { SurfaceLightingModel } from './surfaceLighting.js';
@@ -184,9 +187,13 @@ const bandMask = Fn(([h, w, fw]) => {
 export class RockNodeMaterial extends THREE.NodeMaterial {
   static get type() { return 'RockNodeMaterial'; }
 
-  constructor({ shared, backdrop = false, carve = null }) {
+  constructor({ shared, backdrop = false, carve = null, smear = false }) {
     super();
-    this.name = backdrop ? 'AsteroidBelt:rocksBack' : 'AsteroidBelt:rocks';
+    this.name = smear ? 'AsteroidBelt:rocksSmear' : (backdrop ? 'AsteroidBelt:rocksBack' : 'AsteroidBelt:rocks');
+    // SMUGA (warpDebris.js — skały pasa w skoku, 2026-10-19): wariant z tylną półkulą skały przesuniętą wzdłuż wektora
+    // smugi `smear.vec` (j. sceny, lokalnie; skąd skała przyleciała względem kamery) — zwykłe warstwy bez niego (ten sam
+    // WGSL co dawniej).
+    this.smear = smear ? { vec: uniform(new THREE.Vector3()) } : null;
     this.lights = true;
     // Siatka świateł gry: tryb „optIn” (fxFrame.js) — skały czytają ją jawnie.
     enableGridLights(this);
@@ -199,6 +206,13 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       this.transparent = true;
       this.blending = THREE.NoBlending;
       this.depthWrite = true;
+      this.depthTest = true;
+    }
+    if (smear) {
+      // Smuga: głowa pełna, ogon zanika (rozmycie ruchu) — mieszanie zwykłe, bez zapisu głębi (skały rzadkie).
+      this.transparent = true;
+      this.blending = THREE.NormalBlending;
+      this.depthWrite = false;
       this.depthTest = true;
     }
     this.S = shared;
@@ -227,7 +241,9 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       // float32 przy 6 mln j.).
       localP: varyingProperty('vec3', 'vRockLocalP'),
       carve: carve ? varyingProperty('vec4', 'vRockCarve') : null,
-      grid: carve ? varyingProperty('vec4', 'vRockGrid') : null
+      grid: carve ? varyingProperty('vec4', 'vRockGrid') : null,
+      // smuga: udział ogona w wierzchołku (0 — głowa skały, 1 — koniec smugi)
+      smearT: smear ? varyingProperty('float', 'vRockSmear') : null
     };
     this.positionNode = this._buildVertex();
     this._surf = null;
@@ -278,7 +294,18 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
           V.grid.assign(attribute('iGrid', 'vec4'));
         }
       }
-      const pLocal = iPos.xyz.add(local).toVar();
+      let pl = iPos.xyz.add(local);
+      if (this.smear) {
+        // Smuga: wierzchołki półkuli zwróconej w stronę wektora smugi (kierunek z kształtu po obrocie — bez dzielenia
+        // przez zero przy skale 0) przesunięte o cały wektor, przejście miękkie przez równik skały.
+        const sv = this.smear.vec;
+        const sd = sv.div(max(length(sv), 1e-3));
+        const nd = quatRotate(q, dir);
+        const tail = smoothstep(-0.15, 0.4, dot(nd, sd)).toVar();
+        pl = pl.add(sv.mul(tail));
+        if (withVaryings) V.smearT.assign(tail);
+      }
+      const pLocal = pl.toVar();
       if (withVaryings) V.localP.assign(pLocal);
       return pLocal;
     })();
@@ -346,6 +373,9 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       const fogLit = this._surf.diffAlbedo.mul(v.rgb).mul(S.fogLit).mul(clamp(Nv.z.mul(0.6).add(0.4), 0.0, 1.0));
       col.assign(col.add(fogLit).mul(v.a).add(v.rgb));
     }
+    // Smuga: ogon zanika ku końcowi do 30% (rozmycie ruchu — ciemna skała zanikająca do zera ginie na tle nieba), głowa
+    // pełna; skała smugi jaśniejsza (×1,5) — oświetlona strona odcina się od tła w ruchu.
+    if (this.smear) return vec4(max(col.mul(1.5), vec3(0.0)), mix(float(1.0), float(0.3), smoothstep(0.0, 1.0, this.V.smearT)));
     return vec4(max(col, vec3(0.0)), 1.0);
   }
 

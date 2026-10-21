@@ -212,11 +212,15 @@ export function pirateBaseBrokenChunks() {
 let rockLayout = null;
 const _rockAt = { x: 0, y: 0 };
 
-/** Środek planetoidy pod bazą w świecie gry (radar, CIC) albo null bez bazy — z układu skały i ramki bazy. */
+/**
+ * Środek planetoidy pod bazą na radarze i mapie CIC (gra) albo null bez bazy — z układu skały i ramki bazy. Znak mapy to
+ * RZUT skały z punktu widzenia (projekt: `layout.design` — promień PIRATE_ROCK_SPEC.radius): skała w świecie jest
+ * `scale` razy większa i dalej (pirateRockLayout.js), z kamery wygląda jak projekt — radar i CIC też.
+ */
 export function pirateRockAt() {
   if (!place || typeof place.toGame !== 'function') return null;
   if (!rockLayout) rockLayout = createPirateRockLayout();
-  const c = rockLayout.center;
+  const c = rockLayout.design.center;
   return place.toGame(c[0], c[2], _rockAt);
 }
 

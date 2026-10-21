@@ -24,7 +24,8 @@ import {
  *   daleki 6–7 km — Tempest L, Helios Lance, Yamato L / Capital
  *   snajper (klasa `weaponClass: 'sniper'`, niżej) — Lanca 8 / 10 km (main M / L), Valkyrie 6,5 / 7 / 9 km
  *     (special S / M / Capital), Mjolnir 20 km (postój i ładowanie)
- *   Hexlance 15 km, rakiety 4,5–15 km, torpedy 7–9 km
+ *   Hexlance 15 km, Promień Śmierci 12 km (superbroń natychmiastowa — krótsza niż Hexlance), rakiety 4,5–15 km,
+ *   torpedy 7–9 km
  * Wzrok Atlasa (18 km, fogOfWar.js) sięga dalej niż jego działa. Nowa broń — w pasmo swojej roli;
  * w tym samym rozmiarze dłuższy zasięg = mniej DPS (wiązka trafia natychmiast — krótsza).
  *
@@ -552,6 +553,41 @@ export const MASTER_WEAPONS = {
     burstCount: 1, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff',
     recoil: 0, shake: 14
   },
+  // PROMIEŃ ŚMIERCI (2026-10-19, prośba użytkownika: „ogromny laser jak na Venatorze — broń death ray, na strzała
+  // niszczy battleship”; logika src/game/deathRay.js, obraz receptura `deathRay` + WeaponFx.deathRay*). Gniazdo
+  // special Capital (Atlas, superkapitały; NPC dostaje go jak każdy special — autoWeapons + ładowanie z capitalAI),
+  // nie wbudowany jak Hexlance: stan Hexlance'a jest jeden na grę (gracz), a promień ma strzelać też z okrętów NPC
+  // (scena „Wojna”). Ładowanie 4 s (stepMountCharge — jak Mjolnir, bez postoju), potem wiązka natychmiastowa:
+  // czoło biegnie `frontSpeed` j/s, przepala tarczę (pole spada do zera — świadomie, bez testu przebicia: superbroń)
+  // i tnie kadłuby na wylot (HullBodies.cutSegment z pędem, pas ± `cutHalfWidth`), do `penetration` okrętów — następny
+  // zatrzymuje promień kraterem; obrażenia na kadłub = baseDamage × min(1, droga w materiale / `fullDepth`)
+  // (≥ `minFrac`): pancernik (12 000) ginie od jednego strzału, lotniskowiec (42 000) i superkapitał (85 000) — nie.
+  // Zasięg 12 km: superbroń krótsza niż Hexlance (15 km), bo trafia natychmiast. Smugi gazu — brak (TRAIL_FAMILIES).
+  // Wbudowana wieża supercapitala Terra Nova (Colossus — `defaultNpcLoadout.builtin` w src/data/ships.js), tylko NPC
+  // (2026-10-20, user: „built-in turret single target — daj go supercapitalowi Terran; broń jest zbyt potężna na
+  // special slot”). `npcOnly` — poza wyposażeniem gracza, sklepem i zapisem; `builtinTurret` — gniazdo builtin z wieżą
+  // (Turret2D, rodzina 3D `deathRay`), nie lufą w kadłubie jak Hexlance.
+  death_ray: {
+    id: 'death_ray', name: 'Gungnir — Promień Śmierci', mountType: 'builtin', category: 'superweapon', size: 'Capital',
+    npcOnly: true, builtinTurret: true, npcFaction: 'terran',   // piracki supercapital na ramie Colossusa — bez promienia
+    baseDamage: 20000, baseRange: 12000, baseSpeed: Infinity, cooldown: 45.0, chargeTime: 4.0,
+    spread: 0, penetration: 1, energyCost: 400, vfxColor: '#46ff8c',
+    recoil: 30, shake: 40, impactScale: 6.0,
+    deathRay: {
+      singleTarget: true,  // jeden cel: promień kończy się za pierwszym przeciętym okrętem (i najdalej za celem strzału)
+      width: 150,          // [j.] szerokość wiązki w obrazie (ciało; poświata ~2,4 ×)
+      cutHalfWidth: 55,    // [j.] półszerokość pasa rzazu w kadłubie (~7 węzłów siatki 15 j.)
+      frontSpeed: 30000,   // [j/s] czoło promienia (12 km w 0,4 s; rzaz pancernika w 1–3 krokach fizyki)
+      sustain: 1.1,        // [s] wiązka trwa po dojściu czoła (sam obraz — obrażenia liczy czoło)
+      fade: 0.5,           // [s] wygaszanie
+      fullDepth: 200,      // [j.] droga w materiale, przy której kadłub dostaje pełne obrażenia
+      minFrac: 0.15,       // otarcie: najmniej taki ułamek obrażeń
+      endDamageFrac: 0.35, // okręt, który zatrzymał promień (ponad `penetration`, bez `singleTarget`): ułamek obrażeń + krater
+      endCrater: 90,       // [j.] promień krateru zatrzymania
+      stationDamage: 30000 // stacja / budowla: obrażenia raz na strzał, promień kończy się na niej
+    },
+    description: 'Wbudowana wieża superlasera Colossusa Terra Nova: 4 s ładowania, potem wiązka, która przepala tarczę i tnie kadłub na wylot — jeden strzał rozcina pancernik. Jeden cel, przeładowanie 45 s.'
+  },
 
   // ==========================================================================
   // WARIANTY ROZMIAROWE BRONI SPECJALNEJ (S / M / L)
@@ -653,6 +689,7 @@ export const WEAPON_ICON_PATHS = {
   special_valkyrie_railgun: 'assets/weapons/railgun.svg',
   special_yamato_cannon: 'assets/weapons/supercapitalmain.png',
   hexlance_siege: 'assets/weapons/supercapitalmain.png',
+  death_ray: 'assets/weapons/supercapitalmain.png',
   supernova_missile: 'assets/weapons/torpedo.svg',
   siege_torpedo: 'assets/weapons/torpedo.svg',
   siege_torpedo_mk2: 'assets/weapons/torpedo.svg',

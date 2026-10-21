@@ -26,16 +26,23 @@
  */
 
 import { createPirateRockLayout } from '../../3d/portBuildings/pirateRockLayout.js';
+import { ROCK_FOOT_BINS } from '../../render/rockImpactRecord.js';
 
 export const PIRATE_FALL_TUNE = {
-  // grawitacja skały [j/s²] ku środkowi (stała; r0 > 0 — malejąca z kwadratem odległości od środka, g przy r0)
+  // grawitacja skały [j/s²] ku środkowi (stała; r0 > 0 — malejąca z kwadratem odległości od środka, g przy r0): `gravity`
+  // do przejścia wieży przez dysk (przebicie i korek — strojone przy 260), `gravityPassed` od przejścia (długi lot na skałę
+  // ~23 km pod bazą — pirateRockLayout.js, skala świata; prośba użytkownika 2026-10-19: „powinny dłużej lecieć / bardziej
+  // się pomniejszać”), `gravityVmax` — sufit prędkości ku środkowi (silnik: gravityWell.vmax): uderzenie w skałę z 2,5 km/s
+  // (dawny lot z 8 km — ~2,2 km/s; bez sufitu 3,7 km/s i wieża w 60 Hz traciła 37% węzłów zamiast ~15%)
   gravity: 260,
+  gravityPassed: 600,
+  gravityVmax: 2500,
   gravityR0: 0,
   // odłam spod habitatu (z poniżej) dostaje grawitację skały jeszcze za życia habitatu
   wellBelowZ: -1600,
   // skała w prawie kontaktu: tarcie, mnożnik pancerza bryły w granicy plastyczności (skała twardsza od blachy)
   rockFriction: 0.85,
-  rockArmorMul: 1.6,
+  rockArmorMul: 2.0,     // (1,6 przy uderzeniach ~2,2 km/s; 2,0 przy 2,5 km/s — wieża traci przy uderzeniu ~16% węzłów jak dawniej)
   rockRestAngDamp: 6,    // [1/s] tłumienie kołysania bryły leżącej na skale (szeroki styk — silnik: restAngDamp terenu)
   // sekwencja przy HP 0
   towerKick: 300,          // [j/s] prędkość zapadnięcia wieży ku skale w chwili śmierci habitatu
@@ -88,10 +95,11 @@ export const PIRATE_FALL_TUNE = {
   restSmallTime: 2,        // [s] drobnica w styku tyle — zamarza (o ile nie leci szybciej niż 8 × restSpeed)
   restTinyNodes: 12,       // drobina (mniej węzłów) na skale — zamarza od razu
   restAssistTime: 3,       // [s] w styku tyle — zamarza przy prędkości chwilowej poniżej 2 × progu
-  settleTimeout: 25,       // [s od śmierci habitatu] reszta wolnych brył przy skale zamarza, koniec sekwencji
+  settleTimeout: 32,       // [s od śmierci habitatu] reszta wolnych brył przy skale zamarza, koniec sekwencji
   freezePinCells: 3,
-  // odłam bryły spadający w otchłań (poza skałą) znika poniżej (pętla wraków gry — HULL_BODY_CONFIG.solidFloorZ)
-  floorZ: -45000
+  // odłam bryły spadający w otchłań (poza skałą) znika poniżej (pętla wraków gry — HULL_BODY_CONFIG.solidFloorZ;
+  // spód skały ~88 km pod płaszczyzną)
+  floorZ: -130000
 };
 
 // Mapa kształtu skały (scripts/planety/male_ciala.py: hidalgo; ścieżka i zakres jak SMALL_BODY_MAPS.hidalgo
@@ -312,6 +320,78 @@ export function fallKindOf(body) {
 }
 
 /**
+ * OBRYS bryły w płaszczyźnie stycznej przez punkt (hx, hy, hz) o normalnej (nx, ny, nz) — RZUT WĘZŁÓW wzdłuż normalnej,
+ * czyli to, co bryła zasłania z góry (świat silnika). PROFIL BIEGUNOWY (zgłoszenie użytkownika 2026-10-19: prostokąt
+ * z obwiedni dawał prostokątną ramkę pyłu wokół okrągłej głowy wieży): środek = środek rzutu węzłów, kierunek kąta 0 =
+ * rzut pierwszej osi ciała, która nie leży wzdłuż normalnej (v = n × u), w każdym z ROCK_FOOT_BINS wycinków kąta —
+ * najdalszy węzeł od środka + promień węzła; wycinek bez węzłów — 0 (bryła nie sięga tam ze środka). Węzły co `stride`
+ * (najwyżej ~4096 na zdarzenie — wieża ma ~11–13 tys.). out: { cx, cy, cz, ux, uy, uz, n (liczba promieni albo 0),
+ * r (Float64Array), rmax }. Bez alokacji poza pierwszym wywołaniem (tablica promieni).
+ */
+export function bodyFootprint(body, hx, hy, hz, nx, ny, nz, out) {
+  const K = ROCK_FOOT_BINS;
+  if (!out.r || out.r.length !== K) out.r = new Float64Array(K);
+  const R = out.r;
+  R.fill(0);
+  out.n = 0; out.rmax = 0;
+  const s = body?.nodeStore;
+  if (!s || !(s.count > 0) || !body.quat || !body.pos) return out;
+  const q = body.quat;
+  const x = q.x, y = q.y, z = q.z, w = q.w;
+  // osie ciała w świecie (kolumny macierzy obrotu — jak quatToMat3 silnika): świat = pos + a0·lx + a1·ly + a2·lz
+  const a0x = 1 - 2 * (y * y + z * z), a0y = 2 * (x * y + w * z), a0z = 2 * (x * z - w * y);
+  const a1x = 2 * (x * y - w * z), a1y = 1 - 2 * (x * x + z * z), a1z = 2 * (y * z + w * x);
+  const a2x = 2 * (x * z + w * y), a2y = 2 * (y * z - w * x), a2z = 1 - 2 * (x * x + y * y);
+  // kierunek kąta 0: rzut osi ciała (pierwszej nie wzdłuż normalnej) na płaszczyznę styczną
+  let ux = 0, uy = 0, uz = 0;
+  for (let k = 0; k < 3; k++) {
+    ux = k === 0 ? a0x : k === 1 ? a1x : a2x; uy = k === 0 ? a0y : k === 1 ? a1y : a2y; uz = k === 0 ? a0z : k === 1 ? a1z : a2z;
+    const un = ux * nx + uy * ny + uz * nz;
+    ux -= un * nx; uy -= un * ny; uz -= un * nz;
+    const ul = Math.sqrt(ux * ux + uy * uy + uz * uz);
+    if (ul > 0.3) { ux /= ul; uy /= ul; uz /= ul; break; }
+    ux = 0;
+  }
+  if (!ux && !uy && !uz) return out;
+  const vx = ny * uz - nz * uy, vy = nz * ux - nx * uz, vz = nx * uy - ny * ux;
+  const X = s.x, Y = s.y, Z = s.z, active = s.active;
+  const stride = Math.max(1, Math.ceil(s.count / 4096));
+  // współrzędne (u, v) rzutu węzła względem punktu styku: (pos − h + a·l) · u — składowa wzdłuż n odpada sama
+  const bx = body.pos.x - hx, by = body.pos.y - hy, bz = body.pos.z - hz;
+  const pu0 = bx * ux + by * uy + bz * uz, pv0 = bx * vx + by * vy + bz * vz;
+  const a0u = a0x * ux + a0y * uy + a0z * uz, a1u = a1x * ux + a1y * uy + a1z * uz, a2u = a2x * ux + a2y * uy + a2z * uz;
+  const a0v = a0x * vx + a0y * vy + a0z * vz, a1v = a1x * vx + a1y * vy + a1z * vz, a2v = a2x * vx + a2y * vy + a2z * vz;
+  let su = 0, sv = 0, cnt = 0;
+  for (let i = 0; i < s.count; i += stride) {
+    if (!active[i]) continue;
+    su += pu0 + a0u * X[i] + a1u * Y[i] + a2u * Z[i];
+    sv += pv0 + a0v * X[i] + a1v * Y[i] + a2v * Z[i];
+    cnt++;
+  }
+  if (!cnt) return out;
+  const cu = su / cnt, cv = sv / cnt;
+  const nodeR = (body.cellSize || 0) * 0.55;
+  const TWO_PI = Math.PI * 2;
+  for (let i = 0; i < s.count; i += stride) {
+    if (!active[i]) continue;
+    const du = pu0 + a0u * X[i] + a1u * Y[i] + a2u * Z[i] - cu;
+    const dv = pv0 + a0v * X[i] + a1v * Y[i] + a2v * Z[i] - cv;
+    let a = Math.atan2(dv, du);
+    if (a < 0) a += TWO_PI;
+    let k = Math.floor(a / TWO_PI * K);
+    if (k >= K) k = K - 1;
+    const d = Math.sqrt(du * du + dv * dv) + nodeR;
+    if (d > R[k]) R[k] = d;
+  }
+  let rmax = 0;
+  for (let k = 0; k < K; k++) if (R[k] > rmax) rmax = R[k];
+  out.cx = hx + ux * cu + vx * cv; out.cy = hy + uy * cu + vy * cv; out.cz = hz + uz * cu + vz * cv;
+  out.ux = ux; out.uy = uy; out.uz = uz;
+  out.n = K; out.rmax = rmax;
+  return out;
+}
+
+/**
  * Teren skały i zegar zdarzeń styku — raz przy podpięciu bazy (ctx: { engine, terrain, hooks, simTime() }). Zwraca
  * terrain (ten sam obiekt) z podpiętym onContact.
  */
@@ -322,7 +402,8 @@ export function attachPirateRockTerrain(st, ctx) {
   const tune = ctx.tune || PIRATE_FALL_TUNE;
   const recs = st.recs || (st.recs = new Map());
   const ev = st._ev || (st._ev = { id: 0, kind: 'debris', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 1, speed: 0, slide: 0, mass: 0, size: 0, energy: 0,
-    vx: 0, vy: 0, vz: 0, body: null });
+    vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0, ux: 1, uy: 0, uz: 0, fn: 0, fr: null, body: null });
+  const fp = st._fp || (st._fp = { cx: 0, cy: 0, cz: 0, ux: 1, uy: 0, uz: 0, n: 0, r: null, rmax: 0 });
   T.onContact = (body, info) => {
     if (!info.doDamage) return;
     const now = ctx.simTime();
@@ -337,6 +418,11 @@ export function attachPirateRockTerrain(st, ctx) {
       ev.speed = info.approach; ev.slide = info.slide; ev.mass = body.mass;
       ev.size = Math.max(body.cellSize, body.radius); ev.energy = 0.5 * body.mass * info.approach * info.approach;
       ev.vx = body.vel.x; ev.vy = -body.vel.y; ev.vz = body.vel.z;
+      // obrys bryły z góry (pył wychodzi spod niej na boki — pirateRockImpactFx.js); układ gry: y odbite
+      bodyFootprint(body, info.x, info.y, info.z, info.nx, info.ny, info.nz, fp);
+      ev.fx = fp.cx; ev.fy = -fp.cy; ev.fz = fp.cz;
+      ev.ux = fp.ux; ev.uy = -fp.uy; ev.uz = fp.uz;
+      ev.fn = fp.n; ev.fr = fp.r;
       ev.body = body;
       return ev;
     };
@@ -367,13 +453,15 @@ export function detachPirateRockTerrain(st, engine) {
 }
 
 function wellFor(st, tune) {
-  if (!st.well) st.well = { x: st.terrain.cx, y: st.terrain.cy, z: st.terrain.cz, g: tune.gravity, r0: tune.gravityR0 };
-  st.well.g = tune.gravity;
+  if (!st.well) st.well = { x: st.terrain.cx, y: st.terrain.cy, z: st.terrain.cz, g: tune.gravity, r0: tune.gravityR0, vmax: tune.gravityVmax };
+  st.well.g = st.passed && tune.gravityPassed > 0 ? tune.gravityPassed : tune.gravity;
   st.well.r0 = tune.gravityR0;
+  st.well.vmax = tune.gravityVmax;
   // dolna część habitatu (szyb, bęben) przed przejściem wieży przez dysk: ta sama studnia, słabsza — wieża musi
   // przebić dół i spaść pierwsza („dół ciągnięty przez wieżę”); po przejściu odłamy przechodzą na pełną studnię
-  if (!st.wellHold) st.wellHold = { x: st.well.x, y: st.well.y, z: st.well.z, g: 0, r0: st.well.r0 };
+  if (!st.wellHold) st.wellHold = { x: st.well.x, y: st.well.y, z: st.well.z, g: 0, r0: st.well.r0, vmax: st.well.vmax };
   st.wellHold.x = st.well.x; st.wellHold.y = st.well.y; st.wellHold.z = st.well.z; st.wellHold.r0 = st.well.r0;
+  st.wellHold.vmax = st.well.vmax;
   st.wellHold.g = tune.gravity * (st.passed ? 1 : tune.holdGravity);
   return st.well;
 }
@@ -1224,10 +1312,21 @@ function settleBody(st, ctx, b, well) {
   st.frozen++;
   const ev = st._ev;
   if (ev && ctx.hooks?.onSettle) {
-    ev.id = b.id; ev.kind = fallKindOf(b); ev.x = b.pos.x; ev.y = -b.pos.y; ev.z = b.pos.z;
+    // punkt na skale pod środkiem bryły (kierunek od środka skały) i obrys bryły z góry — kłąb osiadania wychodzi spod
+    // niej na boki
     const ox = b.pos.x - well.x, oy = b.pos.y - well.y, oz = b.pos.z - well.z, ol = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
-    ev.nx = ox / ol; ev.ny = -oy / ol; ev.nz = oz / ol;
+    const ux = ox / ol, uy = oy / ol, uz = oz / ol;
+    const T = st.terrain;
+    const r = T && typeof T.radius === 'function' ? Math.min(ol, T.radius(ux, uy, uz)) : ol;
+    const sx = well.x + ux * r, sy = well.y + uy * r, sz = well.z + uz * r;
+    ev.id = b.id; ev.kind = fallKindOf(b); ev.x = sx; ev.y = -sy; ev.z = sz;
+    ev.nx = ux; ev.ny = -uy; ev.nz = uz;
     ev.speed = 0; ev.slide = 0; ev.mass = b.mass; ev.size = b.radius; ev.energy = 0; ev.vx = 0; ev.vy = 0; ev.vz = 0; ev.body = b;
+    const fp = st._fp || (st._fp = { cx: 0, cy: 0, cz: 0, ux: 1, uy: 0, uz: 0, n: 0, r: null, rmax: 0 });
+    bodyFootprint(b, sx, sy, sz, ux, uy, uz, fp);
+    ev.fx = fp.cx; ev.fy = -fp.cy; ev.fz = fp.cz;
+    ev.ux = fp.ux; ev.uy = -fp.uy; ev.uz = fp.uz;
+    ev.fn = fp.n; ev.fr = fp.r;
     ctx.hooks.onSettle(ev);
   }
 }

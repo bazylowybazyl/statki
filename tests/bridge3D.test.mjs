@@ -22,10 +22,12 @@ const {
   BRIDGE3D_EMIT,
   BRIDGE3D_KINDS,
   BRIDGE3D_KIND_ORDER,
+  bridgeModelOnHull,
   buildBridgeModel,
   resolveBridgeModelKind,
   sampleHeightField
 } = await import('../src/3d/bridge3DShapes.js');
+const { BRIDGE_LEVELS } = await import('../src/data/bridgeLevels.js');
 const {
   BRIDGE3D_DAMAGE_LIMITS,
   BRIDGE3D_KIND_STYLE,
@@ -47,11 +49,23 @@ const MODELS = Object.fromEntries(BRIDGE3D_KIND_ORDER.map((k) => [k, buildBridge
 // Kolce piratów mogą wystawać poza strefę (jak na sprite'ach), ale nie dalej niż tyle.
 const SPIKE_SLACK = { ironskull: 12, pirate_frigate: 5, pirate_destroyer: 9 };
 
-// Strefa rodzaju z BRIDGE_LAYOUT_PROPOSALS (domyślny wariant kadłuba).
+// Okręty floty TN (nazwa modelu na kadłubie — bridgeModelOnHull) i ich klucze stref.
+const TN_HULL_OF = { custos: 'frigate', hasta: 'destroyer', bellator: 'battleship', citadella: 'terran_carrier', colossus: 'terran_supercapital' };
+
+// Strefa rodzaju z BRIDGE_LAYOUT_PROPOSALS (domyślny wariant kadłuba) z kadłubem i skalą render/PNG; model poziomu
+// — strefa okrętu TN tego poziomu (null — poziom bez kadłuba TN: III).
 function kindZone(name) {
   const k = BRIDGE3D_KINDS[name];
+  if (k.level) {
+    for (const [tn, hull] of Object.entries(TN_HULL_OF)) {
+      const entry = BRIDGE_LAYOUT_PROPOSALS[hull];
+      const z = entry.variants[entry.defaultVariant].find((q) => q.level === k.level);
+      if (z) { const on = bridgeModelOnHull(tn); return { def: z, hull, kx: on.kx, ky: on.ky }; }
+    }
+    return null;
+  }
   const entry = BRIDGE_LAYOUT_PROPOSALS[k.hull];
-  return entry.variants[entry.defaultVariant].find((z) => z.id === k.zoneId);
+  return { def: entry.variants[entry.defaultVariant].find((z) => z.id === k.zoneId), hull: k.hull, kx: k.render[0] / k.png[0], ky: k.render[1] / k.png[1] };
 }
 
 // Zasób rodzaju jak w Bridge3D.attach (bez three): model + emitery zapalone.
@@ -161,14 +175,24 @@ test('windows sit on slanted faces visible from the top camera, on the model sur
   }
 });
 
-test('model kind follows the hull key and the Atlas zone shape', () => {
-  assert.equal(resolveBridgeModelKind('battleship', { w: 236, h: 92 }), 'bellator');
+test('model kind follows the zone level, the hull key and the Atlas zone shape', () => {
+  // Terra Nova i projekty kreatora: model poziomu z pola `level` strefy (kadłub bez znaczenia).
+  for (const lv of BRIDGE_LEVELS) {
+    assert.equal(resolveBridgeModelKind('battleship', { w: 10, h: 10, level: lv.level }), lv.model);
+    assert.equal(resolveBridgeModelKind(null, { level: lv.level }), lv.model);
+  }
+  const tnLevels = { frigate: 1, destroyer: 2, battleship: 4, terran_carrier: 5, terran_supercapital: 6 };
+  for (const [hull, lv] of Object.entries(tnLevels)) {
+    const entry = BRIDGE_LAYOUT_PROPOSALS[hull];
+    assert.equal(resolveBridgeModelKind(hull, entry.variants[entry.defaultVariant][0]), `tn_${lv}`, `${hull}: model poziomu ${lv}`);
+  }
+  assert.equal(resolveBridgeModelKind('battleship', { w: 236, h: 92 }), null, 'kadłub TN bez poziomu strefy — bez modelu');
   assert.equal(resolveBridgeModelKind('pirate_battleship', { w: 176, h: 104 }), 'ironskull');
   assert.equal(resolveBridgeModelKind('atlas', { role: 'primary', w: 520, h: 80 }), 'atlas_main');
   assert.equal(resolveBridgeModelKind('atlas', { role: 'backup', w: 244, h: 66 }), 'atlas_backup');
   assert.equal(resolveBridgeModelKind('atlas', { role: 'primary', w: 244, h: 66 }), 'atlas_backup'); // wariant „dziobowy”
-  // Pozostała flota: jeden model na kadłub (strefa z edytora — dopasowanie skalą).
-  const fleet = { frigate: 'custos', destroyer: 'hasta', terran_carrier: 'citadella', terran_supercapital: 'colossus', pirate_frigate: 'pirate_frigate', pirate_destroyer: 'pirate_destroyer', megafreighter: 'megafreighter' };
+  // Piraci i lokomotywa: jeden model na kadłub (strefa z edytora — dopasowanie skalą).
+  const fleet = { pirate_frigate: 'pirate_frigate', pirate_destroyer: 'pirate_destroyer', pirate_supercapital: 'pirate_supercapital', megafreighter: 'megafreighter' };
   for (const [hull, kind] of Object.entries(fleet)) assert.equal(resolveBridgeModelKind(hull, { w: 100, h: 40 }), kind, hull);
   assert.equal(resolveBridgeModelKind('long_haul_freighter', { w: 100, h: 40 }), null);
 });
@@ -186,12 +210,12 @@ test('record block maps model space onto the zone and holds every live bridge ce
   const e = ship('battleship');
   const st = e.bridgeState;
   const def = st.bridges[0].def;
-  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('tn_4'), 0);
   // Środek modelu = środek strefy w obrazie kadłuba (px od lewego górnego rogu).
   const g = bridgeModelToGrid(rec.map, 0, 0);
   assert.ok(Math.abs(g.x - (st.srcW * 0.5 + def.x * st.scaleX)) < 1e-9 && Math.abs(g.y - (st.srcH * 0.5 + def.y * st.scaleY)) < 1e-9);
   // Narożnik modelu (M: +x, +y↑) → prawy GÓRNY róg strefy (Y obrazu w dół).
-  const k = MODELS.bellator.design;
+  const k = MODELS.tn_4.design;
   const c = bridgeModelToGrid(rec.map, k.w / 2, k.h / 2);
   assert.ok(Math.abs(c.x - (st.srcW * 0.5 + (def.x + def.w / 2) * st.scaleX)) < 1e-6);
   assert.ok(Math.abs(c.y - (st.srcH * 0.5 + (def.y - def.h / 2) * st.scaleY)) < 1e-6);
@@ -215,7 +239,7 @@ test('record block maps model space onto the zone and holds every live bridge ce
 test('damage row: a dead cell opens a hole, live neighbours get the edge mask and a fresh-cut glow that fades', () => {
   const e = ship('battleship');
   const st = e.bridgeState;
-  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 1);
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('tn_4'), 1);
   const W = BRIDGE3D_DAMAGE_LIMITS.width;
   const data = new Uint8Array(W * 4 * 4);
   refreshBeamBridgeRecordDamage(rec, e.beamHull, data, 10, W);
@@ -262,7 +286,7 @@ test('instance basis maps model points exactly where bridgeGridToWorld puts them
   window.wrecks.length = 0;
   const e = ship('battleship', 1200, -340, 0.73);
   const st = e.bridgeState;
-  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('tn_4'), 0);
   for (const pose of [null, { x: 1190, y: -331, angle: 0.71 }]) {
     const B = beamBridgeInstanceBasis(rec, e, pose, {});
     for (const [x, y] of [[0, 0], [30, -10], [-50, 20], [60, 24]]) {
@@ -291,7 +315,7 @@ test('cells cut off with a fragment vanish from the parent row and live in the f
   const e = ship('battleship');
   const st = e.bridgeState;
   const def = st.bridges[0].def;
-  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('tn_4'), 0);
   // Rzaz w poprzek strefy mostka: rufowa część nadbudówki odpada z odłamem.
   const a = bridgePngToWorld(e, def.x, -500, {});
   const c = bridgePngToWorld(e, def.x, 500, {});
@@ -320,7 +344,7 @@ test('cells cut off with a fragment vanish from the parent row and live in the f
 test('window lights follow the kill timeline: steady, flicker, wave out; a wreck dies with its power', () => {
   const e = ship('battleship');
   const st = e.bridgeState;
-  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 0);
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('tn_4'), 0);
   const E = rec.kind.emit;
   const win = [];
   for (let i = 0; i < E.count; i++) if (E.type[i] === BRIDGE3D_EMIT.WINDOW) win.push(i);
@@ -367,13 +391,13 @@ test('every model stands on its zone and its cell block fits the damage rows', (
   const { maxRows } = BRIDGE3D_DAMAGE_LIMITS;
   for (const name of BRIDGE3D_KIND_ORDER) {
     const k = BRIDGE3D_KINDS[name];
-    const def = kindZone(name);
-    assert.ok(def, `${name}: strefa ${k.hull}/${k.zoneId}`);
-    const kx = k.render[0] / k.png[0];
-    const ky = k.render[1] / k.png[1];
-    const map = bridgeModelGridMap({ ...def, rot: 0 }, kx, ky, k.render[0], k.render[1], MODELS[name].design);
-    assert.ok(Math.abs(map.sxZ - 1) < 0.01 && Math.abs(map.syZ - 1) < 0.01, `${name}: model zaprojektowany na strefę`);
-    assert.equal(resolveBridgeModelKind(k.hull, def), name, `${name}: rodzaj po strefie`);
+    const z = kindZone(name);
+    if (!z) { assert.equal(k.level, 3, `${name}: tylko poziom III (krążownik) bez kadłuba TN`); continue; }
+    const { def, hull, kx, ky } = z;
+    assert.ok(def, `${name}: strefa ${hull}/${k.zoneId}`);
+    const map = bridgeModelGridMap({ ...def, rot: 0 }, kx, ky, 1000, 1000, MODELS[name].design);
+    assert.ok(Math.abs(map.sxZ - 1) < 0.01 && Math.abs(map.syZ - 1) < 0.01, `${name}: model zaprojektowany na strefę (${map.sxZ.toFixed(3)} × ${map.syZ.toFixed(3)})`);
+    assert.equal(resolveBridgeModelKind(hull, def), name, `${name}: rodzaj po strefie`);
   }
   // Blok komórek pod każdym modelem na prawdziwym kadłubie mieści się w maxRows wierszach bufora obrażeń.
   const covered = new Set();
@@ -388,7 +412,7 @@ test('every model stands on its zone and its cell block fits the damage rows', (
       covered.add(name);
     }
   }
-  assert.deepEqual([...covered].sort(), [...BRIDGE3D_KIND_ORDER].sort(), 'każdy rodzaj modelu na kadłubie dema');
+  assert.deepEqual([...covered].sort(), BRIDGE3D_KIND_ORDER.filter((n) => n !== 'tn_3').sort(), 'każdy rodzaj modelu (poza III — bez kadłuba TN) na kadłubie dema');
   assert.equal(BRIDGE3D_TUNE.enabled, true);
 });
 
@@ -398,7 +422,7 @@ test('every kind has a full palette and style', () => {
     assert.ok(st, `${name}: brak stylu w BRIDGE3D_KIND_STYLE`);
     assert.equal(st.palette.length, 8, `${name}: paleta 8 materiałów`);
     for (const hex of st.palette) assert.match(hex, /^#[0-9a-f]{6}$/i);
-    assert.ok(BRIDGE_LAYOUT_PROPOSALS[BRIDGE3D_KINDS[name].hull].windowColor, `${name}: kolor okien`);
+    if (!BRIDGE3D_KINDS[name].level) assert.ok(BRIDGE_LAYOUT_PROPOSALS[BRIDGE3D_KINDS[name].hull].windowColor, `${name}: kolor okien`);
   }
 });
 
@@ -454,7 +478,7 @@ test('damage rows: big bridges get consecutive rows, uploads cover only the chan
 test('refreshBeamBridgeRecordDamage writes RGBA bytes the shader unpacks from one u32 per cell', () => {
   const e = ship('battleship');
   const st = e.bridgeState;
-  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('bellator'), 2);
+  const rec = createBeamBridgeRecordCore(e, st, 0, kindRes('tn_4'), 2);
   const W = BRIDGE3D_DAMAGE_LIMITS.width;
   const words = new Uint32Array(W * 4);
   const bytes = new Uint8Array(words.buffer);

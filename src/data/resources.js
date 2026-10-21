@@ -120,24 +120,25 @@ export const RESOURCES = Object.freeze({
     mass: 1.2, value: 22, color: '#6ee06e'
   },
   // Typy z widm planetoid (pas realistyczny, 2026-10-12 — src/data/asteroidTypes.js
-  // SPECTRAL_ORE_TYPES). Bez receptur i popytu stacji — ekonomię dostroi użytkownik.
+  // SPECTRAL_ORE_TYPES). Idą w podzespoły (decyzja użytkownika 2026-10-21): węgiel
+  // w kompozyt, nikiel w nadstop, platyna w katalizator — patrz receptury pasa niżej.
   // Chondryt węglisty (C): węgiel, organika i woda związana w minerałach (4,5–10%).
   carbon_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
     label: 'Ruda węglista', short: 'C', unit: 't', form: 'solid',
-    mass: 0.8, value: 7, color: '#5b5650' // AGENT: cena tymczasowa
+    mass: 0.8, value: 7, color: '#5b5650'
   },
   // Żelazo-nikiel z kobaltem (M).
   nickel_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
     label: 'Ruda niklu', short: 'Ni', unit: 't', form: 'solid',
-    mass: 1.0, value: 15, color: '#b8b4a6' // AGENT: cena tymczasowa
+    mass: 1.0, value: 15, color: '#b8b4a6'
   },
   // Platynowce (platyna, iryd, osm, pallad) — najwyższy szczebel rud, rdzenie pól metalicznych.
   platinum_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
     label: 'Platynowce', short: 'Pt', unit: 't', form: 'solid',
-    mass: 1.2, value: 40, color: '#e4e6ea' // AGENT: cena tymczasowa
+    mass: 1.2, value: 40, color: '#e4e6ea'
   },
 
   // ---------- T0: GAZY Z OLBRZYMÓW GAZOWYCH ----------
@@ -221,6 +222,27 @@ export const RESOURCES = Object.freeze({
     mass: 0.5, value: 100, color: '#fbbf24'
   },
 
+  // Rafinaty pasa — z rud typów C, M i platynowców. Robi je Unia Pasa (Ceres
+  // i Westa), więc napędy i cięższe lufy rdzenia stoją na dowozie z pasa.
+  nickel_superalloy: {
+    tier: TIER.REFINED, category: CATEGORY.METAL,
+    label: 'Nadstop niklu', short: 'NiA', unit: 't', form: 'solid',
+    mass: 1.0, value: 36, color: '#d6d0bc'
+  },
+  // Włókno węglowe w żywicy z polimeru — dlatego kompozyt wiąże pas z olbrzymami.
+  carbon_composite: {
+    tier: TIER.REFINED, category: CATEGORY.CHEMICAL,
+    label: 'Kompozyt węglowy', short: 'CFK', unit: 't', form: 'solid',
+    mass: 0.6, value: 31, color: '#4b4f58'
+  },
+  // Platyny jest śladowo, więc katalizator wchodzi tylko tam, gdzie jest istotą
+  // wyrobu: komora plazmy i napęd hipercruise.
+  pt_catalyst: {
+    tier: TIER.REFINED, category: CATEGORY.CHEMICAL,
+    label: 'Katalizator platynowy', short: 'Kat', unit: 'szt', form: 'solid',
+    mass: 0.3, value: 128, color: '#f1f5f9'
+  },
+
   // ---------- T2: KOMPONENTY OKRĘTOWE ----------
   hull_plate: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
@@ -242,6 +264,40 @@ export const RESOURCES = Object.freeze({
     label: 'Silnik manewrowy', short: 'Sil', unit: 'szt', form: 'solid',
     mass: 5.0, value: 660, color: '#fb923c'
   },
+
+  // ---------- T2: NAPĘDY ----------
+  //
+  // Silnik manewrowy (`thruster`) obraca i hamuje; napęd przelotowy pcha okręt
+  // w trybie bojowym i PRZELOCIE, w dwóch rozmiarach kadłuba. Silnik hipercruise
+  // to osobny moduł na odcinki `'drive'` TRAVEL TO (tryb lotu i vmax — E5,
+  // `src/data/driveModes.js`; id są kontraktem E5 ↔ E8, PLAN-ekonomia-rynki § 3.4).
+  drive_light: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Napęd przelotowy lekki', short: 'NpL', unit: 'szt', form: 'solid',
+    mass: 5.0, value: 560, color: '#fdba74'
+  },
+  drive_heavy: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Napęd przelotowy ciężki', short: 'NpC', unit: 'szt', form: 'solid',
+    mass: 12.0, value: 1500, color: '#f97316'
+  },
+  // Koszt rośnie szybciej niż vmax (20 / 30 / 40 tys. j./s): 35 / 59 / 90 CR
+  // za tysiąc j./s — szybszy moduł to wybór, nie oczywistość.
+  hypercruise_mk1: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Silnik hipercruise Mk1', short: 'HC1', unit: 'szt', form: 'solid',
+    mass: 6.0, value: 690, color: '#93c5fd'
+  },
+  hypercruise_mk2: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Silnik hipercruise Mk2', short: 'HC2', unit: 'szt', form: 'solid',
+    mass: 9.0, value: 1765, color: '#60a5fa'
+  },
+  hypercruise_mk3: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Silnik hipercruise Mk3', short: 'HC3', unit: 'szt', form: 'solid',
+    mass: 14.0, value: 3600, color: '#3b82f6'
+  },
   weapon_mount: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Podstawa uzbrojenia', short: 'Uzb', unit: 'szt', form: 'solid',
@@ -255,33 +311,60 @@ export const RESOURCES = Object.freeze({
 
   // ---------- T2: UZBROJENIE ----------
   //
-  // Gospodarka handluje KLASAMI uzbrojenia, nie 38 modelami z `weapons.js`.
-  // Konkretna lufa (Tempest Ion Mk II, Grad Flak) to kwestia tego, co gracz
-  // kupi w doku — `weaponEconomy.js` przelicza model na te cztery pozycje.
+  // Gospodarka handluje RODZINAMI uzbrojenia (8 pozycji), nie 52 modelami
+  // z `weapons.js`. Rodzina to inna technologia, więc i inny wsad: szynowe stoją
+  // na nadstopie niklu, plazmowe na katalizatorze platynowym, torpedy i flak na
+  // kompozycie. Rozmiar NIE jest osobną pozycją — lufa L to cztery sztuki
+  // rodziny (`WEAPON_SIZE_UNITS` w `weaponEconomy.js`), bo te same zakłady robią
+  // ją z tych samych rafinatów; osobne S–M–L–Capital dałyby 32 pozycje bez
+  // żadnej nowej trasy. Model → rodzina: `weaponGood` w `weaponEconomy.js`.
   //
   // `weapon_mount` zostaje PODSTAWĄ: działo siada na niej, a nie zastępuje jej.
   // Dlatego uzbrojony okręt potrzebuje obu rzeczy naraz.
+  //
+  // Działka szybkostrzelne i armaty.
   gun_ballistic: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
     label: 'Działo kinetyczne', short: 'Kin', unit: 'szt', form: 'solid',
     mass: 6.0, value: 440, color: '#fca5a5'
   },
+  gun_railgun: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Działo szynowe', short: 'Szy', unit: 'szt', form: 'solid',
+    mass: 6.0, value: 460, color: '#f87171'
+  },
   // Droższe w budowie od balistyki i tańsze w użyciu — nie je amunicji, tylko
   // moc reaktora. To jest cała różnica między tymi dwiema szkołami.
   gun_energy: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
-    label: 'Emiter energetyczny', short: 'Emi', unit: 'szt', form: 'solid',
+    label: 'Emiter laserowy', short: 'Emi', unit: 'szt', form: 'solid',
     mass: 5.0, value: 720, color: '#67e8f9'
+  },
+  gun_plasma: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Działo plazmowe', short: 'Plz', unit: 'szt', form: 'solid',
+    mass: 6.0, value: 700, color: '#c4b5fd'
   },
   launcher_ordnance: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
-    label: 'Wyrzutnia', short: 'Wyr', unit: 'szt', form: 'solid',
+    label: 'Wyrzutnia rakiet', short: 'Wyr', unit: 'szt', form: 'solid',
     mass: 7.0, value: 500, color: '#fdba74'
   },
+  launcher_torpedo: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Wyrzutnia torped', short: 'WTr', unit: 'szt', form: 'solid',
+    mass: 9.0, value: 680, color: '#fb7185'
+  },
+  // CIWS i laser OP.
   pd_turret: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
     label: 'Wieżyczka OP', short: 'OP', unit: 'szt', form: 'solid',
     mass: 4.0, value: 450, color: '#a5b4fc'
+  },
+  flak_turret: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Działo flak', short: 'DFl', unit: 'szt', form: 'solid',
+    mass: 5.0, value: 375, color: '#fcd34d'
   },
   /**
    * Myśliwiec — jedna maszyna, nie eskadra. Eskadra to `squadSize` sztuk
@@ -398,8 +481,19 @@ export const PLANET_YIELD = Object.freeze({
   //
   // Ceres jest lodowa i wodna, Westa zróżnicowana i bogata w metal — stąd
   // różne udziały. Razem dają Unii stal i tytan bez oglądania się na rdzeń.
-  ceres: { rate: 1.25, yields: { iron_ore: 0.30, silicon_ore: 0.22, ice: 0.28, raw_crystal: 0.20 } },
-  vesta: { rate: 1.05, yields: { iron_ore: 0.42, titanium_ore: 0.33, silicon_ore: 0.25 } },
+  //
+  // Rudy pasa (2026-10-21): Ceres to chondryt węglisty (C) — węgiel; Westa ma
+  // żelazo-niklowe jądro — nikiel i śladowo platynowce. Doszły PONAD dawny
+  // urobek: `rate` wzrosło tak, żeby żelazo, krzem, tytan, lód i kryształ
+  // zostały w tych samych tonach na cykl co przed zmianą (krzem jest
+  // najciaśniejszym surowcem układu, a hutę Unii skalibrowano pod te liczby).
+  // Główne źródło węgla i niklu to i tak wyprawy górnicze w pas.
+  ceres: { rate: 1.70, yields: {
+    iron_ore: 0.2206, silicon_ore: 0.1618, ice: 0.2059, raw_crystal: 0.1470, carbon_ore: 0.2647
+  } },
+  vesta: { rate: 1.95, yields: {
+    iron_ore: 0.2262, titanium_ore: 0.1777, silicon_ore: 0.1346, nickel_ore: 0.3846, platinum_ore: 0.0769
+  } },
 
   // ---------- KSIĘŻYCE-KOPALNIE ----------
   //
@@ -508,6 +602,22 @@ export const RECIPES = Object.freeze({
     in: { scrap: 4 }, out: { steel: 1 }
   },
 
+  // Rafinacja rud pasa (rafineria pasa Unii). Bez krzemu i bez układów —
+  // krzem jest najciaśniejszym surowcem układu, a te linie mają go odciążać.
+  alloy_nickel: {
+    label: 'Stapianie nadstopu niklu', building: 'refinery', seconds: 40,
+    in: { nickel_ore: 3 }, out: { nickel_superalloy: 2 }
+  },
+  // Żywica z polimeru: Ceres ma węgiel, ale polimer ściąga od olbrzymów gazowych.
+  lay_carbon_composite: {
+    label: 'Laminowanie kompozytu', building: 'refinery', seconds: 45,
+    in: { carbon_ore: 3, polymer: 1 }, out: { carbon_composite: 2 }
+  },
+  refine_platinum_catalyst: {
+    label: 'Rafinacja katalizatora', building: 'refinery', seconds: 60,
+    in: { platinum_ore: 2 }, out: { pt_catalyst: 1 }
+  },
+
   // ---------- FABRYKA: T1 → T2 ----------
   assemble_hull_plate: {
     label: 'Montaż płyt kadłuba', building: 'factory', seconds: 70,
@@ -534,6 +644,37 @@ export const RECIPES = Object.freeze({
     in: { polymer: 1, oxygen: 1, avionics: 1 }, out: { life_support: 1 }
   },
 
+  // ---------- STOCZNIA: napędy przelotowe i hipercruise ----------
+  //
+  // Dysza, komora i osłona termiczna z nadstopu niklu i kompozytu — rudy pasa,
+  // nie krzem. Hipercruise dokłada katalizator platynowy, a klasy wyższe
+  // awionikę i rdzeń reaktora, więc Mk3 nie powstanie bez rdzenia przemysłowego
+  // i uranu z Kuipera.
+  assemble_drive_light: {
+    label: 'Montaż napędu lekkiego', building: 'factory', seconds: 120,
+    in: { nickel_superalloy: 3, hull_plate: 1, coolant: 1, copper_wire: 2 }, out: { drive_light: 1 }
+  },
+  assemble_drive_heavy: {
+    label: 'Montaż napędu ciężkiego', building: 'factory', seconds: 240,
+    in: { nickel_superalloy: 10, hull_plate: 2, carbon_composite: 4, coolant: 3, copper_wire: 4 },
+    out: { drive_heavy: 1 }
+  },
+  assemble_hypercruise_mk1: {
+    label: 'Montaż hipercruise Mk1', building: 'factory', seconds: 160,
+    in: { nickel_superalloy: 3, carbon_composite: 4, pt_catalyst: 1, copper_wire: 3, coolant: 2 },
+    out: { hypercruise_mk1: 1 }
+  },
+  assemble_hypercruise_mk2: {
+    label: 'Montaż hipercruise Mk2', building: 'factory', seconds: 260,
+    in: { nickel_superalloy: 8, carbon_composite: 6, pt_catalyst: 2, avionics: 1, coolant: 3 },
+    out: { hypercruise_mk2: 1 }
+  },
+  assemble_hypercruise_mk3: {
+    label: 'Montaż hipercruise Mk3', building: 'factory', seconds: 380,
+    in: { nickel_superalloy: 12, carbon_composite: 8, pt_catalyst: 4, reactor_core: 1, avionics: 1, coolant: 4 },
+    out: { hypercruise_mk3: 1 }
+  },
+
   // ---------- ZBROJOWNIA: T1 → uzbrojenie ----------
   assemble_gun_ballistic: {
     label: 'Montaż działa kinetycznego', building: 'factory', seconds: 150,
@@ -555,6 +696,24 @@ export const RECIPES = Object.freeze({
   assemble_pd_turret: {
     label: 'Montaż wieżyczki OP', building: 'factory', seconds: 130,
     in: { optic_lens: 2, copper_wire: 4, steel: 2 }, out: { pd_turret: 1 }
+  },
+  // Rodziny na rudach pasa — bez układów scalonych poza zapalnikiem torpedy.
+  assemble_gun_railgun: {
+    label: 'Montaż działa szynowego', building: 'factory', seconds: 150,
+    in: { nickel_superalloy: 3, copper_wire: 5, titan_alloy: 1, steel: 2 }, out: { gun_railgun: 1 }
+  },
+  assemble_gun_plasma: {
+    label: 'Montaż działa plazmowego', building: 'factory', seconds: 190,
+    in: { pt_catalyst: 1, nickel_superalloy: 3, coolant: 3, copper_wire: 4, optic_lens: 1 },
+    out: { gun_plasma: 1 }
+  },
+  assemble_launcher_torpedo: {
+    label: 'Montaż wyrzutni torped', building: 'factory', seconds: 200,
+    in: { hull_plate: 1, carbon_composite: 5, steel: 3, chips: 1 }, out: { launcher_torpedo: 1 }
+  },
+  assemble_flak_turret: {
+    label: 'Montaż działa flak', building: 'factory', seconds: 120,
+    in: { steel: 2, carbon_composite: 3, copper_wire: 3, titan_alloy: 1 }, out: { flak_turret: 1 }
   },
   // Płatowiec jest LEKKI: tytan i elektronika, bez płyt pancernych i bez
   // wielkiego silnika manewrowego. Myśliwiec za 660 CR wobec fregaty za 3950

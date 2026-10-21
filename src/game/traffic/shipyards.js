@@ -43,25 +43,34 @@ import { areFactionsHostile } from '../../data/factions.js';
  * broni się myśliwcami, nie burtą.
  */
 export const WARSHIP_CLASSES = Object.freeze({
+  // Napędy (2026-10-21): silnik manewrowy (`thruster`) obraca, napęd przelotowy
+  // pcha, moduł hipercruise niesie odcinki 'drive' TRAVEL TO. Fregata ma tylko
+  // napęd lekki — mały kadłub obraca się wektorem dysz, bez osobnych manewrowych.
+  // Klasa hipercruise rośnie z kadłubem: Mk1 fregata i niszczyciel, Mk2 krążownik,
+  // Mk3 nosiciel. Rodziny luf (`weaponEconomy.WEAPON_FAMILY_GOOD`) rozłożone tak,
+  // że łączna liczba luf każdej klasy jest ta sama co przy czterech klasach.
   frigate: {
     id: 'frigate', label: 'fregata', hull: 'terran_frigate', power: 1, seconds: 600,
     build: {
-      hull_plate: 4, avionics: 1, thruster: 1, weapon_mount: 1,
+      hull_plate: 4, avionics: 1, drive_light: 1, hypercruise_mk1: 1, weapon_mount: 1,
       gun_ballistic: 1, pd_turret: 1
     }
   },
   destroyer: {
     id: 'destroyer', label: 'niszczyciel', hull: 'terran_destroyer', power: 2.4, seconds: 1700,
     build: {
-      hull_plate: 12, avionics: 2, thruster: 2, weapon_mount: 3, reactor_core: 1,
-      gun_ballistic: 2, gun_energy: 1, pd_turret: 2
+      hull_plate: 12, avionics: 2, thruster: 1, drive_light: 2, hypercruise_mk1: 1,
+      weapon_mount: 3, reactor_core: 1,
+      gun_ballistic: 1, gun_railgun: 1, gun_energy: 1, pd_turret: 1, flak_turret: 1
     }
   },
   cruiser: {
     id: 'cruiser', label: 'krążownik', hull: 'terran_battleship', power: 5.5, seconds: 4600,
     build: {
-      hull_plate: 30, avionics: 6, thruster: 5, weapon_mount: 7, reactor_core: 3, life_support: 2,
-      gun_ballistic: 4, gun_energy: 2, launcher_ordnance: 1, pd_turret: 4
+      hull_plate: 30, avionics: 6, thruster: 2, drive_heavy: 2, hypercruise_mk2: 1,
+      weapon_mount: 7, reactor_core: 3, life_support: 2,
+      gun_ballistic: 2, gun_railgun: 2, gun_energy: 1, gun_plasma: 1, launcher_ordnance: 1,
+      pd_turret: 2, flak_turret: 2
     }
   },
   // Nosiciel schodzi z pochylni Z GRUPĄ LOTNICZĄ: dwie eskadry po dziewięć
@@ -71,8 +80,10 @@ export const WARSHIP_CLASSES = Object.freeze({
   carrier: {
     id: 'carrier', label: 'nosiciel', hull: 'terran_carrier', power: 9, seconds: 8800,
     build: {
-      hull_plate: 60, avionics: 16, thruster: 9, weapon_mount: 7, reactor_core: 7, life_support: 14,
-      gun_ballistic: 2, gun_energy: 1, launcher_ordnance: 2, pd_turret: 6,
+      hull_plate: 60, avionics: 16, thruster: 4, drive_heavy: 4, hypercruise_mk3: 1,
+      weapon_mount: 7, reactor_core: 7, life_support: 14,
+      gun_ballistic: 1, gun_railgun: 1, gun_energy: 1, launcher_ordnance: 1, launcher_torpedo: 1,
+      pd_turret: 3, flak_turret: 3,
       fighter_craft: 18
     }
   }
@@ -147,6 +158,24 @@ export function createShipyardRegistry() {
     stats: { built: 0, spent: 0, blocked: 0, byClass: {} }
   };
 }
+
+/**
+ * Podzespoły FRACHTOWCÓW RUCHU — klasy `VAN_CLASSES` (`cargoFleet.js`).
+ *
+ * AGENT: tylko dane (E8, 2026-10-21). Dziś firma kupuje statek za kredyty
+ * (`transportCompanies.maintainFleet`, `SHIP_PRICE`) i nic nie schodzi
+ * z magazynów; wpięcie odkupu floty w stocznie i rynek należy do E4/E2 — wtedy
+ * frachtowce staną się drugim po okrętach odbiorcą napędów i hipercruise Mk1.
+ * Statek handlowy nie ma uzbrojenia ani podstaw; ciężkie klasy pchają napędy
+ * ciężkie, a hipercruise zostaje Mk1 — frachtowiec nie płaci za prędkość okrętu.
+ */
+export const FREIGHTER_BUILD = Object.freeze({
+  van: Object.freeze({ hull_plate: 2, avionics: 1, drive_light: 1, hypercruise_mk1: 1 }),
+  hauler: Object.freeze({ hull_plate: 5, avionics: 1, thruster: 1, drive_light: 2, hypercruise_mk1: 1 }),
+  bulk: Object.freeze({ hull_plate: 10, avionics: 1, thruster: 2, drive_heavy: 1, hypercruise_mk1: 1, life_support: 1 }),
+  heavy: Object.freeze({ hull_plate: 22, avionics: 2, thruster: 2, drive_heavy: 2, hypercruise_mk1: 1, life_support: 2 }),
+  mega: Object.freeze({ hull_plate: 50, avionics: 3, thruster: 4, drive_heavy: 4, hypercruise_mk2: 1, life_support: 3 })
+});
 
 /** Wszystkie podzespoły, jakich potrzebuje jakakolwiek klasa okrętu. */
 export const WARSHIP_COMPONENTS = Object.freeze([...new Set(

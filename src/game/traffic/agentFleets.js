@@ -23,6 +23,7 @@ import { resourcePrice } from '../stationEconomy.js';
 import { snapshotMarket, findTradeOpportunities, netProfit } from './tradeMarket.js';
 import { chooseRoute } from './travelNetwork.js';
 import { convoyInterceptChance, escortCost, ESCORT_MODEL } from './convoy.js';
+import { FALLBACK_HOME_PORT } from '../../data/markets.js';
 
 /**
  * Profile agentów. Różnica sprowadza się do JEDNEJ rzeczy — ile ryzyka wolno
@@ -474,7 +475,7 @@ export function summarizeAgents(registry) {
  * ochrony i nie powinna jej mieć.
  */
 export function buildMerchants(registry, ports, economyScale = 1, options = {}) {
-  const activePorts = Array.isArray(ports) && ports.length ? ports : ['earth'];
+  const activePorts = Array.isArray(ports) && ports.length ? ports : [FALLBACK_HOME_PORT];
   const scale = Math.max(0.1, Number(economyScale) || 1);
   const soloCount = Math.max(4, Math.round((options.soloPerScale ?? 6) * Math.sqrt(scale)));
   const caravanCount = Math.max(2, Math.round((options.caravansPerScale ?? 1) * Math.sqrt(scale)));

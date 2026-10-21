@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   WORLD_LENS_DEFAULTS, mapWorldLens, warpLensScale, warpDepthScale, flybyTurn, viewEdgeDistance,
-  WarpWorldLens, WARP_WORLD_LENS, newLensBody, resetWarpWorldLens
+  WarpWorldLens, WARP_WORLD_LENS, newLensBody, resetWarpWorldLens, WARP_RING_LENS, warpRingLensSlot
 } from '../src/3d/warp/worldLens.js';
 import * as demoLens from '../dema/warp-webgpu/worldLens.js';
 
@@ -98,6 +98,74 @@ test('bramka ringu: ciało z prawdziwym ringiem w kadrze zostaje na swoim miejsc
   assert.equal(list[1].out.beta, 0);
 });
 
+test('przylot (2026-10-19): po wyjściu cel trzyma się krawędzi, póki prawdziwy obraz go nie dogoni — bez skoków, cały czas w kadrze', () => {
+  const { lens, ctx, jup, list } = rig();
+  // β wyjścia już opadło (rampa skończona), statek dolatuje z pędem i zwalnia (krok ∝ odległość, ~5 s jak ślizg).
+  Object.assign(ctx, { beta: 0, exitAge: 2, exitHalt: 1.35, dt: 1 / 60 });
+  let prev = null;
+  let worst = 0;
+  let first = true;
+  for (let d = 300000; d >= 49000; d -= Math.max(150, d * 0.006)) {
+    ctx.shipX = jup.x - d;
+    ctx.camX = ctx.shipX;
+    ctx.exitAge += ctx.dt;
+    lens.update(list, 3, ctx, jup);
+    const o = jup.out;
+    if (first) {
+      assert.ok(ctx.targetHold > 0.99, 'daleko: cel trzymany');
+      assert.ok(o.x - o.size < 480 && o.x + o.size > 480, 'tarcza celu na krawędzi kadru (wystaje)');
+      first = false;
+    }
+    // Bliski brzeg tarczy (to, co widać przy krawędzi kadru) — cały czas w kadrze.
+    const near = o.x - o.size;
+    assert.ok(near < 480, `cel w kadrze (d ${d.toFixed(0)}: brzeg ${near.toFixed(0)} px)`);
+    const realNear = (d - jup.r) * jup.flat;
+    if (prev) {
+      // Brzeg nie jedzie szybciej niż brzeg prawdziwego obrazu (dawniej β z czasu rampy przenosił cel za kadr
+      // w ~0,6 s); tarcza przy dogonieniu rośnie z obrazu soczewki do prawdziwej wokół tego brzegu — bez cofania.
+      worst = Math.max(worst, Math.abs(near - prev.near) - Math.abs(realNear - prev.realNear));
+      assert.ok(o.size >= prev.size - 1e-6, `tarcza nie maleje przy dolocie (${prev.size.toFixed(1)} → ${o.size.toFixed(1)})`);
+    }
+    prev = { near, size: o.size, realNear };
+  }
+  assert.ok(worst < 3, `brzeg celu szybszy od prawdziwego o ${worst.toFixed(1)} px na klatkę`);
+  assert.ok(ctx.targetHold < 0.05 && jup.out.beta < 0.05, 'dogonił — prawie prawdziwy widok');
+  assert.ok(ctx.exitAge < ctx.exitHalt + WORLD_LENS_DEFAULTS.arrivalHoldMax, 'dolot krótszy niż limit trzymania');
+});
+
+test('przylot: statek stanął, zanim prawdziwy obraz dogonił cel — puszczenie w 0,8 s po zatrzymaniu, płynnie; w skoku bez trzymania', () => {
+  const { lens, ctx, jup, list } = rig();
+  Object.assign(ctx, { beta: 0, exitAge: 0.5, exitHalt: 1.35, dt: 1 / 60 });
+  ctx.shipX = jup.x - 300000;
+  ctx.camX = ctx.shipX;
+  const holds = [];
+  for (let i = 0; i < 150; i++) {
+    ctx.exitAge += ctx.dt;
+    lens.update(list, 3, ctx, jup);
+    holds.push(ctx.targetHold);
+  }
+  assert.ok(holds[40] > 0.99, 'do zatrzymania (rampa) trzyma');
+  for (let i = 1; i < holds.length; i++) assert.ok(holds[i] <= holds[i - 1] + 1e-12, 'puszczenie bez nawrotów');
+  assert.equal(ctx.targetHold, 0, 'puszczony');
+  assert.ok(near(jup.out.x, (jup.x - ctx.shipX) * jup.flat, 1e-6), 'prawdziwe miejsce');
+  // Cięcie (teleport na start nowej podróży w trakcie trzymania): koniec trzymania w tej samej klatce.
+  const C = rig();
+  Object.assign(C.ctx, { beta: 0, exitAge: 0.5, exitHalt: 1.35, dt: 1 / 60 });
+  C.ctx.shipX = C.jup.x - 300000;
+  for (let i = 0; i < 10; i++) { C.ctx.exitAge += C.ctx.dt; C.ctx.shipX += 2000; C.lens.update(C.list, 3, C.ctx, C.jup); }
+  assert.ok(C.ctx.targetHold > 0.99);
+  C.ctx.shipX = C.jup.x - 5e6;
+  C.ctx.exitAge += C.ctx.dt;
+  C.lens.update(C.list, 3, C.ctx, C.jup);
+  assert.equal(C.ctx.targetHold, 0, 'teleport — bez ducha celu przy krawędzi');
+  // Skok (bez wyjścia): bez trzymania — zwykłe β.
+  const R = rig();
+  R.ctx.beta = 0;
+  R.lens.update(R.list, 3, R.ctx, R.jup);
+  assert.equal(R.ctx.targetHold, 0);
+  assert.equal(R.jup.out.beta, 0);
+});
+
 test('wejście w soczewkę (2026-10-08): planeta startu z boku nie wskakuje pod statek; przed dziobem wlatuje; przejście niewidoczne', () => {
   const lens = new WarpWorldLens();
   const ctx = {
@@ -149,9 +217,14 @@ test('wpięcie: sterownik warpa pisze stan, planety rozstawia soczewka, gra plan
   const nurt = read('src/3d/warp/warpNurt.js');
   assert.match(nurt, /this\._commitWorldLens\(o, t, dt, camX, camY, zoom, view, hasPlayer\);/);
   assert.match(nurt, /if \(!this\.initialized \|\| !this\.enabled\) \{ resetWarpWorldLens\(\); return; \}/);
-  assert.match(nurt, /const beta = hasPlayer && o\.lensAllowed !== false \? p\.lensBeta\(t\) : 0;/);
+  assert.match(nurt, /const lensOk = hasPlayer && o\.lensAllowed !== false;\s*const beta = lensOk \? p\.lensBeta\(t\) : 0;/);
+  // Przylot: soczewka żyje po wyjściu, póki trzyma cel przy krawędzi (targetHold), choć β już opadło.
+  assert.match(nurt, /if \(!\(beta > 0\.0005\) && !\(arriving && L\.targetHold > 0\.0005\)\) \{ resetWarpWorldLens\(\); return; \}/);
+  assert.match(nurt, /L\.exitAge = arriving \? exitAge : -1;/);
   const planets = read('src/3d/planet3d.assets.js');
   assert.match(planets, /const lensOn = WARP_WORLD_LENS\.active === true;[\s\S]*ent\.update\(dt, cam, lensOn\)[\s\S]*if \(lensOn\) applyWarpWorldLens\(\);/);
+  // Bramka ringu raz otwarta w skoku zostaje otwarta (2026-10-19: przelot obok ringu i dolot do celu wyrywały planetę).
+  assert.match(planets, /if \(b\.gateOpenSession === _warpLens\.session\) gate = 1;[\s\S]*?if \(b\.gate >= 0\.999\) \{ b\.gate = 1; b\.gateOpenSession = _warpLens\.session; \}/);
   // Księżyc w soczewce stoi przy statku — bez cienia na kadłub; po soczewce cień wraca.
   assert.match(planets, /_lensPlace\(\) \{[\s\S]*?this\.mesh\.castShadow = false;/);
   assert.match(planets, /_lensRestore\(\) \{[\s\S]*?this\.mesh\.castShadow = true;/);
@@ -161,4 +234,42 @@ test('wpięcie: sterownik warpa pisze stan, planety rozstawia soczewka, gra plan
   assert.match(html, /planPlayerWarp\(dirX, dirY\);/);
   assert.match(html, /warp\.flybyFactor = playerWarpFlybyFactor\(\);\s*const maxWarpSpeed = \(warp\.cruise \|\| warp\.speed\) \* zoneWarpMul \* warp\.flybyFactor;/);
   assert.match(html, /o\.lensAllowed = !splitScreenMode && !View3D\.active;/);
+  // Cel: ustawienie tarczy przy przylocie zamrożone, po skoku własna orientacja planety (bez obrotu przy końcu soczewki).
+  assert.match(planets, /if \(!\(L\.exitAge >= 0\) \|\| !this\._lensWasTarget\) \{/);
+  assert.match(planets, /_lensRestore\(\) \{[\s\S]*?this\._lensFace\.copy\(this\._lensFaceNow\);[\s\S]*?this\._orient\(null, this\._lensFace\);/);
+  assert.match(planets, /this\._spin\(dt\);\s*\/\/[^\n]*\n\s*this\._orient\(null, this\._lensFace\);/);
+});
+
+test('cel bez obrotu przelotu (2026-10-19: „przy wejściu planeta się obraca”): cel i jego księżyce — kąt 0 przy każdym β; mijana planeta się obraca', () => {
+  const { lens, ctx, jup, io, mars, list } = rig();
+  for (const beta of [1, 0.5, 0.1]) {
+    ctx.beta = beta;
+    lens.update(list, 3, ctx, jup);
+    assert.equal(jup.out.angle, 0, `cel bez obrotu (β ${beta})`);
+    assert.equal(io.out.angle, 0, `księżyc celu bez obrotu (β ${beta})`);
+  }
+  ctx.beta = 1;
+  lens.update(list, 3, ctx, jup);
+  assert.ok(mars.out.angle > 0.1, 'mijana planeta — obrót przelotu');
+});
+
+test('ring w soczewce (2026-10-19, „a co z ringami”): slot raz na planetę, planety go piszą, ring jedzie z obrazem planety', () => {
+  const s = warpRingLensSlot('test-ring');
+  assert.equal(warpRingLensSlot('test-ring'), s, 'ten sam rekord (bez alokacji na klatkę)');
+  assert.equal(WARP_RING_LENS['test-ring'], s);
+  assert.deepEqual(Object.keys(s).sort(), ['k', 'on', 'q', 'real', 'turned', 'vis', 'x', 'y']);
+  assert.equal(s.on, false, 'poza soczewką ring na prawdziwym miejscu');
+  delete WARP_RING_LENS['test-ring'];
+  // Planeta z ringiem w soczewce: środek obrazu, skala obrazu do prawdziwej, udział prawdziwego widoku, obrót przelotu.
+  const planets = read('src/3d/planet3d.assets.js');
+  assert.match(planets, /const rl = this\._ringLens;\s*rl\.on = true;\s*rl\.x = lwx;\s*rl\.y = lwy;\s*rl\.k = Math\.max\(1e-6, fit\.size \* k\) \/ Math\.max\(1e-6, b\.r\);\s*rl\.real = real;\s*rl\.vis = !fit\.off;\s*rl\.turned = turned;/);
+  assert.match(planets, /if \(this\._ringLens\) this\._ringLens\.on = false;/);
+  // Obraz ringu: grupa w obrazie planety, skala, obrót przelotu przed kątem portu; cień ringu × udział prawdziwego widoku.
+  const ring = read('src/3d/haloRing/haloRingGame.js');
+  assert.match(ring, /const lens = WARP_RING_LENS\[e\.key\];\s*const lensOn = !!\(lens && lens\.on\);/);
+  assert.match(ring, /ring\.group\.position\.set\(ox, -oy, 0\);\s*ring\.group\.scale\.setScalar\(ks\);/);
+  assert.match(ring, /if \(lensOn && lens\.turned && lens\.q\) ring\.group\.quaternion\.copy\(lens\.q\)\.multiply\(_qRot\);\s*else ring\.group\.quaternion\.copy\(_qRot\);/);
+  assert.match(ring, /const shadowK = lensOn \? Math\.max\(0, Math\.min\(1, Number\(lens\.real\) \|\| 0\)\) : 1;/);
+  // Klucz slotu = klucz wpisu ringu (id planety z mapy układu).
+  assert.match(planets, /warpRingLensSlot\(this\.data\?\.id \|\| this\.name\)/);
 });

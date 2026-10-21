@@ -222,6 +222,17 @@ test('WGSL: materiał skał (gra, tło) z gałęziami C / D / M / V i minerały 
       assert.match(fragment, new RegExp(`==\\s*(?:i32\\()?${TI[id]}\\b`), `gałąź ${id}`);
     }
   }
+  // Smugi skał w skoku (warpDebris.js, 2026-10-19): wariant `smear` — rozciągnięcie w wierzchołkach, ogon z alfą;
+  // zwykłe warstwy bez niego (ten sam WGSL co dawniej — bez varyingu smugi).
+  const back = buildMesh(new THREE.Mesh(geo, new gameRock.RockNodeMaterial({ shared, backdrop: true })));
+  assert.doesNotMatch(back.vertex, /vRockSmear/, 'zwykłe skały tła bez smugi');
+  const smearMat = new gameRock.RockNodeMaterial({ shared, backdrop: true, smear: true });
+  assert.equal(smearMat.transparent, true);
+  assert.equal(smearMat.blending, THREE.NormalBlending);
+  assert.equal(smearMat.depthWrite, false);
+  const sm = buildMesh(new THREE.Mesh(geo, smearMat));
+  assert.match(sm.vertex, /vRockSmear/, 'smuga: udział ogona w wierzchołku');
+  assert.ok(count(sm.fragment, /var<uniform>/g) <= 12, `smuga: bufory uniform ${count(sm.fragment, /var<uniform>/g)}`);
   const layer = new gameRock.RockNodeMaterial({ shared });
   const mm = new gameMinerals.MineralMaterial({ shared, layer: layer.L, grid });
   const mgeo = new THREE.InstancedBufferGeometry();

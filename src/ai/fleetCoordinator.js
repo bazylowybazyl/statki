@@ -29,6 +29,13 @@
 //     swobodnie, a okręty flagowe trzymają linię.
 //  Brak widocznych wrogów, ale świeży „duch" i ATAK — faza 'search': front idzie
 //  do ostatniej znanej pozycji wroga.
+//  NATARCIE ('charge' — postawa narzucona stronie: setFleetStanceOverride, scena
+//  „Wojna”): szyk JAK PRZYLECIAŁ — każdy okręt trzyma swoje przesunięcie względem
+//  punktu floty zapisane po ślizgu wyjścia z warpa (klin przylotu zostaje klinem, nikt
+//  się nie cofa do linii), a punkt floty jedzie tempem marszu najwolniejszego ku
+//  zagrożeniu (bez zagrożenia — kursem przylotu); faza walki, gdy wróg podejdzie na
+//  dystans bojowy — wtedy walkę prowadzą mózgi (capitalAI.js: przeloty burta w burtę
+//  i nawroty — `chargeRun`), a punkt floty staje (lotniskowce trzymają się za nim).
 //
 // Mózgi w capitalAI.js czytają slot przez getBattleSlot() (z kontrolą świeżości
 // i ekstrapolacją pozycji miejsca od chwili przebudowy).
@@ -44,10 +51,14 @@ import {
   SIDE_FRIENDLY,
   SIDE_PIRATE,
   contactInLeash,
+  fleetStanceOverride,
   getFreshestGhost,
   getSideContacts,
+  setFleetStanceOverride,
   updateFleetAwareness
 } from './fleetAwareness.js';
+
+export { setFleetStanceOverride };
 import { flightSpeedLimit, resolveShipFlightSpec } from '../game/flight/shipFlightModel.js';
 import {
   DEFAULT_FLEET_FORMATION,
@@ -191,6 +202,9 @@ function isCoordinatedNpc(npc) {
   if (!npc.ai) return false;
   if (npc.command) return false; // rozkazy RTS mają priorytet
   if (npc.state === 'warping_in') return false;
+  // Okręt w tunelu warpa (przylot prowadzony przez rejestr ruchu warpa — duch do końca hamowania) nie należy jeszcze
+  // do szyku: wpada z 12–30 tys. j/s, a jako okręt flagowy (korzeń szyku) ciągnąłby miejsca całej floty.
+  if (npc.isCollidable === false) return false;
   return !!npc.isCapitalShip || isSmallShip(npc) || isBigShip(npc);
 }
 
@@ -281,6 +295,7 @@ function writeFlankSlot(npc, st, victim, bearing, dist) {
 }
 
 function resetSide(st) {
+  st.chargeRef = null;
   st.shapeDir = NaN;
   st.shapeOmega = 0;
   st.frontDist = NaN;
@@ -311,8 +326,11 @@ function resolveStandoff(npc, reprEnemy) {
 }
 
 // Postawa strony: gracz ustawia ją rozkazem skrzydła (ESKORTA / ATAK);
-// piraci są ofensywni, a obronę stacji załatwia smycz bazy per okręt.
+// piraci są ofensywni, a obronę stacji załatwia smycz bazy per okręt. Postawa
+// narzucona z zewnątrz (NATARCIE — fleetAwareness.setFleetStanceOverride) wygrywa.
 function sideStance(side) {
+  const forced = fleetStanceOverride(side);
+  if (forced) return forced;
   if (side === SIDE_FRIENDLY) {
     const order = (typeof window !== 'undefined' && window.SupportWing?.order) || 'guard';
     return order === 'engage' ? 'engage' : 'guard';
@@ -501,7 +519,7 @@ function assignFlanks(st, members, threats) {
 // ATAKU eskorta poluje (engageR jak dawne „wyłamanie z szyku": 1,6× dystansu
 // bojowego + 1,5 km od miejsca).
 function slotEngageRadius(stance, standoff, leash) {
-  if (stance === 'engage') return standoff * 1.6 + 1500;
+  if (stance === 'engage' || stance === 'charge') return standoff * 1.6 + 1500;
   return standoff + leash;
 }
 
@@ -921,6 +939,103 @@ function cruiseFormation(side, st, player, members, dt) {
   return true;
 }
 
+// NATARCIE — szyk „jak przyleciał” (opis w nagłówku). Punkt floty `st.chargeRef` (początkowo środek okrętów) jedzie
+// tempem marszu (prędkość przelotowa najwolniejszego × PACE_MARGIN) w kierunku `st.chargeDir` — ku zagrożeniu albo
+// kursem przylotu (średni kurs okrętów), obracanym najwyżej CHARGE_TURN_RATE. Przesunięcie okrętu (wzdłuż / w bok
+// kierunku) zapisane, gdy pierwszy raz jest w szyku po ślizgu wyjścia z warpa; okręt w ślizgu (`__warpExitSlide`)
+// dostaje miejsce przed sobą z własną prędkością — dokańcza ślizg, zamiast hamować do miejsca. Tempo marszu jest
+// niższe od prędkości przelotowej każdego okrętu, więc punkt floty nie ucieka (bez ograniczania go środkiem okrętów —
+// okręty w przelotach i zatrzymane walką trzymały go w miejscu, a reszta stała przed swoimi miejscami).
+const CHARGE_TURN_RATE = 0.08;
+function chargeFormation(side, st, members, threat, dt) {
+  const fs = st.form;
+  let cx = 0;
+  let cy = 0;
+  let sx = 0;
+  let sy = 0;
+  for (let i = 0; i < members.length; i++) {
+    const n = members[i];
+    cx += n.x;
+    cy += n.y;
+    sx += Math.sin(Number(n.angle) || 0);
+    sy += Math.cos(Number(n.angle) || 0);
+  }
+  cx /= members.length;
+  cy /= members.length;
+  if (!st.chargeRef) {
+    st.chargeRef = { x: cx, y: cy };
+    st.chargeEpoch = (st.chargeEpoch || 0) + 1;
+    st.chargeDir = Math.atan2(sx, sy);
+  }
+  const ref = st.chargeRef;
+  const E = _threat;
+  let maxStandoff = 0;
+  let pace = Infinity;
+  for (let i = 0; i < members.length; i++) {
+    const n = members[i];
+    const standoff = resolveStandoff(n, threat ? E.repr : null);
+    n.__coordStandoff = standoff;
+    if (standoff > maxStandoff) maxStandoff = standoff;
+    pace = Math.min(pace, memberSpeed(n, 'cruise'));
+  }
+  pace *= PACE_MARGIN;
+  let front = NaN;
+  if (threat) {
+    const want = Math.atan2(E.y - ref.y, E.x - ref.x);
+    const err = wrapAngle(want - st.chargeDir);
+    const step = CHARGE_TURN_RATE * Math.max(0, dt);
+    st.chargeDir = wrapAngle(st.chargeDir + Math.max(-step, Math.min(step, err)));
+    front = Math.hypot(E.x - ref.x, E.y - ref.y);
+    st.phase = E.searching ? 'search' : (front > maxStandoff * ENGAGE_PHASE_MUL ? 'advance' : 'engage');
+  } else {
+    st.phase = 'cruise';
+  }
+  st.frontDist = front;
+  if (threat) { st.ex = E.x; st.ey = E.y; }
+  const dx = Math.cos(st.chargeDir);
+  const dy = Math.sin(st.chargeDir);
+  const lx = -dy;
+  const ly = dx;
+  // marsz punktu floty (w walce stoi — lotniskowce i okręty bez celu czekają za frontem)
+  const moving = st.phase !== 'engage';
+  const vx = moving ? dx * pace : 0;
+  const vy = moving ? dy * pace : 0;
+  if (moving) {
+    ref.x += vx * dt;
+    ref.y += vy * dt;
+  }
+  st.frontSpeed = moving ? pace : 0;
+  const tether = FORMATION_TETHER.engage;
+  const facing = st.chargeDir;
+  for (let i = 0; i < members.length; i++) {
+    const n = members[i];
+    const isLeader = fs.groups.has(n);
+    const standoff = n.__coordStandoff;
+    const leash = isLeader ? tether.leader : tether.escort;
+    let px;
+    let py;
+    let pvx = vx;
+    let pvy = vy;
+    if (n.__warpExitSlide) {
+      // ślizg wyjścia z warpa: miejsce sekundę przed okrętem, z jego prędkością
+      pvx = Number(n.vx) || 0;
+      pvy = Number(n.vy) || 0;
+      px = n.x + pvx;
+      py = n.y + pvy;
+    } else {
+      if (n.__chargeEpoch !== st.chargeEpoch) {
+        n.__chargeEpoch = st.chargeEpoch;
+        n.__chargeFwd = (n.x - ref.x) * dx + (n.y - ref.y) * dy;
+        n.__chargeLat = (n.x - ref.x) * lx + (n.y - ref.y) * ly;
+      }
+      px = ref.x + dx * n.__chargeFwd + lx * n.__chargeLat;
+      py = ref.y + dy * n.__chargeFwd + ly * n.__chargeLat;
+    }
+    writeFormationSlot(n, st, 'line', isLeader ? 'leader' : 'escort', px, py, pvx, pvy, facing, standoff,
+      leash, slotEngageRadius(st.stance, standoff, leash), isLeader ? null : (n.__formLeader || null));
+  }
+}
+
 function coordinateSide(side, members, player, dt) {
   const st = sideState[side];
   const stance = sideStance(side);
@@ -929,8 +1044,9 @@ function coordinateSide(side, members, player, dt) {
   if (st.shape === DEFAULT_FLEET_FORMATION) st.shapeDir = NaN;
   if (stance !== st.stance) {
     st.stance = stance;
-    // Nowa postawa: front liczony od nowa.
+    // Nowa postawa: front liczony od nowa (natarcie — szyk „jak przyleciał” od nowa).
     st.frontDist = NaN;
+    st.chargeRef = null;
   }
 
   const threats = collectThreats(side, stance, player, threatsScratch);
@@ -975,6 +1091,11 @@ function coordinateSide(side, members, player, dt) {
     battle = true;
   }
 
+  if (stance === 'charge') {
+    chargeFormation(side, st, activeMembers, battle, dt);
+    st.battle = battle;
+    return;
+  }
   if (battle) {
     battleFormation(side, st, player, activeMembers, threats, dt);
     st.battle = true;

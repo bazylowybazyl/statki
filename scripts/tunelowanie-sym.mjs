@@ -9,7 +9,8 @@
 //   głębokość — o ile A wjechał za pierwszy PEWNY styk (para węzłów wchodzi w zasięg co najmniej o ¼ komórki;
 //               pary styczne — okno styku ~1 j. — nie liczą się), zanim silnik go zauważył (w komórkach).
 //
-//   node scripts/tunelowanie-sym.mjs [--tryb kadluby|cienkie|pociski|wszystko] [--fazy 12] [--json plik]
+//   node scripts/tunelowanie-sym.mjs [--tryb kadluby|cienkie|pociski|wszystko] [--fazy 12] [--json plik] [--v 4200,8700]
+// --v: własne prędkości trybu kadłubów [j/s] (np. wyjście z warpa z pędem: fregaty 4200 + 4500 czołowo = 8700).
 // Rastry kadłubów z gry: .tmp/tunelowanie/kadluby.json (`node scripts/webgpu/tunelowanie-gra.mjs --tryb zrzut`).
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -24,6 +25,7 @@ const arg = (n, f) => { const i = process.argv.indexOf('--' + n); return i >= 0 
 const TRYB = arg('tryb', 'wszystko');
 const FAZY = Math.max(1, Number(arg('fazy', 12)) | 0);
 const JSON_OUT = arg('json', '');
+const V_ARG = arg('v', '');
 const DTS = [1 / 60, 1 / 120];
 HullBodies.init();
 const D = HullBodies.engine;
@@ -176,7 +178,7 @@ function thinPlates() {
 function realHulls(hulls) {
   if (!hulls.length) { console.log('\n(brak .tmp/tunelowanie/kadluby.json — najpierw `node scripts/webgpu/tunelowanie-gra.mjs --tryb zrzut`)'); return; }
   const by = Object.fromEntries(hulls.map((h) => [h.key, h]));
-  const V = [500, 1500, 3000, 6000, 16200, 30000, 260000];
+  const V = V_ARG ? V_ARG.split(',').map(Number).filter((v) => v > 0) : [500, 1500, 3000, 6000, 16200, 30000, 260000];
   const pairs = [
     ['atlas', 'frigate_pd'], ['atlas', 'destroyer'], ['atlas', 'pirate_battleship'], ['atlas', 'pirate_supercapital'],
     ['frigate_pd', 'frigate_pd'], ['destroyer', 'frigate_pd'], ['destroyer', 'destroyer']

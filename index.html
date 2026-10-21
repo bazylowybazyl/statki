@@ -893,7 +893,7 @@
       npcHasPhysicalThrusters,
       syncNpcFlightState
     } from "./src/game/flight/npcFlight.js";
-    import { setFlightArrive, setFlightStop, stepShipFlight, usesShipFlightModel } from "./src/game/flight/shipFlightModel.js";
+    import { setFlightArrive, setFlightStop, stepShipFlight, usesShipFlightModel, buildShipFlightSpec, resolveShipFlightSpec } from "./src/game/flight/shipFlightModel.js";
     import {
       createNpcCollisionBody,
       loadNpcCollisionBody,
@@ -901,7 +901,8 @@
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
     import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
-    import { describeFleetFormation, getFleetPhase } from "./src/ai/fleetCoordinator.js";
+    import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
+    import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
     import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
     import { capitalCommandFreePoint, capitalCommandSeparate, capitalCommandSteer } from "./src/ai/capitalAI.js";
@@ -1153,6 +1154,7 @@
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { projectilePassesAlly, beamPassesAlly } from "./src/game/friendlyFire.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
+    import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
       RenderLiveDebug,
@@ -1212,6 +1214,11 @@
     import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
     import { createPirateVentsBlock } from "./src/render/blocks/pirateVentsBlock.js";
     import { createPirateBaseVents3D } from "./src/3d/pirateBaseVents3D.js";
+    // Bitwa w głębi sceny „Wojna” (2026-10-19): tłum okrętów nad i pod płaszczyzną gry, planeta w głębi, bohaterowie —
+    // sam obraz (src/3d/warBackdrop/); plan wspólny z grą (src/render/warBackdropPlan.js), stan klatki — blok warBackdrop.
+    import { createWarBackdropBlock, createWarBackdropFrame } from "./src/render/blocks/warBackdropBlock.js";
+    import { heroFocus as warHeroFocus } from "./src/render/warBackdropPlan.js";
+    import { createWarBackdrop3D } from "./src/3d/warBackdrop/warBackdrop3D.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
@@ -1338,6 +1345,9 @@
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     window.Superweapon = Superweapon;
+    // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js): superbroń special — czoło promienia, tarcze, rzaz belek,
+    // obrażenia; rozkazy scen (scena „Wojna”) i strzał wizualny. Klej gry: blok „PROMIEŃ ŚMIERCI” przy fireWeaponCore.
+    import { createDeathRaySystem } from "./src/game/deathRay.js";
     window.applyNpcFlightVector = applyNpcFlightVector;
     window.executeNpcFlightCommand = executeNpcFlightCommand;
     window.npcHasPhysicalThrusters = npcHasPhysicalThrusters;
@@ -1546,7 +1556,7 @@
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor } from "./src/game/warpDrive.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival } from "./src/game/warpDrive.js";
     import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
@@ -1569,7 +1579,7 @@
     } from "./src/game/shipBridgeRuntime.js";
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
     import { Bridge3D } from "./src/3d/bridge3D.js";
-    import { cloakLightGain } from "./src/game/cloakLook.js";
+    import { cloakLightGain, entityCloakVisAt } from "./src/game/cloakLook.js";
     import { stepCloakLooks } from "./src/game/cloakLooks.js";
     import { RenderPoses } from "./src/game/renderPoses.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
@@ -1683,6 +1693,8 @@
     // Wybuchy okrętów z gazu (createExplosionFactory bez withRepairDroneBlast) — śmierć ze zbiornika paliwa, gaz rdzenia.
     let shipBlastFactory = null;
     let pirateVents3D = null;   // obraz wyrw bazy piratów (tryb off / inline; w workerze — render.worker.js)
+    let warBackdrop3D = null;   // bitwa w głębi sceny „Wojna” (tryb off / inline; w workerze — render.worker.js)
+    const warBackdropFrame = createWarBackdropFrame();   // stan klatki bitwy w głębi (gra pisze — blok warBackdrop)
     let reactorModel3D = null;
     if (initHexShips3D) {
       const hex3dReady = initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
@@ -1729,6 +1741,8 @@
         shipBlastFactory = window.makeReactorBlow;
         // Obraz wyrw bazy piratów (dekompresja, pożary): cząstki w passach tła i FG, gaz reżysera wybuchów (VENT_TAG).
         pirateVents3D = createPirateBaseVents3D(Core3D, { explosions: () => window.__explosions || null });
+        // Bitwa w głębi sceny „Wojna” (passy tła i FG, rozgrzewka 'after') — tylko gdy rysuje strona (tryb off / inline).
+        if (!Core3D.noDevice) warBackdrop3D = createWarBackdrop3D(Core3D);
         // Gra pisze rekordy EXPLOSION, gdy render ma fabrykę (w workerze — flaga z kanału zwrotnego).
         GameBlasts.ready = !!shipBlastFactory;
         // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
@@ -1739,23 +1753,25 @@
           shockwaveManager: null,
         });
         // Wybuch rdzenia reaktora (krok klatki efektów „reaktor-rdzen”: kula plazmy, strumień,
-        // dym rakiet, pule broni) i model reaktora w wyrwie (warstwa 7) — obraz ReactorCoreGame.
+        // dym rakiet, pule broni) i model reaktora w obudowie nad kadłubem (pass ortho) — obraz ReactorCoreGame.
         WeaponFx.ensure();
         reactorBlastFx = createReactorBlastFx(Core3D, { rocketFx, weaponFx: WeaponFx });
         if (reactorBlastFx) reactorBlastFx.onShake = (mag, dur) => camera.addShake?.(mag, dur);
         ReactorFxEvents.ready = !!reactorBlastFx;
+        // Reaktor w obudowie NAD kadłubem (pass ortho): poza renderu gospodarza jak mostek, gaśnie z maskowaniem
+        // w środku rdzenia i przy „Statkach 3D” (reactorModelVisibility), słońce z RenderWorld.
         reactorModel3D = createReactor3D({
           scene: Core3D.scene,
-          markLayerActive: () => Core3D.setShieldLayerActive(true),
           colorFor: (core) => core.color || [0.3, 0.7, 1.0],
-          frameOf: reactorCoreFrame,
-          hostReady: (h) => !!reactorCoreHull(h)
+          frameOf: (core, out) => reactorCoreFrame(core, out, bridgeRenderPose(core.host)),
+          hostReady: (h) => !!reactorCoreHull(h),
+          visibility: reactorModelVisibility
         });
-        // Pierwszy odsłonięty reaktor nie kompiluje materiałów w swojej klatce.
+        // Reaktory widać od pierwszej klatki gry — rozgrzewka na ekranie ładowania.
         Core3D.warmup.add({
           name: 'model reaktora (reactor3D)',
-          objects: () => Object.values(reactorModel3D?.meshes || {}).flatMap((k) => [k.structure, k.plasma]).filter(Boolean),
-          layer: 7,
+          objects: () => reactorModel3D?.warmupMeshes() || [],
+          layer: 0,
           phase: 'loading'
         });
         // Pył kosmiczny: dwie siatki (pod kadłubami w passie ortho, rzadkie drobiny „przy kamerze” w FG), uniformy
@@ -2172,6 +2188,11 @@
         case 'hexlance':
           // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
           playDynamicSound('sfx_hexlance', x, y, 0.1, 0.6);
+          break;
+
+        case 'death_ray':
+          // Promień śmierci — dźwięk superbroni, głośniej i bez wariacji
+          playDynamicSound('sfx_hexlance', x, y, 0, 0.9);
           break;
 
         case 'railgun_mk1':
@@ -2719,14 +2740,16 @@
     window.add = add;
     const len = v => Math.hypot(v.x, v.y);
     const norm = v => { const L = len(v); return L ? { x: v.x / L, y: v.y / L } : { x: 0, y: 0 }; };
-    function isLineOfFireBlocked(shooter, target, weaponRange) {
+    // `pad` — pas linii ognia ponad promień sojusznika (szeroka wiązka: promień śmierci; src/ai/lineOfFire.js).
+    function isLineOfFireBlocked(shooter, target, weaponRange, pad) {
       return isFriendlyLineOfFireBlocked(
         shooter,
         target,
         weaponRange,
         window.queryAIGrid,
         npcs,
-        window.ship
+        window.ship,
+        pad
       );
     }
     window.clampTurnAngle = clampTurnAngle;
@@ -3676,10 +3699,10 @@
       // Zaznacz, że ten NPC należy do skrzydła wsparcia
       npc.isSupportWing = true;
 
-      // Aktualny rozkaz skrzydła (domyślnie guard, jakby coś było nieustawione)
-      const order = (typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order)
-        ? SupportWing.order
-        : 'guard';
+      // Aktualny rozkaz skrzydła (domyślnie guard, jakby coś było nieustawione); NATARCIE narzucone stronie
+      // (scena „Wojna”: setFleetStanceOverride) liczy się jak ATAK.
+      const order = window.fleetStanceOverride?.('friendly') ? 'engage'
+        : ((typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order) ? SupportWing.order : 'guard');
 
       npc.supportOrder = order; // przyda się w fighter AI
 
@@ -5032,6 +5055,13 @@
       return cloakLightGain(entity);
     }
 
+    // Model reaktora (obudowa nad kadłubem): jak mostek przy „Statkach 3D”, maskowanie w środku rdzenia
+    // (komórka kadłuba pod obudową — jak wieże 3D).
+    function reactorModelVisibility(core, wx, wy) {
+      const host = core?.host;
+      return bridgeModelVisibility(host) > 0 ? entityCloakVisAt(host, wx, wy) : 0;
+    }
+
     function tickShipBridges(entity, dt) {
       if (!entity?.bridgeState || entity.destroyed) return;
       const flags = updateShipBridges(entity, dt, bridgeSimTime);
@@ -5220,7 +5250,9 @@
     // Rodzaj gniazda, do którego wpis zapisu / migawki pasuje DZIŚ — po aktualnym mountType broni, nie po typie
     // z zapisu: hexlance przeszedł ze `special` na `builtin` (2026-04-11) i z typem z zapisu ginął bez śladu.
     // null = wpis pusty (gniazdo bez broni, zniszczone, broń spoza katalogu).
+    // Broń `npcOnly` z zapisu (promień śmierci był od 2026-10-19 do 10-20 bronią special gracza) — wpis pusty.
     function savedHardpointBucket(saved) {
+      if (saved?.mount && WEAPONS[saved.mount]?.npcOnly === true) return null;
       if (saved?.mount && WEAPONS[saved.mount]) return WEAPONS[saved.mount].mountType || saved.type || null;
       if (Array.isArray(saved?.hangarSquadrons) && saved.hangarSquadrons.some(id => WEAPONS[id])) return HP.HANGAR;
       return null;
@@ -5324,7 +5356,7 @@
           // gniazd, którą montaż niżej zdejmuje (eskadry hangarów nie są liczone sztukowo) — magazyn + zamontowane
           // = zapis. Zapis bez pola: magazyn jak dawniej (zapas startowy − zamontowane), montaż tworzy brakujące sztuki.
           const stockRestored = restoreWeaponStock(Game.player.inventory, data?.weaponStock, {
-            isKnown: (id) => !!WEAPONS[id],
+            isKnown: (id) => !!WEAPONS[id] && WEAPONS[id].npcOnly !== true,
             mounts: savedEntries.map(saved => (WEAPONS[saved.mount] && WEAPONS[saved.mount].mountType !== HP.HANGAR ? saved.mount : null))
           });
           for (const { hp, entry } of plan.pairs) {
@@ -8935,7 +8967,7 @@
       if (templateKey === 'megafreighter' && opts.singleModule !== true) {
         return spawnMegafreighterTrain({ ...opts, mode });
       }
-      if (templateKey === 'carrier' && mode === 'friendly') {
+      if (templateKey === 'carrier' && mode === 'friendly' && !opts.extraCarrier) {
         const existing = getFriendlyCarrierEntity();
         if (existing) return existing;
       }
@@ -9064,7 +9096,9 @@
         length: size.w,
         width: size.h,
         pirate: isPirate,
-        palette: isPirate ? 'crimson' : (resolveEngineFx(profileId).warpPalette || 'magenta')
+        palette: isPirate ? 'crimson' : (resolveEngineFx(profileId).warpPalette || 'magenta'),
+        // id kadłuba tabeli lotu (wyjście z pędem: prędkość bojowa i hamowanie klasy) — null poza tabelą
+        flightSpec: buildShipFlightSpec(profileId)
       };
     }
 
@@ -9090,6 +9124,24 @@
     installWarpTrafficCommands(RenderCommands.reader, WarpNurt, (slot) => warpTraffic.recordAt(slot));
     window.WarpTraffic = warpTraffic;
 
+    // WYJŚCIE Z PĘDEM (2026-10-19, scena „Wojna”, src/game/warpDrive.js: warpExitMomentum): przylot NPC hamuje do
+    // k × prędkość bojowa klasy i wraca do gry z tym pędem wzdłuż kursu (ślizg ~3–4 km ścina model lotu); punkt
+    // przylotu = koniec ślizgu. k = 0 — dawne zatrzymanie (A/B: `?pedNpc=0`, konsola `WarpExitTune.k`). Bez pędu:
+    // myśliwce, holownik serwisowy (przylot do burty statku), kadłuby spoza tabeli lotu (megafrachtowiec).
+    const WarpExitTune = { k: new URLSearchParams(location.search).get('pedNpc') === '0' ? 0 : WARP_EXIT_MOMENTUM.k };
+    window.WarpExitTune = WarpExitTune;
+    function warpExitMomentumOfSpec(spec, k = WarpExitTune.k) {
+      if (!spec || !(Number(k) > 0)) return null;
+      const m = warpExitMomentum(spec, k);
+      return m.vExit > 0 ? m : null;
+    }
+    // Przylot „teraz” (warpTraffic.arrive): specyfikacja lotu encji.
+    function npcWarpExitMomentum(e) {
+      if (!e || e.fighter || e.isFighter || e.serviceTug || e.towTrainChild) return null;
+      return warpExitMomentumOfSpec(resolveShipFlightSpec(e));
+    }
+    warpTraffic.momentum = npcWarpExitMomentum;
+
     const supportCallIns = createSupportWarpCallIns({
       warp: warpTraffic,
       spawn: (req) => {
@@ -9112,7 +9164,8 @@
       if (key === 'service_tug' && !opts.__tugCall) return callServiceTug(opts);
       const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
       // Lotniskowiec Terra Novy jest jeden: kolejne wezwanie oddaje istniejący (spawnCapitalCallIn).
-      if (key === 'carrier' && mode === 'friendly' && getFriendlyCarrierEntity()) {
+      // (scena „Wojna” — opts.extraCarrier: kilka lotniskowców we flocie A)
+      if (key === 'carrier' && mode === 'friendly' && !opts.extraCarrier && getFriendlyCarrierEntity()) {
         return { planned: false, eta: 0, existing: true };
       }
       const pos = opts.spawnPos || opts.pos || null;
@@ -9126,9 +9179,16 @@
         // Nić zwiastuna zaczyna się w miejscu startu, gdy to jest bliżej niż zasięg nici (60 tys. j.).
         const homeDist = from ? Math.hypot(pos.x - from.x, pos.y - from.y) - (Number(from.r) || 0) : Infinity;
         const at = { x: pos.x, y: pos.y };
+        // Wyjście z pędem (punkt upuszczenia = koniec ślizgu); opts.exitK — k tego wezwania (0 — zatrzymanie).
+        // Holownik podpływa do burty statku — staje jak dawniej.
+        const exit = key === 'service_tug' ? null
+          : warpExitMomentumOfSpec(hull.flightSpec, Number.isFinite(opts.exitK) ? opts.exitK : WarpExitTune.k);
         const rec = supportCallIns.request({
           x: at.x, y: at.y, angle, hullLength: hull.length, hullWidth: hull.width,
           palette: hull.palette, pirate: hull.pirate, heraldReach: homeDist,
+          exitSpeed: exit ? exit.vExit : undefined, slide: exit ? exit.slide : undefined,
+          // plan floty (scena „Wojna”: planWarpFleetArrival) i wygląd zwiastuna
+          delay: opts.warpDelay, heraldExtra: opts.warpHeraldExtra, heraldStyle: opts.heraldStyle,
           key, opts: { ...opts, mode, spawnPos: at, pos: at, angle, spawnAngle: angle }
         });
         if (rec) return { planned: true, eta: Math.max(0, rec.fx.tBurst - warpTraffic.time), from: hull.pirate ? 'belt' : 'earth' };
@@ -9242,6 +9302,7 @@
     // Klatka przed render(): spawn wezwań w klatce wyrzutu i kroki powrotów — potem krok rejestru ruchu warpa
     // (warpTraffic.step) przesuwa zegar tej klatki o `dt` (dt gry: 0 w pauzie i przy zamrożonym świecie fabuły).
     function stepSupportWarp(dt) {
+      stepWarScene(dt);
       supportCallIns.flush(dt);
       supportReturn.step(dt, dt);
       storyWarpOut.step(dt, dt);
@@ -10521,6 +10582,163 @@
       return rocketCraterHit(HullBodies, target, x0, y0, x1, y1, damage, weaponDef || 'rocket', _rocketHullVel, applyHexImpact);
     };
 
+    // ============================================================================
+    // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js; dane `death_ray` w src/data/weapons.js, obraz WeaponFx.deathRay*
+    // przez rekordy RAY_* strumienia rozkazów)
+    // ============================================================================
+    // Klej gry: kandydaci (gracz, P2, NPC, wraki), stacje (bryły doku albo okrąg), tarcza (obrys blokującej tarczy — pada
+    // do zera), obrażenia z pominięciem tarczy (NPC / gracz — śmierć, wrak i wybuch zbiornika jak przy każdej śmierci),
+    // źródło stempla mapy ran, wylot strzelca dla rozkazów scen (gniazdo z promieniem / special, inaczej dziób).
+    // Strzał gracza i NPC: fireWeaponCore → fireDeathRayCore (ładowanie zrobiły stepMountCharge / capitalAI). Scena:
+    // DevScene.deathRay(strzelec, cel, opcje) / window.DeathRayGame.order(…) i .visual(x0, y0, x1, y1, opcje).
+    const _deathRayDockHit = { t: 0, x: 0, y: 0, chunk: null };
+    const _deathRayHp = { x: 0, y: 0 };
+    // Gniazdo z bronią `def` w grupie uzbrojenia NPC (null — brak).
+    function _deathRayHpIn(group, def) {
+      if (!Array.isArray(group)) return null;
+      for (let i = 0; i < group.length; i++) {
+        const lo = group[i];
+        if (lo?.weapon?.id === def?.id && lo.hp && !lo.hp.destroyed) return lo.hp;
+      }
+      return null;
+    }
+    // Wylot promienia strzelca w świecie: gniazdo z promieniem (wbudowane — Colossus, albo special), inaczej pierwsze
+    // builtin / special — jak spawnBulletAdapter (NPC) / mountedWeaponBase (gracz); bez gniazda — false (system strzela
+    // z dziobu). Rozkazy scen (env.muzzleOf) i DevScene.deathRayMuzzle.
+    function deathRayMuzzleOf(shooter, def, out) {
+      if (!shooter) return false;
+      if (shooter === window.ship) {
+        const lo = (Game.player?.weapons?.[HP.SPECIAL] || []).find((l) => l?.weapon?.id === def?.id && l.hp && !l.hp.destroyed);
+        if (!lo) return false;
+        mountedWeaponBase(ship, lo.hp, _deathRayHp);
+        out.x = _deathRayHp.x; out.y = _deathRayHp.y;
+        return true;
+      }
+      let hp = _deathRayHpIn(shooter.weapons?.builtin, def) || _deathRayHpIn(shooter.weapons?.special, def);
+      if (!hp && Array.isArray(shooter.editorHardpoints)) {
+        hp = shooter.editorHardpoints.find((h) => h?.type === HP.BUILTIN && !h.destroyed)
+          || shooter.editorHardpoints.find((h) => h?.type === HP.SPECIAL && !h.destroyed) || null;
+      }
+      if (!hp || hp.x === undefined) return false;
+      const angle = (shooter.angle || 0) + (Number(shooter.capitalProfile?.spriteRotation) || 0);
+      const c = Math.cos(angle), s = Math.sin(angle);
+      const hx = hp.x * getEntityHardpointScaleX(shooter), hy = hp.y * getEntityHardpointScaleY(shooter);
+      out.x = shooter.x + (hx * c - hy * s);
+      out.y = shooter.y + (hx * s + hy * c);
+      return true;
+    }
+    const deathRays = createDeathRaySystem({
+      hulls: HullBodies,
+      time: () => SimClock.sim,
+      collect(out) {
+        const s = window.ship;
+        if (s && !s.destroyed && s.beamHull) out.push(s);
+        const p2 = window.player2Ship;
+        if (p2 && !p2.destroyed && p2.beamHull) out.push(p2);
+        const list = window.npcs;
+        if (list) {
+          for (let i = 0; i < list.length; i++) {
+            const n = list[i];
+            if (!n || n.dead || n.isCollidable === false) continue;
+            if (!n.beamHull && !(n.hp > 0)) continue;
+            out.push(n);
+          }
+        }
+        const wl = window.wrecks;
+        if (wl) {
+          for (let i = 0; i < wl.length; i++) {
+            const w = wl[i];
+            if (w && w.beamHull && !w.removed && w.isCollidable !== false) out.push(w);
+          }
+        }
+      },
+      stations: () => (Array.isArray(window.stations) ? window.stations : null),
+      // Wejście promienia w stację: bryły trzonu i hali suchego doku (jak Hexlance), inaczej okrąg obwiedni.
+      stationHit(st, x0, y0, x1, y1) {
+        if (!st || st._destroyed3D || !(st.hp > 0) || st.ringPort) return -1;
+        if (st.hitShapes) {
+          const dh = dryDockSegmentHit(st.hitShapes, x0, y0, x1, y1, _deathRayDockHit, st._dockGone)
+            || (st.hallShapes && dryDockSegmentHit(st.hallShapes, x0, y0, x1, y1, _deathRayDockHit));
+          return dh ? dh.t : -1;
+        }
+        const r = Math.max(60, Number(st.r) || 200);
+        const dx = x1 - x0, dy = y1 - y0, fx = x0 - st.x, fy = y0 - st.y;
+        const a = dx * dx + dy * dy;
+        if (!(a > 0)) return -1;
+        const c = fx * fx + fy * fy - r * r;
+        if (c <= 0) return 0;
+        const b = 2 * (fx * dx + fy * dy);
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) return -1;
+        const t = (-b - Math.sqrt(disc)) / (2 * a);
+        return t >= 0 && t <= 1 ? t : -1;
+      },
+      radius: (e) => getBeamTargetRadius(e),
+      shieldRadius: (e) => getEntityShieldBlockingRadius(e),
+      shieldEnter: (e, x, y, dx, dy, maxT) => getEntityShieldRayEnter(e, x, y, dx, dy, maxT),
+      // Przepalenie tarczy (świadomie bez testu przebicia — superbroń): efekt trafienia klasy „special”, pole do zera
+      // (shieldSystem: stan 'breaking', regeneracja od opóźnienia).
+      collapseShield(e, x, y, dmg) {
+        const real = e._realEntity || e;
+        const sh = real.shield;
+        if (!sh || !(sh.val > 0)) return;
+        registerShieldImpact(e, x, y, dmg, 'special');
+        sh.val = 0;
+        sh.regenTimer = sh.regenDelay ?? 0;
+        if (real.fleetEntry?.status) real.fleetEntry.status.shield = 0;
+      },
+      damage(e, dmg, ray) {
+        if (!(dmg > 0) || !e) return;
+        const shooter = ray.shooter;
+        if (e === window.ship) {
+          applyDamageToPlayer(dmg, SHIELD_BREACH_DAMAGE_OPTS);
+          // obrażenia gracza od NPC — znacznik zagrożenia strzelca (kierowanie ogniem: `threat`)
+          if (shooter && shooter !== window.ship) shooter.__fcHitPlayerAt = SimClock.sim;
+        } else if (e === window.player2Ship) {
+          if (e.hull && typeof e.hull.val === 'number') e.hull.val = Math.max(0, e.hull.val - dmg);
+        } else {
+          if (ray.byPlayer) markPlayerDamage(e);
+          applyDamageToNPC(e, dmg, 'deathray', SHIELD_BREACH_DAMAGE_OPTS, ray.byPlayer === true);
+        }
+      },
+      damageStation: (st, dmg) => applyDamageToStation(st, dmg),
+      isWreck: (e) => !!e.isWreck,
+      alive: (e) => !!e && !e.dead && !e.destroyed && !e.removed,
+      setSource: (def, variant) => HullDamageEvents.setSource(def, variant),
+      clearSource: () => HullDamageEvents.clearSource(),
+      fx: () => (RenderCommands.ready ? RenderCommands.writer : null),
+      carrier: (e, x, y, out) => writeCarrier(e, x, y, false, out),
+      muzzleOf: deathRayMuzzleOf
+    });
+    window.DeathRayGame = deathRays;
+
+    // Strzał promienia z fireWeaponCore (gracz: wieża celuje w kursor — kierunek lufy; NPC: w cel — wiązka trafia
+    // natychmiast, bez wyprzedzenia). Obraz idzie rekordem RAY_FIRE z systemu; szyna strzałów niesie dźwięk, odrzut wieży
+    // i wstrząs strzału. Zwraca przeładowanie (jak fireWeaponCore).
+    function fireDeathRayCore(shooter, target, weapon, muzzleData) {
+      const mods = shooter.modifiers || {};
+      const isP1Ship = shooter === window.ship;
+      const isPlayerShip = isP1Ship || shooter === window.player2Ship;
+      const range = weaponRangeFor(shooter, weapon, weapon.baseRange || 12000);
+      const damage = (weapon.baseDamage || 0) * (mods.damage || 1.0);
+      const cd = (weapon.cooldown || 45) * (mods.fireRate || 1.0);
+      const x = muzzleData.pos.x, y = muzzleData.pos.y;
+      let dirX = muzzleData.dir.x, dirY = muzzleData.dir.y;
+      const aimed = !isPlayerShip && isTargetAlive(target);
+      if (aimed) {
+        dirX = getTargetX(target) - x;
+        dirY = getTargetY(target) - y;
+      }
+      // NPC: wylot z czopu gniazda (spawnBulletAdapter) — system dokłada lufę wieży (Turret2D.writeMuzzleOffset).
+      // `target` — jeden cel (broń `singleTarget`): promień kończy się za celem strzału.
+      const ray = deathRays.fire(shooter, weapon, x, y, dirX, dirY, {
+        range, damage, byPlayer: isP1Ship, addBarrel: !isPlayerShip, target: aimed ? target : null
+      });
+      const l = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+      WeaponShotBus.emit(weapon.id, shooter, ray ? ray.ox : x, ray ? ray.oy : y, false, null, null, dirX / l, dirY / l);
+      return cd;
+    }
+
     // --- Trafienia wiązek: pomocniki modułowe (bez domknięć i tablic per strzał) ---
     // Dawniej każda wiązka budowała 3 tablice, 4 domknięcia, obiekt na kandydata
     // i tekstowy klucz cache ringu — przy tysiącach strzałów PD na sekundę główny
@@ -10894,6 +11112,9 @@
     window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {
       const weapon = MASTER_WEAPONS[weaponId];
       if (!weapon) return null;
+      // Promień śmierci (pole `deathRay` broni — isDeathRayWeapon): czoło promienia w systemie promieni
+      // (src/game/deathRay.js), nie pocisk ani wiązka. Bez wywołań dla innych broni (wycinki fireWeaponCore w testach).
+      if (weapon.deathRay) return fireDeathRayCore(shooter, target, weapon, muzzleData);
 
       // Ciągła wiązka pracuje seriami jak w demie. Przerwa nie emituje zdarzenia
       // ani obrażeń; normalny takt podtrzymuje stan emitera podczas chłodzenia.
@@ -11500,6 +11721,13 @@
       for (const hp of npc.editorHardpoints) {
         let weaponId = loadout[hp.type];
         if (!weaponId || !MASTER_WEAPONS[weaponId]) continue;
+        // Broń jednej frakcji (`npcFaction` — promień śmierci Colossusa Terra Nova): inna frakcja na tej ramie (piracki
+        // „supercapital” bez własnej ramy rozwiązuje się do terran_supercapital) zostawia gniazdo puste.
+        const onlyFaction = MASTER_WEAPONS[weaponId].npcFaction;
+        if (onlyFaction && onlyFaction !== faction) {
+          hp.mount = null;
+          continue;
+        }
         if (!armedSlots.has(hp)) {
           hp.mount = null;
           continue;
@@ -11580,6 +11808,9 @@
         y = owner.y + (hpX * s + hpY * c);
       }
       const a = Number.isFinite(weapon.visualAngle) ? weapon.visualAngle : (owner.angle || 0);
+      // Promień śmierci: wylot na końcu lufy wieży (laser naprowadzający i implozja przy głowicy, nie na czopie); laser
+      // naprowadzający do celu AI (jeden cel — strzał nie sięgnie dalej niż cel).
+      if (weapon.def.deathRay) { deathRays.chargeFx(owner, weapon.def, x, y, a, u, dt, weapon, weapon.cachedTarget || null); return; }
       // Stan efektu ładowania — w renderze po kluczu działa (obiekt broni NPC).
       RenderCommands.writer.charge(weapon.def.id, x, y, a, 1, u, dt, weapon, writeCarrier(owner, x, y, false, _npcChargeCarrier));
     };
@@ -11854,12 +12085,338 @@
         camera: { x: Math.round(camera.x), y: Math.round(camera.y), zoom: camera.zoom }
       })
     };
+    // === SCENA „WOJNA” (DevScene.wojna — src/game/warScene.js, 2026-10-19) ===
+    // User: „dużo statków jak battle over Coruscant: wychodzą z warpa jednostki i naprzeciwko nich po chwili też
+    // wychodzą z warpa jednostki, obydwa się o siebie rozbijają; prędkość wyjścia z warpa i lecenie à la Star Wars”.
+    // Flota A (Terra Nova) i B (piraci) przylatują wezwaniami (callInSupport → warpTraffic: zwiastuny, fale klas,
+    // wyjście z pędem — punkt przylotu = koniec ślizgu), obie strony w postawie NATARCIA (setFleetStanceOverride:
+    // marsz bez stania, przeloty burtą w burtę i nawroty — capitalAI.js `chargeRun`). Tło: tarcza Jowisza / Marsa —
+    // bitwa NAD tarczą (planeta w 2D nie koliduje; cała scena wewnątrz płyty ringu, po stronie słońca), Atlas — widz
+    // z boku albo w szyku A. Kamera: reżyser kadru dostaje sygnał tego, co się dzieje — przylot A, przylot B, potem
+    // środek bitwy (obie floty naraz nie mieszczą się w kadrze gry przy 25 km). Krok w czasie gry (stepSupportWarp —
+    // przed wezwaniami): start floty B po `gapB` s, pomiar ślizgu (od zwolnienia z tunelu do prędkości bojowej
+    // ≤ 1,03 maxSpeed) — DevScene.wojnaState().
+    const WarScene = { active: false, t: 0, plan: null, launched: { A: false, B: false }, tracked: [], calls: [] };
+    window.WarScene = WarScene;
+
+    function warSceneHull(key, mode) {
+      const h = estimateCallInHull(key, mode);
+      return h ? { length: h.length, width: h.width } : null;
+    }
+
+    function startWarScene(opts = {}) {
+      stopWarScene({ clear: false });
+      const o = { ...WAR_SCENE_DEFAULTS, ...opts };
+      // Czysty stół: okręty misji (skrzydło, piraci, wezwania) znikają bez wraków; kolejka wezwań i ruch warpa od zera.
+      if (o.clear !== false) {
+        for (const n of npcs.slice()) if (n && !n.dead && n.mission && !n.isStation) dematerializeSupportUnit(n);
+        supportCallIns.clear();
+        warpTraffic.clear();
+      }
+      let center;
+      let side = 1;
+      let planetInfo;
+      if (o.backdrop === 'deep') {
+        // BITWA W GŁĘBI: pusta przestrzeń między orbitami olbrzymów, z dala od planet, księżyców i małych ciał
+        // (w 2D nic tu nie koliduje); tłum nad i pod płaszczyzną i planetę ~200 km pod nią rysuje obraz
+        // (src/3d/warBackdrop/ — blok warBackdrop). Widz (Atlas) na południe od osi bitwy.
+        const bodies = [...planets, ...(window.smallBodies || [])]
+          .filter((b) => b && Number.isFinite(b.x) && Number.isFinite(b.y))
+          .map((b) => ({ x: b.x, y: b.y, r: (Number(b.r) || 0) + 400000 }));
+        const spot = pickDeepSpot(SUN, bodies, Number(o.deepRadius) || WAR_SCENE_DEFAULTS.deepRadius);
+        center = { x: spot.x, y: spot.y };
+        planetInfo = { id: 'deep', x: center.x, y: center.y, r: 0, clearance: Math.round(spot.clearance), side };
+      } else {
+        const planet = planets.find((p) => p?.id === o.backdrop) || planets.find((p) => p?.id === 'jupiter')
+          || planets.find((p) => p?.id === 'mars') || planets[0];
+        // Bitwa poziomo w kadrze (oś A → B wzdłuż x świata) NAD tarczą planety, po stronie słońca (oświetlona półkula);
+        // Atlas-widz dalej od środka planety. Promień tarczy i wewnętrzny brzeg płyty ringu — z kolidera gry
+        // (src/game/haloRingWorld.js), nie z modułów obrazu; scena (klin ± ślizg) zostaje wewnątrz płyty.
+        const ringCol = haloRingKey(planet) ? haloWorld?.entry(haloRingKey(planet))?.collider : null;
+        const discR = Number(ringCol?.layout?.planetRadius) || Number(planet.r) || 0;
+        const ringInner = Number(ringCol?.layout?.radii?.min) || 0;
+        const ringOuter = ringCol ? Math.max(Number(ringCol.wallsOuter) || 0, Number(ringCol.layout?.radii?.max) || 0) : 0;
+        // środek bitwy od środka tarczy w stronę Słońca (dzienna półkula pod całą sceną), widz dalej w osi y
+        const sunDx = SUN.x - planet.x;
+        const sunDy = SUN.y - planet.y;
+        const sunD = Math.hypot(sunDx, sunDy) || 1;
+        side = sunDy >= 0 ? 1 : -1;
+        const over = Number.isFinite(o.overPlanet) ? o.overPlanet : 0.35;
+        center = { x: planet.x + (sunDx / sunD) * discR * over, y: planet.y + (sunDy / sunD) * discR * over };
+        planetInfo = { id: planet.id, x: planet.x, y: planet.y, r: discR, ringInner, ringOuter, side };
+      }
+      const plan = planWarScene(o, center, 0, warSceneHull);
+      plan.planet = planetInfo;
+      // Bitwa w głębi (obraz): tłum w pasmach, planeta pod płaszczyzną ('deep'), bohaterowie i ujęcia kamery.
+      const bd = planWarBackdrop(o, center, 0, SUN, side);
+      plan.backdrop = bd;
+      WarScene.shots = bd.shots.map((sh) => ({ ...sh, started: false }));
+      const F = warBackdropFrame;
+      F.has = true;
+      F.id = (F.id | 0) + 1;
+      F.t = 0;
+      F.cx = center.x;
+      F.cy = center.y;
+      F.axis = bd.backdrop.axis;
+      F.seed = bd.backdrop.seed;
+      F.density = bd.backdrop.density;
+      F.prewarm = bd.backdrop.prewarm;
+      F.fade = 1;
+      Object.assign(F.planet, bd.backdrop.planet);
+      F.sunX = SUN.x;
+      F.sunY = SUN.y;
+      F.heroN = Math.min(F.heroes.length, bd.backdrop.heroes.length);
+      for (let i = 0; i < F.heroN; i++) Object.assign(F.heroes[i], bd.backdrop.heroes[i]);
+      WarScene.plan = plan;
+      WarScene.opts = o;
+      WarScene.t = 0;
+      WarScene.launched = { A: false, B: false };
+      WarScene.tracked = [];
+      WarScene.calls = [];
+      WarScene.active = true;
+      // Atlas: widz z boku (dalej od planety, dziobem na bitwę) albo w szyku A (za flagowcem, z boku klina).
+      const A = plan.fleets.A;
+      let px;
+      let py;
+      let heading;
+      if (o.atlas === 'fleet') {
+        px = A.apex.x - Math.cos(A.heading) * 3500 + Math.sin(A.heading) * 4000;
+        py = A.apex.y - Math.sin(A.heading) * 3500 - Math.cos(A.heading) * 4000;
+        heading = A.heading;
+      } else {
+        px = center.x;
+        py = center.y + side * (Number(o.sideOffset) || 9000);
+        heading = Math.atan2(-side, 0);
+      }
+      if (warp.state !== 'idle') { warp.state = 'idle'; exitWarp({ abrupt: true }); }
+      warp.exitRamp = null;
+      if (typeof cancelTravel === 'function') cancelTravel(null);
+      ship.pos.x = px; ship.pos.y = py; ship.vel.x = 0; ship.vel.y = 0; ship.angle = heading; ship.angVel = 0;
+      camera.mode = 'ship';
+      camera.transition = null;
+      camera.x = camera.targetX = px;
+      camera.y = camera.targetY = py;
+      prevCameraState.x = px;
+      prevCameraState.y = py;
+      // Kadr gracza ~kadru jednej floty; reżyser kadru oddala go (do ~45 km) i przesuwa na sygnał tego, co się dzieje.
+      const spanW = Number(o.viewWidth) || 24000;
+      camera.manualZoom = true;
+      camera.zoom = camera.targetZoom = camera.zoomBase = clamp(W / spanW, camera.minZoom, camera.maxZoom);
+      camera.zoomVel = 0;
+      camera.zoomImpulseLog = 0;
+      // Reżyser kadru może oddalić do granicy zoomu gry (~45 km): podłoga „kadłub ≥ 6% kadru” trzymała kadr przy
+      // Atlasie na 30 km — przylot floty 25 km dalej wypadał za brzeg. Przywraca wojnaStop.
+      if (WarScene.prevMinShipFrac == null) WarScene.prevMinShipFrac = cameraDirectorTune.minShipFrac;
+      cameraDirectorTune.minShipFrac = Number(o.minShipFrac) || 0.03;
+      // Natarcie obu stron (bez smyczy ESKORTY, marsz bez stania, przeloty).
+      setFleetStanceOverride('friendly', 'charge');
+      setFleetStanceOverride('pirate', 'charge');
+      return {
+        center, planet: plan.planet, atlas: { x: px, y: py },
+        backdrop: { planet: { ...F.planet }, heroes: bd.heroes.map((h) => ({ kind: h.beat.kind, t0: h.plan.t0, keys: h.plan.keys, z: Math.round(h.params.z) })),
+          shots: WarScene.shots.map((sh) => ({ t: +sh.t.toFixed(2), kind: sh.kind })) },
+        fleets: Object.fromEntries(['A', 'B'].map((k) => [k, {
+          start: plan.fleets[k].start, count: plan.fleets[k].ships.length, apex: plan.fleets[k].apex,
+          heading: plan.fleets[k].heading,
+          bursts: plan.fleets[k].ships.map((sh) => ({ key: sh.key, burst: +(plan.fleets[k].start + sh.burst).toFixed(2) }))
+        }]))
+      };
+    }
+
+    // Wezwania floty: każdy okręt z planu (punkt przylotu, start tunelu za flotą, plan fali, k, styl zwiastuna).
+    function launchWarFleet(fleet) {
+      const o = WarScene.opts;
+      for (const sh of fleet.ships) {
+        const res = callInSupport(sh.key, {
+          mode: sh.mode, spawnPos: { x: sh.x, y: sh.y }, origin: fleet.origin,
+          warpDelay: sh.delay, warpHeraldExtra: sh.heraldExtra, heraldStyle: o.heraldStyle, exitK: o.k,
+          extraCarrier: true,
+          onSpawned: (list) => trackWarSceneShips(list, sh, fleet.side)
+        });
+        WarScene.calls.push({ side: fleet.side, key: sh.key, planned: !!res?.planned, eta: res?.eta ?? null });
+      }
+    }
+
+    function trackWarSceneShips(list, sh, side) {
+      for (const e of list) {
+        if (!e || e.dead || e.fighter) continue;
+        e.__warScene = side;
+        WarScene.tracked.push({
+          e, side, key: sh.key, px: sh.x, py: sh.y, spawnT: WarScene.t, ghost: false,
+          releaseT: NaN, rx: NaN, ry: NaN, vExit: NaN, slide: NaN, slideT: NaN, endErr: NaN
+        });
+      }
+    }
+
+    // Środek i rozrzut żywych okrętów strony (side null — obu; sygnał kamery w walce) albo punktów przylotu strony
+    // (przed przylotem).
+    const _warCue = { x: 0, y: 0, r: 0, n: 0 };
+    function warSceneFleetCue(side) {
+      let sx = 0, sy = 0, n = 0;
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if ((side && tr.side !== side) || !e || e.dead || e.isCollidable === false) continue;
+        sx += e.x; sy += e.y; n++;
+      }
+      if (n === 0) {
+        if (!side) { _warCue.n = 0; return _warCue; }
+        const f = WarScene.plan.fleets[side];
+        for (const sh of f.ships) { sx += sh.x; sy += sh.y; n++; }
+        _warCue.x = sx / n; _warCue.y = sy / n;
+        let r = 0;
+        for (const sh of f.ships) r = Math.max(r, Math.hypot(sh.x - _warCue.x, sh.y - _warCue.y) + sh.length * 0.5);
+        _warCue.r = r; _warCue.n = 0;
+        return _warCue;
+      }
+      _warCue.x = sx / n; _warCue.y = sy / n; _warCue.n = n;
+      // promień: 80% okrętów (pojedyncze maruderki nie oddalają kadru), najwyżej pół odległości flot
+      const ds = [];
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if ((side && tr.side !== side) || !e || e.dead || e.isCollidable === false) continue;
+        ds.push(Math.hypot(e.x - _warCue.x, e.y - _warCue.y));
+      }
+      ds.sort((a, b) => a - b);
+      _warCue.r = Math.min(WarScene.opts.distance * 0.5, (ds[Math.floor(ds.length * 0.8)] || 0) + 1500);
+      return _warCue;
+    }
+
+    function stepWarScene(dt) {
+      if (!WarScene.active) return;
+      const h = Math.max(0, Number(dt) || 0);
+      WarScene.t += h;
+      const plan = WarScene.plan;
+      for (const side of ['A', 'B']) {
+        if (!WarScene.launched[side] && WarScene.t >= plan.fleets[side].start) {
+          WarScene.launched[side] = true;
+          launchWarFleet(plan.fleets[side]);
+        }
+      }
+      // Pomiar ślizgu: duch w tunelu → zwolnienie (prędkość wyjścia) → prędkość bojowa (≤ 1,03 maxSpeed).
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if (!e || e.dead) continue;
+        if (e.isCollidable === false) { tr.ghost = true; continue; }
+        if (!tr.ghost) continue;
+        const sp = Math.hypot(e.vx || 0, e.vy || 0);
+        if (!Number.isFinite(tr.releaseT)) {
+          tr.releaseT = WarScene.t; tr.rx = e.x; tr.ry = e.y; tr.vExit = sp;
+        } else if (!Number.isFinite(tr.slide)) {
+          const spec = resolveShipFlightSpec(e);
+          if (spec && sp <= spec.maxSpeed * 1.03) {
+            tr.slide = Math.hypot(e.x - tr.rx, e.y - tr.ry);
+            tr.slideT = WarScene.t - tr.releaseT;
+            tr.endErr = Math.hypot(e.x - tr.px, e.y - tr.py);
+          }
+        }
+      }
+      // Ujęcia (kino sceny, opcja cinema): szeroki kadr, kadry bohaterów prowadzone za ich ogniskiem (heroFocus), szeroki.
+      if (WarScene.shots && camera.mode === 'ship') stepWarSceneShots();
+      // Kamera (reżyser kadru mieści sygnał i Atlasa): przylot A, od startu B — przylot B (do 2 s po ostatnim wyjściu),
+      // potem środek bitwy (wszystkie żywe okręty, promień 80% z nich).
+      if (camera.mode === 'ship') {
+        const B = plan.fleets.B;
+        const bEnd = B.start + B.ships.reduce((m, sh) => Math.max(m, sh.burst), 0) + 2;
+        if (WarScene.t < B.start) {
+          const c = warSceneFleetCue('A');
+          noteCameraDirectorCue(cameraDirector, 'wojna-A', c.x, c.y, c.r, 2, 0.6);
+        } else if (WarScene.t < bEnd) {
+          const c = warSceneFleetCue('B');
+          noteCameraDirectorCue(cameraDirector, 'wojna-B', c.x, c.y, c.r, 2, 0.6);
+        } else {
+          const c = warSceneFleetCue(null);
+          if (c.n > 0) noteCameraDirectorCue(cameraDirector, 'wojna', c.x, c.y, c.r, 2, 0.6);
+        }
+      }
+    }
+
+    // Bitwa w głębi: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu) — blok migawki i tryb off.
+    function warBackdropFrameNow() {
+      const F = warBackdropFrame;
+      if (F.has) F.t = WarScene.t + Math.max(0, (SimClock.render - SimClock.sim) || 0);
+      return F;
+    }
+
+    // Kadr bohaterów: rozpiętość pary × fit mieści się w szerokości kadru NA ICH WYSOKOŚCI (perspektywa z góry:
+    // widoczna szerokość na wysokości z = vh · aspekt · (1 − z / wysokość kamery)).
+    const _warFocus = { x: 0, y: 0, extent: 0 };
+    function warShotViewHeight(shot) {
+      warHeroFocus(shot.hero, WarScene.t, _warFocus);
+      const aspect = W / Math.max(1, H);
+      const need = (_warFocus.extent * shot.fit + (aspect * shot.hero.z) / topCameraHeight(1)) / aspect;
+      return clamp(need, shot.vMin, shot.vMax);
+    }
+
+    function stepWarSceneShots() {
+      for (const shot of WarScene.shots) {
+        if (shot.started || WarScene.t < shot.t) continue;
+        shot.started = true;
+        if (shot.kind === 'hero') {
+          warHeroFocus(shot.hero, WarScene.t, _warFocus);
+          startStoryCameraLook({ x: shot.cx + _warFocus.x, y: shot.cy + _warFocus.y, viewHeight: warShotViewHeight(shot),
+            inSec: shot.inSec, holdSec: shot.holdSec, outSec: shot.outSec });
+        } else {
+          startStoryCameraLook({ x: shot.x, y: shot.y, viewHeight: shot.viewHeight, inSec: shot.inSec, holdSec: shot.holdSec, outSec: shot.outSec });
+        }
+        if (storyCameraLook) storyCameraLook.__warShot = shot;
+      }
+      const look = storyCameraLook;
+      const shot = look && look.__warShot;
+      if (shot && shot.kind === 'hero') {
+        // punkt kadru płynnie goni ognisko bohaterów (bez szarpnięcia przy rozpadzie okrętu), wysokość kadru — rozpiętość
+        warHeroFocus(shot.hero, WarScene.t, _warFocus);
+        look.x += (shot.cx + _warFocus.x - look.x) * 0.12;
+        look.y += (shot.cy + _warFocus.y - look.y) * 0.12;
+        look.viewHeight += (warShotViewHeight(shot) - look.viewHeight) * 0.05;
+      }
+    }
+
+    function stopWarScene({ clear = false } = {}) {
+      if (!WarScene.active && !clear) return false;
+      WarScene.active = false;
+      warBackdropFrame.has = false;
+      if (storyCameraLook && storyCameraLook.__warShot) { storyCameraLook.holdSec = 0; storyCameraLook.holdUntil = null; }
+      WarScene.shots = null;
+      setFleetStanceOverride('friendly', null);
+      setFleetStanceOverride('pirate', null);
+      camera.manualZoom = false;
+      if (WarScene.prevMinShipFrac != null) { cameraDirectorTune.minShipFrac = WarScene.prevMinShipFrac; WarScene.prevMinShipFrac = null; }
+      if (clear) for (const tr of WarScene.tracked) if (tr.e && !tr.e.dead) dematerializeSupportUnit(tr.e);
+      return true;
+    }
+
+    // Stan sceny i pomiary (harness: scripts/webgpu/wojna-gra.mjs).
+    function warSceneState() {
+      const per = (side) => {
+        const list = WarScene.tracked.filter((tr) => tr.side === side);
+        const alive = list.filter((tr) => tr.e && !tr.e.dead).length;
+        const slides = list.filter((tr) => Number.isFinite(tr.slide)).map((tr) => ({
+          key: tr.key, vExit: Math.round(tr.vExit), slide: Math.round(tr.slide), t: +tr.slideT.toFixed(2),
+          endErr: Math.round(tr.endErr)
+        }));
+        return { spawned: list.length, alive, released: list.filter((tr) => Number.isFinite(tr.releaseT)).length, slides };
+      };
+      return {
+        active: WarScene.active, t: +WarScene.t.toFixed(2), launched: { ...WarScene.launched },
+        A: per('A'), B: per('B'), calls: WarScene.calls.length, planned: WarScene.calls.filter((c) => c.planned).length,
+        backdrop: { has: warBackdropFrame.has, id: warBackdropFrame.id, t: +warBackdropFrame.t.toFixed(2) },
+        shot: storyCameraLook && storyCameraLook.__warShot ? { kind: storyCameraLook.__warShot.kind, t: storyCameraLook.__warShot.t,
+          x: Math.round(storyCameraLook.x), y: Math.round(storyCameraLook.y), viewHeight: Math.round(storyCameraLook.viewHeight) } : null
+      };
+    }
+
     // Harness zrzutów portu WebGPU (scripts/webgpu/zrzuty.mjs) — tylko z ?dev, rozgrywki nie
     // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
     if (new URLSearchParams(location.search).has('dev')) {
       window.DevScene = Object.assign(window.DevScene || {}, {
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
+        // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
+        // opts: countA, countB, k, distance, gapB, heraldStyle ('thread' | 'ripple' | 'none'), backdrop ('jupiter' |
+        // 'mars'), atlas ('side' | 'fleet'), seed, clear. Zwraca plan (środek, floty, czasy wyjść).
+        wojna(opts = {}) { return startWarScene(opts); },
+        wojnaStop(clear = false) { return stopWarScene({ clear }); },
+        wojnaState() { return warSceneState(); },
         teleport(x, y, heading = ship.angle) {
           ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
           if (Number.isFinite(heading)) ship.angle = heading;
@@ -11884,6 +12441,8 @@
         // Galeria broni (zadanie 18-B): broń na zaczepach special gracza bez ładowni (wszystkie
         // albo `count` pierwszych) i strzał jak klawisz 2 — ładowanie Mjolnira / Valkyrie w kadrze.
         mountSpecial(weaponId, count = Infinity) {
+          // broń tylko dla NPC (promień śmierci — wieża Colossusa) nie trafia do gracza także z konsoli dev
+          if (weaponId && WEAPONS[weaponId]?.npcOnly === true) return 0;
           let n = 0;
           for (const hp of Game.player.hardpoints) {
             if (hp.type !== HP.SPECIAL || hp.destroyed) continue;
@@ -11895,6 +12454,50 @@
         },
         fireSpecial() {
           return tryFireMountedSpecialWeapons(true);
+        },
+        // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js; gra: window.DeathRayGame). Rozkaz sceny: strzelec (encja albo
+        // indeks w npcs; brak — gracz) ładuje promień `opts.charge` s (domyślnie chargeTime broni, 4 s) przy wylocie
+        // swojego gniazda (albo dziobu) i strzela w AKTUALNĄ pozycję celu (encja, indeks w npcs albo { x, y }).
+        // opts: { charge, damage, range, penetration, width, color: [r, g, b] liniowo 0..1, byPlayer }. Zwraca rozkaz.
+        deathRay(shooter, target, opts = {}) {
+          const s = typeof shooter === 'number' ? npcs[shooter] : (shooter || ship);
+          const t = typeof target === 'number' ? npcs[target] : target;
+          if (!s || !t) return null;
+          return deathRays.order(s, t, { byPlayer: s === ship, ...opts });
+        },
+        // Strzał WYŁĄCZNIE obrazowy (bez trafień) od (x0, y0) do (x1, y1) — ten sam obraz co prawdziwy promień (warstwy
+        // bitwy w głębi): opts { charge [s], width, color: [r, g, b], z0, z1, impact (rozbłysk na końcu, domyślnie tak) }.
+        deathRayVisual(x0, y0, x1, y1, opts = {}) {
+          return deathRays.visual(x0, y0, x1, y1, opts);
+        },
+        // Promień na gnieździe BUILT-IN NPC jak u Colossusa Terra Nova (AI strzela sama: autoWeapons grupy `builtin` +
+        // ładowanie z capitalAI) — okręt bez gniazda builtin dostaje wirtualne na osi dziobu (`rot` 90 = dziób). Inne
+        // okręty niż Colossus — tylko scena / próba (w grze promień ma wyłącznie supercapital Terra Nova). Zwraca 1 / 0.
+        equipDeathRay(npc, weaponId = 'death_ray') {
+          const e = typeof npc === 'number' ? npcs[npc] : npc;
+          const def = MASTER_WEAPONS[weaponId];
+          if (!e || !def) return 0;
+          if (!e.weapons) e.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+          if (!Array.isArray(e.editorHardpoints)) e.editorHardpoints = [];
+          let hp = e.editorHardpoints.find((h) => h && h.type === HP.BUILTIN && !h.destroyed) || null;
+          if (!hp) {
+            hp = { id: `deathray_${e.id ?? 'npc'}`, type: HP.BUILTIN, size: 'Capital', rot: 90, x: (Number(e.radius) || 200) * 0.45 / getEntityHardpointScaleX(e), y: 0 };
+            e.editorHardpoints.push(hp);
+          }
+          hp.mount = weaponId;
+          e.weapons.builtin = [{ hp, weapon: def }];
+          e._weaponsInit = false;   // autoWeapons od nowa (capitalAI.initAutonomousWeapons)
+          return 1;
+        },
+        // Stan promieni i rozkazów (harness: scripts/webgpu/promien-gra.mjs).
+        deathRayState() {
+          return deathRays.describe();
+        },
+        // Czop gniazda promienia strzelca w świecie ({ x, y } albo null) — wieża Colossusa w kadrze, ustawienie sceny.
+        deathRayMuzzle(shooter, weaponId = 'death_ray') {
+          const s = typeof shooter === 'number' ? npcs[shooter] : shooter;
+          const out = { x: 0, y: 0 };
+          return s && deathRayMuzzleOf(s, MASTER_WEAPONS[weaponId], out) ? out : null;
         },
         // Działa main (2026-10-08, klasa dział snajperskich): broń na zaczepach main gracza bez ładowni
         // (wszystkie albo `count` pierwszych) — Lanca w grze (scripts/webgpu/lanca-gra.mjs).
@@ -13156,8 +13759,10 @@
         mount: playerFitCurrentMount(hp)
       }));
     }
+    // Broń tylko dla NPC (`npcOnly` — promień śmierci, wieża Colossusa: user 2026-10-20 „zbyt potężna na special
+    // slot”) nie pasuje do żadnego gniazda gracza — WYPOSAŻENIE, plan fitowania i automat kart idą przez tę funkcję.
     function playerFitFits(def, slot) {
-      return !!def && weaponFitsHardpointSize(def.size, slot?.size || getHardpointSize(slot));
+      return !!def && def.npcOnly !== true && weaponFitsHardpointSize(def.size, slot?.size || getHardpointSize(slot));
     }
 
     function buildPlayerFitPlan(preset, mode, station = stationUI.station, opts = {}) {
@@ -15928,6 +16533,8 @@
           + `budowa świata ${Math.round(ready.buildMs)} ms`);
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
+      // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
+      for (const station of stations) registerTrafficV2Market(station, bridge);
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
       bridge.on('market', () => {
         if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
@@ -15949,6 +16556,31 @@
         trafficV2CapacitySent.set(station.id, { ...capacity });
         trafficV2.setCapacity(station.id, capacity);
       }
+    }
+
+    /**
+     * Stacja misyjna piratów (kryjówka najemnika, stocznia piratów, baza misji 1) jako RYNEK świata ruchu
+     * (src/game/traffic/markets.js, MarketDef z src/data/markets.js): kryjówka — łup z przechwytów, przemyt, cel
+     * wojny. Baza misji 1 to jeden rynek (habitat), nie cztery budowle. Bez `?trafficV2` nic się nie dzieje.
+     */
+    function registerTrafficV2Market(station, bridge = trafficV2) {
+      if (!bridge || !station?.id || !station.mission || !station.isPirate) return;
+      if (station.baseStructure && station.baseStructure !== 'habitat') return;
+      if (station.hp <= 0) return;
+      bridge.addMarket({
+        id: String(station.id),
+        label: station.name || 'Kryjówka piratów',
+        kind: MARKET_KIND.HIDEOUT,
+        position: { source: MARKET_POSITION.POINT, x: station.x, y: station.y },
+        factionId: station.factionId || FACTION.PIRATES,
+        docks: { layout: DOCK_LAYOUT.HANGAR },
+        hideout: true
+      });
+    }
+
+    /** Stacja zginęła w grze — jej rynek w świecie ruchu zostaje opuszczony (port, stocznia, kryjówka znikają). */
+    function onTrafficV2StationKilled(station) {
+      if (trafficV2?.hasStation(station?.id)) trafficV2.stationDestroyed(station.id);
     }
 
     if (DevFlags.trafficV2) {
@@ -16011,6 +16643,7 @@
       };
 
       stations.push(station);
+      registerTrafficV2Market(station);   // RUCH v2: kryjówka jako rynek
       if (typeof attachPirateStation3D === 'function') {
         if (!mainScene3D && typeof initWorld3D === 'function') {
           const res = initWorld3D();
@@ -22421,7 +23054,7 @@
     // Render rdzeni: listy encji (gracze, NPC, wraki), zegar symulacji, początek modelu przy kamerze.
     const _reactorCoreLists = [[null, null], null, null, null];
     const _reactorModelOrigin = { x: 0, y: 0 };
-    const _reactorModelOpts = { origin: _reactorModelOrigin };
+    const _reactorModelOpts = { origin: _reactorModelOrigin, view: null, zoom: 1 };
     let _reactorFxSim = 0;
     // Rdzeń na świeżym kadłubie belkowym: miejsce z tabeli (src/data/reactorCores.js) po profilu
     // renderu kadłuba, inaczej komora z automatu (najgłębiej przy środku masy). Myśliwce bez rdzenia.
@@ -22679,6 +23312,7 @@
           // First death — trigger 3D destruction effect
           station._destroyed3D = true;
           HullDamageEvents.station(station, 1, true);
+          onTrafficV2StationKilled(station);
           if (mercMission?.station === station) {
             const completed = completeMission('merc_pirate_station', {
               rewardCredits: 50000,
@@ -23715,8 +24349,14 @@
             if (dist < npc.warpData.brakingDist) {
               npc.state = 'engage_formation';
               npc.isCollidable = true;
-              npc.vx *= 0.1;
-              npc.vy *= 0.1;
+              // Wyjście z pędem (WarpExitTune): dalej z k × prędkość bojowa wzdłuż kursu (nadmiar ścina model lotu);
+              // bez pędu (k = 0, kadłub spoza tabeli lotu) — dawne 10% prędkości warpa.
+              const exitMom = npcWarpExitMomentum(npc);
+              const vIn = Math.hypot(npc.vx, npc.vy) || 1;
+              const vOut = exitMom ? Math.min(vIn, exitMom.vExit) : vIn * 0.1;
+              npc.vx *= vOut / vIn;
+              npc.vy *= vOut / vIn;
+              if (exitMom) npc.__warpExitSlide = true;
               // Przylot widać w warpie „Nurt” (WarpNurt: wyrzut z tunelu w chwili warp-in) — dawny
               // czerwony pierścień 2D i smuga cząstek usunięte w zadaniu 22.
               if (npc.type === 'battleship') camera.addShake(8, 0.4);
@@ -25266,7 +25906,8 @@
       }
       else if (warp.exitRamp && warp.exitRamp.active) {
         // Wyjście z warpa = przylot jak u NPC (warpDrive.js): prędkość wzdłuż kursu z rampy
-        // (zwolnienie → wlot → hamowanie), bez ciągu i bez skrętu; na końcu statek stoi.
+        // (zwolnienie → wlot → hamowanie), bez ciągu i bez skrętu; na końcu prędkość `vEnd` rampy
+        // (0 — statek stoi; wyjście z pędem — dalej leci, nadmiar zbiera zwykły lot).
         const r = warp.exitRamp;
         const wasBrake = r.age >= r.tBrake;
         r.age += dt;
@@ -25280,11 +25921,7 @@
         const desired = Math.atan2(r.dirY, r.dirX);
         ship.angle = wrapAngle(ship.angle + clamp(wrapAngle(desired - ship.angle), -warp.alignRate * dt, warp.alignRate * dt));
         ship.angVel = 0;
-        if (s.phase === 'done') {
-          r.active = false;
-          ship.vel.x = 0;
-          ship.vel.y = 0;
-        }
+        if (s.phase === 'done') r.active = false;
       }
       else {
         // --- Thruster-based Newtonian player physics ---
@@ -25781,6 +26418,8 @@
       window.__npcFireScanMs = 0;
       window.__npcFireSpawnMs = 0;
       npcShootingStep(dt);
+      // Promienie śmierci: czoło (tarcze, rzaz belek, obrażenia) po strzałach gracza i NPC tego kroku, rozkazy scen.
+      deathRays.step(dt);
       PerfHUD.addTiming('npcFireTime', performance.now() - tPhysSection0);
       PerfHUD.addTiming('npcFireScanTime', window.__npcFireScanMs || 0);
       PerfHUD.addTiming('npcFireSpawnTime', window.__npcFireSpawnMs || 0);
@@ -27086,10 +27725,12 @@
     // raz na klatkę przed zoomem i rigiem — człon log(zoom) dla updateCameraZoom, cofnięcie
     // kamery dla stepCameraRig i drżenie ładowania z tego samego stanu. Tylko gracz 1 (P2 nie ma
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
-    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35 };
+    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: true };
     function updateCameraWarpKick(gameDt) {
       const w = _cameraWarpInput;
       w.dt = gameDt;
+      // Styl skoku bez rulonu (`?warp=ped|akcent|soczewka`, `?rulon=0` — warpDrive.js: warpRulonEnabled): kamera bez środka lejka.
+      w.rulon = warpRulonEnabled(location.search);
       w.state = warp.state;
       w.charge = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0;
       const dir = warp.dir;
@@ -27514,6 +28155,8 @@
       renderSnapshot.addBlock(createPirateBaseBlock());
       // wyrwy bazy piratów (dekompresja, pożary — src/game/story/pirateBaseAtmosphere.js): stan klatki obrazu wyrw
       renderSnapshot.addBlock(createPirateVentsBlock());
+      // bitwa w głębi sceny „Wojna” (src/game/warScene.js): środek, czas sceny, planeta, bohaterowie
+      renderSnapshot.addBlock(createWarBackdropBlock());
       renderSnapshot.addBlock(createRingBlock());
       // RW-11b: wygląd maskowania (liczy gra — stepCloakLooks, RW-26)
       if (SZEW_LATE) renderSnapshot.addBlock(createCloakBlock());
@@ -27645,6 +28288,8 @@
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
       // wyrwy bazy (dekompresja, pożary): pozy wyrw dosunięte do czasu renderu, dt gry klatki
       f.pirateVents = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      // bitwa w głębi sceny „Wojna”: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu)
+      f.warBackdrop = warBackdropFrameNow();
       // ringi „Halo”: świat ringów gry (zegar hal, rejestr — stanowiska, lampy, pozy obsługi), statek do obrysu w hubie
       f.ringWorld = haloWorld;
       f.ringShip = ship;
@@ -28721,6 +29366,8 @@
           const vf = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
           pirateVents3D.update(vf, vf.dt);
         }
+        // Bitwa w głębi sceny „Wojna” (tłum nad i pod płaszczyzną, planeta); worker — sam z bloku warBackdrop.
+        if (!RW_WORKER && warBackdrop3D) warBackdrop3D.update(warBackdropFrameNow(), cam);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
@@ -28744,8 +29391,8 @@
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
 
       // Rdzenie reaktorów: obraz stopienia i zagrożeń (reżyser wybuchu — krok klatki efektów
-      // przed passami) i model reaktora w wyrwie (warstwa 7 — po tarczach, które ją zgłaszają
-      // przypisaniem). Zegar = czas symulacji tej klatki (pauza = 0).
+      // przed passami) i model reaktora w obudowie nad kadłubem (pass ortho; kadr z pudła kadłubów).
+      // Zegar = czas symulacji tej klatki (pauza = 0).
       if (reactorBlastFx && !RW_WORKER) {
         const simNow = SimClock.sim;
         const reactorSimDt = Math.max(0, Math.min(0.1, simNow - _reactorFxSim));
@@ -28762,6 +29409,8 @@
         reactorBlastFx.syncHazards(reactorSimDt);
         if (reactorModel3D) {
           _reactorModelOrigin.x = cam.x; _reactorModelOrigin.y = cam.y;
+          _reactorModelOpts.view = _hexCullInfo;
+          _reactorModelOpts.zoom = cam.zoom;
           reactorModel3D.sync(reactorCores, 0, reactorSimDt, _reactorModelOpts);
         }
       }
@@ -30486,6 +31135,7 @@
         shield: { max: spec.shield || 4000, val: spec.shield || 4000, regenRate: 250, regenDelay: 6, regenTimer: 0 }
       };
       stations.push(station);
+      registerTrafficV2Market(station);   // RUCH v2: stocznia piratów jako rynek
       if (typeof attachPirateStation3D === 'function') {
         if (!mainScene3D && typeof initWorld3D === 'function') {
           const res = initWorld3D();
@@ -30529,6 +31179,7 @@
         stations.push(st);
         out[key] = st;
       }
+      registerTrafficV2Market(out.habitat);   // RUCH v2: baza piratów jako jeden rynek (habitat)
       attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
@@ -30906,17 +31557,31 @@
       pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity: ev.entity || null, kind: 'break' });
       pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity: ev.entity || null });
     }
-    // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): środek między habitatem a środkiem skały, kadr na całą
-    // planetoidę; trzyma się do 4 s po uderzeniu dysku w skałę (albo do osiadania). Gracz dalej niż 40 km — bez ujęcia.
+    // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): habitat i RZUT miejsca lądowania (prosta habitat → środek
+    // skały do przecięcia z kulą skały, ~24 km pod płaszczyzną — pirateRockLayout.js, skala świata) symetrycznie wokół
+    // środka kadru; kadr 13 km — kamera ~21 km nad płaszczyzną, kawałki bazy maleją w locie do ~0,46 (prośba użytkownika
+    // 2026-10-19: „powinny dłużej lecieć / bardziej się pomniejszać”). Trzyma się do 4 s po uderzeniu dysku w skałę (albo
+    // do osiadania). Gracz dalej niż 40 km — bez ujęcia.
+    const FALL_LOOK_VIEW_H = 13000;
     function pirateBaseFallLook() {
       const F = _baseFall, T = F.terrain, pl = _fallCtx.place || _baseFallPlace;
       if (!T || !pl || F.phase !== 'falling') return null;
       const hc = pl.habitat;
       const sp = ship?.pos;
       if (!sp || Math.hypot(sp.x - hc.x, sp.y - hc.y) > 40000) return null;
-      const rx = T.cx, ry = -T.cy;
+      const rx = T.cx, ry = -T.cy, rz = T.cz;
+      // lądowanie: z poziomu dysku (z ≈ −1000) po prostej ku środkowi skały, na kuli R
+      const hz = -1000;
+      const dx = rx - hc.x, dy = ry - hc.y, dz = rz - hz;
+      const dl = Math.hypot(dx, dy, dz) || 1;
+      const t = Math.max(0, dl - T.R);
+      const lx = hc.x + dx / dl * t, ly = hc.y + dy / dl * t, lz = hz + dz / dl * t;
+      // rzut z kamery H nad płaszczyzną: k = H / (H − z); środek kadru c spełnia c − hab = (lądowanie − c) · k
+      const camH = FALL_LOOK_VIEW_H * 0.5 / Math.tan(17.5 * Math.PI / 180);
+      const k = camH / (camH - lz);
+      const f = k / (1 + k);
       return {
-        x: hc.x + (rx - hc.x) * 0.3, y: hc.y + (ry - hc.y) * 0.3, viewHeight: 15000,
+        x: hc.x + (lx - hc.x) * f, y: hc.y + (ly - hc.y) * f, viewHeight: FALL_LOOK_VIEW_H,
         holdUntil: () => F.phase !== 'falling' || (F.discImpactT >= 0 && F.t >= F.discImpactT + 4)
       };
     }
@@ -30932,7 +31597,8 @@
 
     // Planetoida pod bazą na radarze i mapie CIC (teren — rysowana zawsze, także we mgle, jak komety; tylko obraz,
     // bez kolizji i studni). Póki baza misji stoi (StoryGame.site i baza w świecie gry): podkład radaru = ląd
-    // o promieniu skały (rzut z góry — szczyt leży 8 km pod płaszczyzną gry), kontakt „HIDALGO AST” w środku
+    // o promieniu skały z PROJEKTU (rzut z punktu widzenia — skała w świecie jest 2× większa i dalej, szczyt 24 km pod
+    // płaszczyzną gry, z kamery wygląda jak projekt: pirateRockLayout.js, pirateRockAt), kontakt „HIDALGO AST” w środku
     // (`env.bodies`, mała kropla — ląd rysuje podkład), mapa CIC — window.pirateRockLandmark (cicDisplay.js).
     const _pirateRockMark = { id: 'pirate-rock', label: PIRATE_ROCK_SPEC.label, x: 0, y: 0, radius: PIRATE_ROCK_SPEC.radius };
     const _pirateRockFeature = { id: 'pirate-rock', type: 'planet', label: PIRATE_ROCK_SPEC.label, entity: _pirateRockMark,
@@ -31600,6 +32266,24 @@
       if (fadeThroughBlack) fadeScreen(false, 750);
 
       console.log("[System] Gra uruchomiona.");
+      // Scena „Wojna” z adresu (bez konsoli): ?wojna — start sekundę po wejściu do gry swobodnej (kampania ma własny
+      // świat — pomija). Opcje: wojnaK (k wyjścia z warpa), wojnaZwiastun (thread | ripple | none), wojnaTlo (deep |
+      // jupiter | mars), wojnaAtlas (side | fleet), wojnaA / wojnaB (liczba okrętów), wojnaOdl (odległość flot, j.),
+      // wojnaKino (0 — bez ujęć kamery), wojnaBohaterowie (0 — bez scen bohaterów), wojnaGestosc (tłum w głębi),
+      // wojnaPlaneta (venus | mercury | earth | mars).
+      const warQuery = new URLSearchParams(location.search);
+      if (warQuery.has('wojna') && !storyCampaign) {
+        const num = (k) => (warQuery.has(k) && Number.isFinite(Number(warQuery.get(k))) ? Number(warQuery.get(k)) : undefined);
+        const warOpts = {
+          k: num('wojnaK'), heraldStyle: warQuery.get('wojnaZwiastun') || undefined, backdrop: warQuery.get('wojnaTlo') || undefined,
+          atlas: warQuery.get('wojnaAtlas') || undefined, countA: num('wojnaA'), countB: num('wojnaB'), distance: num('wojnaOdl'),
+          cinema: warQuery.has('wojnaKino') ? warQuery.get('wojnaKino') !== '0' : undefined,
+          heroes: warQuery.has('wojnaBohaterowie') ? warQuery.get('wojnaBohaterowie') !== '0' : undefined,
+          density: num('wojnaGestosc'), planetMaps: warQuery.get('wojnaPlaneta') || undefined
+        };
+        for (const key of Object.keys(warOpts)) if (warOpts[key] === undefined) delete warOpts[key];
+        setTimeout(() => { try { startWarScene(warOpts); } catch (err) { console.error('[Wojna] start sceny:', err); } }, 1000);
+      }
     }
     if (newGameButton) {
       newGameButton.addEventListener('click', () => {

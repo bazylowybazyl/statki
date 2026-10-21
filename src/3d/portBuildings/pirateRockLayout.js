@@ -13,9 +13,19 @@
 //
 // RZUT: skała, osada i lina są w passie TŁA Core3D (warstwa 1 — kamera perspektywy jak dysk mieszkalny habitatu;
 // pass ring-planet małych ciał rysuje się PO tle i przykryłby dysk). Kamera z góry stoi pół kadru / tan 17,5° nad
-// płaszczyzną (kadr 9 × 5 km — ~8 km), więc głębia to paralaksa: szczyt skały 8 km pod płaszczyzną wygląda o połowę
-// mniejszy i płynie wolniej niż baza. Promień 16 km i stopa windy 5,5 km od habitatu dobrane tak, żeby w kadrach gry
-// skała leżała pod bazą i wystawała z boku (szkic: r ≈ 9 km w rzucie), a lina wychodziła spod dysku habitatu.
+// płaszczyzną (kadr 9 × 5 km — ~8 km), więc głębia to paralaksa. PROJEKT (wymiary w PIRATE_ROCK_SITE i w polach
+// projektu PIRATE_ROCK_SPEC): promień 16 km, szczyt 8 km pod płaszczyzną, stopa windy 5,5 km od habitatu — tak, żeby
+// w kadrach gry skała leżała pod bazą i wystawała z boku (szkic: r ≈ 9 km w rzucie), a lina wychodziła spod dysku.
+//
+// SKALA (2026-10-19, prośba użytkownika: „elementy stoczni lecące na planetę są za duże na planecie — powinny dłużej
+// lecieć / bardziej się pomniejszać”): w świecie skała, osada i stacja dolna windy to projekt powiększony `scale` razy
+// PODOBIEŃSTWEM względem punktu widzenia `eyeH` nad osią habitatu (x = z = 0). Z tego punktu skała i osada wyglądają
+// jak w projekcie (ten sam rzut), ale są `scale` razy dalej i większe — spadające kawałki bazy (rozmiar prawdziwy)
+// lecą ~3× dłuższą drogą (skala 2: 8 → ~23 km), maleją w perspektywie i lądują ~`scale` razy mniejsze względem skały
+// (fizyka upadku: pirateBaseFall.js — grawitacja po przejściu wieży przez dysk i sufit prędkości). Mapy tekstur skały
+// zostają (kąty na kuli bez zmian: e / R, n / R), głowica kotwicy pod dyskiem — bez skali (należy do habitatu).
+// Pola świata daje createPirateRockLayout (R, foot, center, stationTop, plateau, cableR, budowle: e, n, r);
+// PIRATE_ROCK_SPEC trzyma projekt.
 //
 // OSADA (stopa windy) stoi na WYRÓWNANYM TARASIE na szczycie skały (generator map: d = 0 w promieniu `plateau`), więc
 // bryły nagrywa się na kuli o promieniu R. Położenie na powierzchni: (e, n) — odległości wzdłuż powierzchni od stopy
@@ -64,18 +74,24 @@ export const PIRATE_ROCK_SITE = Object.freeze(
 export const PIRATE_ROCK_SPEC = Object.freeze({
   id: 'hidalgo',
   label: 'Hidalgo',
+  // skala świata względem projektu i punkt widzenia podobieństwa (opis SKALA wyżej) — 2: szczyt skały 24 km pod
+  // płaszczyzną, promień 32 km, środek 56 km pod płaszczyzną i 11 km w bok od osi habitatu (2,5: lot wieży 17 s
+  // i uderzenie z 3,7 km/s — za długo i za ciężko dla silnika belek przy 60 Hz)
+  scale: 2,
+  eyeH: 8000,                // [j.] wysokość punktu widzenia nad płaszczyzną gry (kamera z góry projektu)
+  // dalej PROJEKT (świat — createPirateRockLayout)
   radius: PIRATE_ROCK_SITE.radius,
   bearing: Math.PI / 4,      // kierunek stopy windy (i środka skały) od osi habitatu: kąt od +x ku +z
   footDist: 5500,            // [j.] odległość pozioma stopy windy od osi habitatu
   footH: -8000,              // [j.] h szczytu skały = poziom tarasu osady
-  anchorTop: -1060,          // głowica kotwicy windy pod dyskiem mieszkalnym (dno dysku: −1056)
-  anchorH: -1540,            // dół głowicy — tu zaczyna się lina
+  anchorTop: -1060,          // głowica kotwicy windy pod dyskiem mieszkalnym (dno dysku: −1056) — świat, bez skali
+  anchorH: -1540,            // dół głowicy — tu zaczyna się lina (świat, bez skali)
   stationTop: 660,           // wysokość wieży stacji dolnej nad tarasem (tam wchodzi lina)
   segments: 16,              // odcinki liny (grupy renderu)
   climbers: 2,               // kabiny windy
   plateau: PIRATE_ROCK_SITE.plateau,   // [j. po powierzchni] promień wyrównanego tarasu (mapa kształtu: d = 0)
-  gravity: 400,              // [j/s²] ku środkowi skały (jak grawitacja habitatu — przechył wieży, pirateBaseNeck.js)
-  cableR: 34                 // [j.] promień wiązki liny (kolizja z powierzchnią)
+  gravity: 400,              // [j/s²] ku środkowi skały: łuki odłamków uderzeń (pirateRockImpactFx.js); lina — × skala długości
+  cableR: 34                 // [j.] promień wiązki liny przy stacji dolnej (kolizja z powierzchnią; świat × scale)
 });
 
 const len3 = (x, y, z) => Math.sqrt(x * x + y * y + z * z);
@@ -124,23 +140,31 @@ export function pirateRockLonLat(e, n, R) {
 }
 
 /**
- * Geometria skały w układzie bazy. Zwraca { spec, R, center, up, east, north, foot, anchor, anchorTop, stationTop,
- * meshQuat (kula three: lokalne → układ bazy), surfacePoint, frameAt, lonLat, uvAt, buildings, buildingById, tether }.
+ * Geometria skały w układzie bazy — ŚWIAT (projekt × skala, opis SKALA wyżej). Zwraca { spec (projekt), k (skala),
+ * R, center, up, east, north, foot, footH, anchor, anchorTop, stationTop, plateau, cableR, meshQuat (kula three: lokalne
+ * → układ bazy), surfacePoint, frameAt, lonLat, uvAt, buildings (e, n, r — świat), buildingById, tether (+ scale —
+ * długość liny / długość z projektu), design { center, R, foot } (projekt: rzut skały z punktu widzenia — radar, CIC) }.
  */
 export function createPirateRockLayout(spec = PIRATE_ROCK_SPEC, site = PIRATE_ROCK_SITE) {
   const S = { ...PIRATE_ROCK_SPEC, ...spec };
-  const R = S.radius;
+  const k = Number(S.scale) > 0 ? Number(S.scale) : 1;
+  const eyeH = Number.isFinite(S.eyeH) ? S.eyeH : 0;
+  const R = S.radius * k;
   const cb = Math.cos(S.bearing);
   const sb = Math.sin(S.bearing);
   const up = [0, 1, 0];
   const east = [cb, 0, sb];
   // prawoskrętnie: północ = up × wschód
   const north = [sb, 0, -cb];
-  const foot = [cb * S.footDist, S.footH, sb * S.footDist];
+  // podobieństwo względem (0, eyeH, 0): poziomo × k, wysokość eyeH − k · (eyeH − h)
+  const footH = eyeH - k * (eyeH - S.footH);
+  const foot = [cb * S.footDist * k, footH, sb * S.footDist * k];
   const center = [foot[0], foot[1] - R, foot[2]];
   const anchor = [0, S.anchorH, 0];
   const anchorTop = [0, S.anchorTop, 0];
-  const stationTop = [foot[0], foot[1] + S.stationTop, foot[2]];
+  const stationTop = [foot[0], foot[1] + S.stationTop * k, foot[2]];
+  const designFoot = [cb * S.footDist, S.footH, sb * S.footDist];
+  const design = { R: S.radius, foot: designFoot, center: [designFoot[0], designFoot[1] - S.radius, designFoot[2]] };
   // Kula three (SphereGeometry): punkt (u 0,5, v 0,5) = lokalne +X → stopa windy (up); wschód (+u) = lokalne −Z,
   // północ (+v) = lokalne +Y. Kolumny obrotu lokalne → układ bazy: X → up, Y → północ, Z → −wschód.
   const meshQuat = quatFromBasis(up, north, [-east[0], -east[1], -east[2]]);
@@ -195,13 +219,15 @@ export function createPirateRockLayout(spec = PIRATE_ROCK_SPEC, site = PIRATE_RO
     return { u: 0.5 + ll.lon / (2 * Math.PI), v: 0.5 + ll.lat / Math.PI };
   };
 
+  // budowle: położenie i obrys w świecie (projekt × k — te same kąty na kuli, mapy bez zmian)
   const buildings = site.buildings.map((b, i) => {
-    const fr = frameAt(b.e, b.n, b.yaw || 0);
-    return { ...b, index: i, frame: fr, group: 0 };
+    const fr = frameAt(b.e * k, b.n * k, b.yaw || 0);
+    return { ...b, e: b.e * k, n: b.n * k, r: b.r * k, index: i, frame: fr, group: 0 };
   });
   const buildingById = new Map(buildings.map((b) => [b.id, b]));
 
-  // Lina: od dołu głowicy kotwicy do szczytu wieży stacji dolnej, `segments` równych odcinków.
+  // Lina: od dołu głowicy kotwicy do szczytu wieży stacji dolnej, `segments` równych odcinków. scale — długość liny
+  // względem projektu (fizyka liny: przyspieszenia i prędkości × scale — spada i zwija się w tym samym czasie).
   const N = Math.max(2, S.segments | 0);
   const nodes = new Float64Array((N + 1) * 3);
   for (let i = 0; i <= N; i++) {
@@ -211,11 +237,13 @@ export function createPirateRockLayout(spec = PIRATE_ROCK_SPEC, site = PIRATE_RO
     nodes[i * 3 + 2] = anchor[2] + (stationTop[2] - anchor[2]) * t;
   }
   const tetherLen = len3(stationTop[0] - anchor[0], stationTop[1] - anchor[1], stationTop[2] - anchor[2]);
-  const tether = { segments: N, nodes, length: tetherLen, segLen: tetherLen / N };
+  const designLen = len3(designFoot[0] - anchor[0], designFoot[1] + S.stationTop - anchor[1], designFoot[2] - anchor[2]);
+  const tether = { segments: N, nodes, length: tetherLen, segLen: tetherLen / N, scale: tetherLen / Math.max(1, designLen) };
 
   return {
-    spec: S, R, center, up, east, north, foot, anchor, anchorTop, stationTop, meshQuat,
-    surfacePoint, frameAt, lonLat, uvAt, buildings, buildingById, tether, site
+    spec: S, k, R, center, up, east, north, foot, footH, anchor, anchorTop, stationTop, meshQuat,
+    plateau: S.plateau * k, cableR: S.cableR * k,
+    surfacePoint, frameAt, lonLat, uvAt, buildings, buildingById, tether, site, design
   };
 }
 
@@ -247,10 +275,14 @@ export const PIRATE_ROCK_COLLAPSE = Object.freeze({
   ])
 });
 
-/** Kolejka zdarzeń zawalenia: [{ t, kind: 'power' | 'building', id, blast, dur }], posortowana po czasie. */
+/**
+ * Kolejka zdarzeń zawalenia: [{ t, kind: 'power' | 'building', id, blast, dur }], posortowana po czasie. blast — świat
+ * (projekt × skala układu: budowle są większe razem ze skałą).
+ */
 export function planPirateRockCollapse(layout, tune = PIRATE_ROCK_COLLAPSE) {
   const ev = [{ t: 0, kind: 'snap' }];
-  for (const o of tune.order) if (layout.buildingById.has(o.id)) ev.push({ t: o.t, kind: 'building', id: o.id, blast: o.blast, dur: o.dur });
+  const k = layout.k || 1;
+  for (const o of tune.order) if (layout.buildingById.has(o.id)) ev.push({ t: o.t, kind: 'building', id: o.id, blast: o.blast * k, dur: o.dur });
   ev.sort((a, b) => a.t - b.t);
   return ev;
 }
