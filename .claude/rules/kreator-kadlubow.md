@@ -145,6 +145,32 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   haki `reactorDemoCoresFrom` po wypieku, `reactorDemoSync` w `render()`, `window.__kreator.reactor3D`); zrzuty
   `--etapy reaktor` (z modelem, samo gniazdo, na tle okrętu).
 
+## Mostek: gniazdo poziomu (v 2)
+
+- Moduł `bridge`: v 0 — rysunek kompozytora (pas szyb, talerz radaru), v 2 — GNIAZDO MOSTKA Terra Novy (domyślne `v`
+  wpisu, nowy moduł w demie dostaje je z poziomem klasy projektu): płyta pokładu w obrysie modelu 3D poziomu
+  (`src/data/bridgeLevels.js`, ośmiokąt z fazą poziomu), szczelina, rama z nitami i żółtymi skosami, mocowania modelu
+  (poziom + 1 na burtę, od IV — dziób i rufa), belki poziomu przy dziobowym brzegu, przepust kabli. Gra stawia na nim
+  model 3D poziomu (`src/3d/bridge3D.js`, reguła `mostki-reaktor`).
+- Poziom: `bridgeLevel` projektu (I–VI) ma pierwszeństwo, przy 0 albo klasie ponad drabiną modeli (drednot VII, tylko
+  NPC) — `lv` modułu (domyślnie I; mostki drednota mają różne poziomy). `normalizeHullDesign`
+  (`bridgeSocketModule`) wpisuje `lv`, pół-wymiary `w, h` = obrys / 2 i `rim` (szczelina + rama, `HD_BRIDGE_SOCKET`) —
+  zmiana poziomu mostka w projekcie zmienia moduł; surowe `w, h` modułu v 2 nic nie znaczą. Bryła modułu (poziom 3)
+  sięga ramy (faza poziomu + rim · (2 − √2)), trasy sieci omijają ramę (`pipeModuleSdf` z `rim`). Kompozytor: `B.z` =
+  poziom + faza / 100.
+- Presety TN mają mostek v 2 ze slotów (`SOCKET` w `hullDesignSystemSlots.js`), miejsca = strefy gry
+  (`BRIDGE_LAYOUT_PROPOSALS`, `tests/bridgeLevels.test.mjs`): Custos −42, Hasta −64, Bellator −217, Citadella −339
+  (środek rufowego kasztelu — kratka i kapsuły kasztelu zdjęte), Colossus −150 (napis TERRA NOVA skrócony). Gniazdo
+  nie nachodzi na obudowę reaktora, zbiorniki, gniazda broni i dysze (test); przy zbiorniku zostaje rów dla rury paliwa
+  (Hasta: mostek −64, przy −67 przyłącze zbiornika szło po płycie). Fregata z klocków ma dalej mostek v 0.
+- Demo: sekcja „MOSTEK 3D” w `dema/kreator-kadluba-webgpu.js` — mostki na belkach kadłuba projektu z gniazd v 2
+  (`attachBeamBridges`, skala 1) i `Bridge3D` jak w grze (rozgrzewka w starcie, haki `bridgeDemoAttach` po budowie,
+  `bridgeDemoSync` w `render()`, `window.__kreator.setBridge3D(false)` — samo gniazdo); zrzuty `--etapy mostek`
+  (flota TN z modelem i bez, galeria I–VI na jednym kadłubie — `--tylko mostki`).
+- Do decyzji: w trybie „poziom z powierzchni” (`bridgeLevel` 0) gniazdo bierze `lv` modułu, a klasa — powierzchnię
+  i gniazda (`hullDesignLevels`); mogą się rozjechać.
+
+
 ## Jak sprawdzić
 
 - `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
@@ -153,6 +179,6 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   Bellatora i Colossusa, niedobór mocy z martwymi kablami, odmowy limitów; liczby w `raport.json` → `klasa`).
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]
   [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`), gniazdo obudowy
-  reaktora z modelem 3D (`reaktor`); raport `raport.json`
+  reaktora z modelem 3D (`reaktor`), gniazdo mostka z modelem 3D poziomu i galeria I–VI (`mostek`); raport `raport.json`
   (pipeline'y synchroniczne w klatkach — ma być 0, błędy konsoli).
 - Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html?preset=klocki`.

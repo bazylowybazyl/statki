@@ -2,7 +2,12 @@
 //
 // MODEL 3D MOSTKA — geometria i dane pomocnicze, bez three i bez DOM (testy
 // w Node: tests/bridge3D.test.mjs). Rysuje src/3d/bridge3D.js, opis w
-// docs/PORT-mostki.md §8.
+// docs/PORT-mostki.md §8 i § 10 (mostki na poziomy klas).
+//
+// RODZAJE: flota Terra Novy ma mostki NA POZIOMY klas I–VI (tn_1 … tn_6 —
+// src/data/bridgeLevels.js: obrys modelu = strefa mostka = gniazdo kreatora;
+// strefa wybiera model polem `level`), piraci, Atlas i lokomotywa
+// megafrachtowca — modele własnego kadłuba (rodzaj = kadłub + strefa).
 //
 // PRZESTRZEŃ MODELU (M): środek strefy mostka = (0, 0, 0), +X wzdłuż
 // szerokości strefy (przy rot 0 — ku dziobowi), +Y = w górę SCENY (−Y obrazka
@@ -25,6 +30,7 @@
 
 import { BRIDGE_LAYOUT_PROPOSALS, bridgeHash01 } from '../game/shipBridge.js';
 import { getHullRenderSize } from '../data/ships.js';
+import { BRIDGE_LEVELS, bridgeLevel } from '../data/bridgeLevels.js';
 
 /** Materiały (indeks palety w bridge3D.js). */
 export const BRIDGE3D_MAT = Object.freeze({
@@ -76,6 +82,32 @@ function kindSpec(index, o) {
   });
 }
 
+// Rodzaj POZIOMU (tn_1 … tn_6): rozmiar projektowy = obrys poziomu [j. świata],
+// bez sprite'a (kx = ky = 1 — model w jednostkach świata, na strefę kadłuba
+// pasuje skalą render/PNG strefy, czyli 1 przy strefie = obrys / s).
+function levelKindSpec(index, o) {
+  const lv = bridgeLevel(o.level);
+  return Object.freeze({
+    index,
+    label: o.label,
+    hull: null,
+    level: lv.level,
+    zoneId: 'mostek',
+    role: 'primary',
+    zoneAspect: lv.w / lv.h,
+    png: null,
+    render: null,
+    capacity: o.capacity ?? 128,
+    detail: o.detail ?? Math.max(0.35, Math.min(3, Math.sqrt((lv.w * lv.h) / BELLATOR_AREA))),
+    zoneX: 0,
+    zoneY: 0,
+    kx: 1,
+    ky: 1,
+    w: lv.w,
+    h: lv.h
+  });
+}
+
 /**
  * Punkty ze sprite'a do przestrzeni M: P.x(px), P.y(py) — px PNG kadłuba
  * (środek obrazka = 0, +Y w dół obrazka) → M (środek strefy, +Y w górę sceny),
@@ -94,32 +126,31 @@ export function bridgePngMap(spec) {
 
 const BELLATOR_AREA = (236 * 624 / 1158) * (92 * 385 / 714);
 
+const LEVEL_CAPACITY = [0, 256, 256, 192, 256, 96, 64];
 const KIND_DEFS = [
-  ['bellator', { label: 'Bellator — mostek', hull: 'battleship', zone: 'mostek', png: [1158, 714], profile: 'terran_battleship', capacity: 256, detail: 1 }],
+  ...BRIDGE_LEVELS.map((lv) => [lv.model, { label: `Terra Nova — mostek ${lv.roman}`, level: lv.level, capacity: LEVEL_CAPACITY[lv.level] }]),
   ['ironskull', { label: 'Iron Skull — mostek', hull: 'pirate_battleship', zone: 'mostek', png: [1727, 911], profile: 'pirate_battleship', capacity: 256, detail: 1 }],
   ['atlas_main', { label: 'Atlas — mostek rufowy', hull: 'atlas', zone: 'mostek_rufowy', png: [3747, 1677], profile: 'atlas', capacity: 160, detail: 1 }],
   ['atlas_backup', { label: 'Atlas — mostek zapasowy', hull: 'atlas', zone: 'mostek_zapasowy', png: [3747, 1677], profile: 'atlas', capacity: 160, detail: 1 }],
-  ['custos', { label: 'Custos — mostek', hull: 'frigate', zone: 'mostek', png: [2400, 1792], profile: 'terran_frigate', capacity: 256 }],
-  ['hasta', { label: 'Hasta — mostek', hull: 'destroyer', zone: 'mostek', png: [768, 573], profile: 'terran_destroyer', capacity: 256 }],
-  ['citadella', { label: 'Citadella — mostek', hull: 'terran_carrier', zone: 'mostek', png: [1672, 941], profile: 'terran_carrier', capacity: 96 }],
-  ['colossus', { label: 'Colossus — mostek', hull: 'terran_supercapital', zone: 'mostek', png: [1672, 941], profile: 'terran_supercapital', capacity: 64 }],
   ['pirate_frigate', { label: 'Fregata piratów — mostek', hull: 'pirate_frigate', zone: 'mostek', png: [1942, 809], profile: 'pirate_frigate', capacity: 256 }],
   ['pirate_destroyer', { label: 'Niszczyciel piratów — mostek', hull: 'pirate_destroyer', zone: 'mostek', png: [1840, 854], profile: 'pirate_destroyer', capacity: 256 }],
   ['pirate_supercapital', { label: 'Supercapital piratów — mostek', hull: 'pirate_supercapital', zone: 'mostek', png: [1671, 941], profile: 'pirate_supercapital', capacity: 64 }],
   ['megafreighter', { label: 'Megafrachtowiec — mostek lokomotywy', hull: 'megafreighter', zone: 'mostek', png: [1672, 941], profile: 'megafreighter', capacity: 32 }]
 ];
 
-export const BRIDGE3D_KINDS = Object.freeze(Object.fromEntries(KIND_DEFS.map(([name, o], i) => [name, kindSpec(i, o)])));
+export const BRIDGE3D_KINDS = Object.freeze(Object.fromEntries(KIND_DEFS.map(([name, o], i) => [name, o.level ? levelKindSpec(i, o) : kindSpec(i, o)])));
 
 export const BRIDGE3D_KIND_ORDER = Object.freeze(KIND_DEFS.map(([name]) => name));
 
 /**
- * Który model stoi na mostku. Kadłub z jednym rodzajem — ten rodzaj. Atlas
+ * Który model stoi na mostku. Strefa z poziomem (`level`, flota TN i projekty
+ * kreatora) — model poziomu. Kadłub z jednym rodzajem — ten rodzaj. Atlas
  * ma dwa: długi rufowy (kręgosłup) i krótki zapasowy na dziobie; strefa
  * z propozycji trafia po id, mostek zapasowy po roli, warianty edytora
  * (śródokręcie, dziobowy) — po najbliższych proporcjach strefy.
  */
 export function resolveBridgeModelKind(hullKey, def) {
+  if (def?.level >= 1) return bridgeLevel(def.level).model;
   let only = null;
   let count = 0;
   for (const name of BRIDGE3D_KIND_ORDER) {
@@ -140,6 +171,33 @@ export function resolveBridgeModelKind(hullKey, def) {
     if (d < bestD) { bestD = d; best = name; }
   }
   return best;
+}
+
+/**
+ * Model mostka na kadłubie modelu 3D okrętu (src/3d/ships3d — tryb „Statki 3D”): nazwa = rodzaj z KIND_DEFS
+ * (piraci, Atlas, lokomotywa) albo okręt floty TN (custos, hasta, bellator, citadella, colossus — model poziomu
+ * na strefie BRIDGE_LAYOUT_PROPOSALS). Wynik: { kind, png, zoneX, zoneY (środek strefy w px PNG), kx, ky
+ * (j. modelu → px PNG: 1 / kx) }.
+ */
+const TN_BRIDGE_HULLS = Object.freeze({
+  custos: ['frigate', 'terran_frigate', [2400, 1792]],
+  hasta: ['destroyer', 'terran_destroyer', [768, 573]],
+  bellator: ['battleship', 'terran_battleship', [1158, 714]],
+  citadella: ['terran_carrier', 'terran_carrier', [1672, 941]],
+  colossus: ['terran_supercapital', 'terran_supercapital', [1672, 941]]
+});
+export function bridgeModelOnHull(name) {
+  const tn = TN_BRIDGE_HULLS[name];
+  if (!tn) {
+    const k = BRIDGE3D_KINDS[name];
+    return k ? { kind: name, png: k.png, zoneX: k.zoneX, zoneY: k.zoneY, kx: k.kx, ky: k.ky } : null;
+  }
+  const [hull, profile, png] = tn;
+  const entry = BRIDGE_LAYOUT_PROPOSALS[hull];
+  const zone = (entry?.variants?.[entry.defaultVariant] || []).find((z) => z.role !== 'backup');
+  if (!zone) return null;
+  const size = getHullRenderSize(profile, png[0], png[1]);
+  return { kind: resolveBridgeModelKind(hull, zone), png, zoneX: zone.x, zoneY: zone.y, kx: size.w / png[0], ky: size.h / png[1] };
 }
 
 // ---------------------------------------------------------------------------
@@ -568,79 +626,6 @@ function strip(B, x0, x1, y, z, width, o = {}) {
 // Modele
 // ---------------------------------------------------------------------------
 
-// BELLATOR — czysta biel/szarość Terran. Na sprite'cie pod strefą: blok
-// z kwadratową wieżą (rufowa połowa) i okrągłą kopułą sensorów (dziobowa).
-function buildBellator(B, W, H) {
-  const hw = W / 2;
-  const hh = H / 2;
-
-  B.begin('podstawa', 'Pokład nadbudówki');
-  block(B, octPoly(-hw, -hh, hw, hh, 6), 0, 5, { chamfer: [2.4, 2.8], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT });
-  // Kratki wentylacji i skrzynki na pokładzie po bokach hali.
-  for (const y of [-20.4, 20.4]) {
-    boxRot(B, -28, y, 5, 9, 2.4, 0.8, 0, { mat: M.DARK });
-    boxRot(B, 12, y, 5, 6, 2.4, 0.8, 0, { mat: M.DARK });
-    boxRot(B, -46, y, 5, 4, 3, 1.4, 0, { mat: M.PANEL, chamfer: [0.4, 0.4] });
-    boxRot(B, 36, y, 5, 3.2, 2.6, 1.1, 0, { mat: M.PANEL, chamfer: [0.3, 0.3] });
-  }
-  B.end();
-
-  B.begin('hala', 'Hala dowodzenia');
-  const hall = block(B, octPoly(-50, -16.5, 54, 16.5, 3), 5, 11.5, {
-    slope: [4.5, 3.5, 3, 3.5, 4.5, 3, 2.5, 3], chamfer: [0.9, 0.9],
-    mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
-  });
-  windowRow(B, hall.body[0], { at: 0.52, paneW: 2.3, paneH: 1.25, pitch: 4.0, margin: 3, seed: 11 });
-  windowRow(B, hall.body[4], { at: 0.52, paneW: 2.3, paneH: 1.25, pitch: 4.0, margin: 3, seed: 12 });
-  // Detale dachu hali między wieżą a kopułą: właz, wywietrzniki, rury.
-  boxRot(B, -5, 4, 11.5, 8, 5, 1.3, 0, { mat: M.PANEL, chamfer: [0.4, 0.4] });
-  boxRot(B, 6, -5, 11.5, 5, 4, 1.0, 0, { mat: M.DARK });
-  boxRot(B, 3, 7.5, 11.5, 4, 2.6, 0.9, 0, { mat: M.BRIGHT });
-  boxRot(B, -9, -6.5, 11.5, 3, 3, 0.7, 0, { mat: M.DARK });
-  boxRot(B, 11, 5, 11.5, 2.4, 2.4, 1.6, 0, { mat: M.PANEL, chamfer: [0.4, 0.3] });
-  tube(B, [-12, -9.4, 12.1], [16, -9.4, 12.1], 0.55, 0.55, { seg: 6, mat: M.PANEL, capA: true });
-  tube(B, [-12, -8.0, 12.0], [14, -8.0, 12.0], 0.4, 0.4, { seg: 6, mat: M.DARK, capA: true });
-  B.end();
-
-  // Wieża: stromy korpus, na górze „korona” — faza ~45° z oknami dookoła
-  // (z góry widać ją jako jasny/ciemny pierścień szyb wokół dachu).
-  B.begin('wieza', 'Wieża dowodzenia');
-  const tower = block(B, octPoly(-44, -12.5, -15, 12.5, 2), 5, 20.5, {
-    slope: [0.8, 1.0, 1.4, 1.0, 0.8, 0.8, 0.6, 0.8],
-    chamfer: [4.2, [3.8, 3.2, 5.2, 3.2, 3.8, 3.0, 3.0, 3.0]],
-    mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
-  });
-  windowRow(B, tower.chamfer[2], { at: 0.5, paneW: 1.9, paneH: 1.6, pitch: 2.7, margin: 1.2, seed: 21, allLit: true });
-  windowRow(B, tower.chamfer[0], { at: 0.5, paneW: 1.7, paneH: 1.5, pitch: 3.0, margin: 1.8, seed: 23 });
-  windowRow(B, tower.chamfer[4], { at: 0.5, paneW: 1.7, paneH: 1.5, pitch: 3.0, margin: 1.8, seed: 24 });
-  windowRow(B, tower.chamfer[6], { at: 0.5, paneW: 1.5, paneH: 1.3, pitch: 3.6, margin: 2.4, seed: 25 });
-  boxRot(B, -26, -3.5, 20.5, 5, 4, 1.2, 0, { mat: M.PANEL, chamfer: [0.4, 0.4] });
-  B.end();
-
-  B.begin('kopula', 'Kopuła sensorów');
-  cylinder(B, 31, 0, 5, 13.2, 12.5, 12.5, { seg: 24, mat: M.PANEL });
-  cylinder(B, 31, 0, 13.2, 13.9, 11.9, 11.6, { seg: 24, mat: M.DARK });
-  dome(B, 31, 0, 13.9, 11, 7.6, { seg: 24, rings: 6, mat: M.BRIGHT });
-  cylinder(B, 31, 0, 21.0, 22.6, 1.4, 1.1, { seg: 8, mat: M.DARK });
-  B.end();
-
-  B.begin('maszt', 'Maszt i anteny');
-  block(B, rectPoly(-38.7, 5.3, -37.3, 6.7), 20.5, 30.5, { mat: M.BRIGHT });
-  block(B, rectPoly(-38.4, 2.4, -37.6, 9.6), 27.2, 27.9, { mat: M.BRIGHT });
-  beacon(B, -38, 6, 31.0, 'beacon_red', { period: 1.6 });
-  tube(B, [-22, -8, 20.5], [-22.4, -8.3, 27.5], 0.36, 0.2, { seg: 6, mat: M.BRIGHT });
-  tube(B, [9, -11, 11.5], [9.3, -11.2, 19], 0.34, 0.18, { seg: 6, mat: M.BRIGHT });
-  cylinder(B, 44, -12, 11.5, 12.2, 3.1, 2.6, { seg: 12, mat: M.BRIGHT });
-  B.end();
-
-  B.begin('czujniki', 'Kopułki czujników');
-  for (const [x, y] of [[-56, 19.4], [-56, -19.4], [56, 18.6], [52, -19.4]]) {
-    cylinder(B, x, y, 5, 5.6, 2.5, 2.4, { seg: 10, mat: M.PANEL });
-    dome(B, x, y, 5.6, 2.2, 1.8, { seg: 10, rings: 3, mat: M.BRIGHT });
-  }
-  B.end();
-}
-
 // IRON SKULL — rdza, nity, łaty, kolce. Na sprite'cie: kwadratowy bunkier
 // z najeżoną kopułą, kraty po rufowej stronie, siatka po dziobowej.
 function buildIronSkull(B, W, H) {
@@ -830,272 +815,236 @@ function buildAtlasBackup(B, W, H) {
 }
 
 // ---------------------------------------------------------------------------
-// Modele floty (Terra Nova, piraci, megafrachtowiec). Położenia cech czytane
-// ze sprite'ów w px PNG i przeliczane przez P (pngMap): P.x(px), P.y(py) →
-// przestrzeń M, P.len(d) → długość. Wysokości w jednostkach renderu.
+// TERRA NOVA — MOSTKI NA POZIOMY KLAS I–VI (src/data/bridgeLevels.js). Jeden język brył (jak dawne mostki
+// floty TN): pokład-ośmiokąt, hala z oknami na burtach, wieża z koroną okien na rufie, kopuła sensorów na
+// dziobie, maszty z lampami, kopułki czujników. Z poziomem rośnie rozmiar, piętra, rzędy okien, anteny
+// i światła: I — niska hala bez okien, wieża i jeden maszt; II — okna hali, maszt z poprzeczką i antena;
+// III — druga kondygnacja wieży i pierścień kopuły; IV — okna z przodu hali, dwa maszty, kratki pokładu;
+// V — górna hala, górny mostek nad wieżą, posterunki obserwacyjne, trzy maszty; VI — dwa rzędy okien hali,
+// krata na wieży, korona okien na sześciu ścianach, kapsuła czujników przed halą, anteny biczowe.
+// Model wypełnia obrys poziomu W × H (pokład = octPoly z fazą `ch` — tę samą fazę ma gniazdo kreatora)
+// i nic poza niego nie wystaje: obrys modelu = strefa mostka w rozgrywce (tests/bridge3D.test.mjs).
+// Układ w ułamkach pół-wymiarów (u = x / hw, v = y / hh), wysokości w j. świata, `s` — skala detali
+// okien i drobnicy (dawny Bellator = 1).
 // ---------------------------------------------------------------------------
 
-// TERRA NOVA — Custos i Hasta mają na sprite'ach ten sam blok dowodzenia:
-// kwadratową wieżę na rufie strefy, zaokrągloną płytę z pionowym włazem
-// i okrągłą kopułą przed nią. Model: wieża z koroną okien, niska hala z oknami
-// na burtach, kopuła sensorów, maszt z czerwoną lampą. `o.s` — skala detali
-// (Bellator = 1): małe okręty mają proporcjonalnie grubsze bryły, żeby
-// wysokość w ogóle czytała się z góry.
-function buildTerranCommand(B, W, H, P, o) {
+const TN_LEVEL_LOOK = Object.freeze([
+  null,
+  Object.freeze({ s: 0.42, deck: 0.9, hall: [-0.25, 0.4, 0.62, 1.6], tower: [-0.88, -0.24, 0.66, 5.8], tier: 0, dome: [0.66, 0.36], hall2: null, top: 0, posts: 0, capsule: false, masts: 1, domelets: 0, hallRows: 0, seed: 200 }),
+  Object.freeze({ s: 0.56, deck: 1.2, hall: [-0.28, 0.42, 0.66, 2.4], tower: [-0.88, -0.26, 0.64, 8.0], tier: 0, dome: [0.66, 0.34], hall2: null, top: 0, posts: 0, capsule: false, masts: 1, domelets: 2, hallRows: 1, seed: 210 }),
+  Object.freeze({ s: 0.68, deck: 1.5, hall: [-0.3, 0.44, 0.68, 3.0], tower: [-0.88, -0.28, 0.64, 8.6], tier: 11.0, dome: [0.66, 0.32], hall2: null, top: 0, posts: 0, capsule: false, masts: 2, domelets: 3, hallRows: 1, seed: 220 }),
+  Object.freeze({ s: 0.82, deck: 2.0, hall: [-0.32, 0.44, 0.7, 4.0], tower: [-0.88, -0.3, 0.62, 11.5], tier: 14.5, dome: [0.66, 0.34], hall2: null, top: 0, posts: 0, capsule: false, masts: 2, domelets: 4, hallRows: 1, front: true, vents: 2, seed: 230 }),
+  Object.freeze({ s: 1.0, deck: 2.6, hall: [-0.36, 0.48, 0.72, 4.6], tower: [-0.88, -0.34, 0.6, 16.5], tier: 0, dome: [0.72, 0.3], hall2: [-0.22, 0.3, 0.48, 3.6], top: 20.0, posts: 2, capsule: false, masts: 3, domelets: 4, hallRows: 1, front: true, vents: 2, seed: 240 }),
+  Object.freeze({ s: 1.25, deck: 3.2, hall: [-0.4, 0.4, 0.72, 6.0], tower: [-0.9, -0.38, 0.66, 26.0], tier: 0, dome: null, hall2: [-0.3, 0.3, 0.5, 5.0], top: 32.0, posts: 2, capsule: true, masts: 3, domelets: 6, hallRows: 2, front: true, vents: 4, grille: true, whips: 2, seed: 250 })
+]);
+
+function polyBox(poly) {
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const [x, y] of poly) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  return { x0, y0, x1, y1 };
+}
+
+function buildTerranLevel(B, W, H, lv) {
+  const L = TN_LEVEL_LOOK[lv];
+  const lvl = bridgeLevel(lv);
   const hw = W / 2;
   const hh = H / 2;
-  const s = o.s;
-  const deckZ = 2.0 * s;
-  const hallZ = deckZ + 3.8 * s;
-  const towerZ = deckZ + 11.5 * s;
-  const tx0 = P.x(o.tower[0]); const tx1 = P.x(o.tower[2]);
-  const ty0 = P.y(o.tower[3]); const ty1 = P.y(o.tower[1]);
-  const lx0 = P.x(o.hall[0]); const lx1 = P.x(o.hall[2]);
-  const ly0 = P.y(o.hall[3]); const ly1 = P.y(o.hall[1]);
-  const dx = P.x(o.dome[0]);
-  const dy = P.y(o.dome[1]);
-  const dr = P.len(o.dome[2]);
+  const s = L.s;
+  const ch = lvl.ch;
+  const deckZ = L.deck;
+  const X = (u) => u * hw;
+  const Y = (v) => v * hh;
 
-  B.begin('poklad', 'Pokład nadbudówki');
-  block(B, octPoly(-hw, -hh, hw, hh, 3.5 * s), 0, deckZ, { chamfer: [0.8 * s, 1.0 * s], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT });
-  // Kratki i skrzynki przy burtach strefy.
-  for (const y of [-hh + 2.6 * s, hh - 2.6 * s]) {
-    boxRot(B, (tx0 + tx1) * 0.5, y, deckZ, 6 * s, 1.8 * s, 0.6 * s, 0, { mat: M.DARK });
-    boxRot(B, lx0 + (lx1 - lx0) * 0.55, y, deckZ, 4.5 * s, 2.0 * s, 0.9 * s, 0, { mat: M.PANEL, chamfer: [0.3 * s, 0.3 * s] });
+  B.begin('poklad', 'Pokład mostka');
+  block(B, octPoly(-hw, -hh, hw, hh, ch), 0, deckZ, { chamfer: [Math.min(0.8 * s, deckZ * 0.5), 1.0 * s], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT });
+  // Kratki i skrzynki przy burtach pokładu (od IV — kratki wentylacji po obu stronach hali).
+  for (const y of [-hh + 2.4 * s, hh - 2.4 * s]) {
+    boxRot(B, X(-0.56), y, deckZ, 5 * s, 1.6 * s, 0.6 * s, 0, { mat: M.DARK });
+    boxRot(B, X(0.12), y, deckZ, 4.2 * s, 1.8 * s, 0.9 * s, 0, { mat: M.PANEL, chamfer: [0.3 * s, 0.3 * s] });
+    for (let k = 0; k < (L.vents || 0); k++) boxRot(B, X(-0.12 + k * 0.2), y, deckZ, 6 * s, 2.0 * s, 0.7 * s, 0, { mat: M.DARK, chamfer: [0.25 * s, 0.25 * s] });
   }
   B.end();
 
+  // HALA: pochyłe ściany, rzędy okien na burtach (od II), z przodu (od IV); VI — dwa rzędy.
+  const [hu0, hu1, hv, hdz] = L.hall;
+  const hallZ = deckZ + hdz;
   B.begin('hala', 'Hala dowodzenia');
-  const hall = block(B, octPoly(lx0, ly0, lx1, ly1, 2.2 * s), deckZ, hallZ, {
-    slope: [2.6 * s, 1.8 * s, 1.8 * s, 1.8 * s, 2.6 * s, 1.6 * s, 1.2 * s, 1.6 * s], chamfer: [0.5 * s, 0.6 * s],
+  const hall = block(B, octPoly(X(hu0), -Y(hv), X(hu1), Y(hv), 2.2 * s), deckZ, hallZ, {
+    // skosy z oknami (burty, przód) ~50° — z góry kamera widzi szyby tylko na skosach (n.z > 0,5)
+    slope: [0.78, 0.6, 0.72, 0.6, 0.78, 0.5, 0.4, 0.5].map((k) => k * hdz), chamfer: [0.5 * s, 0.6 * s],
     mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
   });
-  const hp = { at: 0.5, paneW: 1.9 * s, paneH: 1.0 * s, pitch: 3.2 * s, margin: 1.8 * s, frameExtra: 0.35 * s };
-  windowRow(B, hall.body[0], { ...hp, seed: o.seed + 1 });
-  windowRow(B, hall.body[4], { ...hp, seed: o.seed + 2 });
-  // Pionowy właz ze sprite'a między wieżą a kopułą.
-  const vx = P.x(o.slot[0]); const vx1 = P.x(o.slot[2]);
-  block(B, octPoly(vx, P.y(o.slot[3]) + 1.2 * s, vx1, P.y(o.slot[1]) - 1.2 * s, 0.8 * s), hallZ, hallZ + 1.1 * s, { slope: 0.3 * s, mat: M.PANEL, capMat: M.PAINT });
+  const hp = { paneW: 1.9 * s, paneH: 1.0 * s, pitch: 3.2 * s, margin: 1.8 * s, frameExtra: 0.35 * s };
+  const rows = L.hallRows === 2 ? [0.32, 0.72] : (L.hallRows ? [0.5] : []);
+  rows.forEach((at, r) => {
+    windowRow(B, hall.body[0], { ...hp, at, seed: L.seed + 1 + r * 10 });
+    windowRow(B, hall.body[4], { ...hp, at, seed: L.seed + 2 + r * 10 });
+  });
+  if (L.front) windowRow(B, hall.body[2], { ...hp, at: 0.55, pitch: 2.8 * s, seed: L.seed + 3 });
+  // Właz i skrzynki na dachu hali (bez górnej hali).
+  if (!L.hall2) {
+    const cx = X((hu0 + hu1) * 0.5);
+    block(B, octPoly(cx - 2.2 * s, -Y(hv) * 0.55, cx + 1.4 * s, Y(hv) * 0.55, 0.8 * s), hallZ, hallZ + 1.0 * s, { slope: 0.3 * s, mat: M.PANEL, capMat: M.PAINT });
+    boxRot(B, X(hu1) - 3.2 * s, Y(hv) * 0.42, hallZ, 2.6 * s, 2.0 * s, 0.8 * s, 0, { mat: M.DARK });
+  }
   B.end();
 
+  // GÓRNA HALA (V, VI): węższa kondygnacja na hali, okna na burtach (VI — też z przodu).
+  if (L.hall2) {
+    const [gu0, gu1, gv, gdz] = L.hall2;
+    B.begin('hala_gorna', 'Górna hala');
+    const up = block(B, octPoly(X(gu0), -Y(gv), X(gu1), Y(gv), 1.8 * s), hallZ, hallZ + gdz, {
+      slope: [0.78, 0.6, 0.72, 0.6, 0.78, 0.5, 0.4, 0.5].map((k) => k * gdz), chamfer: [0.5 * s, 0.6 * s],
+      mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
+    });
+    windowRow(B, up.body[0], { ...hp, at: 0.55, seed: L.seed + 4 });
+    windowRow(B, up.body[4], { ...hp, at: 0.55, seed: L.seed + 5 });
+    if (L.capsule) windowRow(B, up.body[2], { ...hp, at: 0.55, pitch: 2.8 * s, seed: L.seed + 6 });
+    for (const [u, v] of [[0.35, 0.45], [0.65, -0.4]]) boxRot(B, X(gu0 + (gu1 - gu0) * u), Y(gv) * v, hallZ + gdz, 5 * s, 2.4 * s, 0.7 * s, 0, { mat: M.DARK, chamfer: [0.25 * s, 0.25 * s] });
+    B.end();
+  }
+
+  // WIEŻA: stromy korpus, korona ~45° z oknami (przód zawsze zapalony); III–IV — druga kondygnacja z koroną.
+  const [tu0, tu1, tv, tz] = L.tower;
+  const tx0 = X(tu0); const tx1 = X(tu1); const ty = Y(tv);
+  const towerZ = tz;
+  const crownH = Math.min(3.8 * s, (towerZ - deckZ) * 0.42);
   B.begin('wieza', 'Wieża dowodzenia');
-  const tower = block(B, octPoly(tx0, ty0, tx1, ty1, 1.8 * s), deckZ, towerZ, {
+  const tower = block(B, octPoly(tx0, -ty, tx1, ty, Math.min(ty, tx1 - tx0) * 0.22), deckZ, towerZ, {
     slope: [0.9 * s, 1.0 * s, 1.4 * s, 1.0 * s, 0.9 * s, 0.8 * s, 0.6 * s, 0.8 * s],
-    chamfer: [3.8 * s, [3.4 * s, 2.9 * s, 4.8 * s, 2.9 * s, 3.4 * s, 2.7 * s, 2.7 * s, 2.7 * s]],
+    chamfer: [crownH, [crownH * 0.9, crownH * 0.76, crownH * 1.26, crownH * 0.76, crownH * 0.9, crownH * 0.7, crownH * 0.7, crownH * 0.7]],
     mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
   });
   const tp = { at: 0.5, paneW: 1.6 * s, paneH: 1.4 * s, pitch: 2.4 * s, margin: 1.0 * s, frameExtra: 0.35 * s };
-  windowRow(B, tower.chamfer[2], { ...tp, seed: o.seed + 3, allLit: true });
-  windowRow(B, tower.chamfer[0], { ...tp, pitch: 2.7 * s, seed: o.seed + 4 });
-  windowRow(B, tower.chamfer[4], { ...tp, pitch: 2.7 * s, seed: o.seed + 5 });
-  windowRow(B, tower.chamfer[6], { ...tp, paneW: 1.3 * s, pitch: 3.0 * s, seed: o.seed + 6 });
-  boxRot(B, (tx0 + tx1) * 0.5 + 0.8 * s, (ty0 + ty1) * 0.5 - 1.0 * s, towerZ, (tx1 - tx0) * 0.28, (ty1 - ty0) * 0.24, 0.9 * s, 0, { mat: M.PANEL, chamfer: [0.3 * s, 0.3 * s] });
-  B.end();
-
-  B.begin('kopula', 'Kopuła sensorów');
-  cylinder(B, dx, dy, deckZ, hallZ + 1.0 * s, dr, dr * 0.97, { seg: 20, mat: M.PANEL });
-  cylinder(B, dx, dy, hallZ + 1.0 * s, hallZ + 1.6 * s, dr * 0.92, dr * 0.9, { seg: 20, mat: M.DARK });
-  dome(B, dx, dy, hallZ + 1.6 * s, dr * 0.84, dr * 0.58, { seg: 20, rings: 5, mat: M.BRIGHT });
-  B.end();
-
-  B.begin('maszt', 'Maszt i anteny');
-  const mx = tx0 + (tx1 - tx0) * 0.3;
-  const my = ty0 + (ty1 - ty0) * 0.72;
-  block(B, rectPoly(mx - 0.45 * s, my - 0.45 * s, mx + 0.45 * s, my + 0.45 * s), towerZ, towerZ + 8.5 * s, { mat: M.BRIGHT });
-  block(B, rectPoly(mx - 0.3 * s, my - 2.8 * s, mx + 0.3 * s, my + 2.8 * s), towerZ + 6.2 * s, towerZ + 6.8 * s, { mat: M.BRIGHT });
-  beacon(B, mx, my, towerZ + 8.9 * s, 'beacon_red', { period: 1.6, size: 0.45 * s, core: 1.0 * s });
-  tube(B, [tx1 - 2.2 * s, ty0 + 2.0 * s, towerZ], [tx1 - 2.4 * s, ty0 + 1.8 * s, towerZ + 5.0 * s], 0.3 * s, 0.16 * s, { seg: 6, mat: M.BRIGHT });
-  B.end();
-
-  B.begin('czujniki', 'Kopułki czujników');
-  for (const [x, y] of [[-hw + 3.4 * s, hh - 3.0 * s], [-hw + 3.4 * s, -hh + 3.0 * s], [hw - 3.6 * s, hh - 3.0 * s]]) {
-    cylinder(B, x, y, deckZ, deckZ + 0.5 * s, 1.9 * s, 1.8 * s, { seg: 10, mat: M.PANEL });
-    dome(B, x, y, deckZ + 0.5 * s, 1.6 * s, 1.3 * s, { seg: 10, rings: 3, mat: M.BRIGHT });
+  windowRow(B, tower.chamfer[2], { ...tp, seed: L.seed + 7, allLit: true });
+  windowRow(B, tower.chamfer[0], { ...tp, pitch: 2.7 * s, seed: L.seed + 8 });
+  windowRow(B, tower.chamfer[4], { ...tp, pitch: 2.7 * s, seed: L.seed + 9 });
+  if (lv >= 2) windowRow(B, tower.chamfer[6], { ...tp, paneW: 1.3 * s, pitch: 3.0 * s, seed: L.seed + 10 });
+  if (lv >= 6) {
+    windowRow(B, tower.chamfer[1], { ...tp, margin: 0.8 * s, seed: L.seed + 11, allLit: true });
+    windowRow(B, tower.chamfer[3], { ...tp, margin: 0.8 * s, seed: L.seed + 12, allLit: true });
   }
-  B.end();
-}
-
-function buildCustos(B, W, H, P) {
-  buildTerranCommand(B, W, H, P, {
-    s: 0.44,
-    tower: [-692, -52, -600, 40],
-    hall: [-541, -64, -373, 52],
-    slot: [-512, -54, -477, 52],
-    dome: [-426, -2, 42],
-    seed: 70
-  });
-}
-
-function buildHasta(B, W, H, P) {
-  buildTerranCommand(B, W, H, P, {
-    s: 0.62,
-    tower: [-240, -19, -179, 20],
-    hall: [-175, -22, -121, 20],
-    slot: [-164, -18, -153, 18],
-    dome: [-137.5, -1, 13.5],
-    seed: 80
-  });
-}
-
-// CITADELLA — lotniskowiec Terra Nova. Na rufowym bloku cytadela w poprzek
-// kadłuba: płyta, wieża dowodzenia z koroną okien w osi (na sprite'cie
-// mechanizm) i dwa posterunki obserwacyjne z kopułami na okrągłych włazach.
-function buildCitadella(B, W, H, P) {
-  const hw = W / 2;
-  const hh = H / 2;
-  const deckZ = 1.8;
-  const plateZ = 4.4;
-  const towerZ = 16.5;
-
-  B.begin('poklad', 'Pokład cytadeli');
-  block(B, octPoly(-hw, -hh, hw, hh, 5), 0, deckZ, { chamfer: [0.6, 0.8], mat: M.PANEL, chamferMat: M.PANEL, capMat: M.PAINT });
-  B.end();
-
-  B.begin('plyta', 'Płyta cytadeli');
-  const px0 = P.x(-582); const px1 = P.x(-507);
-  const py0 = P.y(65); const py1 = P.y(-90);
-  block(B, octPoly(px0, py0, px1, py1, 7), deckZ, plateZ, { slope: 1.2, chamfer: [0.6, 0.8], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT });
-  for (const y of [-6, 6]) boxRot(B, px1 - 5, y, plateZ, 4, 3.4, 1.1, 0, { mat: M.PANEL, chamfer: [0.4, 0.4] });
-  boxRot(B, px0 + 4.5, 0, plateZ, 3, 12, 0.8, 0, { mat: M.DARK });
-  B.end();
-
-  B.begin('wieza', 'Wieża dowodzenia');
-  const tx0 = P.x(-578); const tx1 = P.x(-512);
-  const ty0 = P.y(14); const ty1 = P.y(-40);
-  const tower = block(B, octPoly(tx0, ty0, tx1, ty1, 3), plateZ, towerZ, {
-    slope: [1.0, 1.1, 1.6, 1.1, 1.0, 0.9, 0.8, 0.9],
-    chamfer: [4.0, [3.6, 3.0, 5.2, 3.0, 3.6, 2.8, 2.6, 2.8]],
-    mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
-  });
-  windowRow(B, tower.chamfer[2], { at: 0.5, paneW: 1.9, paneH: 1.6, pitch: 2.7, margin: 1.3, seed: 91, allLit: true });
-  windowRow(B, tower.chamfer[0], { at: 0.5, paneW: 1.8, paneH: 1.5, pitch: 3.0, margin: 1.8, seed: 92 });
-  windowRow(B, tower.chamfer[4], { at: 0.5, paneW: 1.8, paneH: 1.5, pitch: 3.0, margin: 1.8, seed: 93 });
-  windowRow(B, tower.chamfer[6], { at: 0.5, paneW: 1.5, paneH: 1.3, pitch: 3.4, margin: 2.2, seed: 94 });
-  // Mechanizm ze sprite'a: ciemny blok i rury na dachu wieży.
-  const tcx = (tx0 + tx1) * 0.5;
-  const tcy = (ty0 + ty1) * 0.5;
-  boxRot(B, tcx + 2, tcy - 1.5, towerZ, 11, 6, 1.2, 0, { mat: M.DARK, chamfer: [0.4, 0.4] });
-  tube(B, [tcx - 8, tcy + 5, towerZ + 0.6], [tcx + 8, tcy + 5, towerZ + 0.6], 0.55, 0.55, { seg: 6, mat: M.PANEL, capA: true });
-  B.end();
-
-  B.begin('posterunki', 'Posterunki obserwacyjne');
-  const r = P.len(20) * 0.95;
-  for (const [cx, cy, seed] of [[P.x(-550), P.y(-65), 95], [P.x(-550), P.y(42), 97]]) {
-    const post = block(B, octPoly(cx - r, cy - r, cx + r, cy + r, r * 0.42), plateZ, plateZ + 5.0, {
-      slope: 0.6, chamfer: [2.3, 2.1], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PANEL
+  let roofZ = towerZ;
+  const tb = polyBox(tower.top);
+  let R = tb;
+  // Druga kondygnacja (III, IV) albo górny mostek (V, VI): węższy blok z koroną okien na dachu wieży (w obrysie dachu).
+  const upperZ = L.tier || L.top;
+  if (upperZ) {
+    const tw = tb.x1 - tb.x0;
+    const ux0 = tb.x0 + tw * 0.06;
+    const ux1 = tb.x1 - tw * (L.grille ? 0.32 : (L.top ? 0.16 : 0.06));
+    const uy = (tb.y1 - tb.y0) * 0.5 * 0.86;
+    const uH = Math.min(3.2 * s, (upperZ - towerZ) * 0.5);
+    const upper = block(B, octPoly(ux0, -uy, ux1, uy, Math.min(uy, ux1 - ux0) * 0.2), towerZ, upperZ, {
+      slope: [0.5 * s, 0.5 * s, 0.7 * s, 0.5 * s, 0.5 * s, 0.5 * s, 0.4 * s, 0.5 * s],
+      chamfer: [uH, [uH, uH * 0.85, uH * 1.4, uH * 0.85, uH, uH * 0.75, uH * 0.6, uH * 0.75]],
+      mat: M.PANEL, chamferMat: L.top ? M.TRIM : M.PANEL, capMat: M.PAINT
     });
-    windowRow(B, post.chamfer[2], { at: 0.5, paneW: 1.5, paneH: 1.3, pitch: 2.3, margin: 0.8, seed, allLit: true });
-    windowRow(B, post.chamfer[cy > 0 ? 4 : 0], { at: 0.5, paneW: 1.5, paneH: 1.3, pitch: 2.4, margin: 0.8, seed: seed + 1 });
-    cylinder(B, cx, cy, plateZ + 5.0, plateZ + 5.7, r * 0.6, r * 0.58, { seg: 16, mat: M.DARK });
-    dome(B, cx, cy, plateZ + 5.7, r * 0.54, r * 0.42, { seg: 16, rings: 4, mat: M.BRIGHT });
+    const up = { ...tp, paneW: 1.4 * s, paneH: 1.2 * s, margin: 0.7 * s };
+    windowRow(B, upper.chamfer[2], { ...up, pitch: 2.1 * s, seed: L.seed + 13, allLit: true });
+    windowRow(B, upper.chamfer[0], { ...up, pitch: 2.6 * s, seed: L.seed + 14 });
+    windowRow(B, upper.chamfer[4], { ...up, pitch: 2.6 * s, seed: L.seed + 15 });
+    roofZ = upperZ;
+    R = polyBox(upper.top);
+  } else {
+    boxRot(B, (tb.x0 + tb.x1) * 0.5 + 0.6 * s, (tb.y0 + tb.y1) * 0.1, towerZ, (tb.x1 - tb.x0) * 0.34, (tb.y1 - tb.y0) * 0.3, 0.9 * s, 0, { mat: M.PANEL, chamfer: [0.3 * s, 0.3 * s] });
+  }
+  // Krata na dachu wieży (VI), przed górnym mostkiem.
+  if (L.grille) {
+    const gx0 = tb.x1 - (tb.x1 - tb.x0) * 0.27; const gx1 = tb.x1 - (tb.x1 - tb.x0) * 0.04;
+    const gy = (tb.y1 - tb.y0) * 0.5 * 0.7;
+    block(B, rectPoly(gx0, -gy, gx1, gy), towerZ, towerZ + 0.8 * s, { mat: M.DARK });
+    for (let k = 0; k < 7; k++) boxRot(B, (gx0 + gx1) * 0.5, -gy + gy * 2 * (k + 0.5) / 7, towerZ + 0.8 * s, gx1 - gx0 - 2 * s, 1.6 * s, 0.6 * s, 0, { mat: M.PANEL });
   }
   B.end();
 
-  B.begin('maszty', 'Maszty');
-  for (const [x, y, h, color, ph] of [[tx0 + 5, ty1 - 3.5, 11, 'beacon_red', 0], [tx0 + 5, ty0 + 3.5, 8.5, 'beacon_white', 0.4]]) {
-    block(B, rectPoly(x - 0.5, y - 0.5, x + 0.5, y + 0.5), towerZ, towerZ + h, { mat: M.BRIGHT });
-    beacon(B, x, y, towerZ + h + 0.4, color, { period: 1.8, phase: ph });
+  // KOPUŁA SENSORÓW (I–V) albo KAPSUŁA CZUJNIKÓW (VI) na dziobie strefy.
+  B.begin('kopula', L.capsule ? 'Kapsuła czujników' : 'Kopuła sensorów');
+  if (L.capsule) {
+    const cx0 = X(0.5); const cx1 = X(0.9); const cy = Y(0.42);
+    block(B, octPoly(cx0, -cy, cx1, cy, cy * 0.5), deckZ, deckZ + 5.5 * s, { slope: 1.3 * s, chamfer: [0.7 * s, 0.7 * s], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.DARK });
+    dome(B, (cx0 + cx1) * 0.5, 0, deckZ + 5.5 * s, (cx1 - cx0) * 0.36, 6.2 * s, { seg: 22, rings: 5, mat: M.BRIGHT, ry: cy * 0.62 });
+  } else {
+    const dx = X(L.dome[0]);
+    const dr = L.dome[1] * hh;
+    cylinder(B, dx, 0, deckZ, hallZ + 0.8 * s, dr, dr * 0.97, { seg: 20, mat: M.PANEL });
+    cylinder(B, dx, 0, hallZ + 0.8 * s, hallZ + 1.4 * s, dr * 0.92, dr * 0.9, { seg: 20, mat: M.DARK });
+    if (lv >= 3) cylinder(B, dx, 0, hallZ + 1.4 * s, hallZ + 1.8 * s, dr * 0.88, dr * 0.86, { seg: 20, mat: M.BRIGHT });
+    const dz = hallZ + (lv >= 3 ? 1.8 : 1.4) * s;
+    dome(B, dx, 0, dz, dr * 0.82, dr * 0.58, { seg: 20, rings: 5, mat: M.BRIGHT });
+    if (lv >= 4) cylinder(B, dx, 0, dz + dr * 0.56, dz + dr * 0.56 + 1.4 * s, 0.9 * s, 0.7 * s, { seg: 8, mat: M.DARK });
   }
-  block(B, rectPoly(tx0 + 4.6, ty1 - 7, tx0 + 5.4, ty1), towerZ + 7.4, towerZ + 8.0, { mat: M.BRIGHT });
   B.end();
+
+  // POSTERUNKI OBSERWACYJNE (V, VI): ośmiokątne budki z koroną okien i kopułką przy przednich narożnikach.
+  if (L.posts) {
+    B.begin('posterunki', 'Posterunki obserwacyjne');
+    const r = 0.15 * hh;
+    const pu = L.capsule ? 0.62 : 0.6;
+    for (const sy of [-1, 1]) {
+      const cx = X(pu); const cy = sy * (hh - r - 1.4 * s);
+      const post = block(B, octPoly(cx - r, cy - r, cx + r, cy + r, r * 0.42), deckZ, deckZ + 4.6 * s, {
+        slope: 0.5 * s, chamfer: [2.0 * s, 1.8 * s], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PANEL
+      });
+      windowRow(B, post.chamfer[2], { at: 0.5, paneW: 1.3 * s, paneH: 1.1 * s, pitch: 2.0 * s, margin: 0.6 * s, seed: L.seed + 16 + sy, allLit: true });
+      windowRow(B, post.chamfer[sy > 0 ? 4 : 0], { at: 0.5, paneW: 1.3 * s, paneH: 1.1 * s, pitch: 2.1 * s, margin: 0.6 * s, seed: L.seed + 18 + sy });
+      cylinder(B, cx, cy, deckZ + 4.6 * s, deckZ + 5.2 * s, r * 0.58, r * 0.56, { seg: 14, mat: M.DARK });
+      dome(B, cx, cy, deckZ + 5.2 * s, r * 0.52, r * 0.4, { seg: 14, rings: 4, mat: M.BRIGHT });
+    }
+    B.end();
+  }
+
+  // MASZTY: pierwszy (czerwona lampa) od I, poprzeczka od II, biały od III, trzeci (czerwony) od V; VI — anteny biczowe.
+  B.begin('maszt', 'Maszty i anteny');
+  const mastH = [0, 3.6, 5.2, 6.6, 8.4, 10.5, 14][lv];
+  const ms = 0.45 * s;
+  const rw = R.x1 - R.x0; const rh = (R.y1 - R.y0) * 0.5;
+  const mx = R.x0 + rw * (L.masts >= 3 ? 0.5 : 0.3);
+  const masts = L.masts >= 3
+    ? [[mx, -rh * 0.55, mastH, 'beacon_red', 0], [mx, rh * 0.55, mastH, 'beacon_red', 0.5], [mx - rw * 0.25, 0, mastH * 1.35, 'beacon_white', 0.25]]
+    : (L.masts === 2 ? [[mx, rh * 0.5, mastH, 'beacon_red', 0], [R.x0 + rw * 0.72, -rh * 0.45, mastH * 0.72, 'beacon_white', 0.4]] : [[mx, rh * 0.45, mastH, 'beacon_red', 0]]);
+  for (const [x, y, h, color, ph] of masts) {
+    block(B, rectPoly(x - ms, y - ms, x + ms, y + ms), roofZ, roofZ + h, { mat: M.BRIGHT });
+    beacon(B, x, y, roofZ + h + 0.4 * s, color, { period: color === 'beacon_white' ? 2.2 : 1.6, phase: ph, size: 0.45 * s + 0.1, core: 1.0 * s + 0.2 });
+  }
+  if (lv >= 2) {
+    // poprzeczka masztu (od V — między masztami burtowymi) i antena na narożniku dachu wieży
+    const [x0, y0, h0] = masts[0];
+    const yc = L.masts >= 3 ? 0 : y0;
+    const span = L.masts >= 3 ? rh * 0.55 : Math.min(2.6 * s, rh * 0.8);
+    block(B, rectPoly(x0 - 0.3 * s, yc - span, x0 + 0.3 * s, yc + span), roofZ + h0 * 0.74, roofZ + h0 * 0.74 + 0.6 * s, { mat: M.BRIGHT });
+    tube(B, [tb.x1 - 1.6 * s, tb.y0 + 1.4 * s, towerZ], [tb.x1 - 1.8 * s, tb.y0 + 1.2 * s, towerZ + mastH * 0.6], 0.3 * s, 0.16 * s, { seg: 6, mat: M.BRIGHT });
+  }
+  for (let k = 0; k < (L.whips || 0); k++) {
+    const y = (k ? 1 : -1) * rh * 0.75;
+    tube(B, [R.x0 + 1.2 * s, y, roofZ], [R.x0 + 0.9 * s, y * 1.02, roofZ + mastH * 0.8], 0.34 * s, 0.14 * s, { seg: 6, mat: M.BRIGHT });
+  }
+  B.end();
+
+  // KOPUŁKI CZUJNIKÓW przy burtach pokładu (od II: 2 na rufie, III: + dziób, IV: 4, VI: 6).
+  if (L.domelets) {
+    B.begin('czujniki', 'Kopułki czujników');
+    const r = 1.7 * s;
+    const xr = -hw + ch + r + 0.6 * s;
+    const xf = hw - ch - r - 0.6 * s;
+    const yy = hh - r - 0.8 * s;
+    const spots = [[xr, yy], [xr, -yy], [xf, yy], [xf, -yy], [X(0.0), yy], [X(0.0), -yy]].slice(0, L.domelets);
+    for (const [x, y] of spots) {
+      cylinder(B, x, y, deckZ, deckZ + 0.5 * s, r * 1.1, r * 1.05, { seg: 10, mat: M.PANEL });
+      dome(B, x, y, deckZ + 0.5 * s, r * 0.94, r * 0.76, { seg: 10, rings: 3, mat: M.BRIGHT });
+    }
+    B.end();
+  }
 }
 
-// COLOSSUS — superpancernik Terra Nova. Centralna nadbudówka: ośmiokątna
-// wieża z kratą (na dachu krata i górny mostek z koroną okien), długa
-// dwupoziomowa hala z rzędami okien i kapsuła czujników przed nią.
-function buildColossus(B, W, H, P) {
-  const hw = W / 2;
-  const hh = H / 2;
-  const deckZ = 3.2;
-  const hallZ = 12.5;
-  const hall2Z = 19.5;
-  const towerZ = 30;
-  const topZ = 37;
-
-  B.begin('poklad', 'Pokład nadbudówki');
-  block(B, octPoly(-hw, -hh, hw, hh, 12), 0, deckZ, { chamfer: [1.1, 1.3], mat: M.PANEL, chamferMat: M.PANEL, capMat: M.PAINT });
-  for (const [x, y] of [[-20, -hh + 5], [60, -hh + 5], [-20, hh - 5], [60, hh - 5]]) boxRot(B, x, y, deckZ, 22, 3, 0.9, 0, { mat: M.DARK });
-  B.end();
-
-  B.begin('hala', 'Hala');
-  const hall = block(B, octPoly(P.x(-146), P.y(38), P.x(41), P.y(-55), 9), deckZ, hallZ, {
-    slope: [5.5, 4, 5.5, 4, 5.5, 3, 3, 3], chamfer: [1.0, 1.0],
-    mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
-  });
-  windowRow(B, hall.body[0], { at: 0.5, paneW: 2.5, paneH: 1.4, pitch: 4.8, margin: 5, seed: 101 });
-  windowRow(B, hall.body[4], { at: 0.5, paneW: 2.5, paneH: 1.4, pitch: 4.8, margin: 5, seed: 102 });
-  windowRow(B, hall.body[2], { at: 0.5, paneW: 2.3, paneH: 1.4, pitch: 4.2, margin: 3.5, seed: 103 });
-  B.end();
-
-  B.begin('hala_gorna', 'Górny poziom hali');
-  const upper = block(B, octPoly(-44, -20, 96, 34, 6), hallZ, hall2Z, {
-    slope: [4.3, 3, 4.3, 3, 4.3, 3, 2.5, 3], chamfer: [1.0, 1.0],
-    mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
-  });
-  windowRow(B, upper.body[0], { at: 0.55, paneW: 2.1, paneH: 1.2, pitch: 4.2, margin: 4, seed: 104 });
-  windowRow(B, upper.body[4], { at: 0.55, paneW: 2.1, paneH: 1.2, pitch: 4.2, margin: 4, seed: 105 });
-  // Wnęki i wywietrzniki ze sprite'a.
-  for (const [x, y, w, h] of [[-22, 23, 16, 4], [18, 23, 16, 4], [-22, -9, 16, 4], [18, -9, 16, 4], [62, 7, 18, 9]]) {
-    boxRot(B, x, y, hall2Z, w, h, 0.8, 0, { mat: M.DARK, chamfer: [0.3, 0.3] });
-  }
-  B.end();
-
-  B.begin('wieza', 'Wieża dowodzenia');
-  const tx0 = P.x(-249); const tx1 = P.x(-140);
-  const ty0 = P.y(59); const ty1 = P.y(-58);
-  const tower = block(B, octPoly(tx0, ty0, tx1, ty1, 16), deckZ, towerZ, {
-    slope: [2.2, 2.4, 3.2, 2.4, 2.2, 2.0, 1.6, 2.0],
-    chamfer: [6.5, [6.0, 5.0, 8.5, 5.0, 6.0, 4.5, 4.0, 4.5]],
-    mat: M.PAINT, chamferMat: M.PANEL, capMat: M.PAINT
-  });
-  const pane = { paneW: 2.5, paneH: 2.1, pitch: 3.7, margin: 2.4 };
-  windowRow(B, tower.chamfer[2], { at: 0.5, ...pane, seed: 106, allLit: true });
-  windowRow(B, tower.chamfer[0], { at: 0.5, ...pane, seed: 107 });
-  windowRow(B, tower.chamfer[4], { at: 0.5, ...pane, seed: 108 });
-  windowRow(B, tower.chamfer[6], { at: 0.5, ...pane, pitch: 4.4, seed: 109 });
-  windowRow(B, tower.chamfer[1], { at: 0.5, ...pane, margin: 1.5, seed: 110, allLit: true });
-  windowRow(B, tower.chamfer[3], { at: 0.5, ...pane, margin: 1.5, seed: 111, allLit: true });
-  // Krata ze sprite'a na dachu wieży.
-  const gx0 = P.x(-198); const gx1 = P.x(-157);
-  const gy0 = P.y(28); const gy1 = P.y(-31);
-  block(B, rectPoly(gx0, gy0, gx1, gy1), towerZ, towerZ + 0.8, { mat: M.DARK });
-  for (let k = 0; k < 7; k++) {
-    boxRot(B, (gx0 + gx1) * 0.5, gy0 + (gy1 - gy0) * (k + 0.5) / 7, towerZ + 0.8, gx1 - gx0 - 3, 2.2, 0.7, 0, { mat: M.PANEL });
-  }
-  B.end();
-
-  B.begin('mostek', 'Górny mostek');
-  const bx0 = tx0 + 10; const bx1 = gx0 - 3;
-  const top = block(B, octPoly(bx0, -22, bx1, 22, 5), towerZ, topZ, {
-    slope: [1.2, 1.2, 1.6, 1.2, 1.2, 1.0, 1.0, 1.0],
-    chamfer: [3.4, [3.2, 2.8, 4.8, 2.8, 3.2, 2.4, 2.2, 2.4]],
-    mat: M.PANEL, chamferMat: M.TRIM, capMat: M.PAINT
-  });
-  windowRow(B, top.chamfer[2], { at: 0.5, paneW: 1.9, paneH: 1.6, pitch: 2.7, margin: 1.3, seed: 112, allLit: true });
-  windowRow(B, top.chamfer[0], { at: 0.5, paneW: 1.8, paneH: 1.5, pitch: 3.1, margin: 1.7, seed: 113 });
-  windowRow(B, top.chamfer[4], { at: 0.5, paneW: 1.8, paneH: 1.5, pitch: 3.1, margin: 1.7, seed: 114 });
-  B.end();
-
-  B.begin('kapsula', 'Kapsuła czujników');
-  const cx = P.x(68); const cy = P.y(-3);
-  const rx = P.len(14); const ry = P.len(25);
-  block(B, octPoly(P.x(39), P.y(34), P.x(86), P.y(-39), 9), deckZ, deckZ + 7, { slope: 1.6, chamfer: [0.8, 0.8], mat: M.PAINT, chamferMat: M.PANEL, capMat: M.DARK });
-  dome(B, cx, cy, deckZ + 7, rx, 8, { seg: 22, rings: 5, mat: M.BRIGHT, ry });
-  B.end();
-
-  B.begin('maszty', 'Maszty i anteny');
-  const mx = (bx0 + bx1) * 0.5 - 2;
-  for (const [y, h, color, ph] of [[-11, 13, 'beacon_red', 0], [11, 13, 'beacon_red', 0.5], [0, 19, 'beacon_white', 0.25]]) {
-    block(B, rectPoly(mx - 0.75, y - 0.75, mx + 0.75, y + 0.75), topZ, topZ + h, { mat: M.BRIGHT });
-    beacon(B, mx, y, topZ + h + 0.5, color, { period: 2.0, phase: ph, size: 0.8, core: 1.6 });
-  }
-  block(B, rectPoly(mx - 0.5, -8, mx + 0.5, 8), topZ + 14, topZ + 14.8, { mat: M.BRIGHT });
-  for (const y of [-46, 46]) {
-    cylinder(B, 132, y, deckZ, deckZ + 1.1, 5, 4.4, { seg: 14, mat: M.PANEL });
-    dome(B, 132, y, deckZ + 1.1, 4.2, 3.2, { seg: 14, rings: 3, mat: M.BRIGHT });
-  }
-  B.end();
-}
+// ---------------------------------------------------------------------------
+// Modele floty (piraci, megafrachtowiec). Położenia cech czytane
+// ze sprite'ów w px PNG i przeliczane przez P (pngMap): P.x(px), P.y(py) →
+// przestrzeń M, P.len(d) → długość. Wysokości w jednostkach renderu.
+// ---------------------------------------------------------------------------
 
 // PIRACI — wspólne: najeżona kopuła, krata chłodnic, krzywy maszt
 // z pomarańczową lampą.
@@ -1409,14 +1358,10 @@ function buildPirateSupercapital(B, W, H, P) {
 }
 
 const BUILDERS = {
-  bellator: buildBellator,
+  ...Object.fromEntries(BRIDGE_LEVELS.map((lv) => [lv.model, (B, W, H) => buildTerranLevel(B, W, H, lv.level)])),
   ironskull: buildIronSkull,
   atlas_main: buildAtlasMain,
   atlas_backup: buildAtlasBackup,
-  custos: buildCustos,
-  hasta: buildHasta,
-  citadella: buildCitadella,
-  colossus: buildColossus,
   pirate_frigate: buildPirateFrigate,
   pirate_destroyer: buildPirateDestroyer,
   pirate_supercapital: buildPirateSupercapital,

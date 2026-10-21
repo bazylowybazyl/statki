@@ -14,7 +14,7 @@ import { SHIP3D_MAT, SHIP3D_MAT_COUNT } from '../src/3d/ships3d/meshBuilder3D.js
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 import { getHullRenderSize, HULL_RENDER_PROFILES } from '../src/data/ships.js';
 import { TRAFFIC_HULLS } from '../src/data/trafficHulls.js';
-import { BRIDGE3D_KINDS } from '../src/3d/bridge3DShapes.js';
+import { bridgeModelOnHull } from '../src/3d/bridge3DShapes.js';
 
 const hulls = Object.fromEntries(AUTO3D_IDS.map((id) => [id, buildAutoHull3D(id)]));
 const pngSize = (path) => { const b = readFileSync(new URL(`../${path}`, import.meta.url)); return [b.readUInt32BE(16), b.readUInt32BE(20)]; };
@@ -90,7 +90,7 @@ test('dysze, gniazda, hangary, światła i mostki z danych gry', () => {
     assert.equal(h.lights.length, (ed?.lights?.position || []).length + (ed?.lights?.road || []).length, `${id}: światła`);
     if (t.bridge) {
       assert.equal(h.bridges.length, 1, `${id}: mostek`);
-      assert.deepEqual(BRIDGE3D_KINDS[t.bridge].png, AUTO3D_OUTLINES[t.outlineOf || id].sprite, `${id}: mostek z innego sprite'a`);
+      assert.deepEqual(bridgeModelOnHull(t.bridge).png, AUTO3D_OUTLINES[t.outlineOf || id].sprite, `${id}: mostek z innego sprite'a`);
     } else assert.equal(h.bridges.length, 0);
   }
 });

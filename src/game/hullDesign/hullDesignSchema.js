@@ -70,6 +70,7 @@
 import { HD_PARTS, expandHullPart } from './hullDesignParts.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
 import { MOUNT_SIZES, POWER_CATEGORIES, SHIP_CLASS_MAX } from '../../data/shipClasses.js';
+import { BRIDGE_LEVEL_MAX, bridgeLevel } from '../../data/bridgeLevels.js';
 import { expandHullBlocks, hullDesignGridStep, normalizeBlock } from './hullDesignBlocks.js';
 import { expandCastle, normalizeCastle } from './hullDesignCastles.js';
 
@@ -127,7 +128,11 @@ export const HD_MODULES = Object.freeze({
   // OBUDOWY Terra Novy (domyślny, `v` wpisu): ośmiokąt o apotemie r = obrys kołnierza obudowy 3D, w której gra rysuje
   // reaktor (src/3d/reactor3D.js; marker gry: hr = r w px PNG — src/data/reactorCores.js); sieć jak przy v 1
   reactor: Object.freeze({ code: 6, label: 'Reaktor', r: 24, v: 2, parts: { reactor_core: 1 } }),
-  bridge: Object.freeze({ code: 7, label: 'Mostek', w: 26, h: 19, level: 3, parts: { avionics: 2, life_support: 1 } }),
+  // mostek: v 0 — rysunek kompozytora (pas szyb, talerz radaru), 2 — GNIAZDO MOSTKA Terra Novy (domyślny, `v` wpisu):
+  // płyta pokładu w obrysie modelu 3D poziomu `lv` (I–VI, src/data/bridgeLevels.js — pół-wymiary w, h = obrys / 2,
+  // ośmiokąt z fazą poziomu), szczelina i rama; w, h i poziom wyznacza poziom mostka projektu (bridgeLevel; 0 — `lv`
+  // modułu) — normalizeHullDesign. Gra rysuje na nim model 3D poziomu (src/3d/bridge3D.js), obrys = strefa mostka
+  bridge: Object.freeze({ code: 7, label: 'Mostek', w: 26, h: 19, v: 2, level: 3, parts: { avionics: 2, life_support: 1 } }),
   vent: Object.freeze({ code: 8, label: 'Kratka', w: 14, h: 6, parts: {} }),
   hangar: Object.freeze({ code: 9, label: 'Wrota hangaru', w: 38, h: 32, parts: { hull_plate: 1 } }),
   well: Object.freeze({ code: 10, label: 'Pierścień', r: 20, parts: { hull_plate: 0.5 } }),
@@ -142,6 +147,19 @@ export const HD_MODULES = Object.freeze({
   mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } })
 });
 export const HD_MODULE_TYPES = Object.freeze(Object.keys(HD_MODULES));
+
+/**
+ * GNIAZDO MOSTKA (moduł `bridge` v 2): wokół płyty pokładu (obrys modelu) szczelina i rama — razem `rim` [j.] = (gapDu +
+ * frameDu) jd + frameK · krótszy pełny wymiar obrysu. Bryła modułu (poziom 3) sięga ramy, trasy sieci omijają ramę
+ * (pipeModuleSdf); kompozytor dzieli rim na szczelinę (gapShare) i ramę.
+ */
+export const HD_BRIDGE_SOCKET = Object.freeze({ gapDu: 0.6, frameDu: 1.8, frameK: 0.04, gapShare: 0.25 });
+/** Szczelina + rama gniazda mostka v 2 [j.] dla modułu (pół-wymiary w, h) i detalu projektu (moduł niesie ją w `rim`). */
+export function hullDesignBridgeRim(m, detail) {
+  return (HD_BRIDGE_SOCKET.gapDu + HD_BRIDGE_SOCKET.frameDu) * detail + HD_BRIDGE_SOCKET.frameK * 2 * Math.min(m.w, m.h);
+}
+/** Czy moduł to gniazdo mostka (v 2). */
+export const isBridgeSocket = (m) => m?.type === 'bridge' && m.v === 2;
 
 /** Typy gniazd modułu `mount` (gniazda hangarowe to wrota `hangar`). */
 export const HD_MOUNT_SLOTS = Object.freeze(['main', 'aux', 'missile', 'special', 'builtin']);
@@ -262,6 +280,8 @@ function normModule(m) {
   if (m.n !== undefined) out.n = clampInt(m.n, 1, 8);
   if (m.doors !== undefined) out.doors = clampInt(m.doors, 1, 6);
   if (m.mirror === false) out.mirror = false;
+  // gniazdo mostka: poziom (I–VI) — w, h z obrysu poziomu (normalizeHullDesign; poziom projektu ma pierwszeństwo)
+  if (m.type === 'bridge' && m.lv !== undefined) out.lv = clampInt(num(m.lv, 1), 1, BRIDGE_LEVEL_MAX);
   // system na stałym miejscu klasy i kadłuba (sloty presetów: hullDesignSystemSlots.js) — edytor go nie przesuwa
   if (m.lock === true) out.lock = true;
   // gniazdo broni: typ (tylko `mount`), rozmiar, broń ('' — puste; nieznana — typowa)
@@ -340,6 +360,19 @@ function normPart(p) {
   return out;
 }
 
+/**
+ * Gniazdo mostka (v 2) poziomu projektu: poziom = `bridgeLevel` projektu, gdy ma model (I–VI); 0 albo klasa ponad
+ * drabiną modeli (drednot VII, tylko NPC) — `lv` modułu (domyślnie I), więc mostki drednota mają różne poziomy.
+ * Pół-wymiary = obrys modelu poziomu / 2 (zmiana poziomu mostka w projekcie zmienia moduł). Inne moduły — bez zmian.
+ */
+export function bridgeSocketModule(m, designLevel = 0, detail = HD_DETAIL.def) {
+  if (!isBridgeSocket(m)) return m;
+  const lv = bridgeLevel(designLevel >= 1 && designLevel <= BRIDGE_LEVEL_MAX ? designLevel : (m.lv || 1));
+  const out = { ...m, lv: lv.level, w: lv.w / 2, h: lv.h / 2 };
+  out.rim = hullDesignBridgeRim(out, detail);
+  return out;
+}
+
 /** Projekt po walidacji: brakujące pola z domyślnych, bloki bez powtórzeń (najwyższy poziom komórki), v1 → v2. */
 export function normalizeHullDesign(design = {}) {
   // v1 (bez pola v albo v < 2): poziomy kadłub / nadbudówka / mostek → pancerz / nadbudówka / mostek.
@@ -353,6 +386,7 @@ export function normalizeHullDesign(design = {}) {
   }
   const detail = Math.max(HD_DETAIL.min, Math.min(HD_DETAIL.max, num(design.detail, HD_DETAIL.def)));
   const style = HD_STYLES.includes(design.style) ? design.style : 'chamfer';
+  const bridgeLv = clampInt(num(design.bridgeLevel, 0), 0, SHIP_CLASS_MAX);
   return {
     v: HD_VERSION,
     name: String(design.name || 'Projekt'),
@@ -370,12 +404,12 @@ export function normalizeHullDesign(design = {}) {
     // Okna tarasów (rząd świateł za krawędzią nadbudówki): 0 — brak (Terra Nova), 1 — pełne.
     windows: Math.max(0, Math.min(1, num(design.windows, 1))),
     // klasa okrętu (src/data/shipClasses.js): mostek I–VI, rdzeń R1–R6; 0 — z powierzchni i gniazd
-    bridgeLevel: clampInt(num(design.bridgeLevel, 0), 0, SHIP_CLASS_MAX),
+    bridgeLevel: bridgeLv,
     coreLevel: clampInt(num(design.coreLevel, 0), 0, SHIP_CLASS_MAX),
     powerPriority: normPriority(design.powerPriority),
     blocks: [...blocks.values()],
     shapes: (design.shapes || []).map((s) => normShape(s, shift)).filter(Boolean),
-    modules: (design.modules || []).map(normModule).filter(Boolean),
+    modules: (design.modules || []).map(normModule).filter(Boolean).map((m) => bridgeSocketModule(m, bridgeLv, detail)),
     decals: (design.decals || []).map((d) => normDecal(d, shift)).filter(Boolean),
     parts: (design.parts || []).map(normPart).filter(Boolean),
     grooves: (design.grooves || []).map(normGroove).filter(Boolean),
@@ -477,6 +511,13 @@ export function expandHullDesign(input) {
   for (const m of modules) {
     const def = HD_MODULES[m.type];
     if (def.level === undefined) continue;
+    if (isBridgeSocket(m)) {
+      // gniazdo mostka: płyta do ramy, ośmiokąt z fazą poziomu przesuniętą o rim (faza rośnie o rim · (2 − √2))
+      const rim = m.rim ?? hullDesignBridgeRim(m, design.detail);
+      const ch = bridgeLevel(m.lv).ch + rim * (2 - Math.SQRT2);
+      shapes.push({ kind: 'rect', op: 'add', x: m.x, y: m.y, w: m.w + rim, h: m.h + rim, r: 0, ch, rot: m.rot, level: def.level, module: m.type });
+      continue;
+    }
     const r = m.type === 'engine' ? Math.min(m.h * 0.35, 16) : Math.min(m.h * 0.55, 12);
     shapes.push({ kind: 'rect', op: 'add', x: m.x, y: m.y, w: m.w, h: m.h, r, ch: 0, rot: m.rot, level: def.level, module: m.type });
   }

@@ -33,7 +33,8 @@ import {
 } from 'three/tsl';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { srgbEncode } from '../skybake/skyGameColor.js';
-import { HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { HD_BRIDGE_SOCKET, HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { bridgeLevel } from '../../data/bridgeLevels.js';
 import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
 
 export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 160, decals: 48, maxSide: 4096, pipeRuns: 256, pipeFits: 256 });
@@ -842,6 +843,81 @@ export class HullComposer {
           modK.assign(max(modK, step(rr, R)));
           modCol.assign(select(ringBand.greaterThan(0.5), mix(vec3(0.02), hazard, ringStripe), mix(plateC.mul(0.9), vec3(0.04), vent)));
           emis.addAssign(accent.mul(vent).mul(1.4));
+        });
+      }).ElseIf(type.lessThan(7.5).and(B.w.greaterThan(1.5)), () => {
+        // v = 2 — GNIAZDO MOSTKA Terra Novy (src/data/bridgeLevels.js): płyta pokładu w obrysie modelu 3D poziomu (pół-
+        // wymiary w, h, ośmiokąt z fazą poziomu), szczelina i pancerna rama z podwójną linią, nitami i żółtymi skosami
+        // w narożnikach; na płycie mocowania modelu (poziom + 1 na burtę, od IV — także dziób i rufa) z bursztynową
+        // lampką, belki poziomu przy przednim brzegu (tyle, ile poziom) i przepust kabli w środku. Gra stawia na nim
+        // model 3D poziomu (src/3d/bridge3D.js); B.z = poziom + faza / 100 [j.]
+        const w = B.x.mul(iD), hh = B.y.mul(iD);
+        const lv = floor(B.z).toVar();
+        const chJ = fract(B.z).mul(100.0).mul(iD).toVar();
+        const rimJ = float(HD_BRIDGE_SOCKET.gapDu + HD_BRIDGE_SOCKET.frameDu).add(min(w, hh).mul(2 * HD_BRIDGE_SOCKET.frameK)).toVar();
+        const gapJ = rimJ.mul(HD_BRIDGE_SOCKET.gapShare).toVar();
+        const al = abs(lu).toVar();
+        // ośmiokąt (płaszczyzny boków i skosów — przesunięcie o d daje ramę z fazą większą o d · (2 − √2), jak bryła)
+        const deck = max(max(al.x.sub(w), al.y.sub(hh)), al.x.add(al.y).sub(w.add(hh).sub(chJ)).mul(0.70710678)).toVar();
+        If(deck.lessThan(rimJ.add(1.0)), () => {
+          const pad = clamp(deck.negate().div(0.4), 0.0, 1.0).toVar();
+          const gapO = deck.sub(gapJ).toVar();
+          const gap = clamp(gapO.negate().div(0.35), 0.0, 1.0).mul(float(1.0).sub(pad)).toVar();
+          const frameO = deck.sub(rimJ).toVar();
+          const frame = clamp(frameO.negate().div(0.5), 0.0, 1.0).mul(float(1.0).sub(gap)).mul(float(1.0).sub(pad)).toVar();
+          const fw = rimJ.sub(gapJ);
+          // nity w środku ramy (wzdłuż boku, krok 2,2 jd), podwójna linia, żółte skosy narożników
+          const along = select(al.y.sub(hh).greaterThan(al.x.sub(w)), lu.x, lu.y);
+          const midF = frameO.add(fw.mul(0.5));
+          const rivF = float(1.0).sub(smoothstep(0.18, 0.34, length(vec2(fract(along.div(2.2)).sub(0.5).mul(2.2), midF)))).mul(frame).mul(step(1.2, fw));
+          const dbl = lineN(frameO.add(fw.mul(0.28)), float(0.3)).mul(frame);
+          const diagD = al.x.add(al.y).sub(w.add(hh).sub(chJ)).mul(0.70710678);
+          const onDiag = step(max(al.x.sub(w), al.y.sub(hh)).sub(0.05), diagD).mul(frame).mul(step(frameO, fw.mul(-0.2)));
+          const stripe = step(0.5, fract(al.x.sub(al.y).div(1.4)));
+          // płyta: szwy paneli, śruby przy brzegu
+          const P = clamp(min(w, hh).mul(0.55), 3.0, 9.0);
+          const seam = max(lineN(fract(lu.x.div(P).add(0.5)).sub(0.5).mul(P), float(0.25)), lineN(lu.y, float(0.25))).mul(pad).mul(step(deck, -1.4)).toVar();
+          const boltP = float(1.0).sub(smoothstep(0.16, 0.3, length(vec2(fract(along.div(3.0)).sub(0.5).mul(3.0), deck.add(0.9))))).mul(pad);
+          // mocowania modelu: lv + 1 na burtę (rozstaw ±0,72 w), od IV — dziób i rufa
+          const n = lv.add(1.0);
+          const span = w.mul(0.72);
+          const stepX = span.mul(2.0).div(n.sub(1.0));
+          const kc = clamp(floor(lu.x.add(span).div(stepX).add(0.5)), 0.0, n.sub(1.0));
+          const dxC = lu.x.add(span).sub(kc.mul(stepX));
+          const cw = clamp(w.mul(0.05), 0.9, 3.2), chh = clamp(hh.mul(0.07), 0.7, 2.4);
+          const dyC = al.y.sub(hh.sub(chh.mul(1.7)));
+          const clampS = step(abs(dxC), cw).mul(step(abs(dyC), chh));
+          const dxF = al.x.sub(w.sub(chh.mul(1.7)));
+          const clampF = step(4.0, lv).mul(step(abs(dxF), chh)).mul(step(al.y, cw));
+          const clampK = max(clampS, clampF).mul(pad).toVar();
+          const lamp = float(1.0).sub(smoothstep(0.14, 0.3, length(select(clampS.greaterThan(0.5), vec2(dxC, dyC), vec2(dxF, lu.y))))).mul(clampK);
+          // belki poziomu (I–VI) przy przednim brzegu płyty, za mocowaniem dziobowym (rozstaw i długość z obrysu)
+          const sp = clamp(hh.mul(0.1), 1.7, 3.6), bl = clamp(hh.mul(0.1), 1.0, 3.2);
+          const ky = lu.y.div(sp).add(lv.sub(1.0).mul(0.5));
+          const kb = floor(ky.add(0.5));
+          const bx = w.sub(chh.mul(2.8)).sub(bl).sub(1.0);
+          const bar = step(abs(ky.sub(kb)), 0.27).mul(step(0.0, kb)).mul(step(kb, lv.sub(1.0)))
+            .mul(step(abs(lu.x.sub(bx)), bl)).mul(pad);
+          // przepust kabli w środku płyty (pień sieci z rdzenia)
+          const pr = clamp(hh.mul(0.22), 1.2, 3.2);
+          const rr2 = length(lu);
+          const port = step(rr2, pr).mul(pad);
+          const portRing = lineN(rr2.sub(pr), float(0.35)).mul(pad);
+          modH.addAssign(frame.mul(1.1).add(rivF.mul(0.25)).sub(gap.mul(2.2)).add(pad.mul(0.35)).add(clampK.mul(0.7)).add(boltP.mul(0.18))
+            .sub(port.mul(0.6)).add(portRing.mul(0.2)).sub(dbl.mul(0.25)).sub(seam.mul(0.15)).add(bar.mul(0.1)));
+          modK.assign(max(modK, max(frame, max(gap, pad))));
+          modSeam.assign(max(modSeam, max(lineN(frameO, float(0.35)), lineN(gapO, float(0.3))).mul(0.6)));
+          const col = mix(plateC.mul(1.02), plateC.mul(0.93), dbl).toVar();
+          col.assign(mix(col, hazard, onDiag.mul(stripe)));
+          col.assign(mix(col, trimC.mul(0.5), rivF.mul(0.6)));
+          col.assign(mix(col, vec3(0.025, 0.025, 0.024), gap));
+          col.assign(mix(col, mix(mix(plateC.mul(0.86), plateC.mul(0.74), seam), trimC.mul(0.55), boltP), pad));
+          col.assign(mix(col, metal.mul(1.6), clampK));
+          col.assign(mix(col, hazard, bar));
+          col.assign(mix(col, vec3(0.02), port));
+          col.assign(mix(col, metal.mul(1.9), portRing));
+          col.assign(mix(col, vec3(1.0, 0.6, 0.18), lamp));
+          modCol.assign(col);
+          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.2));
         });
       }).ElseIf(type.lessThan(7.5), () => {
         // mostek: pas szyb z przodu, okna burtowe, talerz radaru (szyby ciemne, świecą wg „okien” projektu)
@@ -1668,7 +1744,9 @@ export class HullComposer {
       const look = m.type === 'mount' ? _mountLook(m) : null;
       A.set(m.x, m.y, look ? look[0] : TYPE_CODE[m.type] + (chanMods.has(m) ? 0.25 : 0), m.rot || 0);
       const extra = look ? look[1] : (m.type === 'hangar' ? (m.doors || 1) : (m.v || 0));
-      B.set(m.w || 0, m.h || 0, m.r || 0, extra);
+      // gniazdo mostka (v 2): z = poziom + faza pokładu / 100 [j.] (kompozytor: floor / fract)
+      const z = m.type === 'bridge' && m.v === 2 ? (m.lv || 1) + bridgeLevel(m.lv).ch / 100 : (m.r || 0);
+      B.set(m.w || 0, m.h || 0, z, extra);
       mi++;
     }
     U.modCount.value = mi;

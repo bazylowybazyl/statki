@@ -48,6 +48,10 @@ import { createShip, loadHullAssets } from './mostki-webgpu/swiat.js';
 import { BRIDGE_DEMO_HULLS } from './mostki-webgpu/kadluby.js';
 import { createBackdrop } from './rdzen-webgpu/tlo.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
+import { Bridge3D } from '../src/3d/bridge3D.js';
+import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
+import { isBridgeSocket } from '../src/game/hullDesign/hullDesignSchema.js';
+import { bridgeLevel } from '../src/data/bridgeLevels.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
@@ -209,6 +213,7 @@ async function runBuild() {
     const t3 = performance.now();
     S.field = field; S.recipe = recipe; S.mounts = mounts; S.bake = bake;
     reactorDemoCoresFrom(field);
+    bridgeDemoAttach(field);
     S.timing = { field: t1 - t0, bake: t2 - t1, gpu: bake.ms, hull: t3 - t2, total: t3 - t0, fast: job.fast };
     S.builtRev = rev;
     placeRef();
@@ -504,7 +509,9 @@ function onDown(e) {
     const o = { type: S.moduleType, x: snap(w.x), y: Math.abs(w.y) < 10 * k ? 0 : snap(w.y), rot: 0 };
     if (def.r) o.r = Math.round(def.r * k * 10) / 10;
     if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
-    if (def.v !== undefined) o.v = def.v;   // wariant domyślny (reaktor: gniazdo obudowy)
+    if (def.v !== undefined) o.v = def.v;   // wariant domyślny (reaktor: gniazdo obudowy, mostek: gniazdo poziomu)
+    // gniazdo mostka: poziom klasy projektu (obrys modelu poziomu — normalizeHullDesign; tu dla zaznaczania)
+    if (S.moduleType === 'bridge' && o.v === 2) { const lv = bridgeLevel(S.cls?.levels.bridge || 1); o.lv = lv.level; o.w = lv.w / 2; o.h = lv.h / 2; }
     // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
     if (S.moduleType === 'thruster_side') o.rot = w.y > 0 ? Math.PI / 2 : -Math.PI / 2;
     // gniazdo broni: typ i rozmiar z panelu, limity mostka (twarde) przed postawieniem
@@ -653,6 +660,7 @@ function render(realDt, list) {
   backdrop.sync(cam, W, H);
   updateHexShips3D(cam, list, cullInfo);
   reactorDemoSync(cam);
+  bridgeDemoSync(cam);
   drawHexShips3D(ctx2d, W, H);
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
@@ -2117,6 +2125,7 @@ window.__kreator = {
     return true;
   },
   setUnderlay(on) { S.underlay = !!on; syncPanel(); return true; },
+  setBridge3D(on) { S.bridge3D = !!on; return true; },
   setNetGraph(on) { S.netGraph = !!on; syncPanel(); return true; },
   toScreen(x, y) { return { x: (x - S.cam.x) * S.cam.zoom + W * 0.5, y: (y - S.cam.y) * S.cam.zoom + H * 0.5 }; },
   async built() { await waitBuilt(); return true; },
@@ -2181,6 +2190,44 @@ function reactorDemoSync(cam) {
   reactorDemo.sync(reactorDemoCores, 0, PHYS_DT, reactorDemoOpts);
 }
 
+// ---------------------------------------------------------------------------
+// MOSTEK 3D w gnieździe (moduł `bridge` v 2): ten sam model poziomu co w grze (src/3d/bridge3D.js, rodzaje tn_1 … tn_6)
+// na kadłubie projektu. Strefy mostków = gniazda v 2 (obrys poziomu, `level`) zamontowane na belkach kadłuba projektu
+// (attachBeamBridges; skala 1 — obraz fizyki to układ projektu przesunięty o środek obrazu (cx, cy)). Haki:
+// bridgeDemoInit() przy starcie (rozgrzewka), bridgeDemoAttach(field) po budowie kadłuba, bridgeDemoSync(cam)
+// w render(); `window.__kreator.setBridge3D(false)` — samo gniazdo (bez modelu).
+const bridgeDemoList = [];
+const bridgeDemoOpts = { nowSec: 0, dt: 1 / 60, zoom: 1, cull: null, camera: null };
+function bridgeDemoInit() {
+  Bridge3D.attach(Core3D.scene);
+  Core3D.warmup.add({ name: 'mostki 3D (bridge3D)', objects: () => Bridge3D.warmupMeshes(), layer: 0, phase: 'loading' });
+  window.__kreator.bridge3D = Bridge3D;
+}
+function bridgeDemoAttach(field) {
+  const e = ship.entity;
+  if (!e?.beamHull) return;
+  const im = field.image;
+  const zones = [];
+  for (const m of field.expanded.modules) {
+    if (!isBridgeSocket(m)) continue;
+    zones.push({
+      id: `mostek_${zones.length}`, label: `Mostek ${bridgeLevel(m.lv).roman}`, x: m.x - im.cx, y: m.y - im.cy,
+      w: m.w * 2, h: m.h * 2, rot: (m.rot || 0) * 180 / Math.PI, level: m.lv
+    });
+  }
+  const hull = e.beamHull;
+  attachBeamBridges(e, zones, { scaleX: 1, scaleY: 1, pngWidth: hull.srcWidth, pngHeight: hull.srcHeight, hullKey: 'kreator' });
+}
+function bridgeDemoSync(cam) {
+  bridgeDemoList.length = 0;
+  if (S.bridge3D !== false && ship.entity?.bridgeState) bridgeDemoList.push(ship.entity);
+  bridgeDemoOpts.nowSec = S.frame * PHYS_DT;
+  bridgeDemoOpts.zoom = cam.zoom;
+  bridgeDemoOpts.cull = cullInfo;
+  bridgeDemoOpts.camera = cam;
+  Bridge3D.update(bridgeDemoList, bridgeDemoOpts);
+}
+
 (async () => {
   try {
     if (!(await Core3D.ready)) {
@@ -2199,6 +2246,7 @@ function reactorDemoSync(cam) {
     backdrop = createBackdrop(Core3D);
     composer = new HullComposer(Core3D.renderer);
     reactorDemoInit();
+    bridgeDemoInit();
     window.__composer = composer;
     await composer.prewarm();
     mark('kompozytor');

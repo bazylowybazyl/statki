@@ -9,6 +9,9 @@ paths:
   - "src/data/reactorCores.js"
   - "src/game/coreModel.js"
   - "scripts/webgpu/reaktory-gra.mjs"
+  - "src/data/bridgeLevels.js"
+  - "scripts/webgpu/mostki-gra.mjs"
+  - "tests/bridgeLevels.test.mjs"
 ---
 
 # Mostki (zniszczenie mostka = kill) i rdzeń reaktora
@@ -29,7 +32,15 @@ paths:
 
 - Mostek na WebGPU (zadanie 15, `docs/PORT-mostki.md` §8.14): JEDEN graf i materiał bryły na wszystkie rodzaje — Mesh + `InstancedBufferGeometry` na rodzaj (nie `InstancedMesh`: jego uuid wchodzi do klucza programu), dane instancji w jednym przeplecionym buforze, stałe rodzaju (obrys, paleta, skala detalu) w tablicy `uniformArray` czytanej indeksem rodzaju z instancji. Obrażenia = bufor storage u32 (bajty RGBA8 w słowie, 768 × 512 komórek; `Bridge3D.damage.data` to widok bajtów), wysyłane tylko zakresami zmienionych bloków (`_markRange`) — tekstury backend WebGPU wysyła w całości (1,5 MB na każdą zmianę). Maska słońca z `sunShadowMask.js` (`sunVisibility` / `sunFill`) w jednym miejscu grafu; okna, lampy, szczeliny `bridgeFx3D` i światła pozycyjne `shipLights3D` maski nie czytają. Model reaktora (`reactor3D.js`, graf w `reactor3D.tsl.js`) — w TSL, w grze (§ „Rdzeń reaktora w grze”, rama rdzenia `frameOf` wymagana); żar rdzeni dem heksowych (`coreFx3D.js`) usunięty 2026-10-19.
 
-- **Nowy kadłub (nowy albo podmieniony sprite okrętu) = od razu mostek**: strefa w `BRIDGE_LAYOUT_PROPOSALS`, model w `bridge3DShapes.js`, paleta w `bridge3D.js` — checklista `docs/BRIEF-mostek-nowego-kadluba.md`. Mostki ma cała flota bojowa (Terra Nova, piraci, Atlas) i lokomotywa megafrachtowca; frachtowce cywilne i myśliwce nie.
+- **Nowy kadłub (nowy albo podmieniony sprite okrętu) = od razu mostek**: strefa w `BRIDGE_LAYOUT_PROPOSALS`, model w `bridge3DShapes.js`, paleta w `bridge3D.js` — checklista `docs/BRIEF-mostek-nowego-kadluba.md` (flota TN — § 2a: strefa z poziomu klasy, bez własnego modelu). Mostki ma cała flota bojowa (Terra Nova, piraci, Atlas) i lokomotywa megafrachtowca; frachtowce cywilne i myśliwce nie.
+
+## Mostki na poziomy klas I–VI (flota Terra Novy, `src/data/bridgeLevels.js`; `docs/PORT-mostki.md` § 10)
+
+- Poziom mostka = klasa okrętu (etap 2 kreatora, `src/data/shipClasses.js`). `BRIDGE_LEVELS`: obrys `w × h` [j. świata], faza pokładu `ch`, rodzaj modelu `tn_1` … `tn_6`. Kadłuby TN: Custos I, Hasta II, Bellator IV, Citadella V, Colossus VI; III (krążownik) — tylko projekty gracza. Piraci, Atlas i lokomotywa mają modele własnego kadłuba (strefa bez `level`).
+- JEDNO ŹRÓDŁO: strefa gry TN = moduł `bridge` v 2 presetu kreatora (x, y = 0) przeliczony ramą `HD_TN_SPRITE_FRAMES` (px = x / s − dx, py = −dy), wymiary = obrys poziomu / s, pole `level`. Obrys modelu = strefa zabicia (decyzja użytkownika), skala strefa / model = 1. Przesuwasz mostek presetu TN albo zmieniasz obrys poziomu → ta sama zmiana w `BRIDGE_LAYOUT_PROPOSALS` (strażnik `tests/bridgeLevels.test.mjs`: preset = strefa, model = obrys, wzrost z poziomem, gniazdo bez kolizji z modułami presetu, strefa poza obudową reaktora i na kadłubie). Zmiana obrysu = zmiana rozgrywki (komórki strefy) — podaj ją w raporcie, tabela zmian w `PORT-mostki.md` § 10.2. Pancerz i próg strefy są wspólne dla poziomów (`BRIDGE_DEFAULTS`): mniejsza strefa = mniej komórek do zabicia, bez wyrównania pancerzem (decyzja użytkownika 2026-10-21).
+- Model wybiera `resolveBridgeModelKind`: strefa z `level` → `tn_<poziom>` (kadłub bez znaczenia — tak dostaną mostek projekty kreatora). Pole `level` przechodzi przez `normalizeBridgeDef` / `compactBridgeDef`, worker dostaje je w kopii `def` (`describeBridgeState`) — nowe pole strefy czytane przez model: tak samo przez `def`.
+- Modele: `buildTerranLevel` w `bridge3DShapes.js` — jeden język brył TN (pokład-ośmiokąt w obrysie, hala z oknami, wieża z koroną, kopuła, maszty, kopułki), wzrost piętrami, rzędami okien, antenami i lampami (tabela `TN_LEVEL_LOOK`); nic nie wystaje poza obrys. Skos z oknami ≥ ~50° (n.z > 0,5): skos hali = 0,72–0,78 jej wysokości. Wspólna paleta `TN_STYLE` (`bridge3D.js`). Modele okrętów 3D (tryb „Statki 3D”) stawiają model poziomu na strefie przez `bridgeModelOnHull`.
+- Narzędzie: `node scripts/webgpu/mostki-gra.mjs [--query renderWorker=1]` — flota TN (zbliżenie na mostek i okręt), zabicie mostka Bellatora (hulk → wrak z modelem), pirat, Atlas, pipeline'y sync strony i workera (0).
 
 ## Rdzeń reaktora w grze (2026-10-02, `src/game/reactorCoreGame.js`; logika `reactorCore.js`, obraz `src/3d/reactorBlast/` + `reactor3D.js`; `docs/webgpu/DEMO-RDZEN.md` § 7)
 
