@@ -12636,6 +12636,7 @@
           // lista szczytów pól (~20 ms) teraz, nie w klatce pierwszego wlotu w pas.
           beltWorld.setSmallBodyAnchors(smallBodies);
           beltWorld.familyPeaks();
+          wireTrafficV2BeltHoles();   // wyrwy po wydobyciu z ruchu v2 (blok „WYDOBYCIE SKAŁ”)
           // Obraz pasa: własna instancja pola z konfiguracją świata pasa (operacje wyżej dochodzą same).
           asteroidBelt = createAsteroidBelt({ world: beltWorld });
           beltWorld.onMining(() => wireAsteroidMining());   // platforma wydobywcza po pieczeniu banku skał
@@ -26801,7 +26802,10 @@
       rig.stock = PLAYER.miningCharges;
       rig.onCargo = (key, tonnes) => {
         const accepted = addToPlayerCargo({ [key]: tonnes });
-        return Number(accepted[key]) || 0;
+        const took = Number(accepted[key]) || 0;
+        // Pod ?trafficV2 urobek gracza uszczupla pas jak wyprawy NPC: rejestr w workerze ruchu → wyrwy (E3).
+        if (took > 0 && trafficV2) trafficV2.reportMining(ship.pos.x, ship.pos.y, took);
+        return took;
       };
       rig.cargoFree = () => getPlayerCargoFree();
       rig.onBlast = (x, y, energy) => {
@@ -26810,6 +26814,17 @@
         if (k > 0.05) camera.addShake(Math.min(26, 5 + 5 * Math.sqrt(Math.max(0, energy))) * k, 0.35);
       };
       window.__asteroidMining = rig;
+    }
+
+    // Wyrwy w pasie (E3, docs/PLAN-ekonomia-rynki.md § 3.3): rejestr uszczuplenia żyje w świecie ruchu v2
+    // (src/game/traffic/miningFields.js — wyprawy NPC i urobek gracza); jego wyrwy idą przez most do świata
+    // pasa (beltWorld.setHoles → pole gry i replika obrazu, także w workerze renderu). Bez ?trafficV2 pas stoi.
+    // (Funkcja, nie `let` — woła ją start świata pasa, który bywa wcześniej w pliku niż ten blok.)
+    function wireTrafficV2BeltHoles() {
+      if (!trafficV2 || !beltWorld || beltWorld.__trafficHoles) return;
+      beltWorld.__trafficHoles = true;
+      trafficV2.on('belt-holes', (list) => beltWorld.setHoles(list));
+      if (trafficV2.beltHoles.size) beltWorld.setHoles([...trafficV2.beltHoles.values()]);
     }
 
     function setMiningMode(on, quiet = false) {

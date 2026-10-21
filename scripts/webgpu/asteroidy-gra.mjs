@@ -3,6 +3,7 @@
 // zrzuty, statystyki pasa, błędy konsoli / walidacji WebGPU, kolizja z olbrzymem.
 //
 //   node scripts/webgpu/asteroidy-gra.mjs [--out katalog] [--port 5355] [--sceny pole,noc,burza,luka,luka-bez,olbrzym]
+//        (wyrwy po wydobyciu — E3: --sceny wyrwa-przed,wyrwa,wyrwa-blisko, po kolei)
 //        [--rozmiar 1920x1080] [--klatki 30] [--kolizja] [--wydajnosc]
 //
 // Strona dostaje harness (scripts/webgpu/harness-strona.js: zegar wirtualny, Math.random
@@ -99,6 +100,15 @@ const TYPES_LOG = `
   F.forEachRockInRect(0, best.x - hw, best.y - hh, best.x + hw, best.y + hh, 0, (r) => { const t = ROCK_TYPES[r.type]; cnt[t] = (cnt[t] || 0) + 1; tot++; });
   const typy = Object.entries(cnt).sort((p, q) => q[1] - p[1]).map(([t, c]) => t + ' ' + Math.round(100 * c / tot) + '%');
   console.log('[typy] ' + JSON.stringify({ r: P0.r, region: best.reg, skaly: tot, typy }));`;
+
+// Wyrwy (E3, src/game/traffic/miningFields.js): skały PLAY w kole wokół window.__wyrwaCam — w polu gry
+// (window.__beltWorld.field) i w polu obrazu (B.field, replika) — ma wyjść to samo; log [wyrwa].
+const WYRWA_LOG = (etap) => `
+  { const C = window.__wyrwaCam; const R = 9000; const licz = (F) => { let n = 0;
+      F.forEachRockInRect(0, C.x - R, C.y - R, C.x + R, C.y + R, 0, (r) => { if (Math.hypot(r.x - C.x, r.y - C.y) < R) n++; }); return n; };
+    console.log('[wyrwa] ' + JSON.stringify({ etap: '${etap}', skalyGra: licz(window.__beltWorld.field), skalyObraz: licz(B.field),
+      wyrwyGra: window.__beltWorld.field.holes.length, wyrwyObraz: B.field.holes.length,
+      gestosc: +(window.__beltWorld.field.depletedDensityAt(C.x, C.y) * 1e6).toFixed(3) })); }`;
 
 // Sceny: js — ciało funkcji async w stronie (W = world.js dema, S = pomocniki harnessu,
 // H = harness, B = pas gry). Wzory miejsc i zoom jak `setScene` dema.
@@ -247,6 +257,37 @@ export const BELT_SCENES = {
         stan: Z ? { obecna: Z.current, zegar: +Z.clock.toFixed(2) } : null,
         tu: window.beltFamilyAt?.(window.ship.pos.x, window.ship.pos.y)?.id || null }));`,
     po: `window.setMiningMode(false, true);`
+  },
+  // WYRWY po wydobyciu (E3, docs/PLAN-ekonomia-rynki.md § 3.3): rejestr uszczuplenia ruchu v2 (miningFields.js)
+  // z geometrią TEJ gry → recordExtraction w kilku komórkach (wyrobisko: środek wybrany do dna, sąsiedzi płycej)
+  // → takeHoleUpdates → window.__beltWorld.setHoles — ta sama droga co wiadomość `belt-holes` z mostu.
+  'wyrwa-przed': {
+    opis: 'Wyrwy (E3) — PRZED: oświetlony rdzeń pola pasa głównego (38,6 AU), zoom 0,1',
+    js: `const F = B.field, au = F.auToWorld; window.__popScene = { r: 38.6, zoom: 0.1, beltId: 'main' };` + TYPES_PICK + `
+         window.__wyrwaCam = { x: best.x, y: best.y, a: Math.atan2(best.y - F.sunY, best.x - F.sunX) };` + WYRWA_LOG('przed')
+  },
+  wyrwa: {
+    opis: 'Wyrwy (E3) — PO: to samo miejsce, wyrobisko z rejestru uszczuplenia (7 komórek po 8192 j.), zoom 0,1',
+    js: `const C = window.__wyrwaCam; if (!C) throw new Error('najpierw scena wyrwa-przed');
+         const M = await import('/src/game/traffic/miningFields.js');
+         const model = M.createMiningFields({ origin: window.SUN, planets: window.planets, planetAngles: window.SMALL_BODY_ANGLES });
+         const cell = model.config.cell, ix = Math.floor(C.x / cell), iy = Math.floor(C.y / cell);
+         const plan = [[0, 0, 1], [1, 0, 0.95], [2, 0, 0.75], [1, 1, 0.8], [0, 1, 0.55], [1, -1, 0.5], [-1, 0, 0.35]];
+         for (const [dx, dy, frac] of plan) { const x = (ix + dx + 0.5) * cell, y = (iy + dy + 0.5) * cell;
+           const c = M.recordExtraction(model, x, y, 1e-6); M.recordExtraction(model, x, y, c.reserve * frac); }
+         const holes = M.takeHoleUpdates(model) || []; window.__wyrwaHoles = holes;
+         window.__beltWorld.setHoles(holes);
+         const zgodnosc = { au: [model.au, window.AU_IN_WORLD_UNITS], gestosc: [model.field.densityAt(C.x, C.y), window.__beltWorld.field.densityAt(C.x, C.y)],
+           rodzina: [model.field.familyAt(C.x, C.y)?.id || null, window.__beltWorld.field.familyAt(C.x, C.y)?.id || null] };
+         console.log('[wyrwa] rejestr ' + JSON.stringify({ wyrwy: holes.map((h) => [h.id, +h.depth.toFixed(2)]),
+           zasobKomorki: Math.round(model.cells.values().next().value.reserve), zgodnosc }));
+         S.cam(C.x, C.y, 0.1);` + WYRWA_LOG('po')
+  },
+  'wyrwa-blisko': {
+    opis: 'Wyrwy (E3) — brzeg wyrobiska w skali gry: Atlas na skraju wyrwy, zoom 0,35',
+    js: `const C = window.__wyrwaCam; if (!C) throw new Error('najpierw scena wyrwa');
+         const x = C.x - 6500, y = C.y - 2500; DevScene.teleport(x, y, 0); S.cam(x, y, 0.35);` + WYRWA_LOG('blisko'),
+    po: `if (window.__wyrwaHoles) window.__beltWorld.setHoles(window.__wyrwaHoles.map((h) => ({ ...h, depth: 0 })));`
   },
   olbrzym: {
     opis: 'Olbrzym w polu (scena 4 dema): Labirynt na obrzeżu gęstego pola, statek u wlotu trasy, zoom 0,3',
@@ -520,7 +561,7 @@ async function main() {
       report.sceny.push({ scena: id, opis: sc.opis, blad: error, sekundy: (Date.now() - t0) / 1000, stats, perf, bledy: errors.slice(0, 30) });
       console.log(`  ${id.padEnd(8)} ${error ? 'BŁĄD ' + error : 'ok'} | skały ${stats.rocks.join('/')} min. ${stats.minerals} | światła ${stats.lights} (statki ${stats.shipLights}, skały ${stats.rockLights}) | mapy cienia ${stats.shadowMaps} | kolumny ${stats.volumeColumns} | pas ${stats.active ? 'aktywny' : 'śpi'} | CPU pasa ${stats.cpuMs?.toFixed?.(2)} ms | ${perf.drawCalls} dc, GPU ${perf.gpuMs} ms | pipeline sync ${perf.pipelineSync} | błędy ${errors.length}`);
       if (errors.length) console.log('     ' + errors.slice(0, 6).join('\n     '));
-      const sceneLog = logs.all().filter((l) => /\[(luka|pop|typy)/.test(l));
+      const sceneLog = logs.all().filter((l) => /\[(luka|pop|typy|wyrwa)/.test(l));
       if (sceneLog.length) console.log('     ' + sceneLog.join('\n     '));
     }
     if (args.kolizja) report.kolizja = await kolizja(ev, cdp);

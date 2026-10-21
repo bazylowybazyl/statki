@@ -34,6 +34,7 @@ import { createFleetRegistry } from './transportCompanies.js';
 import { buildCarriers, TONS_PER_SHIP_HOUR } from './carrierRoster.js';
 import { createShipyardRegistry, tickShipyards } from './shipyards.js';
 import { createAgentRegistry, buildMerchants } from './agentFleets.js';
+import { createMiningFields, miningFieldSpecs } from './miningFields.js';
 import {
   addMarket, destroyMarketStation, smallBodyMarketPlacement, worldCapacityFromGame
 } from './markets.js';
@@ -79,26 +80,13 @@ export function trafficOutposts(options = {}) {
   return [...smallBodyOutposts(options), ...PIRATE_OUTPOSTS];
 }
 
-/** Pola wydobywcze z definicji pasów. Kuiper to jedyne źródło rudy uranu w układzie. */
-export function trafficFields(belts = BELT_DEFINITIONS) {
-  const mainBelt = belts.find(belt => belt.id === 'main');
-  const kuiper = belts.find(belt => belt.id === 'kuiper');
-  return [
-    {
-      id: 'belt-main', label: 'Pas Główny',
-      orbitAU: (mainBelt.innerAU + mainBelt.outerAU) / 2, angle: 1.9,
-      innerAU: mainBelt.innerAU, outerAU: mainBelt.outerAU, arcSpread: 0.85,
-      yields: { iron_ore: 1, silicon_ore: 1, copper_ore: 1, titanium_ore: 1, raw_crystal: 1 },
-      extractionSeconds: 600
-    },
-    {
-      id: 'belt-kuiper', label: 'Pas Kuipera',
-      orbitAU: (kuiper.innerAU + kuiper.outerAU) / 2, angle: 4.2,
-      innerAU: kuiper.innerAU, outerAU: kuiper.outerAU, arcSpread: 0.7,
-      yields: { uranium_ore: 1, ice: 1, raw_crystal: 1 },
-      extractionSeconds: 900
-    }
-  ];
+/**
+ * Pola wydobywcze z danych pasa (`miningFields.js`): sektory pasa głównego i Kuipera, Hildy, Trojańczycy —
+ * skład z przystanków `types`, położenie z pola skał gry. Kuiper to jedyne źródło rudy uranu w układzie
+ * (wynika ze składu pasa). `options` — geometria jak `buildTrafficWorld` (`origin`, `planetAngles`, `angleFor`…).
+ */
+export function trafficFields(belts = BELT_DEFINITIONS, options = {}) {
+  return miningFieldSpecs({ ...options, angleFor: options.angleFor || DEFAULT_ANGLE_FOR, belts });
 }
 
 /** Kąty planet skryptu pomiarowego — rozstawione, żeby planety nie stały w linii. */
@@ -160,6 +148,9 @@ export function buildTrafficWorld(options = {}) {
 
   // ---------- sieć ----------
   // Sama geometria i pola wydobywcze; węzły stacji dokłada `addMarket`.
+  // Pola wydobywcze z danych pasa (E3, miningFields.js): pole skał z tą samą geometrią co sieć i gra —
+  // rejestr uszczuplenia i wyrwy żyją w tym modelu, wyprawy planuje z niego dyspozytor.
+  const mining = options.fields ? null : createMiningFields({ ...options, angleFor: options.angleFor || DEFAULT_ANGLE_FOR });
   const network = buildTravelNetwork({
     beltEdgeAu: getOutermostBeltEdgeAu(BELT_DEFINITIONS),
     angleFor: options.angleFor || DEFAULT_ANGLE_FOR,
@@ -168,7 +159,7 @@ export function buildTrafficWorld(options = {}) {
     planetScale: options.planetScale,
     sunRadius: options.sunRadius,
     stations: false,
-    fields: options.fields || trafficFields()
+    fields: options.fields || mining.fields
   });
 
   // ---------- części świata ----------
@@ -202,6 +193,7 @@ export function buildTrafficWorld(options = {}) {
     piracyEnabled,
     economyScale,
     piracy,
+    mining,
     rng,
     ...(options.directorOptions || {})
   });

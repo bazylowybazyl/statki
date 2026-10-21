@@ -165,3 +165,19 @@ export function courseNumber(courseId) {
   const tail = id.slice(dash + 1);
   return /^\d+$/.test(tail) ? Number(tail) : NaN;
 }
+
+/**
+ * PAS W EKONOMII (E3, docs/PLAN-ekonomia-rynki.md § 3.3) — uszczuplenie pasa i wyrwy
+ * (`traffic/miningFields.js`). Osobna tabela, bo `TRAFFIC_MSG` rozbudowuje rynek.
+ *
+ * GRA → WORKER
+ *   belt-mined { x, y, tons }       urobek platformy gracza (ładownia) w punkcie świata gry —
+ *                                   ten sam rejestr uszczuplenia co wyprawy NPC
+ * WORKER → GRA
+ *   belt-holes { holes, full }      zmienione wyrwy `[{ id, x, y, r, depth }]` (depth 0 = usunięta);
+ *                                   `full` — pełna lista (po `ready`), inaczej tylko zmiany od ostatniej
+ */
+export const BELT_MSG = Object.freeze({
+  MINED: 'belt-mined',
+  HOLES: 'belt-holes'
+});
