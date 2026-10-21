@@ -6,7 +6,7 @@
 // projektem do odrysowania). NIC nie jest wpięte do gry.
 //
 // Serwowanie: `npm run dev` → /dema/kreator-kadluba-webgpu.html
-//   ?preset=citadella|custos|hasta|bellator|colossus|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty
+//   ?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty
 //   ?clean=1 (bez paneli)   ?test=1 (klatki z __kreator.runFrames — skrypt scripts/webgpu/kreator-kadluba-demo.mjs)
 import { Core3D } from '../src/3d/core3d.js';
 import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D } from '../src/3d/hexShips3D.js';
@@ -28,6 +28,11 @@ import { buildHullField, hullCells, hullFieldScale, polyShapeLoop, rasterHullAlp
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 import { RESOURCES } from '../src/data/resources.js';
 import { getHullRenderSize } from '../src/data/ships.js';
+import {
+  HD_BLOCK_PALETTE, HD_BLOCK_ROT_STEP, HD_BLOCK_TUNE, blockLocalLoops, blockRotStep, blockWorldLoops, hullBlockFromPalette,
+  hullBlockPaletteId, hullBlockPaletteUnit, snapBlockRot
+} from '../src/game/hullDesign/hullDesignBlocks.js';
+import { isPlayerBuildable } from '../src/game/hullDesign/hullDesignBuildable.js';
 import { createShip, loadHullAssets } from './mostki-webgpu/swiat.js';
 import { BRIDGE_DEMO_HULLS } from './mostki-webgpu/kadluby.js';
 import { createBackdrop } from './rdzen-webgpu/tlo.js';
@@ -47,7 +52,7 @@ window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.r
 
 // Kadłub dzisiejszej gry do porównania (A/B) — ten sam okręt (Terra Nova) albo podobna klasa.
 const REF_FOR = {
-  custos: 'frigate', hasta: 'destroyer', bellator: 'battleship', citadella: 'terran_carrier', colossus: 'terran_supercapital', tnparts: 'battleship', tnparts2: 'battleship',
+  custos: 'frigate', klocki: 'frigate', hasta: 'destroyer', bellator: 'battleship', citadella: 'terran_carrier', colossus: 'terran_supercapital', tnparts: 'battleship', tnparts2: 'battleship',
   orbis: 'terran_carrier', atlas2: 'atlas', pirate: 'pirate_battleship', empty: 'battleship'
 };
 const REF_KEYS = ['frigate', 'destroyer', 'battleship', 'terran_carrier', 'terran_supercapital', 'atlas', 'pirate_battleship', 'pirate_destroyer'];
@@ -148,6 +153,7 @@ function buildShipEntity(field, bake, mounts) {
 
 /** Przebudowa (zlewana): `fast` — 1 teksel/j. (przeciąganie), inaczej 2 teksele/j. */
 function requestBuild(fast = false) {
+  if (!fast && !S.drag) histCommit();
   S.rev++;
   S.pending = { fast };
   if (!S.busy) runBuild();
@@ -179,6 +185,7 @@ async function runBuild() {
     S.builtRev = rev;
     placeRef();
     updateRecipe();
+    updateBlockStats();
   } catch (err) {
     reportError(err.stack || String(err));
     S.builtRev = rev;
@@ -276,6 +283,8 @@ function pick(wx, wy) {
     } else if (t.kind === 'module') {
       const def = HD_MODULES[o.type];
       dist = def.r ? Math.hypot(wx - o.x, yy - o.y) - (o.r || def.r) : rectDist(wx, yy, o.x, o.y, o.w, o.h, o.rot);
+    } else if (o.kind === 'block') {
+      dist = Math.max(0, loopDistance(blockWorldLoops(o, t.mirrored), wx, wy));
     } else if (o.kind === 'poly') {
       const loop = polyLoopOf(o, t.mirrored);
       dist = Math.abs(loopDistance(loop, wx, wy));
@@ -346,6 +355,7 @@ function moveObj(p, dx, dy) {
 }
 function scaleObj(p, k) {
   const o = p.obj;
+  if (o.kind === 'block') { o.w *= k; o.h *= k; snapBlock(o); return; }   // klocek: wymiary na siatce
   if (p.kind === 'part') { o.s = Math.max(0.02, Math.min(20, o.s * k)); return; }
   if (p.kind === 'castle') { o.w = Math.max(4, o.w * k); o.h = Math.max(4, o.h * k); return; }
   if (p.kind === 'groove') { o.w = Math.max(0.3, Math.min(8, o.w * k)); return; }
@@ -366,6 +376,7 @@ function scaleObj(p, k) {
 function rotateObj(p, a) {
   const o = p.obj;
   const s = p.mirrored ? -1 : 1;
+  if (o.kind === 'block') { o.rot = snapBlockRot((o.rot || 0) + Math.sign(a) * s * HD_BLOCK_ROT_STEP); snapBlock(o); return; }   // klocek: co 45°
   if (p.kind === 'decal' && o.kind === 'stripe') {
     const cx = (o.x0 + o.x1) * 0.5, cy = (o.y0 + o.y1) * 0.5;
     const r = (x, y) => { const dx = x - cx, dy = y - cy; return [cx + dx * Math.cos(a * s) - dy * Math.sin(a * s), cy + dx * Math.sin(a * s) + dy * Math.cos(a * s)]; };
@@ -402,6 +413,7 @@ function onDown(e) {
     return;
   }
   if (e.button !== 0) return;
+  if (S.tool === 'klocek') { blockDown(e, w); return; }
   const d = design();
   const tool = S.tool;
   if (tool === 'poly' || tool === 'groove' || tool === 'pipe') { addPolyPoint(w.x, w.y, e.shiftKey); return; }
@@ -518,6 +530,7 @@ function onMove(e) {
   m.wx = w.x; m.wy = w.y;
   const dr = S.drag;
   if (!dr) return;
+  if (dr.kind === 'blk') { blockDrag(dr, w, e); return; }
   if (dr.kind === 'paint' || dr.kind === 'erase') {
     const [bx, by] = blockAt(w.x, w.y);
     const key = `${bx},${by}`;
@@ -543,6 +556,7 @@ function onUp() {
   if (S.drag) {
     const dr = S.drag;
     S.drag = null;
+    if (dr.kind === 'blk') blockUp(dr);
     if (dr.kind === 'stripeEnd' && Math.hypot(dr.obj.x1 - dr.obj.x0, dr.obj.y1 - dr.obj.y0) < 4) design().decals.splice(design().decals.indexOf(dr.obj), 1);
     requestBuild(false);
   }
@@ -599,7 +613,7 @@ function render(realDt, list) {
   drawHexShips3D(ctx2d, W, H);
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
-  if (!document.body.classList.contains('clean')) drawEditor(cam);
+  if (!document.body.classList.contains('clean')) { drawEditor(cam); drawBlocks(cam); }
   updateHud();
 }
 
@@ -746,7 +760,7 @@ function drawEditor(cam) {
     }
     // bryły
     for (const s of S.field.expanded.shapes) {
-      if (s.module) continue;
+      if (s.module || (s.blockSet && S.tool === 'klocek')) continue;
       ctx2d.strokeStyle = s.op === 'cut' ? '#ff5a52aa' : LEVEL_COLORS[s.level] + 'aa';
       ctx2d.setLineDash(s.op === 'cut' ? [4, 4] : []);
       ctx2d.beginPath();
@@ -866,7 +880,7 @@ function drawEditor(cam) {
     if (p) {
       ctx2d.fillStyle = '#ffffffcc';
       ctx2d.font = '11px "Segoe UI", system-ui, sans-serif';
-      const shapeName = { circle: 'koło', rect: 'prostokąt', poly: 'wielokąt' };
+      const shapeName = { circle: 'koło', rect: 'prostokąt', poly: 'wielokąt', block: 'klocek' };
       const name = p.kind === 'castle' ? `kasztel ${Math.round(p.obj.w * 2)} × ${Math.round(p.obj.h * 2)} j. · ${p.obj.tiers} piętra${p.obj.clip !== undefined ? ' · na płytach' : ''}` : p.kind === 'pipe' ? `rura (${p.obj.pts.length} pkt, ${p.obj.n} w wiązce, ×${(p.obj.r || 1).toFixed(2)})` : p.kind === 'groove' ? `rowek (${p.obj.pts.length} pkt, ${p.obj.w.toFixed(1)} jd)` : p.kind === 'module' ? HD_MODULES[p.obj.type].label : (p.kind === 'part' ? `część: ${HD_PARTS[p.obj.id].label} (×${p.obj.s.toFixed(2)})` : (p.kind === 'shape' ? `${shapeName[p.obj.kind]} ${p.obj.op === 'cut' ? '(wycięcie)' : ''} · ${HD_LEVEL_NAMES[p.obj.level]}` : `naklejka: ${p.obj.kind}`));
       ctx2d.fillText(`${name}  — PPM usuwa`, m.x + 14, m.y - 10);
     }
@@ -946,6 +960,7 @@ function syncPanel() {
   $('zoom-05').classList.toggle('on', Math.abs(S.cam.zoom - 0.5) < 1e-3);
   $('zoom-1').classList.toggle('on', Math.abs(S.cam.zoom - 1) < 1e-3);
   $('sel-ref').value = S.refKey || '';
+  syncBlockPanel();
 }
 
 function fit() {
@@ -967,6 +982,8 @@ function setZoom(z) {
 async function loadPreset(key) {
   S.presetKey = key;
   S.design = hullDesignPreset(key);
+  S.blkSel.clear();
+  histReset();
   $('sel-preset').value = key;
   requestBuild(false);
   await waitBuilt();
@@ -1133,6 +1150,536 @@ function loop(nowMs) {
   requestAnimationFrame(loop);
 }
 
+// ---------------------------------------------------------------------------
+// KLOCKI (narzędzie N): paleta prostych kształtów na siatce projektu (src/game/hullDesign/hullDesignBlocks.js).
+// LPM na pustym — postaw klocek z palety (klik: rozmiar domyślny, przeciąganie: pudło), LPM na klocku — zaznacz
+// i przesuń (z przyciąganiem do siatki), Shift+klik — dodaj / zdejmij z zaznaczenia, Ctrl+przeciąganie — zaznacz
+// ramką, uchwyty — rozmiar; R / Shift+R — obrót o 90° / 45°, F — odbicie, X — wycięcie, 1–4 — poziom, Del — usuń,
+// Ctrl+D — duplikat obok, strzałki — krok siatki, Esc — bez zaznaczenia; Ctrl+Z / Ctrl+Y — cofnij / ponów (każda
+// zmiana projektu, nie tylko klocki).
+S.blkPal = 'rect';
+S.blkSel = new Set();
+S.blkCut = false;
+
+const blkGrid = () => S.design?.grid || 1;
+const isBlock = (o) => o?.kind === 'block';
+const designBlocks = () => (S.design?.shapes || []).filter(isBlock);
+const snapG = (v, g = blkGrid()) => Math.round(v / g) * g;
+const blkSelected = () => designBlocks().filter((b) => S.blkSel.has(b));
+
+// Historia projektu: zrzut JSON po każdej zakończonej zmianie (requestBuild bez przeciągania), cofanie / ponawianie.
+const HIST = { stack: [], idx: -1, max: 160 };
+function histReset() {
+  HIST.stack = S.design ? [JSON.stringify(S.design)] : [];
+  HIST.idx = HIST.stack.length - 1;
+}
+function histCommit() {
+  if (!S.design) return;
+  const j = JSON.stringify(S.design);
+  if (HIST.stack[HIST.idx] === j) return;
+  HIST.stack.length = HIST.idx + 1;
+  HIST.stack.push(j);
+  if (HIST.stack.length > HIST.max) HIST.stack.shift();
+  HIST.idx = HIST.stack.length - 1;
+}
+function histGo(step) {
+  const i = HIST.idx + step;
+  if (i < 0 || i >= HIST.stack.length) return false;
+  HIST.idx = i;
+  S.design = normalizeHullDesign(JSON.parse(HIST.stack[i]));
+  S.blkSel.clear();
+  S.rev++;
+  S.pending = { fast: false };
+  if (!S.busy) runBuild();
+  syncPanel();
+  return true;
+}
+
+/** Klocek pod punktem (najwyżej leżący — ostatni na liście): { b, mirrored } albo null. */
+function blockHit(wx, wy) {
+  const list = designBlocks();
+  for (let i = list.length - 1; i >= 0; i--) {
+    const b = list[i];
+    for (const m of mirrorOn(b) ? [false, true] : [false]) if (loopDistance(blockWorldLoops(b, m), wx, wy) <= 0) return { b, mirrored: m };
+  }
+  return null;
+}
+
+/** Przekształcenie układu klocka → świat (kopia lustra: y → −y). */
+function blockXf(b, mirrored = false) {
+  const c = Math.cos(b.rot || 0), s = Math.sin(b.rot || 0), fx = b.flip ? -1 : 1, fy = mirrored ? -1 : 1;
+  return {
+    toW: (lx, ly) => [b.x + lx * fx * c - ly * s, (b.y + lx * fx * s + ly * c) * fy],
+    toL: (wx, wy) => { const dx = wx - b.x, dy = wy * fy - b.y; return [(dx * c + dy * s) * fx, -dx * s + dy * c]; }
+  };
+}
+
+/** Klocek na siatce: wymiary i parametry co krok, krawędzie pudła na siatce (obrót co 90°) albo środek co pół kroku. */
+function snapBlock(b) {
+  const g = blkGrid(), k = blockRotStep(b.rot);
+  b.rot = snapBlockRot(b.rot);
+  b.w = Math.max(g, snapG(b.w)); b.h = Math.max(g, snapG(b.h));
+  if (k % 2 === 0) {
+    const Wb = k % 4 === 0 ? b.w : b.h, Hb = k % 4 === 0 ? b.h : b.w;
+    b.x = snapG(b.x - Wb / 2) + Wb / 2; b.y = snapG(b.y - Hb / 2) + Hb / 2;
+  } else { b.x = snapG(b.x, g / 2); b.y = snapG(b.y, g / 2); }
+  if (b.shape === 'trap') {
+    b.a = snapG(b.a || 0); b.b = snapG(b.b || 0);
+    if (b.a + b.b > b.w) b.b = b.w - b.a;
+  } else if (b.shape === 'tri') b.a = Math.max(0, Math.min(b.w, snapG(b.a || 0, g / 2)));
+  if (b.c) {
+    const lim = Math.floor(Math.min(b.w, b.h) / 2 / g) * g;
+    b.c = b.c.map((v) => Math.max(0, Math.min(lim, snapG(v))));
+  }
+  return b;
+}
+
+/** Nowy klocek z palety w pudle [x0, x1] × [y0, y1] (świat, obrót 0); parametry palety przeskalowane do pudła. */
+function paletteBlock(id, x0, y0, x1, y1) {
+  const g = blkGrid();
+  const p = HD_BLOCK_PALETTE.find((q) => q.id === id) || HD_BLOCK_PALETTE[0];
+  const Wb = Math.max(g, Math.abs(x1 - x0)), Hb = Math.max(g, Math.abs(y1 - y0));
+  const b = { kind: 'block', shape: p.shape, x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: Wb, h: Hb, rot: 0, level: S.level, op: S.blkCut ? 'cut' : 'add' };
+  if (p.shape === 'trap') {
+    // skosy trapezu względem wysokości (paleta: 45°)
+    let a = (p.a / p.h) * Hb, bb = (p.b / p.h) * Hb;
+    if (a + bb > Wb - g) { const k = (Wb - g) / Math.max(1e-6, a + bb); a *= k; bb *= k; }
+    b.a = a; b.b = bb;
+  } else if (p.shape === 'tri') b.a = (p.a / p.w) * Wb;
+  else if (p.c) b.c = p.c.map((v) => (v / p.h) * Math.min(Wb, Hb));
+  if (p.arc) b.arc = p.arc;
+  if (p.ri) b.ri = p.ri;
+  return snapBlock(b);
+}
+
+/** Domyślne pudło klocka palety przy punkcie (przyciągnięte, przy osi — na osi). */
+function paletteBox(id, wx, wy) {
+  const p = HD_BLOCK_PALETTE.find((q) => q.id === id) || HD_BLOCK_PALETTE[0];
+  const u = hullBlockPaletteUnit(blkGrid(), S.design?.detail || 0.6);
+  const Wb = p.w * u, Hb = p.h * u;
+  const x0 = snapG(wx - Wb / 2);
+  const y0 = S.design?.mirror && Math.abs(wy) < 10 / S.cam.zoom ? -Hb / 2 : snapG(wy - Hb / 2);
+  return [x0, y0, x0 + Wb, y0 + Hb];
+}
+
+/** Uchwyty rozmiaru zaznaczonego klocka: [{ hx, hy, x, y }] (świat). */
+function blockHandles(b, mirrored = false) {
+  const X = blockXf(b, mirrored);
+  const out = [];
+  for (const hy of [-1, 0, 1]) for (const hx of [-1, 0, 1]) {
+    if (!hx && !hy) continue;
+    const [x, y] = X.toW(hx * b.w / 2, hy * b.h / 2);
+    out.push({ hx, hy, x, y });
+  }
+  return out;
+}
+
+function blockDown(e, w) {
+  const d = design();
+  const ctrl = e.ctrlKey || e.metaKey;
+  // uchwyt zaznaczonego klocka
+  const sel = blkSelected();
+  if (sel.length === 1) {
+    const b = sel[0];
+    for (const m of mirrorOn(b) ? [false, true] : [false]) {
+      for (const h of blockHandles(b, m)) {
+        const [sx, sy] = [(h.x - S.cam.x) * S.cam.zoom + W * 0.5, (h.y - S.cam.y) * S.cam.zoom + H * 0.5];
+        if (Math.hypot(sx - e.clientX, sy - e.clientY) <= 7) {
+          S.drag = { kind: 'blk', mode: 'resize', b, h, mirrored: m, orig: { ...b, c: b.c ? b.c.slice() : undefined } };
+          return;
+        }
+      }
+    }
+  }
+  const hit = blockHit(w.x, w.y);
+  if (hit && !ctrl) {
+    if (e.shiftKey) { if (S.blkSel.has(hit.b)) S.blkSel.delete(hit.b); else S.blkSel.add(hit.b); }
+    else if (!S.blkSel.has(hit.b)) { S.blkSel.clear(); S.blkSel.add(hit.b); }
+    const orig = new Map();
+    for (const b of blkSelected()) orig.set(b, { x: b.x, y: b.y });
+    S.drag = { kind: 'blk', mode: 'move', wx: w.x, wy: w.y, orig, mirrored: hit.mirrored };
+    syncBlockPanel();
+    return;
+  }
+  if (ctrl) { S.drag = { kind: 'blk', mode: 'marquee', a: [w.x, w.y], b: [w.x, w.y], add: e.shiftKey }; return; }
+  S.drag = { kind: 'blk', mode: 'place', a: [w.x, w.y], b: [w.x, w.y], sx: e.clientX, sy: e.clientY, rubber: false };
+  void d;
+}
+
+function blockDrag(dr, w, e) {
+  if (dr.mode === 'move') {
+    const dx = snapG(w.x - dr.wx), dy = snapG((w.y - dr.wy) * (dr.mirrored ? -1 : 1));
+    let changed = false;
+    for (const [b, o] of dr.orig) {
+      if (b.x !== o.x + dx || b.y !== o.y + dy) changed = true;
+      b.x = o.x + dx; b.y = o.y + dy;
+    }
+    if (changed) requestBuild(true);
+  } else if (dr.mode === 'resize') {
+    const b = dr.b, o = dr.orig, g = blkGrid();
+    const X = blockXf(o, dr.mirrored);
+    const [lx, ly] = X.toL(w.x, w.y);
+    let x0 = -o.w / 2, x1 = o.w / 2, y0 = -o.h / 2, y1 = o.h / 2;
+    if (dr.h.hx > 0) x1 = x0 + Math.max(g, snapG(lx - x0)); else if (dr.h.hx < 0) x0 = x1 - Math.max(g, snapG(x1 - lx));
+    if (dr.h.hy > 0) y1 = y0 + Math.max(g, snapG(ly - y0)); else if (dr.h.hy < 0) y0 = y1 - Math.max(g, snapG(y1 - ly));
+    const [cx, cy] = blockXf(o, false).toW((x0 + x1) / 2, (y0 + y1) / 2);
+    b.x = cx; b.y = cy; b.w = x1 - x0; b.h = y1 - y0;
+    // parametry kształtu: skosy 45° trapezu zostają 45°, wierzchołek trójkąta proporcjonalnie, fazy w granicach
+    if (b.shape === 'trap') {
+      b.a = Math.abs(Math.abs(o.a || 0) - o.h) < 1e-6 ? Math.sign(o.a) * b.h : (o.a || 0);
+      b.b = Math.abs(Math.abs(o.b || 0) - o.h) < 1e-6 ? Math.sign(o.b) * b.h : (o.b || 0);
+    } else if (b.shape === 'tri') b.a = (o.a || 0) / o.w * b.w;
+    snapBlock(b);
+    requestBuild(true);
+  } else {
+    dr.b = [w.x, w.y];
+    if (dr.mode === 'place' && Math.hypot(e.clientX - dr.sx, e.clientY - dr.sy) > 6) dr.rubber = true;
+  }
+}
+
+function blockUp(dr) {
+  const d = design();
+  if (dr.mode === 'place') {
+    const box = dr.rubber
+      ? [snapG(Math.min(dr.a[0], dr.b[0])), snapG(Math.min(dr.a[1], dr.b[1])), snapG(Math.max(dr.a[0], dr.b[0])), snapG(Math.max(dr.a[1], dr.b[1]))]
+      : paletteBox(S.blkPal, dr.a[0], dr.a[1]);
+    const b = paletteBlock(S.blkPal, ...box);
+    d.shapes.push(b);
+    S.blkSel.clear();
+    S.blkSel.add(b);
+  } else if (dr.mode === 'marquee') {
+    const x0 = Math.min(dr.a[0], dr.b[0]), x1 = Math.max(dr.a[0], dr.b[0]), y0 = Math.min(dr.a[1], dr.b[1]), y1 = Math.max(dr.a[1], dr.b[1]);
+    if (!dr.add) S.blkSel.clear();
+    for (const b of designBlocks()) {
+      for (const m of mirrorOn(b) ? [false, true] : [false]) {
+        const y = m ? -b.y : b.y;
+        if (b.x >= x0 && b.x <= x1 && y >= y0 && y <= y1) S.blkSel.add(b);
+      }
+    }
+  }
+  syncBlockPanel();
+}
+
+/** Środek pudła zaznaczenia (przyciągnięty do pół kroku siatki). */
+function selCenter(list) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const b of list) { x0 = Math.min(x0, b.x); x1 = Math.max(x1, b.x); y0 = Math.min(y0, b.y); y1 = Math.max(y1, b.y); }
+  const g = blkGrid() / 2;
+  return [snapG((x0 + x1) / 2, g), snapG((y0 + y1) / 2, g)];
+}
+
+/** Obrót zaznaczenia o `steps` × 45° (jeden klocek — w miejscu, grupa — wokół środka). */
+function blkRotate(steps) {
+  const sel = blkSelected();
+  if (!sel.length) return;
+  const a = steps * HD_BLOCK_ROT_STEP;
+  const [cx, cy] = selCenter(sel);
+  for (const b of sel) {
+    if (sel.length > 1) {
+      const dx = b.x - cx, dy = b.y - cy;
+      b.x = cx + dx * Math.cos(a) - dy * Math.sin(a);
+      b.y = cy + dx * Math.sin(a) + dy * Math.cos(a);
+    }
+    b.rot = snapBlockRot((b.rot || 0) + a);
+    snapBlock(b);
+  }
+  requestBuild();
+}
+
+/** Odbicie zaznaczenia lewo-prawo na ekranie (klocek: flip + obrót przeciwny; grupa — względem środka). */
+function blkFlip() {
+  const sel = blkSelected();
+  if (!sel.length) return;
+  const [cx] = selCenter(sel);
+  for (const b of sel) {
+    b.flip = !b.flip;
+    b.rot = snapBlockRot(-(b.rot || 0));
+    if (sel.length > 1) b.x = 2 * cx - b.x;
+    snapBlock(b);
+  }
+  requestBuild();
+}
+
+function blkDelete() {
+  const d = design();
+  if (!S.blkSel.size) return;
+  d.shapes = d.shapes.filter((s) => !S.blkSel.has(s));
+  S.blkSel.clear();
+  requestBuild();
+  syncBlockPanel();
+}
+
+/** Duplikat zaznaczenia tuż obok (przesunięty o szerokość zaznaczenia wzdłuż x). */
+function blkDuplicate() {
+  const d = design();
+  const sel = blkSelected();
+  if (!sel.length) return;
+  let x0 = Infinity, x1 = -Infinity;
+  for (const b of sel) for (const [x] of blockWorldLoops(b)[0]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); }
+  const dx = snapG(x1 - x0);
+  S.blkSel.clear();
+  for (const b of sel) {
+    const c = { ...b, x: b.x + dx, c: b.c ? b.c.slice() : undefined };
+    if (!c.c) delete c.c;
+    d.shapes.push(c);
+    S.blkSel.add(c);
+  }
+  requestBuild();
+}
+
+function blkNudge(dx, dy) {
+  for (const b of blkSelected()) { b.x += dx; b.y += dy; }
+  requestBuild();
+}
+
+function blkToggleCut() {
+  const sel = blkSelected();
+  if (!sel.length) { S.blkCut = !S.blkCut; syncBlockPanel(); return; }
+  const cut = sel.some((b) => b.op !== 'cut');
+  for (const b of sel) { b.op = cut ? 'cut' : 'add'; if (cut) delete b.gap; }
+  requestBuild();
+  syncBlockPanel();
+}
+
+function onBlockKey(e) {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+  const k = e.key.toLowerCase();
+  const ctrl = e.ctrlKey || e.metaKey;
+  const stop = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+  if (ctrl && (k === 'z' || k === 'y')) { histGo(k === 'y' || e.shiftKey ? 1 : -1); stop(); return; }
+  if (S.tool !== 'klocek') return;
+  const g = blkGrid();
+  if (ctrl && k === 'd') { blkDuplicate(); stop(); return; }
+  if (ctrl) return;
+  if (k === 'r') { blkRotate(e.shiftKey ? 1 : 2); stop(); return; }
+  if (k === 'f') { blkFlip(); stop(); return; }
+  if (k === 'x') { blkToggleCut(); stop(); return; }
+  if (k === 'delete' || k === 'backspace') { blkDelete(); stop(); return; }
+  if (k === 'escape') { S.blkSel.clear(); syncBlockPanel(); stop(); return; }
+  const arrows = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
+  if (arrows[k]) { const s = (e.shiftKey ? 4 : 1) * g; blkNudge(arrows[k][0] * s, arrows[k][1] * s); stop(); return; }
+  if (k >= '1' && k <= '4' && S.blkSel.size) {
+    for (const b of blkSelected()) b.level = Number(k) - 1;
+    requestBuild();               // S.level ustawia zwykły skrót (ACTIONS)
+  }
+}
+
+const LEVEL_FILL = ['#9a8f8033', '#7fb3ff22', '#ffd27a22', '#ff8a7a22'];
+function blockPath(loops, toS) {
+  ctx2d.beginPath();
+  for (const l of loops) {
+    l.forEach(([x, y], i) => { const [sx, sy] = toS(x, y); if (i) ctx2d.lineTo(sx, sy); else ctx2d.moveTo(sx, sy); });
+    ctx2d.closePath();
+  }
+}
+
+/** Nakładka klocków: siatka, oś lustra, obrysy klocków (kopia lustra przerywana), zaznaczenie, uchwyty, podgląd. */
+function drawBlocks(cam) {
+  const d = design();
+  if (!d || !S.field) return;
+  const tool = S.tool === 'klocek';
+  const toS = (x, y) => [(x - cam.x) * cam.zoom + W * 0.5, (y - cam.y) * cam.zoom + H * 0.5];
+  const g = blkGrid();
+  ctx2d.save();
+  if (tool && S.grid && g * cam.zoom >= 5) {
+    const w0 = worldOf(0, 0), w1 = worldOf(W, H);
+    ctx2d.lineWidth = 1;
+    for (const major of [false, true]) {
+      const st = major ? g * 4 : g;
+      if ((w1.x - w0.x) / st > 600) continue;
+      ctx2d.strokeStyle = major ? '#9fc6d628' : '#9fc6d610';
+      ctx2d.beginPath();
+      for (let x = Math.floor(w0.x / st) * st; x <= w1.x; x += st) { const [sx] = toS(x, 0); ctx2d.moveTo(Math.round(sx) + 0.5, 0); ctx2d.lineTo(Math.round(sx) + 0.5, H); }
+      for (let y = Math.floor(w0.y / st) * st; y <= w1.y; y += st) { const [, sy] = toS(0, y); ctx2d.moveTo(0, Math.round(sy) + 0.5); ctx2d.lineTo(W, Math.round(sy) + 0.5); }
+      ctx2d.stroke();
+    }
+  }
+  // oś lustra (zawsze w narzędziu Klocki)
+  if (d.mirror && (tool || S.grid)) {
+    const [, sy] = toS(0, 0);
+    ctx2d.strokeStyle = tool ? '#ffb54acc' : '#ffb54a40';
+    ctx2d.lineWidth = tool ? 1.4 : 1;
+    ctx2d.setLineDash([10, 6]);
+    ctx2d.beginPath(); ctx2d.moveTo(0, sy); ctx2d.lineTo(W, sy); ctx2d.stroke();
+    ctx2d.setLineDash([]);
+    if (tool) { ctx2d.fillStyle = '#ffb54a'; ctx2d.font = '11px "Segoe UI", system-ui, sans-serif'; ctx2d.fillText('oś lustra', 12, sy - 5); }
+  }
+  if (tool || S.blkSel.size) {
+    for (const b of designBlocks()) {
+      const sel = S.blkSel.has(b);
+      for (const m of mirrorOn(b) ? [false, true] : [false]) {
+        blockPath(blockWorldLoops(b, m), toS);
+        if (sel && !m) { ctx2d.fillStyle = '#ffffff18'; ctx2d.fill('evenodd'); }
+        else if (tool && !m) { ctx2d.fillStyle = b.op === 'cut' ? '#ff5a5222' : LEVEL_FILL[b.level]; ctx2d.fill('evenodd'); }
+        ctx2d.strokeStyle = b.op === 'cut' ? '#ff5a52dd' : (sel ? '#ffffff' : LEVEL_COLORS[b.level] + (m ? '66' : 'cc'));
+        ctx2d.lineWidth = sel ? 1.8 : 1;
+        ctx2d.setLineDash(m || b.op === 'cut' ? [4, 4] : []);
+        ctx2d.stroke();
+        ctx2d.setLineDash([]);
+      }
+    }
+    const sel = blkSelected();
+    if (sel.length === 1 && tool) {
+      ctx2d.fillStyle = '#ffffff';
+      ctx2d.strokeStyle = '#0b1218';
+      for (const h of blockHandles(sel[0])) {
+        const [sx, sy] = toS(h.x, h.y);
+        ctx2d.fillRect(sx - 4, sy - 4, 8, 8);
+        ctx2d.strokeRect(sx - 4.5, sy - 4.5, 9, 9);
+      }
+      const b = sel[0];
+      const [sx, sy] = toS(b.x, b.y);
+      ctx2d.font = '11px ui-monospace, Consolas, monospace';
+      ctx2d.fillStyle = '#ffffffdd';
+      ctx2d.fillText(`${blockLabel(b)} ${fmtJ(b.w)} × ${fmtJ(b.h)} j. · ${Math.round(blockRotStep(b.rot) * 45)}°${b.flip ? ' · odbity' : ''}`, sx + 10, sy - 10);
+    }
+  }
+  const dr = S.drag;
+  if (tool && dr?.kind === 'blk' && (dr.mode === 'marquee' || (dr.mode === 'place' && dr.rubber))) {
+    const [ax, ay] = toS(dr.a[0], dr.a[1]), [bx, by] = toS(dr.b[0], dr.b[1]);
+    ctx2d.strokeStyle = dr.mode === 'marquee' ? '#ffffffaa' : LEVEL_COLORS[S.level];
+    ctx2d.setLineDash([5, 4]);
+    ctx2d.strokeRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+    ctx2d.setLineDash([]);
+    if (dr.mode === 'place') {
+      const box = [snapG(Math.min(dr.a[0], dr.b[0])), snapG(Math.min(dr.a[1], dr.b[1])), snapG(Math.max(dr.a[0], dr.b[0])), snapG(Math.max(dr.a[1], dr.b[1]))];
+      blockPath(blockWorldLoops(paletteBlock(S.blkPal, ...box)), toS);
+      ctx2d.strokeStyle = S.blkCut ? '#ff5a52' : '#ffffff';
+      ctx2d.stroke();
+    }
+  } else if (tool && !dr && !blockHit(S.mouse.wx, S.mouse.wy)) {
+    // podgląd klocka palety pod kursorem (+ kopia lustra)
+    const b = paletteBlock(S.blkPal, ...paletteBox(S.blkPal, S.mouse.wx, S.mouse.wy));
+    for (const m of d.mirror ? [false, true] : [false]) {
+      blockPath(blockWorldLoops(b, m), toS);
+      ctx2d.strokeStyle = (S.blkCut ? '#ff5a52' : LEVEL_COLORS[S.level]) + (m ? '66' : 'ee');
+      ctx2d.setLineDash(m ? [3, 4] : [6, 3]);
+      ctx2d.stroke();
+      ctx2d.setLineDash([]);
+    }
+  }
+  ctx2d.restore();
+}
+
+const fmtJ = (v) => (Math.round(v * 100) / 100).toLocaleString('pl-PL');
+function blockLabel(b) {
+  const p = HD_BLOCK_PALETTE.find((q) => q.id === hullBlockPaletteId(b));
+  return `${p ? p.label.toLowerCase() : b.shape}${b.op === 'cut' ? ' (wycięcie)' : ''} · ${HD_LEVEL_NAMES[b.level]}`;
+}
+
+/** Ikona wpisu palety (SVG z wielokąta klocka). */
+function paletteIcon(id) {
+  const loops = blockLocalLoops(hullBlockFromPalette(id, 1));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const l of loops) for (const [x, y] of l) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const k = Math.min(34 / (x1 - x0), 18 / (y1 - y0));
+  const ox = 20 - (x0 + x1) / 2 * k, oy = 12 - (y0 + y1) / 2 * k;
+  const dpath = loops.map((l) => `M${l.map(([x, y]) => `${(x * k + ox).toFixed(1)},${(y * k + oy).toFixed(1)}`).join('L')}Z`).join('');
+  return `<svg viewBox="0 0 40 24" aria-hidden="true"><path d="${dpath}" fill="#c9c4b9" fill-rule="evenodd" stroke="#f2efe8" stroke-width="0.8"/></svg>`;
+}
+
+function syncBlockPanel() {
+  const el = $('blk-palette');
+  if (!el) return;
+  for (const btn of el.querySelectorAll('button')) btn.classList.toggle('on', btn.dataset.id === S.blkPal);
+  $('tool-klocek').classList.toggle('on', S.tool === 'klocek');
+  const sel = blkSelected();
+  $('blk-cut').classList.toggle('on', sel.length ? sel.every((b) => b.op === 'cut') : S.blkCut);
+  const gap = sel.length ? (sel[0].gap ?? HD_BLOCK_TUNE.gapDu) : HD_BLOCK_TUNE.gapDu;
+  $('inp-gap').value = String(gap);
+  $('lbl-gap').textContent = `szczelina ${gap} jd${sel.length ? '' : ' (domyślna)'}`;
+  $('blk-undo').disabled = HIST.idx <= 0;
+  $('blk-redo').disabled = HIST.idx >= HIST.stack.length - 1;
+  updateBlockStats();
+}
+
+/** Panel: powierzchnia kadłuba, liczba klocków (i z lustrem), gniazda uzbrojenia, strażnik „bez czitowania”. */
+function updateBlockStats() {
+  const el = $('blk-stats');
+  if (!el || !S.field || !S.design) return;
+  const blocks = designBlocks();
+  const copies = blocks.reduce((n, b) => n + (mirrorOn(b) && Math.abs(b.y) > 1e-6 ? 2 : 1), 0);
+  const mods = S.field.expanded.modules;
+  const cnt = (t) => mods.filter((m) => m.type === t).length;
+  const sockets = cnt('turret_s') + cnt('turret_m') + cnt('turret_l');
+  const b = S.field.bounds;
+  const bp = isPlayerBuildable(S.design);
+  const sel = blkSelected();
+  el.innerHTML = [
+    `kadłub ${Math.round(b.maxX - b.minX)} × ${Math.round(b.maxY - b.minY)} j. · powierzchnia <b>${Math.round(S.field.area).toLocaleString('pl-PL')} j.²</b>`,
+    `klocki <b>${blocks.length}</b>${copies !== blocks.length ? ` (z lustrem ${copies})` : ''} · gniazda <b>${sockets}</b> (S ${cnt('turret_s')} · M ${cnt('turret_m')} · L ${cnt('turret_l')})`,
+    `siatka ${fmtJ(blkGrid())} j. · zaznaczone ${sel.length}${sel.length === 1 ? ` — ${blockLabel(sel[0])}` : ''}`,
+    bp.ok ? '<span style="color:var(--good)">✓ do zbudowania w edytorze gracza</span>'
+      : `<span style="color:var(--warn)">⚠ poza edytorem gracza: ${bp.violations.length} (${bp.violations[0].text})</span>`
+  ].join('<br>');
+}
+
+function bindBlockPanel() {
+  const el = $('blk-palette');
+  el.innerHTML = HD_BLOCK_PALETTE.map((p) => `<button data-id="${p.id}" title="${p.label}">${paletteIcon(p.id)}</button>`).join('');
+  for (const btn of el.querySelectorAll('button')) {
+    btn.addEventListener('click', () => { S.blkPal = btn.dataset.id; S.tool = 'klocek'; syncPanel(); });
+  }
+  $('tool-klocek').addEventListener('click', () => { S.tool = 'klocek'; syncPanel(); });
+  $('blk-cut').addEventListener('click', () => { S.tool = 'klocek'; blkToggleCut(); syncPanel(); });
+  $('blk-del').addEventListener('click', () => blkDelete());
+  $('blk-rot').addEventListener('click', () => blkRotate(2));
+  $('blk-rot45').addEventListener('click', () => blkRotate(1));
+  $('blk-flip').addEventListener('click', () => blkFlip());
+  $('blk-dup').addEventListener('click', () => blkDuplicate());
+  $('blk-undo').addEventListener('click', () => histGo(-1));
+  $('blk-redo').addEventListener('click', () => histGo(1));
+  const gap = $('inp-gap');
+  gap.min = '0'; gap.max = String(HD_BLOCK_TUNE.gapDu * 3); gap.step = '1';
+  gap.addEventListener('input', () => {
+    for (const b of blkSelected()) if (b.op !== 'cut') b.gap = Number(gap.value);
+    $('lbl-gap').textContent = `szczelina ${gap.value} jd`;
+    requestBuild(true);
+  });
+  gap.addEventListener('change', () => requestBuild(false));
+  window.addEventListener('keydown', onBlockKey, true);
+  ACTIONS.n = () => { S.tool = 'klocek'; };
+  window.__kreator.blk = {
+    tool() { S.tool = 'klocek'; syncPanel(); return true; },
+    palette(id) { S.blkPal = id; syncPanel(); return true; },
+    select(idx) { S.blkSel.clear(); const list = designBlocks(); for (const i of idx) if (list[i]) S.blkSel.add(list[i]); syncPanel(); return S.blkSel.size; },
+    rotate(steps) { blkRotate(steps); return true; },
+    flip() { blkFlip(); return true; },
+    undo() { return histGo(-1); },
+    redo() { return histGo(1); },
+    hist() { return { idx: HIST.idx, n: HIST.stack.length }; },
+    buildable() { return isPlayerBuildable(S.design); },
+    area() { return S.field?.area || 0; },
+    count() { return designBlocks().length; },
+    sheet() { S.design = normalizeHullDesign(blockSheet()); S.blkSel.clear(); histReset(); requestBuild(false); return true; }
+  };
+}
+
+/**
+ * ARKUSZ PALETY (zrzuty): każdy kształt w trzech ustawieniach (0°, 45°, 90° z odbiciem) na płycie ramy, pod nimi
+ * szczelina: trzy płyty stykające się (rowy), trzy z gap 0 (jedna płyta), dwie nachodzące, wycięcie płyty, nadbudówka.
+ */
+function blockSheet() {
+  const g = 0.5, D = 0.09, u = hullBlockPaletteUnit(g, D);
+  const shapes = [{ kind: 'block', shape: 'rect', x: -6, y: 7, w: 156, h: 62, level: 0 }];
+  HD_BLOCK_PALETTE.forEach((p, i) => {
+    const x = -72 + i * 13;
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, -14) });
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, 0), rot: HD_BLOCK_ROT_STEP });
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, 14), rot: 2 * HD_BLOCK_ROT_STEP, flip: true });
+  });
+  const r = (x0, x1, o = {}) => ({ kind: 'block', shape: 'rect', x: (x0 + x1) / 2, y: 28, w: x1 - x0, h: 8, level: 1, ...o });
+  shapes.push(r(-76, -66), r(-66, -56), r(-56, -46));
+  shapes.push(r(-40, -30, { gap: 0 }), r(-30, -20, { gap: 0 }), r(-20, -10, { gap: 0 }));
+  shapes.push(r(-4, 10), r(6, 20));
+  shapes.push(r(26, 46), { kind: 'block', shape: 'rect', x: 36, y: 28, w: 8, h: 3, level: 1, op: 'cut' });
+  shapes.push(r(52, 70), { kind: 'block', shape: 'trap', x: 61, y: 28, w: 12, h: 4, a: 2, b: 2, level: 2 });
+  return {
+    v: 2, name: 'Arkusz palety klocków', style: 'chamfer', mirror: false, palette: 'terra', seed: 3, detail: D, grid: g,
+    windows: 0, bevel: 1.9, round: 1, panels: 0.55, blocks: [], shapes, modules: [], decals: []
+  };
+}
+
 // API konsoli / harnessu.
 window.__kreator = {
   ready: false, S,
@@ -1205,6 +1752,7 @@ window.__kreator = {
     mark('kompozytor');
     bindPanel();
     bindInput();
+    bindBlockPanel();
     await loadPreset(HD_PRESETS[S.presetKey] ? S.presetKey : 'citadella');
     mark('projekt');
     await Core3D.warmup.flush?.({ timeoutMs: 6000 });
