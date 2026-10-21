@@ -106,7 +106,7 @@ const smooth01 = (t) => { const x = clamp(t, 0, 1); return x * x * (3 - 2 * x); 
 export function pipeModuleSdf(m, x, y) {
   const def = HD_MODULES[m.type];
   if (def.r) {
-    const k = m.type.startsWith('turret_') ? 1.22 : 1.04;
+    const k = m.type.startsWith('turret_') || m.type === 'mount' ? 1.22 : 1.04;
     return Math.hypot(x - m.x, y - m.y) - (m.r || def.r) * k;
   }
   let dx = x - m.x, dy = y - m.y;
@@ -414,7 +414,8 @@ function insideDepthSampler(field, S, mirror, pre = null, slack = 0) {
  * moduły rozwinięte, projekt). Zwraca { runs: [{ net ('feed' | 'supply' | 'power' | 'manual'), radii [jd], halfW [jd],
  * gap, rMax, mat (0 mix, 1 stal, 2 miedź, 3 kable), over, phase [j.], count, n, polys: [[[x, y], …], …] (kopia lustra
  * w tym samym biegu), ends: [[węzeł A, węzeł B], …] (na łamaną) }], fits: [{ type, x, y, rot, hw, hh [jd], p1, p2 }],
- * graph: { nodes: [{ x, y, dev (indeks modułu w field.expanded.modules przy przyłączu; −1 — węzeł), net }] },
+ * graph: { nodes: [{ x, y, dev (indeks modułu w field.expanded.modules przy przyłączu; −1 — węzeł), net }] }, mirror
+ * (sieć liczona na burcie y < 0 i odbita — każdy moduł poza osią ma bliźniaka),
  * channels (indeksy gondol MAIN z kanałem serwisowym — kompozytor rysuje kanał), clampJ [j.], stats }.
  */
 export function buildPipeNetwork(field, tuneIn = {}) {
@@ -1191,7 +1192,7 @@ export function buildPipeNetwork(field, tuneIn = {}) {
   }
   const channels = [];
   modules.forEach((m, i) => { if (engChan.has(m)) channels.push(i); });
-  return { runs, fits, graph, channels, clampJ: T.clampDu * D, detail: D, stats };
+  return { runs, fits, graph, channels, mirror, clampJ: T.clampDu * D, detail: D, stats };
 }
 
 /**
@@ -1671,6 +1672,61 @@ function autoFittings(net, list, fits, ctx) {
     fits.push(f);
     if (mirror && Math.abs(f.y) > 0.5 * D) fits.push({ ...f, y: -f.y, rot: -f.rot, mirrorOf: true });
   }
+}
+
+/**
+ * MARTWE KABLE (etap 2 — bilans mocy rdzenia, src/game/hullDesign/hullDesignClass.js): sieć z biegami kabli bez prądu
+ * oznaczonymi `dead: true` (kompozytor rysuje je szare, bez opasek). `dead` — zbiór indeksów modułów
+ * (field.expanded.modules) bez prądu. Drzewo sieci zasilania od przyłączy reaktorów (węzły z `dev` = reaktor): bieg jest
+ * martwy, gdy za nim (w stronę urządzeń) nie ma żadnego urządzenia z prądem. Bieg z kopią lustra, którego burty różnią
+ * się stanem, dzieli się na dwa biegi (te same parametry, łamane i końce rozdzielone) — raster czyta numer biegu, więc po
+ * zmianie trzeba go policzyć od nowa (rasterPipeNetwork). Nie zmienia `net`: zwraca nową sieć (ta sama geometria, graf
+ * i osprzęt; `base` — sieć bez oznaczeń). Pusty `dead` — `net` bez zmian.
+ */
+export function markPipeNetPower(net, modules, dead) {
+  const base = net?.base || net;
+  if (!base || !dead || !dead.size) return base;
+  const nodes = base.graph.nodes;
+  const adj = nodes.map(() => []);
+  base.runs.forEach((r, ri) => {
+    if (r.net !== 'power') return;
+    r.ends.forEach(([a, b], pi) => { adj[a]?.push({ ri, pi, o: b }); adj[b]?.push({ ri, pi, o: a }); });
+  });
+  const isCore = (n) => n.dev >= 0 && modules[n.dev]?.type === 'reactor';
+  // BFS od przyłączy reaktorów: krawędź rodzica każdego węzła
+  const parent = new Int32Array(nodes.length).fill(-2);   // −2 — nieosiągalny, −1 — korzeń
+  const order = [];
+  nodes.forEach((n, i) => { if (n.net === 'power' && isCore(n)) { parent[i] = -1; order.push(i); } });
+  for (let q = 0; q < order.length; q++) {
+    for (const e of adj[order[q]]) if (parent[e.o] === -2) { parent[e.o] = order[q]; order.push(e.o); }
+  }
+  // żywe poddrzewo: urządzenie z prądem w węźle albo dalej
+  const live = new Uint8Array(nodes.length);
+  for (let q = order.length - 1; q >= 0; q--) {
+    const i = order[q], n = nodes[i];
+    if (n.dev >= 0 && !isCore(n) && !dead.has(n.dev)) live[i] = 1;
+    if (live[i] && parent[i] >= 0) live[parent[i]] = 1;
+  }
+  const polyLive = (a, b) => {
+    if (parent[a] === -2 || parent[b] === -2) return true;   // poza drzewem (nie powinno być) — bez oznaczenia
+    if (parent[b] === a) return !!live[b];
+    if (parent[a] === b) return !!live[a];
+    return !!(live[a] || live[b]);
+  };
+  const runs = [];
+  let split = 0;
+  for (const r of base.runs) {
+    if (r.net !== 'power') { runs.push(r); continue; }
+    const st = r.ends.map(([a, b]) => polyLive(a, b));
+    if (st.every((v) => v)) runs.push(r);
+    else if (st.every((v) => !v)) runs.push({ ...r, dead: true });
+    else if (base.runs.length + split + 1 < 255) {
+      split++;
+      const pick = (want) => ({ polys: r.polys.filter((_, i) => st[i] === want), ends: r.ends.filter((_, i) => st[i] === want) });
+      runs.push({ ...r, ...pick(true) }, { ...r, ...pick(false), dead: true });
+    } else runs.push(r);
+  }
+  return { ...base, runs, base, deadDevices: dead.size };
 }
 
 /**

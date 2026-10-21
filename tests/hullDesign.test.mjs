@@ -325,8 +325,9 @@ test('rury: sieć TN deterministyczna, wewnątrz kadłuba, gęstsza przy rufie n
     assert.ok(rear > bow * 1.3, `${key}: rufa ${rear.toFixed(0)} vs dziób ${bow.toFixed(0)}`);
     // wiązki z wielu rur / kabli istnieją (grubość z liczby tras)
     assert.ok(net.runs.some((r) => r.auto && r.n >= 4), `${key}: brak grubej wiązki`);
-    // lustro: druga łamana biegu = pierwsza odbita; osprzęt w parach
-    for (const r of net.runs) {
+    // lustro: druga łamana biegu = pierwsza odbita; osprzęt w parach — gdy moduły są w lustrze (gniazda gry Bellatora
+    // bez pary na drugiej burcie: sieć na całym kadłubie, tests/hullDesignNetwork.test.mjs)
+    for (const r of net.mirror ? net.runs : []) {
       assert.equal(r.polys.length, 2);
       const [a, b] = r.polys;
       assert.equal(a.length, b.length);
@@ -334,7 +335,7 @@ test('rury: sieć TN deterministyczna, wewnątrz kadłuba, gęstsza przy rufie n
       assert.ok(a.every(([, y]) => y < 0), `${key}: bieg na burcie y < 0`);
     }
     const D = d.detail;
-    for (const ft of net.fits) {
+    for (const ft of net.mirror ? net.fits : []) {
       if (Math.abs(ft.y) <= 0.5 * D) continue;
       assert.ok(net.fits.some((g) => g.type === ft.type && Math.abs(g.x - ft.x) < 1e-6 && Math.abs(g.y + ft.y) < 1e-6), `${key}: osprzęt bez pary lustra`);
     }
@@ -498,7 +499,10 @@ test('presety TN: kasztele rufowe, kratki-radiatory, kapsuły i iluminatory (war
   assert.ok(cit.modules.some((m) => m.type === 'hatch' && m.v === 1), 'klapa TN');
   assert.ok(cit.pipes.length >= 1, 'rury rdzenia dziobu');
   const col = expandHullDesign(normalizeHullDesign(hullDesignPreset('colossus')));
-  assert.ok(col.modules.filter((m) => m.type === 'well' && m.v === 2).length >= 8, 'iluminatory w ośmiokątnych ramach');
+  // ośmiokątne ramy sprite'a to gniazda gry (rakietowe, specjalne, wbudowane — etap 2): ramy w ich miejscu zastępuje
+  // moduł gniazda (HD_PRESET_MOUNTS.colossus.drop)
+  assert.equal(col.modules.filter((m) => m.type === 'mount').length, 56, 'gniazda broni z gry');
+  assert.ok(col.modules.some((m) => m.type === 'mount' && m.slot === 'missile'), 'gniazda rakietowe na ramach');
   assert.ok(col.shapes.filter((s) => s.castle).length >= 8);
   for (const k of ['custos', 'hasta', 'bellator']) {
     const dd = normalizeHullDesign(hullDesignPreset(k));
