@@ -18,8 +18,10 @@ import {
 import {
   weaponBuildCost, weaponMaterialValue, weaponPriceAt, stationCanBuildWeapon,
   buyWeaponFrom, sellWeaponTo, ammoForShots, sustainCostPerMinute, weaponCatalog,
-  squadronBuildCost, squadronRearmCost, squadronTotalCost, squadronCatalog
+  squadronBuildCost, squadronRearmCost, squadronTotalCost, squadronCatalog,
+  weaponGood, WEAPON_FAMILY_GOOD
 } from '../../src/game/weaponEconomy.js';
+import { isFighterWeapon } from '../../src/data/weapons.js';
 import {
   FIGHTER_SQUADRON_DEFS, getHangarSquadronCapacity
 } from '../../src/data/fighterSquadrons.js';
@@ -105,7 +107,7 @@ export function run() {
 
   const kosztRail = weaponBuildCost('railgun_mk2');
   t.check('działo siada na PODSTAWIE, a nie zamiast niej',
-    kosztRail.weapon_mount > 0 && kosztRail.gun_ballistic > 0);
+    kosztRail.weapon_mount > 0 && kosztRail.gun_railgun > 0);
   t.check('Capital kosztuje więcej niż S',
     weaponMaterialValue('tempest_ion_l') > weaponMaterialValue('tempest_ion_s'));
   t.check('superbroń jest wielokrotnie droższa od seryjnej',
@@ -130,16 +132,16 @@ export function run() {
   t.check('sprzedaje drożej, niż odkupuje', wycena.sell > wycena.buy);
   t.check('pełny magazyn ma z czego złożyć', stationCanBuildWeapon(econ, 'railgun_mk2'));
 
-  const przedKupnem = econ.resources.gun_ballistic;
+  const przedKupnem = econ.resources.gun_railgun;
   const zakup = buyWeaponFrom(port, econ, 'railgun_mk2');
   t.check('zakup dochodzi do skutku', !!zakup && zakup.price > 0);
   t.equal('działa ubyły z magazynu portu',
-    econ.resources.gun_ballistic, przedKupnem - kosztRail.gun_ballistic);
+    econ.resources.gun_railgun, przedKupnem - kosztRail.gun_railgun);
 
   const odsprzedaz = sellWeaponTo(port, econ, 'railgun_mk2');
   t.check('odkup zwraca składniki', !!odsprzedaz);
   t.equal('magazyn wrócił do stanu sprzed zakupu',
-    econ.resources.gun_ballistic, przedKupnem);
+    econ.resources.gun_railgun, przedKupnem);
   t.check('gracz traci na obrocie', odsprzedaz.price < zakup.price);
 
   // Pusty port nie sprzedaje niczego — to jest realna odpowiedź „nie ma na stanie".
@@ -190,7 +192,7 @@ export function run() {
   t.section('Okręt ma działa, a port wie, że trzeba mu wozić skrzynie');
 
   for (const cls of Object.values(WARSHIP_CLASSES)) {
-    const dziala = ['gun_ballistic', 'gun_energy', 'launcher_ordnance', 'pd_turret']
+    const dziala = [...new Set(Object.values(WEAPON_FAMILY_GOOD))].filter(id => id !== 'fighter_craft')
       .reduce((sum, id) => sum + (cls.build[id] || 0), 0);
     t.check(`${cls.id} schodzi z pochylni uzbrojony`, dziala > 0);
     t.check(`${cls.id} ma podstawy pod to uzbrojenie`, (cls.build.weapon_mount || 0) > 0);
@@ -205,6 +207,35 @@ export function run() {
   })).sort((a, b) => a.krPerSila - b.krPerSila);
   t.equal('najtańsza na punkt siły zostaje fregata', naSile[0].id, 'frigate');
   t.equal('najdroższy zostaje nosiciel', naSile[naSile.length - 1].id, 'carrier');
+
+  // ----------------------------------------------------------
+  t.section('Każdy model broni ma rodzinę, którą robi jakiś zakład');
+
+  const bezRodziny = [];
+  const rodziny = new Set();
+  for (const weapon of Object.values(MASTER_WEAPONS)) {
+    if (isFighterWeapon(weapon)) continue;
+    const good = weaponGood(weapon);
+    if (!good || !RESOURCES[good] || !Object.values(RECIPES).some(r => r.out[good] > 0)) {
+      bezRodziny.push(`${weapon.id} → ${good}`);
+      continue;
+    }
+    rodziny.add(good);
+  }
+  t.check('każdy model ma towar z recepturą', bezRodziny.length === 0, `(${bezRodziny.join(', ')})`);
+  t.check('osiem rodzin luf plus maszyny eskadr', rodziny.size === 9, `(${[...rodziny].join(', ')})`);
+  t.equal('railgun to działo szynowe', weaponGood('railgun_mk2'), 'gun_railgun');
+  t.equal('helios to działo plazmowe', weaponGood('helios_laser'), 'gun_plasma');
+  t.equal('laser OP to wieżyczka OP, nie emiter', weaponGood('laser_pd_mk1'), 'pd_turret');
+  t.equal('flak ma własne działo', weaponGood('flak_m'), 'flak_turret');
+  t.equal('wyrzutnia torped to osobna rodzina', weaponGood('siege_torpedo'), 'launcher_torpedo');
+  t.equal('armata to działo kinetyczne', weaponGood('armata_mk1'), 'gun_ballistic');
+  // Rudy pasa mają odbiorcę w uzbrojeniu — po to rodziny w ogóle powstały.
+  const wsad = id => Object.values(RECIPES).find(r => r.out[id] > 0)?.in || {};
+  t.check('działo szynowe stoi na nadstopie niklu', wsad('gun_railgun').nickel_superalloy > 0);
+  t.check('działo plazmowe stoi na katalizatorze platynowym', wsad('gun_plasma').pt_catalyst > 0);
+  t.check('flak i torpedy stoją na kompozycie',
+    wsad('flak_turret').carbon_composite > 0 && wsad('launcher_torpedo').carbon_composite > 0);
 
   // ----------------------------------------------------------
   t.section('Eskadry myśliwskie są towarem, nie tłem');

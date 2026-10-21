@@ -1,16 +1,16 @@
 /**
- * EKONOMIA UZBROJENIA — most między 38 modelami broni a czterema pozycjami,
+ * EKONOMIA UZBROJENIA — most między modelami broni a ośmioma rodzinami,
  * którymi handluje gospodarka.
  *
  * `weapons.js` opisuje, JAK broń strzela. `resources.js` wie, co da się
- * wyprodukować i przewieźć. Tego drugiego nie wolno rozdmuchać do 38 pozycji
- * magazynowych — port musiałby prowadzić osobny słupek dla każdego wariantu
- * Tempest Iona, a transport woziłby paczki po jednej sztuce.
+ * wyprodukować i przewieźć. Tego drugiego nie wolno rozdmuchać do kilkudziesięciu
+ * pozycji magazynowych — port musiałby prowadzić osobny słupek dla każdego
+ * wariantu Tempest Iona, a transport woziłby paczki po jednej sztuce.
  *
- * Dlatego gospodarka zna cztery klasy uzbrojenia (`gun_ballistic`, `gun_energy`,
- * `launcher_ordnance`, `pd_turret`) plus `weapon_mount` jako podstawę, a KONKRETNY
- * model powstaje dopiero przy zakupie: railgun Mk II to dwie sztuki działa
- * kinetycznego na jednej podstawie. Tu mieszka to przeliczenie.
+ * Dlatego gospodarka zna osiem rodzin uzbrojenia (`WEAPON_FAMILY_GOOD`) plus
+ * `weapon_mount` jako podstawę, a KONKRETNY model powstaje dopiero przy zakupie:
+ * railgun Mk II to dwie sztuki działa szynowego na jednej podstawie. Tu mieszka
+ * to przeliczenie.
  *
  * Druga rzecz, która tu mieszka: **amunicja jako koszt bieżący.** Działo
  * balistyczne kupuje się raz, ale strzela dopóki ktoś dowozi skrzynie — i to
@@ -54,6 +54,43 @@ const MOUNT_PREMIUM = Object.freeze({
 
 /** Standardowy zapas amunicji sprzedawany razem z działem, w strzałach. */
 export const STANDARD_AMMO_LOAD = 200;
+
+/**
+ * Kategoria broni → RODZINA, którą handluje gospodarka (2026-10-21).
+ *
+ * `weaponTradeGood` z `weapons.js` zostaje SZKOŁĄ (balistyka / energia /
+ * wyrzutnia / OP) — tym rozróżnia się sposób walki. Towar jest drobniejszy, bo
+ * rodziny różnią się wsadem: szynowe stoją na nadstopie niklu, plazmowe na
+ * katalizatorze platynowym, flak i torpedy na kompozycie. Bez tego rudy pasa
+ * nie miałyby w uzbrojeniu żadnego odbiorcy.
+ *
+ * Kategoria spoza tabeli wraca do szkoły (`weaponTradeGood`).
+ */
+export const WEAPON_FAMILY_GOOD = Object.freeze({
+  autocannon: 'gun_ballistic',
+  armata: 'gun_ballistic',
+  rail: 'gun_railgun',
+  beam: 'gun_energy',
+  plasma: 'gun_plasma',
+  superweapon: 'gun_plasma',
+  rocket: 'launcher_ordnance',
+  bomb: 'launcher_ordnance',
+  torpedo: 'launcher_torpedo',
+  ciws: 'pd_turret',
+  flak: 'flak_turret',
+  hangar: 'fighter_craft'
+});
+
+/**
+ * Towar, z którego składa się lufa modelu. Wyjątek od kategorii: laser OP
+ * (wiązka na gnieździe `aux`) to wieżyczka obrony punktowej, nie emiter okrętowy.
+ */
+export function weaponGood(weaponOrId) {
+  const weapon = def(weaponOrId);
+  if (!weapon) return null;
+  if (weapon.category === 'beam' && weapon.mountType === 'aux') return 'pd_turret';
+  return WEAPON_FAMILY_GOOD[weapon.category] || weaponTradeGood(weapon);
+}
 
 function def(weaponOrId) {
   if (weaponOrId && typeof weaponOrId === 'object') return weaponOrId;
@@ -154,7 +191,7 @@ export function weaponBuildCost(weaponOrId) {
   // a jej amunicję liczy przezbrojenie eskadry (squadronRearmCost). Bez ceny wypada z katalogu, cen portu
   // i zakupów refitu.
   if (isFighterWeapon(weapon)) return null;
-  const good = weaponTradeGood(weapon);
+  const good = weaponGood(weapon);
   if (!good) return null;
 
   const premium = MOUNT_PREMIUM[weapon.mountType] ?? 1;
