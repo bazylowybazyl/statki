@@ -8,9 +8,9 @@
 // docs/PORT-mostki.md §8–9.
 //
 // RYSOWANIE (jeden renderer: Core3D; obiekty w podanej scenie):
-//   • model — mesh instancjonowany na rodzaj (BRIDGE3D_KIND_ORDER: Bellator,
-//     Iron Skull, Atlas rufowy i zapasowy, Custos, Hasta, Citadella, Colossus,
-//     fregata i niszczyciel piratów, lokomotywa megafrachtowca): warstwa 0
+//   • model — mesh instancjonowany na rodzaj (BRIDGE3D_KIND_ORDER: Terra Nova
+//     na poziomy klas I–VI — tn_1 … tn_6, Iron Skull, Atlas rufowy i zapasowy,
+//     fregata, niszczyciel i supercapital piratów, lokomotywa megafrachtowca): warstwa 0
 //     (pass ortho, jak kadłuby), renderOrder 12 — rysuje się tylko rodzaj,
 //     który ma widoczne instancje;
 //   • cień na kadłubie — jeden mesh instancjonowany prostokątów tuż POD
@@ -180,18 +180,15 @@ const BRIDGE3D_WOUND_GLOW_PEAK = 9.0;  // szczyt żaru brzegu (8–12 HDR jak br
 // Palety (sRGB → liniowo przy starcie) z próbek stref na sprite'ach.
 // Kolejność = BRIDGE3D_MAT: farba, panel, ciemny metal, akcent, szyba,
 // rama okien, jasny detal, brud/rdza.
+// Terra Nova — mostki na poziomy I–VI (jedna biel floty: próbki stref Bellatora, Citadelli i Colossusa).
+const TN_STYLE = Object.freeze({ palette: ['#cbc9c2', '#adaaa3', '#4b4f53', '#8e9297', '#141c25', '#394045', '#e5e4de', '#7b7871'], spec: 1.0, seams: 0.12, grime: 0.1, rivets: 0, rust: 0, sky: 1.0, interior: '#1a1d21' });
 export const BRIDGE3D_KIND_STYLE = {
-  bellator: { palette: ['#c9c9c3', '#aaaaa4', '#4c5358', '#8e939a', '#141c25', '#394045', '#e4e4de', '#7b776f'], spec: 1.0, seams: 0.12, grime: 0.1, rivets: 0, rust: 0, sky: 1.0, interior: '#1a1d21' },
+  tn_1: TN_STYLE, tn_2: TN_STYLE, tn_3: TN_STYLE, tn_4: TN_STYLE, tn_5: TN_STYLE, tn_6: TN_STYLE,
   // Iron Skull i reszta rodziny: próbki NOWYCH sprite'ów (migracja 2026-09-24) —
   // ciemna stal z rdzą jako akcentem, kości kolców; łaty rdzy nie dominują.
   ironskull: { palette: ['#4a4440', '#39332f', '#15110f', '#7a4127', '#24130a', '#211b18', '#b6a595', '#4d3021'], spec: 0.6, seams: 0.22, grime: 0.28, rivets: 1, rust: 0.4, sky: 0.6, interior: '#140f0c' },
   atlas_main: { palette: ['#56606f', '#434b58', '#252a33', '#2c8ca4', '#0d1720', '#2a303a', '#8a94a2', '#343943'], spec: 1.0, seams: 0.14, grime: 0.08, rivets: 0, rust: 0, sky: 1.2, interior: '#0f1216' },
   atlas_backup: { palette: ['#56606f', '#434b58', '#252a33', '#2c8ca4', '#0d1720', '#2a303a', '#8a94a2', '#343943'], spec: 1.0, seams: 0.14, grime: 0.08, rivets: 0, rust: 0, sky: 1.2, interior: '#0f1216' },
-  // Terra Nova: ta sama biel co Bellator; Custos i Hasta cieplejsze (próbki stref).
-  custos: { palette: ['#c4c0b0', '#a19d8f', '#464a45', '#8a8a80', '#141c25', '#383c3a', '#e0dccb', '#77705f'], spec: 1.0, seams: 0.12, grime: 0.12, rivets: 0, rust: 0, sky: 1.0, interior: '#1a1d21' },
-  hasta: { palette: ['#c0bba9', '#9d998a', '#474a47', '#8b897d', '#141c25', '#383c3a', '#ddd8c6', '#79725f'], spec: 1.0, seams: 0.12, grime: 0.12, rivets: 0, rust: 0, sky: 1.0, interior: '#1a1d21' },
-  citadella: { palette: ['#d0cec7', '#b1aea6', '#4a4d50', '#8f9398', '#141c25', '#394045', '#e6e5df', '#7d7a73'], spec: 1.0, seams: 0.12, grime: 0.1, rivets: 0, rust: 0, sky: 1.0, interior: '#1a1d21' },
-  colossus: { palette: ['#cfcdc7', '#b3b0a8', '#4a4c4f', '#8e9196', '#141c25', '#394045', '#e6e5e0', '#7b7870'], spec: 1.0, seams: 0.12, grime: 0.1, rivets: 0, rust: 0, sky: 1.0, interior: '#1a1d21' },
   pirate_frigate: { palette: ['#4a4440', '#39332f', '#15110f', '#7a4127', '#24130a', '#211b18', '#b6a595', '#4d3021'], spec: 0.6, seams: 0.22, grime: 0.3, rivets: 1, rust: 0.4, sky: 0.55, interior: '#140f0c' },
   pirate_destroyer: { palette: ['#4b4541', '#3a3430', '#16120f', '#7c4328', '#24130a', '#211b18', '#b3a292', '#4f3122'], spec: 0.6, seams: 0.22, grime: 0.3, rivets: 1, rust: 0.4, sky: 0.55, interior: '#140f0c' },
   pirate_supercapital: { palette: ['#4a4440', '#39332f', '#15110f', '#7a4127', '#24130a', '#211b18', '#b6a595', '#4d3021'], spec: 0.6, seams: 0.22, grime: 0.3, rivets: 1, rust: 0.4, sky: 0.55, interior: '#140f0c' },
@@ -779,7 +776,7 @@ export const Bridge3D = {
     this.kinds = BRIDGE3D_KIND_ORDER.map((name) => {
       const model = buildBridgeModel(name);
       const spec = BRIDGE3D_KINDS[name];
-      return { name, index: spec.index, model, emit: packEmitters(model), style: KIND_STYLE[name] || KIND_STYLE.bellator, count: 0, capacity: spec.capacity, detail: spec.detail };
+      return { name, index: spec.index, model, emit: packEmitters(model), style: KIND_STYLE[name] || TN_STYLE, count: 0, capacity: spec.capacity, detail: spec.detail };
     });
     this.heightTex = buildHeightAtlas(this.kinds);
 

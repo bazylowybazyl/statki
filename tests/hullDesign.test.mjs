@@ -494,8 +494,8 @@ test('presety TN: kasztele rufowe, kratki-radiatory, kapsuły i iluminatory (war
   const cit = expandHullDesign(normalizeHullDesign(hullDesignPreset('citadella')));
   assert.ok(cit.shapes.filter((s) => s.castle).length >= 8, 'kasztele Citadelli z piętrami i lustrem');
   assert.ok(cit.modules.filter((m) => m.type === 'vent' && m.v === 1).length > 20, 'radiatory TN');
-  assert.ok(cit.modules.some((m) => m.type === 'vent' && m.v === 2), 'krata');
-  assert.ok(cit.modules.some((m) => m.type === 'well' && m.v === 1), 'iluminator');
+  // iluminator (well v 1): fregata z klocków; kapsuły środka kasztelu Citadelli zdjęte pod gniazdo mostka V
+  assert.ok(expandHullDesign(normalizeHullDesign(hullDesignPreset('klocki'))).modules.some((m) => m.type === 'well' && m.v === 1), 'iluminator');
   assert.ok(cit.modules.some((m) => m.type === 'hatch' && m.v === 1), 'klapa TN');
   assert.ok(cit.pipes.length >= 1, 'rury rdzenia dziobu');
   const col = expandHullDesign(normalizeHullDesign(hullDesignPreset('colossus')));
@@ -504,6 +504,8 @@ test('presety TN: kasztele rufowe, kratki-radiatory, kapsuły i iluminatory (war
   assert.equal(col.modules.filter((m) => m.type === 'mount').length, 56, 'gniazda broni z gry');
   assert.ok(col.modules.some((m) => m.type === 'mount' && m.slot === 'missile'), 'gniazda rakietowe na ramach');
   assert.ok(col.shapes.filter((s) => s.castle).length >= 8);
+  // krata (vent v 2): Colossus; kratka środka kasztelu Citadelli zdjęta pod gniazdo mostka V
+  assert.ok(col.modules.some((m) => m.type === 'vent' && m.v === 2), 'krata');
   for (const k of ['custos', 'hasta', 'bellator']) {
     const dd = normalizeHullDesign(hullDesignPreset(k));
     assert.ok(dd.castles.length >= 1, `${k}: kasztel`);

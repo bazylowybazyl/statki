@@ -241,7 +241,7 @@ function custos() {
     vent(-11.3, 0, 4.3, 3.6),
     hatch(14, -18, 3.4, 2.3), hatch(-13, -17.5, 5, 2.2), hatch(6, -17, 3.6, 2.6),
     mount(6, 0, 3.2),
-    { type: 'bridge', x: -46, y: 0, w: 6.5, h: 4.2 },
+    { type: 'bridge', x: -42, y: 0, v: 2 },              // gniazdo mostka I (obrys modelu 3D gry)
     { type: 'reactor', x: -20, y: 0, r: 5, v: 1 }
   );
   d.decals.push(text(27, -8.5, 15.5, 2.1), eagle(29.5, -13.6, 7.8, 6.4));
@@ -279,13 +279,12 @@ function hasta() {
     ]
   });
   d.modules.push(
-    vent(-77.8, -3.7, 1.575, 0.96, Math.PI / 2),
     engine(-108, -49.5, 8.2, 7.4), engine(-109, -28, 6.2, 5.6),
     port(-40, -25.2, 9.4),
     vent(-6, 0, 10, 3.6),
     vent(68.5, -23, 2.2, 12), hatch(-85.5, -39.5, 5, 1.6), hatch(27, -27, 3.5, 1.7), hatch(-26, -13, 3.8, 1.3),
     mount(14, 0, 4.8), mount(-58, 0, 5.4),
-    { type: 'bridge', x: -82, y: 0, w: 9, h: 6 },
+    { type: 'bridge', x: -64, y: 0, v: 2 },              // gniazdo mostka II (rów przy zbiorniku zostaje dla rury)
     { type: 'reactor', x: -30, y: 0, r: 8, v: 1 }
   );
   d.decals.push(text(50, -11.8, 22, 3.1), eagle(53, -20.4, 11, 9.5), eagle(-83.6, -51.7, 8, 9));
@@ -338,7 +337,7 @@ function bellator() {
     vent(-164, -151, 3.2, 11), vent(126, -145, 4, 4),
     hatch(-28, -111, 15, 4), hatch(-202, -96, 9, 7), hatch(57, -65, 7, 3),
     mount(-132, 0, 12), mount(-40, 0, 9), mount(40, 0, 9),
-    { type: 'bridge', x: -205, y: 0, w: 22, h: 15 },
+    { type: 'bridge', x: -217, y: 0, v: 2 },             // gniazdo mostka IV: między gniazdem PD rufy a zbiornikiem
     { type: 'reactor', x: -80, y: 0, r: 18, v: 1 }
   );
   d.decals.push(
@@ -395,18 +394,19 @@ function citadella() {
     vent(-87.5, -164.7, 21, 5.4), vent(79.8, -164.7, 19.005, 5.4), vent(147.6, -185.4, 12.915, 3.84),
     engine(-504, 0, 34, 28), engine(-491, -134, 26, 21), engine(-502, -85, 23, 22),
     ...[-112, -38, 39, 115, 190].map((x) => ({ type: 'hangar', x, y: -90, w: 34, h: 35, doors: 1 })),
-    port(-132, 0, 12), port(121, 0, 12), port(237, 0, 12), port(-354, -39, 11),
+    port(-132, 0, 12), port(121, 0, 12), port(237, 0, 12),
     mount(-362, -30, 11), mount(330, 0, 10),
     vent(264, -114, 12, 9.5), vent(277, -35, 15, 11),
     // kratki-radiatory kaszteli i pasa nad wrotami
     vent(-342, -196, 14, 20), vent(-349.5, -80, 5.5, 24.5), vent(-419.5, -150, 2.5, 15), vent(-398, -146.5, 3.2, 16.5),
-    vent(-346, -120, 12, 9), grid(-357, 0, 16, 17), vent(-438.5, -32, 4.5, 8),
+    vent(-346, -120, 12, 9), vent(-438.5, -32, 4.5, 8),
     vent(-265.5, -37, 11.5, 4), vent(-232, 0, 15, 10.5), vent(-30, -35, 11, 6.5),
     vent(-88, -164, 21, 6.5), vent(24, -164, 13, 6), vent(78, -164, 20, 6.5), vent(133, -164, 14, 6),
     hatch(-319, -150, 11, 8), hatch(300, -150, 7, 4),
     // dziób: pionowa kratka klina i klapa przy jego czole
     vent(410, -64, 5, 23), hatch(454, -48, 5, 2.5),
-    { type: 'bridge', x: -300, y: 0, w: 26, h: 18 },
+    // gniazdo mostka V na środku rufowego kasztelu (cytadela sprite'a: kopuły i mechanizm — tam stoi strefa gry)
+    { type: 'bridge', x: -339, y: 0, v: 2 },
     { type: 'reactor', x: -230, y: 0, r: 24, v: 1 }
   );
   d.decals.push(
@@ -508,11 +508,11 @@ function colossus() {
     mount(375.6, -166, 20), mount(546, -108, 20), mount(110, -110, 25, 'turret_l'), mount(507, 0, 22),
     portO(-375, -178.5, 24), portO(-468, -105.4, 24), portO(-216.6, -86, 24), portO(451, -147, 22), portO(231.7, -71, 22),
     portO(227, 0, 24), portO(702, 0, 20), portO(-14, -176, 28),
-    { type: 'bridge', x: -560, y: 0, w: 30, h: 22 },
+    { type: 'bridge', x: -150, y: 0, v: 2 },             // gniazdo mostka VI na centralnej nadbudówce
     { type: 'reactor', x: -330, y: 0, r: 30, v: 1 }
   );
   d.decals.push(
-    text(-50, 0, 90, 12), text(-680, -110, 68, 12, -Math.PI / 2), text(-597, -142, 52, 10, Math.PI / 2),
+    text(-37, 0, 58, 8), text(-680, -110, 68, 12, -Math.PI / 2), text(-597, -142, 52, 10, Math.PI / 2),
     eagle(-492, -256.6, 35, 30), eagle(-443, 0, 44, 38), eagle(405, 0, 30, 28)
   );
   return d;

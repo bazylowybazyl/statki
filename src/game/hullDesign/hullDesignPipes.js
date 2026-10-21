@@ -115,12 +115,14 @@ export function pipeModuleSdf(m, x, y) {
     const lx = dx * c + dy * s, ly = -dx * s + dy * c;
     dx = lx; dy = ly;
   }
-  const qx = Math.abs(dx) - m.w, qy = Math.abs(dy) - m.h;
+  // gniazdo mostka (v 2): przeszkoda do ramy (pokład + szczelina + rama — `rim` z normalizeHullDesign)
+  const rim = m.type === 'bridge' && m.v === 2 ? (m.rim || 0) : 0;
+  const qx = Math.abs(dx) - m.w - rim, qy = Math.abs(dy) - m.h - rim;
   return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0);
 }
 function moduleBox(m) {
   const def = HD_MODULES[m.type];
-  const R = def.r ? (m.r || def.r) * 1.25 : Math.hypot(m.w, m.h);
+  const R = def.r ? (m.r || def.r) * 1.25 : Math.hypot(m.w + (m.rim || 0), m.h + (m.rim || 0));
   return [m.x - R, m.y - R, m.x + R, m.y + R];
 }
 /** Moduł rysowany (przeszkoda dla tras) — reaktor wewnątrz (v ≥ 1) nie ma bryły. */

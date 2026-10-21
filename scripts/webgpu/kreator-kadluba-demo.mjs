@@ -6,10 +6,12 @@
 // myszą), sieć rur (etap `rury`: rufa z gondolami A/B, sieć wyłączona, rura ręczna), pipeline'y synchroniczne
 // w klatkach (ma być 0), błędy konsoli. Etap `klocki` (poza domyślnymi): fregata z klocków, arkusz palety, edycja myszą
 // (`--etapy klocki --tylko klocki` — bez floty). Etap `klasa` (poza domyślnymi): panel klasy, gniazda Bellatora
-// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka.
+// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka. Etap `mostek` (poza domyślnymi):
+// gniazdo mostka v 2 floty TN z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze, galeria poziomów I–VI
+// (sześć gniazd na jednym kadłubie, z modelami i bez).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,reaktor,klasa]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,reaktor,klasa,mostek]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -124,6 +126,24 @@ try {
         await ev(`window.__kreator.setCamera(${rc.x}, ${rc.y}, ${z * 0.3})`);
         await ev('window.__kreator.runFrames(4)');
         await shot(`${key}-reaktor-okret`, `${key}: obudowa reaktora na tle okrętu, zoom ${(z * 0.3).toFixed(2)}`);
+      }
+    }
+    if (stages.has('mostek') && TN.has(key)) {
+      // gniazdo mostka (moduł bridge v 2, poziom klasy) z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze
+      await ev('window.__kreator.built()');
+      const br = await ev('(() => { const k = window.__kreator, m = k.S.field.expanded.modules.find((q) => q.type === "bridge"); return m ? { x: m.x, y: m.y, w: m.w, h: m.h, lv: m.lv, v: m.v, rim: m.rim, poziomProjektu: k.S.field.expanded.design.bridgeLevel } : null; })()');
+      if (br) {
+        const z = Math.min(24, 1600 * 0.42 / (2 * (br.w + br.rim)));
+        await ev(`window.__kreator.setAb(false); window.__kreator.setBridge3D(true); window.__kreator.setCamera(${br.x}, ${br.y}, ${z})`);
+        await ev('window.__kreator.runFrames(6)');
+        report.mostek = report.mostek || {};
+        report.mostek[key] = { ...br, b3: await ev('JSON.stringify({ records: window.__kreator.bridge3D.stats.records, visible: window.__kreator.bridge3D.stats.visible, emitters: window.__kreator.bridge3D.stats.emitters })') };
+        await shot(`${key}-mostek-3d`, `${key}: mostek ${br.lv} (model 3D gry) w gnieździe v ${br.v}, zoom ${z.toFixed(2)}`);
+        await ev('window.__kreator.setBridge3D(false); window.__kreator.runFrames(2)');
+        await shot(`${key}-mostek-gniazdo`, `${key}: samo gniazdo mostka ${br.lv} w poszyciu (bez modelu 3D)`);
+        await ev(`window.__kreator.setBridge3D(true); window.__kreator.setCamera(${br.x}, ${br.y}, ${z * 0.3})`);
+        await ev('window.__kreator.runFrames(4)');
+        await shot(`${key}-mostek-okret`, `${key}: mostek na tle okrętu, zoom ${(z * 0.3).toFixed(2)}`);
       }
     }
     if (stages.has('style') && key === 'orbis') {
@@ -299,6 +319,29 @@ try {
     rama.po = await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`);
     report.rama_klocki = rama;
     console.log('klocki rama', JSON.stringify(rama));
+  }
+  if (stages.has('mostek') && (!only || only.has('mostki'))) {
+    // GALERIA POZIOMÓW: sześć gniazd mostka (I–VI, poziom projektu 0 — poziom modułu) na jednym prostym kadłubie
+    await ev('window.__kreator.preset("empty")');
+    await ev(`(() => { const k = window.__kreator; k.S.classValid = null; k.edit((d) => {
+      d.name = 'Galeria mostków I–VI'; d.bridgeLevel = 0; d.detail = 0.36; d.palette = 'terra';
+      d.shapes = [{ kind: 'rect', op: 'add', x: 0, y: 0, w: 330, h: 54, r: 0, ch: 24, level: 1 }];
+      d.blocks = []; d.parts = []; d.castles = []; d.decals = []; d.grooves = []; d.pipes = [];
+      const W = [28, 42, 58, 78, 108, 150];
+      let x = -318;
+      d.modules = W.map((w, i) => { x += w / 2; const m = { type: 'bridge', v: 2, lv: i + 1, x, y: 0, rot: 0 }; x += w / 2 + 22; return m; });
+    }); return true; })()`);
+    await ev('window.__kreator.built()');
+    await ev('document.body.classList.add("clean"); window.__kreator.setAb(false); window.__kreator.setBridge3D(true); window.__kreator.setCamera(0, 0, 2.35)');
+    await ev('window.__kreator.runFrames(6)');
+    report.mostkiGaleria = await ev('JSON.stringify({ moduly: window.__kreator.S.field.expanded.modules.filter((m) => m.type === "bridge").map((m) => [m.lv, m.x, m.w * 2, m.h * 2]), b3: { records: window.__kreator.bridge3D.stats.records, visible: window.__kreator.bridge3D.stats.visible, emitters: window.__kreator.bridge3D.stats.emitters } })');
+    await shot('mostki-galeria-3d', 'Galeria: mostki I–VI (modele 3D gry) w gniazdach poziomów, ta sama skala');
+    await ev('window.__kreator.setBridge3D(false); window.__kreator.runFrames(2)');
+    await shot('mostki-galeria-gniazda', 'Galeria: same gniazda I–VI (belki poziomu przy dziobowym brzegu, mocowania lv + 1 na burtę)');
+    await ev('window.__kreator.setBridge3D(true); window.__kreator.setCamera(-175, 0, 5)');
+    await ev('window.__kreator.runFrames(4)');
+    await shot('mostki-galeria-3d-male', 'Galeria: zbliżenie I–IV');
+    console.log('galeria', report.mostkiGaleria);
   }
   if (stages.has('klasa')) {
     // KLASA OKRĘTU (--etapy klasa, etap 2): panel klasy przy Bellatorze (limity, bilans mocy, priorytety), Bellator
