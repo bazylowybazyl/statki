@@ -7,10 +7,11 @@
 //
 // WYGLĄD (v2, 2026-10-14 — wzór: sprite'y Terra Novy): białe PŁYTY PANCERZA (poziom 1) i nadbudówki nad ciemną
 // MASZYNOWNIĄ ramy (poziom 0). Płyty: stroma ściana + faza, linia paneli równoległa do krawędzi, nity, podział na
-// panele (cegiełki o losowych granicach), kratki, luki, skrzynki, płyty na płytach. Maszynownia: wiązki RUR wzdłuż
-// krawędzi pancerza (izolinie pola odległości — same zakręcają po fazach 45°, jak w sprite'ach), obejmy, a dalej od
-// pancerza skrzynki, żebrowane walce i kraty. Moduły: ośmiokątne obudowy wież, pierścienie, gondole-walce z żebrami,
-// wrota hangarów, kratki, luki, reaktor, mostek. Wszystkie wymiary detalu w JEDNOSTKACH DETALU (jd = design.detail j.),
+// panele (cegiełki o losowych granicach), kratki, luki, skrzynki, płyty na płytach. Maszynownia: SIEĆ SYSTEMÓW (rury
+// paliwa i kable w korytkach — src/game/hullDesign/hullDesignPipes.js; bez sieci — wiązki rur wzdłuż krawędzi pancerza
+// z izolinii pola odległości, same zakręcają po fazach 45°, jak w sprite'ach), obejmy, a dalej od pancerza skrzynki,
+// żebrowane walce i kraty. Moduły: ośmiokątne obudowy wież, pierścienie, gondole-walce z żebrami, wrota hangarów,
+// kratki, luki, reaktor, mostek, zbiorniki paliwa, gniazda dysz SIDE, ładownie. Wszystkie wymiary detalu w JEDNOSTKACH DETALU (jd = design.detail j.),
 // więc mała fregata ma tyle detalu na długość co lotniskowiec (jak sprite'y).
 //
 //   GEO   (RGBA16F) wysokość reliefu [j.], alfa, szwy, KOPUŁA [j.] (sylwetka rozmyta jak w HullSurface sprite'ów)
@@ -32,9 +33,11 @@ import {
 } from 'three/tsl';
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { srgbEncode } from '../skybake/skyGameColor.js';
-import { HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { HD_BRIDGE_SOCKET, HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { bridgeLevel } from '../../data/bridgeLevels.js';
+import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
 
-export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 96, decals: 48, maxSide: 4096, pipeRuns: 256, pipeFits: 256 });
+export const HD_COMPOSER_LIMITS = Object.freeze({ modules: 160, decals: 48, maxSide: 4096, pipeRuns: 256, pipeFits: 256 });
 /** Gęstość obrazu: dłuższy bok ~targetSide tekseli, w granicach [min, max] tekseli na j. */
 export const HD_TEX = Object.freeze({ targetSide: 2560, min: 1.2, max: 16 });
 
@@ -46,9 +49,9 @@ export const HD_LOOK = {
   bevel: [1.0, 2.0, 1.8, 1.6],        // faza nad ścianą
   pipe: { r: 2.2, gap: 0.6, start: 0.8, count: 4, clampStep: 26, clampW: 1.8 },
   machine: 18.0,                      // komórka sprzętu maszynowni
-  // sieć rur (src/game/hullDesign/hullDesignPipes.js): przy włączonej sieci izolinie rur maszynowni cieńsze, rzadsze
-  // i przerywane (sieć prowadzi wiązki), rowy w cieplejszym tonie
-  net: { isoCount: 2, isoR: 1.45, isoSkip: 0.42, rowWarm: 0.55, bandLo: 0.9715, bandHi: 0.986, bracket: 4.5 },
+  // sieć systemów (src/game/hullDesign/hullDesignPipes.js): przy włączonej sieci bez izolinii rur maszynowni — rury i kable
+  // to tylko trasy sieci (izolinie urywały się w rowach jak rury „donikąd”), rowy w cieplejszym tonie
+  net: { isoCount: 0, isoR: 1.45, isoSkip: 0.42, rowWarm: 0.55, bandLo: 0.9715, bandHi: 0.986, bracket: 4.5 },
   panel: {
     // rozmiary z sprite'ów TN (~1 px sprite'a = 1 jd): płyty burt lotniskowca ~80 × 36 px, szwy ~1,5 px, nity ~2 px
     // co ~11 px, linia przy krawędzi ~7 px od brzegu
@@ -81,6 +84,16 @@ export const HD_LOOK = {
 
 const TYPE_CODE = Object.fromEntries(Object.entries(HD_MODULES).map(([k, v]) => [k, v.code]));
 const EDGE_GAIN = 0.3989423;
+
+/**
+ * GNIAZDO BRONI (`mount`, etap 2) w gałęzi wież: [kod wieży, wariant] — podstawa w stylu TN pod wieżę gry: główne,
+ * specjalne, wbudowane — kapsuła (v 0), pomocnicze — okrągła płyta z rowkiem obrotnicy (v 1), rakietowe — pokrywa
+ * wyrzutni (v 2); kod z rozmiaru (S 1, M 2, L / Capital 3 — wygląd i tak liczy się z promienia).
+ */
+function _mountLook(m) {
+  const code = m.size === 'S' ? 1 : (m.size === 'M' ? 2 : 3);
+  return [code, m.slot === 'aux' ? 1 : (m.slot === 'missile' ? 2 : 0)];
+}
 
 function srgbToLinear(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -212,7 +225,7 @@ export class HullComposer {
       decals: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.decals * 4 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignDecals'),
       decalCount: uniform(0, 'int'),
       // sieć rur: x — włączona (0 / 1), y — okres obejm [jd]; biegi (3 × vec4: promienie rur 0–3, 4–7 [jd],
-      // pół-szerokość, odstęp, najgrubsza, materiał + 4 · na płytach), osprzęt (2 × vec4: x, y, rodzaj + 8 · na płytach, obrót;
+      // pół-szerokość, odstęp, najgrubsza, materiał (3 — kable) + 8 · na płytach), osprzęt (2 × vec4: x, y, rodzaj + 16 · na płytach, obrót;
       // pół-wymiary [jd], p1, p2)
       pnet: uniform(new THREE.Vector4(0, 26, 0, 0)),
       pruns: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeRuns * 3 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeRuns'),
@@ -302,8 +315,12 @@ export class HullComposer {
       const R2 = U.pruns.element(runId.mul(3).add(2)).toVar();
       const tU = pa.x.mul(iD).toVar();
       const halfW = R2.x, gap = R2.y, rMax = R2.z;
-      const overF = step(3.5, R2.w);
-      const mat = R2.w.sub(overF.mul(4.0));
+      // R2.w = materiał + 8 · na płytach + 16 · MARTWY (kable do urządzeń bez prądu — markPipeNetPower)
+      const deadF = step(15.5, R2.w).toVar();
+      const w2 = R2.w.sub(deadF.mul(16.0));
+      const overF = step(7.5, w2);
+      const mat = w2.sub(overF.mul(8.0)).toVar();
+      const isCable = step(2.5, mat).mul(step(mat, 3.5)).toVar();       // materiał 3 — kable sieci zasilania, 4 — rury paliwa
       o.t.assign(tU);
       o.halfW.assign(halfW);
       o.over.assign(overF);
@@ -324,38 +341,70 @@ export class HullComposer {
         const pkV = pk.toVar(), prV = pr.toVar(), pcV = pc.toVar(), inPipe = min(hit, 1.0).toVar();
         const inB = step(abs(tU), halfW).toVar();
         const band = o.band.mul(step(abs(tU), halfW.add(0.7))).toVar();
-        // kołnierze rur w odcinkach między obejmami (numer odcinka pewny w połowie odcinka)
         const P = U.pnet.y;
         const seg = floor(pa.w), fr = fract(pa.w);
         const rid = float(runId);
-        const hf = hash11(rid.mul(13.7).add(pkV.mul(5.3)).add(seg.mul(1.91)));
-        const flange = step(hf, 0.2).mul(float(1.0).sub(smoothstep(0.32, 0.55, abs(fr.sub(0.5)).mul(P)))).mul(inPipe);
-        // materiał: 0 jasna stal, 1 miedź, 2 rdza, 3 ciemna stal (grube rury zwykle stalowe)
-        const hm = hash11(rid.mul(7.31).add(pkV.mul(3.17)).add(0.5));
-        const thick = step(2.05, prV);
-        const mixM = select(thick.greaterThan(0.5), select(hm.lessThan(0.72), float(0.0), float(3.0)),
-          select(hm.lessThan(0.3), float(0.0), select(hm.lessThan(0.7), float(1.0), select(hm.lessThan(0.85), float(2.0), float(3.0)))));
-        const mSteel = select(hm.lessThan(0.8), float(0.0), float(3.0)), mCop = select(hm.lessThan(0.75), float(1.0), float(2.0));
-        const m = select(mat.lessThan(0.5), mixM, select(mat.lessThan(1.5), mSteel, mCop));
-        const rust = mix(copper, grime, 0.45).mul(0.72);
-        const baseC = select(m.lessThan(0.5), steel.mul(1.12), select(m.lessThan(1.5), copper.mul(1.6), select(m.lessThan(2.5), rust, engC.mul(0.95))));
-        const segT = float(0.9).add(hash11(rid.mul(3.3).add(pkV.mul(11.1)).add(seg.mul(7.7))).mul(0.18));
-        const shade = float(0.5).add(pcV.mul(0.55)).add(smoothstep(0.88, 1.0, pcV).mul(0.12));
-        const pipeC = baseC.mul(segT).mul(shade).mul(float(1.0).sub(flange.mul(0.25)));
-        const pipeH = prV.mul(pcV).mul(0.95).add(flange.mul(0.35));
-        const floorC = vec3(0.016, 0.013, 0.010);
-        // obejma: płaska taśma nad rurami
-        const bandC = engC.mul(1.2).mul(float(0.85).add(step(0.5, fract(tU.div(1.6))).mul(0.15)));
-        o.K.assign(max(inB, band));
-        o.H.assign(mix(pipeH.mul(inPipe), rMax.add(0.45), band));
-        o.C.assign(mix(mix(floorC, pipeC, inPipe), bandC, band));
+        If(isCable.greaterThan(0.5), () => {
+          // KABLE w korytku drabinkowym: szyny po bokach, szczeble co 3 jd (widać je między kablami), ciemna izolacja
+          // z połyskiem, kolorowe opaski co ~9 jd (czerwona, bursztynowa, zielona, biała — bez niebieskiej: niebieskie
+          // albedo świeci w grze, hullGlowMask), obejmy korytka w miejscu obejm rur
+          const sAl = pa.w.mul(P).toVar();                      // [jd] wzdłuż biegu (mod 8 okresów obejm)
+          const inTray = step(abs(tU), halfW.add(0.55)).toVar();
+          const rail = step(halfW.add(0.12), abs(tU)).mul(inTray).toVar();
+          const rung = step(abs(fract(sAl.div(3.0)).sub(0.5)), 0.09).mul(inTray).mul(float(1.0).sub(rail));
+          const hb = hash11(rid.mul(5.9).add(pkV.mul(2.71)));
+          const bandP = float(9.0);
+          const bandIdx = floor(sAl.div(bandP).add(hb));
+          // martwy kabel (urządzenie bez prądu): szara izolacja, bez opasek
+          const bandOn = step(abs(fract(sAl.div(bandP).add(hb)).sub(0.5)).mul(bandP), 0.45).mul(inPipe)
+            .mul(step(0.35, hash11(rid.add(pkV.mul(1.37)).add(bandIdx.mul(0.71))))).mul(float(1.0).sub(deadF)).toVar();
+          const hc = hash11(rid.mul(1.3).add(pkV.mul(9.1)).add(3.3));
+          const bandCol = select(hc.lessThan(0.3), vec3(0.5, 0.05, 0.03), select(hc.lessThan(0.55), vec3(0.6, 0.34, 0.04),
+            select(hc.lessThan(0.78), vec3(0.07, 0.32, 0.09), vec3(0.6, 0.6, 0.56))));
+          // pierwszy — gruby kabel zasilający; martwy — jasnoszara izolacja (w cieniu rowu ciemna szarość ginęła)
+          const insul = mix(vec3(0.03, 0.029, 0.027), vec3(0.34, 0.34, 0.33), deadF).mul(select(pkV.lessThan(0.5), float(1.3), float(1.0)));
+          const gloss = smoothstep(0.82, 1.0, pcV).mul(0.1);
+          const cableC = mix(insul.mul(float(0.55).add(pcV.mul(0.75))).add(vec3(gloss)), bandCol.mul(float(0.6).add(pcV.mul(0.5))), bandOn);
+          const trayC = engC.mul(float(1.0).add(rail.mul(0.3)));
+          const cableH = prV.mul(pcV).mul(0.95).add(0.35).add(bandOn.mul(0.08));
+          const trayH = rail.mul(0.95).add(rung.mul(0.3));
+          const trayFloor = vec3(0.012, 0.011, 0.01);
+          o.K.assign(max(inTray, band));
+          o.H.assign(mix(max(cableH.mul(inPipe), trayH), rMax.add(0.65), band));
+          o.C.assign(mix(mix(mix(trayFloor, trayC, max(rail, rung)), cableC, inPipe), engC.mul(0.72), band));
+        }).Else(() => {
+          // kołnierze rur w odcinkach między obejmami (numer odcinka pewny w połowie odcinka)
+          const hf = hash11(rid.mul(13.7).add(pkV.mul(5.3)).add(seg.mul(1.91)));
+          const flange = step(hf, 0.2).mul(float(1.0).sub(smoothstep(0.32, 0.55, abs(fr.sub(0.5)).mul(P)))).mul(inPipe);
+          // materiał: 0 jasna stal, 1 miedź, 2 rdza, 3 ciemna stal (grube rury zwykle stalowe)
+          const hm = hash11(rid.mul(7.31).add(pkV.mul(3.17)).add(0.5));
+          const thick = step(2.05, prV);
+          const mixM = select(thick.greaterThan(0.5), select(hm.lessThan(0.72), float(0.0), float(3.0)),
+            select(hm.lessThan(0.3), float(0.0), select(hm.lessThan(0.7), float(1.0), select(hm.lessThan(0.85), float(2.0), float(3.0)))));
+          const mSteel = select(hm.lessThan(0.8), float(0.0), float(3.0)), mCop = select(hm.lessThan(0.75), float(1.0), float(2.0));
+          // rury paliwa (4): jasna stal i miedź — bez rdzy i ciemnej stali (widać je przy silnikach na ciemnej maszynowni)
+          const mFuel = select(hm.lessThan(0.55), float(0.0), float(1.0));
+          const m = select(mat.lessThan(0.5), mixM, select(mat.lessThan(1.5), mSteel, select(mat.lessThan(2.5), mCop, mFuel)));
+          const rust = mix(copper, grime, 0.45).mul(0.72);
+          const baseC = select(m.lessThan(0.5), steel.mul(1.12), select(m.lessThan(1.5), copper.mul(1.6), select(m.lessThan(2.5), rust, engC.mul(0.95))));
+          const segT = float(0.9).add(hash11(rid.mul(3.3).add(pkV.mul(11.1)).add(seg.mul(7.7))).mul(0.18));
+          const shade = float(0.5).add(pcV.mul(0.55)).add(smoothstep(0.88, 1.0, pcV).mul(0.12));
+          const pipeC = baseC.mul(segT).mul(shade).mul(float(1.0).sub(flange.mul(0.25)));
+          const pipeH = prV.mul(pcV).mul(0.95).add(flange.mul(0.35));
+          const floorC = vec3(0.016, 0.013, 0.010);
+          // obejma: płaska taśma nad rurami
+          const bandC = engC.mul(1.2).mul(float(0.85).add(step(0.5, fract(tU.div(1.6))).mul(0.15)));
+          o.K.assign(max(inB, band));
+          o.H.assign(mix(pipeH.mul(inPipe), rMax.add(0.45), band));
+          o.C.assign(mix(mix(floorC, pipeC, inPipe), bandC, band));
+        });
       });
     });
     If(fitId.greaterThan(0).and(on), () => {
       const F0 = U.pfits.element(fitId.mul(2)).toVar();
       const F1 = U.pfits.element(fitId.mul(2).add(1)).toVar();
-      const fOv = step(7.5, F0.z);
-      const ft = F0.z.sub(fOv.mul(8.0)).toVar();
+      const fOv = step(15.5, F0.z);
+      const ft = F0.z.sub(fOv.mul(16.0)).toVar();
       const lf = rot2(p.sub(F0.xy), F0.w).mul(iD).toVar();     // [jd]
       const hw = F1.x, hh = F1.y, p1 = F1.z, p2 = F1.w;
       const al = abs(lf).toVar();
@@ -375,16 +424,19 @@ export class HullComposer {
         o.fK.assign(up);
         o.fC.assign(mix(mix(bodyC.mul(float(1.0).add(lidUp.mul(0.08))), bodyC.mul(0.5), max(bolt, seamL.mul(0.6))), engC.mul(0.6), handle));
       }).ElseIf(ft.lessThan(2.5), () => {
-        // kołnierz / tuleja na wejściu pod płytę (p1 > 0,5 — para kołnierzy)
+        // kołnierz / tuleja na wejściu pod płytę (p1 0,5…1,5 — para kołnierzy); p1 ≥ 1,5 — PRZEPUST kabli: gumowa
+        // ciemna tuleja z jasną obręczą
         const sd = sdBox(lf, vec2(hw, hh));
-        const up = clamp(sd.negate().div(0.3), 0.0, 1.0).mul(select(p1.greaterThan(0.5), step(hw.mul(0.3), al.x), float(1.0)));
+        const grom = step(1.5, p1);
+        const up = clamp(sd.negate().div(0.3), 0.0, 1.0).mul(select(p1.greaterThan(0.5).and(p1.lessThan(1.5)), step(hw.mul(0.3), al.x), float(1.0)));
         const yn = lf.y.div(max(hh, 0.5));
         const roundY = sqrt(max(float(0.0), float(1.0).sub(yn.mul(yn).mul(0.6))));
         const bq = vec2(lf.x, fract(lf.y.div(1.5)).sub(0.5).mul(1.5));
         const bolt = float(1.0).sub(smoothstep(0.16, 0.32, length(bq))).mul(step(p1, 0.5)).mul(up);
-        o.fH.assign(up.mul(p2.mul(roundY)).add(bolt.mul(0.15)));
+        const ringG = step(hw.sub(0.35), al.x).mul(grom);
+        o.fH.assign(up.mul(p2.mul(roundY)).add(bolt.mul(0.15)).add(ringG.mul(0.1)));
         o.fK.assign(up);
-        o.fC.assign(mix(engC.mul(1.3), engC.mul(0.6), bolt));
+        o.fC.assign(mix(mix(engC.mul(1.3), engC.mul(0.6), bolt), mix(vec3(0.025, 0.024, 0.022), engC.mul(1.25), ringG), grom));
       }).ElseIf(ft.lessThan(3.5), () => {
         // zawór: korpus na wiązce, siłownik (walec o promieniu p1) z dźwignią
         const sd = sdRoundBox(lf, vec2(hw, hh), float(0.5));
@@ -424,7 +476,7 @@ export class HullComposer {
         o.fH.assign(up.mul(mix(float(0.4).add(inP.mul(cyl).mul(rr).mul(1.6)), p2, endF)));
         o.fK.assign(up);
         o.fC.assign(mix(mix(vec3(0.02, 0.017, 0.013), pcC.mul(float(0.55).add(cyl.mul(0.5))), inP), engC.mul(1.2), endF));
-      }).Else(() => {
+      }).ElseIf(ft.lessThan(6.5), () => {
         // zaślepka: płyta kołnierza z dwoma rzędami śrub
         const sd = sdRoundBox(lf, vec2(hw, hh), float(0.4));
         const up = clamp(sd.negate().div(0.3), 0.0, 1.0);
@@ -433,6 +485,48 @@ export class HullComposer {
         o.fH.assign(up.mul(p2).add(bolt.mul(0.12)));
         o.fK.assign(up);
         o.fC.assign(mix(engC.mul(1.15), engC.mul(0.55), bolt));
+      }).ElseIf(ft.lessThan(7.5), () => {
+        // dławnica: skrzynka przyłączeniowa kabli przy urządzeniu — korpus z pokrywą, rząd mosiężnych dławnic od strony
+        // wiązki (−x), dwie śruby pokrywy
+        const sd = sdRoundBox(lf, vec2(hw, hh), float(0.35)).toVar();
+        const up = clamp(sd.negate().div(0.35), 0.0, 1.0);
+        const lid = clamp(sdRoundBox(lf.add(vec2(-0.25, 0.0)), vec2(hw.sub(0.65), hh.sub(0.55)), float(0.3)).negate().div(0.25), 0.0, 1.0);
+        const nG = max(p1, 1.0);
+        const lane = hh.mul(2.0).div(nG);
+        const gy = fract(lf.y.add(hh).div(lane)).sub(0.5).mul(lane);
+        const gland = float(1.0).sub(smoothstep(0.2, 0.36, length(vec2(lf.x.add(hw).sub(0.45), gy)))).mul(step(lf.x, hw.negate().add(0.95)));
+        const bolt = float(1.0).sub(smoothstep(0.12, 0.24, length(vec2(lf.x.sub(hw.mul(0.45)), al.y.sub(hh.sub(0.55))))));
+        o.fH.assign(up.mul(p2.mul(0.85)).add(lid.mul(0.2)).add(gland.mul(0.3)).add(bolt.mul(0.1)));
+        o.fK.assign(max(up, gland));
+        o.fC.assign(mix(mix(mix(engC.mul(0.8), engC.mul(1.0), lid), copper.mul(1.5), gland), engC.mul(0.45), bolt));
+      }).ElseIf(ft.lessThan(8.5), () => {
+        // puszka kablowa w rozgałęzieniu (p1 > 0,5 — mała, w biegu): płaska skrzynka z pokrywą, żółty pasek opisu,
+        // śruby w rogach
+        const sd = sdRoundBox(lf, vec2(hw, hh), float(0.5)).toVar();
+        const up = clamp(sd.negate().div(0.4), 0.0, 1.0);
+        const lid = clamp(sdRoundBox(lf, vec2(hw.sub(0.55), hh.sub(0.55)), float(0.35)).negate().div(0.25), 0.0, 1.0);
+        const bolt = float(1.0).sub(smoothstep(0.14, 0.27, length(al.sub(vec2(hw.sub(0.55), hh.sub(0.55))))));
+        const tag = step(abs(lf.y), 0.32).mul(step(al.x, hw.mul(0.5))).mul(lid).mul(step(p1, 0.5));
+        o.fH.assign(up.mul(p2.mul(0.9)).add(lid.mul(0.22)).add(bolt.mul(0.12)));
+        o.fK.assign(up);
+        o.fC.assign(mix(mix(mix(engC.mul(0.62), engC.mul(0.78), lid), hazard.mul(0.85), tag), engC.mul(0.35), bolt));
+      }).Else(() => {
+        // rozdzielnia przyłącza reaktora bez własnej bryły (reaktor pod płytami): ośmiokątna płyta z pierścieniem śrub,
+        // ostrzegawczy pierścień, środek — miedziany (rury) albo ciemny (kable)
+        const R = min(hw, hh);
+        const oct = sdOct(lf, R).toVar();
+        const up = clamp(oct.negate().div(0.4), 0.0, 1.0);
+        const rr = length(lf);
+        const ring = step(R.mul(0.62), rr).mul(step(rr, R.mul(0.8)));
+        const ra = fract(atan(lf.y, lf.x).div(6.28318).mul(12.0));
+        const stripe = step(0.5, ra).mul(ring);
+        const core = step(rr, R.mul(0.45));
+        const boltD = length(vec2(fract(atan(lf.y, lf.x).div(6.28318).mul(8.0)).sub(0.5).mul(R.mul(0.9)), rr.sub(R.mul(0.9))));
+        const bolt = float(1.0).sub(smoothstep(0.15, 0.3, boltD)).mul(up);
+        const coreC = select(p1.greaterThan(0.5), engC.mul(0.45), copper.mul(1.4));
+        o.fH.assign(up.mul(p2).add(core.mul(0.5)).add(bolt.mul(0.12)).sub(ring.mul(0.15)));
+        o.fK.assign(up);
+        o.fC.assign(mix(mix(mix(engC.mul(1.1), mix(vec3(0.02), hazard, stripe), ring), coreC, core), engC.mul(0.5), bolt));
       });
     });
     return o;
@@ -493,6 +587,7 @@ export class HullComposer {
     const modK = float(0.0).toVar();
     const modSeam = float(0.0).toVar();
     const engK = float(0.0).toVar();      // gondola MAIN (poziom ramy): pod nią wysokość samej ramy, bez okruchów płyt
+    const cutK = float(0.0).toVar();      // KANAŁ SERWISOWY (SIDE, zbiornik): płyty zdjęte — maszynownia z siecią
     const emis = vec3(0.0).toVar();
     const hullC = this._pal(0), upperC = this._pal(1), trimC = this._pal(2), accent = this._pal(3), metal = this._pal(4);
     const hazard = this._pal(5), winC = this._pal(6), pipeC = this._pal(7), engC = this._pal(8), doorC = this._pal(9);
@@ -508,7 +603,8 @@ export class HullComposer {
       If(type.lessThan(3.5), () => {
         // gniazda wież S / M / L: v = 0 — KAPSUŁA Terra Novy (sprite'y Colossusa i Bellatora): ośmiokątna rama z podwójną
         // linią i nitami, płyta, zaokrąglony kwadratowy pierścień włazu, ciemne okno z płytą w środku, zaczepy na osi y;
-        // v = 1 — płyta z rowkiem obrotnicy
+        // v = 1 — płyta z rowkiem obrotnicy; v = 2 — pokrywa wyrzutni (gniazdo `mount` przychodzi tu z kodem wieży:
+        // _mountLook)
         const R = B.z.mul(iD);
         If(rr.lessThan(R.mul(1.3).add(1.0)), () => {
           If(B.w.lessThan(0.5), () => {
@@ -544,6 +640,26 @@ export class HullComposer {
             col.assign(mix(col, winC, win));
             col.assign(mix(col, trimC.mul(0.75), clampK));
             modCol.assign(col);
+          }).ElseIf(B.w.greaterThan(1.5), () => {
+            // POKRYWA WYRZUTNI (gniazdo rakietowe `mount`): kwadratowa płyta z ramą, 2 × 2 komory z pokrywami na zawiasie
+            const hb = R.mul(0.92);
+            const sd = sdRoundBox(lu, vec2(hb, hb), R.mul(0.18)).toVar();
+            If(sd.lessThan(1.0), () => {
+              const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0);
+              const frameUp = clamp(sd.negate().div(0.6), 0.0, 1.0);
+              const cc = vec2(select(lu.x.greaterThan(0.0), hb, hb.negate()), select(lu.y.greaterThan(0.0), hb, hb.negate())).mul(0.47).toVar();
+              const lc = lu.sub(cc).toVar();
+              const sc = sdRoundBox(lc, vec2(hb.mul(0.36), hb.mul(0.36)), hb.mul(0.07)).toVar();
+              const cell = clamp(sc.negate().div(0.35), 0.0, 1.0);
+              const lid = clamp(sc.negate().sub(0.5).div(0.3), 0.0, 1.0).toVar();
+              const hinge = lineN(lc.x, float(0.25)).mul(lid);
+              modH.addAssign(frameUp.mul(1.1).sub(cell.mul(0.9)).add(lid.mul(0.5)).sub(hinge.mul(0.2)));
+              modK.assign(max(modK, inside));
+              modSeam.assign(max(modSeam, max(lineN(sd, float(0.35)), lineN(sc, float(0.3))).mul(0.6)));
+              const col = mix(plateC.mul(1.02), vec3(0.03, 0.03, 0.028), cell).toVar();
+              col.assign(mix(col, metal.mul(1.35), lid));
+              modCol.assign(mix(col, trimC.mul(0.6), hinge));
+            });
           }).Else(() => {
             const plate = clamp(R.sub(rr), 0.0, 1.0);
             const groove = lineN(rr.sub(R.mul(0.8)), float(0.7));
@@ -554,13 +670,24 @@ export class HullComposer {
             const bolt = float(1.0).sub(smoothstep(0.35, 0.6, boltD));
             modH.addAssign(plate.mul(1.4).sub(groove.mul(0.5)).add(bolt.mul(0.4)));
             modK.assign(max(modK, plate));
-            modCol.assign(select(rr.lessThan(R.mul(0.8)), metal.mul(0.75), metal.mul(1.25)).mul(float(1.0).sub(groove.mul(0.5))));
+            // obrotnica szara (pół stali, pół płyty), pierścień w barwie płyty — na białym pancerzu TN nie czyta się jak otwór
+            modCol.assign(select(rr.lessThan(R.mul(0.8)), mix(metal, plateC, 0.5), plateC.mul(0.97)).mul(float(1.0).sub(groove.mul(0.5))));
           });
         });
       }).ElseIf(type.lessThan(4.5), () => {
         // gondola MAIN (v = 0): walec wzdłuż osi gondoli — bęben z żebrami i kołnierzami, szyjka przy kadłubie (+x),
         // ciemna gardziel dyszy na rufie (−x); v = 1: kanciasty blok z kratą (silniki Colossusa)
         const w = B.x.mul(iD), hh = B.y.mul(iD);
+        If(fract(type).greaterThan(0.1), () => {
+          // kanał serwisowy od szyjki (+x) w głąb kadłuba (serviceChannel, gondola bez rowu przy szyjce)
+          const chX0 = w.mul(HD_SERVICE_CHANNEL.mainInK), chX1 = w.add(HD_SERVICE_CHANNEL.lenDu);
+          const chH = max(hh.mul(HD_SERVICE_CHANNEL.mainHalfK), HD_SERVICE_CHANNEL.halfDu);
+          const chSd = sdBox(lu.sub(vec2(chX0.add(chX1).mul(0.5), 0.0)), vec2(chX1.sub(chX0).mul(0.5), chH)).toVar();
+          const chK = clamp(chSd.negate().mul(2.0), 0.0, 1.0);
+          cutK.assign(max(cutK, chK));
+          engK.assign(max(engK, chK));
+          modSeam.assign(max(modSeam, lineN(chSd, float(0.35)).mul(0.5)));
+        });
         const sd = sdRoundBox(lq, B.xy, min(B.y.mul(0.35), 16.0)).mul(iD).toVar();
         If(sd.lessThan(1.0), () => {
           const inside = clamp(sd.negate().div(0.5), 0.0, 1.0);
@@ -668,6 +795,41 @@ export class HullComposer {
       }).ElseIf(type.lessThan(6.5), () => {
         // reaktor: pancerna pokrywa, wentyle promieniste ze światłem, pierścień ostrzegawczy (v = 1 — wewnątrz kadłuba)
         const R = B.z.mul(iD);
+        // v = 2 — GNIAZDO OBUDOWY Terra Novy: ośmiokąt (boki na osiach i przekątnych) o apotemie R = obrys kołnierza
+        // obudowy 3D, w której gra rysuje reaktor (src/3d/reactor3D.js); wokół szczelina i pancerna rama z podwójną
+        // linią, nitami i żółtymi narożnikami ostrzegawczymi, w środku płyta pokładu ze śrubami i 4 przepustami kabli
+        If(B.w.greaterThan(1.5).and(B.w.lessThan(2.5)).and(rr.lessThan(R.mul(1.45).add(1.0))), () => {
+          const oct = sdOct(lu, R).toVar();
+          const gapO = sdOct(lu, R.mul(1.06).add(0.4)).toVar();
+          const frameO = sdOct(lu, R.mul(1.2).add(0.8)).toVar();
+          const pad = clamp(oct.negate().div(0.4), 0.0, 1.0).toVar();
+          const gap = clamp(gapO.negate().div(0.35), 0.0, 1.0).mul(float(1.0).sub(pad)).toVar();
+          const frame = clamp(frameO.negate().div(0.5), 0.0, 1.0).mul(float(1.0).sub(gap)).mul(float(1.0).sub(pad)).toVar();
+          const a = atan(lu.y, lu.x);
+          // nity na ramie i śruby płyty pokładu (8 na bok ośmiokąta)
+          const nb = floor(R.mul(0.9)).max(16.0);
+          const midF = frameO.add(R.mul(0.07).add(0.4));
+          const angF = fract(a.div(6.28318).mul(nb));
+          const boltF = float(1.0).sub(smoothstep(0.22, 0.4, length(vec2(angF.sub(0.5).mul(6.28318).mul(R.mul(1.13)).div(nb), midF)))).mul(frame);
+          const angP = fract(a.div(6.28318).mul(16.0));
+          const boltP = float(1.0).sub(smoothstep(0.2, 0.36, length(vec2(angP.sub(0.5).mul(6.28318).mul(R.mul(0.88)).div(16.0), oct.add(R.mul(0.1)))))).mul(pad);
+          // przepusty kabli na przekątnych (ciemne kwadraty przy brzegu płyty)
+          const dq = rot2(lu, float(0.7853982));
+          const port = step(abs(abs(dq.x).sub(R.mul(0.72))), R.mul(0.07).max(0.6)).mul(step(abs(abs(dq.y).sub(R.mul(0.72))), R.mul(0.07).max(0.6))).mul(pad);
+          // żółte narożniki ostrzegawcze ramy (przy wierzchołkach ośmiokąta)
+          const corner = step(0.82, abs(cos(a.mul(8.0).sub(3.14159)))).mul(frame).mul(step(frameO, R.mul(-0.05)));
+          const dbl = lineN(frameO.add(R.mul(0.11).add(0.55)), float(0.3)).mul(frame);
+          modH.addAssign(frame.mul(1.1).add(boltF.mul(0.25)).sub(gap.mul(2.2)).add(pad.mul(0.35)).add(boltP.mul(0.2)).sub(port.mul(0.6)).sub(dbl.mul(0.25)));
+          modK.assign(max(modK, max(frame, max(gap, pad))));
+          modSeam.assign(max(modSeam, max(lineN(frameO, float(0.35)), lineN(gapO, float(0.3))).mul(0.6)));
+          const col = mix(plateC.mul(1.02), plateC.mul(0.93), dbl).toVar();
+          col.assign(mix(col, hazard, corner));
+          col.assign(mix(col, trimC.mul(0.5), boltF.mul(0.6)));
+          col.assign(mix(col, vec3(0.025, 0.025, 0.024), gap));
+          col.assign(mix(col, mix(plateC.mul(0.84), trimC.mul(0.55), boltP), pad));
+          col.assign(mix(col, vec3(0.02), port));
+          modCol.assign(col);
+        });
         If(rr.lessThan(R.add(1.0)).and(B.w.lessThan(0.5)), () => {
           const a = atan(lu.y, lu.x);
           const cap = clamp(R.mul(0.92).sub(rr), 0.0, 1.0);
@@ -681,6 +843,81 @@ export class HullComposer {
           modK.assign(max(modK, step(rr, R)));
           modCol.assign(select(ringBand.greaterThan(0.5), mix(vec3(0.02), hazard, ringStripe), mix(plateC.mul(0.9), vec3(0.04), vent)));
           emis.addAssign(accent.mul(vent).mul(1.4));
+        });
+      }).ElseIf(type.lessThan(7.5).and(B.w.greaterThan(1.5)), () => {
+        // v = 2 — GNIAZDO MOSTKA Terra Novy (src/data/bridgeLevels.js): płyta pokładu w obrysie modelu 3D poziomu (pół-
+        // wymiary w, h, ośmiokąt z fazą poziomu), szczelina i pancerna rama z podwójną linią, nitami i żółtymi skosami
+        // w narożnikach; na płycie mocowania modelu (poziom + 1 na burtę, od IV — także dziób i rufa) z bursztynową
+        // lampką, belki poziomu przy przednim brzegu (tyle, ile poziom) i przepust kabli w środku. Gra stawia na nim
+        // model 3D poziomu (src/3d/bridge3D.js); B.z = poziom + faza / 100 [j.]
+        const w = B.x.mul(iD), hh = B.y.mul(iD);
+        const lv = floor(B.z).toVar();
+        const chJ = fract(B.z).mul(100.0).mul(iD).toVar();
+        const rimJ = float(HD_BRIDGE_SOCKET.gapDu + HD_BRIDGE_SOCKET.frameDu).add(min(w, hh).mul(2 * HD_BRIDGE_SOCKET.frameK)).toVar();
+        const gapJ = rimJ.mul(HD_BRIDGE_SOCKET.gapShare).toVar();
+        const al = abs(lu).toVar();
+        // ośmiokąt (płaszczyzny boków i skosów — przesunięcie o d daje ramę z fazą większą o d · (2 − √2), jak bryła)
+        const deck = max(max(al.x.sub(w), al.y.sub(hh)), al.x.add(al.y).sub(w.add(hh).sub(chJ)).mul(0.70710678)).toVar();
+        If(deck.lessThan(rimJ.add(1.0)), () => {
+          const pad = clamp(deck.negate().div(0.4), 0.0, 1.0).toVar();
+          const gapO = deck.sub(gapJ).toVar();
+          const gap = clamp(gapO.negate().div(0.35), 0.0, 1.0).mul(float(1.0).sub(pad)).toVar();
+          const frameO = deck.sub(rimJ).toVar();
+          const frame = clamp(frameO.negate().div(0.5), 0.0, 1.0).mul(float(1.0).sub(gap)).mul(float(1.0).sub(pad)).toVar();
+          const fw = rimJ.sub(gapJ);
+          // nity w środku ramy (wzdłuż boku, krok 2,2 jd), podwójna linia, żółte skosy narożników
+          const along = select(al.y.sub(hh).greaterThan(al.x.sub(w)), lu.x, lu.y);
+          const midF = frameO.add(fw.mul(0.5));
+          const rivF = float(1.0).sub(smoothstep(0.18, 0.34, length(vec2(fract(along.div(2.2)).sub(0.5).mul(2.2), midF)))).mul(frame).mul(step(1.2, fw));
+          const dbl = lineN(frameO.add(fw.mul(0.28)), float(0.3)).mul(frame);
+          const diagD = al.x.add(al.y).sub(w.add(hh).sub(chJ)).mul(0.70710678);
+          const onDiag = step(max(al.x.sub(w), al.y.sub(hh)).sub(0.05), diagD).mul(frame).mul(step(frameO, fw.mul(-0.2)));
+          const stripe = step(0.5, fract(al.x.sub(al.y).div(1.4)));
+          // płyta: szwy paneli, śruby przy brzegu
+          const P = clamp(min(w, hh).mul(0.55), 3.0, 9.0);
+          const seam = max(lineN(fract(lu.x.div(P).add(0.5)).sub(0.5).mul(P), float(0.25)), lineN(lu.y, float(0.25))).mul(pad).mul(step(deck, -1.4)).toVar();
+          const boltP = float(1.0).sub(smoothstep(0.16, 0.3, length(vec2(fract(along.div(3.0)).sub(0.5).mul(3.0), deck.add(0.9))))).mul(pad);
+          // mocowania modelu: lv + 1 na burtę (rozstaw ±0,72 w), od IV — dziób i rufa
+          const n = lv.add(1.0);
+          const span = w.mul(0.72);
+          const stepX = span.mul(2.0).div(n.sub(1.0));
+          const kc = clamp(floor(lu.x.add(span).div(stepX).add(0.5)), 0.0, n.sub(1.0));
+          const dxC = lu.x.add(span).sub(kc.mul(stepX));
+          const cw = clamp(w.mul(0.05), 0.9, 3.2), chh = clamp(hh.mul(0.07), 0.7, 2.4);
+          const dyC = al.y.sub(hh.sub(chh.mul(1.7)));
+          const clampS = step(abs(dxC), cw).mul(step(abs(dyC), chh));
+          const dxF = al.x.sub(w.sub(chh.mul(1.7)));
+          const clampF = step(4.0, lv).mul(step(abs(dxF), chh)).mul(step(al.y, cw));
+          const clampK = max(clampS, clampF).mul(pad).toVar();
+          const lamp = float(1.0).sub(smoothstep(0.14, 0.3, length(select(clampS.greaterThan(0.5), vec2(dxC, dyC), vec2(dxF, lu.y))))).mul(clampK);
+          // belki poziomu (I–VI) przy przednim brzegu płyty, za mocowaniem dziobowym (rozstaw i długość z obrysu)
+          const sp = clamp(hh.mul(0.1), 1.7, 3.6), bl = clamp(hh.mul(0.1), 1.0, 3.2);
+          const ky = lu.y.div(sp).add(lv.sub(1.0).mul(0.5));
+          const kb = floor(ky.add(0.5));
+          const bx = w.sub(chh.mul(2.8)).sub(bl).sub(1.0);
+          const bar = step(abs(ky.sub(kb)), 0.27).mul(step(0.0, kb)).mul(step(kb, lv.sub(1.0)))
+            .mul(step(abs(lu.x.sub(bx)), bl)).mul(pad);
+          // przepust kabli w środku płyty (pień sieci z rdzenia)
+          const pr = clamp(hh.mul(0.22), 1.2, 3.2);
+          const rr2 = length(lu);
+          const port = step(rr2, pr).mul(pad);
+          const portRing = lineN(rr2.sub(pr), float(0.35)).mul(pad);
+          modH.addAssign(frame.mul(1.1).add(rivF.mul(0.25)).sub(gap.mul(2.2)).add(pad.mul(0.35)).add(clampK.mul(0.7)).add(boltP.mul(0.18))
+            .sub(port.mul(0.6)).add(portRing.mul(0.2)).sub(dbl.mul(0.25)).sub(seam.mul(0.15)).add(bar.mul(0.1)));
+          modK.assign(max(modK, max(frame, max(gap, pad))));
+          modSeam.assign(max(modSeam, max(lineN(frameO, float(0.35)), lineN(gapO, float(0.3))).mul(0.6)));
+          const col = mix(plateC.mul(1.02), plateC.mul(0.93), dbl).toVar();
+          col.assign(mix(col, hazard, onDiag.mul(stripe)));
+          col.assign(mix(col, trimC.mul(0.5), rivF.mul(0.6)));
+          col.assign(mix(col, vec3(0.025, 0.025, 0.024), gap));
+          col.assign(mix(col, mix(mix(plateC.mul(0.86), plateC.mul(0.74), seam), trimC.mul(0.55), boltP), pad));
+          col.assign(mix(col, metal.mul(1.6), clampK));
+          col.assign(mix(col, hazard, bar));
+          col.assign(mix(col, vec3(0.02), port));
+          col.assign(mix(col, metal.mul(1.9), portRing));
+          col.assign(mix(col, vec3(1.0, 0.6, 0.18), lamp));
+          modCol.assign(col);
+          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.2));
         });
       }).ElseIf(type.lessThan(7.5), () => {
         // mostek: pas szyb z przodu, okna burtowe, talerz radaru (szyby ciemne, świecą wg „okien” projektu)
@@ -814,7 +1051,7 @@ export class HullComposer {
           modCol.assign(col);
           emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.2));
         });
-      }).Else(() => {
+      }).ElseIf(type.lessThan(10.5), () => {
         // pierścień (v = 0, gniazdo okrągłe): obręcz-torus, głęboka ciemna studnia, pierścień dna;
         // ILUMINATOR (v = 1): gruba obręcz ze śrubami, ciemna wypukła szyba z blikiem; v = 2 — iluminator w ośmiokątnej
         // ramie (Colossus): rama z płytą, iluminator o promieniu 0,62 R
@@ -863,9 +1100,139 @@ export class HullComposer {
             modCol.assign(mix(mix(ringC, trimC.mul(0.5), bolt), glassC, glass));
           });
         });
+      }).ElseIf(type.lessThan(11.5), () => {
+        // ZBIORNIK PALIWA we wnęce maszynowni (pod wnęką wysokość ramy, jak pod gondolą): ciemne dno i obrzeże wnęki,
+        // walec poziomy wzdłuż osi modułu z półkulistymi dennicami (v 1 — kula), 3–5 obręczy ze śrubami, bursztynowy pas
+        // znakowania paliwa, króciec na dennicy −x (wyjście do pompy)
+        const hb = B.xy.mul(iD).toVar();
+        const chX0 = hb.x.negate().sub(HD_SERVICE_CHANNEL.lenDu), chX1 = hb.x.negate().add(1.0);
+        const chH = max(hb.y.mul(HD_SERVICE_CHANNEL.tankHalfK), HD_SERVICE_CHANNEL.halfDu);
+        // kanał serwisowy (serviceChannel w hullDesignSystems.js — te same wymiary): płyty zdjęte, wysokość ramy, obrzeże
+        const chSd = sdBox(lu.sub(vec2(chX0.add(chX1).mul(0.5), 0.0)), vec2(chX1.sub(chX0).mul(0.5), chH)).toVar();
+        const chK = clamp(chSd.negate().mul(2.0), 0.0, 1.0);
+        cutK.assign(max(cutK, chK));
+        engK.assign(max(engK, chK));
+        modSeam.assign(max(modSeam, lineN(chSd, float(0.35)).mul(0.5)));
+        const sdW = sdRoundBox(lu, hb, min(hb.y.mul(0.5), 3.0)).toVar();
+        If(sdW.lessThan(1.0), () => {
+          const inside = clamp(sdW.negate().mul(2.0), 0.0, 1.0);
+          engK.assign(max(engK, inside));
+          const sph = step(0.5, B.w);
+          const R = max(mix(hb.y, min(hb.x, hb.y), sph).sub(1.6), 0.8).toVar();
+          const Lc = max(hb.x.sub(1.6).sub(R), 0.0).mul(float(1.0).sub(sph)).toVar();
+          const rq = length(vec2(max(abs(lu.x).sub(Lc), 0.0), lu.y)).toVar();
+          const inT = step(rq, R).toVar();
+          const rn = rq.div(R);
+          const cyl = sqrt(max(float(0.0), float(1.0).sub(rn.mul(rn)))).toVar();
+          const capH = min(R, 8.5);
+          // obręcze na części walcowej: 3–5, równo od dennicy do dennicy
+          const nB = clamp(floor(Lc.mul(2.0).div(9.0)).add(2.0), 3.0, 5.0);
+          const bp = Lc.mul(2.0).div(max(nB.sub(1.0), 1.0));
+          const bx = lu.x.add(Lc);
+          const bd = abs(bx.sub(floor(bx.div(max(bp, 0.5)).add(0.5)).mul(bp))).toVar();
+          const hoop = step(bd, 0.55).mul(step(abs(lu.x), Lc.add(0.3))).mul(inT).mul(float(1.0).sub(sph)).toVar();
+          const bolt = float(1.0).sub(smoothstep(0.14, 0.26, length(vec2(bd, fract(lu.y.div(1.6)).sub(0.5).mul(1.6))))).mul(hoop);
+          // pas paliwa (bursztyn z czarnymi skosami) na jednej trzeciej długości
+          const fuelBand = step(abs(lu.x.add(Lc.mul(0.33))), 1.1).mul(inT).mul(float(1.0).sub(hoop)).mul(float(1.0).sub(sph));
+          const chev = step(0.5, fract(lu.x.add(lu.y).div(1.4)));
+          const rim = inside.mul(float(1.0).sub(clamp(sdW.negate().sub(1.0).div(0.4), 0.0, 1.0)));
+          // króciec na dennicy −x: rura do brzegu wnęki
+          const nzl = step(abs(lu.y), 0.7).mul(step(lu.x, Lc.negate().sub(R.mul(0.6)))).mul(step(hb.x.negate().add(0.6), lu.x)).mul(float(1.0).sub(inT));
+          const nzlN = lu.y.div(0.7);
+          const nzlCyl = sqrt(max(float(0.0), float(1.0).sub(nzlN.mul(nzlN))));
+          const tankH = cyl.mul(capH).add(1.0).add(hoop.mul(0.35)).add(bolt.mul(0.1));
+          modH.addAssign(inT.mul(tankH).add(rim.mul(0.9)).add(nzl.mul(nzlCyl.mul(0.7).add(0.3)))
+            .sub(inside.mul(float(1.0).sub(inT)).mul(float(1.0).sub(rim)).mul(0.6)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(lineN(rq.sub(R), float(0.35)).mul(0.7), lineN(sdW, float(0.35)).mul(0.6))));
+          const shade = float(0.55).add(cyl.mul(0.5)).add(smoothstep(0.9, 1.0, cyl).mul(0.08));
+          const tankC = mix(hullC.mul(0.92), this._pal(11), 0.35).mul(shade).toVar();
+          tankC.assign(mix(tankC, mix(hazard.mul(0.95), vec3(0.03), chev).mul(shade), fuelBand));
+          tankC.assign(mix(tankC, engC.mul(1.25).mul(shade), hoop));
+          tankC.assign(mix(tankC, trimC.mul(0.45), bolt));
+          const wellC = mix(vec3(0.018, 0.016, 0.014), metal.mul(1.2), rim);
+          modCol.assign(mix(mix(wellC, pipeC.mul(float(0.8).add(nzlCyl.mul(0.6))), nzl), tankC, inT));
+        });
+      }).ElseIf(type.lessThan(12.5), () => {
+        // DYSZA SIDE (gniazdo w poszyciu przy burcie; dzwon i płomień rysuje gra w 3D): płyta-sponson, na końcu +x
+        // (wydech, burta) obręcz gniazda ze śrubami i ciemną gardzielą, od strony kadłuba (−x) dwa krótkie przewody w
+        // obudowę: miedziany (paliwo) i ciemny (prąd)
+        const hb = B.xy.mul(iD).toVar();
+        const chX0 = hb.x.negate().sub(max(hb.x.mul(HD_SERVICE_CHANNEL.sideLenK), HD_SERVICE_CHANNEL.lenDu)), chX1 = hb.x.mul(-0.3);
+        const chH = max(hb.y.mul(HD_SERVICE_CHANNEL.sideHalfK), HD_SERVICE_CHANNEL.halfDu);
+        // kanał serwisowy (serviceChannel w hullDesignSystems.js — te same wymiary): płyty zdjęte, wysokość ramy, obrzeże
+        const chSd = sdBox(lu.sub(vec2(chX0.add(chX1).mul(0.5), 0.0)), vec2(chX1.sub(chX0).mul(0.5), chH)).toVar();
+        const chK = clamp(chSd.negate().mul(2.0), 0.0, 1.0);
+        cutK.assign(max(cutK, chK));
+        engK.assign(max(engK, chK));
+        modSeam.assign(max(modSeam, lineN(chSd, float(0.35)).mul(0.5)));
+        const sd = sdRoundBox(lu, hb, min(hb.y.mul(0.45), 2.5)).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0);
+          const plate = clamp(sd.negate().div(0.6), 0.0, 1.0);
+          const R0 = hb.y.mul(0.82).toVar();
+          const ccx = hb.x.sub(R0);
+          const rc = length(vec2(lu.x.sub(ccx), lu.y)).toVar();
+          const inR = step(rc, R0);
+          const ringT = rc.sub(R0.mul(0.78)).div(R0.mul(0.22));
+          const torus = sqrt(max(float(0.0), float(1.0).sub(ringT.mul(ringT)))).mul(inR);
+          const throat = clamp(R0.mul(0.56).sub(rc).div(0.4), 0.0, 1.0).toVar();
+          const ang = fract(atan(lu.y, lu.x.sub(ccx)).div(6.28318).mul(8.0));
+          const bolt = float(1.0).sub(smoothstep(0.14, 0.28, length(vec2(ang.sub(0.5).mul(R0.mul(0.69)), rc.sub(R0.mul(0.88)))))).mul(inR);
+          const fy = abs(lu.y).sub(hb.y.mul(0.42));
+          const feed = step(abs(fy), 0.45).mul(step(lu.x, ccx.sub(R0.mul(0.7)))).mul(plate).toVar();
+          const fn = fy.div(0.45);
+          const feedCyl = sqrt(max(float(0.0), float(1.0).sub(fn.mul(fn))));
+          modH.addAssign(plate.mul(1.1).add(torus.mul(1.4)).sub(throat.mul(2.2)).add(feed.mul(feedCyl.mul(0.5))).add(bolt.mul(0.12)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(lineN(sd, float(0.35)).mul(0.7), lineN(rc.sub(R0), float(0.3)).mul(0.7))));
+          const col = mix(plateC.mul(0.86), engC.mul(1.2).mul(float(0.8).add(torus.mul(0.35))), inR).toVar();
+          col.assign(mix(col, select(lu.y.lessThan(0.0), pipeC.mul(1.45), vec3(0.035, 0.033, 0.03)).mul(float(0.7).add(feedCyl.mul(0.5))), feed));
+          col.assign(mix(col, trimC.mul(0.45), bolt));
+          col.assign(mix(col, vec3(0.02, 0.018, 0.017), throat));
+          modCol.assign(col);
+          emis.addAssign(vec3(1.0, 0.45, 0.14).mul(throat).mul(float(1.0).sub(smoothstep(0.0, R0.mul(0.4), rc))).mul(0.35));
+        });
+      }).Else(() => {
+        // ŁADOWNIA (v 0 — wrota: dwa skrzydła ze szwem na osi x modułu i zazębieniem, żebra w poprzek, szyny wzdłuż
+        // dłuższych boków; v 1 — klapa z krzyżem wzmocnień): rama z pasem ostrzegawczym, bursztynowe lampy w rogach
+        const hb = B.xy.mul(iD).toVar();
+        const sd = sdBox(lu, hb).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0);
+          const fw = clamp(min(hb.x, hb.y).mul(0.12), 1.2, 3.0).toVar();
+          const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
+          const frame = inside.mul(step(0.0, inner)).toVar();
+          const leaf = clamp(inner.negate().div(0.35), 0.0, 1.0).toVar();
+          const hz = step(inner.negate(), 0.8).mul(leaf);
+          const hzS = step(0.5, fract(lu.x.add(lu.y).div(2.2)));
+          const klapa = step(0.5, B.w);
+          const tooth = step(0.5, fract(lu.x.div(3.0))).sub(0.5).mul(0.8);
+          const seam = lineN(lu.y.add(tooth), float(0.35)).mul(leaf).mul(float(1.0).sub(klapa));
+          const ribP = clamp(hb.x.mul(0.25), 4.0, 8.0);
+          const rib = step(abs(fract(lu.x.div(ribP)).sub(0.5)), 0.08).mul(leaf).mul(float(1.0).sub(hz));
+          const xr = lineN(abs(lu.x.div(max(hb.x, 1.0))).sub(abs(lu.y.div(max(hb.y, 1.0)))).mul(min(hb.x, hb.y)), float(0.5)).mul(leaf).mul(klapa);
+          const rail = step(abs(abs(lu.y).sub(hb.y.sub(fw.mul(0.5)))), 0.35).mul(frame);
+          const lampD = length(abs(lu).sub(hb.sub(vec2(fw.mul(0.5)))));
+          const lamp = float(1.0).sub(smoothstep(0.35, 0.6, lampD)).mul(inside).toVar();
+          modH.addAssign(frame.mul(0.9).sub(leaf.mul(0.7)).add(rib.mul(0.28)).add(xr.mul(0.3)).sub(seam.mul(0.5)).add(rail.mul(0.15)).add(lamp.mul(0.25)));
+          modK.assign(max(modK, inside));
+          modSeam.assign(max(modSeam, max(max(lineN(inner, float(0.35)), lineN(sd, float(0.35))).mul(0.7), seam)));
+          const leafC = doorC.mul(float(1.08).add(rib.mul(0.15)).add(xr.mul(0.12)));
+          const col = mix(plateC.mul(0.94), leafC, leaf).toVar();
+          col.assign(mix(col, mix(hazard.mul(0.9), vec3(0.03), hzS), hz));
+          col.assign(mix(col, engC.mul(0.7), rail));
+          col.assign(mix(col, vec3(0.025), seam));
+          col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
+          modCol.assign(col);
+          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+        });
       });
     });
     const freeK = float(1.0).sub(modK).toVar();
+    // kanały serwisowe: płyty (pancerz, nadbudówka, mostek) zdjęte — w kanale maszynownia z rurą i kablem do urządzenia
+    const keepK = float(1.0).sub(cutK);
+    s1.assign(s1.mul(keepK)); s2.assign(s2.mul(keepK)); s3.assign(s3.mul(keepK));
     // sieć rur (generowana + ręczne): wiązki i osprzęt — w maszynowni, ręczne także na płytach
     const net = this._pipeNet(p, iD);
     const netOn = U.pnet.x;
@@ -1369,12 +1736,17 @@ export class HullComposer {
     });
     // moduły
     let mi = 0;
+    // gondole MAIN z kanałem serwisowym (sieć systemów: przy szyjce brak rowu) — znacznik w kodzie typu (+0,25)
+    const chanMods = new Set((field.pipeNet?.channels || []).map((i) => modules[i]));
     for (const m of modules) {
       if (mi >= HD_COMPOSER_LIMITS.modules) break;
       const A = U.mods.array[mi * 2], B = U.mods.array[mi * 2 + 1];
-      A.set(m.x, m.y, TYPE_CODE[m.type], m.rot || 0);
-      const extra = m.type === 'hangar' ? (m.doors || 1) : (m.v || 0);
-      B.set(m.w || 0, m.h || 0, m.r || 0, extra);
+      const look = m.type === 'mount' ? _mountLook(m) : null;
+      A.set(m.x, m.y, look ? look[0] : TYPE_CODE[m.type] + (chanMods.has(m) ? 0.25 : 0), m.rot || 0);
+      const extra = look ? look[1] : (m.type === 'hangar' ? (m.doors || 1) : (m.v || 0));
+      // gniazdo mostka (v 2): z = poziom + faza pokładu / 100 [j.] (kompozytor: floor / fract)
+      const z = m.type === 'bridge' && m.v === 2 ? (m.lv || 1) + bridgeLevel(m.lv).ch / 100 : (m.r || 0);
+      B.set(m.w || 0, m.h || 0, z, extra);
       mi++;
     }
     U.modCount.value = mi;
@@ -1416,7 +1788,7 @@ export class HullComposer {
   /**
    * Sieć rur do tekstur i uniformów: pipeA (RGBA16F na siatce pola, dwuliniowo) — przesunięcie w poprzek od osi biegu
    * [j.], cos φ, sin φ, numer odcinka; pipeB (RGBA8, textureLoad) — numer biegu, numer osprzętu; biegi (promienie rur,
-   * pół-szerokość, odstęp, najgrubsza, materiał + 4 · na płytach) i osprzęt (miejsce, rodzaj + 8 · na płytach, obrót,
+   * pół-szerokość, odstęp, najgrubsza, materiał (3 — kable) + 8 · na płytach) i osprzęt (miejsce, rodzaj + 16 · na płytach, obrót,
    * wymiary). Bez sieci — tekstury 1 × 1 i wyłącznik w uniformie.
    */
   _setPipes(field, n, toHalf) {
@@ -1459,12 +1831,12 @@ export class HullComposer {
       const q = r.radii;
       R[(i + 1) * 3].set(q[0] || 0, q[1] || 0, q[2] || 0, q[3] || 0);
       R[(i + 1) * 3 + 1].set(q[4] || 0, q[5] || 0, q[6] || 0, q[7] || 0);
-      R[(i + 1) * 3 + 2].set(r.halfW, r.gap, r.rMax, (r.mat || 0) + (r.over ? 4 : 0));
+      R[(i + 1) * 3 + 2].set(r.halfW, r.gap, r.rMax, (r.mat || 0) + (r.over ? 8 : 0) + (r.dead ? 16 : 0));
     });
     const F = U.pfits.array;
     net.fits.forEach((f, i) => {
       if (i + 1 >= HD_COMPOSER_LIMITS.pipeFits) return;
-      F[(i + 1) * 2].set(f.x, f.y, f.type + (f.over ? 8 : 0), f.rot || 0);
+      F[(i + 1) * 2].set(f.x, f.y, f.type + (f.over ? 16 : 0), f.rot || 0);
       F[(i + 1) * 2 + 1].set(f.hw, f.hh, f.p1 || 0, f.p2 || 0);
     });
   }

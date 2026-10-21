@@ -38,7 +38,7 @@
 // Losowość rozgrywki: tylko generatory z ziarnem (makeCoreRng) — bez Math.random, więc wariant,
 // kierunek wyrzutu i rozpad są powtarzalne przy tym samym ziarnie.
 
-import { HullBodies, hullImpactResult } from './hullBodies.js';
+import { HullBodies, hullImpactResult, hullSpriteRotation } from './hullBodies.js';
 import { activateNode } from './beamActiveRegion3D.js';
 import {
   CORE_STATE, CORE_STATE_RANK, CORE_STATE_LABEL, coreStateRank, CORE_KILL_MODE, CORE_PROBE_CONFIG,
@@ -224,20 +224,55 @@ export function reactorCoreWorld(core, out = {}) {
 /**
  * Rama rdzenia dla modelu reaktora (reactor3D): środek w świecie i dwa wektory długości promienia
  * komory — X wzdłuż +x sprite'a (dziób), Y w dół obrazka (jak siatka heksów wersji heksowej).
- * Wynik: { x, y, axX, axY, ayX, ayY, R }.
+ * `pose` — poza RENDERU gospodarza ({ x, y, angle } jak bridgeRenderPose: gracz interpolowany między krokami
+ * fizyki, NPC z RenderPoses); bez niej — poza encji. Wynik: { x, y, axX, axY, ayX, ayY, R, cs (bok komórki) }.
  */
-export function reactorCoreFrame(core, out = {}) {
-  reactorCoreWorld(core, out);
+export function reactorCoreFrame(core, out = {}, pose = null) {
   const hull = reactorHull(core?.host);
   const R = finite(core?.gridR, 1);
   out.R = R;
-  if (!hull) { out.axX = R; out.axY = 0; out.ayX = 0; out.ayY = R; return out; }
+  out.cs = hull ? hull.body.cellSize : 0;
+  if (!hull) {
+    reactorCoreWorld(core, out);
+    out.axX = R; out.axY = 0; out.ayX = 0; out.ayY = R;
+    return out;
+  }
+  if (pose && Number.isFinite(pose.x) && Number.isFinite(pose.y) && Number.isFinite(pose.angle)) {
+    // jak localToWorld, ale z pozą renderu (ten sam obrót sprite'a co skóra kadłuba)
+    const th = -(pose.angle + hullSpriteRotation(hull.entity));
+    const c = Math.cos(th), s = Math.sin(th);
+    const lm = hull.body.latticeMin;
+    const dx = lm.x + core.gx - HullBodies.anchorLocalX(hull), dy = lm.y + core.gy - HullBodies.anchorLocalY(hull);
+    out.x = pose.x + c * dx - s * dy;
+    out.y = pose.y - (s * dx + c * dy);
+    out.axX = c * R; out.axY = -s * R;
+    out.ayX = s * R; out.ayY = c * R;
+    return out;
+  }
+  reactorCoreWorld(core, out);
   reactorLocalDirToWorld(hull, 1, 0, _q);
   out.axX = _q.x * R; out.axY = _q.y * R;
   // obraz w dół = −Y ciała
   reactorLocalDirToWorld(hull, 0, -1, _q);
   out.ayX = _q.x * R; out.ayY = _q.y * R;
   return out;
+}
+
+/**
+ * Parametry modelu 3D rdzenia z markera (obraz — reactor3D.js; rozgrywka ich nie czyta): housingR — promień
+ * obrysu obudowy [j. świata] (`hr` markera w px PNG × `pxToWorld`; bez niego model w skali komory), housing —
+ * false: wnętrze bez obudowy, kind — rodzaj modelu (terran / pirate / atlas; bez niego z gospodarza), tier —
+ * poziom rdzenia (R1–R6, etap 2 kreatora). null — wszystko domyślne.
+ */
+export function reactorModelParams(marker, pxToWorld) {
+  const hr = finite(marker?.hr, 0);
+  const out = {
+    housingR: hr > 0 ? hr * finite(pxToWorld, 1) : 0,
+    housing: marker?.housing !== false,
+    kind: marker?.model || null,
+    tier: marker?.tier || null
+  };
+  return out.housingR > 0 || !out.housing || out.kind || out.tier ? out : null;
 }
 
 /** Pozycja spoczynkowa komórki komory k w świecie gry (u bieżącego gospodarza). */
@@ -346,6 +381,8 @@ function buildCore(entity, hull, marker, index, opts, claimed) {
     meltdownSec: positive(marker.meltdownSec, profile.meltdownSec),
     color: marker.color || opts.color || null,
     kind: opts.kind,
+    // obraz (reactor3D): parametry modelu — skala obudowy [j. świata], wariant, rodzaj, poziom rdzenia
+    model: reactorModelParams(marker, layout.uniform * hull.scale),
     cellX: Int16Array.from(ixs),
     cellY: Int16Array.from(iys),
     cellBaseHp: Float32Array.from(base),

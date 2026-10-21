@@ -9,7 +9,7 @@
  */
 
 import { createSuite, runIfMain } from './harness.mjs';
-import { RESOURCE_KEYS, RESOURCES } from '../../src/data/resources.js';
+import { RESOURCE_KEYS, RESOURCES, RECIPES } from '../../src/data/resources.js';
 import { FACTION } from '../../src/data/factions.js';
 import {
   WARSHIP_CLASSES, WARSHIP_ORDER, SHIPYARD_MODEL, FLEET_DOCTRINE, pickWarshipClass,
@@ -126,6 +126,29 @@ export function run() {
     t.check(`${naSile[i].id} zajmuje pochylnię dłużej na punkt siły`,
       naSile[i].sPerSila > naSile[i - 1].sPerSila);
   }
+
+  // ----------------------------------------------------------
+  t.section('Silniki hipercruise — towary z kontraktu E5 ↔ E8');
+
+  // Id i vmax to kontrakt z tabelą napędów (PLAN-ekonomia-rynki § 3.4): E5 stroi
+  // vmax w 20–40 tys. j./s, ale id się nie zmieniają. Cena ma rosnąć szybciej niż
+  // prędkość, inaczej Mk3 byłby oczywistym wyborem dla każdego kadłuba.
+  const KONTRAKT = { hypercruise_mk1: 20000, hypercruise_mk2: 30000, hypercruise_mk3: 40000 };
+  let poprzedni = 0;
+  for (const [id, vmax] of Object.entries(KONTRAKT)) {
+    t.check(`${id} jest towarem z recepturą`,
+      !!RESOURCES[id] && Object.values(RECIPES).some(r => r.out[id] > 0));
+    t.check(`${id} buduje jakaś klasa okrętu`,
+      Object.values(WARSHIP_CLASSES).some(cls => cls.build[id] > 0));
+    const zaTysiac = (RESOURCES[id]?.value || 0) / (vmax / 1000);
+    t.check(`${id} kosztuje więcej za tysiąc j./s niż słabszy`, zaTysiac > poprzedni,
+      `(${poprzedni.toFixed(1)} → ${zaTysiac.toFixed(1)} CR)`);
+    poprzedni = zaTysiac;
+  }
+  t.check('każdy okręt ma napęd przelotowy i moduł hipercruise',
+    Object.values(WARSHIP_CLASSES).every(cls =>
+      (cls.build.drive_light || cls.build.drive_heavy)
+      && Object.keys(KONTRAKT).some(id => cls.build[id] > 0)));
 
   // ----------------------------------------------------------
   t.section('Zapas roboczy portu jest nietykalny');

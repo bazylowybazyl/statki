@@ -672,14 +672,23 @@ export const DestructorBeams3D = {
         b.vel.z = 0; b.angVel.x = 0; b.angVel.y = 0;
       } else if (b.gravityWell !== null && b.gravityWell !== undefined) {
         // Grawitacja ku punktowi (środek planetoidy): kierunek liczony co krok — ciało spada po prostej ku środkowi,
-        // a nie „w dół” sceny; r0 > 0 — przyspieszenie maleje z kwadratem odległości.
+        // a nie „w dół” sceny; r0 > 0 — przyspieszenie maleje z kwadratem odległości; vmax > 0 — sufit prędkości ku
+        // środkowi (bez pola — dawne całkowanie bit w bit).
         const gw = b.gravityWell;
         const gx = gw.x - b.pos.x, gy = gw.y - b.pos.y, gz = gw.z - b.pos.z;
         const d2 = gx * gx + gy * gy + gz * gz;
         if (d2 > 1e-6) {
           const d = Math.sqrt(d2);
           const a = (gw.r0 > 0 ? gw.g * (gw.r0 * gw.r0) / d2 : gw.g) * dt / d;
-          b.vel.x += gx * a; b.vel.y += gy * a; b.vel.z += gz * a;
+          if (gw.vmax > 0) {
+            // SUFIT prędkości ku środkowi (upadek bazy piratów z 23 km — pirateBaseFall.js `gravityVmax`): przyspieszenie
+            // dokłada się tylko do vmax składowej ku środkowi; składowa styczna i ruch od środka bez zmian
+            const vin = (b.vel.x * gx + b.vel.y * gy + b.vel.z * gz) / d;
+            const add = Math.min(a * d, gw.vmax - vin);
+            if (add > 0) { const k = add / d; b.vel.x += gx * k; b.vel.y += gy * k; b.vel.z += gz * k; }
+          } else {
+            b.vel.x += gx * a; b.vel.y += gy * a; b.vel.z += gz * a;
+          }
         }
       } else if (b.gravity) {
         // Grawitacja ciała 3D (wieża habitatu, jej odłamy): jednorodne przyspieszenie całości — węzły się od niego nie

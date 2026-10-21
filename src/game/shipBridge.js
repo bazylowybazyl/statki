@@ -86,14 +86,19 @@ export function bridgeZoneMargin(renderPerPng, tier = 'L') {
 // Strefa leży na namalowanej nadbudówce (model 3D ją zastępuje), poza
 // zapasem bridgeZoneMargin od hardpointów i silników (pilnuje tego
 // tests/shipBridge.test.mjs). Nowy kadłub: docs/BRIEF-mostek-nowego-kadluba.md.
+// FLOTA TERRA NOVY: mostek na POZIOM klasy (`level`, src/data/bridgeLevels.js — Custos I, Hasta II, Bellator IV,
+// Citadella V, Colossus VI). Jedno źródło z kreatorem kadłubów: środek = moduł `bridge` presetu TN (x, y = 0)
+// przeliczony ramą sprite'a HD_TN_SPRITE_FRAMES (px = x / s − dx, py = −dy), wymiary = obrys modelu poziomu / s
+// — strefa zabicia to dokładnie obrys modelu 3D (tests/bridgeLevels.test.mjs). Przesuwasz mostek presetu TN albo
+// zmieniasz obrys poziomu → ten sam ruch tutaj. Zmiany stref z 2026-10-21: docs/PORT-mostki.md § 10.
 export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
   battleship: Object.freeze({
     label: 'Bellator',
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Blok z kwadratową wieżą i kopułą w osi, rufowa połowa kadłuba.
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -282, y: 0, w: 236, h: 92, rot: 0 })
+        // Mostek IV na rufowym bloku (kreator −217 j.: między gniazdem PD rufy a zbiornikiem paliwa).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -403.2, y: -1, w: 144.7, h: 74.2, rot: 0, level: 4 })
       ])
     }),
     defaultVariant: 'standard'
@@ -137,9 +142,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Rufowy blok dowodzenia: kwadratowa wieża i okrągły właz, między
-        // działami burtowymi a dyszami (PNG 2400 × 1792, render 192 × 143).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -552, y: -5, w: 430, h: 220, rot: 0 })
+        // Mostek I za zbiornikiem paliwa, przed komorą reaktora (kreator −42 j.; PNG 2400 × 1792, render 192 × 143).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -489.5, y: 6, w: 350, h: 200, rot: 0, level: 1 })
       ])
     }),
     defaultVariant: 'standard'
@@ -149,8 +153,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Ten sam układ co Custos: wieża i właz w osi, rufowa część (768 × 573).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -193, y: 0, w: 150, h: 76, rot: 0 })
+        // Mostek II w osi rufowej części, przed komorą reaktora (kreator −64 j.; 768 × 573).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -183.2, y: -0.5, w: 112, h: 58.7, rot: 0, level: 2 })
       ])
     }),
     defaultVariant: 'standard'
@@ -160,9 +164,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Cytadela na rufowym bloku: poprzeczna płyta z dwoma okrągłymi
-        // kopułami i mechanizmem w osi (1672 × 941).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -552.5, y: -14.5, w: 95, h: 161, rot: 0 })
+        // Mostek V na środku rufowego kasztelu (cytadela: kopuły i mechanizm sprite'a; kreator −339 j.; 1672 × 941).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -526.3, y: -12, w: 167.2, h: 83.6, rot: 0, level: 5 })
       ])
     }),
     defaultVariant: 'standard'
@@ -172,9 +175,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#e4f3ff',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Centralna nadbudówka: ośmiokątna wieża z kratą, długi blok z napisem
-        // TERRA NOVA i kapsuła czujników przed nim (1672 × 941).
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -81.5, y: 0, w: 347, h: 124, rot: 0 })
+        // Mostek VI na centralnej nadbudówce (wieża z kratą i rufowa część bloku TERRA NOVA; kreator −150 j.; 1672 × 941).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -160.3, y: -2, w: 160.8, h: 81.5, rot: 0, level: 6 })
       ])
     }),
     defaultVariant: 'standard'
@@ -306,7 +308,9 @@ export function normalizeBridgeDef(raw, index = 0) {
     armorMul: clamp(positive(src.armorMul, BRIDGE_DEFAULTS.armorMul), 0.1, 50),
     killFrac: clamp(finite(src.killFrac, BRIDGE_DEFAULTS.killFrac), 0.05, 1),
     poly,
-    windowColor: typeof src.windowColor === 'string' ? src.windowColor : null
+    windowColor: typeof src.windowColor === 'string' ? src.windowColor : null,
+    // poziom mostka I–VI (src/data/bridgeLevels.js): model 3D poziomu, obrys modelu = strefa; 0 — model kadłuba
+    level: Number.isFinite(Number(src.level)) && Number(src.level) >= 1 ? Math.min(6, Math.round(Number(src.level))) : 0
   };
   if (poly) {
     // Prostokąt opisujący wielokąt: środek i rozmiar do HUD-u i celowania.
@@ -351,6 +355,7 @@ export function compactBridgeDef(raw) {
   }
   out.armorMul = round2(def.armorMul);
   out.killFrac = round2(def.killFrac);
+  if (def.level) out.level = def.level;
   return out;
 }
 

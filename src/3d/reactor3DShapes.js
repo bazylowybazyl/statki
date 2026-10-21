@@ -2,23 +2,34 @@
 //
 // MODELE REAKTORA — geometria proceduralna (bez sceny i bez DOM; testy node).
 //
-// Układ modelu: jednostka = promień komory rdzenia, (x, y) = osie siatki heksów
-// kadłuba, z ≤ 0 w głąb kadłuba (0 = dach modelu, −1 = podłoga przedziału).
-// Kamera gry patrzy z góry (ortho), więc liczą się dachy, skosy i to, co
-// przykrywa co — ściany pionowe są kreską, a ich spody nigdy nie są widoczne,
-// więc ich nie ma. Plazma krąży w torusie pod cewkami: między cewkami ją widać.
+// Układ modelu: jednostka = skala modelu (rdzeń: promień obudowy / REACTOR3D_HOUSING[rodzaj].outer, bez
+// parametru — promień komory), (x, y) = osie sprite'a kadłuba (x ku dziobowi, y w dół obrazu), z w górę.
+// WNĘTRZE (maszyneria) leży w z ∈ [−1, 0]: −1 = podłoga przy pokładzie, 0 = dach cewek. OBUDOWA (materiały
+// ≥ REACTOR3D_MAT.housing) stoi na pokładzie wokół wnętrza i kryje je pokrywą tuż nad dachem (z do ~0,09):
+// pancerny pierścień z kołnierzem, płyty pokrywy, krata nad pierścieniem plazmy (przez nią świeci plazma),
+// czapa w środku. Kamera gry patrzy z góry (ortho), więc liczą się dachy, skosy i to, co przykrywa co — spodów
+// nie ma. Plazma krąży w torusie pod cewkami: między cewkami i przez kratę ją widać.
 //
 // Rodzaje (REACTOR3D_KINDS):
 //   terran — tokamak Terra Nova (Bellator): równy pierścień plazmy w 16 cewkach,
 //            szyny cewek, solenoid w środku, grodź z zaciskami i sprzęgłami mocy;
+//            obudowa: ośmiokąt TN (kołnierz, ściana z fazą 45°, 8 płyt pokrywy,
+//            krata 16 prętów nad cewkami, czapa ze wskaźnikiem, tabliczki ostrzegawcze);
 //   pirate — prowizorka piratów (Iron Skull): eliptyczny pierścień w 11 cewkach
 //            o nierównych odstępach (jednej brak — plazma tam wystaje), łaty na
 //            grodzi z przerwą, kable w poprzek, dwa zbiorniki, kanciasty rdzeń;
+//            obudowa: krzywy dziesięciokąt, łatanina płyt i krata z belek, kwadratowa
+//            czapa na śrubach, pomarańczowe pasy;
 //   atlas  — Atlas gracza: dwa przeciwbieżne pierścienie (20 + 12 cewek), kula
-//            rdzenia w kołnierzu, listwy świetlne na grodzi.
+//            rdzenia w kołnierzu, listwy świetlne na grodzi; obudowa: okrągła, dwie
+//            kraty nad pierścieniami, okno nad kulą rdzenia, listwy świetlne.
+//
+// SEKTORY POKRYWY: płyty, pręty kraty i czapa niosą w aCoil numer sektora (0–7: kąt k·π/4 ± π/8 w układzie
+// modelu, 8 — czapa w środku; REACTOR3D_HOUSING_SECTORS) — runtime zdejmuje sektory nad martwymi komórkami
+// komory (reactor3D.js, maska w instancji). Ściany i kołnierz mają aCoil = −1 (zostają).
 //
 // Konstrukcja (BufferGeometry bez indeksów): position, normal, aMat (materiał,
-// REACTOR3D_MAT), aCoil (indeks cewki albo −1), aAng (kąt środka elementu —
+// REACTOR3D_MAT), aCoil (indeks cewki, sektor pokrywy albo −1), aAng (kąt środka elementu —
 // łuk rozerwany wyrzutem znika po kącie). Plazma (z indeksami): position,
 // normal, aCenter (środek rury), aTube (promień rury), aRing (pierścień; 2 =
 // kula Atlasa), aUV (u wzdłuż pierścienia, v dookoła rury).
@@ -26,12 +37,43 @@ import * as THREE from 'three';
 
 export const REACTOR3D_KINDS = Object.freeze(['terran', 'pirate', 'atlas']);
 
-// Materiały konstrukcji (indeks = aMat).
+// Materiały konstrukcji (indeks = aMat). Od `housing` w górę — obudowa (oświetlana słońcem, zdejmowana sektorami).
 export const REACTOR3D_MAT = Object.freeze({
-  floor: 0, frame: 1, coil: 2, core: 3, strut: 4, conduit: 5, detail: 6, accent: 7
+  floor: 0, frame: 1, coil: 2, core: 3, strut: 4, conduit: 5, detail: 6, accent: 7,
+  housing: 8, housingTrim: 9, grate: 10, paint: 11, glow: 12
+});
+export const REACTOR3D_MAT_COUNT = 13;
+
+// Sektory pokrywy: 8 po kącie + czapa (bit 8 maski).
+export const REACTOR3D_HOUSING_SECTORS = 8;
+export const REACTOR3D_HUB_SECTOR = 8;
+
+/**
+ * Obrys obudowy rodzaju w jednostkach modelu: outer — promień obrysu (apotema kołnierza; obrys gniazda
+ * w kreatorze), top — najwyższe z, lid — z płyt pokrywy.
+ */
+export const REACTOR3D_HOUSING = Object.freeze({
+  terran: Object.freeze({ outer: 1.16, top: 0.09, lid: 0.035, sides: 8 }),
+  pirate: Object.freeze({ outer: 1.14, top: 0.085, lid: 0.03, sides: 10 }),
+  atlas: Object.freeze({ outer: 1.1, top: 0.07, lid: 0.03, sides: 0 })
 });
 
 const TAU = Math.PI * 2;
+const SECTOR = TAU / REACTOR3D_HOUSING_SECTORS;
+
+/** Sektor pokrywy (0–7) dla kąta w układzie modelu. */
+export function reactorHousingSector(a) {
+  const k = Math.round(a / SECTOR) % REACTOR3D_HOUSING_SECTORS;
+  return k < 0 ? k + REACTOR3D_HOUSING_SECTORS : k;
+}
+
+// Promień wielokąta foremnego o n bokach (apotema `apo`, środek boku k pod kątem phase + k·2π/n) w kierunku a.
+function polyRadius(apo, n, phase, a) {
+  const P = TAU / n;
+  let t = (a - phase + P * 0.5) % P;
+  if (t < 0) t += P;
+  return apo / Math.cos(t - P * 0.5);
+}
 
 // Deterministyczny szum dla elementów „prowizorki” (bez Math.random: model
 // ma być ten sam przy każdym wczytaniu).
@@ -146,10 +188,61 @@ class ShapeBuilder {
   }
 
   // Odcinek (kabel, belka) z punktu A do B w płaszczyźnie modelu.
-  beam(ax, ay, bx, by, wid, zTop, zBot, mat, bevel = 0) {
+  beam(ax, ay, bx, by, wid, zTop, zBot, mat, bevel = 0, coil = -1) {
     const len = Math.hypot(bx - ax, by - ay);
-    this.box((ax + bx) * 0.5, (ay + by) * 0.5, len, wid, Math.atan2(by - ay, bx - ax), zTop, zBot, mat, -1, bevel,
+    this.box((ax + bx) * 0.5, (ay + by) * 0.5, len, wid, Math.atan2(by - ay, bx - ax), zTop, zBot, mat, coil, bevel,
       Math.atan2((ay + by) * 0.5, (ax + bx) * 0.5));
+  }
+
+  /**
+   * Bryła obrotowa o PŁASKICH ścianach wielokąta foremnego (n boków, środek boku k pod kątem phase + k·2π/n);
+   * profil [[apotema, z], ...] jak w lathe (od środka / dołu w górę, przez dach, w dół na zewnątrz — normalne
+   * na zewnątrz). o: ex, ey (elipsa), jitter(k) → mnożnik apotemy boku k (prowizorka), coil.
+   */
+  polyLathe(profile, n, phase, mat, o = {}) {
+    const P = TAU / n;
+    const ex = o.ex ?? 1;
+    const ey = o.ey ?? 1;
+    const coil = o.coil ?? -1;
+    const kc = 1 / Math.cos(P * 0.5);
+    for (let k = 0; k < n; k++) {
+      const fa = phase + k * P;
+      const ta = fa - P * 0.5, tb = fa + P * 0.5;
+      const ja = o.jitter ? o.jitter(k) : 1;
+      const jb = o.jitter ? o.jitter((k + 1) % n) : 1;
+      const ca = Math.cos(ta) * kc * ex, sa = Math.sin(ta) * kc * ey;
+      const cb = Math.cos(tb) * kc * ex, sb = Math.sin(tb) * kc * ey;
+      for (let j = 0; j < profile.length - 1; j++) {
+        const [r0, z0] = profile[j];
+        const [r1, z1] = profile[j + 1];
+        const dr = r1 - r0, dz = z1 - z0;
+        const len = Math.hypot(dr, dz) || 1;
+        const nr = -dz / len, nz = dr / len;
+        const N = normalize3(nr * Math.cos(fa) / ex, nr * Math.sin(fa) / ey, nz);
+        this.quad(
+          [r0 * ca * ja, r0 * sa * ja, z0], [r1 * ca * ja, r1 * sa * ja, z1],
+          [r1 * cb * jb, r1 * sb * jb, z1], [r0 * cb * jb, r0 * sb * jb, z0],
+          N, N, N, N, mat, coil, fa
+        );
+      }
+    }
+  }
+
+  /**
+   * Płaski pierścień (dach, płyta pokrywy) na wysokości z między promieniami rIn(a) i rOut(a), kąty a0..a1
+   * w `segs` krokach, normalna w górę. coil — sektor pokrywy albo −1.
+   */
+  annulus(rIn, rOut, z, a0, a1, segs, mat, coil = -1) {
+    const up = [0, 0, 1];
+    const ang = (a0 + a1) * 0.5;
+    for (let k = 0; k < segs; k++) {
+      const ta = a0 + (a1 - a0) * (k / segs);
+      const tb = a0 + (a1 - a0) * ((k + 1) / segs);
+      const ia = rIn(ta), oa = rOut(ta), ib = rIn(tb), ob = rOut(tb);
+      const ca = Math.cos(ta), sa = Math.sin(ta), cb = Math.cos(tb), sb = Math.sin(tb);
+      this.quad([ia * ca, ia * sa, z], [oa * ca, oa * sa, z], [ob * cb, ob * sb, z], [ib * cb, ib * sb, z],
+        up, up, up, up, mat, coil, ang);
+    }
   }
 
   toGeometry() {
@@ -250,6 +343,133 @@ function railProfile(r0, r1, z, depth = -0.6, bevel = 0.015) {
 }
 const FLOOR_PROFILE = [[0, -1.0], [0.965, -1.0], [0.995, -0.975], [0.995, -0.94]];
 
+// ============================ OBUDOWY ============================
+
+const constR = (r) => () => r;
+
+// Pręty kraty nad pierścieniem plazmy: promieniowe, pod kątami `angles` (zwykle nad cewkami — szczeliny
+// między nimi odsłaniają plazmę), r0..r1, sektor z kąta.
+function grateBars(S, angles, r0, r1, wid, zTop, M, mat = M.grate) {
+  for (const a of angles) {
+    S.box(Math.cos(a) * (r0 + r1) * 0.5, Math.sin(a) * (r0 + r1) * 0.5, r1 - r0, wid, a, zTop, zTop - 0.07, mat,
+      reactorHousingSector(a), 0.008, a);
+  }
+}
+
+// Terra Nova: ośmiokąt (boki na osiach i przekątnych), kołnierz na pokładzie, pancerna ściana z fazą 45°
+// i śrubami, 8 płyt pokrywy ze szwami, krata 16 prętów nad cewkami, pierścień wewnętrzny, czapa ze wskaźnikiem
+// w barwie plazmy, żółte tabliczki ostrzegawcze na płytach przekątnych.
+function terranHousing(S, M) {
+  const H = REACTOR3D_HOUSING.terran;
+  const lid = H.lid;
+  S.polyLathe([[1.0, -1.0], [1.0, -0.93], [1.025, -0.905], [1.12, -0.905], [1.16, -0.945], [1.16, -1.0]], 8, 0, M.housingTrim);
+  S.polyLathe([[0.985, -0.92], [0.985, 0.07], [1.04, 0.07], [1.085, 0.025], [1.085, -0.905]], 8, 0, M.housing);
+  for (let k = 0; k < 8; k++) {
+    const fa = k * SECTOR;
+    const c = Math.cos(fa), s = Math.sin(fa);
+    // śruby na dachu ściany (2 na bok) i na kołnierzu (1 na bok)
+    for (const t of [-0.26, 0.26]) {
+      S.box(c * 1.012 - s * t, s * 1.012 + c * t, 0.035, 0.035, fa, 0.082, 0.06, M.housingTrim, -1, 0.006, fa);
+    }
+    S.box(c * 1.075, s * 1.075, 0.04, 0.04, fa, -0.892, -0.91, M.housingTrim, -1, 0.006, fa);
+    // płyta pokrywy sektora k: od kraty (0,715) do ściany (ośmiokąt), szwy między płytami
+    const gap = 0.012;
+    S.annulus(constR(0.715), (a) => polyRadius(0.985, 8, 0, a), lid, fa - SECTOR * 0.5 + gap, fa + SECTOR * 0.5 - gap, 6, M.housing, k);
+    // pierścień wewnętrzny (między kratą a czapą)
+    S.annulus(constR(0.27), constR(0.405), lid, fa - SECTOR * 0.5 + gap * 1.5, fa + SECTOR * 0.5 - gap * 1.5, 6, M.housing, k);
+    // śruba płyty i tabliczka ostrzegawcza (przekątne)
+    S.box(c * 0.79, s * 0.79, 0.04, 0.04, fa, lid + 0.012, lid - 0.01, M.housingTrim, k, 0.006, fa);
+    if (k % 2 === 1) S.box(c * 0.9, s * 0.9, 0.05, 0.16, fa, lid + 0.006, lid - 0.01, M.paint, k, 0.004, fa);
+    // obejma kraty (zewnętrzna i wewnętrzna listwa)
+    S.annulus(constR(0.69), constR(0.715), lid + 0.004, fa - SECTOR * 0.5, fa + SECTOR * 0.5, 4, M.housingTrim, k);
+    S.annulus(constR(0.405), constR(0.43), lid + 0.004, fa - SECTOR * 0.5, fa + SECTOR * 0.5, 4, M.housingTrim, k);
+  }
+  grateBars(S, Array.from({ length: 16 }, (_, k) => k * TAU / 16), 0.43, 0.69, 0.05, lid, M);
+  // czapa nad solenoidem i wskaźnik (świeci barwą plazmy)
+  const hub = REACTOR3D_HUB_SECTOR;
+  S.lathe([[0, 0.088], [0.19, 0.088], [0.235, 0.065], [0.27, lid + 0.002]], 48, M.housing, { coil: hub });
+  S.lathe([[0.105, 0.0885], [0.145, 0.0885]], 48, M.glow, { coil: hub });
+  S.lathe([[0.0, 0.089], [0.05, 0.089]], 24, M.housingTrim, { coil: hub });
+}
+
+// Piraci: krzywy dziesięciokąt na elipsie komory, bez kołnierza — wsporniki przyspawane do pokładu; płyty
+// tylko na części sektorów, reszta to krata z belek; kwadratowa czapa na śrubach; pomarańczowe pasy.
+function pirateHousing(S, M, EX, EY) {
+  const H = REACTOR3D_HOUSING.pirate;
+  const lid = H.lid;
+  const jit = (k) => 0.97 + hash01(k, 21) * 0.06;
+  S.polyLathe([[0.975, -0.93], [0.975, 0.05], [1.03, 0.05], [1.07, 0.01], [1.07, -1.0]], 10, 0.2, M.housing, { ex: EX, ey: EY, jitter: jit });
+  // wsporniki
+  for (let k = 0; k < 7; k++) {
+    const a = 0.4 + k * TAU / 7 + (hash01(k, 22) - 0.5) * 0.3;
+    S.box(Math.cos(a) * 1.1 * EX, Math.sin(a) * 1.1 * EY, 0.12, 0.06 + hash01(k, 23) * 0.03, a, -0.86, -1.0, M.housingTrim, -1, 0.012, a);
+  }
+  const wall = (a) => 0.975 * Math.hypot(Math.cos(a) * EX, Math.sin(a) * EY) * 0.985;
+  const plated = [true, true, false, true, true, false, true, false];
+  for (let k = 0; k < 8; k++) {
+    const fa = k * SECTOR;
+    if (plated[k]) {
+      const a0 = fa - SECTOR * 0.5 + 0.02 + hash01(k, 24) * 0.03;
+      const a1 = fa + SECTOR * 0.5 - 0.02 - hash01(k, 25) * 0.03;
+      const rin = 0.66 + hash01(k, 26) * 0.06;
+      S.annulus(constR(rin), wall, lid + hash01(k, 27) * 0.012, a0, a1, 5, M.housing, k);
+      // łata na płycie z pasem ostrzegawczym
+      const pa = fa + (hash01(k, 28) - 0.5) * 0.3;
+      const pr = 0.84;
+      S.box(Math.cos(pa) * pr * EX, Math.sin(pa) * pr * EY, 0.16, 0.1, pa + 0.4, lid + 0.022, lid - 0.01, M.housingTrim, k, 0.01, pa);
+      if (k % 3 === 0) S.box(Math.cos(pa) * pr * EX, Math.sin(pa) * pr * EY, 0.05, 0.1, pa + 0.4, lid + 0.026, lid - 0.01, M.paint, k, 0.004, pa);
+    } else {
+      // krata z belek w poprzek sektora (cięciwy)
+      for (let j = 0; j < 3; j++) {
+        const a0 = fa - SECTOR * 0.48, a1 = fa + SECTOR * 0.48;
+        const rr = 0.72 + j * 0.1;
+        S.beam(Math.cos(a0) * rr * EX, Math.sin(a0) * rr * EY, Math.cos(a1) * rr * EX, Math.sin(a1) * rr * EY,
+          0.035, lid + 0.01, lid - 0.06, M.grate, 0.006, k);
+      }
+    }
+    // pierścień wewnętrzny z przerwami
+    S.annulus(constR(0.25), constR(0.4), lid, fa - SECTOR * 0.5 + 0.03, fa + SECTOR * 0.5 - 0.03, 4, M.housing, k);
+  }
+  // krata nad cewkami (belki promieniowe, nierówne)
+  const bars = [];
+  for (let k = 0; k < 11; k++) bars.push(k * TAU / 11 + (hash01(k, 5) - 0.5) * 0.24);
+  grateBars(S, bars, 0.4, 0.7, 0.055, lid + 0.006, M);
+  // kwadratowa czapa na śrubach i pas
+  const hub = REACTOR3D_HUB_SECTOR;
+  S.box(0, 0, 0.44, 0.44, 0.39, 0.075, lid - 0.02, M.housing, hub, 0.035, 0);
+  for (let k = 0; k < 4; k++) {
+    const a = 0.39 + k * Math.PI / 2 + Math.PI / 4;
+    S.box(Math.cos(a) * 0.25, Math.sin(a) * 0.25, 0.05, 0.05, a, 0.082, 0.06, M.housingTrim, hub, 0.008, a);
+  }
+  S.box(0, 0, 0.3, 0.05, 0.39, 0.079, 0.06, M.paint, hub, 0, 0);
+}
+
+// Atlas: okrągła obudowa, kołnierz, ściana z listwami świetlnymi, płyty w dwóch pierścieniach, kraty nad
+// oboma pierścieniami plazmy, okno nad kulą rdzenia (otwarte — kulę widać) w ramie z listwą.
+function atlasHousing(S, M) {
+  const H = REACTOR3D_HOUSING.atlas;
+  const lid = H.lid;
+  S.lathe([[1.0, -1.0], [1.0, -0.94], [1.03, -0.915], [1.07, -0.915], [1.1, -0.95], [1.1, -1.0]], 72, M.housingTrim);
+  S.lathe([[0.985, -0.93], [0.985, 0.06], [1.035, 0.06], [1.07, 0.025], [1.07, -0.915]], 80, M.housing);
+  for (let k = 0; k < 8; k++) {
+    const fa = k * SECTOR;
+    const gap = 0.014;
+    // listwa świetlna na dachu ściany (łuk)
+    S.lathe([[1.0, 0.0605], [1.018, 0.0605]], 24, M.glow, { a0: fa - SECTOR * 0.3, a1: fa + SECTOR * 0.3 });
+    S.annulus(constR(0.745), constR(0.985), lid, fa - SECTOR * 0.5 + gap, fa + SECTOR * 0.5 - gap, 6, M.housing, k);
+    S.annulus(constR(0.468), constR(0.552), lid, fa - SECTOR * 0.5 + gap * 1.3, fa + SECTOR * 0.5 - gap * 1.3, 6, M.housing, k);
+    S.annulus(constR(0.73), constR(0.745), lid + 0.004, fa - SECTOR * 0.5, fa + SECTOR * 0.5, 4, M.housingTrim, k);
+    S.annulus(constR(0.552), constR(0.567), lid + 0.004, fa - SECTOR * 0.5, fa + SECTOR * 0.5, 4, M.housingTrim, k);
+    S.annulus(constR(0.455), constR(0.468), lid + 0.004, fa - SECTOR * 0.5, fa + SECTOR * 0.5, 4, M.housingTrim, k);
+    S.box(Math.cos(fa) * 0.865, Math.sin(fa) * 0.865, 0.03, 0.03, fa, lid + 0.01, lid - 0.01, M.housingTrim, k, 0.005, fa);
+  }
+  grateBars(S, Array.from({ length: 20 }, (_, k) => k * TAU / 20), 0.567, 0.73, 0.034, lid, M);
+  grateBars(S, Array.from({ length: 12 }, (_, k) => (k + 0.5) * TAU / 12), 0.27, 0.455, 0.03, lid, M);
+  const hub = REACTOR3D_HUB_SECTOR;
+  S.lathe([[0.2, 0.068], [0.245, 0.068], [0.27, lid + 0.002]], 48, M.housing, { coil: hub });
+  S.lathe([[0.2, 0.069], [0.215, 0.069]], 48, M.glow, { coil: hub });
+}
+
 function buildTerran() {
   const S = new ShapeBuilder();
   const P = new PlasmaBuilder();
@@ -293,6 +513,7 @@ function buildTerran() {
     S.box(Math.cos(a) * 0.905, Math.sin(a) * 0.905, 0.1, 0.12, a, -0.095, -0.13, M.conduit, -1, 0.012);
     S.box(Math.cos(a) * 0.905, Math.sin(a) * 0.905, 0.07, 0.02, a, -0.093, -0.1, M.accent, -1, 0);
   }
+  terranHousing(S, M);
   P.torus(0.55, 0.1, -0.3, 128, 14, 0);
   return {
     kind: 'terran',
@@ -301,9 +522,12 @@ function buildTerran() {
     coils, coilRing,
     rings: [{ R: 0.55, tube: 0.1, z: -0.3, ex: 1, ey: 1, dir: 1 }],
     coreLight: null,
-    // farba grodzi, ciemna stal, miedź cewek, rdzeń, wsporniki, sprzęgła, detale
-    palette: ['#262b31', '#8f98a1', '#9a6a3e', '#4d535b', '#6e767e', '#353b41', '#565d65', '#000000'],
-    spec: [[16, 0.08], [40, 0.35], [28, 0.5], [30, 0.3], [24, 0.25], [20, 0.2], [18, 0.15], [1, 0]],
+    // farba grodzi, ciemna stal, miedź cewek, rdzeń, wsporniki, sprzęgła, detale, (akcent);
+    // obudowa: pancerz (biel płyt TN), osprzęt, krata, farba ostrzegawcza, (wskaźnik)
+    palette: ['#262b31', '#8f98a1', '#9a6a3e', '#4d535b', '#6e767e', '#353b41', '#565d65', '#000000',
+      '#c9c5bc', '#4f4c46', '#3a3d41', '#c99a2e', '#000000'],
+    spec: [[16, 0.08], [40, 0.35], [28, 0.5], [30, 0.3], [24, 0.25], [20, 0.2], [18, 0.15], [1, 0],
+      [28, 0.3], [24, 0.25], [20, 0.2], [16, 0.15], [1, 0]],
     accent: null,
     flicker: 0
   };
@@ -372,6 +596,7 @@ function buildPirate() {
   for (const [a, r] of [[0.8, 0.78], [3.5, 0.8]]) {
     S.lathe([[0, -0.07], [0.06, -0.075], [0.09, -0.1], [0.1, -0.14], [0.1, -0.6]], 28, M.detail, { cx: Math.cos(a) * r, cy: Math.sin(a) * r, ang: a });
   }
+  pirateHousing(S, M, EX, EY);
   P.torus(0.54, 0.115, -0.3, 128, 14, 0, EX, EY);
   return {
     kind: 'pirate',
@@ -380,8 +605,10 @@ function buildPirate() {
     coils, coilRing,
     rings: [{ R: 0.54, tube: 0.115, z: -0.3, ex: EX, ey: EY, dir: 1 }],
     coreLight: null,
-    palette: ['#1b1917', '#48423c', '#6b4429', '#37322e', '#524a43', '#2b1a12', '#5a5047', '#000000'],
-    spec: [[10, 0.05], [18, 0.18], [16, 0.3], [14, 0.15], [14, 0.15], [8, 0.08], [12, 0.12], [1, 0]],
+    palette: ['#1b1917', '#48423c', '#6b4429', '#37322e', '#524a43', '#2b1a12', '#5a5047', '#000000',
+      '#4a4440', '#2b2420', '#39332e', '#d9641f', '#000000'],
+    spec: [[10, 0.05], [18, 0.18], [16, 0.3], [14, 0.15], [14, 0.15], [8, 0.08], [12, 0.12], [1, 0],
+      [14, 0.12], [10, 0.08], [12, 0.1], [10, 0.08], [1, 0]],
     accent: '#ff7a2a',
     flicker: 0.35
   };
@@ -430,6 +657,7 @@ function buildAtlas() {
     const a = k * TAU / 6 + TAU / 12;
     S.box(Math.cos(a) * 0.91, Math.sin(a) * 0.91, 0.12, 0.018, a + Math.PI / 2, -0.098, -0.1, M.accent, -1, 0);
   }
+  atlasHousing(S, M);
   P.torus(0.64, 0.075, -0.26, 144, 12, 0);
   P.torus(0.38, 0.06, -0.23, 112, 12, 1);
   P.sphere(0.12, -0.18, 32, 16, 2);
@@ -443,8 +671,10 @@ function buildAtlas() {
       { R: 0.38, tube: 0.06, z: -0.23, ex: 1, ey: 1, dir: -1 }
     ],
     coreLight: { z: -0.18, gain: 0.8 },
-    palette: ['#15191f', '#4c5663', '#667991', '#2b313a', '#3a424e', '#252b34', '#333a45', '#000000'],
-    spec: [[20, 0.1], [48, 0.45], [40, 0.55], [36, 0.35], [30, 0.3], [24, 0.2], [24, 0.2], [1, 0]],
+    palette: ['#15191f', '#4c5663', '#667991', '#2b313a', '#3a424e', '#252b34', '#333a45', '#000000',
+      '#56606f', '#2a303a', '#2c323b', '#8a94a2', '#000000'],
+    spec: [[20, 0.1], [48, 0.45], [40, 0.55], [36, 0.35], [30, 0.3], [24, 0.2], [24, 0.2], [1, 0],
+      [40, 0.4], [30, 0.3], [24, 0.25], [30, 0.3], [1, 0]],
     accent: '#46dcff',
     flicker: 0
   };
@@ -452,10 +682,11 @@ function buildAtlas() {
 
 const BUILDERS = { terran: buildTerran, pirate: buildPirate, atlas: buildAtlas };
 
-/** Model rodzaju `kind` (REACTOR3D_KINDS): { structure, plasma, coils, coilRing, rings, ... }. */
+/** Model rodzaju `kind` (REACTOR3D_KINDS): { structure, plasma, coils, coilRing, rings, housing, ... }. */
 export function buildReactorModel(kind) {
   const build = BUILDERS[kind] || BUILDERS.terran;
   const model = build();
   model.coilCount = model.coils.length;
+  model.housing = REACTOR3D_HOUSING[model.kind];
   return model;
 }

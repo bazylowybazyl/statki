@@ -126,6 +126,30 @@ export class Rozgrzewka {
     return this._enqueue({ ...opts, objects }, true).promise;
   }
 
+  /**
+   * Od razu, bez kolejki — tuż przed rysunkiem klatki, która pokaże obiekty pierwszy raz (klatka zero renderu w workerze,
+   * Core3D.prewarmVisibleNow): budowy NodeBuildera teraz (synchronicznie), pipeline'y w tle GPU. Rysunek z pipeline'em
+   * w budowie pomija osłona Core3D (`_guardPendingPipelines`), więc ta klatka nie tworzy pipeline'u synchronicznie;
+   * flush() czeka na te pipeline'y. Opcje jak w add() (bez `phase`); obietnica jak w now().
+   */
+  compileNow(objects, opts = {}) {
+    const entry = this._newEntry({ ...opts, objects }, true);
+    if (entry.state === 'puste') return entry.promise;
+    if (!this.ready || !this.core?.renderer) {
+      entry.state = 'puste';
+      entry._resolve(false);
+      return entry.promise;
+    }
+    entry.meshes = this._expand(entry);
+    entry.t0 = nowMs();
+    if (this.stats.pierwszeMs < 0) this.stats.pierwszeMs = +entry.t0.toFixed(1);
+    entry.state = 'trwa';
+    for (let i = 0; i < entry.meshes.length; i++) this._compileOne(entry, entry.meshes[i]);
+    entry.index = entry.meshes.length;
+    this._finish(entry);
+    return entry.promise;
+  }
+
   /** Urządzenie gotowe (Core3D._initGpu) — start pracy w tle. */
   start() {
     if (this.ready) return;
@@ -272,7 +296,8 @@ export class Rozgrzewka {
   }
 
   // ---------------------------------------------------------------------------
-  _enqueue(spec, urgent) {
+  // Wpis (stan, obietnica, licznik wpisów); bez WebGPU — od razu 'puste' z obietnicą false.
+  _newEntry(spec, urgent) {
     const entry = {
       name: String(spec?.name || 'bez nazwy'),
       spec: spec || {},
@@ -294,8 +319,13 @@ export class Rozgrzewka {
     if (this.core?.gpuUnsupported) {
       entry.state = 'puste';
       entry._resolve(false);
-      return entry;
     }
+    return entry;
+  }
+
+  _enqueue(spec, urgent) {
+    const entry = this._newEntry(spec, urgent);
+    if (entry.state === 'puste') return entry;
     if (entry.spec.phase === 'after' && !this._afterOpen) {
       entry.state = 'po ładowaniu';
       this._after.push(entry);

@@ -147,3 +147,8 @@ test('automat: przechwyt hamuje mocniej niż zwykłe wyjście', () => {
   assert.ok(forced * HYPERCRUISE_TUNE.interruptDecelMul < normal * 1.1, `przechwyt ${forced} j., zwykłe ${normal} j.`);
   assert.ok(forced < 20000, 'z 20 tys. j/s staje w ~15 km');
 });
+
+test('kontrakt E5 ↔ E8: każdy silnik hipercruise z tabeli napędów jest towarem w resources.js', async () => {
+  const { RESOURCES } = await import('../src/data/resources.js');
+  for (const id of HYPERCRUISE_ENGINE_IDS) assert.ok(RESOURCES[id], `brak towaru ${id}`);
+});

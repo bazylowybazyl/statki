@@ -5,6 +5,11 @@
 > komórek kadłuba (zniszczenie = utrata dowodzenia → hulk → wrak) i model 3D nadbudówki
 > stojący dokładnie na tej strefie. Mechanika: `docs/PORT-mostki.md` §0–§4,
 > model: §8, lista gotowych kadłubów: §8.2. Czas pracy: ~1–2 h na kadłub.
+>
+> **Flota Terra Novy (od 2026-10-21, `docs/PORT-mostki.md` § 10): mostek na POZIOM klasy, nie na kadłub.**
+> Nowy kadłub TN nie dostaje własnego modelu: strefa = obrys modelu poziomu (`src/data/bridgeLevels.js`)
+> w miejscu modułu `bridge` (gniazdo v 2) jego presetu kreatora, z polem `level` — § 2a. Pozostałe punkty
+> (klucz, zapas, test sprite'a) obowiązują dalej; § 3–4 dotyczą piratów, Atlasa i cywilnych.
 
 ## 0. Kiedy
 
@@ -37,6 +42,17 @@ te same współrzędne PNG. Gra dochodzi do niego tak:
   dowodzący — pozostałe moduły zwracają `null`.
 
 Test `bridge hull keys: …` w `tests/shipBridge.test.mjs` — dopisz przypadki.
+
+## 2a. Terra Nova: strefa z poziomu klasy
+
+1. Preset kreatora (`src/game/hullDesign/hullDesignPresets.js`) dostaje moduł `{ type: 'bridge', x, y: 0, v: 2 }`
+   w osi, a slot (`HD_SYSTEM_SLOTS` w `hullDesignSystemSlots.js`) — `bridge: SOCKET`; poziom = klasa presetu
+   (`HD_PRESET_CLASS`). Obrys liczy się sam z poziomu (`normalizeHullDesign`).
+2. Miejsce: na nadbudówce sprite'a, poza obudową reaktora (rama 1,2 r + 0,8 jd), zbiornikami, gniazdami broni
+   (`HD_PRESET_MOUNTS`) i zapasem `bridgeZoneMargin` od wież gry; rów sieci przy zbiorniku paliwa zostaje (test sieci).
+3. Strefa gry: `x = xKreatora / s − dx`, `y = −dy`, `w = obrys.w / s`, `h = obrys.h / s`, `level` (rama
+   `HD_TN_SPRITE_FRAMES`). Pilnuje `tests/bridgeLevels.test.mjs` (dopisz kadłub do ramy i `TN_LEVEL`).
+4. Model 3D okrętu (tryb „Statki 3D”): `TN_BRIDGE_HULLS` w `bridge3DShapes.js` (`bridgeModelOnHull`).
 
 ## 2. Strefa (`BRIDGE_LAYOUT_PROPOSALS`, `src/game/shipBridge.js`)
 
@@ -80,8 +96,9 @@ pokazuje ich liczbę („komórek w strefie”). Strefa na kilka komórek to ju�
 3. Klocki: `block` (korpus o pochyłych ścianach `slope` + faza `chamfer` +
    dach), `octPoly`, `rectPoly`, `boxRot`, `dome` (`ry` — elipsa),
    `cylinder`, `tube` (rura, stożek, kolec), `windowRow`, `beacon`, `strip`.
-   Gotowe zestawy: `buildTerranCommand` (wieża z koroną okien + hala + kopuła
-   + maszt — Custos, Hasta), piraci: `spikedDome`, `grille`, `crookedMast`.
+   Gotowe zestawy: `buildTerranLevel` (mostki TN na poziomy I–VI — wieża z koroną
+   okien, hala, kopuła, maszty; nie dla nowych kadłubów spoza TN), piraci: `spikedDome`,
+   `grille`, `crookedMast`.
 4. Zasady (pilnują testy w `tests/bridge3D.test.mjs`):
    - kamera patrzy z góry, a słońce pada prawie poziomo — wysokość czyta się
      przez światło i cień, więc bryły mają skosy, a **okna stoją na fazach**
@@ -108,7 +125,7 @@ rama okien, jasny detal, brud) z **próbki strefy na sprite'cie**: percentyle
 jasności pikseli strefy — farba ≈ p75–p92, panel ≈ p50, ciemny ≈ p5–p25,
 jasny detal powyżej p92, akcent = najbardziej nasycone (rdza, pomarańcz),
 brud ciemniejszy i cieplejszy od panelu. Parametry stylu jak u frakcji:
-Terra (`bellator`, `custos`…), piraci (`rivets 1`, `rust 0,4` — wyżej modele
+Terra (`TN_STYLE` — wspólna dla poziomów `tn_1` … `tn_6`), piraci (`rivets 1`, `rust 0,4` — wyżej modele
 robią się rude), cywilni (`megafreighter`). Nowa lampa → kolor w `EMIT_COLOR_HEX`.
 
 ## 5. Demo i sprawdzenie (sam, bez proszenia usera)

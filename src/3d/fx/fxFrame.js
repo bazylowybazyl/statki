@@ -30,6 +30,7 @@ import { FxLights } from './fxLights.js';
 import { FxPoolOrigin } from './gpuPoolOrigin.js';
 import { DistortionField } from './distortion.js';
 import { SimClock } from '../../game/simClock.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 
 /** Warstwa zniekształceń (DIST, dema/bronie-webgpu): siatki na niej rysują przesunięcie w px do Core3D.distortionTarget. */
 export const FX_DISTORT_LAYER = 10;
@@ -63,6 +64,7 @@ export class FxFrame {
     this.distortLayerActive = false;
     this._warmed = new WeakSet();
     this.view = { x0: 0, y0: 0, x1: 0, y1: 0 };
+    this._rollHalf = { hw: 0, hh: 0 };
     this.ctx = {
       renderer: null, core: null, time: 0, dt: 0, frame: -1,
       origin: this.origin, grid: this.grid, lights: this.lights, distortion: this.distortion, view: this.view
@@ -167,8 +169,10 @@ export class FxFrame {
       const c = k === 0 ? cam : cam2;
       if (!c) continue;
       const zoom = Math.max(1e-4, Number(c.zoom) || 1);
-      const hw = (bufW * 0.5 / zoom) * (1 + FX_VIEW_MARGIN);
-      const hh = (bufH * 0.5 / zoom) * (1 + FX_VIEW_MARGIN);
+      // Obrócony kadr (cam.roll, viewRoll.js) — pudło osi świata obejmujące go.
+      const rh = rolledHalfExtents((bufW * 0.5 / zoom) * (1 + FX_VIEW_MARGIN), (bufH * 0.5 / zoom) * (1 + FX_VIEW_MARGIN), cameraRoll(c), this._rollHalf);
+      const hw = rh.hw;
+      const hh = rh.hh;
       const cx = Number(c.x) || 0;
       const cy = Number(c.y) || 0;
       if (first) {
@@ -285,7 +289,7 @@ export class FxFrame {
     // bufW / bufH — cel sceny w px bufora; pxScale — px bufora na px kanwy (skala renderu, Core3D.viewZoom).
     const ps = pxScale > 0 ? pxScale : 1;
     const zoom = Math.max(1e-4, Number(cam?.zoom) || 1) * ps;
-    const n = f.commit(Number(cam?.x) || 0, Number(cam?.y) || 0, zoom, Math.max(1, bufW | 0), Math.max(1, bufH | 0), this.time, ps);
+    const n = f.commit(Number(cam?.x) || 0, Number(cam?.y) || 0, zoom, Math.max(1, bufW | 0), Math.max(1, bufH | 0), this.time, ps, cameraRoll(cam));
     this.stats.distortSources = n;
     return n;
   }

@@ -15,8 +15,9 @@ const dps = (d) => (Number(d.baseDamage) || 0) * Math.max(1, Number(d.barrelsPer
   * Math.max(1, Number(d.burstCount) || 1) / Math.max(1e-6, Number(d.cooldown) || 1);
 const all = Object.values(MASTER_WEAPONS);
 const snipers = all.filter((d) => d.weaponClass === 'sniper');
-// Broń zwykła do porównań: działa gniazd main i special (bez obrony punktowej, rakiet, hangarów i broni wbudowanej).
-const ordinaryGuns = all.filter((d) => !d.weaponClass && (d.mountType === 'main' || d.mountType === 'special'));
+// Broń zwykła do porównań: działa gniazd main i special (bez obrony punktowej, rakiet, hangarów, broni wbudowanej
+// i superbroni — promień śmierci, 2026-10-19: special Capital 12 km, poza pasmami dział).
+const ordinaryGuns = all.filter((d) => !d.weaponClass && d.category !== 'superweapon' && (d.mountType === 'main' || d.mountType === 'special'));
 
 test('klasa: pole weaponClass tylko „sniper”, skład klasy, kategoria bez zmian (Lanca to rail)', () => {
   for (const d of all) if (d.weaponClass !== undefined) assert.equal(d.weaponClass, 'sniper', `${d.id}: nieznana klasa ${d.weaponClass}`);

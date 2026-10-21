@@ -192,6 +192,62 @@ test('bez WebGPU: now() od razu false', async () => {
   core.gpuUnsupported = true;
   const w = new Rozgrzewka(core);
   assert.equal(await w.now([mesh('a')]), false);
+  assert.equal(await w.compileNow([mesh('b')]), false);
+});
+
+test('compileNow (klatka zero): od razu, bez kolejki — widoczne z warstwy, rozgrzane pominięte, flush czeka na pipeline’y', async () => {
+  const { core, calls } = fakeCore();
+  const w = new Rozgrzewka(core);
+  const a = mesh('a');
+  const b = mesh('b');
+  core.scene.add(a, b, mesh('inna-warstwa', 1), mesh('ukryta', 0, { visible: false }));
+  assert.equal(await w.compileNow(core.scene, { layer: 0, visible: false }), false, 'przed urządzeniem nic');
+  assert.equal(calls.length, 0);
+  w.start();
+  await w.now([a], { name: 'wcześniej' });
+  const n0 = calls.length;
+  const p = w.compileNow(core.scene, { name: 'klatka zero', layer: 0, visible: false });
+  // budowy w tym samym zadaniu (przed rysunkiem klatki), nie w wolnej chwili
+  assert.deepEqual(calls.slice(n0).map((c) => c.obj.name), ['b'], 'widoczne z warstwy, bez rozgrzanych wcześniej');
+  assert.equal(calls.at(-1).camera, core.cameraOrtho);
+  assert.equal(calls.at(-1).target, core.composerTarget);
+  assert.equal(calls.at(-1).scene, core.scene, 'światła sceny Core3D');
+  assert.equal(w._urgent.length + w._normal.length, 0, 'bez kolejki');
+  assert.equal(await p, true);
+  // pipeline w tle GPU: flush (ekran ładowania) czeka na niego w swoim limicie
+  const slow = fakeCore({ hang: true });
+  const w2 = new Rozgrzewka(slow.core);
+  slow.core.scene.add(mesh('c'));
+  w2.start();
+  w2.compileNow(slow.core.scene, { layer: 0, visible: false });
+  assert.equal(w2._pending.size, 1);
+  const stats = await w2.flush({ timeoutMs: 30 });
+  assert.equal(stats.flush.wLocie, 1, 'limit czasu minął przed pipeline’em');
+});
+
+test('worker renderu: stałe światła sceny przed urządzeniem, klatka zero rozgrzewa to, co widać, przed rysunkiem', () => {
+  const worker = read('src/render/render.worker.js');
+  // latarnie stacji pirackiej (world3d.js) w scenie od jej powstania, jak initWorld3D() strony przy starcie: zestaw
+  // świateł passa jest w kluczu materiałów (pułapka 34) — latarnie z wpisu rozgrzewki zmieniały go w środku kolejki
+  const scene = worker.indexOf('hex.initHexShips3D({ canvas: st.canvas });');
+  const lights = worker.indexOf('st.w3.initWorld3D();');
+  const ready = worker.indexOf('await Promise.race([Core3D.ready');
+  assert.ok(scene > 0 && lights > scene && lights < ready, 'światła po scenie, przed urządzeniem i rozgrzewką');
+  assert.ok(worker.indexOf("st.w3 = await import('../3d/world3d.js');") < scene);
+  assert.match(read('src/3d/world3d.js'), /export function initWorld3D\(\) \{[^}]*ensurePirateBeaconLights\(\);/);
+  // klatka zero: po aktualizacji modułów, przed renderem strony
+  const page = worker.slice(worker.indexOf('function renderPage(v, k) {'), worker.indexOf("postMessage({ type: 'frame', k, bmp"));
+  const warm = page.indexOf('Core3D.prewarmVisibleNow();');
+  assert.ok(warm > page.indexOf("models.syncShipModels3D(") && warm > page.indexOf("bridge3d.Bridge3D.update("), 'po modułach');
+  assert.ok(warm < page.indexOf('Core3D.renderSingle('), 'przed rysunkiem');
+  assert.match(page, /if \(st\.firstPageWarm\) \{\s*st\.firstPageWarm = false;/);
+  // Core3D: warstwy passów gry jak wpisy „start gry”, pass mapy cienia, macierze i przełączniki jak w render()
+  const core = read('src/3d/core3d.js');
+  const fn = core.slice(core.indexOf('  prewarmVisibleNow() {'), core.indexOf('  prewarmShadowPass(object3d) {'));
+  assert.match(fn, /this\._syncSceneMatrices\(\);/);
+  assert.match(fn, /for \(const layer of GAME_PASS_LAYERS\) \{\s*jobs\.push\(w\.compileNow\(this\.scene, \{ name: `[^`]*`, layer, visible: false, ortho \}\)\);/);
+  assert.match(fn, /w\.compileNow\(this\.scene, \{[^}]*visible: false, shadow: true \}\)/);
+  assert.match(core, /for \(const layer of GAME_PASS_LAYERS\) \{\s*w\.add\(\{ name: `Core3D: warstwa \$\{layer\} \(start gry\)`/);
 });
 
 test('Core3D: rejestr jako Core3D.warmup, start przy gotowym urządzeniu, passy Core3D w rejestrze; wpisy modułów jedną linią', () => {

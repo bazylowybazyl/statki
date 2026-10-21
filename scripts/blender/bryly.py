@@ -43,6 +43,7 @@ PALETTE = {
     'GLASS': (7, '#0a1018', 0.08, 0.30, None, 0.0),
     'E_CYAN': (9, '#10232b', 0.40, 0.20, '#4fdcff', 4.4),
     'E_MAGENTA': (13, '#2b1026', 0.40, 0.20, '#ff4fd8', 4.4),
+    'E_MINT': (12, '#102b20', 0.40, 0.20, '#6dffc0', 4.5),
 }
 MAT_ORDER = list(PALETTE)
 MI = {n: i for i, n in enumerate(MAT_ORDER)}
@@ -281,6 +282,22 @@ def add_along_x(bm, x0, x1, sec0, sec1=None, side='STEEL', cap0='DARK', cap1=Non
         j = (i + 1) % n
         sm = side[i] if isinstance(side, (list, tuple)) else side
         bm.faces.new([a[i], a[j], b[j], b[i]]).material_index = MI[sm]
+
+
+def add_loft(bm, stations, side='STEEL', cap0='DARK', cap1=None):
+    """Bryła wzdłuż X przez kolejne przekroje: stations = [(x, y, z, sec), …], sec — przekrój (y, z) wokół (y, z)
+    stacji, ten sam układ wierzchołków we wszystkich (zęby, wysięgniki zbiegające się ku osi). Zwraca wierzchołki
+    (do obrotu / przesunięcia całej bryły)."""
+    rings = [[bm.verts.new((x, y + p[0], z + p[1])) for p in sec] for (x, y, z, sec) in stations]
+    n = len(stations[0][3])
+    bm.faces.new(list(reversed(rings[0]))).material_index = MI[cap0]
+    bm.faces.new(rings[-1]).material_index = MI[cap1 or cap0]
+    for a, b in zip(rings, rings[1:]):
+        for i in range(n):
+            j = (i + 1) % n
+            sm = side[i] if isinstance(side, (list, tuple)) else side
+            bm.faces.new([a[i], a[j], b[j], b[i]]).material_index = MI[sm]
+    return [v for r in rings for v in r]
 
 
 def add_cyl(bm, a, b, r0, r1=None, segs=32, side='STEEL', cap='DARK', phase=0.0):

@@ -40,15 +40,20 @@ function quatFromY(dx, dy, dz) {
 /**
  * Rejestrator w ramce budowli (frameAt) — te same bryły co PortRecorder (box, cyl, cone, ring, beam), ale wysokość
  * `y` liczona wzdłuż normalnej powierzchni, a obroty składane z obrotem ramki. y = środek bryły (jak PortRecorder).
+ * Wymiary lokalne (położenia i rozmiary) w jednostkach PROJEKTU — rejestrator mnoży je przez skalę świata `k`
+ * (pirateRockLayout.js: osada rośnie razem ze skałą).
  */
 class SurfaceRecorder {
-  constructor(f) {
+  constructor(f, k = 1) {
     this.f = f;
+    this.k = k;
     this.fr = null;
   }
   at(frame) { this.fr = frame; return this; }
   _p(a, y, b) {
     const F = this.fr;
+    const k = this.k;
+    a *= k; y *= k; b *= k;
     return [F.o[0] + F.X[0] * a + F.Y[0] * y + F.Z[0] * b, F.o[1] + F.X[1] * a + F.Y[1] * y + F.Z[1] * b, F.o[2] + F.X[2] * a + F.Y[2] * y + F.Z[2] * b];
   }
   // kierunek lokalny → układ bazy
@@ -58,28 +63,32 @@ class SurfaceRecorder {
   }
   box(a, y, b, w, h, d, mat, yaw = 0) {
     const p = this._p(a, y, b);
-    this.f._push('box', p[0], p[1], p[2], 1, w, h, d, mat, quatMul(this.fr.quat, qAxis(0, 1, 0, yaw)));
+    const k = this.k;
+    this.f._push('box', p[0], p[1], p[2], 1, w * k, h * k, d * k, mat, quatMul(this.fr.quat, qAxis(0, 1, 0, yaw)));
     return this;
   }
   cyl(a, y, b, r, h, mat, rot = null) {
     const p = this._p(a, y, b);
-    this.f._push('cyl', p[0], p[1], p[2], 1, r, h, r, mat, rot ? quatMul(this.fr.quat, quatEuler(rot[0], rot[1], rot[2])) : this.fr.quat);
+    const k = this.k;
+    this.f._push('cyl', p[0], p[1], p[2], 1, r * k, h * k, r * k, mat, rot ? quatMul(this.fr.quat, quatEuler(rot[0], rot[1], rot[2])) : this.fr.quat);
     return this;
   }
   cone(a, y, b, r, h, mat, dir = null) {
     const p = this._p(a, y, b);
-    this.f._push('cone', p[0], p[1], p[2], 1, r, h, r, mat, dir ? quatMul(this.fr.quat, quatFromY(dir[0], dir[1], dir[2])) : this.fr.quat);
+    const k = this.k;
+    this.f._push('cone', p[0], p[1], p[2], 1, r * k, h * k, r * k, mat, dir ? quatMul(this.fr.quat, quatFromY(dir[0], dir[1], dir[2])) : this.fr.quat);
     return this;
   }
   ring(a, y, b, r, mat, rot = null) {
     const p = this._p(a, y, b);
-    this.f._push('torus', p[0], p[1], p[2], 1, r, r, r, mat, rot ? quatMul(this.fr.quat, quatEuler(rot[0], rot[1], rot[2])) : this.fr.quat);
+    const rk = r * this.k;
+    this.f._push('torus', p[0], p[1], p[2], 1, rk, rk, rk, mat, rot ? quatMul(this.fr.quat, quatEuler(rot[0], rot[1], rot[2])) : this.fr.quat);
     return this;
   }
   beam(A, B, w, mat, d = w) {
     const a = this._p(A[0], A[1], A[2]);
     const b = this._p(B[0], B[1], B[2]);
-    worldBeam(this.f, a, b, w, mat, d);
+    worldBeam(this.f, a, b, w * this.k, mat, d * this.k);
     return this;
   }
   fx(...args) { this.f.fx(...args); return this; }
@@ -355,18 +364,20 @@ function mine(s, b, L, plantB) {
     s.box(a, 270, z, 60, 24, 40, M.white);
     s.nofx();
   }
-  // taśmociąg: od skraju odkrywki ku zakładowi (punkty na powierzchni, nad nią na podporach)
+  // taśmociąg: od skraju odkrywki ku zakładowi (punkty na powierzchni, nad nią na podporach); b.e / b.n — świat,
+  // przesunięcia i grubości w jednostkach projektu × k
   if (plantB) {
     const n = 8;
+    const k = L.k || 1;
     let prev = null;
     for (let i = 0; i <= n; i++) {
       const t = i / n;
-      const e = (b.e - 420) + ((plantB.e + 200) - (b.e - 420)) * t;
-      const nn = (b.n + 380) + ((plantB.n - 260) - (b.n + 380)) * t;
-      const top = L.surfacePoint(e, nn, 90);
+      const e = (b.e - 420 * k) + ((plantB.e + 200 * k) - (b.e - 420 * k)) * t;
+      const nn = (b.n + 380 * k) + ((plantB.n - 260 * k) - (b.n + 380 * k)) * t;
+      const top = L.surfacePoint(e, nn, 90 * k);
       const foot = L.surfacePoint(e, nn, 0);
-      worldBeam(s.f, [foot.x, foot.h, foot.z], [top.x, top.h, top.z], 14, M.rail);
-      if (prev) worldBeam(s.f, prev, [top.x, top.h, top.z], 38, M.dark, 18);
+      worldBeam(s.f, [foot.x, foot.h, foot.z], [top.x, top.h, top.z], 14 * k, M.rail);
+      if (prev) worldBeam(s.f, prev, [top.x, top.h, top.z], 38 * k, M.dark, 18 * k);
       prev = [top.x, top.h, top.z];
     }
   }
@@ -400,6 +411,15 @@ function anchorHead(f, L) {
   f.nofx();
 }
 
+/**
+ * Grubość liny w miejscu t (0 — głowica, 1 — stacja dolna) względem projektu: 1 + t · (k − 1). Głowica jest przy
+ * habitacie (bez skali), stacja dolna — w skali skały; dokładnie tyle razy punkt liny w świecie jest dalej od punktu
+ * widzenia niż punkt liny projektu na tym samym promieniu widzenia — z kamery lina wygląda jak w projekcie.
+ */
+export function pirateTetherThickness(L, t) {
+  return 1 + Math.max(0, Math.min(1, t)) * ((L.k || 1) - 1);
+}
+
 // Odcinek liny i–i+1: wiązka trzech kabli, rozpórki, światła biegnące w dół (zasilanie windy).
 function cableSegment(f, L, i) {
   const P = L.tether.nodes;
@@ -413,17 +433,18 @@ function cableSegment(f, L, i) {
   let pz = -dx;
   const pl = Math.hypot(px, pz) || 1;
   px /= pl; pz /= pl;
-  const w = 22;
-  for (const o of [-w, 0, w]) {
-    worldRod(f, [a[0] + px * o, a[1], a[2] + pz * o], [b[0] + px * o, b[1], b[2] + pz * o], o === 0 ? 11 : 8, o === 0 ? M.steel : M.dark);
-  }
   const N = L.tether.segments;
+  const s = pirateTetherThickness(L, (i + 0.5) / N);
+  const w = 22 * s;
+  for (const o of [-w, 0, w]) {
+    worldRod(f, [a[0] + px * o, a[1], a[2] + pz * o], [b[0] + px * o, b[1], b[2] + pz * o], (o === 0 ? 11 : 8) * s, o === 0 ? M.steel : M.dark);
+  }
   for (let k = 0; k < 2; k++) {
     const t = (k + 0.5) / 2;
     const c = [a[0] + dx * t, a[1] + dy * t, a[2] + dz * t];
-    worldBeam(f, [c[0] - px * 40, c[1], c[2] - pz * 40], [c[0] + px * 40, c[1], c[2] + pz * 40], 12, M.rail, 12);
+    worldBeam(f, [c[0] - px * 40 * s, c[1], c[2] - pz * 40 * s], [c[0] + px * 40 * s, c[1], c[2] + pz * 40 * s], 12 * s, M.rail, 12 * s);
     f.fx(1.5, PB_FX.chase, (i + t) / N, 0.35);
-    f._push('box', c[0] + px * 44, c[1], c[2] + pz * 44, 1, 14, 14, 14, M.cyan, [0, 0, 0, 1]);
+    f._push('box', c[0] + px * 44 * s, c[1], c[2] + pz * 44 * s, 1, 14 * s, 14 * s, 14 * s, M.cyan, [0, 0, 0, 1]);
     f.nofx();
   }
 }
@@ -449,7 +470,7 @@ function climber(f, L, k) {
  */
 export function buildPirateRockScene(L) {
   const f = new PortRecorder();
-  const s = new SurfaceRecorder(f);
+  const s = new SurfaceRecorder(f, L.k || 1);
   const lamps = [];
   const groupOf = { buildings: {}, head: 0, segments: [], climbers: [] };
   let g = 1;
@@ -481,7 +502,7 @@ export function buildPirateRockScene(L) {
   for (const id of ['foot', 'plant', 'domes', 'reactor', 'pads', 'mine']) {
     const b = L.buildingById.get(id);
     if (!b || lamps.length >= PB_MAX_LAMPS) continue;
-    const p = L.surfacePoint(b.e, b.n, 420);
+    const p = L.surfacePoint(b.e, b.n, 420 * (L.k || 1));
     lamps.push([p.x, p.h, p.z, 1]);
   }
   return {
