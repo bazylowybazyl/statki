@@ -349,7 +349,8 @@ function buildSurfaceGraph(flow = null) {
           const vObj = normalize(modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(vec4(viewDir, 0.0))).xyz);
           const pv = dot(pL, vObj);
           const tq = pv.negate().add(sqrt(max(pv.mul(pv).sub(dot(pL, pL)).add(1.0), 0.0)));
-          biteMu.assign(clamp(dot(normalize(pL.add(vObj.mul(tq))), vObj), 0.0, 1.0));
+          // ≥ 0,35: przez wcięcie na brzegu tarczy promień wychodzi stycznie — pełna masa powietrza dawała mleczną taflę
+          biteMu.assign(clamp(dot(normalize(pL.add(vObj.mul(tq))), vObj), 0.35, 1.0));
         }).Else(() => {
           const rs = earthBiteRibShade(pL, normalize(vNormalLocal), sunObj, vUv, U.uBite, east);
           normal.assign(geoN);
@@ -405,7 +406,8 @@ function buildSurfaceGraph(flow = null) {
     If(U.uHazeStrength.greaterThan(0.0005), () => {
       // we wnętrzu gryzu (ściany, dno) promień wychodzi przez otwór — wysokość widoku z punktu wejścia (biteMu)
       const mu = mix(clamp(dot(atmN, viewDir), 0.0, 1.0), biteMu, pitOwn.mul(select(U.uPitMode.greaterThan(1.5).and(U.uPitMode.lessThan(2.5)), 1.0, 0.0)));
-      const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05));
+      // we wnętrzu gryzu połowa masy powietrza (wnętrze jest wypełnione żarem, nie stokiem powłoki)
+      const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05)).mul(float(1.0).sub(pitOwn.mul(0.5)));
       const extinction = exp(airmass.negate().mul(U.uHazeBeta)).toVar();
       // Mgiełka świeci światłem słońca, które do niej doszło: za dnia barwa mgiełki, przy terminatorze
       // złoto i czerwień, za nim łuna powietrza, które jeszcze widzi słońce.

@@ -14,7 +14,7 @@
 //  • MAPA — warstwy wypieku w układzie równoodległym (kolumna 0 = 180° W, wiersz 0 = biegun N): dzień, noc
 //    (wzmocnienie — światła są ciemne), noc na dniu, woda / połysk, normalne (R = wschód, G = północ), chmury.
 //  • NOWE / STARE — A/B z dawnymi mapami gry (jak `?planety=stare`: bez dziury, bez nocy Marsa / Merkurego / Wenus).
-//  • Miejsca — skok kamery do miejsc z generatora (dziura na Saharze, Hellas, Caloris, Ishtar, GRS, stocznia na
+//  • Miejsca — skok kamery do miejsc z generatora (wielki gryz w Afryce, Hellas, Caloris, Ishtar, GRS, stocznia na
 //    Lunie, odkrywki Io, cięcia Europy…; współrzędne księżyców z `<ciało>-miejsca.json` podglądu ksiezyce.py).
 // Własny WebGPURenderer (jak niebo-webgpu.js): demo nie potrzebuje passów Core3D, a materiały planet tła nie czytają
 // maski słońca (uSunShadowRecv = 0 — maska zastępcza z sunShadowMask.js, pełne słońce).
@@ -93,7 +93,7 @@ const MOON_KINDS = { stocznia: 'stocznia', ladowisko: 'lądowisko', depot: 'depo
   kopalnia: 'kopalnia', hub: 'hub pola cięć', baza: 'baza Unii Pasa' };
 
 const BODIES = [
-  { id: 'earth', name: 'Ziemia', kind: 'planet', ring: true, script: 'ziemia.py + dziura.py',
+  { id: 'earth', name: 'Ziemia', kind: 'planet', ring: true, script: 'ziemia.py + gryz.py',
     src: 'NOAA ETOPO 2022 (60″), detal z dawnych map gry',
     info: 'Ziemia „zajechana”: oceany wypompowane na ring, szczątkowe morza w najgłębszych basenach (~19% powierzchni), ' +
       'odsłonięte dno — szelfy, skarpy stoków, grzbiety śródoceaniczne jako łańcuchy gór, osady (biały muł, czerwony ił), ' +

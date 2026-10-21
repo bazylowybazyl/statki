@@ -227,6 +227,13 @@ test('materiały tła w TSL: Ziemia, poświata limbu i niebo budują WGSL (cień
   const E = buildWGSL(earth.material);
   const A = buildWGSL(atm.material);
   const S = buildWGSL(sky.material);
+  // wielki gryz (earthBite.tsl.js): kula z wycięciem, łata, klamry i poświata z wcięciem budują WGSL
+  for (const pitMode of [1, 2, 3]) {
+    const m = createMenuEarthMaterial(ring, tex, { pitMode, shared: earth.uniforms });
+    assert.match(buildWGSL(m.material).fragment, /fn earthBiteCoords \(/, `pitMode ${pitMode}`);
+    assert.equal(m.uniforms.uBite, earth.uniforms.uBite, 'środek gryzu wspólny z kulą');
+  }
+  assert.match(buildWGSL(createMenuAtmosphereMaterial(ring, layout.planetRadius + 1250, { bite: true }).material).fragment, /fn earthBiteCoords \(/);
   // cień ringu na planecie i w poświacie: funkcja WGSL biblioteki ringu (parametry-uniformy)
   assert.match(E.fragment, /fn haloRingBlock \(/);
   assert.match(A.fragment, /fn haloRingBlock \(/);

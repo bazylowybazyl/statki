@@ -16,7 +16,7 @@
 export const EARTH_BITE = Object.freeze(/*EARTH_BITE*/{
   "lon": 15.0,
   "lat": 10.0,
-  "radiusR": 0.30,
+  "radiusR": 0.46,
   "lobes": [[2, 0.075, 18], [3, 0.03, 130], [5, 0.014, 40]],
   "teeth": 9,
   "teethAmp": 0.07,

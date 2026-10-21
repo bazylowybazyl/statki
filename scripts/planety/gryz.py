@@ -120,8 +120,10 @@ def wypiecz(par, kol, noc, W, H, R_km):
         blok[:] = mix(blok, P_HUTA[None, None, :] * (0.7 + 0.6 * kwartal[..., None]), (t_hut * 0.85)[..., None])
         kol[j0:j1] = blok
         # noc: łuna brzegu (żar i dym nad krawędzią, poszarpana), huty, fronty, obwodnica
-        luna = smoothstep(90.0 + 60.0 * szum, 0.0, dkm) * (dkm > -2.0) * (0.35 + 0.65 * smoothstep(0.3, 0.8, szum_d))
-        nn = (N_LUNA[None, None, :] * (luna * 0.55)[..., None]
+        # łuna: poszarpana (plamy i przerwy wzdłuż brzegu), nie jednolity pierścień
+        plamy = smoothstep(0.42, 0.78, szum3(x * 260.0, y * 260.0, z * 260.0, 417)) * (0.4 + 0.6 * smoothstep(0.3, 0.85, szum_d))
+        luna = smoothstep(70.0 + 90.0 * szum, 0.0, dkm) * (dkm > -2.0) * plamy
+        nn = (N_LUNA[None, None, :] * (luna * 0.4)[..., None]
               + N_HUTA[None, None, :] * (t_hut * kwartal * 0.9)[..., None]
               + N_SOD[None, None, :] * (sw_front * 0.9 + obw * 0.25 * smoothstep(0.5, 0.7, szum_h))[..., None])
         noc[j0:j1] = np.maximum(nblok, nn * (1.0 - t_in))

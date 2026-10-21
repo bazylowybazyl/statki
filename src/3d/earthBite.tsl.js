@@ -35,7 +35,7 @@ export const EARTH_BITE_TSL = Object.freeze({
   field: [0.22, 0.72, 1.0],
   fieldGain: 0.32,
   forge: [1.0, 0.42, 0.12],
-  forgeGain: 0.6,
+  forgeGain: 1.5,
   skyFill: 0.10
 });
 
@@ -232,7 +232,8 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   const ramp = smoothstep(0.04, 1.0, dN).toVar();
   const wallCracks = mix(float(0.035), pow(max(0.0, ridge1), float(16.0).sub(ramp.mul(6.0))).mul(0.8), lod(pix, 1700.0))
     .add(mix(float(0.01), pow(max(0.0, ridge2), 22.0).mul(0.45), lod(pix, 5200.0)));
-  const wallEmit = heat(ramp).mul(wallCracks.mul(ramp).mul(T.wall).add(ramp.mul(ramp).mul(ramp).mul(ramp).mul(0.08)));
+  // żar ciała ściany rośnie z głębokością (płaszcz ~1 600 K pod skorupą → ~2 500 K przy dnie)
+  const wallEmit = heat(ramp).mul(wallCracks.mul(ramp).mul(T.wall).add(ramp.mul(ramp).mul(0.16)));
 
   // DNO: jezioro płaszcza pod zastygającą skorupą — płyty, jasne szwy, rzeki spływające ze ścian, huty
   const lake = smoothstep(0.80, 0.90, dN).toVar();
@@ -277,7 +278,7 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   // światło dna na ścianach (piec): kierunek ku środkowi dna, gaśnie ku brzegowi
   const bottom = C.mul(float(1.0).sub(b));
   const toB = normalize(bottom.sub(p));
-  const forge = max(dot(normal, toB), 0.0).mul(smoothstep(0.05, 0.85, dN)).mul(float(1.0).sub(lake.mul(0.7)));
+  const forge = max(dot(normal, toB), 0.0).mul(float(0.35).add(smoothstep(0.05, 0.8, dN).mul(0.65))).mul(float(1.0).sub(lake.mul(0.7)));
   emit.addAssign(albedo.mul(vec3(...T.forge)).mul(forge.mul(T.forgeGain)));
   emit.mulAssign(cav);
   return { normal, shadow, albedo, emit, field, cav, dN };
