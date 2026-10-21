@@ -11,7 +11,7 @@ window.wrecks = window.wrecks || [];
 const { BRIDGE_LEVELS, bridgeLevel, clampBridgeLevel } = await import('../src/data/bridgeLevels.js');
 const { HD_TN_SPRITE_FRAMES, HD_PRESET_CLASS } = await import('../src/game/hullDesign/hullDesignSystemSlots.js');
 const { hullDesignPreset } = await import('../src/game/hullDesign/hullDesignPresets.js');
-const { normalizeHullDesign, expandHullDesign, isBridgeSocket } = await import('../src/game/hullDesign/hullDesignSchema.js');
+const { normalizeHullDesign, expandHullDesign, isBridgeSocket, bridgeSocketModule } = await import('../src/game/hullDesign/hullDesignSchema.js');
 const { pipeModuleSdf } = await import('../src/game/hullDesign/hullDesignPipes.js');
 const { BRIDGE_LAYOUT_PROPOSALS } = await import('../src/game/shipBridge.js');
 const { REACTOR_CORE_MARKERS } = await import('../src/data/reactorCores.js');
@@ -91,6 +91,11 @@ test('zmiana poziomu mostka w projekcie zmienia gniazdo (obrys, poziom); 0 — p
   }
   const free = { ...d, bridgeLevel: 0, modules: d.modules.map((q) => (q.type === 'bridge' ? { ...q, lv: 3 } : q)) };
   assert.equal(normalizeHullDesign(free).modules.find((q) => q.type === 'bridge').lv, 3);
+  // klasa ponad drabiną modeli (drednot VII, tylko NPC): poziom z modułu, nie przycięty poziom projektu
+  const sock = { type: 'bridge', x: 0, y: 0, v: 2, lv: 5 };
+  assert.equal(bridgeSocketModule(sock, 7).lv, 5);
+  assert.equal(bridgeSocketModule(sock, 6).lv, 6);
+  assert.equal(bridgeSocketModule(sock, 0).lv, 5);
   // bryła gniazda (poziom 3) sięga ramy: pokład + rim
   const ex = expandHullDesign(normalizeHullDesign(d));
   const m = ex.modules.find((q) => q.type === 'bridge');

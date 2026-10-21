@@ -361,12 +361,13 @@ function normPart(p) {
 }
 
 /**
- * Gniazdo mostka (v 2) poziomu projektu: poziom = `bridgeLevel` projektu (0 — `lv` modułu, domyślnie I), pół-wymiary =
- * obrys modelu poziomu / 2 (zmiana poziomu mostka w projekcie zmienia moduł). Inne moduły — bez zmian.
+ * Gniazdo mostka (v 2) poziomu projektu: poziom = `bridgeLevel` projektu, gdy ma model (I–VI); 0 albo klasa ponad
+ * drabiną modeli (drednot VII, tylko NPC) — `lv` modułu (domyślnie I), więc mostki drednota mają różne poziomy.
+ * Pół-wymiary = obrys modelu poziomu / 2 (zmiana poziomu mostka w projekcie zmienia moduł). Inne moduły — bez zmian.
  */
 export function bridgeSocketModule(m, designLevel = 0, detail = HD_DETAIL.def) {
   if (!isBridgeSocket(m)) return m;
-  const lv = bridgeLevel(designLevel > 0 ? designLevel : (m.lv || 1));
+  const lv = bridgeLevel(designLevel >= 1 && designLevel <= BRIDGE_LEVEL_MAX ? designLevel : (m.lv || 1));
   const out = { ...m, lv: lv.level, w: lv.w / 2, h: lv.h / 2 };
   out.rim = hullDesignBridgeRim(out, detail);
   return out;

@@ -152,7 +152,8 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   (`src/data/bridgeLevels.js`, ośmiokąt z fazą poziomu), szczelina, rama z nitami i żółtymi skosami, mocowania modelu
   (poziom + 1 na burtę, od IV — dziób i rufa), belki poziomu przy dziobowym brzegu, przepust kabli. Gra stawia na nim
   model 3D poziomu (`src/3d/bridge3D.js`, reguła `mostki-reaktor`).
-- Poziom: `bridgeLevel` projektu (I–VI) ma pierwszeństwo, przy 0 — `lv` modułu (domyślnie I). `normalizeHullDesign`
+- Poziom: `bridgeLevel` projektu (I–VI) ma pierwszeństwo, przy 0 albo klasie ponad drabiną modeli (drednot VII, tylko
+  NPC) — `lv` modułu (domyślnie I; mostki drednota mają różne poziomy). `normalizeHullDesign`
   (`bridgeSocketModule`) wpisuje `lv`, pół-wymiary `w, h` = obrys / 2 i `rim` (szczelina + rama, `HD_BRIDGE_SOCKET`) —
   zmiana poziomu mostka w projekcie zmienia moduł; surowe `w, h` modułu v 2 nic nie znaczą. Bryła modułu (poziom 3)
   sięga ramy (faza poziomu + rim · (2 − √2)), trasy sieci omijają ramę (`pipeModuleSdf` z `rim`). Kompozytor: `B.z` =
