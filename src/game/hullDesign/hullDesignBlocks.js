@@ -63,22 +63,36 @@ export const HD_BLOCK_TUNE = Object.freeze({
 /**
  * PALETA (kolejność panelu edytora): kształt i parametry w jednostkach palety `u` (edytor: hullBlockPaletteUnit —
  * wielokrotność dwóch kroków siatki) — fazy i wierzchołki wypadają na siatce. Mało rodzajów (rect / trap / tri / arc), wpis palety
- * to tylko ustawienie parametrów.
+ * to tylko ustawienie parametrów (sześciokąt, romb i grot to prostokąt z fazami do połowy boku, owal — elipsa wpisana
+ * w pudło). `group` — grupa w palecie edytora (HD_BLOCK_PALETTE_GROUPS). Nowy wpis rozpoznaje hullBlockPaletteId.
  */
 export const HD_BLOCK_PALETTE = Object.freeze([
-  Object.freeze({ id: 'rect', label: 'Prostokąt', shape: 'rect', w: 4, h: 2 }),
-  Object.freeze({ id: 'rect_ch', label: 'Prostokąt ze ściętymi rogami', shape: 'rect', w: 4, h: 2, c: [0.5, 0.5, 0.5, 0.5] }),
-  Object.freeze({ id: 'tri', label: 'Trójkąt prostokątny', shape: 'tri', w: 3, h: 2, a: 0 }),
-  Object.freeze({ id: 'wedge', label: 'Klin (dziób)', shape: 'tri', w: 4, h: 2, a: 2 }),
-  Object.freeze({ id: 'trap_r', label: 'Trapez prostokątny', shape: 'trap', w: 4, h: 2, a: 0, b: 2 }),
-  Object.freeze({ id: 'trap_i', label: 'Trapez równoramienny', shape: 'trap', w: 4, h: 1.5, a: 1.5, b: 1.5 }),
-  Object.freeze({ id: 'para', label: 'Równoległobok', shape: 'trap', w: 4, h: 1.5, a: 1.5, b: -1.5 }),
-  Object.freeze({ id: 'circle', label: 'Koło', shape: 'arc', w: 3, h: 3, arc: 360 }),
-  Object.freeze({ id: 'half', label: 'Półkole', shape: 'arc', w: 4, h: 2, arc: 180 }),
-  Object.freeze({ id: 'quarter', label: 'Ćwiartka koła', shape: 'arc', w: 2, h: 2, arc: 90 }),
-  Object.freeze({ id: 'ring', label: 'Pierścień', shape: 'arc', w: 3, h: 3, arc: 360, ri: 0.6 })
+  Object.freeze({ id: 'rect', label: 'Prostokąt', group: 'proste', shape: 'rect', w: 4, h: 2 }),
+  Object.freeze({ id: 'rect_ch', label: 'Prostokąt ze ściętymi rogami', group: 'proste', shape: 'rect', w: 4, h: 2, c: [0.5, 0.5, 0.5, 0.5] }),
+  Object.freeze({ id: 'tri', label: 'Trójkąt prostokątny', group: 'skosy', shape: 'tri', w: 3, h: 2, a: 0 }),
+  Object.freeze({ id: 'wedge', label: 'Klin (dziób)', group: 'skosy', shape: 'tri', w: 4, h: 2, a: 2 }),
+  Object.freeze({ id: 'trap_r', label: 'Trapez prostokątny', group: 'skosy', shape: 'trap', w: 4, h: 2, a: 0, b: 2 }),
+  Object.freeze({ id: 'trap_i', label: 'Trapez równoramienny', group: 'skosy', shape: 'trap', w: 4, h: 1.5, a: 1.5, b: 1.5 }),
+  Object.freeze({ id: 'para', label: 'Równoległobok', group: 'skosy', shape: 'trap', w: 4, h: 1.5, a: 1.5, b: -1.5 }),
+  Object.freeze({ id: 'circle', label: 'Koło', group: 'luki', shape: 'arc', w: 3, h: 3, arc: 360 }),
+  Object.freeze({ id: 'half', label: 'Półkole', group: 'luki', shape: 'arc', w: 4, h: 2, arc: 180 }),
+  Object.freeze({ id: 'quarter', label: 'Ćwiartka koła', group: 'luki', shape: 'arc', w: 2, h: 2, arc: 90 }),
+  Object.freeze({ id: 'ring', label: 'Pierścień', group: 'luki', shape: 'arc', w: 3, h: 3, arc: 360, ri: 0.6 }),
+  Object.freeze({ id: 'square', label: 'Kwadrat', group: 'proste', shape: 'rect', w: 2, h: 2 }),
+  Object.freeze({ id: 'beam', label: 'Belka', group: 'proste', shape: 'rect', w: 6, h: 1 }),
+  Object.freeze({ id: 'rect_cut', label: 'Prostokąt ze ściętym rogiem', group: 'proste', shape: 'rect', w: 4, h: 2, c: [0, 1, 0, 0] }),
+  Object.freeze({ id: 'bow', label: 'Grot (pięciokąt)', group: 'proste', shape: 'rect', w: 4, h: 2, c: [0, 1, 1, 0] }),
+  Object.freeze({ id: 'hex', label: 'Sześciokąt', group: 'proste', shape: 'rect', w: 4, h: 2, c: [1, 1, 1, 1] }),
+  Object.freeze({ id: 'oct', label: 'Ośmiokąt', group: 'proste', shape: 'rect', w: 3.5, h: 3.5, c: [1, 1, 1, 1] }),
+  Object.freeze({ id: 'diamond', label: 'Romb', group: 'proste', shape: 'rect', w: 2, h: 2, c: [1, 1, 1, 1] }),
+  Object.freeze({ id: 'spike', label: 'Kolec (długi klin)', group: 'skosy', shape: 'tri', w: 5, h: 2, a: 2.5 }),
+  Object.freeze({ id: 'oval', label: 'Owal', group: 'luki', shape: 'arc', w: 4, h: 2, arc: 360 }),
+  Object.freeze({ id: 'arch', label: 'Łuk (półpierścień)', group: 'luki', shape: 'arc', w: 4, h: 2, arc: 180, ri: 0.5 }),
+  Object.freeze({ id: 'qring', label: 'Narożnik łukowy', group: 'luki', shape: 'arc', w: 2, h: 2, arc: 90, ri: 0.5 })
 ]);
 export const HD_BLOCK_PALETTE_IDS = Object.freeze(HD_BLOCK_PALETTE.map((p) => p.id));
+/** Grupy palety edytora (kolejność): id → nazwa. */
+export const HD_BLOCK_PALETTE_GROUPS = Object.freeze({ proste: 'Proste', skosy: 'Skosy i kliny', luki: 'Łuki' });
 
 /** Krok siatki klocków [j.] dla projektu o detalu `detail` [j./jd]: ~gridDu jd, potęga dwójki (fregata 0,5, Colossus 4). */
 export function hullDesignGridStep(detail) {
@@ -674,16 +688,38 @@ export function hullBlockFromPalette(id, u, x = 0, y = 0, level = 1) {
   return b;
 }
 
-/** Wpis palety pasujący do klocka (nazwa w edytorze): po kształcie i parametrach. */
+/**
+ * Wpis palety pasujący do klocka (nazwa w edytorze): po kształcie i parametrach — także po proporcjach (kwadrat,
+ * belka ≥ 4 : 1, kolec, owal) i fazach do połowy krótszego boku (sześciokąt, romb, grot), więc klocek po zmianie
+ * rozmiaru może dostać inną nazwę. Każdy wpis palety rozpoznaje się jako on sam (test).
+ */
 export function hullBlockPaletteId(b) {
-  if (b.shape === 'rect') return b.c && b.c.some((v) => v > 0) ? 'rect_ch' : 'rect';
-  if (b.shape === 'tri') return Math.abs((b.a || 0) - b.w / 2) < 1e-6 * b.w ? 'wedge' : 'tri';
+  const E = 1e-6 * Math.max(b.w, b.h);
+  const eq = (u, v) => Math.abs(u - v) < E;
+  if (b.shape === 'rect') {
+    const c = b.c || [0, 0, 0, 0];
+    const on = c.map((v) => v > E);
+    const n = on.filter(Boolean).length;
+    const full = Math.min(b.w, b.h) / 2;   // faza do połowy krótszego boku: koniec klocka w ostrzu
+    if (!n) return eq(b.w, b.h) ? 'square' : (Math.max(b.w, b.h) >= 4 * Math.min(b.w, b.h) ? 'beam' : 'rect');
+    if (n === 1) return 'rect_cut';
+    const same = c.every((v) => eq(v, c[0]));
+    if (n === 4 && same && eq(c[0], full)) return eq(b.w, b.h) ? 'diamond' : 'hex';
+    if (n === 4 && same && eq(b.w, b.h) && c[0] > 0.2 * b.w && c[0] < 0.36 * b.w) return 'oct';
+    // dwa rogi jednego boku ścięte do ostrza (sąsiednie w kolejności lewy-górny, prawy-górny, prawy-dolny, lewy-dolny)
+    if (n === 2) {
+      const i = on.indexOf(true), j = on.lastIndexOf(true);
+      if ((j - i === 1 || (i === 0 && j === 3)) && eq(c[i], full) && eq(c[j], full)) return 'bow';
+    }
+    return 'rect_ch';
+  }
+  if (b.shape === 'tri') return Math.abs((b.a || 0) - b.w / 2) < 1e-6 * b.w ? (b.w >= 2.25 * b.h ? 'spike' : 'wedge') : 'tri';
   if (b.shape === 'trap') {
     const a = b.a || 0, bb = b.b || 0;
     if (Math.abs(a + bb) < 1e-6 * b.w && Math.abs(a) > 0) return 'para';
     if (Math.abs(a - bb) < 1e-6 * b.w) return 'trap_i';
     return 'trap_r';
   }
-  if (b.ri) return 'ring';
-  return b.arc === 90 ? 'quarter' : (b.arc === 180 ? 'half' : 'circle');
+  if (b.ri) return b.arc === 90 ? 'qring' : (b.arc === 180 ? 'arch' : 'ring');
+  return b.arc === 90 ? 'quarter' : (b.arc === 180 ? 'half' : (eq(b.w, b.h) ? 'circle' : 'oval'));
 }

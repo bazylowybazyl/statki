@@ -25,7 +25,9 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania), `hullDesignClass.js` (klasa
   okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`.
 - `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól), `hullDecalAtlas.js`.
-- Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami), testy `tests/hullDesign.test.mjs`,
+- Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami) z dwoma interfejsami: STOCZNIA
+  (domyślny, przyjazny: `dema/kreator-kadluba-stocznia.js` — § „Stocznia”) i WARSZTAT (pełny panel narzędzi,
+  `?ui=warsztat`), testy `tests/hullDesign.test.mjs`,
   `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
   podkład do układania klocków) `scripts/kreator-tn-ab.mjs`, gniazda broni TN z gry `scripts/kreator-gniazda-tn.mjs`.
 
@@ -38,6 +40,9 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   jest z klocków (etap 1B): IoU alfy ze sprite'em ≥ 0,9 (test), najwyżej 60 klocków na połowę okrętu.
 - Systemy (rdzeń, mostki, silniki, ładownie, zbiorniki) mają stałe miejsca dla klasy i kadłuba; kable i rury wynikają
   z systemów i biegną rowami między płytami (etap 1C).
+- Edytor jak w Spore (2026-10-21): elementy przeciąga się z przyjaznej palety kart na okręt (drag & drop), BEZ siatki
+  i kolorowych („zielonych”) obrysów — widać sam okręt i elementy; dużo podstawowych kształtów z przeciąganiem
+  i powtarzaniem, żeby przyjemnie budowało się też od zera. Dawny panel zostaje jako „Warsztat”.
 - Klasa okrętu z mostka i rdzenia (etap 2, 2026-10-21, `docs/PROPOZYCJA-KLASY-MOSTEK-RDZEN.md`): klasy I–VI (Fregata,
   Niszczyciel, Krążownik, Pancernik, Kapitał — lotniskowiec to rola, Superkapitał); Atlas poza drabiną (unikat fabularny
   klasy VI); limity mostka TWARDE (edytor nie pozwala ich przekroczyć), moc rdzenia — limit MIĘKKI (urządzenia ponad moc
@@ -48,8 +53,13 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 
 - Format: bryła `{ kind: 'block', shape: 'rect' | 'trap' | 'tri' | 'arc', x, y (środek), w, h (PEŁNE wymiary — inaczej niż
   'rect' i kasztele), rot (rad, przyciągany do 45°), flip, level (domyślnie 1), op, gap, mirror, c / a / b / arc / ri }`.
-  Mało rodzajów, wpis palety (`HD_BLOCK_PALETTE`) = ustawienie parametrów. Nowy kształt: wpis palety; nowy rodzaj — dopiero
-  gdy parametry nie wystarczą (`normalizeBlock`, `blockLocalLoops`, `blockGridViolations`, `hullBlockPaletteId`, test).
+  Mało rodzajów, wpis palety (`HD_BLOCK_PALETTE`) = ustawienie parametrów. Nowy kształt: wpis palety (z `group` —
+  `HD_BLOCK_PALETTE_GROUPS`) i rozpoznanie w `hullBlockPaletteId` (test: każdy wpis rozpoznaje się jako on sam); nowy
+  rodzaj — dopiero gdy parametry nie wystarczą (`normalizeBlock`, `blockLocalLoops`, `blockGridViolations`,
+  `hullBlockPaletteId`, test). Paleta: 22 kształty w grupach Proste / Skosy i kliny / Łuki — sześciokąt, romb i grot to
+  prostokąt z fazami do połowy krótszego boku, ośmiokąt — fazy ~0,29 boku, owal — elipsa w pudle, łuk i narożnik — łuk
+  z pierścieniem. `hullBlockPaletteId` patrzy też na proporcje (kwadrat, belka ≥ 4 : 1, kolec, owal), więc nazwa klocka
+  zmienia się z rozmiarem.
 - SIATKA: klocki w j. świata na siatce projektu `design.grid` — krok ustalany przy tworzeniu projektu
   (`hullDesignGridStep(detail)`: ~4 jd, potęga dwójki), potem stały. Suwak `detail` zmienia detal (rowy, płyty, nity), nie
   rozmiar okrętu. Strażnik: wymiary i parametry co krok, krawędzie pudła na siatce przy obrocie co 90°, środek co pół kroku
@@ -64,10 +74,43 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   z pola: rowek w płycie, w alfie półprzezroczysta kreska). Dlatego klocki łączą się sumą geometryczną (`polygonUnion`:
   kawałki krawędzi poza innymi wielokątami, wspólna krawędź o przeciwnym kierunku znika), a nie przez pole. Bryły spoza
   klocków (wielokąty, części) łączą się dalej `min` — stykające się dokładnie dają szew.
-- Edytor (demo, narzędzie N): mysz i klawisze w sekcji „KLOCKI” na końcu `dema/kreator-kadluba-webgpu.js`; haki w kodzie
+- Edytor warsztatu (narzędzie N): mysz i klawisze w sekcji „KLOCKI” na końcu `dema/kreator-kadluba-webgpu.js`; haki w kodzie
   dema są jednolinijkowe (`blockDown` / `blockDrag` / `blockUp`, `drawBlocks`, `syncBlockPanel`). R / F / X / Del działają
   tylko w narzędziu Klocki (poza nim R to rowek). Cofanie: zrzut JSON w `requestBuild` bez przeciągania — nowa ścieżka edycji
   ma po zakończeniu zmiany wołać `requestBuild(false)` (inaczej nie trafi do historii).
+
+## Stocznia (przyjazny edytor dema)
+
+- `dema/kreator-kadluba-stocznia.js` (`installShipyard(api)`; `api` = `shipyardApi()` w demie — stan, budowa, historia,
+  `pick`, przekształcenia, fabryki elementów, `composerExclusive`). Domyślny interfejs; `?ui=warsztat` albo przycisk
+  „Warsztat” — dawny panel (wybór pamięta `localStorage` `kreator.ui`). Skrypt zrzutów ładuje warsztat, etap `stocznia`
+  przełącza sam (`__kreator.setUi`). Haki w demie: `installShipyard` przy starcie, `shipyard.draw(cam)` w `render()`,
+  `shipyard.insets()` w `fit()`, `shipyard.refresh()` w `loadPreset`, bramka `S.ui === 'stocznia'` na początku obsług
+  myszy i klawiszy warsztatu (`onDown`, `onMove`, `onUp`, `onWheel`, klawisze, `onBlockKey`) — nowa obsługa warsztatu
+  też ją dostaje.
+- Z lewej paleta kart (Kształty, Systemy, Uzbrojenie, Detale, Malowanie): przeciągnięcie karty na okręt stawia element
+  (duch z kopią lustra w trakcie), klik w kartę — STEMPEL (klik na okręcie — kopia, przeciągnięcie — rząd stykających
+  się kopii), kółko przy stawianiu klocka — rozmiar ×1–×4. Na okręcie: element pod kursorem świeci, przeciągnięcie
+  przesuwa (Shift — kopia), upuszczenie na paletę usuwa, Esc przerywa; kółko nad zaznaczonym — rozmiar; Ctrl+D — powiel
+  (po przesunięciu kopii kolejne powtarza przesunięcie), Ctrl+C / V — schowek; tło — przesuw widoku, Ctrl / Shift —
+  ramka. Z prawej karta okrętu (klasa, rozmiar, gniazda, moc, wartość, lista kontrolna systemów, edytor gniazda),
+  „Od zera” — kadłub wybranej klasy z kilem na osi.
+- Bez siatki i obrysów poziomów (decyzja użytkownika): rysuje się tylko podświetlenie, zaznaczenie (akcent), duch,
+  uchwyty i ramka; „Kontury” (O) — cienkie białe obrysy wszystkich elementów. Uchwyty rozmiaru tylko na klocku,
+  który na ekranie ma ≥ 34 px krótszego boku — mniejszy chwyta się w całości (uchwyt zasłaniał środek: zamiast
+  przesuwać, rozciągał).
+- Wybór: moduły, części, kasztele i naklejki przed klockami, z klocków — wierzchni (ostatni na liście; `pick` dema
+  bierze pierwszy). Moduły, kasztele i naklejki stawia się tylko na kadłubie (pole ramy ostatniej budowy ≤ 0) —
+  upuszczone obok wracają; klocki wszędzie, z MAGNESEM: nowy klocek do 48 px od burty dosuwa się do niej po gradiencie
+  pola ramy z zakładką pół kroku siatki (rama w jednym kawałku), Alt — bez magnesu, wycięcia nie przywierają.
+- Nowy element palety: wpis w `buildCatalog` + fabryka w `makeObject` (moduły, kasztele, części i naklejki przez fabryki
+  dema `newModule` / `newCastle` / `newPart` / `newDecal` — wspólne z warsztatem) + projekt miniatury `thumbDesign`.
+  Zmiana z interfejsu kończy się `requestBuild(false)`; w trakcie przeciągania `S.drag = { kind: 'stocznia…' }`
+  i `requestBuild(true)`. Stan trzymający obiekty projektu czyści się przy nowym obiekcie `S.design` (cofanie, preset,
+  straż limitów mostka — `syncDesign`).
+- Miniatury kart: ten sam kompozytor co okręt (projekt z jednym elementem w detalu 0,6, bez sieci), w barwach i stylu
+  projektu, w tle — tylko przez `composerExclusive` (S.busy; zmiana projektu czeka w `S.pending`), wstrzymane
+  w trakcie przeciągania. Drugie `composer.setDesign` poza `runBuild` bez tej osłony = wyścig z budową okrętu.
 
 ## Flota TN z klocków — zasady
 
@@ -181,4 +224,7 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   [--tylko custos,…,klocki]` — A/B floty TN ze sprite'ami, arkusz palety i edycja myszą (`klocki`), gniazdo obudowy
   reaktora z modelem 3D (`reaktor`), gniazdo mostka z modelem 3D poziomu i galeria I–VI (`mostek`); raport `raport.json`
   (pipeline'y synchroniczne w klatkach — ma być 0, błędy konsoli).
-- Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html?preset=klocki`.
+- Stocznia: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy stocznia --tylko stocznia --out .tmp/kreator/stocznia`
+  (prawdziwa mysz przez CDP: karta → okręt, stempel z rzędem, Ctrl+D, usunięcie na paletę, moduł poza kadłubem,
+  Shift+przeciągnij, od zera; liczniki w `raport.json` → `stocznia`).
+- Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html?preset=klocki` (`&ui=warsztat` — pełny panel).

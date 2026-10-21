@@ -12,7 +12,8 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
 
 ## Jak uruchomić
 
-- Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html` (otwiera się z lotniskowcem Citadella; flota TN z siecią
+- Demo: `npm run dev` → `/dema/kreator-kadluba-webgpu.html` (otwiera się z lotniskowcem Citadella w przyjaznym
+  interfejsie „Stocznia” — § „Demo — narzędzia”; `?ui=warsztat` — pełny panel: flota TN z siecią
   systemów — suwak „sieć rur”, ⟳ inne wiązki, I — graf sieci, panel „Sieć systemów”; narzędzie Rura W).
   `?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty`,
   `?clean=1` bez paneli. A — A/B (kreator ↔ sprite tego samego okrętu), U — sprite jako podkład pod projektem.
@@ -307,9 +308,13 @@ każdy kadłub (plan: `docs/PLAN-KREATOR-STOCZNIA.md`).
 | `level`, `op` | poziom (domyślnie 1 — pancerz), `cut` — wycięcie (na poziomie L usuwa poziomy ≥ L) |
 | `gap` | szczelina płyty [jd] (domyślnie 12; 0 — płyta scala się z sąsiadem) |
 
-Paleta (`HD_BLOCK_PALETTE` — ustawienia czterech rodzajów): prostokąt, prostokąt ze ściętymi rogami, trójkąt prostokątny,
-klin, trapez prostokątny, trapez równoramienny, równoległobok, koło, półkole, ćwiartka koła, pierścień. Nowy kształt =
-wpis palety; nowy rodzaj tylko wtedy, gdy parametry nie wystarczą.
+Paleta (`HD_BLOCK_PALETTE` — ustawienia czterech rodzajów, 22 kształty w grupach `HD_BLOCK_PALETTE_GROUPS`):
+**proste** — kwadrat, prostokąt, belka, prostokąt ze ściętymi rogami, ze ściętym rogiem, grot (pięciokąt), sześciokąt,
+ośmiokąt, romb (sześciokąt, romb i grot to prostokąt z fazami do połowy krótszego boku); **skosy i kliny** — trójkąt
+prostokątny, klin, kolec (długi klin), trapez prostokątny, trapez równoramienny, równoległobok; **łuki** — koło, owal,
+półkole, ćwiartka koła, pierścień, łuk (półpierścień), narożnik łukowy (ćwierć pierścienia). Nowy kształt = wpis palety
+z grupą i rozpoznanie w `hullBlockPaletteId` (po parametrach i proporcjach; test: każdy wpis rozpoznaje się jako on sam);
+nowy rodzaj tylko wtedy, gdy parametry nie wystarczą.
 
 **Siatka a `detail`** (decyzja 1A): klocki leżą w j. świata na siatce projektu `grid` — krok ustalany przy tworzeniu
 projektu z detalu (`hullDesignGridStep`: ~4 jd, potęga dwójki) i zapisany w projekcie. Suwak detalu zmienia gęstość detalu
@@ -486,6 +491,30 @@ limitów Custosa; liczby w `raport.json` → `klasa`).
 już typ, rozmiar i broń); NPC — wybór gniazd po `spec` zostaje albo przechodzi na pobór mocy.
 
 ## Demo — narzędzia
+
+**Stocznia** (domyślny interfejs, `dema/kreator-kadluba-stocznia.js`; prośba użytkownika 2026-10-21: „jak generator
+statków i pojazdów w Spore — drag & drop, bez kratki i zielonych linii, po prostu elementy; przyjazne menu; różne
+podstawowe kształty z przeciąganiem i powtarzaniem, żeby fajnie budowało się od podstaw”):
+
+- z lewej paleta kart z miniaturami pieczonymi przez kompozytor okrętu w jego barwach i stylu (Kształty — 22 klocki
+  z warstwą, wycięciem i rozmiarem ×1–×4; Systemy; Uzbrojenie — wieże i gniazda z rozmiarem; Detale — luki, kratki,
+  pierścienie, kasztel, gotowe części TN; Malowanie — barwy, krawędzie, naklejki, kolor, napis, detal płyt, rury,
+  okna); karta przeciągnięta na okręt stawia element (duch z kopią lustra; klocek blisko burty przywiera — magnes,
+  Alt bez), kółko w trakcie stawiania klocka zmienia rozmiar;
+- powtarzanie: klik w kartę — stempel (klik — kopia, przeciągnięcie — rząd stykających się kopii), Ctrl+D — powiel
+  (po przesunięciu kopii następne powtarza przesunięcie), Shift+przeciągnij — kopia, Ctrl+C / Ctrl+V — schowek;
+- na okręcie: element pod kursorem świeci, przeciągnięcie przesuwa, upuszczenie na paletę usuwa, Esc przerywa; pasek
+  nad zaznaczeniem (obrót ±45°, odbicie, warstwa, wycięcie, rozmiar, powiel, usuń), kółko nad zaznaczonym — rozmiar,
+  R / F / X / Del / 1–4 / strzałki; tło — przesuw, Ctrl / Shift + przeciągnij — ramka; „Kontury” (O) — obrysy elementów
+  na życzenie (domyślnie bez siatki i obrysów);
+- z prawej karta okrętu: nazwa, klasa (mostek, rdzeń), paski rozmiaru, gniazd i mocy, napęd, wartość, masa, lista
+  kontrolna (reaktor, mostek, silnik, zbiornik, rama w jednym kawałku, zasilanie, sieć) i edytor zaznaczonego gniazda;
+- „Od zera” — kadłub wybranej klasy (I–VI: detal i skala klocków jak flota TN tej klasy) z kilem na osi; „Warsztat” —
+  dawny panel poniżej (`?ui=warsztat`; z warsztatu wraca przycisk „Stocznia”).
+
+Zrzuty i próba prawdziwą myszą: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy stocznia --tylko stocznia`.
+
+**Warsztat** (`?ui=warsztat`) — pełny panel narzędzi:
 
 **Klocki (N)** — sekcja „Klocki” w panelu: paleta z ikonami, LPM na pustym stawia klocek (klik — rozmiar domyślny,
 przeciąganie — pudło), LPM na klocku zaznacza i przesuwa (z przyciąganiem do siatki), Shift+klik dodaje do zaznaczenia,

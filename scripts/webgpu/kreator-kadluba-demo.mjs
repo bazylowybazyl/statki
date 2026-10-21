@@ -8,10 +8,13 @@
 // (`--etapy klocki --tylko klocki` — bez floty). Etap `klasa` (poza domyślnymi): panel klasy, gniazda Bellatora
 // i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka. Etap `mostek` (poza domyślnymi):
 // gniazdo mostka v 2 floty TN z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze, galeria poziomów I–VI
-// (sześć gniazd na jednym kadłubie, z modelami i bez).
+// (sześć gniazd na jednym kadłubie, z modelami i bez). Etap `stocznia` (poza domyślnymi): przyjazny edytor prawdziwą
+// myszą — paleta z miniaturami, przeciągnij i upuść, stempel z rzędem, Ctrl+D, Shift+przeciągnij, usunięcie na paletę,
+// moduł poza kadłubem odrzucony, kadłub od zera (`--etapy stocznia --tylko stocznia`). Pozostałe etapy — w interfejsie
+// warsztatu (`?ui=warsztat`).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor,mostek]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor,mostek,stocznia]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -44,7 +47,8 @@ async function shot(name, opis, frames = 4) {
 const PRESETS = ['custos', 'hasta', 'bellator', 'citadella', 'colossus', 'orbis', 'atlas2', 'pirate'];
 const TN = new Set(['custos', 'hasta', 'bellator', 'citadella', 'colossus']);
 try {
-  await cdp.send('Page.navigate', { url: `${base}/dema/kreator-kadluba-webgpu.html?test=1` });
+  // zrzuty paneli warsztatu: interfejs 'warsztat' (domyślny jest przyjazny edytor — etap `stocznia` przełącza go sam)
+  await cdp.send('Page.navigate', { url: `${base}/dema/kreator-kadluba-webgpu.html?test=1&ui=warsztat` });
   if (!await waitFor(cdp, '!!(window.__kreator && (window.__kreator.ready || window.__kreator.error))', 240000, 400)) throw new Error('demo nie wstało');
   const err = await ev('window.__kreator.error || null');
   if (err) throw new Error(`demo: ${err}`);
@@ -319,6 +323,111 @@ try {
     rama.po = await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`);
     report.rama_klocki = rama;
     console.log('klocki rama', JSON.stringify(rama));
+  }
+  if (stages.has('stocznia')) {
+    // STOCZNIA (--etapy stocznia): przyjazny edytor — paleta z miniaturami z kompozytora, przeciągnij i upuść kartę
+    // (duch nad okrętem, kopia lustra), stempel z rzędem kopii, powielanie Ctrl+D z powtórzeniem przesunięcia, kopia
+    // Shift+przeciągnij, usunięcie upuszczeniem na paletę, moduł poza kadłubem odrzucony, nowy kadłub od zera
+    const k = 'window.__kreator', y = `${k}.stocznia`;
+    const mouse = async (type, x, yy, button = 'left', buttons = 1, modifiers = 0) => cdp.send('Input.dispatchMouseEvent', { type, x, y: yy, button, buttons, clickCount: 1, modifiers });
+    const keyDown = async (key, code, vk, modifiers = 0) => {
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, modifiers, windowsVirtualKeyCode: vk });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, modifiers, windowsVirtualKeyCode: vk });
+    };
+    const scr = (x, yy) => ev(`${k}.toScreen(${x}, ${yy})`);
+    const card = (key) => ev(`(() => { const c = document.querySelector('.ycard[data-key="${key}"]'); if (!c) return null; c.scrollIntoView({ block: 'nearest' }); const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const count = () => ev(`({ shapes: ${k}.design.shapes.length, modules: ${k}.design.modules.length, sel: ${y}.state().sel, hist: ${k}.blk.hist().idx })`);
+    const drag = async (a, b, steps = 10, mods = 0, before = null) => {
+      await mouse('mouseMoved', a.x, a.y, 'none', 0, mods);
+      await mouse('mousePressed', a.x, a.y, 'left', 1, mods);
+      for (let i = 1; i <= steps; i++) await mouse('mouseMoved', a.x + (b.x - a.x) * i / steps, a.y + (b.y - a.y) * i / steps, 'left', 1, mods);
+      if (before) await before();
+      await mouse('mouseReleased', b.x, b.y, 'left', 0, mods);
+      await ev(`${k}.built()`);
+    };
+    const st = {};
+    await ev(`${k}.setUi('stocznia')`);
+    await ev(`${k}.preset("hasta")`);
+    await ev(`${y}.cat('ksztalty')`);
+    st.miniatury = await ev(`${y}.thumbsDone()`);
+    await shot('stocznia-1-paleta', 'Stocznia: paleta kształtów z miniaturami z kompozytora, karta okrętu (klasa, rozmiar, gniazda, moc, lista kontrolna), sam okręt bez siatki');
+    // karta → okręt: sześciokąt nad burtą (lustro: druga burta), duch w trakcie przeciągania
+    const im = await ev(`(() => { const f = ${k}.S.field; return { cx: f.image.cx, minX: f.bounds.minX, maxX: f.bounds.maxX, minY: f.bounds.minY, w: f.bounds.maxX - f.bounds.minX }; })()`);
+    st.przed = await count();
+    // sześciokąt kilka j. nad burtą (magnes dosuwa go do kadłuba)
+    const hx = im.cx - im.w * 0.08;
+    const top = await ev(`${y}.edge(${hx}, -1)`);
+    let a = await card('blk:hex');
+    let b = await scr(hx, top - 8);
+    await drag(a, b, 12, 0, () => shot('stocznia-2-przeciaganie', 'Przeciąganie karty sześciokąta nad burtę: duch klocka dosunięty magnesem do kadłuba, kopia lustra, oś symetrii'));
+    st.upuszczony = await count();
+    st.ramaPoSzesciokacie = await ev(`document.querySelector('#yard-card .ycheck li:nth-child(5)')?.className || null`);
+    await shot('stocznia-3-upuszczony', 'Sześciokąt postawiony: zaznaczenie z paskiem narzędzi (obrót, odbicie, warstwa, wycięcie, rozmiar, powiel, usuń)');
+    // stempel: klik w kartę prostokąta, przeciągnięcie wzdłuż burty — rząd stykających się płyt
+    a = await card('blk:rect');
+    await mouse('mouseMoved', a.x, a.y, 'none', 0); await mouse('mousePressed', a.x, a.y); await mouse('mouseReleased', a.x, a.y, 'left', 0);
+    st.stempel = (await ev(`${y}.state()`)).armed;
+    // rząd od środka okrętu ku dziobowi, tuż nad burtą
+    const rx0 = im.minX + im.w * 0.45, rx1 = im.minX + im.w * 0.75;
+    const ry = Math.min(await ev(`${y}.edge(${rx0}, -1)`), await ev(`${y}.edge(${rx1}, -1)`)) - 6;
+    a = await scr(rx0, ry);
+    b = await scr(rx1, ry);
+    await drag(a, b, 14, 0, () => shot('stocznia-4-rzad', 'Stempel: przeciągnięcie układa rząd stykających się płyt (podgląd) — drugą burtę stawia lustro'));
+    st.rzad = await count();
+    await keyDown('Escape', 'Escape', 27);
+    // powiel: ostatni klocek, Ctrl+D dwa razy (drugie powtarza przesunięcie)
+    await ev(`${y}.selectLast('shape')`);
+    await keyDown('d', 'KeyD', 68, 2); await ev(`${k}.built()`);
+    await keyDown('d', 'KeyD', 68, 2); await ev(`${k}.built()`);
+    st.powiel = await count();
+    await shot('stocznia-5-powiel', 'Powiel (Ctrl+D) dwa razy: kopie obok, drugie powielenie powtarza przesunięcie pierwszego');
+    // przeciągnięcie zaznaczonego klocka na paletę — usunięcie
+    const last = await ev(`(() => { const s = ${k}.design.shapes.at(-1); return { x: s.x, y: s.y }; })()`);
+    a = await scr(last.x, last.y);
+    b = await card('blk:square');
+    await drag(a, b, 10);
+    st.usuniety = await count();
+    // wieża M z karty na pancerz; ta sama karta upuszczona daleko poza kadłubem — odmowa
+    await ev(`${y}.cat('bron')`);
+    const plate = await ev(`(() => { const s = ${k}.design.shapes.filter((q) => q.kind === 'block' && q.level >= 1 && q.op !== 'cut').sort((p, q) => q.w * q.h - p.w * p.h)[0]; return { x: s.x, y: s.y }; })()`);
+    a = await card('mod:turret_m');
+    b = await scr(plate.x, plate.y);
+    await drag(a, b, 10);
+    st.wieza = await count();
+    a = await card('mod:turret_m');
+    b = await scr(im.cx, im.minY - im.w * 0.3);
+    await drag(a, b, 10);
+    st.wiezaPoza = await count();
+    // Shift+przeciągnij wieżę — kopia obok
+    const tur = await ev(`(() => { const m = ${k}.design.modules.at(-1); return { x: m.x, y: m.y, r: m.r }; })()`);
+    a = await scr(tur.x, tur.y);
+    b = await scr(tur.x - tur.r * 3, tur.y);
+    await drag(a, b, 8, 8);
+    st.kopiaShift = await count();
+    await shot('stocznia-6-uzbrojenie', 'Uzbrojenie: wieża M z karty na pancerzu i jej kopia Shift+przeciągnij; rozmiar gniazd nad kartami');
+    // malowanie i karty pozostałych kategorii
+    await ev(`${y}.cat('systemy')`); st.miniatury2 = await ev(`${y}.thumbsDone()`);
+    await shot('stocznia-7-systemy', 'Karty systemów: reaktor, mostek, silnik, dysza, zbiornik, ładownia, hangar');
+    await ev(`${y}.cat('farba')`);
+    await shot('stocznia-8-malowanie', 'Malowanie: barwy kadłuba, krawędzie, naklejki, kolor, wykończenie');
+    // od zera: niszczyciel — płyta startowa, potem klocki, reaktor, mostek, silniki i zbiornik z palety
+    await ev(`${y}.newShip(2)`);
+    await ev(`${k}.built()`);
+    await shot('stocznia-9-od-zera', 'Nowy kadłub od zera (II · niszczyciel): płyta startowa, lista kontrolna podpowiada brakujące systemy');
+    st.odZera = await ev(`(() => {
+      const s = ${y}, b0 = ${k}.design.shapes[0], W = b0.w, H = b0.h;
+      return [s.drop('blk:bow', b0.x + W / 2 + W / 8, 0), s.drop('blk:trap_r', b0.x - W / 2 - W / 8, -H / 2), s.drop('blk:rect', b0.x, -H / 2 - H / 4)];
+    })()`);
+    await ev(`${k}.built()`);
+    st.odZeraSys = await ev(`(() => {
+      const s = ${y}, d = ${k}.design, b0 = d.shapes[0];
+      return [s.drop('mod:reactor', b0.x, 0), s.drop('mod:bridge', b0.x + b0.w * 0.3, 0), s.drop('mod:engine', b0.x - b0.w * 0.38, -b0.h * 0.25), s.drop('mod:fuel_tank', b0.x - b0.w * 0.12, -b0.h * 0.3)];
+    })()`);
+    await ev(`${k}.built(); ${k}.fit()`);
+    await shot('stocznia-10-od-zera-zbudowany', 'Od zera: grot na dziobie, trapez na rufie, płyta nad burtą (lustro), reaktor, mostek, silniki, zbiornik — lista kontrolna');
+    st.klasa = await ev(`${k}.klasa.state()`);
+    report.stocznia = st;
+    console.log('stocznia', JSON.stringify(st));
   }
   if (stages.has('mostek') && (!only || only.has('mostki'))) {
     // GALERIA POZIOMÓW: sześć gniazd mostka (I–VI, poziom projektu 0 — poziom modułu) na jednym prostym kadłubie

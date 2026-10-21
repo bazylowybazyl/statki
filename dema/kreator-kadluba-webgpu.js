@@ -52,6 +52,7 @@ import { Bridge3D } from '../src/3d/bridge3D.js';
 import { attachBeamBridges } from '../src/game/shipBridgeBeams.js';
 import { isBridgeSocket } from '../src/game/hullDesign/hullDesignSchema.js';
 import { bridgeLevel } from '../src/data/bridgeLevels.js';
+import { installShipyard } from './kreator-kadluba-stocznia.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
@@ -87,8 +88,17 @@ const S = {
   // sieć systemów: graf (kto z kim), kontrola tras (wolne końce, poza obrysem, bez prądu / paliwa), nakładka grafu (I)
   systems: null, netCheck: null, netGraph: false, flash: null,
   // klasa okrętu (etap 2): wynik hullDesignClass, ostatni projekt w limitach mostka (straż akcji), nowe gniazdo
-  cls: null, classValid: null, classCheckValid: null, mountSlot: 'main', mountSize: null, classMsg: null
+  cls: null, classValid: null, classCheckValid: null, mountSlot: 'main', mountSize: null, classMsg: null,
+  // interfejs: 'stocznia' — przyjazny edytor przeciągnij-i-upuść (domyślny), 'warsztat' — pełny panel narzędzi
+  ui: uiFromPage()
 };
+function uiFromPage() {
+  let stored = null;
+  try { stored = localStorage.getItem('kreator.ui'); } catch { /* bez pamięci strony */ }
+  const want = params.get('ui') || stored;
+  return want === 'warsztat' ? 'warsztat' : 'stocznia';
+}
+document.body.classList.add(`ui-${S.ui}`);
 window.camera = {
   get x() { return S.cam.x; }, get y() { return S.cam.y; }, get zoom() { return S.cam.zoom; },
   shakeMag: 0, shakeDur: 0, addShake() {}
@@ -110,6 +120,7 @@ if (!Array.isArray(window.wrecks)) window.wrecks = [];
 
 let composer = null;
 let backdrop = null;
+let shipyard = null;   // przyjazny edytor (installShipyard) — interfejs 'stocznia'
 const cullInfo = { x: 0, y: 0, halfW: 1e5, halfH: 1e5, drawHalfW: 1e5, drawHalfH: 1e5 };
 const renderList = [];
 const ship = { entity: null, visual: null, physics: null, surfaceImg: null };
@@ -228,6 +239,22 @@ async function runBuild() {
   if (S.pending) queueMicrotask(runBuild);
   else if (S.timing?.fast && !S.drag) requestBuild(false);
   else wakeBuilt();
+}
+
+/**
+ * Kompozytor na wyłączność między wypiekami projektu (miniatury palety stoczni): czeka, aż budowa skończy, i woła
+ * `fn(composer)`; zmiana projektu w tym czasie czeka w `S.pending` i rusza zaraz po.
+ */
+async function composerExclusive(fn) {
+  while (!composer || S.busy || S.pending) await new Promise((ok) => setTimeout(ok, 40));
+  S.busy = true;
+  try {
+    return await fn(composer);
+  } finally {
+    S.busy = false;
+    if (S.pending) runBuild();
+    else wakeBuilt();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +464,7 @@ function worldOf(sx, sy) {
 }
 
 function onDown(e) {
+  if (S.ui === 'stocznia') return;   // stocznia ma własną obsługę myszy i klawiszy (dema/kreator-kadluba-stocznia.js)
   const m = S.mouse;
   m.lastX = e.clientX; m.lastY = e.clientY;
   const w = worldOf(e.clientX, e.clientY);
@@ -458,10 +486,7 @@ function onDown(e) {
   const tool = S.tool;
   if (tool === 'poly' || tool === 'groove' || tool === 'pipe') { addPolyPoint(w.x, w.y, e.shiftKey); return; }
   if (tool === 'castle' && !pick(w.x, w.y)) {
-    // kasztel: domyślne wymiary z detalu okrętu (≈ 60 × 45 jd), na osi przy kliknięciu blisko osi
-    const D = d.detail || 0.6;
-    const onAxis = Math.abs(w.y) < 20 / S.cam.zoom;
-    const o = { x: snap(w.x), y: onAxis ? 0 : snap(w.y), w: Math.round(32 * D * 10) / 10, h: Math.round(24 * D * 10) / 10, rot: 0, tiers: 2, taper: 0.45, port: true, hatches: 2, vent: 'slats', clip: S.castleClip ? 1 : undefined };
+    const o = newCastle(w.x, w.y);
     d.castles = d.castles || [];
     d.castles.push(o);
     S.drag = { kind: 'move', p: { kind: 'castle', obj: o, mirrored: false }, wx: w.x, wy: w.y };
@@ -469,7 +494,7 @@ function onDown(e) {
     return;
   }
   if (tool === 'part' && !pick(w.x, w.y)) {
-    const o = { id: S.partId, x: snap(w.x), y: Math.abs(w.y) < 12 / S.cam.zoom ? 0 : snap(w.y), s: Math.round(((d.detail || 0.6) / 0.6) * 1000) / 1000, rot: 0 };
+    const o = newPart(S.partId, w.x, w.y);
     d.parts = d.parts || [];
     d.parts.push(o);
     S.drag = { kind: 'move', p: { kind: 'part', obj: o, mirrored: false }, wx: w.x, wy: w.y };
@@ -496,30 +521,55 @@ function onDown(e) {
     d.decals.push(s);
     S.drag = { kind: 'stripeEnd', obj: s };
   } else if (tool === 'emblem' || tool === 'text') {
-    const o = tool === 'emblem'
-      ? { kind: 'emblem', id: S.emblem, x: snap(w.x), y: snap(w.y), rot: 0, w: 50, h: 50, color: S.color, opacity: 0.92, flip: false }
-      : { kind: 'text', text: S.text || 'HF', x: snap(w.x), y: snap(w.y), rot: 0, w: Math.max(30, (S.text || 'HF').length * 13), h: 16, color: S.color, opacity: 0.92, flip: false };
+    const o = newDecal(tool, w.x, w.y);
     d.decals.push(o);
     S.drag = { kind: 'move', p: { kind: 'decal', obj: o, mirrored: false }, wx: w.x, wy: w.y };
     requestBuild(true);
   } else if (tool === 'module') {
-    const def = HD_MODULES[S.moduleType];
-    // domyślne wymiary modułów są dla detail 0,6 — mniejszy okręt dostaje mniejsze moduły
-    const k = (d.detail || 0.6) / 0.6;
-    const o = { type: S.moduleType, x: snap(w.x), y: Math.abs(w.y) < 10 * k ? 0 : snap(w.y), rot: 0 };
-    if (def.r) o.r = Math.round(def.r * k * 10) / 10;
-    if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
-    if (def.v !== undefined) o.v = def.v;   // wariant domyślny (reaktor: gniazdo obudowy, mostek: gniazdo poziomu)
-    // gniazdo mostka: poziom klasy projektu (obrys modelu poziomu — normalizeHullDesign; tu dla zaznaczania)
-    if (S.moduleType === 'bridge' && o.v === 2) { const lv = bridgeLevel(S.cls?.levels.bridge || 1); o.lv = lv.level; o.w = lv.w / 2; o.h = lv.h / 2; }
-    // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
-    if (S.moduleType === 'thruster_side') o.rot = w.y > 0 ? Math.PI / 2 : -Math.PI / 2;
-    // gniazdo broni: typ i rozmiar z panelu, limity mostka (twarde) przed postawieniem
-    if (!classMountPlace(o)) return;
+    const o = newModule(S.moduleType, w.x, w.y);
+    if (!o) return;
     d.modules.push(o);
     S.drag = { kind: 'move', p: { kind: 'module', obj: o, mirrored: false }, wx: w.x, wy: w.y };
     requestBuild(true);
   }
+}
+
+// Nowe elementy w punkcie (wx, wy) — wspólne dla narzędzi warsztatu i palety stoczni (dema/kreator-kadluba-stocznia.js).
+/** Kasztel: domyślne wymiary z detalu okrętu (≈ 60 × 45 jd), na osi przy kliknięciu blisko osi. */
+function newCastle(wx, wy) {
+  const D = design().detail || 0.6;
+  const onAxis = Math.abs(wy) < 20 / S.cam.zoom;
+  return { x: snap(wx), y: onAxis ? 0 : snap(wy), w: Math.round(32 * D * 10) / 10, h: Math.round(24 * D * 10) / 10, rot: 0, tiers: 2, taper: 0.45, port: true, hatches: 2, vent: 'slats', clip: S.castleClip ? 1 : undefined };
+}
+/** Gotowa część `id` w skali detalu okrętu. */
+function newPart(id, wx, wy) {
+  return { id, x: snap(wx), y: Math.abs(wy) < 12 / S.cam.zoom ? 0 : snap(wy), s: Math.round(((design().detail || 0.6) / 0.6) * 1000) / 1000, rot: 0 };
+}
+/** Naklejka: emblemat z panelu albo napis. */
+function newDecal(kind, wx, wy) {
+  return kind === 'emblem'
+    ? { kind: 'emblem', id: S.emblem, x: snap(wx), y: snap(wy), rot: 0, w: 50, h: 50, color: S.color, opacity: 0.92, flip: false }
+    : { kind: 'text', text: S.text || 'HF', x: snap(wx), y: snap(wy), rot: 0, w: Math.max(30, (S.text || 'HF').length * 13), h: 16, color: S.color, opacity: 0.92, flip: false };
+}
+/**
+ * Moduł `type`: wymiary z detalu okrętu, wariant domyślny, gniazdo mostka w obrysie poziomu klasy, dysza SIDE wydechem ku
+ * burcie, gniazdo broni z typem i rozmiarem z panelu. `place` — z limitami mostka (odmowa: null i komunikat); false —
+ * bez sprawdzania (podgląd).
+ */
+function newModule(type, wx, wy, place = true) {
+  const def = HD_MODULES[type];
+  // domyślne wymiary modułów są dla detail 0,6 — mniejszy okręt dostaje mniejsze moduły
+  const k = (design().detail || 0.6) / 0.6;
+  const o = { type, x: snap(wx), y: Math.abs(wy) < 10 * k ? 0 : snap(wy), rot: 0 };
+  if (def.r) o.r = Math.round(def.r * k * 10) / 10;
+  if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
+  if (def.v !== undefined) o.v = def.v;   // wariant domyślny (reaktor: gniazdo obudowy, mostek: gniazdo poziomu)
+  // gniazdo mostka: poziom klasy projektu (obrys modelu poziomu — normalizeHullDesign; tu dla zaznaczania)
+  if (type === 'bridge' && o.v === 2) { const lv = bridgeLevel(S.cls?.levels.bridge || 1); o.lv = lv.level; o.w = lv.w / 2; o.h = lv.h / 2; }
+  // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
+  if (type === 'thruster_side') o.rot = wy > 0 ? Math.PI / 2 : -Math.PI / 2;
+  // gniazdo broni: typ i rozmiar z panelu, limity mostka (twarde) przed postawieniem
+  return classMountPlace(o, place) ? o : null;
 }
 
 /** Krok przyciągania punktów [j.]: 1 jd zaokrąglony (fregata ~0,1 j., lotniskowiec ~0,6 j.). */
@@ -568,6 +618,7 @@ function finishPoly() {
 }
 
 function onMove(e) {
+  if (S.ui === 'stocznia') return;
   const m = S.mouse;
   const w = worldOf(e.clientX, e.clientY);
   if (m.pan) {
@@ -600,6 +651,7 @@ function onMove(e) {
 }
 
 function onUp() {
+  if (S.ui === 'stocznia') return;
   S.mouse.pan = false;
   if (S.drag) {
     const dr = S.drag;
@@ -611,6 +663,7 @@ function onUp() {
 }
 
 function onWheel(e) {
+  if (S.ui === 'stocznia') return;
   e.preventDefault();
   const w = worldOf(e.clientX, e.clientY);
   if (S.tool === 'move') {
@@ -664,7 +717,10 @@ function render(realDt, list) {
   drawHexShips3D(ctx2d, W, H);
   if (S.underlay) drawUnderlay(cam);
   if (S.view !== 'game') drawMap(cam);
-  if (!document.body.classList.contains('clean')) { drawEditor(cam); drawBlocks(cam); }
+  if (!document.body.classList.contains('clean')) {
+    if (S.ui === 'stocznia') shipyard?.draw(cam);
+    else { drawEditor(cam); drawBlocks(cam); }
+  }
   updateHud();
 }
 
@@ -1090,6 +1146,15 @@ function syncPanel() {
 function fit() {
   const im = S.field?.image;
   if (!im) return;
+  if (S.ui === 'stocznia' && shipyard) {
+    // stocznia: kadr między paletą (z lewej), kartą okrętu (z prawej) i paskami u góry / u dołu
+    const ins = shipyard.insets();
+    const fw = Math.max(200, W - ins.left - ins.right), fh = Math.max(200, H - ins.top - ins.bottom);
+    S.cam.zoom = Math.min(6, Math.max(0.06, Math.min(fw * 0.84 / im.w, fh * 0.8 / im.h)));
+    S.cam.x = im.cx + (ins.right - ins.left) * 0.5 / S.cam.zoom;
+    S.cam.y = im.cy + (ins.bottom - ins.top) * 0.5 / S.cam.zoom;
+    return;
+  }
   const free = W > 900 ? W - 330 : W;
   S.cam.zoom = Math.min(2, Math.max(0.06, Math.min(free * 0.8 / im.w, H * 0.7 / im.h)));
   S.cam.x = im.cx + (W > 900 ? 160 / S.cam.zoom : 0);
@@ -1103,9 +1168,10 @@ function setZoom(z) {
   syncPanel();
 }
 
-async function loadPreset(key) {
+/** Gotowy projekt `key` (albo `own` — własny projekt, np. nowy kadłub stoczni; A/B jak dla `key`). */
+async function loadPreset(key, own = null) {
   S.presetKey = key;
-  S.design = hullDesignPreset(key);
+  S.design = own ? normalizeHullDesign(own) : hullDesignPreset(key);
   S.classValid = null; S.selected = null;
   S.blkSel.clear();
   histReset();
@@ -1115,6 +1181,7 @@ async function loadPreset(key) {
   fit();
   if (REF_FOR[key]) await setRef(REF_FOR[key]);
   syncPanel();
+  shipyard?.refresh();
 }
 
 const builtWaiters = [];
@@ -1159,6 +1226,23 @@ function toggleAb() {
   S.cam.x = f.x; S.cam.y = f.y;
   updateAbTag();
   syncPanel();
+}
+
+/** Interfejs: 'stocznia' (przyjazny edytor, domyślny) albo 'warsztat' (pełny panel narzędzi); wybór pamięta strona. */
+function setUi(mode) {
+  const ui = mode === 'warsztat' ? 'warsztat' : 'stocznia';
+  if (ui === S.ui) return true;
+  S.ui = ui;
+  document.body.classList.toggle('ui-stocznia', ui === 'stocznia');
+  document.body.classList.toggle('ui-warsztat', ui === 'warsztat');
+  try { localStorage.setItem('kreator.ui', ui); } catch { /* bez pamięci strony */ }
+  S.drag = null; S.poly = null; S.mouse.pan = false;
+  S.blkSel.clear();
+  // stocznia pokazuje sam okręt: bez map pakietu, A/B, podkładu i grafu sieci (to narzędzia warsztatu)
+  if (ui === 'stocznia') { S.view = 'game'; S.ab = false; S.underlay = false; S.netGraph = false; updateAbTag(); }
+  shipyard?.onUi(ui);
+  syncPanel();
+  return true;
 }
 
 function bindPanel() {
@@ -1222,6 +1306,7 @@ function bindPanel() {
   $('btn-ab').addEventListener('click', () => toggleAb());
   $('btn-netgraph').addEventListener('click', () => { ACTIONS.i(); syncPanel(); });
   $('btn-clean').addEventListener('click', () => ACTIONS.h());
+  $('btn-ui-stocznia').addEventListener('click', () => setUi('stocznia'));
   $('btn-json').addEventListener('click', () => {
     const ta = $('json');
     if (ta.style.display !== 'block') { ta.style.display = 'block'; ta.value = JSON.stringify(design(), null, 1); return; }
@@ -1236,6 +1321,7 @@ function bindInput() {
   window.addEventListener('mouseup', onUp);
   canvas2d.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('keydown', (e) => {
+    if (S.ui === 'stocznia') return;
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
     if ((S.tool === 'poly' || S.tool === 'groove' || S.tool === 'pipe') && S.poly) {
       if (e.key === 'Enter') { finishPoly(); e.preventDefault(); return; }
@@ -1570,6 +1656,7 @@ function blkToggleCut() {
 }
 
 function onBlockKey(e) {
+  if (S.ui === 'stocznia') return;
   if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
   const k = e.key.toLowerCase();
   const ctrl = e.ctrlKey || e.metaKey;
@@ -1799,19 +1886,21 @@ function bindBlockPanel() {
  */
 function blockSheet() {
   const g = 0.5, D = 0.09, u = hullBlockPaletteUnit(g, D);
-  const shapes = [{ kind: 'block', shape: 'rect', x: -6, y: 7, w: 156, h: 62, level: 0 }];
+  // 11 kształtów w pasie (trzy ustawienia jeden pod drugim), dalsze wpisy palety — w kolejnych pasach
+  const per = 11, bands = Math.ceil(HD_BLOCK_PALETTE.length / per), yGap = 28 + 56 * (bands - 1);
+  const shapes = [{ kind: 'block', shape: 'rect', x: -6, y: (yGap - 14) / 2, w: 156, h: yGap + 34, level: 0 }];
   HD_BLOCK_PALETTE.forEach((p, i) => {
-    const x = -72 + i * 13;
-    shapes.push({ ...hullBlockFromPalette(p.id, u, x, -14) });
-    shapes.push({ ...hullBlockFromPalette(p.id, u, x, 0), rot: HD_BLOCK_ROT_STEP });
-    shapes.push({ ...hullBlockFromPalette(p.id, u, x, 14), rot: 2 * HD_BLOCK_ROT_STEP, flip: true });
+    const x = -72 + (i % per) * 13, y = Math.floor(i / per) * 56;
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, y - 14) });
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, y), rot: HD_BLOCK_ROT_STEP });
+    shapes.push({ ...hullBlockFromPalette(p.id, u, x, y + 14), rot: 2 * HD_BLOCK_ROT_STEP, flip: true });
   });
-  const r = (x0, x1, o = {}) => ({ kind: 'block', shape: 'rect', x: (x0 + x1) / 2, y: 28, w: x1 - x0, h: 8, level: 1, ...o });
+  const r = (x0, x1, o = {}) => ({ kind: 'block', shape: 'rect', x: (x0 + x1) / 2, y: yGap, w: x1 - x0, h: 8, level: 1, ...o });
   shapes.push(r(-76, -66), r(-66, -56), r(-56, -46));
   shapes.push(r(-40, -30, { gap: 0 }), r(-30, -20, { gap: 0 }), r(-20, -10, { gap: 0 }));
   shapes.push(r(-4, 10), r(6, 20));
-  shapes.push(r(26, 46), { kind: 'block', shape: 'rect', x: 36, y: 28, w: 8, h: 3, level: 1, op: 'cut' });
-  shapes.push(r(52, 70), { kind: 'block', shape: 'trap', x: 61, y: 28, w: 12, h: 4, a: 2, b: 2, level: 2 });
+  shapes.push(r(26, 46), { kind: 'block', shape: 'rect', x: 36, y: yGap, w: 8, h: 3, level: 1, op: 'cut' });
+  shapes.push(r(52, 70), { kind: 'block', shape: 'trap', x: 61, y: yGap, w: 12, h: 4, a: 2, b: 2, level: 2 });
   return {
     v: 2, name: 'Arkusz palety klocków', style: 'chamfer', mirror: false, palette: 'terra', seed: 3, detail: D, grid: g,
     windows: 0, bevel: 1.9, round: 1, panels: 0.55, blocks: [], shapes, modules: [], decals: []
@@ -1866,8 +1955,8 @@ function classGuard(cls) {
   return false;
 }
 
-/** Nowe gniazdo (narzędzie Moduł): typ i rozmiar z panelu, limity mostka przed postawieniem. */
-function classMountPlace(o) {
+/** Nowe gniazdo (narzędzie Moduł): typ i rozmiar z panelu, limity mostka przed postawieniem (`check` false — bez limitów). */
+function classMountPlace(o, check = true) {
   if (!HD_MOUNT_MODULES[o.type]) return true;
   const d = design();
   const lv = S.cls?.levels.bridge || 1;
@@ -1876,6 +1965,7 @@ function classMountPlace(o) {
     o.size = S.mountSize || shipClass(lv).weaponSize;
     o.r = Math.round(HD_MOUNT_RADIUS_DU[o.slot] * (d.detail || 0.6) * 100) / 100;
   }
+  if (!check) return true;
   const copies = d.mirror && Math.abs(o.y) > 0.5 ? 2 : 1;
   const why = hullDesignMountAddIssue(lv, S.cls?.mounts || [], hullDesignMountOf(o), copies);
   if (why) { classFlash(why); return false; }
@@ -2125,6 +2215,9 @@ window.__kreator = {
     return true;
   },
   setUnderlay(on) { S.underlay = !!on; syncPanel(); return true; },
+  /** Interfejs 'stocznia' | 'warsztat'; haki stoczni (paleta, miniatury, zaznaczenie) — `__kreator.stocznia`. */
+  setUi(mode) { return setUi(mode); },
+  get stocznia() { return shipyard?.harness || null; },
   setBridge3D(on) { S.bridge3D = !!on; return true; },
   setNetGraph(on) { S.netGraph = !!on; syncPanel(); return true; },
   toScreen(x, y) { return { x: (x - S.cam.x) * S.cam.zoom + W * 0.5, y: (y - S.cam.y) * S.cam.zoom + H * 0.5 }; },
@@ -2228,6 +2321,22 @@ function bridgeDemoSync(cam) {
   Bridge3D.update(bridgeDemoList, bridgeDemoOpts);
 }
 
+// ---------------------------------------------------------------------------
+// STOCZNIA (przyjazny edytor, dema/kreator-kadluba-stocznia.js): stan, budowa i historia, wybór i przekształcenia
+// elementów, klocki palety, fabryki elementów i kompozytor na wyłączność (miniatury kart). Haki w demie: installShipyard
+// przy starcie, shipyard.draw(cam) w render(), shipyard.insets() w fit(), bramki `S.ui === 'stocznia'` w obsługach myszy
+// i klawiszy warsztatu.
+function shipyardApi() {
+  return {
+    S, ctx: ctx2d, canvas: canvas2d, view: () => ({ W, H }), worldOf, design: () => S.design,
+    requestBuild, histGo, hist: () => ({ idx: HIST.idx, n: HIST.stack.length }),
+    pick, isLocked, mirrorOn, polyLoopOf, partWorldBox, removePicked, rotateObj, scaleObj,
+    paletteBlock, paletteBox, snapBlock, blkGrid, blockLabel, classModuleLabel,
+    newModule, newCastle, newPart, newDecal,
+    loadPreset, fit, setUi, classFlash, setBridgeLevel, setCoreLevel, composerExclusive
+  };
+}
+
 (async () => {
   try {
     if (!(await Core3D.ready)) {
@@ -2254,6 +2363,7 @@ function bridgeDemoSync(cam) {
     bindInput();
     bindBlockPanel();
     bindClassPanel();
+    shipyard = installShipyard(shipyardApi());
     await loadPreset(HD_PRESETS[S.presetKey] ? S.presetKey : 'citadella');
     mark('projekt');
     await Core3D.warmup.flush?.({ timeoutMs: 6000 });

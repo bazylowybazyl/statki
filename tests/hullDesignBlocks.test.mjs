@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 import { expandHullDesign, normalizeHullDesign } from '../src/game/hullDesign/hullDesignSchema.js';
 import { buildHullField, hullFrameIntegrity, sampleHullField } from '../src/game/hullDesign/hullDesignGeometry.js';
 import {
-  HD_BLOCK_PALETTE, HD_BLOCK_TUNE, blockArea, blockLocalLoops, blockWorldLoops, hullBlockFromPalette, hullDesignGridStep,
-  loopArea, normalizeBlock, offsetLoop, polygonDifference, polygonUnion, polygonsOverlap, snapBlockRot
+  HD_BLOCK_PALETTE, HD_BLOCK_PALETTE_GROUPS, HD_BLOCK_TUNE, blockArea, blockLocalLoops, blockWorldLoops, hullBlockFromPalette,
+  hullBlockPaletteId, hullDesignGridStep, loopArea, normalizeBlock, offsetLoop, polygonDifference, polygonUnion, polygonsOverlap,
+  snapBlockRot
 } from '../src/game/hullDesign/hullDesignBlocks.js';
 import { isPlayerBuildable, onGrid } from '../src/game/hullDesign/hullDesignBuildable.js';
 import { HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
@@ -66,6 +67,24 @@ test('paleta: każdy kształt — dodatni obrys, pole z wymiarów, wypukły (poz
       }
     }
   }
+});
+
+test('paleta: każdy wpis rozpoznaje się jako on sam (nazwa w edytorze), także po normalizacji i w skali; grupy i id jednoznaczne', () => {
+  const ids = HD_BLOCK_PALETTE.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'id palety bez powtórzeń');
+  for (const p of HD_BLOCK_PALETTE) {
+    assert.ok(HD_BLOCK_PALETTE_GROUPS[p.group], `${p.id}: grupa ${p.group}`);
+    for (const u of [1, 2, 6]) {
+      const b = normalizeBlock(hullBlockFromPalette(p.id, u, 0, 0));
+      assert.equal(hullBlockPaletteId(b), p.id, `${p.id} (u = ${u})`);
+    }
+  }
+  // sześciokąt i romb to prostokąt z fazami do połowy boku: ostrze na końcu, bez pionowego odcinka
+  const hex = blockLocalLoops(normalizeBlock(hullBlockFromPalette('hex', 2)))[0];
+  assert.equal(hex.length, 6, 'sześciokąt: 6 wierzchołków');
+  assert.equal(blockLocalLoops(normalizeBlock(hullBlockFromPalette('diamond', 2)))[0].length, 4, 'romb: 4 wierzchołki');
+  assert.equal(blockLocalLoops(normalizeBlock(hullBlockFromPalette('bow', 2)))[0].length, 5, 'grot: 5 wierzchołków');
+  assert.equal(blockLocalLoops(normalizeBlock(hullBlockFromPalette('oct', 2)))[0].length, 8, 'ośmiokąt: 8 wierzchołków');
 });
 
 test('obrót: przyciągany do 45°, pole stałe, pudło przy 90° zamienia wymiary; odbicie: wierzchołek trójkąta po drugiej stronie, 8 różnych ustawień', () => {
