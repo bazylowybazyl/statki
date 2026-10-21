@@ -25,6 +25,27 @@ export const ECU_S = 3;
 const S = ECU_S;
 export const ECU_DEMO_LENGTH = 8100 * Math.PI / 6;   // dzielnica dema (R · 2π / 12)
 export const ECU_DEMO_W = 2100;
+// kadłub dema × S (podłoga → spód powłoki z żebrami) — miara ściśnięcia profilu
+export const ECU_DEMO_HULL = 1600;
+
+// Przekrój ringu węższego / cieńszego niż demo (Mars od 2026-10-21: wstęga 3 200, kadłub 600):
+// mapZ — z dema × S → z świata: w poprzek podłogi liniowo (ułamek szerokości), poza krawędzią
+// podłogi (ściany, skrzydła radiatorów, tablice) przesunięcie o tę samą odległość od krawędzi;
+// mapH — wysokość: pod podłogą (kadłub, żebra, radiatory) × kadłub / kadłub dema, nad nią bez zmian.
+// Mapa dzielnic (ląd, zabudowa) NIE jest ściskana — przycięta do środka wstęgi (bryły bez zniekształceń),
+// arterie `zArt` przesunięte do środka o tę samą odległość od krawędzi co w demie.
+export function ecumeneSection(layout) {
+  const E = ECU_DEMO_W * 0.5 * S;
+  const HW = layout.floor.spanZ * 0.5;
+  const KZ = HW / E;
+  const KH = layout.hullThickness / ECU_DEMO_HULL;
+  return {
+    HW, KZ, KH, E,
+    zArt: Math.min(850 * S, HW - (1050 - 850) * S),
+    mapZ: (z) => (Math.abs(z) <= E ? z * KZ : Math.sign(z) * (HW + Math.abs(z) - E)),
+    mapH: (h) => (h < 0 ? h * KH : h)
+  };
+}
 
 // Dzielnice dema (id): nazwa w demie, podtytuł (tablice sektorów).
 export const ECU_DISTRICTS = Object.freeze([
@@ -77,6 +98,9 @@ export function createEcumenePlan(layout, seed = layout.seed) {
   const LEN = span * R;
   const stretch = LEN / (S * ECU_DEMO_LENGTH);
   const { hash2, noise } = makeNoise(seed | 0);
+  const section = ecumeneSection(layout);
+  // arterie (dema z = ±850 × S) i siatka katastralna od nich
+  const zArt = section.zArt;
 
   // ---- port: płyty i osłona (kąt środka, pół-rozpiętość łuku, zakres z) ----
   const sites = haloPortSites(R).map((st) => ({ ...st, halfS: st.halfS }));
@@ -126,12 +150,17 @@ export function createEcumenePlan(layout, seed = layout.seed) {
     const d = ECU_DOME_PLANS[index];
     const p = sectors.findIndex((sec) => sec.district === d.s);
     if (p < 0) continue;
-    const r = d.r * S;
+    // węższa wstęga (Mars od 2026-10-21): kopuła nie szersza niż podłoga, środek w poprzek tak, żeby mieściła się
+    // na podłodze (w demie wstęga 2 100 × S — kopuły stały i przy krawędziach)
+    const rD = Math.min(d.r, (HW - 70 * S) / S);
+    const r = rD * S;
+    const zLim = Math.max(0, HW - r - 30 * S);
+    const zPlan = clamp(d.z * S, -zLim, zLim);
     const lo = (r + 90 * S) / LEN;
     const free = (u, z) => u >= lo && u <= 1 - lo && portClass(theta0(p) + u * LEN / R, z, r) === 0 &&
       domeSpots.every((o) => o.s !== d.s || Math.hypot((u - o.u) * LEN, z - o.z * S) > r + o.r * S + 60 * S);
     const zBehind = padLo - r - 30 * S;
-    const zs = zBehind - r > -HW + 60 * S ? [d.z * S, zBehind] : [d.z * S];
+    const zs = zBehind - r > -HW + 60 * S ? [zPlan, zBehind] : [zPlan];
     let spot = null;
     for (const z of zs) {
       for (let step = 0; step <= 45 && !spot; step++) {
@@ -142,7 +171,7 @@ export function createEcumenePlan(layout, seed = layout.seed) {
       }
       if (spot) break;
     }
-    if (spot) domeSpots.push({ ...d, u: spot.u, z: spot.z / S, index, moved: spot.u !== d.u || spot.z !== d.z * S });
+    if (spot) domeSpots.push({ ...d, r: rD, u: spot.u, z: spot.z / S, index, moved: spot.u !== d.u || spot.z !== d.z * S });
   }
   const domesOf = (k) => domeSpots.filter((d) => d.s === k);
   function reserved(s, z, k, margin = 12 * S) {
@@ -153,7 +182,7 @@ export function createEcumenePlan(layout, seed = layout.seed) {
     const water = waterField(s, z, k);
     if (water < 0) return 3;
     if (Math.abs(z) > HW - 38 * S) return 7;
-    if (Math.abs(Math.abs(z) - 850 * S) < 19 * S) return 6;
+    if (Math.abs(Math.abs(z) - zArt) < 19 * S) return 6;
     if (water < 28 * S && (k === 1 || k === 2 || k === 9 || k === 11)) return 8;
     let t = 0;
     if (k === 1) t = ellipseField(s, z, LEN * 0.51, 0, 1600 * S, 670 * S) < 0 ? 1 : 0;
@@ -167,7 +196,7 @@ export function createEcumenePlan(layout, seed = layout.seed) {
     if (k === 11) t = Math.sin(s * 0.0028 / S) + Math.cos(z * 0.009 / S) > 0.65 ? 0 : 2;
     if (k === 0 && ellipseField(s, z, LEN * 0.48, -30 * S, 330 * S, 230 * S) < 0) t = 7;
     if (t === 0 || t === 5) {
-      if (modp(s, 76 * S) < 12 * S || modp(z + 850 * S, 88 * S) < 12 * S) t = 6;
+      if (modp(s, 76 * S) < 12 * S || modp(z + zArt, 88 * S) < 12 * S) t = 6;
     }
     return t;
   }
@@ -182,7 +211,7 @@ export function createEcumenePlan(layout, seed = layout.seed) {
       const hill = (noise((s / S + k * ECU_DEMO_LENGTH) / 270, z / S / 250) * 0.65 + noise(s / S / 90, z / S / 115) * 0.35) * (t === 2 ? 65 : 16) * S;
       height = 3 * S + shore * (4 * S + hill);
     }
-    const shoulder = 1 - smooth(clamp((Math.abs(Math.abs(z) - 850 * S) - 15 * S) / (60 * S), 0, 1));
+    const shoulder = 1 - smooth(clamp((Math.abs(Math.abs(z) - zArt) - 15 * S) / (60 * S), 0, 1));
     height = mix(height, 0.5 * S, shoulder);
     for (const dome of domesOf(k)) {
       const dist = Math.hypot(s - dome.u * LEN, z - dome.z * S);
@@ -211,7 +240,7 @@ export function createEcumenePlan(layout, seed = layout.seed) {
   }
 
   return {
-    layout, R, W, HW, N, span, LEN, stretch, seed,
+    layout, R, W, HW, N, span, LEN, stretch, seed, section, zArt,
     sectors, sites, hash2, noise,
     waterField, districtType, terrainHeight, reserved, portClass, locate, heightAt, theta0,
     domesOf, domeSpots
@@ -234,8 +263,12 @@ export function buildEcumeneInstances(plan) {
 
 // Krokami (zadanie 23): `yield` po każdej dzielnicy (~6 ms pracy) — budowa w klatkach (archRing.js).
 export function* buildEcumeneInstancesSteps(plan) {
-  const { layout, R, LEN, HW, sectors, stretch } = plan;
+  const { layout, R, LEN, HW, sectors, stretch, zArt } = plan;
   const m = new Array(16);
+  // węższa wstęga niż demo: część dzielnicy poza podłogą odpada (mapa przycięta, nie ściśnięta)
+  const across = (plan.W - 160 * S) / (ECU_DEMO_W * S - 160 * S);
+  // supertalle dzielnic 0 i 8: położenie w poprzek względem arterii (w demie 330 / −410 przy arteriach ±850)
+  const superZ = (k) => (k === 0 ? 330 : -410) * zArt / 850;
   // drzewo = jedna bryła (korona + pień, archTreeGeometry): skala x/z = 2 ×
   // promień korony dema, y = wysokość drzewa
   const per = sectors.map(() => ({
@@ -247,6 +280,7 @@ export function* buildEcumeneInstancesSteps(plan) {
   const angleOf = (p, s) => plan.theta0(p) + s / R;
   // skrzynka dema: Batch.add(a, z, h, sx, sy, sz, color, yaw) — podstawa na h
   const add = (batch, a, z, h, sx, sy, sz, color, kind = 0, p1 = 0.2, yaw = 0, seed = -1) => {
+    if (Math.abs(z) + Math.abs(sz) * 0.5 > HW) return;
     archMatrix(R, a, z, h, sx, sy, sz, yaw, m);
     const sd = seed >= 0 ? seed : Math.abs(Math.sin(a * 7919.3 + z * 0.0131 + h * 0.07)) % 1;
     batch.push16(m, color, kind, sd, p1, 0);
@@ -258,10 +292,10 @@ export function* buildEcumeneInstancesSteps(plan) {
     // ---- miasto (createCityDistricts) ----
     const r = archRng((plan.seed ^ Math.imul(k + 1, 8837)) >>> 0);
     for (let s = 38 * S; s < LEN; s += 76 * S) {
-      for (let z = -806 * S; z < 820 * S; z += 88 * S) {
+      for (let z = -(zArt - 44 * S); z < zArt - 30 * S; z += 88 * S) {
         const type = plan.districtType(s, z, k);
         if (type !== 0 || plan.reserved(s, z, k, 30 * S) || r() < 0.08) continue;
-        if ((k === 0 || k === 8) && Math.hypot(s - LEN * (k === 0 ? 0.31 : 0.39), z - (k === 0 ? 330 : -410) * S) < 118 * S) continue;
+        if ((k === 0 || k === 8) && Math.hypot(s - LEN * (k === 0 ? 0.31 : 0.39), z - superZ(k)) < 118 * S) continue;
         const a = angleOf(p, s);
         const pc = plan.portClass(a, z, 60);
         const h0 = plan.terrainHeight(s, z, k);
@@ -297,7 +331,7 @@ export function* buildEcumeneInstancesSteps(plan) {
     if (k === 0 || k === 8) {
       const s = LEN * (k === 0 ? 0.31 : 0.39);
       const a = angleOf(p, s);
-      const z = (k === 0 ? 330 : -410) * S;
+      const z = superZ(k);
       if (plan.portClass(a, z, 300) === 0) {
         for (let i = 0; i < 6; i++) {
           const width = (120 - i * 13) * S;
@@ -313,6 +347,7 @@ export function* buildEcumeneInstancesSteps(plan) {
       const ri = archRng((plan.seed + k * 5743) >>> 0);
       for (let s = 115 * S; s < LEN - 100 * S; s += 170 * S) {
         for (let z = -710 * S; z < 800 * S; z += 185 * S) {
+          if (Math.abs(z) + 75 * S > HW - 38 * S) continue;
           if (plan.waterField(s, z, k) < 80 * S || plan.reserved(s, z, k, 35 * S)) continue;
           const a = angleOf(p, s);
           // zapas: szklarnie i hale mają do ~180 j. od środka + pasy na nich
@@ -351,7 +386,7 @@ export function* buildEcumeneInstancesSteps(plan) {
     // ---- lasy (createForests): gęstość dema na j.², dłuższa dzielnica = więcej ----
     {
       const rf = archRng((plan.seed ^ Math.imul(k + 7, 17239)) >>> 0);
-      const samples = Math.round(11000 * stretch);
+      const samples = Math.round(11000 * stretch * across);
       for (let i = 0; i < samples; i++) {
         const s = rf() * LEN;
         const z = (rf() - 0.5) * (plan.W - 160 * S);
@@ -373,10 +408,11 @@ export function* buildEcumeneInstancesSteps(plan) {
     // ---- parki i mosty (createParks) ----
     if (k === 1 || k === 2 || k === 4 || k === 9 || k === 11) {
       const rp = archRng((plan.seed + k * 5549) >>> 0);
-      const tries = Math.round(45 * stretch);
+      const spread = Math.min(1500 * S, plan.W - 160 * S);
+      const tries = Math.round(45 * stretch * spread / (1500 * S));
       for (let i = 0; i < tries; i++) {
         const s = rp() * LEN;
-        const z = (rp() - 0.5) * 1500 * S;
+        const z = (rp() - 0.5) * spread;
         const t = plan.districtType(s, z, k);
         if ((t !== 1 && t !== 2) || plan.reserved(s, z, k, 30 * S)) continue;
         const a = angleOf(p, s);
@@ -390,6 +426,7 @@ export function* buildEcumeneInstancesSteps(plan) {
         const s = LEN * 0.49;
         const a = angleOf(p, s);
         for (let z = -690 * S; z < 690 * S; z += 70 * S) {
+          if (Math.abs(z) + 37 * S > HW) continue;
           if (plan.waterField(s, z, k) > 80 * S || plan.portClass(a, z, 40) === 2) continue;
           add(B.box, a, z, 34 * S, 32 * S, 5 * S, 73 * S, C(0xa9a590), 0);
           for (const dx of [-17, 17]) add(B.box, a + dx * S / R, z, 39 * S, 1.4 * S, 4 * S, 73 * S, C(0xc4c6b2), 0, 0.3);
@@ -457,23 +494,31 @@ export function buildEcumeneDomes(plan, per, lights) {
 // Konstrukcja (createRingStructure): żebra, belki, słupki ze złotymi
 // głowicami, czerwone światła, stępka, radiatory. BG = do płaszczyzny gry
 // i strona planety, FG = strona +z (nad statkami). Żebra pod podłogą omijają
-// tranzyty i płyty portu na z ≈ 0.
+// tranzyty i płyty portu na z ≈ 0. Liczby w przekroju dema × S (W_D = szerokość podłogi dema);
+// węższą wstęgę i cieńszy kadłub daje przekrój (`ecumeneSection`): krańce brył przez mapZ / mapH.
 export function buildEcumeneStructure(plan) {
-  const { layout, R, W, HW } = plan;
+  const { layout, R, section } = plan;
+  const { mapZ, mapH } = section;
+  const W = ECU_DEMO_W * S;
   const m = new Array(16);
   const bg = new ArchBatch('EcuStructure');
   const fg = new ArchBatch('EcuStructureFG');
   const zTop = layout.z.topIn;
   const pick = (z) => (z > zTop - 1 ? fg : bg);
   const add = (a, z, h, sx, sy, sz, color, kind = 4, p1 = 0.3, yaw = 0) => {
-    archMatrix(R, a, z, h, sx, sy, sz, yaw, m);
-    pick(z).push16(m, color, kind, Math.abs(Math.sin(a * 977 + z)), p1, 0);
+    const z0 = mapZ(z - sz * 0.5);
+    const z1 = mapZ(z + sz * 0.5);
+    const h0 = mapH(h);
+    const h1 = mapH(h + sy);
+    const zc = (z0 + z1) * 0.5;
+    archMatrix(R, a, zc, h0, sx, h1 - h0, z1 - z0, yaw, m);
+    pick(zc).push16(m, color, kind, Math.abs(Math.sin(a * 977 + z)), p1, 0);
   };
   const beam = (a0, z0, h0, a1, z1, h1, w, color) => {
-    const p0 = archPoint(R, a0, z0, h0, {});
-    const p1 = archPoint(R, a1, z1, h1, {});
+    const p0 = archPoint(R, a0, mapZ(z0), mapH(h0), {});
+    const p1 = archPoint(R, a1, mapZ(z1), mapH(h1), {});
     archBeamMatrix(p0, p1, w, m);
-    pick((z0 + z1) * 0.5).push16(m, color, 0, 0, 0.3, 0);
+    pick((p0.z + p1.z) * 0.5).push16(m, color, 0, 0, 0.3, 0);
   };
   // liczba żeber: gęstość dema (384 na obwód 3 · 2π · 8 100), wielokrotność 12
   const N = Math.max(12, Math.round(384 * layout.circumference / (S * 2 * Math.PI * 8100) / 12) * 12);
@@ -493,7 +538,7 @@ export function buildEcumeneStructure(plan) {
         beam(a, side * 1168 * S, -35 * S, next, side * 1168 * S, -420 * S, 10 * S, C(0x667c88));
       }
       if (i % 6 === 0) add(a, side * 1133 * S, 64 * S, 6 * S, 8 * S, 6 * S, RED, 2, 1);
-      if (i % 4 === 0 && plan.portClass(a, side * 960 * S, 60) !== 2) {
+      if (i % 4 === 0 && plan.portClass(a, mapZ(side * 960 * S), 60) !== 2) {
         add(a, side * 960 * S, 0, 18 * S, 102 * S, 24 * S, C(0x819295));
         add(a, side * 960 * S, 99 * S, 35 * S, 5 * S, 25 * S, C(0xb2a27d), 0, 0.7);
       }

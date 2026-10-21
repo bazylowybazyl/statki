@@ -61,25 +61,35 @@ test('Ziemia = liczby sprzed profili (ring Ziemi i tło menu bez zmian)', () => 
   assert.deepEqual([L.radii.rim, L.radii.floorMid, L.radii.back], [43752, 42252, 41800]);
 });
 
-test('Mars = ECUMENE, Jowisz = ring Fable: archetyp, geometria dem ×3, plan dzielnic', () => {
+test('Mars = ECUMENE, Jowisz = ring Fable: archetyp, geometria (mniejsze niż ring Ziemi), plan dzielnic', () => {
   assert.deepEqual([...HALO_PROFILE_KEYS], ['earth', 'mars', 'jupiter']);
   assert.equal(resolveHaloProfile('venus'), HALO_RING_PROFILES.earth);
   const M = HALO_RING_PROFILES.mars;
   const J = HALO_RING_PROFILES.jupiter;
   assert.equal(M.archetype, 'ecumene');
   assert.equal(J.archetype, 'fable');
-  // ECUMENE: podłoga 3 × 2 100, krawędzie 3 × 54, 12 dzielnic dema (każda raz)
+  // ECUMENE: wstęga 3 200 (podłoga 2 780), krawędzie 3 × 54 jak w demie, kadłub 600, 12 dzielnic dema (każda raz)
   const LM = layoutOf('mars');
   assert.equal(LM.archetype, 'ecumene');
-  assert.equal(LM.floor.spanZ, 6300);
+  assert.equal(LM.floor.spanZ, 2780);
   assert.equal(LM.wallHeight, 162);
+  assert.equal(LM.hullThickness, 600);
   assert.equal(LM.sectors.length, 12);
   assert.deepEqual(LM.sectors.map((s) => s.district).sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-  // Fable: podłoga 3 × 1 800, ściany 3 × 260, 12 układów dema × 2
+  // Fable: wstęga 3 000 (podłoga 2 550), ściany 250, kadłub 450 (kratownica), 12 układów dema × 2
   const LJ = layoutOf('jupiter');
   assert.equal(LJ.archetype, 'fable');
-  assert.equal(LJ.floor.spanZ, 5400);
-  assert.equal(LJ.wallHeight, 780);
+  assert.equal(LJ.floor.spanZ, 2550);
+  assert.equal(LJ.wallHeight, 250);
+  assert.equal(LJ.hullThickness, 450);
+  // oba mniejsze niż ring Ziemi: węższa wstęga i cieńsza obręcz (ściany + kadłub) niż Ziemia
+  const LE = layoutOf('earth');
+  for (const L of [LM, LJ]) {
+    assert.ok(L.width < LE.width, `${L.profileKey}: wstęga`);
+    assert.ok(L.wallHeight + L.hullThickness < LE.wallHeight + LE.hullThickness, `${L.profileKey}: obręcz`);
+    // krawędź ścian na obwiedni (port, tranzyty i strefy orbit bez zmian)
+    assert.equal(L.radii.rim, L.envelope.outerRadius);
+  }
   assert.equal(LJ.sectors.length, 24);
   const layouts = new Set(LJ.sectors.map((s) => s.layout));
   assert.equal(layouts.size, 12);

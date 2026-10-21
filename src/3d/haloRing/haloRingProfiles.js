@@ -247,9 +247,13 @@ const MARS = {
   key: 'mars',
   label: 'Mars',
   archetype: 'ecumene',
-  // dem ×3: podłoga 6 300, krawędzie 162 nad podłogą, ściany 210, kadłub
-  // z żebrami 1 600 pod podłogą
-  geometry: { width: 6720, wallHeight: 162, hullThickness: 1600, wallThickness: 210, roofDetailMax: 0, sectorCount: 12 },
+  // Ring MNIEJSZY niż ziemski (decyzja użytkownika 2026-10-21): 0,29 g na
+  // ringu (mniej niż na terraformowanej powierzchni) — ludzie mieszkają na
+  // Marsie, ring to port, przemysł i stocznie. Wstęga 3 200 (podłoga 2 780 —
+  // mapa dzielnic dema przycięta do środka, arterie bliżej osi), krawędzie 162
+  // jak w demie, ściany 210, kadłub z żebrami 600 (profil dema ściśnięty
+  // promieniowo); z góry obręcz 762 zamiast 1 762. Dawniej dema ×3: 6 720 / 1 600.
+  geometry: { width: 3200, wallHeight: 162, hullThickness: 600, wallThickness: 210, roofDetailMax: 0, sectorCount: 12 },
   sectorPlan: ECUMENE_SECTORS,
   // niebieska godzina dema (klucz ffead0, niebo cadce7, otoczenie b7c7ce)
   sky: { tint: [0.52, 0.66, 0.78], cloudTint: [0.8, 0.8, 0.8] },
@@ -315,9 +319,16 @@ const JUPITER = {
   key: 'jupiter',
   label: 'Jowisz',
   archetype: 'fable',
-  // dema ×3: podłoga 5 400, ściany 780 (zamieszkane), grubość 270, kadłub
-  // 1 380 + żebra pod spodem (do 1 900)
-  geometry: { width: 5940, wallHeight: 780, hullThickness: 1900, wallThickness: 270, roofDetailMax: 0, sectorCount: 24 },
+  // Ring PRZEMYSŁOWY, cienki (decyzja użytkownika 2026-10-21): 1,9 g na
+  // ringu, pasy radiacyjne, obwód 11× ziemskiego — z materiału księżyców (Io,
+  // Ganimedes, Kallisto) tylko port i rafinerie dla tankowców, załoga
+  // w osłoniętych halach. Wstęga 3 000 (dolna granica HALO_LIMITS.width;
+  // podłoga 2 550 — mapa stref dema przycięta do środka), ściany 250, grubość
+  // 225, kadłub 450: pełny pokład `hullTruss.deck` pod podłogą, niżej
+  // kratownica (ażur — żebra, krzyżulce na licach, pasy dolne). Z góry obręcz
+  // 700 zamiast 2 680. Dawniej dema ×3: 5 940 / 780 / 1 900.
+  geometry: { width: 3000, wallHeight: 250, hullThickness: 450, wallThickness: 225, roofDetailMax: 0, sectorCount: 24 },
+  hullTruss: { deck: 130 },
   sectorPlan: FABLE_SECTORS,
   sky: { tint: [0.30, 0.42, 0.60], cloudTint: [0.8, 0.8, 0.8] },
   light: {

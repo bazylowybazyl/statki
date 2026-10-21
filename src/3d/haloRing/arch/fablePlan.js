@@ -13,12 +13,40 @@
 // K-7 i zatoki w płaszczyźnie gry; płyty doków i osłona jak w ECUMENE.
 import { haloPortSites } from '../haloRingConfig.js';
 import { PORT_PAD_H } from '../haloRingRoofPlan.js';
-import { ArchBatch, archHex, archHslLinear, archMatrix, archPoint, archRunSteps, clamp, smoothstep } from './archFrame.js';
+import { ArchBatch, archBeamMatrix, archHex, archHslLinear, archMatrix, archPoint, archRunSteps, clamp, smoothstep } from './archFrame.js';
 
 export const FAB_S = 3;
 const S = FAB_S;
 export const FAB_DEMO_R = 8000;
 export const FAB_DEMO_SECTOR = FAB_DEMO_R * Math.PI * 2 / 12;
+// przekrój dema × S: pół szerokości podłogi, kadłub (płyta 460, żebra do 630 pod podłogą — profil 1 900)
+export const FAB_DEMO_HW = 900 * S;
+export const FAB_DEMO_T = 460 * S;
+export const FAB_DEMO_HULL = 1900;
+
+// Przekrój ringu (Jowisz od 2026-10-21: wstęga 3 000, ściany 250, kadłub 450 — ring przemysłowy):
+// ściany (WH, WT) i kadłub z układu; mapU — położenie w poprzek z dema × S (w obrębie podłogi liniowo,
+// poza krawędzią o tę samą odległość od krawędzi), mapH — pod podłogą × kadłub / kadłub dema.
+// Profil z `hullTruss` (Jowisz): pod podłogą pełny pokład grubości `deck` (TD), niżej do TB = kadłub
+// kratownica (ażur) — żebra, krzyżulce na licach, pasy wzdłuż ringu; bez niego pełna płyta na mapH(−T dema).
+export function fableSection(layout) {
+  const HW = layout.floor.spanZ * 0.5;
+  const KZ = HW / FAB_DEMO_HW;
+  const KH = layout.hullThickness / FAB_DEMO_HULL;
+  const truss = layout.planetProfile?.hullTruss || null;
+  const TB = layout.hullThickness;
+  const mapH = (h) => (h < 0 ? h * KH : h);
+  return {
+    HW, KZ, KH, TB,
+    WH: layout.wallHeight,
+    WT: layout.wallThickness,
+    // spód pełnej płyty kadłuba (z kratownicą — spód pokładu)
+    TD: truss ? Math.min(TB - 60, Math.max(40, Number(truss.deck) || 130)) : -mapH(-FAB_DEMO_T),
+    truss: !!truss,
+    mapU: (u) => (Math.abs(u) <= FAB_DEMO_HW ? u * KZ : Math.sign(u) * (HW + Math.abs(u) - FAB_DEMO_HW)),
+    mapH
+  };
+}
 
 // Typy stref dema (Z) i miejskie.
 export const FZ = Object.freeze({ WATER: 0, PARK: 1, FOREST: 2, FARM: 3, MEADOW: 4, RESIDENTIAL: 5, CITY: 6, CORE: 7, INDUSTRIAL: 8, PORT: 9, TECH: 10, PLAZA: 11, BEACH: 12, PAD: 13 });
@@ -160,6 +188,8 @@ export function createFablePlan(layout, seed = layout.seed) {
       } else {
         ls = rngD.range(700 * S, LEN - 700 * S); u = rngD.range(-450, 450) * S; r = rngD.range(150, 280) * S; type = rngD.pick(FAB_DOME_TYPES); sunk = rngD.range(0.15, 0.3);
       }
+      // węższa wstęga (Jowisz od 2026-10-21): kopuła nie szersza niż podłoga
+      r = Math.min(r, HW - 80 * S);
       u = clamp(u, -HW + r + 60 * S, HW - r - 60 * S);
       const s = sec.s0 + ls;
       const theta = sToTheta(s);
@@ -381,7 +411,7 @@ export function createFablePlan(layout, seed = layout.seed) {
   }
 
   return {
-    layout, R, W, HW, N, span, LEN, CIRC, stretch, seed, S,
+    layout, R, W, HW, N, span, LEN, CIRC, stretch, seed, S, section: fableSection(layout),
     sectors, secs, domes, sites, subRng, fbm, hash1,
     zoneAt, zoneWithPort, bakeZoneMap, bakeZoneMapSteps, portClass, locate, sToTheta, theta0, heightAt, inDome, domeHit: _domeHit,
     urban: ZONE_URBAN
@@ -590,11 +620,17 @@ export function* buildFableCitySteps(plan) {
 // Konstrukcja (createRingStructure + createStructuralDetails dema). Habitat na
 // zewnątrz: kadłub pod podłogą od strony planety (h < 0), ściany w górę (h > 0)
 // po bokach wstęgi. BG / FG jak w ECUMENE (strona +z nad płaszczyzną gry).
+// Liczby dema (× S) idą przez przekrój ringu (`fableSection`: mapU / mapH); z kratownicą
+// (Jowisz) pod pełnym pokładem TD do spodu TB: żebra przez całą szerokość, słupki i krzyżulce
+// na obu licach (z góry widać ażur — prześwity między krzyżulcami), stężenia na spodzie.
 export function buildFableStructure(plan, lights) {
-  const { layout, R, W, HW } = plan;
-  const T = 460 * S;
-  const WH = 260 * S;
-  const WT = 90 * S;
+  const { layout, R, HW } = plan;
+  const sec = plan.section;
+  const { WH, WT, TB, TD, KZ, mapU, mapH, truss } = sec;
+  const T = FAB_DEMO_T;
+  const uSide = HW + WT;
+  // spód kadłuba (pełna płyta albo pasy dolne kratownicy)
+  const hBot = truss ? -TB : mapH(-T);
   const m = new Array(16);
   const zTop = layout.z.topIn;
   // jedna partia na stronę (rodzaj materiału w aInst) — jedno wywołanie
@@ -611,6 +647,16 @@ export function buildFableStructure(plan, lights) {
     archMatrix(R, th, u, h - sy * 0.5, sx, sy, sz, yaw, m);
     side(u)[key].push16(m, color, kind, Math.abs(Math.sin(th * 991 + u)) % 1, p1, 0);
   };
+  // bryła między wysokościami h0 < h1 (świat)
+  const placeSpan = (key, th, u, h0, h1, yaw, sx, sz, color, kind = 4, p1 = 0.3) =>
+    placeBox(key, th, u, (h0 + h1) * 0.5, yaw, sx, h1 - h0, sz, color, kind, p1);
+  // bryła z liczb dema: środek wysokości hD i wysokość syD przez mapH (u już w świecie)
+  const placeDemo = (key, th, u, hD, yaw, sx, syD, sz, color, kind = 4, p1 = 0.3) =>
+    placeSpan(key, th, u, mapH(hD - syD * 0.5), mapH(hD + syD * 0.5), yaw, sx, sz, color, kind, p1);
+  const beam = (key, th0_, u0, h0, th1_, u1, h1, w, color) => {
+    archBeamMatrix(archPoint(R, th0_, u0, h0, {}), archPoint(R, th1_, u1, h1, {}), w, m);
+    side((u0 + u1) * 0.5)[key].push16(m, color, 0, 0, 0.3, 0);
+  };
   // structMaterial dema: barwa aeb4bc × tekstura płyt (baza 70,72,78) → ciemny grafit
   const STRUCT = archHex(0xaeb4bc).map((v) => v * 0.28);
   const DARK = archHex(0x585c66).map((v) => v * 0.8);
@@ -618,7 +664,6 @@ export function buildFableStructure(plan, lights) {
   const COL_RED = [1.3, 0.16, 0.07];
   const COL_GREEN = [0.14, 1.3, 0.4];
   const COL_WHITE = [1.3, 1.24, 1.1];
-  const COL_CYAN = [0.52, 1.1, 1.3];
   const COL_AMBER = [1.3, 0.78, 0.2];
   const nav = (th, u, h, color, size, phase) => {
     const p = archPoint(R, th, u, h, {});
@@ -629,55 +674,74 @@ export function buildFableStructure(plan, lights) {
   const segAng = (Math.PI * 2) / NSEG;
   const segLen = layout.circumference / NSEG;
   const th0 = layout.sectorStart;
-  // żebra: pod kadłubem (przez całą szerokość) i po bokach
+  // słupki po bokach: od spodu kadłuba do korony ścian
+  const postTop = WH + 35 * S * Math.min(1, WH / (260 * S)) + 10;
+  // żebra: pod kadłubem (przez całą szerokość) i słupki po bokach
   for (let i = 0; i < NSEG; i++) {
     const th = th0 + i * segAng;
     const big = i % 8 === 0;
     const w = (big ? 70 : 34) * S;
-    if (clearAt(th)) placeBox('struct', th, 0, -T - 70 * S, 0, w, (big ? 200 : 140) * S, W + 2 * WT + 150 * S, STRUCT);
-    placeBox('struct', th, HW + WT + 45 * S, (WH - T) * 0.5, 0, w, T + WH + 70 * S, 90 * S, STRUCT);
-    placeBox('struct', th, -HW - WT - 45 * S, (WH - T) * 0.5, 0, w, T + WH + 70 * S, 90 * S, STRUCT);
+    if (clearAt(th)) {
+      if (truss) placeSpan('struct', th, 0, -TB, -TD, 0, w, 2 * uSide + 150 * S, STRUCT);
+      else placeDemo('struct', th, 0, -T - 70 * S, 0, w, (big ? 200 : 140) * S, 2 * uSide + 150 * S, STRUCT);
+    }
+    for (const sd of [-1, 1]) placeSpan('struct', th, sd * (uSide + 45 * S), hBot - 10, postTop, 0, w, 90 * S, STRUCT);
+  }
+  // krzyżulce kratownicy na licach (z góry: lico +z w FG, ażur między słupkami)
+  if (truss) {
+    for (let i = 0; i < NSEG; i++) {
+      const a0 = th0 + i * segAng;
+      const a1 = a0 + segAng;
+      const up = i % 2 === 0;
+      for (const sd of [-1, 1]) {
+        const u = sd * (uSide + 45 * S);
+        beam('dark', a0, u, up ? -TB : -TD, a1, u, up ? -TD : -TB, 9 * S, DARK);
+      }
+    }
   }
   // kratownice pod kadłubem (skośne między żebrami)
-  const stations = [-660, -220, 220, 660].map((v) => v * S);
-  const span = 300 * S;
+  const stations = [-660, -220, 220, 660].map((v) => mapU(v * S));
+  const span = 300 * S * KZ;
   const tlen = Math.hypot(segLen, span);
+  const hTruss = truss ? -TB + 6 * S : mapH(-T - 175 * S);
   for (let i = 0; i < NSEG; i++) {
     const th = th0 + (i + 0.5) * segAng;
     for (const st of stations) {
-      placeBox('dark', th, st, -T - 175 * S, Math.atan2(span, segLen), tlen, 12 * S, 12 * S, DARK, 0, 0.2);
-      placeBox('dark', th, st, -T - 175 * S, -Math.atan2(span, segLen), tlen, 12 * S, 12 * S, DARK, 0, 0.2);
+      placeBox('dark', th, st, hTruss, Math.atan2(span, segLen), tlen, 12 * S, 12 * S, DARK, 0, 0.2);
+      placeBox('dark', th, st, hTruss, -Math.atan2(span, segLen), tlen, 12 * S, 12 * S, DARK, 0, 0.2);
     }
   }
   // radiatory (klastry po 7 lamel) z mocowaniami
   const nClusters = NSEG / 3;
   for (let c = 0; c < nClusters; c++) {
     const th = th0 + (c * 3 + 1.5) * segAng;
-    const u = (c % 2 === 0 ? 470 : -470) * S;
+    const u = mapU((c % 2 === 0 ? 470 : -470) * S);
     const hgt = (130 + 60 * plan.hash1(c)) * S;
-    for (let f = 0; f < 7; f++) placeBox('rad', th + ((f - 3) * 17 * S) / R, u, -T - 340 * S - hgt * 0.5 + 60 * S, 0, 2.5 * S, hgt, 120 * S, RAD, 5, 0.1);
-    placeBox('dark', th, u, -T - 240 * S, 0, 14 * S, 140 * S, 14 * S, DARK, 0, 0.2);
-    placeBox('dark', th, u, -T - 310 * S, 0, 130 * S, 8 * S, 130 * S, DARK, 0, 0.2);
+    for (let f = 0; f < 7; f++) placeDemo('rad', th + ((f - 3) * 17 * S) / R, u, -T - 340 * S - hgt * 0.5 + 60 * S, 0, 2.5 * S, hgt, 120 * S, RAD, 5, 0.1);
+    placeDemo('dark', th, u, -T - 240 * S, 0, 14 * S, 140 * S, 14 * S, DARK, 0, 0.2);
+    placeDemo('dark', th, u, -T - 310 * S, 0, 130 * S, 8 * S, 130 * S, DARK, 0, 0.2);
   }
   // hangary pod kadłubem z bramami (bursztyn) i światłami
   const nHangar = NSEG / 6;
   for (let i = 0; i < nHangar; i++) {
     const th = th0 + (i * 6 + 3) * segAng;
-    const u = (i % 3 - 1) * 380 * S;
+    const u = mapU((i % 3 - 1) * 380 * S);
     if (Math.abs(u) < 1 && !clearAt(th)) continue;
     const w = (90 + 60 * plan.hash1(i + 50)) * S;
     const d = (120 + 40 * plan.hash1(i + 90)) * S;
     const hh = 55 * S;
-    placeBox('struct', th, u, -T - hh * 0.5 - 2 * S, 0, w, hh, d, STRUCT);
+    placeDemo('struct', th, u, -T - hh * 0.5 - 2 * S, 0, w, hh, d, STRUCT);
     for (const sgn of [-1, 1]) {
       const g = 1.0 + 0.4 * plan.hash1(i * 3 + sgn);
-      placeBox('glow', th + (sgn * (w * 0.5 + 1)) / R, u, -T - hh * 0.5 - 2 * S, 0, 2, hh * 0.6, d * 0.7, [1.3 * 0.72 * g, 1.3 * 0.52 * g, 1.3 * 0.3 * g], 2, 1);
+      placeDemo('glow', th + (sgn * (w * 0.5 + 1)) / R, u, -T - hh * 0.5 - 2 * S, 0, 2, hh * 0.6, d * 0.7, [1.3 * 0.72 * g, 1.3 * 0.52 * g, 1.3 * 0.3 * g], 2, 1);
     }
-    nav(th, u + d * 0.5 + 8 * S, -T - hh - 6 * S, COL_RED, 9, plan.hash1(i));
-    nav(th, u - d * 0.5 - 8 * S, -T - hh - 6 * S, COL_GREEN, 9, plan.hash1(i + 1));
+    nav(th, u + d * 0.5 + 8 * S, mapH(-T - hh - 6 * S), COL_RED, 9, plan.hash1(i));
+    nav(th, u - d * 0.5 - 8 * S, mapH(-T - hh - 6 * S), COL_GREEN, 9, plan.hash1(i + 1));
   }
-  // moduły serwisowe (pod kadłubem i na bokach)
+  // moduły serwisowe (pod kadłubem i na bokach; z kratownicą boczne na pełnym pasie lica)
   const nMod = Math.round(900 * NSEG / 384);
+  const sideLo = truss ? -TD : mapH(-T + 40 * S);
+  const sideHi = WH - 20;
   for (let i = 0; i < nMod; i++) {
     const th = th0 + rng.next() * Math.PI * 2;
     const u = rng.range(-HW - WT + 60 * S, HW + WT - 60 * S);
@@ -685,12 +749,14 @@ export function buildFableStructure(plan, lights) {
     const onSide = rng.chance(0.25);
     const col = archHslLinear(0.58, rng.range(0, 0.12), rng.range(0.35, 0.7)).map((v) => v * 0.35);
     if (onSide) {
-      placeBox('struct', th, (rng.chance(0.5) ? 1 : -1) * (HW + WT + sz * 0.5), rng.range(-T + 40 * S, WH - 40 * S), 0, sx, sy, sz, col);
+      const syS = Math.min(sy, (sideHi - sideLo) * 0.6);
+      const h = rng.range(sideLo + syS * 0.5, sideHi - syS * 0.5);
+      placeBox('struct', th, (rng.chance(0.5) ? 1 : -1) * (uSide + sz * 0.5), h, 0, sx, syS, sz, col);
     } else {
-      const hh = -T - sy * 0.5 - rng.range(0, 60) * S;
+      const drop = rng.range(0, 60) * S;
       const yaw = rng.chance(0.3) ? Math.PI * 0.5 : 0;
-      if (Math.abs(u) < 400 * S && !clearAt(th)) continue;
-      placeBox('struct', th, u, hh, yaw, sx, sy, sz, col);
+      if (Math.abs(u) < 400 * S * KZ && !clearAt(th)) continue;
+      placeSpan('struct', th, u, mapH(-T - drop - sy), mapH(-T - drop), yaw, sx, sz, col);
     }
   }
   // anteny i maszty (w dół z kadłuba, na boki, na koronach ścian)
@@ -702,18 +768,19 @@ export function buildFableStructure(plan, lights) {
     const thick = rng.range(2, 5) * S;
     if (mode < 0.45) {
       const u = rng.range(-HW, HW);
-      if (Math.abs(u) < 500 * S) continue;
-      // cylinder z podstawą na h: w dół = obrót o π wokół stycznej → prościej: od h = −T − len
-      archMatrix(R, th, u, -T - len, thick, len, thick, 0, m);
+      if (Math.abs(u) < 500 * S * KZ) continue;
+      // w dół z kadłuba: od h = mapH(−T − len) do spodu płyty dema
+      const hA = mapH(-T - len);
+      archMatrix(R, th, u, hA, thick, mapH(-T) - hA, thick, 0, m);
       side(u).cyl.push16(m, DARK, 0, 0, 0.3, 0);
-      nav(th, u, -T - len, COL_RED, 8, rng.next());
+      nav(th, u, hA, COL_RED, 8, rng.next());
     } else if (mode < 0.85) {
       const sd = rng.chance(0.5) ? 1 : -1;
-      const h = rng.range(-T + 60 * S, WH - 20 * S);
+      const h = rng.range(mapH(-T + 60 * S), WH - 20);
       // wzdłuż osi (±z): skrzynka długa w z
-      archMatrix(R, th, sd * (HW + WT + len * 0.5), h - thick * 0.5, thick, thick, len, 0, m);
-      side(sd * (HW + WT + len * 0.5)).dark.push16(m, DARK, 0, 0, 0.3, 0);
-      nav(th, sd * (HW + WT + len), h, sd > 0 ? COL_GREEN : COL_RED, 8, rng.next());
+      archMatrix(R, th, sd * (uSide + len * 0.5), h - thick * 0.5, thick, thick, len, 0, m);
+      side(sd * (uSide + len * 0.5)).dark.push16(m, DARK, 0, 0, 0.3, 0);
+      nav(th, sd * (uSide + len), h, sd > 0 ? COL_GREEN : COL_RED, 8, rng.next());
     } else {
       const sd = rng.chance(0.5) ? 1 : -1;
       archMatrix(R, th, sd * (HW + WT * 0.5), WH, thick, len * 0.8, thick, 0, m);
@@ -724,31 +791,44 @@ export function buildFableStructure(plan, lights) {
   // światła wzdłuż krawędzi
   for (let i = 0; i < NSEG; i++) {
     const th = th0 + i * segAng;
-    nav(th, HW + WT + 8 * S, -T - 4 * S, COL_GREEN, 10, (i * 0.13) % 1);
-    nav(th, -HW - WT - 8 * S, -T - 4 * S, COL_RED, 10, (i * 0.13 + 0.5) % 1);
+    nav(th, uSide + 8 * S, hBot - 12, COL_GREEN, 10, (i * 0.13) % 1);
+    nav(th, -uSide - 8 * S, hBot - 12, COL_RED, 10, (i * 0.13 + 0.5) % 1);
     if (i % 2 === 0) {
       nav(th, HW + WT * 0.5, WH + 5 * S, COL_WHITE, 7, (i * 0.07) % 1);
       nav(th, -HW - WT * 0.5, WH + 5 * S, COL_WHITE, 7, (i * 0.07 + 0.3) % 1);
     }
-    if (i % 8 === 0) nav(th, 0, -T - 175 * S, COL_AMBER, 12, plan.hash1(i));
+    if (i % 8 === 0) nav(th, 0, truss ? -TB - 6 : mapH(-T - 175 * S), COL_AMBER, 12, plan.hash1(i));
   }
-  return { bg, fg, NSEG, T, WH, WT };
+  return { bg, fg, NSEG, T: -hBot, WH, WT };
 }
 
-// Rury i belki wzdłuż ringu (tori dema): h (od podłogi, − = pod), u (z), grubość, barwa, emisja.
-export function fableTubes() {
+// Rury i belki wzdłuż ringu (tori dema) w świecie: h (od podłogi, − = pod), u (z), promień, barwa
+// (null = pas świateł), square — belka. Liczby dema przez przekrój; pod podłogą promień × √KH, rura
+// w obrębie kadłuba. Z kratownicą: pasy dolne i górne (pod pokładem) na obu licach.
+export function fableTubes(sec) {
+  const { HW, WT, WH, TB, TD, KH, mapH, mapU, truss } = sec;
   const T = 460;
-  const WH = 260;
-  const WT = 90;
-  const HW = 900;
+  const kr = Math.sqrt(Math.min(1, KH));
   const out = [];
-  for (const u of [-700, -350, 0, 350, 700]) out.push({ h: -(T + 95), u, r: 13, color: 0x7a7e88 });
-  for (const u of [-520, 520]) out.push({ h: -(T + 120), u, r: 8, color: 0x7a7e88 });
-  for (const u of [-800, 800]) out.push({ h: -(T + 250), u, r: 42, color: 0xaeb4bc, square: true });
-  for (const u of [HW + WT + 60, -HW - WT - 60]) out.push({ h: (WH - T) * 0.5 - 60, u, r: 20, color: 0x7a7e88 });
+  const under = (hD, uD, r, color, square = false) => {
+    const rr = r * S * kr;
+    out.push({ h: Math.max(mapH(hD * S), -TB + rr), u: mapU(uD * S), r: rr, color, square });
+  };
+  for (const u of [-700, -350, 0, 350, 700]) under(-(T + 95), u, 13, 0x7a7e88);
+  for (const u of [-520, 520]) under(-(T + 120), u, 8, 0x7a7e88);
+  for (const u of [-800, 800]) under(-(T + 250), u, 42, 0xaeb4bc, true);
+  const hMid = truss ? (WH - TD) * 0.5 : (WH + mapH(-T * S)) * 0.5 - 60 * S * KH;
+  for (const u of [HW + WT + 60 * S, -HW - WT - 60 * S]) out.push({ h: hMid, u, r: 20 * S * kr, color: 0x7a7e88 });
+  if (truss) {
+    for (const sd of [-1, 1]) {
+      const u = sd * (HW + WT + 45 * S);
+      out.push({ h: -TB + 7 * S, u, r: 7 * S, color: 0xaeb4bc, square: true });
+      out.push({ h: -TD - 5 * S, u, r: 5 * S, color: 0xaeb4bc, square: true });
+    }
+  }
   for (const u of [HW + WT * 0.5, -HW - WT * 0.5]) {
-    out.push({ h: WH + 6, u, r: 5, color: 0x9ea4ad });
-    out.push({ h: WH + 12, u, r: 1.6, color: null });
+    out.push({ h: WH + 6 * S, u, r: 5 * S, color: 0x9ea4ad });
+    out.push({ h: WH + 12 * S, u, r: 1.6 * S, color: null });
   }
   return out;
 }

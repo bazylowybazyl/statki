@@ -40,7 +40,7 @@ const S = ECU_S;
 
 // ---------------------------------------------------------------------------
 // Powierzchnia dzielnic (tekstury createSectorTextures dema, na piksel). Funkcje pól czyste
-// (setLayout): uEcu (LEN dzielnicy, S, W, —) w parametrze, bez uniformów w domknięciu (PLAN §3).
+// (setLayout): uEcu (LEN dzielnicy, S, W, zArt) w parametrze, bez uniformów w domknięciu (PLAN §3).
 const sel = (k, i) => abs(k.sub(i)).lessThan(0.5);
 const ecuEllipse = haloPureFn('ecuEllipse', 'float', [['q', 'vec2'], ['c', 'vec2'], ['r', 'vec2']], (a) =>
   length(a.q.sub(a.c).div(a.r)).sub(1.0).mul(min(a.r.x, a.r.y)));
@@ -91,7 +91,7 @@ const ecuType = haloPureFn('ecuType', 'float', [['q', 'vec2'], ['k', 'float'], [
     t.assign(3.0);
   }).ElseIf(abs(z).greaterThan(HW.sub(Sc.mul(38.0))), () => {
     t.assign(7.0);
-  }).ElseIf(abs(abs(z).sub(Sc.mul(850.0))).lessThan(Sc.mul(19.0)), () => {
+  }).ElseIf(abs(abs(z).sub(a.ecu.w)).lessThan(Sc.mul(19.0)), () => {
     t.assign(6.0);
   }).ElseIf(a.water.lessThan(Sc.mul(28.0)).and(sel(k, 1.0).or(sel(k, 2.0)).or(sel(k, 9.0)).or(sel(k, 11.0))), () => {
     t.assign(8.0);
@@ -118,7 +118,7 @@ const ecuType = haloPureFn('ecuType', 'float', [['q', 'vec2'], ['k', 'float'], [
     });
     If(k.lessThan(0.5).and(ecuEllipse(a.q, vec2(L.mul(0.48), Sc.mul(-30.0)), vec2(330.0, 230.0).mul(Sc)).lessThan(0.0)), () => { t.assign(7.0); });
     If(t.lessThan(0.5).or(sel(t, 5.0)), () => {
-      If(ecuMod(s, Sc.mul(76.0)).lessThan(Sc.mul(12.0)).or(ecuMod(z.add(Sc.mul(850.0)), Sc.mul(88.0)).lessThan(Sc.mul(12.0))), () => { t.assign(6.0); });
+      If(ecuMod(s, Sc.mul(76.0)).lessThan(Sc.mul(12.0)).or(ecuMod(z.add(a.ecu.w), Sc.mul(88.0)).lessThan(Sc.mul(12.0))), () => { t.assign(6.0); });
     });
   });
   return t;
@@ -131,7 +131,7 @@ const f32mul = (a, b) => Math.fround(Math.fround(a) * Math.fround(b));
 const F32_8x414 = f32mul(8.0, 4.14);
 const F32_3x414 = f32mul(3.0, 4.14);
 
-// Materiał powierzchni dzielnic (dawne ECU_SURFACE_*): ecu — uniform vec4 (LEN, S, W, —),
+// Materiał powierzchni dzielnic (dawne ECU_SURFACE_*): ecu — uniform vec4 (LEN, S, W, zArt — arterie),
 // pal — uniformArray 10 × vec3 (barwy typów, sRGB 0–255).
 export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
   const { H, U, archNight, archShade, archWater, archSAbs } = archLitTSL(u);
@@ -183,13 +183,13 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
     If(t.lessThan(0.5).or(sel(t, 5.0)).or(sel(t, 6.0)), () => {
       const ci = floor(q.x.div(Sc.mul(76.0))).toVar();
       const sc0 = Sc.mul(38.0).add(ci.mul(76.0).mul(Sc)).toVar();
-      const cj = floor(z.add(Sc.mul(806.0)).add(Sc.mul(44.0)).div(Sc.mul(88.0))).toVar();
-      const zc0 = Sc.mul(-806.0).add(cj.mul(88.0).mul(Sc)).toVar();
+      const cj = floor(z.add(ecu.w).div(Sc.mul(88.0))).toVar();
+      const zc0 = Sc.mul(44.0).sub(ecu.w).add(cj.mul(88.0).mul(Sc)).toVar();
       const cc = vec2(sc0, zc0).toVar();
       const tc = ecuType(cc, k, ecuWater(cc, k, ecu), ecu).toVar();
       const house = tc.lessThan(0.5).or(sel(tc, 5.0)).toVar();
       If(house.and(abs(q.x.sub(sc0)).lessThan(Sc.mul(26.0))).and(abs(z.sub(zc0)).lessThan(Sc.mul(30.0)))
-        .and(cj.greaterThanEqual(0.0)).and(zc0.lessThan(Sc.mul(820.0))), () => {
+        .and(cj.greaterThanEqual(0.0)).and(zc0.lessThan(ecu.w.sub(Sc.mul(30.0)))), () => {
         const v = float(67.0).add(haloHash12(vec2(ci, cj).add(k.mul(17.0))).mul(38.0)).toVar();
         base255.assign(vec3(v, v.add(7.0), v.add(9.0)));
         nz.mulAssign(0.3);
@@ -200,15 +200,15 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
       });
     });
     const col = ecuLin(base255.add(nz)).toVar();
-    // arterie z = ±850: asfalt, przerywana oś, oświetlenie od frontu
-    const azd = abs(abs(z).sub(Sc.mul(850.0))).toVar();
+    // arterie z = ±zArt (dema ±850 × S): asfalt, przerywana oś, oświetlenie od frontu
+    const azd = abs(abs(z).sub(ecu.w)).toVar();
     If(azd.lessThan(Sc.mul(18.0)).and(water.greaterThanEqual(0.0)), () => {
       col.assign(ecuLin(vec3(34.0, 44.0, 50.0).add(nz.mul(0.3))));
       // 8 · 4,14 i 3 · 4,14 zwinięte jak stałe GLSL w bazie (mnożenie w float32)
       const dash = step(ecuMod(q.x, float(F32_8x414).mul(Sc)), float(F32_3x414).mul(Sc));
       If(azd.lessThan(Sc.mul(0.9)), () => { col.assign(mix(col, ecuLin(vec3(168.0, 170.0, 153.0)), dash)); });
     });
-    If(abs(abs(z.add(Sc.mul(15.0).mul(sign(z)))).sub(Sc.mul(850.0))).lessThan(Sc.mul(1.1)), () => { emit.addAssign(vec3(0.30, 0.19, 0.07)); });
+    If(abs(abs(z.add(Sc.mul(15.0).mul(sign(z)))).sub(ecu.w)).lessThan(Sc.mul(1.1)), () => { emit.addAssign(vec3(0.30, 0.19, 0.07)); });
     // ścieżki spacerowe w parkach i lasach (bez brodzenia)
     If(sel(k, 1.0).or(sel(k, 2.0)).or(sel(k, 4.0)).or(sel(k, 9.0)).or(sel(k, 11.0)).and(water.greaterThan(Sc.mul(25.0))), () => {
       Loop({ start: 0, end: 3, type: 'int', condition: '<', name: 'ecuLane' }, ({ ecuLane }) => {
@@ -381,9 +381,12 @@ function* districtSurfaceSteps(plan, p, cell) {
   return g;
 }
 
-// Pas wokół ringu po profilu (h, z) — powłoka; u wzdłuż ringu co `rep` j.
+// Pas wokół ringu po profilu (h, z) dema — powłoka; u wzdłuż ringu co `rep` j. Wierzchołki profilu przez
+// przekrój ringu (mapZ / mapH — węższa wstęga, cieńszy kadłub).
 function shellStrip(plan, profile, segs, repU, repV) {
   const { R } = plan;
+  const { mapZ, mapH } = plan.section;
+  profile = profile.map(([h, z]) => [mapH(h * S) / S, mapZ(z * S) / S]);
   const pos = [];
   const uv = [];
   const idx = [];
@@ -461,9 +464,9 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   const zTop = layout.z.topIn;
 
   // ---- powierzchnia dzielnic ----
-  // uEcu: LEN dzielnicy, S, W, —; uEcuPal: barwy typów (sRGB 0–255), tablica ze stałą nazwą bufora
+  // uEcu: LEN dzielnicy, S, W, arterie zArt; uEcuPal: barwy typów (sRGB 0–255), tablica ze stałą nazwą bufora
   // (ten sam WGSL przy przebudowie ringu)
-  const uEcu = uniform(new THREE.Vector4(plan.LEN, S, plan.W, 0));
+  const uEcu = uniform(new THREE.Vector4(plan.LEN, S, plan.W, plan.zArt));
   const uEcuPal = uniformArray(ECU_TYPE_PALETTE.map((c) => new THREE.Vector3(...c)), 'vec3').setName('ecuPal');
   const surfaceMat = archNodeMaterial('EcumeneSurface', makeEcumeneSurfaceNodes({ u: uniforms, ecu: uEcu, pal: uEcuPal }), {},
     { ...uniforms, ...uniformsAdapter({ uEcu, uEcuPal }) });
@@ -501,11 +504,12 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   // ---- konstrukcja: żebra, belki, radiatory, rury wzdłuż ringu i bryły
   // portu (zatoki, tranzyty) — jedna partia na stronę (BG + FG) ----
   const st = buildEcumeneStructure(plan);
+  const { mapZ, mapH } = plan.section;
   for (const t of ECU_TUBES) {
     for (const side of [-1, 1]) {
       const color = t.color == null ? [0.38 * 0.55, 1.6 * 0.55, 2.3 * 0.55] : archHex(t.color);
-      const z = side * t.z * S;
-      archRingTubeBoxes(z > zTop - 1 ? st.fg : st.bg, plan.R, t.h * S, z, t.r * S, 512, color,
+      const z = mapZ(side * t.z * S);
+      archRingTubeBoxes(z > zTop - 1 ? st.fg : st.bg, plan.R, mapH(t.h * S), z, t.r * S, 512, color,
         t.color == null ? 2 : 0, t.color == null ? 1 : (t.color === 0xb19a70 ? 0.6 : 0.3));
     }
   }
@@ -538,6 +542,11 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   yield;
   // ---- tablice sektorów (+z, patrzą w kamerę gry) ----
   let signMesh = null;
+  // tablica na licu kadłuba od strony kamery gry: środek i wysokość z profilu powłoki (lico −45 … −345 dema),
+  // proporcje atlasu 2 : 1
+  const signH = plan.section.mapH(-190 * S);
+  const signHH = Math.min(97.5 * S, 0.47 * (plan.section.mapH(-45 * S) - plan.section.mapH(-345 * S)));
+  const signZ = plan.section.mapZ(1130 * S) + 6;
   const atlas = makeSignAtlas(plan);
   disposables.push(atlas);
   {
@@ -549,10 +558,10 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
       const a = plan.theta0(p) + plan.span * 0.5;
       const c = Math.cos(a);
       const sn = Math.sin(a);
-      const r = plan.R - 190 * S;
-      const hw = 195 * S;
-      const hh = 97.5 * S;
-      const z = 1130 * S + 6;
+      const r = plan.R + signH;
+      const hw = signHH * 2;
+      const hh = signHH;
+      const z = signZ;
       const ox = (p % 2) * 0.5;
       const oy = 1 - (Math.floor(p / 2) + 1) / 6;
       const base = pos.length / 3;
@@ -582,7 +591,7 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
   }
   const signCenters = plan.sectors.map((sec, p) => {
     const a = plan.theta0(p) + plan.span * 0.5;
-    return new THREE.Vector3((plan.R - 190 * S) * Math.cos(a), (plan.R - 190 * S) * Math.sin(a), 1130 * S);
+    return new THREE.Vector3((plan.R + signH) * Math.cos(a), (plan.R + signH) * Math.sin(a), signZ);
   });
 
   yield;

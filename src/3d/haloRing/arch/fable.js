@@ -25,7 +25,7 @@ import { haloHash12, haloHash22, haloPureFn } from '../haloRingTSL.js';
 import { archLitTSL, archNodeMaterial } from './archTSL.js';
 import { ArchBatch, archHex, archRingTubeBoxes, archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
-import { FAB_S, buildFableCitySteps, buildFableDomes, buildFableStructure, createFablePlan, fableTubes } from './fablePlan.js';
+import { FAB_DEMO_T, FAB_S, buildFableCitySteps, buildFableDomes, buildFableStructure, createFablePlan, fableTubes } from './fablePlan.js';
 
 const S = FAB_S;
 
@@ -406,9 +406,8 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const lights = { add: (x, y, z, c, s, p) => (z > zTop - 1 ? lightsFG : lightsBG).add(x, y, z, c, s, p) };
   for (const l of portLights) lightsBG.add(l.x, l.y, l.z, l.color, l.size, l.phase);
   const HW = plan.HW;
-  const T = 460 * S;
-  const WH = 260 * S;
-  const WT = 90 * S;
+  // przekrój z układu (fableSection): ściany WH / WT, spód pełnej płyty kadłuba TD (z kratownicą — pokład)
+  const { WH, WT, TD, truss, mapH } = plan.section;
 
   // ---- mapa stref + powierzchnia ----
   const ZW = 8192;
@@ -467,14 +466,18 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const hullFG = [];
   const wallBG = [];
   const wallFG = [];
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -T, HW + WT, -T, 0, -1, SEG, { across: 4, repU: circPanels, repV: (plan.W + 2 * WT) / (420 * S) }), 0));
-  hullFG.push(tagAtlas(ringStrip(plan, HW + WT, -T, HW + WT, WH, 1, 0, SEG, { across: 2, repU: circPanels, repV: (T + WH) / (420 * S) }), 0));
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -T, -HW - WT, WH, -1, 0, SEG, { across: 2, repU: circPanels, repV: (T + WH) / (420 * S) }), 0));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, HW + WT, -TD, 0, -1, SEG, { across: 4, repU: circPanels, repV: (plan.W + 2 * WT) / (420 * S) }), 0));
+  hullFG.push(tagAtlas(ringStrip(plan, HW + WT, -TD, HW + WT, WH, 1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S) }), 0));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, -HW - WT, WH, -1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S) }), 0));
   hullFG.push(tagAtlas(ringStrip(plan, HW, WH, HW + WT, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }), 0));
   hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, WH, -HW, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }), 0));
   wallFG.push(tagAtlas(ringStrip(plan, HW, 0, HW, WH, -1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S) }), 1));
   wallBG.push(tagAtlas(ringStrip(plan, -HW, 0, -HW, WH, 1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S) }), 1));
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT + 40 * S, -T + 140 * S, HW + WT - 40 * S, -T + 140 * S, 0, -1, SEG, { across: 2, repU: circPanels * 1.5, repV: 3 }), 0));
+  // pokład wewnętrzny nad płytą (bez kratownicy; z kratownicą pod pokładem jest ażur)
+  if (!truss) {
+    const hDeck = mapH(-FAB_DEMO_T + 140 * S);
+    hullBG.push(tagAtlas(ringStrip(plan, -HW - WT + 40 * S, hDeck, HW + WT - 40 * S, hDeck, 0, -1, SEG, { across: 2, repU: circPanels * 1.5, repV: 3 }), 0));
+  }
   const stripMesh = (geos_, mat, name) => {
     const g = mergeGeometries(geos_, false);
     for (const x of geos_) x.dispose();
@@ -494,10 +497,10 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const matFG = materials.instanced(true);
   // rury i belki wzdłuż ringu (tori dema) jako odcinki w tej samej partii,
   // bryły portu (zatoki, tranzyty) dopisane do BG — jedno wywołanie na stronę
-  for (const t of fableTubes()) {
-    const z = t.u * S;
+  for (const t of fableTubes(plan.section)) {
+    const z = t.u;
     const color = t.color == null ? [0.35 * 1.2, 0.8 * 1.2, 1.0 * 1.2] : archHex(t.color).map((v) => v * (t.square ? 0.28 : 0.8));
-    archRingTubeBoxes(z > zTop - 1 ? st.fg.all : st.bg.all, plan.R, t.h * S, z, t.r * S, 512, color, t.color == null ? 2 : 0, t.color == null ? 1 : 0.35);
+    archRingTubeBoxes(z > zTop - 1 ? st.fg.all : st.bg.all, plan.R, t.h, z, t.r, 512, color, t.color == null ? 2 : 0, t.color == null ? 1 : 0.35);
   }
   if (portSolid) st.bg.all.append(portSolid);
   for (const [set, mat, list] of [[st.bg, matBG, bg], [st.fg, matFG, fg]]) {
