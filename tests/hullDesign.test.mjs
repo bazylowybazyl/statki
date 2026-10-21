@@ -16,7 +16,6 @@ import { regularizeLoop, regularizeLoopSym } from '../src/game/hullDesign/hullDe
 import { hullDesignMounts, hullDesignRecipe } from '../src/game/hullDesign/hullDesignRecipe.js';
 import { HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
 import { HD_PART_IDS, expandHullPart } from '../src/game/hullDesign/hullDesignParts.js';
-import { HD_TN_TRACE } from '../src/game/hullDesign/hullDesignTNTrace.js';
 import { HD_PIPE_FIT, filletPolyline, pipeTercileLoad, rasterPipeNetwork } from '../src/game/hullDesign/hullDesignPipes.js';
 import { HULL_RENDER_PROFILES, HULL_RENDER_WORLD_SCALE } from '../src/data/ships.js';
 
@@ -199,9 +198,18 @@ test('alfa fizyki i komórki belek; gotowe projekty bez ostrzeżeń', () => {
   }
 });
 
+// sprite'y floty TN: profil renderu, długość i szerokość alfy [j. świata] (pomiar: scripts/kreator-tn-ab.mjs)
+const TN_SPRITE_SIZE = {
+  custos: { profile: 'terran_frigate', length: 151.9, width: 66.1 },
+  hasta: { profile: 'terran_destroyer', length: 245.6, width: 137.6 },
+  bellator: { profile: 'terran_battleship', length: 622.4, width: 384.2 },
+  citadella: { profile: 'terran_carrier', length: 1071.6, width: 433.4 },
+  colossus: { profile: 'terran_supercapital', length: 1540.4, width: 627 }
+};
+
 test('flota Terra Novy: projekt w skali sprite\'a gry (długość, szerokość), detal = długość / 1700', () => {
   for (const key of ['custos', 'hasta', 'bellator', 'citadella', 'colossus']) {
-    const t = HD_TN_TRACE[key];
+    const t = TN_SPRITE_SIZE[key];
     const d = hullDesignPreset(key);
     const f = buildHullField(d);
     const len = f.bounds.maxX - f.bounds.minX, wid = f.bounds.maxY - f.bounds.minY;
@@ -235,10 +243,10 @@ test('gotowe części: rozwinięcie w skali i obrocie, kopia lustra odbita, pozi
   assert.equal(ex.modules.filter((x) => x.type === 'well').length, 2 + 3, 'port z lustrem + 3 porty grzbietu');
 });
 
-test('dane obrysu TN: rama i pancerz na okręt, kompozytor czyta pola ośmiokątne', () => {
-  for (const key of Object.keys(HD_TN_TRACE)) {
-    const t = HD_TN_TRACE[key];
-    assert.ok(t.frame.length >= 1 && t.armor.length >= 1 && t.frame[0].length >= 6, key);
+test('flota TN z klocków (bez obrysu sprite\'a), kompozytor czyta pola ośmiokątne', () => {
+  for (const key of Object.keys(TN_SPRITE_SIZE)) {
+    const d = hullDesignPreset(key);
+    assert.ok(d.shapes.length >= 10 && d.shapes.every((s) => s.kind === 'block'), key);
   }
   const src = readFileSync(new URL('../src/3d/hullDesign/hullComposer.js', import.meta.url), 'utf8');
   for (const k of ['_auxAt', 'oU.x', 'topComp']) assert.ok(src.includes(k), k);
@@ -302,22 +310,24 @@ test('rury: sieć TN deterministyczna, wewnątrz kadłuba, gęstsza przy rufie n
     const d = hullDesignPreset(key);
     const f = buildHullField(d);
     const net = f.pipeNet;
-    assert.ok(net && net.runs.length >= 15 && net.fits.length >= 20, `${key}: ${net?.runs.length} biegów, ${net?.fits.length} osprzętu`);
+    // sieć systemów (bez celów wypełnienia): biegi kabli i rur do urządzeń — sieci zupełności: tests/hullDesignNetwork.test.mjs
+    assert.ok(net && net.runs.length >= 12 && net.fits.length >= 20, `${key}: ${net?.runs.length} biegów, ${net?.fits.length} osprzętu`);
     assert.equal(netKey(net), netKey(buildHullField(d).pipeNet), `${key}: deterministyczna`);
-    const seeded = buildHullField({ ...d, pipeNet: { density: 1, seed: 5 } }).pipeNet;
+    const seeded = buildHullField({ ...d, pipeNet: { density: 1, seed: d.pipeNet.seed === 5 ? 6 : 5 } }).pipeNet;
     assert.notEqual(netKey(net), netKey(seeded), `${key}: inne ziarno — inna sieć`);
     // oś każdej rury wewnątrz sylwetki
     for (const r of net.runs) for (const poly of r.polys) for (const [x, y] of poly) {
       const d0 = sampleHullField(f, 0, x, y);
       assert.ok(d0 < 0, `${key}: rura poza kadłubem (${x.toFixed(1)}, ${y.toFixed(1)}): ${d0.toFixed(2)}`);
     }
-    // koncentracja przy silnikach: rury × długość w rufowej tercji > w dziobowej
-    const [rear, , bow] = pipeTercileLoad(net, f.bounds);
+    // koncentracja przy silnikach: rury paliwa × długość w rufowej tercji > w dziobowej (kable — po całym okręcie)
+    const [rear, , bow] = pipeTercileLoad(net, f.bounds, 'feed');
     assert.ok(rear > bow * 1.3, `${key}: rufa ${rear.toFixed(0)} vs dziób ${bow.toFixed(0)}`);
-    // najgrubsze wiązki przy gondolach: biegi z 5+ rurami istnieją
-    assert.ok(net.runs.some((r) => r.n >= 5), `${key}: brak grubej wiązki`);
-    // lustro: druga łamana biegu = pierwsza odbita; osprzęt w parach
-    for (const r of net.runs) {
+    // wiązki z wielu rur / kabli istnieją (grubość z liczby tras)
+    assert.ok(net.runs.some((r) => r.auto && r.n >= 4), `${key}: brak grubej wiązki`);
+    // lustro: druga łamana biegu = pierwsza odbita; osprzęt w parach — gdy moduły są w lustrze (gniazda gry Bellatora
+    // bez pary na drugiej burcie: sieć na całym kadłubie, tests/hullDesignNetwork.test.mjs)
+    for (const r of net.mirror ? net.runs : []) {
       assert.equal(r.polys.length, 2);
       const [a, b] = r.polys;
       assert.equal(a.length, b.length);
@@ -325,7 +335,7 @@ test('rury: sieć TN deterministyczna, wewnątrz kadłuba, gęstsza przy rufie n
       assert.ok(a.every(([, y]) => y < 0), `${key}: bieg na burcie y < 0`);
     }
     const D = d.detail;
-    for (const ft of net.fits) {
+    for (const ft of net.mirror ? net.fits : []) {
       if (Math.abs(ft.y) <= 0.5 * D) continue;
       assert.ok(net.fits.some((g) => g.type === ft.type && Math.abs(g.x - ft.x) < 1e-6 && Math.abs(g.y + ft.y) < 1e-6), `${key}: osprzęt bez pary lustra`);
     }
@@ -484,13 +494,18 @@ test('presety TN: kasztele rufowe, kratki-radiatory, kapsuły i iluminatory (war
   const cit = expandHullDesign(normalizeHullDesign(hullDesignPreset('citadella')));
   assert.ok(cit.shapes.filter((s) => s.castle).length >= 8, 'kasztele Citadelli z piętrami i lustrem');
   assert.ok(cit.modules.filter((m) => m.type === 'vent' && m.v === 1).length > 20, 'radiatory TN');
-  assert.ok(cit.modules.some((m) => m.type === 'vent' && m.v === 2), 'krata');
-  assert.ok(cit.modules.some((m) => m.type === 'well' && m.v === 1), 'iluminator');
+  // iluminator (well v 1): fregata z klocków; kapsuły środka kasztelu Citadelli zdjęte pod gniazdo mostka V
+  assert.ok(expandHullDesign(normalizeHullDesign(hullDesignPreset('klocki'))).modules.some((m) => m.type === 'well' && m.v === 1), 'iluminator');
   assert.ok(cit.modules.some((m) => m.type === 'hatch' && m.v === 1), 'klapa TN');
   assert.ok(cit.pipes.length >= 1, 'rury rdzenia dziobu');
   const col = expandHullDesign(normalizeHullDesign(hullDesignPreset('colossus')));
-  assert.ok(col.modules.filter((m) => m.type === 'well' && m.v === 2).length >= 8, 'iluminatory w ośmiokątnych ramach');
+  // ośmiokątne ramy sprite'a to gniazda gry (rakietowe, specjalne, wbudowane — etap 2): ramy w ich miejscu zastępuje
+  // moduł gniazda (HD_PRESET_MOUNTS.colossus.drop)
+  assert.equal(col.modules.filter((m) => m.type === 'mount').length, 56, 'gniazda broni z gry');
+  assert.ok(col.modules.some((m) => m.type === 'mount' && m.slot === 'missile'), 'gniazda rakietowe na ramach');
   assert.ok(col.shapes.filter((s) => s.castle).length >= 8);
+  // krata (vent v 2): Colossus; kratka środka kasztelu Citadelli zdjęta pod gniazdo mostka V
+  assert.ok(col.modules.some((m) => m.type === 'vent' && m.v === 2), 'krata');
   for (const k of ['custos', 'hasta', 'bellator']) {
     const dd = normalizeHullDesign(hullDesignPreset(k));
     assert.ok(dd.castles.length >= 1, `${k}: kasztel`);

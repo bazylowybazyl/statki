@@ -36,6 +36,7 @@ import { WARP_WORLD_LENS, resetWarpWorldLens } from './worldLens.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import * as THREE from 'three/webgpu';
 
 export const WARP_STEP = 1 / 240;
@@ -118,6 +119,9 @@ export const WarpNurt = {
   _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0 },
   _map: { camX: 0, camY: 0 },
   _view: { bufW: 1, bufH: 1, focal: 1, camZ: 1 },
+  // Obrót kadru kamery (cam.roll — src/3d/viewRoll.js) tej klatki i pudło osi świata obróconego kadru [px].
+  _roll: 0,
+  _rollHalf: { hw: 0, hh: 0 },
   _rulonArgs: { bend: 0, field: 0, hx: 1, hy: 0, shipX: 0, shipY: 0, bubbleW: 50, bubbleL: 70, W: 1, H: 1, F: 1, strength: 1 },
   _medCtx: { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 },
   _fxStep: null,
@@ -212,6 +216,8 @@ export const WarpNurt = {
     // px BUFORA na j. świata (Core3D.viewZoom — skala renderu z opcji grafiki): ośrodek, szczeliny, fale,
     // gwiazdy, rulon i soczewka liczą położenia w px celu sceny.
     const zoom = Core3D.viewZoom(cam);
+    // Obrót kadru (viewRoll.js): piksele celu liczone w osiach EKRANU — przesunięcia ze świata obracane o −roll.
+    this._roll = cameraRoll(cam);
     const frame = this.frame;
     frame.reset();
 
@@ -323,7 +329,8 @@ export const WarpNurt = {
     // Tylko przegródki i szczeliny w zasięgu pudła ośrodka wokół kamery (daleki przylot go nie budzi).
     const view = this._viewParams(zoom);
     this._commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer);
-    cullWarpFrameToView(frame, view.bufW * 0.5, view.bufH * 0.5, view.focal, view.camZ);
+    const vh = rolledHalfExtents(view.bufW * 0.5, view.bufH * 0.5, this._roll, this._rollHalf);
+    cullWarpFrameToView(frame, vh.hw, vh.hh, view.focal, view.camZ);
     const busy = frame.bubbles.length > 0 || frame.seams.count > 0 || frame.warpVis > 0.001;
     if (busy) {
       this.lastBusyT = t;
@@ -531,12 +538,19 @@ export const WarpNurt = {
   // planPlayerWarp). Bez skoku albo poza kamerą z góry jednego gracza (`lensAllowed`) — wyłączona.
   _commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer) {
     const p = this.player;
-    const beta = hasPlayer && o.lensAllowed !== false ? p.lensBeta(t) : 0;
-    if (!(beta > 0.0005)) { resetWarpWorldLens(); return; }
-    const g = this._playerGame;
+    const lensOk = hasPlayer && o.lensAllowed !== false;
+    const beta = lensOk ? p.lensBeta(t) : 0;
     const L = WARP_WORLD_LENS;
+    // Przylot (worldLens.js: WarpWorldLens._arrivalHold): po wyjściu soczewka żyje, póki trzyma cel przy krawędzi
+    // (targetHold z poprzedniej klatki), choć β wyjścia już opadło — reszta ciał stoi wtedy na prawdziwych miejscach.
+    const exitAge = lensOk && (p.mode === 'exit' || p.mode === 'idle') ? p.exitAge(t) : -1;
+    const arriving = exitAge >= 0 && exitAge < p.ramp.tHalt + 12;
+    if (!(beta > 0.0005) && !(arriving && L.targetHold > 0.0005)) { resetWarpWorldLens(); return; }
+    const g = this._playerGame;
     L.active = true;
     L.beta = beta;
+    L.exitAge = arriving ? exitAge : -1;
+    L.exitHalt = p.ramp.tHalt;
     L.speed = Math.max(1, Number(g.cruise) || 0);
     L.velAngle = p.angle;
     L.zoom = zoom;
@@ -548,8 +562,16 @@ export const WarpNurt = {
     L.camY = camY;
     L.shipX = g.x;
     L.shipY = g.y;
-    L.shipSx = (g.x - camX) * zoom;
-    L.shipSy = (g.y - camY) * zoom;
+    // Obrót kadru (viewRoll.js): soczewka liczy w osiach ekranu (WarpWorldLens obraca wejścia o −roll,
+    // planet3d.assets.js — rozstawienie o +roll); statek od środka kadru — już w osiach ekranu.
+    const roll = this._roll;
+    const rc = roll ? Math.cos(roll) : 1;
+    const rs = roll ? Math.sin(roll) : 0;
+    const wx = g.x - camX;
+    const wy = g.y - camY;
+    L.roll = roll;
+    L.shipSx = (rc * wx + rs * wy) * zoom;
+    L.shipSy = (-rs * wx + rc * wy) * zoom;
     L.hullHalfLen = Math.max(0, Number(g.length) || 0) * zoom * 0.5;
     L.hullHalfWid = Math.max(0, Number(g.width) || 0) * zoom * 0.5;
     L.dt = dt;
@@ -571,8 +593,10 @@ export const WarpNurt = {
     const medium = this.medium;
     const cam = o.cam;
     const { bufW, bufH, focal, camZ } = this._view;
-    // Zapas pudeł na rulon tylko na czas zwinięcia (poza skokiem gęstość jak przed rulonem).
-    medium.setBoxes(zoom, bufW, bufH, focal, 1 + (RULON_BOX - 1) * Math.min(1, this.player.rulonBend));
+    // Zapas pudeł na rulon tylko na czas zwinięcia (poza skokiem gęstość jak przed rulonem). Obrócony kadr
+    // (viewRoll.js) — pudła osi świata obejmują go (rogi kadru nie zostają bez drobin).
+    const bh = rolledHalfExtents(bufW * 0.5, bufH * 0.5, this._roll, this._rollHalf);
+    medium.setBoxes(zoom, bh.hw * 2, bh.hh * 2, focal, 1 + (RULON_BOX - 1) * Math.min(1, this.player.rulonBend));
     const mesh = medium.mesh;
     mesh.position.set(Number(cam.x) || 0, -(Number(cam.y) || 0), 0);
     // Przesunięcie kamery ośrodka względem ostatniego kroku (scena: y w górę).
@@ -657,8 +681,10 @@ export const WarpNurt = {
     for (let i = 0; i < frame.waves.count; i++) {
       const w = frame.waves.items[i];
       if (!(w.amp > 0.05)) continue;
+      if (w.kind === 1) D.implode(camX + w.x, camY + w.y, w.r, w.amp, 0.15);
+      else if (w.kind === 2) D.bubble(camX + w.x, camY + w.y, w.r, Math.max(6 / zoom, w.width), w.amp, w.dx, w.dy, w.asp);
       // Demo: szerokość ≥ 6 px, fala bez dyspersji (przesuwa wszystkie kanały razem).
-      D.shock(camX + w.x, camY + w.y, w.r, Math.max(6 / zoom, w.width), w.amp, 0);
+      else D.shock(camX + w.x, camY + w.y, w.r, Math.max(6 / zoom, w.width), w.amp, 0);
     }
   },
 
@@ -674,16 +700,22 @@ export const WarpNurt = {
     const shake = o.camShake || o.cam;
     const sx0 = camX - (Number(shake?.x) || camX);
     const sy0 = camY - (Number(shake?.y) || camY);
+    // Obrót kadru (viewRoll.js): przesunięcie ze świata → osie ekranu R(−roll), kąty − roll.
+    const roll = this._roll;
+    const rc = roll ? Math.cos(roll) : 1;
+    const rs = roll ? Math.sin(roll) : 0;
     const lens = this._lensPx;
     let li = 0;
     for (let i = 0; i < nl && li < lens.length; i++) {
       const l = frame.lens.items[i];
       if (!(l.amp > 0.01)) continue;
       const d = lens[li++];
-      d.x = bufW * 0.5 + (l.x + sx0) * zoom;
-      d.y = bufH * 0.5 + (l.y + sy0) * zoom;
-      d.ax = Math.cos(l.angle);
-      d.ay = Math.sin(l.angle);
+      const wx = l.x + sx0;
+      const wy = l.y + sy0;
+      d.x = bufW * 0.5 + (rc * wx + rs * wy) * zoom;
+      d.y = bufH * 0.5 + (-rs * wx + rc * wy) * zoom;
+      d.ax = Math.cos(l.angle - roll);
+      d.ay = Math.sin(l.angle - roll);
       d.a = l.a * zoom;
       d.b = l.b * zoom;
       d.amp = l.amp;
@@ -694,10 +726,12 @@ export const WarpNurt = {
     for (let j = 0; j < ns && si < seams.length; j++) {
       const s = frame.seamLens.items[j];
       const d = seams[si++];
-      d.x = bufW * 0.5 + (s.x + sx0) * zoom;
-      d.y = bufH * 0.5 + (s.y + sy0) * zoom;
-      d.ax = Math.cos(s.angle);
-      d.ay = Math.sin(s.angle);
+      const wx = s.x + sx0;
+      const wy = s.y + sy0;
+      d.x = bufW * 0.5 + (rc * wx + rs * wy) * zoom;
+      d.y = bufH * 0.5 + (-rs * wx + rc * wy) * zoom;
+      d.ax = Math.cos(s.angle - roll);
+      d.ay = Math.sin(s.angle - roll);
       d.halfLen = s.halfLen * zoom;
       d.band = Math.max(4, s.band * zoom);
       d.amp = s.amp;
@@ -713,10 +747,16 @@ export const WarpNurt = {
       const scx = Number(shake?.x) || camX;
       const scy = Number(shake?.y) || camY;
       W.stretch.value = st.stretch;
-      W.heading.value.set(Math.cos(st.angle), -Math.sin(st.angle));
+      // Kurs i statek w osiach ekranu (y w górę) — obrót kadru (viewRoll.js): kąt − roll, przesunięcie R(−roll).
+      const roll = this._roll;
+      W.heading.value.set(Math.cos(st.angle - roll), -Math.sin(st.angle - roll));
       W.frontOn.value = st.frontOn;
       W.frontPx.value = st.frontS * zoom;
-      W.shipPx.value.set((st.refX + camX - scx) * zoom, -(st.refY + camY - scy) * zoom);
+      const wx = st.refX + camX - scx;
+      const wy = st.refY + camY - scy;
+      const rc = roll ? Math.cos(roll) : 1;
+      const rs = roll ? Math.sin(roll) : 0;
+      W.shipPx.value.set((rc * wx + rs * wy) * zoom, -(-rs * wx + rc * wy) * zoom);
       W.warpTint.value = st.warpTint;
     } else if (W.stretch.value !== 0) {
       resetWarpStars();
@@ -743,10 +783,16 @@ export const WarpNurt = {
     const a = this._rulonArgs;
     a.bend = p.rulonBend;
     a.field = p.rulonField;
-    a.hx = Math.cos(p.angle);
-    a.hy = -Math.sin(p.angle);
-    a.shipX = (st.refX + camX - scx) * zoom;
-    a.shipY = -(st.refY + camY - scy) * zoom;
+    // Oś i statek w osiach ekranu (y w górę) — obrót kadru (viewRoll.js): kąt − roll, przesunięcie R(−roll).
+    const roll = this._roll;
+    const rc = roll ? Math.cos(roll) : 1;
+    const rs = roll ? Math.sin(roll) : 0;
+    const wx = st.refX + camX - scx;
+    const wy = st.refY + camY - scy;
+    a.hx = Math.cos(p.angle - roll);
+    a.hy = -Math.sin(p.angle - roll);
+    a.shipX = (rc * wx + rs * wy) * zoom;
+    a.shipY = -(-rs * wx + rc * wy) * zoom;
     a.bubbleW = R;
     a.bubbleL = R * WARP_BUBBLE.asp;
     a.W = v.bufW;

@@ -94,9 +94,11 @@ export function run() {
   // — ostatnio 2026-08-20, gdy Ziemia i Mars dostały zbrojownie, a Wenus
   // i Saturn amunicjownie. Rosnący apetyt Ziemi na rudę jest tu skutkiem
   // zamierzonym: uzbrojenie to nowy, stały odbiorca metalu.
-  t.close('plan Ziemi wymaga 1390,846 rudy żelaza/h', earthNet.iron_ore * 3600, -1390.8463520161451, 1e-6);
-  t.close('plan Ziemi wymaga 754,339 rudy krzemu/h', earthNet.silicon_ore * 3600, -754.3389223147897, 1e-6);
-  t.close('plan Merkurego eksportuje 1318,364 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1318.3643796574736, 1e-6);
+  // 2026-10-21 (receptury E8): osiem rodzin luf i napędy na rudach pasa — Ziemia
+  // +2,7% żelaza (flak, wyrzutnia torped, napędy w stoczni), −1,5% krzemu (mniej emiterów).
+  t.close('plan Ziemi wymaga 1428,834 rudy żelaza/h', earthNet.iron_ore * 3600, -1428.8343229171044, 1e-6);
+  t.close('plan Ziemi wymaga 743,368 rudy krzemu/h', earthNet.silicon_ore * 3600, -743.3683448852485, 1e-6);
+  t.close('plan Merkurego eksportuje 1328,848 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1328.8483362557267, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });
@@ -383,6 +385,15 @@ export function run() {
     `(${realShortages.map(s => `${s.id} ${(s.ratio * 100).toFixed(0)}%`).join(', ')})`);
   t.check('uran pozostaje wąskim gardłem wymagającym wydobycia w pasach',
     (supply.uranium_ore || 0) === 0);
+  // Rudy pasa idą w podzespoły (decyzja użytkownika 2026-10-21): każda ma
+  // odbiorcę w recepturach i własne źródło w Unii Pasa, niezależne od wypraw.
+  for (const ruda of ['carbon_ore', 'nickel_ore', 'platinum_ore']) {
+    t.check(`${ruda} ma odbiorcę i pokryty popyt`,
+      (demand[ruda] || 0) > 0 && (supply[ruda] || 0) >= demand[ruda],
+      `(podaż ${(supply[ruda] || 0).toFixed(2)} / popyt ${(demand[ruda] || 0).toFixed(2)})`);
+  }
+  t.check('ruda uranu nie trafia na planety ani księżyce przy rudach pasa',
+    Object.values(PLANET_YIELD).every(e => !e.yields.uranium_ore));
 
   // OGÓLNA POSTAĆ BŁĘDU, który to przegapił: receptura istnieje w resources.js,
   // ale żaden profil przemysłowy jej nie wykonuje. Tak zniknęła rafinacja uranu —

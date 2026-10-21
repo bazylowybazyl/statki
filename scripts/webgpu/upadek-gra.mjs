@@ -3,7 +3,8 @@
 // wieżę; w końcu wszystkie elementy spadają na planetoidę”). Vite + headless Chrome z WebGPU, skok dev ?story=shipyard.
 //
 //   node scripts/webgpu/upadek-gra.mjs [--warianty stoi,lezy] [--kamera top,3d] [--out .tmp/upadek] [--query renderWorker=0]
-//     [--rozmiar 1600x900] [--czas 34] [--fall k=v,k2=v2] (PIRATE_FALL_TUNE w locie)
+//     [--rozmiar 1600x900] [--czas 34] [--fall k=v,k2=v2] (PIRATE_FALL_TUNE w locie) [--seria 1.5] (kadr co 1,5 s od
+//     uderzenia wieży); wiersze stanu: `gaz` — domeny głębokie wg znacznika (10 uderzenia, 9 wyrwy): [liczba, bok km]
 //
 // stoi — HP 0 habitatu przy stojącej wieży (gracz zestrzelił resztę bez taranu szyi)
 // lezy — najpierw zerwanie szyi (window.snapPirateBaseNeck), wieża leży na dysku i zamarza, potem HP 0
@@ -110,7 +111,17 @@ const STATE = `(() => {
   if (R) { R.n = 0; R.sum = 0; R.max = 0; R.fn = 0; R.fsum = 0; R.fmax = 0; R.fslow = 0; }
   let free = 0, frozen = 0;
   for (const s of window.HullBodies._solids) { if (!s || s.dead || s.planar) continue; if (s.anchored) frozen++; else free++; }
-  return { szyja: n ? n.phase : '-', upadek: F ? F.phase : '-', t: F ? +F.t.toFixed(2) : 0, hp: +(100 * st.hp / st.maxHp).toFixed(1),
+  // domeny gazu głębokie (pass tła) wg znacznika: 10 — uderzenia w skałę, 9 — wyrwy (dekompresja), inne — wybuchy;
+  // [liczba, bok największej domeny w km] (tryb off: reżyser na stronie)
+  const gaz = {};
+  const G = window.__explosions && window.__explosions.grid;
+  if (G && G.slots) for (const sl of G.slots) {
+    if (!sl.active || !sl.deep) continue;
+    const k = String(sl.tag || 0), side = sl.h * sl.n / 1000;
+    const g = gaz[k] || (gaz[k] = [0, 0]);
+    g[0]++; if (side > g[1]) g[1] = +side.toFixed(1);
+  }
+  return { szyja: n ? n.phase : '-', upadek: F ? F.phase : '-', t: F ? +F.t.toFixed(2) : 0, hp: +(100 * st.hp / st.maxHp).toFixed(1), gaz,
     wieza: b ? [Math.round(b.pos.x - hc.x), Math.round(-b.pos.y - hc.y), Math.round(b.pos.z), Math.round(Math.hypot(b.vel.x, b.vel.y, b.vel.z)), b.activeNodes, b.anchored ? 1 : 0] : null,
     styk: F ? +F.touchT.toFixed(2) : -1, przejscie: F ? +F.passT.toFixed(2) : -1, korek: F ? F.plugN || 0 : 0, sektory: F ? F.released : 0,
     uderzenieWiezy: F ? +F.towerImpactT.toFixed(2) : -1, uderzenieDysku: F ? +F.discImpactT.toFixed(2) : -1, uderzenia: F ? F.impacts : 0, zamrozone: F ? F.frozen : 0,
@@ -191,7 +202,10 @@ async function przebieg(wariant, kamera) {
   await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat; S.deps.damageStation(st, st.hp + 10); return st.hp; })()`);
   const rows = [];
   const kadry = new Set();
-  const kadr = async (k) => { if (!kadry.has(k)) { kadry.add(k); await shot(`${tag}-${k}`); } };
+  const kadr = async (k) => {
+    const key = k.replace(/-[0-9.]+s$/, '');   // kadr serii: jeden na przedział
+    if (!kadry.has(key)) { kadry.add(key); await shot(`${tag}-${k}`); }
+  };
   let zoomedOut = false;
   for (let i = 0; i < Math.round(czas / 0.25); i++) {
     await sleep(250);
@@ -207,14 +221,20 @@ async function przebieg(wariant, kamera) {
     if (s.styk >= 0 && s.t >= s.styk + 1.5) await kadr('04-przez-dysk');
     if (kamera === 'top' && !zoomedOut && s.przejscie >= 0 && s.t >= s.przejscie + 0.5) {
       zoomedOut = true;
-      // między habitatem a środkiem skały (skała pod bazą w kierunku +x +z układu bazy)
-      await camHub(2200, 2200, 0.07);
+      // między habitatem a RZUTEM miejsca lądowania (skała pod bazą w kierunku +x +z układu bazy, szczyt 24 km niżej —
+      // lądowanie ~4,6 km w bok, z kamery ~20 km nad płaszczyzną rzut ~2 km)
+      await camHub(1000, 1000, 0.07);
     }
     if (s.przejscie >= 0 && s.t >= s.przejscie + 1.2) await kadr('05-dysk-za-wieza');
-    if (s.uderzenieWiezy < 0 && s.wieza && s.wieza[2] < -5500) await kadr('06-lot');
+    if (s.uderzenieWiezy < 0 && s.wieza && s.wieza[2] < -12000) await kadr('06-lot');
     if (s.uderzenieWiezy >= 0) await kadr('07-uderzenie-wiezy');
     if (s.uderzenieWiezy >= 0 && s.t >= s.uderzenieWiezy + 1.2) await kadr('08-po-uderzeniu');
     if (s.uderzenieDysku >= 0 && s.t >= s.uderzenieDysku + 0.6) await kadr('09-uderzenie-dysku');
+    // --seria S: kadr co S s od uderzenia wieży (jak pył się rozchodzi i opada)
+    if (args.seria && s.uderzenieWiezy >= 0) {
+      const k = Math.floor((s.t - s.uderzenieWiezy) / Number(args.seria));
+      if (k >= 0 && k < 20) await kadr(`s${String(k).padStart(2, '0')}-${(s.t - s.uderzenieWiezy).toFixed(1)}s`);
+    }
     if (s.upadek === 'settled') { await kadr('10-osiadlo'); break; }
   }
   if (args.progi) {

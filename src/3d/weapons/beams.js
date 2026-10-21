@@ -6,9 +6,13 @@
 //           szumem (plazma w kanale), pakiety energii biegnące do celu, rozbłysk przy soczewce.
 //   PULSE — impuls: front biegnie od emitera do celu (~42 000 j/s), potem zwężenie i zgaśnięcie.
 //   PD    — laser obrony punktowej: cienki, szybki impuls.
+//   RAY   — promień śmierci (2026-10-19, src/game/deathRay.js): gruba wiązka HDR — biało-gorące jądro, ciało w barwie
+//           broni płynące szumem, pierścienie energii biegnące do celu, szeroka poświata, rozbłysk czoła (gdy rośnie)
+//           i soczewka emitera; świadomie ponad progiem bloomu całym ciałem (superbroń).
 // Pasma HDR jak w grze: ponad progiem bloomu tylko cienkie jądro i krótkie rozbłyski, ciało
-// ≤ ~1. W grze końce wiązek liczy fasada (weaponFx.js) co klatkę — z nośnikiem strzelca,
-// względem początku pul przy kamerze; bufor to lista wiązek TEJ klatki (zero alokacji).
+// ≤ ~1 (poza RAY). W grze końce wiązek liczy fasada (weaponFx.js) co klatkę — z nośnikiem strzelca,
+// względem początku pul przy kamerze; bufor to lista wiązek TEJ klatki (zero alokacji). Wysokość wiązki
+// nad płaszczyzną gry: 16 + z (z z `addRgb` — promień w warstwach bitwy w głębi; zwykłe wiązki z = 0).
 
 import * as THREE from 'three/webgpu';
 import {
@@ -18,7 +22,7 @@ import {
 import { additiveMaterial } from './gpuFx.js';
 import { liveRangeAttribute, markRange } from './liveRange.js';
 
-export const BEAM = Object.freeze({ CONT: 0, PULSE: 1, PD: 2 });
+export const BEAM = Object.freeze({ CONT: 0, PULSE: 1, PD: 2, RAY: 3 });
 /** Wiązek w jednym draw callu na klatkę (PD w bitwie: setki równocześnie). */
 export const BEAM_MAX = 1024;
 /** Prędkość frontu impulsu [j/s] (demo). */
@@ -54,6 +58,7 @@ export class BeamSystem {
     const vL = varyingProperty('vec4', 'vWfxBmL');   // wzdłuż, w poprzek, długość, szerokość
     const vA = varyingProperty('vec4', 'vWfxBmA');   // barwa ciała, moc
     const vB = varyingProperty('vec4', 'vWfxBmB');   // styl, ziarno, wiek, szer. jądra [j.]
+    const vC = varyingProperty('vec2', 'vWfxBmC');   // RAY: rozbłysk czoła, soczewka emitera (inne style: nieczytane)
     const mat = additiveMaterial('wfxBeams');
     mat.positionNode = Fn(() => {
       const i = instanceIndex.mul(uint(4)).toVar();
@@ -74,7 +79,10 @@ export class BeamSystem {
       vA.assign(C);
       // jądro: ≥ 1,2 px, rośnie z szerokością wiązki
       vB.assign(vec4(D.x, D.y, D.z, max(W.mul(0.16), float(1.2).div(U.zoom))));
-      return vec3(A.xy.add(dir.mul(along)).add(perp.mul(across)), 16.0);
+      vC.assign(B.xy);
+      // wysokość: z początku (D.w) do z końca (B.z) wzdłuż wiązki — zwykłe wiązki mają oba 0
+      const zz = mix(D.w, B.z, clamp(along.div(len), 0.0, 1.0));
+      return vec3(A.xy.add(dir.mul(along)).add(perp.mul(across)), zz.add(16.0));
     })();
     // 1, gdy front jeszcze nie doszedł do celu
     const step1 = (front, len) => smoothstep(len.add(1.0), len.sub(1.0), front);
@@ -118,11 +126,33 @@ export class BeamSystem {
         const body = exp(sq(d.div(W.mul(0.45))).negate()).mul(n.mul(0.6).add(0.6));
         const sheath = exp(sq(d.div(W.mul(1.1))).negate()).mul(0.2);
         out.assign(vec3(1.0).mul(core.mul(5.0)).add(col.mul(body.add(sheath))).mul(reached).add(col.add(0.8).mul(head.mul(2.0))));
-      }).Else(() => {
+      }).ElseIf(style.lessThan(2.5), () => {
         // PD: cienki impuls
         const core = exp(sq(d.div(coreW.mul(0.8))).negate());
         const body = exp(sq(d.div(W.mul(0.6))).negate()).mul(0.7);
         out.assign(vec3(1.0).mul(core.mul(4.0)).add(col.mul(body)));
+      }).Else(() => {
+        // RAY: promień śmierci — jądro, ciało z płynącą plazmą, pierścienie energii, poświata, czoło i soczewka
+        const flowU = along.div(W.mul(6.0)).sub(t.mul(4.5));
+        const n1 = texture(noise, vec2(flowU, across.div(W).mul(0.45).add(seed))).r;
+        const n2 = texture(noise, vec2(flowU.mul(2.7).sub(t.mul(2.3)), across.div(W).mul(0.9).sub(seed))).g;
+        const flow = n1.mul(0.6).add(n2.mul(0.4));
+        // Pasma HDR (próg bloomu ~0,9): wąskie jądro wyraźnie ponad progiem (biel), środek ciała przy progu, ciało
+        // i poświata pod nim — szeroka jasna wiązka bez zalewania kadru bloomem (pomiar: scripts/webgpu/promien-gra.mjs).
+        const core = exp(sq(d.div(max(W.mul(0.16), coreW))).negate());
+        const inner = exp(sq(d.div(W.mul(0.3))).negate());
+        const body = exp(sq(d.div(W.mul(0.5))).negate()).mul(flow.mul(0.7).add(0.5));
+        const sheath = exp(sq(d.div(W.mul(1.0))).negate()).mul(n2.mul(0.45).add(0.65));
+        // pierścienie energii biegnące od emitera do celu (sin·0,5 + 0,5 ≥ 0 — bez ujemnej podstawy potęgi)
+        const ring = pow(sin(along.div(W.mul(1.9)).sub(t.mul(42.0)).add(seed.mul(7.0))).mul(0.5).add(0.5), 8.0)
+          .mul(exp(sq(d.div(W.mul(0.45))).negate()));
+        // czoło (gdy wiązka rośnie) i soczewka emitera — plamy okrągłe, nie pas przez całą szerokość kwadu
+        const head = exp(sq(len.sub(along).div(W.mul(0.9))).negate()).mul(exp(sq(across.div(W.mul(0.8))).negate())).mul(vC.x);
+        const lens = exp(sq(length(vec2(along, across)).div(W.mul(1.1))).negate()).mul(vC.y);
+        out.assign(vec3(1.0).mul(core.mul(3.0))
+          .add(col.mul(0.55).add(0.25).mul(inner))
+          .add(col.mul(body.mul(0.55).add(sheath.mul(0.07)).add(ring.mul(0.5))))
+          .add(col.add(1.0).mul(head.mul(1.6).add(lens.mul(1.2)))));
       });
       const c = max(out.mul(power).mul(endFade), vec3(0.0)).toVar();
       return vec4(c, max(c.x, max(c.y, c.z)));
@@ -147,14 +177,18 @@ export class BeamSystem {
     return this.addRgb(x0, y0, x1, y1, style, width, col[0], col[1], col[2], power, seed, age);
   }
 
-  addRgb(x0, y0, x1, y1, style, width, r, g, b, power, seed = 0, age = 0) {
+  /**
+   * z / z1 — wysokość początku i końca nad płaszczyzną gry [j.] (16 + z, liniowo wzdłuż wiązki); head / lens — RAY:
+   * rozbłysk czoła i soczewka emitera 0..1 (inne style ich nie czytają).
+   */
+  addRgb(x0, y0, x1, y1, style, width, r, g, b, power, seed = 0, age = 0, z = 0, head = 1, lens = 1, z1 = z) {
     if (this.count >= BEAM_MAX) { this.dropped++; return false; }
     const o = this.count++ * FLOATS;
     const D = this.data;
     D[o] = x0; D[o + 1] = y0; D[o + 2] = x1; D[o + 3] = y1;
-    D[o + 4] = 1; D[o + 5] = 1; D[o + 6] = 1; D[o + 7] = width;
+    D[o + 4] = head; D[o + 5] = lens; D[o + 6] = z1; D[o + 7] = width;
     D[o + 8] = r; D[o + 9] = g; D[o + 10] = b; D[o + 11] = power;
-    D[o + 12] = style; D[o + 13] = seed; D[o + 14] = age; D[o + 15] = 0;
+    D[o + 12] = style; D[o + 13] = seed; D[o + 14] = age; D[o + 15] = z;
     return true;
   }
 

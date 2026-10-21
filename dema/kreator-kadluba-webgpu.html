@@ -36,6 +36,17 @@
   .row > input[type=color] { flex: 0 0 34px; }
   #recipe { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
   #recipe .bad { color: var(--bad); } #recipe .warn { color: var(--warn); } #recipe .good { color: var(--good); }
+  #netinfo { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  #netinfo .bad { color: var(--bad); } #netinfo .good { color: var(--good); }
+  #classinfo { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; margin-top: 4px; }
+  #classinfo .bad { color: var(--bad); } #classinfo .warn { color: var(--warn); } #classinfo .good { color: var(--good); }
+  #classinfo .bar { display: inline-block; height: 7px; vertical-align: middle; background: #1b2a35; width: 56px; margin: 0 4px; position: relative; }
+  #classinfo .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--good); }
+  #classinfo .bar i.warn { background: var(--warn); } #classinfo .bar i.bad { background: var(--bad); }
+  #classmsg { color: var(--warn); min-height: 0; }
+  #prio { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 4px; align-items: center; font: 11px ui-monospace, Consolas, monospace; margin-top: 3px; }
+  #prio button { padding: 0 6px; text-align: center; }
+  #prio .off { color: var(--bad); }
   .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
   #json { display: none; width: 100%; height: 160px; margin-top: 4px; background: #050a0f; color: var(--ink); border: 1px solid #2a4252; font: 10px ui-monospace, Consolas, monospace; }
   #errors { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
@@ -43,6 +54,144 @@
   #nogpu { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: #030406f2; font-size: 15px; text-align: center; }
   #abtag { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 41; padding: 4px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 600 12px "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; display: none; pointer-events: none; }
   body.clean #panel, body.clean #hud, body.clean #title { display: none; }
+  .pal { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
+  .pal button { padding: 2px; text-align: center; }
+  .pal svg { display: block; width: 100%; height: 22px; }
+  button:disabled { opacity: .4; cursor: default; }
+  #btn-ui-stocznia { width: 100%; margin: 2px 0 8px; text-align: center; background: #10222c; border-color: #2f6f78; }
+
+  /* ── STOCZNIA: przyjazny edytor (dema/kreator-kadluba-stocznia.js) ── */
+  body.ui-stocznia #panel, body.ui-stocznia #hud, body.ui-stocznia #title, body.ui-stocznia #abtag { display: none !important; }
+  body:not(.ui-stocznia) #yard, body:not(.ui-stocznia) #yard-ghost, body:not(.ui-stocznia) #yard-tip, body.clean #yard { display: none; }
+  #yard { --y-bg: #0c151dee; --y-bg2: #111e29f2; --y-line: #a9cbdc24; --y-ink: #e9eef1; --y-muted: #8fa3ad; --y-acc: #ffb54a; --y-acc2: #66d6c3; --y-bad: #ff6a5e;
+    position: fixed; inset: 0; z-index: 40; pointer-events: none; color: var(--y-ink); font: 13px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #yard > * { pointer-events: auto; }
+  .yard-glass { background: linear-gradient(180deg, var(--y-bg2), var(--y-bg)); border: 1px solid var(--y-line); border-radius: 16px;
+    box-shadow: 0 14px 40px #0009, inset 0 1px 0 #ffffff0d; backdrop-filter: blur(10px); }
+  #yard button { font: inherit; color: inherit; cursor: pointer; }
+  #yard button:disabled { opacity: .35; cursor: default; }
+  /* pasek górny */
+  #yard-top { position: absolute; top: 12px; left: 342px; right: 296px; margin-inline: auto; width: max-content; max-width: calc(100vw - 650px); display: flex; align-items: center; gap: 4px; padding: 6px 8px; white-space: nowrap; border-radius: 999px; }
+  .yard-brand { display: flex; align-items: center; gap: 9px; padding: 0 10px 0 4px; }
+  .yard-brand b { display: block; font-size: 13px; letter-spacing: .2em; }
+  .yard-brand small { display: block; color: var(--y-muted); font-size: 10.5px; letter-spacing: .06em; margin-top: -1px; }
+  .yard-logo { width: 28px; height: 28px; border-radius: 9px; background: conic-gradient(from 210deg, #ffb54a, #ff7a3a, #66d6c3, #ffb54a); box-shadow: 0 0 18px #ffb54a55; position: relative; }
+  .yard-logo::after { content: ""; position: absolute; inset: 7px 5px; background: #0c151d; clip-path: polygon(0 50%, 30% 0, 100% 0, 78% 50%, 100% 100%, 30% 100%); }
+  .yard-grp { display: flex; align-items: center; gap: 4px; padding: 0 6px; border-left: 1px solid var(--y-line); }
+  .yard-btn { background: #ffffff0a; border: 1px solid transparent; border-radius: 999px; padding: 6px 12px; transition: background .15s, border-color .15s; }
+  .yard-btn:hover:not(:disabled) { background: #ffffff16; border-color: #ffb54a66; }
+  .yard-btn.yard-ico { width: 34px; height: 32px; padding: 0; font-size: 17px; line-height: 30px; text-align: center; }
+  .yard-btn.on { background: linear-gradient(180deg, #ffb54a, #e8902e); color: #1c1205; font-weight: 600; box-shadow: 0 0 14px #ffb54a55; }
+  #yard-preset { background: #ffffff0a; color: var(--y-ink); border: 1px solid var(--y-line); border-radius: 999px; padding: 6px 10px; font: inherit; width: 212px; }
+  #yard-preset option { background: #101b24; }
+  /* paleta */
+  #yard-pal { position: absolute; left: 12px; top: 12px; bottom: 12px; width: 318px; display: flex; flex-direction: column; overflow: hidden; }
+  #yard-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 8px 8px 0; }
+  .ytab { background: none; border: 0; border-radius: 12px 12px 4px 4px; padding: 8px 2px 7px; color: var(--y-muted) !important; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px !important; position: relative; transition: color .15s, background .15s; }
+  .ytab svg { width: 22px; height: 22px; }
+  .ytab:hover { color: var(--y-ink) !important; background: #ffffff08; }
+  .ytab.on { color: var(--y-acc) !important; background: #ffb54a12; }
+  .ytab.on::after { content: ""; position: absolute; left: 22%; right: 22%; bottom: 0; height: 3px; border-radius: 3px; background: var(--y-acc); box-shadow: 0 0 10px var(--y-acc); }
+  #yard-opts { padding: 8px 12px 4px; border-top: 1px solid var(--y-line); border-bottom: 1px solid var(--y-line); background: #00000022; }
+  .yoptl { color: var(--y-muted); font-size: 11px; letter-spacing: .04em; margin: 2px 0 5px; }
+  .ychips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+  .ychip { display: inline-flex; align-items: center; gap: 6px; background: #ffffff0b; border: 1px solid var(--y-line); border-radius: 999px; padding: 4px 10px; font-size: 12px !important; transition: background .15s, border-color .15s; }
+  .ychip i { width: 10px; height: 10px; border-radius: 3px; border: 1px solid #0006; }
+  .ychip:hover:not(:disabled) { border-color: #ffb54a88; }
+  .ychip.on { background: #ffb54a26; border-color: var(--y-acc); color: #ffe2b8 !important; }
+  .ychip.cut.on { background: #ff6a5e26; border-color: var(--y-bad); color: #ffd0ca !important; }
+  .yswatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #ffffff30; padding: 0; }
+  .yswatch.on { border-color: #fff; box-shadow: 0 0 0 2px var(--y-acc); }
+  .ycolor { width: 28px; height: 26px; padding: 0; border: 0; background: none; cursor: pointer; }
+  .ytext { width: 100%; margin-bottom: 6px; background: #ffffff0b; color: var(--y-ink); border: 1px solid var(--y-line); border-radius: 8px; padding: 5px 8px; font: inherit; }
+  .yslider { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 6px; font-size: 12px; color: var(--y-muted); margin-bottom: 4px; }
+  .yslider input { width: 100%; accent-color: var(--y-acc); }
+  #yard-cards { flex: 1; overflow-y: auto; padding: 4px 10px 14px; scrollbar-width: thin; scrollbar-color: #ffffff22 transparent; }
+  .ygroup { color: var(--y-muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; margin: 12px 2px 7px; display: flex; align-items: center; gap: 8px; }
+  .ygroup::after { content: ""; flex: 1; height: 1px; background: var(--y-line); }
+  .ygrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .ycard { position: relative; border-radius: 12px; padding: 5px 4px 6px; background: radial-gradient(120% 90% at 50% 30%, #22323f 0%, #131e28 70%); border: 1px solid #ffffff12;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: grab; user-select: none; touch-action: none; transition: transform .12s, border-color .12s, box-shadow .12s; }
+  .ycard canvas { width: 84px; height: 56px; display: block; pointer-events: none; }
+  .ycard span { font-size: 11px; line-height: 1.2; text-align: center; color: #d5dee3; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 2.4em; }
+  .ycard:hover { transform: translateY(-2px); border-color: #ffb54a70; box-shadow: 0 8px 18px #0008, 0 0 0 1px #ffb54a30; }
+  .ycard:active { cursor: grabbing; transform: scale(.97); }
+  .ycard.active { border-color: var(--y-acc2); box-shadow: 0 0 0 1px var(--y-acc2), 0 0 16px #66d6c344; }
+  .ycard.armed { border-color: var(--y-acc); animation: yarmed 1.1s ease-in-out infinite; }
+  .ycard.armed::before { content: "STEMPEL"; position: absolute; top: 4px; right: 5px; font-size: 8.5px; letter-spacing: .1em; font-weight: 700; color: #1c1205; background: var(--y-acc); border-radius: 4px; padding: 1px 4px; }
+  @keyframes yarmed { 50% { box-shadow: 0 0 0 2px #ffb54a66, 0 0 22px #ffb54a66; } }
+  #yard-trash { display: none; position: absolute; inset: 0; border-radius: 16px; background: #3a0f0ccc; border: 2px dashed var(--y-bad); color: #ffd0ca; font-size: 15px; font-weight: 600; align-items: center; justify-content: center; pointer-events: none; }
+  #yard.trash #yard-trash { display: flex; }
+  /* karta okrętu */
+  #yard-card { position: absolute; right: 12px; top: 74px; width: 272px; max-height: calc(100vh - 140px); overflow-y: auto; padding: 12px 14px; scrollbar-width: thin; }
+  .yname { width: 100%; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--y-ink); font: 600 15px "Segoe UI", system-ui, sans-serif; padding: 3px 6px; margin: -3px -6px 6px; }
+  .yname:hover, .yname:focus { border-color: var(--y-line); background: #ffffff08; outline: none; }
+  .yclass { display: flex; align-items: center; gap: 11px; margin-bottom: 8px; }
+  .yclass b { display: block; font-size: 14px; }
+  .yclass small { display: block; color: var(--y-muted); font-size: 11px; }
+  .yroman { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; font: 700 16px "Segoe UI", system-ui, sans-serif; color: #1c1205;
+    background: linear-gradient(160deg, #ffd08a, #f39b38); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+  .yrow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+  .yrow2 label { display: flex; flex-direction: column; gap: 2px; color: var(--y-muted); font-size: 11px; }
+  .yrow2 select { background: #ffffff0b; color: var(--y-ink); border: 1px solid var(--y-line); border-radius: 8px; padding: 4px 6px; font: 12px "Segoe UI", system-ui, sans-serif; }
+  .yrow2 select option { background: #101b24; }
+  .ymeter { margin: 7px 0; }
+  .ymh { display: flex; justify-content: space-between; font-size: 12px; color: var(--y-muted); margin-bottom: 3px; }
+  .ymh b { color: var(--y-ink); font-weight: 600; }
+  .ymh i { color: var(--y-muted); font-style: normal; font-weight: 400; }
+  .ybar { height: 8px; border-radius: 99px; background: #ffffff10; overflow: hidden; }
+  .ybar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #4fbfae, #66d6c3); transition: width .3s; }
+  .ybar i.warn { background: linear-gradient(90deg, #e8a03a, #ffb54a); }
+  .ybar i.bad { background: linear-gradient(90deg, #d8483e, #ff6a5e); }
+  .ystat { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; color: var(--y-muted); margin: 8px 0 4px; }
+  .ystat b { text-align: right; color: var(--y-ink); font-weight: 600; }
+  .ystat b.warn { color: var(--y-acc); }
+  .ycheck { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--y-line); }
+  .ycheck li { display: grid; grid-template-columns: 20px 1fr; font-size: 12.5px; padding: 2px 0; }
+  .ycheck li span { font-weight: 700; }
+  .ycheck li.ok span { color: var(--y-acc2); }
+  .ycheck li.no { color: #ffd9d4; }
+  .ycheck li.no span { color: var(--y-bad); }
+  .ycheck small { grid-column: 2; color: var(--y-muted); font-size: 11px; }
+  .ywarn { color: #ffcf8a; font-size: 12px; margin-top: 6px; }
+  .ymount { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--y-line); }
+  .ymount b { display: block; } .ymount small { display: block; color: var(--y-muted); margin-bottom: 6px; }
+  /* pasek zaznaczenia */
+  #yard-sel { position: absolute; left: 0; top: 0; display: none; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 999px; }
+  #yard-sel button { width: 32px; height: 30px; border: 0; border-radius: 999px; background: none; font-size: 16px; line-height: 30px; padding: 0; text-align: center; }
+  #yard-sel button:hover { background: #ffb54a2a; color: #ffe2b8; }
+  #yard-sel button[data-act="del"]:hover { background: #ff6a5e33; }
+  .ycount { font-size: 12px; color: var(--y-muted); padding: 0 8px 0 6px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ylock { font-size: 12px; color: #ffd7a0; padding-right: 8px; }
+  /* pasek pomocy i dymki */
+  #yard-help { position: absolute; bottom: 12px; left: 342px; right: 296px; margin-inline: auto; width: max-content; max-width: calc(100vw - 650px); padding: 7px 16px; border-radius: 999px; background: #0a1219d9; border: 1px solid var(--y-line); color: var(--y-muted); font-size: 12px; text-align: center; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #yard-help:empty { display: none; }
+  .ydim { color: #6f828c; }
+  #yard-help kbd { font: 600 11px "Segoe UI", system-ui, sans-serif; color: var(--y-ink); background: #ffffff14; border: 1px solid #ffffff1c; border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; }
+  #yard-toasts { position: absolute; top: 72px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+  .ytoast { max-width: 560px; padding: 8px 16px; border-radius: 12px; background: #0b1820f0; border: 1px solid #66d6c366; box-shadow: 0 8px 24px #0008; font-size: 12.5px; animation: ytoastin .2s ease-out; transition: opacity .4s, transform .4s; }
+  .ytoast.warn { border-color: #ffb54a88; color: #ffe6c2; }
+  .ytoast.out { opacity: 0; transform: translateY(-6px); }
+  @keyframes ytoastin { from { opacity: 0; transform: translateY(-8px); } }
+  #yard-ghost { position: fixed; left: 0; top: 0; z-index: 70; display: none; pointer-events: none; padding: 5px 6px 6px; border-radius: 12px; background: radial-gradient(120% 90% at 50% 30%, #2a3c4b, #16222c); border: 1px solid #ffb54a99; box-shadow: 0 16px 34px #000b, 0 0 20px #ffb54a44; text-align: center; color: #f3e6d2; font: 11px "Segoe UI", system-ui, sans-serif; }
+  #yard-ghost canvas { width: 84px; height: 56px; display: block; }
+  #yard-tip { position: fixed; left: 0; top: 0; z-index: 60; display: none; pointer-events: none; padding: 4px 10px; border-radius: 9px; background: #0a1219ee; border: 1px solid #ffffff1f; color: #e6edf0; font: 12px "Segoe UI", system-ui, sans-serif; white-space: nowrap; }
+  /* nowy kadłub */
+  #yard-new-dlg { position: absolute; inset: 0; display: grid; place-items: center; background: #02060acc; border: 0; border-radius: 0; box-shadow: none; z-index: 5; }
+  #yard-new-dlg[hidden] { display: none; }
+  .ydlg { width: min(720px, calc(100vw - 40px)); padding: 22px 24px; border-radius: 20px; background: linear-gradient(180deg, #13212c, #0c151d); border: 1px solid var(--y-line); box-shadow: 0 30px 80px #000c; }
+  .ydlg h2 { margin: 0 0 4px; font-size: 19px; letter-spacing: .06em; }
+  .ydlg p { margin: 0 0 16px; color: var(--y-muted); }
+  .ydlg-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .ydlg-grid button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 14px; border-radius: 14px; background: radial-gradient(120% 120% at 20% 0%, #24384a, #121d27); border: 1px solid #ffffff14; text-align: left; transition: transform .12s, border-color .12s; }
+  .ydlg-grid button:hover { transform: translateY(-2px); border-color: var(--y-acc); }
+  .ydlg-grid b { font-size: 22px; color: var(--y-acc); }
+  .ydlg-grid span { font-size: 14px; font-weight: 600; }
+  .ydlg-grid small, .ydlg-grid i { color: var(--y-muted); font-size: 11.5px; font-style: normal; }
+  .ydlg-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
+  .ydlg-foot button { background: #ffffff0d; border: 1px solid var(--y-line); border-radius: 999px; padding: 6px 16px; }
+  @media (max-width: 1240px) { #yard-card { display: none; } #yard-top, #yard-help { right: 12px; max-width: calc(100vw - 366px); } }
+  @media (max-width: 980px) { .yard-brand small, .yard-grp.yard-right { display: none; } }
 </style>
 </head>
 <body>
@@ -56,7 +205,42 @@
 <div id="loading">Ładowanie kompozytora i shaderów…</div>
 <div id="errors"></div>
 <div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
+<div id="yard" aria-label="Stocznia — przyjazny edytor kadłuba">
+  <header id="yard-top" class="yard-glass">
+    <div class="yard-brand"><span class="yard-logo" aria-hidden="true"></span><div><b>STOCZNIA</b><small>kreator kadłuba</small></div></div>
+    <div class="yard-grp">
+      <select id="yard-preset" title="Gotowy okręt do przerobienia"></select>
+      <button id="yard-new" class="yard-btn" title="Nowy kadłub — budowa od podstaw">＋ Od zera</button>
+    </div>
+    <div class="yard-grp">
+      <button id="yard-undo" class="yard-btn yard-ico" title="Cofnij (Ctrl+Z)">↶</button>
+      <button id="yard-redo" class="yard-btn yard-ico" title="Ponów (Ctrl+Y)">↷</button>
+    </div>
+    <div class="yard-grp">
+      <button id="yard-mirror" class="yard-btn" title="Symetria burt: element staje też po drugiej stronie osi (L)">⇅ Symetria</button>
+      <button id="yard-outline" class="yard-btn" title="Kontury elementów (O)">◌ Kontury</button>
+      <button id="yard-fit" class="yard-btn yard-ico" title="Cały okręt w kadrze (Home)">⤢</button>
+    </div>
+    <div class="yard-grp yard-right">
+      <button id="yard-pro" class="yard-btn" title="Warsztat: pełny panel narzędzi — mapy pakietu, A/B ze sprite'ami, sieć systemów, pióro, JSON">⚙ Warsztat</button>
+    </div>
+  </header>
+  <aside id="yard-pal" class="yard-glass" aria-label="Paleta elementów">
+    <nav id="yard-tabs" role="tablist"></nav>
+    <div id="yard-opts"></div>
+    <div id="yard-cards"></div>
+    <div id="yard-trash">🗑 Puść tutaj, by usunąć</div>
+  </aside>
+  <aside id="yard-card" class="yard-glass" aria-label="Okręt"></aside>
+  <div id="yard-sel" class="yard-glass" role="toolbar" aria-label="Zaznaczony element"></div>
+  <div id="yard-help"></div>
+  <div id="yard-toasts" aria-live="polite"></div>
+  <div id="yard-new-dlg" class="yard-glass" hidden></div>
+</div>
+<div id="yard-ghost"></div>
+<div id="yard-tip"></div>
 <div id="panel">
+  <button id="btn-ui-stocznia" title="Przyjazny edytor: paleta kart, przeciągnij i upuść">◂ Stocznia — prosty edytor (przeciągnij i upuść)</button>
   <h1>KREATOR KADŁUBA — DEMO</h1>
   <div class="sub">Projekt: src/game/hullDesign/ (rama + pancerz + nadbudówka + mostek; bloki, wielokąty, części, moduły, rowki, naklejki, receptura). Pakiet: src/3d/hullDesign/hullComposer.js (TSL).</div>
 
@@ -73,6 +257,35 @@
   <div class="row"><span style="flex:0 0 112px;color:var(--muted)">panele losowe</span><input id="inp-panels" type="range" min="0" max="1" step="0.05" style="min-width:0"></div>
   <div class="row"><span id="lbl-pipenet" style="flex:0 0 112px;color:var(--muted)">sieć rur</span><input id="inp-pipenet" type="range" min="0" max="2" step="0.05" style="min-width:0"><button id="btn-pipeseed" style="flex:0 0 44px;text-align:center" title="inny układ sieci (ziarno)">⟳</button></div>
   <div class="btns" style="margin-top:4px"><button id="btn-windows">okna tarasów</button><button id="btn-underlay">podkład: sprite<kbd>U</kbd></button></div>
+
+  <h2>Klasa okrętu</h2>
+  <div class="row"><select id="sel-bridge" title="mostek — klasa: twarde limity powierzchni, gniazd i rozmiaru broni"></select></div>
+  <div class="row"><select id="sel-core" title="rdzeń — moc; najwyżej poziom ponad mostek"></select></div>
+  <div id="classinfo">—</div>
+  <div id="classmsg" class="hint"></div>
+  <h2>Gniazda broni</h2>
+  <div class="row"><select id="sel-mslot" title="typ nowego gniazda (narzędzie Moduł → Gniazdo broni)"></select><select id="sel-msize" title="rozmiar nowego gniazda"></select></div>
+  <div id="mountedit" class="hint">Kliknij gniazdo (narzędzie Przesuń / Moduł), by zmienić typ, rozmiar i broń.</div>
+  <div class="row" id="mountedit-row" style="display:none"><select id="sel-medit-slot"></select><select id="sel-medit-size"></select></div>
+  <div class="row" id="mountedit-row2" style="display:none"><select id="sel-medit-weapon"></select></div>
+  <div class="hint">Priorytet zasilania (przy niedoborze mocy gasną urządzenia od dołu listy; ich kable są szare):</div>
+  <div id="prio"></div>
+  <h2>Klocki</h2>
+  <div id="blk-palette" class="pal"></div>
+  <div class="btns3" style="margin-top:4px">
+    <button id="tool-klocek">Klocki<kbd>N</kbd></button>
+    <button id="blk-cut">wycięcie<kbd>X</kbd></button>
+    <button id="blk-del">usuń<kbd>Del</kbd></button>
+    <button id="blk-rot">obrót 90°<kbd>R</kbd></button>
+    <button id="blk-rot45">obrót 45°<kbd>⇧R</kbd></button>
+    <button id="blk-flip">odbij<kbd>F</kbd></button>
+    <button id="blk-dup">duplikuj<kbd>^D</kbd></button>
+    <button id="blk-undo">cofnij<kbd>^Z</kbd></button>
+    <button id="blk-redo">ponów<kbd>^Y</kbd></button>
+  </div>
+  <div class="row"><span id="lbl-gap" style="flex:0 0 112px;color:var(--muted)">szczelina</span><input id="inp-gap" type="range" style="min-width:0"></div>
+  <div id="blk-stats" class="hint"></div>
+  <div class="hint">Klocki (N): LPM na pustym — postaw (klik: rozmiar domyślny, przeciąganie: pudło), LPM na klocku — zaznacz i przesuń, Shift+klik — dodaj do zaznaczenia, Ctrl+przeciąganie — ramka, uchwyty — rozmiar (siatka projektu). R / Shift+R — obrót 90° / 45°, F — odbicie, X — wycięcie, 1–4 — poziom, Del — usuń, Ctrl+D — duplikat obok, strzałki — krok siatki. Płyty pancerza same dostają rów maszynowni od sąsiadów (szczelina; 0 — scala z sąsiadem); rama = pełny obrys klocków. Ctrl+Z / Ctrl+Y — cofnij / ponów każdą zmianę.</div>
 
   <h2>Narzędzie</h2>
   <div class="btns">
@@ -102,7 +315,7 @@
   <div class="row"><select id="sel-emblem"></select><input id="inp-color" type="color" value="#d06a22"></div>
   <div class="row"><input id="inp-text" type="text" value="HF-07" maxlength="16"></div>
   <div class="row"><select id="sel-pipen"></select><select id="sel-pipemat"></select></div>
-  <div class="hint">LPM — maluj / postaw / przeciągnij · PPM — usuń (element pod kursorem albo blok) · kółko nad elementem (Przesuń) — skala, Shift+kółko — obrót · kółko poza — zoom · ŚPM — przesuw. Wielokąt: LPM punkty, PPM / Enter zamyka (pierwszy i ostatni punkt na osi → symetryczny), Backspace cofa. Rura (W): łamana wiązki (rowem i po płytach), PPM / Enter kończy; kółko nad rurą (Przesuń) — średnica. Poziomy: rama = ciemna maszynownia z rurami, pancerz = białe płyty. Sieć rur: od gondol silników przez rowy do reaktora, mostka, wież i wzdłuż grzbietu (⟳ — inny układ).</div>
+  <div class="hint">LPM — maluj / postaw / przeciągnij · PPM — usuń (element pod kursorem albo blok) · kółko nad elementem (Przesuń) — skala, Shift+kółko — obrót · kółko poza — zoom · ŚPM — przesuw. Wielokąt: LPM punkty, PPM / Enter zamyka (pierwszy i ostatni punkt na osi → symetryczny), Backspace cofa. Rura (W): łamana wiązki (rowem i po płytach), PPM / Enter kończy; kółko nad rurą (Przesuń) — średnica. Poziomy: rama = ciemna maszynownia z rurami, pancerz = białe płyty. Sieć systemów: rury paliwa zbiornik → reaktor → gondole MAIN i dysze SIDE, kable reaktor → każde urządzenie, rowami maszynowni, bez wolnych końców (⟳ — inne wiązki, I — graf sieci). Systemy presetu (reaktor, mostek, silniki, zbiorniki, SIDE, ładownie — 🔒) stoją na stałych miejscach; w projekcie od zera stawiasz je sam (moduł M).</div>
 
   <h2>Widok</h2>
   <div class="btns3">
@@ -125,6 +338,10 @@
 
   <h2>Receptura</h2>
   <div id="recipe">—</div>
+
+  <h2>Sieć systemów</h2>
+  <div class="btns"><button id="btn-netgraph">graf sieci<kbd>I</kbd></button></div>
+  <div id="netinfo">—</div>
 
   <h2>JSON</h2>
   <div class="btns"><button id="btn-json">Pokaż / wczytaj</button><button id="btn-clean">Bez paneli<kbd>H</kbd></button></div>

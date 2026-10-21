@@ -28,7 +28,7 @@ import { FLEET3D_OUTLINES } from './fleetOutlines3D.js';
 import { FLEET3D_SPECS, FLEET3D_PALETTES, fleetClipKey } from './fleetHulls3D.js';
 import { SHIP_EDITOR_DEFAULTS } from '../../../data/hardpointEditorDefaults.js';
 import { getHullRenderSize } from '../../../data/ships.js';
-import { buildBridgeModel, BRIDGE3D_KINDS, BRIDGE3D_MAT, BRIDGE3D_EMIT } from '../../../3d/bridge3DShapes.js';
+import { buildBridgeModel, bridgeModelOnHull, BRIDGE3D_MAT, BRIDGE3D_EMIT } from '../../../3d/bridge3DShapes.js';
 
 export { FLEET3D_SPECS };
 export const FLEET3D_IDS = Object.freeze(Object.keys(FLEET3D_SPECS));
@@ -292,11 +292,12 @@ export function buildHullCore(id, spec, out, S, o = {}) {
   // --- 5. Mostek gry -------------------------------------------------------------------
   const bridges = [];
   if (o.bridges !== false && spec.bridge) {
-    const kind = BRIDGE3D_KINDS[spec.bridge];
-    const x = kind.zoneX;
-    const y = -kind.zoneY;
+    // flota TN — model poziomu klasy na strefie gry, reszta — model kadłuba (bridgeModelOnHull)
+    const on = bridgeModelOnHull(spec.bridge);
+    const x = on.zoneX;
+    const y = -on.zoneY;
     const z = heightAtPx(x, y);
-    bridges.push(addBridge(B, { kind: spec.bridge, x, y, z }, o.bridgeZScale ?? spec.bridgeZ ?? 2.2));
+    bridges.push(addBridge(B, { on, x, y, z }, o.bridgeZScale ?? spec.bridgeZ ?? 2.2));
   }
 
   // --- 6. Gniazda broni, światła, RCS (edytor) ------------------------------------------
@@ -471,10 +472,9 @@ function heightAt(tops, x, y, fallback) {
 // Mostek gry (przestrzeń M: środek strefy, jednostki świata profilu mostka, +Z wysokość) → px
 // kadłuba (skala render/PNG rodzaju — kadłub o innym profilu, np. `supercapital`, też pasuje).
 function addBridge(B, p, zs) {
-  const model = buildBridgeModel(p.kind);
-  const kind = BRIDGE3D_KINDS[p.kind];
-  const kx = 1 / kind.kx;
-  const ky = 1 / kind.ky;
+  const model = buildBridgeModel(p.on.kind);
+  const kx = 1 / p.on.kx;
+  const ky = 1 / p.on.ky;
   const k = (kx + ky) * 0.5;
   const MAT = {
     [BRIDGE3D_MAT.PAINT]: M.PAINT, [BRIDGE3D_MAT.PANEL]: M.PANEL, [BRIDGE3D_MAT.DARK]: M.DARK,
@@ -510,7 +510,7 @@ function addBridge(B, p, zs) {
     B.face([q(-hw, -hh), q(hw, -hh), q(hw, hh), q(-hw, hh)], mat, [e.n[0], e.n[1], e.n[2] / zs]);
     windows++;
   }
-  return { kind: p.kind, x: p.x, y: p.y, z: p.z, windows, triangles: model.triangleCount };
+  return { kind: p.on.kind, x: p.x, y: p.y, z: p.z, windows, triangles: model.triangleCount };
 }
 
 // Dane w jednostkach świata (× S), układ Core3D; zapytania jak Atlas.

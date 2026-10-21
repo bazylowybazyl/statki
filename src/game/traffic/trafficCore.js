@@ -34,6 +34,9 @@ import {
   setWorldCapacityFromGame, destroyWorldStation
 } from './trafficWorld.js';
 import {
+  addMarket, addMarketBuilding, setMarketOwner, removeMarket, describeMarket
+} from './markets.js';
+import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber
 } from './trafficProtocol.js';
@@ -84,6 +87,9 @@ export function createTrafficCore(post, options = {}) {
     wreckCursor: 0,
     warWreckSeq: 0,
     stationFactionsDirty: false,
+    /** `world.marketsVersion` ostatniej tabeli stacji wysłanej do gry. */
+    marketsVersion: 0,
+    marketsDirty: false,
     scratch: new Float64Array(COURSE_STRIDE * 256),
     segment: { x0: 0, y0: 0, x1: 0, y1: 0, t0: 0, dur: 0, dwell: false, mode: null },
     stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0 }
@@ -106,6 +112,10 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.STATION: return station(message);
         case TRAFFIC_MSG.CONFIG: return config(message);
         case TRAFFIC_MSG.SNAPSHOT: return snapshot(message);
+        case TRAFFIC_MSG.MARKET_ADD: return marketAdd(message);
+        case TRAFFIC_MSG.MARKET_BUILDING: return marketBuilding(message);
+        case TRAFFIC_MSG.MARKET_OWNER: return marketOwner(message);
+        case TRAFFIC_MSG.MARKET_REMOVE: return marketRemove(message);
         case BELT_MSG.MINED: return beltMined(message);
         default: return undefined;
       }
@@ -144,11 +154,8 @@ export function createTrafficCore(post, options = {}) {
       }
     });
     core.world = world;
-    core.stationIndex = new Map(world.stations.map((entry, index) => [entry.id, index]));
     core.berthIndex = new WeakMap();
-    for (const layout of world.docks.values()) {
-      layout.berths.forEach((berth, index) => core.berthIndex.set(berth, index));
-    }
+    indexMarkets();
     if (message.focus) setFocus(message.focus);
     const buildMs = now() - t0;
 
@@ -160,29 +167,14 @@ export function createTrafficCore(post, options = {}) {
       seed: message.seed ?? null,
       economyScale: world.config.economyScale,
       capacityMultiplier: world.config.capacityMultiplier,
-      stations: world.stations.map(entry => {
-        const node = getNode(world.network, entry.id);
-        return {
-          id: entry.id,
-          name: entry.name,
-          factionId: entry.factionId || null,
-          x: entry.x,
-          y: entry.y,
-          moon: !!node?.moon,
-          outpost: !!node?.outpost,
-          derelict: !entry.factionId,
-          parentId: node?.parentId || null,
-          hasPort: world.docks.has(entry.id)
-        };
-      }),
+      stations: stationTable(),
       resources: [...RESOURCE_KEYS],
       factions: [...FACTION_IDS],
       kinds: [...KINDS],
       // `BERTH` w rekordzie kursu to indeks w tej liście — id stanowisk są te
       // same co w układach gry (`earth:K7-1:…` z haloPortTraffic), więc bańka
       // wie, do którego padu i hali leci statek, bez własnej kopii doków.
-      berths: Object.fromEntries([...world.docks].map(([stationId, layout]) =>
-        [stationId, layout.berths.map(berth => berth.id)])),
+      berths: berthTable(),
       buildMs
     });
     // Rynek od razu, nie po pierwszych pięciu sekundach — terminal handlu
@@ -317,6 +309,61 @@ export function createTrafficCore(post, options = {}) {
     }
   }
 
+  // ============================================================
+  // Rynki (E1) — `markets.js`
+  // ============================================================
+
+  /** Indeksy stacji i stanowisk po zmianie listy rynków. */
+  function indexMarkets() {
+    const world = core.world;
+    core.stationIndex = new Map(world.stations.map((entry, index) => [entry.id, index]));
+    for (const layout of world.docks.values()) {
+      layout.berths.forEach((berth, index) => core.berthIndex.set(berth, index));
+    }
+    core.marketsVersion = world.marketsVersion;
+  }
+
+  function stationTable() {
+    const world = core.world;
+    return world.stations.map(entry => describeMarket(world, entry));
+  }
+
+  function berthTable() {
+    return Object.fromEntries([...core.world.docks].map(([stationId, layout]) =>
+      [stationId, layout.berths.map(berth => berth.id)]));
+  }
+
+  /** Zmiana listy rynków dociera do gry od razu, nie po kroku świata. */
+  function marketsChanged() {
+    indexMarkets();
+    core.marketsDirty = true;
+    publishTick(0, 0);
+  }
+
+  function marketAdd(message) {
+    const world = core.world;
+    if (!world || !message.def) return;
+    if (addMarket(world, message.def)) marketsChanged();
+  }
+
+  function marketBuilding(message) {
+    const world = core.world;
+    if (!world) return;
+    if (addMarketBuilding(world, String(message.stationId || ''), String(message.role || ''))) marketsChanged();
+  }
+
+  function marketOwner(message) {
+    const world = core.world;
+    if (!world) return;
+    if (setMarketOwner(world, String(message.stationId || ''), message.factionId || null)) marketsChanged();
+  }
+
+  function marketRemove(message) {
+    const world = core.world;
+    if (!world) return;
+    if (removeMarket(world, String(message.stationId || ''))) marketsChanged();
+  }
+
   function config(message) {
     const director = core.world?.director;
     if (!director) return;
@@ -383,6 +430,13 @@ export function createTrafficCore(post, options = {}) {
     if (core.stationFactionsDirty) {
       core.stationFactionsDirty = false;
       message.stationFactions = world.stations.map(entry => entry.factionId || null);
+    }
+    if (core.marketsDirty || core.marketsVersion !== world.marketsVersion) {
+      // Tabela rynków przed `market` — bufor rynku ma już jej układ.
+      if (core.marketsVersion !== world.marketsVersion) indexMarkets();
+      core.marketsDirty = false;
+      message.stations = stationTable();
+      message.berths = berthTable();
     }
     send(message, [market.buffer, bubble.data.buffer]);
   }

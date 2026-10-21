@@ -155,7 +155,8 @@ export function describeCore(c) {
   return {
     uid: c.uid, id: c.id, lineage: c.lineage, gx: c.gx, gy: c.gy, gridR: c.gridR, classId: c.classId,
     color: c.color, kind: c.kind, armorMul: c.armorMul, meltdownSec: c.meltdownSec, chamberMaxHpSum: c.chamberMaxHpSum,
-    cellX: copy(c.cellX), cellY: copy(c.cellY), cellBaseHp: copy(c.cellBaseHp), cellMaxHp: copy(c.cellMaxHp)
+    cellX: copy(c.cellX), cellY: copy(c.cellY), cellBaseHp: copy(c.cellBaseHp), cellMaxHp: copy(c.cellMaxHp),
+    model: c.model ? { ...c.model } : null
   };
 }
 

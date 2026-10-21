@@ -43,8 +43,8 @@ test('stan kawałków: break / ram / hide bez obrazu, _dockGone budowli, zdarzen
   gone.add('obcy');
   syncPirateBaseGone();
   assert.deepEqual([...gone].sort(), [c1.id, c2.id, c3.id].sort());
-  // planetoida: środek z układu skały i ramki bazy (jak dawny obiekt 3D)
-  const c = createPirateRockLayout().center;
+  // planetoida (radar, CIC): rzut skały z punktu widzenia — środek projektu z układu skały i ramki bazy
+  const c = createPirateRockLayout().design.center;
   assert.deepEqual(pirateRockAt(), place.toGame(c[0], c[2], {}));
   assert.equal(collapsePirateRock(), true);
   assert.equal(events.at(-1)[0], 'rockCollapse');

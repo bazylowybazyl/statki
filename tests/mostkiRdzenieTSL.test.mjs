@@ -185,3 +185,34 @@ test('reaktor: graf raz na rodzaj (2 materiały na rodzaj), limity, plazma ONE/O
     r3.dispose();
   }
 });
+
+test('reaktor nad kadłubem: obudowa czyta maskę słońca, cień pod kadłubem z depthFunc GREATER (jeden graf), 2 bufory wierzchołków', () => {
+  const scene = new THREE.Scene();
+  const r3 = createReactor3D({ scene, frameOf: (core, out) => out });
+  try {
+    const shadows = new Set();
+    for (const kind of r3.kinds) {
+      const { structure, plasma, shadow } = r3.meshes[kind];
+      for (const m of [structure, plasma, shadow]) assert.ok(m.layers.isEnabled(0), `${m.name}: pass ortho (warstwa 0)`);
+      assert.equal(structure.renderOrder, 12);
+      assert.equal(shadow.renderOrder, 11);
+      const s = limits(`reactor3D:${kind}:obudowa`, structure);
+      // obudowa: człon słońca × sunVisibility (tekstura maski), wnętrze — plazma
+      assert.match(s.fragmentShader, /texture_2d/, 'obudowa czyta maskę słońca');
+      assert.equal(vertexBuffers(structure, s), 2, 'model + jeden przepleciony bufor instancji');
+      const m = shadow.material;
+      shadows.add(m);
+      assert.equal(m.depthFunc, THREE.GreaterDepth);
+      assert.equal(m.depthWrite, false);
+      assert.equal(m.blending, THREE.NormalBlending);
+      const b = limits(`reactor3D:${kind}:cień`, shadow);
+      assert.match(b.vertexShader, /-0\.6/, 'czworokąt cienia pod kadłubem (z = −0,6)');
+      // dane instancji wspólne dla konstrukcji, plazmy i cienia rodzaju
+      assert.equal(shadow.geometry.getAttribute('iBasis').data, structure.geometry.getAttribute('iBasis').data);
+      assert.equal(plasma.geometry.getAttribute('iHouse').data, structure.geometry.getAttribute('iHouse').data);
+    }
+    assert.equal(shadows.size, 1, 'jeden materiał cienia na wszystkie rodzaje');
+  } finally {
+    r3.dispose();
+  }
+});

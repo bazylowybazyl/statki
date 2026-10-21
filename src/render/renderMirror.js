@@ -513,7 +513,7 @@ function applyCores(rm, v) {
       c = {
         uid: d.uid, id: d.id, lineage: d.lineage, gx: d.gx, gy: d.gy, gridR: d.gridR, classId: d.classId, color: d.color,
         kind: d.kind, armorMul: d.armorMul, meltdownSec: d.meltdownSec, chamberMaxHpSum: d.chamberMaxHpSum,
-        cellX: d.cellX, cellY: d.cellY, cellBaseHp: d.cellBaseHp, cellMaxHp: d.cellMaxHp,
+        cellX: d.cellX, cellY: d.cellY, cellBaseHp: d.cellBaseHp, cellMaxHp: d.cellMaxHp, model: d.model || null,
         cellState: new Uint8Array(d.cellX ? d.cellX.length : 0),
         host: null, state: undefined, invalid: null, integrity: 0, meltdownRemaining: 0, meltdownDuration: 0,
         deadCount: 0, elsewhereCount: 0, aliveCount: 0, lastX: 0, lastY: 0

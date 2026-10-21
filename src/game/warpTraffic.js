@@ -20,9 +20,13 @@ import {
   planWarpFleetArrival, warpSizeScale
 } from './warpDrive.js';
 
-export const WARP_TRAFFIC_CAP = 24;
+// 48 (dawniej 24, pula efektu `ARRIVAL_CAP`): scena „Wojna” — dwie floty po 20–25 okrętów, rekordy pierwszej żyją
+// jeszcze ~5 s po jej hamowaniu, gdy druga już zapowiada się zwiastunami.
+export const WARP_TRAFFIC_CAP = 48;
 /** Zasięg nici zwiastuna wstecz od miejsca zatrzymania [j.] (od krawędzi kadru). */
 export const HERALD_REACH = 60000;
+/** Style zwiastuna przylotu: nić wzdłuż kursu (domyślny), drganie przestrzeni w punkcie wyjścia, brak. */
+export const WARP_HERALD_STYLES = Object.freeze(['thread', 'ripple', 'none']);
 
 /** Paleta plazmy WARP encji: blok engineFx z edytora albo zapas silników (piraci karmazyn, reszta magenta). */
 export function entityWarpPaletteId(entity) {
@@ -64,23 +68,33 @@ function npcPose(e, out) {
 }
 
 /**
- * Oś przylotu okrętu (hullLength, hullWidth w j.) do (x, y) z kursem `angle` (świat gry) — (x, y) = miejsce zatrzymania.
+ * Oś przylotu okrętu (hullLength, hullWidth w j.) do (x, y) z kursem `angle` (świat gry) — (x, y) = punkt przylotu:
+ * miejsce zatrzymania, a przy wyjściu z pędem (exitSpeed > 0, slide — warpExitMomentum) KONIEC ŚLIZGU; hamowanie
+ * (zwiastun, błysk, fala) kończy się wtedy `slide` przed nim (a.x, a.y), punkt przylotu zostaje w a.ex, a.ey.
  * startTime — start zwiastuna; burstTime (zamiast startTime) — początek hamowania; appearTime (zamiast obu) — okręt
  * pojawia się w tej chwili (przylot „teraz”). moving — pozycję prowadzi gra (hamowanie z chwili wyjścia z warp-in:
  * setArrivalMovingBrake); rush — minimalna droga wlotu [× długość kadłuba]; heraldReach — nić krótsza, gdy znane miejsce
  * startu jest bliżej (wezwanie z Ziemi). Wygląd (barwy, przegródki ośrodka, kadłub) dokłada render.
  */
 export function planWarpArrivalAxis(o) {
-  const probe = planWarpRush(createWarpArrival({ hullLength: o.hullLength, heraldExtra: o.heraldExtra }), o.rush);
+  const vExit = Math.max(0, Number(o.exitSpeed) || 0);
+  const slide = vExit > 0 ? Math.max(0, Number(o.slide) || 0) : 0;
+  const probe = planWarpRush(createWarpArrival({ hullLength: o.hullLength, heraldExtra: o.heraldExtra }), o.rush, vExit);
   const lead = probe.tBurst - probe.t0;
   let startTime = Number(o.startTime) || 0;
   if (Number.isFinite(o.burstTime)) startTime = o.burstTime - lead;
   else if (Number.isFinite(o.appearTime)) startTime = o.appearTime - (probe.tAppear - probe.t0);
+  const ang = Number(o.angle) || 0;
+  const ex = Number(o.x) || 0;
+  const ey = Number(o.y) || 0;
   const a = createWarpArrival({
-    x: o.x, y: o.y, angle: o.angle, hullLength: o.hullLength, hullWidth: o.hullWidth,
-    startTime, heraldExtra: o.heraldExtra, palette: o.palette, entity: o.entity || null, id: o.id
+    x: ex - Math.cos(ang) * slide, y: ey - Math.sin(ang) * slide, angle: ang, hullLength: o.hullLength,
+    hullWidth: o.hullWidth, startTime, heraldExtra: o.heraldExtra, palette: o.palette, entity: o.entity || null, id: o.id
   });
-  planWarpRush(a, o.rush);
+  planWarpRush(a, o.rush, vExit);
+  a.slide = slide;
+  a.ex = ex;
+  a.ey = ey;
   a.sx = a.x;
   a.sy = a.y;
   // Chwila, w której okręt musi już być w grze (wezwanie: spawn — src/game/supportWarp.js).
@@ -90,6 +104,8 @@ export function planWarpArrivalAxis(o) {
   a.drive = !o.moving;
   const reach = Number(o.heraldReach);
   a.heraldReach = reach > 0 ? Math.max(a.hullLength * 2, Math.min(HERALD_REACH, reach)) : HERALD_REACH;
+  // Wygląd zwiastuna (render: arrivals.js): nić wzdłuż kursu, drganie przestrzeni w punkcie wyjścia albo nic.
+  a.heraldStyle = WARP_HERALD_STYLES.includes(o.heraldStyle) ? o.heraldStyle : 'thread';
   a.rushSample = {};
   // Puszczenie przegródki iskier pchniętych przed dziób (render: przegródka ośrodka) — chwila z osi.
   a.pushReleaseT = a.tBrake + 0.02;
@@ -100,15 +116,21 @@ export function planWarpArrivalAxis(o) {
     a.tStop = Infinity;
     a.tEnd = Infinity;
     a.v0 = Math.max(1, Number(o.speed) || a.v0);
-    a.brake = warpBrakeTime(a.hullLength, a.v0);
+    a.vExit = Math.min(a.vExit, a.v0);
+    a.brake = warpBrakeTime(a.hullLength, a.v0, a.vExit);
   }
   return a;
 }
 
-/** Warp-in prowadzony przez grę: okręt wyszedł z 'warping_in' w chwili t — hamowanie od teraz. */
-export function setArrivalMovingBrake(a, t, speed) {
+/**
+ * Warp-in prowadzony przez grę: okręt wyszedł z 'warping_in' w chwili t — hamowanie od teraz (obraz: z `speed` do
+ * `vExit` — prędkości, z którą gra puściła okręt; bez niej — do dawnego vExit osi).
+ */
+export function setArrivalMovingBrake(a, t, speed, vExit = NaN) {
   if (Number(speed) > 1) a.v0 = speed;
-  a.brake = warpBrakeTime(a.hullLength, a.v0);
+  if (Number.isFinite(vExit)) a.vExit = Math.max(0, vExit);
+  a.vExit = Math.min(Number(a.vExit) || 0, a.v0);
+  a.brake = warpBrakeTime(a.hullLength, a.v0, a.vExit);
   a.tBrake = t;
   a.tStop = t + a.brake;
   a.tEnd = a.tStop + 4.5;
@@ -153,9 +175,10 @@ export function departAxisPose(d, t, out) {
 
 /**
  * Rejestr ruchu warpa. commands — pisarz strumienia rozkazów (RenderCommands.writer: warpBegin / warpAttach / warpEnd /
- * warpClear) albo null (testy bez renderu).
+ * warpClear) albo null (testy bez renderu). momentum(encja) → { vExit, slide } | null — wyjście z pędem przylotu „teraz”
+ * (`arrive`: gra zna specyfikację lotu encji — warpExitMomentum); bez niego okręt staje jak dawniej.
  */
-export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = {}) {
+export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP, momentum = null } = {}) {
   const free = [];
   for (let i = cap - 1; i >= 0; i--) free.push(i);
   const slots = new Array(cap).fill(null);
@@ -170,6 +193,7 @@ export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = 
     /** Rekordy w kolejności powstania (jak dawna lista efektu `WarpNurt.arrivals`). */
     records: [],
     commands,
+    momentum,
     stats: { arrivals: 0, departures: 0, started: 0, ended: 0, full: 0 },
 
     /** Rekord w slocie puli (render inline: obiekt rejestru). */
@@ -237,10 +261,12 @@ export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = 
           const fx = rec.fx;
           const en = rec.entity;
           if (en) {
-            // Warp-in prowadzony przez grę: hamowanie od chwili, gdy okręt wyszedł z 'warping_in'.
+            // Warp-in prowadzony przez grę: hamowanie od chwili, gdy okręt wyszedł z 'warping_in' (do prędkości,
+            // z którą gra go puściła — wyjście z pędem).
             if (fx.moving && fx.tBrake === Infinity && en.state !== 'warping_in') {
               const p0 = npcPose(en, pose);
-              setArrivalMovingBrake(fx, t, Math.max(fx.v0, Math.sqrt(p0.vx * p0.vx + p0.vy * p0.vy)));
+              const sp = Math.sqrt(p0.vx * p0.vx + p0.vy * p0.vy);
+              setArrivalMovingBrake(fx, t, Math.max(fx.v0, sp), sp < fx.v0 ? sp : NaN);
             }
             if (fx.drive && t < fx.tStop) {
               // Wlot i hamowanie prowadzi oś (duch — bez zderzeń; okręt pojawia się za kadrem).
@@ -255,8 +281,12 @@ export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = 
               if (Number.isFinite(en.desiredAngle)) en.desiredAngle = fx.angle;
               en.angVel = 0;
             } else if (rec.driving) {
-              // Zatrzymanie: okręt stoi w miejscu zwiastuna i wraca do gry.
-              writePose(en, fx.x, fx.y, 0, 0);
+              // Koniec hamowania: okręt wraca do gry — stoi w miejscu zwiastuna (vExit = 0) albo leci dalej z prędkością
+              // wyjścia wzdłuż kursu (wyjście z pędem; poza z osi w tej chwili — klatka może przyjść po tStop).
+              const p = arrivalAxisPose(fx, t, drive);
+              writePose(en, p.x, p.y, p.vx, p.vy);
+              // ślizg: model lotu trzyma limit na prędkości bojowej, aż nadmiar zgaśnie (shipFlightModel.js)
+              if (fx.vExit > 0) en.__warpExitSlide = true;
               this._releaseDrive(rec);
             }
           }
@@ -306,8 +336,10 @@ export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = 
 
     /**
      * Przylot okrętu w chwili pojawienia się w grze (bez zapowiedzi — rozgrywka nie zna go wcześniej): okręt wpada
-     * z daleka i hamuje w miejscu, w którym postawiła go gra (oś prowadzi go przez wlot — duch). opts.moving — pozycję
-     * prowadzi gra (warp-in piratów: odsłanianie od miejsca pojawienia się, hamowanie po wyjściu z 'warping_in').
+     * z daleka i hamuje tak, że w miejscu, w którym postawiła go gra, staje (albo — wyjście z pędem — kończy ślizg; oś
+     * prowadzi go przez wlot i hamowanie — duch). opts.moving — pozycję prowadzi gra (warp-in piratów: odsłanianie od
+     * miejsca pojawienia się, hamowanie po wyjściu z 'warping_in'). opts.exit — { vExit, slide } zamiast `momentum`
+     * rejestru (null — zatrzymanie).
      */
     arrive(entity, opts = {}) {
       if (!entity || !this._room()) return null;
@@ -315,10 +347,12 @@ export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = 
       const angle = opts.angle ?? p.angle;
       const moving = !!opts.moving;
       const speed = Math.max(Number(entity.warpData?.speed) || 0, Math.sqrt(p.vx * p.vx + p.vy * p.vy));
+      const exit = moving ? null : (opts.exit !== undefined ? opts.exit : (this.momentum ? this.momentum(entity) : null));
       const fx = planWarpArrivalAxis({
         x: p.x, y: p.y, angle, hullLength: entityWarpHullLength(entity), hullWidth: entityWarpHullWidth(entity),
         palette: opts.palette || entityWarpPaletteId(entity), pirate: !!(opts.pirate ?? entity.isPirate),
-        moving, appearTime: this.time, speed, entity, rush: opts.rush
+        moving, appearTime: this.time, speed, entity, rush: opts.rush,
+        exitSpeed: exit ? exit.vExit : 0, slide: exit ? exit.slide : 0
       });
       if (moving) { fx.x0 = p.x; fx.y0 = p.y; }
       return this._add({ id: -1, kind: 'arrival', fx, entity, sized: !!entity.beamHull, moving, driving: false, wasCollidable: true, onGone: null, goneFired: false });
@@ -340,9 +374,11 @@ export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = 
     },
 
     /**
-     * Przylot zaplanowany (zwiastun → wlot → hamowanie) w (x, y) = miejsce zatrzymania; hamowanie po czasie zwiastuna
-     * (albo `burstIn` s). Wołający stawia okręt w grze w chwili `rec.fx.tSpawn` (czas tego rejestru) i podpina go
-     * `attach(rec, encja)` (wezwania z zakładki wsparcia: src/game/supportWarp.js). o.heraldReach — nić krótsza.
+     * Przylot zaplanowany (zwiastun → wlot → hamowanie) w (x, y) = punkt przylotu (miejsce zatrzymania albo koniec
+     * ślizgu — o.exitSpeed, o.slide: warpExitMomentum); hamowanie po czasie zwiastuna (albo `burstIn` s). Wołający
+     * stawia okręt w grze w chwili `rec.fx.tSpawn` (czas tego rejestru) i podpina go `attach(rec, encja)` (wezwania
+     * z zakładki wsparcia: src/game/supportWarp.js). o.heraldReach — nić krótsza; o.heraldStyle — wygląd zwiastuna
+     * ('thread' — nić, domyślnie; 'ripple' — drganie przestrzeni; 'none').
      */
     planArrival(o) {
       if (!this._room()) return null;
@@ -351,7 +387,7 @@ export function createWarpTraffic({ commands = null, cap = WARP_TRAFFIC_CAP } = 
         palette: o.palette || 'magenta', pirate: !!o.pirate, moving: false, rush: o.rush,
         startTime: Number.isFinite(o.burstIn) ? undefined : this.time + (Number(o.delay) || 0),
         burstTime: Number.isFinite(o.burstIn) ? this.time + o.burstIn : undefined, heraldExtra: o.heraldExtra || 0,
-        heraldReach: o.heraldReach
+        heraldReach: o.heraldReach, exitSpeed: o.exitSpeed, slide: o.slide, heraldStyle: o.heraldStyle
       });
       return this._add({ id: -1, kind: 'arrival', fx, entity: null, sized: true, moving: false, driving: false, wasCollidable: true, onGone: null, goneFired: false });
     },

@@ -8,7 +8,7 @@ HULLFALL to gra o okrętach kapitałowych (gracz prowadzi Atlasa): rozgrywka na 
 
 - Opis obszaru (jak działa, decyzje użytkownika, pułapki, jak sprawdzić) → jego reguła w `.claude/rules/`. Nowy obszar = nowa reguła z `paths:` (każdy glob w cudzysłowie — zepsuty YAML ładuje regułę ZAWSZE) + wiersz w indeksie niżej. Do tego pliku dopisuj tylko zasadę przekrojową (dotyczy kodu poza obszarem: „nowa ścieżka X musi wołać Y”) albo zmianę indeksu.
 - Reguła opisuje STAN i ZASADY w czasie teraźniejszym. Historia („dawniej…”), wyniki pomiarów i A/B → `docs/` (audyty, plany); w regule zostaje wniosek i odnośnik.
-- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–38) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
+- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–39) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
 - Notatka dla kolejnych agentów w kodzie: komentarz z prefiksem `AGENT:`.
 
 ## Zasady żelazne
@@ -46,6 +46,7 @@ HULLFALL to gra o okrętach kapitałowych (gracz prowadzi Atlasa): rozgrywka na 
 Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 **Obraz i render**
+- Nowe stałe światło sceny → w scenie przed pierwszą kompilacją (strona przy starcie, worker w init przed urządzeniem — jak `initWorld3D()`), gaszone `intensity = 0`; zestaw świateł jest w kluczu każdego materiału, światło dodane później przebudowuje wszystko rozgrzane (reguła `webgpu-tsl`, „Rozgrzewka pipeline'ów”).
 - Nowy materiał, siatka albo pula → rejestr rozgrzewki `Core3D.warmup.add({ name, objects, phase })` (`'loading'` — pula tworzona na ekranie ładowania, `'after'` — rzeczy, których pierwsza klatka gry nie rysuje; `shadow: true` — siatki z `castShadow`; siatki instancjonowane z `variant: WARIANT_INSTANCJI`). Każde `compileAsync` na celu przez `compileAsyncNaCelu` (`src/3d/rozgrzewka.js`).
 - Nowy efekt GPU → krok `Core3D.addFxStep({ name, spawn, lights, update, warm })` (compute raz na klatkę, przed passami); pula GPU rejestruje się w `FxPoolOrigin` z kernelem przesunięcia; światła przez `Core3D.fx.lights` / `ctx.grid`, refrakcja przez `Core3D.fxDistortion()` albo warstwę DIST. Nie własne `renderer.compute` w pętli gry, cele ani passy.
 - Nowe zdarzenie efektu z gry → nowy typ rekordu strumienia rozkazów (`src/render/renderCommands.js` + dekoder + test kodowania), nie wywołanie modułu renderu (`WeaponFx`, `RocketEffects`…). Wybuch z gry → `GameBlasts.blast`; mapa ran → `HullDamageEvents` (+ `setSource` / `clearSource`); strzał z wieży → odrzut liczy gra (`Turret2D.recoilForShot`).
@@ -73,10 +74,11 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Broń i obrażenia myśliwców → filtr IFF z `src/game/friendlyFire.js`; jednostka gracza poza frakcjami → `playerOwned = true`.
 - Obrażenia od broni gracza → `applyDamageToNPC(…, byPlayer)` (znacznik trafienia); obrażenia gracza od pocisku NPC → stempel `__fcHitPlayerAt` strzelca; obrażenia zatrzymywane przez tarczę → test przebicia `isShieldBreachedAt`; obrażenia obszarowe → też `RepairSwarm.blast` (drony naprawcze).
 - Zestrzelenie rakiety lub torpedy → tylko `killRocketThreat`.
-- Przylot, odlot, wezwanie NPC tunelem warpa → rejestr `warpTraffic` (nie `WarpNurt`); wyjście z warpa → `exitWarp`; przylot wroga spoza kolejki wezwań → `noteCameraDirectorCue`; sterowanie skrzydłem pomija jednostki z `__warpReturn`.
+- Przylot, odlot, wezwanie NPC tunelem warpa → rejestr `warpTraffic` (nie `WarpNurt`); wyjście z warpa → `exitWarp`; przylot wroga spoza kolejki wezwań → `noteCameraDirectorCue`; sterowanie skrzydłem pomija jednostki z `__warpReturn`. Nowa ścieżka wyjścia NPC z warpa → pęd z `warpExitMomentum` (punkt przylotu = koniec ślizgu) i flaga `__warpExitSlide` (model lotu trzyma limit bojowy do końca ślizgu), nie zerowanie prędkości.
 - Kamera: wejście ustawia `camera.targetZoom` (sprężyna raz na klatkę renderu, nie w `physicsStep`); offsety kamery tylko w rigu (`src/game/cameraRig.js`); wstrząs z modułu renderu → hak `onShake` (żądanie do gry), nie `window.camera`.
 - Ciąg, skok, szarża → `mainEngineFraction` / `engineThrustScale` / `engineBlocksDrive` (uszkodzenie i stan silników).
 - Modyfikatory okrętu → `setModifierSource`, nigdy `entity.modifiers =`; zasięg i prędkość pocisku broni → `weaponRangeFor` / `weaponSpeedMul`.
+- Nowa ścieżka montażu broni u gracza (fitowanie, zapis wyposażenia, sklep, konsola dev) → przez `playerFitFits` / `savedHardpointBucket` / `weaponBuildCost`: broń `npcOnly` (promień śmierci Colossusa) do gracza nie trafia; broń z `npcFaction` uzbraja tylko tę frakcję (`equipNpcWeapons`).
 - Mózgi NPC liczą się też w klatkach bez kroku fizyki — mózg pisze tylko ZAMIARY (intencja lotu, cel, wieże); mózg całkujący ruch sam musi zostać w kroku (`aiOffStepEligible`).
 - Logika nie czyta klawiszy ani padów wprost: akcje (`Input.*`, rejestr `GameActions`); nowa akcja = wpis w `INPUT_ACTIONS` + układy + `GameActions`.
 - Nowy rodzaj obiektu na radarze → rekord w `radarFeed.collect` (nie rysunek w kokpicie).
@@ -86,7 +88,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 ## Częste zadania
 
-- Nowy kadłub: `HULL_RENDER_PROFILES` (`src/data/ships.js`), `HULL_SPRITE_PATHS_BY_ID` i `getNpcHullRenderProfileId` (`index.html`), gniazda w `src/data/hardpointEditorDefaults.js` (kadłub gracza spoza kluczy edytora — `EDITOR_HULL_KEY_BY_PLAYER_ID`, strażnik `tests/playerEditorKey.test.mjs`), dysze MAIN w `ENGINE_FX_DEFAULTS` (`src/data/engineFx.js`), mostek wg `docs/BRIEF-mostek-nowego-kadluba.md`, obrys 3D (`node scripts/webgpu/obrysy-floty.mjs`).
+- Nowy kadłub: `HULL_RENDER_PROFILES` (`src/data/ships.js`), `HULL_SPRITE_PATHS_BY_ID` i `getNpcHullRenderProfileId` (`index.html`), gniazda w `src/data/hardpointEditorDefaults.js` (kadłub gracza spoza kluczy edytora — `EDITOR_HULL_KEY_BY_PLAYER_ID`, strażnik `tests/playerEditorKey.test.mjs`), dysze MAIN w `ENGINE_FX_DEFAULTS` (`src/data/engineFx.js`), mostek wg `docs/BRIEF-mostek-nowego-kadluba.md` (flota TN — strefa = obrys modelu poziomu klasy w miejscu gniazda `bridge` v 2 presetu kreatora, `src/data/bridgeLevels.js`), rdzeń reaktora — marker w `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`: komora `r`, obudowa nad kadłubem `hr`, poza wieżami i mostkami; kadłub z presetem kreatora — miejsce z presetu, reguła `mostki-reaktor`), obrys 3D (`node scripts/webgpu/obrysy-floty.mjs`).
 - Nowa broń: `MASTER_WEAPONS` (`src/data/weapons.js`: `recoil`, `shake`, zasięg w paśmie swojej roli — reguła `bron-gracza`), `WEAPON_FX` (`src/3d/weapons/weaponFxTable.js`), klucz wieżyczki (`FX_PROFILE` w `src/vfx/turret2D.js`), rodzina 3D (`FAMILIES` w `src/3d/ships3d/weapons/weapons3D.js`).
 - Nowa misja: skrypt w `src/game/story/missions/` + kwestie w `src/data/story/`; gry dotyka tylko przez `api` z `src/game/story/storyGame.js` (reguła `fabula`).
 - Nowy typ skały pasa, nowy system F, nowa rola myśliwca, nowa formacja: lista kontrolna w regule obszaru (`pas-asteroid`, `systemy-f`, `mysliwce`, `flota-ai`).
@@ -113,7 +115,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 | Reguła | Obszar |
 |---|---|
-| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–38), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
+| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–39), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
 | `core3d` | Core3D: klatka i passy, post i bloom, efekty GPU (`Core3D.fx`), maska słońca i cień kadłubów, wydajność renderu |
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
@@ -126,6 +128,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, upadek, powietrze, uderzenia |
 | `fabula` | Fabuła: reżyser misji, intro w K-7, kampania |
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |
+| `kreator-kadlubow` | Kreator kadłubów (demo, niewpięty): format projektu, klocki i strażnik „bez czitowania”, kompozytor TSL, sieć systemów (kable i rury), przyjazny edytor „Stocznia” (przeciągnij i upuść) |
 | `ciala-swiata` | Budowle na silniku belek: kawałki, kotwice, broń, rozpad, skóry |
 | `wybuchy-gaz` | Wybuchy WebGPU i gaz 3D: domeny, przeszkody, zbiorniki paliwa, dym zgniotu |
 | `flota-ai` | Szyk floty, formacje, omijanie przeszkód, rozkazy RTS, AI poza krokiem fizyki |
@@ -139,6 +142,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `tarcze` | Tarcze: pula slotów, przebicie, wygląd |
 | `maskowanie` | Maskowanie: wygląd, efekty, wizjer |
 | `warp` | Warp gracza, TRAVEL TO, wezwania wsparcia, warp „Nurt” w Core3D |
+| `scena-wojna` | Scena „Wojna”: floty z warpa, bitwa w głębi (tłum nad i pod płaszczyzną, planeta w głębi), bohaterowie, ujęcia kamery |
 | `fregata-zwiadu` | Fregata zwiadu w ładowni Atlasa |
 | `holownik` | Uszkodzenie silników i holownik serwisowy |
 | `silniki` | Silniki MAIN / WARP / SIDE, zapłon i gaszenie |

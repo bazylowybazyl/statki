@@ -43,6 +43,7 @@ import { HullSurface } from './hullSurface.js';
 import { EngineFrame } from './engineFrame.js';
 import { MAIN_EXHAUST_PALETTES } from '../data/engineFx.js';
 import { HULL_SDF_OCCLUDER_FLOATS, HullShadowSdf, packHullShaftOccluder } from './hullShadowSdf.js';
+import { WARP_HULL_SHADOW } from './warp/player.js';
 import {
   HULL_EMPTY_SPRITE_TEXTURE,
   HULL_FLAT_NORMAL_TEXTURE,
@@ -1328,6 +1329,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     let pushed = 0;
     for (let i = 0; i < cands.length && pushed < shaftHullBudget; i++) {
       const c = cands[i];
+      // Gracz w skoku: cień gaśnie (warp/player.js: WARP_HULL_SHADOW — tło skoku w nieskończoności).
+      const strength = c.entity === RenderWorld.ship ? WARP_HULL_SHADOW.player : 1;
+      if (!(strength > 0.001)) continue;
       // null = sylwetka czeka na pieczenie (budżet klatki) — cień od następnej.
       const occ = HullShadowSdf.acquire(c.grid, now);
       if (!occ) continue;
@@ -1339,7 +1343,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       const rot = usesBillboardOrientation(c.entity) ? rawAng : -rawAng;
       const rsc = Number(c.entity.__renderScale) > 0 ? Number(c.entity.__renderScale) : 1;
       packHullShaftOccluder(shaftOccluderScratch, 0, px, py, rot,
-        getEntityScaleX(c.entity) * rsc, getEntityScaleY(c.entity) * rsc, occ.layout, occ.layer);
+        getEntityScaleX(c.entity) * rsc, getEntityScaleY(c.entity) * rsc, occ.layout, occ.layer, strength);
       // pushShaftHullSdf zwraca false po zapełnieniu rejestru — koniec.
       if (!Core3D.pushShaftHullSdf(shaftOccluderScratch, 0)) break;
       pushed++;
