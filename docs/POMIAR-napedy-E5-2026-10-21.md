@@ -84,3 +84,21 @@ Wnioski:
 - Koszt ticku rośnie mimo 3× mniej kursów: 26% czasu zjada `nextShipmentOrderId` (`src/game/cargoFleet.js:332` — przy
   każdym zleceniu buduje `Set` ze WSZYSTKICH zleceń; koszt rośnie kwadratowo z liczbą dostaw). Bramka 25 ms wymaga
   naprawy tam (plik E4 / E2) albo strojenia przepływu.
+
+## Bramka bilansu E4 (`scripts/bramka-bilansu.mjs` z cf5b56e3, ziarna 7 / 11 / 23, po kolei)
+
+Obie wersje nie zaliczają bramki (baza też nie); progi z `docs/PLAN-ekonomia-rynki.md` § 5. Na maszynie pracowało
+5 sesji naraz — czas ticku orientacyjnie.
+
+| próg | baza (9d0e61fd) | E5 |
+|---|---|---|
+| przechwyty ≤ 15% | 40,4 / 40,7 / 41,2% | 28,8 / 29,0 / 29,2% |
+| głód ≤ 30 min | 240 min, 35 / 35 / 35 pozycji | 240 min, 33 / 32 / 32 pozycji |
+| stocznie ≤ 30 min | 240 min (Merkury, Wenus, Saturn, Uran, Westa) | to samo (Wenus 234 min w ziarnie 11) |
+| średnia kolejka ≤ 2 | 6,0 Westa / 12,9 Saturn / 4,8 Westa | 63,3 / 65,6 / 62,1 — Saturn |
+| tick przy szczycie ≤ 25 ms | 26,7 / 18,5 / 23,5 ms | 48,3 / 42,8 / 44,7 ms |
+
+- Saturn (26 stanowisk, w bazie zajęte 25) nie nadąża z 2× większym obrotem — średnia kolejka ×5–10.
+- Tick mierzy bramka przy ≥ 90% szczytu kursów; w E5 szczyt przypada na koniec biegu, kiedy lista zleceń jest
+  najdłuższa — kwadratowy `nextShipmentOrderId` (`src/game/cargoFleet.js:332`, 26% profilu) waży tam najwięcej.
+- Głód i stocznie bez zmian: to braki struktury (stocznie bez podzespołów — zadanie E4/E8), nie prędkości.
