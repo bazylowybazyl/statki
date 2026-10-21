@@ -47,6 +47,37 @@ urobek przy okazji jest wyłączony do czasu receptur rud z widm (E4).
 Wyprawy po kryształ (rzadka ruda) szukają dłużej, zamiast wozić skałę płonną. W pierwszej wersji (ładownia ściśle
 wg składu) przywoziły 6 t kryształu na 120 t ładowni, więc dyspozytor słał ich 1062.
 
+## Po scaleniu z lokalnym `main` (E1 — rynek, E8 — receptury)
+
+Przed: eksport lokalnego `main`. Po: gałąź E3 po scaleniu (commit 4b24d2ab, z `minShare` 0,005).
+
+| ziarno | wyprawy | w skałach | urobek dowieziony [t] | dostawy | skuteczność |
+|---|---|---|---|---|---|
+| 7 | 536 → 607 | 24,6% → 95,6% | 18 720 → 25 920 | 10 862 → 11 906 | 59,2% → 61,0% |
+| 11 | 568 → 559 | 21,0% → 96,8% | 19 560 → 20 280 | 11 089 → 11 259 | 61,3% → 61,1% |
+| 23 | 576 → 615 | 21,4% → 96,7% | 18 720 → 26 998 | 11 211 → 11 492 | 60,7% → 61,0% |
+
+**Bramka bilansu:**
+- przechwyty z ładunkiem: 23,2 / 21,9 / 22,9% → 22,4 / 21,4 / 22,6%;
+- głód (63–64 pozycje) i stocznie: bez zmian;
+- kolejka Urana: 3,62 / 4,44 / 3,78 → 4,93 / 6,22 / 4,24.
+
+**Kolejka Urana (A/B, ziarna 7 / 11):**
+- Wyprawy po uran z Urana idą do jednego sektora Kuipera, do kopalni, i trwają 94 min (w `main` 77).
+- Przy `claimReuse` 0 kolejka spada do 4,33 / 4,15. Resztę wzrostu daje dłuższe wydobycie: czas zależy od gęstości
+  i rzadkości rudy.
+- Pokrętła: `claimReuse`, `extraction.rareMax`, `extractionSeconds.kuiper`.
+
+**Głód rud z widm** (definicja bramki, `main` → E3, ziarna 7 / 11):
+- ruda niklu na Ceres: 34 → 34 min i 35 → 34 min. Wypraw po nikiel nie ma, bo Westa ma go w nadwyżce (`PLANET_YIELD`),
+  a dyspozytor kopie tylko to, czego nikt nie ma na zbyciu. Głód bierze się z czasu przewozu.
+- ruda platyny: głodu ≥ 10 min nie ma. Po zmianie `minShare` jest 23–25 wypraw po platynę, przy dawnym 0,02 żadne pole
+  jej nie oferowało.
+- węgiel na Weście: 76 → 35 i 30 → 34 min.
+
+**Uran:** po E8 popyt pojawia się dopiero ok. 180. minuty, więc w 240 min biegu wyprawy po uran nic nie dowożą,
+w `main` i w E3 tak samo.
+
 ## Koszt pola skał w workerze ruchu
 
 `AsteroidBeltField` jest czystą logiką (bez three i DOM). Koszty:

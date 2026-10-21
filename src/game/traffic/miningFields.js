@@ -722,13 +722,15 @@ export function planExpedition(model, fieldNode, resourceId, units, rng = Math.r
   let dens = sampleResources(model, x, y);
   const res = model.resShares;
   let ore = oreShareOf(res);
-  if (!(dens > 0) || !(ore > 0)) {
-    // Skraj komórki bez skał — skład komórki (średnia z próbek).
+  if (!(dens > 0) || !(ore > 0) || !(res[r] > 0)) {
+    // Skraj komórki bez skał albo bez tej rudy — skład komórki (średnia z próbek).
     const c = cellAt(model, claim.ix, claim.iy);
     dens = c.dens;
     for (let k = 0; k < NR; k++) res[k] = c.shares[k];
     ore = oreShareOf(res);
   }
+  // Bez chcianej rudy nawet w komórce — nie ma po co lecieć (ładownia samych produktów ubocznych).
+  if (!(res[r] > 0)) return null;
   const harvest = {};
   const want = ore > 0 ? res[r] / ore : 0;
   if (ore > 0) {
