@@ -123,13 +123,15 @@ export const HD_SYSTEM_SLOTS = Object.freeze({
     add: [tank(-58, 0, 3.2, 2, { rot: TO_BOW }), side(30, -22.1, 2, 2)]
   },
   // DREDNOT TN (klasa VII, tylko NPC): miejsca z briefu § 4.4 (u · 5 400, v · 1 800; rufa węższa niż w briefie — ±460):
-  // 2 rdzenie w obudowach R7 (−810, ±200), mostek główny w wieży rufy (−1790), 2 pomocnicze (820, ±248), 4 zbiorniki
+  // 2 rdzenie w obudowach R7 (−810, ±200), mostek główny w wieży rufy (−1790, poziom VI), 2 pomocnicze (820, ±248, V), 4 zbiorniki
   // w poprzecznej wnęce rufy (−2056; v ±0,09 i ±0,19), 12 dysz SIDE (rufa 2, burta śródokręcia 3, skos ostrza 1 — na
   // burtę), 4 generatory tarczy sektorów (dziób i rufa na osi, burty), 2 projektory studni grawitacyjnej na grzbiecie
   dreadnought: {
     add: [
       { type: 'reactor', x: -810, y: -200, r: 48, v: 2 },
-      { type: 'bridge', x: -1790, y: 0, w: 64, h: 44 }, { type: 'bridge', x: 820, y: -248, w: 40, h: 28 },
+      // mostki: gniazda poziomu (v 2, `lv` — gałąź mostki-klasy: obrys z src/data/bridgeLevels.js, w / h ignorowane); do jej
+      // scalenia w / h = pół obrysu poziomu (VI 150 × 76, V 108 × 54) — dzisiejszy main rysuje z nich mostek v 0
+      { type: 'bridge', x: -1790, y: 0, v: 2, lv: 6, w: 75, h: 38 }, { type: 'bridge', x: 820, y: -248, v: 2, lv: 5, w: 54, h: 27 },
       tank(-2056, -168, 44, 18, { rot: TO_AXIS }), tank(-2056, -340, 44, 18, { rot: TO_AXIS }),
       side(-2180, -445.25, 16, 12), side(-1960, -445.25, 16, 12),
       side(-1072, -705.25, 16, 12), side(-368, -705.25, 16, 12), side(336, -705.25, 16, 12),

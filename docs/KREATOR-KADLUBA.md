@@ -502,7 +502,8 @@ i nadbudówki), 2 kasztele, `isPlayerBuildable` i rama w jednym kawałku — tak
 specjalne Capital 12 (Yamato), główne L 16 (Helios × 8, ciężkie autodziała × 8, w tym 4 w rufę), specjalne L 10 (jony
 × 6, promienie ściągające × 4 — bez broni, typowe 40 MW), pomocnicze L 14 (CIWS Mk II × 8, flak L × 6), rakietowe L 6
 (torpedy oblężnicze × 4 w dziobie, wyrzutnie rakiet × 2), hangary 8 (wrota w pasie środkowym). **Systemy (§ 4.4)**:
-2 rdzenie w obudowach R7 (r 48 j.), 3 mostki (główny −1 790 na osi, pomocnicze 820, ±248), 4 zbiorniki we wnęce
+2 rdzenie w obudowach R7 (r 48 j.), 3 mostki — gniazda poziomu z gałęzi mostków (`v: 2`, `lv`; główny VI 150 × 76 j. na
+osi −1 790, pomocnicze V 108 × 54 j. w 820, ±248; modelu VII nie ma), 4 zbiorniki we wnęce
 rufy, 12 dysz SIDE (8 MAIN + 12 SIDE = sufit 20 stref dysz gry), 4 generatory tarczy sektorów, 2 projektory studni
 na grzbiecie. Sieć: 127 biegów, ~430 elementów osprzętu, 0 wolnych końców i wiązek poza obrysem.
 
