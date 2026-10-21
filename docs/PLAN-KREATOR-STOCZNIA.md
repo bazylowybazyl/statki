@@ -44,8 +44,15 @@ gondola, a gondolę reaktor. Zbiornika paliwa w ogóle nie ma, a kabli nie ma wc
   cała szerokość wiązki wewnątrz obrysu, trasy rowami (widać je) albo pod płytami (wejście z kołnierzem).
 - **Systemy w presetach są zablokowane** w edytorze; w projekcie od zera wolne, z walidacją (rdzeń, zbiornik,
   mostek i MAIN wymagane).
+- **Rama w jednym kawałku**: kadłub (poziom ramy) to jedna bryła bez otworów na wylot — szpara między klockami to
+  dziura w kadłubie i w strukturze belek, a sieć nie przejdzie przez nią do urządzeń. Test na wszystkich presetach,
+  ostrzeżenie w panelu edytora.
 
 ## Etapy
+
+Stan 2026-10-21: etapy 1A–1D zrobione i scalone do main. Flota TN z klocków: 20–58 klocków na połowę okrętu, IoU
+sylwetki ze sprite'em 0,92–0,98; sieć na całej flocie bez wolnych końców i wiązek poza obrysem. Następny jest etap 2
+(najpierw decyzje użytkownika).
 
 | Etap | Co | Kto |
 |---|---|---|
