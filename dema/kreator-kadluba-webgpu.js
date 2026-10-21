@@ -35,6 +35,15 @@ import {
   hullBlockPaletteId, hullBlockPaletteUnit, snapBlockRot
 } from '../src/game/hullDesign/hullDesignBlocks.js';
 import { isPlayerBuildable } from '../src/game/hullDesign/hullDesignBuildable.js';
+import {
+  hullDesignClass, applyHullDesignPower, hullDesignCheck, hullDesignLimitBreach, hullDesignMountAddIssue, hullDesignMountList
+} from '../src/game/hullDesign/hullDesignClass.js';
+import { HD_MOUNT_SLOTS, HD_MOUNT_MODULES, HD_MOUNT_RADIUS_DU, hullDesignMountOf } from '../src/game/hullDesign/hullDesignSchema.js';
+import {
+  SHIP_CLASSES, CORE_LEVELS, MOUNT_SIZES, MOUNT_SLOT_LABELS, POWER_CATEGORY_LABELS, POWER_PRIORITY_DEFAULT, coreLevelMax,
+  mountPowerMW, shipClass, sizeRank, weaponsForMount, weaponPowerMW, isHeavySlot
+} from '../src/data/shipClasses.js';
+import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { createShip, loadHullAssets } from './mostki-webgpu/swiat.js';
 import { BRIDGE_DEMO_HULLS } from './mostki-webgpu/kadluby.js';
 import { createBackdrop } from './rdzen-webgpu/tlo.js';
@@ -71,7 +80,9 @@ const S = {
   busy: false, pending: null, rev: 0, builtRev: -1,
   syncPipes: 0, syncNames: [], frame: 0,
   // sieć systemów: graf (kto z kim), kontrola tras (wolne końce, poza obrysem, bez prądu / paliwa), nakładka grafu (I)
-  systems: null, netCheck: null, netGraph: false, flash: null
+  systems: null, netCheck: null, netGraph: false, flash: null,
+  // klasa okrętu (etap 2): wynik hullDesignClass, ostatni projekt w limitach mostka (straż akcji), nowe gniazdo
+  cls: null, classValid: null, classCheckValid: null, mountSlot: 'main', mountSize: null, classMsg: null
 };
 window.camera = {
   get x() { return S.cam.x; }, get y() { return S.cam.y; }, get zoom() { return S.cam.zoom; },
@@ -174,6 +185,15 @@ async function runBuild() {
     // przeciąganie: pole i obraz w połowie rozdzielczości (szybko), po puszczeniu — pełny wypiek
     const sc = hullFieldScale(normalizeHullDesign(S.design));
     const field = buildHullField(S.design, job.fast ? { fieldRes: sc.res * 0.5 } : {});
+    // klasa okrętu: akcja ponad twardy limit mostka się nie wykonuje (projekt wraca do ostatniego w limitach)
+    const cls = hullDesignClass(field);
+    if (classGuard(cls)) {
+      S.busy = false;
+      runBuild();
+      return;
+    }
+    applyHullDesignPower(field, cls);
+    S.cls = cls;
     const t1 = performance.now();
     const recipe = hullDesignRecipe(field);
     const mounts = hullDesignMounts(field);
@@ -192,6 +212,7 @@ async function runBuild() {
     placeRef();
     updateRecipe();
     updateBlockStats();
+    updateClassPanel();
   } catch (err) {
     reportError(err.stack || String(err));
     S.builtRev = rev;
@@ -451,7 +472,7 @@ function onDown(e) {
   if (tool === 'move' || (tool !== 'block' && !e.shiftKey && pick(w.x, w.y) && tool !== 'circle')) {
     const p = pick(w.x, w.y);
     if (p && isLocked(p)) { lockFlash(p); return; }
-    if (p) { S.drag = { kind: 'move', p, wx: w.x, wy: w.y }; S.selected = p; return; }
+    if (p) { S.drag = { kind: 'move', p, wx: w.x, wy: w.y }; S.selected = p; syncMountEdit(); return; }
   }
   if (tool === 'block') {
     const [bx, by] = blockAt(w.x, w.y);
@@ -483,6 +504,8 @@ function onDown(e) {
     if (def.w) { o.w = Math.round(def.w * k * 10) / 10; o.h = Math.round(def.h * k * 10) / 10; }
     // dysza SIDE: wydech ku najbliższej burcie (lustro odbija obrót)
     if (S.moduleType === 'thruster_side') o.rot = w.y > 0 ? Math.PI / 2 : -Math.PI / 2;
+    // gniazdo broni: typ i rozmiar z panelu, limity mostka (twarde) przed postawieniem
+    if (!classMountPlace(o)) return;
     d.modules.push(o);
     S.drag = { kind: 'move', p: { kind: 'module', obj: o, mirrored: false }, wx: w.x, wy: w.y };
     requestBuild(true);
@@ -786,17 +809,18 @@ function drawEditor(cam) {
       ctx2d.stroke();
       ctx2d.setLineDash([]);
     }
-    // moduły
+    // moduły (gniazda bez prądu — czerwone; podpis gniazda: typ, rozmiar, broń)
     ctx2d.font = '10px ui-monospace, Consolas, monospace';
-    for (const m of S.field.expanded.modules) {
+    S.field.expanded.modules.forEach((m, mi) => {
       const def = HD_MODULES[m.type];
-      ctx2d.strokeStyle = '#7be0a0cc';
+      const off = S.cls?.dead.has(mi);
+      ctx2d.strokeStyle = off ? '#ff5a52dd' : '#7be0a0cc';
       ctx2d.beginPath();
       if (def.r) { const [sx, sy] = toS(m.x, m.y); ctx2d.arc(sx, sy, (m.r || def.r) * cam.zoom, 0, Math.PI * 2); }
       else rectPath(toS, m.x, m.y, m.w, m.h, m.rot || 0);
       ctx2d.stroke();
-      if (cam.zoom > 0.3) { const [sx, sy] = toS(m.x, m.y); ctx2d.fillStyle = '#7be0a0'; ctx2d.fillText(m.lock ? `🔒 ${def.label}` : def.label, sx + 4, sy - 4); }
-    }
+      if (cam.zoom > 0.3) { const [sx, sy] = toS(m.x, m.y); ctx2d.fillStyle = off ? '#ff8a82' : '#7be0a0'; ctx2d.fillText(m.lock ? `🔒 ${def.label}` : classModuleLabel(m, off), sx + 4, sy - 4); }
+    });
     // rowki
     ctx2d.strokeStyle = '#ffffff70';
     ctx2d.setLineDash([2, 3]);
@@ -1048,6 +1072,7 @@ function syncPanel() {
   $('zoom-1').classList.toggle('on', Math.abs(S.cam.zoom - 1) < 1e-3);
   $('sel-ref').value = S.refKey || '';
   syncBlockPanel();
+  syncClassPanel();
 }
 
 function fit() {
@@ -1069,6 +1094,7 @@ function setZoom(z) {
 async function loadPreset(key) {
   S.presetKey = key;
   S.design = hullDesignPreset(key);
+  S.classValid = null; S.selected = null;
   S.blkSel.clear();
   histReset();
   $('sel-preset').value = key;
@@ -1187,7 +1213,7 @@ function bindPanel() {
   $('btn-json').addEventListener('click', () => {
     const ta = $('json');
     if (ta.style.display !== 'block') { ta.style.display = 'block'; ta.value = JSON.stringify(design(), null, 1); return; }
-    try { S.design = normalizeHullDesign(JSON.parse(ta.value)); requestBuild(); ta.style.display = 'none'; } catch (err) { reportError(`JSON: ${err.message}`); }
+    try { S.design = normalizeHullDesign(JSON.parse(ta.value)); S.classValid = null; requestBuild(); ta.style.display = 'none'; } catch (err) { reportError(`JSON: ${err.message}`); }
   });
 }
 
@@ -1276,6 +1302,7 @@ function histGo(step) {
   if (i < 0 || i >= HIST.stack.length) return false;
   HIST.idx = i;
   S.design = normalizeHullDesign(JSON.parse(HIST.stack[i]));
+  S.classValid = null; S.selected = null;
   S.blkSel.clear();
   S.rev++;
   S.pending = { fast: false };
@@ -1689,9 +1716,8 @@ function updateBlockStats() {
   if (!el || !S.field || !S.design) return;
   const blocks = designBlocks();
   const copies = blocks.reduce((n, b) => n + (mirrorOn(b) && Math.abs(b.y) > 1e-6 ? 2 : 1), 0);
-  const mods = S.field.expanded.modules;
-  const cnt = (t) => mods.filter((m) => m.type === t).length;
-  const sockets = cnt('turret_s') + cnt('turret_m') + cnt('turret_l');
+  const gn = hullDesignMountList(S.field.expanded.modules);
+  const bySize = (s) => gn.filter((g) => g.size === s).length;
   const b = S.field.bounds;
   const bp = isPlayerBuildable(S.design);
   const sel = blkSelected();
@@ -1705,7 +1731,7 @@ function updateBlockStats() {
   if (it.holes.length) frame.push(`${it.holes.length} ${it.holes.length === 1 ? 'szpara' : it.holes.length < 5 ? 'szpary' : 'szpar'} na wylot (największa ${j2(it.holes[0])} j.² przy ${at(it.holes[0])})`);
   el.innerHTML = [
     `kadłub ${Math.round(b.maxX - b.minX)} × ${Math.round(b.maxY - b.minY)} j. · powierzchnia <b>${Math.round(S.field.area).toLocaleString('pl-PL')} j.²</b>`,
-    `klocki <b>${blocks.length}</b>${copies !== blocks.length ? ` (z lustrem ${copies})` : ''} · gniazda <b>${sockets}</b> (S ${cnt('turret_s')} · M ${cnt('turret_m')} · L ${cnt('turret_l')})`,
+    `klocki <b>${blocks.length}</b>${copies !== blocks.length ? ` (z lustrem ${copies})` : ''} · gniazda <b>${gn.length}</b> (S ${bySize('S')} · M ${bySize('M')} · L ${bySize('L')} · C ${bySize('Capital')})`,
     `siatka ${fmtJ(blkGrid())} j. · zaznaczone ${sel.length}${sel.length === 1 ? ` — ${blockLabel(sel[0])}` : ''}`,
     bp.ok ? '<span style="color:var(--good)">✓ do zbudowania w edytorze gracza</span>'
       : `<span style="color:var(--warn)">⚠ poza edytorem gracza: ${bp.violations.length} (${bp.violations[0].text})</span>`,
@@ -1781,8 +1807,285 @@ function blockSheet() {
 }
 
 // API konsoli / harnessu.
+// ---------------------------------------------------------------------------
+// KLASA OKRĘTU (etap 2 — src/game/hullDesign/hullDesignClass.js, dane src/data/shipClasses.js): mostek I–VI (twarde
+// limity: powierzchnia, gniazda, gniazda ciężkie, rozmiar broni — akcja ponad limit wraca do ostatniego projektu w
+// limitach: classGuard w runBuild), rdzeń R1–R6 (moc — limit miękki: urządzenia ponad moc gasną wg priorytetu, ich kable
+// szare), gniazda broni (typ, rozmiar, broń), kolejka priorytetów zasilania.
+const fmtMW = (v) => (Math.round(v * 10) / 10).toLocaleString('pl-PL');
+const fmtInt = (v) => Math.round(v).toLocaleString('pl-PL');
+
+function classFlash(text) {
+  S.flash = { text, t: performance.now() };
+  S.classMsg = text;
+  const el = $('classmsg');
+  if (el) el.textContent = text;
+}
+
+/** Podpis modułu w nakładce: gniazdo — typ, rozmiar, broń (bez prądu — dopisek). */
+function classModuleLabel(m, off) {
+  const g = hullDesignMountOf(m);
+  if (!g) return HD_MODULES[m.type].label;
+  const w = g.weapon === '' ? 'puste' : (g.weapon ? MASTER_WEAPONS[g.weapon]?.name || g.weapon : 'typowa');
+  return `${MOUNT_SLOT_LABELS[g.slot]} ${g.size} · ${w}${off ? ' · BEZ PRĄDU' : ''}`;
+}
+
+/**
+ * Straż twardych limitów mostka po budowie pola: akcja, po której limit jest bardziej przekroczony niż w ostatnim projekcie
+ * w limitach, się nie wykonuje — projekt wraca, wpis historii znika, komunikat. Zwraca true, gdy cofnięto.
+ */
+function classGuard(cls) {
+  const json = JSON.stringify(S.design);
+  if (S.classValid && S.classCheckValid && json !== S.classValid) {
+    const why = hullDesignLimitBreach(S.classCheckValid, cls.check);
+    if (why) {
+      if (HIST.stack[HIST.idx] === json) { HIST.stack.splice(HIST.idx, 1); HIST.idx = Math.max(0, HIST.idx - 1); }
+      S.design = normalizeHullDesign(JSON.parse(S.classValid));
+      S.drag = null; S.selected = null;
+      S.blkSel.clear();
+      classFlash(`Limit mostka: ${why}`);
+      S.rev++;
+      S.pending = { fast: false };
+      return true;
+    }
+  }
+  S.classValid = json;
+  S.classCheckValid = cls.check;
+  return false;
+}
+
+/** Nowe gniazdo (narzędzie Moduł): typ i rozmiar z panelu, limity mostka przed postawieniem. */
+function classMountPlace(o) {
+  if (!HD_MOUNT_MODULES[o.type]) return true;
+  const d = design();
+  const lv = S.cls?.levels.bridge || 1;
+  if (o.type === 'mount') {
+    o.slot = S.mountSlot;
+    o.size = S.mountSize || shipClass(lv).weaponSize;
+    o.r = Math.round(HD_MOUNT_RADIUS_DU[o.slot] * (d.detail || 0.6) * 100) / 100;
+  }
+  const copies = d.mirror && Math.abs(o.y) > 0.5 ? 2 : 1;
+  const why = hullDesignMountAddIssue(lv, S.cls?.mounts || [], hullDesignMountOf(o), copies);
+  if (why) { classFlash(why); return false; }
+  return true;
+}
+
+function setBridgeLevel(lv) {
+  const d = design();
+  if (lv > 0 && S.cls && S.field) {
+    const c = hullDesignCheck({ ...d, bridgeLevel: lv, coreLevel: Math.min(d.coreLevel || lv, coreLevelMax(lv)) }, S.cls.area, S.field.expanded.modules);
+    const hard = c.issues.filter((i) => i.code !== 'core');
+    if (hard.length) { classFlash(`Mostek ${shipClass(lv).roman} (${shipClass(lv).label}): ${hard[0].text}`); syncClassPanel(); return false; }
+  }
+  d.bridgeLevel = lv;
+  if (lv > 0 && d.coreLevel > coreLevelMax(lv)) d.coreLevel = coreLevelMax(lv);
+  S.classValid = null;
+  classFlash('');
+  requestBuild();
+  return true;
+}
+
+function setCoreLevel(lv) {
+  const d = design();
+  const br = S.cls?.levels.bridge || d.bridgeLevel || 1;
+  if (lv > coreLevelMax(br)) {
+    classFlash(`Rdzeń R${lv} nie mieści się w kadłubie z mostkiem ${shipClass(br).roman} (najwyżej R${coreLevelMax(br)} — komora rdzenia).`);
+    syncClassPanel();
+    return false;
+  }
+  d.coreLevel = lv;
+  classFlash('');
+  requestBuild();
+  return true;
+}
+
+function setPowerPriority(list) {
+  design().powerPriority = [...list];
+  requestBuild();
+}
+
+/** Gniazdo zaznaczone w edytorze (moduł projektu — kopia lustra edytuje oryginał). */
+function selectedMount() {
+  const p = S.selected;
+  if (!p || p.kind !== 'module' || !HD_MOUNT_MODULES[p.obj.type] || !design()?.modules.includes(p.obj)) return null;
+  return p.obj;
+}
+
+function syncMountEdit() {
+  const o = selectedMount();
+  const row = $('mountedit-row'), row2 = $('mountedit-row2'), info = $('mountedit');
+  if (!row) return;
+  row.style.display = row2.style.display = o ? '' : 'none';
+  if (!o) { info.textContent = 'Kliknij gniazdo (narzędzie Przesuń / Moduł), by zmienić typ, rozmiar i broń.'; return; }
+  const g = hullDesignMountOf(o);
+  const cls = shipClass(S.cls?.levels.bridge || 1);
+  const mw = mountPowerMW(g.slot, g.size, g.weapon);
+  info.textContent = `Gniazdo ${MOUNT_SLOT_LABELS[g.slot]} ${g.size}${o.mirror === false || Math.abs(o.y) <= 0.5 || !design().mirror ? '' : ' (z kopią lustra)'} · pobór ${fmtMW(mw)} MW`;
+  const sl = $('sel-medit-slot'), sz = $('sel-medit-size'), wp = $('sel-medit-weapon');
+  sl.innerHTML = '';
+  for (const s of o.type === 'mount' ? HD_MOUNT_SLOTS : [g.slot]) sl.add(new Option(`typ: ${MOUNT_SLOT_LABELS[s]}`, s));
+  sl.value = g.slot;
+  sl.disabled = o.type !== 'mount';
+  sz.innerHTML = '';
+  for (const s of MOUNT_SIZES) {
+    const opt = new Option(`rozmiar: ${s}`, s);
+    if (sizeRank(s) > sizeRank(cls.weaponSize)) { opt.disabled = true; opt.text += ` (mostek ${cls.roman}: do ${cls.weaponSize})`; }
+    sz.add(opt);
+  }
+  sz.value = g.size;
+  wp.innerHTML = '';
+  wp.add(new Option(`broń: typowa (mediana ${MOUNT_SLOT_LABELS[g.slot]} ${g.size}: ${fmtMW(mountPowerMW(g.slot, g.size, undefined))} MW)`, '__typ'));
+  wp.add(new Option('broń: brak (gniazdo puste, 0 MW)', ''));
+  for (const id of weaponsForMount(g.slot, g.size, { npc: true })) {
+    const w = MASTER_WEAPONS[id];
+    wp.add(new Option(`${w.name} · ${w.size} · ${fmtMW(weaponPowerMW(id))} MW${w.npcOnly ? ' (tylko NPC)' : ''}`, id));
+  }
+  wp.value = g.weapon === undefined ? '__typ' : g.weapon;
+}
+
+function bindClassPanel() {
+  const sb = $('sel-bridge'), sc = $('sel-core');
+  sb.add(new Option('mostek: z powierzchni (auto)', '0'));
+  for (const c of SHIP_CLASSES) sb.add(new Option(`mostek ${c.roman} · ${c.label}${c.example ? ` (${c.example})` : ''}`, String(c.level)));
+  for (const c of CORE_LEVELS) sc.add(new Option(`rdzeń R${c.level} · ${fmtInt(c.mw)} MW`, String(c.level)));
+  sb.addEventListener('change', () => setBridgeLevel(Number(sb.value)));
+  sc.addEventListener('change', () => setCoreLevel(Number(sc.value)));
+  const ms = $('sel-mslot'), mz = $('sel-msize');
+  for (const s of HD_MOUNT_SLOTS) ms.add(new Option(`nowe gniazdo: ${MOUNT_SLOT_LABELS[s]}`, s));
+  mz.add(new Option('rozmiar: jak klasa', ''));
+  for (const s of MOUNT_SIZES) mz.add(new Option(`rozmiar: ${s}`, s));
+  const toMountTool = () => { S.tool = 'module'; S.moduleType = 'mount'; $('sel-module').value = 'mount'; syncPanel(); };
+  ms.addEventListener('change', () => { S.mountSlot = ms.value; toMountTool(); });
+  mz.addEventListener('change', () => { S.mountSize = mz.value || null; toMountTool(); });
+  $('sel-medit-slot').addEventListener('change', (e) => {
+    const o = selectedMount();
+    if (!o || o.type !== 'mount') return;
+    o.slot = e.target.value;
+    o.r = Math.round(HD_MOUNT_RADIUS_DU[o.slot] * (design().detail || 0.6) * 100) / 100;
+    if (o.weapon && MASTER_WEAPONS[o.weapon] && MASTER_WEAPONS[o.weapon].mountType !== o.slot) delete o.weapon;
+    requestBuild(); syncMountEdit();
+  });
+  $('sel-medit-size').addEventListener('change', (e) => {
+    const o = selectedMount();
+    if (!o) return;
+    const w = MASTER_WEAPONS[o.weapon];
+    if (w && sizeRank(w.size) > sizeRank(e.target.value)) { classFlash(`Broń ${w.name} (${w.size}) za duża na gniazdo ${e.target.value} — najpierw zmień broń.`); syncMountEdit(); return; }
+    o.size = e.target.value;
+    requestBuild(); syncMountEdit();
+  });
+  $('sel-medit-weapon').addEventListener('change', (e) => {
+    const o = selectedMount();
+    if (!o) return;
+    if (e.target.value === '__typ') delete o.weapon;
+    else o.weapon = e.target.value;
+    requestBuild(); syncMountEdit();
+  });
+  $('prio').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-k]');
+    if (!b) return;
+    // zamiana z sąsiadem na liście widocznej (kategorie bez urządzeń zostają na swoich miejscach w pełnej kolejności)
+    const list = [...(design().powerPriority || POWER_PRIORITY_DEFAULT)];
+    const vis = classPriorityVisible();
+    const vi = vis.indexOf(b.dataset.k), vj = vi + Number(b.dataset.d);
+    if (vi < 0 || vj < 0 || vj >= vis.length) return;
+    const i = list.indexOf(vis[vi]), j = list.indexOf(vis[vj]);
+    [list[i], list[j]] = [list[j], list[i]];
+    setPowerPriority(list);
+  });
+}
+
+/** Kategorie kolejki mocy obecne na okręcie (tarcza zawsze) w kolejności priorytetu projektu. */
+function classPriorityVisible() {
+  const order = design()?.powerPriority || POWER_PRIORITY_DEFAULT;
+  const devs = S.cls?.power.devices || [];
+  return order.filter((k) => k === 'shield' || devs.some((x) => x.cat === k));
+}
+
+function syncClassPanel() {
+  const d = design();
+  const sb = $('sel-bridge'), sc = $('sel-core');
+  if (!d || !sb || !sb.options.length) return;
+  sb.value = String(d.bridgeLevel || 0);
+  const br = S.cls?.levels.bridge || d.bridgeLevel || 1;
+  for (const o of sc.options) o.disabled = Number(o.value) > coreLevelMax(br);
+  sc.value = String(S.cls?.levels.core || d.coreLevel || br);
+  $('sel-mslot').value = S.mountSlot;
+  $('sel-msize').value = S.mountSize || '';
+  const el = $('classmsg');
+  if (el) el.textContent = S.classMsg || '';
+  syncMountEdit();
+}
+
+/** Panel klasy po budowie: powierzchnia i gniazda wobec limitu, bilans mocy, kolejka priorytetów. */
+function updateClassPanel() {
+  const c = S.cls;
+  const el = $('classinfo');
+  if (!el || !c) return;
+  const cls = c.check.cls, p = c.power;
+  const bar = (v, max) => {
+    const k = max > 0 ? v / max : 0;
+    return `<span class="bar"><i class="${k > 1 ? 'bad' : (k > 0.9 ? 'warn' : '')}" style="width:${Math.min(100, k * 100).toFixed(0)}%"></i></span>`;
+  };
+  const by = c.check.counts.bySlot;
+  const lines = [
+    `<b>Mostek ${cls.roman} · ${cls.label}</b>${c.levels.auto ? ' (z powierzchni)' : ''}${cls.example ? ` — wzór: ${cls.example}` : ''}`,
+    `pow.    ${bar(c.area, cls.areaMax)} ${fmtInt(c.area)} / ${fmtInt(cls.areaMax)} j²`,
+    `gniazda ${bar(c.check.counts.mounts, cls.mountsMax)} ${c.check.counts.mounts} / ${cls.mountsMax}`,
+    `ciężkie ${bar(c.check.counts.heavy, cls.heavyMax)} ${c.check.counts.heavy} / ${cls.heavyMax}`,
+    `broń do ${cls.weaponSize} · ${Object.entries(by).map(([k, n]) => `${MOUNT_SLOT_LABELS[k]} ${n}`).join(' · ') || 'bez gniazd'}`,
+    `<b>Rdzeń R${c.levels.core} · ${fmtInt(p.capacity)} MW</b>${c.levels.autoCore ? ' (jak mostek)' : ''}`,
+    `utrzymanie ${fmtMW(p.upkeep)} + tarcza ${fmtMW(p.shield)} + broń ${fmtMW(p.demand - p.shield)}`,
+    `pobór   ${bar(p.upkeep + p.demand, p.capacity)} ${fmtMW(p.upkeep + p.demand)} / ${fmtInt(p.capacity)} MW`,
+    p.upkeepOver
+      ? '<span class="bad">utrzymanie kadłuba ponad moc rdzenia — okręt bez zasilania</span>'
+      : `zapas ${fmtMW(p.spare)} MW (${(p.spareFrac * 100).toFixed(0)}%) → napęd <span class="${p.drive < 0.85 ? 'warn' : 'good'}">×${p.drive.toFixed(2)}</span>`,
+    c.deadMounts || p.deficit > 0
+      ? `<span class="bad">niedobór ${fmtMW(p.deficit)} MW: bez prądu ${c.deadMounts} gniazd${p.devices.some((x) => x.cat === 'shield' && !x.on) ? ' i tarcza' : ''}</span>`
+      : '<span class="good">✓ wszystkie urządzenia z prądem</span>'
+  ];
+  for (const i of c.check.issues) lines.push(`<span class="bad">⚠ ${i.text}</span>`);
+  el.innerHTML = lines.join('\n');
+  // kolejka priorytetów: kategorie obecne na okręcie (tarcza zawsze), pobór, ile zgaszonych, ▲ ▼ (między widocznymi)
+  const vis = classPriorityVisible();
+  $('prio').innerHTML = vis.map((k, i) => {
+    const ds = p.devices.filter((x) => x.cat === k);
+    const off = ds.filter((x) => !x.on && x.mw > 0).length;
+    const mw = ds.reduce((a, x) => a + x.mw, 0);
+    return `<span>${i + 1}. ${POWER_CATEGORY_LABELS[k]}${k === 'shield' ? '' : ` ×${ds.length}`} · ${fmtMW(mw)} MW${off ? ` <span class="off">· ${off} bez prądu</span>` : ''}</span>`
+      + `<button data-k="${k}" data-d="-1" ${i ? '' : 'disabled'}>▲</button><button data-k="${k}" data-d="1" ${i < vis.length - 1 ? '' : 'disabled'}>▼</button>`;
+  }).join('');
+  syncClassPanel();
+}
+
 window.__kreator = {
   ready: false, S,
+  /** Klasa okrętu (etap 2) — haki zrzutów: poziomy, priorytet, gniazdo testowe, stan panelu. */
+  klasa: {
+    setBridge: (lv) => setBridgeLevel(lv),
+    setCore: (lv) => setCoreLevel(lv),
+    setPriority: (list) => { setPowerPriority(list); return true; },
+    /** Gniazdo w (x, y) narzędziem Moduł (z limitami): true — postawione. */
+    addMount(x, y, slot = 'main', size = null) {
+      const d = design();
+      const o = { type: 'mount', x, y, rot: 0 };
+      S.mountSlot = slot; S.mountSize = size;
+      if (!classMountPlace(o)) return false;
+      d.modules.push(o);
+      requestBuild();
+      return true;
+    },
+    select(i) { const o = design().modules[i]; S.selected = o ? { kind: 'module', obj: o, mirrored: false } : null; syncMountEdit(); return !!o; },
+    state() {
+      const c = S.cls;
+      if (!c) return null;
+      return {
+        levels: c.levels, area: Math.round(c.area), mounts: c.check.counts.mounts, heavy: c.check.counts.heavy, issues: c.check.issues.map((i) => i.code),
+        capacity: c.power.capacity, used: Math.round((c.power.upkeep + c.power.demand) * 10) / 10, spare: Math.round(c.power.spareFrac * 1000) / 10,
+        drive: Math.round(c.power.drive * 100) / 100, deadMounts: c.deadMounts, deadRuns: (S.field?.pipeNet?.runs || []).filter((r) => r.dead).length,
+        msg: S.classMsg
+      };
+    }
+  },
   get design() { return S.design; },
   get ship() { return ship.entity; },
   get ref() { return refShip; },
@@ -1827,7 +2130,7 @@ window.__kreator = {
       timing: S.timing, parts: S.recipe?.parts, warnings: S.recipe?.warnings?.map((w) => w.text),
       surfaceReady: ship.surfaceImg ? HullSurface.isReady(ship.surfaceImg) : false,
       net: S.netCheck ? { freeEnds: S.netCheck.freeEnds, outside: S.netCheck.outside, unpowered: S.netCheck.unpowered.length, unfueled: S.netCheck.unfueled.length, ms: Math.round(S.field?.pipeNet?.stats?.ms || 0) } : null,
-      syncPipes: S.syncPipes, syncNames: S.syncNames.slice()
+      syncPipes: S.syncPipes, syncNames: S.syncNames.slice(), klasa: this.klasa.state()
     };
   }
 };
@@ -1855,6 +2158,7 @@ window.__kreator = {
     bindPanel();
     bindInput();
     bindBlockPanel();
+    bindClassPanel();
     await loadPreset(HD_PRESETS[S.presetKey] ? S.presetKey : 'citadella');
     mark('projekt');
     await Core3D.warmup.flush?.({ timeoutMs: 6000 });

@@ -51,8 +51,10 @@ gondola, a gondolę reaktor. Zbiornika paliwa w ogóle nie ma, a kabli nie ma wc
 ## Etapy
 
 Stan 2026-10-21: etapy 1A–1D zrobione i scalone do main. Flota TN z klocków: 20–58 klocków na połowę okrętu, IoU
-sylwetki ze sprite'em 0,92–0,98; sieć na całej flocie bez wolnych końców i wiązek poza obrysem. Następny jest etap 2
-(najpierw decyzje użytkownika).
+sylwetki ze sprite'em 0,92–0,98; sieć na całej flocie bez wolnych końców i wiązek poza obrysem. Etap 2 (klasy z mostka
+i rdzenia) wdrożony w kreatorze 2026-10-21 na gałęzi `claude/kreator-klasy-ba238b` (do oceny): dane `src/data/shipClasses.js`,
+pełne gniazda broni floty TN z gry, panel klasy, twarde limity mostka, bilans mocy z martwymi kablami — opis
+`docs/KREATOR-KADLUBA.md` § „Klasy okrętów”. Następny — etap 3 (kreator w grze).
 
 | Etap | Co | Kto |
 |---|---|---|
@@ -60,11 +62,14 @@ sylwetki ze sprite'em 0,92–0,98; sieć na całej flocie bez wolnych końców i
 | 1B | Flota TN (Custos, Hasta, Bellator, Citadella, Colossus) złożona z klocków, A/B ze sprite'ami, strażnik „bez czitowania” | ta sama sesja, po przeglądzie 1A |
 | 1C | Sieć systemów: nowe moduły (zbiornik, SIDE, ładownia), sloty TN z tabel gry, generator kabli i rur bez wolnych końców, rysunek kabli | sesja `siec-systemow`, równolegle |
 | 1D | Scalenie: sieć na kadłubach z klocków, zrzuty A/B, ocena użytkownika | orkiestrator |
-| 2 | Klasy z mostka i rdzenia: limity (powierzchnia, gniazda, moc rdzenia), ulepszenia, awans klasy | projekt liczb do decyzji użytkownika |
+| 2 | Klasy z mostka i rdzenia: limity (powierzchnia, gniazda, moc rdzenia), ulepszenia, awans klasy | kreator: sesja `klasy-mostek-rdzen` (2026-10-21), gra — etap 3 |
 | 3 | Kreator w grze: kadłub z danych zamiast sprite'a (lista w `KREATOR-KADLUBA.md` § „Co trzeba zmienić w grze”) | później |
 | 4 | Stocznia gracza (fabuła): zamówienie kadłuba, budowa i przebudowa | później |
 
 ## Na etap 2 (do decyzji użytkownika)
+
+Propozycja z pomiarem floty TN i tabelami klas mostka i poziomów rdzenia: `docs/PROPOZYCJA-KLASY-MOSTEK-RDZEN.md`
+(2026-10-21, przyjęta z rekomendacjami; wdrożenie w kreatorze — sesja `klasy-mostek-rdzen`).
 
 - Tabela klas (fregata → niszczyciel → pancernik → lotniskowiec → superkapitał): maksymalna powierzchnia [j.²]
   i liczba gniazd na poziom mostka. Punkt wyjścia: pomiar obecnej floty TN (powierzchnia z alfy, gniazda

@@ -27,8 +27,9 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
   `.tmp/kreator/tn/<okręt>-podklad.png` (sprite w j. świata z siatką i podpisami, kontury poziomów projektu, czerwień —
   sprite bez projektu, błękit — projekt bez sprite'a; `--bez-projektu` — sam sprite do odczytu wymiarów). Obrys płyt
   sprite'a (pomiar płyt i rowów): `node scripts/kreator-obrys-tn.mjs --kadlub terran_carrier` → `.tmp/kreator/obrys/`.
-- Testy: `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs` (klocki, suma
-  wielokątów, szczelina, strażnik „bez czitowania”, sieć systemów).
+- Testy: `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
+  tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs` (klocki, suma wielokątów, szczelina, strażnik „bez czitowania”,
+  sieć systemów, klasy okrętów — § „Klasy okrętów”).
 
 ## Format projektu v2 (`src/game/hullDesign/hullDesignSchema.js`)
 
@@ -365,6 +366,125 @@ sponson, rząd hangarów, blok wieży, grzbiet z portami, port. Presety `tnparts
 i `tnparts2` (krążownik wyłącznie z części). Nowa część = wpis w `HD_PARTS` (bryły, moduły, naklejki w jej
 układzie przy skali 1 ≈ detail 0,6).
 
+## Klasy okrętów: mostek, rdzeń, gniazda broni (etap 2 — `src/data/shipClasses.js`, `hullDesignClass.js`)
+
+Propozycja z pomiarem floty: `docs/PROPOZYCJA-KLASY-MOSTEK-RDZEN.md` (przyjęta przez użytkownika 2026-10-21: krążownik
+jako klasa III, lotniskowiec to rola w klasie V, Atlas poza drabiną, miękki limit mocy rdzenia, twarde limity mostka,
+liczby z tabel). Wdrożenie 2026-10-21 — kreator i czyste dane; gra przyjdzie w etapie 3.
+
+**Klasa = poziom mostka (I–VI)** — twarde limity. Projekt ma `bridgeLevel` (0 — najniższa klasa, w której mieszczą się
+powierzchnia i gniazda) i `coreLevel` (0 — jak mostek; najwyżej mostek + 1 — komora rdzenia).
+
+| Klasa | Limit powierzchni [j.²] | Gniazda (ciężkie) | Broń do | Wzór TN: powierzchnia, gniazda (ciężkie) |
+|---|---|---|---|---|
+| I Fregata | 10 000 | 12 (7) | S | Custos 6 381 (64%), 4 (2) |
+| II Niszczyciel | 32 000 | 22 (13) | M | Hasta 18 373 (57%), 8 (4) |
+| III Krążownik | 90 000 | 26 (15) | M | — (Hasta-D z kreatora 63 141) |
+| IV Pancernik | 200 000 | 32 (18) | L | Bellator 165 292 (83%), 31 (13) |
+| V Kapitał | 420 000 | 44 (26) | L | Citadella 352 131 (84%), 35 (20) |
+| VI Superkapitał | 900 000 | 60 (32) | Capital | Colossus 721 631 (80%), 56 (24) |
+
+**Rdzeń = moc [MW]** — limit miękki. Pobór: utrzymanie kadłuba `0,07 · powierzchnia^0,6`, tarcza, broń, hangary.
+Urządzenia ponad moc gasną według kolejki priorytetów (gracz ją zmienia), zapas mocy idzie w napęd: przyspieszenie
+× 0,7 (zapas 0) … × 1,2 (zapas ≥ 40% mocy), liniowo (`driveMultiplier`).
+
+| Rdzeń | Moc — kalibracja (wdrożona) | Moc — propozycja | Wzór na swoim rdzeniu: utrzymanie + tarcza + broń NPC = pobór (zapas) |
+|---|---|---|---|
+| R1 | 45 | 65 | Custos 13,4 + 6,7 + 14,0 = 34,1 (24%) |
+| R2 | 100 | 180 | Hasta 25,3 + 12,7 + 44,0 = 82,0 (18%) |
+| R3 | 185 | 280 | — (średnia geometryczna R2 i R4) |
+| R4 | 330 | 450 | Bellator 94,6 + 47,3 + 122,0 = 264,0 (20%) |
+| R5 | 450 | 700 | Citadella 149,0 + 74,5 + 138,0 = 361,5 (20%) |
+| R6 | 1 150 | 1 500 | Colossus 229,1 + 114,6 + 558,0 = 901,7 (22%; promień śmierci 400 MW, bez niego 44% mocy) |
+
+Kalibracja na PRAWDZIWYM domyślnym uzbrojeniu NPC (`equipNpcWeapons` w `index.html`: gniazda z edytora gry, najwyżej
+`SHIPS[rama].spec` na typ, wybór po kącie; Terra Nova — `railgun_mk2` 8 MW, `laser_pd_mk1` 3 MW, rakiety, promień śmierci;
+hangary lotniskowca latają wszystkie — 5 MW). Moc = pobór / 0,8. Propozycja liczyła typowe uzbrojenie klasy z median
+na wszystkich gniazdach (ciężka broń L 14 MW) i bez tarczy — stąd ~30% więcej. Ten sam Bellator z typową bronią we
+wszystkich 31 gniazdach pobiera 444 MW (135% R4) — przy miękkim limicie gaśnie wtedy końcówka kolejki.
+
+**Pobór gniazda** (`mountPowerMW`): broń przypisana → `energyCost` (`src/data/weapons.js`); `weapon: ''` (puste) → 0;
+bez pola → TYPOWA broń: mediana `energyCost` broni typu i rozmiaru (bez broni tylko-NPC): główne S / M / L 4 / 7,5 / 14
+(Capital — jak L, broni głównej Capital nie ma), pomocnicze 3 / 4 / 8 / 14, specjalne 12 / 22 / 40 / 31, wbudowane 200
+(Hexlance), hangar 5. Rakiety nie mają `energyCost` (zasila je amunicja) — wyrzutnia bierze 2 MW (`MISSILE_MOUNT_MW`).
+**Tarcza** (rozstrzygnięcie): generator tarczy to urządzenie okrętu, nie moduł kreatora; pole obejmuje cały obrys, więc
+pobór = 0,5 · utrzymanie (rośnie z powierzchnią); w kolejce mocy stoi jak broń (domyślnie pierwsza).
+
+**Kolejka mocy** (`shipPowerBalance`): utrzymanie zawsze pierwsze; potem kategorie w kolejności `powerPriority`
+(domyślnie tarcza, pomocnicze (obrona punktowa), główne, specjalne, wbudowane, rakietowe, hangary), w kategorii —
+w kolejności gniazd. Urządzenie, które się nie mieści, gaśnie, mniejsze dalej w kolejce mogą się jeszcze zmieścić.
+Utrzymanie ponad moc — okręt bez zasilania (wszystkie urządzenia sieci zgaszone).
+
+**Gniazda broni** — moduł `mount` `{ slot: main | aux | missile | special | builtin, size: S | M | L | Capital, weapon }`;
+wieże `turret_s / m / l` to gniazda główne S / M / L, wrota hangaru (`hangar`) — gniazda hangarowe (`hullDesignMountOf`).
+Wygląd (podstawa pod wieżę gry, wieżę rysuje gra): główne, specjalne i wbudowane — kapsuła TN (ośmiokątna rama, właz),
+pomocnicze — okrągła płyta z rowkiem obrotnicy, rakietowe — pokrywa wyrzutni (2 × 2 komory); promień w jd na typ
+(`HD_MOUNT_RADIUS_DU`: 22 / 26 / 30 / 13 / 15). Gniazda są urządzeniami sieci (kabel z rdzenia do każdego).
+
+**Gniazda floty TN** = pełne zestawy z gry (`SHIP_EDITOR_DEFAULTS.ships` — frigate, destroyer, battleship,
+terran_carrier, terran_supercapital; te wpisy czyta gra dla NPC i gracza). Liczy je `node scripts/kreator-gniazda-tn.mjs
+[--zapisz]` → blok `HD_PRESET_MOUNTS` w `hullDesignSystemSlots.js` (dane, nie rachunek przy wczytaniu):
+
+- przeliczenie px PNG → projekt jak sloty systemów; duplikaty edytora (dwa markery jednego typu ≤ 3 px — podwójne
+  kliknięcie: Custos 1, Citadella 5) → jedno gniazdo;
+- pary burt (ten sam typ, odległość (x, |y|) ≤ 10% długości) → para w lustrze w średnim położeniu; gniazdo przy osi → na
+  osi; bez pary → na swojej burcie (`g1`; Bellator ma po burtach 7 / 6 gniazd głównych i 6 / 7 pomocniczych — jego sieć
+  liczy się bez lustra);
+- gniazdo w zasięgu kapsuły wieży albo pierścienia / ramy presetu SIADA w jej środku (sprite ma tam gniazdo): wieże
+  presetu znikają wszystkie, pierścienie pod gniazdami — z listy `drop` (Colossus: 8 ośmiokątnych ram to gniazda
+  rakietowe, specjalne i wbudowane — promień śmierci siada na ramie dziobu, 57 j. za markerem z czubka dziobu);
+- reszta dosunięta do najbliższego wolnego miejsca: podstawa cała w kadłubie, z odstępem od modułów, kanałów serwisowych
+  i innych gniazd, najlepiej na płycie (kratki i klapy TN — miękkie przeszkody). Przesunięcia: przeważnie 0–15 j.,
+  największe — Colossus: gniazdo pomocnicze przy dziobie 48 j., specjalne przy dyszy SIDE 41 j.;
+- rozmiar = rozmiar broni kadłuba w grze (`WEAPON_TIER_BY_HULL`: S / M / L / L / Capital); broń = domyślne uzbrojenie NPC
+  (gniazda bez broni NPC — puste: tak gra zostawia nadwyżkę gniazd ponad `spec`); broń za duża na gniazdo → ta sama
+  rodzina w rozmiarze gniazda (NPC Custos nosi `railgun_mk2` M w gniazdach S — w kreatorze Tempest Ion S).
+
+| Okręt | Markery edytora | Gniazda | główne / pomocnicze / rakietowe / specjalne / hangary / wbudowane | Uzbrojone przez NPC |
+|---|---|---|---|---|
+| Custos | 5 | 4 | 2 / 2 / – / – / – / – | 4 |
+| Hasta | 8 | 8 | 4 / 4 | 8 |
+| Bellator | 31 | 31 | 13 / 14 / 4 | 22 |
+| Citadella | 40 | 35 | 8 / 15 / – / 2 / 10 (wrota) | 26 |
+| Colossus | 56 | 56 | 14 / 24 / 8 / 9 / – / 1 | 33 |
+
+Propozycja wzięła dla Custosa, Hasty i Bellatora `SHIPS[…].spec` (10 / 20 / 27 gniazd), bo szukała kluczy
+`terran_frigate` itd. — edytor gniazd gry trzyma je pod `frigate`, `destroyer`, `battleship`. Bellator z 31 gniazdami
+zajmuje 97% limitu klasy IV (propozycja zakładała 60–85%).
+
+**Klasy presetów** (`HD_PRESET_CLASS`): TN i fregata z klocków — decyzja użytkownika (Custos I/R1, Hasta II/R2, Bellator
+IV/R4, Citadella V/R5, Colossus VI/R6, klocki I/R1 — jej wieża M dostaje gniazdo S), reszta — najniższa klasa z
+powierzchni i gniazd (Hasta-D III, fregata i krążownik z części IV, Orbis i Szakal V); Atlas II (1,05 mln j.²) — poza
+drabiną jak Atlas (`HD_PRESET_OUTSIDE_LADDER`); `empty` — gracz wybiera.
+
+**Martwe kable** (`markPipeNetPower`, `applyHullDesignPower`): drzewo sieci zasilania od przyłączy reaktora — bieg jest
+martwy, gdy za nim nie ma urządzenia z prądem; bieg z kopią lustra, którego burty różnią się stanem, dzieli się na dwa.
+Trasy się nie liczą od nowa (sieć bez oznaczeń w `pipeNet.base`), raster tak. Kompozytor: `R2.w` biegu = materiał
++ 8 · na płytach + 16 · martwy — szara izolacja, bez opasek. Kable do gniazd wchodzą zwykle pod płyty, więc martwe
+widać głównie w rowach przy rdzeniu i w nakładce edytora (gniazda bez prądu — czerwone). Kontrola sieci
+(`pipeNetworkCheck`) na sieci z martwymi biegami — 0 wolnych końców, 0 wiązek poza obrysem.
+
+**Demo — panel „Klasa okrętu” i „Gniazda broni”**: wybór mostka (auto / I–VI) i rdzenia (poziomy ponad mostek + 1
+nieaktywne), paski powierzchni, gniazd i gniazd ciężkich wobec limitu, rozmiar broni, bilans (utrzymanie + tarcza +
+broń wobec mocy, zapas, mnożnik napędu, niedobór i zgaszone gniazda), kolejka priorytetów (▲ ▼ — tylko kategorie obecne
+na okręcie). Typ i rozmiar nowego gniazda (narzędzie Moduł → Gniazdo broni), edycja zaznaczonego gniazda (typ, rozmiar,
+broń: typowa / pusta / lista broni pasujących do gniazda z poborem). TWARDE LIMITY: gniazdo ponad limit gniazd albo
+gniazd ciężkich, gniazdo ponad rozmiar klasy i mostek niższy niż kadłub — odmowa z komunikatem przed akcją; każda inna
+akcja (klocki, powiększanie, przesunięcie przez oś, zmiana typu) jest sprawdzana po przeliczeniu pola (`classGuard`):
+gdy któryś limit jest bardziej przekroczony niż przed nią, projekt wraca do ostatniego w limitach (wpis historii znika)
+i panel podaje powód. Projekt wczytany ponad limit (Atlas II) da się zmniejszać, nie powiększać. Haki zrzutów:
+`__kreator.klasa` (`setBridge`, `setCore`, `setPriority`, `addMount`, `select`, `state`).
+
+**Sprawdzanie**: `node --test tests/shipClasses.test.mjs tests/hullDesignClass.test.mjs` (dane i rachunek; presety
+w limitach, gniazda TN zgodne z edytorem gry, broń = NPC, kalibracja ~20% ± 5%, martwe kable, straż limitów); zrzuty
+`node scripts/webgpu/kreator-kadluba-demo.mjs --etapy klasa --out .tmp/kreator/klasa` → `klasa-*.png` (panel przy
+Bellatorze i Colossusie, gniazda w kadrze i zbliżeniu, Bellator na R2 — martwe kable i ten sam kadr na R4, odmowy
+limitów Custosa; liczby w `raport.json` → `klasa`).
+
+**Do gry (etap 3)**: bilans mocy na okręcie (gaśnięcie broni, tarczy i hangarów wg priorytetu, napęd z zapasu),
+`energyCost` broni zacznie coś znaczyć; gniazda z projektu zamiast `SHIP_EDITOR_DEFAULTS` (`hullDesignMounts` daje
+już typ, rozmiar i broń); NPC — wybór gniazd po `spec` zostaje albo przechodzi na pobór mocy.
+
 ## Demo — narzędzia
 
 **Klocki (N)** — sekcja „Klocki” w panelu: paleta z ikonami, LPM na pustym stawia klocek (klik — rozmiar domyślny,
@@ -402,8 +522,8 @@ kadłub (klucz = profil renderu)**. Kolejno:
    z modułu „Mostek”), rdzenie reaktora (`src/data/reactorCores.js` — z modułu „Reaktor”: `hullDesignMounts().cores`),
    zbiorniki paliwa (`src/data/fuelTanks.js` — z modułu „Zbiornik paliwa”: `.fuelTanks`), dysze MAIN
    (`ENGINE_FX_DEFAULTS` — z gondol: `.mainThrusters`), dysze SIDE (`engines.side` — z modułów „Dysza SIDE”:
-   `.sideThrusters`, deg jak edytor gniazd), gniazda broni (`SHIP_EDITOR_DEFAULTS` — z modułów wież; typ main / aux /
-   special do dodania w module), lampy pozycyjne (`editorLights` — zrobione w demie, promień w jd), ładownie
+   `.sideThrusters`, deg jak edytor gniazd), gniazda broni (`SHIP_EDITOR_DEFAULTS` — z gniazd projektu: `.hardpoints`
+   z typem, rozmiarem i bronią — § „Klasy okrętów”), lampy pozycyjne (`editorLights` — zrobione w demie, promień w jd), ładownie
    (`CARGO_BAY_HULLS` — z modułów „Ładownia”: `.cargoBays`; wrota gry do dobrania), `HULL_COLLISION_ARMOR`,
    `SHIP_FLIGHT_SPECS`, obrys 3D.
 5. **Stocznia** — budowa od zera = ciało z wszystkimi komórkami martwymi ożywiane odrostem (`HullBodies.regrowCell`)

@@ -360,7 +360,8 @@ export class HullComposer {
           const hc = hash11(rid.mul(1.3).add(pkV.mul(9.1)).add(3.3));
           const bandCol = select(hc.lessThan(0.3), vec3(0.5, 0.05, 0.03), select(hc.lessThan(0.55), vec3(0.6, 0.34, 0.04),
             select(hc.lessThan(0.78), vec3(0.07, 0.32, 0.09), vec3(0.6, 0.6, 0.56))));
-          const insul = mix(vec3(0.03, 0.029, 0.027), vec3(0.15, 0.15, 0.145), deadF).mul(select(pkV.lessThan(0.5), float(1.3), float(1.0)));   // pierwszy — gruby kabel zasilający
+          // pierwszy — gruby kabel zasilający; martwy — jasnoszara izolacja (w cieniu rowu ciemna szarość ginęła)
+          const insul = mix(vec3(0.03, 0.029, 0.027), vec3(0.34, 0.34, 0.33), deadF).mul(select(pkV.lessThan(0.5), float(1.3), float(1.0)));
           const gloss = smoothstep(0.82, 1.0, pcV).mul(0.1);
           const cableC = mix(insul.mul(float(0.55).add(pcV.mul(0.75))).add(vec3(gloss)), bandCol.mul(float(0.6).add(pcV.mul(0.5))), bandOn);
           const trayC = engC.mul(float(1.0).add(rail.mul(0.3)));
@@ -668,7 +669,8 @@ export class HullComposer {
             const bolt = float(1.0).sub(smoothstep(0.35, 0.6, boltD));
             modH.addAssign(plate.mul(1.4).sub(groove.mul(0.5)).add(bolt.mul(0.4)));
             modK.assign(max(modK, plate));
-            modCol.assign(select(rr.lessThan(R.mul(0.8)), metal.mul(0.75), metal.mul(1.25)).mul(float(1.0).sub(groove.mul(0.5))));
+            // obrotnica szara (pół stali, pół płyty), pierścień w barwie płyty — na białym pancerzu TN nie czyta się jak otwór
+            modCol.assign(select(rr.lessThan(R.mul(0.8)), mix(metal, plateC, 0.5), plateC.mul(0.97)).mul(float(1.0).sub(groove.mul(0.5))));
           });
         });
       }).ElseIf(type.lessThan(4.5), () => {
