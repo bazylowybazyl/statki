@@ -59,7 +59,8 @@ export const MINING_FIELDS_CONFIG = Object.freeze({
   selectivity: 2.5,
   minWanted: 1,
   // Pole bez tej rudy (udział < minShare) nie wchodzi w wybór; pole wybrane z dostępnością < minAvailability też nie.
-  minShare: 0.02,
+  // Próg = próg `yields` (0,005): platyna ma w pasie głównym ~1,6% składu — przy 0,02 nie kopał jej nikt.
+  minShare: 0.005,
   minAvailability: 0.02,
   // Wybór pola: udział × dostępność / (odległość [AU] + distanceSoftAu).
   distanceSoftAu: 3,

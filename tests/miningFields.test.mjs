@@ -153,6 +153,13 @@ test('wybór pola: najbliższy sektor z rudą; uran tylko z Kuipera; pole wyczer
     .sort((a, b) => Math.hypot(a.x - ceres.x, a.y - ceres.y) - Math.hypot(b.x - ceres.x, b.y - ceres.y))[0];
   assert.equal(pick.id, near.id, 'najbliższy sektor');
   assert.ok(pickMiningField(m, net, ceres, 'uranium_ore').id.startsWith('belt-kuiper'));
+  // Rudy z widm (receptury E8): nikiel i rzadka platyna z pasa głównego — każda ruda z `yields` pola jest do wzięcia.
+  for (const res of ['nickel_ore', 'platinum_ore', 'carbon_ore']) {
+    const f = pickMiningField(m, net, ceres, res);
+    assert.ok(f && f.id.startsWith('belt-main'), `${res} z pasa głównego`);
+    const plan = planExpedition(m, f, res, 120, seededRandom(4));
+    assert.ok(plan && plan.harvest[res] === 120 && plan.density > 0, `wyprawa po ${res}: ${JSON.stringify(plan?.harvest)}`);
+  }
   assert.equal(pickMiningField(m, net, ceres, 'steel_plate'), null, 'stal nie rośnie w pasie');
   // Wybieramy sektor do zera (tabela zabrana w całości) — wybór przechodzi dalej.
   planExpedition(m, near, 'iron_ore', 120, seededRandom(1));
