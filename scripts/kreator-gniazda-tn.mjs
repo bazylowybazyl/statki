@@ -153,6 +153,8 @@ export function computeTnMounts(key) {
   const obstacles = ex.filter((m) => !m.type.startsWith('turret_') && !isDropped(m));
   // kanały serwisowe dysz SIDE, zbiorników i gondol MAIN (rura paliwa wchodzi nimi widocznie — sieć systemów)
   const channels = obstacles.map((m) => serviceChannel(m, D, true)).filter(Boolean);
+  // obudowa reaktora nad kadłubem (gałąź reaktor-obudowa: ośmiokąt do 1,2 · r + 0,8 · D) — koło r · 1,3 + D
+  const housings = obstacles.filter((m) => m.type === 'reactor').map((m) => ({ x: m.x, y: m.y, R: m.r * 1.3 + D }));
   const soft = (m) => m.type === 'vent' || (m.type === 'hatch' && (m.v || 0) >= 1);
   // dosuwanie: większe najpierw
   items.sort((a, b) => rOf(b.slot) - rOf(a.slot) || a.x - b.x);
@@ -168,6 +170,7 @@ export function computeTnMounts(key) {
     if (y !== 0 && !it.one && Math.abs(y) < F + gapJ / 2) return false;
     for (const m of obstacles) if (pipeModuleSdf(m, x, y) < F + (soft(m) ? 0 : gapJ)) return false;
     for (const ch of channels) if (serviceChannelSdf(ch, x, y) < F + gapJ) return false;
+    for (const h of housings) if (Math.hypot(x - h.x, y - h.y) < h.R + F + gapJ) return false;
     for (const yy of it.one || y === 0 ? [y] : [y, -y]) {
       for (const q of placed) {
         const Fq = rOf(q.slot) * FOOT;

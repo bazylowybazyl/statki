@@ -95,10 +95,15 @@ test('gniazda TN: podstawa cała w kadłubie, bez nakładania na siebie, na syst
     const mods = f.expanded.modules;
     const mounts = mods.filter((m) => m.type === 'mount');
     const hard = mods.filter((m) => HD_SYSTEM_TYPES.includes(m.type) || m.type === 'reactor' || m.type === 'hangar');
+    // obudowa reaktora nad kadłubem (gałąź reaktor-obudowa, `reactor` v 2): ośmiokąt do 1,2 · r + 0,8 · D — z zapasem
+    // koło r · 1,3 + D wokół rdzenia
+    const D = f.expanded.design.detail;
+    const housings = mods.filter((m) => m.type === 'reactor').map((m) => ({ x: m.x, y: m.y, R: m.r * 1.3 + D }));
     for (const m of mounts) {
       const F = m.r * 1.16;
       assert.ok(sampleHullField(f, 0, m.x, m.y) <= -F, `${key}: gniazdo ${m.slot} (${m.x}, ${m.y}) za płytko`);
       for (const q of hard) assert.ok(pipeModuleSdf(q, m.x, m.y) >= F, `${key}: gniazdo (${m.x}, ${m.y}) na ${q.type} (${q.x}, ${q.y})`);
+      for (const h of housings) assert.ok(Math.hypot(m.x - h.x, m.y - h.y) >= h.R + F, `${key}: gniazdo (${m.x}, ${m.y}) na obudowie reaktora (${h.x}, ${h.y})`);
       for (const q of mounts) {
         if (q === m) continue;
         assert.ok(Math.hypot(q.x - m.x, q.y - m.y) >= F + q.r * 1.16, `${key}: gniazda (${m.x}, ${m.y}) i (${q.x}, ${q.y}) nachodzą`);
