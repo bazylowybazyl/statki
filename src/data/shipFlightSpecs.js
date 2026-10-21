@@ -22,7 +22,7 @@
 //                  „zero-flux boost": płaski, więc ciężkim daje procentowo więcej
 //   travelSpeed  — limit dojazdu do formacji za szybkim liderem (bez wroga w pobliżu)
 //   boostSpeed / cruiseBoostSpeed — limit dopalacza gracza (Shift) w walce / w PRZELOCIE
-//                  (driveBoostSpeed w driveTransmission.js; bez wpisu 3× / 6× maxSpeed)
+//                  (driveBoostSpeed w driveTransmission.js; bez wpisu — mnożniki CRUISE_DRIVE z driveModes.js)
 //   reverseSpeedFrac — ułamek maxSpeed przy cofaniu (ruch rufą naprzód). Okręt
 //                  cofający się przed wrogiem jest wolniejszy od goniącego go
 //                  dziobem — bez tego snajper uciekał przed brawlerem bez końca.
@@ -32,26 +32,32 @@
 //   fregata ~0,8 s / ~2,3 s · niszczyciel ~1,2 s / ~3,7 s · pancernik ~2 s / ~7 s
 //   lotniskowiec ~2,7 s / ~10 s · superkapitał ~3,2 s / ~13,5 s
 
+import { CRUISE_BY_CLASS, PLAYER_HULL_DRIVE } from './driveModes.js';
+
+// PRZELOT NPC (cruiseBonus, travelSpeed) i dopalacz gracza idą z JEDNEJ tabeli napędów
+// (src/data/driveModes.js, E5 2026-10-21) — tu tylko walka: limit, ciąg, hamowanie, obrót.
+const C = CRUISE_BY_CLASS;
+
 export const SHIP_FLIGHT_CLASS_DEFAULTS = Object.freeze({
   frigate: Object.freeze({
     maxSpeed: 1400, accel: 1750, decel: 2000, strafeAccel: 900, reverseAccel: 800,
-    turnRate: 100, turnAccel: 200, cruiseBonus: 450, travelSpeed: 3200, reverseSpeedFrac: 0.6
+    turnRate: 100, turnAccel: 200, ...C.frigate, reverseSpeedFrac: 0.6
   }),
   destroyer: Object.freeze({
     maxSpeed: 1000, accel: 830, decel: 1000, strafeAccel: 380, reverseAccel: 360,
-    turnRate: 60, turnAccel: 90, cruiseBonus: 450, travelSpeed: 3000, reverseSpeedFrac: 0.5
+    turnRate: 60, turnAccel: 90, ...C.destroyer, reverseSpeedFrac: 0.5
   }),
   battleship: Object.freeze({
     maxSpeed: 650, accel: 325, decel: 400, strafeAccel: 95, reverseAccel: 120,
-    turnRate: 30, turnAccel: 34, cruiseBonus: 450, travelSpeed: 2600, reverseSpeedFrac: 0.4
+    turnRate: 30, turnAccel: 34, ...C.battleship, reverseSpeedFrac: 0.4
   }),
   carrier: Object.freeze({
     maxSpeed: 480, accel: 180, decel: 220, strafeAccel: 65, reverseAccel: 65,
-    turnRate: 20, turnAccel: 17, cruiseBonus: 450, travelSpeed: 2400, reverseSpeedFrac: 0.4
+    turnRate: 20, turnAccel: 17, ...C.carrier, reverseSpeedFrac: 0.4
   }),
   supercapital: Object.freeze({
     maxSpeed: 380, accel: 120, decel: 150, strafeAccel: 50, reverseAccel: 45,
-    turnRate: 15, turnAccel: 10, cruiseBonus: 450, travelSpeed: 2200, reverseSpeedFrac: 0.35
+    turnRate: 15, turnAccel: 10, ...C.supercapital, reverseSpeedFrac: 0.35
   })
 });
 
@@ -61,69 +67,70 @@ export const SHIP_FLIGHT_SPECS = Object.freeze({
   terran_frigate: Object.freeze({
     flightClass: 'frigate',
     maxSpeed: 1400, accel: 1750, decel: 2000, strafeAccel: 900, reverseAccel: 800,
-    turnRate: 100, turnAccel: 200, cruiseBonus: 450, travelSpeed: 3200
+    turnRate: 100, turnAccel: 200, ...C.frigate
   }),
   // Marauder — szybszy na prostej, gorzej hamuje i skręca.
   pirate_frigate: Object.freeze({
     flightClass: 'frigate',
     maxSpeed: 1500, accel: 1800, decel: 1800, strafeAccel: 800, reverseAccel: 700,
-    turnRate: 92, turnAccel: 180, cruiseBonus: 450, travelSpeed: 3200
+    turnRate: 92, turnAccel: 180, ...C.frigate
   }),
   // Hasta.
   terran_destroyer: Object.freeze({
     flightClass: 'destroyer',
     maxSpeed: 1000, accel: 830, decel: 1000, strafeAccel: 380, reverseAccel: 360,
-    turnRate: 60, turnAccel: 90, cruiseBonus: 450, travelSpeed: 3000
+    turnRate: 60, turnAccel: 90, ...C.destroyer
   }),
   // Reaver — bez dysz manewrowych w edytorze: słaby strafe.
   pirate_destroyer: Object.freeze({
     flightClass: 'destroyer',
     maxSpeed: 1080, accel: 860, decel: 900, strafeAccel: 300, reverseAccel: 320,
-    turnRate: 55, turnAccel: 80, cruiseBonus: 450, travelSpeed: 3000
+    turnRate: 55, turnAccel: 80, ...C.destroyer
   }),
   // Brak dysz bocznych — przestawia się dziobem, zamiast ślizgać bokiem.
   terran_battleship: Object.freeze({
     flightClass: 'battleship',
     maxSpeed: 650, accel: 325, decel: 400, strafeAccel: 80, reverseAccel: 120,
-    turnRate: 30, turnAccel: 34, cruiseBonus: 450, travelSpeed: 2600
+    turnRate: 30, turnAccel: 34, ...C.battleship
   }),
   // Iron Skull — ciężki taran: szybszy, ale ociężale hamuje i skręca.
   pirate_battleship: Object.freeze({
     flightClass: 'battleship',
     maxSpeed: 700, accel: 300, decel: 340, strafeAccel: 70, reverseAccel: 100,
-    turnRate: 27, turnAccel: 30, cruiseBonus: 450, travelSpeed: 2600
+    turnRate: 27, turnAccel: 30, ...C.battleship
   }),
   // Citadella.
   terran_carrier: Object.freeze({
     flightClass: 'carrier',
     maxSpeed: 480, accel: 180, decel: 220, strafeAccel: 70, reverseAccel: 65,
-    turnRate: 20, turnAccel: 17, cruiseBonus: 450, travelSpeed: 2400
+    turnRate: 20, turnAccel: 17, ...C.carrier
   }),
   capital_carrier: Object.freeze({
     flightClass: 'carrier',
     maxSpeed: 500, accel: 190, decel: 220, strafeAccel: 70, reverseAccel: 65,
-    turnRate: 21, turnAccel: 18, cruiseBonus: 450, travelSpeed: 2400
+    turnRate: 21, turnAccel: 18, ...C.carrier
   }),
   // Colossus — 13 dysz manewrowych: jak na swój tonaż przyzwoity strafe.
   terran_supercapital: Object.freeze({
     flightClass: 'supercapital',
     maxSpeed: 380, accel: 120, decel: 150, strafeAccel: 55, reverseAccel: 45,
-    turnRate: 15, turnAccel: 10, cruiseBonus: 450, travelSpeed: 2200
+    turnRate: 15, turnAccel: 10, ...C.supercapital
   }),
   // Piracki supercapital — manewrowość ciężkiej jednostki tej samej klasy.
   pirate_supercapital: Object.freeze({
     flightClass: 'supercapital',
     maxSpeed: 380, accel: 120, decel: 150, strafeAccel: 55, reverseAccel: 45,
-    turnRate: 15, turnAccel: 10, cruiseBonus: 450, travelSpeed: 2200
+    turnRate: 15, turnAccel: 10, ...C.supercapital
   }),
   // Atlas — te same liczby dla gracza i dla Atlasa-NPC (decyzja użytkownika 2026-10-01: jedna tabela,
   // limit bojowy 500 j/s; napęd gracza kalibruje się do tej tabeli — driveTransmission.js).
   atlas: Object.freeze({
     flightClass: 'supercapital',
     maxSpeed: 500, accel: 160, decel: 200, strafeAccel: 70, reverseAccel: 60,
-    turnRate: 18, turnAccel: 12, cruiseBonus: 450, travelSpeed: 2200,
-    // Dopalacz gracza (Shift, decyzja użytkownika 2026-10-05): ~1500 j/s, w PRZELOCIE do 3000 j/s.
-    boostSpeed: 1500, cruiseBoostSpeed: 3000
+    turnRate: 18, turnAccel: 12, ...C.supercapital,
+    // Dopalacz gracza (Shift): limity z tabeli napędów (driveModes.js — 1000 / 1800 j/s od 2026-10-21,
+    // wcześniej 1500 / 3000; decyzja użytkownika: „gracz lata trochę za szybko”).
+    boostSpeed: PLAYER_HULL_DRIVE.atlas.boostSpeed, cruiseBoostSpeed: PLAYER_HULL_DRIVE.atlas.cruiseBoostSpeed
   }),
   // Holownik serwisowy (src/game/serviceTug.js) — 5 km, ale z mocnymi dyszami manewrowymi: trzyma pozycję przy
   // statku i wsuwa się pod niego bokiem (strafe), szybciej zawraca niż superkapitał tego tonażu.

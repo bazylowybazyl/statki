@@ -101,7 +101,10 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   // Obrót kadru w skoku (stepCameraRigRoll — demo „Pęd”, 2026-10-19): sprężyna krytyczna kąta [1/s]
   // (90° w ~1 s) i ile sekund po zatrzymaniu kadr jeszcze trzyma kurs, zanim wróci do północy.
   warpRollOmega: 3.2,
-  warpRollHold: 0.5
+  warpRollHold: 0.5,
+  // Hipercruise (E5, src/game/flight/hypercruise.js): zoom × lerp(1, hyperZoomOut, ułamek vmax) — przy
+  // 20–40 tys. j/s kadr 9 km mija się w ~0,3 s, oddalenie pokazuje ruch; ten sam człon log(zoom) co kop warpa.
+  hyperZoomOut: 0.6
 });
 
 // Zakresy strojenia (sanityzacja wartości z konsoli i testów).
@@ -146,7 +149,8 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   warpArrivalOmega: [0.5, 12],
   warpChargeShakePx: [0, 16],
   warpRollOmega: [0.5, 12],
-  warpRollHold: [0, 3]
+  warpRollHold: [0, 3],
+  hyperZoomOut: [0.3, 1]
 });
 
 // Impulsy kopu warpa (s): narastanie i zanik — stałe dema (dema/warp-webgpu/scenes.js).
@@ -486,6 +490,7 @@ export function noteCameraRigWarp(rig, event) {
 //                     ten, przy którym brzeg leży na warpArrivalFill drogi do krawędzi kadru przed dziobem — kamera
 //                     odsuwa się w zwolnieniu (sprężyna warpArrivalOmega), planeta rośnie razem z hamowaniem i dolotem
 //                     (soczewka świata oddaje ją w trakcie hamowania), przy zatrzymaniu kadr wraca do zoomu odniesienia
+//   hyper           — hipercruise gracza: 0…1 (prędkość / vmax; 0 poza nim) — oddalenie do hyperZoomOut
 // Wynik w rig: warpZoomLog (człon log(zoom)), warpLagPx, warpShakePx, warpDirX/Y.
 export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const dt = Math.max(0, finite(input.dt, 0));
@@ -537,6 +542,8 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     else if (state === 'charging') target = 1 + (zoomOut - 1) * smoothstep01(charge);
     // Wyjście: oddalenie zostaje do końca zwolnienia (demo: zoom wraca od wlotu).
     else if (exitAge >= 0 && exitAge < exitSlow) target = Math.min(rig.warpHold, zoomOut);
+    const hyper = clamp(finite(input.hyper, 0), 0, 1);
+    if (hyper > 0) target = Math.min(target, 1 + (clamp(finite(tune.hyperZoomOut, 1), 0.05, 1) - 1) * smoothstep01(hyper));
   }
   // Rulon: statek na środku lejka (ładowanie: × (1 − lejek), lot: 0), przy wyjściu kamera za nim.
   // Bez rulonu (styl skoku — input.rulon === false) w ładowaniu i locie zwykłe wyprzedzenie, jak przed rulonem.

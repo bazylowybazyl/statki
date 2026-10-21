@@ -12,6 +12,7 @@
  */
 
 import { createSuite, runIfMain } from './harness.mjs';
+import { DRIVE_MODES } from '../../src/game/traffic/travelNetwork.js';
 import {
   COURSE_KIND, COURSE_STATUS, DWELL_REASON,
   createCourseRegistry, launchCourse, advanceCourses, getActiveCourses,
@@ -175,11 +176,13 @@ export function run() {
   // ----------------------------------------------------------
   t.section('Odporność na zły krok czasu');
 
+  // Prędkość napędu konwencjonalnego z tabeli napędów (src/data/driveModes.js — 1200 j/s od E5).
+  const vKonw = DRIVE_MODES.conventional.speed;
   const duzyRegistry = createCourseRegistry();
   const duzyKurs = launchCourse(duzyRegistry, {
     kind: COURSE_KIND.HAUL,
     unitClass: 'container_ship',
-    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 500, fuel: 10 })],
+    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 400_000 / vKonw, fuel: 10 })],
     fuelCapacity: 40
   });
   const duzyBubble = createBubble({ separationRadius: 0 });
@@ -190,15 +193,15 @@ export function run() {
   t.equal('ujemne dt nie cofa lotu', duzyActor.x, przedKrokiem.x);
 
   updateBubble(duzyBubble, network, duzyRegistry, indeks(duzyRegistry), { x: 0, y: 0 }, 500_000, 5);
-  t.close('dt=5 przesuwa statek przez pełne pięć sekund', duzyActor.x, 4_000, 0.001);
+  t.close('dt=5 przesuwa statek przez pełne pięć sekund', duzyActor.x, 5 * vKonw, 0.001);
   t.close('fizyczny lot aktualizuje elapsed kursu', duzyKurs.elapsed, 5, 0.001);
-  t.close('ETA kursu maleje podczas fizycznego lotu', duzyKurs.remaining, 495, 0.001);
+  t.close('ETA kursu maleje podczas fizycznego lotu', duzyKurs.remaining, 400_000 / vKonw - 5, 0.001);
 
   const drobnyRegistry = createCourseRegistry();
   const drobnyKurs = launchCourse(drobnyRegistry, {
     kind: COURSE_KIND.HAUL,
     unitClass: 'container_ship',
-    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 500, fuel: 10 })],
+    stages: [travelStage('a', 'b', { distance: 400_000, seconds: 400_000 / vKonw, fuel: 10 })],
     fuelCapacity: 40
   });
   const drobnyBubble = createBubble({ separationRadius: 0 });

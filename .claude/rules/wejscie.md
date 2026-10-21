@@ -47,7 +47,9 @@ paths:
 
 - `4` — Hexlance, `5` — pocisk specjalny (Supernowa)
 
-- `Shift` — dopalacz (Atlas ~1500 j/s, w PRZELOCIE do 3000 j/s)
+- `Shift` — dopalacz (Atlas ~1000 j/s, w PRZELOCIE do 1800 j/s — `src/data/driveModes.js`)
+
+- `O` — hipercruise: rozruch / wyjście (akcja `nav.hypercruise`; `S` też kończy; odcinki TRAVEL TO włączają go same)
 
 - `CapsLock` / `9` — warp (przełącznik); kurs skoku stoi od ładowania — ustaw dziób przed skokiem
 

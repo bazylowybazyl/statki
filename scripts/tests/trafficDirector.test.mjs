@@ -351,9 +351,10 @@ export function run() {
     .filter(entry => entry.destinationId === 'earth' && entry.payload?.resourceId === 'iron_ore')
     .reduce((sum, entry) => sum + (Number(entry.payload?.units) || 0), 0);
   t.note(`Fe w drodze do Ziemi: ${earthIronInbound.toLocaleString('pl-PL')} szt.`);
-  // Stary limiter zatrzymywał się na ok. 17 250. Sam popyt podczas lotu
-  // Merkury→Ziemia wymaga ponad 38 tys. sztuk, zanim doliczy się zapas roboczy.
-  t.check('pipeline przekracza dawny limit i pokrywa czas lotu', earthIronInbound > 38_000);
+  // Stary limiter zatrzymywał się na ok. 17 250. Przy napędzie konwencjonalnym (800 j./s, ~22 min
+  // lotu Merkury→Ziemia) sam popyt w locie wymagał ponad 38 tys. sztuk; od E5 (hipercruise, ~1 min
+  // lotu — src/data/driveModes.js) pipeline wyznacza głównie zapas roboczy, więc próg to dawny limit.
+  t.check('pipeline przekracza dawny limit i pokrywa czas lotu', earthIronInbound > 17_250);
   t.check('pipeline nigdy nie przepełnia magazynu odbiorcy', earthIronInbound <= 60_000);
 
   // ----------------------------------------------------------

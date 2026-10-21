@@ -80,6 +80,8 @@ function loadRingStep(haloRings, npcs, extra = {}) {
     _haloRingNoticeAtMs: 0,
     pushZoneMessage: () => {},
     _npcCollisionBody: createNpcCollisionBody(),
+    // Hipercruise gracza (E5) bezczynny — ring jak dotąd.
+    hypercruise: { state: 'idle', reason: '' }, hypercruiseDriving: () => false, resetHypercruise: () => {},
     ...helpers,
     ...extra
   };
