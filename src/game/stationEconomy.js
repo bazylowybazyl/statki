@@ -1076,8 +1076,33 @@ export const PRICE_MODEL = Object.freeze({
   /** Po tylu sekundach głodu dopłata sięga ~63% maksimum. */
   duressHalfLife: 1800,
   /** Ile razy szybciej głód odpuszcza po dostawie, niż narastał. */
-  duressRelief: 3
+  duressRelief: 3,
+
+  // ---------- CENA REZERWACJI PRODUCENTA ----------
+  //
+  // Rynek kupców nie czeka na „nadwyżkę ponad 70%”. Producent sprzedaje każdą
+  // sztukę, za którą ktoś płaci więcej niż jego własna cena przy zapasie PO
+  // sprzedaży — czyli schodzi z zapasem w dół krzywej niedoboru, aż jego cena
+  // żądania zrówna się z ofertą skupu (patrz `sellDownToFill` w tradeMarket).
+  // Próg 70% zostaje dla planisty frakcji (`getStationSurpluses`).
+  //
+  // Bez tego stocznie producentów zjadały podzespoły do zera i kupcy nie mieli
+  // czego kupić, choć stocznia bez podzespołów płaciła 4,4× bazy (2026-10-21:
+  // Merkury, Wenus, Saturn, Uran i Westa na 0% przez całe 240 min).
+
+  /** Zapas roboczy, którego producent nie sprzedaje nikomu, jeśli sam go używa. */
+  offerFloorFill: 0.1
 });
+
+/**
+ * Zapełnienie, przy którym mnożnik niedoboru wynosi `scarcity` — odwrotność
+ * `scarcityMultiplier`. Poza krzywą przycięte do [0, 1].
+ */
+export function fillForScarcity(scarcity) {
+  const { emptyMultiplier, fullMultiplier } = PRICE_MODEL;
+  const fill = (emptyMultiplier - (Number(scarcity) || 0)) / (emptyMultiplier - fullMultiplier);
+  return Math.max(0, Math.min(1, fill));
+}
 
 /**
  * Dopłata za DŁUGOŚĆ niedoboru. 1,0 świeżo po opróżnieniu, w granicy 2,6×.
@@ -1198,7 +1223,15 @@ export function resourcePrice(station, econ, resourceId, options = {}) {
     /** Ile jest do wzięcia bez naruszania zapasu roboczego stacji. */
     available: Math.max(0, stored - cap * SURPLUS_FILL),
     /** Ile stacja jeszcze zmieści. */
-    room: cap > 0 ? Math.max(0, cap - stored) : Infinity
+    room: cap > 0 ? Math.max(0, cap - stored) : Infinity,
+    // Składniki potrzebne, żeby policzyć cenę przy INNYM zapasie — rynek kupców
+    // sprzedaje i skupuje wzdłuż krzywej, a nie po jednej cenie chwili.
+    stored,
+    capacity: cap,
+    /** Cena przy mnożniku niedoboru 1, bez rozstępu i reputacji. */
+    unitMarket: def.value * profile * duress,
+    /** Poniżej tego zapełnienia stacja nie sprzedaje — patrz `offerFloorFill`. */
+    offerFloor: stationWantsResource(station, resourceId) ? PRICE_MODEL.offerFloorFill : 0
   };
 }
 

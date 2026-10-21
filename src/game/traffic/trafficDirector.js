@@ -34,6 +34,7 @@ import {
   getCourse
 } from './courseRegistry.js';
 import { laneThreat, depositLoot, recordPirateLoss } from './piracy.js';
+import { refreshQuote } from './tradeMarket.js';
 import {
   chooseRoute, getNode, DRIVE_MODES, interceptChance, randomFieldSpot, approachPoint
 } from './travelNetwork.js';
@@ -744,6 +745,13 @@ function dispatchAgent(director, stations) {
   }
 
   attachCourses(agent, kursy.map(course => course.id));
+  // Następny kupiec w tym samym ticku ma widzieć chudszego nadawcę i towar już
+  // lecący do odbiorcy — inaczej cała pula wolnych karawan rzuca się na tę samą
+  // parę, a nadmiar przepada przy rozładunku.
+  bumpInbound(director, opportunity.target.id, opportunity.resourceId, wyslane,
+    route.seconds + (dojazd?.seconds || 0));
+  refreshQuote(director.quotes, opportunity.source.id, opportunity.resourceId);
+  refreshQuote(director.quotes, opportunity.target.id, opportunity.resourceId, wyslane);
   // Karawana leci razem Z DEFINICJI: to jeden właściciel i jeden towar, więc
   // nie pytamy `shouldConvoy` — ta funkcja rozstrzyga, czy OBCYM kursom opłaca
   // się zebrać w grupę. Osłona jest już wliczona w rachunek okazji.
@@ -1982,7 +1990,16 @@ export function tickDirector(director, dt, stations) {
   rebuildInboundIndex(director);
   rebuildMarket(director, stations);
   rebuildParkedIndex(director);
-  if (director.agents) director.quotes = marketSnapshot(stations, id => director.getEconomy(id));
+  if (director.agents) {
+    director.quotes = marketSnapshot(stations, id => director.getEconomy(id), {
+      inbound: (stationId, resourceId) => inboundUnits(director, stationId, resourceId),
+      demandRate: (stationId, resourceId) => {
+        const rates = director.demandRates.get(String(stationId));
+        return Math.max(0, -(Number(rates?.[resourceId]) || 0))
+          * Math.max(0, Number(director.config.economyScale) || 0);
+      }
+    });
+  }
 
   // Odstęp wysyłek skaluje się z gospodarką: N× większy przepływ przy tej samej
   // ładowni to N× więcej kursów, więc dyspozytor musi wystawiać je N× częściej.

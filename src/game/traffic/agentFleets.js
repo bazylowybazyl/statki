@@ -37,6 +37,12 @@ export const AGENT_PROFILE = Object.freeze({
   BOLD: 'bold'
 });
 
+/**
+ * Jaką część kapitału kupiec wkłada w jeden ładunek. Reszta zostaje na eskortę,
+ * paliwo i odkup statków — kupiec przy zerze stoi w porcie na zawsze.
+ */
+export const AFFORD_SHARE = 0.85;
+
 const PROFILES = Object.freeze({
   [AGENT_PROFILE.CAUTIOUS]: { maxRisk: 0.08, minProfit: 200, escortPower: 0, boldness: 0.6 },
   [AGENT_PROFILE.TRADER]: { maxRisk: 0.25, minProfit: 600, escortPower: 1, boldness: 1 },
@@ -255,11 +261,20 @@ export function findBestTrade(agent, quotes, network, options = {}) {
   ];
 
   let best = null;
-  for (const okazja of okazje) {
+  for (const pelna of okazje) {
     // Agent musi mieć czym zapłacić ZA TOWAR — to jest różnica wobec przewoźnika,
-    // który wozi cudze i ryzykuje tylko statkiem.
-    const stake = okazja.buyPrice * okazja.units;
-    if (stake > agent.capital) continue;
+    // który wozi cudze i ryzykuje tylko statkiem. Na pełną ładownię drogiego
+    // podzespołu go nie stać (540 podstaw uzbrojenia to ~750 tys. CR), więc
+    // bierze tyle, na ile ma — wcześniej odrzucał takie okazje w całości
+    // i drogie podzespoły nie jeździły z rąk kupców wcale.
+    const naKapital = Math.floor(agent.capital * AFFORD_SHARE / Math.max(pelna.buyPrice, 1e-6));
+    const okazja = naKapital >= pelna.units ? pelna : {
+      ...pelna,
+      units: naKapital,
+      mass: naKapital * (pelna.mass / Math.max(1, pelna.units)),
+      gross: pelna.marginPerUnit * naKapital
+    };
+    if (okazja.units <= 0) continue;
 
     // Kupiec stoi tam, gdzie skończył poprzedni kurs. Okazja u kogoś innego
     // nadal jest okazją — trzeba tam tylko dolecieć PUSTO i za to zapłacić.
@@ -329,7 +344,7 @@ export function findBestDig(agent, quotes, network, options = {}) {
       let kupiec = null;
       for (const [, quote] of quotes) {
         const cena = quote.prices.get(resourceId);
-        if (!cena || cena.room < units) continue;
+        if (!cena || cena.wanted === false || cena.room - (cena.inbound || 0) < units) continue;
         if (!kupiec || cena.bid > kupiec.cena.bid) kupiec = { station: quote.station, cena };
       }
       if (!kupiec) continue;
@@ -504,8 +519,8 @@ export function buildMerchants(registry, ports, economyScale = 1, options = {}) 
 }
 
 /** Notowania — wygodne opakowanie, żeby wołający nie znał `tradeMarket`. */
-export function marketSnapshot(stations, getEconomy) {
-  return snapshotMarket(stations, getEconomy);
+export function marketSnapshot(stations, getEconomy, options = {}) {
+  return snapshotMarket(stations, getEconomy, options);
 }
 
 /** Cena, po której agent kupi u siebie w porcie — do wyceny startowej. */
