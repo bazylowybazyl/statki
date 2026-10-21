@@ -1273,3 +1273,38 @@ luminancji 1, jasność daje pasmo stanu.
   Zrobić przy integracji.
 - Model nie reaguje na wgniecenia kadłuba (heksy dryfują do `_maxHexDrift`).
   Widać go tylko przez martwe heksy, więc tego nie widać.
+
+## 13. Obudowa nad kadłubem i miejsca rdzeni floty TN (2026-10-21)
+
+Prośba użytkownika (2026-10-21): „widoczny reaktor rysujący się NAD kadłubem (dotąd pod) i obudowa na hullach Terra
+Novy — takie miejsce na reaktor”. Stan i zasady: reguła `mostki-reaktor` § „Model reaktora nad kadłubem”, kreator —
+reguła `kreator-kadlubow` § „Rdzeń: gniazdo obudowy reaktora (v 2)”.
+
+- Model (`src/3d/reactor3D.js`) stoi na wierzchu kadłuba w obudowie, cały czas, w passie ortho; dawniej leżał pod
+  kadłubem (`zTop` −1,2, warstwa 7) i był tylko dla rdzeni ODSŁONIĘTYCH i wyżej — widać go było jedynie przez wyrwę.
+- Miejsca rdzeni Custosa, Hasty, Citadelli i Colossusa przeszły z automatu (`autoReactorMarker`) do tabeli
+  (`REACTOR_CORE_MARKERS`), w miejsca rdzeni presetów kreatora (rama sprite'a `HD_TN_SPRITE_FRAMES`). Promień komory —
+  dawny z automatu (rozgrywka bez zmian poza miejscem). Bellator, Iron Skull i Atlas — miejsca bez zmian, doszły
+  parametry modelu (`hr`, `tier`, `model`).
+
+| Okręt (profil) | dawne miejsce [px PNG] | nowe [px PNG] (kreator, j. projektu) | komora r [px PNG] (R [j.]) | komórek: dawniej → teraz | obudowa hr [px PNG] (j.) | poziom |
+|---|---|---|---|---|---|---|
+| Custos (`terran_frigate`) | automat (0, 121,9) | (−214,5; 6) (x −20) | 295,8 (23,6) | 9 → 7 | 62,5 (5) | R1 |
+| Hasta (`terran_destroyer`) | automat (−161,7; 16,5) | (−92,5; −0,5) (x −30) | 88,9 (33,3) | 13 → 14 | 21,3 (8) | R2 |
+| Bellator (`terran_battleship`) | tabela (−32; 0) | bez zmian (x −17) | 48 (25,9) | 11 | 48,2 (26) | R4 |
+| Citadella (`terran_carrier`) | automat (−58,1; −17,8) | (−357,6; −12) (x −230) | 92,9 (60) | 47 → 51 | 37,2 (24) | R5 |
+| Colossus (`terran_supercapital`) | automat (−104,5; 3,8) | (−353,2; −2) (x −330) | 64,3 (60) | 48 → 52 | 32,2 (30) | R6 |
+| Iron Skull (`pirate_battleship`) | tabela (−60; 0) | bez zmian | 62,64 (26,1) | 9 | — (skala komory) | R4 |
+| Atlas (`atlas`) | tabela (−275; 94) | bez zmian | 56 (26,9) | — | 44 (21,1) | R6 |
+
+Liczby komórek: kadłub belkowy z prawdziwego sprite'a w Node (rozmiar renderu, siatka 15 px). Odstępy obudowy (z ramą
+gniazda 1,2 · hr) od wież i stref mostków sprite'a — dodatnie na całej flocie; najciaśniej Hasta: obudowa 4 px PNG od
+strefy mostka, wieże główne ~50 px (strażnik `tests/reactorCoreMarkers.test.mjs`).
+
+Sprawdzenie (2026-10-21, `scripts/webgpu/reaktory-gra.mjs`, tryb `off` i `--query renderWorker=1`): pięć okrętów TN,
+Iron Skull i Atlas z obudową na wierzchu; Bellator — wyrwa w komorze → ODSŁONIĘTY (sektory pokrywy od strony wyrwy
+zdjęte, przypalony brzeg), stopienie (`forceMeltdown`, 40% i 85%: pęknięcia i żar kraty), detonacja — model znika;
+pirat — stopienie przy zamkniętej pokrywie. A/B cienia obudowy na kadłubie (Bellator): 2915 px ciemniejszych średnio
+o 21 / 255 po stronie od słońca. Pipeline'y synchroniczne w klatkach etapów: 0 (strona i worker). Kreator:
+`node scripts/webgpu/kreator-kadluba-demo.mjs --etapy reaktor --tylko custos,hasta,bellator,citadella,colossus` —
+gniazdo v 2 z modelem 3D i bez, sieć bez zmian (0 wolnych końców), pipeline'y sync 0.

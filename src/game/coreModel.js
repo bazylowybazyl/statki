@@ -145,6 +145,14 @@ export function normalizeCoreMarker(raw, index = 0) {
   const meltdownSec = Number(raw?.meltdownSec);
   if (Number.isFinite(meltdownSec) && meltdownSec > 0) out.meltdownSec = meltdownSec;
   if (raw?.color) out.color = String(raw.color);
+  // Obraz (model 3D reaktora — src/3d/reactor3D.js), bez wpływu na rozgrywkę: hr — promień obrysu obudowy
+  // [px PNG] (obrys gniazda w kreatorze), tier — poziom rdzenia (R1–R6), model — rodzaj modelu, housing: false
+  // — wnętrze bez obudowy.
+  const hr = Number(raw?.hr);
+  if (Number.isFinite(hr) && hr > 0) out.hr = hr;
+  if (raw?.tier) out.tier = String(raw.tier);
+  if (raw?.model) out.model = String(raw.model);
+  if (raw?.housing === false) out.housing = false;
   return out;
 }
 

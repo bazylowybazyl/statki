@@ -280,13 +280,17 @@ if (isWorker) {
         objects: () => [...bridge3d.Bridge3D.warmupMeshes(), bridgeFx.BridgeFx3D.mesh].filter(Boolean) });
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       const rc = st.hazMods.core;
+      // reaktor w obudowie nad kadłubem (pass ortho): poza renderu gracza, maskowanie w środku rdzenia i „Statki 3D”
+      // jak strona (reactorModelVisibility w index.html)
+      const sid3 = models.shipModel3DIdFor;
       st.reactorModel = st.hazMods.model.createReactor3D({
-        scene: Core3D.scene, markLayerActive: () => Core3D.setShieldLayerActive(true),
-        colorFor: (core) => core.color || [0.3, 0.7, 1.0], frameOf: rc.reactorCoreFrame, hostReady: (h) => !!rc.reactorHull(h)
+        scene: Core3D.scene, colorFor: (core) => core.color || [0.3, 0.7, 1.0],
+        frameOf: (core, out) => rc.reactorCoreFrame(core, out, st.playerPoseOf(core.host)), hostReady: (h) => !!rc.reactorHull(h),
+        visibility: (core, wx, wy) => (sid3(core.host) ? 0 : cloakLook.entityCloakVisAt(core.host, wx, wy))
       });
-      st.reactorModelOpts = { origin: { x: 0, y: 0 } };
-      Core3D.warmup.add({ name: 'model reaktora (reactor3D)', layer: 7, phase: 'loading',
-        objects: () => Object.values(st.reactorModel?.meshes || {}).flatMap((k) => [k.structure, k.plasma]).filter(Boolean) });
+      st.reactorModelOpts = { origin: { x: 0, y: 0 }, view: st.cull, zoom: 1 };
+      Core3D.warmup.add({ name: 'model reaktora (reactor3D)', layer: 0, phase: 'loading',
+        objects: () => (st.reactorModel ? st.reactorModel.warmupMeshes() : []) });
       await yieldTask();
       st.dust.init();
       await yieldTask();
@@ -877,6 +881,7 @@ if (isWorker) {
       st.reactorFx.syncHazards(rdt);
       if (st.reactorModel) {
         st.reactorModelOpts.origin.x = cam.x; st.reactorModelOpts.origin.y = cam.y;
+        st.reactorModelOpts.zoom = cam.zoom;
         st.reactorModel.sync(rm.cores, 0, rdt, st.reactorModelOpts);
       }
     } } catch (e) { modFail('reaktory', e); }

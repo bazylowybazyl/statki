@@ -8,7 +8,7 @@
 // (`--etapy klocki --tylko klocki` — bez floty).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,reaktor]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -105,6 +105,25 @@ try {
       await ev(`window.__kreator.edit((d) => { d.pipeNet = { ...(d.pipeNet || {}), density: ${dens} }; })`);
       await ev('window.__kreator.built()');
       await ev('window.__kreator.setAb(false)');
+    }
+    if (stages.has('reaktor') && TN.has(key)) {
+      // gniazdo obudowy reaktora (moduł reactor v 2) z modelem 3D gry (reactor3D) i bez niego — samo gniazdo w poszyciu
+      await ev('window.__kreator.built()');
+      const rc = await ev('(() => { const m = window.__kreator.S.field.expanded.modules.find((q) => q.type === "reactor"); return m ? { x: m.x, y: m.y, r: m.r, v: m.v } : null; })()');
+      if (rc) {
+        const z = Math.min(12, 140 / rc.r);
+        report.reaktor = report.reaktor || {};
+        report.reaktor[key] = { ...rc, model: await ev('window.__kreator.reactor3D ? window.__kreator.reactor3D.stats.instances : -1') };
+        await ev(`window.__kreator.setAb(false); window.__kreator.setCamera(${rc.x}, ${rc.y}, ${z})`);
+        await ev('window.__kreator.runFrames(4)');
+        await shot(`${key}-reaktor-3d`, `${key}: obudowa reaktora 3D w gnieździe (v ${rc.v}), zoom ${z.toFixed(2)}`);
+        await ev('window.__kreator.reactor3D.debug.enabled = false; window.__kreator.runFrames(2)');
+        await shot(`${key}-reaktor-gniazdo`, `${key}: samo gniazdo obudowy w poszyciu (bez modelu 3D)`);
+        await ev('window.__kreator.reactor3D.debug.enabled = true');
+        await ev(`window.__kreator.setCamera(${rc.x}, ${rc.y}, ${z * 0.3})`);
+        await ev('window.__kreator.runFrames(4)');
+        await shot(`${key}-reaktor-okret`, `${key}: obudowa reaktora na tle okrętu, zoom ${(z * 0.3).toFixed(2)}`);
+      }
     }
     if (stages.has('style') && key === 'orbis') {
       for (const s of ['chamfer', 'rounded', 'sharp']) {
