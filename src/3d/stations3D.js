@@ -6,12 +6,16 @@ import { Core3D } from './core3d.js';
 import { Destruction3D } from '../vfx/destruction3D.js';
 // Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
 import { fxRandom } from './fx/fxRandom.js';
+import { requestIdle } from './harmonogram.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
-// prepareStations3D już było (ekran ładowania) — szablon wczytany później rozgrzewa się od razu.
+// prepareStations3D / warmStationTemplates3D już było — szablon wczytany później rozgrzewa się w wolnej chwili.
 let stationsWarmRequested = false;
+// Faza wpisów rozgrzewki szablonów: ekran ładowania (prepareStations3D, przed flush) — bez fazy; szablony
+// rozgrzewane w tle (tryb worker, szablon wczytany po limicie) — 'after'.
+let stationsWarmPhase = null;
 
 let stationKeySequence = 0;
 const STATION_KEY_PROP = '__station3DKey';
@@ -118,7 +122,8 @@ function getTemplate(stationId, path) {
       placeholder.materials = [];
       placeholder.loading = false;
       // wczytany po ekranie ładowania (limit prepareStations3D) — rozgrzewka w tle, zanim stacja wejdzie w kadr
-      if (stationsWarmRequested) warmStationTemplate(placeholder, path);
+      // (wypiek rozpadu szablonu to ~100 ms CPU — w wolnej chwili, nie w callbacku wczytania w środku klatki)
+      if (stationsWarmRequested) requestIdle(() => warmStationTemplate(placeholder, path), { timeout: 2000 });
       resolveLoaded(true);
     },
     undefined,
@@ -152,8 +157,9 @@ function warmStationTemplate(entry, path) {
   const reg = Core3D.warmup;
   if (reg && typeof reg.add === 'function') {
     const name = String(path).split('/').pop();
-    reg.add({ name: `stacje: bryła ${name}`, objects: root, layer: 2 });
-    reg.add({ name: `stacje: cień ${name}`, objects: root, shadow: true });
+    const phase = stationsWarmPhase ? { phase: stationsWarmPhase } : null;
+    reg.add({ name: `stacje: bryła ${name}`, objects: root, layer: 2, ...phase });
+    reg.add({ name: `stacje: cień ${name}`, objects: root, shadow: true, ...phase });
   }
   return true;
 }
@@ -189,6 +195,34 @@ export async function prepareStations3D(stations, { timeoutMs = 10000 } = {}) {
   if (typeof Core3D.warmup?.run === 'function') Core3D.warmup.run('wypiek stacji: szablony i bryły', build);
   else build();
   return warmed;
+}
+
+/**
+ * Szablony GLB modeli stacji w tle, BEZ składania brył (faza rozgrzewki 'after'). Tryb worker: strona nie woła
+ * prepareStations3D (stacje rysuje worker z luster, bryły powstają leniwie przy wejściu w kadr) — bez tego pierwsza
+ * stacja modelu w kadrze (teleport do odległego portu) wczytywała GLB i kompilowała pass FG i cień w klatce. Worker
+ * woła to przy przygotowaniu sceny po klatce zero (lustra stacji już są) i czeka na wczytanie z limitem — wypiek
+ * rozpadu i kompilacje idą pod kurtyną ładowania; szablon wczytany później — w wolnej chwili. Zwraca obietnicę
+ * wczytania szablonów (true, gdy wszystkie gotowe przed limitem `timeoutMs`).
+ */
+export async function warmStationTemplates3D(stations, { timeoutMs = 10000 } = {}) {
+  if (!Core3D.isInitialized || !Array.isArray(stations)) return false;
+  stationsWarmRequested = true;
+  stationsWarmPhase = 'after';
+  const byPath = new Map();
+  for (const station of stations) {
+    if (!station || isPirateStation(station) || isPlayerStation(station) || station.ringPort) continue;
+    const urls = getModelUrlsForStation(station);
+    const path = urls ? urls.find(Boolean) : null;
+    if (path && !byPath.has(path)) byPath.set(path, getTemplate(station.id, path));
+  }
+  if (!byPath.size) return true;
+  let timer = 0;
+  const all = Promise.all([...byPath.values()].map((entry) => entry.loaded));
+  const done = await Promise.race([all.then(() => true), new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); })]);
+  clearTimeout(timer);
+  for (const [path, entry] of byPath) warmStationTemplate(entry, path);
+  return done;
 }
 
 function cloneTemplate(stationId, path) {
