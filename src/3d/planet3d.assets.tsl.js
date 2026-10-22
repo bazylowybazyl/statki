@@ -571,7 +571,13 @@ function buildRingAtmosphereGraph() {
       const mf = bf.w.sub(bf.x);
       const through = smoothstep(-0.004, 0.008, min(mf, bb.w.sub(bb.x)));
       const intoHole = select(inDisc, smoothstep(-0.01, 0.02, mf).mul(0.97), float(0.0));
-      glow.mulAssign(float(1.0).sub(max(through, intoHole)));
+      // Promień widzenia przechodzi przez kulę gryzu (punkt promienia najbliższy jej środkowi — z = z środka, dokładne β):
+      // dysk leży w płaszczyźnie środka planety i dodaje poświatę na tym, co za nim — przy gryzie przy limbie (Ziemia
+      // obraca się wokół osi ringu, earthSpin.js) za nią leży ściana gryzu widziana przez wcięcie (granatowy nalot).
+      // Gryz na tarczy (dawny kadr): ten punkt leży w otworze, a limb poza zasięgiem kuli gryzu — bez zmian.
+      const bm = earthBiteCoords(vec3(vOff, U.uBite.z), U.uBite, U.uBiteEast);
+      const pass = smoothstep(-0.004, 0.008, bm.w.sub(bm.x));
+      glow.mulAssign(float(1.0).sub(max(max(through, intoHole), pass)));
     });
     const alpha = max(glow.r, max(glow.g, glow.b)).toVar();
     Discard(rho.greaterThanEqual(U.uRa).or(alpha.lessThanEqual(0.001)));
