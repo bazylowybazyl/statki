@@ -45,7 +45,7 @@ import { Vec3, Quat, clamp, lerp, degToRad } from "./rocketMath.js";
 import { isEntityShieldBlocking } from "../../../shieldSystem.js";
 import { shieldImpactClass, submunitionDef } from "../../data/weapons.js";
 import { SimClock } from "../simClock.js";
-import { writePointVelocity } from "../carrierVelocity.js";
+import { writePointVelocity, writeEntityVelocity, isInterpolatedEntity } from "../carrierVelocity.js";
 import { fighterSideOf, fighterSideSparesAlly } from "../friendlyFire.js";
 
 /*
@@ -109,6 +109,7 @@ const _leadVel = { x: 0, y: 0 };
 const _leadFrame = { x: 0, y: 0 };
 const _targetVel = { x: 0, y: 0 };
 const _pointVel = { x: 0, y: 0 };
+const _fuseTargetVel = { x: 0, y: 0 };
 // Opis wyrzutu dla fire() z salwy / podziału (jeden obiekt — fire czyta go od razu).
 const _launch = {
     mode: LAUNCH_ELEVATED, index: 0, count: 1, seed: 0, azimuth: NaN, shooter: null,
@@ -1289,7 +1290,17 @@ class RocketSystem3D {
                 const ty = Number(target.y ?? target.pos?.y) || 0;
                 // Endpoint-only distance tunnels through the fuse sphere at high speed
                 // (supernova at 30 fps steps 120u/frame against a 98u fuse).
-                const x1 = r.prevTravelPos.x, z1 = r.prevTravelPos.z;
+                let x1 = r.prevTravelPos.x, z1 = r.prevTravelPos.z;
+                // Ruch względny: gracz (i P2) rusza się w kroku fizyki PRZED rakietami, więc stoi już w pozie końca
+                // kroku — w jego układzie odcinek rakiety zaczyna się v_celu·dt dalej (jak segX0 pocisków). Bez tego
+                // hipercruise (20–40 tys. j/s) przelatywał przez zapalnik: małe kadłuby gubiły 20–75% trafień, Atlas
+                // do 3% (E9 2026-10-22, scripts/hipercruise-kolizje-sym.mjs --tryb rakiety). NPC ruszają się po
+                // rakietach — ich poza jest z początku kroku, bez poprawki.
+                if (physics && isInterpolatedEntity(target)) {
+                    writeEntityVelocity(target, _fuseTargetVel);
+                    x1 += _fuseTargetVel.x * dt;
+                    z1 += _fuseTargetVel.y * dt;
+                }
                 const segX = r.position.x - x1;
                 const segZ = r.position.z - z1;
                 const segLenSq = segX * segX + segZ * segZ;
