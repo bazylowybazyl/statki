@@ -47,6 +47,7 @@ export const PLANT_LAYOUT = Object.freeze({
   hubRing: 0.05,      // promień pierścienia odbiornika
   elevators: [30, 90, 150, 210, 270, 330],   // azymuty wind w ramie gryzu (0 — wschód, 90 — północ)
   anchorPad: 0.015,   // odsunięcie kotwic wind za krawędź gryzu [rad]
+  ringInnerR: 41800 / 37800,   // wewnętrzna krawędź ringu „Halo” Ziemi (layout.radii.min / promień Ziemi gry) [R]
   footH: 0.045,       // STOPA ŚCIANY: wysokość, na której mosty korka (nad lawą, w azymutach wind) dochodzą do ściany gryzu,
                       // a zaczynają się przewody obudowy (pierścień przy stopie i przewody w górę ścian)
   timeScale: 1
@@ -183,4 +184,28 @@ export function mergeParts(parts, matrix) {
   if (matrix) geo.applyMatrix4(matrix);
   geo.computeBoundingSphere();
   return geo;
+}
+
+/**
+ * Najbliższy punkt WEWNĘTRZNEJ KRAWĘDZI RINGU (okrąg o promieniu `innerR` w płaszczyźnie równika osi obrotu `axis`,
+ * środek w środku Ziemi) do punktu P — wszystko w układzie obiektu kuli. Ring w układzie Ziemi stoi (earthSpin.js).
+ */
+export function ringPointObject(P, axis, innerR, out = new THREE.Vector3()) {
+  out.copy(P).addScaledVector(axis, -P.dot(axis));
+  if (out.lengthSq() < 1e-12) out.set(1, 0, 0).addScaledVector(axis, -axis.x);
+  return out.normalize().multiplyScalar(innerR);
+}
+
+/** Czy odcinek P → Q (układ obiektu kuli) omija kulę o promieniu r wokół środka Ziemi. */
+export function segmentClearsSphere(P, Q, r = 1) {
+  const dx = Q.x - P.x, dy = Q.y - P.y, dz = Q.z - P.z;
+  const dd = dx * dx + dy * dy + dz * dz;
+  const t = dd > 0 ? Math.max(0, Math.min(1, -(P.x * dx + P.y * dy + P.z * dz) / dd)) : 0;
+  const x = P.x + dx * t, y = P.y + dy * t, z = P.z + dz * t;
+  return x * x + y * y + z * z > r * r;
+}
+
+/** Macierz odwrotna ramy: układ obiektu kuli → rama elektrowni (np. oś obrotu Ziemi w ramie). */
+export function objectToFrameMatrix(b = EARTH_BITE.radiusR, out = new THREE.Matrix4()) {
+  return out.copy(plantFrameMatrix(b)).invert();
 }

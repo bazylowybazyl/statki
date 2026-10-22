@@ -19,7 +19,9 @@
 import * as THREE from 'three/webgpu';
 import { EARTH_BITE } from '../data/earthBite.js';
 import { earthBiteFrame } from './earthBiteShape.js';
-import { PLANT_LAYOUT, plantFrameMatrix, plantZ0, hubHeight, mergeParts } from './earthBitePlantFrame.js';
+import {
+  PLANT_LAYOUT, plantFrameMatrix, plantZ0, hubHeight, mergeParts, ringPointObject, segmentClearsSphere
+} from './earthBitePlantFrame.js';
 import { createPlantUniformValues } from './earthBitePlantCommon.tsl.js';
 import { createPlantMetalMaterial, createPlantFlowMaterial } from './earthBitePlant.tsl.js';
 import * as Cork from './earthBitePlantCork.js';
@@ -128,7 +130,25 @@ export class EarthBitePlant {
 
   /** Promień przekaźnikowy odbiornik → ring: siatki w układzie gospodarza (świat dema / scena gry). */
   createRelay() {
-    return this.beam.createRelay();
+    this.relay = this.beam.createRelay();
+    return this.relay;
+  }
+
+  /**
+   * Ring w układzie Ziemi: oś obrotu `axis` (układ obiektu kuli, earthSpin.js), wewnętrzna krawędź `innerR` [R]. Ring
+   * jest równikowy i stoi względem gruntu, więc promień przekaźnikowy odbiornik → najbliższy punkt krawędzi ringu jest
+   * stały: jego siatki idą do grupy elektrowni (układ obiektu kuli, obracają się z Ziemią). Linia przez planetę —
+   * przekaz wyłączony (magazyn się ładuje). Zwraca, czy przekaz działa.
+   */
+  attachRing(axis, innerR = this.look.ringInnerR) {
+    const relay = this.relay ?? this.createRelay();
+    if (relay.group.parent !== this.group) this.group.add(relay.group);
+    const H = this.hubCenterObject(new THREE.Vector3());
+    const T = ringPointObject(H, axis, innerR);
+    const on = segmentClearsSphere(H, T, 1.002);
+    this.ringAxis = axis.clone();
+    this.placeRelay(H, T, on);
+    return on;
   }
 
   /** Ustawia promień przekaźnikowy od H do T (układ gospodarza); bez widoczności — chowa (odbiornik ładuje magazyn). */
