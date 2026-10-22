@@ -87,7 +87,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Ruch statku przy Ziemi, Marsie i Jowiszu (spawn, teleport, autopilot) omija płytę ringu — przelot tylko tranzytami.
 - Kawałek bazy piratów łamie się przez `storyBaseBreak` / `pirateBaseWorld`; konfiguracja pola pasa idzie przez `beltWorld`, nie `asteroidBelt.field`.
 - Stała efektu objęta presetem grafiki → zmiana tabeli w `src/game/graphicsQuality.js`.
-- Ekonomia jest jedna — ruch v2 w workerze (reguła `ruch-v2`); gra nie trzyma magazynów stacji. Zmiana zapasu stacji z gry (handel, rozbiórka, zakup w porcie, łup) → `adjustStationStock` (most `trafficV2.stockDelta`); odczyt magazynu, ceny i oferty → `getTradeEconomy` / `getTradeOffer` (kopia rynku z mostu); w świecie ruchu zapas tylko przez `takeStock` / `putStock`, popyt konsumenta spoza receptur → `declareDemand` (API rynku, `marketBook.js`); nowy rynek → `addMarket` / `TrafficBridge.addMarket`.
+- Ekonomia jest jedna — ruch v2 w workerze (reguła `ruch-v2`); gra nie trzyma magazynów stacji. Zmiana zapasu stacji z gry (handel, rozbiórka, zakup w porcie, łup) → `adjustStationStock` (most `trafficV2.stockDelta`); odczyt magazynu, ceny i oferty → `getTradeEconomy` / `getTradeOffer` (kopia rynku z mostu); w świecie ruchu zapas tylko przez `takeStock` / `putStock`, popyt konsumenta spoza receptur → `declareDemand` (API rynku, `marketBook.js`); nowy rynek → `addMarket` / `TrafficBridge.addMarket`; stan ekonomii, który ma przeżyć F5 → `economySave.js` (eksport, wczytanie, `ECONOMY_SAVE_VERSION`).
 
 ## Częste zadania
 

@@ -1879,6 +1879,19 @@ export function settleCourseEvents(director, events) {
  * produkuje, potem kursy się przesuwają i rozliczają, a dopiero na końcu
  * dyspozytor patrzy na świeży stan magazynów i wystawia nowe zlecenia.
  */
+/**
+ * Otwiera rynek dyspozytora na bieżącym stanie (API rynku, `marketBook.js`): rezerwacje towaru w drodze,
+ * oferty i zamówienia skupu, a z kupcami — notowania. Woła go tick (przed wysyłkami) i start świata w workerze
+ * (oferta portu dla gracza od pierwszego bufora rynku, także po wczytaniu zapisu).
+ */
+export function openDirectorMarket(director, stations) {
+  openMarket(director.book, stations, {
+    courses: getActiveCourses(director.registry),
+    orders: director.fleet?.activeOrders || [],
+    withQuotes: !!director.agents || director.config.sellOffers === 'reservation'
+  });
+}
+
 export function tickDirector(director, dt, stations) {
   const { registry, fleet, config } = director;
   const events = advanceCourses(registry, dt);
@@ -1942,11 +1955,7 @@ export function tickDirector(director, dt, stations) {
   // Indeksy przeliczane raz na tick, tuż przed fazą wysyłek — to one czynią
   // dyspozytora liniowym wobec liczby kursów i floty zamiast kwadratowym.
   // Rynek: rezerwacje towaru w drodze, oferty i zamówienia skupu, a z kupcami — notowania.
-  openMarket(director.book, stations, {
-    courses: getActiveCourses(registry),
-    orders: fleet?.activeOrders || [],
-    withQuotes: !!director.agents || config.sellOffers === 'reservation'
-  });
+  openDirectorMarket(director, stations);
   rebuildParkedIndex(director);
 
   // Odstęp wysyłek skaluje się z gospodarką: N× większy przepływ przy tej samej

@@ -7,6 +7,7 @@ import {
 } from '../config/units.js';
 import { drawWreckFieldMarkers } from './wreckFieldMarkers.js';
 import { CicBeltLayer, CIC_BELT_TUNE, CIC_BELT_PALETTES, describeCicBeltAt } from './cicBeltLayer.js';
+import { createCicTradeLayer } from './cicTradeLayer.js';
 
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
@@ -713,6 +714,14 @@ const CIC_BELT_VIEW = { W: 0, H: 0, cx: 0, cy: 0, viewX: 0, viewY: 0, zoom: 1, b
 if (typeof window !== 'undefined') window.CicBeltTune = CIC_BELT_TUNE;
 // Warstwa pasów nie może zatrzymać pętli gry (wyjątek w rysunku CIC = koniec klatek): błąd raz do konsoli.
 let cicBeltLayerFailed = false;
+// Komputer handlowy (E7, src/ui/cicTradeLayer.js) — warstwa „HANDEL”; dane z ruchu v2 przez `setTradeSource`.
+const cicTradeLayer = createCicTradeLayer();
+let cicTradeLayerFailed = false;
+function cicTradeLayerFail(e) {
+  if (!cicTradeLayerFailed) console.error('[CIC] warstwa handlu:', e);
+  cicTradeLayerFailed = true;
+}
+
 function cicBeltLayerFail(e) {
   if (cicBeltLayerFailed) return;
   cicBeltLayerFailed = true;
@@ -763,6 +772,13 @@ export const CICDisplay = {
 
   getSelectedTarget()  { return cicSelectedContacts[0]?.entity || cicSelectedTarget || null; },
   getSelectedTargets() { return cicSelectedContacts.map(c => c.entity).filter(Boolean); },
+
+  /** Komputer handlowy (warstwa „HANDEL”, klawisz H w CIC): trasy, porty, okazje z ruchu v2. */
+  toggleTrade() { return cicTradeLayer.toggle(); },
+  get tradeEnabled() { return cicTradeLayer.enabled; },
+  /** Źródło danych: `() => Promise<summary>` (most ruchu v2 — `requestTradeSummary`). */
+  setTradeSource(fn) { cicTradeLayer.setSource(fn); },
+  tradeStats() { return cicTradeLayer.stats(); },
 
   /** Jump to system view (V key) — sets target zoom to system level */
   toggleSystemView() {
@@ -1142,6 +1158,12 @@ export const CICDisplay = {
     drawSolarSystem(ctx, W, H, toScreen, cicZoom, gameTime);
     // podpisy pasów, rodzin i olbrzymy nad orbitami
     try { cicBeltLayer.drawLabels(ctx, beltView, window.__beltWorld?.giants?.entries || null); } catch (e) { cicBeltLayerFail(e); }
+
+    // === HANDEL (komputer handlowy — src/ui/cicTradeLayer.js; [H]) ===
+    try {
+      cicTradeLayer.update(performance.now());
+      cicTradeLayer.draw(ctx, W, H, toScreen);
+    } catch (e) { cicTradeLayerFail(e); }
 
     // === RANGE RINGS (from ship center) ===
     const shipScr = toScreen(ship.pos.x, ship.pos.y);
@@ -1530,8 +1552,11 @@ export const CICDisplay = {
       rows.push([`STATEK  ${describeCicBeltAt(beltField, ship.pos.x, ship.pos.y) || 'POZA PASAMI'}`, '#e8c48a']);
       if (cicMouseInView) rows.push([`KURSOR  ${describeCicBeltAt(beltField, cicMouseWorld.x, cicMouseWorld.y) || '—'}`, '#c9a978']);
     }
-    const panelBottom = drawCicInfoPanel(ctx, W, isSystemScale ? 'CIC · WIDOK UKŁADU' : 'CIC · WIDOK TAKTYCZNY',
+    let panelBottom = drawCicInfoPanel(ctx, W, isSystemScale ? 'CIC · WIDOK UKŁADU' : 'CIC · WIDOK TAKTYCZNY',
       rows, !!beltField, isSystemScale);
+    if (cicTradeLayer.enabled) {
+      try { panelBottom = cicTradeLayer.drawPanel(ctx, W, panelBottom + 10, CIC_PANEL_W); } catch (e) { cicTradeLayerFail(e); }
+    }
 
     // Dane zaznaczonego celu — pod panelem (dawniej w prawym dolnym rogu, pod podpowiedziami kokpitu)
     const _panelTarget = cicSelectedContacts[0]?.entity || null;

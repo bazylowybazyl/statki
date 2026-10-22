@@ -97,6 +97,7 @@ export const INPUT_ACTIONS = Object.freeze([
   { id: 'ui.cicMap', name: 'Mapa CIC (dawna mapa sektora)', cat: 'interfejs', kind: 'edge', ctx: GC, shares: 'ui.cic' },
   { id: 'cic.pan', name: 'CIC: przesuw mapy', cat: 'interfejs', kind: 'hold', ctx: ['cic'] },
   { id: 'cic.systemView', name: 'CIC: widok systemu / taktyczny', cat: 'interfejs', kind: 'edge', ctx: ['cic'] },
+  { id: 'cic.trade', name: 'CIC: komputer handlowy (trasy, porty, okazje)', cat: 'interfejs', kind: 'edge', ctx: ['cic'] },
   { id: 'ui.journal', name: 'Dziennik misji', cat: 'interfejs', kind: 'edge', ctx: G },
   { id: 'ui.pause', name: 'Pauza', cat: 'interfejs', kind: 'edge', ctx: ['game', 'pause'] },
   { id: 'ui.menu', name: 'Menu', cat: 'interfejs', kind: 'edge', ctx: ['game', 'cic', 'pause', 'story', 'menu'] },
@@ -186,6 +187,7 @@ export const KEYBOARD_LAYOUT = Object.freeze({
   'ui.cicMap': ['KeyM'],
   'cic.pan': ['KeyW', 'KeyA', 'KeyS', 'KeyD'],
   'cic.systemView': ['KeyV', 'Backquote'],
+  'cic.trade': ['KeyH'],
   'ui.journal': ['KeyJ'],
   'ui.pause': ['Space'],
   'ui.menu': ['Escape'],                 // słuchacz Esc (index.html), nie główny keydown
@@ -278,6 +280,7 @@ export const PAD_LAYOUT = Object.freeze({
   'ui.cicMap': null,
   'cic.pan': null,
   'cic.systemView': null,
+  'cic.trade': null,
   'ui.journal': null,
   'ui.pause': null,
   'ui.menu': { button: PB.MENU },
@@ -315,7 +318,7 @@ export const KEYDOWN_ORDER = Object.freeze([
   'fly.boost', 'fly.gearDown', 'cam.next', 'cam.reset', 'nav.warp', 'fly.driveAuto', 'ui.perf',
   'wpn.group1', 'wpn.group2', 'wpn.group3', 'tgt.priority', 'tgt.queue', 'wpn.posture', 'wpn.special',
   'wpn.lance', 'wpn.energy', 'ui.cicMap', 'ui.journal', 'mode.fleet', 'fly.damper', 'ship.lights',
-  'fly.stabilizer', 'ui.pause', 'tgt.scan', 'ui.cic', 'cic.pan', 'ship.ram', 'wpn.rocketKey', 'ship.scout', 'tgt.drone',
+  'fly.stabilizer', 'ui.pause', 'tgt.scan', 'ui.cic', 'cic.pan', 'cic.trade', 'ship.ram', 'wpn.rocketKey', 'ship.scout', 'tgt.drone',
   'cic.systemView', 'wpn.fighters', 'ship.repair', 'fly.driveMode', 'ship.engines', 'nav.hypercruise'
 ]);
 
