@@ -15820,8 +15820,9 @@
     let trafficBubble = null;
     /** Czas mostu w bieżącym kroku fizyki (pozy encji do testów trafień). */
     let _trafficStepTime = 0;
-    /** Stanowiska portu Ziemi w układzie gry (geometria z workera — `ready.bubblePorts`) — postój gracza. */
+    /** Stanowiska portów bańki w układzie gry (geometria z workera — `ready.bubblePorts`) — postój gracza. */
     let _trafficPortIndex = null;
+    let _trafficPortTables = null;
     const _trafficBerthStates = new Map();
     const _trafficBerthMarked = new Map();
     const _trafficRegistryBerths = new Map();
@@ -15829,24 +15830,33 @@
     /** Koszt bańki na wątku gry (dekodowanie, pozy, stanowiska, pozy klatki) — `TrafficBubble.stats.gameMs` (średnia). */
     let _trafficGameMs = 0;
 
-    function trafficEarthPortIndex() {
-      if (_trafficPortIndex) return _trafficPortIndex;
-      const berths = trafficV2?.tables?.bubblePorts?.earth;
-      if (!berths) return null;
+    /** Indeks stanowisk WSZYSTKICH portów bańki — przebudowa, gdy worker przyśle nową tabelę (rynki w biegu). */
+    function trafficPortIndex() {
+      const tables = trafficV2?.tables?.bubblePorts || null;
+      if (!tables) return null;
+      if (_trafficPortIndex && _trafficPortTables === tables) return _trafficPortIndex;
+      const berths = [];
+      for (const list of Object.values(tables)) for (const b of list) berths.push(b);
+      _trafficPortTables = tables;
       _trafficPortIndex = createPortBerthIndex({ berths });
+      _trafficRegistryBerths.clear();
       return _trafficPortIndex;
     }
 
-    /** Stanowisko rejestru ringu Ziemi (lampki hal K-7 i zatok) dla id stanowiska ruchu → { b, owner } albo null. */
+    /**
+     * Stanowisko rejestru ringu (lampki hal K-7 i zatok Ziemi, Marsa, Jowisza) dla id stanowiska ruchu →
+     * { b, owner } albo null (pomosty portów bez ringu nie mają lampek).
+     */
     function trafficRegistryBerth(id) {
       if (_trafficRegistryBerths.has(id)) return _trafficRegistryBerths.get(id);
       let found = null;
-      const info = trafficEarthPortIndex()?.byId.get(id);
-      const entry = haloWorld?.entry('earth');
-      if (!info || !entry) return null;   // przed `ready` / bez ringu — bez zapamiętania
-      {
+      const info = trafficPortIndex()?.byId.get(id);
+      if (!info) return null;   // przed `ready` — bez zapamiętania
+      const key = info.stationId;
+      const entry = key ? haloWorld?.entry(key) : null;
+      if (entry && info.hall) {
         if (info.hall === 'K-7') {
-          const owner = haloWorld.hall('earth', info.complex);
+          const owner = haloWorld.hall(key, info.complex);
           const b = owner?.layout?.berths?.find((x) => x.id === info.k7BerthId);
           if (b) found = { b, owner };
         } else {
@@ -15932,7 +15942,7 @@
       }
       if (ship && !ship.dead && dt > 0) {
         const speed = Math.hypot(ship.vel.x, ship.vel.y);
-        stepPlayerBerthHolds(tb, trafficEarthPortIndex(), ship.pos.x, ship.pos.y, speed, dt);
+        stepPlayerBerthHolds(tb, trafficPortIndex(), ship.pos.x, ship.pos.y, speed, dt);
       }
       _trafficGameMs += performance.now() - t0;
       tb.stats.gameMs = tb.stats.gameMs * 0.9 + _trafficGameMs * 0.1;

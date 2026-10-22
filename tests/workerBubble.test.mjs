@@ -207,6 +207,28 @@ test('garnizon K-7 (E4: PATROL / WAR) dokuje w halach przez bańkę i nie staje 
   assert.equal(overlap, 0, 'dwa statki na jednym padzie K-7');
 });
 
+test('bańka w portach bez ringu (pomosty Merkurego i Westy): dokowanie bez wymuszeń, ready.bubblePorts dla wszystkich portów', () => {
+  assert.ok(got.ready.bubblePorts.mercury?.length > 0 && got.ready.bubblePorts.vesta?.length > 0, 'geometria pomostów w ready');
+  assert.ok(got.ready.bubblePorts.mars?.length > 0, 'port ringu Marsa w ready');
+  for (const id of ['mercury', 'vesta']) {
+    const berth0 = world.docks.get(id).berths[0];
+    core.handle({ type: TRAFFIC_MSG.FOCUS, x: berth0.x, y: berth0.y, r: 60_000 });
+    const s0 = { ...core.bubble.bubble.stats };
+    const docked = new Set();
+    for (let f = 0; f < 30 * 120; f++) {
+      core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+      if (f % 15) continue;
+      for (const a of decode(got.actors)) {
+        const berthId = a.berth >= 0 ? got.ready.berths[got.ready.stations[a.port]?.id]?.[a.berth] : null;
+        if ((a.phase === 'docked' || a.phase === 'capture') && berthId?.startsWith(`${id}:`)) docked.add(a.id);
+      }
+    }
+    const s1 = core.bubble.bubble.stats;
+    assert.ok(docked.size > 0, `${id}: statki zadokowane przy pomoście`);
+    assert.equal((s1.forcedCaptures - s0.forcedCaptures) + (s1.forcedStages - s0.forcedStages), 0, `${id}: bez wymuszeń`);
+  }
+});
+
 test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rejestrze ringu', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   let seenApproach = false;

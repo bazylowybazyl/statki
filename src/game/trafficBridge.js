@@ -443,6 +443,7 @@ export class TrafficBridge {
     if (Array.isArray(message.stations) && this.tables) {
       this.tables.stations = message.stations;
       if (message.berths) this.tables.berths = message.berths;
+      if (message.bubblePorts) this.tables.bubblePorts = message.bubblePorts;
       this._indexStations();
       this._emit('markets', this.tables.stations);
     }

@@ -45,7 +45,7 @@ import { recordPlayerMining, setPlayerBerthHolds } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
-  releaseWorldBubbleCourse, refreshFleetStock
+  releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds
 } from './workerBubble.js';
 
 /** Ile ostatnich wraków dyspozytora trzymać po wysłaniu do gry. */
@@ -424,11 +424,12 @@ export function createTrafficCore(post, options = {}) {
    */
   function bubblePortTable() {
     const out = {};
-    for (const stationId of core.bubble?.ports || []) {
+    if (!core.bubble) return out;
+    for (const stationId of bubblePortIds(core.bubble)) {
       const layout = core.world.docks.get(stationId);
       if (!layout) continue;
       out[stationId] = layout.berths.map(b => ({
-        id: b.id, x: b.x, y: b.y, angle: b.angle, length: b.length, width: b.width,
+        id: b.id, stationId, x: b.x, y: b.y, angle: b.angle, length: b.length, width: b.width,
         maxLength: b.maxLength ?? null, maxBeam: b.maxBeam ?? null, complex: b.complex ?? null,
         hall: b.hall ?? null, bayId: b.bayId ?? null, k7BerthId: b.k7BerthId ?? null
       }));
@@ -439,6 +440,7 @@ export function createTrafficCore(post, options = {}) {
   /** Zmiana listy rynków dociera do gry od razu, nie po kroku świata. */
   function marketsChanged() {
     indexMarkets();
+    if (core.bubble) refreshWorldBubblePorts(core.bubble);
     core.marketsDirty = true;
     publishTick(0, 0);
   }
@@ -543,6 +545,7 @@ export function createTrafficCore(post, options = {}) {
       core.marketsDirty = false;
       message.stations = stationTable();
       message.berths = berthTable();
+      message.bubblePorts = bubblePortTable();
     }
     send(message, [market.buffer, bubble.data.buffer]);
   }
@@ -754,6 +757,8 @@ export function createTrafficCore(post, options = {}) {
     handle,
     /** Świat — dla testów i trybu awaryjnego; gra rozmawia przez `handle`. */
     get world() { return core.world; },
+    /** Bańka workera (E6) — dla testów i diagnostyki (`workerBubble.js`). */
+    get bubble() { return core.bubble; },
     get stats() { return { ...core.stats }; }
   };
 }

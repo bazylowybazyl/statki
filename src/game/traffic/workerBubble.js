@@ -9,9 +9,10 @@
  * Gra dostaje po każdym `advance` bufor póz (`ACTOR_FIELD`) i liczy na nim
  * trafienia, taran i rejestr stanowisk; zniszczenie odsyła `destroyed`.
  *
- * Zawężenie fali 3: bańka żyje tylko przy portach z `BUBBLE_PORTS` (dziś
- * Ziemia) — fokus dalej niż `BUBBLE_PORT_RANGE` od węzła portu zwalnia
- * wszystkie encje do rekordów. Kandydaci do materializacji to kursy z bufora
+ * Bańka żyje przy portach (każdy rynek z dokami świata: ringi K-7 i zatoki
+ * Ziemi, Marsa i Jowisza, pomosty planet, księżyców i małych ciał, hangary
+ * kryjówek) — fokus dalej niż `BUBBLE_PORT_RANGE` od każdego portu zwalnia
+ * wszystkie encje do rekordów; `options.ports` zawęża listę (testy). Kandydaci do materializacji to kursy z bufora
  * bańki rdzenia (`buildBubble`: w promieniu fokusu w horyzoncie kroku świata)
  * — bez przeglądu tysięcy aktywnych kursów co klatkę.
  *
@@ -26,11 +27,14 @@
  */
 
 import {
-  createBubble, updateBubble, clearBubble, releaseBubbleCourse, ACTOR_PHASE
+  createBubble, updateBubble, clearBubble, releaseBubbleCourse, setBubblePorts, ACTOR_PHASE
 } from './materializedFlight.js';
 import { createRingObstaclesForNetwork } from './ringRouter.js';
 import { getCourse, COURSE_STATUS } from './courseRegistry.js';
 import { createParkingRegistry, placeFleetStock } from './portParking.js';
+import { SYSTEM_MAP_PLANETS } from '../../data/systemMap.js';
+import { haloRingKey } from '../haloRingPlanets.js';
+import { computeHaloRingLayout } from '../../3d/haloRing/haloRingLayout.js';
 import { BERTH_ROLE, hullFootprint } from './dockLayout.js';
 import { getNode } from './travelNetwork.js';
 import { settleCourseEvents } from './trafficDirector.js';
@@ -51,8 +55,8 @@ function wrapAngle(a) {
   return a - TAU * Math.round(a / TAU);
 }
 
-/** Porty, przy których bańka działa (fala 3: jeden port). */
-export const BUBBLE_PORTS = Object.freeze(['earth']);
+/** Porty bańki domyślnie: wszystkie rynki z dokami (`null` = `world.docks`; lista id — zawężenie). */
+export const BUBBLE_PORTS = null;
 /**
  * Fokus dalej od węzła portu → bańka pusta. Ring Ziemi z portem i redą sięga
  * ~60 tys. j. od środka, bańka ma 60 tys. promienia — 180 tys. obejmuje cały
@@ -68,9 +72,12 @@ const PHASE_INDEX = new Map(ACTOR_PHASES.map((phase, index) => [phase, index]));
  */
 export function createWorldBubble(world, options = {}) {
   const ports = Array.isArray(options.ports) ? options.ports : BUBBLE_PORTS;
+  // `null` = wszystkie porty świata, czytane na żywo (rynki dochodzą w biegu — `refreshWorldBubblePorts`).
+  const wells = planetWells(world);
   const bubble = createBubble({
     rings: createRingObstaclesForNetwork(world.network, world.docks),
     docks: world.docks,
+    zoneAt: (x, y) => planetZoneAt(wells, x, y),
     ...(options.flight || {})
   });
   const state = {
@@ -98,18 +105,65 @@ export function createWorldBubble(world, options = {}) {
   return state;
 }
 
+/**
+ * Studnie grawitacyjne planet — strefa „planet_gravity” gry (`planetOrbitRadii` w index.html): planeta z ringiem
+ * — obwiednia ringu + 12 tys. j.; z `orbitZone` — `gravity`; reszta — `max(2,2 r, r + 1500) + 10 000`,
+ * r = `baseR × planetScale` (te same liczby, z których gra skaluje planety). Płaska lista `[x, y, r²]`.
+ */
+export function planetWells(world) {
+  const scale = Number(world.placement?.planetScale) || 1;
+  const out = [];
+  for (const planet of SYSTEM_MAP_PLANETS) {
+    const node = world.network.nodes.get(planet.id);
+    if (!node) continue;
+    const r = planet.baseR * scale;
+    let well;
+    if (haloRingKey(planet)) well = computeHaloRingLayout(planet).outerRadius + 12000;
+    else if (planet.orbitZone?.gravity) well = planet.orbitZone.gravity;
+    else well = Math.max(r * 2.2, r + 1500) + 10000;
+    out.push(node.x, node.y, well * well);
+  }
+  return out;
+}
+
+/** Mnożnik strefy warpa w punkcie: w studni planety 0,3 (`zonePropsForId` gry), poza nią 1. */
+export function planetZoneAt(wells, x, y) {
+  for (let i = 0; i < wells.length; i += 3) {
+    const dx = x - wells[i];
+    const dy = y - wells[i + 1];
+    if (dx * dx + dy * dy <= wells[i + 2]) return PLANET_ZONE_WARP;
+  }
+  return 1;
+}
+
+/** Strefa planety gry (`planet_gravity`): warp ×0,3, hipercruise ×max(0,6, 0,3) — `applyZone` w bańce. */
+const PLANET_ZONE_WARP = 0.3;
+
+/** Id portów bańki: lista z opcji albo wszystkie rynki z dokami świata (bez kopii — iterator mapy). */
+export function bubblePortIds(state) {
+  return state.ports || state.world.docks.keys();
+}
+
 /** Czy fokus jest przy porcie bańki. */
 export function bubblePortNear(state, x, y) {
   const network = state.world.network;
   const r2 = state.range * state.range;
-  for (let i = 0; i < state.ports.length; i++) {
-    const node = getNode(network, state.ports[i]);
+  for (const id of bubblePortIds(state)) {
+    const node = getNode(network, id);
     if (!node) continue;
     const dx = node.x - x;
     const dy = node.y - y;
     if (dx * dx + dy * dy <= r2) return true;
   }
   return false;
+}
+
+/**
+ * Po zmianie rynków (`market-add` / `market-remove`, kryjówki misji): układy doków świata do indeksu portów
+ * bańki (stanowiska nowych rynków dostają ścieżki pomostu / hangaru).
+ */
+export function refreshWorldBubblePorts(state) {
+  setBubblePorts(state.bubble, state.world.docks);
 }
 
 /** Kandydaci do materializacji — kursy aktywne z bufora bańki rdzenia. */
@@ -181,9 +235,10 @@ export function refreshFleetStock(state) {
   stock.list.length = 0;
   const fleets = world.shipyards?.fleets;
   if (!fleets) return 0;
-  for (let i = 0; i < state.ports.length; i++) {
-    const portId = state.ports[i];
+  for (const portId of bubblePortIds(state)) {
     const layout = world.docks.get(portId);
+    // Pady hal K-7 są tylko w portach z ringiem (Ziemia, Mars, Jowisz).
+    if (!layout?.hasRing) continue;
     const plan = world.parking?.get(portId);
     const owner = world.stations.find((s) => s.id === portId)?.factionId || null;
     if (!layout || !plan || !owner) continue;

@@ -420,6 +420,7 @@ export function createPortBerthIndex(layout) {
   for (const berth of layout?.berths || []) {
     list.push({
       id: berth.id,
+      stationId: berth.stationId || null,
       x: berth.x,
       y: berth.y,
       c: Math.cos(berth.angle),

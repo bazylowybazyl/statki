@@ -49,6 +49,7 @@ import {
   completeCurrentStage, syncActorStageProgress, attachActor, detachActor
 } from './courseRegistry.js';
 import { DRIVE_MODES, driveModeFor, getNode } from './travelNetwork.js';
+import { HYPERCRUISE_TUNE } from '../../data/driveModes.js';
 import { hullFootprint } from './dockLayout.js';
 import { needsService } from './portControl.js';
 import {
@@ -219,6 +220,7 @@ function cruiseFor(stage, course) {
 function applyDrive(actor, stage, course) {
   const mode = driveFor(stage, course);
   actor.cruise = cruiseFor(stage, course);
+  actor.driveCruise = actor.cruise;
   actor.mode = stage?.mode || null;
   actor.driveAccel = mode.accel > 0 ? mode.accel : 0;
   actor.driveDecel = mode.decel > 0 ? mode.decel : 0;
@@ -239,16 +241,30 @@ function freeBrake(cfg, actor) {
 // ============================================================
 
 /**
+ * Strefa planety (jak lot gracza, E5): w studni grawitacyjnej `zoneAt(x, y)` < 1 (planety 0,3 — `zonePropsForId`
+ * gry). Hipercruise nie schodzi niżej niż `HYPERCRUISE_TUNE.minZone` (0,6), warp bierze mnożnik wprost, lot
+ * konwencjonalny i port — bez strefy. Liczone w każdym kroku lotu (zależy od miejsca, nie od etapu); zwolnienie
+ * w strefie hamuje hamowaniem napędu, nie skokiem.
+ */
+function applyZone(bubble, actor) {
+  if (!bubble.zoneAt || (actor.mode !== 'hypercruise' && actor.mode !== 'warp')) return;
+  const z = bubble.zoneAt(actor.x, actor.y);
+  const k = actor.mode === 'hypercruise' ? Math.max(HYPERCRUISE_TUNE.minZone, Math.min(1, z)) : Math.min(1, z);
+  actor.cruise = actor.driveCruise * (k > 0 ? k : 1);
+}
+
+/**
  * Opcje: wszystko z `FLIGHT_DEFAULTS` oraz
  *   `rings`    — przeszkody-ringi (`createRingObstacle`, `createRingObstaclesForNetwork`),
  *   `docks`    — układy doków stacji (Map stationId → układ, jak `director.docks`)
  *                albo gotowy indeks `ports` (`createPortIndex`),
  *   `holdPose` — `(course, stage, out) → bool`: miejsce i kurs w kolejce portu
  *                (bez niego: pozycja z dyspozytora, dziób od planety),
- *   `records`  — `{ attach, detach, sync, complete }` zamiast courseRegistry.
+ *   `records`  — `{ attach, detach, sync, complete }` zamiast courseRegistry,
+ *   `zoneAt`   — `(x, y) → mnożnik strefy` (studnie planet; `applyZone`), bez niego — bez strefy.
  */
 export function createBubble(options = {}) {
-  const { rings = null, ports = null, docks = null, holdPose = null, records = null, ...rest } = options;
+  const { rings = null, ports = null, docks = null, holdPose = null, records = null, zoneAt = null, ...rest } = options;
   return {
     config: { ...FLIGHT_DEFAULTS, ...rest },
     /** `courseId` → encja. */
@@ -258,6 +274,7 @@ export function createBubble(options = {}) {
     rings: Array.isArray(rings) ? rings : [],
     ports: ports?.entries instanceof Map ? ports : createPortIndex(docks || ports || null),
     holdPose: typeof holdPose === 'function' ? holdPose : null,
+    zoneAt: typeof zoneAt === 'function' ? zoneAt : null,
     records: { ...DEFAULT_RECORDS, ...(records || {}) },
     pathPool: [],
     /** `courseId` → czas bańki, do którego kurs się nie materializuje. */
@@ -320,6 +337,8 @@ function createActor(bubble, course) {
     /** Rozpęd i hamowanie z tabeli napędu (hipercruise) [j./s²]; 0 = ułamek prędkości przelotowej. */
     driveAccel: 0,
     driveDecel: 0,
+    /** Prędkość przelotowa napędu bez strefy (`cruise` = ta × mnożnik strefy planety — `applyZone`). */
+    driveCruise: DRIVE_MODES.conventional.speed,
     /** Ruch faktyczny ostatniego kroku (pakowanie bufora encji w workerze ruchu — E6). */
     effVx: 0,
     effVy: 0,
@@ -1086,13 +1105,18 @@ function followPath(bubble, actor, dt) {
   }
 
   const accel = precise ? actor.accelPort : freeAccel(cfg, actor);
-  // Nadmiar prędkości (np. po etapie warpu) hamuje się proporcjonalnie do niej; w granicach przelotu
-  // napęd z tabeli (hipercruise) hamuje swoim hamowaniem.
+  // Nadmiar prędkości (np. po etapie warpu) hamuje się proporcjonalnie do niej. Napęd z tabeli
+  // (hipercruise) hamuje swoim hamowaniem, dopóki statek TRZYMA profil — przy zwolnieniu w strefie planety
+  // (limitem jest przelot, nie stop) i na profilu stopu. Nad profilem stopu (materializacja w biegu tuż
+  // przed punktem, dyskretny krok) hamuje awaryjnie jak dawniej — inaczej przelatywał punkt o kilometr
+  // i cofał się po 40 j./s, aż strażnik wymusił etap.
+  const v0a = v0Abs(actor);
+  const onProfile = vmax >= actor.cruise - 1 || v0a <= vmax * 1.02 + 5;
   const brake = precise
-    ? Math.max(actor.accelPort, (v0Abs(actor) - actor.portCap) * cfg.brakeRatio * actor.accelScale)
-    : (actor.driveDecel > 0 && v0Abs(actor) <= actor.cruise
+    ? Math.max(actor.accelPort, (v0a - actor.portCap) * cfg.brakeRatio * actor.accelScale)
+    : (actor.driveDecel > 0 && v0a <= actor.driveCruise && onProfile
       ? actor.driveDecel
-      : Math.max(actor.cruise, v0Abs(actor)) * cfg.brakeRatio * actor.accelScale);
+      : Math.max(actor.cruise, v0a) * cfg.brakeRatio * actor.accelScale);
   const v0 = actor.speed;
   const speedingUp = v0 >= 0 ? desiredSpeed > v0 && desiredSpeed > 0 : desiredSpeed < v0 && desiredSpeed < 0;
   const lim = (speedingUp ? accel : brake) * dt;
@@ -1292,8 +1316,11 @@ function updateCorridors(bubble, dt) {
 // Separacja (swobodny lot)
 // ============================================================
 
-function freeFlying(actor) {
+function freeFlying(actor, cfg) {
   if (actor.phase !== ACTOR_PHASE.FLY || !actor.path || actor.path.count < 2) return false;
+  // Ostatni odcinek przed punktem stopu bez rozpychania: kilka kursów z tym samym punktem (węzeł stacji,
+  // punkt postoju) odpychało się tuż przed nim siłą ∝ przelotowi i żaden nie dochodził — wymuszony etap.
+  if (actor.endKind !== END_PASS && actor.distance < cfg.separationRadius * 2) return false;
   const flags = actor.path.data[actor.wp * S + PF];
   return (flags & (PORTISH | WP.WAIT)) === 0;
 }
@@ -1333,7 +1360,7 @@ function separate(bubble, dt) {
   let any = 0;
   for (let k = 0; k < n; k++) {
     const a = list[k];
-    if (!freeFlying(a)) { next[k] = -2; continue; }
+    if (!freeFlying(a, bubble.config)) { next[k] = -2; continue; }
     const gx = Math.floor(a.x / cell);
     const gy = Math.floor(a.y / cell);
     cx[k] = gx;
@@ -1529,6 +1556,7 @@ function stepActor(bubble, network, registry, course, actor, dt, events) {
 
   // Lot po ścieżce.
   actor.phaseTime += dt;
+  applyZone(bubble, actor);
   const result = followPath(bubble, actor, dt);
 
   // Strażnik postępu: liczy się droga po ścieżce, nie prędkość — statek, który
