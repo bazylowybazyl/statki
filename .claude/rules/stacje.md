@@ -20,6 +20,8 @@ paths:
 
 - `updateStations3D(stations)` — synchronizacja stacji 2D -> 3D.
 
+- Stacja gracza (`style: 'player'`, rynek dodany w biegu — reguła `ruch-v2`, § „Stacja gracza”) nie ma bryły: `isPlayerStation` pomija ją w `prepareStations3D`, `initStations3D` i `updateStations3D` (model dodany po ekranie ładowania kompiluje pipeline w klatce), w grze rysuje ją znacznik 2D. Model stacji gracza = szablon w rozgrzewce na ekranie ładowania i dopiero wtedy zdjęcie wyjątku.
+
 - Zniszczenie stacji: `destroyStation3D` → `Destruction3D.shatter` (odłamki paneli + wygaszenie bryły), progi HP →
   `Destruction3D.detachChunk` (fragment leci, pęka na kawałki z maską cięcia, potem odłamki). Materiały rozpadu w TSL
   (`src/vfx/shatterMaterial.js`); nowa bryła stacji ma przejść przez `Destruction3D.prebake` (wypiek + rozgrzewka — bez niej
@@ -29,7 +31,15 @@ paths:
   GLB modeli używanych przez stacje (`MODEL_URLS`) wczytane, na warstwie FG jak klony, `Destruction3D.prebake(szablon)` (klony
   dzielą z szablonem geometrię i materiały — wypiek i klucze rozgrzewki są wspólne), pass FG i pass mapy cienia szablonu w
   rejestrze, potem bryły stacji (`initStations3D`); pierwsza stacja modelu w kadrze i jej rozpad nie kompilują nic. Nowy model
-  stacji = wpis w `MODEL_URLS`, reszta sama. Stacja piracka (`world3d.js`): bryła budowana na ekranie ładowania (wygląd z
+  stacji = wpis w `MODEL_URLS`, reszta sama. Tryb worker (render w workerze): strona NIE woła `prepareStations3D`
+  (bryły stacji powstają w workerze leniwie, w `updateStations3D` przy wejściu w kadr) — worker przy przygotowaniu
+  sceny po klatce zero (`prepareScene`, `afterFrame`) woła `warmStationTemplates3D(lustra stacji)`: szablony modeli
+  używanych przez stacje wczytane (limit 8 s, pod kurtyną), wypiek rozpadu, pass FG i cień w rejestrze z fazą
+  `'after'`, bez składania brył. Szablon wczytany po limicie (oba tryby) rozgrzewa się w wolnej chwili
+  (`requestIdle`), nie w callbacku wczytania. Bez tego pierwsza stacja modelu w kadrze (teleport do odległego portu:
+  Ceres — model Marsa, Merkury / Westa — model domyślny Ziemi) kompilowała pass FG i cień w klatce. Sprawdzenie:
+  przegląd portów `node scripts/webgpu/ruch-banka-gra.mjs --obserwacja 8 [--query renderWorker=0]` — 0 pipeline'ów
+  sync workera i strony. Stacja piracka (`world3d.js`): bryła budowana na ekranie ładowania (wygląd z
   własnego strumienia `FxRandom` o stałym ziarnie, stan wspólnego `fxRandom` wraca po wypieku — budowa nie przesuwa ani
   losowań gry, ani ciągu efektów), `attachPirateStation3D` bierze ją gotową; światła latarni to stałe światła sceny od
   startu gry (pułapka 34; zgaszone dokładają 2 światła punktowe do materiałów oświetlanych światłami sceny — PBR księżyców

@@ -22,7 +22,7 @@ import {
 import { createTrafficCore } from '../../src/game/traffic/trafficCore.js';
 import {
   TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD as F, COURSE_FLAG, COURSE_KIND_SHIFT,
-  COURSE_KIND_MASK, MARKET_FIELD, marketOffset, courseNumber
+  COURSE_KIND_MASK, MARKET_FIELD, MARKET_STRIDE, marketOffset, courseNumber
 } from '../../src/game/traffic/trafficProtocol.js';
 import { worldDigest } from './trafficWorld.test.mjs';
 
@@ -317,7 +317,7 @@ export function run() {
     wpis?.hasPort === true && wpis.kind === 'hideout' && wpis.factionId === 'pirates');
   t.equal('tabela urosła o jeden rynek', poDodaniu?.stations.length, ileNaStarcie + 1);
   t.equal('bufor rynku ma układ nowej tabeli', poDodaniu?.market.length,
-    (ileNaStarcie + 1) * RESOURCE_KEYS.length * 5);
+    (ileNaStarcie + 1) * RESOURCE_KEYS.length * MARKET_STRIDE);
   t.check('stanowiska kryjówki są w `berths`', poDodaniu?.berths?.[KRYJOWKA]?.length > 0);
   t.check('kryjówka zbiera łup', rynki.core.world.piracy.nests.has(KRYJOWKA));
   const indeks = poDodaniu.stations.findIndex(entry => entry.id === KRYJOWKA);
@@ -337,7 +337,7 @@ export function run() {
   const poUsunieciu = lastOf(rynki.inbox, TRAFFIC_MSG.TICK);
   t.check('usunięty rynek znika z tabeli', !!poUsunieciu.stations
     && !poUsunieciu.stations.some(entry => entry.id === KRYJOWKA));
-  t.equal('i z bufora rynku', poUsunieciu.market.length, ileNaStarcie * RESOURCE_KEYS.length * 5);
+  t.equal('i z bufora rynku', poUsunieciu.market.length, ileNaStarcie * RESOURCE_KEYS.length * MARKET_STRIDE);
   t.check('nieznany rynek: bez odpowiedzi i bez błędu', (() => {
     const n = rynki.inbox.length;
     rynki.core.handle({ type: TRAFFIC_MSG.MARKET_REMOVE, stationId: 'nie-ma' });

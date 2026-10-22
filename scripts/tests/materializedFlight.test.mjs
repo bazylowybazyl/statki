@@ -274,6 +274,21 @@ function driveTableSection(t) {
       v > spec.accel * 1.6 && v < spec.accel * 2.2);
     t.check(`${unitClass}: rekord ruszony przez encję`, course.actorId != null);
   }
+
+  // Strefa planety (E5, jak lot gracza): w studni hipercruise × max(0,6; strefa), warp × strefa (0,3).
+  for (const [mode, expectK] of [['hypercruise', 0.6], ['warp', 0.3]]) {
+    const registry = createCourseRegistry();
+    launchCourse(registry, {
+      kind: COURSE_KIND.HAUL, unitClass: 'container_ship',
+      stages: [travelStage('a', 'b', { mode, seconds: 200, distance: 3_000_000 })]
+    });
+    const bubble = createBubble({ zoneAt: (x) => (x < 1_000_000 ? 0.3 : 1) });
+    const active = indeks(registry);
+    updateBubble(bubble, far, registry, active, { x: 0, y: 0 }, 50_000, 0);
+    updateBubble(bubble, far, registry, active, { x: 0, y: 0 }, 50_000, 1 / 60);
+    const a = getActorList(bubble)[0];
+    t.close(`strefa planety: ${mode} × ${expectK}`, a.cruise / a.driveCruise, expectK, 1e-9);
+  }
 }
 
 /**

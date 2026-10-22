@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
   segmentHitsActor, damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates,
-  createPortBerthIndex, playerBerthHolds, stepPlayerBerthHolds
+  createPortBerthIndex, playerBerthHolds, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion
 } from '../src/game/trafficBubble.js';
 import {
   ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG
@@ -29,7 +29,7 @@ function fakeBridge(actors, time = 10) {
     data[o + F.VY] = a.vy || 0;
     data[o + F.ANG_VEL] = a.angVel || 0;
     data[o + F.HULL] = a.hull ?? 0;
-    data[o + F.FACTION] = -1;
+    data[o + F.FACTION] = a.faction ?? -1;
     data[o + F.PHASE] = ACTOR_PHASES.indexOf(a.phase || 'fly');
     data[o + F.FLAGS] = a.flags || 0;
     data[o + F.THROTTLE] = 0;
@@ -46,7 +46,10 @@ function fakeBridge(actors, time = 10) {
   return {
     actors: { data, count: actors.length, time, seq: 1, ms: 0 },
     hulls: ['container_ship', 'freighter-capital'],
-    tables: { stations: [{ id: 'earth' }], berths: { earth: ['earth:Z-01:Z01-M01', 'earth:K7-1:C-02'] } },
+    tables: {
+      stations: [{ id: 'earth' }], berths: { earth: ['earth:Z-01:Z01-M01', 'earth:K7-1:C-02'] },
+      factions: ['terra_nova', 'pirates']
+    },
     destroyCourse(id, opts) { sent.destroyed.push({ id, ...opts }); },
     setBerthHolds(ids) { sent.holds.push(ids.slice()); },
     sent
@@ -201,4 +204,36 @@ test('blok migawki `traffic`: pakowanie ↔ odczyt (kadłub przez tabelę, warp,
   block.pack(blk, { traffic: null });
   assert.equal(applyTrafficBlock(blk, out).length, 0);
   assert.equal(packTrafficBlock(blk.f64, list, 0), 0);
+});
+
+test('awans do NPC: trafienie gracza zgłasza encję (hak onHit), awansowana nie wraca z workera, zgon blokuje powrót', () => {
+  const br = fakeBridge([
+    { id: 21, x: 0, y: 0, phase: 'fly', faction: 1 },
+    { id: -4, x: 9000, y: 0, phase: 'docked', flags: ACTOR_FLAG.STOCK }
+  ], 10);
+  const hits = [];
+  const tb = createTrafficBubble(br, { onHit: (a, amount, cause) => hits.push([a.id, amount, cause]) });
+  syncTrafficBubble(tb, 10);
+  setTrafficBubbleTime(tb, 10);
+  const a = tb.byId.get(21);
+  assert.equal(a.factionId, 'pirates', 'frakcja z tabeli `ready.factions`');
+  damageTrafficActor(tb, a, 10, 0, 0, 'player');
+  assert.deepEqual(hits, [[21, 10, 'player']]);
+  damageTrafficActor(tb, tb.byId.get(-4), 10, 9000, 0, 'player');
+  assert.equal(hits.length, 1, 'zapas floty nietykalny — bez awansu');
+  markTrafficActorPromoted(tb, a);
+  assert.equal(tb.byId.has(21), false);
+  assert.ok(!tb.list.includes(a));
+  br.actors.seq++;
+  syncTrafficBubble(tb, 10.1);
+  assert.ok(!tb.byId.has(21), 'worker przysłał encję przed `attach` — gra jej nie bierze');
+  releaseTrafficPromotion(tb, 21, true);
+  br.actors.seq++;
+  syncTrafficBubble(tb, 10.2);
+  assert.ok(!tb.byId.has(21), 'NPC zginął — `deadHold`');
+  releaseTrafficPromotion(tb, 21, false);
+  tb.dead.clear();
+  br.actors.seq++;
+  syncTrafficBubble(tb, 10.3);
+  assert.ok(tb.byId.has(21), 'po powrocie do bańki encja znów jest');
 });

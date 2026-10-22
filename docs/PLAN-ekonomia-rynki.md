@@ -389,6 +389,59 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Testy: `npm test` 1755 zielone.
 - Dalej:
   - ~~E4: okno ciszy (tick ≤ 25 ms) i końcowe strojenie~~ — zrobione;
-  - bańka dla pozostałych portów i awans do pełnego NPC (do zlecenia);
-  - E7: gracz na rynku i zapis ekonomii.
+  - ~~bańka dla pozostałych portów i awans do pełnego NPC~~ — zrobione (E6 etap 2);
+  - ~~E7: gracz na rynku i zapis ekonomii~~ — zrobione.
+- 2026-10-22 następny etap, decyzja użytkownika: „tak”, plus nowa sesja na przeładunek w portach.
+  - E6 (ta sama sesja):
+    - bańka w pozostałych portach: Mars, Jowisz, porty bez ringu, księżyce, Ceres i Westa, kryjówki;
+    - awans aktora do pełnego NPC w walce;
+    - strefa planety ×0,6 w bańce;
+    - kontrakt danych przeładunku z E12.
+  - E7 (w sesji E2):
+    - terminal na ofertach API rynku;
+    - komputer handlowy (agregat z rekordów);
+    - stacja gracza jako rynek (`addMarket` w biegu, budynki);
+    - zapis ekonomii, wyrw i zapasu flot.
+  - E12 (nowa sesja), przeładunek w portach według dem:
+    - ładownie: `dema/ladownia-webgpu.html`, `src/data/cargoBays.js`, `src/3d/cargo/`;
+    - roje dronów przeładunkowych: `dema/roj-webgpu.html`, `src/3d/swarm/`, `src/game/swarm/`;
+    - taśmociągi: budowle Z7, `src/3d/portBuildings/`;
+    - kontenery Z5: `src/data/cargoContainers.js`, `src/game/cargoPortOps.js`;
+    - wszystko podpięte pod dokowanie w bańce E6.
+- 2026-10-22 decyzja użytkownika dla E12: rój dronów w grze liczony NA ŻYWO NA GPU, z symulacji z dema (ORCA, wieża), a nie z analitycznego planu.
+  - Wymagania: sloty stanowisk w jednej puli; statek zastany w połowie postoju startuje ze stanu zgodnego z zegarem kursu, bez przewijania minut w jednej klatce; koniec postoju domyka obraz zgodnie z ekonomią.
+  - Koszt mierzony przy ok. 20 stanowiskach. Jeśli za drogo, symulacja na żywo tylko dla N stanowisk najbliżej kamery, a reszta pokazuje stan z zegara.
+- 2026-10-22 E7 w `main` (078eabc9), z sesji E2:
+  - terminal na księdze rynku (port sprzedaje nadwyżkę, skupuje tylko używane towary do celu zapasu);
+  - komputer handlowy jako warstwa HANDEL w CIC (klawisz H);
+  - stacja gracza jako rynek (API + `DevEconomy`, bez UI budowy i bez modelu 3D);
+  - zapis ekonomii v1: magazyny, wyrwy, floty, stacje gracza; co 20 s i przy zamknięciu.
+  - Testy: `npm test` 1779 zielone, build przechodzi, start w workerze 0 pipeline'ów sync.
+  - Opis: `docs/E7-gracz-na-rynku.md`.
+  - Decyzje dla użytkownika, z rekomendacją orkiestratora:
+    - interfejs budowy stacji gracza (§ 3 notatki E7);
+    - zysk ze stacji: marża portu;
+    - „Nowa gra” czyści zapis ekonomii;
+    - nowe zachowanie terminala;
+    - uzupełnienie kadłubów ruchu (mostki, reaktory, zbiorniki, gniazda) w osobnej sesji.
+- 2026-10-22 E6, etap 2 (`claude/frosty-moser-69ca47`): bańka we wszystkich portach (`world.docks`), strefa planety, kontrakt E12 (`actors.cargo`), awans do pełnego NPC (trafienie gracza, 1 na klatkę, do 8 naraz). Czeka na `git merge main` z E7 po swojej stronie.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
+- 2026-10-22 E6 etap 2 w `main` (34fcd98a):
+  - bańka we wszystkich portach: ringi Marsa i Jowisza, pomosty, księżyce, Ceres, Westa, kryjówki, stacje gracza;
+  - strefa planety ×0,6 także w locie bańki;
+  - kontrakt przeładunku dla E12 (`actors.cargo`);
+  - awans do pełnego NPC po trafieniu gracza: 1 na klatkę, do 8 naraz, powrót do bańki po walce.
+  - Testy: `npm test` 1781 zielone; `node --test` 3170 testów, 1 porażka (`cicBeltLayer`, budżet czasu pod obciążeniem innych sesji; osobno 10/10); build przechodzi; start w workerze 0 pipeline'ów sync.
+  - Znalezisko spoza bańki: 3 pipeline'y kompilowane synchronicznie od modeli stacji planet (GLB) przy pierwszym teleporcie do odległego portu. Poprawka E6 w `main` (7f5cea29): worker rozgrzewa szablony modeli stacji pod kurtyną ładowania (219 ms), szablon wczytany po limicie — w wolnej chwili. Przegląd 6 portów (Mars, Jowisz, Luna, Ceres, Merkury, Westa): 0 pipeline'ów sync w obu trybach.
+- 2026-10-22 E12 (`claude/e12-przeladunek-c31e74`, de01f388): rój liczony na żywo na GPU (symulacja z dema w puli 8 slotów stanowisk), ładownie floty, stoły i taśmociągi, luk Atlasa z ładunkiem. Koszt CPU +0,4–0,7 ms przy budżecie 0,3 ms.
+  - Decyzja orkiestratora:
+    - scalić kernele `kClear` i `kBin`;
+    - krok roju tylko przy slocie w kadrze, więc poza portem koszt 0;
+    - liczba slotów z presetu grafiki: Niska 0, Średnia 4, Wysoka i Ultra 8.
+  - Kroku 1/30 s nie bierzemy, bo zmienia dynamikę dema.
+  - Kontrakt E6 jest już w `main`, więc bramka `?przeladunekDemo=1` znika: przeładunek widać domyślnie, a `?przeladunek=0` zostaje do A/B.
+- 2026-10-22 E12, runda 2 (27eeaaed): przeładunek domyślnie, także w zatokach Marsa i Jowisza; 3 kernele na krok (wynik w szumie A/A), krok tylko przy pracy, sloty z presetu (`cargoSwarmSlots`), cienie dronów.
+  - Koszt (A/B z `?przeladunek=0`): CPU workera w szumie (±0,2 ms), GPU +0,07–0,24 ms przy 14 stanowiskach, poza portem 0.
+  - Próbne scalenie z `main`: testy zielone (poza `cicBeltLayer` pod obciążeniem), build, start w workerze 0 sync, przegląd 6 portów 0 sync i 0 błędów. Rozgrzewka przy ładowaniu dłuższa o ok. 0,9 s (flush workera 1659 → 2565 ms).
+  - Niezależny przegląd kodu znalazł błędy obrazu: `snap()` cofa przeniesione kontenery, slot zakładany w fazie przechwytu (przesunięta ładownia), nieaktualny odczyt po ponownym użyciu slotu, resztki slotu na cudzym stanowisku, podwójna `SwarmSim` z rozgrzewki, alokacje co klatkę, `?przeladunek=0` nie wyłącza rozgrzewki. Scalenie wstrzymane do poprawek (runda 3).
+  - Decyzja orkiestratora: ciężki frachtowiec (1320 kontenerów, 48 dronów przenosi ok. 970) dostaje 96 dronów na slot pola MEGA, jak scena „wymiana” w demie; postój bez zmian, więc ekonomia i bramka nietknięte. Resztka na koniec okna chowa się za zamkniętymi wrotami albo poza kadrem.
