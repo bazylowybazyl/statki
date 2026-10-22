@@ -220,6 +220,13 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
   uuid się nie powtarza. Strażnik `tests/tslUuid.test.mjs` (`TSL_UUID_BEZ_LATY=1` — przypadki skażenia padają), A/B
   w przeglądarce `node scripts/webgpu/tsl-uuid-gra.mjs [--tryb demo|gra] [--naprawa 0] [--czekaj 0]`.
 
+- **Pułapka r183 z elektrowni KOREK (2026-10-22):** (39) `getNodeType` węzłów TSL nie pamięta wyniku, a `.toVar()` pyta
+  o typ węzeł źródłowy — graf z wieloma WSPÓŁDZIELONYMI węzłami (kontekst światła używany przez kilkanaście gałęzi
+  rodzajów powierzchni) buduje się wykładniczo: NodeBuilder materiału metalu elektrowni ~1,1–2 s zamiast ~0,08 s, bez
+  błędu. Węzeł użyty wiele razy → zmienna o typie ze STAŁEJ przypisana w miejscu (`const v = vec3(0).toVar();
+  v.assign(expr)`) — przecina rekurencję i ustala miejsce obliczenia przed gałęziami (wzór `plantVar`,
+  `src/3d/earthBitePlantCommon.tsl.js`). Czas budowy sprawdzaj w Node (`renderer.backend.createNodeBuilder(...).build()`).
+
 ## Rozgrzewka pipeline'ów (`Core3D.warmup`)
 
 - **Rozgrzewka pipeline'ów (zadanie 11, `src/3d/rozgrzewka.js`, `Core3D.warmup`):** w WebGPU klucz pipeline'u to graf materiału + układ atrybutów + cel (format, próbki, głębia) + światła passa + typ kamery + stan (mieszanie, głębia, strona), więc rozgrzewa się PRAWDZIWE obiekty w PRAWDZIWYM celu. Moduł dopisuje się JEDNĄ linią (przy imporcie też — wpisy czekają na urządzenie, a funkcja `objects` woła się dopiero w chwili rozgrzewki):

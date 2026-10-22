@@ -24,6 +24,8 @@ import { warpSkyBendCount } from './warp/skyBend.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
 import { skyRegionBrightness, stepSkyRegion } from '../game/skyRegion.js';
 import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector, earthBiteCenterIn } from './earthBite3D.js';
+import { EARTH_SPIN, earthSpinAxis, earthSpinBase, earthSpinQuaternion } from './earthSpin.js';
+import { EarthBitePlant } from './earthBitePlant.js';
 import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
@@ -614,6 +616,7 @@ class DirectPlanet {
         this._visibilityCulled = false;
         this.mesh = null; this.clouds = null; this.cloudUniforms = null; this.atmosphere = null; this.saturnRing = null;
         this.pit = null;
+        this.plant = null;
         this.group = new THREE.Group(); this.group.position.z = -50000; this.basePlanetBloom = 0.0; this.visibleRadiusMul = 1.0;
         this.uniforms = {
             uPlanetBloom: { value: 0.0 }, dayTexture: { value: null }, nightTexture: { value: null }, specularTexture: { value: null },
@@ -640,6 +643,10 @@ class DirectPlanet {
         this._cloudSpinY = 0;
         this._ringSpinZ = 0;
         this._ringTilt = 0;
+        // Ziemia: doba wokół OSI RINGU (earthSpin.js — ring w jej układzie równikowy, windy elektrowni do ringu na stałe);
+        // reszta planet — wokół osi Y sceny.
+        this._spinAxis = this.name === 'earth' ? earthSpinAxis() : null;
+        this._spinBase = this._spinAxis ? earthSpinBase() : null;
         // Soczewka świata w skoku gracza (rekord worldLens.js) i obwiednia ringu „Halo” (bramka soczewki).
         this.lensBody = newLensBody(this.name);
         this._lensed = false;
@@ -703,6 +710,11 @@ class DirectPlanet {
             this.uniforms.uPitMode.value = 1.0;
             this.pit = createEarthBiteMesh(createPlanetSurfaceMaterial(earthBiteUniforms(this.uniforms, 2)));
             this.mesh.add(this.pit);
+            // Elektrownia „KOREK” w gryzie (earthBitePlant.js): bryły (~0,5 s CPU) buduje rozgrzewka ekranu ładowania —
+            // menu (Ziemia z gry nie jest w jego kadrze) nie czeka; bez rejestru rozgrzewki — przy pierwszej klatce.
+            if (this._spinAxis && Core3D.warmup) {
+                Core3D.warmup.add({ name: 'elektrownia KOREK (gryz Ziemi)', objects: () => this._ensurePlant()?.warmupMeshes() ?? [], layer: 6, phase: 'loading' });
+            }
         }
         if (name === 'saturn') {
             const tilt = THREE.MathUtils.degToRad(SATURN_VISUAL_RING.tiltDeg);
@@ -940,9 +952,11 @@ class DirectPlanet {
     }
     _spin(dt) {
         const d = Math.max(0, Number(dt) || 0);
-        this._spinY = (this._spinY + 0.02 * d) % TAU;
-        this._cloudSpinY = (this._cloudSpinY + 0.027 * d) % TAU;
+        this._spinY = (this._spinY + (this._spinAxis ? EARTH_SPIN.rate : 0.02) * d) % TAU;
+        this._cloudSpinY = (this._cloudSpinY + (this._spinAxis ? EARTH_SPIN.cloudRate : 0.027) * d) % TAU;
         this._ringSpinZ = (this._ringSpinZ + 0.00035 * d) % TAU;
+        if (this.plant) this.plant.update(d);
+        else if (this.pit && this._spinAxis && !Core3D.warmup) this._ensurePlant();
         // Atmosfera Jowisza w czasie GRY (SimClock — w pauzie stoi; dt tu to czas klatki).
         if (this.jupiterAtm) this.jupiterAtm.step();
         if (this.saturnAtm) this.saturnAtm.step();
@@ -953,21 +967,23 @@ class DirectPlanet {
         const turn = q || base;
         if (this.mesh) {
             if (turn) {
-                _lensQa.setFromAxisAngle(_lensYAxis, this._spinY);
+                this._spinQuat(this._spinY, _lensQa);
                 this.mesh.quaternion.identity();
                 if (q) this.mesh.quaternion.copy(q);
                 if (base) this.mesh.quaternion.multiply(base);
                 this.mesh.quaternion.multiply(_lensQa);
-            } else this.mesh.rotation.set(0, this._spinY, 0);
+            } else if (this._spinAxis) this._spinQuat(this._spinY, this.mesh.quaternion);
+            else this.mesh.rotation.set(0, this._spinY, 0);
         }
         if (this.clouds) {
             if (turn) {
-                _lensQa.setFromAxisAngle(_lensYAxis, this._cloudSpinY);
+                this._spinQuat(this._cloudSpinY, _lensQa);
                 this.clouds.quaternion.identity();
                 if (q) this.clouds.quaternion.copy(q);
                 if (base) this.clouds.quaternion.multiply(base);
                 this.clouds.quaternion.multiply(_lensQa);
-            } else this.clouds.rotation.set(0, this._cloudSpinY, 0);
+            } else if (this._spinAxis) this._spinQuat(this._cloudSpinY, this.clouds.quaternion);
+            else this.clouds.rotation.set(0, this._cloudSpinY, 0);
             // Chmury obracają się szybciej niż grunt: środek gryzu w układzie chmur.
             if (this.pit) earthBiteCenterIn(this.mesh, this.clouds, this.cloudUniforms.uBite.value);
         }
@@ -983,6 +999,23 @@ class DirectPlanet {
                 this.saturnRing.quaternion.copy(q).multiply(_lensQa);
             } else this.saturnRing.rotation.set(this._ringTilt, 0, this._ringSpinZ);
         }
+    }
+    // Elektrownia „KOREK” na dnie gryzu: dziecko kuli (doba, soczewka), uniformy słońca / gryzu / maski słońca dzielone
+    // z kulą. Ring „Halo” w układzie Ziemi jest równikowy (earthSpin.js), więc przekaźnik odbiornik → ring i liny wind
+    // są stałe (attachRing). Warstwa passa ring-planet jak reszta bryły (grupa dostała ją w init przed elektrownią).
+    _ensurePlant() {
+        if (this.plant || !this.pit || !this._spinAxis || !this.mesh) return this.plant;
+        this.plant = new EarthBitePlant(this.uniforms);
+        this.plant.attachRing(this._spinAxis);
+        this.mesh.add(this.plant.group);
+        if (this.isRingAnchored) enableRingPlanetLayer(this.plant.group);
+        else enablePlanetLayer(this.plant.group);
+        return this.plant;
+    }
+    // Obrót doby o kąt `angle` (oś Y sceny albo — Ziemia — oś ringu, earthSpin.js) do kwaternionu `out`.
+    _spinQuat(angle, out) {
+        if (this._spinAxis) return earthSpinQuaternion(angle, this._spinAxis, this._spinBase, out);
+        return out.setFromAxisAngle(_lensYAxis, angle);
     }
     // Soczewka: rekord ciała w tej klatce (prawdziwy środek, promień kuli, skala prawdziwego widoku, bramka ringu).
     _lensPrepare(dt, scale, visualZ) {

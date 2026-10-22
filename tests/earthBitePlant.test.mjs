@@ -1,6 +1,7 @@
 // Elektrownia „KOREK” w wielkim gryzie Ziemi (src/3d/earthBitePlant*.js): układ i klucze komponentów, kontrakt części
 // (aPart), budżet wierzchołków, powtarzalność brył, budowa WGSL wszystkich siatek w Node (bez GPU), graf raz na rodzaj,
-// zasady żelazne w plikach elektrowni.
+// zasady żelazne w plikach elektrowni; doba Ziemi wokół osi ringu (src/3d/earthSpin.js — ring równikowy, przekaźnik
+// i liny stałe) i wpięcie w Ziemię gry (planet3d.assets.js).
 // node --test tests/earthBitePlant.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +16,11 @@ import { HUB_DEFAULTS } from '../src/3d/earthBitePlantOrbital.js';
 import { BEAM_DEFAULTS } from '../src/3d/earthBitePlantBeam.js';
 import { earthBiteVector } from '../src/3d/earthBite3D.js';
 import { EARTH_BITE } from '../src/data/earthBite.js';
+import { EARTH_SPIN, earthSpinAxis, earthSpinBase, earthSpinQuaternion } from '../src/3d/earthSpin.js';
+import { ringPointObject, segmentClearsSphere } from '../src/3d/earthBitePlantFrame.js';
+import { createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
+import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
+import { HALO_RING_PLANETS } from '../src/game/haloRingPlanets.js';
 
 /** Budżet wierzchołków (cała elektrownia jest w kadrze, gdy gryz jest na tarczy — docs/BRIEF-korek.md § Budżet). */
 const BUDGET = { metal: 600_000, flow: 150_000, total: 900_000 };
@@ -168,4 +174,53 @@ test('zasady żelazne w plikach elektrowni: TSL, bez Math.random, bez window / D
     assert.doesNotMatch(src, /\bwindow\.|\bdocument\.|\blocalStorage\b/, `${f}: window / DOM`);
     assert.doesNotMatch(src, /\.needsUpdate\s*=\s*true[\s\S]{0,40}material|defines\s*[.[]/, `${f}: defines / needsUpdate materiału`);
   }
+});
+
+test('doba wokół osi ringu: oś → +Z sceny (ku kamerze gry), obrót przeciwnie do wskazówek zegara, biegun północny', () => {
+  const axis = earthSpinAxis();
+  assert.deepEqual([EARTH_SPIN.poleLat, EARTH_SPIN.poleLon], [90, 0]);
+  assert.ok(Math.abs(axis.y - 1) < 1e-12);
+  const base = earthSpinBase();
+  const q = new THREE.Quaternion();
+  for (const a of [0, 0.7, 2.5]) {
+    earthSpinQuaternion(a, axis, base, q);
+    const z = axis.clone().applyQuaternion(q);
+    assert.ok(z.distanceTo(new THREE.Vector3(0, 0, 1)) < 1e-9, 'oś obrotu stoi ku kamerze');
+  }
+  // punkt równika obrócony o mały kąt doby przesuwa się przeciwnie do wskazówek zegara (z +Z)
+  const p = new THREE.Vector3(1, 0, 0);
+  const a0 = p.clone().applyQuaternion(earthSpinQuaternion(0, axis, base, q));
+  const a1 = p.clone().applyQuaternion(earthSpinQuaternion(0.1, axis, base, q));
+  assert.ok(a0.x * a1.y - a0.y * a1.x > 0);
+  // gryz (10° N) leży 10° nad płaszczyzną ringu — po stronie kamery
+  const cz = Math.sin(EARTH_BITE.lat * Math.PI / 180);
+  assert.ok(cz > 0.17 && cz < 0.18);
+});
+
+test('ring gry: wewnętrzna krawędź = layout ringu Ziemi; przekaźnik i liny do ringu omijają planetę', () => {
+  const R = RING_PLANET_WORLD_RADII.earth;
+  const layout = createHaloRingLayout({ planetRadius: R, profile: HALO_RING_PLANETS.earth.profile });
+  assert.ok(Math.abs(PLANT_DEFAULTS.ringInnerR - layout.radii.min / R) < 1e-9, 'ringInnerR = radii.min / R');
+  assert.equal(layout.planetCenterZ, 0, 'ring przez środek Ziemi');
+  const plant = new EarthBitePlant(sphereUniforms());
+  const axis = earthSpinAxis();
+  assert.equal(plant.attachRing(axis), true, 'przekaz do ringu działa (linia nad planetą)');
+  assert.equal(plant.relay.group.parent, plant.group, 'przekaźnik w grupie elektrowni (układ obiektu kuli)');
+  const H = plant.hubCenterObject(new THREE.Vector3());
+  const T = ringPointObject(H, axis, PLANT_DEFAULTS.ringInnerR);
+  assert.ok(Math.abs(T.dot(axis)) < 1e-12 && Math.abs(T.length() - PLANT_DEFAULTS.ringInnerR) < 1e-12);
+  assert.ok(segmentClearsSphere(H, T, 1.002));
+  plant.update(1);
+  assert.equal(plant.uniforms.uPlantState.value.x > 0, true);
+  plant.dispose();
+});
+
+test('Ziemia gry: doba wokół osi ringu, elektrownia w kuli, rozgrzewka w passie ring-planet', () => {
+  const src = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  assert.match(src, /earthSpinQuaternion\(angle, this\._spinAxis, this\._spinBase, out\)/);
+  assert.match(src, /this\._spinAxis = this\.name === 'earth' \? earthSpinAxis\(\) : null/);
+  assert.match(src, /new EarthBitePlant\(this\.uniforms\)/);
+  assert.match(src, /this\.plant\.attachRing\(this\._spinAxis\)/);
+  assert.match(src, /name: 'elektrownia KOREK \(gryz Ziemi\)'[^\n]*layer: 6, phase: 'loading'/);
+  assert.match(src, /if \(this\.plant\) this\.plant\.update\(d\)/);
 });
