@@ -212,3 +212,10 @@ Port prowadzi sesja E11 planu ekonomii (`docs/PLAN-ekonomia-rynki.md`).
   - Światło: mapa światła, siatka świateł i maska słońca.
   - W grze w trybach off i worker: pipeline'ów sync 0, błędów 0.
   - GPU z pyłem: render +0,13 ms, compute +0,17 ms.
+- **GK-5, część druga (2026-10-22, zlecenie orkiestratora po decyzjach użytkownika):**
+  - Olbrzymy pasa jako przeszkody: raster przekroju 128 × 128 z SDF gry w teksturze R8 (komórki stałe i zasłona strug).
+  - Wybuchy (`GameBlasts`: front + wyrzut, budżet przed dyszami) i pociski (`bullets`) jako źródła.
+  - JEDNA MGŁA: płytkie płaty `fog.js` gasną pod gazem (`SpaceGasCover`).
+  - Pył ławicy siarki o 30% ciemniejszy.
+  - Rzednięcie w wyrwach E3 sprawdzone testem na prawdziwym polu: w środku wyrwy obwiednia < 5%, poza nią bez zmian; źródło `gas` pola dokłada gęstość.
+  - Pomiar: off i worker — pipeline'ów sync 0, błędów 0. GPU: render +0,10 ms, compute +0,18 ms.

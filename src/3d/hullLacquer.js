@@ -472,7 +472,7 @@ export const HullLacquer = {
       clampNum(t.sunElevDeg, 0, 89, 30) * DEG
     );
     // W warpie bliskie obłoki gasną: kafel przewijałby się szybciej niż klatki.
-    const warpActive = RenderWorld.warp?.state === 'active';
+    const warpActive = RenderWorld.warp?.state === 'active' || RenderWorld.hyper?.state === 'active';
     const fadeStep = dt / SKY_WARP_FADE_S;
     this._skyFade = warpActive
       ? Math.max(0, this._skyFade - fadeStep)

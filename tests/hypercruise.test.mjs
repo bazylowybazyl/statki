@@ -109,13 +109,13 @@ test('automat: rozruch → lot do vmax × strefa → wyjście do prędkości wyj
   run(hc, () => ({ zone: 1 }), 20);
   assert.ok(Math.abs(hc.speed - 20000) < 1);
   run(hc, () => ({ zone: 0.3 }), 10);
-  assert.ok(Math.abs(hc.speed - 6000) < 1, 'strefa planety × 0,3');
+  assert.ok(Math.abs(hc.speed - 12000) < 1, 'strefa planety: warp × 0,3, hipercruise nie niżej niż minZone × 0,6 (2026-10-22)');
   assert.equal(dropHypercruise(hc, 'manual'), true);
   assert.equal(hc.state, HC_DROP);
   const ev = run(hc, () => ({ zone: 1 }), 10);
   assert.deepEqual(ev, ['exit']);
   assert.equal(hc.state, HC_IDLE);
-  assert.equal(hc.speed, HYPERCRUISE_TUNE.exitSpeed);
+  assert.ok(Math.abs(hc.speed - HYPERCRUISE_TUNE.exitSpeed) < 1e-6);
 });
 
 test('automat: przerwanie w rozruchu wraca od razu, przechwyt oznacza wyjście jako wymuszone', () => {

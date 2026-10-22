@@ -16,6 +16,8 @@
 // (blend premultiplied „over”). Światła siatki (lights.js) rozpraszają się
 // w płatach — liczone w WIERZCHOŁKACH, jak w grze (smugi reflektorów w mgle).
 // Nad mgłą idzie fizyczny pył (dust.js) w passie gry.
+// JEDNA MGŁA (2026-10-22): płytkie płaty (fg) gasną pod gazem w otwartej przestrzeni (src/3d/spaceGas/ — SpaceGasCover.belt);
+// bez gazu (opcja wył.) zostają jak dawniej. Głębokie płaty tła — bez zmian.
 
 import * as THREE from 'three/webgpu';
 import {
@@ -24,6 +26,7 @@ import {
   If, Discard, mix, smoothstep, clamp, floor, fract, abs, exp, sin
 } from 'three/tsl';
 import { stormIntensity } from '../../game/asteroidStorms.js';
+import { SpaceGasCover } from '../spaceGas/spaceGasState.js';
 
 // Z beltDust3D.js (DUST_SLICES od 1300 j., DUST_LOOK_DEFAULTS, GRID,
 // DUST_NOISE_WRAP). Płytkie płaty (fg) w passie gry — mgła na wysokości skał.
@@ -367,7 +370,10 @@ export class BeltFog {
       s.mesh.updateMatrixWorld(true);
       s.S.center.value.copy(s.mesh.position);
       s.S.drift.value.set(f.time * 0.0009 * def.drift, f.time * 0.0004 * def.drift);
-      s.mesh.visible = s.maxFog > 0.002;
+      // płytkie płaty pod gazem przestrzeni: alfa × (1 − pokrycie) — jedna mgła w paśmie gry
+      const cover = def.fg ? SpaceGasCover.belt : 0;
+      s.S.alpha.value = def.alpha * (1 - cover);
+      s.mesh.visible = s.maxFog > 0.002 && cover < 0.999;
     }
   }
 }

@@ -10,7 +10,7 @@
 <!--
   Demo generatora map planet (scripts/planety/, opis docs/PLANETY-GENERATOR.md). Mapy z generatora na kuli
   z materiałami GRY (planet3d.assets.tsl.js: powierzchnia, chmury, poświata limbu; wielka kopalnia ringu jako
-  bryła — earthPit3D.js; żywa atmosfera Jowisza — jupiterAtmosphere.js; księżyce — moonSurface.tsl.js), post jak
+  bryła — earthBite3D.js (wielki gryz, ?gryz=0.30|0.46, ?mapyGryz=.tmp/planety-gryz/030); żywa atmosfera Jowisza — jupiterAtmosphere.js; księżyce — moonSurface.tsl.js), post jak
   w grze (bloom gry → ACES gry → sRGB). Widok MAPA — płaskie warstwy wypieku (dzień, noc, woda / połysk, normalne,
   chmury). A/B z dawnymi mapami (STARE).
   Serwowanie: `npm run dev` → /dema/planety-webgpu.html
@@ -66,6 +66,10 @@
     <button id="v-glob">GLOB</button><button id="v-mapa">MAPA</button>
     <span style="width:10px"></span>
     <button id="m-nowe">NOWE</button><button id="m-stare">STARE</button>
+  </div>
+  <div class="btns" id="bite-variants" style="margin-top:4px" title="wielki gryz Ziemi: promień kuli gryzu (R) i mapy z wypieku .tmp/planety-gryz/">
+    <span style="color:var(--muted);align-self:center">gryz:</span>
+    <button data-b="0.30">0,30 R (płaszcz)</button><button data-b="0.46">0,46 R (do jądra)</button>
   </div>
   <div id="globe-opts">
     <h2>Glob</h2>

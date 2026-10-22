@@ -944,7 +944,7 @@
     // Hipercruise (E5): automat lotu 20–40 tys. j/s i JEDNA tabela napędów gracza, NPC i ruchu v2.
     import {
       createHypercruise, configureHypercruise, engageHypercruise, dropHypercruise, stepHypercruise, resetHypercruise,
-      hypercruiseBusy, hypercruiseDriving, hypercruiseSpoolProgress
+      hypercruiseBusy, hypercruiseDriving, hypercruiseSpoolProgress, hypercruiseObstacleLookAhead, hypercruiseObstacleAction
     } from "./src/game/flight/hypercruise.js";
     import {
       HYPERCRUISE_TUNE, HYPERCRUISE_ENGINES, WARP_DRIVES, playerHullDrives, warpDriveSpeed, hypercruiseLegSpool
@@ -16810,6 +16810,27 @@
     // ========================================================================
     const hypercruise = createHypercruise();
     window.hypercruise = hypercruise;
+    // WYGLĄD hipercruise'u dla renderu (decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”):
+    // ten sam kształt co warp — rozruch = 'charging' (charge 0…1), lot = 'active', wyjście = 'idle' (efekt skoku gracza
+    // w WarpNurt kończy się wyjściem); GameState.hyper → RenderWorld.hyper (worker — skalary HYPER_* migawki).
+    // Statek dostaje `__hyperMode` (struga plazmy WARP na dyszach MAIN — engineVfxSystem.js; NPC — ta sama flaga).
+    const hyperLook = { state: 'idle', charge: 0, chargeTime: 0, speed: 0, vmax: 0, dir: 0 };
+    publishGameState({ hyper: hyperLook });
+    function syncHyperLook() {
+      const hc = hypercruise;
+      const prev = hyperLook.state;
+      const next = hc.state === 'spool' ? 'charging' : hc.state === 'active' ? 'active' : 'idle';
+      hyperLook.state = next;
+      hyperLook.charge = hypercruiseSpoolProgress(hc);
+      hyperLook.chargeTime = Number(hc.spoolNow) || Number(hc.spool) || 0;
+      hyperLook.speed = hypercruiseDriving(hc) ? hc.speed : 0;
+      hyperLook.vmax = hc.vmax;
+      hyperLook.dir = ship ? ship.angle : 0;
+      if (ship) ship.__hyperMode = next === 'idle' ? undefined : next;
+      // Kamera: kop jak przy skoku warpa (rig — cameraRig.js) przy starcie lotu i impuls przy wyjściu.
+      if (next === 'active' && prev !== 'active') noteCameraRigWarp(cameraRig, 'kick');
+      else if (prev === 'active' && next !== 'active') noteCameraRigWarp(cameraRig, 'exit');
+    }
     const _hcCtx = { speed: 0, zone: 1, remaining: Infinity, stopMargin: 0, brake: false, exitSpeed: HYPERCRUISE_TUNE.exitSpeed, align: 1, thrust: 1 };
     let _hcMassLockAt = 0;
     let _hcMassLocked = false;
@@ -16920,6 +16941,16 @@
         stopPlayerHypercruise('engines', true, 'HIPERCRUISE: PRZERWANY — SILNIKI');
       } else if (HYPERCRUISE_TUNE.interruptible && hc.state !== 'drop' && playerMassLocked(performance.now())) {
         stopPlayerHypercruise('masslock', true, 'HIPERCRUISE: PRZECHWYT — BLOKADA MASY');
+      }
+      // Płyta ringu na kursie (E9 2026-10-22, hypercruiseObstacleAction): wyjście, zanim płyta wejdzie w drogę
+      // hamowania przechwytu — automat staje z prędkością wyjścia przed płytą (pomiar: scripts/hipercruise-kolizje-sym.mjs).
+      if (haloWorld && hypercruiseDriving(hc)) {
+        const look = hypercruiseObstacleLookAhead(hc, dt);
+        const reach = Math.max(Number(ship.radius) || 0, Math.sqrt((Number(ship.w) || 0) ** 2 + (Number(ship.h) || 0) ** 2) * 0.5);
+        const dist = haloWorld.rayToSlab(ship.pos.x, ship.pos.y, Math.cos(ship.angle), Math.sin(ship.angle), look + reach, reach) - reach;
+        const act = hypercruiseObstacleAction(hc, dist, dt);
+        if (act === 'drop') stopPlayerHypercruise('ring', true, 'HIPERCRUISE: WYJŚCIE — PŁYTA RINGU NA KURSIE');
+        else if (act === 'brake') hc.interrupted = true;
       }
       if (hc.state === 'idle') return;
       const c = _hcCtx;
@@ -24224,9 +24255,27 @@
         return true;
       }
       if (!_warpGhostLinger) return false;
-      // Kadłuby z listy destruktora (budowana raz na klatkę — z poprzedniej, martwe odpadają) i ciała budowli.
-      _warpGhostLinger = playerHullOverlapsAny(worldBodies.withEntities(_cachedAllDestructibles || npcs));
+      // Kadłuby z listy destruktora (budowana raz na klatkę — z poprzedniej, martwe odpadają) i ciała budowli; głąb skały
+      // olbrzyma pasa — duch trwa, a statek jest wypychany (playerRockEscape).
+      const inRock = playerRockEscape();
+      _warpGhostLinger = inRock || playerHullOverlapsAny(worldBodies.withEntities(_cachedAllDestructibles || npcs));
       return _warpGhostLinger;
+    }
+    // Wyjście z warpa / hipercruise'u w GŁĘBI olbrzyma pasa (E9 2026-10-22; olbrzym 18–62 km, duch przelatuje): kolider
+    // olbrzyma widzi tylko pasmo SDF przy powierzchni (w głębi gradient 0 — statek zostawał w skale). Statek leci w stronę
+    // najbliższej płytkiej skały / próżni (BeltGiants.escapeFromRock) co najmniej ROCK_ESCAPE_SPEED; resztę wypchnięcia
+    // robi zwykły collideShip, gdy środek wyjdzie z głębi.
+    const ROCK_ESCAPE_SPEED = 3000;
+    const _rockEscape = { x: 0, y: 0, dist: 0 };
+    function playerRockEscape() {
+      if (!ship || ship.dead || !beltWorld || !(beltWorld.giants?.readyCount > 0)) return false;
+      const e = beltWorld.giants.escapeFromRock(ship.pos.x, ship.pos.y, _rockEscape);
+      if (!e) return false;
+      const along = ship.vel.x * e.x + ship.vel.y * e.y;
+      const v = Math.max(ROCK_ESCAPE_SPEED, along);
+      ship.vel.x = e.x * v;
+      ship.vel.y = e.y * v;
+      return true;
     }
     function playerHullOverlapsAny(bodies) {
       if (!ship || ship.dead || !ship.beamHull) return false;
@@ -24951,8 +25000,9 @@
       stepPlayerShipSystem(dt);
       // Postawa okrętu (TARCZE): limit i ciąg napędu.
       applyShipStance(dt);
-      // Hipercruise (E5): przerwania, profil prędkości (prędkość pisze gałąź automatu niżej).
+      // Hipercruise (E5): przerwania, profil prędkości (prędkość pisze gałąź automatu niżej), wygląd dla renderu.
       stepPlayerHypercruise(dt);
+      syncHyperLook();
       // Tabela lotu: mnożniki dysz kadłuba dopasowane do SHIP_FLIGHT_SPECS (liczy tylko po zmianie
       // kadłuba albo układu dysz).
       calibrateDriveToShip(driveState, ship, getPlayerSpeed());
@@ -26768,6 +26818,7 @@
     // Statki daleko od ringów odpadają na teście odległości od planety.
     // NPC przez widok kinematyki, jak przy asteroidach (npcCollidesWithWorld).
     let _haloRingNoticeAtMs = 0;
+    let _ringPrevOk = false, _ringPrevX = 0, _ringPrevY = 0;
     // Bramka odległości NPC od ringów (audyt 2026-10-07 § 5.4): [x, y, promień] na ring — środek
     // planety i zewnętrzny brzeg testu płyty w koliderze (podłoga + teren). Bitwa daleko od planet
     // nie kopiuje co krok każdego NPC do bryły i nie pyta o niego trzech koliderów.
@@ -26779,10 +26830,23 @@
       // tylko tranzytami), a uderzenie w nią zrywa hipercruise od razu (resztę prędkości w głąb zeruje kolider).
       const hcRing = hypercruiseDriving(hypercruise);
       if (ship && !ship.dead && (!ship.noHullCollisions || hcRing)) {
+        // Ostatnia linia (E9 2026-10-22): środek kadłuba przeszedł w tym kroku przez płytę (mały kadłub przy 30–40 tys.
+        // j/s na płycie Ziemi 452 j.) — cofnięty do pozy sprzed kroku; dyskretny test podłogi wypchnąłby go na drugą stronę.
+        let tunnel = false;
+        if (hcRing && _ringPrevOk) {
+          const ddx = ship.pos.x - _ringPrevX, ddy = ship.pos.y - _ringPrevY;
+          const vv = Math.sqrt(ship.vel.x * ship.vel.x + ship.vel.y * ship.vel.y);
+          const lim = Math.max(2000, 2 * vv * dt);
+          if (ddx * ddx + ddy * ddy <= lim * lim) tunnel = !!haloWorld.blockTunnel(ship, _ringPrevX, _ringPrevY);
+        }
         const hit = haloWorld.constrainShip(ship, true);
-        if (hcRing && hit && hit.hit) {
+        if (hcRing && (tunnel || (hit && hit.hit))) {
           hypercruise.reason = 'ring';
           resetHypercruise(hypercruise);
+          // Uderzenie kończy lot: kolider zeruje tylko składową w głąb płyty, a wzdłuż niej zostawało do 32 tys. j/s —
+          // już z kolizjami kadłubów. Prędkość przycięta do prędkości wyjścia hipercruise'u.
+          const vx = ship.vel.x, vy = ship.vel.y, v = Math.sqrt(vx * vx + vy * vy), vmax = HYPERCRUISE_TUNE.exitSpeed;
+          if (v > vmax) { ship.vel.x = vx * vmax / v; ship.vel.y = vy * vmax / v; }
           pushZoneMessage('HIPERCRUISE: PRZERWANY — PŁYTA RINGU', 1.8, { tone: 'warn', label: 'NAPĘD' });
         }
         const nowMs = performance.now();
@@ -26791,6 +26855,9 @@
           pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
         }
       }
+      // Poza z końca kroku dla testu odcinka — tylko w hipercruise'ie (warp, teleport i zwykły lot jej nie zostawiają).
+      _ringPrevOk = !!(ship && !ship.dead && hypercruiseDriving(hypercruise));
+      if (_ringPrevOk) { _ringPrevX = ship.pos.x; _ringPrevY = ship.pos.y; }
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloWorld.constrainShip(player2Ship, true);
       // NPC (bez ścian portu) kolider odrzuca, gdy środek kadłuba jest dalej od planety niż
       // floorMid + terrainReach + zasięg kadłuba (HaloRingCollider.constrainShip, nearFloor) — ten
@@ -27016,11 +27083,15 @@
       const w = _cameraWarpInput;
       w.dt = gameDt;
       // Styl skoku bez rulonu (`?warp=ped|akcent|soczewka`, `?rulon=0` — warpDrive.js: warpRulonEnabled): kamera bez środka lejka.
-      w.rulon = warpRulonEnabled(location.search);
-      w.state = warp.state;
-      w.charge = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0;
+      // Hipercruise (E5, 2026-10-22): kop i oddalenie jak skok warpa (rozruch = ładowanie, lot = skok), bez rulonu —
+      // gdy warp stoi; warp ma pierwszeństwo.
+      const hyperCam = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
+      w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
+      w.state = hyperCam ? hyperLook.state : warp.state;
+      w.charge = hyperCam ? hyperLook.charge : (warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0);
       const dir = warp.dir;
-      if (dir && (dir.x || dir.y)) { w.dirX = dir.x; w.dirY = dir.y; }
+      if (hyperCam) { w.dirX = Math.cos(hyperLook.dir); w.dirY = Math.sin(hyperLook.dir); }
+      else if (dir && (dir.x || dir.y)) { w.dirX = dir.x; w.dirY = dir.y; }
       else if (ship) { w.dirX = Math.cos(ship.angle); w.dirY = Math.sin(ship.angle); }
       // Rampa wyjścia (kamera za statkiem, oddalenie do końca zwolnienia) i chwila po zatrzymaniu
       // (kamera dogania statek: WARP_EXIT.settle) — po rampie jej wiek rośnie zegarem gry.
@@ -27038,8 +27109,6 @@
       }
       w.enabled = normalizeCameraWarpKickMode(OPTIONS.cameraWarpKick) === 'on'
         && camera.mode === 'ship' && !!ship && !ship.destroyed;
-      // Hipercruise (E5): oddalenie z prędkością (cameraRig.js: hyperZoomOut).
-      w.hyper = hypercruiseDriving(hypercruise) ? hypercruise.speed / Math.max(1, hypercruise.vmax) : 0;
       // Zoom prowadzi przejście (fokus stacji, edytor) — kop znika od razu, jak w updateCameraZoom.
       w.suspend = !!(camera.transition && camera.transition.kind !== 'ship');
       stepCameraRigWarp(cameraRig, w, cameraRigTune);
@@ -27569,6 +27638,7 @@
       f.skyZone = zoneState.current?.id || null;
       f.warp = warp;
       f.boost = boost;
+      f.hyper = hyperLook;
       // ruch warpa NPC (osie rejestru gry) i klatka „Nurtu” — ta sama, którą dostaje WarpNurt.update
       f.warpTraffic = warpTraffic;
       f.warpNurt = _warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam);
@@ -27789,13 +27859,16 @@
     const spaceGasIn = new Float64Array(SPACE_GAS_IN.size);
     const spaceGasState = createSpaceGasInputState();
     const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
-    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true };
+    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
     function packSpaceGas(cam, dt) {
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
       o.dt = dt; o.camX = cam.x; o.camY = cam.y;
       o.halfW = W * 0.5 / zoom; o.halfH = H * 0.5 / zoom;
       o.field = beltWorld ? beltWorld.field : null;
+      // olbrzymy pasa (raster przekroju — przeszkody gazu), pociski (gaz wleczony), wybuchy — pierścień GameBlasts
+      o.giants = beltWorld ? beltWorld.giants : null;
+      o.bullets = window.bullets || null;
       o.sunX = SUN ? SUN.x : 0; o.sunY = SUN ? SUN.y : 0;
       o.windowCells = SPACE_GAS_TUNE.windowCells;
       o.time = SimClock.sim;
@@ -28198,7 +28271,7 @@
     // ============== END SPLIT SCREEN RENDER ==============
 
     // Warp „Nurt” (src/3d/warp/warpNurt.js): jeden obiekt wejścia na grę (bez alokacji na klatkę).
-    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, npcs: null };
+    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: null, npcs: null };
     function _warpNurtFrame(dt, camNoShake, camShake) {
       const o = _warpNurtCtx;
       o.dt = dt;
@@ -28208,6 +28281,7 @@
       o.camFollow = camera.mode === 'ship' && !camera.transition;
       o.ship = ship;
       o.warp = warp;
+      o.hyper = hyperLook;
       // Zegar rejestru ruchu warpa (RW-28): osie przylotów i odlotów NPC liczone w czasie gry.
       o.trafficTime = warpTraffic.time;
       // Soczewka świata (planety w skoku — src/3d/warp/worldLens.js) tylko w kamerze z góry jednego gracza:

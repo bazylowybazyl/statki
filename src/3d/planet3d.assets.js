@@ -24,7 +24,7 @@ import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { warpSkyBendCount } from './warp/skyBend.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
 import { skyRegionBrightness, stepSkyRegion } from '../game/skyRegion.js';
-import { createEarthPitMesh, earthPitUniforms } from './earthPit3D.js';
+import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector, earthBiteCenterIn } from './earthBite3D.js';
 import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
@@ -328,7 +328,9 @@ function createRingAtmosphere(key, planetRadius) {
         uDayColor: { value: new THREE.Vector3(...tune.day) },
         uSunsetColor: { value: new THREE.Vector3(...tune.sunset) },
         uGain: { value: new THREE.Vector3(1.02, 0.985, 0.933).multiplyScalar(tune.gain) },
-        uSunShadowRecv: { value: 1.0 }
+        uSunShadowRecv: { value: 1.0 },
+        // wcięcie gryzu w tarczy (tylko Ziemia — DirectPlanet._orient włącza i podaje środek w układzie dysku)
+        uPitMode: { value: 0.0 }, uBite: { value: new THREE.Vector4() }, uBiteEast: { value: new THREE.Vector3(1, 0, 0) }
     });
     const mesh = new THREE.Mesh(new THREE.CircleGeometry(ra, 256), material);
     mesh.name = 'RingPlanetAtmosphere';
@@ -645,7 +647,7 @@ class DirectPlanet {
         this.isRingAnchored = RING_PLANET_NAMES.has(this.name);
         this._visibilityCulled = false;
         this.mesh = null; this.clouds = null; this.cloudUniforms = null; this.atmosphere = null; this.saturnRing = null;
-        this.pit = null; this.pitUniforms = null;
+        this.pit = null;
         this.group = new THREE.Group(); this.group.position.z = -50000; this.basePlanetBloom = 0.0; this.visibleRadiusMul = 1.0;
         this.uniforms = {
             uPlanetBloom: { value: 0.0 }, dayTexture: { value: null }, nightTexture: { value: null }, specularTexture: { value: null },
@@ -658,8 +660,9 @@ class DirectPlanet {
             // Planety tła siedzą na z = −50 000 w perspektywie — maska liczona
             // w płaszczyźnie gry trafiałaby w nie obok (własna smuga na tarczy).
             uSunShadowRecv: { value: this.isRingAnchored ? 1.0 : 0.0 },
-            // Wielka kopalnia ringu (tylko Ziemia): 1 = kula z wycięciem, łata ma 2 (earthPit3D.js).
-            uPitMode: { value: 0.0 }
+            // Wielki gryz (tylko Ziemia): 1 = kula z wycięciem, łata ma 2 (earthBite3D.js);
+            // uBite = środek gryzu w układzie obiektu kuli + promień bazowy.
+            uPitMode: { value: 0.0 }, uBite: { value: earthBiteVector() }
         };
         // Analityczny cień ringu na tarczy planety (dzienny łuk od nawietrznej,
         // czyli słonecznej, strony) — parametry ustawia init() dla ciał na ringu.
@@ -735,10 +738,9 @@ class DirectPlanet {
             : (this.saturnAtm ? createSaturnSurfaceMaterial(this.uniforms) : createPlanetSurfaceMaterial(this.uniforms));
         this.mesh = new THREE.Mesh(geometry, material); this.group.add(this.mesh);
         if (maps?.pit) {
-            // Wielka kopalnia ringu: kula bez obszaru dziury, w nim bryła łaty (ten sam graf i mapy).
+            // Wielki gryz: kula bez obszaru gryzu, w nim łata (ściany, dno, kołnierz) — ten sam graf i mapy.
             this.uniforms.uPitMode.value = 1.0;
-            this.pitUniforms = earthPitUniforms(this.uniforms);
-            this.pit = createEarthPitMesh(createPlanetSurfaceMaterial(this.pitUniforms));
+            this.pit = createEarthBiteMesh(createPlanetSurfaceMaterial(earthBiteUniforms(this.uniforms, 2)));
             this.mesh.add(this.pit);
         }
         if (name === 'saturn') {
@@ -791,7 +793,9 @@ class DirectPlanet {
 
         if (maps?.clouds) {
             const cloudTex = loadTex(maps.clouds); cloudTex.colorSpace = THREE.SRGBColorSpace;
-            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: maps.cloudOpacity ?? 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter, uSunShadowRecv: this.uniforms.uSunShadowRecv };
+            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: maps.cloudOpacity ?? 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter, uSunShadowRecv: this.uniforms.uSunShadowRecv,
+                // gryz: chmury nad otworem wycięte (środek gryzu w układzie chmur — _orient)
+                uPitMode: { value: this.pit ? 1.0 : 0.0 }, uBite: { value: earthBiteVector() } };
             // Przezroczyste DoubleSide w jednym rysunku (jak ShaderMaterial), blend normalny.
             const cloudMat = createPlanetCloudMaterial(this.cloudUniforms);
             this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, 128, 128), cloudMat); this.group.add(this.clouds);
@@ -1005,6 +1009,13 @@ class DirectPlanet {
                 if (base) this.clouds.quaternion.multiply(base);
                 this.clouds.quaternion.multiply(_lensQa);
             } else this.clouds.rotation.set(0, this._cloudSpinY, 0);
+            // Chmury obracają się szybciej niż grunt: środek gryzu w układzie chmur.
+            if (this.pit) earthBiteCenterIn(this.mesh, this.clouds, this.cloudUniforms.uBite.value);
+        }
+        if (this.pit && this.atmosphere?.material?.uniforms?.uBite) {
+            const au = this.atmosphere.material.uniforms;
+            au.uPitMode.value = 1.0;
+            earthBiteCenterIn(this.mesh, this.atmosphere, au.uBite.value, au.uBiteEast.value);
         }
         if (this.saturnRing) {
             if (q) {

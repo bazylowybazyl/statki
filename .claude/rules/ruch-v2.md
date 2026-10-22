@@ -36,7 +36,7 @@ paths:
 
 ## Napędy (E5)
 
-- Jedna tabela `src/data/driveModes.js` dla gracza, NPC gry i ruchu: warp `WARP_SPEED` 260 tys. j./s (nietykalny, paliwo fuzyjne), hipercruise `HYPERCRUISE_ENGINES` `hypercruise_mk1..3` = 20 / 30 / 40 tys. j./s (id stałe — kontrakt z recepturami E8), konwencjonalny 1200 j./s, klasa ładowni → silnik `TRAFFIC_CLASS_DRIVE`. Ruch liczy z niej czasy, paliwo i ryzyko przechwytu (`travelNetwork.js`; ekspozycja `rollPiracy` z ŚREDNIEJ prędkości etapu). Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`.
+- Jedna tabela `src/data/driveModes.js` dla gracza, NPC gry i ruchu: warp — napędy `warp_mk1..3` = 100 / 175 / 250 tys. j./s (`WARP_DRIVES`, klasa ładowni → napęd: van i hauler Mk I, bulk i heavy Mk II, mega Mk III; nietykalny, paliwo fuzyjne; brama ma procedurę skoku `gateTransitSeconds` 30 s — inaczej byłaby szybsza od warpa Mk I), hipercruise `HYPERCRUISE_ENGINES` `hypercruise_mk1..3` = 20 / 30 / 40 tys. j./s (id stałe — kontrakt z recepturami E8), konwencjonalny 1200 j./s, klasa ładowni → silnik `TRAFFIC_CLASS_DRIVE`. Ruch liczy z niej czasy, paliwo i ryzyko przechwytu (`travelNetwork.js`; ekspozycja `rollPiracy` z ŚREDNIEJ prędkości etapu). Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`.
 
 ## Pola górnicze i wyrwy (E3)
 
@@ -53,7 +53,8 @@ paths:
 
 ## Bramka bilansu (E4)
 
-- `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. Progi (`PLAN-ekonomia-rynki.md` § 5): przechwyty 12–20% kursów z ładunkiem, głód chcianego surowca ≤ 30 min, stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms. Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
+- `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. Progi (`PLAN-ekonomia-rynki.md` § 5): przechwyty w paśmie 12–20% kursów z ładunkiem (decyzja użytkownika 2026-10-22: cel ~15%; puste przeloty liczone osobno), głód chcianego surowca ≤ 30 min (na zerze = poniżej min(1% magazynu, 15 min zużycia brutto stacji)), stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms (mierz w ciszy — przy innych sesjach ta sama baza skacze 25 → 55 ms).
+- Port większy niż z planu przeładunku: `MARKET_DOCK_OVERRIDES` w `src/data/markets.js` (`berthMultiplier` dla id rynku); plan (`stationHaulTonnage`) nie widzi wypraw górniczych z portu ani kupców. Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
 
 ## Pułapki
 
