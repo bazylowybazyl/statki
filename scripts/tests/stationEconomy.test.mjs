@@ -104,9 +104,10 @@ export function run() {
   // stop tytanu z glinem zamiast stali (Ti-6Al-4V) i glin w płytach — Ziemia −16%
   // żelaza i −8% krzemu (moc huty przeszła na glin), Merkury eksportuje +5% żelaza;
   // taśma nadprzewodząca w elektronice i reaktor fuzyjny — Ziemia dalej −5% Fe, −4% Si.
-  t.close('plan Ziemi wymaga 1068,551 rudy żelaza/h', earthNet.iron_ore * 3600, -1068.551032596086, 1e-6);
-  t.close('plan Ziemi wymaga 663,153 rudy krzemu/h', earthNet.silicon_ore * 3600, -663.1526251316807, 1e-6);
-  t.close('plan Merkurego eksportuje 1413,502 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1413.5015086619358, 1e-6);
+  // emitery tarcz w zakładach systemowych — Ziemia −3% Fe, +1% Si.
+  t.close('plan Ziemi wymaga 1038,112 rudy żelaza/h', earthNet.iron_ore * 3600, -1038.1122453713313, 1e-6);
+  t.close('plan Ziemi wymaga 670,740 rudy krzemu/h', earthNet.silicon_ore * 3600, -670.7395458595911, 1e-6);
+  t.close('plan Merkurego eksportuje 1414,490 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1414.4898142378106, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });

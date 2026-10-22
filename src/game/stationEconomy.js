@@ -81,7 +81,9 @@ export const FLEET_DEMAND = Object.freeze({
   warp_mk3: 0.0003,
   // Pancerz okrętów wojennych (E10): ~5,4 płyty ceramiki na okręt ważony
   // doktryną wobec ~11 płyt kadłuba — ta sama metoda co `hull_plate`.
-  ceramic_armor: 0.035
+  ceramic_armor: 0.035,
+  // Emitery tarcz 1 / 3 / 6 / 9 — ~2,4 sztuki na okręt ważony doktryną.
+  shield_generator: 0.0151
 });
 
 /**
@@ -194,8 +196,9 @@ export const INDUSTRY_ARCHETYPES = Object.freeze({
       'assemble_hypercruise_mk1', 'assemble_hypercruise_mk2', 'assemble_hypercruise_mk3',
       'assemble_warp_mk1', 'assemble_warp_mk2', 'assemble_warp_mk3'],
     capacity: 1.1, cost: { steel: 120, hull_plate: 40, avionics: 10, thruster: 4 } },
-  /** Systemy: awionika, reaktory, podtrzymywanie życia — miękka część okrętu. */
-  systems: { label: 'Zakłady systemowe', recipes: ['assemble_avionics', 'assemble_reactor_core', 'assemble_life_support'],
+  /** Systemy: awionika, reaktory, podtrzymywanie życia, emitery tarcz — miękka część okrętu. */
+  systems: { label: 'Zakłady systemowe', recipes: ['assemble_avionics', 'assemble_reactor_core', 'assemble_life_support',
+    'assemble_shield_generator'],
     capacity: 1.0, cost: { steel: 90, hull_plate: 28, chips: 20, optic_lens: 8 } },
   /** Przetop złomu. Jedyna receptura o wsadzie w 100% z wraków. */
   recycling: { label: 'Przetop złomu', recipes: ['recycle_scrap'],

@@ -377,6 +377,14 @@ export const RESOURCES = Object.freeze({
     label: 'Podtrzymywanie życia', short: 'LSS', unit: 'szt', form: 'solid',
     mass: 3.0, value: 620, color: '#a3e635'
   },
+  // Emiter tarczy (E10, decyzja użytkownika: tarcze jako towar). Fikcja z realną
+  // kotwicą: cewki nadprzewodzące osłony magnetycznej i bank kondensatorów
+  // foliowych (glin + polimer). Tylko okręty wojenne, liczba rośnie z klasą.
+  shield_generator: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Emiter tarczy', short: 'Trz', unit: 'szt', form: 'solid',
+    mass: 3.0, value: 620, color: '#38bdf8'
+  },
 
   // ---------- T2: UZBROJENIE ----------
   //
@@ -749,6 +757,10 @@ export const RECIPES = Object.freeze({
   assemble_life_support: {
     label: 'Montaż podtrzymywania życia', building: 'factory', seconds: 95,
     in: { polymer: 1, oxygen: 1, avionics: 1 }, out: { life_support: 1 }
+  },
+  assemble_shield_generator: {
+    label: 'Montaż emitera tarczy', building: 'factory', seconds: 150,
+    in: { superconductor: 3, aluminum: 2, polymer: 1, chips: 1, coolant: 2 }, out: { shield_generator: 1 }
   },
 
   // ---------- STOCZNIA: napędy przelotowe i hipercruise ----------
