@@ -389,6 +389,23 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Testy: `npm test` 1755 zielone.
 - Dalej:
   - ~~E4: okno ciszy (tick ≤ 25 ms) i końcowe strojenie~~ — zrobione;
+- 2026-10-22 następny etap, decyzja użytkownika: „tak”, plus nowa sesja na przeładunek w portach.
+  - E6 (ta sama sesja):
+    - bańka w pozostałych portach: Mars, Jowisz, porty bez ringu, księżyce, Ceres i Westa, kryjówki;
+    - awans aktora do pełnego NPC w walce;
+    - strefa planety ×0,6 w bańce;
+    - kontrakt danych przeładunku z E12.
+  - E7 (w sesji E2):
+    - terminal na ofertach API rynku;
+    - komputer handlowy (agregat z rekordów);
+    - stacja gracza jako rynek (`addMarket` w biegu, budynki);
+    - zapis ekonomii, wyrw i zapasu flot.
+  - E12 (nowa sesja), przeładunek w portach według dem:
+    - ładownie: `dema/ladownia-webgpu.html`, `src/data/cargoBays.js`, `src/3d/cargo/`;
+    - roje dronów przeładunkowych: `dema/roj-webgpu.html`, `src/3d/swarm/`, `src/game/swarm/`;
+    - taśmociągi: budowle Z7, `src/3d/portBuildings/`;
+    - kontenery Z5: `src/data/cargoContainers.js`, `src/game/cargoPortOps.js`;
+    - wszystko podpięte pod dokowanie w bańce E6.
   - bańka dla pozostałych portów i awans do pełnego NPC (do zlecenia);
   - E7: gracz na rynku i zapis ekonomii.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
