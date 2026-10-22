@@ -578,9 +578,13 @@ export const PLANET_YIELD = Object.freeze({
   // najciaśniejszym surowcem układu, a hutę Unii skalibrowano pod te liczby).
   // Główne źródło węgla i niklu to i tak wyprawy górnicze w pas.
   // Glin Westy (E10, 2026-10-22): plagioklaz eukrytów — doszedł tak samo PONAD
-  // dawny urobek (`rate` 1,95 → 2,378, pozostałe tony na cykl bez zmian).
-  ceres: { rate: 1.70, yields: {
-    iron_ore: 0.2206, silicon_ore: 0.1618, ice: 0.2059, raw_crystal: 0.1470, carbon_ore: 0.2647
+  // dawny urobek (`rate` 1,95 → 2,378, pozostałe tony na cykl bez zmian). Ceres —
+  // glin z glinokrzemianów warstwowych (8%, `rate` 1,70 → 1,848): bez niego huta Ceres
+  // ściągała ~1 t rudy glinu na cykl z Westy i kolejka na redzie Ceres rosła
+  // (bramka E10, krok 2: średnia 2,6–3,3 → 3,5–5,6).
+  ceres: { rate: 1.8478, yields: {
+    iron_ore: 0.202952, silicon_ore: 0.148856, ice: 0.189428, raw_crystal: 0.13524, carbon_ore: 0.243524,
+    aluminum_ore: 0.08
   } },
   vesta: { rate: 2.378, yields: {
     iron_ore: 0.185484, titanium_ore: 0.145714, silicon_ore: 0.110372, nickel_ore: 0.315372, platinum_ore: 0.063058,
