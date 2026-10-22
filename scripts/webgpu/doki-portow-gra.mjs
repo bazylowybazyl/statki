@@ -173,6 +173,12 @@ try {
     await ev(CAMERA(near.x, near.y, Math.min(0.16, zoomAll * 4.5)));
     await waitGame(0.5);
     await screenshotPng(cdp, join(out, `${tag}-zblizenie.png`));
+    if (near.statek) {
+      // Statek na stanowisku z bliska (małe kadłuby — prom, kontenerowiec — giną w kadrze całej budowli).
+      await ev(CAMERA(near.x, near.y, 0.55));
+      await waitGame(0.1);
+      await screenshotPng(cdp, join(out, `${tag}-statek.png`));
+    }
     report.porty[id] = { ...at, statki: s, zblizenie: near };
     console.log('port', id, at.kind, JSON.stringify(s));
 
