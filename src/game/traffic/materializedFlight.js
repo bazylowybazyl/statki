@@ -17,6 +17,10 @@
  * Statek leci po ŚCIEŻCE (bufor punktów, `portPaths.js`), nie do punktu:
  *   - przy ringu „Halo” trasę układa `ringRouter.js` — płyta ringu tylko przez
  *     tranzyty, dookoła planety łukiem za halami, w strefie portu promieniowo;
+ *   - przy budowli doku portu bez ringu (E14: krzyż, okrąg, koło) trasa z
+ *     przestrzeni objeżdża dysk zapasu budowli (`dockDiscs`: styczna → łuk →
+ *     styczna) i wchodzi lejkiem na oś podejścia stanowiska; punkty dyspozytora
+ *     w dysku (kolejka, punkty manewrowe) wypycha `resolveCore`;
  *   - w porcie: punkt czekania → brama / wylot → pas albo aleja → skręt → pole
  *     STOP; przechwyt w oknie stanowiska (jak `PortDocking`: capital 145 × 180,
  *     reszta 70 × 55, ≤ 30 j./s, ≤ 7°) i 1,1 s dociągnięcia pozy;
@@ -53,7 +57,7 @@ import { HYPERCRUISE_TUNE } from '../../data/driveModes.js';
 import { hullFootprint } from './dockLayout.js';
 import { needsService } from './portControl.js';
 import {
-  PATH_STRIDE, WP, createPath, pathReset, pathFinalize, pathApplyCornerSpeeds, pathAddFlags,
+  PATH_STRIDE, WP, createPath, pathReset, pathPush, pathFinalize, pathApplyCornerSpeeds, pathAddFlags,
   pathPointAt, pathFind, createPortIndex, addPortLayout, findPortEntry, findPortEntryAt,
   portApproachPoint, writeInbound, writeOutbound, berthCaptureOk, inPortCap,
   CAPTURE_DEFAULTS, PORT_PATH_SPEED
@@ -265,7 +269,7 @@ function applyZone(bubble, actor) {
  */
 export function createBubble(options = {}) {
   const { rings = null, ports = null, docks = null, holdPose = null, records = null, zoneAt = null, ...rest } = options;
-  return {
+  const bubble = {
     config: { ...FLIGHT_DEFAULTS, ...rest },
     /** `courseId` → encja. */
     actors: new Map(),
@@ -273,6 +277,8 @@ export function createBubble(options = {}) {
     list: [],
     rings: Array.isArray(rings) ? rings : [],
     ports: ports?.entries instanceof Map ? ports : createPortIndex(docks || ports || null),
+    /** Dyski zapasu budowli doków (E14): [x, y, keepR, promień łuku objazdu] × n. */
+    dockDiscs: new Float64Array(0),
     holdPose: typeof holdPose === 'function' ? holdPose : null,
     zoneAt: typeof zoneAt === 'function' ? zoneAt : null,
     records: { ...DEFAULT_RECORDS, ...(records || {}) },
@@ -289,6 +295,27 @@ export function createBubble(options = {}) {
       replans: 0, forcedStages: 0, waits: 0
     }
   };
+  refreshDockDiscs(bubble);
+  return bubble;
+}
+
+/** Krok łuku objazdu dysku budowli doku — cięciwa nie schodzi pod `keepR`. */
+const DOCK_ARC_STEP = 12 * Math.PI / 180;
+/**
+ * Łuk objazdu tyle za dyskiem zapasu: w swobodnym locie statek ścina zakręt o do
+ * 1500 j. (`pathApplyCornerSpeeds`, otwarta przestrzeń) — ścięty łuk nie wchodzi w dysk.
+ */
+const DOCK_ARC_MARGIN = 1600;
+
+/** Dyski zapasu budowli doków z układów w indeksie portów (`layout.model`). */
+function refreshDockDiscs(bubble) {
+  const list = [];
+  for (const layout of bubble.ports.layouts.values()) {
+    const m = layout?.model;
+    if (!m || !(m.keepR > 0)) continue;
+    list.push(m.x, m.y, m.keepR, m.keepR / Math.cos(DOCK_ARC_STEP * 0.5) + DOCK_ARC_MARGIN);
+  }
+  bubble.dockDiscs = Float64Array.from(list);
 }
 
 /** Podmienia ringi (np. po przesunięciu planet albo zmianie układu). */
@@ -301,6 +328,7 @@ export function setBubblePorts(bubble, docks) {
   if (!docks) return;
   const iterable = docks instanceof Map ? docks.entries() : Object.entries(docks);
   for (const [stationId, layout] of iterable) addPortLayout(bubble.ports, stationId, layout);
+  refreshDockDiscs(bubble);
 }
 
 function takePath(bubble) {
@@ -484,7 +512,11 @@ const _hold = { x: 0, y: 0, angle: 0 };
 const _pose = { along: 0, across: 0, angle: 0 };
 const _rec = { x: 0, y: 0 };
 
-/** Punkt abstrakcyjny (środek planety z ringiem) → lejek w stronę `towards`. */
+/**
+ * Punkt abstrakcyjny (środek planety z ringiem) → lejek w stronę `towards`.
+ * Punkt dyspozytora w dysku zapasu budowli doku (kolejka, punkt manewrowy,
+ * zwolnione stanowisko) → promieniowo za dysk — trasa do niego objeżdża budowlę.
+ */
 function resolveCore(bubble, x, y, tx, ty, out) {
   const rings = bubble.rings;
   if (rings.length && isRingCorePoint(rings, x, y)) {
@@ -493,7 +525,87 @@ function resolveCore(bubble, x, y, tx, ty, out) {
   }
   out.x = x;
   out.y = y;
+  const discs = bubble.dockDiscs;
+  for (let i = 0; i < discs.length; i += 4) {
+    const dx = x - discs[i];
+    const dy = y - discs[i + 1];
+    const r = discs[i + 2];
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= r * r) continue;
+    const d = Math.sqrt(d2);
+    const ux = d > 1e-6 ? dx / d : 1;
+    const uy = d > 1e-6 ? dy / d : 0;
+    out.x = discs[i] + ux * (r + 300);
+    out.y = discs[i + 1] + uy * (r + 300);
+    break;
+  }
   return out;
+}
+
+/**
+ * Trasa A → B: objazd dysków budowli doków (styczna → łuk → styczna, krótszą
+ * stroną — jak `pushDetour` ringu), potem router ringu. Dysk, w którym leży koniec
+ * odcinka, nie jest objeżdżany (punkty portu — wejście lejkiem, wyjście za dysk —
+ * są poza nim; reszta przeszła przez `resolveCore`).
+ */
+function routeAround(bubble, path, ax, ay, bx, by, vmax, flags) {
+  const discs = bubble.dockDiscs;
+  let cx = ax;
+  let cy = ay;
+  for (let iter = 0; iter < 4 && discs.length; iter++) {
+    let best = -1;
+    let bestT = Infinity;
+    const vx = bx - cx;
+    const vy = by - cy;
+    const len2 = vx * vx + vy * vy;
+    if (len2 < 1) break;
+    for (let i = 0; i < discs.length; i += 4) {
+      const ox = discs[i];
+      const oy = discs[i + 1];
+      const r = discs[i + 2];
+      const r2 = r * r;
+      if ((cx - ox) ** 2 + (cy - oy) ** 2 < r2 || (bx - ox) ** 2 + (by - oy) ** 2 < r2) continue;
+      let t = ((ox - cx) * vx + (oy - cy) * vy) / len2;
+      if (t <= 0 || t >= 1) continue;
+      const px = cx + vx * t - ox;
+      const py = cy + vy * t - oy;
+      if (px * px + py * py >= r2) continue;
+      if (t < bestT) { bestT = t; best = i; }
+    }
+    if (best < 0) break;
+    pushDiscDetour(path, discs, best, cx, cy, bx, by);
+    const o = (path.count - 1) * S;
+    cx = path.data[o];
+    cy = path.data[o + 1];
+  }
+  routeRing(path, bubble.rings, cx, cy, bx, by, vmax, flags);
+}
+
+function wrap2Pi(a) {
+  const v = a % TAU;
+  return v < 0 ? v + TAU : v;
+}
+
+/** Objazd dysku `i` z P do Q (oba poza dyskiem): punkty na łuku promienia objazdu. */
+function pushDiscDetour(path, discs, i, px, py, qx, qy) {
+  const ox = discs[i];
+  const oy = discs[i + 1];
+  const R = discs[i + 3];
+  const dp = Math.hypot(px - ox, py - oy);
+  const dq = Math.hypot(qx - ox, qy - oy);
+  const fp = Math.atan2(py - oy, px - ox);
+  const fq = Math.atan2(qy - oy, qx - ox);
+  const ap = Math.acos(Math.min(1, R / Math.max(R, dp)));
+  const aq = Math.acos(Math.min(1, R / Math.max(R, dq)));
+  const ccw = wrap2Pi((fq - aq) - (fp + ap));
+  const cw = wrap2Pi((fp - ap) - (fq + aq));
+  const a0 = ccw <= cw ? fp + ap : fp - ap;
+  const delta = ccw <= cw ? ccw : -cw;
+  const n = Math.max(1, Math.ceil(Math.abs(delta) / DOCK_ARC_STEP));
+  for (let k = 0; k <= n; k++) {
+    const a = a0 + delta * (k / n);
+    pathPush(path, ox + Math.cos(a) * R, oy + Math.sin(a) * R, Infinity, 0);
+  }
 }
 
 /** Czy postój to obsługa w porcie znanym bańce (dyspozytor przydzieli miejsce). */
@@ -533,7 +645,7 @@ function beginPath(bubble, actor) {
     actor.docked = false;
     pathReset(path, e.x, e.y);
     if (writeOutbound(e, path, actor) > 0) pathAddFlags(path, path.count - 1, OUT_END);
-    actor.corridorOut = e.corridor;
+    actor.corridorOut = e.corridorOut || e.corridor;
     actor.outGateX = e.gateX;
     actor.outGateY = e.gateY;
     actor.outOutX = e.outX;
@@ -604,7 +716,7 @@ function planTravel(bubble, network, course, stage, actor) {
       fEnd = 0;
     }
   }
-  routeRing(path, bubble.rings, ax, ay, ex, ey, vEnd, fEnd);
+  routeAround(bubble, path, ax, ay, ex, ey, vEnd, fEnd);
   actor.endKind = fEnd & WP.STOP ? END_STOP : END_PASS;
   finishPath(bubble, actor);
 }
@@ -665,8 +777,14 @@ function planDwell(bubble, network, course, stage, actor) {
     }
     beginPath(bubble, actor);
     portApproachPoint(entry, actor, _p);
-    routeRing(path, bubble.rings, lastX(path), lastY(path), _p.x, _p.y,
-      Math.min(actor.portCap, PORT_PATH_SPEED.approach), WP.WAIT);
+    const vWait = Math.min(actor.portCap, PORT_PATH_SPEED.approach);
+    if (entry.funnelX === entry.funnelX) {
+      // Budowla doku: z przestrzeni do lejka za dyskiem zapasu, dalej osią podejścia do punktu czekania.
+      routeAround(bubble, path, lastX(path), lastY(path), entry.funnelX, entry.funnelY, vWait, 0);
+      pathPush(path, _p.x, _p.y, vWait, WP.WAIT | WP.PORT);
+    } else {
+      routeAround(bubble, path, lastX(path), lastY(path), _p.x, _p.y, vWait, WP.WAIT);
+    }
     // Pas: punkt czekania leży dalej niż punkt podejścia — ten zostaje w szkielecie;
     // aleja i pomost: punkt czekania TO punkt podejścia.
     writeInbound(entry, path, actor, entry.lane ? 0 : 1);
@@ -689,7 +807,7 @@ function planDwell(bubble, network, course, stage, actor) {
     }
     resolveCore(bubble, _hold.x, _hold.y, actor.x, actor.y, _p);
     beginPath(bubble, actor);
-    routeRing(path, bubble.rings, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP | WP.HOLD);
+    routeAround(bubble, path, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP | WP.HOLD);
     actor.holdAngle = Number.isFinite(_hold.angle) ? _hold.angle : actor.angle;
     actor.endKind = END_HOLD;
     if (actor.phase !== ACTOR_PHASE.UNDOCK) setPhase(actor, ACTOR_PHASE.FLY);
@@ -718,7 +836,7 @@ function planDwell(bubble, network, course, stage, actor) {
     return;
   }
   beginPath(bubble, actor);
-  routeRing(path, bubble.rings, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP);
+  routeAround(bubble, path, lastX(path), lastY(path), _p.x, _p.y, 0, WP.STOP);
   actor.endKind = END_STOP;
   if (actor.phase !== ACTOR_PHASE.UNDOCK) setPhase(actor, ACTOR_PHASE.FLY);
   finishPath(bubble, actor);
@@ -1266,7 +1384,8 @@ function updateCorridors(bubble, dt) {
         c = a.corridorOut;
       } else if (a.waitIndex > 0 && a.corridorIn) {
         if (a.wp <= a.waitIndex) a.corridorState = IN_OUTSIDE;
-        else if (a.wp <= a.cornerIndex) a.corridorState = IN_COMMITTED;
+        // Budowla doku (E14): wchodzący zostaje w korytarzu aż do pola — po skręcie w stanowisko też go widać.
+        else if (a.wp <= a.cornerIndex || a.entry?.kind === 'model') a.corridorState = IN_COMMITTED;
         if (a.corridorState) c = a.corridorIn;
       }
     }
@@ -1313,27 +1432,54 @@ function updateCorridors(bubble, dt) {
     }
   }
 
-  // Gęsiego: za encją przed sobą w tym samym korytarzu i kierunku.
+  // Gęsiego: za encją przed sobą w tym samym korytarzu i kierunku. W budowli doku (E14: pierścienie koła,
+  // aleje krzyża — za punktem czekania i w drodze do wyjścia) „przed” i „w poprzek” po kierunku jazdy encji,
+  // nie po osi ujścia; kolejka przed ujściem — po osi, jak w K-7. Wychodzący w budowli ustępuje wchodzącym
+  // za punktem czekania (w kole przecina ich pierścień), nigdy odwrotnie — bez wzajemnego czekania.
+  const modelCorridors = bubble.ports.modelCorridors;
   for (let i = 0; i < port.length; i++) {
     const a = port[i];
     const outbound = a.corridorState === OUT_MOVING;
     const c = outbound ? a.corridorOut : a.corridorIn;
-    const ox = outbound ? a.outOutX : a.inOutX;
-    const oy = outbound ? a.outOutY : a.inOutY;
+    const byMotion = a.corridorState !== IN_OUTSIDE && !!modelCorridors && modelCorridors.has(c);
+    let ox = outbound ? a.outOutX : a.inOutX;
+    let oy = outbound ? a.outOutY : a.inOutY;
+    if (byMotion) {
+      const v = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+      ox = v > 1 ? a.vx / v : Math.cos(a.angle);
+      oy = v > 1 ? a.vy / v : Math.sin(a.angle);
+    }
+    const dockA = byMotion ? modelCorridors.get(c) : null;
     for (let j = 0; j < port.length; j++) {
       if (i === j) continue;
       const b = port[j];
       const bOut = b.corridorState === OUT_MOVING;
-      if (bOut !== outbound) continue;
-      if ((bOut ? b.corridorOut : b.corridorIn) !== c) continue;
-      // Wchodzący: przed nim ten, kto głębiej; wychodzący: ten, kto bliżej ujścia.
-      const ahead = outbound ? a.depth - b.depth : b.depth - a.depth;
+      const sameLane = bOut === outbound && (bOut ? b.corridorOut : b.corridorIn) === c;
+      const giveWay = !sameLane && outbound && byMotion && b.corridorState === IN_COMMITTED
+        && modelCorridors.get(b.corridorIn) === dockA;
+      if (!sameLane && !giveWay) continue;
+      // Wchodzący: przed nim ten, kto głębiej; wychodzący: ten, kto bliżej ujścia; budowla doku — ten przed dziobem.
+      const ahead = byMotion ? (b.x - a.x) * ox + (b.y - a.y) * oy
+        : outbound ? a.depth - b.depth : b.depth - a.depth;
+      // Budowla doku: ustępuje się temu przed dziobem; gdy dwaj mają się nawzajem przed dziobem (naprzeciw,
+      // włączanie na pierścień), jedzie kurs o niższym numerze — porządek liniowy, bez wzajemnego czekania.
+      if (byMotion && sameLane) {
+        const bv = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+        const fbx = bv > 1 ? b.vx / bv : Math.cos(b.angle);
+        const fby = bv > 1 ? b.vy / bv : Math.sin(b.angle);
+        const backX = a.x - b.x;
+        const backY = a.y - b.y;
+        const mutual = backX * fbx + backY * fby > 0
+          && Math.abs(backX * fby - backY * fbx) <= (a.width + b.width) * 0.5 + 120;
+        if (mutual && a.courseId < b.courseId) continue;
+      }
       if (ahead <= 0) continue;
       const rx = b.x - a.x;
       const ry = b.y - a.y;
       const lateral = Math.abs(rx * oy - ry * ox);
-      if (lateral > (a.width + b.width) * 0.5 + 120) continue;
-      const gap = ahead - (a.length + b.length) * 0.5 - 80;
+      // Ustępowanie: wchodzący jedzie w poprzek drogi wychodzącego — w poprzek liczy się jego długość.
+      if (lateral > (a.width + (giveWay ? b.length : b.width)) * 0.5 + (giveWay ? 250 : 120)) continue;
+      const gap = giveWay ? ahead - (a.length + b.width) * 0.5 - 200 : ahead - (a.length + b.length) * 0.5 - 80;
       const cap = gap > 0 ? gap * 0.7 + 4 : 0;
       if (cap < a.speedCap) a.speedCap = cap;
     }

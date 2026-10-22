@@ -129,6 +129,20 @@ export class BeltWorld {
     this._fieldOp('exclusions', (list || []).map((e) => ({ x: e.x, y: e.y, rx: e.rx, ry: e.ry })));
   }
 
+  /**
+   * Dodatkowe obszary bez skał gry pod kluczem (E14: dyski budowli doków portów bez ringu — `portDocks`; Ceres
+   * i Westa leżą w pasie, skała w bryle doku blokowałaby stanowiska). Pole dostaje olbrzymy + wszystkie listy;
+   * wołać tylko przy zmianie (czyści cache komórek pola gry i obrazu).
+   */
+  setExtraExclusions(key, list) {
+    if (!this._extraExclusions) this._extraExclusions = new Map();
+    if (Array.isArray(list) && list.length) this._extraExclusions.set(String(key), list);
+    else this._extraExclusions.delete(String(key));
+    const all = this.giants.exclusions();
+    for (const extra of this._extraExclusions.values()) for (const e of extra) all.push(e);
+    this.setExclusions(all);
+  }
+
   /** Kotwice rodzin kolizyjnych (Westa, Hygiea): [{ id, x, y }] — AsteroidBeltField.setSmallBodyAnchors. */
   setSmallBodyAnchors(list) {
     const copy = Array.isArray(list)

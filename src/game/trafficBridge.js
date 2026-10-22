@@ -443,8 +443,12 @@ export class TrafficBridge {
       /** `stationId` → id stanowisk portu; `BERTH` kursu to indeks w tej liście. */
       berths: message.berths || {},
       /** Porty bańki (E6): `stationId` → stanowiska z geometrią w układzie gry ({ id, x, y, angle, … }). */
-      bubblePorts: message.bubblePorts || {}
+      bubblePorts: message.bubblePorts || {},
+      /** Budowle doków portów bez ringu (E14): `stationId` → `{ kind, mix, repeats, dockCount, x, y, angle, keepR, style }`. */
+      bubbleDocks: message.bubbleDocks || {}
     };
+    /** Wersja tabeli doków — gra przebudowuje kolizje i listę obrazu tylko po zmianie. */
+    this.docksVersion = (this.docksVersion || 0) + 1;
     this.step = Number(message.step) || this.step;
     this.clock = Number(message.clock) || 0;
     this.seed = message.seed ?? null;
@@ -476,6 +480,10 @@ export class TrafficBridge {
       this.tables.stations = message.stations;
       if (message.berths) this.tables.berths = message.berths;
       if (message.bubblePorts) this.tables.bubblePorts = message.bubblePorts;
+      if (message.bubbleDocks) {
+        this.tables.bubbleDocks = message.bubbleDocks;
+        this.docksVersion = (this.docksVersion || 0) + 1;
+      }
       this._indexStations();
       this._emit('markets', this.tables.stations);
     }

@@ -143,6 +143,9 @@ if (isWorker) {
     // statki ruchu v2 w bańce (E6): blok `traffic` → proxy kadłubów (ShipProxyBatch3D) i dysze MAIN w liście kadłubów
     st.trafficMods = { blk: await import('./blocks/trafficBlock.js'), proxy: (await import('../3d/shipProxyBatch3D.js')).ShipProxyBatch3D };
     st.trafficList = [];
+    // doki portów bez ringu (E14): blok `portDocks` → budowle krzyż / okrąg / koło (import rejestruje rozgrzewkę szablonów)
+    st.portDockMods = { blk: await import('./blocks/portDockBlock.js'), mod: await import('../3d/portDocks3D.js') };
+    st.portDockList = [];
     st.hexList = [];
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
@@ -885,6 +888,14 @@ if (isWorker) {
       if (pl) { bp.x = pl.pos ? pl.pos.x : pl.x; bp.y = pl.pos ? pl.pos.y : pl.y; bp.angle = pl.angle || 0; }
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     } } catch (e) { modFail('luk', e); }
+    // doki portów bez ringu (E14): budowle w zasięgu kadru (słońce z RenderWorld.sun)
+    try {
+      const pd = st.portDockMods;
+      if (pd && v.blocks.portDocks) {
+        const list = pd.blk.applyPortDockBlock(v.blocks.portDocks, st.portDockList);
+        pd.mod.updatePortDocks3D(list, list.length, dt);
+      }
+    } catch (e) { modFail('doki portów', e); }
     // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
     let hexList = rm.lists[L.RENDER];
     try {
