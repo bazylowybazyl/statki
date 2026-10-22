@@ -15757,8 +15757,6 @@
 
     function initTrafficV2() {
       const params = new URLSearchParams(location.search);
-      const savedEconomy = loadEconomySave();
-      economySaveCache = savedEconomy?.world || null;
       const scale = Number(params.get('trafficV2'));
       const seedParam = params.get('trafficSeed');
       const seed = seedParam !== null && seedParam !== ''
@@ -15786,24 +15784,17 @@
         planetAngles: { ...Object.fromEntries(planets.map(planet => [String(planet.id), planet.angle])), ...SMALL_BODY_ANGLES },
         planetScale: PLANET_SCALE,
         sunRadius: SUN.r,
+        // Świat zawsze świeży — zapis ekonomii nakłada `loadEconomyIntoWorld` po wyborze w menu (blok „ZAPIS EKONOMII”).
         stations: stationSpecs,
-        // Zapis ekonomii (E7): magazyny, wyrwy, flota — worker nakłada go na świeży świat.
-        restore: savedEconomy?.world || undefined,
         focus: { x: ship.pos.x, y: ship.pos.y, r: TRAFFIC_V2_BUBBLE_RADIUS }
       }).then(ready => {
         console.info(`[ruch v2] ${bridge.mode === 'worker' ? 'worker' : 'GŁÓWNY WĄTEK (tryb awaryjny)'}: `
           + `${ready.stations.length} stacji, gospodarka ×${ready.economyScale}, ziarno ${ready.seed}, `
-          + `budowa świata ${Math.round(ready.buildMs)} ms`
-          + (ready.restored ? `, zapis: ${ready.restored.stations} rynków, ${ready.restored.mining} komórek pasa, ${ready.restored.fleets} flot` : ''));
+          + `budowa świata ${Math.round(ready.buildMs)} ms`);
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
       // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
       for (const station of stations) registerTrafficV2Market(station, bridge);
-      // Stacje gracza z zapisu: encja w grze i rynek; magazyn nakłada worker po `market-add`.
-      for (const entry of savedEconomy?.playerStations || []) {
-        if (!entry?.id || stations.some(st => st.id === entry.id)) continue;
-        foundPlayerStation(entry, bridge);
-      }
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
       bridge.on('market', () => {
         if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
@@ -15858,14 +15849,20 @@
     // świeżo z kopii rynku (z handlem gracza, którego worker jeszcze nie odesłał), resztę z ostatniego
     // stanu workera. Kursy w locie, firmy i kupcy zaczynają od nowa. Klucz `economy` w localStorage
     // (`?reset` czyści). Wersja: ECONOMY_SAVE_VERSION — ta sama co w economySave.js (strażnik w teście).
+    // „Nowa gra” zaczyna gospodarkę od zera (decyzja użytkownika 2026-10-22): świat ruchu buduje się przy
+    // starcie strony ZAWSZE świeży, zapis nakłada dopiero `loadEconomyIntoWorld` (wybór przed startem gry),
+    // a `startGame` bez tego wyboru kasuje stary zapis (`beginEconomySession`) — autozapis ani `beforeunload`
+    // nie wpiszą go z powrotem, bo nikt go nie wczytał.
     // ============================================================
 
     const ECONOMY_SAVE_KEY = 'economy';
     const ECONOMY_SAVE_VERSION = 1;
     const ECONOMY_AUTOSAVE_MS = 20000;
-    /** Ostatni stan workera (rejestr pasa, flota, skala) — przy starcie: wczytany zapis. */
+    /** Ostatni stan workera (rejestr pasa, flota, skala) — po wczytaniu: wczytany zapis; nowa gra: pusty. */
     let economySaveCache = null;
     let economyAutosaveAt = -Infinity;
+    /** Zapis nałożony na świat w tej sesji strony (`loadEconomyIntoWorld`) — wtedy `startGame` go nie kasuje. */
+    let economySessionLoaded = false;
 
     /** Zapis z localStorage albo `null` (brak, inna wersja, śmieci — start bez zapisu, bez wyjątku). */
     function loadEconomySave() {
@@ -15938,6 +15935,38 @@
     }
 
     window.addEventListener('beforeunload', writeEconomySave);
+
+    /**
+     * Zapis ekonomii na świat ruchu (przed startem gry): magazyny, wyrwy i flota w workerze, stacje gracza jako
+     * encje i rynki (ich magazyn worker nakłada po `market-add`). Obietnica liczb przywróconych albo `null`
+     * (brak zapisu, gra już trwa, ruch wyłączony).
+     */
+    function loadEconomyIntoWorld() {
+      if (!trafficV2 || gameStarted || economySessionLoaded) return Promise.resolve(null);
+      const saved = loadEconomySave();
+      if (!saved) return Promise.resolve(null);
+      economySessionLoaded = true;
+      economySaveCache = saved.world;
+      const restored = trafficV2.restoreEconomy(saved.world).then(counts => {
+        if (counts) {
+          console.info(`[ruch v2] zapis ekonomii: ${counts.stations} rynków, ${counts.mining} komórek pasa, ${counts.fleets} flot`);
+        }
+        return counts;
+      });
+      for (const entry of saved.playerStations || []) {
+        if (!entry?.id || stations.some(st => st.id === entry.id)) continue;
+        foundPlayerStation(entry);
+      }
+      return restored;
+    }
+
+    /** Start gry: bez wczytanego zapisu — gospodarka od zera, stary zapis znika (nowy zapisze autozapis). */
+    function beginEconomySession() {
+      if (economySessionLoaded) return 'load';
+      try { localStorage.removeItem(ECONOMY_SAVE_KEY); } catch { /* prywatne okno */ }
+      economySaveCache = null;
+      return 'new';
+    }
 
     // ============================================================
     // STACJA GRACZA JAKO RYNEK (E7) — pamięć „imperium gracza”, scripts/tests/playerStation.test.mjs
@@ -16047,6 +16076,8 @@
       saveEconomy: () => saveEconomyNow(),
       /** Zapis z localStorage (podgląd). */
       economySave: () => loadEconomySave(),
+      /** Wczytanie zapisu na świat ruchu — w menu, przed startem gry (inaczej „Nowa gra” go skasuje). */
+      loadEconomy: () => loadEconomyIntoWorld(),
       playerStations: () => PLAYER_STATIONS.map(entry => ({ ...entry }))
     });
 
@@ -32164,6 +32195,8 @@
       if (gameStarted) return;
       // Tylko WebGPU: bez adaptera gra nie startuje (komunikat w menu).
       if (Core3D.gpuUnsupported || rwHost?.failed) { showWebGpuRequired(); return; }
+      // Gospodarka: nowa gra od zera (stary zapis znika), chyba że zapis wczytano przed startem.
+      beginEconomySession();
       // Kampania (dok K-7, intro, misja 1 — src/game/story/) albo swobodna gra.
       const storyCampaign = startGameCampaign && StoryOptions.campaign;
 
