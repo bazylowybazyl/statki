@@ -43,7 +43,8 @@ paths:
 
 ## Bramka bilansu (E4)
 
-- `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. Progi (`PLAN-ekonomia-rynki.md` § 5): przechwyty ≤ 15% kursów z ładunkiem, głód chcianego surowca ≤ 30 min, stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms. Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
+- `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. Progi (`PLAN-ekonomia-rynki.md` § 5): przechwyty w paśmie 12–20% kursów z ładunkiem (decyzja użytkownika 2026-10-22: cel ~15%; puste przeloty liczone osobno), głód chcianego surowca ≤ 30 min (na zerze = poniżej min(1% magazynu, 15 min zużycia brutto stacji)), stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms (mierz w ciszy — przy innych sesjach ta sama baza skacze 25 → 55 ms).
+- Port większy niż z planu przeładunku: `MARKET_DOCK_OVERRIDES` w `src/data/markets.js` (`berthMultiplier` dla id rynku); plan (`stationHaulTonnage`) nie widzi wypraw górniczych z portu ani kupców. Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
 
 ## Pułapki
 

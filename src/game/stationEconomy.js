@@ -1086,6 +1086,43 @@ export function getStationSurpluses(station, econ, limit = 6) {
  */
 export function stationWantsResource(station, resourceId) {
   const id = String(resourceId || '');
+  if (!station || typeof station !== 'object') return wantsResourceUncached(station, id);
+  return wantedSetOf(station).has(id);
+}
+
+/**
+ * Zbiór surowców, których stacja chce — liczony raz na stan stacji.
+ *
+ * `stationWantsResource` woła się dla każdej pary stacja × surowiec w każdym
+ * ticku ruchu (notowania, rynek dyspozytora, przyduszenie, niedobory) — profil
+ * ziarna 7 po fali 2: ~12% ticku na samym przeglądaniu receptur. Zbiór jest
+ * ważny, dopóki stacja ma ten sam profil przemysłu i tę samą listę
+ * `extraDemand` (stocznia i wojna podmieniają tablicę, dopisanie w miejscu
+ * łapie długość). Wynik jest ten sam co przy liczeniu za każdym razem.
+ */
+const WANTED_CACHE = new WeakMap();
+
+function wantedSetOf(station) {
+  const industry = getStationIndustry(station);
+  const extra = station.extraDemand || null;
+  const extraLength = extra ? extra.length : 0;
+  const cached = WANTED_CACHE.get(station);
+  if (cached && cached.industry === industry && cached.extra === extra
+    && cached.extraLength === extraLength) {
+    return cached.ids;
+  }
+  const candidates = new Set([...Object.keys(STATION_UPKEEP), ...Object.keys(MILITARY_UPKEEP)]);
+  for (const id of extra || []) candidates.add(String(id));
+  for (const recipeId of industry?.recipes || []) {
+    for (const id of Object.keys(RECIPES[recipeId]?.in || {})) candidates.add(id);
+  }
+  const ids = new Set();
+  for (const id of candidates) if (wantsResourceUncached(station, id)) ids.add(id);
+  WANTED_CACHE.set(station, { industry, extra, extraLength, ids });
+  return ids;
+}
+
+function wantsResourceUncached(station, id) {
   if (STATION_UPKEEP[id]) return true;
   // Uzbrojenia i amunicji chce tylko ten, kto je NAPRAWDĘ zużywa. Kopalnia
   // księżycowa ma wiertło i kilkunastu ludzi — zamawianie jej torped tylko
