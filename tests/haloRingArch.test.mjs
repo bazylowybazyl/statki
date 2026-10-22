@@ -134,14 +134,25 @@ test('Fable: strefy dema (12 układów × 2), zabudowa per komórka, port wolny'
   assert.equal(plan.N, 24);
   const zm = plan.bakeZoneMap(1024, 64);
   const types = new Set();
-  for (let i = 0; i < zm.length; i += 4) types.add((zm[i] - 8) / 16);
-  for (const t of [FZ.WATER, FZ.PARK, FZ.FOREST, FZ.FARM, FZ.RESIDENTIAL, FZ.CITY, FZ.CORE, FZ.INDUSTRIAL, FZ.PORT, FZ.TECH, FZ.PAD]) {
+  for (let i = 0; i < zm.length; i += 4) types.add((zm[i] - 4) / 8);
+  // ring przemysłowy (2026-10-22): zieleń i woda dema tylko w kopułach, poza nimi przemysł
+  for (const t of [FZ.RESIDENTIAL, FZ.CITY, FZ.CORE, FZ.INDUSTRIAL, FZ.PORT, FZ.TECH, FZ.PAD, FZ.BUILD,
+    FZ.DECK, FZ.RADIATOR, FZ.TANKS, FZ.COLLECTOR, FZ.POOL]) {
     assert.ok(types.has(t), `strefa ${t}`);
+  }
+  for (let y = 0; y < 64; y += 3) {
+    for (let x = 0; x < 1024; x += 7) {
+      const t = (zm[(y * 1024 + x) * 4] - 4) / 8;
+      if (t !== FZ.FOREST && t !== FZ.FARM && t !== FZ.WATER) continue;
+      const s = (x + 0.5) / 1024 * plan.CIRC;
+      const u = ((y + 0.5) / 64 - 0.5) * plan.W;
+      assert.ok(plan.inDome(s, u), `zieleń / woda poza kopułą (${t})`);
+    }
   }
   const city = buildFableCity(plan);
   // ring w budowie (2026-10-22): przerwy i fronty budowy bez zabudowy
-  assert.ok(city.stats.buildings > 6500, `budynki ${city.stats.buildings}`);
-  assert.ok(city.stats.trees > 22000, `drzewa ${city.stats.trees}`);
+  assert.ok(city.stats.buildings > 12000, `budynki i bryły przemysłu ${city.stats.buildings}`);
+  assert.ok(city.stats.trees > 3000 && city.stats.trees < 12000, `drzewa (kopuły) ${city.stats.trees}`);
   let onPad = 0;
   for (const B of city.per) {
     assert.ok(allFinite(B.box) && allFinite(B.tree));

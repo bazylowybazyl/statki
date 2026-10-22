@@ -22,7 +22,7 @@ import { PORT_PAD_H } from '../haloRingRoofPlan.js';
 import { haloHash12, haloPureFn } from '../haloRingTSL.js';
 import { uniformsAdapter } from '../haloUniformsAdapter.js';
 import { archLitTSL, archNodeMaterial } from './archTSL.js';
-import { ArchBatch, archHex, archRingTubeBoxes, archRunSteps } from './archFrame.js';
+import { ArchBatch, archBeamMatrix, archHex, archMatrix, archPoint, archRingTubeBoxes, archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
 import {
   ECU_DISTRICTS,
@@ -33,7 +33,8 @@ import {
   buildEcumeneDomes,
   buildEcumeneInstancesSteps,
   buildEcumeneStructure,
-  createEcumenePlan
+  createEcumenePlan,
+  ecumeneVault
 } from './ecumenePlan.js';
 
 const S = ECU_S;
@@ -194,6 +195,43 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
         base255.assign(vec3(v, v.add(7.0), v.add(9.0)));
         nz.mulAssign(0.3);
       });
+      // Kwartał bez śladu budynku (2026-10-22, podłoga do poziomu ringu Ziemi): podwórze kwartału —
+      // jasny bruk albo ogród (losowo per działka), cień kontaktowy wokół śladu budynku (AO), ulice
+      // z chodnikami przy krawężnikach zamiast jednolitej ciemnej siatki.
+      const inFoot = abs(q.x.sub(sc0)).lessThan(Sc.mul(26.0)).and(abs(z.sub(zc0)).lessThan(Sc.mul(30.0))).toVar();
+      const footD = max(abs(q.x.sub(sc0)).sub(Sc.mul(26.0)), abs(z.sub(zc0)).sub(Sc.mul(30.0))).toVar();
+      const plot = haloHash12(vec2(ci, cj).add(k.mul(41.0)).add(9.0)).toVar();
+      If(sel(t, 0.0).and(inFoot.not().or(house.not())), () => {
+        const yard = plot.lessThan(0.42).select(vec3(126.0, 122.0, 112.0),
+          plot.lessThan(0.78).select(vec3(56.0, 78.0, 44.0), vec3(96.0, 100.0, 98.0))).toVar();
+        base255.assign(yard);
+        // ogród: korony i ścieżki w szumie
+        If(plot.greaterThanEqual(0.42).and(plot.lessThan(0.78)), () => {
+          nz.addAssign(haloHash12(floor(q.div(Sc.mul(3.0))).add(k)).sub(0.5).mul(22.0));
+        });
+        // bruk: płyty 6 × 6 m dema
+        If(plot.lessThan(0.42), () => {
+          const pq = abs(fract(q.div(Sc.mul(6.0))).sub(0.5)).toVar();
+          nz.subAssign(step(0.46, max(pq.x, pq.y)).mul(14.0));
+        });
+      });
+      If(house.and(inFoot.not()).and(footD.lessThan(Sc.mul(5.0))), () => {
+        // cień kontaktowy wokół budynku (bez geometrii cienia — AO z odległości od śladu)
+        base255.mulAssign(mix(0.62, 1.0, smoothstep(0.0, Sc.mul(5.0), footD)));
+      });
+      If(sel(t, 6.0), () => {
+        // ulica: krawężnik i chodnik przy brzegu pasa (12 m dema), asfalt w środku
+        const dsx = ecuMod(q.x, Sc.mul(76.0)).toVar();
+        const dsz = ecuMod(z.add(ecu.w), Sc.mul(88.0)).toVar();
+        const onX = dsx.lessThan(Sc.mul(12.0)).toVar();
+        const edgeX = min(dsx, Sc.mul(12.0).sub(dsx));
+        const edgeZ = min(dsz, Sc.mul(12.0).sub(dsz));
+        const edge = onX.select(edgeX, edgeZ).toVar();
+        If(edge.lessThan(Sc.mul(2.6)), () => {
+          base255.assign(vec3(112.0, 112.0, 106.0));
+          nz.mulAssign(0.4);
+        });
+      });
       const r2 = haloHash12(vec2(ci, cj).add(k.mul(29.0)).add(3.0)).toVar();
       If(house.and(r2.greaterThan(0.57)).and(abs(q.x.sub(sc0)).lessThan(Sc.mul(30.0))).and(abs(z.sub(zc0.sub(Sc.mul(37.0)))).lessThan(Sc.mul(1.3))), () => {
         emit.addAssign(r2.greaterThan(0.7).select(vec3(0.15, 0.27, 0.29), vec3(0.32, 0.22, 0.12)));
@@ -225,7 +263,7 @@ export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
     });
     const night = archNight(vPos).toVar();
     If(water.lessThan(0.0).and(pad.lessThan(0.5)), () => {
-      col.assign(archWater(vPos, n, q, vec3(0.018, 0.092, 0.093).mul(0.6), vec3(0.06, 0.15, 0.17), clamp(water.negate().div(Sc.mul(60.0)), 0.0, 1.0)));
+      col.assign(archWater(vPos, n, q, vec3(0.006, 0.034, 0.042), vec3(0.04, 0.10, 0.105), clamp(water.negate().div(Sc.mul(60.0)), 0.0, 1.0)));
     }).Else(() => {
       col.assign(archShade(vPos, n, col, 0.0));
     });
@@ -513,6 +551,73 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
         t.color == null ? 2 : 0, t.color == null ? 1 : (t.color === 0xb19a70 ? 0.6 : 0.3));
     }
   }
+  // ---- kryte habitaty: szklane sklepienie nad pasem habitatu (ecumeneVault) — panele szkła (instancje
+  // kwadratu), żebra co 3 segmenty i szprosy wzdłuż ringu w partiach konstrukcji; górna połowa w FG
+  // (zanik i wycięcia jak górna ściana — haloFgClip)
+  const vault = ecumeneVault(plan);
+  let vaultStats = null;
+  if (vault) {
+    const K = 10;
+    const zs = Array.from({ length: K + 1 }, (_, j) => -plan.HW + (2 * plan.HW * j) / K);
+    const glassBG = new ArchBatch('EcumeneVaultGlass');
+    const glassFG = new ArchBatch('EcumeneVaultGlassFG');
+    const tint = [0.55, 0.74, 0.8];
+    const rib = archHex(0xb8c2c0);
+    const mul = archHex(0x8fa0a4);
+    const vm = new Array(16);
+    const p0 = {};
+    const p1 = {};
+    let panels = 0;
+    for (let i = 0; i < vault.n; i++) {
+      if (!vault.covered[i]) continue;
+      const th = layout.sectorStart + (i + 0.5) * vault.dA;
+      const tx = -Math.sin(th);
+      const ty = Math.cos(th);
+      for (let j = 0; j < K; j++) {
+        archPoint(plan.R, th, zs[j], vault.hAt(zs[j]), p0);
+        archPoint(plan.R, th, zs[j + 1], vault.hAt(zs[j + 1]), p1);
+        const L = 2 * (plan.R + Math.max(vault.hAt(zs[j]), vault.hAt(zs[j + 1]))) * Math.sin(vault.dA * 0.5) * 1.01;
+        const yx = p1.x - p0.x;
+        const yy = p1.y - p0.y;
+        const yz = p1.z - p0.z;
+        let nx = ty * yz;
+        let ny = -tx * yz;
+        let nz = tx * yy - ty * yx;
+        const nl = Math.hypot(nx, ny, nz) || 1;
+        nx /= nl; ny /= nl; nz /= nl;
+        vm[0] = tx * L; vm[1] = ty * L; vm[2] = 0; vm[3] = 0;
+        vm[4] = yx; vm[5] = yy; vm[6] = yz; vm[7] = 0;
+        vm[8] = nx; vm[9] = ny; vm[10] = nz; vm[11] = 0;
+        vm[12] = p0.x; vm[13] = p0.y; vm[14] = p0.z; vm[15] = 1;
+        ((p0.z + p1.z) * 0.5 > zTop - 1 ? glassFG : glassBG).push16(vm, tint, 0, 0, 0, 0);
+        panels++;
+        // żebro sklepienia co 3 segmenty (na początku segmentu) i szprosy wzdłuż ringu co 2 pasy
+        if (i % 3 === 0) {
+          const a0 = th - vault.dA * 0.5;
+          const q0 = archPoint(plan.R, a0, zs[j], vault.hAt(zs[j]) + 3, {});
+          const q1 = archPoint(plan.R, a0, zs[j + 1], vault.hAt(zs[j + 1]) + 3, {});
+          archBeamMatrix(q0, q1, 7, vm);
+          ((q0.z + q1.z) * 0.5 > zTop - 1 ? st.fg : st.bg).push16(vm, rib, 4, 0.5, 0.3, 0);
+        }
+        if (j % 2 === 0 && j > 0) {
+          archMatrix(plan.R, th, zs[j], vault.hAt(zs[j]) - 1, L, 4, 4, 0, vm);
+          (zs[j] > zTop - 1 ? st.fg : st.bg).push16(vm, mul, 0, 0, 0.4, 0);
+        }
+      }
+    }
+    const plane = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
+    plane.deleteAttribute('uv');
+    disposables.push(plane);
+    const gBG = archBatchMesh(glassBG, plane, materials.glass({ alpha: 0.035 }));
+    const gFG = archBatchMesh(glassFG, plane, materials.glass({ alpha: 0.035, fg: true }));
+    for (const [mesh, list, name] of [[gBG, bg, 'EcumeneVault'], [gFG, fg, 'EcumeneVaultFG']]) {
+      if (!mesh) continue;
+      mesh.name = name;
+      mesh.renderOrder = 31;
+      list.push(mesh);
+    }
+    vaultStats = { panels, segments: vault.covered.reduce((s, c) => s + c, 0), of: vault.n, apex: vault.apex };
+  }
   if (portSolid) st.bg.append(portSolid);
   yield;
   const stBG = archBatchMesh(st.bg, geos.box, matBG);
@@ -697,7 +802,7 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
     fg,
     domes,
     landmarks: [],
-    stats: { instances: inst.stats.buildings + inst.stats.trees, buildings: inst.stats.buildings, trees: inst.stats.trees, lights: lights.pos.length / 3 },
+    stats: { instances: inst.stats.buildings + inst.stats.trees, buildings: inst.stats.buildings, trees: inst.stats.trees, lights: lights.pos.length / 3, vault: vaultStats },
     heightAt: (theta, z) => plan.heightAt(theta, z),
     plan,
     // LOD: drzewa i drobne bryły dzielnicy znikają, gdy kamera daleko (mniej niż ~1 px)

@@ -5,6 +5,7 @@
 //
 //   node scripts/webgpu/ringi-archetypy-gra.mjs [--ringi mars,jupiter] [--out .tmp/ringi/<katalog>]
 //        [--rozmiar 1600x900] [--czekaj 2500] [--query renderWorker=1] [--port 5341] [--kadry port-z02,3d-podloga]
+//        [--gpu [kadry]] — koszt klatki GPU i draw calle na stałych kadrach (tryb off)
 //
 // Kadry (na ring): port-z02 (hala K-7 i zatoki z kamery gry), obrecz-z005 / obrecz-z02 (obręcz ringu po stronie
 // Słońca, między zatoką a tranzytem — z góry widać promień obręczy i grubość ściany + kadłuba), 3d-habitat (kamera 3D
@@ -182,6 +183,28 @@ try {
       await screenshotPng(cdp, file);
       rep.kadry.push(name);
       console.log('  ', name);
+    }
+    // --gpu: koszt klatki na stałych kadrach (Core3D.gpuFrameMs — znaczniki czasu GPU, tylko tryb off; draw calle)
+    if (args.gpu && !worker) {
+      rep.gpu = {};
+      for (const name of String(/^(1|true)$/.test(String(args.gpu)) ? 'obrecz-z02,3d-habitat,3d-podloga' : args.gpu).split(',')) {
+        const v = VIEWS.find(([n]) => n === name)?.[1];
+        if (!v || !await ev(VIEW(key, v))) continue;
+        await sleep(2500);
+        const samples = await ev(`(async () => {
+          const out = [];
+          for (let i = 0; i < 60; i++) {
+            await new Promise((r) => requestAnimationFrame(r));
+            const C = window.Core3D;
+            out.push([Number(C.gpuFrameMs) || 0, C.renderer?.info?.render?.drawCalls || 0]);
+          }
+          return out;
+        })()`);
+        const g = samples.map((s) => s[0]).filter((x) => x > 0).sort((a, b) => a - b);
+        const dc = samples.map((s) => s[1]).sort((a, b) => a - b);
+        rep.gpu[name] = { gpuMsMed: g.length ? +g[g.length >> 1].toFixed(2) : null, drawCallsMed: dc[dc.length >> 1] };
+        console.log('  gpu', name, JSON.stringify(rep.gpu[name]));
+      }
     }
     await ev(`(() => { window.Game3D.setCamera('classic'); return true; })()`);
     rep.pipelineSync = await ev('(window.__ringiSync || []).slice(0, 20)');

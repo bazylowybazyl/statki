@@ -292,7 +292,11 @@ const MARS = {
     walls: 'ecumene',
     bays: 'ecumene',
     buildings: { family: 'vault', walls: 'berm' }
-  }
+  },
+  // KRYTE HABITATY (2026-10-22; decyzja u użytkownika — domyślnie TAK): szklane sklepienie nad pasem
+  // habitatu od korony do korony ścian, szczyt `apex` j. nad podłogą, segmenty co `segment` j. (bez
+  // sklepienia nad portem, tranzytami, kopułami i supertallami) — ecumeneVault. null = otwarty habitat.
+  habitatVault: { apex: 620, segment: 280 }
 };
 
 // Fable: 12 układów sektorów dema, ×2 wokół ringu (24 sektory — ring Jowisza
@@ -329,6 +333,10 @@ const JUPITER = {
   // 700 zamiast 2 680. Dawniej dema ×3: 5 940 / 780 / 1 900.
   geometry: { width: 3000, wallHeight: 250, hullThickness: 450, wallThickness: 225, roofDetailMax: 0, sectorCount: 24 },
   hullTruss: { deck: 130 },
+  // podłoga ringu PRZEMYSŁOWEGO (2026-10-22): poza kopułami załogi strefy dema Fable (lasy, parki, pola,
+  // plaże, jeziora) = pola radiatorów, pokład z estakadami, baterie kolektorów, składowiska rudy z Io,
+  // baseny chłodziwa, rozlewnie zbiorników (fablePlan.js, FZ_INDUSTRIAL); zieleń tylko w kopułach
+  industrialFloor: true,
   // Ring W BUDOWIE (decyzja użytkownika 2026-10-22: „unfinished”): trzy przerwy w płycie (prawdziwe
   // przeloty w płaszczyźnie gry), w wolnych łukach między kompleksem portu a tranzytem; wszystkie hale
   // K-7, zatoki i tranzyty na zbudowanych segmentach. at — środek względem kąta stacji [rad], half —

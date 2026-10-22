@@ -51,7 +51,19 @@ export function fableSection(layout) {
 
 // Typy stref dema (Z) i miejskie.
 // BUILD — front budowy ringu w budowie (pokład bez zabudowy, plac budowy; haloRingConstruction.js).
-export const FZ = Object.freeze({ WATER: 0, PARK: 1, FOREST: 2, FARM: 3, MEADOW: 4, RESIDENTIAL: 5, CITY: 6, CORE: 7, INDUSTRIAL: 8, PORT: 9, TECH: 10, PLAZA: 11, BEACH: 12, PAD: 13, BUILD: 14 });
+// DECK … POOL — ring przemysłowy (`industrialFloor` profilu, Jowisz): poza kopułami załogi zieleń
+// i jeziora dema zamieniają się w pokład z rurociągami, pola radiatorów, rozlewnie zbiorników,
+// składowiska rudy z Io, baterie kolektorów i baseny chłodziwa (FZ_INDUSTRIAL niżej).
+// Mapa stref: r = typ · 8 + 4 (do 31 typów).
+export const FZ = Object.freeze({ WATER: 0, PARK: 1, FOREST: 2, FARM: 3, MEADOW: 4, RESIDENTIAL: 5, CITY: 6, CORE: 7, INDUSTRIAL: 8, PORT: 9, TECH: 10, PLAZA: 11, BEACH: 12, PAD: 13, BUILD: 14,
+  DECK: 15, RADIATOR: 16, TANKS: 17, STOCKPILE: 18, COLLECTOR: 19, POOL: 20 });
+// Zamiana stref dema poza kopułami na ringu przemysłowym (lore 2026-10-21: 1,9 g i pasy radiacyjne —
+// nikt nie mieszka pod gołym niebem; zieleń tylko w kopułach załogi).
+const FZ_INDUSTRIAL = Object.freeze({
+  [FZ.FOREST]: FZ.RADIATOR, [FZ.PARK]: FZ.DECK, [FZ.MEADOW]: FZ.DECK, [FZ.FARM]: FZ.COLLECTOR,
+  [FZ.BEACH]: FZ.STOCKPILE, [FZ.WATER]: FZ.POOL
+});
+export const FAB_ZONE_STEP = 8;
 const ZONE_URBAN = new Set([FZ.RESIDENTIAL, FZ.CITY, FZ.CORE, FZ.INDUSTRIAL, FZ.PORT, FZ.TECH]);
 
 // Liczba kopuł per układ (SECTOR_DEFS dema).
@@ -208,7 +220,7 @@ export function createFablePlan(layout, seed = layout.seed) {
   }
 
   // ---- funkcja stref (zoneAt dema) ----------------------------------------
-  const _z = { t: 0, d: 0, e: 0 };
+  const _z = { t: 0, d: 0, e: 0, dome: false };
   const setZ = (t, d, e = 0) => { _z.t = t; _z.d = d; _z.e = e; return _z; };
   const _domeHit = { d: null, dist: 0, ds: 0, du: 0 };
   function inDome(s, u) {
@@ -268,7 +280,8 @@ export function createFablePlan(layout, seed = layout.seed) {
     const ls = s - k * LEN;
     const au = Math.abs(u);
     if (au > HW - 55 * S) return setZ(FZ.PLAZA, 0.25, 0.2);
-    if (inDome(s, u)) return domeInterior();
+    if (inDome(s, u)) { _z.dome = true; return domeInterior(); }
+    _z.dome = false;
     if (ls < 110 * S || ls > LEN - 110 * S) return setZ(FZ.PARK, 0.4, 0.55 + 0.3 * fbm(s * 0.02 / S, u * 0.02 / S, 2));
     const nx = (ls + sec.noiseOff[0] * S);
     const ny = (u + sec.noiseOff[1] * S);
@@ -383,6 +396,22 @@ export function createFablePlan(layout, seed = layout.seed) {
       default: return setZ(FZ.PARK, 0.5, 0.5);
     }
   }
+  // Strefa końcowa (bez portu): ring przemysłowy zamienia zieleń i wodę poza kopułami (FZ_INDUSTRIAL),
+  // pas między tankami pól radiatorów — rozlewnie zbiorników (TANKS) w co trzecim polu pokładu.
+  const industrialFloor = !!layout.planetProfile?.industrialFloor;
+  function zoneFinal(s, u) {
+    const z = zoneAt(s, u);
+    if (!industrialFloor || z.dome) return z;
+    const t = FZ_INDUSTRIAL[z.t];
+    if (t === undefined) return z;
+    if (t === FZ.DECK) {
+      // co trzecie pole pokładu (siatka ~1,1 tys. j.) — rozlewnia zbiorników
+      const fx = Math.floor(s / (360 * S));
+      const fy = Math.floor((u + HW) / (300 * S));
+      if (hash1(fx * 7.31 + fy * 3.17) < 0.34) return setZ(FZ.TANKS, z.d, z.e);
+    }
+    return setZ(t, z.d, z.e);
+  }
   // strefa z portem gry: płyta doku (PAD) nad strefą dema
   function zoneWithPort(s, u) {
     const th = sToTheta(s);
@@ -390,7 +419,7 @@ export function createFablePlan(layout, seed = layout.seed) {
     if (pc === 2) return setZ(FZ.PAD, 0.6, 0.3);
     // front budowy: g = postęp obłożenia (0 przy krawędzi przerwy, 1 na końcu frontu)
     if (construction.active && inFront(th)) return setZ(FZ.BUILD, clamp(edgeDist(th) / construction.front, 0, 1), 0);
-    return zoneAt(s, u);
+    return zoneFinal(s, u);
   }
 
   // Mapa stref (tekstura dema: r = typ·16 + 8, g = gęstość, b = extra).
@@ -406,7 +435,7 @@ export function createFablePlan(layout, seed = layout.seed) {
         const s = (x + 0.5) / width * CIRC;
         const z = zoneWithPort(s, u);
         const i = (y * width + x) * 4;
-        data[i] = z.t * 16 + 8;
+        data[i] = z.t * FAB_ZONE_STEP + FAB_ZONE_STEP / 2;
         data[i + 1] = Math.round(clamp(z.d, 0, 1) * 255);
         data[i + 2] = Math.round(clamp(z.e, 0, 1) * 255);
         data[i + 3] = 255;
@@ -424,7 +453,7 @@ export function createFablePlan(layout, seed = layout.seed) {
   return {
     layout, R, W, HW, N, span, LEN, CIRC, stretch, seed, S, section: fableSection(layout),
     sectors, secs, domes, sites, subRng, fbm, hash1,
-    zoneAt, zoneWithPort, bakeZoneMap, bakeZoneMapSteps, portClass, locate, sToTheta, theta0, heightAt, inDome, domeHit: _domeHit,
+    zoneAt, zoneFinal, zoneWithPort, bakeZoneMap, bakeZoneMapSteps, portClass, locate, sToTheta, theta0, heightAt, inDome, domeHit: _domeHit,
     construction, edgeDist, inFront,
     urban: ZONE_URBAN
   };
@@ -465,6 +494,11 @@ export function* buildFableCitySteps(plan) {
     archMatrix(R, plan.sToTheta(s), u, 0, w, h, d, yaw, m);
     list.push16(m, color, 3, seedV, kind, 0);
   };
+  // bryła z rodzajem materiału instancji (5 radiator, 4 płyty, 0 zwykła) — przemysł ringu przemysłowego
+  const addK = (list, s, u, h0, yaw, w, h, d, mat, color, p1 = 0.3) => {
+    archMatrix(R, plan.sToTheta(s), u, h0, w, h, d, yaw, m);
+    list.push16(m, color, mat, rng.next(), p1, 0);
+  };
   const addTree = (list, s, u, scale, color) => {
     archMatrix(R, plan.sToTheta(s), u, 0, scale * 0.9, scale, scale * 0.9, rng.next() * Math.PI * 2, m);
     list.push16(m, color, 0, 0, 0.02, 0);
@@ -483,7 +517,7 @@ export function* buildFableCitySteps(plan) {
       if (Math.abs(uc) > HW - 70 * S) continue;
       const pc = plan.portClass(th, uc, CELL * 0.5);
       if (plan.construction.active && plan.inFront(th, CELL / R)) continue;
-      const z = plan.zoneAt(sc, uc);
+      const z = plan.zoneFinal(sc, uc);
       const type = z.t;
       const dens = z.d;
       const hv = rng.next();
@@ -620,6 +654,68 @@ export function* buildFableCitySteps(plan) {
         case FZ.FARM: {
           if (hv < 0.05) B(sc + rng.range(-10, 10) * S, uc + rng.range(-10, 10) * S, rng.next(), rng.range(10, 16) * S, rng.range(5, 8) * S, rng.range(10, 16) * S, 0, [0.6, 0.5, 0.4]);
           if (hv > 0.97) Cyl(sc, uc, 12 * S, rng.range(18, 30) * S, 12 * S, [0.7, 0.7, 0.72]);
+          break;
+        }
+        // ---- ring przemysłowy (FZ_INDUSTRIAL): bryły zamiast drzew dema
+        case FZ.RADIATOR: {
+          // rzędy lamel radiatorów wzdłuż ringu (ciemne, z czerwonym żarem), szyna u podstawy
+          const nFin = 3;
+          const finH = rng.range(16, 28) * S;
+          const glow = rng.range(0.03, 0.09);
+          for (let b = 0; b < nFin; b++) {
+            const off = (b - (nFin - 1) / 2) * inner * 0.62;
+            addK(list, sc, uc + off, 2 * S, 0, CELL * 0.86, finH, 1.6 * S, 5, [0.15, 0.16, 0.18], glow);
+            addK(list, sc, uc + off, 0, 0, CELL * 0.9, 2 * S, 5 * S, 4, [0.18, 0.18, 0.19], 0.3);
+          }
+          stats.buildings += nFin;
+          break;
+        }
+        case FZ.DECK: {
+          // pokład: estakady rurociągów wzdłuż ringu (co druga komórka), budki serwisowe
+          if (hv < 0.5) {
+            const pu = uc + rng.range(-inner * 0.5, inner * 0.5);
+            const ph = rng.range(5, 8) * S;
+            addK(list, sc, pu, ph, 0, CELL * 1.02, 3.2 * S, 3.2 * S, 0, [0.42, 0.40, 0.34], 0.4);
+            addK(list, sc, pu + 4 * S, ph, 0, CELL * 1.02, 2.2 * S, 2.2 * S, 0, [0.30, 0.31, 0.33], 0.4);
+            addK(list, sc, pu + 2 * S, 0, 0, 2 * S, ph, 9 * S, 0, [0.22, 0.22, 0.23], 0.2);
+            stats.buildings += 3;
+          }
+          if (hv > 0.88) {
+            B(sc + rng.range(-12, 12) * S, uc + rng.range(-12, 12) * S, 0, rng.range(14, 22) * S, rng.range(6, 10) * S, rng.range(12, 18) * S, 4, [0.46, 0.47, 0.5]);
+          }
+          break;
+        }
+        case FZ.TANKS: {
+          // rozlewnia: zbiorniki paliwa (walce z żarzącym się pierścieniem) i rura spinająca
+          const n = 1 + (hv > 0.55 ? 1 : 0);
+          for (let b = 0; b < n; b++) {
+            const r = rng.range(14, 22) * S;
+            const off = n === 1 ? 0 : (b ? 1 : -1) * inner * 0.45;
+            Cyl(sc + rng.range(-4, 4) * S, uc + off, r * 2, rng.range(10, 18) * S, r * 2, [0.62, 0.62, 0.6]);
+          }
+          addK(list, sc, uc, 3 * S, 0, CELL, 2.4 * S, 2.4 * S, 0, [0.42, 0.40, 0.34], 0.4);
+          stats.buildings += n;
+          break;
+        }
+        case FZ.STOCKPILE: {
+          // składowisko budulca: hałdy rudy z Io (siarka, ochra, sól) — kopce
+          const n = 2 + Math.floor(rng.next() * 3);
+          for (let b = 0; b < n; b++) {
+            const hs = rng.range(18, 34) * S;
+            const pick = rng.next();
+            const col = pick < 0.35 ? [0.42, 0.36, 0.08] : pick < 0.65 ? [0.30, 0.20, 0.08] : pick < 0.85 ? [0.22, 0.21, 0.2] : [0.5, 0.48, 0.42];
+            archMatrix(R, plan.sToTheta(sc + rng.range(-inner, inner)), uc + rng.range(-inner, inner), -hs * 0.1, hs, hs * 0.38, hs * 0.85, rng.next() * Math.PI * 2, m);
+            acc.sphere.push16(m, col, 0, 0.2, 0, 0);
+          }
+          break;
+        }
+        case FZ.COLLECTOR: {
+          // baterie kolektorów: dwa pasy niskich płyt na nóżkach (ciemne, połysk)
+          for (let b = 0; b < 2; b++) {
+            const off = (b ? 1 : -1) * inner * 0.48;
+            addK(list, sc, uc + off, 1.5 * S, 0, CELL * 0.9, 1.2 * S, inner * 0.82, 4, [0.05, 0.065, 0.1], 0.3);
+          }
+          stats.buildings += 2;
           break;
         }
         default: break;

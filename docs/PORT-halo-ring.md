@@ -618,9 +618,73 @@ przesuwa tylko jego spód (od strony planety), a niższe ściany Jowisza — pod
   [--query renderWorker=1] --out .tmp/ringi/<katalog>` (kamera gry przy porcie i nad obręczą po stronie
   Słońca, kamery 3D: habitat, wzdłuż, spód, port; pipeline'y synchroniczne w trybie `off` = 0).
 
-**Otwarte (do decyzji użytkownika):** Jowisz — ring pełny (dziś) czy niedokończony (segmenty z przerwami
-i rusztowaniem w budowie — zmienia rozgrywkę: przerwy = przeloty poza tranzytami); Mars — habitaty kryte
-(szkło / sklepienia nad pasami habitatu), skoro przy niskich ścianach otwarta atmosfera by uciekła.
+**Decyzje (2026-10-22):** Jowisz — ring NIEDOKOŃCZONY („unfinished”, § niżej); Mars — habitaty kryte
+domyślnie TAK (warstwa wyłączalna, decyzja jeszcze u użytkownika na liście orkiestratora).
+
+### Jowisz w budowie (decyzja użytkownika 2026-10-22: „unfinished”)
+
+- **Geometria** (`haloRingConstruction.js`, czysta matematyka; profil `construction`, układ
+  `layout.construction`): 3 przerwy w płycie w wolnych łukach między kompleksem portu a tranzytem —
+  środki 1,064 / 3,649 / 5,219 rad od kąta stacji, pół-rozpiętości 0,11 / 0,08 / 0,06 rad (przy podłodze
+  54 500: ~12 / ~8,7 / ~6,5 tys. j.), front budowy 0,05 rad (~2,7 tys. j.) na końcu każdego segmentu.
+  Hale K-7, zatoki i tranzyty stoją na segmentach — budowa układu rzuca błąd, gdy przerwa (z frontem
+  i zapasem) wchodzi na port albo tranzyt.
+- **Rozgrywka**: przerwa = PRAWDZIWY przelot. Kolider (`_inTransit`) otwiera ją jak tranzyt (statki,
+  pociski `pointInSlab`); czoło segmentu wypycha wzdłuż ringu do przerwy, gdy krócej niż przez grubość
+  płyty (statek lecący wzdłuż przerwy nie skacze promieniowo o 450 j.); front należy do płyty
+  (kratownica jest przeszkodą). Komunikat kolizji: „PRZELOT TRANZYTEM ALBO PRZERWĄ BUDOWY”. Radar
+  (`radarTerrain.js`) rysuje płytę z lukami przerw. Ruch v2: router (`ringRouter.js`) ma przerwy jako
+  szerokie przeloty (`transitHalfWidths`, zapas `gapMargin` 900 j. od czoła segmentu), reda portu
+  (`portParking.js`) kończy się przed wylotem przerwy (`layout.ring.gaps` z `haloPortTraffic.js`).
+  Autopiloty i AI nie omijają ringu same (zdaje się na kolider) — przerwy tylko dokładają przelotów;
+  TRAVEL TO i studnie warpa liczą ring jako pełny dysk (ostrożnie, bez zmian). Debug:
+  `HaloRingDebug.goto('jupiter', 'gap')`.
+- **Obraz** (Fable): pasy podłogi, pokładu, lic i ścian bez przerw, a na froncie obłożenie kończy się
+  stopniowo (`clad` w `fable.js`: od krawędzi goła kratownica, dalej płyty kładzione losowo, dalej
+  pełne — pokład od 0,2–0,4 frontu, podłoga 0,35–0,6, lica 0,45–0,7, ściany i korony 0,55–0,75);
+  konstrukcja, rury, zabudowa i kopuły tylko na segmentach; plac budowy na frontach
+  (`buildFableStructure` → `site`): roboty-pająki na węzłach gołej kratownicy, roboty spawalnicze
+  wzdłuż krawędzi obłożenia, rusztowania, stosy płyt z Io i stali, kontenery, drony z lampkami,
+  światła ostrzegawcze na czole; bez suwnic. Strefa `FZ.BUILD` (świeże płyty pokładu, pas
+  ostrzegawczy). Światła spawania = światła pozycyjne z fazą ≥ 1 — nieregularne błyski ~19 Hz z
+  pikami HDR (`makeArchPointNodes`).
+- Nie zmienione (kosmetyka, poza tym zadaniem): cień ringu na tarczy planety i okluder ringu w masce
+  słońca to pełny okrąg (`planet3d.assets.js` — pliki sesji Ziemi, `Core3D.setShaftRingOccluder`).
+
+### Podłogi Marsa i Jowisza bliżej ringu Ziemi (2026-10-22)
+
+Porównanie zrzutów podłóg trzech ringów (narzędzie niżej, kadry `3d-podloga`, `3d-podloga-bok`):
+Ziemia ma powietrze, chmury, naturalną paletę i gęsty detal; Jowisz miał „schodki” brzegów stref
+(mapa stref NEAREST, skok o komórkę 5 m dema), kreskówkowe barwy wody i zieleni (parki, lasy
+i jeziora na ringu 1,9 g w pasach radiacyjnych); Mars — dominującą ciemną siatkę ulic i bryły na
+ciemnym tle. Silnik Halo NIE został przemalowany na archetypy (decyzja 2026-09-27 „kompletnie inne
+ringi”) — zmiany są w ich własnych shaderach i planach:
+
+- **Jowisz — ring rafineryjny** (`industrialFloor` profilu): poza kopułami załogi strefy dema
+  zamieniają się (`FZ_INDUSTRIAL` w `fablePlan.js`): las → pole radiatorów (lamele z metalu ze słabym
+  żarem), park i łąka → pokład z estakadami rurociągów (co trzecie pole — rozlewnia zbiorników
+  paliwa), pola → baterie kolektorów, plaża → składowisko rudy z Io (siarka, ochra, sól), jezioro →
+  basen chłodziwa (ciemna, oleista toń z betonową obwódką wanny). Zieleń i woda zostają w kopułach.
+  Mapa stref: typ · 8 + 4 (do 31 typów). Brzegi stref organiczne: współrzędne zakrzywione gładkim
+  szumem, typ z „głosowania” 4 sąsiednich tekseli wagami dwuliniowymi (granica po izolinii).
+  Zabudowa: 17,5 tys. brył (miasto załogi + przemysł), 6 tys. drzew (kopuły) — dawniej 35 tys. /
+  94 tys.
+- **Mars — podłoga miasta**: podwórza kwartałów (jasny bruk w płytach albo ogród, losowo per działka),
+  cień kontaktowy (AO) wokół śladu budynku, ulice z chodnikami przy krawężnikach, jaśniejsza paleta
+  miasta i ulic, ciemniejsza woda.
+- **Mars — kryte habitaty** (`habitatVault` profilu: `apex` 620 j., segment 280 j.; `null` = otwarty
+  habitat): szklane sklepienie od korony do korony ścian, łuk paraboliczny, panele szkła (instancje
+  kwadratu, materiał szkła archetypów, górna połowa w FG — zanik i wycięcia jak górna ściana),
+  żebra co 3 segmenty i szprosy wzdłuż ringu w partiach konstrukcji. Bez sklepienia nad płytami
+  portu i tranzytami (na Marsie ~połowa obwodu), nad kopułami (własne szkło) i supertallami
+  (kołnierz w szkle) — pokrycie ~37% obwodu. Budynki pod sklepieniem przycięte do jego wysokości.
+  Z góry sklepienie to przezroczysty pas ze słupkami ~460 j. nad koroną ścian.
+
+**Narzędzie**: `node scripts/webgpu/ringi-archetypy-gra.mjs [--ringi earth,mars,jupiter] [--kadry …]
+[--gpu] [--query renderWorker=1] --out .tmp/ringi/<katalog>` — kadry z kamery gry (port, obręcz,
+przerwa i front budowy) i z kamer 3D (habitat, wzdłuż, spód, port, podłoga z bliska, przerwa, front),
+sonda kolizji na świecie gry, pipeline'y synchroniczne (tryb off), `--gpu` — `Core3D.gpuFrameMs`
+i draw calle na stałych kadrach.
 
 ## Po porcie (gameplay)
 

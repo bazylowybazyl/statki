@@ -65,7 +65,7 @@ export const ECU_DOME_PLANS = Object.freeze([
 // Paleta typów terenu dema (sRGB 0–255): 0 miasto, 1 park, 2 las, 3 woda,
 // 4 pola, 5 przemysł, 6 ulica, 7 pas techniczny/plac, 8 plaża; 9 płyta portu.
 export const ECU_TYPE_PALETTE = Object.freeze([
-  [76, 85, 87], [65, 84, 51], [42, 64, 43], [24, 62, 68], [90, 104, 56], [63, 70, 76], [35, 43, 47], [91, 97, 98], [166, 158, 117], [104, 110, 112]
+  [96, 100, 100], [65, 84, 51], [42, 64, 43], [24, 62, 68], [90, 104, 56], [72, 78, 82], [50, 54, 57], [100, 104, 104], [166, 158, 117], [104, 110, 112]
 ]);
 
 // ---- szum dema (wartościowy, hasz całkowity z ziarnem) --------------------
@@ -247,6 +247,46 @@ export function createEcumenePlan(layout, seed = layout.seed) {
   };
 }
 
+// ---- kryte habitaty (sklepienie) --------------------------------------------
+// Mars, 2026-10-22 (decyzja u użytkownika — domyślnie TAK, warstwa wyłączalna polem profilu
+// `habitatVault`): przy 0,29 g i ścianach ~1 wysokości skali otwarta atmosfera by uciekła, więc nad
+// pasem habitatu stoi szklane sklepienie od korony do korony ścian. Łuk paraboliczny
+// h(z) = ściany + (apex − ściany)·(1 − (z/HW)²). Bez sklepienia nad płytami portu i tranzytami (doki
+// stoją za krawędzią, pylony idą z płyty), nad kopułami (własne szkło) i supertallami (kołnierz w szkle).
+// Segmenty co ~`segment` j. łuku; budynki pod sklepieniem przycięte do jego wysokości (plan zabudowy).
+export function ecumeneVault(plan) {
+  const v = plan.layout.planetProfile?.habitatVault;
+  if (!v) return null;
+  const { layout, R, HW, LEN } = plan;
+  const wallH = layout.wallHeight;
+  const apex = Math.max(wallH + 60, Number(v.apex) || 600);
+  const hAt = (z) => wallH + (apex - wallH) * Math.max(0, 1 - (z / HW) * (z / HW));
+  const n = Math.max(12, Math.round(layout.circumference / (Number(v.segment) || 280)));
+  const dA = (Math.PI * 2) / n;
+  const segLen = dA * R;
+  const wrapD = (d) => d - Math.PI * 2 * Math.round(d / (Math.PI * 2));
+  const holes = [];
+  for (const d of plan.domeSpots) {
+    const p = plan.sectors.findIndex((sec) => sec.district === d.s);
+    if (p >= 0) holes.push({ theta: plan.theta0(p) + (d.u * LEN) / R, r: d.r * S + 150 });
+  }
+  plan.sectors.forEach((sec, p) => {
+    if (sec.district === 0 || sec.district === 8) holes.push({ theta: plan.theta0(p) + (LEN * (sec.district === 0 ? 0.31 : 0.39)) / R, r: 160 * S });
+  });
+  const covered = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const th = layout.sectorStart + (i + 0.5) * dA;
+    if ([-0.85, 0, 0.85].some((f) => plan.portClass(th, f * HW, 300) === 2)) continue;
+    if (holes.some((hole) => Math.abs(wrapD(th - hole.theta)) * R < hole.r + segLen * 0.5)) continue;
+    covered[i] = 1;
+  }
+  const indexAt = (theta) => {
+    const rel = ((theta - layout.sectorStart) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    return Math.min(n - 1, Math.floor(rel / dA));
+  };
+  return { apex, wallH, hAt, n, dA, covered, coveredAt: (theta) => covered[indexAt(theta)] === 1 };
+}
+
 // ---- rozstawienie brył (instancje) ------------------------------------------
 // Batche na dzielnicę: budynki (skrzynki), walce (rury, kominy), korony
 // i pnie drzew; konstrukcja wspólna dla ringu. Barwy dema (sRGB → liniowe).
@@ -265,6 +305,17 @@ export function buildEcumeneInstances(plan) {
 export function* buildEcumeneInstancesSteps(plan) {
   const { layout, R, LEN, HW, sectors, stretch, zArt } = plan;
   const m = new Array(16);
+  // kryte habitaty: zabudowa pod sklepieniem nie przebija szkła (zapas 30 j.): wieża (> 145 dema)
+  // z nadbudową do 1,33 h i masztem ~120 j., niższy budynek z dachem do +32 j.
+  const vault = ecumeneVault(plan);
+  const capUnderVault = (a, z, h0, h) => {
+    if (!vault || !vault.coveredAt(a)) return h;
+    const top = vault.hAt(z) - 30 - h0;
+    if (h > 145 * S && h * 1.33 + 120 > top) h = Math.max(0, (top - 120) / 1.33);
+    if (h <= 145 * S && h + 32 > top) h = Math.max(4 * S, top - 32);
+    return h;
+  };
+  const underVaultTop = (a, z) => (vault && vault.coveredAt(a) ? vault.hAt(z) - 30 : Infinity);
   // węższa wstęga niż demo: część dzielnicy poza podłogą odpada (mapa przycięta, nie ściśnięta)
   const across = (plan.W - 160 * S) / (ECU_DEMO_W * S - 160 * S);
   // supertalle dzielnic 0 i 8: położenie w poprzek względem arterii (w demie 330 / −410 przy arteriach ±850)
@@ -308,6 +359,7 @@ export function* buildEcumeneInstancesSteps(plan) {
         }
         if (k === 3) h = (14 + r() * 64) * S;
         if (k === 11) h = (10 + r() * 25) * S;
+        h = capUnderVault(a, z, h0, h);
         const color = PAL_CITY[(r() * PAL_CITY.length) | 0];
         const sd = r();
         if (pc === 2 || (pc === 1 && h > 40 * S)) continue;
@@ -322,7 +374,7 @@ export function* buildEcumeneInstancesSteps(plan) {
           add(B.box, a, z, h0 + h, w * 0.36, (3 + r() * 7) * S, d * 0.4, C(0x74868b), 4);
         }
         if (k === 3 && r() > 0.35) {
-          add(B.box, a + 29 * S / R, z + 18 * S, h0, 16 * S, (12 + r() * 22) * S, 22 * S, C(0xa4a08e), 1, 0, 0, r());
+          add(B.box, a + 29 * S / R, z + 18 * S, h0, 16 * S, Math.min((12 + r() * 22) * S, underVaultTop(a, z + 18 * S) - h0), 22 * S, C(0xa4a08e), 1, 0, 0, r());
           stats.buildings++;
         }
       }
@@ -367,8 +419,11 @@ export function* buildEcumeneInstancesSteps(plan) {
               add(B.cyl, a + 55 * S / R, z - 15 * S, 1 * S, 18 * S, (35 + ri() * 50) * S, 18 * S, C(0x8b9999), 0, 0.3);
             }
             if (k === 6 && ri() > 0.62 && pc === 0) {
-              add(B.cyl, a - 43 * S / R, z, 1 * S, 6 * S, (125 + ri() * 70) * S, 6 * S, C(0x9c9d94), 0, 0.3);
-              add(B.box, a - 43 * S / R, z, 130 * S, 7 * S, 4 * S, 7 * S, COOL, 2, 1.1);
+              const chimney = (125 + ri() * 70) * S;
+              if (underVaultTop(a, z) > 150 * S) {
+                add(B.cyl, a - 43 * S / R, z, 1 * S, 6 * S, Math.min(chimney, underVaultTop(a, z) - 1 * S), 6 * S, C(0x9c9d94), 0, 0.3);
+                add(B.box, a - 43 * S / R, z, 130 * S, 7 * S, 4 * S, 7 * S, COOL, 2, 1.1);
+              }
             }
             if (k === 7 || k === 10) {
               for (let n = 0; n < 6; n++) {
