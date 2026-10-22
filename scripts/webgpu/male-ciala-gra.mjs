@@ -4,7 +4,7 @@
 // Zrzuty `<kadr>.png`, na końcu dok na Ceres (terminal, rynek, frakcja), położenia (tor kampanii, olbrzymy, ciała,
 // stacje), pipeline'y utworzone synchronicznie w klatkach (ma być 0) i błędy strony.
 //
-//   node scripts/webgpu/male-ciala-gra.mjs [--out .tmp/ciala] [--tylko ceres-cala,pluton-charon] [--query trafficV2]
+//   node scripts/webgpu/male-ciala-gra.mjs [--out .tmp/ciala] [--tylko ceres-cala,pluton-charon]
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startChrome, attachLogs, waitFor, evaluate, osobneLosowanieUuid, repo } from './wspolne.mjs';
@@ -192,13 +192,13 @@ try {
       const out = {};
       for (const id of ['ceres', 'vesta', 'venus']) {
         const st = (window.stations || []).find((s) => s.id === id);
-        const econ = st ? window.Game?.stationEconomy?.get?.('station-' + id) : null;
+        const econ = st ? window.TrafficV2?.getEconomy?.(id) : null;   // kopia rynku ruchu v2 (jedyna ekonomia)
         const res = econ?.resources || {};
         out[id] = { towary: Object.keys(res).filter((k) => res[k] > 0).length,
           przykład: Object.entries(res).filter(([, v]) => v > 0).slice(0, 5).map(([k, v]) => k + ':' + Math.round(v)),
-          seeded: !!st?._stockSeeded };
+          rynek: !!econ };
       }
-      out.stacjeGospodarki = window.Game?.stationEconomy?.size ?? null;
+      out.stacjeGospodarki = window.TrafficV2?.market?.size ?? null;   // rynki ruchu v2 (kopia w moście)
       return out;
     })()`);
     console.log('dok', JSON.stringify(result.dok));

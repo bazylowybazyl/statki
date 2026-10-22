@@ -86,6 +86,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Ruch statku przy Ziemi, Marsie i Jowiszu (spawn, teleport, autopilot) omija płytę ringu — przelot tylko tranzytami.
 - Kawałek bazy piratów łamie się przez `storyBaseBreak` / `pirateBaseWorld`; konfiguracja pola pasa idzie przez `beltWorld`, nie `asteroidBelt.field`.
 - Stała efektu objęta presetem grafiki → zmiana tabeli w `src/game/graphicsQuality.js`.
+- Ekonomia jest jedna — ruch v2 w workerze (reguła `ruch-v2`); gra nie trzyma magazynów stacji. Zmiana zapasu stacji z gry (handel, rozbiórka, zakup w porcie, łup) → `adjustStationStock` (most `trafficV2.stockDelta`); odczyt magazynu i ceny → `getTradeEconomy` / `getTradePrice` (kopia rynku z mostu); nowy rynek → `addMarket` / `TrafficBridge.addMarket`.
 
 ## Częste zadania
 
@@ -126,6 +127,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `pyl-hal-k7` | Pył i para w halach K-7, źródła gazu, światła i pola siłowe hali |
 | `pas-asteroid` | Pas asteroid: pole, olbrzymy, wydobycie, rumowiska, populacje, NEA, nowy typ skały |
 | `komety` | Komety |
+| `ruch-v2` | Ruch v2 — jedyna ekonomia gry: rynki (`addMarket`), kursy i zlecenia, most i worker, napędy ruchu, pola górnicze i wyrwy, bramka bilansu |
 | `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, upadek, powietrze, uderzenia |
 | `fabula` | Fabuła: reżyser misji, intro w K-7, kampania |
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |
