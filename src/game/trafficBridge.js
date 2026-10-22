@@ -352,16 +352,24 @@ export class TrafficBridge {
     return this._request(TRAFFIC_MSG.ECONOMY_SAVE);
   }
 
+  /**
+   * Zapis ekonomii (`exportEconomyState`) na świat już zbudowany — gra woła to po wyborze w menu, przed
+   * pierwszym krokiem. Obietnica liczb `{ stations, pending, mining, fleets }` albo `null`.
+   */
+  restoreEconomy(state) {
+    return this._request(TRAFFIC_MSG.ECONOMY_RESTORE, { state });
+  }
+
   /** Agregat dla komputera handlowego (E7, `tradeSummary.js`): trasy, porty, towar w drodze, okazje. */
   requestTradeSummary() {
     return this._request(TRAFFIC_MSG.TRADE_SUMMARY);
   }
 
-  _request(type) {
+  _request(type, payload = null) {
     const requestId = this._requestId++;
     return new Promise((resolve, reject) => {
       this._pending.set(requestId, { resolve, reject });
-      this._send({ type, requestId });
+      this._send({ ...payload, type, requestId });
     });
   }
 
@@ -414,10 +422,11 @@ export class TrafficBridge {
         case TRAFFIC_MSG.ACTORS: this._applyActors(message); break;
         case TRAFFIC_MSG.SNAPSHOT_RESULT:
         case TRAFFIC_MSG.ECONOMY_SAVE_RESULT:
+        case TRAFFIC_MSG.ECONOMY_RESTORE_RESULT:
         case TRAFFIC_MSG.TRADE_SUMMARY_RESULT: {
           const pending = this._pending.get(message.requestId);
           this._pending.delete(message.requestId);
-          pending?.resolve(message.snapshot ?? message.state ?? message.summary ?? null);
+          pending?.resolve(message.snapshot ?? message.state ?? message.summary ?? message.restored ?? null);
           break;
         }
         case TRAFFIC_MSG.ERROR:

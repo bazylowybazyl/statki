@@ -152,6 +152,7 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.MARKET_REMOVE: return marketRemove(message);
         case TRAFFIC_MSG.BERTH_HOLD: return berthHold(message);
         case TRAFFIC_MSG.ECONOMY_SAVE: return economySave(message);
+        case TRAFFIC_MSG.ECONOMY_RESTORE: return economyRestore(message);
         case TRAFFIC_MSG.TRADE_SUMMARY: return tradeSummary(message);
         case BELT_MSG.MINED: return beltMined(message);
         default: return undefined;
@@ -220,9 +221,7 @@ export function createTrafficCore(post, options = {}) {
       // wie, do którego padu i hali leci statek, bez własnej kopii doków.
       berths: berthTable(),
       bubblePorts: bubblePortTable(),
-      restored: restored
-        ? { stations: restored.applied, pending: restored.pending.size, mining: restored.mining, fleets: restored.fleets }
-        : null,
+      restored: restoredCounts(restored),
       buildMs
     });
     // Rynek od razu, nie po pierwszych pięciu sekundach — terminal handlu
@@ -508,6 +507,31 @@ export function createTrafficCore(post, options = {}) {
   // ============================================================
   // Gracz na rynku i zapis (E7)
   // ============================================================
+
+  /** Liczby przywróconego zapisu dla gry (`ready.restored`, `economy-restore-result`). */
+  function restoredCounts(restored) {
+    return restored
+      ? { stations: restored.applied, pending: restored.pending.size, mining: restored.mining, fleets: restored.fleets }
+      : null;
+  }
+
+  /**
+   * Zapis wybrany w menu na świat zbudowany przy starcie strony (gra: przed pierwszym krokiem). To samo co
+   * `init.restore`, potem księga, zapas floty bańki, rynek i wyrwy od razu — jak po `ready`.
+   */
+  function economyRestore(message) {
+    const world = core.world;
+    const restored = world && message.state ? restoreEconomyState(world, message.state) : null;
+    if (restored) {
+      core.pendingRestore = restored.pending.size ? restored : null;
+      openDirectorMarket(world.director, world.stations);
+      if (core.bubble) refreshFleetStock(core.bubble);
+    }
+    send({ type: TRAFFIC_MSG.ECONOMY_RESTORE_RESULT, requestId: message.requestId ?? null, restored: restoredCounts(restored) });
+    if (!restored) return;
+    publishTick(0, 0);
+    publishBeltHoles();
+  }
 
   function economySave(message) {
     const world = core.world;

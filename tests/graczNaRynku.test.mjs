@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readIndexHtml, loadIndexFunction } from './helpers/indexSource.mjs';
+import { readIndexHtml, loadIndexFunction, sliceFunction } from './helpers/indexSource.mjs';
 import { ECONOMY_SAVE_VERSION } from '../src/game/traffic/economySave.js';
 import { INPUT_ACTIONS, KEYDOWN_ORDER, KEYBOARD_LAYOUT } from '../src/input/inputActions.js';
 import { createCicTradeLayer, formatTons } from '../src/ui/cicTradeLayer.js';
@@ -35,6 +35,56 @@ test('zapis ekonomii: brak, obca wersja i śmieci nie wywracają startu', () => 
   const ok = { version: ECONOMY_SAVE_VERSION, world: { version: ECONOMY_SAVE_VERSION, stations: {} }, playerStations: [] };
   store.set('economy', JSON.stringify(ok));
   assert.deepEqual(load(), ok, 'zapis tej wersji');
+});
+
+test('nowa gra: gospodarka od zera, zapis tylko po wyborze przed startem', async () => {
+  // Świat ruchu przy starcie strony jest zawsze świeży (bez `restore`), zapis nakłada loadEconomyIntoWorld.
+  const init = sliceFunction(src, 'function initTrafficV2()');
+  assert.ok(!/restore:/.test(init) && !init.includes('loadEconomySave'), 'initTrafficV2 nie wczytuje zapisu');
+  // startGame: kasowanie przed pierwszym autozapisem, po sprawdzeniu WebGPU (bez gry zapis zostaje).
+  const start = sliceFunction(src, 'async function startGame()');
+  const at = start.indexOf('beginEconomySession();');
+  assert.ok(at > start.indexOf('showWebGpuRequired()') && at < start.indexOf('gameStarted = true;'), 'startGame woła beginEconomySession');
+
+  const removed = [];
+  const scope = {
+    localStorage: { removeItem: key => removed.push(key) },
+    ECONOMY_SAVE_KEY: 'economy',
+    economySessionLoaded: false,
+    economySaveCache: { stare: true }
+  };
+  const begin = loadIndexFunction(src, 'function beginEconomySession()', 'beginEconomySession', scope);
+  assert.equal(begin(), 'new');
+  assert.deepEqual(removed, ['economy'], 'nowa gra kasuje zapis');
+  assert.equal(scope.economySaveCache, null, '…i stan workera do zapisu');
+  scope.economySessionLoaded = true;
+  assert.equal(begin(), 'load', 'wczytany zapis zostaje');
+  assert.equal(removed.length, 1);
+
+  const restores = [];
+  const founded = [];
+  const saved = { version: ECONOMY_SAVE_VERSION, world: { version: ECONOMY_SAVE_VERSION, stations: {} },
+    playerStations: [{ id: 'stacja-gracza-1', buildings: [] }] };
+  const loadScope = {
+    trafficV2: { restoreEconomy: state => { restores.push(state); return Promise.resolve({ stations: 3, mining: 0, fleets: 0 }); } },
+    gameStarted: false,
+    economySessionLoaded: false,
+    economySaveCache: null,
+    stations: [],
+    loadEconomySave: () => saved,
+    foundPlayerStation: entry => founded.push(entry.id),
+    console: { info() {} }
+  };
+  const load = loadIndexFunction(src, 'function loadEconomyIntoWorld()', 'loadEconomyIntoWorld', loadScope);
+  assert.deepEqual(await load(), { stations: 3, mining: 0, fleets: 0 });
+  assert.equal(restores[0], saved.world, 'zapis idzie do workera');
+  assert.deepEqual(founded, ['stacja-gracza-1'], 'stacje gracza z zapisu');
+  assert.equal(loadScope.economySessionLoaded, true);
+  assert.equal(await load(), null, 'drugi raz nic');
+  loadScope.economySessionLoaded = false;
+  loadScope.gameStarted = true;
+  assert.equal(await load(), null, 'w trakcie gry nic');
+  assert.equal(restores.length, 1);
 });
 
 test('komputer handlowy: H w CIC przed zwiadem i dronem', () => {

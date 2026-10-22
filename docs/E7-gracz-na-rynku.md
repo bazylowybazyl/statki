@@ -35,6 +35,12 @@ Zadanie z `docs/PLAN-ekonomia-rynki.md` (sesja E2, etap E7): terminal stacji na 
 - Kiedy: autozapis co 20 s czasu strony (stan z workera) i synchroniczny zapis przy `beforeunload` (magazyny z kopii mostu + reszta z ostatniego stanu workera). Klucz `economy`, czyszczenie `?reset=economy`.
 - Rynki dodane po starcie (stacje gracza, kryjówki misji) dostają swój magazyn z zapisu po `market-add`. Wyrwy z zapisu worker wysyła zaraz po `ready`.
 
+### 4a. „Nowa gra” = gospodarka od zera (decyzja użytkownika 2026-10-22)
+
+- Droga: świat ruchu buduje się przy starcie strony ZAWSZE świeży (`initTrafficV2` bez `restore`). Zapis nakłada osobna wiadomość `economy-restore` na zbudowany świat (`restoreEconomyState`, potem księga, zapas floty bańki, `tick` z rynkiem i wyrwy od razu) — tylko po wyborze przed startem gry (`loadEconomyIntoWorld`; stacje gracza z zapisu dokłada gra). `startGame` woła `beginEconomySession`: bez wczytanego zapisu kasuje klucz `economy` i stan workera do zapisu (`economySaveCache`), więc autozapis i `beforeunload` nie mają z czego odtworzyć starego stanu; pierwszy autozapis nowej gry pisze świeży świat.
+- Dlaczego nie restart workera: most, bańka, rynki misyjne, CIC i wyrwy pasa trzymają się jednego mostu i jednego świata — restart to ponowne wpięcie wszystkiego. Wczytanie „w drugą stronę” (świeży świat + nałożenie zapisu przed pierwszym krokiem) daje ten sam stan co `init.restore` (test w suicie `economySave`, § 2b).
+- W menu nie ma dziś ścieżki „wczytaj”: „Kontynuuj” wraca do bitwy w tej samej karcie (świat dalej żyje, nic się nie kasuje), „Wczytaj grę” jest wyłączone („wkrótce”), a po F5 do gry wchodzi się tylko przez „Nową grę”. Zapis ekonomii wczytuje więc tylko hak `DevEconomy.loadEconomy()` (w menu, przed startem). Przycisk dla gracza — do decyzji (propozycja: włączyć „Wczytaj grę”, gdy jest zapis ekonomii; dalej wybór trybu jak w „Nowej grze”).
+
 ## 5. Sprawdzenie
 
 - Symulacja `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` przed i po: identyczna liczba w liczbę (poza czasem ticku) — oferta, zapis i agregat nie zmieniają świata. Bramka bilansu wynika z tego samego (świat bez zmian).
@@ -43,7 +49,7 @@ Zadanie z `docs/PLAN-ekonomia-rynki.md` (sesja E2, etap E7): terminal stacji na 
 
 ## 6. Ryzyka i do zrobienia
 
-- Zapis przeżywa „Nową grę” (jak magazyny świata w kampanii) — czyści go tylko `?reset=economy`. Jeśli „Nowa gra” ma zaczynać gospodarkę od zera, to jedno `localStorage.removeItem('economy')` w ścieżce nowej gry — do decyzji.
+- „Nowa gra” kasuje zapis od razu przy starcie (§ 4a) — przypadkowe kliknięcie po F5 traci poprzednią gospodarkę (jak nadpisanie zapisu w każdej grze).
 - `MARKET_STRIDE` 5 → 7: każdy czytelnik bufora rynku musi brać stałą z protokołu (test `trafficCore` poprawiony).
 - Na mapie CIC przy Słońcu stemple portów wewnętrznych planet nachodzą na siebie w widoku całego układu — czytelne po przybliżeniu; ewentualnie ukrywanie stempli przy gęstości > N na ekran.
 - Stacja gracza nie ma własnych przewoźników (jak każdy rynek dodany w biegu — obsługują ją puste przeloty i kupcy).

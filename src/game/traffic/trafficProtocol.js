@@ -38,6 +38,8 @@
  *   GRACZ NA RYNKU I ZAPIS (E7) — `economySave.js`, `tradeSummary.js`
  *   init.restore         zapis ekonomii (`exportEconomyState`) nakładany na świeży świat; magazyny
  *                        rynków, których jeszcze nie ma (stacja gracza), po ich `market-add`
+ *   economy-restore { requestId, state }  ten sam zapis na świat już zbudowany (gra: wybór w menu, przed
+ *                        pierwszym krokiem); odpowiedź `economy-restore-result { restored }`
  *   economy-save    { requestId }   stan do zapisu gry
  *   trade-summary   { requestId }   agregat dla komputera handlowego (trasy, porty, okazje)
  *
@@ -104,6 +106,8 @@ export const TRAFFIC_MSG = Object.freeze({
   // Gracz na rynku i zapis (E7).
   ECONOMY_SAVE: 'economy-save',
   ECONOMY_SAVE_RESULT: 'economy-save-result',
+  ECONOMY_RESTORE: 'economy-restore',
+  ECONOMY_RESTORE_RESULT: 'economy-restore-result',
   TRADE_SUMMARY: 'trade-summary',
   TRADE_SUMMARY_RESULT: 'trade-summary-result',
 

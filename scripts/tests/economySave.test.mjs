@@ -88,6 +88,39 @@ export function run() {
   t.check('stacja gracza dostaje magazyn po market-add', Math.abs((own?.resources.iron_ore || 0)
     - state.stations[PLAYER_DEF.id].stock.iron_ore) < 0.01);
 
+  t.section('2b. Zapis wybrany w menu: economy-restore na świat zbudowany przy starcie strony');
+  // Gra buduje świat ZAWSZE świeży (nowa gra = gospodarka od zera); zapis nakłada dopiero wybór przed startem.
+  const m = makeCore();
+  m.core.handle({ type: TRAFFIC_MSG.INIT, ...OPTS, seed: 99 });
+  const mReady = lastOf(m.inbox, TRAFFIC_MSG.READY);
+  t.check('świeży świat: ready bez zapisu', mReady?.restored === null);
+  t.equal('świeży świat: bez wyrw', m.core.world.director.mining.holes.size, 0);
+  const freshEarth = { ...m.core.world.getEconomy('earth').resources };
+  m.inbox.length = 0;
+  m.core.handle({ type: TRAFFIC_MSG.ECONOMY_RESTORE, requestId: 11, state: JSON.parse(JSON.stringify(state)) });
+  const res = lastOf(m.inbox, TRAFFIC_MSG.ECONOMY_RESTORE_RESULT);
+  t.equal('odpowiedź niesie requestId', res?.requestId, 11);
+  t.check('odpowiedź mówi, co przywrócono', res?.restored?.stations > 20 && res.restored.pending === 1 && res.restored.mining > 0);
+  const earthNow = m.core.world.getEconomy('earth').resources;
+  t.check('magazyn Ziemi jak w zapisie', RESOURCE_KEYS.every(key => Math.abs((earthNow[key] || 0)
+    - (state.stations.earth.stock[key] || 0)) < 0.01));
+  t.check('magazyn Ziemi inny niż świeży', RESOURCE_KEYS.some(key => Math.abs((freshEarth[key] || 0) - (earthNow[key] || 0)) > 0.01));
+  const tickAfter = lastOf(m.inbox, TRAFFIC_MSG.TICK);
+  const earthIdx = (tickAfter?.stations || mReady.stations).findIndex(entry => entry.id === 'earth');
+  const steelIdx = RESOURCE_KEYS.indexOf('steel');
+  t.check('bufor rynku od razu z zapisu (tick po restore)', !!tickAfter && earthIdx >= 0
+    && Math.abs(tickAfter.market[marketOffset(earthIdx, steelIdx, RESOURCE_KEYS.length) + MARKET_FIELD.STOCK]
+      - (state.stations.earth.stock.steel || 0)) < 0.01);
+  t.equal('wyrwy idą do gry od razu', m.inbox.find(message => message.type === BELT_MSG.HOLES)?.holes?.length,
+    world.director.mining.holes.size);
+  t.equal('flota frakcji wraca', m.core.world.shipyards.fleets.get(FACTION.TERRA_NOVA)?.destroyer, 3);
+  m.core.handle({ type: TRAFFIC_MSG.MARKET_ADD, def: PLAYER_DEF });
+  t.check('stacja gracza dostaje magazyn po market-add', Math.abs((m.core.world.getEconomy(PLAYER_DEF.id)?.resources.iron_ore || 0)
+    - state.stations[PLAYER_DEF.id].stock.iron_ore) < 0.01);
+  m.core.handle({ type: TRAFFIC_MSG.ECONOMY_RESTORE, requestId: 12, state: 'nie-zapis' });
+  t.check('zły zapis: odpowiedź bez liczb, bez błędu', lastOf(m.inbox, TRAFFIC_MSG.ECONOMY_RESTORE_RESULT)?.requestId === 12
+    && !lastOf(m.inbox, TRAFFIC_MSG.ERROR));
+
   t.section('3. Stary albo obcy zapis nie wywraca startu');
   for (const [label, restore] of [
     ['obca wersja', { ...state, version: 999 }],
