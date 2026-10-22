@@ -482,6 +482,11 @@
       color: #9fb4e6;
     }
 
+    /* Oferta portu ma 6 kolumn (towar, ładownia, port ma, sprzedaje, skupuje, akcje) — karta na dwie kolumny siatki. */
+    .station-card-aero.trade-market-card {
+      grid-column: span 2;
+    }
+
     .trade-market-table {
       width: 100%;
       border-collapse: collapse;
@@ -493,6 +498,21 @@
       font-size: 12px;
       color: #dfe7ff;
       vertical-align: middle;
+    }
+
+    .trade-market-table th {
+      padding: 2px 4px 4px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      text-align: right;
+      color: #7f93c2;
+      white-space: nowrap;
+    }
+
+    .trade-market-table th:first-child {
+      text-align: left;
     }
 
     .trade-market-table tr+tr td {

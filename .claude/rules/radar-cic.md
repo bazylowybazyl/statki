@@ -3,6 +3,7 @@ paths:
   - "src/ui/radar/**"
   - "src/ui/cicDisplay.js"
   - "src/ui/cicBeltLayer.js"
+  - "src/ui/cicTradeLayer.js"
   - "dema/radar-taktyczny.html"
 ---
 
@@ -15,6 +16,8 @@ paths:
 - **`src/ui/radar/`** — radar taktyczny kokpitu (tarcza PPI dziobem do góry, śledzenie ARPA, podkład terenu: planety, ring, pas asteroid, budowle) i skan X w świecie (`scanOverlay.js`). Opis: § „Radar taktyczny kokpitu i skan X” niżej.
 
 - **`src/ui/cicDisplay.js`, `src/ui/cicBeltLayer.js`** — mapa CIC (Tab / M): kontakty, układ, stacje, cele misji, PASY ASTEROID (kafle gęstości pola pasa gry, luki Kirkwooda, rodziny, olbrzymy), panel informacyjny w prawym górnym rogu. Opis: § „Mapa CIC: pasy asteroid” niżej.
+
+- **`src/ui/cicTradeLayer.js`** — KOMPUTER HANDLOWY: warstwa „HANDEL” mapy CIC (klawisz H) z agregatem ruchu v2. Opis: § „Mapa CIC: komputer handlowy” niżej.
 
 ## Radar taktyczny kokpitu i skan X (2026-10-07; `src/ui/radar/`)
 
@@ -41,3 +44,9 @@ paths:
 - KOSZT (pomiar `node scripts/webgpu/cic-gra.mjs [--ab 0.0004,uklad] [--ruch 1 --ruchAb 1] [--okno 1]`): kontury MUSZĄ być liniami dokładnie 1 px na ekranie (Skia: hairline na GPU) — grubsza linia pod transformacją kafla szła przez maskę rastrową (+2,4–3,5 ms klatki); luki bez przerywanych linii i grubego obrysu (+1,2 ms). Kafle, kontury i luki idą do PAMIĘCI KADRU (kanwa ekranu + 160 px zapasu, przerysowanie przy zmianie zoomu / nowym kaflu / wyjściu poza zapas; w ruchu zoomu rysunek wprost) — w spoczynku +0,1 ms klatki, z VSync 240 Hz ruch zoomu bez zmian (4,17 ms). Napisy / poświaty CIC: stemple i panel pieczony przy zmianie tekstu (bez `shadowBlur` i gradientów co klatkę). Headless bez limitu klatek daje ~100 ms „zacięcia” (przeciążony proces GPU) — oceniaj ruch w oknie (`--okno 1`).
 
 - Wyjątek w rysunku CIC zatrzymuje pętlę gry — warstwa pasów jest w `try/catch` (błąd raz do konsoli); bitmapa kafla użytego w klatce (także przodka w zastępstwie) nie może wypaść z LRU (`ImageBitmap.close()` → „image source is detached”). Strojenie `window.CicBeltTune`, stan `CICDisplay.beltStats()`, widok narzędzi `CICDisplay.setView({ zoom, panX, panY })`. Testy `tests/cicBeltLayer.test.mjs`.
+
+## Mapa CIC: komputer handlowy (E7, 2026-10-22; `docs/BRIEF-ruch-v2.md` § 2.3)
+
+- Warstwa „HANDEL” (`src/ui/cicTradeLayer.js`, w `CICDisplay.draw` po podpisach pasów, panel pod panelem informacyjnym): w CIC klawisz H (akcja `cic.trade`, kontekst `cic`, w `KEYDOWN_ORDER` przed zwiadem i dronem — H poza CIC zostaje ich). Pokazuje AGREGAT z warstwy rekordów ruchu v2, nie statki: trasy z ładunkiem w powietrzu (grubość ~√ton, barwa = kategoria głównego towaru, grot przy odbiorcy, podpis „towar · tony · kursy” dla 8 największych), przy portach stemple ▼ najtańszy zakup / ▲ najlepszy skup (cena z oferty portu — ta sama co w terminalu stacji), panel „KOMPUTER HANDLOWY” (kursy, tony w drodze, najgęstsze trasy, OKAZJE dla ładowni 380 j. z `findTradeOpportunities`, urobek pasa w drodze).
+- Dane NA ŻĄDANIE: `CICDisplay.setTradeSource(fn)` (w grze `trafficV2.requestTradeSummary()` → `trade-summary` w workerze, `summarizeTrade` z `src/game/traffic/tradeSummary.js`), co `CIC_TRADE_TUNE.refreshMs` (2 s czasu rzeczywistego) i tylko przy włączonej warstwie — worker nie liczy agregatu co tick. Bez ruchu v2 (`?trafficV2=0`) warstwa jest pusta.
+- Rysunek jak reszta CIC: ≤ 40 linii, napisy ze stempli (`maxStamps`), panel pieczony przy nowych danych; cały blok w `try/catch` (błąd raz do konsoli — wyjątek w CIC zatrzymuje pętlę gry). Stan `CICDisplay.tradeStats()`, przełącznik `CICDisplay.toggleTrade()`. Test `tests/graczNaRynku.test.mjs`, harness `node scripts/webgpu/rynek-gra.mjs --query renderWorker=1` (zrzuty `cic-handel*.png`).

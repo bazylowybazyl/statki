@@ -9,13 +9,15 @@
        Ctrl+F5 czysci tylko cache HTTP, a "usuwanie ciastek" nie rusza localStorage, wiec stary
        uklad hardpointow z edytora (hpEditor.v1) przezywal kazde odswiezenie i wygrywal z nowym
        ukladem z src/data/hardpointEditorDefaults.js. Stad byl potrzebny tryb incognito.
-       Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=dev
+       Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=economy | ?reset=dev
        Z konsoli: resetGameSave()  /  resetGameSave('hp') — potem F5. -->
   <script>
     (function () {
       const SAVE_KEYS = {
         // Co wisi na kadlubie: uklad gniazd z edytora + zapisany fit + strojenie dysz.
         ship: ['hpEditor.v1', 'loadout', 'engineVfxTune.v1'],
+        // Ekonomia (E7): magazyny rynków, wyrwy pasa, flota frakcji, stacje gracza.
+        economy: ['economy'],
         // Panele deweloperskie, layouty HUD i ustawienia grafiki.
         dev: [
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
@@ -23,7 +25,7 @@
           'sc_camera_frame', 'sc_gfx', 'sc_gfx_auto', 'sc_space_dust'
         ]
       };
-      const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.dev];
+      const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.economy, ...SAVE_KEYS.dev];
 
       function keysForScope(scope) {
         switch (String(scope || 'all').trim().toLowerCase()) {
@@ -37,6 +39,8 @@
           case 'kadlub': return SAVE_KEYS.ship;
           case 'dev':
           case 'panele': return SAVE_KEYS.dev;
+          case 'economy':
+          case 'ekonomia': return SAVE_KEYS.economy;
           default: return ALL_KEYS;
         }
       }
@@ -1138,8 +1142,12 @@
     import {
       createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
       damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates, createPortBerthIndex,
-      stepPlayerBerthHolds
+      stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion
     } from "./src/game/trafficBubble.js";
+    import {
+      createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion, trafficPromotionVerdict,
+      trafficFleePoint, trafficActorPromotable, trafficPromotionOrder
+    } from "./src/game/trafficPromotion.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
     import { createCargoOpsBlock } from "./src/render/blocks/cargoOpsBlock.js";
@@ -14529,17 +14537,20 @@
       return station ? (trafficV2?.getEconomy(station.id) || null) : null;
     }
 
-    // Oferta stacji dla gracza — ten sam model co dla kupców i przewoźników (API rynku, `marketBook.js`):
-    // sprzedaje zapas ponad rezerwę na własne potrzeby (`offerFloor` z `resourcePrice`), przyjmuje do
-    // pojemności magazynu i płaci tylko za to, co przyjęła. `null` — stacja bez rynku.
+    // Oferta portu dla gracza — ta sama co dla kupców z księgi rynku (E7, `portOfferFromQuote` w workerze, pola
+    // `sell` / `buy` kopii rynku): port sprzedaje zapas ponad rezerwę na własne potrzeby i skupuje do celu
+    // uzupełnienia (2 h zużycia albo porcja stoczni), licząc z towarem w drodze; towaru, którego nie używa,
+    // nie skupuje. Cena `resourcePrice` z reputacją gracza. `null` — stacja bez rynku.
     function getTradeOffer(station, key) {
       const econ = getTradeEconomy(station);
       const price = econ ? resourcePrice(station, econ, key, { reputation: PLAYER.reputation }) : null;
       if (!price) return null;
       return {
         stock: Number(price.stored) || 0,
-        sell: Math.max(0, Math.floor((Number(price.stored) || 0) - (price.offerFloor || 0) * price.capacity)),
-        room: Math.max(0, Math.floor(Number(price.room) || 0)),
+        sell: Math.max(0, Math.floor(Number(econ.sell?.[key]) || 0)),
+        buy: Math.max(0, Math.floor(Number(econ.buy?.[key]) || 0)),
+        // Skup −1 z workera: port towaru nie używa („nie skupuje”); 0 przy `wants` — „ma dość”.
+        wants: !(Number(econ.buy?.[key]) < 0),
         ask: Math.max(1, Math.round(Number(price.ask) || 0)),
         bid: Math.max(1, Math.round(Number(price.bid) || 0))
       };
@@ -14577,7 +14588,8 @@
 
       const desc = document.createElement('p');
       desc.className = 'card-desc';
-      desc.textContent = 'Sprzedaj nadwyżki z ładowni albo dokup surowiec, którego jeszcze nie produkujesz.';
+      desc.textContent = 'Port sprzedaje zapas ponad własne potrzeby i skupuje to, czego używa — tyle, ile pokazuje oferta. '
+        + 'Ceny z rynku: niedobór, frakcja, reputacja.';
       card.appendChild(desc);
 
       const holdNote = document.createElement('div');
@@ -14586,6 +14598,13 @@
 
       const table = document.createElement('table');
       table.className = 'trade-market-table';
+      const head = document.createElement('tr');
+      for (const label of ['Towar', 'Ładownia', 'Port ma', 'Port sprzedaje', 'Port skupuje', '']) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        head.appendChild(th);
+      }
+      table.appendChild(head);
       for (const key of RESOURCE_KEYS) {
         const row = document.createElement('tr');
         row.dataset.marketKey = key;
@@ -14598,17 +14617,15 @@
         labelCell.appendChild(label);
         row.appendChild(labelCell);
 
-        const stockCell = document.createElement('td');
-        stockCell.className = 'trade-market-stock';
-        stockCell.dataset.field = 'stock';
-        row.appendChild(stockCell);
-
-        // Ceny są lokalne (niedobór + profil frakcji + reputacja), więc wypełnia
+        // Liczby i ceny są lokalne (oferta portu z workera, cena z reputacją), więc wypełnia
         // je updateTradeCards przy każdym odświeżeniu, nie budowa tabeli.
-        const priceCell = document.createElement('td');
-        priceCell.className = 'trade-market-price';
-        priceCell.dataset.field = 'price';
-        row.appendChild(priceCell);
+        for (const [field, className] of [['held', 'trade-market-stock'], ['stock', 'trade-market-stock'],
+          ['sell', 'trade-market-price'], ['buy', 'trade-market-price']]) {
+          const cell = document.createElement('td');
+          cell.className = className;
+          cell.dataset.field = field;
+          row.appendChild(cell);
+        }
 
         const actionCell = document.createElement('td');
         actionCell.className = 'trade-market-actions';
@@ -15086,29 +15103,33 @@
         const held = Number(PLAYER.cargo?.[key]) || 0;
         const offer = econ ? getTradeOffer(station, key) : null;
         const stationStock = offer?.stock || 0;
-
-        // Stacja sprzedaje tylko zapas ponad rezerwę na własne potrzeby — jak kupcom i przewoźnikom.
-        const stockCell = row.querySelector('[data-field="stock"]');
-        if (stockCell) {
-          stockCell.textContent = `${Math.round(held)} / stacja ${Math.round(stationStock)}`
-            + (offer && offer.sell < Math.round(stationStock) ? ` (na sprzedaż ${offer.sell})` : '');
-        }
-
         const sellPrice = offer?.bid || 0;
         const buyPrice = offer?.ask || 0;
-        const priceCell = row.querySelector('[data-field="price"]');
-        if (priceCell) {
-          priceCell.textContent = econ ? `${sellPrice} / ${buyPrice} CR` : '—';
-          // Kolor mówi, czy tu się opłaca sprzedawać, czy kupować — bez tego
-          // gracz musiałby porównywać liczby między stacjami z pamięci.
-          const ratio = sellPrice / Math.max(1, getResourceValue(key));
-          priceCell.classList.toggle('is-rich', ratio >= 1.05);
-          priceCell.classList.toggle('is-poor', ratio <= 0.65);
+        const value = Math.max(1, getResourceValue(key));
+        const fields = row._tradeFields || (row._tradeFields = {
+          held: row.querySelector('[data-field="held"]'),
+          stock: row.querySelector('[data-field="stock"]'),
+          sell: row.querySelector('[data-field="sell"]'),
+          buy: row.querySelector('[data-field="buy"]')
+        });
+        if (fields.held) fields.held.textContent = held > 0 ? formatTradeUnits(held) : '—';
+        if (fields.stock) fields.stock.textContent = offer ? formatTradeUnits(stationStock) : '—';
+        // Oferta portu: ile sprzeda / skupi i za ile. Zielono = dobra okazja dla gracza (tanio kupić,
+        // drogo sprzedać) — bez tego trzeba by porównywać liczby między stacjami z pamięci.
+        if (fields.sell) {
+          fields.sell.textContent = offer?.sell > 0 ? `${formatTradeUnits(offer.sell)} × ${buyPrice} CR` : '—';
+          fields.sell.classList.toggle('is-rich', offer?.sell > 0 && buyPrice / value <= 0.85);
+        }
+        if (fields.buy) {
+          fields.buy.textContent = !offer ? '—'
+            : (offer.buy > 0 ? `${formatTradeUnits(offer.buy)} × ${sellPrice} CR` : (offer.wants ? 'ma dość' : 'nie skupuje'));
+          fields.buy.classList.toggle('is-rich', offer?.buy > 0 && sellPrice / value >= 1.05);
+          fields.buy.classList.toggle('is-poor', !!offer && !(offer.buy > 0) && !offer.wants);
         }
 
         // Wiersze bez ruchu w obie strony tylko przygasają — pełne ukrycie
         // sprawiłoby, że tabela skacze przy każdym zakupie.
-        row.classList.toggle('is-idle', held <= 0 && stationStock <= 0);
+        row.classList.toggle('is-idle', held <= 0 && !(offer?.sell > 0) && !(offer?.buy > 0));
 
         row.querySelectorAll('button[data-trade-type]').forEach(btn => {
           if (btn.dataset.tradeType === 'buy') {
@@ -15116,10 +15137,15 @@
             const massNeeded = getResourceMassLocal(key, step);
             btn.disabled = PLAYER.credits < cost || !offer || offer.sell < step || cargoFree < massNeeded;
           } else {
-            btn.disabled = !offer || held < step || offer.room < 1;
+            btn.disabled = !offer || held < step || offer.buy < 1;
           }
         });
       });
+    }
+
+    /** Sztuki w tabeli handlu: pełne, z odstępem tysięcy. */
+    function formatTradeUnits(units) {
+      return Math.round(Number(units) || 0).toLocaleString('pl-PL');
     }
 
     function getResourceMassLocal(key, amount) {
@@ -15175,10 +15201,10 @@
       } else if (type === 'sell') {
         const held = Number(PLAYER.cargo?.[key]) || 0;
         if (held < amount) return;
-        // Stacja przyjmuje do pojemności magazynu i płaci za to, co przyjęła — jak kupcom (`putStock`).
-        // Reszta zostaje w ładowni.
-        const stored = Math.min(amount, offer.room);
-        if (stored <= 0) { toast('Magazyn stacji pełny'); return; }
+        // Port skupuje do swojego celu (oferta skupu) i płaci za to, co przyjął — jak kupcom. Reszta zostaje
+        // w ładowni.
+        const stored = Math.min(amount, offer.buy);
+        if (stored <= 0) { toast(offer.wants ? 'Port ma tego dość' : 'Port tego nie skupuje'); return; }
         PLAYER.cargo[key] = held - stored;
         if (PLAYER.cargo[key] <= 0) delete PLAYER.cargo[key];
         adjustStationStock(station, key, stored);
@@ -15731,6 +15757,8 @@
 
     function initTrafficV2() {
       const params = new URLSearchParams(location.search);
+      const savedEconomy = loadEconomySave();
+      economySaveCache = savedEconomy?.world || null;
       const scale = Number(params.get('trafficV2'));
       const seedParam = params.get('trafficSeed');
       const seed = seedParam !== null && seedParam !== ''
@@ -15759,15 +15787,23 @@
         planetScale: PLANET_SCALE,
         sunRadius: SUN.r,
         stations: stationSpecs,
+        // Zapis ekonomii (E7): magazyny, wyrwy, flota — worker nakłada go na świeży świat.
+        restore: savedEconomy?.world || undefined,
         focus: { x: ship.pos.x, y: ship.pos.y, r: TRAFFIC_V2_BUBBLE_RADIUS }
       }).then(ready => {
         console.info(`[ruch v2] ${bridge.mode === 'worker' ? 'worker' : 'GŁÓWNY WĄTEK (tryb awaryjny)'}: `
           + `${ready.stations.length} stacji, gospodarka ×${ready.economyScale}, ziarno ${ready.seed}, `
-          + `budowa świata ${Math.round(ready.buildMs)} ms`);
+          + `budowa świata ${Math.round(ready.buildMs)} ms`
+          + (ready.restored ? `, zapis: ${ready.restored.stations} rynków, ${ready.restored.mining} komórek pasa, ${ready.restored.fleets} flot` : ''));
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
       // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
       for (const station of stations) registerTrafficV2Market(station, bridge);
+      // Stacje gracza z zapisu: encja w grze i rynek; magazyn nakłada worker po `market-add`.
+      for (const entry of savedEconomy?.playerStations || []) {
+        if (!entry?.id || stations.some(st => st.id === entry.id)) continue;
+        foundPlayerStation(entry, bridge);
+      }
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
       bridge.on('market', () => {
         if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
@@ -15816,6 +15852,205 @@
     }
 
     // ============================================================
+    // ZAPIS EKONOMII (E7) — src/game/traffic/economySave.js
+    // Magazyny rynków, rejestr pasa (wyrwy), flota frakcji i stacje gracza przeżywają F5. Worker oddaje
+    // swój stan na żądanie (autozapis co 20 s, `requestEconomySave`); przy wyjściu zapis bierze magazyny
+    // świeżo z kopii rynku (z handlem gracza, którego worker jeszcze nie odesłał), resztę z ostatniego
+    // stanu workera. Kursy w locie, firmy i kupcy zaczynają od nowa. Klucz `economy` w localStorage
+    // (`?reset` czyści). Wersja: ECONOMY_SAVE_VERSION — ta sama co w economySave.js (strażnik w teście).
+    // ============================================================
+
+    const ECONOMY_SAVE_KEY = 'economy';
+    const ECONOMY_SAVE_VERSION = 1;
+    const ECONOMY_AUTOSAVE_MS = 20000;
+    /** Ostatni stan workera (rejestr pasa, flota, skala) — przy starcie: wczytany zapis. */
+    let economySaveCache = null;
+    let economyAutosaveAt = -Infinity;
+
+    /** Zapis z localStorage albo `null` (brak, inna wersja, śmieci — start bez zapisu, bez wyjątku). */
+    function loadEconomySave() {
+      let raw = null;
+      try { raw = localStorage.getItem(ECONOMY_SAVE_KEY); } catch { return null; }
+      if (!raw) return null;
+      try {
+        const saved = JSON.parse(raw);
+        if (saved?.version !== ECONOMY_SAVE_VERSION || saved.world?.version !== ECONOMY_SAVE_VERSION) {
+          console.info('[ruch v2] zapis ekonomii w innej wersji — start bez zapisu');
+          return null;
+        }
+        return saved;
+      } catch (error) {
+        console.warn('[ruch v2] zapis ekonomii nieczytelny — start bez zapisu', error);
+        return null;
+      }
+    }
+
+    /** Zapis do localStorage: magazyny z kopii rynku + stan workera + stacje gracza. */
+    function buildEconomySave() {
+      const base = economySaveCache;
+      if (!trafficV2?.ready || !base) return null;
+      const stationsOut = {};
+      for (const [id, mirror] of trafficV2.market) {
+        const stock = {};
+        for (const [key, value] of Object.entries(mirror.resources)) {
+          if (value > 0) stock[key] = Math.round(value * 1000) / 1000;
+        }
+        const duress = {};
+        for (const [key, value] of Object.entries(mirror.duress || {})) {
+          if (value > 0) duress[key] = Math.round(value);
+        }
+        stationsOut[id] = { stock, duress };
+      }
+      return {
+        version: ECONOMY_SAVE_VERSION,
+        savedAt: Date.now(),
+        world: { ...base, resources: [...trafficV2.tables.resources], stations: stationsOut },
+        playerStations: PLAYER_STATIONS.map(entry => ({ ...entry, buildings: [...entry.buildings] }))
+      };
+    }
+
+    function writeEconomySave() {
+      if (window.__SAVE_LOCKED) return false;
+      const state = buildEconomySave();
+      if (!state) return false;
+      try {
+        localStorage.setItem(ECONOMY_SAVE_KEY, JSON.stringify(state));
+        return true;
+      } catch (error) {
+        console.warn('[ruch v2] zapis ekonomii się nie udał', error);
+        return false;
+      }
+    }
+
+    /** Świeży stan workera do zapisu, potem zapis. Zwraca obietnicę `true` po udanym zapisie. */
+    async function saveEconomyNow() {
+      if (!trafficV2?.ready) return false;
+      const state = await trafficV2.requestEconomySave();
+      if (state) economySaveCache = state;
+      return writeEconomySave();
+    }
+
+    /** Autozapis z pętli (czas strony): co ECONOMY_AUTOSAVE_MS, bez blokowania klatki. */
+    function tickEconomyAutosave(nowMs) {
+      if (!trafficV2?.ready || nowMs - economyAutosaveAt < ECONOMY_AUTOSAVE_MS) return;
+      economyAutosaveAt = nowMs;
+      saveEconomyNow().catch(error => console.warn('[ruch v2] autozapis ekonomii', error));
+    }
+
+    window.addEventListener('beforeunload', writeEconomySave);
+
+    // ============================================================
+    // STACJA GRACZA JAKO RYNEK (E7) — pamięć „imperium gracza”, scripts/tests/playerStation.test.mjs
+    // Stacja gry (dok, terminal, znacznik na kanwie — modelu 3D jeszcze nie ma) i rynek świata ruchu
+    // (`kind: 'player'`) z przemysłem z budynków (`addMarketBuilding` → `composeFromBuildings`): przewoźnicy
+    // i kupcy obsługują ją jak każdy port. Interfejsu budowy w grze jeszcze nie ma — zakłada ją konsola
+    // (`DevEconomy.foundStation`, `DevEconomy.addStationBuilding`), zapis ekonomii odtwarza ją po F5.
+    // Frakcja: Terra Nova (frakcja gracza do czasu dyplomacji).
+    // ============================================================
+
+    /** Stacje gracza: `{ id, name, x, y, factionId, buildings }` — źródło dla zapisu. */
+    const PLAYER_STATIONS = [];
+    const PLAYER_STATION_RADIUS = 160;
+
+    function playerStationMarketDef(entry) {
+      return {
+        id: entry.id,
+        label: entry.name,
+        kind: MARKET_KIND.PLAYER,
+        position: { source: MARKET_POSITION.POINT, x: entry.x, y: entry.y },
+        factionId: entry.factionId,
+        industry: { buildings: [...entry.buildings], size: 0.3 },
+        docks: { layout: DOCK_LAYOUT.PIERS }
+      };
+    }
+
+    /** Encja stacji w grze (dok i terminal jak u każdej stacji; `static` — nie orbituje). */
+    function createPlayerStationEntity(entry) {
+      const r = PLAYER_STATION_RADIUS;
+      const port = r + 40;
+      const station = {
+        id: entry.id, name: entry.name, factionId: entry.factionId,
+        x: entry.x, y: entry.y, r, baseR: r, orbitRadius: 0, angle: 0, speed: 0,
+        static: true, playerStation: true,
+        ports: [{ x: port, y: 0 }, { x: 0, y: port }, { x: -port, y: 0 }, { x: 0, y: -port }],
+        // `player` — bez bryły 3D (stations3D.js): znacznik 2D, model stacji gracza to osobne zadanie.
+        style: 'player',
+        hp: 8000, maxHp: 8000, hitFlash: 0, hitR: Math.round(r * 1.4)
+      };
+      stations.push(station);
+      return station;
+    }
+
+    /**
+     * Zakłada stację gracza: encja w grze + rynek świata ruchu. `spec`: `x`, `y` (domyślnie przy statku),
+     * `name`, `buildings` (role z `INDUSTRY_ARCHETYPES`, np. `['foundry']`). Zwraca encję stacji.
+     */
+    function foundPlayerStation(spec = {}, bridge = trafficV2) {
+      const index = PLAYER_STATIONS.length + 1;
+      const baseId = String(spec.id || `stacja-gracza-${index}`);
+      let id = baseId;
+      for (let n = 2; stations.some(st => st.id === id); n++) id = `${baseId}-${n}`;
+      const entry = {
+        id,
+        name: String(spec.name || `Stacja gracza ${index}`),
+        x: Number.isFinite(spec.x) ? spec.x : ship.pos.x + 900,
+        y: Number.isFinite(spec.y) ? spec.y : ship.pos.y,
+        factionId: spec.factionId || FACTION.TERRA_NOVA,
+        buildings: Array.isArray(spec.buildings) ? spec.buildings.map(String) : []
+      };
+      PLAYER_STATIONS.push(entry);
+      const station = createPlayerStationEntity(entry);
+      bridge?.addMarket(playerStationMarketDef(entry));
+      return station;
+    }
+
+    /** Nowy budynek na stacji gracza (rola przemysłu): rynek przelicza profil z budynków. */
+    function addPlayerStationBuilding(stationId, role) {
+      const entry = PLAYER_STATIONS.find(item => item.id === String(stationId || ''));
+      if (!entry || !role) return false;
+      entry.buildings.push(String(role));
+      trafficV2?.addMarketBuilding(entry.id, String(role));
+      return true;
+    }
+
+    /** Znacznik stacji gracza na kanwie (bez modelu 3D): pierścień, doki, nazwa. */
+    function drawPlayerStations2D(ctx, cam) {
+      for (const st of stations) {
+        if (!st.playerStation) continue;
+        const s = worldToScreen(st.x, st.y, cam);
+        const rr = Math.max(6, st.r * cam.zoom);
+        ctx.save();
+        ctx.strokeStyle = '#7cff91';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(s.x, s.y, rr, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(s.x, s.y, rr * 0.45, 0, Math.PI * 2); ctx.stroke();
+        for (let i = 0; i < st.ports.length; i++) {
+          const pw = stationPortWorld(st, i);
+          const ps = worldToScreen(pw.x, pw.y, cam);
+          ctx.fillStyle = '#7cff91';
+          ctx.fillRect(ps.x - 2, ps.y - 2, 4, 4);
+        }
+        ctx.fillStyle = '#dfffe6';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(st.name, s.x, s.y - rr - 8);
+        ctx.restore();
+      }
+    }
+
+    Object.assign(DevEconomy, {
+      /** Stacja gracza przy statku: `DevEconomy.foundStation({ buildings: ['foundry'] })`. */
+      foundStation: (spec = {}) => foundPlayerStation(spec),
+      /** Budynek na stacji gracza: `DevEconomy.addStationBuilding('stacja-gracza-1', 'electronics')`. */
+      addStationBuilding: (stationId, role) => addPlayerStationBuilding(stationId, role),
+      /** Zapis ekonomii teraz (obietnica `true`) — narzędzia: zapis → F5 → wczytanie. */
+      saveEconomy: () => saveEconomyNow(),
+      /** Zapis z localStorage (podgląd). */
+      economySave: () => loadEconomySave(),
+      playerStations: () => PLAYER_STATIONS.map(entry => ({ ...entry }))
+    });
+
+    // ============================================================
     // BAŃKA RUCHU v2 W GRZE (E6, docs/PLAN-ekonomia-rynki.md § 3.5) — src/game/trafficBubble.js. Lot statków
     // ruchu liczy worker (traffic/workerBubble.js, tylko przy porcie Ziemi), gra dostaje pozy po każdym `advance`:
     // ekstrapoluje je do kroku fizyki i klatki, liczy trafienia ogniem gracza i taran (obrys kadłuba), punkty
@@ -15825,8 +16060,9 @@
     let trafficBubble = null;
     /** Czas mostu w bieżącym kroku fizyki (pozy encji do testów trafień). */
     let _trafficStepTime = 0;
-    /** Stanowiska portu Ziemi w układzie gry (geometria z workera — `ready.bubblePorts`) — postój gracza. */
+    /** Stanowiska portów bańki w układzie gry (geometria z workera — `ready.bubblePorts`) — postój gracza. */
     let _trafficPortIndex = null;
+    let _trafficPortTables = null;
     const _trafficBerthStates = new Map();
     const _trafficBerthMarked = new Map();
     const _trafficRegistryBerths = new Map();
@@ -15834,24 +16070,33 @@
     /** Koszt bańki na wątku gry (dekodowanie, pozy, stanowiska, pozy klatki) — `TrafficBubble.stats.gameMs` (średnia). */
     let _trafficGameMs = 0;
 
-    function trafficEarthPortIndex() {
-      if (_trafficPortIndex) return _trafficPortIndex;
-      const berths = trafficV2?.tables?.bubblePorts?.earth;
-      if (!berths) return null;
+    /** Indeks stanowisk WSZYSTKICH portów bańki — przebudowa, gdy worker przyśle nową tabelę (rynki w biegu). */
+    function trafficPortIndex() {
+      const tables = trafficV2?.tables?.bubblePorts || null;
+      if (!tables) return null;
+      if (_trafficPortIndex && _trafficPortTables === tables) return _trafficPortIndex;
+      const berths = [];
+      for (const list of Object.values(tables)) for (const b of list) berths.push(b);
+      _trafficPortTables = tables;
       _trafficPortIndex = createPortBerthIndex({ berths });
+      _trafficRegistryBerths.clear();
       return _trafficPortIndex;
     }
 
-    /** Stanowisko rejestru ringu Ziemi (lampki hal K-7 i zatok) dla id stanowiska ruchu → { b, owner } albo null. */
+    /**
+     * Stanowisko rejestru ringu (lampki hal K-7 i zatok Ziemi, Marsa, Jowisza) dla id stanowiska ruchu →
+     * { b, owner } albo null (pomosty portów bez ringu nie mają lampek).
+     */
     function trafficRegistryBerth(id) {
       if (_trafficRegistryBerths.has(id)) return _trafficRegistryBerths.get(id);
       let found = null;
-      const info = trafficEarthPortIndex()?.byId.get(id);
-      const entry = haloWorld?.entry('earth');
-      if (!info || !entry) return null;   // przed `ready` / bez ringu — bez zapamiętania
-      {
+      const info = trafficPortIndex()?.byId.get(id);
+      if (!info) return null;   // przed `ready` — bez zapamiętania
+      const key = info.stationId;
+      const entry = key ? haloWorld?.entry(key) : null;
+      if (entry && info.hall) {
         if (info.hall === 'K-7') {
-          const owner = haloWorld.hall('earth', info.complex);
+          const owner = haloWorld.hall(key, info.complex);
           const b = owner?.layout?.berths?.find((x) => x.id === info.k7BerthId);
           if (b) found = { b, owner };
         } else {
@@ -15937,7 +16182,7 @@
       }
       if (ship && !ship.dead && dt > 0) {
         const speed = Math.hypot(ship.vel.x, ship.vel.y);
-        stepPlayerBerthHolds(tb, trafficEarthPortIndex(), ship.pos.x, ship.pos.y, speed, dt);
+        stepPlayerBerthHolds(tb, trafficPortIndex(), ship.pos.x, ship.pos.y, speed, dt);
       }
       _trafficGameMs += performance.now() - t0;
       tb.stats.gameMs = tb.stats.gameMs * 0.9 + _trafficGameMs * 0.1;
@@ -15950,7 +16195,7 @@
       out.count = 0;
       const tb = trafficBubble;
       // `TrafficBubble.hideRender` — A/B kosztu obrazu (narzędzie ruch-banka-gra.mjs): rozgrywka bez zmian, bez proxy.
-      if (!tb || !tb.list.length || !trafficV2 || tb.hideRender) return out;
+      if (!tb || !trafficV2 || tb.hideRender || (!tb.list.length && !trafficPromotion?.alive.size)) return out;
       const t0 = performance.now();
       const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
       for (let i = 0; i < tb.list.length; i++) {
@@ -15972,8 +16217,169 @@
         r.mode = a.mode;
         out.count++;
       }
+      // Awansowany NPC, którego kadłub na belkach jeszcze się nie zbudował (sprite, budżet budowy w klatce) — proxy
+      // w pozie NPC, żeby statek nie znikał na klatkę między encją bańki a modelem kadłuba.
+      if (trafficPromotion) {
+        for (const [id, npc] of trafficPromotion.alive) {
+          if (npc.beamHull || npc.dead) continue;
+          let r = out.list[out.count];
+          if (!r) {
+            r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
+              vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+            out.list[out.count] = r;
+          }
+          r.courseId = id;
+          r.hullId = npc.shipFrame;
+          r.unitClass = npc.shipFrame;
+          r.x = npc.x;
+          r.y = npc.y;
+          r.angle = npc.angle;
+          r.prevX = NaN;
+          r.vx = npc.vx;
+          r.vy = npc.vy;
+          r.speed = Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy);
+          r.throttle = 0;
+          r.mode = null;
+          out.count++;
+        }
+      }
       _trafficGameMs += performance.now() - t0;
       return out;
+    }
+
+    // AWANS DO PEŁNEGO NPC (E6, src/game/trafficPromotion.js): encja z kursem trafiona przez gracza (pocisk, taran)
+    // staje się NPC gry — kadłub na belkach ze sprite'a kadłuba ruchu (buduje go drawNPCPretty jak kadłuby
+    // DEV_HULL_SPAWNS), lot i rozkazy NPC, rany, wrak. Kurs przejmuje gra (`attach` — rekord stoi). Najwyżej jeden
+    // awans na klatkę. Zginął → `destroyCourse` (wrak z ładunkiem w świecie ruchu); po walce i poza zasięgiem →
+    // `detach` z pozą (bańka materializuje kurs tam, gdzie był NPC) i cichy koniec NPC.
+    let trafficPromotion = null;
+    let _trafficNpcDefs = null;
+    const _trafficFlee = { x: 0, y: 0 };
+
+    /** Liczby NPC kadłuba ruchu (punkty życia, prędkość) — z DEV_HULL_SPAWNS; kadłub spoza tabeli — null. */
+    function trafficNpcDef(hullId) {
+      if (!_trafficNpcDefs) {
+        _trafficNpcDefs = new Map();
+        for (const def of Object.values(DEV_HULL_SPAWNS)) if (!_trafficNpcDefs.has(def.hull)) _trafficNpcDefs.set(def.hull, def);
+      }
+      return _trafficNpcDefs.get(hullId) || null;
+    }
+
+    /** Trafienie encji przez gracza (pocisk, taran — `damageTrafficActor`, encja żyje): prośba o awans. */
+    function onTrafficActorHit(a, amount, cause) {
+      const st = trafficPromotion;
+      if (!st || cause !== 'player' || !trafficActorPromotable(a, st.tune)) return;
+      // Kadłub na belkach buduje się ze sprite'a — wczytanie rusza od razu, NPC powstaje klatkę później.
+      loadHullSprite(HULL_SPRITE_PATHS_BY_ID[a.hullId] || TRAFFIC_HULLS[a.hullId]?.sprite);
+      requestTrafficPromotion(st, a.id);
+    }
+
+    function trafficNpcOrder(npc, order) {
+      if (order === 'flee' && ship && !ship.dead) {
+        trafficFleePoint(npc, ship.pos.x, ship.pos.y, trafficPromotion.tune.fleeDistance, _trafficFlee);
+        npc.command = { type: 'move', target: { x: _trafficFlee.x, y: _trafficFlee.y }, arrival: 600 };
+      } else {
+        npc.command = { type: 'hold', faceAngle: npc.angle };
+      }
+    }
+
+    /** Encja bańki → NPC gry w tej samej pozie i ruchu, z ułamkiem punktów życia encji. */
+    function spawnTrafficNpc(a) {
+      const def = trafficNpcDef(a.hullId);
+      const maxHp = def?.hp ?? a.maxHp;
+      const speed = def?.speed ?? 160;
+      const npc = makeNPCBase({ x: a.cx, y: a.cy }, {
+        hp: maxHp,
+        maxSpeed: speed,
+        accel: speed * 0.6,
+        turn: 1.2,
+        friction: 0.99,
+        radius: Math.round((HULL_RENDER_PROFILES[a.hullId]?.radius || 100) * HULL_RENDER_WORLD_SCALE),
+        isCollidable: true
+      });
+      npc.hp = Math.max(1, Math.round(maxHp * Math.max(0, a.hp) / Math.max(1, a.maxHp)));
+      npc.id = `traffic:${a.id}`;
+      npc.type = def?.type || a.hullId;
+      npc.shipFrame = a.hullId;
+      npc.devHull = true;
+      // Bez despawnu NPC_DESPAWN_RADIUS — o powrocie do bańki decyduje trafficPromotionVerdict.
+      npc.mission = true;
+      npc.combatDisabled = true;
+      npc.factionId = a.factionId;
+      npc.isPirate = a.factionId === FACTION.PIRATES || !!def?.pirate;
+      npc.friendly = false;
+      npc.color = npc.isPirate ? '#ff5c7c' : '#9fb6c8';
+      npc.displayName = a.unitClass || a.hullId;
+      npc.angle = a.ca;
+      npc.desiredAngle = a.ca;
+      // Ruch encji, najwyżej 1,5 × prędkość NPC (dalej tnie model lotu).
+      const v = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+      const k = v > speed * 1.5 ? speed * 1.5 / v : 1;
+      npc.vx = a.vx * k;
+      npc.vy = a.vy * k;
+      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+      npc.trafficCourse = a.id;
+      npc.__trafficPromotedAt = gameTime;
+      npc._lastPlayerHit = gameTime;
+      npcs.push(npc);
+      return npc;
+    }
+
+    /** NPC wraca do bańki: znika bez wraku i wybuchu (wzór dematerializeSupportUnit). */
+    function dismissTrafficNpc(npc) {
+      npc.dead = true;
+      npc.removed = true;
+      npc.isCollidable = false;
+      TowSystem.detachBody(npc, 'traffic-demote');
+      releaseNpcHexBody(npc);
+      forgetPurgedNpc(npc);
+    }
+
+    /** Klatka (po `advance`): awans z kolejki (najwyżej `maxPerFrame`) i los awansowanych NPC. */
+    function stepTrafficPromotion() {
+      const st = trafficPromotion;
+      const tb = trafficBubble;
+      if (!st || !tb || !trafficV2) return;
+      let promoted = 0;
+      while (promoted < st.tune.maxPerFrame) {
+        const id = takeTrafficPromotion(st);
+        if (id === null) break;
+        const a = tb.byId.get(id);
+        if (!a || !trafficActorPromotable(a, st.tune)) {
+          st.stats.refused++;
+          continue;
+        }
+        const npc = spawnTrafficNpc(a);
+        markTrafficActorPromoted(tb, a);
+        trafficV2.attach(id);
+        st.alive.set(id, npc);
+        st.stats.promoted++;
+        promoted++;
+        trafficNpcOrder(npc, trafficPromotionOrder(a.phase));
+      }
+      if (!st.alive.size) return;
+      const px = ship ? ship.pos.x : Infinity;
+      const py = ship ? ship.pos.y : Infinity;
+      for (const [id, npc] of st.alive) {
+        const verdict = trafficPromotionVerdict(st, npc, gameTime, px, py);
+        if (verdict === 'dead') {
+          st.alive.delete(id);
+          releaseTrafficPromotion(tb, id, true);
+          trafficV2.destroyCourse(id, { x: npc.x, y: npc.y, reason: 'player', byPirates: false });
+          st.stats.destroyed++;
+        } else if (verdict === 'demote') {
+          st.alive.delete(id);
+          trafficV2.detach(id, null, { x: npc.x, y: npc.y, angle: npc.angle, speed: Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy) });
+          dismissTrafficNpc(npc);
+          releaseTrafficPromotion(tb, id, false);
+          st.stats.demoted++;
+        } else if (!npc.command) {
+          // Dotarł do punktu ucieczki: dalej, póki gracz blisko, potem stoi.
+          const dx = npc.x - px;
+          const dy = npc.y - py;
+          trafficNpcOrder(npc, dx * dx + dy * dy < st.tune.releaseRadius * st.tune.releaseRadius ? 'flee' : 'hold');
+        }
+      }
     }
 
 
@@ -16065,8 +16471,12 @@
     if (DevFlags.trafficV2) {
       trafficV2 = initTrafficV2();
       window.TrafficV2 = trafficV2;
-      trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed });
+      // Komputer handlowy w CIC (E7): agregat z workera na żądanie.
+      CICDisplay.setTradeSource(() => (trafficV2?.ready ? trafficV2.requestTradeSummary() : Promise.resolve(null)));
+      trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed, onHit: onTrafficActorHit });
       window.TrafficBubble = trafficBubble;
+      trafficPromotion = createTrafficPromotion();
+      window.TrafficPromotion = trafficPromotion;
     } else {
       console.warn('[ruch v2] wyłączony (?trafficV2=0) — stacje bez rynku, terminal nie handluje');
     }
@@ -17966,6 +18376,15 @@
           const pip = SpotterDroneSystem.getActivePip();
           if (pip) pushZoneMessage(`Drone PiP: ${pip.id}`, 1);
           else pushZoneMessage('No active drones', 1);
+        }
+      },
+      // CIC otwarty: H — komputer handlowy (warstwa „HANDEL”: trasy, porty, okazje z ruchu v2); przed zwiadem i dronem.
+      'cic.trade': {
+        gate: () => CICDisplay.active,
+        run() {
+          const on = CICDisplay.toggleTrade();
+          pushZoneMessage(on ? 'CIC: KOMPUTER HANDLOWY' : 'CIC: HANDEL UKRYTY', 1.5);
+          return GA_HALT;
         }
       },
       'cic.systemView': {
@@ -27555,7 +27974,9 @@
         // wyżej) i przycięte klatki zatrzymują ją tak samo jak resztę świata.
         if (steps > 0) trafficV2.advance(steps * PHYS_DT);
         trafficV2.setFocus(ship.pos.x, ship.pos.y, TRAFFIC_V2_BUBBLE_RADIUS);
+        tickEconomyAutosave(performance.now());
         stepTrafficBerths(steps * PHYS_DT);
+        stepTrafficPromotion();
         PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
 
@@ -29232,6 +29653,7 @@
 
         CanvasVFX.drawShockwaves(ctx, cam);
         drawTowRopes(ctx, cam);
+        drawPlayerStations2D(ctx, cam);
 
         if (!window.USE_STATION_3D) {
           for (const st of stations) {

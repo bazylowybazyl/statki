@@ -10,6 +10,7 @@ import {
 import { getCourse, COURSE_STATUS } from '../src/game/traffic/courseRegistry.js';
 import { PLAYER_BERTH_HOLDER } from '../src/game/traffic/trafficDirector.js';
 import { BUBBLE_PORT_RANGE } from '../src/game/traffic/workerBubble.js';
+import { ACTOR_CARGO_STRIDE, ACTOR_CARGO_FIELD, ACTOR_CARGO_MODE } from '../src/game/traffic/bubbleCargo.js';
 
 const F = ACTOR_FIELD;
 
@@ -207,6 +208,61 @@ test('garnizon K-7 (E4: PATROL / WAR) dokuje w halach przez bańkę i nie staje 
   assert.equal(overlap, 0, 'dwa statki na jednym padzie K-7');
 });
 
+test('bańka w portach bez ringu (pomosty Merkurego i Westy): dokowanie bez wymuszeń, ready.bubblePorts dla wszystkich portów', () => {
+  assert.ok(got.ready.bubblePorts.mercury?.length > 0 && got.ready.bubblePorts.vesta?.length > 0, 'geometria pomostów w ready');
+  assert.ok(got.ready.bubblePorts.mars?.length > 0, 'port ringu Marsa w ready');
+  for (const id of ['mercury', 'vesta']) {
+    const berth0 = world.docks.get(id).berths[0];
+    core.handle({ type: TRAFFIC_MSG.FOCUS, x: berth0.x, y: berth0.y, r: 60_000 });
+    const s0 = { ...core.bubble.bubble.stats };
+    const docked = new Set();
+    for (let f = 0; f < 30 * 120; f++) {
+      core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+      if (f % 15) continue;
+      for (const a of decode(got.actors)) {
+        const berthId = a.berth >= 0 ? got.ready.berths[got.ready.stations[a.port]?.id]?.[a.berth] : null;
+        if ((a.phase === 'docked' || a.phase === 'capture') && berthId?.startsWith(`${id}:`)) docked.add(a.id);
+      }
+    }
+    const s1 = core.bubble.bubble.stats;
+    assert.ok(docked.size > 0, `${id}: statki zadokowane przy pomoście`);
+    assert.equal((s1.forcedCaptures - s0.forcedCaptures) + (s1.forcedStages - s0.forcedStages), 0, `${id}: bez wymuszeń`);
+  }
+});
+
+test('postoje przy stanowisku (kontrakt E12): rekord przy dokowaniu, koniec w `undocked`, tylko zmiany', () => {
+  const berth0 = world.docks.get('earth').berths.find((b) => b.id.includes(':Z-'));
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: berth0.x, y: berth0.y, r: 60_000 });
+  const live = new Map();
+  let records = 0;
+  let ended = 0;
+  let repeated = 0;
+  let fills = 0;
+  for (let f = 0; f < 30 * 120; f++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+    for (const id of got.actors.undocked || []) { if (live.delete(id)) ended++; }
+    for (const rec of got.actors.docks || []) {
+      if (live.has(rec.id) && JSON.stringify(live.get(rec.id)) === JSON.stringify(rec)) repeated++;
+      live.set(rec.id, rec);
+      records++;
+      assert.ok(String(rec.berthId).includes(':'), 'id stanowiska');
+      assert.ok(['load', 'unload', 'extract', 'refuel', 'service', 'hold'].includes(rec.mode), `tryb ${rec.mode}`);
+      assert.ok(rec.cargo && typeof rec.cargo === 'object');
+      for (const n of Object.values(rec.cargo)) assert.ok(n > 0);
+      assert.ok(rec.dur >= 0 && Number.isFinite(rec.t0) && rec.t0 <= got.actors.time + 1e-6, 'zegar postoju w czasie mostu');
+      assert.ok(typeof rec.hull === 'string' && rec.hull.length > 0);
+      assert.ok(rec.fill === null || (rec.fill >= 0 && rec.fill <= 1), `wypełnienie ładowni ${rec.fill}`);
+      if (rec.fill !== null) fills++;
+    }
+  }
+  assert.ok(records > 0, 'postoje wysłane');
+  assert.ok(ended > 0, 'koniec postoju zgłoszony');
+  assert.equal(repeated, 0, 'ten sam rekord nie idzie drugi raz');
+  assert.ok(fills > 0, 'frachtowce niosą wypełnienie ładowni');
+  const withCargo = [...live.values()].filter((r) => Object.keys(r.cargo).length > 0).length;
+  assert.ok(withCargo > 0 || ended > 0, 'ładunek w rekordach');
+});
+
 test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rejestrze ringu', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   let seenApproach = false;
@@ -221,3 +277,80 @@ test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rej
   assert.ok(seenApproach, 'podejście na stanowisko');
   assert.ok(seenBerth, 'postój na stanowisku');
 });
+
+test('awans do NPC i powrót: attach zamraża rekord, detach z pozą (bez postępu) materializuje encję w miejscu NPC', () => {
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
+  for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  const actors = decode(got.actors).filter((a) => !(a.flags & ACTOR_FLAG.STOCK));
+  const pick = actors.find((a) => a.phase === 'fly') || actors[0];
+  assert.ok(pick);
+  const courseId = [...world.registry.byId.keys()].find((id) => courseNumber(id) === pick.id);
+  const course = getCourse(world.registry, courseId);
+  core.handle({ type: TRAFFIC_MSG.ATTACH, course: pick.id });
+  const stageIndex = course.stageIndex;
+  const elapsed = course.stageElapsed;
+  for (let i = 0; i < 60; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  assert.equal(course.stageElapsed, elapsed, 'kurs gry nie biegnie w rekordzie');
+  // NPC odleciał o 900 j. w bok i stanął.
+  const px = pick.x + 600;
+  const py = pick.y - 670;
+  core.handle({ type: TRAFFIC_MSG.DETACH, course: pick.id, progress: null, pose: { x: px, y: py, angle: 1.2, speed: 0 } });
+  assert.equal(course.actorId, null);
+  assert.equal(course.stageIndex, stageIndex);
+  assert.equal(course.stageElapsed, elapsed, '`progress: null` nie zeruje postępu etapu');
+  assert.equal(course.viewState?.handoff, true);
+  core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  const back = decode(got.actors).find((a) => a.id === pick.id);
+  assert.ok(back, 'kurs wraca do bańki w następnym advance');
+  assert.ok(Math.hypot(back.x - px, back.y - py) < 50, `encja w pozie NPC (${Math.round(back.x - px)}, ${Math.round(back.y - py)})`);
+  assert.equal(course.viewState, null, 'poza oddana raz');
+});
+
+test('przeładunek (kontrakt E12 `actors.cargo`): rekordy encji przy stanowisku w postoju LOAD / UNLOAD', () => {
+  const berth0 = world.docks.get('earth').berths.find((b) => b.id.includes(':Z-'));
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: berth0.x, y: berth0.y, r: 60_000 });
+  let records = 0;
+  let checked = 0;
+  for (let f = 0; f < 30 * 60; f++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+    const cargo = got.actors.cargo;
+    if (!cargo) continue;
+    assert.ok(cargo instanceof Float32Array);
+    assert.equal(cargo.length % ACTOR_CARGO_STRIDE, 0);
+    const atBerth = new Set(decode(got.actors).filter((a) => ['capture', 'docked', 'undock'].includes(a.phase)).map((a) => a.id));
+    for (let o = 0; o < cargo.length; o += ACTOR_CARGO_STRIDE) {
+      records++;
+      const C = ACTOR_CARGO_FIELD;
+      assert.ok(atBerth.has(cargo[o + C.ID]), 'rekord tylko dla encji przy stanowisku');
+      assert.ok(cargo[o + C.MODE] === ACTOR_CARGO_MODE.LOAD || cargo[o + C.MODE] === ACTOR_CARGO_MODE.UNLOAD);
+      assert.ok(cargo[o + C.FILL] >= 0 && cargo[o + C.FILL] <= 1);
+      assert.ok(cargo[o + C.DWELL] >= cargo[o + C.MOVE]);
+      const ri = cargo[o + C.RES];
+      assert.ok(ri === -1 || (ri >= 0 && ri < got.ready.resources.length), 'indeks towaru w ready.resources');
+      checked++;
+    }
+  }
+  assert.ok(records > 0 && checked === records, 'statki przy zatokach Ziemi przeładowują');
+});
+
+test('stacja gracza dodana w biegu (zapis E7 → market-add) jest portem bańki: stanowiska w tabeli i w bańce, fokus przy niej', async () => {
+  const { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } = await import('../src/data/markets.js');
+  const { bubblePortNear } = await import('../src/game/traffic/workerBubble.js');
+  const at = { x: earth.x + 400_000, y: earth.y + 250_000 };
+  core.handle({ type: TRAFFIC_MSG.MARKET_ADD, def: {
+    id: 'gracz-test', label: 'Test', kind: MARKET_KIND.PLAYER,
+    position: { source: MARKET_POSITION.POINT, x: at.x, y: at.y },
+    factionId: null, industry: { buildings: [], size: 0.3 }, docks: { layout: DOCK_LAYOUT.PIERS }
+  } });
+  const berths = got.tick.bubblePorts?.['gracz-test'];
+  assert.ok(Array.isArray(berths) && berths.length > 0, 'tick niesie stanowiska nowego portu');
+  const state = core.bubble;
+  assert.ok([...bubblePortIdsOf(state)].includes('gracz-test'));
+  assert.equal(bubblePortNear(state, at.x, at.y), true, 'fokus przy stacji gracza budzi bańkę');
+  assert.ok(state.bubble.ports.layouts.has('gracz-test'), 'układ doków w indeksie portów bańki');
+  assert.ok([...state.bubble.ports.berths.values()].some((r) => r.stationId === 'gracz-test'), 'stanowiska w indeksie portów bańki');
+});
+
+function bubblePortIdsOf(state) {
+  return state.ports || state.world.docks.keys();
+}

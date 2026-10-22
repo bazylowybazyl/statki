@@ -39,7 +39,8 @@ function now() {
 
 function createMirror(resources) {
   const zeros = () => Object.fromEntries(resources.map(key => [key, 0]));
-  return { resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros() };
+  // `sell` / `buy` — oferta portu dla kupca (E7): ile sprzeda ponad rezerwę, ile skupi do celu.
+  return { resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros(), sell: zeros(), buy: zeros() };
 }
 
 /** Te same reguły co `applyStockDelta` w workerze — wspólne `moveStock` (API rynku): 0…pojemność, 0 = bez limitu. */
@@ -51,7 +52,12 @@ function applyToMirror(mirror, bag) {
     const delta = Number(raw);
     if (!Number.isFinite(delta) || delta === 0) continue;
     const moved = moveStock(mirror, id, delta);
-    if (moved !== 0) applied[id] = moved;
+    if (moved === 0) continue;
+    applied[id] = moved;
+    // Oferta portu kurczy się od razu: kupione schodzi z oferty sprzedaży, sprzedane — ze skupu
+    // (skup −1 = port towaru nie używa — zostaje, nawet gdy towar wszedł inną drogą, np. rozbiórka wraku).
+    if (moved < 0 && mirror.sell) mirror.sell[id] = Math.max(0, (Number(mirror.sell[id]) || 0) + moved);
+    if (moved > 0 && mirror.buy?.[id] > 0) mirror.buy[id] = Math.max(0, mirror.buy[id] - moved);
   }
   return applied;
 }
@@ -93,7 +99,13 @@ export class TrafficBridge {
      * Encje bańki workera (E6): `data` (Float64Array, `ACTOR_STRIDE`), `count`,
      * `time` (czas mostu, w którym pozy są ważne), `seq` (numer wiadomości), `ms`.
      */
-    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0 };
+    // `cargo` — przeładunek przy stanowiskach (kontrakt E12, `bubbleCargo.js`): Float32Array albo null.
+    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0, cargo: null };
+    /**
+     * Postoje statków ruchu przy stanowiskach (kontrakt `DockRecord`, `trafficProtocol.js` — przeładunek E12):
+     * numer kursu → { id, berthId, stationId, mode, cargo, t0, dur, hull, unitClass }. Worker przysyła zmiany.
+     */
+    this.actorDocks = new Map();
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
@@ -271,7 +283,11 @@ export class TrafficBridge {
   }
 
   attach(course) { this._send({ type: TRAFFIC_MSG.ATTACH, course }); }
-  detach(course, progress) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress }); }
+  /**
+   * Gra oddaje kurs (`pose` — { x, y, angle, speed }: NPC wraca do bańki tam, gdzie był — E6, awans
+   * do pełnego NPC). `progress` — postęp etapu albo null (bez zmiany).
+   */
+  detach(course, progress, pose = null) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress, pose }); }
   reportProgress(course, progress) { this._send({ type: TRAFFIC_MSG.PROGRESS, course, progress }); }
   completeStage(course) { this._send({ type: TRAFFIC_MSG.STAGE_DONE, course }); }
 
@@ -328,10 +344,24 @@ export class TrafficBridge {
 
   /** Podsumowanie świata (dyspozytor, stocznie, wojna, piractwo…) — do konsoli. */
   requestSnapshot() {
+    return this._request(TRAFFIC_MSG.SNAPSHOT);
+  }
+
+  /** Stan ekonomii do zapisu gry (E7, `economySave.js`) — obietnica obiektu JSON albo `null`. */
+  requestEconomySave() {
+    return this._request(TRAFFIC_MSG.ECONOMY_SAVE);
+  }
+
+  /** Agregat dla komputera handlowego (E7, `tradeSummary.js`): trasy, porty, towar w drodze, okazje. */
+  requestTradeSummary() {
+    return this._request(TRAFFIC_MSG.TRADE_SUMMARY);
+  }
+
+  _request(type) {
     const requestId = this._requestId++;
     return new Promise((resolve, reject) => {
       this._pending.set(requestId, { resolve, reject });
-      this._send({ type: TRAFFIC_MSG.SNAPSHOT, requestId });
+      this._send({ type, requestId });
     });
   }
 
@@ -382,10 +412,12 @@ export class TrafficBridge {
         case TRAFFIC_MSG.TICK: this._onTick(message); break;
         case TRAFFIC_MSG.BUBBLE: this._applyBubble(message); this._emit('bubble', this.courses); break;
         case TRAFFIC_MSG.ACTORS: this._applyActors(message); break;
-        case TRAFFIC_MSG.SNAPSHOT_RESULT: {
+        case TRAFFIC_MSG.SNAPSHOT_RESULT:
+        case TRAFFIC_MSG.ECONOMY_SAVE_RESULT:
+        case TRAFFIC_MSG.TRADE_SUMMARY_RESULT: {
           const pending = this._pending.get(message.requestId);
           this._pending.delete(message.requestId);
-          pending?.resolve(message.snapshot);
+          pending?.resolve(message.snapshot ?? message.state ?? message.summary ?? null);
           break;
         }
         case TRAFFIC_MSG.ERROR:
@@ -443,6 +475,7 @@ export class TrafficBridge {
     if (Array.isArray(message.stations) && this.tables) {
       this.tables.stations = message.stations;
       if (message.berths) this.tables.berths = message.berths;
+      if (message.bubblePorts) this.tables.bubblePorts = message.bubblePorts;
       this._indexStations();
       this._emit('markets', this.tables.stations);
     }
@@ -483,6 +516,8 @@ export class TrafficBridge {
         else delete mirror.duress[key];
         mirror.bid[key] = data[offset + MARKET_FIELD.BID];
         mirror.ask[key] = data[offset + MARKET_FIELD.ASK];
+        mirror.sell[key] = data[offset + MARKET_FIELD.SELL];
+        mirror.buy[key] = data[offset + MARKET_FIELD.BUY];
       }
     });
     // Zmiany gry, których ten stan jeszcze nie zawiera, nakładamy ponownie.
@@ -498,7 +533,12 @@ export class TrafficBridge {
     actors.count = Number(message.count) || 0;
     actors.time = Number(message.time) || 0;
     actors.ms = Number(message.ms) || 0;
+    actors.cargo = message.cargo instanceof Float32Array ? message.cargo : null;
     actors.seq++;
+    if (Array.isArray(message.undocked)) for (const id of message.undocked) this.actorDocks.delete(id);
+    if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);
+    // Pusta bańka (wyjście z zasięgu portów) — postoje znikają razem z encjami.
+    if (!actors.count && this.actorDocks.size) this.actorDocks.clear();
   }
 
   _applyBubble(bubble) {
