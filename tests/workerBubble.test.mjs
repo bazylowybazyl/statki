@@ -184,6 +184,29 @@ test('zapas floty Ziemi stoi na padach hal K-7: encje STOCK z id ujemnym, bez ku
   for (const a of decode(got.actors)) if (before.has(a.id)) assert.equal(a.berth, before.get(a.id));
 });
 
+test('garnizon K-7 (E4: PATROL / WAR) dokuje w halach przez bańkę i nie staje na padzie z okrętem zapasu', () => {
+  const k7 = world.docks.get('earth').berths.find((b) => b.id.includes(':K7-'));
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: k7.x, y: k7.y, r: 60_000 });
+  const berthIds = got.ready.berths.earth;
+  const garrison = new Set();
+  let overlap = 0;
+  for (let f = 0; f < 30 * 180; f++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+    if (f % 15) continue;
+    const onPad = new Map();
+    for (const a of decode(got.actors)) {
+      const id = a.berth >= 0 ? berthIds[a.berth] : null;
+      if (!id || !id.includes(':K7-')) continue;
+      if (!(a.phase === 'docked' || a.phase === 'capture' || a.phase === 'undock')) continue;
+      if (onPad.has(id)) overlap++;
+      onPad.set(id, a.id);
+      if (!(a.flags & ACTOR_FLAG.STOCK)) garrison.add(a.id);
+    }
+  }
+  assert.ok(garrison.size > 0, 'okręty garnizonu zadokowane w K-7 (kursy, nie zapas)');
+  assert.equal(overlap, 0, 'dwa statki na jednym padzie K-7');
+});
+
 test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rejestrze ringu', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   let seenApproach = false;

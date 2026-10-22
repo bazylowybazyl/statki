@@ -56,7 +56,9 @@ Zadanie E6 z `docs/PLAN-ekonomia-rynki.md` (§ 3.5, wiersz E6), 2026-10-22. Stan
 ## Pomiary (2026-10-22, RTX 5080, headless Chrome, tryb gracza `renderWorker=1`)
 
 `node scripts/webgpu/ruch-banka-gra.mjs --out .tmp/ruch-banka/run7` (świat ruchu ziarno 7 rozgrzany 40 min gry,
-zegar krokowy harnessu; przebiegi 4–5 przed poprawkami napędu, póz i zapasu floty, 6–7 po nich):
+zegar krokowy harnessu; przebiegi 4–5 przed poprawkami napędu, póz i zapasu floty, 6–7 po nich; przebieg 8 po
+scaleniu `main` 283129a0 z garnizonem E4: 49 statków, 26 dokowań — 24 w zatokach, 2 okręty garnizonu w K-7 — obok
+6 okrętów zapasu na padach, trafienie i taran niszczą cel, postój gracza bez wejścia ruchu, 0 błędów, 0 pipeline'ów sync):
 
 | | wynik |
 |---|---|
@@ -83,11 +85,17 @@ w liczbę (przy starych obrysach w obu przebiegach).
 
 ## Czego nie ma (ryzyka i dalsze kroki)
 
-- **Kursy do hal K-7.** Stanowiska K-7 mają rolę `military`, a w gospodarce nie cumuje dziś nic wojskowego
-  (pomiar: 0 / 112 zajętych przez 60 min gry). Decyzja orkiestratora: wariant (a) — patrole i floty frakcji
-  wracają do portu domowego na postój i tankowanie (zlecone E4). Bańka obsłuży ich dokowanie bez zmian (ścieżki
-  hal przetestowane w `portPaths`); do tego czasu hale ożywia zapas floty na padach.
+- **Kursy do hal K-7 — od scalenia `main` 283129a0 są** (garnizon E4: patrole i floty frakcji z postojem
+  i tankowaniem w K-7 portu domowego). Bańka dokuje je bez zmian w kodzie (role `military`, ścieżki hal
+  z `portPaths`): ziarno 7, po 40 min gry 24 kursy PATROL z przydziałem w K-7 Ziemi; 5 min gry nad halą K7-1 —
+  12 różnych okrętów zadokowanych (do 6 naraz) obok do 7 okrętów zapasu, 0 próbek z dwoma statkami na jednym
+  padzie (zapas ustępuje padu kursowi przy następnym rozstawieniu). Test: `tests/workerBubble.test.mjs`
+  („garnizon K-7…”). Przed garnizonem (pomiar sprzed scalenia): 0 / 112 stanowisk K-7 zajętych przez 60 min.
 - Okręty zapasu floty nie przyjmują obrażeń (zatrzymują pociski) — strata zapasu frakcji wejdzie z awansem.
+- Okręt garnizonu K-7 (kurs PATROL / WAR) da się zestrzelić jak każdy kurs: kurs kończy się wrakiem bez ładunku,
+  `tickGarrison` usuwa wizytę i wysyła następną, ale zapas frakcji się nie zmniejsza (garnizon to widok zapasu —
+  reguła `ruch-v2`, § „Garnizon w K-7”). Do decyzji: strata okrętu z zapasu frakcji albo garnizon nietykalny
+  jak zapas na padach.
 - Wiązki, rakiety, wybuchy obszarowe i ogień NPC nie ranią statków ruchu (tylko pociski gracza i taran).
 - Statki bez kursu (reda `portParking`, zapas floty `placeFleetStock`) nie są kursami — nie ma ich w bańce.
 - Radar (`radarFeed.collect`), mgła wojny i obsługa K-7 (ramiona SCARA) nie znają statków ruchu.
