@@ -1,7 +1,8 @@
 // Elektrownia geotermalna „KOREK” w wielkim gryzie Ziemi — ORKIESTRATOR: czarna megabudowla zatykająca jądro na dnie
 // gryzu (dno sięga granicy jądra), z wylotem pośrodku, z którego bije PROMIEŃ ENERGII w górę przez wylot gryzu do
 // ODBIORNIKA na orbicie (pierścień-stacja tuż pod wewnętrzną krawędzią ringu „Halo”), z OBUDOWĄ DZIURY (dno, ściany,
-// brzeg) i WINDAMI KOSMICZNYMI — liny z kotwic za krawędzią gryzu do odbiornika. Obraz (zasada żelazna 1).
+// brzeg) i WINDAMI KOSMICZNYMI — liny z kotwic za krawędzią gryzu do SZYNY w wewnętrznej krawędzi ringu (płaszcz
+// obracający się z Ziemią, wózki, kabiny na GPU). Obraz (zasada żelazna 1).
 //
 // Komponenty (każdy we własnym pliku, rama i kontrakt części — earthBitePlantFrame.js, opis — docs/BRIEF-korek.md):
 //   korek — earthBitePlantCork.js, obudowa — earthBitePlantLining.js, windy — earthBitePlantElevators.js,
@@ -10,9 +11,9 @@
 // przepływu (dwa rysunki), promień ma własne siatki, a komponent może dołożyć własne obiekty (`extras` — fabryki
 // (uniforms) → { object, applyLook(L, b, matrix), update(time, dt), meshes(), dispose() }; obiekt w ramie OBIEKTU kuli).
 //
-// Ring gry leży w płaszczyźnie ekranu i nie obraca się z Ziemią, więc odbiornik krąży z gryzem (obraca się z gruntem):
-// przy krawędziach tarczy wchodzi pod ring, nad środkiem tarczy wisi nad otworem. Przekaz do ringu tylko przy widoku
-// ringu z odbiornika (`placeRelay`); bez niego odbiornik ładuje magazyn (`uPlantState.y`), z nim — oddaje.
+// Ziemia obraca się wokół osi ringu (earthSpin.js — decyzja użytkownika 2026-10-22), więc ring gry jest w jej układzie
+// równikowy i stoi względem gruntu: promień przekaźnikowy (`attachRing`) i liny wind są stałe. Przekaz działa przy
+// widoku ringu z odbiornika; bez niego odbiornik ładuje magazyn (`uPlantState.y`), z nim — oddaje.
 //
 // Układ: obiekt kuli Ziemi (R = 1, earthBiteShape.js). Siatki są dziećmi siatki kuli (obrót doby, soczewka warpa, skala
 // grupy); uniformy słońca, gryzu i maski słońca dzielą z kulą obiekty { value }.

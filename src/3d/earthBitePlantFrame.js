@@ -31,7 +31,7 @@ export const PART = Object.freeze({
   BEACON: 6,  // światło pozycyjne (miga, faza z aPart.y); z — częstotliwość [Hz], w — barwa: 0 czerwona, 1 biała
   GLASS: 7,   // ciemne szkło / czasze (odblask nieba i słońca)
   PIPE: 8,    // przewód energii: uv.y — droga od źródła 0…1, z — długość drogi [R], w — kierunek impulsów (±1)
-  TETHER: 9   // lina windy: uv.y — 0 kotwica … 1 odbiornik, z — długość [R], w — pas kabin (+1 w górę, −1 w dół)
+  TETHER: 9   // lina windy: uv.y — 0 kotwica … 1 ring (dok wózka na szynie), z — długość [R], w — pas kabin (±1)
 });
 
 /**
