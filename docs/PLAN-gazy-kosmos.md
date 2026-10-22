@@ -190,3 +190,18 @@ Port prowadzi sesja E11 planu ekonomii (`docs/PLAN-ekonomia-rynki.md`).
   - Kadłuby wchodzą jako maski obrysu z rekordów `GAS_HULL_REC`; „pług” liczy się od prostokąta maski.
   - Obraz ma dwie pary tekstur zapisywane na zmianę, każdą z własnym rogiem okna. Przenikanie idzie według ułamka kroku.
   - Szum: z layoutem jest tylko `gnoise`, a `fbm` jest wklejana (pułapka 35).
+- **GK-2, GK-3 i GK-5, część pierwsza (2026-10-22):** gaz pasa w grze (commit `ecd3d672`).
+  - Wejście gry: `src/game/spaceGasInput.js` → blok `spaceGas`. Kotwica to Słońce. Obwiednia 32 × 32 bierze się z `sampleMacro` (wzór płatów mgły × `hole` + `gas` z E3) i przesuwa się przyrostowo. Dochodzi do tego odgazowanie lodowych skał.
+  - Render: `src/3d/spaceGas/spaceGas.js` (dysze `EngineFrame`, kadłuby z `GAS_OBST_IN`, gdy okno pola jest w prostokątach domen), mapy compute i warstwa.
+  - Odstępstwo od planu: zamiast 8 plasterków są **dwie połowy warstwy** (dolna pod kadłubami, górna po efektach). W kamerze z góry to złożenie dema z głębią. Plasterki z paralaksą dla kamer 3D przyjdą później.
+  - Pomiar (`scripts/webgpu/gaz-kosmos-gra.mjs`, RTX, 1600 × 900): w trybach off i worker obraz jest zgodny, pipeline'ów sync 0, błędów 0. GPU: render +0,08 ms, compute +0,16 ms.
+- **GK-8, część pierwsza:** opcja „Gazy i mgły w pasie asteroid” (Wł. / Wył., preset Niska — Wył.).
+- **Do zrobienia:**
+  - GK-4: pył gazu (D2: 80 tys.).
+  - GK-5, część druga:
+    - przekroje olbrzymów pasa jako przeszkody;
+    - wybuchy (reżyser) i pociski jako źródła;
+    - gaz zamiast płytkich płatów `fog.js` (dziś są obie mgły) — po scaleniu E3, które zmienia `fog.js`.
+  - GK-8, część druga: okno 128 / 256 / 384 i mapy z presetu.
+  - GK-6 (ring Jowisza), GK-7 (ławice mgły), GK-9 (odbiór).
+  - Kamery 3D: plasterki z paralaksą i mipmapy map.
