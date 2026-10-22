@@ -2,8 +2,7 @@
 // pośrednik, szum, pioruny): earthBitePlumeShape.js, obiekty three: earthBitePlume3D.js.
 //
 // Bryła-pośrednik (wycinek kuli nad gryzem, ściany przednie, test głębi) daje punkt wejścia promienia; dalej wszystko
-// liczy fragment: koniec drogi analitycznie (kula Ziemi poza gryzem, ściany gryzu — kula β bazowego, klamry nad
-// otworem), marsz z krokiem drobnym w powłoce kowadła i grubszym w kolumnie, gęstość = kształt (kolumna z przechyłem
+// liczy fragment: koniec drogi analitycznie (kula Ziemi poza gryzem, ściany gryzu — kula β(φ, ψ)), marsz z krokiem drobnym w powłoce kowadła i grubszym w kolumnie, gęstość = kształt (kolumna z przechyłem
 // i kopułą, kowadło z wiatrem) erodowany kaflem szumu 3D, który jedzie z przepływem (wznoszenie, wir, wypływ).
 // Światło w punkcie: SŁOŃCE (cień kuli Ziemi, w głębi gryzu — wyjście przez otwór; zachód — przepuszczalność
 // atmosfery przy muśnięciu promienia; samocień dwiema próbkami kształtu; maska słońca gry), ŻAR DNA od spodu
@@ -172,7 +171,7 @@ function buildPlumeGraph() {
     const W = normalize(U.uPlWind).toVar();
     const Bn = cross(A, W).toVar();
 
-    // ── koniec drogi: kula Ziemi poza gryzem, ściany gryzu, klamry ──
+    // ── koniec drogi: kula Ziemi poza gryzem, ściany gryzu ──
     // Ściana gryzu to kula β(φ, ψ) (płaty, zęby — do ±12% β bazowego): wejście do kuli Ziemi w otworze i wyjście przez
     // ścianę liczone z β w punkcie (jedna poprawka po kuli β bazowego), inaczej słup prześwitywałby przez ścianę.
     const east = earthBiteEast(A).toVar();
@@ -186,30 +185,6 @@ function buildPlumeGraph() {
     const w = raySphere(ro, rd, A, cW.w);
     const tWall = select(w.y.lessThan(e.y), w.y, float(BIG));
     const tHit = select(hitEarth, select(inBite, tWall, tIn), float(BIG)).toVar();
-    {
-      // klamry: płyty |x · n − s| < w/2 w powłoce [bottomKm, topKm] nad kulą, nad otworem (zasięg od C)
-      const RB = EARTH_BITE.ribs;
-      const north = cross(A, east);
-      const a = RB.axisDeg * DEG;
-      const nRib = east.mul(Math.cos(a)).add(north.mul(Math.sin(a))).toVar();
-      const s1 = raySphere(ro, rd, vec3(0.0), float(1 + RB.topKm * KM));
-      const s0 = raySphere(ro, rd, vec3(0.0), float(1 + RB.bottomKm * KM));
-      const shIn = s1.x;
-      const shOut = select(s0.x.lessThan(BIG * 0.5), s0.x, s1.y);
-      const ln0 = dot(rd, nRib);
-      const ln = select(abs(ln0).lessThan(1e-6), float(1e-6), ln0).toVar();
-      const pn = dot(ro, nRib).toVar();
-      const w2 = RB.widthKm * 0.5 * KM;
-      const reach = b.mul(1.25).add(RB.anchorKm * KM).toVar();
-      for (const off of RB.offsets) {
-        const s = b.mul(off);
-        const ta = s.sub(w2).sub(pn).div(ln), tb = s.add(w2).sub(pn).div(ln);
-        const t0 = max(min(ta, tb), shIn);
-        const t1 = min(max(ta, tb), shOut);
-        const near = length(ro.add(rd.mul(t0)).sub(A)).lessThan(reach);
-        tHit.assign(select(t1.greaterThan(t0).and(t0.greaterThan(0.0)).and(near), min(tHit, t0), tHit));
-      }
-    }
     const bound = raySphere(ro, rd, vec3(0.0), U.uPlAnv2.w);
     const tStart = max(bound.x, 0.0).toVar();
     const tEnd = min(tHit, bound.y).toVar();

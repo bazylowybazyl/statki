@@ -23,7 +23,7 @@ import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { warpSkyBendCount } from './warp/skyBend.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
 import { skyRegionBrightness, stepSkyRegion } from '../game/skyRegion.js';
-import { createEarthBiteMeshes, earthBiteUniforms, earthBiteVector, earthBiteCenterIn } from './earthBite3D.js';
+import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector, earthBiteCenterIn } from './earthBite3D.js';
 import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
@@ -613,7 +613,7 @@ class DirectPlanet {
         this.isRingAnchored = RING_PLANET_NAMES.has(this.name);
         this._visibilityCulled = false;
         this.mesh = null; this.clouds = null; this.cloudUniforms = null; this.atmosphere = null; this.saturnRing = null;
-        this.pit = null; this.pitRibs = null;
+        this.pit = null;
         this.group = new THREE.Group(); this.group.position.z = -50000; this.basePlanetBloom = 0.0; this.visibleRadiusMul = 1.0;
         this.uniforms = {
             uPlanetBloom: { value: 0.0 }, dayTexture: { value: null }, nightTexture: { value: null }, specularTexture: { value: null },
@@ -626,7 +626,7 @@ class DirectPlanet {
             // Planety tła siedzą na z = −50 000 w perspektywie — maska liczona
             // w płaszczyźnie gry trafiałaby w nie obok (własna smuga na tarczy).
             uSunShadowRecv: { value: this.isRingAnchored ? 1.0 : 0.0 },
-            // Wielki gryz (tylko Ziemia): 1 = kula z wycięciem, łata ma 2, klamry 3 (earthBite3D.js);
+            // Wielki gryz (tylko Ziemia): 1 = kula z wycięciem, łata ma 2 (earthBite3D.js);
             // uBite = środek gryzu w układzie obiektu kuli + promień bazowy.
             uPitMode: { value: 0.0 }, uBite: { value: earthBiteVector() }
         };
@@ -699,12 +699,10 @@ class DirectPlanet {
             : (this.saturnAtm ? createSaturnSurfaceMaterial(this.uniforms) : createPlanetSurfaceMaterial(this.uniforms));
         this.mesh = new THREE.Mesh(geometry, material); this.group.add(this.mesh);
         if (maps?.pit) {
-            // Wielki gryz: kula bez obszaru gryzu, w nim łata (ściany, dno, kołnierz) i klamry — ten sam graf i mapy.
+            // Wielki gryz: kula bez obszaru gryzu, w nim łata (ściany, dno, kołnierz) — ten sam graf i mapy.
             this.uniforms.uPitMode.value = 1.0;
-            const bite = createEarthBiteMeshes(createPlanetSurfaceMaterial(earthBiteUniforms(this.uniforms, 2)),
-                createPlanetSurfaceMaterial(earthBiteUniforms(this.uniforms, 3)));
-            this.pit = bite.patch; this.pitRibs = bite.ribs;
-            this.mesh.add(this.pit, this.pitRibs);
+            this.pit = createEarthBiteMesh(createPlanetSurfaceMaterial(earthBiteUniforms(this.uniforms, 2)));
+            this.mesh.add(this.pit);
         }
         if (name === 'saturn') {
             const tilt = THREE.MathUtils.degToRad(SATURN_VISUAL_RING.tiltDeg);

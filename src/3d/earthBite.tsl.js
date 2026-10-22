@@ -2,17 +2,17 @@
 // limbu i tła menu.
 //
 // Kula Ziemi ma wycięty obszar gryzu (uPitMode = 1: discard bliżej C niż β + cutPad), w jego miejscu leży
-// ŁATA — ściany, dno i kołnierz brzegu (earthBite3D.js, uPitMode = 2) — a nad otworem KLAMRY (uPitMode = 3).
+// ŁATA — ściany, dno i kołnierz brzegu (earthBite3D.js, uPitMode = 2).
 // Kształt jest analityczny (kula β(φ, ψ) ze środkiem na powierzchni), więc fragment łaty liczy wszystko
 // wprost: normalną z gradientu β (bruzdy zębów ostre przy każdej gęstości siatki), cień ścian promieniem ku
-// słońcu (drugie przecięcie kuli gryzu: wyjście przez otwór = słońce, w skałę = cień) i cienie klamer,
+// słońcu (drugie przecięcie kuli gryzu: wyjście przez otwór = słońce, w skałę = cień),
 // barwę skał (skorupa, płaszcz), żar (rzeki i pęknięcia w zastygającej skorupie dna, jasne punkty hut,
 // pęknięcia ścian jaśniejsze w głąb), pole siłowe na ścianach (język tarcz: heksy, poświata pod kątem)
 // i światło dna na ścianach (piec).
 //
 // `betaNode` = LUSTRO `earthBiteRadius` (earthBiteShape.js) i `beta` w scripts/planety/gryz.py. Funkcje
 // z layoutem są czyste (liczby z danych wklejone jako stałe, uniformy jako parametry) i nie wołają innych
-// funkcji z layoutem (pułapka 35); wołające — wklejane (`earthBiteShade`, `earthBiteRibShade`).
+// funkcji z layoutem (pułapka 35); wołające — wklejane (`earthBiteShade`).
 import {
   Fn, float, vec2, vec3, vec4, atan, acos, sqrt, cos, sin, floor, fract, clamp, smoothstep, mix, abs,
   normalize, dot, length, max, min, cross, select, pow
@@ -35,7 +35,7 @@ export const EARTH_BITE_TSL = Object.freeze({
   field: [0.22, 0.72, 1.0],
   fieldGain: 0.32,
   forge: [1.0, 0.42, 0.12],
-  forgeGain: 0.6,
+  forgeGain: 1.5,
   skyFill: 0.10
 });
 
@@ -179,28 +179,6 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   const q = p.add(sunObj.mul(t2));
   const open = smoothstep(-0.0016, 0.0016, length(q).sub(1.0));
   const shadow = select(vl.lessThan(0.0), open, float(0.0)).toVar();
-  // cienie klamer: przejście promienia przez płytę |x · n − s| < w / 2 na wysokości belki
-  const a = B.ribs.axisDeg * DEG;
-  const nRib = east.mul(Math.cos(a)).add(north.mul(Math.sin(a))).toVar();
-  const ln0 = dot(sunObj, nRib);
-  const ln = select(abs(ln0).lessThan(1e-5), float(1e-5), ln0).toVar();
-  const pn = dot(p, nRib).toVar();
-  const w2 = B.ribs.widthKm * 0.5 * KM;
-  const r0 = 1 + B.ribs.bottomKm * KM, r1 = 1 + B.ribs.topKm * KM;
-  const reach = b.mul(1.25).add(B.ribs.anchorKm * KM).toVar();
-  const ribOcc = float(0.0).toVar();
-  for (const off of B.ribs.offsets) {
-    const s = b.mul(off);
-    const ta = s.sub(w2).sub(pn).div(ln), tb = s.add(w2).sub(pn).div(ln);
-    const t0 = max(min(ta, tb), 0.0), t1 = max(ta, tb);
-    const ra = length(p.add(sunObj.mul(t0))), rb = length(p.add(sunObj.mul(t1)));
-    const lo = min(ra, rb), hi = max(ra, rb);
-    const over = smoothstep(r0 - 0.0004, r0 + 0.0004, hi).mul(sdown(r1 - 0.0004, r1 + 0.0004, lo));
-    const xm = normalize(p.add(sunObj.mul(t0.add(t1).mul(0.5))));
-    const near = sdown(reach.mul(0.96), reach, length(xm.sub(C)));
-    ribOcc.assign(max(ribOcc, select(t1.greaterThan(0.0), over.mul(near), float(0.0))));
-  }
-  shadow.mulAssign(float(1.0).sub(ribOcc));
 
   // głębokość: 0 brzeg … 1 dno
   const depthR = float(1.0).sub(length(p)).toVar();
@@ -232,7 +210,8 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   const ramp = smoothstep(0.04, 1.0, dN).toVar();
   const wallCracks = mix(float(0.035), pow(max(0.0, ridge1), float(16.0).sub(ramp.mul(6.0))).mul(0.8), lod(pix, 1700.0))
     .add(mix(float(0.01), pow(max(0.0, ridge2), 22.0).mul(0.45), lod(pix, 5200.0)));
-  const wallEmit = heat(ramp).mul(wallCracks.mul(ramp).mul(T.wall).add(ramp.mul(ramp).mul(ramp).mul(ramp).mul(0.08)));
+  // żar ciała ściany rośnie z głębokością (płaszcz ~1 600 K pod skorupą → ~2 500 K przy dnie)
+  const wallEmit = heat(ramp).mul(wallCracks.mul(ramp).mul(T.wall).add(ramp.mul(ramp).mul(0.16)));
 
   // DNO: jezioro płaszcza pod zastygającą skorupą — płyty, jasne szwy, rzeki spływające ze ścian, huty
   const lake = smoothstep(0.80, 0.90, dN).toVar();
@@ -277,7 +256,7 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   // światło dna na ścianach (piec): kierunek ku środkowi dna, gaśnie ku brzegowi
   const bottom = C.mul(float(1.0).sub(b));
   const toB = normalize(bottom.sub(p));
-  const forge = max(dot(normal, toB), 0.0).mul(smoothstep(0.05, 0.85, dN)).mul(float(1.0).sub(lake.mul(0.7)));
+  const forge = max(dot(normal, toB), 0.0).mul(float(0.35).add(smoothstep(0.05, 0.8, dN).mul(0.65))).mul(float(1.0).sub(lake.mul(0.7)));
   emit.addAssign(albedo.mul(vec3(...T.forge)).mul(forge.mul(T.forgeGain)));
   emit.mulAssign(cav);
   return { normal, shadow, albedo, emit, field, cav, dN };
@@ -303,35 +282,4 @@ function sdown(lo, hi, x) {
 // select(x > edge) jako 0 / 1 (próg twardy — punkty hut)
 function step01(x, edge) {
   return select(x.greaterThan(edge), float(1.0), float(0.0));
-}
-
-/**
- * Cieniowanie klamer (wklejane). p = punkt (obiekt), nObj = normalna ściany belki (obiekt), sunObj = kierunek ku
- * słońcu, uvR = uv siatki klamer (x — droga [1000 km], y — ściana + ułamek). Zwraca { albedo, emit, shadow }.
- */
-export function earthBiteRibShade(p, nObj, sunObj, uvR, bite, east) {
-  const T = EARTH_BITE_TSL;
-  const face = floor(uvR.y).toVar();
-  const fr = fract(uvR.y);
-  const km = uvR.x.mul(1000.0).toVar();
-  // panele belki (co ~14 km), pas jaśniejszy na górze
-  const panel = fract(sin(floor(km.div(14.0)).mul(12.9898)).mul(43758.5453));
-  const top = select(face.lessThan(0.5), float(1.0), float(0.0));
-  const albedo = vec3(0.12, 0.125, 0.135).mul(float(0.82).add(panel.mul(0.3))).add(vec3(0.06).mul(top).mul(sdown(0.40, 0.42, abs(fr.sub(0.5))))).toVar();
-  // cień kuli Ziemi (belka leży tuż nad powierzchnią): promień ku słońcu przechodzi przez kulę?
-  const dl = dot(p, sunObj);
-  const h2 = max(dot(p, p).sub(dl.mul(dl)), 0.0);
-  const shadow = select(dl.lessThan(0.0), smoothstep(0.999, 1.002, sqrt(h2)), float(1.0)).toVar();
-  // spód i boki nad otworem świecą żarem dna
-  const c = earthBiteCoords(p, bite, east);
-  const over = sdown(c.w.sub(0.004), c.w.add(0.004), c.x);
-  const rad = normalize(p);
-  const down = max(dot(nObj, rad).negate(), 0.0).add(float(1.0).sub(abs(dot(nObj, rad))).mul(0.3));
-  const emit = albedo.mul(vec3(...T.forge)).mul(down.mul(over).mul(2.2)).toVar();
-  // światła pozycyjne na górze belki, czerwone na kotwach
-  const dash = sdown(0.0, 0.18, abs(fract(km.div(9.0)).sub(0.5))).mul(sdown(0.0, 0.08, abs(fr.sub(0.5)))).mul(top);
-  emit.addAssign(vec3(2.2, 1.9, 1.4).mul(dash).mul(over));
-  const beacon = sdown(0.0, 0.08, abs(fract(km.div(40.0)).sub(0.5))).mul(sdown(0.0, 0.2, abs(fr.sub(0.5)))).mul(top).mul(float(1.0).sub(over));
-  emit.addAssign(vec3(3.0, 0.25, 0.12).mul(beacon));
-  return { albedo, emit, shadow };
 }

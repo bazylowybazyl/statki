@@ -1,11 +1,11 @@
-// Wielki gryz Ziemi — łata (ściany, dno, kołnierz brzegu) i klamry na kuli planety (gra: planet3d.assets.js,
+// Wielki gryz Ziemi — łata (ściany, dno, kołnierz brzegu) na kuli planety (gra: planet3d.assets.js,
 // tło menu, demo planet). Kształt: earthBiteShape.js (dane src/data/earthBite.js), cieniowanie: gałąź
-// uPitMode 2 / 3 w grafie powierzchni (planet3d.assets.tsl.js / earthBite.tsl.js). Kula planety wycina u siebie
-// obszar gryzu (uPitMode = 1); łata i klamry siedzą jako dzieci siatki kuli (obrót doby, soczewka warpa i skala
-// grupy działają same) i używają tego samego grafu co kula — te same mapy, ten sam szew.
+// uPitMode = 2 w grafie powierzchni (planet3d.assets.tsl.js / earthBite.tsl.js). Kula planety wycina u siebie
+// obszar gryzu (uPitMode = 1); łata siedzi jako dziecko siatki kuli (obrót doby, soczewka warpa i skala
+// grupy działają same) i używa tego samego grafu co kula — te same mapy, ten sam szew.
 import * as THREE from 'three/webgpu';
 import { EARTH_BITE } from '../data/earthBite.js';
-import { buildEarthBitePatch, buildEarthBiteRibs, earthBiteFrame } from './earthBiteShape.js';
+import { buildEarthBitePatch, earthBiteFrame } from './earthBiteShape.js';
 
 const _geometry = new Map();
 
@@ -19,14 +19,11 @@ function toGeometry(p) {
   return g;
 }
 
-/** Geometria łaty i klamer — wspólna na promień gryzu (kula o promieniu 1; skala z grupy planety). */
+/** Geometria łaty — wspólna na promień gryzu (kula o promieniu 1; skala z grupy planety). */
 export function earthBiteGeometry(b = EARTH_BITE.radiusR) {
   const key = b.toFixed(4);
   if (!_geometry.has(key)) {
-    _geometry.set(key, {
-      patch: toGeometry(buildEarthBitePatch(EARTH_BITE, { b })),
-      ribs: toGeometry(buildEarthBiteRibs(EARTH_BITE, { b }))
-    });
+    _geometry.set(key, toGeometry(buildEarthBitePatch(EARTH_BITE, { b })));
   }
   return _geometry.get(key);
 }
@@ -38,21 +35,18 @@ export function earthBiteVector(b = EARTH_BITE.radiusR, out = new THREE.Vector4(
 }
 
 /**
- * Uniformy łaty i klamer: te same obiekty `{ value }` co kula (mapy, słońce, mgiełka, cień ringu, `uBite`),
+ * Uniformy łaty: te same obiekty `{ value }` co kula (mapy, słońce, mgiełka, cień ringu, `uBite`),
  * własny tylko tryb gryzu.
  */
 export function earthBiteUniforms(sphereUniforms, mode) {
   return { ...sphereUniforms, uPitMode: { value: mode } };
 }
 
-/** Siatki łaty i klamer dla materiałów `patchMaterial` / `ribMaterial` (lekkie materiały na grafie kuli). */
-export function createEarthBiteMeshes(patchMaterial, ribMaterial, b = EARTH_BITE.radiusR) {
-  const geo = earthBiteGeometry(b);
-  const patch = new THREE.Mesh(geo.patch, patchMaterial);
+/** Siatka łaty dla materiału `material` (lekki materiał na grafie kuli). */
+export function createEarthBiteMesh(material, b = EARTH_BITE.radiusR) {
+  const patch = new THREE.Mesh(earthBiteGeometry(b), material);
   patch.name = 'EarthBite';
-  const ribs = new THREE.Mesh(geo.ribs, ribMaterial);
-  ribs.name = 'EarthBiteRibs';
-  return { patch, ribs };
+  return patch;
 }
 
 const _qa = new THREE.Quaternion();

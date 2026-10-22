@@ -5,6 +5,9 @@
 //
 //   node scripts/webgpu/planety-mapy-gra.mjs [--tag nowe] [--obok stare] [--query planety=stare]
 //                                            [--out .tmp/planety-mapy] [--tylko dziura-dzien,ziemia-cala]
+//                                            [--js "wyrażenie"]  (w stronie przed każdym kadrem — A/B warstw, np.
+//                                            "(window._entities.find(e => e.name === 'earth').atmosphere.visible = false)")
+//                                            [--po "return Core3D.gpuFrameMs"]  (po klatkach kadru — wynik do wynik-<tag>.json)
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startChrome, attachLogs, waitFor, evaluate, osobneLosowanieUuid, repo } from './wspolne.mjs';
@@ -217,7 +220,7 @@ try {
     if (view.off) { x += view.off[0] * r; y += view.off[1] * r; }
     const info = { r: Math.round(r) };
     if (e && (e.pit || view.target) && view.pitX !== undefined) {
-      // kierunek celu w układzie siatki: punkt (lon, lat) albo środek dziury (pierwszy wierzchołek łaty)
+      // kierunek celu w układzie siatki: punkt (lon, lat) albo środek gryzu (pierwszy wierzchołek łaty = dno nad C)
       let cx, cy, cz;
       if (view.target) {
         const lo = view.target[0] * Math.PI / 180, la = view.target[1] * Math.PI / 180;
@@ -242,7 +245,8 @@ try {
       if (view.center === 'pit') {
         x = p.x + xs * r;
         y = p.y - cy * r;
-        const pitR = r * (860 / 6371);
+        // otwór gryzu 0,46 R (src/data/earthBite.js): promień kątowy ~26,6° → ~0,45 R na tarczy
+        const pitR = r * 0.45;
         zoom = view.zoom ?? (persp ? zoomFor(view.fill) : view.fill * 1080 / (2 * pitR * 1.25));
       }
     }
@@ -280,9 +284,11 @@ try {
     if (only && !only.has(view.name)) continue;
     const info = await place(view);
     if (info.blad) throw new Error(info.blad);
+    if (args.js) await ev(`(() => { ${args.js}; return true; })()`);
     await ev('window.__harness.frames(12)');
     await waitFor(cdp, 'window.__harness.scene.uploadsIdle()', 60000, 250);
     await ev('window.__harness.frames(6)');
+    if (args.po) info.po = await ev(`(async () => { ${args.po} })()`);
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     writeFileSync(join(out, `${view.name}__${tag}.png`), Buffer.from(data, 'base64'));
     const shots = [];

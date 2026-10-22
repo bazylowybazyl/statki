@@ -98,9 +98,6 @@ async function start() {
       const vis = !!body && P.S.pitOn !== false;
       plume.mesh.visible = vis && S.on;
       plant.group.visible = vis && S.plantOn;
-      // klamry gryzu (decyzja użytkownika 2026-10-22: „wywal te 4 paski”) — w demie schowane razem z elektrownią; demo co
-      // klatkę ustawia im `visible`, więc chowamy je warstwą (kamera dema widzi tylko warstwę 0)
-      if (body?.ribs) body.ribs.layers.set(vis && S.plantOn ? 31 : 0);
       plume.update(S.frozen ? 0 : dt);
       plant.update(S.frozen ? 0 : dt);
     }
