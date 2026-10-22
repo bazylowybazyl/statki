@@ -10,8 +10,11 @@
 import { createSuite, runIfMain } from './harness.mjs';
 import {
   PATROL_MODEL, laneKey, createPatrolRegistry, collectLevy, budgetOf,
-  recordLaneLoss, planPatrols, patrolStrength, patrolMultiplier, summarizePatrols
+  recordLaneLoss, planPatrols, patrolStrength, patrolMultiplier, summarizePatrols,
+  GARRISON_MODEL, militaryWarshipBerths, garrisonPorts, summarizeGarrison
 } from '../../src/game/traffic/patrols.js';
+import { buildTrafficWorld, stepTrafficWorld } from '../../src/game/traffic/trafficWorld.js';
+import { berthRole, BERTH_ROLE } from '../../src/game/traffic/dockLayout.js';
 
 const TN = 'terra_nova';
 
@@ -118,6 +121,33 @@ export function run() {
   t.check('pokazuje, gdzie boli najbardziej', raport.hotspots.length > 0);
   t.check('i ile zostało w kasie', typeof raport.budgets[TN] === 'number');
   t.check('liczy wydatki', raport.stats.spent > 0);
+
+  // ----------------------------------------------------------
+  t.section('Garnizon: K-7 to port wojskowy');
+
+  // Hale K-7 stały puste: zapas okrętów był liczbą w stoczni, a kampanie nie
+  // miały postoju w porcie. Rotacja pokazuje garnizon przy porcie domowym.
+  const swiat = buildTrafficWorld({ economyScale: 1, capacityMultiplier: 4, seed: 7 });
+  const k7 = swiat.docks.get('earth');
+  t.check('Ziemia ma stanowiska wojskowe dla okrętów', militaryWarshipBerths(k7) > 0);
+  t.check('porty garnizonu to tylko te z halami wojskowymi',
+    garrisonPorts(swiat.stations, swiat.docks, 'terra_nova').every(p => p.berths > 0));
+  let maxZajete = 0;
+  let maxNaRotacji = 0;
+  for (let s = 0; s < 2 * 3600; s += 5) {
+    stepTrafficWorld(swiat, 5);
+    let zajete = 0;
+    for (const b of k7.berths) if (berthRole(b) === BERTH_ROLE.MILITARY && b.occupantId) zajete++;
+    maxZajete = Math.max(maxZajete, zajete);
+    maxNaRotacji = Math.max(maxNaRotacji, summarizeGarrison(swiat.war.garrison).byStation.earth || 0);
+  }
+  const garnizon = summarizeGarrison(swiat.war.garrison);
+  t.note(`rotacje ${garnizon.stats.rotations}, powroty ${garnizon.stats.returns}, `
+    + `K-7 Ziemi max ${maxZajete} z ${militaryWarshipBerths(k7)} stanowisk`);
+  t.check('okręty stają w halach K-7', maxZajete > 0);
+  t.check('rotacja nie zajmuje więcej niż berthShare stanowisk',
+    maxNaRotacji <= Math.floor(militaryWarshipBerths(k7) * GARRISON_MODEL.berthShare)
+      + GARRISON_MODEL.returnCap);
 
   return t.results;
 }

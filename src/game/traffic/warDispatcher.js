@@ -26,6 +26,7 @@ import { RESOURCES } from '../../data/resources.js';
 import { getStationIndustry, militaryScale } from '../stationEconomy.js';
 import { WARSHIP_CLASSES, takeShips, returnShips, fleetPower } from './shipyards.js';
 import { takeStock, declareDemand } from './marketBook.js';
+import { createGarrisonState, tickGarrison, launchCampaignReturn } from './patrols.js';
 
 export const WAR_MODEL = Object.freeze({
   /** Co ile sekund frakcja w ogóle rozważa wyprawę. */
@@ -251,6 +252,8 @@ export function createWarState(options = {}) {
     garrisons: new Map(),
     /** Wraki czekające na złomiarzy: { id, x, y, scrap, factionId, classId }. */
     wrecks: [],
+    /** Rotacja garnizonu przez porty wojskowe (K-7) — patrz `tickGarrison`. */
+    garrison: createGarrisonState(options.garrison),
     sinceDecision: 0,
     nextWreckId: 1,
     log: [],
@@ -412,6 +415,10 @@ export function tickWar(war, dt, options = {}) {
   const events = [];
   const step = Math.max(0, Number(dt) || 0);
 
+  // 0. Garnizon w portach wojskowych — widok floty, nie ruch zapasu.
+  if (!war.garrison) war.garrison = createGarrisonState();
+  tickGarrison(war.garrison, step, options);
+
   // 1. Kampanie w drodze — czy dotarły.
   for (let i = war.campaigns.length - 1; i >= 0; i--) {
     const campaign = war.campaigns[i];
@@ -472,6 +479,9 @@ export function tickWar(war, dt, options = {}) {
         if (wraca > 0) ocalali[classId] = wraca;
       }
       returnShips(shipyards, campaign.attacker, ocalali);
+      // Ocalali wracają do portu domowego na postój i tankowanie (hale K-7).
+      launchCampaignReturn(war.garrison, options, campaign.attacker, ocalali,
+        { x: target.x, y: target.y });
 
       war.stats.battles++;
       if (wynik.attackerWins) war.stats.attackerWins++; else war.stats.defenderWins++;
