@@ -650,6 +650,7 @@ Każdy krok liczony na swoim commicie w osobnej kopii (git worktree), przebiegi 
 | 4 emiter tarczy | daece75b | 15,0% | 8,2 min | 0 | 1,46–4,46 (Ceres) | 816–854 |
 | 5 układy z niklem, azot | fc593c36 | 15,2–15,3% | 8,6 min | 0 | 1,82–2,13 (Ceres) | 835–883 |
 | 6 warp + glin na Ceres (HEAD) | 1a530756 | 14,7–15,6% | 6,4 min | 0 | **1,60–1,67** (Wenus, Oberon, Ceres) | 832–874 |
+| po scaleniu z `main` (doki E4) | befbc566 | 15,0–15,7% | 6,8 min | 0 | **0,92–1,47** (Wenus) | 785–881 |
 
 Wnioski:
 - **Głód uranu** na Saturnie spada z 14,7 do 6,4 min, bo reaktor bierze połowę prętów.
