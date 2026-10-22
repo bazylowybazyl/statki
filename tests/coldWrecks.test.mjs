@@ -13,7 +13,6 @@ window.wrecks = [];
 const { HullBodies } = await import('../src/game/hullBodies.js');
 const { TowConstraintSystem } = await import('../src/game/towSystem.js');
 const { createColdWreckSystem, COLD_WRECK_CONFIG, THAW_RESULT } = await import('../src/game/coldWrecks.js');
-const { SHIPMENT_STATUS } = await import('../src/game/cargoFleet.js');
 const { readIndexHtml, sliceFunction, loadIndexFunction } = await import('./helpers/indexSource.mjs');
 const D = HullBodies.engine;
 
@@ -278,21 +277,12 @@ test('index.html: odwołania do wraku (odzysk, locki, kursor, menu, rozkazy, lin
   assert.equal(menuClosed._coldRefStamp, undefined, 'zamknięte menu nie trzyma wraku');
   assert.equal(refs.cutting._coldRefStamp, 8);
 
-  // Wprost: lina i ładunek w locie (partia jeszcze nie leży we wraku).
-  const orders = new Map([
-    ['o-transit', { status: SHIPMENT_STATUS.IN_TRANSIT }],
-    ['o-wreck', { status: SHIPMENT_STATUS.WRECK }]
-  ]);
+  // Wprost: lina. (Ładunek vanów w locie do wraku odszedł ze starą ekonomią — E2, 2026-10-22.)
   const roped = w();
   const direct = loadIndexFunction(src, 'function isColdWreckReferencedDirect(wreck)', 'isColdWreckReferencedDirect', {
-    TowSystem: { isAttached: (b) => b === roped },
-    getShipmentOrder: (_fleet, id) => orders.get(id),
-    cargoFleet: {},
-    SHIPMENT_STATUS
+    TowSystem: { isAttached: (b) => b === roped }
   });
   assert.equal(direct(roped), true);
-  assert.equal(direct({ isWreck: true, _cargoOrderId: 'o-transit' }), true, 'transfer w toku');
-  assert.equal(direct({ isWreck: true, _cargoOrderId: 'o-wreck' }), false, 'ładunek leżący we wraku nie blokuje');
   assert.equal(direct(idle), false);
 });
 

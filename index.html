@@ -1086,44 +1086,10 @@
     } from "./src/game/carrierVelocity.js";
     import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
-    import {
-      buildWarpRoutes,
-      getWarpRoute as lookupWarpRoute,
-      assignTransitRoute,
-      removeActorFromTransitQueues,
-      refreshWarpRoutes
-    } from "./src/game/transitController.js";
-    import {
-      createFleetState,
-      planShipment,
-      createShipmentOrder,
-      advanceShipmentOrders,
-      tryDeliverShipmentOrder,
-      wreckShipmentOrder,
-      recoverWreckedShipmentOrder,
-      materializeShipmentOrderView,
-      dematerializeShipmentOrderView,
-      getShipmentOrder,
-      tickCooldowns,
-      blockRoute,
-      getBlockedPairs,
-      describeCargo,
-      VAN_CLASSES,
-      SHIPMENT_STATUS,
-      SHIPMENT_OWNER_KIND,
-      DISPATCH_INTERVAL,
-      MAX_ACTIVE_VANS
-    } from "./src/game/cargoFleet.js";
-    import {
-      ECONOMY_CYCLE_SECONDS,
-      runStationEconomy,
-      seedStationStock,
-      getStationDeficits,
-      getStationSurpluses,
-      stationWantsResource,
-      describeStationRole,
-      resourcePrice
-    } from "./src/game/stationEconomy.js";
+    // Gospodarka stacji, przewozy i ceny liczą się w ruchu v2 (blok „RUCH v2”, most src/game/trafficBridge.js);
+    // gra trzyma tylko kopię rynku z mostu. Stara ekonomia (vany cargoFleet, tranzyt przez bramy, produkcja
+    // w grze, wycena z marżą doku) usunięta 2026-10-22 — E2, docs/PLAN-ekonomia-rynki.md § 3.2.
+    import { describeStationRole, resourcePrice } from "./src/game/stationEconomy.js";
     import {
       ensureSalvageManifest,
       getSalvage,
@@ -1520,7 +1486,6 @@
       getDefaultStationFaction,
       getFactionColor,
       getFactionName,
-      getFactionPriceMultiplier,
       getFactionShort,
       isDerelict,
       isFactionHostileToPlayer,
@@ -2646,9 +2611,9 @@
       unlimitedWarp: false,
       disableCameraShake: false,
       globalShieldsOff: false,
-      // Ruch v2 w Web Workerze (src/game/trafficBridge.js): gospodarka ×60,
-      // stara ekonomia stacji i vany stoją. `?trafficV2=N` — inna skala.
-      trafficV2: new URLSearchParams(location.search).has('trafficV2'),
+      // Ruch v2 w Web Workerze (src/game/trafficBridge.js) — JEDYNA ekonomia gry, gospodarka ×60.
+      // `?trafficV2=N` — inna skala, `?trafficV2=0` — wyłącznik awaryjny (stacje bez rynku, terminal bez handlu).
+      trafficV2: new URLSearchParams(location.search).get('trafficV2') !== '0',
       // Kolorowe kropki slotów z edytora hardpointów na każdym NPC (overlay z
       // czasów przed Turret2D). Domyślnie OFF: przy 150 okrętach to ~4000 kropek
       // w trybie 'screen' co klatkę, bez cullingu, a uzbrojone sloty i tak
@@ -2666,7 +2631,7 @@
     const DevTuning = window.DevTuning;
     const Dev = window.Dev = window.Dev || {};
     // Most ruchu v2 — tworzony w initTrafficV2(), gdy stacje i ich budynki już
-    // istnieją. `null` = flaga wyłączona (stara ekonomia i vany jak dotąd).
+    // istnieją. `null` = wyłącznik `?trafficV2=0` (gra bez ekonomii: terminal nie handluje).
     let trafficV2 = null;
     if (!Number.isFinite(Dev.station3DScale) || Dev.station3DScale <= 0) {
       Dev.station3DScale = DEFAULT_STATION_3D_SCALE;
@@ -4433,7 +4398,6 @@
 
     const Game = window.Game || (window.Game = {});
     Game.infrastructure = Game.infrastructure || new Map();
-    Game.stationEconomy = Game.stationEconomy || new Map();
     const previousPlayer = Game.player || {};
     // Inwentarz to broń W ŁADOWNI — montaż ją zabiera, demontaż zwraca.
     // Ilości startowe pokrywają DOKŁADNIE to, co obsadza autoMountDefaults(),
@@ -7859,7 +7823,6 @@
           orbitRadius, angle, speed: 0, r, baseR: r, x, y,
           ports: [{ x: portOffset, y: 0 }, { x: 0, y: portOffset }, { x: -portOffset, y: 0 }, { x: 0, y: -portOffset }],
           style: body.def.role === 'capital' ? 'shipyard' : 'hexHub',
-          warpGate: { x: x + 220, y, offset: { x: 220, y: 0 } },
           hp, maxHp: hp, hitFlash: 0, hitR: Math.round(r * 2.2),
           berths: spec.berths
         });
@@ -7890,8 +7853,6 @@
       const y = pl.y + Math.sin(angle) * orbitRadius;
       const r = 120;
       const portOffset = r + 40;
-      const gateOffset = ringPort ? ringPort.gateOffset : { x: 220, y: 0 };
-      const warpGate = { x: x + gateOffset.x, y: y + gateOffset.y, offset: { x: gateOffset.x, y: gateOffset.y } };
       const ports = ringPort
         ? ringPort.ports.map(p => ({ x: p.x, y: p.y }))
         : [
@@ -7919,7 +7880,6 @@
         y,
         ports,
         style,
-        warpGate,
         // Combat stats — required for bullet collision check (if (st.hp && ...))
         hp: 3000, maxHp: 3000,
         hitFlash: 0,
@@ -7971,32 +7931,6 @@
         camera.targetY = spawnPos.y;
       }
     }
-
-    // oznacz stacje wewnątrz pasa asteroid
-    (() => {
-      if (ASTEROID_BELT) {
-        const beltRadius = ASTEROID_BELT.mid;
-        for (const st of stations) {
-          const planetOrbit = st.planet?.orbitRadius;
-          const distFromSun = Number.isFinite(planetOrbit)
-            ? planetOrbit
-            : Math.hypot((st.planet?.x ?? st.x) - SUN.x, (st.planet?.y ?? st.y) - SUN.y);
-          st.inner = distFromSun < beltRadius;
-        }
-      } else {
-        for (const st of stations) st.inner = true;
-      }
-    })();
-
-    // Warp routes between stations
-    let warpRoutes = {};
-    function initWarpRoutes() {
-      // Pełna skierowana siatka obejmuje także przejścia inner <-> outer.
-      // Brak trasy jest błędem planowania; nigdy nie zastępujemy go lotem direct.
-      warpRoutes = buildWarpRoutes(stations);
-    }
-    function getWarpRoute(fromId, toId) { return lookupWarpRoute(warpRoutes, fromId, toId); }
-    initWarpRoutes();
 
     let npcs = [];
     window.npcs = npcs;
@@ -10133,123 +10067,8 @@
       return squad;
     }
     window.spawnPirateSquad = spawnPirateSquad;
-    const TRAFFIC_WEIGHTS = {
-      mercury: { civilian: 0.02, convoy: 0.25 },
-      venus: { civilian: 0.03, convoy: 0.25 },
-      earth: { civilian: 1.80, convoy: 0.50 },
-      mars: { civilian: 1.60, convoy: 0.55 },
-      default: { civilian: 0.40, convoy: 0.40 }
-    };
-
-    function trafficWeightFor(station, kind) {
-      const table = TRAFFIC_WEIGHTS[station.id] || TRAFFIC_WEIGHTS.default;
-      if (kind === 'convoy') return table.convoy ?? TRAFFIC_WEIGHTS.default.convoy;
-      if (kind === 'civilian') return table.civilian ?? TRAFFIC_WEIGHTS.default.civilian;
-      if (kind && typeof table[kind] === 'number') return table[kind];
-      return table.civilian ?? TRAFFIC_WEIGHTS.default.civilian;
-    }
-
-    function weightedPickStation(kind, scope) {
-      let pool;
-      if (Array.isArray(scope)) {
-        pool = scope.slice();
-      } else if (scope === 'inner' || scope === 'outer') {
-        const match = scope === 'inner';
-        pool = stations.filter(s => s.inner === match);
-      } else if (typeof scope === 'boolean') {
-        pool = stations.filter(s => s.inner === scope);
-      } else {
-        pool = stations.slice();
-      }
-      if (!pool.length) return null;
-      let total = 0;
-      const weighted = pool.map(st => {
-        const w = Math.max(0, trafficWeightFor(st, kind));
-        total += w;
-        return { st, w };
-      });
-      if (total <= 0) {
-        return pool[Math.floor(Math.random() * pool.length)];
-      }
-      let r = Math.random() * total;
-      for (const { st, w } of weighted) {
-        r -= w;
-        if (r <= 0) return st;
-      }
-      return weighted[weighted.length - 1].st;
-    }
-
-    function preferEarthMarsRoute(stationId) {
-      return (stationId === 'earth' || stationId === 'mars') && Math.random() < 0.7;
-    }
-
-    function pickNextStation(startStationId, type) {
-      const start = stations.find(s => s.id === startStationId) || stations[0];
-      if (!start) return startStationId;
-      if (preferEarthMarsRoute(start.id)) {
-        return start.id === 'earth' ? 'mars' : 'earth';
-      }
-      const isCivil = type && (type.startsWith('civilian') || type.startsWith('freighter'));
-      const sameSphere = stations.filter(s => s.inner === start.inner && s.id !== start.id);
-      const otherSphere = stations.filter(s => s.inner !== start.inner);
-      let pool = sameSphere.length ? sameSphere : stations.filter(s => s.id !== start.id);
-      if (isCivil && otherSphere.length && Math.random() < 0.35) {
-        pool = otherSphere;
-      }
-      let target = weightedPickStation(isCivil ? 'civilian' : null, pool);
-      if (!target || target.id === start.id) {
-        const fallbackPool = pool.length ? pool : stations.filter(s => s.id !== start.id);
-        if (fallbackPool.length) {
-          return fallbackPool[Math.floor(Math.random() * fallbackPool.length)].id;
-        }
-        return startStationId;
-      }
-      return target.id;
-    }
-
-    function beginStationTransit(npc, start, targetId, options = {}) {
-      const target = stations.find(station => station.id === targetId);
-      const route = start && target ? getWarpRoute(start.id, target.id) : null;
-      if (!npc || !start || !target || !route) return false;
-
-      const assigned = assignTransitRoute(npc, start, target, route, {
-        phase: options.phase || 'toGate',
-        lane: options.lane,
-        dockPort: options.dockPort,
-        speed: options.speed,
-        fade: options.fade ?? 1,
-        resetVelocity: options.resetVelocity
-      });
-      if (!assigned) return false;
-
-      if (options.spawnAtSource !== false) {
-        const portCount = Math.max(1, start.ports?.length || 0);
-        const startPort = Number.isFinite(options.startPort)
-          ? Math.abs(Math.trunc(options.startPort)) % portCount
-          : Math.floor(Math.random() * portCount);
-        const spawnPos = stationPortWorld(start, startPort);
-        npc.x = spawnPos.x;
-        npc.y = spawnPos.y;
-        npc.vx = 0;
-        npc.vy = 0;
-      }
-      return true;
-    }
-
-    const NPC_TYPES = {
-      'freighter-small': { radius: 10, speed: 100, hp: 100, color: '#8ab4d6', weapon: null, isCollidable: false },
-      'freighter-medium': { radius: 15, speed: 100, hp: 150, color: '#769cb8', weapon: null, isCollidable: false },
-      'freighter-large': { radius: 25, speed: 100, hp: 200, color: '#5d829c', weapon: null, isCollidable: false },
-      'freighter-capital': { radius: 48, speed: 100, hp: 400, color: '#45667d', weapon: null, isCollidable: false },
-      'police': { radius: 24, speed: 100, hp: 200, color: '#44aaff', weapon: 'null', isCollidable: true },
-      'civilian-small': { radius: 6, speed: 100, hp: 10, color: '#cccccc', weapon: null, isCollidable: false },
-      'civilian-large': { radius: 12, speed: 100, hp: 50, color: '#bbbbbb', weapon: null, isCollidable: false },
-      'guard': { radius: 20, speed: 100, hp: 100, color: '#ff9933', weapon: 'gun', isCollidable: true },
-      'mercenary': { radius: 25, speed: 100, hp: 100, color: '#ff6633', weapon: 'gun', isCollidable: true }
-    };
-
     // --- DevTools: spawn kadłubów bez szablonu wsparcia ---
-    // Frachtowce cargoFleet i kadłuby ruchu v2 (TRAFFIC_HULLS). Bez AI i broni:
+    // Frachtowce i kadłuby ruchu v2 (TRAFFIC_HULLS). Bez AI i broni:
     // `mission` = nie znikają za DESPAWN_RADIUS i słuchają rozkazów RTS.
     // Bojowe typy (fregaty, niszczyciele, kapitały) idą przez spawnCallInShip.
     const DEV_HULL_SPAWNS = Object.freeze({
@@ -13730,12 +13549,12 @@
     function fitPartPrice(id) {
       return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? 0) || 0;
     }
-    // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — pod ?trafficV2 most do
-    // workera), wycena weaponPriceAt. false — port jej tu nie złoży.
+    // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — most do workera ruchu),
+    // wycena weaponPriceAt. false — port jej tu nie złoży.
     function fitBuyWeaponPiece(station, econ, id) {
       const quote = weaponPriceAt(station, econ, id);
       if (!quote || !quote.inStock) return false;
-      for (const [res, qty] of Object.entries(quote.cost)) adjustStationStock(station, econ, res, -qty);
+      for (const [res, qty] of Object.entries(quote.cost)) adjustStationStock(station, res, -qty);
       return true;
     }
     // Czy port złoży wszystkie sztuki z listy zakupów naraz (weaponPriceAt sprawdza jedną).
@@ -14685,82 +14504,30 @@
       });
     }
 
-    // Stacja skupuje poniżej i sprzedaje powyżej wartości bazowej z resources.js.
-    // Rozpiętość jest marżą doku — opłaca się produkować samemu, ale zakup
-    // brakującego surowca zawsze jest możliwy.
-    const TRADE_BUY_MARGIN = 1.18;
-    const TRADE_SELL_MARGIN = 0.82;
+    // HANDEL Z DOKIEM — jeden model ceny dla gracza i kupców NPC: `resourcePrice` z gospodarki świata ruchu
+    // (niedobór, profil frakcji, długość głodu) z reputacją gracza, liczona na kopii rynku z mostu
+    // (`trafficV2.getEconomy`). Stacja, której świat ruchu nie zna (przed `ready` workera, kryjówka misji przed
+    // jego odpowiedzią, wyłącznik `?trafficV2=0`), nie handluje: brak magazynu → brak ceny (0).
 
-    // Cena lokalna = wartość bazowa × niedobór × profil frakcji × reputacja.
-    // To ten mnożnik niedoboru tworzy trasy handlowe: pusty magazyn na Marsie
-    // płaci za stal dwa razy tyle co pełny magazyn na Ziemi, więc frachtowce
-    // (i gracz) mają dokąd lecieć.
-    const SCARCITY_MIN_MUL = 0.6;   // magazyn pełny — nadwyżka, nikt nie chce
-    const SCARCITY_MAX_MUL = 1.8;   // magazyn pusty — głód
-    // Frakcja płaci więcej za to, czego potrzebuje, i taniej oddaje to,
-    // czego ma w nadmiarze z własnej produkcji.
-    const FACTION_DEMAND_MUL = 1.25;
-    const FACTION_SUPPLY_MUL = 0.8;
-
-    function getStationScarcityMul(station, key) {
-      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
-      const cap = Number(econ?.capacity?.[key]);
-      if (!Number.isFinite(cap) || cap <= 0) return 1;
-      const fill = Math.max(0, Math.min(1, (Number(econ.resources?.[key]) || 0) / cap));
-      return SCARCITY_MIN_MUL + (SCARCITY_MAX_MUL - SCARCITY_MIN_MUL) * (1 - fill);
+    // Magazyn, który widzi terminal: kopia rynku z workera ruchu (zapas ×60 i ceny świata) albo `null`.
+    function getTradeEconomy(station) {
+      return station ? (trafficV2?.getEconomy(station.id) || null) : null;
     }
 
-    function getFactionProfileMul(station, key) {
-      const faction = FACTIONS[normalizeFaction(station?.factionId)];
-      if (!faction) return 1;
-      if (faction.demands?.includes(key)) return FACTION_DEMAND_MUL;
-      if (faction.supplies?.includes(key)) return FACTION_SUPPLY_MUL;
-      return 1;
-    }
-
-    function getLocalBasePrice(station, key) {
-      return getResourceValue(key) * getStationScarcityMul(station, key) * getFactionProfileMul(station, key);
-    }
-
-    function getTradeBuyPrice(key, station = stationUI.station) {
-      if (trafficV2?.hasStation(station?.id)) return getTrafficV2PlayerPrice(station, key, 'ask');
-      // Dobra reputacja obniża cenę zakupu...
-      const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation);
-      return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_BUY_MARGIN * rep));
-    }
-
-    function getTradeSellPrice(key, station = stationUI.station) {
-      if (trafficV2?.hasStation(station?.id)) return getTrafficV2PlayerPrice(station, key, 'bid');
-      // ...i podnosi cenę skupu, więc dzielimy zamiast mnożyć.
-      const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation) || 1;
-      return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_SELL_MARGIN / rep));
-    }
-
-    // Ruch v2 (?trafficV2): JEDEN model ceny dla gracza i kupców NPC —
-    // `resourcePrice` z gospodarki świata ruchu (niedobór, profil frakcji,
-    // długość głodu) z reputacją gracza. Wycena doku wyżej (marża ±18%) zostaje
-    // dla stacji spoza świata ruchu, np. misyjnej kryjówki piratów.
-    function getTrafficV2PlayerPrice(station, key, side) {
-      const price = resourcePrice(station, trafficV2.getEconomy(station.id), key,
-        { reputation: PLAYER.reputation });
+    function getTradePrice(station, key, side) {
+      const econ = getTradeEconomy(station);
+      if (!econ) return 0;
+      const price = resourcePrice(station, econ, key, { reputation: PLAYER.reputation });
       return Math.max(1, Math.round(Number(price?.[side]) || 0));
     }
 
-    // Magazyn, który widzi terminal: pod ?trafficV2 kopia z workera ruchu
-    // (zapas ×60 i ceny świata), bez flagi — gospodarka stacji w grze.
-    function getTradeEconomy(station) {
-      if (!station) return null;
-      return trafficV2?.getEconomy(station.id) || InfrastructureUI.ensureEconomy(station);
-    }
+    function getTradeBuyPrice(key, station = stationUI.station) { return getTradePrice(station, key, 'ask'); }
+    function getTradeSellPrice(key, station = stationUI.station) { return getTradePrice(station, key, 'bid'); }
 
-    // Zmiana zapasu stacji z gry (handel, rozbiórka wraku). Pod ?trafficV2 idzie
-    // przez most — kopia zmienia się od razu, worker po swojej stronie.
-    function adjustStationStock(station, econ, key, delta) {
-      if (trafficV2?.hasStation(station?.id)) {
-        trafficV2.stockDelta(station.id, { [key]: delta }, 'player');
-        return;
-      }
-      econ.resources[key] = (Number(econ.resources[key]) || 0) + delta;
+    // Zmiana zapasu stacji z gry (handel, rozbiórka wraku, zakup broni) — tylko przez most (`stockDelta`):
+    // kopia zmienia się od razu, worker po swojej stronie. Stacja bez rynku nic nie przyjmuje.
+    function adjustStationStock(station, key, delta) {
+      if (trafficV2?.hasStation(station?.id)) trafficV2.stockDelta(station.id, { [key]: delta }, 'player');
     }
 
     // Komponenty handluje się sztukami, surowce sypkie partiami po 10.
@@ -15259,14 +15026,14 @@
       if (!pane) return;
       const table = pane.querySelector('.trade-resource-table');
       if (!table) return;
+      // Bez rynku stacji (świat ruchu jej nie zna) — kreski, nie liczby z poprzednio otwartej stacji.
       const econ = getTradeEconomy(station);
-      if (!econ) return;
       table.querySelectorAll('tr[data-resource-key]').forEach(row => {
         const key = row.dataset.resourceKey;
         const amountEl = row.querySelector('[data-field="amount"]');
         const capEl = row.querySelector('[data-field="capacity"]');
-        if (amountEl) amountEl.textContent = `${Math.round(econ.resources?.[key] ?? 0)}`;
-        if (capEl) capEl.textContent = `${Math.round(econ.capacity?.[key] ?? 0)}`;
+        if (amountEl) amountEl.textContent = econ ? `${Math.round(econ.resources?.[key] ?? 0)}` : '—';
+        if (capEl) capEl.textContent = econ ? `${Math.round(econ.capacity?.[key] ?? 0)}` : '—';
       });
       const note = pane.querySelector('.trade-resource-note');
       if (note) {
@@ -15287,7 +15054,9 @@
 
       const holdNote = pane.querySelector('.trade-hold-note');
       if (holdNote) {
-        holdNote.textContent = `Ładownia: ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cargoCap)}`;
+        // Bez rynku (stacja nieznana światu ruchu albo `?trafficV2=0`) terminal nie handluje.
+        holdNote.textContent = `Ładownia: ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cargoCap)}`
+          + (econ ? '' : ' · rynek stacji niedostępny');
       }
 
       table.querySelectorAll('tr[data-market-key]').forEach(row => {
@@ -15303,7 +15072,7 @@
         const buyPrice = getTradeBuyPrice(key, station);
         const priceCell = row.querySelector('[data-field="price"]');
         if (priceCell) {
-          priceCell.textContent = `${sellPrice} / ${buyPrice} CR`;
+          priceCell.textContent = econ ? `${sellPrice} / ${buyPrice} CR` : '—';
           // Kolor mówi, czy tu się opłaca sprzedawać, czy kupować — bez tego
           // gracz musiałby porównywać liczby między stacjami z pamięci.
           const ratio = sellPrice / Math.max(1, getResourceValue(key));
@@ -15321,7 +15090,7 @@
             const massNeeded = getResourceMassLocal(key, step);
             btn.disabled = PLAYER.credits < cost || stationStock < step || cargoFree < massNeeded;
           } else {
-            btn.disabled = held < step;
+            btn.disabled = !econ || held < step;
           }
         });
       });
@@ -15357,15 +15126,15 @@
       updateHangarCards();
     }
 
-    // Handel przenosi surowiec między ładownią gracza a magazynem stacji —
-    // nic nie znika i nie powstaje z niczego. Kredyty to marża doku.
+    // Handel przenosi surowiec między ładownią gracza a magazynem stacji (rynek ruchu v2, przez most) —
+    // nic nie znika i nie powstaje z niczego.
     function handleTrade(type, key, qty) {
       const amount = Math.max(1, Math.round(Number(qty) || 1));
       if (!RESOURCES[key]) return;
       const station = stationUI.station;
       const econ = getTradeEconomy(station);
       if (!econ) {
-        toast('Brak magazynu stacji');
+        toast('Rynek stacji niedostępny');
         return;
       }
 
@@ -15375,7 +15144,7 @@
         if ((Number(econ.resources?.[key]) || 0) < amount) { toast('Stacja nie ma zapasu'); return; }
         if (getPlayerCargoFree() < getResourceMassLocal(key, amount)) { toast('Ładownia pełna'); return; }
         PLAYER.credits -= cost;
-        adjustStationStock(station, econ, key, -amount);
+        adjustStationStock(station, key, -amount);
         PLAYER.cargo[key] = (Number(PLAYER.cargo[key]) || 0) + amount;
       } else if (type === 'sell') {
         const held = Number(PLAYER.cargo?.[key]) || 0;
@@ -15387,7 +15156,7 @@
         const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
         PLAYER.cargo[key] = held - amount;
         if (PLAYER.cargo[key] <= 0) delete PLAYER.cargo[key];
-        adjustStationStock(station, econ, key, stored);
+        adjustStationStock(station, key, stored);
         PLAYER.credits += getTradeSellPrice(key, station) * amount;
         // Regularny handel powoli ociepla stosunki z właścicielem doku.
         if (station.factionId) changePlayerReputation(station.factionId, REPUTATION_EVENTS.tradedGoods);
@@ -15396,525 +15165,12 @@
     }
 
     // ============================================================
-    // EKONOMIA STACJI
-    // Silnik chodzi dla WSZYSTKICH stacji naraz, nie tylko dla tej z otwartym
-    // terminalem — inaczej świat zamierałby, gdy gracz na niego nie patrzy,
-    // a o to właśnie chodzi, żeby żył sam.
-    // ============================================================
-
-    let economyCycleTimer = 0;
-
-    function updateStationEconomies(dt) {
-      economyCycleTimer += dt;
-      if (economyCycleTimer < ECONOMY_CYCLE_SECONDS) return;
-      const cycles = Math.floor(economyCycleTimer / ECONOMY_CYCLE_SECONDS);
-      economyCycleTimer -= cycles * ECONOMY_CYCLE_SECONDS;
-      for (const station of stations) {
-        if (!station || isDerelict(station)) continue;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        if (econ) runStationEconomy(station, econ, cycles);
-      }
-      // Terminal pokazuje stany magazynowe — po cyklu trzeba go odświeżyć.
-      if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
-    }
-
-    // ============================================================
-    // FLOTY TOWAROWE
-    // Vany wożą realny ładunek między stacjami. Trasy nie są wpisane w tabelę —
-    // biorą się z tego, co się nie bilansuje w produkcji stacji.
-    // ============================================================
-
-    const cargoFleet = createFleetState();
-    const cargoActors = new Map();
-    const cargoTransitEvents = [];
-    const cargoPoseScratch = { x: 0, y: 0, phase: 'toGate' };
-    const CARGO_MATERIALIZE_RADIUS = 15000;
-    const CARGO_DEMATERIALIZE_RADIUS = 18000;
-    const CARGO_WARP_SPEED = 4000;
-    // Pod ?trafficV2 stare vany stoją, bo physicsStep w ogóle nie woła
-    // updateCargoFleet — zlecenia wystawia dyspozytor ruchu v2 w workerze.
-    const CARGO_DISPATCH_ENABLED = true;
-    const cargoAdvanceOptions = {
-      events: cargoTransitEvents,
-      getEconomy: resolveCargoEconomy,
-      onEvent: onCargoTransitEvent,
-      retryIntervalSeconds: 1
-    };
-
-    function getStationById(stationId) {
-      for (let i = 0; i < stations.length; i++) {
-        if (stations[i]?.id === stationId) return stations[i];
-      }
-      return null;
-    }
-
-    function resolveCargoEconomy(stationId) {
-      const station = getStationById(stationId);
-      return station ? InfrastructureUI.ensureEconomy(station) : null;
-    }
-
-    function getCargoVanClass(order) {
-      return VAN_CLASSES.find(vanClass => vanClass.id === order?.vanClassId) || VAN_CLASSES[0];
-    }
-
-    function getCargoTravelSeconds(shipment, route) {
-      if (!shipment || !route) return 0;
-      const speed = Math.max(1, Number(shipment.vanClass?.speed) || VAN_CLASSES[0].speed);
-      const source = shipment.source;
-      const target = shipment.target;
-      const toGate = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
-      const fromGate = Math.hypot(target.x - route.end.x, target.y - route.end.y) / speed;
-      return Math.max(1, toGate + route.length / CARGO_WARP_SPEED + fromGate);
-    }
-
-    function fillCargoOrderPose(order, route, out) {
-      const source = route?.fromRef;
-      const target = route?.toRef;
-      if (!source || !target || !out) return false;
-      if (order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) {
-        out.x = target.x;
-        out.y = target.y;
-        out.phase = 'toStation';
-        return true;
-      }
-
-      const vanClass = getCargoVanClass(order);
-      const speed = Math.max(1, Number(vanClass?.speed) || 1);
-      const total = Math.max(0.001, Number(order.route?.durationSeconds) || 0.001);
-      const elapsed = Math.max(0, Math.min(total, Number(order.routeProgress) * total || 0));
-      const toGateDuration = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
-      const warpDuration = route.length / CARGO_WARP_SPEED;
-
-      if (elapsed < toGateDuration) {
-        const t = toGateDuration > 0 ? elapsed / toGateDuration : 1;
-        out.x = source.x + (route.start.x - source.x) * t;
-        out.y = source.y + (route.start.y - source.y) * t;
-        out.phase = 'toGate';
-        return true;
-      }
-      if (elapsed < toGateDuration + warpDuration) {
-        const t = warpDuration > 0 ? (elapsed - toGateDuration) / warpDuration : 1;
-        out.x = route.start.x + (route.end.x - route.start.x) * t;
-        out.y = route.start.y + (route.end.y - route.start.y) * t;
-        out.phase = 'warping';
-        return true;
-      }
-
-      const fromGateDuration = Math.max(0.001, total - toGateDuration - warpDuration);
-      const t = Math.max(0, Math.min(1, (elapsed - toGateDuration - warpDuration) / fromGateDuration));
-      out.x = route.end.x + (target.x - route.end.x) * t;
-      out.y = route.end.y + (target.y - route.end.y) * t;
-      out.phase = 'toStation';
-      return true;
-    }
-
-    function cargoSegmentProgress(ax, ay, bx, by, x, y) {
-      const dx = bx - ax;
-      const dy = by - ay;
-      const lengthSq = dx * dx + dy * dy;
-      if (lengthSq <= 0.000001) return 1;
-      return clamp(((x - ax) * dx + (y - ay) * dy) / lengthSq, 0, 1);
-    }
-
-    function getCargoActorRouteProgress(order, route, van) {
-      const source = route?.fromRef;
-      const target = route?.toRef;
-      if (!source || !target || !van) return Number(order?.routeProgress) || 0;
-      if (van.docking || order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) return 1;
-
-      const vanClass = getCargoVanClass(order);
-      const speed = Math.max(1, Number(vanClass?.speed) || 1);
-      const toGateDuration = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
-      const warpDuration = route.length / CARGO_WARP_SPEED;
-      const toStationDuration = Math.hypot(target.x - route.end.x, target.y - route.end.y) / speed;
-      const duration = Math.max(0.001, Number(order.route?.durationSeconds)
-        || toGateDuration + warpDuration + toStationDuration);
-      let elapsed = 0;
-
-      if (van.phase === 'warping') {
-        elapsed = toGateDuration + warpDuration * cargoSegmentProgress(
-          route.start.x, route.start.y, route.end.x, route.end.y, van.x, van.y
-        );
-      } else if (van.phase === 'toStation') {
-        elapsed = toGateDuration + warpDuration + toStationDuration * cargoSegmentProgress(
-          route.end.x, route.end.y, target.x, target.y, van.x, van.y
-        );
-      } else {
-        elapsed = toGateDuration * cargoSegmentProgress(
-          source.x, source.y, route.start.x, route.start.y, van.x, van.y
-        );
-      }
-      return clamp(elapsed / duration, 0, 1);
-    }
-
-    function cargoDistanceToPlayerSq(x, y) {
-      const dx = (Number(x) || 0) - ship.pos.x;
-      const dy = (Number(y) || 0) - ship.pos.y;
-      return dx * dx + dy * dy;
-    }
-
-    function ensureCargoWreckFragment(van) {
-      if (van?._cargoWreck) return van._cargoWreck;
-      // Kadłub na belkach: wrak z ocalałych węzłów, a gdy nie zostało nic — z jednego
-      // odtworzonego węzła (nośnik partii, jak odtworzony heks niżej).
-      if (van?.beamHull) return HullBodies.ensureCargoCarrier(van) || van._cargoWreck || null;
-      return null;
-    }
-
-    function ensureCargoWreckInventory(wreck, order) {
-      if (!wreck) return null;
-      const shardCount = Math.max(1, Number(wreck.beamHull?.body?.activeNodes) || 1);
-      if (!wreck._salvage) {
-        wreck._salvage = {
-          weapons: [],
-          materials: {},
-          materialsTotal: {},
-          sourceShards: shardCount,
-          remainingShards: shardCount,
-          label: `Wrak transportu ${order.id}`
-        };
-      }
-      if (!wreck._salvage.materials) wreck._salvage.materials = {};
-      if (!wreck._salvage.materialsTotal) wreck._salvage.materialsTotal = { ...wreck._salvage.materials };
-      if (!wreck._cargoManifest || typeof wreck._cargoManifest !== 'object') wreck._cargoManifest = {};
-      return wreck._cargoManifest;
-    }
-
-    function handleCargoVanDestroyed(van) {
-      const order = getShipmentOrder(cargoFleet, van?._cargoOrderId || van?.shipmentOrderId);
-      if (!order || order.status === SHIPMENT_STATUS.DELIVERED) return false;
-      const wreck = van._cargoWreck || ensureCargoWreckFragment(van);
-      if (!wreck) return false;
-      const wreckId = wreck._cargoWreckId || `cargo-wreck:${order.id}`;
-      const inventory = ensureCargoWreckInventory(wreck, order);
-      const result = wreckShipmentOrder(order, wreckId, inventory, cargoFleet.elapsedSeconds);
-      if (wreck && Object.keys(result.moved || {}).length) {
-        wreck._cargoOrderId = order.id;
-        wreck._cargoWreckId = wreckId;
-      }
-      removeActorFromTransitQueues(van);
-      return result.changed;
-    }
-
-    function removeCargoVanView(order, van, saveState = true) {
-      if (!van) return;
-      removeActorFromTransitQueues(van);
-      if (saveState && order?.actorId && !van.dead) {
-        const route = getWarpRoute(order.sourceStationId, order.targetStationId);
-        const routeProgress = route
-          ? getCargoActorRouteProgress(order, route, van)
-          : (Number(order.routeProgress) || 0);
-        dematerializeShipmentOrderView(order, van, {
-          x: van.x,
-          y: van.y,
-          vx: van.vx,
-          vy: van.vy,
-          angle: van.angle,
-          hp: van.hp,
-          maxHp: van.maxHp,
-          lane: van.lane,
-          dockPort: van.dockPort,
-          phase: van.phase,
-          routeProgress,
-          clockTime: cargoFleet.elapsedSeconds
-        });
-      } else {
-        if (order?.actorId) dematerializeShipmentOrderView(order, van);
-        delete van.shipmentOrderId;
-        delete van.shipmentViewId;
-      }
-      releaseNpcHexBody(van);
-      const npcIndex = npcs.indexOf(van);
-      if (npcIndex >= 0) npcs.splice(npcIndex, 1);
-      if (order) cargoActors.delete(order.id);
-      van._cargoOrderId = null;
-    }
-
-    function materializeCargoOrder(order) {
-      const source = getStationById(order.sourceStationId);
-      const target = getStationById(order.targetStationId);
-      const route = getWarpRoute(order.sourceStationId, order.targetStationId);
-      if (!source || !target || !route || !fillCargoOrderPose(order, route, cargoPoseScratch)) return null;
-
-      const vanClass = getCargoVanClass(order);
-      const stats = NPC_TYPES[vanClass.npcType] || NPC_TYPES['freighter-small'];
-      const saved = order.viewState || null;
-      const savedIsCurrent = saved
-        && Number.isFinite(Number(saved.x))
-        && Number.isFinite(Number(saved.y))
-        && Number.isFinite(Number(saved.recordElapsedSeconds))
-        && Math.abs(Number(saved.recordElapsedSeconds) - Number(order.elapsedSeconds)) <= 1e-6;
-      const spawnPose = savedIsCurrent ? saved : cargoPoseScratch;
-      const van = makeNPCBase(spawnPose, {
-        ...stats,
-        hp: Number(saved?.maxHp) || stats.hp,
-        maxSpeed: vanClass.speed,
-        accel: vanClass.speed * 0.6,
-        turn: 1.4
-      });
-      van.id = `cargo-view:${order.id}`;
-      van.type = vanClass.npcType;
-      van.shipFrame = 'terran_frigate';
-      van.factionId = normalizeFaction(order.factionId);
-      van.isCargoVan = true;
-      van.isCollidable = true;
-      van.combatDisabled = true;
-      van.displayName = `Transport ${vanClass.id.toUpperCase()}`;
-      van.color = stats.color;
-      van._cargoOrderId = order.id;
-      van.hp = Math.max(1, Math.min(van.maxHp, Number(saved?.hp) || van.maxHp));
-      van.angle = savedIsCurrent && Number.isFinite(Number(saved?.angle))
-        ? Number(saved.angle)
-        : Math.atan2(route.dir.y, route.dir.x);
-
-      if (!assignTransitRoute(van, source, target, route, {
-        phase: spawnPose.phase,
-        lane: saved?.lane,
-        dockPort: saved?.dockPort,
-        speed: vanClass.speed,
-        resetVelocity: spawnPose.phase !== 'warping',
-        warpSpeed: CARGO_WARP_SPEED
-      })) return null;
-      van.x = spawnPose.x;
-      van.y = spawnPose.y;
-      if (savedIsCurrent && Number.isFinite(Number(saved.vx)) && Number.isFinite(Number(saved.vy))) {
-        van.vx = Number(saved.vx);
-        van.vy = Number(saved.vy);
-      }
-
-      if (order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) {
-        const portPos = stationPortWorld(target, van.dockPort || 0);
-        van.x = portPos.x;
-        van.y = portPos.y;
-        van.vx = 0;
-        van.vy = 0;
-        van.docking = true;
-        van.lastStation = target.id;
-      }
-
-      if (!materializeShipmentOrderView(order, van)) {
-        removeActorFromTransitQueues(van);
-        return null;
-      }
-      syncEntityFactionFlags(van);
-      assignNpcShipFrame?.(van);
-      npcs.push(van);
-      cargoActors.set(order.id, van);
-      return van;
-    }
-
-    function notifyCargoDelivery(order, delivered) {
-      const target = getStationById(order?.targetStationId);
-      if (!cargoBagIsEmpty(delivered) && target && stationUI.open && stationUI.station === target) {
-        toast(`Dostawa: ${describeCargo(delivered)}`);
-      }
-    }
-
-    function reconcileCargoViewsBeforeAdvance() {
-      for (const [orderId, van] of cargoActors) {
-        const order = getShipmentOrder(cargoFleet, orderId);
-        if (!order) {
-          removeCargoVanView(null, van, false);
-          cargoActors.delete(orderId);
-          continue;
-        }
-        if (van.dead) {
-          handleCargoVanDestroyed(van);
-          removeCargoVanView(order, van, false);
-          continue;
-        }
-        if (order.status === SHIPMENT_STATUS.DELIVERED || order.status === SHIPMENT_STATUS.WRECK) {
-          removeCargoVanView(order, van, false);
-          continue;
-        }
-        if (van.docking && van.lastStation === order.targetStationId
-          && order.status === SHIPMENT_STATUS.IN_TRANSIT) {
-          const target = getStationById(order.targetStationId);
-          const econ = target ? InfrastructureUI.ensureEconomy(target) : null;
-          const result = tryDeliverShipmentOrder(order, econ, cargoFleet.elapsedSeconds);
-          if (result.changed) {
-            notifyCargoDelivery(order, result.delivered);
-            removeCargoVanView(order, van, false);
-            continue;
-          }
-          order.nextUnloadAttemptAt = cargoFleet.elapsedSeconds + cargoAdvanceOptions.retryIntervalSeconds;
-        }
-        if (cargoDistanceToPlayerSq(van.x, van.y) > CARGO_DEMATERIALIZE_RADIUS * CARGO_DEMATERIALIZE_RADIUS) {
-          removeCargoVanView(order, van, true);
-        }
-      }
-    }
-
-    function syncCargoOrderViews() {
-      for (const [orderId, van] of cargoActors) {
-        const order = getShipmentOrder(cargoFleet, orderId);
-        const active = order && (order.status === SHIPMENT_STATUS.IN_TRANSIT
-          || order.status === SHIPMENT_STATUS.AWAITING_UNLOAD);
-        if (!active) removeCargoVanView(order, van, false);
-      }
-      for (const order of cargoFleet.activeOrders) {
-        if (!order) continue;
-        const existing = cargoActors.get(order.id);
-        if (existing) continue;
-        if (order.actorId) dematerializeShipmentOrderView(order, order.actorId, order.viewState);
-        const route = getWarpRoute(order.sourceStationId, order.targetStationId);
-        if (!route || !fillCargoOrderPose(order, route, cargoPoseScratch)) continue;
-        if (cargoDistanceToPlayerSq(cargoPoseScratch.x, cargoPoseScratch.y)
-          <= CARGO_MATERIALIZE_RADIUS * CARGO_MATERIALIZE_RADIUS) {
-          materializeCargoOrder(order);
-        }
-      }
-    }
-
-    function onCargoTransitEvent(event, order) {
-      if (event?.type === 'delivered') notifyCargoDelivery(order, event.result?.delivered || {});
-    }
-
-    function countActiveCargoOrders() {
-      return cargoFleet.activeOrders.length;
-    }
-
-    /**
-     * Wystawia jedno zlecenie transportowe. Zwraca `{ ok, order, reason }`,
-     * żeby konsola deweloperska mogła powiedzieć, DLACZEGO nic nie poleciało —
-     * najczęstszy powód to brak rozbieżności w magazynach, nie usterka.
-     */
-    function dispatchOneCargoOrder(options = {}) {
-      if (!options.force && countActiveCargoOrders() >= MAX_ACTIVE_VANS) {
-        return { ok: false, reason: `limit ${MAX_ACTIVE_VANS} aktywnych transportów` };
-      }
-      const shipment = planShipment(
-        stations,
-        (station) => InfrastructureUI.ensureEconomy(station),
-        { skipPairs: options.ignoreCooldowns ? new Set() : getBlockedPairs(cargoFleet) }
-      );
-      if (!shipment) {
-        return { ok: false, reason: 'brak pary nadwyżka→niedobór (magazyny za blisko progów 70%/25%)' };
-      }
-      const route = getWarpRoute(shipment.source.id, shipment.target.id);
-      if (!route) {
-        blockRoute(cargoFleet, shipment.source, shipment.target);
-        return { ok: false, reason: `brak trasy warp ${shipment.source.id}→${shipment.target.id}` };
-      }
-      const sourceEcon = InfrastructureUI.ensureEconomy(shipment.source);
-      const order = createShipmentOrder(cargoFleet, shipment, sourceEcon, route, {
-        travelSeconds: getCargoTravelSeconds(shipment, route),
-        warpSpeed: CARGO_WARP_SPEED
-      });
-      if (!order) {
-        blockRoute(cargoFleet, shipment.source, shipment.target);
-        return { ok: false, reason: 'towar zniknął między planowaniem a załadunkiem' };
-      }
-      return { ok: true, order, shipment };
-    }
-
-    function updateCargoFleet(dt) {
-      tickCooldowns(cargoFleet, dt);
-      reconcileCargoViewsBeforeAdvance();
-      syncCargoOrderViews();
-      advanceShipmentOrders(cargoFleet, dt, cargoAdvanceOptions);
-
-      if (!CARGO_DISPATCH_ENABLED) return;
-      cargoFleet.dispatchTimer += dt;
-      if (cargoFleet.dispatchTimer < DISPATCH_INTERVAL) return;
-      cargoFleet.dispatchTimer -= DISPATCH_INTERVAL;
-      dispatchOneCargoOrder();
-    }
-
-    // ============================================================
-    // KONSOLA DEWELOPERSKA — window.Cargo
-    // Ekonomia potrzebuje minut, żeby magazyny rozjechały się poza progi
-    // 70%/25% i pojawiła się pierwsza para nadwyżka→niedobór. Testowanie
-    // transportu w tempie czasu rzeczywistego jest przez to bardzo powolne.
-    // ============================================================
-
-    window.Cargo = {
-      /** Przewija gospodarkę o N cykli (1 cykl = 20 s gry). To usuwa czekanie. */
-      economy(cycles = 30) {
-        const runs = Math.max(1, Math.floor(cycles));
-        let touched = 0;
-        for (const station of stations) {
-          if (!station || isDerelict(station)) continue;
-          const econ = InfrastructureUI.ensureEconomy(station);
-          if (econ && runStationEconomy(station, econ, runs)) touched++;
-        }
-        if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
-        console.log(`[Cargo] przewinięto ${runs} cykli (${runs * ECONOMY_CYCLE_SECONDS}s gry) na ${touched} stacjach`);
-        return this.trade();
-      },
-
-      /** Wymusza jedno zlecenie natychmiast, z pominięciem timera i karencji. */
-      dispatch() {
-        const result = dispatchOneCargoOrder({ force: true, ignoreCooldowns: true });
-        if (!result.ok) {
-          console.warn(`[Cargo] nic nie wysłano — ${result.reason}`);
-          console.info('[Cargo] spróbuj najpierw: Cargo.economy(40)');
-          return null;
-        }
-        const { order, shipment } = result;
-        console.log(`[Cargo] ${shipment.source.id} → ${shipment.target.id}: `
-          + `${describeCargo(order.manifest)} (${shipment.vanClass.id}, ETA ${Math.round(order.remainingSeconds)}s)`);
-        return order;
-      },
-
-      /** Lista transportów w drodze. */
-      list() {
-        const rows = cargoFleet.activeOrders.map(o => ({
-          trasa: `${o.sourceStationId} → ${o.targetStationId}`,
-          ładunek: describeCargo(o.manifest),
-          'ETA (s)': Math.round(o.remainingSeconds ?? 0),
-          status: o.status,
-          widoczny: o.actorId ? 'tak' : 'nie'
-        }));
-        if (!rows.length) console.log('[Cargo] brak transportów w drodze');
-        else console.table(rows);
-        return rows;
-      },
-
-      /** Dowozi wszystko, co jest w drodze. Zmaterializowane pomija — te wiozą się fizyką. */
-      arrive() {
-        const visible = cargoFleet.activeOrders.filter(o => o.actorId).length;
-        advanceShipmentOrders(cargoFleet, 100000, cargoAdvanceOptions);
-        if (visible) console.warn(`[Cargo] ${visible} transportów jest widocznych — te dolecą fizycznie, nie skokiem`);
-        console.log('[Cargo] pozostałe dostarczone');
-        return this.list();
-      },
-
-      /** Stan magazynów: gdzie jest nadwyżka, a gdzie głód. */
-      trade() {
-        const rows = [];
-        for (const station of stations) {
-          if (!station || isDerelict(station)) continue;
-          const econ = InfrastructureUI.ensureEconomy(station);
-          if (!econ) continue;
-          rows.push({
-            stacja: station.id,
-            oddaje: getStationSurpluses(station, econ, 3).map(s => `${s.id}×${s.spare}`).join(' ') || '—',
-            potrzebuje: getStationDeficits(station, econ, 3).map(d => `${d.id} ${(d.fill * 100).toFixed(0)}%`).join(' ') || '—'
-          });
-        }
-        console.table(rows);
-        return rows;
-      },
-
-      help() {
-        console.log([
-          'Cargo.economy(n)  przewiń gospodarkę o n cykli po 20 s (domyślnie 30)',
-          'Cargo.dispatch()  wymuś jedno zlecenie natychmiast',
-          'Cargo.list()      transporty w drodze',
-          'Cargo.arrive()    dowieź wszystko, co niewidoczne',
-          'Cargo.trade()     kto ma nadwyżkę, a kto głoduje',
-          '',
-          'Typowy test:  Cargo.economy(40)  →  Cargo.dispatch()  →  Cargo.list()'
-        ].join('\n'));
-      }
-    };
-
-    // ============================================================
     // OPUSZCZONE STACJE
     // Stacja bez właściciela nic nie produkuje, ale w magazynach został towar
     // po poprzednich mieszkańcach. To jedyne miejsce, gdzie da się wziąć
     // komponenty bez płacenia i bez psucia sobie z kimkolwiek stosunków.
+    // Łup losuje gra przy starcie ruchu v2 (`initTrafficV2` → `spec.stock`), magazyn trzyma świat ruchu.
+    // Czynne stacje dostają zapas roboczy w workerze (`seedStationStock` w `traffic/markets.js`).
     // ============================================================
 
     const DERELICT_LOOT_POOL = [
@@ -15928,32 +15184,16 @@
       { id: 'scrap', min: 60, max: 240 }
     ];
 
-    // Stacje nie zaczynają z pustymi magazynami: czynne mają zapas roboczy,
-    // opuszczone — resztki po poprzednikach. Start od zera dawał sztuczny
-    // kryzys, bo producent oddaje nadwyżkę dopiero powyżej progu zapełnienia.
-    function seedStationEconomies() {
-      for (const station of stations) {
-        if (isDerelict(station) || station._stockSeeded) continue;
-        station._stockSeeded = true;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        if (econ) seedStationStock(station, econ);
+    /** Resztki po mieszkańcach — zapas startowy rynku opuszczonej stacji (w granicach magazynu z budynków). */
+    function rollDerelictLoot(capacity) {
+      const loot = {};
+      for (const entry of DERELICT_LOOT_POOL) {
+        const amount = Math.round(entry.min + Math.random() * (entry.max - entry.min));
+        if (amount <= 0) continue;
+        const cap = Number(capacity?.[entry.id]);
+        loot[entry.id] = Number.isFinite(cap) ? Math.min(cap, amount) : amount;
       }
-      seedDerelictStations();
-    }
-
-    function seedDerelictStations() {
-      for (const station of stations) {
-        if (!isDerelict(station) || station._derelictSeeded) continue;
-        station._derelictSeeded = true;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        if (!econ) continue;
-        for (const entry of DERELICT_LOOT_POOL) {
-          const amount = Math.round(entry.min + Math.random() * (entry.max - entry.min));
-          if (amount <= 0) continue;
-          const cap = Number(econ.capacity?.[entry.id]);
-          econ.resources[entry.id] = Number.isFinite(cap) ? Math.min(cap, amount) : amount;
-        }
-      }
+      return loot;
     }
 
     // ============================================================
@@ -15995,31 +15235,6 @@
         if ((Number(amount) || 0) > 0) return false;
       }
       return true;
-    }
-
-    function recoverCargoWreckToPlayer(wreck) {
-      if (!wreck || cargoBagIsEmpty(wreck._cargoManifest)) return { changed: false, moved: {} };
-      if (getBagMass(wreck._cargoManifest) > getPlayerCargoFree() + 1e-6) {
-        return { changed: false, moved: {}, reason: 'capacity' };
-      }
-      const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
-      if (!order) return { changed: false, moved: {}, reason: 'missing-order' };
-      return recoverWreckedShipmentOrder(order, wreck._cargoManifest, PLAYER.cargo, {
-        ownerKind: SHIPMENT_OWNER_KIND.PLAYER,
-        ownerId: 'player',
-        now: cargoFleet.elapsedSeconds
-      });
-    }
-
-    function recoverCargoWreckToStation(wreck, station, econ) {
-      if (!wreck || !station || cargoBagIsEmpty(wreck._cargoManifest)) return { changed: false, moved: {} };
-      const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
-      if (!order) return { changed: false, moved: {}, reason: 'missing-order' };
-      return recoverWreckedShipmentOrder(order, wreck._cargoManifest, econ, {
-        ownerKind: SHIPMENT_OWNER_KIND.STATION,
-        ownerId: station.id,
-        now: cargoFleet.elapsedSeconds
-      });
     }
 
     function formatCargoBag(bag) {
@@ -16096,14 +15311,8 @@
         return;
       }
 
-      const cargoRecovery = recoverCargoWreckToPlayer(wreck);
-      if (cargoRecovery.changed) {
-        pushZoneMessage(`ODZYSKANO ŁADUNEK: ${formatCargoBag(cargoRecovery.moved)}`, 1.8);
-      }
       if (!HullBodies.hasHull(wreck)) {
-        stopFieldSalvage(cargoRecovery.reason === 'capacity'
-          ? 'SALVAGE: CAŁA PARTIA NIE MIEŚCI SIĘ W ŁADOWNI'
-          : 'SALVAGE: PUSTY KONTENER');
+        stopFieldSalvage('SALVAGE: PUSTY KONTENER');
         return;
       }
       if (getPlayerCargoFree() <= 0) {
@@ -16260,12 +15469,9 @@
      * ładowni: wrak ma masę setek ton), a broń w całości do ładowni gracza.
      */
     function deliverWreckToDock(wreck, station) {
-      const econ = InfrastructureUI.ensureEconomy(station);
-      const cargoRecovery = recoverCargoWreckToStation(wreck, station, econ);
       const { materials, weapons } = takeDockSalvage(wreck);
       const storedParts = [];
-      // Pod ?trafficV2 materiały trafiają do magazynu świata ruchu (przez most);
-      // bez flagi to ten sam obiekt co `econ`.
+      // Materiały trafiają do magazynu świata ruchu (przez most). Stacja bez rynku ich nie przyjmuje.
       const store = getTradeEconomy(station);
       if (store) {
         for (const [id, amount] of Object.entries(materials)) {
@@ -16274,7 +15480,7 @@
           const stock = Number(store.resources?.[id]) || 0;
           const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
           if (stored <= 0) continue;
-          adjustStationStock(station, store, id, stored);
+          adjustStationStock(station, id, stored);
           storedParts.push(`${getResourceLabel(id)} ×${Math.round(stored)}`);
         }
       }
@@ -16294,10 +15500,7 @@
         removeWreckFromWorld(wreck);
       }
 
-      pushZoneMessage(cargoRecovery.reason === 'capacity'
-        ? 'ROZBIÓRKA: ŁADUNEK CZEKA NA MIEJSCE W MAGAZYNIE'
-        : 'ROZBIÓRKA UKOŃCZONA', 2.2);
-      if (cargoRecovery.changed) toast(`Odzyskany ładunek: ${formatCargoBag(cargoRecovery.moved)}`);
+      pushZoneMessage('ROZBIÓRKA UKOŃCZONA', 2.2);
       if (storedParts.length) toast(`Magazyn stacji: ${storedParts.join(', ')}`);
       if (recovered.length) toast(`Odzyskana broń: ${recovered.join(', ')}`);
       else toast('Wrak nie miał sprawnego uzbrojenia');
@@ -16483,15 +15686,15 @@
     initMechanicUI();
     InfrastructureUI.init(canvas);
     InfrastructureUI.autopopulate();
-    seedStationEconomies();
 
     // ============================================================
-    // RUCH v2 (?trafficV2) — src/game/trafficBridge.js
-    // Gospodarka stacji ×60, przewoźnicy, kupcy, stocznie, wojna, piractwo
-    // i złomiarze liczą się w Web Workerze (docs/PLAN-ruch-v2-w-grze.md, Z1).
-    // Gra wysyła mu czas z krokami fizyki, pozycję gracza (fokus bańki),
-    // handel i pojemności budynków; dostaje kopię rynku (terminal handlu)
-    // i kursy w bańce (proxy statków — Z13). Bez flagi nic się tu nie dzieje.
+    // RUCH v2 — src/game/trafficBridge.js. JEDYNA ekonomia gry (od 2026-10-22, E2):
+    // gospodarka stacji ×60, przewoźnicy, kupcy, stocznie, wojna, piractwo
+    // i złomiarze liczą się w Web Workerze (docs/PLAN-ruch-v2-w-grze.md, Z1;
+    // docs/PLAN-ekonomia-rynki.md). Gra wysyła mu czas z krokami fizyki, pozycję
+    // gracza (fokus bańki), handel (`stockDelta`) i pojemności budynków; dostaje
+    // kopię rynku (terminal handlu) i kursy w bańce (proxy statków — Z13).
+    // `?trafficV2=0` — wyłącznik awaryjny: gra bez ekonomii (patrz DevFlags).
     // ============================================================
 
     /** Promień bańki kursów wokół gracza — Z13 dostroi go pod proxy statków. */
@@ -16511,14 +15714,12 @@
       const stationSpecs = {};
       for (const station of stations) {
         if (!station?.id) continue;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        const spec = { factionId: station.factionId || null };
-        if (econ?.capacity) {
-          spec.capacity = { ...econ.capacity };
-          trafficV2CapacitySent.set(station.id, { ...econ.capacity });
-        }
+        // Pojemności magazynów z budynków gry (skala 1) — worker sam przelicza je na świat.
+        const capacity = InfrastructureUI.getCapacity(station);
+        const spec = { factionId: station.factionId || null, capacity: { ...capacity } };
+        trafficV2CapacitySent.set(station.id, { ...capacity });
         // Opuszczona stacja niesie resztki po mieszkańcach — łup gracza.
-        if (isDerelict(station) && econ?.resources) spec.stock = { ...econ.resources };
+        if (isDerelict(station)) spec.stock = rollDerelictLoot(capacity);
         stationSpecs[station.id] = spec;
       }
       const bridge = new TrafficBridge();
@@ -16556,8 +15757,7 @@
       trafficV2CapacityTimer = 0;
       for (const station of stations) {
         if (!station?.id || !trafficV2.hasStation(station.id)) continue;
-        const capacity = InfrastructureUI.ensureEconomy(station)?.capacity;
-        if (!capacity) continue;
+        const capacity = InfrastructureUI.getCapacity(station);
         const sent = trafficV2CapacitySent.get(station.id);
         if (sent && RESOURCE_KEYS.every(key => sent[key] === capacity[key])) continue;
         trafficV2CapacitySent.set(station.id, { ...capacity });
@@ -16568,7 +15768,7 @@
     /**
      * Stacja misyjna piratów (kryjówka najemnika, stocznia piratów, baza misji 1) jako RYNEK świata ruchu
      * (src/game/traffic/markets.js, MarketDef z src/data/markets.js): kryjówka — łup z przechwytów, przemyt, cel
-     * wojny. Baza misji 1 to jeden rynek (habitat), nie cztery budowle. Bez `?trafficV2` nic się nie dzieje.
+     * wojny. Baza misji 1 to jeden rynek (habitat), nie cztery budowle. Przy `?trafficV2=0` nic się nie dzieje.
      */
     function registerTrafficV2Market(station, bridge = trafficV2) {
       if (!bridge || !station?.id || !station.mission || !station.isPirate) return;
@@ -16593,8 +15793,10 @@
     if (DevFlags.trafficV2) {
       trafficV2 = initTrafficV2();
       window.TrafficV2 = trafficV2;
-      window.TrafficV2Stats = () => trafficV2.getStats();
+    } else {
+      console.warn('[ruch v2] wyłączony (?trafficV2=0) — stacje bez rynku, terminal nie handluje');
     }
+    window.TrafficV2Stats = () => trafficV2?.getStats() ?? null;
 
     function startMercenaryMission() {
       if (mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
@@ -23066,13 +22268,11 @@
     }
 
     // Martwy NPC misji, po którym wrak już powstał (ciało kadłuba zwolnione
-    // przez releaseNpcHexBody). Nic go nie ożywi — odradzają się tylko cywile
-    // (gałąź respawnTimer w npcStep), a frachtowce ładunku sprząta ich rekord.
+    // przez releaseNpcHexBody). Nic go nie ożywi.
     function isFinishedMissionNpc(npc) {
       return npc.dead === true
         && npc.mission === true
         && npc !== ship
-        && !npc.isCargoVan
         && !npc.beamHull
         && !isBridgeHulk(npc);
     }
@@ -23093,7 +22293,6 @@
       if (npc.fleetEntry?.status) npc.fleetEntry.status.hull = 0;
       // Kadłub na belkach: cały ocalały kadłub zostaje wrakiem-łupem.
       if (npc.beamHull) window.createWreckage?.(npc);
-      if (npc.isCargoVan) handleCargoVanDestroyed(npc);
       releaseShipBridges(npc);
       releaseNpcHexBody(npc);
     }
@@ -23103,9 +22302,6 @@
       // Hulk po utracie mostka już nie żyje — pula (i crit) nie gra roli.
       if (isBridgeHulk(npc)) return;
       if (!Number.isFinite(dmg) || dmg <= 0) return;
-      // Cargo może umrzeć dopiero, gdy istnieje geometria zdolna utworzyć realny wrak.
-      // Do tego czasu rekord nadal leci, a encja jest wyłącznie niewrażliwym widokiem.
-      if (npc.isCargoVan && !npc.beamHull) return;
       const bypassShield = !!opts?.bypassShield;
       // Fregata zwiadu (ScoutBay): trafienie zrywa maskowanie, jak u Atlasa.
       if (npc.scoutFrigate && npc.cloak) ScoutBay.breakCloak('hit');
@@ -23171,10 +22367,6 @@
           spawnShipDeathBlast(npc, tankBlast, blastHostKey);
         }
 
-        // Towar przechodzi carrier -> dokładnie jeden wrak w tej samej operacji
-        // śmierci. Nie ma zwrotu do nadawcy ani oczekiwania na następny tick.
-        if (npc.isCargoVan) handleCargoVanDestroyed(npc);
-
         releaseNpcHexBody(npc);
       }
     }
@@ -23207,7 +22399,6 @@
       },
       afterHostDetonate: (host) => {
         if (host === ship || host === player2Ship) return;
-        if (host.isCargoVan) handleCargoVanDestroyed(host);
         releaseNpcHexBody(host);
       },
       // budowle w bańce gracza (kawałki doku — src/game/worldBodies.js): fala reaktora jako front ciśnienia
@@ -24499,7 +23690,7 @@
         }
 
         // Despawn logic (poza misją)
-        if (!npc.mission && !npc.isCargoVan) {
+        if (!npc.mission) {
           const dx = npc.x - ship.pos.x;
           const dy = npc.y - ship.pos.y;
           if (dx * dx + dy * dy > DESPAWN_RADIUS_SQ) {
@@ -24636,128 +23827,8 @@
           continue;
         }
 
-        // --- LOGIKA CYWILNA (Reszta funkcji bez zmian) ---
-        if (npc.dead) {
-          // Rekord transportowy obsługuje śmierć atomowo i usuwa widok; pusty
-          // frachtowiec nie może odrodzić się jako niezależny cywil.
-          if (npc.isCargoVan) continue;
-          npc.respawnTimer -= dt;
-          if (npc.respawnTimer <= 0) {
-            const base = stations.find(s => s.id === npc.lastStation) || stations[0];
-            const group = stations.filter(s => s.inner === base.inner);
-            const start = group[Math.floor(Math.random() * group.length)] || base;
-            const targetId = pickNextStation(start.id, npc.type);
-            npc.hp = npc.maxHp;
-            npc.dead = false;
-            if (!beginStationTransit(npc, start, targetId)) {
-              npc.dead = true;
-              npc.respawnTimer = 5;
-            }
-          }
-          continue;
-        }
-        if (npc.docking) {
-          const st = stations.find(s => s.id === npc.lastStation);
-          if (st) { const portPos = stationPortWorld(st, npc.dockPort || 0); npc.x = portPos.x; npc.y = portPos.y; }
-          if (npc.isCargoVan) {
-            npc.vx = 0;
-            npc.vy = 0;
-            npc.fade = 1;
-            continue;
-          }
-          npc.fade -= dt / 0.6;
-          if (npc.fade <= 0 && st) {
-            const targetId = pickNextStation(npc.lastStation, npc.type);
-            if (!beginStationTransit(npc, st, targetId)) {
-              npc.fade = 0;
-              npc.docking = true;
-            }
-          }
-          continue;
-        }
-        if (npc.phase === 'warping') {
-          npc.x += npc.vx * dt; npc.y += npc.vy * dt;
-          if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
-            npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
-          }
-          npcRotationStep(npc, dt, frameNorm);
-          const route = npc.warpRoute;
-          const traveled = (npc.x - route.start.x) * route.dir.x + (npc.y - route.start.y) * route.dir.y;
-          if (traveled >= route.length) {
-            npc.phase = 'toStation';
-            npc.x = route.end.x;
-            npc.y = route.end.y;
-            npc.vx = 0;
-            npc.vy = 0;
-          }
-          continue;
-        }
-        if (npc.phase === 'toGate') {
-          const gate = npc.warpRoute.start;
-          const start = stations.find(s => s.id === npc.lastStation);
-          const gv = { x: gate.x - start.x, y: gate.y - start.y };
-          const gd = Math.hypot(gv.x, gv.y) || 1;
-          const dirToGate = { x: gv.x / gd, y: gv.y / gd };
-          const perp = { x: -dirToGate.y, y: dirToGate.x };
-          const laneOffset = npc.lane ? 20 : -20;
-          const gatePos = { x: gate.x + perp.x * laneOffset, y: gate.y + perp.y * laneOffset };
-          const queue = gate.queues[npc.lane];
-          let idx = queue.indexOf(npc);
-          if (idx === -1) { queue.push(npc); idx = queue.length - 1; }
-          const spacing = 30;
-          const targetPos = { x: gatePos.x - dirToGate.x * idx * spacing, y: gatePos.y - dirToGate.y * idx * spacing };
-          const distGate = Math.hypot(npc.x - gatePos.x, npc.y - gatePos.y);
-          if (idx === 0 && distGate < 5) {
-            queue.shift(); npc.phase = 'warping';
-            npc.vx = npc.warpRoute.dir.x * 4000; npc.vy = npc.warpRoute.dir.y * 4000;
-            npc.x = gatePos.x; npc.y = gatePos.y;
-            continue;
-          }
-          const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
-          const d = Math.hypot(to.x, to.y);
-          if (d < 1) { npc.vx = 0; npc.vy = 0; continue; }
-          const dir = { x: to.x / d, y: to.y / d };
-          const desiredV = { x: dir.x * npc.speed, y: dir.y * npc.speed };
-          npc.vx += (desiredV.x - (npc.vx || 0)) * clamp(1.5 * dt, 0, 1);
-          npc.vy += (desiredV.y - (npc.vy || 0)) * clamp(1.5 * dt, 0, 1);
-          npc.x += npc.vx * dt;
-          npc.y += npc.vy * dt;
-          npcRotationStep(npc, dt, frameNorm);
-          continue;
-        }
-        let targetPos, st = null;
-        if (npc.leader != null) {
-          const leader = npcs.find(n => n.id === npc.leader && !n.dead);
-          if (leader) {
-            targetPos = { x: leader.x + Math.cos(npc.orbitAngle) * npc.orbitRadius, y: leader.y + Math.sin(npc.orbitAngle) * npc.orbitRadius };
-          } else { npc.leader = null; }
-        }
-        if (!targetPos) {
-          st = stations.find(s => s.id === npc.target);
-          if (!st) {
-            npc.target = pickNextStation(npc.lastStation, npc.type);
-            continue;
-          }
-          if (npc.phase === 'toStation') { targetPos = stationPortWorld(st, npc.dockPort || 0); }
-          else { targetPos = { x: st.x, y: st.y }; }
-        }
-        const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
-        const d = Math.hypot(to.x, to.y);
-        const dir = d ? { x: to.x / d, y: to.y / d } : { x: 0, y: 0 };
-        const desiredSpeed = npc.leader != null ? npc.speed : npc.speed * (d < 120 ? (d / 120) : 1);
-        const desiredV = { x: dir.x * desiredSpeed, y: dir.y * desiredSpeed };
-        npc.vx += (desiredV.x - (npc.vx || 0)) * clamp(1.5 * dt, 0, 1);
-        npc.vy += (desiredV.y - (npc.vy || 0)) * clamp(1.5 * dt, 0, 1);
-        const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x, toP.y);
-        if (dp < 120) { npc.vx -= (toP.x / dp) * 40 * dt; npc.vy -= (toP.y / dp) * 40 * dt; }
-        npc.x += npc.vx * dt;
-        npc.y += npc.vy * dt;
-        npcRotationStep(npc, dt, frameNorm);
-        const portPos = st ? stationPortWorld(st, npc.dockPort || 0) : null;
-        const distToStation = portPos ? Math.hypot(portPos.x - npc.x, portPos.y - npc.y) : Infinity;
-        if (npc.leader == null && st && distToStation < 20) {
-          npc.docking = true; npc.x = portPos.x; npc.y = portPos.y; npc.vx = 0; npc.vy = 0; npc.lastStation = st.id;
-        }
+        // Poza misją: dawny ruch cywilny i vany starej ekonomii (tranzyt przez bramy) usunięte 2026-10-22 (E2).
+        // NPC spoza misji dziś nie powstają; gdyby się trafił, tylko dryfuje, a despawn wyżej go sprząta.
       }
       return measuredAiMs;
     }
@@ -25335,13 +24406,7 @@
 
     // Tanie odwołania sprawdzane wprost przy każdym kandydacie.
     function isColdWreckReferencedDirect(wreck) {
-      if (TowSystem.isAttached(wreck)) return true;
-      if (wreck._cargoOrderId) {
-        const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
-        // Partia jeszcze nie „leży” we wraku — transfer w toku.
-        if (order && order.status !== SHIPMENT_STATUS.WRECK && order.status !== SHIPMENT_STATUS.RECOVERED) return true;
-      }
-      return false;
+      return TowSystem.isAttached(wreck);
     }
 
     const coldWreckSystem = createColdWreckSystem({
@@ -25737,14 +24802,9 @@
       updateCameraTarget(dt);
       // Stan UI stacji i infrastruktury (UI, postęp budowy) — z warstwą informacyjną w klatce bez kroku (stepFrameInfo).
       if (!frameInfoDeferred) stepStationUiState(dt);
-      if (trafficV2) {
-        // Ruch v2: gospodarka i vany żyją w workerze (czas idzie z pętli, razem
-        // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
-        syncTrafficV2Capacities(dt);
-      } else {
-        updateStationEconomies(dt);
-        updateCargoFleet(dt);
-      }
+      // Ruch v2: gospodarka i przewozy żyją w workerze (czas idzie z pętli, razem
+      // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
+      if (trafficV2) syncTrafficV2Capacities(dt);
       updateSalvage(dt);
       if (window.updateInfrastructureAnimations) {
         window.updateInfrastructureAnimations(dt);
@@ -25769,15 +24829,6 @@
         st.x = st.planet.x + Math.cos(st.angle) * st.orbitRadius;
         st.y = st.planet.y + Math.sin(st.angle) * st.orbitRadius;
       }
-      for (const st of stations) {
-        if (!st.warpGate) continue;
-        const off = st.warpGate.offset;
-        const ox = off && typeof off.x === 'number' ? off.x : 0;
-        const oy = off && typeof off.y === 'number' ? off.y : 0;
-        st.warpGate.x = st.x + ox;
-        st.warpGate.y = st.y + oy;
-      }
-      refreshWarpRoutes(warpRoutes);
       InfrastructureUI.syncWorldPositions();
       for (const st of stations) {
         if (!st.shield) continue;
@@ -26803,7 +25854,7 @@
       rig.onCargo = (key, tonnes) => {
         const accepted = addToPlayerCargo({ [key]: tonnes });
         const took = Number(accepted[key]) || 0;
-        // Pod ?trafficV2 urobek gracza uszczupla pas jak wyprawy NPC: rejestr w workerze ruchu → wyrwy (E3).
+        // Urobek gracza uszczupla pas jak wyprawy NPC: rejestr w workerze ruchu → wyrwy (E3).
         if (took > 0 && trafficV2) trafficV2.reportMining(ship.pos.x, ship.pos.y, took);
         return took;
       };
@@ -26818,7 +25869,7 @@
 
     // Wyrwy w pasie (E3, docs/PLAN-ekonomia-rynki.md § 3.3): rejestr uszczuplenia żyje w świecie ruchu v2
     // (src/game/traffic/miningFields.js — wyprawy NPC i urobek gracza); jego wyrwy idą przez most do świata
-    // pasa (beltWorld.setHoles → pole gry i replika obrazu, także w workerze renderu). Bez ?trafficV2 pas stoi.
+    // pasa (beltWorld.setHoles → pole gry i replika obrazu, także w workerze renderu). Przy ?trafficV2=0 pas stoi.
     // (Funkcja, nie `let` — woła ją start świata pasa, który bywa wcześniej w pliku niż ten blok.)
     function wireTrafficV2BeltHoles() {
       if (!trafficV2 || !beltWorld || beltWorld.__trafficHoles) return;
@@ -29042,7 +28093,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.beamHull && !npc.dead) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
         if (sprite && sprite.ready && !sprite.error && !(npc.__hullInitRetryAtMs > nowMs) && hullInitBudgetAllows()) {
@@ -29752,25 +28803,6 @@
         }
         InfrastructureUI.drawInstances(ctx, cam);
         drawPlanetLabels(ctx, cam);
-
-        // Warp gates
-        for (const key in warpRoutes) {
-          const route = warpRoutes[key];
-          const perp = { x: -route.dir.y, y: route.dir.x };
-          const w = 6 * cam.zoom;
-          const s1 = worldToScreen(route.start.x, route.start.y, cam);
-          const s2 = worldToScreen(route.end.x, route.end.y, cam);
-          ctx.strokeStyle = '#88aaff';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(s1.x - perp.x * w, s1.y - perp.y * w);
-          ctx.lineTo(s1.x + perp.x * w, s1.y + perp.y * w);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(s2.x - perp.x * w, s2.y - perp.y * w);
-          ctx.lineTo(s2.x + perp.x * w, s2.y + perp.y * w);
-          ctx.stroke();
-        }
 
         CanvasVFX.drawShockwaves(ctx, cam);
         drawTowRopes(ctx, cam);

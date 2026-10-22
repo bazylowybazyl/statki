@@ -162,7 +162,7 @@ export function trapezoidPeak(distance, vmax, accel, decel) {
 // ============================================================
 
 /**
- * Klasa ładowni ruchu v2 (cargoFleet VAN_CLASSES) → klasa lotu i silnik hipercruise. Propozycja E5:
+ * Klasa ładowni ruchu v2 (VAN_CLASSES, traffic/shipmentOrders.js) → klasa lotu i silnik hipercruise. Propozycja E5:
  * lekkie vany Mk II (szybki drobnicowiec), reszta Mk I; Mk III — towar dla gracza i kurierów (E8).
  */
 export const TRAFFIC_CLASS_DRIVE = Object.freeze({

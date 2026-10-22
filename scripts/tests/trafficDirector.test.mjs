@@ -10,7 +10,7 @@ import { RESOURCES, RESOURCE_KEYS, TIER } from '../../src/data/resources.js';
 import { seedStationStock } from '../../src/game/stationEconomy.js';
 import {
   createFleetState, createShipmentOrder, SHIPMENT_STATUS
-} from '../../src/game/cargoFleet.js';
+} from '../../src/game/traffic/shipmentOrders.js';
 import { buildTravelNetwork } from '../../src/game/traffic/travelNetwork.js';
 import {
   COURSE_KIND, DWELL_REASON, createCourseRegistry, getActiveCourses,

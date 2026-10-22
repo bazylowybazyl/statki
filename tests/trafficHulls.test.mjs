@@ -18,7 +18,7 @@ import { hullFootprint } from '../src/game/traffic/dockLayout.js';
 import { hullForVanClass } from '../src/game/traffic/transportCompanies.js';
 import { CARAVAN_ROLES } from '../src/game/traffic/agentFleets.js';
 import { WARSHIP_CLASSES } from '../src/game/traffic/shipyards.js';
-import { VAN_CLASSES } from '../src/game/cargoFleet.js';
+import { VAN_CLASSES } from '../src/game/traffic/shipmentOrders.js';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
 
 const trafficDir = fileURLToPath(new URL('../src/game/traffic/', import.meta.url));

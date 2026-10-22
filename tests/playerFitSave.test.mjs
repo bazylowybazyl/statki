@@ -91,8 +91,20 @@ function richStation() {
   for (const id of Object.keys(MASTER_WEAPONS)) {
     for (const [res, qty] of Object.entries(weaponBuildCost(id) || {})) resources[res] = (resources[res] || 0) + qty * 200;
   }
-  return { id: 'port-test', factionId: null, econ: { resources } };
+  const station = { id: 'port-test', factionId: null, econ: { resources } };
+  testPorts.set(station.id, station);
+  return station;
 }
+
+// Most ruchu v2 (jedyna ekonomia od E2): zakup w porcie zmienia zapas przez `stockDelta` — tu wprost magazyn portu testu.
+const testPorts = new Map();
+const testTrafficBridge = {
+  hasStation: (id) => testPorts.has(id),
+  stockDelta: (id, bag) => {
+    const econ = testPorts.get(id)?.econ;
+    for (const [key, delta] of Object.entries(bag)) econ.resources[key] = (Number(econ.resources[key]) || 0) + delta;
+  }
+};
 
 const INDEX_FUNCTIONS = [
   ['function getHardpointSize(hp, ship = Game.player) {', 'getHardpointSize'],
@@ -139,7 +151,7 @@ const INDEX_FUNCTIONS = [
   ['function fitPartPrice(id) {', 'fitPartPrice'],
   ['function fitStationCanSupply(econ, buyMap) {', 'fitStationCanSupply'],
   ['function fitBuyWeaponPiece(station, econ, id) {', 'fitBuyWeaponPiece'],
-  ['function adjustStationStock(station, econ, key, delta) {', 'adjustStationStock'],
+  ['function adjustStationStock(station, key, delta) {', 'adjustStationStock'],
   ['function playerFitCurrentMount(hp) {', 'playerFitCurrentMount'],
   ['function playerFitSlots() {', 'playerFitSlots'],
   ['function playerFitFits(def, slot) {', 'playerFitFits'],
@@ -185,7 +197,7 @@ function bootPage(storage, { credits = 0 } = {}) {
     planFit, presetFromHardpoints,
     setModifierSourceWithClasses, clearModifierSource,
     weaponPriceAt, weaponBuildCost,
-    trafficV2: null,
+    trafficV2: testTrafficBridge,
     getTradeEconomy: (station) => station?.econ || null,
     BASE_PLAYER_PROFILE: { shieldMax: 1000, shieldRegen: 20, shieldDelay: 3 },
     clamp: (v, a, b) => Math.max(a, Math.min(b, v)),

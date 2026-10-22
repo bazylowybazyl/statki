@@ -21,7 +21,7 @@
  * ruch dusi się sam z siebie po kilkudziesięciu minutach.
  */
 
-import { VAN_CLASSES } from '../cargoFleet.js';
+import { VAN_CLASSES } from './shipmentOrders.js';
 
 export const SHIP_STATE = Object.freeze({
   /** Stoi w wolumenie postojowym i czeka na zlecenie. */
