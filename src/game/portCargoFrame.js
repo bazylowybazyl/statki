@@ -182,7 +182,7 @@ export function buildPortCargoFrame(frame, o) {
 // na środku pola, tryb na zmianę, zegar postoju przesunięty na pole) — pomiar kosztu obrazu bez czekania na ruch.
 // Proxy kadłubów nie ma (rysuje je tylko bańka) — mierzy się sam przeładunek.
 const STRESS_RES = Object.freeze(['steel', 'copper_ore', 'chips', 'ice', 'fusion_fuel', 'helium3', 'polymer', 'ammo_kinetic']);
-const STRESS_HULL = Object.freeze({ S: 'inter_station_shuttle', M: 'container_ship', L: 'long_haul_freighter', MEGA: 'heavy_freighter_proxy' });
+const STRESS_HULL = Object.freeze({ S: 'inter_station_shuttle', M: 'container_ship', L: 'long_haul_freighter', MEGA: 'heavy_freighter' });
 function stressOps(frame, o) {
   const n = Math.min(o.stress | 0, frame.yardCount, 48);
   const t = Number(o.time) || 0;

@@ -246,7 +246,7 @@ export const ENGINE_FX_DEFAULTS = Object.freeze({
   inter_station_shuttle: Object.freeze({ mainNozzle: 70, ...PLUME, ...TERRAN }),
   container_ship: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN }),
   long_haul_freighter: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN }),
-  heavy_freighter: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN }),
+  heavy_freighter: Object.freeze({ mainNozzle: 91, ...PLUME, ...TERRAN }),
   heavy_harvester: Object.freeze({ mainNozzle: 51, ...PLUME, ...TERRAN }),
   belter: Object.freeze({ mainNozzle: 85, ...PLUME, ...TERRAN }),
   surveyor: Object.freeze({ mainNozzle: 60, ...PLUME, ...TERRAN }),

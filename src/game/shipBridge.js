@@ -248,7 +248,7 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
   inter_station_shuttle: trafficBridge('Wahadłowiec międzystacyjny', '#ffe0b0', { x: 140, y: -5, w: 385, h: 206.2, level: 1 }),
   container_ship: trafficBridge('Kontenerowiec', '#ffe0b0', { x: 395, y: -12, w: 238.8, h: 125.1, level: 2 }),
   long_haul_freighter: trafficBridge('Frachtowiec dalekiego zasięgu', '#ffe0b0', { x: 290, y: -20, w: 190.5, h: 98.6, level: 3 }),
-  heavy_freighter: trafficBridge('Ciężki frachtowiec', '#ffe0b0', { x: 290, y: -20, w: 147.8, h: 74.9, level: 6 }),
+  heavy_freighter: trafficBridge('Ciężki frachtowiec', '#ffe0b0', { x: 420, y: -20, w: 147.8, h: 74.9, level: 6 }),
   heavy_harvester: trafficBridge('Ciężki kombajn górniczy', '#ffe0b0', { x: 260, y: -10, w: 207, h: 108.4, level: 2 }),
   belter: trafficBridge('Belter', '#ffe0b0', { x: 340, y: -20, w: 276, h: 157.7, level: 1 }),
   surveyor: trafficBridge('Zwiadowca złóż', '#ffe0b0', { x: 330, y: -20, w: 258.7, h: 147.8, level: 1 }),

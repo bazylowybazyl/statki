@@ -62,7 +62,7 @@ export const BRIDGE_DEMO_HULLS = Object.freeze({
     npc: Object.freeze({ type: 'freighter-large', isPirate: false, shipFrame: 'long_haul_freighter', mass: 20000 })
   }),
   heavy_freighter: Object.freeze({
-    key: 'heavy_freighter', label: 'Ciężki frachtowiec', faction: 'civil', sprite: 'assets/long_haul_freighter.png', profile: 'heavy_freighter',
+    key: 'heavy_freighter', label: 'Ciężki frachtowiec', faction: 'civil', sprite: 'assets/ships/heavy_freighter.png', profile: 'heavy_freighter',
     npc: Object.freeze({ type: 'freighter-capital', isPirate: false, shipFrame: 'heavy_freighter', mass: 150000 })
   }),
   heavy_harvester: Object.freeze({

@@ -44,14 +44,12 @@ export const TRAFFIC_HULLS = Object.freeze({
     png: [1774, 887],
     main: [[-786, -148, 68], [-805, -18, 95], [-786, 114, 68]]
   }),
-  // TODO AGENT: sprite zastępczy (frachtowiec dalekiego zasięgu w skali 1800 j.,
-  // jak HALO_PLAYER_HULLS w haloPortHulls.js). Własny `assets/ships/heavy_freighter.png`
-  // z Z11 już jest — po przyjęciu przez użytkownika podmienić tu i w haloPortHulls
-  // (obrys kolizji z alfy, 4 dysze zamiast 3).
+  // Sprite Z11 (E13, 2026-10-23): ładownia 3 × 8 (puste pokłady — heavy_freighter_empty.png, cargoBays.js),
+  // 4 bębny dysz na rufie jak holownik serwisowy (ten sam obrys płótna).
   heavy_freighter: Object.freeze({
-    sprite: new URL('../../assets/long_haul_freighter.png', import.meta.url).href,
+    sprite: new URL('../../assets/ships/heavy_freighter.png', import.meta.url).href,
     png: [1774, 887],
-    main: [[-786, -148, 68], [-805, -18, 95], [-786, 114, 68]]
+    main: [[-815, -181, 90], [-815, -71, 92], [-815, 40, 92], [-815, 148, 90]]
   }),
   // Jeden sprite całego składu (2760 j.) — tyle, ile widać z daleka i w porcie.
   // TODO AGENT (Z13): pełny NPC megafrachtowca to pociąg z megafreighterTrain.js

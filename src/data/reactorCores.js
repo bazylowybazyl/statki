@@ -37,7 +37,7 @@ export const REACTOR_CORE_MARKERS = Object.freeze({
   inter_station_shuttle: marker({ id: 'inter_station_shuttle_A', x: -330, y: -10, r: 182.4, hr: 71.5, tier: 'R1', model: 'terran' }),
   container_ship: marker({ id: 'container_ship_A', x: -650, y: -10, r: 110.9, hr: 45.5, tier: 'R2', model: 'terran' }),
   long_haul_freighter: marker({ id: 'long_haul_freighter_A', x: -580, y: -10, r: 78.8, hr: 46, tier: 'R3', model: 'terran' }),
-  heavy_freighter: marker({ id: 'heavy_freighter_A', x: -580, y: -10, r: 44.3, hr: 29.6, tier: 'R6', model: 'terran' }),
+  heavy_freighter: marker({ id: 'heavy_freighter_A', x: -660, y: -10, r: 44.3, hr: 29.6, tier: 'R6', model: 'terran' }),
   heavy_harvester: marker({ id: 'heavy_harvester_A', x: -130, y: 0, r: 110.9, hr: 39.4, tier: 'R2', model: 'terran' }),
   belter: marker({ id: 'belter_A', x: -500, y: -20, r: 192.2, hr: 49.3, tier: 'R1', model: 'terran' }),
   surveyor: marker({ id: 'surveyor_A', x: -560, y: -20, r: 180.2, hr: 46.2, tier: 'R1', model: 'terran' }),

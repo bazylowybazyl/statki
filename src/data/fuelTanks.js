@@ -27,7 +27,7 @@ export const FUEL_TANK_MARKERS = Object.freeze({
   inter_station_shuttle: tank({ id: 'inter_station_shuttle_fuel', x: -20, y: -10, r: 160.9 }),
   container_ship: tank({ id: 'container_ship_fuel', x: -455, y: -10, r: 76.8 }),
   long_haul_freighter: tank({ id: 'long_haul_freighter_fuel', x: -420, y: 15, r: 59.1 }),
-  heavy_freighter: tank({ id: 'heavy_freighter_fuel', x: -420, y: 15, r: 37 }),
+  heavy_freighter: tank({ id: 'heavy_freighter_fuel', x: -540, y: -20, r: 37 }),
   heavy_harvester: tank({ id: 'heavy_harvester_fuel', x: -420, y: -150, r: 73.9 }),
   belter: tank({ id: 'belter_fuel', x: -120, y: -20, r: 133.1 }),
   surveyor: tank({ id: 'surveyor_fuel', x: -180, y: -20, r: 124.7 }),

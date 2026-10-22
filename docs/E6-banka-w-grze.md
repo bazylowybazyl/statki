@@ -179,8 +179,9 @@ Zrobione w E13 (gałąź `claude/e13-kadluby-ruchu-db21d9`; reguły `ruch-v2` §
    przemytnik) po awansie ma liczby szablonu wezwania swojej klasy, broń z gniazd i mózg klasy; okręt niepiracki
    dostaje urazę do gracza (`playerGrudge` — wrogi bez względu na reputację, cel tylko gracz widoczny i w zasięgu,
    wieże nie biją sojuszników frakcji). Cywile uciekają / stoją jak dotąd.
-3. **Sprite'y Z11** — łowca, kuter policji i ratownik mają własne kadłuby (role `hunter`, `police`, `rescue`).
-   Ciężki frachtowiec — podmiana po scaleniu E12 (ładownie `cargoBays.js`).
+3. **Sprite'y Z11** — łowca, kuter policji i ratownik mają własne kadłuby (role `hunter`, `police`, `rescue`),
+   ciężki frachtowiec — własny sprite (4 dysze MAIN, ładownia 3 × 8 z `cargoBays.js` — `TRAFFIC_CARGO_BAY_HULLS`
+   wskazuje `heavy_freighter`, kopia `heavy_freighter_proxy` usunięta; obrys hali w `haloPortHulls.js`).
 
 Dalej otwarte:
 

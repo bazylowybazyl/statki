@@ -48,7 +48,7 @@ const TRAFFIC_SPRITES = {
   inter_station_shuttle: 'assets/inter_station_shuttle.png',
   container_ship: 'assets/container_ship.png',
   long_haul_freighter: 'assets/long_haul_freighter.png',
-  heavy_freighter: 'assets/long_haul_freighter.png',
+  heavy_freighter: 'assets/ships/heavy_freighter.png',
   megafreighter: 'assets/megafreighter.png',
   heavy_harvester: 'assets/heavy_harvester.png',
   belter: 'assets/belter.png',
@@ -120,8 +120,7 @@ export const AUTO3D_TABLE = {
   ...Object.fromEntries(Object.keys(TRAFFIC_LABELS).map((id) => [id, {
     label: TRAFFIC_LABELS[id][0], short: TRAFFIC_LABELS[id][1],
     faction: PIRATE_TRAFFIC.has(id) ? 'pirate' : 'civil', profile: id,
-    sprite: TRAFFIC_SPRITES[id], nozzles: 'traffic',
-    ...(id === 'heavy_freighter' ? { outlineOf: 'long_haul_freighter' } : {})
+    sprite: TRAFFIC_SPRITES[id], nozzles: 'traffic'
   }]))
 };
 

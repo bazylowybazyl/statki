@@ -227,7 +227,7 @@ test('partie (ładownie floty, taśmy, drony z bufora CPU): WGSL się buduje, li
   const wd = buildWGSL(drones.warmupMeshes()[0]);
   assert.ok(wd.vertex.includes('portCargoDrones'));
   // Rekordy ładowni floty w tablicy świateł: ładownia rodzaju jest geometrią kadłuba.
-  assert.ok(cargoHullBays('heavy_freighter_proxy')[0].module.nx === 2);
+  assert.ok(cargoHullBays('heavy_freighter')[0].module.nx === 2);
 });
 
 // ---------------------------------------------------------------------------
@@ -378,7 +378,7 @@ test('regresja 4: slot trzyma kopię stanowiska (rekord ramki z puli), slot bez 
 
 test('gniazda roju poza sylwetką kadłuba: każde gniazdo ma drona, przy pełnej liczbie dronów (96 — MEGA)', () => {
   const pool = createSwarmBerthPool(fakeCore());
-  const cases = [['inter_station_shuttle', 'S'], ['container_ship', 'M'], ['long_haul_freighter', 'L'], ['heavy_freighter_proxy', 'MEGA']];
+  const cases = [['inter_station_shuttle', 'S'], ['container_ship', 'M'], ['long_haul_freighter', 'L'], ['heavy_freighter', 'MEGA']];
   for (const [hull, size] of cases) {
     const P = PORT_CARGO_PADS[size];
     const yard = berthYardGeometry({ size, padLength: P.padLength, padBeam: P.padBeam, portalGap: P.portalGap, halfBeam: P.yardHalfBeam });

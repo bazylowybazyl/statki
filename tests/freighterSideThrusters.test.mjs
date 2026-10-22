@@ -34,9 +34,9 @@ const HULLS = [
     bays: 'container_ship', npc: { type: 'freighter-medium', shipFrame: 'container_ship' } },
   { key: 'long_haul_freighter', profile: 'long_haul_freighter', sprite: TRAFFIC_HULLS.long_haul_freighter.sprite,
     bays: 'long_haul_freighter', npc: { type: 'freighter-large', shipFrame: 'long_haul_freighter' } },
-  // Ciężki frachtowiec rysuje się dziś sprite'em frachtowca dalekiego zasięgu (ładownie jak na tym spricie).
+  // Ciężki frachtowiec: własny sprite Z11 (E13), ładownie 3 × 8 z cargoBays.js.
   { key: 'heavy_freighter', profile: 'heavy_freighter', sprite: TRAFFIC_HULLS.heavy_freighter.sprite,
-    bays: 'long_haul_freighter', npc: { type: 'freighter-capital', shipFrame: 'heavy_freighter' } },
+    bays: 'heavy_freighter', npc: { type: 'freighter-capital', shipFrame: 'heavy_freighter' } },
   { key: 'megafreighter_front', profile: 'megafreighter', sprite: LOCOMOTIVE.spriteSrc, bays: null, bridge: 'megafreighter',
     npc: { type: 'megafreighter_front', shipFrame: 'megafreighter', disableEditorLayout: true } },
   // Cywilne kadłuby ruchu v2 (E13, 2026-10-22): te same reguły SIDE; mostek z tabeli ruchu (strefa poziomu).
@@ -112,8 +112,8 @@ test('dane edytora: wpisy sideOnly — 4 narożniki, wydech na zewnątrz burty, 
     }
   }
   // Ciężki frachtowiec ma sprite frachtowca dalekiego zasięgu — te same markery; własny sprite = nowy pomiar.
-  assert.equal(TRAFFIC_HULLS.heavy_freighter.sprite, TRAFFIC_HULLS.long_haul_freighter.sprite);
-  assert.deepEqual(SHIPS.heavy_freighter.engines.side, SHIPS.long_haul_freighter.engines.side);
+  // Ciężki frachtowiec ma własny sprite Z11 (E13) — własne markery.
+  assert.notEqual(TRAFFIC_HULLS.heavy_freighter.sprite, TRAFFIC_HULLS.long_haul_freighter.sprite);
   // Megafrachtowiec gracza (układ dysz z applyHullThrusterLayout) — wpis bez dysz, inaczej edytor podmieniłby mu dysze.
   assert.deepEqual(SHIPS.megafreighter.engines, { main: [], side: [] });
 });

@@ -164,7 +164,7 @@ export function createSwarmBerthPool(Core3D) {
   // przy płaszczyźnie lotu i placem na płycie pola.
   function referenceLayers() {
     const port = buildSwarmPort({
-      ships: [{ id: 'wzor', hull: 'heavy_freighter_proxy', x: 0, y: 0 }],
+      ships: [{ id: 'wzor', hull: 'heavy_freighter', x: 0, y: 0 }],
       yards: [{ id: 'plac', classId: 'L', x: 0, y: -400, cols: 2, rows: 1, levels: T.yardLevels, z: BERTH_TRANSFER_TUNE.tableZ }],
       pads: [{ id: 'gn', classId: 'L', x: 300, y: -450, cols: 1, rows: 1, z: -114.5 }]
     });

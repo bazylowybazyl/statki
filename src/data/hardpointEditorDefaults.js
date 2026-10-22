@@ -11,7 +11,7 @@ const civilSide = (id, x, y, mount) => ({
 const trafficMain = (id, x, y) => ({ id, x, y, deg: 90, offsetX: 0, offsetY: 0 });
 // Kadłub cywilny ruchu v2: dysze MAIN tylko do obrazu i SIDE (runtime NPC — applySideOnlyLayout), bez gniazd.
 const trafficCivilHull = (label, main, side) => ({ label, frontAxis: '+X', sideOnly: true, engines: { main, side } });
-// Frachtowiec dalekiego zasięgu — ten sam sprite rysuje dziś ciężki frachtowiec (TRAFFIC_HULLS.heavy_freighter).
+// Frachtowiec dalekiego zasięgu.
 const LONG_HAUL_MAIN = [trafficMain('main_1', -786, -148), trafficMain('main_2', -805, -18), trafficMain('main_3', -786, 114)];
 const LONG_HAUL_SIDE = [
   civilSide('side_front_left', 300, -196, 'upper_left'),
@@ -81,11 +81,20 @@ export const SHIP_EDITOR_DEFAULTS = {
       sideOnly: true,
       engines: { main: LONG_HAUL_MAIN, side: LONG_HAUL_SIDE }
     },
+    // Ciężki frachtowiec — własny sprite Z11 (E13): 4 dysze MAIN, SIDE poza lukami ładowni 3 × 8.
     heavy_freighter: {
       label: 'Ciężki frachtowiec',
       frontAxis: '+X',
       sideOnly: true,
-      engines: { main: LONG_HAUL_MAIN, side: LONG_HAUL_SIDE }
+      engines: {
+        main: [trafficMain('main_1', -815, -181), trafficMain('main_2', -815, -71), trafficMain('main_3', -815, 40), trafficMain('main_4', -815, 148)],
+        side: [
+          civilSide('side_front_left', 300, -232, 'upper_left'),
+          civilSide('side_front_right', 300, 195, 'upper_right'),
+          civilSide('side_rear_left', -670, -256, 'lower_left'),
+          civilSide('side_rear_right', -672, 216, 'lower_right')
+        ]
+      }
     },
     // Holownik serwisowy (src/game/serviceTug.js; sprite zastępczy = przebarwiony heavy_freighter_empty.png, px płótna
     // 1774 × 887 od środka): 4 bębny dysz MAIN na rufie (ciąg i plazma skoku z ładunkiem), 4 dysze SIDE poza pokładem
