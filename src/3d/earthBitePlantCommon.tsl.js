@@ -7,7 +7,8 @@ import {
   cameraProjectionMatrix, abs, atan, clamp, cross, dot, fract, length, max, min, mix, normalize, select, sin,
   smoothstep, sqrt
 } from 'three/tsl';
-import { earthBiteEast } from './earthBite.tsl.js';
+import { earthBiteEast, earthBiteCoords } from './earthBite.tsl.js';
+import { CORK_DEFAULTS } from './earthBitePlantCork.js';
 
 /** Klucze `material.uniforms` wspólne dla wszystkich materiałów elektrowni (typ węzła). */
 export const PLANT_KEYS = Object.freeze({
@@ -161,8 +162,27 @@ export const PLANT_LIGHT = Object.freeze({
   beam: 14,         // poświata promienia × uPlantBeam.x
   beamNear: 0.012,  // spadek bliski od osi [R]
   beamFar: 0.05,    // spadek daleki [R]
-  sky: 0.5          // niebo za dnia poza gryzem (w gryzie × 0,15)
+  sky: 0.5,         // niebo za dnia poza gryzem (w gryzie × 0,15)
+  // runda 2 (czarna megastruktura): poświata promienia obcięta (przy osi nie więcej niż ~⅓ słońca), rozproszenie
+  // słabsze (zostaje odblask krawędzi), nad końcem promienia (czasza odbiornika) — zero
+  beamMax: 1.2,     // górna granica irradiancji promienia × uPlantBeam.x
+  beamDiffuse: 0.3, // rozproszenie poświaty promienia (odblask GGX — pełny)
+  beamTop: 0.01,    // koniec promienia pod odbiornikiem (uPlantBeam.z − beamTop)
+  // w przestrzeni (|p| > ~1,01): czarne niebo, od dołu poświata dziennej Ziemi
+  earthGlow: 0.15,
+  // okluzja kontaktowa: przy skale (ściany gryzu, grunt) i przy pokładach korka; zasięg [R], siła
+  aoNear: 0.0003, aoFar: 0.005, aoWall: 0.62, aoDeckFar: 0.0045, aoDeck: 0.5
 });
+
+/** Barwa poświaty dziennej Ziemi (beż spękanych lądów) — światło od dołu w przestrzeni. */
+export const PLANT_EARTH_GLOW = Object.freeze([0.62, 0.52, 0.4]);
+
+// wysokości pokładów korka (zewnętrzny = uPlantCork.y; środkowy i wewnętrzny — z wymiarów korka)
+const DECK_MID_R = CORK_DEFAULTS.corkMidR ?? 0.098;
+const DECK_MID_H = CORK_DEFAULTS.corkMidH ?? 0.059;
+const DECK_IN_R = CORK_DEFAULTS.corkInnerR ?? 0.046;
+const DECK_IN_H = CORK_DEFAULTS.corkInnerH ?? 0.065;
+const DECK_CRATER_R = CORK_DEFAULTS.corkCraterR ?? 0.024;
 
 /**
  * Zmienna o typie ze stałej, przypisana W MIEJSCU wywołania (wewnątrz Fn): przecina rekurencję typów TSL (getNodeType
@@ -267,13 +287,61 @@ export function plantLightContext(U, p, world, sunVis) {
   const occ = select(above, smoothstep(-0.003, 0.006, yc.sub(corkTop)), select(inner, float(0.0), float(1.0)));
   const lakeE = plantVar(U.uPlantShape.y.mul(LT.lake).mul(bowl).mul(occ)
     .div(dQl.mul(dQl).div(LT.lakeFall * LT.lakeFall).add(1.0)));
-  // poświata promienia: najbliższy punkt osi (dno gardzieli … odbiornik)
-  const dB = plantVar(A.mul(z0.add(clamp(y, 0.0, U.uPlantBeam.z))).sub(p), 'vec3');
+  // poświata promienia: najbliższy punkt osi (dno gardzieli … koniec promienia pod czaszą odbiornika); obcięta przy
+  // osi (beamMax), nad końcem promienia zero — czasza zasłania grzbiet odbiornika
+  const yEnd = U.uPlantBeam.z.sub(LT.beamTop);
+  const dB = plantVar(A.mul(z0.add(clamp(y, 0.0, yEnd))).sub(p), 'vec3');
   const dBl = plantVar(max(length(dB), 1e-4));
   const beamDir = plantVar(dB.div(dBl), 'vec3');
-  const beamE = plantVar(U.uPlantBeam.x.mul(LT.beam).mul(float(LT.beamNear).div(dBl.add(LT.beamNear)))
-    .mul(float(LT.beamFar).div(dBl.add(LT.beamFar))));
-  return { F, A, y, rho, phi, out, tan, L, V, lit, bowl, up, day, lakeDir, lakeE, beamDir, beamE, dBl };
+  const beamE = plantVar(min(U.uPlantBeam.x.mul(LT.beam).mul(float(LT.beamNear).div(dBl.add(LT.beamNear)))
+    .mul(float(LT.beamFar).div(dBl.add(LT.beamFar))), U.uPlantBeam.x.mul(LT.beamMax))
+    .mul(sdown(yEnd.sub(0.004), yEnd.add(0.002), y)));
+  // przestrzeń: nad gruntem (|p| > ~1,01) — czarne niebo; horyzont Ziemi (cos kąta od pionu w dół)
+  const pr = plantVar(length(p));
+  const space = plantVar(smoothstep(1.004, 1.02, pr).mul(float(1.0).sub(bowl)));
+  const horizon = plantVar(sqrt(max(float(1.0).sub(float(1.0).div(max(pr.mul(pr), 1.0))), 0.0)).negate());
+  // OKLUZJA KONTAKTOWA: odległość od bryły skały (kula Ziemi bez kuli gryzu: max(|p| − 1, β − r)) i kierunek od niej;
+  // pokłady korka (zewnętrzny, środkowy, wewnętrzny) — odległość nad pokładem w obrysie tarasu
+  const bc = plantVar(earthBiteCoords(p, U.uBite, F.E), 'vec4');
+  const dWall = bc.w.sub(bc.x);
+  const dGround = pr.sub(1.0);
+  const gap = plantVar(max(max(dWall, dGround), 0.0));
+  const gN = plantVar(select(dGround.greaterThan(dWall), up, U.uBite.xyz.sub(p).div(max(bc.x, 1e-6))), 'vec3');
+  const deckH = select(rho.greaterThan(DECK_MID_R), U.uPlantCork.y, select(rho.greaterThan(DECK_IN_R), float(DECK_MID_H),
+    float(DECK_IN_H)));
+  const onDeck = rho.lessThan(U.uPlantCork.x.mul(0.985)).and(rho.greaterThan(DECK_CRATER_R));
+  const deckGap = plantVar(select(onDeck, max(y.sub(deckH), 0.0), float(1.0)));
+  return {
+    F, A, y, rho, phi, out, tan, L, V, lit, bowl, up, day, lakeDir, lakeE, beamDir, beamE, dBl,
+    space, horizon, gap, gN, deckGap
+  };
+}
+
+/**
+ * Radiancja otoczenia w kierunku R (odbicia, szkło): nad gruntem niebo za dnia (w gryzie × 0,15, ku dołowi grunt),
+ * w przestrzeni czarne niebo, pod horyzontem poświata dziennej Ziemi.
+ */
+export function plantEnv(C, R) {
+  const LT = PLANT_LIGHT;
+  const ru = dot(R, C.up);
+  const skyE = C.day.mul(mix(1.0, 0.15, C.bowl)).mul(LT.sky);
+  const surf = mix(vec3(0.105, 0.095, 0.085), vec3(...PLANT_COLORS.sky), smoothstep(-0.25, 0.35, ru)).mul(skyE);
+  const earth = vec3(...PLANT_EARTH_GLOW).mul(C.day.mul(LT.earthGlow).mul(sdown(C.horizon.sub(0.1), C.horizon.add(0.06), ru)));
+  return mix(surf, earth, C.space);
+}
+
+/**
+ * Okluzja kontaktowa powierzchni o normalnej n (0…1): przy skale (zwrócone ku skale — całkiem, w bok — połowicznie,
+ * od skały — wcale) i przy pokładzie korka (ściany i boki brył; pokład i dachy — wcale).
+ */
+export function plantContactAO(C, n) {
+  const LT = PLANT_LIGHT;
+  const near = sdown(LT.aoNear, LT.aoFar, C.gap);
+  const facing = clamp(float(0.5).sub(dot(n, C.gN).mul(0.5)), 0.0, 1.0);
+  const aoW = float(1.0).sub(near.mul(facing).mul(LT.aoWall));
+  const side = clamp(float(1.0).sub(abs(dot(n, C.A))), 0.0, 1.0);
+  const aoD = float(1.0).sub(sdown(0.0002, LT.aoDeckFar, C.deckGap).mul(side).mul(LT.aoDeck));
+  return aoW.mul(aoD);
 }
 
 /**
@@ -285,24 +353,88 @@ export function plantLighting(C, n, albedo, a2, f0, specOcc) {
   const T = PLANT_COLORS;
   const LT = PLANT_LIGHT;
   const nl = max(dot(n, C.L), 0.0);
-  const sunE = C.lit.mul(LT.sun);
+  // okluzja kontaktowa: pełna dla nieba i promienia, połowiczna dla słońca (tani cień kontaktowy), żar jeziora bez niej
+  // (jezioro świeci od dołu — przy lawie jest źródłem, nie zasłoną)
+  const ao = plantVar(plantContactAO(C, n));
+  const aoSun = mix(1.0, ao, 0.5);
+  const sunE = C.lit.mul(LT.sun).mul(aoSun);
   const lakeW = clamp(dot(n, C.lakeDir).mul(0.6).add(0.4), 0.0, 1.0);
   const beamW = clamp(dot(n, C.beamDir).mul(0.8).add(0.2), 0.0, 1.0);
+  const beamE = C.beamE.mul(ao);
   const skyE = C.day.mul(mix(1.0, 0.15, C.bowl)).mul(LT.sky);
-  const hemi = mix(vec3(0.105, 0.095, 0.085), vec3(...T.sky), dot(n, C.up).mul(0.5).add(0.5));
+  const nu = dot(n, C.up);
+  // półkula: nad gruntem niebo z góry i grunt z dołu; w przestrzeni z góry czerń, od dołu poświata Ziemi
+  const hemiS = mix(vec3(0.105, 0.095, 0.085), vec3(...T.sky), nu.mul(0.5).add(0.5)).mul(skyE);
+  const hemiE = vec3(...PLANT_EARTH_GLOW).mul(C.day.mul(LT.earthGlow).mul(clamp(nu.mul(-0.6).add(0.4), 0.0, 1.0)));
+  const hemi = mix(hemiS, hemiE, C.space).mul(ao);
   const diff = vec3(...T.sun).mul(sunE.mul(nl))
     .add(vec3(...T.lava).mul(C.lakeE.mul(lakeW)))
-    .add(vec3(...T.beam).mul(C.beamE.mul(beamW)))
-    .add(hemi.mul(skyE));
+    .add(vec3(...T.beam).mul(beamE.mul(beamW).mul(LT.beamDiffuse)))
+    .add(hemi);
   const spec = vec3(...T.sun).mul(plantGGX(n, C.L, C.V, a2, f0).mul(sunE))
     .add(vec3(...T.lava).mul(plantGGX(n, C.lakeDir, C.V, min(a2.add(0.2), 1.0), f0).mul(C.lakeE)))
-    .add(vec3(...T.beam).mul(plantGGX(n, C.beamDir, C.V, min(a2.add(0.01), 1.0), f0).mul(C.beamE)));
-  // niebo w odblasku: Fresnel na krawędziach (gładsze — wyraźniej)
+    .add(vec3(...T.beam).mul(plantGGX(n, C.beamDir, C.V, min(a2.add(0.01), 1.0), f0).mul(beamE)));
+  // otoczenie w odblasku: Fresnel na krawędziach (gładsze — wyraźniej); w przestrzeni nad horyzontem czarne
   const fc = float(1.0).sub(max(dot(n, C.V), 0.0));
   const fc2 = fc.mul(fc);
   const fr = float(f0).add(float(1.0).sub(f0).mul(fc2.mul(fc2).mul(fc))).mul(float(1.0).sub(sqrt(a2).mul(0.7)));
-  const env = vec3(...T.sky).mul(skyE.mul(fr).mul(0.6));
+  const R = C.V.negate().sub(n.mul(dot(n, C.V.negate()).mul(2.0)));
+  const env = plantEnv(C, R).mul(fr.mul(0.6).mul(ao));
   return albedo.mul(diff).mul(1.0 / Math.PI).add(spec.add(env).mul(specOcc));
+}
+
+/**
+ * Układ wzoru powierzchni: rzut pudełkowy (plantBoxUv) albo — dla części z WŁASNYM uv w [R] (uvMode = 1: części
+ * przeciągane, uv.x wzdłuż, uv.y w przekroju) — uv części z ramą stycznych z pochodnych ekranowych (wzór idzie wzdłuż
+ * części, nie w poprzek nieregularnego brzegu). Pochodne pozycji (dpx, dpy) i uv (duvx, duvy) — policzone na początku
+ * Fn (przed gałęziami). Zwraca uv [R], kierunki tu / tv (układ obiektu, w płaszczyźnie stycznej), piksel WZDŁUŻ osi
+ * wzoru pu / pv [R] (detal gaśnie osobno wzdłuż osi ściśniętej w rzucie — bez smug pod ostrym kątem) i `wall`
+ * (1 — ściana: wzór pionowy, 0 — pokład).
+ */
+export function plantSurfaceUv(C, n, seed, partUv, uvMode, dpx, dpy, duvx, duvy) {
+  const B = plantBoxUv(C, n, seed);
+  // rzut pudełkowy BEZ przesunięcia wg części (układ wzoru od położenia — części współpłaszczyznowe i sąsiednie zgodne)
+  const qB = plantVar(select(abs(dot(n, C.A)).greaterThanEqual(max(abs(dot(n, C.out)), abs(dot(n, C.tan)))),
+    vec2(C.rho.mul(C.phi), C.rho), select(abs(dot(n, C.out)).greaterThanEqual(abs(dot(n, C.tan))), vec2(C.rho.mul(C.phi), C.y),
+      vec2(C.rho, C.y))), 'vec2');
+  // osie rzutu pudełkowego bez rzutowania (szybkość zmiany u / v wzdłuż przesunięcia)
+  const nY = abs(dot(n, C.A));
+  const nR = abs(dot(n, C.out));
+  const nT = abs(dot(n, C.tan));
+  const deck = nY.greaterThanEqual(max(nR, nT));
+  const radial = nR.greaterThanEqual(nT);
+  const tuR = plantVar(select(deck.or(radial), C.tan, C.out), 'vec3');
+  const tvR = plantVar(select(deck, C.out, C.A), 'vec3');
+  const puB = abs(dot(dpx, tuR)).add(abs(dot(dpy, tuR)));
+  const pvB = abs(dot(dpx, tvR)).add(abs(dot(dpy, tvR)));
+  // rama uv części: ∂p/∂u, ∂p/∂v z układu dp = J · duv (niezmiennicze względem znaku dFdy — pułapka 26)
+  const det = duvx.x.mul(duvy.y).sub(duvy.x.mul(duvx.y));
+  const okUv = abs(det).greaterThan(1e-20);
+  const detS = select(okUv, det, float(1.0));
+  const Tu = dpx.mul(duvy.y).sub(dpy.mul(duvx.y)).div(detS);
+  const Tv = dpy.mul(duvx.x).sub(dpx.mul(duvy.x)).div(detS);
+  const TuS = Tu.sub(n.mul(dot(n, Tu)));
+  const TvS = Tv.sub(n.mul(dot(n, Tv)));
+  const tuP = select(okUv.and(length(TuS).greaterThan(1e-12)), TuS.div(max(length(TuS), 1e-20)), B.tu);
+  const tvP = select(okUv.and(length(TvS).greaterThan(1e-12)), TvS.div(max(length(TvS), 1e-20)), B.tv);
+  const puP = abs(duvx.x).add(abs(duvy.x));
+  const pvP = abs(duvx.y).add(abs(duvy.y));
+  const off = vec2(fract(seed.mul(7.13)).mul(0.0371), fract(seed.mul(3.71)).mul(0.0293));
+  const m = uvMode.greaterThan(0.5);
+  // ściana / pokład: wg normalnej względem osi gryzu (część przeciągana — tak samo: pokład korony leży płasko)
+  const wall = plantVar(float(1.0).sub(smoothstep(0.45, 0.62, nY)));
+  return {
+    uv: plantVar(select(m, partUv.add(vec2(off.y, 0.0)), qB), 'vec2'),
+    tu: plantVar(select(m, tuP, B.tu), 'vec3'),
+    tv: plantVar(select(m, tvP, B.tv), 'vec3'),
+    // anizotropia ograniczona do 5 : 1 (jak filtr anizotropowy) — pod bardzo ostrym kątem linie wzdłuż osi
+    // nieściśniętej też gasną, zamiast czesać się w smugi
+    pu: plantVar(max(max(select(m, puP, puB), select(m, pvP, pvB).mul(0.2)), 1e-7)),
+    pv: plantVar(max(max(select(m, pvP, pvB), select(m, puP, puB).mul(0.2)), 1e-7)),
+    wall,
+    deck: plantVar(select(deck, float(1.0), float(0.0))),
+    uvMode: plantVar(select(m, float(1.0), float(0.0)))
+  };
 }
 
 /**
