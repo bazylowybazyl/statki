@@ -179,10 +179,19 @@ export function makeFableSurfaceNodes({ u, zone, fab }) {
       albedo.mulAssign(float(1.0).sub(fabGridAA(gFine, gFineFw, 0.8).mul(0.25)));
     }).ElseIf(type.lessThan(12.5), () => {
       albedo.assign(vec3(0.48, 0.42, 0.29).mul(float(0.9).add(float(0.2).mul(n2))));
-    }).Else(() => {
+    }).ElseIf(type.lessThan(13.5), () => {
       // płyta doku gry: beton z siatką 120 j.
       albedo.assign(vec3(0.26, 0.27, 0.285).mul(float(0.9).add(float(0.12).mul(haloHash12(floor(ring.div(120.0)))))));
       albedo.mulAssign(float(1.0).sub(fabGridAA(gPad, gPadFw, 1.5).mul(0.35)));
+    }).Else(() => {
+      // front budowy (ring w budowie): świeże płyty pokładu (ciemniejsze i różne — kładzione partiami),
+      // szwy co 120 j., przy krawędzi obłożenia pas ostrzegawczy (dens = postęp 0 … 1 od krawędzi przerwy)
+      const plate = haloHash12(floor(ring.div(120.0)).add(5.0)).toVar();
+      albedo.assign(mix(vec3(0.12, 0.125, 0.13), vec3(0.22, 0.225, 0.23), plate).mul(float(0.85).add(float(0.25).mul(n2))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gPad, gPadFw, 2.0).mul(0.5)));
+      const hazBand = float(1.0).sub(smoothstep(0.62, 0.7, dens)).mul(smoothstep(0.5, 0.56, dens)).toVar();
+      const stripe = step(0.5, fract(ring.x.add(ring.y).div(Sc.mul(14.0))));
+      albedo.assign(mix(albedo, mix(vec3(0.03, 0.03, 0.03), vec3(0.62, 0.45, 0.06), stripe), hazBand.mul(0.85)));
     });
     // drogi i kwartały w strefach miejskich
     const road = fabGridAA(gCell, gCellFw, Sc.mul(5.0)).mul(isUrban).toVar();
@@ -331,7 +340,8 @@ function makePanelTextures(kind, seedTag, size = 1024) {
 
 // Pas wokół ringu (ringStrip dema): od (u0, h0) do (u1, h1), normalna (nU, nH)
 // w (z, promień); u = z, h wysokość nad podłogą (na zewnątrz).
-function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 1, repV = 1, extraRing = false } = {}) {
+// keep(θ, i) — quad kolumny i rysuje się tylko, gdy zwróci true (ring w budowie: przerwy i front obłożenia).
+function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 1, repV = 1, extraRing = false, keep = null } = {}) {
   const R = plan.R;
   const cols = segments + 1;
   const rows = across + 1;
@@ -360,6 +370,7 @@ function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 
   }
   const idx = [];
   for (let i = 0; i < segments; i++) {
+    if (keep && !keep(th0 + ((i + 0.5) / segments) * Math.PI * 2, i)) continue;
     for (let j = 0; j < across; j++) {
       const a = i * rows + j;
       const b = a + 1;
@@ -427,8 +438,19 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const uFab = uniform(new THREE.Vector4(plan.CIRC, plan.W, plan.CIRC / Math.round(plan.CIRC / (56 * S)), S));
   const surfMat = archNodeMaterial('FableSurface', makeFableSurfaceNodes({ u: uniforms, zone: uZone, fab: uFab }), {}, { ...uniforms, uZone, uFab });
   disposables.push(surfMat);
+  // Ring w budowie (Jowisz): pasy bez przerw, a na froncie budowy obłożenie kończy się stopniowo —
+  // od krawędzi przerwy goła kratownica, dalej płyty kładzione (losowo w paśmie przejścia), dalej pełne.
+  // clad(od, do): ułamki frontu (0 = krawędź przerwy, 1 = koniec frontu).
+  const K = plan.construction;
+  const quadHash = (i) => { const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
+  const clad = (from, to) => (K.active ? (th, i) => {
+    const d = plan.edgeDist(th) / K.front;
+    if (d < from) return false;
+    if (d >= to) return true;
+    return quadHash(i) < (d - from) / (to - from);
+  } : null);
   const segSurf = Math.round(plan.CIRC / 110);
-  const floorGeo = ringStrip(plan, -HW, 0, HW, 0, 0, 1, segSurf, { across: 6, extraRing: true });
+  const floorGeo = ringStrip(plan, -HW, 0, HW, 0, 0, 1, segSurf, { across: 6, extraRing: true, keep: clad(0.35, 0.6) });
   const floorMesh = new THREE.Mesh(floorGeo, surfMat);
   floorMesh.name = 'FableSurface';
   floorMesh.frustumCulled = false;
@@ -466,13 +488,13 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const hullFG = [];
   const wallBG = [];
   const wallFG = [];
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, HW + WT, -TD, 0, -1, SEG, { across: 4, repU: circPanels, repV: (plan.W + 2 * WT) / (420 * S) }), 0));
-  hullFG.push(tagAtlas(ringStrip(plan, HW + WT, -TD, HW + WT, WH, 1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S) }), 0));
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, -HW - WT, WH, -1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S) }), 0));
-  hullFG.push(tagAtlas(ringStrip(plan, HW, WH, HW + WT, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }), 0));
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, WH, -HW, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }), 0));
-  wallFG.push(tagAtlas(ringStrip(plan, HW, 0, HW, WH, -1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S) }), 1));
-  wallBG.push(tagAtlas(ringStrip(plan, -HW, 0, -HW, WH, 1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S) }), 1));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, HW + WT, -TD, 0, -1, SEG, { across: 4, repU: circPanels, repV: (plan.W + 2 * WT) / (420 * S), keep: clad(0.2, 0.4) }), 0));
+  hullFG.push(tagAtlas(ringStrip(plan, HW + WT, -TD, HW + WT, WH, 1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S), keep: clad(0.45, 0.7) }), 0));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, -HW - WT, WH, -1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S), keep: clad(0.45, 0.7) }), 0));
+  hullFG.push(tagAtlas(ringStrip(plan, HW, WH, HW + WT, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25, keep: clad(0.6, 0.75) }), 0));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, WH, -HW, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25, keep: clad(0.6, 0.75) }), 0));
+  wallFG.push(tagAtlas(ringStrip(plan, HW, 0, HW, WH, -1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S), keep: clad(0.55, 0.75) }), 1));
+  wallBG.push(tagAtlas(ringStrip(plan, -HW, 0, -HW, WH, 1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S), keep: clad(0.55, 0.75) }), 1));
   // pokład wewnętrzny nad płytą (bez kratownicy; z kratownicą pod pokładem jest ażur)
   if (!truss) {
     const hDeck = mapH(-FAB_DEMO_T + 140 * S);
@@ -500,7 +522,9 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   for (const t of fableTubes(plan.section)) {
     const z = t.u;
     const color = t.color == null ? [0.35 * 1.2, 0.8 * 1.2, 1.0 * 1.2] : archHex(t.color).map((v) => v * (t.square ? 0.28 : 0.8));
-    archRingTubeBoxes(z > zTop - 1 ? st.fg.all : st.bg.all, plan.R, t.h, z, t.r, 512, color, t.color == null ? 2 : 0, t.color == null ? 1 : 0.35);
+    // pasy kratownicy (pod pokładem) do krawędzi przerwy, rury i pasy świateł na koronach — za obłożeniem
+    const keep = K.active ? (th) => plan.edgeDist(th) > (t.h > 0 ? K.front * 0.75 : 0) : null;
+    archRingTubeBoxes(z > zTop - 1 ? st.fg.all : st.bg.all, plan.R, t.h, z, t.r, 512, color, t.color == null ? 2 : 0, t.color == null ? 1 : 0.35, keep);
   }
   if (portSolid) st.bg.all.append(portSolid);
   for (const [set, mat, list] of [[st.bg, matBG, bg], [st.fg, matFG, fg]]) {

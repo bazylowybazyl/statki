@@ -11867,6 +11867,18 @@
         x = planet.x + Math.cos(t) * r;
         y = planet.y + Math.sin(t) * r;
         heading = t + Math.PI;
+      } else if (where === 'gap') {
+        // ring w budowie (Jowisz): środek pierwszej przerwy w płycie, za krawędzią ścian, dziobem ku planecie
+        const entry = haloWorld?.entries.find(e => e.key === key);
+        const gap = entry?.collider?.construction?.gaps?.[0];
+        if (!gap) return null;
+        const p = entry.collider.place;
+        const r = entry.collider.layout.radii.rim + 1800;
+        const lx = Math.cos(gap.center) * r;
+        const ly = Math.sin(gap.center) * r;
+        x = p.x + lx * p.cos - ly * p.sin;
+        y = p.y - (lx * p.sin + ly * p.cos);
+        heading = Math.atan2(planet.y - y, planet.x - x);
       } else {
         const r = station.orbitRadius + (where === 'hall' ? -1800 : 6200);
         x = planet.x + ux * r;
@@ -26788,7 +26800,8 @@
         const nowMs = performance.now();
         if (hit && hit.impactSpeed > 150 && nowMs - _haloRingNoticeAtMs > 2500) {
           _haloRingNoticeAtMs = nowMs;
-          pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
+          pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA'
+            : hit.building ? 'RING: PŁYTA — PRZELOT TRANZYTEM ALBO PRZERWĄ BUDOWY' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
         }
       }
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloWorld.constrainShip(player2Ship, true);

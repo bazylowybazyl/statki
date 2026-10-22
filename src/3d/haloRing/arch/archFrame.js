@@ -134,12 +134,14 @@ export class ArchBatch {
 
 // Rura / belka wzdłuż ringu jako odcinki-skrzynki (cięciwy) — w partii
 // konstrukcji zamiast osobnej siatki torusa (jedno wywołanie mniej na stronę).
-// h — wysokość osi rury nad podłogą, z — położenie w poprzek, r — pół przekroju.
-export function archRingTubeBoxes(batch, R, h, z, r, segs, color, kind = 0, p1 = 0.3) {
+// h — wysokość osi rury nad podłogą, z — położenie w poprzek, r — pół przekroju; keep(θ) — odcinek
+// tylko tam, gdzie zwróci true (ring w budowie: bez przerw).
+export function archRingTubeBoxes(batch, R, h, z, r, segs, color, kind = 0, p1 = 0.3, keep = null) {
   const m = new Array(16);
   const dA = (Math.PI * 2) / segs;
   const chord = 2 * (R + h) * Math.sin(dA * 0.5) * 1.02;
   for (let i = 0; i < segs; i++) {
+    if (keep && !keep((i + 0.5) * dA)) continue;
     archMatrix(R, (i + 0.5) * dA, z, h - r, chord, 2 * r, 2 * r, 0, m);
     batch.push16(m, color, kind, 0, p1, 0);
   }

@@ -12,6 +12,7 @@
 // (na zewnątrz). Porty z boku wstęgi (dema) wypadają — w grze doki to hala
 // K-7 i zatoki w płaszczyźnie gry; płyty doków i osłona jak w ECUMENE.
 import { haloPortSites } from '../haloRingConfig.js';
+import { haloGapEdgeDistance } from '../haloRingConstruction.js';
 import { PORT_PAD_H } from '../haloRingRoofPlan.js';
 import { ArchBatch, archBeamMatrix, archHex, archHslLinear, archMatrix, archPoint, archRunSteps, clamp, smoothstep } from './archFrame.js';
 
@@ -49,7 +50,8 @@ export function fableSection(layout) {
 }
 
 // Typy stref dema (Z) i miejskie.
-export const FZ = Object.freeze({ WATER: 0, PARK: 1, FOREST: 2, FARM: 3, MEADOW: 4, RESIDENTIAL: 5, CITY: 6, CORE: 7, INDUSTRIAL: 8, PORT: 9, TECH: 10, PLAZA: 11, BEACH: 12, PAD: 13 });
+// BUILD — front budowy ringu w budowie (pokład bez zabudowy, plac budowy; haloRingConstruction.js).
+export const FZ = Object.freeze({ WATER: 0, PARK: 1, FOREST: 2, FARM: 3, MEADOW: 4, RESIDENTIAL: 5, CITY: 6, CORE: 7, INDUSTRIAL: 8, PORT: 9, TECH: 10, PLAZA: 11, BEACH: 12, PAD: 13, BUILD: 14 });
 const ZONE_URBAN = new Set([FZ.RESIDENTIAL, FZ.CITY, FZ.CORE, FZ.INDUSTRIAL, FZ.PORT, FZ.TECH]);
 
 // Liczba kopuł per układ (SECTOR_DEFS dema).
@@ -122,6 +124,10 @@ export function createFablePlan(layout, seed = layout.seed) {
 
   // ---- port (miejsca doków i tranzytów w grze) -----------------------------
   const sites = haloPortSites(R);
+  // ring w budowie (Jowisz): odległość kątowa od krawędzi przerwy (< 0 w przerwie, Infinity bez przerw)
+  const construction = layout.construction;
+  const edgeDist = (theta) => haloGapEdgeDistance(theta, construction);
+  const inFront = (theta, margin = 0) => edgeDist(theta) < construction.front + margin;
   const wrapD = (d) => d - Math.PI * 2 * Math.round(d / (Math.PI * 2));
   function portClass(theta, z, margin = 0) {
     let cls = 0;
@@ -195,6 +201,8 @@ export function createFablePlan(layout, seed = layout.seed) {
       const theta = sToTheta(s);
       // pod dokiem kopuła nie staje (płyta lub osłona)
       if (portClass(theta, u, r) !== 0) continue;
+      // kopuła nie staje w przerwie ani na froncie budowy
+      if (construction.active && inFront(theta, r / R)) continue;
       domes.push({ sector: sec.k, s, theta, u, r, type, sunk, seed: rngD.next(), hasHill: rngD.chance(0.5), hasWaterfall: type === 'TROPICAL' || type === 'WILDERNESS' });
     }
   }
@@ -377,8 +385,11 @@ export function createFablePlan(layout, seed = layout.seed) {
   }
   // strefa z portem gry: płyta doku (PAD) nad strefą dema
   function zoneWithPort(s, u) {
-    const pc = portClass(sToTheta(s), u);
+    const th = sToTheta(s);
+    const pc = portClass(th, u);
     if (pc === 2) return setZ(FZ.PAD, 0.6, 0.3);
+    // front budowy: g = postęp obłożenia (0 przy krawędzi przerwy, 1 na końcu frontu)
+    if (construction.active && inFront(th)) return setZ(FZ.BUILD, clamp(edgeDist(th) / construction.front, 0, 1), 0);
     return zoneAt(s, u);
   }
 
@@ -414,6 +425,7 @@ export function createFablePlan(layout, seed = layout.seed) {
     layout, R, W, HW, N, span, LEN, CIRC, stretch, seed, S, section: fableSection(layout),
     sectors, secs, domes, sites, subRng, fbm, hash1,
     zoneAt, zoneWithPort, bakeZoneMap, bakeZoneMapSteps, portClass, locate, sToTheta, theta0, heightAt, inDome, domeHit: _domeHit,
+    construction, edgeDist, inFront,
     urban: ZONE_URBAN
   };
 }
@@ -470,6 +482,7 @@ export function* buildFableCitySteps(plan) {
       const uc = u0 + CELL * 0.5;
       if (Math.abs(uc) > HW - 70 * S) continue;
       const pc = plan.portClass(th, uc, CELL * 0.5);
+      if (plan.construction.active && plan.inFront(th, CELL / R)) continue;
       const z = plan.zoneAt(sc, uc);
       const type = z.t;
       const dens = z.d;
@@ -674,12 +687,15 @@ export function buildFableStructure(plan, lights) {
   const segAng = (Math.PI * 2) / NSEG;
   const segLen = layout.circumference / NSEG;
   const th0 = layout.sectorStart;
+  // ring w budowie: konstrukcja tylko na zbudowanych segmentach (front budowy ma gołą kratownicę)
+  const built = (th) => plan.edgeDist(th) > 0;
   // słupki po bokach: od spodu kadłuba do korony ścian
   const postTop = WH + 35 * S * Math.min(1, WH / (260 * S)) + 10;
   // żebra: pod kadłubem (przez całą szerokość) i słupki po bokach
   for (let i = 0; i < NSEG; i++) {
     const th = th0 + i * segAng;
     const big = i % 8 === 0;
+    if (!built(th)) continue;
     const w = (big ? 70 : 34) * S;
     if (clearAt(th)) {
       if (truss) placeSpan('struct', th, 0, -TB, -TD, 0, w, 2 * uSide + 150 * S, STRUCT);
@@ -692,6 +708,7 @@ export function buildFableStructure(plan, lights) {
     for (let i = 0; i < NSEG; i++) {
       const a0 = th0 + i * segAng;
       const a1 = a0 + segAng;
+      if (!built(a0) || !built(a1)) continue;
       const up = i % 2 === 0;
       for (const sd of [-1, 1]) {
         const u = sd * (uSide + 45 * S);
@@ -707,6 +724,7 @@ export function buildFableStructure(plan, lights) {
   for (let i = 0; i < NSEG; i++) {
     const th = th0 + (i + 0.5) * segAng;
     for (const st of stations) {
+      if (!built(th - segAng * 0.5) || !built(th + segAng * 0.5)) break;
       placeBox('dark', th, st, hTruss, Math.atan2(span, segLen), tlen, 12 * S, 12 * S, DARK, 0, 0.2);
       placeBox('dark', th, st, hTruss, -Math.atan2(span, segLen), tlen, 12 * S, 12 * S, DARK, 0, 0.2);
     }
@@ -715,6 +733,7 @@ export function buildFableStructure(plan, lights) {
   const nClusters = NSEG / 3;
   for (let c = 0; c < nClusters; c++) {
     const th = th0 + (c * 3 + 1.5) * segAng;
+    if (!built(th - 3 * segAng) || !built(th + 3 * segAng)) continue;
     const u = mapU((c % 2 === 0 ? 470 : -470) * S);
     const hgt = (130 + 60 * plan.hash1(c)) * S;
     for (let f = 0; f < 7; f++) placeDemo('rad', th + ((f - 3) * 17 * S) / R, u, -T - 340 * S - hgt * 0.5 + 60 * S, 0, 2.5 * S, hgt, 120 * S, RAD, 5, 0.1);
@@ -725,6 +744,7 @@ export function buildFableStructure(plan, lights) {
   const nHangar = NSEG / 6;
   for (let i = 0; i < nHangar; i++) {
     const th = th0 + (i * 6 + 3) * segAng;
+    if (!built(th)) continue;
     const u = mapU((i % 3 - 1) * 380 * S);
     if (Math.abs(u) < 1 && !clearAt(th)) continue;
     const w = (90 + 60 * plan.hash1(i + 50)) * S;
@@ -744,6 +764,7 @@ export function buildFableStructure(plan, lights) {
   const sideHi = WH - 20;
   for (let i = 0; i < nMod; i++) {
     const th = th0 + rng.next() * Math.PI * 2;
+    if (!built(th)) continue;
     const u = rng.range(-HW - WT + 60 * S, HW + WT - 60 * S);
     const sx = rng.range(18, 60) * S; const sy = rng.range(14, 40) * S; const sz = rng.range(18, 60) * S;
     const onSide = rng.chance(0.25);
@@ -763,6 +784,7 @@ export function buildFableStructure(plan, lights) {
   const nAnt = Math.round(420 * NSEG / 384);
   for (let i = 0; i < nAnt; i++) {
     const th = th0 + rng.next() * Math.PI * 2;
+    if (!built(th)) continue;
     const len = rng.range(50, 170) * S;
     const mode = rng.next();
     const thick = rng.range(2, 5) * S;
@@ -791,6 +813,7 @@ export function buildFableStructure(plan, lights) {
   // światła wzdłuż krawędzi
   for (let i = 0; i < NSEG; i++) {
     const th = th0 + i * segAng;
+    if (!built(th)) continue;
     nav(th, uSide + 8 * S, hBot - 12, COL_GREEN, 10, (i * 0.13) % 1);
     nav(th, -uSide - 8 * S, hBot - 12, COL_RED, 10, (i * 0.13 + 0.5) % 1);
     if (i % 2 === 0) {
@@ -799,7 +822,96 @@ export function buildFableStructure(plan, lights) {
     }
     if (i % 8 === 0) nav(th, 0, truss ? -TB - 6 : mapH(-T - 175 * S), COL_AMBER, 12, plan.hash1(i));
   }
-  return { bg, fg, NSEG, T: -hBot, WH, WT };
+  // ---- ring w budowie: place budowy na frontach segmentów (haloRingConstruction.js) ----
+  // Od krawędzi przerwy w głąb segmentu (x — łuk na podłodze): goła kratownica z robotami na węzłach
+  // (0–0,3 frontu), krawędź obłożenia z robotami spawalniczymi (~0,35–0,5), rusztowania (0,3–0,8),
+  // stosy płyt z Io i kontenery (0,6–0,95); nad całością drony; na czole światła ostrzegawcze. Bez
+  // suwnic (decyzja użytkownika 2026-10-07). Spawanie — światła pozycyjne z fazą ≥ 1 (archTSL: migotanie).
+  const site = { fronts: 0, props: 0, welds: 0, drones: 0 };
+  const K = plan.construction;
+  if (K.active) {
+    const crng = plan.subRng('construction');
+    const IO = archHex(0xb59a45).map((v) => v * 0.55);
+    const STEEL = archHex(0x8a9099).map((v) => v * 0.45);
+    const RUST = archHex(0x8a5a2a).map((v) => v * 0.5);
+    const HAZ = archHex(0xd9a21e).map((v) => v * 0.75);
+    const ROBOT = archHex(0xc9c2b0).map((v) => v * 0.6);
+    const WELD = [2.2, 2.45, 2.8];
+    const weld = (th, u, h, size = 7) => { nav(th, u, h, WELD, size, 1 + crng.next()); site.welds++; };
+    const Fw = K.front * R;
+    for (const gap of K.gaps) {
+      for (const sgn of [-1, 1]) {
+        site.fronts++;
+        const edge = gap.center + sgn * gap.half;
+        const at = (x) => edge + sgn * x / R;
+        // czoło segmentu: światła ostrzegawcze w narożnikach kratownicy i na koronach ścian
+        for (const u of [-uSide, 0, uSide]) for (const h of [-TB, -TD, WH]) nav(at(25), u, h, COL_AMBER, 11, 0.3 + crng.next() * 0.6);
+        // goła kratownica: roboty-pająki na węzłach żeber pod pokładem, spawanie węzłów
+        for (let x = 60; x < 0.3 * Fw; x += 150 + crng.range(0, 160)) {
+          const u = crng.range(-uSide, uSide);
+          const h = crng.chance(0.5) ? -TD - 12 : -TB + 12;
+          placeBox('struct', at(x), u, h, crng.next() * Math.PI, 38, 16, 30, ROBOT, 0, 0.4);
+          weld(at(x), u, h + (h > -TB + 20 ? -14 : 14), 6);
+          site.props++;
+        }
+        // krawędź obłożenia podłogi: roboty spawalnicze w rzędzie w poprzek wstęgi
+        for (let u = -HW * 0.85; u <= HW * 0.85; u += 170 + crng.range(-30, 30)) {
+          const x = (0.36 + crng.range(0, 0.14)) * Fw;
+          const th = at(x);
+          placeSpan('struct', th, u, 0, 34, crng.next() * 0.6, 44, 44, HAZ, 4, 0.3);
+          const base = archPoint(R, th, u, 34, {});
+          const elbow = archPoint(R, at(x - 55), u + crng.range(-30, 30), 120, {});
+          const tip = archPoint(R, at(x - 115), u + crng.range(-25, 25), 14, {});
+          archBeamMatrix(base, elbow, 13, m);
+          side(u).struct.push16(m, ROBOT, 0, 0, 0.4, 0);
+          archBeamMatrix(elbow, tip, 9, m);
+          side(u).struct.push16(m, ROBOT, 0, 0, 0.4, 0);
+          weld(at(x - 115), u, 18, 8);
+          site.props += 3;
+        }
+        // rusztowania: wieże co ~520 j. w trzech rzędach w poprzek
+        for (let x = 0.3 * Fw; x < 0.8 * Fw; x += 480 + crng.range(0, 120)) {
+          for (const uf of [-0.62, 0, 0.62]) {
+            if (crng.chance(0.25)) continue;
+            const th = at(x);
+            const u = uf * HW + crng.range(-60, 60);
+            const hTop = WH * crng.range(0.8, 1.5);
+            const w = 70;
+            const d = 90;
+            for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) placeSpan('dark', th + (dx * w * 0.5) / R, u + dz * d * 0.5, 0, hTop, 0, 6, 6, STEEL, 0, 0.2);
+            for (let lv = 1; lv <= 3; lv++) placeBox('dark', th, u, (hTop * lv) / 3, 0, w + 6, 5, d + 6, lv === 3 ? HAZ : STEEL, 0, 0.2);
+            if (crng.chance(0.5)) weld(th, u, hTop * 0.66, 7);
+            site.props += 7;
+          }
+        }
+        // stosy płyt z Io i stali, kontenery
+        for (let i = 0; i < 9; i++) {
+          const th = at(crng.range(0.6, 0.95) * Fw);
+          const u = crng.range(-0.8, 0.8) * HW;
+          const yaw = crng.range(-0.25, 0.25);
+          if (crng.chance(0.3)) {
+            placeSpan('struct', th, u, 0, 50, yaw, 120, 55, RUST, 4, 0.3);
+          } else {
+            const n = 1 + Math.floor(crng.next() * 3);
+            const col = crng.chance(0.6) ? IO : STEEL;
+            for (let k = 0; k < n; k++) placeSpan('struct', th, u, k * 24, k * 24 + 20, yaw + k * 0.05, 160 - k * 18, 110 - k * 12, col, 4, 0.2);
+          }
+          site.props++;
+        }
+        // drony nad frontem i nad krawędzią przerwy (z lampkami)
+        for (let i = 0; i < 14; i++) {
+          const th = at(crng.range(-0.2, 0.65) * Fw);
+          const u = crng.range(-0.9, 0.9) * HW;
+          const h = crng.range(90, 420);
+          placeBox('struct', th, u, h, crng.next() * Math.PI, 26, 9, 26, ROBOT, 0, 0.5);
+          nav(th, u, h + 8, crng.chance(0.5) ? COL_GREEN : COL_RED, 5, 0.3 + crng.next() * 0.6);
+          if (crng.chance(0.3)) weld(th, u, h - 10, 5);
+          site.drones++;
+        }
+      }
+    }
+  }
+  return { bg, fg, NSEG, T: -hBot, WH, WT, site };
 }
 
 // Rury i belki wzdłuż ringu (tori dema) w świecie: h (od podłogi, − = pod), u (z), promień, barwa

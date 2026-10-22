@@ -139,8 +139,9 @@ test('Fable: strefy dema (12 układów × 2), zabudowa per komórka, port wolny'
     assert.ok(types.has(t), `strefa ${t}`);
   }
   const city = buildFableCity(plan);
-  assert.ok(city.stats.buildings > 8000, `budynki ${city.stats.buildings}`);
-  assert.ok(city.stats.trees > 25000, `drzewa ${city.stats.trees}`);
+  // ring w budowie (2026-10-22): przerwy i fronty budowy bez zabudowy
+  assert.ok(city.stats.buildings > 6500, `budynki ${city.stats.buildings}`);
+  assert.ok(city.stats.trees > 22000, `drzewa ${city.stats.trees}`);
   let onPad = 0;
   for (const B of city.per) {
     assert.ok(allFinite(B.box) && allFinite(B.tree));

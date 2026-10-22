@@ -460,6 +460,9 @@ export function makeArchPointNodes({ u, fg = false, pointScale }) {
     const phase = iLight.y;
     const blink = float(0.35).add(float(0.65).mul(step(0.5, fract(U.uTime.mul(0.9).add(phase.mul(4.0)))))).toVar();
     blink.assign(mix(1.0, blink, step(0.25, phase)));
+    // faza ≥ 1: spawanie (ring w budowie) — nieregularne błyski ~19 Hz, szczyty HDR
+    const flick = haloHash12(vec2(floor(U.uTime.mul(19.0)), phase.mul(97.0))).toVar();
+    blink.assign(mix(blink, float(0.08).add(step(0.45, flick).mul(1.2)).add(step(0.85, flick).mul(1.3)), step(1.0, phase)));
     vBlinkV.assign(blink);
     vColV.assign(iCol);
     vPosV.assign(iPos);

@@ -329,6 +329,15 @@ const JUPITER = {
   // 700 zamiast 2 680. Dawniej dema ×3: 5 940 / 780 / 1 900.
   geometry: { width: 3000, wallHeight: 250, hullThickness: 450, wallThickness: 225, roofDetailMax: 0, sectorCount: 24 },
   hullTruss: { deck: 130 },
+  // Ring W BUDOWIE (decyzja użytkownika 2026-10-22: „unfinished”): trzy przerwy w płycie (prawdziwe
+  // przeloty w płaszczyźnie gry), w wolnych łukach między kompleksem portu a tranzytem; wszystkie hale
+  // K-7, zatoki i tranzyty na zbudowanych segmentach. at — środek względem kąta stacji [rad], half —
+  // pół-rozpiętość [rad] (przy podłodze 54 500: ~12 / ~8,7 / ~6,5 tys. j.), front — pas końca segmentu
+  // z gołą kratownicą i placem budowy [rad] (~2,7 tys. j.). Moduł: haloRingConstruction.js.
+  construction: {
+    gaps: [{ at: 1.064, half: 0.11 }, { at: 3.649, half: 0.08 }, { at: 5.219, half: 0.06 }],
+    front: 0.05
+  },
   sectorPlan: FABLE_SECTORS,
   sky: { tint: [0.30, 0.42, 0.60], cloudTint: [0.8, 0.8, 0.8] },
   light: {

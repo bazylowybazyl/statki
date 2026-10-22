@@ -23,6 +23,7 @@ import {
   resolveHabitatFacing
 } from './haloRingConfig.js';
 import { resolveHaloProfile } from './haloRingProfiles.js';
+import { haloRingConstruction } from './haloRingConstruction.js';
 import { resolveRingPlanetWorldRadius } from '../ringScale.js';
 
 export const GAME_CAMERA_FOV_DEG = 35;
@@ -342,6 +343,8 @@ export function createHaloRingLayout(options = {}) {
     };
   });
 
+  // ring w budowie (Jowisz): przerwy w płycie i zbudowane segmenty (pusto = pełny ring)
+  const construction = haloRingConstruction(profile, floorMid);
   const rivers = buildRivers(seed);
   const canyons = buildCanyons(seed, profile.canyons);
   const rand = mulberry32(hashSeed(seed, 0x0ff5e7));
@@ -476,6 +479,7 @@ export function createHaloRingLayout(options = {}) {
     }),
     profile: Object.freeze({ vertices: Object.freeze(vertices), edges: Object.freeze(edges) }),
     sectors: Object.freeze(sectors),
+    construction,
     sectorSpan,
     sectorStart,
     rivers: Object.freeze(rivers),

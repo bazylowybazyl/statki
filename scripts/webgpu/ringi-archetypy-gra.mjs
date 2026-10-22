@@ -4,7 +4,7 @@
 // (bez zegara harnessu), statek przy porcie ringu (?haloTest=<ring>&haloAt=port).
 //
 //   node scripts/webgpu/ringi-archetypy-gra.mjs [--ringi mars,jupiter] [--out .tmp/ringi/<katalog>]
-//        [--rozmiar 1600x900] [--czekaj 2500] [--query renderWorker=1] [--port 5341]
+//        [--rozmiar 1600x900] [--czekaj 2500] [--query renderWorker=1] [--port 5341] [--kadry port-z02,3d-podloga]
 //
 // Kadry (na ring): port-z02 (hala K-7 i zatoki z kamery gry), obrecz-z005 / obrecz-z02 (obręcz ringu po stronie
 // Słońca, między zatoką a tranzytem — z góry widać promień obręczy i grubość ściany + kadłuba), 3d-habitat (kamera 3D
@@ -47,6 +47,16 @@ const VIEW = (key, v) => `(() => {
   const port = ${-Math.PI / 4};
   const v = { ...${JSON.stringify(v)} };
   // 'slonce': punkt ringu po stronie Słońca (habitat w świetle), w połowie między zatoką kompleksu a tranzytem
+  // 'przerwa' / 'front': ring w budowie (Jowisz) — środek przerwy najbliżej Słońca / front budowy za jej krawędzią
+  const K = e.collider.construction;
+  if (v.ang === 'przerwa' || v.ang === 'front') {
+    if (!K || !K.active) return false;
+    const sx = window.SUN.x - p.x, sy = -(window.SUN.y - p.y);
+    const sun = Math.atan2(-sx * p.sin + sy * p.cos, sx * p.cos + sy * p.sin);
+    let g = K.gaps[0];
+    for (const c of K.gaps) if (Math.cos(c.center - sun) > Math.cos(g.center - sun)) g = c;
+    v.ang = (v.ang === 'przerwa' ? g.center : g.center + g.half + K.front * 0.55) - port;
+  }
   if (v.ang === 'slonce') {
     const dx = window.SUN.x - p.x, dy = -(window.SUN.y - p.y);
     const a = Math.atan2(-dx * p.sin + dy * p.cos, dx * p.cos + dy * p.sin) - port;
@@ -58,7 +68,7 @@ const VIEW = (key, v) => `(() => {
     }
     v.ang = best;
   }
-  const rOf = (s) => s === 'rim+' ? R.rim + 900 : s === 'mid' ? 0.5 * (R.back + R.rim) : s === 'back-' ? R.back - 1400 : s === 'dock' ? R.rim + 2500 + 1500 : Number(s);
+  const rOf = (s) => /^rim\+\d+$/.test(s) ? R.rim + Number(s.slice(4)) : s === 'rim+' ? R.rim + 900 : s === 'mid' ? 0.5 * (R.back + R.rim) : s === 'back-' ? R.back - 1400 : s === 'dock' ? R.rim + 2500 + 1500 : Number(s);
   const sh = toGame(port + v.ang, rOf(v.r));
   const s = window.ship;
   s.pos.x = sh.x; s.pos.y = sh.y; s.vel.x = 0; s.vel.y = 0;
@@ -86,15 +96,27 @@ const VIEW = (key, v) => `(() => {
   return true;
 })()`;
 
+// Kadry z kamery gry najpierw, potem kamery 3D (po powrocie z kamery 3D pierwszy kadr gry bywał czarny).
 const VIEWS = [
   ['port-z02', { ang: 0, r: 'dock', zoom: 0.2, camR: 'rim+' }],
   ['obrecz-z005', { ang: 'slonce', r: 'rim+', zoom: 0.05, camR: 'mid' }],
   ['obrecz-z02', { ang: 'slonce', r: 'rim+', zoom: 0.2, camR: 'mid' }],
+  // podłoga habitatu z kamery gry poza ringiem (jak scena ring-habitat zrzuty.mjs)
+  ['habitat-z034', { ang: 'slonce', r: 'rim+1800', zoom: 0.34, camR: 'rim+1800' }],
+  // ring w budowie (Jowisz): przerwa w płycie i front budowy z kamery gry
+  ['przerwa-z005', { ang: 'przerwa', r: 'rim+', zoom: 0.05, camR: 'mid' }],
+  ['front-z02', { ang: 'front', r: 'rim+', zoom: 0.2, camR: 'mid' }],
   ['3d-habitat', { ang: 'slonce', r: 'rim+', zoom: 0.06, mode3d: true, az: 25, el: 32 }],
   ['3d-wzdluz', { ang: 'slonce', r: 'rim+', zoom: 0.08, mode3d: true, az: 82, el: 8 }],
   ['3d-spod', { ang: 'slonce', r: 'back-', zoom: 0.08, mode3d: true, az: 200, el: 30 }],
-  ['3d-port', { ang: 0.02, r: 'rim+', zoom: 0.05, mode3d: true, az: 40, el: 40 }]
+  ['3d-port', { ang: 0.02, r: 'rim+', zoom: 0.05, mode3d: true, az: 40, el: 40 }],
+  ['3d-podloga', { ang: 'slonce', r: 'rim+', zoom: 0.3, mode3d: true, az: 15, el: 35 }],
+  ['3d-podloga-bok', { ang: 'slonce', r: 'rim+', zoom: 0.16, mode3d: true, az: 62, el: 20 }],
+  ['3d-przerwa', { ang: 'przerwa', r: 'rim+', zoom: 0.06, mode3d: true, az: 25, el: 30 }],
+  ['3d-front', { ang: 'front', r: 'rim+', zoom: 0.22, mode3d: true, az: 35, el: 26 }]
 ];
+// --kadry a,b: tylko wybrane kadry
+const onlyViews = args.kadry ? new Set(String(args.kadry).split(',')) : null;
 
 const { server, base } = await startVite(Number(args.port || 5341));
 const chrome = await startChrome({ width: W, height: H });
@@ -150,7 +172,9 @@ try {
     console.log(key, worker ? '(worker)' : '(off)', JSON.stringify(geo));
     console.log('  kolizje', JSON.stringify(kolizje));
     for (const [name, v] of VIEWS) {
-      await ev(VIEW(key, v));
+      if (onlyViews && !onlyViews.has(name)) continue;
+      // kadr niemożliwy dla tego ringu (np. przerwa na pełnym ringu) — pomijany
+      if (!await ev(VIEW(key, v))) continue;
       await sleep(waitMs);
       await ev(VIEW(key, v));
       await sleep(600);

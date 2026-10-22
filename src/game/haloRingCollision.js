@@ -16,6 +16,7 @@
 //
 // Zero alokacji na krok: bufory wielokątów i wyniki w obiekcie kolidera.
 import { HALO_TRANSIT, haloPortComplexAngles, haloTransitAngles } from '../3d/haloRing/haloRingConfig.js';
+import { haloAngleDiff, haloGapIndexAt } from '../3d/haloRing/haloRingConstruction.js';
 import { K7_HEIGHTS, createK7Layout, k7Frame } from '../3d/haloRing/haloPortK7Layout.js';
 import { haloBayLayouts } from '../3d/haloRing/haloPortBays.js';
 import { buildPortCollision, createPortRegistry } from '../3d/haloRing/haloPortDocking.js';
@@ -138,6 +139,8 @@ export class HaloRingCollider {
     // tranzyty: korytarz bez płyty (środek ściany tunelu włącznie)
     this.transitAngles = haloTransitAngles();
     this.transitHalf = (HALO_TRANSIT.halfWidth + HALO_TRANSIT.wall) / this.floorMid;
+    // ring w budowie (Jowisz): przerwy w płycie — przeloty jak tranzyty (haloRingConstruction.js)
+    this.construction = L.construction;
     // świat ścian portu w układzie huba hali gracza (kompleks 0)
     this.frame = k7Frame(L);
     const halls = haloPortComplexAngles().map((angle, index) => ({ index, frame: k7Frame(L, angle), layout: createK7Layout() }));
@@ -158,7 +161,8 @@ export class HaloRingCollider {
     this._v = { x: 0, y: 0 };
     this._mtv = { x: 0, z: 0 };
     this._bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
-    this.result = { hit: false, floor: 0, walls: 0, impactSpeed: 0, lastWall: '' };
+    // building — ring w budowie (komunikat: przelot także przerwą)
+    this.result = { hit: false, floor: 0, walls: 0, impactSpeed: 0, lastWall: '', building: !!this.construction.active };
   }
 
   setPlanet(planet) {
@@ -186,6 +190,7 @@ export class HaloRingCollider {
     return this._hub;
   }
 
+  // Przelot przez płytę: tranzyt albo przerwa ringu w budowie.
   _inTransit(lx, ly) {
     let th = Math.atan2(ly, lx);
     for (let i = 0; i < this.transitAngles.length; i++) {
@@ -193,7 +198,7 @@ export class HaloRingCollider {
       d -= TAU * Math.round(d / TAU);
       if (Math.abs(d) < this.transitHalf) return true;
     }
-    return false;
+    return this.construction.active && haloGapIndexAt(th, this.construction) >= 0;
   }
 
   // Punkt świata gry w płycie ringu [kadłub, podłoga + teren] poza tranzytami
@@ -241,22 +246,59 @@ export class HaloRingCollider {
     const habitat = rc > (back + fm) * 0.5;
     const outline = this._outline;
     const local = this._local;
+    // ring w budowie: najbliższa przerwa przy statku — czoło segmentu wypycha też wzdłuż ringu (do przerwy)
+    const K = this.construction;
+    let gap = null;
+    let gapSide = 0;
+    if (K.active && rc > 1) {
+      const thc = Math.atan2(c.y, c.x);
+      let best = Infinity;
+      for (let i = 0; i < K.gaps.length; i++) {
+        const dc = haloAngleDiff(thc, K.gaps[i].center);
+        const e = Math.abs(dc) - K.gaps[i].half;
+        if (e < best) { best = e; gap = K.gaps[i]; gapSide = dc < 0 ? -1 : 1; }
+      }
+      if (best * rc > 4000) gap = null;
+    }
     let push = 0;
+    let tAng = 0;
     for (let i = 0; i < outline.length; i++) {
       const p = haloGameToLocal(place, outline[i].x, outline[i].y, local[i]);
       const r = Math.hypot(p.x, p.y);
       if (r > fm + C.terrainReach || r < back - C.hullReach) continue;
       if (this._inTransit(p.x, p.y)) continue;
+      let pen = 0;
       if (habitat) {
         const h = this.terrainHeightAt ? Number(this.terrainHeightAt(p.x, p.y)) || 0 : 0;
         const g = fm + Math.max(C.padHeight, h) + C.clearance;
-        if (r < g && g - r > push) push = g - r;
+        if (r < g) pen = g - r;
+        if (pen > push) push = pen;
       } else {
         const g = back - C.clearance;
-        if (r > g && g - r < push) push = g - r;
+        if (r > g) pen = g - r;
+        if (pen < push) push = pen;
+      }
+      if (gap && pen !== 0) {
+        const need = Math.abs(haloAngleDiff(Math.atan2(p.y, p.x), gap.center)) - gap.half;
+        if (need > tAng) tAng = need;
       }
     }
     if (push === 0 || rc < 1) return;
+    // czoło segmentu: obrót wokół planety ku przerwie, gdy krótszy niż wypchnięcie promieniowe
+    if (gap && tAng > 0 && tAng * rc + C.clearance < Math.abs(push)) {
+      const a = -gapSide * (tAng + (C.clearance + C.wallSlop) / rc);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const d = haloLocalToGameVec(place, c.x * ca - c.y * sa - c.x, c.x * sa + c.y * ca - c.y, this._v);
+      ship.pos.x += d.x;
+      ship.pos.y += d.y;
+      const s = Math.sign(a);
+      const n = haloLocalToGameVec(place, (-c.y / rc) * s, (c.x / rc) * s, this._v);
+      this._cancelInto(ship, n.x, n.y);
+      this.result.hit = true;
+      this.result.floor = tAng * rc;
+      return;
+    }
     // zapas: wierzchołki daleko kątowo od środka statku idą promieniowo odrobinę mniej
     push += Math.sign(push) * C.wallSlop;
     const ux = c.x / rc;
