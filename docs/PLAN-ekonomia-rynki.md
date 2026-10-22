@@ -175,6 +175,9 @@ Awans do pełnego NPC przyjdzie później.
 | E2b | Jeden model handlu: API rynku (oferty, rezerwacje) dla wszystkich — przewoźnicy, kupcy, gracz, stocznie, wojna, złomiarze, paser | 2 | E2 i końcowe strojenie E4 | moduły ruchu v2 (`agentFleets.js`, `shipyards.js`, `scrapperFleets.js`, `piracy.js`, planista) |
 | E6 | Bańka w grze (Z13 zwężone, § 3.5) | 3 | E1, E2, E5 | nowy `src/game/trafficBubble.js`, `materializedFlight.js`, `shipProxyBatch3D.js` + `src/render/`, `haloPortDocking.js`, `index.html` |
 | E7 | Gracz na rynku: terminal na ofertach, komputer handlowy, stacja gracza jako rynek, zapis stanu ekonomii i wyrw | 4 | E2 | `src/ui/`, `index.html`, zapis gry |
+| E12 | Przeładunek w portach: ładownie floty, rój dronów liczony na żywo na GPU, taśmociągi | 4 | E6 (kontrakt `actors.cargo`) | `src/3d/cargo/`, `src/3d/swarm/`, `src/game/swarm/`, `src/game/portCargoFrame.js`, `src/render/blocks/cargoOpsBlock.js` |
+| E13 | Kadłuby ruchu: mostki, rdzenie, zbiorniki paliwa, gniazda i dysze; broń i AI bojowa awansowanych okrętów; sprite'y Z11 | 5 | E6; E12 (ładownia ciężkiego frachtowca) | `src/data/trafficHulls.js`, `hardpointEditorDefaults.js`, `reactorCores.js`, `engineFx.js`, `src/game/trafficPromotion.js`, blok „BAŃKA RUCHU v2 W GRZE” w `index.html`, `assets/ships/` |
+| E14 | Doki portów bez ringu: dok krzyżowy, dok okrągły, koło z wlotem (jak stacja z Elite Dangerous, płaska) | 5 | E6 | `dockLayout.js`, `DOCK_LAYOUT` w `src/data/markets.js`, `portPaths.js`, nowy moduł 3D doków, kolizje 2D |
 
 Fala 1 (E1, E3, E4, E5, E8) rusza równolegle, każda sesja we własnym worktree. Pliki wspólne (`trafficWorld.js`, `travelNetwork.js`, `trafficProtocol.js`, `trafficBridge.js`, `agentFleets.js`, `trafficDirector.js`) dzielimy po FUNKCJACH, jak w tabeli. Konflikty przy scalaniu rozwiązuje orkiestrator.
 
@@ -445,3 +448,11 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Próbne scalenie z `main`: testy zielone (poza `cicBeltLayer` pod obciążeniem), build, start w workerze 0 sync, przegląd 6 portów 0 sync i 0 błędów. Rozgrzewka przy ładowaniu dłuższa o ok. 0,9 s (flush workera 1659 → 2565 ms).
   - Niezależny przegląd kodu znalazł błędy obrazu: `snap()` cofa przeniesione kontenery, slot zakładany w fazie przechwytu (przesunięta ładownia), nieaktualny odczyt po ponownym użyciu slotu, resztki slotu na cudzym stanowisku, podwójna `SwarmSim` z rozgrzewki, alokacje co klatkę, `?przeladunek=0` nie wyłącza rozgrzewki. Scalenie wstrzymane do poprawek (runda 3).
   - Decyzja orkiestratora: ciężki frachtowiec (1320 kontenerów, 48 dronów przenosi ok. 970) dostaje 96 dronów na slot pola MEGA, jak scena „wymiana” w demie; postój bez zmian, więc ekonomia i bramka nietknięte. Resztka na koniec okna chowa się za zamkniętymi wrotami albo poza kadrem.
+- 2026-10-22 decyzje użytkownika (lista po E6 i E7):
+  1. Budowa stacji gracza — nie na tym etapie. Stacja gracza wyjdzie z fabuły, późno; interfejs budowy i model 3D odłożone, hak `?dev` zostaje.
+  2. Zysk ze stacji idzie do frakcji: stacja Terra Novy zarabia dla Terra Novy. Gracz jest oficerem — po kilku misjach w Atlasie zostaje zdradzony i zaczyna od zera.
+  3. „Nowa gra” czyści zapis ekonomii (zadanie dla sesji E2).
+  4. Nowy terminal zostaje: rudę sprzedaje się w hucie.
+  5–7. Nowa sesja E13: dane kadłubów ruchu (mostki, rdzenie, zbiorniki, gniazda), potem broń i AI bojowa awansowanych okrętów; sprite'y Z11 wpięte.
+  8. Nowa sesja E14: modele doków portów bez ringu — dok krzyżowy, dok okrągły i koło z wlotem (jak stacja z Elite Dangerous, tylko płaska).
+  - Po zakończeniu pracy sesji komputer ma się wyłączyć (polecenie użytkownika).
