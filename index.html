@@ -22773,6 +22773,15 @@
       const hullR = Number(e.radius) || 0;
       e._blkMaxR = shieldR > hullR ? shieldR : hullR;
     }
+    // Cel do siatki pocisków z drogą kroku (v·dt): cele ruszają się PRZED pociskami, a pętla kandydatów testuje odcinek
+    // w ruchu względnym (segX0) — zapytanie siatki idzie odcinkiem świata, więc komórki muszą objąć też pozę sprzed
+    // kroku. Bez tego hipercruise gracza (330–670 j. na krok) gubił 1–6% trafień w mały kadłub (E9 2026-10-22,
+    // scripts/hipercruise-kolizje-sym.mjs --tryb pociski).
+    function insertBulletGridTarget(e, dt) {
+      stampBulletCollisionRadii(e);
+      writeEntityVelocity(e, _bulletTargetVel);
+      SpatialGrid.insertSwept(e, e._blkMaxR, _bulletTargetVel.x * dt, _bulletTargetVel.y * dt);
+    }
 
     // Swap-pop zamiast splice O(n) — kolejnosc pociskow nie ma znaczenia dla logiki
     // ani renderu. W petli malejacej element podmieniony z konca byl juz przetworzony.
@@ -22916,14 +22925,12 @@
       for (let i = 0; i < npcs.length; i++) {
         const t = npcs[i];
         if (t.dead) continue;
-        stampBulletCollisionRadii(t);
-        SpatialGrid.insert(t);
+        insertBulletGridTarget(t, dt);
       }
       for (let i = 0; i < wrecks.length; i++) {
         const t = wrecks[i];
         if (!t.isWreck) continue;
-        stampBulletCollisionRadii(t);
-        SpatialGrid.insert(t);
+        insertBulletGridTarget(t, dt);
       }
       // Gracz: wstaw do SpatialGrid żeby pociski NPC mogły go trafić
       if (ship && !ship.dead && !ship.destroyed) {
@@ -22946,8 +22953,7 @@
             get isWreck() { return false; }
           };
         }
-        stampBulletCollisionRadii(ship._spatialProxy);
-        SpatialGrid.insert(ship._spatialProxy);
+        insertBulletGridTarget(ship._spatialProxy, dt);
       }
       // Player 2 into SpatialGrid
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
@@ -22971,8 +22977,7 @@
             get isWreck() { return false; }
           };
         }
-        stampBulletCollisionRadii(player2Ship._spatialProxy);
-        SpatialGrid.insert(player2Ship._spatialProxy);
+        insertBulletGridTarget(player2Ship._spatialProxy, dt);
       }
       PerfHUD.addTiming('bulletGridTime', performance.now() - tBulletGrid0);
 
