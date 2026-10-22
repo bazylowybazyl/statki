@@ -322,3 +322,9 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Przy scalaniu jeden konflikt w regule `statek-gracza`: opis efektu (E5) połączony z bezpiecznikami (E9).
   - Testy zielone, build przechodzi, w grze 0 pipeline'ów sync (`scripts/webgpu/hipercruise-efekt-gra.mjs`).
 - 2026-10-22 E10: wszystkie 6 kroków receptur zacommitowane, bramki kroków biegną. Czysty pomiar ticku zrobi E4 na końcu, na scalonym `main`, w oknie ciszy.
+- 2026-10-22 E4 w `main` (3d19d01a):
+  - kolejki zaliczone: 1,75–1,96 (`MARKET_DOCK_OVERRIDES`: Ceres ×5, Oberon ×2);
+  - pamięć `stationWantsResource`: symulacja identyczna, tick −30% pod tym samym obciążeniem.
+  - Następne gorące miejsce, `findTradeOpportunities` (24% ticku), przekazane E2 do E2b jako indeks per surowiec bez zmiany wyniku.
+  - Tick (50–68 ms pod obciążeniem innych sesji) zmierzymy w jednym oknie ciszy po E2b, E6 i E10.
+- 2026-10-22 E10, krok 3: głód uranu na Saturnie spadł z 14,4 do 8,7 min, kolejka Ceres wróciła do poziomu bazy.
