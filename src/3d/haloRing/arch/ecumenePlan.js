@@ -247,24 +247,36 @@ export function createEcumenePlan(layout, seed = layout.seed) {
   };
 }
 
-// ---- kryte habitaty (sklepienie) --------------------------------------------
-// Mars, 2026-10-22 (decyzja u użytkownika — domyślnie TAK, warstwa wyłączalna polem profilu
-// `habitatVault`): przy 0,29 g i ścianach ~1 wysokości skali otwarta atmosfera by uciekła, więc nad
-// pasem habitatu stoi szklane sklepienie od korony do korony ścian. Łuk paraboliczny
-// h(z) = ściany + (apex − ściany)·(1 − (z/HW)²). Bez sklepienia nad płytami portu i tranzytami (doki
-// stoją za krawędzią, pylony idą z płyty), nad kopułami (własne szkło) i supertallami (kołnierz w szkle).
-// Segmenty co ~`segment` j. łuku; budynki pod sklepieniem przycięte do jego wysokości (plan zabudowy).
+// ---- kryte habitaty (kopuły przęseł) -------------------------------------------
+// Mars, decyzja użytkownika 2026-10-22 („tak, robić kopuły”; warstwa wyłączalna polem profilu
+// `habitatVault`, null = otwarty habitat): przy 0,29 g i ścianach ~1 wysokości skali otwarta atmosfera
+// by uciekła, więc pas habitatu przykrywa ciąg szklanych KOPUŁ-PRZĘSEŁ na żebrach, od korony do korony
+// ścian. W poprzek łuk paraboliczny, wzdłuż ringu każde przęsło wybrzusza się ku środkowi i opada przy
+// żebrach (`sag`) — z kamery gry krawędź ma falisty, czytelny obrys. Wysokość:
+// h(z, θ) = ściany + (apex − ściany)·(1 − (z/HW)²)·(1 − sag·t²), t ∈ [−1, 1] w przęśle.
+// Bez kopuł nad płytami portu i tranzytami (doki stoją za krawędzią, pylony idą z płyty), nad kopułami
+// dema (własne szkło) i supertallami; przęsło przykryte w całości albo wcale (czoła szklane).
+// Budynki pod szkłem przycięte do jego wysokości (plan zabudowy).
 export function ecumeneVault(plan) {
   const v = plan.layout.planetProfile?.habitatVault;
   if (!v) return null;
   const { layout, R, HW, LEN } = plan;
   const wallH = layout.wallHeight;
   const apex = Math.max(wallH + 60, Number(v.apex) || 600);
-  const hAt = (z) => wallH + (apex - wallH) * Math.max(0, 1 - (z / HW) * (z / HW));
-  const n = Math.max(12, Math.round(layout.circumference / (Number(v.segment) || 280)));
+  const bay = Math.max(2, Math.round(Number(v.bay) || 6));
+  const sag = Math.min(0.8, Math.max(0, Number(v.sag ?? 0.32)));
+  const n = Math.max(bay * 12, Math.round(layout.circumference / (Number(v.segment) || 140) / bay) * bay);
   const dA = (Math.PI * 2) / n;
-  const segLen = dA * R;
   const wrapD = (d) => d - Math.PI * 2 * Math.round(d / (Math.PI * 2));
+  const relOf = (theta) => ((theta - layout.sectorStart) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+  const rise = (z) => (apex - wallH) * Math.max(0, 1 - (z / HW) * (z / HW));
+  // t w przęśle: −1 przy żebrze na początku, 0 w środku, +1 przy żebrze na końcu
+  const bayT = (theta) => {
+    const u = relOf(theta) / (dA * bay);
+    return 2 * (u - Math.floor(u)) - 1;
+  };
+  // bez θ — grzbiet przęsła (najwyżej); z θ — wysokość szkła w tym miejscu przęsła
+  const hAt = (z, theta = null) => wallH + rise(z) * (theta == null ? 1 : 1 - sag * bayT(theta) * bayT(theta));
   const holes = [];
   for (const d of plan.domeSpots) {
     const p = plan.sectors.findIndex((sec) => sec.district === d.s);
@@ -273,18 +285,19 @@ export function ecumeneVault(plan) {
   plan.sectors.forEach((sec, p) => {
     if (sec.district === 0 || sec.district === 8) holes.push({ theta: plan.theta0(p) + (LEN * (sec.district === 0 ? 0.31 : 0.39)) / R, r: 160 * S });
   });
-  const covered = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
+  const segOk = (i) => {
     const th = layout.sectorStart + (i + 0.5) * dA;
-    if ([-0.85, 0, 0.85].some((f) => plan.portClass(th, f * HW, 300) === 2)) continue;
-    if (holes.some((hole) => Math.abs(wrapD(th - hole.theta)) * R < hole.r + segLen * 0.5)) continue;
-    covered[i] = 1;
-  }
-  const indexAt = (theta) => {
-    const rel = ((theta - layout.sectorStart) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-    return Math.min(n - 1, Math.floor(rel / dA));
+    if ([-0.85, 0, 0.85].some((f) => plan.portClass(th, f * HW, 300) === 2)) return false;
+    return !holes.some((hole) => Math.abs(wrapD(th - hole.theta)) * R < hole.r + dA * R * 0.5);
   };
-  return { apex, wallH, hAt, n, dA, covered, coveredAt: (theta) => covered[indexAt(theta)] === 1 };
+  const covered = new Uint8Array(n);
+  for (let b0 = 0; b0 < n; b0 += bay) {
+    let ok = true;
+    for (let i = b0; i < b0 + bay && ok; i++) ok = segOk(i);
+    if (ok) covered.fill(1, b0, b0 + bay);
+  }
+  const indexAt = (theta) => Math.min(n - 1, Math.floor(relOf(theta) / dA));
+  return { apex, wallH, sag, bay, hAt, n, dA, covered, coveredAt: (theta) => covered[indexAt(theta)] === 1 };
 }
 
 // ---- rozstawienie brył (instancje) ------------------------------------------
@@ -308,14 +321,19 @@ export function* buildEcumeneInstancesSteps(plan) {
   // kryte habitaty: zabudowa pod sklepieniem nie przebija szkła (zapas 30 j.): wieża (> 145 dema)
   // z nadbudową do 1,33 h i masztem ~120 j., niższy budynek z dachem do +32 j.
   const vault = ecumeneVault(plan);
+  // szkło nad obrysem bryły (do ~90 j. od środka wzdłuż i w poprzek) — najniżej w tym obrysie
+  const glassOver = (a, z) => {
+    const ze = Math.sign(z) * Math.min(HW, Math.abs(z) + 90);
+    return Math.min(vault.hAt(ze, a), vault.hAt(ze, a - 90 / R), vault.hAt(ze, a + 90 / R));
+  };
   const capUnderVault = (a, z, h0, h) => {
     if (!vault || !vault.coveredAt(a)) return h;
-    const top = vault.hAt(z) - 30 - h0;
+    const top = glassOver(a, z) - 30 - h0;
     if (h > 145 * S && h * 1.33 + 120 > top) h = Math.max(0, (top - 120) / 1.33);
     if (h <= 145 * S && h + 32 > top) h = Math.max(4 * S, top - 32);
     return h;
   };
-  const underVaultTop = (a, z) => (vault && vault.coveredAt(a) ? vault.hAt(z) - 30 : Infinity);
+  const underVaultTop = (a, z) => (vault && vault.coveredAt(a) ? glassOver(a, z) - 30 : Infinity);
   // węższa wstęga niż demo: część dzielnicy poza podłogą odpada (mapa przycięta, nie ściśnięta)
   const across = (plan.W - 160 * S) / (ECU_DEMO_W * S - 160 * S);
   // supertalle dzielnic 0 i 8: położenie w poprzek względem arterii (w demie 330 / −410 przy arteriach ±850)

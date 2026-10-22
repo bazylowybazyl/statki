@@ -17,6 +17,15 @@ test('sklepienie: łuk od korony do korony ścian, pokrycie poza portem, kopuła
   assert.equal(v.hAt(plan.HW), mars.wallHeight);
   assert.equal(v.hAt(-plan.HW), mars.wallHeight);
   assert.equal(v.hAt(0), v.apex);
+  // kopuły przęseł: przy żebrze szkło niżej niż w środku przęsła (falisty obrys z kamery gry)
+  const th0 = mars.sectorStart + 0.5 * v.dA * 0;
+  const mid = mars.sectorStart + v.dA * v.bay * 0.5;
+  assert.ok(v.hAt(0, mid) > v.hAt(0, th0) + 50, `przęsło ${v.hAt(0, mid).toFixed(0)} vs żebro ${v.hAt(0, th0).toFixed(0)}`);
+  // przęsła przykryte w całości albo wcale
+  for (let b = 0; b < v.n; b += v.bay) {
+    const s = v.covered.slice(b, b + v.bay).reduce((x, c) => x + c, 0);
+    assert.ok(s === 0 || s === v.bay, 'przęsło przykryte częściowo');
+  }
   const covered = v.covered.reduce((s, c) => s + c, 0);
   assert.ok(covered / v.n > 0.25 && covered / v.n < 0.7, `pokrycie ${covered}/${v.n}`);
   for (let i = 0; i < v.n; i++) {
@@ -48,7 +57,7 @@ test('sklepienie: zabudowa pod nim nie przebija szkła; bez pola profilu — otw
       // góra bryły: podstawa (r − R) + wysokość (długość osi Y macierzy)
       const base = Math.hypot(x, y) - plan.R;
       const h = Math.hypot(b.m[o + 4], b.m[o + 5], b.m[o + 6]);
-      assert.ok(base + h <= v.hAt(z) + 1, `bryła ${(base + h).toFixed(0)} > sklepienie ${v.hAt(z).toFixed(0)}`);
+      assert.ok(base + h <= v.hAt(z, th) + 1, `bryła ${(base + h).toFixed(0)} > szkło ${v.hAt(z, th).toFixed(0)}`);
       checked++;
     }
   }
@@ -57,5 +66,5 @@ test('sklepienie: zabudowa pod nim nie przebija szkła; bez pola profilu — otw
   const openPlan = { ...plan, layout: { ...plan.layout, planetProfile: { ...plan.layout.planetProfile, habitatVault: null } } };
   assert.equal(ecumeneVault(openPlan), null);
   const src = read('src/3d/haloRing/arch/ecumene.js');
-  assert.match(src, /materials\.glass\(\{ alpha: 0\.035, fg: true \}\)/, 'górna połowa w FG (zanik jak górna ściana)');
+  assert.match(src, /archBatchMesh\(one, g, materials\.glass\(/, 'szkło kopuł: ciągła siatka, materiał szkła archetypów');
 });

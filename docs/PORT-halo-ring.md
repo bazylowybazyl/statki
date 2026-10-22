@@ -619,7 +619,7 @@ przesuwa tylko jego spód (od strony planety), a niższe ściany Jowisza — pod
   Słońca, kamery 3D: habitat, wzdłuż, spód, port; pipeline'y synchroniczne w trybie `off` = 0).
 
 **Decyzje (2026-10-22):** Jowisz — ring NIEDOKOŃCZONY („unfinished”, § niżej); Mars — habitaty kryte
-domyślnie TAK (warstwa wyłączalna, decyzja jeszcze u użytkownika na liście orkiestratora).
+TAK („tak, robić kopuły”; kształt do wyboru — kopuły przęseł, § „Podłogi…”).
 
 ### Jowisz w budowie (decyzja użytkownika 2026-10-22: „unfinished”)
 
@@ -672,13 +672,17 @@ ringi”) — zmiany są w ich własnych shaderach i planach:
 - **Mars — podłoga miasta**: podwórza kwartałów (jasny bruk w płytach albo ogród, losowo per działka),
   cień kontaktowy (AO) wokół śladu budynku, ulice z chodnikami przy krawężnikach, jaśniejsza paleta
   miasta i ulic, ciemniejsza woda.
-- **Mars — kryte habitaty** (`habitatVault` profilu: `apex` 620 j., segment 280 j.; `null` = otwarty
-  habitat): szklane sklepienie od korony do korony ścian, łuk paraboliczny, panele szkła (instancje
-  kwadratu, materiał szkła archetypów, górna połowa w FG — zanik i wycięcia jak górna ściana),
-  żebra co 3 segmenty i szprosy wzdłuż ringu w partiach konstrukcji. Bez sklepienia nad płytami
-  portu i tranzytami (na Marsie ~połowa obwodu), nad kopułami (własne szkło) i supertallami
-  (kołnierz w szkle) — pokrycie ~37% obwodu. Budynki pod sklepieniem przycięte do jego wysokości.
-  Z góry sklepienie to przezroczysty pas ze słupkami ~460 j. nad koroną ścian.
+- **Mars — kryte habitaty, KOPUŁY PRZĘSEŁ** (decyzja użytkownika „tak, robić kopuły”; `habitatVault`
+  profilu: `apex` 620 j., przęsło `bay` 6 × `segment` 140 = 840 j., `sag` 0,32; `null` = otwarty
+  habitat): ciąg szklanych kopuł na żebrach od korony do korony ścian — w poprzek łuk paraboliczny,
+  wzdłuż ringu każde przęsło wybrzusza się ku środkowi i opada przy żebrach o 32% wzniosu, więc
+  z kamery gry krawędź szkła ma falisty, czytelny obrys (kopuły „koralikami” wzdłuż ringu). Ciągła
+  siatka szkła na odcinek przykrycia (jedna instancja materiału szkła archetypów, lżejszy Fresnel —
+  `fresnel` 0,2, żeby z kamer 3D było widać podłogę), szklane czoła na końcach odcinka, żebra po krzywej
+  szkła ze światłami na szczytach, szprosy wzdłuż ringu (partie konstrukcji). Bez kopuł nad płytami
+  portu i tranzytami (na Marsie ~połowa obwodu), nad kopułami dema i supertallami; przęsło
+  przykryte w całości albo wcale — pokrycie ~28% obwodu. Budynki pod szkłem przycięte do jego
+  wysokości nad obrysem bryły. Szkło leży w z ≤ HW, więc rysuje się w BG jak podłoga.
 
 **Narzędzie**: `node scripts/webgpu/ringi-archetypy-gra.mjs [--ringi earth,mars,jupiter] [--kadry …]
 [--gpu] [--query renderWorker=1] --out .tmp/ringi/<katalog>` — kadry z kamery gry (port, obręcz,

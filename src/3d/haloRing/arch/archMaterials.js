@@ -70,10 +70,10 @@ export class ArchMaterials {
     }));
   }
 
-  glass({ alpha = 0.12, fg = false } = {}) {
+  glass({ alpha = 0.12, fg = false, fresnel = 0.5 } = {}) {
     const uGlassAlpha = uniform(alpha);
     // przezroczyste DoubleSide w jednym przebiegu jak ShaderMaterial w bazie (forceSinglePass)
-    return this._track(archNodeMaterial('ArchGlass', makeArchGlassNodes({ u: this.uniforms, fg, glassAlpha: uGlassAlpha }), {
+    return this._track(archNodeMaterial('ArchGlass', makeArchGlassNodes({ u: this.uniforms, fg, glassAlpha: uGlassAlpha, fresnel }), {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,

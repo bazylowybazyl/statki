@@ -22,7 +22,7 @@ import { PORT_PAD_H } from '../haloRingRoofPlan.js';
 import { haloHash12, haloPureFn } from '../haloRingTSL.js';
 import { uniformsAdapter } from '../haloUniformsAdapter.js';
 import { archLitTSL, archNodeMaterial } from './archTSL.js';
-import { ArchBatch, archBeamMatrix, archHex, archMatrix, archPoint, archRingTubeBoxes, archRunSteps } from './archFrame.js';
+import { ArchBatch, archBeamMatrix, archHex, archPoint, archRingTubeBoxes, archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
 import {
   ECU_DISTRICTS,
@@ -551,72 +551,101 @@ export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, qual
         t.color == null ? 2 : 0, t.color == null ? 1 : (t.color === 0xb19a70 ? 0.6 : 0.3));
     }
   }
-  // ---- kryte habitaty: szklane sklepienie nad pasem habitatu (ecumeneVault) — panele szkła (instancje
-  // kwadratu), żebra co 3 segmenty i szprosy wzdłuż ringu w partiach konstrukcji; górna połowa w FG
-  // (zanik i wycięcia jak górna ściana — haloFgClip)
+  // ---- kryte habitaty: szklane kopuły przęseł nad pasem habitatu (ecumeneVault) — ciągła siatka szkła
+  // na odcinek przykrycia (przęsła wybrzuszone ku środkowi, szklane czoła na końcach odcinka), żebra po
+  // krzywej szkła na granicach przęseł ze światłami na szczytach i szprosy wzdłuż ringu w partiach
+  // konstrukcji. Szkło leży w z ∈ [−HW, HW] — pod płaszczyzną górnej ściany, więc w BG jak podłoga.
   const vault = ecumeneVault(plan);
   let vaultStats = null;
   if (vault) {
-    const K = 10;
+    const K = 12;
+    const SUB = 2;
     const zs = Array.from({ length: K + 1 }, (_, j) => -plan.HW + (2 * plan.HW * j) / K);
-    const glassBG = new ArchBatch('EcumeneVaultGlass');
-    const glassFG = new ArchBatch('EcumeneVaultGlassFG');
-    const tint = [0.55, 0.74, 0.8];
-    const rib = archHex(0xb8c2c0);
+    const rib = archHex(0xc4ccc9);
     const mul = archHex(0x8fa0a4);
+    const RIB_LIGHT = [1.25, 1.05, 0.78];
+    const pos = [];
+    const idx = [];
     const vm = new Array(16);
-    const p0 = {};
-    const p1 = {};
-    let panels = 0;
-    for (let i = 0; i < vault.n; i++) {
-      if (!vault.covered[i]) continue;
-      const th = layout.sectorStart + (i + 0.5) * vault.dA;
-      const tx = -Math.sin(th);
-      const ty = Math.cos(th);
-      for (let j = 0; j < K; j++) {
-        archPoint(plan.R, th, zs[j], vault.hAt(zs[j]), p0);
-        archPoint(plan.R, th, zs[j + 1], vault.hAt(zs[j + 1]), p1);
-        const L = 2 * (plan.R + Math.max(vault.hAt(zs[j]), vault.hAt(zs[j + 1]))) * Math.sin(vault.dA * 0.5) * 1.01;
-        const yx = p1.x - p0.x;
-        const yy = p1.y - p0.y;
-        const yz = p1.z - p0.z;
-        let nx = ty * yz;
-        let ny = -tx * yz;
-        let nz = tx * yy - ty * yx;
-        const nl = Math.hypot(nx, ny, nz) || 1;
-        nx /= nl; ny /= nl; nz /= nl;
-        vm[0] = tx * L; vm[1] = ty * L; vm[2] = 0; vm[3] = 0;
-        vm[4] = yx; vm[5] = yy; vm[6] = yz; vm[7] = 0;
-        vm[8] = nx; vm[9] = ny; vm[10] = nz; vm[11] = 0;
-        vm[12] = p0.x; vm[13] = p0.y; vm[14] = p0.z; vm[15] = 1;
-        ((p0.z + p1.z) * 0.5 > zTop - 1 ? glassFG : glassBG).push16(vm, tint, 0, 0, 0, 0);
-        panels++;
-        // żebro sklepienia co 3 segmenty (na początku segmentu) i szprosy wzdłuż ringu co 2 pasy
-        if (i % 3 === 0) {
-          const a0 = th - vault.dA * 0.5;
-          const q0 = archPoint(plan.R, a0, zs[j], vault.hAt(zs[j]) + 3, {});
-          const q1 = archPoint(plan.R, a0, zs[j + 1], vault.hAt(zs[j + 1]) + 3, {});
-          archBeamMatrix(q0, q1, 7, vm);
-          ((q0.z + q1.z) * 0.5 > zTop - 1 ? st.fg : st.bg).push16(vm, rib, 4, 0.5, 0.3, 0);
-        }
-        if (j % 2 === 0 && j > 0) {
-          archMatrix(plan.R, th, zs[j], vault.hAt(zs[j]) - 1, L, 4, 4, 0, vm);
-          (zs[j] > zTop - 1 ? st.fg : st.bg).push16(vm, mul, 0, 0, 0.4, 0);
+    const thOf = (k) => layout.sectorStart + k * vault.dA;
+    const push = (th, z, h) => {
+      const r = plan.R + h;
+      pos.push(r * Math.cos(th), r * Math.sin(th), z);
+      return pos.length / 3 - 1;
+    };
+    let runs = 0;
+    let ribs = 0;
+    for (let i = 0; i < vault.n;) {
+      if (!vault.covered[i]) { i++; continue; }
+      let e = i;
+      while (e < vault.n && vault.covered[e]) e++;
+      runs++;
+      // powłoka odcinka [i, e): (e − i)·SUB + 1 kolumn × K + 1 wierszy
+      const cols = (e - i) * SUB + 1;
+      const base = pos.length / 3;
+      for (let c = 0; c < cols; c++) {
+        const th = thOf(i + c / SUB);
+        for (let j = 0; j <= K; j++) push(th, zs[j], vault.hAt(zs[j], th));
+      }
+      for (let c = 0; c < cols - 1; c++) {
+        for (let j = 0; j < K; j++) {
+          const a = base + c * (K + 1) + j;
+          const b = a + K + 1;
+          idx.push(a, b, a + 1, a + 1, b, b + 1);
         }
       }
+      // szklane czoła na końcach odcinka: od podłogi do łuku szkła
+      for (const th of [thOf(i), thOf(e)]) {
+        const cb = pos.length / 3;
+        for (let j = 0; j <= K; j++) { push(th, zs[j], -4); push(th, zs[j], vault.hAt(zs[j], th)); }
+        for (let j = 0; j < K; j++) {
+          const a = cb + j * 2;
+          idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+        }
+      }
+      // żebra na granicach przęseł (w tym czoła) po krzywej szkła + światło na szczycie
+      for (let k = i; k <= e; k += vault.bay) {
+        const th = thOf(k);
+        for (let j = 0; j < K; j++) {
+          const q0 = archPoint(plan.R, th, zs[j], vault.hAt(zs[j], th) + 4, {});
+          const q1 = archPoint(plan.R, th, zs[j + 1], vault.hAt(zs[j + 1], th) + 4, {});
+          archBeamMatrix(q0, q1, 10, vm);
+          st.bg.push16(vm, rib, 4, 0.5, 0.3, 0);
+        }
+        const top = archPoint(plan.R, th, 0, vault.hAt(0, th) + 12, {});
+        lights.add(top.x, top.y, top.z, RIB_LIGHT, 6 * S, 0.05);
+        ribs++;
+      }
+      // szprosy wzdłuż ringu (co 3 pasy w poprzek)
+      for (let j = 3; j < K; j += 3) {
+        for (let c = 0; c < cols - 1; c++) {
+          const t0 = thOf(i + c / SUB);
+          const t1 = thOf(i + (c + 1) / SUB);
+          const q0 = archPoint(plan.R, t0, zs[j], vault.hAt(zs[j], t0) + 2, {});
+          const q1 = archPoint(plan.R, t1, zs[j], vault.hAt(zs[j], t1) + 2, {});
+          archBeamMatrix(q0, q1, 4, vm);
+          st.bg.push16(vm, mul, 0, 0, 0.4, 0);
+        }
+      }
+      i = e;
     }
-    const plane = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
-    plane.deleteAttribute('uv');
-    disposables.push(plane);
-    const gBG = archBatchMesh(glassBG, plane, materials.glass({ alpha: 0.035 }));
-    const gFG = archBatchMesh(glassFG, plane, materials.glass({ alpha: 0.035, fg: true }));
-    for (const [mesh, list, name] of [[gBG, bg, 'EcumeneVault'], [gFG, fg, 'EcumeneVaultFG']]) {
-      if (!mesh) continue;
-      mesh.name = name;
+    if (idx.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      g.computeBoundingSphere();
+      disposables.push(g);
+      // jedna instancja z macierzą jednostkową — materiał szkła archetypów (instancje), siatka w układzie ringu
+      const one = new ArchBatch('EcumeneVault');
+      one.push16([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], [0.55, 0.74, 0.8], 0, 0, 0, 0);
+      const mesh = archBatchMesh(one, g, materials.glass({ alpha: 0.03, fresnel: 0.2 }));
+      mesh.geometry.boundingSphere = g.boundingSphere.clone();
+      mesh.geometry.boundingBox = new THREE.Box3().setFromBufferAttribute(g.getAttribute('position'));
       mesh.renderOrder = 31;
-      list.push(mesh);
+      bg.push(mesh);
     }
-    vaultStats = { panels, segments: vault.covered.reduce((s, c) => s + c, 0), of: vault.n, apex: vault.apex };
+    vaultStats = { runs, ribs, segments: vault.covered.reduce((s, c) => s + c, 0), of: vault.n, apex: vault.apex };
   }
   if (portSolid) st.bg.append(portSolid);
   yield;

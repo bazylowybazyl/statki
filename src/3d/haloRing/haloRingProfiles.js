@@ -293,10 +293,11 @@ const MARS = {
     bays: 'ecumene',
     buildings: { family: 'vault', walls: 'berm' }
   },
-  // KRYTE HABITATY (2026-10-22; decyzja u użytkownika — domyślnie TAK): szklane sklepienie nad pasem
-  // habitatu od korony do korony ścian, szczyt `apex` j. nad podłogą, segmenty co `segment` j. (bez
-  // sklepienia nad portem, tranzytami, kopułami i supertallami) — ecumeneVault. null = otwarty habitat.
-  habitatVault: { apex: 620, segment: 280 }
+  // KRYTE HABITATY (decyzja użytkownika 2026-10-22: „tak, robić kopuły”): ciąg szklanych kopuł-przęseł
+  // na żebrach nad pasem habitatu, od korony do korony ścian — szczyt `apex` j. nad podłogą, przęsło
+  // `bay` × `segment` j. (840), przy żebrze szkło niżej o `sag` wzniosu (falisty obrys z kamery gry);
+  // bez kopuł nad portem, tranzytami, kopułami dema i supertallami — ecumeneVault. null = otwarty habitat.
+  habitatVault: { apex: 620, segment: 140, bay: 6, sag: 0.32 }
 };
 
 // Fable: 12 układów sektorów dema, ×2 wokół ringu (24 sektory — ring Jowisza
