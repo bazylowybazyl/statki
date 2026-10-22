@@ -144,6 +144,9 @@ if (isWorker) {
     st.trafficMods = { blk: await import('./blocks/trafficBlock.js'), proxy: (await import('../3d/shipProxyBatch3D.js')).ShipProxyBatch3D };
     st.trafficList = [];
     st.hexList = [];
+    // przeładunek w portach (E12): blok `cargoOps` → ładownie, kontenery, rój dronów, taśmy (import rejestruje rozgrzewkę)
+    st.cargoMods = { blk: await import('./blocks/cargoOpsBlock.js'), shared: (await import('../3d/cargo/portCargo3D.js')).sharedPortCargo3D };
+    st.cargoFrame = {};
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -885,6 +888,15 @@ if (isWorker) {
       if (pl) { bp.x = pl.pos ? pl.pos.x : pl.x; bp.y = pl.pos ? pl.pos.y : pl.y; bp.angle = pl.angle || 0; }
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     } } catch (e) { modFail('luk', e); }
+    // przeładunek (E12): po luku Atlasa (rekord 0 tablicy ładowni), przed proxy — dziury w lukach otwartych ładowni
+    try {
+      const cblk = v.blocks.cargoOps;
+      if (cblk && cblk.f64 && st.cargoMods) {
+        const fr = st.cargoMods.blk.applyCargoOpsBlock(cblk, st.cargoFrame);
+        if (!st.portCargo && (fr.yardCount || fr.opCount || fr.player)) st.portCargo = st.cargoMods.shared();
+        if (st.portCargo) st.portCargo.update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
+      }
+    } catch (e) { modFail('przeładunek', e); }
     // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
     let hexList = rm.lists[L.RENDER];
     try {

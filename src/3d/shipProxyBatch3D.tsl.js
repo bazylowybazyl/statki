@@ -65,6 +65,9 @@ function buildGraph() {
   const vUv = varying(vec2(uv().x, float(1.0).sub(uv().y)), 'vProxyUv');
   const vRot = varying(iRot.xy, 'vProxyRot');
   const vOpacity = varying(iRot.z, 'vProxyOpacity');
+  // Otwarty luk ładowni (E12, przeładunek w bańce — src/3d/cargo/portCargo3D.js): prostokąt otworu w uv sprite'a
+  // (u0, v0) w iAxisX.zw, (u1, v1) w iAxisY.zw; pusty (u1 ≤ u0) — skóra cała. Pod otworem wnętrze ładowni.
+  const vCut = varying(vec4(iAxisX.zw, iAxisY.zw), 'vProxyCut');
   // Słońce jak u kadłubów: (słońce − statek, 600) w układzie sceny, oba punkty względem
   // tego samego początku przy kamerze.
   const vLightDir = varying(
@@ -77,6 +80,10 @@ function buildGraph() {
     const armor = teksturaObiektu('uSprite', PLACEHOLDER_SPRITE, spriteUV);
     const alpha = armor.a.mul(clamp(vOpacity, 0.0, 1.0)).toVar();
     If(alpha.lessThan(0.01), () => {
+      Discard();
+    });
+    const inCut = step(vCut.x, spriteUV.x).mul(step(spriteUV.x, vCut.z)).mul(step(vCut.y, spriteUV.y)).mul(step(spriteUV.y, vCut.w));
+    If(inCut.greaterThan(0.5).and(vCut.z.greaterThan(vCut.x)), () => {
       Discard();
     });
     const armorRgb = armor.rgb.toVar();

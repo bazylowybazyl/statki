@@ -102,6 +102,8 @@ export const KLASY_IMPORTOW = Object.freeze({
   'src/game/shipBridgeRuntime.js': 'A',
   'src/game/shipLightRuntime.js': 'A',
   'src/game/skyRegion.js': 'A',
+  'src/game/swarm/berthTransfer.js': 'A',
+  'src/game/swarm/swarmPort.js': 'A',
   'src/game/traffic/dockLayout.js': 'A',
   'src/game/traffic/shipyards.js': 'A',
   'src/game/warpDrive.js': 'A',
