@@ -356,8 +356,17 @@ export function createTrafficCore(post, options = {}) {
   function detach(message) {
     const course = resolveCourse(message.course);
     if (!course) return;
-    const value = Number(message.progress);
-    detachActor(course, Number.isFinite(value) ? { stageProgress: value } : null);
+    const value = message.progress == null ? NaN : Number(message.progress);
+    const snapshot = Number.isFinite(value) ? { stageProgress: value } : {};
+    // Poza z gry (E6: NPC wraca do bańki) — bańka materializuje kurs w tym miejscu (`viewState.handoff`).
+    const pose = message.pose;
+    if (pose && Number.isFinite(Number(pose.x)) && Number.isFinite(Number(pose.y))) {
+      Object.assign(snapshot, {
+        x: Number(pose.x), y: Number(pose.y), angle: Number(pose.angle) || 0,
+        speed: Number(pose.speed) || 0, handoff: true, stageIndex: course.stageIndex
+      });
+    }
+    detachActor(course, Object.keys(snapshot).length ? snapshot : null);
   }
 
   function progress(message) {

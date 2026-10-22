@@ -786,6 +786,16 @@ function materialize(bubble, network, course, focus, inner) {
   const ok = stage.kind === STAGE_KIND.TRAVEL
     ? placeTravel(bubble, network, course, stage, actor)
     : placeDwell(bubble, network, course, stage, actor);
+  // Gra oddała kurs z pozą (E6: NPC po walce wraca do bańki) — encja startuje tam, gdzie był NPC, a nie
+  // w miejscu rekordu, i dostaje ścieżkę od nowa (przelot albo podejście na stanowisko). Poza ważna tylko
+  // w etapie, w którym gra oddała kurs (rekord poza bańką biegnie dalej).
+  const vs = course.viewState;
+  if (vs && vs.handoff) {
+    course.viewState = null;
+    if (ok && vs.stageIndex === course.stageIndex && Number.isFinite(vs.x) && Number.isFinite(vs.y)) {
+      handoffPose(bubble, network, course, stage, actor, vs);
+    }
+  }
   const dx = actor.x - focus.x;
   const dy = actor.y - focus.y;
   if (!ok || dx * dx + dy * dy > inner * inner) {
@@ -804,6 +814,24 @@ function materialize(bubble, network, course, focus, inner) {
   addActor(bubble, actor);
   bubble.stats.materialized++;
   return actor;
+}
+
+/** Encja w pozie oddanej przez grę: lot od tego miejsca, bez stanowiska pod sobą. */
+function handoffPose(bubble, network, course, stage, actor, vs) {
+  freeBerth(actor);
+  actor.dockedEntry = null;
+  actor.docked = false;
+  actor.phase = ACTOR_PHASE.FLY;
+  actor.phaseTime = 0;
+  actor.x = vs.x;
+  actor.y = vs.y;
+  actor.angle = Number.isFinite(vs.angle) ? vs.angle : actor.angle;
+  actor.speed = Math.max(0, Number(vs.speed) || 0);
+  if (stage.kind === STAGE_KIND.TRAVEL) {
+    planTravel(bubble, network, course, stage, actor);
+    // Postęp etapu przy zwolnieniu liczy się od postępu rekordu w chwili oddania, nie od zera.
+    actor.pathStart = stageProgress(course);
+  } else planDwell(bubble, network, course, stage, actor);
 }
 
 function placeTravel(bubble, network, course, stage, actor) {

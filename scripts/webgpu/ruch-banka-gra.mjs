@@ -1,10 +1,11 @@
 // BAŃKA RUCHU v2 w PRAWDZIWEJ grze (E6, docs/PLAN-ekonomia-rynki.md § 3.5): statki ruchu przy Ziemi (lot liczy
-// worker ruchu, proxy rysuje worker renderu), dokowanie w halach K-7 i zatokach, trafienia ogniem gracza, taran,
-// stanowisko gracza (`berth-hold`), błędy konsoli, pipeline'y synchroniczne workera renderu i koszt.
+// worker ruchu, proxy rysuje worker renderu), dokowanie w halach K-7 i zatokach, trafienia ogniem gracza i awans
+// do pełnego NPC (kadłub na belkach, wrak, powrót do bańki), taran, stanowisko gracza (`berth-hold`), przegląd
+// innych portów (`--porty`), błędy konsoli, pipeline'y synchroniczne workera renderu i koszt.
 // Vite + headless Chrome z WebGPU (CDP), gra swobodna.
 //
 //   node scripts/webgpu/ruch-banka-gra.mjs [--query renderWorker=1] [--out .tmp/ruch-banka] [--port 5461]
-//        [--rozgrzewka 2400] [--obserwacja 40]
+//        [--rozgrzewka 2400] [--obserwacja 40] [--porty mars,jupiter,luna,ceres,mercury,vesta]
 //
 // Przebieg: start gry → świat ruchu rozgrzany `--rozgrzewka` s czasu świata (`TrafficV2.advance` — gospodarka
 // startuje od zera, a statki do portu Ziemi lecą minuty) → gracz przy porcie Ziemi → obserwacja `--obserwacja` s
@@ -22,6 +23,7 @@ mkdirSync(out, { recursive: true });
 const query = `&${args.query || 'renderWorker=1'}`;
 const WARM = Number(args.rozgrzewka || 2400);
 const OBS = Number(args.obserwacja || 40);
+const PORTS = String(args.porty ?? 'mars,jupiter,luna,ceres,mercury,vesta').split(',').map((s) => s.trim()).filter((s) => s && s !== '-');
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 
 const { server, base } = await startVite(Number(args.port || 5461));
@@ -205,16 +207,19 @@ try {
   await screenshotPng(cdp, join(out, '03-zblizenie-stanowisko.png'));
 
   // Ostrzał: statek ruchu najbliżej gracza w locie, gracz 1600 j. od niego, salwy fireWeaponCore (pociski gry).
+  // Działo, które nie zabija jednym strzałem (superbroń 9999 niszczy encję przed awansem): railgun ~500.
   const weapon = await ev(`(() => {
     const W = window.MASTER_WEAPONS || {};
-    const ids = Object.keys(W).filter((k) => W[k].category !== 'beam' && W[k].category !== 'rocket' && !W[k].deathRay
-      && !W[k].beamMode && (W[k].baseDamage || 0) >= 40 && !W[k].npcOnly);
-    return ids.sort((a, b) => (W[b].baseDamage || 0) - (W[a].baseDamage || 0))[0] || ids[0] || null;
+    if (W.special_valkyrie_railgun) return 'special_valkyrie_railgun';
+    const ids = Object.keys(W).filter((k) => W[k].category === 'rail' && !W[k].npcOnly && (W[k].baseDamage || 0) <= 600);
+    return ids.sort((a, b) => (W[b].baseDamage || 0) - (W[a].baseDamage || 0))[0] || null;
   })()`);
   report.bron = weapon;
   const target = await ev(`(() => {
     const tb = window.TrafficBubble, s = window.ship;
-    const list = tb.list.filter((a) => !(a.flags & 64) && (a.phase === 'docked' || a.phase === 'hold' || a.phase === 'station' || Math.hypot(a.vx, a.vy) < 260));
+    // Statek, który przeżyje pierwszy strzał (awans) — obrys > 1000 pkt.
+    const list = tb.list.filter((a) => !(a.flags & 64) && a.maxHp > 1000 && a.hullId !== 'megafreighter'
+      && (a.phase === 'docked' || a.phase === 'hold' || a.phase === 'station' || Math.hypot(a.vx, a.vy) < 260));
     list.sort((a, b) => Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
     const a = list[0];
     if (!a) return null;
@@ -226,33 +231,57 @@ try {
     return { id: a.id, hull: a.hullId, hp: a.hp, maxHp: a.maxHp, phase: a.phase, x: a.cx, y: a.cy };
   })()`);
   report.etapy.ostrzal = { cel: target };
+  // Cel ostrzału: encja bańki albo — po awansie — NPC gry z tym kursem (`trafficCourse`).
+  const FIRE_AT = (id, w) => `(() => {
+    const a = window.TrafficBubble.byId.get(${id});
+    const npc = (a && a.alive) ? null : (window.TrafficPromotion?.alive.get(${id}) || null);
+    if (!(a && a.alive) && !(npc && !npc.dead)) return null;
+    const x = npc ? npc.x : a.cx, y = npc ? npc.y : a.cy;
+    const s = window.ship;
+    const dx = x - s.pos.x, dy = y - s.pos.y, d = Math.hypot(dx, dy) || 1;
+    // Kierunek pocisku gracza = kierunek lufy (fireWeaponCore: kursor / zamek kręci wieżą, nie pociskiem).
+    window.fireWeaponCore(s, null, ${JSON.stringify(w)},
+      { pos: { x: s.pos.x, y: s.pos.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: s.vel.x, y: s.vel.y } });
+    return npc ? 'npc' : 'encja';
+  })()`;
+  const NPC_INFO = (id) => `(() => { const n = window.TrafficPromotion?.alive.get(${id});
+    return n ? { id: n.id, kadlub: n.shipFrame, belki: !!n.beamHull, hp: Math.round(n.hp), maxHp: n.maxHp, frakcja: n.factionId,
+      rozkaz: n.command?.type || null, x: Math.round(n.x), y: Math.round(n.y), v: Math.round(Math.hypot(n.vx, n.vy)) } : null; })()`;
   if (target && weapon) {
     await ev(ZOOM(0.25));
     await waitGame(1);
-    const before = await ev('({ ...window.TrafficBubble.stats })');
-    for (let k = 0; k < 30; k++) {
-      const alive = await ev(`(() => {
-        const a = window.TrafficBubble.byId.get(${target.id});
-        if (!a || !a.alive) return false;
-        const s = window.ship;
-        const dx = a.cx - s.pos.x, dy = a.cy - s.pos.y, d = Math.hypot(dx, dy) || 1;
-        // Kierunek pocisku gracza = kierunek lufy (fireWeaponCore: kursor / zamek kręci wieżą, nie pociskiem).
-        window.fireWeaponCore(s, null, ${JSON.stringify(weapon)},
-          { pos: { x: s.pos.x, y: s.pos.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: s.vel.x, y: s.vel.y } });
-        return true;
-      })()`);
-      if (k === 4) await screenshotPng(cdp, join(out, '04-ostrzal.png'));
-      if (!alive) break;
+    const before = await ev('({ ...window.TrafficBubble.stats, awans: { ...window.TrafficPromotion.stats } })');
+    let npcInfo = null;
+    let shotNpc = false;
+    const kinds = [];
+    for (let k = 0; k < 80; k++) {
+      const kind = await ev(FIRE_AT(target.id, weapon));
+      if (!kind) break;
+      kinds.push(kind);
+      if (k === 2) await screenshotPng(cdp, join(out, '04-ostrzal.png'));
+      if (kind === 'npc' && !npcInfo) npcInfo = await ev(NPC_INFO(target.id));
+      if (kind === 'npc' && !shotNpc && (await ev(NPC_INFO(target.id)))?.belki) {
+        shotNpc = true;
+        await screenshotPng(cdp, join(out, '04b-awans-npc-na-belkach.png'));
+        npcInfo = { ...npcInfo, poBudowie: await ev(NPC_INFO(target.id)) };
+      }
       await waitGame(0.25);
     }
     await waitGame(2);
-    const after = await ev(`(() => { const a = window.TrafficBubble.byId.get(${target.id}); return { stats: { ...window.TrafficBubble.stats }, hp: a ? a.hp : 0, zyje: !!(a && a.alive) }; })()`);
+    const after = await ev(`(() => { const a = window.TrafficBubble.byId.get(${target.id});
+      return { stats: { ...window.TrafficBubble.stats }, awans: { ...window.TrafficPromotion.stats }, hp: a ? a.hp : 0, zyje: !!(a && a.alive),
+        npcZyje: window.TrafficPromotion.alive.has(${target.id}) }; })()`);
     await waitGame(6);
     // Wrak z workera (tick świata): `recentWrecks` trzyma ostatnie 64 — szukamy po numerze kursu.
     const wrak = await ev(`window.TrafficV2.recentWrecks.find((w) => w.course === ${target.id}) || null`);
-    report.etapy.ostrzal = { cel: target, przed: before, po: after, wrak };
+    // Wrak gry (kadłub na belkach NPC → wrak): encja wraku w pobliżu miejsca NPC.
+    const wrakGry = npcInfo ? await ev(`(() => { const p = ${JSON.stringify(npcInfo.poBudowie || npcInfo)};
+      const w = (window.wrecks || []).filter((n) => Math.hypot(n.x - p.x, n.y - p.y) < 6000);
+      return w.length ? { wrakow: w.length, belki: w.some((n) => !!n.beamHull), kadlub: w[0].shipFrame || w[0].type || null } : null; })()`) : null;
+    report.etapy.ostrzal = { cel: target, przed: before, po: after, strzaly: kinds.length, wEncje: kinds.filter((k) => k === 'encja').length,
+      wNpc: kinds.filter((k) => k === 'npc').length, npc: npcInfo, wrak, wrakGry };
     await screenshotPng(cdp, join(out, '05-po-ostrzale.png'));
-    console.log('ostrzał:', JSON.stringify({ trafien: after.stats.hits - before.hits, zniszczonych: after.stats.destroyed - before.destroyed, wrak: report.etapy.ostrzal.wrak }));
+    console.log('ostrzał:', JSON.stringify({ trafienEncji: after.stats.hits - before.hits, awans: after.awans, npc: npcInfo, wrak, wrakGry }));
   }
 
   // Taran: najbliższy statek w locie — gracz rusza na niego z 700 j/s.
@@ -265,7 +294,8 @@ try {
     const a = list[0];
     if (!a) return null;
     // Gracz przed dziobem, burtą do niego, zbliżanie 600 j/s względnie.
-    const d = a.length * 0.5 + Math.max(Number(s.w) || 0, Number(s.h) || 0) * 0.5 + 60;
+    // Burta gracza 5 j. przed dziobem (kontakt w pierwszych krokach, zbliżanie 600 j/s względnie).
+    const d = a.length * 0.5 + (Number(s.h) || 0) * 0.5 + 5;
     const fx = Math.cos(a.ca), fy = Math.sin(a.ca);
     window.devTeleportTo(a.cx + fx * d, a.cy + fy * d, { angle: a.ca + Math.PI / 2, quiet: true });
     s.vel.x = a.vx - fx * 600; s.vel.y = a.vy - fy * 600;
@@ -275,10 +305,65 @@ try {
     const r0 = await ev('({ ...window.TrafficBubble.stats })');
     await waitGame(0.1);
     await screenshotPng(cdp, join(out, '05b-taran.png'));
-    await waitGame(2);
+    await waitGame(1);
     const r1 = await ev(`(() => { const a = window.TrafficBubble.byId.get(${ram.id}); return { stats: { ...window.TrafficBubble.stats }, hp: a ? a.hp : 0, zyje: !!(a && a.alive) }; })()`);
-    report.etapy.taran = { cel: ram, przed: r0, po: r1 };
-    console.log('taran:', JSON.stringify({ zderzen: r1.stats.rams - r0.rams, hp: `${ram.hp} → ${r1.hp}`, zyje: r1.zyje }));
+    const rNpc = await ev(NPC_INFO(ram.id));
+    report.etapy.taran = { cel: ram, przed: r0, po: r1, npc: rNpc };
+    console.log('taran:', JSON.stringify({ zderzen: r1.stats.rams - r0.rams, hp: `${ram.hp} → ${r1.hp}`, zyje: r1.zyje, awans: !!rNpc }));
+  }
+
+  // Awans i powrót do bańki: statek w locie dostaje jeden słaby pocisk → NPC ucieka; gracz odlatuje 30 tys. j.,
+  // koniec walki skrócony do 4 s (narzędzie) → `detach` z pozą, encja wraca do bańki w miejscu NPC.
+  const weak = await ev(`(() => { const W = window.MASTER_WEAPONS || {};
+    return W.lance_rail_l ? 'lance_rail_l' : Object.keys(W).find((k) => W[k].category === 'rail' && !W[k].npcOnly) || null; })()`);
+  const flee = await ev(`(() => {
+    const tb = window.TrafficBubble, s = window.ship;
+    const list = tb.list.filter((a) => a.alive && a.id >= 0 && !(a.flags & 65) && a.phase === 'fly' && Math.hypot(a.vx, a.vy) < 2000
+      && a.hullId !== 'megafreighter' && a.maxHp > 300);
+    list.sort((a, b) => Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
+    const a = list[0];
+    if (!a) return null;
+    const ox = Math.cos(a.ca + Math.PI / 2), oy = Math.sin(a.ca + Math.PI / 2);
+    window.devTeleportTo(a.cx + ox * 2000, a.cy + oy * 2000, { angle: a.ca - Math.PI / 2, quiet: true });
+    s.vel.x = a.vx; s.vel.y = a.vy;
+    window.TrafficPromotion.tune.calmSeconds = 4;
+    return { id: a.id, hull: a.hullId, hp: a.hp, maxHp: a.maxHp };
+  })()`);
+  if (flee && weak) {
+    const d0 = await ev('({ ...window.TrafficPromotion.stats, trafien: window.TrafficBubble.stats.hits })');
+    for (let k = 0; k < 6; k++) {
+      const kind = await ev(FIRE_AT(flee.id, weak));
+      if (kind !== 'encja') break;
+      await waitGame(0.25);
+    }
+    await waitGame(1);
+    const npc = await ev(NPC_INFO(flee.id));
+    await waitGame(2);
+    const npc2 = await ev(NPC_INFO(flee.id));
+    await ev(ZOOM(0.12));
+    await screenshotPng(cdp, join(out, '05c-npc-ucieka.png'));
+    // Gracz odlatuje (30 tys. j. od NPC), czekamy na koniec walki i powrót.
+    if (npc2) {
+      await ev(`(() => { const n = window.TrafficPromotion.alive.get(${flee.id}); const s = window.ship;
+        const dx = s.pos.x - n.x, dy = s.pos.y - n.y, d = Math.hypot(dx, dy) || 1;
+        window.devTeleportTo(n.x + dx / d * 30000, n.y + dy / d * 30000, { angle: 0, quiet: true });
+        s.vel.x = 0; s.vel.y = 0; return true; })()`);
+    }
+    let back = null;
+    let last = npc2;
+    for (let i = 0; i < 20 && !back; i++) {
+      await waitGame(0.5);
+      const cur = await ev(NPC_INFO(flee.id));
+      if (cur) last = cur;
+      back = await ev(`(() => { const a = window.TrafficBubble.byId.get(${flee.id});
+        return a && a.alive ? { x: Math.round(a.cx), y: Math.round(a.cy), faza: a.phase } : null; })()`);
+    }
+    const d1 = await ev('({ ...window.TrafficPromotion.stats, trafien: window.TrafficBubble.stats.hits })');
+    report.etapy.powrot = { cel: flee, bron: weak, npc, npcPo2s: npc2, ostatniaPoza: last, wrocil: back,
+      skok: back && last ? Math.round(Math.hypot(back.x - last.x, back.y - last.y)) : null, przed: d0, po: d1 };
+    await ev('(() => { window.TrafficPromotion.tune.calmSeconds = 20; return true; })()');
+    console.log('awans i powrót:', JSON.stringify({ npc: npc && { rozkaz: npc.rozkaz, belki: npc.belki }, npcPo2s: npc2 && { v: npc2.v, belki: npc2.belki },
+      wrocil: back, skok: report.etapy.powrot.skok, staty: d1 }));
   }
 
   // Stanowisko gracza: gracz staje na wolnym stanowisku zatoki → `berth-hold` → worker nie przydziela go innym.
@@ -301,7 +386,13 @@ try {
     await waitGame(8);
     const st = await bubbleState();
     const taken = await ev(`window.TrafficBubble.list.filter((a) => a.berthId === ${JSON.stringify(hold.berth)}).map((a) => a.phase)`);
-    report.etapy.postoj = { ...hold, held: st.held, ruchNaStanowisku: taken };
+    // Gdzie gracz stoi względem pola stanowiska (wzdłuż / w poprzek osi) i co jest obok.
+    const where = await ev(`(() => { const b = window.TrafficV2.tables.bubblePorts.earth.find((x) => x.id === ${JSON.stringify(hold.berth)});
+      const s = window.ship; const dx = s.pos.x - b.x, dy = s.pos.y - b.y, c = Math.cos(b.angle), n = Math.sin(b.angle);
+      const near = window.TrafficBubble.list.filter((a) => Math.hypot(a.cx - b.x, a.cy - b.y) < 3000).map((a) => ({ id: a.id, faza: a.phase, stan: a.berthId }));
+      return { wzdluz: Math.round(dx * c + dy * n), wPoprzek: Math.round(-dx * n + dy * c), pole: [Math.round(b.length), Math.round(b.width)],
+        v: Math.round(Math.hypot(s.vel.x, s.vel.y)), obok: near.slice(0, 6) }; })()`);
+    report.etapy.postoj = { ...hold, held: st.held, ruchNaStanowisku: taken, gracz: where };
     console.log('postój gracza:', JSON.stringify(report.etapy.postoj));
   }
 
@@ -329,6 +420,56 @@ try {
   report.koszt = { zProxy: z, bezProxy: bez };
   console.log('koszt z proxy', JSON.stringify(z), '| bez', JSON.stringify(bez));
   await screenshotPng(cdp, join(out, '06-koszt-kadr.png'));
+
+  // Inne porty: gracz 5 tys. j. na zewnątrz od pierwszego stanowiska portu (od środka stacji), 8 s gry, encje,
+  // stanowiska, zrzut w kadrze portu i koszt (2 s próbek).
+  report.porty = {};
+  let pi = 0;
+  for (const id of PORTS) {
+    pi++;
+    const at = await ev(`(() => {
+      const berths = window.TrafficV2.tables.bubblePorts?.[${JSON.stringify(id)}];
+      const st = window.TrafficV2.getStation(${JSON.stringify(id)});
+      if (!berths?.length || !st) return null;
+      const b = berths.find((x) => x.hall === 'K-7') || berths[0];
+      const dx = b.x - st.x, dy = b.y - st.y, d = Math.hypot(dx, dy) || 1;
+      const x = b.x + dx / d * 5000, y = b.y + dy / d * 5000;
+      window.devTeleportTo(x, y, { angle: Math.atan2(-dy, -dx), quiet: true });
+      window.ship.vel.x = 0; window.ship.vel.y = 0;
+      return { x: Math.round(x), y: Math.round(y), stanowisk: berths.length, hale: [...new Set(berths.map((x) => x.hall || 'pomost'))] };
+    })()`);
+    if (!at) { report.porty[id] = { brak: true }; continue; }
+    await ev(ZOOM(0.045));
+    await waitGame(8);
+    const s = await bubbleState();
+    // Koszt w kadrze portu: 2 s z proxy i 2 s bez (A/B `hideRender` w tym samym miejscu).
+    const sample = async (hide) => {
+      await ev(`(() => { window.TrafficBubble.hideRender = ${hide}; return true; })()`);
+      await waitGame(0.5);
+      const rows = [];
+      for (let i = 0; i < 8; i++) {
+        await waitGame(0.25);
+        rows.push(await ev(`(() => { const h = window.RenderWorkerHost; if (h && h.readStats) h.readStats(); const st = h ? h.stats : null;
+          return { gpu: st ? st[0] : (window.Core3D.gpuFrameMs || 0), cpu: st ? st[6] : 0, actorMs: window.TrafficV2.getStats().actorMs }; })()`));
+      }
+      return (k) => +(rows.reduce((q, r) => q + (Number(r[k]) || 0), 0) / rows.length).toFixed(3);
+    };
+    const bezProxy = await sample(true);
+    const avg = await sample(false);
+    await screenshotPng(cdp, join(out, `07-port-${pi}-${id}.png`));
+    // Zbliżenie na statek przy stanowisku tego portu, jeśli jest.
+    const dock = s.docked.find((d) => d.berth && d.berth.startsWith(`${id}:`));
+    if (dock) {
+      await ev(`(() => { window.devTeleportTo(${dock.x} + 900, ${dock.y} + 400, { angle: 0, quiet: true });
+        window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+      await ev(ZOOM(0.18));
+      await waitGame(2);
+      await screenshotPng(cdp, join(out, `07-port-${pi}-${id}-zblizenie.png`));
+    }
+    report.porty[id] = { ...at, encji: s.actors, zapas: s.stock, fazy: s.phases, zadokowane: s.docked.filter((d) => d.berth?.startsWith(`${id}:`)).length,
+      gpuMs: avg('gpu'), cpuWorkerMs: avg('cpu'), actorMs: avg('actorMs'), bezProxy: { gpuMs: bezProxy('gpu'), cpuWorkerMs: bezProxy('cpu') } };
+    console.log('port', id, JSON.stringify(report.porty[id]));
+  }
 
   report.syncKoniec = syncWorker();
 } catch (e) {

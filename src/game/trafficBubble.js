@@ -56,7 +56,7 @@ const PHASE_AT_BERTH = new Set(['capture', 'docked', 'undock']);
 function makeActor(id) {
   return {
     id, alive: false, seen: 0,
-    unitClass: '', hullId: '', x: 0, y: 0, angle: 0, vx: 0, vy: 0, angVel: 0, ax: 0, ay: 0,
+    unitClass: '', hullId: '', factionId: null, x: 0, y: 0, angle: 0, vx: 0, vy: 0, angVel: 0, ax: 0, ay: 0,
     length: 0, width: 0, phase: 'fly', flags: 0, throttle: 0, speed: 0, dockTime: 0,
     berthId: null, port: -1, berth: -1, time: 0,
     // poza w czasie gry (krok fizyki / klatka renderu)
@@ -76,12 +76,16 @@ export function createTrafficBubble(bridge, options = {}) {
     list: [],
     /** numer kursu → czas gry, do którego zniszczona encja nie wraca na obraz. */
     dead: new Map(),
+    /** Numery kursów awansowanych do pełnego NPC gry (`trafficPromotion.js`) — nie wracają jako encje. */
+    promoted: new Set(),
     seq: -1,
     frame: 0,
     /** Czas gry, w którym policzone są `cx`, `cy`, `ca` (`setTime`). */
     time: 0,
     hooks: {
-      onDestroyed: typeof options.onDestroyed === 'function' ? options.onDestroyed : null
+      onDestroyed: typeof options.onDestroyed === 'function' ? options.onDestroyed : null,
+      /** (encja, obrażenia, przyczyna) — encja z kursem trafiona i żywa (awans do NPC, `trafficPromotion.js`). */
+      onHit: typeof options.onHit === 'function' ? options.onHit : null
     },
     /** Narzędzia (A/B kosztu obrazu): true = bez proxy na ekranie, rozgrywka bez zmian. */
     hideRender: false,
@@ -111,6 +115,7 @@ export function syncTrafficBubble(tb, gameTime = tb.time) {
   const hulls = tb.bridge.hulls || [];
   const berthTable = tb.bridge.tables?.berths || null;
   const stations = tb.bridge.tables?.stations || null;
+  const factions = tb.bridge.tables?.factions || null;
   for (const [id, until] of tb.dead) if (until <= gameTime) tb.dead.delete(id);
   const list = tb.list;
   list.length = 0;
@@ -118,7 +123,7 @@ export function syncTrafficBubble(tb, gameTime = tb.time) {
     const o = k * ACTOR_STRIDE;
     const id = data[o + F.ID];
     // Kurs: numer ≥ 0; zapas floty (STOCK): id ujemny — oba stałe przez życie encji.
-    if (!Number.isFinite(id) || tb.dead.has(id)) continue;
+    if (!Number.isFinite(id) || tb.dead.has(id) || tb.promoted.has(id)) continue;
     let a = tb.byId.get(id);
     if (!a) {
       a = makeActor(id);
@@ -145,6 +150,8 @@ export function syncTrafficBubble(tb, gameTime = tb.time) {
     a.throttle = data[o + F.THROTTLE];
     a.dockTime = data[o + F.DOCK_TIME];
     a.speed = data[o + F.SPEED];
+    const fi = data[o + F.FACTION];
+    a.factionId = fi >= 0 && factions ? (factions[fi] || null) : null;
     a.port = data[o + F.PORT];
     a.berth = data[o + F.BERTH];
     const stationId = a.port >= 0 && stations ? stations[a.port]?.id : null;
@@ -306,7 +313,10 @@ export function damageTrafficActor(tb, a, amount, x, y, cause = 'player') {
   a.hp -= amount;
   a.hitAt = tb.time;
   tb.stats.hits++;
-  if (a.hp > 0) return false;
+  if (a.hp > 0) {
+    tb.hooks.onHit?.(a, amount, cause);
+    return false;
+  }
   destroyTrafficActor(tb, a, x, y, cause);
   return true;
 }
@@ -322,6 +332,25 @@ export function destroyTrafficActor(tb, a, x = a.cx, y = a.cy, cause = 'player')
   tb.stats.destroyed++;
   tb.bridge?.destroyCourse?.(a.id, { x, y, reason: cause, byPirates: false });
   tb.hooks.onDestroyed?.(a, x, y, cause);
+}
+
+/**
+ * Encja awansowana do pełnego NPC (`trafficPromotion.js`): znika z obrazu i trafień bańki od razu (worker
+ * zwolni ją po `attach`), nie wraca, dopóki NPC żyje.
+ */
+export function markTrafficActorPromoted(tb, a) {
+  if (!a) return;
+  tb.promoted.add(a.id);
+  a.alive = false;
+  tb.byId.delete(a.id);
+  const at = tb.list.indexOf(a);
+  if (at >= 0) tb.list.splice(at, 1);
+}
+
+/** NPC wrócił do bańki (`detach`) albo zginął — numer kursu znów może być encją (zniszczony — w `dead`). */
+export function releaseTrafficPromotion(tb, id, destroyed = false) {
+  tb.promoted.delete(id);
+  if (destroyed) tb.dead.set(id, tb.time + tb.tune.deadHold);
 }
 
 const _ram = { actor: null, nx: 0, ny: 0, depth: 0, speed: 0 };

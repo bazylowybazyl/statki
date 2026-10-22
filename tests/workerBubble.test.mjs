@@ -272,3 +272,31 @@ test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rej
   assert.ok(seenApproach, 'podejście na stanowisko');
   assert.ok(seenBerth, 'postój na stanowisku');
 });
+
+test('awans do NPC i powrót: attach zamraża rekord, detach z pozą (bez postępu) materializuje encję w miejscu NPC', () => {
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
+  for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  const actors = decode(got.actors).filter((a) => !(a.flags & ACTOR_FLAG.STOCK));
+  const pick = actors.find((a) => a.phase === 'fly') || actors[0];
+  assert.ok(pick);
+  const courseId = [...world.registry.byId.keys()].find((id) => courseNumber(id) === pick.id);
+  const course = getCourse(world.registry, courseId);
+  core.handle({ type: TRAFFIC_MSG.ATTACH, course: pick.id });
+  const stageIndex = course.stageIndex;
+  const elapsed = course.stageElapsed;
+  for (let i = 0; i < 60; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  assert.equal(course.stageElapsed, elapsed, 'kurs gry nie biegnie w rekordzie');
+  // NPC odleciał o 900 j. w bok i stanął.
+  const px = pick.x + 600;
+  const py = pick.y - 670;
+  core.handle({ type: TRAFFIC_MSG.DETACH, course: pick.id, progress: null, pose: { x: px, y: py, angle: 1.2, speed: 0 } });
+  assert.equal(course.actorId, null);
+  assert.equal(course.stageIndex, stageIndex);
+  assert.equal(course.stageElapsed, elapsed, '`progress: null` nie zeruje postępu etapu');
+  assert.equal(course.viewState?.handoff, true);
+  core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  const back = decode(got.actors).find((a) => a.id === pick.id);
+  assert.ok(back, 'kurs wraca do bańki w następnym advance');
+  assert.ok(Math.hypot(back.x - px, back.y - py) < 50, `encja w pozie NPC (${Math.round(back.x - px)}, ${Math.round(back.y - py)})`);
+  assert.equal(course.viewState, null, 'poza oddana raz');
+});

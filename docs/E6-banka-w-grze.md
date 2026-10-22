@@ -29,8 +29,8 @@ Zadanie E6 z `docs/PLAN-ekonomia-rynki.md` (§ 3.5, wiersz E6), 2026-10-22. Stan
   W workerze bańka ma prawdziwe kursy, a dolot i koniec postoju rozlicza ta sama transakcja co zegar
   analityczny — dokładnie układ testu integracyjnego świata ×60. Zasada 1 zostaje: trafienia, taran i punkty życia
   liczy gra w 2D, na pozach z bufora (ekstrapolowanych do kroku fizyki).
-- **Jeden port:** bańka żyje, gdy fokus jest bliżej niż 180 tys. j. od węzła Ziemi (`BUBBLE_PORTS`,
-  `BUBBLE_PORT_RANGE`); dalej encje wracają do rekordów.
+- **Jeden port (krok 1; od etapu 2 — wszystkie porty, niżej):** bańka żyła, gdy fokus był bliżej niż 180 tys. j.
+  od węzła Ziemi (`BUBBLE_PORTS`, `BUBBLE_PORT_RANGE`); dalej encje wracają do rekordów.
 - **Promień bańki a życie NPC:** bańka 60 tys. j. (obraz: proxy w kadrze przy najmniejszym zoomie gry), trafienia
   i taran w promieniu 20 tys. j. od gracza (= `NPC_DESPAWN_RADIUS`) — dalej i tak nie ma czym trafić, a awans
   do NPC (niżej) będzie miał ten sam próg w obie strony.
@@ -91,41 +91,141 @@ w liczbę (przy starych obrysach w obu przebiegach).
   12 różnych okrętów zadokowanych (do 6 naraz) obok do 7 okrętów zapasu, 0 próbek z dwoma statkami na jednym
   padzie (zapas ustępuje padu kursowi przy następnym rozstawieniu). Test: `tests/workerBubble.test.mjs`
   („garnizon K-7…”). Przed garnizonem (pomiar sprzed scalenia): 0 / 112 stanowisk K-7 zajętych przez 60 min.
-- Okręty zapasu floty nie przyjmują obrażeń (zatrzymują pociski) — strata zapasu frakcji wejdzie z awansem.
-- Okręt garnizonu K-7 (kurs PATROL / WAR) da się zestrzelić jak każdy kurs: kurs kończy się wrakiem bez ładunku,
-  `tickGarrison` usuwa wizytę i wysyła następną, ale zapas frakcji się nie zmniejsza (garnizon to widok zapasu —
-  reguła `ruch-v2`, § „Garnizon w K-7”). Do decyzji: strata okrętu z zapasu frakcji albo garnizon nietykalny
-  jak zapas na padach.
+- Okręty zapasu floty nie przyjmują obrażeń (zatrzymują pociski) i nie awansują — decyzja orkiestratora
+  z 2026-10-22: zapas nietykalny; zestrzelony okręt garnizonu (kurs PATROL / WAR) = strata z zapasu frakcji
+  (E4: `settleGarrisonLosses`).
 - Wiązki, rakiety, wybuchy obszarowe i ogień NPC nie ranią statków ruchu (tylko pociski gracza i taran).
 - Statki bez kursu (reda `portParking`, zapas floty `placeFleetStock`) nie są kursami — nie ma ich w bańce.
 - Radar (`radarFeed.collect`), mgła wojny i obsługa K-7 (ramiona SCARA) nie znają statków ruchu.
 - Opóźnienie bufora: pozy są klatkę za grą (ekstrapolacja prędkością, najwyżej 0,5 s). Przy zatkanym workerze
   ruchu (krok świata ~80 ms szczytowo) statek w zakręcie portu może być w grze kilka–kilkanaście j. obok obrazu
   workera — bez znaczenia dla trafień przy obrysach 200–1800 j.
-- Wybuch statku ruchu to `GameBlasts` bez wraku w grze (wrak i ładunek są rekordem w świecie ruchu).
+- Encja zniszczona na obrysie (jeden strzał, cel spoza awansu) to wybuch bez wraku w grze (wrak i ładunek są
+  rekordem w świecie ruchu); awansowany NPC zostawia wrak gry z kadłuba na belkach.
 
-## Plan: awans encji do pełnego NPC
+## Etap 2 (2026-10-22): wszystkie porty, strefa planety, kontrakt E12, awans do pełnego NPC
 
-Cel: statek ruchu, z którym gracz wchodzi w interakcję (cel ataku, abordaż, rozkaz, holowanie), staje się NPC
-gry z kadłubem na belkach — trafienia kraterami, rozpad, wrak do złomowania — i wraca do bańki, gdy gracz odleci.
+Zlecenie orkiestratora po scaleniu kroku 1 (`main` 9817a50a). Commity na gałęzi `claude/frosty-moser-69ca47`:
+d3869cd4 (porty, strefa planety, stop bez przelotu), 08591b86 (kontrakt E12), awans — commit tego etapu.
 
-1. **Kiedy:** encja w promieniu `NPC_DESPAWN_RADIUS` (20 tys. j.) i jeden z wyzwalaczy: pierwsze trafienie
-   (dziś punkty życia gry — po awansie obrażenia przechodzą na kadłub), zamek celu gracza, rozkaz RTS, holownik.
-   Limit naraz (np. 8) — reszta zostaje proxy.
-2. **Jak (protokół już jest):** gra wysyła `attach { course }` — kurs przechodzi na zegar gry, a bańka w workerze
-   zwalnia encję tego kursu (nowa reguła w `workerBubble`: kurs z `actorId` gry nie materializuje się w bańce,
-   encja bańki → `detach` bez postępu, pole stanowiska zostaje zajęte). Gra tworzy NPC w pozie i prędkości encji
-   (`npc.shipFrame = resolveTrafficHullId(unitClass)`, sprite w `HULL_SPRITE_PATHS_BY_ID`, `getNpcHullRenderProfileId`
-   po `shipFrame`), punkty życia z encji, ładunek i frakcja z kursu (nowe pola bufora: `PAYLOAD`, `ORDER` — albo
-   zapytanie `snapshot` kursu). Proxy znika w tej samej klatce, w której NPC dostaje kadłub (bez mignięcia —
-   wspólna tekstura `acquireHullVisualTexture`).
-3. **Lot NPC:** mózg „kurs ruchu” — prowadzi NPC po tej samej ścieżce, co bańka (`portPaths` / `ringRouter` jako
-   biblioteka po stronie gry, na ODCINKU, który worker wyśle przy `attach`: bieżący etap + następny), `progress`
-   co ~1 s, `stage-done` przy dolocie / końcu postoju; dok i korytarze — przechwyt jak u gracza (`PortDocking`).
-   Bojowy statek ruchu (rajder, łowca) dostaje mostek przed awansem (Z4: „rejder potrzebuje mostka”).
-4. **Powrót:** NPC dalej niż 20 tys. j. od gracza (zamiast despawnu — `npc.trafficCourse` wyłącza despawn) albo
-   koniec interakcji → `detach { course, progress }` i usunięcie NPC; bańka materializuje kurs od nowa z rekordu
-   (pozycja z `detach` — `viewState`). Zniszczony NPC → `destroyed` (jak dziś), wrak gry z ładunkiem kursu
-   (`convertToWreck` + łup z `payload`).
-5. **Testy:** atrapa mostu (attach / detach / stage-done w kolejności), cykl awans → dok → powrót bez zamrożonych
-   kursów i bez dwóch statków na stanowisku (jak test świata ×60), harness: trafienie → awans → krater → rozpad.
+### Porty
+
+- `BUBBLE_PORTS = null` — bańka żyje przy każdym rynku z dokami świata (`world.docks`): ringi Marsa i Jowisza
+  (archetypy z `main`, hale K-7 i zatoki), pomosty planet, księżyców, Ceres i Westy, hangary kryjówek. Fokus dalej
+  niż 180 tys. j. od NAJBLIŻSZEGO portu — bańka pusta. Rynki dodane w biegu wchodzą przez `refreshWorldBubblePorts`.
+  Megadoki i budowle Z7 nie są dokami świata (niewpięte w grę) — bańka ich nie zna.
+- `ready` / `tick` niosą `bubblePorts` wszystkich portów (`stationId` w rekordzie stanowiska); gra buduje indeks
+  stanowisk wszystkich portów (postój gracza) i pisze lampki ringów Marsa i Jowisza (`trafficRegistryBerth` po
+  `stationId`); zapas floty stoi na padach K-7 każdego ringu.
+- Dwie poprawki lotu wyszły dopiero przy portach bez ringu (Wenus, Westa — wymuszone etapy po zmianie portu):
+  hamowanie z tabeli napędu tylko na profilu (nad profilem stopu — awaryjne jak dawniej; inaczej przelot punktu stopu
+  o ~0,9 km po materializacji w biegu) i bez rozpychania na ostatnim odcinku przed punktem stopu (kilka kursów
+  z jednym punktem odpychało się i żaden nie dochodził). Pomiar w Node: 15 portów × 2 ziarna — 0 wymuszeń, 0 błędów.
+
+### Strefa planety (E5)
+
+- `planetWells` w workerze — te same studnie co strefa `planet_gravity` gry (`planetOrbitRadii`): planeta z ringiem
+  — obwiednia ringu + 12 tys. j., `orbitZone.gravity`, reszta `max(2,2 r, r + 1500) + 10 tys.` z r = `baseR ×
+  planetScale`. W studni encja: hipercruise × `max(0,6; strefa)` (`HYPERCRUISE_TUNE.minZone`), warp × 0,3
+  (`applyZone` w każdym kroku lotu, przed `followPath`). Rekordy kursów liczą czas bez strefy (bez zmiany gospodarki).
+
+### Kontrakt E12 (przeładunek)
+
+- W wiadomości `actors` tylko zmiany: `docks: [DockRecord]` (`{ id, berthId, stationId, mode, cargo, t0, dur, hull,
+  unitClass }`) i `undocked: [id]`; most — `TrafficV2.actorDocks` (`Map`). Opis: `trafficProtocol.js` (`DockRecord`,
+  `DOCK_MODES`) i notatka orkiestratora `E6-E12-kontrakt-przeladunku.md`. Test: `tests/workerBubble.test.mjs`
+  („postoje przy stanowisku (kontrakt E12)…”).
+
+### Awans do pełnego NPC
+
+- **Wyzwalacz:** trafienie gracza, po którym encja żyje (pocisk albo taran — hak `onHit` w `damageTrafficActor`).
+  Strzał zabójczy (superbroń, taran z dużą prędkością) niszczy encję na obrysie jak dotąd. Zamek celu, rozkaz RTS
+  i holownik — nie (bez nich gracz nie ma interakcji, która wymaga kadłuba).
+- **Kto nie awansuje:** zapas floty (STOCK — nietykalny), encje w warpie i w hipercruise (> 2500 j./s — uciekają,
+  trafienia zostają na obrysie), megafrachtowiec (w grze to pociąg modułów `megafreighterTrain.js`, proxy rysuje
+  cały skład jednym sprite'em) i holownik serwisowy (8300 j., nie jest klasą ruchu).
+- **Limity:** 1 awans na klatkę (kadłub na belkach ze sprite'a buduje się w `drawNPCPretty` w budżecie budowy
+  kadłubów), 8 NPC z ruchu naraz (kolejne trafione encje zostają na obrysie).
+- **NPC:** `makeNPCBase` w pozie i ruchu encji (prędkość ≤ 1,5 × prędkość NPC — encja w podejściu leci kilka
+  razy szybciej niż NPC z `DEV_HULL_SPAWNS`), `devHull` + `shipFrame` = kadłub ruchu (sprite z `TRAFFIC_HULLS`,
+  wczytany już przy trafieniu), liczby z `DEV_HULL_SPAWNS` (punkty życia, prędkość; kadłub spoza tabeli — punkty
+  życia z obrysu), ułamek punktów życia encji, frakcja z bufora (`ACTOR_FIELD.FACTION` → `ready.factions` —
+  reputacja za zestrzelenie przez `registerFactionKill`), `mission` (bez despawnu), `trafficCourse` = numer kursu.
+  Do zbudowania kadłuba proxy rysuje się w pozie NPC (bez mignięcia). Rozkaz: przy stanowisku i w kolejce `hold`,
+  w locie `move` 18 tys. j. od gracza (ucieczka), po dolocie — dalej, póki gracz bliżej niż 20 tys. j., potem stoi.
+- **Worker:** `attach` — encja bańki wraca do rekordu, zegar kursu stoi (`actorId = game:N`), stanowisko zostaje
+  przy kursie. Zginął NPC → `destroyed` (wrak z ładunkiem kursu w świecie ruchu; w grze — wrak z kadłuba).
+  Koniec walki (20 s bez trafienia gracza) i dalej niż 20 tys. j. → `detach { progress: null, pose }` i cichy koniec
+  NPC (bez wraku); bańka materializuje kurs w pozie NPC (`viewState.handoff`, tylko w etapie oddania — rekord, który
+  zdążył pobiec dalej poza bańką, wraca z rekordu) i planuje ścieżkę od tego miejsca (przelot albo podejście
+  na stanowisko; postęp etapu od postępu z chwili oddania — `pathStart`). Poprawka przy okazji: `detach` z
+  `progress: null` zerował postęp etapu (`Number(null) = 0`).
+- **Testy:** `tests/trafficPromotion.test.mjs` (5: kolejka, kto awansuje, rozkaz, werdykt, punkt ucieczki),
+  `tests/trafficBubble.test.mjs` (hak `onHit`, frakcja, encja awansowana nie wraca z workera, zgon blokuje powrót),
+  `tests/workerBubble.test.mjs` (attach zamraża rekord, `detach` z pozą bez postępu → encja w pozie NPC).
+
+### Braki kadłubów ruchu (awans działa na minimum)
+
+1. **Mostki, rdzenie, zbiorniki, gniazda:** w `src/data/hardpointEditorDefaults.js` z kadłubów cywilnych ruchu są
+   tylko cztery frachtowce (`inter_station_shuttle`, `container_ship`, `long_haul_freighter`, `heavy_freighter`)
+   i to z samymi dyszami (MAIN / SIDE). Reszta (`heavy_harvester`, `belter`, `surveyor`, `refinery_tender`, `tanker`,
+   `salvage_hauler`, `construction_tug`, `smuggler`, `pirate_raider`, `distress_beacon_ship`, `repair_drone`) nie
+   ma wpisu wcale. Żaden nie ma mostka (`attachEntityBridges` nic nie przypina — strzał w mostek nie robi hulka),
+   rdzenia reaktora ani zbiornika paliwa (śmierć wybucha ze środka, nie z `fuelTankBlast`). Okręty Terra Novy
+   i piratów (`terran_*`, `pirate_*` z `editorKey`) mają gniazda i dysze z edytora.
+2. **Dysze:** kadłuby bez wpisu edytora mają w 3D dysze MAIN z `TRAFFIC_HULLS[].main` (`autoHulls3D`, jak proxy),
+   bez SIDE.
+3. **Broń i AI bojowa:** awansowane okręty (garnizon K-7, łowcy, rajdery) lecą jako `combatDisabled` bez broni —
+   uciekają albo stoją jak cywile. Pełny okręt wojenny = spawn klasy z `WARSHIP_CLASSES` z bronią i mózgiem bojowym
+   (osobne zadanie; rajder potrzebuje też mostka — `TRAFFIC_HULLS.pirate_raider`, TODO AGENT).
+4. **Sprite'y zastępcze:** `heavy_freighter` (sprite `long_haul_freighter`), łowca i policja (fregata Terra Novy),
+   ratownik (`distress_beacon_ship`), wyprawa wojenna (jeden niszczyciel) — `TRAFFIC_UNIT_HULLS`, TODO AGENT w
+   `src/data/trafficHulls.js`. Z11 ma gotowe sprite'y (`bounty_hunter`, `police_cutter`, `rescue_ship`, nowy
+   `heavy_freighter`) — czekają na akceptację i mostki.
+5. **Lot po ścieżce kursu:** NPC nie leci kursem (dok, korytarze, etap dalej) — kurs stoi, dopóki NPC żyje; po
+   powrocie do bańki leci dalej z rekordu. Plan z kroku 1 (mózg „kurs ruchu” na `portPaths` po stronie gry) — później.
+6. **Stanowisko pod awansowanym NPC:** lampki ringu gasną (rejestr pisze tylko bańka), automat K-7 i postój gracza
+   widzą pole jako wolne; worker trzyma je przy kursie (nikt inny nie dostanie przydziału).
+7. **Pomosty portów bez ringu nie mają modeli w grze** (Luna, Merkury, Ceres, Westa…): statki dokują w pustej
+   przestrzeni obok stacji (stacja w środku planety / ciała, pomost kilka tys. j. dalej) — zrzuty `07-port-*`.
+8. **Ładunek i łup:** wrak gry awansowanego NPC nie niesie ładunku kursu (ładunek jest we wraku świata ruchu);
+   rozbiórka wraku gry daje złom kadłuba jak każdy wrak NPC.
+
+### Pomiary etapu 2 (2026-10-22, RTX 5080, headless Chrome, tryb gracza `renderWorker=1`)
+
+`node scripts/webgpu/ruch-banka-gra.mjs --out .tmp/ruch-banka-e6b2` (ziarno 7, świat rozgrzany 40 min gry; przebiegi 3
+i 4 — `--obserwacja 8 --porty -`, sam awans). Porty: gracz 5 tys. j. na zewnątrz od pierwszego stanowiska (K-7 przy
+ringach), 8 s gry, potem 2 s próbek bez proxy i 2 s z proxy (`TrafficBubble.hideRender`):
+
+| port | stanowiska | encje (+ zapas K-7) | zadokowane w porcie | GPU ms bez / z proxy | CPU workera renderu ms bez / z |
+|---|---|---|---|---|---|
+| Ziemia (A/B po 8 s) | 224 (K-7, zatoki) | 48 (+6) | 26 w 40 s obserwacji | 0,35 / 0,39 | 2,20 / 2,18 |
+| Mars | 224 (K-7, zatoki) | 8 (+20) | 6 | 0,28 / 0,43 | 3,29 / 3,70 |
+| Jowisz | 224 (K-7, zatoki) | 4 (+12) | 3 | 0,44 / 0,42 | 10,55 / 9,46 |
+| Luna | 52 (pomost) | 12 | 0 (encje przy stanowiskach Ziemi w promieniu bańki) | 0,21 / 0,18 | 1,19 / 1,65 |
+| Ceres | 130 (pomost) | 11 | 11 | 0,85 / 0,85 | 2,37 / 3,53 |
+| Merkury | 78 (pomost) | 19 | 7 (+9 w kolejce) | 0,23 / 0,26 | 1,34 / 1,53 |
+| Westa | 104 (pomost) | 93 | 22 | 0,57 / 0,54 | 1,84 / 2,52 |
+
+- Krok bańki w workerze ruchu: 0,008–0,08 ms (średnio) we wszystkich portach.
+- Różnice z / bez proxy w portach to próbki 2 s jedna po drugiej (pierwsza zaraz po teleporcie) — w szumie; A/B
+  w tym samym miejscu po 8 s (Ziemia, 48 encji): GPU +0,04 ms, CPU −0,02 ms. Jowisz ~10 ms CPU workera renderu
+  z proxy i bez — koszt sceny Jowisza (ring, planeta), nie bańki (4 encje).
+- Awans (przebiegi 2 i 3): lotniskowiec garnizonu w K-7 Ziemi, railgun 500 → NPC `terran_carrier` z kadłubem
+  na belkach od pierwszej klatki odczytu (`hold`, 6412 / 6912 pkt), zestrzelony → wrak gry na belkach
+  (`window.wrecks`) i wrak kursu `garrison-00032` w świecie ruchu (`reason: player` — strata zapasu frakcji, E4).
+  Kontenerowiec Konsorcjum (lance_rail_l, 100) → NPC (720 / 900 pkt) ucieka (`move`, 113–172 j./s); gracz
+  odlatuje 30 tys. j., koniec walki (narzędzie: 4 s) → `detach` z pozą, encja w bańce 15 j. (przebieg 2) / 32 j.
+  (przebieg 3) / 88 j. (przebieg 4) od ostatniej odczytanej pozy NPC (odczyt co 0,5 s przy 137–172 j./s — ruch NPC
+  między próbkami, nie skok).
+- Taran (przebieg 4, gracz burtą 5 j. przed dziobem, zbliżanie 600 j/s): ciężki frachtowiec (9000 pkt obrysu)
+  dostał 7200 pkt i awans. W przebiegu 2 (stary układ: 60 j. przed dziobem) dwa małe statki konwoju obok celu
+  dostały taran i awans, a gracz z prędkością 600 j/s wszedł w nie jako w pełne kadłuby — kadłub Atlasa pękł
+  (zderzenie kadłubów na belkach, jak z każdym NPC).
+- Postój gracza (`berth-hold`): przebiegi 1, 2 i 4 — stanowisko zatoki trzymane, żaden kurs nie wszedł; przebieg 3
+  — po 8 s gracz nie stał na polu (zbiór pusty). Nie powtórzyło się; harness zapisuje teraz pozę gracza względem
+  pola i statki obok (`etapy.postoj.gracz`).
+- Koszt przy Ziemi (przebieg 4, A/B po 8 s): CPU workera renderu 1,54 → 1,76 ms z ~46 proxy, GPU 0,344 / 0,346 ms.
+- 0 błędów strony i workerów; 0 pipeline'ów synchronicznych na Ziemi (przebieg 3). Przegląd portów (przebieg 2):
+  3 pipeline'y synchroniczne modeli stacji planet (`station009_low`, `Space_Station_Top` z `src/stations/*.glb`,
+  `stations3D`) przy pierwszym wejściu w kadr odległego portu — poza bańką (obszar `stacje`), do rozgrzewki stacji.

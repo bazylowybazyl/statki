@@ -276,7 +276,11 @@ export class TrafficBridge {
   }
 
   attach(course) { this._send({ type: TRAFFIC_MSG.ATTACH, course }); }
-  detach(course, progress) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress }); }
+  /**
+   * Gra oddaje kurs (`pose` — { x, y, angle, speed }: NPC wraca do bańki tam, gdzie był — E6, awans
+   * do pełnego NPC). `progress` — postęp etapu albo null (bez zmiany).
+   */
+  detach(course, progress, pose = null) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress, pose }); }
   reportProgress(course, progress) { this._send({ type: TRAFFIC_MSG.PROGRESS, course, progress }); }
   completeStage(course) { this._send({ type: TRAFFIC_MSG.STAGE_DONE, course }); }
 
