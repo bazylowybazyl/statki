@@ -94,6 +94,11 @@ export class TrafficBridge {
      * `time` (czas mostu, w którym pozy są ważne), `seq` (numer wiadomości), `ms`.
      */
     this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0 };
+    /**
+     * Postoje statków ruchu przy stanowiskach (kontrakt `DockRecord`, `trafficProtocol.js` — przeładunek E12):
+     * numer kursu → { id, berthId, stationId, mode, cargo, t0, dur, hull, unitClass }. Worker przysyła zmiany.
+     */
+    this.actorDocks = new Map();
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
@@ -500,6 +505,10 @@ export class TrafficBridge {
     actors.time = Number(message.time) || 0;
     actors.ms = Number(message.ms) || 0;
     actors.seq++;
+    if (Array.isArray(message.undocked)) for (const id of message.undocked) this.actorDocks.delete(id);
+    if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);
+    // Pusta bańka (wyjście z zasięgu portów) — postoje znikają razem z encjami.
+    if (!actors.count && this.actorDocks.size) this.actorDocks.clear();
   }
 
   _applyBubble(bubble) {

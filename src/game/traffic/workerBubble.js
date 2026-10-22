@@ -93,6 +93,8 @@ export function createWorldBubble(world, options = {}) {
     count: 0,
     /** `dt` ostatniego kroku bańki — ruch faktyczny encji w buforze. */
     lastDt: 0,
+    /** Postoje przy stanowisku wysłane do gry: numer kursu → podpis (kontrakt `DockRecord`, E12). */
+    docksSent: new Map(),
     /** Zapas floty na padach K-7: rejestry postoju (port → rejestr), okręty na padach, stałe id ujemne. */
     stock: { regs: new Map(), list: [], ids: new Map(), seq: 0 },
     stats: { ms: 0, maxMs: 0, actors: 0, events: 0, candidates: 0 }
@@ -258,6 +260,70 @@ export function refreshFleetStock(state) {
     }
   }
   return stock.list.length;
+}
+
+/**
+ * Zmiany postojów przy stanowisku (kontrakt `DockRecord` z `trafficProtocol.js`, przeładunek E12): nowe albo
+ * zmienione → `docks`, zakończone → `undocked`. `time` — czas mostu (`trafficWorldTime`). Zwraca `null`, gdy
+ * nic się nie zmieniło (wiadomość bez pól).
+ */
+export function collectDockChanges(state, time, hullOf) {
+  const sent = state.docksSent;
+  const list = state.bubble.list;
+  const seen = state._dockSeen || (state._dockSeen = new Set());
+  seen.clear();
+  let docks = null;
+  for (let k = 0; k < list.length; k++) {
+    const a = list[k];
+    if (a.phase !== ACTOR_PHASE.DOCKED || !a.dockedEntry?.berthId) continue;
+    const course = getCourse(state.world.registry, a.courseId);
+    const stage = course?.stages?.[course.stageIndex];
+    if (!stage || stage.kind !== 'dwell') continue;
+    const num = courseNumber(a.courseId);
+    if (!Number.isFinite(num)) continue;
+    seen.add(num);
+    const seconds = Math.max(0, Number(stage.seconds) || 0);
+    const sig = `${course.stageIndex}|${a.dockedEntry.berthId}|${seconds}`;
+    if (sent.get(num) === sig) continue;
+    sent.set(num, sig);
+    // Obsługa przy stanowisku: od przechwytu do końca postoju; dojście w porcie (`moveSeconds`) zastąpił lot.
+    // Kolejny postój przy tym samym stanowisku (bez przechwytu, bez kredytu dojścia) zaczyna się teraz.
+    const moveCredit = Math.min(Number(stage.moveSeconds) || 0, seconds);
+    const tEnd = time + Math.max(0, seconds - a.dwell);
+    const t0 = Math.min(time, tEnd - Math.max(0, seconds - moveCredit));
+    const dur = tEnd - t0;
+    (docks || (docks = [])).push({
+      id: num,
+      berthId: a.dockedEntry.berthId,
+      stationId: course.portStationId || stage.nodeId || null,
+      mode: stage.reason || 'service',
+      cargo: cargoOf(course),
+      t0,
+      dur,
+      hull: hullOf ? hullOf(a.unitClass) : a.unitClass,
+      unitClass: a.unitClass
+    });
+  }
+  let undocked = null;
+  for (const num of sent.keys()) {
+    if (seen.has(num)) continue;
+    sent.delete(num);
+    (undocked || (undocked = [])).push(num);
+  }
+  return docks || undocked ? { docks, undocked } : null;
+}
+
+/** Ładunek kursu w jednostkach świata ruchu: przewóz / kupiec / przemyt — jeden towar, wyprawa — worek urobku. */
+function cargoOf(course) {
+  const p = course?.payload;
+  if (!p) return {};
+  if (p.harvest && typeof p.harvest === 'object') {
+    const out = {};
+    for (const [id, n] of Object.entries(p.harvest)) if (Number(n) > 0) out[id] = Number(n);
+    return out;
+  }
+  if (p.resourceId && Number(p.units) > 0) return { [p.resourceId]: Number(p.units) };
+  return {};
 }
 
 /** Encja bańki przy kursie `courseId` albo null. */

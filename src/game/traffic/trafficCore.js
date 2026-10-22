@@ -45,8 +45,9 @@ import { recordPlayerMining, setPlayerBerthHolds } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
-  releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds
+  releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges
 } from './workerBubble.js';
+import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
 /** Ile ostatnich wraków dyspozytora trzymać po wysłaniu do gry. */
 const WRECK_LOG_LIMIT = 256;
@@ -252,13 +253,20 @@ export function createTrafficCore(post, options = {}) {
     core.stats.actors = packed.count;
     // Pusta bańka idzie raz (gra gasi encje), potem cisza do następnej.
     core.actorsSent = packed.count;
+    const time = trafficWorldTime(core.world);
     const message = {
       type: TRAFFIC_MSG.ACTORS,
-      time: trafficWorldTime(core.world),
+      time,
       count: packed.count,
       data: packed.data,
       ms: state.stats.ms
     };
+    // Postoje przy stanowisku (kontrakt E12) — tylko zmiany.
+    const docks = collectDockChanges(state, time, resolveTrafficHullId);
+    if (docks) {
+      if (docks.docks) message.docks = docks.docks;
+      if (docks.undocked) message.undocked = docks.undocked;
+    }
     if (core.hulls.length !== core.actorHullsSent) {
       message.hulls = [...core.hulls];
       core.actorHullsSent = core.hulls.length;

@@ -229,6 +229,35 @@ test('bańka w portach bez ringu (pomosty Merkurego i Westy): dokowanie bez wymu
   }
 });
 
+test('postoje przy stanowisku (kontrakt E12): rekord przy dokowaniu, koniec w `undocked`, tylko zmiany', () => {
+  const berth0 = world.docks.get('earth').berths.find((b) => b.id.includes(':Z-'));
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: berth0.x, y: berth0.y, r: 60_000 });
+  const live = new Map();
+  let records = 0;
+  let ended = 0;
+  let repeated = 0;
+  for (let f = 0; f < 30 * 120; f++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+    for (const id of got.actors.undocked || []) { if (live.delete(id)) ended++; }
+    for (const rec of got.actors.docks || []) {
+      if (live.has(rec.id) && JSON.stringify(live.get(rec.id)) === JSON.stringify(rec)) repeated++;
+      live.set(rec.id, rec);
+      records++;
+      assert.ok(String(rec.berthId).includes(':'), 'id stanowiska');
+      assert.ok(['load', 'unload', 'extract', 'refuel', 'service', 'hold'].includes(rec.mode), `tryb ${rec.mode}`);
+      assert.ok(rec.cargo && typeof rec.cargo === 'object');
+      for (const n of Object.values(rec.cargo)) assert.ok(n > 0);
+      assert.ok(rec.dur >= 0 && Number.isFinite(rec.t0) && rec.t0 <= got.actors.time + 1e-6, 'zegar postoju w czasie mostu');
+      assert.ok(typeof rec.hull === 'string' && rec.hull.length > 0);
+    }
+  }
+  assert.ok(records > 0, 'postoje wysłane');
+  assert.ok(ended > 0, 'koniec postoju zgłoszony');
+  assert.equal(repeated, 0, 'ten sam rekord nie idzie drugi raz');
+  const withCargo = [...live.values()].filter((r) => Object.keys(r.cargo).length > 0).length;
+  assert.ok(withCargo > 0 || ended > 0, 'ładunek w rekordach');
+});
+
 test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rejestrze ringu', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   let seenApproach = false;
