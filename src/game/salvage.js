@@ -38,6 +38,8 @@ const SALVAGE_COMPONENTS = Object.freeze([
   { id: 'avionics', perShards: 820 },
   { id: 'life_support', perShards: 1150 },
   { id: 'reactor_core', perShards: 1500 },
+  // Taśma z magnesów reaktora i dysz (E10) — drugie po Lunie źródło ziem rzadkich.
+  { id: 'superconductor', perShards: 900 },
   { id: 'weapon_mount', perShards: 1900 }
 ]);
 
