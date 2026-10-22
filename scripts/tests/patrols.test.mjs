@@ -15,6 +15,8 @@ import {
 } from '../../src/game/traffic/patrols.js';
 import { buildTrafficWorld, stepTrafficWorld } from '../../src/game/traffic/trafficWorld.js';
 import { berthRole, BERTH_ROLE } from '../../src/game/traffic/dockLayout.js';
+import { destroyCourse } from '../../src/game/traffic/trafficDirector.js';
+import { readyShips } from '../../src/game/traffic/shipyards.js';
 
 const TN = 'terra_nova';
 
@@ -145,6 +147,23 @@ export function run() {
   t.note(`rotacje ${garnizon.stats.rotations}, powroty ${garnizon.stats.returns}, `
     + `K-7 Ziemi max ${maxZajete} z ${militaryWarshipBerths(k7)} stanowisk`);
   t.check('okręty stają w halach K-7', maxZajete > 0);
+
+  // Okręt garnizonu zestrzelony w grze (`destroyed` z bańki) to strata z zapasu
+  // frakcji — jak w kampanii: zapas mniejszy o jeden, wrak ze złomem w rejestrze.
+  const wizyta = swiat.war.garrison.visits.find(v => v.kind === 'rotation');
+  t.check('jest wizyta garnizonu do zestrzelenia', !!wizyta);
+  if (wizyta) {
+    const zapasPrzed = readyShips(swiat.shipyards, wizyta.factionId);
+    const wrakiPrzed = swiat.war.wrecks.length;
+    t.check('kurs garnizonu da się zniszczyć z gry',
+      !!destroyCourse(swiat.director, wizyta.courseId, { reason: 'player' }));
+    stepTrafficWorld(swiat, 5);
+    t.equal('zapas frakcji mniejszy o okręt', readyShips(swiat.shipyards, wizyta.factionId), zapasPrzed - 1);
+    t.equal('wrak okrętu w rejestrze wojny', swiat.war.wrecks.length, wrakiPrzed + 1);
+    const wrak = swiat.war.wrecks[swiat.war.wrecks.length - 1];
+    t.check('wrak należy do frakcji i niesie złom', wrak.factionId === wizyta.factionId && wrak.scrap > 0);
+    t.equal('strata policzona w garnizonie', summarizeGarrison(swiat.war.garrison).stats.lost, 1);
+  }
   t.check('rotacja nie zajmuje więcej niż berthShare stanowisk',
     maxNaRotacji <= Math.floor(militaryWarshipBerths(k7) * GARRISON_MODEL.berthShare)
       + GARRISON_MODEL.returnCap);

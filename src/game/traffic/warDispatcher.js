@@ -418,6 +418,7 @@ export function tickWar(war, dt, options = {}) {
   // 0. Garnizon w portach wojskowych — widok floty, nie ruch zapasu.
   if (!war.garrison) war.garrison = createGarrisonState();
   tickGarrison(war.garrison, step, options);
+  settleGarrisonLosses(war, shipyards, rng, events);
 
   // 1. Kampanie w drodze — czy dotarły.
   for (let i = war.campaigns.length - 1; i >= 0; i--) {
@@ -581,6 +582,38 @@ export function tickWar(war, dt, options = {}) {
   }
 
   return events;
+}
+
+/**
+ * Okręt garnizonu zestrzelony w grze to strata z zapasu frakcji: znika jeden
+ * okręt tej klasy, a na miejscu zostaje wrak ze złomem (`emitWrecks`), tak jak
+ * po bitwie. Gdy zapas nie ma już okrętu tej klasy (cała klasa poszła na
+ * kampanię), strata zdejmuje najmniejszy, jaki zostanie — garnizon nie może
+ * ginąć „z niczego”.
+ */
+export function settleGarrisonLosses(war, shipyards, rng = Math.random, events = null) {
+  const losses = war?.garrison?.losses;
+  if (!losses?.length || !shipyards) return 0;
+  let settled = 0;
+  for (const loss of losses.splice(0)) {
+    const fleet = shipyards.fleets.get(String(loss.factionId || ''));
+    let classId = loss.classId;
+    if (!fleet || !(fleet[classId] > 0)) {
+      classId = Object.keys(WARSHIP_CLASSES)
+        .sort((a, b) => WARSHIP_CLASSES[a].power - WARSHIP_CLASSES[b].power)
+        .find(id => fleet?.[id] > 0) || null;
+    }
+    if (!classId) continue;
+    fleet[classId]--;
+    const scrap = emitWrecks(war, { [classId]: 1 }, loss.factionId, loss.x, loss.y, rng);
+    war.garrison.stats.lost++;
+    settled++;
+    events?.push({
+      type: 'garrison-lost', factionId: loss.factionId, classId,
+      stationId: loss.stationId, reason: loss.reason, scrap
+    });
+  }
+  return settled;
 }
 
 /** Migawka do panelu. */

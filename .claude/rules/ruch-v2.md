@@ -85,6 +85,7 @@ Jedno źródło zapasu, ceny i zleceń dla WSZYSTKICH, którzy handlują: przewo
 
 - K-7 to port wojskowy: stanowiska z rolą `military` zajmują tylko kursy WAR i PATROL (`berthRoleForCourse`). Rotacja garnizonu (`tickGarrison` w `patrols.js`, wołana z `tickWar`) wysyła okręty frakcji z patrolu wokół portu domowego na postój i tankowanie (`DWELL_REASON.REFUEL`) i z powrotem: `dutyShare` 30% gotowej floty frakcji, najwyżej `berthShare` 60% stanowisk wojskowych portu, na które wejdzie fregata; ocalali z kampanii wracają do portu domowego (`launchCampaignReturn`, do `returnCap`). Tylko porty z halami wojskowymi (Ziemia, Mars, Jowisz).
 - Rotacja to WIDOK garnizonu: okręty nie schodzą z zapasu frakcji, a garnizon ma własny strumień losowości (`rngState`) i własne id kursów (`garrison-NNNNN`) — gospodarka i wojna są identyczne liczba w liczbę z rotacją i bez niej. Nowa logika garnizonu, która zmienia zapas albo wojnę, musi to łamać świadomie i przejść bramkę.
+- Wyjątek: okręt garnizonu ZESTRZELONY w grze (`destroyed` z bańki → `destroyCourse`) to strata z zapasu frakcji — `tickGarrison` odkłada ją do `garrison.losses`, a `settleGarrisonLosses` w `tickWar` zdejmuje okręt tej klasy (gdy klasy brak — najmniejszy, jaki jest) i zostawia wrak ze złomem (`emitWrecks`), jak strata w kampanii. Bez zestrzeleń symulacja jest identyczna. Okręty zapasu stojące na padach K-7 (encje STOCK bańki) są nietykalne — to widok zapasu, nie kursy garnizonu.
 
 ## Pułapki
 
