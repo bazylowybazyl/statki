@@ -279,7 +279,7 @@ export const RESOURCES = Object.freeze({
   drive_heavy: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Napęd przelotowy ciężki', short: 'NpC', unit: 'szt', form: 'solid',
-    mass: 12.0, value: 1500, color: '#f97316'
+    mass: 12.0, value: 1500, color: '#f97316', capacityFactor: 0.5
   },
   // Koszt rośnie szybciej niż vmax (20 / 30 / 40 tys. j./s): 35 / 59 / 90 CR
   // za tysiąc j./s — szybszy moduł to wybór, nie oczywistość.
@@ -291,12 +291,38 @@ export const RESOURCES = Object.freeze({
   hypercruise_mk2: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Silnik hipercruise Mk2', short: 'HC2', unit: 'szt', form: 'solid',
-    mass: 9.0, value: 1765, color: '#60a5fa'
+    mass: 9.0, value: 1765, color: '#60a5fa', capacityFactor: 0.5
   },
   hypercruise_mk3: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Silnik hipercruise Mk3', short: 'HC3', unit: 'szt', form: 'solid',
-    mass: 14.0, value: 3600, color: '#3b82f6'
+    mass: 14.0, value: 3600, color: '#3b82f6', capacityFactor: 0.5
+  },
+  // Napęd warp (2026-10-22): prędkość warpa zależy od Mk (100–250 tys. j./s;
+  // liczby — E5, `src/data/driveModes.js`; id to kontrakt E5 ↔ E8). Koszt rośnie
+  // szybciej niż prędkość, o ile Mk II leży w 150–200 tys.: 16,8 / 17,6–23,5 /
+  // 26,2 CR za tysiąc j./s. Mk I bez rdzenia reaktora — pręty paliwowe (uran
+  // z Kuipera) są wąskim gardłem stoczni; awionika oszczędnie, bo krzem jest
+  // najciaśniejszym surowcem układu (optyka stoi na krysztale z nadwyżką).
+  //
+  // `capacityFactor` 0,5 (tu, w Mk2/Mk3 hipercruise i napędzie ciężkim): rzadkie,
+  // drogie części — przy pełnym magazynie producent rzadko przekraczał próg
+  // nadwyżki, a stocznie bez własnej produkcji czekały na nie 40–50 min. Zmierzone
+  // bramką bilansu (ziarna 7/11/23): pozycji głodu > 30 min 22–25 → 8–12.
+  warp_mk1: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Napęd warp Mk I', short: 'WP1', unit: 'szt', form: 'solid',
+    mass: 8.0, value: 1680, color: '#a78bfa', capacityFactor: 0.5
+  },
+  warp_mk2: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Napęd warp Mk II', short: 'WP2', unit: 'szt', form: 'solid',
+    mass: 12.0, value: 3520, color: '#8b5cf6', capacityFactor: 0.5
+  },
+  warp_mk3: {
+    tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
+    label: 'Napęd warp Mk III', short: 'WP3', unit: 'szt', form: 'solid',
+    mass: 18.0, value: 6560, color: '#7c3aed', capacityFactor: 0.5
   },
   weapon_mount: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
@@ -673,6 +699,24 @@ export const RECIPES = Object.freeze({
     label: 'Montaż hipercruise Mk3', building: 'factory', seconds: 380,
     in: { nickel_superalloy: 12, carbon_composite: 8, pt_catalyst: 4, reactor_core: 1, avionics: 1, coolant: 4 },
     out: { hypercruise_mk3: 1 }
+  },
+  // Napęd warp: generator pola na stopie tytanu i nadstopie, katalizator
+  // platynowy w komorze; od Mk II zasila go własny rdzeń reaktora, Mk III
+  // dokłada optykę emiterów i osłonę z kompozytu.
+  assemble_warp_mk1: {
+    label: 'Montaż napędu warp Mk I', building: 'factory', seconds: 300,
+    in: { nickel_superalloy: 6, titan_alloy: 4, pt_catalyst: 1, avionics: 1, copper_wire: 4, coolant: 3 },
+    out: { warp_mk1: 1 }
+  },
+  assemble_warp_mk2: {
+    label: 'Montaż napędu warp Mk II', building: 'factory', seconds: 420,
+    in: { nickel_superalloy: 10, titan_alloy: 4, pt_catalyst: 2, reactor_core: 1, avionics: 1, optic_lens: 3, coolant: 4 },
+    out: { warp_mk2: 1 }
+  },
+  assemble_warp_mk3: {
+    label: 'Montaż napędu warp Mk III', building: 'factory', seconds: 560,
+    in: { nickel_superalloy: 14, titan_alloy: 4, carbon_composite: 6, pt_catalyst: 4, reactor_core: 2, avionics: 2, optic_lens: 6, coolant: 6 },
+    out: { warp_mk3: 1 }
   },
 
   // ---------- ZBROJOWNIA: T1 → uzbrojenie ----------

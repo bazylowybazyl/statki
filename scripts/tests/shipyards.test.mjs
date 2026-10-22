@@ -146,6 +146,22 @@ export function run() {
       `(${poprzedni.toFixed(1)} → ${zaTysiac.toFixed(1)} CR)`);
     poprzedni = zaTysiac;
   }
+  // Napęd warp Mk I–III (2026-10-22): vmax w 100–250 tys. j./s stroi E5. Cena na
+  // tysiąc j./s ma rosnąć dla Mk II w 150–200 tys. — szerszego okna nie spełni
+  // żaden cennik, w którym Mk III nie jest absurdalnie drogi.
+  const WARP = { warp_mk1: [100000, 100000], warp_mk2: [150000, 200000], warp_mk3: [250000, 250000] };
+  let warpPoprzedniMax = 0;
+  for (const [id, [vMin, vMax]] of Object.entries(WARP)) {
+    t.check(`${id} jest towarem z recepturą`,
+      !!RESOURCES[id] && Object.values(RECIPES).some(r => r.out[id] > 0));
+    t.check(`${id} buduje jakaś klasa okrętu`,
+      Object.values(WARSHIP_CLASSES).some(cls => cls.build[id] > 0));
+    const zaTysiacMin = (RESOURCES[id]?.value || 0) / (vMax / 1000);
+    t.check(`${id} kosztuje więcej za tysiąc j./s niż słabszy`, zaTysiacMin > warpPoprzedniMax,
+      `(${warpPoprzedniMax.toFixed(1)} → ${zaTysiacMin.toFixed(1)} CR)`);
+    warpPoprzedniMax = (RESOURCES[id]?.value || 0) / (vMin / 1000);
+  }
+
   t.check('każdy okręt ma napęd przelotowy i moduł hipercruise',
     Object.values(WARSHIP_CLASSES).every(cls =>
       (cls.build.drive_light || cls.build.drive_heavy)
