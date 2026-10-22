@@ -82,6 +82,8 @@ export function run() {
   earthEcon.resources.silicon_ore = 200;
   earthEcon.resources.titanium_ore = 150;
   earthEcon.resources.raw_crystal = 120;
+  // Glin z Księżyca i Westy (E10): bez niego nie ma stopu tytanu ani płyt.
+  earthEcon.resources.aluminum_ore = 150;
   runStationEconomy(earth, earthEcon, 20, seededRng(2));
   t.check('Ziemia zużyła dostarczoną rudę', earthEcon.resources.iron_ore < 200, `(${earthEcon.resources.iron_ore.toFixed(1)})`);
   t.check('Ziemia wyprodukowała płyty kadłuba', earthEcon.resources.hull_plate > 0, `(${earthEcon.resources.hull_plate.toFixed(1)})`);
@@ -98,11 +100,12 @@ export function run() {
   // +2,7% żelaza (flak, wyrzutnia torped, napędy w stoczni), −1,5% krzemu (mniej emiterów).
   // 2026-10-22 (napędy warp Mk I–III w roli stoczni): stocznia Ziemi dzieli moc na
   // więcej linii, więc topi mniej — −6% żelaza, krzem +1%.
-  // 2026-10-22 (E10 krok 1: amunicja na materiale wybuchowym): drobne przesunięcie
-  // linii amunicji, −0,1% żelaza i krzemu.
-  t.close('plan Ziemi wymaga 1339,130 rudy żelaza/h', earthNet.iron_ore * 3600, -1339.1299844487587, 1e-6);
-  t.close('plan Ziemi wymaga 749,115 rudy krzemu/h', earthNet.silicon_ore * 3600, -749.1150757999137, 1e-6);
-  t.close('plan Merkurego eksportuje 1333,976 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1333.9759240333703, 1e-6);
+  // 2026-10-22 (E10, receptury realistyczne): amunicja na materiale wybuchowym,
+  // stop tytanu z glinem zamiast stali (Ti-6Al-4V) i glin w płytach — Ziemia −16%
+  // żelaza i −8% krzemu (moc huty przeszła na glin), Merkury eksportuje +5% żelaza.
+  t.close('plan Ziemi wymaga 1127,108 rudy żelaza/h', earthNet.iron_ore * 3600, -1127.1077993095391, 1e-6);
+  t.close('plan Ziemi wymaga 688,851 rudy krzemu/h', earthNet.silicon_ore * 3600, -688.8513169878162, 1e-6);
+  t.close('plan Merkurego eksportuje 1406,167 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1406.167493739907, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });
@@ -445,7 +448,8 @@ export function run() {
   });
 
   t.check('nowa stacja dostaje działający profil bez ręcznego strojenia',
-    rozszerzony.psyche.recipes.length === 5 && rozszerzony.psyche.capacity === 3.0);
+    rozszerzony.psyche.recipes.length === new Set([...INDUSTRY_ARCHETYPES.foundry.recipes,
+      ...INDUSTRY_ARCHETYPES.electronics.recipes]).size && rozszerzony.psyche.capacity === 3.0);
   t.check('moc rozkłada się na linie i sumuje do zadeklarowanej',
     Math.abs(Object.values(rozszerzony.psyche.lines).reduce((a, b) => a + b, 0) - 3.0) < 1e-6);
   t.check('role dzielące recepturę nie dublują linii',

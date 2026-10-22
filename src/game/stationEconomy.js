@@ -78,7 +78,10 @@ export const FLEET_DEMAND = Object.freeze({
   // (fregata bez warpa) — ten sam przelicznik ~0,0105 na sztukę ważoną doktryną.
   warp_mk1: 0.0025,
   warp_mk2: 0.0014,
-  warp_mk3: 0.0003
+  warp_mk3: 0.0003,
+  // Pancerz okrętów wojennych (E10): ~5,4 płyty ceramiki na okręt ważony
+  // doktryną wobec ~11 płyt kadłuba — ta sama metoda co `hull_plate`.
+  ceramic_armor: 0.035
 });
 
 /**
@@ -156,8 +159,9 @@ const EXTRACTION_PER_CYCLE = 9;
  * (tylko pas Kuipera) i złom (tylko wraki). Reszta ma mieć zapas.
  */
 export const INDUSTRY_ARCHETYPES = Object.freeze({
-  /** Huta: ruda → metal. Podstawa każdego okręgu przemysłowego. */
-  foundry: { label: 'Huta', recipes: ['smelt_steel', 'alloy_titanium', 'draw_copper_wire'],
+  /** Huta: ruda → metal (i ceramika pancerna z rudy glinu i węgla). Podstawa każdego okręgu przemysłowego. */
+  foundry: { label: 'Huta', recipes: ['smelt_steel', 'smelt_aluminum', 'alloy_titanium', 'draw_copper_wire',
+    'sinter_ceramic_armor'],
     capacity: 0.9, cost: { steel: 60, hull_plate: 14 } },
   /** Elektronika: krzem i kryształ → układy i optyka. */
   electronics: { label: 'Elektronika', recipes: ['etch_chips', 'grind_optics'],

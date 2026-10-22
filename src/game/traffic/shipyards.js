@@ -49,19 +49,21 @@ export const WARSHIP_CLASSES = Object.freeze({
   // Klasa hipercruise rośnie z kadłubem: Mk1 fregata i niszczyciel, Mk2 krążownik,
   // Mk3 nosiciel. Napęd warp (2026-10-22) tak samo od niszczyciela w górę: Mk I,
   // Mk II, Mk III — fregata go nie ma, bo z nim byłaby droższa na punkt siły niż
-  // niszczyciel (a doktryna stoi na tanich fregatach). Rodziny luf (`weaponEconomy.WEAPON_FAMILY_GOOD`) rozłożone tak,
+  // niszczyciel (a doktryna stoi na tanich fregatach). Ceramika pancerna (E10,
+  // `docs/PROPOZYCJA-receptury-realistyczne.md` § 4) tylko na okrętach wojennych —
+  // frachtowiec jej nie ma. Rodziny luf (`weaponEconomy.WEAPON_FAMILY_GOOD`) rozłożone tak,
   // że łączna liczba luf każdej klasy jest ta sama co przy czterech klasach.
   frigate: {
     id: 'frigate', label: 'fregata', hull: 'terran_frigate', power: 1, seconds: 600,
     build: {
-      hull_plate: 4, avionics: 1, drive_light: 1, hypercruise_mk1: 1, weapon_mount: 1,
+      hull_plate: 4, ceramic_armor: 2, avionics: 1, drive_light: 1, hypercruise_mk1: 1, weapon_mount: 1,
       gun_ballistic: 1, pd_turret: 1
     }
   },
   destroyer: {
     id: 'destroyer', label: 'niszczyciel', hull: 'terran_destroyer', power: 2.4, seconds: 1700,
     build: {
-      hull_plate: 12, avionics: 2, thruster: 1, drive_light: 2, hypercruise_mk1: 1, warp_mk1: 1,
+      hull_plate: 12, ceramic_armor: 6, avionics: 2, thruster: 1, drive_light: 2, hypercruise_mk1: 1, warp_mk1: 1,
       weapon_mount: 3, reactor_core: 1,
       gun_ballistic: 1, gun_railgun: 1, gun_energy: 1, pd_turret: 1, flak_turret: 1
     }
@@ -69,7 +71,7 @@ export const WARSHIP_CLASSES = Object.freeze({
   cruiser: {
     id: 'cruiser', label: 'krążownik', hull: 'terran_battleship', power: 5.5, seconds: 4600,
     build: {
-      hull_plate: 30, avionics: 6, thruster: 2, drive_heavy: 2, hypercruise_mk2: 1, warp_mk2: 1,
+      hull_plate: 30, ceramic_armor: 16, avionics: 6, thruster: 2, drive_heavy: 2, hypercruise_mk2: 1, warp_mk2: 1,
       weapon_mount: 7, reactor_core: 3, life_support: 2,
       gun_ballistic: 2, gun_railgun: 2, gun_energy: 1, gun_plasma: 1, launcher_ordnance: 1,
       pd_turret: 2, flak_turret: 2
@@ -82,7 +84,7 @@ export const WARSHIP_CLASSES = Object.freeze({
   carrier: {
     id: 'carrier', label: 'nosiciel', hull: 'terran_carrier', power: 9, seconds: 8800,
     build: {
-      hull_plate: 60, avionics: 16, thruster: 4, drive_heavy: 4, hypercruise_mk3: 1, warp_mk3: 1,
+      hull_plate: 60, ceramic_armor: 24, avionics: 16, thruster: 4, drive_heavy: 4, hypercruise_mk3: 1, warp_mk3: 1,
       weapon_mount: 7, reactor_core: 7, life_support: 14,
       gun_ballistic: 1, gun_railgun: 1, gun_energy: 1, launcher_ordnance: 1, launcher_torpedo: 1,
       pd_turret: 3, flak_turret: 3,

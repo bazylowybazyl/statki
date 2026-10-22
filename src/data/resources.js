@@ -140,6 +140,14 @@ export const RESOURCES = Object.freeze({
     label: 'Platynowce', short: 'Pt', unit: 't', form: 'solid',
     mass: 1.2, value: 40, color: '#e4e6ea'
   },
+  // Receptury realistyczne (E10): glin z anortytu — wyżyny Księżyca i eukryty Westy
+  // (plagioklaz). Podstawowy metal statków: poszycie, osłony przeciwodłamkowe,
+  // kondensatory, stop tytanu Ti-6Al-4V, ceramika pancerna (korund).
+  aluminum_ore: {
+    tier: TIER.RAW, category: CATEGORY.ORE,
+    label: 'Ruda glinu (anortyt)', short: 'Al', unit: 't', form: 'solid',
+    mass: 1.0, value: 8, color: '#c9ccd1'
+  },
 
   // ---------- T0: GAZY Z OLBRZYMÓW GAZOWYCH ----------
   helium3: {
@@ -249,6 +257,18 @@ export const RESOURCES = Object.freeze({
     tier: TIER.REFINED, category: CATEGORY.CHEMICAL,
     label: 'Materiał wybuchowy', short: 'MW', unit: 't', form: 'solid',
     mass: 0.8, value: 20, color: '#f59e0b'
+  },
+  aluminum: {
+    tier: TIER.REFINED, category: CATEGORY.METAL,
+    label: 'Stop glinu', short: 'AlS', unit: 't', form: 'solid',
+    mass: 0.8, value: 19, color: '#e2e8f0'
+  },
+  // Korund z węglikiem (Al₂O₃ / SiC) na podkładzie z kompozytu — pancerz okrętów
+  // wojennych. Bez krzemu i bez boru: glin i węgiel są w układzie pospolite.
+  ceramic_armor: {
+    tier: TIER.REFINED, category: CATEGORY.METAL,
+    label: 'Ceramika pancerna', short: 'Cer', unit: 't', form: 'solid',
+    mass: 1.2, value: 37, color: '#a8a29e'
   },
 
   // ---------- T2: KOMPONENTY OKRĘTOWE ----------
@@ -522,11 +542,14 @@ export const PLANET_YIELD = Object.freeze({
   // zostały w tych samych tonach na cykl co przed zmianą (krzem jest
   // najciaśniejszym surowcem układu, a hutę Unii skalibrowano pod te liczby).
   // Główne źródło węgla i niklu to i tak wyprawy górnicze w pas.
+  // Glin Westy (E10, 2026-10-22): plagioklaz eukrytów — doszedł tak samo PONAD
+  // dawny urobek (`rate` 1,95 → 2,378, pozostałe tony na cykl bez zmian).
   ceres: { rate: 1.70, yields: {
     iron_ore: 0.2206, silicon_ore: 0.1618, ice: 0.2059, raw_crystal: 0.1470, carbon_ore: 0.2647
   } },
-  vesta: { rate: 1.95, yields: {
-    iron_ore: 0.2262, titanium_ore: 0.1777, silicon_ore: 0.1346, nickel_ore: 0.3846, platinum_ore: 0.0769
+  vesta: { rate: 2.378, yields: {
+    iron_ore: 0.185484, titanium_ore: 0.145714, silicon_ore: 0.110372, nickel_ore: 0.315372, platinum_ore: 0.063058,
+    aluminum_ore: 0.18
   } },
 
   // ---------- KSIĘŻYCE-KOPALNIE ----------
@@ -542,6 +565,10 @@ export const PLANET_YIELD = Object.freeze({
   // Księżyc nie powiela tego, co robi jego planeta w RAFINERII — daje surowiec,
   // planeta go przerabia. Inaczej olbrzym gazowy staje się samowystarczalny
   // i wypada z gospodarki, co już raz złapaliśmy na Saturnie.
+
+  // Ziemia — Luna (E10, 2026-10-22, decyzja użytkownika: Księżyc jako kopalnia).
+  // Anortyt wyżyn (glin) i ilmenit mórz (tytan). Ziemia dalej nic nie wydobywa.
+  luna: { rate: 0.75, yields: { aluminum_ore: 0.615, titanium_ore: 0.385 } },
 
   // Jowisz — wulkaniczne Io i lodowa Europa.
   io: { rate: 0.5, yields: { iron_ore: 0.34, titanium_ore: 0.30, copper_ore: 0.36 } },
@@ -600,9 +627,19 @@ export const RECIPES = Object.freeze({
     label: 'Trawienie układów', building: 'refinery', seconds: 55,
     in: { silicon_ore: 4 }, out: { chips: 1 }
   },
+  // Ti-6Al-4V: dodatkiem stopowym jest glin, nie stal (E10).
   alloy_titanium: {
     label: 'Stapianie tytanu', building: 'refinery', seconds: 60,
-    in: { titanium_ore: 4, steel: 1 }, out: { titan_alloy: 2 }
+    in: { titanium_ore: 4, aluminum: 1 }, out: { titan_alloy: 2 }
+  },
+  smelt_aluminum: {
+    label: 'Elektroliza glinu', building: 'refinery', seconds: 45,
+    in: { aluminum_ore: 3 }, out: { aluminum: 2 }
+  },
+  // Korund z węglikiem: ruda glinu i węgiel z planetoid C (Ceres, pas).
+  sinter_ceramic_armor: {
+    label: 'Spiekanie ceramiki pancernej', building: 'refinery', seconds: 50,
+    in: { aluminum_ore: 2, carbon_ore: 1 }, out: { ceramic_armor: 1 }
   },
   grind_optics: {
     label: 'Szlifowanie optyki', building: 'refinery', seconds: 50,
@@ -659,9 +696,11 @@ export const RECIPES = Object.freeze({
   },
 
   // ---------- FABRYKA: T1 → T2 ----------
+  // Belki ze stali i tytanu, poszycie z glinu (zderzak osłony Whipple'a) — E10.
+  // Stal zostaje w całości: huty żelaza skalibrowano pod nią (bez niej Fe 186%).
   assemble_hull_plate: {
     label: 'Montaż płyt kadłuba', building: 'factory', seconds: 70,
-    in: { steel: 4, titan_alloy: 1 }, out: { hull_plate: 1 }
+    in: { steel: 4, aluminum: 1, titan_alloy: 1 }, out: { hull_plate: 1 }
   },
   assemble_avionics: {
     label: 'Montaż awioniki', building: 'factory', seconds: 90,
@@ -758,7 +797,10 @@ export const RECIPES = Object.freeze({
   // Rodziny na rudach pasa — bez układów scalonych poza zapalnikiem torpedy.
   assemble_gun_railgun: {
     label: 'Montaż działa szynowego', building: 'factory', seconds: 150,
-    in: { nickel_superalloy: 3, copper_wire: 5, titan_alloy: 1, steel: 2 }, out: { gun_railgun: 1 }
+    // Szyny z miedzi, kondensatory foliowe (glin + polimer), obudowa
+    // ściskająca szyny z nadstopu i stali (E10).
+    in: { nickel_superalloy: 2, copper_wire: 4, aluminum: 2, polymer: 1, titan_alloy: 1, steel: 2 },
+    out: { gun_railgun: 1 }
   },
   assemble_gun_plasma: {
     label: 'Montaż działa plazmowego', building: 'factory', seconds: 190,
@@ -785,7 +827,8 @@ export const RECIPES = Object.freeze({
     // Połowa elektroniki na optyce, nie na układach: krzem jest najciaśniejszym
     // surowcem układu (przy dwóch chipach pokrycie spadało do 100,0%, czyli na
     // styk), a surowy kryształ ma nadwyżkę u Wenus i Ceres.
-    in: { titan_alloy: 2, chips: 1, optic_lens: 1, copper_wire: 4, polymer: 2 },
+    // Płatowiec Al-Ti (E10): stop glinu zamiast połowy tytanu i części przewodów.
+    in: { titan_alloy: 1, aluminum: 3, chips: 1, optic_lens: 1, copper_wire: 3, polymer: 2 },
     out: { fighter_craft: 1 }
   },
 
