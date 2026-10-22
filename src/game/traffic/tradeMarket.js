@@ -70,6 +70,7 @@ export function snapshotMarket(stations, getEconomy, options = {}) {
     }
     quotes.set(station.id, { station, econ, prices: byResource });
   }
+  attachOfferIndex(quotes, resources);
   return quotes;
 }
 
@@ -83,8 +84,68 @@ export function refreshQuote(quotes, stationId, resourceId, inboundDelta = 0) {
   if (!quote?.econ || !old) return null;
   const price = quoteOf(quote.station, quote.econ, resourceId,
     (old.inbound || 0) + (Number(inboundDelta) || 0), old.demandRate);
-  if (price) quote.prices.set(resourceId, price);
+  if (price) {
+    quote.prices.set(resourceId, price);
+    const index = quotes.offerIndex;
+    if (index) placeInIndex(index, index.slot.get(stationId), resourceId, price);
+  }
   return price;
+}
+
+// ============================================================
+// Indeks ofert per surowiec (oferty sprzedaży i skupu API rynku)
+// ============================================================
+//
+// `findTradeOpportunities` porównywało każdą parę stacji po każdym surowcu (stacje² × surowce,
+// dwa razy na każdą decyzję kupca — 24% ticku w profilu E4). Indeks trzyma dla każdego surowca
+// tylko stacje, które mogą cokolwiek oddać (zapas ponad próg sprzedaży), i takie, które chcą
+// i mają miejsce. Oba warunki są GÓRNYMI ograniczeniami `tradableUnits` — pomijana para i tak
+// odpadłaby w pełnym przeglądzie — więc wynik jest ten sam co z `scanTradeOpportunities`,
+// także kolejność przy remisach zysku.
+
+/** Czy notowanie może cokolwiek oddać przy jakiejkolwiek cenie skupu (`tradableUnits` → `offered`). */
+function canOffer(ask) {
+  const offered = Number.isFinite(ask.stored) && ask.capacity > 0
+    ? ask.stored - (ask.offerFloor || 0) * ask.capacity
+    : ask.available;
+  return !(offered <= 0);
+}
+
+/** Czy notowanie może cokolwiek przyjąć (`tradableUnits` → `room`), licząc z towarem w drodze. */
+function canBid(bid) {
+  if (bid.wanted === false) return false;
+  if (bid.room - (bid.inbound || 0) <= 0) return false;
+  if (Number.isFinite(bid.stored) && bid.capacity > 0
+    && restockTarget(bid) - (bid.stored + (bid.inbound || 0)) <= 0) return false;
+  return true;
+}
+
+function placeInIndex(index, slot, resourceId, price) {
+  if (slot === undefined) return;
+  let lists = index.byResource.get(resourceId);
+  if (!lists) {
+    lists = { sellers: new Set(), buyers: new Set() };
+    index.byResource.set(resourceId, lists);
+    if (!index.order.has(resourceId)) index.order.set(resourceId, index.order.size);
+  }
+  if (price && canOffer(price)) lists.sellers.add(slot); else lists.sellers.delete(slot);
+  if (price && canBid(price)) lists.buyers.add(slot); else lists.buyers.delete(slot);
+}
+
+/** Indeks ofert notowań — budowany raz z notowaniami, aktualizowany przez `refreshQuote`. */
+function attachOfferIndex(quotes, resources) {
+  const index = { keys: [], entries: [], slot: new Map(), order: new Map(), byResource: new Map() };
+  resources.forEach((id, i) => index.order.set(id, i));
+  for (const [id, quote] of quotes) {
+    index.slot.set(id, index.keys.length);
+    index.keys.push(id);
+    index.entries.push(quote);
+  }
+  for (let slot = 0; slot < index.entries.length; slot++) {
+    for (const [resourceId, price] of index.entries[slot].prices) placeInIndex(index, slot, resourceId, price);
+  }
+  Object.defineProperty(quotes, 'offerIndex', { value: index, writable: true, configurable: true, enumerable: false });
+  return index;
 }
 
 /**
@@ -181,6 +242,89 @@ export function tradableUnits(ask, bid, minRatio = MIN_MARGIN_RATIO) {
  * 5% na tysiącu ton bije 60% na dwóch sztukach.
  */
 export function findTradeOpportunities(quotes, options = {}) {
+  return quotes?.offerIndex
+    ? findIndexedOpportunities(quotes.offerIndex, options)
+    : scanTradeOpportunities(quotes, options);
+}
+
+/** Jedna okazja dla pary notowań albo `null` — wspólne ciało przeglądu i indeksu. */
+function opportunityOf(source, target, resourceId, ask, bid, holdCapacity, minRatio) {
+  const marginPerUnit = bid.bid - ask.ask;
+  if (marginPerUnit <= 0) return null;
+  if (marginPerUnit / Math.max(ask.ask, 1e-6) < minRatio) return null;
+
+  // Ile przejdzie, zanim ceny obu stron zejdą się na marżę — a nie
+  // „nadwyżka ponad 70%”, której producent ze stocznią nigdy nie miał.
+  const { offered, room } = tradableUnits(ask, bid, minRatio);
+  if (offered <= 0 || room <= 0) return null;
+
+  const def = RESOURCES[resourceId];
+  const byHold = Math.floor(holdCapacity / Math.max(def.mass, 1e-6));
+  const units = Math.floor(Math.min(offered, room, byHold));
+  if (units <= 0) return null;
+
+  return {
+    resourceId,
+    source: source.station,
+    target: target.station,
+    units,
+    mass: units * def.mass,
+    buyPrice: ask.ask,
+    sellPrice: bid.bid,
+    marginPerUnit,
+    marginRatio: marginPerUnit / ask.ask,
+    /** Zysk brutto z kursu, PRZED kosztem trasy i ryzykiem. */
+    gross: marginPerUnit * units
+  };
+}
+
+/**
+ * Ścieżka indeksu: pary tylko ze sprzedających i chcących danego surowca. Kolejność wyniku jak
+ * w pełnym przeglądzie: zysk malejąco, przy remisie kolejność przeglądu (źródło, cel, surowiec).
+ */
+function findIndexedOpportunities(index, options) {
+  const holdCapacity = Math.max(1, Number(options.holdCapacity) || 160);
+  const minRatio = Number.isFinite(options.minMargin) ? options.minMargin : MIN_MARGIN_RATIO;
+  const limit = Math.max(1, Math.floor(options.limit || 12));
+  const sourceIds = options.sourceIds ? new Set([...options.sourceIds].map(String)) : null;
+  const { keys, entries, order, byResource } = index;
+  const stations = entries.length;
+  const resources = order.size;
+  const out = [];
+  const rank = [];
+
+  for (const [resourceId, lists] of byResource) {
+    if (!lists.sellers.size || !lists.buyers.size) continue;
+    const resourceRank = order.get(resourceId);
+    for (const si of lists.sellers) {
+      if (sourceIds && !sourceIds.has(String(keys[si]))) continue;
+      const source = entries[si];
+      const ask = source.prices.get(resourceId);
+      if (!ask) continue;
+      for (const ti of lists.buyers) {
+        if (ti === si) continue;
+        const target = entries[ti];
+        // Nikt nie wozi towaru wprost do frakcji, z którą jest w stanie wojny.
+        if (areFactionsHostile(source.station.factionId, target.station.factionId)) continue;
+        const bid = target.prices.get(resourceId);
+        if (!bid || bid.wanted === false) continue;
+        const okazja = opportunityOf(source, target, resourceId, ask, bid, holdCapacity, minRatio);
+        if (!okazja) continue;
+        out.push(okazja);
+        rank.push((si * stations + ti) * resources + resourceRank);
+      }
+    }
+  }
+
+  const perm = out.map((_, i) => i);
+  perm.sort((a, b) => (out[b].gross - out[a].gross) || (rank[a] - rank[b]));
+  const best = [];
+  for (let i = 0; i < perm.length && i < limit; i++) best.push(out[perm[i]]);
+  return best;
+}
+
+/** Pełny przegląd stacje × stacje × surowce — notowania bez indeksu (ręczne migawki, testy). */
+export function scanTradeOpportunities(quotes, options = {}) {
   const holdCapacity = Math.max(1, Number(options.holdCapacity) || 160);
   const minRatio = Number.isFinite(options.minMargin) ? options.minMargin : MIN_MARGIN_RATIO;
   const limit = Math.max(1, Math.floor(options.limit || 12));
@@ -200,34 +344,8 @@ export function findTradeOpportunities(quotes, options = {}) {
       for (const [resourceId, ask] of source.prices) {
         const bid = target.prices.get(resourceId);
         if (!bid || bid.wanted === false) continue;
-
-        const marginPerUnit = bid.bid - ask.ask;
-        if (marginPerUnit <= 0) continue;
-        if (marginPerUnit / Math.max(ask.ask, 1e-6) < minRatio) continue;
-
-        // Ile przejdzie, zanim ceny obu stron zejdą się na marżę — a nie
-        // „nadwyżka ponad 70%”, której producent ze stocznią nigdy nie miał.
-        const { offered, room } = tradableUnits(ask, bid, minRatio);
-        if (offered <= 0 || room <= 0) continue;
-
-        const def = RESOURCES[resourceId];
-        const byHold = Math.floor(holdCapacity / Math.max(def.mass, 1e-6));
-        const units = Math.floor(Math.min(offered, room, byHold));
-        if (units <= 0) continue;
-
-        out.push({
-          resourceId,
-          source: source.station,
-          target: target.station,
-          units,
-          mass: units * def.mass,
-          buyPrice: ask.ask,
-          sellPrice: bid.bid,
-          marginPerUnit,
-          marginRatio: marginPerUnit / ask.ask,
-          /** Zysk brutto z kursu, PRZED kosztem trasy i ryzykiem. */
-          gross: marginPerUnit * units
-        });
+        const okazja = opportunityOf(source, target, resourceId, ask, bid, holdCapacity, minRatio);
+        if (okazja) out.push(okazja);
       }
     }
   }

@@ -13,6 +13,10 @@ import {
   buyOrderUnits, postQuotes, requote
 } from '../../src/game/traffic/marketBook.js';
 import { SHIPMENT_STATUS } from '../../src/game/traffic/shipmentOrders.js';
+import {
+  findTradeOpportunities, scanTradeOpportunities, refreshQuote
+} from '../../src/game/traffic/tradeMarket.js';
+import { buildTrafficWorld, stepTrafficWorld } from '../../src/game/traffic/trafficWorld.js';
 import { stationWantsResource } from '../../src/game/stationEconomy.js';
 import { RESOURCE_KEYS } from '../../src/data/resources.js';
 import { FACTION } from '../../src/data/factions.js';
@@ -98,6 +102,37 @@ export function run() {
   requote(book, 'b', 'steel', 10);
   t.equal('notowanie po transakcji widzi więcej w drodze', book.quotes.get('b').prices.get('steel').inbound, przed + 10);
   t.check('postQuotes przelicza od nowa', postQuotes(book, stations).get('b').prices.get('steel').inbound === 75);
+
+  t.section('5. Indeks ofert per surowiec = pełny przegląd (kupcy)');
+  // Prawdziwy świat po kilku minutach gry: indeks sprzedających i chcących (`offerIndex`) musi dać
+  // dokładnie tę samą listę okazji co przegląd stacje × stacje × surowce — także kolejność remisów
+  // i po transakcjach w ticku (`refreshQuote`).
+  const world = buildTrafficWorld({ economyScale: 60, capacityMultiplier: 4, seed: 7 });
+  for (let i = 0; i < 60; i++) stepTrafficWorld(world);
+  const quotes = world.director.book.quotes;
+  const ids = world.stations.map(station => station.id);
+  const same = (a, b) => a.length === b.length && a.every((x, i) => x.resourceId === b[i].resourceId
+    && x.source === b[i].source && x.target === b[i].target && x.units === b[i].units && x.gross === b[i].gross);
+  t.check('notowania świata mają indeks ofert', !!quotes.offerIndex);
+  let zgodne = 0;
+  let wszystkie = 0;
+  let okazje = 0;
+  for (let runda = 0; runda < 2; runda++) {
+    for (const hold of [60, 380, 1600]) {
+      for (const opts of [{ holdCapacity: hold, limit: 20 }, { holdCapacity: hold, limit: 40, minMargin: 0 },
+        { holdCapacity: hold, limit: 12, sourceIds: [ids[hold % ids.length]] }]) {
+        const a = findTradeOpportunities(quotes, opts);
+        okazje += a.length;
+        wszystkie++;
+        if (same(a, scanTradeOpportunities(quotes, opts))) zgodne++;
+      }
+    }
+    for (const id of ids.slice(0, 6)) {
+      for (const r of ['iron_ore', 'steel', 'hull_plate', 'oxygen']) refreshQuote(quotes, id, r, 50);
+    }
+  }
+  t.check('świat ma okazje handlowe do porównania', okazje > 0);
+  t.equal('indeks daje tę samą listę co pełny przegląd', zgodne, wszystkie);
 
   return t.results;
 }

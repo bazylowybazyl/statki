@@ -331,6 +331,8 @@ export function buyOrderUnits(book, station, resourceId, leadSeconds = 0) {
 /**
  * Notowania `resourcePrice` wszystkich czynnych stacji z towarem w drodze i popytem brutto
  * (sztuk/s przy bieżącej skali) — wejście kupców (`findTradeOpportunities`) i licytacji stoczni.
+ * Notowania niosą indeks ofert per surowiec (`quotes.offerIndex`, `tradeMarket.js`) — sprzedający
+ * i chcący odbiorcy; `requote` aktualizuje go razem z ceną.
  */
 export function postQuotes(book, stations) {
   book.quotes = snapshotMarket(stations, id => book.getEconomy(id), {
