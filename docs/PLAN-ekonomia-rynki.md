@@ -456,3 +456,10 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   5–7. Nowa sesja E13: dane kadłubów ruchu (mostki, rdzenie, zbiorniki, gniazda), potem broń i AI bojowa awansowanych okrętów; sprite'y Z11 wpięte.
   8. Nowa sesja E14: modele doków portów bez ringu — dok krzyżowy, dok okrągły i koło z wlotem (jak stacja z Elite Dangerous, tylko płaska).
   - Po zakończeniu pracy sesji komputer ma się wyłączyć (polecenie użytkownika).
+- 2026-10-23 E12 w `main` (c542b208), runda 3:
+  - poprawione znaleziska przeglądu: koniec postoju bez `snap` (wieża bez nowych zadań od zamykania wrót, ładownia chowa się za domkniętymi wrotami), slot po przechwycie, odczyt ważny od dołączenia slotu, własna kopia stanowiska, jedno `ensure()`, bez alokacji w klatce, `?przeladunek=0` bez importu i rozgrzewki, kamery 3D i maskowanie; testy regresji padają na starej puli;
+  - 96 dronów przy polach MEGA: ciężki frachtowiec 1320 / 1320 kontenerów w ~60 s, koniec postoju bez skoku (skrzydła wrót przenikają się ze skórą);
+  - koszt: CPU w szumie, GPU +0,06 ms przy 14 stanowiskach, poza portem 0; ładowanie średnio +0,33 s (przebiegi bez przeładunku różnią się o 0,7 s). Rozgrzewka kerneli na żądanie odrzucona (przestój ~140 ms w grze).
+  - Po scaleniu: `npm test` 1781 zielone, build, start w workerze 0 sync. Przegląd portów i `rynek-gra` pokazały synchroniczny pył kosmiczny (`spaceDust:fg`, `:ortho`) w pierwszej klatce przy obciążeniu — E12 sprawdza A/B z `?przeladunek=0`.
+- 2026-10-23 E2 w `main` (8601b039): „Nowa gra” od zera — świat ruchu przy starcie strony zawsze świeży, zapis ekonomii nakłada się tylko po wyborze przed startem (`economy-restore`), start bez wyboru kasuje stary zapis. `rynek-gra`: zapis → wczytanie (34 rynki, 6 wyrw, stacja gracza), zapis → Nowa gra (0 wyrw, bez stacji gracza). `npm test` 1792 zielone, build.
+  - Do decyzji użytkownika: „Wczytaj grę” w menu jest wyłączone, więc zapis ekonomii wczytuje dziś tylko hak `DevEconomy.loadEconomy()`. Rekomendacja orkiestratora: włączyć „Wczytaj grę”, gdy będzie pełny zapis gry (statek, fabuła, ekonomia).
