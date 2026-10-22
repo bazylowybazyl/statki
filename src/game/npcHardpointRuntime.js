@@ -172,6 +172,29 @@ function normalizeEditorEngine(marker, idx, kind = 'main') {
   };
 }
 
+// Dysze MAIN (visual.mainThrusters) z markerów edytora: pozycje w px PNG × skala hardpointów kadłuba.
+function buildMainThrusters(markers, hpScaleX, hpScaleY) {
+  const mainThrusters = [];
+  if (!Array.isArray(markers)) return mainThrusters;
+  for (let i = 0; i < markers.length; i++) {
+    const engine = normalizeEditorEngine(markers[i], i, 'main');
+    if (!engine) continue;
+    mainThrusters.push({
+      offset: { x: engine.x * hpScaleX, y: engine.y * hpScaleY },
+      forward: forwardFromEditorDeg(engine.nozzleDeg),
+      mount: engine.mount,
+      baseDeg: engine.baseDeg,
+      nozzleDeg: engine.nozzleDeg,
+      gimbalMinDeg: engine.gimbalMinDeg,
+      gimbalMaxDeg: engine.gimbalMaxDeg,
+      yNudge: engine.offsetY * hpScaleY,
+      vfxLengthMin: engine.vfxLengthMin,
+      vfxLengthMax: engine.vfxLengthMax
+    });
+  }
+  return mainThrusters;
+}
+
 // Dysze SIDE (visual.torqueThrusters) z markerów edytora: pozycje w px PNG × skala hardpointów kadłuba.
 function buildSideThrusters(markers, hpScaleX, hpScaleY) {
   const sideThrusters = [];
@@ -202,7 +225,14 @@ function buildSideThrusters(markers, hpScaleX, hpScaleY) {
 // (profil frachtowca — kadłuby dev i ruchu), bez ramy — typ jak FREIGHTER_HULL_BY_TYPE w index.html (lustro,
 // pilnuje test). Furgony ładunku (materializeCargoOrder: rama terran_frigate) rysują się sprite'em fregaty, więc
 // dysz frachtowca nie dostają.
-const FREIGHTER_EDITOR_FRAMES = new Set(['inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter']);
+// Od E13 (2026-10-22) — wszystkie kadłuby ruchu v2 z własnym wpisem edytora (klucz = rama): cywile `sideOnly`,
+// okręty (przemytnik, rajder, łowca, kuter policji) z gniazdami. Pilnuje tests/trafficHullData.test.mjs.
+const FREIGHTER_EDITOR_FRAMES = new Set([
+  'inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter',
+  'heavy_harvester', 'belter', 'surveyor', 'refinery_tender', 'tanker', 'salvage_hauler', 'construction_tug',
+  'smuggler', 'pirate_raider', 'distress_beacon_ship', 'repair_drone', 'bounty_hunter', 'police_cutter', 'rescue_ship'
+]);
+export const TRAFFIC_EDITOR_FRAMES = FREIGHTER_EDITOR_FRAMES;
 const FREIGHTER_HULL_BY_TYPE = Object.freeze({
   'freighter-small': 'inter_station_shuttle',
   'freighter-medium': 'container_ship',
@@ -367,6 +397,14 @@ export function createNpcHardpointRuntime({
     npc.visual = npc.visual || {};
     if (sideThrusters.length) npc.visual.torqueThrusters = sideThrusters;
     else delete npc.visual.torqueThrusters;
+    // Dysze MAIN cywila (E13): strugi i strefy lakieru — sam obraz. `mainVisualOnly` trzyma ścieżkę lotu
+    // (npcHasPhysicalThrusters → false); NPC bez kadłuba z tego wpisu (lokomotywa) ich nie ma.
+    const mainThrusters = buildMainThrusters(cfg.engines?.main, hpScaleX, hpScaleY);
+    if (mainThrusters.length && !npc.disableEditorLayout) {
+      npc.visual.mainThrusters = mainThrusters;
+      npc.visual.mainVisualOnly = true;
+      npc.visual.engineFx = buildEntityEngineFx(editorShipId, cfg.engineFx, (hpScaleX + hpScaleY) * 0.5);
+    }
     npc.__editorEngineScaleX = hpScaleX;
     npc.__editorEngineScaleY = hpScaleY;
     npc.__editorLayoutShipId = editorShipId;
@@ -438,25 +476,10 @@ export function createNpcHardpointRuntime({
     }
 
     if (enginesMainRaw.length) {
-      const mainThrusters = [];
-      for (let i = 0; i < enginesMainRaw.length; i++) {
-        const engine = normalizeEditorEngine(enginesMainRaw[i], i, 'main');
-        if (!engine) continue;
-        mainThrusters.push({
-          offset: { x: engine.x * hpScaleX, y: engine.y * hpScaleY },
-          forward: forwardFromEditorDeg(engine.nozzleDeg),
-          mount: engine.mount,
-          baseDeg: engine.baseDeg,
-          nozzleDeg: engine.nozzleDeg,
-          gimbalMinDeg: engine.gimbalMinDeg,
-          gimbalMaxDeg: engine.gimbalMaxDeg,
-          yNudge: engine.offsetY * hpScaleY,
-          vfxLengthMin: engine.vfxLengthMin,
-          vfxLengthMax: engine.vfxLengthMax
-        });
-      }
+      const mainThrusters = buildMainThrusters(enginesMainRaw, hpScaleX, hpScaleY);
       if (mainThrusters.length) {
         npc.visual.mainThrusters = mainThrusters;
+        delete npc.visual.mainVisualOnly;
         // Rozmiar i palety silników tego kadłuba (edytor: blok engineFx) —
         // dysza w pikselach PNG przez tę samą skalę co pozycje markerów.
         npc.visual.engineFx = buildEntityEngineFx(editorShipId, cfg.engineFx, (hpScaleX + hpScaleY) * 0.5);

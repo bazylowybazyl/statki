@@ -1462,6 +1462,9 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
   cache.maxRange = maxRange;
   const maxRangeSq = maxRange * maxRange;
 
+  // Okręt ruchu z urazą do gracza (E13, src/game/trafficPromotion.js): poza stronami — wieże biją gracza i jego
+  // własne jednostki (`playerOwned`), nie sojuszników frakcji, z którą gracz nie walczy.
+  const grudgeOnly = npc.playerGrudge === true && !npc.isPirate;
   // Zamaskowany gracz (src/game/cloak.js) nie trafia do listy celów wież.
   if (!npc.friendly && window.ship && !window.ship.dead && !isCloakHidden(window.ship)) {
     const playerX = window.ship.pos?.x ?? window.ship.x ?? 0;
@@ -1483,6 +1486,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (!enemy || enemy.dead || enemy === npc || enemy === window.ship) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      if (grudgeOnly && !enemy.playerOwned) continue;
       const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
       const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
       const dx = enemyX - npc.x;
@@ -1500,6 +1504,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (enemy === window.ship || isCloakHidden(enemy)) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      if (grudgeOnly && !enemy.playerOwned) continue;
       const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
       const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
       const dx = enemyX - npc.x;
@@ -1514,6 +1519,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (!enemy || enemy.dead || enemy === npc) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      if (grudgeOnly && !enemy.playerOwned) continue;
       const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
       const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
       const dx = enemyX - npc.x;

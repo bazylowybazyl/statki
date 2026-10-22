@@ -38,7 +38,13 @@ const HULLS = [
   { key: 'heavy_freighter', profile: 'heavy_freighter', sprite: TRAFFIC_HULLS.heavy_freighter.sprite,
     bays: 'long_haul_freighter', npc: { type: 'freighter-capital', shipFrame: 'heavy_freighter' } },
   { key: 'megafreighter_front', profile: 'megafreighter', sprite: LOCOMOTIVE.spriteSrc, bays: null, bridge: 'megafreighter',
-    npc: { type: 'megafreighter_front', shipFrame: 'megafreighter', disableEditorLayout: true } }
+    npc: { type: 'megafreighter_front', shipFrame: 'megafreighter', disableEditorLayout: true } },
+  // Cywilne kadłuby ruchu v2 (E13, 2026-10-22): te same reguły SIDE; mostek z tabeli ruchu (strefa poziomu).
+  // Dron naprawczy ma 2 dysze SIDE (kadłub ~2,5 × 2 komórki) — tests/trafficHullData.test.mjs.
+  ...['heavy_harvester', 'belter', 'surveyor', 'refinery_tender', 'tanker', 'salvage_hauler', 'construction_tug',
+    'distress_beacon_ship', 'rescue_ship'].map((id) => ({
+    key: id, profile: id, sprite: TRAFFIC_HULLS[id].sprite, bays: null, bridge: id, npc: { type: id, shipFrame: id }
+  }))
 ];
 
 const spriteCache = new Map();
@@ -83,12 +89,15 @@ function runtime() {
   return rt;
 }
 
-test('dane edytora: wpisy sideOnly — 4 narożniki, wydech na zewnątrz burty, bez MAIN, gniazd, rdzeni i świateł', () => {
-  for (const { key } of HULLS) {
+test('dane edytora: wpisy sideOnly — 4 narożniki, wydech na zewnątrz burty, MAIN jak proxy, bez gniazd, rdzeni i świateł', () => {
+  for (const { key, npc } of HULLS) {
     const cfg = SHIPS[key];
     assert.ok(cfg, `${key}: brak wpisu`);
     assert.equal(cfg.sideOnly, true, `${key}: sideOnly`);
-    assert.deepEqual(cfg.engines.main, [], `${key}: bez dysz MAIN (npcHasPhysicalThrusters zmieniłby lot)`);
+    // Dysze MAIN (E13): osie dysz proxy ruchu (TRAFFIC_HULLS[].main) — w runtime sam obraz (visual.mainVisualOnly);
+    // lokomotywa bez (układ edytora wyłączony, dysze MAIN składu ma model 3D z tabeli autoHulls3D).
+    const proxyMain = npc.disableEditorLayout ? [] : TRAFFIC_HULLS[npc.shipFrame].main.map(([x, y]) => [x, y]);
+    assert.deepEqual(cfg.engines.main.map((m) => [m.x, m.y]), proxyMain, `${key}: dysze MAIN`);
     for (const field of ['hardpoints', 'cores', 'lights']) assert.equal(cfg[field], undefined, `${key}: bez ${field}`);
     const side = cfg.engines.side;
     assert.equal(side.length, 4, `${key}: 4 dysze SIDE`);
@@ -153,7 +162,8 @@ test('sponsony poza lukami ładowni (cargoBays.js) i strefą mostka lokomotywy',
     if (h.bridge) {
       const entry = BRIDGE_LAYOUT_PROPOSALS[h.bridge];
       const zones = entry.variants[entry.defaultVariant];
-      const margin = bridgeZoneMargin(Math.min(scale.x, scale.y), getWeaponTierForHull(h.profile));
+      // Kadłuby ruchu (E13) bez wież — zapas 14 px PNG (oś dyszy poza strefą); sponson i tak nie wchodzi na mostek (niżej).
+      const margin = h.bridge === 'megafreighter' ? bridgeZoneMargin(Math.min(scale.x, scale.y), getWeaponTierForHull(h.profile)) : 14;
       assert.deepEqual(validateBridgeLayout(zones, { engines: { side } }, { margin }), [], `${h.key}: dysze przy mostku`);
       for (const m of side) for (const z of zones) assert.ok(!overlaps(plateRect(m, R), z.x, z.y, z.w, z.h, 2), `${h.key}/${m.id} na mostku`);
     }
@@ -192,9 +202,14 @@ test('NPC frachtowców: 4 dysze SIDE z kadłubem, wydech na zewnątrz burt, lot,
       assert.equal(t.baseDeg, left ? 180 : 0, `${h.key}: baza kąta z burty`);
       assert.ok(left ? -t.forward.y < -0.99 : -t.forward.y > 0.99, `${h.key}: wydech na zewnątrz burty`);
     });
-    // Sam wygląd: bez dysz MAIN (ścieżka lotu jak dawniej), gniazda, rdzenie, światła i napęd nietknięte.
-    assert.equal(npc.visual.mainThrusters, undefined);
-    assert.equal(npc.visual.engineFx, undefined);
+    // Sam wygląd: dysze MAIN tylko do obrazu (ścieżka lotu jak dawniej), gniazda, rdzenie, światła i napęd nietknięte.
+    if (h.npc.disableEditorLayout) {
+      assert.equal(npc.visual.mainThrusters, undefined);
+      assert.equal(npc.visual.engineFx, undefined);
+    } else {
+      assert.equal(npc.visual.mainThrusters.length, SHIPS[h.key].engines.main.length, `${h.key}: dysze MAIN`);
+      assert.equal(npc.visual.mainVisualOnly, true, `${h.key}: MAIN tylko obraz`);
+    }
     assert.equal(npcHasPhysicalThrusters(npc), false);
     assert.equal(npc.editorHardpoints, before.hardpoints);
     assert.equal(npc.editorCores, before.cores);

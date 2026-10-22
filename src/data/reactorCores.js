@@ -29,7 +29,29 @@ export const REACTOR_CORE_MARKERS = Object.freeze({
   terran_battleship: marker({ id: 'bellator_A', x: -32, y: 0, r: 48, armorMul: 3, hr: 48.2, tier: 'R4', model: 'terran' }),
   terran_carrier: marker({ id: 'citadella_A', x: -357.6, y: -12, r: 92.9, hr: 37.2, tier: 'R5', model: 'terran' }),
   terran_supercapital: marker({ id: 'colossus_A', x: -353.2, y: -2, r: 64.3, hr: 32.2, tier: 'R6', model: 'terran' }),
-  pirate_battleship: marker({ id: 'skull_A', x: -60, y: 0, r: 62.64, armorMul: 3, tier: 'R4', model: 'pirate' })
+  pirate_battleship: marker({ id: 'skull_A', x: -60, y: 0, r: 62.64, armorMul: 3, tier: 'R4', model: 'pirate' }),
+  // Kadłuby ruchu v2 (E13, 2026-10-22): komora w maszynowni za ładownią (blok rufowy sprite'a), promień komory
+  // r = 0,6–1,6 komórki siatki belek (małe kadłuby — mniej, żeby zmieścić zbiornik i mostek; frachtowiec ciężki —
+  // 3 komórki), poziom rdzenia = poziom mostka (klasa z pola kadłuba), obudowa hr = promień modułu `reactor`
+  // poziomu (5 / 8 / 14 / — / — / 30 j.) / s. Komora poza strefą mostka i zbiornikiem — tests/trafficHullData.test.mjs.
+  inter_station_shuttle: marker({ id: 'inter_station_shuttle_A', x: -330, y: -10, r: 182.4, hr: 71.5, tier: 'R1', model: 'terran' }),
+  container_ship: marker({ id: 'container_ship_A', x: -650, y: -10, r: 110.9, hr: 45.5, tier: 'R2', model: 'terran' }),
+  long_haul_freighter: marker({ id: 'long_haul_freighter_A', x: -580, y: -10, r: 78.8, hr: 46, tier: 'R3', model: 'terran' }),
+  heavy_freighter: marker({ id: 'heavy_freighter_A', x: -580, y: -10, r: 44.3, hr: 29.6, tier: 'R6', model: 'terran' }),
+  heavy_harvester: marker({ id: 'heavy_harvester_A', x: -130, y: 0, r: 110.9, hr: 39.4, tier: 'R2', model: 'terran' }),
+  belter: marker({ id: 'belter_A', x: -500, y: -20, r: 192.2, hr: 49.3, tier: 'R1', model: 'terran' }),
+  surveyor: marker({ id: 'surveyor_A', x: -560, y: -20, r: 180.2, hr: 46.2, tier: 'R1', model: 'terran' }),
+  refinery_tender: marker({ id: 'refinery_tender_A', x: -560, y: -20, r: 83.2, hr: 51.7, tier: 'R3', model: 'terran' }),
+  tanker: marker({ id: 'tanker_A', x: -460, y: -20, r: 74.2, hr: 46.2, tier: 'R3', model: 'terran' }),
+  salvage_hauler: marker({ id: 'salvage_hauler_A', x: -440, y: -20, r: 95, hr: 59.1, tier: 'R3', model: 'terran' }),
+  construction_tug: marker({ id: 'construction_tug_A', x: -420, y: -20, r: 160.2, hr: 41.1, tier: 'R1', model: 'terran' }),
+  smuggler: marker({ id: 'smuggler_A', x: -420, y: -20, r: 160.2, hr: 41.1, tier: 'R1', model: 'pirate' }),
+  pirate_raider: marker({ id: 'pirate_raider_A', x: -640, y: -20, r: 129.4, hr: 49.3, tier: 'R2', model: 'pirate' }),
+  distress_beacon_ship: marker({ id: 'distress_beacon_ship_A', x: -330, y: -20, r: 144.1, hr: 37, tier: 'R1', model: 'terran' }),
+  repair_drone: marker({ id: 'repair_drone_A', x: -170, y: -60, r: 144, hr: 80, tier: 'R1', model: 'terran' }),
+  bounty_hunter: marker({ id: 'bounty_hunter_A', x: -400, y: -5, r: 131, hr: 53.8, tier: 'R2', model: 'terran' }),
+  police_cutter: marker({ id: 'police_cutter_A', x: -150, y: -5, r: 192.2, hr: 49.3, tier: 'R1', model: 'terran' }),
+  rescue_ship: marker({ id: 'rescue_ship_A', x: -470, y: -5, r: 144.1, hr: 59.1, tier: 'R2', model: 'terran' })
 });
 
 // Barwa plazmy reaktora per frakcja (liniowe RGB „ciała”, jak REACTOR_COLORS dema).

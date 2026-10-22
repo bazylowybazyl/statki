@@ -132,6 +132,29 @@ export const SHIP_FLIGHT_SPECS = Object.freeze({
     // Dopalacz gracza (Shift): z tabeli napędów (driveModes.js — 1137 j/s od 2026-10-22; PRZELOTU nie ma).
     boostSpeed: PLAYER_HULL_DRIVE.atlas.boostSpeed
   }),
+  // Okręty ruchu v2 po awansie do pełnego NPC (E13, src/game/trafficPromotion.js): klasa fregaty, liczby z fregat
+  // floty — rajder jak Marauder, tylko cięższy (288 j.); przemytnik najszybszy na prostej, łowca zwrotny, kuter
+  // policji krótki i hamujący najmocniej. Cywile ruchu zostają przy dawnym napędzie (ucieczka rozkazem `move`).
+  pirate_raider: Object.freeze({
+    flightClass: 'frigate',
+    maxSpeed: 1306, accel: 1500, decel: 1600, strafeAccel: 650, reverseAccel: 600,
+    turnRate: 80, turnAccel: 150, ...C.frigate
+  }),
+  smuggler: Object.freeze({
+    flightClass: 'frigate',
+    maxSpeed: 1531, accel: 1850, decel: 1700, strafeAccel: 700, reverseAccel: 650,
+    turnRate: 90, turnAccel: 170, ...C.frigate
+  }),
+  bounty_hunter: Object.freeze({
+    flightClass: 'frigate',
+    maxSpeed: 1447, accel: 1780, decel: 1900, strafeAccel: 850, reverseAccel: 750,
+    turnRate: 96, turnAccel: 190, ...C.frigate
+  }),
+  police_cutter: Object.freeze({
+    flightClass: 'frigate',
+    maxSpeed: 1389, accel: 1720, decel: 2150, strafeAccel: 950, reverseAccel: 850,
+    turnRate: 104, turnAccel: 210, ...C.frigate
+  }),
   // Holownik serwisowy (src/game/serviceTug.js) — 5 km, ale z mocnymi dyszami manewrowymi: trzyma pozycję przy
   // statku i wsuwa się pod niego bokiem (strafe), szybciej zawraca niż superkapitał tego tonażu.
   service_tug: Object.freeze({

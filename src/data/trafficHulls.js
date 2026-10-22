@@ -103,8 +103,7 @@ export const TRAFFIC_HULLS = Object.freeze({
     png: [1774, 887],
     main: [[-822, -181, 85], [-822, -71, 85], [-822, 40, 85], [-822, 148, 85]]
   }),
-  // TODO AGENT: rejder to okręt bojowy — przed awansem proxy do pełnego NPC (Z13)
-  // mostek wg docs/BRIEF-mostek-nowego-kadluba.md (strefa, model, paleta).
+  // Rajder to okręt bojowy: po awansie do NPC walczy (trafficPromotion.js), mostek poziomu II, gniazda w edytorze.
   pirate_raider: Object.freeze({
     sprite: new URL('../../assets/pirate_raider.png', import.meta.url).href,
     png: [1774, 887],
@@ -166,6 +165,24 @@ export const TRAFFIC_HULLS = Object.freeze({
     sprite: new URL('../assets/ships/piratebattleship.png', import.meta.url).href,
     png: [1727, 911],
     editorKey: 'pirate_battleship'
+  }),
+  // Sprite'y Z11 (E13, 2026-10-22; opisy assets/ships/*.prompt.md): role łowcy, policji i ratownika dostały własne
+  // kadłuby zamiast fregaty Terra Novy i statku z boją. Na końcu rejestru — indeksy TRAFFIC_HULL_IDS starszych
+  // kadłubów (blok migawki `traffic`) bez zmian. Dysze zmierzone na kanale alfa (oś wylotu ~25 px za rufą).
+  bounty_hunter: Object.freeze({
+    sprite: new URL('../../assets/ships/bounty_hunter.png', import.meta.url).href,
+    png: [1774, 887],
+    main: [[-812, -124, 140], [-812, 115, 140]]
+  }),
+  police_cutter: Object.freeze({
+    sprite: new URL('../../assets/ships/police_cutter.png', import.meta.url).href,
+    png: [1774, 887],
+    main: [[-754, -172, 150], [-754, 173, 150]]
+  }),
+  rescue_ship: Object.freeze({
+    sprite: new URL('../../assets/ships/rescue_ship.png', import.meta.url).href,
+    png: [1774, 887],
+    main: [[-770, -172, 135], [-770, 168, 135]]
   })
 });
 
@@ -186,21 +203,18 @@ export const TRAFFIC_UNIT_HULLS = Object.freeze({
   // Piractwo (piracy.js): rejd i przemyt.
   raider: 'pirate_raider',
   smuggler: 'smuggler',
-  // Łowca nagród frakcji (piracy.js, kurs PATROL). TODO AGENT: własny sprite
-  // `assets/ships/bounty_hunter.png` z Z11 (profil 440 × 150) jest w repo, ale
-  // niezarejestrowany — kadłub bojowy, więc najpierw mostek; do tego czasu fregata.
-  hunter: 'terran_frigate',
+  // Łowca nagród frakcji (piracy.js, kurs PATROL): sprite Z11, kadłub bojowy z mostkiem i gniazdami.
+  hunter: 'bounty_hunter',
   // Złomiarze (scrapperFleets.js): holownik po wrak — tnie albo holuje.
   tug: 'salvage_hauler',
   // Wyprawa wojenna (warDispatcher.js): jeden kurs = cała flota. TODO AGENT:
   // rodziny frakcyjne z Z11 (mars_/inner_/belt_/outer_destroyer…, z mostkami)
   // i szyk kilku proxy na kurs; dziś jeden niszczyciel Terra Novy.
   warfleet: 'terran_destroyer',
-  // Role, których ruch v2 jeszcze nie wystawia — mapowania tymczasowe.
-  // TODO AGENT: kuter `assets/ships/police_cutter.png` z Z11 (300 × 110, bojowy → mostek).
-  police: 'terran_frigate',
-  // TODO AGENT: `assets/ships/rescue_ship.png` z Z11 (400 × 150, cywilny, bez mostka).
-  rescue: 'distress_beacon_ship'
+  // Role, których ruch v2 jeszcze nie wystawia — kadłuby Z11: kuter policji (bojowy, mostek i 2 gniazda)
+  // i statek ratunkowy (cywilny, mostek cywilny bez gniazd).
+  police: 'police_cutter',
+  rescue: 'rescue_ship'
 });
 
 /** Klasa spoza rejestru: obrys jak w dockLayout.hullFootprint (kontenerowiec). */

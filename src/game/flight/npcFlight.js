@@ -64,8 +64,9 @@ function resolveNpcInertia(npc) {
   return Math.max(1, Number(npc.inertia) || 1);
 }
 
+// `visual.mainVisualOnly` — dysze MAIN cywila (wpis edytora `sideOnly`, npcHardpointRuntime.js): sam obraz, lot bez zmian.
 export function npcHasPhysicalThrusters(npc) {
-  return !!(npc?.visual && Array.isArray(npc.visual.mainThrusters) && npc.visual.mainThrusters.length > 0);
+  return !!(npc?.visual && !npc.visual.mainVisualOnly && Array.isArray(npc.visual.mainThrusters) && npc.visual.mainThrusters.length > 0);
 }
 
 export function syncNpcFlightState(npc) {

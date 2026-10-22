@@ -240,7 +240,27 @@ export const ENGINE_FX_DEFAULTS = Object.freeze({
   pirate_destroyer: Object.freeze({ mainNozzle: 115, ...PLUME, ...PIRATE }),
   pirate_frigate: Object.freeze({ mainNozzle: 120, ...PLUME, ...PIRATE }),
   // Holownik serwisowy: bębny rufowe ~85 px płótna (sprite zastępczy — heavy_freighter_empty.png), napęd Terra Nova.
-  service_tug: Object.freeze({ mainNozzle: 85, ...PLUME, ...TERRAN })
+  service_tug: Object.freeze({ mainNozzle: 85, ...PLUME, ...TERRAN }),
+  // Kadłuby ruchu v2 (E13, 2026-10-22): średnica wylotu = mediana `d` z TRAFFIC_HULLS[].main (te same dysze co proxy
+  // bańki); palety jak proxy — piraci (rajder, przemytnik) PIRATE, reszta napęd cywilny / Terra Nova.
+  inter_station_shuttle: Object.freeze({ mainNozzle: 70, ...PLUME, ...TERRAN }),
+  container_ship: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN }),
+  long_haul_freighter: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN }),
+  heavy_freighter: Object.freeze({ mainNozzle: 68, ...PLUME, ...TERRAN }),
+  heavy_harvester: Object.freeze({ mainNozzle: 51, ...PLUME, ...TERRAN }),
+  belter: Object.freeze({ mainNozzle: 85, ...PLUME, ...TERRAN }),
+  surveyor: Object.freeze({ mainNozzle: 60, ...PLUME, ...TERRAN }),
+  refinery_tender: Object.freeze({ mainNozzle: 84, ...PLUME, ...TERRAN }),
+  tanker: Object.freeze({ mainNozzle: 69, ...PLUME, ...TERRAN }),
+  salvage_hauler: Object.freeze({ mainNozzle: 65, ...PLUME, ...TERRAN }),
+  construction_tug: Object.freeze({ mainNozzle: 77, ...PLUME, ...TERRAN }),
+  smuggler: Object.freeze({ mainNozzle: 73, ...PLUME, ...PIRATE }),
+  pirate_raider: Object.freeze({ mainNozzle: 68, ...PLUME, ...PIRATE }),
+  distress_beacon_ship: Object.freeze({ mainNozzle: 77, ...PLUME, ...TERRAN }),
+  repair_drone: Object.freeze({ mainNozzle: 80, ...PLUME, ...TERRAN }),
+  bounty_hunter: Object.freeze({ mainNozzle: 140, ...PLUME, ...TERRAN }),
+  police_cutter: Object.freeze({ mainNozzle: 150, ...PLUME, ...TERRAN }),
+  rescue_ship: Object.freeze({ mainNozzle: 135, ...PLUME, ...TERRAN })
 });
 
 // Kadłub bez wpisu (frachtowce, legacy): dysza liczona od długości renderu.
