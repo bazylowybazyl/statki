@@ -47,6 +47,12 @@ export const BERTH_TRANSFER_TUNE = Object.freeze({
   /** Pokład zatoki (wierzch płyty pola) i wysokości placu [z sceny]. */
   deckZ: CARGO_PORT.deckZ,
   tableH: 1.6,
+  /**
+   * Wierzch stołów przeładunkowych (rój GPU — swarmBerthPool.js): stoły na wspornikach tuż pod płaszczyzną statku,
+   * nie na płycie pola — kurs drona bez dwóch zjazdów po ~115 j. (rój ~3× szybszy). Kamera z góry jest ortograficzna,
+   * więc wysokości nie widać; taśma zostaje na płycie pola.
+   */
+  tableZ: -16,
   beltH: 2.4,
   /** Grzbiet serwisowy (gniazda dronów — włazy w grzbiecie przy dziobie). */
   nestZ: CARGO_PORT.spineZ,
@@ -121,6 +127,9 @@ export function berthYardGeometry(berth) {
   const fp = BERTH_TABLE_FOOTPRINT[size] || BERTH_TABLE_FOOTPRINT.M;
   const L = fp.nx * C.L + (fp.nx - 1) * C.gap;
   const W = fp.ny * C.W + (fp.ny - 1) * C.gap;
+  // Odstęp stołów = odstęp kolumn placu roju (swarmPort: chwyt klasy + yardGap) — stoły, które rysuje port, są tymi
+  // samymi kolumnami, na które drony symulacji GPU odkładają warstwy (swarmBerthPool.js).
+  const yardGap = size === 'MEGA' || size === 'CAPITAL' ? 3.5 : 2.5;
   const halfBeam = Math.max(10, Number(berth?.halfBeam) || (Number(berth?.maxBeam) || padBeam * 0.68) / 2);
   const beltW = W + T.beltWidthPad;
   const v0 = halfBeam + T.hullClear;
@@ -129,15 +138,12 @@ export function berthYardGeometry(berth) {
   // Portal taśmy: lico grzbietu przed dziobem (grzebień zatoki — tuż za polem; pas MEGA — ściana tylna
   // 150 j. przed polem: berth.portalGap).
   const uPortal = padLength / 2 + (Number(berth?.portalGap) || 0);
-  const pitch = L + T.tableGap;
-  // Stoły od rufy ku dziobowi; przy dziobie zostaje miejsce na gniazdo dronów.
-  const uLo = -padLength / 2 + 24 + L / 2;
-  const uHi = padLength / 2 - 40 - L / 2;
-  const n = Math.max(1, Math.floor((uHi - uLo) / pitch) + 1);
+  const pitch = L + yardGap;
+  // Stoły wzdłuż pola, środek rzędu w osi pola (jak blok placu roju wyśrodkowany na stanowisku).
+  const n = Math.max(2, Math.floor((padLength - 64) / pitch));
   const tables = [];
   const span = (n - 1) * pitch;
-  const uMid = (uLo + uHi) / 2;
-  for (let k = 0; k < n; k++) tables.push(uMid - span / 2 + k * pitch);
+  for (let k = 0; k < n; k++) tables.push(-span / 2 + k * pitch);
   const sides = [];
   for (const side of [-1, 1]) {
     sides.push({
@@ -506,6 +512,32 @@ function planSide(plan, S, nDrones) {
 // ============================================================
 
 const _pf = { s: 0, v: 0, a: 0 };
+
+/**
+ * Czasy postoju bez planu dronów (rój z symulacji GPU — swarmBerthPool.js): okno, wrota, start roju i koniec pracy
+ * [s zegara postoju]. ctx: { hull, dwell, moveSeconds }.
+ */
+export function berthTransferTiming(ctx) {
+  const H = typeof ctx.hull === 'string' ? cargoBayHull(ctx.hull) : ctx.hull;
+  const geo = H ? cargoHullBays(H)[0] : null;
+  if (!geo) return null;
+  const win = cargoTransferWindow({ seconds: Number(ctx.dwell) || 90, moveSeconds: Number(ctx.moveSeconds) || 0 });
+  const door = cargoBayDoorTimeline(geo);
+  const doorOpen = win.start;
+  const doorClose = Math.max(doorOpen + door.total, win.end - door.total);
+  const swarmStart = doorOpen + door.total * T.doorLead;
+  const workEnd = Math.max(swarmStart + 1, doorClose - T.closeMargin);
+  return { geo, window: win, doorOpen, doorClose, doorTotal: door.total, swarmStart, workEnd };
+}
+
+/** Postęp wrót [s osi przebiegu] dla czasów postoju (berthTransferTiming / plan) w chwili postoju. */
+export function berthDoorAt(tm, dockTime, closeAt = tm.doorClose) {
+  const t = Number(dockTime) || 0;
+  if (!(t > tm.doorOpen)) return 0;
+  const opened = Math.min(tm.doorTotal, t - tm.doorOpen);
+  if (!(t > closeAt)) return opened;
+  return Math.max(0, tm.doorTotal - (t - closeAt));
+}
 
 /** Zegar roju dla zegara postoju [s gry]. */
 export function berthTransferClock(plan, dockTime) {

@@ -229,3 +229,61 @@ test('partie (ładownie floty, taśmy, drony z bufora CPU): WGSL się buduje, li
   // Rekordy ładowni floty w tablicy świateł: ładownia rodzaju jest geometrią kadłuba.
   assert.ok(cargoHullBays('heavy_freighter_proxy')[0].module.nx === 2);
 });
+
+// ---------------------------------------------------------------------------
+// Rój z dema w grze: pula stanowisk jednej symulacji GPU (src/3d/swarm/swarmBerthPool.js)
+// ---------------------------------------------------------------------------
+
+import { SWARM_POOL_TUNE, createSwarmBerthPool } from '../src/3d/swarm/swarmBerthPool.js';
+import { SwarmUnits } from '../src/3d/swarm/swarmUnits.tsl.js';
+import { createSwarmSlotFrames } from '../src/3d/swarm/swarmSlotFrame.js';
+
+function fakeCore() {
+  const steps = [];
+  return { scene: new THREE.Scene(), addFxStep(s) { steps.push(s); return s; }, steps };
+}
+
+test('pula roju: slot ze stanem z zegara (przeniesione warstwy = postęp), krok w Core3D.fx, zwolnienie bez przebudowy', () => {
+  const core = fakeCore();
+  const pool = createSwarmBerthPool(core);
+  assert.ok(pool.ensure());
+  assert.equal(core.steps.length, 1, 'krok roju zarejestrowany w Core3D.fx');
+  assert.ok(typeof core.steps[0].warm === 'function', 'rozgrzewka kerneli');
+  const yard = berthYardGeometry({ size: 'M', padLength: 620, padBeam: 380, halfBeam: 95 });
+  const a = pool.activate({ key: 1, seed: 1, hull: 'container_ship', mode: 'unload', fill: 1, resourceId: 'steel', progress: 0, remainingSec: 90,
+    ship: { u: 0, v: 0, angle: 0 }, yard, berth: { x: 5e6, y: 6e6, angle: 0.5 } });
+  assert.ok(a && a.active);
+  assert.equal(a.totalLayers, 28);
+  assert.equal(a.moved, 0);
+  assert.equal(a.planner.stats.total, 56, 'UNLOAD od początku: cała ładownia czeka');
+  const b = pool.activate({ key: 2, seed: 2, hull: 'container_ship', mode: 'load', fill: 1, resourceId: 'steel', progress: 0.5, remainingSec: 45,
+    ship: { u: 0, v: 0, angle: 0 }, yard, berth: { x: 5e6 + 500, y: 6e6, angle: 0.5 } });
+  assert.equal(b.moved, 14, 'statek zastany w połowie postoju: połowa warstw już w ładowni');
+  assert.equal(b.planner.stats.total, 28, 'LOAD: na stołach czeka reszta');
+  assert.notEqual(a.dBase, b.dBase);
+  assert.ok(a.drones >= 2 && a.drones <= SWARM_POOL_TUNE.dronesPerSlot);
+  // Zwolnienie: slot wolny, następne dołączenie bierze ten sam zakres.
+  pool.release(a, 'test');
+  assert.equal(a.active, false);
+  const c = pool.activate({ key: 3, seed: 3, hull: 'inter_station_shuttle', mode: 'unload', fill: 1, resourceId: 'ice', progress: 0, remainingSec: 90,
+    ship: { u: 0, v: 0, angle: 0 }, yard: berthYardGeometry({ size: 'S', padLength: 400, padBeam: 250, halfBeam: 60 }), berth: { x: 0, y: 0, angle: 0 } });
+  assert.equal(c.k, a.k);
+  // Klatka: rama slotów (przesunięcie i obrót) z pozy stanowiska.
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, (s) => (s.key === 2 ? { berth: { x: 5e6 + 500, y: 6e6, angle: 0.5 }, dockTime: 30, swarmStart: 8, doorClose: 100, workEnd: 99 } : null), 1);
+  assert.ok(Math.abs(pool.frame.rows[b.k].z + 0.5) < 1e-9, 'obrót ramy = −kąt stanowiska');
+});
+
+test('materiały roju z ramą slotów i mapą klas: WGSL się buduje (gra); bez ramy — jak demo', () => {
+  const scene = new THREE.Scene();
+  const frame = createSwarmSlotFrames(4, 8, 32);
+  frame.remap = instancedArray(4 * 32, 'uint').setName('swarmDroneRemap');
+  const node = instancedArray(32 * 11, 'vec4').setName('swarmDrones');
+  const units = instancedArray(128 * 2, 'vec4').setName('swarmUnits');
+  const drones = new SwarmDroneMeshes(scene, node, buildSwarmDroneGeometries(THREE), frame);
+  const w = buildWGSL(drones.warmupMeshes()[0]);
+  assert.ok(w.vertex.includes('swarmSlotFrames') && w.vertex.includes('swarmDroneRemap'));
+  const su = new SwarmUnits(scene, units, 128, frame);
+  assert.ok(buildWGSL(su.mesh).vertex.includes('swarmSlotFrames'));
+  const demo = new SwarmDroneMeshes(scene, node, buildSwarmDroneGeometries(THREE));
+  assert.ok(!buildWGSL(demo.warmupMeshes()[0]).vertex.includes('swarmSlotFrames'), 'demo bez ramy slotów');
+});

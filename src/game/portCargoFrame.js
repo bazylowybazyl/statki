@@ -95,14 +95,17 @@ export function buildPortCargoFrame(frame, o) {
   frame.yardCount = 0;
   frame.opCount = 0;
   frame.player = o.player || null;
+  frame.time = Number(o.time) || 0;
   frame.stats.yards = 0; frame.stats.ops = 0; frame.stats.withCargo = 0;
   const berths = o.berths;
   const idx = frame._yardIndex;
   idx.clear();
   const cam = o.cam;
   const zoom = Math.max(1e-4, Number(cam?.zoom) || 1);
-  const halfW = (o.viewW || 1920) * 0.5 / zoom + 1800;
-  const halfH = (o.viewH || 1080) * 0.5 / zoom + 1800;
+  // Pola w kadrze z zapasem większym niż obraz trzyma slot roju (portCargo3D: 1,6 × pół kadru) — przeładunek nie
+  // znika z ramki, póki rój go liczy.
+  const halfW = (o.viewW || 1920) * 0.85 / zoom + 1800;
+  const halfH = (o.viewH || 1080) * 0.85 / zoom + 1800;
   if (berths && cam) {
     for (const b of berths) {
       if (b.hall === 'K-7') continue;

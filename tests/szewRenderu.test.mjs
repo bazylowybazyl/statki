@@ -53,8 +53,11 @@ const SUFITY = {
   'import:src/game/shipLightRuntime.js': 5,
   'import:src/game/simClock.js': 15, // 2026-10-19: +1 — src/3d/pirateBaseVents3D.js (nośnik cząstek wyrw: czas pozy SimClock.sim jak Fx3D i wybuchy), klasa A
   'import:src/game/skyRegion.js': 1,
-  'import:src/game/swarm/berthTransfer.js': 1, // 2026-10-22 E12: plan przeładunku przy stanowisku (czysta funkcja ziarna kursu i zegara postoju — tory dronów, stoły, taśma) czytany przez obraz portCargo3D, klasa A
-  'import:src/game/swarm/swarmPort.js': 2, // 2026-10-22 E12: układ rekordu drona roju (SWARM_DRONE) — stałe wspólne demu, kernelowi i obrazowi (portCargo3D, swarmDrones.tsl.js), klasa A
+  'import:src/game/swarm/berthTransfer.js': 2, // 2026-10-22 E12: geometria placu i czasy postoju przy stanowisku (czyste funkcje: stoły, taśma, okno, wrota) czytane przez obraz portCargo3D i pulę roju swarmBerthPool, klasa A
+  'import:src/game/swarm/swarmPort.js': 4, // 2026-10-22 E12: rój z dema w grze (decyzja użytkownika „na żywo liczone na GPU”) — układy rekordów drona / zadania / jednostki i budowa portu slotu (swarmSim, swarmDrones.tsl, swarmUnits.tsl, swarmBerthPool), klasa A
+  'import:src/game/swarm/swarmPlanner.js': 1, // 2026-10-22 E12: wieża portu roju (księga kontenerów slotu, przydział zadań) — logika obrazu bez stanu gry, w workerze renderu obok symulacji (swarmBerthPool), klasa A
+  'import:src/game/swarm/swarmExecCpu.js': 1, // 2026-10-22 E12: czasy chwytu i odłożenia (SWARM_OP_TIMES) — stałe wspólne kernelowi i lustru CPU (swarmSim), klasa A
+  'import:src/game/swarm/swarmOrca.js': 1, // 2026-10-22 E12: liczba linii ORCA (SWARM_ORCA_LINES) — stała wspólna kernelowi i lustru CPU (swarmSim), klasa A
   'import:src/game/traffic/dockLayout.js': 2,
   'import:src/game/traffic/shipyards.js': 2,
   'import:src/game/view3D.js': 1,
@@ -88,6 +91,7 @@ const SUFITY = {
   'gpu:src/3d/haloRing/haloRingWorldGen.js': 1,
   'gpu:src/3d/shield3D.js': 2,
   'gpu:src/3d/tsl/zapisF16.js': 2,
+  'gpu:src/3d/swarm/swarmSim.js': 1, // 2026-10-22 E12: odczyt stanu dronów dla wieży roju (SwarmReadback — pierścień MAP_READ, asynchronicznie, bez czekania w klatce; worker renderu)
   // Math.random w renderze (RW-20)
   'random:src/3d/planet3d.assets.js': 8
 };

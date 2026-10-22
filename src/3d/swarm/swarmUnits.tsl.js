@@ -18,6 +18,7 @@ import { buildCargoContactShadowMaterial, buildCargoHullShadowMaterial } from '.
 import { CARGO_CONTAINER } from '../../data/cargoBays.js';
 import { SWARM_DRONE, SWARM_DRONE_VEC4, SWARM_UNIT, SWARM_UNIT_VEC4 } from '../../game/swarm/swarmPort.js';
 import { SWARM_CLASS_ROW, SWARM_CLASS_ROWS, swarmClassTable } from './swarmClassTable.js';
+import { slotFrameRow } from './swarmSlotFrame.js';
 
 const UNIT_FLOATS = 20; // iUnitOff (jednostka, a, b, z), iSize (L, W, H, —), iPaint, iAccent, iFrame
 const UV = SWARM_UNIT_VEC4;
@@ -27,8 +28,11 @@ const CR = SWARM_CLASS_ROW;
 function keepRanges() {}
 
 export class SwarmUnits {
-  /** unitsNode — bufor jednostek symulacji; capacity — najwięcej instancji (kontenerów do narysowania). */
-  constructor(scene, unitsNode, capacity = 65536) {
+  /**
+   * unitsNode — bufor jednostek symulacji; capacity — najwięcej instancji (kontenerów do narysowania); frame
+   * (opcjonalnie) — rama slotów stanowisk (swarmSlotFrame.js, gra), bez niej przestrzeń symulacji = świat sceny.
+   */
+  constructor(scene, unitsNode, capacity = 65536, frame = null) {
     this.capacity = capacity;
     this.unitsNode = unitsNode;
     const base = buildContainerGeometry();
@@ -60,6 +64,19 @@ export class SwarmUnits {
         const ub = uint(int(uo.x)).mul(uint(UV));
         const up = U.element(ub.add(uint(SWARM_UNIT.POSE)));
         const ui = U.element(ub.add(uint(SWARM_UNIT.INFO)));
+        if (frame) {
+          // Slot stanowiska → świat: obrót φ i przesunięcie ramy (kurs + φ), miejsce w chwycie po obrocie.
+          const fr = slotFrameRow(frame, uint(int(uo.x)), frame.unitsPerSlot);
+          const cf = cos(fr.z);
+          const sf = sin(fr.z);
+          const yaw = up.w.add(fr.z);
+          const px = fr.x.add(up.x.mul(cf)).sub(up.y.mul(sf));
+          const py = fr.y.add(up.x.mul(sf)).add(up.y.mul(cf));
+          const c = cos(yaw);
+          const s = sin(yaw);
+          const pos = vec4(px.add(uo.y.mul(c)).sub(uo.z.mul(s)), py.add(uo.y.mul(s)).add(uo.z.mul(c)), up.z.add(uo.w), yaw);
+          return { pos, size: vec4(sz.xyz, ui.x), visible: ui.y };
+        }
         const c = cos(up.w);
         const s = sin(up.w);
         const pos = vec4(up.x.add(uo.y.mul(c)).sub(uo.z.mul(s)), up.y.add(uo.y.mul(s)).add(uo.z.mul(c)), up.z.add(uo.w), up.w);

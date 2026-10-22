@@ -35,7 +35,24 @@ const ev = (e, t = 120000) => evaluate(cdp, e, t);
 const report = { query: extra, etapy: {} };
 const workerLogs = [];
 let msgId = 900000;
+// Sesja workera renderu (diagnostyka: statystyki obrazu przeładunku liczone w workerze).
+let rwSession = null;
+let rwId = 990000;
+function evalWorker(expr, timeout = 20000) {
+  if (!rwSession) return Promise.resolve('brak sesji workera renderu');
+  const id = ++rwId;
+  // Odpowiedź z id przechodzi przez cdp.pending (Cdp nie podaje słuchaczom wiadomości bez metody).
+  return new Promise((res) => {
+    const timer = setTimeout(() => { cdp.pending.delete(id); res('limit czasu'); }, timeout);
+    cdp.pending.set(id, {
+      ok: (r) => { clearTimeout(timer); res(r?.result?.value ?? r?.exceptionDetails?.exception?.description ?? null); },
+      reject: (e) => { clearTimeout(timer); res(String(e && e.message || e)); }
+    });
+    cdp.ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', sessionId: rwSession, params: { expression: expr, awaitPromise: true, returnByValue: true } }));
+  });
+}
 cdp.on((msg) => {
+  if (msg.method === 'Target.attachedToTarget' && /render.worker/.test(msg.params.targetInfo?.url || '')) rwSession = msg.params.sessionId;
   if (msg.method === 'Target.attachedToTarget') {
     const sessionId = msg.params.sessionId;
     for (const method of ['Runtime.enable', 'Runtime.runIfWaitingForDebugger']) cdp.ws.send(JSON.stringify({ id: ++msgId, method, sessionId }));
@@ -130,6 +147,8 @@ try {
         return { t: +(window.TrafficV2.time - ${t0}).toFixed(1), dock: a ? +a.dockTime.toFixed(1) : null, phase: a ? a.phase : null,
           op: op ? { mode: op.mode, fill: +op.fill.toFixed(2), res: op.resourceId, dock: +op.dockTime.toFixed(1) } : null,
           ops: f.opCount, yards: f.yardCount }; })()`);
+      if (args.diag && report.tryb === 'worker') st.diag = await evalWorker(`import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((m) => { const p = m.sharedPortCargo3D(); return JSON.stringify({ stats: p.stats, pool: p.pool ? { st: p.pool.stats, slots: p.pool.slots.filter((x) => x.active).map((x) => ({ k: x.k, key: x.key, started: x.started, finished: x.finished, drones: x.drones, units: x.units, done: x.planner ? x.planner.stats.done : null, total: x.planner ? x.planner.stats.total : null })) } : null }); }).catch((e) => String(e && e.stack || e))`);
+      else if (args.diag) st.diag = await ev(`import('/src/3d/cargo/portCargo3D.js').then((m) => { const p = m.sharedPortCargo3D(); return { stats: { ...p.stats }, pool: p.pool ? { ...p.pool.stats, slots: p.pool.slots.filter((x) => x.active).map((x) => ({ k: x.k, key: x.key, started: x.started, finished: x.finished, drones: x.drones, units: x.units, done: x.planner ? x.planner.stats.done : null, total: x.planner ? x.planner.stats.total : null })) } : null }; }).catch((e) => String(e && e.stack || e))`);
       seq.push(st);
       // Na zmianę: zbliżenie (statek i plac po burtach) i szerszy kadr pola.
       const close = (i % 2) === 0;
@@ -161,10 +180,10 @@ try {
         await waitGame(0.25);
         rows.push(await ev(`(() => { const h = window.RenderWorkerHost; if (h && h.readStats) h.readStats(); const st = h ? h.stats : null;
           const f = window.PortCargo.frame;
-          return { gpu: st ? st[0] : (window.Core3D.gpuFrameMs || 0), cpu: st ? st[6] : 0, ops: f.opCount, yards: f.yardCount }; })()`));
+          return { gpu: st ? st[0] : (window.Core3D.gpuFrameMs || 0), gpuCompute: st ? st[1] : (window.Core3D.gpuComputeMs || 0), cpu: st ? st[6] : 0, cpuUpd: st ? st[4] : 0, fx: st ? st[11] : 0, ops: f.opCount, yards: f.yardCount }; })()`));
       }
       const avg = (k) => +(rows.reduce((s, r) => s + (Number(r[k]) || 0), 0) / rows.length).toFixed(3);
-      return { gpuMs: avg('gpu'), cpuWorkerMs: avg('cpu'), przeladunkow: avg('ops'), pol: avg('yards') };
+      return { gpuMs: avg('gpu'), gpuComputeMs: avg('gpuCompute'), cpuWorkerMs: avg('cpu'), cpuUpdateMs: avg('cpuUpd'), fxMs: avg('fx'), przeladunkow: avg('ops'), pol: avg('yards') };
     };
     report.koszt = await costRun();
     report.kosztKadry[vh] = report.koszt;
