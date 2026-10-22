@@ -63,3 +63,32 @@ na krótkich odcinkach to on dominuje.
 Symulacja, ziarno 7 — napęd kursów w locie na koniec: przed hipercruise 1078, warp 63, brama 3, konw. 20; po
 hipercruise 965, warp 72, brama 2, konw. 27; szczyt kursów w locie 1410 → 1394; kolejka na redzie 37 → 18.
 Warp Mk I haulerów (100 tys.) i procedura bramy 30 s nie zmieniają rachunku: masówka hipercruise'em, cenne warpem.
+
+## Efekt hipercruise'u = obecny efekt warpa, strefa planety × 0,6 (2026-10-22, druga runda)
+
+Decyzje użytkownika: „nie ma efektu hypercruise — obecny silnik warp będzie hypercruise, a dla warpa stworzy się nowe
+efekty”; hipercruise przy planetach × 0,6 (warp bez zmian, × 0,3). Baza = `main` e92c867c (osobny worktree).
+
+Co dostał hipercruise (gracz; NPC — ta sama flaga encji `__hyperMode`, gdy zaczną latać hipercruise'em):
+- plazma WARP na dyszach MAIN (rozruch = ładowanie, lot = skok) — `engineVfxSystem.resolveWarpMode`;
+- bańka, ośrodek „Nurtu”, smugi gwiazd, fale i żar kadłuba skoku gracza (`WarpPlayerFx` przez `WarpNurt`, wejście
+  `hyperLook`), przepływ ośrodka × prędkość / 30 tys. (Mk I ~14 tys., Mk III ~28 tys. j/s widocznie);
+- kop i oddalenie kamery jak przy skoku (rig, bez rulonu); lakier kadłuba gasi obłoki jak w warpie;
+- BEZ rulonu (zwijania świata) i soczewki planet — to kompozycja skoku z celem, a hipercruise trwa minutami i da się go
+  przerwać (gra wokół statku musi zostać czytelna).
+
+Zrzuty (tryb gracza, `--query renderWorker=1`; `node scripts/webgpu/hipercruise-efekt-gra.mjs`):
+`.tmp/e5c/efekt-przed-worker/*.png` (baza) i `.tmp/e5c/efekt-po-worker/*.png` (po) — fazy 00-przed, 01-rozruch,
+02-kop, 03-lot, 04-pelna, 05-wyjscie, 06-po-wyjsciu; tryb `off` — `.tmp/e5c/efekt-po-off/`.
+
+| pomiar | przed | po |
+|---|---|---|
+| zoom kadru: przed / rozruch / lot / wyjście / po | 0,178 / 0,178 / 0,167 / 0,108 / 0,178 | 0,178 / 0,126 / 0,098 / 0,162 / 0,178 |
+| TRAVEL TO Luna | 125,8 s (163 tys. j.; dolot `drive` ~118 s, strefa × 0,3) | 75,4 s (170 tys. j.; warp 27 s, dolot 48 s, strefa × 0,6) |
+| pipeline'y sync — przebieg efektu (tryb off) | 0 | 0 |
+| pipeline'y sync — podróże `napedy-gra.mjs` | 1 (`AsteroidBelt:rocksSmear` — smugi skał pasa z `main` w skoku warpa przez pas) | 1 (to samo) |
+
+Znalezione przy okazji (nie poprawione — wygląd warpa bez zmian): w workerze renderu `RenderWorld.warp` i
+`RenderWorld.boost` nie mają źródła (skalary `WARP_*` / `BOOST_STATE` migawki są pakowane, ale fasada ich nie czyta),
+więc plazma warpa i dopalacza GRACZA świeci tylko w trybie `off`. Hipercruise idzie flagą encji i skalarami `HYPER_*`,
+więc działa w obu trybach.

@@ -35,7 +35,7 @@ paths:
 
 ## Napędy (E5)
 
-- Jedna tabela `src/data/driveModes.js` dla gracza, NPC gry i ruchu: warp `WARP_SPEED` 260 tys. j./s (nietykalny, paliwo fuzyjne), hipercruise `HYPERCRUISE_ENGINES` `hypercruise_mk1..3` = 20 / 30 / 40 tys. j./s (id stałe — kontrakt z recepturami E8), konwencjonalny 1200 j./s, klasa ładowni → silnik `TRAFFIC_CLASS_DRIVE`. Ruch liczy z niej czasy, paliwo i ryzyko przechwytu (`travelNetwork.js`; ekspozycja `rollPiracy` z ŚREDNIEJ prędkości etapu). Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`.
+- Jedna tabela `src/data/driveModes.js` dla gracza, NPC gry i ruchu: warp — napędy `warp_mk1..3` = 100 / 175 / 250 tys. j./s (`WARP_DRIVES`, klasa ładowni → napęd: van i hauler Mk I, bulk i heavy Mk II, mega Mk III; nietykalny, paliwo fuzyjne; brama ma procedurę skoku `gateTransitSeconds` 30 s — inaczej byłaby szybsza od warpa Mk I), hipercruise `HYPERCRUISE_ENGINES` `hypercruise_mk1..3` = 20 / 30 / 40 tys. j./s (id stałe — kontrakt z recepturami E8), konwencjonalny 1200 j./s, klasa ładowni → silnik `TRAFFIC_CLASS_DRIVE`. Ruch liczy z niej czasy, paliwo i ryzyko przechwytu (`travelNetwork.js`; ekspozycja `rollPiracy` z ŚREDNIEJ prędkości etapu). Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`.
 
 ## Pola górnicze i wyrwy (E3)
 
