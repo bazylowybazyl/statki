@@ -164,24 +164,28 @@ d3869cd4 (porty, strefa planety, stop bez przelotu), 08591b86 (kontrakt E12), aw
   `tests/trafficBubble.test.mjs` (hak `onHit`, frakcja, encja awansowana nie wraca z workera, zgon blokuje powrót),
   `tests/workerBubble.test.mjs` (attach zamraża rekord, `detach` z pozą bez postępu → encja w pozie NPC).
 
-### Braki kadłubów ruchu (awans działa na minimum)
+### Braki kadłubów ruchu (stan po E13, 2026-10-22)
 
-1. **Mostki, rdzenie, zbiorniki, gniazda:** w `src/data/hardpointEditorDefaults.js` z kadłubów cywilnych ruchu są
-   tylko cztery frachtowce (`inter_station_shuttle`, `container_ship`, `long_haul_freighter`, `heavy_freighter`)
-   i to z samymi dyszami (MAIN / SIDE). Reszta (`heavy_harvester`, `belter`, `surveyor`, `refinery_tender`, `tanker`,
-   `salvage_hauler`, `construction_tug`, `smuggler`, `pirate_raider`, `distress_beacon_ship`, `repair_drone`) nie
-   ma wpisu wcale. Żaden nie ma mostka (`attachEntityBridges` nic nie przypina — strzał w mostek nie robi hulka),
-   rdzenia reaktora ani zbiornika paliwa (śmierć wybucha ze środka, nie z `fuelTankBlast`). Okręty Terra Novy
-   i piratów (`terran_*`, `pirate_*` z `editorKey`) mają gniazda i dysze z edytora.
-2. **Dysze:** kadłuby bez wpisu edytora mają w 3D dysze MAIN z `TRAFFIC_HULLS[].main` (`autoHulls3D`, jak proxy),
-   bez SIDE.
-3. **Broń i AI bojowa:** awansowane okręty (garnizon K-7, łowcy, rajdery) lecą jako `combatDisabled` bez broni —
-   uciekają albo stoją jak cywile. Pełny okręt wojenny = spawn klasy z `WARSHIP_CLASSES` z bronią i mózgiem bojowym
-   (osobne zadanie; rajder potrzebuje też mostka — `TRAFFIC_HULLS.pirate_raider`, TODO AGENT).
-4. **Sprite'y zastępcze:** `heavy_freighter` (sprite `long_haul_freighter`), łowca i policja (fregata Terra Novy),
-   ratownik (`distress_beacon_ship`), wyprawa wojenna (jeden niszczyciel) — `TRAFFIC_UNIT_HULLS`, TODO AGENT w
-   `src/data/trafficHulls.js`. Z11 ma gotowe sprite'y (`bounty_hunter`, `police_cutter`, `rescue_ship`, nowy
-   `heavy_freighter`) — czekają na akceptację i mostki.
+Zrobione w E13 (gałąź `claude/e13-kadluby-ruchu-db21d9`; reguły `ruch-v2` § „Bańka w grze”, `mostki-reaktor`
+§ „Kadłuby ruchu v2”):
+
+1. **Mostki, rdzenie, zbiorniki, gniazda, dysze** — wszystkie 18 kadłubów ruchu bez `editorKey` (15 dawnych +
+   `bounty_hunter`, `police_cutter`, `rescue_ship` z Z11) mają wpis edytora (klucz = rama), strefę mostka poziomu
+   z pola kadłuba (model `tn_<poziom>`; strzał w mostek → hulk → wrak), rdzeń w maszynowni, zbiornik paliwa (śmierć
+   wybucha z `fuelTankBlast`), dysze MAIN (osie proxy) i SIDE. Cywile: MAIN tylko do obrazu (`visual.mainVisualOnly`,
+   lot bez zmian); okręty (przemytnik, rajder, łowca, kuter policji): gniazda broni i model lotu fregaty. Miejsca
+   dobrane na sprite'ach (zrzuty `.tmp/e13/znaczniki_*.png`), strażnik `tests/trafficHullData.test.mjs`.
+2. **Broń i AI bojowa** — okręt ruchu (`TRAFFIC_COMBAT_HULLS`: garnizon `terran_*`, łowca, policja, rajder,
+   przemytnik) po awansie ma liczby szablonu wezwania swojej klasy, broń z gniazd i mózg klasy; okręt niepiracki
+   dostaje urazę do gracza (`playerGrudge` — wrogi bez względu na reputację, cel tylko gracz widoczny i w zasięgu,
+   wieże nie biją sojuszników frakcji). Cywile uciekają / stoją jak dotąd.
+3. **Sprite'y Z11** — łowca, kuter policji i ratownik mają własne kadłuby (role `hunter`, `police`, `rescue`).
+   Ciężki frachtowiec — podmiana po scaleniu E12 (ładownie `cargoBays.js`).
+
+Dalej otwarte:
+
+4. **Wyprawa wojenna** (`warfleet`) to jeden niszczyciel Terra Novy na kurs — rodziny frakcyjne z Z11 i szyk kilku
+   proxy na kurs nie są zrobione. Modele mostków kadłubów ruchu to modele poziomów TN (także u piratów).
 5. **Lot po ścieżce kursu:** NPC nie leci kursem (dok, korytarze, etap dalej) — kurs stoi, dopóki NPC żyje; po
    powrocie do bańki leci dalej z rekordu. Plan z kroku 1 (mózg „kurs ruchu” na `portPaths` po stronie gry) — później.
 6. **Stanowisko pod awansowanym NPC:** lampki ringu gasną (rejestr pisze tylko bańka), automat K-7 i postój gracza
