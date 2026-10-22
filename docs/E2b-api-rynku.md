@@ -36,7 +36,14 @@ magazyny ×4, ×60, przebiegi po kolei na obciążonej maszynie (tick tylko orie
 | B `reservation`, marża 0 | 39,7–41,4 tys. | 13,4–13,8% | 0 | 0,1–11,3 min | Wenus 104–1008, Saturn 14–27, Uran 10–17 | 2187–3787 | 86–128 ms |
 | B `reservation`, marża 12% | 36,9–37,5 tys. | 12,9–13,3% | 0 | 0,6–2,2 min | Wenus 36–306, Uran 10–14, Saturn 10–13 | 1833–2174 | 91–123 ms |
 
+Ta sama bramka po scaleniu receptur E10 (`main` 4f42a2aa) i indeksu ofert kupców (4a9883e5):
+
+| wariant | dostawy | przechwyty (z ładunkiem) | najdłuższy głód | kolejka na redzie (najgorszy port) | szczyt kursów | tick |
+|---|---|---|---|---|---|---|
+| A `surplus` | 20,1–21,1 tys. | 15,0–15,7% | 5,9–6,8 min (zaliczony) | Wenus 0,92–1,47 (zaliczona) | 1344–1408 | 24,5 / 24,7 / 37,8 ms |
+| B `reservation`, marża 0 | 39,0–40,4 tys. | 12,3–12,6% | Wenus Fe 42–71 min (niezaliczony) | Wenus 348–2059, Uran, Merkury, Westa 13–18 | 3140–4878 | 51–73 ms |
+
 Wniosek: jeden model ceny dla planisty prawie znosi głód (dawna miara 1% magazynu: 17–27 min zamiast 40–43 min,
 0 pozycji zamiast 9–10), ale podwaja przepływ, a porty bez ringu (Wenus, Saturn, Uran, Westa) go nie przyjmują.
-Domyślnie zostaje `'surplus'`. Przełączenie na `'reservation'` czeka na przepustowość portów (E4: kolejki
+Na recepturach E10 B dokłada jeszcze głód rudy żelaza na Wenus (port nie odbiera dostaw). Domyślnie zostaje `'surplus'` — wariant A zalicza bramkę poza tickiem jednego ziarna (pomiar bez okna ciszy). Przełączenie na `'reservation'` czeka na przepustowość portów (E4: kolejki
 i tick) albo na limit oferty po stronie portu nadania (np. sprzedaż nie szybciej, niż port wydaje statki).
