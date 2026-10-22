@@ -20,6 +20,10 @@
 //     rozdzielnie, wiązki główne w górę ścian i przed fasadą przez koronę do kotwic wind (windy idą do RINGU
 //     planetarnego), boczne do PODSTACJI (tarasowe budynki we wnęce między policzkami, węzły galerii); obejmy co ~0,02 R;
 //     OSŁONY CIEPLNE pod pierścieniem: ciemne płyty na żarzącym się podkładzie (świecące szwy).
+//   • BRAMA PROMIENIA w osi promienia w kadrze gry (południowa ściana, 270°: południk gryzu zawiera kierunek kamery gry,
+//     więc to, co w nim stoi, rzutuje się na promień) — zamiast przewodu bocznego z podstacją: dwa pylony od stopy po
+//     wieże nad krawędzią spięte nadprożem z cewkami, przewody energii w rynnach, głowice emiterów na wieżach. Z gry —
+//     dwie linie równoległe do promienia i portal na dalszej krawędzi wcięcia, przez który promień wychodzi z otworu.
 // Przekrój południka φ: ρ — odległość od osi gryzu, y — wysokość nad dnem; ściana pod kątem ψ (od dna) z dokładnym β(φ, ψ)
 // (płaty, zęby). Azymut φ ramy = azymut kuli gryzu (x = ρ cos φ, z = −ρ sin φ).
 // AGENT: azymuty przewodów, przypór i żeber liczą się z L.elevators (wallLayout) — obrót wind przenosi całą obudowę.
@@ -44,7 +48,11 @@ export const LINING_DEFAULTS = Object.freeze({
   liningGalleries: [0.10, 0.18, 0.27], liningGalleryD: 0.011, liningGalleryH: 0.015,
   // przewody: promień rury głównej, azymuty bocznych (null — w pół drogi między windami), podstacje: wysokości (na
   // przemian; galerie przechodzą przez nie) i skala
-  liningConduitR: 0.0016, liningSideConduits: null, liningSubstationH: [0.186, 0.106], liningSubstationScale: 1.25
+  liningConduitR: 0.0016, liningSideConduits: null, liningSubstationH: [0.186, 0.106], liningSubstationScale: 1.25,
+  // BRAMA PROMIENIA na osi promienia w kadrze gry (południk gryzu z kierunkiem kamery gry — południowa ściana; null — bez
+  // bramy; przy placu windy w osi brama nie powstaje): azymut [°], półrozstaw pylonów [°] (w rytmie masztów — zastępuje
+  // dwa maszty), wysokość wież nad krawędzią [R]
+  liningGateAz: 270, liningGateHalf: 3.75, liningGateTower: 0.028
 });
 
 const BITE = EARTH_BITE;
@@ -151,18 +159,34 @@ function midRing(list) {
   return s.map((a, i) => norm360((a + (i + 1 < s.length ? s[i + 1] : s[0] + 360)) / 2));
 }
 
+const angDistDeg = (a, c) => angDist(a * DEG, c * DEG) / DEG;
+
 /**
  * Układ ścian [rad]: przewody główne (azymuty wind) i boczne (do podstacji), przypory główne w pół drogi między
- * przewodami, żebra wtórne w pół drogi między przewodami a przyporami.
+ * przewodami, żebra wtórne w pół drogi między przewodami a przyporami. BRAMA PROMIENIA (`liningGateAz`) zastępuje przewód
+ * boczny w swojej osi (bez podstacji — z kamery gry wszystko w tym południku leży na promieniu); przypory i żebra liczą się
+ * z pełnego pierścienia przewodów, więc zostają symetryczne wokół osi bramy. `sideH` — wysokość podstacji przewodu
+ * bocznego (na przemian w pełnym pierścieniu — brama nie przestawia sąsiadów).
  */
 function wallLayout(L) {
   const main = L.elevators.map(norm360);
-  const side = (Array.isArray(L.liningSideConduits) ? L.liningSideConduits : midRing(main)).map(norm360);
-  const cond = [...main, ...side];
+  const sideAll = (Array.isArray(L.liningSideConduits) ? L.liningSideConduits : midRing(main)).map(norm360);
+  const cond = [...main, ...sideAll];
   const prim = midRing(cond);
   const sec = midRing([...cond, ...prim]);
+  const gAz = L.liningGateAz == null ? null : norm360(L.liningGateAz);
+  const gate = gAz !== null && !main.some((a) => angDistDeg(a, gAz) < 10);
+  const side = [], sideH = [];
+  sideAll.forEach((a, i) => {
+    if (gate && angDistDeg(a, gAz) < 5) return;
+    side.push(a);
+    sideH.push(L.liningSubstationH[i % L.liningSubstationH.length]);
+  });
   const r = (l) => l.map((a) => a * DEG);
-  return { main: r(main), side: r(side), cond: r(cond), prim: r(prim), sec: r(sec) };
+  return {
+    main: r(main), side: r(side), sideH, cond: r(cond), prim: r(prim), sec: r(sec),
+    gateAz: gate ? gAz * DEG : null, gate: gate ? r([gAz - L.liningGateHalf, gAz + L.liningGateHalf]) : []
+  };
 }
 
 /** Galeria-pas (najwyższa — pod okładziną) i wysokość skrzyni galerii. */
@@ -430,12 +454,13 @@ function buildCrown(L, b, lay, metal) {
     metal.push(boxPart(rimBasis(R, phi), s0, L.liningCrownOut + 0.0006, -0.0014, L.liningCrownDeck + 0.0006, -0.0009, 0.0009,
       PART.HULL, (i * 0.618) % 1, 0, 0, 0.0034));
   }
-  // pilastry fasady co krok (co piąty cięższy), w kondygnacjach okien; przy przyporach głównych — filary (buildButtress)
+  // pilastry fasady co krok (co piąty cięższy — w azymutach podzielnych przez 5°, więc symetrycznie wokół osi bramy
+  // i placów), w kondygnacjach okien; przy przyporach głównych — filary (buildButtress), przy pylonach bramy — pylony
   const step = L.liningPilasterStep;
   const cTop = STOREYS[2][1], cm = (D + cTop) / 2, hz = (D - cTop) / 2;
   for (let i = 0, n = Math.round(360 / step); i < n; i++) {
-    const phi = (i + 0.5) * step * DEG;
-    if (plazaAt(L, b, phi) > 0.001 || lay.prim.some((p) => angDist(phi, p) < 0.9 * DEG)) continue;
+    const phi = i * step * DEG;
+    if (plazaAt(L, b, phi) > 0.001 || [...lay.prim, ...lay.gate].some((p) => angDist(phi, p) < 0.9 * DEG)) continue;
     const R = rimAt(phi, b);
     const heavy = i % 5 === 0;
     const hw = heavy ? 0.0011 : 0.0006;
@@ -484,8 +509,8 @@ function buildCladding(L, b, lay, metal) {
   // listwy pionowe w osiach cięższych pilastrów fasady (co 5°), poza przyporami i wiązkami przewodów
   const step = L.liningPilasterStep * 5;
   for (let i = 0, n = Math.round(360 / step); i < n; i++) {
-    const phi = (i + 0.5 / 5) * step * DEG;
-    if (plazaAt(L, b, phi) > 0.001 || lay.prim.some((p) => angDist(phi, p) < 1.2 * DEG)) continue;
+    const phi = i * step * DEG;
+    if (plazaAt(L, b, phi) > 0.001 || [...lay.prim, ...lay.gate].some((p) => angDist(phi, p) < 1.2 * DEG)) continue;
     const [psiB, psiT] = cladRange(L, b, phi);
     const hl = l0 + 0.0008;
     wallSweep(metal, phi, psiRows(psiB, psiT, b, 0.012), () => [[-0.0009, -0.002], [-0.0009, hl], [0.0009, hl], [0.0009, -0.002]],
@@ -542,22 +567,154 @@ function buildMast(L, b, phi, k, n, rng, metal) {
     metal.push(finalizePart(cylinderBetween(P(0.0040, 0.0058, z), along(0.42), 0.00045, 4, true, 0.0003), PART.STRUCT, seed));
   }
   metal.push(finalizePart(cylinderBetween(P(0.0058, L.liningCrownDeck - 0.0006), along(0.66), 0.0004, 4, true, 0.0003), PART.STRUCT, seed));
-  // głowica: obudowa, pierścień wokół niej (chłodna listwa — cyjan) i mała soczewka na czole (cewka — biel)
-  const T0 = T.clone().addScaledVector(dir, -0.0026), T1 = T.clone().addScaledVector(dir, 0.0003);
-  metal.push(finalizePart(cylinderBetween(T0, T1, 0.0012, 12, false, 0.0019), PART.HULL, seed));
-  const ax = new THREE.Vector3(0, 1, 0).cross(dir);
-  if (ax.lengthSq() < 1e-8) ax.set(1, 0, 0);
-  ax.normalize();
-  const ring = new THREE.TorusGeometry(0.0027, 0.00062, 5, 16);
-  ring.applyMatrix4(new THREE.Matrix4().makeBasis(ax, new THREE.Vector3().crossVectors(dir, ax), dir)
-    .setPosition(T.clone().addScaledVector(dir, -0.0010)));
-  metal.push(finalizePart(ring, PART.STRIP, seed, 0.6, 1));
-  const C0 = T.clone().addScaledVector(dir, 0.0002), C1 = T.clone().addScaledVector(dir, 0.0007);
-  metal.push(finalizePart(cylinderBetween(C0, C1, 0.0009, 12, false, 0.0006), PART.COIL, seed, seed, 0.45));
   if (k % 2 === 0) {
     metal.push(boxPart(m, 0.0016, 0.0026, 0.0074, 0.0084, -0.0005, 0.0005, PART.BEACON, seed, 0.45, (k >> 1) % 3 === 0 ? 1 : 0));
   }
-  return T.clone().addScaledVector(dir, -0.0010);
+  return emitterHead(metal, T, dir, 1, seed, 0.6);
+}
+
+/**
+ * Głowica emitera pola na końcu ramienia T (kierunek dir), skala k: obudowa rozszerzona ku czołu, pierścień wokół niej
+ * (chłodna listwa — cyjan, jasność ring) i mała soczewka na czole (cewka — biel). Zwraca środek pierścienia (cięciwy pola).
+ */
+function emitterHead(metal, T, dir, k, seed, ring) {
+  const T0 = T.clone().addScaledVector(dir, -0.0026 * k), T1 = T.clone().addScaledVector(dir, 0.0003 * k);
+  metal.push(finalizePart(cylinderBetween(T0, T1, 0.0012 * k, 12, false, 0.0019 * k), PART.HULL, seed));
+  const ax = new THREE.Vector3(0, 1, 0).cross(dir);
+  if (ax.lengthSq() < 1e-8) ax.set(1, 0, 0);
+  ax.normalize();
+  const C = T.clone().addScaledVector(dir, -0.0010 * k);
+  const torus = new THREE.TorusGeometry(0.0027 * k, 0.00062 * k, 5, 16);
+  torus.applyMatrix4(new THREE.Matrix4().makeBasis(ax, new THREE.Vector3().crossVectors(dir, ax), dir).setPosition(C));
+  metal.push(finalizePart(torus, PART.STRIP, seed, ring, 1));
+  const C0 = T.clone().addScaledVector(dir, 0.0002 * k), C1 = T.clone().addScaledVector(dir, 0.0007 * k);
+  metal.push(finalizePart(cylinderBetween(C0, C1, 0.0009 * k, 12, false, 0.0006 * k), PART.COIL, seed, seed, 0.45));
+  return C;
+}
+
+// ── Brama promienia ────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * BRAMA PROMIENIA na osi promienia w kadrze gry (południk gryzu z kierunkiem kamery gry — południowa ściana): dwa PYLONY
+ * w azymutach gateAz ± half od pierścienia stopy (but, stopa na pasie osłon) po ścianie i przed fasadą nad krawędź, gdzie
+ * przechodzą w WIEŻE (podstawa w pokładzie korony, trzon, gzyms, taras z głowicą emitera pola — większą niż na masztach);
+ * wieże spina NADPROŻE z cewkami na czole (ku otworowi — ku kamerze gry) i podwójną chłodną listwą. Na czole pylonów
+ * RYNNA z przewodem energii (impulsy w górę, od pierścienia stopy do głowic), po bokach czoła światła parami (te same
+ * ziarna po obu stronach — błyskają razem), galerie dochodzą do pylonów przyczółkami. Z kamery gry pylony biegną
+ * równolegle do promienia po obu jego stronach, a wieże z nadprożem stoją na dalszej krawędzi wcięcia: promień wychodzi
+ * z otworu przez bramę. Zwraca [[azymut, środek głowicy], …] (cięciwy pola między głowicami).
+ */
+function buildGate(L, b, lay, metal, flow) {
+  if (lay.gateAz === null) return [];
+  const H = PART.HULL, St = PART.STRUCT;
+  const Ht = L.liningGateTower;
+  const cw = 0.0013, cd = 0.0012, rp = 0.0009;      // rynna na czole: półszerokość, głębokość; promień przewodu
+  const dim = (f) => ({
+    wf: lerp(0.0120, 0.0095, f), wb: lerp(0.0092, 0.0074, f), wt: lerp(0.0062, 0.0050, f),
+    l1: lerp(0.0060, 0.0050, f), hl: lerp(0.0160, 0.0135, f)
+  });
+  const seedL = 0.731;                               // światła: wspólne ziarno obu pylonów
+  const heads = [];
+  const lintel = [];
+  lay.gate.forEach((phi, gi) => {
+    const sg = gi ? 1 : -1;                          // strona osi: −1 — mniejszy azymut
+    const seed = 0.71 + gi * 0.07;
+    const R = rimAt(phi, b);
+    const psiF = footPsi(L, b, phi);
+    const psiBot = psiF + 0.0058 / b, psiTop = R.psR;
+    const sec = (f) => {
+      const { wf, wb, wt, l1, hl } = dim(f);
+      return [[-wf, -0.003], [-wf, 0.0008], [-wb, 0.0010], [-wb, l1], [-wt, hl], [-cw, hl], [-cw, hl - cd], [cw, hl - cd],
+        [cw, hl], [wt, hl], [wb, l1], [wb, 0.0010], [wf, 0.0008], [wf, -0.003]];
+    };
+    wallSweep(metal, phi, psiRows(psiBot, psiTop, b, 0.006), sec, [[0, St], [1, St], [2, H], [3, H], [4, H], [5, H],
+      [6, PART.STRIP, 0.3, 1], [7, H], [8, H], [9, H], [10, H], [11, St], [12, St]], seed, b);
+    footShoe(L, b, phi, 0.0130, dim(0).hl - 0.0010, true, seed, metal);
+    // cienka chłodna listwa na zewnętrznym narożu czoła (od osi bramy): z gry — linia obrysu bramy wzdłuż promienia
+    const edge = (f) => {
+      const { wt, hl } = dim(f), x0 = sg * (wt - 0.0007), x1 = sg * (wt + 0.0001);
+      return sg > 0 ? [[x0, hl - 0.0002], [x0, hl + 0.0003], [x1, hl + 0.0003], [x1, hl - 0.0002]]
+        : [[x1, hl - 0.0002], [x1, hl + 0.0003], [x0, hl + 0.0003], [x0, hl - 0.0002]];
+    };
+    wallSweep(metal, phi, psiRows(psiBot + 0.004 / b, psiTop, b, 0.012), edge, [[0, PART.STRIP, 0.35, 1], [1, PART.STRIP, 0.35, 1],
+      [2, PART.STRIP, 0.35, 1]], seed, b);
+    // wieża nad krawędzią: baza ściany w krawędzi (Z — po ścianie w górę, przedłużenie nad krawędź; Y — w otwór)
+    const m = wallBasis(phi, R.psR, b);
+    const { wb, wt, hl } = dim(1);
+    const yf = hl - cd;
+    metal.push(boxPart(m, sg > 0 ? wt - 0.0007 : -wt - 0.0001, sg > 0 ? wt + 0.0001 : -wt + 0.0007, hl - 0.0002, hl + 0.0003,
+      -0.0060, Ht - 0.0002, PART.STRIP, seed, 0.35, 1));
+    metal.push(boxPart(m, -wb - 0.0012, wb + 0.0012, -0.0130, yf - 0.0030, -0.0150, 0.0100, H, seed));       // podstawa
+    metal.push(boxPart(m, -wt, wt, -0.0118, yf, -0.0060, Ht, H, seed));                                       // trzon
+    for (const s of [-1, 1]) {                                                                                  // ościeża rynny
+      metal.push(boxPart(m, s > 0 ? cw : -wt, s > 0 ? wt : -cw, yf - 0.0002, hl, -0.0060, Ht - 0.0016, H, seed));
+    }
+    metal.push(boxPart(m, -wt - 0.0013, wt + 0.0013, -0.0130, hl + 0.0010, Ht, Ht + 0.0024, H, seed));       // gzyms
+    metal.push(boxPart(m, -wt - 0.0015, wt + 0.0015, hl + 0.0002, hl + 0.0010, Ht + 0.0004, Ht + 0.0012, PART.STRIP, seed, 0.4, 1));
+    metal.push(boxPart(m, -wt + 0.0010, wt - 0.0010, -0.0100, hl - 0.0016, Ht + 0.0024, Ht + 0.0042, St, seed)); // taras
+    // światła: czerwone parami na narożach gzymsu (białe w osi bramy), wzdłuż czoła co ~0,03 R
+    metal.push(boxPart(m, sg * (wt + 0.0006) - 0.0005, sg * (wt + 0.0006) + 0.0005, hl - 0.0004, hl + 0.0006, Ht + 0.0024, Ht + 0.0034, PART.BEACON, seedL, 0.35, 0));
+    metal.push(boxPart(m, -sg * (wt + 0.0006) - 0.0005, -sg * (wt + 0.0006) + 0.0005, hl - 0.0004, hl + 0.0006, Ht + 0.0024, Ht + 0.0034, PART.BEACON, seedL + 0.5, 0.35, 1));
+    const nL = Math.floor(((psiTop - psiBot) * b) / 0.03);
+    for (let i = 1; i < nL; i++) {
+      const psi = lerp(psiBot, psiTop, i / nL);
+      const d = dim(i / nL);
+      const mw = wallBasis(phi, psi, b);
+      for (const s of [-1, 1]) {
+        const x = s * (d.wt - 0.0017);
+        metal.push(boxPart(mw, x - 0.0004, x + 0.0004, d.hl - 0.0002, d.hl + 0.0006, -0.0004, 0.0004, PART.BEACON,
+          (seedL + i * 0.13 + (s === sg ? 0.5 : 0)) % 1, 0.4, i % 3 === 0 ? 1 : 0));
+      }
+    }
+    // przewód energii w rynnie: od pierścienia stopy po ścianie, przez krawędź po czole wieży do tarasu
+    const pts = psiRows(psiF + 0.002 / b, psiTop - 0.001 / b, b, 0.01).map((psi) => {
+      const f = clamp01((psi - psiBot) / (psiTop - psiBot));
+      const q = wallRY(phi, psi, dim(f).hl - cd + rp + 0.0001, b);
+      return at3(q[0], q[1], phi);
+    });
+    for (const c of [0.006, 0.012, 0.018, Ht - 0.0024]) pts.push(new THREE.Vector3(0, yf + rp + 0.0001, c).applyMatrix4(m));
+    flow.push(pipePart(pts, rp, (0.37 + gi * 0.5) % 1, false, 1));
+    // przyczółki galerii po bokach pylonu
+    for (const yc of L.liningGalleries) {
+      const pr = galleryProfile(L, b, phi, yc);
+      const Hg = galleryH(L, yc), m2 = cylBasis(phi);
+      for (const s of [-1, 1]) {
+        const z0 = s > 0 ? 0.0084 : -0.0130, z1 = s > 0 ? 0.0130 : -0.0084;
+        metal.push(boxPart(m2, pr[2][0] - 0.0012, pr[0][0], yc - Hg / 2 - 0.0022, yc + Hg / 2 + 0.0022, z0, z1, H, seed));
+      }
+    }
+    // głowica emitera na tarasie: krótkie ramię pochylone nad otwór, głowica 1,6 × masztowej (pierścień jaśniejszy)
+    const F = new THREE.Vector3(0, (yf - 0.0100) / 2, Ht + 0.0040).applyMatrix4(m);
+    const up = at3(Math.cos(R.psR), Math.sin(R.psR), phi), inw = at3(-Math.sin(R.psR), Math.cos(R.psR), phi);
+    const dir = up.clone().multiplyScalar(Math.cos(40 * DEG)).addScaledVector(inw, Math.sin(40 * DEG)).normalize();
+    const T = F.clone().addScaledVector(dir, 0.0110);
+    metal.push(finalizePart(cylinderBetween(F, T, 0.0022, 6, true, 0.0014), PART.STRUCT, seed));
+    for (const s of [-1, 1]) {
+      const off = new THREE.Vector3(-Math.sin(phi), 0, -Math.cos(phi)).multiplyScalar(s * 0.0024);
+      metal.push(finalizePart(cylinderBetween(F.clone().add(off), T.clone().addScaledVector(dir, -0.002).addScaledVector(off, 0.5),
+        0.00034, 4, true), PART.STRIP, seed, 0.4, 1));
+    }
+    heads.push([phi, emitterHead(metal, T, dir, 1.6, seed, 0.8)]);
+    lintel.push(new THREE.Vector3(0, (yf - 0.0090) / 2, Ht - 0.0032).applyMatrix4(m));
+  });
+  // nadproże między wieżami (pod gzymsami): belka, na czole cewki (bez środka — tam promień) i dwie chłodne listwy
+  const [A, B] = lintel;
+  const X = new THREE.Vector3().subVectors(B, A);
+  const len = X.length();
+  X.normalize();
+  const Rg = rimAt(lay.gateAz, b);
+  const Y = at3(Math.cos(Rg.psR), Math.sin(Rg.psR), lay.gateAz);
+  Y.addScaledVector(X, -Y.dot(X)).normalize();
+  const Z = new THREE.Vector3().crossVectors(X, Y);           // ku skale (od otworu)
+  const ml = new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(A);
+  const dz = (dim(1).hl - cd + 0.0090) / 2;                  // pół-głębokość belki
+  metal.push(boxPart(ml, 0, len, -0.0028, 0.0028, -dz, dz, H, 0.77));
+  for (const y of [-0.0022, 0.0022]) metal.push(boxPart(ml, 0.002, len - 0.002, y - 0.0003, y + 0.0003, -dz - 0.0004, -dz + 0.0002, PART.STRIP, 0.77, 0.4, 1));
+  for (let i = 0; i < 6; i++) {
+    const t = i < 3 ? 0.08 + i * 0.11 : 0.92 - (5 - i) * 0.11;
+    metal.push(boxPart(ml, len * (t - 0.04), len * (t + 0.04), -0.0013, 0.0013, -dz - 0.0006, -dz + 0.0002, PART.COIL, 0.77, i < 3 ? i / 6 : (5 - i) / 6, 0.3));
+  }
+  return heads;
 }
 
 // ── Ściany: przypory, żebra, galerie ───────────────────────────────────────────────────────────────────────────────
@@ -696,7 +853,7 @@ function buildGalleries(L, b, lay, metal) {
       const type = rng.next();
       const rho = wallRhoAt(phi, yc, b);
       if (near(phi, lay.sec, 0.009, rho) || near(phi, lay.prim, 0.014, rho) || near(phi, lay.main, 0.012, rho)
-        || near(phi, lay.side, 0.042, rho)) continue;
+        || near(phi, lay.side, 0.042, rho) || near(phi, lay.gate, 0.014, rho)) continue;
       const pr = galleryProfile(L, b, phi, yc);
       const f = pr[2][0], m = cylBasis(phi), sd = (seed + i * 0.031) % 1;
       if (type < 0.45) {
@@ -714,7 +871,7 @@ function buildGalleries(L, b, lay, metal) {
       const phi = ((i + 0.25) / 48) * TAU;
       const rho = wallRhoAt(phi, yc, b);
       if (near(phi, lay.sec, 0.008, rho) || near(phi, lay.prim, 0.014, rho) || near(phi, lay.main, 0.016, rho)
-        || near(phi, lay.side, 0.042, rho)) continue;
+        || near(phi, lay.side, 0.042, rho) || near(phi, lay.gate, 0.016, rho)) continue;
       const pr = galleryProfile(L, b, phi, yc);
       metal.push(boxPart(cylBasis(phi), pr[1][0] - 0.0002, pr[0][0], yb - 0.0100, yb + 0.0003, -0.0007, 0.0007, PART.STRUCT,
         (seed + i * 0.01) % 1, 0, 0, -0.0092));
@@ -737,8 +894,8 @@ function buildFoot(L, b, lay, metal, flow) {
     });
     flow.push(pipePart(pts, r, 0.55 + k * 0.1, true));
   }
-  // obejmy pierścienia w pół drogi między butami żeber, przypór i rozdzielniami
-  const stops = [...lay.cond, ...lay.prim, ...lay.sec];
+  // obejmy pierścienia w pół drogi między butami żeber, przypór i rozdzielniami (buty pylonów bramy — zamiast obejm)
+  const stops = [...lay.cond, ...lay.prim, ...lay.sec, ...lay.gate];
   for (const phi of midRing(stops.map((a) => a / DEG)).map((a) => a * DEG)) {
     const psi = psiAtHeight(phi, L.footH, b);
     const rho = wallRY(phi, psi, 0, b)[0];
@@ -938,15 +1095,19 @@ export function buildLining(L, b) {
   buildCrown(L, b, lay, metal);
   buildCladding(L, b, lay, metal);
   L.elevators.forEach((az, i) => buildPlaza(L, b, az * DEG, metal, (i + 0.5) / L.elevators.length));
-  // maszty emiterów; między sąsiednimi głowicami (nie nad placami) cienka cięciwa pola — ślad pola nad otworem
-  const heads = [];
+  // brama promienia (jej głowice zastępują maszty przy osi), maszty emiterów; między sąsiednimi głowicami (nie nad
+  // placami) cienka cięciwa pola — ślad pola nad otworem
+  const heads = buildGate(L, b, lay, metal, flow);
   for (let k = 0; k < L.liningMasts; k++) {
     const phi = ((k + 0.5) / L.liningMasts) * TAU;
-    heads.push(plazaAt(L, b, phi) > 0.001 ? null : buildMast(L, b, phi, k, L.liningMasts, rng, metal));
+    if (lay.gateAz !== null && angDist(phi, lay.gateAz) < (L.liningGateHalf + 1.5) * DEG) continue;
+    heads.push([phi, plazaAt(L, b, phi) > 0.001 ? null : buildMast(L, b, phi, k, L.liningMasts, rng, metal)]);
   }
-  heads.forEach((h, k) => {
-    const n = heads[(k + 1) % heads.length];
-    if (h && n) metal.push(finalizePart(cylinderBetween(h, n, 0.00036, 4, true), PART.STRIP, k / heads.length, 0.2, 1));
+  heads.sort((p, q) => p[0] - q[0]);
+  const gap = (TAU / L.liningMasts) * 1.6;
+  heads.forEach(([pa, h], k) => {
+    const [pb, n] = heads[(k + 1) % heads.length];
+    if (h && n && angDist(pa, pb) < gap) metal.push(finalizePart(cylinderBetween(h, n, 0.00036, 4, true), PART.STRIP, k / heads.length, 0.2, 1));
   });
   lay.prim.forEach((phi, i) => buildButtress(L, b, phi, (i * 0.618 + 0.05) % 1, metal, flow));
   lay.sec.forEach((phi, i) => buildRib(L, b, phi, (i * 0.618) % 1, metal));
@@ -958,7 +1119,7 @@ export function buildLining(L, b) {
     bundle(metal, flow, mainConduitNodes(L, b, phi), phi, [-2.25 * r, 0, 2.25 * r], r, b, (i * 0.31) % 1);
   });
   lay.side.forEach((phi, i) => {
-    const ya = L.liningSubstationH[i % L.liningSubstationH.length];
+    const ya = lay.sideH[i];
     const rs = r * 0.8;
     buildJunction(L, b, phi, false, (i + 0.75) / lay.side.length, metal);
     bundle(metal, flow, sideConduitNodes(L, b, phi, ya), phi, [-1.2 * rs, 1.2 * rs], rs, b, (i * 0.43 + 0.2) % 1);

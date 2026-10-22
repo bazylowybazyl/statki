@@ -187,7 +187,7 @@ function confinementRing(metal, h, ri, i, n, rng) {
     [ri + ch, -T / 2], [ro - ch, -T / 2], [ro, -T / 2 + ch], [ro, T / 2 - ch], [ro - ch, T / 2], [ri + ch, T / 2],
     [ri, T / 2 - ch], [ri, T / 2 - tl], [ri + dc, T / 2 - tl], [ri + dc, -T / 2 + tl], [ri, -T / 2 + tl], [ri, -T / 2 + ch]
   ];
-  const SEG = 96;
+  const SEG = 72;   // 5° na odcinek — strzałka cięciwy ~0,5 px przy kadrze „pierscien-zamkniecia”
   const phase = n > 1 ? i / (n - 1) : 0;
   // korpus bez kanału (odcinki 7 → 10: sufit, tylna ściana, podłoga — cewka)
   metal.push(finalizePart(latheBands(prof, SEG, h, 0, 7), PART.HULL, seed(1)));
@@ -213,10 +213,16 @@ function confinementRing(metal, h, ri, i, n, rng) {
   // pancerz: 6 łuków wyższych od korpusu, w szczelinach węzły
   const NA = 6, step = (Math.PI * 2) / NA, span = step * 0.8;
   const armor = octagon(ro - 0.0003, ro + 0.0018, -T * 0.6, T * 0.6, 0.0005);
-  const arcs = [], nodes = [], wings = [];
+  // pas pola na czole pancerza: płytki kanał z uzwojeniem w połowie wysokości (z kadru gry, prawie z profilu, bliższa
+  // połowa pierścienia świeci czołem, dalsza — kanałem „C” od strony promienia: cały pierścień to cyjanowa elipsa wokół
+  // węzła promienia); wysoki na ~1 px przy średnim zoomie gry — cieńszy rwałby się w rastrze
+  const bh = 0.00055;
+  const band = [[ro + 0.0017, -bh], [ro + 0.00195, -bh], [ro + 0.00195, bh], [ro + 0.0017, bh]];
+  const arcs = [], nodes = [], wings = [], bands = [];
   for (let k = 0; k < NA; k++) {
     const a = rot + k * step;
-    arcs.push(latheBands(armor, 16, h, 0, armor.length, a - span / 2, a + span / 2, true));
+    arcs.push(latheBands(armor, 12, h, 0, armor.length, a - span / 2, a + span / 2, true));
+    bands.push(latheBands(band, 12, h, 0, 3, a - span * 0.47, a + span * 0.47, true));
     const g = a + step / 2;
     const gw = (step - span) * ro * 0.62;
     nodes.push(ringBox(ro - 0.0002, ro + 0.0013, h, T * 0.78, gw, g));
@@ -227,10 +233,11 @@ function confinementRing(metal, h, ri, i, n, rng) {
   const marks = [];
   for (const [az, white] of [[90 + 42, 1], [90 - 42, 1], [270, 0]]) {
     const a = az * Math.PI / 180;
-    nodes.push(ringBox(ro - 0.0002, ro + 0.0017, h + T * 0.05, T * 1.3, 0.0014, a));
+    // cokół wystaje przed pas pola (bez walki głębi z jego czołem)
+    nodes.push(ringBox(ro - 0.0002, ro + 0.0023, h + T * 0.05, T * 1.3, 0.0014, a));
     // stałe znaczniki na czołach białych cokołów (między błyskami pozycja węzła dalej czytelna z kadru gry)
-    if (white) marks.push(ringBox(ro + 0.0017, ro + 0.00195, h + T * 0.05, 0.0009, 0.001, a));
-    const lamp = new THREE.SphereGeometry(0.0007, 10, 6);
+    if (white) marks.push(ringBox(ro + 0.0023, ro + 0.00255, h + T * 0.05, 0.0009, 0.001, a));
+    const lamp = new THREE.SphereGeometry(0.0007, 8, 5);
     lamp.translate(ro + 0.0008, yTop + 0.0006, 0);
     lamp.rotateY(a);
     metal.push(white
@@ -245,6 +252,7 @@ function confinementRing(metal, h, ri, i, n, rng) {
   }
   metal.push(finalizePart(mergeGeometries(marks), PART.STRIP, seed(12), 0.45, 1));
   metal.push(finalizePart(mergeGeometries(arcs), PART.HULL, seed(6)));
+  metal.push(finalizePart(mergeGeometries(bands), PART.COIL, seed(13), phase, 0.32));
   metal.push(finalizePart(mergeGeometries(nodes), PART.STRUCT, seed(7)));
   metal.push(finalizePart(mergeGeometries(wings), PART.STRUCT, seed(9)));
 }

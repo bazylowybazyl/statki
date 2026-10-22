@@ -44,8 +44,8 @@ const FIL_STEP = 0.011;      // długość smugi włókna [R]
 const FIL_RATE = 0.3;        // wolny obrót włókien wokół osi [rad/s]
 const FIELD_RATE = 0.22;     // obrót linii pola pierścieni [rad/s]
 
-const C_CORE = [0.92, 0.97, 1.0];
-const C_CORE_EDGE = [0.42, 0.84, 1.0];
+const C_CORE = [0.86, 0.96, 1.0];
+const C_CORE_EDGE = [0.24, 0.74, 1.0];
 const C_SHEATH = [0.03, 0.55, 1.0];
 const C_STRAND = [0.3, 0.82, 1.0];
 const C_GLOW = [0.06, 0.42, 1.0];
@@ -186,15 +186,21 @@ function buildBeamGraph() {
         const shimmer = float(0.88).add(sin(sR.mul(113.0).sub(T.mul(9.0))).mul(sin(sR.mul(37.0).add(T.mul(3.7)))).mul(0.12));
         const innerOn = select(layer.lessThan(0.5).or(layer.greaterThan(1.5)), float(1.0), float(0.0));
         const glowOn = select(layer.greaterThan(0.5), float(1.0), float(0.0));
-        // rdzeń: biała nić; ekspozycja wg rozmiaru — ~4,2 przy 1,5 px, ~1,5 przy 6 px, → 1 z bliska; cieńszy niż piksel —
-        // grubieje do piksela z jasnością × √(r / szerokość); brzeg rdzenia przechodzi w cyjan
+        // rdzeń: biała nić; ekspozycja wg rozmiaru — ~4,2 przy 1,5 px, ~1,5 przy 6 px, → 0,8 z bliska; cieńszy niż piksel —
+        // grubieje do piksela z jasnością × √(r / szerokość); biel tylko w środkowej ~1/3 rdzenia, brzeg przechodzi w cyjan
+        // (rozlany bloomem rdzeń barwi otoczkę cyjanem, nie bielą)
         const cx = max(nrc.sub(1.5), 0.0).mul(0.5);
         const coreG = float(1.0).add(float(3.2).div(cx.mul(cx).add(1.0)));
         const rcE = min(max(rc, pix.mul(0.9)), rg.mul(0.45));
         const xc = plantVar(d.div(rcE), 'float');
-        const core = exp(xc.mul(xc).mul(-3.0)).mul(sqrt(rc.div(rcE))).mul(coreG)
-          .mul(float(0.45).add(packets.mul(1.1))).mul(float(1.0).add(pinch.mul(pinchB).mul(0.6)));
-        const coreC = mix(vec3(...C_CORE_EDGE), vec3(...C_CORE), exp(xc.mul(xc).mul(-6.0)));
+        // pakiety z bliska płyną OTOCZKĄ (cyjanowe impulsy), rdzeń tylko lekko pulsuje — inaczej z bliska idą po promieniu
+        // białe koraliki; z daleka (rdzeń ~1–3 px) impuls jest w rdzeniu, bo tylko on ma tam rozdzielczość
+        const nearB = plantVar(smoothstep(2.5, 8.0, nrc), 'float');
+        const pkCore = mix(float(0.45).add(packets.mul(1.1)), float(0.55).add(packets.mul(0.45)), nearB);
+        const pkSheath = mix(float(0.35).add(packets.mul(1.5)), float(0.28).add(packets.mul(1.9)), nearB);
+        const core = exp(xc.mul(xc).mul(-3.0)).mul(sqrt(rc.div(rcE))).mul(coreG).mul(mix(1.0, 0.8, nearB))
+          .mul(pkCore).mul(float(1.0).add(pinch.mul(pinchB).mul(0.6)));
+        const coreC = mix(vec3(...C_CORE_EDGE), vec3(...C_CORE), exp(xc.mul(xc).mul(-10.0)));
         // otoczka: świecąca powłoka (droga przez warstwę 0,4…1 promienia — jaśniejsze brzegi), nasycony cyjan; z bliska
         // nie schodzi poniżej ~0,6 (widoczna szerokość promienia to otoczka, nie rdzeń)
         const sheathG = mix(1.25, 0.62, smoothstep(3.0, 40.0, nrs));
@@ -220,7 +226,7 @@ function buildBeamGraph() {
         const ringS = aaLine(abs(d.sub(rf)), wf, pix).mul(0.8);
         const strands = mix(ringS, fils, sideOn).mul(sdown(rf.mul(0.15), rf.mul(0.5), pix));
         const inner = coreC.mul(core)
-          .add(vec3(...C_SHEATH).mul(tube.mul(float(0.35).add(packets.mul(1.5))).mul(float(1.0).add(pinch.mul(pinchB)))
+          .add(vec3(...C_SHEATH).mul(tube.mul(pkSheath).mul(float(1.0).add(pinch.mul(pinchB)))
             .mul(shimmer).mul(sheathG)))
           .add(vec3(...C_STRAND).mul(strands.mul(float(0.5).add(packets.mul(0.5)))));
         // szeroka poświata: niska jasność (pod progiem bloomu), zero na brzegu osłony; jaśniejsza w węzłach pierścieni

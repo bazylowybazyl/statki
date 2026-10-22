@@ -12,7 +12,10 @@
 //     między mostami na przemian 3 KANAŁY wlotu lawy i 3 WYLOTY; 6 BRAM mostów;
 //   • MOSTY nad lawą (azymuty wind) od bramy do STOPY ŚCIANY (`wallFootPoint`): stalowy dźwigar skrzynkowy z galerią
 //     okien, pod nim kratownica z podwieszoną galerią rur na filarach V (gdzie płytko — nasyp), przewody energii na
-//     pokładzie (PIPE: uv.y 0 korek → 1 stopa), blok kotwiący na ścianie;
+//     pokładzie (PIPE: uv.y 0 korek → 1 stopa), przyczółek i pylony. Dźwigar kończy się na CZOLE ROZDZIELNI obudowy
+//     przy stopie (`footContact`); gdzie ściana podchodzi pod korek (~300°), brama cofa się przed rozdzielnię;
+//   • gdzie przed ścianą korka leży już PAS OSŁON stopy ściany (obudowa; ~75–105° i ~280–315°) — bez wymienników, kanał
+//     wlotu skraca się do wrót śluzy, wylot — do obudowy nad pasem (`bandH`);
 //   • GROBLE energii w azymutach mostów: od zigguratu po tarasach do bram (2 przewody PIPE) — 6 szprych koła;
 //   • pokład górny: 24 hale turbin (wnęki okien, generatory na kołyskach), szyna zbiorcza (PIPE), rozdzielnie przy
 //     groblach, 3 ARKOLOGIE (wieże z gęstymi rzędami okien — skala setek kilometrów) i 3 lądowiska w środkach
@@ -27,7 +30,7 @@
 // tylko przy lawie. Rozrzut z ziarnem (`plantRng`). Wierzchołki zbierają akumulatory per rodzaj (i kubełek ziarna), więc
 // korek oddaje kilkadziesiąt części zamiast setek.
 import * as THREE from 'three/webgpu';
-import { DEG, PART, finalizePart, bowlPoint, plantZ0, rimPsi, wallFootPoint, plantRng } from './earthBitePlantFrame.js';
+import { DEG, PART, finalizePart, bowlPoint, bowlPsiAtHeight, plantZ0, rimPsi, wallFootPoint, plantRng } from './earthBitePlantFrame.js';
 
 /** Wymiary korka (R Ziemi). corkR, corkTopH, apertureH, apertureR — w PLANT_LAYOUT (wspólne z promieniem i obudową). */
 export const CORK_DEFAULTS = Object.freeze({
@@ -447,6 +450,19 @@ function lavaHeight(phi, rho, b, z0) {
   return bowlPoint(phi, (lo + hi) * 0.5, 0, b, z0, _bp).y;
 }
 
+/** Odległość od osi punktu ściany gryzu na wysokości h (azymut phi). */
+function wallRhoAt(phi, h, b, z0) {
+  bowlPoint(phi, bowlPsiAtHeight(phi, h, b), 0, b, z0, _bp);
+  return Math.sqrt(_bp.x * _bp.x + _bp.z * _bp.z);
+}
+
+/**
+ * Dolna krawędź PASA OSŁON CIEPLNYCH stopy ściany (obudowa, LINING `buildFoot`: na ścianie od footH − 0,0155 do
+ * footH − 0,0038, grubość ~0,0036) z zapasem. Gdzie ściana gryzu sięga tej wysokości tuż przy korku (azymuty ~75–105°
+ * i ~280–315°), przed ścianą korka nie ma jeziora: wymienniki, kanały wlotu i rury wylotu tam nie wchodzą.
+ */
+const bandH = (L) => L.footH - 0.0175;
+
 /** Linia lawy na boku korka w azymucie phi: pierwszy punkt profilu boku (łamana `side`) nad lawą → { r, y }. */
 function waterline(side, phi, b, z0) {
   const at = (t) => {
@@ -478,6 +494,9 @@ export function buildCork(L, b) {
   const nB = Math.max(1, ctx.bridgeAz.length);
   ctx.az0 = ctx.bridgeAz[0] ?? 0;
   ctx.sectorAz = ctx.bridgeAz.map((a) => a + Math.PI / nB);
+  // styk mostów ze stopą ściany (czoło rozdzielni obudowy) i czoło bram — liczone raz, wspólne dla bram i mostów
+  ctx.deckTop = L.footH - L.corkPipeR - 0.0003;
+  ctx.contact = ctx.bridgeAz.map((az) => footContact(L, b, az, ctx.deckTop));
   buildMassif(ctx);
   buildSpans(ctx);
   ctx.bridgeAz.forEach((az, i) => buildBridge(ctx, az, i));
@@ -594,12 +613,14 @@ function buildSpans(ctx) {
   for (let i = 0; i < n; i++) buildPilaster(ctx, ctx.az0 + (i + 0.5) * step, i);
   for (let i = 0; i < n; i++) {
     const az = ctx.az0 + i * step;
-    if (nearAz(az, ctx.bridgeAz, tol)) { buildGate(ctx, az, i); continue; }
+    const kG = ctx.bridgeAz.findIndex((a) => Math.abs(angDiff(az, a)) < tol);
+    if (kG >= 0) { buildGate(ctx, az, i, ctx.contact[kG]); continue; }
     const wl = waterline(geo.side, az, b, z0);
     const k = ctx.sectorAz.findIndex((a) => Math.abs(angDiff(az, a)) < tol);
-    // w środkach sektorów na przemian: kanał wlotu lawy i wylot zużytego medium; reszta przęseł — wymienniki
+    // w środkach sektorów na przemian: kanał wlotu lawy i wylot zużytego medium; reszta przęseł — wymienniki (nie tam,
+    // gdzie przed ścianą korka leży już pas osłon stopy ściany — obudowa)
     if (k >= 0) (k % 2 ? buildOutlet : buildIntake)(ctx, az, wl, i);
-    else buildExchanger(ctx, az, wl, i, rng);
+    else if (lavaHeight(az, wl.r + 0.004, b, z0) < bandH(L)) buildExchanger(ctx, az, wl, i, rng);
   }
 }
 
@@ -674,13 +695,21 @@ function buildExchanger(ctx, az, wl, i, rng) {
  * w korycie płynie żar (HOT), ścianki i głowica — stal, wrota śluzy z cienką listwą.
  */
 function buildIntake(ctx, az, wl, i) {
-  const { M, b, z0 } = ctx;
+  const { L, M, b, z0 } = ctx;
   const F = radialFrame(az, 0, 0);
   const st = M.acc(PART.STRUCT, (i * 0.21) % 1);
   const hull = M.acc(PART.HULL, 0.62);
   const hot = M.acc(PART.HOT, 0.9);
-  const half = 0.0052, wallT = 0.0016, len = 0.032;
-  const w0 = wl.r - 0.002, w1 = w0 + len;
+  const half = 0.0052, wallT = 0.0016;
+  const w0 = wl.r - 0.002;
+  // koryto kończy się przed pasem osłon stopy ściany; gdy jeziora przed korkiem prawie nie ma — same wrota śluzy
+  const len = Math.min(0.032, wallRhoAt(az, bandH(L), b, z0) - 0.005 - w0);
+  if (len < 0.014) {
+    box(F, 0, wl.r + 0.0022, half + wallT + 0.0016, 0.0024, wl.y - 0.004, wl.y + 0.0155, hull, 0, 0, 0.0008);
+    box(F, 0, wl.r + 0.0047, half - 0.0003, 0.0002, wl.y + 0.0110, wl.y + 0.0115, M.acc(PART.STRIP, 0.3), 0.4, 0);
+    return;
+  }
+  const w1 = w0 + len;
   const lava1 = lavaHeight(az, w1, b, z0);
   // dno koryta: od lustra lawy przy głowicy (−0,001) do +0,005 nad linią lawy przy ścianie
   const fA = wl.y + 0.005, fB = lava1 - 0.001;
@@ -724,17 +753,31 @@ function buildIntake(ctx, az, wl, i) {
  * żarzący się pierścień rozbryzgu), podpory na lawie.
  */
 function buildOutlet(ctx, az, wl, i) {
-  const { M, b, z0 } = ctx;
+  const { L, M, b, z0 } = ctx;
   const F = radialFrame(az, 0, 0);
   const st = M.acc(PART.STRUCT, (i * 0.23 + 0.4) % 1);
   const hull = M.acc(PART.HULL, 0.58);
-  const hot = M.acc(PART.HOT, 0.85);
   const y0 = wl.y + 0.0095;
-  const wIn = wl.r + 0.021;
+  // rury schodzą do jeziora przed pasem osłon stopy ściany; gdy jeziora przed korkiem prawie nie ma — sama obudowa
+  // (podniesiona nad pas osłon)
+  const wIn = Math.min(wl.r + 0.021, wallRhoAt(az, bandH(L), b, z0) - 0.007);
+  if (wIn - wl.r > 0.013) buildOutletPipes(ctx, F, az, wl, wIn, y0, st, hull);
+  const hB = lavaHeight(az, wl.r + 0.0046, b, z0);
+  const base = hB >= bandH(L) ? Math.max(wl.y + 0.003, hB + 0.0042) : wl.y + 0.003;
+  // obudowa wylotu przy ścianie z cienką ciepłą listwą
+  box(F, 0, wl.r + 0.002, 0.0066, 0.0026, base, Math.max(base + 0.006, wl.y + 0.0145), hull, 0, 0, 0.0008);
+  const yS = Math.max(base + 0.0049, wl.y + 0.0129);
+  box(F, 0, wl.r + 0.0047, 0.0058, 0.0002, yS, yS + 0.0005, M.acc(PART.STRIP, 0.35), 0.4, 0);
+}
+
+/** Rury wylotu: z obudowy przy ścianie, zgięte w dół do jeziora (w odległości wIn od osi), pierścień rozbryzgu, podpory. */
+function buildOutletPipes(ctx, F, az, wl, wIn, y0, st, hull) {
+  const { M, b, z0 } = ctx;
+  const hot = M.acc(PART.HOT, 0.85);
   const hIn = lavaHeight(az, wIn, b, z0);
   for (const u of [-0.0034, 0.0034]) {
     const pts = [
-      F.at(u, y0, wl.r - 0.001), F.at(u, y0, wl.r + 0.007), F.at(u, lerp(y0, hIn, 0.45), wl.r + 0.0145),
+      F.at(u, y0, wl.r - 0.001), F.at(u, y0, wl.r + 0.007), F.at(u, lerp(y0, hIn, 0.45), lerp(wl.r + 0.007, wIn - 0.0012, 0.59)),
       F.at(u, hIn + 0.002, wIn - 0.0012), F.at(u, hIn - 0.006, wIn + 0.0006)
     ];
     const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
@@ -756,30 +799,33 @@ function buildOutlet(ctx, az, wl, i) {
       box(Fs, 0, 0, 0.0014, 0.0012, hS - 0.004, pS.y - 0.0019, st);
     }
   }
-  // obudowa wylotu przy ścianie z cienką ciepłą listwą
-  box(F, 0, wl.r + 0.002, 0.0066, 0.0026, wl.y + 0.003, wl.y + 0.0145, hull, 0, 0, 0.0008);
-  box(F, 0, wl.r + 0.0047, 0.0058, 0.0002, wl.y + 0.0129, wl.y + 0.0134, M.acc(PART.STRIP, 0.35), 0.4, 0);
 }
 
-/** Brama mostu w przęśle: blok na ścianie korka z portalem (mosty wchodzą w jej czoło), dyspozytornia i antena. */
-function buildGate(ctx, az, i) {
+/**
+ * Brama mostu w przęśle: blok na ścianie korka z portalem (mosty wchodzą w jej czoło), dyspozytornia i antena. Czoło
+ * bramy — `C.gate` (footContact): gdzie ściana gryzu podchodzi pod korek, brama cofa się przed rozdzielnię stopy, a
+ * skośnych przypór (sięgają 0,008 R przed czoło) nie ma.
+ */
+function buildGate(ctx, az, i, C) {
   const { L, M, b, z0, geo } = ctx;
   const F = radialFrame(az, 0, 0);
   const R = L.corkR, T = L.corkTopH;
   const wl = waterline(geo.side, az, b, z0);
   const hull = M.acc(PART.HULL, 0.75);
   const half = 0.0092;
-  const r1 = R + 0.0125;
+  const r1 = C.gate;
   // bryła bramy: od lawy do nad pokład, fazowana
   prism(F, rect(0, (R - 0.002 + r1) / 2, half, (r1 - R + 0.002) / 2),
     [{ v: wl.y - 0.008 }, { v: T + 0.0006 }, { v: T + 0.0018, s: [0.88, 0.86] }], hull);
-  // skośne przypory bramy ku lawie
-  for (const s of [-1, 1]) {
-    prism(F, rect(s * half, r1 + 0.002, 0.0015, 0.006),
-      [{ v: wl.y - 0.010 }, { v: wl.y + 0.004 }, { v: T - 0.004, o: [0, -0.011] }], M.acc(PART.STRUCT, 0.75));
+  // skośne przypory bramy ku lawie (tylko gdy przed bramą jest jezioro)
+  if (C.deck - r1 > 0.014) {
+    for (const s of [-1, 1]) {
+      prism(F, rect(s * half, r1 + 0.002, 0.0015, 0.006),
+        [{ v: wl.y - 0.010 }, { v: wl.y + 0.004 }, { v: T - 0.004, o: [0, -0.011] }], M.acc(PART.STRUCT, 0.75));
+    }
   }
   // portal: rama chłodnej listwy wokół wejścia przewodów, ciemne szkło w środku
-  const deckTop = L.footH - L.corkPipeR - 0.0003;
+  const deckTop = ctx.deckTop;
   const hw = L.corkBridgeW / 2;
   box(F, 0, r1 + 0.0002, hw + 0.0008, 0.0003, deckTop - 0.0005, deckTop + 0.0058, M.acc(PART.STRIP, 0.2), 0.4, 1);
   box(F, 0, r1 + 0.0004, hw - 0.0006, 0.0003, deckTop + 0.0006, deckTop + 0.0050, M.acc(PART.GLASS, 0.2));
@@ -788,10 +834,12 @@ function buildGate(ctx, az, i) {
   box(F, 0, r1 + 0.00005, half * 0.8, 0.00015, yW0, yW1, M.acc(PART.WINDOW, 0.4), 0.9);
   for (const [v0, v1] of [[yW0 - 0.0005, yW0], [yW1, yW1 + 0.0005]]) box(F, 0, r1 + 0.00035, half * 0.84, 0.00035, v0, v1, hull);
   // dyspozytornia na bramie i kratownicowa antena z piętrami świateł
+  // (na wierzchu bramy: przy krótkiej bramie dyspozytornia cofa się nad pokład, antena stoi obok niej)
   const top = T + 0.0018;
-  box(F, 0, R + 0.0055, 0.0042, 0.003, top, top + 0.0032, { side: M.acc(PART.WINDOW, 0.9), top: hull, bottom: null }, 0.88);
-  box(F, 0, R + 0.0055, 0.0046, 0.0034, top + 0.0032, top + 0.0040, hull, 0, 0, 0.0004);
-  latticeMast(M, F, -0.0035, R + 0.0098, top, 0.014, 0.0008, 0.00035, 4, (i * 0.29 + 0.1) % 1, { antenna: 0.004 });
+  const wD = Math.min(R + 0.0055, (R - 0.002 + r1) / 2);
+  box(F, 0, wD, 0.0042, 0.003, top, top + 0.0032, { side: M.acc(PART.WINDOW, 0.9), top: hull, bottom: null }, 0.88);
+  box(F, 0, wD, 0.0046, 0.0034, top + 0.0032, top + 0.0040, hull, 0, 0, 0.0004);
+  latticeMast(M, F, -0.0066, Math.min(R + 0.0098, r1 - 0.0013), top, 0.014, 0.0008, 0.00035, 4, (i * 0.29 + 0.1) % 1, { antenna: 0.004 });
 }
 
 // ── Maszty kratownicowe ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -838,6 +886,31 @@ function latticeMast(M, F, cu, cw, y0, h, b0, b1, tiers, seed, { cu1 = cu, cw1 =
 
 // ── Mosty nad lawą ──────────────────────────────────────────────────────────────────────────────────────────────────
 /**
+ * Styk mostu ze STOPĄ ŚCIANY w azymucie phi. Przy stopie stoi ROZDZIELNIA obudowy (LINING `buildJunction`: skrzynia
+ * ±0,0095 R wzdłuż obwodu, ±0,008 R po ścianie od stopy, do ~0,0092 R od ściany z nadbudówką) — most kończy się na jej
+ * CZOLE (płaszczyzna 0,0088 R w dół ściany od stopy, z zapasem). Wynik (ρ od osi): `deck` — czoło na wysokości pokładu
+ * (tu dźwigar wchodzi w rozdzielnię), `top` — górna krawędź czoła (pylony mostu stoją przed nią), `gate` — czoło bramy
+ * korka (R + 0,0125, a gdzie ściana podchodzi pod sam korek — azymuty 280–310° — cofnięte przed rozdzielnię).
+ */
+function footContact(L, b, phi, deckY) {
+  const z0 = plantZ0(b);
+  const foot = wallFootPoint(L, b, phi);
+  const rf = Math.sqrt(foot.x * foot.x + foot.z * foot.z);
+  // kierunek „po ścianie w górę” w (ρ, y) z punktów ściany ±0,001 R wokół stopy; normalna ściany — w otwór
+  const p0 = bowlPoint(phi, bowlPsiAtHeight(phi, L.footH - 0.001, b), 0, b, z0, new V3());
+  const p1 = bowlPoint(phi, bowlPsiAtHeight(phi, L.footH + 0.001, b), 0, b, z0, new V3());
+  let dr = Math.sqrt(p1.x * p1.x + p1.z * p1.z) - Math.sqrt(p0.x * p0.x + p0.z * p0.z), dy = p1.y - p0.y;
+  const dl = Math.sqrt(dr * dr + dy * dy) || 1;
+  dr /= dl; dy /= dl;
+  const nr = -dy;
+  const Z = -0.0088, Y = 0.0098;
+  const deck = rf + (Z - (deckY - foot.y) * dy) / Math.max(0.2, dr);
+  const top = rf + dr * Z + nr * Y;
+  const gate = Math.max(L.corkR + 0.006, Math.min(L.corkR + 0.0125, top - 0.0004));
+  return { foot, rf, deck, top, gate };
+}
+
+/**
  * Most w azymucie phi: od czoła bramy do STOPY ŚCIANY (`wallFootPoint`) — STALOWY DŹWIGAR SKRZYNKOWY (wierzch kadłub,
  * w boku wnęka galerii okien, skośny spód ze stali; spód lekko żarzy się tylko tuż nad lawą), pod nim KRATOWNICA
  * (Warren) z podwieszoną galerią dwóch rur, filary V na stopach w lawie (żar tylko w wąskim pasie przy lawie); gdzie
@@ -846,18 +919,21 @@ function latticeMast(M, F, cu, cw, y0, h, b0, b1, tiers, seed, { cu1 = cu, cw1 =
  */
 function buildBridge(ctx, phi, idx) {
   const { L, M, b, z0 } = ctx;
-  const foot = wallFootPoint(L, b, phi);
-  const rf = Math.hypot(foot.x, foot.z);
+  const C = ctx.contact[idx];
+  const foot = C.foot, rf = C.rf;
   const F = radialFrame(phi, 0, 0);
   const R = L.corkR;
-  const r0 = R + 0.0125;               // czoło bramy
+  const r0 = C.gate;                   // czoło bramy
   const hw = L.corkBridgeW / 2;
-  const deckTop = L.footH - L.corkPipeR - 0.0003;
+  const deckTop = ctx.deckTop;
   const gBot = deckTop - 0.0044;       // spód dźwigara
   const hd = hw - 0.0013;              // spód dźwigara węższy (skos)
-  const anchorW = Math.max(r0 + 0.002, rf - 0.016);
-  const end = anchorW + 0.0006;        // dźwigar wchodzi w blok kotwiący
+  const end = Math.max(r0 + 0.002, C.deck + 0.0006);   // dźwigar wchodzi w czoło rozdzielni stopy (obudowa)
   const len = end - r0;
+  // pylony przed górną krawędzią czoła rozdzielni; przyczółek pod końcem dźwigara (pod pylonami, w głąb ściany)
+  const wPy = C.top - 0.0010 - 0.0032;
+  const pylons = wPy - 0.0032 > r0 + 0.004;
+  const anchorW = Math.max(r0 + 0.0008, Math.min(end - 0.009, wPy - 0.0040));
   // lawa pod mostem (próbki co ~0,003 R)
   const lW = rf + 0.006 - r0;
   const nL = Math.max(4, Math.ceil(lW / 0.003));
@@ -968,27 +1044,31 @@ function buildBridge(ctx, phi, idx) {
       }
     }
   }
-  // blok kotwiący na stopie ściany (część w ścianie) i pylony ze światłami
+  // przyczółek pod końcem dźwigara (dalsza część — pod rozdzielnią stopy i w ścianie) i pylony ze światłami — przed
+  // czołem rozdzielni (gdzie ściana podchodzi pod korek, pylonów nie ma: brama, przyczółek i rozdzielnia stoją w rzędzie)
+  const wA = C.deck + 0.006;
   const hk = Math.min(lavaAt(anchorW), gBot - 0.004);
   const anchor = M.acc(PART.HULL, (seed + 0.5) % 1);
-  prism(F, rect(0, (anchorW + rf + 0.006) / 2, hw + 0.0028, (rf + 0.006 - anchorW) / 2),
+  prism(F, rect(0, (anchorW + wA) / 2, hw + 0.0028, (wA - anchorW) / 2),
     [{ v: hk - 0.008 }, { v: deckTop - 0.0010 }, { v: deckTop - 0.0002, s: [0.94, 0.93] }], anchor);
-  const wPy = Math.max(rf - 0.009, anchorW + 0.0034);
-  for (const s of [-1, 1]) {
-    box(F, s * (hw + 0.0012), wPy, 0.0014, 0.0032, deckTop - 0.0002, deckTop + 0.0075, anchor, 0, 0, 0.0005);
-    box(F, s * (hw + 0.0012), wPy, 0.0006, 0.0006, deckTop + 0.0075, deckTop + 0.0087, M.acc(PART.BEACON, (seed * 3 + (s > 0 ? 0.3 : 0.7)) % 1), 0.6, 0);
+  if (pylons) {
+    for (const s of [-1, 1]) {
+      box(F, s * (hw + 0.0012), wPy, 0.0014, 0.0032, deckTop - 0.0002, deckTop + 0.0075, anchor, 0, 0, 0.0005);
+      box(F, s * (hw + 0.0012), wPy, 0.0006, 0.0006, deckTop + 0.0075, deckTop + 0.0087, M.acc(PART.BEACON, (seed * 3 + (s > 0 ? 0.3 : 0.7)) % 1), 0.6, 0);
+    }
   }
-  // wiązka przewodów: z bramy po pokładzie do stopy ściany (boczne zbiegają się przy kotwie)
+  // wiązka przewodów: z bramy po pokładzie w czoło rozdzielni, dalej (w jej wnętrzu) do stopy ściany
   const pr = L.corkPipeR;
   const yp = deckTop + pr;
+  const wIn = C.deck - 0.001;
   for (const o of [-0.0034, 0, 0.0034]) {
     const pts = [F.at(o, yp, R + 0.002)];
     let last = R + 0.002;
-    for (const w of [r0 + 0.004, (r0 + rf) / 2, rf - 0.018]) {
-      if (w > last + 0.002 && w < rf - 0.011) { pts.push(F.at(o, yp, w)); last = w; }
+    for (const w of [r0 + 0.004, (r0 + C.deck) / 2, C.deck - 0.010]) {
+      if (w > last + 0.002 && w < wIn - 0.003) { pts.push(F.at(o, yp, w)); last = w; }
     }
-    if (rf - 0.008 > last + 0.001) pts.push(F.at(o * 0.55, yp, rf - 0.008));
-    pts.push(F.at(o * 0.12, lerp(yp, foot.y, 0.6), rf - 0.002));
+    if (wIn > last + 0.001) pts.push(F.at(o * 0.55, yp, wIn));
+    pts.push(F.at(o * 0.12, lerp(yp, foot.y, 0.6), rf - 0.003));
     pts.push(foot.clone().addScaledVector(F.U, o * 0.05));
     pipe(M, pts, pr * (o === 0 ? 1.1 : 0.85), (idx * 0.37 + (o + 0.004) * 60) % 1);
   }

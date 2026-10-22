@@ -156,10 +156,12 @@ function structDetail(q, pu, pv, seed) {
   const rx = plantVar(fract(q.x.div(0.0009)));
   const lodR = plantVar(lodFade(pu, 0.0009));
   const valley = plantVar(aaLine(min(rx, float(1.0).sub(rx)).mul(0.0009), float(0.00006), pu).mul(lodR));
+  // kontrast niski: na częściach skośnych względem ramy (żebra obudowy, wsporniki) rzut pudełkowy kładzie smugi
+  // w poprzek części — przy mocnym kontraście czytały się jak ukośne kreskowanie
   const part = float(0.56).add(fract(seed.mul(71.3)).mul(0.1));
-  const tone = part.mul(float(0.85).add(st.mul(0.3))).mul(float(1.0).sub(valley.mul(0.45)));
-  const rough = float(0.5).add(st.mul(0.2)).add(valley.mul(0.12));
-  return { tone: plantVar(tone), rough: plantVar(rough), tilt: plantVar(vec2(sin(rx.mul(TAU)).mul(0.22).mul(lodR), 0.0), 'vec2') };
+  const tone = part.mul(float(0.93).add(st.mul(0.14))).mul(float(1.0).sub(valley.mul(0.2)));
+  const rough = float(0.5).add(st.mul(0.12)).add(valley.mul(0.08));
+  return { tone: plantVar(tone), rough: plantVar(rough), tilt: plantVar(vec2(sin(rx.mul(TAU)).mul(0.09).mul(lodR), 0.0), 'vec2') };
 }
 
 // ── Okna: z bliska szczeliny w rzędach ~0,0005 R (bloki 4 × 4 = pomieszczenia, zapalone wg gęstości z), DALEJ — ciągłe
@@ -347,9 +349,10 @@ function buildMetalGraph() {
     // wierzchołek), każda płyta trochę inna temperatura, lekkie falowanie; z daleka średnia płyt i szwów
     const wave = sin(B.uv.x.mul(900.0).add(time.mul(0.8))).mul(sin(B.uv.y.mul(700.0).sub(time.mul(0.6))));
     const heatZ = plantVar(zOr(0.0));
-    const plateHeat = plantHeat(heatZ.mul(float(0.5).add(H.hv.mul(0.14)).add(wave.mul(0.03))));
+    // płyta ~0,35–0,47 żaru szwu (ciemna czerwień — sadza na stygnącej blasze), szew — pełny żar (żółć w HDR)
+    const plateHeat = plantHeat(heatZ.mul(float(0.35).add(H.hv.mul(0.12)).add(wave.mul(0.03))));
     const seamHeat = plantHeat(heatZ.mul(float(1.04).add(wave.mul(0.04))));
-    const seamAvg = float(1.0).sub(H.lod2).mul(0.12);
+    const seamAvg = float(1.0).sub(H.lod2).mul(0.16);
     col.addAssign(mix(plateHeat, seamHeat, clamp(H.seam.add(seamAvg), 0.0, 1.0)).mul(kHot));
     // ŚWIATŁO POZYCYJNE: ostre mrugnięcie (z — częstotliwość, faza z ziarna), w — 0 czerwone / 1 białe
     const bx = fract(time.mul(zOr(0.5)).add(seed.mul(7.7)));
@@ -371,14 +374,6 @@ function buildMetalGraph() {
     const throatCol = vec3(...T.beam).mul(rings.mul(1.5).add(0.015))
       .add(vec3(...T.beamCore).mul(heat.mul(heat).mul(1.5)));
     col.addAssign(throatCol.mul(throat.mul(U.uPlantBeam.x)));
-    // AGENT: DBG-MAT (tymczasowe — usunąć) uPlantMisc.x: 1 tryb uv / ściana / żar, 2 normalna, 3 ton, 4 pu/pv
-    const dm = U.uPlantMisc.x;
-    const dbg = select(dm.lessThan(1.5), vec3(B.uvMode, B.wall, kHot), select(dm.lessThan(2.5), n.mul(0.5).add(0.5),
-      select(dm.lessThan(3.5), vec3(tone.mul(10.0)), select(dm.lessThan(4.5), vec3(B.pu.mul(3000.0), B.pv.mul(3000.0), 0.0),
-        kHull.mul(vec3(0.4)).add(kStruct).add(kWin.mul(vec3(1, 0.5, 0))).add(kStrip.mul(vec3(0, 1, 1)))
-          .add(kindMask(kind, PART.COIL).mul(vec3(0, 0, 1))).add(kHot.mul(vec3(1, 0, 0)))
-          .add(kindMask(kind, PART.BEACON).mul(vec3(1, 1, 0))).add(kGlass.mul(vec3(0, 1, 0)))))));
-    col.assign(select(dm.greaterThan(0.5), dbg.mul(0.3), col));
     return vec4(max(col, vec3(0.0)), 1.0);
   })();
   return { fragmentNode };
@@ -437,21 +432,27 @@ function buildFlowGraph() {
     const r0n = plantVar(r0.div(max(length(r0), 1e-4)), 'vec3');
     const th = atan(dot(n, cross(tAx, r0n)), dot(n, r0n).add(1e-6));
     const dth = abs(fract(th.mul(3.0 / TAU).add(0.5)).sub(0.5)).mul(TAU / 3.0);
-    const slitW = 0.11;
-    const slit = plantVar(mix(3.0 * slitW * 2.0 / TAU, aaBox(dth, slitW, max(nPix, 1e-4)), sdown(0.25, 0.5, nPix.div(slitW * 2.0))));
-    const pipeEmit = vec3(...T.beam).mul(slit.mul(packet.mul(1.6).add(0.15)).add(packet.mul(0.22))
+    const slitW = 0.07;
+    // szczelina ostra, dopóki ma ≥ ~1 px (aaBox grubieje do piksela), potem średnia
+    const slitLod = plantVar(sdown(0.6, 1.2, nPix.div(slitW * 2.0)));
+    const slit = plantVar(mix(3.0 * slitW * 2.0 / TAU, aaBox(dth, slitW, max(nPix, 1e-4)), slitLod));
+    // pakiet w szczelinie ≤ ~1,7 × barwa promienia (lekki bloom, po ACES zostaje cyjan, nie biel); prześwit pakietu przez
+    // pancerz tylko z daleka (szczeliny drobniejsze niż piksel — biegnący impuls na ciemnej linii), z bliska słaby —
+    // inaczej cała rura świeci bladym cyjanem jak plastik
+    const armorGlow = mix(0.2, 0.04, slitLod);
+    const pipeEmit = vec3(...T.beam).mul(slit.mul(packet.mul(0.45).add(0.15)).add(packet.mul(armorGlow))
       .mul(float(1.0).sub(collar.mul(0.9))).mul(U.uPlantBeam.x));
-    // LINA: światła prowadzące co 0,03 R (co czwarte czerwone), fala jasności w górę; kabiny — subtelny wskaźnik
-    // (fizyczne kabiny dokłada komponent wind)
+    // LINA: światła prowadzące co 0,03 R (co czwarte czerwone), fala jasności w górę; kabiny jeżdżą na GPU (dodatek
+    // wind) — w materiale liny ich nie ma. Światło na samych końcach liny (kotwica s ≈ 0, dok na szynie s ≈ z) zgaszone:
+    // przy czołach doków świeciłoby jak reflektor; gaśnie wg położenia LAMPY (cała lampa, nie jej połowa)
     const gs = s.div(0.03);
     const gi = floor(gs.add(0.5));
-    const guide = aaDot(abs(gs.sub(gi)).mul(0.03), 0.0006, pix);
+    const sc = gi.mul(0.03);
+    const ends = smoothstep(0.012, 0.026, sc).mul(smoothstep(0.012, 0.026, max(vPart.z, 1e-4).sub(sc)));
+    const guide = aaDot(abs(gs.sub(gi)).mul(0.03), 0.0006, pix).mul(ends);
     const chase = sdown(0.0, 0.18, fract(gi.mul(0.05).sub(time.mul(0.15))));
     const red = step01(fract(gi.mul(0.25)), 0.7);
-    const guideCol = mix(vec3(2.6, 2.4, 2.1), vec3(3.0, 0.3, 0.12), red).mul(guide.mul(chase.mul(0.75).add(0.25)));
-    const pos = fract(s.div(0.06).sub(time.mul(0.05).mul(vPart.w)));
-    const cab = aaDot(abs(pos.sub(0.5)).mul(0.06), 0.0008, pix).mul(0.45);
-    const tetherEmit = guideCol.add(mix(vec3(2.4, 2.0, 1.4), vec3(0.7, 1.5, 2.6), step01(vPart.w.negate(), 0.0)).mul(cab));
+    const tetherEmit = mix(vec3(2.6, 2.4, 2.1), vec3(3.0, 0.3, 0.12), red).mul(guide.mul(chase.mul(0.75).add(0.25)));
     // światło: ciemna stal pancerza (opaski polerowane), lina gładsza
     const tone = mix(mix(0.7, 0.9, collar).mul(float(1.0).sub(slit.mul(0.6))), 0.9, kTether);
     const rough = mix(mix(0.64, 0.42, collar), 0.42, kTether);

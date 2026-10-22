@@ -4,8 +4,8 @@
 import * as THREE from 'three/webgpu';
 import {
   float, vec2, vec3, vec4, uniform, attribute, varying, positionView, modelWorldMatrixInverse, cameraWorldMatrix,
-  cameraProjectionMatrix, abs, atan, clamp, cross, dot, fract, length, max, min, mix, normalize, select, sin,
-  smoothstep, sqrt
+  cameraProjectionMatrix, abs, atan, clamp, cross, dot, exp2, floor, fract, length, log2, max, min, mix, normalize,
+  select, sin, smoothstep, sqrt
 } from 'three/tsl';
 import { earthBiteEast, earthBiteCoords } from './earthBite.tsl.js';
 import { CORK_DEFAULTS } from './earthBitePlantCork.js';
@@ -168,8 +168,10 @@ export const PLANT_LIGHT = Object.freeze({
   beamMax: 1.2,     // górna granica irradiancji promienia × uPlantBeam.x
   beamDiffuse: 0.3, // rozproszenie poświaty promienia (odblask GGX — pełny)
   beamTop: 0.01,    // koniec promienia pod odbiornikiem (uPlantBeam.z − beamTop)
-  // w przestrzeni (|p| > ~1,01): czarne niebo, od dołu poświata dziennej Ziemi
+  // w przestrzeni (|p| > ~1,01): czarne niebo, od dołu poświata dziennej Ziemi; w ODBICIU (env) poświata Ziemi × earthEnv
+  // — metal w przestrzeni (odbiornik, szyna ringu, wózki) nie szarzeje na krawędziach pod kątem (prośba ORBIT)
   earthGlow: 0.15,
+  earthEnv: 0.35,
   // okluzja kontaktowa: przy skale (ściany gryzu, grunt) i przy pokładach korka; zasięg [R], siła
   aoNear: 0.0003, aoFar: 0.005, aoWall: 0.62, aoDeckFar: 0.0045, aoDeck: 0.5
 });
@@ -326,7 +328,8 @@ export function plantEnv(C, R) {
   const ru = dot(R, C.up);
   const skyE = C.day.mul(mix(1.0, 0.15, C.bowl)).mul(LT.sky);
   const surf = mix(vec3(0.105, 0.095, 0.085), vec3(...PLANT_COLORS.sky), smoothstep(-0.25, 0.35, ru)).mul(skyE);
-  const earth = vec3(...PLANT_EARTH_GLOW).mul(C.day.mul(LT.earthGlow).mul(sdown(C.horizon.sub(0.1), C.horizon.add(0.06), ru)));
+  const earth = vec3(...PLANT_EARTH_GLOW).mul(C.day.mul(LT.earthGlow * LT.earthEnv)
+    .mul(sdown(C.horizon.sub(0.1), C.horizon.add(0.06), ru)));
   return mix(surf, earth, C.space);
 }
 
@@ -393,19 +396,24 @@ export function plantLighting(C, n, albedo, a2, f0, specOcc) {
  */
 export function plantSurfaceUv(C, n, seed, partUv, uvMode, dpx, dpy, duvx, duvy) {
   const B = plantBoxUv(C, n, seed);
-  // rzut pudełkowy BEZ przesunięcia wg części (układ wzoru od położenia — części współpłaszczyznowe i sąsiednie zgodne)
-  const qB = plantVar(select(abs(dot(n, C.A)).greaterThanEqual(max(abs(dot(n, C.out)), abs(dot(n, C.tan)))),
-    vec2(C.rho.mul(C.phi), C.rho), select(abs(dot(n, C.out)).greaterThanEqual(abs(dot(n, C.tan))), vec2(C.rho.mul(C.phi), C.y),
-      vec2(C.rho, C.y))), 'vec2');
   // osie rzutu pudełkowego bez rzutowania (szybkość zmiany u / v wzdłuż przesunięcia)
   const nY = abs(dot(n, C.A));
   const nR = abs(dot(n, C.out));
   const nT = abs(dot(n, C.tan));
   const deck = nY.greaterThanEqual(max(nR, nT));
   const radial = nR.greaterThanEqual(nT);
+  // ściana zwrócona do osi / od osi: u = ρq · φ — POŁUDNIKI (stałe φ) zamiast stałego łuku ρφ. Na pochyłej ścianie
+  // (fasada korony, stożki chłodni, skośna stopa) ρ zmienia się z wysokością, więc linie stałego ρφ szły ukośnie
+  // („////” na fasadzie bohatera, tym mocniej, im dalej od φ = 0). ρq — promień skwantowany co pół oktawy (szerokość
+  // paneli ±19%; na granicy kwantu — poziomy szew, jak zmiana podziału w rzędzie)
+  const rhoQ = plantVar(exp2(floor(log2(max(C.rho, 0.01).div(0.01)).mul(2.0)).mul(0.5)).mul(0.01));
+  // rzut pudełkowy BEZ przesunięcia wg części (układ wzoru od położenia — części współpłaszczyznowe i sąsiednie zgodne)
+  const qB = plantVar(select(deck, vec2(C.rho.mul(C.phi), C.rho), select(radial, vec2(rhoQ.mul(C.phi), C.y),
+    vec2(C.rho, C.y))), 'vec2');
   const tuR = plantVar(select(deck.or(radial), C.tan, C.out), 'vec3');
   const tvR = plantVar(select(deck, C.out, C.A), 'vec3');
-  const puB = abs(dot(dpx, tuR)).add(abs(dot(dpy, tuR)));
+  const uRate = select(deck.not().and(radial), rhoQ.div(max(C.rho, 1e-4)), float(1.0));
+  const puB = abs(dot(dpx, tuR)).add(abs(dot(dpy, tuR))).mul(uRate);
   const pvB = abs(dot(dpx, tvR)).add(abs(dot(dpy, tvR)));
   // rama uv części: ∂p/∂u, ∂p/∂v z układu dp = J · duv (niezmiennicze względem znaku dFdy — pułapka 26)
   const det = duvx.x.mul(duvy.y).sub(duvy.x.mul(duvx.y));
