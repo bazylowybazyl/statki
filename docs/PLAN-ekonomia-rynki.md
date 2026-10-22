@@ -374,8 +374,21 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - 0 błędów, 0 pipeline'ów sync. `npm test` 1749 zielone, build przechodzi.
   - Opis: `docs/E6-banka-w-grze.md`.
   - Decyzja orkiestratora: zestrzelony okręt garnizonu to strata z zapasu frakcji (księgowanie robi E4). Okręty zapasu (STOCK) zostają nietykalne jako widok zapasu.
+- 2026-10-22 E4 w `main` (06f4d10a): BRAMKA ZALICZONA w całości na 3 ziarnach.
+
+  | próg | wynik |
+  |---|---|
+  | przechwyty | 15,2–15,4% |
+  | głód | 0 pozycji > 30 min, najdłużej 6,3 min |
+  | stocznie | 0 min |
+  | kolejki | 0,79–1,87 |
+  | tick | 11,5–12,3 ms |
+
+  - Tick spadł z 26,4 / 24,8 do 9,9 / 10,1 ms dzięki indeksom: zlecenia po id, manifest wraku per klasa, niedobory tylko po chcianych towarach. Wynik symulacji jest identyczny liczba w liczbę.
+  - Zestrzelony okręt garnizonu zdejmuje okręt z zapasu frakcji i zostawia wrak.
+  - Testy: `npm test` 1755 zielone.
 - Dalej:
-  - E4: okno ciszy (tick ≤ 25 ms) i końcowe strojenie;
+  - ~~E4: okno ciszy (tick ≤ 25 ms) i końcowe strojenie~~ — zrobione;
   - bańka dla pozostałych portów i awans do pełnego NPC (do zlecenia);
   - E7: gracz na rynku i zapis ekonomii.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
