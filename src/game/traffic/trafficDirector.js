@@ -7,11 +7,11 @@
  * Zestrzelona flota górnicza to realnie mniej rudy na stacji, nie animacja.
  *
  * Trzy źródła kursów:
- *   PRZEWÓZ    — nadwyżka u jednego, niedobór u drugiego (`planShipment`)
+ *   PRZEWÓZ    — nadwyżka u jednego, niedobór u drugiego (migawka rynku, `rebuildMarket`)
  *   WYDOBYCIE  — surowce, których nie robi żadna stacja: ruda uranu z Kuipera
  *   TANKOWANIE — dowóz paliwa tam, gdzie kursy stają z pustym zbiornikiem
  *
- * Księgowość ładunku zostaje w `cargoFleet.js` — ten moduł tylko ją wywołuje,
+ * Księgowość ładunku jest w `shipmentOrders.js` — ten moduł tylko ją wywołuje,
  * nigdy nie dotyka magazynów wprost. Dzięki temu niezmiennik „jedna partia,
  * jeden właściciel" pilnują wciąż te same, przetestowane funkcje.
  */
@@ -21,7 +21,7 @@ import {
   createShipmentOrder, tryDeliverShipmentOrder, wreckShipmentOrder,
   getBlockedPairs, blockRoute, tickCooldowns, pickVanClass, VAN_CLASSES,
   SHIPMENT_STATUS
-} from '../cargoFleet.js';
+} from './shipmentOrders.js';
 import {
   runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, getStationSurpluses,
   stationWantsResource, stationNetRates, stationConsumptionRates
@@ -171,7 +171,7 @@ export function createDirector(network, registry, options = {}) {
     network,
     registry,
     config,
-    /** Stan floty z cargoFleet — trzyma zlecenia i karencje par. */
+    /** Stan floty (`shipmentOrders.js`) — trzyma zlecenia i karencje par. */
     fleet: options.fleet,
     /** Firmy transportowe i ich jednostki. Bez tego kurs powstaje znikąd. */
     companies: options.companies || null,
@@ -1023,7 +1023,7 @@ function needsMoreMining(director, station, resourceId) {
 /**
  * Migawka rynku: co kto oddaje i czego komu brakuje — liczona RAZ na tick.
  *
- * `planShipment` z `cargoFleet.js` przelicza nadwyżki i niedobory dla każdej
+ * Dawny planista starej ekonomii (`planShipment`) przeliczał nadwyżki i niedobory dla każdej
  * pary stacji przy każdym wywołaniu. Przy kilkunastu kursach to nie miało
  * znaczenia; przy skali, na której w locie jest kilkaset jednostek, dyspozytor
  * wołany 25 razy na tick spędzał na tym 7 z 13 ms. Tutaj liczymy to raz i

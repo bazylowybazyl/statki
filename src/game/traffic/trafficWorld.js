@@ -20,7 +20,7 @@ import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../../data/asteroidTyp
 import { SMALL_BODY_STATIONS } from '../../data/smallBodies.js';
 import { MARKET_DEFS, PIRATE_OUTPOSTS } from '../../data/markets.js';
 import { systemHaulTonnage, resourcePrice, stationHaulTonnage } from '../stationEconomy.js';
-import { createFleetState } from '../cargoFleet.js';
+import { createFleetState } from './shipmentOrders.js';
 import { buildTravelNetwork } from './travelNetwork.js';
 import { createCourseRegistry } from './courseRegistry.js';
 import {

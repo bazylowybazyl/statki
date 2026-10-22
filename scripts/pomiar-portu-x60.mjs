@@ -19,7 +19,7 @@ if (process.env.SEED) {
 const { RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor } = await import(R + 'src/data/resources.js');
 const { FACTION, getDefaultStationFaction } = await import(R + 'src/data/factions.js');
 const { seedStationStock, systemHaulTonnage, resourcePrice, stationHaulTonnage, getStationIndustry, militaryScale } = await import(R + 'src/game/stationEconomy.js');
-const { createFleetState } = await import(R + 'src/game/cargoFleet.js');
+const { createFleetState } = await import(R + 'src/game/traffic/shipmentOrders.js');
 const { BELT_DEFINITIONS, getOutermostBeltEdgeAu } = await import(R + 'src/data/asteroidTypes.js');
 const { buildTravelNetwork } = await import(R + 'src/game/traffic/travelNetwork.js');
 const { createCourseRegistry, currentStage, STAGE_KIND, DWELL_REASON } = await import(R + 'src/game/traffic/courseRegistry.js');
