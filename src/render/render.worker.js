@@ -132,6 +132,10 @@ if (isWorker) {
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
     st.hallDust = (await import('../3d/gasField/hallDust.js')).HallDust;
+    // gaz w otwartej przestrzeni (pas — docs/PLAN-gazy-kosmos.md): bloki `spaceGas` (wejście) i `gasObst` (kadłuby)
+    st.spaceGas = (await import('../3d/spaceGas/spaceGas.js')).SpaceGas;
+    st.spaceGasBlk = await import('./blocks/spaceGasBlock.js');
+    st.gasObstBlk = await import('./blocks/gasObstBlock.js');
     // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
     st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
     st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
@@ -817,6 +821,11 @@ if (isWorker) {
     } } catch (e) { modFail('pas', e); }
     // pył hal K-7: wejście klatki = blok HALL (kopia HALL_DUST_IN strony); krok Core3D.fx czyta tylko tę tablicę
     try { if (st.hallDust && v.hall) st.hallDust.submit(v.hall); } catch (e) { modFail('pył hal', e); }
+    // gaz przestrzeni: wejście = blok `spaceGas` (kopia SPACE_GAS_IN strony), kadłuby z bloku `gasObst`
+    try { if (st.spaceGas) {
+      const sg = st.spaceGasBlk.spaceGasInputOf(v);
+      if (sg) { st.spaceGas.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); st.spaceGas.submit(sg); }
+    } } catch (e) { modFail('gaz przestrzeni', e); }
     try { if (st.dust) {
       const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM] });
       st.dust.frame(dt, cns, null, st.dustOn !== false);

@@ -125,6 +125,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz): świat ringów, kolizje, render |
 | `k7-obsluga` | Hala K-7: obsługa paliwowa stanowisk, ramiona SCARA, przewody, hala z Blendera |
 | `pyl-hal-k7` | Pył i para w halach K-7, źródła gazu, światła i pola siłowe hali |
+| `gaz-przestrzeni` | Gaz w otwartej przestrzeni (port dema gazy-transport): pole z transportem gęstości, scena pasa, mapy i warstwa |
 | `pas-asteroid` | Pas asteroid: pole, olbrzymy, wydobycie, rumowiska, populacje, NEA, nowy typ skały |
 | `komety` | Komety |
 | `ruch-v2` | Ruch v2 — jedyna ekonomia gry: rynki (`addMarket`), kursy i zlecenia, most i worker, napędy ruchu, pola górnicze i wyrwy, bramka bilansu |
