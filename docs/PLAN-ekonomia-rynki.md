@@ -281,3 +281,32 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - E4: piractwo w paśmie 12–20%;
   - E2: bez widoku vanów.
   - Ruszyły nowe sesje E9 (hipercruise a kolizje), E10 (receptury realistyczne) i E11 (gazy i mgły). Wszystkie z worktree wyciętego z lokalnego `main`.
+- 2026-10-22 fala 2 scalona do `main` (78886901): E2, E5, E8, E4, E3, E9, E10, E11 i poprawka przeszkód gazu wybuchów w workerze.
+  - Konflikty rozwiązane przy scalaniu: komentarz w `driveModes.js` (E2 / E5), sufity szwu renderu (E2 + E11: `index:aktualizacja` 114) i podwójny import `gasObst` w workerze.
+  - Testy na całości:
+    - `npm test` 1693 asercje zielone (znany błąd bańki tym razem się nie ujawnił, nadal jest ukryty);
+    - `node --test` bez nowych porażek;
+    - build przechodzi;
+    - start gry w workerze: 0 pipeline'ów sync;
+    - scena gazu w trybie gracza: gaz się rysuje, 0 pipeline'ów sync.
+  - Bramka (`fala2-main`):
+    - zaliczone: przechwyty 15,5–16,3%, głód ≤ 15 min, stocznie 0 min;
+    - niezaliczone: kolejki (Ceres 3,2–3,3, Oberon 2,7) i tick 25–27 ms (mierzony pod obciążeniem).
+- 2026-10-22: sesje nie pytają użytkownika — pytania idą do orkiestratora, a decyzje użytkownika zbierane są w jedną listę.
+- 2026-10-22 użytkownik przyjął wszystkie rekomendacje orkiestratora:
+  - prędkości E5: Atlas 507, dopalacz 1137, warp Atlasa Mk II, krótkie TRAVEL TO według propozycji;
+  - hipercruise w strefie planety ×0,6;
+  - gaz pasa: siarka −30% jasności, gaz zastępuje stare płaty mgły w pasie, etap GK-5b;
+  - receptury E10 w wariancie grywalnym, krokami przez bramkę: Księżyc jako kopalnia, uran tylko z Kuipera przy połowie popytu, reaktor D–He-3, tarcze jako towar, azot z Tytana;
+  - fregata z warpem Mk I;
+  - bańka E6 rusza;
+  - E2b w sesji E2.
+- 2026-10-22 decyzja: hipercruise dostaje OBECNY efekt warpa (struga WARP, smugi, kamera). Nowe efekty warpa robi użytkownik, więc wyglądu warpa nie ruszamy.
+- Zadania po tych decyzjach:
+  - E4: kolejki i tick;
+  - E5: Księżyc ×0,6 i efekt hipercruise;
+  - E9: bezpieczniki hipercruise (płyta ringu, olbrzym);
+  - E10: wdrożenie wariantu grywalnego razem z warpem fregaty i składem warpa;
+  - E11: GK-5b, siarka, jedna mgła;
+  - E2: E2b;
+  - E6: bańka — najpierw prom przy Księżycu.
