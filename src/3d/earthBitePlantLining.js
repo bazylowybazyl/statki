@@ -5,6 +5,8 @@ import * as THREE from 'three/webgpu';
 import {
   DEG, PART, finalizePart, bowlPoint, surfacePoint, biteCenter, plantZ0, rimAngle, rimPsi
 } from './earthBitePlantFrame.js';
+// AGENT: przewody mają zaczynać się przy stopie ściany (`wallFootPoint`, `bowlPsiAtHeight` — earthBitePlantFrame.js);
+// od korka do stopy prowadzi je korek po mostach nad lawą (docs/BRIEF-korek.md § Kontrakt).
 
 /** Wymiary obudowy (R Ziemi). */
 export const LINING_DEFAULTS = Object.freeze({

@@ -47,6 +47,8 @@ export const PLANT_LAYOUT = Object.freeze({
   hubRing: 0.05,      // promień pierścienia odbiornika
   elevators: [30, 90, 150, 210, 270, 330],   // azymuty wind w ramie gryzu (0 — wschód, 90 — północ)
   anchorPad: 0.015,   // odsunięcie kotwic wind za krawędź gryzu [rad]
+  footH: 0.045,       // STOPA ŚCIANY: wysokość, na której mosty korka (nad lawą, w azymutach wind) dochodzą do ściany gryzu,
+                      // a zaczynają się przewody obudowy (pierścień przy stopie i przewody w górę ścian)
   timeScale: 1
 });
 
@@ -94,6 +96,23 @@ export function bowlPoint(phi, psi, lift, b, z0, out = new THREE.Vector3()) {
   const p = [0, 1, 2].map((k) => C[k] + beta * u[k]);
   const d = (a, c) => a[0] * c[0] + a[1] * c[1] + a[2] * c[2];
   return out.set(d(p, E), d(p, C) - z0, -d(p, N));
+}
+
+/** Kąt ψ (od dna, w azymucie phi), na którym ściana gryzu leży na wysokości h nad dnem (bisekcja po dokładnym β). */
+export function bowlPsiAtHeight(phi, h, b = EARTH_BITE.radiusR) {
+  const z0 = plantZ0(b);
+  const p = new THREE.Vector3();
+  let lo = 0, hi = rimPsi(phi, b);
+  for (let i = 0; i < 48; i++) {
+    const mid = (lo + hi) * 0.5;
+    if (bowlPoint(phi, mid, 0, b, z0, p).y < h) lo = mid; else hi = mid;
+  }
+  return (lo + hi) * 0.5;
+}
+
+/** Stopa ściany w azymucie phi (wysokość L.footH), uniesiona o `lift` nad ścianę — rama elektrowni. */
+export function wallFootPoint(L, b, phi, lift = 0, out = new THREE.Vector3()) {
+  return bowlPoint(phi, bowlPsiAtHeight(phi, L.footH, b), lift, b, plantZ0(b), out);
 }
 
 /** Normalna ściany gryzu skierowana do wnętrza (≈ ku środkowi kuli gryzu) w punkcie P ramy. */

@@ -71,18 +71,22 @@ test `tests/earthBitePlant.test.mjs`.
   promień rdzenia), `uPlantLayer` (warstwa siatki przezroczystej), `uPlantBeamLen`, `uPlantState` (przekaz, magazyn),
   `uPlantCork` (promień korka, h wierzchu, h wylotu, gardziel), `uPlantHub` (h odbiornika, pierścień), `uPlantMisc`
   (zapas). Nowy klucz = zmiana w Common i w orkiestratorze (zgłoś).
-- Liny łączą się z odbiornikiem w `tetherHubPoint(L, b, φ)` (`earthBitePlantElevators.js`) — odbiornik stawia tam doki;
-  kotwice stoją w `rimAngle(φ) + anchorPad` w azymutach `L.elevators`, przewody obudowy dochodzą do nich.
+- WINDY IDĄ DO RINGU PLANETARNEGO (decyzja użytkownika 2026-10-22: „winda ma być do ringu planetarnego”), nie do
+  odbiornika — odbiornik nie ma doków lin (jest tylko odbiornikiem promienia, magazynem i nadajnikiem przekazu do ringu).
+  Kotwice stoją w `rimAngle(φ) + anchorPad` w azymutach `L.elevators`, przewody obudowy dochodzą do nich.
+- STOPA ŚCIANY (`wallFootPoint(L, b, φ)`, wysokość `L.footH`): korek stawia w azymutach `L.elevators` MOSTY nad lawą od
+  swojego boku do stopy ściany i niesie po nich przewody (PIPE) od korka do stopy; obudowa zaczyna przy stopie: pierścień
+  przewodu wokół stopy ściany, przewody główne w górę ścian do kotwic wind, boczne (`liningSideConduits`) do podstacji.
 
 ## Podział plików (każdy pisze TYLKO swoje)
 
 | Rola | Pliki | Zakres |
 |---|---|---|
 | MAT | `earthBitePlant.tsl.js`, `earthBitePlantCommon.tsl.js` (tylko dopisywanie pomocników, eksporty zostają) | materiał metalu (wszystkie rodzaje 0–7) i przepływu (8–9), światło, mikro-detal |
-| CORK | `earthBitePlantCork.js` (+ własny `.tsl.js` dodatków, jeśli trzeba) | korek: bryła, tarasy, budowle, krater i cewki wylotu, przypory nad lawą do stóp ścian |
-| LINING | `earthBitePlantLining.js` | obudowa dziury: korona brzegu z emiterami pola, żebra i galerie ścian, przewody i podstacje |
-| ELEV | `earthBitePlantElevators.js`, `earthBitePlantClimbers.tsl.js` (nowy) | windy: kotwice-stacje, wieże, liny / taśmy, kabiny na GPU (dodatek) |
-| ORBIT | `earthBitePlantOrbital.js` | odbiornik: pierścień-stacja, czasza zbierająca, doki lin, radiatory, magazyn, nadajnik przekazu |
+| CORK | `earthBitePlantCork.js` (+ własny `.tsl.js` dodatków, jeśli trzeba) | korek: bryła, tarasy, budowle, krater i cewki wylotu, mosty nad lawą do stopy ściany z przewodami |
+| LINING | `earthBitePlantLining.js` | obudowa dziury: korona brzegu z emiterami pola, żebra i galerie ścian, przewody od stopy ściany i podstacje |
+| ELEV | `earthBitePlantElevators.js`, `earthBitePlantClimbers.tsl.js` (nowy) | windy do ringu: kotwice-stacje, wieże, liny, kabiny na GPU (dodatek) |
+| ORBIT | `earthBitePlantOrbital.js` | odbiornik: pierścień-stacja, czasza zbierająca, radiatory, magazyn, nadajnik przekazu (bez doków lin) |
 | BEAM | `earthBitePlantBeam.js`, `earthBitePlantBeam.tsl.js` | promień główny i przekaźnikowy: warstwy, spirale, impulsy, pierścienie zamknięcia (`buildBeamHardware`), rozbłyski |
 
 Wspólne (tylko orkiestrator): `earthBitePlant.js`, `earthBitePlantFrame.js`, `tests/earthBitePlant.test.mjs`,
