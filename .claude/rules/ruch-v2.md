@@ -46,6 +46,11 @@ paths:
 - `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. Progi (`PLAN-ekonomia-rynki.md` § 5): przechwyty w paśmie 12–20% kursów z ładunkiem (decyzja użytkownika 2026-10-22: cel ~15%; puste przeloty liczone osobno), głód chcianego surowca ≤ 30 min (na zerze = poniżej min(1% magazynu, 15 min zużycia brutto stacji)), stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms (mierz w ciszy — przy innych sesjach ta sama baza skacze 25 → 55 ms).
 - Port większy niż z planu przeładunku: `MARKET_DOCK_OVERRIDES` w `src/data/markets.js` (`berthMultiplier` dla id rynku); plan (`stationHaulTonnage`) nie widzi wypraw górniczych z portu ani kupców. Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
 
+## Garnizon w K-7 (E4)
+
+- K-7 to port wojskowy: stanowiska z rolą `military` zajmują tylko kursy WAR i PATROL (`berthRoleForCourse`). Rotacja garnizonu (`tickGarrison` w `patrols.js`, wołana z `tickWar`) wysyła okręty frakcji z patrolu wokół portu domowego na postój i tankowanie (`DWELL_REASON.REFUEL`) i z powrotem: `dutyShare` 30% gotowej floty frakcji, najwyżej `berthShare` 60% stanowisk wojskowych portu, na które wejdzie fregata; ocalali z kampanii wracają do portu domowego (`launchCampaignReturn`, do `returnCap`). Tylko porty z halami wojskowymi (Ziemia, Mars, Jowisz).
+- Rotacja to WIDOK garnizonu: okręty nie schodzą z zapasu frakcji, a garnizon ma własny strumień losowości (`rngState`) i własne id kursów (`garrison-NNNNN`) — gospodarka i wojna są identyczne liczba w liczbę z rotacją i bez niej. Nowa logika garnizonu, która zmienia zapas albo wojnę, musi to łamać świadomie i przejść bramkę.
+
 ## Pułapki
 
 1. **Id z `length + 1`** w kolekcji, z której się usuwa = kolizja z żywym obiektem i ciche przepięcie indeksu (wyciek floty 2026-09-26: tysiące jednostek BUSY bez kursu). Nowe id — licznik monotoniczny na właścicielu (`company.shipSeq`, `registry.nextId`, `fleet.nextOrderId` z indeksem użytych id). `shipyards.js` ma jeszcze `yards.length + 1` — bez skutków, dopóki stocznie nie znikają.

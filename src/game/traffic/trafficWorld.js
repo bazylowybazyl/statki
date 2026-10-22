@@ -266,7 +266,8 @@ function buildTickOptions(world) {
   return {
     // Notowania dyspozytora z tego kroku — stocznie licytują się nimi o podzespoły.
     shipyards: { getEconomy, quotes: () => director.quotes },
-    war: { shipyards, stations, network, registry, getEconomy, rng },
+    // `docks` — porty wojskowe K-7 dla rotacji garnizonu (`tickGarrison`).
+    war: { shipyards, stations, network, registry, getEconomy, rng, docks: world.docks },
     piracy: {
       stations, registry, getEconomy, rng,
       // Siła kontroli na szlaku = to, o ile patrol zbija tam ryzyko. Ta sama
