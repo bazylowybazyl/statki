@@ -11,13 +11,8 @@
 import { TRAFFIC_CARGO_BAY_HULLS } from '../data/cargoBays.js';
 import { K7_BANK_SLOTS } from '../3d/haloRing/haloPortK7Layout.js';
 import { HALO_BAY } from '../3d/haloRing/haloPortBays.js';
-/**
- * Kontrakt przeładunku bańki (E12 ↔ E6, 2026-10-22): `actors.cargo` — Float32Array, jeden rekord na encję przy
- * stanowisku (fazy capture / docked / undock). AGENT: gdy E6 dopisze stałe do trafficProtocol.js (ACTOR_CARGO_*),
- * importuj je stamtąd — układ ten sam.
- */
-export const ACTOR_CARGO_STRIDE = 8;
-export const ACTOR_CARGO_FIELD = Object.freeze({ ID: 0, MODE: 1, DWELL: 2, MOVE: 3, RES: 4, FILL: 5, UNITS: 6, FLAGS: 7 });
+// Kontrakt przeładunku bańki (E12 ↔ E6): koder w workerze ruchu, układ rekordu — jedno źródło.
+import { ACTOR_CARGO_FIELD, ACTOR_CARGO_STRIDE } from './traffic/bubbleCargo.js';
 
 /**
  * Pola zatok wg klasy (id stanowiska `…-MG1`, `…-L01`, `…-M02`, `…-S01`) — wymiary pola, portal taśmy i pół szerokości
@@ -127,7 +122,9 @@ export function buildPortCargoFrame(frame, o) {
   }
   frame.stats.yards = frame.yardCount;
   const list = o.bubble?.list;
-  if (!list || !frame.yardCount) return frame;
+  if (!frame.yardCount) return frame;
+  if (o.stress > 0) return stressOps(frame, o);
+  if (!list) return frame;
   const cargo = o.cargo;
   for (let i = 0; i < list.length && frame.opCount < 48; i++) {
     const a = list[i];
@@ -165,4 +162,29 @@ function demoCargo(id) {
   if (_demo.size > 512) _demo.clear();
   _demo.set(id, r);
   return r;
+}
+
+// Narzędzia (`?przeladunekStres=N`): N syntetycznych przeładunków na polach w kadrze (kadłub wg klasy pola, statek
+// na środku pola, tryb na zmianę, zegar postoju przesunięty na pole) — pomiar kosztu obrazu bez czekania na ruch.
+// Proxy kadłubów nie ma (rysuje je tylko bańka) — mierzy się sam przeładunek.
+const STRESS_HULL = Object.freeze({ S: 'inter_station_shuttle', M: 'container_ship', L: 'long_haul_freighter', MEGA: 'heavy_freighter_proxy' });
+function stressOps(frame, o) {
+  const n = Math.min(o.stress | 0, frame.yardCount, 48);
+  const t = Number(o.time) || 0;
+  for (let i = 0; i < n; i++) {
+    const y = frame.yards[i];
+    const r = rec(frame.ops, frame.opCount, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0 }));
+    const unload = (i & 1) === 0;
+    r.seed = 900000 + i; r.yard = i; r.hull = STRESS_HULL[y.size] || 'container_ship';
+    r.x = y.x; r.y = y.y; r.angle = y.angle;
+    r.mode = unload ? 'unload' : 'load'; r.fill = 0.85; r.resourceId = DEMO_RES[i % DEMO_RES.length];
+    r.dwell = unload ? 120 : 90; r.move = 0;
+    // Postój w pętli przesuniętej na pole: wrota, praca roju, zamykanie — wszystkie fazy naraz na różnych polach.
+    r.dockTime = ((t + i * 13) % (r.dwell - 4)) + 2;
+    r.halfBeam = 0;
+    frame.opCount++;
+  }
+  frame.stats.ops = n;
+  frame.stats.withCargo = n;
+  return frame;
 }

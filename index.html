@@ -15988,6 +15988,7 @@
     const _portCargoQuery = new URLSearchParams(location.search);
     const PORT_CARGO_ON = _portCargoQuery.get('przeladunek') !== '0';
     const PORT_CARGO_DEMO = _portCargoQuery.get('przeladunekDemo') === '1';
+    const PORT_CARGO_STRESS = Number(_portCargoQuery.get('przeladunekStres')) || 0;
     const _portCargoFrame = createPortCargoFrame();
     const _portCargoCam = { x: 0, y: 0, zoom: 1 };
     /** Luk Atlasa przy postoju i handlu: postęp wrót 0…1 (jak ScoutBay.door) — luk rysuje scoutBay3D. */
@@ -16031,7 +16032,7 @@
       const cargo = trafficV2?.actors ? syncPortCargoContract(_portCargoFrame, trafficV2.actors, trafficV2.tables?.resources) : null;
       buildPortCargoFrame(_portCargoFrame, {
         bubble: tb, berths: trafficV2?.tables?.bubblePorts?.earth || null, time: trafficV2 ? trafficV2.time : 0,
-        cam: _portCargoCam, viewW: W, viewH: H, cargo, demo: PORT_CARGO_DEMO, player
+        cam: _portCargoCam, viewW: W, viewH: H, cargo, demo: PORT_CARGO_DEMO, stress: PORT_CARGO_STRESS, player
       });
       return _portCargoFrame;
     }

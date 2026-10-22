@@ -14,6 +14,9 @@ import { TRAFFIC_CARGO_BAY_HULLS, cargoBayHull, cargoHullBays } from '../src/dat
 import { TRAFFIC_HULLS, trafficHullRenderSize } from '../src/data/trafficHulls.js';
 import { SWARM_DRONE_CLASSES, SWARM_LOADED_SPEED } from '../src/data/swarmDrones.js';
 import { applyCargoOpsBlock, cargoOpsBlockSize, packCargoOpsBlock } from '../src/render/blocks/cargoOpsBlock.js';
+import { ACTOR_CARGO_STRIDE, writeBubbleCargo } from '../src/game/traffic/bubbleCargo.js';
+import { createPortCargoFrame, syncPortCargoContract, bayBerthSize } from '../src/game/portCargoFrame.js';
+import { dwellStage, DWELL_REASON } from '../src/game/traffic/courseRegistry.js';
 import { CargoBayBatch } from '../src/3d/cargo/bayBatch.tsl.js';
 import { PortConveyors } from '../src/3d/cargo/conveyor.tsl.js';
 import { SwarmDroneMeshes } from '../src/3d/swarm/swarmDrones.tsl.js';
@@ -129,6 +132,28 @@ test('plac pola: stoły po obu burtach poza obrysem statku, taśma dalej od burt
 test('statek w układzie stanowiska: shipInBerth', () => {
   const r = shipInBerth({ x: 100, y: 50, angle: Math.PI / 2 }, { x: 100, y: 80, angle: Math.PI / 2 + 0.1 });
   assert.ok(Math.abs(r.u - 30) < 1e-9 && Math.abs(r.v) < 1e-9 && Math.abs(r.angle - 0.1) < 1e-9);
+});
+
+test('kontrakt E6 (actors.cargo): koder kursu na postoju → dekoder gry; postój bez ładunku pomijany', () => {
+  const resources = ['iron_ore', 'copper_ore', 'steel'];
+  const course = { unitClass: 'container_ship', stageIndex: 0,
+    stages: [dwellStage('earth', 120, DWELL_REASON.UNLOAD, null, { moveSeconds: 7 })],
+    payload: { resourceId: 'steel', units: 480, mass: 120 } };
+  const buf = new Float32Array(ACTOR_CARGO_STRIDE * 2);
+  assert.equal(writeBubbleCargo(buf, 0, 4242, course, (id) => resources.indexOf(id)), 1);
+  const refuel = { unitClass: 'terran_frigate', stageIndex: 0, stages: [dwellStage('earth', 60, DWELL_REASON.REFUEL)], payload: {} };
+  assert.equal(writeBubbleCargo(buf, 1, 7, refuel, () => -1), 0);
+  const frame = createPortCargoFrame();
+  const map = syncPortCargoContract(frame, { seq: 1, cargo: buf.subarray(0, ACTOR_CARGO_STRIDE) }, resources);
+  const r = map.get(4242);
+  assert.equal(r.mode, 'unload');
+  assert.equal(r.resourceId, 'steel');
+  assert.equal(r.dwell, 120);
+  assert.equal(r.move, 7);
+  assert.ok(Math.abs(r.fill - 120 / 160) < 1e-6, 'wypełnienie = masa / ładowność klasy (hauler 160 t)');
+  assert.equal(bayBerthSize('earth:Z-02:Z02-MG1'), 'MEGA');
+  assert.equal(bayBerthSize('earth:Z-02:Z02-M04'), 'M');
+  assert.equal(bayBerthSize('earth:K7-1:C-01'), null);
 });
 
 test('blok cargoOps: pakowanie i odczyt (pola, przeładunki, gracz)', () => {

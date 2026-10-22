@@ -107,10 +107,10 @@ try {
   // przed promem; po `--szukaj` s — najkrótszy postój, jaki jest.
   const PRIO = { container_ship: 0, long_haul_freighter: 1, heavy_freighter: 2, inter_station_shuttle: 3 };
   let target = null;
-  const SEARCH = Number(args.szukaj || 150);
+  const SEARCH = args.tylkoKoszt ? 0 : Number(args.szukaj || 150);
   for (let k = 0; k < SEARCH && !target; k++) {
     const list = await dockedFreighters();
-    const fresh = list.filter((a) => a.dock < 4 && (PRIO[a.hull] < 3 || k > SEARCH * 0.6))
+    const fresh = list.filter((a) => a.dock < 4 && (args.kadlub ? a.hull === args.kadlub : (PRIO[a.hull] < 3 || k > SEARCH * 0.6)))
       .sort((a, b) => (PRIO[a.hull] - PRIO[b.hull]) || (a.dock - b.dock));
     target = fresh[0] || (k >= SEARCH - 1 ? list.sort((a, b) => a.dock - b.dock)[0] : null) || null;
     if (!target) await waitGame(1);
@@ -147,8 +147,14 @@ try {
     await screenshotPng(cdp, join(out, '20-zatoka.png'));
   }
 
-  // Koszt: kadr zatoki (pola, statki przy stanowiskach) — worker renderu CPU / GPU, liczby z PerfHUD workera.
+  // Koszt: szeroki kadr zatok (pola, statki przy stanowiskach — `--kosztKadr` j. wysokości) — worker renderu CPU / GPU,
+  // liczby z PerfHUD workera. Drugi przebieg z `--flaga przeladunek=0` w tym samym miejscu daje „przed”.
   if (args.koszt !== '0') {
+    const c = target || { x: spot.bx, y: spot.by };
+    report.kosztKadry = {};
+    for (const vh of String(args.kosztKadr || '9000,2600').split(',').map(Number)) {
+    await ev(`window.PortCargo.look(${c.x}, ${c.y}, ${vh})`);
+    await waitGame(2);
     const costRun = async () => {
       const rows = [];
       for (let i = 0; i < 20; i++) {
@@ -161,9 +167,12 @@ try {
       return { gpuMs: avg('gpu'), cpuWorkerMs: avg('cpu'), przeladunkow: avg('ops'), pol: avg('yards') };
     };
     report.koszt = await costRun();
-    console.log('koszt', JSON.stringify(report.koszt));
-    await screenshotPng(cdp, join(out, '30-koszt-kadr.png'));
+    report.kosztKadry[vh] = report.koszt;
+    console.log('koszt kadr', vh, JSON.stringify(report.koszt));
+    await screenshotPng(cdp, join(out, `30-koszt-kadr-${vh}.png`));
+    }
   }
+  if (args.tylkoKoszt) throw new Error('tylko koszt — koniec');
 
   // Luk Atlasa: gracz na wolnym polu MEGA zatoki z ładunkiem — postój (berth-hold) otwiera luk, kontenery z ładunku.
   await ev(`window.PortCargo.lookEnd()`);

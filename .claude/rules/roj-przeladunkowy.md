@@ -12,7 +12,7 @@ paths:
 
 ## Pliki obszaru (z mapy repozytorium)
 
-- **`src/3d/swarm/`, `src/game/swarm/`, `src/data/swarmDrones.js`** — rój dronów przeładunkowych (demo `dema/roj-webgpu.html`, jeszcze nie w grze): klasy S / M / L / Capital (jeden kontener standardowy, chwyt płaski 1 / 2 / 4 / 8, ramiona z chwytakami — wysuwane w większych klasach), symulacja i unikanie ORCA w compute (`swarmSim.js`), wieża portu na CPU (`swarmPlanner.js`, księga pojedynczych kontenerów). Opis: § „Rój dronów przeładunkowych” niżej, `docs/webgpu/DEMO-ROJ.md`.
+- **`src/3d/swarm/`, `src/game/swarm/`, `src/data/swarmDrones.js`** — rój dronów przeładunkowych (demo `dema/roj-webgpu.html`; w grze — model, chwyty i lot z planu analitycznego przy stanowiskach zatok, reguła `przeladunek-portow`): klasy S / M / L / Capital (jeden kontener standardowy, chwyt płaski 1 / 2 / 4 / 8, ramiona z chwytakami — wysuwane w większych klasach), symulacja i unikanie ORCA w compute (`swarmSim.js`), wieża portu na CPU (`swarmPlanner.js`, księga pojedynczych kontenerów). Opis: § „Rój dronów przeładunkowych” niżej, `docs/webgpu/DEMO-ROJ.md`.
 
 ## Rój dronów przeładunkowych (demo WebGPU 2026-10-06; `src/3d/swarm/`, `src/game/swarm/`, `docs/webgpu/DEMO-ROJ.md`)
 
@@ -27,3 +27,5 @@ paths:
 - Pułapka (three r183): niepuste `updateRanges` = wysyłka TYLKO zakresów — po `init()` zakresy dopisane w tej samej klatce zjadały pełną wysyłkę i na GPU zostawały rekordy poprzedniej sceny. Bufor przebudowywany w całości + zapisy zakresami w tej samej klatce → wymuś pełną wysyłkę (`SwarmSim._tasksFull`).
 
 - Narzędzia: `node scripts/webgpu/roj-demo.mjs --tryb test | metryki [--tune k=v] [--zastoj 90] | zrzuty | wydajnosc` (metryki: czas, puste przeloty, zderzenia obrysów, histogram faz, zrzut zastoju). Integracja z grą (ładownie, port K-7, `Core3D.addFxStep`, rozgrzewka) — plan w `DEMO-ROJ.md`.
+
+- W GRZE (E12, 2026-10-22 — reguła `przeladunek-portow`): rój przy stanowiskach zatok Ziemi to model, chwyty, ramiona, parametry lotu i zegar ×4 z dema, ale ruch z PLANU ANALITYCZNEGO (`src/game/swarm/berthTransfer.js` — funkcja ziarna kursu i zegara postoju), nie z symulacji GPU (`swarmSim.js`, wieża) — decyzja orkiestratora „tymczasowo, do decyzji użytkownika”. Bryła i materiał dronów (`SwarmDroneMeshes`, `SwarmDroneLights`) czytają bufor storage pisany z CPU (`portCargoDrones`) — ten sam układ rekordu `SWARM_DRONE`; zmiana układu rekordu = zmiana w kernelu, w planie analitycznym i w `portCargo3D.js`.
