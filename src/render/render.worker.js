@@ -132,7 +132,8 @@ if (isWorker) {
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
     st.hallDust = (await import('../3d/gasField/hallDust.js')).HallDust;
-    // gaz w otwartej przestrzeni (pas — docs/PLAN-gazy-kosmos.md): bloki `spaceGas` (wejście) i `gasObst` (kadłuby)
+    // gaz w otwartej przestrzeni (pas — docs/PLAN-gazy-kosmos.md): bloki `spaceGas` (wejście) i `gasObst` (kadłuby;
+    // ten sam blok podaje przeszkody gazu wybuchów — kopia GAS_OBST_IN strony, RW-11c)
     st.spaceGas = (await import('../3d/spaceGas/spaceGas.js')).SpaceGas;
     st.spaceGasBlk = await import('./blocks/spaceGasBlock.js');
     st.gasObstBlk = await import('./blocks/gasObstBlock.js');
@@ -144,8 +145,6 @@ if (isWorker) {
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
       model: await import('../3d/reactor3D.js'), core: await import('../game/reactorCore.js') };
     st.hazards = st.hazMods.blk.createHazardMirrorState();
-    // przeszkody gazu wybuchów (blok `gasObst` — kopia GAS_OBST_IN strony; RW-11c)
-    st.gasObstBlk = await import('./blocks/gasObstBlock.js');
     // luk Atlasa (fregata zwiadu): rig ładowni i dziura w skórze lustra gracza; postęp wrót z wiadomości strony
     st.bayMod = await import('../3d/cargo/scoutBay3D.js');
     // stacja piracka (world3d.js): bryła na lustrze stacji, którą strona podpięła (`world3dPirate` w opisie)
