@@ -33,7 +33,9 @@ export const CARGO_OPS_BLOCK = Object.freeze({
   MODE_LOAD: 1,
   MODE_UNLOAD: 2,
   /** Gracz: fregata zwiadu w luku (miejsce zajęte). */
-  PLAYER_FRIGATE: 1
+  PLAYER_FRIGATE: 1,
+  /** Przeładunek: statek jeszcze w przechwycie (poza w drodze na stanowisko — bez roju na żywo). */
+  OP_CAPTURE: 1
 });
 
 const B = CARGO_OPS_BLOCK;
@@ -48,7 +50,7 @@ export function cargoOpsBlockSize() {
 /**
  * Ramka przeładunku (strona gry) → blok. frame: { yards: [{ x, y, angle, size, padLength, padBeam, portalGap,
  * halfBeam, seed }], yardCount, ops: [{ seed, yard, hull, x, y, angle, mode, fill, resourceId, dwell, move,
- * dockTime, halfBeam }], opCount, player: { x, y, angle, door, fill, hull, frigate, res: [[id, udział]…] } | null }.
+ * dockTime, halfBeam, capture }], opCount, player: { x, y, angle, door, fill, hull, frigate, res: [[id, udział]…] } | null }.
  */
 export function packCargoOpsBlock(F, frame) {
   let o = B.HEAD;
@@ -71,7 +73,7 @@ export function packCargoOpsBlock(F, frame) {
     F[o + O.MODE] = r.mode === 'load' ? B.MODE_LOAD : r.mode === 'unload' ? B.MODE_UNLOAD : 0;
     F[o + O.FILL] = r.fill; F[o + O.RES] = RES_INDEX.get(r.resourceId) ?? -1;
     F[o + O.DWELL] = r.dwell; F[o + O.MOVE] = r.move || 0; F[o + O.DOCK_TIME] = r.dockTime;
-    F[o + O.HALF_BEAM] = r.halfBeam || 0; F[o + O.FLAGS] = 0; F[o + 14] = 0; F[o + 15] = 0;
+    F[o + O.HALF_BEAM] = r.halfBeam || 0; F[o + O.FLAGS] = r.capture ? B.OP_CAPTURE : 0; F[o + 14] = 0; F[o + 15] = 0;
     o += O.STRIDE;
     nOp++;
   }
@@ -133,7 +135,7 @@ export function applyCargoOpsBlock(blk, out) {
   }
   out.yardCount = ny;
   for (let i = 0; i < nOp; i++, o += O.STRIDE) {
-    const r = rec(out.ops, i, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0 }));
+    const r = rec(out.ops, i, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0, capture: false }));
     r.seed = F[o + O.SEED]; r.yard = F[o + O.YARD]; r.hull = PORT_CARGO_HULLS[F[o + O.HULL] | 0] || '';
     r.x = F[o + O.SX]; r.y = F[o + O.SY]; r.angle = F[o + O.SA];
     const m = F[o + O.MODE];
@@ -142,6 +144,7 @@ export function applyCargoOpsBlock(blk, out) {
     const ri = F[o + O.RES] | 0;
     r.resourceId = ri >= 0 ? RESOURCE_KEYS[ri] || null : null;
     r.dwell = F[o + O.DWELL]; r.move = F[o + O.MOVE]; r.dockTime = F[o + O.DOCK_TIME]; r.halfBeam = F[o + O.HALF_BEAM];
+    r.capture = ((F[o + O.FLAGS] | 0) & B.OP_CAPTURE) !== 0;
   }
   out.opCount = nOp;
   if ((F[2] | 0) > 0) {

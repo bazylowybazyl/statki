@@ -163,8 +163,10 @@ export function buildPortCargoFrame(frame, o) {
     const c = cargo ? cargo.get(a.id) : null;
     if (!c || !c.mode) continue;
     frame.stats.withCargo++;
-    const r = rec(frame.ops, frame.opCount, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0 }));
+    const r = rec(frame.ops, frame.opCount, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0, capture: false }));
     r.seed = a.id; r.yard = yi; r.hull = hull;
+    // Przechwyt: poza jeszcze w drodze na stanowisko (interpolacja bańki) — obraz bez roju na żywo.
+    r.capture = a.phase === 'capture';
     // Poza w chwili klatki (cx / cy / ca — ekstrapolacja bańki do kroku; postój = stała poza).
     r.x = a.cx; r.y = a.cy; r.angle = a.ca;
     r.mode = c.mode; r.fill = c.fill; r.resourceId = c.resourceId; r.dwell = c.dwell; r.move = c.move;
@@ -188,7 +190,7 @@ function stressOps(frame, o) {
     const y = frame.yards[i];
     const r = rec(frame.ops, frame.opCount, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0 }));
     const unload = (i & 1) === 0;
-    r.seed = 900000 + i; r.yard = i; r.hull = STRESS_HULL[y.size] || 'container_ship';
+    r.seed = 900000 + i; r.yard = i; r.hull = STRESS_HULL[y.size] || 'container_ship'; r.capture = false;
     r.x = y.x; r.y = y.y; r.angle = y.angle;
     r.mode = unload ? 'unload' : 'load'; r.fill = 0.85; r.resourceId = STRESS_RES[i % STRESS_RES.length];
     r.dwell = unload ? 120 : 90; r.move = 0;

@@ -15,7 +15,7 @@ import { TRAFFIC_HULLS, trafficHullRenderSize } from '../src/data/trafficHulls.j
 import { SWARM_DRONE_CLASSES, SWARM_LOADED_SPEED } from '../src/data/swarmDrones.js';
 import { applyCargoOpsBlock, cargoOpsBlockSize, packCargoOpsBlock } from '../src/render/blocks/cargoOpsBlock.js';
 import { ACTOR_CARGO_STRIDE, writeBubbleCargo } from '../src/game/traffic/bubbleCargo.js';
-import { buildPortCargoFrame, createPortCargoFrame, syncPortCargoContract, bayBerthSize } from '../src/game/portCargoFrame.js';
+import { PORT_CARGO_PADS, buildPortCargoFrame, createPortCargoFrame, syncPortCargoContract, bayBerthSize } from '../src/game/portCargoFrame.js';
 import { dwellStage, DWELL_REASON } from '../src/game/traffic/courseRegistry.js';
 import { CargoBayBatch } from '../src/3d/cargo/bayBatch.tsl.js';
 import { PortConveyors } from '../src/3d/cargo/conveyor.tsl.js';
@@ -237,6 +237,7 @@ test('partie (ładownie floty, taśmy, drony z bufora CPU): WGSL się buduje, li
 import { SWARM_POOL_TUNE, createSwarmBerthPool } from '../src/3d/swarm/swarmBerthPool.js';
 import { SwarmShadows, SwarmUnits } from '../src/3d/swarm/swarmUnits.tsl.js';
 import { createSwarmSlotFrames } from '../src/3d/swarm/swarmSlotFrame.js';
+import { swarmUnitRestPose } from '../src/game/swarm/swarmPort.js';
 
 function fakeCore() {
   const steps = [];
@@ -271,6 +272,131 @@ test('pula roju: slot ze stanem z zegara (przeniesione warstwy = postęp), krok 
   // Klatka: rama slotów (przesunięcie i obrót) z pozy stanowiska.
   pool.update(1 / 60, { x: 5e6, y: -6e6 }, (s) => (s.key === 2 ? { berth: { x: 5e6 + 500, y: 6e6, angle: 0.5 }, dockTime: 30, swarmStart: 8, doorClose: 100, workEnd: 99 } : null), 1);
   assert.ok(Math.abs(pool.frame.rows[b.k].z + 0.5) < 1e-9, 'obrót ramy = −kąt stanowiska');
+});
+
+// --- Regresje przeglądu E12 (runda 3) ---
+
+const M_YARD = () => berthYardGeometry({ size: 'M', padLength: 620, padBeam: 380, halfBeam: 95 });
+const slotOp = (key, mode, progress, x = 5e6) => ({ key, seed: key, hull: 'container_ship', mode, fill: 1, resourceId: 'steel', progress,
+  remainingSec: 90, ship: { u: 0, v: 0, angle: 0 }, yard: M_YARD(), berth: { x, y: 6e6, angle: 0.3 } });
+/** Odczyt GPU na niby (SwarmReadback: frame — ostatni odebrany, requested — zlecone). */
+function fakeReadback(pool, frame, fill = null) {
+  const n = pool.tune.slots * pool.tune.dronesPerSlot * 4;
+  const rb = { frame, requested: frame, latest: new Float32Array(n), reset() { this.frame = -1; this.latest.fill(0); } };
+  if (fill) fill(rb.latest);
+  pool.sim.readback = rb;
+  return rb;
+}
+const st = (b, o = {}) => ({ berth: b, dockTime: 30, swarmStart: 8, doorClose: 100, workEnd: 99, doorShut: 105, ...o });
+
+test('regresja 5: rozgrzewka wołana od razu przy addFxStep nie buduje drugiej symulacji ani siatek', () => {
+  const plain = fakeCore();
+  createSwarmBerthPool(plain).ensure();
+  const eager = { scene: new THREE.Scene(), steps: [], addFxStep(s) { this.steps.push(s); s.warm({ renderer: { compute() {} } }); return s; } };
+  const pool = createSwarmBerthPool(eager);
+  assert.ok(pool.ensure());
+  assert.equal(eager.steps.length, 1);
+  assert.equal(eager.scene.children.length, plain.scene.children.length, 'jeden komplet siatek roju');
+});
+
+test('regresja 1: domknięcie (wrota zamknięte) wysyła tylko kontenery ładowni — przeniesione na stoły zostają z GPU', () => {
+  const pool = createSwarmBerthPool(fakeCore());
+  const a = pool.activate(slotOp(1, 'unload', 0.5));
+  const yardIds = a.port.units.filter((u) => a.port.columns[u.col].kind === 'yard').map((u) => u.id);
+  assert.ok(yardIds.length > 0, 'połowa warstw już na stołach');
+  const b0 = { x: 5e6, y: 6e6, angle: 0.3 };
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, () => st(b0), 1);   // start roju (pula stała — odczyt zerowany)
+  fakeReadback(pool, 5);                                        // świeży odczyt: wszystkie drony w gniazdach
+  // Rój „przeniósł” kontener z ładowni na stół (księga wieży), a kopia CPU ma jeszcze pozę z dołączenia (jak po pracy GPU).
+  const h = a.port.units.find((u) => a.port.columns[u.col].kind === 'hold');
+  const y = a.port.units.find((u) => a.port.columns[u.col].kind === 'yard');
+  for (const k of ['col', 'level', 'cell']) [h[k], y[k]] = [y[k], h[k]];
+  a.planner.unitState[h.id] = 2;
+  a.planner.unitState[y.id] = 2;
+  const units = pool.sim.units.value;
+  units.clearUpdateRanges();
+  // Wrota domknięte, rój bez zadań → domknięcie.
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, () => st(b0, { dockTime: 110 }), 1);
+  assert.ok(a.finished && a.holdHidden, 'rój skończył, ładownia schowana');
+  const UVF = 2 * 4;
+  const U = units.array;
+  const rest = {};
+  let hidden = 0;
+  for (const r of units.updateRanges) {
+    for (let f = r.start; f < r.start + r.count; f += UVF) {
+      const id = f / UVF - a.uBase;
+      const u = a.port.units[id];
+      const kind = a.port.columns[u.col].kind;
+      if (U[f + 5] === 0) { assert.equal(kind, 'hold', `ukryty ${id} — z ładowni`); hidden++; continue; }
+      // Widoczny wysłany = kontener placu pisany przez taśmę z księgi wieży (nie stara kopia z dołączenia).
+      assert.equal(kind, 'yard', `wysłany widoczny ${id} — tylko taśma placu`);
+      swarmUnitRestPose(a.port, u, rest);
+      assert.ok(Math.abs(U[f] - rest.x) < 1e-3 && Math.abs(U[f + 1] - rest.y) < 1e-3 && Math.abs(U[f + 3] - rest.yaw) < 1e-6, `${id}: poza z księgi`);
+      assert.equal(U[f + 4], a.port.columns[u.col].bay);
+    }
+  }
+  assert.ok(hidden > 0, 'kontenery ładowni schowane za wrotami');
+  void yardIds;
+});
+
+test('regresja 3: slot oddany nowemu statkowi w tej samej klatce nie bierze odczytu poprzedniego właściciela', () => {
+  const pool = createSwarmBerthPool(fakeCore());
+  const A = pool.activate(slotOp(1, 'unload', 0));
+  const B = pool.activate(slotOp(2, 'unload', 0, 5e6 + 900));
+  const bA = { x: 5e6, y: 6e6, angle: 0.3 };
+  const bB = { x: 5e6 + 900, y: 6e6, angle: 0.3 };
+  const live = new Map([[1, bA], [2, bB]]);
+  const stateOf = (s) => (live.has(s.key) ? st(live.get(s.key)) : null);
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, stateOf, 1);   // oba pracują
+  // Odczyt w locie: zakres slotu A — drony z 7 wykonanymi zadaniami.
+  fakeReadback(pool, 5, (L) => { for (let i = 0; i < pool.tune.dronesPerSlot; i++) { L[(A.dBase + i) * 4] = 2; L[(A.dBase + i) * 4 + 1] = 7; } });
+  pool.release(A, 'wywłaszczenie');
+  live.delete(1);
+  const C = pool.activate(slotOp(3, 'unload', 0));
+  assert.equal(C.k, A.k, 'ten sam slot');
+  const bC = { x: 5e6, y: 6e6, angle: 0.3 };
+  live.set(3, bC);
+  for (let i = 0; i < 3; i++) pool.update(1 / 60, { x: 5e6, y: -6e6 }, stateOf, 1);
+  const drones = C.planner.drones;
+  assert.ok(drones.some((d) => d.assigned > 0), 'wieża przydzieliła zadania');
+  assert.ok(drones.every((d) => d.completed === 0), 'żadne zadanie nie „wykonało się” z cudzego odczytu');
+});
+
+test('regresja 4: slot trzyma kopię stanowiska (rekord ramki z puli), slot bez stanu dalej liczy się do pracy roju', () => {
+  const pool = createSwarmBerthPool(fakeCore());
+  const A = pool.activate(slotOp(1, 'unload', 0));
+  const rec = { x: 5e6, y: 6e6, angle: 0.3 };
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, () => st(rec), 1);
+  const row = pool.frame.rows[A.k].clone();
+  // Rekord ramki trafia do innego statku (pula ramki), a przeładunku A w ramce chwilowo nie ma.
+  rec.x += 4000; rec.angle = 2;
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, () => null, 1);
+  assert.equal(A.berth.x, 5e6, 'stanowisko slotu bez zmian');
+  assert.ok(pool.frame.rows[A.k].equals(row), 'rama slotu bez skoku');
+  assert.equal(pool.stats.working, 1, 'rój liczy dalej (bez zamrożenia dronów w powietrzu)');
+});
+
+test('gniazda roju poza sylwetką kadłuba: każde gniazdo ma drona, przy pełnej liczbie dronów (96 — MEGA)', () => {
+  const pool = createSwarmBerthPool(fakeCore());
+  const cases = [['inter_station_shuttle', 'S'], ['container_ship', 'M'], ['long_haul_freighter', 'L'], ['heavy_freighter_proxy', 'MEGA']];
+  for (const [hull, size] of cases) {
+    const P = PORT_CARGO_PADS[size];
+    const yard = berthYardGeometry({ size, padLength: P.padLength, padBeam: P.padBeam, portalGap: P.portalGap, halfBeam: P.yardHalfBeam });
+    const s = pool.activate({ key: hull, seed: 1, hull, mode: 'unload', fill: 1, resourceId: 'steel', progress: 0, remainingSec: 5,
+      ship: { u: 0, v: 0, angle: 0 }, yard, berth: { x: 0, y: 0, angle: 0 } });
+    assert.equal(pool.stats.padsBlocked, 0, `${hull}: gniazdo pod kadłubem / placem`);
+    if (size === 'MEGA') assert.equal(s.drones, SWARM_POOL_TUNE.dronesPerSlot, 'MEGA: 96 dronów w ciasnym oknie');
+    pool.release(s, 'test');
+  }
+});
+
+test('regresja 2: przechwyt (poza w drodze na stanowisko) przechodzi przez blok — obraz bez roju na żywo', () => {
+  const blk = { f64: new Float64Array(cargoOpsBlockSize()) };
+  const yard = { x: 0, y: 0, angle: 0, size: 'M', padLength: 620, padBeam: 380, portalGap: 0, halfBeam: 95, seed: 1 };
+  const op = (seed, capture) => ({ seed, yard: 0, hull: 'container_ship', x: 0, y: 0, angle: 0, mode: 'unload', fill: 1, resourceId: 'steel', dwell: 90, move: 0, dockTime: 1, halfBeam: 40, capture });
+  packCargoOpsBlock(blk.f64, { yards: [yard], yardCount: 1, ops: [op(1, true), op(2, false)], opCount: 2, player: null, time: 0, liveSlots: 8 });
+  const out = applyCargoOpsBlock(blk, {});
+  assert.deepEqual(out.ops.slice(0, 2).map((o) => o.capture), [true, false]);
 });
 
 test('ramka: zatoki ze wszystkich portów bańki (bez hal K-7 i pomostów), sloty roju z presetu w bloku', () => {

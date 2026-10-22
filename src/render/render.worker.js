@@ -144,8 +144,11 @@ if (isWorker) {
     st.trafficMods = { blk: await import('./blocks/trafficBlock.js'), proxy: (await import('../3d/shipProxyBatch3D.js')).ShipProxyBatch3D };
     st.trafficList = [];
     st.hexList = [];
-    // przeładunek w portach (E12): blok `cargoOps` → ładownie, kontenery, rój dronów, taśmy (import rejestruje rozgrzewkę)
-    st.cargoMods = { blk: await import('./blocks/cargoOpsBlock.js'), shared: (await import('../3d/cargo/portCargo3D.js')).sharedPortCargo3D };
+    // przeładunek w portach (E12): blok `cargoOps` → ładownie, kontenery, rój dronów, taśmy (import rejestruje rozgrzewkę);
+    // `?przeladunek=0` strony (A/B kosztu) — bez importu: bez rozgrzewki, symulacji i kroku efektów
+    let cargoOn = true;
+    try { cargoOn = !m.pageBase || new URL(m.pageBase).searchParams.get('przeladunek') !== '0'; } catch (_) { /* adres bez składni URL */ }
+    st.cargoMods = cargoOn ? { blk: await import('./blocks/cargoOpsBlock.js'), shared: (await import('../3d/cargo/portCargo3D.js')).sharedPortCargo3D } : null;
     st.cargoFrame = {};
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie

@@ -10,7 +10,7 @@
 // na wszystkie rodzaje. Mesh + InstancedBufferGeometry (nie InstancedMesh — uuid w kluczu programu), jeden
 // przepleciony bufor instancji (limit 8 buforów wierzchołków).
 import * as THREE from 'three/webgpu';
-import { Fn, attribute, int, positionGeometry, uniform, varyingProperty, vec3 } from 'three/tsl';
+import { Discard, Fn, If, attribute, dot, float, fract, int, positionGeometry, screenCoordinate, uniform, varyingProperty, vec2, vec3 } from 'three/tsl';
 import { loadImageBitmap } from '../canvas2d.js';
 import { RenderWorld } from '../../render/renderWorld.js';
 import { LEAF_RENDER_ORDER, bayInteriorFragment, bayLeafFragment, buildBayInteriorGeometry, buildLeafGeometry } from './bay.tsl.js';
@@ -55,7 +55,9 @@ function interiorTemplate() {
 
 /**
  * Skrzydła z instancji: iBayPose; iLeafP (położenie pudła w układzie ładowni x, y, z0, rekord), iLeafDims (L, W,
- * grubość), iLeafUV (wycinek sprite'a), iLeafInfo (strona, przy osi, kieszeń, środek w b) — jak uniformy rigu.
+ * grubość, skóra proxy w otworze 0…1), iLeafUV (wycinek sprite'a), iLeafInfo (strona, przy osi, kieszeń, środek w b) —
+ * jak uniformy rigu. Skóra: domknięte skrzydło odpada w pikselach, w których proxy pokazuje już skórę (ten sam szum
+ * IGN ekranu co shipProxyBatch3D.tsl.js) — przenikanie zamiast zamiany w jednej klatce.
  */
 function leafTemplate() {
   if (_leaf) return _leaf;
@@ -75,6 +77,7 @@ function leafTemplate() {
   const vUV = varyingProperty('vec4', 'vBlUV');
   const vDims = varyingProperty('vec4', 'vBlDims');
   const vInfo = varyingProperty('vec4', 'vBlInfo');
+  const vSkin = varyingProperty('float', 'vBlSkin');
   m.positionNode = Fn(() => {
     const pose = attribute('iBayPose', 'vec4');
     const lp = attribute('iLeafP', 'vec4');
@@ -87,10 +90,16 @@ function leafTemplate() {
     vBay.assign(lp.w);
     vUV.assign(attribute('iLeafUV', 'vec4'));
     vDims.assign(dims);
+    vSkin.assign(dims.w);
     vInfo.assign(attribute('iLeafInfo', 'vec4'));
     return vec3(pose.x.add(p.x.mul(pose.z)).sub(p.y.mul(pose.w)), pose.y.add(p.x.mul(pose.w)).add(p.y.mul(pose.z)), p.z);
   })();
-  m.fragmentNode = bayLeafFragment(int(vBay.add(0.5)), vUV, vDims, vInfo, vU, vN, vFace);
+  const leaf = bayLeafFragment(int(vBay.add(0.5)), vUV, vDims, vInfo, vU, vN, vFace);
+  m.fragmentNode = Fn(() => {
+    const ign = fract(float(52.9829189).mul(fract(dot(screenCoordinate.xy, vec2(0.06711056, 0.00583715)))));
+    If(ign.lessThan(vSkin), () => { Discard(); });
+    return leaf;
+  })();
   _leaf = m;
   return m;
 }
@@ -199,7 +208,7 @@ export class CargoBayBatch {
    * door — postęp wrót [s osi przebiegu], table — rekord w CargoBayTable (światło), seed — ziarno lamp.
    * Rekord tablicy dostaje te same współrzędne (kontenery i drony liczą światło względem tego samego początku).
    */
-  push(hullKey, x, y, yaw, door, table, seed = 0) {
+  push(hullKey, x, y, yaw, door, table, seed = 0, skin = 0) {
     const k = this.kind(hullKey);
     if (!k || k.count >= this.capacity) return null;
     const geo = k.geo;
@@ -224,7 +233,7 @@ export class CargoBayBatch {
       const p = m * BAY_LEAF_STRIDE;
       Lb[p] = x; Lb[p + 1] = y; Lb[p + 2] = c; Lb[p + 3] = s;
       Lb[p + 4] = q.da; Lb[p + 5] = bc + q.db; Lb[p + 6] = q.z0; Lb[p + 7] = table;
-      Lb[p + 8] = L.a1 - L.a0; Lb[p + 9] = wB; Lb[p + 10] = geo.leafT; Lb[p + 11] = 0;
+      Lb[p + 8] = L.a1 - L.a0; Lb[p + 9] = wB; Lb[p + 10] = geo.leafT; Lb[p + 11] = skin;
       const uv = k.leafUV[i];
       Lb[p + 12] = uv[0]; Lb[p + 13] = uv[1]; Lb[p + 14] = uv[2]; Lb[p + 15] = uv[3];
       Lb[p + 16] = L.side; Lb[p + 17] = L.index === 0 ? 1 : 0; Lb[p + 18] = geo.door === 'pocket' ? 1 : 0; Lb[p + 19] = bc + q.db;
@@ -235,19 +244,22 @@ export class CargoBayBatch {
   end() {
     let draws = 0;
     for (const k of this.kindList) {
-      for (const [mesh, buf, n, stride] of [[k.imesh, k.ibuf, k.count, BAY_INTERIOR_STRIDE], [k.lmesh, k.lbuf, k.leafCount, BAY_LEAF_STRIDE]]) {
-        mesh.position.set(this.origin.x, this.origin.y, 0);
-        mesh.geometry.instanceCount = n;
-        mesh.visible = n > 0;
-        if (n > 0) {
-          buf.updateRanges.length = 0;
-          buf.addUpdateRange(0, n * stride);
-          buf.needsUpdate = true;
-          draws++;
-        }
-      }
+      draws += this._commit(k.imesh, k.ibuf, k.count, BAY_INTERIOR_STRIDE);
+      draws += this._commit(k.lmesh, k.lbuf, k.leafCount, BAY_LEAF_STRIDE);
     }
     return draws;
+  }
+
+  // Partia rodzaju: pozycja względem początku, liczba instancji, wysyłka zakresu (bez tablic w klatce).
+  _commit(mesh, buf, n, stride) {
+    mesh.position.set(this.origin.x, this.origin.y, 0);
+    mesh.geometry.instanceCount = n;
+    mesh.visible = n > 0;
+    if (!(n > 0)) return 0;
+    buf.updateRanges.length = 0;
+    buf.addUpdateRange(0, n * stride);
+    buf.needsUpdate = true;
+    return 1;
   }
 
   /** Rozgrzewka: obie siatki rodzajów (tworzy rodzaje z listy kadłubów). */

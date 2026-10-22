@@ -24,6 +24,7 @@
 // Szew: bez `window`, DOM i stanu gry — wejście to ramka bloku (`applyCargoOpsBlock`) i kamera klatki.
 import * as THREE from 'three/webgpu';
 import { Core3D as CoreRef } from '../core3d.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 import { sceneOriginNearCamera } from '../sceneOrigin.js';
 import { ShipProxyBatch3D } from '../shipProxyBatch3D.js';
@@ -36,7 +37,7 @@ import { SWARM_LOOK } from '../swarm/swarmDrones.tsl.js';
 import { SWARM_POOL_TUNE, createSwarmBerthPool } from '../swarm/swarmBerthPool.js';
 import { BERTH_TRANSFER_TUNE, berthDoorAt, berthTransferTiming, berthYardGeometry, shipInBerth } from '../../game/swarm/berthTransfer.js';
 import {
-  CARGO_CONTAINER, TRAFFIC_CARGO_BAY_HULLS, cargoBayHull, cargoBaySlots, cargoHullBays, cargoModuleContainer, cargoShipToWorld
+  CARGO_CONTAINER, TRAFFIC_CARGO_BAY_HULLS, cargoBayDoorTimeline, cargoBayHull, cargoBaySlots, cargoHullBays, cargoModuleContainer, cargoShipToWorld
 } from '../../data/cargoBays.js';
 
 export const PORT_CARGO_TUNE = {
@@ -89,6 +90,7 @@ export function createPortCargo3D(Core3D) {
   const origin = { x: 0, y: 0 };
   const cuts = new Map();           // numer kursu → Vector4 (uv otworu) — dla proxy w tej klatce
   const cutCache = new Map();       // kadłub → Vector4
+  const cutRecs = new Map();        // numer kursu → { x, y, z, w, skin } (rekord resolvera proxy, wielokrotnego użytku)
   const timings = new Map();        // numer kursu → { key…, tm } (czasy postoju)
   const stats = { ops: 0, live: 0, clock: 0, containers: 0, yards: 0, ms: 0, draws: 0, poolMs: 0, planMs: 0 };
   let frameNo = 0;
@@ -113,8 +115,8 @@ export function createPortCargo3D(Core3D) {
     bays = new CargoBayBatch(scene, 40);
     containers = new CargoContainers(scene, T.containers);
     conveyors = new PortConveyors(scene, 2048);
+    // Pula roju bez symulacji i kerneli: buduje je rozgrzewka roju (faza 'after' — warmupSwarm), sloty ruszają po niej.
     pool = createSwarmBerthPool(Core3D);
-    pool.ensure();
     ready = true;
     return ready;
   }
@@ -132,7 +134,10 @@ export function createPortCargo3D(Core3D) {
     let e = timings.get(op.seed);
     if (e && e.hull === op.hull && e.dwell === op.dwell && e.move === op.move) { e.seen = frameNo; return e; }
     const tm = berthTransferTiming({ hull: op.hull, dwell: op.dwell, moveSeconds: op.move });
-    e = { hull: op.hull, dwell: op.dwell, move: op.move, tm, seen: frameNo, liveClose: Infinity };
+    // Okno przenikania skóry proxy i skrzydeł: czas domkniętych skrzydeł w przebiegu wrót (ostrzeżenie + zamki).
+    const tl = tm ? cargoBayDoorTimeline(tm.geo) : null;
+    const skinSec = tl ? Math.max(0.25, (tl.warn || 0) + (tl.unlock || 0)) : 1;
+    e = { hull: op.hull, dwell: op.dwell, move: op.move, tm, seen: frameNo, liveClose: Infinity, skinSec };
     timings.set(op.seed, e);
     return e;
   }
@@ -177,6 +182,14 @@ export function createPortCargo3D(Core3D) {
     }
   }
 
+  // Wygląd kontenera (surowiec, wariant 0…15) bez napisu-klucza containerLookLinear w klatce: tablica wariantów na towar.
+  const _looks = new Map();
+  function lookOf(res, v) {
+    let looks = _looks.get(res);
+    if (!looks) { looks = []; _looks.set(res, looks); }
+    return looks[v] || (looks[v] = containerLookLinear(res, 4242, v));
+  }
+
   // Ładownia w stanie z zegara (stanowiska poza roju na żywo): warstwy od początku kolejności załadunku.
   function pushBayClock(op, geo, layers, table) {
     if (!(layers > 0)) return;
@@ -197,7 +210,7 @@ export function createPortCargo3D(Core3D) {
           cargoModuleContainer(mod, tier * per + q, _mc);
           const a = sl.a + _mc.a;
           const b = sl.b + _mc.b;
-          const look = containerLookLinear(op.resourceId || 'steel', 4242, ((op.seed | 0) + i * 7 + q) & 15);
+          const look = lookOf(op.resourceId || 'steel', ((op.seed | 0) + i * 7 + q) & 15);
           if (containers.push(bx + a * c - b * s, by + a * s + b * c, -geo.depth + _mc.z, yaw, C.L, C.W, C.H, table, look)) stats.containers++;
         }
       }
@@ -209,7 +222,7 @@ export function createPortCargo3D(Core3D) {
   }
 
   // Stan slotu roju w tej klatce (dla puli): stanowisko i zegar postoju albo null (statek odleciał, poza kadrem).
-  const slotState = { berth: null, dockTime: 0, swarmStart: 0, doorClose: 0, workEnd: 0 };
+  const slotState = { berth: null, dockTime: 0, swarmStart: 0, doorClose: 0, workEnd: 0, doorShut: 0 };
   function stateOf(slot) {
     const op = _byKey.get(slot.key);
     if (!op) { stats.noState = (stats.noState || 0) + 1; stats.noStateWhy = _seen.has(slot.key) ? 'poza kadrem' : 'brak przeładunku w ramce'; return null; }
@@ -220,7 +233,31 @@ export function createPortCargo3D(Core3D) {
     slotState.swarmStart = e.tm.swarmStart;
     slotState.doorClose = e.tm.doorClose;
     slotState.workEnd = e.tm.workEnd;
+    // Wrota domknięte (rój skończył — zamykanie wcześniej, liveClose; inaczej koniec okna) — ładownia slotu może zniknąć.
+    slotState.doorShut = Math.min(e.tm.doorClose, e.liveClose) + e.tm.doorTotal;
     return slotState;
+  }
+  // Stanowisko w kadrze (z zapasem pola) — pula: slot bez stanu w kadrze dokańcza pracę, poza kadrem zwalnia się od razu.
+  const _view = { halfW: 0, halfH: 0 };
+  function viewOf(b) {
+    return inView(b.x, b.y, T.cullPad + 1500, _camG, _view.halfW, _view.halfH);
+  }
+
+  // Rozgrzewka na żądanie (pierwsza ramka z polami zatok, statkami albo lukiem gracza — po ekranie ładowania): ładownie
+  // i kontenery, potem siatki roju; rysunek grupy dopiero po jej wpisie (bayWarm / swarmWarm). Flush ekranu ładowania
+  // na nie nie czeka (faza 'after' rusza w workerze już w menu, a flush „Start” czeka na pipeline'y w locie).
+  let onDemand = false;
+  function warmOnDemand() {
+    if (onDemand) return;
+    onDemand = true;
+    const reg = Core3D.warmup;
+    if (!reg || typeof reg.add !== 'function') { api.bayWarm = true; api.swarmWarm = true; return; }
+    const b = reg.add({ name: 'przeładunek w portach: ładownie i kontenery', objects: () => api.warmupBays(), variant: WARIANT_INSTANCJI });
+    if (b && b.promise) b.promise.then(() => { api.bayWarm = true; }); else api.bayWarm = true;
+    const w = reg.add({ name: 'przeładunek w portach: rój', objects: () => api.warmupSwarm(), variant: WARIANT_INSTANCJI });
+    if (w && w.promise) w.promise.then(() => { api.swarmWarm = true; }); else api.swarmWarm = true;
+    // Kamery 3D (lot free3d, widok kamer): pierwszy widok portu bez kompilacji w klatce (wzór repairDrones3D, mainExhaust3D).
+    reg.add({ name: 'przeładunek w portach (kamery 3D)', objects: () => [...api.warmupMeshes(), ...api.warmupBays(), ...api.warmupSwarm()], ortho: false, variant: WARIANT_INSTANCJI });
   }
 
   const api = {
@@ -256,6 +293,7 @@ export function createPortCargo3D(Core3D) {
         return;
       }
       if (!ensure()) return;
+      warmOnDemand();
       if (!resolverSet) { ShipProxyBatch3D.setBayCutResolver((ref) => api.cutForRef(ref)); resolverSet = true; }
       sceneOriginNearCamera(origin, Core3D.activeCam1);
       const zoom = Math.max(1e-4, Number(cam?.zoom) || 1);
@@ -305,7 +343,8 @@ export function createPortCargo3D(Core3D) {
       }
       // 2) Pula: istniejące sloty (stan z zegara, wieża, krok w Core3D.fx); nowe sloty dla najbliższych bez slotu.
       const tp = performance.now();
-      pool.update(gameDt, origin, stateOf, pxPerUnit);
+      _view.halfW = halfW; _view.halfH = halfH;
+      pool.update(gameDt, origin, stateOf, pxPerUnit, viewOf);
       // Stanowiska z rojem na żywo z presetu grafiki (Niska 0 — sam stan z zegara); po obniżeniu presetu nadmiar slotów
       // się zwalnia — najpierw te poza kadrem.
       const cap = Math.max(0, Math.min(SWARM_POOL_TUNE.slots, Number.isFinite(frame?.liveSlots) ? frame.liveSlots : SWARM_POOL_TUNE.slots));
@@ -324,7 +363,8 @@ export function createPortCargo3D(Core3D) {
         pool.release(victim, 'preset grafiki');
       }
       _cand.sort((a, b) => a._dist - b._dist);
-      let budget = cap > 0 ? T.activatePerFrame : 0;
+      // Sloty na żywo dopiero po rozgrzaniu roju (siatki, kernele — faza 'after' rejestru): bez kompilacji w klatce.
+      let budget = cap > 0 && api.swarmWarm && api.bayWarm ? T.activatePerFrame : 0;
       for (let i = 0; i < _cand.length && budget > 0; i++) {
         const op = _cand[i];
         if (live.has(op.seed)) continue;
@@ -341,8 +381,9 @@ export function createPortCargo3D(Core3D) {
           pool.release(victim, 'wywłaszczenie');
         }
         const tm = op._e.tm;
-        // Statek pod koniec okna (wrota się zamykają) — bez roju; stan z zegara.
-        if (op.dockTime >= tm.doorClose - 1) continue;
+        // Statek jeszcze w przechwycie (poza interpolowana do stanowiska ~1 s — utrwalona w porcie slotu przesunęłaby
+        // ładownię roju) albo pod koniec okna (wrota się zamykają) — bez roju, stan z zegara.
+        if (op.capture || op.dockTime >= tm.doorClose - 1) continue;
         _berth.x = op._yard.x; _berth.y = op._yard.y; _berth.angle = op._yard.angle;
         shipInBerth(_berth, op, _shipLocal);
         const span = Math.max(1e-3, tm.workEnd - tm.swarmStart);
@@ -375,13 +416,23 @@ export function createPortCargo3D(Core3D) {
         if (slot && slot.finished && !Number.isFinite(e.liveClose)) e.liveClose = Math.max(tm.doorOpen + tm.doorTotal, op.dockTime + 0.6);
         const door = berthDoorAt(tm, op.dockTime, Math.min(tm.doorClose, e.liveClose));
         const geo = tm.geo;
-        if (door > 1e-3) {
+        // Ładownie floty po swojej rozgrzewce (faza 'after'): wcześniej statek pokazuje zamknięte wrota (skóra proxy).
+        if (door > 1e-3 && api.bayWarm) {
           const tbl = slot ? 1 + slot.k : (table < 40 ? table++ : -1);
+          // Skrzydła domknięte: skóra proxy przenika się z nimi w otworze (przy door → 0 jest cała — bez przeskoku).
+          const skin = Math.max(0, Math.min(1, 1 - door / e.skinSec));
           if (tbl >= 0) {
             cargoShipToWorld(op, geo.cx, geo.cy, _w);
-            if (bays.push(op.hull, _w.x - origin.x, _w.y - origin.y, -op.angle, door, tbl, (op.seed % 97) / 97)) {
+            if (bays.push(op.hull, _w.x - origin.x, _w.y - origin.y, -op.angle, door, tbl, (op.seed % 97) / 97, skin)) {
               const cut = cutFor(op.hull);
-              if (cut) cuts.set(op.seed, cut);
+              if (cut) {
+                let r = cutRecs.get(op.seed);
+                if (!r) { r = { x: 0, y: 0, z: 0, w: 0, skin: 0, door: 0 }; cutRecs.set(op.seed, r); }
+                r.x = cut.x; r.y = cut.y; r.z = cut.z; r.w = cut.w;
+                r.skin = skin;
+                r.door = door;
+                cuts.set(op.seed, r);
+              }
             }
             if (!slot) {
               const span = Math.max(1e-3, tm.workEnd - tm.swarmStart);
@@ -406,23 +457,44 @@ export function createPortCargo3D(Core3D) {
         stats.yards++;
       }
       // Gracz: luk Atlasa z ładunkiem (rekord 0 tablicy — luk rysuje scoutBay3D, tu kontenery).
-      if (frame && frame.player && frame.player.door > 1e-3) pushPlayer(frame.player);
+      if (frame && frame.player && frame.player.door > 1e-3 && api.bayWarm) pushPlayer(frame.player);
       let draws = bays.end();
       containers.commit();
       containers.mesh.position.set(origin.x, origin.y, 0);
       if (containers.count) draws++;
       draws += conveyors.end();
       stats.draws = draws;
-      if ((frameNo & 63) === 0) for (const [id, e] of timings) if (frameNo - e.seen > 600) timings.delete(id);
+      if ((frameNo & 63) === 0) {
+        for (const [id, e] of timings) if (frameNo - e.seen > 600) { timings.delete(id); cutRecs.delete(id); }
+      }
       stats.ms = performance.now() - t0;
     },
 
-    /** Rozgrzewka (Core3D.warmup, faza 'loading'): partie ładowni rodzajów ruchu i Atlasa, kontenery, rój, taśmy. */
+    /** Rozgrzewka (Core3D.warmup, faza 'loading'): taśmy, stoły i portale pól zatok (widać je przy każdym porcie). */
     warmupMeshes() {
       if (!ensure()) return [];
-      const hulls = [...new Set(Object.values(TRAFFIC_CARGO_BAY_HULLS))];
-      return [...bays.warmupMeshes(hulls), containers.mesh, conveyors.mesh, ...pool.warmupMeshes()];
+      return [conveyors.mesh];
     },
+    /** Rozgrzewka ładowni (faza 'after'): partie ładowni rodzajów ruchu, kontenery z zegara i luku gracza. */
+    warmupBays() {
+      if (!ensure()) return [];
+      const hulls = [...new Set(Object.values(TRAFFIC_CARGO_BAY_HULLS))];
+      return [...bays.warmupMeshes(hulls), containers.mesh];
+    },
+    /** Rozgrzewka roju (na żądanie): pula — symulacja, kernele (krok Core3D.fx), siatki dronów, świateł, kontenerów, cieni. */
+    warmupSwarm() {
+      if (!ensure()) return [];
+      return pool.warmupMeshes();
+    },
+    /** Pula roju z kernelami (faza 'after' — w menu): CPU budowy TSL kerneli (~140 ms) poza grą; bez siatek do kompilacji. */
+    prepareSwarm() {
+      if (ensure()) pool.ensure();
+      return [];
+    },
+    /** Rój rozgrzany (wpis 'after' gotowy) — wolno zakładać sloty na żywo. Bez rejestru rozgrzewki (testy) — od razu. */
+    swarmWarm: !CoreRef.warmup,
+    /** Ładownie rozgrzane (wpis 'after' gotowy) — wolno je rysować. */
+    bayWarm: !CoreRef.warmup,
 
     dispose() { cuts.clear(); timings.clear(); }
   };
@@ -435,7 +507,6 @@ export function createPortCargo3D(Core3D) {
 
   // Ładunek gracza w luku Atlasa: moduły od rufy (cargoBaySlots), wypełnienie z masy / ładowności, surowce wg udziałów.
   // Pole myśliwców i stanowisko fregaty zwiadu (gdy w luku) zostają wolne — „okręty zabierają miejsce ładunkowi”.
-  const _playerLooks = new Map();
   function pushPlayer(p) {
     const geo = cargoHullBays(p.hull)[0];
     if (!geo) return;
@@ -466,10 +537,7 @@ export function createPortCargo3D(Core3D) {
         const b = sl.b + _mc.b;
         const x = bx + a * c - b * s;
         const y = by + a * s + b * c;
-        const key = res[ri][0];
-        let looks = _playerLooks.get(key);
-        if (!looks) { looks = []; _playerLooks.set(key, looks); }
-        const look = looks[k & 15] || (looks[k & 15] = containerLookLinear(key, 4242, k & 15));
+        const look = lookOf(res[ri][0], k & 15);
         if (containers.push(x, y, -geo.depth + _mc.z, yaw, C.L, C.W, C.H, 0, look)) stats.containers++;
       }
     }
@@ -503,9 +571,10 @@ let _shared = null;
 export function sharedPortCargo3D() {
   return _shared || (_shared = createPortCargo3D(CoreRef));
 }
-CoreRef.warmup?.add?.({
-  name: 'przeładunek w portach (ładownie, kontenery, rój, taśmy)',
-  objects: () => sharedPortCargo3D().warmupMeshes(),
-  phase: 'loading',
-  variant: WARIANT_INSTANCJI
-});
+// `?przeladunek=0` (A/B kosztu): bez rozgrzewki i symulacji — tryb off czyta adres strony (RenderWorld), worker przy tej
+// fladze modułu nie importuje (render.worker.js).
+const cargoOff = () => /[?&]przeladunek=0(&|$)/.test(RenderWorld.pageSearch || '');
+// Ekran ładowania: tylko taśmy / stoły / portale (1 siatka — pola zatok widać przy każdym porcie). Menu ('after'): pula
+// i kernele roju (CPU). Ładownie, kontenery i siatki roju — na żądanie, przy pierwszej ramce przeładunku (warmOnDemand).
+CoreRef.warmup?.add?.({ name: 'przeładunek w portach (taśmy, stoły)', objects: () => (cargoOff() ? [] : sharedPortCargo3D().warmupMeshes()), phase: 'loading', variant: WARIANT_INSTANCJI });
+CoreRef.warmup?.add?.({ name: 'przeładunek w portach: kernele roju', objects: () => (cargoOff() ? [] : sharedPortCargo3D().prepareSwarm()), phase: 'after' });

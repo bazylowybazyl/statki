@@ -4,7 +4,7 @@
 // Vite + headless Chrome z WebGPU (CDP), gra swobodna, zegar krokowy harnessu.
 //
 //   node scripts/webgpu/przeladunek-gra.mjs [--query renderWorker=1] [--flaga przeladunek=0]
-//        [--out .tmp/e12/po] [--rozgrzewka 2400] [--postoj 70] [--koszt 1] [--kosztPoza 1] [--cienie 1]
+//        [--out .tmp/e12/po] [--rozgrzewka 2400] [--postoj 70] [--koszt 1] [--kosztPoza 1] [--cienie 1] [--koniec 1]
 //
 // Przebieg: start → świat ruchu rozgrzany `--rozgrzewka` s (gospodarka startuje od zera) → gracz przy zatoce
 // Ziemi → czekanie na frachtowiec przy stanowisku zatoki (kadłub z ładownią; najlepiej świeżo po przechwycie) →
@@ -13,7 +13,7 @@
 // (worker renderu CPU / GPU w kadrze zatoki; drugi przebieg z `--flaga przeladunek=0` daje „przed”; `--kosztPoza 1` —
 // jeszcze kadr daleko od zatok po zwolnieniu slotów roju: koszt ma być 0). Pomiar w workerze dopisuje stan puli roju
 // (sloty, sloty w pracy, kroki symulacji w klatce). `--cienie 1` — na 7. etapie postoju zrzuty A/B siły cieni dronów (4 i 0,
-// klatka po klatce; tryb worker).
+// klatka po klatce; tryb worker). `--rozgrzewkaStat 1` — statystyki rejestru rozgrzewki workera (grupy, wpisy E12).
 // Wynik: <out>/raport.json, zrzuty <out>/*.png, dziennik workerów <out>/worker.log.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -106,6 +106,12 @@ try {
   report.tryb = await ev('window.RenderWorkerHost ? "worker" : "off"');
   if (!await waitFor(cdp, '!!(window.TrafficV2 && window.TrafficV2.ready && window.TrafficV2.tables && window.TrafficV2.tables.bubblePorts && window.TrafficV2.tables.bubblePorts.earth)', 120000, 300)) throw new Error('ruch v2 nie wstał');
   report.syncStart = syncWorker();
+  if (args.rozgrzewkaStat && report.tryb === 'worker') {
+    // Rejestr rozgrzewki workera: grupy (CPU po modułach) i wpisy przeładunku / roju (czas od startu wpisu do pipeline'ów).
+    const ws = await evalWorker(`import(new URL('../3d/core3d.js', self.location.href).href).then((m) => { const s = m.Core3D.warmup.stats; return import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((pc) => { const p = pc.sharedPortCargo3D().pool; return JSON.stringify({ flush: s.flush, e12: (s.lista || []).filter((r) => /przeładun|rój/.test(r.nazwa)), pula: p ? { ensureMs: p.stats.ensureMs, warmMs: p.stats.warmMs } : null, fx: s.grupy && s.grupy['Core3D.fx'] }); }); }).catch((e) => String(e))`, 30000);
+    report.rozgrzewka = ws;
+    console.log('rozgrzewka workera:', String(ws).slice(0, 3000));
+  }
   await ev('window.__harness.hold(true)');
   report.przeladunek = await ev('({ on: window.PortCargo.on })');
   console.log('tryb', report.tryb, extra, JSON.stringify(report.przeladunek));
@@ -150,7 +156,34 @@ try {
     await waitGame(0.5);
     const seq = [];
     const t0 = await ev('window.TrafficV2.time');
-    for (let i = 0; i <= 14; i++) {
+    if (args.koniec && report.tryb === 'worker') {
+      // Koniec postoju klatka po klatce: od zamrożenia wieży (wrota się zamykają) albo końca roju do odlotu + 3 s,
+      // zbliżenie co 0,25 s (50-koniec-NNN.png) — skok obrazu widać w różnicy sąsiednich klatek.
+      const slotState = async () => {
+        const r = await evalWorker(`import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((m) => { const p = m.sharedPortCargo3D().pool; const s = p && p.slots.find((x) => x.active && x.key === ${target.id}); const rb = p && p.sim && p.sim.readback; const sd = p && p.sim ? p.sim.statusData : null; const ph = {}; if (s && sd) for (let i = 0; i < s.drones; i++) { const k = sd[(s.dBase + i) * 4] | 0; ph[k] = (ph[k] || 0) + 1; } return JSON.stringify(s ? { frozen: s.frozen, finished: s.finished, holdHidden: s.holdHidden, drain: s.drain, done: s.planner ? s.planner.stats.done : null, total: s.planner ? s.planner.stats.total : null, drones: s.drones, rbFrame: rb ? rb.frame : null, from: s.statusFrom, fazy: ph, working: p.stats.working, steps: p.stats.steps, cut: (() => { const c = m.sharedPortCargo3D().cutForRef({ courseId: ${target.id} }); return c ? { door: +(c.door || 0).toFixed(2), skin: +(c.skin || 0).toFixed(2) } : null; })() } : { cut: (() => { const c = m.sharedPortCargo3D().cutForRef({ courseId: ${target.id} }); return c ? { door: +(c.door || 0).toFixed(2), skin: +(c.skin || 0).toFixed(2) } : null; })() }); })`);
+        try { return JSON.parse(r); } catch { return null; }
+      };
+      await ev(`window.PortCargo.look(${target.x}, ${target.y}, ${Math.max(380, target.len * 0.62)})`);
+      const end = [];
+      let capturing = false;
+      let after = -1;
+      for (let k = 0, n = 0; k < 600 && n < 160; k++) {
+        const a = await ev(`(() => { const a = window.TrafficBubble.byId.get(${target.id}); return a ? { phase: a.phase, dock: +a.dockTime.toFixed(2) } : null; })()`);
+        const s = await slotState();
+        if (!capturing && s && (s.frozen || s.finished)) capturing = true;
+        if (!capturing && k % 10 === 0) console.log('koniec: czekam', JSON.stringify(a), JSON.stringify(s));
+        if (capturing) {
+          await screenshotPng(cdp, join(out, `50-koniec-${String(n).padStart(3, '0')}.png`));
+          end.push({ n, ...(a || {}), slot: s });
+          n++;
+          if (!a || a.phase === 'undock') { if (after < 0) after = n; if (n - after > 12) break; }
+        }
+        await waitGame(capturing ? 0.25 : 1);
+      }
+      report.etapy.koniec = end;
+      console.log('koniec:', JSON.stringify(end.filter((e, i) => i % 8 === 0 || i === end.length - 1)));
+    }
+    for (let i = 0; i <= (args.koniec ? -1 : 14); i++) {
       const st = await ev(`(() => { const a = window.TrafficBubble.byId.get(${target.id}); const f = window.PortCargo.frame;
         const op = f.ops.slice(0, f.opCount).find((o) => o.seed === ${target.id});
         return { t: +(window.TrafficV2.time - ${t0}).toFixed(1), dock: a ? +a.dockTime.toFixed(1) : null, phase: a ? a.phase : null,

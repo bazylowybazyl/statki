@@ -51,12 +51,13 @@ reguła `przeladunek-portow` (`.claude/rules/przeladunek-portow.md`). Ten dokume
   zerowanie siatki mieszającej — do `kIntegrate` (na krok następny; `kSteer` już ją przeczytał). Stan po kroku
   bit w bit jak przed zmianą (pomiar niżej). Dalej się nie da bez zmiany wyniku: `kSteer` czyta pozy sąsiadów, które
   pisze `kIntegrate` (w jednym dispatchu nie ma bariery globalnej), a `kIntegrate` + `kBin` kroku następnego
-  wymagałyby podwójnej siatki z parzystością na GPU, przy czym pozy pisane z CPU (dołączenie, zaparkowanie, `snap`)
+  wymagałyby podwójnej siatki z parzystością na GPU, przy czym pozy pisane z CPU (dołączenie, zaparkowanie, domknięcie)
   zostawiałyby siatkę nieaktualną na krok.
 - **Statek zastany w połowie postoju:** stan startowy z zegara — warstwy przeniesione = postęp postoju (UNLOAD na
   stołach, LOAD w ładowni), reszta czeka u źródła. Drony startują z gniazd (pierwsze 1–2 s to start roju) — bez
-  przewijania symulacji. **Koniec okna** przed końcem pracy → `snap`: czekające i niesione kontenery znikają, drony
-  slotu się chowają, wrota się zamykają — ładownia przy odlocie jest pełna / pusta zgodnie z ekonomią.
+  przewijania symulacji. **Koniec okna** (od rundy 3): od zamykania wrót wieża nie daje nowych zadań, drony kończą
+  i lądują, ładownia chowa się za domkniętymi wrotami, resztki LOAD wraca taśma — ładownia przy odlocie jest pełna /
+  pusta zgodnie z ekonomią, bez skoku w kadrze (pierwsza wersja: `snap` — skok; runda 3 niżej).
 - **Liczba dronów:** gęstość jak w demie (dron na 8 warstw), a gdy okno jest ciasne — tyle, żeby pozostałe warstwy
   zdążyły (zmierzone ~60 s czasu roju na kurs warstwy z czekaniem); najwyżej 48 na slot. Kontenerowiec: 3–6 M,
   ciężki frachtowiec: 37 L.
@@ -131,16 +132,74 @@ Przebiegi: kontenerowiec LOAD + drugi UNLOAD (`.tmp/e12/gpu-kont8/`), ciężki f
 (`.tmp/e12/przed-kontenerowiec/`, `?przeladunek=0`), demo roju do porównania (`.tmp/e12/demo-roj/11-wymiana*.png`).
 Pierwsza wersja z planem analitycznym: `.tmp/e12/po-*`, `koszt-*`.
 
+## Runda 3 — przegląd kodu przed scaleniem (2026-10-22)
+
+Znaleziska przeglądu orkiestratora — wszystkie potwierdzone w kodzie, poprawione, regresje w `tests/portCargo.test.mjs`
+(każda pada na puli sprzed poprawki):
+
+1. `snap()` wysyłał cały zakres jednostek slotu ze starej kopii CPU (przeniesione kontenery wracały) i parkował drony
+   bez pierścienia zadań. Teraz `snap` nie istnieje: koniec okna = wieża bez nowych zadań, drony lądują, ładownia chowa
+   się za domkniętymi wrotami; wysyłka tylko oznaczonych jednostek (`uploadMarked`), parkowanie z pierścieniem
+   (`parkSlotDrones`); taśma pisze cały rekord z księgi wieży (kurs i ładownia światła też były stare).
+2. Slot w fazie `capture` (poza w drodze na stanowisko) — bit `OP_CAPTURE` bloku, slot dopiero po przechwycie.
+3. Odczyt poprzedniego właściciela slotu po wywłaszczeniu w tej samej klatce — `statusFrom` (odczyt ważny od polecenia
+   po dołączeniu; wcześniej zerowy).
+4. Resztki slotu na cudzym stanowisku (referencja do rekordu ramki z puli) i krok GPU stający przy slocie bez stanu —
+   własna kopia stanowiska, slot bez stanu liczy się do pracy; poza kadrem zwolnienie od razu, w kadrze domknięcie.
+5. `ensure()` wchodzący drugi raz (addFxStep → rozgrzewka → ensure przed `ready`) — 30 obiektów zamiast 15; `ready`
+   przed rejestracją kroku.
+6. Alokacje w klatce: napis-klucz `containerLookLinear` na kontener z zegara (pamięć wariantów `lookOf`), tablice
+   w `bayBatch.end()`, literały w puli.
+7. `?przeladunek=0` rozgrzewał i kompilował — worker nie importuje modułu, tryb off czyta flagę przez `RenderWorld`.
+8. Kamery 3D: wpis rozgrzewki `ortho: false`; ładunek w luku Atlasa gaśnie z maskowaniem (próg luku).
+
+Znalezione przy weryfikacji:
+- **Gniazda pod kadłubem** — 24 kolumny gniazd ciężkiego frachtowca (96 dronów) wchodziły pod sylwetkę kadłuba; 20 dronów
+  krążyło w `RETURN` bez końca, slot nie kończył (przy 48 dronach ten sam statek kończył się `snap`). Gniazda w więcej
+  rzędach (`padColsMax` 12), gniazdo z przeszkodą nad wejściem bez drona; test dla każdego kadłuba ruchu.
+- **Skok przy domknięciu wrót** (od rundy 1, na końcu każdego postoju): zamknięte skrzydła zamieniały się na skórę sprite'a
+  w jednej klatce (różnica sąsiednich klatek 12,3 wobec ~1). Teraz przenikanie ditheringiem przez czas domkniętych
+  skrzydeł (ostrzeżenie + zamki, u ciężkiego 1,6 s): proxy pokazuje skórę, skrzydło odpada w tych samych pikselach —
+  różnice 2–3 przez 7 klatek, bez piku (`.tmp/e12/v7-koniec/przenikanie.png`).
+- **Statek E6 znika ze stanowiska w jednej klatce przy odlocie** (różnica 37,6, cały kadłub) — po stronie bańki, nie
+  przeładunku.
+
+**Ciężki frachtowiec, 96 dronów (decyzja orkiestratora):** 1320 / 1320 kontenerów w ~60 s postoju, rój kończy ~65 s,
+domknięcie wrót bez skoku (`--koniec 1`, zrzuty co 0,25 s: `.tmp/e12/v7-koniec/50-koniec-*.png`).
+
+**Koszt** (A/B jak w rundzie 2, w ciszy innych sesji, po 2 przebiegi; `.tmp/e12/v5-*`):
+
+| | A (`przeladunek=0`) | B1 | B14 (8 na żywo, 6–7 w pracy) |
+|---|---|---|---|
+| CPU workera, kadr 9000 j. | 3,62 / 3,43 ms | 2,73 / 2,89 | 2,67 / 2,71 |
+| CPU workera, kadr 2600 j. | 1,29 / 1,18 ms | 1,19 / 1,49 | 1,24 / 1,24 |
+| CPU workera, poza portem | 0,84 / 0,69 ms | 0,68 / 1,18 | 0,64 / 0,65 |
+| GPU passów, kadr 9000 / 2600 / poza | 0,59–0,54 / 0,28–0,27 / 0,15–0,14 | +0,02 / +0,01 / 0 | +0,05 / +0,06 / 0 |
+
+CPU w szumie; GPU przy 14 stanowiskach i 96 dronach na slot +0,06 ms (budżet ≤ +0,35).
+
+**Ładowanie** (`start-sync-gra.mjs --query renderWorker=1`, Start od razu po wstaniu strony — najgorszy przypadek):
+przed rundą rejestr miał w fazie `'loading'` 24 siatki przeładunku (147 ms CPU, wpis gotowy po 5,1 s pracy procesu GPU)
+i pulę z kernelami (`ensure` 26 ms, kernele 5 / 127 / 10 ms CPU). Faza `'after'` nie pomaga: w workerze rusza już w menu
+(pierwszy flush), a flush po „Start” czeka na pipeline'y w locie. Teraz: ekran ładowania — 1 siatka (taśmy, stoły,
+portale); menu (`'after'`) — pula i kernele (CPU, bez pipeline'ów); ładownie, kontenery i siatki roju — na żądanie, przy
+pierwszej ramce przeładunku, rysunek po rozgrzaniu (statki do tego czasu z zamkniętymi wrotami, bez roju). Drugi flush:
+z przeładunkiem 1735 / 1255 ms, bez 1514 / 814 ms — parami +0,22 / +0,44 s (średnio +0,33), przy rozrzucie samych
+przebiegów bez przeładunku 0,7 s. Dalszy krok, jeśli trzeba: kernele też na żądanie — kosztem jednego przestoju ~140 ms
+przy pierwszym podejściu do portu.
+
+Przegląd portów `ruch-banka-gra.mjs --obserwacja 8`: 0 pipeline'ów sync (worker i off), 0 błędów (`.tmp/e12/v7-banka/`).
+W jednym przebiegu start-sync **bez** przeładunku worker skompilował synchronicznie `HallDustBack` / `HallDustFront`
+(pył hal K-7) — poza E12.
+
 ## Ryzyka i dalsze kroki
 
-- **Ciężki frachtowiec z prawdziwym kontraktem nie mieści się w oknie**: kontrakt E6 daje mu 1320 kontenerów (dane
-  demo dawały 848); 48 dronów na slot przenosi ~970 do zamknięcia wrót, resztę (~350) `snap` chowa naraz — skok
-  obrazu raz na postój. Do decyzji: więcej dronów na slot dla MEGA (pula 8 × 96 — pamięć i GPU symulacji), dłuższy
-  postój ciężkich kursów (świat ruchu, E6 / E2) albo zgoda na skok.
 - **Wydajność wieży i ORCA w grze** zmierzona na 2 typach statków; prom i frachtowiec dalekiego zasięgu bez osobnego
   przebiegu harnessu. Zmierzone tempo (~60 s roju na kurs warstwy) siedzi w `swarmSecPerLayer`.
-- **Snap na końcu okna** (rój nie zdążył) to skok obrazu — rzadki przy obecnej liczbie dronów, ale możliwy przy
-  statku zastanym tuż przed końcem postoju (wtedy slotu się nie zakłada: ostatnia sekunda okna — stan z zegara).
+- **Koniec okna, gdy rój nie zdążył:** resztki LOAD wraca taśma do portalu (widać, ale bez skoku), resztki UNLOAD
+  chowają się za wrotami. Ostateczność (`freezeTimeout` 25 s bez powrotu dronów) chowa drony slotu naraz.
+- **Ładownie pojawiają się po rozgrzewce na żądanie** — przy pierwszym podejściu do portu przez chwilę statki mają
+  zamknięte wrota, a stanowiska są bez roju.
 - **Wyjątek w workerze może nie dotrzeć do strony** (limit 20 raportów na sesję) — `stats.err` modułu i `--diag 1`.
 - Pomosty portów bez ringu (Merkury, Wenus, księżyce, Ceres, Westa…) przeładunku nie mają — potrzebują własnej
   geometrii placu (wpisy w `PORT_CARGO_PADS` / `bayBerthSize` i `berthYardGeometry`).

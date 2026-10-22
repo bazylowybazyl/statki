@@ -16406,9 +16406,12 @@
       const p = _portCargoFrame._player;
       const atlas = !!ship && !ship.destroyed && isAtlasHullForScout();
       const docked = atlas && (!!stationUI.open || (trafficBubble ? trafficBubble.held.length > 0 : false));
+      // Maskowanie: ładunek w luku gaśnie z kadłubem jak luk (syncScoutBay3D — ten sam próg).
+      const cl = atlas ? ship.__cloakLook : null;
+      const cloaked = !!(cl && cl.active && cl.vis < 0.5);
       // Przebieg wrót luku Atlasa (cargoBayDoorTimeline: ~6,9 s) — otwarcie przy postoju / handlu, zamknięcie po.
       _playerCargoDoor = Math.max(0, Math.min(1, _playerCargoDoor + (docked ? 1 : -1) * (Number(frameDt) || 0) / 6.9));
-      if (!atlas || _playerCargoDoor <= 0) return null;
+      if (!atlas || cloaked || _playerCargoDoor <= 0) return null;
       const pose = window.__interpShipPose || { x: ship.pos.x, y: ship.pos.y, angle: ship.angle };
       const cap = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
       const mass = getBagMass(PLAYER.cargo);
