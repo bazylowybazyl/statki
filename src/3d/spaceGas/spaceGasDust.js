@@ -43,6 +43,7 @@ export class SpaceGasDust {
       birth: uniform(new THREE.Vector4(0, 0, 1, 1)), // prostokąt narodzin względem rogu okna: x0, y0, szer., wys. [j.]
       dustW: uniform(new THREE.Vector4(1, 0.5, 0.3, 1)), // waga kanałów gazu dla pyłu
       dustRho: uniform(0.45),                   // ρ₀ — gęstość pełnego budżetu drobin
+      sulfurDim: uniform(0.3),                  // pył w ławicy siarki ciemniejszy: × (1 − dim · udział siarki w komórce)
       // obraz
       color: uniform(new THREE.Color(0.1, 0.085, 0.07)),
       sun: uniform(new THREE.Color(1, 0.9, 0.78)),
@@ -155,7 +156,15 @@ export class SpaceGasDust {
       // Słońce z mapy światła (samocień gazu) — w fragmencie × maska słońca Core3D
       const muv = P.xy.add(U.mapO).mul(U.mapInv);
       const tsun = texture(maps.lightTex, muv).level(0).x;
-      const base = U.color.mul(seed.mul(0.8).add(0.5)).mul(mix(float(1.0), float(0.12), puff)).mul(U.gain).toVar();
+      // udział siarki (kanał y) w gazie komórki drobiny — pył ławicy siarki ciemniejszy (decyzja użytkownika 2026-10-22)
+      const C = this.sim.cell, N = this.sim.N;
+      const cp = P.xy.div(C);
+      const ic = (v) => min(max(int(v), int(0)), int(N - 1));
+      const ci = ic(cp.x).add(ic(cp.y).mul(int(N)));
+      const den = this.sim.buf.denA.element(ci).toVar();
+      const sulfur = den.y.mul(U.dustW.y).div(max(dot(den, U.dustW), 1e-4));
+      const dim = float(1.0).sub(U.sulfurDim.mul(saturate(sulfur)));
+      const base = U.color.mul(seed.mul(0.8).add(0.5)).mul(mix(float(1.0), float(0.12), puff)).mul(U.gain).mul(dim).toVar();
       const k = fade.mul(mix(float(1.0), float(0.3), puff)).toVar();
       vSun.assign(base.mul(U.sun).mul(tsun.mul(0.75)).mul(k));
       const rest = vec3(U.ambient).toVar();
@@ -208,6 +217,7 @@ export class SpaceGasDust {
     const w = look.dustW;
     U.dustW.value.set(w[0], w[1], w[2], w[3]);
     U.dustRho.value = look.dustRho;
+    U.sulfurDim.value = look.dustSulfurDim ?? 0;
   }
 
   /**

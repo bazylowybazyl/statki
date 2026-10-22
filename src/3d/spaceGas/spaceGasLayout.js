@@ -12,9 +12,22 @@ export const SPACE_GAS_ENV_RES = 32;
 /** Najwięcej strug odgazowania na klatkę. */
 export const SPACE_GAS_MAX_JETS = 12;
 const JET = 6;     // x, y (względem kotwicy), kierunek xy (od Słońca), promień skały, wydajność 0..1
+/** Najwięcej wybuchów (fronty i wyrzut) i pocisków w polu na klatkę. */
+export const SPACE_GAS_MAX_BLASTS = 8;
+export const SPACE_GAS_MAX_BOLTS = 24;
+const BLAST = 5;  // x, y (względem kotwicy), rozmiar (size fabryki wybuchów), wiek [s], życie [s]
+const BOLT = 5;   // x, y (względem kotwicy), kierunek lotu xy (jednostkowy), prędkość [j/s]
+/** Raster przekroju olbrzymów pasa (z = 0) na okno pola: bok [teksle], słowa 32-bitowe. */
+export const SPACE_GAS_RASTER = 128;
+const RASTER_WORDS = SPACE_GAS_RASTER * SPACE_GAS_RASTER / 32;
 
 const G = SPACE_GAS_ENV_RES;
 const HEADER = 32;
+const ENV = HEADER;
+const JETS = ENV + G * G * 2;
+const BLASTS = JETS + SPACE_GAS_MAX_JETS * JET;
+const BOLTS = BLASTS + SPACE_GAS_MAX_BLASTS * BLAST;
+const RASTER = BOLTS + SPACE_GAS_MAX_BOLTS * BOLT;
 
 /** Układ wejścia klatki (Float64Array). */
 export const SPACE_GAS_IN = Object.freeze({
@@ -40,10 +53,22 @@ export const SPACE_GAS_IN = Object.freeze({
   windowCells: 19,  // okno pola [komórki] (128 / 256 / 384 — preset)
   cell: 20,         // bok komórki pola [j.]
   envMax: 21,       // największa obwiednia w siatce
+  blasts: 22,       // wybuchów w polu
+  bolts: 23,        // pocisków w polu
+  rasterOn: 24,     // 1 — raster olbrzymów ma bryły (0 — kernel go pomija)
+  rasterX0: 25,     // róg rastra (krawędź teksla 0, 0) względem kotwicy [j.]
+  rasterY0: 26,
+  rasterTexel: 27,  // bok teksla [j.]
+  rasterVer: 28,    // wersja rastra (zmiana = wysyłka tekstury)
   header: HEADER,
-  envBase: HEADER,              // G·G par (obwiednia gazu, udział lodu)
-  jetBase: HEADER + G * G * 2,
+  envBase: ENV,                 // G·G par (obwiednia gazu, udział lodu)
+  jetBase: JETS,
   jetStride: JET,
-  size: HEADER + G * G * 2 + SPACE_GAS_MAX_JETS * JET
+  blastBase: BLASTS,
+  blastStride: BLAST,
+  boltBase: BOLTS,
+  boltStride: BOLT,
+  rasterBase: RASTER,           // słowa rastra (bit k = teksel k, wiersz po wierszu; y gry w dół)
+  rasterWords: RASTER_WORDS,
+  size: RASTER + RASTER_WORDS
 });
-

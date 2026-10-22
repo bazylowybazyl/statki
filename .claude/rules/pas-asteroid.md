@@ -27,6 +27,8 @@ paths:
 
 - Warstwy Core3D: pasmo PLAY (skały POD płaszczyzną gry, `zOf = −1,45 r`), minerały, płytka mgła, iskry, pioruny i kwad dna ośrodka (z = −29 000) — pass ortho (warstwa 0, renderOrder < 0; efekty gry ≥ 0); RUBBLE/MID/DEEP, głęboka mgła i zasłona pola — pass tła (warstwa 1, perspektywa; skały tła w kolejce przezroczystej z `NoBlending`, po zasłonie). Pozycje LOKALNE względem `Core3D.fx.origin` (grupa pola przesunięta o początek) — w shaderach pasa bez `positionWorld` (float32 przy 6–10 mln j.).
 
+- JEDNA MGŁA (2026-10-22): płytkie płaty mgły (`fog.js`, pass gry) gasną pod gazem w otwartej przestrzeni — alfa × (1 − `SpaceGasCover.belt`, `src/3d/spaceGas/spaceGasState.js`); głębokie płaty tła bez zmian. Bez gazu (opcja wył., preset Niska) płaty jak dawniej. Gaz bierze obwiednię z `sampleMacro` (`hole`, `gas`) — reguła `gaz-przestrzeni`.
+
 - Materiały pasa nie biorą świateł sceny Core3D: własne słońce (`BELT_SUN_LIGHT`, `surfaceLighting.js`) + siatka `Core3D.fx.grid` (opt-in `enableGridLights`). Transmitancja słońca do renderu przez `nightKnee(T)`, do logiki surowe `T` (`asteroidFieldLight.js`); mapa pola (R = `nightKnee(T)`) idzie do maski słońca Core3D (`setSunOcclusionField`) — kadłuby ciemnieją w głębi pola.
 
 - Ośrodek objętościowy (`beltMedium.js`, jeden na grę): `sample(P)` → `kolor · a + rgb` w KAŻDEJ powierzchni z zapisem głębi w passie gry — skały i minerały do stropu warstwy skał (`rockLayerTop = 0`), olbrzymy w punkcie powierzchni, kadłuby przez hak `hullVolume` (`hexShips3D.tsl.js`); poza polem `on = 0` (tożsamość). Nowa powierzchnia w passie gry → ten sam hak, inaczej w polu świeci „przez pył”.
