@@ -113,7 +113,9 @@ export class FieldSunOcclusion {
     // Obrzeże z wypełniacza (m.rim) celowo NIE przesłania: rzadkie skały przed
     // polem kładły się na 30–60 tys. j. i wejście od słońca było już w półmroku
     // (T 0,33) — mechanika „na początku jasno” zaczyna się na właściwym polu.
-    return m.weight * (c.sigmaBase + c.sigmaField * Math.pow(Math.max(0, m.cluster), c.fieldPower)) * (this.field.densityScale ?? 1);
+    // Wyrwa po wydobyciu (m.hole) rozrzedza pył jak skały; źródło gazu (m.gas — dziś 0) dołożyłoby swój.
+    const dust = m.weight * (c.sigmaBase + c.sigmaField * Math.pow(Math.max(0, m.cluster), c.fieldPower)) * m.hole;
+    return (dust + m.gas * c.sigmaField) * (this.field.densityScale ?? 1);
   }
 
   _sector(index) {
@@ -219,6 +221,103 @@ export class FieldSunOcclusion {
     this.precomputed = true;
     this.stats.precomputeMs = ((typeof performance !== 'undefined') ? performance.now() : 0) - t0;
     return this;
+  }
+
+  /**
+   * Przeliczenie po zmianie gęstości w prostokącie świata (wyrwy — beltWorld.setHoles): kolumny kątowe przez
+   * prostokąt, od jego pierwszego wiersza w dół promienia, aż wartości za prostokątem zbiegną się z dawnymi
+   * (|ΔT| < tol przez 3 wiersze — dalej odbudowa światła i tak je wyrównuje). Dane sektorów W MIEJSCU: tablice są
+   * w SharedArrayBuffer (worker renderu) albo wspólne z obrazem (`adoptSectors`), więc render widzi nowy cień bez
+   * kopii. Liczy tylko policzone sektory (reszta policzy się sama z nową gęstością).
+   * Zwraca { columns, samples, ms, x0, y0, x1, y1 } — prostokąt świata, w którym T zmieniła się o ≥ 0,002 (albo null).
+   */
+  recomputeRect(x0, y0, x1, y1, tol = 1e-4) {
+    const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+    const c = this.config;
+    const out = { columns: 0, samples: 0, ms: 0, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    // Pasmo promieni i kątów prostokąta (wokół słońca).
+    const px = [x0, x1, x1, x0];
+    const py = [y0, y0, y1, y1];
+    let rMax = 0;
+    let a0 = Infinity;
+    let a1 = -Infinity;
+    const aRef = Math.atan2((y0 + y1) * 0.5 - this.sunY, (x0 + x1) * 0.5 - this.sunX);
+    for (let i = 0; i < 4; i++) {
+      const dx = px[i] - this.sunX;
+      const dy = py[i] - this.sunY;
+      rMax = Math.max(rMax, Math.sqrt(dx * dx + dy * dy));
+      let a = Math.atan2(dy, dx) - aRef;
+      a -= Math.round(a / TWO_PI) * TWO_PI;
+      a0 = Math.min(a0, a);
+      a1 = Math.max(a1, a);
+    }
+    const cx0 = Math.max(this.sunX < x0 ? x0 - this.sunX : this.sunX > x1 ? this.sunX - x1 : 0, 0);
+    const cy0 = Math.max(this.sunY < y0 ? y0 - this.sunY : this.sunY > y1 ? this.sunY - y1 : 0, 0);
+    const rMin = Math.sqrt(cx0 * cx0 + cy0 * cy0);
+    const inside = rMin === 0;
+    const colA = inside ? 0 : Math.floor((aRef + a0 + Math.PI) / this.dTheta) - 1;
+    const colB = inside ? this.columns - 1 : Math.ceil((aRef + a1 + Math.PI) / this.dTheta) + 1;
+    const cols = c.sectorColumns;
+    const decayPerStep = Math.exp(-c.dr / c.recovery);
+    const rows = this.rows;
+    for (let cc = colA; cc <= colB; cc++) {
+      const col = ((cc % this.columns) + this.columns) % this.columns;
+      const sector = this._sectors.get(Math.floor(col / cols));
+      if (!sector) continue;
+      const data = sector.data;
+      const base = (col % cols) * rows;
+      const theta = col * this.dTheta - Math.PI;
+      const ux = Math.cos(theta);
+      const uy = Math.sin(theta);
+      out.columns++;
+      let started = false;
+      let tau = 0;
+      let calm = 0;
+      let prevR = null;
+      let prevRow = -1;
+      let done = false;
+      for (const w of this.windows) {
+        if (done) break;
+        if (w.r0 + (w.rows - 1) * c.dr < rMin - c.dr) { prevR = w.r0 + (w.rows - 1) * c.dr; prevRow = w.row0 + w.rows - 1; continue; }
+        for (let i = 0; i < w.rows; i++) {
+          const r = w.r0 + i * c.dr;
+          if (!started) {
+            if (r < rMin - c.dr) continue;
+            started = true;
+            // τ przed tym wierszem z zapisanej transmitancji (poprzedni wiersz okna albo koniec poprzedniego okna).
+            if (i > 0) tau = -Math.log(Math.max(1e-30, data[base + w.row0 + i - 1]));
+            else if (prevRow >= 0) tau = -Math.log(Math.max(1e-30, data[base + prevRow])) * Math.exp(-(w.r0 - prevR) / c.recovery);
+          } else if (i === 0 && prevR !== null) {
+            tau *= Math.exp(-(w.r0 - prevR) / c.recovery);
+          }
+          const sigma = this.extinctionAt(this.sunX + ux * r, this.sunY + uy * r);
+          out.samples++;
+          tau = tau * decayPerStep + sigma * c.dr;
+          const T = Math.exp(-tau);
+          const idx = base + w.row0 + i;
+          const diff = Math.abs(T - data[idx]);
+          data[idx] = T;
+          if (diff >= 0.002) {
+            const x = this.sunX + ux * r;
+            const y = this.sunY + uy * r;
+            if (x < out.x0) out.x0 = x;
+            if (y < out.y0) out.y0 = y;
+            if (x > out.x1) out.x1 = x;
+            if (y > out.y1) out.y1 = y;
+          }
+          if (r > rMax) {
+            calm = diff < tol ? calm + 1 : 0;
+            if (calm >= 3) { done = true; break; }
+          }
+        }
+        prevR = w.r0 + (w.rows - 1) * c.dr;
+        prevRow = w.row0 + w.rows - 1;
+      }
+    }
+    out.ms = ((typeof performance !== 'undefined') ? performance.now() : 0) - t0;
+    this.stats.recomputeMs = (this.stats.recomputeMs || 0) + out.ms;
+    if (!(out.x1 >= out.x0)) { out.x0 = out.y0 = out.x1 = out.y1 = null; }
+    return out;
   }
 
   /** Pamięć siatki biegunowej [B] (do diagnostyki). */

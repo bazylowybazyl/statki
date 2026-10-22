@@ -129,7 +129,10 @@ export const BELT_HOLE_CONFIG = Object.freeze({
   // — komórka poza kołem mogła odrzucić skałę z powodu większej skały w kole (_overlapsLarger).
   reach: 7000,
   // Ile ostatnich prostokątów zmian pamięta pole (warstwy obrazu dogrywają je w update()).
-  dirtyKeep: 64
+  dirtyKeep: 64,
+  // Zasięg zmiany cienia pól za wyrwą (od słońca) [j.]: ~6 długości odbudowy światła (asteroidFieldLight.js) —
+  // dalej różnica transmitancji < 0,002. `holesTouch(…, light)` — pamięci obrazu ze słońcem (mapa pola, skały).
+  lightReach: 420000
 });
 
 // Rudy pola → indeks ROCK_TYPES (rudy gry 0–6 jak dawniej, typy z widm 9–13).
@@ -640,7 +643,7 @@ function avoidFactor(av, dx, dy) {
 // ---------------------------------------------------------------------------
 // Pole
 
-const _macro = { weight: 0, gap: 1, cluster: 0, rim: 0, depth: 0, density: 0, ice: 0, region: null };
+const _macro = { weight: 0, gap: 1, cluster: 0, rim: 0, depth: 0, density: 0, ice: 0, region: null, hole: 1, gas: 0 };
 
 export class AsteroidBeltField {
   /**
@@ -1071,6 +1074,13 @@ export class AsteroidBeltField {
     out.density = wDens * gap * (c.baseDensity + (c.fieldDensity - c.baseDensity) * cluster + c.fieldDensity * c.rimDensity * rim) * this.densityScale;
     out.ice = region ? region.ice : 0;
     out.region = region;
+    // Wyrwy po wydobyciu (setHoles): mnożnik mgły, pyłu, zasłony i cienia pól w punkcie (tam, gdzie nie ma skał,
+    // nie ma też pyłu). Skały biorą go w _generateCell; `density` zostaje surowa — granica losowania komórki.
+    out.hole = this.holes.length ? this.holeFactor(x, y) : 1;
+    // AGENT: miejsce na źródła gazu (skały produkujące gaz — osobny temat, demo gazów i mgieł): dodatkowa gęstość
+    // mgły w punkcie. Odbiorcy (fog.js, fieldMap.js, zasłona w asteroidBelt.js, cień pól asteroidFieldLight.js)
+    // liczą pył jako „gęstość × hole + gas”, więc źródło gazu wystarczy dopisać tutaj (bez wyrw).
+    out.gas = 0;
     return out;
   }
 
@@ -1196,7 +1206,7 @@ export class AsteroidBeltField {
       const m = this.sampleMacro(x, y);
       // Wyrwa (wydobycie, setHoles) przerzedza tylko przyjęcie kandydata: ta sama liczba losowań i te same
       // skały poza wyrwą — w wyrwie zostaje ich podzbiór. Bez wyrw — bit w bit jak dawniej.
-      if (uAccept * bound > (this.holes.length ? m.density * this.holeFactor(x, y) : m.density)) continue;
+      if (uAccept * bound > (m.hole < 1 ? m.density * m.hole : m.density)) continue;
       const region = m.region;
       const cluster = m.cluster;
       const depth = m.depth;
@@ -1643,6 +1653,37 @@ export class AsteroidBeltField {
       if (v < mul) mul = v;
     }
     return mul;
+  }
+
+  /**
+   * Czy zmiany wyrw nowsze niż wersja `seen` dotykają prostokąta świata [x0, x1] × [y0, y1] — pamięci obrazu
+   * (mgła, mapa pola, skały) przebudowują się tylko przy wyrwie w swoim zasięgu, nie przy każdej w pasie.
+   * `light` — także klin cienia pól ZA wyrwą (od słońca, do `lightReach`): tam zmienia się transmitancja.
+   * Pominięte prostokąty (`seen` starsza niż pamięć `holeDirty`) — true.
+   */
+  holesTouch(seen, x0, y0, x1, y1, light = false) {
+    const dirty = this.holeDirty;
+    if (!dirty.length || dirty[0].v > seen + 1) return this.holeVersion !== seen;
+    const reach = BELT_HOLE_CONFIG.lightReach;
+    const qx = (x0 + x1) * 0.5 - this.sunX;
+    const qy = (y0 + y1) * 0.5 - this.sunY;
+    const rq = Math.sqrt(qx * qx + qy * qy);
+    const halfQ = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)) * 0.5;
+    for (let i = 0; i < dirty.length; i++) {
+      const d = dirty[i];
+      if (d.v <= seen) continue;
+      if (!(d.x0 > x1 || d.x1 < x0 || d.y0 > y1 || d.y1 < y0)) return true;
+      if (!light) continue;
+      const dx = (d.x0 + d.x1) * 0.5 - this.sunX;
+      const dy = (d.y0 + d.y1) * 0.5 - this.sunY;
+      const rd = Math.sqrt(dx * dx + dy * dy);
+      const halfD = Math.sqrt((d.x1 - d.x0) * (d.x1 - d.x0) + (d.y1 - d.y0) * (d.y1 - d.y0)) * 0.5;
+      if (rq + halfQ < rd - halfD || rq - halfQ > rd + halfD + reach) continue;
+      let da = Math.atan2(qy, qx) - Math.atan2(dy, dx);
+      da -= Math.round(da / (Math.PI * 2)) * Math.PI * 2;
+      if (Math.abs(da) <= halfD / Math.max(1, rd) + halfQ / Math.max(1, rq)) return true;
+    }
+    return false;
   }
 
   /** Gęstość skał PLAY z wyrwami (densityAt × holeFactor) — skaner, testy. */

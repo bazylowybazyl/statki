@@ -226,7 +226,6 @@ export class RockLayer {
    */
   update(f) {
     if (!this.enabled) return;
-    if ((this.field.holeVersion || 0) !== this._holeVersion) this._reloadHoles();
     const zoom = Math.max(1e-5, f.cam.zoom || 1);
     const camZ = f.focalPx / zoom;
     let minPx = this.minPx;
@@ -247,6 +246,9 @@ export class RockLayer {
     const halfH = (f.viewH * 0.5 / zoom) * spreadFar;
     const marginW = halfW * this.marginFrac;
     const marginH = halfH * this.marginFrac;
+    if ((this.field.holeVersion || 0) !== this._holeVersion) {
+      this._reloadHoles(f.cam.x - halfW - marginW, f.cam.y - halfH - marginH, f.cam.x + halfW + marginW, f.cam.y + halfH + marginH);
+    }
     const pxPerUnitNear = this.perspective ? f.focalPx / (camZ + band.zNear) : zoom;
     const budgetEnd = performance.now() + (f.budgetMs ?? 3);
     let pending = 0;
@@ -483,14 +485,17 @@ export class RockLayer {
   }
 
   /**
-   * Wyrwy po wydobyciu (rzadko — zmiana wyrwy co minuty gry): wczytane komórki dotykające prostokątów zmian
+   * Wyrwy po wydobyciu (zmiany w całym pasie — w kadrze rzadko): wczytane komórki dotykające prostokątów zmian
    * pola (`holeDirty` nowszych niż ostatnio widziana wersja) wracają do kolejki — pole generuje je już
    * z wyrwą (ten sam podzbiór skał co w polu gry). Pominięte prostokąty (warstwa długo bez update) — wszystkie.
+   * [x0, x1] × [y0, y1] — kadr warstwy (świat gry): słońce wczytanych skał od nowa tylko, gdy leży w wyrwie
+   * albo w klinie jej cienia pól.
    */
-  _reloadHoles() {
+  _reloadHoles(x0, y0, x1, y1) {
     const field = this.field;
     const dirty = field.holeDirty || [];
     const seen = this._holeVersion;
+    const light = field.holesTouch(seen, x0, y0, x1, y1, true);
     this._holeVersion = field.holeVersion || 0;
     const all = !dirty.length || dirty[0].v > seen + 1;
     for (const o of this.octaves) {
@@ -498,18 +503,22 @@ export class RockLayer {
       const cs = o.oct.cell;
       let any = false;
       for (const cell of [...o.cells.values()]) {
-        const x0 = cell.cx * cs;
-        const y0 = cell.cy * cs;
+        const cx0 = cell.cx * cs;
+        const cy0 = cell.cy * cs;
         let hit = all;
         for (let i = 0; !hit && i < dirty.length; i++) {
           const d = dirty[i];
           if (d.v <= seen) continue;
-          hit = !(x0 > d.x1 || x0 + cs < d.x0 || y0 > d.y1 || y0 + cs < d.y0);
+          hit = !(cx0 > d.x1 || cx0 + cs < d.x0 || cy0 > d.y1 || cy0 + cs < d.y0);
         }
         if (hit) { this._unloadCell(o, cell); any = true; }
       }
       if (any) o.pending++;
+      // Cień pól przeliczony w wyrwie i za nią (beltWorld.setHoles) — instancja niesie transmitancję z chwili
+      // wczytania skały.
+      if (light) for (let s = 0; s < o.count; s++) o.data[s * FLOATS + 19] = this.sunT(o.slotRock[s].x, o.slotRock[s].y);
     }
+    if (light) this._version++;
   }
 
   _unloadAll(o) {

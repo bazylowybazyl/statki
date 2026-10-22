@@ -175,6 +175,7 @@ export class AsteroidBelt {
     this.mined = null;
     this.miningView = null;
     this._takenVersion = -1;
+    this._holeVersion = 0;
     this._minedFrame = { zoom: 1, originX: 0, originY: 0, camX: 0, camY: 0 };
     this._miningFrame = { dt: 0, time: 0, originX: 0, originY: 0, zoom: 1, ship: null, sunT: null };
     this._miningShip = { x: 0, y: 0 };
@@ -616,7 +617,17 @@ export class AsteroidBelt {
     }
     // Olbrzymy: widoki GPU gotowych siatek (budowę zleca świat pasa gry), przekrój pod stropem.
     this._updateGiants(dt, ox, oy);
-    // Mapa pola nad kadrem (słońce, pył, lód, burze): mgła, ośrodek, maska Core3D.
+    // Mapa pola nad kadrem (słońce, pył, lód, burze): mgła, ośrodek, maska Core3D. Nowe wyrwy (field.setHoles):
+    // mapa od nowa — pył rzednie, a cień pól przeliczył świat pasa gry przed operacją dla repliki.
+    if ((this.field.holeVersion || 0) !== this._holeVersion) {
+      const seen = this._holeVersion;
+      this._holeVersion = this.field.holeVersion || 0;
+      // Mapa (lokalnie, y w górę) → świat gry; z klinem cienia pól za wyrwą (kanał R = słońce).
+      const r = this.fieldMap.rect;
+      if (this.fieldMap.valid && this.field.holesTouch(seen, r.x0 + ox, -(r.y0 + r.h) + oy, r.x0 + r.w + ox, -r.y0 + oy, true)) {
+        this.fieldMap.invalidate();
+      }
+    }
     const mf = this._mapFrame;
     mf.viewW = f.viewW; mf.viewH = f.viewH; mf.focalPx = f.focalPx;
     mf.originX = ox; mf.originY = oy;
@@ -919,7 +930,8 @@ export class AsteroidBelt {
     const ice = m.ice || 0;
     const Tcam = this.sunT(v.x, v.y);
     const t = Math.min(1, Math.max(0, (cluster - 0.06) / (0.42 - 0.06)));
-    const target = weight * t * t * (3 - 2 * t);
+    // Wyrwa po wydobyciu rozrzedza zasłonę (m.hole); źródło gazu (m.gas — dziś 0) dołożyłoby swoją.
+    const target = weight * t * t * (3 - 2 * t) * m.hole + m.gas;
     u.veil.value = Math.min(1, target * (0.85 + 0.15 * (1 - Tcam)));
     u.sunLevel.value = Tcam;
     u.ice.value = Math.min(1, ice);
