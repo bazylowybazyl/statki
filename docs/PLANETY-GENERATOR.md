@@ -96,8 +96,8 @@ i kierunek artystyczny: `docs/BRIEF-korek.md`.
   0,15–0,59 R (kotwice w azymutach 0, 60, …, 300 ramy gryzu, najwyżej ~32° nad płaszczyzną ringu); przekaźnik ~0,19 R.
 - Kadr gry: biegun obrotu ku kamerze, gryz (10° N) krąży przy krawędzi tarczy (wcięcie w obrysie na ±25° obwodu);
   w ramie gryzu zawsze ten sam rzut (z północy ~10° nad płaszczyzną elektrowni) — fasada południowej korony.
-- Budżet końcowy (test `tests/earthBitePlant.test.mjs`): metal 576 tys. wierzchołków (limit 600 tys.), przepływ 79 tys.
-  (150 tys.), razem z dodatkami 658 tys. (900 tys.); 9 rysunków (metal, przepływ, promień ×3, przekaźnik ×2, kabiny —
+- Budżet końcowy (test `tests/earthBitePlant.test.mjs`): metal 583 tys. wierzchołków po rundzie 5 (limit 600 tys.), przepływ 79 tys.
+  (150 tys.), razem z dodatkami 665 tys. (900 tys.); 9 rysunków (metal, przepływ, promień ×3, przekaźnik ×2, kabiny —
   36 instancji, linie energii wind). Budowa brył ~0,5–0,9 s CPU (rozgrzewka ekranu ładowania). WGSL fragmentu: metal
   ~74 tys. znaków, budowa grafu ~0,1 s (pułapka 40: `plantVar`).
 - Pomiar w grze (`node scripts/webgpu/korek-gra.mjs`, RTX 5080, kadr całego gryzu przy zoomie 0,032): GPU klatki 0,61 ms
@@ -106,10 +106,17 @@ i kierunek artystyczny: `docs/BRIEF-korek.md`.
 - Przebieg pracy: 4 rundy ról (MAT, CORK, LINING, ELEV, ORBIT, BEAM) z krytykiem — oceny kadrów gry 5 → 7,5 → 8,5 → 9,
   szczegółów 6,5 → 7,5 → 8 → 8,5. Zrzuty dema: `node scripts/webgpu/slup-demo.mjs --tylko gra,szczegoly` (grupy ról:
   mat, cork, lining, orbit, beam, elev).
-- Otwarte (krytyk 5): łopaty radiatorów odbiornika w profilu gry czytają się jak ramka; dok wózka i szyna z bliska
-  ubogie; fasada z daleka jak równa drabinka listew; nocne płaszczyzny brązowe; okna z bardzo bliska płaskie. Poza
-  elektrownią: ściana gryzu w słońcu jak beżowy marmur, jezioro płaszcza w słońcu jak błoto (shader gryzu), spód ringu
-  z bliska (ring „Halo”). Tło menu ma własną Ziemię z obrotem wokół Y — bez elektrowni.
+- Runda 5 (resztki krytyka 5, 2026-10-22): łopaty radiatorów bez ramki (listwa tylko na czole końca, kolektor — ciemna
+  stal); windy — dok wózka i głowica z wręgami, zaczepami, ramą wrót, wąską listwą grzbietu i oknami galerii, szyna
+  z własnym uv i kratownicą pod spodem przy wózkach, cewki z własnym uv (kontrakt: COIL z < 0), światła pozycyjne jako
+  oprawa z jedną soczewką (windy, obudowa, korek); fasada — okna grupami, klatki schodowe, rzędy świateł odcinkami,
+  pilastry w nieregularnym rytmie (symetrycznym wokół osi bramy); noc — A/B: brązowe wypełnienie dawała szeroka poświata
+  lamp (średnia jasność kadru 30 → 12,5 bez niej; światło jeziora ~1–3 poziomy), teraz ciemna baza z plamami
+  naświetlaczy; okna z bliska — `windowPane` (rama, szprosy, głębia, bursztyn zamiast kremu). Metal 583 tys.
+  wierzchołków; w grze (`korek-gra.mjs`, tryb `off`) GPU klatki 0,61 ms bez elektrowni, 0,95–1,07 ms z nią,
+  pipeline'y synchroniczne 0, błędy 0.
+- Otwarte: poza elektrownią ściana gryzu w słońcu jak beżowy marmur, jezioro płaszcza w słońcu jak błoto (shader
+  gryzu), spód ringu z bliska (ring „Halo”). Tło menu ma własną Ziemię z obrotem wokół Y — bez elektrowni.
 
 ## Merkury i Wenus: rola w ekonomii na mapie (2026-10-08)
 

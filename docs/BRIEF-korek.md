@@ -84,8 +84,13 @@ test `tests/earthBitePlant.test.mjs`.
   per wierzchołek), BEACON 6 (światło pozycyjne: z — częstotliwość, w — 0 czerwone / 1 białe), GLASS 7 (ciemne szkło),
   PIPE 8 (przewód: uv.y wzdłuż, z — długość [R], w — kierunek impulsów ±1), TETHER 9 (lina: uv.y 0 kotwica → 1
   ring (dok wózka na szynie), z — długość, w — pas kabin ±1). Metal: rodzaje 0–7, przepływ: 8–9. WŁASNE UV CZĘŚCI:
-  z < 0 przy HULL, STRUCT, WINDOW, STRIP i HOT — wzór idzie po uv części w [R] (uv.x wzdłuż, uv.y w poprzek profilu —
-  części przeciągane: korona, galerie, osłony, żebra), |z| to parametr rodzaju; z ≥ 0 — rzut pudełkowy w ramie.
+  z < 0 przy HULL, STRUCT, WINDOW, STRIP, HOT i COIL — wzór idzie po uv części w [R] (uv.x wzdłuż, uv.y w poprzek
+  profilu — części przeciągane: korona, galerie, osłony, żebra; cewka: uzwojenia w poprzek uv.x — na małych walcach
+  i pierścieniach rzut pudełkowy dawał ukośne paski jak litery), |z| to parametr rodzaju (cewka — faza; runda 5);
+  z ≥ 0 — rzut pudełkowy w ramie.
+- ŚWIATŁO POZYCYJNE NA BRYLE (runda 5): pudełko BEACON ma uv 0…1 na każdej ścianie, więc świecący środek KAŻDEJ ściany
+  czytał się za dnia jak kostka do gry — światło to oprawa ze stali (STRUCT, pięć ścian) i soczewka na jednej ścianie
+  (BEACON; windy: `lampBox`, odbiornik: `lamp` — oprawa sześciokątna z kopułką).
 - UNIFORMY (`PLANT_KEYS`, `earthBitePlantCommon.tsl.js`): wspólne obiekty `{ value }` wszystkich materiałów
   elektrowni; `uPlantTime`, `uPlantShape` (z0, światło jeziora, —, h korka), `uPlantBeam` (jasność, h wylotu, h odbiornika,
   promień rdzenia), `uPlantLayer` (warstwa siatki przezroczystej), `uPlantBeamLen`, `uPlantState` (przekaz, magazyn),

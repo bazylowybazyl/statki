@@ -19,16 +19,17 @@ export const DEG = Math.PI / 180;
 
 /**
  * Rodzaje powierzchni (aPart.x). Materiał metalu: 0–7, materiał przepływu (rury, liny): 8–9. Przy każdym — znaczenie
- * aPart.z / aPart.w (0 = wartość domyślna rodzaju) i uv. WŁASNE UV CZĘŚCI: aPart.z < 0 przy HULL, STRUCT, WINDOW, STRIP
- * i HOT — wzór (panele, okna, listwy) idzie po uv części w [R] (uv.x wzdłuż części, uv.y w poprzek profilu; części
- * przeciągane: korona, galerie, osłony, żebra), |z| to parametr rodzaju; z ≥ 0 — rzut pudełkowy w ramie elektrowni.
+ * aPart.z / aPart.w (0 = wartość domyślna rodzaju) i uv. WŁASNE UV CZĘŚCI: aPart.z < 0 przy HULL, STRUCT, WINDOW, STRIP,
+ * HOT i COIL — wzór (panele, okna, listwy, uzwojenia) idzie po uv części w [R] (uv.x wzdłuż części, uv.y w poprzek
+ * profilu; części przeciągane: korona, galerie, osłony, żebra; cewka — uzwojenia w poprzek uv.x), |z| to parametr rodzaju
+ * (cewka: faza); z ≥ 0 — rzut pudełkowy w ramie elektrowni.
  */
 export const PART = Object.freeze({
   HULL: 0,    // czarny kadłub megastruktury (panele, szwy, drobne światła)
   STRUCT: 1,  // stal konstrukcyjna (żebra, kratownice, wsporniki) — ciemniejsza, bez okien i szwów
   WINDOW: 2,  // pasy okien (ciepłe punkty, nocą wyraźniej); z — gęstość zapalonych 0…1
   STRIP: 3,   // świecąca listwa (cała powierzchnia); z — jasność ×, w — barwa: 0 ciepła, 1 chłodna (energia)
-  COIL: 4,    // cewka / pierścień energii (barwa promienia, puls); z — faza 0…1, w — jasność ×
+  COIL: 4,    // cewka / pierścień energii (barwa promienia, puls); z — faza 0…1 (z < 0 — własne uv, faza |z|), w — jasność ×
   HOT: 5,     // gorący wymiennik / styk z lawą; z — żar 0…1 per wierzchołek
   BEACON: 6,  // światło pozycyjne (miga, faza z aPart.y); z — częstotliwość [Hz], w — barwa: 0 czerwona, 1 biała
   GLASS: 7,   // ciemne szkło / czasze (odblask nieba i słońca)

@@ -24,7 +24,8 @@
 //     pierścieniami cewek (w = −1, jasność wg naładowania) między ogniwami.
 //   • ŁOPATY RADIATORÓW: ciemne, matowe płyty żaru o płytkiej fali (krawędzią do osi — z góry linie), bez siatki płyt;
 //     trzy rury cieplne na stronę z gorącym szwem gasnącym ku połowie łopaty, ciepły gradient emisji tylko u nasady
-//     (kolektor), jedna ciepła listwa obrysu (zostaje nocą) i światła pozycyjne w rogach końca.
+//     (blacha i rury; kolektor — ciemna stal), słaba ciepła listwa TYLKO na czole końca (zostaje nocą; listwy na wszystkich
+//     krawędziach czytały się w kadrze gry jak ramka zaznaczenia) i światła pozycyjne w rogach końca.
 //   • ŚWIATŁA POZYCYJNE (`lamp`): ciemna oprawa z małą soczewką — zgaszone to metal z szybką, nie kolorowa kula.
 //   • NADAJNIK w środku (`hubCenterObject`): świecący rdzeń w sferze armilarnej cewek i dwóch pierścieniach gimbala
 //     (w sferze mieści się kula ładowania promienia), lufa z cewkami i dyszą ku ringowi przez szczelinę w kołnierzu.
@@ -1139,8 +1140,8 @@ function buildSpire(M, L, a) {
 
 // ── ŁOPATY RADIATORÓW: ciemna, matowa blacha (krawędzią do osi gryzu) o PŁYTKIEJ fali, trzy rury cieplne ─────────────
 // Rysunek łopaty w kadrze gry (runda 4 — gęsta pomarańczowa siatka szwów i sześciu rur czytała się jak wireframe):
-// JEDNA listwa krawędzi (obrys — zostaje nocą), TRZY rury cieplne na stronę i ciemne wnętrze; żar tylko u nasady —
-// kolektor z gorącym szwem, rury z żarem gasnącym ku połowie łopaty i blacha z ciepłym gradientem emisji od nasady
+// słaba listwa TYLKO na czole końca (zostaje nocą), TRZY rury cieplne na stronę i ciemne wnętrze; żar tylko u nasady —
+// rury z żarem gasnącym ku połowie łopaty i blacha z ciepłym gradientem emisji od nasady (kolektor — ciemna stal)
 // (bez siatki płyt: blacha i rama w trybie własnego uv ze STAŁYM uv w środku oczka — `HOT_FLAT`). Blacha to płyty żaru
 // (HOT): najciemniejszy i najbardziej matowy metal — grzbiety nie łapią szarego połysku. Rama krawędzi — ta sama ciemna
 // blacha (bez drugiej linii obok listwy), usztywnienia ze stali, nocą światła pozycyjne w rogach końca.
@@ -1185,7 +1186,7 @@ function buildRadiators(M, L, lay) {
   const T_PIPE = [0, 0.2, 0.45, 0.7, 1];
   const hotPipe = M.part(PART.HOT, 0.31, pipeHeat);
   const sheet = M.part(PART.HOT, 0.53, plateHeat);
-  const edgeL = M.part(PART.STRIP, 0.29, -0.17, 0);
+  const edgeL = M.part(PART.STRIP, 0.29, -0.06, 0);
   // linie fal: k parzyste — grzbiet od przodu (z = +dz), nieparzyste — dolina
   const lineY = (k, x) => ((k / (nL - 1)) * 2 - 1) * (h(x) - 0.0005);
   const lineZ = (k) => (k % 2 ? -dz : dz);
@@ -1223,10 +1224,10 @@ function buildRadiators(M, L, lay) {
         bar(sheet, v3(xa, sg * (h(xa) - 0.0001), 0), v3(xb, sg * (h(xb) - 0.0001), 0), 0.0005, dz * 2 + 0.0006, Z_AX);
       }
     }
-    // kolektor u nasady (pion wzdłuż osi, obie strony) — blacha w pełnym żarze nasady, bez gorącego szwu (twarda
-    // pomarańczowa linia u nasady domykała obrys łopaty w ramkę)
+    // kolektor u nasady (pion wzdłuż osi, obie strony) — CIEMNA stal: żar nasady niesie blacha i rury (świecący kolektor
+    // domykał w kadrze gry obrys łopaty w czerwono-pomarańczową ramkę)
     for (const sg of [-1, 1]) {
-      bar(sheet, v3(s0 + 0.0009, -h0 + 0.0003, sg * (dz + 0.0004)), v3(s0 + 0.0009, h0 - 0.0003, sg * (dz + 0.0004)), 0.0006, 0.0005, X_AX);
+      bar(S, v3(s0 + 0.0009, -h0 + 0.0003, sg * (dz + 0.0004)), v3(s0 + 0.0009, h0 - 0.0003, sg * (dz + 0.0004)), 0.0006, 0.0005, X_AX);
     }
     const fl = hotFlatUv(0.53, k);
     flatUv(sheet, ss, fl.u, fl.v);
@@ -1250,13 +1251,10 @@ function buildRadiators(M, L, lay) {
       for (const sg of [-1, 1]) bar(S, v3(x, -hx, sg * (dz + tp / 2 + rp * 2 + 0.00013)), v3(x, hx, sg * (dz + tp / 2 + rp * 2 + 0.00013)), 0.0005, 0.00026, Z_AX);
     }
     bar(S, v3(s4 + 0.0003, -h1 - 0.0002, 0), v3(s4 + 0.0003, h1 + 0.0002, 0), 0.0008, dz * 2 + 0.0007, Z_AX);
-    // OBRYS NOCĄ: ciepła listwa w segmentach na krawędziach (górna, dolna — nad ramą żaru; czoło końca), słaba — pod
-    // progiem bloomu i pod jasnością korony (chłodny pełny obrys czytał się jak ramka zaznaczenia)
+    // LISTWA TYLKO NA CZOLE KOŃCA (zewnętrzna krawędź łopaty), słaba — nocą zostaje kreska końca; listwy wzdłuż górnej
+    // i dolnej krawędzi z kolektorem u nasady czytały się w kadrze gry jak pomarańczowo-czerwona ramka zaznaczenia
     const lw = 0.00016, lt = 0.00016, xt = s4 + 0.0007 + lw / 2;
-    for (const sg of [-1, 1]) {
-      bar(edgeL, v3(s0 + 0.002, sg * (h(s0 + 0.002) + 0.00015 + lw / 2), 0), v3(xt, sg * (h(xt) + 0.00015 + lw / 2), 0), lw, lt, Z_AX);
-    }
-    bar(edgeL, v3(xt, -h1 - 0.0002 - lw, 0), v3(xt, h1 + 0.0002 + lw, 0), lw, lt, Z_AX);
+    bar(edgeL, v3(xt, -h1 + 0.0004, 0), v3(xt, h1 - 0.0004, 0), lw, lt, Z_AX);
     pinUv(edgeL, sl, STRIP_V);
     for (const B of [S, hull]) B.transformFrom(0, m);
     hotPipe.transformFrom(sp, m);

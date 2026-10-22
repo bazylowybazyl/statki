@@ -31,7 +31,7 @@ import {
 import { sunVisibility } from './sunShadowMask.js';
 import {
   PLANT_COLORS, perObjectUniforms, sdown, aaLine, aaBox, aaDot, lodFade, hash12, plantLightContext, plantLighting,
-  plantVar
+  plantVar, windowPane
 } from './earthBitePlantCommon.tsl.js';
 import { blendAddytywnePremul } from './tsl/mieszanie.js';
 
@@ -175,7 +175,12 @@ function buildGraph() {
     const lodW = plantVar(lodFade(pix, 0.0003));
     const wi = floor(arc.div(0.00034));
     const lit = select(hash12(vec2(wi, seed.mul(31.0))).lessThan(mix(0.55, 0.95, seed)), float(1.0), float(0.25));
-    const win = plantVar(mix(wy.mul(0.33), wy.mul(wx).mul(lit), lodW).mul(onBody).mul(away));
+    // z bliska rama, ślemię i głębia wnęki (windowPane) — nie płaski kremowy prostokąt; szyba bez ramy
+    const pane = windowPane(wu.sub(0.5).mul(0.00034 / 0.00011), loc.y.div(0.00042), pix.div(0.00011), pix.div(0.00042),
+      { gain: 0.5 });
+    const win = plantVar(mix(wy.mul(0.33), wy.mul(wx).mul(pane.glass), lodW).mul(onBody).mul(away));
+    const winE = plantVar(win.mul(mix(1.0, lit.mul(pane.lum), lodW)));
+    const winTint = mix(vec3(1.0, 0.36, 0.1), vec3(1.0, 0.62, 0.3), pane.warm);
     // KOŁNIERZE: pierścienie listew (r > 1,04 r) — chłodna energia pod progiem bloomu
     const collar = plantVar(step(CAB.r * 1.04, rr).mul(sdown(0.00110, 0.00140, abs(loc.y))).mul(step(0.0011, abs(loc.y))));
     // materiał: ciemny anodowany kadłub (trochę jaśniejszy od megastruktury — kabina czyta się na tle), szyby gładkie
@@ -183,7 +188,7 @@ function buildGraph() {
     const rough = mix(float(0.42).add(seam.mul(0.2)), 0.12, win);
     const a2 = clamp(rough.mul(rough).mul(rough).mul(rough).add(nPix.mul(nPix).mul(0.6)), 0.002, 1.0);
     const col = plantVar(plantLighting(C, n, albedo, a2, float(0.05), float(1.0).sub(seam.mul(0.5))), 'vec3');
-    col.addAssign(vec3(1.0, 0.6, 0.3).mul(win.mul(1.7)).mul(float(1.0).sub(C.lit.mul(0.5))));
+    col.addAssign(winTint.mul(winE.mul(1.7)).mul(float(1.0).sub(C.lit.mul(0.5))));
     col.addAssign(vec3(0.35, 0.7, 1.0).mul(collar.mul(0.55)));
     // ŚWIATŁA: nos w kierunku jazdy — biały HDR, tylny — czerwony; drobniejsze niż piksel rosną do piksela
     const tipF = vec3(0.0, dir.mul(CAB.tip), 0.0);

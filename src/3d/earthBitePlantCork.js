@@ -263,6 +263,12 @@ function box(F, cu, cw, hu, hw, v0, v1, acc, z = 0, w = 0, chamfer = 0) {
 }
 
 /**
+ * Światło pozycyjne do `box` (runda 5): OPRAWA ze stali (boki i spód) i SOCZEWKA tylko na wierzchu (BEACON, uv 0…1 —
+ * środek świeci); pudełko BEACON ze świecącym środkiem każdej ściany czytało się za dnia jak kostka do gry.
+ */
+const lampAcc = (M, seed) => ({ side: M.acc(PART.STRUCT, 0.58), top: M.acc(PART.BEACON, seed), bottom: M.acc(PART.STRUCT, 0.58) });
+
+/**
  * Blok sterowni (dyspozytornie bram, rozdzielnie): kadłub z JEDNYM ciągłym pasem okien we wnęce (głębokość 0,00022 R)
  * w środkowej części wysokości i fazowanym dachem — nie „biurowiec” z oknami na całych ścianach.
  */
@@ -728,7 +734,7 @@ function buildPilaster(ctx, az, i) {
   const yS = wl.y + 0.0035;
   const hS = lavaHeight(az, R + 0.016, b, z0);
   if (yS < T - 0.017 && hS < yS - 0.004) beam(st, F.at(0, yS, R + 0.0060), F.at(0, hS - 0.003, R + 0.016), 0.0008, 6);
-  if (i % 3 === 1) box(F, 0, R + 0.0052, 0.0006, 0.0006, T - 0.0072, T - 0.0060, M.acc(PART.BEACON, (i * 0.137) % 1), 0.4, 0);
+  if (i % 3 === 1) box(F, 0, R + 0.0052, 0.0006, 0.0006, T - 0.0072, T - 0.0060, lampAcc(M, (i * 0.137) % 1), 0.4, 0);
 }
 
 /**
@@ -992,7 +998,7 @@ function heavyPylon(M, F, cu, cw, y0, h, b0, b1, tiers, seed, { cu1 = cu, cw1 = 
     if (i % 2 === 1 || i === n - 1) {
       const c = (bt + e) * 0.8, k = (i >> 1) % 2 ? 1 : -1;
       for (const s of [-1, 1]) {
-        box(F, bu + s * c, bw + s * k * c, lb, lb, vb, vb + 1.6 * lb, M.acc(PART.BEACON, (seed * 5.3 + i * 0.11 + (s > 0 ? 0.07 : 0)) % 1), 0.45, 0);
+        box(F, bu + s * c, bw + s * k * c, lb, lb, vb, vb + 1.6 * lb, lampAcc(M, (seed * 5.3 + i * 0.11 + (s > 0 ? 0.07 : 0)) % 1), 0.45, 0);
       }
     }
     tu = bu; tw = bw; tv = vb; tb = bt;
@@ -1000,7 +1006,7 @@ function heavyPylon(M, F, cu, cw, y0, h, b0, b1, tiers, seed, { cu1 = cu, cw1 = 
   if (spire > 0) {
     const sb = Math.max(0.00012, tb * 0.3);
     prism(F, rect(tu, tw, sb, sb), [{ v: tv }, { v: tv + spire, s: 0.45 }], { side: hull, top: hull, bottom: null });
-    box(F, tu, tw, lb, lb, tv + spire, tv + spire + 2 * lb, M.acc(PART.BEACON, (seed * 3.1) % 1), 0.7, 1);
+    box(F, tu, tw, lb, lb, tv + spire, tv + spire + 2 * lb, lampAcc(M, (seed * 3.1) % 1), 0.7, 1);
   }
 }
 
@@ -1033,7 +1039,7 @@ function stackPair(ctx, F, cu, cw, y0, h, r, seed) {
     const c = F.at(cu, 0, cw + s * r * 1.45);
     lathe(prof, segs, 8, { cx: c.x, cz: c.z });
     const p = F.at(cu, 0, cw + s * r * 1.45 + s * (rr(yc) + e));
-    box(frame(p, F.U, F.V, F.W), 0, 0, 0.00022, 0.00022, yc, yc + 0.0004, M.acc(PART.BEACON, (seed * 7.3 + (s > 0 ? 0.5 : 0)) % 1), 0.5, 0);
+    box(frame(p, F.U, F.V, F.W), 0, 0, 0.00022, 0.00022, yc, yc + 0.0004, lampAcc(M, (seed * 7.3 + (s > 0 ? 0.5 : 0)) % 1), 0.5, 0);
   }
 }
 
@@ -1235,7 +1241,7 @@ function buildBridge(ctx, phi, idx) {
   if (pylons) {
     for (const s of [-1, 1]) {
       box(F, s * (hw + 0.0012), wPy, 0.0014, 0.0032, deckTop - 0.0002, deckTop + 0.0075, anchor, 0, 0, 0.0005);
-      box(F, s * (hw + 0.0012), wPy, 0.0006, 0.0006, deckTop + 0.0075, deckTop + 0.0087, M.acc(PART.BEACON, (seed * 3 + (s > 0 ? 0.3 : 0.7)) % 1), 0.6, 0);
+      box(F, s * (hw + 0.0012), wPy, 0.0006, 0.0006, deckTop + 0.0075, deckTop + 0.0087, lampAcc(M, (seed * 3 + (s > 0 ? 0.3 : 0.7)) % 1), 0.6, 0);
     }
   }
   // wiązka przewodów: z bramy po pokładzie w czoło rozdzielni, dalej (w jej wnętrzu) do stopy ściany
@@ -1477,7 +1483,7 @@ function buildArcology(ctx, az, rc, k) {
   // korona: ścięty ostrosłup, czerwone światła na narożach, pełna iglica z kondygnacjami świateł i białym światłem
   const top = y0 + H;
   prism(F, rect(0, cw, 0.0030, 0.0040), [{ v: y + 0.0002 }, { v: y + (top - y) * 0.6, s: 0.72 }, { v: top, s: 0.32 }], hull);
-  for (const su of [-1, 1]) for (const sw of [-1, 1]) box(F, su * 0.0030, cw + sw * 0.0040, 0.0003, 0.0003, y + 0.0002, y + 0.0008, M.acc(PART.BEACON, (seed + su * 0.13 + sw * 0.07 + 1) % 1), 0.45, 0);
+  for (const su of [-1, 1]) for (const sw of [-1, 1]) box(F, su * 0.0030, cw + sw * 0.0040, 0.0003, 0.0003, y + 0.0002, y + 0.0008, lampAcc(M, (seed + su * 0.13 + sw * 0.07 + 1) % 1), 0.45, 0);
   heavyPylon(M, F, 0, cw, top - 0.0004, 0.0065, 0.00068, 0.00032, 3, seed, { spire: 0.004 });
 }
 
@@ -1563,7 +1569,7 @@ function tankBattery(ctx, F, cu, cw, hu, hw, y, seed, side = 1) {
   const yH = yt + 0.0014 + rng.range(0.0018, 0.0024);
   bandBlock(F, cu, wH, hu - 0.0006, 0.0014, yt + 0.00005, yH, hull, win);
   for (const s of [-1, 1]) {
-    box(F, cu + s * (hu - 0.0011), wH + s * side * 0.0009, 0.00022, 0.00022, yH - 0.0002, yH + 0.0002, M.acc(PART.BEACON, (seed * 5.1 + (s > 0 ? 0.5 : 0)) % 1), 0.55, 0);
+    box(F, cu + s * (hu - 0.0011), wH + s * side * 0.0009, 0.00022, 0.00022, yH - 0.0002, yH + 0.0002, lampAcc(M, (seed * 5.1 + (s > 0 ? 0.5 : 0)) % 1), 0.55, 0);
   }
 }
 
@@ -1626,7 +1632,7 @@ function steppedBlock(ctx, F, cu, cw, hu, hw, y, seed, coils = false, winTiers =
         [{ acc: hull }, { acc: hull }, { acc: hull }, { acc: hot, z: 0.3 }, null], 16, { cx: c.x, cz: c.z });
     }
   }
-  box(F, cu + su * 0.8, cw + sw * 0.8, 0.0003, 0.0003, v, v + 0.0007, M.acc(PART.BEACON, seed), 0.6, rng.chance(0.25) ? 1 : 0);
+  box(F, cu + su * 0.8, cw + sw * 0.8, 0.0003, 0.0003, v, v + 0.0007, lampAcc(M, seed), 0.6, rng.chance(0.25) ? 1 : 0);
 }
 
 /**
@@ -1644,7 +1650,7 @@ function buildPipeRack(ctx, rr, y, { portals = 60, seed = 0.52, segs = 112 } = {
     const F = radialFrame(a, 0, 0);
     for (const s of [-1, 1]) beam(st, F.at(0, y, rr + s * 0.0017), F.at(0, y + hP, rr + s * 0.0017), 0.00022);
     box(F, 0, rr, 0.00025, 0.0021, y + hP - 0.0004, y + hP, st);
-    if (k % 6 === 3) box(F, 0, rr + 0.0019, 0.00028, 0.00028, y + hP, y + hP + 0.0005, M.acc(PART.BEACON, (k * 0.07) % 1), 0.5, 0);
+    if (k % 6 === 3) box(F, 0, rr + 0.0019, 0.00028, 0.00028, y + hP, y + hP + 0.0005, lampAcc(M, (k * 0.07) % 1), 0.5, 0);
   }
   [-0.0011, 0, 0.0011].forEach((o, j) => torus(M.acc(PART.STRUCT, (seed + j * 0.12) % 1), rr + o, y + hP + 0.00042, 0.00042, segs, 6));
 }
@@ -1719,7 +1725,7 @@ function buildTower(ctx, c, i, rng) {
   for (let k = 0; k < 4; k++) {
     const a = ((k + 0.25) / 4) * TAU;
     const p = new V3(c.x + Math.cos(a) * (rC + 0.0002), 0, c.z - Math.sin(a) * (rC + 0.0002));
-    box(frame(p, tanAz(a), UP.clone(), dirAz(a)), 0, 0, 0.0003, 0.0003, c.y + H + 0.0002, c.y + H + 0.0008, M.acc(PART.BEACON, (seed + k * 0.25) % 1), 0.4, 0);
+    box(frame(p, tanAz(a), UP.clone(), dirAz(a)), 0, 0, 0.0003, 0.0003, c.y + H + 0.0002, c.y + H + 0.0008, lampAcc(M, (seed + k * 0.25) % 1), 0.4, 0);
   }
   // wieńce na powłoce
   for (const f of [0.3, 0.6]) {

@@ -417,7 +417,14 @@ function boxPart(m, x0, x1, y0, y1, z0, z1, kind, seed, z = 0, w = 0, slope = 0)
   }
   g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   g.applyMatrix4(m);
-  return finalizePart(g, kind, seed, own ? ownZ(kind, z) : z, w);
+  const part = finalizePart(g, kind, seed, own ? ownZ(kind, z) : z, w);
+  // ŚWIATŁO POZYCYJNE (runda 5): oprawa ze stali na pięciu ścianach, soczewka tylko na ścianie +y bazy (na koronie — w górę,
+  // na ścianie — w otwór); pudełko ze świecącym środkiem każdej ściany czytało się za dnia jak kostka do gry
+  if (kind === PART.BEACON) {
+    const a = part.attributes.aPart;
+    for (let i = 0; i < a.count; i++) if ((i >> 2) !== 2) a.setX(i, PART.STRUCT);
+  }
+  return part;
 }
 
 /** Walec o osi Y bazy `m` (podstawa w (x, y0, z), wysokość h). */
@@ -560,18 +567,27 @@ function buildCrown(L, b, lay, metal) {
     metal.push(boxPart(rimBasis(R, phi), s0, L.liningCrownOut + 0.0006, -0.0014, L.liningCrownDeck + 0.0006, -0.0009, 0.0009,
       PART.HULL, (i * 0.618) % 1, 0, 0, 0.0034));
   }
-  // pilastry fasady co krok (co piąty cięższy — w azymutach podzielnych przez 5°, więc symetrycznie wokół osi bramy
-  // i placów), w kondygnacjach okien; przy przyporach głównych — filary (buildButtress), przy pylonach bramy — pylony
-  const step = L.liningPilasterStep;
+  // pilastry fasady w kondygnacjach okien: CIĘŻKIE co 5° (w azymutach podzielnych przez 5°, więc symetrycznie wokół osi
+  // bramy i placów), LEKKIE w module 5° wg wzoru modułu (runda 5 — pilastry co 1° cięły pasy okien równo jak perforacja
+  // taśmy filmowej): jeden w środku, dwa, cztery albo żaden — przęsła 1–5°; wzór z ziarna odległości modułu od osi bramy
+  // (lustro wokół 270°). Przy przyporach głównych — filary (buildButtress), przy pylonach bramy — pylony
+  const step = L.liningPilasterStep * 5;
+  const LIGHT = [[0.5], [0.3, 0.7], [0.2, 0.4, 0.6, 0.8], [], [0.5], [0.3, 0.7]];
+  const m0 = Math.round(L.liningGateAz / step);
   const cTop = STOREYS[2][1], cm = (D + cTop) / 2, hz = (D - cTop) / 2;
   for (let i = 0, n = Math.round(360 / step); i < n; i++) {
-    const phi = i * step * DEG;
-    if (plazaAt(L, b, phi) > 0.001 || [...lay.prim, ...lay.gate].some((p) => angDist(phi, p) < 0.9 * DEG)) continue;
-    const R = rimAt(phi, b);
-    const heavy = i % 5 === 0;
-    const hw = heavy ? 0.0011 : 0.0006;
-    metal.push(boxPart(wallBasis(phi, R.psR - cm / R.beR, b), -hw, hw, a - 0.0012, a + (heavy ? 0.0013 : 0.0007), -hz, hz,
-      PART.HULL, (i * 0.618) % 1));
+    const key = i >= m0 ? i - m0 : m0 - 1 - i;
+    const pat = LIGHT[plantRng(9100 + key).next() * LIGHT.length | 0];
+    for (const f of [0, ...pat]) {
+      const deg = (i + f) * step;
+      const phi = deg * DEG;
+      if (plazaAt(L, b, phi) > 0.001 || [...lay.prim, ...lay.gate].some((p) => angDist(phi, p) < 0.9 * DEG)) continue;
+      const R = rimAt(phi, b);
+      const heavy = f === 0;
+      const hw = heavy ? 0.0011 : 0.0006;
+      metal.push(boxPart(wallBasis(phi, R.psR - cm / R.beR, b), -hw, hw, a - 0.0012, a + (heavy ? 0.0013 : 0.0007), -hz, hz,
+        PART.HULL, (deg * 0.618) % 1));
+    }
   }
   // posterunki na pokładzie co 15° (nad żebrami): blok z oknami ku otworowi i światłem
   const deck = L.liningCrownDeck;

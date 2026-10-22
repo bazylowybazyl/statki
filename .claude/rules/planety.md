@@ -74,7 +74,14 @@ paths:
   `dema/planety-webgpu.html?korek=1` (dodatek `dema/planety-slup.js`: `__slup.viewGame` — kadr gry znad bieguna,
   `__slup.viewPlant` — kadr w ramie elektrowni), zrzuty `node scripts/webgpu/slup-demo.mjs --tylko gra,szczegoly`
   (grupy ról: mat, cork, lining, orbit, beam, elev), w grze `node scripts/webgpu/korek-gra.mjs [--query renderWorker=1]`
-  (kadry gryzu i odbiornika, koszt GPU z elektrownią i bez, pipeline'y synchroniczne). Słup dymu nad gryzem
+  (kadry gryzu i odbiornika, koszt GPU z elektrownią i bez, pipeline'y synchroniczne). Zasady wyglądu (runda 5):
+  światło pozycyjne na bryle to stalowa oprawa z soczewką na JEDNEJ ścianie (BEACON tylko tam — pudełko BEACON świeci
+  środkiem każdej ściany i za dnia czyta się jak kostka do gry); cewka na małym walcu albo pierścieniu — własne uv
+  (z < 0, faza |z|; uzwojenia w poprzek uv.x), bo rzut pudełkowy daje ukośne paski jak litery; szeroka listwa w rzucie
+  pudełkowym to kratka rurek — listwy wąskie albo z własnym uv; okna z bliska przez `windowPane` (rama, szprosy, głębia,
+  nasycony bursztyn — jasne duże pole po ACES bieleje w krem); pasy okien świecą GRUPAMI (ciemne / przygaszone / zapalone
+  komórki, klatki schodowe — pionowe akcenty), a rzędy świateł odcinkami — równe linie z daleka to „drabinka”; nocą
+  ciemna baza z plamami naświetlaczy (szeroka poświata lamp zlewała się w brązowe wypełnienie płaszczyzn). Słup dymu nad gryzem
   (`src/3d/earthBitePlume*.js`, `?slup=1`) to porzucony prototyp — poza grą.
 
 - KSIĘŻYCE (2026-10-08, `scripts/planety/ksiezyce.py`, `MOON_MAPS` w `planetMaps.js`, `docs/PLANETY-GENERATOR.md` § Księżyce): mapy dzień / noc / normalne z rolą w ekonomii (Luna — stocznia, depoty i garnizony Terra Nova; Io — odkrywki metalu Konsorcjum; Europa — cięcia lodu Unii Pasa po prawdziwych lineae; Ganimedes, Kallisto — depoty Konsorcjum); materiał `src/3d/moonSurface.tsl.js` (MeshStandardNodeMaterial, hak modelu oświetlenia: słońce gry świeci z PŁASZCZYZNY GRY — Słońce − środek, z = 0, jak planety — otoczenie sceny × 0,12, światła nocne z `emissiveMap` zapalane zmrokiem i w cieniu planety; graf raz na wariant, kierunek w `material.uniforms.uSunDir`). Nowy księżyc = wpis w `MOON_MAPS` po `id` strojenia.

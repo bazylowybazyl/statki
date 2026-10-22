@@ -223,6 +223,33 @@ export function aaDot(d, r, pix) {
   return sdown(0.0, rE, d).mul(float(r).div(rE));
 }
 
+/**
+ * OKNO Z BLISKA (runda 5 — nie płaski kremowy prostokąt): rama (ciemny obrys), słupek w środku i ślemię u góry, głębia
+ * wnęki (cień nadproża u góry, ciemniejsze boki, jaśniejszy dół wnętrza). x, y — położenie w świetle okna −1…1 (y — w górę
+ * okna), px, py — piksel w tych jednostkach. Okno mniejsze niż ~8 px — szczegół gaśnie do średniej (szyba 1, jasność 1:
+ * ta sama energia co płaski prostokąt z daleka). Zwraca { glass — szyba bez ramy i szprosów 0…1, lum — jasność wnętrza
+ * (średnio ~1 na szybie), warm — 0 brzegi (nasycony bursztyn) … 1 środek (jaśniejszy, mniej nasycony) }.
+ * Opcje (stałe JS): `transom` — ślemię (okna wysokie; szczeliny bez niego), `gain` — jasność dużego okna względem
+ * płaskiego prostokąta (jasne duże pole po ACES bieleje w krem — z bliska ciemniej i bardziej nasycone).
+ */
+export function windowPane(x, y, px, py, { transom = true, gain = 0.5 } = {}) {
+  const det = plantVar(min(lodFade(px, 0.7), lodFade(py, 0.7)));
+  const ax = abs(x);
+  const ay = abs(y);
+  // rama 10% boku, słupek (szerokość 0,08) i ślemię na 0,42 wysokości od góry — szprosy dopiero, gdy mają ≥ ~1,5 px
+  const frame = float(1.0).sub(aaBox(ax, 0.9, px).mul(aaBox(ay, 0.88, py)));
+  const mull = aaBox(ax, 0.04, px).mul(lodFade(px, 0.25));
+  const bars = transom ? mull.add(aaBox(abs(y.sub(0.42)), 0.035, py).mul(lodFade(py, 0.25))) : mull;
+  const glass = plantVar(mix(1.0, clamp(float(1.0).sub(frame).sub(bars), 0.0, 1.0), det));
+  // głębia: cień nadproża (górne ~20%), ciemniejsze boki, dół wnętrza jaśniejszy (sufitowe światło na podłodze i meblach)
+  const lintel = float(1.0).sub(smoothstep(0.55, 0.92, y).mul(0.62));
+  const sides = float(1.0).sub(ax.mul(ax).mul(0.38));
+  const floorL = float(1.0).add(sdown(-0.9, 0.1, y).mul(0.28));
+  const lum = plantVar(mix(1.0, lintel.mul(sides).mul(floorL).mul(1.12 * gain), det));
+  const warm = plantVar(mix(0.5, sdown(0.2, 1.0, max(ax, ay.mul(0.9))).mul(lintel), det));
+  return { glass, lum, warm };
+}
+
 /** Żar ciała doskonale czarnego, t ∈ [0, 1]: czerń → ciemna czerwień → pomarańcz → żółć (HDR, 4,5 przy t = 1). */
 export function plantHeat(t) {
   const c = clamp(t, 0.0, 1.0);
