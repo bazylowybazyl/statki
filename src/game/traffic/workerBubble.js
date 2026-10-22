@@ -444,6 +444,7 @@ export function packWorldBubble(state, index, kindIndex = null, focus = null) {
     const course = getCourse(state.world.registry, a.courseId);
     let flags = 0;
     if (a.mode === 'warp') flags |= ACTOR_FLAG.WARP;
+    if (a.departed) flags |= ACTOR_FLAG.DEPARTED;
     let berthEntry = null;
     if (a.dockedEntry && (a.phase === ACTOR_PHASE.CAPTURE || a.phase === ACTOR_PHASE.DOCKED
       || a.phase === ACTOR_PHASE.UNDOCK)) {

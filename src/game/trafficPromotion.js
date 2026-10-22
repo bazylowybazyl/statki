@@ -87,7 +87,7 @@ const PHASES_HOLD = new Set(['capture', 'docked', 'undock', 'hold', 'station']);
 /** Czy encję bańki gry (`trafficBubble.js`) wolno awansować: kurs (nie zapas floty), bez warpa i hipercruise. */
 export function trafficActorPromotable(a, tune = TRAFFIC_PROMOTION_TUNE) {
   if (!a?.alive || !(a.id >= 0)) return false;
-  if (a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.WARP)) return false;
+  if (a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.WARP | ACTOR_FLAG.DEPARTED)) return false;
   if (a.vx * a.vx + a.vy * a.vy > tune.maxSpeed * tune.maxSpeed) return false;
   return !TRAFFIC_PROMOTION_SKIP_HULLS.has(a.hullId);
 }

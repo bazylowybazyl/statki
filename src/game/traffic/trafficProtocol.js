@@ -255,7 +255,12 @@ export const ACTOR_FLAG = Object.freeze({
    * Okręt z zapasu floty frakcji portu na padzie hali K-7 (`placeFleetStock`, Z2) — BEZ kursu: stoi,
    * `ID` ujemny (nie numer kursu), nie przyjmuje obrażeń i nie idzie do `destroyed`.
    */
-  STOCK: 64
+  STOCK: 64,
+  /**
+   * Kurs skończył się przy stanowisku (rozładunek u celu): encja dokańcza odlot BEZ kursu — odłączanie, korytarz,
+   * lot poza bańkę. Numer kursu zostaje (ciągłość encji), ale nie przyjmuje obrażeń i nie awansuje (jak STOCK).
+   */
+  DEPARTED: 128
 });
 
 /**

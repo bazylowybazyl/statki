@@ -122,7 +122,7 @@ test('berth-hold: stanowisko gracza poza pulą, kurs w podejściu dostaje inne, 
 });
 
 test('destroyed z gry: kurs encji zniszczony, wrak z ładunkiem w ticku, encja znika w następnym advance', () => {
-  const actors = decode(got.actors).filter((a) => !(a.flags & ACTOR_FLAG.STOCK));
+  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.DEPARTED)));
   const target = actors.find((a) => {
     const c = getCourse(world.registry, core.world.registry.byId && [...world.registry.byId.keys()].find((id) => courseNumber(id) === a.id));
     return c && c.payload?.orderId;
@@ -147,7 +147,7 @@ test('destroyed z gry: kurs encji zniszczony, wrak z ładunkiem w ticku, encja z
 test('attach z gry przejmuje kurs bańki: encja wraca do rekordu z postępem i nie wraca do bańki', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
-  const actors = decode(got.actors).filter((a) => !(a.flags & ACTOR_FLAG.STOCK));
+  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.DEPARTED)));
   const pick = actors.find((a) => a.phase === 'fly') || actors[0];
   assert.ok(pick);
   const courseId = [...world.registry.byId.keys()].find((id) => courseNumber(id) === pick.id);
@@ -281,7 +281,7 @@ test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rej
 test('awans do NPC i powrót: attach zamraża rekord, detach z pozą (bez postępu) materializuje encję w miejscu NPC', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
-  const actors = decode(got.actors).filter((a) => !(a.flags & ACTOR_FLAG.STOCK));
+  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.DEPARTED)));
   const pick = actors.find((a) => a.phase === 'fly') || actors[0];
   assert.ok(pick);
   const courseId = [...world.registry.byId.keys()].find((id) => courseNumber(id) === pick.id);
@@ -354,3 +354,32 @@ test('stacja gracza dodana w biegu (zapis E7 → market-add) jest portem bańki:
 function bubblePortIdsOf(state) {
   return state.ports || state.world.docks.keys();
 }
+
+test('koniec kursu przy stanowisku (rozładunek u celu): encja nie znika z pola — DEPARTED, odłączanie, lot poza port', () => {
+  const berth0 = world.docks.get('earth').berths.find((b) => b.id.includes(':Z-'));
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: berth0.x, y: berth0.y, r: 60_000 });
+  let prev = new Map();
+  let vanishedDocked = 0;
+  const seen = new Map();
+  let maxJump = 0;
+  for (let f = 0; f < 10 * 400 && !([...seen.values()].some((v) => v.phases.includes('fly') && v.dist > 3000)); f++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 10 });
+    const cur = new Map(decode(got.actors).filter((a) => a.id >= 0).map((a) => [a.id, a]));
+    for (const [id, a] of prev) if (!cur.has(id) && (a.phase === 'docked' || a.phase === 'capture')) vanishedDocked++;
+    for (const [id, a] of cur) {
+      if (!(a.flags & ACTOR_FLAG.DEPARTED)) continue;
+      let v = seen.get(id);
+      if (!v) { v = { phases: [], x0: a.x, y0: a.y, dist: 0 }; seen.set(id, v); }
+      if (v.phases[v.phases.length - 1] !== a.phase) v.phases.push(a.phase);
+      v.dist = Math.hypot(a.x - v.x0, a.y - v.y0);
+      const p = prev.get(id);
+      if (p) maxJump = Math.max(maxJump, Math.hypot(a.x - p.x, a.y - p.y));
+    }
+    prev = cur;
+  }
+  assert.equal(vanishedDocked, 0, 'statek przy stanowisku nie znika w jednej klatce');
+  const flown = [...seen.values()].find((v) => v.phases.includes('fly') && v.dist > 3000);
+  assert.ok(flown, `odlot po końcu kursu (${seen.size} encji DEPARTED)`);
+  assert.deepEqual(flown.phases.slice(0, 2), ['undock', 'fly'], 'odłączanie, potem lot');
+  assert.ok(maxJump < 400, `ruch ciągły (największy skok w klatce 0,1 s: ${Math.round(maxJump)} j.)`);
+});

@@ -209,7 +209,8 @@ test('blok migawki `traffic`: pakowanie ↔ odczyt (kadłub przez tabelę, warp,
 test('awans do NPC: trafienie gracza zgłasza encję (hak onHit), awansowana nie wraca z workera, zgon blokuje powrót', () => {
   const br = fakeBridge([
     { id: 21, x: 0, y: 0, phase: 'fly', faction: 1 },
-    { id: -4, x: 9000, y: 0, phase: 'docked', flags: ACTOR_FLAG.STOCK }
+    { id: -4, x: 9000, y: 0, phase: 'docked', flags: ACTOR_FLAG.STOCK },
+    { id: 22, x: -9000, y: 0, phase: 'fly', flags: ACTOR_FLAG.DEPARTED }
   ], 10);
   const hits = [];
   const tb = createTrafficBubble(br, { onHit: (a, amount, cause) => hits.push([a.id, amount, cause]) });
@@ -221,6 +222,11 @@ test('awans do NPC: trafienie gracza zgłasza encję (hak onHit), awansowana nie
   assert.deepEqual(hits, [[21, 10, 'player']]);
   damageTrafficActor(tb, tb.byId.get(-4), 10, 9000, 0, 'player');
   assert.equal(hits.length, 1, 'zapas floty nietykalny — bez awansu');
+  const gone = tb.byId.get(22);
+  const hp = gone.hp;
+  damageTrafficActor(tb, gone, 10, 0, 0, 'player');
+  assert.equal(hits.length, 1, 'odlot po końcu kursu (DEPARTED) — bez obrażeń i awansu');
+  assert.equal(gone.hp, hp);
   markTrafficActorPromoted(tb, a);
   assert.equal(tb.byId.has(21), false);
   assert.ok(!tb.list.includes(a));
