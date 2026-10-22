@@ -201,15 +201,6 @@ export const CARGO_BAY_HULLS = Object.freeze({
     cargoToday: 900, todayNote: 'klasa ruchu heavy',
     bays: [bay({ id: 'luki', label: 'Luki 3 × 8', x: -128, y: 11, w: 648, h: 344, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
   }),
-  // Proxy ciężkiego frachtowca w ruchu v2 (E12): sprite dalekiego zasięgu w skali 1800 j. (TRAFFIC_HULLS.heavy_freighter —
-  // TODO AGENT tam: własny sprite Z11). Te same luki co frachtowiec dalekiego zasięgu, moduły 2 × 2 × 2 (drony L).
-  // AGENT: po podmianie sprite'a proxy na heavy_freighter.png mapa TRAFFIC_CARGO_BAY_HULLS wskaże heavy_freighter.
-  heavy_freighter_proxy: hull({
-    label: 'Ciężki frachtowiec (sylwetka ruchu)', family: 'frachtowce', sprite: 'assets/ships/long_haul_freighter_empty.png', png: { w: 1774, h: 887 },
-    renderLength: 1800, profile: 'heavy_freighter', editorKey: null, bridgeKey: null,
-    cargoToday: 900, todayNote: 'klasa ruchu heavy (proxy)',
-    bays: [bay({ id: 'luki', label: 'Luki 2 × 7', x: -150, y: -12, w: 506, h: 192, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
-  }),
   megafreighter_wagon: hull({
     label: 'Wagon megafrachtowca', family: 'frachtowce', sprite: 'assets/ships/megafreighterwagon_empty.png', png: { w: 1672, h: 941 },
     renderLength: 2760, profile: null, editorKey: null, bridgeKey: null,
@@ -233,7 +224,8 @@ export const TRAFFIC_CARGO_BAY_HULLS = Object.freeze({
   inter_station_shuttle: 'inter_station_shuttle',
   container_ship: 'container_ship',
   long_haul_freighter: 'long_haul_freighter',
-  heavy_freighter: 'heavy_freighter_proxy'
+  // Od E13 (2026-10-23) proxy rysuje własny sprite Z11 (heavy_freighter.png) — ładownia 3 × 8 tego obrazka.
+  heavy_freighter: 'heavy_freighter'
 });
 
 /** Kadłub z ładowniami albo null. */

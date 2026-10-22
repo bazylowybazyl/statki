@@ -1146,7 +1146,8 @@
     } from "./src/game/trafficBubble.js";
     import {
       createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion, trafficPromotionVerdict,
-      trafficFleePoint, trafficActorPromotable, trafficPromotionOrder
+      trafficFleePoint, trafficActorPromotable, trafficPromotionOrder, trafficCombatRole, trafficWeaponFaction,
+      trafficGrudgeTarget
     } from "./src/game/trafficPromotion.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
@@ -10123,7 +10124,12 @@
       repair_drone: { hull: 'repair_drone', hp: 200, speed: 260 },
       distress_beacon_ship: { hull: 'distress_beacon_ship', hp: 600, speed: 200 },
       smuggler: { hull: 'smuggler', hp: 600, speed: 240, pirate: true },
-      pirate_raider: { hull: 'pirate_raider', hp: 1400, speed: 220, pirate: true }
+      pirate_raider: { hull: 'pirate_raider', hp: 1400, speed: 220, pirate: true },
+      // Sprite'y Z11 (E13): łowca i kuter policji (okręty — po awansie z ruchu walczą, src/game/trafficPromotion.js),
+      // statek ratunkowy (cywil).
+      bounty_hunter: { hull: 'bounty_hunter', hp: 1300, speed: 230 },
+      police_cutter: { hull: 'police_cutter', hp: 1000, speed: 240 },
+      rescue_ship: { hull: 'rescue_ship', hp: 700, speed: 200 }
     });
 
     function spawnDevHull(key, opts = {}) {
@@ -11821,6 +11827,8 @@
       if (npc && npc.forceTarget && !npc.forceTarget.dead) {
         return npc.forceTarget;
       }
+      // Okręt ruchu z urazą do gracza (E13): poza stronami obrazu sytuacji — bije samego gracza, gdy go widzi.
+      if (npc?.playerGrudge && !npc.isPirate) return trafficGrudgeTarget(npc, ship, isCloakHidden);
       // Wspólny obraz sytuacji strony (src/ai/fleetAwareness.js): widoczne
       // kontakty z czujników WSZYSTKICH okrętów strony (dla sojuszników także
       // Atlasa, sond i dronów), ze smyczą postawy — ESKORTA bije tylko to, co
@@ -16314,10 +16322,27 @@
       }
     }
 
+    /** Liczby szablonu wezwania okrętu ruchu (E13): { hp, shield, mass, rammingMass, sensors } albo null (cywil). */
+    function trafficWarshipTemplate(role) {
+      if (!role) return null;
+      if (role.capital) {
+        const t = CAPITAL_SHIP_TEMPLATES[role.template];
+        return t ? {
+          hp: t.hull, mass: t.mass, rammingMass: t.rammingMass, sensors: t.sensors,
+          shield: { max: t.shield, val: t.shield, regenRate: t.shieldRegen, regenDelay: t.shieldDelay, impacts: [], state: 'activating' }
+        } : null;
+      }
+      const t = SUPPORT_SHIP_TEMPLATES[role.template];
+      return t ? { hp: t.stats?.hp, mass: t.stats?.mass, rammingMass: t.stats?.rammingMass, sensors: t.sensors, shield: t.shield } : null;
+    }
+
     /** Encja bańki → NPC gry w tej samej pozie i ruchu, z ułamkiem punktów życia encji. */
     function spawnTrafficNpc(a) {
       const def = trafficNpcDef(a.hullId);
-      const maxHp = def?.hp ?? a.maxHp;
+      // Okręt (garnizon, łowca, policja, rajder, przemytnik — E13): liczby szablonu wezwania swojej klasy.
+      const role = trafficCombatRole(a.hullId);
+      const tpl = trafficWarshipTemplate(role);
+      const maxHp = def?.hp ?? tpl?.hp ?? a.maxHp;
       const speed = def?.speed ?? 160;
       const npc = makeNPCBase({ x: a.cx, y: a.cy }, {
         hp: maxHp,
@@ -16326,19 +16351,24 @@
         turn: 1.2,
         friction: 0.99,
         radius: Math.round((HULL_RENDER_PROFILES[a.hullId]?.radius || 100) * HULL_RENDER_WORLD_SCALE),
-        isCollidable: true
+        isCollidable: true,
+        ...(tpl ? { shield: tpl.shield, mass: tpl.mass, rammingMass: tpl.rammingMass } : null)
       });
       npc.hp = Math.max(1, Math.round(maxHp * Math.max(0, a.hp) / Math.max(1, a.maxHp)));
       npc.id = `traffic:${a.id}`;
-      npc.type = def?.type || a.hullId;
+      npc.type = role?.type || def?.type || a.hullId;
       npc.shipFrame = a.hullId;
       npc.devHull = true;
       // Bez despawnu NPC_DESPAWN_RADIUS — o powrocie do bańki decyduje trafficPromotionVerdict.
       npc.mission = true;
-      npc.combatDisabled = true;
+      npc.combatDisabled = !role;
       npc.factionId = a.factionId;
       npc.isPirate = a.factionId === FACTION.PIRATES || !!def?.pirate;
       npc.friendly = false;
+      // Okręt trafiony przez gracza odpowiada ogniem bez względu na reputację frakcji — uraza wobec samego gracza
+      // (isEntityHostileToPlayer, aiPickTarget, wieże capitalAI); piraci są wrodzy i bez niej.
+      npc.playerGrudge = !!role && !npc.isPirate;
+      if (tpl?.sensors) npc.sensors = { ...tpl.sensors };
       npc.color = npc.isPirate ? '#ff5c7c' : '#9fb6c8';
       npc.displayName = a.unitClass || a.hullId;
       npc.angle = a.ca;
@@ -16349,6 +16379,13 @@
       npc.vx = a.vx * k;
       npc.vy = a.vy * k;
       npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+      if (role) {
+        // Broń z gniazd edytora kadłuba (jak wezwania: spawnSupportShip) i mózg klasy (runCallInCombatAI).
+        npc.keepAngle = true;
+        applyEditorLayoutToNpc(npc);
+        equipNpcWeapons(npc, trafficWeaponFaction(a.factionId, npc.isPirate));
+        npc.ai = (dt) => runCallInCombatAI(npc, role.type, dt);
+      }
       npc.trafficCourse = a.id;
       npc.__trafficPromotedAt = gameTime;
       npc._lastPlayerHit = gameTime;
@@ -16386,7 +16423,8 @@
         st.alive.set(id, npc);
         st.stats.promoted++;
         promoted++;
-        trafficNpcOrder(npc, trafficPromotionOrder(a.phase));
+        // Okręt walczy mózgiem klasy (bez rozkazu RTS); cywil stoi albo ucieka.
+        if (npc.combatDisabled) trafficNpcOrder(npc, trafficPromotionOrder(a.phase));
       }
       if (!st.alive.size) return;
       const px = ship ? ship.pos.x : Infinity;
@@ -16404,7 +16442,7 @@
           dismissTrafficNpc(npc);
           releaseTrafficPromotion(tb, id, false);
           st.stats.demoted++;
-        } else if (!npc.command) {
+        } else if (!npc.command && npc.combatDisabled) {
           // Dotarł do punktu ucieczki: dalej, póki gracz blisko, potem stoi.
           const dx = npc.x - px;
           const dy = npc.y - py;
@@ -18969,6 +19007,8 @@
 
     function isEntityHostileToPlayer(entity) {
       if (!entity) return false;
+      // Okręt ruchu trafiony przez gracza (E13, src/game/trafficPromotion.js): wrogi graczowi bez względu na reputację.
+      if (entity.playerGrudge === true && !entity.isWreck) return true;
       const faction = resolveEntityFaction(entity);
       // Bezpańskie obiekty (wraki, dryf) nie atakują i nie są celem z urzędu.
       if (!faction) return entity.friendly === false && !entity.isWreck;
@@ -18981,7 +19021,7 @@
       const faction = resolveEntityFaction(entity);
       if (!faction) return;
       entity.factionId = faction;
-      entity.friendly = !isFactionHostileToPlayer(faction, PLAYER.reputation);
+      entity.friendly = entity.playerGrudge !== true && !isFactionHostileToPlayer(faction, PLAYER.reputation);
     }
 
     /** Po zmianie reputacji przeliczamy wszystkie jednostki naraz. */
