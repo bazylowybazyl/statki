@@ -22,6 +22,22 @@ Z 2026-10-21:
 6. **Orkiestracja:** sesje pracują równolegle, orkiestrator przegląda ich wyniki i scala.
 7. **Receptury dostają osobną sesję (E8):** wieżyczki, silniki i nowe rodzaje silników, w tym silniki hipercruise.
 
+Z 2026-10-22 (po fali 1):
+
+8. **Prędkości:**
+   - bojowy Atlasa około 500 j/s, ale nie równo 500 (nieokrągłe wartości także dla innych kadłubów);
+   - dopalacz w walce ok. 1000–1200 j/s;
+   - PRZELOT znika, zastępuje go hipercruise, więc dopalacz w PRZELOCIE przestaje obowiązywać;
+   - warp 100–250 tys. j/s zależnie od napędu warp `warp_mk1`, `warp_mk2`, `warp_mk3`.
+9. **Wpływ hipercruise** na trafienia, tunelowanie i wydajność sprawdza osobna sesja (E9).
+10. **Receptury:** osobna sesja projektuje, jak naprawdę wyglądałyby receptury przy surowcach z kopalni i asteroid (E10). Potem rozmowa z użytkownikiem.
+11. **Wyrwy:**
+    - mgła i pył RZEDNĄ, bo bez asteroid nie ma pyłu; niektóre asteroidy produkują gazy, a niewdrożone demo gazów i mgieł sprawdzi i wpina sesja E11;
+    - tona urobku = tona pasa;
+    - regeneracja wyłączona.
+12. **Więcej piractwa:** cel ok. 15% przechwytów (pasmo 12–20%).
+13. **Zgoda na przerwę:** do bańki (fala 3) w grze nie widać statków ruchu.
+
 Nadal obowiązują wcześniejsze decyzje (bez pytania użytkownika ich nie zmieniamy):
 - wszystko, co lata, ma powód ekonomiczny;
 - rekordy kursów są autorytatywne dla ekonomii, a bańka działa tylko wokół gracza;
@@ -153,6 +169,9 @@ Awans do pełnego NPC przyjdzie później.
 | E8 | Receptury: rafinaty z węgla, niklu i platyny; wieżyczki jako różne towary; silniki jako różne towary, w tym silniki hipercruise `hypercruise_mk1..3` | 1 | kontrakt id silników z E5 (§ 3.4) | `resources.js` (towary, receptury); `INDUSTRY_ARCHETYPES` i wpisy ról w `SYSTEM_INDUSTRY_SPEC` (bez zmiany struktury); listy konsumpcji (`MILITARY_UPKEEP`, `FLEET_DEMAND`) w `stationEconomy.js`; `weaponEconomy.js`; `WARSHIP_CLASSES` w `shipyards.js`; listy konsumpcji w `warDispatcher.js` |
 | E5 | Napędy: jedna tabela, zwolniony gracz, hipercruise, ruch v2 na nowych prędkościach | 1 | — | nowy `src/data/driveModes.js`; `DRIVE_MODES` i wycena tras w `travelNetwork.js`; lot gracza (`src/data/shipFlightSpecs.js`, `src/game/shipModes.js`, `src/game/flight/*`, `src/game/travelNav.js`, bloki lotu, TRAVEL TO i HUD w `index.html`); wejście (`src/input/inputActions.js`, `GameActions`) |
 | E2 | Jedna ekonomia: usunięcie starej ekonomii i flagi `?trafficV2`; `planShipment` i stan zleceń przeniesione z `cargoFleet.js` do ruchu v2; terminal i UI na rynku z mostu; reguła `ruch-v2` | 2 | E1 (strojenie E4 idzie równolegle, bez wspólnych plików) | `trafficDirector.js` (zależność od `cargoFleet`, stan zleceń); `cargoFleet.js` i `transitController.js` (do usunięcia); `infrastructureUI.js`; `index.html` (stara ekonomia, gałęzie `trafficV2`, terminal); `src/game/trafficBridge.js`; nowa reguła `.claude/rules/ruch-v2.md` + wiersz w indeksie `AGENTS.md` |
+| E9 | Hipercruise: trafienia, tunelowanie, wydajność — pomiar i bezpieczne poprawki | 2 | E5 (prędkości przestrajane równolegle) | kolizje i trafienia (`hullBodies.js` i pokrewne, pętle kolizji i pocisków w `index.html`, kolizje `beltWorld`, `haloRingCollision.js`), testy |
+| E10 | Receptury realistyczne — projekt do rozmowy z użytkownikiem, bez kodu | 2 | — | `docs/PROPOZYCJA-receptury-realistyczne.md` |
+| E11 | Gazy i mgły: stan dema (czy gotowe do produkcji, co stoi) i wpięcie do gry | 2 | — (z wyrwami E3: źródła gazu z asteroid) | najpierw ocena i raport; dalej moduły gazu (reguła `wybuchy-gaz`) |
 | E2b | Jeden model handlu: API rynku (oferty, rezerwacje) dla wszystkich — przewoźnicy, kupcy, gracz, stocznie, wojna, złomiarze, paser | 2 | E2 i końcowe strojenie E4 | moduły ruchu v2 (`agentFleets.js`, `shipyards.js`, `scrapperFleets.js`, `piracy.js`, planista) |
 | E6 | Bańka w grze (Z13 zwężone, § 3.5) | 3 | E1, E2, E5 | nowy `src/game/trafficBubble.js`, `materializedFlight.js`, `shipProxyBatch3D.js` + `src/render/`, `haloPortDocking.js`, `index.html` |
 | E7 | Gracz na rynku: terminal na ofertach, komputer handlowy, stacja gracza jako rynek, zapis stanu ekonomii i wyrw | 4 | E2 | `src/ui/`, `index.html`, zapis gry |
@@ -166,7 +185,7 @@ Kolejność scalania: E1 → E5 → E8 → E3 → E4. E4 kończy strojenie bilan
 Bramkę buduje E4, używają jej wszyscy. Skrypt w `scripts/` puszcza symulację na 3 ziarnach (7, 11, 23; 240 min, presja 1, magazyny ×4, skala ×60) i sprawdza progi. Wynik zapisuje w JSON do `.tmp/`, a przy niezaliczeniu kończy się kodem wyjścia ≠ 0.
 
 Progi startowe to propozycja: E4 je stroi, użytkownik akceptuje.
-- przechwycone ≤ 15% rozstrzygniętych kursów przy presji ×1;
+- przechwycone 12–20% rozstrzygniętych kursów z ładunkiem przy presji ×1 (decyzja z 2026-10-22: więcej piractwa; wcześniej ≤ 15%);
 - żaden surowiec, którego stacja chce, nie stoi na 0% dłużej niż 30 min gry;
 - żadna stocznia nie stoi bez podzespołów dłużej niż 30 min;
 - średnia kolejka na redzie ≤ 2 w każdym porcie;
@@ -255,3 +274,10 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - E4: końcowe strojenie na `main` — skup stoczni, kupcy, kolejki Saturna i Urana, saldo `thruster`. Bez `cargoFleet.js` i bez planisty.
   - E2 ruszyło z worktree wyciętego z lokalnego `main`.
   - Wspólne API rynku dla wszystkich wydzielone jako E2b. Rusza po E2 i po strojeniu E4, żeby zmiany w kupcach i stoczniach się nie nakładały.
+- 2026-10-22: decyzje użytkownika (§ 1, punkty 8–13) rozesłane:
+  - E5: bojowy ok. 500 (nieokrągły), dopalacz 1000–1200, PRZELOT usunięty, warp Mk1–3 (100–250 tys.);
+  - E8: towary `warp_mk1..3`;
+  - E3: mgła i pył rzedną w wyrwach;
+  - E4: piractwo w paśmie 12–20%;
+  - E2: bez widoku vanów.
+  - Ruszyły nowe sesje E9 (hipercruise a kolizje), E10 (receptury realistyczne) i E11 (gazy i mgły). Wszystkie z worktree wyciętego z lokalnego `main`.
