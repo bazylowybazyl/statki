@@ -165,8 +165,8 @@ export const INDUSTRY_ARCHETYPES = Object.freeze({
   /** Lotne: lód → tlen i wodór, amoniak → chłodziwo. Byt i chłodzenie. */
   volatiles: { label: 'Zakłady lotne', recipes: ['electrolyse_ice', 'synth_coolant'],
     capacity: 0.7, cost: { steel: 35, hull_plate: 8 } },
-  /** Gazownia: metan → polimer, hel-3 → paliwo fuzyjne. Domena olbrzymów. */
-  gasworks: { label: 'Gazownia', recipes: ['crack_methane', 'compress_fusion_fuel'],
+  /** Gazownia: metan → polimer, hel-3 → paliwo fuzyjne, amoniak + metan → materiał wybuchowy. Domena olbrzymów. */
+  gasworks: { label: 'Gazownia', recipes: ['crack_methane', 'compress_fusion_fuel', 'synth_explosive'],
     capacity: 0.7, cost: { steel: 45, hull_plate: 10 } },
   /** Wzbogacalnia: ruda uranu → pręty paliwowe. */
   enrichment: { label: 'Wzbogacalnia', recipes: ['enrich_uranium'],

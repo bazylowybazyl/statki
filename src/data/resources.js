@@ -242,6 +242,14 @@ export const RESOURCES = Object.freeze({
     label: 'Katalizator platynowy', short: 'Kat', unit: 'szt', form: 'solid',
     mass: 0.3, value: 128, color: '#f1f5f9'
   },
+  // Receptury realistyczne (E10, docs/PROPOZYCJA-receptury-realistyczne.md):
+  // materiał wybuchowy i miotający to azot, węgiel i wodór (HMX, nitroceluloza) —
+  // z amoniaku i metanu, więc amunicja stoi na olbrzymach gazowych i Tytanie.
+  explosive: {
+    tier: TIER.REFINED, category: CATEGORY.CHEMICAL,
+    label: 'Materiał wybuchowy', short: 'MW', unit: 't', form: 'solid',
+    mass: 0.8, value: 20, color: '#f59e0b'
+  },
 
   // ---------- T2: KOMPONENTY OKRĘTOWE ----------
   hull_plate: {
@@ -644,6 +652,12 @@ export const RECIPES = Object.freeze({
     in: { platinum_ore: 2 }, out: { pt_catalyst: 1 }
   },
 
+  // Gazownia olbrzymów: azot z amoniaku, węgiel i wodór z metanu.
+  synth_explosive: {
+    label: 'Synteza materiału wybuchowego', building: 'refinery', seconds: 40,
+    in: { ammonia: 2, methane: 1 }, out: { explosive: 2 }
+  },
+
   // ---------- FABRYKA: T1 → T2 ----------
   assemble_hull_plate: {
     label: 'Montaż płyt kadłuba', building: 'factory', seconds: 70,
@@ -780,22 +794,24 @@ export const RECIPES = Object.freeze({
   // CELOWO tylko z rafinatów, bez ani jednego komponentu T2. Amunicja nie może
   // konkurować o płyty i awionikę z budową okrętów — inaczej każda wojna
   // zatrzymywałaby stocznie, zamiast je nakręcać.
+  // Ładunek miotający, zapalnik i głowica to materiał wybuchowy (E10) — polimer
+  // zostaje w rakietach i torpedach jako kadłub i paliwo stałe (spoiwo).
   assemble_ammo_kinetic: {
     label: 'Elaboracja amunicji', building: 'factory', seconds: 60,
-    in: { steel: 2, polymer: 1 }, out: { ammo_kinetic: 6 }
+    in: { steel: 2, explosive: 1 }, out: { ammo_kinetic: 6 }
   },
   assemble_flak_shell: {
     label: 'Elaboracja pocisków flak', building: 'factory', seconds: 85,
-    in: { steel: 1, chips: 1, polymer: 1 }, out: { flak_shell: 4 }
+    in: { steel: 1, chips: 1, explosive: 1 }, out: { flak_shell: 4 }
   },
   assemble_missile_round: {
     label: 'Montaż rakiet', building: 'factory', seconds: 120,
-    in: { chips: 1, copper_wire: 2, polymer: 2, steel: 2, fusion_fuel: 1 },
+    in: { chips: 1, copper_wire: 2, polymer: 1, explosive: 1, steel: 2, fusion_fuel: 1 },
     out: { missile_round: 2 }
   },
   assemble_torpedo_round: {
     label: 'Montaż torped', building: 'factory', seconds: 210,
-    in: { chips: 2, copper_wire: 2, polymer: 3, steel: 4, fusion_fuel: 2 },
+    in: { chips: 2, copper_wire: 2, polymer: 1, explosive: 2, steel: 4, fusion_fuel: 2 },
     out: { torpedo_round: 1 }
   }
 });

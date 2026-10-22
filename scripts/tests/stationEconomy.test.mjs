@@ -98,9 +98,11 @@ export function run() {
   // +2,7% żelaza (flak, wyrzutnia torped, napędy w stoczni), −1,5% krzemu (mniej emiterów).
   // 2026-10-22 (napędy warp Mk I–III w roli stoczni): stocznia Ziemi dzieli moc na
   // więcej linii, więc topi mniej — −6% żelaza, krzem +1%.
-  t.close('plan Ziemi wymaga 1340,093 rudy żelaza/h', earthNet.iron_ore * 3600, -1340.0927833985027, 1e-6);
-  t.close('plan Ziemi wymaga 750,479 rudy krzemu/h', earthNet.silicon_ore * 3600, -750.4793355139908, 1e-6);
-  t.close('plan Merkurego eksportuje 1334,222 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1334.2222163168465, 1e-6);
+  // 2026-10-22 (E10 krok 1: amunicja na materiale wybuchowym): drobne przesunięcie
+  // linii amunicji, −0,1% żelaza i krzemu.
+  t.close('plan Ziemi wymaga 1339,130 rudy żelaza/h', earthNet.iron_ore * 3600, -1339.1299844487587, 1e-6);
+  t.close('plan Ziemi wymaga 749,115 rudy krzemu/h', earthNet.silicon_ore * 3600, -749.1150757999137, 1e-6);
+  t.close('plan Merkurego eksportuje 1333,976 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1333.9759240333703, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });
