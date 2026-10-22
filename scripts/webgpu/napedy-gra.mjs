@@ -5,9 +5,9 @@
 //   node scripts/webgpu/napedy-gra.mjs [--out .tmp/napedy] [--etapy przelot,dopalacz,dolot,luna,mars,hiper]
 //
 // Etapy:
-//   przelot  — PRZELOT, W trzymane: prędkość co sekundę, szczyt i czas do szczytu;
-//   dopalacz — Shift + W w BOJOWYM i w PRZELOCIE: szczyt;
-//   dolot    — TRAVEL TO 30 tys. j. (odcinek 'drive'): czas, fazy, błąd celu, prędkość na końcu;
+//   przelot  — BOJOWY, W trzymane: prędkość co sekundę, szczyt i czas do szczytu (PRZELOTU nie ma od 2026-10-22);
+//   dopalacz — Shift + W w BOJOWYM: szczyt;
+//   dolot    — TRAVEL TO 5 / 10 / 30 tys. j. (odcinki 'drive'): czas, fazy, błąd celu, prędkość na końcu;
 //   luna     — TRAVEL TO do Księżyca (przy Ziemi);
 //   mars     — TRAVEL TO pod Marsa (warp + dolot 'drive' w studni), potem pod Jowisza;
 //   przechwyt — hipercruise + rajder piratów 30 km przed dziobem: blokada masy przerywa lot;
@@ -131,37 +131,37 @@ try {
   await sleep(3000);
   await ev(`(() => { window.DevFlags && (window.DevFlags.unlimitedWarp = true); window.__pipeRec.startIdx = window.__pipeRec.pipes.length; return true; })()`);
   report.hiper = await ev('typeof window.hypercruise === "object" && !!window.hypercruise');
+  report.warp = await ev('({ speed: window.warp.speed, drive: window.warp.driveId || null })');
+  console.log('warp:', JSON.stringify(report.warp));
   report.start = await navState();
   startPose = await ev('({ x: window.ship.pos.x, y: window.ship.pos.y, angle: window.ship.angle })');
   await screenshotPng(cdp, join(out, '00-start.png'));
 
   if (etapy.has('przelot')) {
+    // BOJOWY, W trzymane (PRZELOTU nie ma od 2026-10-22; w bazie sprzed zmiany — ten sam etap w postawie bojowej).
     await stopShip();
-    await ev(`window.setShipMode('cruise')`);
     await keyDown('w');
-    report.etapy.przelot = await profile(30, 'PRZELOT (W)');
+    report.etapy.bojowy = await profile(16, 'BOJOWY (W)');
     await keyUp('w');
     await stopShip();
   }
   if (etapy.has('dopalacz')) {
+    await stopShip();
     await keyDown('w'); await keyDown('shift');
     report.etapy.dopalaczBojowy = await profile(16, 'BOJOWY + Shift');
     await keyUp('shift'); await keyUp('w');
     await stopShip();
-    await ev(`window.setShipMode('cruise')`);
-    await keyDown('w'); await keyDown('shift');
-    report.etapy.dopalaczPrzelot = await profile(24, 'PRZELOT + Shift');
-    await keyUp('shift'); await keyUp('w');
-    await stopShip();
   }
   if (etapy.has('dolot')) {
-    await stopShip();
-    // Kierunek OD najbliższej planety — dolot nie wbija się w płytę ringu (start gry swobodnej stoi przy Ziemi).
-    const goal = await ev(`(() => { const s = window.ship; let best = null, bd = Infinity;
-      for (const p of window.planets) { if (!p) continue; const d = Math.hypot(s.pos.x - p.x, s.pos.y - p.y); if (d < bd) { bd = d; best = p; } }
-      const a = best ? Math.atan2(s.pos.y - best.y, s.pos.x - best.x) : s.angle + 0.6;
-      return { x: s.pos.x + Math.cos(a) * 30000, y: s.pos.y + Math.sin(a) * 30000 }; })()`);
-    report.etapy.dolot30k = await travel(goal, 'TRAVEL 30 tys. (drive)');
+    // Odcinki 'drive' 5 / 10 / 30 tys. j. — kierunek OD najbliższej planety (bez płyty ringu po drodze).
+    for (const dist of [5000, 10000, 30000]) {
+      await stopShip();
+      const goal = await ev(`(() => { const s = window.ship; let best = null, bd = Infinity;
+        for (const p of window.planets) { if (!p) continue; const d = Math.hypot(s.pos.x - p.x, s.pos.y - p.y); if (d < bd) { bd = d; best = p; } }
+        const a = best ? Math.atan2(s.pos.y - best.y, s.pos.x - best.x) : s.angle + 0.6;
+        return { x: s.pos.x + Math.cos(a) * ${dist}, y: s.pos.y + Math.sin(a) * ${dist} }; })()`);
+      report.etapy[`dolot${dist / 1000}k`] = await travel(goal, `TRAVEL ${dist / 1000} tys. (drive)`);
+    }
     await stopShip();
   }
   if (etapy.has('luna')) {

@@ -928,18 +928,19 @@
       reconcileLockedTargets,
       targetingVisualScale
     } from "./src/game/targetingModes.js";
-    // Tryby okrętu pod ŚPM (koło jak w Crysis): BOJOWY / TARCZE / PRZELOT / MASKOWANIE / TORPEDY / WYDOBYCIE / FLOTA.
+    // Tryby okrętu pod ŚPM (koło jak w Crysis): BOJOWY / TARCZE / HIPERCRUISE / MASKOWANIE / TORPEDY / WYDOBYCIE / FLOTA.
     import {
       SHIP_MODE_IDS, SHIP_MODE_DEFS, SHIP_MODE_DEADZONE, createShipModes, isShipMode, stanceTune, resolveShipMode,
-      shipModeFromWheelVector, openShipModeWheel, releaseShipModeWheel,
-      CRUISE_GEARS, cruiseGearMul, stepCruiseGear, shiftCruiseGearDown
+      shipModeFromWheelVector, openShipModeWheel, releaseShipModeWheel
     } from "./src/game/shipModes.js";
     // Hipercruise (E5): automat lotu 20–40 tys. j/s i JEDNA tabela napędów gracza, NPC i ruchu v2.
     import {
       createHypercruise, configureHypercruise, engageHypercruise, dropHypercruise, stepHypercruise, resetHypercruise,
       hypercruiseBusy, hypercruiseDriving, hypercruiseSpoolProgress
     } from "./src/game/flight/hypercruise.js";
-    import { HYPERCRUISE_TUNE, HYPERCRUISE_ENGINES, PLAYER_HULL_DRIVE, WARP_SPEED as DRIVE_WARP_SPEED } from "./src/data/driveModes.js";
+    import {
+      HYPERCRUISE_TUNE, HYPERCRUISE_ENGINES, WARP_DRIVES, playerHullDrives, warpDriveSpeed, hypercruiseLegSpool
+    } from "./src/data/driveModes.js";
     // Koło trybów: rysunek i animacje (ikony, wachlarz, podświetlenie, błysk wyboru, echo).
     import {
       createModeWheelFx, stepModeWheelFx, noteModeWheelClose, modeWheelVisible, drawModeWheel,
@@ -1527,7 +1528,7 @@
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival } from "./src/game/warpDrive.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpTripTuneFor, warpFlybyFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival } from "./src/game/warpDrive.js";
     import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
@@ -10141,7 +10142,7 @@
     // ============================================================================
     // TRYBY OKRĘTU (src/game/shipModes.js, 2026-10-03): koło pod ŚPM jak kombinezon w Crysis — przytrzymaj
     // ŚPM, wskaż sektor, puść; stuknięcie ŚPM = poprzedni tryb; czas nie zwalnia. Tryby się wykluczają:
-    // BOJOWY / TARCZE / PRZELOT to postawa (stan tutaj), MASKOWANIE (I), TORPEDY (8), WYDOBYCIE (N)
+    // BOJOWY / TARCZE to postawa (stan tutaj), HIPERCRUISE (O — automat w bloku „HIPERCRUISE”), MASKOWANIE (I), TORPEDY (8), WYDOBYCIE (N)
     // i FLOTA (G — RTS) to systemy gry, które zostają źródłem prawdy — tryb widoczny rozstrzyga co klatkę
     // syncShipMode(). Klawisze I / 8 / N / G idą przez setShipMode (wejście w tryb zamyka pozostałe).
     // Postawa działa przez applyShipStance (napęd: driveState.stanceLimit / stanceThrust, obrót, tarcza,
@@ -10160,7 +10161,8 @@
         fleet: camera.mode === 'rts',
         mining: !!miningInput?.active,
         torpedo: !!torpedoAim?.active,
-        cloak: isPlayerCloakOn()
+        cloak: isPlayerCloakOn(),
+        hypercruise: hypercruiseBusy(hypercruise)
       });
     }
 
@@ -10198,8 +10200,7 @@
 
     const SHIP_STANCE_MESSAGES = Object.freeze({
       combat: 'TRYB: BOJOWY',
-      shield: 'TRYB: TARCZE — pole twarde i widoczne, okręt wolny i ociężały',
-      cruise: 'TRYB: PRZELOT — szybki lot, broń zimna'
+      shield: 'TRYB: TARCZE — pole twarde i widoczne, okręt wolny i ociężały'
     });
 
     // Stan HUD-u celownika gracza (rysowanie w render(): blok „Celownik gracza”). Poza render(), żeby
@@ -10241,6 +10242,8 @@
         if (!getMiningRig()) return 'WYDOBYCIE: platforma niegotowa (pas asteroid się ładuje)';
       } else if (id === 'fleet') {
         if (splitScreenMode) return 'RTS MODE niedostepny w split-screen';
+      } else if (id === 'hypercruise') {
+        return hypercruiseBlockReason();
       }
       return '';
     }
@@ -10263,10 +10266,9 @@
         toggleCloak(ship.cloak);
         if (!quiet) pushZoneMessage('MASKOWANIE WYŁĄCZONE', 1.2);
       }
+      if (id !== 'hypercruise' && hypercruiseBusy(hypercruise)) stopPlayerHypercruise('manual', false, quiet ? '' : 'HIPERCRUISE — WYJŚCIE');
       let ok = true;
       if (SHIP_MODE_DEFS[id].stance) {
-        // PRZELOT zaczyna od pierwszego biegu.
-        if (id === 'cruise' && shipModes.stance !== 'cruise') { shipModes.cruiseGear = 1; shipModes.cruiseShiftCd = 0; }
         shipModes.stance = id;
         if (!quiet) pushZoneMessage(SHIP_STANCE_MESSAGES[id], 1.6);
       } else {
@@ -10276,13 +10278,14 @@
         else if (id === 'torpedo') ok = setTorpedoMode(true);
         else if (id === 'mining') ok = setMiningMode(true);
         else if (id === 'fleet') ok = setPlayerRtsMode(true);
+        else if (id === 'hypercruise') ok = startPlayerHypercruise({ quiet });
       }
       syncShipMode();
       return ok;
     }
     window.setShipMode = setShipMode;
 
-    /** Wyjście z trybu z systemem (I / 8 / N / G drugi raz) — powrót do postawy. */
+    /** Wyjście z trybu z systemem (I / 8 / N / G / O drugi raz) — powrót do postawy. */
     function leaveShipMode(id) {
       syncShipMode();
       if (shipModes.current !== id) return false;
@@ -10290,8 +10293,7 @@
     }
 
     // Postawa na krok fizyki gracza: napęd (limit, ciąg) — obrót, tarcza i broń czytają stanceTune() w miejscu.
-    // PRZELOT jeździ na BIEGACH (shipModes.js: CRUISE_GEARS — QOL 2026-10-03, biegi przeniesione z warpa):
-    // limit = limit bojowy × mnożnik biegu (Atlas do 1500 j/s), w górę sam przy gazie, Ctrl w dół.
+    // PRZELOTU na biegach nie ma (decyzja użytkownika 2026-10-22 — zastąpił go hipercruise).
     function applyShipStance(dt = 0) {
       const tune = stanceTune(shipModes);
       driveState.stanceThrust = tune.thrust;
@@ -10301,22 +10303,7 @@
         ship.shield.hardness = (Number(ship.shield.baseHardness) || 1) * tune.shieldHardness;
         ship.shield.show = !!tune.shieldShow;
       }
-      if (shipModes.stance === 'cruise') {
-        const ev = warp.state === 'idle'
-          ? stepCruiseGear(shipModes, getPlayerSpeed(), driveState.speedLimit, Number(driveState.throttle) || 0, dt)
-          : null;
-        if (ev) announceCruiseGear();
-        driveState.stanceLimit = cruiseGearMul(shipModes.cruiseGear);
-      } else {
-        driveState.stanceLimit = tune.speed;
-      }
-    }
-    function cruiseGearLabel() {
-      return `B${shipModes.cruiseGear | 0 || 1}/${CRUISE_GEARS.muls.length}`;
-    }
-    function announceCruiseGear() {
-      const limit = Math.round((Number(driveState.speedLimit) || 0) * cruiseGearMul(shipModes.cruiseGear));
-      pushZoneMessage(`PRZELOT — BIEG ${shipModes.cruiseGear}/${CRUISE_GEARS.muls.length} · ${limit} J/S`, 1.1);
+      driveState.stanceLimit = tune.speed;
     }
 
     // Koło trybów (ŚPM): otwarcie, kierunek, puszczenie.
@@ -16387,7 +16374,6 @@
       exitByNav: false,
       waypoints: [],
       waypointIndex: 0,
-      prevStance: null,
       obstacleMargin: 1100,
       // Hipercruise odcinka 'drive' (SimClock.sim): najwcześniejsza próba — po przechwycie 10 s przerwy.
       hcRetryAt: 0
@@ -16452,12 +16438,6 @@
 
     function requestPlayerShiftDown() {
       if (warp.state !== 'idle') return false;
-      // PRZELOT: Ctrl redukuje bieg postawy (shipModes.js).
-      if (shipModes.stance === 'cruise') {
-        const down = shiftCruiseGearDown(shipModes);
-        if (down) announceCruiseGear();
-        return down;
-      }
       const shifted = shiftDriveDown(driveState, getPlayerSpeed(), false);
       if (shifted) pushZoneMessage(`BIEG ${driveState.gear}/${driveState.gearCount}`, 0.9);
       return shifted;
@@ -16762,10 +16742,11 @@
         zones[i] = detectZones(probe).current?.warpMultiplier ?? 1;
       }
       const zone = (s) => zones[Math.max(0, Math.min(n - 1, Math.round(s / step)))];
+      // Czas podróży jak w demie, przeskalowany do prędkości napędu warp (Mk I / II / III — warpTripTuneFor).
       const plan = planWarpCruise({
         dist, v0: getPlayerSpeed(), hullLength: playerWarpHullLength(), bodies, zone,
         entry: warp.entryDuration, lag: 6, dt: 1 / 30
-      });
+      }, warpTripTuneFor(warp.speed));
       warp.cruise = plan.speed;
       warp.tripPlan = {
         dist: Math.round(dist), speed: Math.round(plan.speed), time: +plan.time.toFixed(2), target: +plan.target.toFixed(2),
@@ -16802,18 +16783,6 @@
       return TRAVEL_TUNE.minWarp;
     }
 
-    // Odcinki „drive” lecą w PRZELOCIE (biegi do 1500 j/s Atlasa) — postawa sprzed podróży wraca na końcu.
-    function travelUseCruise() {
-      if (shipModes.stance === 'cruise') return;
-      if (!travelNav.prevStance) travelNav.prevStance = shipModes.stance;
-      setShipMode('cruise', true);
-    }
-    function travelRestoreStance() {
-      const prev = travelNav.prevStance;
-      travelNav.prevStance = null;
-      if (prev && prev !== 'cruise' && shipModes.stance === 'cruise') setShipMode(prev, true);
-    }
-
     // ========================================================================
     // HIPERCRUISE (E5 2026-10-21, src/game/flight/hypercruise.js; liczby — src/data/driveModes.js): przelot
     // 20–40 tys. j/s na silniku hipercruise (Atlas: hypercruise_mk1). O — rozruch / wyjście; odcinki 'drive'
@@ -16830,12 +16799,26 @@
     let _hcMassLocked = false;
 
     // Silnik hipercruise gracza: wyposażenie / konsola (`ship.hypercruiseEngine`, null = brak), potem kadłub
-    // (PLAYER_HULL_DRIVE), a kadłub z tabelą lotu bez wpisu — Mk I. Kadłub bez tabeli lotu nie ma trybu.
+    // (PLAYER_HULL_DRIVE) i klasa lotu (NPC_CLASS_DRIVE — driveModes.js). Kadłub bez tabeli lotu nie ma trybu.
     function playerHypercruiseEngineId() {
       if (ship && ship.hypercruiseEngine !== undefined) return ship.hypercruiseEngine || null;
       const spec = driveState.flightSpec;
       if (!spec) return null;
-      return PLAYER_HULL_DRIVE[spec.id]?.hypercruise || 'hypercruise_mk1';
+      return playerHullDrives(spec.id, spec.flightClass).hypercruise;
+    }
+    // Napęd warp gracza (decyzja użytkownika 2026-10-22: Mk I / II / III = 100 / 175 / 250 tys. j/s): wyposażenie /
+    // konsola (`ship.warpDrive`), potem kadłub i klasa lotu (Atlas — Mk II). Prędkość pisze syncPlayerWarpDrive.
+    function playerWarpDriveId() {
+      if (ship && ship.warpDrive) return ship.warpDrive;
+      const spec = driveState.flightSpec;
+      return playerHullDrives(spec?.id, spec?.flightClass).warp;
+    }
+    function syncPlayerWarpDrive() {
+      const id = playerWarpDriveId();
+      if (warp.driveId === id) return;
+      warp.driveId = id;
+      warp.speed = warpDriveSpeed(id);
+      if (warp.state === 'idle') warp.cruise = warp.speed;
     }
     function syncPlayerHypercruise() {
       return configureHypercruise(hypercruise, playerHypercruiseEngineId(), driveState.flightSpec?.flightClass || 'supercapital');
@@ -16879,9 +16862,8 @@
       // Silniki wyłączone / w rozruchu: autozapłon, hipercruise po rozruchu (ponowne O albo TRAVEL TO).
       if (playerEnginesBlockDrive('HIPERCRUISE')) return false;
       stopBoost();
-      if (!engageHypercruise(hypercruise, { target: opts.target || null })) return false;
-      // Broń zimna jak w PRZELOCIE — po wyjściu okręt zostaje w PRZELOCIE.
-      if (shipModes.stance !== 'cruise') setShipMode('cruise', true);
+      if (!engageHypercruise(hypercruise, { target: opts.target || null, spool: opts.spool })) return false;
+      syncShipMode();
       pushZoneMessage(`HIPERCRUISE — ROZRUCH (${HYPERCRUISE_ENGINES[hypercruise.engineId]?.short || ''})`, 1.4, { label: 'NAPĘD' });
       return true;
     }
@@ -16896,14 +16878,18 @@
       if (travelNav.active) cancelTravel('TRAVEL: KURS RĘCZNY', true);
       return startPlayerHypercruise();
     }
-    // Odcinek 'drive' TRAVEL TO: hipercruise, gdy jest silnik, odcinek dość długi i nie było świeżego przechwytu.
+    // Odcinek 'drive' TRAVEL TO: hipercruise (PRZELOTU nie ma — decyzja 2026-10-22), gdy jest silnik, odcinek nie
+    // krótszy niż minLeg i nie było świeżego przechwytu. Krótki odcinek (do shortLeg) — skrócony rozruch
+    // (hypercruiseLegSpool); krótszy niż minLeg — sam autopilot bojowy (hipercruise wyszedłby, zanim ruszy).
     function travelTryHypercruise(leg) {
       if (!leg || hypercruiseBusy(hypercruise) || SimClock.sim < travelNav.hcRetryAt) return false;
       const dx = leg.x - ship.pos.x;
       const dy = leg.y - ship.pos.y;
-      if (dx * dx + dy * dy < HYPERCRUISE_TUNE.minLeg * HYPERCRUISE_TUNE.minLeg) return false;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < HYPERCRUISE_TUNE.minLeg) return false;
       travelNav.hcRetryAt = SimClock.sim + 1;
-      return startPlayerHypercruise({ target: { x: leg.x, y: leg.y }, quiet: true });
+      if (!syncPlayerHypercruise()) return false;
+      return startPlayerHypercruise({ target: { x: leg.x, y: leg.y }, quiet: true, spool: hypercruiseLegSpool(hypercruise.spool, d) });
     }
 
     // Krok hipercruise'u (physicsStep, po postawie): przerwania, profil prędkości, komunikaty. Prędkość statku
@@ -16949,7 +16935,7 @@
       if (ev === 'engage') {
         pushZoneMessage(`HIPERCRUISE — ${formatVelocity(hc.vmax)}`, 1.2, { label: 'NAPĘD', tone: 'good' });
       } else if (ev === 'exit' && hc.interrupted) {
-        travelNav.hcRetryAt = SimClock.sim + 10;   // TRAVEL TO po przechwycie: 10 s PRZELOTEM, potem znowu
+        travelNav.hcRetryAt = SimClock.sim + 10;   // TRAVEL TO po przechwycie: 10 s autopilotem bojowym, potem znowu
       }
       // Struga MAIN na dopalaczu w rozpędzie (engineVfxSystem: __fSysBoost — także w workerze renderu).
       if (hc.state === 'active' && hc.speed < hc.vcap - 1) ship.__fSysBoost = true;
@@ -17039,7 +17025,6 @@
         if (keepCourse) hypercruise.target = null;
         else stopPlayerHypercruise('cancel');
       }
-      if (wasActive && !hypercruiseBusy(hypercruise)) travelRestoreStance();
       if (wasActive && message) pushZoneMessage(message, 1.4, { tone: 'warn' });
     }
     window.setTravelTarget = setTravelTarget;
@@ -17072,10 +17057,9 @@
           return;
         }
         if (leg.kind === 'drive') {
-          travelUseCruise();
           nav.cmd = createApproachCommand({ point: { x: leg.x, y: leg.y }, arrival: TRAVEL_TUNE.arriveRadius * 0.5 });
           nav.phase = 'drive';
-          // Hipercruise przejmuje odcinek (ten sam cel); w rozruchu i po nim dolot prowadzi autopilot.
+          // Hipercruise leci odcinek (ten sam cel); w rozruchu i po nim dolot prowadzi autopilot bojowy.
           travelTryHypercruise(leg);
         } else {
           nav.cmd = { type: 'hold', faceAngle: Math.atan2(leg.y - ship.pos.y, leg.x - ship.pos.x), travel: true };
@@ -21568,9 +21552,9 @@
       );
       env.snapTarget = env.cursorTarget;
       env.trigger = (fcTrigger.mouse || fcTrigger.pad) && !blockedUi && !torpedoAim.active && !miningInput.active;
-      // PRZELOT (tryb okrętu, src/game/shipModes.js): broń zimna — nie strzela ani grupa w ręku, ani auto.
+      // Hipercruise (i postawa z weaponsCold): broń zimna — nie strzela ani grupa w ręku, ani auto.
       env.canFire = !ship.destroyed && !warp.isBusy() && !stationUI.open && !StoryGame.blocksInput
-        && !stanceTune(shipModes).weaponsCold;
+        && !stanceTune(shipModes).weaponsCold && !hypercruiseBusy(hypercruise);
       // Maskowanie: wieże na auto milczą (strzał zrywa maskowanie); grupa w ręku strzela na rozkaz gracza.
       // To samo na rozkaz misji (podejście po cichu — StoryGame: api.fire.hold); rozkaz gaśnie z misją.
       if (fireControl.storyHold && !StoryGame.active) fireControl.storyHold = false;
@@ -24029,13 +24013,14 @@
     }
     // =============== Warp ===============
     // Jedna prędkość warpa [j/s] (demo „Nurt”: podróż międzyplanetarna ~260 tys. j/s); strefa mnoży.
-    // Liczba w tabeli napędów (src/data/driveModes.js) — ta sama dla ruchu v2.
-    const WARP_SPEED = DRIVE_WARP_SPEED;
+    // Napęd warp Mk I / II / III (src/data/driveModes.js — WARP_DRIVES; ta sama tabela co ruch v2): domyślna wartość
+    // to Mk II (Atlas); kadłub i wyposażenie podmienia syncPlayerWarpDrive (blok „HIPERCRUISE”).
+    const WARP_SPEED = WARP_DRIVES.warp_mk2.speed;
     const warp = {
       state: 'idle', // idle | charging | active
       charge: 0, chargeTime: 0.8,
       orientTolerance: Math.PI / 30, // 6 stopni - to nas blokowało!
-      // JEDNA prędkość warpa (QOL 2026-10-03: biegi przeniesione do PRZELOTU) — jak w demie „Nurt”
+      // Prędkość napędu warp (Mk I / II / III — driveModes.js; QOL 2026-10-03 — bez biegów) — jak w demie „Nurt”
       // (podróż Ziemia → Jowisz ~260 tys. j/s); strefy: pas asteroid × 0,8, przy planetach × 0,3.
       speed: WARP_SPEED,
       // Skok z celem (TRAVEL TO, ręczny kurs w tolerancji): prędkość przelotowa z planu (planPlayerWarp —
@@ -24880,7 +24865,7 @@
       }
       if (!boostActive && boost.effectTime > 0) boost.effectTime = Math.max(0, boost.effectTime - dt);
       // Dopalacz podnosi limit regulatora napędu (po puszczeniu okręt wraca do limitu trybu hamowaniem regulatora).
-      driveState.boostLimit = boostActive ? driveBoostSpeed(driveState, shipModes.stance === 'cruise') : 0;
+      driveState.boostLimit = boostActive ? driveBoostSpeed(driveState) : 0;
 
       PerfHUD.addTiming('worldZoneTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
@@ -24933,6 +24918,8 @@
       PerfHUD.addTiming('scanUiTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
 
+      // Napęd warp z kadłuba / wyposażenia (Mk I / II / III) — przed automatem podróży i ładowaniem skoku.
+      syncPlayerWarpDrive();
       stepTravelNav();
       updatePlayerCommand(dt);
       stepWarpCourse(dt);
@@ -24941,7 +24928,7 @@
       stepPlayerEngineIgnition(dt);
       // System okrętu (F): ładunek, przerwania, limit napędu na czas szarży / zrywu / skoku manewru.
       stepPlayerShipSystem(dt);
-      // Postawa okrętu (TARCZE / PRZELOT): limit i ciąg napędu.
+      // Postawa okrętu (TARCZE): limit i ciąg napędu.
       applyShipStance(dt);
       // Hipercruise (E5): przerwania, profil prędkości (prędkość pisze gałąź automatu niżej).
       stepPlayerHypercruise(dt);
@@ -25683,7 +25670,7 @@
 
       // Warp niewrażliwy (decyzja użytkownika 2026-10-11): w skoku i na rampie wyjścia gracz nie zderza się z
       // kadłubami (filtr par HullBodies), olbrzymami pasa ani ringiem — kolizje dopiero w zwykłym locie (też
-      // PRZELOT). Bez tego silnik belek łapał styki dyskretnie, w pozach z końca kroku: skok 260 tys. j/s przez
+      // hipercruise ma własny duch). Bez tego silnik belek łapał styki dyskretnie, w pozach z końca kroku: skok 260 tys. j/s przez
       // szereg 40 okrętów — styk z 23 (60 Hz) / 39 (120 Hz), rampa (87 → 16 tys. j/s) przeorywała okręty na drodze
       // (scripts/webgpu/tunelowanie-gra.mjs --tryb gra). Pociski, AI i mgła widzą gracza jak dotąd.
       if (ship) ship.noHullCollisions = updatePlayerWarpGhost();
@@ -29497,7 +29484,6 @@
         out.tagColor = '#8fa3b0';
         const hcTag = hypercruiseHudTag();
         if (hcTag) { out.tag = hcTag; out.tagColor = hypercruise.interrupted ? '#ff8a94' : '#9fd8ff'; }
-        else if (mode === 'cruise') { out.tag = `PRZELOT ${cruiseGearLabel()} — BROŃ ZIMNA`; out.tagColor = '#8fb0bf'; }
         else if (cloaked) { out.tag = 'MASKOWANIE — STRZAŁ ZRYWA'; out.tagColor = '#8fb0bf'; }
         else if (fireControl.storyHold === true) { out.tag = 'ROZKAZ: NIE STRZELAĆ'; out.tagColor = '#ff8a94'; }
         else if (fireControl.posture === 'hold') { out.tag = 'WSTRZYMAĆ OGIEŃ (Y)'; out.tagColor = '#ff8a94'; }
@@ -29529,7 +29515,7 @@
         opts.scale = scale;
         const mw = screenToWorld(cursor.x, cursor.y, camRef);
         opts.distance = Math.hypot(mw.x - ship.pos.x, mw.y - ship.pos.y);
-        opts.cold = !!stanceTune(shipModes).weaponsCold;
+        opts.cold = !!stanceTune(shipModes).weaponsCold || hypercruiseBusy(hypercruise);
         opts.dim = !!ship.cloak && isCloakEngaged(ship.cloak);
         opts.missiles = null;
         _reticleTag(opts);
@@ -29760,13 +29746,12 @@
         _panelArgs.groups = tp.groups;
         _panelArgs.cursorRel = cursorRel;
         _panelArgs.title = handGrp ? `${FC_GROUP_LABEL[hand]} ${ready}/${n}` : (hand ? FC_GROUP_LABEL[hand] : '');
-        _panelArgs.titleColor = mode === 'cruise' ? '#6f8b99' : (handGrp && ready > 0 ? '#52ff9a' : '#ffd27a');
+        _panelArgs.titleColor = mode === 'hypercruise' ? '#6f8b99' : (handGrp && ready > 0 ? '#52ff9a' : '#ffd27a');
         const hcSub = hypercruiseHudTag();
         _panelArgs.sub = hcSub ? hcSub
-          : mode === 'cruise' ? `PRZELOT ${cruiseGearLabel()} — BROŃ ZIMNA`
           : fireControl.posture === 'free' ? (SHIP_MODE_DEFS[mode]?.label || '')
           : FC_POSTURE_LABEL[fireControl.posture];
-        _panelArgs.subColor = mode === 'cruise' || fireControl.posture === 'hold' ? '#ff8a94' : '#8fa3b0';
+        _panelArgs.subColor = hcSub || fireControl.posture === 'hold' ? '#ff8a94' : '#8fa3b0';
         // Dysze MAIN na sylwetce i stan napędu (src/game/engineDamage.js — zniszczone do remontu w doku).
         const mains = ship.visual?.mainThrusters;
         const nEng = Array.isArray(mains) ? mains.length : 0;

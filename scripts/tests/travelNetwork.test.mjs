@@ -90,7 +90,11 @@ export function run() {
       + `strata ${option.cost.expectedLoss.toFixed(0)})  ryzyko ${(option.interceptChance * 100).toFixed(2)}%`);
   }
 
-  t.check('warp jest znacznie szybszy', byId.warp.seconds * 5 < byId.hypercruise.seconds);
+  // Hauler ma warp Mk I (100 tys. j./s) — najwolniejszy napęd warp, a i tak kilkukrotnie szybszy od hipercruise'u.
+  t.check('warp jest znacznie szybszy', byId.warp.seconds * 3 < byId.hypercruise.seconds);
+  t.check('megafrachtowiec z warpem Mk III skacze szybciej niż hauler z Mk I',
+    priceRoute(network, [{ from: 'mercury', to: 'earth', mode: 'warp' }], { ...bulk, vanClass: 'mega' }).seconds
+    < priceRoute(network, [{ from: 'mercury', to: 'earth', mode: 'warp' }], { ...bulk, vanClass: 'hauler' }).seconds);
   t.check('warp jest wielokrotnie droższy w paliwie', byId.warp.cost.fuel > byId.hypercruise.cost.fuel * 5);
   t.equal('warp nie ma ekspozycji', byId.warp.exposedDistance, 0);
   t.check('hipercruise jest w pełni odsłonięty (da się go przerwać)',
@@ -176,7 +180,7 @@ export function run() {
     { from: 'gate:mars', to: 'mars', mode: 'hypercruise' }
   ], bulk);
   t.equal('trzy odcinki', manual.legs.length, 3);
-  t.equal('skok nie zajmuje czasu', manual.legs[1].seconds, 0);
+  t.equal('skok trwa procedurę bramy', manual.legs[1].seconds, network.config.gateTransitSeconds);
   t.check('skok kosztuje opłatę', manual.cost.gate > 0);
   t.check('opłata rośnie z tonażem',
     priceRoute(network, [{ from: 'gate:earth', to: 'gate:mars', mode: 'gate' }], { mass: 400 }).cost.gate
@@ -188,6 +192,8 @@ export function run() {
   t.equal('trasa donikąd nie ma wariantów', chooseRoute(network, 'earth', 'earth', bulk), null);
   t.equal('tryb hipercruise klasy bierze silnik klasy', driveModeFor('hypercruise', 'van').engineId, 'hypercruise_mk2');
   t.equal('tryb bez klasy — hauler', driveModeFor('hypercruise').engineId, 'hypercruise_mk1');
+  t.equal('warp klasy bierze napęd klasy', driveModeFor('warp', 'mega').driveId, 'warp_mk3');
+  t.equal('warp bez klasy — hauler Mk I', driveModeFor('warp').driveId, 'warp_mk1');
 
   return t.results;
 }

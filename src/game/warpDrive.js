@@ -709,6 +709,17 @@ export const WARP_TRIP = Object.freeze({
   vMax: 600000
 });
 
+/**
+ * Strojenie czasu skoku dla napędu o prędkości `speed` [j/s] (napędy warp Mk I / II / III — src/data/driveModes.js,
+ * decyzja użytkownika 2026-10-22): demo „Nurt” = 260 tys. j/s; wolniejszy napęd — dłuższa podróż (człon drogi
+ * i sufit × 260 tys. / speed), sufit prędkości przelotowej w tej samej proporcji.
+ */
+export function warpTripTuneFor(speed, tune = WARP_TRIP) {
+  const k = 260000 / Math.max(1000, Number(speed) || 260000);
+  if (Math.abs(k - 1) < 1e-9) return tune;
+  return Object.freeze({ ...tune, perUnit: tune.perUnit * k, max: tune.max * k, vMax: tune.vMax / k });
+}
+
 /** Czas skoku z celem [s, od skoku do zatrzymania] dla odcinka `dist` [j.]. */
 export function warpTripTime(dist, tune = WARP_TRIP) {
   const d = Math.max(0, Number(dist) || 0);

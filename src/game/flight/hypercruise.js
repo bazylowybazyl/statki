@@ -3,7 +3,8 @@
 // HIPERCRUISE gracza (E5, decyzja użytkownika 2026-10-21: „będzie możliwość hipercruise, czyli przelotu
 // dającego większy vmax dla statków”; liczby — src/data/driveModes.js). Automat:
 //   idle → spool (rozruch; lot zwykły trwa) → active (rozpęd do vmax × strefa, kurs z dziobu) → drop
-//   (hamowanie do HYPERCRUISE_TUNE.exitSpeed) → idle.
+//   (hamowanie do HYPERCRUISE_TUNE.exitSpeed, dalej regulator do limitu bojowego) → idle. PRZELOTU gracza nie ma
+//   (decyzja użytkownika 2026-10-22) — hipercruise to jedyny napęd odcinków 'drive' TRAVEL TO.
 // W 'active' i 'drop' automat PROWADZI prędkość (jak rampa wyjścia z warpa): klej gry pisze ship.vel =
 // dziób × speed, bez ciągu dysz. Odcinek 'drive' rozkazu TRAVEL TO podaje cel (`target`) — automat sam
 // hamuje tak, żeby wyjść `stopMargin` przed punktem z prędkością wyjścia (resztę dolotu robi autopilot).
@@ -27,6 +28,7 @@ export function createHypercruise() {
     engineId: null,
     flightClass: null,
     vmax: 0, accel: 0, decel: 0, spool: 0, turnMul: 0.5,
+    spoolNow: 0,         // [s] rozruch bieżącego startu (krótki odcinek TRAVEL TO — skrócony)
     vcap: 0,             // [j/s] sufit tej chwili (vmax × strefa)
     target: null,        // { x, y } — cel odcinka TRAVEL TO (null: lot ręczny)
     reason: '',          // powód ostatniego wyjścia ('', 'manual', 'arrive', 'brake', powód przerwania)
@@ -59,11 +61,16 @@ export function hypercruiseDriving(hc) {
   return !!hc && (hc.state === HC_ACTIVE || hc.state === HC_DROP);
 }
 
-/** Start rozruchu. opts.target — cel odcinka TRAVEL TO. Zwraca false bez silnika albo w trakcie. */
+/**
+ * Start rozruchu. opts.target — cel odcinka TRAVEL TO, opts.spool — rozruch tego startu [s] (krótki odcinek;
+ * domyślnie pełny rozruch klasy). Zwraca false bez silnika albo w trakcie.
+ */
 export function engageHypercruise(hc, opts = {}) {
   if (!hc || !(hc.vmax > 0) || hc.state !== HC_IDLE) return false;
   hc.state = HC_SPOOL;
   hc.t = 0;
+  const spool = Number(opts.spool);
+  hc.spoolNow = Number.isFinite(spool) && spool >= 0 ? Math.min(hc.spool, spool) : hc.spool;
   hc.target = opts.target ? { x: Number(opts.target.x) || 0, y: Number(opts.target.y) || 0 } : null;
   hc.reason = '';
   hc.interrupted = false;
@@ -115,7 +122,7 @@ export function stepHypercruise(hc, ctx, dt) {
   const exitSpeed = Math.max(0, Number(ctx?.exitSpeed ?? HYPERCRUISE_TUNE.exitSpeed) || 0);
   hc.t += step;
   if (hc.state === HC_SPOOL) {
-    if (hc.t < hc.spool) return null;
+    if (hc.t < hc.spoolNow) return null;
     hc.state = HC_ACTIVE;
     hc.t = 0;
     hc.speed = Math.max(0, Number(ctx?.speed) || 0);
@@ -173,5 +180,5 @@ export function stepHypercruise(hc, ctx, dt) {
 /** Postęp rozruchu 0…1 (HUD). */
 export function hypercruiseSpoolProgress(hc) {
   if (!hc || hc.state !== HC_SPOOL) return hc && hypercruiseDriving(hc) ? 1 : 0;
-  return Math.min(1, hc.t / Math.max(1e-3, hc.spool));
+  return Math.min(1, hc.t / Math.max(1e-3, hc.spoolNow));
 }
