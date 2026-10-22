@@ -108,9 +108,10 @@ export function run() {
   // taśma nadprzewodząca w elektronice i reaktor fuzyjny — Ziemia dalej −5% Fe, −4% Si.
   // emitery tarcz w zakładach systemowych — Ziemia −3% Fe, +1% Si.
   // układy scalone z niklem (Ga, Ge) — Ziemia −22% krzemu, +2% Fe.
-  t.close('plan Ziemi wymaga 1058,718 rudy żelaza/h', earthNet.iron_ore * 3600, -1058.7179695891068, 1e-6);
-  t.close('plan Ziemi wymaga 525,693 rudy krzemu/h', earthNet.silicon_ore * 3600, -525.6929226886501, 1e-6);
-  t.close('plan Merkurego eksportuje 1414,244 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1414.2437065317436, 1e-6);
+  // warp Mk I–III na taśmie nadprzewodzącej, fregata z warpem Mk I — Ziemia −3% Fe, −3% Si.
+  t.close('plan Ziemi wymaga 1031,138 rudy żelaza/h', earthNet.iron_ore * 3600, -1031.1380183740011, 1e-6);
+  t.close('plan Ziemi wymaga 509,769 rudy krzemu/h', earthNet.silicon_ore * 3600, -509.769265759327, 1e-6);
+  t.close('plan Merkurego eksportuje 1412,130 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1412.1304873239783, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });

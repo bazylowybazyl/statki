@@ -290,7 +290,7 @@ export const RESOURCES = Object.freeze({
   superconductor: {
     tier: TIER.REFINED, category: CATEGORY.ELECTRONIC,
     label: 'Taśma nadprzewodząca', short: 'HTS', unit: 'szt', form: 'solid',
-    mass: 0.3, value: 86, color: '#818cf8'
+    mass: 0.3, value: 75, color: '#818cf8'
   },
 
   // ---------- T2: KOMPONENTY OKRĘTOWE ----------
@@ -349,11 +349,12 @@ export const RESOURCES = Object.freeze({
     mass: 14.0, value: 3600, color: '#3b82f6', capacityFactor: 0.5
   },
   // Napęd warp (2026-10-22): prędkość warpa zależy od Mk (100–250 tys. j./s;
-  // liczby — E5, `src/data/driveModes.js`; id to kontrakt E5 ↔ E8). Koszt rośnie
-  // szybciej niż prędkość, o ile Mk II leży w 150–200 tys.: 16,8 / 17,6–23,5 /
-  // 26,2 CR za tysiąc j./s. Mk I bez rdzenia reaktora — pręty paliwowe (uran
-  // z Kuipera) są wąskim gardłem stoczni; awionika oszczędnie, bo krzem jest
-  // najciaśniejszym surowcem układu (optyka stoi na krysztale z nadwyżką).
+  // liczby — E5, `src/data/driveModes.js`; id to kontrakt E5 ↔ E8). Skład (E10,
+  // decyzja użytkownika): pole na taśmie nadprzewodzącej, od Mk II własny rdzeń
+  // reaktora i platynowce w komorze. Mk I bez platynowców i bez rdzenia, bo ma go
+  // każda fregata (platynowce są najciaśniejszym surowcem pasa). Koszt rośnie
+  // szybciej niż prędkość, o ile Mk II leży w 150–200 tys.: 8,7 / 20–26,7 / 28 CR
+  // za tysiąc j./s.
   //
   // `capacityFactor` 0,5 (tu, w Mk2/Mk3 hipercruise i napędzie ciężkim): rzadkie,
   // drogie części — przy pełnym magazynie producent rzadko przekraczał próg
@@ -362,17 +363,17 @@ export const RESOURCES = Object.freeze({
   warp_mk1: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Napęd warp Mk I', short: 'WP1', unit: 'szt', form: 'solid',
-    mass: 8.0, value: 1680, color: '#a78bfa', capacityFactor: 0.5
+    mass: 8.0, value: 870, color: '#a78bfa', capacityFactor: 0.5
   },
   warp_mk2: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Napęd warp Mk II', short: 'WP2', unit: 'szt', form: 'solid',
-    mass: 12.0, value: 3520, color: '#8b5cf6', capacityFactor: 0.5
+    mass: 12.0, value: 4000, color: '#8b5cf6', capacityFactor: 0.5
   },
   warp_mk3: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Napęd warp Mk III', short: 'WP3', unit: 'szt', form: 'solid',
-    mass: 18.0, value: 6560, color: '#7c3aed', capacityFactor: 0.5
+    mass: 18.0, value: 7000, color: '#7c3aed', capacityFactor: 0.5
   },
   weapon_mount: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
@@ -550,7 +551,7 @@ export const PLANET_YIELD = Object.freeze({
   venus:   { rate: 1.40, yields: { copper_ore: 0.45, silicon_ore: 0.25, raw_crystal: 0.22, iron_ore: 0.08 } },
   earth:   { rate: 0.00, yields: {} },
   // Mars: ziemie rzadkie ze skorupy (E10) — drugie, małe źródło obok Luny,
-  // PONAD dawny urobek (`rate` 1,05 → 1,0714). Luna daje ~80% ziem rzadkich.
+  // PONAD dawny urobek (`rate` 1,05 → 1,0714). Luna daje ~90% ziem rzadkich.
   mars:    { rate: 1.0714, yields: {
     iron_ore: 0.392, silicon_ore: 0.2352, ice: 0.2058, raw_crystal: 0.147, rare_earth_ore: 0.02
   } },
@@ -603,7 +604,7 @@ export const PLANET_YIELD = Object.freeze({
   // Ziemia — Luna (E10, 2026-10-22, decyzja użytkownika: Księżyc jako kopalnia).
   // Anortyt wyżyn (glin), ilmenit mórz (tytan) i KREEP (ziemie rzadkie) — Terra
   // Nova ma przy Ziemi monopol na magnesy. Ziemia dalej nic nie wydobywa.
-  luna: { rate: 0.8523, yields: { aluminum_ore: 0.5412, titanium_ore: 0.3388, rare_earth_ore: 0.12 } },
+  luna: { rate: 0.9375, yields: { aluminum_ore: 0.492, titanium_ore: 0.308, rare_earth_ore: 0.2 } },
 
   // Jowisz — wulkaniczne Io i lodowa Europa.
   io: { rate: 0.5, yields: { iron_ore: 0.34, titanium_ore: 0.30, copper_ore: 0.36 } },
@@ -736,7 +737,7 @@ export const RECIPES = Object.freeze({
   // Elektronika: film REBCO na taśmie z nadstopu niklu, miedź i srebro na wierzchu.
   tape_superconductor: {
     label: 'Napylanie taśmy nadprzewodzącej', building: 'refinery', seconds: 70,
-    in: { rare_earth_ore: 1, copper_wire: 2, nickel_superalloy: 1 }, out: { superconductor: 2 }
+    in: { rare_earth_ore: 1, copper_wire: 1, nickel_superalloy: 1 }, out: { superconductor: 2 }
   },
 
   // ---------- FABRYKA: T1 → T2 ----------
@@ -806,22 +807,21 @@ export const RECIPES = Object.freeze({
     in: { nickel_superalloy: 9, carbon_composite: 8, pt_catalyst: 4, superconductor: 3, reactor_core: 1, avionics: 1, coolant: 4 },
     out: { hypercruise_mk3: 1 }
   },
-  // Napęd warp: generator pola na stopie tytanu i nadstopie, katalizator
-  // platynowy w komorze; od Mk II zasila go własny rdzeń reaktora, Mk III
-  // dokłada optykę emiterów i osłonę z kompozytu.
+  // Napęd warp (E10): generator pola na taśmie nadprzewodzącej i nadstopie; od
+  // Mk II zasila go własny rdzeń reaktora, a platynowce idą w komorę.
   assemble_warp_mk1: {
     label: 'Montaż napędu warp Mk I', building: 'factory', seconds: 300,
-    in: { nickel_superalloy: 6, titan_alloy: 4, pt_catalyst: 1, avionics: 1, copper_wire: 4, coolant: 3 },
+    in: { superconductor: 4, nickel_superalloy: 2, titan_alloy: 2, coolant: 2 },
     out: { warp_mk1: 1 }
   },
   assemble_warp_mk2: {
     label: 'Montaż napędu warp Mk II', building: 'factory', seconds: 420,
-    in: { nickel_superalloy: 10, titan_alloy: 4, pt_catalyst: 2, reactor_core: 1, avionics: 1, optic_lens: 3, coolant: 4 },
+    in: { superconductor: 8, reactor_core: 1, avionics: 2, pt_catalyst: 2, nickel_superalloy: 4, coolant: 3 },
     out: { warp_mk2: 1 }
   },
   assemble_warp_mk3: {
     label: 'Montaż napędu warp Mk III', building: 'factory', seconds: 560,
-    in: { nickel_superalloy: 14, titan_alloy: 4, carbon_composite: 6, pt_catalyst: 4, reactor_core: 2, avionics: 2, optic_lens: 6, coolant: 6 },
+    in: { superconductor: 14, reactor_core: 2, avionics: 3, pt_catalyst: 4, nickel_superalloy: 6, coolant: 5 },
     out: { warp_mk3: 1 }
   },
 

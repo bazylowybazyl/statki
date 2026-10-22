@@ -74,9 +74,10 @@ export const FLEET_DEMAND = Object.freeze({
   hypercruise_mk1: 0.0088,
   hypercruise_mk2: 0.0014,
   hypercruise_mk3: 0.0003,
-  // Napęd warp (2026-10-22): niszczyciel Mk I, krążownik Mk II, nosiciel Mk III
-  // (fregata bez warpa) — ten sam przelicznik ~0,0105 na sztukę ważoną doktryną.
-  warp_mk1: 0.0025,
+  // Napęd warp (2026-10-22): fregata i niszczyciel Mk I (fregata od decyzji
+  // użytkownika z 2026-10-22), krążownik Mk II, nosiciel Mk III — ten sam
+  // przelicznik ~0,0105 na sztukę ważoną doktryną.
+  warp_mk1: 0.0088,
   warp_mk2: 0.0014,
   warp_mk3: 0.0003,
   // Pancerz okrętów wojennych (E10): ~5,4 płyty ceramiki na okręt ważony

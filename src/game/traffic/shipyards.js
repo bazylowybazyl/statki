@@ -47,16 +47,18 @@ export const WARSHIP_CLASSES = Object.freeze({
   // pcha, moduł hipercruise niesie odcinki 'drive' TRAVEL TO. Fregata ma tylko
   // napęd lekki — mały kadłub obraca się wektorem dysz, bez osobnych manewrowych.
   // Klasa hipercruise rośnie z kadłubem: Mk1 fregata i niszczyciel, Mk2 krążownik,
-  // Mk3 nosiciel. Napęd warp (2026-10-22) tak samo od niszczyciela w górę: Mk I,
-  // Mk II, Mk III — fregata go nie ma, bo z nim byłaby droższa na punkt siły niż
-  // niszczyciel (a doktryna stoi na tanich fregatach). Ceramika pancerna (E10,
-  // `docs/PROPOZYCJA-receptury-realistyczne.md` § 4) tylko na okrętach wojennych —
-  // frachtowiec jej nie ma; tak samo emitery tarcz (1 / 3 / 6 / 9). Rodziny luf (`weaponEconomy.WEAPON_FAMILY_GOOD`) rozłożone tak,
+  // Mk3 nosiciel. Napęd warp: Mk I fregata i niszczyciel (fregata od decyzji
+  // użytkownika z 2026-10-22 — Mk I na taśmie nadprzewodzącej jest dość tani, żeby
+  // fregata została najtańsza na punkt siły), Mk II krążownik, Mk III nosiciel.
+  // Ceramika pancerna i emitery tarcz (E10, `docs/PROPOZYCJA-receptury-realistyczne.md`
+  // § 4) tylko na okrętach wojennych — frachtowiec ich nie ma; emiterów 1 / 3 / 6 / 9.
+  // Rodziny luf (`weaponEconomy.WEAPON_FAMILY_GOOD`) rozłożone tak,
   // że łączna liczba luf każdej klasy jest ta sama co przy czterech klasach.
   frigate: {
     id: 'frigate', label: 'fregata', hull: 'terran_frigate', power: 1, seconds: 600,
     build: {
-      hull_plate: 4, ceramic_armor: 2, shield_generator: 1, avionics: 1, drive_light: 1, hypercruise_mk1: 1, weapon_mount: 1,
+      hull_plate: 4, ceramic_armor: 2, shield_generator: 1, avionics: 1, drive_light: 1, hypercruise_mk1: 1, warp_mk1: 1,
+      weapon_mount: 1,
       gun_ballistic: 1, pd_turret: 1
     }
   },
