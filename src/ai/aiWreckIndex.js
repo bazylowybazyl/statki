@@ -15,6 +15,12 @@
 // przeszkody 1,5–5 km okręt ogląda kilka wraków, nie wszystkie.
 
 export const WRECK_OBSTACLE_MIN_RADIUS = 80;
+// Bryła 3D (wrak `solid3D` — odłam budowli, gruz upadku habitatu) jest przeszkodą tylko, gdy jej sfera (z ± promień
+// encji — obejmuje każdy węzeł z komórką) sięga pasa ± tyle j. przy płaszczyźnie gry: słup okrętu
+// (HULL_BODY_CONFIG.shipColumn, 70) + zapas na promień encji, który odświeża się dopiero przy zmianie liczby węzłów.
+// Dalej okręt jej nie dotknie, a indeks widziałby sam rzut — gruz upadku habitatu leżący na planetoidzie 24–27 km pod
+// bazą piratów zatrzymywał w płaszczyźnie okręty lecące nad bazą (2026-10-21).
+export const WRECK_OBSTACLE_BAND = 120;
 // Wrak jako KAPSUŁA wzdłuż osi kadłuba (angle): promień kadłuba to pół-długości, pół-szerokość
 // ≈ tyle × promień (kadłuby ~3:1). Koło o promieniu pół-długości przepuszczało okręt obok środka
 // długiego wraku leżącego w poprzek kursu albo, szersze, zasłaniało pół pola wraków.
@@ -48,12 +54,14 @@ function grow(arr, need) {
 
 function byX(a, b) { return _candX[a] - _candX[b]; }
 
-// Wrak jest przeszkodą: żywy, zderza się (duch odłamu budowli nie), dość duży. Zimny wrak (src/game/coldWrecks.js)
-// nie ma kolizji (duch dla okrętów i pocisków), ale stoi w kadrze jak inne — okręty go omijają.
+// Wrak jest przeszkodą: żywy, zderza się (duch odłamu budowli nie), dość duży, a bryła 3D — przy płaszczyźnie gry
+// (WRECK_OBSTACLE_BAND). Zimny wrak (src/game/coldWrecks.js) nie ma kolizji (duch dla okrętów i pocisków), ale stoi
+// w kadrze jak inne — okręty go omijają.
 function isObstacleWreck(w) {
   if (!w || w.dead || w.removed || (w.isCollidable === false && w.isCold !== true)) return false;
   const r = Number(w.radius) || 0;
-  return r >= WRECK_OBSTACLE_MIN_RADIUS && Number.isFinite(w.x) && Number.isFinite(w.y);
+  if (r < WRECK_OBSTACLE_MIN_RADIUS || !Number.isFinite(w.x) || !Number.isFinite(w.y)) return false;
+  return w.solid3D !== true || Math.abs(Number(w.z) || 0) - r <= WRECK_OBSTACLE_BAND;
 }
 
 function addCandidates(list) {

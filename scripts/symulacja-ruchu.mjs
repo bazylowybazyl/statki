@@ -24,6 +24,7 @@ import { summarizeCompanies } from '../src/game/traffic/transportCompanies.js';
 import { summarizeShipyards } from '../src/game/traffic/shipyards.js';
 import { summarizeAgents } from '../src/game/traffic/agentFleets.js';
 import { buildTrafficWorld, stepTrafficWorld, TRAFFIC_STEP_SECONDS } from '../src/game/traffic/trafficWorld.js';
+import { summarizeMining } from '../src/game/traffic/miningFields.js';
 
 const MINUTES = Number(process.argv[2]) || 60;
 const PRESSURE = process.argv[3] !== undefined ? Number(process.argv[3]) : 1;
@@ -178,6 +179,19 @@ console.log(`  patrole: ${pat.count} szlaków, łączna siła ${pat.totalStrengt
   + `ufundowane ${pat.stats.funded}, rozwiązane ${pat.stats.disbanded}`);
 for (const lane of pat.lanes.slice(0, 4)) {
   console.log(`    ${(lane.fromId + ' ↔ ' + lane.toId).padEnd(24)} siła ${lane.strength}  (${lane.factionId})`);
+}
+// Pas w ekonomii (E3, miningFields.js): wyprawy w skałach pola, urobek ze składu, uszczuplenie i wyrwy.
+const pas = summarizeMining(director.mining);
+if (pas) {
+  const tony = bag => Object.entries(bag).sort((a, b) => b[1] - a[1])
+    .map(([id, n]) => `${RESOURCES[id]?.short || id} ${Math.round(n)}`).join('  ');
+  const suma = bag => Object.values(bag).reduce((s, n) => s + n, 0);
+  console.log(`  wydobycie: ${pas.expeditions} wypraw, w skałach ${pas.inRocks} `
+    + `(${(pas.inRocks / Math.max(1, pas.expeditions) * 100).toFixed(1)}%), w pasie ${pas.inBelt}; `
+    + `pola ${pas.fields} (tabele ${pas.tablesBuilt}, ${pas.tableMs.toFixed(0)} ms)`);
+  console.log(`    urobek dowieziony ${Math.round(suma(pas.delivered))} t: ${tony(pas.delivered)}`);
+  console.log(`    zaplanowany ${Math.round(suma(pas.planned))} t, z pasa zeszło ${Math.round(pas.extracted)} t, `
+    + `komórek ${pas.cells}, kopalni ${pas.claims}, wyrw ${pas.holes} (puste ${pas.emptyHoles})`);
 }
 console.log(`  konwoje: ${snap.convoys.count} grup / ${snap.convoys.ships} jednostek, `
   + `największa ${snap.convoys.largest}, z osłoną ${snap.convoys.escorted}`);

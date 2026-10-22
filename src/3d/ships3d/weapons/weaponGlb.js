@@ -7,7 +7,7 @@
 //
 // REJESTR OGÓLNY: rodzina → plik assets/weapons3d/<plik>.glb (LOD1: <plik>_lod1.glb), plik = nazwa rodziny
 // albo wpis w WEAPON_GLB_FILE (yamato2 → yamato). Rodziny AKTYWNE w grze i ich tryb: WEAPON_GLB_GAME — od 2026-10-13
-// (decyzja użytkownika) Yamato, Yamato L, Tempest 1 / 2 i Lanca w trybie AUTO: wczytane OBA pliki, LOD wieży wg
+// (decyzja użytkownika) Yamato, Yamato L, Tempest 1 / 2 i Lanca, od 2026-10-20 Promień Śmierci w trybie AUTO: wczytane OBA pliki, LOD wieży wg
 // jej rozmiaru na ekranie (weaponGlbLodFor — promień sylwetki Turret2D × skala × zoom, w kamerach 3D z perspektywy;
 // z bliska LOD0, przy oddalaniu LOD1, histereza), dwie partie rodziny (shipModels3DGame.syncTurrets). Przełącznik
 // bez zmian w kodzie (A/B, harness, demo):
@@ -67,7 +67,10 @@ export const WEAPON_GLB_GAME = Object.freeze({
   yamato2: WEAPON_GLB_AUTO,
   tempest1: WEAPON_GLB_AUTO,
   tempest2: WEAPON_GLB_AUTO,
-  lance: WEAPON_GLB_AUTO
+  lance: WEAPON_GLB_AUTO,
+  // Promień Śmierci „Gungnir” (2026-10-20, scripts/blender/deathRay.py; wygląd zaakceptowany przez użytkownika): jedna wieża na supercapitalu Terra Nova
+  // (Capital, r 64) — LOD0 z góry od zoomu ~1,43, LOD1 (3,4 tys. trójkątów) poniżej ~1,14.
+  deathRay: WEAPON_GLB_AUTO
 });
 
 /** LOD wieży w trybie AUTO z promienia sylwetki na ekranie [px] i poprzedniego LOD (histereza; prev < 0 — pierwszy raz). */

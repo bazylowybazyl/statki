@@ -391,8 +391,8 @@ test('źródło stempla: pocisk, broń, id; rodziny 27 broni dema zgodne z tabel
   assert.equal(S.stampFamilyFor(null), 'generic');
   assert.equal(S.stampPowerFor({ weaponSize: 'Capital' }), 1.6);
   // 27 broni dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L (własne, mniejsze wpisy stempla)
-  // + broń maszyn eskadr (bomba, torpeda lotnicza — rocket; działko kanonierki — autocannon).
-  assert.equal(Object.keys(S.WEAPON_STAMP_FAMILY).length, 35);
+  // + broń maszyn eskadr (bomba, torpeda lotnicza — rocket; działko kanonierki — autocannon) + promień śmierci (deathRay).
+  assert.equal(Object.keys(S.WEAPON_STAMP_FAMILY).length, 36);
   for (const fam of new Set(Object.values(S.WEAPON_STAMP_FAMILY))) assert.ok(S.STAMP[fam]?.impact, `rodzina ${fam} ma stempel trafienia`);
   assert.equal(S.stampFamilyFor({ vfxKey: 'special_valkyrie_s', type: 'rail', weaponSize: 'S' }), 'valkyrieS');
   assert.equal(S.stampFamilyFor({ vfxKey: 'special_valkyrie_m', type: 'rail', weaponSize: 'M' }), 'valkyrieM');

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Mapy planet gry mają ścieżki względne od roota (assets/planety/…) — jak demo planet. -->
+<base href="/">
+<title>Warp „Pęd” — WebGPU</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #d9e4ea; --muted: #7f929c; --line: #9fc6d626; --panel: #060c12e8; --accent: #6fd8ff; --warn: #f0b060; --bad: #ff5a52; --good: #7be0a0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #020305; overflow: hidden; color: var(--ink); font: 12px/1.4 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #020305; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: default; }
+  #title { position: fixed; left: 14px; top: 12px; z-index: 40; pointer-events: none; }
+  #title .name { font: 600 15px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+  #title .hint { margin-top: 4px; color: var(--muted); font-size: 12px; text-shadow: 0 0 8px #000; max-width: 600px; }
+  #styl { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 40; pointer-events: none; text-align: center; text-shadow: 0 0 10px #000; }
+  #styl .k { font: 600 20px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .14em; color: #fff; }
+  #styl .d { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #hud { position: fixed; left: 14px; bottom: 14px; z-index: 40; padding: 8px 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.5 ui-monospace, Consolas, monospace; min-width: 340px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #hud .warn { color: var(--warn); } #hud .good { color: var(--good); }
+  #panel { position: fixed; right: 12px; top: 12px; z-index: 40; width: 300px; max-height: calc(100vh - 24px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .08em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .btns { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .btns.two { grid-template-columns: 1fr 1fr; }
+  button { background: #0d1822; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 5px 8px; font: inherit; cursor: pointer; text-align: left; }
+  button kbd { float: right; color: var(--muted); font: 11px ui-monospace, Consolas, monospace; }
+  button small { display: block; color: var(--muted); font-size: 11px; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #0f2633; border-color: var(--accent); color: #fff; }
+  button.on small { color: #a9cbd8; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .row input[type=range] { flex: 1; }
+  .row .v { width: 64px; text-align: right; font: 11px ui-monospace, Consolas, monospace; color: var(--accent); }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #errors { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 12px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #nogpu { position: fixed; inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; background: #020305f2; font-size: 15px; text-align: center; }
+  body.clean #panel, body.clean #hud, body.clean #title { display: none; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Demo warpa: skok Atlasa w wybranym stylu — rulon, sama prędkość, prędkość z akcentami soczewki albo soczewka bańki"></canvas>
+</div>
+<div id="title"><div class="name">Warp „Pęd” · WebGPU</div><div class="hint">Ten sam warp co w grze (ośrodek, smugi, planety w soczewce świata, kop kamery, Atlas na belkach) — przełączasz tylko styl skoku i wyjście. Podróż leci w pętli.</div></div>
+<div id="styl"><div class="k" id="styl-k">—</div><div class="d" id="styl-d"></div></div>
+<div id="hud">ładowanie…</div>
+<div id="loading">Ładowanie planet, kadłuba i shaderów…</div>
+<div id="errors"></div>
+<div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
+<div id="panel">
+  <h1>WARP — STYL SKOKU</h1>
+  <div class="sub">Moduły gry: src/3d/warp (WarpNurt), planet3d.assets.js, hexShips3D, cameraRig.js. Styl: warpDrive.js → setWarpStyle (w grze: ?warp=…).</div>
+
+  <h2>Styl</h2>
+  <div class="btns" id="styles">
+    <button data-styl="rulon" title="1">Rulon — dziś w grze<kbd>1</kbd><small>świat zwija się w walec i lejek</small></button>
+    <button data-styl="ped" title="2">Pęd — sama prędkość<kbd>2</kbd><small>nic się nie gnie: smugi, ośrodek, planety mijają</small></button>
+    <button data-styl="akcent" title="3">Pęd + akcenty<kbd>3</kbd><small>soczewka tylko na przejściach: naciąg, pęknięcie, sprężenie</small></button>
+    <button data-styl="soczewka" title="4">Soczewka bańki<kbd>4</kbd><small>przestrzeń gnie się wokół statku przez cały skok</small></button>
+  </div>
+
+  <h2>Wyjście</h2>
+  <div class="btns two">
+    <button id="btn-ped" title="P">Z pędem<kbd>P</kbd></button>
+    <button id="btn-stop" title="P">Do zatrzymania<kbd>P</kbd></button>
+  </div>
+  <div class="row"><span>pęd</span><input type="range" id="pedK" min="1" max="6" step="0.5" value="3"><span class="v" id="pedK-v">3×</span></div>
+  <div class="hint" id="ped-hint">Rampa hamuje do k × prędkość bojowa Atlasa (500 j/s) — potem statek leci dalej i wytraca nadmiar ciągiem wstecznym (200 j/s²).</div>
+
+  <h2>Kamera w skoku</h2>
+  <div class="btns" id="camroll">
+    <button data-roll="up" title="K">Obrót: kurs w górę<kbd>K</kbd><small>kadr obraca się na czas skoku — to, co przed dziobem, u góry ekranu</small></button>
+    <button data-roll="right" title="K">Obrót: kurs w prawo<kbd>K</kbd><small>kurs wzdłuż dłuższego boku kadru — więcej miejsca przed dziobem</small></button>
+    <button data-roll="off" title="K">Bez obrotu<kbd>K</kbd><small>kadr osiami świata, jak dziś w grze</small></button>
+  </div>
+  <div class="btns two" id="warpzoom" style="margin-top:4px">
+    <button data-zoom="staly" title="Z">Zoom stały<kbd>Z</kbd><small>ten sam kadr skoku przy każdym zoomie; przy przylocie kamera odsuwa się do celu</small></button>
+    <button data-zoom="gracz" title="Z">Zoom gracza<kbd>Z</kbd><small>oddalenie × Twój zoom</small></button>
+  </div>
+
+  <h2>Trasa</h2>
+  <div class="btns two" id="routes">
+    <button data-trasa="jowisz" title="J">Ziemia → Jowisz<kbd>J</kbd></button>
+    <button data-trasa="mars" title="M">Ziemia → Mars<kbd>M</kbd></button>
+  </div>
+  <div class="btns" style="margin-top:4px">
+    <button id="btn-free" title="F">Lot swobodny<kbd>F</kbd><small>W/S ciąg · A/D obrót · Shift dopalacz · CapsLock / 9 — warp (drugi raz: wyjście)</small></button>
+  </div>
+
+  <h2>Czas</h2>
+  <div class="btns two">
+    <button id="btn-jump" title="Spacja">Skok od nowa<kbd>spacja</kbd></button>
+    <button id="btn-pause" title="Pauza">Pauza<kbd>Esc</kbd></button>
+    <button id="btn-slow" title="T">Zwolnienie ×0,25<kbd>T</kbd></button>
+    <button id="btn-clean" title="H">Bez paneli<kbd>H</kbd></button>
+  </div>
+  <div class="hint">Kółko — zoom (jak w grze: kop i oddalenie warpa działają względem Twojego zoomu).</div>
+</div>
+<script type="module" src="/dema/warp-ped.js"></script>
+</body>
+</html>

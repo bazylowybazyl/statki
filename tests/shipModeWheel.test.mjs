@@ -70,15 +70,16 @@ test('koło: pozycje dla każdego trybu — ikona, barwa, opis; tryby z klawisze
   assert.equal(items.find((it) => it.id === 'combat').key, '');
 });
 
-test('opisy postaw idą za nastawami (TARCZE, PRZELOT)', () => {
+test('opisy postaw idą za nastawami (TARCZE), HIPERCRUISE z tabeli napędów', () => {
   const sh = shipModeHint('shield');
   const t = SHIP_STANCE_TUNE.shield;
   const fmt = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
   assert.ok(sh.gain.includes(`×${fmt(t.shieldRegen)}`) && sh.gain.includes(`×${fmt(t.shieldTaken)}`), sh.gain);
   assert.ok(sh.cost.includes(`×${fmt(t.speed)}`) && sh.cost.includes(`×${fmt(t.turnRate)}`), sh.cost);
   assert.equal(sh.costKind, 'cost');
-  const cr = shipModeHint('cruise');
-  assert.ok(cr.cost.includes('Broń zimna'), cr.cost);
+  const hc = shipModeHint('hypercruise');
+  assert.ok(hc.cost.includes('Broń zimna'), hc.cost);
+  assert.ok(hc.gain.includes('20 tys.'), hc.gain);
   assert.equal(shipModeHint('torpedo').costKind, 'keys');
 });
 

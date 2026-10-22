@@ -1,0 +1,61 @@
+---
+paths:
+  - "src/game/traffic/**"
+  - "src/game/trafficBridge.js"
+  - "src/game/stationEconomy.js"
+  - "src/data/markets.js"
+  - "scripts/symulacja-ruchu.mjs"
+  - "scripts/bramka-bilansu.mjs"
+---
+
+# Ruch v2: jedyna ekonomia gry — rynki, kursy, napędy, pola górnicze
+
+> Reguła obszaru (spisana 2026-10-22, po falach 1 i 2 przebudowy ekonomii). Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Odnośnik „§ X” = nagłówek sekcji w tej albo innej regule (`grep -rn "## X" .claude/rules`). Nową wiedzę o obszarze dopisuj tutaj: stan i zasady w czasie teraźniejszym, historię i pomiary — do `docs/`. Plan i decyzje użytkownika: `docs/PLAN-ekonomia-rynki.md` (§ 1 decyzje, § 8 stan); założenia i pułapki ruchu: `docs/BRIEF-ruch-v2.md`, zadania Z1–Z15: `docs/PLAN-ruch-v2-w-grze.md`.
+
+## Stan: jedna ekonomia (E2, 2026-10-22)
+
+- Gospodarka stacji, przewozy, kupcy, stocznie, wojna, piractwo, złomiarze i ceny liczą się WYŁĄCZNIE w świecie ruchu v2 w Web Workerze (`traffic.worker.js` → `trafficCore.js`), skala gospodarki ×60, magazyny ×4 (`TRAFFIC_V2_CAPACITY_MULTIPLIER`). Gra (blok „RUCH v2” w `index.html`) trzyma tylko kopie z mostu `TrafficBridge` (`src/game/trafficBridge.js`): rynek (`getEconomy(id)` → `{ resources, capacity, duress, bid, ask }` w jednostkach świata) i kursy w bańce.
+- Start bez flagi. `?trafficV2=N` — inna skala gospodarki, `?trafficV2=0` — wyłącznik awaryjny (most `null`: stacje bez rynku, terminal pokazuje „—” i nie handluje), `?trafficSeed=N` — ziarno świata (domyślnie losowe).
+- Gra → świat: czas (`advance` z krokami fizyki w `loop` — pauza zatrzymuje gospodarkę), fokus bańki (`setFocus`, ~10 Hz), zmiany zapasu (`stockDelta` — handel gracza, rozbiórka wraku w doku, zakup broni w porcie; w `index.html` jedyna droga to `adjustStationStock`), pojemności z budynków (`InfrastructureUI.getCapacity` → `syncTrafficV2Capacities` co 1 s gry → `capacity`; worker przelicza `worldCapacityFromGame`: baza ×4 + premie budynków, × skala), łup opuszczonych stacji przy starcie (`rollDerelictLoot` → `spec.stock`), urobek gracza (`reportMining`), rynki misyjne (`registerTrafficV2Market`) i zniszczone stacje (`stationDestroyed`).
+- Terminal i UI czytają rynek tylko z mostu: `getTradeEconomy` (kopia rynku albo `null`), cena `getTradePrice` = `resourcePrice(stacja, kopia, surowiec, { reputation })` (ask = kupno gracza, bid = sprzedaż), broń w porcie `weaponPriceAt` na tej samej kopii. Stacja, której świat nie zna (przed `ready`, kryjówka misji przed odpowiedzią workera), nie handluje.
+- Nie ma (usunięte w E2, strażnik `tests/jednaEkonomia.test.mjs`): produkcji i magazynów w grze (`updateStationEconomies`, `window.Game.stationEconomy`, produkcja w `infrastructureUI.js`), wyceny z marżą doku (`getLocalBasePrice`, ±18%), vanów `cargoFleet` i tranzytu przez bramy (`transitController.js`, `warpRoutes`, ruch cywilny w `npcStep`). Widocznych statków ruchu w grze nie ma do bańki (E6) — decyzja użytkownika z 2026-10-22.
+- Zapis: stan rynku i wyrw się NIE zapisuje (E7). Po F5 świat ruchu startuje od nowa z zapasu startowego; magazyny stacji nigdy nie były w zapisie (`loadout` ich nie ma), więc stary zapis wczytuje się bez migracji.
+
+## Trzy warstwy
+
+- **Rekordy (zawsze, autorytatywne dla ekonomii):** kursy `courseRegistry.js` (etapy przelotu i postoju, zegar analityczny), zlecenia i księgowość ładunku `shipmentOrders.js` (jedna partia = jeden właściciel: nadawca → rekord przewoźnika → odbiorca albo wrak; `createShipmentOrder` / `tryDeliverShipmentOrder` / `wreckShipmentOrder` — każda jako jedna transakcja, walidacja przed pierwszą mutacją), dyspozytor `trafficDirector.js` (migawka rynku RAZ na tick — `rebuildMarket`, przewozy, wydobycie, tankowanie, piractwo na rekordach). Dyspozytor nie dotyka magazynów wprost — tylko przez funkcje zleceń i `applyStockDelta`.
+- **Węzły (przepustowość):** sieć `travelNetwork.js` (planety, księżyce, placówki, bramy hubów, pola, wycena tras), doki `dockLayout.js`, port `portControl.js` (kolejka slotowa, `SPEC-kolejkowanie-slotowe.md`), reda i hangar `portParking.js`, konwoje `convoy.js`, patrole `patrols.js`.
+- **Bańka (wokół gracza, NIEWPIĘTA — E6):** `materializedFlight.js`, `portPaths.js`, `ringRouter.js`; worker już wysyła kursy w promieniu fokusu (`bubble`: bieżący odcinek `X0,Y0 → X1,Y1` od `T0` przez `DUR`, klasa kadłuba, port i stanowisko — `COURSE_FIELD`, `coursePosition`, `courseBerth`). Nie buduj widoku kursów obok bańki — E6 ma jedną ścieżkę (proxy w workerze renderu, wspólny rejestr stanowisk, trafienia).
+
+## Rynek (E1)
+
+- `MarketDef` — jedna tabela `MARKET_DEFS` (`src/data/markets.js`): id, nazwa, rodzaj (`MARKET_KIND`), położenie (`MARKET_POSITION`), frakcja, przemysł, stocznia, brama, doki (`DOCK_LAYOUT`), flagi. Kolejność tabeli = kolejność `world.stations` = indeksy w buforze rynku i `PORT` kursów — NIE przestawiaj; nowy rynek na koniec.
+- `addMarket(world, def)` (`src/game/traffic/markets.js`) to jedyna droga rynku do świata: węzeł, magazyn z zapasem startowym (`seedStationStock`; opuszczona stacja — tylko `spec.stock`), doki, reda / hangar, stocznia, kryjówka, porty domowe. Builder świata (`buildTrafficWorld`) to pętla `addMarket`; w trakcie gry — wiadomości `market-add` / `market-building` / `market-owner` / `market-remove` (most: `addMarket`, `addMarketBuilding`, `setMarketOwner`, `removeMarket`), po których worker od razu wysyła `tick` z nową tabelą `stations` i `berths`. Rynek dodany w grze nie ma własnych przewoźników (obsługują go puste przeloty). Notatka API: `docs/PLAN-ekonomia-rynki.md` § 8 (E1).
+- Cena: `resourcePrice` w `stationEconomy.js` (niedobór, profil frakcji, długość głodu `duress`, reputacja gracza); model `PRICE_MODEL`, cena rezerwacji producenta i kupcy zaopatrujący stocznie — E4. Jeden model ceny dla gracza i NPC.
+
+## Napędy (E5)
+
+- Jedna tabela `src/data/driveModes.js` dla gracza, NPC gry i ruchu: warp `WARP_SPEED` 260 tys. j./s (nietykalny, paliwo fuzyjne), hipercruise `HYPERCRUISE_ENGINES` `hypercruise_mk1..3` = 20 / 30 / 40 tys. j./s (id stałe — kontrakt z recepturami E8), konwencjonalny 1200 j./s, klasa ładowni → silnik `TRAFFIC_CLASS_DRIVE`. Ruch liczy z niej czasy, paliwo i ryzyko przechwytu (`travelNetwork.js`; ekspozycja `rollPiracy` z ŚREDNIEJ prędkości etapu). Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`.
+
+## Pola górnicze i wyrwy (E3)
+
+- Pola wydobywcze z danych pasa (`miningFields.js`, `MINING_FIELDS_CONFIG`): punkt wyprawy z gęstości pola, urobek ze składu w tym miejscu, Hildy, Trojańczycy, Kuiper (uran tylko tam). Rejestr uszczuplenia w świecie ruchu jest autorytatywny; urobek gracza idzie do tego samego rejestru (`reportMining` → `belt-mined`). Po progu powstaje wyrwa → `belt-holes` → `beltWorld.setHoles` (pole gry i replika obrazu — reguła `pas-asteroid`). Pas się nie regeneruje. Opis i liczby: `docs/E3-pas-w-ekonomii.md`.
+
+## Bramka bilansu (E4)
+
+- `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. Progi (`PLAN-ekonomia-rynki.md` § 5): przechwyty ≤ 15% kursów z ładunkiem, głód chcianego surowca ≤ 30 min, stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms. Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
+
+## Pułapki
+
+1. **Id z `length + 1`** w kolekcji, z której się usuwa = kolizja z żywym obiektem i ciche przepięcie indeksu (wyciek floty 2026-09-26: tysiące jednostek BUSY bez kursu). Nowe id — licznik monotoniczny na właścicielu (`company.shipSeq`, `registry.nextId`, `fleet.nextOrderId` z indeksem użytych id). `shipyards.js` ma jeszcze `yards.length + 1` — bez skutków, dopóki stocznie nie znikają.
+2. **Determinizm:** losowość tylko z `world.rng` (`seededRandom(seed)` w `buildTrafficWorld`), przekazywanego dalej jako `rng`. Domyślne `Math.random` w sygnaturach to zapas dla testów — wywołanie z rdzenia bez `rng` łamie powtarzalność symulacji. Część modułów trzyma liczniki na poziomie modułu (id agentów) — drugi świat w tym samym procesie nie jest tym samym światem (dlatego bramka puszcza ziarna w osobnych procesach).
+3. **Worker kontra tryb awaryjny:** ten sam rdzeń (`trafficCore.js`) chodzi w workerze albo na głównym wątku (brak `Worker`, błąd ładowania przed `ready`). Tryb awaryjny buduje świat w klatce i liczy krok co 5 s gry na głównym wątku (~12–18 ms przy ×60 — wiersz PerfHUD „Ruch v2 (most)”). Wiadomości przed `ready` most zapamiętuje i odtwarza (`_replay`); po `ready` padnięty worker = `failed`, bez powtórki. Logika świata nie może zakładać, że jest w workerze (żadnego `self`, `postMessage` poza `trafficCore`).
+4. **Jednostki:** kopia rynku, `stockDelta` i terminal są w jednostkach ŚWIATA (zapas ×60); `capacity` i `stock` z gry — w skali 1 (worker mnoży sam). Czas kursów w buforze bańki (`T0`, `DUR`) to czas mostu (`TrafficBridge.time`, suma `advance`), nie zegar świata.
+5. **Kopia rynku po `stockDelta`** zmienia się od razu, a worker nakłada zmianę po swojej stronie; rynek z workera niesie `stockSeq`, a most nakłada ponownie tylko niepotwierdzone zmiany — nie pisz do kopii wprost (`econ.resources[k] = …`), bo następny `tick` to nadpisze.
+6. **Indeksy stacji** w buforach (`market`, `PORT` kursów, `stationFactions`) liczą się od bieżącej tabeli `stations`; po zmianie rynków przychodzi nowa tabela PRZED buforem `market`. Nie cache'uj indeksu stacji między tickami.
+
+## Jak sprawdzać
+
+- `npm test` — suity ruchu: `shipmentOrders`, `courseRegistry`, `travelNetwork`, `dockLayout`, `transportCompanies`, `trafficDirector`, `materializedFlight`, `tradeMarket`, `convoy`, `agentFleets`, `shipyards`, `warDispatcher`, `scrapperFleets`, `piracy`, `portControl`, `portParking`, `trafficWorld`, `trafficCore`. `node --test tests/jednaEkonomia.test.mjs` — strażnik jednej ekonomii.
+- Refaktor bez zmiany zachowania: `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` przed i po — wynik identyczny liczba w liczbę (poza czasem ticku). Zmiana zachowania: co najmniej 3 ziarna (7, 11, 23) i bramka bilansu.
+- W grze: konsola `[ruch v2] worker: N stacji, gospodarka ×60…` po starcie, `TrafficV2Stats()` (tryb, `ready`, kursy w bańce, statystyki kroku), `TrafficV2.requestSnapshot()` (dyspozytor, stocznie, wojna, piractwo), `TrafficV2.getEconomy('earth')`; PerfHUD (`P`) — „Ruch v2 (most)” (ms głównego wątku). Harness `scripts/webgpu/*-gra.mjs` — handel w terminalu zmienia zapas kopii od razu.

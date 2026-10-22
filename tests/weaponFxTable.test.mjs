@@ -12,10 +12,10 @@ import {
 // spoza tabeli) — test pilnuje, żeby nikt jej nie przeoczył.
 
 const FAMILIES = new Set(['tempest', 'vulcan', 'autocannon', 'helios', 'armata', 'goliath', 'yamato', 'plasmaGatling',
-  'hexlance', 'mjolnir', 'valkyrie', 'beamC', 'beamP', 'laserPD', 'ciws', 'flak']);
+  'hexlance', 'mjolnir', 'valkyrie', 'beamC', 'beamP', 'laserPD', 'ciws', 'flak', 'deathRay']);
 
-test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L + działko kanonierki mają wpis w tabeli efektów, rodziny z listy receptur', () => {
-  assert.equal(WEAPON_FX_IDS.length, 33);
+test('27 broni z dema + 3 warianty rozmiarowe broni specjalnej + Lanca M / L + działko kanonierki + promień śmierci mają wpis w tabeli efektów, rodziny z listy receptur', () => {
+  assert.equal(WEAPON_FX_IDS.length, 34);
   for (const id of WEAPON_FX_IDS) {
     assert.ok(MASTER_WEAPONS[id], `${id}: brak w MASTER_WEAPONS`);
     assert.ok(FAMILIES.has(WEAPON_FX[id].fx), `${id}: nieznana rodzina ${WEAPON_FX[id].fx}`);
@@ -36,7 +36,7 @@ test('każda broń MASTER_WEAPONS poza rakietami, torpedami, bombami i hangarami
 });
 
 test('ładowanie w tabeli = chargeTime z danych (Mjolnir, Valkyrie, Hexlance)', () => {
-  for (const id of ['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_m', 'special_valkyrie_s', 'hexlance_siege']) {
+  for (const id of ['siege_railgun', 'special_valkyrie_railgun', 'special_valkyrie_m', 'special_valkyrie_s', 'hexlance_siege', 'death_ray']) {
     assert.equal(WEAPON_FX[id].charge, MASTER_WEAPONS[id].chargeTime, id);
   }
   assert.ok(WEAPON_FX.laser_pd_mk1.pd && WEAPON_FX.flak_capital.pd && WEAPON_FX.ciws_mk2.pd);

@@ -39,9 +39,10 @@ test('player hulls fly the shared flight table: speed limit, thrust and brake fr
   const maneuver = hulls.map(hullClass => createDriveTransmission({ mode: 'maneuver', hullClass }));
 
   assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), specs.map(s => s.maxSpeed));
-  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [1400, 1000, 650, 480, 500]);
+  // Nieokrągłe limity wokół klasy (decyzja użytkownika 2026-10-22 — driveModes.js / shipFlightSpecs.js).
+  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [1412, 994, 643, 487, 507]);
   assert.deepEqual(combat.map(drive => drive.brakeAccel), specs.map(s => s.decel));
-  assert.deepEqual(maneuver.map(drive => drive.modeMaxSpeed), [700, 500, 325, 240, 250]);
+  assert.deepEqual(maneuver.map(drive => drive.modeMaxSpeed), [706, 497, 321.5, 243.5, 253.5]);
   assert.ok(combat[0].mainForceScale > combat[1].mainForceScale);
   assert.ok(combat[1].mainForceScale > combat[2].mainForceScale);
   assert.ok(combat[2].mainForceScale > combat[3].mainForceScale);
@@ -53,7 +54,7 @@ test('player hulls fly the shared flight table: speed limit, thrust and brake fr
 
   setDriveHullClass(combat[0], 'atlas');
   assert.equal(combat[0].hullClass, 'supercapital');
-  assert.equal(combat[0].modeMaxSpeed, 500);
+  assert.equal(combat[0].modeMaxSpeed, 507);
 });
 
 test('szarża: limit napędu rośnie na czas zrywu, potem napęd hamuje do limitu trybu', () => {
@@ -83,7 +84,7 @@ test('Atlas exposes only combat and maneuver modes', () => {
   const drive = createDriveTransmission({ hullClass: 'atlas' });
 
   assert.equal(drive.mode, 'combat');
-  assert.equal(drive.modeMaxSpeed, 500);
+  assert.equal(drive.modeMaxSpeed, 507);
   assert.deepEqual(drive.availableModes, ['combat', 'maneuver']);
   assert.equal(setDriveMode(drive, 'travel'), false);
   assert.equal(drive.mode, 'combat');
@@ -203,4 +204,22 @@ test('speed governor approaches the active limit without a hard mode-change snap
   // Supercapital zachowuje pęd i potrzebuje kilku sekund na zejście do limitu.
   for (let i = 0; i < 300; i++) applyDriveSpeedGovernor(drive, velocity, 1 / 60);
   assert.ok(Math.hypot(velocity.x, velocity.y) <= drive.speedLimit + 1e-6);
+});
+
+test('dopalacz: ponad jego limitem prędkość nie rośnie, nawet gdy ciąg przewyższa hamowanie regulatora (E5)', () => {
+  const drive = createDriveTransmission({ hullClass: 'atlas', mode: 'combat' });
+  drive.boostLimit = 1800;
+  drive.governorDeceleration = 400;
+  const velocity = { x: 1900, y: 0 };
+  let prev = applyDriveSpeedGovernor(drive, velocity, 1 / 60);
+  for (let i = 0; i < 600; i++) {
+    velocity.x += 1500 / 60;   // ciąg dopalacza 1500 j/s² > hamowanie regulatora 400 j/s²
+    const v = applyDriveSpeedGovernor(drive, velocity, 1 / 60);
+    assert.ok(v <= prev + 1e-9, `krok ${i}: ${v} > ${prev}`);
+    prev = v;
+  }
+  assert.ok(Math.abs(prev - 1800) < 1e-6, `prędkość ${prev} schodzi do limitu dopalacza`);
+  drive.boostLimit = 0;
+  velocity.x = 1800;
+  assert.ok(applyDriveSpeedGovernor(drive, velocity, 1 / 60) < 1800, 'po dopalaczu regulator wraca do limitu trybu');
 });

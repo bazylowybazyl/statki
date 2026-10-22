@@ -2,10 +2,13 @@
 // siatka AI i separacja wycięta z index.html (applySeparationForces z pomocnikami). Okręty
 // uzbrojone jak w grze (gniazda z edytora, selectSpecSlots), więc kurs bojowy jest prawdziwy.
 // Skrzydło gracza (5 pancerników, 5 niszczycieli, 50 fregat, losowo na 16 × 20 km) przechodzi
-// fazy: zbiórka → przelot 500 j/s → zakręt 90° → ESKORTA przeciw 17 piratom → ATAK.
+// fazy: zbiórka → przelot 500 j/s → zakręt 90° → ESKORTA przeciw 17 piratom → ATAK → NATARCIE (postawa 'charge'
+// obu stron — scena „Wojna”: świeża flota piratów 25 km naprzeciw, przeloty burtą i nawroty; fazy 1–5 bez zmian).
 // Na fazę: zetknięcia sojuszników (środki bliżej niż 0,8 sumy promieni; gracz — elipsa
 // kadłuba Atlasa), lot bokiem (kadłub 45–135° od kierunku lotu przy > 0,3 maxSpeed) i postój
-// burtą do celu (wolniej niż 0,3 maxSpeed, kadłub 60–120° od namiaru celu).
+// burtą do celu (wolniej niż 0,3 maxSpeed, kadłub 60–120° od namiaru celu). NATARCIE: także wolno_pct — okręty obu stron
+// w przelocie (`npc.__charge`) wolniej niż 0,6 maxSpeed, stoi_pct — okręty z celem wolniej niż 0,3 maxSpeed (obie
+// strony), przeloty (podejście → wybieg) na okręt, zWrogiem — zetknięcia z wrogiem (taran w przelocie).
 //   node scripts/szyk-floty.mjs [--seed 7] [--seeds 1-6] [--root <drzewo gry>] [--json plik] [--why]
 //        [--formacja groups|line|wedge|column|crescent|ring]
 // --seeds a-b: każde ziarno w osobnym procesie (moduły trzymają stan), na końcu średnie;
@@ -28,20 +31,23 @@ const JSON_OUT = arg('json', null);
 const WHY = process.argv.includes('--why');
 // Formacja skrzydła (SupportWing.formation, src/ai/fleetFormation.js); domyślnie grupy bojowe.
 const FORMACJA = arg('formacja', null);
-const PHASES = ['zbiórka (gracz stoi)', 'przelot 500 j/s', 'zakręt 90°', 'ESKORTA + piraci', 'ATAK'];
+// Strojenie natarcia (capitalAI.js CHARGE_TUNE) na czas przebiegu: --natarcie turnStep=0.6,passAbeam=0.2
+const NATARCIE = arg('natarcie', null);
+const PHASES = ['zbiórka (gracz stoi)', 'przelot 500 j/s', 'zakręt 90°', 'ESKORTA + piraci', 'ATAK', 'NATARCIE'];
 
 // --- wiele ziaren: osobne procesy, średnie ---
 const SEEDS = arg('seeds', null);
 if (SEEDS) {
   const [a, b] = SEEDS.split('-').map(Number);
   const dir = mkdtempSync(join(tmpdir(), 'szyk-floty-'));
-  const perPhase = new Map(PHASES.map(p => [p, { c: [], b: [], br: [] }]));
+  const perPhase = new Map(PHASES.map(p => [p, { c: [], b: [], br: [], e: [], slow: [], stand: [], passes: [] }]));
   try {
     for (let s = a; s <= (b || a); s++) {
       const out = join(dir, `${s}.json`);
       const args = [fileURLToPath(import.meta.url), '--seed', String(s), '--json', out];
       if (ROOT_ARG) args.push('--root', ROOT_ARG);
       if (FORMACJA) args.push('--formacja', FORMACJA);
+      if (NATARCIE) args.push('--natarcie', NATARCIE);
       const r = spawnSync(process.execPath, args, { stdio: ['ignore', 'ignore', 'inherit'] });
       if (r.status !== 0) throw new Error(`ziarno ${s}: kod ${r.status}`);
       for (const row of JSON.parse(readFileSync(out, 'utf8'))) {
@@ -49,6 +55,12 @@ if (SEEDS) {
         acc.c.push(row.zetkniecia);
         acc.b.push(row.bokiem_pct);
         acc.br.push(row.burta_pct);
+        acc.e.push(row.zWrogiem);
+        if (row.wolno_pct !== undefined) {
+          acc.slow.push(row.wolno_pct);
+          acc.stand.push(row.stoi_pct);
+          acc.passes.push(row.przeloty_na_okret);
+        }
       }
       process.stderr.write(`ziarno ${s} gotowe\n`);
     }
@@ -59,13 +71,20 @@ if (SEEDS) {
   console.log(`== ${ROOT_ARG || 'repo'} ziarna ${SEEDS}${FORMACJA ? ' formacja ' + FORMACJA : ''}`);
   console.table(PHASES.map(p => {
     const acc = perPhase.get(p);
-    return {
+    const row = {
       faza: p,
       zetkniecia: acc.c.join('/'),
       bokiem_pct: acc.b.join('/'),
       bokiem_sr: mean(acc.b),
-      burta_sr: mean(acc.br)
+      burta_sr: mean(acc.br),
+      zWrogiem: acc.e.join('/')
     };
+    if (acc.slow.length) {
+      row.wolno_sr = mean(acc.slow);
+      row.stoi_sr = mean(acc.stand);
+      row.przeloty_sr = mean(acc.passes);
+    }
+    return row;
   }));
   process.exit(0);
 }
@@ -112,7 +131,13 @@ const Grid = await import(ROOT + 'src/ai/aiSpatialGrid.js');
 window.queryAIGrid = Grid.queryAIGrid;
 window.getAIFriendlyCandidates = Grid.getAIFriendlyCandidates;
 window.getAIPirateCandidates = Grid.getAIPirateCandidates;
-const { aiBattleship, aiFrigate, aiDestroyer } = await import(ROOT + 'src/ai/capitalAI.js');
+const { aiBattleship, aiFrigate, aiDestroyer, CHARGE_TUNE } = await import(ROOT + 'src/ai/capitalAI.js');
+if (NATARCIE && CHARGE_TUNE) {
+  for (const kv of NATARCIE.split(',')) {
+    const [k, v] = kv.split('=');
+    if (k in CHARGE_TUNE && Number.isFinite(Number(v))) CHARGE_TUNE[k] = Number(v);
+  }
+}
 const { stepShipFlight, resolveShipFlightSpec } = await import(ROOT + 'src/game/flight/shipFlightModel.js');
 const Coord = await import(ROOT + 'src/ai/fleetCoordinator.js');
 const Aw = await import(ROOT + 'src/ai/fleetAwareness.js');
@@ -210,8 +235,38 @@ const contactState = new Map();
 const phases = [];
 let phase = null;
 function newPhase(name) {
-  phase = { name, t: 0, contacts: 0, pairs: {}, contactTime: 0, enemyContacts: 0, moving: 0, sideways: 0, holding: 0, broadside: 0, why: {} };
+  phase = { name, t: 0, contacts: 0, pairs: {}, contactTime: 0, enemyContacts: 0, moving: 0, sideways: 0, holding: 0, broadside: 0, why: {},
+    charge: null };
   phases.push(phase);
+}
+// NATARCIE: okręty obu stron w przelocie (npc.__charge) wolniej niż 0,6 maxSpeed, okręty z celem stojące (< 0,3),
+// przeloty (podejście → wybieg).
+function measureCharge() {
+  const m = phase.charge;
+  for (const a of npcs) {
+    if (a.dead) continue;
+    const spec = resolveShipFlightSpec(a);
+    const sp = Math.hypot(a.vx, a.vy);
+    const c = a.__charge;
+    const ph = c && c.phase ? c.phase : '';
+    if (ph) {
+      m.inRun++;
+      if (sp < 0.6 * spec.maxSpeed) {
+        m.slow++;
+        if (WHY) noteWhy(`wolno ${a.friendly ? 'TN' : 'pir'} ${classOf(a)} faza ${ph} v ${bucket(sp / spec.maxSpeed * 100, [20, 40])}%`);
+      }
+    }
+    if (a.target && !a.target.dead) {
+      m.withTarget++;
+      if (sp < 0.3 * spec.maxSpeed) {
+        m.standing++;
+        if (WHY) noteWhy(`stoi ${a.friendly ? 'TN' : 'pir'} ${classOf(a)} ${ph ? 'przelot ' + ph : slotOf(a) + ' ' + (a.__battleSlot?.phase || '-') + ' ' + (a.__battleSlot?.stance || '-')}`);
+      }
+    }
+    const prev = m.lastPhase.get(a) || '';
+    if (prev === 'in' && ph === 'out') m.passes++;
+    m.lastPhase.set(a, ph);
+  }
 }
 let pairSeq = 0;
 function pairKey(a, b) {
@@ -334,7 +389,10 @@ function run(seconds, pv = null) {
       for (const n of npcs) n.ai(1 / 20);
     }
     for (const n of npcs) stepShipFlight(n, DT);
-    if (tick % 3 === 0) measure();
+    if (tick % 3 === 0) {
+      measure();
+      if (phase.charge) measureCharge();
+    }
     phase.t += DT;
     tick++;
   }
@@ -356,16 +414,46 @@ run(30, { x: 0, y: 0 });
 window.SupportWing.order = 'engage';
 newPhase(PHASES[4]);
 run(30, { x: 0, y: 0 });
+// NATARCIE: świeża flota piratów 25 km naprzeciw skrzydła, obie strony w postawie 'charge' (scena „Wojna”).
+{
+  let cx = 0;
+  let cy = 0;
+  let n = 0;
+  for (const a of wing) if (!a.dead) { cx += a.x; cy += a.y; n++; }
+  cx /= Math.max(1, n);
+  cy /= Math.max(1, n);
+  // klin piratów jak w scenie (src/game/warScene.js: layoutWarWedge), dziobem na skrzydło
+  const { layoutWarWedge } = await import(ROOT + 'src/game/warScene.js');
+  const LEN = { battleship: 1500, destroyer: 900, frigate_pd: 600 };
+  const kinds = [...Array(4).fill('battleship'), ...Array(6).fill('destroyer'), ...Array(16).fill('frigate_pd')];
+  const slots = layoutWarWedge(kinds.map((k) => ({ length: LEN[k] })), { halfAngle: 0.95, pad: 550 });
+  const bx = cx + 25000;
+  for (let i = 0; i < kinds.length; i++) makeShip('pirate', kinds[i], bx - slots[i].fwd, cy + slots[i].lat, Math.PI);
+  Coord.setFleetStanceOverride('friendly', 'charge');
+  Coord.setFleetStanceOverride('pirate', 'charge');
+}
+newPhase(PHASES[5]);
+phase.charge = { inRun: 0, slow: 0, withTarget: 0, standing: 0, passes: 0, lastPhase: new Map() };
+run(60, { x: 0, y: 0 });
 
-const rows = phases.map(p => ({
-  faza: p.name,
-  zetkniecia: p.contacts,
-  pary: JSON.stringify(p.pairs),
-  czasZetkniec_s: +p.contactTime.toFixed(1),
-  bokiem_pct: p.moving ? +(100 * p.sideways / p.moving).toFixed(1) : 0,
-  burta_pct: p.holding ? +(100 * p.broadside / p.holding).toFixed(1) : 0,
-  zWrogiem: p.enemyContacts
-}));
+const rows = phases.map(p => {
+  const row = {
+    faza: p.name,
+    zetkniecia: p.contacts,
+    pary: JSON.stringify(p.pairs),
+    czasZetkniec_s: +p.contactTime.toFixed(1),
+    bokiem_pct: p.moving ? +(100 * p.sideways / p.moving).toFixed(1) : 0,
+    burta_pct: p.holding ? +(100 * p.broadside / p.holding).toFixed(1) : 0,
+    zWrogiem: p.enemyContacts
+  };
+  const m = p.charge;
+  if (m) {
+    row.wolno_pct = m.inRun ? +(100 * m.slow / m.inRun).toFixed(1) : 0;
+    row.stoi_pct = m.withTarget ? +(100 * m.standing / m.withTarget).toFixed(1) : 0;
+    row.przeloty_na_okret = +(m.passes / Math.max(1, m.lastPhase.size)).toFixed(2);
+  }
+  return row;
+});
 console.log(`== ${ROOT_ARG || 'repo'} ziarno ${SEED}`);
 console.table(rows);
 if (WHY) {

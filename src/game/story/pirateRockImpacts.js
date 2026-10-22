@@ -9,7 +9,12 @@
 // ev = { id (stały na ciało), kind: 'tower' | 'disc' | 'drum' | 'core' | 'debris' | 'cable' | 'other', x, y (GRA — punkt
 // styku), z (wysokość świata, ujemna), nx, ny, nz (normalna skały na zewnątrz, układ GRY: y w dół, z w górę), speed (j/s
 // wzdłuż normalnej), slide (j/s stycznie), mass (masa silnika), size (promień ciała / łaty styku, j.), energy (½·m·v²),
-// vx, vy, vz (opcjonalnie: prędkość ciała w układzie gry — kierunek śladu pyłu przy szorowaniu) }.
+// vx, vy, vz (opcjonalnie: prędkość ciała w układzie gry — kierunek śladu pyłu przy szorowaniu), OBRYS ciała w płaszczyźnie
+// stycznej przez punkt styku (opcjonalnie; rzut węzłów wzdłuż normalnej — to, co bryła zasłania z góry): fx, fy, fz
+// (środek rzutu, gra), ux, uy, uz (kierunek kąta 0), fr (ROCK_FOOT_BINS promieni profilu biegunowego [j.], wycinek k —
+// kąt (k + ½) · 2π / K ku n × u) — pył wychodzi spod budowli NA BOKI od tego obrysu (prośba użytkownika 2026-10-19:
+// „pył od uderzeń przykrywa budowle, a powinien lecieć na boki”; obrys z obwiedni-prostokąta dawał prostokątną ramkę
+// pyłu wokół okrągłej głowy wieży) }.
 //   • deepBlast(ev) — wybuch / kłąb w GŁĘBI bez skały (wieża przebija dysk mieszkalny, z ≈ −800): ev = { id, kind, x, y,
 //     z, size (promień kuli wybuchu), nx, ny, nz (kierunek ruchu ciała, opcjonalnie), speed, vx, vy, vz (nośnik) }.
 //
@@ -23,7 +28,7 @@
 // powierzchni (e, n — odległości po powierzchni od stopy windy jak surfacePoint w pirateRockLayout.js); scrape i settle
 // tak samo (testScrape / testSettle); demo('upadek') — scenariusz upadku bazy z kolejnych zdarzeń (bez fizyki).
 
-import { ROCK_IMPACT_CODE, ROCK_IMPACT_REC, ROCK_EVENT, rockBodyKindCode } from '../../render/rockImpactRecord.js';
+import { ROCK_IMPACT_CODE, ROCK_IMPACT_REC, ROCK_EVENT, ROCK_FOOT_BINS, rockBodyKindCode } from '../../render/rockImpactRecord.js';
 import { createPirateRockLayout } from '../../3d/portBuildings/pirateRockLayout.js';
 
 /** Strojenie kontraktu (konsola: window.PirateRockImpacts.tune). */
@@ -52,7 +57,8 @@ let _burstT = -Infinity;
 let _burstN = 0;
 let _testSerial = 0;
 const _ev = {
-  id: 0, kind: 'other', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 1, speed: 0, slide: 0, mass: 0, size: 0, energy: 0, vx: 0, vy: 0, vz: 0
+  id: 0, kind: 'other', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 1, speed: 0, slide: 0, mass: 0, size: 0, energy: 0, vx: 0, vy: 0, vz: 0,
+  fx: 0, fy: 0, fz: 0, ux: 1, uy: 0, uz: 0, fn: 0, fr: new Float64Array(ROCK_FOOT_BINS)
 };
 const _p = {};
 const _sched = [];           // demo / testy: zaplanowane zdarzenia { t, type, ev }
@@ -146,7 +152,35 @@ function normalize(ev) {
   const v2 = e.speed * e.speed + e.slide * e.slide;
   e.energy = Math.max(0, fin(ev.energy, 0.5 * e.mass * v2));
   e.vx = fin(ev.vx); e.vy = fin(ev.vy); e.vz = fin(ev.vz);
+  footprintOf(ev, e);
   return true;
+}
+
+/**
+ * Obrys ze zdarzenia → e.fx … e.fr (kierunek kąta 0 jednostkowy, ⊥ normalnej; promienie ≥ 0); bez obrysu (brak / zły
+ * środek, oś albo same zera) — fn = 0.
+ */
+function footprintOf(ev, e) {
+  const K = ROCK_FOOT_BINS;
+  e.fn = 0; e.fx = e.x; e.fy = e.y; e.fz = e.z; e.ux = 1; e.uy = 0; e.uz = 0;
+  e.fr.fill(0);
+  const fr = ev.fr;
+  if (!fr || !(fr.length >= K) || !Number.isFinite(ev.fx) || !Number.isFinite(ev.fy) || !Number.isFinite(ev.fz)) return;
+  let ux = fin(ev.ux), uy = fin(ev.uy), uz = fin(ev.uz);
+  const un = ux * e.nx + uy * e.ny + uz * e.nz;
+  ux -= un * e.nx; uy -= un * e.ny; uz -= un * e.nz;
+  const ul = Math.sqrt(ux * ux + uy * uy + uz * uz);
+  if (!(ul > 1e-6)) return;
+  let any = false;
+  for (let k = 0; k < K; k++) {
+    const r = Math.max(0, fin(fr[k]));
+    e.fr[k] = r;
+    if (r > 0) any = true;
+  }
+  if (!any) return;
+  e.fx = ev.fx; e.fy = ev.fy; e.fz = ev.fz;
+  e.ux = ux / ul; e.uy = uy / ul; e.uz = uz / ul;
+  e.fn = K;
 }
 
 function burstOk(t) {
@@ -170,6 +204,10 @@ function write(type, e) {
   d[o + R.SPEED] = e.speed; d[o + R.SLIDE] = e.slide;
   d[o + R.MASS] = e.mass; d[o + R.SIZE] = e.size; d[o + R.ENERGY] = e.energy;
   d[o + R.VX] = e.vx; d[o + R.VY] = e.vy; d[o + R.VZ] = e.vz;
+  d[o + R.FX] = e.fx; d[o + R.FY] = e.fy; d[o + R.FZ] = e.fz;
+  d[o + R.UX] = e.ux; d[o + R.UY] = e.uy; d[o + R.UZ] = e.uz;
+  d[o + R.FN] = e.fn;
+  for (let k = 0; k < ROCK_FOOT_BINS; k++) d[o + R.FR + k] = e.fr[k];
   _writer._commit();
   stats.written++;
   return true;
@@ -243,6 +281,7 @@ export function deepBlast(ev) {
   e.mass = Math.max(0, fin(ev.mass));
   e.size = Math.max(1, fin(ev.size, 700));
   e.energy = Math.max(0, fin(ev.energy, 0.5 * e.mass * e.speed * e.speed));
+  e.fn = 0; e.fr.fill(0); e.fx = e.x; e.fy = e.y; e.fz = e.z; e.ux = 1; e.uy = 0; e.uz = 0;
   const t = now();
   const b = bodyOf(e.id, t);
   if (t - b.tB < ROCK_IMPACT_TUNE.blastGap) { stats.gapped++; return false; }
@@ -339,10 +378,13 @@ export function stepPirateRockImpacts() {
 /**
  * Scenariusz upadku (dev, zrzuty — bez fizyki orkiestratora): wieża w punkt (e0, n0), 8 sektorów dysku dookoła,
  * kawałki bębna, odłamy, szorowanie wieży i osiadanie. o = { e, n, scale }. Domyślny punkt: ślad promienia skały przez
- * habitat (bryła spadająca ku środkowi skały z płaszczyzny gry — φ = atan(5500 / 24000) ≈ 12,9° od stopy windy, e ≈ −3600).
+ * habitat (bryła spadająca z poziomu dysku ku środkowi skały — φ = atan(odległość pozioma / głębokość środka) od stopy
+ * windy, e = −R · φ; skala świata 2: φ ≈ 11°, e ≈ −6,3 km).
  */
 export function demoRockFall(o = {}) {
-  const e0 = Number(o.e ?? -3600), n0 = Number(o.n ?? 0);
+  const L = layout();
+  const phi = Math.atan2(Math.hypot(L.center[0], L.center[2]), -1000 - L.center[1]);
+  const e0 = Number(o.e ?? -L.R * phi), n0 = Number(o.n ?? 0);
   const k = Number(o.scale) || 1;
   let r = 12345;
   const rnd = () => ((r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296);

@@ -34,16 +34,28 @@ export class BulletSpatialGrid {
   }
 
   insert(entity, radius = entity?._blkMaxR ?? entity?.radius ?? entity?.r ?? 0) {
+    this.insertSwept(entity, radius, 0, 0);
+  }
+
+  /**
+   * Wstawienie z drogą kroku (dx, dy) = v·dt: komórki obejmują koło w pozie końca kroku i w pozie sprzed kroku.
+   * Pętla pocisków sprawdza cel w ruchu względnym (odcinek przesunięty o v_celu·dt), a pyta siatkę odcinkiem
+   * w świecie — szybki cel (hipercruise 20–40 tys. j/s: 330–670 j. na krok) wypadał z zapytania, choć odcinek
+   * względny trafiał (scripts/hipercruise-kolizje-sym.mjs --tryb pociski).
+   */
+  insertSwept(entity, radius = entity?._blkMaxR ?? entity?.radius ?? entity?.r ?? 0, dx = 0, dy = 0) {
     if (!entity) return;
     const x = Number(entity.x);
     const y = Number(entity.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
     const extent = Number.isFinite(radius) ? Math.max(0, radius) : 0;
-    const minCx = Math.floor((x - extent) * this.cellInv);
-    const maxCx = Math.floor((x + extent) * this.cellInv);
-    const minCy = Math.floor((y - extent) * this.cellInv);
-    const maxCy = Math.floor((y + extent) * this.cellInv);
+    const sx = Number.isFinite(dx) ? dx : 0;
+    const sy = Number.isFinite(dy) ? dy : 0;
+    const minCx = Math.floor((Math.min(x, x - sx) - extent) * this.cellInv);
+    const maxCx = Math.floor((Math.max(x, x - sx) + extent) * this.cellInv);
+    const minCy = Math.floor((Math.min(y, y - sy) - extent) * this.cellInv);
+    const maxCy = Math.floor((Math.max(y, y - sy) + extent) * this.cellInv);
 
     for (let cx = minCx; cx <= maxCx; cx++) {
       for (let cy = minCy; cy <= maxCy; cy++) {

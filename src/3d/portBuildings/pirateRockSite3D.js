@@ -15,7 +15,7 @@ import { PortBuilding3D } from './portBuildings3D.js';
 import { resolvePortBuildingStyle } from './portBuildingStyle.js';
 import { portHubMatrixElements, portModuleFrame } from './portModuleTraffic.js';
 import { PIRATE_ROCK_COLLAPSE, createPirateRockLayout, pirateRockCollapsePose, pirateRockPowerAt, planPirateRockCollapse, pirateRockSurfaceH } from './pirateRockLayout.js';
-import { ROCK_CH, buildPirateRockScene } from './pirateRockScene.js';
+import { ROCK_CH, buildPirateRockScene, pirateTetherThickness } from './pirateRockScene.js';
 import { climberParam, createTetherSim, releaseTetherBottom, resetTetherSim, snapTether, stepTetherSim } from './pirateRockTether.js';
 import { PirateRockFx3D } from '../pirateRockFx3D.js';
 import { pbHash1 } from './portBuildingScene.js';
@@ -29,6 +29,7 @@ const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 const _m2 = new THREE.Matrix4();
+const _mS = new THREE.Matrix4();
 const _mFoot = new THREE.Matrix4();
 
 /** Macierz ruchu sztywnego: punkt p0 z kierunkiem d0 przechodzi w (px, py, pz) z kierunkiem (dx, dy, dz) (układ bazy). */
@@ -45,6 +46,15 @@ function rigidFromTo(out, p0, d0, px, py, pz, dx, dy, dz) {
 function hideMatrix(M) {
   M.identity();
   M.elements[15] = 0;
+}
+
+/** M ← M · T(p) · S(s) · T(−p): bryła nagrana przy p rośnie s razy wokół p, potem ruch M. */
+function scaleAbout(M, p, s) {
+  if (Math.abs(s - 1) < 1e-9) return M;
+  _m2.makeTranslation(p[0], p[1], p[2]);
+  _m2.multiply(_m.makeScale(s, s, s));
+  _m2.multiply(_mS.makeTranslation(-p[0], -p[1], -p[2]));
+  return M.multiply(_m2);
 }
 
 export class PirateRockSite3D extends PortBuilding3D {
@@ -99,9 +109,10 @@ export class PirateRockSite3D extends PortBuilding3D {
       y0 = Math.min(y0, y - pad); y1 = Math.max(y1, y + pad);
       z0 = Math.min(z0, z - pad); z1 = Math.max(z1, z + pad);
     };
+    const k = L.k || 1;
     take(L.anchorTop[0], L.anchorTop[1], L.anchorTop[2], 600);
-    take(0, pirateRockSurfaceH(L, 0, 0), 0, 1200);
-    for (const b of L.buildings) take(b.frame.o[0], b.frame.o[1], b.frame.o[2], b.r + 1000);
+    take(0, pirateRockSurfaceH(L, 0, 0), 0, 1200 * k);
+    for (const b of L.buildings) take(b.frame.o[0], b.frame.o[1], b.frame.o[2], b.r + 1000 * k);
     const sphere = new THREE.Sphere(new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + 800);
     for (const set of Object.values(this.meshes)) for (const m of set) m.geometry.boundingSphere = sphere.clone();
     this.sphere = sphere;
@@ -163,11 +174,15 @@ export class PirateRockSite3D extends PortBuilding3D {
     const C = this.rock.center;
     const dx = x - C[0], dh = h - C[1], dz = z - C[2];
     const l = Math.hypot(dx, dh, dz) || 1;
+    // głowica i kabiny — rozmiar prawdziwy (należą do habitatu / jeżdżą po linie), kurz odcinka — w grubości liny
+    // w tym miejscu; próg prędkości w skali długości liny (pirateRockTether.js — prędkości liny × tether.scale)
     if (kind === 'head') this._blastAt(x, h, z, 1250, dx / l, dh / l, dz / l);
     else if (kind === 'climber') {
       if (k >= 0) this.climberGone[k] = 1;
       this._blastAt(x, h, z, 620, dx / l, dh / l, dz / l);
-    } else if (speed > 260) this._blastAt(x, h, z, 340, dx / l, dh / l, dz / l, true);
+    } else if (speed > 260 * (this.rock.tether.scale || 1)) {
+      this._blastAt(x, h, z, 340 * pirateTetherThickness(this.rock, node / this.rock.tether.segments), dx / l, dh / l, dz / l, true);
+    }
   }
 
   _runEvents() {
@@ -193,9 +208,10 @@ export class PirateRockSite3D extends PortBuilding3D {
     const F = b.frame;
     const o = F.o;
     const n = F.Y;
-    const H = b.kind === 'mast' ? 900 : b.r * 0.8;
+    const k = this.rock.k || 1;
+    const H = b.kind === 'mast' ? 900 * k : b.r * 0.8;
     // wstrząs w pierwszej chwili (styczne)
-    const sh = this.collapseT - b.start < 0.35 ? Math.sin((this.collapseT - b.start) * 70) * 14 : 0;
+    const sh = this.collapseT - b.start < 0.35 ? Math.sin((this.collapseT - b.start) * 70) * 14 * k : 0;
     // M = T(o − n·sink·H + X·sh) · R(oś, tilt) · S_n(squash) · T(−o)
     const s = p.squash;
     const nx = n[0], ny = n[1], nz = n[2];
@@ -237,7 +253,8 @@ export class PirateRockSite3D extends PortBuilding3D {
         rigidFromTo(G[segs[i]], this._n0[i], this._d0[i], P[a], P[a + 1], P[a + 2], P[a + 3] - P[a], P[a + 4] - P[a + 1], P[a + 5] - P[a + 2]);
       }
     }
-    // kabiny: nagrane na górnym końcu liny
+    // kabiny: nagrane na górnym końcu liny; rosną z grubością liny w swoim miejscu (pirateTetherThickness — z kamery
+    // kabina przy stacji dolnej wygląda jak w projekcie)
     const top = this._n0[0];
     const N = this.rock.tether.segments;
     const bottom = this._n0[N];
@@ -248,18 +265,21 @@ export class PirateRockSite3D extends PortBuilding3D {
       if (!sim.snapped) {
         const s = climberParam(k, this.clock, this.groupOf.climbers.length);
         M.makeTranslation((bottom[0] - top[0]) * s, (bottom[1] - top[1]) * s, (bottom[2] - top[2]) * s);
+        scaleAbout(M, top, pirateTetherThickness(this.rock, s));
         continue;
       }
       const node = sim.climberNode[k];
       if (node < 0) {
         // kabina w stacji dolnej: jedzie z zapadającą się stacją
         M.makeTranslation(bottom[0] - top[0], bottom[1] - top[1], bottom[2] - top[2]);
+        scaleAbout(M, top, pirateTetherThickness(this.rock, 1));
         if (foot) { this._buildingMatrix(foot, _mFoot); M.premultiply(_mFoot); }
         continue;
       }
       const a = Math.min(N - 1, node) * 3;
       const o = node * 3;
       rigidFromTo(M, top, this._d0[0], P[o], P[o + 1], P[o + 2], P[a + 3] - P[a], P[a + 4] - P[a + 1], P[a + 5] - P[a + 2]);
+      scaleAbout(M, top, pirateTetherThickness(this.rock, node / N));
     }
   }
 

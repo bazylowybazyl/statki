@@ -8,7 +8,7 @@
 import { ActiveCarrier } from '../../game/carrierVelocity.js';
 import { WeaponFx } from './weaponFx.js';
 import {
-  RC, SHOT, SHOT_KIND, BULLET, IMPACT, KERF, PIERCE, FLAK, BLAST, CHARGE, PD_LASER, HEX, HEX_HIT_KIND, MUZZLE_WORDS
+  RC, SHOT, SHOT_KIND, BULLET, IMPACT, KERF, PIERCE, FLAK, BLAST, CHARGE, PD_LASER, HEX, HEX_HIT_KIND, MUZZLE_WORDS, RAY
 } from '../../render/renderCommands.js';
 
 // Widoki wielokrotnego użytku (WeaponFx czyta je w trakcie wywołania i nie zatrzymuje).
@@ -205,6 +205,56 @@ function onHexHit(r, d, o) {
   else WeaponFx.hexlanceExit(x, y, vx, vy, c);
 }
 
+// Promień śmierci: widok rekordu RAY_FIRE (WeaponFx kopiuje liczby; strzelca trzyma do końca obrazu promienia).
+const _ray = {
+  id: 0, weaponId: null, shooter: null, x: 0, y: 0, z0: 0, z1: 0, dx: 1, dy: 0, len: 0, lx: 0, ly: 0, width: 150,
+  speed: 30000, sustain: 1, fade: 0.5, flags: 0, r: NaN, g: NaN, b: NaN
+};
+
+function onRayFire(r, d, o) {
+  const R = RAY;
+  const v = _ray;
+  v.id = d[o + R.F_ID];
+  v.weaponId = r.str(d[o + R.F_WEAPON]);
+  v.shooter = r.ent(d, o + R.F_SHOOTER);
+  v.x = d[o + R.F_X]; v.y = d[o + R.F_Y]; v.z0 = d[o + R.F_Z0]; v.z1 = d[o + R.F_Z1];
+  v.dx = d[o + R.F_DX]; v.dy = d[o + R.F_DY]; v.len = d[o + R.F_LEN];
+  v.lx = d[o + R.F_LX]; v.ly = d[o + R.F_LY];
+  v.width = d[o + R.F_WIDTH]; v.speed = d[o + R.F_SPEED]; v.sustain = d[o + R.F_SUSTAIN]; v.fade = d[o + R.F_FADE];
+  v.flags = d[o + R.F_FLAGS];
+  v.r = d[o + R.F_R]; v.g = d[o + R.F_G]; v.b = d[o + R.F_B];
+  try {
+    WeaponFx.deathRayFire(v, readCarrier(d, o + R.F_CARRIER));
+  } finally {
+    v.shooter = null;
+  }
+}
+
+function onRayHit(r, d, o) {
+  const R = RAY;
+  WeaponFx.deathRayHit(d[o + R.H_ID], d[o + R.H_KIND], d[o + R.H_X], d[o + R.H_Y], d[o + R.H_NX], d[o + R.H_NY],
+    d[o + R.H_RVX], d[o + R.H_RVY], r.ent(d, o + R.H_ENT), d[o + R.H_POWER], d[o + R.H_T], readCarrier(d, o + R.H_CARRIER));
+}
+
+function onRayState(r, d, o) {
+  WeaponFx.deathRayState(d[o + RAY.S_ID], d[o + RAY.S_LEN], d[o + RAY.S_CODE]);
+}
+
+// Ładowanie z rozkazu sceny / strzału wizualnego: stan efektu po kluczu (jak CHARGE), barwa i wysokość z rekordu.
+const _rayCol = [0, 0, 0];
+function onRayCharge(r, d, o) {
+  const R = RAY;
+  const slot = d[o + R.C_KEY];
+  const gen = d[o + R.C_KEY + 1];
+  let e = slot >= 0 ? _charge[slot] : null;
+  if (slot >= 0 && (!e || e.gen !== gen)) e = _charge[slot] = { gen, state: WeaponFx.createChargeState() };
+  const cr = d[o + R.C_R];
+  let col = null;
+  if (cr === cr) { _rayCol[0] = cr; _rayCol[1] = d[o + R.C_G]; _rayCol[2] = d[o + R.C_B]; col = _rayCol; }
+  WeaponFx.deathRayCharge(d[o + R.C_X], d[o + R.C_Y], d[o + R.C_Z], d[o + R.C_ANGLE], d[o + R.C_U], d[o + R.C_DT],
+    d[o + R.C_SCALE], col, e ? e.state : null, readCarrier(d, o + R.C_CARRIER), d[o + R.C_LEN]);
+}
+
 /** Obsługa rekordów broni w czytelniku strumienia rozkazów; WeaponFx przestaje słuchać szyny strzałów. */
 export function installWeaponFxCommands(reader) {
   if (!reader) return false;
@@ -224,6 +274,10 @@ export function installWeaponFxCommands(reader) {
   reader.on(RC.HEX_STEP, onHexStep);
   reader.on(RC.HEX_END, onHexEnd);
   reader.on(RC.HEX_HIT, onHexHit);
+  reader.on(RC.RAY_FIRE, onRayFire);
+  reader.on(RC.RAY_HIT, onRayHit);
+  reader.on(RC.RAY_STATE, onRayState);
+  reader.on(RC.RAY_CHARGE, onRayCharge);
   WeaponFx.useCommands(true);
   return true;
 }

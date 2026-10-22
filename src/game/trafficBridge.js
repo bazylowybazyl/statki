@@ -24,6 +24,7 @@
 import {
   TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD
 } from './traffic/trafficProtocol.js';
+import { BELT_MSG } from './traffic/trafficProtocol.js';
 
 /** Ile ostatnich wraków trzymać do podglądu w konsoli. */
 const RECENT_WRECK_LIMIT = 64;
@@ -96,6 +97,8 @@ export class TrafficBridge {
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
+    /** Wyrwy w pasie (id → `{ id, x, y, r, depth }`) — rejestr uszczuplenia świata ruchu, dla świata pasa gry. */
+    this.beltHoles = new Map();
     this.listeners = new Map();
 
     this._initMessage = null;
@@ -281,6 +284,35 @@ export class TrafficBridge {
     this._send({ type: TRAFFIC_MSG.STATION, stationId: String(stationId || ''), destroyed: true });
   }
 
+  // ---------- rynki (E1, `traffic/markets.js`) ----------
+  // Kopia rynku widzi zmianę po odpowiedzi workera (`tick` z nową tabelą
+  // stacji, wysłany od razu) — do tego czasu `hasStation` zwraca stan sprzed.
+
+  /**
+   * Nowy rynek w trakcie gry: MarketDef (`src/data/markets.js`) — np. kryjówka
+   * misji `{ id, label, kind: 'hideout', position: { source: 'point', x, y },
+   * factionId: 'pirates', docks: { layout: 'hangar' } }`.
+   */
+  addMarket(def) {
+    if (!def?.id) return;
+    this._send({ type: TRAFFIC_MSG.MARKET_ADD, def: JSON.parse(JSON.stringify(def)) });
+  }
+
+  /** Budynek przemysłu na rynku (archetyp z `INDUSTRY_ARCHETYPES`, np. `foundry`). */
+  addMarketBuilding(stationId, role) {
+    this._send({ type: TRAFFIC_MSG.MARKET_BUILDING, stationId: String(stationId || ''), role: String(role || '') });
+  }
+
+  /** Nowy właściciel rynku; `null` = opuszczony. */
+  setMarketOwner(stationId, factionId) {
+    this._send({ type: TRAFFIC_MSG.MARKET_OWNER, stationId: String(stationId || ''), factionId: factionId || null });
+  }
+
+  /** Rynek znika ze świata ruchu (i z kopii rynku po odpowiedzi workera). */
+  removeMarket(stationId) {
+    this._send({ type: TRAFFIC_MSG.MARKET_REMOVE, stationId: String(stationId || '') });
+  }
+
   /** Pokrętła deweloperskie: `piracyPressure`, `piracyEnabled`, `protectObserved`. */
   setConfig(config = {}) {
     this._send({ ...config, type: TRAFFIC_MSG.CONFIG });
@@ -305,6 +337,32 @@ export class TrafficBridge {
   }
 
   // ============================================================
+  // Pas w ekonomii (E3): urobek gracza i wyrwy
+  // ============================================================
+
+  /**
+   * Urobek platformy gracza (tony rudy w ładowni) w punkcie świata gry — ten sam rejestr uszczuplenia
+   * pasa co wyprawy NPC. Wyrwa, jeśli powstanie, wraca zdarzeniem `belt-holes`.
+   */
+  reportMining(x, y, tons) {
+    const amount = Number(tons);
+    if (!(amount > 0) || !Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return;
+    this._send({ type: BELT_MSG.MINED, x: Number(x), y: Number(y), tons: amount });
+  }
+
+  /** Wyrwy z workera: kopia `beltHoles` i zdarzenie `belt-holes` ze zmianami (depth 0 = usunięta). */
+  _onBeltHoles(message) {
+    const list = Array.isArray(message.holes) ? message.holes : [];
+    if (message.full) this.beltHoles.clear();
+    for (const hole of list) {
+      if (!hole || hole.id == null) continue;
+      if (Number(hole.depth) > 0) this.beltHoles.set(String(hole.id), hole);
+      else this.beltHoles.delete(String(hole.id));
+    }
+    if (list.length || message.full) this._emit('belt-holes', list);
+  }
+
+  // ============================================================
   // Świat → gra
   // ============================================================
 
@@ -325,6 +383,7 @@ export class TrafficBridge {
           this.lastError = message;
           this._emit('error', message);
           break;
+        case BELT_MSG.HOLES: this._onBeltHoles(message); break;
         default: break;
       }
     } finally {
@@ -347,18 +406,35 @@ export class TrafficBridge {
     this.clock = Number(message.clock) || 0;
     this.seed = message.seed ?? null;
     this.buildMs = Number(message.buildMs) || 0;
-    this.stationIndex = new Map(this.tables.stations.map((entry, index) => [entry.id, index]));
     this.market.clear();
-    for (const entry of this.tables.stations) {
-      this.market.set(entry.id, createMirror(this.tables.resources));
-    }
+    this._indexStations();
     this._emit('ready', message);
     this._resolveReady(message);
+  }
+
+  /** Indeks i kopie magazynów po tabeli stacji — kopie istniejących rynków zostają. */
+  _indexStations() {
+    const stations = this.tables.stations;
+    this.stationIndex = new Map(stations.map((entry, index) => [entry.id, index]));
+    for (const id of [...this.market.keys()]) {
+      if (!this.stationIndex.has(id)) this.market.delete(id);
+    }
+    for (const entry of stations) {
+      if (!this.market.has(entry.id)) this.market.set(entry.id, createMirror(this.tables.resources));
+    }
   }
 
   _onTick(message) {
     this.clock = Number(message.clock) || 0;
     this.stats = message.stats || null;
+    // Nowa tabela rynków (MARKET_* albo zniszczona stacja) przed rynkiem —
+    // bufor `market` ma już jej układ.
+    if (Array.isArray(message.stations) && this.tables) {
+      this.tables.stations = message.stations;
+      if (message.berths) this.tables.berths = message.berths;
+      this._indexStations();
+      this._emit('markets', this.tables.stations);
+    }
     if (message.market) this._applyMarket(message.market, Number(message.stockSeq) || 0);
     if (message.bubble) this._applyBubble(message.bubble);
     if (Array.isArray(message.stationFactions) && this.tables) {
@@ -417,7 +493,7 @@ export class TrafficBridge {
   // Odczyt
   // ============================================================
 
-  /** Czy świat ruchu zna tę stację (planety gry tak, misyjna kryjówka nie). */
+  /** Czy świat ruchu zna tę stację (planety gry; kryjówka misji — po `addMarket` i odpowiedzi workera). */
   hasStation(stationId) {
     return this.market.has(String(stationId || ''));
   }
@@ -501,7 +577,7 @@ export class TrafficBridge {
   // Zdarzenia
   // ============================================================
 
-  /** `ready`, `tick`, `market`, `bubble`, `wrecks`, `war-wrecks`, `error`. Zwraca wypisanie. */
+  /** `ready`, `tick`, `market`, `markets` (nowa tabela stacji), `bubble`, `wrecks`, `war-wrecks`, `belt-holes`, `error`. Zwraca wypisanie. */
   on(type, listener) {
     if (typeof listener !== 'function') return () => {};
     let list = this.listeners.get(type);

@@ -26,13 +26,23 @@
  *   snapshot   { requestId }          podsumowanie dla konsoli
  *   (zarezerwowane dla Z13 + portu Z2: berth-hold / berth-release gracza)
  *
+ *   RYNKI (E1, docs/PLAN-ekonomia-rynki.md § 3.1) — `src/game/traffic/markets.js`
+ *   market-add      { def }                  nowy rynek (MarketDef, `src/data/markets.js`)
+ *   market-building { stationId, role }      budynek przemysłu na rynku
+ *   market-owner    { stationId, factionId } nowy właściciel (null = opuszczony)
+ *   market-remove   { stationId }            rynek znika ze świata
+ *   Po każdej zmianie worker od razu wysyła `tick` z nową tabelą `stations`
+ *   i `berths` — indeksy rynku i `PORT` kursów liczą się od tej tabeli.
+ *
  * WORKER → GRA
  *   ready      { version, clock, step, seed, economyScale, capacityMultiplier,
  *                stations, resources, factions, kinds, berths, buildMs }
  *              `berths`: { stationId: [id stanowiska…] } — `BERTH` kursu to
  *              indeks w liście jego portu (`PORT`), id jak w układach gry.
  *   tick       { clock, steps, stepMs, stats, stockSeq, market, bubble,
- *                wrecks, warWrecks, stationFactions? }   po każdym kroku świata
+ *                wrecks, warWrecks, stationFactions?, stations?, berths? }
+ *              po każdym kroku świata; `stations` i `berths` (jak w `ready`)
+ *              tylko po zmianie listy rynków — przed `market` z nowym układem
  *   bubble     { clock, count, data, hulls? }            po przesunięciu fokusu
  *   snapshot-result { requestId, snapshot }
  *   error      { message, stack, during }
@@ -58,6 +68,12 @@ export const TRAFFIC_MSG = Object.freeze({
   STATION: 'station',
   CONFIG: 'config',
   SNAPSHOT: 'snapshot',
+
+  // Rynki (E1) — `markets.js`.
+  MARKET_ADD: 'market-add',
+  MARKET_BUILDING: 'market-building',
+  MARKET_OWNER: 'market-owner',
+  MARKET_REMOVE: 'market-remove',
 
   READY: 'ready',
   TICK: 'tick',
@@ -149,3 +165,19 @@ export function courseNumber(courseId) {
   const tail = id.slice(dash + 1);
   return /^\d+$/.test(tail) ? Number(tail) : NaN;
 }
+
+/**
+ * PAS W EKONOMII (E3, docs/PLAN-ekonomia-rynki.md § 3.3) — uszczuplenie pasa i wyrwy
+ * (`traffic/miningFields.js`). Osobna tabela, bo `TRAFFIC_MSG` rozbudowuje rynek.
+ *
+ * GRA → WORKER
+ *   belt-mined { x, y, tons }       urobek platformy gracza (ładownia) w punkcie świata gry —
+ *                                   ten sam rejestr uszczuplenia co wyprawy NPC
+ * WORKER → GRA
+ *   belt-holes { holes, full }      zmienione wyrwy `[{ id, x, y, r, depth }]` (depth 0 = usunięta);
+ *                                   `full` — pełna lista (po `ready`), inaczej tylko zmiany od ostatniej
+ */
+export const BELT_MSG = Object.freeze({
+  MINED: 'belt-mined',
+  HOLES: 'belt-holes'
+});

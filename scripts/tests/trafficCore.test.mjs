@@ -220,8 +220,11 @@ export function run() {
   // ----------------------------------------------------------
   t.section('Encja w grze przejmuje zegar kursu');
 
+  // Kurs w locie, po którego etapie jest jeszcze lot — po stage-done ma zostać w drodze (od E5 hipercruise
+  // skraca odcinki do sekund, więc ostatni lot często kończyłby kurs przed rozbiciem).
   const przypiety = getActiveCourses(world.registry).find(course =>
-    currentStage(course)?.kind === STAGE_KIND.TRAVEL && currentStage(course).seconds > 60);
+    currentStage(course)?.kind === STAGE_KIND.TRAVEL && currentStage(course).seconds > 60
+    && course.stages?.[course.stageIndex + 1]?.kind === STAGE_KIND.TRAVEL);
   const numer = courseNumber(przypiety.id);
   core.handle({ type: TRAFFIC_MSG.ATTACH, course: numer });
   t.check('attach przypina encję', !!przypiety.actorId);
@@ -288,6 +291,56 @@ export function run() {
     piraci.core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: TRAFFIC_STEP_SECONDS });
   }
   t.equal('bez ochrony pada ofiarą kostki', naSzlaku.status, COURSE_STATUS.WRECKED);
+
+  // ----------------------------------------------------------
+  t.section('Rynki przez wiadomości (E1)');
+
+  const rynki = makeCore();
+  rynki.core.handle({ type: TRAFFIC_MSG.INIT, ...OPTS });
+  const ileNaStarcie = lastOf(rynki.inbox, TRAFFIC_MSG.READY).stations.length;
+  const KRYJOWKA = 'PIR';
+  const przedDodaniem = rynki.inbox.length;
+  rynki.core.handle({
+    type: TRAFFIC_MSG.MARKET_ADD,
+    def: {
+      id: KRYJOWKA, label: 'Kryjówka misji', kind: 'hideout',
+      position: { source: 'point', x: earth.x + 900_000, y: earth.y - 400_000 },
+      factionId: 'pirates', docks: { layout: 'hangar' }, hideout: true
+    }
+  });
+  const poDodaniu = rynki.inbox.slice(przedDodaniem).find(message => message.type === TRAFFIC_MSG.TICK);
+  t.check('rdzeń od razu odsyła tick z nową tabelą stacji', !!poDodaniu?.stations);
+  const wpis = poDodaniu?.stations.find(entry => entry.id === KRYJOWKA);
+  t.check('kryjówka jest w tabeli, z portem i rodzajem',
+    wpis?.hasPort === true && wpis.kind === 'hideout' && wpis.factionId === 'pirates');
+  t.equal('tabela urosła o jeden rynek', poDodaniu?.stations.length, ileNaStarcie + 1);
+  t.equal('bufor rynku ma układ nowej tabeli', poDodaniu?.market.length,
+    (ileNaStarcie + 1) * RESOURCE_KEYS.length * 5);
+  t.check('stanowiska kryjówki są w `berths`', poDodaniu?.berths?.[KRYJOWKA]?.length > 0);
+  t.check('kryjówka zbiera łup', rynki.core.world.piracy.nests.has(KRYJOWKA));
+  const indeks = poDodaniu.stations.findIndex(entry => entry.id === KRYJOWKA);
+  const pojemnosc = poDodaniu.market[marketOffset(indeks, 0, RESOURCE_KEYS.length) + MARKET_FIELD.CAPACITY];
+  t.check('kryjówka ma magazyn w buforze rynku', pojemnosc > 0);
+
+  rynki.core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: TRAFFIC_STEP_SECONDS });
+  t.check('zwykły tick po zmianie nie powtarza tabeli', !lastOf(rynki.inbox, TRAFFIC_MSG.TICK).stations);
+
+  rynki.core.handle({ type: TRAFFIC_MSG.MARKET_BUILDING, stationId: KRYJOWKA, role: 'foundry' });
+  t.check('budynek na rynku', rynki.core.world.stations.find(s => s.id === KRYJOWKA)?.industry?.roles.includes('foundry'));
+  rynki.core.handle({ type: TRAFFIC_MSG.MARKET_OWNER, stationId: 'dione', factionId: 'outer_consortium' });
+  const poZajeciu = lastOf(rynki.inbox, TRAFFIC_MSG.TICK);
+  t.check('zajęty księżyc dostaje port w tabeli', poZajeciu.stations?.find(e => e.id === 'dione')?.hasPort === true);
+
+  rynki.core.handle({ type: TRAFFIC_MSG.MARKET_REMOVE, stationId: KRYJOWKA });
+  const poUsunieciu = lastOf(rynki.inbox, TRAFFIC_MSG.TICK);
+  t.check('usunięty rynek znika z tabeli', !!poUsunieciu.stations
+    && !poUsunieciu.stations.some(entry => entry.id === KRYJOWKA));
+  t.equal('i z bufora rynku', poUsunieciu.market.length, ileNaStarcie * RESOURCE_KEYS.length * 5);
+  t.check('nieznany rynek: bez odpowiedzi i bez błędu', (() => {
+    const n = rynki.inbox.length;
+    rynki.core.handle({ type: TRAFFIC_MSG.MARKET_REMOVE, stationId: 'nie-ma' });
+    return rynki.inbox.length === n;
+  })());
 
   // ----------------------------------------------------------
   t.section('Błąd w wiadomości nie zabija rdzenia');

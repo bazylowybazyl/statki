@@ -861,6 +861,280 @@ RECIPES.valkyrie = {
   }
 };
 
+// ── PROMIEŃ ŚMIERCI (Gungnir, superbroń special — 2026-10-19) ────────────────
+// Logika src/game/deathRay.js, fasada WeaponFx.deathRay* (wiązka BEAM.RAY, światła, zniekształcenia, trafienia).
+// Ładowanie (4 s): kula energii rośnie przy wylocie, iskry i łuki zbiegają do lufy z pierścienia, fale IMPLOZJI w
+// warstwie DIST (pierścień kurczy się do wylotu), światło narasta. Wylot: rozbłysk, krzyż, jęzory plazmy, fala.
+// Wejście w kadłub: rozbłysk z krzyżem, iskry stopionego metalu pod prąd, odłamy, dym, fala. Wyjście: stożek metalu
+// i plazmy wzdłuż toru. Tarcza: rozbłysk na obrysie. Zatrzymanie (okręt ponad przebicia, stacja): wybuch.
+// Paleta Z BARWY WIĄZKI (`deathRayPalette`) — scena może dać promieniowi inną barwę, cząstki idą za nią; iskry
+// stopionego metalu (rzaz, wyjście) zostają w barwie żaru.
+const DR_METAL = [3.0, 2.2, 1.3];
+const DR_METAL_HOT = [3.6, 3.0, 2.2];
+const DR_SMOKE0 = [1.6, 0.75, 0.3];
+const DR_SMOKE1 = [0.18, 0.18, 0.19];
+const _drPal = new Map();
+const mixW = (c, k, s, out, i) => { out[i] = (1 - k + k * c) * s; };
+
+/**
+ * Paleta promienia z barwy ciała (dowolna skala — normalizowana do max = 1): rdzenie do bieli, ciała w barwie.
+ * Bez alokacji po pierwszym użyciu barwy (pamięć po kluczu 8 bitów na kanał; barw w grze jest kilka).
+ */
+export function deathRayPalette(r, g, b) {
+  const m = Math.max(1e-4, r, g, b);
+  const nr = Math.max(0, r / m), ng = Math.max(0, g / m), nb = Math.max(0, b / m);
+  const key = (Math.round(nr * 255) << 16) | (Math.round(ng * 255) << 8) | Math.round(nb * 255);
+  let p = _drPal.get(key);
+  if (p) return p;
+  const arr = () => [0, 0, 0];
+  p = {
+    base: [nr, ng, nb], core0: arr(), core1: arr(), halo0: arr(), halo1: arr(), flare0: arr(), flare1: arr(), cross: arr(),
+    p1: arr(), p2: arr(), p3: arr(), p4: arr(), blob0: arr(), blob1: arr(), streak: arr(), arc: arr(), vap0: arr(), vap1: arr(),
+    light: [nr, ng, nb]
+  };
+  const c = [nr, ng, nb];
+  for (let i = 0; i < 3; i++) {
+    mixW(c[i], 0.25, 4.2, p.core0, i); p.core1[i] = c[i] * 2.8;
+    p.halo0[i] = c[i] * 2.4 + 0.2; p.halo1[i] = c[i] * 0.5;
+    mixW(c[i], 0.35, 3.8, p.flare0, i); p.flare1[i] = c[i] * 2.2;
+    mixW(c[i], 0.4, 3.4, p.cross, i);
+    mixW(c[i], 0.3, 4.0, p.p1, i); p.p2[i] = c[i] * 2.6; p.p3[i] = c[i] * 1.0; mixW(c[i], 0.5, 3.0, p.p4, i);
+    mixW(c[i], 0.55, 3.0, p.blob0, i); p.blob1[i] = c[i] * 0.45;
+    mixW(c[i], 0.45, 3.2, p.streak, i); mixW(c[i], 0.5, 3.4, p.arc, i);
+    p.vap0[i] = c[i] * 1.2; p.vap1[i] = c[i] * 0.2;
+  }
+  _drPal.set(key, p);
+  return p;
+}
+// Barwa domyślna (vfxColor '#46ff8c' liniowo) — paleta receptury, gdy wołający nie poda swojej.
+const DR_PAL = deathRayPalette(0.061, 1.0, 0.262);
+
+/**
+ * Ładowanie promienia: u — postęp 0..1, cs — stan działa (createChargeState; `cs.pal` — paleta wołającego, `cs.ringT`
+ * — odstęp fal implozji), S — skala (wieża Capital 1). Kula energii przy wylocie, iskry i łuki zbiegające z pierścienia,
+ * fale implozji (DIST — sama refrakcja), światło.
+ */
+function rayCharge(ctx, m, u, dt, cs, S, c) {
+  const fx = ctx.fx;
+  const P = sp(m.x, m.y, _P);
+  const D = sd(m.angle, _D);
+  const uu = u * u;
+  // kula energii: re-emitowana co wywołanie (krótkie życie — ciągła poświata, rośnie z u)
+  const s0 = (18 + 110 * uu) * S;
+  E(fx.add, K.GLOW, 1, P, D).life(0.07, 0.07).s0(s0, s0).s1(s0 * 1.25, s0 * 1.25).colors(c.core0, c.core1).mix(10).alpha(0.55 + 0.45 * u, 0.55 + 0.45 * u).fade(0.02, 1.4).grow(0.6).emit();
+  if (fxRandom.next() < 26 * dt) {
+    const s1 = (40 + 260 * uu) * S;
+    E(fx.add, K.FLARE, 1, P, D).life(0.12, 0.12).s0(s1 * 0.6, s1 * 0.6).s1(s1, s1).colors(c.flare0, c.flare1).mix(9).alpha(0.25 + 0.55 * u, 0.25 + 0.55 * u).fade(0.02, 1.5).grow(0.6).spin(2).emit();
+  }
+  // iskry zbiegające do wylotu z pierścienia (kierunek do środka; pierścień kurczy się z ładowaniem)
+  const ringR = (620 - 380 * u) * S;
+  const n = fxRandom.round((30 + 240 * uu) * dt);
+  for (let k = 0; k < n; k++) {
+    const a = fxRandom.next() * TAU;
+    const r = ringR * (0.7 + 0.5 * fxRandom.next());
+    _Q.x = P.x + Math.cos(a) * r; _Q.y = P.y + Math.sin(a) * r;
+    _T.x = -Math.cos(a); _T.y = -Math.sin(a);
+    E(fx.spark, K.SPARK, 1, _Q, _T).speed(r * 2.2, r * 3.4).life(0.18, 0.32).drag(0.2, 0.2).colors(c.streak).x01(60 * S, 1.05).x23(1.2, 1.6).emit();
+  }
+  // łuki z otoczenia do wylotu
+  if (fxRandom.next() < (6 + 26 * u) * dt) {
+    const a = fxRandom.next() * TAU;
+    const r = ringR * rand(0.5, 1.1);
+    _Q.x = P.x + Math.cos(a) * r; _Q.y = P.y + Math.sin(a) * r;
+    _T.x = -Math.cos(a); _T.y = -Math.sin(a);
+    E(fx.arc, 0, 1, _Q, _T).speed(r, r).life(0.05, 0.14).colors(c.arc).x01((10 + 30 * u) * S, 1.7).emit();
+  }
+  // fale implozji: pierścień refrakcji kurczący się do wylotu (s0 > s1)
+  cs.ringT = (cs.ringT || 0) - dt;
+  if (cs.ringT <= 0) {
+    cs.ringT = 0.42 - 0.24 * u;
+    const R0 = (700 - 300 * u) * S;
+    E(fx.dist, K.SHOCK, 1, P, D).life(0.4, 0.4).s0(R0, R0).s1(30 * S, 30 * S).alpha(0.35 + 0.65 * u, 0.35 + 0.65 * u).fade(0.05, 1.2).emit();
+  }
+  if (fxRandom.next() < 8 * dt) {
+    E(fx.dist, K.HEAT, 1, P, D).speed(10, 10).life(0.5, 0.5).s0((30 + 90 * u) * S, (30 + 90 * u) * S).s1((70 + 160 * u) * S, (70 + 160 * u) * S).alpha(0.5 * u, 0.5 * u).fade(0.1, 1.5).grow(0.5).emit();
+  }
+  const L = c.light;
+  ctx.lights.point(m.x, m.y, L[0], L[1], L[2], (1.5 + 9 * uu) * Math.sqrt(S), (260 + 900 * u) * S, 40);
+  if (u > 0.75) ctx.shake(2.5 * (u - 0.75) * 4, 0.12);
+}
+
+/** Wylot promienia: rozbłysk, krzyż anamorficzny, jęzory plazmy wzdłuż toru, iskry, opar, fala, światło. */
+function rayMuzzle(ctx, m, S, c) {
+  const fx = ctx.fx;
+  const P = sp(m.x, m.y, _P);
+  const D = sd(m.angle, _D);
+  E(fx.add, K.GLOW, 1, P, D).life(0.18, 0.18).drag(5, 5).s0(60 * S, 60 * S).s1(420 * S, 420 * S).colors(c.core0, c.core1).mix(12).fade(0.004, 2.0).grow(0.38).emit();
+  E(fx.add, K.GLOW, 1, off(P, D, 80 * S, _T), D).life(0.5, 0.5).drag(3, 3).s0(120 * S, 120 * S).s1(700 * S, 700 * S).colors(c.halo0, c.halo1).mix(4.5).alpha(0.6, 0.6).fade(0.008, 1.9).grow(0.48).emit();
+  E(fx.add, K.FLARE, 1, P, D).life(0.24, 0.24).s0(200 * S, 200 * S).s1(800 * S, 800 * S).colors(c.flare0, c.flare1).mix(11).alpha(0.9, 0.9).fade(0.005, 2.5).grow(0.35).spin(0.6).emit();
+  E(fx.add, K.CROSS, 1, P, D).life(0.26, 0.26).s0(300 * S, 1800 * S).s1(60 * S, 130 * S).colors(c.cross).emit();
+  E(fx.add, K.PLUME, 1, P, D).life(0.32, 0.32).s0(180 * S, 1500 * S).s1(40 * S, 90 * S).colors(c.p1).emit();
+  E(fx.add, K.PLUME, 1, P, D).life(0.5, 0.5).s0(140 * S, 1000 * S).s1(90 * S, 200 * S).colors(c.p2).alpha(0.85, 0.85).emit();
+  E(fx.add, K.PLUME, 1, P, D).life(0.7, 0.7).s0(100 * S, 600 * S).s1(180 * S, 380 * S).colors(c.p3).alpha(0.45, 0.45).emit();
+  E(fx.add, K.GLOW, 36, P, D).cone(0.22, 0.18).speed(300 * S, 1100 * S).life(0.3, 0.9).drag(1.6, 1.6).offset(0, 90 * S).s0(14 * S, 34 * S).s1(70 * S, 170 * S).colors(c.blob0, c.blob1).mix(3.4).alpha(0.4, 0.8).fade(0.02, 1.8).grow(0.5).spin(1.6).emit();
+  E(fx.spark, K.SPARK, 140, P, D).cone(0.3, 0.18).speed(700 * S, 2400 * S).life(0.3, 0.9).drag(0.25, 0.7).offset(0, 100 * S).colors(c.streak).x01(170 * S, 1.05).x23(1.2, 1.8).emit();
+  E(fx.spark, K.SPARK, 40, P, neg(D, _T2)).cone(1.2, 0.18).speed(200 * S, 700 * S).life(0.25, 0.7).drag(0.5, 1.2).colors(c.streak).x01(80 * S, 1.05).x23(1.2, 1.5).emit();
+  E(fx.arc, 0, 14, P, D).cone(0.9, 0.18).speed(40 * S, 160 * S).life(0.12, 0.4).colors(c.arc).x01(26 * S, 2.4).emit();
+  E(fx.add, K.VAPOR, 22, P, D).cone(0.5, 0.18).speed(40 * S, 200 * S).life(1.2, 2.8).drag(0.9, 0.9).offset(0, 140 * S).s0(40 * S, 90 * S).s1(160 * S, 360 * S).colors(c.vap0, c.vap1).mix(1.3).alpha(0.10, 0.24).fade(0.06, 1.5).grow(0.45).spin(0.4).emit();
+  E(fx.dist, K.SHOCK, 1, P, D).life(0.6, 0.6).s0(60 * S, 60 * S).s1(1500 * S, 1500 * S).alpha(1.3, 1.3).fade(0.01, 1.1).emit();
+  E(fx.dist, K.HEAT, 6, P, D).cone(0.4, 0.18).speed(80 * S, 300 * S).life(0.8, 1.6).offset(0, 220 * S).s0(70 * S, 70 * S).s1(180 * S, 180 * S).alpha(0.6, 0.6).fade(0.1, 1.5).grow(0.5).emit();
+  const L = c.light;
+  ctx.lights.flash(m.x, m.y, L[0], L[1], L[2], 18, 1800 * S, 0.3, 2, 0, 80);
+  ctx.lights.flash(m.x + Math.cos(m.angle) * 400 * S, m.y + Math.sin(m.angle) * 400 * S, L[0], L[1], L[2], 6, 1200 * S, 0.5, 2, 0, 80);
+}
+
+/** Wejście promienia w kadłub (x, y; D — kierunek promienia w scenie): rozbłysk z krzyżem, iskry pod prąd, odłamy, dym, fala. */
+function rayEntry(ctx, x, y, D, S, c, hull) {
+  const fx = ctx.fx;
+  const P = sp(x, y, _H);
+  const N = neg(D, _N);
+  E(fx.add, K.GLOW, 1, P, N).life(0.22, 0.22).drag(5, 5).s0(60 * S, 60 * S).s1(520 * S, 520 * S).colors(c.core0, c.core1).mix(11).fade(0.004, 2.0).grow(0.4).emit();
+  E(fx.add, K.GLOW, 1, P, N).life(0.5, 0.5).drag(3, 3).s0(80 * S, 80 * S).s1(700 * S, 700 * S).color(3.0, 2.0, 1.0).color1(0.6, 0.2, 0.05).mix(5).alpha(0.7, 0.7).fade(0.01, 1.8).grow(0.45).emit();
+  E(fx.add, K.CROSS, 1, P, D).life(0.28, 0.28).s0(300 * S, 1800 * S).s1(90 * S, 200 * S).colors(c.cross).alpha(0.9, 0.9).emit();
+  E(fx.add, K.FIRE, 18, P, N).cone(0.9, 0.18).speed(150 * S, 600 * S).life(0.4, 1.0).drag(2.2, 2.2).s0(30 * S, 60 * S).s1(110 * S, 240 * S).color(3.2, 1.7, 0.6).color1(0.8, 0.16, 0.03).mix(3).alpha(0.8, 1.0).fade(0.02, 1.3).grow(0.45).spin(1.5).emit();
+  E(fx.spark, K.SPARK, 220, P, N).cone(0.85, 0.18).speed(400 * S, 1800 * S).life(0.35, 1.2).drag(0.5, 1.3).colors(DR_METAL).x01(110 * S, 0.32).x23(0.06, 1.8).bounce(0.3).emit();
+  E(fx.spark, K.SPARK, 60, P, N).cone(1.4, 0.18).speed(200 * S, 800 * S).life(0.3, 0.8).drag(0.6, 1.2).colors(c.streak).x01(80 * S, 1.0).x23(1.1, 1.5).emit();
+  E(fx.debris, K.CHUNK, 26, P, N).cone(1.1, 0.18).speed(120 * S, 520 * S).life(1.8, 3.6).drag(0.25, 0.25).s0(4 * S, 11 * S).s1(4 * S, 11 * S).color(3.0, 1.7, 0.7).color1(STEEL[0], STEEL[1], STEEL[2]).alpha(1, 1).spin(8).x01(0.8, 0).emit();
+  E(fx.smoke, 0, 12, P, N).cone(1.4, 0.18).speed(30, 160).life(2.0, 3.6).drag(1.1, 1.1).s0(60 * S, 60 * S).s1(200 * S, 380 * S).colors(DR_SMOKE0, DR_SMOKE1).alpha(0.5, 0.5).fade(0.04, 1.3).grow(0.45).x01(60, 2).emit();
+  E(fx.dist, K.SHOCK, 1, P, N).life(0.5, 0.5).s0(60 * S, 60 * S).s1(1300 * S, 1300 * S).alpha(1.1, 1.1).fade(0.01, 1.2).emit();
+  hullArcs(ctx, hull, x, y, 8, 60 * S, 260 * S, c.arc, 0.1, 0.3, 14);
+  ctx.lights.flash(x, y, 1.0, 0.8, 0.55, 22, 2000 * S, 0.3, 2, 0, 60);
+  ctx.lights.flash(x, y, c.light[0], c.light[1], c.light[2], 8, 1400 * S, 0.9, 1.5, 0.4, 60);
+}
+
+/** Wyjście promienia z kadłuba: stożek stopionego metalu i plazmy wzdłuż toru (D — kierunek w scenie). */
+function rayExit(ctx, x, y, D, S, c) {
+  const fx = ctx.fx;
+  const P = sp(x, y, _H);
+  E(fx.add, K.GLOW, 1, P, D).life(0.2, 0.2).s0(40 * S, 40 * S).s1(380 * S, 380 * S).color(3.8, 3.2, 2.4).color1(2.2, 0.8, 0.2).mix(12).fade(0.004, 2).emit();
+  E(fx.add, K.PLUME, 1, P, D).life(0.4, 0.4).s0(140 * S, 900 * S).s1(60 * S, 220 * S).color(2.8, 1.5, 0.6).alpha(0.9, 0.9).emit();
+  E(fx.add, K.PLUME, 1, P, D).life(0.55, 0.55).s0(110 * S, 1200 * S).s1(80 * S, 180 * S).colors(c.p2).alpha(0.7, 0.7).emit();
+  E(fx.add, K.FIRE, 20, P, D).cone(0.5, 0.18).speed(200 * S, 900 * S).life(0.4, 1.0).drag(2.2, 2.2).s0(24 * S, 24 * S).s1(80 * S, 200 * S).color(3.0, 1.5, 0.5).color1(0.8, 0.15, 0.03).mix(3).alpha(0.9, 0.9).fade(0.02, 1.3).grow(0.45).spin(1.5).emit();
+  E(fx.spark, K.SPARK, 260, P, D).cone(0.45, 0.18).speed(600 * S, 2600 * S).life(0.4, 1.3).drag(0.4, 1.1).colors(DR_METAL_HOT).x01(130 * S, 0.32).x23(0.06, 1.8).emit();
+  E(fx.debris, K.CHUNK, 30, P, D).cone(0.5, 0.18).speed(260 * S, 1100 * S).life(1.6, 3.2).drag(0.2, 0.2).s0(4 * S, 12 * S).s1(4 * S, 12 * S).color(3.0, 1.5, 0.5).color1(STEEL[0], STEEL[1], STEEL[2]).alpha(1, 1).spin(9).x01(0.9, 0).emit();
+  E(fx.smoke, 0, 10, P, D).cone(0.7, 0.18).speed(60 * S, 260 * S).life(2.2, 3.8).drag(1.2, 1.2).s0(40 * S, 40 * S).s1(160 * S, 320 * S).colors(DR_SMOKE0, DR_SMOKE1).alpha(0.55, 0.55).fade(0.04, 1.3).grow(0.45).x01(50, 2).emit();
+  E(fx.dist, K.SHOCK, 1, P, D).life(0.45, 0.45).s0(40 * S, 40 * S).s1(800 * S, 800 * S).alpha(0.9, 0.9).fade(0.01, 1.2).emit();
+  ctx.lights.flash(x, y, 1.0, 0.7, 0.4, 14, 1500 * S, 0.25, 2, 0, 50);
+}
+
+/** Zatrzymanie promienia (okręt ponad przebicia, stacja) albo koniec strzału wizualnego: wybuch energii. */
+function rayEnd(ctx, x, y, D, S, c) {
+  const fx = ctx.fx;
+  const P = sp(x, y, _H);
+  const N = neg(D, _N);
+  E(fx.add, K.GLOW, 1, P, N).life(0.3, 0.3).drag(4, 4).s0(80 * S, 80 * S).s1(700 * S, 700 * S).colors(c.core0, c.core1).mix(10).fade(0.004, 2.0).grow(0.4).emit();
+  E(fx.add, K.FLARE, 1, P, N).life(0.3, 0.3).s0(200 * S, 200 * S).s1(1000 * S, 1000 * S).colors(c.flare0, c.flare1).mix(10).alpha(0.9, 0.9).fade(0.004, 2.3).grow(0.35).spin(1).emit();
+  E(fx.add, K.FIRE, 28, P, N).cone(1.6, 0.18).speed(200 * S, 800 * S).life(0.5, 1.2).drag(2.4, 2.4).s0(40 * S, 70 * S).s1(140 * S, 320 * S).color(3.2, 1.7, 0.6).color1(0.8, 0.16, 0.03).mix(3).alpha(0.8, 1.0).fade(0.02, 1.3).grow(0.4).spin(1.5).emit();
+  E(fx.spark, K.SPARK, 260, P, N).cone(1.5, 0.18).speed(500 * S, 2200 * S).life(0.4, 1.3).drag(0.5, 1.4).colors(DR_METAL).x01(120 * S, 0.32).x23(0.06, 1.8).bounce(0.3).emit();
+  E(fx.spark, K.SPARK, 80, P, N).cone(2.6, 0.18).speed(300 * S, 1200 * S).life(0.3, 0.9).drag(0.6, 1.2).colors(c.streak).x01(90 * S, 1.0).x23(1.1, 1.5).emit();
+  E(fx.debris, K.CHUNK, 30, P, N).cone(1.6, 0.18).speed(160 * S, 700 * S).life(1.8, 3.6).drag(0.25, 0.25).s0(5 * S, 12 * S).s1(5 * S, 12 * S).color(3.0, 1.7, 0.7).color1(STEEL[0], STEEL[1], STEEL[2]).alpha(1, 1).spin(8).x01(0.8, 0).emit();
+  E(fx.smoke, 0, 16, P, N).cone(2.2, 0.18).speed(40, 220).life(2.4, 4.2).drag(1.1, 1.1).s0(80 * S, 80 * S).s1(260 * S, 480 * S).colors(DR_SMOKE0, DR_SMOKE1).alpha(0.5, 0.5).fade(0.04, 1.3).grow(0.45).x01(70, 2).emit();
+  E(fx.dist, K.SHOCK, 1, P, N).life(0.7, 0.7).s0(80 * S, 80 * S).s1(2200 * S, 2200 * S).alpha(1.3, 1.3).fade(0.01, 1.1).emit();
+  E(fx.dist, K.HEAT, 5, P, N).cone(3, 0.18).speed(40 * S, 160 * S).life(1.2, 2.0).s0(120 * S, 120 * S).s1(320 * S, 320 * S).alpha(0.6, 0.6).fade(0.1, 1.5).grow(0.5).emit();
+  ctx.lights.flash(x, y, 1.0, 0.8, 0.55, 26, 2600 * S, 0.35, 2, 0, 70);
+  ctx.lights.flash(x, y, c.light[0], c.light[1], c.light[2], 10, 1800 * S, 1.0, 1.4, 0.5, 70);
+}
+
+/** Tarcza przepalona: rozbłysk na obrysie pola (refrakcja i światło; płytki i fale tarczy robi jej efekt). */
+function rayShield(ctx, x, y, D, S, c) {
+  const fx = ctx.fx;
+  const P = sp(x, y, _H);
+  const N = neg(D, _N);
+  E(fx.add, K.GLOW, 1, P, N).life(0.25, 0.25).s0(60 * S, 60 * S).s1(560 * S, 560 * S).colors(c.core0, c.core1).mix(10).fade(0.004, 2.0).grow(0.4).emit();
+  E(fx.add, K.CROSS, 1, P, D).life(0.22, 0.22).s0(260 * S, 1400 * S).s1(70 * S, 150 * S).colors(c.cross).alpha(0.85, 0.85).emit();
+  E(fx.spark, K.SPARK, 90, P, N).cone(1.8, 0.18).speed(300 * S, 1300 * S).life(0.25, 0.7).drag(0.8, 1.2).colors(c.streak).x01(80 * S, 1.0).x23(1.1, 1.5).emit();
+  E(fx.arc, 0, 10, P, N).cone(2.4, 0.18).speed(80 * S, 300 * S).life(0.08, 0.26).colors(c.arc).x01(30 * S, 2.2).emit();
+  E(fx.dist, K.SHOCK, 1, P, N).life(0.45, 0.45).s0(40 * S, 40 * S).s1(1000 * S, 1000 * S).alpha(1.0, 1.0).fade(0.01, 1.2).emit();
+  ctx.lights.flash(x, y, c.light[0], c.light[1], c.light[2], 14, 1600 * S, 0.3, 2, 0, 60);
+}
+
+RECIPES.deathRay = {
+  scale: 1,
+  /** Paleta domyślna (barwa broni); WeaponFx podaje paletę promienia z jego barwy. */
+  palette: DR_PAL,
+  charge(ctx, m, u, dt, cs) { rayCharge(ctx, m, u, dt, cs, Math.max(0.3, m.scale || 1), cs?.pal || DR_PAL); },
+  muzzle(ctx, m, w, pal = DR_PAL) {
+    rayMuzzle(ctx, m, Math.max(0.3, m.scale || 1), pal || DR_PAL);
+    ctx.shake(16, 0.5);
+  },
+  // Promień nie jest pociskiem w `bullets` — styl tylko dla kompletności tabeli (galeria, testy).
+  projectile() {
+    return { style: PSTYLE.NEEDLE, color: [0.6, 3.6, 1.4], width: 60, len: 400, streak: 0.001, trail: -1, light: [0.45, 1.0, 0.55, 5, 900] };
+  },
+  // Trafienie (receptura ogólna; promień woła entry / exit / shield / end wprost z WeaponFx).
+  impact(ctx, p, hull, hit, pal = DR_PAL) {
+    rayEntry(ctx, hit.x, hit.y, sv(p.vx, p.vy, _D), 1, pal || DR_PAL, hull);
+    ctx.shake(12, 0.45);
+  },
+  entry(ctx, x, y, vx, vy, hull, pal = DR_PAL, S = 1) {
+    rayEntry(ctx, x, y, sv(vx, vy, _D), S, pal || DR_PAL, hull);
+    ctx.shake(12, 0.45);
+  },
+  kerf(ctx, p, hull, pal = DR_PAL) {
+    kerf(ctx, p.x, p.y, sv(p.vx, p.vy, _D), 3.0, 1.0, DR_METAL);
+    const c = pal || DR_PAL;
+    ctx.lights.flash(p.x, p.y, c.light[0], c.light[1], c.light[2], 6, 600, 0.12, 2, 0, 50);
+  },
+  exit(ctx, p, hull, pal = DR_PAL) {
+    rayExit(ctx, p.x, p.y, sv(p.vx, p.vy, _D), 1, pal || DR_PAL);
+    ctx.shake(8, 0.35);
+  },
+  shield(ctx, x, y, vx, vy, pal = DR_PAL, S = 1) {
+    rayShield(ctx, x, y, sv(vx, vy, _D), S, pal || DR_PAL);
+    ctx.shake(6, 0.3);
+  },
+  end(ctx, x, y, vx, vy, pal = DR_PAL, S = 1) {
+    rayEnd(ctx, x, y, sv(vx, vy, _D), S, pal || DR_PAL);
+    ctx.shake(14, 0.5);
+  },
+  /**
+   * Co klatkę wiązki (WeaponFx._stepRays): soczewka emitera (m: wylot i kąt), czoło (fx, fy — gdy rośnie), punkt
+   * końca na przeszkodzie (hit) i opar / iskry plazmy na losowym miejscu wiązki (ax, ay — punkt na osi). k — moc 0..1.
+   */
+  emit(ctx, m, hit, k, dt, hull, pal = DR_PAL, front = null, ax = NaN, ay = NaN, S = 1) {
+    const fx = ctx.fx;
+    const c = pal || DR_PAL;
+    if (!(k > 0) || !(dt > 0)) return;
+    const P = sp(m.x, m.y, _P);
+    const D = sd(m.angle, _D);
+    E(fx.add, K.GLOW, 1, P, D).life(0.06, 0.06).s0(80 * S * k, 80 * S * k).s1(100 * S * k, 100 * S * k).colors(c.core0, c.core1).mix(10).alpha(0.7, 0.7).fade(0.02, 1.4).grow(0.6).emit();
+    if (fxRandom.next() < 30 * dt) E(fx.arc, 0, 1, P, D).cone(1.6, 0.18).speed(30 * S, 120 * S).life(0.05, 0.14).colors(c.arc).x01(14 * S, 1.6).emit();
+    E(fx.spark, K.SPARK, 50 * dt * k, P, D).cone(0.35, 0.18).speed(400 * S, 1400 * S).life(0.2, 0.5).drag(0.4, 0.8).colors(c.streak).x01(90 * S, 1.05).x23(1.2, 1.6).emit();
+    if (front) {
+      const F = sp(front.x, front.y, _T);
+      E(fx.add, K.GLOW, 1, F, D).life(0.05, 0.05).s0(90 * S, 90 * S).s1(120 * S, 120 * S).colors(c.flare0, c.flare1).mix(10).alpha(0.8, 0.8).fade(0.01, 1.2).grow(0.8).emit();
+    }
+    if (ax === ax) {
+      // plazma wyrzucana z boku wiązki (iskry prostopadle, opar) — losowy punkt osi
+      const A = sp(ax, ay, _A);
+      const side = fxRandom.next() < 0.5 ? 1 : -1;
+      _B.x = -D.y * side; _B.y = D.x * side;
+      E(fx.spark, K.SPARK, 1 + 3 * k, A, _B).cone(0.7, 0.18).speed(200 * S, 900 * S).life(0.2, 0.55).drag(0.6, 1.2).colors(c.streak).x01(70 * S, 1.0).x23(1.1, 1.5).emit();
+      if (fxRandom.next() < 0.5) E(fx.add, K.VAPOR, 1, A, _B).speed(20, 90).life(0.6, 1.2).drag(1, 1).s0(60 * S, 60 * S).s1(160 * S, 260 * S).colors(c.vap0, c.vap1).mix(1.3).alpha(0.12 * k, 0.2 * k).fade(0.06, 1.5).grow(0.45).emit();
+      if (fxRandom.next() < 0.35) E(fx.dist, K.HEAT, 1, A, D).speed(30, 60).life(0.6, 1.0).s0(90 * S, 90 * S).s1(220 * S, 220 * S).alpha(0.45 * k, 0.45 * k).fade(0.1, 1.5).grow(0.5).emit();
+    }
+    if (hit) RECIPES.deathRay.burn(ctx, hit, k, dt, hull, c, S);
+  },
+  /**
+   * Żar w punkcie, gdzie wiązka przechodzi przez kadłub / stoi na przeszkodzie (co klatkę trwania): hit = { x, y, nx, ny }
+   * (normalna — od strony wylotu iskier), k — moc, hull — kadłub (mapa ran: żar co klatkę wiązki) albo null.
+   */
+  burn(ctx, hit, k, dt, hull, pal = DR_PAL, S = 1) {
+    if (!(k > 0) || !(dt > 0)) return;
+    const fx = ctx.fx;
+    const c = pal || DR_PAL;
+    const H = sp(hit.x, hit.y, _H);
+    const N = sv(hit.nx, hit.ny, _N);
+    E(fx.add, K.GLOW, 1, H, N).life(0.07, 0.07).s0(80 * S * k, 80 * S * k).s1(110 * S * k, 110 * S * k).colors(c.core0, c.core1).mix(12).fade(0.01, 1.5).emit();
+    E(fx.spark, K.SPARK, 520 * dt * k, H, N).cone(1.1, 0.18).speed(300 * S, 1500 * S).life(0.25, 0.9).drag(0.6, 1.4).colors(DR_METAL).x01(70 * S, 0.32).x23(0.06, 1.5).bounce(0.3).emit();
+    E(fx.smoke, 0, 10 * dt * k, H, N).cone(0.8, 0.18).speed(40, 140).life(1.4, 2.6).drag(0.9, 0.9).s0(40 * S, 40 * S).s1(120 * S, 220 * S).colors(DR_SMOKE0, DR_SMOKE1).alpha(0.3, 0.5).fade(0.05, 1.4).grow(0.5).spin(0.8).x01(40, 3).emit();
+    E(fx.dist, K.HEAT, 10 * dt * k, H, N).cone(0.8, 0.18).speed(30, 90).life(0.6, 1.1).s0(60 * S, 60 * S).s1(160 * S, 160 * S).alpha(0.6, 0.6).fade(0.1, 1.5).grow(0.5).emit();
+    ctx.lights.point(hit.x, hit.y, 1.0, 0.75, 0.5, 6 * k, 900 * S, 40);
+    // mapa ran: żar podtrzymywany ~12 razy na sekundę (nie co klatkę — kolejka stempli klatki)
+    if (hull && fxRandom.next() < 12 * dt) ctx.stamp(hull, hit.x, hit.y, 60, 3.4 * k, 0.6, 0.8 * k, 0.2);
+  }
+};
+
 // ── WIĄZKA CIĄGŁA ────────────────────────────────────────────────────────────
 // Barwa ciała z danych broni (vfxColor × BEAM_HDR_K — PROJEKT-BRONI §1.1), reszta z dema.
 const BC_ARC = [0.5, 2.6, 2.2];

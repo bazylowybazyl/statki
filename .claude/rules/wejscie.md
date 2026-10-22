@@ -37,7 +37,7 @@ paths:
 
 - `PPM` — menu rozkazów
 
-- `ŚPM` (trzymany) — koło trybów okrętu: bojowy / tarcze / przelot / maskowanie / torpedy / wydobycie / flota; stuknięcie — poprzedni tryb
+- `ŚPM` (trzymany) — koło trybów okrętu: bojowy / tarcze / hipercruise / maskowanie / torpedy / wydobycie / flota; stuknięcie — poprzedni tryb
 
 - `1` / `2` / `3` — grupa w rękę (działa / bateria główna / rakiety); `Ctrl` lub `Alt` + `1` / `2` / `3` — auto grupy wł./wył.
 
@@ -47,7 +47,9 @@ paths:
 
 - `4` — Hexlance, `5` — pocisk specjalny (Supernowa)
 
-- `Shift` — dopalacz (Atlas ~1500 j/s, w PRZELOCIE do 3000 j/s)
+- `Shift` — dopalacz (Atlas 1137 j/s — `src/data/driveModes.js`; PRZELOTU nie ma)
+
+- `O` — hipercruise: rozruch / wyjście (akcja `nav.hypercruise`, ten sam sektor koła ŚPM; `S` też kończy; odcinki TRAVEL TO włączają go same); `Ctrl` — bieg w dół tylko w skrzyni podróżnej megafrachtowca
 
 - `CapsLock` / `9` — warp (przełącznik); kurs skoku stoi od ładowania — ustaw dziób przed skokiem
 

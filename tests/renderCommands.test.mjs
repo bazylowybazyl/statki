@@ -12,7 +12,7 @@ import { MASTER_WEAPONS } from '../src/data/weapons.js';
 
 const METHODS = ['_onShot', 'pdShot', 'pdLaser', 'impact', 'kerf', 'pierceExit', 'pierceStuck', 'flakBurst', 'droneBlast',
   'bombBlast', 'bombDud', 'charge', 'hexlanceCharge', 'hexlanceFire', 'hexlanceBegin', 'hexlanceStep', 'hexlanceEnd',
-  'hexlanceImpact', 'hexlanceKerf', 'hexlanceExit'];
+  'hexlanceImpact', 'hexlanceKerf', 'hexlanceExit', 'deathRayFire', 'deathRayHit', 'deathRayState', 'deathRayCharge'];
 
 // Podstawia metody WeaponFx rejestratorem (kopie argumentów i ActiveCarrier w chwili wywołania).
 function withStubs(fn) {
@@ -228,6 +228,44 @@ test('Hexlance: id gry ↔ uchwyt renderu (begin, step, end), ładowanie, wylot 
     rc.writer.hexlanceEnd(id, 200, 6);
     assert.equal(last(calls, 'hexlanceEnd').args[0], handle);
     assert.equal(WeaponFxCommandState.hex.has(id), false);
+  });
+});
+
+test('promień śmierci: RAY_FIRE (widok promienia, strzelec ze slotu, barwa NaN), RAY_HIT, RAY_STATE, RAY_CHARGE (stan po kluczu, barwa, laser) — liczby 1:1', () => {
+  withStubs((rc, calls) => {
+    const shooter = ent('strzelec');
+    const hull = ent('cel');
+    const car = { vx: 11, vy: -12, t0: 13, z: 0.25, clock: 0 };
+    const ray = { id: 7, def: MASTER_WEAPONS.death_ray, shooter, ox: 100, oy: 200, z0: -50, z1: -80, dx: 0.6, dy: 0.8, len: 12000, lx: 30, ly: -4,
+      width: 150, frontSpeed: 30000, params: { sustain: 1.1, fade: 0.5 }, flags: 6, colR: NaN, colG: NaN, colB: NaN };
+    rc.writer.deathRayFire(ray, car);
+    const f = last(calls, 'deathRayFire');
+    const v = f.snap[0];
+    assert.equal(v.id, 7); assert.equal(v.weaponId, 'death_ray'); assert.equal(v.shooter, shooter);
+    assert.deepEqual([v.x, v.y, v.z0, v.z1, v.dx, v.dy, v.len, v.lx, v.ly], [100, 200, -50, -80, 0.6, 0.8, 12000, 30, -4]);
+    assert.deepEqual([v.width, v.speed, v.sustain, v.fade, v.flags], [150, 30000, 1.1, 0.5, 6]);
+    assert.ok(Number.isNaN(v.r) && Number.isNaN(v.g) && Number.isNaN(v.b), 'barwa z broni');
+    assert.deepEqual({ ...f.args[1] }, car);
+    rc.writer.deathRayHit(7, 1, 5, 6, 0.6, 0.8, 18000, 24000, hull, 1, 3210, car);
+    const h = last(calls, 'deathRayHit');
+    assert.deepEqual(h.args.slice(0, 8), [7, 1, 5, 6, 0.6, 0.8, 18000, 24000]);
+    assert.equal(h.args[8], hull); assert.equal(h.args[9], 1); assert.equal(h.args[10], 3210);
+    assert.deepEqual({ ...h.args[11] }, car);
+    rc.writer.deathRayState(7, 6800, 0);
+    assert.deepEqual(last(calls, 'deathRayState').args, [7, 6800, 0]);
+    const owner = {};
+    rc.writer.deathRayCharge(owner, 1, 2, -40, 0.5, 0.3, 1 / 60, 1.5, [1, 0.2, 0.1], car, 9000);
+    const c1 = last(calls, 'deathRayCharge');
+    assert.deepEqual(c1.args.slice(0, 7), [1, 2, -40, 0.5, 0.3, 1 / 60, 1.5]);
+    assert.deepEqual([...c1.args[7]], [1, 0.2, 0.1]);
+    const state = c1.args[8];
+    assert.ok(state && typeof state === 'object');
+    assert.deepEqual({ ...c1.args[9] }, car);
+    assert.equal(c1.args[10], 9000);
+    rc.writer.deathRayCharge(owner, 1, 2, 0, 0.5, 0.6, 1 / 60, 1, null, null, 0);
+    const c2 = last(calls, 'deathRayCharge');
+    assert.equal(c2.args[8], state, 'ten sam stan rozkazu');
+    assert.equal(c2.args[7], null, 'bez barwy — barwa broni');
   });
 });
 

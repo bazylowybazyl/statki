@@ -149,6 +149,7 @@ export class BeltFog {
     this.fgGroup = new THREE.Group();
     this.fgGroup.name = 'AsteroidBelt:fogFg';
     this._macroCache = new Map();
+    this._holeVersion = field.holeVersion || 0;
     this.U = {
       rockLit: uniform(new THREE.Vector3(...this.look.rockLit)),
       rockShade: uniform(new THREE.Vector3(...this.look.rockShade)),
@@ -284,8 +285,10 @@ export class BeltFog {
     let v = this._macroCache.get(key);
     if (v === undefined) {
       const m = this.field.sampleMacro(wx, wy);
-      const fog = m.weight * (0.22 + 0.78 * Math.min(1, m.cluster * 1.15));
-      v = [fog, m.ice, stormIntensity(this.field.seed, wx, wy, m.cluster)];
+      // Wyrwa po wydobyciu rozrzedza mgłę jak skały (m.hole); źródło gazu (m.gas — dziś 0) dołożyłoby swoją.
+      const fog = m.weight * (0.22 + 0.78 * Math.min(1, m.cluster * 1.15)) * m.hole + m.gas;
+      // [mgła, lód, burza, x, y] — położenie do unieważnienia przy wyrwie.
+      v = [fog, m.ice, stormIntensity(this.field.seed, wx, wy, m.cluster), wx, wy];
       if (this._macroCache.size > 20000) this._macroCache.clear();
       this._macroCache.set(key, v);
     }
@@ -306,6 +309,22 @@ export class BeltFog {
     this.U.sunDir.value.set(sdx / sl, sdy / sl);
     this.U.time.value = f.time;
     this.U.sunOcc.value = f.sunOcc ? 1 : 0;
+    // Nowe wyrwy (field.setHoles): próbki i płaty tylko tam, gdzie zmiana dotyka (wyrwa w innej części pasa
+    // nie przebudowuje mgły w kadrze).
+    if ((this.field.holeVersion || 0) !== this._holeVersion) {
+      const seen = this._holeVersion;
+      this._holeVersion = this.field.holeVersion || 0;
+      for (const [key, v] of this._macroCache) {
+        if (this.field.holesTouch(seen, v[3], v[4], v[3], v[4])) this._macroCache.delete(key);
+      }
+      for (const s of this.slices) {
+        if (!(s.step > 0)) continue;
+        const half = (GRID / 2 + 1) * s.step;
+        const cx = (s.gx + 0.5) * s.step;
+        const cy = (s.gy + 0.5) * s.step;
+        if (this.field.holesTouch(seen, cx - half, cy - half, cx + half, cy + half)) s.step = 0;
+      }
+    }
     for (const s of this.slices) {
       const def = s.def;
       // Płytkie płaty w passie gry: kamera ortho, kadr bez rozszerzenia perspektywy.

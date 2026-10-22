@@ -23,6 +23,7 @@ import { resourcePrice } from '../stationEconomy.js';
 import { snapshotMarket, findTradeOpportunities, netProfit } from './tradeMarket.js';
 import { chooseRoute } from './travelNetwork.js';
 import { convoyInterceptChance, escortCost, ESCORT_MODEL } from './convoy.js';
+import { FALLBACK_HOME_PORT } from '../../data/markets.js';
 
 /**
  * Profile agentów. Różnica sprowadza się do JEDNEJ rzeczy — ile ryzyka wolno
@@ -36,6 +37,12 @@ export const AGENT_PROFILE = Object.freeze({
   /** Śmiałek. Uzbrojony, wchodzi tam, gdzie marża jest największa. */
   BOLD: 'bold'
 });
+
+/**
+ * Jaką część kapitału kupiec wkłada w jeden ładunek. Reszta zostaje na eskortę,
+ * paliwo i odkup statków — kupiec przy zerze stoi w porcie na zawsze.
+ */
+export const AFFORD_SHARE = 0.85;
 
 const PROFILES = Object.freeze({
   [AGENT_PROFILE.CAUTIOUS]: { maxRisk: 0.08, minProfit: 200, escortPower: 0, boldness: 0.6 },
@@ -255,11 +262,20 @@ export function findBestTrade(agent, quotes, network, options = {}) {
   ];
 
   let best = null;
-  for (const okazja of okazje) {
+  for (const pelna of okazje) {
     // Agent musi mieć czym zapłacić ZA TOWAR — to jest różnica wobec przewoźnika,
-    // który wozi cudze i ryzykuje tylko statkiem.
-    const stake = okazja.buyPrice * okazja.units;
-    if (stake > agent.capital) continue;
+    // który wozi cudze i ryzykuje tylko statkiem. Na pełną ładownię drogiego
+    // podzespołu go nie stać (540 podstaw uzbrojenia to ~750 tys. CR), więc
+    // bierze tyle, na ile ma — wcześniej odrzucał takie okazje w całości
+    // i drogie podzespoły nie jeździły z rąk kupców wcale.
+    const naKapital = Math.floor(agent.capital * AFFORD_SHARE / Math.max(pelna.buyPrice, 1e-6));
+    const okazja = naKapital >= pelna.units ? pelna : {
+      ...pelna,
+      units: naKapital,
+      mass: naKapital * (pelna.mass / Math.max(1, pelna.units)),
+      gross: pelna.marginPerUnit * naKapital
+    };
+    if (okazja.units <= 0) continue;
 
     // Kupiec stoi tam, gdzie skończył poprzedni kurs. Okazja u kogoś innego
     // nadal jest okazją — trzeba tam tylko dolecieć PUSTO i za to zapłacić.
@@ -329,7 +345,7 @@ export function findBestDig(agent, quotes, network, options = {}) {
       let kupiec = null;
       for (const [, quote] of quotes) {
         const cena = quote.prices.get(resourceId);
-        if (!cena || cena.room < units) continue;
+        if (!cena || cena.wanted === false || cena.room - (cena.inbound || 0) < units) continue;
         if (!kupiec || cena.bid > kupiec.cena.bid) kupiec = { station: quote.station, cena };
       }
       if (!kupiec) continue;
@@ -459,7 +475,7 @@ export function summarizeAgents(registry) {
  * ochrony i nie powinna jej mieć.
  */
 export function buildMerchants(registry, ports, economyScale = 1, options = {}) {
-  const activePorts = Array.isArray(ports) && ports.length ? ports : ['earth'];
+  const activePorts = Array.isArray(ports) && ports.length ? ports : [FALLBACK_HOME_PORT];
   const scale = Math.max(0.1, Number(economyScale) || 1);
   const soloCount = Math.max(4, Math.round((options.soloPerScale ?? 6) * Math.sqrt(scale)));
   const caravanCount = Math.max(2, Math.round((options.caravansPerScale ?? 1) * Math.sqrt(scale)));
@@ -504,8 +520,8 @@ export function buildMerchants(registry, ports, economyScale = 1, options = {}) 
 }
 
 /** Notowania — wygodne opakowanie, żeby wołający nie znał `tradeMarket`. */
-export function marketSnapshot(stations, getEconomy) {
-  return snapshotMarket(stations, getEconomy);
+export function marketSnapshot(stations, getEconomy, options = {}) {
+  return snapshotMarket(stations, getEconomy, options);
 }
 
 /** Cena, po której agent kupi u siebie w porcie — do wyceny startowej. */

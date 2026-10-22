@@ -7,11 +7,11 @@ import {
   updateCombatPressure
 } from './capitalAiTuning.js';
 import { getBattleSlot } from './fleetCoordinator.js';
-import { AWARENESS_CONFIG } from './fleetAwareness.js';
+import { AWARENESS_CONFIG, SIDE_FRIENDLY, fleetStanceOverride } from './fleetAwareness.js';
 import { isCloakHidden } from '../game/cloak.js';
 import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import { chargeTimeOf, createChargeState, stepCharge, cancelCharge, CHARGE_FIRE, CHARGE_CHARGING } from '../game/weaponCharge.js';
-import { mountFireArc } from '../game/weaponAim.js';
+import { MOUNT_ARCS, mountFireArc } from '../game/weaponAim.js';
 import { AI_SNAP_FIGHTER, trafficAvoidanceObjects, trafficAvoidanceRange, trafficAvoidanceSnapshot } from './aiNeighborKernels.js';
 import { getWreckIndex, wreckLowerBound } from './aiWreckIndex.js';
 import { npcHasEngineBurst, stepNpcShipSystem } from './npcShipSystem.js';
@@ -1013,9 +1013,161 @@ function pickGroupFocus(npc, slot, own) {
   if (!leader || leader.dead) return own;
   const lt = (leader.forceTarget && !leader.forceTarget.dead) ? leader.forceTarget : leader.target;
   if (!lt || lt === own || lt.dead || lt.destroyed || isProjectileTarget(lt)) return own;
-  if (slot.stance === 'engage' && own) return own;
+  if ((slot.stance === 'engage' || slot.stance === 'charge') && own) return own;
   if (window.isEnemyUnit && !window.isEnemyUnit(npc, lt)) return own;
   return mayLeaveFormation(npc, slot, lt) ? lt : own;
+}
+
+// ============================================================================
+// NATARCIE (postawa 'charge' — scena „Wojna”, 2026-10-19)
+// ============================================================================
+// User: „wychodzą z warpa jednostki i naprzeciwko nich po chwili też ... obydwa się o siebie rozbijają; lecenie
+// à la Star Wars, a nie stanie pasywne”. Okręt w natarciu nie trzyma dystansu bojowego: PODEJŚCIE na punkt obok celu
+// (burta w burtę — odstęp `passGap` klasy + promienie, po stronie, po której cel już jest: bez przecinania jego dziobu),
+// WYBIEG za cel na prosto, NAWRÓT po łuku bez hamowania — kurs zadany najwyżej `turnStep` od kierunku lotu, więc
+// prędkość zostaje przy ~80% (pilot hamuje tylko składową wzdłuż lotu do cap · cos turnStep) — i kolejne podejście.
+// Pilot bez hamowania przed punktem (`noBrake`), kadłub w kierunku lotu; ogranicznik przeszkód i unik CPA zostają.
+// Lotniskowce (bronią są myśliwce) i okręty bez specyfikacji lotu — jak przy ATAKU (miejsce za linią).
+// Stan w `npc.__charge` (phase 'in' | 'out' | 'turn'); strojenie na żywo: window.ChargeTune.
+export const CHARGE_TUNE = {
+  passGap: { frigate: 700, destroyer: 1000, battleship: 1500, carrier: 3000, supercapital: 2400 },
+  startRange: 1.5,   // podejście zaczyna się, gdy cel bliżej niż dystans bojowy × tyle + passGap (dalej — szyk)
+  leadMax: 2.5,      // [s] wyprzedzenie ruchu celu w podejściu
+  passAbeam: 0.3,    // podejście kończy się, gdy cel jest przed nami mniej niż passGap × tyle (na trawersie)
+  extend: 1.6,       // wybieg: od celu passGap + promień skrętu × tyle (promień przy 0,8 maxSpeed)
+  outMax: 8,         // [s] najdłuższy wybieg
+  turnStep: 0.55,    // [rad] nawrót: kurs zadany najwyżej tyle od kierunku lotu (0,75 — więcej zetknięć w tłumie)
+  turnDone: 0.35,    // [rad] nawrót skończony, gdy cel leży tyle od kierunku lotu
+  aimAhead: 4000,    // [j.] marchewka wybiegu i nawrotu przed dziobem
+  runMax: 30         // [s] podejście dłuższe — od nowa (cel ucieka szybciej)
+};
+if (typeof window !== 'undefined') window.ChargeTune = CHARGE_TUNE;
+
+function chargeEligible(npc) {
+  const type = String(npc.type || '').toLowerCase();
+  if (type.includes('carrier') || type.includes('freighter')) return false;
+  return !!resolveShipFlightSpec(npc);
+}
+
+// Odstęp burt przy mijaniu: klasa × pas okrętu (0,85–1,45 — okręty bijące jeden cel mijają go w różnych odległościach,
+// zamiast ciągnąć gęsiego jednym torem i hamować przed sobą) + promienie.
+function chargePassGap(npc, target, spec) {
+  const g = CHARGE_TUNE.passGap[spec?.flightClass] ?? 1200;
+  if (!(npc.__chargeLane > 0)) npc.__chargeLane = 0.85 + 0.6 * Math.random();
+  return g * npc.__chargeLane + (Number(npc.radius) || 100) + (Number(target.radius) || 100);
+}
+
+// Czy okręt w natarciu prowadzi przelot: trwający, flota w fazie walki (front przy wrogu — nikt nie stoi w linii)
+// albo cel w zasięgu podejścia (zbliżanie: szyk idzie razem, z niego wychodzą ci, do których wróg już doszedł).
+function chargeWants(npc, target, slot) {
+  if (isProjectileTarget(target) || !chargeEligible(npc)) return false;
+  const c = npc.__charge;
+  if (c && c.phase) return true;
+  if (slot.phase === 'engage') return true;
+  const tk = readTargetKinematics(target, _reachScratch);
+  const spec = resolveShipFlightSpec(npc);
+  const reach = resolveCapitalIdealRange(npc, target) * CHARGE_TUNE.startRange + chargePassGap(npc, target, spec);
+  return Math.hypot(tk.x - npc.x, tk.y - npc.y) <= reach;
+}
+
+function chargeReset(npc) {
+  const c = npc.__charge;
+  if (c && c.phase) { c.phase = ''; c.target = null; }
+}
+
+// Strona mijania: cel zostaje po tej stronie, po której jest (względem kierunku lotu); punkt podejścia — obok celu,
+// prostopadle do linii wzroku. +1 — w prawo od linii wzroku (y w dół: obrót o +90°).
+function chargeSide(hx, hy, dx, dy) {
+  return (hx * dy - hy * dx) < 0 ? 1 : -1;
+}
+
+function chargeRun(npc, target, dt) {
+  const T = CHARGE_TUNE;
+  const spec = resolveShipFlightSpec(npc);
+  let c = npc.__charge;
+  if (!c) c = npc.__charge = { phase: '', target: null, side: 1, t: 0, ox: 1, oy: 0 };
+  const vx = Number(npc.vx) || 0;
+  const vy = Number(npc.vy) || 0;
+  const sp = Math.hypot(vx, vy);
+  const hx = sp > 50 ? vx / sp : Math.cos(npc.angle || 0);
+  const hy = sp > 50 ? vy / sp : Math.sin(npc.angle || 0);
+  // Cel podejścia trzymany do jego końca; wybieg i nawrót biorą bieżący cel mózgu.
+  if (!c.phase) {
+    c.phase = 'in';
+    c.t = 0;
+    c.target = target;
+    c.side = 0;
+  } else if (c.phase !== 'in' || !c.target || c.target.dead || c.target.destroyed) {
+    c.target = target;
+  }
+  c.t += dt;
+  const tgt = c.target;
+  const tk = readTargetKinematics(tgt);
+  let dx = tk.x - npc.x;
+  let dy = tk.y - npc.y;
+  let dist = Math.hypot(dx, dy) || 1;
+  const gap = chargePassGap(npc, tgt, spec);
+  const ideal = resolveCapitalIdealRange(npc, tgt);
+  let aimX = NaN;
+  let aimY = NaN;
+  if (c.phase === 'in') {
+    if (!c.side) c.side = chargeSide(hx, hy, dx, dy);
+    const along = dx * hx + dy * hy;
+    if (along < gap * T.passAbeam && c.t > 0.5) {
+      c.phase = 'out';
+      c.t = 0;
+      c.ox = hx;
+      c.oy = hy;
+    } else if (c.t > T.runMax) {
+      c.phase = 'turn';
+      c.t = 0;
+    } else {
+      // punkt obok celu (z wyprzedzeniem jego ruchu), po stronie mijania
+      const lead = Math.min(T.leadMax, dist / Math.max(sp, 1));
+      const ux = dx / dist;
+      const uy = dy / dist;
+      aimX = tk.x + tk.vx * lead - uy * gap * c.side;
+      aimY = tk.y + tk.vy * lead + ux * gap * c.side;
+    }
+  }
+  if (c.phase === 'out') {
+    const turnR = (spec.maxSpeed * 0.8) / Math.max(0.05, spec.turnRate);
+    if (dist > gap + turnR * T.extend || c.t > T.outMax) {
+      c.phase = 'turn';
+      c.t = 0;
+    } else {
+      aimX = npc.x + c.ox * T.aimAhead;
+      aimY = npc.y + c.oy * T.aimAhead;
+    }
+  }
+  if (c.phase === 'turn') {
+    // nawrót na bieżący cel mózgu
+    const tk2 = readTargetKinematics(c.target);
+    dx = tk2.x - npc.x;
+    dy = tk2.y - npc.y;
+    dist = Math.hypot(dx, dy) || 1;
+    const vAng = Math.atan2(hy, hx);
+    const err = wrapAng(Math.atan2(dy, dx) - vAng);
+    if (Math.abs(err) < T.turnDone) {
+      // nawrót skończony — nowe podejście (strona od nowa)
+      c.phase = 'in';
+      c.t = 0;
+      c.side = chargeSide(hx, hy, dx, dy);
+      const ux = dx / dist;
+      const uy = dy / dist;
+      aimX = tk2.x - uy * gap * c.side;
+      aimY = tk2.y + ux * gap * c.side;
+    } else {
+      const a = vAng + clampNum(err, -T.turnStep, T.turnStep);
+      aimX = npc.x + Math.cos(a) * T.aimAhead;
+      aimY = npc.y + Math.sin(a) * T.aimAhead;
+    }
+  }
+  return capitalArriveControls(npc, aimX, aimY, {
+    arrival: 0,
+    noBrake: true,
+    speedMode: dist > ideal * 2.5 ? 'cruise' : 'combat'
+  });
 }
 
 // Ruch okrętu w szyku floty — wspólny dla fregat, niszczycieli i pancerników:
@@ -1031,6 +1183,14 @@ function steerWithFormation(npc, slot, target, dt, engageArrival, slotArrival) {
   if (slot && slot.kind === 'flank') {
     computeFlankControls(npc, slot);
     return 'flank';
+  }
+  // NATARCIE: przeloty burta w burtę i nawroty bez stania (lotniskowce — jak ATAK, za linią).
+  if (slot && slot.stance === 'charge') {
+    if (target && chargeWants(npc, target, slot)) {
+      chargeRun(npc, target, dt);
+      return 'charge';
+    }
+    chargeReset(npc);
   }
   if (target) {
     let engage;
@@ -1100,16 +1260,35 @@ function resolveMountShape(npc, out) {
 const MAIN_ARC_TOLERANCE = 0.12;
 const _mountShape = { halfLen: 1, halfWid: 1 };
 
+// Wpis działa sprzed przebudowy dla tego samego gniazda i tej samej broni; zabrany wpis znika z kopii listy, żeby nie
+// wrócił dwa razy.
+function takeKeptWeapon(prev, hp, def) {
+  for (let i = 0; i < prev.length; i++) {
+    const w = prev[i];
+    if (w && w.hpOffset === hp && w.id === def.id) {
+      prev[i] = null;
+      return w;
+    }
+  }
+  return null;
+}
+
 function initAutonomousWeapons(npc) {
   if (npc.autoWeapons !== undefined && npc._weaponsInit) return;
 
   npc._weaponsInit = true;
+  // Przebudowa po zmianie układu (utrata gniazda — markHardpointDestroyed w index.html, broń z konsoli dev): działo,
+  // które zostało (to samo gniazdo, ta sama broń), wraca TYM SAMYM wpisem — z przeładowaniem, amunicją, ładowaniem,
+  // celem i kątem lufy. Dawniej każde stracone gniazdo dawało wszystkim wieżom okrętu przeładowanie 0–2 s i pełną
+  // amunicję (promień śmierci Colossusa strzelał znów po 0–2 s zamiast 45 s, wyrzutnie dostawały rakiety).
+  const prev = Array.isArray(npc.autoWeapons) && npc.autoWeapons.length > 0 ? npc.autoWeapons.slice() : null;
   npc.autoWeapons = [];
   npc._shipScanCaches = Object.create(null);
 
   if (npc.weapons) {
     const shape = resolveMountShape(npc, _mountShape);
-    const addWeaponsFromGroup = (group, groupName, arcDefault, prefers, scanProfile) => {
+    // `strict` — cel wyłącznie z `prefers` (inne rodzaje pomijane, nie z wynikiem 0): superlaser nie traci 45 s na fregatę.
+    const addWeaponsFromGroup = (group, groupName, arcDefault, prefers, scanProfile, strict = false) => {
       if (!group || !Array.isArray(group)) return;
       for (let i = 0; i < group.length; i++) {
         const loadout = group[i];
@@ -1119,7 +1298,13 @@ function initAutonomousWeapons(npc) {
         const localY = loadout.hp?.y || loadout.hp?.pos?.y || 0;
         let baseAngle = loadout.hp?.rot || loadout.hp?.pos?.rot;
         let arc = arcDefault;
-        if (typeof baseAngle !== 'number') {
+        if (groupName === 'builtin') {
+          // Gniazdo builtin z wieżą (promień śmierci Colossusa): `rot` z edytora w STOPNIACH (90 = dziób —
+          // editorDegToForward: x = sin, y = −cos), łuk broni specjalnej (270°) wokół tego kierunku.
+          const rot = Number(loadout.hp?.rot ?? loadout.hp?.pos?.rot);
+          baseAngle = (Number.isFinite(rot) ? rot : 90) * Math.PI / 180 - Math.PI / 2;
+          arc = MOUNT_ARCS.special.half + MAIN_ARC_TOLERANCE;
+        } else if (typeof baseAngle !== 'number') {
           if (groupName === 'main' || groupName === 'special') {
             const fireArc = mountFireArc(loadout.hp, 'main', shape.halfLen, shape.halfWid);
             baseAngle = fireArc.center;
@@ -1127,6 +1312,18 @@ function initAutonomousWeapons(npc) {
           } else if (localY > 15) baseAngle = Math.PI / 2;
           else if (localY < -15) baseAngle = -Math.PI / 2;
           else baseAngle = 0;
+        }
+
+        const kept = prev ? takeKeptWeapon(prev, loadout.hp, def) : null;
+        if (kept) {
+          kept.mountAngle = baseAngle;
+          kept.arc = arc;
+          kept.group = groupName;
+          kept.prefers = prefers;
+          kept.strict = strict;
+          kept.scanProfile = scanProfile;
+          npc.autoWeapons.push(kept);
+          continue;
         }
 
         let startAmmo = null;
@@ -1148,6 +1345,9 @@ function initAutonomousWeapons(npc) {
           // Obrona punktowa (gniazdo aux): kadłub spoza `prefers` to brak celu,
           // chyba że okręt ma PD CHIP (getTargetScoreForWeapon).
           pd: isPointDefenseWeapon(def),
+          strict,
+          // Szeroka wiązka (promień śmierci: rzaz ± cutHalfWidth): linia ognia z pasem, nie z punktem pocisku.
+          losPad: def.deathRay ? (Number(def.deathRay.cutHalfWidth) || 55) + 60 : 0,
           scanProfile
         });
       }
@@ -1157,6 +1357,12 @@ function initAutonomousWeapons(npc) {
     addWeaponsFromGroup(npc.weapons.special, 'special', 0.55, ['battleship', 'destroyer', 'frigate'], 'slow');
     addWeaponsFromGroup(npc.weapons.aux, 'aux', Math.PI * 2, ['rocket', 'fighter'], 'fast');
     addWeaponsFromGroup(npc.weapons.missile, 'missile', 1.2, ['battleship', 'destroyer', 'frigate', 'fighter'], 'slow');
+    // Broń wbudowana z wieżą (promień śmierci supercapitala Terra Nova, 2026-10-20): jeden cel — okręt kapitałowy,
+    // potem niszczyciel; fregaty i myśliwce pomija. Inne bronie builtin NPC (bez wieży) zostają poza AI.
+    if (Array.isArray(npc.weapons.builtin) && npc.weapons.builtin.some((l) => l?.weapon?.builtinTurret === true)) {
+      addWeaponsFromGroup(npc.weapons.builtin.filter((l) => l?.weapon?.builtinTurret === true), 'builtin', 0.55,
+        ['battleship', 'destroyer'], 'slow', true);
+    }
   }
 
   // Układ broni mógł się zmienić — przelicz preferowane ustawienie kadłuba.
@@ -1566,6 +1772,7 @@ export function processAutonomousWeapons(npc, dt) {
         const candidateKind = cache.enemyKinds[i];
         // PD bez chipa: z okrętów tylko myśliwce (rakiety zebrała pętla wyżej).
         if (weapon.pd && !pdHullsAllowed && candidateKind !== 'fighter') continue;
+        if (weapon.strict && weapon.prefers.indexOf(candidateKind) < 0) continue;
 
         const absTargetAngle = cache.enemyAngles[i];
         const angleDiff = Math.abs(window.wrapAngle(absTargetAngle - restAngle));
@@ -1627,17 +1834,22 @@ export function processAutonomousWeapons(npc, dt) {
         const targetIsRocket = bestTarget.type === 'rocket' || bestTarget.type === 'torpedo';
         let lineBlocked = false;
         if (!targetIsRocket) {
+          // Szeroka wiązka (`losPad` — promień śmierci: sojusznik przy osi dostałby rzaz) liczy linię ze swoim pasem i
+          // bez pamięci LOS wywołania (ta trzyma linię pocisku). Strzał raz na kilkadziesiąt sekund — koszt bez znaczenia.
+          const wide = weapon.losPad > 0;
           let losIndex = -1;
-          for (let i = 0; i < losCount; i++) {
+          for (let i = 0; i < losCount && !wide; i++) {
             if (losTargets[i] === bestTarget) { losIndex = i; break; }
           }
           if (losIndex >= 0) {
             lineBlocked = losBlocked[losIndex] === true;
           } else {
-            lineBlocked = window.isLineOfFireBlocked?.(npc, bestTarget, range) === true;
-            losTargets[losCount] = bestTarget;
-            losBlocked[losCount] = lineBlocked;
-            losCount++;
+            lineBlocked = window.isLineOfFireBlocked?.(npc, bestTarget, range, weapon.losPad) === true;
+            if (!wide) {
+              losTargets[losCount] = bestTarget;
+              losBlocked[losCount] = lineBlocked;
+              losCount++;
+            }
           }
         }
         if (targetIsRocket && !(bestTarget.life > 0)) {
@@ -1746,7 +1958,7 @@ export function aiFrigate(sim, npc, dt) {
   // Smycz eskorty bez miejsca w szyku (dowódca floty nie dał slotu): skrzydło
   // wsparcia poza ATAKIEM nie oddala się od lidera dalej niż promień obrony.
   // Z miejscem w szyku smycz niesie slot (leash / engageR postawy).
-  const guardOrder = isSupport && (window.SupportWing?.order || 'guard') !== 'engage';
+  const guardOrder = isSupport && (window.SupportWing?.order || 'guard') !== 'engage' && !fleetStanceOverride(SIDE_FRIENDLY);
   if (!slot && guardOrder && guardian && distToGuard > AWARENESS_CONFIG.guardRadius) {
     target = null;
     npc.target = null;

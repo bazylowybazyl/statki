@@ -65,6 +65,9 @@ import { GlowSprites } from './glowSprites.js';
 import { BeltVeil } from './beltVeil.js';
 import { MinedRocks } from './minedRocks.js';
 import { MiningView } from './miningView.js';
+import { WarpDebris } from './warpDebris.js';
+import { WARP_STARS, WARP_STAR_CAMERA } from '../warp/stars.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 
 /** Warstwy passów Core3D: gra (ortho) i tło (perspektywa). */
 export const BELT_LAYER_PLAY = 0;
@@ -79,6 +82,12 @@ const RENDER_ORDER = Object.freeze({ rocks: 1, minerals: -70, backRocks: 2 });
 // Wygaszanie pasm tła przy oddaleniu (demo): gruz znika przed mapą taktyczną, środek
 // przy samym dole zakresu zoomu, głębia zostaje.
 const BACK_FADE = Object.freeze({ [BELT_BAND.RUBBLE]: [0.22, 0.09], [BELT_BAND.MID]: [0.07, 0.03], [BELT_BAND.DEEP]: null });
+
+// Tryb skoku pasa (smugi skał — warpDebris.js): kamera szybsza niż ON włącza (pole nie nadąża), wolniejsza niż OFF
+// wyłącza; szybsza niż CUT — skok pozycji (teleport, cięcie), nie przelot.
+const WARP_MODE_ON = 30000;
+const WARP_MODE_OFF = 20000;
+const WARP_CUT_SPEED = 1.2e6;
 
 // Głęboka noc (dema: nightKnee) — w src/game/asteroidFieldLight.js (platforma wydobywcza liczy
 // tę samą wartość); tu re-eksport dla modułów obrazu.
@@ -166,6 +175,7 @@ export class AsteroidBelt {
     this.mined = null;
     this.miningView = null;
     this._takenVersion = -1;
+    this._holeVersion = 0;
     this._minedFrame = { zoom: 1, originX: 0, originY: 0, camX: 0, camY: 0 };
     this._miningFrame = { dt: 0, time: 0, originX: 0, originY: 0, zoom: 1, ship: null, sunT: null };
     this._miningShip = { x: 0, y: 0 };
@@ -176,7 +186,7 @@ export class AsteroidBelt {
     this.stats = {
       active: false, cpuMs: 0, lights: 0, shipLights: 0, rockLights: 0, rocks: [0, 0, 0, 0], minerals: 0,
       shadowMaps: 0, shadowCasters: 0, volumeColumns: 0, storm: 0, strikes: 0, segments: 0, giantsReady: 0,
-      pending: 0, fieldMapBuilds: 0
+      pending: 0, fieldMapBuilds: 0, warpDebris: 0
     };
     this._step = {
       name: 'asteroidBelt',
@@ -262,6 +272,12 @@ export class AsteroidBelt {
         bandIndex: band, perspective: true, renderOrder: RENDER_ORDER.backRocks, minPx: 0.8, fadeZoom: BACK_FADE[band], maxLod: 3, sunT: this.sunT
       }));
     }
+    // Smugi skał w skoku gracza (warpDebris.js, 2026-10-19): pula skał w przestrzeni widocznej warpa — wariant materiału
+    // tła ze smugą (graf raz); siatki pod `root` — rozgrzewka razem z passem tła pola.
+    this.warpDebris = new WarpDebris({
+      parent: root, layer: BELT_LAYER_BACK, bank: this.bank, material: new RockNodeMaterial({ shared, backdrop: true, smear: true }),
+      field: this.field, sunT: this.sunT, renderOrder: RENDER_ORDER.backRocks
+    });
     this.veil = new BeltVeil({ parent: root, layer: BELT_LAYER_BACK });
     this.glow = new GlowSprites({ parent: root, capacity: 4096, layer: BELT_LAYER_PLAY });
     this.sparks = new Sparks({ renderer, parent: root, layer: BELT_LAYER_PLAY });
@@ -408,7 +424,9 @@ export class AsteroidBelt {
   prepareFrame(time, dt, ship, player2, npcs) {
     const i = this._in;
     i.time = Number(time) || 0;
-    i.dt = Math.max(0, Number(dt) || 0);
+    // dt SUMOWANE do zużycia przez krok pasa (raz na klatkę rAF Core3D.fx): kilka klatek gry na jedną klatkę rAF
+    // (harness dema: runFrames) nie gubi czasu iskier, burzy i smug skał w skoku.
+    i.dt = (i.prepared ? i.dt : 0) + Math.max(0, Number(dt) || 0);
     i.ship = ship || null;
     i.player2 = player2 || null;
     i.npcs = npcs || null;
@@ -434,8 +452,11 @@ export class AsteroidBelt {
     let x = Number(cam1.x) || 0;
     let y = Number(cam1.y) || 0;
     let zoom = z1;
-    let viewW = bufW;
-    let viewH = bufH;
+    // Obrócony kadr (cam.roll — viewRoll.js, obrót kursem w skoku): pole liczy pudło osi świata obejmujące go
+    // (warstwy, mapa pola, mgła, zasłona) — bez tego rogi kadru zostawały bez skał, a brzeg zasłony wchodził w kadr.
+    const rh = rolledHalfExtents(bufW * 0.5, bufH * 0.5, cameraRoll(cam1), this._rollHalf || (this._rollHalf = { hw: 0, hh: 0 }));
+    let viewW = rh.hw * 2;
+    let viewH = rh.hh * 2;
     const split = !!RenderWorld.splitScreenMode;
     const cam2 = split ? RenderWorld.camera2 : null;
     if (cam2 && !Core3D.isFreePerspectiveCamera(cam2)) {
@@ -531,6 +552,22 @@ export class AsteroidBelt {
     input.prepared = false;
     this._dt = dt;
     const viewOk = this.enabled && this._computeView();
+    // TRYB SKOKU (gwiazdy w smugach — WARP_STARS.stretch, skok gracza — i kamera naprawdę leci: > WARP_MODE_ON j/s,
+    // gaśnie < WARP_MODE_OFF; w ładowaniu statek stoi, pole zostaje): pole pasa wyłączone — przy prędkości warpa
+    // komórki nie nadążały (~8–9 ms CPU na klatkę, kilka migających skał, maska zacienienia pola ze starego okna
+    // czerniła kadłub) — zamiast niego smugi skał (warpDebris.js) z gęstością pola w punkcie kamery.
+    const stretch = Number(WARP_STARS.stretch.value) || 0;
+    const camSpeed = viewOk ? this._trackCameraSpeed(dt) : 0;
+    this._warpMode = !!this.warpDebris && stretch > this.warpDebris.cfg.minStretch
+      && camSpeed > (this._warpMode ? WARP_MODE_OFF : WARP_MODE_ON);
+    if (viewOk && this._warpMode) {
+      this._deactivate();
+      this._frameActive = false;
+      this._warpStep(ctx, stretch);
+      this.stats.cpuMs = performance.now() - t0;
+      return;
+    }
+    if (this.warpDebris) this.warpDebris.hide();
     const touches = viewOk && this._viewTouchesBelt();
     if (!touches) {
       this._deactivate();
@@ -580,7 +617,17 @@ export class AsteroidBelt {
     }
     // Olbrzymy: widoki GPU gotowych siatek (budowę zleca świat pasa gry), przekrój pod stropem.
     this._updateGiants(dt, ox, oy);
-    // Mapa pola nad kadrem (słońce, pył, lód, burze): mgła, ośrodek, maska Core3D.
+    // Mapa pola nad kadrem (słońce, pył, lód, burze): mgła, ośrodek, maska Core3D. Nowe wyrwy (field.setHoles):
+    // mapa od nowa — pył rzednie, a cień pól przeliczył świat pasa gry przed operacją dla repliki.
+    if ((this.field.holeVersion || 0) !== this._holeVersion) {
+      const seen = this._holeVersion;
+      this._holeVersion = this.field.holeVersion || 0;
+      // Mapa (lokalnie, y w górę) → świat gry; z klinem cienia pól za wyrwą (kanał R = słońce).
+      const r = this.fieldMap.rect;
+      if (this.fieldMap.valid && this.field.holesTouch(seen, r.x0 + ox, -(r.y0 + r.h) + oy, r.x0 + r.w + ox, -r.y0 + oy, true)) {
+        this.fieldMap.invalidate();
+      }
+    }
     const mf = this._mapFrame;
     mf.viewW = f.viewW; mf.viewH = f.viewH; mf.focalPx = f.focalPx;
     mf.originX = ox; mf.originY = oy;
@@ -668,6 +715,48 @@ export class AsteroidBelt {
     for (let i = 0; i < this.layers.length; i++) pending += this.layers[i].stats.pending;
     st.pending = pending;
     st.fieldMapBuilds = this.fieldMap.builds;
+  }
+
+  // Klatka trybu skoku: grupa pola na początku pul (pole puste — po powrocie przepisze swoje dane od nowa), słońce
+  // i zegar skał, smugi skał w kadrze tej klatki (prędkość przepływu = kamera gwiazd, długość smugi z ich rozciągnięcia).
+  _warpStep(ctx, stretch) {
+    const origin = ctx.origin;
+    this.root.position.set(origin.x, origin.y, 0);
+    this.root.updateMatrixWorld(true);
+    this._originX = NaN;
+    this._originY = NaN;
+    this._updateSun();
+    this.shared.time.value = this.time;
+    const v = this._view;
+    const wf = this._warpFrame || (this._warpFrame = { dt: 0, camX: 0, camY: 0, originX: 0, originY: 0, frame: null, speed: 0, stretch: 0 });
+    wf.dt = this._dt;
+    wf.camX = v.x;
+    wf.camY = v.y;
+    wf.originX = origin.x;
+    wf.originY = -origin.y;
+    wf.frame = this._frame;
+    // przepływ widoczny: kamera gwiazd (limit), nie szybszy niż prawdziwa kamera (wyjście — hamowanie)
+    const cap = Number(WARP_STAR_CAMERA.speedCap) || 0;
+    wf.speed = cap > 0 ? Math.min(cap, this._camSpeed) : 0;
+    wf.stretch = stretch;
+    this.warpDebris.update(wf);
+    this.stats.warpDebris = this.warpDebris.stats.rocks;
+  }
+
+  // Prędkość kamery kadru [j/s] (wygładzona ~0,1 s) — tryb skoku. Skok pozycji szybszy niż WARP_CUT_SPEED (teleport,
+  // cięcie kamery) zeruje odczyt zamiast udawać przelot.
+  _trackCameraSpeed(dt) {
+    const v = this._view;
+    if (Number.isFinite(this._prevViewX) && dt > 0) {
+      const ddx = v.x - this._prevViewX;
+      const ddy = v.y - this._prevViewY;
+      const sp = Math.sqrt(ddx * ddx + ddy * ddy) / dt;
+      if (sp > WARP_CUT_SPEED) this._camSpeed = 0;
+      else this._camSpeed = (this._camSpeed || 0) + (sp - (this._camSpeed || 0)) * (1 - Math.exp(-dt / 0.1));
+    }
+    this._prevViewX = v.x;
+    this._prevViewY = v.y;
+    return this._camSpeed || 0;
   }
 
   // Kierunek do słońca (scena) podniesiony o kąt nad płaszczyzną — jak w skałach gry.
@@ -841,7 +930,8 @@ export class AsteroidBelt {
     const ice = m.ice || 0;
     const Tcam = this.sunT(v.x, v.y);
     const t = Math.min(1, Math.max(0, (cluster - 0.06) / (0.42 - 0.06)));
-    const target = weight * t * t * (3 - 2 * t);
+    // Wyrwa po wydobyciu rozrzedza zasłonę (m.hole); źródło gazu (m.gas — dziś 0) dołożyłoby swoją.
+    const target = weight * t * t * (3 - 2 * t) * m.hole + m.gas;
     u.veil.value = Math.min(1, target * (0.85 + 0.15 * (1 - Tcam)));
     u.sunLevel.value = Tcam;
     u.ice.value = Math.min(1, ice);

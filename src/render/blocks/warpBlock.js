@@ -20,7 +20,9 @@ const ARRIVAL_FIELDS = [
   ['emerge', 'n'], ['close', 'n'], ['tTear', 'n'], ['tBurst', 'n'], ['tClose', 'n'], ['tSettled', 'n'], ['tEnd', 'n'],
   ['seamLength', 'n'], ['seamHalfWidth', 'n'], ['emergeDist', 'n'], ['v0', 'n'], ['rushDist', 'n'], ['brake', 'n'],
   ['coast', 'n'], ['tBrake', 'n'], ['tAppear', 'n'], ['tStop', 'n'], ['x0', 'n'], ['y0', 'n'], ['sx', 'n'], ['sy', 'n'],
-  ['tSpawn', 'n'], ['pirate', 'b'], ['moving', 'b'], ['drive', 'b'], ['heraldReach', 'n'], ['pushReleaseT', 'n']
+  ['tSpawn', 'n'], ['pirate', 'b'], ['moving', 'b'], ['drive', 'b'], ['heraldReach', 'n'], ['pushReleaseT', 'n'],
+  // wyjście z pędem (2026-10-19): prędkość na końcu hamowania, ślizg i punkt przylotu (koniec ślizgu); styl zwiastuna
+  ['vExit', 'n'], ['slide', 'n'], ['ex', 'n'], ['ey', 'n'], ['heraldStyle', 's']
 ];
 const DEPARTURE_FIELDS = [
   ['id', 'N'], ['x', 'n'], ['y', 'n'], ['angle', 'n'], ['dirX', 'n'], ['dirY', 'n'], ['hullLength', 'n'],

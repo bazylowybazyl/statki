@@ -353,6 +353,14 @@
                 <p class="mm-note">Kurz podrywany przez dysze, para z przewodów paliwowych i snopy świateł w dokach.</p>
               </div>
               <div class="mm-field">
+                <div class="mm-field-label">Gazy i mgły w pasie asteroid</div>
+                <div class="menu-chip-group" role="group" aria-label="Gazy i mgły w pasie">
+                  <button class="menu-chip" data-gfx-space-gas="on">Wł.</button>
+                  <button class="menu-chip" data-gfx-space-gas="off">Wył.</button>
+                </div>
+                <p class="mm-note">Pył, siarka i lód w pasie: dysze wycinają w gazie kanały, lodowe skały odgazowują.</p>
+              </div>
+              <div class="mm-field">
                 <div class="mm-field-label">Lakier kadłubów</div>
                 <div class="menu-chip-group" role="group" aria-label="Lakier kadłubów">
                   <button class="menu-chip" data-lacquer="off">Off</button>
@@ -893,7 +901,7 @@
       npcHasPhysicalThrusters,
       syncNpcFlightState
     } from "./src/game/flight/npcFlight.js";
-    import { setFlightArrive, setFlightStop, stepShipFlight, usesShipFlightModel } from "./src/game/flight/shipFlightModel.js";
+    import { setFlightArrive, setFlightStop, stepShipFlight, usesShipFlightModel, buildShipFlightSpec, resolveShipFlightSpec } from "./src/game/flight/shipFlightModel.js";
     import {
       createNpcCollisionBody,
       loadNpcCollisionBody,
@@ -901,7 +909,8 @@
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
     import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
-    import { describeFleetFormation, getFleetPhase } from "./src/ai/fleetCoordinator.js";
+    import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
+    import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
     import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
     import { capitalCommandFreePoint, capitalCommandSeparate, capitalCommandSteer } from "./src/ai/capitalAI.js";
@@ -927,12 +936,19 @@
       reconcileLockedTargets,
       targetingVisualScale
     } from "./src/game/targetingModes.js";
-    // Tryby okrętu pod ŚPM (koło jak w Crysis): BOJOWY / TARCZE / PRZELOT / MASKOWANIE / TORPEDY / WYDOBYCIE / FLOTA.
+    // Tryby okrętu pod ŚPM (koło jak w Crysis): BOJOWY / TARCZE / HIPERCRUISE / MASKOWANIE / TORPEDY / WYDOBYCIE / FLOTA.
     import {
       SHIP_MODE_IDS, SHIP_MODE_DEFS, SHIP_MODE_DEADZONE, createShipModes, isShipMode, stanceTune, resolveShipMode,
-      shipModeFromWheelVector, openShipModeWheel, releaseShipModeWheel,
-      CRUISE_GEARS, cruiseGearMul, stepCruiseGear, shiftCruiseGearDown
+      shipModeFromWheelVector, openShipModeWheel, releaseShipModeWheel
     } from "./src/game/shipModes.js";
+    // Hipercruise (E5): automat lotu 20–40 tys. j/s i JEDNA tabela napędów gracza, NPC i ruchu v2.
+    import {
+      createHypercruise, configureHypercruise, engageHypercruise, dropHypercruise, stepHypercruise, resetHypercruise,
+      hypercruiseBusy, hypercruiseDriving, hypercruiseSpoolProgress
+    } from "./src/game/flight/hypercruise.js";
+    import {
+      HYPERCRUISE_TUNE, HYPERCRUISE_ENGINES, WARP_DRIVES, playerHullDrives, warpDriveSpeed, hypercruiseLegSpool
+    } from "./src/data/driveModes.js";
     // Koło trybów: rysunek i animacje (ikony, wachlarz, podświetlenie, błysk wyboru, echo).
     import {
       createModeWheelFx, stepModeWheelFx, noteModeWheelClose, modeWheelVisible, drawModeWheel,
@@ -1079,44 +1095,10 @@
     } from "./src/game/carrierVelocity.js";
     import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
-    import {
-      buildWarpRoutes,
-      getWarpRoute as lookupWarpRoute,
-      assignTransitRoute,
-      removeActorFromTransitQueues,
-      refreshWarpRoutes
-    } from "./src/game/transitController.js";
-    import {
-      createFleetState,
-      planShipment,
-      createShipmentOrder,
-      advanceShipmentOrders,
-      tryDeliverShipmentOrder,
-      wreckShipmentOrder,
-      recoverWreckedShipmentOrder,
-      materializeShipmentOrderView,
-      dematerializeShipmentOrderView,
-      getShipmentOrder,
-      tickCooldowns,
-      blockRoute,
-      getBlockedPairs,
-      describeCargo,
-      VAN_CLASSES,
-      SHIPMENT_STATUS,
-      SHIPMENT_OWNER_KIND,
-      DISPATCH_INTERVAL,
-      MAX_ACTIVE_VANS
-    } from "./src/game/cargoFleet.js";
-    import {
-      ECONOMY_CYCLE_SECONDS,
-      runStationEconomy,
-      seedStationStock,
-      getStationDeficits,
-      getStationSurpluses,
-      stationWantsResource,
-      describeStationRole,
-      resourcePrice
-    } from "./src/game/stationEconomy.js";
+    // Gospodarka stacji, przewozy i ceny liczą się w ruchu v2 (blok „RUCH v2”, most src/game/trafficBridge.js);
+    // gra trzyma tylko kopię rynku z mostu. Stara ekonomia (vany cargoFleet, tranzyt przez bramy, produkcja
+    // w grze, wycena z marżą doku) usunięta 2026-10-22 — E2, docs/PLAN-ekonomia-rynki.md § 3.2.
+    import { describeStationRole, resourcePrice } from "./src/game/stationEconomy.js";
     import {
       ensureSalvageManifest,
       getSalvage,
@@ -1153,6 +1135,7 @@
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { projectilePassesAlly, beamPassesAlly } from "./src/game/friendlyFire.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
+    import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
       RenderLiveDebug,
@@ -1212,6 +1195,11 @@
     import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
     import { createPirateVentsBlock } from "./src/render/blocks/pirateVentsBlock.js";
     import { createPirateBaseVents3D } from "./src/3d/pirateBaseVents3D.js";
+    // Bitwa w głębi sceny „Wojna” (2026-10-19): tłum okrętów nad i pod płaszczyzną gry, planeta w głębi, bohaterowie —
+    // sam obraz (src/3d/warBackdrop/); plan wspólny z grą (src/render/warBackdropPlan.js), stan klatki — blok warBackdrop.
+    import { createWarBackdropBlock, createWarBackdropFrame } from "./src/render/blocks/warBackdropBlock.js";
+    import { heroFocus as warHeroFocus } from "./src/render/warBackdropPlan.js";
+    import { createWarBackdrop3D } from "./src/3d/warBackdrop/warBackdrop3D.js";
     import { dryDockSegmentHit } from "./src/game/story/shipyardLayout.js";
     import { prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D (obraz); rozgrywka pasa — świat pasa
@@ -1223,6 +1211,11 @@
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
     import { HallDust, HALL_DUST_TUNE } from "./src/3d/gasField/hallDust.js";
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
+    // Gaz w otwartej przestrzeni (port dema gazy-transport — docs/PLAN-gazy-kosmos.md): wejście klatki pakuje gra
+    // (pas: obwiednia z pola, odgazowanie skał), krok Core3D.fx „gaz przestrzeni” czyta tylko tę tablicę.
+    import { SpaceGas, SPACE_GAS_TUNE } from "./src/3d/spaceGas/spaceGas.js";
+    import { packSpaceGasFrame, createSpaceGasInputState, SPACE_GAS_IN, SPACE_GAS_ICY_TYPES, SPACE_GAS_INPUT_TUNE } from "./src/game/spaceGasInput.js";
+    import { createSpaceGasBlock } from "./src/render/blocks/spaceGasBlock.js";
     // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
     import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
@@ -1251,6 +1244,9 @@
     import { setPositionLightOcclusion } from "./src/game/shipLightRuntime.js";
     // Diagnostyka i strojenie z konsoli: HallDust.stats, HallDustTune.jetSpeed = 3000 itd.
     window.HallDust = HallDust;
+    window.SpaceGas = SpaceGas;
+    window.SpaceGasTune = SPACE_GAS_TUNE;
+    window.SpaceGasInputTune = SPACE_GAS_INPUT_TUNE;
     window.HallDustTune = HALL_DUST_TUNE;
     // Obsługa stanowisk capital K-7 w grze swobodnej (zamki pola, ramiona SCARA i przewody paliwowe przy postoju gracza —
     // obraz i gaz; automat w HaloRingGame._portVisuals): strojenie K7ServiceTune (dwell, settleSpeed, releaseSpeed …),
@@ -1262,7 +1258,7 @@
     // Wydobycie (zadanie 21b): ładunki górnicze gracza (magazynek platformy, ceny tymczasowe).
     import { MINING_CHARGES, createMiningChargeStock } from "./src/data/miningCharges.js";
     import { chargeForDepth } from "./src/game/asteroidMaterials.js";
-    import { ROCK_TYPE_LABELS_PL } from "./src/game/asteroidRockKinds.js";
+    import { ROCK_TYPE_LABELS_PL, ROCK_TYPE_INDEX } from "./src/game/asteroidRockKinds.js";
     // Rodziny kolizyjne pasa (A2, docs/PLAN-pas-realizm.md): nazwa pola dla gracza (komunikat strefy, skaner wydobycia).
     import { familyTitle } from "./src/data/asteroidFamilies.js";
     import {
@@ -1338,6 +1334,9 @@
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     window.Superweapon = Superweapon;
+    // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js): superbroń special — czoło promienia, tarcze, rzaz belek,
+    // obrażenia; rozkazy scen (scena „Wojna”) i strzał wizualny. Klej gry: blok „PROMIEŃ ŚMIERCI” przy fireWeaponCore.
+    import { createDeathRaySystem } from "./src/game/deathRay.js";
     window.applyNpcFlightVector = applyNpcFlightVector;
     window.executeNpcFlightCommand = executeNpcFlightCommand;
     window.npcHasPhysicalThrusters = npcHasPhysicalThrusters;
@@ -1504,7 +1503,6 @@
       getDefaultStationFaction,
       getFactionColor,
       getFactionName,
-      getFactionPriceMultiplier,
       getFactionShort,
       isDerelict,
       isFactionHostileToPlayer,
@@ -1546,7 +1544,7 @@
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpFlybyFactor } from "./src/game/warpDrive.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpTripTuneFor, warpFlybyFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival } from "./src/game/warpDrive.js";
     import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
@@ -1569,7 +1567,7 @@
     } from "./src/game/shipBridgeRuntime.js";
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
     import { Bridge3D } from "./src/3d/bridge3D.js";
-    import { cloakLightGain } from "./src/game/cloakLook.js";
+    import { cloakLightGain, entityCloakVisAt } from "./src/game/cloakLook.js";
     import { stepCloakLooks } from "./src/game/cloakLooks.js";
     import { RenderPoses } from "./src/game/renderPoses.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
@@ -1683,6 +1681,8 @@
     // Wybuchy okrętów z gazu (createExplosionFactory bez withRepairDroneBlast) — śmierć ze zbiornika paliwa, gaz rdzenia.
     let shipBlastFactory = null;
     let pirateVents3D = null;   // obraz wyrw bazy piratów (tryb off / inline; w workerze — render.worker.js)
+    let warBackdrop3D = null;   // bitwa w głębi sceny „Wojna” (tryb off / inline; w workerze — render.worker.js)
+    const warBackdropFrame = createWarBackdropFrame();   // stan klatki bitwy w głębi (gra pisze — blok warBackdrop)
     let reactorModel3D = null;
     if (initHexShips3D) {
       const hex3dReady = initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
@@ -1729,6 +1729,8 @@
         shipBlastFactory = window.makeReactorBlow;
         // Obraz wyrw bazy piratów (dekompresja, pożary): cząstki w passach tła i FG, gaz reżysera wybuchów (VENT_TAG).
         pirateVents3D = createPirateBaseVents3D(Core3D, { explosions: () => window.__explosions || null });
+        // Bitwa w głębi sceny „Wojna” (passy tła i FG, rozgrzewka 'after') — tylko gdy rysuje strona (tryb off / inline).
+        if (!Core3D.noDevice) warBackdrop3D = createWarBackdrop3D(Core3D);
         // Gra pisze rekordy EXPLOSION, gdy render ma fabrykę (w workerze — flaga z kanału zwrotnego).
         GameBlasts.ready = !!shipBlastFactory;
         // Drony naprawcze w zasięgu wybuchu giną (src/game/repairSwarm.js) — wybuch bez strony.
@@ -1739,23 +1741,25 @@
           shockwaveManager: null,
         });
         // Wybuch rdzenia reaktora (krok klatki efektów „reaktor-rdzen”: kula plazmy, strumień,
-        // dym rakiet, pule broni) i model reaktora w wyrwie (warstwa 7) — obraz ReactorCoreGame.
+        // dym rakiet, pule broni) i model reaktora w obudowie nad kadłubem (pass ortho) — obraz ReactorCoreGame.
         WeaponFx.ensure();
         reactorBlastFx = createReactorBlastFx(Core3D, { rocketFx, weaponFx: WeaponFx });
         if (reactorBlastFx) reactorBlastFx.onShake = (mag, dur) => camera.addShake?.(mag, dur);
         ReactorFxEvents.ready = !!reactorBlastFx;
+        // Reaktor w obudowie NAD kadłubem (pass ortho): poza renderu gospodarza jak mostek, gaśnie z maskowaniem
+        // w środku rdzenia i przy „Statkach 3D” (reactorModelVisibility), słońce z RenderWorld.
         reactorModel3D = createReactor3D({
           scene: Core3D.scene,
-          markLayerActive: () => Core3D.setShieldLayerActive(true),
           colorFor: (core) => core.color || [0.3, 0.7, 1.0],
-          frameOf: reactorCoreFrame,
-          hostReady: (h) => !!reactorCoreHull(h)
+          frameOf: (core, out) => reactorCoreFrame(core, out, bridgeRenderPose(core.host)),
+          hostReady: (h) => !!reactorCoreHull(h),
+          visibility: reactorModelVisibility
         });
-        // Pierwszy odsłonięty reaktor nie kompiluje materiałów w swojej klatce.
+        // Reaktory widać od pierwszej klatki gry — rozgrzewka na ekranie ładowania.
         Core3D.warmup.add({
           name: 'model reaktora (reactor3D)',
-          objects: () => Object.values(reactorModel3D?.meshes || {}).flatMap((k) => [k.structure, k.plasma]).filter(Boolean),
-          layer: 7,
+          objects: () => reactorModel3D?.warmupMeshes() || [],
+          layer: 0,
           phase: 'loading'
         });
         // Pył kosmiczny: dwie siatki (pod kadłubami w passie ortho, rzadkie drobiny „przy kamerze” w FG), uniformy
@@ -2172,6 +2176,11 @@
         case 'hexlance':
           // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
           playDynamicSound('sfx_hexlance', x, y, 0.1, 0.6);
+          break;
+
+        case 'death_ray':
+          // Promień śmierci — dźwięk superbroni, głośniej i bez wariacji
+          playDynamicSound('sfx_hexlance', x, y, 0, 0.9);
           break;
 
         case 'railgun_mk1':
@@ -2619,9 +2628,9 @@
       unlimitedWarp: false,
       disableCameraShake: false,
       globalShieldsOff: false,
-      // Ruch v2 w Web Workerze (src/game/trafficBridge.js): gospodarka ×60,
-      // stara ekonomia stacji i vany stoją. `?trafficV2=N` — inna skala.
-      trafficV2: new URLSearchParams(location.search).has('trafficV2'),
+      // Ruch v2 w Web Workerze (src/game/trafficBridge.js) — JEDYNA ekonomia gry, gospodarka ×60.
+      // `?trafficV2=N` — inna skala, `?trafficV2=0` — wyłącznik awaryjny (stacje bez rynku, terminal bez handlu).
+      trafficV2: new URLSearchParams(location.search).get('trafficV2') !== '0',
       // Kolorowe kropki slotów z edytora hardpointów na każdym NPC (overlay z
       // czasów przed Turret2D). Domyślnie OFF: przy 150 okrętach to ~4000 kropek
       // w trybie 'screen' co klatkę, bez cullingu, a uzbrojone sloty i tak
@@ -2639,7 +2648,7 @@
     const DevTuning = window.DevTuning;
     const Dev = window.Dev = window.Dev || {};
     // Most ruchu v2 — tworzony w initTrafficV2(), gdy stacje i ich budynki już
-    // istnieją. `null` = flaga wyłączona (stara ekonomia i vany jak dotąd).
+    // istnieją. `null` = wyłącznik `?trafficV2=0` (gra bez ekonomii: terminal nie handluje).
     let trafficV2 = null;
     if (!Number.isFinite(Dev.station3DScale) || Dev.station3DScale <= 0) {
       Dev.station3DScale = DEFAULT_STATION_3D_SCALE;
@@ -2719,14 +2728,16 @@
     window.add = add;
     const len = v => Math.hypot(v.x, v.y);
     const norm = v => { const L = len(v); return L ? { x: v.x / L, y: v.y / L } : { x: 0, y: 0 }; };
-    function isLineOfFireBlocked(shooter, target, weaponRange) {
+    // `pad` — pas linii ognia ponad promień sojusznika (szeroka wiązka: promień śmierci; src/ai/lineOfFire.js).
+    function isLineOfFireBlocked(shooter, target, weaponRange, pad) {
       return isFriendlyLineOfFireBlocked(
         shooter,
         target,
         weaponRange,
         window.queryAIGrid,
         npcs,
-        window.ship
+        window.ship,
+        pad
       );
     }
     window.clampTurnAngle = clampTurnAngle;
@@ -3676,10 +3687,10 @@
       // Zaznacz, że ten NPC należy do skrzydła wsparcia
       npc.isSupportWing = true;
 
-      // Aktualny rozkaz skrzydła (domyślnie guard, jakby coś było nieustawione)
-      const order = (typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order)
-        ? SupportWing.order
-        : 'guard';
+      // Aktualny rozkaz skrzydła (domyślnie guard, jakby coś było nieustawione); NATARCIE narzucone stronie
+      // (scena „Wojna”: setFleetStanceOverride) liczy się jak ATAK.
+      const order = window.fleetStanceOverride?.('friendly') ? 'engage'
+        : ((typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order) ? SupportWing.order : 'guard');
 
       npc.supportOrder = order; // przyda się w fighter AI
 
@@ -4404,7 +4415,6 @@
 
     const Game = window.Game || (window.Game = {});
     Game.infrastructure = Game.infrastructure || new Map();
-    Game.stationEconomy = Game.stationEconomy || new Map();
     const previousPlayer = Game.player || {};
     // Inwentarz to broń W ŁADOWNI — montaż ją zabiera, demontaż zwraca.
     // Ilości startowe pokrywają DOKŁADNIE to, co obsadza autoMountDefaults(),
@@ -5032,6 +5042,13 @@
       return cloakLightGain(entity);
     }
 
+    // Model reaktora (obudowa nad kadłubem): jak mostek przy „Statkach 3D”, maskowanie w środku rdzenia
+    // (komórka kadłuba pod obudową — jak wieże 3D).
+    function reactorModelVisibility(core, wx, wy) {
+      const host = core?.host;
+      return bridgeModelVisibility(host) > 0 ? entityCloakVisAt(host, wx, wy) : 0;
+    }
+
     function tickShipBridges(entity, dt) {
       if (!entity?.bridgeState || entity.destroyed) return;
       const flags = updateShipBridges(entity, dt, bridgeSimTime);
@@ -5220,7 +5237,9 @@
     // Rodzaj gniazda, do którego wpis zapisu / migawki pasuje DZIŚ — po aktualnym mountType broni, nie po typie
     // z zapisu: hexlance przeszedł ze `special` na `builtin` (2026-04-11) i z typem z zapisu ginął bez śladu.
     // null = wpis pusty (gniazdo bez broni, zniszczone, broń spoza katalogu).
+    // Broń `npcOnly` z zapisu (promień śmierci był od 2026-10-19 do 10-20 bronią special gracza) — wpis pusty.
     function savedHardpointBucket(saved) {
+      if (saved?.mount && WEAPONS[saved.mount]?.npcOnly === true) return null;
       if (saved?.mount && WEAPONS[saved.mount]) return WEAPONS[saved.mount].mountType || saved.type || null;
       if (Array.isArray(saved?.hangarSquadrons) && saved.hangarSquadrons.some(id => WEAPONS[id])) return HP.HANGAR;
       return null;
@@ -5324,7 +5343,7 @@
           // gniazd, którą montaż niżej zdejmuje (eskadry hangarów nie są liczone sztukowo) — magazyn + zamontowane
           // = zapis. Zapis bez pola: magazyn jak dawniej (zapas startowy − zamontowane), montaż tworzy brakujące sztuki.
           const stockRestored = restoreWeaponStock(Game.player.inventory, data?.weaponStock, {
-            isKnown: (id) => !!WEAPONS[id],
+            isKnown: (id) => !!WEAPONS[id] && WEAPONS[id].npcOnly !== true,
             mounts: savedEntries.map(saved => (WEAPONS[saved.mount] && WEAPONS[saved.mount].mountType !== HP.HANGAR ? saved.mount : null))
           });
           for (const { hp, entry } of plan.pairs) {
@@ -7821,7 +7840,6 @@
           orbitRadius, angle, speed: 0, r, baseR: r, x, y,
           ports: [{ x: portOffset, y: 0 }, { x: 0, y: portOffset }, { x: -portOffset, y: 0 }, { x: 0, y: -portOffset }],
           style: body.def.role === 'capital' ? 'shipyard' : 'hexHub',
-          warpGate: { x: x + 220, y, offset: { x: 220, y: 0 } },
           hp, maxHp: hp, hitFlash: 0, hitR: Math.round(r * 2.2),
           berths: spec.berths
         });
@@ -7852,8 +7870,6 @@
       const y = pl.y + Math.sin(angle) * orbitRadius;
       const r = 120;
       const portOffset = r + 40;
-      const gateOffset = ringPort ? ringPort.gateOffset : { x: 220, y: 0 };
-      const warpGate = { x: x + gateOffset.x, y: y + gateOffset.y, offset: { x: gateOffset.x, y: gateOffset.y } };
       const ports = ringPort
         ? ringPort.ports.map(p => ({ x: p.x, y: p.y }))
         : [
@@ -7881,7 +7897,6 @@
         y,
         ports,
         style,
-        warpGate,
         // Combat stats — required for bullet collision check (if (st.hp && ...))
         hp: 3000, maxHp: 3000,
         hitFlash: 0,
@@ -7933,32 +7948,6 @@
         camera.targetY = spawnPos.y;
       }
     }
-
-    // oznacz stacje wewnątrz pasa asteroid
-    (() => {
-      if (ASTEROID_BELT) {
-        const beltRadius = ASTEROID_BELT.mid;
-        for (const st of stations) {
-          const planetOrbit = st.planet?.orbitRadius;
-          const distFromSun = Number.isFinite(planetOrbit)
-            ? planetOrbit
-            : Math.hypot((st.planet?.x ?? st.x) - SUN.x, (st.planet?.y ?? st.y) - SUN.y);
-          st.inner = distFromSun < beltRadius;
-        }
-      } else {
-        for (const st of stations) st.inner = true;
-      }
-    })();
-
-    // Warp routes between stations
-    let warpRoutes = {};
-    function initWarpRoutes() {
-      // Pełna skierowana siatka obejmuje także przejścia inner <-> outer.
-      // Brak trasy jest błędem planowania; nigdy nie zastępujemy go lotem direct.
-      warpRoutes = buildWarpRoutes(stations);
-    }
-    function getWarpRoute(fromId, toId) { return lookupWarpRoute(warpRoutes, fromId, toId); }
-    initWarpRoutes();
 
     let npcs = [];
     window.npcs = npcs;
@@ -8935,7 +8924,7 @@
       if (templateKey === 'megafreighter' && opts.singleModule !== true) {
         return spawnMegafreighterTrain({ ...opts, mode });
       }
-      if (templateKey === 'carrier' && mode === 'friendly') {
+      if (templateKey === 'carrier' && mode === 'friendly' && !opts.extraCarrier) {
         const existing = getFriendlyCarrierEntity();
         if (existing) return existing;
       }
@@ -9064,7 +9053,9 @@
         length: size.w,
         width: size.h,
         pirate: isPirate,
-        palette: isPirate ? 'crimson' : (resolveEngineFx(profileId).warpPalette || 'magenta')
+        palette: isPirate ? 'crimson' : (resolveEngineFx(profileId).warpPalette || 'magenta'),
+        // id kadłuba tabeli lotu (wyjście z pędem: prędkość bojowa i hamowanie klasy) — null poza tabelą
+        flightSpec: buildShipFlightSpec(profileId)
       };
     }
 
@@ -9090,6 +9081,24 @@
     installWarpTrafficCommands(RenderCommands.reader, WarpNurt, (slot) => warpTraffic.recordAt(slot));
     window.WarpTraffic = warpTraffic;
 
+    // WYJŚCIE Z PĘDEM (2026-10-19, scena „Wojna”, src/game/warpDrive.js: warpExitMomentum): przylot NPC hamuje do
+    // k × prędkość bojowa klasy i wraca do gry z tym pędem wzdłuż kursu (ślizg ~3–4 km ścina model lotu); punkt
+    // przylotu = koniec ślizgu. k = 0 — dawne zatrzymanie (A/B: `?pedNpc=0`, konsola `WarpExitTune.k`). Bez pędu:
+    // myśliwce, holownik serwisowy (przylot do burty statku), kadłuby spoza tabeli lotu (megafrachtowiec).
+    const WarpExitTune = { k: new URLSearchParams(location.search).get('pedNpc') === '0' ? 0 : WARP_EXIT_MOMENTUM.k };
+    window.WarpExitTune = WarpExitTune;
+    function warpExitMomentumOfSpec(spec, k = WarpExitTune.k) {
+      if (!spec || !(Number(k) > 0)) return null;
+      const m = warpExitMomentum(spec, k);
+      return m.vExit > 0 ? m : null;
+    }
+    // Przylot „teraz” (warpTraffic.arrive): specyfikacja lotu encji.
+    function npcWarpExitMomentum(e) {
+      if (!e || e.fighter || e.isFighter || e.serviceTug || e.towTrainChild) return null;
+      return warpExitMomentumOfSpec(resolveShipFlightSpec(e));
+    }
+    warpTraffic.momentum = npcWarpExitMomentum;
+
     const supportCallIns = createSupportWarpCallIns({
       warp: warpTraffic,
       spawn: (req) => {
@@ -9112,7 +9121,8 @@
       if (key === 'service_tug' && !opts.__tugCall) return callServiceTug(opts);
       const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
       // Lotniskowiec Terra Novy jest jeden: kolejne wezwanie oddaje istniejący (spawnCapitalCallIn).
-      if (key === 'carrier' && mode === 'friendly' && getFriendlyCarrierEntity()) {
+      // (scena „Wojna” — opts.extraCarrier: kilka lotniskowców we flocie A)
+      if (key === 'carrier' && mode === 'friendly' && !opts.extraCarrier && getFriendlyCarrierEntity()) {
         return { planned: false, eta: 0, existing: true };
       }
       const pos = opts.spawnPos || opts.pos || null;
@@ -9126,9 +9136,16 @@
         // Nić zwiastuna zaczyna się w miejscu startu, gdy to jest bliżej niż zasięg nici (60 tys. j.).
         const homeDist = from ? Math.hypot(pos.x - from.x, pos.y - from.y) - (Number(from.r) || 0) : Infinity;
         const at = { x: pos.x, y: pos.y };
+        // Wyjście z pędem (punkt upuszczenia = koniec ślizgu); opts.exitK — k tego wezwania (0 — zatrzymanie).
+        // Holownik podpływa do burty statku — staje jak dawniej.
+        const exit = key === 'service_tug' ? null
+          : warpExitMomentumOfSpec(hull.flightSpec, Number.isFinite(opts.exitK) ? opts.exitK : WarpExitTune.k);
         const rec = supportCallIns.request({
           x: at.x, y: at.y, angle, hullLength: hull.length, hullWidth: hull.width,
           palette: hull.palette, pirate: hull.pirate, heraldReach: homeDist,
+          exitSpeed: exit ? exit.vExit : undefined, slide: exit ? exit.slide : undefined,
+          // plan floty (scena „Wojna”: planWarpFleetArrival) i wygląd zwiastuna
+          delay: opts.warpDelay, heraldExtra: opts.warpHeraldExtra, heraldStyle: opts.heraldStyle,
           key, opts: { ...opts, mode, spawnPos: at, pos: at, angle, spawnAngle: angle }
         });
         if (rec) return { planned: true, eta: Math.max(0, rec.fx.tBurst - warpTraffic.time), from: hull.pirate ? 'belt' : 'earth' };
@@ -9242,6 +9259,7 @@
     // Klatka przed render(): spawn wezwań w klatce wyrzutu i kroki powrotów — potem krok rejestru ruchu warpa
     // (warpTraffic.step) przesuwa zegar tej klatki o `dt` (dt gry: 0 w pauzie i przy zamrożonym świecie fabuły).
     function stepSupportWarp(dt) {
+      stepWarScene(dt);
       supportCallIns.flush(dt);
       supportReturn.step(dt, dt);
       storyWarpOut.step(dt, dt);
@@ -10066,123 +10084,8 @@
       return squad;
     }
     window.spawnPirateSquad = spawnPirateSquad;
-    const TRAFFIC_WEIGHTS = {
-      mercury: { civilian: 0.02, convoy: 0.25 },
-      venus: { civilian: 0.03, convoy: 0.25 },
-      earth: { civilian: 1.80, convoy: 0.50 },
-      mars: { civilian: 1.60, convoy: 0.55 },
-      default: { civilian: 0.40, convoy: 0.40 }
-    };
-
-    function trafficWeightFor(station, kind) {
-      const table = TRAFFIC_WEIGHTS[station.id] || TRAFFIC_WEIGHTS.default;
-      if (kind === 'convoy') return table.convoy ?? TRAFFIC_WEIGHTS.default.convoy;
-      if (kind === 'civilian') return table.civilian ?? TRAFFIC_WEIGHTS.default.civilian;
-      if (kind && typeof table[kind] === 'number') return table[kind];
-      return table.civilian ?? TRAFFIC_WEIGHTS.default.civilian;
-    }
-
-    function weightedPickStation(kind, scope) {
-      let pool;
-      if (Array.isArray(scope)) {
-        pool = scope.slice();
-      } else if (scope === 'inner' || scope === 'outer') {
-        const match = scope === 'inner';
-        pool = stations.filter(s => s.inner === match);
-      } else if (typeof scope === 'boolean') {
-        pool = stations.filter(s => s.inner === scope);
-      } else {
-        pool = stations.slice();
-      }
-      if (!pool.length) return null;
-      let total = 0;
-      const weighted = pool.map(st => {
-        const w = Math.max(0, trafficWeightFor(st, kind));
-        total += w;
-        return { st, w };
-      });
-      if (total <= 0) {
-        return pool[Math.floor(Math.random() * pool.length)];
-      }
-      let r = Math.random() * total;
-      for (const { st, w } of weighted) {
-        r -= w;
-        if (r <= 0) return st;
-      }
-      return weighted[weighted.length - 1].st;
-    }
-
-    function preferEarthMarsRoute(stationId) {
-      return (stationId === 'earth' || stationId === 'mars') && Math.random() < 0.7;
-    }
-
-    function pickNextStation(startStationId, type) {
-      const start = stations.find(s => s.id === startStationId) || stations[0];
-      if (!start) return startStationId;
-      if (preferEarthMarsRoute(start.id)) {
-        return start.id === 'earth' ? 'mars' : 'earth';
-      }
-      const isCivil = type && (type.startsWith('civilian') || type.startsWith('freighter'));
-      const sameSphere = stations.filter(s => s.inner === start.inner && s.id !== start.id);
-      const otherSphere = stations.filter(s => s.inner !== start.inner);
-      let pool = sameSphere.length ? sameSphere : stations.filter(s => s.id !== start.id);
-      if (isCivil && otherSphere.length && Math.random() < 0.35) {
-        pool = otherSphere;
-      }
-      let target = weightedPickStation(isCivil ? 'civilian' : null, pool);
-      if (!target || target.id === start.id) {
-        const fallbackPool = pool.length ? pool : stations.filter(s => s.id !== start.id);
-        if (fallbackPool.length) {
-          return fallbackPool[Math.floor(Math.random() * fallbackPool.length)].id;
-        }
-        return startStationId;
-      }
-      return target.id;
-    }
-
-    function beginStationTransit(npc, start, targetId, options = {}) {
-      const target = stations.find(station => station.id === targetId);
-      const route = start && target ? getWarpRoute(start.id, target.id) : null;
-      if (!npc || !start || !target || !route) return false;
-
-      const assigned = assignTransitRoute(npc, start, target, route, {
-        phase: options.phase || 'toGate',
-        lane: options.lane,
-        dockPort: options.dockPort,
-        speed: options.speed,
-        fade: options.fade ?? 1,
-        resetVelocity: options.resetVelocity
-      });
-      if (!assigned) return false;
-
-      if (options.spawnAtSource !== false) {
-        const portCount = Math.max(1, start.ports?.length || 0);
-        const startPort = Number.isFinite(options.startPort)
-          ? Math.abs(Math.trunc(options.startPort)) % portCount
-          : Math.floor(Math.random() * portCount);
-        const spawnPos = stationPortWorld(start, startPort);
-        npc.x = spawnPos.x;
-        npc.y = spawnPos.y;
-        npc.vx = 0;
-        npc.vy = 0;
-      }
-      return true;
-    }
-
-    const NPC_TYPES = {
-      'freighter-small': { radius: 10, speed: 100, hp: 100, color: '#8ab4d6', weapon: null, isCollidable: false },
-      'freighter-medium': { radius: 15, speed: 100, hp: 150, color: '#769cb8', weapon: null, isCollidable: false },
-      'freighter-large': { radius: 25, speed: 100, hp: 200, color: '#5d829c', weapon: null, isCollidable: false },
-      'freighter-capital': { radius: 48, speed: 100, hp: 400, color: '#45667d', weapon: null, isCollidable: false },
-      'police': { radius: 24, speed: 100, hp: 200, color: '#44aaff', weapon: 'null', isCollidable: true },
-      'civilian-small': { radius: 6, speed: 100, hp: 10, color: '#cccccc', weapon: null, isCollidable: false },
-      'civilian-large': { radius: 12, speed: 100, hp: 50, color: '#bbbbbb', weapon: null, isCollidable: false },
-      'guard': { radius: 20, speed: 100, hp: 100, color: '#ff9933', weapon: 'gun', isCollidable: true },
-      'mercenary': { radius: 25, speed: 100, hp: 100, color: '#ff6633', weapon: 'gun', isCollidable: true }
-    };
-
     // --- DevTools: spawn kadłubów bez szablonu wsparcia ---
-    // Frachtowce cargoFleet i kadłuby ruchu v2 (TRAFFIC_HULLS). Bez AI i broni:
+    // Frachtowce i kadłuby ruchu v2 (TRAFFIC_HULLS). Bez AI i broni:
     // `mission` = nie znikają za DESPAWN_RADIUS i słuchają rozkazów RTS.
     // Bojowe typy (fregaty, niszczyciele, kapitały) idą przez spawnCallInShip.
     const DEV_HULL_SPAWNS = Object.freeze({
@@ -10255,7 +10158,7 @@
     // ============================================================================
     // TRYBY OKRĘTU (src/game/shipModes.js, 2026-10-03): koło pod ŚPM jak kombinezon w Crysis — przytrzymaj
     // ŚPM, wskaż sektor, puść; stuknięcie ŚPM = poprzedni tryb; czas nie zwalnia. Tryby się wykluczają:
-    // BOJOWY / TARCZE / PRZELOT to postawa (stan tutaj), MASKOWANIE (I), TORPEDY (8), WYDOBYCIE (N)
+    // BOJOWY / TARCZE to postawa (stan tutaj), HIPERCRUISE (O — automat w bloku „HIPERCRUISE”), MASKOWANIE (I), TORPEDY (8), WYDOBYCIE (N)
     // i FLOTA (G — RTS) to systemy gry, które zostają źródłem prawdy — tryb widoczny rozstrzyga co klatkę
     // syncShipMode(). Klawisze I / 8 / N / G idą przez setShipMode (wejście w tryb zamyka pozostałe).
     // Postawa działa przez applyShipStance (napęd: driveState.stanceLimit / stanceThrust, obrót, tarcza,
@@ -10274,7 +10177,8 @@
         fleet: camera.mode === 'rts',
         mining: !!miningInput?.active,
         torpedo: !!torpedoAim?.active,
-        cloak: isPlayerCloakOn()
+        cloak: isPlayerCloakOn(),
+        hypercruise: hypercruiseBusy(hypercruise)
       });
     }
 
@@ -10312,8 +10216,7 @@
 
     const SHIP_STANCE_MESSAGES = Object.freeze({
       combat: 'TRYB: BOJOWY',
-      shield: 'TRYB: TARCZE — pole twarde i widoczne, okręt wolny i ociężały',
-      cruise: 'TRYB: PRZELOT — szybki lot, broń zimna'
+      shield: 'TRYB: TARCZE — pole twarde i widoczne, okręt wolny i ociężały'
     });
 
     // Stan HUD-u celownika gracza (rysowanie w render(): blok „Celownik gracza”). Poza render(), żeby
@@ -10355,6 +10258,8 @@
         if (!getMiningRig()) return 'WYDOBYCIE: platforma niegotowa (pas asteroid się ładuje)';
       } else if (id === 'fleet') {
         if (splitScreenMode) return 'RTS MODE niedostepny w split-screen';
+      } else if (id === 'hypercruise') {
+        return hypercruiseBlockReason();
       }
       return '';
     }
@@ -10377,10 +10282,9 @@
         toggleCloak(ship.cloak);
         if (!quiet) pushZoneMessage('MASKOWANIE WYŁĄCZONE', 1.2);
       }
+      if (id !== 'hypercruise' && hypercruiseBusy(hypercruise)) stopPlayerHypercruise('manual', false, quiet ? '' : 'HIPERCRUISE — WYJŚCIE');
       let ok = true;
       if (SHIP_MODE_DEFS[id].stance) {
-        // PRZELOT zaczyna od pierwszego biegu.
-        if (id === 'cruise' && shipModes.stance !== 'cruise') { shipModes.cruiseGear = 1; shipModes.cruiseShiftCd = 0; }
         shipModes.stance = id;
         if (!quiet) pushZoneMessage(SHIP_STANCE_MESSAGES[id], 1.6);
       } else {
@@ -10390,13 +10294,14 @@
         else if (id === 'torpedo') ok = setTorpedoMode(true);
         else if (id === 'mining') ok = setMiningMode(true);
         else if (id === 'fleet') ok = setPlayerRtsMode(true);
+        else if (id === 'hypercruise') ok = startPlayerHypercruise({ quiet });
       }
       syncShipMode();
       return ok;
     }
     window.setShipMode = setShipMode;
 
-    /** Wyjście z trybu z systemem (I / 8 / N / G drugi raz) — powrót do postawy. */
+    /** Wyjście z trybu z systemem (I / 8 / N / G / O drugi raz) — powrót do postawy. */
     function leaveShipMode(id) {
       syncShipMode();
       if (shipModes.current !== id) return false;
@@ -10404,8 +10309,7 @@
     }
 
     // Postawa na krok fizyki gracza: napęd (limit, ciąg) — obrót, tarcza i broń czytają stanceTune() w miejscu.
-    // PRZELOT jeździ na BIEGACH (shipModes.js: CRUISE_GEARS — QOL 2026-10-03, biegi przeniesione z warpa):
-    // limit = limit bojowy × mnożnik biegu (Atlas do 1500 j/s), w górę sam przy gazie, Ctrl w dół.
+    // PRZELOTU na biegach nie ma (decyzja użytkownika 2026-10-22 — zastąpił go hipercruise).
     function applyShipStance(dt = 0) {
       const tune = stanceTune(shipModes);
       driveState.stanceThrust = tune.thrust;
@@ -10415,22 +10319,7 @@
         ship.shield.hardness = (Number(ship.shield.baseHardness) || 1) * tune.shieldHardness;
         ship.shield.show = !!tune.shieldShow;
       }
-      if (shipModes.stance === 'cruise') {
-        const ev = warp.state === 'idle'
-          ? stepCruiseGear(shipModes, getPlayerSpeed(), driveState.speedLimit, Number(driveState.throttle) || 0, dt)
-          : null;
-        if (ev) announceCruiseGear();
-        driveState.stanceLimit = cruiseGearMul(shipModes.cruiseGear);
-      } else {
-        driveState.stanceLimit = tune.speed;
-      }
-    }
-    function cruiseGearLabel() {
-      return `B${shipModes.cruiseGear | 0 || 1}/${CRUISE_GEARS.muls.length}`;
-    }
-    function announceCruiseGear() {
-      const limit = Math.round((Number(driveState.speedLimit) || 0) * cruiseGearMul(shipModes.cruiseGear));
-      pushZoneMessage(`PRZELOT — BIEG ${shipModes.cruiseGear}/${CRUISE_GEARS.muls.length} · ${limit} J/S`, 1.1);
+      driveState.stanceLimit = tune.speed;
     }
 
     // Koło trybów (ŚPM): otwarcie, kierunek, puszczenie.
@@ -10520,6 +10409,163 @@
       _rocketHullVel.y = Number(relVy) || 0;
       return rocketCraterHit(HullBodies, target, x0, y0, x1, y1, damage, weaponDef || 'rocket', _rocketHullVel, applyHexImpact);
     };
+
+    // ============================================================================
+    // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js; dane `death_ray` w src/data/weapons.js, obraz WeaponFx.deathRay*
+    // przez rekordy RAY_* strumienia rozkazów)
+    // ============================================================================
+    // Klej gry: kandydaci (gracz, P2, NPC, wraki), stacje (bryły doku albo okrąg), tarcza (obrys blokującej tarczy — pada
+    // do zera), obrażenia z pominięciem tarczy (NPC / gracz — śmierć, wrak i wybuch zbiornika jak przy każdej śmierci),
+    // źródło stempla mapy ran, wylot strzelca dla rozkazów scen (gniazdo z promieniem / special, inaczej dziób).
+    // Strzał gracza i NPC: fireWeaponCore → fireDeathRayCore (ładowanie zrobiły stepMountCharge / capitalAI). Scena:
+    // DevScene.deathRay(strzelec, cel, opcje) / window.DeathRayGame.order(…) i .visual(x0, y0, x1, y1, opcje).
+    const _deathRayDockHit = { t: 0, x: 0, y: 0, chunk: null };
+    const _deathRayHp = { x: 0, y: 0 };
+    // Gniazdo z bronią `def` w grupie uzbrojenia NPC (null — brak).
+    function _deathRayHpIn(group, def) {
+      if (!Array.isArray(group)) return null;
+      for (let i = 0; i < group.length; i++) {
+        const lo = group[i];
+        if (lo?.weapon?.id === def?.id && lo.hp && !lo.hp.destroyed) return lo.hp;
+      }
+      return null;
+    }
+    // Wylot promienia strzelca w świecie: gniazdo z promieniem (wbudowane — Colossus, albo special), inaczej pierwsze
+    // builtin / special — jak spawnBulletAdapter (NPC) / mountedWeaponBase (gracz); bez gniazda — false (system strzela
+    // z dziobu). Rozkazy scen (env.muzzleOf) i DevScene.deathRayMuzzle.
+    function deathRayMuzzleOf(shooter, def, out) {
+      if (!shooter) return false;
+      if (shooter === window.ship) {
+        const lo = (Game.player?.weapons?.[HP.SPECIAL] || []).find((l) => l?.weapon?.id === def?.id && l.hp && !l.hp.destroyed);
+        if (!lo) return false;
+        mountedWeaponBase(ship, lo.hp, _deathRayHp);
+        out.x = _deathRayHp.x; out.y = _deathRayHp.y;
+        return true;
+      }
+      let hp = _deathRayHpIn(shooter.weapons?.builtin, def) || _deathRayHpIn(shooter.weapons?.special, def);
+      if (!hp && Array.isArray(shooter.editorHardpoints)) {
+        hp = shooter.editorHardpoints.find((h) => h?.type === HP.BUILTIN && !h.destroyed)
+          || shooter.editorHardpoints.find((h) => h?.type === HP.SPECIAL && !h.destroyed) || null;
+      }
+      if (!hp || hp.x === undefined) return false;
+      const angle = (shooter.angle || 0) + (Number(shooter.capitalProfile?.spriteRotation) || 0);
+      const c = Math.cos(angle), s = Math.sin(angle);
+      const hx = hp.x * getEntityHardpointScaleX(shooter), hy = hp.y * getEntityHardpointScaleY(shooter);
+      out.x = shooter.x + (hx * c - hy * s);
+      out.y = shooter.y + (hx * s + hy * c);
+      return true;
+    }
+    const deathRays = createDeathRaySystem({
+      hulls: HullBodies,
+      time: () => SimClock.sim,
+      collect(out) {
+        const s = window.ship;
+        if (s && !s.destroyed && s.beamHull) out.push(s);
+        const p2 = window.player2Ship;
+        if (p2 && !p2.destroyed && p2.beamHull) out.push(p2);
+        const list = window.npcs;
+        if (list) {
+          for (let i = 0; i < list.length; i++) {
+            const n = list[i];
+            if (!n || n.dead || n.isCollidable === false) continue;
+            if (!n.beamHull && !(n.hp > 0)) continue;
+            out.push(n);
+          }
+        }
+        const wl = window.wrecks;
+        if (wl) {
+          for (let i = 0; i < wl.length; i++) {
+            const w = wl[i];
+            if (w && w.beamHull && !w.removed && w.isCollidable !== false) out.push(w);
+          }
+        }
+      },
+      stations: () => (Array.isArray(window.stations) ? window.stations : null),
+      // Wejście promienia w stację: bryły trzonu i hali suchego doku (jak Hexlance), inaczej okrąg obwiedni.
+      stationHit(st, x0, y0, x1, y1) {
+        if (!st || st._destroyed3D || !(st.hp > 0) || st.ringPort) return -1;
+        if (st.hitShapes) {
+          const dh = dryDockSegmentHit(st.hitShapes, x0, y0, x1, y1, _deathRayDockHit, st._dockGone)
+            || (st.hallShapes && dryDockSegmentHit(st.hallShapes, x0, y0, x1, y1, _deathRayDockHit));
+          return dh ? dh.t : -1;
+        }
+        const r = Math.max(60, Number(st.r) || 200);
+        const dx = x1 - x0, dy = y1 - y0, fx = x0 - st.x, fy = y0 - st.y;
+        const a = dx * dx + dy * dy;
+        if (!(a > 0)) return -1;
+        const c = fx * fx + fy * fy - r * r;
+        if (c <= 0) return 0;
+        const b = 2 * (fx * dx + fy * dy);
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) return -1;
+        const t = (-b - Math.sqrt(disc)) / (2 * a);
+        return t >= 0 && t <= 1 ? t : -1;
+      },
+      radius: (e) => getBeamTargetRadius(e),
+      shieldRadius: (e) => getEntityShieldBlockingRadius(e),
+      shieldEnter: (e, x, y, dx, dy, maxT) => getEntityShieldRayEnter(e, x, y, dx, dy, maxT),
+      // Przepalenie tarczy (świadomie bez testu przebicia — superbroń): efekt trafienia klasy „special”, pole do zera
+      // (shieldSystem: stan 'breaking', regeneracja od opóźnienia).
+      collapseShield(e, x, y, dmg) {
+        const real = e._realEntity || e;
+        const sh = real.shield;
+        if (!sh || !(sh.val > 0)) return;
+        registerShieldImpact(e, x, y, dmg, 'special');
+        sh.val = 0;
+        sh.regenTimer = sh.regenDelay ?? 0;
+        if (real.fleetEntry?.status) real.fleetEntry.status.shield = 0;
+      },
+      damage(e, dmg, ray) {
+        if (!(dmg > 0) || !e) return;
+        const shooter = ray.shooter;
+        if (e === window.ship) {
+          applyDamageToPlayer(dmg, SHIELD_BREACH_DAMAGE_OPTS);
+          // obrażenia gracza od NPC — znacznik zagrożenia strzelca (kierowanie ogniem: `threat`)
+          if (shooter && shooter !== window.ship) shooter.__fcHitPlayerAt = SimClock.sim;
+        } else if (e === window.player2Ship) {
+          if (e.hull && typeof e.hull.val === 'number') e.hull.val = Math.max(0, e.hull.val - dmg);
+        } else {
+          if (ray.byPlayer) markPlayerDamage(e);
+          applyDamageToNPC(e, dmg, 'deathray', SHIELD_BREACH_DAMAGE_OPTS, ray.byPlayer === true);
+        }
+      },
+      damageStation: (st, dmg) => applyDamageToStation(st, dmg),
+      isWreck: (e) => !!e.isWreck,
+      alive: (e) => !!e && !e.dead && !e.destroyed && !e.removed,
+      setSource: (def, variant) => HullDamageEvents.setSource(def, variant),
+      clearSource: () => HullDamageEvents.clearSource(),
+      fx: () => (RenderCommands.ready ? RenderCommands.writer : null),
+      carrier: (e, x, y, out) => writeCarrier(e, x, y, false, out),
+      muzzleOf: deathRayMuzzleOf
+    });
+    window.DeathRayGame = deathRays;
+
+    // Strzał promienia z fireWeaponCore (gracz: wieża celuje w kursor — kierunek lufy; NPC: w cel — wiązka trafia
+    // natychmiast, bez wyprzedzenia). Obraz idzie rekordem RAY_FIRE z systemu; szyna strzałów niesie dźwięk, odrzut wieży
+    // i wstrząs strzału. Zwraca przeładowanie (jak fireWeaponCore).
+    function fireDeathRayCore(shooter, target, weapon, muzzleData) {
+      const mods = shooter.modifiers || {};
+      const isP1Ship = shooter === window.ship;
+      const isPlayerShip = isP1Ship || shooter === window.player2Ship;
+      const range = weaponRangeFor(shooter, weapon, weapon.baseRange || 12000);
+      const damage = (weapon.baseDamage || 0) * (mods.damage || 1.0);
+      const cd = (weapon.cooldown || 45) * (mods.fireRate || 1.0);
+      const x = muzzleData.pos.x, y = muzzleData.pos.y;
+      let dirX = muzzleData.dir.x, dirY = muzzleData.dir.y;
+      const aimed = !isPlayerShip && isTargetAlive(target);
+      if (aimed) {
+        dirX = getTargetX(target) - x;
+        dirY = getTargetY(target) - y;
+      }
+      // NPC: wylot z czopu gniazda (spawnBulletAdapter) — system dokłada lufę wieży (Turret2D.writeMuzzleOffset).
+      // `target` — jeden cel (broń `singleTarget`): promień kończy się za celem strzału.
+      const ray = deathRays.fire(shooter, weapon, x, y, dirX, dirY, {
+        range, damage, byPlayer: isP1Ship, addBarrel: !isPlayerShip, target: aimed ? target : null
+      });
+      const l = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+      WeaponShotBus.emit(weapon.id, shooter, ray ? ray.ox : x, ray ? ray.oy : y, false, null, null, dirX / l, dirY / l);
+      return cd;
+    }
 
     // --- Trafienia wiązek: pomocniki modułowe (bez domknięć i tablic per strzał) ---
     // Dawniej każda wiązka budowała 3 tablice, 4 domknięcia, obiekt na kandydata
@@ -10894,6 +10940,9 @@
     window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {
       const weapon = MASTER_WEAPONS[weaponId];
       if (!weapon) return null;
+      // Promień śmierci (pole `deathRay` broni — isDeathRayWeapon): czoło promienia w systemie promieni
+      // (src/game/deathRay.js), nie pocisk ani wiązka. Bez wywołań dla innych broni (wycinki fireWeaponCore w testach).
+      if (weapon.deathRay) return fireDeathRayCore(shooter, target, weapon, muzzleData);
 
       // Ciągła wiązka pracuje seriami jak w demie. Przerwa nie emituje zdarzenia
       // ani obrażeń; normalny takt podtrzymuje stan emitera podczas chłodzenia.
@@ -11500,6 +11549,13 @@
       for (const hp of npc.editorHardpoints) {
         let weaponId = loadout[hp.type];
         if (!weaponId || !MASTER_WEAPONS[weaponId]) continue;
+        // Broń jednej frakcji (`npcFaction` — promień śmierci Colossusa Terra Nova): inna frakcja na tej ramie (piracki
+        // „supercapital” bez własnej ramy rozwiązuje się do terran_supercapital) zostawia gniazdo puste.
+        const onlyFaction = MASTER_WEAPONS[weaponId].npcFaction;
+        if (onlyFaction && onlyFaction !== faction) {
+          hp.mount = null;
+          continue;
+        }
         if (!armedSlots.has(hp)) {
           hp.mount = null;
           continue;
@@ -11580,6 +11636,9 @@
         y = owner.y + (hpX * s + hpY * c);
       }
       const a = Number.isFinite(weapon.visualAngle) ? weapon.visualAngle : (owner.angle || 0);
+      // Promień śmierci: wylot na końcu lufy wieży (laser naprowadzający i implozja przy głowicy, nie na czopie); laser
+      // naprowadzający do celu AI (jeden cel — strzał nie sięgnie dalej niż cel).
+      if (weapon.def.deathRay) { deathRays.chargeFx(owner, weapon.def, x, y, a, u, dt, weapon, weapon.cachedTarget || null); return; }
       // Stan efektu ładowania — w renderze po kluczu działa (obiekt broni NPC).
       RenderCommands.writer.charge(weapon.def.id, x, y, a, 1, u, dt, weapon, writeCarrier(owner, x, y, false, _npcChargeCarrier));
     };
@@ -11854,12 +11913,338 @@
         camera: { x: Math.round(camera.x), y: Math.round(camera.y), zoom: camera.zoom }
       })
     };
+    // === SCENA „WOJNA” (DevScene.wojna — src/game/warScene.js, 2026-10-19) ===
+    // User: „dużo statków jak battle over Coruscant: wychodzą z warpa jednostki i naprzeciwko nich po chwili też
+    // wychodzą z warpa jednostki, obydwa się o siebie rozbijają; prędkość wyjścia z warpa i lecenie à la Star Wars”.
+    // Flota A (Terra Nova) i B (piraci) przylatują wezwaniami (callInSupport → warpTraffic: zwiastuny, fale klas,
+    // wyjście z pędem — punkt przylotu = koniec ślizgu), obie strony w postawie NATARCIA (setFleetStanceOverride:
+    // marsz bez stania, przeloty burtą w burtę i nawroty — capitalAI.js `chargeRun`). Tło: tarcza Jowisza / Marsa —
+    // bitwa NAD tarczą (planeta w 2D nie koliduje; cała scena wewnątrz płyty ringu, po stronie słońca), Atlas — widz
+    // z boku albo w szyku A. Kamera: reżyser kadru dostaje sygnał tego, co się dzieje — przylot A, przylot B, potem
+    // środek bitwy (obie floty naraz nie mieszczą się w kadrze gry przy 25 km). Krok w czasie gry (stepSupportWarp —
+    // przed wezwaniami): start floty B po `gapB` s, pomiar ślizgu (od zwolnienia z tunelu do prędkości bojowej
+    // ≤ 1,03 maxSpeed) — DevScene.wojnaState().
+    const WarScene = { active: false, t: 0, plan: null, launched: { A: false, B: false }, tracked: [], calls: [] };
+    window.WarScene = WarScene;
+
+    function warSceneHull(key, mode) {
+      const h = estimateCallInHull(key, mode);
+      return h ? { length: h.length, width: h.width } : null;
+    }
+
+    function startWarScene(opts = {}) {
+      stopWarScene({ clear: false });
+      const o = { ...WAR_SCENE_DEFAULTS, ...opts };
+      // Czysty stół: okręty misji (skrzydło, piraci, wezwania) znikają bez wraków; kolejka wezwań i ruch warpa od zera.
+      if (o.clear !== false) {
+        for (const n of npcs.slice()) if (n && !n.dead && n.mission && !n.isStation) dematerializeSupportUnit(n);
+        supportCallIns.clear();
+        warpTraffic.clear();
+      }
+      let center;
+      let side = 1;
+      let planetInfo;
+      if (o.backdrop === 'deep') {
+        // BITWA W GŁĘBI: pusta przestrzeń między orbitami olbrzymów, z dala od planet, księżyców i małych ciał
+        // (w 2D nic tu nie koliduje); tłum nad i pod płaszczyzną i planetę ~200 km pod nią rysuje obraz
+        // (src/3d/warBackdrop/ — blok warBackdrop). Widz (Atlas) na południe od osi bitwy.
+        const bodies = [...planets, ...(window.smallBodies || [])]
+          .filter((b) => b && Number.isFinite(b.x) && Number.isFinite(b.y))
+          .map((b) => ({ x: b.x, y: b.y, r: (Number(b.r) || 0) + 400000 }));
+        const spot = pickDeepSpot(SUN, bodies, Number(o.deepRadius) || WAR_SCENE_DEFAULTS.deepRadius);
+        center = { x: spot.x, y: spot.y };
+        planetInfo = { id: 'deep', x: center.x, y: center.y, r: 0, clearance: Math.round(spot.clearance), side };
+      } else {
+        const planet = planets.find((p) => p?.id === o.backdrop) || planets.find((p) => p?.id === 'jupiter')
+          || planets.find((p) => p?.id === 'mars') || planets[0];
+        // Bitwa poziomo w kadrze (oś A → B wzdłuż x świata) NAD tarczą planety, po stronie słońca (oświetlona półkula);
+        // Atlas-widz dalej od środka planety. Promień tarczy i wewnętrzny brzeg płyty ringu — z kolidera gry
+        // (src/game/haloRingWorld.js), nie z modułów obrazu; scena (klin ± ślizg) zostaje wewnątrz płyty.
+        const ringCol = haloRingKey(planet) ? haloWorld?.entry(haloRingKey(planet))?.collider : null;
+        const discR = Number(ringCol?.layout?.planetRadius) || Number(planet.r) || 0;
+        const ringInner = Number(ringCol?.layout?.radii?.min) || 0;
+        const ringOuter = ringCol ? Math.max(Number(ringCol.wallsOuter) || 0, Number(ringCol.layout?.radii?.max) || 0) : 0;
+        // środek bitwy od środka tarczy w stronę Słońca (dzienna półkula pod całą sceną), widz dalej w osi y
+        const sunDx = SUN.x - planet.x;
+        const sunDy = SUN.y - planet.y;
+        const sunD = Math.hypot(sunDx, sunDy) || 1;
+        side = sunDy >= 0 ? 1 : -1;
+        const over = Number.isFinite(o.overPlanet) ? o.overPlanet : 0.35;
+        center = { x: planet.x + (sunDx / sunD) * discR * over, y: planet.y + (sunDy / sunD) * discR * over };
+        planetInfo = { id: planet.id, x: planet.x, y: planet.y, r: discR, ringInner, ringOuter, side };
+      }
+      const plan = planWarScene(o, center, 0, warSceneHull);
+      plan.planet = planetInfo;
+      // Bitwa w głębi (obraz): tłum w pasmach, planeta pod płaszczyzną ('deep'), bohaterowie i ujęcia kamery.
+      const bd = planWarBackdrop(o, center, 0, SUN, side);
+      plan.backdrop = bd;
+      WarScene.shots = bd.shots.map((sh) => ({ ...sh, started: false }));
+      const F = warBackdropFrame;
+      F.has = true;
+      F.id = (F.id | 0) + 1;
+      F.t = 0;
+      F.cx = center.x;
+      F.cy = center.y;
+      F.axis = bd.backdrop.axis;
+      F.seed = bd.backdrop.seed;
+      F.density = bd.backdrop.density;
+      F.prewarm = bd.backdrop.prewarm;
+      F.fade = 1;
+      Object.assign(F.planet, bd.backdrop.planet);
+      F.sunX = SUN.x;
+      F.sunY = SUN.y;
+      F.heroN = Math.min(F.heroes.length, bd.backdrop.heroes.length);
+      for (let i = 0; i < F.heroN; i++) Object.assign(F.heroes[i], bd.backdrop.heroes[i]);
+      WarScene.plan = plan;
+      WarScene.opts = o;
+      WarScene.t = 0;
+      WarScene.launched = { A: false, B: false };
+      WarScene.tracked = [];
+      WarScene.calls = [];
+      WarScene.active = true;
+      // Atlas: widz z boku (dalej od planety, dziobem na bitwę) albo w szyku A (za flagowcem, z boku klina).
+      const A = plan.fleets.A;
+      let px;
+      let py;
+      let heading;
+      if (o.atlas === 'fleet') {
+        px = A.apex.x - Math.cos(A.heading) * 3500 + Math.sin(A.heading) * 4000;
+        py = A.apex.y - Math.sin(A.heading) * 3500 - Math.cos(A.heading) * 4000;
+        heading = A.heading;
+      } else {
+        px = center.x;
+        py = center.y + side * (Number(o.sideOffset) || 9000);
+        heading = Math.atan2(-side, 0);
+      }
+      if (warp.state !== 'idle') { warp.state = 'idle'; exitWarp({ abrupt: true }); }
+      warp.exitRamp = null;
+      if (typeof cancelTravel === 'function') cancelTravel(null);
+      ship.pos.x = px; ship.pos.y = py; ship.vel.x = 0; ship.vel.y = 0; ship.angle = heading; ship.angVel = 0;
+      camera.mode = 'ship';
+      camera.transition = null;
+      camera.x = camera.targetX = px;
+      camera.y = camera.targetY = py;
+      prevCameraState.x = px;
+      prevCameraState.y = py;
+      // Kadr gracza ~kadru jednej floty; reżyser kadru oddala go (do ~45 km) i przesuwa na sygnał tego, co się dzieje.
+      const spanW = Number(o.viewWidth) || 24000;
+      camera.manualZoom = true;
+      camera.zoom = camera.targetZoom = camera.zoomBase = clamp(W / spanW, camera.minZoom, camera.maxZoom);
+      camera.zoomVel = 0;
+      camera.zoomImpulseLog = 0;
+      // Reżyser kadru może oddalić do granicy zoomu gry (~45 km): podłoga „kadłub ≥ 6% kadru” trzymała kadr przy
+      // Atlasie na 30 km — przylot floty 25 km dalej wypadał za brzeg. Przywraca wojnaStop.
+      if (WarScene.prevMinShipFrac == null) WarScene.prevMinShipFrac = cameraDirectorTune.minShipFrac;
+      cameraDirectorTune.minShipFrac = Number(o.minShipFrac) || 0.03;
+      // Natarcie obu stron (bez smyczy ESKORTY, marsz bez stania, przeloty).
+      setFleetStanceOverride('friendly', 'charge');
+      setFleetStanceOverride('pirate', 'charge');
+      return {
+        center, planet: plan.planet, atlas: { x: px, y: py },
+        backdrop: { planet: { ...F.planet }, heroes: bd.heroes.map((h) => ({ kind: h.beat.kind, t0: h.plan.t0, keys: h.plan.keys, z: Math.round(h.params.z) })),
+          shots: WarScene.shots.map((sh) => ({ t: +sh.t.toFixed(2), kind: sh.kind })) },
+        fleets: Object.fromEntries(['A', 'B'].map((k) => [k, {
+          start: plan.fleets[k].start, count: plan.fleets[k].ships.length, apex: plan.fleets[k].apex,
+          heading: plan.fleets[k].heading,
+          bursts: plan.fleets[k].ships.map((sh) => ({ key: sh.key, burst: +(plan.fleets[k].start + sh.burst).toFixed(2) }))
+        }]))
+      };
+    }
+
+    // Wezwania floty: każdy okręt z planu (punkt przylotu, start tunelu za flotą, plan fali, k, styl zwiastuna).
+    function launchWarFleet(fleet) {
+      const o = WarScene.opts;
+      for (const sh of fleet.ships) {
+        const res = callInSupport(sh.key, {
+          mode: sh.mode, spawnPos: { x: sh.x, y: sh.y }, origin: fleet.origin,
+          warpDelay: sh.delay, warpHeraldExtra: sh.heraldExtra, heraldStyle: o.heraldStyle, exitK: o.k,
+          extraCarrier: true,
+          onSpawned: (list) => trackWarSceneShips(list, sh, fleet.side)
+        });
+        WarScene.calls.push({ side: fleet.side, key: sh.key, planned: !!res?.planned, eta: res?.eta ?? null });
+      }
+    }
+
+    function trackWarSceneShips(list, sh, side) {
+      for (const e of list) {
+        if (!e || e.dead || e.fighter) continue;
+        e.__warScene = side;
+        WarScene.tracked.push({
+          e, side, key: sh.key, px: sh.x, py: sh.y, spawnT: WarScene.t, ghost: false,
+          releaseT: NaN, rx: NaN, ry: NaN, vExit: NaN, slide: NaN, slideT: NaN, endErr: NaN
+        });
+      }
+    }
+
+    // Środek i rozrzut żywych okrętów strony (side null — obu; sygnał kamery w walce) albo punktów przylotu strony
+    // (przed przylotem).
+    const _warCue = { x: 0, y: 0, r: 0, n: 0 };
+    function warSceneFleetCue(side) {
+      let sx = 0, sy = 0, n = 0;
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if ((side && tr.side !== side) || !e || e.dead || e.isCollidable === false) continue;
+        sx += e.x; sy += e.y; n++;
+      }
+      if (n === 0) {
+        if (!side) { _warCue.n = 0; return _warCue; }
+        const f = WarScene.plan.fleets[side];
+        for (const sh of f.ships) { sx += sh.x; sy += sh.y; n++; }
+        _warCue.x = sx / n; _warCue.y = sy / n;
+        let r = 0;
+        for (const sh of f.ships) r = Math.max(r, Math.hypot(sh.x - _warCue.x, sh.y - _warCue.y) + sh.length * 0.5);
+        _warCue.r = r; _warCue.n = 0;
+        return _warCue;
+      }
+      _warCue.x = sx / n; _warCue.y = sy / n; _warCue.n = n;
+      // promień: 80% okrętów (pojedyncze maruderki nie oddalają kadru), najwyżej pół odległości flot
+      const ds = [];
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if ((side && tr.side !== side) || !e || e.dead || e.isCollidable === false) continue;
+        ds.push(Math.hypot(e.x - _warCue.x, e.y - _warCue.y));
+      }
+      ds.sort((a, b) => a - b);
+      _warCue.r = Math.min(WarScene.opts.distance * 0.5, (ds[Math.floor(ds.length * 0.8)] || 0) + 1500);
+      return _warCue;
+    }
+
+    function stepWarScene(dt) {
+      if (!WarScene.active) return;
+      const h = Math.max(0, Number(dt) || 0);
+      WarScene.t += h;
+      const plan = WarScene.plan;
+      for (const side of ['A', 'B']) {
+        if (!WarScene.launched[side] && WarScene.t >= plan.fleets[side].start) {
+          WarScene.launched[side] = true;
+          launchWarFleet(plan.fleets[side]);
+        }
+      }
+      // Pomiar ślizgu: duch w tunelu → zwolnienie (prędkość wyjścia) → prędkość bojowa (≤ 1,03 maxSpeed).
+      for (const tr of WarScene.tracked) {
+        const e = tr.e;
+        if (!e || e.dead) continue;
+        if (e.isCollidable === false) { tr.ghost = true; continue; }
+        if (!tr.ghost) continue;
+        const sp = Math.hypot(e.vx || 0, e.vy || 0);
+        if (!Number.isFinite(tr.releaseT)) {
+          tr.releaseT = WarScene.t; tr.rx = e.x; tr.ry = e.y; tr.vExit = sp;
+        } else if (!Number.isFinite(tr.slide)) {
+          const spec = resolveShipFlightSpec(e);
+          if (spec && sp <= spec.maxSpeed * 1.03) {
+            tr.slide = Math.hypot(e.x - tr.rx, e.y - tr.ry);
+            tr.slideT = WarScene.t - tr.releaseT;
+            tr.endErr = Math.hypot(e.x - tr.px, e.y - tr.py);
+          }
+        }
+      }
+      // Ujęcia (kino sceny, opcja cinema): szeroki kadr, kadry bohaterów prowadzone za ich ogniskiem (heroFocus), szeroki.
+      if (WarScene.shots && camera.mode === 'ship') stepWarSceneShots();
+      // Kamera (reżyser kadru mieści sygnał i Atlasa): przylot A, od startu B — przylot B (do 2 s po ostatnim wyjściu),
+      // potem środek bitwy (wszystkie żywe okręty, promień 80% z nich).
+      if (camera.mode === 'ship') {
+        const B = plan.fleets.B;
+        const bEnd = B.start + B.ships.reduce((m, sh) => Math.max(m, sh.burst), 0) + 2;
+        if (WarScene.t < B.start) {
+          const c = warSceneFleetCue('A');
+          noteCameraDirectorCue(cameraDirector, 'wojna-A', c.x, c.y, c.r, 2, 0.6);
+        } else if (WarScene.t < bEnd) {
+          const c = warSceneFleetCue('B');
+          noteCameraDirectorCue(cameraDirector, 'wojna-B', c.x, c.y, c.r, 2, 0.6);
+        } else {
+          const c = warSceneFleetCue(null);
+          if (c.n > 0) noteCameraDirectorCue(cameraDirector, 'wojna', c.x, c.y, c.r, 2, 0.6);
+        }
+      }
+    }
+
+    // Bitwa w głębi: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu) — blok migawki i tryb off.
+    function warBackdropFrameNow() {
+      const F = warBackdropFrame;
+      if (F.has) F.t = WarScene.t + Math.max(0, (SimClock.render - SimClock.sim) || 0);
+      return F;
+    }
+
+    // Kadr bohaterów: rozpiętość pary × fit mieści się w szerokości kadru NA ICH WYSOKOŚCI (perspektywa z góry:
+    // widoczna szerokość na wysokości z = vh · aspekt · (1 − z / wysokość kamery)).
+    const _warFocus = { x: 0, y: 0, extent: 0 };
+    function warShotViewHeight(shot) {
+      warHeroFocus(shot.hero, WarScene.t, _warFocus);
+      const aspect = W / Math.max(1, H);
+      const need = (_warFocus.extent * shot.fit + (aspect * shot.hero.z) / topCameraHeight(1)) / aspect;
+      return clamp(need, shot.vMin, shot.vMax);
+    }
+
+    function stepWarSceneShots() {
+      for (const shot of WarScene.shots) {
+        if (shot.started || WarScene.t < shot.t) continue;
+        shot.started = true;
+        if (shot.kind === 'hero') {
+          warHeroFocus(shot.hero, WarScene.t, _warFocus);
+          startStoryCameraLook({ x: shot.cx + _warFocus.x, y: shot.cy + _warFocus.y, viewHeight: warShotViewHeight(shot),
+            inSec: shot.inSec, holdSec: shot.holdSec, outSec: shot.outSec });
+        } else {
+          startStoryCameraLook({ x: shot.x, y: shot.y, viewHeight: shot.viewHeight, inSec: shot.inSec, holdSec: shot.holdSec, outSec: shot.outSec });
+        }
+        if (storyCameraLook) storyCameraLook.__warShot = shot;
+      }
+      const look = storyCameraLook;
+      const shot = look && look.__warShot;
+      if (shot && shot.kind === 'hero') {
+        // punkt kadru płynnie goni ognisko bohaterów (bez szarpnięcia przy rozpadzie okrętu), wysokość kadru — rozpiętość
+        warHeroFocus(shot.hero, WarScene.t, _warFocus);
+        look.x += (shot.cx + _warFocus.x - look.x) * 0.12;
+        look.y += (shot.cy + _warFocus.y - look.y) * 0.12;
+        look.viewHeight += (warShotViewHeight(shot) - look.viewHeight) * 0.05;
+      }
+    }
+
+    function stopWarScene({ clear = false } = {}) {
+      if (!WarScene.active && !clear) return false;
+      WarScene.active = false;
+      warBackdropFrame.has = false;
+      if (storyCameraLook && storyCameraLook.__warShot) { storyCameraLook.holdSec = 0; storyCameraLook.holdUntil = null; }
+      WarScene.shots = null;
+      setFleetStanceOverride('friendly', null);
+      setFleetStanceOverride('pirate', null);
+      camera.manualZoom = false;
+      if (WarScene.prevMinShipFrac != null) { cameraDirectorTune.minShipFrac = WarScene.prevMinShipFrac; WarScene.prevMinShipFrac = null; }
+      if (clear) for (const tr of WarScene.tracked) if (tr.e && !tr.e.dead) dematerializeSupportUnit(tr.e);
+      return true;
+    }
+
+    // Stan sceny i pomiary (harness: scripts/webgpu/wojna-gra.mjs).
+    function warSceneState() {
+      const per = (side) => {
+        const list = WarScene.tracked.filter((tr) => tr.side === side);
+        const alive = list.filter((tr) => tr.e && !tr.e.dead).length;
+        const slides = list.filter((tr) => Number.isFinite(tr.slide)).map((tr) => ({
+          key: tr.key, vExit: Math.round(tr.vExit), slide: Math.round(tr.slide), t: +tr.slideT.toFixed(2),
+          endErr: Math.round(tr.endErr)
+        }));
+        return { spawned: list.length, alive, released: list.filter((tr) => Number.isFinite(tr.releaseT)).length, slides };
+      };
+      return {
+        active: WarScene.active, t: +WarScene.t.toFixed(2), launched: { ...WarScene.launched },
+        A: per('A'), B: per('B'), calls: WarScene.calls.length, planned: WarScene.calls.filter((c) => c.planned).length,
+        backdrop: { has: warBackdropFrame.has, id: warBackdropFrame.id, t: +warBackdropFrame.t.toFixed(2) },
+        shot: storyCameraLook && storyCameraLook.__warShot ? { kind: storyCameraLook.__warShot.kind, t: storyCameraLook.__warShot.t,
+          x: Math.round(storyCameraLook.x), y: Math.round(storyCameraLook.y), viewHeight: Math.round(storyCameraLook.viewHeight) } : null
+      };
+    }
+
     // Harness zrzutów portu WebGPU (scripts/webgpu/zrzuty.mjs) — tylko z ?dev, rozgrywki nie
     // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
     if (new URLSearchParams(location.search).has('dev')) {
       window.DevScene = Object.assign(window.DevScene || {}, {
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
+        // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
+        // opts: countA, countB, k, distance, gapB, heraldStyle ('thread' | 'ripple' | 'none'), backdrop ('jupiter' |
+        // 'mars'), atlas ('side' | 'fleet'), seed, clear. Zwraca plan (środek, floty, czasy wyjść).
+        wojna(opts = {}) { return startWarScene(opts); },
+        wojnaStop(clear = false) { return stopWarScene({ clear }); },
+        wojnaState() { return warSceneState(); },
         teleport(x, y, heading = ship.angle) {
           ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
           if (Number.isFinite(heading)) ship.angle = heading;
@@ -11884,6 +12269,8 @@
         // Galeria broni (zadanie 18-B): broń na zaczepach special gracza bez ładowni (wszystkie
         // albo `count` pierwszych) i strzał jak klawisz 2 — ładowanie Mjolnira / Valkyrie w kadrze.
         mountSpecial(weaponId, count = Infinity) {
+          // broń tylko dla NPC (promień śmierci — wieża Colossusa) nie trafia do gracza także z konsoli dev
+          if (weaponId && WEAPONS[weaponId]?.npcOnly === true) return 0;
           let n = 0;
           for (const hp of Game.player.hardpoints) {
             if (hp.type !== HP.SPECIAL || hp.destroyed) continue;
@@ -11895,6 +12282,50 @@
         },
         fireSpecial() {
           return tryFireMountedSpecialWeapons(true);
+        },
+        // PROMIEŃ ŚMIERCI (2026-10-19, src/game/deathRay.js; gra: window.DeathRayGame). Rozkaz sceny: strzelec (encja albo
+        // indeks w npcs; brak — gracz) ładuje promień `opts.charge` s (domyślnie chargeTime broni, 4 s) przy wylocie
+        // swojego gniazda (albo dziobu) i strzela w AKTUALNĄ pozycję celu (encja, indeks w npcs albo { x, y }).
+        // opts: { charge, damage, range, penetration, width, color: [r, g, b] liniowo 0..1, byPlayer }. Zwraca rozkaz.
+        deathRay(shooter, target, opts = {}) {
+          const s = typeof shooter === 'number' ? npcs[shooter] : (shooter || ship);
+          const t = typeof target === 'number' ? npcs[target] : target;
+          if (!s || !t) return null;
+          return deathRays.order(s, t, { byPlayer: s === ship, ...opts });
+        },
+        // Strzał WYŁĄCZNIE obrazowy (bez trafień) od (x0, y0) do (x1, y1) — ten sam obraz co prawdziwy promień (warstwy
+        // bitwy w głębi): opts { charge [s], width, color: [r, g, b], z0, z1, impact (rozbłysk na końcu, domyślnie tak) }.
+        deathRayVisual(x0, y0, x1, y1, opts = {}) {
+          return deathRays.visual(x0, y0, x1, y1, opts);
+        },
+        // Promień na gnieździe BUILT-IN NPC jak u Colossusa Terra Nova (AI strzela sama: autoWeapons grupy `builtin` +
+        // ładowanie z capitalAI) — okręt bez gniazda builtin dostaje wirtualne na osi dziobu (`rot` 90 = dziób). Inne
+        // okręty niż Colossus — tylko scena / próba (w grze promień ma wyłącznie supercapital Terra Nova). Zwraca 1 / 0.
+        equipDeathRay(npc, weaponId = 'death_ray') {
+          const e = typeof npc === 'number' ? npcs[npc] : npc;
+          const def = MASTER_WEAPONS[weaponId];
+          if (!e || !def) return 0;
+          if (!e.weapons) e.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+          if (!Array.isArray(e.editorHardpoints)) e.editorHardpoints = [];
+          let hp = e.editorHardpoints.find((h) => h && h.type === HP.BUILTIN && !h.destroyed) || null;
+          if (!hp) {
+            hp = { id: `deathray_${e.id ?? 'npc'}`, type: HP.BUILTIN, size: 'Capital', rot: 90, x: (Number(e.radius) || 200) * 0.45 / getEntityHardpointScaleX(e), y: 0 };
+            e.editorHardpoints.push(hp);
+          }
+          hp.mount = weaponId;
+          e.weapons.builtin = [{ hp, weapon: def }];
+          e._weaponsInit = false;   // autoWeapons od nowa (capitalAI.initAutonomousWeapons)
+          return 1;
+        },
+        // Stan promieni i rozkazów (harness: scripts/webgpu/promien-gra.mjs).
+        deathRayState() {
+          return deathRays.describe();
+        },
+        // Czop gniazda promienia strzelca w świecie ({ x, y } albo null) — wieża Colossusa w kadrze, ustawienie sceny.
+        deathRayMuzzle(shooter, weaponId = 'death_ray') {
+          const s = typeof shooter === 'number' ? npcs[shooter] : shooter;
+          const out = { x: 0, y: 0 };
+          return s && deathRayMuzzleOf(s, MASTER_WEAPONS[weaponId], out) ? out : null;
         },
         // Działa main (2026-10-08, klasa dział snajperskich): broń na zaczepach main gracza bez ładowni
         // (wszystkie albo `count` pierwszych) — Lanca w grze (scripts/webgpu/lanca-gra.mjs).
@@ -12027,6 +12458,7 @@
           // lista szczytów pól (~20 ms) teraz, nie w klatce pierwszego wlotu w pas.
           beltWorld.setSmallBodyAnchors(smallBodies);
           beltWorld.familyPeaks();
+          wireTrafficV2BeltHoles();   // wyrwy po wydobyciu z ruchu v2 (blok „WYDOBYCIE SKAŁ”)
           // Obraz pasa: własna instancja pola z konfiguracją świata pasa (operacje wyżej dochodzą same).
           asteroidBelt = createAsteroidBelt({ world: beltWorld });
           beltWorld.onMining(() => wireAsteroidMining());   // platforma wydobywcza po pieczeniu banku skał
@@ -13120,12 +13552,12 @@
     function fitPartPrice(id) {
       return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? 0) || 0;
     }
-    // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — pod ?trafficV2 most do
-    // workera), wycena weaponPriceAt. false — port jej tu nie złoży.
+    // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — most do workera ruchu),
+    // wycena weaponPriceAt. false — port jej tu nie złoży.
     function fitBuyWeaponPiece(station, econ, id) {
       const quote = weaponPriceAt(station, econ, id);
       if (!quote || !quote.inStock) return false;
-      for (const [res, qty] of Object.entries(quote.cost)) adjustStationStock(station, econ, res, -qty);
+      for (const [res, qty] of Object.entries(quote.cost)) adjustStationStock(station, res, -qty);
       return true;
     }
     // Czy port złoży wszystkie sztuki z listy zakupów naraz (weaponPriceAt sprawdza jedną).
@@ -13156,8 +13588,10 @@
         mount: playerFitCurrentMount(hp)
       }));
     }
+    // Broń tylko dla NPC (`npcOnly` — promień śmierci, wieża Colossusa: user 2026-10-20 „zbyt potężna na special
+    // slot”) nie pasuje do żadnego gniazda gracza — WYPOSAŻENIE, plan fitowania i automat kart idą przez tę funkcję.
     function playerFitFits(def, slot) {
-      return !!def && weaponFitsHardpointSize(def.size, slot?.size || getHardpointSize(slot));
+      return !!def && def.npcOnly !== true && weaponFitsHardpointSize(def.size, slot?.size || getHardpointSize(slot));
     }
 
     function buildPlayerFitPlan(preset, mode, station = stationUI.station, opts = {}) {
@@ -14073,82 +14507,30 @@
       });
     }
 
-    // Stacja skupuje poniżej i sprzedaje powyżej wartości bazowej z resources.js.
-    // Rozpiętość jest marżą doku — opłaca się produkować samemu, ale zakup
-    // brakującego surowca zawsze jest możliwy.
-    const TRADE_BUY_MARGIN = 1.18;
-    const TRADE_SELL_MARGIN = 0.82;
+    // HANDEL Z DOKIEM — jeden model ceny dla gracza i kupców NPC: `resourcePrice` z gospodarki świata ruchu
+    // (niedobór, profil frakcji, długość głodu) z reputacją gracza, liczona na kopii rynku z mostu
+    // (`trafficV2.getEconomy`). Stacja, której świat ruchu nie zna (przed `ready` workera, kryjówka misji przed
+    // jego odpowiedzią, wyłącznik `?trafficV2=0`), nie handluje: brak magazynu → brak ceny (0).
 
-    // Cena lokalna = wartość bazowa × niedobór × profil frakcji × reputacja.
-    // To ten mnożnik niedoboru tworzy trasy handlowe: pusty magazyn na Marsie
-    // płaci za stal dwa razy tyle co pełny magazyn na Ziemi, więc frachtowce
-    // (i gracz) mają dokąd lecieć.
-    const SCARCITY_MIN_MUL = 0.6;   // magazyn pełny — nadwyżka, nikt nie chce
-    const SCARCITY_MAX_MUL = 1.8;   // magazyn pusty — głód
-    // Frakcja płaci więcej za to, czego potrzebuje, i taniej oddaje to,
-    // czego ma w nadmiarze z własnej produkcji.
-    const FACTION_DEMAND_MUL = 1.25;
-    const FACTION_SUPPLY_MUL = 0.8;
-
-    function getStationScarcityMul(station, key) {
-      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
-      const cap = Number(econ?.capacity?.[key]);
-      if (!Number.isFinite(cap) || cap <= 0) return 1;
-      const fill = Math.max(0, Math.min(1, (Number(econ.resources?.[key]) || 0) / cap));
-      return SCARCITY_MIN_MUL + (SCARCITY_MAX_MUL - SCARCITY_MIN_MUL) * (1 - fill);
+    // Magazyn, który widzi terminal: kopia rynku z workera ruchu (zapas ×60 i ceny świata) albo `null`.
+    function getTradeEconomy(station) {
+      return station ? (trafficV2?.getEconomy(station.id) || null) : null;
     }
 
-    function getFactionProfileMul(station, key) {
-      const faction = FACTIONS[normalizeFaction(station?.factionId)];
-      if (!faction) return 1;
-      if (faction.demands?.includes(key)) return FACTION_DEMAND_MUL;
-      if (faction.supplies?.includes(key)) return FACTION_SUPPLY_MUL;
-      return 1;
-    }
-
-    function getLocalBasePrice(station, key) {
-      return getResourceValue(key) * getStationScarcityMul(station, key) * getFactionProfileMul(station, key);
-    }
-
-    function getTradeBuyPrice(key, station = stationUI.station) {
-      if (trafficV2?.hasStation(station?.id)) return getTrafficV2PlayerPrice(station, key, 'ask');
-      // Dobra reputacja obniża cenę zakupu...
-      const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation);
-      return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_BUY_MARGIN * rep));
-    }
-
-    function getTradeSellPrice(key, station = stationUI.station) {
-      if (trafficV2?.hasStation(station?.id)) return getTrafficV2PlayerPrice(station, key, 'bid');
-      // ...i podnosi cenę skupu, więc dzielimy zamiast mnożyć.
-      const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation) || 1;
-      return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_SELL_MARGIN / rep));
-    }
-
-    // Ruch v2 (?trafficV2): JEDEN model ceny dla gracza i kupców NPC —
-    // `resourcePrice` z gospodarki świata ruchu (niedobór, profil frakcji,
-    // długość głodu) z reputacją gracza. Wycena doku wyżej (marża ±18%) zostaje
-    // dla stacji spoza świata ruchu, np. misyjnej kryjówki piratów.
-    function getTrafficV2PlayerPrice(station, key, side) {
-      const price = resourcePrice(station, trafficV2.getEconomy(station.id), key,
-        { reputation: PLAYER.reputation });
+    function getTradePrice(station, key, side) {
+      const econ = getTradeEconomy(station);
+      if (!econ) return 0;
+      const price = resourcePrice(station, econ, key, { reputation: PLAYER.reputation });
       return Math.max(1, Math.round(Number(price?.[side]) || 0));
     }
 
-    // Magazyn, który widzi terminal: pod ?trafficV2 kopia z workera ruchu
-    // (zapas ×60 i ceny świata), bez flagi — gospodarka stacji w grze.
-    function getTradeEconomy(station) {
-      if (!station) return null;
-      return trafficV2?.getEconomy(station.id) || InfrastructureUI.ensureEconomy(station);
-    }
+    function getTradeBuyPrice(key, station = stationUI.station) { return getTradePrice(station, key, 'ask'); }
+    function getTradeSellPrice(key, station = stationUI.station) { return getTradePrice(station, key, 'bid'); }
 
-    // Zmiana zapasu stacji z gry (handel, rozbiórka wraku). Pod ?trafficV2 idzie
-    // przez most — kopia zmienia się od razu, worker po swojej stronie.
-    function adjustStationStock(station, econ, key, delta) {
-      if (trafficV2?.hasStation(station?.id)) {
-        trafficV2.stockDelta(station.id, { [key]: delta }, 'player');
-        return;
-      }
-      econ.resources[key] = (Number(econ.resources[key]) || 0) + delta;
+    // Zmiana zapasu stacji z gry (handel, rozbiórka wraku, zakup broni) — tylko przez most (`stockDelta`):
+    // kopia zmienia się od razu, worker po swojej stronie. Stacja bez rynku nic nie przyjmuje.
+    function adjustStationStock(station, key, delta) {
+      if (trafficV2?.hasStation(station?.id)) trafficV2.stockDelta(station.id, { [key]: delta }, 'player');
     }
 
     // Komponenty handluje się sztukami, surowce sypkie partiami po 10.
@@ -14647,14 +15029,14 @@
       if (!pane) return;
       const table = pane.querySelector('.trade-resource-table');
       if (!table) return;
+      // Bez rynku stacji (świat ruchu jej nie zna) — kreski, nie liczby z poprzednio otwartej stacji.
       const econ = getTradeEconomy(station);
-      if (!econ) return;
       table.querySelectorAll('tr[data-resource-key]').forEach(row => {
         const key = row.dataset.resourceKey;
         const amountEl = row.querySelector('[data-field="amount"]');
         const capEl = row.querySelector('[data-field="capacity"]');
-        if (amountEl) amountEl.textContent = `${Math.round(econ.resources?.[key] ?? 0)}`;
-        if (capEl) capEl.textContent = `${Math.round(econ.capacity?.[key] ?? 0)}`;
+        if (amountEl) amountEl.textContent = econ ? `${Math.round(econ.resources?.[key] ?? 0)}` : '—';
+        if (capEl) capEl.textContent = econ ? `${Math.round(econ.capacity?.[key] ?? 0)}` : '—';
       });
       const note = pane.querySelector('.trade-resource-note');
       if (note) {
@@ -14675,7 +15057,9 @@
 
       const holdNote = pane.querySelector('.trade-hold-note');
       if (holdNote) {
-        holdNote.textContent = `Ładownia: ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cargoCap)}`;
+        // Bez rynku (stacja nieznana światu ruchu albo `?trafficV2=0`) terminal nie handluje.
+        holdNote.textContent = `Ładownia: ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cargoCap)}`
+          + (econ ? '' : ' · rynek stacji niedostępny');
       }
 
       table.querySelectorAll('tr[data-market-key]').forEach(row => {
@@ -14691,7 +15075,7 @@
         const buyPrice = getTradeBuyPrice(key, station);
         const priceCell = row.querySelector('[data-field="price"]');
         if (priceCell) {
-          priceCell.textContent = `${sellPrice} / ${buyPrice} CR`;
+          priceCell.textContent = econ ? `${sellPrice} / ${buyPrice} CR` : '—';
           // Kolor mówi, czy tu się opłaca sprzedawać, czy kupować — bez tego
           // gracz musiałby porównywać liczby między stacjami z pamięci.
           const ratio = sellPrice / Math.max(1, getResourceValue(key));
@@ -14709,7 +15093,7 @@
             const massNeeded = getResourceMassLocal(key, step);
             btn.disabled = PLAYER.credits < cost || stationStock < step || cargoFree < massNeeded;
           } else {
-            btn.disabled = held < step;
+            btn.disabled = !econ || held < step;
           }
         });
       });
@@ -14745,15 +15129,15 @@
       updateHangarCards();
     }
 
-    // Handel przenosi surowiec między ładownią gracza a magazynem stacji —
-    // nic nie znika i nie powstaje z niczego. Kredyty to marża doku.
+    // Handel przenosi surowiec między ładownią gracza a magazynem stacji (rynek ruchu v2, przez most) —
+    // nic nie znika i nie powstaje z niczego.
     function handleTrade(type, key, qty) {
       const amount = Math.max(1, Math.round(Number(qty) || 1));
       if (!RESOURCES[key]) return;
       const station = stationUI.station;
       const econ = getTradeEconomy(station);
       if (!econ) {
-        toast('Brak magazynu stacji');
+        toast('Rynek stacji niedostępny');
         return;
       }
 
@@ -14763,7 +15147,7 @@
         if ((Number(econ.resources?.[key]) || 0) < amount) { toast('Stacja nie ma zapasu'); return; }
         if (getPlayerCargoFree() < getResourceMassLocal(key, amount)) { toast('Ładownia pełna'); return; }
         PLAYER.credits -= cost;
-        adjustStationStock(station, econ, key, -amount);
+        adjustStationStock(station, key, -amount);
         PLAYER.cargo[key] = (Number(PLAYER.cargo[key]) || 0) + amount;
       } else if (type === 'sell') {
         const held = Number(PLAYER.cargo?.[key]) || 0;
@@ -14775,7 +15159,7 @@
         const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
         PLAYER.cargo[key] = held - amount;
         if (PLAYER.cargo[key] <= 0) delete PLAYER.cargo[key];
-        adjustStationStock(station, econ, key, stored);
+        adjustStationStock(station, key, stored);
         PLAYER.credits += getTradeSellPrice(key, station) * amount;
         // Regularny handel powoli ociepla stosunki z właścicielem doku.
         if (station.factionId) changePlayerReputation(station.factionId, REPUTATION_EVENTS.tradedGoods);
@@ -14784,525 +15168,12 @@
     }
 
     // ============================================================
-    // EKONOMIA STACJI
-    // Silnik chodzi dla WSZYSTKICH stacji naraz, nie tylko dla tej z otwartym
-    // terminalem — inaczej świat zamierałby, gdy gracz na niego nie patrzy,
-    // a o to właśnie chodzi, żeby żył sam.
-    // ============================================================
-
-    let economyCycleTimer = 0;
-
-    function updateStationEconomies(dt) {
-      economyCycleTimer += dt;
-      if (economyCycleTimer < ECONOMY_CYCLE_SECONDS) return;
-      const cycles = Math.floor(economyCycleTimer / ECONOMY_CYCLE_SECONDS);
-      economyCycleTimer -= cycles * ECONOMY_CYCLE_SECONDS;
-      for (const station of stations) {
-        if (!station || isDerelict(station)) continue;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        if (econ) runStationEconomy(station, econ, cycles);
-      }
-      // Terminal pokazuje stany magazynowe — po cyklu trzeba go odświeżyć.
-      if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
-    }
-
-    // ============================================================
-    // FLOTY TOWAROWE
-    // Vany wożą realny ładunek między stacjami. Trasy nie są wpisane w tabelę —
-    // biorą się z tego, co się nie bilansuje w produkcji stacji.
-    // ============================================================
-
-    const cargoFleet = createFleetState();
-    const cargoActors = new Map();
-    const cargoTransitEvents = [];
-    const cargoPoseScratch = { x: 0, y: 0, phase: 'toGate' };
-    const CARGO_MATERIALIZE_RADIUS = 15000;
-    const CARGO_DEMATERIALIZE_RADIUS = 18000;
-    const CARGO_WARP_SPEED = 4000;
-    // Pod ?trafficV2 stare vany stoją, bo physicsStep w ogóle nie woła
-    // updateCargoFleet — zlecenia wystawia dyspozytor ruchu v2 w workerze.
-    const CARGO_DISPATCH_ENABLED = true;
-    const cargoAdvanceOptions = {
-      events: cargoTransitEvents,
-      getEconomy: resolveCargoEconomy,
-      onEvent: onCargoTransitEvent,
-      retryIntervalSeconds: 1
-    };
-
-    function getStationById(stationId) {
-      for (let i = 0; i < stations.length; i++) {
-        if (stations[i]?.id === stationId) return stations[i];
-      }
-      return null;
-    }
-
-    function resolveCargoEconomy(stationId) {
-      const station = getStationById(stationId);
-      return station ? InfrastructureUI.ensureEconomy(station) : null;
-    }
-
-    function getCargoVanClass(order) {
-      return VAN_CLASSES.find(vanClass => vanClass.id === order?.vanClassId) || VAN_CLASSES[0];
-    }
-
-    function getCargoTravelSeconds(shipment, route) {
-      if (!shipment || !route) return 0;
-      const speed = Math.max(1, Number(shipment.vanClass?.speed) || VAN_CLASSES[0].speed);
-      const source = shipment.source;
-      const target = shipment.target;
-      const toGate = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
-      const fromGate = Math.hypot(target.x - route.end.x, target.y - route.end.y) / speed;
-      return Math.max(1, toGate + route.length / CARGO_WARP_SPEED + fromGate);
-    }
-
-    function fillCargoOrderPose(order, route, out) {
-      const source = route?.fromRef;
-      const target = route?.toRef;
-      if (!source || !target || !out) return false;
-      if (order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) {
-        out.x = target.x;
-        out.y = target.y;
-        out.phase = 'toStation';
-        return true;
-      }
-
-      const vanClass = getCargoVanClass(order);
-      const speed = Math.max(1, Number(vanClass?.speed) || 1);
-      const total = Math.max(0.001, Number(order.route?.durationSeconds) || 0.001);
-      const elapsed = Math.max(0, Math.min(total, Number(order.routeProgress) * total || 0));
-      const toGateDuration = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
-      const warpDuration = route.length / CARGO_WARP_SPEED;
-
-      if (elapsed < toGateDuration) {
-        const t = toGateDuration > 0 ? elapsed / toGateDuration : 1;
-        out.x = source.x + (route.start.x - source.x) * t;
-        out.y = source.y + (route.start.y - source.y) * t;
-        out.phase = 'toGate';
-        return true;
-      }
-      if (elapsed < toGateDuration + warpDuration) {
-        const t = warpDuration > 0 ? (elapsed - toGateDuration) / warpDuration : 1;
-        out.x = route.start.x + (route.end.x - route.start.x) * t;
-        out.y = route.start.y + (route.end.y - route.start.y) * t;
-        out.phase = 'warping';
-        return true;
-      }
-
-      const fromGateDuration = Math.max(0.001, total - toGateDuration - warpDuration);
-      const t = Math.max(0, Math.min(1, (elapsed - toGateDuration - warpDuration) / fromGateDuration));
-      out.x = route.end.x + (target.x - route.end.x) * t;
-      out.y = route.end.y + (target.y - route.end.y) * t;
-      out.phase = 'toStation';
-      return true;
-    }
-
-    function cargoSegmentProgress(ax, ay, bx, by, x, y) {
-      const dx = bx - ax;
-      const dy = by - ay;
-      const lengthSq = dx * dx + dy * dy;
-      if (lengthSq <= 0.000001) return 1;
-      return clamp(((x - ax) * dx + (y - ay) * dy) / lengthSq, 0, 1);
-    }
-
-    function getCargoActorRouteProgress(order, route, van) {
-      const source = route?.fromRef;
-      const target = route?.toRef;
-      if (!source || !target || !van) return Number(order?.routeProgress) || 0;
-      if (van.docking || order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) return 1;
-
-      const vanClass = getCargoVanClass(order);
-      const speed = Math.max(1, Number(vanClass?.speed) || 1);
-      const toGateDuration = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
-      const warpDuration = route.length / CARGO_WARP_SPEED;
-      const toStationDuration = Math.hypot(target.x - route.end.x, target.y - route.end.y) / speed;
-      const duration = Math.max(0.001, Number(order.route?.durationSeconds)
-        || toGateDuration + warpDuration + toStationDuration);
-      let elapsed = 0;
-
-      if (van.phase === 'warping') {
-        elapsed = toGateDuration + warpDuration * cargoSegmentProgress(
-          route.start.x, route.start.y, route.end.x, route.end.y, van.x, van.y
-        );
-      } else if (van.phase === 'toStation') {
-        elapsed = toGateDuration + warpDuration + toStationDuration * cargoSegmentProgress(
-          route.end.x, route.end.y, target.x, target.y, van.x, van.y
-        );
-      } else {
-        elapsed = toGateDuration * cargoSegmentProgress(
-          source.x, source.y, route.start.x, route.start.y, van.x, van.y
-        );
-      }
-      return clamp(elapsed / duration, 0, 1);
-    }
-
-    function cargoDistanceToPlayerSq(x, y) {
-      const dx = (Number(x) || 0) - ship.pos.x;
-      const dy = (Number(y) || 0) - ship.pos.y;
-      return dx * dx + dy * dy;
-    }
-
-    function ensureCargoWreckFragment(van) {
-      if (van?._cargoWreck) return van._cargoWreck;
-      // Kadłub na belkach: wrak z ocalałych węzłów, a gdy nie zostało nic — z jednego
-      // odtworzonego węzła (nośnik partii, jak odtworzony heks niżej).
-      if (van?.beamHull) return HullBodies.ensureCargoCarrier(van) || van._cargoWreck || null;
-      return null;
-    }
-
-    function ensureCargoWreckInventory(wreck, order) {
-      if (!wreck) return null;
-      const shardCount = Math.max(1, Number(wreck.beamHull?.body?.activeNodes) || 1);
-      if (!wreck._salvage) {
-        wreck._salvage = {
-          weapons: [],
-          materials: {},
-          materialsTotal: {},
-          sourceShards: shardCount,
-          remainingShards: shardCount,
-          label: `Wrak transportu ${order.id}`
-        };
-      }
-      if (!wreck._salvage.materials) wreck._salvage.materials = {};
-      if (!wreck._salvage.materialsTotal) wreck._salvage.materialsTotal = { ...wreck._salvage.materials };
-      if (!wreck._cargoManifest || typeof wreck._cargoManifest !== 'object') wreck._cargoManifest = {};
-      return wreck._cargoManifest;
-    }
-
-    function handleCargoVanDestroyed(van) {
-      const order = getShipmentOrder(cargoFleet, van?._cargoOrderId || van?.shipmentOrderId);
-      if (!order || order.status === SHIPMENT_STATUS.DELIVERED) return false;
-      const wreck = van._cargoWreck || ensureCargoWreckFragment(van);
-      if (!wreck) return false;
-      const wreckId = wreck._cargoWreckId || `cargo-wreck:${order.id}`;
-      const inventory = ensureCargoWreckInventory(wreck, order);
-      const result = wreckShipmentOrder(order, wreckId, inventory, cargoFleet.elapsedSeconds);
-      if (wreck && Object.keys(result.moved || {}).length) {
-        wreck._cargoOrderId = order.id;
-        wreck._cargoWreckId = wreckId;
-      }
-      removeActorFromTransitQueues(van);
-      return result.changed;
-    }
-
-    function removeCargoVanView(order, van, saveState = true) {
-      if (!van) return;
-      removeActorFromTransitQueues(van);
-      if (saveState && order?.actorId && !van.dead) {
-        const route = getWarpRoute(order.sourceStationId, order.targetStationId);
-        const routeProgress = route
-          ? getCargoActorRouteProgress(order, route, van)
-          : (Number(order.routeProgress) || 0);
-        dematerializeShipmentOrderView(order, van, {
-          x: van.x,
-          y: van.y,
-          vx: van.vx,
-          vy: van.vy,
-          angle: van.angle,
-          hp: van.hp,
-          maxHp: van.maxHp,
-          lane: van.lane,
-          dockPort: van.dockPort,
-          phase: van.phase,
-          routeProgress,
-          clockTime: cargoFleet.elapsedSeconds
-        });
-      } else {
-        if (order?.actorId) dematerializeShipmentOrderView(order, van);
-        delete van.shipmentOrderId;
-        delete van.shipmentViewId;
-      }
-      releaseNpcHexBody(van);
-      const npcIndex = npcs.indexOf(van);
-      if (npcIndex >= 0) npcs.splice(npcIndex, 1);
-      if (order) cargoActors.delete(order.id);
-      van._cargoOrderId = null;
-    }
-
-    function materializeCargoOrder(order) {
-      const source = getStationById(order.sourceStationId);
-      const target = getStationById(order.targetStationId);
-      const route = getWarpRoute(order.sourceStationId, order.targetStationId);
-      if (!source || !target || !route || !fillCargoOrderPose(order, route, cargoPoseScratch)) return null;
-
-      const vanClass = getCargoVanClass(order);
-      const stats = NPC_TYPES[vanClass.npcType] || NPC_TYPES['freighter-small'];
-      const saved = order.viewState || null;
-      const savedIsCurrent = saved
-        && Number.isFinite(Number(saved.x))
-        && Number.isFinite(Number(saved.y))
-        && Number.isFinite(Number(saved.recordElapsedSeconds))
-        && Math.abs(Number(saved.recordElapsedSeconds) - Number(order.elapsedSeconds)) <= 1e-6;
-      const spawnPose = savedIsCurrent ? saved : cargoPoseScratch;
-      const van = makeNPCBase(spawnPose, {
-        ...stats,
-        hp: Number(saved?.maxHp) || stats.hp,
-        maxSpeed: vanClass.speed,
-        accel: vanClass.speed * 0.6,
-        turn: 1.4
-      });
-      van.id = `cargo-view:${order.id}`;
-      van.type = vanClass.npcType;
-      van.shipFrame = 'terran_frigate';
-      van.factionId = normalizeFaction(order.factionId);
-      van.isCargoVan = true;
-      van.isCollidable = true;
-      van.combatDisabled = true;
-      van.displayName = `Transport ${vanClass.id.toUpperCase()}`;
-      van.color = stats.color;
-      van._cargoOrderId = order.id;
-      van.hp = Math.max(1, Math.min(van.maxHp, Number(saved?.hp) || van.maxHp));
-      van.angle = savedIsCurrent && Number.isFinite(Number(saved?.angle))
-        ? Number(saved.angle)
-        : Math.atan2(route.dir.y, route.dir.x);
-
-      if (!assignTransitRoute(van, source, target, route, {
-        phase: spawnPose.phase,
-        lane: saved?.lane,
-        dockPort: saved?.dockPort,
-        speed: vanClass.speed,
-        resetVelocity: spawnPose.phase !== 'warping',
-        warpSpeed: CARGO_WARP_SPEED
-      })) return null;
-      van.x = spawnPose.x;
-      van.y = spawnPose.y;
-      if (savedIsCurrent && Number.isFinite(Number(saved.vx)) && Number.isFinite(Number(saved.vy))) {
-        van.vx = Number(saved.vx);
-        van.vy = Number(saved.vy);
-      }
-
-      if (order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) {
-        const portPos = stationPortWorld(target, van.dockPort || 0);
-        van.x = portPos.x;
-        van.y = portPos.y;
-        van.vx = 0;
-        van.vy = 0;
-        van.docking = true;
-        van.lastStation = target.id;
-      }
-
-      if (!materializeShipmentOrderView(order, van)) {
-        removeActorFromTransitQueues(van);
-        return null;
-      }
-      syncEntityFactionFlags(van);
-      assignNpcShipFrame?.(van);
-      npcs.push(van);
-      cargoActors.set(order.id, van);
-      return van;
-    }
-
-    function notifyCargoDelivery(order, delivered) {
-      const target = getStationById(order?.targetStationId);
-      if (!cargoBagIsEmpty(delivered) && target && stationUI.open && stationUI.station === target) {
-        toast(`Dostawa: ${describeCargo(delivered)}`);
-      }
-    }
-
-    function reconcileCargoViewsBeforeAdvance() {
-      for (const [orderId, van] of cargoActors) {
-        const order = getShipmentOrder(cargoFleet, orderId);
-        if (!order) {
-          removeCargoVanView(null, van, false);
-          cargoActors.delete(orderId);
-          continue;
-        }
-        if (van.dead) {
-          handleCargoVanDestroyed(van);
-          removeCargoVanView(order, van, false);
-          continue;
-        }
-        if (order.status === SHIPMENT_STATUS.DELIVERED || order.status === SHIPMENT_STATUS.WRECK) {
-          removeCargoVanView(order, van, false);
-          continue;
-        }
-        if (van.docking && van.lastStation === order.targetStationId
-          && order.status === SHIPMENT_STATUS.IN_TRANSIT) {
-          const target = getStationById(order.targetStationId);
-          const econ = target ? InfrastructureUI.ensureEconomy(target) : null;
-          const result = tryDeliverShipmentOrder(order, econ, cargoFleet.elapsedSeconds);
-          if (result.changed) {
-            notifyCargoDelivery(order, result.delivered);
-            removeCargoVanView(order, van, false);
-            continue;
-          }
-          order.nextUnloadAttemptAt = cargoFleet.elapsedSeconds + cargoAdvanceOptions.retryIntervalSeconds;
-        }
-        if (cargoDistanceToPlayerSq(van.x, van.y) > CARGO_DEMATERIALIZE_RADIUS * CARGO_DEMATERIALIZE_RADIUS) {
-          removeCargoVanView(order, van, true);
-        }
-      }
-    }
-
-    function syncCargoOrderViews() {
-      for (const [orderId, van] of cargoActors) {
-        const order = getShipmentOrder(cargoFleet, orderId);
-        const active = order && (order.status === SHIPMENT_STATUS.IN_TRANSIT
-          || order.status === SHIPMENT_STATUS.AWAITING_UNLOAD);
-        if (!active) removeCargoVanView(order, van, false);
-      }
-      for (const order of cargoFleet.activeOrders) {
-        if (!order) continue;
-        const existing = cargoActors.get(order.id);
-        if (existing) continue;
-        if (order.actorId) dematerializeShipmentOrderView(order, order.actorId, order.viewState);
-        const route = getWarpRoute(order.sourceStationId, order.targetStationId);
-        if (!route || !fillCargoOrderPose(order, route, cargoPoseScratch)) continue;
-        if (cargoDistanceToPlayerSq(cargoPoseScratch.x, cargoPoseScratch.y)
-          <= CARGO_MATERIALIZE_RADIUS * CARGO_MATERIALIZE_RADIUS) {
-          materializeCargoOrder(order);
-        }
-      }
-    }
-
-    function onCargoTransitEvent(event, order) {
-      if (event?.type === 'delivered') notifyCargoDelivery(order, event.result?.delivered || {});
-    }
-
-    function countActiveCargoOrders() {
-      return cargoFleet.activeOrders.length;
-    }
-
-    /**
-     * Wystawia jedno zlecenie transportowe. Zwraca `{ ok, order, reason }`,
-     * żeby konsola deweloperska mogła powiedzieć, DLACZEGO nic nie poleciało —
-     * najczęstszy powód to brak rozbieżności w magazynach, nie usterka.
-     */
-    function dispatchOneCargoOrder(options = {}) {
-      if (!options.force && countActiveCargoOrders() >= MAX_ACTIVE_VANS) {
-        return { ok: false, reason: `limit ${MAX_ACTIVE_VANS} aktywnych transportów` };
-      }
-      const shipment = planShipment(
-        stations,
-        (station) => InfrastructureUI.ensureEconomy(station),
-        { skipPairs: options.ignoreCooldowns ? new Set() : getBlockedPairs(cargoFleet) }
-      );
-      if (!shipment) {
-        return { ok: false, reason: 'brak pary nadwyżka→niedobór (magazyny za blisko progów 70%/25%)' };
-      }
-      const route = getWarpRoute(shipment.source.id, shipment.target.id);
-      if (!route) {
-        blockRoute(cargoFleet, shipment.source, shipment.target);
-        return { ok: false, reason: `brak trasy warp ${shipment.source.id}→${shipment.target.id}` };
-      }
-      const sourceEcon = InfrastructureUI.ensureEconomy(shipment.source);
-      const order = createShipmentOrder(cargoFleet, shipment, sourceEcon, route, {
-        travelSeconds: getCargoTravelSeconds(shipment, route),
-        warpSpeed: CARGO_WARP_SPEED
-      });
-      if (!order) {
-        blockRoute(cargoFleet, shipment.source, shipment.target);
-        return { ok: false, reason: 'towar zniknął między planowaniem a załadunkiem' };
-      }
-      return { ok: true, order, shipment };
-    }
-
-    function updateCargoFleet(dt) {
-      tickCooldowns(cargoFleet, dt);
-      reconcileCargoViewsBeforeAdvance();
-      syncCargoOrderViews();
-      advanceShipmentOrders(cargoFleet, dt, cargoAdvanceOptions);
-
-      if (!CARGO_DISPATCH_ENABLED) return;
-      cargoFleet.dispatchTimer += dt;
-      if (cargoFleet.dispatchTimer < DISPATCH_INTERVAL) return;
-      cargoFleet.dispatchTimer -= DISPATCH_INTERVAL;
-      dispatchOneCargoOrder();
-    }
-
-    // ============================================================
-    // KONSOLA DEWELOPERSKA — window.Cargo
-    // Ekonomia potrzebuje minut, żeby magazyny rozjechały się poza progi
-    // 70%/25% i pojawiła się pierwsza para nadwyżka→niedobór. Testowanie
-    // transportu w tempie czasu rzeczywistego jest przez to bardzo powolne.
-    // ============================================================
-
-    window.Cargo = {
-      /** Przewija gospodarkę o N cykli (1 cykl = 20 s gry). To usuwa czekanie. */
-      economy(cycles = 30) {
-        const runs = Math.max(1, Math.floor(cycles));
-        let touched = 0;
-        for (const station of stations) {
-          if (!station || isDerelict(station)) continue;
-          const econ = InfrastructureUI.ensureEconomy(station);
-          if (econ && runStationEconomy(station, econ, runs)) touched++;
-        }
-        if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
-        console.log(`[Cargo] przewinięto ${runs} cykli (${runs * ECONOMY_CYCLE_SECONDS}s gry) na ${touched} stacjach`);
-        return this.trade();
-      },
-
-      /** Wymusza jedno zlecenie natychmiast, z pominięciem timera i karencji. */
-      dispatch() {
-        const result = dispatchOneCargoOrder({ force: true, ignoreCooldowns: true });
-        if (!result.ok) {
-          console.warn(`[Cargo] nic nie wysłano — ${result.reason}`);
-          console.info('[Cargo] spróbuj najpierw: Cargo.economy(40)');
-          return null;
-        }
-        const { order, shipment } = result;
-        console.log(`[Cargo] ${shipment.source.id} → ${shipment.target.id}: `
-          + `${describeCargo(order.manifest)} (${shipment.vanClass.id}, ETA ${Math.round(order.remainingSeconds)}s)`);
-        return order;
-      },
-
-      /** Lista transportów w drodze. */
-      list() {
-        const rows = cargoFleet.activeOrders.map(o => ({
-          trasa: `${o.sourceStationId} → ${o.targetStationId}`,
-          ładunek: describeCargo(o.manifest),
-          'ETA (s)': Math.round(o.remainingSeconds ?? 0),
-          status: o.status,
-          widoczny: o.actorId ? 'tak' : 'nie'
-        }));
-        if (!rows.length) console.log('[Cargo] brak transportów w drodze');
-        else console.table(rows);
-        return rows;
-      },
-
-      /** Dowozi wszystko, co jest w drodze. Zmaterializowane pomija — te wiozą się fizyką. */
-      arrive() {
-        const visible = cargoFleet.activeOrders.filter(o => o.actorId).length;
-        advanceShipmentOrders(cargoFleet, 100000, cargoAdvanceOptions);
-        if (visible) console.warn(`[Cargo] ${visible} transportów jest widocznych — te dolecą fizycznie, nie skokiem`);
-        console.log('[Cargo] pozostałe dostarczone');
-        return this.list();
-      },
-
-      /** Stan magazynów: gdzie jest nadwyżka, a gdzie głód. */
-      trade() {
-        const rows = [];
-        for (const station of stations) {
-          if (!station || isDerelict(station)) continue;
-          const econ = InfrastructureUI.ensureEconomy(station);
-          if (!econ) continue;
-          rows.push({
-            stacja: station.id,
-            oddaje: getStationSurpluses(station, econ, 3).map(s => `${s.id}×${s.spare}`).join(' ') || '—',
-            potrzebuje: getStationDeficits(station, econ, 3).map(d => `${d.id} ${(d.fill * 100).toFixed(0)}%`).join(' ') || '—'
-          });
-        }
-        console.table(rows);
-        return rows;
-      },
-
-      help() {
-        console.log([
-          'Cargo.economy(n)  przewiń gospodarkę o n cykli po 20 s (domyślnie 30)',
-          'Cargo.dispatch()  wymuś jedno zlecenie natychmiast',
-          'Cargo.list()      transporty w drodze',
-          'Cargo.arrive()    dowieź wszystko, co niewidoczne',
-          'Cargo.trade()     kto ma nadwyżkę, a kto głoduje',
-          '',
-          'Typowy test:  Cargo.economy(40)  →  Cargo.dispatch()  →  Cargo.list()'
-        ].join('\n'));
-      }
-    };
-
-    // ============================================================
     // OPUSZCZONE STACJE
     // Stacja bez właściciela nic nie produkuje, ale w magazynach został towar
     // po poprzednich mieszkańcach. To jedyne miejsce, gdzie da się wziąć
     // komponenty bez płacenia i bez psucia sobie z kimkolwiek stosunków.
+    // Łup losuje gra przy starcie ruchu v2 (`initTrafficV2` → `spec.stock`), magazyn trzyma świat ruchu.
+    // Czynne stacje dostają zapas roboczy w workerze (`seedStationStock` w `traffic/markets.js`).
     // ============================================================
 
     const DERELICT_LOOT_POOL = [
@@ -15316,32 +15187,16 @@
       { id: 'scrap', min: 60, max: 240 }
     ];
 
-    // Stacje nie zaczynają z pustymi magazynami: czynne mają zapas roboczy,
-    // opuszczone — resztki po poprzednikach. Start od zera dawał sztuczny
-    // kryzys, bo producent oddaje nadwyżkę dopiero powyżej progu zapełnienia.
-    function seedStationEconomies() {
-      for (const station of stations) {
-        if (isDerelict(station) || station._stockSeeded) continue;
-        station._stockSeeded = true;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        if (econ) seedStationStock(station, econ);
+    /** Resztki po mieszkańcach — zapas startowy rynku opuszczonej stacji (w granicach magazynu z budynków). */
+    function rollDerelictLoot(capacity) {
+      const loot = {};
+      for (const entry of DERELICT_LOOT_POOL) {
+        const amount = Math.round(entry.min + Math.random() * (entry.max - entry.min));
+        if (amount <= 0) continue;
+        const cap = Number(capacity?.[entry.id]);
+        loot[entry.id] = Number.isFinite(cap) ? Math.min(cap, amount) : amount;
       }
-      seedDerelictStations();
-    }
-
-    function seedDerelictStations() {
-      for (const station of stations) {
-        if (!isDerelict(station) || station._derelictSeeded) continue;
-        station._derelictSeeded = true;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        if (!econ) continue;
-        for (const entry of DERELICT_LOOT_POOL) {
-          const amount = Math.round(entry.min + Math.random() * (entry.max - entry.min));
-          if (amount <= 0) continue;
-          const cap = Number(econ.capacity?.[entry.id]);
-          econ.resources[entry.id] = Number.isFinite(cap) ? Math.min(cap, amount) : amount;
-        }
-      }
+      return loot;
     }
 
     // ============================================================
@@ -15383,31 +15238,6 @@
         if ((Number(amount) || 0) > 0) return false;
       }
       return true;
-    }
-
-    function recoverCargoWreckToPlayer(wreck) {
-      if (!wreck || cargoBagIsEmpty(wreck._cargoManifest)) return { changed: false, moved: {} };
-      if (getBagMass(wreck._cargoManifest) > getPlayerCargoFree() + 1e-6) {
-        return { changed: false, moved: {}, reason: 'capacity' };
-      }
-      const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
-      if (!order) return { changed: false, moved: {}, reason: 'missing-order' };
-      return recoverWreckedShipmentOrder(order, wreck._cargoManifest, PLAYER.cargo, {
-        ownerKind: SHIPMENT_OWNER_KIND.PLAYER,
-        ownerId: 'player',
-        now: cargoFleet.elapsedSeconds
-      });
-    }
-
-    function recoverCargoWreckToStation(wreck, station, econ) {
-      if (!wreck || !station || cargoBagIsEmpty(wreck._cargoManifest)) return { changed: false, moved: {} };
-      const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
-      if (!order) return { changed: false, moved: {}, reason: 'missing-order' };
-      return recoverWreckedShipmentOrder(order, wreck._cargoManifest, econ, {
-        ownerKind: SHIPMENT_OWNER_KIND.STATION,
-        ownerId: station.id,
-        now: cargoFleet.elapsedSeconds
-      });
     }
 
     function formatCargoBag(bag) {
@@ -15484,14 +15314,8 @@
         return;
       }
 
-      const cargoRecovery = recoverCargoWreckToPlayer(wreck);
-      if (cargoRecovery.changed) {
-        pushZoneMessage(`ODZYSKANO ŁADUNEK: ${formatCargoBag(cargoRecovery.moved)}`, 1.8);
-      }
       if (!HullBodies.hasHull(wreck)) {
-        stopFieldSalvage(cargoRecovery.reason === 'capacity'
-          ? 'SALVAGE: CAŁA PARTIA NIE MIEŚCI SIĘ W ŁADOWNI'
-          : 'SALVAGE: PUSTY KONTENER');
+        stopFieldSalvage('SALVAGE: PUSTY KONTENER');
         return;
       }
       if (getPlayerCargoFree() <= 0) {
@@ -15648,12 +15472,9 @@
      * ładowni: wrak ma masę setek ton), a broń w całości do ładowni gracza.
      */
     function deliverWreckToDock(wreck, station) {
-      const econ = InfrastructureUI.ensureEconomy(station);
-      const cargoRecovery = recoverCargoWreckToStation(wreck, station, econ);
       const { materials, weapons } = takeDockSalvage(wreck);
       const storedParts = [];
-      // Pod ?trafficV2 materiały trafiają do magazynu świata ruchu (przez most);
-      // bez flagi to ten sam obiekt co `econ`.
+      // Materiały trafiają do magazynu świata ruchu (przez most). Stacja bez rynku ich nie przyjmuje.
       const store = getTradeEconomy(station);
       if (store) {
         for (const [id, amount] of Object.entries(materials)) {
@@ -15662,7 +15483,7 @@
           const stock = Number(store.resources?.[id]) || 0;
           const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
           if (stored <= 0) continue;
-          adjustStationStock(station, store, id, stored);
+          adjustStationStock(station, id, stored);
           storedParts.push(`${getResourceLabel(id)} ×${Math.round(stored)}`);
         }
       }
@@ -15682,10 +15503,7 @@
         removeWreckFromWorld(wreck);
       }
 
-      pushZoneMessage(cargoRecovery.reason === 'capacity'
-        ? 'ROZBIÓRKA: ŁADUNEK CZEKA NA MIEJSCE W MAGAZYNIE'
-        : 'ROZBIÓRKA UKOŃCZONA', 2.2);
-      if (cargoRecovery.changed) toast(`Odzyskany ładunek: ${formatCargoBag(cargoRecovery.moved)}`);
+      pushZoneMessage('ROZBIÓRKA UKOŃCZONA', 2.2);
       if (storedParts.length) toast(`Magazyn stacji: ${storedParts.join(', ')}`);
       if (recovered.length) toast(`Odzyskana broń: ${recovered.join(', ')}`);
       else toast('Wrak nie miał sprawnego uzbrojenia');
@@ -15871,15 +15689,15 @@
     initMechanicUI();
     InfrastructureUI.init(canvas);
     InfrastructureUI.autopopulate();
-    seedStationEconomies();
 
     // ============================================================
-    // RUCH v2 (?trafficV2) — src/game/trafficBridge.js
-    // Gospodarka stacji ×60, przewoźnicy, kupcy, stocznie, wojna, piractwo
-    // i złomiarze liczą się w Web Workerze (docs/PLAN-ruch-v2-w-grze.md, Z1).
-    // Gra wysyła mu czas z krokami fizyki, pozycję gracza (fokus bańki),
-    // handel i pojemności budynków; dostaje kopię rynku (terminal handlu)
-    // i kursy w bańce (proxy statków — Z13). Bez flagi nic się tu nie dzieje.
+    // RUCH v2 — src/game/trafficBridge.js. JEDYNA ekonomia gry (od 2026-10-22, E2):
+    // gospodarka stacji ×60, przewoźnicy, kupcy, stocznie, wojna, piractwo
+    // i złomiarze liczą się w Web Workerze (docs/PLAN-ruch-v2-w-grze.md, Z1;
+    // docs/PLAN-ekonomia-rynki.md). Gra wysyła mu czas z krokami fizyki, pozycję
+    // gracza (fokus bańki), handel (`stockDelta`) i pojemności budynków; dostaje
+    // kopię rynku (terminal handlu) i kursy w bańce (proxy statków — Z13).
+    // `?trafficV2=0` — wyłącznik awaryjny: gra bez ekonomii (patrz DevFlags).
     // ============================================================
 
     /** Promień bańki kursów wokół gracza — Z13 dostroi go pod proxy statków. */
@@ -15899,14 +15717,12 @@
       const stationSpecs = {};
       for (const station of stations) {
         if (!station?.id) continue;
-        const econ = InfrastructureUI.ensureEconomy(station);
-        const spec = { factionId: station.factionId || null };
-        if (econ?.capacity) {
-          spec.capacity = { ...econ.capacity };
-          trafficV2CapacitySent.set(station.id, { ...econ.capacity });
-        }
+        // Pojemności magazynów z budynków gry (skala 1) — worker sam przelicza je na świat.
+        const capacity = InfrastructureUI.getCapacity(station);
+        const spec = { factionId: station.factionId || null, capacity: { ...capacity } };
+        trafficV2CapacitySent.set(station.id, { ...capacity });
         // Opuszczona stacja niesie resztki po mieszkańcach — łup gracza.
-        if (isDerelict(station) && econ?.resources) spec.stock = { ...econ.resources };
+        if (isDerelict(station)) spec.stock = rollDerelictLoot(capacity);
         stationSpecs[station.id] = spec;
       }
       const bridge = new TrafficBridge();
@@ -15928,6 +15744,8 @@
           + `budowa świata ${Math.round(ready.buildMs)} ms`);
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
+      // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
+      for (const station of stations) registerTrafficV2Market(station, bridge);
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
       bridge.on('market', () => {
         if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
@@ -15942,8 +15760,7 @@
       trafficV2CapacityTimer = 0;
       for (const station of stations) {
         if (!station?.id || !trafficV2.hasStation(station.id)) continue;
-        const capacity = InfrastructureUI.ensureEconomy(station)?.capacity;
-        if (!capacity) continue;
+        const capacity = InfrastructureUI.getCapacity(station);
         const sent = trafficV2CapacitySent.get(station.id);
         if (sent && RESOURCE_KEYS.every(key => sent[key] === capacity[key])) continue;
         trafficV2CapacitySent.set(station.id, { ...capacity });
@@ -15951,11 +15768,38 @@
       }
     }
 
+    /**
+     * Stacja misyjna piratów (kryjówka najemnika, stocznia piratów, baza misji 1) jako RYNEK świata ruchu
+     * (src/game/traffic/markets.js, MarketDef z src/data/markets.js): kryjówka — łup z przechwytów, przemyt, cel
+     * wojny. Baza misji 1 to jeden rynek (habitat), nie cztery budowle. Przy `?trafficV2=0` nic się nie dzieje.
+     */
+    function registerTrafficV2Market(station, bridge = trafficV2) {
+      if (!bridge || !station?.id || !station.mission || !station.isPirate) return;
+      if (station.baseStructure && station.baseStructure !== 'habitat') return;
+      if (station.hp <= 0) return;
+      bridge.addMarket({
+        id: String(station.id),
+        label: station.name || 'Kryjówka piratów',
+        kind: MARKET_KIND.HIDEOUT,
+        position: { source: MARKET_POSITION.POINT, x: station.x, y: station.y },
+        factionId: station.factionId || FACTION.PIRATES,
+        docks: { layout: DOCK_LAYOUT.HANGAR },
+        hideout: true
+      });
+    }
+
+    /** Stacja zginęła w grze — jej rynek w świecie ruchu zostaje opuszczony (port, stocznia, kryjówka znikają). */
+    function onTrafficV2StationKilled(station) {
+      if (trafficV2?.hasStation(station?.id)) trafficV2.stationDestroyed(station.id);
+    }
+
     if (DevFlags.trafficV2) {
       trafficV2 = initTrafficV2();
       window.TrafficV2 = trafficV2;
-      window.TrafficV2Stats = () => trafficV2.getStats();
+    } else {
+      console.warn('[ruch v2] wyłączony (?trafficV2=0) — stacje bez rynku, terminal nie handluje');
     }
+    window.TrafficV2Stats = () => trafficV2?.getStats() ?? null;
 
     function startMercenaryMission() {
       if (mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
@@ -16011,6 +15855,7 @@
       };
 
       stations.push(station);
+      registerTrafficV2Market(station);   // RUCH v2: kryjówka jako rynek
       if (typeof attachPirateStation3D === 'function') {
         if (!mainScene3D && typeof initWorld3D === 'function') {
           const res = initWorld3D();
@@ -16545,8 +16390,9 @@
       exitByNav: false,
       waypoints: [],
       waypointIndex: 0,
-      prevStance: null,
-      obstacleMargin: 1100
+      obstacleMargin: 1100,
+      // Hipercruise odcinka 'drive' (SimClock.sim): najwcześniejsza próba — po przechwycie 10 s przerwy.
+      hcRetryAt: 0
     };
     const warpCourse = { aim: null, autoExit: false, refreshLeft: 0 };
     const _warpCourseBearing = {}, _warpCoursePass = {};
@@ -16608,12 +16454,6 @@
 
     function requestPlayerShiftDown() {
       if (warp.state !== 'idle') return false;
-      // PRZELOT: Ctrl redukuje bieg postawy (shipModes.js).
-      if (shipModes.stance === 'cruise') {
-        const down = shiftCruiseGearDown(shipModes);
-        if (down) announceCruiseGear();
-        return down;
-      }
       const shifted = shiftDriveDown(driveState, getPlayerSpeed(), false);
       if (shifted) pushZoneMessage(`BIEG ${driveState.gear}/${driveState.gearCount}`, 0.9);
       return shifted;
@@ -16918,10 +16758,11 @@
         zones[i] = detectZones(probe).current?.warpMultiplier ?? 1;
       }
       const zone = (s) => zones[Math.max(0, Math.min(n - 1, Math.round(s / step)))];
+      // Czas podróży jak w demie, przeskalowany do prędkości napędu warp (Mk I / II / III — warpTripTuneFor).
       const plan = planWarpCruise({
         dist, v0: getPlayerSpeed(), hullLength: playerWarpHullLength(), bodies, zone,
         entry: warp.entryDuration, lag: 6, dt: 1 / 30
-      });
+      }, warpTripTuneFor(warp.speed));
       warp.cruise = plan.speed;
       warp.tripPlan = {
         dist: Math.round(dist), speed: Math.round(plan.speed), time: +plan.time.toFixed(2), target: +plan.target.toFixed(2),
@@ -16958,17 +16799,174 @@
       return TRAVEL_TUNE.minWarp;
     }
 
-    // Odcinki „drive” lecą w PRZELOCIE (biegi do 1500 j/s Atlasa) — postawa sprzed podróży wraca na końcu.
-    function travelUseCruise() {
-      if (shipModes.stance === 'cruise') return;
-      if (!travelNav.prevStance) travelNav.prevStance = shipModes.stance;
-      setShipMode('cruise', true);
+    // ========================================================================
+    // HIPERCRUISE (E5 2026-10-21, src/game/flight/hypercruise.js; liczby — src/data/driveModes.js): przelot
+    // 20–40 tys. j/s na silniku hipercruise (Atlas: hypercruise_mk1). O — rozruch / wyjście; odcinki 'drive'
+    // rozkazu TRAVEL TO dłuższe niż HYPERCRUISE_TUNE.minLeg lecą nim same (decyzja użytkownika 2026-10-03: ten sam
+    // cel, inny napęd). W locie automat prowadzi prędkość (gałąź w fizyce gracza, jak rampa wyjścia warpa), kurs
+    // z dziobu: TRAVEL TO — na cel odcinka, ręcznie — A/D (obrót × turnMul), S hamuje i kończy. DA SIĘ PRZERWAĆ
+    // (warp nie): trafienie (applyDamageToPlayer) i blokada masy (wróg bliżej niż massLockRange) — przechwyt.
+    // Kolizje jak w warpie (duch — updatePlayerWarpGhost: przy 20 tys. j/s krok fizyki to 330 j.), broń zimna.
+    // ========================================================================
+    const hypercruise = createHypercruise();
+    window.hypercruise = hypercruise;
+    const _hcCtx = { speed: 0, zone: 1, remaining: Infinity, stopMargin: 0, brake: false, exitSpeed: HYPERCRUISE_TUNE.exitSpeed, align: 1, thrust: 1 };
+    let _hcMassLockAt = 0;
+    let _hcMassLocked = false;
+
+    // Silnik hipercruise gracza: wyposażenie / konsola (`ship.hypercruiseEngine`, null = brak), potem kadłub
+    // (PLAYER_HULL_DRIVE) i klasa lotu (NPC_CLASS_DRIVE — driveModes.js). Kadłub bez tabeli lotu nie ma trybu.
+    function playerHypercruiseEngineId() {
+      if (ship && ship.hypercruiseEngine !== undefined) return ship.hypercruiseEngine || null;
+      const spec = driveState.flightSpec;
+      if (!spec) return null;
+      return playerHullDrives(spec.id, spec.flightClass).hypercruise;
     }
-    function travelRestoreStance() {
-      const prev = travelNav.prevStance;
-      travelNav.prevStance = null;
-      if (prev && prev !== 'cruise' && shipModes.stance === 'cruise') setShipMode(prev, true);
+    // Napęd warp gracza (decyzja użytkownika 2026-10-22: Mk I / II / III = 100 / 175 / 250 tys. j/s): wyposażenie /
+    // konsola (`ship.warpDrive`), potem kadłub i klasa lotu (Atlas — Mk II). Prędkość pisze syncPlayerWarpDrive.
+    function playerWarpDriveId() {
+      if (ship && ship.warpDrive) return ship.warpDrive;
+      const spec = driveState.flightSpec;
+      return playerHullDrives(spec?.id, spec?.flightClass).warp;
     }
+    function syncPlayerWarpDrive() {
+      const id = playerWarpDriveId();
+      if (warp.driveId === id) return;
+      warp.driveId = id;
+      warp.speed = warpDriveSpeed(id);
+      if (warp.state === 'idle') warp.cruise = warp.speed;
+    }
+    function syncPlayerHypercruise() {
+      return configureHypercruise(hypercruise, playerHypercruiseEngineId(), driveState.flightSpec?.flightClass || 'supercapital');
+    }
+    // Blokada masy: wróg żywy, nie uśpiony, nie zamaskowany, poza tunelem warpa, bliżej niż massLockRange. To zjawisko
+    // fizyczne, nie wykrycie — mgła wojny jej nie ukrywa (przy 20 tys. j/s czujniki nie nadążały: rajder 30 km przed
+    // dziobem był wciąż „w mgle”, gdy statek go mijał). Liczona co 250 ms (5 km lotu przy 20 tys. j/s).
+    function playerMassLocked(nowMs) {
+      if (nowMs < _hcMassLockAt) return _hcMassLocked;
+      _hcMassLockAt = nowMs + 250;
+      const r2 = HYPERCRUISE_TUNE.massLockRange * HYPERCRUISE_TUNE.massLockRange;
+      let locked = false;
+      for (let i = 0; i < npcs.length; i++) {
+        const n = npcs[i];
+        if (!n || n.dead || n.removed || n.isWreck || !(n.hp > 0) || n.isBridgeHulk || n.combatDisabled === true) continue;
+        if (n.__warpNurtMode || n.isCollidable === false || n.__warpReturn) continue;
+        if (!isHostileNpc(n) || isCloakHidden(n)) continue;
+        const dx = getTargetX(n) - ship.pos.x;
+        const dy = getTargetY(n) - ship.pos.y;
+        if (dx * dx + dy * dy < r2) { locked = true; break; }
+      }
+      _hcMassLocked = locked;
+      return locked;
+    }
+    function hypercruiseBlockReason() {
+      if (!syncPlayerHypercruise()) return 'HIPERCRUISE: KADŁUB BEZ SILNIKA HIPERCRUISE';
+      if (warp.isBusy()) return 'HIPERCRUISE: NIE W TRAKCIE SKOKU';
+      if (ship.__carriedBy) return 'HIPERCRUISE: NA POKŁADZIE HOLOWNIKA';
+      if (playerDriveDown()) return 'HIPERCRUISE: NAPĘD GŁÓWNY ZNISZCZONY';
+      if (playerMassLocked(performance.now())) return `HIPERCRUISE: BLOKADA MASY — WRÓG BLIŻEJ NIŻ ${Math.round(HYPERCRUISE_TUNE.massLockRange / 1000)} KM`;
+      return '';
+    }
+    /** Rozruch hipercruise'u (opts.target — cel odcinka TRAVEL TO, opts.quiet — bez komunikatu odmowy). */
+    function startPlayerHypercruise(opts = {}) {
+      if (!ship || ship.destroyed || hypercruiseBusy(hypercruise)) return false;
+      const why = hypercruiseBlockReason();
+      if (why) {
+        if (!opts.quiet) pushZoneMessage(why, 1.8, { tone: 'warn', label: 'NAPĘD' });
+        return false;
+      }
+      // Silniki wyłączone / w rozruchu: autozapłon, hipercruise po rozruchu (ponowne O albo TRAVEL TO).
+      if (playerEnginesBlockDrive('HIPERCRUISE')) return false;
+      stopBoost();
+      if (!engageHypercruise(hypercruise, { target: opts.target || null, spool: opts.spool })) return false;
+      syncShipMode();
+      pushZoneMessage(`HIPERCRUISE — ROZRUCH (${HYPERCRUISE_ENGINES[hypercruise.engineId]?.short || ''})`, 1.4, { label: 'NAPĘD' });
+      return true;
+    }
+    function stopPlayerHypercruise(reason = 'manual', forced = false, message = '') {
+      if (!dropHypercruise(hypercruise, reason, forced)) return false;
+      if (message) pushZoneMessage(message, 1.8, { tone: forced ? 'warn' : 'status', label: 'NAPĘD' });
+      return true;
+    }
+    function togglePlayerHypercruise() {
+      if (hypercruiseBusy(hypercruise)) return stopPlayerHypercruise('manual', false, 'HIPERCRUISE — WYJŚCIE');
+      // Ręczny hipercruise przejmuje stery od TRAVEL TO (cel zostaje, jak przy ręcznym warpie).
+      if (travelNav.active) cancelTravel('TRAVEL: KURS RĘCZNY', true);
+      return startPlayerHypercruise();
+    }
+    // Odcinek 'drive' TRAVEL TO: hipercruise (PRZELOTU nie ma — decyzja 2026-10-22), gdy jest silnik, odcinek nie
+    // krótszy niż minLeg i nie było świeżego przechwytu. Krótki odcinek (do shortLeg) — skrócony rozruch
+    // (hypercruiseLegSpool); krótszy niż minLeg — sam autopilot bojowy (hipercruise wyszedłby, zanim ruszy).
+    function travelTryHypercruise(leg) {
+      if (!leg || hypercruiseBusy(hypercruise) || SimClock.sim < travelNav.hcRetryAt) return false;
+      const dx = leg.x - ship.pos.x;
+      const dy = leg.y - ship.pos.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < HYPERCRUISE_TUNE.minLeg) return false;
+      travelNav.hcRetryAt = SimClock.sim + 1;
+      if (!syncPlayerHypercruise()) return false;
+      return startPlayerHypercruise({ target: { x: leg.x, y: leg.y }, quiet: true, spool: hypercruiseLegSpool(hypercruise.spool, d) });
+    }
+
+    // Krok hipercruise'u (physicsStep, po postawie): przerwania, profil prędkości, komunikaty. Prędkość statku
+    // pisze gałąź automatu w fizyce gracza (hypercruiseDriving).
+    function stepPlayerHypercruise(dt) {
+      const hc = hypercruise;
+      if (hc.state === 'idle') return;
+      if (!ship || ship.destroyed) { resetHypercruise(hc); return; }
+      // Warp przejmuje lot (ładowanie leci z prędkości hipercruise'u), holownik — zestaw.
+      if (warp.state !== 'idle' || ship.__carriedBy) { resetHypercruise(hc); return; }
+      if (playerDriveDown() || playerEnginesNotRunning()) {
+        stopPlayerHypercruise('engines', true, 'HIPERCRUISE: PRZERWANY — SILNIKI');
+      } else if (HYPERCRUISE_TUNE.interruptible && hc.state !== 'drop' && playerMassLocked(performance.now())) {
+        stopPlayerHypercruise('masslock', true, 'HIPERCRUISE: PRZECHWYT — BLOKADA MASY');
+      }
+      if (hc.state === 'idle') return;
+      const c = _hcCtx;
+      // Start lotu z prędkości wzdłuż dziobu (bok i wsteczny przepadają — lot idzie dziobem).
+      const ca = Math.cos(ship.angle);
+      const sa = Math.sin(ship.angle);
+      c.speed = Math.max(0, ship.vel.x * ca + ship.vel.y * sa);
+      c.zone = zoneState.current?.warpMultiplier ?? 1;
+      // Hamulec = wejście GRACZA (S albo gałka w dół) w locie ręcznym; autopilot dolotu pisze ship.input.thrustY < 0
+      // (tłumik postoju) — to nie hamulec. Odcinek TRAVEL TO hamuje profilem do celu.
+      c.brake = !hc.target && !isRtsModeActive() && ((keyboardOwnsP1() && Input.keyHeld('fly.back')) || Input.padAxis('fly.thrust', 0) < -0.15);
+      c.thrust = mainEngineFraction(ship) * engineThrustScale(ship);
+      const t = hc.target;
+      if (t) {
+        const dx = t.x - ship.pos.x;
+        const dy = t.y - ship.pos.y;
+        c.remaining = Math.sqrt(dx * dx + dy * dy);
+        const cs = Math.max(0, Math.cos(wrapAngle(Math.atan2(dy, dx) - ship.angle)));
+        c.align = cs * cs;
+        // Koniec przed punktem: droga hamowania lotu zwykłego z prędkości wyjścia + pół promienia przylotu.
+        const brakeA = Math.max(50, Number(driveState.brakeAccel) || 200);
+        c.stopMargin = (c.exitSpeed * c.exitSpeed) / (2 * brakeA) + TRAVEL_TUNE.arriveRadius * 0.5;
+      } else {
+        c.remaining = Infinity;
+        c.align = 1;
+        c.stopMargin = 0;
+      }
+      const ev = stepHypercruise(hc, c, dt);
+      if (ev === 'engage') {
+        pushZoneMessage(`HIPERCRUISE — ${formatVelocity(hc.vmax)}`, 1.2, { label: 'NAPĘD', tone: 'good' });
+      } else if (ev === 'exit' && hc.interrupted) {
+        travelNav.hcRetryAt = SimClock.sim + 10;   // TRAVEL TO po przechwycie: 10 s autopilotem bojowym, potem znowu
+      }
+      // Struga MAIN na dopalaczu w rozpędzie (engineVfxSystem: __fSysBoost — także w workerze renderu).
+      if (hc.state === 'active' && hc.speed < hc.vcap - 1) ship.__fSysBoost = true;
+    }
+
+    /** Podpis HUD-u (celownik, panel wież) albo ''. */
+    function hypercruiseHudTag() {
+      const hc = hypercruise;
+      if (hc.state === 'spool') return `HIPERCRUISE — ROZRUCH ${Math.round(hypercruiseSpoolProgress(hc) * 100)}%`;
+      if (hc.state === 'active') return `HIPERCRUISE ${formatVelocity(hc.speed)} — BROŃ ZIMNA`;
+      if (hc.state === 'drop') return hc.interrupted ? 'HIPERCRUISE — PRZECHWYT' : 'HIPERCRUISE — WYJŚCIE';
+      return '';
+    }
+    window.__hypercruiseReset = () => { resetHypercruise(hypercruise); };
+    window.PlayerHypercruise = { start: startPlayerHypercruise, stop: stopPlayerHypercruise, toggle: togglePlayerHypercruise, state: hypercruise };
 
     function refreshTravelRoute() {
       if (!travelNav.target) return [];
@@ -17038,7 +17036,11 @@
       if (ship?.command && ship.command === travelNav.cmd) ship.command = null;
       travelNav.cmd = null;
       if (wasActive && !keepCourse && warp.state === 'charging') { warp.state = 'idle'; warp.charge = 0; }
-      if (wasActive) travelRestoreStance();
+      // Hipercruise odcinka: kurs ręczny — leci dalej ręcznie (A/D, S kończy), anulowanie — wyjście.
+      if (wasActive && hypercruise.target) {
+        if (keepCourse) hypercruise.target = null;
+        else stopPlayerHypercruise('cancel');
+      }
       if (wasActive && message) pushZoneMessage(message, 1.4, { tone: 'warn' });
     }
     window.setTravelTarget = setTravelTarget;
@@ -17071,9 +17073,10 @@
           return;
         }
         if (leg.kind === 'drive') {
-          travelUseCruise();
           nav.cmd = createApproachCommand({ point: { x: leg.x, y: leg.y }, arrival: TRAVEL_TUNE.arriveRadius * 0.5 });
           nav.phase = 'drive';
+          // Hipercruise leci odcinek (ten sam cel); w rozruchu i po nim dolot prowadzi autopilot bojowy.
+          travelTryHypercruise(leg);
         } else {
           nav.cmd = { type: 'hold', faceAngle: Math.atan2(leg.y - ship.pos.y, leg.x - ship.pos.x), travel: true };
           nav.phase = 'align';
@@ -17112,6 +17115,8 @@
         return;
       }
       if (nav.phase === 'drive') {
+        // Hipercruise odcinka: ponowna próba po blokadzie masy / przechwycie (travelTryHypercruise pilnuje odstępu).
+        if (!hypercruiseBusy(hypercruise)) travelTryHypercruise(nav.leg);
         // Autopilot dotarł (approach przechodzi w 'hold' albo znika) albo statek jest na miejscu.
         const ldx = nav.leg.x - ship.pos.x;
         const ldy = nav.leg.y - ship.pos.y;
@@ -17259,7 +17264,7 @@
     // (dawniej Shift poza studnią planety był warpem). Limit dopalacza: driveBoostSpeed (Atlas 1500 j/s,
     // w PRZELOCIE 3000 j/s).
     function activateBoostIfAllowed() {
-      if (warp.state !== 'idle' || warp.exitRamp?.active) return false;
+      if (warp.state !== 'idle' || warp.exitRamp?.active || hypercruiseDriving(hypercruise)) return false;
       if (boost.fuel > 0) {
         boost.state = 'active';
         return true;
@@ -17596,6 +17601,11 @@
       'ship.engines': {
         gate: () => !!ship && gaNotRts(),
         run() { togglePlayerEngines(); }
+      },
+      // Hipercruise (E5): rozruch / wyjście; odcinki 'drive' TRAVEL TO włączają go same.
+      'nav.hypercruise': {
+        gate: () => !!ship && gaNotRts(),
+        run() { togglePlayerHypercruise(); }
       },
       'ship.lights': {
         gate: () => !!ship,
@@ -21558,9 +21568,9 @@
       );
       env.snapTarget = env.cursorTarget;
       env.trigger = (fcTrigger.mouse || fcTrigger.pad) && !blockedUi && !torpedoAim.active && !miningInput.active;
-      // PRZELOT (tryb okrętu, src/game/shipModes.js): broń zimna — nie strzela ani grupa w ręku, ani auto.
+      // Hipercruise (i postawa z weaponsCold): broń zimna — nie strzela ani grupa w ręku, ani auto.
       env.canFire = !ship.destroyed && !warp.isBusy() && !stationUI.open && !StoryGame.blocksInput
-        && !stanceTune(shipModes).weaponsCold;
+        && !stanceTune(shipModes).weaponsCold && !hypercruiseBusy(hypercruise);
       // Maskowanie: wieże na auto milczą (strzał zrywa maskowanie); grupa w ręku strzela na rozkaz gracza.
       // To samo na rozkaz misji (podejście po cichu — StoryGame: api.fire.hold); rozkaz gaśnie z misją.
       if (fireControl.storyHold && !StoryGame.active) fireControl.storyHold = false;
@@ -22163,6 +22173,10 @@
       // obrażenia spoza walki (sufit kadłuba po zderzeniu, asteroidy).
       if (amount > 0 && opts?.combat !== false) noteCameraCombat('trafienie');
       if (amount > 0 && opts?.combat !== false) breakPlayerCloak('hit');
+      // Hipercruise da się przerwać (warp nie): trafienie w locie = przechwyt (E5, docs/PLAN-ekonomia-rynki.md § 3.4).
+      if (amount > 0 && opts?.combat !== false && hypercruiseBusy(hypercruise)) {
+        stopPlayerHypercruise('hit', true, 'HIPERCRUISE: PRZECHWYT — TRAFIENIE');
+      }
       const prevHull = ship.hull.val;
       if (!bypassShield && isEntityShieldBlocking(ship)) {
         // Tryb TARCZE (src/game/shipModes.js): tarcza przyjmuje mniej (shieldTaken < 1) i wcześniej rusza
@@ -22254,13 +22268,11 @@
     }
 
     // Martwy NPC misji, po którym wrak już powstał (ciało kadłuba zwolnione
-    // przez releaseNpcHexBody). Nic go nie ożywi — odradzają się tylko cywile
-    // (gałąź respawnTimer w npcStep), a frachtowce ładunku sprząta ich rekord.
+    // przez releaseNpcHexBody). Nic go nie ożywi.
     function isFinishedMissionNpc(npc) {
       return npc.dead === true
         && npc.mission === true
         && npc !== ship
-        && !npc.isCargoVan
         && !npc.beamHull
         && !isBridgeHulk(npc);
     }
@@ -22281,7 +22293,6 @@
       if (npc.fleetEntry?.status) npc.fleetEntry.status.hull = 0;
       // Kadłub na belkach: cały ocalały kadłub zostaje wrakiem-łupem.
       if (npc.beamHull) window.createWreckage?.(npc);
-      if (npc.isCargoVan) handleCargoVanDestroyed(npc);
       releaseShipBridges(npc);
       releaseNpcHexBody(npc);
     }
@@ -22291,9 +22302,6 @@
       // Hulk po utracie mostka już nie żyje — pula (i crit) nie gra roli.
       if (isBridgeHulk(npc)) return;
       if (!Number.isFinite(dmg) || dmg <= 0) return;
-      // Cargo może umrzeć dopiero, gdy istnieje geometria zdolna utworzyć realny wrak.
-      // Do tego czasu rekord nadal leci, a encja jest wyłącznie niewrażliwym widokiem.
-      if (npc.isCargoVan && !npc.beamHull) return;
       const bypassShield = !!opts?.bypassShield;
       // Fregata zwiadu (ScoutBay): trafienie zrywa maskowanie, jak u Atlasa.
       if (npc.scoutFrigate && npc.cloak) ScoutBay.breakCloak('hit');
@@ -22359,10 +22367,6 @@
           spawnShipDeathBlast(npc, tankBlast, blastHostKey);
         }
 
-        // Towar przechodzi carrier -> dokładnie jeden wrak w tej samej operacji
-        // śmierci. Nie ma zwrotu do nadawcy ani oczekiwania na następny tick.
-        if (npc.isCargoVan) handleCargoVanDestroyed(npc);
-
         releaseNpcHexBody(npc);
       }
     }
@@ -22395,7 +22399,6 @@
       },
       afterHostDetonate: (host) => {
         if (host === ship || host === player2Ship) return;
-        if (host.isCargoVan) handleCargoVanDestroyed(host);
         releaseNpcHexBody(host);
       },
       // budowle w bańce gracza (kawałki doku — src/game/worldBodies.js): fala reaktora jako front ciśnienia
@@ -22421,7 +22424,7 @@
     // Render rdzeni: listy encji (gracze, NPC, wraki), zegar symulacji, początek modelu przy kamerze.
     const _reactorCoreLists = [[null, null], null, null, null];
     const _reactorModelOrigin = { x: 0, y: 0 };
-    const _reactorModelOpts = { origin: _reactorModelOrigin };
+    const _reactorModelOpts = { origin: _reactorModelOrigin, view: null, zoom: 1 };
     let _reactorFxSim = 0;
     // Rdzeń na świeżym kadłubie belkowym: miejsce z tabeli (src/data/reactorCores.js) po profilu
     // renderu kadłuba, inaczej komora z automatu (najgłębiej przy środku masy). Myśliwce bez rdzenia.
@@ -22679,6 +22682,7 @@
           // First death — trigger 3D destruction effect
           station._destroyed3D = true;
           HullDamageEvents.station(station, 1, true);
+          onTrafficV2StationKilled(station);
           if (mercMission?.station === station) {
             const completed = completeMission('merc_pirate_station', {
               rewardCredits: 50000,
@@ -22784,6 +22788,15 @@
       e._blkShieldProg = shieldProg;
       const hullR = Number(e.radius) || 0;
       e._blkMaxR = shieldR > hullR ? shieldR : hullR;
+    }
+    // Cel do siatki pocisków z drogą kroku (v·dt): cele ruszają się PRZED pociskami, a pętla kandydatów testuje odcinek
+    // w ruchu względnym (segX0) — zapytanie siatki idzie odcinkiem świata, więc komórki muszą objąć też pozę sprzed
+    // kroku. Bez tego hipercruise gracza (330–670 j. na krok) gubił 1–6% trafień w mały kadłub (E9 2026-10-22,
+    // scripts/hipercruise-kolizje-sym.mjs --tryb pociski).
+    function insertBulletGridTarget(e, dt) {
+      stampBulletCollisionRadii(e);
+      writeEntityVelocity(e, _bulletTargetVel);
+      SpatialGrid.insertSwept(e, e._blkMaxR, _bulletTargetVel.x * dt, _bulletTargetVel.y * dt);
     }
 
     // Swap-pop zamiast splice O(n) — kolejnosc pociskow nie ma znaczenia dla logiki
@@ -22928,14 +22941,12 @@
       for (let i = 0; i < npcs.length; i++) {
         const t = npcs[i];
         if (t.dead) continue;
-        stampBulletCollisionRadii(t);
-        SpatialGrid.insert(t);
+        insertBulletGridTarget(t, dt);
       }
       for (let i = 0; i < wrecks.length; i++) {
         const t = wrecks[i];
         if (!t.isWreck) continue;
-        stampBulletCollisionRadii(t);
-        SpatialGrid.insert(t);
+        insertBulletGridTarget(t, dt);
       }
       // Gracz: wstaw do SpatialGrid żeby pociski NPC mogły go trafić
       if (ship && !ship.dead && !ship.destroyed) {
@@ -22958,8 +22969,7 @@
             get isWreck() { return false; }
           };
         }
-        stampBulletCollisionRadii(ship._spatialProxy);
-        SpatialGrid.insert(ship._spatialProxy);
+        insertBulletGridTarget(ship._spatialProxy, dt);
       }
       // Player 2 into SpatialGrid
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
@@ -22983,8 +22993,7 @@
             get isWreck() { return false; }
           };
         }
-        stampBulletCollisionRadii(player2Ship._spatialProxy);
-        SpatialGrid.insert(player2Ship._spatialProxy);
+        insertBulletGridTarget(player2Ship._spatialProxy, dt);
       }
       PerfHUD.addTiming('bulletGridTime', performance.now() - tBulletGrid0);
 
@@ -23686,7 +23695,7 @@
         }
 
         // Despawn logic (poza misją)
-        if (!npc.mission && !npc.isCargoVan) {
+        if (!npc.mission) {
           const dx = npc.x - ship.pos.x;
           const dy = npc.y - ship.pos.y;
           if (dx * dx + dy * dy > DESPAWN_RADIUS_SQ) {
@@ -23715,8 +23724,14 @@
             if (dist < npc.warpData.brakingDist) {
               npc.state = 'engage_formation';
               npc.isCollidable = true;
-              npc.vx *= 0.1;
-              npc.vy *= 0.1;
+              // Wyjście z pędem (WarpExitTune): dalej z k × prędkość bojowa wzdłuż kursu (nadmiar ścina model lotu);
+              // bez pędu (k = 0, kadłub spoza tabeli lotu) — dawne 10% prędkości warpa.
+              const exitMom = npcWarpExitMomentum(npc);
+              const vIn = Math.hypot(npc.vx, npc.vy) || 1;
+              const vOut = exitMom ? Math.min(vIn, exitMom.vExit) : vIn * 0.1;
+              npc.vx *= vOut / vIn;
+              npc.vy *= vOut / vIn;
+              if (exitMom) npc.__warpExitSlide = true;
               // Przylot widać w warpie „Nurt” (WarpNurt: wyrzut z tunelu w chwili warp-in) — dawny
               // czerwony pierścień 2D i smuga cząstek usunięte w zadaniu 22.
               if (npc.type === 'battleship') camera.addShake(8, 0.4);
@@ -23817,128 +23832,8 @@
           continue;
         }
 
-        // --- LOGIKA CYWILNA (Reszta funkcji bez zmian) ---
-        if (npc.dead) {
-          // Rekord transportowy obsługuje śmierć atomowo i usuwa widok; pusty
-          // frachtowiec nie może odrodzić się jako niezależny cywil.
-          if (npc.isCargoVan) continue;
-          npc.respawnTimer -= dt;
-          if (npc.respawnTimer <= 0) {
-            const base = stations.find(s => s.id === npc.lastStation) || stations[0];
-            const group = stations.filter(s => s.inner === base.inner);
-            const start = group[Math.floor(Math.random() * group.length)] || base;
-            const targetId = pickNextStation(start.id, npc.type);
-            npc.hp = npc.maxHp;
-            npc.dead = false;
-            if (!beginStationTransit(npc, start, targetId)) {
-              npc.dead = true;
-              npc.respawnTimer = 5;
-            }
-          }
-          continue;
-        }
-        if (npc.docking) {
-          const st = stations.find(s => s.id === npc.lastStation);
-          if (st) { const portPos = stationPortWorld(st, npc.dockPort || 0); npc.x = portPos.x; npc.y = portPos.y; }
-          if (npc.isCargoVan) {
-            npc.vx = 0;
-            npc.vy = 0;
-            npc.fade = 1;
-            continue;
-          }
-          npc.fade -= dt / 0.6;
-          if (npc.fade <= 0 && st) {
-            const targetId = pickNextStation(npc.lastStation, npc.type);
-            if (!beginStationTransit(npc, st, targetId)) {
-              npc.fade = 0;
-              npc.docking = true;
-            }
-          }
-          continue;
-        }
-        if (npc.phase === 'warping') {
-          npc.x += npc.vx * dt; npc.y += npc.vy * dt;
-          if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
-            npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
-          }
-          npcRotationStep(npc, dt, frameNorm);
-          const route = npc.warpRoute;
-          const traveled = (npc.x - route.start.x) * route.dir.x + (npc.y - route.start.y) * route.dir.y;
-          if (traveled >= route.length) {
-            npc.phase = 'toStation';
-            npc.x = route.end.x;
-            npc.y = route.end.y;
-            npc.vx = 0;
-            npc.vy = 0;
-          }
-          continue;
-        }
-        if (npc.phase === 'toGate') {
-          const gate = npc.warpRoute.start;
-          const start = stations.find(s => s.id === npc.lastStation);
-          const gv = { x: gate.x - start.x, y: gate.y - start.y };
-          const gd = Math.hypot(gv.x, gv.y) || 1;
-          const dirToGate = { x: gv.x / gd, y: gv.y / gd };
-          const perp = { x: -dirToGate.y, y: dirToGate.x };
-          const laneOffset = npc.lane ? 20 : -20;
-          const gatePos = { x: gate.x + perp.x * laneOffset, y: gate.y + perp.y * laneOffset };
-          const queue = gate.queues[npc.lane];
-          let idx = queue.indexOf(npc);
-          if (idx === -1) { queue.push(npc); idx = queue.length - 1; }
-          const spacing = 30;
-          const targetPos = { x: gatePos.x - dirToGate.x * idx * spacing, y: gatePos.y - dirToGate.y * idx * spacing };
-          const distGate = Math.hypot(npc.x - gatePos.x, npc.y - gatePos.y);
-          if (idx === 0 && distGate < 5) {
-            queue.shift(); npc.phase = 'warping';
-            npc.vx = npc.warpRoute.dir.x * 4000; npc.vy = npc.warpRoute.dir.y * 4000;
-            npc.x = gatePos.x; npc.y = gatePos.y;
-            continue;
-          }
-          const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
-          const d = Math.hypot(to.x, to.y);
-          if (d < 1) { npc.vx = 0; npc.vy = 0; continue; }
-          const dir = { x: to.x / d, y: to.y / d };
-          const desiredV = { x: dir.x * npc.speed, y: dir.y * npc.speed };
-          npc.vx += (desiredV.x - (npc.vx || 0)) * clamp(1.5 * dt, 0, 1);
-          npc.vy += (desiredV.y - (npc.vy || 0)) * clamp(1.5 * dt, 0, 1);
-          npc.x += npc.vx * dt;
-          npc.y += npc.vy * dt;
-          npcRotationStep(npc, dt, frameNorm);
-          continue;
-        }
-        let targetPos, st = null;
-        if (npc.leader != null) {
-          const leader = npcs.find(n => n.id === npc.leader && !n.dead);
-          if (leader) {
-            targetPos = { x: leader.x + Math.cos(npc.orbitAngle) * npc.orbitRadius, y: leader.y + Math.sin(npc.orbitAngle) * npc.orbitRadius };
-          } else { npc.leader = null; }
-        }
-        if (!targetPos) {
-          st = stations.find(s => s.id === npc.target);
-          if (!st) {
-            npc.target = pickNextStation(npc.lastStation, npc.type);
-            continue;
-          }
-          if (npc.phase === 'toStation') { targetPos = stationPortWorld(st, npc.dockPort || 0); }
-          else { targetPos = { x: st.x, y: st.y }; }
-        }
-        const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
-        const d = Math.hypot(to.x, to.y);
-        const dir = d ? { x: to.x / d, y: to.y / d } : { x: 0, y: 0 };
-        const desiredSpeed = npc.leader != null ? npc.speed : npc.speed * (d < 120 ? (d / 120) : 1);
-        const desiredV = { x: dir.x * desiredSpeed, y: dir.y * desiredSpeed };
-        npc.vx += (desiredV.x - (npc.vx || 0)) * clamp(1.5 * dt, 0, 1);
-        npc.vy += (desiredV.y - (npc.vy || 0)) * clamp(1.5 * dt, 0, 1);
-        const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x, toP.y);
-        if (dp < 120) { npc.vx -= (toP.x / dp) * 40 * dt; npc.vy -= (toP.y / dp) * 40 * dt; }
-        npc.x += npc.vx * dt;
-        npc.y += npc.vy * dt;
-        npcRotationStep(npc, dt, frameNorm);
-        const portPos = st ? stationPortWorld(st, npc.dockPort || 0) : null;
-        const distToStation = portPos ? Math.hypot(portPos.x - npc.x, portPos.y - npc.y) : Infinity;
-        if (npc.leader == null && st && distToStation < 20) {
-          npc.docking = true; npc.x = portPos.x; npc.y = portPos.y; npc.vx = 0; npc.vy = 0; npc.lastStation = st.id;
-        }
+        // Poza misją: dawny ruch cywilny i vany starej ekonomii (tranzyt przez bramy) usunięte 2026-10-22 (E2).
+        // NPC spoza misji dziś nie powstają; gdyby się trafił, tylko dryfuje, a despawn wyżej go sprząta.
       }
       return measuredAiMs;
     }
@@ -24139,12 +24034,14 @@
     }
     // =============== Warp ===============
     // Jedna prędkość warpa [j/s] (demo „Nurt”: podróż międzyplanetarna ~260 tys. j/s); strefa mnoży.
-    const WARP_SPEED = 260000;
+    // Napęd warp Mk I / II / III (src/data/driveModes.js — WARP_DRIVES; ta sama tabela co ruch v2): domyślna wartość
+    // to Mk II (Atlas); kadłub i wyposażenie podmienia syncPlayerWarpDrive (blok „HIPERCRUISE”).
+    const WARP_SPEED = WARP_DRIVES.warp_mk2.speed;
     const warp = {
       state: 'idle', // idle | charging | active
       charge: 0, chargeTime: 0.8,
       orientTolerance: Math.PI / 30, // 6 stopni - to nas blokowało!
-      // JEDNA prędkość warpa (QOL 2026-10-03: biegi przeniesione do PRZELOTU) — jak w demie „Nurt”
+      // Prędkość napędu warp (Mk I / II / III — driveModes.js; QOL 2026-10-03 — bez biegów) — jak w demie „Nurt”
       // (podróż Ziemia → Jowisz ~260 tys. j/s); strefy: pas asteroid × 0,8, przy planetach × 0,3.
       speed: WARP_SPEED,
       // Skok z celem (TRAVEL TO, ręczny kurs w tolerancji): prędkość przelotowa z planu (planPlayerWarp —
@@ -24223,6 +24120,7 @@
     function devTeleportTo(x, y, opts = {}) {
       if (!ship?.pos || !Number.isFinite(x) || !Number.isFinite(y)) return false;
       cancelTravel(null);
+      resetHypercruise(hypercruise);
 
       if (warp.state !== 'idle') {
         warp.state = 'idle';
@@ -24319,7 +24217,9 @@
     // styki co krok (pomiar 2026-10-11, scripts/webgpu/tunelowanie-gra.mjs). Wolny — od razu zwykłe kolizje.
     let _warpGhostLinger = false;
     function updatePlayerWarpGhost() {
-      if (warp.state === 'active' || (warp.exitRamp && warp.exitRamp.active)) {
+      // Hipercruise jak warp: przy 20–40 tys. j/s krok fizyki to 330–670 j. — silnik belek łapałby styki dyskretnie
+      // (tunelowanie); przechwyt robi blokada masy i trafienie, nie zderzenie.
+      if (warp.state === 'active' || (warp.exitRamp && warp.exitRamp.active) || hypercruiseDriving(hypercruise)) {
         _warpGhostLinger = true;
         return true;
       }
@@ -24512,13 +24412,7 @@
 
     // Tanie odwołania sprawdzane wprost przy każdym kandydacie.
     function isColdWreckReferencedDirect(wreck) {
-      if (TowSystem.isAttached(wreck)) return true;
-      if (wreck._cargoOrderId) {
-        const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
-        // Partia jeszcze nie „leży” we wraku — transfer w toku.
-        if (order && order.status !== SHIPMENT_STATUS.WRECK && order.status !== SHIPMENT_STATUS.RECOVERED) return true;
-      }
-      return false;
+      return TowSystem.isAttached(wreck);
     }
 
     const coldWreckSystem = createColdWreckSystem({
@@ -24914,14 +24808,9 @@
       updateCameraTarget(dt);
       // Stan UI stacji i infrastruktury (UI, postęp budowy) — z warstwą informacyjną w klatce bez kroku (stepFrameInfo).
       if (!frameInfoDeferred) stepStationUiState(dt);
-      if (trafficV2) {
-        // Ruch v2: gospodarka i vany żyją w workerze (czas idzie z pętli, razem
-        // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
-        syncTrafficV2Capacities(dt);
-      } else {
-        updateStationEconomies(dt);
-        updateCargoFleet(dt);
-      }
+      // Ruch v2: gospodarka i przewozy żyją w workerze (czas idzie z pętli, razem
+      // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
+      if (trafficV2) syncTrafficV2Capacities(dt);
       updateSalvage(dt);
       if (window.updateInfrastructureAnimations) {
         window.updateInfrastructureAnimations(dt);
@@ -24946,15 +24835,6 @@
         st.x = st.planet.x + Math.cos(st.angle) * st.orbitRadius;
         st.y = st.planet.y + Math.sin(st.angle) * st.orbitRadius;
       }
-      for (const st of stations) {
-        if (!st.warpGate) continue;
-        const off = st.warpGate.offset;
-        const ox = off && typeof off.x === 'number' ? off.x : 0;
-        const oy = off && typeof off.y === 'number' ? off.y : 0;
-        st.warpGate.x = st.x + ox;
-        st.warpGate.y = st.y + oy;
-      }
-      refreshWarpRoutes(warpRoutes);
       InfrastructureUI.syncWorldPositions();
       for (const st of stations) {
         if (!st.shield) continue;
@@ -25006,7 +24886,7 @@
       }
       if (!boostActive && boost.effectTime > 0) boost.effectTime = Math.max(0, boost.effectTime - dt);
       // Dopalacz podnosi limit regulatora napędu (po puszczeniu okręt wraca do limitu trybu hamowaniem regulatora).
-      driveState.boostLimit = boostActive ? driveBoostSpeed(driveState, shipModes.stance === 'cruise') : 0;
+      driveState.boostLimit = boostActive ? driveBoostSpeed(driveState) : 0;
 
       PerfHUD.addTiming('worldZoneTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
@@ -25059,6 +24939,8 @@
       PerfHUD.addTiming('scanUiTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
 
+      // Napęd warp z kadłuba / wyposażenia (Mk I / II / III) — przed automatem podróży i ładowaniem skoku.
+      syncPlayerWarpDrive();
       stepTravelNav();
       updatePlayerCommand(dt);
       stepWarpCourse(dt);
@@ -25067,8 +24949,10 @@
       stepPlayerEngineIgnition(dt);
       // System okrętu (F): ładunek, przerwania, limit napędu na czas szarży / zrywu / skoku manewru.
       stepPlayerShipSystem(dt);
-      // Postawa okrętu (TARCZE / PRZELOT): limit i ciąg napędu.
+      // Postawa okrętu (TARCZE): limit i ciąg napędu.
       applyShipStance(dt);
+      // Hipercruise (E5): przerwania, profil prędkości (prędkość pisze gałąź automatu niżej).
+      stepPlayerHypercruise(dt);
       // Tabela lotu: mnożniki dysz kadłuba dopasowane do SHIP_FLIGHT_SPECS (liczy tylko po zmianie
       // kadłuba albo układu dysz).
       calibrateDriveToShip(driveState, ship, getPlayerSpeed());
@@ -25266,7 +25150,8 @@
       }
       else if (warp.exitRamp && warp.exitRamp.active) {
         // Wyjście z warpa = przylot jak u NPC (warpDrive.js): prędkość wzdłuż kursu z rampy
-        // (zwolnienie → wlot → hamowanie), bez ciągu i bez skrętu; na końcu statek stoi.
+        // (zwolnienie → wlot → hamowanie), bez ciągu i bez skrętu; na końcu prędkość `vEnd` rampy
+        // (0 — statek stoi; wyjście z pędem — dalej leci, nadmiar zbiera zwykły lot).
         const r = warp.exitRamp;
         const wasBrake = r.age >= r.tBrake;
         r.age += dt;
@@ -25280,11 +25165,27 @@
         const desired = Math.atan2(r.dirY, r.dirX);
         ship.angle = wrapAngle(ship.angle + clamp(wrapAngle(desired - ship.angle), -warp.alignRate * dt, warp.alignRate * dt));
         ship.angVel = 0;
-        if (s.phase === 'done') {
-          r.active = false;
-          ship.vel.x = 0;
-          ship.vel.y = 0;
+        if (s.phase === 'done') r.active = false;
+      }
+      else if (hypercruiseDriving(hypercruise)) {
+        // HIPERCRUISE (E5): automat prowadzi prędkość wzdłuż dziobu (jak rampa wyjścia warpa — bez ciągu dysz);
+        // kurs: odcinek TRAVEL TO — na jego cel, ręcznie — A/D; obrót × turnMul limitu obrotu tabeli lotu.
+        const hc = hypercruise;
+        const rate = (Number(driveState.flightSpec?.turnRate) || 15) * (Math.PI / 180) * hc.turnMul;
+        const maxTurn = rate * dt;
+        let turn;
+        if (hc.target && hc.state === 'active') {
+          const want = Math.atan2(hc.target.y - ship.pos.y, hc.target.x - ship.pos.x);
+          turn = clamp(wrapAngle(want - ship.angle), -maxTurn, maxTurn);
+        } else {
+          turn = commandTurn * maxTurn;
         }
+        ship.angle = wrapAngle(ship.angle + turn);
+        ship.angVel = dt > 0 ? turn / dt : 0;
+        ship.vel.x = Math.cos(ship.angle) * hc.speed;
+        ship.vel.y = Math.sin(ship.angle) * hc.speed;
+        // Struga MAIN: pełny ciąg w rozpędzie, potem płomień przelotowy (engineVfxSystem czyta thrusterInput).
+        if (ship.thrusterInput) ship.thrusterInput.main = hc.state === 'active' && hc.speed < hc.vcap - 1 ? 1 : 0.35;
       }
       else {
         // --- Thruster-based Newtonian player physics ---
@@ -25781,6 +25682,8 @@
       window.__npcFireScanMs = 0;
       window.__npcFireSpawnMs = 0;
       npcShootingStep(dt);
+      // Promienie śmierci: czoło (tarcze, rzaz belek, obrażenia) po strzałach gracza i NPC tego kroku, rozkazy scen.
+      deathRays.step(dt);
       PerfHUD.addTiming('npcFireTime', performance.now() - tPhysSection0);
       PerfHUD.addTiming('npcFireScanTime', window.__npcFireScanMs || 0);
       PerfHUD.addTiming('npcFireSpawnTime', window.__npcFireSpawnMs || 0);
@@ -25788,7 +25691,7 @@
 
       // Warp niewrażliwy (decyzja użytkownika 2026-10-11): w skoku i na rampie wyjścia gracz nie zderza się z
       // kadłubami (filtr par HullBodies), olbrzymami pasa ani ringiem — kolizje dopiero w zwykłym locie (też
-      // PRZELOT). Bez tego silnik belek łapał styki dyskretnie, w pozach z końca kroku: skok 260 tys. j/s przez
+      // hipercruise ma własny duch). Bez tego silnik belek łapał styki dyskretnie, w pozach z końca kroku: skok 260 tys. j/s przez
       // szereg 40 okrętów — styk z 23 (60 Hz) / 39 (120 Hz), rampa (87 → 16 tys. j/s) przeorywała okręty na drodze
       // (scripts/webgpu/tunelowanie-gra.mjs --tryb gra). Pociski, AI i mgła widzą gracza jak dotąd.
       if (ship) ship.noHullCollisions = updatePlayerWarpGhost();
@@ -25958,7 +25861,10 @@
       rig.stock = PLAYER.miningCharges;
       rig.onCargo = (key, tonnes) => {
         const accepted = addToPlayerCargo({ [key]: tonnes });
-        return Number(accepted[key]) || 0;
+        const took = Number(accepted[key]) || 0;
+        // Urobek gracza uszczupla pas jak wyprawy NPC: rejestr w workerze ruchu → wyrwy (E3).
+        if (took > 0 && trafficV2) trafficV2.reportMining(ship.pos.x, ship.pos.y, took);
+        return took;
       };
       rig.cargoFree = () => getPlayerCargoFree();
       rig.onBlast = (x, y, energy) => {
@@ -25967,6 +25873,17 @@
         if (k > 0.05) camera.addShake(Math.min(26, 5 + 5 * Math.sqrt(Math.max(0, energy))) * k, 0.35);
       };
       window.__asteroidMining = rig;
+    }
+
+    // Wyrwy w pasie (E3, docs/PLAN-ekonomia-rynki.md § 3.3): rejestr uszczuplenia żyje w świecie ruchu v2
+    // (src/game/traffic/miningFields.js — wyprawy NPC i urobek gracza); jego wyrwy idą przez most do świata
+    // pasa (beltWorld.setHoles → pole gry i replika obrazu, także w workerze renderu). Przy ?trafficV2=0 pas stoi.
+    // (Funkcja, nie `let` — woła ją start świata pasa, który bywa wcześniej w pliku niż ten blok.)
+    function wireTrafficV2BeltHoles() {
+      if (!trafficV2 || !beltWorld || beltWorld.__trafficHoles) return;
+      beltWorld.__trafficHoles = true;
+      trafficV2.on('belt-holes', (list) => beltWorld.setHoles(list));
+      if (trafficV2.beltHoles.size) beltWorld.setHoles([...trafficV2.beltHoles.values()]);
     }
 
     function setMiningMode(on, quiet = false) {
@@ -26858,8 +26775,16 @@
     const RING_GATE_SLACK = 64;   // zapas na zaokrąglenia obrotu do układu ringu (j. świata)
     function stepShipRingCollisions(dt) {
       if (!haloWorld) return;
-      if (ship && !ship.dead && !ship.noHullCollisions) {
+      // Hipercruise (E5) jest duchem dla kadłubów, ale NIE dla ringu: płyta habitatu zostaje przeszkodą (przelot
+      // tylko tranzytami), a uderzenie w nią zrywa hipercruise od razu (resztę prędkości w głąb zeruje kolider).
+      const hcRing = hypercruiseDriving(hypercruise);
+      if (ship && !ship.dead && (!ship.noHullCollisions || hcRing)) {
         const hit = haloWorld.constrainShip(ship, true);
+        if (hcRing && hit && hit.hit) {
+          hypercruise.reason = 'ring';
+          resetHypercruise(hypercruise);
+          pushZoneMessage('HIPERCRUISE: PRZERWANY — PŁYTA RINGU', 1.8, { tone: 'warn', label: 'NAPĘD' });
+        }
         const nowMs = performance.now();
         if (hit && hit.impactSpeed > 150 && nowMs - _haloRingNoticeAtMs > 2500) {
           _haloRingNoticeAtMs = nowMs;
@@ -27086,10 +27011,12 @@
     // raz na klatkę przed zoomem i rigiem — człon log(zoom) dla updateCameraZoom, cofnięcie
     // kamery dla stepCameraRig i drżenie ładowania z tego samego stanu. Tylko gracz 1 (P2 nie ma
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
-    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35 };
+    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: true };
     function updateCameraWarpKick(gameDt) {
       const w = _cameraWarpInput;
       w.dt = gameDt;
+      // Styl skoku bez rulonu (`?warp=ped|akcent|soczewka`, `?rulon=0` — warpDrive.js: warpRulonEnabled): kamera bez środka lejka.
+      w.rulon = warpRulonEnabled(location.search);
       w.state = warp.state;
       w.charge = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0;
       const dir = warp.dir;
@@ -27111,6 +27038,8 @@
       }
       w.enabled = normalizeCameraWarpKickMode(OPTIONS.cameraWarpKick) === 'on'
         && camera.mode === 'ship' && !!ship && !ship.destroyed;
+      // Hipercruise (E5): oddalenie z prędkością (cameraRig.js: hyperZoomOut).
+      w.hyper = hypercruiseDriving(hypercruise) ? hypercruise.speed / Math.max(1, hypercruise.vmax) : 0;
       // Zoom prowadzi przejście (fokus stacji, edytor) — kop znika od razu, jak w updateCameraZoom.
       w.suspend = !!(camera.transition && camera.transition.kind !== 'ship');
       stepCameraRigWarp(cameraRig, w, cameraRigTune);
@@ -27510,10 +27439,13 @@
     // RW-11c: bloki modułów świata (src/render/blocks/) — wejścia klatki modułów renderu w stronie migawki
     if (renderSnapshot) {
       renderSnapshot.addBlock(createGasObstBlock());
+      renderSnapshot.addBlock(createSpaceGasBlock());
       renderSnapshot.addBlock(createWarpBlock());
       renderSnapshot.addBlock(createPirateBaseBlock());
       // wyrwy bazy piratów (dekompresja, pożary — src/game/story/pirateBaseAtmosphere.js): stan klatki obrazu wyrw
       renderSnapshot.addBlock(createPirateVentsBlock());
+      // bitwa w głębi sceny „Wojna” (src/game/warScene.js): środek, czas sceny, planeta, bohaterowie
+      renderSnapshot.addBlock(createWarBackdropBlock());
       renderSnapshot.addBlock(createRingBlock());
       // RW-11b: wygląd maskowania (liczy gra — stepCloakLooks, RW-26)
       if (SZEW_LATE) renderSnapshot.addBlock(createCloakBlock());
@@ -27645,6 +27577,8 @@
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
       // wyrwy bazy (dekompresja, pożary): pozy wyrw dosunięte do czasu renderu, dt gry klatki
       f.pirateVents = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      // bitwa w głębi sceny „Wojna”: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu)
+      f.warBackdrop = warBackdropFrameNow();
       // ringi „Halo”: świat ringów gry (zegar hal, rejestr — stanowiska, lampy, pozy obsługi), statek do obrysu w hubie
       f.ringWorld = haloWorld;
       f.ringShip = ship;
@@ -27673,6 +27607,7 @@
       f.hall = HallDust.input;
       // przeszkody gazu wybuchów (packGasObstacles w render(); bez reżysera wybuchów — brak wejścia)
       f.gasObst = window.__explosions ? gasObstIn : null;
+      f.spaceGas = spaceGasIn;
       renderSnapshot.finish(f);
       if (rwHost) rwHost.postFrame();
     }
@@ -27848,6 +27783,27 @@
       return out;
     }
 
+    // GAZ PRZESTRZENI (port dema gazy-transport — docs/PLAN-gazy-kosmos.md, src/game/spaceGasInput.js): wejście
+    // klatki gazu w otwartej przestrzeni — pas asteroid przy kamerze (obwiednia z pola pasa gry, wyrwy, odgazowanie
+    // lodowych skał), kotwica = Słońce. Render (tryb off — SpaceGas.submit w render(), worker — blok `spaceGas`).
+    const spaceGasIn = new Float64Array(SPACE_GAS_IN.size);
+    const spaceGasState = createSpaceGasInputState();
+    const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
+    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true };
+    function packSpaceGas(cam, dt) {
+      const o = _spaceGasOpts;
+      const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
+      o.dt = dt; o.camX = cam.x; o.camY = cam.y;
+      o.halfW = W * 0.5 / zoom; o.halfH = H * 0.5 / zoom;
+      o.field = beltWorld ? beltWorld.field : null;
+      o.sunX = SUN ? SUN.x : 0; o.sunY = SUN ? SUN.y : 0;
+      o.windowCells = SPACE_GAS_TUNE.windowCells;
+      o.time = SimClock.sim;
+      // warp gracza (smugi skał pasa) i sceny bez pasa — bez gazu
+      o.enabled = warp.state !== 'active';
+      packSpaceGasFrame(spaceGasIn, spaceGasState, o);
+    }
+
     // PRZESZKODY GAZU WYBUCHÓW (etap C — F2 docs/AUDYT-wybuchy-gaz-2026-10-08.md; src/game/gasObstacleInput.js): wejście
     // klatki reżysera wybuchów (window.__explosions) — bryły hal K-7 i suchego doku przy kamerze, kadłuby przy domenach
     // gazu (okręty widoczne we mgle wojny i wraki; bez odłamów budowli — worldDebris rodzą się w kuli wybuchu kawałka).
@@ -27911,6 +27867,15 @@
       o.dock = gasDockObstacles();
       // tryb worker: domeny gazu ma reżyser wybuchów workera (prostokąty z ostatniej narysowanej klatki)
       o.nDomains = rwHost ? rwHost.copyDomainRects(_gasDomRects) : ex.domainRects(_gasDomRects);
+      // okno pola gazu przestrzeni: kadłuby w nim są przeszkodami gazu (maski obrysu jak dla domen wybuchów)
+      if (spaceGasIn[SPACE_GAS_IN.active] > 0.5 && o.nDomains < 16) {
+        const h = spaceGasIn[SPACE_GAS_IN.windowCells] * spaceGasIn[SPACE_GAS_IN.cell] * 0.5;
+        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.camX];
+        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.camY];
+        const k = o.nDomains * 4;
+        _gasDomRects[k] = sx - h; _gasDomRects[k + 1] = sy - h; _gasDomRects[k + 2] = sx + h; _gasDomRects[k + 3] = sy + h;
+        o.nDomains++;
+      }
       _gasHullLists[0] = ship && !ship.destroyed ? ship : null;
       _gasHullLists[1] = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
       _gasHullLists[2] = o.nDomains ? fogSeenInto(npcs, _gasNpcSeen) : null;
@@ -28168,7 +28133,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.beamHull && !npc.dead) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.devHull || npc.serviceTug || (npc.type && npc.type.includes('frigate'))) && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
         if (sprite && sprite.ready && !sprite.error && !(npc.__hullInitRetryAtMs > nowMs) && hullInitBudgetAllows()) {
@@ -28591,10 +28556,14 @@
         clock: haloWorld ? haloWorld.clock : 0
       });
       if (!RW_WORKER) HallDust.submit(HallDust.input);
+      // Gaz w otwartej przestrzeni (blok „GAZ PRZESTRZENI” niżej): pas przy kamerze — obwiednia z pola, odgazowanie
+      // lodowych skał, okno pola; przed przeszkodami (okno idzie do prostokątów domen — kadłuby w polu gazu).
+      packSpaceGas(cam, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
       // (statyka — przy zmianie), kadłuby przy domenach gazu (reżyser podaje ich prostokąty; bez domen — nic). Krok
       // efektów „wybuchy” czyta tylko tę tablicę.
       packGasObstacles(cam, Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1), (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      if (!RW_WORKER) { SpaceGas.setObstacleInput(window.__explosions ? gasObstIn : null); SpaceGas.submit(spaceGasIn); }
       const render3dAsteroidsMs = asteroidBelt ? asteroidBelt.stats.cpuMs : (performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('asteroidBelt', render3dAsteroidsMs);
@@ -28721,6 +28690,8 @@
           const vf = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
           pirateVents3D.update(vf, vf.dt);
         }
+        // Bitwa w głębi sceny „Wojna” (tłum nad i pod płaszczyzną, planeta); worker — sam z bloku warBackdrop.
+        if (!RW_WORKER && warBackdrop3D) warBackdrop3D.update(warBackdropFrameNow(), cam);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
@@ -28744,8 +28715,8 @@
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
 
       // Rdzenie reaktorów: obraz stopienia i zagrożeń (reżyser wybuchu — krok klatki efektów
-      // przed passami) i model reaktora w wyrwie (warstwa 7 — po tarczach, które ją zgłaszają
-      // przypisaniem). Zegar = czas symulacji tej klatki (pauza = 0).
+      // przed passami) i model reaktora w obudowie nad kadłubem (pass ortho; kadr z pudła kadłubów).
+      // Zegar = czas symulacji tej klatki (pauza = 0).
       if (reactorBlastFx && !RW_WORKER) {
         const simNow = SimClock.sim;
         const reactorSimDt = Math.max(0, Math.min(0.1, simNow - _reactorFxSim));
@@ -28762,6 +28733,8 @@
         reactorBlastFx.syncHazards(reactorSimDt);
         if (reactorModel3D) {
           _reactorModelOrigin.x = cam.x; _reactorModelOrigin.y = cam.y;
+          _reactorModelOpts.view = _hexCullInfo;
+          _reactorModelOpts.zoom = cam.zoom;
           reactorModel3D.sync(reactorCores, 0, reactorSimDt, _reactorModelOpts);
         }
       }
@@ -28874,25 +28847,6 @@
         }
         InfrastructureUI.drawInstances(ctx, cam);
         drawPlanetLabels(ctx, cam);
-
-        // Warp gates
-        for (const key in warpRoutes) {
-          const route = warpRoutes[key];
-          const perp = { x: -route.dir.y, y: route.dir.x };
-          const w = 6 * cam.zoom;
-          const s1 = worldToScreen(route.start.x, route.start.y, cam);
-          const s2 = worldToScreen(route.end.x, route.end.y, cam);
-          ctx.strokeStyle = '#88aaff';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(s1.x - perp.x * w, s1.y - perp.y * w);
-          ctx.lineTo(s1.x + perp.x * w, s1.y + perp.y * w);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(s2.x - perp.x * w, s2.y - perp.y * w);
-          ctx.lineTo(s2.x + perp.x * w, s2.y + perp.y * w);
-          ctx.stroke();
-        }
 
         CanvasVFX.drawShockwaves(ctx, cam);
         drawTowRopes(ctx, cam);
@@ -29585,7 +29539,8 @@
         const cloaked = !!ship.cloak && isCloakEngaged(ship.cloak);
         out.tag = '';
         out.tagColor = '#8fa3b0';
-        if (mode === 'cruise') { out.tag = `PRZELOT ${cruiseGearLabel()} — BROŃ ZIMNA`; out.tagColor = '#8fb0bf'; }
+        const hcTag = hypercruiseHudTag();
+        if (hcTag) { out.tag = hcTag; out.tagColor = hypercruise.interrupted ? '#ff8a94' : '#9fd8ff'; }
         else if (cloaked) { out.tag = 'MASKOWANIE — STRZAŁ ZRYWA'; out.tagColor = '#8fb0bf'; }
         else if (fireControl.storyHold === true) { out.tag = 'ROZKAZ: NIE STRZELAĆ'; out.tagColor = '#ff8a94'; }
         else if (fireControl.posture === 'hold') { out.tag = 'WSTRZYMAĆ OGIEŃ (Y)'; out.tagColor = '#ff8a94'; }
@@ -29617,7 +29572,7 @@
         opts.scale = scale;
         const mw = screenToWorld(cursor.x, cursor.y, camRef);
         opts.distance = Math.hypot(mw.x - ship.pos.x, mw.y - ship.pos.y);
-        opts.cold = !!stanceTune(shipModes).weaponsCold;
+        opts.cold = !!stanceTune(shipModes).weaponsCold || hypercruiseBusy(hypercruise);
         opts.dim = !!ship.cloak && isCloakEngaged(ship.cloak);
         opts.missiles = null;
         _reticleTag(opts);
@@ -29848,11 +29803,12 @@
         _panelArgs.groups = tp.groups;
         _panelArgs.cursorRel = cursorRel;
         _panelArgs.title = handGrp ? `${FC_GROUP_LABEL[hand]} ${ready}/${n}` : (hand ? FC_GROUP_LABEL[hand] : '');
-        _panelArgs.titleColor = mode === 'cruise' ? '#6f8b99' : (handGrp && ready > 0 ? '#52ff9a' : '#ffd27a');
-        _panelArgs.sub = mode === 'cruise' ? `PRZELOT ${cruiseGearLabel()} — BROŃ ZIMNA`
+        _panelArgs.titleColor = mode === 'hypercruise' ? '#6f8b99' : (handGrp && ready > 0 ? '#52ff9a' : '#ffd27a');
+        const hcSub = hypercruiseHudTag();
+        _panelArgs.sub = hcSub ? hcSub
           : fireControl.posture === 'free' ? (SHIP_MODE_DEFS[mode]?.label || '')
           : FC_POSTURE_LABEL[fireControl.posture];
-        _panelArgs.subColor = mode === 'cruise' || fireControl.posture === 'hold' ? '#ff8a94' : '#8fa3b0';
+        _panelArgs.subColor = hcSub || fireControl.posture === 'hold' ? '#ff8a94' : '#8fa3b0';
         // Dysze MAIN na sylwetce i stan napędu (src/game/engineDamage.js — zniszczone do remontu w doku).
         const mains = ship.visual?.mainThrusters;
         const nEng = Array.isArray(mains) ? mains.length : 0;
@@ -30486,6 +30442,7 @@
         shield: { max: spec.shield || 4000, val: spec.shield || 4000, regenRate: 250, regenDelay: 6, regenTimer: 0 }
       };
       stations.push(station);
+      registerTrafficV2Market(station);   // RUCH v2: stocznia piratów jako rynek
       if (typeof attachPirateStation3D === 'function') {
         if (!mainScene3D && typeof initWorld3D === 'function') {
           const res = initWorld3D();
@@ -30529,6 +30486,7 @@
         stations.push(st);
         out[key] = st;
       }
+      registerTrafficV2Market(out.habitat);   // RUCH v2: baza piratów jako jeden rynek (habitat)
       attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
@@ -30906,17 +30864,31 @@
       pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity: ev.entity || null, kind: 'break' });
       pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity: ev.entity || null });
     }
-    // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): środek między habitatem a środkiem skały, kadr na całą
-    // planetoidę; trzyma się do 4 s po uderzeniu dysku w skałę (albo do osiadania). Gracz dalej niż 40 km — bez ujęcia.
+    // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): habitat i RZUT miejsca lądowania (prosta habitat → środek
+    // skały do przecięcia z kulą skały, ~24 km pod płaszczyzną — pirateRockLayout.js, skala świata) symetrycznie wokół
+    // środka kadru; kadr 13 km — kamera ~21 km nad płaszczyzną, kawałki bazy maleją w locie do ~0,46 (prośba użytkownika
+    // 2026-10-19: „powinny dłużej lecieć / bardziej się pomniejszać”). Trzyma się do 4 s po uderzeniu dysku w skałę (albo
+    // do osiadania). Gracz dalej niż 40 km — bez ujęcia.
+    const FALL_LOOK_VIEW_H = 13000;
     function pirateBaseFallLook() {
       const F = _baseFall, T = F.terrain, pl = _fallCtx.place || _baseFallPlace;
       if (!T || !pl || F.phase !== 'falling') return null;
       const hc = pl.habitat;
       const sp = ship?.pos;
       if (!sp || Math.hypot(sp.x - hc.x, sp.y - hc.y) > 40000) return null;
-      const rx = T.cx, ry = -T.cy;
+      const rx = T.cx, ry = -T.cy, rz = T.cz;
+      // lądowanie: z poziomu dysku (z ≈ −1000) po prostej ku środkowi skały, na kuli R
+      const hz = -1000;
+      const dx = rx - hc.x, dy = ry - hc.y, dz = rz - hz;
+      const dl = Math.hypot(dx, dy, dz) || 1;
+      const t = Math.max(0, dl - T.R);
+      const lx = hc.x + dx / dl * t, ly = hc.y + dy / dl * t, lz = hz + dz / dl * t;
+      // rzut z kamery H nad płaszczyzną: k = H / (H − z); środek kadru c spełnia c − hab = (lądowanie − c) · k
+      const camH = FALL_LOOK_VIEW_H * 0.5 / Math.tan(17.5 * Math.PI / 180);
+      const k = camH / (camH - lz);
+      const f = k / (1 + k);
       return {
-        x: hc.x + (rx - hc.x) * 0.3, y: hc.y + (ry - hc.y) * 0.3, viewHeight: 15000,
+        x: hc.x + (lx - hc.x) * f, y: hc.y + (ly - hc.y) * f, viewHeight: FALL_LOOK_VIEW_H,
         holdUntil: () => F.phase !== 'falling' || (F.discImpactT >= 0 && F.t >= F.discImpactT + 4)
       };
     }
@@ -30932,7 +30904,8 @@
 
     // Planetoida pod bazą na radarze i mapie CIC (teren — rysowana zawsze, także we mgle, jak komety; tylko obraz,
     // bez kolizji i studni). Póki baza misji stoi (StoryGame.site i baza w świecie gry): podkład radaru = ląd
-    // o promieniu skały (rzut z góry — szczyt leży 8 km pod płaszczyzną gry), kontakt „HIDALGO AST” w środku
+    // o promieniu skały z PROJEKTU (rzut z punktu widzenia — skała w świecie jest 2× większa i dalej, szczyt 24 km pod
+    // płaszczyzną gry, z kamery wygląda jak projekt: pirateRockLayout.js, pirateRockAt), kontakt „HIDALGO AST” w środku
     // (`env.bodies`, mała kropla — ląd rysuje podkład), mapa CIC — window.pirateRockLandmark (cicDisplay.js).
     const _pirateRockMark = { id: 'pirate-rock', label: PIRATE_ROCK_SPEC.label, x: 0, y: 0, radius: PIRATE_ROCK_SPEC.radius };
     const _pirateRockFeature = { id: 'pirate-rock', type: 'planet', label: PIRATE_ROCK_SPEC.label, entity: _pirateRockMark,
@@ -31600,6 +31573,24 @@
       if (fadeThroughBlack) fadeScreen(false, 750);
 
       console.log("[System] Gra uruchomiona.");
+      // Scena „Wojna” z adresu (bez konsoli): ?wojna — start sekundę po wejściu do gry swobodnej (kampania ma własny
+      // świat — pomija). Opcje: wojnaK (k wyjścia z warpa), wojnaZwiastun (thread | ripple | none), wojnaTlo (deep |
+      // jupiter | mars), wojnaAtlas (side | fleet), wojnaA / wojnaB (liczba okrętów), wojnaOdl (odległość flot, j.),
+      // wojnaKino (0 — bez ujęć kamery), wojnaBohaterowie (0 — bez scen bohaterów), wojnaGestosc (tłum w głębi),
+      // wojnaPlaneta (venus | mercury | earth | mars).
+      const warQuery = new URLSearchParams(location.search);
+      if (warQuery.has('wojna') && !storyCampaign) {
+        const num = (k) => (warQuery.has(k) && Number.isFinite(Number(warQuery.get(k))) ? Number(warQuery.get(k)) : undefined);
+        const warOpts = {
+          k: num('wojnaK'), heraldStyle: warQuery.get('wojnaZwiastun') || undefined, backdrop: warQuery.get('wojnaTlo') || undefined,
+          atlas: warQuery.get('wojnaAtlas') || undefined, countA: num('wojnaA'), countB: num('wojnaB'), distance: num('wojnaOdl'),
+          cinema: warQuery.has('wojnaKino') ? warQuery.get('wojnaKino') !== '0' : undefined,
+          heroes: warQuery.has('wojnaBohaterowie') ? warQuery.get('wojnaBohaterowie') !== '0' : undefined,
+          density: num('wojnaGestosc'), planetMaps: warQuery.get('wojnaPlaneta') || undefined
+        };
+        for (const key of Object.keys(warOpts)) if (warOpts[key] === undefined) delete warOpts[key];
+        setTimeout(() => { try { startWarScene(warOpts); } catch (err) { console.error('[Wojna] start sceny:', err); } }, 1000);
+      }
     }
     if (newGameButton) {
       newGameButton.addEventListener('click', () => {
@@ -32320,7 +32311,7 @@
     // (dawne opcje zostały przy swoich atrybutach: data-planet-q, data-shaft-q, data-lacquer, data-hull-light, data-space-dust).
     const GFX_CHIP_ATTR = Object.freeze({
       renderScale: 'gfxScale', msaa: 'gfxMsaa', bloom: 'gfxBloom', heatHaze: 'gfxHeat', explosions: 'gfxExplosions',
-      effects: 'gfxEffects', hallDust: 'gfxHallDust', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
+      effects: 'gfxEffects', hallDust: 'gfxHallDust', spaceGas: 'gfxSpaceGas', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
       lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync'
     });
     const gfxChipSelector = (attr) => `[data-${attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]`;
@@ -32427,6 +32418,8 @@
       }
       WarpNurt.setMediumCount?.(fx.warpParticles);   // czeka, aż ośrodek warpa uśnie
       HALL_DUST_TUNE.enabled = gfxSettings.hallDust !== 'off';
+      // gaz przestrzeni: wejście gry (działa też w workerze renderu — bez wejścia render nic nie liczy)
+      SPACE_GAS_INPUT_TUNE.enabled = gfxSettings.spaceGas !== 'off';
     }
 
     function applyGraphicsSettings() {

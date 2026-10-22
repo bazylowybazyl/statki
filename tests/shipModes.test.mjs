@@ -13,7 +13,10 @@ const { orderRingTurrets, drawArcCompass, drawWeaponReticle } = await import('..
 const { createDriveTransmission, applyDriveSpeedGovernor } = await import('../src/game/flight/driveTransmission.js');
 
 test('koło trybów: siedem sektorów od góry zgodnie z zegarem, środek bez wyboru', () => {
-  assert.deepEqual([...SHIP_MODE_IDS], ['combat', 'shield', 'cruise', 'cloak', 'torpedo', 'mining', 'fleet']);
+  // PRZELOT usunięty 2026-10-22 (decyzja użytkownika) — jego sektor przejął HIPERCRUISE (automat, nie postawa).
+  assert.deepEqual([...SHIP_MODE_IDS], ['combat', 'shield', 'hypercruise', 'cloak', 'torpedo', 'mining', 'fleet']);
+  assert.equal(SHIP_MODE_DEFS.hypercruise.stance, false);
+  assert.equal(SHIP_MODE_DEFS.hypercruise.key, 'O');
   for (const id of SHIP_MODE_IDS) assert.equal(SHIP_MODE_DEFS[id].id, id);
   assert.equal(shipModeFromWheelVector(0, 0), -1);
   assert.equal(shipModeFromWheelVector(10, -10), -1, 'martwa strefa');
@@ -34,8 +37,8 @@ test('puszczenie ŚPM: sektor wybiera tryb, stuknięcie wraca do poprzedniego', 
   assert.equal(m.previous, 'combat');
 
   openShipModeWheel(m, 500, 400, 10);
-  m.wheel.hover = SHIP_MODE_IDS.indexOf('cruise');
-  assert.equal(releaseShipModeWheel(m, 10.5), 'cruise');
+  m.wheel.hover = SHIP_MODE_IDS.indexOf('hypercruise');
+  assert.equal(releaseShipModeWheel(m, 10.5), 'hypercruise');
   assert.equal(m.wheel.open, false);
 
   openShipModeWheel(m, 500, 400, 20);
@@ -49,16 +52,17 @@ test('puszczenie ŚPM: sektor wybiera tryb, stuknięcie wraca do poprzedniego', 
 
 test('tryb widoczny: systemy gry wygrywają z postawą, postawa wraca po ich wyłączeniu', () => {
   const m = createShipModes();
-  m.stance = 'cruise';
-  assert.equal(resolveShipMode(m, { cloak: true }), 'cloak');
+  m.stance = 'shield';
+  assert.equal(resolveShipMode(m, { hypercruise: true }), 'hypercruise');
+  assert.equal(resolveShipMode(m, { cloak: true, hypercruise: true }), 'cloak');
   assert.equal(resolveShipMode(m, { cloak: true, torpedo: true }), 'torpedo');
   assert.equal(resolveShipMode(m, { torpedo: true, mining: true }), 'mining');
   assert.equal(resolveShipMode(m, { mining: true, fleet: true }), 'fleet');
-  assert.equal(resolveShipMode(m, {}), 'cruise');
+  assert.equal(resolveShipMode(m, {}), 'shield');
   assert.equal(m.previous, 'fleet');
 });
 
-test('postawy: TARCZE kosztem napędu, PRZELOT szybciej z zimną bronią, BOJOWY bez zmian', () => {
+test('postawy: TARCZE kosztem napędu, BOJOWY bez zmian; PRZELOTU nie ma', () => {
   const combat = SHIP_STANCE_TUNE.combat;
   for (const k of ['speed', 'thrust', 'turn', 'shieldRegen', 'shieldDelay', 'shieldTaken']) assert.equal(combat[k], 1, k);
   assert.equal(combat.weaponsCold, false);
@@ -71,37 +75,10 @@ test('postawy: TARCZE kosztem napędu, PRZELOT szybciej z zimną bronią, BOJOWY
   assert.ok(shield.speed <= 0.5 && shield.thrust <= 0.6 && shield.turn <= 0.6 && shield.turnRate < 1);
   for (const k of ['turnRate', 'shieldHardness']) assert.equal(combat[k], 1, k);
   assert.equal(combat.shieldShow, false, 'domyślnie tarcza niewidoczna');
-  assert.equal(SHIP_STANCE_TUNE.cruise.shieldShow, false);
-  const cruise = SHIP_STANCE_TUNE.cruise;
-  assert.ok(cruise.speed > 1 && cruise.thrust > 1);
-  assert.equal(cruise.weaponsCold, true);
+  assert.deepEqual(Object.keys(SHIP_STANCE_TUNE), ['combat', 'shield'], 'PRZELOT usunięty 2026-10-22');
   const m = createShipModes();
   m.stance = 'cloak';
   assert.equal(stanceTune(m), combat, 'tryb bez postawy = nastawy bojowe');
-});
-
-test('PRZELOT na biegach: Atlas 500 → 750 / 1000 / 1250 / 1500 j/s, w górę przy gazie pod limitem, w dół bez gazu i Ctrl', async () => {
-  const { CRUISE_GEARS, cruiseGearMul, stepCruiseGear, shiftCruiseGearDown } = await import('../src/game/shipModes.js');
-  assert.deepEqual([...CRUISE_GEARS.muls].map((m) => m * 500), [750, 1000, 1250, 1500]);
-  const m = createShipModes();
-  assert.equal(stepCruiseGear(m, 1000, 500, 1, 1), null, 'poza PRZELOTEM bez biegów');
-  m.stance = 'cruise';
-  assert.equal(m.cruiseGear, 1);
-  assert.equal(stepCruiseGear(m, 600, 500, 1, 0.1), null, 'pod limitem biegu');
-  assert.equal(stepCruiseGear(m, 740, 500, 1, 0.1), 'up');
-  assert.equal(m.cruiseGear, 2);
-  assert.equal(stepCruiseGear(m, 990, 500, 1, 0.1), null, 'odstęp między zmianami');
-  let ev = null;
-  for (let i = 0; i < 20 && !ev; i++) ev = stepCruiseGear(m, 990, 500, 1, 0.1);
-  assert.equal(ev, 'up');
-  assert.equal(cruiseGearMul(m.cruiseGear) * 500, 1250);
-  m.cruiseShiftCd = 0;
-  assert.equal(stepCruiseGear(m, 400, 500, 0, 0.1), 'down', 'bez gazu, wolno — w dół');
-  m.cruiseShiftCd = 0;
-  assert.equal(shiftCruiseGearDown(m), true);
-  assert.equal(m.cruiseGear, 1);
-  assert.equal(shiftCruiseGearDown(m), false);
-  assert.equal(cruiseGearMul(99), 3, 'najwyższy bieg = 3 × limit bojowy');
 });
 
 test('postawa w napędzie: regulator trzyma limit × stanceLimit, zryw szarży nadal wygrywa', () => {
@@ -109,9 +86,9 @@ test('postawa w napędzie: regulator trzyma limit × stanceLimit, zryw szarży n
   st.speedLimit = 500;
   st.governorDeceleration = 1e9;
   const v = { x: 2000, y: 0 };
-  st.stanceLimit = SHIP_STANCE_TUNE.cruise.speed;
+  st.stanceLimit = SHIP_STANCE_TUNE.combat.speed;
   applyDriveSpeedGovernor(st, v, 1);
-  assert.ok(Math.abs(v.x - 500 * SHIP_STANCE_TUNE.cruise.speed) < 1e-6, `PRZELOT: ${v.x}`);
+  assert.ok(Math.abs(v.x - 500) < 1e-6, `BOJOWY: ${v.x}`);
   st.stanceLimit = SHIP_STANCE_TUNE.shield.speed;
   applyDriveSpeedGovernor(st, v, 1);
   assert.ok(Math.abs(v.x - 500 * SHIP_STANCE_TUNE.shield.speed) < 1e-6, `TARCZE: ${v.x}`);
@@ -201,9 +178,9 @@ test('celownik: gotowe / przeładowanie / poza łukiem — liczba i druga linia'
   assert.ok(ctx.log.text.includes('POZA ŁUKIEM'));
 
   ctx = fakeCtx();
-  drawWeaponReticle(ctx, 0, 0, list, 4, { distance: 1000, cold: true, tag: 'PRZELOT — BROŃ ZIMNA' });
+  drawWeaponReticle(ctx, 0, 0, list, 4, { distance: 1000, cold: true, tag: 'HIPERCRUISE — BROŃ ZIMNA' });
   assert.ok(!ctx.log.text.includes('/4'), 'broń zimna — bez licznika');
-  assert.ok(ctx.log.text.includes('PRZELOT — BROŃ ZIMNA'));
+  assert.ok(ctx.log.text.includes('HIPERCRUISE — BROŃ ZIMNA'));
 });
 
 test('index.html: ŚPM otwiera koło trybów, dawne tryby celownika i opcja „Klasyczne” usunięte', () => {
@@ -211,14 +188,14 @@ test('index.html: ŚPM otwiera koło trybów, dawne tryby celownika i opcja „K
   assert.doesNotMatch(html, /TARGETING_MODE|targetingMode\b|confirmTargetingSelection|data-fire-control|isFireControlCommand/);
   assert.match(html, /openShipModeWheelAt\(mouse\.x, mouse\.y\)/);
   assert.match(html, /closeShipModeWheel\(\)/);
-  // PRZELOT: broń zimna przez kierowanie ogniem, TARCZE: tarcza przyjmuje mniej.
-  assert.match(html, /env\.canFire = [^;]*!stanceTune\(shipModes\)\.weaponsCold/);
+  // Hipercruise: broń zimna przez kierowanie ogniem, TARCZE: tarcza przyjmuje mniej.
+  assert.match(html, /env\.canFire = [^;]*!stanceTune\(shipModes\)\.weaponsCold && !hypercruiseBusy\(hypercruise\)/);
   assert.match(html, /amount \* taken/);
   assert.match(html, /stanceTune\(shipModes\)\.shieldRegen/);
   assert.match(html, /stanceTune\(shipModes\)\.turn/);
   assert.match(html, /applyShipStance\(dt\)/);
-  // PRZELOT na biegach (QOL 2026-10-03): limit z biegu, Ctrl redukuje; warp bez biegów.
-  assert.match(html, /driveState\.stanceLimit = cruiseGearMul\(shipModes\.cruiseGear\);/);
-  assert.match(html, /shiftCruiseGearDown\(shipModes\)/);
+  // PRZELOT i jego biegi usunięte (2026-10-22) — sektor koła włącza hipercruise; warp bez biegów.
+  assert.doesNotMatch(html, /cruiseGear|CRUISE_GEARS|stepCruiseGear|travelUseCruise|setShipMode\('cruise'/);
+  assert.match(html, /else if \(id === 'hypercruise'\) ok = startPlayerHypercruise\(\{ quiet \}\);/);
   assert.doesNotMatch(html, /gearSpeeds|shiftWarpGearUp|setWarpGear/);
 });

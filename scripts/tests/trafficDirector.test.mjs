@@ -10,7 +10,7 @@ import { RESOURCES, RESOURCE_KEYS, TIER } from '../../src/data/resources.js';
 import { seedStationStock } from '../../src/game/stationEconomy.js';
 import {
   createFleetState, createShipmentOrder, SHIPMENT_STATUS
-} from '../../src/game/cargoFleet.js';
+} from '../../src/game/traffic/shipmentOrders.js';
 import { buildTravelNetwork } from '../../src/game/traffic/travelNetwork.js';
 import {
   COURSE_KIND, DWELL_REASON, createCourseRegistry, getActiveCourses,
@@ -351,9 +351,10 @@ export function run() {
     .filter(entry => entry.destinationId === 'earth' && entry.payload?.resourceId === 'iron_ore')
     .reduce((sum, entry) => sum + (Number(entry.payload?.units) || 0), 0);
   t.note(`Fe w drodze do Ziemi: ${earthIronInbound.toLocaleString('pl-PL')} szt.`);
-  // Stary limiter zatrzymywał się na ok. 17 250. Sam popyt podczas lotu
-  // Merkury→Ziemia wymaga ponad 38 tys. sztuk, zanim doliczy się zapas roboczy.
-  t.check('pipeline przekracza dawny limit i pokrywa czas lotu', earthIronInbound > 38_000);
+  // Stary limiter zatrzymywał się na ok. 17 250. Przy napędzie konwencjonalnym (800 j./s, ~22 min
+  // lotu Merkury→Ziemia) sam popyt w locie wymagał ponad 38 tys. sztuk; od E5 (hipercruise, ~1 min
+  // lotu — src/data/driveModes.js) pipeline wyznacza głównie zapas roboczy, więc próg to dawny limit.
+  t.check('pipeline przekracza dawny limit i pokrywa czas lotu', earthIronInbound > 17_250);
   t.check('pipeline nigdy nie przepełnia magazynu odbiorcy', earthIronInbound <= 60_000);
 
   // ----------------------------------------------------------
@@ -463,7 +464,9 @@ export function run() {
     })],
     payload: {
       orderId: lossOrder.id, shipId: lossShip.id, companyId: lossCompany.id,
-      resourceId: 'iron_ore', units: 10, value: 100
+      // Wartość na progu pełnego zainteresowania piratów (`lootReference`) —
+      // drobnicę piraci łapią rzadziej, a test potrzebuje pewnego przechwytu.
+      resourceId: 'iron_ore', units: 10, value: 25_000
     }
   });
   t.check('test przechwytu przypisał statek', assignShipToCourse(lossShip, lossCourse.id));
@@ -535,7 +538,9 @@ export function run() {
       ships: 12,
       economyScale: 5,
       // Flota docelowa = startowa, więc firma odkupuje już pierwszą stratę.
-      directorOptions: { piracyEnabled: true, piracyPressure: 6, targetFleetPerCompany: 12 }
+      // Presja ×20: piraci polują na łup (`pirateInterest`), więc tania ruda
+      // przy ×6 dawała już tylko dwie straty na pół godziny.
+      directorOptions: { piracyEnabled: true, piracyPressure: 20, targetFleetPerCompany: 12 }
     });
     przewoznik = zPiratami.companies.companies[0];
     for (let czas = 0; czas < 1800; czas += 5) {

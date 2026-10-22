@@ -476,7 +476,14 @@ export function stepShipFlight(entity, dt) {
   const accelMul = boost ? (it.boostAccelMul > 0 ? it.boostAccelMul : FLIGHT_PILOT.boostAccelMul) : 1;
   const speedMul = boost ? (it.boostSpeedMul > 0 ? it.boostSpeedMul : FLIGHT_PILOT.boostSpeedMul) : 1;
   const baseLimit = it.speedLimit > 0 ? it.speedLimit : spec.maxSpeed;
-  const cap = Math.min(spec.travelSpeed * speedMul, baseLimit * speedMul);
+  let cap = Math.min(spec.travelSpeed * speedMul, baseLimit * speedMul);
+  // Wyjście z warpa z pędem (src/game/warpDrive.js warpExitMomentum; flagę stawia rejestr ruchu warpa przy zwolnieniu
+  // z tunelu): do końca ŚLIZGU limitem jest prędkość bojowa — nadmiar ścina pilot i governor, a mózg nie podtrzyma go
+  // trybem przelotu albo dolotu do szyku (fregata w marszu leciałaby dalej 3200 j/s: ślizg 9 km zamiast 2,8).
+  if (entity.__warpExitSlide) {
+    if (vx * vx + vy * vy <= spec.maxSpeed * spec.maxSpeed * 1.0201) entity.__warpExitSlide = false;
+    else cap = Math.min(cap, spec.maxSpeed);
+  }
 
   // --- zadana prędkość ---
   let desVx = 0;

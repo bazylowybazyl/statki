@@ -7,11 +7,11 @@
  * Zestrzelona flota górnicza to realnie mniej rudy na stacji, nie animacja.
  *
  * Trzy źródła kursów:
- *   PRZEWÓZ    — nadwyżka u jednego, niedobór u drugiego (`planShipment`)
+ *   PRZEWÓZ    — nadwyżka u jednego, niedobór u drugiego (migawka rynku, `rebuildMarket`)
  *   WYDOBYCIE  — surowce, których nie robi żadna stacja: ruda uranu z Kuipera
  *   TANKOWANIE — dowóz paliwa tam, gdzie kursy stają z pustym zbiornikiem
  *
- * Księgowość ładunku zostaje w `cargoFleet.js` — ten moduł tylko ją wywołuje,
+ * Księgowość ładunku jest w `shipmentOrders.js` — ten moduł tylko ją wywołuje,
  * nigdy nie dotyka magazynów wprost. Dzięki temu niezmiennik „jedna partia,
  * jeden właściciel" pilnują wciąż te same, przetestowane funkcje.
  */
@@ -21,10 +21,10 @@ import {
   createShipmentOrder, tryDeliverShipmentOrder, wreckShipmentOrder,
   getBlockedPairs, blockRoute, tickCooldowns, pickVanClass, VAN_CLASSES,
   SHIPMENT_STATUS
-} from '../cargoFleet.js';
+} from './shipmentOrders.js';
 import {
   runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, getStationSurpluses,
-  stationWantsResource, stationNetRates
+  stationWantsResource, stationNetRates, stationConsumptionRates
 } from '../stationEconomy.js';
 import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js';
 import {
@@ -33,7 +33,8 @@ import {
   travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage,
   getCourse
 } from './courseRegistry.js';
-import { laneThreat, depositLoot, recordPirateLoss } from './piracy.js';
+import { laneThreat, depositLoot, recordPirateLoss, pirateInterest } from './piracy.js';
+import { refreshQuote } from './tradeMarket.js';
 import {
   chooseRoute, getNode, DRIVE_MODES, interceptChance, randomFieldSpot, approachPoint
 } from './travelNetwork.js';
@@ -61,6 +62,9 @@ import {
   createPatrolRegistry, collectLevy, recordLaneLoss, planPatrols,
   patrolMultiplier, summarizePatrols
 } from './patrols.js';
+import {
+  pickMiningField, planExpedition, recordExtraction, tickMiningFields, noteHarvestDelivered
+} from './miningFields.js';
 
 /** Ile trwa załadunek i rozładunek. Wchodzi w plan jako etap, nie jako kara. */
 const LOAD_SECONDS = 90;
@@ -106,8 +110,12 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    *
    * Przepustowość portu i tak wyznaczają stanowiska — kolejka dłuższa niż one
    * niczego nie przyspiesza, tylko zamraża towar w rekordach.
+   *
+   * 0,1 zamiast 0,6 (2026-10-21): przy 0,6 eksport Westy trzymał na redzie
+   * średnio ~2,4 kursu, choć tempo i tak wyznaczały stanowiska. Statek, który
+   * czeka, czeka w porcie macierzystym — to nie zapycha redy.
    */
-  loadQueueRatio: 0.6,
+  loadQueueRatio: 0.1,
   /**
    * Ile pustych przerzutów wolno wystawić na jeden cykl gospodarczy.
    *
@@ -163,7 +171,7 @@ export function createDirector(network, registry, options = {}) {
     network,
     registry,
     config,
-    /** Stan floty z cargoFleet — trzyma zlecenia i karencje par. */
+    /** Stan floty (`shipmentOrders.js`) — trzyma zlecenia i karencje par. */
     fleet: options.fleet,
     /** Firmy transportowe i ich jednostki. Bez tego kurs powstaje znikąd. */
     companies: options.companies || null,
@@ -195,6 +203,8 @@ export function createDirector(network, registry, options = {}) {
     inboundSchedule: new Map(),
     /** `stacja` → nominalne saldo zasobów/s przy skali gospodarki 1. */
     demandRates: new Map(),
+    /** `stacja` → planowe zużycie brutto/s przy skali 1 — potrzeba w skupie kupców. */
+    useRates: new Map(),
     /** Surowce dostępne u kogokolwiek na zbyciu. Też raz na tick. */
     surplus: new Set(),
     /** `stacja` → ile kursów stoi tam na redzie, czekając na stanowisko. */
@@ -212,6 +222,11 @@ export function createDirector(network, registry, options = {}) {
     convoys: createConvoyRegistry(),
     /** Niezależni kupcy i górnicy — ruch po marżę, nie po niedobór. */
     agents: options.agents || null,
+    /**
+     * Pola wydobywcze z danych pasa (`miningFields.js`): wybór pola, punkt i urobek wyprawy, rejestr
+     * uszczuplenia i wyrwy. Bez niego (sieć z własnymi polami) wyprawy kopią jak dawniej — z `yields` pola.
+     */
+    mining: options.mining || null,
     /** Patrole: bezpieczeństwo szlaku jako wielkość ekonomiczna. */
     patrols: createPatrolRegistry(),
     /** Migawka rynku: sprzedający z zapasem i kupujący wg pilności. */
@@ -311,9 +326,14 @@ function tryDeadhead(director, targetStationId, requiredCapacity) {
       kind: COURSE_KIND.HAUL,
       unitClass: candidate.ship.hullId,
       factionId: candidate.company.factionId,
+      // Pusty statek nie ładuje ani nie rozładowuje, więc nie zajmuje
+      // stanowiska: czeka na orbicie oczekiwania w punkcie manewrowym portu.
+      // Ze stanowiskami pod „załadunek” i „rozładunek” puste przeloty były
+      // większością kolejki na redzie Westy (2026-10-21: ~6 z 9,5 kursu).
       stages: stagesFromRoute(route, candidate.ship.stationId, targetStationId, {
         loadSeconds: 30,
         unloadSeconds: 30,
+        dwellReason: DWELL_REASON.HOLD,
         ...manoeuvrePoints(director, candidate.ship.stationId, targetStationId)
       }),
       fuelCapacity: fuelCapacityFor(route),
@@ -565,8 +585,13 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // w środku planety. Bez `entryPos` świeżo wystawiony kurs siedział przez
   // jeden tick w punkcie zerowym stacji, zanim dyspozytor portu przydzielił mu
   // stanowisko; przy dużym ruchu widać to było jako grudkę w środku globu.
-  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS, DWELL_REASON.LOAD,
-    options.originBerthPos, { entryPos: options.originBerthPos || options.departPoint }));
+  // `dwellReason` podmienia oba postoje (pusty przelot: HOLD, bez stanowiska —
+  // wtedy statek stoi w punktach manewrowych, nie w środku stacji).
+  const hold = options.dwellReason === DWELL_REASON.HOLD;
+  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS,
+    options.dwellReason || DWELL_REASON.LOAD,
+    options.originBerthPos || (hold ? depart : undefined),
+    { entryPos: options.originBerthPos || options.departPoint }));
   if (depart) {
     stages.push(travelStage(originId, originId, {
       mode: 'conventional',
@@ -597,7 +622,7 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // Wcześniej ostatni manewr celował w `destinationPos`, czyli w sam środek
   // stacji: wszystko zlatywało się do jednego punktu i było stamtąd odbijane.
   stages.push(dwellStage(destinationId, options.unloadSeconds ?? UNLOAD_SECONDS,
-    DWELL_REASON.UNLOAD, null, { entryPos: arrive }));
+    options.dwellReason || DWELL_REASON.UNLOAD, hold ? arrive : null, { entryPos: arrive }));
   return stages;
 }
 
@@ -744,6 +769,13 @@ function dispatchAgent(director, stations) {
   }
 
   attachCourses(agent, kursy.map(course => course.id));
+  // Następny kupiec w tym samym ticku ma widzieć chudszego nadawcę i towar już
+  // lecący do odbiorcy — inaczej cała pula wolnych karawan rzuca się na tę samą
+  // parę, a nadmiar przepada przy rozładunku.
+  bumpInbound(director, opportunity.target.id, opportunity.resourceId, wyslane,
+    route.seconds + (dojazd?.seconds || 0));
+  refreshQuote(director.quotes, opportunity.source.id, opportunity.resourceId);
+  refreshQuote(director.quotes, opportunity.target.id, opportunity.resourceId, wyslane);
   // Karawana leci razem Z DEFINICJI: to jeden właściciel i jeden towar, więc
   // nie pytamy `shouldConvoy` — ta funkcja rozstrzyga, czy OBCYM kursom opłaca
   // się zebrać w grupę. Osłona jest już wliczona w rachunek okazji.
@@ -991,7 +1023,7 @@ function needsMoreMining(director, station, resourceId) {
 /**
  * Migawka rynku: co kto oddaje i czego komu brakuje — liczona RAZ na tick.
  *
- * `planShipment` z `cargoFleet.js` przelicza nadwyżki i niedobory dla każdej
+ * Dawny planista starej ekonomii (`planShipment`) przeliczał nadwyżki i niedobory dla każdej
  * pary stacji przy każdym wywołaniu. Przy kilkunastu kursach to nie miało
  * znaczenia; przy skali, na której w locie jest kilkaset jednostek, dyspozytor
  * wołany 25 razy na tick spędzał na tym 7 z 13 ms. Tutaj liczymy to raz i
@@ -1004,6 +1036,7 @@ function rebuildMarket(director, stations) {
   market.buyers.length = 0;
   director.surplus.clear();
   director.demandRates.clear();
+  director.useRates.clear();
 
   for (const station of stations) {
     // Opuszczona stacja NIE JEST uczestnikiem rynku. Nie ma załogi, nie ma
@@ -1017,6 +1050,7 @@ function rebuildMarket(director, stations) {
     const econ = director.getEconomy(station.id);
     if (!econ) continue;
     director.demandRates.set(String(station.id), stationNetRates(station));
+    director.useRates.set(String(station.id), stationConsumptionRates(station));
 
     const spare = new Map();
     for (const surplus of getStationSurpluses(station, econ, 20)) {
@@ -1403,21 +1437,27 @@ export function dispatchMining(director, stations) {
     return { ok: false, reason: 'limit kursów w powietrzu' };
   }
 
+  const model = director.mining;
   let best = null;
   for (const station of stations) {
     if (isDerelict(station) || station.factionId === FACTION.PIRATES) continue;
     const econ = director.getEconomy(station.id);
     if (!econ) continue;
     for (const deficit of getStationDeficits(station, econ, 8)) {
-      const field = network.fields.find(candidate => candidate.yields?.[deficit.id] > 0);
-      if (!field) continue;
+      // Pole z danych pasa wybiera się dopiero dla kandydata, który wygrywa (udział rudy, dostępność
+      // po uszczupleniu, odległość) — tu wystarczy, że jakieś pole ją ma.
+      const field = model ? null : network.fields.find(candidate => candidate.yields?.[deficit.id] > 0);
+      if (!model && !field) continue;
+      if (model && !network.fields.some(candidate => candidate.yields?.[deficit.id] > 0)) continue;
       // Kopie się tylko to, czego NIE DA SIĘ KUPIĆ. Jeśli ktokolwiek w układzie
       // ma nadwyżkę, tańszy i szybszy jest przewóz — a wyprawa górnicza po rudę,
       // której pełno u sąsiada, wypychała przewozy do zera (zmierzone: 0 kursów
       // handlowych na 158 wypraw).
       if (anyStationHasSurplus(director, stations, deficit.id)) continue;
       if (!needsMoreMining(director, station, deficit.id)) continue;
-      if (!best || deficit.fill < best.deficit.fill) best = { station, field, deficit };
+      if (best && deficit.fill >= best.deficit.fill) continue;
+      const pick = field || pickMiningField(model, network, station, deficit.id);
+      if (pick) best = { station, field: pick, deficit };
     }
   }
   if (!best) return { ok: false, reason: 'nie ma czego kopać — wszystko da się kupić' };
@@ -1436,7 +1476,15 @@ export function dispatchMining(director, stations) {
   // Każda wyprawa kopie GDZIE INDZIEJ. Pole to wycinek pasa o szerokości setek
   // tysięcy jednostek, a trzymanie jego środka ustawiało wszystkich górników
   // w jedną kolumnę lecącą w ten sam punkt.
-  const spot = randomFieldSpot(best.field, director.rng);
+  //
+  // Z danymi pasa (E3): punkt w skałach pola (poszukiwania po gęstości i składzie,
+  // potem kopalnia rosnąca od jednego miejsca), urobek ze składu w tym punkcie,
+  // czas wydobycia z gęstości. Bez modelu — dawny los po pierścieniu.
+  const plan = model ? planExpedition(model, best.field, best.deficit.id, units, director.rng) : null;
+  if (model && !plan) return { ok: false, reason: 'pole wyczerpane' };
+  const spot = plan ? plan.spot : randomFieldSpot(best.field, director.rng);
+  const harvest = plan ? plan.harvest : { [best.deficit.id]: units };
+  const harvestMass = plan ? getBagMass(harvest) : mass;
   const out = manoeuvrePoints(director, best.station.id, best.field.id);
   const back = manoeuvrePoints(director, best.field.id, best.station.id);
 
@@ -1451,7 +1499,7 @@ export function dispatchMining(director, stations) {
       fromPos: index === 0 ? out.departPoint : null,
       toPos: index === outbound.legs.length - 1 ? spot : null
     })),
-    dwellStage(best.field.id, best.field.extractionSeconds, DWELL_REASON.EXTRACT, spot),
+    dwellStage(best.field.id, plan ? plan.seconds : best.field.extractionSeconds, DWELL_REASON.EXTRACT, spot),
     ...inbound.legs.map((leg, index) => travelStage(leg.from, leg.to, {
       ...leg,
       fromPos: index === 0 ? spot : null,
@@ -1460,10 +1508,12 @@ export function dispatchMining(director, stations) {
     dwellStage(best.station.id, UNLOAD_SECONDS, DWELL_REASON.UNLOAD, null,
       { entryPos: back.arrivePoint })
   ];
+  // Indeks etapu wydobycia: postój załadunku, manewr, odcinki dolotu.
+  const extractStage = 2 + outbound.legs.length;
 
   const course = launchCourse(registry, {
     kind: COURSE_KIND.MINE,
-    unitClass: unitClassFor(mass),
+    unitClass: unitClassFor(harvestMass),
     factionId: best.station.factionId ?? null,
     stages,
     fuelCapacity: fuelCapacityFor(outbound) + fuelCapacityFor(inbound),
@@ -1472,22 +1522,57 @@ export function dispatchMining(director, stations) {
     // Wyprawa górnicza wraca z towarem, którego nikt wcześniej nie posiadał —
     // nie ma zlecenia, więc ładunek dopisuje się dopiero przy powrocie.
     payload: {
-      harvest: { [best.deficit.id]: units },
-      mass,
+      harvest,
+      mass: harvestMass,
       resourceId: best.deficit.id,
       targetStationId: best.station.id,
       fieldId: best.field.id,
-      mode: inbound.id
+      mode: inbound.id,
+      // Punkt i tony urobku do rejestru uszczuplenia pasa — księgowane po etapie wydobycia
+      // (`bookMiningExtractions`); przechwyt przed nim niczego z pasa nie zabiera.
+      extract: plan
+        ? { x: spot.x, y: spot.y, tons: Object.values(harvest).reduce((s, n) => s + n, 0), stage: extractStage, booked: false }
+        : null
     },
     now: registry.clock
   });
   if (!course) return { ok: false, reason: 'plan wyprawy odrzucony' };
 
-  bumpInbound(director, best.station.id, best.deficit.id, units, course.duration);
+  for (const [id, amount] of Object.entries(harvest)) {
+    bumpInbound(director, best.station.id, id, amount, course.duration);
+  }
   director.stats.mining++;
   note(director, `wyprawa: ${best.station.id} → ${best.field.label} po `
-    + `${RESOURCES[best.deficit.id].label} ×${units}`);
+    + `${RESOURCES[best.deficit.id].label} ×${harvest[best.deficit.id] || 0}`);
   return { ok: true, course };
+}
+
+/**
+ * Wydobycie z pasa trafia do rejestru uszczuplenia, gdy wyprawa SKOŃCZY etap wydobycia (pierwszy
+ * odcinek powrotu — zdarzenie `stage`); kurs domknięty bez tego zdarzenia (bańka) księguje przy `done`.
+ */
+function bookMiningExtractions(director, events) {
+  if (!director.mining || !events?.length) return;
+  for (const event of events) {
+    if (event?.type !== 'stage') continue;
+    const extract = event.course?.payload?.extract;
+    if (!extract || extract.booked || event.course.stageIndex <= extract.stage) continue;
+    bookExtraction(director, extract);
+  }
+}
+
+function bookExtraction(director, extract) {
+  extract.booked = true;
+  recordExtraction(director.mining, extract.x, extract.y, extract.tons, 'npc');
+}
+
+/**
+ * Wydobycie gracza (platforma → ładownia) w tym samym rejestrze co wyprawy NPC: tony rudy w punkcie świata.
+ * Zwraca komórkę rejestru albo null (świat bez pól z danych pasa).
+ */
+export function recordPlayerMining(director, x, y, tons) {
+  if (!director?.mining) return null;
+  return recordExtraction(director.mining, Number(x), Number(y), Number(tons), 'player');
 }
 
 // ============================================================
@@ -1499,6 +1584,24 @@ export function dispatchMining(director, stations) {
  * przelatuje przez tę pętlę nietknięty — nietykalność wynika z modelu, nie
  * z osobnego wyjątku.
  */
+/**
+ * Ile jest wart ładunek kursu W TEJ CHWILI — wejście do zainteresowania
+ * piratów. Wyprawa górnicza leci w pole pusto i dopiero wraca z urobkiem.
+ */
+function cargoValueNow(course) {
+  const payload = course?.payload;
+  if (!payload || payload.deadhead) return 0;
+  const value = Number(payload.value);
+  if (value > 0) return value;
+  if (!payload.harvest) return 0;
+  const stages = course.stages || [];
+  for (let i = 0; i < course.stageIndex && i < stages.length; i++) {
+    const stage = stages[i];
+    if (stage.toId === payload.fieldId || stage.nodeId === payload.fieldId) return getBagValue(payload.harvest);
+  }
+  return 0;
+}
+
 function rollPiracy(director, dt) {
   const { registry, config } = director;
   if (!config.piracyEnabled || config.piracyPressure <= 0) return;
@@ -1517,8 +1620,11 @@ function rollPiracy(director, dt) {
     if (!stage || stage.kind !== STAGE_KIND.TRAVEL || !(stage.risk > 0)) continue;
     if (course.kind === COURSE_KIND.PATROL) continue;
 
+    // Ekspozycja = droga w tym kroku: średnia prędkość etapu (hipercruise ma w czasie rozruch i rozpęd —
+    // jego prędkość szczytowa zawyżałaby drogę), bez dystansu — prędkość napędu.
     const mode = DRIVE_MODES[stage.mode];
-    const exposure = (mode?.speed || 0) * dt * stage.risk;
+    const v = stage.distance > 0 && stage.seconds > 0 ? stage.distance / stage.seconds : (mode?.speed || 0);
+    const exposure = v * dt * stage.risk;
     if (!(exposure > 0)) continue;
     // Patrol na szlaku zbija ryzyko — to jedyne miejsce, w którym pieniądze
     // frakcji przekładają się na bezpieczeństwo transportu.
@@ -1527,12 +1633,19 @@ function rollPiracy(director, dt) {
     // patrolu. Dzięki temu szlak da się realnie oczyścić, zabijając rejdera,
     // zamiast tylko przeczekać złą passę losowania.
     const zagrozenie = director.piracy ? laneThreat(director.piracy, stage.fromId, stage.toId) : 1;
-    const solo = interceptChance(exposure, director.network.config, config.piracyPressure)
+    const ryzyko = interceptChance(exposure, director.network.config, config.piracyPressure)
       * oslona * zagrozenie;
 
     const konwoj = convoyOf(director.convoys, course.id);
     if (konwoj) {
-      for (const id of konwoj.courseIds) rozliczone.add(id);
+      // Konwój kusi łupem CAŁEJ grupy — razem jest celem, nawet gdy pojedyncze
+      // statki wiozą drobnicę.
+      let lup = 0;
+      for (const id of konwoj.courseIds) {
+        rozliczone.add(id);
+        lup += cargoValueNow(getCourse(registry, id));
+      }
+      const solo = ryzyko * pirateInterest(lup, director.piracy?.config);
       // Konwój z choćby jednym oglądanym statkiem gracz widzi w całości —
       // o jego losie rozstrzyga gra, nie rzut.
       if (config.protectObserved && convoyIsObserved(registry, konwoj)) continue;
@@ -1551,7 +1664,8 @@ function rollPiracy(director, dt) {
     }
 
     if (config.protectObserved && course.actorId) continue;
-    if (director.rng() >= solo) continue;
+    // Pirat poluje na łup: pusty przelot i tani urobek to słaby cel.
+    if (director.rng() >= ryzyko * pirateInterest(cargoValueNow(course), director.piracy?.config)) continue;
     strikeCourse(director, course);
     note(director, `PRZECHWYT: ${course.originId}→${course.destinationId}`);
   }
@@ -1882,6 +1996,9 @@ export function settleCourseEvents(director, events) {
           director.stats.delivered++;
         }
       } else if (course.payload?.harvest) {
+        // Kurs domknięty bez zdarzenia `stage` po wydobyciu (bańka) — urobek i tak zszedł z pasa.
+        const extract = course.payload.extract;
+        if (extract && !extract.booked && director.mining) bookExtraction(director, extract);
         // Wyprawa górnicza wnosi do gospodarki surowiec spoza przemysłu stacji.
         const econ = director.getEconomy(course.payload.targetStationId);
         if (econ?.resources) {
@@ -1890,6 +2007,7 @@ export function settleCourseEvents(director, events) {
             const next = (Number(econ.resources[id]) || 0) + amount;
             econ.resources[id] = Number.isFinite(cap) ? Math.min(cap, next) : next;
           }
+          if (director.mining) noteHarvestDelivered(director.mining, course.payload.harvest);
           director.stats.delivered++;
         }
       }
@@ -1924,6 +2042,9 @@ export function tickDirector(director, dt, stations) {
   const { registry, fleet, config } = director;
   const events = advanceCourses(registry, dt);
   settleCourseEvents(director, events);
+  // Pas: urobek wypraw po etapie wydobycia do rejestru uszczuplenia, regeneracja (domyślnie brak).
+  bookMiningExtractions(director, events);
+  tickMiningFields(director.mining, dt);
 
   rollPiracy(director, dt);
   syncPorts(director);
@@ -1982,7 +2103,16 @@ export function tickDirector(director, dt, stations) {
   rebuildInboundIndex(director);
   rebuildMarket(director, stations);
   rebuildParkedIndex(director);
-  if (director.agents) director.quotes = marketSnapshot(stations, id => director.getEconomy(id));
+  if (director.agents) {
+    director.quotes = marketSnapshot(stations, id => director.getEconomy(id), {
+      inbound: (stationId, resourceId) => inboundUnits(director, stationId, resourceId),
+      // Potrzeba skupu to zużycie BRUTTO, nie saldo planu — patrz
+      // `stationConsumptionRates`.
+      demandRate: (stationId, resourceId) =>
+        Math.max(0, Number(director.useRates.get(String(stationId))?.[resourceId]) || 0)
+          * Math.max(0, Number(director.config.economyScale) || 0)
+    });
+  }
 
   // Odstęp wysyłek skaluje się z gospodarką: N× większy przepływ przy tej samej
   // ładowni to N× więcej kursów, więc dyspozytor musi wystawiać je N× częściej.

@@ -60,11 +60,25 @@ export const STATION_UPKEEP = Object.freeze({
 export const FLEET_DEMAND = Object.freeze({
   hull_plate: 0.070,
   avionics: 0.028,
-  thruster: 0.021,
   weapon_mount: 0.021,
   reactor_core: 0.014,
   life_support: 0.014,
 
+  // NAPĘDY (2026-10-21). Dawny `thruster` 0,021 przypadał na 2,0 silnika
+  // na okręt ważony doktryną; teraz silnik manewrowy idzie 0,62 sztuki (fregata go nie ma), a resztę
+  // pcha napęd przelotowy. Ten sam przelicznik ~0,0105 na sztukę ważoną
+  // doktryną (60% fregat, 24% niszczycieli, 13% krążowników, 3% nosicieli).
+  thruster: 0.0065,
+  drive_light: 0.0113,
+  drive_heavy: 0.0040,
+  hypercruise_mk1: 0.0088,
+  hypercruise_mk2: 0.0014,
+  hypercruise_mk3: 0.0003,
+  // Napęd warp (2026-10-22): niszczyciel Mk I, krążownik Mk II, nosiciel Mk III
+  // (fregata bez warpa) — ten sam przelicznik ~0,0105 na sztukę ważoną doktryną.
+  warp_mk1: 0.0025,
+  warp_mk2: 0.0014,
+  warp_mk3: 0.0003
 });
 
 /**
@@ -90,10 +104,17 @@ export const FLEET_DEMAND = Object.freeze({
  * PONAD to (`warDispatcher.ammoPerPower`) i są skokiem, nie tłem.
  */
 export const MILITARY_UPKEEP = Object.freeze({
-  gun_ballistic: 0.0106,
-  gun_energy: 0.0034,
-  launcher_ordnance: 0.0012,
-  pd_turret: 0.0114,
+  // Osiem rodzin, ten sam przelicznik co przy czterech klasach (~0,0064 na
+  // sztukę ważoną doktryną), więc łączny pobór luf prawie się nie zmienił —
+  // rozłożył się tylko na inne wsady.
+  gun_ballistic: 0.0072,
+  gun_railgun: 0.0034,
+  gun_energy: 0.0026,
+  gun_plasma: 0.0008,
+  launcher_ordnance: 0.0010,
+  launcher_torpedo: 0.0002,
+  pd_turret: 0.0076,
+  flak_turret: 0.0038,
 
   ammo_kinetic: 0.20,
   flak_shell: 0.05,
@@ -150,8 +171,24 @@ export const INDUSTRY_ARCHETYPES = Object.freeze({
   /** Wzbogacalnia: ruda uranu → pręty paliwowe. */
   enrichment: { label: 'Wzbogacalnia', recipes: ['enrich_uranium'],
     capacity: 0.5, cost: { steel: 55, hull_plate: 16, reactor_core: 2 } },
-  /** Stocznia: płyty, napędy, uzbrojenie — twarda część okrętu. */
-  shipworks: { label: 'Stocznia', recipes: ['assemble_hull_plate', 'assemble_thruster', 'assemble_weapon_mount'],
+  /**
+   * Stocznia: płyty, napędy, podstawy uzbrojenia — twarda część okrętu.
+   *
+   * Napędy przelotowe i silniki hipercruise (2026-10-21) są TU, a nie w osobnej
+   * roli, celowo. Zmierzone (`symulacja-ruchu.mjs 240 1 4 60`, ziarna 7/11/23):
+   * podzespoły okrętowe w ruchu v2 nie jeżdżą między stacjami — ani jednego
+   * zlecenia na silnik — więc buduje tylko stocznia, która ma je u siebie.
+   * Osobna napędownia na Marsie i Ceres zatrzymała pochylnie Ziemi i Jowisza
+   * i ścięła wodowania z ~560 do ~265 na 4 h. Rudy pasa i tak muszą tu dojechać
+   * jako rafinaty (nadstop, kompozyt, katalizator) — to one tworzą trasę z pasa.
+   * AGENT: gdy stocznie zaczną kupować podzespoły na rynku (E4/E2), napędy mogą wrócić
+   * do osobnej roli.
+   */
+  shipworks: { label: 'Stocznia',
+    recipes: ['assemble_hull_plate', 'assemble_thruster', 'assemble_weapon_mount',
+      'assemble_drive_light', 'assemble_drive_heavy',
+      'assemble_hypercruise_mk1', 'assemble_hypercruise_mk2', 'assemble_hypercruise_mk3',
+      'assemble_warp_mk1', 'assemble_warp_mk2', 'assemble_warp_mk3'],
     capacity: 1.1, cost: { steel: 120, hull_plate: 40, avionics: 10, thruster: 4 } },
   /** Systemy: awionika, reaktory, podtrzymywanie życia — miękka część okrętu. */
   systems: { label: 'Zakłady systemowe', recipes: ['assemble_avionics', 'assemble_reactor_core', 'assemble_life_support'],
@@ -167,8 +204,17 @@ export const INDUSTRY_ARCHETYPES = Object.freeze({
    * tym się kończyło i cały układ produkował uchwyty bez ani jednej lufy.
    */
   armory: { label: 'Zbrojownia',
-    recipes: ['assemble_gun_ballistic', 'assemble_gun_energy', 'assemble_launcher', 'assemble_pd_turret'],
+    recipes: ['assemble_gun_ballistic', 'assemble_gun_railgun', 'assemble_gun_energy', 'assemble_gun_plasma',
+      'assemble_launcher', 'assemble_launcher_torpedo', 'assemble_pd_turret', 'assemble_flak_turret'],
     capacity: 0.8, cost: { steel: 70, hull_plate: 20, chips: 12 } },
+  /**
+   * Rafineria pasa: nikiel → nadstop, węgiel + polimer → kompozyt, platynowce →
+   * katalizator. Rola Unii Pasa — rudy C i M wydobywa się w pasie, a nie na
+   * planetach rdzenia, więc napędy i cięższe lufy stoją na dowozie z pasa.
+   */
+  beltworks: { label: 'Rafineria pasa',
+    recipes: ['alloy_nickel', 'lay_carbon_composite', 'refine_platinum_catalyst'],
+    capacity: 0.7, cost: { steel: 50, hull_plate: 12 } },
   /**
    * Amunicjownia: jedyny zakład, którego wyrób znika przez samo strzelanie.
    *
@@ -474,15 +520,17 @@ export const SYSTEM_INDUSTRY_SPEC = Object.freeze({
   venus: { capacity: 5.9, roles: ['foundry', 'electronics', 'munitions'], size: 1.1 },
   // Rdzeń przemysłowy. Nic nie wydobywa, żyje z przerobu i montażu.
   // Role okrętowe dają mu redundancję wobec Marsa.
-  earth: { capacity: 19.2, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'armory'], size: 2.2 },
+  earth: { capacity: 20.8, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'armory'], size: 2.2 },
   // Druga stocznia układu. Jedyne miejsce przetopu złomu — tam trafiają wraki.
-  mars: { capacity: 15.2, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'recycling', 'armory'], size: 1.6 },
+  // Moc +1,6 (2026-10-21) na napędy w roli stoczni, żeby nie zabrały hucie
+  // i płytom tego, na co je skalibrowano. Tak samo Ziemia, Jowisz i Ceres.
+  mars: { capacity: 16.8, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'recycling', 'armory'], size: 1.6 },
   // Olbrzymy gazowe: paliwo, chłodziwo i byt dla całego układu zewnętrznego.
   // Stocznia Konsorcjum Zewnętrznego. Jowisz nie ma ani grama metalu, więc
   // stal, stop tytanu, układy, przewód i optykę musi ŚCIĄGNĄĆ z rdzenia —
   // i to jest sedno: zbrojenie olbrzymów gazowych tworzy najdłuższą trasę
   // towarową w układzie, dokładnie tam, gdzie warto stawiać piratów.
-  jupiter: { capacity: 10.1, roles: ['gasworks', 'volatiles', 'shipworks', 'systems', 'aerospace'], size: 1.3 },
+  jupiter: { capacity: 11.5, roles: ['gasworks', 'volatiles', 'shipworks', 'systems', 'aerospace'], size: 1.3 },
   // Saturn i Uran wzbogacają uran — dwa osrodki zamiast jednego, bo pręty
   // paliwowe są wąskim gardłem stoczni.
   // Druga amunicjownia po przeciwnej stronie układu: ma polimer i paliwo
@@ -501,8 +549,14 @@ export const SYSTEM_INDUSTRY_SPEC = Object.freeze({
   // najodporniejsza na blokadę, ale brakuje jej lotnych i paliwa.
   // Unia Pasa robi myśliwce: ma własny metal i krzem, a jej ośrodki są małe
   // i rozproszone — płatowce pasują jej lepiej niż wielkie kadłuby.
-  ceres: { capacity: 7.6, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'aerospace'], size: 1.0 },
-  vesta: { capacity: 2.0, roles: ['foundry'], size: 0.4 },
+  //
+  // Rudy pasa (2026-10-21): Ceres ma węgiel (typ C, jak rodziny Themis
+  // i Hygiea w zewnętrznym pasie), Westa nikiel i śladowo platynowce (jądro
+  // żelazo-niklowe, typ M ze środka pasa) — obie dostają rafinerię pasa. Ceres
+  // składa z tego napędy i silniki hipercruise (rola stoczni). Moc podniesiona o to, co biorą
+  // nowe linie, żeby huta i stocznia Unii nie oddały im całej mocy.
+  ceres: { capacity: 10.6, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'aerospace', 'beltworks'], size: 1.0 },
+  vesta: { capacity: 4.4, roles: ['foundry', 'beltworks'], size: 0.4 },
 
   // ---------- KSIĘŻYCE ----------
   //
@@ -623,7 +677,10 @@ export function stationHaulTonnage(industryMap = STATION_INDUSTRY) {
   const netto = {};
 
   for (const [id, industry] of Object.entries(industryMap)) {
-    if (!industry.capacity) continue;
+    // Kopalnia księżycowa nie ma fabryki, ale ma załogę i urobek — jej wywóz
+    // i dowóz bytu przechodzą przez port planety. Pominięta, zaniżała przeładunek
+    // olbrzymów gazowych z kopalniami (Saturn: 26 stanowisk, kolejka 21).
+    if (!industry.capacity && !industry.size) continue;
     const local = {};
     const add = (res, amount) => { local[res] = (local[res] || 0) + amount; };
 
@@ -664,7 +721,9 @@ export function stationHaulTonnage(industryMap = STATION_INDUSTRY) {
     for (const [res, net] of Object.entries(local)) {
       const s = podaz[res] || 0;
       const d = popyt[res] || 0;
-      const handel = Math.min(s, d);
+      // Bez podaży u stacji towar i tak przypływa — z pól wydobywczych (ruda
+      // uranu z Kuipera) albo z wraków — i zajmuje stanowisko odbiorcy.
+      const handel = s > 0 ? Math.min(s, d) : d;
       if (handel <= 0) continue;
       const udzial = net > 0 ? (net / s) * handel : (-net / d) * handel;
       tons += getResourceMass(res, udzial * cyclesPerHour);
@@ -782,6 +841,32 @@ export function stationNetRates(station) {
   }
 
   return net;
+}
+
+/**
+ * Planowe zużycie BRUTTO stacji przy skali 1, w jednostkach/s: wsad wszystkich
+ * linii plus byt, gotowość i utrzymanie floty — bez odejmowania własnej
+ * produkcji.
+ *
+ * Saldo netto (`stationNetRates`) mówi, ile trzeba stacji DOWIEŹĆ według planu.
+ * Ta liczba mówi, ile stacja ZJADA — a to jest miara jej potrzeby, gdy plan się
+ * rozjedzie: Mars w planie eksportuje stal, więc netto ma zero popytu, choć
+ * w biegu stał na zerze stali przez blisko godzinę.
+ */
+export function stationConsumptionRates(station) {
+  const industry = getStationIndustry(station);
+  const out = {};
+  const add = (id, amount) => { out[id] = (out[id] || 0) + amount; };
+  for (const recipeId of industry?.recipes || []) {
+    const recipe = RECIPES[recipeId];
+    if (!recipe) continue;
+    const batchesPerSecond = lineWeight(industry, recipeId) / recipe.seconds;
+    for (const [id, need] of Object.entries(recipe.in)) add(id, need * batchesPerSecond);
+  }
+  for (const [id, amount] of Object.entries(systemDemandFor(industry))) {
+    add(id, amount / ECONOMY_CYCLE_SECONDS);
+  }
+  return out;
 }
 
 function amountOf(econ, id) {
@@ -1076,8 +1161,37 @@ export const PRICE_MODEL = Object.freeze({
   /** Po tylu sekundach głodu dopłata sięga ~63% maksimum. */
   duressHalfLife: 1800,
   /** Ile razy szybciej głód odpuszcza po dostawie, niż narastał. */
-  duressRelief: 3
+  duressRelief: 3,
+
+  // ---------- CENA REZERWACJI PRODUCENTA ----------
+  //
+  // Rynek kupców nie czeka na „nadwyżkę ponad 70%”. Producent sprzedaje każdą
+  // sztukę, za którą ktoś płaci więcej niż jego własna cena przy zapasie PO
+  // sprzedaży — czyli schodzi z zapasem w dół krzywej niedoboru, aż jego cena
+  // żądania zrówna się z ofertą skupu (patrz `sellDownToFill` w tradeMarket).
+  // Próg 70% zostaje dla planisty frakcji (`getStationSurpluses`).
+  //
+  // Bez tego stocznie producentów zjadały podzespoły do zera i kupcy nie mieli
+  // czego kupić, choć stocznia bez podzespołów płaciła 4,4× bazy (2026-10-21:
+  // Merkury, Wenus, Saturn, Uran i Westa na 0% przez całe 240 min).
+
+  /**
+   * Zapas roboczy, którego producent nie sprzedaje nikomu, jeśli sam go używa.
+   * Ten sam co zapas roboczy planisty (`inventorySafetyFill`). Przy 0,1 kupcy
+   * wyciągali z Marsa stal dla głodnych olbrzymów, aż Mars sam stał na zerze.
+   */
+  offerFloorFill: 0.25
 });
+
+/**
+ * Zapełnienie, przy którym mnożnik niedoboru wynosi `scarcity` — odwrotność
+ * `scarcityMultiplier`. Poza krzywą przycięte do [0, 1].
+ */
+export function fillForScarcity(scarcity) {
+  const { emptyMultiplier, fullMultiplier } = PRICE_MODEL;
+  const fill = (emptyMultiplier - (Number(scarcity) || 0)) / (emptyMultiplier - fullMultiplier);
+  return Math.max(0, Math.min(1, fill));
+}
 
 /**
  * Dopłata za DŁUGOŚĆ niedoboru. 1,0 świeżo po opróżnieniu, w granicy 2,6×.
@@ -1198,7 +1312,15 @@ export function resourcePrice(station, econ, resourceId, options = {}) {
     /** Ile jest do wzięcia bez naruszania zapasu roboczego stacji. */
     available: Math.max(0, stored - cap * SURPLUS_FILL),
     /** Ile stacja jeszcze zmieści. */
-    room: cap > 0 ? Math.max(0, cap - stored) : Infinity
+    room: cap > 0 ? Math.max(0, cap - stored) : Infinity,
+    // Składniki potrzebne, żeby policzyć cenę przy INNYM zapasie — rynek kupców
+    // sprzedaje i skupuje wzdłuż krzywej, a nie po jednej cenie chwili.
+    stored,
+    capacity: cap,
+    /** Cena przy mnożniku niedoboru 1, bez rozstępu i reputacji. */
+    unitMarket: def.value * profile * duress,
+    /** Poniżej tego zapełnienia stacja nie sprzedaje — patrz `offerFloorFill`. */
+    offerFloor: stationWantsResource(station, resourceId) ? PRICE_MODEL.offerFloorFill : 0
   };
 }
 

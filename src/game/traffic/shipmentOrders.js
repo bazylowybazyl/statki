@@ -1,24 +1,26 @@
 /**
- * FLOTY TOWAROWE — logistyka, która sprawia, że surowiec fizycznie gdzieś leci.
+ * ZLECENIA PRZEWOZU — księgowość ładunku ruchu v2.
  *
- * Ruch NPC w grze istniał od dawna, ale był teatrem: frachtowce latały między
- * stacjami z pustymi ładowniami, a ich utrata nikogo nic nie kosztowała.
- * Ten moduł daje im ładunek i powód.
+ * Jedna partia towaru ma w każdej chwili jednego właściciela: magazyn nadawcy,
+ * przewoźnika (rekord zlecenia), magazyn odbiorcy albo wrak. Dyspozytor
+ * (`trafficDirector.js`) nie dotyka magazynów wprost — załadunek, dostawę
+ * i stratę robią funkcje stąd, każda jako jedna synchroniczna transakcja.
  *
- * Trasa nie jest wpisana w żadną tabelę — wynika z tego, co się nie bilansuje
- * w `stationEconomy`: van rusza stamtąd, gdzie jest nadwyżka, tam, gdzie jest
- * największy niedobór. Zmiana produkcji sama przerysowuje mapę połączeń.
+ * Moduł jest czystą logiką: rekordy to zwykłe DTO (bez referencji do stacji,
+ * kursów ani encji), stan floty to `createFleetState`. Tu są też klasy ładowni
+ * (`VAN_CLASSES`) i karencja tras.
  *
- * Moduł jest czystą logiką: planuje trasy i prowadzi księgowość ładunku,
- * ale nie tworzy encji ani ich nie rysuje — od tego jest warstwa gry.
+ * Wydzielone 2026-10-22 (E2, docs/PLAN-ekonomia-rynki.md § 3.2) z dawnego
+ * `src/game/cargoFleet.js`: zostało to, czego używa ruch v2. Stary planista
+ * (`planShipment`), zegar analityczny zleceń i widok vanów w grze odeszły
+ * razem ze starą ekonomią.
  */
 
-import { RESOURCES, getBagMass } from '../data/resources.js';
-import { getStationDeficits, getStationSurpluses, stationWantsResource } from './stationEconomy.js';
-import { isDerelict, normalizeFaction, areFactionsHostile } from '../data/factions.js';
+import { RESOURCES, getBagMass } from '../../data/resources.js';
+import { normalizeFaction } from '../../data/factions.js';
 
 // ============================================================
-// Klasy vanów
+// Klasy ładowni
 // ============================================================
 
 /**
@@ -46,15 +48,6 @@ export function pickVanClass(cargoMass) {
   return chosen;
 }
 
-/** Minimalna masa, dla której w ogóle opłaca się wysyłać transport. */
-const MIN_SHIPMENT_MASS = 12;
-
-/** Ile jednocześnie vanów na trasie — zapobiega zalaniu układu ruchem. */
-export const MAX_ACTIVE_VANS = 14;
-
-/** Odstęp między próbami wystawienia nowego zlecenia (sekundy gry). */
-export const DISPATCH_INTERVAL = 12;
-
 /** Stabilne statusy rekordu przesyłki. Encja NPC jest tylko opcjonalnym widokiem. */
 export const SHIPMENT_STATUS = Object.freeze({
   IN_TRANSIT: 'inTransit',
@@ -77,80 +70,12 @@ const DEFAULT_WARP_SPEED = 4000;
 const MASS_EPSILON = 1e-6;
 
 // ============================================================
-// Planowanie zleceń
+// Trwałe rekordy przesyłek
 // ============================================================
 
 function stationId(station) {
   return String(station?.id || station?.name || '').toLowerCase();
 }
-
-/**
- * Szuka najlepszego zlecenia: nadwyżka u jednego, największy głód u drugiego.
- * Zwraca `null`, gdy nic sensownego nie ma do przewiezienia.
- *
- * `getEcon(station)` dostarcza magazyn — moduł nie zna sposobu jego trzymania.
- */
-export function planShipment(stations, getEcon, options = {}) {
-  const skipPairs = options.skipPairs instanceof Set ? options.skipPairs : new Set();
-  const active = Array.isArray(stations) ? stations.filter(s => s && !isDerelict(s)) : [];
-  if (active.length < 2) return null;
-
-  let best = null;
-
-  for (const source of active) {
-    const sourceEcon = getEcon(source);
-    if (!sourceEcon) continue;
-    const surpluses = getStationSurpluses(source, sourceEcon, 8);
-    if (!surpluses.length) continue;
-
-    for (const target of active) {
-      if (target === source) continue;
-      // Nikt nie wozi towaru wprost do frakcji, z którą jest w stanie wojny.
-      if (areFactionsHostile(source.factionId, target.factionId)) continue;
-      if (skipPairs.has(`${stationId(source)}>${stationId(target)}`)) continue;
-
-      const targetEcon = getEcon(target);
-      if (!targetEcon) continue;
-      const deficits = getStationDeficits(target, targetEcon, 8);
-      if (!deficits.length) continue;
-
-      for (const deficit of deficits) {
-        const surplus = surpluses.find(s => s.id === deficit.id);
-        if (!surplus || surplus.spare <= 0) continue;
-        if (!stationWantsResource(target, deficit.id)) continue;
-
-        const units = Math.min(surplus.spare, Math.max(1, deficit.missing));
-        const mass = (RESOURCES[deficit.id]?.mass || 1) * units;
-        if (mass < MIN_SHIPMENT_MASS) continue;
-
-        // Priorytet: im pustszy magazyn odbiorcy, tym pilniejsze zlecenie.
-        // Wartość towaru rozstrzyga remisy, żeby najpierw jechało to, co drogie.
-        const score = (1 - deficit.fill) * 100 + Math.min(20, (deficit.value || 0) * 0.05);
-        if (!best || score > best.score) {
-          best = { source, target, resourceId: deficit.id, units, mass, score };
-        }
-      }
-    }
-  }
-
-  if (!best) return null;
-
-  const vanClass = pickVanClass(best.mass);
-  const carried = Math.min(best.units, Math.floor(vanClass.capacity / (RESOURCES[best.resourceId]?.mass || 1)));
-  if (carried <= 0) return null;
-
-  return {
-    source: best.source,
-    target: best.target,
-    resourceId: best.resourceId,
-    units: carried,
-    vanClass
-  };
-}
-
-// ============================================================
-// Trwałe rekordy przesyłek
-// ============================================================
 
 function stableId(value) {
   const raw = value && typeof value === 'object' ? value.id : value;
@@ -330,10 +255,35 @@ export function validateShipmentRoute(route, sourceId, targetId, options = {}) {
   };
 }
 
+/**
+ * Zbiór id wszystkich zleceń, prowadzony przyrostowo.
+ *
+ * Zlecenia tylko się dopisują, więc wystarczy doindeksować nowe wpisy od
+ * ostatniego razu. Budowanie zbioru od zera przy KAŻDYM nowym zleceniu było
+ * O(n²): po kilku godzinach ×60 (kilkanaście tysięcy zleceń) zjadało ~19%
+ * ticku ruchu. Gdy ktoś podmieni albo skróci `orders` (wczytanie, test),
+ * indeks buduje się od nowa — wynik jest zawsze ten sam co pełny przegląd.
+ * Pole niewyliczalne, żeby nie trafiało do zapisu stanu.
+ */
+function usedOrderIds(state) {
+  const orders = state.orders || [];
+  let index = state.usedOrderIndex;
+  if (!index || index.orders !== orders || index.count > orders.length) {
+    index = { orders, count: 0, ids: new Set() };
+    Object.defineProperty(state, 'usedOrderIndex', {
+      value: index, writable: true, configurable: true, enumerable: false
+    });
+  }
+  for (; index.count < orders.length; index.count++) {
+    index.ids.add(String(orders[index.count]?.id || ''));
+  }
+  return index.ids;
+}
+
 function nextShipmentOrderId(state, prefix = 'shipment') {
   let seq = Math.max(1, Math.floor(Number(state.nextOrderId) || 1));
   let id = `${prefix}-${String(seq).padStart(6, '0')}`;
-  const used = new Set((state.orders || []).map(order => String(order?.id || '')));
+  const used = usedOrderIds(state);
   while (used.has(id)) {
     seq++;
     id = `${prefix}-${String(seq).padStart(6, '0')}`;
@@ -482,62 +432,6 @@ export function tryDeliverShipmentOrder(order, targetEcon, now = null) {
   return { changed: true, delivered, status: order.status };
 }
 
-function resolveOrderEconomy(options, stationId, order) {
-  const resolver = options?.getEconomy || options?.getEcon || options?.resolveEconomy;
-  return typeof resolver === 'function' ? resolver(stationId, order) : null;
-}
-
-/**
- * Analityczny tick rekordów. Nie zna gracza, renderu ani NPC, więc dostawa działa
- * także wtedy, gdy w pobliżu nie ma żadnej zmaterializowanej encji.
- */
-export function advanceShipmentOrders(state, dt, options = {}) {
-  if (!state) return [];
-  if (!Array.isArray(state.orders)) state.orders = [];
-  ensureActiveOrderIndex(state);
-  const delta = Math.max(0, Number(dt) || 0);
-  state.elapsedSeconds = Math.max(0, Number(state.elapsedSeconds) || 0) + delta;
-  const now = state.elapsedSeconds;
-  const events = Array.isArray(options.events) ? options.events : [];
-  events.length = 0;
-
-  for (let index = state.activeOrders.length - 1; index >= 0; index--) {
-    const order = state.activeOrders[index];
-    if (!order) {
-      state.activeOrders.splice(index, 1);
-      continue;
-    }
-    if (order.status === SHIPMENT_STATUS.IN_TRANSIT) {
-      // Po materializacji pozycja aktora i npcStep są jedynym zegarem trasy.
-      // Rekord wznawia zegar analityczny dopiero po zapisaniu fizycznego postępu.
-      if (order.actorId) continue;
-      const duration = Math.max(0, Number(order.route?.durationSeconds) || 0);
-      order.elapsedSeconds = Math.min(duration, Math.max(0, Number(order.elapsedSeconds) || 0) + delta);
-      order.remainingSeconds = Math.max(0, duration - order.elapsedSeconds);
-      order.routeProgress = duration <= 0 ? 1 : Math.min(1, order.elapsedSeconds / duration);
-      if (order.remainingSeconds > MASS_EPSILON) continue;
-    } else if (order.status !== SHIPMENT_STATUS.AWAITING_UNLOAD) {
-      state.activeOrders.splice(index, 1);
-      continue;
-    } else if (Number.isFinite(Number(order.nextUnloadAttemptAt))
-      && now + MASS_EPSILON < Number(order.nextUnloadAttemptAt)) {
-      continue;
-    }
-
-    const targetEcon = resolveOrderEconomy(options, order.targetStationId, order);
-    const result = tryDeliverShipmentOrder(order, targetEcon, now);
-    if (!result.changed) {
-      const retryInterval = Math.max(0, Number(options.retryIntervalSeconds) || 0);
-      order.nextUnloadAttemptAt = retryInterval > 0 ? now + retryInterval : null;
-    }
-    const event = { type: result.changed ? 'delivered' : 'awaitingUnload', orderId: order.id, result };
-    events.push(event);
-    if (typeof options.onEvent === 'function') options.onEvent(event, order);
-    if (result.changed) state.activeOrders.splice(index, 1);
-  }
-  return events;
-}
-
 function wreckInventoryBag(inventory) {
   if (!inventory || typeof inventory !== 'object') return null;
   if (inventory.resources && typeof inventory.resources === 'object') return inventory.resources;
@@ -602,133 +496,6 @@ export function wreckShipmentOrder(order, wreckId = null, wreckInventory = null,
   }
 
   return { changed, moved, retained: cloneManifest(order.cargo), status: order.status };
-}
-
-/**
- * Atomowo odzyskuje całą partię z konkretnego wraku. Cargo nie jest dzielone
- * pomiędzy wrak i odbiorcę: gdy brakuje miejsca, operacja jest no-opem.
- */
-export function recoverWreckedShipmentOrder(order, wreckInventory, receiverInventory, options = {}) {
-  const empty = {};
-  if (!order || order.status !== SHIPMENT_STATUS.WRECK || order.cargoLocation !== 'wreckInventory') {
-    return { changed: false, moved: empty, status: order?.status || null };
-  }
-
-  const wreckBag = wreckInventoryBag(wreckInventory);
-  const manifest = cloneManifest(wreckBag);
-  if (!wreckBag || !manifestHasCargo(manifest)) {
-    return { changed: false, moved: empty, status: order.status };
-  }
-
-  const receiverBag = receiverInventory?.resources && typeof receiverInventory.resources === 'object'
-    ? receiverInventory.resources
-    : receiverInventory;
-  if (!receiverBag || typeof receiverBag !== 'object') {
-    return { changed: false, moved: empty, status: order.status };
-  }
-  const receiverEcon = receiverInventory?.resources
-    ? receiverInventory
-    : { resources: receiverBag, capacity: options.capacity || null };
-  if (!targetCanAcceptWholeManifest(receiverEcon, manifest)) {
-    return { changed: false, moved: empty, status: order.status, reason: 'capacity' };
-  }
-
-  const ownerKind = options.ownerKind === SHIPMENT_OWNER_KIND.STATION
-    ? SHIPMENT_OWNER_KIND.STATION
-    : SHIPMENT_OWNER_KIND.PLAYER;
-  const ownerId = String(options.ownerId || (ownerKind === SHIPMENT_OWNER_KIND.PLAYER ? 'player' : '')).trim();
-  if (!ownerId) return { changed: false, moved: empty, status: order.status };
-
-  for (const [id, amount] of Object.entries(manifest)) {
-    receiverBag[id] = (Number(receiverBag[id]) || 0) + amount;
-  }
-  for (const id of Object.keys(manifest)) delete wreckBag[id];
-
-  order.status = SHIPMENT_STATUS.RECOVERED;
-  order.owner = { kind: ownerKind, id: ownerId };
-  order.cargoLocation = ownerKind === SHIPMENT_OWNER_KIND.STATION ? 'stationInventory' : 'playerInventory';
-  order.recoveredAt = Number.isFinite(Number(options.now)) ? Number(options.now) : null;
-  order.actorId = null;
-  return { changed: true, moved: manifest, status: order.status };
-}
-
-function actorViewId(actorOrId, order) {
-  if (actorOrId && typeof actorOrId === 'object') {
-    const objectId = actorOrId.id ?? actorOrId.actorId ?? actorOrId.shipmentViewId;
-    if (objectId != null && String(objectId).trim()) return String(objectId);
-  }
-  if (actorOrId != null && typeof actorOrId !== 'object' && String(actorOrId).trim()) return String(actorOrId);
-  return `shipment-view:${order.id}`;
-}
-
-function serializableViewState(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object') return null;
-  const out = {};
-  const numericKeys = [
-    'x', 'y', 'vx', 'vy', 'angle', 'hp', 'maxHp', 'lane', 'dockPort',
-    'routeProgress', 'recordElapsedSeconds', 'clockTime'
-  ];
-  for (const key of numericKeys) {
-    const value = Number(snapshot[key]);
-    if (Number.isFinite(value)) out[key] = value;
-  }
-  if (typeof snapshot.phase === 'string') out.phase = snapshot.phase;
-  return Object.keys(out).length ? out : null;
-}
-
-/** Wiąże widok z rekordem, ale nie kopiuje manifestu i nie prowadzi ruchu. */
-export function materializeShipmentOrderView(order, actorOrId = null) {
-  if (!order || (order.status !== SHIPMENT_STATUS.IN_TRANSIT && order.status !== SHIPMENT_STATUS.AWAITING_UNLOAD)) {
-    return null;
-  }
-  const actorId = actorViewId(actorOrId, order);
-  if (order.actorId && order.actorId !== actorId) return null;
-  order.actorId = actorId;
-
-  if (actorOrId && typeof actorOrId === 'object') {
-    actorOrId.shipmentOrderId = order.id;
-    actorOrId.shipmentViewId = actorId;
-    actorOrId.isCargoVan = true;
-  }
-
-  return {
-    actorId,
-    shipmentOrderId: order.id,
-    vanClassId: order.vanClassId,
-    sourceStationId: order.sourceStationId,
-    targetStationId: order.targetStationId,
-    factionId: order.factionId,
-    status: order.status,
-    viewState: order.viewState ? { ...order.viewState } : null
-  };
-}
-
-/** Zapisuje wyłącznie małą migawkę widoku; nie ustawia `dead` i nie dotyka cargo. */
-export function dematerializeShipmentOrderView(order, actorOrId = null, snapshot = null) {
-  if (!order || !order.actorId) return false;
-  const actorId = actorViewId(actorOrId, order);
-  if (actorOrId != null && actorId !== order.actorId) return false;
-  const actor = actorOrId && typeof actorOrId === 'object' ? actorOrId : null;
-  order.viewState = serializableViewState(snapshot || actor);
-  if (order.status === SHIPMENT_STATUS.IN_TRANSIT && order.viewState) {
-    const duration = Math.max(0, Number(order.route?.durationSeconds) || 0);
-    const rawProgress = Number(order.viewState.routeProgress);
-    if (Number.isFinite(rawProgress)) {
-      const progress = Math.max(0, Math.min(1, rawProgress));
-      order.routeProgress = progress;
-      order.elapsedSeconds = duration * progress;
-      order.remainingSeconds = Math.max(0, duration - order.elapsedSeconds);
-      order.viewState.recordElapsedSeconds = order.elapsedSeconds;
-      const clockTime = Number(order.viewState.clockTime);
-      if (Number.isFinite(clockTime)) order.eta = clockTime + order.remainingSeconds;
-    }
-  }
-  order.actorId = null;
-  if (actor) {
-    delete actor.shipmentOrderId;
-    delete actor.shipmentViewId;
-  }
-  return true;
 }
 
 export function getShipmentOrder(state, orderId) {
@@ -874,27 +641,4 @@ export function blockRoute(state, source, target, seconds = 45) {
 
 export function getBlockedPairs(state) {
   return new Set(ensureCooldownPairs(state).keys());
-}
-
-/** Opis ładunku do HUD-u i skanera. */
-export function describeCargo(cargo) {
-  const parts = [];
-  for (const [id, amount] of Object.entries(cargo || {})) {
-    if (amount <= 0) continue;
-    parts.push(`${RESOURCES[id]?.label || id} ×${Math.round(amount)}`);
-  }
-  return parts.join(', ');
-}
-
-export function cargoMass(cargo) {
-  return getBagMass(cargo);
-}
-
-/** Łączna wartość ładunku w CR — do wyceny łupu i nagród za eskortę. */
-export function cargoValue(cargo) {
-  let total = 0;
-  for (const [id, amount] of Object.entries(cargo || {})) {
-    total += (RESOURCES[id]?.value || 0) * (Number(amount) || 0);
-  }
-  return total;
 }

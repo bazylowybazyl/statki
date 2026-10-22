@@ -145,6 +145,9 @@ try {
           .map(([n, p]) => `${n}: ${p.instancje}${p.rysowana ? '' : ' (ukryta)'}`).join(', ');
         console.log('zrzut', key, '3d', k, lods ? `partie ${lods}` : '');
       }
+      // Kamera 3D zapisuje się w preferencjach (localStorage) — bez powrotu do klasycznej następny wariant
+      // (świeża strona) startowałby w kamerze 3D i kadry z góry byłyby z perspektywy.
+      if (CAMS3D.length) await ev(`(async () => { window.Game3D.focusEntity = null; window.Game3D.setCamera('classic'); await window.__harness.frames(2); return true; })()`);
       vr.pipeline = await pipesSince(k0);
       vr.bledy = logs.errors().slice(0, 30);
       console.log('  pipeline', JSON.stringify(vr.pipeline));

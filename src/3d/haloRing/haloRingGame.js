@@ -32,6 +32,11 @@ import { K7RoofFade, k7HubToWorld } from './haloPortK7Layout.js';
 import { haloXfPoint } from './haloPortBays.js';
 import { resolveRingPlanetWorldRadius } from '../ringScale.js';
 import { HALO_RING_PLANETS, haloGameToLocal } from '../../game/haloRingPlanets.js';
+import { WARP_RING_LENS } from '../warp/worldLens.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
+
+const _zAxis = new THREE.Vector3(0, 0, 1);
+const _qRot = new THREE.Quaternion();
 
 export const HALO_GAME = Object.freeze({
   layers: Object.freeze({ default: 1, fg: 2 }),
@@ -80,6 +85,7 @@ export class HaloRingGame {
     // Fabuła: { key: 'earth', hall: 0, roofFade: 0..1 (1 = dachu nie ma), cut: 0..1 } albo null (dach z kadłuba gracza).
     this.hallRoofOverride = null;
     this.stats = { rings: 0, visible: 0, updateMs: 0 };
+    this._rollHalf = { hw: 0, hh: 0 };
     this.syncEntries();
   }
 
@@ -255,8 +261,9 @@ export class HaloRingGame {
   }
 
   // Kamera persp passów Core3D (syncCamera): FOV 35°, wysokość z rozmiaru
-  // bufora sceny i zoomu, patrzy pionowo w dół na (x, −y, 0).
-  _syncCamera(x, y, zoom, vw, vh) {
+  // bufora sceny i zoomu, patrzy pionowo w dół na (x, −y, 0). Obrót kadru (cam.roll — viewRoll.js) jak Core3D:
+  // `up` = (sin roll, cos roll, 0) — bryła widzenia ringu (LOD, odcinanie części) obraca się z kadrem.
+  _syncCamera(x, y, zoom, vw, vh, roll = 0) {
     const cam = this.camera;
     const src = Core3D.cameraPersp;
     cam.fov = src?.fov || 35;
@@ -266,6 +273,7 @@ export class HaloRingGame {
     cam.updateProjectionMatrix();
     const h = (vh * 0.5) / Math.tan(THREE.MathUtils.degToRad(cam.fov * 0.5)) / zoom;
     cam.position.set(x, -y, h);
+    cam.up.set(Math.sin(roll), Math.cos(roll), 0);
     cam.lookAt(x, -y, 0);
     cam.updateMatrixWorld(true);
   }
@@ -304,40 +312,59 @@ export class HaloRingGame {
     // Kamery 3D gry (tryb free3d): kamera ringu = kamera perspektywy Core3D (render() woła
     // Core3D.syncCamera przed ringiem); bez wycięć i zaniku dachu z kamery gry (gameView).
     const free3d = Core3D.isFreePerspectiveCamera(cam);
+    const roll = free3d ? 0 : cameraRoll(cam);
     if (free3d) this._copyFreeCamera(vw, vh);
-    else this._syncCamera(cx, cy, zoom, vw, vh);
-    const halfW = (vw * 0.5) / zoom;
-    const halfH = (vh * 0.5) / zoom;
+    else this._syncCamera(cx, cy, zoom, vw, vh, roll);
+    // Kadr w osiach świata: pudło obejmujące obrócony kadr (viewRoll.js; bez obrotu — dokładnie dawne pół kadru).
+    const rh = rolledHalfExtents((vw * 0.5) / zoom, (vh * 0.5) / zoom, roll, this._rollHalf);
+    const halfW = rh.hw;
+    const halfH = rh.hh;
     const eye = this.camera.position;
     let visible = 0;
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i];
       const L = e.collider.layout;
-      const dx = e.place.x - cx;
-      const dy = e.place.y - cy;
+      // Ring w soczewce warpa razem z planetą (worldLens.js: WARP_RING_LENS — pisze planet3d.assets.js): grupa
+      // w środku obrazu planety, skala obrazu do prawdziwej, obrót przelotu; poza soczewką — prawdziwe miejsce.
+      const lens = WARP_RING_LENS[e.key];
+      const lensOn = !!(lens && lens.on);
+      const ox = lensOn ? lens.x : e.place.x;
+      const oy = lensOn ? lens.y : e.place.y;
+      const ks = lensOn ? Math.max(1e-6, lens.k) : 1;
+      const dx = ox - cx;
+      const dy = oy - cy;
       // cień ringu w smugach — analityczny okrąg, także gdy ring poza kadrem, ale dopiero od podpięcia brył:
       // ring-archetyp buduje się w tle (Mars ~2–3 s po przylocie) i do tego czasu kadr miał sam cień ringu —
-      // ciemny pierścień wokół planety i szerszą smugę bez ringu (pas na tarczy planety idzie za nim)
+      // ciemny pierścień wokół planety i szerszą smugę bez ringu (pas na tarczy planety idzie za nim). W soczewce
+      // gaśnie z udziałem prawdziwego widoku (jak tarcza planety: pushShaftDiscWorld × (1 − β)), na prawdziwym miejscu.
       const ringMid = (L.radii.min + L.radii.max) * 0.5;
-      if (e.shadowReady) Core3D.setShaftRingOccluder?.(e.occluderKey, e.place.x, e.place.y, ringMid, ringMid * HALO_GAME.occluderReachMul);
-      else Core3D.removeShaftRingOccluder?.(e.occluderKey);
-      if (!e.ring && Math.hypot(dx, dy) < HALO_GAME.activateDistance) this._ensureRing(e);
+      const shadowK = lensOn ? Math.max(0, Math.min(1, Number(lens.real) || 0)) : 1;
+      if (e.shadowReady && shadowK > 0.001) {
+        Core3D.setShaftRingOccluder?.(e.occluderKey, e.place.x, e.place.y, ringMid, ringMid * HALO_GAME.occluderReachMul, shadowK);
+      } else Core3D.removeShaftRingOccluder?.(e.occluderKey);
+      // budowa: kadr blisko planety albo jej obraz w soczewce w kadrze (przelot, cel przy krawędzi)
+      if (!e.ring && (Math.hypot(e.place.x - cx, e.place.y - cy) < HALO_GAME.activateDistance || (lensOn && lens.vis))) this._ensureRing(e);
       const ring = e.ring;
       if (!ring) continue;
       // budowa ringu-archetypu w tle: kroki co klatkę, także poza kadrem (archRing.js, ARCH_BUILD_BUDGET)
       if (ring.pumpBuild) ring.pumpBuild();
       // podzielony ekran: ring liczy RTE dla jednej kamery — drugi kadr by go przesunął
-      const reach = L.radii.max + HALO_GAME.hallReach + HALO_GAME.viewMargin;
+      const reach = (L.radii.max + HALO_GAME.hallReach + HALO_GAME.viewMargin) * ks;
       // free3d: ring widać z daleka (patrzymy wzdłuż płaszczyzny) — próg z odległości oka od
       // środka ringu; resztę (bryła widzenia, LOD) liczy ring sam z kamery.
       const inView = !opts.splitScreen && (free3d
-        ? Math.hypot(eye.x - e.place.x, eye.y + e.place.y, eye.z) < reach + HALO_GAME.activateDistance
+        ? Math.hypot(eye.x - ox, eye.y + oy, eye.z) < reach + HALO_GAME.activateDistance
         : Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach);
       ring.group.visible = inView;
       e.visible = inView;
       if (!inView) continue;
       visible++;
-      ring.group.position.set(e.place.x, -e.place.y, 0);
+      ring.group.position.set(ox, -oy, 0);
+      ring.group.scale.setScalar(ks);
+      // obrót: port pod kątem stacji (place.rot), w soczewce poprzedzony obrotem przelotu bryły planety
+      _qRot.setFromAxisAngle(_zAxis, e.place.rot);
+      if (lensOn && lens.turned && lens.q) ring.group.quaternion.copy(lens.q).multiply(_qRot);
+      else ring.group.quaternion.copy(_qRot);
       ring.update(dt, { camera: this.camera, viewportHeight: vh, gameView: !free3d });
       this._applySun(e, opts.sun);
       this._portVisuals(e, dt, opts.ship || null, gameDt);
