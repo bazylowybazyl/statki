@@ -367,4 +367,15 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - zapas floty jako encje STOCK na padach K-7;
   - `berth-hold` gracza.
   - Czeka na `git merge main` po swojej stronie; scalenie po nim.
+- 2026-10-22 E6 w `main` (9d9db47a): bańka przy Ziemi.
+  - Harness w trybie gracza: 49 statków ruchu, 26 dokowań (24 w zatokach i 2 okręty garnizonu w K-7) obok 6 okrętów zapasu na padach.
+  - Trafienie i taran niszczą cel, a worker oddaje wrak.
+  - Gracz trzyma swoje stanowisko, ruch na nie nie wchodzi.
+  - 0 błędów, 0 pipeline'ów sync. `npm test` 1749 zielone, build przechodzi.
+  - Opis: `docs/E6-banka-w-grze.md`.
+  - Decyzja orkiestratora: zestrzelony okręt garnizonu to strata z zapasu frakcji (księgowanie robi E4). Okręty zapasu (STOCK) zostają nietykalne jako widok zapasu.
+- Dalej:
+  - E4: okno ciszy (tick ≤ 25 ms) i końcowe strojenie;
+  - bańka dla pozostałych portów i awans do pełnego NPC (do zlecenia);
+  - E7: gracz na rynku i zapis ekonomii.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
