@@ -163,8 +163,8 @@ export const INDUSTRY_ARCHETYPES = Object.freeze({
   foundry: { label: 'Huta', recipes: ['smelt_steel', 'smelt_aluminum', 'alloy_titanium', 'draw_copper_wire',
     'sinter_ceramic_armor'],
     capacity: 0.9, cost: { steel: 60, hull_plate: 14 } },
-  /** Elektronika: krzem i kryształ → układy i optyka. */
-  electronics: { label: 'Elektronika', recipes: ['etch_chips', 'grind_optics'],
+  /** Elektronika: krzem i kryształ → układy i optyka; ziemie rzadkie → taśma nadprzewodząca. */
+  electronics: { label: 'Elektronika', recipes: ['etch_chips', 'grind_optics', 'tape_superconductor'],
     capacity: 0.7, cost: { steel: 40, hull_plate: 10, chips: 8 } },
   /** Lotne: lód → tlen i wodór, amoniak → chłodziwo. Byt i chłodzenie. */
   volatiles: { label: 'Zakłady lotne', recipes: ['electrolyse_ice', 'synth_coolant'],

@@ -148,6 +148,13 @@ export const RESOURCES = Object.freeze({
     label: 'Ruda glinu (anortyt)', short: 'Al', unit: 't', form: 'solid',
     mass: 1.0, value: 8, color: '#c9ccd1'
   },
+  // Ziemie rzadkie z KREEP (Oceanus Procellarum) — Luna, śladowo skorupa Marsa;
+  // drugie źródło to wraki (odzysk taśmy nadprzewodzącej). Idą w magnesy REBCO.
+  rare_earth_ore: {
+    tier: TIER.RAW, category: CATEGORY.ORE,
+    label: 'Ziemie rzadkie (KREEP)', short: 'REE', unit: 't', form: 'solid',
+    mass: 1.2, value: 30, color: '#d8b4fe'
+  },
 
   // ---------- T0: GAZY Z OLBRZYMÓW GAZOWYCH ----------
   helium3: {
@@ -269,6 +276,14 @@ export const RESOURCES = Object.freeze({
     tier: TIER.REFINED, category: CATEGORY.METAL,
     label: 'Ceramika pancerna', short: 'Cer', unit: 't', form: 'solid',
     mass: 1.2, value: 37, color: '#a8a29e'
+  },
+  // Taśma REBCO (ziemia rzadka, bar, miedź na podłożu z nadstopu niklu) — magnesy
+  // reaktora fuzyjnego, dysz magnetycznych, warpa i tarcz. Rafinat, nie podzespół,
+  // bo podzespoły nie jeżdżą między stacjami, a taśma ma jeździć z rdzenia na Jowisz.
+  superconductor: {
+    tier: TIER.REFINED, category: CATEGORY.ELECTRONIC,
+    label: 'Taśma nadprzewodząca', short: 'HTS', unit: 'szt', form: 'solid',
+    mass: 0.3, value: 86, color: '#818cf8'
   },
 
   // ---------- T2: KOMPONENTY OKRĘTOWE ----------
@@ -519,7 +534,11 @@ export const PLANET_YIELD = Object.freeze({
   mercury: { rate: 2.45, yields: { iron_ore: 0.40, titanium_ore: 0.36, silicon_ore: 0.12, copper_ore: 0.12 } },
   venus:   { rate: 1.40, yields: { copper_ore: 0.45, silicon_ore: 0.25, raw_crystal: 0.22, iron_ore: 0.08 } },
   earth:   { rate: 0.00, yields: {} },
-  mars:    { rate: 1.05, yields: { iron_ore: 0.40, silicon_ore: 0.24, ice: 0.21, raw_crystal: 0.15 } },
+  // Mars: ziemie rzadkie ze skorupy (E10) — drugie, małe źródło obok Luny,
+  // PONAD dawny urobek (`rate` 1,05 → 1,0714). Luna daje ~80% ziem rzadkich.
+  mars:    { rate: 1.0714, yields: {
+    iron_ore: 0.392, silicon_ore: 0.2352, ice: 0.2058, raw_crystal: 0.147, rare_earth_ore: 0.02
+  } },
   // Olbrzymy gazowe dają też lód — z księżyców (Europa, Enceladus, Tytan).
   // Bez tego cały łańcuch tlen/wodór/paliwo fuzyjne stoi na jednym dostawcy
   // z Marsa i układ zewnętrzny dusi się na podtrzymywaniu życia.
@@ -567,8 +586,9 @@ export const PLANET_YIELD = Object.freeze({
   // i wypada z gospodarki, co już raz złapaliśmy na Saturnie.
 
   // Ziemia — Luna (E10, 2026-10-22, decyzja użytkownika: Księżyc jako kopalnia).
-  // Anortyt wyżyn (glin) i ilmenit mórz (tytan). Ziemia dalej nic nie wydobywa.
-  luna: { rate: 0.75, yields: { aluminum_ore: 0.615, titanium_ore: 0.385 } },
+  // Anortyt wyżyn (glin), ilmenit mórz (tytan) i KREEP (ziemie rzadkie) — Terra
+  // Nova ma przy Ziemi monopol na magnesy. Ziemia dalej nic nie wydobywa.
+  luna: { rate: 0.8523, yields: { aluminum_ore: 0.5412, titanium_ore: 0.3388, rare_earth_ore: 0.12 } },
 
   // Jowisz — wulkaniczne Io i lodowa Europa.
   io: { rate: 0.5, yields: { iron_ore: 0.34, titanium_ore: 0.30, copper_ore: 0.36 } },
@@ -694,6 +714,11 @@ export const RECIPES = Object.freeze({
     label: 'Synteza materiału wybuchowego', building: 'refinery', seconds: 40,
     in: { ammonia: 2, methane: 1 }, out: { explosive: 2 }
   },
+  // Elektronika: film REBCO na taśmie z nadstopu niklu, miedź i srebro na wierzchu.
+  tape_superconductor: {
+    label: 'Napylanie taśmy nadprzewodzącej', building: 'refinery', seconds: 70,
+    in: { rare_earth_ore: 1, copper_wire: 2, nickel_superalloy: 1 }, out: { superconductor: 2 }
+  },
 
   // ---------- FABRYKA: T1 → T2 ----------
   // Belki ze stali i tytanu, poszycie z glinu (zderzak osłony Whipple'a) — E10.
@@ -708,11 +733,14 @@ export const RECIPES = Object.freeze({
   },
   assemble_reactor_core: {
     label: 'Montaż rdzenia reaktora', building: 'factory', seconds: 130,
-    in: { fuel_rods: 2, titan_alloy: 2, coolant: 1 }, out: { reactor_core: 1 }
+    // Reaktor fuzyjny D–He-3 (E10): magnesy nadprzewodzące, osłona z ceramiki;
+    // pręt uranowy tylko na rozruch i zapas — popyt na uran o połowę mniejszy.
+    in: { superconductor: 2, fuel_rods: 1, titan_alloy: 1, ceramic_armor: 1, coolant: 1 }, out: { reactor_core: 1 }
   },
   assemble_thruster: {
     label: 'Montaż silnika', building: 'factory', seconds: 110,
-    in: { hull_plate: 2, coolant: 1, copper_wire: 2 }, out: { thruster: 1 }
+    // Dysze RCS z nadstopu, nie z płyty pancernej (E10).
+    in: { hull_plate: 1, nickel_superalloy: 3, coolant: 1, copper_wire: 3 }, out: { thruster: 1 }
   },
   assemble_weapon_mount: {
     label: 'Montaż podstawy uzbrojenia', building: 'factory', seconds: 140,
@@ -735,7 +763,8 @@ export const RECIPES = Object.freeze({
   },
   assemble_drive_heavy: {
     label: 'Montaż napędu ciężkiego', building: 'factory', seconds: 240,
-    in: { nickel_superalloy: 10, hull_plate: 2, carbon_composite: 4, coolant: 3, copper_wire: 4 },
+    // Dysza magnetyczna na taśmie nadprzewodzącej (E10).
+    in: { nickel_superalloy: 7, superconductor: 2, hull_plate: 2, carbon_composite: 4, coolant: 3, copper_wire: 2 },
     out: { drive_heavy: 1 }
   },
   assemble_hypercruise_mk1: {
@@ -745,12 +774,12 @@ export const RECIPES = Object.freeze({
   },
   assemble_hypercruise_mk2: {
     label: 'Montaż hipercruise Mk2', building: 'factory', seconds: 260,
-    in: { nickel_superalloy: 8, carbon_composite: 6, pt_catalyst: 2, avionics: 1, coolant: 3 },
+    in: { nickel_superalloy: 6, carbon_composite: 6, pt_catalyst: 2, superconductor: 1, avionics: 1, coolant: 3 },
     out: { hypercruise_mk2: 1 }
   },
   assemble_hypercruise_mk3: {
     label: 'Montaż hipercruise Mk3', building: 'factory', seconds: 380,
-    in: { nickel_superalloy: 12, carbon_composite: 8, pt_catalyst: 4, reactor_core: 1, avionics: 1, coolant: 4 },
+    in: { nickel_superalloy: 9, carbon_composite: 8, pt_catalyst: 4, superconductor: 3, reactor_core: 1, avionics: 1, coolant: 4 },
     out: { hypercruise_mk3: 1 }
   },
   // Napęd warp: generator pola na stopie tytanu i nadstopie, katalizator
@@ -804,7 +833,8 @@ export const RECIPES = Object.freeze({
   },
   assemble_gun_plasma: {
     label: 'Montaż działa plazmowego', building: 'factory', seconds: 190,
-    in: { pt_catalyst: 1, nickel_superalloy: 3, coolant: 3, copper_wire: 4, optic_lens: 1 },
+    // Cewki formujące plazmę z taśmy nadprzewodzącej; platynowce w elektrodach (E10).
+    in: { pt_catalyst: 1, superconductor: 1, nickel_superalloy: 3, coolant: 3, copper_wire: 2, optic_lens: 1 },
     out: { gun_plasma: 1 }
   },
   assemble_launcher_torpedo: {
