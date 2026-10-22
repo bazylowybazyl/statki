@@ -24,6 +24,21 @@ const logs = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 180000) => evaluate(cdp, e, t);
 const result = { stacja: stationId, query: args.query || null };
+// Konsola workerów (render: „pipeline sync” w klatkach; ruch v2: błędy) — wzór mostki-gra.mjs.
+const workerLogs = [];
+let msgId = 900000;
+cdp.on((msg) => {
+  if (msg.method === 'Target.attachedToTarget') {
+    for (const method of ['Runtime.enable', 'Runtime.runIfWaitingForDebugger']) cdp.ws.send(JSON.stringify({ id: ++msgId, method, sessionId: msg.params.sessionId }));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.consoleAPICalled') {
+    workerLogs.push(`[${msg.params.type}] ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 2000));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.exceptionThrown') {
+    workerLogs.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`.slice(0, 2000));
+  }
+});
+await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
 mkdirSync(out, { recursive: true });
 
 // Stan wiersza terminalu (DOM) i kopii rynku dla jednego surowca.
@@ -47,8 +62,9 @@ try {
     source: `try { localStorage.setItem('sc_story_campaign', '0'); } catch {}\nwindow.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
   });
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1${query}` });
-  if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
-  await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 500);
+  // Tryb worker: Core3D renderu żyje w workerze — na stronie bez gpuReady; menu gotowe albo host workera.
+  if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
+  await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready) || !!window.RenderWorkerHost', 240000, 500);
   await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
   await new Promise((r) => setTimeout(r, 900));
   await ev(`(() => { document.querySelector('[data-story-campaign="0"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
@@ -62,7 +78,7 @@ try {
   for (let i = 0; i < 40; i++) {
     const ok = await ev(`(() => { const e = window.TrafficV2?.getEconomy?.(${JSON.stringify(stationId)}); return !!e && Object.values(e.resources).some(v => v > 0); })()`);
     if (ok) break;
-    await ev('window.__harness.frames(30)');
+    await ev('window.__harness.step(30)');
   }
   result.ruch = await ev(`(() => {
     const s = window.TrafficV2Stats();
@@ -81,7 +97,7 @@ try {
     window.openStationUI(st, 'trade');
     return { stacja: st.name, otwarty: !!window.stationUI?.open };
   })()`);
-  await ev('window.__harness.frames(20)');
+  await ev('window.__harness.step(20)');
   Object.assign(result.terminal, await ev(`(() => {
     const rows = [...document.querySelectorAll('.trade-market-table tr[data-market-key]')];
     const stock = [...document.querySelectorAll('.trade-resource-table tr[data-resource-key]')];
@@ -113,16 +129,20 @@ try {
   // Krok świata ruchu = 5 s czasu gry świata; ~6 s gry wystarczy na kolejny `tick` z rynkiem.
   const tickBefore = await ev('window.TrafficV2Stats().clock');
   for (let i = 0; i < 30; i++) {
-    await ev('window.__harness.frames(30)');
+    await ev('window.__harness.step(30)');
     if (await ev(`window.TrafficV2Stats().clock !== ${tickBefore} && window.TrafficV2Stats().pendingStock === 0`)) break;
   }
   const poTicku = await ev(rowState(key));
   result.handel = { towar: key, przed, poKupnie, poSprzedazy, poTicku };
+  result.ruchPoHandlu = await ev(`(() => { const s = window.TrafficV2Stats(); return { czasMostu: +s.time.toFixed(2), zegarSwiata: Math.round(s.clock), kroki: s.stats?.steps ?? null, stepMs: s.stats?.stepMs != null ? +s.stats.stepMs.toFixed(2) : null, kursyWBance: s.courses, blad: s.lastError?.message || null }; })()`);
+  console.log('ruch po handlu', JSON.stringify(result.ruchPoHandlu));
   console.log('handel', JSON.stringify(result.handel));
   const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
   writeFileSync(join(out, `terminal-${stationId}.png`), Buffer.from(data, 'base64'));
 
   result.pipeline = (await ev(`window.__harness.frameStats(${begLog})`)).pipeline;
+  result.syncWorker = workerLogs.filter((l) => l.includes('pipeline sync')).map((l) => l.replace(/^.*pipeline sync #d+ k=d+: /, ''));
+  result.bledyWorkerow = workerLogs.filter((l) => /^[(error|exception)]/.test(l)).slice(0, 20);
   result.bledy = logs.errors().filter((l) => !/favicon|AudioSys|decode audio|powerPreference|\[vite\]|DevTools|ReadPixels/.test(l)).slice(0, 20);
 } catch (err) {
   result.blad = String(err?.stack || err);
@@ -133,6 +153,7 @@ try {
 }
 writeFileSync(join(out, 'wynik.json'), JSON.stringify(result, null, 2) + '\n');
 console.log('wynik →', out);
-console.log('pipeline:', JSON.stringify(result.pipeline));
+console.log('pipeline:', JSON.stringify(result.pipeline), '| sync w workerze:', (result.syncWorker || []).length, (result.syncWorker || []).slice(0, 5).join(' | '));
+console.log('błędy workerów:', (result.bledyWorkerow || []).length, (result.bledyWorkerow || []).slice(0, 5).join(' | '));
 console.log('błędy strony:', (result.bledy || []).length, (result.bledy || []).slice(0, 5).join(' | '));
 process.exit(result.blad ? 1 : 0);
