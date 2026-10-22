@@ -60,8 +60,8 @@ const SKY_STAR_TEX = vec2(5120, 3200);
 // maska liczona w płaszczyźnie gry trafiałaby w nie obok), ciała przy ringu (pass ortho) — tak;
 // mgławica i gwiazdy dostają długą smugę tła.
 import { sunShaftBackdrop, sunVisibility } from './sunShadowMask.js';
-// Wielki gryz Ziemi: wycięcie kuli, łata (ściany, dno, kołnierz) i klamry (uPitMode 1 / 2 / 3, earthBite.tsl.js).
-import { earthBiteCoords, earthBiteEast, earthBiteShade, earthBiteRibShade, EARTH_BITE_TSL } from './earthBite.tsl.js';
+// Wielki gryz Ziemi: wycięcie kuli i łata (ściany, dno, kołnierz) — uPitMode 1 / 2, earthBite.tsl.js.
+import { earthBiteCoords, earthBiteEast, earthBiteShade, EARTH_BITE_TSL } from './earthBite.tsl.js';
 // Żywa atmosfera Jowisza (rodzaj 'jupiter' = graf powierzchni z barwą dnia z przepływu, jupiterAtmosphere.tsl.js).
 import { JUPITER_UNIFORM_KEYS, jupiterFlowDayColor } from './jupiterAtmosphere.tsl.js';
 // Żywa atmosfera Saturna (rodzaj 'saturn' — ten sam silnik gazowych olbrzymów z czapami polarnymi, saturnAtmosphere*.js).
@@ -289,7 +289,6 @@ function buildSurfaceGraph(flow = null) {
   const vViewPosition = varying(modelViewMatrix.mul(vec4(positionLocal, 1.0)).xyz.negate(), 'vPlanetView');
   const vUv = uv();
   const vLocal = varying(positionLocal, 'vPlanetLocal');
-  const vNormalLocal = varying(normalLocal, 'vPlanetNormalLocal');
   const dayTex = perObjectTexture('dayTexture', PLACEHOLDER.day, vUv);
   const nightTex = perObjectTexture('nightTexture', PLACEHOLDER.night, vUv);
   const specTex = perObjectTexture('specularTexture', PLACEHOLDER.specular, vUv);
@@ -316,17 +315,15 @@ function buildSurfaceGraph(flow = null) {
     const normal = select(hasNight, mappedNormal, geoN).toVar();
 
     // Gryz (tylko Ziemia): współrzędne gryzu fragmentu (earthBite.tsl.js); kula wycina obszar gryzu, na łacie
-    // (ściany i dno) normalna, cień, barwa skał, żar i pole siłowe ze wzoru, klamry — własna barwa i światła.
+    // (ściany i dno) normalna, cień, barwa skał, żar i pole siłowe ze wzoru.
     const biteC = vec4(9.0, 0.0, 0.0, 0.0).toVar();
     const pitShadow = float(1.0).toVar();
     const pitAlbedo = vec3(0.0).toVar();
-    const pitOwn = float(0.0).toVar();      // 1 — barwa i światła z gryzu (ściany, dno, klamry), nie z mapy
+    const pitOwn = float(0.0).toVar();      // 1 — barwa i światła z gryzu (ściany, dno), nie z mapy
     const pitEmit = vec3(0.0).toVar();
     const pitField = float(0.0).toVar();
     // wysokość widoku dla mgiełki we wnętrzu gryzu: z punktu, w którym promień widzenia wchodzi do otworu (kula R)
     const biteMu = float(0.0).toVar();
-    // normalna atmosfery (wysokość słońca, mgiełka): promieniowa — także na ścianach belek klamer
-    const atmN = vec3(geoN).toVar();
     // rozmiar piksela w układzie obiektu — pochodne poza gałęziami (detal gryzu z daleka gaśnie do średniej)
     const pixL = length(fwidth(vLocal)).toVar();
     If(U.uPitMode.greaterThan(0.5), () => {
@@ -337,36 +334,26 @@ function buildSurfaceGraph(flow = null) {
       }).Else(() => {
         const sunW = normalize(U.sunPosition.sub(vWorldPosition));
         const sunObj = normalize(modelWorldMatrixInverse.mul(vec4(sunW, 0.0)).xyz).toVar();
-        If(U.uPitMode.lessThan(2.5), () => {
-          biteC.assign(earthBiteCoords(pL, U.uBite, east));
-          const sh = earthBiteShade(pL, sunObj, biteC, U.uBite, east, pixL);
-          normal.assign(normalize(mix(normal, transformNormalToView(sh.normal), sh.cav)));
-          pitShadow.assign(mix(1.0, sh.shadow, sh.cav));
-          pitAlbedo.assign(sh.albedo);
-          pitOwn.assign(sh.cav);
-          pitEmit.assign(sh.emit);
-          pitField.assign(sh.field);
-          const vObj = normalize(modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(vec4(viewDir, 0.0))).xyz);
-          const pv = dot(pL, vObj);
-          const tq = pv.negate().add(sqrt(max(pv.mul(pv).sub(dot(pL, pL)).add(1.0), 0.0)));
-          // ≥ 0,35: przez wcięcie na brzegu tarczy promień wychodzi stycznie — pełna masa powietrza dawała mleczną taflę
-          biteMu.assign(clamp(dot(normalize(pL.add(vObj.mul(tq))), vObj), 0.35, 1.0));
-        }).Else(() => {
-          const rs = earthBiteRibShade(pL, normalize(vNormalLocal), sunObj, vUv, U.uBite, east);
-          normal.assign(geoN);
-          atmN.assign(transformNormalToView(normalize(pL)));
-          pitShadow.assign(rs.shadow);
-          pitAlbedo.assign(rs.albedo);
-          pitOwn.assign(1.0);
-          pitEmit.assign(rs.emit);
-        });
+        biteC.assign(earthBiteCoords(pL, U.uBite, east));
+        const sh = earthBiteShade(pL, sunObj, biteC, U.uBite, east, pixL);
+        normal.assign(normalize(mix(normal, transformNormalToView(sh.normal), sh.cav)));
+        pitShadow.assign(mix(1.0, sh.shadow, sh.cav));
+        pitAlbedo.assign(sh.albedo);
+        pitOwn.assign(sh.cav);
+        pitEmit.assign(sh.emit);
+        pitField.assign(sh.field);
+        const vObj = normalize(modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(vec4(viewDir, 0.0))).xyz);
+        const pv = dot(pL, vObj);
+        const tq = pv.negate().add(sqrt(max(pv.mul(pv).sub(dot(pL, pL)).add(1.0), 0.0)));
+        // ≥ 0,35: przez wcięcie na brzegu tarczy promień wychodzi stycznie — pełna masa powietrza dawała mleczną taflę
+        biteMu.assign(clamp(dot(normalize(pL.add(vObj.mul(tq))), vObj), 0.35, 1.0));
       });
     });
 
     const NdotL = dot(normal, lightDir).toVar();
     const sunL = max(0.0, NdotL).mul(pitShadow).toVar();
     // Wysokość słońca nad horyzontem w punkcie (normalna geometryczna — gładki pas zachodu).
-    const geoMu = dot(atmN, lightDir).toVar();
+    const geoMu = dot(geoN, lightDir).toVar();
     // Próbki w jednolitym przepływie (toVar): select() niżej rozwija się w if/else, a próbka
     // z pochodnymi w gałęzi zależnej od piksela dawałaby nieokreślony poziom mipmapy.
     const dayRgb = flow ? flow.color({ dayTex, uv: vUv, st0, st1, U }) : vec4(dayTex).rgb;
@@ -376,7 +363,7 @@ function buildSurfaceGraph(flow = null) {
     const waterMask = smoothstep(0.08, 0.82, specularMask);
     const NdotH = max(0.0, dot(normal, halfVector));
     const shininess = mix(16.0, 42.0, waterMask);
-    // połysk wody tylko z mapy — ściany, dno i klamry gryzu go nie mają
+    // połysk wody tylko z mapy — ściany i dno gryzu go nie mają
     const specular = select(sunL.greaterThan(0.0), pow(NdotH, shininess).mul(waterMask).mul(U.uSpecular).mul(sunL), float(0.0))
       .mul(float(1.0).sub(pitOwn)).toVar();
     const sunVisP = mix(1.0, sunVisibility(), U.uSunShadowRecv).toVar();
@@ -405,7 +392,7 @@ function buildSurfaceGraph(flow = null) {
 
     If(U.uHazeStrength.greaterThan(0.0005), () => {
       // we wnętrzu gryzu (ściany, dno) promień wychodzi przez otwór — wysokość widoku z punktu wejścia (biteMu)
-      const mu = mix(clamp(dot(atmN, viewDir), 0.0, 1.0), biteMu, pitOwn.mul(select(U.uPitMode.greaterThan(1.5).and(U.uPitMode.lessThan(2.5)), 1.0, 0.0)));
+      const mu = mix(clamp(dot(geoN, viewDir), 0.0, 1.0), biteMu, pitOwn);
       // we wnętrzu gryzu połowa masy powietrza (wnętrze jest wypełnione żarem, nie stokiem powłoki)
       const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05)).mul(float(1.0).sub(pitOwn.mul(0.5)));
       const extinction = exp(airmass.negate().mul(U.uHazeBeta)).toVar();

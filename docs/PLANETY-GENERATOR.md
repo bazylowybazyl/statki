@@ -18,7 +18,7 @@ na ring — „może 3D”, zrobiona jako bryła).
 - **Wielki gryz** (2026-10-21, zastępuje dawną kopalnię na Saharze): kula o promieniu 0,46 R ze środkiem na
   powierzchni w 10° N 15° E (jezioro Czad) — głębokość ~2 930 km (do granicy jądra), otwór ~5 900 km, ~3,2% masy
   Ziemi (~2,6 Księżyca, ~15 ringów litych jak narysowany). Odsłonięty płaszcz (~2 500 K na dnie) to surowiec i źródło
-  energii (~10¹⁹ W promieniowania); otwór TRZYMANY: klamry megastruktury w poprzek i pole siłowe na ścianach (bez
+  energii (~10¹⁹ W promieniowania); otwór TRZYMANY polem siłowym na ścianach (klamry nad otworem z prototypu usunięte — decyzja użytkownika 2026-10-22) (bez
   nich gryz zapadłby się w minuty — ~80 GPa u podstawy ścian). Brzeg ze śladami zębów (9 łuków), hałdy, huty,
   fronty koparek, cztery tory wyrzutni masy. Bryła 3D w realnej skali (bez przewyższenia).
 - **Mars w trakcie terraformacji**: młody ocean na północnych nizinach (poziom −3 900 m MOLA, ~17%),
@@ -60,10 +60,11 @@ Moduły: `wspolne.py` (siatka, szum 3D na kuli bez szwów, normalne z wysokości
   `specular`, `cloudOpacity`). A/B ze starymi zdjęciami NASA: `?planety=stare` albo
   `localStorage.sc_planet_maps = 'stare'` (bez gryzu i bez map Marsa).
 - **Gryz (bryła)**: kula Ziemi wycina obszar gryzu (`uPitMode = 1`: discard bliżej środka C niż β + `cutPad`), w tym
-  miejscu leży ŁATA — ściany i dno (kula β) z kołnierzem brzegu (`earthBite3D.js`, `earthBiteShape.js`) — i KLAMRY nad
-  otworem; dzieci siatki kuli (doba, soczewka warpa, skala grupy działają same), ten sam graf co kula (`uPitMode` 2 i 3).
+  miejscu leży ŁATA — ściany i dno (kula β) z kołnierzem brzegu (`earthBite3D.js`, `earthBiteShape.js`); dziecko siatki
+  kuli (doba, soczewka warpa, skala grupy działają same), ten sam graf co kula (`uPitMode = 2`). Klamry nad otworem
+  z prototypu usunięte (2026-10-22, „wywal te 4 paski”); na dnie staje elektrownia „KOREK” (osobna sesja).
   Kształt analityczny, więc fragment liczy wprost normalną z gradientu β, cień ścian (drugie przecięcie promienia ku
-  słońcu z kulą gryzu) i cienie klamer, barwę skał, żar (płyty skorupy jeziora płaszcza z jasnymi szwami, rzeki, huty),
+  słońcu z kulą gryzu), barwę skał, żar (płyty skorupy jeziora płaszcza z jasnymi szwami, rzeki, huty),
   pole siłowe ścian i światło dna (`earthBite.tsl.js`); detal drobniejszy niż piksel gaśnie do średniej. Chmury nad
   otworem wycięte, poświata limbu gaśnie nad otworem i nad wyciętym limbem (wcięcie w obrysie: płaskie cięcie z łukami
   zębów, β²/2 ≈ 680 km). To samo w tle menu (`menuBackdrop3D.tsl.js`, `pitMode`, poświata z `bite: true`).

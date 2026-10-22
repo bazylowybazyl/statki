@@ -5,7 +5,7 @@
 // jako płaskie warstwy:
 //  • GLOB — kula z materiałami GRY (bez kopii shaderów): powierzchnia planet i chmury (planet3d.assets.tsl.js — dzień,
 //    noc z miastami, woda / połysk, mapa normalnych, mgiełka, pas zachodu), wielki GRYZ Ziemi jako bryła (łata
-//    i klamry earthBite3D.js na kuli z wycięciem, uPitMode 1 / 2 / 3; rozmiar `?gryz=0.30|0.46`, mapy wypieku
+//    earthBite3D.js na kuli z wycięciem, uPitMode 1 / 2; rozmiar `?gryz=0.30|0.46`, mapy wypieku
 //    `?mapyGryz=.tmp/planety-gryz/030`), żywa atmosfera Jowisza i Saturna (gasGiantAtmosphere.js —
 //    Saturn z sześciokątem i wirami polarnymi: saturnAtmosphere.js), pasy, wiry,
 //    GRS), księżyce (moonSurface.tsl.js — PBR, mapa nocy zapalana zmrokiem); poświata limbu planet przy ringu =
@@ -28,7 +28,7 @@ import {
   createJupiterSurfaceMaterial, createSaturnSurfaceMaterial, createPlanetAtmosphereMaterial, createPlanetCloudMaterial, createPlanetSurfaceMaterial,
   createRingAtmosphereMaterial
 } from '../src/3d/planet3d.assets.tsl.js';
-import { createEarthBiteMeshes, earthBiteUniforms, earthBiteVector } from '../src/3d/earthBite3D.js';
+import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector } from '../src/3d/earthBite3D.js';
 import { earthBiteFrame, earthBiteRimAngle } from '../src/3d/earthBiteShape.js';
 import { EARTH_BITE } from '../src/data/earthBite.js';
 import { JUPITER_ATM_TUNE, JUPITER_VORTICES, JupiterAtmosphere } from '../src/3d/jupiterAtmosphere.js';
@@ -100,7 +100,7 @@ const BODIES = [
       'solniska. Ląd martwy, przemysł w miejscach dawnych metropolii, odkrywki, drogi; nocą huty i posterunki robotów. ' +
       'Atmosfera zapylona, burze piaskowe. W środku Afryki WIELKI GRYZ — materiał na ring: kula o promieniu ' +
       `${BITE_B.toFixed(2)} R ze środkiem nad jeziorem Czad, głębokość ${Math.round(BITE_B * 6371)} km, ` +
-      'odsłonięty płaszcz (~2 500 K) jako źródło energii, ślady zębów na brzegu, klamry nad otworem, pole siłowe na ścianach.',
+      'odsłonięty płaszcz (~2 500 K) jako źródło energii, ślady zębów na brzegu, pole siłowe na ścianach.',
     sites: [[EARTH_BITE.lat, EARTH_BITE.lon, 'wielki gryz'], [28, 84, 'Himalaje — odkrywki'],
       [48, 10, 'dawna Europa — przemysł'], [40, -95, 'dawne USA — przemysł'], [0, -28, 'grzbiet śródatlantycki'],
       [12, 145, 'Pacyfik — szczątkowe morze'], [-30, -160, 'Pacyfik płd. — dawne dno']] },
@@ -395,10 +395,8 @@ async function buildBody(id, old) {
     group.add(body.mesh);
     if (!old && maps.pit) {
       U.uPitMode.value = 1;
-      const m = createEarthBiteMeshes(createPlanetSurfaceMaterial(earthBiteUniforms(U, 2)),
-        createPlanetSurfaceMaterial(earthBiteUniforms(U, 3)), BITE_B);
-      body.pit = m.patch; body.ribs = m.ribs;
-      body.mesh.add(m.patch, m.ribs);
+      body.pit = createEarthBiteMesh(createPlanetSurfaceMaterial(earthBiteUniforms(U, 2)), BITE_B);
+      body.mesh.add(body.pit);
     }
     if (clouds) {
       body.cloudUniforms = { cloudTexture: { value: clouds }, sunPosition: U.sunPosition, uOpacity: { value: maps.cloudOpacity ?? 0.62 },
@@ -615,7 +613,7 @@ function frame(now) {
       body.clouds.rotation.y = S.spin * 1.04;
     }
     if (body.pit) {
-      body.pit.visible = body.ribs.visible = S.pitOn;
+      body.pit.visible = S.pitOn;
       body.uniforms.uPitMode.value = S.pitOn ? 1 : 0;
       // środek gryzu w układzie chmur (obracają się szybciej niż grunt) i dysku poświaty (zwrócony do kamery)
       if (body.cloudUniforms) {

@@ -19,14 +19,14 @@ import { NodeMaterial } from 'three/webgpu';
 import {
   Fn, If, Discard, Loop,
   float, vec2, vec3, vec4, uniform, texture, varying, uv,
-  positionGeometry, normalGeometry, modelViewMatrix, cameraProjectionMatrix,
+  positionGeometry, modelViewMatrix, cameraProjectionMatrix,
   abs, atan, clamp, dFdx, dFdy, fwidth, dot, exp, floor, fract, length, max, min, mix, normalize, pow, select, smoothstep, sqrt, step, uint
 } from 'three/tsl';
 import { haloRingTSL } from './haloRing/haloRingTSL.js';
 import { acesGry } from './tsl/kolorGry.js';
 import { acesGryInv } from './skybake/skyGameColor.js';
 import { skyStarField } from './skyStars.tsl.js';
-import { earthBiteCoords, earthBiteEast, earthBiteShade, earthBiteRibShade, EARTH_BITE_TSL } from './earthBite.tsl.js';
+import { earthBiteCoords, earthBiteEast, earthBiteShade, EARTH_BITE_TSL } from './earthBite.tsl.js';
 import { earthBiteFrame } from './earthBiteShape.js';
 import { EARTH_BITE } from '../data/earthBite.js';
 
@@ -105,8 +105,8 @@ function localVaryings(uLocal) {
  * Ziemia tła menu (dawny EARTH_FRAGMENT): mapa normalnych z pochodnych, cień ringu (haloRingBlock), szum
  * z bliska, połysk oceanu (GGX), światła miast nocą, chmury z przesunięciem i cieniem, cienka atmosfera.
  * tex: { day, night, spec, normal, clouds } (tekstury planety gry — pożyczone). Zwraca { material, uniforms }.
- * Wielki gryz Ziemi (earthBite.tsl.js): pitMode 1 = kula bez obszaru gryzu, 2 = łata (ściany, dno, kołnierz),
- * 3 = klamry (wspólne z kulą `shared`: uLocal, uCloudShift, uSunObj — kierunek słońca w układzie siatki, liczony
+ * Wielki gryz Ziemi (earthBite.tsl.js): pitMode 1 = kula bez obszaru gryzu, 2 = łata (ściany, dno, kołnierz;
+ * wspólne z kulą `shared`: uLocal, uCloudShift, uSunObj — kierunek słońca w układzie siatki, liczony
  * na CPU, uBite — środek gryzu w układzie siatki).
  */
 export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null, air = null } = {}) {
@@ -121,7 +121,6 @@ export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null,
   const uBite = shared?.uBite || uniform(biteVector());
   const { vUv, vPosL } = localVaryings(uLocal);
   const vObj = varying(positionGeometry, 'vMenuObj');
-  const vNormObj = varying(normalGeometry, 'vMenuNormObj');
   const dayTex = texture(tex.day, vUv);
   const nightTex = texture(tex.night, vUv);
   const specTex = texture(tex.spec, vUv);
@@ -143,7 +142,7 @@ export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null,
     const S = normalize(q0.mul(st1.y).sub(q1.mul(st0.y)).add(1e-6)).toVar();
     const T = normalize(q0.negate().mul(st1.x).add(q1.mul(st0.x)).add(1e-6)).toVar();
     const N = normalize(S.mul(mapN.x).add(T.mul(mapN.y)).add(Ng.mul(mapN.z))).toVar();
-    // wielki gryz: współrzędne gryzu; na łacie normalna, cień, barwa, żar i pole ze wzoru, klamry (jak w grze)
+    // wielki gryz: współrzędne gryzu; na łacie normalna, cień, barwa, żar i pole ze wzoru (jak w grze)
     const biteC = vec4(9.0, 0.0, 0.0, 0.0).toVar();
     const pitShadow = float(1.0).toVar();
     const pitOwn = float(0.0).toVar();
@@ -157,7 +156,7 @@ export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null,
       const pObj = vec3(vObj).toVar();
       if (pitMode === 1) {
         biteC.assign(earthBiteCoords(normalize(pObj), uBite, east));
-      } else if (pitMode === 2) {
+      } else {
         biteC.assign(earthBiteCoords(pObj, uBite, east));
         const sh = earthBiteShade(pObj, uSunObj, biteC, uBite, east, pix);
         N.assign(normalize(mix(N, normalize(uLocal.mul(vec4(sh.normal, 0.0)).xyz), sh.cav)));
@@ -171,13 +170,6 @@ export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null,
         const ov = dot(oc, V);
         const tq = ov.negate().add(sqrt(max(ov.mul(ov).sub(dot(oc, oc)).add(U.uPlanet.w.mul(U.uPlanet.w)), 0.0)));
         muHole.assign(clamp(dot(normalize(oc.add(V.mul(tq))), V), 0.35, 1.0));
-      } else {
-        const rs = earthBiteRibShade(pObj, normalize(vNormObj), uSunObj, vUv, uBite, east);
-        N.assign(normalize(uLocal.mul(vec4(vNormObj, 0.0)).xyz));
-        pitShadow.assign(rs.shadow);
-        pitOwn.assign(1.0);
-        pitAlbedo.assign(rs.albedo);
-        pitEmit.assign(rs.emit);
       }
     }
     const NgL = dot(Ng, L).toVar();
@@ -241,7 +233,7 @@ export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null,
   })();
 
   const material = new NodeMaterial();
-  material.name = pitMode === 2 ? 'MenuEarthBite' : (pitMode === 3 ? 'MenuEarthBiteRibs' : 'MenuEarth');
+  material.name = pitMode === 2 ? 'MenuEarthBite' : 'MenuEarth';
   material.fragmentNode = fragmentNode;
   material.fog = false;
   material.toneMapped = false;

@@ -302,16 +302,12 @@ export class MenuBackdrop3D {
     const earth = new THREE.Mesh(sphere, earthM.material);
     let pitMesh = null;
     if (pit) {
-      // wielki gryz: łata (ściany, dno, kołnierz) i klamry na kuli (geometria wspólna z grą — nie zwalniana tutaj)
-      const geo = earthBiteGeometry();
+      // wielki gryz: łata (ściany, dno, kołnierz) na kuli (geometria wspólna z grą — nie zwalniana tutaj)
       const pitM = createMenuEarthMaterial(ring, tex, { pitMode: 2, shared: earthM.uniforms, air });
-      const ribM = createMenuEarthMaterial(ring, tex, { pitMode: 3, shared: earthM.uniforms, air });
-      materials.push(pitM.material, ribM.material);
-      pitMesh = new THREE.Mesh(geo.patch, pitM.material);
+      materials.push(pitM.material);
+      pitMesh = new THREE.Mesh(earthBiteGeometry(), pitM.material);
       pitMesh.name = 'MenuEarthBite';
-      const ribMesh = new THREE.Mesh(geo.ribs, ribM.material);
-      ribMesh.name = 'MenuEarthBiteRibs';
-      earth.add(pitMesh, ribMesh);
+      earth.add(pitMesh);
     }
     const atmosphere = new THREE.Mesh(atmSphere, atmM.material);
     atmosphere.renderOrder = 6;

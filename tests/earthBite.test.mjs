@@ -1,5 +1,5 @@
 // Wielki gryz Ziemi: dane (src/data/earthBite.js — blok JSON czytany też przez scripts/planety/gryz.py),
-// kształt CPU (lustro shadera i generatora), łata (ściany, dno, kołnierz), klamry, wycięcie kuli i wpięcie w graf.
+// kształt CPU (lustro shadera i generatora), łata (ściany, dno, kołnierz), wycięcie kuli i wpięcie w graf.
 // node --test tests/earthBite.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import * as THREE from 'three/webgpu';
 import { EARTH_BITE } from '../src/data/earthBite.js';
 import {
   earthBiteFrame, earthBiteRadius, earthBiteRimRadius, earthBiteRimPsi, earthBiteRimAngle, earthBiteRimMax,
-  earthBiteCoords, earthBiteCutsSphere, buildEarthBitePatch, buildEarthBiteRibs, EARTH_RADIUS_KM
+  earthBiteCoords, earthBiteCutsSphere, buildEarthBitePatch, EARTH_RADIUS_KM
 } from '../src/3d/earthBiteShape.js';
 import { earthBiteCenterIn, earthBiteVector } from '../src/3d/earthBite3D.js';
 
@@ -23,6 +23,8 @@ test('dane gryzu: blok JSON dla generatora = obiekt modułu, decyzja użytkownik
   assert.ok(m, 'znaczniki bloku JSON');
   assert.deepEqual(JSON.parse(m[1]), JSON.parse(JSON.stringify(B)));
   assert.deepEqual([B.radiusR, B.lat, B.lon], [0.46, 10, 15]);
+  // decyzja użytkownika 2026-10-22: bez klamer nad otworem („wywal te 4 paski”) — otwór trzyma pole siłowe
+  assert.equal(B.ribs, undefined);
   const py = read('scripts/planety/gryz.py');
   assert.match(py, /'EARTH_BITE'/);
   // lustro β w generatorze: te same pola danych
@@ -117,29 +119,6 @@ test('łata: dno najgłębiej (1 − R gryzu), brzeg i koniec kołnierza na kuli
   assert.ok(inward > total * 0.97, `twarzą do wnętrza: ${inward} / ${total}`);
 });
 
-test('klamry: belki nad otworem, kotwy za brzegiem w gruncie, ściany na zewnątrz bryły belki', () => {
-  const p = buildEarthBiteRibs(B, { step: 0.01 });
-  const k = 1 / EARTH_RADIUS_KM;
-  let minR = Infinity, maxR = 0, over = 0;
-  const out = new Float64Array(4);
-  for (let i = 0; i < p.position.length / 3; i++) {
-    const x = p.position[i * 3], y = p.position[i * 3 + 1], z = p.position[i * 3 + 2];
-    const rr = Math.hypot(x, y, z);
-    minR = Math.min(minR, rr); maxR = Math.max(maxR, rr);
-    earthBiteCoords(x / rr, y / rr, z / rr, B, B.radiusR, undefined, out);
-    if (out[0] < out[3]) over++;
-  }
-  assert.ok(minR > 1 - 9 * k && maxR < 1 + (B.ribs.anchorTopKm + 1) * k, `wysokość ${minR}…${maxR}`);
-  assert.ok(over > 0.5 * p.position.length / 3, 'większość belek nad otworem');
-  // nawinięcie zgodne z zapisaną normalną ściany
-  for (let t = 0; t < p.index.length; t += 3) {
-    const [a, b, c] = [p.index[t], p.index[t + 1], p.index[t + 2]].map((q) => new THREE.Vector3().fromArray(p.position, q * 3));
-    const nn = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a));
-    if (nn.lengthSq() < 1e-24) continue;
-    assert.ok(nn.dot(new THREE.Vector3().fromArray(p.normal, p.index[t] * 3)) > 0, 'twarz zgodna z normalną');
-  }
-});
-
 test('środek gryzu w układzie rodzeństwa (chmury, dysk poświaty) — z kwaternionów, bez alokacji', () => {
   const from = new THREE.Object3D(), to = new THREE.Object3D();
   const v = new THREE.Vector4(), e = new THREE.Vector3();
@@ -170,12 +149,15 @@ test('graf planety: gryz za uniformem obiektu, współrzędne jako czysta funkcj
   // potęgi z nieujemną podstawą (pow z ujemną to NaN w WGSL)
   for (const m of tsl.matchAll(/pow\((.{0,10})/g)) assert.match(m[1], /^max\(0\.0, /, `pow(${m[1]}`);
   const game = read('src/3d/planet3d.assets.js');
-  assert.match(game, /createEarthBiteMeshes\(createPlanetSurfaceMaterial\(earthBiteUniforms\(this\.uniforms, 2\)\),\s*createPlanetSurfaceMaterial\(earthBiteUniforms\(this\.uniforms, 3\)\)\)/);
+  assert.match(game, /this\.pit = createEarthBiteMesh\(createPlanetSurfaceMaterial\(earthBiteUniforms\(this\.uniforms, 2\)\)\)/);
   assert.match(game, /earthBiteCenterIn\(this\.mesh, this\.clouds, this\.cloudUniforms\.uBite\.value\)/);
   assert.match(game, /earthBiteCenterIn\(this\.mesh, this\.atmosphere, au\.uBite\.value, au\.uBiteEast\.value\)/);
   const menu = read('src/3d/menuBackdrop3D.js');
   assert.match(menu, /createMenuAtmosphereMaterial\(ring, R \+ 1250, \{ bite: pit \}\)/);
-  assert.match(menu, /pitMode: 3, shared: earthM\.uniforms/);
+  assert.match(menu, /pitMode: 2, shared: earthM\.uniforms/);
+  for (const f of ['src/3d/earthBite3D.js', 'src/3d/earthBite.tsl.js', 'src/3d/planet3d.assets.js', 'src/3d/menuBackdrop3D.js', 'src/3d/menuBackdrop3D.tsl.js']) {
+    assert.doesNotMatch(read(f), /RibShade|EarthBiteRibs|pitRibs|pitMode: 3/, `${f}: klamry usunięte`);
+  }
   // dawnej kopalni nie ma
   for (const f of ['src/3d/planet3d.assets.tsl.js', 'src/3d/planet3d.assets.js', 'src/3d/menuBackdrop3D.js', 'src/3d/menuBackdrop3D.tsl.js', 'scripts/planety/ziemia.py']) {
     assert.doesNotMatch(read(f), /earthPit|EARTH_PIT|import dziura/, f);
