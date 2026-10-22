@@ -167,3 +167,26 @@ Nowe, mają domyślną odpowiedź (do potwierdzenia przy okazji):
 - **D8. Ślady okrętów ukrytych mgłą wojny.** Kadłuby i dysze okrętów spoza wzroku gracza też rozpychają gaz — kanał zdradza
   okręt („kanał zdradza okręt” z `PLAN-gazy.md`), ale pod nakładką mgły wojny widać go słabo. Domyślnie: **zostaje** (tak
   działa fizyka). Alternatywa: okręty ukryte nie są przeszkodą ani źródłem.
+
+**Decyzje użytkownika 2026-10-22: rekomendacje D1–D8 przyjęte** („jedziemy, rekomendacje zaakceptowane”):
+
+- jeden silnik w otwartej przestrzeni;
+- pył zostaje (80 tys. drobin na Wysokiej);
+- kolejność scen: pas → ring → ławice;
+- wiatr jako przepływ;
+- komórka 64 j., okno 128 / 256 / 384 komórek;
+- strefy ściśliwe;
+- rozgrywka gazu na CPU z pola dalekiego;
+- kanały okrętów ukrytych mgłą wojny zostają.
+
+Port prowadzi sesja E11 planu ekonomii (`docs/PLAN-ekonomia-rynki.md`).
+
+## 6. Postęp
+
+- **GK-1 (2026-10-22):** rdzeń pola `src/3d/spaceGas/spaceGasSim.js` i szum `spaceGasNoise.js`, testy `tests/spaceGas.test.mjs`.
+  - Kernele są 1:1 z dema.
+  - Układ: świat gry względem kotwicy sceny, liczony w double na CPU. Bufory trzymają tylko stan komórek, więc kernel przesunięcia początku pul nie jest potrzebny.
+  - Bufor `flagB` zastąpił znacznik w `velB.w` (stała = 2). `kAdvect` i `kProject` mają po 7 buforów storage.
+  - Kadłuby wchodzą jako maski obrysu z rekordów `GAS_HULL_REC`; „pług” liczy się od prostokąta maski.
+  - Obraz ma dwie pary tekstur zapisywane na zmianę, każdą z własnym rogiem okna. Przenikanie idzie według ułamka kroku.
+  - Szum: z layoutem jest tylko `gnoise`, a `fbm` jest wklejana (pułapka 35).
