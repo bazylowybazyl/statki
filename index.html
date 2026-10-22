@@ -14509,23 +14509,29 @@
 
     // HANDEL Z DOKIEM — jeden model ceny dla gracza i kupców NPC: `resourcePrice` z gospodarki świata ruchu
     // (niedobór, profil frakcji, długość głodu) z reputacją gracza, liczona na kopii rynku z mostu
-    // (`trafficV2.getEconomy`). Stacja, której świat ruchu nie zna (przed `ready` workera, kryjówka misji przed
-    // jego odpowiedzią, wyłącznik `?trafficV2=0`), nie handluje: brak magazynu → brak ceny (0).
+    // (`trafficV2.getEconomy`), i jedna oferta (`getTradeOffer`). Stacja, której świat ruchu nie zna (przed
+    // `ready` workera, kryjówka misji przed jego odpowiedzią, wyłącznik `?trafficV2=0`), nie handluje.
 
     // Magazyn, który widzi terminal: kopia rynku z workera ruchu (zapas ×60 i ceny świata) albo `null`.
     function getTradeEconomy(station) {
       return station ? (trafficV2?.getEconomy(station.id) || null) : null;
     }
 
-    function getTradePrice(station, key, side) {
+    // Oferta stacji dla gracza — ten sam model co dla kupców i przewoźników (API rynku, `marketBook.js`):
+    // sprzedaje zapas ponad rezerwę na własne potrzeby (`offerFloor` z `resourcePrice`), przyjmuje do
+    // pojemności magazynu i płaci tylko za to, co przyjęła. `null` — stacja bez rynku.
+    function getTradeOffer(station, key) {
       const econ = getTradeEconomy(station);
-      if (!econ) return 0;
-      const price = resourcePrice(station, econ, key, { reputation: PLAYER.reputation });
-      return Math.max(1, Math.round(Number(price?.[side]) || 0));
+      const price = econ ? resourcePrice(station, econ, key, { reputation: PLAYER.reputation }) : null;
+      if (!price) return null;
+      return {
+        stock: Number(price.stored) || 0,
+        sell: Math.max(0, Math.floor((Number(price.stored) || 0) - (price.offerFloor || 0) * price.capacity)),
+        room: Math.max(0, Math.floor(Number(price.room) || 0)),
+        ask: Math.max(1, Math.round(Number(price.ask) || 0)),
+        bid: Math.max(1, Math.round(Number(price.bid) || 0))
+      };
     }
-
-    function getTradeBuyPrice(key, station = stationUI.station) { return getTradePrice(station, key, 'ask'); }
-    function getTradeSellPrice(key, station = stationUI.station) { return getTradePrice(station, key, 'bid'); }
 
     // Zmiana zapasu stacji z gry (handel, rozbiórka wraku, zakup broni) — tylko przez most (`stockDelta`):
     // kopia zmienia się od razu, worker po swojej stronie. Stacja bez rynku nic nie przyjmuje.
@@ -15066,13 +15072,18 @@
         const key = row.dataset.marketKey;
         const step = getTradeStep(key);
         const held = Number(PLAYER.cargo?.[key]) || 0;
-        const stationStock = Number(econ?.resources?.[key]) || 0;
+        const offer = econ ? getTradeOffer(station, key) : null;
+        const stationStock = offer?.stock || 0;
 
+        // Stacja sprzedaje tylko zapas ponad rezerwę na własne potrzeby — jak kupcom i przewoźnikom.
         const stockCell = row.querySelector('[data-field="stock"]');
-        if (stockCell) stockCell.textContent = `${Math.round(held)} / stacja ${Math.round(stationStock)}`;
+        if (stockCell) {
+          stockCell.textContent = `${Math.round(held)} / stacja ${Math.round(stationStock)}`
+            + (offer && offer.sell < Math.round(stationStock) ? ` (na sprzedaż ${offer.sell})` : '');
+        }
 
-        const sellPrice = getTradeSellPrice(key, station);
-        const buyPrice = getTradeBuyPrice(key, station);
+        const sellPrice = offer?.bid || 0;
+        const buyPrice = offer?.ask || 0;
         const priceCell = row.querySelector('[data-field="price"]');
         if (priceCell) {
           priceCell.textContent = econ ? `${sellPrice} / ${buyPrice} CR` : '—';
@@ -15091,9 +15102,9 @@
           if (btn.dataset.tradeType === 'buy') {
             const cost = buyPrice * step;
             const massNeeded = getResourceMassLocal(key, step);
-            btn.disabled = PLAYER.credits < cost || stationStock < step || cargoFree < massNeeded;
+            btn.disabled = PLAYER.credits < cost || !offer || offer.sell < step || cargoFree < massNeeded;
           } else {
-            btn.disabled = !econ || held < step;
+            btn.disabled = !offer || held < step || offer.room < 1;
           }
         });
       });
@@ -15135,16 +15146,16 @@
       const amount = Math.max(1, Math.round(Number(qty) || 1));
       if (!RESOURCES[key]) return;
       const station = stationUI.station;
-      const econ = getTradeEconomy(station);
-      if (!econ) {
+      const offer = getTradeOffer(station, key);
+      if (!offer) {
         toast('Rynek stacji niedostępny');
         return;
       }
 
       if (type === 'buy') {
-        const cost = getTradeBuyPrice(key, station) * amount;
+        const cost = offer.ask * amount;
         if (PLAYER.credits < cost) { toast('Za mało kredytów'); return; }
-        if ((Number(econ.resources?.[key]) || 0) < amount) { toast('Stacja nie ma zapasu'); return; }
+        if (offer.sell < amount) { toast(offer.stock >= amount ? 'Stacja nie sprzedaje zapasu na własne potrzeby' : 'Stacja nie ma zapasu'); return; }
         if (getPlayerCargoFree() < getResourceMassLocal(key, amount)) { toast('Ładownia pełna'); return; }
         PLAYER.credits -= cost;
         adjustStationStock(station, key, -amount);
@@ -15152,15 +15163,14 @@
       } else if (type === 'sell') {
         const held = Number(PLAYER.cargo?.[key]) || 0;
         if (held < amount) return;
-        const cap = Number(econ.capacity?.[key]);
-        const stock = Number(econ.resources?.[key]) || 0;
-        // Nadwyżka ponad pojemność magazynu przepada — dok ją odsprzedaje dalej,
-        // ale gracz i tak dostaje pełną zapłatę.
-        const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
-        PLAYER.cargo[key] = held - amount;
+        // Stacja przyjmuje do pojemności magazynu i płaci za to, co przyjęła — jak kupcom (`putStock`).
+        // Reszta zostaje w ładowni.
+        const stored = Math.min(amount, offer.room);
+        if (stored <= 0) { toast('Magazyn stacji pełny'); return; }
+        PLAYER.cargo[key] = held - stored;
         if (PLAYER.cargo[key] <= 0) delete PLAYER.cargo[key];
         adjustStationStock(station, key, stored);
-        PLAYER.credits += getTradeSellPrice(key, station) * amount;
+        PLAYER.credits += offer.bid * stored;
         // Regularny handel powoli ociepla stosunki z właścicielem doku.
         if (station.factionId) changePlayerReputation(station.factionId, REPUTATION_EVENTS.tradedGoods);
       }

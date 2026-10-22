@@ -69,7 +69,15 @@ test('terminal czyta rynek z mostu, zmiany zapasu idą przez stockDelta', () => 
   assert.deepEqual(calls, [{ id: 'earth', bag: { steel: -10 }, reason: 'player' }]);
   assert.equal(market.resources.steel, 50, 'gra nie pisze magazynu wprost — kopię zmienia most');
 
-  const price = sliceFunction(src, 'function getTradePrice(station, key, side)');
+  // Oferta dla gracza z tego samego modelu co dla kupców (E2b): cena resourcePrice z reputacją, sprzedaż ponad
+  // rezerwę na własne potrzeby (offerFloor), przyjęcie do pojemności.
+  const getTradeOffer = loadIndexFunction(src, 'function getTradeOffer(station, key)', 'getTradeOffer', {
+    getTradeEconomy: () => ({ resources: { steel: 100 }, capacity: { steel: 200 } }),
+    resourcePrice: () => ({ stored: 100, capacity: 200, room: 100, offerFloor: 0.25, ask: 12.4, bid: 9.6 }),
+    PLAYER: { reputation: {} }
+  });
+  assert.deepEqual(getTradeOffer({ id: 'earth' }, 'steel'), { stock: 100, sell: 50, room: 100, ask: 12, bid: 10 });
+  const price = sliceFunction(src, 'function getTradeOffer(station, key)');
   assert.ok(price.includes('resourcePrice(station, econ, key, { reputation: PLAYER.reputation })'), 'jeden model ceny: resourcePrice z reputacją');
 });
 

@@ -29,7 +29,7 @@ import {
 } from '../stationEconomy.js';
 import { FACTION, isDerelict } from '../../data/factions.js';
 import { SHIPMENT_STATUS } from './shipmentOrders.js';
-import { snapshotMarket, refreshQuote } from './tradeMarket.js';
+import { snapshotMarket, refreshQuote, sellDownToFill } from './tradeMarket.js';
 
 // ============================================================
 // Zapas — reguły w `marketStock.js` (bez importów: te same funkcje stosuje most gry do kopii rynku)
@@ -87,6 +87,8 @@ export function createMarketBook(options = {}) {
     cursor: 0,
     /** Surowce, które ktokolwiek ma na zbyciu. */
     surplus: new Set(),
+    /** Uczestnicy rynku w tym ticku: stacje frakcyjne z magazynem (bez opuszczonych i kryjówek). */
+    members: [],
     /** `stacja` → nominalne saldo zasobów/s przy skali gospodarki 1. */
     demandRates: new Map(),
     /** `stacja` → planowe zużycie brutto/s przy skali 1 — potrzeba w skupie kupców. */
@@ -198,6 +200,7 @@ export function plannedDemandPerSecond(book, station, resourceId) {
 export function postOffers(book, stations) {
   book.sellers.clear();
   book.buyers.length = 0;
+  book.members.length = 0;
   book.surplus.clear();
   book.demandRates.clear();
   book.useRates.clear();
@@ -213,6 +216,7 @@ export function postOffers(book, stations) {
     if (isDerelict(station) || station.factionId === FACTION.PIRATES) continue;
     const econ = book.getEconomy(station.id);
     if (!econ) continue;
+    book.members.push(station);
     book.demandRates.set(String(station.id), stationNetRates(station));
     book.useRates.set(String(station.id), stationConsumptionRates(station));
 
@@ -263,6 +267,21 @@ export function hasSellOffer(book, resourceId) {
 /** Ile sprzedawca ma jeszcze na zbyciu w tym ticku. */
 export function sellOfferUnits(book, stationId, resourceId) {
   return book.sellers.get(stationId)?.spare.get(resourceId) || 0;
+}
+
+/**
+ * Oferta sprzedaży producenta dla konkretnego odbiorcy wg ceny rezerwacji — ten sam model co
+ * u kupców (`sellDownToFill`): producent sprzedaje, dopóki skup odbiorcy (`bid`) przebija o marżę
+ * jego cenę żądania przy zapasie PO sprzedaży, nie schodząc poniżej zapasu roboczego, jeśli
+ * towar sam zużywa (`offerFloor`). Własna stocznia nie ma pierwszeństwa — liczy się, kto płaci.
+ * Potrzebuje notowań (`postQuotes`); zwraca pełne sztuki.
+ */
+export function sellOfferTo(book, sellerId, buyerId, resourceId, minRatio = 0) {
+  const ask = book.quotes.get(sellerId)?.prices.get(resourceId);
+  const bid = book.quotes.get(buyerId)?.prices.get(resourceId);
+  if (!ask || !bid || !(ask.capacity > 0)) return 0;
+  const keepFill = sellDownToFill(ask, bid.bid, Number(minRatio) || 0);
+  return Math.max(0, Math.floor(ask.stored - keepFill * ask.capacity));
 }
 
 /** Transakcja zdjęła `units` z oferty sprzedaży — następny kupujący w tym ticku widzi mniej. */

@@ -35,7 +35,7 @@ import {
 import { laneThreat, depositLoot, recordPirateLoss, pirateInterest } from './piracy.js';
 import {
   createMarketBook, openMarket, reserveInbound, inboundUnits, buyOrderUnits, hasSellOffer,
-  takeSellOffer, requote, putStock, moveStock
+  takeSellOffer, requote, putStock, moveStock, sellOfferTo
 } from './marketBook.js';
 import {
   chooseRoute, getNode, DRIVE_MODES, interceptChance, randomFieldSpot, approachPoint
@@ -155,7 +155,18 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    * nosa, bo gdzieś daleko wypadł mu rzut. Skrypt i demo nie mają encji, więc
    * domyślnie wyłączone i ich przebiegi się nie zmieniają.
    */
-  protectObserved: false
+  protectObserved: false,
+  /**
+   * Skąd planista bierze ofertę sprzedaży (API rynku, `marketBook.js`):
+   *   'surplus'     — nadwyżka ponad 70% magazynu (`getStationSurpluses`), niezależna od ceny;
+   *   'reservation' — cena rezerwacji producenta, ten sam model co u kupców (`sellOfferTo`):
+   *                   producent sprzedaje, dopóki skup odbiorcy przebija jego cenę żądania przy
+   *                   zapasie PO sprzedaży (z marżą `sellOfferMargin`), nie schodząc poniżej zapasu
+   *                   roboczego na własne potrzeby. Własna stocznia nie ma pierwszeństwa.
+   */
+  sellOffers: 'surplus',
+  /** Marża ceny rezerwacji w modelu 'reservation' — przewoźnik frakcji bierze fracht, nie marżę. */
+  sellOfferMargin: 0
 });
 
 // ============================================================
@@ -941,6 +952,9 @@ function returnParkedShip(director, crew) {
 function nextShipment(director, blocked = new Set()) {
   const market = director.book;
   const biggestHold = Math.max(...VAN_CLASSES.map(cls => cls.capacity));
+  // Model oferty sprzedaży (`sellOffers`): w 'reservation' sprzedać może każdy uczestnik rynku,
+  // ile — mówi jego cena rezerwacji wobec skupu tego odbiorcy.
+  const reservation = director.config.sellOffers === 'reservation';
 
   while (market.cursor < market.buyers.length) {
     const buyerIndex = market.cursor;
@@ -950,13 +964,17 @@ function nextShipment(director, blocked = new Set()) {
 
     let bestReady = null;
     let bestShipless = null;
-    for (const seller of market.sellers.values()) {
-      if (seller.station.id === buyer.station.id) continue;
-      if (blocked.has(`${seller.station.id}>${buyer.station.id}`)) continue;
-      if (portIsBacklogged(director, seller.station.id)) continue;
-      const spare = seller.spare.get(buyer.id) || 0;
+    for (const entry of (reservation ? market.members : market.sellers.values())) {
+      const seller = reservation ? null : entry;
+      const source = reservation ? entry : entry.station;
+      if (source.id === buyer.station.id) continue;
+      if (blocked.has(`${source.id}>${buyer.station.id}`)) continue;
+      if (portIsBacklogged(director, source.id)) continue;
+      const spare = reservation
+        ? sellOfferTo(market, source.id, buyer.station.id, buyer.id, director.config.sellOfferMargin)
+        : (seller.spare.get(buyer.id) || 0);
       if (spare <= 0) continue;
-      if (areFactionsHostile(seller.station.factionId, buyer.station.factionId)) continue;
+      if (areFactionsHostile(source.factionId, buyer.station.factionId)) continue;
       if (!stationWantsResource(buyer.station, buyer.id)) continue;
 
       const byHold = Math.floor(biggestHold / Math.max(def.mass, 1e-6));
@@ -964,7 +982,7 @@ function nextShipment(director, blocked = new Set()) {
       if (candidateUnits <= 0) continue;
 
       const candidateMass = candidateUnits * def.mass;
-      const route = chooseRoute(director.network, seller.station.id, buyer.station.id, {
+      const route = chooseRoute(director.network, source.id, buyer.station.id, {
         mass: candidateMass,
         value: candidateUnits * (Number(def.value) || 0),
         piracyPressure: director.config.piracyPressure
@@ -977,7 +995,7 @@ function nextShipment(director, blocked = new Set()) {
       if (units <= 0) continue;
 
       const candidate = {
-        source: seller.station,
+        source,
         target: buyer.station,
         resourceId: buyer.id,
         units,
@@ -987,7 +1005,7 @@ function nextShipment(director, blocked = new Set()) {
         buyerIndex
       };
       const hasShip = !director.companies
-        || (director.parked.get(String(seller.station.id))?.length || 0) > 0;
+        || (director.parked.get(String(source.id))?.length || 0) > 0;
       if (hasShip) {
         if (!bestReady || route.seconds < bestReady.route.seconds) bestReady = candidate;
       } else if (!bestShipless || route.seconds < bestShipless.route.seconds) {
@@ -1163,6 +1181,11 @@ export function dispatchHaul(director, stations) {
   // Dopiero udany kurs rezerwuje nadwyżkę i pozycję magazynową. Dzięki temu
   // następna wysyłka w tym samym ticku widzi dokładnie to, co już leci.
   takeSellOffer(director.book, shipment.sellerState, shipment.resourceId, shipment.units);
+  if (director.config.sellOffers === 'reservation') {
+    // Cena rezerwacji liczy się od zapasu: nadawca schudł, do odbiorcy leci towar.
+    requote(director.book, shipment.source.id, shipment.resourceId);
+    requote(director.book, shipment.target.id, shipment.resourceId, shipment.units);
+  }
   reserveInbound(director.book, shipment.target.id, shipment.resourceId, shipment.units,
     shipmentLeadSeconds(route));
   if (Number.isInteger(shipment.buyerIndex)) {
@@ -1858,7 +1881,7 @@ export function tickDirector(director, dt, stations) {
   openMarket(director.book, stations, {
     courses: getActiveCourses(registry),
     orders: fleet?.activeOrders || [],
-    withQuotes: !!director.agents
+    withQuotes: !!director.agents || config.sellOffers === 'reservation'
   });
   rebuildParkedIndex(director);
 
