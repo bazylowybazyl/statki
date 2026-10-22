@@ -592,8 +592,8 @@ function buildFlowGraph() {
     const ends = smoothstep(0.012, 0.026, sc).mul(smoothstep(0.012, 0.026, max(vPart.z, 1e-4).sub(sc)));
     const guide = aaDot(abs(gs.sub(gi)).mul(0.03), 0.0006, pix).mul(ends);
     const chase = sdown(0.0, 0.18, fract(gi.mul(0.05).sub(time.mul(0.15))));
-    const red = step01(fract(gi.mul(0.25)), 0.7);
-    const tetherEmit = mix(vec3(2.6, 2.4, 2.1), vec3(3.0, 0.3, 0.12), red).mul(guide.mul(chase.mul(0.75).add(0.25)));
+    // tylko białe — czerwień jest na bryłach (doki, wózki, wieże), na linie zlewała się z cyjanem w różowe paciorki
+    const tetherEmit = vec3(2.6, 2.4, 2.1).mul(guide.mul(chase.mul(0.75).add(0.25)));
     // światło: pancerz — ciemny metal (F0 0,04, szorstkość 0,45; opaski gładsze), lina gładsza; odblask poświaty promienia
     // NEUTRALNY i słabszy (×0,5) — cyjan tylko w szczelinach i pakietach, nie bladocyjanowy połysk wzdłuż rury
     const tone = mix(mix(0.7, 0.9, collar).mul(float(1.0).sub(slit.mul(0.6))), 0.9, kTether);
