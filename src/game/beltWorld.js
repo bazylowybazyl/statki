@@ -22,7 +22,7 @@
 // Olbrzymy budują się przy punktach uwagi z kamery I statków (`frame` — co klatkę, niezależnie od
 // tego, czy kadr dotyka pasa: kolizje z olbrzymem istnieją, zanim kamera do niego podejdzie).
 
-import { AsteroidBeltField } from './asteroidBeltField.js';
+import { AsteroidBeltField, BELT_HOLE_CONFIG } from './asteroidBeltField.js';
 import { FieldSunOcclusion, nightKnee } from './asteroidFieldLight.js';
 import { BeltGiants } from './asteroidBeltGiants.js';
 import { GiantBuilder } from './asteroidGiantBuilder.js';
@@ -74,6 +74,8 @@ export class BeltWorld {
     this._fieldOps = [];
     this._fieldSubs = [];
     this._holes = new Map();
+    // Koszt przeliczeń cienia pól po wyrwach (setHoles): liczba, ms, kolumny, próbki pola.
+    this.lightStats = { updates: 0, ms: 0, lastMs: 0, columns: 0, samples: 0 };
     this._occSubs = [];
     this._miningSubs = [];
     this.setExclusions(this.giants.exclusions());
@@ -164,7 +166,22 @@ export class BeltWorld {
       else this._holes.delete(hole.id);
     }
     if (!copy.length) return;
+    const version = this.field.holeVersion;
     this._applyFieldOp(this.field, 'holes', copy);
+    // Cień pól w wyrwie (mniej pyłu = więcej słońca w wyrwie i za nią): kolumny siatki przez prostokąt zmian,
+    // W MIEJSCU — sektory dzieli obraz (SharedArrayBuffer w workerze, te same tablice w trybie off), więc
+    // przeliczenie idzie PRZED operacją dla repliki obrazu: render przeładowuje mgłę i mapę już z nowym cieniem.
+    if (this.field.holeVersion !== version) {
+      const d = this.field.holeDirty[this.field.holeDirty.length - 1];
+      const m = BELT_HOLE_CONFIG.reach;
+      const res = this.occlusion.recomputeRect(d.x0 + m, d.y0 + m, d.x1 - m, d.y1 - m);
+      const L = this.lightStats;
+      L.updates++;
+      L.ms += res.ms;
+      L.lastMs = res.ms;
+      L.columns += res.columns;
+      L.samples += res.samples;
+    }
     for (let i = 0; i < this._fieldSubs.length; i++) this._fieldSubs[i]('holes', copy);
     const full = [...this._holes.values()];
     const at = this._fieldOps.findIndex((e) => e[0] === 'holes');

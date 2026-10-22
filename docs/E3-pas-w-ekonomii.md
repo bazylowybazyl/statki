@@ -99,6 +99,33 @@ nie jest potrzebna.
 - `worker/worker-przed.png`, `worker/worker-po.png`: render w workerze (tryb gracza), sonda w czasie rzeczywistym.
   Operacja `holes` dochodzi do repliki w workerze.
 
+## Mgła, pył i cień pól w wyrwie (2026-10-22)
+
+Decyzja użytkownika: tam, gdzie nie ma asteroid, nie ma też mgły i pyłu. Tona urobku = tona pasa i brak
+regeneracji zostają.
+
+- **Co rzednie:** mgła, pył mapy pola (czyta go ośrodek objętościowy), zasłona pola i ekstynkcja cienia pól.
+  Mnożnik wyrwy przychodzi w `sampleMacro` (`hole`). Obok jest miejsce na źródła gazu (`gas`, dziś 0) — osobny temat
+  skał produkujących gaz.
+- **Cień pól:** świat pasa gry przelicza w miejscu kolumny przez wyrwę (`recomputeRect`). Test: zgodność z liczeniem
+  od zera < 0,002. Słońce w środku wyrwy wzrosło z 0,52 do 0,69; za wyrwą (od słońca) też jest jaśniej.
+- **Zrzuty** (`.tmp/webgpu/e3-wyrwy-mgla/`):
+  - `off/wyrwa-przed.png`, `off/wyrwa.png`, `off/wyrwa-blisko.png`;
+  - `worker/worker-przed.png`, `worker/worker-po.png`;
+  - w wyrwie widać gwiazdy tła zamiast mgły; pipeline'y synchroniczne 0, błędów brak.
+- **Koszt CPU jednej zmiany wyrw** (prawdziwy zegar w grze, scena `wyrwa`, kilka wyrw naraz):
+
+  | Przypadek | Wątek | Czas |
+  |---|---|---|
+  | wyrwa w kadrze, `setHoles` (pole gry, cień pól: 20 kolumn, ~2 tys. próbek, replika) | gra | 3,0 ms |
+  | wyrwa w kadrze, przebudowa mgły | obraz | 6,7 ms |
+  | wyrwa w kadrze, przebudowa mapy pola | obraz | 3,0 ms |
+  | wyrwa po drugiej stronie pasa, `setHoles` | gra | 2,2 ms |
+  | wyrwa po drugiej stronie pasa, obraz | obraz | 0,7 ms, bez przebudowy (`holesTouch`) |
+
+- **GPU** (`Core3D.gpuFrameMs`, kadr przy zoomie 0,1): 1,48 ms przed wyrwą, 0,85 ms z wyrwą. Mniej skał i mgły
+  do narysowania.
+
 ## Decyzje dla użytkownika
 
 - **Wygląd wyrwy:**
@@ -107,7 +134,7 @@ nie jest potrzebna.
   - przerzedzone wszystkie pasma skał;
   - mgła, pył i cień pola zostają (gęstość `sampleMacro` bez zmian).
 
-  Do wyboru: czy wyrwa ma też rozrzedzać mgłę i pył. Wymagałoby to przeliczenia cienia pól.
+  Decyzja 2026-10-22: mgła, pył i cień pól rzedną w wyrwie (sekcja wyżej).
 - **Tempo uszczuplania:** fizyczne (`depletionScale` 1), tona urobku = tona zasobu. Przy ×60 to ~53 tys. t
   i ~150 wyrw na 4 h, w polach przy stacjach.
 - **Regeneracja:** brak (`regenPerHour` 0). Mechanizm jest gotowy: wyrwy płycieją i znikają.

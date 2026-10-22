@@ -108,7 +108,9 @@ const WYRWA_LOG = (etap) => `
       F.forEachRockInRect(0, C.x - R, C.y - R, C.x + R, C.y + R, 0, (r) => { if (Math.hypot(r.x - C.x, r.y - C.y) < R) n++; }); return n; };
     console.log('[wyrwa] ' + JSON.stringify({ etap: '${etap}', skalyGra: licz(window.__beltWorld.field), skalyObraz: licz(B.field),
       wyrwyGra: window.__beltWorld.field.holes.length, wyrwyObraz: B.field.holes.length,
-      gestosc: +(window.__beltWorld.field.depletedDensityAt(C.x, C.y) * 1e6).toFixed(3) })); }`;
+      gestosc: +(window.__beltWorld.field.depletedDensityAt(C.x, C.y) * 1e6).toFixed(3),
+      pyl: +B.field.sampleMacro(C.x, C.y).hole.toFixed(3), slonce: +B.sunT(C.x, C.y).toFixed(3),
+      mapaPolaMs: +B.fieldMap.buildMs.toFixed(2), mapaPolaPrzebudowy: B.fieldMap.builds })); }`;
 
 // Sceny: js — ciało funkcji async w stronie (W = world.js dema, S = pomocniki harnessu,
 // H = harness, B = pas gry). Wzory miejsc i zoom jak `setScene` dema.
@@ -276,7 +278,24 @@ export const BELT_SCENES = {
          for (const [dx, dy, frac] of plan) { const x = (ix + dx + 0.5) * cell, y = (iy + dy + 0.5) * cell;
            const c = M.recordExtraction(model, x, y, 1e-6); M.recordExtraction(model, x, y, c.reserve * frac); }
          const holes = M.takeHoleUpdates(model) || []; window.__wyrwaHoles = holes;
-         window.__beltWorld.setHoles(holes);
+         // Koszt CPU (prawdziwy zegar — performance.now harnessu stoi): cały setHoles świata pasa (pole gry, cień pól,
+         // replika obrazu), samo przeliczenie cienia pól (drugi raz — ten sam wynik), przebudowa mgły i mapy pola obrazu.
+         const R = H.realNow;
+         // Wyrwa po drugiej stronie pasa: obraz w kadrze nic nie przebudowuje (holesTouch).
+         const daleko = [{ id: 'daleko', x: 2 * window.SUN.x - C.x, y: 2 * window.SUN.y - C.y, r: 7000, depth: 0.65 }];
+         const map0 = B.fieldMap.builds;
+         const tD = R(); window.__beltWorld.setHoles(daleko); const msDaleko = R() - tD;
+         const tF = R(); B.fog.update(B._fogFrame); B.fieldMap.update(B._mapFrame); const msObrazDaleko = R() - tF;
+         const mapaDaleko = B.fieldMap.builds - map0;
+         window.__beltWorld.setHoles([{ id: 'daleko', depth: 0 }]); B.fog.update(B._fogFrame); B.fieldMap.update(B._mapFrame);
+         const t1 = R(); window.__beltWorld.setHoles(holes); const msSetHoles = R() - t1;
+         const d = window.__beltWorld.field.holeDirty.at(-1), k = 7000;
+         const t3 = R(); const cien = window.__beltWorld.occlusion.recomputeRect(d.x0 + k, d.y0 + k, d.x1 - k, d.y1 - k); const msCien = R() - t3;
+         const t2 = R(); B.fog.update(B._fogFrame); const msMgla = R() - t2;
+         B.fieldMap.invalidate(); const t4 = R(); B.fieldMap.update(B._mapFrame); const msMapa = R() - t4;
+         console.log('[wyrwa] koszt ' + JSON.stringify({ msSetHoles: +msSetHoles.toFixed(2), msCienPol: +msCien.toFixed(2),
+           kolumny: cien.columns, probki: cien.samples, msMgla: +msMgla.toFixed(2), msMapaPola: +msMapa.toFixed(2),
+           daleko: { msSetHoles: +msDaleko.toFixed(2), msObraz: +msObrazDaleko.toFixed(2), przebudowyMapy: mapaDaleko } }));
          const zgodnosc = { au: [model.au, window.AU_IN_WORLD_UNITS], gestosc: [model.field.densityAt(C.x, C.y), window.__beltWorld.field.densityAt(C.x, C.y)],
            rodzina: [model.field.familyAt(C.x, C.y)?.id || null, window.__beltWorld.field.familyAt(C.x, C.y)?.id || null] };
          console.log('[wyrwa] rejestr ' + JSON.stringify({ wyrwy: holes.map((h) => [h.id, +h.depth.toFixed(2)]),
