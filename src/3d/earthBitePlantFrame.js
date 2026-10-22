@@ -45,7 +45,8 @@ export const PLANT_LAYOUT = Object.freeze({
   apertureR: 0.0155,  // promień gardzieli wylotu
   hubRadius: 1.075,   // odbiornik na orbicie: promień od środka Ziemi (pod ringiem 1,09–1,16 R)
   hubRing: 0.05,      // promień pierścienia odbiornika
-  elevators: [30, 90, 150, 210, 270, 330],   // azymuty wind w ramie gryzu (0 — wschód, 90 — północ)
+  elevators: [0, 60, 120, 180, 240, 300],   // azymuty wind w ramie gryzu (0 — wschód, 90 — północ); bez 90° i 270° — południk
+                                            // gryzu zawiera kierunek kamery gry, więc to, co w nim stoi, rzutuje się na promień
   anchorPad: 0.015,   // odsunięcie kotwic wind za krawędź gryzu [rad]
   ringInnerR: 41800 / 37800,   // wewnętrzna krawędź ringu „Halo” Ziemi (layout.radii.min / promień Ziemi gry) [R]
   footH: 0.045,       // STOPA ŚCIANY: wysokość, na której mosty korka (nad lawą, w azymutach wind) dochodzą do ściany gryzu,
