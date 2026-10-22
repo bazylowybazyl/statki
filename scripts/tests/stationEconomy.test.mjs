@@ -84,6 +84,8 @@ export function run() {
   earthEcon.resources.raw_crystal = 120;
   // Glin z Księżyca i Westy (E10): bez niego nie ma stopu tytanu ani płyt.
   earthEcon.resources.aluminum_ore = 150;
+  // Ruda niklu z pasa: gal i german do układów scalonych (E10).
+  earthEcon.resources.nickel_ore = 60;
   runStationEconomy(earth, earthEcon, 20, seededRng(2));
   t.check('Ziemia zużyła dostarczoną rudę', earthEcon.resources.iron_ore < 200, `(${earthEcon.resources.iron_ore.toFixed(1)})`);
   t.check('Ziemia wyprodukowała płyty kadłuba', earthEcon.resources.hull_plate > 0, `(${earthEcon.resources.hull_plate.toFixed(1)})`);
@@ -105,9 +107,10 @@ export function run() {
   // żelaza i −8% krzemu (moc huty przeszła na glin), Merkury eksportuje +5% żelaza;
   // taśma nadprzewodząca w elektronice i reaktor fuzyjny — Ziemia dalej −5% Fe, −4% Si.
   // emitery tarcz w zakładach systemowych — Ziemia −3% Fe, +1% Si.
-  t.close('plan Ziemi wymaga 1038,112 rudy żelaza/h', earthNet.iron_ore * 3600, -1038.1122453713313, 1e-6);
-  t.close('plan Ziemi wymaga 670,740 rudy krzemu/h', earthNet.silicon_ore * 3600, -670.7395458595911, 1e-6);
-  t.close('plan Merkurego eksportuje 1414,490 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1414.4898142378106, 1e-6);
+  // układy scalone z niklem (Ga, Ge) — Ziemia −22% krzemu, +2% Fe.
+  t.close('plan Ziemi wymaga 1058,718 rudy żelaza/h', earthNet.iron_ore * 3600, -1058.7179695891068, 1e-6);
+  t.close('plan Ziemi wymaga 525,693 rudy krzemu/h', earthNet.silicon_ore * 3600, -525.6929226886501, 1e-6);
+  t.close('plan Merkurego eksportuje 1414,244 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1414.2437065317436, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });

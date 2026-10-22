@@ -172,6 +172,13 @@ export const RESOURCES = Object.freeze({
     label: 'Amoniak', short: 'NH₃', unit: 't', form: 'gas',
     mass: 0.7, value: 9, color: '#9fe870'
   },
+  // Azot z atmosfery Tytana (~95% N₂) i lodu Trytona (E10) — gaz buforowy
+  // podtrzymania życia.
+  nitrogen: {
+    tier: TIER.RAW, category: CATEGORY.GAS,
+    label: 'Azot', short: 'N₂', unit: 't', form: 'gas',
+    mass: 0.6, value: 5, color: '#a5b4fc'
+  },
 
   // ---------- T0: Z WRAKÓW ----------
   scrap: {
@@ -603,7 +610,8 @@ export const PLANET_YIELD = Object.freeze({
   europa: { rate: 0.480, yields: { ice: 1.0 } },
 
   // Saturn — metan Tytana i lód reszty.
-  tytan: { rate: 0.540, yields: { methane: 0.62, ammonia: 0.38 } },
+  // Azot z atmosfery Tytana (E10) — ponad dawny urobek metanu i amoniaku.
+  tytan: { rate: 0.5745, yields: { methane: 0.5828, ammonia: 0.3572, nitrogen: 0.06 } },
   enceladus: { rate: 0.420, yields: { ice: 1.0 } },
   rhea: { rate: 0.45, yields: { iron_ore: 0.40, silicon_ore: 0.30, ice: 0.30 } },
   tethys: { rate: 0.360, yields: { ice: 1.0 } },
@@ -614,7 +622,7 @@ export const PLANET_YIELD = Object.freeze({
   ariel: { rate: 0.360, yields: { ice: 1.0 } },
 
   // Neptun — samotna placówka w martwym układzie.
-  tryton: { rate: 0.4, yields: { methane: 0.45, ammonia: 0.30, raw_crystal: 0.25 } }
+  tryton: { rate: 0.4211, yields: { methane: 0.4275, ammonia: 0.285, raw_crystal: 0.2375, nitrogen: 0.05 } }
 });
 
 /** Typ planety → jaki kolektor w ogóle wolno na niej postawić. */
@@ -651,9 +659,12 @@ export const RECIPES = Object.freeze({
     label: 'Ciągnienie miedzi', building: 'refinery', seconds: 30,
     in: { copper_ore: 3 }, out: { copper_wire: 2 }
   },
+  // E10: gal i german (GaN, Ge) z metalu żelazo-niklowego — ruda niklu wiąże
+  // elektronikę z pasem, a krzemu na układ idzie o 25% mniej. Gardłem jest fabryka
+  // (dłuższy cykl), nie ruda.
   etch_chips: {
-    label: 'Trawienie układów', building: 'refinery', seconds: 55,
-    in: { silicon_ore: 4 }, out: { chips: 1 }
+    label: 'Trawienie układów', building: 'refinery', seconds: 70,
+    in: { silicon_ore: 6, nickel_ore: 1 }, out: { chips: 2 }
   },
   // Ti-6Al-4V: dodatkiem stopowym jest glin, nie stal (E10).
   alloy_titanium: {
@@ -756,7 +767,8 @@ export const RECIPES = Object.freeze({
   },
   assemble_life_support: {
     label: 'Montaż podtrzymywania życia', building: 'factory', seconds: 95,
-    in: { polymer: 1, oxygen: 1, avionics: 1 }, out: { life_support: 1 }
+    // Azot jako gaz buforowy atmosfery (E10).
+    in: { polymer: 1, oxygen: 1, nitrogen: 1, avionics: 1 }, out: { life_support: 1 }
   },
   assemble_shield_generator: {
     label: 'Montaż emitera tarczy', building: 'factory', seconds: 150,
