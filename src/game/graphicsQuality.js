@@ -114,12 +114,14 @@ export const GFX_EXPLOSIONS = Object.freeze({
 // Budżety efektów (na żywo). „Wysoka” = wartości gry sprzed opcji: SIDE_JET_TUNE.maxLights 48 / minGasPx 1,1
 // (sideJets3D.js), MUZZLE_PER_FRAME / IMPACT_PER_FRAME 48 (weaponFx.js), ASTEROID_BELT_CONFIG.maxLitShips 6 /
 // maxShadowShips 2 (asteroidBelt.js — każda mapa cienia to render atlasu), MEDIUM_COUNT_DEFAULT 1 mln (warp/medium.js;
-// najwyżej pojemność z init, więc Ultra nie dokłada drobin).
+// najwyżej pojemność z init, więc Ultra nie dokłada drobin). cargoSwarmSlots — stanowiska przeładunku z rojem dronów
+// liczonym na żywo na GPU (E12, src/3d/swarm/swarmBerthPool.js; decyzja 2026-10-22: Niska 0 — sam stan z zegara
+// postoju, Średnia 4, Wysoka i Ultra 8 = pojemność puli).
 export const GFX_EFFECTS = Object.freeze({
-  low: Object.freeze({ sideJetLights: 12, sideJetGasPx: 2.2, weaponMuzzles: 16, weaponImpacts: 16, beltLitShips: 3, beltShadowShips: 1, warpParticles: 400000 }),
-  medium: Object.freeze({ sideJetLights: 24, sideJetGasPx: 1.5, weaponMuzzles: 32, weaponImpacts: 32, beltLitShips: 4, beltShadowShips: 1, warpParticles: 700000 }),
-  high: Object.freeze({ sideJetLights: 48, sideJetGasPx: 1.1, weaponMuzzles: 48, weaponImpacts: 48, beltLitShips: 6, beltShadowShips: 2, warpParticles: 1000000 }),
-  ultra: Object.freeze({ sideJetLights: 64, sideJetGasPx: 0.9, weaponMuzzles: 64, weaponImpacts: 64, beltLitShips: 8, beltShadowShips: 3, warpParticles: 1000000 })
+  low: Object.freeze({ sideJetLights: 12, sideJetGasPx: 2.2, weaponMuzzles: 16, weaponImpacts: 16, beltLitShips: 3, beltShadowShips: 1, warpParticles: 400000, cargoSwarmSlots: 0 }),
+  medium: Object.freeze({ sideJetLights: 24, sideJetGasPx: 1.5, weaponMuzzles: 32, weaponImpacts: 32, beltLitShips: 4, beltShadowShips: 1, warpParticles: 700000, cargoSwarmSlots: 4 }),
+  high: Object.freeze({ sideJetLights: 48, sideJetGasPx: 1.1, weaponMuzzles: 48, weaponImpacts: 48, beltLitShips: 6, beltShadowShips: 2, warpParticles: 1000000, cargoSwarmSlots: 8 }),
+  ultra: Object.freeze({ sideJetLights: 64, sideJetGasPx: 0.9, weaponMuzzles: 64, weaponImpacts: 64, beltLitShips: 8, beltShadowShips: 3, warpParticles: 1000000, cargoSwarmSlots: 8 })
 });
 
 // Skala bloomu (Core3D.bloomResolutionScale) i włącznik (perfToggles.bloom).

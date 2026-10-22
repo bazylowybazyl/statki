@@ -201,6 +201,15 @@ export const CARGO_BAY_HULLS = Object.freeze({
     cargoToday: 900, todayNote: 'klasa ruchu heavy',
     bays: [bay({ id: 'luki', label: 'Luki 3 × 8', x: -128, y: 11, w: 648, h: 344, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
   }),
+  // Proxy ciężkiego frachtowca w ruchu v2 (E12): sprite dalekiego zasięgu w skali 1800 j. (TRAFFIC_HULLS.heavy_freighter —
+  // TODO AGENT tam: własny sprite Z11). Te same luki co frachtowiec dalekiego zasięgu, moduły 2 × 2 × 2 (drony L).
+  // AGENT: po podmianie sprite'a proxy na heavy_freighter.png mapa TRAFFIC_CARGO_BAY_HULLS wskaże heavy_freighter.
+  heavy_freighter_proxy: hull({
+    label: 'Ciężki frachtowiec (sylwetka ruchu)', family: 'frachtowce', sprite: 'assets/ships/long_haul_freighter_empty.png', png: { w: 1774, h: 887 },
+    renderLength: 1800, profile: 'heavy_freighter', editorKey: null, bridgeKey: null,
+    cargoToday: 900, todayNote: 'klasa ruchu heavy (proxy)',
+    bays: [bay({ id: 'luki', label: 'Luki 2 × 7', x: -150, y: -12, w: 506, h: 192, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
+  }),
   megafreighter_wagon: hull({
     label: 'Wagon megafrachtowca', family: 'frachtowce', sprite: 'assets/ships/megafreighterwagon_empty.png', png: { w: 1672, h: 941 },
     renderLength: 2760, profile: null, editorKey: null, bridgeKey: null,
@@ -213,6 +222,19 @@ export const CARGO_BAY_HULLS = Object.freeze({
 });
 
 export const CARGO_BAY_HULL_ORDER = Object.freeze(Object.keys(CARGO_BAY_HULLS));
+
+/**
+ * Kadłub proxy ruchu v2 (`TRAFFIC_HULLS`, src/data/trafficHulls.js) → kadłub z ładownią (E12: przeładunek
+ * w bańce). Ładownia musi leżeć na TYM obrazku, który rysuje proxy: sprite proxy `assets/X.png` ma ten
+ * sam układ płótna co `assets/ships/X_empty.png` (puste pokłady Z11), a długość rysunku = renderLength
+ * (test `tests/portCargo.test.mjs`). Okręty (garnizon K-7) przeładunku nie mają.
+ */
+export const TRAFFIC_CARGO_BAY_HULLS = Object.freeze({
+  inter_station_shuttle: 'inter_station_shuttle',
+  container_ship: 'container_ship',
+  long_haul_freighter: 'long_haul_freighter',
+  heavy_freighter: 'heavy_freighter_proxy'
+});
 
 /** Kadłub z ładowniami albo null. */
 export function cargoBayHull(id) {

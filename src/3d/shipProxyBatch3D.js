@@ -75,6 +75,8 @@ const ownImages = new Map();      // url → ImageBitmap | null (w drodze) — g
 const engineRecords = new Map();  // klucz proxy → { view, frame }
 let imageResolver = null;
 let engineLayoutResolver = null;
+/** (ref encji) → { x: u0, y: v0, z: u1, w: v1 } otwartego luku w uv sprite'a albo null (E12, przeładunek). */
+let bayCutResolver = null;
 let frameNo = 0;
 
 const origin = { x: 0, y: 0 };
@@ -435,6 +437,15 @@ export const ShipProxyBatch3D = {
    * a więc jedną teksturę. Bez resolvera moduł ładuje obrazki sam. Ustawić przed
    * pierwszym update — rodzaj zapamiętuje obraz, z którym powstał.
    */
+  /**
+   * Otwarte luki ładowni (E12, przeładunek w bańce — src/3d/cargo/portCargo3D.js): fn(ref encji) →
+   * prostokąt otworu w uv sprite'a (x u0, y v0, z u1, w v1, skin — skóra w otworze 0…1 przy domykaniu wrót) albo null —
+   * skóra proxy ma tam dziurę.
+   */
+  setBayCutResolver(fn) {
+    bayCutResolver = typeof fn === 'function' ? fn : null;
+  },
+
   setImageResolver(fn) {
     imageResolver = typeof fn === 'function' ? fn : null;
   },
@@ -574,9 +585,11 @@ export const ShipProxyBatch3D = {
     const h = info.h;
     const M = kind.buffer.array;
     const o = n * PROXY_INSTANCE_STRIDE;
-    M[o] = c * w; M[o + 1] = s * w; M[o + 2] = 0; M[o + 3] = 0;
-    M[o + 4] = -s * h; M[o + 5] = c * h; M[o + 6] = 0; M[o + 7] = 0;
-    M[o + 8] = c; M[o + 9] = s; M[o + 10] = opacity; M[o + 11] = 0;
+    // Luk ładowni otwarty (E12): prostokąt uv otworu z resolvera przeładunku (portCargo3D) — albo pusty.
+    const cut = bayCutResolver ? bayCutResolver(ref) : null;
+    M[o] = c * w; M[o + 1] = s * w; M[o + 2] = cut ? cut.x : 0; M[o + 3] = cut ? cut.y : 0;
+    M[o + 4] = -s * h; M[o + 5] = c * h; M[o + 6] = cut ? cut.z : 0; M[o + 7] = cut ? cut.w : 0;
+    M[o + 8] = c; M[o + 9] = s; M[o + 10] = opacity; M[o + 11] = cut ? (cut.skin || 0) : 0;
     M[o + 12] = x - origin.x; M[o + 13] = -y - origin.y; M[o + 14] = 0; M[o + 15] = 1;
 
     if (pickCount < MAX_PICK) {

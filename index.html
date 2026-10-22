@@ -1151,6 +1151,9 @@
     } from "./src/game/trafficPromotion.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
+    import { createCargoOpsBlock } from "./src/render/blocks/cargoOpsBlock.js";
+    import { createPortCargoFrame, buildPortCargoFrame, syncPortCargoContract } from "./src/game/portCargoFrame.js";
+    import { sharedPortCargo3D } from "./src/3d/cargo/portCargo3D.js";
     import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
@@ -9551,10 +9554,12 @@
       const hidden = !ship || ship.destroyed || !isAtlasHullForScout() || (cl && cl.active && cl.vis < 0.5);
       const sunRef = (typeof SUN !== 'undefined' && SUN) ? SUN : null;
       if (sunRef) { _scoutSun.x = sunRef.x; _scoutSun.y = sunRef.y; }
+      // Wrota: fregata zwiadu albo postój / handel z ładunkiem w luku (E12 — przeładunek, _playerCargoDoor).
+      const door = Math.max(ScoutBay.door, _playerCargoDoor);
       if (RW_WORKER) {
         // obraz luku w workerze (RW-40b): tylko postęp wrót i ukrycie
-        if (rwHost) { const sb = rwHost.scoutBay || (rwHost.scoutBay = { door: 0, hidden: true }); sb.door = ScoutBay.door; sb.hidden = !!hidden; }
-      } else scoutBay3D.sync(ship, pose, ScoutBay.door, sunRef ? _scoutSun : null, hidden, time);
+        if (rwHost) { const sb = rwHost.scoutBay || (rwHost.scoutBay = { door: 0, hidden: true }); sb.door = door; sb.hidden = !!hidden; }
+      } else scoutBay3D.sync(ship, pose, door, sunRef ? _scoutSun : null, hidden, time);
       const n = ScoutBay.npc;
       if (n && !n.dead) {
         // Poza renderu fregaty (scoutFrigateRenderPose): na dnie luku mniejsza, wynurza się do rozmiaru z gry i NAD
@@ -16415,6 +16420,94 @@
       }
     }
 
+
+    // ============================================================
+    // PRZEŁADUNEK W PORTACH (E12, docs/E12-przeladunek.md) — ładownie, rój dronów, taśmociągi przy zadokowanych
+    // statkach bańki (zatoki ringów Ziemi, Marsa i Jowisza) i luk Atlasa z ładunkiem gracza. Gra składa tylko ramkę
+    // (src/game/portCargoFrame.js: pola zatok w kadrze, statki przy stanowiskach z kontraktem przeładunku E6, ładunek
+    // gracza); obraz liczy worker renderu z bloku `cargoOps` (src/3d/cargo/portCargo3D.js), w trybie off — moduł na stronie. Ładunek i czas postoju
+    // liczy świat ruchu — przeładunek nic nie zmienia w grze. `?przeladunek=0` — bez obrazu (A/B kosztu),
+    // `?przeladunekStres=N` — N syntetycznych przeładunków na polach w kadrze (pomiar kosztu obrazu).
+    // ============================================================
+    const _portCargoQuery = new URLSearchParams(location.search);
+    const PORT_CARGO_ON = _portCargoQuery.get('przeladunek') !== '0';
+    const PORT_CARGO_STRESS = Number(_portCargoQuery.get('przeladunekStres')) || 0;
+    /** Stanowiska z rojem na żywo (preset grafiki — GFX_EFFECTS.cargoSwarmSlots, applyGraphicsEffects). */
+    let _portCargoLiveSlots = 8;
+    const _portCargoFrame = createPortCargoFrame();
+    const _portCargoCam = { x: 0, y: 0, zoom: 1 };
+    /** Luk Atlasa przy postoju i handlu: postęp wrót 0…1 (jak ScoutBay.door) — luk rysuje scoutBay3D. */
+    let _playerCargoDoor = 0;
+    const _playerCargoRes = [];
+    const _playerCargoPairs = [];
+    function playerCargoRecord(frameDt) {
+      const p = _portCargoFrame._player;
+      const atlas = !!ship && !ship.destroyed && isAtlasHullForScout();
+      const docked = atlas && (!!stationUI.open || (trafficBubble ? trafficBubble.held.length > 0 : false));
+      // Maskowanie: ładunek w luku gaśnie z kadłubem jak luk (syncScoutBay3D — ten sam próg).
+      const cl = atlas ? ship.__cloakLook : null;
+      const cloaked = !!(cl && cl.active && cl.vis < 0.5);
+      // Przebieg wrót luku Atlasa (cargoBayDoorTimeline: ~6,9 s) — otwarcie przy postoju / handlu, zamknięcie po.
+      _playerCargoDoor = Math.max(0, Math.min(1, _playerCargoDoor + (docked ? 1 : -1) * (Number(frameDt) || 0) / 6.9));
+      if (!atlas || cloaked || _playerCargoDoor <= 0) return null;
+      const pose = window.__interpShipPose || { x: ship.pos.x, y: ship.pos.y, angle: ship.angle };
+      const cap = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
+      const mass = getBagMass(PLAYER.cargo);
+      // Udziały masy surowców (do 4 największych) — wygląd kontenerów (rodziny Z5).
+      _playerCargoRes.length = 0;
+      let np = 0;
+      for (const key in PLAYER.cargo) {
+        const m = (Number(PLAYER.cargo[key]) || 0) * (Number(RESOURCES[key]?.mass) || 1);
+        if (!(m > 0)) continue;
+        const pair = _playerCargoPairs[np] || (_playerCargoPairs[np] = ['', 0]);
+        pair[0] = key; pair[1] = m; np++;
+        _playerCargoRes.push(pair);
+      }
+      _playerCargoRes.sort((a, b) => b[1] - a[1]);
+      if (_playerCargoRes.length > 4) _playerCargoRes.length = 4;
+      let sum = 0;
+      for (const r of _playerCargoRes) sum += r[1];
+      for (const r of _playerCargoRes) r[1] = sum > 0 ? r[1] / sum : 0;
+      p.x = pose.x; p.y = pose.y; p.angle = pose.angle;
+      p.door = _playerCargoDoor;
+      p.fill = cap > 0 ? Math.min(1, mass / cap) : 0;
+      p.hull = 'atlas';
+      p.frigate = !!(ScoutBay && ScoutBay.available && ScoutBay.available());
+      p.res = _playerCargoRes;
+      return p;
+    }
+    /** Ramka przeładunku klatki (po pozach bańki — trafficRenderFrame). */
+    function portCargoRenderFrame(cam, frameDt) {
+      if (!PORT_CARGO_ON) return null;
+      const tb = trafficBubble;
+      const player = playerCargoRecord(frameDt);
+      _portCargoCam.x = cam.x; _portCargoCam.y = cam.y; _portCargoCam.zoom = cam.zoom;
+      const cargo = trafficV2?.actors ? syncPortCargoContract(_portCargoFrame, trafficV2.actors, trafficV2.tables?.resources) : null;
+      buildPortCargoFrame(_portCargoFrame, {
+        bubble: tb, ports: trafficV2?.tables?.bubblePorts || null, time: trafficV2 ? trafficV2.time : 0,
+        cam: _portCargoCam, viewW: W, viewH: H, cargo, stress: PORT_CARGO_STRESS, player, liveSlots: _portCargoLiveSlots
+      });
+      return _portCargoFrame;
+    }
+    window.PortCargo = {
+      frame: _portCargoFrame,
+      get on() { return PORT_CARGO_ON; },
+      get playerDoor() { return _playerCargoDoor; },
+      // Narzędzia (?dev): kadr kamery nad punktem świata (ujęcie fabuły — gracz zostaje, gdzie stoi) i powrót.
+      look(x, y, viewHeight = 1200) {
+        if (!_portCargoQuery.has('dev')) return false;
+        startStoryCameraLook({ x, y, viewHeight, inSec: 0.05, holdSec: 1e6, outSec: 0.05 });
+        return true;
+      },
+      lookEnd() { if (storyCameraLook) storyCameraLook.holdSec = 0; return true; },
+      // Narzędzia (?dev): ładunek gracza do zrzutów luku Atlasa ({ surowiec: sztuki }).
+      devCargo(bag) {
+        if (!_portCargoQuery.has('dev')) return false;
+        for (const k in PLAYER.cargo) delete PLAYER.cargo[k];
+        Object.assign(PLAYER.cargo, bag || {});
+        return getBagMass(PLAYER.cargo);
+      }
+    };
 
     if (DevFlags.trafficV2) {
       trafficV2 = initTrafficV2();
@@ -28192,6 +28285,7 @@
       if (RW_WORKER) renderSnapshot.addBlock(createRepairBlock({ idOf: (rig) => RepairFxEvents.idOf(rig) }));
       // E6: statki ruchu v2 w bańce (pozy klatki) — proxy kadłubów i dysze rysuje worker
       if (RW_WORKER) renderSnapshot.addBlock(createTrafficBlock());
+      if (RW_WORKER) renderSnapshot.addBlock(createCargoOpsBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -28333,6 +28427,7 @@
       f.rockets = RW_WORKER ? (window.rocketSystem3D?.rockets || null) : null;
       f.repair = RW_WORKER ? RepairSwarm : null;
       f.traffic = RW_WORKER ? _trafficRender : null;
+      f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -29322,6 +29417,8 @@
       const renderEntities = [];
       // Statki ruchu v2 (E6): pozy w chwili klatki — dla bloku `traffic` (worker) albo rysunku tutaj (off).
       trafficRenderFrame(alpha);
+      // Przeładunek (E12): ramka klatki — pola zatok, statki przy stanowiskach, luk Atlasa (blok `cargoOps` / off niżej).
+      const portCargoFrame = portCargoRenderFrame(cam, frameDt);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -29408,6 +29505,8 @@
           PerfHUD.addTiming('renderMirrorTime', performance.now() - tMirror);
         } else {
           // Statki ruchu v2 (E6): proxy kadłubów i ich dysze MAIN (widoki encji w liście kadłubów).
+          // Przeładunek (E12): obraz przed proxy — dziury w lukach otwartych ładowni (moduł podpina resolver proxy sam).
+          if (portCargoFrame) sharedPortCargo3D().update(portCargoFrame, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
         }
@@ -33166,6 +33265,7 @@
       }
       WarpNurt.setMediumCount?.(fx.warpParticles);   // czeka, aż ośrodek warpa uśnie
       HALL_DUST_TUNE.enabled = gfxSettings.hallDust !== 'off';
+      _portCargoLiveSlots = fx.cargoSwarmSlots ?? 8;   // przeładunek w portach: rój na żywo (blok `cargoOps`)
       // gaz przestrzeni: wejście gry (działa też w workerze renderu — bez wejścia render nic nie liczy)
       SPACE_GAS_INPUT_TUNE.enabled = gfxSettings.spaceGas !== 'off';
     }
