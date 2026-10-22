@@ -68,7 +68,9 @@ const ZOOM = (z) => `(() => { const c = window.camera; c.minZoom = 0.003; c.manu
 const bubbleState = () => ev(`(() => {
   const tb = window.TrafficBubble, br = window.TrafficV2, s = window.ship;
   const phases = {}, berths = { k7: 0, bay: 0 }, docked = [];
+  let stock = 0;
   for (const a of tb.list) {
+    if (a.flags & 64) { stock++; continue; }   // zapas floty na padach K-7 (STOCK) — osobno
     phases[a.phase] = (phases[a.phase] || 0) + 1;
     if (a.berthId && (a.phase === 'docked' || a.phase === 'capture')) {
       if (a.berthId.includes(':K7-')) berths.k7++; else berths.bay++;
@@ -80,7 +82,7 @@ const bubbleState = () => ev(`(() => {
   const reg = window.__haloWorld?.entry('earth')?.collider?.registry;
   let lamps = 0;
   if (reg) for (const e of reg.entries) if (e.berth.occupied === 'traffic' || e.berth.reserved === 'traffic') lamps++;
-  return { t: br.time, actors: tb.list.length, phases, berths, lamps, docked: docked.slice(0, 40),
+  return { t: br.time, actors: tb.list.length - stock, stock, phases, berths, lamps, docked: docked.slice(0, 40),
     held: tb.held.slice(), stats: { ...tb.stats }, actorMs: st.actorMs, bridgeCourses: st.courses,
     player: { x: s.pos.x, y: s.pos.y } };
 })()`);
@@ -134,7 +136,7 @@ try {
   let movedToK7 = false;
   for (;;) {
     const s = await bubbleState();
-    samples.push({ t: +(s.t - t0).toFixed(1), actors: s.actors, phases: s.phases, berths: s.berths, lampki: s.lamps, actorMs: s.actorMs });
+    samples.push({ t: +(s.t - t0).toFixed(1), actors: s.actors, zapasK7: s.stock, phases: s.phases, berths: s.berths, lampki: s.lamps, actorMs: s.actorMs });
     for (const d of s.docked) { seenDocked.set(d.id, d.berth); }
     if (s.actors) for (const id of await ev('window.TrafficBubble.list.map((a) => a.id)')) seen.add(id);
     if (s.t - t0 > OBS * (shot + 1) / 4 && shot < 4) {
@@ -169,10 +171,27 @@ try {
   };
   console.log('obserwacja:', JSON.stringify({ encji: seen.size, zadokowanych: seenDocked.size, k7: report.etapy.obserwacja.k7, zatoki: report.etapy.obserwacja.zatoki }));
 
+  // Hala K-7 z zapasem floty na padach (okręty bez kursów) — zrzut nad halą.
+  report.zapasK7 = await ev(`(() => {
+    const tb = window.TrafficBubble;
+    const st = tb.list.filter((a) => a.flags & 64);
+    if (!st.length) return { okretow: 0 };
+    const a = st[0];
+    window.devTeleportTo(a.cx + 1500, a.cy + 600, { angle: 0, quiet: true });
+    window.ship.vel.x = 0; window.ship.vel.y = 0;
+    return { okretow: st.length, kadluby: [...new Set(st.map((x) => x.hullId))], pad: a.berthId };
+  })()`);
+  if (report.zapasK7?.okretow) {
+    await ev(ZOOM(0.12));
+    await waitGame(2);
+    await screenshotPng(cdp, join(out, '02b-hala-k7-zapas.png'));
+  }
+  console.log('zapas K-7:', JSON.stringify(report.zapasK7));
+
   // Zbliżenie na statek przy stanowisku (K-7, jeśli jest; inaczej zatoka).
   const close = await ev(`(() => {
     const tb = window.TrafficBubble;
-    const at = tb.list.filter((a) => a.berthId && a.phase === 'docked');
+    const at = tb.list.filter((a) => a.berthId && a.phase === 'docked' && !(a.flags & 64));
     const a = at.find((x) => x.berthId.includes(':K7-')) || at[0] || tb.list[0];
     if (!a) return null;
     const off = Math.max(700, a.length * 0.9);
@@ -195,7 +214,7 @@ try {
   report.bron = weapon;
   const target = await ev(`(() => {
     const tb = window.TrafficBubble, s = window.ship;
-    const list = tb.list.filter((a) => a.phase === 'docked' || a.phase === 'hold' || a.phase === 'station' || Math.hypot(a.vx, a.vy) < 260);
+    const list = tb.list.filter((a) => !(a.flags & 64) && (a.phase === 'docked' || a.phase === 'hold' || a.phase === 'station' || Math.hypot(a.vx, a.vy) < 260));
     list.sort((a, b) => Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
     const a = list[0];
     if (!a) return null;
@@ -241,7 +260,7 @@ try {
     const tb = window.TrafficBubble, s = window.ship;
     const earth = window.TrafficV2.getStation('earth');
     // Statek w locie z dala od ringu i doków (> 62 tys. j. od Ziemi), najwolniejszy.
-    const list = tb.list.filter((a) => a.alive && a.phase === 'fly' && Math.hypot(a.cx - earth.x, a.cy - earth.y) > 62000);
+    const list = tb.list.filter((a) => a.alive && !(a.flags & 64) && a.phase === 'fly' && Math.hypot(a.cx - earth.x, a.cy - earth.y) > 62000);
     list.sort((a, b) => Math.hypot(a.vx, a.vy) - Math.hypot(b.vx, b.vy));
     const a = list[0];
     if (!a) return null;
@@ -263,6 +282,12 @@ try {
   }
 
   // Stanowisko gracza: gracz staje na wolnym stanowisku zatoki → `berth-hold` → worker nie przydziela go innym.
+  // Najpierw nad zatoką (2 s gry — statki przy jej stanowiskach materializują się w bańce), potem wybór wolnego.
+  await ev(`(() => { const b = window.TrafficV2.tables.bubblePorts.earth.find((x) => x.hall === 'ZATOKA' && x.maxLength >= 1000);
+    const earth = window.TrafficV2.getStation('earth'); const dx = b.x - earth.x, dy = b.y - earth.y, d = Math.hypot(dx, dy);
+    window.devTeleportTo(b.x + dx / d * 4000, b.y + dy / d * 4000, { angle: 0, quiet: true });
+    window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+  await waitGame(2);
   const hold = await ev(`(() => {
     const tb = window.TrafficBubble;
     const busy = new Set(tb.list.filter((a) => a.berthId).map((a) => a.berthId));

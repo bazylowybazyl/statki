@@ -13,6 +13,7 @@
 
 import { createSuite, runIfMain } from './harness.mjs';
 import { DRIVE_MODES } from '../../src/game/traffic/travelNetwork.js';
+import { hypercruiseSpec, TRAFFIC_CLASS_DRIVE } from '../../src/data/driveModes.js';
 import {
   COURSE_KIND, COURSE_STATUS, DWELL_REASON,
   createCourseRegistry, launchCourse, advanceCourses, getActiveCourses,
@@ -236,10 +237,43 @@ export function run() {
   const pose = actorRenderPose(drobnyActor, 0.5, {});
   t.close('interpolacja renderu w połowie kroku', pose.x, (drobnyActor.prevX + drobnyActor.x) / 2, 1e-9);
 
+  driveTableSection(t);
   integrationSection(t);
   costSection(t);
 
   return t.results;
+}
+
+/**
+ * Napęd encji z jednej tabeli (E6, uwaga E9): etap hipercruise leci silnikiem klasy ładowni kursu
+ * (`TRAFFIC_CLASS_DRIVE`) z rozpędem z `HYPERCRUISE_BY_CLASS` — van Mk II 30 tys. j./s, rozpęd ~5,8 s; hauler
+ * Mk I 20 tys., ~7 s. Wcześniej każdy kurs leciał trybem klasy domyślnej (20 tys.) i rozpędzał się w 1,7 s.
+ */
+function driveTableSection(t) {
+  t.section('Napęd encji z tabeli napędów (hipercruise wg klasy ładowni)');
+  const far = { nodes: new Map([['a', { id: 'a', x: 0, y: 0 }], ['b', { id: 'b', x: 3_000_000, y: 0 }]]) };
+  for (const [unitClass, vanClass] of [['freighter-small', 'van'], ['inter_station_shuttle', 'van'], ['container_ship', 'hauler']]) {
+    const spec = hypercruiseSpec(TRAFFIC_CLASS_DRIVE[vanClass].hypercruise, TRAFFIC_CLASS_DRIVE[vanClass].flightClass);
+    const registry = createCourseRegistry();
+    const course = launchCourse(registry, {
+      kind: COURSE_KIND.HAUL, unitClass,
+      stages: [travelStage('a', 'b', { mode: 'hypercruise', seconds: 200, distance: 3_000_000 })]
+    });
+    const bubble = createBubble();
+    const active = indeks(registry);
+    updateBubble(bubble, far, registry, active, { x: 0, y: 0 }, 50_000, 0);
+    const a = getActorList(bubble)[0];
+    t.equal(`${unitClass}: prędkość silnika klasy ${vanClass}`, a?.cruise, spec.vmax);
+    t.close(`${unitClass}: rozpęd z tabeli`, a?.driveAccel, spec.accel, 1e-9);
+    // Rozpęd od postoju (encja materializuje się w biegu rekordu — tu zatrzymana): po 2 s gry prędkość
+    // ≈ 2 · rozpęd z tabeli, nie 60% prędkości przelotowej na sekundę.
+    a.speed = 0;
+    for (let i = 0; i < 120; i++) updateBubble(bubble, far, registry, active, { x: a.x, y: a.y }, 50_000, 1 / 60);
+    const v = Math.abs(getActorList(bubble)[0]?.speed || 0);
+    t.check(`${unitClass}: po 2 s ~${Math.round(2 * spec.accel)} j./s (jest ${Math.round(v)})`,
+      v > spec.accel * 1.6 && v < spec.accel * 2.2);
+    t.check(`${unitClass}: rekord ruszony przez encję`, course.actorId != null);
+  }
 }
 
 /**

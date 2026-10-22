@@ -154,8 +154,12 @@ export const COURSE_KIND_MASK = 15;
 
 /**
  * Encja bańki (E6): poza lekkiego statku w chwili `actors.time` (czas mostu).
- * Gra ekstrapoluje ją do swojego czasu prędkością (`VX`, `VY`, `ANG_VEL`) —
- * wiadomość przychodzi klatkę po `advance`, który ją policzył.
+ * Gra ekstrapoluje ją do swojego czasu (wiadomość przychodzi klatkę po
+ * `advance`, który ją policzył): `VX`, `VY`, `ANG_VEL` to ruch FAKTYCZNY
+ * ostatniego kroku bańki (z rozpychaniem, dociąganiem przechwytu i cofaniem —
+ * nie sama prędkość wzdłuż dziobu), `AX`, `AY` — przyspieszenie z dwóch kroków.
+ * Ekstrapolacja drugiego rzędu trzyma skok pozy przy nowym buforze poniżej
+ * jednostki (przy 240 Hz obraz nie drga co klatkę fizyki).
  *
  * `LENGTH` × `WIDTH` to obrys kadłuba (`trafficHullFootprint`) — ten sam,
  * którym bańka mieści statek na stanowisku; gra liczy na nim trafienia.
@@ -163,7 +167,7 @@ export const COURSE_KIND_MASK = 15;
  * przy którym stoi (faza `capture` / `docked` / `undock`) albo z którego
  * właśnie wychodzi (`LEAVING`); −1, gdy żadne.
  */
-export const ACTOR_STRIDE = 18;
+export const ACTOR_STRIDE = 20;
 export const ACTOR_FIELD = Object.freeze({
   /** Numer kursu (`courseNumber`) — ten sam, który gra odsyła w `destroyed`. */
   ID: 0,
@@ -188,7 +192,10 @@ export const ACTOR_FIELD = Object.freeze({
   /** Czas od przechwytu na stanowisku [s] (sekwencja obsługi). */
   DOCK_TIME: 16,
   /** Prędkość wzdłuż dziobu (ujemna = cofanie) i przelotowa etapu — dysze. */
-  SPEED: 17
+  SPEED: 17,
+  /** Przyspieszenie faktyczne [j./s²] — ekstrapolacja drugiego rzędu w grze. */
+  AX: 18,
+  AY: 19
 });
 
 /** Fazy encji w kolejności indeksów `ACTOR_FIELD.PHASE` (= wartości `ACTOR_PHASE`). */
@@ -203,7 +210,12 @@ export const ACTOR_FLAG = Object.freeze({
   LEAVING: 4,
   CONVOY: 8,
   AGENT: 16,
-  DEADHEAD: 32
+  DEADHEAD: 32,
+  /**
+   * Okręt z zapasu floty frakcji portu na padzie hali K-7 (`placeFleetStock`, Z2) — BEZ kursu: stoi,
+   * `ID` ujemny (nie numer kursu), nie przyjmuje obrażeń i nie idzie do `destroyed`.
+   */
+  STOCK: 64
 });
 
 /**

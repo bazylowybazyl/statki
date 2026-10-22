@@ -39,6 +39,8 @@ function fakeBridge(actors, time = 10) {
     data[o + F.BERTH] = a.berth ?? -1;
     data[o + F.DOCK_TIME] = 0;
     data[o + F.SPEED] = Math.hypot(a.vx || 0, a.vy || 0);
+    data[o + F.AX] = a.ax || 0;
+    data[o + F.AY] = a.ay || 0;
   });
   const sent = { destroyed: [], holds: [] };
   return {
@@ -74,6 +76,11 @@ test('bufor z workera → encje gry: kadłub z rejestru, stanowisko z tabeli, po
   const pose = trafficActorPoseAt(a, 10.4, {});
   assert.equal(pose.x, 1040);
   assert.equal(trafficActorPoseAt(a, 30, {}).x, 1050, 'ekstrapolacja najwyżej 0,5 s (bufor nie bywa starszy)');
+  // Drugi rząd: przyspieszenie z workera — ½·a·τ² do 0,05 s, dalej prędkość stała.
+  a.ax = 400;
+  assert.ok(Math.abs(trafficActorPoseAt(a, 10.04, {}).x - (1000 + 100 * 0.04 + 0.5 * 400 * 0.04 * 0.04)) < 1e-9);
+  assert.ok(Math.abs(trafficActorPoseAt(a, 10.2, {}).x - (1000 + 100 * 0.2 + 400 * 0.05 * (0.2 - 0.025))) < 1e-9);
+  a.ax = 0;
   // Encja, której worker nie przysyła, znika.
   br.actors.count = 1;
   br.actors.seq++;
@@ -116,6 +123,20 @@ test('zniszczenie: punkty życia w grze, kurs do workera (wrak z ładunkiem), en
   br.actors.seq++;
   syncTrafficBubble(tb, 10.1);
   assert.equal(tb.list.length, 0);
+});
+
+test('zapas floty (STOCK, id ujemny): dekodowany, zatrzymuje pocisk, bez obrażeń i bez zgłoszenia do workera', () => {
+  const br = fakeBridge([{ id: -3, x: 0, y: 0, phase: 'docked', flags: ACTOR_FLAG.STOCK, port: 0, berth: 1, length: 300, width: 150 }]);
+  const tb = createTrafficBubble(br);
+  syncTrafficBubble(tb, 10);
+  setTrafficBubbleTime(tb, 10);
+  assert.equal(tb.list.length, 1);
+  const a = tb.list[0];
+  assert.ok(trafficBulletHit(tb, 0, 10, 0, 1200, 1 / 60, 0, 0, 0)?.actor === a);
+  assert.equal(damageTrafficActor(tb, a, 1e9, 0, 0), false);
+  assert.equal(a.alive, true);
+  assert.equal(br.sent.destroyed.length, 0);
+  assert.equal(trafficBerthStates(tb, new Map()).get('earth:K7-1:C-02'), 'occupied', 'lampka padu: zajęty');
 });
 
 test('taran: SAT dwóch prostokątów, normalna od statku ruchu do gracza, obrażenia ∝ v²', () => {

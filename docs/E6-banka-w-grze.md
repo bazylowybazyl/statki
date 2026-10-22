@@ -37,32 +37,45 @@ Zadanie E6 z `docs/PLAN-ekonomia-rynki.md` (§ 3.5, wiersz E6), 2026-10-22. Stan
 - **Gabaryty:** `dockLayout.hullFootprint` przechodzi przez `trafficHullProfile` (klasy kursów bez własnego
   profilu: `freighter-capital` = ciężki frachtowiec 1800 × 660, nie kontenerowiec 312 × 216). Ten sam obrys mieści
   statek na stanowisku, rysuje proxy i dostaje trafienia.
+- **Płynny obraz (uwaga orkiestratora: drgania przy 240 Hz):** bufor jest klatkę za grą, więc pozę trzeba
+  ekstrapolować. Prędkość wzdłuż dziobu nie widzi rozpychania, dociągania przechwytu ani zmian rozpędu — nowy
+  bufor przesuwał statek o p99 7,8 j. (najwyżej 22 j.) co klatkę fizyki. Teraz bufor niesie ruch faktyczny kroku
+  i przyspieszenie, gra ekstrapoluje drugim rzędem: p99 0,19 j., > 2 j. w 0,036% klatek encji (zmiany etapu).
+  Pomiar: 60 s klatek 1/60 s przy porcie, ~240 tys. par klatek encji. Wybór zamiast interpolacji między dwoma
+  buforami (jak `renderPoses` NPC): bez dodatkowej klatki opóźnienia obrazu względem trafień.
+- **Napęd z tabeli (uwaga E9):** encja leciała trybem klasy domyślnej (20 tys. j./s) z rozpędem 60% prędkości na
+  sekundę (1,7 s do vmax). Teraz `driveModeFor(tryb, klasa ładowni kursu)` — van Mk II 30 tys. j./s i ~5,8 s
+  rozpędu, hauler Mk I 20 tys. i 7 s (test w `scripts/tests/materializedFlight.test.mjs`).
+- **Zapas floty na padach K-7** (prośba orkiestratora, opcjonalna — wyszła tania): `placeFleetStock` z rejestrem
+  redy wojskowej daje gotowe pady; worker dokłada okręty jako encje `STOCK` bez kursów. Przy Ziemi po 40 min gry
+  stoi 7 okrętów Terra Novy (niszczyciele, fregaty) — hale K-7 żyją, zanim przylecą kursy wojskowe (E4).
 - **Stanowiska:** jeden rejestr po obu stronach — worker (dyspozytor) jest źródłem przydziału, gra pisze lampki
   ringu (`'traffic'`) z encji i zgłasza stanowiska pod graczem (`berth-hold`), worker przenosi z nich kursy
   w podejściu. Statek już w korytarzu albo na polu zostaje (gra widzi stanowisko jako zajęte).
 
 ## Pomiary (2026-10-22, RTX 5080, headless Chrome, tryb gracza `renderWorker=1`)
 
-`node scripts/webgpu/ruch-banka-gra.mjs --out .tmp/ruch-banka/run5` (świat ruchu ziarno 7 rozgrzany 40 min gry,
-zegar krokowy harnessu — przebiegi 4 i 5 dają te same zdarzenia):
+`node scripts/webgpu/ruch-banka-gra.mjs --out .tmp/ruch-banka/run7` (świat ruchu ziarno 7 rozgrzany 40 min gry,
+zegar krokowy harnessu; przebiegi 4–5 przed poprawkami napędu, póz i zapasu floty, 6–7 po nich):
 
 | | wynik |
 |---|---|
-| encji przy porcie Ziemi (40 s obserwacji) | 49 różnych, w kadrze bańki 29–41 naraz |
-| dokowania | 15 statków zadokowanych w zatokach, 0 w halach K-7 (niżej) |
+| encji przy porcie Ziemi (40 s obserwacji) | 62 różne (przebieg 5: 49), w bańce ~30–45 naraz |
+| dokowania | 15 statków zadokowanych w zatokach; w halach K-7 kursów brak (niżej), zapas floty: 7 okrętów na padach K-7 |
 | lampki ringu (`occupied` / `reserved` = `'traffic'`) | 28–35 stanowisk zatok Ziemi w trakcie obserwacji |
-| ostrzał (`fireWeaponCore` gracza, pociski w pętli kolizji gry) | trafienie → frachtowiec zniszczony; wrak z workera: `reason: player`, pozycja trafienia, ładunek `warp_mk3` × 5 (wartość 117 933) |
+| ostrzał (`fireWeaponCore` gracza, pociski w pętli kolizji gry) | trafienie → statek zniszczony; wrak z workera: `reason: player`, pozycja trafienia, ładunek kursu (przebieg 5: `warp_mk3` × 5, wartość 117 933; przebieg 7: pusty górnik w drodze na pole) |
 | taran (zbliżanie 600 j/s) | kontakt, frachtowiec zniszczony, gracz wypchnięty z obrysu |
-| postój gracza na Z01-MG1 | `berth-hold` w workerze, żaden kurs nie wszedł na stanowisko |
+| postój gracza na wolnym MG1 zatoki | `berth-hold` w workerze, żaden kurs nie wszedł na stanowisko |
 | krok bańki w workerze ruchu | 0,04–0,13 ms (śr.), najwyżej ~1,7 ms |
-| CPU workera renderu, ~37 proxy w bańce (kadr portu) | +0,13–0,27 ms z proxy (2,67 / 2,54 ms; przebieg 4: 2,05 / 1,78 ms) — A/B `TrafficBubble.hideRender` w tym samym miejscu |
-| GPU klatki | 0,35 / 0,34 ms — różnica w szumie |
+| CPU workera renderu, ~37–45 proxy w bańce (kadr portu) | +0,11–0,27 ms z proxy (przebiegi 4, 5, 7) — A/B `TrafficBubble.hideRender` w tym samym miejscu |
+| GPU klatki | 0,35–0,39 ms, różnica z proxy i bez w szumie (±0,03 ms) |
 | wątek gry (dekodowanie, pozy kroku, pocisk, taran, stanowiska, pozy klatki) | ~8 µs na klatkę przy 40 encjach (mikrobenchmark Node — harness zamraża `performance.now()`) |
 | błędy konsoli (strona i workery) | 0 |
 | pipeline'y synchroniczne workera | 0 na starcie i w trakcie (przebieg 5). `start-sync-gra.mjs --ab` z bazą scalenia (A,B,A,B): A0 4 (`HallDust`, `SpaceDust` — pierwszy przebieg po zimnym starcie Vite, także na BAZIE), B1 0, A2 0, B3 0 |
 
-Testy: `tests/workerBubble.test.mjs` (7, w tym przejęcie kursu przez `attach` gry), `tests/trafficBubble.test.mjs` (7), `scripts/tests/portPaths.test.mjs`
-(nowa sekcja pomostu). Bramka bilansu po zmianie obrysów (`e6-obrysy`) — te same pozycje zaliczone i niezaliczone
+Testy: `tests/workerBubble.test.mjs` (8: m.in. przejęcie kursu przez `attach` gry, zapas floty na padach K-7),
+`tests/trafficBubble.test.mjs` (8: m.in. ekstrapolacja drugiego rzędu, zapas floty bez obrażeń),
+`scripts/tests/portPaths.test.mjs` (nowa sekcja pomostu), `scripts/tests/materializedFlight.test.mjs` (napęd z tabeli). Bramka bilansu po zmianie obrysów (`e6-obrysy`) — te same pozycje zaliczone i niezaliczone
 co baza (`e6-baza`): przechwyty 15,6–16,4%, głód ≤ 14,7 min, stocznie 0 min; kolejki (Ceres 2,51–3,39 wobec
 2,59–3,28) i tick (pod obciążeniem równoległym) niezaliczone jak w bazie. Wydzielenie `assignPortService`
 w dyspozytorze bez zmiany zachowania: `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` identyczna z bazą liczba
@@ -70,10 +83,11 @@ w liczbę (przy starych obrysach w obu przebiegach).
 
 ## Czego nie ma (ryzyka i dalsze kroki)
 
-- **Hale K-7 stoją puste.** Stanowiska K-7 mają rolę `military`, a w gospodarce nie cumuje nic wojskowego
-  (pomiar: 0 / 112 zajętych przez 60 min gry). Bańka obsłuży K-7 bez zmian (ścieżki hal przetestowane
-  w `portPaths`), gdy patrole albo floty frakcji dostaną postój w porcie domowym — zadanie gospodarki (zgłoszone
-  orkiestratorowi: wariant „patrole i floty wracają do portu domowego”).
+- **Kursy do hal K-7.** Stanowiska K-7 mają rolę `military`, a w gospodarce nie cumuje dziś nic wojskowego
+  (pomiar: 0 / 112 zajętych przez 60 min gry). Decyzja orkiestratora: wariant (a) — patrole i floty frakcji
+  wracają do portu domowego na postój i tankowanie (zlecone E4). Bańka obsłuży ich dokowanie bez zmian (ścieżki
+  hal przetestowane w `portPaths`); do tego czasu hale ożywia zapas floty na padach.
+- Okręty zapasu floty nie przyjmują obrażeń (zatrzymują pociski) — strata zapasu frakcji wejdzie z awansem.
 - Wiązki, rakiety, wybuchy obszarowe i ogień NPC nie ranią statków ruchu (tylko pociski gracza i taran).
 - Statki bez kursu (reda `portParking`, zapas floty `placeFleetStock`) nie są kursami — nie ma ich w bańce.
 - Radar (`radarFeed.collect`), mgła wojny i obsługa K-7 (ramiona SCARA) nie znają statków ruchu.

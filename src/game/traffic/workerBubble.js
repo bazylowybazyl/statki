@@ -15,6 +15,10 @@
  * bańki rdzenia (`buildBubble`: w promieniu fokusu w horyzoncie kroku świata)
  * — bez przeglądu tysięcy aktywnych kursów co klatkę.
  *
+ * Zapas floty (`placeFleetStock`, Z2): okręty frakcji portu bez kursów stoją na padach hal K-7 (stanowiska
+ * wojskowe) — hale żyją, zanim przylecą kursy wojskowe. Rozstawienie liczy się przy każdym kroku świata
+ * (rejestr pamięta przydział — okręt nie skacze między padami), kurs i gracz mają pierwszeństwo do padu.
+ *
  * Stanowiska gracza (`berth-hold`): dyspozytor ich nie przydziela, a kurs,
  * który na takie stanowisko dopiero leci, dostaje inne (`setPlayerBerthHolds`
  * w dyspozytorze); statek, który już wszedł w korytarz albo stoi na polu,
@@ -26,12 +30,26 @@ import {
 } from './materializedFlight.js';
 import { createRingObstaclesForNetwork } from './ringRouter.js';
 import { getCourse, COURSE_STATUS } from './courseRegistry.js';
+import { createParkingRegistry, placeFleetStock } from './portParking.js';
+import { BERTH_ROLE, hullFootprint } from './dockLayout.js';
 import { getNode } from './travelNetwork.js';
 import { settleCourseEvents } from './trafficDirector.js';
 import {
   ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG, COURSE_KIND_SHIFT, courseNumber
 } from './trafficProtocol.js';
 import { convoyOf } from './convoy.js';
+
+/** Przyspieszenie w buforze najwyżej tyle [j./s²] — skok prędkości (przechwyt, zmiana etapu) to nie rozpęd. */
+const ACCEL_LIMIT = 200_000;
+
+function clampAccel(a) {
+  return a > ACCEL_LIMIT ? ACCEL_LIMIT : a < -ACCEL_LIMIT ? -ACCEL_LIMIT : a;
+}
+
+function wrapAngle(a) {
+  const TAU = Math.PI * 2;
+  return a - TAU * Math.round(a / TAU);
+}
 
 /** Porty, przy których bańka działa (fala 3: jeden port). */
 export const BUBBLE_PORTS = Object.freeze(['earth']);
@@ -66,6 +84,10 @@ export function createWorldBubble(world, options = {}) {
     active: false,
     data: new Float64Array(ACTOR_STRIDE * 64),
     count: 0,
+    /** `dt` ostatniego kroku bańki — ruch faktyczny encji w buforze. */
+    lastDt: 0,
+    /** Zapas floty na padach K-7: rejestry postoju (port → rejestr), okręty na padach, stałe id ujemne. */
+    stock: { regs: new Map(), list: [], ids: new Map(), seq: 0 },
     stats: { ms: 0, maxMs: 0, actors: 0, events: 0, candidates: 0 }
   };
   // `updateBubble` czyta kursy jak z mapy: po id (encje) i przegląd kandydatów.
@@ -117,6 +139,7 @@ export function stepWorldBubble(state, focus, dt, now = null) {
     state.active = false;
   } else {
     state.active = true;
+    state.lastDt = dt;
     const out = updateBubble(state.bubble, world.network, world.registry, state.view, focus, focus.r, dt);
     if (out.length) {
       settleCourseEvents(world.director, out);
@@ -145,6 +168,41 @@ export function releaseWorldBubble(state) {
  */
 export function releaseWorldBubbleCourse(state, course) {
   return releaseBubbleCourse(state?.bubble, state?.world?.network, course);
+}
+
+/**
+ * Zapas okrętów frakcji portu (`world.shipyards.fleets` właściciela portu) rozstawiony na padach hal K-7
+ * (`placeFleetStock`, rejestr redy wojskowej portu). Woła rdzeń po każdym kroku świata. Okręty na redzie
+ * (nadmiar) nie wchodzą — pady to hala, reda czeka na rysowanie postoju bez kursu.
+ */
+export function refreshFleetStock(state) {
+  const world = state.world;
+  const stock = state.stock;
+  stock.list.length = 0;
+  const fleets = world.shipyards?.fleets;
+  if (!fleets) return 0;
+  for (let i = 0; i < state.ports.length; i++) {
+    const portId = state.ports[i];
+    const layout = world.docks.get(portId);
+    const plan = world.parking?.get(portId);
+    const owner = world.stations.find((s) => s.id === portId)?.factionId || null;
+    if (!layout || !plan || !owner) continue;
+    let reg = stock.regs.get(portId);
+    if (!reg) stock.regs.set(portId, reg = createParkingRegistry(plan, { role: BERTH_ROLE.MILITARY }));
+    const own = fleets.get(owner);
+    const result = placeFleetStock(layout, reg, own ? { [owner]: own } : {});
+    for (const [shipId, spot] of result.placements) {
+      if (spot.kind !== 'berth') continue;
+      let id = stock.ids.get(shipId);
+      if (id === undefined) stock.ids.set(shipId, id = -(++stock.seq));
+      const size = hullFootprint(spot.hullId);
+      stock.list.push({
+        id, hullId: spot.hullId, factionId: spot.factionId, x: spot.x, y: spot.y, angle: spot.angle,
+        berthId: spot.berthId, length: size.length, width: size.width
+      });
+    }
+  }
+  return stock.list.length;
 }
 
 /** Encja bańki przy kursie `courseId` albo null. */
@@ -177,19 +235,44 @@ export function courseCanLeaveBerth(state, course) {
  * (te same tabele co bufor kursów). Zwraca `{ data, count }` (data = kopia
  * do przekazania).
  */
-export function packWorldBubble(state, index, kindIndex = null) {
+export function packWorldBubble(state, index, kindIndex = null, focus = null) {
   const list = state.bubble.list;
   const n = list.length;
+  const stock = state.active && focus ? state.stock.list : null;
+  const total = n + (stock ? stock.length : 0);
   let data = state.data;
-  if (n * ACTOR_STRIDE > data.length) {
+  if (total * ACTOR_STRIDE > data.length) {
     let size = data.length;
-    while (size < n * ACTOR_STRIDE) size *= 2;
+    while (size < total * ACTOR_STRIDE) size *= 2;
     data = state.data = new Float64Array(size);
   }
   const director = state.world.director;
+  const dt = state.lastDt;
   for (let k = 0; k < n; k++) {
     const a = list[k];
     const o = k * ACTOR_STRIDE;
+    // Ruch faktyczny kroku (poza z początku `updateBubble` → bieżąca): średnia prędkość kroku `u`, przyspieszenie
+    // z dwóch kroków, prędkość na końcu kroku ≈ u + a·dt/2. Prędkość wzdłuż dziobu nie widzi rozpychania,
+    // dociągania przechwytu ani zmian kierunku — gra skakałaby przy każdym nowym buforze.
+    let vx = a.vx;
+    let vy = a.vy;
+    let w = a.angVel;
+    let ax = 0;
+    let ay = 0;
+    if (dt > 0) {
+      const ux = (a.x - a.prevX) / dt;
+      const uy = (a.y - a.prevY) / dt;
+      if (a.effSeen) {
+        ax = clampAccel((ux - a.effVx) / dt);
+        ay = clampAccel((uy - a.effVy) / dt);
+      }
+      a.effVx = ux;
+      a.effVy = uy;
+      a.effSeen = true;
+      vx = ux + ax * dt * 0.5;
+      vy = uy + ay * dt * 0.5;
+      w = wrapAngle(a.angle - a.prevAngle) / dt;
+    }
     let num = courseNumber(a.courseId);
     if (!Number.isFinite(num)) num = -1;
     else index.courseId(num, a.courseId);
@@ -217,9 +300,9 @@ export function packWorldBubble(state, index, kindIndex = null) {
     data[o + ACTOR_FIELD.X] = a.x;
     data[o + ACTOR_FIELD.Y] = a.y;
     data[o + ACTOR_FIELD.ANGLE] = a.angle;
-    data[o + ACTOR_FIELD.VX] = a.vx;
-    data[o + ACTOR_FIELD.VY] = a.vy;
-    data[o + ACTOR_FIELD.ANG_VEL] = a.angVel;
+    data[o + ACTOR_FIELD.VX] = vx;
+    data[o + ACTOR_FIELD.VY] = vy;
+    data[o + ACTOR_FIELD.ANG_VEL] = w;
     data[o + ACTOR_FIELD.HULL] = index.hull(a.unitClass);
     data[o + ACTOR_FIELD.FACTION] = index.faction(a.factionId);
     data[o + ACTOR_FIELD.PHASE] = PHASE_INDEX.get(a.phase) ?? 0;
@@ -232,8 +315,46 @@ export function packWorldBubble(state, index, kindIndex = null) {
     data[o + ACTOR_FIELD.BERTH] = berth ? berth.index : -1;
     data[o + ACTOR_FIELD.DOCK_TIME] = a.dockTime;
     data[o + ACTOR_FIELD.SPEED] = a.speed;
+    data[o + ACTOR_FIELD.AX] = ax;
+    data[o + ACTOR_FIELD.AY] = ay;
   }
-  state.count = n;
+  // Zapas floty na padach K-7 w promieniu fokusu: stoją (faza `docked`, prędkość 0), flaga STOCK, id ujemny.
+  let m = n;
+  if (stock) {
+    const r2 = focus.r * focus.r;
+    const docked = PHASE_INDEX.get(ACTOR_PHASE.DOCKED) ?? 2;
+    for (let k = 0; k < stock.length; k++) {
+      const s = stock[k];
+      const dx = s.x - focus.x;
+      const dy = s.y - focus.y;
+      if (dx * dx + dy * dy > r2) continue;
+      const o = m * ACTOR_STRIDE;
+      const berth = index.berthById(s.berthId);
+      data[o + ACTOR_FIELD.ID] = s.id;
+      data[o + ACTOR_FIELD.X] = s.x;
+      data[o + ACTOR_FIELD.Y] = s.y;
+      data[o + ACTOR_FIELD.ANGLE] = s.angle;
+      data[o + ACTOR_FIELD.VX] = 0;
+      data[o + ACTOR_FIELD.VY] = 0;
+      data[o + ACTOR_FIELD.ANG_VEL] = 0;
+      data[o + ACTOR_FIELD.HULL] = index.hull(s.hullId);
+      data[o + ACTOR_FIELD.FACTION] = index.faction(s.factionId);
+      data[o + ACTOR_FIELD.PHASE] = docked;
+      data[o + ACTOR_FIELD.FLAGS] = ACTOR_FLAG.STOCK;
+      data[o + ACTOR_FIELD.THROTTLE] = 0;
+      data[o + ACTOR_FIELD.LENGTH] = s.length;
+      data[o + ACTOR_FIELD.WIDTH] = s.width;
+      data[o + ACTOR_FIELD.PORT] = berth ? berth.port : -1;
+      data[o + ACTOR_FIELD.BERTH] = berth ? berth.index : -1;
+      data[o + ACTOR_FIELD.DOCK_TIME] = 0;
+      data[o + ACTOR_FIELD.SPEED] = 0;
+      data[o + ACTOR_FIELD.AX] = 0;
+      data[o + ACTOR_FIELD.AY] = 0;
+      m++;
+    }
+  }
+  state.count = m;
   state.stats.actors = n;
-  return { data: data.slice(0, n * ACTOR_STRIDE), count: n };
+  state.stats.stock = m - n;
+  return { data: data.slice(0, m * ACTOR_STRIDE), count: m };
 }

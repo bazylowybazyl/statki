@@ -65,7 +65,8 @@ test('statki ruchu przy Ziemi: encje po każdym advance, fazy i stanowiska z tab
   const phases = new Set(actors.map((a) => a.phase));
   assert.ok(phases.has('fly'));
   for (const a of actors) {
-    assert.ok(a.id >= 0 && Number.isFinite(a.x) && a.length >= 40 && a.width >= 20);
+    // Kurs: numer ≥ 0; zapas floty na padach K-7 (STOCK): id ujemny.
+    assert.ok((a.flags & ACTOR_FLAG.STOCK ? a.id < 0 : a.id >= 0) && Number.isFinite(a.x) && a.length >= 40 && a.width >= 20);
     if (a.berth >= 0) {
       const stationId = got.ready.stations[a.port]?.id;
       assert.ok(got.ready.berths[stationId]?.[a.berth], 'stanowisko z tabeli `berths`');
@@ -120,7 +121,7 @@ test('berth-hold: stanowisko gracza poza pulą, kurs w podejściu dostaje inne, 
 });
 
 test('destroyed z gry: kurs encji zniszczony, wrak z ładunkiem w ticku, encja znika w następnym advance', () => {
-  const actors = decode(got.actors);
+  const actors = decode(got.actors).filter((a) => !(a.flags & ACTOR_FLAG.STOCK));
   const target = actors.find((a) => {
     const c = getCourse(world.registry, core.world.registry.byId && [...world.registry.byId.keys()].find((id) => courseNumber(id) === a.id));
     return c && c.payload?.orderId;
@@ -145,7 +146,7 @@ test('destroyed z gry: kurs encji zniszczony, wrak z ładunkiem w ticku, encja z
 test('attach z gry przejmuje kurs bańki: encja wraca do rekordu z postępem i nie wraca do bańki', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
-  const actors = decode(got.actors);
+  const actors = decode(got.actors).filter((a) => !(a.flags & ACTOR_FLAG.STOCK));
   const pick = actors.find((a) => a.phase === 'fly') || actors[0];
   assert.ok(pick);
   const courseId = [...world.registry.byId.keys()].find((id) => courseNumber(id) === pick.id);
@@ -157,6 +158,30 @@ test('attach z gry przejmuje kurs bańki: encja wraca do rekordu z postępem i n
   assert.ok(!decode(got.actors).some((a) => a.id === pick.id), 'kurs gry nie wraca do bańki workera');
   core.handle({ type: TRAFFIC_MSG.DETACH, course: pick.id, progress: 0.5 });
   assert.equal(course.actorId, null);
+});
+
+test('zapas floty Ziemi stoi na padach hal K-7: encje STOCK z id ujemnym, bez kursu, na stanowiskach K-7', () => {
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
+  for (let i = 0; i < 12; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 5 });
+  const actors = decode(got.actors);
+  const stock = actors.filter((a) => a.flags & ACTOR_FLAG.STOCK);
+  const fleet = world.shipyards.fleets.get(world.stations.find((s) => s.id === 'earth').factionId) || {};
+  const owned = Object.values(fleet).reduce((sum, n) => sum + n, 0);
+  assert.ok(owned > 0, 'Terra Nova ma zapas okrętów');
+  assert.ok(stock.length > 0, `okręty zapasu w bańce (${stock.length} z ${owned})`);
+  const ids = new Set();
+  for (const a of stock) {
+    assert.ok(a.id < 0, 'id ujemny — nie numer kursu');
+    assert.ok(!ids.has(a.id));
+    ids.add(a.id);
+    assert.equal(a.phase, 'docked');
+    const berthId = got.ready.berths.earth[a.berth];
+    assert.ok(String(berthId).includes(':K7-'), `pad hali K-7 (${berthId})`);
+  }
+  // Stały pad: ten sam okręt po kolejnym kroku świata stoi w tym samym miejscu.
+  const before = new Map(stock.map((a) => [a.id, a.berth]));
+  core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 5 });
+  for (const a of decode(got.actors)) if (before.has(a.id)) assert.equal(a.berth, before.get(a.id));
 });
 
 test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rejestrze ringu', () => {

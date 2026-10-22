@@ -5,13 +5,15 @@
  * po każdym `advance` bufor póz (`ACTOR_FIELD`, `TrafficBridge.actors`) i robi
  * z nim to, co jest rozgrywką (zasada 1 — trafienia i zderzenia w 2D, w grze):
  *   - pozy w CZASIE GRY: bufor jest ważny w chwili `actors.time` (klatkę za
- *     grą), więc pozycję ekstrapolujemy prędkością do kroku fizyki i do klatki
- *     renderu;
+ *     grą), więc pozycję ekstrapolujemy do kroku fizyki i do klatki renderu —
+ *     drugim rzędem (ruch faktyczny kroku + przyspieszenie z workera): nowy
+ *     bufor zmienia pozę o ułamek jednostki, przy 240 Hz obraz nie drga;
  *   - trafienia pociskami (odcinek w ruchu względnym kontra obrys kadłuba —
  *     prostokąt `LENGTH` × `WIDTH`) i taran statku gracza;
  *   - punkty życia (w grze — świat ruchu ich nie zna); zniszczenie idzie do
  *     workera (`destroyCourse` → kurs zniszczony, wrak z ładunkiem), encja
- *     znika z obrazu od razu;
+ *     znika z obrazu od razu; okręty zapasu floty na padach K-7 (`STOCK`, bez
+ *     kursu) zatrzymują pociski i taran, ale obrażeń jeszcze nie przyjmują;
  *   - stanowiska: które zajmuje ruch (rejestr lampek i postoju gracza) i które
  *     zajmuje gracz (`berth-hold` do workera).
  *
@@ -54,7 +56,7 @@ const PHASE_AT_BERTH = new Set(['capture', 'docked', 'undock']);
 function makeActor(id) {
   return {
     id, alive: false, seen: 0,
-    unitClass: '', hullId: '', x: 0, y: 0, angle: 0, vx: 0, vy: 0, angVel: 0,
+    unitClass: '', hullId: '', x: 0, y: 0, angle: 0, vx: 0, vy: 0, angVel: 0, ax: 0, ay: 0,
     length: 0, width: 0, phase: 'fly', flags: 0, throttle: 0, speed: 0, dockTime: 0,
     berthId: null, port: -1, berth: -1, time: 0,
     // poza w czasie gry (krok fizyki / klatka renderu)
@@ -115,7 +117,8 @@ export function syncTrafficBubble(tb, gameTime = tb.time) {
   for (let k = 0; k < actors.count; k++) {
     const o = k * ACTOR_STRIDE;
     const id = data[o + F.ID];
-    if (!(id >= 0) || tb.dead.has(id)) continue;
+    // Kurs: numer ≥ 0; zapas floty (STOCK): id ujemny — oba stałe przez życie encji.
+    if (!Number.isFinite(id) || tb.dead.has(id)) continue;
     let a = tb.byId.get(id);
     if (!a) {
       a = makeActor(id);
@@ -132,6 +135,8 @@ export function syncTrafficBubble(tb, gameTime = tb.time) {
     a.vx = data[o + F.VX];
     a.vy = data[o + F.VY];
     a.angVel = data[o + F.ANG_VEL];
+    a.ax = data[o + F.AX];
+    a.ay = data[o + F.AY];
     a.length = data[o + F.LENGTH];
     a.width = data[o + F.WIDTH];
     a.phase = ACTOR_PHASES[data[o + F.PHASE]] || 'fly';
@@ -174,18 +179,31 @@ export function setTrafficBubbleTime(tb, time) {
   const list = tb.list;
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
-    const dt = Math.max(0, Math.min(0.5, time - a.time));
-    a.cx = a.x + a.vx * dt;
-    a.cy = a.y + a.vy * dt;
+    const dt = Math.max(0, Math.min(EXTRAPOLATE_MAX, time - a.time));
+    const k = accelTerm(dt);
+    a.cx = a.x + a.vx * dt + a.ax * k;
+    a.cy = a.y + a.vy * dt + a.ay * k;
     a.ca = a.angle + a.angVel * dt;
   }
 }
 
+/** Ekstrapolacja najwyżej tyle [s] — dłuższa przerwa bufora (zatkany worker) nie wynosi statku w pustkę. */
+const EXTRAPOLATE_MAX = 0.5;
+/** Przyspieszenie działa najwyżej tyle [s] — potem prędkość stała (rozpęd kończy się na vmax). */
+const ACCEL_HORIZON = 0.05;
+
+/** Człon przyspieszenia ekstrapolacji: ½·τ² do `ACCEL_HORIZON`, dalej liniowo (ciągły z pochodną). */
+function accelTerm(tau) {
+  if (tau <= ACCEL_HORIZON) return 0.5 * tau * tau;
+  return ACCEL_HORIZON * (tau - 0.5 * ACCEL_HORIZON);
+}
+
 /** Poza encji w czasie gry `time` (bez zapisu) — render z `alpha`. */
 export function trafficActorPoseAt(a, time, out) {
-  const dt = Math.max(0, Math.min(0.5, time - a.time));
-  out.x = a.x + a.vx * dt;
-  out.y = a.y + a.vy * dt;
+  const dt = Math.max(0, Math.min(EXTRAPOLATE_MAX, time - a.time));
+  const k = accelTerm(dt);
+  out.x = a.x + a.vx * dt + a.ax * k;
+  out.y = a.y + a.vy * dt + a.ay * k;
   out.angle = a.angle + a.angVel * dt;
   return out;
 }
@@ -279,6 +297,12 @@ export function trafficBulletHit(tb, x, y, vx, vy, dt, pad, fromX, fromY) {
  */
 export function damageTrafficActor(tb, a, amount, x, y, cause = 'player') {
   if (!a?.alive || !(amount > 0)) return false;
+  // Zapas floty bez kursu: nie ma czego zgłosić workerowi (wrak zapasu, strata floty — z awansem do NPC).
+  if (a.flags & ACTOR_FLAG.STOCK) {
+    a.hitAt = tb.time;
+    tb.stats.hits++;
+    return false;
+  }
   a.hp -= amount;
   a.hitAt = tb.time;
   tb.stats.hits++;

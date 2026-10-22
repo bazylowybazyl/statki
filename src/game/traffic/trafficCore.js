@@ -45,7 +45,7 @@ import { recordPlayerMining, setPlayerBerthHolds } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
-  releaseWorldBubbleCourse
+  releaseWorldBubbleCourse, refreshFleetStock
 } from './workerBubble.js';
 
 /** Ile ostatnich wraków dyspozytora trzymać po wysłaniu do gry. */
@@ -178,6 +178,7 @@ export function createTrafficCore(post, options = {}) {
     core.berthIndex = new WeakMap();
     indexMarkets();
     core.bubble = message.bubble === false ? null : createWorldBubble(world);
+    if (core.bubble) refreshFleetStock(core.bubble);
     if (message.focus) setFocus(message.focus);
     const buildMs = now() - t0;
 
@@ -219,6 +220,8 @@ export function createTrafficCore(post, options = {}) {
       core.stats.maxStepMs = Math.max(core.stats.maxStepMs, core.stats.stepMs);
       publishTick(steps, ms);
       publishBeltHoles();
+      // Zapas floty na padach K-7 (okręty bez kursów) — po kroku świata (stocznie, wojna zmieniają liczby).
+      if (core.bubble) refreshFleetStock(core.bubble);
     }
     stepBubble(dt);
   }
@@ -245,7 +248,7 @@ export function createTrafficCore(post, options = {}) {
 
   function publishActors() {
     const state = core.bubble;
-    const packed = packWorldBubble(state, actorIndex, core.kindIndex);
+    const packed = packWorldBubble(state, actorIndex, core.kindIndex, core.focus);
     core.stats.actors = packed.count;
     // Pusta bańka idzie raz (gra gasi encje), potem cisza do następnej.
     core.actorsSent = packed.count;
