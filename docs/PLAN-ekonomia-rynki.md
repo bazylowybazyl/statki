@@ -310,3 +310,10 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - E11: GK-5b, siarka, jedna mgła;
   - E2: E2b;
   - E6: bańka — najpierw prom przy Księżycu.
+- 2026-10-22 do `main` (facd99cc) weszły:
+  - E9: bezpieczniki hipercruise — przebicia płyty Ziemi spadły z 17–42% do 0%;
+  - E11 GK-5b: olbrzymy jako przeszkody gazu, wybuchy i pociski jako źródła gazu, jedna mgła w pasie, siarka −30%, gaz rzednie w wyrwach.
+  - Testy: `npm test` 1693 zielone, `node --test` bez nowych porażek, build przechodzi, start w workerze 0 pipeline'ów sync.
+- 2026-10-22 E6 (sesja uruchomiona przez użytkownika):
+  - krok 0: prom przy Księżycu naprawiony (`e71377f5`); poprawka kursu wygasa na ostatnich j., 312 podejść, 0 wymuszeń;
+  - krok 1, zatwierdzony przez orkiestratora: lot bańki liczy worker ruchu, gra dostaje bufor aktorów i sama liczy trafienia, taran i rejestr stanowisk (`destroyed`, `berth-hold`), proxy rysuje worker renderu; tylko przy Ziemi.
