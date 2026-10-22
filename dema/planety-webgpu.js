@@ -4,8 +4,9 @@
 // (Python, offline), opis: docs/PLANETY-GENERATOR.md. Demo pokazuje WYPIECZONE mapy tak, jak widzi je gra, i obok
 // jako płaskie warstwy:
 //  • GLOB — kula z materiałami GRY (bez kopii shaderów): powierzchnia planet i chmury (planet3d.assets.tsl.js — dzień,
-//    noc z miastami, woda / połysk, mapa normalnych, mgiełka, pas zachodu), wielka kopalnia ringu jako bryła (łata
-//    earthPit3D.js na kuli z wycięciem, uPitMode 1 / 2), żywa atmosfera Jowisza i Saturna (gasGiantAtmosphere.js —
+//    noc z miastami, woda / połysk, mapa normalnych, mgiełka, pas zachodu), wielki GRYZ Ziemi jako bryła (łata
+//    earthBite3D.js na kuli z wycięciem, uPitMode 1 / 2; rozmiar `?gryz=0.30|0.46`, mapy wypieku
+//    `?mapyGryz=.tmp/planety-gryz/030`), żywa atmosfera Jowisza i Saturna (gasGiantAtmosphere.js —
 //    Saturn z sześciokątem i wirami polarnymi: saturnAtmosphere.js), pasy, wiry,
 //    GRS), księżyce (moonSurface.tsl.js — PBR, mapa nocy zapalana zmrokiem); poświata limbu planet przy ringu =
 //    dysk z modelu atmosfery gry zwrócony do kamery, planet tła i księżyców — powłoka jak w grze. Post jak w grze:
@@ -13,7 +14,7 @@
 //  • MAPA — warstwy wypieku w układzie równoodległym (kolumna 0 = 180° W, wiersz 0 = biegun N): dzień, noc
 //    (wzmocnienie — światła są ciemne), noc na dniu, woda / połysk, normalne (R = wschód, G = północ), chmury.
 //  • NOWE / STARE — A/B z dawnymi mapami gry (jak `?planety=stare`: bez dziury, bez nocy Marsa / Merkurego / Wenus).
-//  • Miejsca — skok kamery do miejsc z generatora (dziura na Saharze, Hellas, Caloris, Ishtar, GRS, stocznia na
+//  • Miejsca — skok kamery do miejsc z generatora (wielki gryz w Afryce, Hellas, Caloris, Ishtar, GRS, stocznia na
 //    Lunie, odkrywki Io, cięcia Europy…; współrzędne księżyców z `<ciało>-miejsca.json` podglądu ksiezyce.py).
 // Własny WebGPURenderer (jak niebo-webgpu.js): demo nie potrzebuje passów Core3D, a materiały planet tła nie czytają
 // maski słońca (uSunShadowRecv = 0 — maska zastępcza z sunShadowMask.js, pełne słońce).
@@ -27,8 +28,9 @@ import {
   createJupiterSurfaceMaterial, createSaturnSurfaceMaterial, createPlanetAtmosphereMaterial, createPlanetCloudMaterial, createPlanetSurfaceMaterial,
   createRingAtmosphereMaterial
 } from '../src/3d/planet3d.assets.tsl.js';
-import { createEarthPitMesh, earthPitUniforms } from '../src/3d/earthPit3D.js';
-import { EARTH_PIT } from '../src/data/earthPit.js';
+import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector } from '../src/3d/earthBite3D.js';
+import { earthBiteFrame, earthBiteRimAngle } from '../src/3d/earthBiteShape.js';
+import { EARTH_BITE } from '../src/data/earthBite.js';
 import { JUPITER_ATM_TUNE, JUPITER_VORTICES, JupiterAtmosphere } from '../src/3d/jupiterAtmosphere.js';
 import { SATURN_ATM_TUNE, SaturnAtmosphere } from '../src/3d/saturnAtmosphere.js';
 import { SATURN_ATMOSPHERE } from '../src/data/saturnAtmosphere.js';
@@ -47,6 +49,18 @@ function showError(text) { errEl.style.display = 'block'; errEl.textContent += `
 addEventListener('error', (e) => showError(`JS: ${e.message} @ ${e.filename}:${e.lineno}`));
 addEventListener('unhandledrejection', (e) => showError(`Promise: ${e.reason?.stack || e.reason}`));
 if (params.get('test') === '1') document.body.classList.add('test');
+
+// Wielki gryz Ziemi (A/B rozmiaru): promień kuli gryzu w R i mapy z wypieku generatora dla tego rozmiaru
+// (`scripts/planety/ziemia.py --szer 8192 --wyj .tmp/planety-gryz/030 --gryz 0.30`); bez `mapyGryz` — mapy gry.
+const BITE_B = Number(params.get('gryz')) || EARTH_BITE.radiusR;
+const BITE_MAP_DIR = params.get('mapyGryz');
+const BITE_MAPS = BITE_MAP_DIR ? {
+  day: `${BITE_MAP_DIR}/earth_hf_color.jpg`, night: `${BITE_MAP_DIR}/earth_hf_night.jpg`, spec: `${BITE_MAP_DIR}/earth_hf_water.jpg`,
+  normal: `${BITE_MAP_DIR}/earth_hf_normal.jpg`, clouds: `${BITE_MAP_DIR}/earth_hf_clouds.jpg`
+} : null;
+const BITE_FRAME = earthBiteFrame(EARTH_BITE);
+const BITE_C = new THREE.Vector3(...BITE_FRAME.C);
+const BITE_E = new THREE.Vector3(...BITE_FRAME.E);
 
 // ── Dane: ciała, dawne mapy, miejsca ─────────────────────────────────────────────
 // Dawne mapy gry (A/B). Planety bez wpisu w dawnym PLANET_MAPS brały `<nazwa>_color.jpg` (planet3d.assets.js).
@@ -79,14 +93,15 @@ const MOON_KINDS = { stocznia: 'stocznia', ladowisko: 'lądowisko', depot: 'depo
   kopalnia: 'kopalnia', hub: 'hub pola cięć', baza: 'baza Unii Pasa' };
 
 const BODIES = [
-  { id: 'earth', name: 'Ziemia', kind: 'planet', ring: true, script: 'ziemia.py + dziura.py',
+  { id: 'earth', name: 'Ziemia', kind: 'planet', ring: true, script: 'ziemia.py + gryz.py',
     src: 'NOAA ETOPO 2022 (60″), detal z dawnych map gry',
     info: 'Ziemia „zajechana”: oceany wypompowane na ring, szczątkowe morza w najgłębszych basenach (~19% powierzchni), ' +
       'odsłonięte dno — szelfy, skarpy stoków, grzbiety śródoceaniczne jako łańcuchy gór, osady (biały muł, czerwony ił), ' +
       'solniska. Ląd martwy, przemysł w miejscach dawnych metropolii, odkrywki, drogi; nocą huty i posterunki robotów. ' +
-      'Atmosfera zapylona, burze piaskowe. Na Saharze WIELKA KOPALNIA RINGU: ~1 700 km, 13 tarasów, dno 38 km, ' +
-      'żarzący się szyb, trzy tory wyrzutni masy — bryła 3D z przewyższeniem ×3.',
-    sites: [[EARTH_PIT.lat, EARTH_PIT.lon, 'wielka kopalnia ringu'], [28, 84, 'Himalaje — odkrywki'],
+      'Atmosfera zapylona, burze piaskowe. W środku Afryki WIELKI GRYZ — materiał na ring: kula o promieniu ' +
+      `${BITE_B.toFixed(2)} R ze środkiem nad jeziorem Czad, głębokość ${Math.round(BITE_B * 6371)} km, ` +
+      'odsłonięty płaszcz (~2 500 K) jako źródło energii, ślady zębów na brzegu, pole siłowe na ścianach.',
+    sites: [[EARTH_BITE.lat, EARTH_BITE.lon, 'wielki gryz'], [28, 84, 'Himalaje — odkrywki'],
       [48, 10, 'dawna Europa — przemysł'], [40, -95, 'dawne USA — przemysł'], [0, -28, 'grzbiet śródatlantycki'],
       [12, 145, 'Pacyfik — szczątkowe morze'], [-30, -160, 'Pacyfik płd. — dawne dno']] },
   { id: 'mars', name: 'Mars', kind: 'planet', ring: true, script: 'mars.py',
@@ -351,7 +366,7 @@ async function buildBody(id, old) {
   const layers = {};   // warstwy dla widoku MAPA: { day, night, spec, normal, clouds } → tekstura
   const body = { id, old, group, layers, mesh: null, clouds: null, atm: null, atmKind: null, jup: null, pit: null, uniforms: null, cloudUniforms: null };
   if (b.kind === 'planet') {
-    const maps = old ? OLD_PLANET_MAPS[id] : PLANET_MAPS[id];
+    const maps = old ? OLD_PLANET_MAPS[id] : (id === 'earth' && BITE_MAPS ? { ...PLANET_MAPS.earth, ...BITE_MAPS } : PLANET_MAPS[id]);
     const tune = planetSurfaceTune(id, old ? null : maps);
     const [day, night, spec, normal, clouds] = await Promise.all([
       loadTex(maps.day, true), maps.night ? loadTex(maps.night, true) : null, maps.spec ? loadTex(maps.spec, false) : null,
@@ -365,7 +380,8 @@ async function buildBody(id, old) {
       uHazeStrength: { value: tune.haze }, uHazeColor: { value: new THREE.Vector3(...tune.hazeColor) },
       uHazeBeta: { value: new THREE.Vector3(...tune.hazeBeta) },
       uRingShadowStrength: { value: 0 }, uRingShadowRadius: { value: 0 }, uRingShadowReach: { value: 1 },
-      uRingShadowCenter: { value: new THREE.Vector2() }, uSunShadowRecv: { value: 0 }, uPitMode: { value: 0 }
+      uRingShadowCenter: { value: new THREE.Vector2() }, uSunShadowRecv: { value: 0 }, uPitMode: { value: 0 },
+      uBite: { value: earthBiteVector(BITE_B) }
     };
     if (id === 'jupiter') {
       // JupiterAtmosphere czyta planet.uniforms i promień grupy (tempo przy zbliżeniu — tu bez kamery gry: 1).
@@ -379,15 +395,15 @@ async function buildBody(id, old) {
     group.add(body.mesh);
     if (!old && maps.pit) {
       U.uPitMode.value = 1;
-      body.pitUniforms = earthPitUniforms(U);
-      body.pit = createEarthPitMesh(createPlanetSurfaceMaterial(body.pitUniforms));
+      body.pit = createEarthBiteMesh(createPlanetSurfaceMaterial(earthBiteUniforms(U, 2)), BITE_B);
       body.mesh.add(body.pit);
     }
     if (clouds) {
       body.cloudUniforms = { cloudTexture: { value: clouds }, sunPosition: U.sunPosition, uOpacity: { value: maps.cloudOpacity ?? 0.62 },
         uHazeStrength: U.uHazeStrength, uHazeColor: U.uHazeColor, uHazeBeta: U.uHazeBeta,
         uRingShadowStrength: U.uRingShadowStrength, uRingShadowRadius: U.uRingShadowRadius, uRingShadowReach: U.uRingShadowReach,
-        uRingShadowCenter: U.uRingShadowCenter, uSunShadowRecv: U.uSunShadowRecv };
+        uRingShadowCenter: U.uRingShadowCenter, uSunShadowRecv: U.uSunShadowRecv,
+        uPitMode: { value: body.pit ? 1 : 0 }, uBite: { value: earthBiteVector(BITE_B) } };
       body.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, 256, 128), createPlanetCloudMaterial(body.cloudUniforms));
       group.add(body.clouds);
     }
@@ -400,7 +416,8 @@ async function buildBody(id, old) {
       const mat = createRingAtmosphereMaterial({
         uSunDir: { value: new THREE.Vector3(1, 0, 0) }, uRa: { value: ra }, uHs: { value: t.height * 0.22 / R },
         uDayColor: { value: new THREE.Vector3(...t.day) }, uSunsetColor: { value: new THREE.Vector3(...t.sunset) },
-        uGain: { value: new THREE.Vector3(1.02, 0.985, 0.933).multiplyScalar(t.gain) }, uSunShadowRecv: { value: 0 }
+        uGain: { value: new THREE.Vector3(1.02, 0.985, 0.933).multiplyScalar(t.gain) }, uSunShadowRecv: { value: 0 },
+        uPitMode: { value: body.pit ? 1 : 0 }, uBite: { value: earthBiteVector(BITE_B) }, uBiteEast: { value: new THREE.Vector3(1, 0, 0) }
       });
       body.atm = new THREE.Mesh(new THREE.CircleGeometry(ra, 256), mat);
       body.atmKind = 'disc';
@@ -486,6 +503,7 @@ const S = {
   old: params.get('mapy') === 'stare',
   layer: params.get('warstwa') || 'day',
   az: 0.4, el: 0.25, dist: Number(params.get('odl')) || 3.2,
+  look: new THREE.Vector3(), fov: 30,   // cel kamery (środek kuli) i kąt widzenia — wąski z daleka ≈ ortho gry
   target: null,           // { az, el } — przelot kamery do miejsca
   pora: Number(params.get('pora') ?? 35),   // słońce względem kamery [°]: 0 — pełnia, ±90 — terminator, 180 — noc
   sunEl: 8,
@@ -575,7 +593,8 @@ function frame(now) {
   // Kamera po orbicie, słońce względem kamery (pora dnia).
   const ce = Math.cos(S.el);
   camera.position.set(ce * Math.sin(S.az), Math.sin(S.el), ce * Math.cos(S.az)).multiplyScalar(S.dist);
-  camera.lookAt(0, 0, 0);
+  camera.lookAt(S.look);
+  if (camera.fov !== S.fov) camera.fov = S.fov;
   camera.near = Math.max(0.0005, (S.dist - 1.1) * 0.5);
   camera.updateProjectionMatrix();
   const sAz = S.az + S.pora * DEG;
@@ -596,14 +615,28 @@ function frame(now) {
     if (body.pit) {
       body.pit.visible = S.pitOn;
       body.uniforms.uPitMode.value = S.pitOn ? 1 : 0;
+      // środek gryzu w układzie chmur (obracają się szybciej niż grunt) i dysku poświaty (zwrócony do kamery)
+      if (body.cloudUniforms) {
+        body.cloudUniforms.uPitMode.value = S.pitOn ? 1 : 0;
+        _q.setFromAxisAngle(_yAxis, S.spin - S.spin * 1.04);
+        _v.copy(BITE_C).applyQuaternion(_q);
+        body.cloudUniforms.uBite.value.set(_v.x, _v.y, _v.z, BITE_B);
+      }
     }
     if (body.atm) {
       body.atm.visible = S.atmOn;
       if (body.atmKind === 'disc') {
-        body.atm.quaternion.copy(camera.quaternion);
+        body.atm.lookAt(camera.position);   // dysk zwrócony do kamery (także przy celu kamery poza środkiem)
         const d = Math.max(1.0005, S.dist);
         body.atm.scale.setScalar(d / Math.sqrt(d * d - 1));
-        body.atm.material.uniforms.uSunDir.value.copy(_sun).applyQuaternion(_invQ.copy(camera.quaternion).invert());
+        body.atm.material.uniforms.uSunDir.value.copy(_sun).applyQuaternion(_invQ.copy(body.atm.quaternion).invert());
+        const au = body.atm.material.uniforms;
+        if (body.pit && au.uBite) {
+          au.uPitMode.value = S.pitOn ? 1 : 0;
+          _v.copy(BITE_C).applyQuaternion(body.mesh.quaternion).applyQuaternion(_invQ);
+          au.uBite.value.set(_v.x, _v.y, _v.z, BITE_B);
+          au.uBiteEast.value.copy(BITE_E).applyQuaternion(body.mesh.quaternion).applyQuaternion(_invQ);
+        }
       }
     }
     if (body.jup) body.jup.sync(dt * S.jupSpeed, dt);
@@ -796,7 +829,7 @@ function setView(v) { S.view = v; syncUi(); }
   $('m-nowe').onclick = () => selectBody(S.bodyId, false);
   $('m-stare').onclick = () => selectBody(S.bodyId, true);
   const TOGGLES = [
-    ['doba', 'doba', () => { S.target = null; }], ['cloudsOn', 'chmury'], ['atmOn', 'poświata'], ['pitOn', 'dziura 3D'],
+    ['doba', 'doba', () => { S.target = null; }], ['cloudsOn', 'chmury'], ['atmOn', 'poświata'], ['pitOn', 'gryz 3D'],
     ['labels', 'podpisy'], ['bloom', 'bloom']
   ];
   for (const [key, label, after] of TOGGLES) {
@@ -832,6 +865,15 @@ function setView(v) { S.view = v; syncUi(); }
       if (S.layer === 'comp') S.mapGain.comp = g; else S.mapGain.night = g;
     }, () => `×${(S.layer === 'comp' ? S.mapGain.comp : S.mapGain.night).toFixed(1)}`)
   );
+  for (const btn of $('bite-variants').querySelectorAll('button')) {
+    btn.classList.toggle('on', Math.abs(Number(btn.dataset.b) - BITE_B) < 1e-3);
+    btn.onclick = () => {
+      const q = new URLSearchParams(location.search);
+      q.set('gryz', btn.dataset.b);
+      q.set('mapyGryz', `.tmp/planety-gryz/0${Math.round(Number(btn.dataset.b) * 100)}`);
+      location.search = q.toString();
+    };
+  }
   $('b-dzien').onclick = () => { S.pora = 35; syncUi(); };
   $('b-term').onclick = () => { S.pora = 88; syncUi(); };
   $('b-noc').onclick = () => { S.pora = 180; syncUi(); };
@@ -884,6 +926,8 @@ window.__planety = {
   view: setView,
   site: goToSite,
   ready: () => !!S.current && S.loading === 0,
+  // promień kątowy otworu gryzu (rad, średnio po obwodzie) — kadry z bliska w scripts/webgpu/gryz-demo.mjs
+  biteScale: () => { let s = 0; for (let i = 0; i < 64; i++) s += earthBiteRimAngle(i / 64 * Math.PI * 2, EARTH_BITE, BITE_B); return s / 64; },
   tune: { jupiter: JUPITER_ATM_TUNE, saturn: SATURN_ATM_TUNE }
 };
 

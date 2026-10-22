@@ -20,7 +20,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np  # noqa: E402
 from wspolne import *  # noqa: E402,F401,F403
-import dziura  # noqa: E402
+import gryz  # noqa: E402
 
 R_ZIEMI_KM = 6371.0
 
@@ -118,7 +118,7 @@ def szum2(x, y, skala, ziarno):
 
 
 # ── Generator ──────────────────────────────────────────────────────────────────
-def generuj(W, H, wyj, podglady, do_gry=False):
+def generuj(W, H, wyj, podglady, do_gry=False, promien_gryzu=None):
     t0 = time.time()
     rng = np.random.default_rng(P['ziarno'])
     log = lambda m: print(f'[{time.time() - t0:6.1f} s] {m}', flush=True)  # noqa: E731
@@ -411,10 +411,10 @@ def generuj(W, H, wyj, podglady, do_gry=False):
     noc += (NOC['sod'] * 0.7 + NOC['zimna'] * 0.3)[None, None, :] * (pkt * 0.5)[..., None]
     del los
 
-    # ── wielka kopalnia ringu ─────────────────────────────────────────────────────
-    pit = dziura.parametry()
-    kol, noc, wys_pit, pit_maska = dziura.wypiecz(pit, kol, noc, W, H, R_ZIEMI_KM)
-    log('dziura')
+    # ── wielki gryz (materiał na ring): brzeg, hałdy, huty, tory; wnętrze rysuje bryła ─────────
+    bite = gryz.parametry(promien_gryzu)
+    kol, noc, pit_maska, chm_gryz = gryz.wypiecz(bite, kol, noc, W, H, R_ZIEMI_KM)
+    log(f'gryz {bite["radiusR"]:.2f} R')
 
     # ── chmury: rzadkie układy, pył i burze piaskowe ──────────────────────────────
     ch_old = wczytaj_szary(os.path.join(KATALOG_REPO, 'public/assets/planety/solar/earth/earth_clouds.jpg'), W, H)
@@ -448,13 +448,13 @@ def generuj(W, H, wyj, podglady, do_gry=False):
         burze[np.ix_(rows, cols)] = np.maximum(sub, np.clip(g, 0, 1) * 0.85)
     pyl = np.clip(pyl + burze, 0, 1)
     barwa_pylu = kolor('#b89a74')
-    m_ch = np.clip(chmury + pyl * (1 - chmury), 0, 1)
+    m_ch = np.clip(chmury + pyl * (1 - chmury), 0, 1) * chm_gryz
     rgb_ch = (np.ones(3, np.float32)[None, None, :] * chmury[..., None] + barwa_pylu[None, None, :] * (pyl * (1 - chmury))[..., None]) / np.maximum(m_ch, 1e-4)[..., None]
     chm_srgb = lin_do_srgb(rgb_ch) * m_ch[..., None]          # luminancja ≈ maska, chroma = barwa pyłu
     log('chmury')
 
     # ── normalne ──────────────────────────────────────────────────────────────────
-    h = np.where(woda, np.float32(S), e).astype(np.float32) + wys_dod + wys_pit
+    h = np.where(woda, np.float32(S), e).astype(np.float32) + wys_dod
     h = np.where(lod > 0.5, rozmyj_kula(h, 1.0), h)
     nrm = normalne_z_wysokosci(h, R_ZIEMI_KM * 1000.0, P['przewyzszenie'])
     nrm[pit_maska] = (0.0, 0.0, 1.0)                      # bryłę dziury rysuje geometria
@@ -483,10 +483,11 @@ def main():
     ap.add_argument('--szer', type=int, default=2048)
     ap.add_argument('--do-gry', action='store_true', help='zapis do public/assets/planety/solar/earth/')
     ap.add_argument('--wyj', default=None)
+    ap.add_argument('--gryz', type=float, default=None, help='promień gryzu [R] zamiast radiusR z src/data/earthBite.js (A/B)')
     a = ap.parse_args()
     W, H = a.szer, a.szer // 2
     wyj = os.path.join(KATALOG_REPO, 'public', 'assets', 'planety', 'solar', 'earth') if a.do_gry else (a.wyj or os.path.join(KATALOG_REPO, '.tmp', 'planety', f'ziemia-{W}'))
-    generuj(W, H, wyj, os.path.join(KATALOG_REPO, '.tmp', 'planety', f'podglad-{W}'), a.do_gry)
+    generuj(W, H, wyj, os.path.join(KATALOG_REPO, '.tmp', 'planety', f'podglad-{W}'), a.do_gry, a.gryz)
 
 
 if __name__ == '__main__':

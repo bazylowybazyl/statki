@@ -43,7 +43,7 @@ function planetUniforms() {
     hasNightTexture: { value: 0.0 }, uBrightness: { value: 0.92 }, uSpecular: { value: 0.0 }, uSunIntensity: { value: 0.92 },
     uHazeStrength: { value: 0.0 }, uHazeColor: { value: V3(0.55, 0.72, 1.0) }, uHazeBeta: { value: V3(0.05, 0.10, 0.22) },
     uRingShadowStrength: { value: 0.0 }, uRingShadowRadius: { value: 0.0 }, uRingShadowReach: { value: 1.0 },
-    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 1.0 }, uPitMode: { value: 0.0 }
+    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 1.0 }, uPitMode: { value: 0.0 }, uBite: { value: new THREE.Vector4() }
   };
 }
 function jupiterPlanet() {
@@ -247,7 +247,9 @@ test('WGSL: rodzaj „jupiter” = graf powierzchni z barwą dnia z przepływu; 
   const grads = [...j.matchAll(/textureSampleGrad\( (\w+), \w+, (\w+), (\w+), (\w+) \)/g)];
   assert.equal(grads.length, 8, 'dwie fazy × (pas, pas sąsiedni, kołnierz wiru, jądro wiru)');
   for (const g of grads) assert.deepEqual([g[3], g[4]], [dx[1], dy[1]], 'gradienty z uv siatki');
-  assert.ok(j.indexOf(dx[0]) < j.indexOf('if ('), 'pochodne przed pierwszą gałęzią');
+  // pierwsza gałąź ciała main (funkcje pomocnicze — np. gryzu Ziemi z select → if — stoją przed main)
+  const jMain = j.indexOf('fn main');
+  assert.ok(j.indexOf(dx[0]) < j.indexOf('if (', jMain), 'pochodne przed pierwszą gałęzią');
   // reszta próbek (profil, szum faz, curl3D, średnia lokalna) z jawnym poziomem
   assert.ok((j.match(/textureSampleLevel\(/g) || []).length >= 5);
   const dayTex = grads[0][1];

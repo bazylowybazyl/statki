@@ -44,7 +44,7 @@ function planetUniforms() {
     hasNightTexture: { value: 0.0 }, uBrightness: { value: 0.94 }, uSpecular: { value: 0.0 }, uSunIntensity: { value: 0.95 },
     uHazeStrength: { value: 0.3 }, uHazeColor: { value: V3(0.93, 0.83, 0.64) }, uHazeBeta: { value: V3(0.06, 0.08, 0.12) },
     uRingShadowStrength: { value: 0.0 }, uRingShadowRadius: { value: 0.0 }, uRingShadowReach: { value: 1.0 },
-    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 0.0 }, uPitMode: { value: 0.0 }
+    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }, uSunShadowRecv: { value: 0.0 }, uPitMode: { value: 0.0 }, uBite: { value: new THREE.Vector4() }
   };
 }
 function saturnPlanet() {
