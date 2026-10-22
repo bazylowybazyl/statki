@@ -409,6 +409,20 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
 - 2026-10-22 decyzja użytkownika dla E12: rój dronów w grze liczony NA ŻYWO NA GPU, z symulacji z dema (ORCA, wieża), a nie z analitycznego planu.
   - Wymagania: sloty stanowisk w jednej puli; statek zastany w połowie postoju startuje ze stanu zgodnego z zegarem kursu, bez przewijania minut w jednej klatce; koniec postoju domyka obraz zgodnie z ekonomią.
   - Koszt mierzony przy ok. 20 stanowiskach. Jeśli za drogo, symulacja na żywo tylko dla N stanowisk najbliżej kamery, a reszta pokazuje stan z zegara.
+- 2026-10-22 E7 w `main` (078eabc9), z sesji E2:
+  - terminal na księdze rynku (port sprzedaje nadwyżkę, skupuje tylko używane towary do celu zapasu);
+  - komputer handlowy jako warstwa HANDEL w CIC (klawisz H);
+  - stacja gracza jako rynek (API + `DevEconomy`, bez UI budowy i bez modelu 3D);
+  - zapis ekonomii v1: magazyny, wyrwy, floty, stacje gracza; co 20 s i przy zamknięciu.
+  - Testy: `npm test` 1779 zielone, build przechodzi, start w workerze 0 pipeline'ów sync.
+  - Opis: `docs/E7-gracz-na-rynku.md`.
+  - Decyzje dla użytkownika, z rekomendacją orkiestratora:
+    - interfejs budowy stacji gracza (§ 3 notatki E7);
+    - zysk ze stacji: marża portu;
+    - „Nowa gra” czyści zapis ekonomii;
+    - nowe zachowanie terminala;
+    - uzupełnienie kadłubów ruchu (mostki, reaktory, zbiorniki, gniazda) w osobnej sesji.
+- 2026-10-22 E6, etap 2 (`claude/frosty-moser-69ca47`): bańka we wszystkich portach (`world.docks`), strefa planety, kontrakt E12 (`actors.cargo`), awans do pełnego NPC (trafienie gracza, 1 na klatkę, do 8 naraz). Czeka na `git merge main` z E7 po swojej stronie.
   - bańka dla pozostałych portów i awans do pełnego NPC (do zlecenia);
   - E7: gracz na rynku i zapis ekonomii.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
