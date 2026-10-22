@@ -586,3 +586,53 @@ Każdy krok osobno przez bramkę:
 7. **Tarcze jako towar** (`shield_generator`) — wchodzą do gospodarki czy zostają poza nią?
 8. **Warp:** kotwica „nadprzewodnik + rdzeń + platynowce” (najdroższy moduł) — zgoda na kontrakt z E8?
 9. **Rzeczy pominięte w B** (lit, bor, wolfram, ksenon, azot i fosfor do żywności, argon na SIDE): zostają tylko w wariancie A czy któraś ma wejść (np. argon z Marsa na silniki manewrowe, azot z Tytana do LSS)?
+
+---
+
+## 8. Wdrożenie (2026-10-22)
+
+Użytkownik przyjął wariant grywalny w całości (§ 7: 1–9) i dołożył fregatę z warpem Mk I. Wdrożenie szło krokami z § 6, każdy przez bramkę bilansu. Gałąź `claude/e10-receptury-realne-a8c587`.
+
+### 8.1 Co weszło, a co różni się od propozycji
+
+| towar | poziom | receptura (wsad → wyjście) | cena CR | skąd | różnica wobec § 4 |
+|---|---|---|---|---|---|
+| `explosive` | T1 | 2 amoniak + 1 metan → 2 (40 s, gazownia) | 20 | Jowisz, Saturn, Uran | — |
+| `aluminum_ore` | T0 | — | 8 | Luna (49%), Westa (18%), Ceres (8%) | Ceres dodatkowo (kolejka Ceres) |
+| `aluminum` | T1 | 3 rudy glinu → 2 (45 s, huta) | 19 | każda huta | — |
+| `ceramic_armor` | T1 | 2 rudy glinu + 1 ruda węglista → 1 (50 s, huta) | 37 | każda huta | — |
+| `rare_earth_ore` | T0 | — | 30 | Luna (20%, ~90% podaży), Mars (2%), wraki | Mars mniejszy (monopol Terra Novej) |
+| `superconductor` | T1 | 1 REE + 1 przewód + 1 nadstop → 2 (70 s, elektronika) | 75 | Wenus, Ziemia, Mars, Ceres | 1 przewód zamiast 2 (ruda miedzi spadła do 99%) |
+| `shield_generator` | T2 | 3 taśmy + 2 stop glinu + polimer + układ + 2 chłodziwo → 1 (150 s, systemy) | 620 | Ziemia, Mars, Jowisz, Ceres | bez awioniki, 620 zamiast ~1080 CR; 1 / 3 / 6 / 9 na klasę zamiast 1 / 1 / 2 / 3 |
+| `nitrogen` | T0 | — | 5 | Tytan (6%), Tryton (5%) | nowy (decyzja 9: azot z Tytana) |
+
+Zmienione receptury (jak w § 4.2, z tymi wyjątkami):
+- **Płyta kadłuba:** 4 stal + 1 stop glinu + 1 stop Ti. Stal zostaje w całości, bo przy 3 stali pokrycie żelaza skakało do 186% (huty skalibrowane pod stal).
+- **Silnik manewrowy:** 1 płyta + 3 nadstop + 1 chłodziwo + 3 przewód.
+- **Podtrzymanie życia:** dochodzi 1 azot.
+- **Warp:**
+  - Mk I: 4 taśmy + 2 nadstop + 2 stop Ti + 2 chłodziwo (870 CR), bez platynowców i rdzenia, bo ma go każda fregata;
+  - Mk II: 8 taśm + rdzeń + 2 awionika + 2 katalizatory + 4 nadstop + 3 chłodziwo (4000 CR);
+  - Mk III: 14 taśm + 2 rdzenie + 3 awionika + 4 katalizatory + 6 nadstop + 5 chłodziwo (7000 CR).
+- **Reszta jak w § 4.2:** stop Ti z glinem, reaktor (2 taśmy + 1 pręt + stop Ti + ceramika + chłodziwo), napęd ciężki, hipercruise Mk2/Mk3, działo szynowe, działo plazmowe, myśliwiec, cztery amunicje, układy scalone (6 Si + 1 Ni → 2).
+- **Okręty wojenne:** ceramika 2 / 6 / 16 / 24, emitery 1 / 3 / 6 / 9, fregata z `warp_mk1`. `FLEET_DEMAND`: ceramika 0,035, emitery 0,0151, `warp_mk1` 0,0088. Wraki oddają taśmę (`SALVAGE_COMPONENTS`, co 900 komórek). Luna ma w `systemMap.js` rolę `mine`.
+
+Razem 52 → 63 towary (z `warp_mk1..3` od E8 i azotem), 46 receptur.
+
+### 8.2 Bilans analityczny (sekcja 12 testu `stationEconomy`, na cykl)
+
+| surowiec | przed | po |
+|---|---|---|
+| ruda uranu (popyt) | 2,40 | 1,15 (−52%) |
+| ruda krzemu | 130% | 191% |
+| platynowce | 101% | 131% |
+| ruda żelaza | 136% | 171% |
+| ruda niklu | 131% | 111% |
+| ruda miedzi | 137% | 120% |
+| ruda glinu | — | 129% |
+| ziemie rzadkie | — | 160% |
+| taśma nadprzewodząca | — | 132% |
+
+Najciaśniejsze rafinaty trzymają 106–108% jak przedtem (solver).
+
+Koszt na punkt siły (`scripts/koszt-okretow.mjs`): fregata 6104, niszczyciel 6424, krążownik 7276, nosiciel 9105 CR. Przedtem 4540 / 5894 / 6405 / 8337 CR.
