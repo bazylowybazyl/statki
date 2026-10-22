@@ -4,7 +4,7 @@
 // Zegar słupa stoi (setTime), błyski z ziarnem (burst) — zrzuty powtarzalne.
 //
 //   node scripts/webgpu/slup-demo.mjs [--out .tmp/slup/demo] [--tag v1] [--tylko gra-dzien,gra-krawedz]
-//        [--wariant parasol|smukly] [--query "mapyGryz=.tmp/planety-gryz/046"] [--czas 40] [--look '{"sigmaAnvil":30}']
+//        [--korek 1] [--dym 0] [--wariant parasol|smukly] [--query "mapyGryz=.tmp/planety-gryz/046"] [--czas 40] [--look '{"sigmaAnvil":30}']
 //        [--bez 1] (bez słupa)
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -19,6 +19,8 @@ const czas = Number(args.czas ?? 40);
 const look = args.look ? JSON.parse(String(args.look)) : null;
 const bez = String(args.bez || '') === '1';
 const wariant = args.wariant ? `&slupWariant=${args.wariant}` : '';
+// --korek 1 — elektrownia „KOREK” (promień, odbiornik, windy), --dym 0 — bez słupa dymu
+const warstwy = `${String(args.dym ?? '1') === '0' ? '' : '&slup=1'}${String(args.korek || '') === '1' ? '&korek=1' : ''}`;
 mkdirSync(out, { recursive: true });
 
 // x — położenie gryzu na tarczy (ułamek promienia, + ku słońcu); half — pół wysokości kadru [R] (whole — cała tarcza);
@@ -43,7 +45,7 @@ const ev = (e, t = 180000) => evaluate(cdp, e, t);
 const report = { tag, zrzuty: [] };
 const settle = (ms = 1500) => new Promise((r) => setTimeout(r, ms));
 try {
-  await cdp.send('Page.navigate', { url: `${base}/dema/planety-webgpu.html?test=1&cialo=earth${bez ? '' : `&slup=1&slupZegar=0${wariant}`}${query}` });
+  await cdp.send('Page.navigate', { url: `${base}/dema/planety-webgpu.html?test=1&cialo=earth${bez ? '' : `${warstwy}&slupZegar=0${wariant}`}${query}` });
   if (!await waitFor(cdp, '!!(window.__planety && window.__planety.ready())', 240000, 400)) throw new Error('demo nie wstało');
   if (!bez && !await waitFor(cdp, '!!(window.__slup && window.__slup.ready())', 60000, 300)) throw new Error('słup nie wstał');
   if (look) await ev(`(() => { Object.assign(window.__slup.look, ${JSON.stringify(look)}); window.__slup.apply(); return true; })()`);
