@@ -39,9 +39,10 @@ test('player hulls fly the shared flight table: speed limit, thrust and brake fr
   const maneuver = hulls.map(hullClass => createDriveTransmission({ mode: 'maneuver', hullClass }));
 
   assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), specs.map(s => s.maxSpeed));
-  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [1400, 1000, 650, 480, 500]);
+  // Nieokrągłe limity wokół klasy (decyzja użytkownika 2026-10-22 — driveModes.js / shipFlightSpecs.js).
+  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [1412, 994, 643, 487, 507]);
   assert.deepEqual(combat.map(drive => drive.brakeAccel), specs.map(s => s.decel));
-  assert.deepEqual(maneuver.map(drive => drive.modeMaxSpeed), [700, 500, 325, 240, 250]);
+  assert.deepEqual(maneuver.map(drive => drive.modeMaxSpeed), [706, 497, 321.5, 243.5, 253.5]);
   assert.ok(combat[0].mainForceScale > combat[1].mainForceScale);
   assert.ok(combat[1].mainForceScale > combat[2].mainForceScale);
   assert.ok(combat[2].mainForceScale > combat[3].mainForceScale);
@@ -53,7 +54,7 @@ test('player hulls fly the shared flight table: speed limit, thrust and brake fr
 
   setDriveHullClass(combat[0], 'atlas');
   assert.equal(combat[0].hullClass, 'supercapital');
-  assert.equal(combat[0].modeMaxSpeed, 500);
+  assert.equal(combat[0].modeMaxSpeed, 507);
 });
 
 test('szarża: limit napędu rośnie na czas zrywu, potem napęd hamuje do limitu trybu', () => {
@@ -83,7 +84,7 @@ test('Atlas exposes only combat and maneuver modes', () => {
   const drive = createDriveTransmission({ hullClass: 'atlas' });
 
   assert.equal(drive.mode, 'combat');
-  assert.equal(drive.modeMaxSpeed, 500);
+  assert.equal(drive.modeMaxSpeed, 507);
   assert.deepEqual(drive.availableModes, ['combat', 'maneuver']);
   assert.equal(setDriveMode(drive, 'travel'), false);
   assert.equal(drive.mode, 'combat');

@@ -12,7 +12,7 @@
 import { SHIP_PHYSICS } from './thrusterModel.js';
 import { resolveShipTurnCapability, thrusterGeometrySignature } from './headingControl.js';
 import { playerFlightSpec } from '../../data/shipFlightSpecs.js';
-import { CRUISE_DRIVE } from '../../data/driveModes.js';
+import { BOOST_DRIVE } from '../../data/driveModes.js';
 
 const freezeGears = (values) => Object.freeze(values.map((maxSpeed, index) => Object.freeze({
   maxSpeed,
@@ -593,15 +593,13 @@ export function updateDriveTransmission(state, speed, throttle, dt) {
   return state;
 }
 
-// Limit prędkości dopalacza (Shift): tabela lotu (`boostSpeed` / `cruiseBoostSpeed`, Atlas 1000 / 1800 j/s —
-// tabela napędów src/data/driveModes.js), bez wpisu — CRUISE_DRIVE.boostMul / cruiseBoostMul × limit bojowy.
-// `cruise` = postawa PRZELOT.
-export function driveBoostSpeed(state, cruise = false) {
+// Limit prędkości dopalacza (Shift): tabela lotu (`boostSpeed`, Atlas 1137 j/s — tabela napędów
+// src/data/driveModes.js), bez wpisu — BOOST_DRIVE.boostMul × limit bojowy. Jeden limit (PRZELOTU nie ma od 2026-10-22).
+export function driveBoostSpeed(state) {
   if (!state) return 0;
   const spec = state.flightSpec;
   const base = Math.max(1, Number(state.speedLimit) || 1);
-  if (cruise) return Number(spec?.cruiseBoostSpeed) || base * CRUISE_DRIVE.cruiseBoostMul;
-  return Number(spec?.boostSpeed) || base * CRUISE_DRIVE.boostMul;
+  return Number(spec?.boostSpeed) || base * BOOST_DRIVE.boostMul;
 }
 
 export function applyDriveSpeedGovernor(state, velocity, dt) {

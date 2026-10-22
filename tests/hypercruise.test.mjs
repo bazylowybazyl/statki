@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  HYPERCRUISE_ENGINES, HYPERCRUISE_ENGINE_IDS, HYPERCRUISE_BY_CLASS, HYPERCRUISE_TUNE, WARP_DRIVE, WARP_SPEED,
+  HYPERCRUISE_ENGINES, HYPERCRUISE_ENGINE_IDS, HYPERCRUISE_BY_CLASS, HYPERCRUISE_TUNE, WARP_DRIVE, WARP_DRIVES, WARP_DRIVE_IDS, BOOST_DRIVE,
+  NPC_CLASS_DRIVE, playerHullDrives, warpDriveSpeed, trafficWarpMode, hypercruiseLegSpool,
   hypercruiseSpec, trapezoidSeconds, trapezoidPeak, trafficHypercruiseMode, TRAFFIC_CLASS_DRIVE, PLAYER_HULL_DRIVE
 } from '../src/data/driveModes.js';
 import {
@@ -21,13 +22,38 @@ test('kontrakt E5 ↔ E8: trzy silniki hipercruise o stałych id, vmax w 20–40
   assert.ok(HYPERCRUISE_ENGINES.hypercruise_mk2.vmax < HYPERCRUISE_ENGINES.hypercruise_mk3.vmax);
 });
 
-test('warp zostaje 260 tys. j/s, nietykalny; hipercruise da się przerwać i jest wolniejszy od warpa', () => {
-  assert.equal(WARP_SPEED, 260000);
-  assert.equal(WARP_DRIVE.speed, 260000);
+test('kontrakt E5 ↔ E8: napędy warp Mk I–III o stałych id, 100–250 tys. j/s, nietykalne; hipercruise wolniejszy i da się go przerwać', () => {
+  assert.deepEqual(WARP_DRIVE_IDS, ['warp_mk1', 'warp_mk2', 'warp_mk3']);
+  assert.deepEqual(WARP_DRIVE_IDS.map(warpDriveSpeed), [100000, 175000, 250000]);
+  for (const id of WARP_DRIVE_IDS) assert.equal(WARP_DRIVES[id].id, id);
+  assert.equal(warpDriveSpeed('nieznany'), 175000, 'nieznany napęd — Mk II');
   assert.equal(WARP_DRIVE.interruptible, false);
   assert.equal(WARP_DRIVE.risk, 0);
   assert.equal(HYPERCRUISE_TUNE.interruptible, true);
-  for (const id of HYPERCRUISE_ENGINE_IDS) assert.ok(HYPERCRUISE_ENGINES[id].vmax * 5 < WARP_SPEED);
+  for (const id of HYPERCRUISE_ENGINE_IDS) assert.ok(HYPERCRUISE_ENGINES[id].vmax * 2 < warpDriveSpeed('warp_mk1'));
+});
+
+test('domyślne napędy: Atlas — hipercruise Mk I, warp Mk II i dopalacz 1137; klasy jak skład okrętów E8', () => {
+  assert.deepEqual(playerHullDrives('atlas', 'supercapital'), { hypercruise: 'hypercruise_mk1', warp: 'warp_mk2' });
+  assert.equal(PLAYER_HULL_DRIVE.atlas.boostSpeed, 1137);
+  assert.ok(BOOST_DRIVE.boostMul > 2 && BOOST_DRIVE.boostMul < 2.5);
+  assert.deepEqual(playerHullDrives('terran_frigate', 'frigate'), { hypercruise: 'hypercruise_mk1', warp: 'warp_mk1' });
+  assert.equal(NPC_CLASS_DRIVE.carrier.warp, 'warp_mk3');
+  assert.deepEqual(playerHullDrives(null, null), { hypercruise: 'hypercruise_mk1', warp: 'warp_mk2' });
+  assert.equal(trafficWarpMode('mega').speed, 250000);
+  assert.equal(trafficWarpMode('hauler').speed, 100000);
+});
+
+test('krótkie odcinki TRAVEL TO: skrócony rozruch hipercruise’u, nie mniej niż minSpool', () => {
+  assert.equal(hypercruiseLegSpool(4, 1e6), 4);
+  assert.equal(hypercruiseLegSpool(4, HYPERCRUISE_TUNE.shortLeg), 4);
+  assert.ok(Math.abs(hypercruiseLegSpool(4, HYPERCRUISE_TUNE.shortLeg / 2) - 2) < 1e-9);
+  assert.equal(hypercruiseLegSpool(4, HYPERCRUISE_TUNE.minLeg / 10), HYPERCRUISE_TUNE.minSpool);
+  const hc = createHypercruise();
+  configureHypercruise(hc, 'hypercruise_mk1', 'supercapital');
+  engageHypercruise(hc, { target: { x: 1e5, y: 0 }, spool: 1.5 });
+  const ev = run(hc, () => ({ speed: 0, zone: 1, remaining: 1e5, align: 1 }), 1.55);
+  assert.deepEqual(ev, ['engage'], 'rozruch 1,5 s zamiast 4 s');
 });
 
 test('przyspieszenie per klasa: cięższy kadłub rozpędza się dłużej, mocniejszy silnik szybciej', () => {

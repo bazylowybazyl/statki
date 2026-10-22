@@ -22,8 +22,8 @@
 import { buildSystemMap, SYSTEM_MAP_MOONS, moonWorldPosition } from '../../data/systemMap.js';
 import { DEFAULT_GATE_HUBS, DERELICT_MARKETS } from '../../data/markets.js';
 import {
-  WARP_DRIVE, TRAFFIC_CONVENTIONAL, TRAFFIC_CLASS_DRIVE, TRAFFIC_DEFAULT_CLASS,
-  trafficHypercruiseMode, trapezoidSeconds
+  TRAFFIC_CONVENTIONAL, TRAFFIC_CLASS_DRIVE, TRAFFIC_DEFAULT_CLASS,
+  trafficHypercruiseMode, trafficWarpMode, trapezoidSeconds
 } from '../../data/driveModes.js';
 
 // ============================================================
@@ -33,37 +33,25 @@ import {
 /**
  * Sposoby podróży — z JEDNEJ tabeli napędów gracza, NPC i ruchu (`src/data/driveModes.js`, E5).
  *
- *   conventional — PRZELOT statku bez silnika hipercruise (1200 j./s), pełna ekspozycja;
+ *   conventional — statek bez silnika hipercruise (1200 j./s) i manewry przy portach, pełna ekspozycja;
  *   hypercruise  — frachtowiec z silnikiem hipercruise (20–40 tys. j./s wg klasy), DA SIĘ GO PRZERWAĆ,
  *                  więc ekspozycja jak konwencjonalny: przechwyt liczy się od DROGI, nie od czasu —
  *                  szybszy przelot skraca kurs, ale nie zmienia szansy przechwytu na trasie;
- *   warp         — 260 tys. j./s jak u gracza (+ narzut ładowania i wyjścia), nietykalny;
- *   gate         — skok natychmiastowy, czas zjada dolot do bramy i od bramy.
+ *   warp         — napęd warp klasy (Mk I / II / III: 100 / 175 / 250 tys. j./s, ta sama tabela co gracz)
+ *                  + narzut ładowania i wyjścia, nietykalny;
+ *   gate         — procedura skoku (`gateTransitSeconds`) plus dolot do bramy i od bramy.
  *
  * `fuelPerUnit` to zużycie na jednostkę dystansu. Warp pali więcej na jednostkę
  * drogi I droższy surowiec, więc jest realnie kosztowny, a nie „lepszy".
- * Hipercruise pali więcej wodoru niż PRZELOT — rachunek masówki zostaje
+ * Hipercruise pali więcej wodoru niż napęd konwencjonalny — rachunek masówki zostaje
  * po stronie paliwa i ryzyka, nie czasu.
  */
 export const DRIVE_MODES = Object.freeze({
   conventional: TRAFFIC_CONVENTIONAL,
   /** Tryb klasy domyślnej (hauler); inna klasa — `driveModeFor('hypercruise', klasa)`. */
   hypercruise: trafficHypercruiseMode(TRAFFIC_DEFAULT_CLASS),
-  warp: Object.freeze({
-    id: 'warp',
-    label: 'warp',
-    speed: WARP_DRIVE.speed,
-    /** Ładowanie i rampa wyjścia — skok nigdy nie trwa zero. */
-    overheadSeconds: WARP_DRIVE.overheadSeconds,
-    fuelId: WARP_DRIVE.fuelId,
-    // Skalibrowane wobec ŁADOWNI, nie z sufitu: typowy kurs w rdzeniu (~1 mln j.)
-    // to ~17 t paliwa fuzyjnego przy ładowni haulera 160 t. Pierwsza wersja
-    // (1/4000) dawała 263 t paliwa na kurs — więcej, niż statek unosi towaru,
-    // i 26 tys. CR kosztu, przez co warp był martwą opcją dla każdego ładunku.
-    fuelPerUnit: WARP_DRIVE.fuelPerUnit,
-    /** Nietykalny z założenia. Dopóki nie ma disruptorów, to jest zero. */
-    risk: WARP_DRIVE.risk
-  }),
+  /** Tryb klasy domyślnej (hauler — warp Mk I); inna klasa — `driveModeFor('warp', klasa)`. */
+  warp: trafficWarpMode(TRAFFIC_DEFAULT_CLASS),
   gate: Object.freeze({
     id: 'gate',
     label: 'brama',
@@ -79,6 +67,9 @@ export const DRIVE_MODES = Object.freeze({
 const HYPERCRUISE_BY_VAN_CLASS = Object.freeze(Object.fromEntries(
   Object.keys(TRAFFIC_CLASS_DRIVE).map(cls => [cls, trafficHypercruiseMode(cls)])
 ));
+const WARP_BY_VAN_CLASS = Object.freeze(Object.fromEntries(
+  Object.keys(TRAFFIC_CLASS_DRIVE).map(cls => [cls, trafficWarpMode(cls)])
+));
 
 /**
  * Tryb napędu odcinka: `hypercruise` zależy od klasy przewoźnika (silnik i rozpęd kadłuba,
@@ -87,6 +78,9 @@ const HYPERCRUISE_BY_VAN_CLASS = Object.freeze(Object.fromEntries(
 export function driveModeFor(modeId, vanClass = null) {
   if (modeId === 'hypercruise') {
     return HYPERCRUISE_BY_VAN_CLASS[vanClass] || DRIVE_MODES.hypercruise;
+  }
+  if (modeId === 'warp') {
+    return WARP_BY_VAN_CLASS[vanClass] || DRIVE_MODES.warp;
   }
   return DRIVE_MODES[modeId] || null;
 }
@@ -105,6 +99,13 @@ export const NETWORK_DEFAULTS = Object.freeze({
   /** Opłata za skok: stała plus od tony. Brama ma być TAŃSZA od warpa. */
   gateFeeBase: 250,
   gateFeePerTon: 1.2,
+  /**
+   * Procedura skoku bramy [s] (kolejka do okna, wyrównanie, przejście). Od napędów warp Mk I–III
+   * (2026-10-22) najwolniejszy warp leci 100 tys. j./s — bez tej procedury dolot hipercruise'em do bram
+   * hubów (~2 × 11–23 s) byłby krótszy od skoku Mars↔Jowisz warpem Mk I (~39 s), a brama ma być TAŃSZA,
+   * nie szybsza (strażnik w `scripts/tests/travelNetwork.test.mjs`).
+   */
+  gateTransitSeconds: 30,
   /** Ile CR jest wart jeden przestój sekundy. Podnosi wagę czasu w rachunku. */
   timeValuePerSecond: 0.08,
   /**
@@ -552,9 +553,11 @@ export function priceRoute(network, legs, cargo = {}) {
     if (!from || !to || !mode) return null;
 
     if (mode.id === 'gate') {
-      // Skok jest natychmiastowy, ale kosztuje opłatę zależną od tonażu.
+      // Skok trwa tyle, co procedura bramy, i kosztuje opłatę zależną od tonażu.
+      const gateSeconds = Math.max(0, Number(config.gateTransitSeconds) || 0);
       gateFee += Number(config.gateFeeBase || 0) + Number(config.gateFeePerTon || 0) * mass;
-      stages.push({ from: from.id, to: to.id, mode: mode.id, distance: 0, seconds: 0, fuel: 0, risk: 0 });
+      seconds += gateSeconds;
+      stages.push({ from: from.id, to: to.id, mode: mode.id, distance: 0, seconds: gateSeconds, fuel: 0, risk: 0 });
       continue;
     }
 

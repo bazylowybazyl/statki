@@ -7,26 +7,22 @@
 //   • TARCZE    — wzmocnienie tarczy kosztem napędu (szybsza regeneracja, tarcza przyjmuje mniej, pole
 //                 znacznie twardsze na przebicie i WIDOCZNE — domyślnie tarcza jest niewidoczna; lot
 //                 i obrót wyraźnie wolniejsze — 2026-10-05, decyzja użytkownika);
-//   • PRZELOT   — szybki lot z zimną bronią na BIEGACH (QOL 2026-10-03: biegi przeniesione z warpa —
-//                 warp ma jedną prędkość): 4 biegi do 2,4× limitu bojowego (Atlas 500 → 1200 j/s; mnożniki
-//                 w tabeli napędów src/data/driveModes.js — E5 2026-10-21, wcześniej do 3× / 1500 j/s), bieg
-//                 w górę sam przy gazie pod limitem biegu, Ctrl w dół; wieże milczą, tarcza wolniej;
-//                 dalej — hipercruise (src/game/flight/hypercruise.js, akcja nav.hypercruise);
+//   • HIPERCRUISE (O) — przelot 20–40 tys. j/s z zimną bronią (src/game/flight/hypercruise.js; decyzja
+//                 użytkownika 2026-10-22: PRZELOT i jego biegi usunięte, zastąpił je hipercruise) — automat
+//                 w kleju gry, nie postawa: sektor koła włącza go jak klawisz O;
 //   • MASKOWANIE (I), TORPEDY (8), WYDOBYCIE (N), FLOTA (G — RTS) — dawne osobne przełączniki gry.
 //
-// Moduł jest czysty (bez DOM i okna gry). Stan TARCZE / PRZELOT / BOJOWY (postawa) żyje tutaj; tryby
-// z własnym systemem (maskowanie, torpedy, wydobycie, RTS) odczytuje i przełącza klej w index.html
+// Moduł jest czysty (bez DOM i okna gry). Stan TARCZE / BOJOWY (postawa) żyje tutaj; tryby z własnym
+// systemem (hipercruise, maskowanie, torpedy, wydobycie, RTS) odczytuje i przełącza klej w index.html
 // (blok „TRYBY OKRĘTU”) — ich system zostaje źródłem prawdy (np. maskowanie pęka przy strzale).
 
-import { CRUISE_DRIVE } from '../data/driveModes.js';
-
-export const SHIP_MODE_IDS = Object.freeze(['combat', 'shield', 'cruise', 'cloak', 'torpedo', 'mining', 'fleet']);
+export const SHIP_MODE_IDS = Object.freeze(['combat', 'shield', 'hypercruise', 'cloak', 'torpedo', 'mining', 'fleet']);
 
 // Kolejność = sektory koła zgodnie z ruchem wskazówek, od góry.
 export const SHIP_MODE_DEFS = Object.freeze({
   combat: Object.freeze({ id: 'combat', label: 'BOJOWY', key: '', stance: true }),
   shield: Object.freeze({ id: 'shield', label: 'TARCZE', key: '', stance: true }),
-  cruise: Object.freeze({ id: 'cruise', label: 'PRZELOT', key: '', stance: true }),
+  hypercruise: Object.freeze({ id: 'hypercruise', label: 'HIPERCRUISE', key: 'O', stance: false }),
   cloak: Object.freeze({ id: 'cloak', label: 'MASKOWANIE', key: 'I', stance: false }),
   torpedo: Object.freeze({ id: 'torpedo', label: 'TORPEDY', key: '8', stance: false }),
   mining: Object.freeze({ id: 'mining', label: 'WYDOBYCIE', key: 'N', stance: false }),
@@ -41,58 +37,8 @@ export const SHIP_STANCE_TUNE = Object.freeze({
   // TARCZE: tarcza ładuje się 2,5× szybciej, zaczyna 2× wcześniej, przyjmuje 35% mniej, pole 3× twardsze
   // na przebicie i widoczne; okręt znacznie wolniejszy (limit × 0,4, ciąg × 0,5) i mniej zwrotny (przyspieszenie
   // kątowe × 0,45, największa prędkość obrotu × 0,55).
-  shield: Object.freeze({ speed: 0.4, thrust: 0.5, turn: 0.45, turnRate: 0.55, shieldRegen: 2.5, shieldDelay: 0.5, shieldTaken: 0.65, shieldHardness: 3, shieldShow: true, weaponsCold: false }),
-  // PRZELOT: limit z biegu (CRUISE_GEARS — speed to bieg 1), ciąg × 1,6; wieże milczą, tarcza ładuje się o połowę wolniej.
-  cruise: Object.freeze({ speed: CRUISE_DRIVE.gearMuls[0], thrust: 1.6, turn: 0.85, shieldRegen: 0.5, shieldDelay: 1, shieldTaken: 1, turnRate: 1, shieldHardness: 1, shieldShow: false, weaponsCold: true })
+  shield: Object.freeze({ speed: 0.4, thrust: 0.5, turn: 0.45, turnRate: 0.55, shieldRegen: 2.5, shieldDelay: 0.5, shieldTaken: 0.65, shieldHardness: 3, shieldShow: true, weaponsCold: false })
 });
-
-/**
- * Biegi PRZELOTU (QOL 2026-10-03, decyzja usera: „biegi przeniesiemy do trybu cruise”): mnożniki limitu
- * bojowego kadłuba z tabeli napędów (CRUISE_DRIVE.gearMuls — Atlas 500 j/s → 700 / 850 / 1000 / 1200;
- * do 2026-10-21 750–1500, decyzja użytkownika: „gracz lata trochę za szybko”).
- * upAt — bieg w górę, gdy prędkość ≥ tyle × limit biegu przy gazie; downAt — w dół bez gazu poniżej
- * tyle × limit biegu niżej; cooldown [s] między zmianami.
- */
-export const CRUISE_GEARS = Object.freeze({ muls: CRUISE_DRIVE.gearMuls, upAt: 0.94, downAt: 0.6, throttle: 0.35, cooldown: 0.6 });
-
-/** Mnożnik limitu bojowego dla biegu PRZELOTU (1..N). */
-export function cruiseGearMul(gear) {
-  const m = CRUISE_GEARS.muls;
-  return m[Math.max(0, Math.min(m.length - 1, (gear | 0) - 1))];
-}
-
-/**
- * Krok automatu biegów PRZELOTU: modes.cruiseGear / modes.cruiseShiftCd. speed — prędkość [j/s],
- * baseLimit — limit bojowy kadłuba [j/s], throttle — gaz 0..1. Zwraca 'up' | 'down' | null.
- */
-export function stepCruiseGear(modes, speed, baseLimit, throttle, dt) {
-  if (!modes || modes.stance !== 'cruise') return null;
-  const G = CRUISE_GEARS;
-  modes.cruiseShiftCd = Math.max(0, (Number(modes.cruiseShiftCd) || 0) - Math.max(0, Number(dt) || 0));
-  if (modes.cruiseShiftCd > 0) return null;
-  const gear = Math.max(1, Math.min(G.muls.length, modes.cruiseGear | 0 || 1));
-  const base = Math.max(1, Number(baseLimit) || 1);
-  const v = Math.max(0, Number(speed) || 0);
-  if (throttle > G.throttle && gear < G.muls.length && v >= base * cruiseGearMul(gear) * G.upAt) {
-    modes.cruiseGear = gear + 1;
-    modes.cruiseShiftCd = G.cooldown;
-    return 'up';
-  }
-  if (throttle < 0.08 && gear > 1 && v < base * cruiseGearMul(gear - 1) * G.downAt) {
-    modes.cruiseGear = gear - 1;
-    modes.cruiseShiftCd = G.cooldown;
-    return 'down';
-  }
-  return null;
-}
-
-/** Ręczna redukcja biegu PRZELOTU (Ctrl). */
-export function shiftCruiseGearDown(modes) {
-  if (!modes || modes.stance !== 'cruise' || (modes.cruiseGear | 0) <= 1) return false;
-  modes.cruiseGear = (modes.cruiseGear | 0) - 1;
-  modes.cruiseShiftCd = CRUISE_GEARS.cooldown;
-  return true;
-}
 
 // Stuknięcie ŚPM krótsze niż to [s, czas rzeczywisty] bez wybranego sektora = poprzedni tryb.
 export const SHIP_MODE_TAP = 0.22;
@@ -101,11 +47,9 @@ export const SHIP_MODE_DEADZONE = 34;
 
 export function createShipModes() {
   return {
-    stance: 'combat',     // postawa: combat / shield / cruise
+    stance: 'combat',     // postawa: combat / shield
     current: 'combat',    // tryb widoczny (klej gry rozstrzyga co klatkę: resolveShipMode)
     previous: 'combat',   // do stuknięcia ŚPM
-    cruiseGear: 1,        // bieg PRZELOTU (CRUISE_GEARS)
-    cruiseShiftCd: 0,
     // x, y — środek rysunku koła; ox, oy — kursor w chwili wciśnięcia ŚPM (sektor = ruch myszy od tego punktu).
     wheel: { open: false, x: 0, y: 0, ox: 0, oy: 0, hover: -1, openedAt: 0 }
   };
@@ -115,14 +59,14 @@ export function isShipMode(id) {
   return Object.prototype.hasOwnProperty.call(SHIP_MODE_DEFS, id);
 }
 
-/** Nastawy postawy (combat dla trybów bez postawy — maskowanie, torpedy, wydobycie, flota). */
+/** Nastawy postawy (combat dla trybów bez postawy — hipercruise, maskowanie, torpedy, wydobycie, flota). */
 export function stanceTune(modes) {
   return SHIP_STANCE_TUNE[modes?.stance] || SHIP_STANCE_TUNE.combat;
 }
 
 /**
- * Tryb widoczny z systemów gry: flota (RTS) > wydobycie > torpedy > maskowanie > postawa.
- * `sys` — { fleet, mining, torpedo, cloak } (bool). Zapamiętuje poprzedni tryb przy zmianie.
+ * Tryb widoczny z systemów gry: flota (RTS) > wydobycie > torpedy > maskowanie > hipercruise > postawa.
+ * `sys` — { fleet, mining, torpedo, cloak, hypercruise } (bool). Zapamiętuje poprzedni tryb przy zmianie.
  */
 export function resolveShipMode(modes, sys) {
   let id = modes.stance;
@@ -130,6 +74,7 @@ export function resolveShipMode(modes, sys) {
   else if (sys?.mining) id = 'mining';
   else if (sys?.torpedo) id = 'torpedo';
   else if (sys?.cloak) id = 'cloak';
+  else if (sys?.hypercruise) id = 'hypercruise';
   if (id !== modes.current) {
     modes.previous = modes.current;
     modes.current = id;
