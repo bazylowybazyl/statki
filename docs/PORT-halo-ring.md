@@ -52,9 +52,10 @@ po `terrainHeightAt` (przed odczytem 0), `k7Halls`, `landmarks`; `mapsReady` = b
 razu (`ready` rozwiązane — plan i teren liczą się na CPU, bez map GPU). Biblioteka shaderów: `haloRingTSL.js`
 (`haloRingTSL(ring.uniforms)` → funkcje jak w GLSL, np. `H.haloSunVisibility(p, L)`). Adapter
 `material.uniforms` jest wspólny (`src/3d/tsl/uniformy.js`), przy ringu zostaje blok uniformów
-(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze, że kolider płyty dostaje teren z mapy
-CPU po `ready` (wysokości ≠ 0, `pointInSlab`, `constrainShip`): `node scripts/webgpu/ring-kolizje-gra.mjs
---ring earth|mars|jupiter`.
+(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze kolidera płyty na świecie gry
+(`__haloWorld`, RW-27: Ziemia — teren z mapy CPU ringu obrazu po `ready`, Mars i Jowisz — od razu z planów CPU;
+wysokości ≠ 0, `pointInSlab`, `constrainShip`, w `off` zgodność z obrazem): `node scripts/webgpu/ring-kolizje-gra.mjs
+--ring earth|mars|jupiter [--query renderWorker=1]`.
 
 **Teren (port, zadanie 07):** `HaloTerrain` rysuje NodeMaterial (`makeHaloTerrainNodes` w `haloRingTerrain.js`,
 1:1 z dawnym GLSL: CDLOD z kaskadowym morphem w `Loop`, strefy, parki, zabudowa z odciskiem zestawu
