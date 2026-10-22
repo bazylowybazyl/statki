@@ -353,6 +353,14 @@
                 <p class="mm-note">Kurz podrywany przez dysze, para z przewodów paliwowych i snopy świateł w dokach.</p>
               </div>
               <div class="mm-field">
+                <div class="mm-field-label">Gazy i mgły w pasie asteroid</div>
+                <div class="menu-chip-group" role="group" aria-label="Gazy i mgły w pasie">
+                  <button class="menu-chip" data-gfx-space-gas="on">Wł.</button>
+                  <button class="menu-chip" data-gfx-space-gas="off">Wył.</button>
+                </div>
+                <p class="mm-note">Pył, siarka i lód w pasie: dysze wycinają w gazie kanały, lodowe skały odgazowują.</p>
+              </div>
+              <div class="mm-field">
                 <div class="mm-field-label">Lakier kadłubów</div>
                 <div class="menu-chip-group" role="group" aria-label="Lakier kadłubów">
                   <button class="menu-chip" data-lacquer="off">Off</button>
@@ -33281,7 +33289,7 @@
     // (dawne opcje zostały przy swoich atrybutach: data-planet-q, data-shaft-q, data-lacquer, data-hull-light, data-space-dust).
     const GFX_CHIP_ATTR = Object.freeze({
       renderScale: 'gfxScale', msaa: 'gfxMsaa', bloom: 'gfxBloom', heatHaze: 'gfxHeat', explosions: 'gfxExplosions',
-      effects: 'gfxEffects', hallDust: 'gfxHallDust', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
+      effects: 'gfxEffects', hallDust: 'gfxHallDust', spaceGas: 'gfxSpaceGas', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
       lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync'
     });
     const gfxChipSelector = (attr) => `[data-${attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]`;
@@ -33388,6 +33396,8 @@
       }
       WarpNurt.setMediumCount?.(fx.warpParticles);   // czeka, aż ośrodek warpa uśnie
       HALL_DUST_TUNE.enabled = gfxSettings.hallDust !== 'off';
+      // gaz przestrzeni: wejście gry (działa też w workerze renderu — bez wejścia render nic nie liczy)
+      SPACE_GAS_INPUT_TUNE.enabled = gfxSettings.spaceGas !== 'off';
     }
 
     function applyGraphicsSettings() {
