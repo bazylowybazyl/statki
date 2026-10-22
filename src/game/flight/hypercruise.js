@@ -177,6 +177,41 @@ export function stepHypercruise(hc, ctx, dt) {
   return null;
 }
 
+/**
+ * BEZPIECZNIK PRZESZKÓD (E9 2026-10-22): hipercruise jest duchem dla kadłubów, ale płyta ringu zostaje przeszkodą, a
+ * sufit strefy planety hamuje automat za wolno (Mk III wpadał w płytę Ziemi z 38 tys. j/s). Klej mierzy odległość
+ * wzdłuż kursu do przeszkody, a ten automat mówi, kiedy wyjść: gdy przeszkoda jest bliżej niż droga hamowania
+ * przechwytu (× interruptDecelMul) z bieżącej prędkości + zapas + dwa kroki lotu.
+ */
+export const HC_OBSTACLE_MARGIN = 1500;
+
+/** Droga [j.] od bieżącej prędkości do prędkości wyjścia; forced — hamowanie przechwytu. */
+export function hypercruiseStopDistance(hc, forced = false, exitSpeed = HYPERCRUISE_TUNE.exitSpeed) {
+  if (!hc || !(hc.decel > 0)) return 0;
+  const v = Math.max(0, Number(hc.speed) || 0);
+  const ve = Math.max(0, Number(exitSpeed) || 0);
+  if (v <= ve) return 0;
+  const a = hc.decel * (forced ? HYPERCRUISE_TUNE.interruptDecelMul : 1);
+  return (v * v - ve * ve) / (2 * a);
+}
+
+/** Jak daleko wzdłuż kursu klej ma szukać przeszkody [j.] (0 — hipercruise nie prowadzi lotu). */
+export function hypercruiseObstacleLookAhead(hc, dt) {
+  if (!hypercruiseDriving(hc)) return 0;
+  return hypercruiseStopDistance(hc, true) + HC_OBSTACLE_MARGIN + 2 * Math.max(0, Number(hc.speed) || 0) * Math.max(0, Number(dt) || 0);
+}
+
+/**
+ * Przeszkoda `dist` [j.] przed dziobem (Infinity — brak): 'drop' — wyjście wymuszone (hamowanie przechwytu), 'brake'
+ * — trwające wyjście zwykłe ma hamować mocniej, null — nic. Wyjście kończy się przed przeszkodą z prędkością wyjścia.
+ */
+export function hypercruiseObstacleAction(hc, dist, dt) {
+  if (!hypercruiseDriving(hc) || !Number.isFinite(dist)) return null;
+  if (dist > hypercruiseObstacleLookAhead(hc, dt)) return null;
+  if (hc.state === HC_ACTIVE) return 'drop';
+  return hc.interrupted ? null : 'brake';
+}
+
 /** Postęp rozruchu 0…1 (HUD). */
 export function hypercruiseSpoolProgress(hc) {
   if (!hc || hc.state !== HC_SPOOL) return hc && hypercruiseDriving(hc) ? 1 : 0;

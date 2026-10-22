@@ -226,6 +226,29 @@ export class HaloRingWorld {
     return hit;
   }
 
+  // Odległość wzdłuż kursu do płyty najbliższego ringu (HaloRingCollider.rayToSlab) albo Infinity.
+  rayToSlab(x, y, dx, dy, len, pad = 0) {
+    let best = Infinity;
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      e.collider.setPlanet(e.planet);
+      const s = e.collider.rayToSlab(x, y, dx, dy, Math.min(len, best), pad);
+      if (s < best) best = s;
+    }
+    return best;
+  }
+
+  // Środek statku przeszedł w kroku przez płytę któregoś ringu (HaloRingCollider.blockTunnel) — cofnięty; wynik albo null.
+  blockTunnel(ship, prevX, prevY) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      e.collider.setPlanet(e.planet);
+      const res = e.collider.blockTunnel(ship, prevX, prevY);
+      if (res.hit) return res;
+    }
+    return null;
+  }
+
   // Punkt świata gry w płycie któregoś ringu (pociski).
   pointInSlab(x, y, z = 0) {
     for (let i = 0; i < this.entries.length; i++) {

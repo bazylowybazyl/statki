@@ -944,7 +944,7 @@
     // Hipercruise (E5): automat lotu 20–40 tys. j/s i JEDNA tabela napędów gracza, NPC i ruchu v2.
     import {
       createHypercruise, configureHypercruise, engageHypercruise, dropHypercruise, stepHypercruise, resetHypercruise,
-      hypercruiseBusy, hypercruiseDriving, hypercruiseSpoolProgress
+      hypercruiseBusy, hypercruiseDriving, hypercruiseSpoolProgress, hypercruiseObstacleLookAhead, hypercruiseObstacleAction
     } from "./src/game/flight/hypercruise.js";
     import {
       HYPERCRUISE_TUNE, HYPERCRUISE_ENGINES, WARP_DRIVES, playerHullDrives, warpDriveSpeed, hypercruiseLegSpool
@@ -16921,6 +16921,16 @@
       } else if (HYPERCRUISE_TUNE.interruptible && hc.state !== 'drop' && playerMassLocked(performance.now())) {
         stopPlayerHypercruise('masslock', true, 'HIPERCRUISE: PRZECHWYT — BLOKADA MASY');
       }
+      // Płyta ringu na kursie (E9 2026-10-22, hypercruiseObstacleAction): wyjście, zanim płyta wejdzie w drogę
+      // hamowania przechwytu — automat staje z prędkością wyjścia przed płytą (pomiar: scripts/hipercruise-kolizje-sym.mjs).
+      if (haloWorld && hypercruiseDriving(hc)) {
+        const look = hypercruiseObstacleLookAhead(hc, dt);
+        const reach = Math.max(Number(ship.radius) || 0, Math.sqrt((Number(ship.w) || 0) ** 2 + (Number(ship.h) || 0) ** 2) * 0.5);
+        const dist = haloWorld.rayToSlab(ship.pos.x, ship.pos.y, Math.cos(ship.angle), Math.sin(ship.angle), look + reach, reach) - reach;
+        const act = hypercruiseObstacleAction(hc, dist, dt);
+        if (act === 'drop') stopPlayerHypercruise('ring', true, 'HIPERCRUISE: WYJŚCIE — PŁYTA RINGU NA KURSIE');
+        else if (act === 'brake') hc.interrupted = true;
+      }
       if (hc.state === 'idle') return;
       const c = _hcCtx;
       // Start lotu z prędkości wzdłuż dziobu (bok i wsteczny przepadają — lot idzie dziobem).
@@ -24224,9 +24234,27 @@
         return true;
       }
       if (!_warpGhostLinger) return false;
-      // Kadłuby z listy destruktora (budowana raz na klatkę — z poprzedniej, martwe odpadają) i ciała budowli.
-      _warpGhostLinger = playerHullOverlapsAny(worldBodies.withEntities(_cachedAllDestructibles || npcs));
+      // Kadłuby z listy destruktora (budowana raz na klatkę — z poprzedniej, martwe odpadają) i ciała budowli; głąb skały
+      // olbrzyma pasa — duch trwa, a statek jest wypychany (playerRockEscape).
+      const inRock = playerRockEscape();
+      _warpGhostLinger = inRock || playerHullOverlapsAny(worldBodies.withEntities(_cachedAllDestructibles || npcs));
       return _warpGhostLinger;
+    }
+    // Wyjście z warpa / hipercruise'u w GŁĘBI olbrzyma pasa (E9 2026-10-22; olbrzym 18–62 km, duch przelatuje): kolider
+    // olbrzyma widzi tylko pasmo SDF przy powierzchni (w głębi gradient 0 — statek zostawał w skale). Statek leci w stronę
+    // najbliższej płytkiej skały / próżni (BeltGiants.escapeFromRock) co najmniej ROCK_ESCAPE_SPEED; resztę wypchnięcia
+    // robi zwykły collideShip, gdy środek wyjdzie z głębi.
+    const ROCK_ESCAPE_SPEED = 3000;
+    const _rockEscape = { x: 0, y: 0, dist: 0 };
+    function playerRockEscape() {
+      if (!ship || ship.dead || !beltWorld || !(beltWorld.giants?.readyCount > 0)) return false;
+      const e = beltWorld.giants.escapeFromRock(ship.pos.x, ship.pos.y, _rockEscape);
+      if (!e) return false;
+      const along = ship.vel.x * e.x + ship.vel.y * e.y;
+      const v = Math.max(ROCK_ESCAPE_SPEED, along);
+      ship.vel.x = e.x * v;
+      ship.vel.y = e.y * v;
+      return true;
     }
     function playerHullOverlapsAny(bodies) {
       if (!ship || ship.dead || !ship.beamHull) return false;
@@ -26768,6 +26796,7 @@
     // Statki daleko od ringów odpadają na teście odległości od planety.
     // NPC przez widok kinematyki, jak przy asteroidach (npcCollidesWithWorld).
     let _haloRingNoticeAtMs = 0;
+    let _ringPrevOk = false, _ringPrevX = 0, _ringPrevY = 0;
     // Bramka odległości NPC od ringów (audyt 2026-10-07 § 5.4): [x, y, promień] na ring — środek
     // planety i zewnętrzny brzeg testu płyty w koliderze (podłoga + teren). Bitwa daleko od planet
     // nie kopiuje co krok każdego NPC do bryły i nie pyta o niego trzech koliderów.
@@ -26779,10 +26808,23 @@
       // tylko tranzytami), a uderzenie w nią zrywa hipercruise od razu (resztę prędkości w głąb zeruje kolider).
       const hcRing = hypercruiseDriving(hypercruise);
       if (ship && !ship.dead && (!ship.noHullCollisions || hcRing)) {
+        // Ostatnia linia (E9 2026-10-22): środek kadłuba przeszedł w tym kroku przez płytę (mały kadłub przy 30–40 tys.
+        // j/s na płycie Ziemi 452 j.) — cofnięty do pozy sprzed kroku; dyskretny test podłogi wypchnąłby go na drugą stronę.
+        let tunnel = false;
+        if (hcRing && _ringPrevOk) {
+          const ddx = ship.pos.x - _ringPrevX, ddy = ship.pos.y - _ringPrevY;
+          const vv = Math.sqrt(ship.vel.x * ship.vel.x + ship.vel.y * ship.vel.y);
+          const lim = Math.max(2000, 2 * vv * dt);
+          if (ddx * ddx + ddy * ddy <= lim * lim) tunnel = !!haloWorld.blockTunnel(ship, _ringPrevX, _ringPrevY);
+        }
         const hit = haloWorld.constrainShip(ship, true);
-        if (hcRing && hit && hit.hit) {
+        if (hcRing && (tunnel || (hit && hit.hit))) {
           hypercruise.reason = 'ring';
           resetHypercruise(hypercruise);
+          // Uderzenie kończy lot: kolider zeruje tylko składową w głąb płyty, a wzdłuż niej zostawało do 32 tys. j/s —
+          // już z kolizjami kadłubów. Prędkość przycięta do prędkości wyjścia hipercruise'u.
+          const vx = ship.vel.x, vy = ship.vel.y, v = Math.sqrt(vx * vx + vy * vy), vmax = HYPERCRUISE_TUNE.exitSpeed;
+          if (v > vmax) { ship.vel.x = vx * vmax / v; ship.vel.y = vy * vmax / v; }
           pushZoneMessage('HIPERCRUISE: PRZERWANY — PŁYTA RINGU', 1.8, { tone: 'warn', label: 'NAPĘD' });
         }
         const nowMs = performance.now();
@@ -26791,6 +26833,9 @@
           pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
         }
       }
+      // Poza z końca kroku dla testu odcinka — tylko w hipercruise'ie (warp, teleport i zwykły lot jej nie zostawiają).
+      _ringPrevOk = !!(ship && !ship.dead && hypercruiseDriving(hypercruise));
+      if (_ringPrevOk) { _ringPrevX = ship.pos.x; _ringPrevY = ship.pos.y; }
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloWorld.constrainShip(player2Ship, true);
       // NPC (bez ścian portu) kolider odrzuca, gdy środek kadłuba jest dalej od planety niż
       // floorMid + terrainReach + zasięg kadłuba (HaloRingCollider.constrainShip, nearFloor) — ten
