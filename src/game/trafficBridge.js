@@ -54,9 +54,10 @@ function applyToMirror(mirror, bag) {
     const moved = moveStock(mirror, id, delta);
     if (moved === 0) continue;
     applied[id] = moved;
-    // Oferta portu kurczy się od razu: kupione schodzi z oferty sprzedaży, sprzedane — ze skupu.
+    // Oferta portu kurczy się od razu: kupione schodzi z oferty sprzedaży, sprzedane — ze skupu
+    // (skup −1 = port towaru nie używa — zostaje, nawet gdy towar wszedł inną drogą, np. rozbiórka wraku).
     if (moved < 0 && mirror.sell) mirror.sell[id] = Math.max(0, (Number(mirror.sell[id]) || 0) + moved);
-    if (moved > 0 && mirror.buy) mirror.buy[id] = Math.max(0, (Number(mirror.buy[id]) || 0) - moved);
+    if (moved > 0 && mirror.buy?.[id] > 0) mirror.buy[id] = Math.max(0, mirror.buy[id] - moved);
   }
   return applied;
 }

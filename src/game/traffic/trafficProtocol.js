@@ -247,7 +247,7 @@ export const MARKET_FIELD = Object.freeze({
   ASK: 4,
   /** Oferta portu dla kupca (gracz): ile sprzeda ponad rezerwę na własne potrzeby (E7, `portOfferFromQuote`). */
   SELL: 5,
-  /** …i ile skupi do celu uzupełnienia, licząc z towarem w drodze (0 — port towaru nie używa). */
+  /** …i ile skupi do celu uzupełnienia, licząc z towarem w drodze (0 — ma dość, −1 — port towaru nie używa). */
   BUY: 6
 });
 

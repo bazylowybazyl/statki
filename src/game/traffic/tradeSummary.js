@@ -30,17 +30,20 @@ function round(value, digits = 0) {
 /**
  * Oferta portu dla kupca (gracz, kupcy): `out.sell` — ile sprzeda ponad rezerwę na własne potrzeby
  * (`offerFloor`), `out.buy` — ile skupi do celu uzupełnienia (`restockTarget`) licząc z towarem w drodze;
- * port, który towaru nie używa (`wanted === false`), nie skupuje. `price` — notowanie (`resourcePrice`
+ * port, który towaru nie używa (`wanted === false`), nie skupuje (`out.wanted` = false — terminal pisze wtedy
+ * „nie skupuje”, a przy `buy` 0 i `wanted` — „ma dość”). `price` — notowanie (`resourcePrice`
  * + `wanted`, `demandRate`, `restockFloor` z `snapshotMarket`). Bez alokacji, gdy podano `out`.
  */
-export function portOfferFromQuote(price, inbound = 0, out = { sell: 0, buy: 0 }) {
+export function portOfferFromQuote(price, inbound = 0, out = { sell: 0, buy: 0, wanted: false }) {
   out.sell = 0;
   out.buy = 0;
+  out.wanted = false;
   if (!price) return out;
   const cap = Number(price.capacity) || 0;
   const stored = Math.max(0, Number(price.stored) || 0);
   out.sell = cap > 0 ? Math.max(0, Math.floor(stored - (price.offerFloor || 0) * cap)) : Math.floor(stored);
   if (price.wanted !== false && cap > 0) {
+    out.wanted = true;
     const coming = Math.max(0, Number(inbound) || 0);
     const room = Math.max(0, Number(price.room) || 0) - coming;
     out.buy = Math.max(0, Math.floor(Math.min(room, restockTarget(price) - (stored + coming))));

@@ -6,7 +6,7 @@ Zadanie z `docs/PLAN-ekonomia-rynki.md` (sesja E2, etap E7): terminal stacji na 
 
 - Gracz handluje jak kupiec, na tej samej księdze (`director.book`) co NPC: port SPRZEDAJE zapas ponad rezerwę na własne potrzeby (`offerFloor`), SKUPUJE do celu uzupełnienia (`restockTarget`: 2 h zużycia albo porcja stoczni, z towarem w drodze) i tylko to, czego używa (`stationWantsResource`). Opuszczona stacja sprzedaje wszystko i nic nie skupuje. Liczy to worker (`portOfferFromQuote`) i wysyła w buforze rynku (`MARKET_FIELD.SELL` / `BUY`); gra nie liczy oferty sama.
 - Dotąd gracz mógł wcisnąć do portu wszystko do pojemności magazynu (model „magazyn”). Teraz port płaci tylko za to, czego chce — ruda z pasa sprzedaje się w hutach, nie w każdym porcie. To zmiana zachowania dla gracza, nie dla świata (symulacja bez zmian).
-- Widok: kolumny Towar / Ładownia / Port ma / Port sprzedaje (`N × cena CR`) / Port skupuje (`N × cena CR` albo „nie skupuje”), zielono — okazja dla gracza (kupno ≤ 85% wartości, sprzedaż ≥ 105%). Karta handlu zajmuje dwie kolumny siatki terminalu.
+- Widok: kolumny Towar / Ładownia / Port ma / Port sprzedaje (`N × cena CR`) / Port skupuje (`N × cena CR`, „ma dość” — używa, ale ma zapas do celu, albo „nie skupuje” — nie używa; w buforze skup −1), zielono — okazja dla gracza (kupno ≤ 85% wartości, sprzedaż ≥ 105%). Karta handlu zajmuje dwie kolumny siatki terminalu.
 - Po kupnie lub sprzedaży oferta w kopii mostu przesuwa się od razu (`applyToMirror`), worker potwierdza w następnym `tick`.
 
 ## 2. Komputer handlowy: warstwa „HANDEL” mapy CIC (klawisz H)
@@ -38,7 +38,7 @@ Zadanie z `docs/PLAN-ekonomia-rynki.md` (sesja E2, etap E7): terminal stacji na 
 ## 5. Sprawdzenie
 
 - Symulacja `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` przed i po: identyczna liczba w liczbę (poza czasem ticku) — oferta, zapis i agregat nie zmieniają świata. Bramka bilansu wynika z tego samego (świat bez zmian).
-- `npm test` — nowa suita `economySave` (23 sprawdzenia: zapis, wczytanie na świeży świat z innym ziarnem, stacja gracza po `market-add`, złe zapisy, wyrwy od razu po `ready`, oferta w buforze, agregat); `node --test tests/graczNaRynku.test.mjs` (wersja zapisu, tolerancyjne wczytanie, klawisz H, rysunek warstwy).
+- `npm test` — nowa suita `economySave` (24 sprawdzenia: zapis, wczytanie na świeży świat z innym ziarnem, stacja gracza po `market-add`, złe zapisy, wyrwy od razu po `ready`, oferta w buforze ze skupem −1 dla towaru nieużywanego, agregat); `node --test tests/graczNaRynku.test.mjs` (wersja zapisu, tolerancyjne wczytanie, klawisz H, rysunek warstwy).
 - Gra w trybie gracza (`node scripts/webgpu/rynek-gra.mjs --query renderWorker=1`): terminal Ziemi (63 towary; port sprzedaje 54, skupuje 7), kupno i sprzedaż przesuwają ofertę od razu, stacja gracza z haka (rynek `player`, 41 towarów, skupuje 20), CIC „HANDEL” (8 tras, 28 portów), urobek gracza w pasie (6 wyrw), zapis (35 rynków, 13 KB) → F5 → wczytanie: magazyn Ziemi, stacja gracza i jej rynek, wyrwy wracają; 0 pipeline'ów synchronicznych (strona i worker renderu), 0 błędów.
 
 ## 6. Ryzyka i do zrobienia

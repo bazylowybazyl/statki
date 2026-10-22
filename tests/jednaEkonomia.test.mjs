@@ -77,7 +77,15 @@ test('terminal czyta rynek z mostu, zmiany zapasu idą przez stockDelta', () => 
     resourcePrice: () => ({ stored: 100, capacity: 200, room: 100, offerFloor: 0.25, ask: 12.4, bid: 9.6 }),
     PLAYER: { reputation: {} }
   });
-  assert.deepEqual(getTradeOffer({ id: 'earth' }, 'steel'), { stock: 100, sell: 50, buy: 0, ask: 12, bid: 10 });
+  assert.deepEqual(getTradeOffer({ id: 'earth' }, 'steel'), { stock: 100, sell: 50, buy: 0, wants: true, ask: 12, bid: 10 });
+  // Skup −1 z workera: port towaru nie używa (terminal: „nie skupuje”, nie „ma dość”).
+  const notWanted = loadIndexFunction(src, 'function getTradeOffer(station, key)', 'getTradeOffer', {
+    getTradeEconomy: () => ({ resources: { steel: 0 }, capacity: { steel: 200 }, sell: { steel: 0 }, buy: { steel: -1 } }),
+    resourcePrice: () => ({ stored: 0, capacity: 200, room: 200, offerFloor: 0.25, ask: 12.4, bid: 9.6 }),
+    PLAYER: { reputation: {} }
+  });
+  assert.equal(notWanted({ id: 'earth' }, 'steel').wants, false);
+  assert.equal(notWanted({ id: 'earth' }, 'steel').buy, 0);
   const price = sliceFunction(src, 'function getTradeOffer(station, key)');
   assert.ok(price.includes('resourcePrice(station, econ, key, { reputation: PLAYER.reputation })'), 'jeden model ceny: resourcePrice z reputacją');
 });

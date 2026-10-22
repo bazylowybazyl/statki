@@ -14540,6 +14540,8 @@
         stock: Number(price.stored) || 0,
         sell: Math.max(0, Math.floor(Number(econ.sell?.[key]) || 0)),
         buy: Math.max(0, Math.floor(Number(econ.buy?.[key]) || 0)),
+        // Skup −1 z workera: port towaru nie używa („nie skupuje”); 0 przy `wants` — „ma dość”.
+        wants: !(Number(econ.buy?.[key]) < 0),
         ask: Math.max(1, Math.round(Number(price.ask) || 0)),
         bid: Math.max(1, Math.round(Number(price.bid) || 0))
       };
@@ -15111,9 +15113,9 @@
         }
         if (fields.buy) {
           fields.buy.textContent = !offer ? '—'
-            : (offer.buy > 0 ? `${formatTradeUnits(offer.buy)} × ${sellPrice} CR` : 'nie skupuje');
+            : (offer.buy > 0 ? `${formatTradeUnits(offer.buy)} × ${sellPrice} CR` : (offer.wants ? 'ma dość' : 'nie skupuje'));
           fields.buy.classList.toggle('is-rich', offer?.buy > 0 && sellPrice / value >= 1.05);
-          fields.buy.classList.toggle('is-poor', !!offer && !(offer.buy > 0));
+          fields.buy.classList.toggle('is-poor', !!offer && !(offer.buy > 0) && !offer.wants);
         }
 
         // Wiersze bez ruchu w obie strony tylko przygasają — pełne ukrycie
@@ -15193,7 +15195,7 @@
         // Port skupuje do swojego celu (oferta skupu) i płaci za to, co przyjął — jak kupcom. Reszta zostaje
         // w ładowni.
         const stored = Math.min(amount, offer.buy);
-        if (stored <= 0) { toast(offer.stock > 0 ? 'Port ma tego dość' : 'Port tego nie skupuje'); return; }
+        if (stored <= 0) { toast(offer.wants ? 'Port ma tego dość' : 'Port tego nie skupuje'); return; }
         PLAYER.cargo[key] = held - stored;
         if (PLAYER.cargo[key] <= 0) delete PLAYER.cargo[key];
         adjustStationStock(station, key, stored);

@@ -112,7 +112,7 @@ export function createTrafficCore(post, options = {}) {
     /** Zapis ekonomii czekający na rynki dokładane po starcie (E7, `economySave.js`). */
     pendingRestore: null,
     /** Bufory oferty portu w `buildMarket` — bez alokacji na stację × towar. */
-    offerScratch: { sell: 0, buy: 0 },
+    offerScratch: { sell: 0, buy: 0, wanted: false },
     quoteScratch: { capacity: 0, stored: 0, room: 0, offerFloor: 0, wanted: false, demandRate: 0, restockFloor: 0 }
   };
 
@@ -621,6 +621,7 @@ export function createTrafficCore(post, options = {}) {
         // Opuszczona stacja oddaje wszystko, co zostało, i niczego nie skupuje.
         if (derelict || !price) {
           data[offset + MARKET_FIELD.SELL] = derelict ? Math.floor(finite(econ.resources?.[key])) : 0;
+          data[offset + MARKET_FIELD.BUY] = -1;
           continue;
         }
         const q = quote?.prices.get(key);
@@ -633,7 +634,7 @@ export function createTrafficCore(post, options = {}) {
         quoteFields.restockFloor = q?.restockFloor || 0;
         portOfferFromQuote(quoteFields, book ? inboundUnits(book, entry.id, key) : 0, offer);
         data[offset + MARKET_FIELD.SELL] = offer.sell;
-        data[offset + MARKET_FIELD.BUY] = offer.buy;
+        data[offset + MARKET_FIELD.BUY] = offer.wanted ? offer.buy : -1;
       }
     });
     return data;

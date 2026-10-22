@@ -108,14 +108,17 @@ export function run() {
   const earthIndex = (tick.stations || stations).findIndex(entry => entry.id === 'earth');
   let sprzedaje = 0;
   let skupuje = 0;
+  let nieUzywa = 0;
   let ponadZapas = false;
   for (let r = 0; r < RESOURCE_KEYS.length; r++) {
     const o = marketOffset(earthIndex, r, RESOURCE_KEYS.length);
     if (tick.market[o + MARKET_FIELD.SELL] > 0) sprzedaje++;
     if (tick.market[o + MARKET_FIELD.BUY] > 0) skupuje++;
+    if (tick.market[o + MARKET_FIELD.BUY] === -1) nieUzywa++;
     if (tick.market[o + MARKET_FIELD.SELL] > tick.market[o + MARKET_FIELD.STOCK] + 1e-9) ponadZapas = true;
   }
   t.check('Ziemia coś sprzedaje i coś skupuje', sprzedaje > 0 && skupuje > 0);
+  t.check('towar, którego port nie używa, ma skup −1 (terminal: „nie skupuje”)', nieUzywa > 0);
   t.check('oferta sprzedaży nie przekracza zapasu', !ponadZapas);
 
   t.section('5. Komputer handlowy: agregat na żądanie');
