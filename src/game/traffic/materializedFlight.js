@@ -190,7 +190,7 @@ function actorSize(unitClass) {
  * Klasa ładowni kursu (`TRAFFIC_CLASS_DRIVE`: silnik hipercruise, klasa lotu, napęd warp) — z kadłuba
  * przewoźnika (`hullForVanClass`) albo z klasy kursu bez statku (`VAN_CLASSES.npcType`).
  */
-const VAN_CLASS_OF_UNIT = Object.freeze({
+export const VAN_CLASS_OF_UNIT = Object.freeze({
   inter_station_shuttle: 'van', 'freighter-small': 'van',
   container_ship: 'hauler', 'freighter-medium': 'hauler',
   long_haul_freighter: 'bulk', 'freighter-large': 'bulk',

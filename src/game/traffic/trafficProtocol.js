@@ -203,13 +203,15 @@ export const ACTOR_FIELD = Object.freeze({
 
 /**
  * Postój statku przy stanowisku (kontrakt E6 ↔ E12 — przeładunek: ładownie, roje dronów, taśmociągi):
- *   { id, berthId, stationId, mode, cargo, t0, dur, hull, unitClass }
+ *   { id, berthId, stationId, mode, cargo, fill, t0, dur, hull, unitClass }
  *   id        — numer kursu (= `ACTOR_FIELD.ID` encji),
  *   berthId   — id stanowiska jak w `ready.berths` / układach doków gry,
  *   mode      — powód postoju (`DWELL_REASON`): 'load' | 'unload' | 'extract' | 'refuel' | 'service' | 'hold',
  *   cargo     — { towar: ilość } w jednostkach ŚWIATA ruchu (zapas × skala gospodarki): to, co statek
  *               wyładowuje ('unload') albo bierze ('load'); urobek wyprawy — cały worek; pusty przelot,
  *               patrol — {},
+ *   fill      — 0…1: masa ładunku (`payload.mass`) / ładowność klasy kursu (`VAN_CLASSES[].capacity`, ta sama
+ *               skala co masa); null — klasa bez ładowni (okręty, rejdery) albo kurs bez masy (pusty → 0),
  *   t0, dur   — obsługa przy stanowisku w CZASIE MOSTU: od `t0` (koniec przechwytu) przez `dur` s
  *               (postęp = (czas − t0) / dur; dojście w porcie nie wchodzi),
  *   hull      — id kadłuba proxy (`resolveTrafficHullId`), unitClass — klasa kursu.

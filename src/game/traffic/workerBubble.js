@@ -27,7 +27,7 @@
  */
 
 import {
-  createBubble, updateBubble, clearBubble, releaseBubbleCourse, setBubblePorts, ACTOR_PHASE
+  createBubble, updateBubble, clearBubble, releaseBubbleCourse, setBubblePorts, ACTOR_PHASE, VAN_CLASS_OF_UNIT
 } from './materializedFlight.js';
 import { createRingObstaclesForNetwork } from './ringRouter.js';
 import { getCourse, COURSE_STATUS } from './courseRegistry.js';
@@ -42,6 +42,7 @@ import {
   ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG, COURSE_KIND_SHIFT, courseNumber
 } from './trafficProtocol.js';
 import { convoyOf } from './convoy.js';
+import { VAN_CLASSES } from './shipmentOrders.js';
 
 /** Przyspieszenie w buforze najwyżej tyle [j./s²] — skok prędkości (przechwyt, zmiana etapu) to nie rozpęd. */
 const ACCEL_LIMIT = 200_000;
@@ -298,6 +299,7 @@ export function collectDockChanges(state, time, hullOf) {
       stationId: course.portStationId || stage.nodeId || null,
       mode: stage.reason || 'service',
       cargo: cargoOf(course),
+      fill: fillOf(course),
       t0,
       dur,
       hull: hullOf ? hullOf(a.unitClass) : a.unitClass,
@@ -324,6 +326,21 @@ function cargoOf(course) {
   }
   if (p.resourceId && Number(p.units) > 0) return { [p.resourceId]: Number(p.units) };
   return {};
+}
+
+const HOLD_BY_VAN_CLASS = new Map(VAN_CLASSES.map((c) => [c.id, c.capacity]));
+
+/**
+ * Wypełnienie ładowni 0…1: masa ładunku / ładowność klasy kursu (`payload.vanClassId` albo klasa z kadłuba —
+ * `VAN_CLASS_OF_UNIT`); null — klasa bez ładowni (okręty, rejdery, holowniki).
+ */
+function fillOf(course) {
+  const p = course?.payload;
+  const cls = p?.vanClassId || VAN_CLASS_OF_UNIT[course?.unitClass];
+  const hold = cls ? HOLD_BY_VAN_CLASS.get(cls) : 0;
+  if (!(hold > 0)) return null;
+  const mass = Number(p?.mass) || 0;
+  return mass > 0 ? Math.min(1, mass / hold) : 0;
 }
 
 /** Encja bańki przy kursie `courseId` albo null. */

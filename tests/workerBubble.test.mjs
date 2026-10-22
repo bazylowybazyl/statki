@@ -236,6 +236,7 @@ test('postoje przy stanowisku (kontrakt E12): rekord przy dokowaniu, koniec w `u
   let records = 0;
   let ended = 0;
   let repeated = 0;
+  let fills = 0;
   for (let f = 0; f < 30 * 120; f++) {
     core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
     for (const id of got.actors.undocked || []) { if (live.delete(id)) ended++; }
@@ -249,11 +250,14 @@ test('postoje przy stanowisku (kontrakt E12): rekord przy dokowaniu, koniec w `u
       for (const n of Object.values(rec.cargo)) assert.ok(n > 0);
       assert.ok(rec.dur >= 0 && Number.isFinite(rec.t0) && rec.t0 <= got.actors.time + 1e-6, 'zegar postoju w czasie mostu');
       assert.ok(typeof rec.hull === 'string' && rec.hull.length > 0);
+      assert.ok(rec.fill === null || (rec.fill >= 0 && rec.fill <= 1), `wypełnienie ładowni ${rec.fill}`);
+      if (rec.fill !== null) fills++;
     }
   }
   assert.ok(records > 0, 'postoje wysłane');
   assert.ok(ended > 0, 'koniec postoju zgłoszony');
   assert.equal(repeated, 0, 'ten sam rekord nie idzie drugi raz');
+  assert.ok(fills > 0, 'frachtowce niosą wypełnienie ładowni');
   const withCargo = [...live.values()].filter((r) => Object.keys(r.cargo).length > 0).length;
   assert.ok(withCargo > 0 || ended > 0, 'ładunek w rekordach');
 });

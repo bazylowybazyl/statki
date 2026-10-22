@@ -131,8 +131,8 @@ d3869cd4 (porty, strefa planety, stop bez przelotu), 08591b86 (kontrakt E12), aw
 
 ### Kontrakt E12 (przeładunek)
 
-- W wiadomości `actors` tylko zmiany: `docks: [DockRecord]` (`{ id, berthId, stationId, mode, cargo, t0, dur, hull,
-  unitClass }`) i `undocked: [id]`; most — `TrafficV2.actorDocks` (`Map`). Opis: `trafficProtocol.js` (`DockRecord`,
+- W wiadomości `actors` tylko zmiany: `docks: [DockRecord]` (`{ id, berthId, stationId, mode, cargo, fill, t0, dur,
+  hull, unitClass }`; `fill` — masa ładunku / ładowność klasy kursu, 0…1, null bez ładowni) i `undocked: [id]`; most — `TrafficV2.actorDocks` (`Map`). Opis: `trafficProtocol.js` (`DockRecord`,
   `DOCK_MODES`) i notatka orkiestratora `E6-E12-kontrakt-przeladunku.md`. Test: `tests/workerBubble.test.mjs`
   („postoje przy stanowisku (kontrakt E12)…”).
 
