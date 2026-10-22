@@ -389,6 +389,8 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Testy: `npm test` 1755 zielone.
 - Dalej:
   - ~~E4: okno ciszy (tick ≤ 25 ms) i końcowe strojenie~~ — zrobione;
+  - ~~bańka dla pozostałych portów i awans do pełnego NPC~~ — zrobione (E6 etap 2);
+  - ~~E7: gracz na rynku i zapis ekonomii~~ — zrobione.
 - 2026-10-22 następny etap, decyzja użytkownika: „tak”, plus nowa sesja na przeładunek w portach.
   - E6 (ta sama sesja):
     - bańka w pozostałych portach: Mars, Jowisz, porty bez ringu, księżyce, Ceres i Westa, kryjówki;
@@ -423,6 +425,18 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
     - nowe zachowanie terminala;
     - uzupełnienie kadłubów ruchu (mostki, reaktory, zbiorniki, gniazda) w osobnej sesji.
 - 2026-10-22 E6, etap 2 (`claude/frosty-moser-69ca47`): bańka we wszystkich portach (`world.docks`), strefa planety, kontrakt E12 (`actors.cargo`), awans do pełnego NPC (trafienie gracza, 1 na klatkę, do 8 naraz). Czeka na `git merge main` z E7 po swojej stronie.
-  - bańka dla pozostałych portów i awans do pełnego NPC (do zlecenia);
-  - E7: gracz na rynku i zapis ekonomii.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
+- 2026-10-22 E6 etap 2 w `main` (34fcd98a):
+  - bańka we wszystkich portach: ringi Marsa i Jowisza, pomosty, księżyce, Ceres, Westa, kryjówki, stacje gracza;
+  - strefa planety ×0,6 także w locie bańki;
+  - kontrakt przeładunku dla E12 (`actors.cargo`);
+  - awans do pełnego NPC po trafieniu gracza: 1 na klatkę, do 8 naraz, powrót do bańki po walce.
+  - Testy: `npm test` 1781 zielone; `node --test` 3170 testów, 1 porażka (`cicBeltLayer`, budżet czasu pod obciążeniem innych sesji; osobno 10/10); build przechodzi; start w workerze 0 pipeline'ów sync.
+  - Znalezisko spoza bańki: 3 pipeline'y kompilowane synchronicznie od modeli stacji planet (GLB) przy pierwszym teleporcie do odległego portu. Rozgrzewkę tych modeli zlecono E6.
+- 2026-10-22 E12 (`claude/e12-przeladunek-c31e74`, de01f388): rój liczony na żywo na GPU (symulacja z dema w puli 8 slotów stanowisk), ładownie floty, stoły i taśmociągi, luk Atlasa z ładunkiem. Koszt CPU +0,4–0,7 ms przy budżecie 0,3 ms.
+  - Decyzja orkiestratora:
+    - scalić kernele `kClear` i `kBin`;
+    - krok roju tylko przy slocie w kadrze, więc poza portem koszt 0;
+    - liczba slotów z presetu grafiki: Niska 0, Średnia 4, Wysoka i Ultra 8.
+  - Kroku 1/30 s nie bierzemy, bo zmienia dynamikę dema.
+  - Kontrakt E6 jest już w `main`, więc bramka `?przeladunekDemo=1` znika: przeładunek widać domyślnie, a `?przeladunek=0` zostaje do A/B.

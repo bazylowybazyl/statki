@@ -22,14 +22,23 @@ test('stacje planet: szablony GLB na ekranie ładowania — warstwa FG, wypiek r
   const warm = src.slice(src.indexOf('function warmStationTemplate('), src.indexOf('export async function prepareStations3D('));
   assert.match(warm, /Core3D\.enableForeground3D\(root\);/, 'szablon na warstwie FG jak klony — klucze rozgrzewki rozpadu z warstwą');
   assert.match(warm, /Destruction3D\.prebake\(root\);/);
-  assert.match(warm, /reg\.add\(\{ name: `stacje: bryła \$\{name\}`, objects: root, layer: 2 \}\);/);
-  assert.match(warm, /reg\.add\(\{ name: `stacje: cień \$\{name\}`, objects: root, shadow: true \}\);/);
+  assert.match(warm, /reg\.add\(\{ name: `stacje: bryła \$\{name\}`, objects: root, layer: 2, \.\.\.phase \}\);/);
+  assert.match(warm, /reg\.add\(\{ name: `stacje: cień \$\{name\}`, objects: root, shadow: true, \.\.\.phase \}\);/);
   const prep = src.slice(src.indexOf('export async function prepareStations3D('), src.indexOf('function cloneTemplate('));
   assert.match(prep, /station\.ringPort\) continue;/, 'stacja-port bez bryły');
   assert.match(prep, /entry\.loaded/, 'czeka na wczytanie szablonów');
   assert.match(prep, /initStations3D\(null, stations\);/, 'bryły stacji przed pierwszą klatką gry');
-  // wczytany po ekranie ładowania — rozgrzewka od razu
-  assert.match(src, /if \(stationsWarmRequested\) warmStationTemplate\(placeholder, path\);/);
+  // wczytany po ekranie ładowania — rozgrzewka w wolnej chwili (wypiek rozpadu szablonu nie w callbacku wczytania)
+  assert.match(src, /if \(stationsWarmRequested\) requestIdle\(\(\) => warmStationTemplate\(placeholder, path\)/);
+  // tryb worker: szablony bez brył, wpisy rejestru w fazie 'after' — worker woła przy przygotowaniu sceny po klatce zero
+  const tpl = src.slice(src.indexOf('export async function warmStationTemplates3D('), src.indexOf('function cloneTemplate('));
+  assert.match(tpl, /stationsWarmPhase = 'after';/);
+  assert.match(tpl, /station\.ringPort\) continue;/);
+  assert.match(tpl, /entry\.loaded/);
+  assert.doesNotMatch(tpl, /initStations3D\(/, 'bryły w workerze leniwie (updateStations3D)');
+  const worker = code('src/render/render.worker.js');
+  const prepScene = worker.slice(worker.indexOf('async function prepareScene('), worker.indexOf('const tF = performance.now();'));
+  assert.match(prepScene, /if \(m\.afterFrame\) \{[\s\S]*warmStationTemplates3D\(st\.rm\.stations/, 'po klatce zero — lustra stacji już są');
   // index.html: przed flush() rejestru na ekranie ładowania
   const html = read('index.html');
   const start = html.slice(html.indexOf('async function startGame() {'), html.indexOf('if (newGameButton) {'));
