@@ -19,7 +19,7 @@ export const BERTH_SIZE_CODES = Object.freeze(['S', 'M', 'L', 'MEGA', 'CAPITAL']
 const SIZE_INDEX = new Map(BERTH_SIZE_CODES.map((id, i) => [id, i]));
 
 export const CARGO_OPS_BLOCK = Object.freeze({
-  HEAD: 5,                        // [pola, przeładunki, gracz, słowa użyte, czas mostu (zegar roju: czas gry × 4)]
+  HEAD: 6,                        // [pola, przeładunki, gracz, słowa użyte, czas mostu (zegar roju: czas gry × 4), sloty roju na żywo]
   YARD: Object.freeze({ X: 0, Y: 1, ANGLE: 2, SIZE: 3, PAD_L: 4, PAD_B: 5, PORTAL: 6, HALF_BEAM: 7, SEED: 8, FLAGS: 9, STRIDE: 10 }),
   OP: Object.freeze({
     SEED: 0, YARD: 1, HULL: 2, SX: 3, SY: 4, SA: 5, MODE: 6, FILL: 7, RES: 8, DWELL: 9, MOVE: 10, DOCK_TIME: 11,
@@ -89,6 +89,7 @@ export function packCargoOpsBlock(F, frame) {
     np = 1;
   }
   F[0] = ny; F[1] = nOp; F[2] = np; F[3] = o; F[4] = Number(frame?.time) || 0;
+  F[5] = Number.isFinite(frame?.liveSlots) ? frame.liveSlots : 8;
   return nOp;
 }
 
@@ -98,7 +99,7 @@ export function createCargoOpsBlock() {
     name: 'cargoOps', f64: cargoOpsBlockSize(), phase: 'begin',
     pack(blk, frame) {
       const c = frame.cargoOps;
-      if (!c) { blk.f64[0] = 0; blk.f64[1] = 0; blk.f64[2] = 0; blk.f64[3] = B.HEAD; blk.f64[4] = 0; return; }
+      if (!c) { blk.f64[0] = 0; blk.f64[1] = 0; blk.f64[2] = 0; blk.f64[3] = B.HEAD; blk.f64[4] = 0; blk.f64[5] = 0; return; }
       packCargoOpsBlock(blk.f64, c);
     }
   };
@@ -112,11 +113,11 @@ function rec(list, i, make) {
 
 /**
  * Strona renderu: blok → ramka (ten sam kształt co ramka strony; obiekty wielokrotnego użytku w `out`).
- * Zwraca `out` ({ yards, yardCount, ops, opCount, player }).
+ * Zwraca `out` ({ yards, yardCount, ops, opCount, player, time, liveSlots }).
  */
 export function applyCargoOpsBlock(blk, out) {
   const F = blk && blk.f64;
-  out.yardCount = 0; out.opCount = 0; out.player = null; out.time = F ? F[4] : 0;
+  out.yardCount = 0; out.opCount = 0; out.player = null; out.time = F ? F[4] : 0; out.liveSlots = F ? F[5] : 0;
   if (!out.yards) out.yards = [];
   if (!out.ops) out.ops = [];
   if (!F) return out;

@@ -44,6 +44,10 @@ export function createPortCargoFrame() {
     _yardIndex: new Map(),
     _cargo: new Map(),
     _cargoSeq: -1,
+    // Zatoki wszystkich portów bańki (Ziemia, Mars, Jowisz — ten sam układ zatok ringu): lista przebudowywana, gdy
+    // worker przyśle nową tabelę stanowisk (rynki w biegu) — klatka nie przegląda pomostów ani hal K-7.
+    _bayTables: null,
+    _bays: [],
     stats: { yards: 0, ops: 0, withCargo: 0 }
   };
 }
@@ -86,18 +90,38 @@ export function syncPortCargoContract(frame, actors, resources) {
 }
 
 /**
- * Ramka klatki. o: { bubble (TrafficBubble gry), berths (ready.bubblePorts.earth), time (czas mostu w chwili klatki),
- * cam { x, y, zoom }, viewW, viewH, cargo (mapa z syncPortCargoContract), demo (dev: przeładunek z ziarna kursu, gdy
- * brak kontraktu), player (rekord gracza albo null) }. Pola tylko w kadrze (+ zapas), przeładunki tylko przy polach
- * zatok i kadłubach z ładownią.
+ * Zatoki (pola S / M / L / MEGA poza halami K-7) ze wszystkich portów tabeli `ready.bubblePorts` ({ stacja: [stanowiska] }).
+ */
+function bayList(frame, ports) {
+  if (frame._bayTables === ports) return frame._bays;
+  frame._bayTables = ports;
+  const out = frame._bays;
+  out.length = 0;
+  if (!ports) return out;
+  for (const list of Object.values(ports)) {
+    if (!Array.isArray(list)) continue;
+    for (const b of list) {
+      if (b.hall === 'K-7') continue;
+      const size = bayBerthSize(b.id);
+      if (size) out.push({ b, size });
+    }
+  }
+  return out;
+}
+
+/**
+ * Ramka klatki. o: { bubble (TrafficBubble gry), ports (ready.bubblePorts — wszystkie porty bańki), time (czas mostu
+ * w chwili klatki), cam { x, y, zoom }, viewW, viewH, cargo (mapa z syncPortCargoContract), player (rekord gracza albo
+ * null), liveSlots (stanowiska z rojem na żywo — preset grafiki) }. Pola tylko w kadrze (+ zapas), przeładunki tylko przy polach zatok i kadłubach z ładownią.
  */
 export function buildPortCargoFrame(frame, o) {
   frame.yardCount = 0;
   frame.opCount = 0;
   frame.player = o.player || null;
   frame.time = Number(o.time) || 0;
+  frame.liveSlots = Number.isFinite(o.liveSlots) ? o.liveSlots : 8;
   frame.stats.yards = 0; frame.stats.ops = 0; frame.stats.withCargo = 0;
-  const berths = o.berths;
+  const bays = bayList(frame, o.ports || null);
   const idx = frame._yardIndex;
   idx.clear();
   const cam = o.cam;
@@ -106,12 +130,11 @@ export function buildPortCargoFrame(frame, o) {
   // znika z ramki, póki rój go liczy.
   const halfW = (o.viewW || 1920) * 0.85 / zoom + 1800;
   const halfH = (o.viewH || 1080) * 0.85 / zoom + 1800;
-  if (berths && cam) {
-    for (const b of berths) {
-      if (b.hall === 'K-7') continue;
-      const size = bayBerthSize(b.id);
-      if (!size) continue;
+  if (cam) {
+    for (let i = 0; i < bays.length; i++) {
+      const b = bays[i].b;
       if (Math.abs(b.x - cam.x) > halfW || Math.abs(b.y - cam.y) > halfH) continue;
+      const size = bays[i].size;
       if (frame.yardCount >= 96) break;
       const pad = PORT_CARGO_PADS[size];
       const r = rec(frame.yards, frame.yardCount, () => ({ x: 0, y: 0, angle: 0, size: 'M', padLength: 0, padBeam: 0, portalGap: 0, halfBeam: 0, seed: 0 }));
@@ -137,8 +160,7 @@ export function buildPortCargoFrame(frame, o) {
     const hull = TRAFFIC_CARGO_BAY_HULLS[a.hullId];
     if (!hull) continue;
     frame.stats.ops++;
-    let c = cargo ? cargo.get(a.id) : null;
-    if (!c && o.demo) c = demoCargo(a.id);
+    const c = cargo ? cargo.get(a.id) : null;
     if (!c || !c.mode) continue;
     frame.stats.withCargo++;
     const r = rec(frame.ops, frame.opCount, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0 }));
@@ -154,22 +176,10 @@ export function buildPortCargoFrame(frame, o) {
   return frame;
 }
 
-// Dev (`?przeladunekDemo=1`): przeładunek z ziarna kursu, gdy worker ruchu nie wystawia jeszcze kontraktu.
-const DEMO_RES = Object.freeze(['steel', 'copper_ore', 'chips', 'ice', 'fusion_fuel', 'helium3', 'polymer', 'ammo_kinetic']);
-const _demo = new Map();
-function demoCargo(id) {
-  let r = _demo.get(id);
-  if (r) return r;
-  const h = ((Math.imul(id | 0, 2654435761) >>> 0) % 1000) / 1000;
-  r = { mode: (id & 1) ? 'unload' : 'load', dwell: (id & 1) ? 120 : 90, move: 0, resourceId: DEMO_RES[(id >>> 1) % DEMO_RES.length], fill: 0.45 + h * 0.55, units: 0 };
-  if (_demo.size > 512) _demo.clear();
-  _demo.set(id, r);
-  return r;
-}
-
 // Narzędzia (`?przeladunekStres=N`): N syntetycznych przeładunków na polach w kadrze (kadłub wg klasy pola, statek
 // na środku pola, tryb na zmianę, zegar postoju przesunięty na pole) — pomiar kosztu obrazu bez czekania na ruch.
 // Proxy kadłubów nie ma (rysuje je tylko bańka) — mierzy się sam przeładunek.
+const STRESS_RES = Object.freeze(['steel', 'copper_ore', 'chips', 'ice', 'fusion_fuel', 'helium3', 'polymer', 'ammo_kinetic']);
 const STRESS_HULL = Object.freeze({ S: 'inter_station_shuttle', M: 'container_ship', L: 'long_haul_freighter', MEGA: 'heavy_freighter_proxy' });
 function stressOps(frame, o) {
   const n = Math.min(o.stress | 0, frame.yardCount, 48);
@@ -180,7 +190,7 @@ function stressOps(frame, o) {
     const unload = (i & 1) === 0;
     r.seed = 900000 + i; r.yard = i; r.hull = STRESS_HULL[y.size] || 'container_ship';
     r.x = y.x; r.y = y.y; r.angle = y.angle;
-    r.mode = unload ? 'unload' : 'load'; r.fill = 0.85; r.resourceId = DEMO_RES[i % DEMO_RES.length];
+    r.mode = unload ? 'unload' : 'load'; r.fill = 0.85; r.resourceId = STRESS_RES[i % STRESS_RES.length];
     r.dwell = unload ? 120 : 90; r.move = 0;
     // Postój w pętli przesuniętej na pole: wrota, praca roju, zamykanie — wszystkie fazy naraz na różnych polach.
     r.dockTime = ((t + i * 13) % (r.dwell - 4)) + 2;

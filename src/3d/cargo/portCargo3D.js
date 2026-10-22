@@ -104,6 +104,8 @@ export function createPortCargo3D(Core3D) {
   const _byKey = new Map();          // numer kursu → op tej klatki (sloty puli)
   const _cand = [];
   const _seen = new Set();
+  const _live = new Set();           // numery kursów ze slotem roju (ta klatka)
+  const _slotOf = new Map();         // numer kursu → slot
 
   function ensure() {
     if (ready || !Core3D.scene) return ready;
@@ -304,14 +306,29 @@ export function createPortCargo3D(Core3D) {
       // 2) Pula: istniejące sloty (stan z zegara, wieża, krok w Core3D.fx); nowe sloty dla najbliższych bez slotu.
       const tp = performance.now();
       pool.update(gameDt, origin, stateOf, pxPerUnit);
-      const live = new Set();
+      // Stanowiska z rojem na żywo z presetu grafiki (Niska 0 — sam stan z zegara); po obniżeniu presetu nadmiar slotów
+      // się zwalnia — najpierw te poza kadrem.
+      const cap = Math.max(0, Math.min(SWARM_POOL_TUNE.slots, Number.isFinite(frame?.liveSlots) ? frame.liveSlots : SWARM_POOL_TUNE.slots));
+      const live = _live;
+      live.clear();
       for (const s of pool.slots) if (s.active) live.add(s.key);
+      while (live.size > cap) {
+        let victim = null;
+        for (const s of pool.slots) {
+          if (!s.active) continue;
+          const o2 = _byKey.get(s.key);
+          if (!victim || !o2 || !o2._keep) victim = s;
+          if (!o2 || !o2._keep) break;
+        }
+        live.delete(victim.key);
+        pool.release(victim, 'preset grafiki');
+      }
       _cand.sort((a, b) => a._dist - b._dist);
-      let budget = T.activatePerFrame;
+      let budget = cap > 0 ? T.activatePerFrame : 0;
       for (let i = 0; i < _cand.length && budget > 0; i++) {
         const op = _cand[i];
         if (live.has(op.seed)) continue;
-        if (live.size >= SWARM_POOL_TUNE.slots) {
+        if (live.size >= cap) {
           // Wywłaszczenie: slot przeładunku poza kadrem (albo już bez ramki) ustępuje stanowisku w kadrze.
           let victim = null;
           for (const s of pool.slots) {
@@ -341,7 +358,8 @@ export function createPortCargo3D(Core3D) {
         budget--;
       }
       // Indeks tablicy ładowni slotu = 1 + slot (stały — światło kontenerów symulacji czyta go z bufora GPU).
-      const slotOf = new Map();
+      const slotOf = _slotOf;
+      slotOf.clear();
       for (const s of pool.slots) if (s.active) slotOf.set(s.key, s);
       stats.poolMs = performance.now() - tp;
       stats.planMs = pool.stats.planMs;

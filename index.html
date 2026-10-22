@@ -16385,17 +16385,17 @@
 
     // ============================================================
     // PRZEŁADUNEK W PORTACH (E12, docs/E12-przeladunek.md) — ładownie, rój dronów, taśmociągi przy zadokowanych
-    // statkach bańki (zatoki Ziemi) i luk Atlasa z ładunkiem gracza. Gra składa tylko ramkę (src/game/portCargoFrame.js:
-    // pola zatok w kadrze, statki przy stanowiskach z kontraktem przeładunku E6, ładunek gracza); obraz liczy worker
-    // renderu z bloku `cargoOps` (src/3d/cargo/portCargo3D.js), w trybie off — moduł na stronie. Ładunek i czas postoju
+    // statkach bańki (zatoki ringów Ziemi, Marsa i Jowisza) i luk Atlasa z ładunkiem gracza. Gra składa tylko ramkę
+    // (src/game/portCargoFrame.js: pola zatok w kadrze, statki przy stanowiskach z kontraktem przeładunku E6, ładunek
+    // gracza); obraz liczy worker renderu z bloku `cargoOps` (src/3d/cargo/portCargo3D.js), w trybie off — moduł na stronie. Ładunek i czas postoju
     // liczy świat ruchu — przeładunek nic nie zmienia w grze. `?przeladunek=0` — bez obrazu (A/B kosztu),
-    // `?przeladunekDemo=1` — przeładunek z ziarna kursu, gdy worker ruchu nie wystawia kontraktu, `?przeladunekStres=N` —
-    // N syntetycznych przeładunków na polach w kadrze (pomiar kosztu obrazu).
+    // `?przeladunekStres=N` — N syntetycznych przeładunków na polach w kadrze (pomiar kosztu obrazu).
     // ============================================================
     const _portCargoQuery = new URLSearchParams(location.search);
     const PORT_CARGO_ON = _portCargoQuery.get('przeladunek') !== '0';
-    const PORT_CARGO_DEMO = _portCargoQuery.get('przeladunekDemo') === '1';
     const PORT_CARGO_STRESS = Number(_portCargoQuery.get('przeladunekStres')) || 0;
+    /** Stanowiska z rojem na żywo (preset grafiki — GFX_EFFECTS.cargoSwarmSlots, applyGraphicsEffects). */
+    let _portCargoLiveSlots = 8;
     const _portCargoFrame = createPortCargoFrame();
     const _portCargoCam = { x: 0, y: 0, zoom: 1 };
     /** Luk Atlasa przy postoju i handlu: postęp wrót 0…1 (jak ScoutBay.door) — luk rysuje scoutBay3D. */
@@ -16443,8 +16443,8 @@
       _portCargoCam.x = cam.x; _portCargoCam.y = cam.y; _portCargoCam.zoom = cam.zoom;
       const cargo = trafficV2?.actors ? syncPortCargoContract(_portCargoFrame, trafficV2.actors, trafficV2.tables?.resources) : null;
       buildPortCargoFrame(_portCargoFrame, {
-        bubble: tb, berths: trafficV2?.tables?.bubblePorts?.earth || null, time: trafficV2 ? trafficV2.time : 0,
-        cam: _portCargoCam, viewW: W, viewH: H, cargo, demo: PORT_CARGO_DEMO, stress: PORT_CARGO_STRESS, player
+        bubble: tb, ports: trafficV2?.tables?.bubblePorts || null, time: trafficV2 ? trafficV2.time : 0,
+        cam: _portCargoCam, viewW: W, viewH: H, cargo, stress: PORT_CARGO_STRESS, player, liveSlots: _portCargoLiveSlots
       });
       return _portCargoFrame;
     }
@@ -33222,6 +33222,7 @@
       }
       WarpNurt.setMediumCount?.(fx.warpParticles);   // czeka, aż ośrodek warpa uśnie
       HALL_DUST_TUNE.enabled = gfxSettings.hallDust !== 'off';
+      _portCargoLiveSlots = fx.cargoSwarmSlots ?? 8;   // przeładunek w portach: rój na żywo (blok `cargoOps`)
       // gaz przestrzeni: wejście gry (działa też w workerze renderu — bez wejścia render nic nie liczy)
       SPACE_GAS_INPUT_TUNE.enabled = gfxSettings.spaceGas !== 'off';
     }

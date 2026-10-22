@@ -15,7 +15,7 @@ import { TRAFFIC_HULLS, trafficHullRenderSize } from '../src/data/trafficHulls.j
 import { SWARM_DRONE_CLASSES, SWARM_LOADED_SPEED } from '../src/data/swarmDrones.js';
 import { applyCargoOpsBlock, cargoOpsBlockSize, packCargoOpsBlock } from '../src/render/blocks/cargoOpsBlock.js';
 import { ACTOR_CARGO_STRIDE, writeBubbleCargo } from '../src/game/traffic/bubbleCargo.js';
-import { createPortCargoFrame, syncPortCargoContract, bayBerthSize } from '../src/game/portCargoFrame.js';
+import { buildPortCargoFrame, createPortCargoFrame, syncPortCargoContract, bayBerthSize } from '../src/game/portCargoFrame.js';
 import { dwellStage, DWELL_REASON } from '../src/game/traffic/courseRegistry.js';
 import { CargoBayBatch } from '../src/3d/cargo/bayBatch.tsl.js';
 import { PortConveyors } from '../src/3d/cargo/conveyor.tsl.js';
@@ -235,7 +235,7 @@ test('partie (ładownie floty, taśmy, drony z bufora CPU): WGSL się buduje, li
 // ---------------------------------------------------------------------------
 
 import { SWARM_POOL_TUNE, createSwarmBerthPool } from '../src/3d/swarm/swarmBerthPool.js';
-import { SwarmUnits } from '../src/3d/swarm/swarmUnits.tsl.js';
+import { SwarmShadows, SwarmUnits } from '../src/3d/swarm/swarmUnits.tsl.js';
 import { createSwarmSlotFrames } from '../src/3d/swarm/swarmSlotFrame.js';
 
 function fakeCore() {
@@ -273,6 +273,26 @@ test('pula roju: slot ze stanem z zegara (przeniesione warstwy = postęp), krok 
   assert.ok(Math.abs(pool.frame.rows[b.k].z + 0.5) < 1e-9, 'obrót ramy = −kąt stanowiska');
 });
 
+test('ramka: zatoki ze wszystkich portów bańki (bez hal K-7 i pomostów), sloty roju z presetu w bloku', () => {
+  const frame = createPortCargoFrame();
+  const bay = (id, x, hall = 'ZATOKA') => ({ id, x, y: 0, angle: 0, hall });
+  const ports = {
+    earth: [bay('earth:Z-01:Z01-MG1', 0), bay('earth:K7-1:W-L01', 100, 'K-7')],
+    mars: [bay('mars:Z-02:Z02-L03', 200)],
+    ceres: [bay('ceres:dok1:b0', 300, null)]
+  };
+  buildPortCargoFrame(frame, { ports, cam: { x: 0, y: 0, zoom: 0.01 }, viewW: 1920, viewH: 1080, liveSlots: 4 });
+  assert.equal(frame.yardCount, 2, 'MEGA Ziemi i L Marsa');
+  assert.deepEqual(frame.yards.slice(0, 2).map((y) => y.size), ['MEGA', 'L']);
+  const blk = { f64: new Float64Array(cargoOpsBlockSize()) };
+  packCargoOpsBlock(blk.f64, frame);
+  assert.equal(applyCargoOpsBlock(blk, {}).liveSlots, 4);
+  // Obciążenie (?przeladunekStres=N): syntetyczne przeładunki na polach w kadrze.
+  buildPortCargoFrame(frame, { ports, bubble: { list: [] }, cam: { x: 0, y: 0, zoom: 0.01 }, viewW: 1920, viewH: 1080, stress: 5, time: 10 });
+  assert.equal(frame.opCount, 2);
+  assert.ok(frame.ops.slice(0, 2).every((o) => o.mode && o.resourceId && o.hull));
+});
+
 test('materiały roju z ramą slotów i mapą klas: WGSL się buduje (gra); bez ramy — jak demo', () => {
   const scene = new THREE.Scene();
   const frame = createSwarmSlotFrames(4, 8, 32);
@@ -284,6 +304,10 @@ test('materiały roju z ramą slotów i mapą klas: WGSL się buduje (gra); bez 
   assert.ok(w.vertex.includes('swarmSlotFrames') && w.vertex.includes('swarmDroneRemap'));
   const su = new SwarmUnits(scene, units, 128, frame);
   assert.ok(buildWGSL(su.mesh).vertex.includes('swarmSlotFrames'));
+  // Cień dronów na kadłubie (gra): rama slotów, kolejka po proxy (10) i skrzydłach wrót (11).
+  const sh = new SwarmShadows(scene, node, units, frame, 11.2);
+  assert.ok(buildWGSL(sh.drones).vertex.includes('swarmSlotFrames'), 'cień dronów z ramą slotów');
+  assert.equal(sh.drones.renderOrder, 11.2);
   const demo = new SwarmDroneMeshes(scene, node, buildSwarmDroneGeometries(THREE));
   assert.ok(!buildWGSL(demo.warmupMeshes()[0]).vertex.includes('swarmSlotFrames'), 'demo bez ramy slotów');
 });

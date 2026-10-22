@@ -6,14 +6,15 @@ reguła `przeladunek-portow` (`.claude/rules/przeladunek-portow.md`). Ten dokume
 
 ## Co jest w grze
 
-- **Ładownie frachtowców ruchu** przy stanowiskach zatok Ziemi (bańka E6): po klamrze wrota kieszeniowe rozjeżdżają
+- **Ładownie frachtowców ruchu** przy stanowiskach zatok ringów Ziemi, Marsa i Jowisza (bańka E6; pomosty pozostałych
+  portów — bez przeładunku, inny układ pól): po klamrze wrota kieszeniowe rozjeżdżają
   się (przebieg i wygląd z dema ładowni — `cargoBayDoorTimeline`, `bay.tsl.js`), skóra proxy ma w otworze dziurę,
   pod nią wnętrze z ładunkiem. Wrota zamykają się, gdy rój skończy, najpóźniej na końcu okna postoju.
 - **Rój dronów z dema liczony na żywo na GPU** (decyzja użytkownika 2026-10-22: „spróbujmy na żywo liczone na GPU”):
   ta sama symulacja (`swarmSim.js` — lot, ORCA na prostokątach, zamki i liczniki kolumn, kontenery w chwycie) i ta
   sama wieża portu (`swarmPlanner.js` — księga kontenerów, chwyty, sztauowanie), te same klasy, chwyty płaskie,
   ramiona teleskopowe, parametry lotu i zegar ×4. Przenosi warstwy kontenerów między ładownią a **stołami
-  przeładunkowymi** po obu burtach.
+  przeładunkowymi** po obu burtach. Cienie dronów na kadłubie jak w demie (`SwarmShadows`).
 - **Taśmociągi** wzdłuż placu: przy załadunku przywożą ładunek z **portalu w grzbiecie zatoki** na stoły przed startem
   roju, przy rozładunku wywożą go do portalu po pracy roju; listwy pasa jadą, gdy taśma pracuje, portal świeci
   bursztynową listwą (HDR — bloom).
@@ -35,10 +36,23 @@ reguła `przeladunek-portow` (`.claude/rules/przeladunek-portow.md`). Ten dokume
   Krok compute: `Core3D.addFxStep`, rozgrzewka kerneli w `warm`. Obraz: materiały roju z ramą slotów
   (`swarmSlotFrame.js` — slot → świat względem początku przy kamerze; to zamiast `FxPoolOrigin`, bo dane slotu nie
   leżą w świecie), drony klas przez mapę indeksów, światła jednym rysunkiem. Demo bez zmian (rama opcjonalna).
-- **N stanowisk na żywo** (`SWARM_POOL_TUNE.slots` = 8, najbliżej środka kadru, najwyżej 1 dołączenie na klatkę).
-  Pozostałe w kadrze: ładownia w stanie z zegara postoju, bez dronów. Slot trzyma przeładunek, dopóki ten jest
-  w ramce gry (pola z zapasem 0,85 kadru + 1800 j.); przy pełnej puli stanowisko poza kadrem ustępuje stanowisku
-  w kadrze. Koszt nie rośnie wyraźnie ze slotami (pomiary niżej), więc N ogranicza głównie pamięć i dołączenia.
+- **N stanowisk na żywo z presetu grafiki** (decyzja orkiestratora 2026-10-22, `GFX_EFFECTS.cargoSwarmSlots`):
+  Niska 0 (sam stan z zegara), Średnia 4, Wysoka i Ultra 8 (= `SWARM_POOL_TUNE.slots`); najbliżej środka kadru,
+  najwyżej 1 dołączenie na klatkę. Pozostałe w kadrze: ładownia w stanie z zegara postoju, bez dronów. Slot trzyma
+  przeładunek, dopóki ten jest w ramce gry (pola z zapasem 0,85 kadru + 1800 j.); przy pełnej puli stanowisko poza
+  kadrem ustępuje stanowisku w kadrze; po obniżeniu presetu nadmiar slotów się zwalnia.
+- **Zero kosztu, gdy nie ma czego liczyć** (decyzja orkiestratora): krok symulacji i odczyt tylko wtedy, gdy któryś
+  slot pracuje (rój ruszył i nie skończył). Sloty istnieją tylko dla stanowisk w ramce (kadr z zapasem), więc poza
+  portem, przed startem roju, po jego końcu i przy samych ładowniach z zegara — 0 dispatchy i 0 odczytów. Po
+  przerwie odczyt jest zerowany (faza PARKED, zadanie 0 = prawdziwy stan dronów w gniazdach), żeby nowy slot nie
+  widział dronów poprzedniego właściciela zakresu. Odczyt bez statystyk symulacji (gra ich nie czyta).
+- **Kernele: 3 dispatche na krok zamiast 4** (decyzja orkiestratora: scalić kClear + kBin; krok 1/30 s odpada —
+  zmienia dynamikę dema). Zerowanie statystyk kroku przeszło do `kBin` (przepełnienie siatki liczy teraz `kSteer`),
+  zerowanie siatki mieszającej — do `kIntegrate` (na krok następny; `kSteer` już ją przeczytał). Stan po kroku
+  bit w bit jak przed zmianą (pomiar niżej). Dalej się nie da bez zmiany wyniku: `kSteer` czyta pozy sąsiadów, które
+  pisze `kIntegrate` (w jednym dispatchu nie ma bariery globalnej), a `kIntegrate` + `kBin` kroku następnego
+  wymagałyby podwójnej siatki z parzystością na GPU, przy czym pozy pisane z CPU (dołączenie, zaparkowanie, `snap`)
+  zostawiałyby siatkę nieaktualną na krok.
 - **Statek zastany w połowie postoju:** stan startowy z zegara — warstwy przeniesione = postęp postoju (UNLOAD na
   stołach, LOAD w ładowni), reszta czeka u źródła. Drony startują z gniazd (pierwsze 1–2 s to start roju) — bez
   przewijania symulacji. **Koniec okna** przed końcem pracy → `snap`: czekające i niesione kontenery znikają, drony
@@ -65,8 +79,8 @@ przy stanowisku: numer kursu, tryb (1 LOAD, 2 UNLOAD, 0 inne), `stage.seconds`, 
 w `resources`, wypełnienie (masa / ładowność klasy kursu), sztuki, flagi. Koder: `src/game/traffic/bubbleCargo.js`
 (`writeBubbleCargo`), dekoder gry: `syncPortCargoContract` (`src/game/portCargoFrame.js`), test w
 `tests/portCargo.test.mjs`. **Wpięte po stronie workera ruchu przez E6** na gałęzi `claude/frosty-moser-69ca47`
-(d251c3e4, `packBubbleCargo` w `workerBubble.js`; plik `bubbleCargo.js` ten sam blob — scalenie bez konfliktu).
-Do czasu scalenia obu gałęzi obraz pokazuje przeładunek tylko z `?przeladunekDemo=1`. Alternatywa E6 —
+(d251c3e4, `packBubbleCargo` w `workerBubble.js`), w `main` od 34fcd98a (E6 etap 2 — bańka we wszystkich portach).
+Przeładunek jest widoczny domyślnie; dawna flaga `?przeladunekDemo=1` (ładunek z ziarna kursu) usunięta. Alternatywa E6 —
 `actors.docks` / `TrafficV2.actorDocks` (DockRecord: zdarzenia zmian postoju z `t0`, `dur`, `fill`) — nieużywana.
 
 ## Pomiary (2026-10-22, RTX 5080, headless Chrome 1600 × 900, tryb gracza `renderWorker=1`, ziarno ruchu 7)
@@ -86,6 +100,32 @@ pracowały w tym czasie — szum bazy CPU workera ±0,3 ms.
 | pipeline'y synchroniczne workera | 0 w trakcie gry we wszystkich przebiegach (kernele roju rozgrzewa `warm` kroku Core3D.fx) |
 | błędy konsoli (strona i workery) | 0 |
 
+### Po scaleniu kerneli, bramce i cieniach (ta sama metoda, po 2 przebiegi, `--kosztPoza 1`)
+
+| | A (`przeladunek=0`) | B1 (`przeladunekStres=1`) | B14 (`przeladunekStres=20`: 14 w kadrze, 8 na żywo) |
+|---|---|---|---|
+| CPU workera, kadr 9000 j. | 3,31 / 3,54 ms | 3,23 / 3,38 (−0,12) | 3,45 / 3,66 (+0,13) |
+| CPU workera, kadr 2600 j. | 1,39 / 1,77 ms | 1,61 / 1,56 (0,00) | 1,70 / 1,77 (+0,16) |
+| CPU workera, poza portem (150 tys. j. od zatok, sloty zwolnione) | 0,98 / 1,05 ms | 0,94 / 0,88 (−0,10) | 1,02 / 0,94 (−0,04) |
+| GPU passów, kadr 9000 / 2600 j. | 0,55 / 0,27 ms | +0,07 / +0,02 | +0,24 / +0,07 |
+| GPU passów, poza portem | 0,147 ms | −0,008 | −0,008 |
+| pula w pomiarze | — | 1 slot, w pracy 1, 4–8 kroków | 8 slotów, w pracy 6, 4–8 kroków; poza portem: 0 slotów, 0 kroków |
+
+Narzut CPU roju spadł z +0,4–0,7 ms do szumu pomiaru (±0,2–0,4 ms między przebiegami A): 12 dispatchy zamiast 16
+i odczyt bez statystyk (jedno polecenie kolejki i mapAsync mniej co drugą klatkę). Poza portem koszt = 0 (w szumie).
+GPU przy 14 stanowiskach w szerokim kadrze +0,24 ms (jeden przebieg B14 0,86 ms — rozrzut), w bliskim +0,07 ms (przed
+cieniami +0,09) — cienie dronów w szumie, zostają (1 rysunek, tylko gdy rój pracuje).
+
+Równoważność kerneli (`scripts/webgpu/roj-stan-ab.mjs --krok`, demo, ten sam stan buforów po 600 klatkach sceny,
+bez wieży): jeden krok — sceny `wymiana` (96 dronów) i `port` (180) bit w bit (drony, zadania, kontenery,
+kolumny); `roj` (2048, gęsto) — 213 różnych liczb wobec 193 w A/A tego samego kodu (kolejność atomików w komórce).
+4 kroki w jednym `renderer.compute` (jak klatka gry): `wymiana` bit w bit, `port` — 2 liczby (3,8e−6) tak samo
+jak w A/A. Przebieg sceny po wielu klatkach rozjeżdża się już w A/A (odczyt asynchroniczny wieży) — nie dowodzi niczego.
+
+Cienie: `.tmp/e12/v2-cienie/cienie-ab-M03.png` (siła 4 / 0 klatka po klatce — rufa pod dronem ciemnieje; w grze siła
+0,5 jak w demie). Przebieg z kontraktem E6 bez flagi demo: `.tmp/e12/v2-wizual/` (ciężki frachtowiec, 0 błędów,
+0 pipeline'ów sync), koszt: `.tmp/e12/v3-A1|A2|B1-1|B1-2|B20-1|B20-2/`.
+
 Przebiegi: kontenerowiec LOAD + drugi UNLOAD (`.tmp/e12/gpu-kont8/`), ciężki frachtowiec UNLOAD
 (`.tmp/e12/gpu-ciezki2/`, `gpu-ciezki3/`), koszt (`.tmp/e12/gk-A1|A2|B1-1|B1-2|B20-1|B20-2/`), „przed” w tej samej scenie
 (`.tmp/e12/przed-kontenerowiec/`, `?przeladunek=0`), demo roju do porównania (`.tmp/e12/demo-roj/11-wymiana*.png`).
@@ -93,14 +133,15 @@ Pierwsza wersja z planem analitycznym: `.tmp/e12/po-*`, `koszt-*`.
 
 ## Ryzyka i dalsze kroki
 
-- **CPU powyżej budżetu** (+0,4–0,7 ms przy dowolnej liczbie slotów) — narzut dispatchy compute i odczytu; do decyzji
-  krok 1/30 s w grze albo scalenie kerneli.
-- **Kontrakt E6** czeka na scalenie gałęzi E6 — do tego czasu przeładunek widać tylko z `?przeladunekDemo=1`.
+- **Ciężki frachtowiec z prawdziwym kontraktem nie mieści się w oknie**: kontrakt E6 daje mu 1320 kontenerów (dane
+  demo dawały 848); 48 dronów na slot przenosi ~970 do zamknięcia wrót, resztę (~350) `snap` chowa naraz — skok
+  obrazu raz na postój. Do decyzji: więcej dronów na slot dla MEGA (pula 8 × 96 — pamięć i GPU symulacji), dłuższy
+  postój ciężkich kursów (świat ruchu, E6 / E2) albo zgoda na skok.
 - **Wydajność wieży i ORCA w grze** zmierzona na 2 typach statków; prom i frachtowiec dalekiego zasięgu bez osobnego
   przebiegu harnessu. Zmierzone tempo (~60 s roju na kurs warstwy) siedzi w `swarmSecPerLayer`.
 - **Snap na końcu okna** (rój nie zdążył) to skok obrazu — rzadki przy obecnej liczbie dronów, ale możliwy przy
   statku zastanym tuż przed końcem postoju (wtedy slotu się nie zakłada: ostatnia sekunda okna — stan z zegara).
 - **Wyjątek w workerze może nie dotrzeć do strony** (limit 20 raportów na sesję) — `stats.err` modułu i `--diag 1`.
-- Bańka żyje tylko przy Ziemi — porty, które doda E6, dostaną przeładunek, jeśli ich stanowiska mają id zatok
-  (`…-MG1`, `…-L01`…) albo nowe wpisy w `PORT_CARGO_PADS` (`bayBerthSize`).
-- Cienie dronów i kontenerów na kadłubie (`SwarmShadows`) nie są wpięte — w demie są.
+- Pomosty portów bez ringu (Merkury, Wenus, księżyce, Ceres, Westa…) przeładunku nie mają — potrzebują własnej
+  geometrii placu (wpisy w `PORT_CARGO_PADS` / `bayBerthSize` i `berthYardGeometry`).
+- Cieni kontaktu kontenerów nie ma (kontenery w grze stoją pod płaszczyzną cieni — ładownia, stoły na z −16).

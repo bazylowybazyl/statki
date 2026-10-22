@@ -11,14 +11,16 @@
 // przy kamerze), drony klas przez mapę indeksów (klasy różnych slotów nie leżą ciągiem), światła jednym rysunkiem.
 //
 // Zegar: rój = czas gry × 4 (decyzja użytkownika 2026-10-06), krok stały 1/60 s czasu roju jak w demie; pauza = 0.
-// Krok compute: Core3D.addFxStep (raz na klatkę, przed passami), rozgrzewka kerneli w `warm`.
+// Krok compute: Core3D.addFxStep (raz na klatkę, przed passami), rozgrzewka kerneli w `warm`. Krok i odczyt liczą się
+// TYLKO, gdy któryś slot pracuje (rój ruszył i nie skończył) — sloty istnieją tylko dla stanowisk w ramce gry (kadr
+// z zapasem), więc poza portem i przy samych taśmach / stanie z zegara koszt GPU i poleceń kolejki = 0.
 //
 // Szew: bez `window`, DOM i stanu gry — stanowiska, statki i zegar postoju podaje portCargo3D.js (blok `cargoOps`).
 import * as THREE from 'three/webgpu';
 import { instancedArray } from 'three/tsl';
 import { SwarmSim } from './swarmSim.js';
 import { SwarmDroneLights, SwarmDroneMeshes } from './swarmDrones.tsl.js';
-import { SwarmUnits } from './swarmUnits.tsl.js';
+import { SwarmShadows, SwarmUnits } from './swarmUnits.tsl.js';
 import { buildSwarmDroneGeometries } from './swarmDroneModel.js';
 import { createSwarmSlotFrames } from './swarmSlotFrame.js';
 import { containerLookLinear } from '../cargo/containers.tsl.js';
@@ -69,6 +71,8 @@ const UV = SWARM_UNIT_VEC4;
 const CLASS_N = SWARM_DRONE_CLASS_LIST.length;
 const C = CARGO_CONTAINER;
 const FAR_Z = -6000;
+/** Kolejka przezroczysta cieni dronów (po proxy kadłubów 10 i skrzydłach wrót 11, przed taśmami 11,5). */
+const SWARM_SHADOW_ORDER = 11.2;
 
 /** Słoty kolejnych klas: drony klasy c w mapie indeksów od c × maxDrones. */
 export function createSwarmBerthPool(Core3D) {
@@ -87,11 +91,14 @@ export function createSwarmBerthPool(Core3D) {
   let droneMeshes = null;
   let droneLights = null;
   let units = null;
+  let shadows = null;
   let stepRegistered = false;
   let ready = false;
   let pendingDt = 0;
   let readbackTick = 0;
   let nDrones = 0;
+  /** Sloty, przy których rój pracuje w tej klatce (started && !finished) — bez nich krok i odczyt stoją. */
+  let working = 0;
   const slots = Array.from({ length: T.slots }, (_, k) => ({ k, active: false, key: null }));
   const classLists = Array.from({ length: CLASS_N }, () => []);
   const ranges = SWARM_DRONE_CLASS_LIST.map((cls) => ({ classIndex: cls.index, base: cls.index * maxDrones, count: 0 }));
@@ -110,6 +117,10 @@ export function createSwarmBerthPool(Core3D) {
     droneMeshes = new SwarmDroneMeshes(Core3D.scene, sim.drones, geos, frame);
     droneLights = new SwarmDroneLights(Core3D.scene, sim.drones, frame);
     units = new SwarmUnits(Core3D.scene, sim.units, maxUnits, frame);
+    // Cienie dronów na kadłubie jak w demie (GREATER na głębi proxy — po proxy, 10, i skrzydłach wrót, 11; przed
+    // taśmami, kontenerami i dronami). Cieni kontaktu kontenerów nie ma: w grze kontenery stoją pod płaszczyzną
+    // cieni (ładownia, stoły), gdzie GREATER i tak ich nie położy.
+    shadows = new SwarmShadows(Core3D.scene, sim.drones, sim.units, frame, SWARM_SHADOW_ORDER);
     // Stan startowy puli (pełna wysyłka raz): bez dronów i kontenerów, mapa przeszkód pusta na całą przestrzeń
     // slotów. Dalej tylko zakresy (dołączenie / zwolnienie slotu) — pełna wysyłka nadpisałaby stan z GPU.
     hfLayers = referenceLayers();
@@ -158,14 +169,15 @@ export function createSwarmBerthPool(Core3D) {
 
   // Krok efektów (Core3D.fx, raz na klatkę przed passami): kroki roju za czas gry tej klatki × 4 i odczyt stanu.
   function stepUpdate(ctx) {
-    if (!ready || !nDrones) { pendingDt = 0; return; }
     const dt = pendingDt;
     pendingDt = 0;
-    if (!(dt > 0) || !nDrones) return;
+    stats.steps = 0;
+    if (!ready || !nDrones || !working || !(dt > 0)) return;
     const n = sim.step(ctx.renderer, dt, 1, T.maxSteps);
     stats.steps = n;
-    // Odczyt stanu dla wieży co drugą klatkę (wieża i tak znosi 1–3 klatki spóźnienia) — mniej poleceń i mapAsync.
-    if (n && (++readbackTick & 1)) sim.requestReadback(ctx.renderer);
+    // Odczyt stanu dla wieży co drugą klatkę (wieża i tak znosi 1–3 klatki spóźnienia), bez statystyk symulacji —
+    // mniej poleceń kolejki i mapAsync.
+    if (n && (++readbackTick & 1)) sim.requestReadback(ctx.renderer, false);
   }
 
   // Rozgrzewka (ekran ładowania): kernele symulacji z zerową liczbą dronów — pipeline compute three r183 powstaje
@@ -174,7 +186,7 @@ export function createSwarmBerthPool(Core3D) {
     if (!ensure()) return;
     const keep = sim.U.nDrones.value;
     sim.U.nDrones.value = 0;
-    for (const k of [sim.kClear, sim.kBin, sim.kSteer, sim.kIntegrate]) ctx.renderer.compute(k);
+    for (const k of [sim.kBin, sim.kSteer, sim.kIntegrate]) ctx.renderer.compute(k);
     sim.U.nDrones.value = keep;
   }
 
@@ -521,6 +533,8 @@ export function createSwarmBerthPool(Core3D) {
     tune: T,
     get ready() { return ready; },
     get frame() { return frame; },
+    /** Cienie dronów (narzędzia: `shadows.strength.value` — A/B siły cienia). */
+    get shadows() { return shadows; },
     slots,
     ensure,
     activate,
@@ -538,9 +552,14 @@ export function createSwarmBerthPool(Core3D) {
       uHi = -Infinity;
       pendingDt = Math.max(0, Number(gameDt) || 0) * T.clock;
       let active = 0;
+      let busy = 0;
       let dronesN = 0;
       let done = 0;
       let total = 0;
+      // Pula stała (żaden slot nie pracował): odczyty stoją, więc ostatni odczyt jest stary (drony slotów sprzed przerwy).
+      // Wszystkie drony stoją teraz w gniazdach — odczyt zerowy (faza PARKED, zadanie 0) to ich prawdziwy stan dla wieży
+      // slotu, który ruszy w tej klatce; reset odrzuca też odczyty jeszcze w locie.
+      if (!working && sim.readback && sim.readback.frame >= 0) sim.readback.reset();
       const status = sim.statusData;
       for (const slot of slots) {
         if (!slot.active) continue;
@@ -593,6 +612,7 @@ export function createSwarmBerthPool(Core3D) {
             }
           }
         }
+        if (slot.started && !slot.finished) busy++;
         if (slot.finished && unload && !slot.snapped) {
           // Rozładunek skończony: taśma wywozi plac do portalu.
           slot.drainT += Math.max(0, Number(gameDt) || 0);
@@ -602,6 +622,8 @@ export function createSwarmBerthPool(Core3D) {
         if (ps) { done += ps.done; total += ps.total; }
       }
       stats.slots = active;
+      stats.working = busy;
+      working = busy;
       stats.drones = dronesN;
       stats.done = done;
       stats.total = total;
@@ -613,12 +635,15 @@ export function createSwarmBerthPool(Core3D) {
       for (const m of droneLights.meshes) m.mesh.position.set(origin.x, origin.y, 0);
       units.mesh.position.set(origin.x, origin.y, 0);
       units.mesh.visible = active > 0;
+      // Cienie: tylko gdy rój pracuje (poza tym drony stoją w gniazdach — siła cienia 0).
+      shadows.setCounts(busy ? nDrones : 0, 0);
+      shadows.drones.position.set(origin.x, origin.y, 0);
       if (!active) { for (const r of ranges) r.count = 0; droneMeshes.setRanges(ranges); }
       stats.ms = performance.now() - t0;
     },
     warmupMeshes() {
       if (!ensure()) return [];
-      return [...droneMeshes.warmupMeshes(), ...droneLights.warmupMeshes(), units.mesh];
+      return [...droneMeshes.warmupMeshes(), ...droneLights.warmupMeshes(), units.mesh, shadows.drones];
     }
   };
 }

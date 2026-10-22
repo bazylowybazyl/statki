@@ -3,15 +3,17 @@
 // synchroniczne workera renderu i koszt (A/B z `?przeladunek=0` — przebiegi PO KOLEI, ten sam build).
 // Vite + headless Chrome z WebGPU (CDP), gra swobodna, zegar krokowy harnessu.
 //
-//   node scripts/webgpu/przeladunek-gra.mjs [--query renderWorker=1] [--flaga przeladunek=0] [--demo 1]
-//        [--out .tmp/e12/po] [--rozgrzewka 2400] [--postoj 70] [--koszt 1]
+//   node scripts/webgpu/przeladunek-gra.mjs [--query renderWorker=1] [--flaga przeladunek=0]
+//        [--out .tmp/e12/po] [--rozgrzewka 2400] [--postoj 70] [--koszt 1] [--kosztPoza 1] [--cienie 1]
 //
 // Przebieg: start → świat ruchu rozgrzany `--rozgrzewka` s (gospodarka startuje od zera) → gracz przy zatoce
 // Ziemi → czekanie na frachtowiec przy stanowisku zatoki (kadłub z ładownią; najlepiej świeżo po przechwycie) →
 // kadr kamery nad stanowiskiem (gracz zostaje na zewnątrz) → zrzuty co kilka sekund postoju (wrota, rój, taśmy) →
 // szeroki kadr zatoki → luk Atlasa: gracz na wolnym polu MEGA z ładunkiem (`berth-hold` otwiera luk) → koszt
-// (worker renderu CPU / GPU w kadrze zatoki; drugi przebieg z `--flaga przeladunek=0` daje „przed”).
-// `--demo 1` — przeładunek z ziarna kursu (`?przeladunekDemo=1`), gdy worker ruchu nie wystawia kontraktu E6.
+// (worker renderu CPU / GPU w kadrze zatoki; drugi przebieg z `--flaga przeladunek=0` daje „przed”; `--kosztPoza 1` —
+// jeszcze kadr daleko od zatok po zwolnieniu slotów roju: koszt ma być 0). Pomiar w workerze dopisuje stan puli roju
+// (sloty, sloty w pracy, kroki symulacji w klatce). `--cienie 1` — na 7. etapie postoju zrzuty A/B siły cieni dronów (4 i 0,
+// klatka po klatce; tryb worker).
 // Wynik: <out>/raport.json, zrzuty <out>/*.png, dziennik workerów <out>/worker.log.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -20,7 +22,7 @@ import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, scree
 const args = parseArgs();
 const out = resolve(repo, args.out || '.tmp/e12/po');
 mkdirSync(out, { recursive: true });
-const extra = [args.query || 'renderWorker=1', args.flaga || '', args.demo ? 'przeladunekDemo=1' : ''].filter(Boolean).join('&');
+const extra = [args.query || 'renderWorker=1', args.flaga || ''].filter(Boolean).join('&');
 const WARM = Number(args.rozgrzewka || 2400);
 const DWELL = Number(args.postoj || 70);
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
@@ -38,6 +40,13 @@ let msgId = 900000;
 // Sesja workera renderu (diagnostyka: statystyki obrazu przeładunku liczone w workerze).
 let rwSession = null;
 let rwId = 990000;
+/** Stan puli roju w sesji workera renderu (sloty, w pracy, kroki w klatce) albo null. */
+async function poolStats() {
+  try {
+    const r = await evalWorker(`import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((m) => { const p = m.sharedPortCargo3D().pool; return JSON.stringify(p ? { slots: p.stats.slots, working: p.stats.working, steps: p.stats.steps } : null); }).catch((e) => String(e))`);
+    return typeof r === 'string' && r.startsWith('{') ? JSON.parse(r) : r;
+  } catch (e) { return String(e); }
+}
 function evalWorker(expr, timeout = 20000) {
   if (!rwSession) return Promise.resolve('brak sesji workera renderu');
   const id = ++rwId;
@@ -155,6 +164,15 @@ try {
       await ev(`window.PortCargo.look(${target.x}, ${target.y}, ${close ? Math.max(380, target.len * 0.62) : Math.max(900, target.len * 1.6)})`);
       await waitGame(0.6);
       await screenshotPng(cdp, join(out, `10-postoj-${String(i).padStart(2, '0')}${close ? '-blisko' : ''}.png`));
+      if (args.cienie && i === 6 && report.tryb === 'worker') {
+        const setShadow = (v) => evalWorker(`import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((m) => { const p = m.sharedPortCargo3D().pool; if (!p || !p.shadows) return 'brak'; p.shadows.strength.value = ${v}; return 'ok'; })`);
+        for (const v of [4, 0]) {
+          report.cienie = await setShadow(v);
+          await waitGame(1 / 60);
+          await screenshotPng(cdp, join(out, `15-cienie-${v}.png`));
+        }
+        await setShadow(0.5);
+      }
       if (st.phase && st.phase !== 'docked' && st.phase !== 'capture' && i > 2) break;
       await waitGame(DWELL / 14);
     }
@@ -171,11 +189,9 @@ try {
   if (args.koszt !== '0') {
     const c = target || { x: spot.bx, y: spot.by };
     report.kosztKadry = {};
-    for (const vh of String(args.kosztKadr || '9000,2600').split(',').map(Number)) {
-    await ev(`window.PortCargo.look(${c.x}, ${c.y}, ${vh})`);
-    await waitGame(2);
     const costRun = async () => {
       const rows = [];
+      const pool = report.tryb === 'worker' ? await poolStats() : null;
       for (let i = 0; i < 20; i++) {
         await waitGame(0.25);
         rows.push(await ev(`(() => { const h = window.RenderWorkerHost; if (h && h.readStats) h.readStats(); const st = h ? h.stats : null;
@@ -183,15 +199,34 @@ try {
           return { gpu: st ? st[0] : (window.Core3D.gpuFrameMs || 0), gpuCompute: st ? st[1] : (window.Core3D.gpuComputeMs || 0), cpu: st ? st[6] : 0, cpuUpd: st ? st[4] : 0, fx: st ? st[11] : 0, ops: f.opCount, yards: f.yardCount }; })()`));
       }
       const avg = (k) => +(rows.reduce((s, r) => s + (Number(r[k]) || 0), 0) / rows.length).toFixed(3);
-      return { gpuMs: avg('gpu'), gpuComputeMs: avg('gpuCompute'), cpuWorkerMs: avg('cpu'), cpuUpdateMs: avg('cpuUpd'), fxMs: avg('fx'), przeladunkow: avg('ops'), pol: avg('yards') };
+      return { gpuMs: avg('gpu'), gpuComputeMs: avg('gpuCompute'), cpuWorkerMs: avg('cpu'), cpuUpdateMs: avg('cpuUpd'), fxMs: avg('fx'), przeladunkow: avg('ops'), pol: avg('yards'), pula: pool };
     };
+    for (const vh of String(args.kosztKadr || '9000,2600').split(',').map(Number)) {
+    await ev(`window.PortCargo.look(${c.x}, ${c.y}, ${vh})`);
+    await waitGame(2);
     report.koszt = await costRun();
     report.kosztKadry[vh] = report.koszt;
     console.log('koszt kadr', vh, JSON.stringify(report.koszt));
     await screenshotPng(cdp, join(out, `30-koszt-kadr-${vh}.png`));
     }
+    if (args.kosztPoza) {
+      // Daleko od zatok (ten sam port w tle bańki): sloty roju zwalniają się po missingGrace + taśmie (do ~12 s gry).
+      await ev(`window.PortCargo.look(${c.x} + 150000, ${c.y}, 2600)`);
+      await waitGame(15);
+      report.kosztPoza = await costRun();
+      console.log('koszt poza portem', JSON.stringify(report.kosztPoza));
+    }
   }
-  if (args.tylkoKoszt) throw new Error('tylko koszt — koniec');
+  if (args.tylkoKoszt) {
+    // Błędy i pipeline'y też w samym pomiarze kosztu (wyjątek w klatce strony zamraża obraz — liczby byłyby fałszywe).
+    report.bledyStrony = logs.errors().filter((l) => !/favicon|powerPreference|[vite]|DevTools|Unable to decode audio|AudioSys/.test(l)).slice(0, 20);
+    report.bledyWorkera = workerLogs.filter((l) => l.startsWith('[error]') || l.startsWith('[exception]')).slice(0, 20);
+    report.syncKoniec = syncWorker();
+    console.log('pipeline sync workera: start', report.syncStart.length, '| koniec', report.syncKoniec.length - report.syncStart.length);
+    console.log('błędy strony', report.bledyStrony.length, '| workera', report.bledyWorkera.length);
+    for (const l of [...report.bledyStrony, ...report.bledyWorkera].slice(0, 4)) console.log('  ', l.slice(0, 300));
+    throw new Error('tylko koszt — koniec');
+  }
 
   // Luk Atlasa: gracz na wolnym polu MEGA zatoki z ładunkiem — postój (berth-hold) otwiera luk, kontenery z ładunku.
   await ev(`window.PortCargo.lookEnd()`);

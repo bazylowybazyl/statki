@@ -118,9 +118,11 @@ export class SwarmUnits {
 /**
  * Cienie roju: drony z ładunkiem na kadłubie / pokładzie (jeden prostokąt na drona) i kontakt
  * kontenerów stojących (jeden na jednostkę). Liczba instancji — liczba dronów / jednostek sceny.
+ * frame (opcjonalnie, gra) — rama slotów stanowisk (swarmSlotFrame.js): poza drona i kontenera ze slotu na świat;
+ * order — kolejka przezroczysta (gra: po proxy kadłubów — cień GREATER kładzie się na zapisanej przez nie głębi).
  */
 export class SwarmShadows {
-  constructor(scene, dronesNode, unitsNode) {
+  constructor(scene, dronesNode, unitsNode, frame = null, order = 10) {
     const CT = swarmClassTable();
     this.strength = uniform(0.5);
     const S = this.strength;
@@ -138,13 +140,18 @@ export class SwarmShadows {
         const rBody = CT.element(cb.add(CR.BODY));
         const rFoot = CT.element(cb.add(CR.FOOT_EMPTY));
         const loaded = aux.x.greaterThan(-0.5);
+        // Gra: slot stanowiska → świat (obrót φ, przesunięcie ramy; kurs + φ).
+        const fr = frame ? slotFrameRow(frame, instanceIndex, frame.dronesPerSlot) : null;
+        const px = fr ? fr.x.add(pose.x.mul(cos(fr.z))).sub(pose.y.mul(sin(fr.z))) : pose.x;
+        const py = fr ? fr.y.add(pose.x.mul(sin(fr.z))).add(pose.y.mul(cos(fr.z))) : pose.y;
+        const yaw = fr ? pose.w.add(fr.z) : pose.w;
         const L = select(loaded, rPay.x, rFoot.x.mul(2.0));
         const W = select(loaded, rPay.y, rFoot.y.mul(2.0));
         const z0 = select(loaded, pose.z.sub(rPay.z), pose.z.add(rBody.w));
         const z1 = pose.z.add(rBody.w).add(rBody.z);
         // Siła maleje z wysokością (miękki, jaśniejszy cień wysoko), zero w ładowni i w gnieździe.
         const k = max(float(0.0), float(1.0).sub(z0.div(260.0))).mul(S).mul(select(z1.greaterThan(0.5).and(info.w.greaterThan(0.5)), float(1.0), float(0.0)));
-        return { a: vec4(pose.x, pose.y, pose.w, k), b: vec4(L, W, max(z0, 0.0), z1) };
+        return { a: vec4(px, py, yaw, k), b: vec4(L, W, max(z0, 0.0), z1) };
       }
     });
     const contactMat = buildCargoContactShadowMaterial({
@@ -154,7 +161,10 @@ export class SwarmShadows {
         const up = unitsNode.element(ub.add(uint(SWARM_UNIT.POSE)));
         const ui = unitsNode.element(ub.add(uint(SWARM_UNIT.INFO)));
         const k = select(ui.z.lessThan(-0.5).and(ui.y.greaterThan(0.5)), float(0.55), float(0.0));
-        return { a: vec4(up.x, up.y, up.w, k), b: vec4(CARGO_CONTAINER.L, CARGO_CONTAINER.W, up.z, 1.2) };
+        const fr = frame ? slotFrameRow(frame, instanceIndex, frame.unitsPerSlot) : null;
+        const px = fr ? fr.x.add(up.x.mul(cos(fr.z))).sub(up.y.mul(sin(fr.z))) : up.x;
+        const py = fr ? fr.y.add(up.x.mul(sin(fr.z))).add(up.y.mul(cos(fr.z))) : up.y;
+        return { a: vec4(px, py, fr ? up.w.add(fr.z) : up.w, k), b: vec4(CARGO_CONTAINER.L, CARGO_CONTAINER.W, up.z, 1.2) };
       }
     });
     const mk = (mat, name, order) => {
@@ -171,8 +181,8 @@ export class SwarmShadows {
       scene.add(mesh);
       return mesh;
     };
-    this.drones = mk(hullMat, 'Roj:cienDronow', 10);
-    this.contact = mk(contactMat, 'Roj:cienKontaktu', 10.5);
+    this.drones = mk(hullMat, 'Roj:cienDronow', order);
+    this.contact = mk(contactMat, 'Roj:cienKontaktu', order + 0.5);
   }
 
   setCounts(drones, units) {
