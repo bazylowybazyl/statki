@@ -13,7 +13,8 @@
 //   • EMITERY POLA SIŁOWEGO (otwór trzyma pole) — maszty co 7,5° na koronie: KRATOWNICOWE PYLONY (trzy pasy, krzyżulce,
 //     dwie kondygnacje z ciepłym pasem świateł, w osi chłodna szyna energii, odciąg), głowica — CEWKA toroidalna
 //     z uzwojeniem i mała okrągła soczewka z gradientem (bez wzoru); na łuku południowym (w kadrze gry nad gzymsem, na
-//     tle kosmosu) przerywane CIĘCIWY POLA między głowicami — przygaszone (najniższy poziom hierarchii jasności).
+//     tle kosmosu) CIĘCIWY POLA między głowicami — ciągłe, bardzo słabe łuki energii wygięte ku górze, jaśniejsze przy
+//     głowicach, gasnące ku środkowi, z falą jasności obiegającą koronę (najniższy poziom hierarchii jasności).
 //   • ŚCIANY — hierarchia: PRZYPORY GŁÓWNE w pół drogi między przewodami (stopniowany przekrój z kołnierzem w skale,
 //     przewód energii na czole, światła; u góry filar fasady, u dołu but na pierścieniu stopy i stopa na pasie osłon),
 //     cieńsze ŻEBRA WTÓRNE od galerii-pasa do pierścienia stopy (obejma na pierścieniu), trzy GALERIE skrzynkowe
@@ -63,8 +64,9 @@ export const LINING_DEFAULTS = Object.freeze({
   // pola, ≤ 0,046 ze skrzydłami), wysokość wież nad krawędzią [R] (nadproże między pierścieniami 0,422 i 0,48)
   liningGateAz: 270, liningGateHalf: 7.5, liningGateTower: 0.024,
   // cięciwy pola między głowicami masztów: tylko na łuku, gdzie w kadrze gry leżą nad gzymsem na tle kosmosu (sin φ
-  // poniżej progu — południowa korona); po stronie północnej biegłyby w poprzek fasady bohatera. Jasność (listwa).
-  liningChordSin: -0.2, liningChordGlow: 0.1
+  // poniżej progu — południowa korona); po stronie północnej biegłyby w poprzek fasady bohatera. Ciągły łuk: jasność
+  // przy głowicach (listwa), ułamek tej jasności w środku cięciwy, wygięcie ku górze (× długość), promień rurki [R]
+  liningChordSin: -0.2, liningChordGlow: 0.085, liningChordMid: 0.1, liningChordBow: 0.045, liningChordR: 0.00028
 });
 
 const BITE = EARTH_BITE;
@@ -741,23 +743,69 @@ function emitterHead(metal, T, dir, k, seed, ring) {
 }
 
 /**
- * Cięciwa pola między głowicami A i B (skale ka, kb): przerywana cienka listwa chłodna (kreski ~0,0035 R, przerwy
- * ~0,0025 R) po własnym uv — jedna droga u przez wszystkie kreski, więc fala listwy biegnie wzdłuż całej cięciwy jak
- * pakiety pola. Jasność niska — najniższy poziom hierarchii kadru gry (promień > liny wind > korona i maszty > cięciwy).
+ * Cięciwa pola między głowicami A i B (skale ka, kb), j — numer cięciwy na łuku: CIĄGŁY, bardzo słaby ŁUK energii
+ * (nie linia pomocnicza z kresek) — cienka rurka listwy chłodnej od obręczy głowicy do obręczy sąsiedniej, wygięta ku
+ * górze (parabola, `liningChordBow` × długość) i zwężona ku środkowi; jasność z per wierzchołek: przy głowicach
+ * `liningChordGlow`, ku środkowi gaśnie do × `liningChordMid` (pole wychodzi z emiterów). Droga u całej cięciwy mieści
+ * się w JEDNYM segmencie listwy (środek segmentu po przesunięciu wg ziarna — jak soczewka głowicy), więc materiał nie
+ * rysuje na niej poprzecznych szwów (z bliska znów byłyby kreski); fala przepływu listwy chłodnej (sin u, okres 0,012)
+ * daje wtedy „oddech” całej cięciwy, a numer segmentu rośnie o 1 z każdą cięciwą (faza +0,21) — grzbiety fali obiegają
+ * koronę jak wędrujące impulsy pola. Najniższy poziom hierarchii kadru gry (promień > liny wind > korona i maszty >
+ * cięciwy).
  */
-function fieldChord(metal, A, B, ka, kb, seed, glow) {
+function fieldChord(metal, A, B, ka, kb, seed, j, L) {
   const d = new THREE.Vector3().subVectors(B, A);
   const len = d.length();
   d.divideScalar(len);
-  const t0 = 0.0034 * ka, t1 = len - 0.0034 * kb;
+  // początek i koniec na obręczy cewki głowicy (promień obręczy 0,0024 k, rurka 0,0006 k) — łuk z niej wyrasta
+  const t0 = 0.0027 * ka, t1 = len - 0.0027 * kb;
   if (t1 - t0 < 0.006) return;
-  const nd = Math.max(2, Math.round((t1 - t0) / 0.006));
-  const step = (t1 - t0) / nd, dash = step * 0.58;
-  for (let i = 0; i < nd; i++) {
-    const s = t0 + i * step + (step - dash) / 2;
-    metal.push(rodPart(A.clone().addScaledVector(d, s), A.clone().addScaledVector(d, s + dash), 0.0003, 4, PART.STRIP, seed,
-      glow, 1, s));
+  const up = new THREE.Vector3(0, 1, 0).addScaledVector(d, -d.y);
+  if (up.lengthSq() < 1e-8) up.set(1, 0, 0);
+  up.normalize();
+  const span = t1 - t0, bow = L.liningChordBow * span;
+  const N = Math.max(10, Math.ceil(span / 0.003)), S = 6;
+  const r0 = L.liningChordR, circ = TAU * r0;
+  // droga u: środek segmentu listwy nr j + 12 (materiał dodaje przesunięcie ziarna off ≤ 0,0293 < 12 segmentów —
+  // u zostaje dodatnie), ±0,0005 wzdłuż cięciwy
+  const off = ((Math.fround(seed) * 3.71) % 1) * 0.0293;
+  const uc = 0.00125 + 0.0025 * (j + 12) - off;
+  const pos = new Float32Array((N + 1) * (S + 1) * 3), nrm = new Float32Array(pos.length);
+  const uvs = new Float32Array((N + 1) * (S + 1) * 2), zs = new Float32Array((N + 1) * (S + 1));
+  const P = new THREE.Vector3(), T = new THREE.Vector3(), nu = new THREE.Vector3(), ns = new THREE.Vector3();
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, f = Math.abs(2 * t - 1);
+    // parabola ku górze: punkt i styczna
+    P.copy(A).addScaledVector(d, t0 + span * t).addScaledVector(up, bow * 4 * t * (1 - t));
+    T.copy(d).multiplyScalar(span).addScaledVector(up, bow * 4 * (1 - 2 * t)).normalize();
+    nu.copy(up).addScaledVector(T, -up.dot(T)).normalize();
+    ns.crossVectors(T, nu);
+    const r = r0 * lerp(0.6, 1, f);
+    const zi = -L.liningChordGlow * lerp(L.liningChordMid, 1, f * f);
+    for (let k = 0; k <= S; k++) {
+      const a = (k / S) * TAU, c = Math.cos(a), s = Math.sin(a);
+      const v = i * (S + 1) + k;
+      const nx = nu.x * c + ns.x * s, ny = nu.y * c + ns.y * s, nz = nu.z * c + ns.z * s;
+      pos[v * 3] = P.x + nx * r; pos[v * 3 + 1] = P.y + ny * r; pos[v * 3 + 2] = P.z + nz * r;
+      nrm[v * 3] = nx; nrm[v * 3 + 1] = ny; nrm[v * 3 + 2] = nz;
+      uvs[v * 2] = uc + (t - 0.5) * 0.001;
+      uvs[v * 2 + 1] = (k / S) * circ;
+      zs[v] = zi;
+    }
   }
+  const idx = [];
+  for (let i = 0; i < N; i++) {
+    for (let k = 0; k < S; k++) {
+      const a = i * (S + 1) + k, b = a + S + 1;
+      idx.push(a, a + 1, b, a + 1, b + 1, b);   // na zewnątrz: (pierścień + 1) × (wzdłuż) = +promieniowy
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  metal.push(finalizePart(g, PART.STRIP, seed, (i) => zs[i], 1));
 }
 
 // ── Brama promienia ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1347,7 +1395,7 @@ export function buildLining(L, b) {
   buildCladding(L, b, lay, metal);
   L.elevators.forEach((az, i) => buildPlaza(L, b, az * DEG, metal, (i + 0.5) / L.elevators.length));
   // brama promienia (jej głowice zastępują maszty przy osi — maszty bliżej niż 5° od pylonu ustępują), maszty emiterów;
-  // między sąsiednimi głowicami (nie nad placami, tylko na łuku południowym) przerywana cięciwa pola
+  // między sąsiednimi głowicami (nie nad placami, tylko na łuku południowym) ciągły łuk cięciwy pola
   const heads = buildGate(L, b, lay, metal, flow);
   for (let k = 0; k < L.liningMasts; k++) {
     const phi = ((k + 0.5) / L.liningMasts) * TAU;
@@ -1356,11 +1404,12 @@ export function buildLining(L, b) {
   }
   heads.sort((p, q) => p[0] - q[0]);
   const gap = (TAU / L.liningMasts) * 1.6;
+  let chordN = 0;
   heads.forEach(([pa, h, ka], k) => {
     const [pb, nx, kb] = heads[(k + 1) % heads.length];
     if (!h || !nx || angDist(pa, pb) >= gap) return;
     if (Math.sin(pa) + Math.sin(pb) > 2 * L.liningChordSin) return;
-    fieldChord(metal, h, nx, ka, kb, k / heads.length, L.liningChordGlow);
+    fieldChord(metal, h, nx, ka, kb, k / heads.length, chordN++, L);
   });
   lay.prim.forEach((phi, i) => buildButtress(L, b, phi, (i * 0.618 + 0.05) % 1, metal, flow));
   lay.sec.forEach((phi, i) => buildRib(L, b, phi, (i * 0.618) % 1, metal));

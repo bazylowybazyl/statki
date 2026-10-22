@@ -7,7 +7,9 @@
 //   • przepływ — pancerne przewody energii (ciemna rura, biegnące cyjanowe impulsy w wąskich szczelinach) i liny wind.
 // Model światła i rzut pudełkowy — earthBitePlantCommon.tsl.js (wspólne z dodatkami komponentów). KADŁUB w dwóch
 // poziomach: DUŻE PANELE 0,012–0,02 R w równej siatce (bez przesunięcia rzędów), na ścianach z PIONOWYM żebrowaniem
-// (przęsła między żebrami usztywnień), na pokładach z siatką podpaneli; rzadkie luki serwisowe; rowki ~0,0004 R.
+// (przęsła między żebrami usztywnień), na pokładach z siatką podpaneli; rzadkie luki serwisowe; rowki ~0,0004 R. Na
+// ścianach część paneli to KONDYGNACJE (wnęki z głębokimi oknami) i SZYBY SERWISOWE; lampy rzędów świateł rzucają w dół
+// ciepłe plamy — nocą płaszczyzny mają objętość (słaba ciepła średnia z daleka), listwy nocą × 0,6.
 // Układ wzoru: walcowe współrzędne ramy (rzut pudełkowy) albo — dla części z własnym uv (aPart.z < 0, części
 // przeciągane) — uv części. Detal gaśnie do średniej OSOBNO wzdłuż każdej osi wzoru (piksel wzdłuż u i v) — bez smug pod
 // ostrym kątem i bez migotania z daleka; z daleka zostaje rytm świateł (rzędy lamp, linie kondygnacji okien, listwy).
@@ -16,7 +18,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, vec2, vec3, vec4, varying, positionLocal, normalLocal, uv, modelWorldMatrix,
-  abs, atan, clamp, cross, dFdx, dFdy, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, select, sign, sin,
+  abs, atan, clamp, cross, dFdx, dFdy, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, select, sign, sin, sqrt,
   smoothstep
 } from 'three/tsl';
 import { sunVisibility } from './sunShadowMask.js';
@@ -44,13 +46,17 @@ const edgeDist = (f, s) => min(f, float(1.0).sub(f)).mul(s);
  */
 const lodLines = (pix, period) => sdown(0.12, 0.3, pix.div(period));
 
+// Okna kadłuba (kondygnacje, szyby) z daleka: ułamek energii zostawiony w średniej — pełna średnia wypełniała panele
+// kondygnacji równym brązem („kafle”); zostaje słaba ciepła poświata płaszczyzn wg zasiedlenia
+const WIN_FAR = 0.4;
+
 // ── Kadłub: duże panele (L1), podpanele / przęsła żeber (L2), rowki (L3), luki serwisowe, rzędy świateł ──────────────
 // q — uv [R], pu / pv — piksel wzdłuż u / v [R], pix — piksel izotropowy, wall — 1 ściana (żebrowanie pionowe), 0 pokład,
 // ring — 1 pokład w rzucie pudełkowym (u = ρφ, v = ρ): panele w pierścieniach, szwy promieniste (u liczone na środku
 // pierścienia, nie spirale ρφ = const), uvMode — własne uv części (rozmiar paneli wg ziarna). W rzucie pudełkowym układ
 // paneli NIE zależy od części (współpłaszczyznowe części wyglądają tak samo — bez migotania „z-fighting”, panele
 // sąsiednich części w jednej siatce); ziarno daje tylko ton części (±3%).
-function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
+function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode, kHull) {
   const sv = vec2(17.0, 31.0);
   // DUŻE PANELE w równej siatce: 0,016 R (część z własnym uv: 0,013–0,019), na ścianach wyższe niż szersze
   const big = mix(float(0.016), float(0.013).add(fract(seed.mul(7.31)).mul(0.006)), uvMode);
@@ -62,10 +68,20 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   const f1 = plantVar(fract(c1), 'vec2');
   const h1 = plantVar(hash12(id1.add(sv)));
   const h1b = plantVar(hash12(id1.add(sv).add(vec2(41.3, 17.9))));
-  // PODPANELE: ściana — przęsła między pionowymi żebrami (~0,0026 R) × 2 w pionie; pokład — siatka 3 albo 4 (wg panelu)
+  const isHatch = plantVar(step01(h1b, 0.958));
+  // ODMIANA PANELU ŚCIANY KADŁUBA (runda 4 — skala megabudowli z bliska, nie blacha falista magazynu): KONDYGNACJE
+  // (~36% paneli w rzucie pudełkowym, ~56% w częściach z własnym uv — okładzina, galerie, fasada bohatera): 5 kondygnacji
+  // na panel, we wnęce każdej pas głębokich okien (rzadko zapalonych), żebra tylko na krawędziach panelu (pilastry);
+  // reszta — przęsła między żebrami, w ~40% z nich jedno przęsło to SZYB SERWISOWY (wnęka z pionowym rzędem okien)
+  const wallB = plantVar(step01(wall, 0.5).mul(kHull).mul(float(1.0).sub(isHatch)));
+  const hT = fract(h1b.mul(29.7).add(h1.mul(3.1)));
+  const storey = plantVar(step01(mix(float(0.36), float(0.56), uvMode), hT).mul(wallB));
+  // PODPANELE: ściana — przęsła między pionowymi żebrami (~0,0026 R) × 2 w pionie (kondygnacje: 1 × 5); pokład — siatka
+  // 3 albo 4 (wg panelu)
   const nDeck = float(3.0).add(step01(fract(h1b.mul(13.1)), 0.5));
   const nRib = max(floor(P1.x.div(0.0026)), 4.0);
-  const nSub = plantVar(mix(vec2(nDeck, nDeck), vec2(nRib, 2.0), wall), 'vec2');
+  const nWall = mix(vec2(nRib, 2.0), vec2(1.0, 5.0), storey);
+  const nSub = plantVar(mix(vec2(nDeck, nDeck), nWall, wall), 'vec2');
   const c2 = plantVar(f1.mul(nSub), 'vec2');
   const f2 = plantVar(fract(c2), 'vec2');
   const h2 = plantVar(hash12(id1.mul(7.0).add(floor(c2)).add(sv).add(19.7)));
@@ -82,8 +98,51 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   const lod2v = plantVar(lodLines(pv, sub.y));
   const lod1 = plantVar(min(lod1u, lod1v));
   const lod2 = plantVar(min(lod2u, lod2v));
+  // WNĘKA OKIEN KONDYGNACJI (pas 0,36…0,70 wysokości kondygnacji): ciemniejsza, z bliska nadproże (krawędź górna)
+  // zwrócone w dół, parapet w górę — głębokość; z daleka ciemniejszy pas, potem średnia
+  const recH = 0.17;
+  const dRec = plantVar(f2.y.sub(0.53).mul(sub.y));
+  const lodRec = plantVar(lodLines(pv, sub.y.mul(recH * 2.0)));
+  const inRec = plantVar(mix(float(recH * 2.0), aaBox(abs(dRec), sub.y.mul(recH), pv), lodRec).mul(storey));
+  const recEdge = plantVar(aaLine(abs(abs(dRec).sub(sub.y.mul(recH))), float(0.00007), pv).mul(lodRec).mul(storey));
+  // ZASIEDLENIE (szum wartości ~0,03 R, od położenia): skupiska zapalonych okien i ciemne strefy — udział zapalonych
+  // 3–28%; z daleka (okna drobniejsze niż ~3 px) zostaje słaba ciepła średnia (× WIN_FAR energii) wg tego szumu — miękkie
+  // plamy na płaszczyźnie, nie kafle paneli
+  const oq = q.div(0.03).add(sv);
+  const oi = plantVar(floor(oq), 'vec2');
+  const of = fract(oq);
+  const os = plantVar(of.mul(of).mul(float(3.0).sub(of.mul(2.0))), 'vec2');
+  const occN = mix(mix(hash12(oi), hash12(oi.add(vec2(1.0, 0.0))), os.x),
+    mix(hash12(oi.add(vec2(0.0, 1.0))), hash12(oi.add(vec2(1.0, 1.0))), os.x), os.y);
+  const litFrac = plantVar(float(0.03).add(smoothstep(0.4, 0.85, occN).mul(0.25)));
+  // okna we wnęce: kolumny co 0,0011 R (przesunięte wg kondygnacji), jasność 0,7–1,3; z daleka średnia
+  const colW = 0.0011;
+  const sI = plantVar(floor(q.y.div(sub.y)));
+  const wu = plantVar(q.x.div(colW).add(hash12(vec2(sI, 5.7)).mul(9.0)));
+  const hw = plantVar(hash12(vec2(floor(wu), sI.add(13.1))));
+  const winShape = plantVar(aaBox(abs(fract(wu).sub(0.5)).mul(colW), colW * 0.3, pu)
+    .mul(aaBox(abs(dRec), sub.y.mul(0.11), pv)));
+  const lodWin = plantVar(min(lodFade(pu, colW), lodFade(pv, sub.y.mul(0.22))));
+  const winLit = step01(litFrac, hw).mul(float(0.7).add(fract(hw.mul(31.7)).mul(0.6)));
+  const winS = plantVar(mix(litFrac.mul(0.6 * 0.22 * WIN_FAR), winShape.mul(winLit), lodWin).mul(storey));
+  // SZYB SERWISOWY: jedno przęsło panelu (~40% paneli z przęsłami) — wnęka z pionowym rzędem okien co 0,0013 R
+  // (zapalonych 15–55% wg zasiedlenia); z daleka słaba średnia
+  const shaftCol = floor(h1.mul(nSub.x));
+  const isShaft = plantVar(step01(fract(h1b.mul(53.1)), 0.6).mul(wallB).mul(float(1.0).sub(storey))
+    .mul(step01(float(0.5).sub(abs(floor(c2.x).sub(shaftCol))), 0.0)));
+  const sh = q.y.div(0.0013);
+  const hs = hash12(vec2(floor(sh), id1.x.mul(7.0).add(id1.y.mul(13.0)).add(3.0)));
+  const shWin = aaBox(abs(fract(sh).sub(0.5)).mul(0.0013), float(0.0003), pv)
+    .mul(aaBox(abs(f2.x.sub(0.5)).mul(sub.x), sub.x.mul(0.21), pu));
+  const lodSh = plantVar(min(lodFade(pv, 0.0013), lodFade(pu, sub.x.mul(0.42))));
+  const shFrac = plantVar(litFrac.mul(1.6).add(0.1));
+  const shLit = step01(shFrac, hs).mul(float(0.75).add(fract(hs.mul(17.3)).mul(0.5)));
+  const shS = plantVar(mix(shFrac.mul((0.6 / 1.3) * 0.42 * WIN_FAR), shWin.mul(shLit), lodSh).mul(isShaft));
+  const shRec = plantVar(isShaft.mul(lodFade(pu, sub.x)));
+  // barwa okien: bursztyn, z bliska co siódma kondygnacja / szyb chłodny (średnia z daleka — sam bursztyn)
+  const winTint = plantVar(mix(vec3(1.0, 0.5, 0.2), vec3(0.6, 0.8, 1.0),
+    step01(fract(hash12(vec2(sI, id1.x)).mul(7.3)), 0.86).mul(lodWin)), 'vec3');
   // LUK SERWISOWY (~4% dużych paneli): prostokąt w środku panelu, obrys wklęsły, ciemniejszy, bez podziałów
-  const isHatch = plantVar(step01(h1b, 0.958));
   const hh = vec2(0.3, 0.27);
   const sdh = plantVar(min(hh.x.sub(abs(f1.x.sub(0.5))).mul(P1.x), hh.y.sub(abs(f1.y.sub(0.5))).mul(P1.y)));
   const inHatch = plantVar(isHatch.mul(step01(sdh, 0.0)));
@@ -106,7 +165,9 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   // skos krawędzi dużego panelu (normalna ku najbliższej krawędzi — łapie słońce) + lekkie przekoszenie płyt
   const dirE = select(e1u.lessThan(e1v), vec2(sign(f1.x.sub(0.5)), 0.0), vec2(0.0, sign(f1.y.sub(0.5))));
   const bevel = sdown(0.0, 0.0003, min(e1u, e1v)).mul(min(lodFade(pu, 0.0008), lodFade(pv, 0.0008)));
-  const tilt = plantVar(dirE.mul(bevel.mul(0.5)).add(vec2(ribTilt, 0.0))
+  // nadproże wnęki (krawędź górna) — normalna w dół, parapet — w górę
+  const recTilt = sign(dRec).mul(recEdge).mul(-0.5);
+  const tilt = plantVar(dirE.mul(bevel.mul(0.5)).add(vec2(ribTilt, recTilt))
     .add(vec2(h1.sub(0.5), h1b.sub(0.5)).mul(lod1.mul(0.03))), 'vec2');
   // rowki (L3) na ~20% podpaneli — wzdłuż u albo v
   const gAxis = step01(h2, 0.9);
@@ -114,12 +175,13 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   const pg = mix(pv, pu, gAxis);
   const groove = plantVar(aaLine(abs(fract(gc).sub(0.5)).mul(0.0004), float(0.00005), pg).mul(lodLines(pg, 0.0004))
     .mul(step01(h2, 0.8)).mul(float(1.0).sub(inHatch)));
-  // TON: rozrzut ±5% (panel), ±4% (podpanel), ±5% (część) — czarny anodowany kadłub, nie mozaika
+  // TON: rozrzut ±5% (panel), ±4% (podpanel), ±5% (część) — czarny anodowany kadłub, nie mozaika; wnęki ciemniejsze
   const tone = plantVar(mix(1.0, float(0.95).add(h1.mul(0.1)), lod1)
     .mul(mix(1.0, float(0.96).add(h2.mul(0.08)), lod2))
     .mul(float(0.97).add(fract(seed.mul(91.7)).mul(0.06)))
     .mul(mix(1.0, 0.8, inHatch.mul(lod1)))
     .mul(float(1.0).add(rib.mul(0.06)))
+    .mul(float(1.0).sub(inRec.mul(0.45)).sub(shRec.mul(0.4)).sub(winShape.mul(lodWin).mul(storey).mul(0.3)))
     .mul(max(float(1.0).sub(seam1.mul(0.75)).sub(seam2.mul(0.5)).sub(groove.mul(0.3)).sub(ribShadow.mul(0.3))
       .sub(hatchLine.mul(0.7)), 0.08)));
   // matowa czarna powłoka (szeroki, słaby odblask słońca — wierzch nie srebrzy w kierunku lustrzanym), panele różnią się
@@ -147,9 +209,27 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   const lamp = plantVar(aaDot(length(vec2(lu, dv)), 0.0002, pix).mul(rowOn).mul(blink));
   const lampCol = plantVar(mix(vec3(3.6, 3.0, 2.2), vec3(4.0, 0.4, 0.16), red), 'vec3');
   const hv = plantVar(mix(0.5, h2, lod2));
+  // PLAMY ŚWIATŁA LAMP (runda 4 — objętość nocą, nie same kontury): białe lampy zapalonego rzędu świecą W DÓŁ po ścianie
+  // — ciepły stożek poszerzający się w dół, spadek z odległością od szwu; na pokładzie plama wokół rzędu z obu stron.
+  // Lampy gęściej niż ~3 px — średnia stożka (bez migotania)
+  const wB = step01(wall, 0.5);
+  const seamUp = floor(q.y.div(P1.y)).add(1.0);
+  const seamW = plantVar(mix(seamI, seamUp, wB));
+  const dW = plantVar(mix(abs(dv), seamUp.mul(P1.y).sub(q.y), wB));
+  const onW = step01(hash12(vec2(seamW, sv.y.add(3.3))), 0.68);
+  const redW = step01(hash12(vec2(lampI, seamW.add(7.0))), 0.82);
+  const wC = plantVar(dW.mul(0.45).add(0.0009));
+  const coneX = lu.div(wC);
+  const cone = mix(min(wC.mul(Math.sqrt(Math.PI) / 0.0077), 1.0), exp(coneX.mul(coneX).negate()), lodFade(pu, 0.0077));
+  const fall = exp(dW.div(P1.y.mul(0.4)).negate()).mul(smoothstep(0.0, 0.0005, dW));
+  const wash = plantVar(onW.mul(float(1.0).sub(redW)).mul(cone).mul(fall).mul(float(1.0).sub(inHatch)));
+  // emisja kadłuba poza rzędami świateł: okna kondygnacji i szybów (HDR ~1–2 z bliska, z daleka ciepła średnia płaszczyzn)
+  // i plamy lamp (pod progiem bloomu)
+  const glow = plantVar(winTint.mul(winS.add(shS).mul(1.6)).add(vec3(1.0, 0.6, 0.3).mul(wash.mul(0.14))), 'vec3');
   return {
-    tone, rough, f0, tilt, occ: plantVar(float(1.0).sub(seam1.mul(0.8)).sub(ribShadow.mul(0.4))), glowSeam, lamp,
-    lampCol, hv, seam: plantVar(max(seam1, seam2D.mul(float(1.0).sub(inHatch)))), lod2
+    tone, rough, f0, tilt, glowSeam, lamp, lampCol, hv, lod2, glow,
+    occ: plantVar(float(1.0).sub(seam1.mul(0.8)).sub(ribShadow.mul(0.4)).sub(inRec.mul(0.35))),
+    seam: plantVar(max(seam1, seam2D.mul(float(1.0).sub(inHatch))))
   };
 }
 
@@ -305,7 +385,7 @@ function buildMetalGraph() {
     // żar: zawsze siatka płyt (szwy w obu kierunkach)
     const wallH = plantVar(B.wall.mul(float(1.0).sub(kHot)));
     const H = hullPanels(B.uv, B.pu, B.pv, pix, seed, time, wallH, float(1.0).sub(wallH).mul(float(1.0).sub(B.uvMode))
-      .mul(B.deck), B.uvMode);
+      .mul(B.deck), B.uvMode, kHull);
     const S = structDetail(B.uv, B.pu, B.pv, seed);
     const W = windowSlots(B.uv, B.pu, B.pv, pix, seed, zOr(0.5), B.uvMode, C.lit);
     const kOther = plantVar(float(1.0).sub(kPlate).sub(kStruct).sub(kGlass));
@@ -326,7 +406,7 @@ function buildMetalGraph() {
     const tone = plantVar(H.tone.mul(kPlate.mul(0.85)).mul(mix(1.0, 0.55, kHot)).add(S.tone.mul(kStruct))
       .add(kOther.mul(0.8)).add(kGlass.mul(0.3))
       .mul(float(1.0).sub(winGlass.mul(0.7))).mul(float(1.0).sub(grime)).mul(deckK));
-    const rough = H.rough.mul(kPlate).add(S.rough.mul(kStruct)).add(kOther.mul(0.45)).add(kGlass.mul(0.07)).add(grime.mul(0.5))
+    const rough = H.rough.mul(kPlate).add(S.rough.mul(kStruct)).add(kOther.mul(0.45)).add(kGlass.mul(0.12)).add(grime.mul(0.5))
       .add(kHot.mul(0.12));
     const roughW = plantVar(mix(rough, 0.1, winGlass));
     const f0 = plantVar(H.f0.mul(kPlate).add(kStruct.mul(0.032)).add(kOther.mul(0.04)).add(kGlass.mul(0.06)).mul(deckK));
@@ -352,13 +432,19 @@ function buildMetalGraph() {
     // KADŁUB: świecące szwy rzędów świateł (pod progiem bloomu; ciepłe w gryzie, chłodne na orbicie) i lampy
     const seamCol = mix(vec3(0.42, 0.75, 1.0).mul(0.36), vec3(1.0, 0.5, 0.17).mul(0.42), C.bowl);
     col.addAssign(seamCol.mul(H.glowSeam).add(H.lampCol.mul(H.lamp)).mul(kHull));
+    // KADŁUB: okna kondygnacji i szybów serwisowych, plamy lamp na ścianach — nocą płaszczyzny mają objętość (ciepła
+    // średnia z daleka), w słońcu słabiej (kontrast dnia bez zmian)
+    col.addAssign(H.glow.mul(kHull).mul(float(1.0).sub(C.lit.mul(0.5))));
     // OKNA: nocą świecą, w pełnym słońcu szczeliny przygasają (dominuje odblask szyby), linie kondygnacji — mniej
     col.addAssign(W.emit.mul(kWin));
     // LISTWA: z — jasność, w — 0 ciepła (bursztyn) / 1 chłodna (cyjan, wolny przepływ); świetlne rurki w ciemnej obudowie
     const coolF = step01(vPart.w, 0.5);
     const flowS = mix(1.0, sin(B.uv.x.div(0.012).sub(time.mul(0.35)).mul(TAU)).mul(0.22).add(0.82), coolF);
     const stripCol = mix(vec3(0.95, 0.3, 0.06), vec3(0.06, 0.42, 1.0), coolF);
-    col.addAssign(stripCol.mul(zOr(1.0)).mul(flowS).mul(stripLight(B.uv, B.pu, B.pv, pix, B.uvMode)).mul(kStrip));
+    // nocą (strona Ziemi bez słońca) listwy × 0,6 — budowla nie czyta się jak neonowy schemat samych krawędzi
+    const stripNight = mix(0.6, 1.0, C.day);
+    col.addAssign(stripCol.mul(zOr(1.0)).mul(flowS).mul(stripNight).mul(stripLight(B.uv, B.pu, B.pv, pix, B.uvMode))
+      .mul(kStrip));
     // CEWKA: puls z fazą z, uzwojenia (jasne linie w poprzek, ciemne przerwy); w = −1 — wskaźnik magazynu (jasność wg
     // naładowania, szybszy puls przy przekazie)
     const store = vPart.w.lessThan(-0.5);
@@ -385,10 +471,30 @@ function buildMetalGraph() {
     const seamHeat = plantHeat(heatZ.mul(float(1.04).add(wave.mul(0.04))));
     const seamAvg = float(1.0).sub(H.lod2).mul(0.16);
     col.addAssign(mix(plateHeat, seamHeat, clamp(H.seam.add(seamAvg), 0.0, 1.0)).mul(kHot));
-    // ŚWIATŁO POZYCYJNE: ostre mrugnięcie (z — częstotliwość, faza z ziarna), w — 0 czerwone / 1 białe
+    // ŚWIATŁO POZYCYJNE: ostre mrugnięcie (z — częstotliwość, faza z ziarna), w — 0 czerwone / 1 białe. Świeci RDZEŃ
+    // soczewki o rozmiarze EKRANOWYM (promień ~0,35 bryły, 1–2,5 px) w jasności ~2 (lekki bloom), reszta oprawy — słabe
+    // barwne szkło; zgaszone ~0,02. Z bliska mała jasna kropka, nie wielka kula z bloomem. Środek rdzenia: kula / kopułka
+    // (normalna zmienna — nPix > 0) — punkt zwrócony do widza, promień bryły w px ≈ 1,2 / nPix; płaska ściana pudełka
+    // albo czworokąta (uv 0…1) — środek ściany; bez uv — cała ściana
     const bx = fract(time.mul(zOr(0.5)).add(seed.mul(7.7)));
-    const flash = smoothstep(0.0, 0.01, bx).mul(exp(bx.mul(-28.0))).mul(6.0).add(0.06);
-    const beacon = mix(vec3(1.0, 0.09, 0.04), vec3(1.0, 0.96, 0.88), step01(vPart.w, 0.5)).mul(flash);
+    const flashT = smoothstep(0.0, 0.01, bx).mul(exp(bx.mul(-28.0)));
+    const fu = abs(duvx.x).add(abs(duvy.x));
+    const fv = abs(duvx.y).add(abs(duvy.y));
+    const uvOk = fu.greaterThan(1e-7).and(fv.greaterThan(1e-7));
+    const fuS = max(fu, 1e-7);
+    const fvS = max(fv, 1e-7);
+    const flatD = length(vec2(vUv.x.sub(0.5).div(fuS), vUv.y.sub(0.5).div(fvS)));
+    const flatHalf = min(float(0.5).div(fuS), float(0.5).div(fvS));
+    const curved = nPix.greaterThan(1e-4);
+    const nv = clamp(dot(n0, C.V), 0.0, 1.0);
+    const curvR = float(1.2).div(max(nPix, 1e-4));
+    const curvD = sqrt(max(float(1.0).sub(nv.mul(nv)), 0.0)).mul(curvR);
+    const lensD = select(curved, curvD, select(uvOk, flatD, float(0.0)));
+    const lensHalf = select(curved, curvR, select(uvOk, flatHalf, float(1.0)));
+    const rc = clamp(lensHalf.mul(0.35), 1.0, 2.5);
+    const lensCore = sdown(rc.sub(0.6), rc.add(0.6), lensD);
+    const beaconE = mix(flashT.mul(0.1).add(0.006), flashT.mul(2.0).add(0.02), lensCore);
+    const beacon = mix(vec3(1.0, 0.09, 0.04), vec3(1.0, 0.96, 0.88), step01(vPart.w, 0.5)).mul(beaconE);
     col.addAssign(beacon.mul(kindMask(kind, PART.BEACON)));
     // GARDZIEL wylotu (ściany zwrócone ku osi, lej i szyb): ciemne ściany z emisyjnymi pierścieniami przy krawędzi
     // (słabną w głąb), biała gorączka tylko na dnie szybu

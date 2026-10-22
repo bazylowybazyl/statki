@@ -19,12 +19,14 @@
 //     wlotu skraca się do wrót śluzy, wylot — do obudowy nad pasem (`bandH`);
 //   • GROBLE energii w azymutach mostów: od zigguratu po tarasach do bram (2 przewody PIPE) — 6 szprych koła;
 //   • pokład górny: 12 MASZYNOWNI wzdłuż obwodu (po dwie w sektorze: hala pod jednym dachem ze świetlikiem,
-//     przybudówka sterowni, plac generatorów pod suwnicą bramową), pierścień estakady rur z odgałęzieniami do hal,
-//     szyna zbiorcza (PIPE), rozdzielnie przy groblach, 3 ARKOLOGIE (wieże z gęstymi rzędami okien — skala setek
-//     kilometrów) i 3 lądowiska w środkach sektorów;
-//   • taras środkowy: 6 chłodni (powłoka ze stali żebrowanej, żebra, wieńce, korona świateł), przy każdej farma
-//     zbiorników i blok transformatorów spięte z nią mostami rurowymi, pierścień estakady rur, kratownicowe anteny,
-//     MASZTY KOLEKTORÓW (pary przy groblach) wokół akceleratora;
+//     przybudówka sterowni, od placu niższa HALA TURBIN z parą KOMINÓW), pierścień estakady rur z odgałęzieniami do
+//     hal, szyna zbiorcza (PIPE), rozdzielnie przy groblach, 3 ARKOLOGIE (wieże z gęstymi rzędami okien — skala setek
+//     kilometrów) i 3 BATERIE ZBIORNIKÓW pod suwnicą w środkach sektorów;
+//   • taras środkowy: 6 chłodni (powłoka ze stali żebrowanej, żebra, wieńce, korona świateł), przy każdej bateria
+//     zbiorników pod suwnicą i blok transformatorów spięte z nią mostami rurowymi, od osi POMPOWNIA, pierścień
+//     estakady rur, CIĘŻKIE PYLONY KOLEKTORÓW (po jednym przy grobli) wokół akceleratora;
+//   • skala: żadnych rekwizytów w skali ludzkiej (kiwony, lądowiska, kratowe maszty radiowe, drobne cysterny — przy
+//     korku o promieniu 830 km czytały się jak zabawki); pionowe akcenty to pełne pylony z kondygnacjami świateł;
 //   • akcelerator: 4 pierścienie COIL z obejmami i 6 smukłych emiterów-zębów (pancerne segmenty, jarzma, cyjanowa
 //     ściana ku osi) nad wylotem — w stałych azymutach (corkToothAz + k · 60°).
 // Konwencja świateł: listwy STRIP cienkie (≤ 0,0006 R, z 0,3–0,5 — pod progiem bloomu), koncentryczne pierścienie
@@ -948,53 +950,118 @@ function buildGate(ctx, az, i, C) {
   const yW0 = T - 0.0046, yW1 = T - 0.0024;
   box(F, 0, r1 + 0.00005, half * 0.8, 0.00015, yW0, yW1, M.acc(PART.WINDOW, 0.4), 0.9);
   for (const [v0, v1] of [[yW0 - 0.0005, yW0], [yW1, yW1 + 0.0005]]) box(F, 0, r1 + 0.00035, half * 0.84, 0.00035, v0, v1, hull);
-  // dyspozytornia na bramie i kratownicowa antena z piętrami świateł
-  // (na wierzchu bramy: przy krótkiej bramie dyspozytornia cofa się nad pokład, antena stoi obok niej)
+  // dyspozytornia na bramie i ciężki pylon z kondygnacjami świateł
+  // (na wierzchu bramy: przy krótkiej bramie dyspozytornia cofa się nad pokład, pylon stoi obok niej)
   const top = T + 0.0018;
   const wD = Math.min(R + 0.0055, (R - 0.002 + r1) / 2);
   bandBlock(F, 0, wD, 0.0044, 0.0032, top, top + 0.0040, hull, M.acc(PART.WINDOW, 0.9));
-  latticeMast(M, F, -0.0066, Math.min(R + 0.0098, r1 - 0.0013), top, 0.014, 0.0008, 0.00035, 4, (i * 0.29 + 0.1) % 1, { antenna: 0.004 });
+  heavyPylon(M, F, -0.0068, Math.min(R + 0.0098, r1 - 0.0015), top, 0.0125, 0.0011, 0.0005, 4, (i * 0.29 + 0.1) % 1, { spire: 0.0035 });
 }
 
-// ── Maszty kratownicowe ─────────────────────────────────────────────────────────────────────────────────────────────
+// ── Pylony ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 /**
- * Maszt kratownicowy (pylon / antena / noga bramy): 4 pasy od (cu, cw) w ramie F na wysokości y0 do (cu1, cw1) na
- * y0 + h, półszerokość b0 → b1, `tiers` pięter z ramą i krzyżulcami X; światła pozycyjne na co drugim piętrze
- * (czerwone, naprzemiennie na narożach) i białe na szczycie anteny (`antenna` — długość masztu nad kratownicą).
+ * CIĘŻKI PYLON (bramy mostów, kolektory akceleratora, iglice arkologii): pełny trzon z ciemnej stali o przekroju
+ * kwadratowym od (cu, cw) w ramie F na wysokości y0 (półszerokość b0) do (cu1, cw1) na y0 + h (b1), w `tiers`
+ * kondygnacjach — każda zbiega się lekko ku górze i kończy GZYMSEM (wysunięty pierścień); pod gzymsem cienka listwa
+ * świateł (pod progiem bloomu: z daleka rytm poziomych kresek — kondygnacje świateł; `cool` 0 ciepła / 1 chłodna),
+ * następna kondygnacja cofnięta uskokiem. Czerwone światła pozycyjne na dwóch narożach gzymsu co drugiej kondygnacji
+ * i na ostatniej, `spire` — iglica z białym światłem. Kratownice przy korku o promieniu 830 km czytały się jak maszty
+ * radiowe — pylon ma masę budowli.
  */
-function latticeMast(M, F, cu, cw, y0, h, b0, b1, tiers, seed, { cu1 = cu, cw1 = cw, antenna = 0, lights = true } = {}) {
-  const st = M.acc(PART.STRUCT, seed);
-  const corner = (k, t) => {
-    const bb = lerp(b0, b1, t);
-    const su = k === 0 || k === 3 ? -1 : 1, sw = k < 2 ? -1 : 1;
-    return F.at(lerp(cu, cu1, t) + su * bb, y0 + h * t, lerp(cw, cw1, t) + sw * bb);
-  };
-  const rL = Math.max(0.0001, b0 * 0.11), rB = rL * 0.55;
-  for (let k = 0; k < 4; k++) beam(st, corner(k, 0), corner(k, 1), rL);
-  for (let i = 0; i <= tiers; i++) {
-    const t = i / tiers;
-    for (let k = 0; k < 4; k++) beam(st, corner(k, t), corner((k + 1) % 4, t), rB, 3);
-    if (i === tiers) break;
-    const t1 = (i + 1) / tiers;
-    for (let k = 0; k < 4; k++) {
-      beam(st, corner(k, t), corner((k + 1) % 4, t1), rB, 3);
-      beam(st, corner((k + 1) % 4, t), corner(k, t1), rB, 3);
-    }
-  }
+function heavyPylon(M, F, cu, cw, y0, h, b0, b1, tiers, seed, { cu1 = cu, cw1 = cw, spire = 0, cool = 0 } = {}) {
+  const hull = M.acc(PART.HULL, seed);
+  const strip = M.acc(PART.STRIP, seed);
+  const n = Math.max(1, tiers);
   const lb = Math.max(0.0002, b0 * 0.16);
-  if (lights) {
-    for (let i = 2; i <= tiers; i += 2) {
-      const k0 = (i / 2) % 2 ? 0 : 2;
-      for (const k of [k0, k0 + 1]) {
-        box(frame(corner(k, i / tiers), F.U, F.V, F.W), 0, 0, lb, lb, -lb, lb, M.acc(PART.BEACON, (seed * 5.3 + i * 0.11 + k * 0.07) % 1), 0.45, 0);
+  let tu = cu, tw = cw, tv = y0, tb = b0;
+  for (let i = 0; i < n; i++) {
+    const t0 = i / n, t1 = (i + 1) / n;
+    const au = lerp(cu, cu1, t0), aw = lerp(cw, cw1, t0);
+    const bu = lerp(cu, cu1, t1), bw = lerp(cw, cw1, t1);
+    const va = y0 + h * t0, vb = y0 + h * t1;
+    // uskok: kondygnacja zaczyna się węższa o 6% od trzonu poprzedniej (pierwsza — pełna)
+    const ba = lerp(b0, b1, t0) * (i ? 0.94 : 1), bt = lerp(b0, b1, t1);
+    const g = Math.min(0.0003, (vb - va) * 0.07);
+    const e = Math.min(0.00022, bt * 0.22);
+    const o = [bu - au, bw - aw];
+    const sT = bt / ba, sC = (bt + e) / ba;
+    prism(F, rect(au, aw, ba, ba), [{ v: va }, { v: vb - 2 * g, s: sT, o }, { v: vb - 2 * g, s: sC, o }, { v: vb, s: sC, o }],
+      { side: hull, top: hull, bottom: null });
+    // listwa świateł pod gzymsem (sama ściana — denka schowane w trzonie i gzymsie)
+    box(F, bu, bw, bt + 0.00003, bt + 0.00003, vb - 3 * g, vb - 2 * g, { side: strip, top: null, bottom: null }, 0.38, cool);
+    if (i % 2 === 1 || i === n - 1) {
+      const c = (bt + e) * 0.8, k = (i >> 1) % 2 ? 1 : -1;
+      for (const s of [-1, 1]) {
+        box(F, bu + s * c, bw + s * k * c, lb, lb, vb, vb + 1.6 * lb, M.acc(PART.BEACON, (seed * 5.3 + i * 0.11 + (s > 0 ? 0.07 : 0)) % 1), 0.45, 0);
       }
     }
+    tu = bu; tw = bw; tv = vb; tb = bt;
   }
-  if (antenna > 0) {
-    const top = F.at(cu1, y0 + h, cw1);
-    const tip = top.clone().addScaledVector(F.V, antenna);
-    beam(st, top, tip, rL * 0.8);
-    box(frame(tip, F.U, F.V, F.W), 0, 0, lb, lb, 0, lb * 2, M.acc(PART.BEACON, (seed * 3.1) % 1), 0.7, 1);
+  if (spire > 0) {
+    const sb = Math.max(0.00012, tb * 0.3);
+    prism(F, rect(tu, tw, sb, sb), [{ v: tv }, { v: tv + spire, s: 0.45 }], { side: hull, top: hull, bottom: null });
+    box(F, tu, tw, lb, lb, tv + spire, tv + spire + 2 * lb, M.acc(PART.BEACON, (seed * 3.1) % 1), 0.7, 1);
+  }
+}
+
+/**
+ * Para KOMINÓW na wspólnym cokole (hale turbin): smukłe walce ze stali żebrowanej zbiegające się ku górze
+ * (r → 0,78 r), wieniec w ~0,45 wysokości, korona z cienką ciepłą listwą (pod progiem bloomu), w przelocie żar spalin
+ * (HOT rośnie w głąb), czerwone światło na koronie. Pary w ramie F wzdłuż W (cw ± 1,45 r).
+ */
+function stackPair(ctx, F, cu, cw, y0, h, r, seed) {
+  const { M } = ctx;
+  const hull = M.acc(PART.HULL, seed), hot = M.acc(PART.HOT, seed), st = M.acc(PART.STRUCT, seed);
+  const strip = M.acc(PART.STRIP, 0.5);
+  const yP = y0 + 0.0009;
+  box(F, cu, cw, r * 1.55, r * 3.05, y0, yP, hull, 0, 0, 0.00015);
+  const H = y0 + h - yP;
+  const rr = (y) => lerp(r, r * 0.78, clamp01((y - yP) / H));
+  const yr = yP + H * 0.45, yc = yP + H, e = 0.00016, dq = 0.0024;
+  const prof = [
+    [r * 1.22, yP], [r * 1.22, yP + 0.0008], [rr(yP + 0.0008), yP + 0.0008],
+    [rr(yr), yr], [rr(yr) + e, yr], [rr(yr) + e, yr + 0.0005], [rr(yr + 0.0005), yr + 0.0005],
+    [rr(yc - 0.0009), yc - 0.0009], [rr(yc) + e, yc - 0.0009], [rr(yc) + e, yc - 0.0005], [rr(yc) + e, yc],
+    [rr(yc) - 0.0002, yc], [rr(yc) - 0.0002, yc - dq], [0, yc - dq]
+  ];
+  const sh = { acc: hull, smooth: true }, ss = { acc: st, smooth: true };
+  const heat = (q, y) => 0.12 + 0.3 * clamp01((yc - y) / dq);
+  // trzon — stal żebrowana (jak chłodnie), kołnierz, wieniec i korona — kadłub
+  const segs = [sh, sh, ss, sh, sh, sh, ss, sh, { acc: strip, z: 0.4, w: 0, smooth: true }, sh, sh,
+    { acc: hot, z: heat, smooth: true }, { acc: hot, z: 0.42, smooth: true }];
+  for (const s of [-1, 1]) {
+    const c = F.at(cu, 0, cw + s * r * 1.45);
+    lathe(prof, segs, 8, { cx: c.x, cz: c.z });
+    const p = F.at(cu, 0, cw + s * r * 1.45 + s * (rr(yc) + e));
+    box(frame(p, F.U, F.V, F.W), 0, 0, 0.00022, 0.00022, yc, yc + 0.0004, M.acc(PART.BEACON, (seed * 7.3 + (s > 0 ? 0.5 : 0)) % 1), 0.5, 0);
+  }
+}
+
+/**
+ * Hala wzdłuż obwodu (hala turbin, pompownia): pierścień ρ r0…r1, azymut a0…a1, od y do y + h — cokół, wnęka pasa
+ * okien, gładka ściana, gzyms; pilastry na licu zewnętrznym dzielą chłodną listwę pod gzymsem na przęsła (z daleka
+ * przerywane łuki pierścieni), żebra dachu w poprzek (rytm). `hideIn` — ściana ku osi schowana (dobudówka hali).
+ */
+function hallBlock(ctx, r0, r1, a0, a1, y, h, seed, hideIn = false) {
+  const { M } = ctx;
+  const hull = M.acc(PART.HULL, seed), win = M.acc(PART.WINDOW, seed), st = M.acc(PART.STRUCT, seed);
+  const sd = (A) => (f) => (hideIn && f === 'in' ? null : A);
+  const yt = y + h;
+  arcBlock(r0, r1, a0, a1, [
+    { v: y, side: sd(hull) }, { v: y + 0.0006, side: sd(hull) }, { v: y + 0.0006, d: 0.00025, side: sd(win) },
+    { v: y + 0.0013, d: 0.00025, side: sd(hull) }, { v: y + 0.0013, side: sd(hull) }, { v: yt - 0.0003, side: sd(hull) },
+    { v: yt - 0.0003, d: -0.00015, side: sd(hull) }, { v: yt, d: -0.00015 }
+  ], { side: sd(hull), top: hull }, 8, 0.88);
+  const rm = (r0 + r1) / 2;
+  arcBlock(r1 - 0.0001, r1 + 0.00004, a0 + 0.0003 / r1, a1 - 0.0003 / r1, [{ v: yt - 0.0009 }, { v: yt - 0.0006 }],
+    { side: (f) => (f === 'out' ? M.acc(PART.STRIP, seed) : null), top: null }, 8, 0.35, 1);
+  const nP = Math.max(2, Math.round(((a1 - a0) * r1) / 0.0046));
+  for (let k = 0; k <= nP; k++) {
+    box(radialFrame(lerp(a0 + 0.00035 / r1, a1 - 0.00035 / r1, k / nP), 0, 0), 0, r1 + 0.00016, 0.00032, 0.00018, y, yt - 0.0003, { side: hull, top: hull, bottom: null });
+  }
+  const nR = Math.max(2, Math.round(((a1 - a0) * rm) / 0.004));
+  for (let k = 1; k < nR; k++) {
+    box(radialFrame(lerp(a0, a1, k / nR), 0, 0), 0, rm, 0.0002, (r1 - r0) / 2 - 0.0003, yt, yt + 0.00035, { side: st, top: st, bottom: null });
   }
 }
 
@@ -1216,7 +1283,8 @@ function appendGeometry(A, g, z, w, swapUv = false) {
 // ── Pokład górny: maszynownie, estakada, szyna zbiorcza, rozdzielnie, arkologie, lądowiska ──────────────────────────
 /**
  * Pokład górny w każdym sektorze między mostami: rozdzielnia przy moście, DWIE MASZYNOWNIE (kompleksy turbin pod jednym
- * dachem wzdłuż obwodu, `buildMachineHall`), w środku sektora arkologia albo lądowisko; od strony osi pierścień ESTAKADY
+ * dachem wzdłuż obwodu, `buildMachineHall`), w środku sektora arkologia albo bateria zbiorników pod suwnicą
+ * (`tankBattery`); od strony osi pierścień ESTAKADY
  * RUR nad drogą obwodową (odgałęzienia do maszynowni), na krawędzi szyna zbiorcza.
  */
 function buildTopDeck(ctx) {
@@ -1265,10 +1333,11 @@ function buildTopDeck(ctx) {
   // wsporniki szyny co 7,5°
   const st = M.acc(PART.STRUCT, 0.35);
   for (let k = 0; k < 48; k++) box(radialFrame((k / 48) * TAU, 0, 0), 0, rb, 0.0004, 0.0012, T, T + 0.0006, st);
-  // przy mostach rozdzielnie; w środkach sektorów co drugi arkologia, reszta — lądowiska
+  // przy mostach rozdzielnie; w środkach sektorów co drugi arkologia, reszta — baterie zbiorników pod suwnicą
   ctx.bridgeAz.forEach((a, s) => {
     buildSwitchyard(ctx, a, rc, s);
-    if (s % 2 === 0) buildArcology(ctx, a + sec / 2, rc, s); else buildPad(ctx, a + sec / 2, rc + 0.001, s);
+    if (s % 2 === 0) buildArcology(ctx, a + sec / 2, rc, s);
+    else tankBattery(ctx, radialFrame(a + sec / 2, 0, 0), 0, rc + 0.001, 0.0072, 0.0085, T, (s * 0.17 + 0.61) % 1, s % 4 === 1 ? 1 : -1);
   });
   // droga obwodowa pokładu: cienka ciepła listwa (pod progiem bloomu) — pod estakadą
   stripRing(M, Mr + 0.0045, T, 0.00022, 0.35, 0, 144);
@@ -1285,8 +1354,8 @@ function stripRing(M, r, y, hw, z, w, n) {
  *   • HALA GŁÓWNA pod jednym dużym dachem: cokół, pas okien przy cokole dzielony pilastrami na wnęki, gładka ściana,
  *     gzyms; na dachu świetlik z ciemnego szkła (cienkie chłodne listwy u podstawy — z góry łuki pierścieni) i bloki
  *     wentylacji;
- *   • PLAC GENERATORÓW na zewnątrz: trzy bębny na kołyskach z uzwojeniem COIL i szynoprzewodami do hali, nad nimi
- *     SUWNICA bramowa na dwóch szynach (nogi A, dźwigar wysunięty nad okap hali, wózek, światło pozycyjne).
+ *   • HALA TURBIN na zewnątrz (`hallBlock`): niższa dobudówka na całej długości (cokół, pas okien, pilastry, chłodna
+ *     listwa pod gzymsem, żebra dachu), na jednym końcu (na przemian) PARA KOMINÓW na cokole (`stackPair`).
  * Wymiary od krawędzi pokładu (R) i od uskoku tarasu (Mr) — w luzie do szyny zbiorczej (R − 0,0032 ± 0,0012).
  */
 function buildMachineHall(ctx, ac, half, i) {
@@ -1334,34 +1403,14 @@ function buildMachineHall(ctx, ac, half, i) {
     const F = radialFrame(ac + f * half + rng.range(-0.6, 0.6) * DEG, 0, 0);
     box(F, 0, (m1 + rOut) / 2, 0.0011 + rng.range(0, 0.0004), 0.0007, hTop, hTop + 0.0006, hull, 0, 0, 0.00015);
   }
-  // plac generatorów: szyny suwnicy, trzy zespoły wzdłuż hali (bęben na kołyskach z uzwojeniem COIL i wzbudnicą),
-  // szynoprzewody do hali
-  const wR0 = R - 0.0116, wR1 = R - 0.0056;
-  for (const r of [wR0, wR1]) arcBlock(r - 0.00018, r + 0.00018, a0, a1, [{ v: T }, { v: T + 0.00025 }], { side: (f) => (f === 'end' ? null : st), top: st }, 8);
-  const wc = (wR0 + wR1) / 2, gl = 0.0026, gr = 0.0016, gy = T + 0.0005 + gr;
-  const coil = M.acc(PART.COIL, seed);
-  [-0.62, 0, 0.62].forEach((f, k) => {
-    const F = radialFrame(ac + f * half, 0, 0);
-    const s = k % 2 ? 1 : -1;   // wzbudnica na przemian z obu stron
-    for (const u of [-gl + 0.0007, gl - 0.0007]) box(F, u, wc, 0.00035, 0.0011, T, T + 0.0013, st);
-    cylinder(hull, F.at(-gl, gy, wc), F.at(gl, gy, wc), gr, gr, 10, true);
-    cylinder(coil, F.at(-0.0002, gy, wc), F.at(0.0002, gy, wc), gr * 1.05, gr * 1.05, 10, false, rng.next(), 0.25);
-    cylinder(hull, F.at(s * gl, gy - 0.0003, wc), F.at(s * (gl + 0.0013), gy - 0.0003, wc), gr * 0.55, gr * 0.5, 8, true);
-    box(F, 0, (rOut + wc - gr) / 2, 0.0005, (wc - gr - rOut) / 2 + 0.0002, gy - 0.0005, gy + 0.0005, st);
-  });
-  // suwnica bramowa między bębnami: nogi A na szynach, wózki jezdne, dźwigar nad okapem hali, wózek z hakiem
-  const F = radialFrame(ac + (0.31 + rng.range(-0.05, 0.05)) * half * (i % 2 ? 1 : -1), 0, 0);
-  const yG = hTop + 0.0010;
-  for (const w of [wR0, wR1]) {
-    box(F, 0, w, 0.0017, 0.00032, T + 0.00025, T + 0.0008, st);
-    for (const s of [-1, 1]) beam(st, F.at(s * 0.0013, T + 0.0008, w), F.at(s * 0.0003, yG, w), 0.00022);
-  }
-  box(F, 0, (rOut - 0.0006 + R - 0.0046) / 2, 0.00045, (R - 0.0046 - rOut + 0.0006) / 2, yG, yG + 0.0008, st, 0, 0, 0.00015);
-  const wt = lerp(rOut, wR1, 0.3 + rng.next() * 0.5);
-  box(F, 0, wt, 0.0007, 0.0006, yG + 0.0008, yG + 0.0013, hull, 0, 0, 0.0001);
-  beam(st, F.at(0, yG, wt), F.at(0, gy + gr + 0.0012, wt), 0.00007, 3);
-  box(F, 0, wt, 0.00025, 0.00025, gy + gr + 0.0006, gy + gr + 0.0012, st);
-  box(F, 0, R - 0.0050, 0.00025, 0.00025, yG + 0.0008, yG + 0.0013, M.acc(PART.BEACON, (seed * 7.3) % 1), 0.5, 0);
+  // HALA TURBIN od placu (dawny otwarty plac generatorów pod suwnicą czytał się z bliska jak pole kiwonów): niższa
+  // dobudówka na całej długości hali (ściana ku osi schowana w hali głównej), na jednym końcu para kominów na cokole
+  const rA = R - 0.0058;
+  const hA = 0.0036 + rng.range(-0.0002, 0.0002);
+  const e0 = a0 + 0.5 * DEG, e1 = a1 - 0.5 * DEG;
+  hallBlock(ctx, rOut - 0.0003, rA, e0, e1, T, hA, seed, true);
+  const aS = i % 2 ? e1 - 2.2 * DEG : e0 + 2.2 * DEG;
+  stackPair(ctx, radialFrame(aS, 0, 0), 0, (rOut + rA) / 2, T + hA, 0.0092 + rng.range(-0.0005, 0.0005), 0.0011, seed);
   // odgałęzienia estakady (wspólny pierścień od osi) nad przybudówką do ściany hali
   const yE = T + 0.0046;
   for (const f of [-0.5, 0.5]) {
@@ -1425,11 +1474,11 @@ function buildArcology(ctx, az, rc, k) {
     if (nx) box(F, 0, cw, nx.hu + 0.0003, nx.hw + 0.0003, s.y1 + 0.0002, s.y1 + 0.0005, M.acc(PART.STRIP, seed), 0.4, j % 2);
     y = s.y1;
   });
-  // korona: ścięty ostrosłup, czerwone światła na narożach, antena z białym światłem
+  // korona: ścięty ostrosłup, czerwone światła na narożach, pełna iglica z kondygnacjami świateł i białym światłem
   const top = y0 + H;
   prism(F, rect(0, cw, 0.0030, 0.0040), [{ v: y + 0.0002 }, { v: y + (top - y) * 0.6, s: 0.72 }, { v: top, s: 0.32 }], hull);
   for (const su of [-1, 1]) for (const sw of [-1, 1]) box(F, su * 0.0030, cw + sw * 0.0040, 0.0003, 0.0003, y + 0.0002, y + 0.0008, M.acc(PART.BEACON, (seed + su * 0.13 + sw * 0.07 + 1) % 1), 0.45, 0);
-  latticeMast(M, F, 0, cw, top - 0.0004, 0.008, 0.0005, 0.0002, 4, seed, { antenna: 0.005 });
+  heavyPylon(M, F, 0, cw, top - 0.0004, 0.0065, 0.00068, 0.00032, 3, seed, { spire: 0.004 });
 }
 
 /**
@@ -1466,66 +1515,56 @@ function buildCauseway(ctx, phi, idx) {
   }
 }
 
-/** Lądowisko: ośmiokątna płyta z pierścieniem świateł pozycyjnych (białe) i cienką listwą znaku. */
-function buildPad(ctx, az, rc, i, T = ctx.L.corkTopH) {
-  const { M } = ctx;
-  const F = radialFrame(az, 0, 0);
-  const hull = M.acc(PART.HULL, 0.82);
-  const rP = 0.0058;
-  prism(F, ngon(8, rP, rP).map(([u, w]) => [u, w + rc]), [{ v: T }, { v: T + 0.0007 }, { v: T + 0.0010, s: 0.94 }], hull);
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * TAU;
-    box(F, Math.cos(a) * rP * 0.84, rc + Math.sin(a) * rP * 0.84, 0.00025, 0.00025, T + 0.0010, T + 0.00125, M.acc(PART.BEACON, (k / 8 + i * 0.1) % 1), 0.8, 1);
-  }
-  const n = 24;
-  const S = M.acc(PART.STRIP, 0.82);
-  for (let k = 0; k < n; k++) {
-    const a = (k / n) * TAU, c = ((k + 1) / n) * TAU;
-    const p = (r, t) => F.at(Math.cos(t) * r, T + 0.0011, rc + Math.sin(t) * r);
-    quad(S, p(rP * 0.53, a), p(rP * 0.53, c), p(rP * 0.6, c), p(rP * 0.6, a), UP, 0.35, 0);
-  }
-}
-
-// ── Maszyny: farmy zbiorników, stopniowe bloki, estakady rur ───────────────────────────────────────────────────────
+// ── Maszyny: baterie zbiorników, stopniowe bloki, estakady rur ─────────────────────────────────────────────────────
 /**
- * Farma zbiorników w prostokącie (cu ± hu, cw ± hw) ramy F na wysokości y: 2 × 3 walce z kopułami na cokołach (na
- * części cienka ciepła listwa), kolektor rur między rzędami z króćcami, niski krawężnik tacy, czerwone światło na
- * najwyższym zbiorniku.
+ * BATERIA ZBIORNIKÓW w prostokącie (cu ± hu, cw ± hw) ramy F na wysokości y — sylwetka elewatora / rafinerii w skali
+ * kilometrów (farmy drobnych zbiorników z kopułami, a potem bateria pod suwnicą bramową czytały się przy korku 830 km
+ * jak cysterny i dźwig): taca z grubym obwałowaniem, ciasny szyk wysokich walców jednej wysokości (powłoka ze stali
+ * żebrowanej jak chłodnie, żebro w połowie, wieniec dachowy — na części cienka ciepła listwa — płaski dach), nad
+ * każdym rzędem GALERIA przenośnika z pasem okien, a na końcu `side` (±1 wzdłuż W) WIEŻA ZAŁADOWCZA na dachach
+ * zbiorników z pasem okien i czerwonymi światłami na narożach.
  */
-function tankFarm(ctx, F, cu, cw, hu, hw, y, seed) {
+function tankBattery(ctx, F, cu, cw, hu, hw, y, seed, side = 1) {
   const { M } = ctx;
   const rng = plantRng(Math.floor(seed * 1e6) + 5);
   const hull = M.acc(PART.HULL, seed);
   const st = M.acc(PART.STRUCT, seed);
   const strip = M.acc(PART.STRIP, seed);
-  const nU = 2, nW = 3;
-  const pu = (2 * hu) / nU, pw = (2 * hw) / nW;
-  const rt = Math.min(pu, pw) * 0.5 - 0.0005;
+  const win = M.acc(PART.WINDOW, seed);
+  // taca: obwałowanie z fazą
+  const bw = 0.00035, bh = 0.0008;
   for (const s of [-1, 1]) {
-    box(F, cu + s * hu, cw, 0.00018, hw + 0.00018, y, y + 0.0005, st);
-    box(F, cu, cw + s * hw, hu - 0.00018, 0.00018, y, y + 0.0005, st);
+    box(F, cu + s * hu, cw, bw, hw + bw, y, y + bh, hull, 0, 0, 0.00012);
+    box(F, cu, cw + s * hw, hu - bw, bw, y, y + bh, hull, 0, 0, 0.00012);
   }
-  let best = null;
+  const nU = Math.max(2, Math.round((2 * hu) / 0.006)), nW = Math.max(2, Math.round((2 * hw) / 0.006));
+  const pu = (2 * hu) / nU, pw = (2 * hw) / nW;
+  const r = Math.min(pu, pw) * 0.5 - 0.00014;
+  const ht = rng.range(0.0050, 0.0056);
+  const yt = y + ht, yb = y + ht * 0.5, e = 0.00015;
+  const prof = [
+    [r, y], [r, yb - 0.00025], [r + e, yb - 0.00025], [r + e, yb + 0.00025], [r, yb + 0.00025],
+    [r, yt - 0.0005], [r + e, yt - 0.0005], [r + e, yt], [r * 0.82, yt], [0, yt + r * 0.05]
+  ];
+  const sh = { acc: hull, smooth: true }, ss = { acc: st, smooth: true };
   for (let iu = 0; iu < nU; iu++) {
+    const u = cu - hu + pu * (iu + 0.5);
     for (let iw = 0; iw < nW; iw++) {
-      const u = cu - hu + pu * (iu + 0.5), w = cw - hw + pw * (iw + 0.5);
+      const w = cw - hw + pw * (iw + 0.5);
       const c = F.at(u, 0, w);
-      const ht = rng.range(0.0026, 0.0042);
-      const r = rt * rng.range(0.86, 1);
-      const hS = y + ht * 0.72;
-      const band = (iu + iw) % 3 === 0 ? { acc: strip, z: 0.32, w: 0, smooth: true } : { acc: hull, smooth: true };
-      const sh = { acc: hull, smooth: true };
-      lathe([[r, y], [r, hS], [r, hS + 0.0003], [r, y + ht], [r * 0.72, y + ht + r * 0.26], [0, y + ht + r * 0.36]],
-        [sh, band, sh, sh, sh, null], 14, { cx: c.x, cz: c.z });
-      // króciec do kolektora
-      const toC = cu > u ? 1 : -1;
-      beam(st, F.at(u + toC * r * 0.9, y + 0.0011, w), F.at(cu, y + 0.0011, w), 0.00022, 6);
-      if (!best || ht > best.ht) best = { ht, r, c };
+      const crown = (iu + iw) % 3 === 0 ? { acc: strip, z: 0.32, w: 0, smooth: true } : sh;
+      lathe(prof, [ss, sh, sh, sh, ss, sh, crown, sh, sh], 10, { cx: c.x, cz: c.z });
     }
+    // galeria przenośnika nad rzędem (od wieży załadowczej przez całą długość)
+    bandBlock(F, u, cw, 0.0007, hw - 0.0004, yt + 0.00005, yt + 0.0014, hull, win);
   }
-  cylinder(st, F.at(cu, y + 0.0011, cw - hw + 0.0006), F.at(cu, y + 0.0011, cw + hw - 0.0006), 0.00035, 0.00035, 8, true);
-  const tp = best.c;
-  box(frame(new V3(tp.x, 0, tp.z), F.U, F.V, F.W), 0, 0, 0.0003, 0.0003, y + best.ht + best.r * 0.36 - 0.0001, y + best.ht + best.r * 0.36 + 0.0005, M.acc(PART.BEACON, seed), 0.55, 0);
+  // wieża załadowcza na końcu baterii (na dachach skrajnego rzędu), spina galerie
+  const wH = cw + side * (hw - pw * 0.5);
+  const yH = yt + 0.0014 + rng.range(0.0018, 0.0024);
+  bandBlock(F, cu, wH, hu - 0.0006, 0.0014, yt + 0.00005, yH, hull, win);
+  for (const s of [-1, 1]) {
+    box(F, cu + s * (hu - 0.0011), wH + s * side * 0.0009, 0.00022, 0.00022, yH - 0.0002, yH + 0.0002, M.acc(PART.BEACON, (seed * 5.1 + (s > 0 ? 0.5 : 0)) % 1), 0.55, 0);
+  }
 }
 
 /**
@@ -1619,22 +1658,24 @@ function buildMidTerrace(ctx) {
     const az = ctx.az0 + ((i + 0.5) / L.corkTowers) * TAU;
     buildTower(ctx, polar(L.corkTowerRing, az, y), i, rng);
   }
-  // między chłodnią a groblami: farma zbiorników (przed środkiem sektora) i blok transformatorów (za nim), oba spięte
-  // z chłodnią mostami rurowymi (jeden kompleks); przed chłodnią (od strony osi) — kratownicowa antena z piętrami świateł
+  // między chłodnią a groblami: bateria zbiorników pod suwnicą (przed środkiem sektora) i blok transformatorów (za
+  // nim), oba spięte z chłodnią mostami rurowymi (jeden kompleks); przed chłodnią (od strony osi) — POMPOWNIA wzdłuż
+  // obwodu z mostem rurowym do chłodni (dawna kratownicowa antena czytała się jak maszt radiowy)
   const off = 19 * DEG;
   const wM = 0.0735, hu = 0.0056;
   ctx.sectorAz.forEach((c, s) => {
     const Ft = radialFrame(c - off, 0, 0), Fs = radialFrame(c + off, 0, 0);
-    tankFarm(ctx, Ft, 0, wM, hu, 0.0102, y, (s * 0.19 + 0.11) % 1);
+    tankBattery(ctx, Ft, 0, wM, hu, 0.0102, y, (s * 0.19 + 0.11) % 1, 1);
     steppedBlock(ctx, Fs, 0, wM, hu, 0.0098, y, (s * 0.23 + 0.47) % 1, true, 1);
     const Ct = polar(L.corkTowerRing, c, y);
     for (const A of [Ft.at(hu + 0.0006, y, wM - 0.0024), Fs.at(-hu - 0.0006, y, wM - 0.0024)]) {
       const d = new V3(Ct.x - A.x, 0, Ct.z - A.z).normalize();
       pipeBridge(M, A, Ct.clone().addScaledVector(d, -(L.corkTowerR - 0.0006)), y, y + 0.0052, (s * 0.29 + 0.07) % 1);
     }
-    const F = radialFrame(c, 0, 0);
-    box(F, 0, 0.052, 0.0019, 0.0019, y, y + 0.0008, M.acc(PART.HULL, 0.25), 0, 0, 0.0002);
-    latticeMast(M, F, 0, 0.052, y + 0.0008, 0.020 + rng.range(-0.002, 0.002), 0.0014, 0.0005, 6, (s * 0.31 + 0.2) % 1, { antenna: 0.007 });
+    const sp = (s * 0.31 + 0.2) % 1;
+    const pr1 = 0.0566;
+    hallBlock(ctx, 0.0501, pr1, c - 4.6 * DEG, c + 4.6 * DEG, y, 0.0031 + rng.range(-0.0002, 0.0002), sp);
+    pipeBridge(M, polar(pr1 + 0.0009, c, y), polar(L.corkTowerRing - L.corkTowerR + 0.0006, c, y), y, y + 0.0042, sp);
   });
   ctx.bridgeAz.forEach((az, i) => buildCollector(ctx, az, i));
   buildPipeRack(ctx, 0.0905, y);
@@ -1714,10 +1755,10 @@ function buildTower(ctx, c, i, rng) {
 }
 
 /**
- * Maszty kolektorów przy groblach akceleratora: para smukłych masztów kratownicowych po obu stronach grobli (lekko
- * zbieżnych), na szczycie każdego głowica z tarczą kolektora COIL zwróconą ku osi i antena z białym światłem —
- * pionowe akcenty wokół akceleratora; między masztami widać promień (bez poprzecznic). Szczyt ~corkCollectorH,
- * r ≥ 0,049 — pod pierścieniami zamknięcia promienia.
+ * Pylon kolektora przy grobli akceleratora (jeden na groblę, zawsze po tej samej stronie — symetria 6-krotna): pełny
+ * ciężki pylon z kondygnacjami chłodnych świateł (`heavyPylon`, lekko pochylony ku grobli), na szczycie głowica
+ * z tarczą kolektora COIL zwróconą ku osi i iglica z białym światłem — pionowe akcenty wokół akceleratora. Szczyt
+ * ~corkCollectorH, r ≥ 0,049 — pod pierścieniami zamknięcia promienia.
  */
 function buildCollector(ctx, phi, i) {
   const { L, M } = ctx;
@@ -1726,20 +1767,14 @@ function buildCollector(ctx, phi, i) {
   const wc = 0.0515;
   const seed = (i * 0.11 + 0.33) % 1;
   const hull = M.acc(PART.HULL, seed);
-  const st = M.acc(PART.STRUCT, seed);
   const hM = top - y0 - 0.0042;
-  for (const s of [-1, 1]) {
-    const u0 = s * 0.0064, u1 = s * 0.0050;
-    const sd = (seed + (s > 0 ? 0.5 : 0)) % 1;
-    box(F, u0, wc, 0.0017, 0.0017, y0, y0 + 0.0012, hull, 0, 0, 0.0003);
-    latticeMast(M, F, u0, wc, y0 + 0.0012, hM, 0.0011, 0.0005, 6, sd, { cu1: u1 });
-    const yh = y0 + 0.0012 + hM;
-    box(F, u1, wc, 0.0009, 0.0011, yh - 0.0004, yh + 0.0022, hull, 0, 0, 0.0002);
-    cylinder(M.acc(PART.COIL, seed), F.at(u1, yh + 0.0009, wc - 0.0011), F.at(u1, yh + 0.0009, wc - 0.0016), 0.0008, 0.0008, 14, true, (i * 0.17 + (s > 0 ? 0.3 : 0)) % 1, 0.55);
-    const tip = F.at(u1, top + 0.003, wc);
-    beam(st, F.at(u1, yh + 0.0022, wc), tip, 0.00012);
-    box(frame(tip, F.U, F.V, F.W), 0, 0, 0.00025, 0.00025, 0, 0.0005, M.acc(PART.BEACON, sd), 0.7, 1);
-  }
+  const u0 = 0.0068, u1 = 0.0054;
+  box(F, u0, wc, 0.0022, 0.0022, y0, y0 + 0.0012, hull, 0, 0, 0.0003);
+  heavyPylon(M, F, u0, wc, y0 + 0.0012, hM, 0.0015, 0.0007, 6, seed, { cu1: u1, cool: 1 });
+  const yh = y0 + 0.0012 + hM;
+  box(F, u1, wc, 0.0011, 0.0013, yh - 0.0004, yh + 0.0024, hull, 0, 0, 0.0002);
+  cylinder(M.acc(PART.COIL, seed), F.at(u1, yh + 0.0010, wc - 0.0013), F.at(u1, yh + 0.0010, wc - 0.0018), 0.0009, 0.0009, 14, true, (i * 0.17) % 1, 0.55);
+  heavyPylon(M, F, u1, wc, yh + 0.0024, 0.0016, 0.00045, 0.0003, 1, seed, { spire: 0.002 });
 }
 
 // ── Akcelerator: pierścienie COIL na stopniach zigguratu, obejmy, emitery-zęby ─────────────────────────────────────

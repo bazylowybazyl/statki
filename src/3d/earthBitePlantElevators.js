@@ -16,7 +16,9 @@
 //     wokół osi obrotu, elevClearHub / elevClearRelay). Wiązka: dwie liny pasów (w = ±1; kabiny jadą PO ZEWNĘTRZNEJ
 //     stronie liny), między nimi przewód energii (PIPE — impulsy ku ringowi; z daleka LINIA ENERGII z pakietami rysowana
 //     na GPU z szerokością ≥ 1,6 px — w kadrze gry liny są drugie w hierarchii jasności po promieniu), ramki rozporowe
-//     co elevSpread ze światłami prowadzącymi.
+//     co elevSpread z BIAŁYMI światłami prowadzącymi (czerwone światła pozycyjne tylko na bryłach kotwic i doków —
+//     czerwień na cyjanowej linii zlewała się z daleka w różowe paciorki). Z daleka kabiny jadą po osi wiązki (LOD
+//     rozstawu pasów w earthBitePlantClimbers.tsl.js) — na linii energii, nie obok niej.
 //   • SZYNA RINGU — płaszcz obracający się z Ziemią: pełny okrąg w płaszczyźnie równika osi obrotu, tuż wewnątrz
 //     krawędzi ringu (oś szyny w ringInnerR − elevRailInset), przekrój skrzynkowy z fazami, na wierzchu krótkie ciepłe
 //     lampy (przy wózkach gęściej i jaśniej — widać, gdzie lina dochodzi do ringu), od planety przerywane chłodne listwy,
@@ -571,8 +573,9 @@ function buildBundle(L, B, sink, flow, beacons) {
     m.makeBasis(U, d, V).setPosition(C);
     sink.add(rod(C.clone().addScaledVector(U, -w), C.clone().addScaledVector(U, w), 0.00022, 4), PART.STRUCT, B.seed);
     sink.add(box(m, -0.0004, 0.0004, -0.0005, 0.0005, -0.0004, 0.0004), PART.STRUCT, B.seed);
-    const red = k % 4 === 3;
-    beacons[red ? 0 : 1].push({ g: box(m, -0.00022, 0.00022, -0.00022, 0.00022, 0.0004, 0.00085), seed: ((-k * 0.5 * 0.11) % 1 + 1) % 1 / 7.7 });
+    // światła prowadzące ramek BIAŁE (czerwień na cyjanowej linii zlewała się w różowe paciorki; czerwone — tylko na
+    // bryłach kotwic i doków)
+    beacons.push({ g: box(m, -0.00022, 0.00022, -0.00022, 0.00022, 0.0004, 0.00085), seed: ((-k * 0.5 * 0.11) % 1 + 1) % 1 / 7.7 });
   }
 }
 
@@ -749,7 +752,7 @@ export function buildElevators(L, b) {
   const metal = [];
   const flow = [];
   const sink = new Sink();
-  const beacons = [[], []];   // światła prowadzące: czerwone, białe (ziarno = faza łańcucha)
+  const beacons = [];         // światła prowadzące ramek (białe; ziarno = faza łańcucha)
   for (const A of layout.anchors) buildAnchor(L, A, sink, flow);
   for (const B of layout.bundles) {
     buildBundle(L, B, sink, flow, beacons);
@@ -767,8 +770,7 @@ export function buildElevators(L, b) {
     for (const x of list) x.g.dispose();
     metal.push(patchSeeds(finalizePart(g, PART.BEACON, 0, z, w), (i) => seeds[i]));
   };
-  chain(beacons[0], 0.5, 0);
-  chain(beacons[1], 0.5, 1);
+  chain(beacons, 0.5, 1);
   chain(railLights[0], 0.6, 0);
   chain(railLights[1], 0.6, 1);
   metal.push(...sink.parts());
@@ -802,7 +804,7 @@ export function climberInstances(L, b) {
 }
 
 /**
- * Linie energii (dodatek na GPU): przewód środkowy każdej wiązki (S → E, pakiety i czerwone światła ramek) i pion energii
+ * Linie energii (dodatek na GPU): przewód środkowy każdej wiązki (S → E, pakiety; bez świateł pozycyjnych) i pion energii
  * każdej wieży (lico rdzenia → kielich głowicy) — rekordy w układzie OBIEKTU kuli: S, E, bok U, promień przewodu,
  * przesunięcie drogi s0 (zgodność pakietów z przewodem PIPE), ziarno, odstęp i koniec ramek (0 — bez świateł).
  */

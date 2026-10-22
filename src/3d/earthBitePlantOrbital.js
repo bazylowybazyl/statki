@@ -22,9 +22,9 @@
 //     obrzeże z ciągłą cienką cewką (czytelna z profilu), fartuch z cewkami, żebrami i światłami na wardze.
 //   • SZPRYCHY: kratownice magazyn → węzeł z przewodami energii; MAGAZYN — stosy ciemnych ogniw przy rdzeniu z cienkimi
 //     pierścieniami cewek (w = −1, jasność wg naładowania) między ogniwami.
-//   • ŁOPATY RADIATORÓW: ciemne, matowe płyty żaru o płytkiej fali (krawędzią do osi — z góry linie), rury cieplne
-//     wzdłuż promienia z gorącym szwem i kolektor u nasady — żar w rurach i na krawędziach, gasnący ku końcowi łopaty;
-//     nocą obrys ciepłą listwą i światła pozycyjne w rogach końca.
+//   • ŁOPATY RADIATORÓW: ciemne, matowe płyty żaru o płytkiej fali (krawędzią do osi — z góry linie), bez siatki płyt;
+//     trzy rury cieplne na stronę z gorącym szwem gasnącym ku połowie łopaty, ciepły gradient emisji tylko u nasady
+//     (kolektor), jedna ciepła listwa obrysu (zostaje nocą) i światła pozycyjne w rogach końca.
 //   • ŚWIATŁA POZYCYJNE (`lamp`): ciemna oprawa z małą soczewką — zgaszone to metal z szybką, nie kolorowa kula.
 //   • NADAJNIK w środku (`hubCenterObject`): świecący rdzeń w sferze armilarnej cewek i dwóch pierścieniach gimbala
 //     (w sferze mieści się kula ładowania promienia), lufa z cewkami i dyszą ku ringowi przez szczelinę w kołnierzu.
@@ -1137,12 +1137,34 @@ function buildSpire(M, L, a) {
     outDir(a), 0.00022);
 }
 
-// ── ŁOPATY RADIATORÓW: ciemna, matowa blacha (krawędzią do osi gryzu) o PŁYTKIEJ fali, grube rury cieplne ─────────────
-// Blacha to płyty żaru (HOT) o niskim cieple: najciemniejszy i najbardziej matowy metal — grzbiety nie łapią szarego
-// połysku (głęboka fala z jasnymi grzbietami czytała się jak żaluzje); u nasady szwy płyt ledwie się żarzą (nocą łopata
-// nie znika). Rysunek łopaty dają RURY CIEPLNE (sześć grubych po obu stronach, żar od nasady gasnący ku końcowi), rama
-// z żarem, kolektor i usztywnienia. Nocą obrys: cienka ciepła listwa na krawędziach i światła pozycyjne w rogach końca.
+// ── ŁOPATY RADIATORÓW: ciemna, matowa blacha (krawędzią do osi gryzu) o PŁYTKIEJ fali, trzy rury cieplne ─────────────
+// Rysunek łopaty w kadrze gry (runda 4 — gęsta pomarańczowa siatka szwów i sześciu rur czytała się jak wireframe):
+// JEDNA listwa krawędzi (obrys — zostaje nocą), TRZY rury cieplne na stronę i ciemne wnętrze; żar tylko u nasady —
+// kolektor z gorącym szwem, rury z żarem gasnącym ku połowie łopaty i blacha z ciepłym gradientem emisji od nasady
+// (bez siatki płyt: blacha i rama w trybie własnego uv ze STAŁYM uv w środku oczka — `HOT_FLAT`). Blacha to płyty żaru
+// (HOT): najciemniejszy i najbardziej matowy metal — grzbiety nie łapią szarego połysku. Rama krawędzi — ta sama ciemna
+// blacha (bez drugiej linii obok listwy), usztywnienia ze stali, nocą światła pozycyjne w rogach końca.
 const Z_AX = new THREE.Vector3(0, 0, 1);
+/**
+ * STAŁE uv części żaru (HOT, tryb własnego uv) w środku oczka siatki płyt `hullPanels` (earthBitePlant.tsl.js): żar ma
+ * zawsze wzór pokładu — duże panele `big` = 0,013 + fract(ziarno · 7,31) · 0,006 R, podpanele 3 albo 4, uv.x przesunięte
+ * o fract(ziarno · 3,71) · 0,0293 R. Punkt 0,4 dużego panelu leży z dala od szwów przy podziale 3, 4 i 7 — część bez
+ * siatki, cała w tonie i żarze płyty (z per wierzchołek). `k` — numer panelu (ton ±5% między łopatami).
+ * AGENT: zmiana rozmiarów paneli albo przesunięcia w hullPanels / plantSurfaceUv = zmiana tutaj (inaczej szew na całej
+ * łopacie).
+ */
+function hotFlatUv(seed, k) {
+  const fr = (x) => x - Math.floor(x);
+  const big = 0.013 + fr(seed * 7.31) * 0.006;
+  return { u: (k + 2.4) * big - fr(seed * 3.71) * 0.0293, v: 0.4 * big };
+}
+/** Stałe uv.x (i uv.y, gdy podane) wierzchołków od `start` — część w trybie własnego uv bez szwów wzdłuż. */
+function flatUv(B, start, u, v = null) {
+  for (let k = start; k < B.count; k++) {
+    B.t[k * 2] = u;
+    if (v !== null) B.t[k * 2 + 1] = v;
+  }
+}
 function buildRadiators(M, L, lay) {
   const R0 = L.hubRing;
   const root = R0 + L.hubTubeW * 1.22 + 0.0004;
@@ -1151,16 +1173,18 @@ function buildRadiators(M, L, lay) {
   const h0 = L.hubRadH, h1 = L.hubRadH * 0.55;  // pół-wysokość u nasady i na końcu (zwężenie — wrzeciono w kadrze gry)
   const h = (x) => h0 + (h1 - h0) * (x - s0) / (s4 - s0);
   const tp = 0.00016, dz = 0.00007, nL = 17;    // grubość blachy, amplituda (płytka — ~4°) i liczba linii fal
-  // żar: od nasady gaśnie ku końcowi łopaty (rampa c³ materiału); rury z ≈ 0,6 u nasady (pomarańcz na progu bloomu)
-  const heatOf = (zo) => (i, x, y, z) => {
-    const t = Math.min(1, Math.max(0, (Math.sqrt(x * x + z * z) - s0) / (s4 - s0)));
-    return zo * (1 - 0.68 * t);
-  };
-  // rury: własne uv (z < 0 — kontrakt, |z| — żar) z SZWEM płyt żaru wzdłuż osi każdej ściany rury (`seamBars`) —
-  // ciemna rura z gorącą linią na całej długości (w rzucie pudełkowym żar dawał tylko kropki na przecięciach szwów)
-  const hotPipe = M.part(PART.HOT, 0.31, (i, x, y, z) => -heatOf(0.46)(i, x, y, z));
-  const hotEdge = M.part(PART.HOT, 0.37, heatOf(0.4));
-  const sheet = M.part(PART.HOT, 0.53, heatOf(0.2));
+  // ŻAR od nasady (t — 0 nasada … 1 koniec, wg odległości od osi odbiornika); |z| < 0 — kontrakt własnego uv, minimum
+  // 0,004 (z = 0 przełączyłby część na rzut pudełkowy). Rampa c³ materiału: rury — szew ≈ 0,48 u nasady (pomarańcz pod
+  // progiem bloomu), w połowie łopaty ~0,01; blacha i rama — płyta ≈ 0,15 u nasady, gaśnie wykładniczo w ~1/10 długości
+  // (dłuższa rampa dawała na czarnym tle ciemnoczerwoną płytę grzejnika przez pół łopaty)
+  const tOf = (x, z) => Math.min(1, Math.max(0, (Math.sqrt(x * x + z * z) - x0) / (s4 - x0)));
+  const pipeHeat = (i, x, y, z) => -(0.03 + 0.43 * Math.pow(1 - tOf(x, z), 2.2));
+  const plateHeat = (i, x, y, z) => -(0.004 + 0.74 * Math.exp(-tOf(x, z) / 0.055));
+  // podział wzdłuż łopaty (żar liniowy między węzłami — gradient zamiast rampy przez całą długość)
+  const T_SHEET = [0, 0.03, 0.07, 0.12, 0.2, 0.4, 1];
+  const T_PIPE = [0, 0.2, 0.45, 0.7, 1];
+  const hotPipe = M.part(PART.HOT, 0.31, pipeHeat);
+  const sheet = M.part(PART.HOT, 0.53, plateHeat);
   const edgeL = M.part(PART.STRIP, 0.29, -0.17, 0);
   // linie fal: k parzyste — grzbiet od przodu (z = +dz), nieparzyste — dolina
   const lineY = (k, x) => ((k / (nL - 1)) * 2 - 1) * (h(x) - 0.0005);
@@ -1172,41 +1196,56 @@ function buildRadiators(M, L, lay) {
     const W = L.hubTubeW * (node ? 1.22 : 1);
     const S = M.part(PART.STRUCT, seed);
     const hull = M.part(PART.HULL, seed);
-    const sp = hotPipe.count, se = hotEdge.count, ss = sheet.count, sl = edgeL.count;
+    const sp = hotPipe.count, ss = sheet.count, sl = edgeL.count;
     // nasada na ścianie modułu i dźwigar łopaty wzdłuż osi
     hull.add(new THREE.BoxGeometry(s0 + 0.0004 - (R0 + W - 0.0006), 0.0098, 0.0028),
       new THREE.Matrix4().makeTranslation((s0 + 0.0004 + R0 + W - 0.0006) / 2, 0, 0));
     bar(S, v3(s0, -h0 - 0.0005, 0), v3(s0, h0 + 0.0005, 0), 0.0012, 0.0014, X_AX);
-    // blacha: pasy między liniami fal, obie strony (normalne płaskie, w stronę strony)
-    const xa = x0, xb = s4;
+    // blacha: pasy między liniami fal × odcinki wzdłuż (T_SHEET), obie strony (normalne płaskie, w stronę strony)
     for (const side of [1, -1]) {
       const zo = side * tp / 2;
-      for (let j = 0; j < nL - 1; j++) {
-        const A0 = v3(xa, lineY(j, xa), lineZ(j) + zo), A1 = v3(xa, lineY(j + 1, xa), lineZ(j + 1) + zo);
-        const B1 = v3(xb, lineY(j + 1, xb), lineZ(j + 1) + zo), B0 = v3(xb, lineY(j, xb), lineZ(j) + zo);
-        _n.subVectors(B1, A0).cross(_p.subVectors(B0, A1)).normalize();
-        if (_n.z * side < 0) _n.negate();
-        const q = [A0, A1, B1, B0].map((P) => sheet.v(P.x, P.y, P.z, _n.x, _n.y, _n.z, P.x, P.y));
-        sheet.quad(q[0], q[1], q[2], q[3]);
+      for (let s = 0; s < T_SHEET.length - 1; s++) {
+        const xa = x0 + (s4 - x0) * T_SHEET[s], xb = x0 + (s4 - x0) * T_SHEET[s + 1];
+        for (let j = 0; j < nL - 1; j++) {
+          const A0 = v3(xa, lineY(j, xa), lineZ(j) + zo), A1 = v3(xa, lineY(j + 1, xa), lineZ(j + 1) + zo);
+          const B1 = v3(xb, lineY(j + 1, xb), lineZ(j + 1) + zo), B0 = v3(xb, lineY(j, xb), lineZ(j) + zo);
+          _n.subVectors(B1, A0).cross(_p.subVectors(B0, A1)).normalize();
+          if (_n.z * side < 0) _n.negate();
+          const q = [A0, A1, B1, B0].map((P) => sheet.v(P.x, P.y, P.z, _n.x, _n.y, _n.z));
+          sheet.quad(q[0], q[1], q[2], q[3]);
+        }
       }
     }
-    // RURY CIEPLNE: sześć grubych po obu stronach (nad grzbietami fal), zbiegają się ze zwężeniem łopaty
-    const rp = 0.00021, xe = s4 - 0.0012;
-    for (let j = 0; j < 6; j++) {
-      const f = (2 * j + 1) / 6 - 1;
+    // rama krawędzi (górna, dolna) — ta sama ciemna blacha z gradientem żaru (odcinki wzdłuż), pod listwą obrysu
+    for (const sg of [-1, 1]) {
+      for (let s = 0; s < T_SHEET.length - 1; s++) {
+        const xa = s0 + (s4 - s0) * T_SHEET[s], xb = s0 + (s4 - s0) * T_SHEET[s + 1];
+        bar(sheet, v3(xa, sg * (h(xa) - 0.0001), 0), v3(xb, sg * (h(xb) - 0.0001), 0), 0.0005, dz * 2 + 0.0006, Z_AX);
+      }
+    }
+    // kolektor u nasady (pion wzdłuż osi, obie strony) — blacha w pełnym żarze nasady, bez gorącego szwu (twarda
+    // pomarańczowa linia u nasady domykała obrys łopaty w ramkę)
+    for (const sg of [-1, 1]) {
+      bar(sheet, v3(s0 + 0.0009, -h0 + 0.0003, sg * (dz + 0.0004)), v3(s0 + 0.0009, h0 - 0.0003, sg * (dz + 0.0004)), 0.0006, 0.0005, X_AX);
+    }
+    const fl = hotFlatUv(0.53, k);
+    flatUv(sheet, ss, fl.u, fl.v);
+    // RURY CIEPLNE: trzy na stronę (grzbiet łopaty i dwie po bokach), zbiegają się ze zwężeniem łopaty; własne uv z SZWEM
+    // płyt żaru wzdłuż osi każdej ściany (`seamBars`) i stałym uv.x (bez poprzecznych szwów — ciągła gorąca linia)
+    const rp = 0.00026, xe = s4 - 0.0012, xs = x0 - 0.0006;
+    for (const f of [-0.6, 0, 0.6]) {
       for (const side of [1, -1]) {
         const z = side * (dz + tp / 2 + rp);
-        bar(hotPipe, v3(x0 - 0.0006, f * (h(x0) - 0.0005), z), v3(xe, f * (h(xe) - 0.0005), z), rp * 2, rp * 2, Z_AX);
+        for (let s = 0; s < T_PIPE.length - 1; s++) {
+          const xa = xs + (xe - xs) * T_PIPE[s], xb = xs + (xe - xs) * T_PIPE[s + 1];
+          bar(hotPipe, v3(xa, f * (h(xa) - 0.0005), z), v3(xb, f * (h(xb) - 0.0005), z), rp * 2, rp * 2, Z_AX);
+        }
       }
     }
     seamBars(hotPipe, sp, rp * 2 * 1.3);
-    // kolektor u nasady (pion wzdłuż osi, obie strony) i krawędzie łopaty (rama z żarem gasnącym ku końcowi)
-    for (const sg of [-1, 1]) {
-      bar(hotEdge, v3(s0 + 0.0009, -h0 + 0.0003, sg * (dz + 0.0004)), v3(s0 + 0.0009, h0 - 0.0003, sg * (dz + 0.0004)), 0.0006, 0.0005, X_AX);
-    }
-    for (const sg of [-1, 1]) bar(hotEdge, v3(s0, sg * (h0 - 0.0001), 0), v3(s4, sg * (h1 - 0.0001), 0), 0.0005, dz * 2 + 0.0006, Z_AX);
-    // usztywnienia w poprzek blachy (dwa, obie strony) i belka końca
-    for (const f of [0.36, 0.7]) {
+    flatUv(hotPipe, sp, hotFlatUv(0.31, k).u);
+    // usztywnienie w poprzek blachy (jedno, w połowie — dwa z trzema rurami dawały kratkę 3 × 3) i belka końca
+    for (const f of [0.52]) {
       const x = s0 + (s4 - s0) * f, hx = h(x) - 0.0003;
       for (const sg of [-1, 1]) bar(S, v3(x, -hx, sg * (dz + tp / 2 + rp * 2 + 0.00013)), v3(x, hx, sg * (dz + tp / 2 + rp * 2 + 0.00013)), 0.0005, 0.00026, Z_AX);
     }
@@ -1221,7 +1260,6 @@ function buildRadiators(M, L, lay) {
     pinUv(edgeL, sl, STRIP_V);
     for (const B of [S, hull]) B.transformFrom(0, m);
     hotPipe.transformFrom(sp, m);
-    hotEdge.transformFrom(se, m);
     sheet.transformFrom(ss, m);
     edgeL.transformFrom(sl, m);
     // światła pozycyjne w rogach końca łopaty (czerwone / białe — na przemian w rogach i między łopatami)

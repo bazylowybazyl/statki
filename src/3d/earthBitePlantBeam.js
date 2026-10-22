@@ -112,25 +112,31 @@ function ringAt(L, i, n) {
 /**
  * Pierścień (albo łuk a0…a1) z profilu (r, y) obracanego wokół osi Y ramy: każdy odcinek profilu to osobny pas z płaską
  * normalną (ostre krawędzie). Profil CCW (r w prawo, y w górę) — normalna odcinka (dy, −dr) na zewnątrz bryły. uv: x —
- * azymut 0…1, y — droga po profilu. Łuk wypukłego profilu dostaje denka na końcach (`caps`).
+ * azymut 0…1, y — droga po profilu. Łuk wypukłego profilu dostaje denka na końcach (`caps`). `uvR` — WŁASNE uv części
+ * w [R] (kontrakt PART, aPart.z < 0): x — łuk po obwodzie w średnim promieniu pasa (obwód zaokrąglony do wielokrotności
+ * 0,012 R — okres przepływu listwy, bez szwu), y — droga po profilu od pierwszego odcinka.
  */
-function latheBands(profile, seg, h, from = 0, to = profile.length, a0 = 0, a1 = Math.PI * 2, caps = false) {
+function latheBands(profile, seg, h, from = 0, to = profile.length, a0 = 0, a1 = Math.PI * 2, caps = false, uvR = false) {
   const pos = [], nor = [], uv = [], idx = [];
   const at = (V, a) => [V[0] * Math.cos(a), V[1] + h, -V[0] * Math.sin(a)];
+  let path = 0;
   for (let k = from; k < to; k++) {
     const P = profile[k], Q = profile[(k + 1) % profile.length];
     let nr = Q[1] - P[1], ny = -(Q[0] - P[0]);
     const nl = Math.sqrt(nr * nr + ny * ny) || 1;
     nr /= nl; ny /= nl;
+    const arc = Math.max(1, Math.round((a1 - a0) * (P[0] + Q[0]) * 0.5 / 0.012)) * 0.012;
     const base = pos.length / 3;
     for (let i = 0; i <= seg; i++) {
       const a = a0 + (a1 - a0) * (i / seg), ca = Math.cos(a), sa = Math.sin(a);
       for (const [j, V] of [[0, P], [1, Q]]) {
         pos.push(...at(V, a));
         nor.push(nr * ca, ny, -nr * sa);
-        uv.push(i / seg, (k + j) / profile.length);
+        if (uvR) uv.push(arc * (i / seg), path + j * nl);
+        else uv.push(i / seg, (k + j) / profile.length);
       }
     }
+    path += nl;
     for (let i = 0; i < seg; i++) {
       const p0 = base + i * 2, q0 = p0 + 1, p1 = p0 + 2, q1 = p0 + 3;
       idx.push(p0, p1, q0, q0, p1, q1);
@@ -278,11 +284,46 @@ function confinementRing(metal, h, ri, i, n, rng) {
 }
 
 /**
- * Sprzęt promienia w ramie elektrowni: pierścienie zamknięcia unoszące się wokół promienia (z góry — koncentryczne
- * okręgi wokół jego punktu, promienie maleją z wysokością). { metal, flow } — jak komponenty brył.
+ * DYSZA ŹRÓDŁA na dnie szybu gardzieli: płyta zamyka szyb korka tuż pod początkiem promienia (`beamSpan`.y0). Szyb jest
+ * od dołu otwarty, więc bez płyty patrząc wzdłuż promienia (z góry, w głąb krateru) widać na jego końcu jezioro gryzu
+ * i rozżarzone do bieli dno ścian szybu — tarczę ~4 szerokości otoczki, czytaną jak kula plazmy. Z płytą źródłem jest
+ * jasny cyjanowy PIERŚCIEŃ APERTURY tuż za otoczką promienia, a biel zostaje tylko w rdzeniu (promień i rozbłysk wylotu).
+ * Od ściany szybu ku osi: pokład zewnętrzny, uskok, pokład kierownicy z promienistymi łopatkami, kołnierz apertury (cewka
+ * na wardze i na ścianie ku osi), ciemna wnęka dyszy, z której wychodzi promień. Wysoko nad strefą „białej gorączki”
+ * materiału (ściany szybu y < ~0,028) — płyta chowa ją razem z jeziorem.
+ */
+function sourceNozzle(metal, L) {
+  const y0 = L.apertureH - 0.04;    // = beamSpan(L).y0 — dno wnęki dyszy na początku promienia
+  const yL = y0 + 0.0016, yO = y0 + 0.0012, yM = y0 + 0.0006;
+  // brzeg płyty wchodzi w ścianę szybu (gardziel zwęża się w dół o 0,0003 R — bez szczeliny przy ścianie)
+  const rW = L.apertureR + 0.0004;
+  const rStep = L.apertureR * 0.76, rCol = 0.0062, rLip = 0.0050, rIn = 0.0041;
+  // profil od ściany ku osi (wierzch: normalne w górę; ściany ku osi i od osi — jak w latheBands)
+  const prof = [
+    [rW, yO], [rStep, yO], [rStep, yM], [rCol, yM], [rCol, yL], [rLip, yL], [rIn, yL - 0.0004], [rIn, y0], [0, y0]
+  ];
+  const SEG = 72;
+  metal.push(finalizePart(mergeGeometries([latheBands(prof, SEG, 0, 0, 2), latheBands(prof, SEG, 0, 3, 4)]), PART.HULL, 0.31));
+  metal.push(finalizePart(mergeGeometries([latheBands(prof, SEG, 0, 2, 3), latheBands(prof, SEG, 0, 7, 8)]), PART.STRUCT, 0.47));
+  // pierścień apertury: warga i faza — chłodna listwa z własnym uv (współśrodkowe rurki światła wokół otoczki, przepływ
+  // po obwodzie; uzwojenia cewki w rzucie pudełkowym pokładu szłyby przy osi spiralą „////”), ściana ku osi — cewka
+  // (uzwojenia pionowe, z góry widać ją z krawędzi: cienki okrąg)
+  metal.push(finalizePart(latheBands(prof, SEG, 0, 4, 6, 0, Math.PI * 2, false, true), PART.STRIP, 0.53, -1.3, 1));
+  metal.push(finalizePart(latheBands(prof, SEG, 0, 6, 7), PART.COIL, 0.59, 0.25, 0.6));
+  // łopatki kierownicy: 12 promienistych żeber na pokładzie kierownicy (z góry — szprychy wokół pierścienia apertury)
+  const vanes = [];
+  for (let k = 0; k < 12; k++) vanes.push(ringBox(rCol + 0.0003, rStep - 0.0002, yM + 0.0003, 0.0006, 0.00045, (k + 0.5) * Math.PI / 6));
+  metal.push(finalizePart(mergeGeometries(vanes), PART.STRUCT, 0.71));
+}
+
+/**
+ * Sprzęt promienia w ramie elektrowni: dysza źródła na dnie szybu gardzieli i pierścienie zamknięcia unoszące się wokół
+ * promienia (z góry — koncentryczne okręgi wokół jego punktu, promienie maleją z wysokością). { metal, flow } — jak
+ * komponenty brył.
  */
 export function buildBeamHardware(L) {
   const metal = [];
+  sourceNozzle(metal, L);
   const R = plantRng(0x5b3a7);
   const rng = () => R.next();
   const n = Math.max(0, Math.round(L.beamRings));

@@ -5,6 +5,8 @@
 // do doku wózka (0,4 okresu, profil prędkości kosinusowy — rusza i hamuje płynnie), postój w doku (0,1 — kabina schowana
 // w doku przechodzi na pas −1), jazda w dół (0,4), postój (0,1). Kabiny jadą po ZEWNĘTRZNEJ stronie liny pasa (ramki
 // rozporowe są między linami), obrócone o 180° wokół liny na pasie −1 (bez odbicia — strona przednia bez zmian).
+// LOD rozstawu pasów: gdy odsunięcie kabiny od osi wiązki ma mniej niż LANE_PX.lo px (kadr gry), kabina jedzie po OSI —
+// na linii energii, którą z daleka widać zamiast lin pasów; od LANE_PX.hi px — po swoim pasie (płynnie między nimi).
 // Kabina: kapsuła (walec, nosy, kołnierze, stopki chwytaka, kontener na grzbiecie); fragment — panele, pas okien
 // (od strony bez liny), kołnierze z chłodną listwą, światło przednie białe HDR (w kierunku jazdy) i tylne czerwone,
 // oświetlenie tym samym modelem co metal (plantLightContext / plantLighting). Z daleka kabina rośnie do ≥ 1,6 px
@@ -16,9 +18,9 @@
 // w pikselach: ≥ 1,6 px albo promień przewodu × 2,4), addytywnie, bez zapisu głębi, lekko przed przewodem (ku kamerze).
 // Fragment: nasycona cyjanowa linia ~1 px z poświatą (pod progiem bloomu), PAKIETY HDR zgodne z przewodem PIPE
 // materiału przepływu (odstęp 0,03 R, 0,018 R/s ku ringowi — z bliska pakiety przewodu i wstęgi się pokrywają; gdy
-// gęstsze niż ~11 px, co drugi, co czwarty… płynnie),
-// czerwone światła ramek rozporowych (co czwarta ramka). Wstęga gaśnie, gdy przewód ma ≥ ~1,5–3 px promienia (z bliska
-// rysuje go materiał przepływu). Hierarchia jasności w kadrze gry: promień > LINY (ta wstęga) > korona > cięciwy pola.
+// gęstsze niż ~11 px, co drugi, co czwarty… płynnie; czoło pakietu bieleje). Na wstędze NIE MA świateł pozycyjnych
+// (czerwień na cyjanie zlewała się w różowe paciorki) — czerwone światła tylko na bryłach kotwic i doków. Wstęga gaśnie,
+// gdy przewód ma ≥ ~1,5–3 px promienia (z bliska rysuje go materiał przepływu). Hierarchia jasności w kadrze gry: promień > LINY (ta wstęga) > korona > cięciwy pola.
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
@@ -28,7 +30,7 @@ import {
 } from 'three/tsl';
 import { sunVisibility } from './sunShadowMask.js';
 import {
-  PLANT_COLORS, perObjectUniforms, sdown, step01, aaLine, aaBox, aaDot, lodFade, hash12, plantLightContext, plantLighting,
+  PLANT_COLORS, perObjectUniforms, sdown, aaLine, aaBox, aaDot, lodFade, hash12, plantLightContext, plantLighting,
   plantVar
 } from './earthBitePlantCommon.tsl.js';
 import { blendAddytywnePremul } from './tsl/mieszanie.js';
@@ -38,6 +40,8 @@ export const CLIMBER_MAX = 48;
 
 /** Kabina (R Ziemi): promień, pół-długość walca, koniec nosa. Lina pasa po stronie −x lokalnej. */
 const CAB = Object.freeze({ r: 0.0012, body: 0.0016, tip: 0.0022, nose: 0.0006 });
+/** LOD rozstawu pasów: odsunięcie kabiny od osi wiązki [px], poniżej którego kabina jedzie po osi / od którego — po pasie. */
+const LANE_PX = Object.freeze({ lo: 6, hi: 16 });
 const FLOATS = 16;
 const TAU = Math.PI * 2;
 
@@ -109,11 +113,16 @@ function buildGraph() {
     const sg = plantVar(select(lat.greaterThanEqual(0.0), float(1.0), float(-1.0)));
     const dir = select(q.lessThan(0.45).or(q.greaterThanEqual(0.95)), float(1.0), float(-1.0));
     const along = mix(iD.y.negate(), len.add(iD.y), s);
-    const center = plantVar(iA.xyz.add(d.mul(along)).add(side.mul(lat.mul(iC.w))), 'vec3');
-    // z daleka kabina rośnie do ≥ 1,6 px średnicy (piksele na R w jej środku: P₁₁ · skala obiektu · pół wysokości celu / w)
-    const cc = plantVar(cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(center, 1.0))), 'vec4');
-    const pxPerR = cameraProjectionMatrix.element(1).y.mul(length(modelViewMatrix.element(0).xyz))
-      .mul(viewportSize.y.mul(0.5)).div(max(cc.w, 1e-6));
+    const axisPt = plantVar(iA.xyz.add(d.mul(along)), 'vec3');
+    // piksele na R w punkcie osi wiązki: P₁₁ · skala obiektu · pół wysokości celu / w
+    const cc = plantVar(cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(axisPt, 1.0))), 'vec4');
+    const pxPerR = plantVar(cameraProjectionMatrix.element(1).y.mul(length(modelViewMatrix.element(0).xyz))
+      .mul(viewportSize.y.mul(0.5)).div(max(cc.w, 1e-6)));
+    // LOD ROZSTAWU PASÓW: z daleka (odsunięcie kabiny od osi < LANE_PX.lo px) kabina jedzie PO OSI wiązki — tam, gdzie
+    // z daleka rysuje się linia energii (wstęga przewodu środkowego); od LANE_PX.hi px — po zewnętrznej stronie liny pasa
+    const laneK = plantVar(smoothstep(LANE_PX.lo, LANE_PX.hi, iC.w.mul(pxPerR)));
+    const center = plantVar(axisPt.add(side.mul(lat.mul(iC.w).mul(laneK))), 'vec3');
+    // z daleka kabina rośnie do ≥ 1,6 px średnicy
     const grow = plantVar(clamp(float(1.6 / (2 * CAB.r)).div(max(pxPerR, 1e-6)), 1.0, 6.0));
     const X = plantVar(side.mul(sg), 'vec3');
     const Z = plantVar(up.mul(sg), 'vec3');
@@ -207,6 +216,8 @@ const GLOW = Object.freeze({
   endFade: 0.004              // wygaszenie przy czołach doków [R]
 });
 const C_LINE = [0.08, 0.5, 1.0];
+/** Dopełnienie barwy promienia do bieli w czole pakietu (beam + to ≈ 0,85 / 0,95 / 1,0 przy pk = 1). */
+const PACKET_WHITE = [0.5, 0.17, 0.0];
 
 /** Wstęga: x — t wzdłuż 0…1, y — bok ±1 (szerokość i kierunek liczy etap wierzchołków). */
 function glowGeometry() {
@@ -294,21 +305,12 @@ function buildGlowGraph() {
       return exp(float(1.0).sub(q).div(wq).mul(-1.6)).mul(sdown(float(1.0).sub(aa), 1.0, q));
     };
     const pk = plantVar(mix(packet(Pa), packet(Pa.mul(2.0)), of));
-    // ŚWIATŁA RAMEK: czerwone co czwartą ramkę (k mod 4 = 3, jak łańcuch BEACON wiązki), ≥ 0,9 px, wolne mruganie
-    const stp = plantVar(V.m.y);
-    const end = plantVar(V.m.z);
-    const kf = plantVar(floor(s.sub(end).div(max(stp, 1e-5))));
-    const sk = end.add(kf.add(0.5).mul(stp));
-    const isMark = step01(stp, 1e-5).mul(step01(kf, -0.5)).mul(step01(len.sub(end).sub(sk), 0.0))
-      .mul(step01(fract(kf.mul(0.25).add(0.01)), 0.7));
-    const da = abs(s.sub(sk)).div(ps);
-    const rPx = max(float(0.00045).div(ps), 0.9);
-    const dd = da.mul(da).add(dpx.mul(dpx)).div(rPx.mul(rPx));
-    const blink = float(0.35).add(sdown(0.0, 0.45, fract(time.mul(0.7).add(kf.mul(0.13)))).mul(0.65));
-    const mark = plantVar(exp(dd.negate()).mul(isMark).mul(blink));
+    // Bez świateł pozycyjnych na wstędze (czerwień na cyjanie dawała różowe paciorki): światła ramek z daleka są poniżej
+    // piksela, czerwone tylko na bryłach doków i wież. Pakiet: barwa promienia, czoło bieleje (cyjan → biel)
     const endK = smoothstep(0.0, GLOW.endFade, s).mul(smoothstep(0.0, GLOW.endFade, len.sub(s)));
-    const energy = vec3(...C_LINE).mul(GLOW.base).add(vec3(...T.beam).mul(pk.mul(GLOW.peak))).mul(prof).mul(U.uPlantBeam.x);
-    const col = plantVar(max(energy.add(vec3(3.2, 0.32, 0.1).mul(mark)).mul(V.k.y.mul(endK)), vec3(0.0)), 'vec3');
+    const pkCol = vec3(...T.beam).mul(pk).add(vec3(...PACKET_WHITE).mul(pk.mul(pk)));
+    const energy = vec3(...C_LINE).mul(GLOW.base).add(pkCol.mul(GLOW.peak)).mul(prof).mul(U.uPlantBeam.x);
+    const col = plantVar(max(energy.mul(V.k.y.mul(endK)), vec3(0.0)), 'vec3');
     return vec4(col, max(col.x, max(col.y, col.z)));
   })();
   return { vertexNode, fragmentNode };
