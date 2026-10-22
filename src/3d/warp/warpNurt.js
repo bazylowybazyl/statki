@@ -116,7 +116,7 @@ export const WarpNurt = {
   _lensPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, a: 1, b: 1, amp: 0, front: 3 })),
   _seamPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, halfLen: 1, band: 1, amp: 0 })),
   _col: [0, 0, 0],
-  _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0 },
+  _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0, hyper: false },
   _map: { camX: 0, camY: 0 },
   _view: { bufW: 1, bufH: 1, focal: 1, camZ: 1 },
   // Obrót kadru kamery (cam.roll — src/3d/viewRoll.js) tej klatki i pudło osi świata obróconego kadru [px].
@@ -202,8 +202,9 @@ export const WarpNurt = {
   /**
    * Klatka efektu. o = { dt (czas gry — 0 w pauzie), cam (kamera gry bez wstrząsu: x, y, zoom),
    * camShake (kamera renderu, ze wstrząsem), camFollow (kamera statku bez przejścia — kamera =
-   * statek + offset riga), ship, warp (GameState.warp), trafficTime (zegar rejestru ruchu warpa gry — osie przylotów
-   * i odlotów NPC), zoneWarpMul }.
+   * statek + offset riga), ship, warp (GameState.warp), hyper (GameState.hyper — hipercruise gracza w kształcie
+   * warpa: rozruch = ładowanie, lot = skok; E5 2026-10-22), trafficTime (zegar rejestru ruchu warpa gry — osie
+   * przylotów i odlotów NPC), zoneWarpMul }.
    */
   update(o) {
     if (!this.initialized || !this.enabled) { resetWarpWorldLens(); return; }
@@ -234,7 +235,33 @@ export const WarpNurt = {
     const warp = o.warp;
     const g = this._playerGame;
     const hasPlayer = !!(ship && !ship.dead && warp);
-    if (hasPlayer) {
+    // Hipercruise (E5, decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”): ten sam efekt
+    // skoku gracza (bańka, ośrodek, smugi, fale, żar), gdy warp stoi; efekt trzyma się hipercruise'u do końca
+    // wyjścia (player.hyper). Warp ma pierwszeństwo — jego wygląd bez zmian.
+    const hyper = o.hyper;
+    const warpBusy = !!warp && (warp.state !== 'idle' || !!(warp.exitRamp && warp.exitRamp.active));
+    const hyperOn = !!hyper && (hyper.state === 'charging' || hyper.state === 'active');
+    const useHyper = hasPlayer && !warpBusy && (hyperOn || (player.hyper && player.mode !== 'idle'));
+    if (hasPlayer && useHyper) {
+      const pose = entityPose(ship, this._pose);
+      g.state = hyperOn ? hyper.state : 'idle';
+      g.charge = Math.min(1, Math.max(0, Number(hyper.charge) || 0));
+      g.chargeTime = Number(hyper.chargeTime) || 4;
+      g.gear = 1;
+      g.speed = Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy);
+      g.angle = hyper.state === 'active' && Number.isFinite(hyper.dir) ? hyper.dir : pose.angle;
+      g.x = pose.x;
+      g.y = pose.y;
+      g.length = entityHullLength(ship);
+      g.width = entityHullWidth(ship);
+      g.palette = entityWarpPaletteId(ship);
+      g.entity = ship;
+      g.exitRamp = null;
+      g.flyby = 1;
+      g.cruise = Number(hyper.speed) || 0;
+      g.hyper = true;
+      player.advance(t, dt, g, map, med);
+    } else if (hasPlayer) {
       const pose = entityPose(ship, this._pose);
       g.state = warp.state;
       g.charge = warp.chargeTime > 0 ? Math.min(1, (Number(warp.charge) || 0) / warp.chargeTime) : 0;
@@ -251,6 +278,7 @@ export const WarpNurt = {
       g.exitRamp = warp.exitRamp || null;
       g.flyby = Number.isFinite(warp.flybyFactor) ? warp.flybyFactor : 1;
       g.cruise = Number(warp.cruise) || Number(warp.speed) || 0;
+      g.hyper = false;
       player.advance(t, dt, g, map, med);
     } else {
       player.reset();

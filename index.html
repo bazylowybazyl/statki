@@ -16810,6 +16810,27 @@
     // ========================================================================
     const hypercruise = createHypercruise();
     window.hypercruise = hypercruise;
+    // WYGLĄD hipercruise'u dla renderu (decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”):
+    // ten sam kształt co warp — rozruch = 'charging' (charge 0…1), lot = 'active', wyjście = 'idle' (efekt skoku gracza
+    // w WarpNurt kończy się wyjściem); GameState.hyper → RenderWorld.hyper (worker — skalary HYPER_* migawki).
+    // Statek dostaje `__hyperMode` (struga plazmy WARP na dyszach MAIN — engineVfxSystem.js; NPC — ta sama flaga).
+    const hyperLook = { state: 'idle', charge: 0, chargeTime: 0, speed: 0, vmax: 0, dir: 0 };
+    publishGameState({ hyper: hyperLook });
+    function syncHyperLook() {
+      const hc = hypercruise;
+      const prev = hyperLook.state;
+      const next = hc.state === 'spool' ? 'charging' : hc.state === 'active' ? 'active' : 'idle';
+      hyperLook.state = next;
+      hyperLook.charge = hypercruiseSpoolProgress(hc);
+      hyperLook.chargeTime = Number(hc.spoolNow) || Number(hc.spool) || 0;
+      hyperLook.speed = hypercruiseDriving(hc) ? hc.speed : 0;
+      hyperLook.vmax = hc.vmax;
+      hyperLook.dir = ship ? ship.angle : 0;
+      if (ship) ship.__hyperMode = next === 'idle' ? undefined : next;
+      // Kamera: kop jak przy skoku warpa (rig — cameraRig.js) przy starcie lotu i impuls przy wyjściu.
+      if (next === 'active' && prev !== 'active') noteCameraRigWarp(cameraRig, 'kick');
+      else if (prev === 'active' && next !== 'active') noteCameraRigWarp(cameraRig, 'exit');
+    }
     const _hcCtx = { speed: 0, zone: 1, remaining: Infinity, stopMargin: 0, brake: false, exitSpeed: HYPERCRUISE_TUNE.exitSpeed, align: 1, thrust: 1 };
     let _hcMassLockAt = 0;
     let _hcMassLocked = false;
@@ -24979,8 +25000,9 @@
       stepPlayerShipSystem(dt);
       // Postawa okrętu (TARCZE): limit i ciąg napędu.
       applyShipStance(dt);
-      // Hipercruise (E5): przerwania, profil prędkości (prędkość pisze gałąź automatu niżej).
+      // Hipercruise (E5): przerwania, profil prędkości (prędkość pisze gałąź automatu niżej), wygląd dla renderu.
       stepPlayerHypercruise(dt);
+      syncHyperLook();
       // Tabela lotu: mnożniki dysz kadłuba dopasowane do SHIP_FLIGHT_SPECS (liczy tylko po zmianie
       // kadłuba albo układu dysz).
       calibrateDriveToShip(driveState, ship, getPlayerSpeed());
@@ -27061,11 +27083,15 @@
       const w = _cameraWarpInput;
       w.dt = gameDt;
       // Styl skoku bez rulonu (`?warp=ped|akcent|soczewka`, `?rulon=0` — warpDrive.js: warpRulonEnabled): kamera bez środka lejka.
-      w.rulon = warpRulonEnabled(location.search);
-      w.state = warp.state;
-      w.charge = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0;
+      // Hipercruise (E5, 2026-10-22): kop i oddalenie jak skok warpa (rozruch = ładowanie, lot = skok), bez rulonu —
+      // gdy warp stoi; warp ma pierwszeństwo.
+      const hyperCam = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
+      w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
+      w.state = hyperCam ? hyperLook.state : warp.state;
+      w.charge = hyperCam ? hyperLook.charge : (warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0);
       const dir = warp.dir;
-      if (dir && (dir.x || dir.y)) { w.dirX = dir.x; w.dirY = dir.y; }
+      if (hyperCam) { w.dirX = Math.cos(hyperLook.dir); w.dirY = Math.sin(hyperLook.dir); }
+      else if (dir && (dir.x || dir.y)) { w.dirX = dir.x; w.dirY = dir.y; }
       else if (ship) { w.dirX = Math.cos(ship.angle); w.dirY = Math.sin(ship.angle); }
       // Rampa wyjścia (kamera za statkiem, oddalenie do końca zwolnienia) i chwila po zatrzymaniu
       // (kamera dogania statek: WARP_EXIT.settle) — po rampie jej wiek rośnie zegarem gry.
@@ -27083,8 +27109,6 @@
       }
       w.enabled = normalizeCameraWarpKickMode(OPTIONS.cameraWarpKick) === 'on'
         && camera.mode === 'ship' && !!ship && !ship.destroyed;
-      // Hipercruise (E5): oddalenie z prędkością (cameraRig.js: hyperZoomOut).
-      w.hyper = hypercruiseDriving(hypercruise) ? hypercruise.speed / Math.max(1, hypercruise.vmax) : 0;
       // Zoom prowadzi przejście (fokus stacji, edytor) — kop znika od razu, jak w updateCameraZoom.
       w.suspend = !!(camera.transition && camera.transition.kind !== 'ship');
       stepCameraRigWarp(cameraRig, w, cameraRigTune);
@@ -27614,6 +27638,7 @@
       f.skyZone = zoneState.current?.id || null;
       f.warp = warp;
       f.boost = boost;
+      f.hyper = hyperLook;
       // ruch warpa NPC (osie rejestru gry) i klatka „Nurtu” — ta sama, którą dostaje WarpNurt.update
       f.warpTraffic = warpTraffic;
       f.warpNurt = _warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam);
@@ -28246,7 +28271,7 @@
     // ============== END SPLIT SCREEN RENDER ==============
 
     // Warp „Nurt” (src/3d/warp/warpNurt.js): jeden obiekt wejścia na grę (bez alokacji na klatkę).
-    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, npcs: null };
+    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: null, npcs: null };
     function _warpNurtFrame(dt, camNoShake, camShake) {
       const o = _warpNurtCtx;
       o.dt = dt;
@@ -28256,6 +28281,7 @@
       o.camFollow = camera.mode === 'ship' && !camera.transition;
       o.ship = ship;
       o.warp = warp;
+      o.hyper = hyperLook;
       // Zegar rejestru ruchu warpa (RW-28): osie przylotów i odlotów NPC liczone w czasie gry.
       o.trafficTime = warpTraffic.time;
       // Soczewka świata (planety w skoku — src/3d/warp/worldLens.js) tylko w kamerze z góry jednego gracza:

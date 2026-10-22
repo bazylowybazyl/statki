@@ -531,6 +531,10 @@ function resolveEntityEngineFx(entity) {
 /** Tryb napędu skokowego encji: 'off' | 'charging' | 'active'. */
 function resolveWarpMode(entity) {
   if (entity.__warpPreview === true) return 'active';
+  // Hipercruise (E5, decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”): ta sama plazma
+  // WARP na dyszach MAIN — rozruch jak ładowanie, lot jak skok (gracz i NPC: `__hyperMode` z gry / lustra).
+  const hyper = entity.__hyperMode;
+  if (hyper === 'active' || hyper === 'charging') return hyper;
   const player = RenderWorld.ship;
   if (player && entity === player) {
     const w = RenderWorld.warp;

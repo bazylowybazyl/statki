@@ -107,7 +107,8 @@ export function resetHypercruise(hc) {
 /**
  * Krok automatu. ctx:
  *   speed      — bieżąca prędkość statku [j/s] (start lotu z niej),
- *   zone       — mnożnik strefy (pas 0,8, planety 0,3 — jak warp; ≥ HYPERCRUISE_TUNE.minZone),
+ *   zone       — mnożnik strefy warpa (pas 0,8, planety 0,3); hipercruise nie schodzi niżej niż
+ *                HYPERCRUISE_TUNE.minZone (0,6 — przy planetach szybciej niż warpowe 0,3),
  *   remaining  — droga do celu wzdłuż kursu [j.] (cel TRAVEL TO; bez celu — Infinity),
  *   stopMargin — ile przed celem kończy się hipercruise [j.] (droga hamowania lotu zwykłego),
  *   brake      — hamulec gracza (S): cel 0, poniżej prędkości wyjścia — wyjście,
