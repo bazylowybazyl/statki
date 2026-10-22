@@ -1107,10 +1107,14 @@ if (isWorker) {
       for (const layer of [0, 7, 2]) jobs.push(w.now(scene, { layer, visible: false, ortho: false }));
       await Promise.race([Promise.all(jobs), limit(6000)]);
       st.tPasses = performance.now() - t0;
+      // szablony modeli stacji (lustra stacji już są): wczytanie, wypiek rozpadu, pass FG i cień — pod kurtyną; bryły
+      // stacji powstają leniwie w updateStations3D (strona w trybie worker nie woła prepareStations3D)
+      try { await st.mods.stations.warmStationTemplates3D(st.rm.stations, { timeoutMs: 8000 }); } catch (e) { console.warn('[render.worker] stacje:', e); }
+      st.tStations = performance.now() - t0;
     }
     const tF = performance.now();
     await Promise.race([st.Core3D.warmup.flush({ timeoutMs: 4000 }), limit(6000)]);
-    console.log(`[render.worker] przygotowanie (afterFrame ${!!m.afterFrame}): od init ${Math.round(t0 - st.t0)} ms, klatka 0 po ${Math.round(st.tFrame0 || 0)} ms, passy do ${Math.round(st.tPasses || 0)} ms, flush ${Math.round(performance.now() - tF)} ms`);
+    console.log(`[render.worker] przygotowanie (afterFrame ${!!m.afterFrame}): od init ${Math.round(t0 - st.t0)} ms, klatka 0 po ${Math.round(st.tFrame0 || 0)} ms, passy do ${Math.round(st.tPasses || 0)} ms, stacje do ${Math.round(st.tStations || 0)} ms, flush ${Math.round(performance.now() - tF)} ms`);
     st.ret && st.mods && st.mods.retMod.retSetFlag(st.ret, st.mods.retMod.RET_FLAG.WARM_FLUSHED);
     console.log(`[render.worker] przygotowanie sceny: ringi ${waits.length} ${Math.round(tRing - t0)} ms, rozgrzewka ${Math.round(performance.now() - tRing)} ms`);
     return true;

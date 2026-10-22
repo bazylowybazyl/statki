@@ -51,6 +51,8 @@ cdp.on((msg) => {
 });
 await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
 const syncWorker = () => workerLogs.filter((l) => l.includes('pipeline sync')).map((l) => l.replace(/^.*pipeline sync #\d+ k=\d+: /, ''));
+// Tryb `off`: pipeline'y renderu strony (licznik harnessu `__harness.pipes`; w trybie worker strona nie renderuje 3D).
+const syncPage = () => ev(`(() => { const p = window.__harness && window.__harness.pipes; return p ? p.list.filter((e) => e.sync).map((e) => e.nazwa) : []; })()`);
 
 const gameT = () => ev('(window.TrafficV2 && window.TrafficV2.time) || 0');
 // Zegar krokowy harnessu (`__harness.hold` + `step`): w trybie worker zegar „real” bez limitu klatek zapycha stronę
@@ -101,6 +103,7 @@ try {
   report.tryb = await ev('window.RenderWorkerHost ? "worker" : "off"');
   if (!await waitFor(cdp, '!!(window.TrafficV2 && window.TrafficV2.ready && window.TrafficV2.tables && window.TrafficV2.tables.bubblePorts && window.TrafficV2.tables.bubblePorts.earth)', 120000, 300)) throw new Error('ruch v2 nie wstał');
   report.syncStart = syncWorker();
+  report.syncStronaStart = await syncPage();
   await ev('window.__harness.hold(true)');
   report.ruch = await ev('({ tryb: window.TrafficV2.mode, stanowiskZiemi: window.TrafficV2.tables.bubblePorts.earth.length })');
   console.log('tryb', report.tryb, JSON.stringify(report.ruch));
@@ -472,6 +475,7 @@ try {
   }
 
   report.syncKoniec = syncWorker();
+  report.syncStronaKoniec = await syncPage();
 } catch (e) {
   report.blad = String(e?.stack || e);
   console.error(report.blad);
@@ -481,6 +485,8 @@ try {
   report.ostrzezeniaRuchu = workerLogs.filter((l) => /ruch|Traffic|ShipProxy/i.test(l)).slice(0, 20);
   console.log('pipeline sync workera: start', report.syncStart?.length ?? '-', '| koniec', report.syncKoniec?.length ?? '-',
     (report.syncKoniec || []).slice(0, 6).join(' | '));
+  console.log('pipeline sync strony (tryb off): start', report.syncStronaStart?.length ?? '-', '| koniec', report.syncStronaKoniec?.length ?? '-',
+    (report.syncStronaKoniec || []).slice(report.syncStronaStart?.length || 0).slice(0, 6).join(' | '));
   console.log('błędy strony', report.bledyStrony.length, '| workera', report.bledyWorkera.length);
   for (const l of [...report.bledyStrony, ...report.bledyWorkera].slice(0, 8)) console.log('  ', l.slice(0, 300));
   writeFileSync(join(out, 'worker.log'), workerLogs.join('\n'));
