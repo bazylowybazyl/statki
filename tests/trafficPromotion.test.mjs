@@ -30,6 +30,7 @@ test('kto awansuje: kurs (nie zapas floty), bez warpa, poniżej prędkości hipe
   assert.equal(trafficActorPromotable({ ...base, alive: false }), false);
   assert.equal(trafficActorPromotable({ ...base, id: -3, flags: ACTOR_FLAG.STOCK }), false, 'zapas floty jest nietykalny');
   assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.WARP }), false);
+  assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.DEPARTED }), false, 'odlot po końcu kursu — bez kursu do przejęcia');
   assert.equal(trafficActorPromotable({ ...base, vx: TRAFFIC_PROMOTION_TUNE.maxSpeed + 1 }), false, 'hipercruise ucieka');
   assert.equal(trafficActorPromotable({ ...base, hullId: 'megafreighter' }), false, 'megafrachtowiec to pociąg modułów');
 });

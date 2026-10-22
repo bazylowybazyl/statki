@@ -5,7 +5,10 @@
 // Vite + headless Chrome z WebGPU (CDP), gra swobodna.
 //
 //   node scripts/webgpu/ruch-banka-gra.mjs [--query renderWorker=1] [--out .tmp/ruch-banka] [--port 5461]
-//        [--rozgrzewka 2400] [--obserwacja 40] [--porty mars,jupiter,luna,ceres,mercury,vesta]
+//        [--rozgrzewka 2400] [--obserwacja 40] [--porty mars,jupiter,luna,ceres,mercury,vesta] [--odlot 1|tylko]
+//
+// `--odlot 1` — koniec kursu przy stanowisku (rozładunek u celu, flaga DEPARTED): kadr na statku, zrzuty co 0,25 s
+// przez odłączanie i początek lotu (`08-odlot-NNN.png`), pozy w każdym kroku (ciągłość); `tylko` — sam ten etap.
 //
 // Przebieg: start gry → świat ruchu rozgrzany `--rozgrzewka` s czasu świata (`TrafficV2.advance` — gospodarka
 // startuje od zera, a statki do portu Ziemi lecą minuty) → gracz przy porcie Ziemi → obserwacja `--obserwacja` s
@@ -130,6 +133,47 @@ try {
   await ev(ZOOM(0.045));
   await waitGame(4);
   await screenshotPng(cdp, join(out, '01-port-ziemi.png'));
+
+  if (args.odlot) {
+    // Statek, którego kurs kończy się przy stanowisku: czekamy na flagę DEPARTED (128) w fazie odłączania.
+    let target = null;
+    for (let k = 0; k < 240 && !target; k++) {
+      target = await ev(`(() => { const a = window.TrafficBubble.list.find((x) => (x.flags & 128) && x.phase === 'undock');
+        return a ? { id: a.id, hull: a.hullId, berth: a.berthId, x: a.cx, y: a.cy, len: a.length } : null; })()`);
+      if (!target) await waitGame(0.5);
+    }
+    report.etapy.odlot = { cel: target };
+    if (target) {
+      const look = Math.max(1600, target.len * 3);
+      const rows = [];
+      let last = null;
+      for (let n = 0; n < 40; n++) {
+        const a = await ev(`(() => { const a = window.TrafficBubble.byId.get(${target.id});
+          return a ? { faza: a.phase, x: a.cx, y: a.cy, flagi: a.flags, v: Math.round(Math.hypot(a.vx, a.vy)) } : null; })()`);
+        if (a) {
+          // kadr za statkiem (gracz poza polem, kamera nad statkiem)
+          await ev(`(() => { const c = window.camera; c.minZoom = 0.003; c.manualZoom = true;
+            const z = Math.min(0.5, (window.innerHeight || 900) / ${look}); c.zoom = c.targetZoom = c.zoomBase = z;
+            window.devTeleportTo(${a.x} + ${look} * 0.6, ${a.y} + ${look} * 0.3, { angle: 0, quiet: true });
+            window.ship.vel.x = 0; window.ship.vel.y = 0; window.DevScene?.syncCamera?.(); return true; })()`);
+          await screenshotPng(cdp, join(out, `08-odlot-${String(n).padStart(3, '0')}.png`));
+        }
+        const skok = a && last ? Math.round(Math.hypot(a.x - last.x, a.y - last.y)) : null;
+        rows.push({ n, ...(a ? { faza: a.faza, v: a.v, skok } : { znikl: true }) });
+        if (!a) break;
+        last = a;
+        await waitGame(0.25);
+      }
+      report.etapy.odlot.klatki = rows;
+      console.log('odlot:', JSON.stringify({ cel: target.hull, fazy: [...new Set(rows.map((r) => r.faza || 'znikł'))],
+        maxSkok: Math.max(0, ...rows.map((r) => r.skok || 0)), znikl: rows.some((r) => r.znikl) }));
+    } else console.log('odlot: brak statku z końcem kursu przy stanowisku w 120 s');
+    if (args.odlot === 'tylko') {
+      report.syncKoniec = syncWorker();
+      report.syncStronaKoniec = await syncPage();
+      throw new Error('tylko odlot — koniec');
+    }
+  }
 
   // Obserwacja: fazy encji, stanowiska K-7 / zatok, kursy, które przeszły przez przechwyt — najpierw przy zatoce,
   // potem nad halą K-7 tego samego kompleksu (stanowiska wojskowe: okręty i patrole).
