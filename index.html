@@ -1236,6 +1236,11 @@
     // Pył w halach K-7 (gazy, etap 1): wejście klatki pakuje gra, krok Core3D.fx czyta tylko tę tablicę.
     import { HallDust, HALL_DUST_TUNE } from "./src/3d/gasField/hallDust.js";
     import { packHallDustFrame } from "./src/game/hallDustInput.js";
+    // Gaz w otwartej przestrzeni (port dema gazy-transport — docs/PLAN-gazy-kosmos.md): wejście klatki pakuje gra
+    // (pas: obwiednia z pola, odgazowanie skał), krok Core3D.fx „gaz przestrzeni” czyta tylko tę tablicę.
+    import { SpaceGas, SPACE_GAS_TUNE } from "./src/3d/spaceGas/spaceGas.js";
+    import { packSpaceGasFrame, createSpaceGasInputState, SPACE_GAS_IN, SPACE_GAS_ICY_TYPES, SPACE_GAS_INPUT_TUNE } from "./src/game/spaceGasInput.js";
+    import { createSpaceGasBlock } from "./src/render/blocks/spaceGasBlock.js";
     // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
     import { createGasObstBlock } from "./src/render/blocks/gasObstBlock.js";
@@ -1264,6 +1269,9 @@
     import { setPositionLightOcclusion } from "./src/game/shipLightRuntime.js";
     // Diagnostyka i strojenie z konsoli: HallDust.stats, HallDustTune.jetSpeed = 3000 itd.
     window.HallDust = HallDust;
+    window.SpaceGas = SpaceGas;
+    window.SpaceGasTune = SPACE_GAS_TUNE;
+    window.SpaceGasInputTune = SPACE_GAS_INPUT_TUNE;
     window.HallDustTune = HALL_DUST_TUNE;
     // Obsługa stanowisk capital K-7 w grze swobodnej (zamki pola, ramiona SCARA i przewody paliwowe przy postoju gracza —
     // obraz i gaz; automat w HaloRingGame._portVisuals): strojenie K7ServiceTune (dwell, settleSpeed, releaseSpeed …),
@@ -1275,7 +1283,7 @@
     // Wydobycie (zadanie 21b): ładunki górnicze gracza (magazynek platformy, ceny tymczasowe).
     import { MINING_CHARGES, createMiningChargeStock } from "./src/data/miningCharges.js";
     import { chargeForDepth } from "./src/game/asteroidMaterials.js";
-    import { ROCK_TYPE_LABELS_PL } from "./src/game/asteroidRockKinds.js";
+    import { ROCK_TYPE_LABELS_PL, ROCK_TYPE_INDEX } from "./src/game/asteroidRockKinds.js";
     // Rodziny kolizyjne pasa (A2, docs/PLAN-pas-realizm.md): nazwa pola dla gracza (komunikat strefy, skaner wydobycia).
     import { familyTitle } from "./src/data/asteroidFamilies.js";
     import {
@@ -28380,6 +28388,7 @@
     // RW-11c: bloki modułów świata (src/render/blocks/) — wejścia klatki modułów renderu w stronie migawki
     if (renderSnapshot) {
       renderSnapshot.addBlock(createGasObstBlock());
+      renderSnapshot.addBlock(createSpaceGasBlock());
       renderSnapshot.addBlock(createWarpBlock());
       renderSnapshot.addBlock(createPirateBaseBlock());
       // wyrwy bazy piratów (dekompresja, pożary — src/game/story/pirateBaseAtmosphere.js): stan klatki obrazu wyrw
@@ -28547,6 +28556,7 @@
       f.hall = HallDust.input;
       // przeszkody gazu wybuchów (packGasObstacles w render(); bez reżysera wybuchów — brak wejścia)
       f.gasObst = window.__explosions ? gasObstIn : null;
+      f.spaceGas = spaceGasIn;
       renderSnapshot.finish(f);
       if (rwHost) rwHost.postFrame();
     }
@@ -28722,6 +28732,27 @@
       return out;
     }
 
+    // GAZ PRZESTRZENI (port dema gazy-transport — docs/PLAN-gazy-kosmos.md, src/game/spaceGasInput.js): wejście
+    // klatki gazu w otwartej przestrzeni — pas asteroid przy kamerze (obwiednia z pola pasa gry, wyrwy, odgazowanie
+    // lodowych skał), kotwica = Słońce. Render (tryb off — SpaceGas.submit w render(), worker — blok `spaceGas`).
+    const spaceGasIn = new Float64Array(SPACE_GAS_IN.size);
+    const spaceGasState = createSpaceGasInputState();
+    const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
+    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true };
+    function packSpaceGas(cam, dt) {
+      const o = _spaceGasOpts;
+      const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
+      o.dt = dt; o.camX = cam.x; o.camY = cam.y;
+      o.halfW = W * 0.5 / zoom; o.halfH = H * 0.5 / zoom;
+      o.field = beltWorld ? beltWorld.field : null;
+      o.sunX = SUN ? SUN.x : 0; o.sunY = SUN ? SUN.y : 0;
+      o.windowCells = SPACE_GAS_TUNE.windowCells;
+      o.time = SimClock.sim;
+      // warp gracza (smugi skał pasa) i sceny bez pasa — bez gazu
+      o.enabled = warp.state !== 'active';
+      packSpaceGasFrame(spaceGasIn, spaceGasState, o);
+    }
+
     // PRZESZKODY GAZU WYBUCHÓW (etap C — F2 docs/AUDYT-wybuchy-gaz-2026-10-08.md; src/game/gasObstacleInput.js): wejście
     // klatki reżysera wybuchów (window.__explosions) — bryły hal K-7 i suchego doku przy kamerze, kadłuby przy domenach
     // gazu (okręty widoczne we mgle wojny i wraki; bez odłamów budowli — worldDebris rodzą się w kuli wybuchu kawałka).
@@ -28785,6 +28816,15 @@
       o.dock = gasDockObstacles();
       // tryb worker: domeny gazu ma reżyser wybuchów workera (prostokąty z ostatniej narysowanej klatki)
       o.nDomains = rwHost ? rwHost.copyDomainRects(_gasDomRects) : ex.domainRects(_gasDomRects);
+      // okno pola gazu przestrzeni: kadłuby w nim są przeszkodami gazu (maski obrysu jak dla domen wybuchów)
+      if (spaceGasIn[SPACE_GAS_IN.active] > 0.5 && o.nDomains < 16) {
+        const h = spaceGasIn[SPACE_GAS_IN.windowCells] * spaceGasIn[SPACE_GAS_IN.cell] * 0.5;
+        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.camX];
+        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.camY];
+        const k = o.nDomains * 4;
+        _gasDomRects[k] = sx - h; _gasDomRects[k + 1] = sy - h; _gasDomRects[k + 2] = sx + h; _gasDomRects[k + 3] = sy + h;
+        o.nDomains++;
+      }
       _gasHullLists[0] = ship && !ship.destroyed ? ship : null;
       _gasHullLists[1] = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
       _gasHullLists[2] = o.nDomains ? fogSeenInto(npcs, _gasNpcSeen) : null;
@@ -29465,10 +29505,14 @@
         clock: haloWorld ? haloWorld.clock : 0
       });
       if (!RW_WORKER) HallDust.submit(HallDust.input);
+      // Gaz w otwartej przestrzeni (blok „GAZ PRZESTRZENI” niżej): pas przy kamerze — obwiednia z pola, odgazowanie
+      // lodowych skał, okno pola; przed przeszkodami (okno idzie do prostokątów domen — kadłuby w polu gazu).
+      packSpaceGas(cam, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
       // (statyka — przy zmianie), kadłuby przy domenach gazu (reżyser podaje ich prostokąty; bez domen — nic). Krok
       // efektów „wybuchy” czyta tylko tę tablicę.
       packGasObstacles(cam, Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1), (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      if (!RW_WORKER) { SpaceGas.setObstacleInput(window.__explosions ? gasObstIn : null); SpaceGas.submit(spaceGasIn); }
       const render3dAsteroidsMs = asteroidBelt ? asteroidBelt.stats.cpuMs : (performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('asteroidBelt', render3dAsteroidsMs);

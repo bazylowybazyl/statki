@@ -169,3 +169,108 @@ test('kadłub z rekordu GAS_HULL_REC: macierz świat → teksle, maska do pasma 
   sim.addHullRecord(F, 0, R, 900, 400);
   assert.equal(sim._maskDirty, false, 'ta sama wersja maski — bez wysyłki');
 });
+
+// --- GK-2 / GK-3 / GK-5: wejście gry, mapy, warstwa, scena pasa ------------------------------------------------------
+
+const { packSpaceGasFrame, createSpaceGasInputState, SPACE_GAS_IN, SPACE_GAS_ENV_RES } = await import('../src/game/spaceGasInput.js');
+const { BeltGasScene } = await import('../src/3d/spaceGas/spaceGasBelt.js');
+const { SpaceGasMaps } = await import('../src/3d/spaceGas/spaceGasMaps.js');
+const { packSpaceGasBlock } = await import('../src/render/blocks/spaceGasBlock.js');
+
+// sztuczne pole pasa: pierścień 90–110 tys. j. wokół Słońca (0, 0), lód rośnie z promieniem
+function fakeField() {
+  return {
+    holeVersion: 0, calls: 0,
+    rectTouchesBelt(x0, y0, x1, y1) { const r = Math.hypot((x0 + x1) / 2, (y0 + y1) / 2); return r > 80000 && r < 120000; },
+    sampleMacro(x, y) {
+      this.calls++;
+      const r = Math.hypot(x, y);
+      const w = r > 90000 && r < 110000 ? 1 : 0;
+      return { weight: w, cluster: 0.5, ice: (r - 90000) / 20000, hole: 1, gas: 0 };
+    },
+    forEachRockInRect(band, x0, y0, x1, y1, minD, cb) {
+      cb({ x: (x0 + x1) / 2 + 100, y: (y0 + y1) / 2, r: 300, type: 5, seed: 0.3 });
+      cb({ x: (x0 + x1) / 2 - 100, y: (y0 + y1) / 2, r: 300, type: 1, seed: 0.7 });
+    }
+  };
+}
+
+test('GK-2: wejście pasa — obwiednia przesuwana przyrostowo, kotwica = Słońce, odgazowanie tylko skał z lodem', () => {
+  const out = new Float64Array(SPACE_GAS_IN.size);
+  const st = createSpaceGasInputState();
+  const field = fakeField();
+  const o = { dt: 1 / 60, camX: 100000, camY: 0, halfW: 3000, halfH: 1700, field, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: new Set([5]), time: 1 };
+  packSpaceGasFrame(out, st, o);
+  const I = SPACE_GAS_IN, G = SPACE_GAS_ENV_RES;
+  assert.equal(out[I.active], 1);
+  assert.equal(out[I.camX], 100000);
+  assert.equal(field.calls, G * G, 'pierwsza klatka: cała siatka');
+  assert.ok(Math.abs(out[I.sunX] + 1) < 1e-9, 'Słońce w −x');
+  assert.equal(out[I.jets], 1, 'tylko skała z lodem');
+  assert.ok(out[I.jetBase + 2] > 0.99, 'struga od Słońca');
+  const ver = out[I.envVer];
+  // mały ruch w obrębie próbki — bez próbkowania
+  field.calls = 0;
+  o.camX += 10;
+  packSpaceGasFrame(out, st, o);
+  assert.equal(field.calls, 0);
+  assert.equal(out[I.envVer], ver);
+  // przesunięcie o jedną próbkę — jedna nowa kolumna
+  o.camX += out[I.envCell];
+  packSpaceGasFrame(out, st, o);
+  assert.equal(field.calls, G);
+  assert.equal(out[I.envVer], ver + 1);
+  // wyrwa (nowa wersja wyrw) — cała siatka od nowa
+  field.calls = 0;
+  field.holeVersion = 1;
+  packSpaceGasFrame(out, st, o);
+  assert.equal(field.calls, G * G);
+  // poza pasem — nieaktywne, blok kopiuje sam nagłówek
+  o.camX = 300000;
+  packSpaceGasFrame(out, st, o);
+  assert.equal(out[I.active], 0);
+  const blk = new Float64Array(I.size).fill(7);
+  packSpaceGasBlock(blk, out);
+  assert.equal(blk[I.active], 0);
+  assert.equal(blk[I.envBase], 7, 'bez gazu siatka nie jest kopiowana');
+});
+
+test('GK-3: mapy gazu i światła — WGSL w Node, storage ≤ 7, tekstury pisane nie są próbkowane w tym samym kernelu', () => {
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = new SpaceGasMaps(sim, scene, { w: 64, h: 36 });
+  for (const k of maps.kernels()) {
+    const b = renderer.backend.createNodeBuilder(k, renderer);
+    b.build();
+    assert.ok((b.computeShader.match(/var<storage/g) || []).length <= 7);
+    const w = new Set(), r = new Set();
+    for (const gr of b.getBindings()) for (const bd of gr.bindings) {
+      if (!bd.texture || bd.constructor?.name === 'NodeSampler') continue;
+      if (bd.store === true || bd.access === 'writeOnly') w.add(bd.texture.name); else r.add(bd.texture.name);
+    }
+    for (const t of w) assert.ok(!r.has(t), `${k.name}: ${t} pisana i próbkowana`);
+  }
+  // pole dalekie pasa w kernelu startu okna
+  assert.match(wgsl(sim.kInit), /spaceGasNoise/);
+  // mapa: środek na siatce tekseli
+  const r = maps.place(1000.3, -50.2, 3000, 1700, {});
+  const tx = maps.U.texel.value.x;
+  assert.ok(Math.abs(r.cx / tx - Math.round(r.cx / tx)) < 1e-9);
+});
+
+test('GK-3: warstwa — dwie połowy w passie ortho, test głębi bez zapisu, dolna przed efektami, górna po nich', async () => {
+  const { SpaceGasLayer, SPACE_GAS_ORDER } = await import('../src/3d/spaceGas/spaceGasLayer.js');
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = new SpaceGasMaps(sim, scene, { w: 64, h: 36 });
+  const layer = new SpaceGasLayer(maps, { grid: null });
+  for (const m of layer.warmupMeshes()) {
+    assert.equal(m.material.depthTest, true);
+    assert.equal(m.material.depthWrite, false);
+    assert.equal(m.layers.mask, 1, 'warstwa 0 — pass ortho');
+  }
+  assert.ok(SPACE_GAS_ORDER.lower < 0 && SPACE_GAS_ORDER.upper > 55, 'efekty gry mają 0…55');
+  layer.place(8e6, -3e6, 1000, 500);
+  assert.equal(layer.lower.position.y, 3e6, 'scena: −y gry');
+  assert.ok(layer.lower.position.z < -10.4 && layer.upper.position.z > 15);
+});
