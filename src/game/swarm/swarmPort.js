@@ -184,8 +184,9 @@ function loadedSpan(classId) {
 /**
  * Port z opisu sceny:
  *   ships: [{ id, hull, x, y, angle }] — poza GRY (x, y w dół, kąt gry, jak cargoShipToWorld);
- *   yards: [{ id, classId, x, y, yaw, cols, rows, levels }] — bloki placu (świat sceny);
- *   pads:  [{ id, classId, x, y, yaw, cols, rows }] — pola gniazd dronów (świat sceny);
+ *   yards: [{ id, classId, x, y, yaw, cols, rows, levels, z? }] — bloki placu (świat sceny; z — pokład bloku,
+ *          domyślnie deckZ — w grze plac stoi na płycie pola zatoki ~115 j. pod płaszczyzną lotu);
+ *   pads:  [{ id, classId, x, y, yaw, cols, rows, z? }] — pola gniazd dronów (świat sceny);
  *   obstacles: [{ x, y, yaw, L, W, top }] — inne przeszkody (wieża, maszty) — prostokąty;
  *   bayIndexOf(shipId, bayIdx) → indeks w tablicy ładowni renderu (światło) — opcjonalnie.
  * Zwraca { grids, columns, ships, pads, obstacles, layers, bounds }.
@@ -253,11 +254,12 @@ export function buildSwarmPort(spec) {
     const pitchA = cls.payload.L + gap;
     const pitchB = cls.payload.W + gap;
     const levels = Math.max(1, y.levels | 0);
+    const deckY = Number.isFinite(y.z) ? y.z : P.deckZ;
     const g = addGrid({
       kind: 'yard', owner: y.id || 'plac', classId: y.classId, bay: -1,
       x: y.x || 0, y: y.y || 0, yaw: y.yaw || 0, cols: y.cols, rows: y.rows, pitchA, pitchB,
       a0: -((y.cols - 1) * pitchA) / 2, b0: -((y.rows - 1) * pitchB) / 2, cnx: cls.pack.nx, cny: cls.pack.ny,
-      levels, zBase: P.deckZ, obstacleTop: P.deckZ + levels * CARGO_CONTAINER.H, label: y.label || null
+      levels, zBase: deckY, obstacleTop: deckY + levels * CARGO_CONTAINER.H, label: y.label || null
     });
     const c = Math.cos(g.yaw);
     const s = Math.sin(g.yaw);
@@ -265,7 +267,7 @@ export function buildSwarmPort(spec) {
       for (let i = 0; i < y.cols; i++) {
         const a = g.a0 + i * pitchA;
         const b = g.b0 + j * pitchB;
-        addColumn(g, i, j, g.x + c * a - s * b, g.y + s * a + c * b, g.yaw, P.deckZ, levels);
+        addColumn(g, i, j, g.x + c * a - s * b, g.y + s * a + c * b, g.yaw, deckY, levels);
       }
     }
   }
@@ -275,11 +277,12 @@ export function buildSwarmPort(spec) {
   for (const p of spec.pads || []) {
     const cls = SWARM_DRONE_CLASSES[p.classId];
     const pitch = 2 * cls.padRadius + P.padGap;
+    const deckP = Number.isFinite(p.z) ? p.z : P.deckZ;
     const g = addGrid({
       kind: 'pad', owner: p.id || 'gniazda', classId: p.classId, bay: -1,
       x: p.x || 0, y: p.y || 0, yaw: p.yaw || 0, cols: p.cols, rows: p.rows, pitchA: pitch, pitchB: pitch,
       a0: -((p.cols - 1) * pitch) / 2, b0: -((p.rows - 1) * pitch) / 2, cnx: 1, cny: 1,
-      levels: 0, zBase: P.deckZ, obstacleTop: P.deckZ + 2
+      levels: 0, zBase: deckP, obstacleTop: deckP + 2
     });
     const c = Math.cos(g.yaw);
     const s = Math.sin(g.yaw);
@@ -287,7 +290,7 @@ export function buildSwarmPort(spec) {
       for (let i = 0; i < p.cols; i++) {
         const a = g.a0 + i * pitch;
         const b = g.b0 + j * pitch;
-        const col = addColumn(g, i, j, g.x + c * a - s * b, g.y + s * a + c * b, g.yaw, P.deckZ, 0);
+        const col = addColumn(g, i, j, g.x + c * a - s * b, g.y + s * a + c * b, g.yaw, deckP, 0);
         pads.push(col.index);
       }
     }

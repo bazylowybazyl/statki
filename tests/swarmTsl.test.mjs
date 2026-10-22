@@ -37,7 +37,8 @@ function buildWGSL(material, geometry) {
 const sim = new SwarmSim({ maxDrones: 64, maxUnits: 64, maxColumns: 64, hfCells: 64 });
 
 test('kernele compute: WGSL w Node, ≤ 8 buforów storage, ORCA na tablicach lokalnych', () => {
-  for (const [name, k] of [['clear', sim.kClear], ['bin', sim.kBin], ['steer', sim.kSteer], ['integrate', sim.kIntegrate]]) {
+  assert.equal(sim.kClear, undefined, 'bez osobnego kClear (3 dispatche na krok)');
+  for (const [name, k] of [['bin', sim.kBin], ['steer', sim.kSteer], ['integrate', sim.kIntegrate]]) {
     const w = buildCompute(k);
     assert.ok(w.length > 200, `${name}: WGSL`);
     assert.ok(count(w, /var<storage/g) <= 8, `${name}: bufory storage ${count(w, /var<storage/g)}`);
@@ -47,7 +48,10 @@ test('kernele compute: WGSL w Node, ≤ 8 buforów storage, ORCA na tablicach lo
       assert.match(w, /for \( var o3i : i32/, 'linearProgram3');
       // Pętle sąsiadów mają niezerowy koniec (atomicLoad jako zmienna — pułapka pustej instrukcji).
       assert.match(w, /for \( var gk : u32 = 0u; gk < nodeVar\d+; gk \+\+ \)/, 'pętla sąsiadów z komórki');
+      assert.match(w, /for \( var ovk : u32/, 'przepełnienie siatki liczy kSteer (kBin zeruje statystyki)');
     }
+    // Zerowanie: statystyki kroku w kBin, siatka mieszająca w kIntegrate (dawny kClear).
+    if (name !== 'steer') assert.match(w, /atomicStore\(/, `${name}: zerowanie`);
   }
 });
 
