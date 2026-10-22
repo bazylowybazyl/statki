@@ -20,6 +20,7 @@
 import { RESOURCES } from '../../data/resources.js';
 import { resourcePrice, scarcityMultiplier, PRICE_MODEL, stationNetRates } from '../stationEconomy.js';
 import { restockTarget, RESTOCK_SECONDS } from './tradeMarket.js';
+import { takeStock, declareDemand } from './marketBook.js';
 import { areFactionsHostile } from '../../data/factions.js';
 
 /**
@@ -205,15 +206,11 @@ export const WARSHIP_BUILD_PORTION = Object.freeze(Object.fromEntries(WARSHIP_CO
  */
 export function registerShipyard(registry, spec = {}) {
   if (spec.station) {
-    const juz = new Set(spec.station.extraDemand || []);
-    for (const id of WARSHIP_COMPONENTS) juz.add(id);
-    spec.station.extraDemand = [...juz];
-    // Dolny próg skupu: kilka porcji na budowę — patrz `restockTarget`.
-    const floor = { ...(spec.station.restockFloor || {}) };
+    // Popyt konsumenta spoza receptur (API rynku) z dolnym progiem skupu: kilka porcji na
+    // budowę — patrz `restockTarget`.
     for (const id of WARSHIP_COMPONENTS) {
-      floor[id] = Math.max(floor[id] || 0, WARSHIP_BUILD_PORTION[id] * SHIPYARD_MODEL.restockBuilds);
+      declareDemand(spec.station, id, { floor: WARSHIP_BUILD_PORTION[id] * SHIPYARD_MODEL.restockBuilds });
     }
-    spec.station.restockFloor = floor;
   }
   // Zapas startowy podzespołów. Stocznia dopisuje swój popyt dopiero tutaj,
   // już po `seedStationStock`, więc stocznie bez własnych podzespołów
@@ -397,7 +394,7 @@ export function reservedForMarket(quotes, stationId, econ, options = {}) {
 function consume(econ, cls) {
   let value = 0;
   for (const [id, need] of Object.entries(cls.build)) {
-    econ.resources[id] = (Number(econ.resources[id]) || 0) - need;
+    takeStock(econ, id, need);   // `canAfford` sprawdził zapas z rezerwą
     value += (RESOURCES[id]?.value || 0) * need;
   }
   return value;

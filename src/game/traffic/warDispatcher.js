@@ -25,6 +25,7 @@ import { areFactionsHostile, getFactionStance } from '../../data/factions.js';
 import { RESOURCES } from '../../data/resources.js';
 import { getStationIndustry, militaryScale } from '../stationEconomy.js';
 import { WARSHIP_CLASSES, takeShips, returnShips, fleetPower } from './shipyards.js';
+import { takeStock, declareDemand } from './marketBook.js';
 
 export const WAR_MODEL = Object.freeze({
   /** Co ile sekund frakcja w ogóle rozważa wyprawę. */
@@ -145,15 +146,11 @@ export function drawAmmo(econ, power, config = WAR_MODEL) {
   for (const id of ids) {
     const need = potrzeba[id];
     if (!(need > 0)) continue;
-    const stan = Math.max(0, Number(econ.resources[id]) || 0);
-    const wziete = Math.min(stan, need);
+    const wziete = takeStock(econ, id, need);
     const w = need * (RESOURCES[id]?.value || 1);
     waga += w;
     pokryte += w * (wziete / need);
-    if (wziete > 0) {
-      econ.resources[id] = stan - wziete;
-      taken[id] = wziete;
-    }
+    if (wziete > 0) taken[id] = wziete;
   }
   const ratio = waga > 0 ? Math.max(0, Math.min(1, pokryte / waga)) : 1;
   return { ratio, taken, needed: potrzeba };
@@ -175,9 +172,7 @@ export function declareAmmoDemand(stations, config = WAR_MODEL) {
     // Skrzynie wozi się tam, gdzie stacjonuje flota — czyli do ośrodków
     // przemysłowych. Kopalnia bez fabryki nie ma czym strzelać ani czego bronić.
     if (militaryScale(getStationIndustry(station)) <= 0) continue;
-    const juz = new Set(station.extraDemand || []);
-    for (const id of ids) juz.add(id);
-    station.extraDemand = [...juz];
+    for (const id of ids) declareDemand(station, id);
     ile++;
   }
   return ile;
