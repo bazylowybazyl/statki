@@ -68,7 +68,10 @@ pracowały w tym czasie — szum bazy CPU workera ±0,27 ms w kadrze szerokim.
 | | wynik |
 |---|---|
 | koszt obrazu, 14 jednoczesnych przeładunków (`?przeladunekStres=20` — wszystkie pola zatoki w kadrze: 2 ciężkie, 4 dalekiego zasięgu, 4 kontenerowce, 4 promy, stoły i taśmy 14 pól), A/B/A/B z `?przeladunek=0` | CPU workera renderu: kadr 9000 j. 2,47 / 2,74 → 2,76 / 2,72 ms (+0,13 ms), kadr 2600 j. 1,05 / 1,08 → 1,19 / 1,30 ms (+0,18 ms); GPU: 0,56 / 0,54 → 0,57 / 0,60 ms (+0,03), 0,272 / 0,268 → 0,279 / 0,276 ms (+0,008) |
-| ekstrapolacja na 20 statków | CPU ~+0,2–0,26 ms, GPU w szumie — w budżecie orkiestratora (≤ 0,3 / ≤ 0,3 ms) |
+| to samo po zagęszczeniu roju jak w demie (~110 dronów w kadrze, światła dronów jednym rysunkiem), maszyna obciążona (baza CPU 2,5 → 3,2–3,4 ms) | CPU workera: kadr 2600 j. +0,11 / +0,37 / +0,56 ms (B − A w parach A3 / B23, A5 / B25, A5 / B24), kadr 9000 j. −0,26…+0,99 ms (szum ±1 ms); GPU +0,01–0,05 ms |
+| własna ścieżka CPU obrazu (Node, `.tmp/e12/bench.mjs`: 14 przeładunków, stan w klatce + rekordy 2158 kontenerów i 76 dronów) | 0,063 ms na klatkę |
+| skąd reszta CPU workera | rysunki three (~15–25 µs każdy): w obciążeniu 14 — ładownie 4 rodzaje × 2, kontenery, taśmy, drony 3 klasy, światła 1; w zwykłym kadrze (1–3 statki, 1–2 kadłuby) 6–8; plus wysyłka bufora kontenerów (~170 KB na klatkę przy 2158 kontenerach) |
+| ocena wobec budżetu (20 statków: ≤ 0,3 ms CPU, ≤ 0,3 ms GPU) | GPU w budżecie z zapasem; CPU w spokojnym pomiarze w budżecie (+0,13–0,18 ms przy 14), w obciążonym — na granicy i powyżej, głównie narzut rysunków. Dalsze cięcia: wnętrza ładowni wszystkich kadłubów jednym rysunkiem (wymiary w instancji: −3 rysunki), stałe regiony kontenerów na statek z wysyłką tylko zmienionych zakresów (ładunek w ładowni stoi) |
 | plan na stanowisko (Node, raz na kurs w kadrze, ≤ 1 nowy plan na klatkę) | prom 0,1–2 ms (pierwszy — JIT), kontenerowiec 0,3–1,5 ms, dalekiego zasięgu 0,8–1,4 ms, ciężki 3,2–5,1 ms |
 | stan w klatce (Node, na statek) | kontenerowiec 2–8 µs, dalekiego zasięgu 7–15 µs, ciężki 17–50 µs (+ wpis kontenerów do partii) |
 | rysunki | ładownie: 2 na kadłub w kadrze; kontenery 1; drony 1 na klasę + światła 1 na klasę; taśmy 1 |
