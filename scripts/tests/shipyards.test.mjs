@@ -15,9 +15,9 @@ import {
   WARSHIP_CLASSES, WARSHIP_ORDER, SHIPYARD_MODEL, FLEET_DOCTRINE, pickWarshipClass,
   createShipyardRegistry, registerShipyard, tickShipyards,
   readyShips, fleetPower, addShips, takeShips, returnShips,
-  canAfford, summarizeShipyards, reservedForMarket, WARSHIP_COMPONENTS
+  canAfford, summarizeShipyards, reservedForMarket, WARSHIP_COMPONENTS, WARSHIP_BUILD_PORTION
 } from '../../src/game/traffic/shipyards.js';
-import { snapshotMarket } from '../../src/game/traffic/tradeMarket.js';
+import { snapshotMarket, restockTarget } from '../../src/game/traffic/tradeMarket.js';
 
 /** Magazyn z zadanym zapasem podzespołów. */
 function makeEcon(fill = 0) {
@@ -215,6 +215,15 @@ export function run() {
     { station: startSt, econ: startEcon, stationId: 'mercury', economyScale: 1 });
   t.check('zapas startowy podzespołów', startEcon.resources.hull_plate > 0);
   t.check('nie ponad magazyn', startEcon.resources.hull_plate <= startEcon.capacity.hull_plate);
+  // Stocznia zużywa podzespół porcjami, więc skupuje nie mniej niż kilka porcji —
+  // nawet gdy planowe zużycie rzadkiego napędu daje na dwie godziny mniej niż jedną.
+  t.equal('dolny próg skupu = porcje na kilka budów', startSt.restockFloor.drive_heavy,
+    WARSHIP_BUILD_PORTION.drive_heavy * SHIPYARD_MODEL.restockBuilds);
+  t.check('porcja to największe zużycie jednej klasy', WARSHIP_BUILD_PORTION.hull_plate === 60);
+  t.equal('skup bez planowego zużycia sięga dolnego progu',
+    restockTarget({ capacity: 100, demandRate: 0, restockFloor: 12 }), 12);
+  t.check('i nie przekracza magazynu',
+    restockTarget({ capacity: 10, demandRate: 0, restockFloor: 12 }) === 10);
 
   // ----------------------------------------------------------
   t.section('Okręt trafia do zapasu frakcji');

@@ -133,6 +133,12 @@ export const SHIPYARD_MODEL = Object.freeze({
   /** Ile okrętów naraz może stać w budowie w jednej stoczni. */
   slots: 2,
   /**
+   * Na ile budów stocznia trzyma każdy podzespół — dolny próg skupu od kupców
+   * (`station.restockFloor`). Porcja to największe zużycie podzespołu przez
+   * jedną klasę okrętu; dwie pochylnie i jedna budowa w zapasie = 3.
+   */
+  restockBuilds: 3,
+  /**
    * LICYTACJA: o ile skup u innej stacji musi przebić cenę żądania portu,
    * żeby miejscowa stocznia odłożyła dla niej podzespół (`reservedForMarket`).
    *
@@ -184,6 +190,10 @@ export const WARSHIP_COMPONENTS = Object.freeze([...new Set(
   Object.values(WARSHIP_CLASSES).flatMap(cls => Object.keys(cls.build))
 )]);
 
+/** Porcja podzespołu: najwięcej, ile bierze naraz jedna klasa okrętu. */
+export const WARSHIP_BUILD_PORTION = Object.freeze(Object.fromEntries(WARSHIP_COMPONENTS.map(id =>
+  [id, Math.max(...Object.values(WARSHIP_CLASSES).map(cls => Number(cls.build[id]) || 0))])));
+
 /**
  * Stocznia stoi przy konkretnej stacji i buduje dla jej frakcji.
  *
@@ -198,6 +208,12 @@ export function registerShipyard(registry, spec = {}) {
     const juz = new Set(spec.station.extraDemand || []);
     for (const id of WARSHIP_COMPONENTS) juz.add(id);
     spec.station.extraDemand = [...juz];
+    // Dolny próg skupu: kilka porcji na budowę — patrz `restockTarget`.
+    const floor = { ...(spec.station.restockFloor || {}) };
+    for (const id of WARSHIP_COMPONENTS) {
+      floor[id] = Math.max(floor[id] || 0, WARSHIP_BUILD_PORTION[id] * SHIPYARD_MODEL.restockBuilds);
+    }
+    spec.station.restockFloor = floor;
   }
   // Zapas startowy podzespołów. Stocznia dopisuje swój popyt dopiero tutaj,
   // już po `seedStationStock`, więc stocznie bez własnych podzespołów
@@ -209,7 +225,9 @@ export function registerShipyard(registry, spec = {}) {
     const scale = Math.max(0, Number(spec.economyScale) || 1);
     for (const id of WARSHIP_COMPONENTS) {
       const cap = Number(spec.econ.capacity?.[id]) || 0;
-      const target = Math.min(cap, Math.max(0, -(Number(rates[id]) || 0)) * scale * RESTOCK_SECONDS);
+      const target = Math.min(cap, Math.max(
+        Math.max(0, -(Number(rates[id]) || 0)) * scale * RESTOCK_SECONDS,
+        spec.station.restockFloor?.[id] || 0));
       spec.econ.resources[id] = Math.max(Number(spec.econ.resources[id]) || 0, target);
     }
   }
