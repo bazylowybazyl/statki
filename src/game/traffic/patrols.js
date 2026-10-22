@@ -267,9 +267,25 @@ export function createGarrisonState(options = {}) {
      * inaczej każdy bieg rozjeżdżałby się chaotycznie od pierwszej wizyty.
      */
     rngState: (Number(options.seed) >>> 0) || 0x4741524e,
+    /** Okręty garnizonu zestrzelone w grze, czekające na rozliczenie w `tickWar`. */
+    losses: [],
     nextId: 1,
-    stats: { rotations: 0, returns: 0 }
+    stats: { rotations: 0, returns: 0, lost: 0 }
   };
+}
+
+/** Gdzie był kurs wizyty w chwili zniszczenia: odcinek z pozycjami albo port. */
+function visitPosition(network, course) {
+  const stage = course?.stages?.[Math.min(course.stageIndex, course.stages.length - 1)];
+  if (stage?.fromPos && stage?.toPos) {
+    const t = stage.seconds > 0 ? Math.max(0, Math.min(1, course.stageElapsed / stage.seconds)) : 0;
+    return {
+      x: stage.fromPos.x + (stage.toPos.x - stage.fromPos.x) * t,
+      y: stage.fromPos.y + (stage.toPos.y - stage.fromPos.y) * t
+    };
+  }
+  const node = getNode(network, course?.originId);
+  return { x: stage?.pos?.x ?? node?.x ?? 0, y: stage?.pos?.y ?? node?.y ?? 0 };
 }
 
 /** Losowanie rotacji (mulberry32 na stanie garnizonu) — patrz `rngState`. */
@@ -355,7 +371,7 @@ function launchVisit(garrison, registry, network, port, factionId, classId, kind
     payload: { garrison: kind, classId }
   });
   if (!course) return null;
-  garrison.visits.push({ courseId: course.id, factionId, stationId: port.station.id, kind });
+  garrison.visits.push({ courseId: course.id, factionId, stationId: port.station.id, kind, classId });
   if (kind === 'return') garrison.stats.returns++;
   else garrison.stats.rotations++;
   return course;
@@ -394,7 +410,19 @@ export function tickGarrison(garrison, dt, options = {}) {
 
   for (let i = garrison.visits.length - 1; i >= 0; i--) {
     const course = getCourse(registry, garrison.visits[i].courseId);
-    if (!course || course.status !== COURSE_STATUS.ACTIVE) garrison.visits.splice(i, 1);
+    if (course && course.status === COURSE_STATUS.ACTIVE) continue;
+    const visit = garrison.visits[i];
+    garrison.visits.splice(i, 1);
+    // Okręt zestrzelony w grze (`destroyed` z bańki) to STRATA Z ZAPASU frakcji —
+    // rozlicza ją `tickWar` (`settleGarrisonLosses`): zapas mniejszy o okręt
+    // tej klasy, wrak ze złomem na pobojowisku, jak strata w kampanii.
+    if (course?.status === COURSE_STATUS.WRECKED) {
+      const at = visitPosition(network, course);
+      garrison.losses.push({
+        factionId: visit.factionId, classId: visit.classId, stationId: visit.stationId,
+        x: at.x, y: at.y, reason: course.closedReason || null
+      });
+    }
   }
 
   garrison.sinceDecision += Math.max(0, Number(dt) || 0);

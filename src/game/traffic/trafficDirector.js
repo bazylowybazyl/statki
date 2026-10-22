@@ -20,7 +20,7 @@ import { RESOURCES, getBagMass, getBagValue } from '../../data/resources.js';
 import {
   createShipmentOrder, tryDeliverShipmentOrder, wreckShipmentOrder,
   getBlockedPairs, blockRoute, tickCooldowns, pickVanClass, VAN_CLASSES,
-  SHIPMENT_STATUS
+  SHIPMENT_STATUS, getShipmentOrder
 } from './shipmentOrders.js';
 import {
   runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, stationWantsResource
@@ -1564,7 +1564,7 @@ function strikeCourse(director, course, options = {}) {
   if (orderId) {
     // Kurs zniknął, więc order nie może dalej udawać `IN_TRANSIT`: taki duch
     // pozostawał w pozycji magazynowej i na zawsze blokował wysyłkę zastępczą.
-    const order = fleet?.orders?.find(candidate => candidate.id === orderId);
+    const order = getShipmentOrder(fleet, orderId);
     if (order) {
       wreckShipmentOrder(order, `wreck:${course.id}`, null, registry.clock);
       removeActiveShipmentOrder(fleet, order);
@@ -1834,7 +1834,8 @@ export function settleCourseEvents(director, events) {
       }
       if (course.payload?.orderId) {
         const econ = director.getEconomy(course.destinationId);
-        const order = fleet.orders.find(candidate => candidate.id === course.payload.orderId);
+        // Przez indeks id, nie przegląd całej listy zleceń — patrz `getShipmentOrder`.
+        const order = getShipmentOrder(fleet, course.payload.orderId);
         if (order && tryDeliverShipmentOrder(order, econ, registry.clock).changed) {
           removeActiveShipmentOrder(fleet, order);
           director.stats.delivered++;
