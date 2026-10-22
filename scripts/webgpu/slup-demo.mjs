@@ -1,8 +1,9 @@
 // Zrzuty dema planet z ELEKTROWNIĄ „KOREK” w wielkim gryzie Ziemi (dema/planety-webgpu.html?korek=1, dodatek
 // dema/planety-slup.js, src/3d/earthBitePlant*.js — korek, obudowa dziury, windy, odbiornik, promień do ringu) i opcjonalnie
 // słupem dymu (?slup=1, src/3d/earthBitePlume*.js). Kadry:
-//   • gra-* — jak w grze (kamera z daleka w płaszczyźnie równika, oś doby pionowo, słońce w poziomie; `x` = położenie
-//     gryzu na tarczy w poziomie, + ku słońcu),
+//   • gra-* — jak w grze (`__slup.viewGame`): Ziemia obraca się wokół osi ringu (src/3d/earthSpin.js), kamera z daleka
+//     znad bieguna, ring równikowy, słońce w płaszczyźnie ringu; `angle` — gryz na tarczy [°], `phase` — pora w gryzie
+//     (0 południe, 90 terminator, 180 północ), `half` — pół wysokości kadru [R],
 //   • szczegóły (korek-*, obudowa, brzeg, odbiornik, winda, promien, nad-gryzem) — kamera w RAMIE ELEKTROWNI
 //     (`__slup.viewPlant`: y — wysokość nad dnem gryzu, R Ziemi; dno 0, płaszczyzna brzegu ~0,354, odbiornik ~0,535),
 //   • blisko* — kamera nad gryzem z ukosa.
@@ -27,21 +28,19 @@ const wariant = args.wariant ? `&slupWariant=${args.wariant}` : '';
 const warstwy = `${String(args.dym ?? '0') === '1' ? '&slup=1' : ''}${String(args.korek ?? '1') === '0' ? '' : '&korek=1'}`;
 mkdirSync(out, { recursive: true });
 
-// x — położenie gryzu na tarczy (ułamek promienia, + ku słońcu); half — pół wysokości kadru [R] (whole — cała tarcza);
-// burst — błyski piorunów (ziarno, liczba); near — kamera nad gryzem (odległość, odchylenie od pionu, pora, słońce).
+// near — kamera nad gryzem z ukosa (odległość, odchylenie od pionu, pora, słońce); burst — błyski dymu (ziarno, liczba).
 const VIEWS = [
-  { name: 'gra-cala', x: 0.35, half: 1.25, whole: true },
-  { name: 'gra-przekaz', x: 0.62, half: 1.25, whole: true },
-  { name: 'gra-przekaz-blisko', x: 0.8, half: 0.42 },
-  { name: 'gra-dzien', x: 0.3, half: 0.62 },
-  { name: 'gra-noc', x: -0.4, half: 0.62, burst: [7, 3] },
-  { name: 'gra-terminator', x: 0.06, half: 0.62, burst: [3, 2] },
-  { name: 'gra-brzeg', x: 0.9, half: 0.55 },
-  { name: 'gra-krawedz', x: 0.997, half: 0.5 },
-  { name: 'gra-krawedz-noc', x: -0.997, half: 0.5, burst: [11, 3] },
+  // jak w grze: kamera znad bieguna obrotu (oś ringu), gryz przy krawędzi tarczy
+  { name: 'gra-cala', game: { angle: 20, phase: 35, half: 1.25, center: 'planet' } },
+  { name: 'gra-noc-cala', game: { angle: 20, phase: 165, half: 1.25, center: 'planet' } },
+  { name: 'gra-dzien', game: { angle: 20, phase: 25, half: 0.45, center: 'bite' } },
+  { name: 'gra-terminator', game: { angle: 20, phase: 88, half: 0.45, center: 'bite' } },
+  { name: 'gra-noc', game: { angle: 20, phase: 160, half: 0.45, center: 'bite' } },
+  { name: 'gra-blisko', game: { angle: 20, phase: 30, half: 0.16, center: 'hub' } },
+  { name: 'gra-blisko-noc', game: { angle: 20, phase: 165, half: 0.16, center: 'hub' } },
   { name: 'blisko', near: { dist: 2.15, tilt: 28, pora: 55, sunEl: 25 } },
   { name: 'blisko-noc', near: { dist: 2.15, tilt: 28, pora: 165, sunEl: 10 }, burst: [5, 4] },
-  // szczegóły w ramie elektrowni (at / from — punkty ramy, sun — kierunek słońca w ramie)
+  // szczegóły w ramie elektrowni (at / from — punkty ramy, sun — kierunek słońca w ramie; góra kadru = oś gryzu)
   { name: 'nad-gryzem', plant: { at: [0, 0.15, 0], from: [0.3, 0.8, 0.35], fov: 58, sun: [0.35, 0.85, 0.4] } },
   { name: 'korek-gora', plant: { at: [0, 0.05, 0], from: [0.07, 0.36, 0.05], fov: 46, sun: [0.4, 1, 0.2] } },
   { name: 'korek-bok', plant: { at: [0, 0.045, 0], from: [0.21, 0.12, 0.13], fov: 40, sun: [0.3, 1, 0.5] } },
@@ -51,12 +50,42 @@ const VIEWS = [
   { name: 'brzeg', plant: { at: [0.35, 0.34, -0.35], from: [0.2, 0.45, -0.2], fov: 40, sun: [-0.5, 0.8, 0.5] } },
   { name: 'odbiornik', plant: { at: [0, 0.53, 0], from: [0.1, 0.5, 0.12], fov: 40, sun: [0.5, 0.6, 0.5] } },
   { name: 'winda', plant: { at: [0.197, 0.453, -0.197], from: [0.112, 0.47, -0.282], fov: 50, sun: [-0.5, 0.6, 0.5] } },
-  { name: 'promien', plant: { at: [0, 0.25, 0], from: [0.26, 0.22, 0.12], fov: 45, sun: [0.3, 1, 0.4] } }
+  { name: 'promien', plant: { at: [0, 0.25, 0], from: [0.26, 0.22, 0.12], fov: 45, sun: [0.3, 1, 0.4] } },
+  // kadry zgłoszone przez role (runda 1) — grupy: --tylko mat | cork | lining | orbit | beam
+  { name: 'mat-most', role: 'mat', plant: {at: [0.15, 0.04, -0.085], from: [0.19, 0.07, -0.06], fov: 40, sun: [0.3, 1, 0.5]} },
+  { name: 'mat-poklad', role: 'mat', plant: {at: [0.11, 0.054, 0], from: [0.132, 0.068, 0.028], fov: 40, sun: [0.3, 1, 0.5]} },
+  { name: 'mat-poklad-noc', role: 'mat', plant: {at: [0.11, 0.054, 0], from: [0.132, 0.068, 0.028], fov: 40, sun: [0.3, -1, 0.5]} },
+  { name: 'mat-wieza', role: 'mat', plant: {at: [0.073, 0.075, 0], from: [0.105, 0.088, 0.032], fov: 40, sun: [0.3, 1, 0.5]} },
+  { name: 'mat-odbiornik-blisko', role: 'mat', plant: {at: [0.05, 0.535, 0], from: [0.085, 0.55, 0.045], fov: 40, sun: [0.5, 0.6, 0.5]} },
+  { name: 'cork-most', role: 'cork', plant: {at: [-0.1602, 0.035, 0.0925], from: [-0.135, 0.085, 0.19], fov: 50, sun: [0.3, 1, 0.5]} },
+  { name: 'cork-most30', role: 'cork', plant: {at: [0.1775, 0.028, -0.1025], from: [0.205, 0.072, -0.02], fov: 50, sun: [0.3, 1, 0.5]} },
+  { name: 'cork-akcelerator', role: 'cork', plant: {at: [0, 0.079, 0], from: [0.004, 0.097, 0.062], fov: 50, sun: [0.3, 1, 0.5]} },
+  { name: 'cork-taras', role: 'cork', plant: {at: [0, 0.058, 0.08], from: [0.012, 0.096, 0.19], fov: 50, sun: [0.4, 1, 0.2]} },
+  { name: 'cork-wylot-lawy', role: 'cork', plant: {at: [-0.076, 0.022, 0.1316], from: [-0.084, 0.058, 0.2], fov: 46, sun: [0.3, 1, 0.5]} },
+  { name: 'cork-gora-noc', role: 'cork', plant: {at: [0, 0.05, 0], from: [0, 0.3, 0.11], fov: 50, sun: [0.4, -1, 0.2]} },
+  { name: 'lining-plac', role: 'lining', plant: {at: [0, 0.371, -0.4197], from: [0.03, 0.4104, -0.397], fov: 45, sun: [0.3, 1, 0.4]} },
+  { name: 'lining-stopa', role: 'lining', plant: {at: [0.2304, 0.0484, -0.133], from: [0.1697, 0.0652, -0.098], fov: 50, sun: [0.3, 1, 0.4]} },
+  { name: 'lining-podstacja', role: 'lining', plant: {at: [0.367, 0.1478, 0], from: [0.2667, 0.1516, 0], fov: 40, sun: [-0.4, 1, 0.3]} },
+  { name: 'lining-maszt', role: 'lining', plant: {at: [0.4862, 0.3377, -0.0967], from: [0.4518, 0.3585, -0.1127], fov: 35, sun: [-0.3, 1, 0.3]} },
+  { name: 'lining-galeria', role: 'lining', plant: {at: [0.352, 0.1836, 0.1281], from: [0.2815, 0.1842, 0.1025], fov: 45, sun: [-0.4, 1, 0.3]} },
+  { name: 'lining-zab', role: 'lining', plant: {at: [-0.4171, 0.365, -0.1228], from: [-0.3838, 0.4308, -0.113], fov: 40, sun: [-0.5, 1, 0.2]} },
+  { name: 'lining-fasada', role: 'lining', plant: {at: [-0.4444, 0.3366, 0.1617], from: [-0.3985, 0.3877, 0.145], fov: 40, sun: [-0.8, 0.9, -0.3]} },
+  { name: 'odbiornik-gora', role: 'orbit', plant: {at: [0, 0.535, 0], from: [0.05, 0.695, 0.04], fov: 42, sun: [0.5, 0.6, 0.5]} },
+  { name: 'odbiornik-spod', role: 'orbit', plant: {at: [0, 0.535, 0], from: [0.07, 0.445, 0.055], fov: 45, sun: [0.5, 0.6, 0.5]} },
+  { name: 'odbiornik-czasza', role: 'orbit', plant: {at: [0, 0.527, 0], from: [0.035, 0.485, 0.03], fov: 50, sun: [0.5, 0.6, 0.5]} },
+  { name: 'odbiornik-modul', role: 'orbit', plant: {at: [0.05, 0.535, 0], from: [0.085, 0.547, 0.03], fov: 40, sun: [0.6, 0.5, 0.4]} },
+  { name: 'odbiornik-nadajnik', role: 'orbit', plant: {at: [0, 0.535, 0], from: [0.03, 0.539, 0.022], fov: 40, sun: [0.5, 0.6, 0.5]} },
+  { name: 'pierscien-zamkniecia', role: 'beam', plant: {at: [0, 0.34, 0], from: [0.05, 0.37, 0.035], fov: 45, sun: [0.3, 1, 0.4]} },
+  { name: 'promien-uderzenie', role: 'beam', plant: {at: [0, 0.5, 0], from: [0.07, 0.47, 0.05], fov: 45, sun: [0.3, 1, 0.4]} },
+  { name: 'promien-czolo', role: 'beam', plant: {at: [0, 0.1, 0], from: [0.012, 0.47, 0.006], fov: 30, sun: [0.3, 1, 0.4]} },
+  { name: 'promien-bok', role: 'beam', plant: {at: [0, 0.3, 0], from: [0.16, 0.33, 0.09], fov: 40, sun: [0.3, 1, 0.4]} },
+  { name: 'promien-wylot', role: 'beam', plant: {at: [0, 0.08, 0], from: [0.07, 0.13, 0.05], fov: 45, sun: [0.3, 1, 0.4]} }
 ];
 const GROUPS = {
-  gra: VIEWS.filter((v) => v.name.startsWith('gra-')).map((v) => v.name),
-  szczegoly: VIEWS.filter((v) => v.plant).map((v) => v.name)
+  gra: VIEWS.filter((v) => v.game).map((v) => v.name),
+  szczegoly: VIEWS.filter((v) => v.plant && !v.role).map((v) => v.name)
 };
+for (const v of VIEWS) if (v.role) (GROUPS[v.role] ??= []).push(v.name);
 const only = args.tylko ? new Set(String(args.tylko).split(',').flatMap((k) => GROUPS[k] ?? [k])) : null;
 
 const { server, base } = await startVite(Number(args.port || 5413));
@@ -85,18 +114,16 @@ try {
       const phi = (lon + 180) * D, c = Math.cos(lat * D);
       const d = [-Math.cos(phi) * c, Math.sin(lat * D), Math.sin(phi) * c];
       const siteAz = Math.atan2(d[0], d[2]);
-      if (v.plant) {
+      if (v.game) {
+        if (!window.__slup.viewGame(v.game)) throw new Error('viewGame: brak elektrowni');
+      } else if (v.plant) {
         if (!window.__slup.viewPlant(v.plant)) throw new Error('viewPlant: brak elektrowni');
       } else if (v.near) {
+        P.camera.up.set(0, 1, 0);
         const latC = lat * D - v.near.tilt * D;
         S.az = siteAz; S.el = latC; S.dist = 1 + (v.near.dist - 1) * skala / 0.3;
         S.look.set(d[0], d[1], d[2]);
         S.fov = 42; S.pora = v.near.pora; S.sunEl = v.near.sunEl;
-      } else {
-        const dl = Math.asin(Math.max(-1, Math.min(1, v.x)));
-        S.az = siteAz - dl; S.el = 0; S.pora = 90; S.sunEl = 0; S.dist = 14;
-        if (v.whole) S.look.set(0, 0, 0); else S.look.set(d[0], d[1], d[2]);
-        S.fov = 2 * Math.atan(v.half / (S.dist - (v.whole ? 0 : 1))) / D;
       }
       const L = window.__slup;
       if (L) {

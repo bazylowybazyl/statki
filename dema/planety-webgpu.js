@@ -921,7 +921,7 @@ function syncUi() {
 
 // Harness / konsola.
 window.__planety = {
-  S, BODIES, renderer,
+  S, BODIES, renderer, camera,
   select: (id, old) => selectBody(id, old),
   view: setView,
   site: goToSite,

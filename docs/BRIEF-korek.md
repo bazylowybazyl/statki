@@ -4,8 +4,14 @@ Prośba użytkownika (2026-10-22): „wymodeluj ją porządnie — dopracuj tę 
 promień, obudowa dziury — megaprojekt godny gry AAA”. Wcześniejsze decyzje: zamiast dymu — geotermalna elektrownia,
 czarna megabudowla w kształcie korka zatykająca jądro, z małym otworem pośrodku; zamiast buchania lawy — PROMIEŃ
 wysyłający prąd do ringu; infrastruktura wokół korka i kilka wind kosmicznych; bez 4 klamer nad otworem (otwór trzyma
-pole siłowe). Ring orbitalny Ziemi z gry; przekaz do ringu tylko przy widoku ringu z odbiornika — bez niego odbiornik
-ŁADUJE MAGAZYN (`uPlantState.y`), z nim oddaje (`uPlantState.x` — przekaz 0…1, wygładzony).
+pole siłowe). Ring orbitalny Ziemi z gry; WINDY IDĄ DO RINGU („winda ma być do ringu planetarnego”).
+
+ZIEMIA OBRACA SIĘ WOKÓŁ OSI RINGU (decyzja użytkownika 2026-10-22, `src/3d/earthSpin.js`): oś doby prostopadła do
+płaszczyzny gry (ku kamerze), ring gry równikowy i NIERUCHOMY względem gruntu — liny wind i promień przekaźnikowy
+odbiornik → ring są STAŁE w układzie Ziemi (geometria w grupie elektrowni). Ring rozgrywki stoi (kolizje, hale K-7),
+z Ziemią obraca się tylko WEWNĘTRZNA SZYNA RINGU z wózkami wind (jak płaszcz prawdziwego pierścienia orbitalnego;
+buduje ją rola wind). Magazyn odbiornika: `uPlantState.y` (naładowanie), `uPlantState.x` — przekaz 0…1 (przy ringu
+równikowym zawsze 1; gdyby linia przechodziła przez planetę — 0 i magazyn się ładuje).
 
 Obraz (zasada żelazna 1): rozgrywka tego nie widzi. Pliki: `src/3d/earthBitePlant*.js`, demo
 `dema/planety-webgpu.html?korek=1` (dodatek `dema/planety-slup.js`), zrzuty `scripts/webgpu/slup-demo.mjs`,
@@ -19,16 +25,20 @@ test `tests/earthBitePlant.test.mjs`.
   jezioro płaszcza ~2 500 K (żar, płyty skorupy, rzeki ze ścian) — rysuje je shader gryzu (`earthBite.tsl.js`), nie my.
 - Korek: promień wierzchu 0,13 R (≈ 830 km), wierzch 0,053 nad dnem, krater wylotu 0,073. Odbiornik: 1,075 R od środka
   Ziemi (0,535 nad dnem, nad wylotem gryzu, pod ringiem 1,09–1,16 R), pierścień 0,05 R. Liny wind ~0,49 R (~3 100 km).
-- Kamera gry: ORTO z góry, Ziemia w passie ring-planet (warstwa 6, bez paralaksy), zoom 0,035–3,2 px/j. Przy zoomie
-  minimalnym 1 px ≈ 0,00076 R — cały gryz to ~1 200 px; przy typowym (0,2–0,5) 1 px ≈ 0,0001 R — wierzch korka nie
-  mieści się w ekranie. Gryz obraca się z Ziemią (oś doby w płaszczyźnie ekranu): nad środkiem tarczy patrzymy W OŚ
-  dziury (z góry: korek, promień od czoła, odbiornik nad nim, liny zbiegają się w środku), przy limbie — z boku
-  (promień poziomo, liny w poprzek). Kadry `gra-*` w demie to te widoki; kadry szczegółów (perspektywa) służą do
-  jakości z bliska.
+- Ring „Halo” Ziemi: wewnętrzna krawędź 41 800 j. = 1,1058 R (`PLANT_LAYOUT.ringInnerR`), zewnętrzna 43 752 j.
+  (1,157 R), w płaszczyźnie gry przez środek Ziemi; od wnętrza Ziemi oddziela go SZCZELINA 1,0–1,106 R.
+- Kamera gry: ORTO znad BIEGUNA OBROTU (oś ringu), Ziemia w passie ring-planet (warstwa 6, bez paralaksy), zoom
+  0,035–3,2 px/j. Przy zoomie minimalnym 1 px ≈ 0,00076 R; przy typowym (0,2–0,5) 1 px ≈ 0,0001 R. Tarcza obraca się
+  jak koło (doba ~314 s), gryz (10° N) leży 10° nad płaszczyzną ringu, więc krąży PRZY KRAWĘDZI TARCZY: z kamery gry
+  widać WCIĘCIE W OBRYSIE (szerokie na ±25° obwodu), a przez nie górną część ścian, koronę brzegu z emiterami, promień
+  wychodzący z wcięcia, odbiornik tuż za krawędzią tarczy (1,059 R od osi, w szczelinie pod ringiem), krótki promień
+  przekaźnikowy do ringu, liny wind przez szczelinę do szyny ringu i samą szynę z wózkami. KOREK NA DNIE z kamery gry
+  jest pod powierzchnią — widać go w kadrach szczegółów (perspektywa: przerywniki, demo, ewentualne ujęcia kinowe).
+  Kadry `gra-*` w demie (`__slup.viewGame`) to widoki gry; ich jakość jest PRIORYTETEM, kadry szczegółów — jakość z bliska.
 - Wniosek: TRZY skale detalu, każda czytelna w swoim zakresie: (1) sylwetka i rytm świateł czytelne przy 0,00076 R/px
-  (koncentryczne pierścienie korka, szprychy, jasny pierścień brzegu, zbieg lin, punkt promienia), (2) budowle 0,002–
-  0,02 R w geometrii (hale, wieże, żebra, kratownice, doki), (3) mikro-detal w shaderze 0,0001–0,002 R (panele, okna,
-  szwy, listwy), gasnący do średniej, gdy jest drobniejszy niż piksel (bez migotania).
+  (wcięcie z koroną świateł, promień, odbiornik, wachlarz lin do szyny ringu), (2) budowle 0,002–0,02 R w geometrii
+  (hale, wieże, żebra, kratownice, doki, wózki), (3) mikro-detal w shaderze 0,0001–0,002 R (panele, okna, szwy, listwy),
+  gasnący do średniej, gdy jest drobniejszy niż piksel (bez migotania).
 
 ## Kierunek artystyczny
 
@@ -42,9 +52,10 @@ test `tests/earthBitePlant.test.mjs`.
   (`sunVisibility`); w gryzie — żar jeziora z dołu i z boków (słabnie z wysokością), poświata promienia (cyjan, przy
   osi); nocą zostaje emisja i lawa. Emisja HDR: > 1 świeci (próg bloomu ~0,9) — rdzeń promienia, cewki, światła
   pozycyjne; okna ~1–2; szwy i drobne listwy POD progiem (inaczej cała budowla rozmywa się w bloomie).
-- KOMPOZYCJA z góry: mocne koncentryczne pierścienie (tarasy korka, cewki krateru, pierścienie zamknięcia promienia,
-  korona brzegu), promieniste szprychy (przypory korka nad lawą, żebra ścian, przewody, liny wind) — gwiazda / koło
-  w jeziorze ognia. Symetria 6-krotna z lekkim złamaniem (nie wszystko identyczne — ziarna).
+- KOMPOZYCJA: w kadrze gry — wcięcie w obrysie obramowane koroną świateł i masztami pola, z którego wybiega promień do
+  odbiornika, a od brzegu wachlarz lin przez szczelinę do ringu (energia i ruch: pakiety, kabiny, wózki); w kadrach
+  szczegółów — koncentryczne pierścienie (tarasy korka, cewki krateru, pierścienie zamknięcia, korona) i promieniste
+  szprychy (mosty nad lawą, żebra ścian, przewody). Symetria 6-krotna z lekkim złamaniem (ziarna).
 - Bez nakładek debug, bez napisów, bez czaszek; wszystko powtarzalne (ziarna `plantRng`, czas `uPlantTime`).
 
 ## Kontrakt (nie łamać bez zgody orkiestratora)
@@ -73,7 +84,16 @@ test `tests/earthBitePlant.test.mjs`.
   (zapas). Nowy klucz = zmiana w Common i w orkiestratorze (zgłoś).
 - WINDY IDĄ DO RINGU PLANETARNEGO (decyzja użytkownika 2026-10-22: „winda ma być do ringu planetarnego”), nie do
   odbiornika — odbiornik nie ma doków lin (jest tylko odbiornikiem promienia, magazynem i nadajnikiem przekazu do ringu).
-  Kotwice stoją w `rimAngle(φ) + anchorPad` w azymutach `L.elevators`, przewody obudowy dochodzą do nich.
+  Kotwice stoją w `rimAngle(φ) + anchorPad` w azymutach `L.elevators`, przewody obudowy dochodzą do nich
+  (`liningTerminalPoint(L, b, φ)` — koniec wiązki rur na placu korony). Lina: szczyt wieży kotwicy → najbliższy punkt
+  wewnętrznej krawędzi ringu: `ringPointObject(P, oś, L.ringInnerR)` w układzie OBIEKTU kuli (oś obrotu
+  `earthSpinAxis()` z `src/3d/earthSpin.js`; rama ↔ obiekt: `plantFrameMatrix` / `objectToFrameMatrix`). Lina z kotwicy
+  > ~35° nad płaszczyzną ringu przechodzi przez planetę (`segmentClearsSphere`) — przy biegunie w 90° N wszystkie
+  6 kotwic (najwyżej ~35°, azymut 90°) sięga ringu; wieża kotwicy może być wyższa, żeby mieć zapas.
+- PROMIEŃ (rola BEAM, runda 1): warstwy `uPlantLayer` 0 — rdzeń / otoczka / włókna / pakiety, 1 — poświata,
+  2 — przekaźnik, 3 — rozbłyski; pierścienie zamknięcia od y = 0,13 do ~0,48 (nad zębami-emiterami korka — w promieniu
+  r < 0,05 od osi nic powyżej y ≈ 0,12); koniec promienia i rozbłysk uderzenia na `hubHeight − 0,01` (spód czaszy
+  odbiornika), kula ładowania w środku nadajnika (r ≤ 0,0038). Przekaźnik w grupie elektrowni (`attachRing`).
 - STOPA ŚCIANY (`wallFootPoint(L, b, φ)`, wysokość `L.footH`): korek stawia w azymutach `L.elevators` MOSTY nad lawą od
   swojego boku do stopy ściany i niesie po nich przewody (PIPE) od korka do stopy; obudowa zaczyna przy stopie: pierścień
   przewodu wokół stopy ściany, przewody główne w górę ścian do kotwic wind, boczne (`liningSideConduits`) do podstacji.
@@ -85,7 +105,7 @@ test `tests/earthBitePlant.test.mjs`.
 | MAT | `earthBitePlant.tsl.js`, `earthBitePlantCommon.tsl.js` (tylko dopisywanie pomocników, eksporty zostają) | materiał metalu (wszystkie rodzaje 0–7) i przepływu (8–9), światło, mikro-detal |
 | CORK | `earthBitePlantCork.js` (+ własny `.tsl.js` dodatków, jeśli trzeba) | korek: bryła, tarasy, budowle, krater i cewki wylotu, mosty nad lawą do stopy ściany z przewodami |
 | LINING | `earthBitePlantLining.js` | obudowa dziury: korona brzegu z emiterami pola, żebra i galerie ścian, przewody od stopy ściany i podstacje |
-| ELEV | `earthBitePlantElevators.js`, `earthBitePlantClimbers.tsl.js` (nowy) | windy do ringu: kotwice-stacje, wieże, liny, kabiny na GPU (dodatek) |
+| ELEV | `earthBitePlantElevators.js`, `earthBitePlantClimbers.tsl.js` (nowy) | windy do ringu: kotwice-stacje, wieże, liny, szyna ringu z wózkami, kabiny na GPU (dodatek) |
 | ORBIT | `earthBitePlantOrbital.js` | odbiornik: pierścień-stacja, czasza zbierająca, radiatory, magazyn, nadajnik przekazu (bez doków lin) |
 | BEAM | `earthBitePlantBeam.js`, `earthBitePlantBeam.tsl.js` | promień główny i przekaźnikowy: warstwy, spirale, impulsy, pierścienie zamknięcia (`buildBeamHardware`), rozbłyski |
 
@@ -116,12 +136,13 @@ Wspólne (tylko orkiestrator): `earthBitePlant.js`, `earthBitePlantFrame.js`, `t
 1. `node --check <twój plik>` od razu po zapisie (inni agenci ładują to samo demo — błąd składni psuje im zrzuty).
 2. `node --test tests/earthBitePlant.test.mjs` — zielony (budżet, kontrakt części, WGSL wszystkich siatek, ziarna).
 3. Zrzuty: `node scripts/webgpu/slup-demo.mjs --out .tmp/korek/<rola>/<runda> --tag <rola> --tylko <kadry> --port <port>`
-   (grupy: `gra` — widoki gry, `szczegoly` — kadry ramy; nazwy: nad-gryzem, korek-gora, korek-bok, korek-noc,
-   korek-wylot, obudowa, brzeg, odbiornik, winda, promien, gra-cala, gra-dzien, gra-noc, gra-terminator, gra-krawedz,
-   gra-przekaz, gra-przekaz-blisko). Porty: MAT 5431, CORK 5432, LINING 5433, ELEV 5434, ORBIT 5435, BEAM 5436,
-   krytyk 5437 — jeden przebieg naraz na rolę. PNG oglądaj narzędziem Read. Na zrzutach widać też pracę innych ról
+   (grupy: `gra` — widoki gry: gra-cala, gra-noc-cala, gra-dzien, gra-terminator, gra-noc, gra-blisko, gra-blisko-noc;
+   `szczegoly` — kadry ramy: nad-gryzem, korek-gora, korek-bok, korek-noc, korek-wylot, obudowa, brzeg, odbiornik,
+   winda, promien; grupy ról z rundy 1: `mat`, `cork`, `lining`, `orbit`, `beam`). Kadr gry z własnymi parametrami:
+   `window.__slup.viewGame({ angle, phase, half, center: 'planet' | 'bite' | 'hub' })`. Porty: MAT 5431, CORK 5432,
+   LINING 5433, ELEV 5434, ORBIT 5435, BEAM 5436, krytyk 5437 — jeden przebieg naraz na rolę. PNG oglądaj narzędziem Read. Na zrzutach widać też pracę innych ról
    (w toku) — oceniaj swoje. Demo nie wstało, bo ktoś ma błąd składni? Odczekaj minutę i powtórz; cudzych plików nie
    ruszaj.
-4. Własny kadr szczegółu: `window.__slup.viewPlant({ at, from, fov, sun })` (punkty w ramie) — dopisz go do raportu,
-   orkiestrator doda kadr do skryptu.
+4. Własny kadr szczegółu: `window.__slup.viewPlant({ at, from, fov, sun, up })` (punkty w ramie; góra kadru domyślnie
+   wzdłuż osi gryzu) — dopisz go do raportu, orkiestrator doda kadr do skryptu.
 5. Nie commituj i nie używaj `git stash` — commituje orkiestrator po rundzie.

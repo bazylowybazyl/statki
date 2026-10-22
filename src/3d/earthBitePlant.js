@@ -53,6 +53,9 @@ export const PLANT_DEFAULTS = Object.freeze({
   lakeGlow: 1.3, relayFade: 1.5, chargeRate: 0.05, dischargeRate: 0.12
 });
 
+/** Okres zawinięcia zegara elektrowni [s]. */
+export const PLANT_TIME_WRAP = 4096;
+
 export function createPlantLook(over = {}) {
   return { ...PLANT_DEFAULTS, ...over };
 }
@@ -157,10 +160,17 @@ export class EarthBitePlant {
     this.beam.placeRelay(H, T, visible);
   }
 
+  /** Stan przekazu od razu u celu (zrzuty przy zatrzymanym zegarze): przekaz 0 albo 1 wg widoku ringu. */
+  settleRelay() {
+    this.relayOn = this.relayWanted ? 1 : 0;
+    this.update(0);
+  }
+
   update(dt) {
     const L = this.look;
     const d = Math.max(0, Math.min(0.25, Number(dt) || 0)) * L.timeScale;
-    this.time += d;
+    // zegar efektów zawinięty (f32 w shaderach: sin / fract przy dużym czasie tracą dokładność) — skok raz na ~68 min
+    this.time = (this.time + d) % PLANT_TIME_WRAP;
     const target = this.relayWanted ? 1 : 0;
     this.relayOn += (target - this.relayOn) * Math.min(1, d * L.relayFade);
     this.charge = Math.max(0, Math.min(1, this.charge + d * (this.relayWanted ? -L.dischargeRate : L.chargeRate)));
