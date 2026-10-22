@@ -248,6 +248,10 @@ function mergeInFrame(parts, m) {
   return geo;
 }
 
+const _rd = new THREE.Vector3();
+const _rq = new THREE.Quaternion();
+const _ry = new THREE.Vector3(0, 1, 0);
+
 export class EarthBitePlant {
   /**
    * @param {object} sphereUniforms `uniforms` siatki kuli Ziemi (sunPosition, uBite, uSunShadowRecv)
@@ -262,7 +266,8 @@ export class EarthBitePlant {
       uPlantTime: { value: 0 },
       uPlantShape: { value: new THREE.Vector4() },
       uPlantBeam: { value: new THREE.Vector4() },
-      uPlantLayer: { value: 0 }
+      uPlantLayer: { value: 0 },
+      uPlantBeamLen: { value: 0.5 }
     };
     const glowUniforms = { ...this.uniforms, uPlantLayer: { value: 1 } };
     this.group = new THREE.Group();
@@ -299,6 +304,7 @@ export class EarthBitePlant {
     const u = this.uniforms;
     u.uPlantShape.value.set(z0, L.lakeGlow, 0, L.hTop);
     u.uPlantBeam.value.set(L.beamGain, L.hCrater - 0.012, L.hubRadius - z0, L.beamCore);
+    u.uPlantBeamLen.value = (L.hubRadius - z0 - 0.01) - (L.hCrater - 0.01);
     const key = JSON.stringify([L, b]);
     if (key !== this._geoKey) {
       this._geoKey = key;
@@ -310,6 +316,62 @@ export class EarthBitePlant {
       set(this.beam, mergeInFrame([buildBeamGeometry(L, b, false)], m));
       set(this.beamGlow, mergeInFrame([buildBeamGeometry(L, b, true)], m));
     }
+  }
+
+  /** Środek odbiornika w układzie obiektu kuli (na osi gryzu). */
+  hubCenterObject(out = new THREE.Vector3()) {
+    const { C } = earthBiteFrame(EARTH_BITE);
+    return out.set(C[0], C[1], C[2]).multiplyScalar(this.look.hubRadius);
+  }
+
+  /**
+   * Promień przekaźnikowy odbiornik → ring (rdzeń, poświata, rozbłysk w celu): siatki w układzie gospodarza (świat
+   * dema / scena gry), ustawia je `placeRelay`. Walce o długości 1 wzdłuż Y (uv.y: 0 — odbiornik, 1 — ring).
+   */
+  createRelay() {
+    const mk = (layer, r, seg) => {
+      const g = new THREE.CylinderGeometry(r, r, 1, seg, 1, true);
+      g.translate(0, 0.5, 0);
+      const uniforms = { ...this.uniforms, uPlantLayer: { value: layer }, uPlantBeamLen: { value: 1 } };
+      const m = new THREE.Mesh(g, createPlantBeamMaterial(uniforms));
+      m.renderOrder = 9;
+      return m;
+    };
+    const L = this.look;
+    // przekaźnikowy grubszy od głównego: biegnie w poprzek kadru (główny jest w pionie, z góry widać go od czoła)
+    const core = mk(0, L.beamCore * 1.6, 24);
+    const glow = mk(1, L.beamGlow * 1.6, 40);
+    const flareU = { ...this.uniforms, uPlantLayer: { value: 1 }, uPlantBeamLen: { value: 0 } };
+    const flareGeo = new THREE.SphereGeometry(1, 32, 16);
+    // rozbłysk: kula bez końców wzdłuż uv.y — pełna jasność poświaty
+    const uvA = flareGeo.attributes.uv;
+    for (let i = 0; i < uvA.count; i++) uvA.setY(i, 0.5);
+    const flare = new THREE.Mesh(flareGeo, createPlantBeamMaterial(flareU));
+    flare.renderOrder = 9;
+    const group = new THREE.Group();
+    group.name = 'EarthBitePlantRelay';
+    group.add(core, glow, flare);
+    this.relay = { group, core, glow, flare };
+    return this.relay;
+  }
+
+  /** Ustawia promień przekaźnikowy od H do T (świat gospodarza); bez widoczności — chowa. */
+  placeRelay(H, T, visible = true) {
+    const r = this.relay;
+    if (!r) return;
+    r.group.visible = !!visible;
+    if (!visible) return;
+    const d = _rd.subVectors(T, H);
+    const len = d.length();
+    _rq.setFromUnitVectors(_ry, d.divideScalar(Math.max(len, 1e-9)));
+    for (const m of [r.core, r.glow]) {
+      m.position.copy(H);
+      m.quaternion.copy(_rq);
+      m.scale.set(1, len, 1);
+      m.material.uniforms.uPlantBeamLen.value = len;
+    }
+    r.flare.position.copy(T);
+    r.flare.scale.setScalar(this.look.beamGlow * 3.0);
   }
 
   update(dt) {

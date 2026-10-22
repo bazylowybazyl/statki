@@ -9,6 +9,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, vec2, vec3, vec4, uniform, varying, positionLocal, positionView, normalLocal, uv, modelWorldMatrix,
+  transformNormalToView,
   modelWorldMatrixInverse, cameraWorldMatrix, cameraProjectionMatrix, abs, atan, clamp, cross, dot, exp, floor, fract,
   fwidth, length, max, min, mix, normalize, pow, select, sin, smoothstep, sqrt
 } from 'three/tsl';
@@ -30,7 +31,8 @@ export const PLANT_KEYS = Object.freeze({
   uPlantTime: 'float',
   uPlantShape: 'vec4',   // z0 (dno gryzu wzdłuż osi), światło jeziora, liczba kanałów, h wierzchu korka
   uPlantBeam: 'vec4',    // jasność promienia, h wylotu, h odbiornika, promień rdzenia promienia
-  uPlantLayer: 'float'   // promień: 0 — rdzeń, 1 — poświata
+  uPlantLayer: 'float',  // promień: 0 — rdzeń, 1 — poświata
+  uPlantBeamLen: 'float' // długość promienia [R] (impulsy na jednostkę długości)
 });
 
 function perObject(key, type) {
@@ -145,24 +147,25 @@ function step01(x, edge) {
   return select(x.greaterThan(edge), float(1.0), float(0.0));
 }
 
-// ── Promień energii ──────────────────────────────────────────────────────────────────────────────────────────────
+// ── Promień energii (główny: wylot → odbiornik, przekaźnikowy: odbiornik → ring) ───────────────────────────────────
+// Walec z uv.y wzdłuż (0 — źródło, 1 — cel); długość w `uPlantBeamLen` (impulsy co ~0,024 R jadą od źródła do celu).
 function buildBeamGraph() {
   const U = perObjectUniforms();
   const T = PLANT_TSL;
-  const vLocal = varying(positionLocal, 'vBeamLocal');
-  const vNormal = varying(normalLocal, 'vBeamNormal');
+  // normalna i kierunek do widza w przestrzeni widoku (promień przekaźnikowy ma skalę tylko wzdłuż osi walca)
+  const vNormalV = varying(transformNormalToView(normalLocal), 'vBeamNormalView');
+  const vUv = uv();
   const fragmentNode = Fn(() => {
-    const A = normalize(U.uBite.xyz);
-    const y = dot(vLocal, A).sub(U.uPlantShape.x);
-    const V = viewRayObject().negate();
-    const n = normalize(vNormal);
+    const ortho = cameraProjectionMatrix.element(3).w.greaterThan(0.5);
+    const V = select(ortho, vec3(0.0, 0.0, 1.0), normalize(positionView).negate());
+    const n = normalize(vNormalV);
     // jasność wg kąta do osi widzenia (środek walca najjaśniejszy) — warstwa 0: rdzeń, 1: poświata
     const c = abs(dot(n, V));
     const core = U.uPlantLayer.lessThan(0.5);
     const prof = select(core, c.mul(c).mul(c), c.mul(c).mul(0.12));
-    // impulsy energii jadą w górę
-    const pulse = float(0.82).add(sin(y.mul(260.0).sub(U.uPlantTime.mul(14.0))).mul(0.18));
-    const ends = smoothstep(U.uPlantBeam.y, U.uPlantBeam.y.add(0.01), y).mul(sdown(U.uPlantBeam.z.sub(0.01), U.uPlantBeam.z, y));
+    const s = vUv.y.mul(U.uPlantBeamLen);
+    const pulse = float(0.82).add(sin(s.mul(260.0).sub(U.uPlantTime.mul(14.0))).mul(0.18));
+    const ends = smoothstep(0.0, 0.02, vUv.y).mul(sdown(0.985, 1.0, vUv.y));
     const col = mix(vec3(...T.beam), vec3(...T.beamCore), select(core, c.mul(c), float(0.0)))
       .mul(prof.mul(pulse).mul(ends).mul(U.uPlantBeam.x).mul(select(core, 6.0, 2.5)));
     return vec4(col, max(col.r, max(col.g, col.b)));

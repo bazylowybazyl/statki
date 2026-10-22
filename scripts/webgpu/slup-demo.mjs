@@ -27,6 +27,8 @@ mkdirSync(out, { recursive: true });
 // burst — błyski piorunów (ziarno, liczba); near — kamera nad gryzem (odległość, odchylenie od pionu, pora, słońce).
 const VIEWS = [
   { name: 'gra-cala', x: 0.35, half: 1.25, whole: true },
+  { name: 'gra-przekaz', x: 0.62, half: 1.25, whole: true },
+  { name: 'gra-przekaz-blisko', x: 0.8, half: 0.42 },
   { name: 'gra-dzien', x: 0.3, half: 0.62 },
   { name: 'gra-noc', x: -0.4, half: 0.62, burst: [7, 3] },
   { name: 'gra-terminator', x: 0.06, half: 0.62, burst: [3, 2] },
@@ -48,6 +50,8 @@ try {
   await cdp.send('Page.navigate', { url: `${base}/dema/planety-webgpu.html?test=1&cialo=earth${bez ? '' : `${warstwy}&slupZegar=0${wariant}`}${query}` });
   if (!await waitFor(cdp, '!!(window.__planety && window.__planety.ready())', 240000, 400)) throw new Error('demo nie wstało');
   if (!bez && !await waitFor(cdp, '!!(window.__slup && window.__slup.ready())', 60000, 300)) throw new Error('słup nie wstał');
+  // ring z gry buduje się asynchronicznie (mapy, miasto, hale K-7)
+  if (!bez && !await waitFor(cdp, '!!(window.__slup && window.__slup.ringReady())', 120000, 500)) throw new Error('ring nie wstał');
   if (look) await ev(`(() => { Object.assign(window.__slup.look, ${JSON.stringify(look)}); window.__slup.apply(); return true; })()`);
   await settle(2500);
   const skala = await ev('window.__planety.biteScale ? window.__planety.biteScale() : 0.16');
