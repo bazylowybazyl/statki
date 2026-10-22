@@ -85,6 +85,8 @@ export function createPortCargo3D(Core3D) {
   const cuts = new Map();           // numer kursu → Vector4 (uv otworu) — dla proxy w tej klatce
   const cutCache = new Map();       // kadłub → Vector4
   const classCount = new Int32Array(CLASS_N);
+  const prevCount = new Int32Array(CLASS_N);
+  const lightRange = [{ classIndex: 0, base: 0, count: 0 }];
   const ranges = SWARM_DRONE_CLASS_LIST.map((cls) => ({ classIndex: cls.index, base: cls.index * T.dronesPerClass, count: 0 }));
   const stats = { ops: 0, drawnOps: 0, drones: 0, containers: 0, yards: 0, plans: 0, planMs: 0, ms: 0, draws: 0 };
   let frameNo = 0;
@@ -179,10 +181,15 @@ export function createPortCargo3D(Core3D) {
     }
   };
 
+  // Plan aktualny, gdy kontekst się nie zmienił (porównanie pól — bez napisu-klucza w klatce).
+  function sameContext(e, op, yard) {
+    return e.hull === op.hull && e.mode === op.mode && Math.abs(e.fill - op.fill) < 1e-4 && e.res === op.resourceId
+      && e.dwell === op.dwell && e.move === op.move && e.size === yard.size && e.yard.x === yard.x && e.yard.y === yard.y;
+  }
+
   function planFor(op, yard, budget) {
-    const key = `${op.hull}|${op.mode}|${op.fill.toFixed(3)}|${op.resourceId}|${op.dwell.toFixed(1)}|${op.move.toFixed(1)}|${yard.size}|${Math.round(yard.x)}|${Math.round(yard.y)}`;
     let e = plans.get(op.seed);
-    if (e && e.key === key) { e.seen = frameNo; return e; }
+    if (e && sameContext(e, op, yard)) { e.seen = frameNo; return e; }
     if (budget.n <= 0) return null;
     budget.n--;
     const t0 = performance.now();
@@ -197,7 +204,10 @@ export function createPortCargo3D(Core3D) {
     });
     stats.planMs = performance.now() - t0;
     stats.plans++;
-    e = { key, plan, seen: frameNo, looks: [], yard: { x: yard.x, y: yard.y, angle: yard.angle } };
+    e = {
+      plan, seen: frameNo, looks: [], yard: { x: yard.x, y: yard.y, angle: yard.angle },
+      hull: op.hull, mode: op.mode, fill: op.fill, res: op.resourceId, dwell: op.dwell, move: op.move, size: yard.size
+    };
     plans.set(op.seed, e);
     return e;
   }
@@ -208,13 +218,17 @@ export function createPortCargo3D(Core3D) {
     return v;
   }
 
-  const _yardGeo = new Map();
   const _bt = { x: 0, y: 0, angle: 0 };
   /** Infrastruktura pola: stoły, taśmy (z fazą pasa) i portale. */
   function pushYard(yard, beltPhase, seed) {
-    const gk = `${yard.size}|${yard.padLength}|${yard.padBeam}|${yard.portalGap}|${yard.halfBeam}`;
-    let g = _yardGeo.get(gk);
-    if (!g) { g = berthYardGeometry(yard); _yardGeo.set(gk, g); }
+    // Geometria placu w pamięci na rekordzie pola (rekordy ramki są wielokrotnego użytku — sprawdzenie pól).
+    let g = yard._yardGeo;
+    if (!g || g._size !== yard.size || g.padLength !== yard.padLength || g.padBeam !== yard.padBeam
+      || g._portal !== yard.portalGap || g._half !== yard.halfBeam) {
+      g = berthYardGeometry(yard);
+      g._size = yard.size; g._portal = yard.portalGap; g._half = yard.halfBeam;
+      yard._yardGeo = g;
+    }
     const D = BERTH_TRANSFER_TUNE;
     const yaw = -yard.angle;
     const bt = _bt;
@@ -340,15 +354,28 @@ export function createPortCargo3D(Core3D) {
       draws += conveyors.end();
       for (let k = 0; k < CLASS_N; k++) ranges[k].count = classCount[k];
       droneMeshes.setRanges(ranges);
-      droneLights.setRanges(ranges);
+      // Światła dronów WSZYSTKICH klas jednym rysunkiem (materiał czyta klasę z rekordu): zakres od 0 do końca
+      // ostatniego zajętego regionu; wolne miejsca regionów mają INFO.w = 0 (światło zwinięte).
+      const D = dronesNode.value.array;
+      let lastUsed = -1;
+      for (let k = 0; k < CLASS_N; k++) {
+        for (let i = classCount[k]; i < prevCount[k]; i++) D[((k * T.dronesPerClass + i) * DV + DR.INFO) * 4 + 3] = 0;
+        if (classCount[k] > 0) lastUsed = k;
+      }
+      lightRange[0].count = lastUsed >= 0 ? lastUsed * T.dronesPerClass + classCount[lastUsed] : 0;
+      droneLights.setRanges(lightRange);
       droneMeshes.setLod(CARGO_LIGHT_VIEW.pxPerUnit.value);
       for (const m of droneMeshes.meshes) for (const lod of ['hi', 'lo']) m.meshes[lod].position.set(origin.x, origin.y, 0);
       for (const m of droneLights.meshes) m.mesh.position.set(origin.x, origin.y, 0);
       const attr = dronesNode.value;
       attr.updateRanges.length = 0;
       for (let k = 0; k < CLASS_N; k++) {
-        if (classCount[k] > 0) { attr.addUpdateRange(k * T.dronesPerClass * DV * 4, classCount[k] * DV * 4); draws += 2; }
+        const n = Math.max(classCount[k], prevCount[k]);
+        if (n > 0) attr.addUpdateRange(k * T.dronesPerClass * DV * 4, n * DV * 4);
+        if (classCount[k] > 0) draws++;
+        prevCount[k] = classCount[k];
       }
+      if (lightRange[0].count > 0) draws++;
       if (attr.updateRanges.length) attr.needsUpdate = true;
       stats.draws = draws;
       // Plany bez odczytu — z pamięci.
@@ -377,7 +404,12 @@ export function createPortCargo3D(Core3D) {
     if (bays) { bays.begin(origin); bays.end(); }
     if (containers) { containers.begin(); containers.commit(); }
     if (conveyors) { conveyors.begin(origin); conveyors.end(); }
-    if (droneMeshes) { for (const r of ranges) r.count = 0; droneMeshes.setRanges(ranges); droneLights.setRanges(ranges); }
+    if (droneMeshes) {
+      for (const r of ranges) r.count = 0;
+      droneMeshes.setRanges(ranges);
+      lightRange[0].count = 0;
+      droneLights.setRanges(lightRange);
+    }
   }
 
   // Ładunek gracza w luku Atlasa: moduły od rufy (cargoBaySlots), wypełnienie z masy / ładowności, surowce wg udziałów.

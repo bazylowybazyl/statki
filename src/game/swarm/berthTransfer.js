@@ -69,7 +69,7 @@ export const BERTH_TRANSFER_TUNE = Object.freeze({
   lead: 3.0,
   /** Starty z gniazda co tyle [s roju]; drony na burtę (wg pracy), najwyżej. */
   launchStagger: 1.25,
-  maxPerSide: 8,
+  maxPerSide: 16,
   /** Praca ma zająć najwyżej taki ułamek okna (zapas na czekanie przy stołach i taśmie). */
   workShare: 0.62,
   /** Wrota: start roju po tej części przebiegu otwarcia; zapas przed zamknięciem [s gry]. */
@@ -332,8 +332,9 @@ function estimateDrones(lifts, W, cls) {
   // Kurs ~ (przelot 2 × 160 j., pion 4 × 130 j., operacje): z grubsza — dokładny czas daje planSide.
   const trip = 2 * profileTime(160, f.vMax * SWARM_LOADED_SPEED, f.accel * SWARM_LOADED_ACCEL)
     + 4 * profileTime(130, f.vVert, f.accelVert) + SWARM_OP_TIMES.grip + SWARM_OP_TIMES.release + 0.6;
-  // Rój, nie pojedynczy dron: co najmniej ~1 dron na 6 warstw burty (do 3), więcej, gdy okno ciasne.
-  return clamp(Math.max(Math.ceil(lifts * trip / (W * T.workShare)), Math.min(3, Math.round(lifts / 6))), 1, T.maxPerSide);
+  // Rój, nie pojedynczy dron — gęstość jak w demie (wymiana frachtowca: 96 dronów L na 760 kursów, ~1 dron na
+  // 8 kursów): co najmniej 1 dron na 8 warstw burty; więcej, gdy okno ciasne; najwyżej maxPerSide.
+  return clamp(Math.max(Math.ceil(lifts * trip / (W * T.workShare)), Math.ceil(lifts / 8)), 1, T.maxPerSide);
 }
 
 /**

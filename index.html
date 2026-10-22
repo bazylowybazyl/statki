@@ -15983,7 +15983,8 @@
     // pola zatok w kadrze, statki przy stanowiskach z kontraktem przeładunku E6, ładunek gracza); obraz liczy worker
     // renderu z bloku `cargoOps` (src/3d/cargo/portCargo3D.js), w trybie off — moduł na stronie. Ładunek i czas postoju
     // liczy świat ruchu — przeładunek nic nie zmienia w grze. `?przeladunek=0` — bez obrazu (A/B kosztu),
-    // `?przeladunekDemo=1` — przeładunek z ziarna kursu, gdy worker ruchu nie wystawia kontraktu.
+    // `?przeladunekDemo=1` — przeładunek z ziarna kursu, gdy worker ruchu nie wystawia kontraktu, `?przeladunekStres=N` —
+    // N syntetycznych przeładunków na polach w kadrze (pomiar kosztu obrazu).
     // ============================================================
     const _portCargoQuery = new URLSearchParams(location.search);
     const PORT_CARGO_ON = _portCargoQuery.get('przeladunek') !== '0';
@@ -15994,6 +15995,7 @@
     /** Luk Atlasa przy postoju i handlu: postęp wrót 0…1 (jak ScoutBay.door) — luk rysuje scoutBay3D. */
     let _playerCargoDoor = 0;
     const _playerCargoRes = [];
+    const _playerCargoPairs = [];
     function playerCargoRecord(frameDt) {
       const p = _portCargoFrame._player;
       const atlas = !!ship && !ship.destroyed && isAtlasHullForScout();
@@ -16006,9 +16008,13 @@
       const mass = getBagMass(PLAYER.cargo);
       // Udziały masy surowców (do 4 największych) — wygląd kontenerów (rodziny Z5).
       _playerCargoRes.length = 0;
+      let np = 0;
       for (const key in PLAYER.cargo) {
         const m = (Number(PLAYER.cargo[key]) || 0) * (Number(RESOURCES[key]?.mass) || 1);
-        if (m > 0) _playerCargoRes.push([key, m]);
+        if (!(m > 0)) continue;
+        const pair = _playerCargoPairs[np] || (_playerCargoPairs[np] = ['', 0]);
+        pair[0] = key; pair[1] = m; np++;
+        _playerCargoRes.push(pair);
       }
       _playerCargoRes.sort((a, b) => b[1] - a[1]);
       if (_playerCargoRes.length > 4) _playerCargoRes.length = 4;
