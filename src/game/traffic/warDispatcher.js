@@ -187,6 +187,23 @@ export function declareAmmoDemand(stations, config = WAR_MODEL) {
  * kilkanaście razy więcej go kosztował.
  */
 export function scrapFromWreck(classId, recovery = WAR_MODEL.scrapRecovery) {
+  const key = `${classId}|${recovery}`;
+  if (SCRAP_MEMO.has(key)) return SCRAP_MEMO.get(key);
+  const scrap = computeScrapFromWreck(classId, recovery);
+  SCRAP_MEMO.set(key, scrap);
+  return scrap;
+}
+
+/**
+ * Pamięć wyników dla klasy okrętu. Złomiarze oceniają każdy wrak z każdej
+ * stacji co decyzję (`assessWreck`), a składy klas są stałe — liczenie mas
+ * i wartości od nowa było ~9% ticku ruchu. Tabele (`WARSHIP_CLASSES`,
+ * `RESOURCES`) są zamrożone, więc wynik zależy tylko od klasy i parametrów.
+ */
+const SCRAP_MEMO = new Map();
+const MANIFEST_MEMO = new Map();
+
+function computeScrapFromWreck(classId, recovery) {
   const cls = WARSHIP_CLASSES[classId];
   if (!cls) return 0;
   let mass = 0;
@@ -209,6 +226,21 @@ export function scrapFromWreck(classId, recovery = WAR_MODEL.scrapRecovery) {
  * jednym przyciskiem; z nim to decyzja: brać mało i szybko czy dużo i wolno.
  */
 export function salvageManifest(classId, mode = 'tow', config = WAR_MODEL) {
+  // Wynik dla domyślnej konfiguracji jest zamrożony i współdzielony — manifest
+  // się tylko czyta (rozładunek holownika, ocena wraku).
+  if (config !== WAR_MODEL) return computeSalvageManifest(classId, mode, config);
+  const key = `${classId}|${mode}`;
+  let manifest = MANIFEST_MEMO.get(key);
+  if (!manifest) {
+    manifest = computeSalvageManifest(classId, mode, config);
+    Object.freeze(manifest.components);
+    Object.freeze(manifest);
+    MANIFEST_MEMO.set(key, manifest);
+  }
+  return manifest;
+}
+
+function computeSalvageManifest(classId, mode, config) {
   const cls = WARSHIP_CLASSES[classId];
   if (!cls) return { scrap: 0, components: {}, value: 0, mass: 0 };
 

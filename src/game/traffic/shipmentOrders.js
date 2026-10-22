@@ -498,9 +498,33 @@ export function wreckShipmentOrder(order, wreckId = null, wreckInventory = null,
   return { changed, moved, retained: cloneManifest(order.cargo), status: order.status };
 }
 
+/**
+ * Indeks id → zlecenie, prowadzony przyrostowo jak `usedOrderIds`: zlecenia
+ * tylko się dopisują, więc wystarczy doindeksować nowe. Przegląd całej listy
+ * przy każdej dostawie (`orders.find`) był ~12% ticku ruchu po kilku godzinach
+ * ×60 — lista ma dziesiątki tysięcy zleceń. Przy duplikacie id wygrywa
+ * pierwsze, tak jak w `find`.
+ */
+function orderIndexOf(state) {
+  const orders = state.orders;
+  let index = state.orderByIdIndex;
+  if (!index || index.orders !== orders || index.count > orders.length) {
+    index = { orders, count: 0, byId: new Map() };
+    Object.defineProperty(state, 'orderByIdIndex', {
+      value: index, writable: true, configurable: true, enumerable: false
+    });
+  }
+  for (; index.count < orders.length; index.count++) {
+    const order = orders[index.count];
+    const id = order?.id;
+    if (id !== undefined && !index.byId.has(id)) index.byId.set(id, order);
+  }
+  return index.byId;
+}
+
 export function getShipmentOrder(state, orderId) {
   const id = String(orderId || '');
-  return Array.isArray(state?.orders) ? state.orders.find(order => order?.id === id) || null : null;
+  return Array.isArray(state?.orders) ? orderIndexOf(state).get(id) || null : null;
 }
 
 export function getActiveShipmentOrders(state) {

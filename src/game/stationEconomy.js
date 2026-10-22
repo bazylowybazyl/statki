@@ -1058,7 +1058,11 @@ export function seedStationStock(station, econ, fill = 0.45) {
 export function getStationDeficits(station, econ, limit = 6) {
   if (!econ?.resources) return [];
   const out = [];
-  for (const [id, def] of Object.entries(RESOURCES)) {
+  // Tylko surowce, których stacja chce, w kolejności `RESOURCES` — ten sam
+  // wynik co przegląd wszystkich, bez pytania o każdy z ~60 towarów.
+  const ids = station && typeof station === 'object' ? wantedEntryOf(station).list : RESOURCE_KEYS;
+  for (const id of ids) {
+    const def = RESOURCES[id];
     const cap = capacityOf(econ, id);
     if (cap <= 0) continue;
     if (!stationWantsResource(station, id)) continue;
@@ -1110,15 +1114,19 @@ export function stationWantsResource(station, resourceId) {
  */
 const WANTED_CACHE = new WeakMap();
 
-function wantedSetOf(station) {
-  const industry = getStationIndustry(station);
+function wantedEntryOf(station) {
   const extra = station.extraDemand || null;
   const extraLength = extra ? extra.length : 0;
   const cached = WANTED_CACHE.get(station);
-  if (cached && cached.industry === industry && cached.extra === extra
+  // Profil przemysłu zależy tylko od `station.industry` i id stacji (tabela
+  // `STATION_INDUSTRY` jest zamrożona) — sprawdzamy je wprost, bez budowania
+  // klucza stacji przy każdym pytaniu.
+  if (cached && cached.own === station.industry && cached.id === station.id
+    && cached.name === station.name && cached.extra === extra
     && cached.extraLength === extraLength) {
-    return cached.ids;
+    return cached;
   }
+  const industry = getStationIndustry(station);
   const candidates = new Set([...Object.keys(STATION_UPKEEP), ...Object.keys(MILITARY_UPKEEP)]);
   for (const id of extra || []) candidates.add(String(id));
   for (const recipeId of industry?.recipes || []) {
@@ -1126,8 +1134,17 @@ function wantedSetOf(station) {
   }
   const ids = new Set();
   for (const id of candidates) if (wantsResourceUncached(station, id)) ids.add(id);
-  WANTED_CACHE.set(station, { industry, extra, extraLength, ids });
-  return ids;
+  const entry = {
+    own: station.industry, id: station.id, name: station.name, extra, extraLength, ids,
+    /** Te same surowce w kolejności `RESOURCE_KEYS` — kolejność ma znaczenie przy remisach w sortowaniu. */
+    list: RESOURCE_KEYS.filter(key => ids.has(key))
+  };
+  WANTED_CACHE.set(station, entry);
+  return entry;
+}
+
+function wantedSetOf(station) {
+  return wantedEntryOf(station).ids;
 }
 
 function wantsResourceUncached(station, id) {
