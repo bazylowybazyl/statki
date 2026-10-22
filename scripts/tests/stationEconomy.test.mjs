@@ -96,9 +96,11 @@ export function run() {
   // zamierzonym: uzbrojenie to nowy, stały odbiorca metalu.
   // 2026-10-21 (receptury E8): osiem rodzin luf i napędy na rudach pasa — Ziemia
   // +2,7% żelaza (flak, wyrzutnia torped, napędy w stoczni), −1,5% krzemu (mniej emiterów).
-  t.close('plan Ziemi wymaga 1428,834 rudy żelaza/h', earthNet.iron_ore * 3600, -1428.8343229171044, 1e-6);
-  t.close('plan Ziemi wymaga 743,368 rudy krzemu/h', earthNet.silicon_ore * 3600, -743.3683448852485, 1e-6);
-  t.close('plan Merkurego eksportuje 1328,848 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1328.8483362557267, 1e-6);
+  // 2026-10-22 (napędy warp Mk I–III w roli stoczni): stocznia Ziemi dzieli moc na
+  // więcej linii, więc topi mniej — −6% żelaza, krzem +1%.
+  t.close('plan Ziemi wymaga 1340,093 rudy żelaza/h', earthNet.iron_ore * 3600, -1340.0927833985027, 1e-6);
+  t.close('plan Ziemi wymaga 750,479 rudy krzemu/h', earthNet.silicon_ore * 3600, -750.4793355139908, 1e-6);
+  t.close('plan Merkurego eksportuje 1334,222 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1334.2222163168465, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });

@@ -73,7 +73,12 @@ export const FLEET_DEMAND = Object.freeze({
   drive_heavy: 0.0040,
   hypercruise_mk1: 0.0088,
   hypercruise_mk2: 0.0014,
-  hypercruise_mk3: 0.0003
+  hypercruise_mk3: 0.0003,
+  // Napęd warp (2026-10-22): niszczyciel Mk I, krążownik Mk II, nosiciel Mk III
+  // (fregata bez warpa) — ten sam przelicznik ~0,0105 na sztukę ważoną doktryną.
+  warp_mk1: 0.0025,
+  warp_mk2: 0.0014,
+  warp_mk3: 0.0003
 });
 
 /**
@@ -182,7 +187,8 @@ export const INDUSTRY_ARCHETYPES = Object.freeze({
   shipworks: { label: 'Stocznia',
     recipes: ['assemble_hull_plate', 'assemble_thruster', 'assemble_weapon_mount',
       'assemble_drive_light', 'assemble_drive_heavy',
-      'assemble_hypercruise_mk1', 'assemble_hypercruise_mk2', 'assemble_hypercruise_mk3'],
+      'assemble_hypercruise_mk1', 'assemble_hypercruise_mk2', 'assemble_hypercruise_mk3',
+      'assemble_warp_mk1', 'assemble_warp_mk2', 'assemble_warp_mk3'],
     capacity: 1.1, cost: { steel: 120, hull_plate: 40, avionics: 10, thruster: 4 } },
   /** Systemy: awionika, reaktory, podtrzymywanie życia — miękka część okrętu. */
   systems: { label: 'Zakłady systemowe', recipes: ['assemble_avionics', 'assemble_reactor_core', 'assemble_life_support'],
