@@ -37,6 +37,8 @@ export const GFX_SETTINGS = Object.freeze({
   effects: { values: GFX_LEVELS, def: 'high' },
   // Pył i para w halach K-7 (pole gazu 2D na GPU).
   hallDust: { values: ['on', 'off'], def: 'on' },
+  // Gaz w otwartej przestrzeni (pas asteroid: pole gazu z transportem na GPU — src/3d/spaceGas/).
+  spaceGas: { values: ['on', 'off'], def: 'on' },
   lacquer: { values: ['on', 'off'], def: 'on', legacyKey: 'sc_hull_lacquer' },
   hullLight: { values: ['pbr', 'classic'], def: 'pbr', legacyKey: 'sc_hull_light' },
   spaceDust: { values: ['on', 'off'], def: 'on', legacyKey: 'sc_space_dust', preset: false },
@@ -82,19 +84,19 @@ export const GFX_PRESET_KEYS = Object.freeze(GFX_KEYS.filter((k) => GFX_SETTINGS
 export const GFX_PRESETS = Object.freeze({
   low: Object.freeze({
     renderScale: 0.67, msaa: 0, bloom: 'half', heatHaze: 'off', shadowShafts: 'off', planetQuality: 'low',
-    explosions: 'low', effects: 'low', hallDust: 'off', lacquer: 'off', hullLight: 'classic'
+    explosions: 'low', effects: 'low', hallDust: 'off', spaceGas: 'off', lacquer: 'off', hullLight: 'classic'
   }),
   medium: Object.freeze({
     renderScale: 0.85, msaa: 4, bloom: 'full', heatHaze: 'on', shadowShafts: 'low', planetQuality: 'medium',
-    explosions: 'medium', effects: 'medium', hallDust: 'on', lacquer: 'on', hullLight: 'pbr'
+    explosions: 'medium', effects: 'medium', hallDust: 'on', spaceGas: 'on', lacquer: 'on', hullLight: 'pbr'
   }),
   high: Object.freeze({
     renderScale: 1, msaa: 4, bloom: 'full', heatHaze: 'on', shadowShafts: 'high', planetQuality: 'high',
-    explosions: 'high', effects: 'high', hallDust: 'on', lacquer: 'on', hullLight: 'pbr'
+    explosions: 'high', effects: 'high', hallDust: 'on', spaceGas: 'on', lacquer: 'on', hullLight: 'pbr'
   }),
   ultra: Object.freeze({
     renderScale: 1.25, msaa: 4, bloom: 'full', heatHaze: 'on', shadowShafts: 'high', planetQuality: 'ultra',
-    explosions: 'ultra', effects: 'ultra', hallDust: 'on', lacquer: 'on', hullLight: 'pbr'
+    explosions: 'ultra', effects: 'ultra', hallDust: 'on', spaceGas: 'on', lacquer: 'on', hullLight: 'pbr'
   })
 });
 

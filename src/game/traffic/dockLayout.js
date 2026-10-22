@@ -21,6 +21,7 @@
  */
 
 import { HULL_RENDER_PROFILES, HULL_RENDER_WORLD_SCALE } from '../../data/ships.js';
+import { trafficHullProfile } from '../../data/trafficHulls.js';
 
 // ============================================================
 // Klasy stanowisk
@@ -82,9 +83,14 @@ export function suggestBerthMultiplier(tonsPerHour = 0, economyScale = 1) {
  */
 export const TONS_PER_BERTH_BLOCK = 50000;
 
-/** Gabaryty kadłuba w jednostkach świata. */
+/**
+ * Gabaryty kadłuba w jednostkach świata. Klasa kursu bez własnego profilu
+ * (`freighter-capital`, `raider`, `tug`…) przechodzi przez rejestr kadłubów
+ * ruchu (`trafficHullProfile`, E6) — wcześniej spadała na kontenerowiec, więc
+ * ciężki frachtowiec (1800 j.) dostawał pad M, a jego proxy wystawało z hali.
+ */
 export function hullFootprint(hullId) {
-  const profile = HULL_RENDER_PROFILES[hullId] || HULL_RENDER_PROFILES.container_ship;
+  const profile = HULL_RENDER_PROFILES[hullId] || trafficHullProfile(hullId);
   return {
     length: profile.length * HULL_RENDER_WORLD_SCALE,
     width: profile.radius * 2 * HULL_RENDER_WORLD_SCALE

@@ -49,14 +49,20 @@ export function isCanvasSource(source) {
 
 const BITMAP_OPTIONS = Object.freeze({ premultiplyAlpha: 'none', colorSpaceConversion: 'default' });
 
-/** Obraz z adresu jako ImageBitmap (Promise). */
-export function loadImageBitmap(url) {
+/**
+ * Obraz z adresu jako ImageBitmap (Promise). `resize` — { width, height } (opcjonalnie): dekodowanie od razu do
+ * mniejszego rozmiaru (np. mapa 8192 × 4096 dla dalekiej planety → 4096 × 2048 — czwarta część pamięci GPU).
+ */
+export function loadImageBitmap(url, resize = null) {
+  const opts = resize && resize.width > 0 && resize.height > 0
+    ? { ...BITMAP_OPTIONS, resizeWidth: resize.width | 0, resizeHeight: resize.height | 0, resizeQuality: 'high' }
+    : BITMAP_OPTIONS;
   return fetch(url)
     .then((res) => {
       if (!res.ok) throw new Error(`obraz ${url}: HTTP ${res.status}`);
       return res.blob();
     })
-    .then((blob) => createImageBitmap(blob, BITMAP_OPTIONS));
+    .then((blob) => createImageBitmap(blob, opts));
 }
 
 /**

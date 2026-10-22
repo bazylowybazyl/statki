@@ -28,6 +28,7 @@ import {
   COURSE_KIND, launchCourse, travelStage, dwellStage, DWELL_REASON, getCourse
 } from './courseRegistry.js';
 import { RESOURCES } from '../../data/resources.js';
+import { putStock } from './marketBook.js';
 
 export const PIRACY_MODEL = Object.freeze({
   /**
@@ -83,8 +84,35 @@ export const PIRACY_MODEL = Object.freeze({
   /** Szansa, że łowca dopadnie rejdera na szlaku. */
   hunterSuccess: 0.55,
   /** Ile trwa polowanie. */
-  huntSeconds: 780
+  huntSeconds: 780,
+
+  /**
+   * ZAINTERESOWANIE ŁUPEM. Pirat nie rzuca się na wszystko, co leci: pusty
+   * przelot nic mu nie da, a abordaż kosztuje go ludzi i paliwo. Szansa
+   * przechwytu rośnie z pierwiastkiem wartości ładunku i osiąga pełnię przy
+   * `lootReference`; pusty kurs i drobnica mają `minInterest`.
+   *
+   * Zmierzone przed (2026-10-21, ziarno 7, 60 min): 36% przechwytów to puste
+   * przeloty i 26% wyprawy górnicze w drodze PO urobek — łup zerowy, a 41%
+   * rozstrzygniętych kursów ginęło. Piractwo dusiło przewóz rudy, choć żyć ma
+   * z tłustych celów: karawan kupieckich, podzespołów i amunicji.
+   */
+  //
+  // Decyzja użytkownika 2026-10-22: „za mało piractwa” — przy 25 000 / 0,15
+  // ginęło ~6% kursów z ładunkiem, cel ~15% (pasmo 12–20%).
+  lootReference: 3_000,
+  minInterest: 0.7
 });
+
+/**
+ * Jak bardzo piratom zależy na kursie o tej wartości ładunku (0…1). Mnoży
+ * szansę przechwytu w rzucie dyspozytora — patrz `lootReference`.
+ */
+export function pirateInterest(cargoValue, config = PIRACY_MODEL) {
+  const value = Math.max(0, Number(cargoValue) || 0);
+  if (!(value > 0)) return config.minInterest;
+  return Math.max(config.minInterest, Math.min(1, Math.sqrt(value / config.lootReference)));
+}
 
 export function createPiracyState(options = {}) {
   return {
@@ -406,11 +434,7 @@ export function tickPiracy(piracy, dt, options = {}) {
     // Towar wchodzi na rynek legalny, kryjówka dostaje kredyty. To jest ten
     // moment, w którym łup staje się pieniądzem i wraca jako kolejny rejd.
     const econ = typeof getEconomy === 'function' ? getEconomy(run.targetId) : null;
-    if (econ?.resources) {
-      const cap = Number(econ.capacity?.[run.resourceId]) || 0;
-      const teraz = Number(econ.resources[run.resourceId]) || 0;
-      econ.resources[run.resourceId] = cap > 0 ? Math.min(cap, teraz + run.units) : teraz + run.units;
-    }
+    putStock(econ, run.resourceId, run.units);
     if (nest) nest.credits += run.sell;
     piracy.stats.smugglesRun++;
     piracy.stats.fenced += run.units;

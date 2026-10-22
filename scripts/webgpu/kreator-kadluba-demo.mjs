@@ -4,10 +4,17 @@
 // podobnej klasy w zoomach 0,22 / 0,5 / 1, style rogów (fazy / łuki / ostro), mapy pakietu (albedo, normalne, AO,
 // relief, emisja, komórki belek), okręty z gotowych części, edycja (blok, koło, wycięcie, moduł, naklejka, rowek
 // myszą), sieć rur (etap `rury`: rufa z gondolami A/B, sieć wyłączona, rura ręczna), pipeline'y synchroniczne
-// w klatkach (ma być 0), błędy konsoli.
+// w klatkach (ma być 0), błędy konsoli. Etap `klocki` (poza domyślnymi): fregata z klocków, arkusz palety, edycja myszą
+// (`--etapy klocki --tylko klocki` — bez floty). Etap `klasa` (poza domyślnymi): panel klasy, gniazda Bellatora
+// i Colossusa, niedobór mocy z martwymi kablami, odrzucenie akcji ponad limit mostka. Etap `mostek` (poza domyślnymi):
+// gniazdo mostka v 2 floty TN z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze, galeria poziomów I–VI
+// (sześć gniazd na jednym kadłubie, z modelami i bez). Etap `stocznia` (poza domyślnymi): przyjazny edytor prawdziwą
+// myszą — paleta z miniaturami, przeciągnij i upuść, stempel z rzędem, Ctrl+D, Shift+przeciągnij, usunięcie na paletę,
+// moduł poza kadłubem odrzucony, kadłub od zera (`--etapy stocznia --tylko stocznia`). Pozostałe etapy — w interfejsie
+// warsztatu (`?ui=warsztat`).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
-//        [--etapy ab,rury,style,mapy,czesci,edycja]
+//        [--etapy ab,rury,style,mapy,czesci,edycja,klocki,klasa,reaktor,mostek,stocznia]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -34,13 +41,14 @@ async function shot(name, opis, frames = 4) {
   await screenshotPng(cdp, join(out, `${name}.png`));
   const st = await ev('window.__kreator.stats()');
   report.zrzuty[name] = { opis, ...st };
-  console.log('zrzut', name.padEnd(30), JSON.stringify({ img: st.image, nodes: st.nodes, t: st.timing && Math.round(st.timing.total), sync: st.syncPipes }));
+  console.log('zrzut', name.padEnd(30), JSON.stringify({ img: st.image, nodes: st.nodes, t: st.timing && Math.round(st.timing.total), sync: st.syncPipes, siec: st.net }));
 }
 
 const PRESETS = ['custos', 'hasta', 'bellator', 'citadella', 'colossus', 'orbis', 'atlas2', 'pirate'];
 const TN = new Set(['custos', 'hasta', 'bellator', 'citadella', 'colossus']);
 try {
-  await cdp.send('Page.navigate', { url: `${base}/dema/kreator-kadluba-webgpu.html?test=1` });
+  // zrzuty paneli warsztatu: interfejs 'warsztat' (domyślny jest przyjazny edytor — etap `stocznia` przełącza go sam)
+  await cdp.send('Page.navigate', { url: `${base}/dema/kreator-kadluba-webgpu.html?test=1&ui=warsztat` });
   if (!await waitFor(cdp, '!!(window.__kreator && (window.__kreator.ready || window.__kreator.error))', 240000, 400)) throw new Error('demo nie wstało');
   const err = await ev('window.__kreator.error || null');
   if (err) throw new Error(`demo: ${err}`);
@@ -88,6 +96,15 @@ try {
         await ev(`window.__kreator.setAb(true, ${JSON.stringify(side)}); window.__kreator.setZoom(${z}); window.__kreator.S.cam.x += ${dx}`);
         await shot(`${key}-${side === 'design' ? 'a' : 'b'}-rufa`, `${key}: ${side === 'design' ? 'A — kreator z siecią rur' : 'B — sprite gry'}, rufa, zoom ${z.toFixed(2)}`);
       }
+      if (key === 'citadella') {
+        // kadr zgłoszenia użytkownika (2026-10-20): gondole MAIN, kolumna z napisem TERRA NOVA, kasztele — zoom 3,3;
+        // czysty i z nakładką edytora (obrysy modułów, graf sieci systemów)
+        await ev('window.__kreator.setAb(false); window.__kreator.setCamera(-362, -65, 3.3)');
+        await shot(`${key}-a-zgloszenie`, `${key}: kadr zgłoszenia (rufa: gondole, kolumna TERRA NOVA, kasztele), zoom 3,3`);
+        await ev('document.body.classList.remove("clean"); window.__kreator.setNetGraph?.(true); window.__kreator.setCamera(-362, -65, 3.3)');
+        await shot(`${key}-a-zgloszenie-edytor`, `${key}: kadr zgłoszenia z nakładką edytora i grafem sieci (I)`);
+        await ev('window.__kreator.setNetGraph?.(false); document.body.classList.add("clean")');
+      }
       const dens = await ev('window.__kreator.design.pipeNet?.density ?? 0');
       await ev('window.__kreator.edit((d) => { d.pipeNet = { ...(d.pipeNet || {}), density: 0 }; })');
       await ev(`window.__kreator.setAb(true, "design"); window.__kreator.setZoom(${z}); window.__kreator.S.cam.x += ${dx}`);
@@ -95,6 +112,43 @@ try {
       await ev(`window.__kreator.edit((d) => { d.pipeNet = { ...(d.pipeNet || {}), density: ${dens} }; })`);
       await ev('window.__kreator.built()');
       await ev('window.__kreator.setAb(false)');
+    }
+    if (stages.has('reaktor') && TN.has(key)) {
+      // gniazdo obudowy reaktora (moduł reactor v 2) z modelem 3D gry (reactor3D) i bez niego — samo gniazdo w poszyciu
+      await ev('window.__kreator.built()');
+      const rc = await ev('(() => { const m = window.__kreator.S.field.expanded.modules.find((q) => q.type === "reactor"); return m ? { x: m.x, y: m.y, r: m.r, v: m.v } : null; })()');
+      if (rc) {
+        const z = Math.min(12, 140 / rc.r);
+        report.reaktor = report.reaktor || {};
+        report.reaktor[key] = { ...rc, model: await ev('window.__kreator.reactor3D ? window.__kreator.reactor3D.stats.instances : -1') };
+        await ev(`window.__kreator.setAb(false); window.__kreator.setCamera(${rc.x}, ${rc.y}, ${z})`);
+        await ev('window.__kreator.runFrames(4)');
+        await shot(`${key}-reaktor-3d`, `${key}: obudowa reaktora 3D w gnieździe (v ${rc.v}), zoom ${z.toFixed(2)}`);
+        await ev('window.__kreator.reactor3D.debug.enabled = false; window.__kreator.runFrames(2)');
+        await shot(`${key}-reaktor-gniazdo`, `${key}: samo gniazdo obudowy w poszyciu (bez modelu 3D)`);
+        await ev('window.__kreator.reactor3D.debug.enabled = true');
+        await ev(`window.__kreator.setCamera(${rc.x}, ${rc.y}, ${z * 0.3})`);
+        await ev('window.__kreator.runFrames(4)');
+        await shot(`${key}-reaktor-okret`, `${key}: obudowa reaktora na tle okrętu, zoom ${(z * 0.3).toFixed(2)}`);
+      }
+    }
+    if (stages.has('mostek') && TN.has(key)) {
+      // gniazdo mostka (moduł bridge v 2, poziom klasy) z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze
+      await ev('window.__kreator.built()');
+      const br = await ev('(() => { const k = window.__kreator, m = k.S.field.expanded.modules.find((q) => q.type === "bridge"); return m ? { x: m.x, y: m.y, w: m.w, h: m.h, lv: m.lv, v: m.v, rim: m.rim, poziomProjektu: k.S.field.expanded.design.bridgeLevel } : null; })()');
+      if (br) {
+        const z = Math.min(24, 1600 * 0.42 / (2 * (br.w + br.rim)));
+        await ev(`window.__kreator.setAb(false); window.__kreator.setBridge3D(true); window.__kreator.setCamera(${br.x}, ${br.y}, ${z})`);
+        await ev('window.__kreator.runFrames(6)');
+        report.mostek = report.mostek || {};
+        report.mostek[key] = { ...br, b3: await ev('JSON.stringify({ records: window.__kreator.bridge3D.stats.records, visible: window.__kreator.bridge3D.stats.visible, emitters: window.__kreator.bridge3D.stats.emitters })') };
+        await shot(`${key}-mostek-3d`, `${key}: mostek ${br.lv} (model 3D gry) w gnieździe v ${br.v}, zoom ${z.toFixed(2)}`);
+        await ev('window.__kreator.setBridge3D(false); window.__kreator.runFrames(2)');
+        await shot(`${key}-mostek-gniazdo`, `${key}: samo gniazdo mostka ${br.lv} w poszyciu (bez modelu 3D)`);
+        await ev(`window.__kreator.setBridge3D(true); window.__kreator.setCamera(${br.x}, ${br.y}, ${z * 0.3})`);
+        await ev('window.__kreator.runFrames(4)');
+        await shot(`${key}-mostek-okret`, `${key}: mostek na tle okrętu, zoom ${(z * 0.3).toFixed(2)}`);
+      }
     }
     if (stages.has('style') && key === 'orbis') {
       for (const s of ['chamfer', 'rounded', 'sharp']) {
@@ -194,6 +248,269 @@ try {
     report.mysz.rura = await ev('(window.__kreator.design.pipes || []).length');
     console.log('mysz', JSON.stringify(report.mysz));
     await shot('edycja-2-mysz', 'Edycja myszą: pas bloków pancerza nad burtą, wieża S usunięta PPM, koło nadbudówki na rufie, rowek, rura ręczna');
+  }
+  if (stages.has('klocki')) {
+    // KLOCKI (--etapy klocki): fregata z klocków (edytor z paletą i zaznaczonym klinem, czysty kadr, zoom gry 1,
+    // zbliżenie rufy, A/B ze sprite'em Custosa), arkusz palety (każdy kształt 0° / 45° / 90° z odbiciem, szczelina,
+    // wycięcie, nadbudówka), edycja myszą (stawianie klikiem i przeciąganiem, obrót R, cofanie i ponawianie)
+    const k = 'window.__kreator';
+    await ev(`${k}.preset("klocki")`);
+    // kadr: okręt w lewej części ekranu (panel po prawej), sekcja klocków panelu widoczna
+    await ev(`${k}.blk.tool(); ${k}.blk.select([6]); (() => { const im = ${k}.S.field.image; const z = Math.min((innerWidth - 360) * 0.86 / im.w, innerHeight * 0.7 / im.h); ${k}.setCamera(im.cx + 170 / z, im.cy, z); })(); document.getElementById('blk-palette').scrollIntoView({ block: 'start' })`);
+    await shot('klocki-edytor', 'Fregata z klocków: edytor — paleta, obrysy klocków (lustro przerywane), oś lustra, uchwyty klina');
+    await ev(`${k}.blk.select([]); ${k}.act("v"); document.body.classList.add("clean")`);
+    const fitZ = await ev(`(() => { const im = ${k}.S.field.image; return Math.min(innerWidth * 0.85 / im.w, innerHeight * 0.8 / im.h); })()`);
+    await ev(`${k}.setCamera(${k}.S.field.image.cx, ${k}.S.field.image.cy, ${fitZ})`);
+    await shot('klocki-fregata', 'Fregata z klocków (10 klocków + lustro): kadr na okręt');
+    await ev(`${k}.setCamera(${k}.S.field.image.cx - ${k}.S.field.image.w * 0.25, ${k}.S.field.image.cy - ${k}.S.field.image.h * 0.15, ${fitZ * 2.6})`);
+    await shot('klocki-fregata-det', 'Fregata z klocków: zbliżenie rufy (rowy maszynowni z rurami między płytami)');
+    await ev(`${k}.setCamera(${k}.S.field.image.cx, ${k}.S.field.image.cy, 1)`);
+    await shot('klocki-fregata-gra1', 'Fregata z klocków: zoom gry 1');
+    await ev(`${k}.fitAb()`);
+    await shot('klocki-ab', 'Fregata z klocków (góra) i sprite Custosa (dół), ta sama skala');
+    await ev(`${k}.setAb(false); ${k}.blk.sheet()`);
+    await ev(`${k}.built()`);
+    const sheetZ = await ev(`(() => { const im = ${k}.S.field.image; return Math.min(innerWidth * 0.92 / im.w, innerHeight * 0.85 / im.h); })()`);
+    await ev(`${k}.setCamera(${k}.S.field.image.cx, ${k}.S.field.image.cy, ${sheetZ})`);
+    await shot('klocki-paleta', 'Arkusz palety: rzędy 0°, 45°, 90° z odbiciem; dół — rowy między płytami, gap 0, nakładanie, wycięcie, nadbudówka');
+    await ev(`document.body.classList.remove("clean"); ${k}.blk.tool(); ${k}.setCamera(${k}.S.field.image.cx + 180 / (${sheetZ} * 0.74), ${k}.S.field.image.cy, ${sheetZ * 0.74}); document.getElementById('blk-palette').scrollIntoView({ block: 'start' })`);
+    await shot('klocki-paleta-edytor', 'Arkusz palety w edytorze: panel klocków, obrysy klocków');
+    // edycja myszą na fregacie
+    await ev(`${k}.preset("klocki")`);
+    await ev(`${k}.blk.tool(); (() => { const im = ${k}.S.field.image; const z = Math.min((innerWidth - 360) * 0.86 / im.w, innerHeight * 0.7 / im.h); ${k}.setCamera(im.cx + 170 / z, im.cy, z); })()`);
+    const mouse = async (type, x, y, button = 'left', buttons = 1, modifiers = 0) => cdp.send('Input.dispatchMouseEvent', { type, x, y, button, buttons, clickCount: 1, modifiers });
+    const key = async (keyName, code, modifiers = 0) => {
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: keyName, code, modifiers, windowsVirtualKeyCode: keyName.toUpperCase().charCodeAt(0) });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: keyName, code, modifiers, windowsVirtualKeyCode: keyName.toUpperCase().charCodeAt(0) });
+    };
+    const scr = async (x, y) => ev(`${k}.toScreen(${x}, ${y})`);
+    const st = () => ev(`({ n: ${k}.blk.count(), hist: ${k}.blk.hist(), sel: ${k}.S.blkSel.size, rot: [...${k}.S.blkSel].map((b) => Math.round(b.rot * 180 / Math.PI)) })`);
+    const mk = { przed: await st() };
+    await ev(`${k}.blk.palette("wedge"); ${k}.act("2")`);
+    let a = await scr(4, -26);
+    await mouse('mouseMoved', a.x, a.y, 'none', 0);
+    await mouse('mousePressed', a.x, a.y);
+    await mouse('mouseReleased', a.x, a.y);
+    await ev(`${k}.built()`);
+    mk.klik = await st();
+    await ev(`${k}.blk.palette("trap_r")`);
+    a = await scr(-30, -34); const b = await scr(-12, -24);
+    await mouse('mouseMoved', a.x, a.y, 'none', 0);
+    await mouse('mousePressed', a.x, a.y);
+    for (let i = 1; i <= 8; i++) await mouse('mouseMoved', a.x + (b.x - a.x) * i / 8, a.y + (b.y - a.y) * i / 8, 'left', 1);
+    await mouse('mouseReleased', b.x, b.y);
+    await ev(`${k}.built()`);
+    mk.przeciaganie = await st();
+    await key('r', 'KeyR');
+    await ev(`${k}.built()`);
+    mk.obrot = await st();
+    await key('z', 'KeyZ', 2);
+    await ev(`${k}.built()`);
+    mk.cofnij = await st();
+    await key('y', 'KeyY', 2);
+    await ev(`${k}.built()`);
+    mk.ponow = await st();
+    report.mysz_klocki = mk;
+    console.log('klocki mysz', JSON.stringify(mk));
+    await shot('klocki-edycja-mysz', 'Edycja myszą: klin (klik) nad burtą, trapez przeciąganiem nad rufą, obrót R, cofnij / ponów');
+    // spójność ramy w panelu: fregata — jedna bryła; klocek odsunięty od kadłuba — ostrzeżenie „kadłub w 2 kawałkach”
+    await ev(`${k}.preset("klocki")`);
+    await ev(`${k}.built()`);
+    const rama = { przed: await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`) };
+    await ev(`${k}.edit((d) => { d.shapes.push({ kind: 'block', shape: 'rect', x: 0, y: -60, w: 8, h: 4, level: 1 }); })`);
+    await ev(`${k}.built(); ${k}.blk.tool(); document.getElementById('blk-palette').scrollIntoView({ block: 'start' })`);
+    await shot('klocki-rama-ostrzezenie', 'Panel klocków: ostrzeżenie o ramie w kawałkach (klocek odsunięty od burty)');
+    rama.po = await ev(`document.getElementById('blk-stats').innerText.split('\\n').at(-1)`);
+    report.rama_klocki = rama;
+    console.log('klocki rama', JSON.stringify(rama));
+  }
+  if (stages.has('stocznia')) {
+    // STOCZNIA (--etapy stocznia): przyjazny edytor — paleta z miniaturami z kompozytora, przeciągnij i upuść kartę
+    // (duch nad okrętem, kopia lustra), stempel z rzędem kopii, powielanie Ctrl+D z powtórzeniem przesunięcia, kopia
+    // Shift+przeciągnij, usunięcie upuszczeniem na paletę, moduł poza kadłubem odrzucony, nowy kadłub od zera
+    const k = 'window.__kreator', y = `${k}.stocznia`;
+    const mouse = async (type, x, yy, button = 'left', buttons = 1, modifiers = 0) => cdp.send('Input.dispatchMouseEvent', { type, x, y: yy, button, buttons, clickCount: 1, modifiers });
+    const keyDown = async (key, code, vk, modifiers = 0) => {
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, modifiers, windowsVirtualKeyCode: vk });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, modifiers, windowsVirtualKeyCode: vk });
+    };
+    const scr = (x, yy) => ev(`${k}.toScreen(${x}, ${yy})`);
+    const card = (key) => ev(`(() => { const c = document.querySelector('.ycard[data-key="${key}"]'); if (!c) return null; c.scrollIntoView({ block: 'nearest' }); const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const count = () => ev(`({ shapes: ${k}.design.shapes.length, modules: ${k}.design.modules.length, sel: ${y}.state().sel, hist: ${k}.blk.hist().idx })`);
+    const drag = async (a, b, steps = 10, mods = 0, before = null) => {
+      await mouse('mouseMoved', a.x, a.y, 'none', 0, mods);
+      await mouse('mousePressed', a.x, a.y, 'left', 1, mods);
+      for (let i = 1; i <= steps; i++) await mouse('mouseMoved', a.x + (b.x - a.x) * i / steps, a.y + (b.y - a.y) * i / steps, 'left', 1, mods);
+      if (before) await before();
+      await mouse('mouseReleased', b.x, b.y, 'left', 0, mods);
+      await ev(`${k}.built()`);
+    };
+    const st = {};
+    await ev(`${k}.setUi('stocznia')`);
+    await ev(`${k}.preset("hasta")`);
+    await ev(`${y}.cat('ksztalty')`);
+    st.miniatury = await ev(`${y}.thumbsDone()`);
+    await shot('stocznia-1-paleta', 'Stocznia: paleta kształtów z miniaturami z kompozytora, karta okrętu (klasa, rozmiar, gniazda, moc, lista kontrolna), sam okręt bez siatki');
+    // karta → okręt: sześciokąt nad burtą (lustro: druga burta), duch w trakcie przeciągania
+    const im = await ev(`(() => { const f = ${k}.S.field; return { cx: f.image.cx, minX: f.bounds.minX, maxX: f.bounds.maxX, minY: f.bounds.minY, w: f.bounds.maxX - f.bounds.minX }; })()`);
+    st.przed = await count();
+    // sześciokąt kilka j. nad burtą (magnes dosuwa go do kadłuba)
+    const hx = im.cx - im.w * 0.08;
+    const top = await ev(`${y}.edge(${hx}, -1)`);
+    let a = await card('blk:hex');
+    let b = await scr(hx, top - 8);
+    await drag(a, b, 12, 0, () => shot('stocznia-2-przeciaganie', 'Przeciąganie karty sześciokąta nad burtę: duch klocka dosunięty magnesem do kadłuba, kopia lustra, oś symetrii'));
+    st.upuszczony = await count();
+    st.ramaPoSzesciokacie = await ev(`document.querySelector('#yard-card .ycheck li:nth-child(5)')?.className || null`);
+    await shot('stocznia-3-upuszczony', 'Sześciokąt postawiony: zaznaczenie z paskiem narzędzi (obrót, odbicie, warstwa, wycięcie, rozmiar, powiel, usuń)');
+    // stempel: klik w kartę prostokąta, przeciągnięcie wzdłuż burty — rząd stykających się płyt
+    a = await card('blk:rect');
+    await mouse('mouseMoved', a.x, a.y, 'none', 0); await mouse('mousePressed', a.x, a.y); await mouse('mouseReleased', a.x, a.y, 'left', 0);
+    st.stempel = (await ev(`${y}.state()`)).armed;
+    // rząd od środka okrętu ku dziobowi, tuż nad burtą
+    const rx0 = im.minX + im.w * 0.45, rx1 = im.minX + im.w * 0.75;
+    const ry = Math.min(await ev(`${y}.edge(${rx0}, -1)`), await ev(`${y}.edge(${rx1}, -1)`)) - 6;
+    a = await scr(rx0, ry);
+    b = await scr(rx1, ry);
+    await drag(a, b, 14, 0, () => shot('stocznia-4-rzad', 'Stempel: przeciągnięcie układa rząd stykających się płyt (podgląd) — drugą burtę stawia lustro'));
+    st.rzad = await count();
+    await keyDown('Escape', 'Escape', 27);
+    // powiel: ostatni klocek, Ctrl+D dwa razy (drugie powtarza przesunięcie)
+    await ev(`${y}.selectLast('shape')`);
+    await keyDown('d', 'KeyD', 68, 2); await ev(`${k}.built()`);
+    await keyDown('d', 'KeyD', 68, 2); await ev(`${k}.built()`);
+    st.powiel = await count();
+    await shot('stocznia-5-powiel', 'Powiel (Ctrl+D) dwa razy: kopie obok, drugie powielenie powtarza przesunięcie pierwszego');
+    // przeciągnięcie zaznaczonego klocka na paletę — usunięcie
+    const last = await ev(`(() => { const s = ${k}.design.shapes.at(-1); return { x: s.x, y: s.y }; })()`);
+    a = await scr(last.x, last.y);
+    b = await card('blk:square');
+    await drag(a, b, 10);
+    st.usuniety = await count();
+    // wieża M z karty na pancerz; ta sama karta upuszczona daleko poza kadłubem — odmowa
+    await ev(`${y}.cat('bron')`);
+    const plate = await ev(`(() => { const s = ${k}.design.shapes.filter((q) => q.kind === 'block' && q.level >= 1 && q.op !== 'cut').sort((p, q) => q.w * q.h - p.w * p.h)[0]; return { x: s.x, y: s.y }; })()`);
+    a = await card('mod:turret_m');
+    b = await scr(plate.x, plate.y);
+    await drag(a, b, 10);
+    st.wieza = await count();
+    a = await card('mod:turret_m');
+    b = await scr(im.cx, im.minY - im.w * 0.3);
+    await drag(a, b, 10);
+    st.wiezaPoza = await count();
+    // Shift+przeciągnij wieżę — kopia obok
+    const tur = await ev(`(() => { const m = ${k}.design.modules.at(-1); return { x: m.x, y: m.y, r: m.r }; })()`);
+    a = await scr(tur.x, tur.y);
+    b = await scr(tur.x - tur.r * 3, tur.y);
+    await drag(a, b, 8, 8);
+    st.kopiaShift = await count();
+    await shot('stocznia-6-uzbrojenie', 'Uzbrojenie: wieża M z karty na pancerzu i jej kopia Shift+przeciągnij; rozmiar gniazd nad kartami');
+    // malowanie i karty pozostałych kategorii
+    await ev(`${y}.cat('systemy')`); st.miniatury2 = await ev(`${y}.thumbsDone()`);
+    await shot('stocznia-7-systemy', 'Karty systemów: reaktor, mostek, silnik, dysza, zbiornik, ładownia, hangar');
+    await ev(`${y}.cat('farba')`);
+    await shot('stocznia-8-malowanie', 'Malowanie: barwy kadłuba, krawędzie, naklejki, kolor, wykończenie');
+    // od zera: niszczyciel — płyta startowa, potem klocki, reaktor, mostek, silniki i zbiornik z palety
+    await ev(`${y}.newShip(2)`);
+    await ev(`${k}.built()`);
+    await shot('stocznia-9-od-zera', 'Nowy kadłub od zera (II · niszczyciel): płyta startowa, lista kontrolna podpowiada brakujące systemy');
+    st.odZera = await ev(`(() => {
+      const s = ${y}, b0 = ${k}.design.shapes[0], W = b0.w, H = b0.h;
+      return [s.drop('blk:bow', b0.x + W / 2 + W / 8, 0), s.drop('blk:trap_r', b0.x - W / 2 - W / 8, -H / 2), s.drop('blk:rect', b0.x, -H / 2 - H / 4)];
+    })()`);
+    await ev(`${k}.built()`);
+    st.odZeraSys = await ev(`(() => {
+      const s = ${y}, d = ${k}.design, b0 = d.shapes[0];
+      return [s.drop('mod:reactor', b0.x, 0), s.drop('mod:bridge', b0.x + b0.w * 0.3, 0), s.drop('mod:engine', b0.x - b0.w * 0.38, -b0.h * 0.25), s.drop('mod:fuel_tank', b0.x - b0.w * 0.12, -b0.h * 0.3)];
+    })()`);
+    await ev(`${k}.built(); ${k}.fit()`);
+    await shot('stocznia-10-od-zera-zbudowany', 'Od zera: grot na dziobie, trapez na rufie, płyta nad burtą (lustro), reaktor, mostek, silniki, zbiornik — lista kontrolna');
+    st.klasa = await ev(`${k}.klasa.state()`);
+    report.stocznia = st;
+    console.log('stocznia', JSON.stringify(st));
+  }
+  if (stages.has('mostek') && (!only || only.has('mostki'))) {
+    // GALERIA POZIOMÓW: sześć gniazd mostka (I–VI, poziom projektu 0 — poziom modułu) na jednym prostym kadłubie
+    await ev('window.__kreator.preset("empty")');
+    await ev(`(() => { const k = window.__kreator; k.S.classValid = null; k.edit((d) => {
+      d.name = 'Galeria mostków I–VI'; d.bridgeLevel = 0; d.detail = 0.36; d.palette = 'terra';
+      d.shapes = [{ kind: 'rect', op: 'add', x: 0, y: 0, w: 330, h: 54, r: 0, ch: 24, level: 1 }];
+      d.blocks = []; d.parts = []; d.castles = []; d.decals = []; d.grooves = []; d.pipes = [];
+      const W = [28, 42, 58, 78, 108, 150];
+      let x = -318;
+      d.modules = W.map((w, i) => { x += w / 2; const m = { type: 'bridge', v: 2, lv: i + 1, x, y: 0, rot: 0 }; x += w / 2 + 22; return m; });
+    }); return true; })()`);
+    await ev('window.__kreator.built()');
+    await ev('document.body.classList.add("clean"); window.__kreator.setAb(false); window.__kreator.setBridge3D(true); window.__kreator.setCamera(0, 0, 2.35)');
+    await ev('window.__kreator.runFrames(6)');
+    report.mostkiGaleria = await ev('JSON.stringify({ moduly: window.__kreator.S.field.expanded.modules.filter((m) => m.type === "bridge").map((m) => [m.lv, m.x, m.w * 2, m.h * 2]), b3: { records: window.__kreator.bridge3D.stats.records, visible: window.__kreator.bridge3D.stats.visible, emitters: window.__kreator.bridge3D.stats.emitters } })');
+    await shot('mostki-galeria-3d', 'Galeria: mostki I–VI (modele 3D gry) w gniazdach poziomów, ta sama skala');
+    await ev('window.__kreator.setBridge3D(false); window.__kreator.runFrames(2)');
+    await shot('mostki-galeria-gniazda', 'Galeria: same gniazda I–VI (belki poziomu przy dziobowym brzegu, mocowania lv + 1 na burtę)');
+    await ev('window.__kreator.setBridge3D(true); window.__kreator.setCamera(-175, 0, 5)');
+    await ev('window.__kreator.runFrames(4)');
+    await shot('mostki-galeria-3d-male', 'Galeria: zbliżenie I–IV');
+    console.log('galeria', report.mostkiGaleria);
+  }
+  if (stages.has('klasa')) {
+    // KLASA OKRĘTU (--etapy klasa, etap 2): panel klasy przy Bellatorze (limity, bilans mocy, priorytety), Bellator
+    // i Colossus z gniazdami gry (kadr na okręt i zbliżenie z nakładką gniazd), niedobór mocy (Bellator na R2 — szare
+    // kable do gniazd bez prądu: czysty kadr i z nakładką), odrzucenie akcji ponad limit (Custos: gniazdo M w klasie I,
+    // 13. gniazdo, mostek niżej niż powierzchnia)
+    const k = 'window.__kreator';
+    const panelOn = `document.body.classList.remove("clean"); document.getElementById('sel-bridge').scrollIntoView({ block: 'start' })`;
+    const leftFit = (zk = 1) => `(() => { const im = ${k}.S.field.image; const z = Math.min((innerWidth - 360) * 0.86 / im.w, innerHeight * 0.7 / im.h) * ${zk}; ${k}.setCamera(im.cx + 170 / z, im.cy, z); })()`;
+    const klasa = {};
+    for (const key of ['bellator', 'colossus']) {
+      if (only && !only.has(key)) continue;
+      await ev(`${k}.preset("${key}")`);
+      await ev(`${k}.act("v"); ${panelOn}; ${leftFit()}`);
+      await shot(`klasa-${key}-panel`, `${key}: panel klasy (mostek, rdzeń, powierzchnia i gniazda wobec limitu, bilans mocy, priorytety), nakładka gniazd`);
+      klasa[key] = await ev(`${k}.klasa.state()`);
+      await ev(`document.body.classList.add("clean"); ${k}.fit()`);
+      await shot(`klasa-${key}-gniazda`, `${key}: gniazda broni z gry (podstawy TN: kapsuły, płyty PD, pokrywy wyrzutni), kadr na okręt`);
+      await ev(`${k}.setCamera(${k}.S.field.image.cx + ${k}.S.field.image.w * 0.18, ${k}.S.field.image.cy - ${k}.S.field.image.h * 0.18, ${k}.S.cam.zoom * 2.6)`);
+      await shot(`klasa-${key}-gniazda-det`, `${key}: zbliżenie dziobowej ćwiartki — gniazda i kable do nich`);
+    }
+    if (!only || only.has('bellator')) {
+      await ev(`${k}.preset("bellator")`);
+      await ev(`${k}.klasa.setCore(2)`);
+      await ev(`${k}.built()`);
+      klasa.niedobor = await ev(`${k}.klasa.state()`);
+      await ev(`${k}.act("v"); ${panelOn}; ${leftFit()}`);
+      await shot('klasa-niedobor-panel', 'Bellator na rdzeniu R2: niedobór mocy — panel (gniazda bez prądu), nakładka (czerwone gniazda)');
+      // kable do gniazd wchodzą pod płyty — widoczne martwe odcinki leżą w kanale osi przy rdzeniu (−17, 0)
+      await ev(`document.body.classList.add("clean"); ${k}.setCamera(5, 36, Math.min(innerWidth * 0.85 / ${k}.S.field.image.w, innerHeight * 0.8 / ${k}.S.field.image.h) * 9)`);
+      await shot('klasa-niedobor-kable', 'Bellator na R2: kable do gniazd bez prądu szare, bez opasek (żywe — czarne z kolorowymi opaskami)');
+      await ev(`${k}.klasa.setCore(4)`);
+      await ev(`${k}.built()`);
+      await shot('klasa-niedobor-kable-r4', 'Ten sam kadr na rdzeniu R4 (wszystko z prądem) — do porównania');
+      // mostek niżej niż kadłub (III: 90 000 j² przy 165 000) — odrzucony
+      klasa.mostekIII = { ok: await ev(`${k}.klasa.setBridge(3)`), msg: (await ev(`${k}.klasa.state()`)).msg };
+    }
+    if (!only || only.has('custos')) {
+      await ev(`${k}.preset("custos")`);
+      await ev(`${k}.built()`);
+      const lim = {};
+      lim.gniazdoM = await ev(`(${k}.klasa.addMount(0, 0, 'main', 'M'), ${k}.klasa.state().msg)`);
+      // 4 pary gniazd PD na klinie dziobu (4 + 8 = 12 — limit klasy I), piąta para odrzucona
+      let n = 0;
+      for (const x of [40, 45, 55, 60]) if (await ev(`${k}.klasa.addMount(${x}, -15, 'aux')`)) n++;
+      await ev(`${k}.built()`);
+      lim.dolozone = n;
+      lim.gniazda = (await ev(`${k}.klasa.state()`)).mounts;
+      lim.trzynaste = await ev(`(${k}.klasa.addMount(30, -10, 'aux'), ${k}.klasa.state().msg)`);
+      // powiększenie kadłuba ponad 10 000 j² (klocek przy burcie) — wraca
+      lim.powierzchnia = await ev(`(${k}.edit((d) => { d.shapes.push({ kind: 'block', shape: 'rect', x: -20, y: -50, w: 60, h: 40, level: 1 }); }), true)`);
+      await ev(`${k}.built()`);
+      lim.powierzchniaMsg = (await ev(`${k}.klasa.state()`)).msg;
+      lim.poCofnieciu = await ev(`${k}.klasa.state()`);
+      await ev(`${k}.act("v"); ${panelOn}; ${leftFit()}`);
+      await shot('klasa-limit-custos', 'Custos (klasa I): 12 gniazd — limit; gniazdo M, 13. gniazdo i powiększenie kadłuba odrzucone z komunikatem');
+      klasa.limity = lim;
+    }
+    report.klasa = klasa;
+    console.log('klasa', JSON.stringify(klasa));
   }
   report.bledy = logs.errors().filter((l) => !/favicon|DevTools|\[vite\]/.test(l)).slice(0, 20);
 } catch (e) {

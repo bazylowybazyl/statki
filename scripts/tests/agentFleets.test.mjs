@@ -42,7 +42,10 @@ function makeWorld() {
     return station;
   });
 
-  return { network, stations, economies, quotes: marketSnapshot(stations, id => economies.get(id)) };
+  // Planowe zużycie w notowaniach: bez niego stacja skupuje tylko podłogę
+  // (`RESTOCK_MIN_FILL`) i karawana nie ma przewagi nad samotnikiem.
+  const quotes = marketSnapshot(stations, id => economies.get(id), { demandRate: () => 1 });
+  return { network, stations, economies, quotes };
 }
 
 export function run() {

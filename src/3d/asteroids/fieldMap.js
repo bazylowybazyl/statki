@@ -89,7 +89,8 @@ export class FieldMap {
         const wy = -sy + f.originY;
         const T = f.sunT(wx, wy);
         const mac = field.sampleMacro(wx, wy);
-        const dust = mac.weight * (0.25 + 0.75 * Math.min(1, mac.cluster));
+        // Wyrwa po wydobyciu rozrzedza pył (mac.hole); źródło gazu (mac.gas — dziś 0) dołożyłoby swój.
+        const dust = mac.weight * (0.25 + 0.75 * Math.min(1, mac.cluster)) * mac.hole + mac.gas;
         const storm = stormIntensity(field.seed, wx, wy, mac.cluster);
         const o = (j * RES + i) * 4;
         this.data[o] = H(Math.max(0, Math.min(1, T)));

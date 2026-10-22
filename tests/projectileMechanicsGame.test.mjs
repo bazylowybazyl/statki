@@ -71,6 +71,7 @@ const game = {
     list: [], _resultBuffer: [],
     clear() { this.list.length = 0; },
     insert(e) { this.list.push(e); },
+    insertSwept(e) { this.list.push(e); },
     getPotentialTargetsAlongSegment() { this._resultBuffer.length = 0; for (const e of this.list) this._resultBuffer.push(e); return this._resultBuffer.length; },
     getPotentialTargets() { return this.getPotentialTargetsAlongSegment(); }
   },
@@ -117,10 +118,13 @@ const game = {
   cometField: null,
   // rój dronów naprawczych (src/game/repairSwarm.js): bez dronów w powietrzu — pocisk ich nie sprawdza
   RepairSwarm: { out: 0 },
+  // bańka ruchu v2 (E6, src/game/trafficBubble.js): bez statków ruchu — pocisk ich nie sprawdza
+  trafficBubble: null,
   window: { asteroidField: null, AudioSys: null }
 };
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };
 load('function removeBulletAt(index) {', 'removeBulletAt');
+load('function insertBulletGridTarget(e, dt) {', 'insertBulletGridTarget');
 load('function hullSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hullSweepImpact');
 load("function applyHexImpact(entity, x, y, damage, vel, fxSource = null, fxVariant = 'impact') {", 'applyHexImpact');
 load('function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {', 'writeImpactHit');

@@ -13,7 +13,7 @@
  *
  * PODZIAŁ ODPOWIEDZIALNOŚCI — ten moduł prowadzi RUCH, nie księgowość ładunku.
  * Własność partii, atomowe przejścia i niezmiennik „jeden właściciel" zostają
- * w `cargoFleet.js`, które ma to przetestowane. Kurs trzyma tylko referencję do
+ * w `shipmentOrders.js`, które ma to przetestowane. Kurs trzyma tylko referencję do
  * zlecenia (`payload.orderId`) i nigdy nie rusza cudzego manifestu.
  *
  * Moduł jest czystą logiką: bez DOM-u, bez Three.js, bez znajomości gracza.
@@ -334,7 +334,7 @@ export function launchCourse(registry, spec = {}) {
     berthId: null,
     berthRef: null,
 
-    /** Referencja do zlecenia w cargoFleet. Manifestu NIE kopiujemy. */
+    /** Referencja do zlecenia (`shipmentOrders.js`). Manifestu NIE kopiujemy. */
     payload: spec.payload ? { ...spec.payload } : null,
     escortIds: Array.isArray(spec.escortIds) ? [...spec.escortIds] : [],
 
@@ -581,7 +581,7 @@ export function advanceCourses(registry, dt, options = {}) {
 
 /**
  * Kurs kończy się wrakiem. Sam ładunek przechodzi we władanie wraku przez
- * `wreckShipmentOrder` w `cargoFleet.js` — tutaj tylko zamykamy ruch i mówimy,
+ * `wreckShipmentOrder` w `shipmentOrders.js` — tutaj tylko zamykamy ruch i mówimy,
  * GDZIE to się stało, żeby było gdzie postawić wrak i wysłać holownik.
  */
 export function wreckCourse(registry, course, reason = 'pirate') {

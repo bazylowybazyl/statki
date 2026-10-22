@@ -28,6 +28,10 @@ import {
 } from 'three/tsl';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { blendAddytywnePremul } from './tsl/mieszanie.js';
+import { sunFill, sunVisibility } from './sunShadowMask.js';
+
+// Sektor pokrywy obudowy (reactor3DShapes.js: REACTOR3D_HOUSING_SECTORS = 8, kąt k·π/4 ± π/8).
+const SECTOR_RAD = Math.PI / 4;
 
 const PI = 3.14159265;
 const TWO_PI = 6.2831853;
@@ -48,15 +52,34 @@ const r3HeatColor = /*@__PURE__*/ Fn(([h]) => {
   return c.mul(h).add(vec3(0.22, 0.18, 0.08).mul(smoothstep(0.75, 1.0, h)));
 }).setLayout({ name: 'r3HeatColor', type: 'vec3', inputs: [{ name: 'h', type: 'float' }] });
 
+// Szum wartości 2D (pęknięcia i poszarpany brzeg obudowy). Funkcja z layoutem PŁASKA — hasz wklejony, bez
+// wołania r3Hash (pułapka 35: zależności między funkcjami z layoutem zmieniają kolejność kodu WGSL).
+const r3Noise2 = /*@__PURE__*/ Fn(([p]) => {
+  const i = floor(p).toVar();
+  const f = fract(p).toVar();
+  const u = f.mul(f).mul(vec2(3.0).sub(f.mul(2.0))).toVar();
+  const h = (q) => fract(sin(dot(q, vec2(127.1, 311.7))).mul(43758.5453));
+  const a = h(i), b = h(i.add(vec2(1.0, 0.0))), c = h(i.add(vec2(0.0, 1.0))), d = h(i.add(vec2(1.0, 1.0)));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}).setLayout({ name: 'r3Noise2', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
+
+// Układ danych instancji: JEDEN przepleciony bufor (InstancedInterleavedBuffer, reactor3D.js) — 8 × vec4.
+// Konstrukcja ma 1 bufor wierzchołków modelu + 1 instancji (limit 8 buforów na pipeline).
+export const R3_INSTANCE_LAYOUT = Object.freeze({
+  iBasis: 0, iPos: 4, iState: 8, iState2: 12, iColor: 16, iBreak: 20, iHouse: 24, iHouse2: 28, stride: 32
+});
+
 // Atrybuty instancji (wspólne węzły — każdy materiał buduje je u siebie).
 function instanceAttributes() {
   return {
     iBasis: attribute('iBasis', 'vec4'),   // oś x modelu → scena (x, y), oś y modelu → scena (z, w)
-    iPos: attribute('iPos', 'vec4'),       // środek WZGLĘDEM mesh.position (x, y), dach z, głębokość na jednostkę
+    iPos: attribute('iPos', 'vec4'),       // środek WZGLĘDEM mesh.position (x, y), z dachu wnętrza (z modelu 0), z na jednostkę
     iState: attribute('iState', 'vec4'),   // ciało plazmy, biel nici, faza obrotu, niestabilność
     iState2: attribute('iState2', 'vec4'), // żar cewek, pęknięte (0–1), puls (0–1), obecność plazmy
     iColor: attribute('iColor', 'vec4'),   // barwa plazmy (L = 1), ziarno
-    iBreak: attribute('iBreak', 'vec4')    // kierunek rozerwania (x, y modelu), półszerokość łuku, żar wraku (< 0 = żywy)
+    iBreak: attribute('iBreak', 'vec4'),   // kierunek rozerwania (x, y modelu), półszerokość łuku, żar wraku (< 0 = żywy)
+    iHouse: attribute('iHouse', 'vec4'),   // maska zdjętych sektorów pokrywy (bity 0–8), obudowa (0/1), słońce (x, y modelu, jednostkowe)
+    iHouse2: attribute('iHouse2', 'vec4')  // żar brzegu wyrwy, żar pęknięć, długość cienia i obrys obudowy (j. modelu)
   };
 }
 
@@ -68,11 +91,18 @@ function instanceClip(I, p) {
   return cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(xy, z, 1.0));
 }
 
+// Bit `i` (0–8) maski sektorów (liczba całkowita w float — dokładna do 2^24).
+function maskBit(mask, i) {
+  return mod(floor(mask.div(pow(2.0, i))), 2.0);
+}
+
 /**
- * Konstrukcja reaktora (nieprzezroczysta, zapis głębi, dwustronna).
- * @param {object} v — wartości rodzaju: albedo (Vector3[8]), spec (Vector2[8]),
+ * Konstrukcja reaktora (nieprzezroczysta, zapis głębi, dwustronna): wnętrze oświetlane plazmą, obudowa
+ * (materiały ≥ 8) słońcem jak kadłub — człon słońca × sunVisibility(), otoczenie × sunFill.
+ * @param {object} v — wartości rodzaju: albedo (Vector3[13]), spec (Vector2[13]),
  *   ring (Vector4[2]), ringCount, coreLight (Vector3), accent (Vector3),
- *   accentL, ambient, lightGain, falloff.
+ *   accentL, ambient, lightGain, falloff, houseLight (Vector3: otoczenie, rozproszone, połysk),
+ *   houseGlow (Vector4: plazma na obudowie, żar pęknięć, przypalenie brzegu, —).
  */
 export function createReactorStructMaterial(v) {
   const U = uniformsAdapter({
@@ -86,6 +116,8 @@ export function createReactorStructMaterial(v) {
     uAmbient: uniform(v.ambient),
     uLightGain: uniform(v.lightGain),
     uFalloff: uniform(v.falloff),
+    uHouseLight: uniform(v.houseLight || new THREE.Vector3(0.24, 1.18, 0.3)),
+    uHouseGlow: uniform(v.houseGlow || new THREE.Vector4(0.35, 1.0, 0.7, 0)),
     uTime: uniform(0),
     uXray: uniform(0)
   });
@@ -101,6 +133,8 @@ export function createReactorStructMaterial(v) {
   const vState2 = varying(I.iState2, 'vR3State2');
   const vColor = varying(I.iColor, 'vR3Color');
   const vBreak = varying(I.iBreak, 'vR3Break');
+  const vHouse = varying(I.iHouse, 'vR3House');
+  const vHouse2 = varying(I.iHouse2, 'vR3House2');
 
   const fragmentNode = Fn(() => {
     const mat = int(vMat.add(0.5)).toVar();
@@ -108,6 +142,25 @@ export function createReactorStructMaterial(v) {
     const dead = burnt.greaterThanEqual(0.0).toVar();
     const r = length(vP.xy).toVar();
     const edgeGlow = float(0.0).toVar();
+    // OBUDOWA: wariant bez obudowy (i prześwietlenie) — znika; zdjęty sektor pokrywy — znika, przy ścianie
+    // zostaje poszarpany brzeg płyty. Czapa (sektor 8) znika cała.
+    const house = mat.greaterThanEqual(8).toVar();
+    const mask = vHouse.x.toVar();
+    const torn = float(0.0).toVar();
+    If(house, () => {
+      If(vHouse.y.lessThan(0.5).or(U.uXray.greaterThan(0.5)), () => {
+        Discard();
+      });
+      If(vCoil.greaterThan(-0.5), () => {
+        If(maskBit(mask, floor(vCoil.add(0.5))).greaterThan(0.5), () => {
+          const lip = float(0.9).add(r3Noise2(vP.xy.mul(16.0).add(vColor.a.mul(37.0))).mul(0.09));
+          If(r.lessThan(lip).or(vCoil.greaterThan(7.5)), () => {
+            Discard();
+          });
+          torn.assign(1.0);
+        });
+      });
+    });
     If(dead.and(vBreak.z.greaterThan(0.0)), () => {
       const a = atan(vP.y, vP.x);
       const ad = atan(vBreak.y, vBreak.x);
@@ -160,6 +213,49 @@ export function createReactorStructMaterial(v) {
     If(mat.equal(7), () => {
       const acc = select(U.uAccent.x.add(U.uAccent.y).add(U.uAccent.z).greaterThan(0.0), U.uAccent, pc);
       col.assign(albedo.mul(0.2).add(acc.mul(U.uAccentL).mul(select(dead, float(0.0), float(1.0)))));
+    });
+    If(house, () => {
+      // Słońce jak na kadłubie (kierunek w układzie modelu z instancji, lekko z góry): otoczenie × sunFill,
+      // rozproszone i połysk × sunVisibility; plazma prześwituje przez kratę na brzegi prętów i płyt.
+      const Ls = normalize(vec3(vHouse.z, vHouse.w, 0.18)).toVar();
+      const sunVis = sunVisibility().toVar();
+      const amb = U.uHouseLight.x.mul(sunFill(sunVis)).mul(max(N.z, 0.0).mul(0.45).add(0.55));
+      const dif = max(0.0, dot(N, Ls)).mul(U.uHouseLight.y).mul(sunVis);
+      const sp = pow(max(dot(N, normalize(Ls.add(V))), 0.0), specK.x).mul(specK.y).mul(U.uHouseLight.z).mul(sunVis);
+      const hc = albedo.mul(amb.add(dif)).add(vec3(sp)).toVar();
+      hc.addAssign(albedo.mul(pc).mul(diff).mul(I0).mul(U.uHouseGlow.x));
+      // pod progiem bloomu (miękkie kolano jak bryła mostka): świeci tylko wskaźnik, żar i plazma
+      const lum = dot(hc, vec3(0.2126, 0.7152, 0.0722)).toVar();
+      If(lum.greaterThan(0.62), () => {
+        hc.mulAssign(float(0.62).add(float(0.24).mul(float(1.0).sub(exp(lum.sub(0.62).div(0.24).negate())))).div(lum));
+      });
+      // Przypalony brzeg przy zdjętym sektorze (sąsiednim albo tym, nad którym stoi ściana) i żar brzegu wyrwy.
+      const sf = atan(vP.y, vP.x).div(SECTOR_RAD).toVar();
+      const si = floor(sf.add(0.5)).toVar();
+      const fr = sf.sub(si).toVar();
+      const here = maskBit(mask, mod(si.add(8.0), 8.0));
+      const next = maskBit(mask, mod(si.add(select(fr.greaterThanEqual(0.0), float(1.0), float(-1.0))).add(8.0), 8.0));
+      const edge = float(0.5).sub(abs(fr));
+      const wall = step(vCoil, -0.5);
+      const scorch = max(max(here.mul(wall).mul(step(r, 1.03)), torn), next.mul(float(1.0).sub(smoothstep(0.0, 0.22, edge)))).toVar();
+      hc.mulAssign(float(1.0).sub(scorch.mul(U.uHouseGlow.z)));
+      hc.addAssign(r3HeatColor(vHouse2.x).mul(scorch.mul(scorch)).mul(0.5).mul(presence));
+      // Pęknięcia (KRYTYCZNY, STOPIENIE): żarzące się szczeliny w pancerzu, krata grzeje się cała.
+      const heat = vHouse2.y.toVar();
+      If(heat.greaterThan(0.01), () => {
+        const n = r3Noise2(vP.xy.mul(7.0).add(vColor.a.mul(13.0)));
+        const ridge = float(1.0).sub(smoothstep(0.0, 0.035, abs(n.sub(0.5)))).mul(select(mat.equal(8), float(1.0), float(0.0)));
+        const grill = select(mat.equal(10), float(0.6), float(0.0));
+        const hk = clamp(heat.mul(1.1).add(0.1), 0.0, 1.0);
+        hc.addAssign(r3HeatColor(hk).mul(max(ridge, grill.mul(heat))).mul(smoothstep(0.05, 0.2, heat))
+          .mul(pulse.mul(0.4).add(0.6)).mul(U.uHouseGlow.y).mul(presence));
+      });
+      // wskaźnik na czapie / listwy: barwa akcentu rodzaju albo plazmy (pod progiem bloomu)
+      If(mat.equal(12), () => {
+        const acc = select(U.uAccent.x.add(U.uAccent.y).add(U.uAccent.z).greaterThan(0.0), U.uAccent, pc);
+        hc.assign(albedo.mul(0.2).add(acc.mul(U.uAccentL).mul(select(dead, float(0.0), float(1.0)))));
+      });
+      col.assign(hc);
     });
     If(dead, () => {
       col.mulAssign(0.55);
@@ -309,6 +405,76 @@ export function createReactorPlasmaMaterial(v) {
   material.transparent = true;
   material.depthTest = true;
   material.depthWrite = false;
+  material.vertexNode = vertexNode;
+  material.fragmentNode = fragmentNode;
+  return material;
+}
+
+/**
+ * Cień obudowy na kadłubie (wzór: cień mostka — bridge3D.tsl.js): czworokąt POD kadłubem (z = receiverZ),
+ * test głębi GREATER — przechodzi tylko tam, gdzie kadłub (albo coś nad nim) zapisał głębię, więc cień jest
+ * przycięty do sylwetki i nie wpada w wyrwy. Cień = obrys obudowy (koło o promieniu obrysu) przesunięty od
+ * słońca o długość cienia (wysokość / tan wysokości „słońca cieni”), półcień rośnie z odległością; u stóp
+ * obudowy kontaktowe przyciemnienie. Wewnątrz obrysu nic (obudowa nie przyciemnia sama siebie). Jeden graf
+ * na wszystkie rodzaje — obrys i długość cienia w danych instancji.
+ * @param {object} v — receiverZ (z świata pod kadłubem), strength (przyciemnienie w pełnym cieniu), ao.
+ */
+export function createReactorShadowMaterial(v) {
+  const U = uniformsAdapter({
+    uShadow: uniform(new THREE.Vector3(v.strength ?? 0.45, v.ao ?? 0.3, 0))
+  });
+  const I = instanceAttributes();
+  const outer = I.iHouse2.w;
+  const len = I.iHouse2.z;
+  const sun = I.iHouse.zw;
+  const dir = sun.negate().div(max(length(sun), 1e-4));
+  const pad = outer.mul(0.2).add(0.05);
+  const off = dir.mul(len);
+  const lo = min(vec2(outer.negate()), vec2(outer.negate()).add(off)).sub(vec2(pad));
+  const hi = max(vec2(outer), vec2(outer).add(off)).add(vec2(pad));
+  const g = attribute('position', 'vec3');
+  const m = mix(lo, hi, g.xy.add(0.5));
+  const vPos2 = varying(m, 'vR3RecvP');
+  const vDir = varying(dir, 'vR3RecvDir').setInterpolation('flat');
+  const vRecv = varying(vec4(outer, len, I.iHouse.y, 0.0), 'vR3Recv').setInterpolation('flat');
+  const xy = I.iPos.xy.add(I.iBasis.xy.mul(m.x)).add(I.iBasis.zw.mul(m.y));
+  const vertexNode = cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(xy, float(v.receiverZ), 1.0));
+
+  const fragmentNode = Fn(() => {
+    const F = vRecv.x;
+    const L = vRecv.y;
+    const p = vPos2.toVar();
+    const r = length(p).toVar();
+    // obrys obudowy (ośmiokąt kołnierza — boki na osiach i przekątnych; koło Atlasa mieści się w nim)
+    const oct = max(max(abs(p.x), abs(p.y)), abs(p.x).add(abs(p.y)).mul(0.70710678));
+    If(oct.lessThan(F).or(vRecv.z.lessThan(0.5)), () => {
+      Discard();
+    });
+    const t = clamp(dot(p, vDir), 0.0, L).toVar();
+    const d = length(p.sub(vDir.mul(t)));
+    const soft = F.mul(float(0.03).add(t.div(max(L, 1e-3)).mul(0.12))).add(0.01);
+    const sh = float(1.0).sub(smoothstep(F.mul(1.02).sub(soft), F.mul(1.02).add(soft), d));
+    const ao = float(1.0).sub(smoothstep(F, F.mul(1.14), r)).mul(U.uShadow.y);
+    // bez słońca (cień planety — maska Core3D) obudowa nie rzuca cienia, kontaktowe przyciemnienie zostaje
+    const dark = min(sh.mul(U.uShadow.x).mul(sunVisibility()).add(ao), 0.8).toVar();
+    If(dark.lessThan(0.003), () => {
+      Discard();
+    });
+    return vec4(0.0, 0.0, 0.0, dark);
+  })();
+
+  const material = new THREE.NodeMaterial();
+  material.name = 'reactor3D:shadow';
+  material.uniforms = U;
+  material.lights = false;
+  material.fog = false;
+  material.transparent = true;
+  material.depthWrite = false;
+  material.depthTest = true;
+  material.depthFunc = THREE.GreaterDepth;
+  material.blending = THREE.NormalBlending;
+  material.side = THREE.DoubleSide;
+  material.forceSinglePass = true;
   material.vertexNode = vertexNode;
   material.fragmentNode = fragmentNode;
   return material;

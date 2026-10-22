@@ -18,7 +18,8 @@ import { applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { WARP_STAR_CAMERA } from './warp/stars.js';
 import { createSky3D, getSky3D, SKY3D_TUNE } from './sky3D.js';
-import { WARP_WORLD_LENS, WarpWorldLens, newLensBody } from './warp/worldLens.js';
+import { WARP_WORLD_LENS, WarpWorldLens, newLensBody, warpRingLensSlot } from './warp/worldLens.js';
+import { cameraRoll } from './viewRoll.js';
 import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { warpSkyBendCount } from './warp/skyBend.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
@@ -377,10 +378,13 @@ const NebulaSystem = {
         Core3D.enableBackground3D(this.mesh);
         Core3D.addPassHook('bg', (camera) => this.skyCacheHook(camera));
         Core3D.skyCacheStats = this.cacheStats;   // narzędzia (licznik przeliczeń / odczytów pamięci nieba)
-        // pipeline zapisu pamięci (cel HalfFloat bez MSAA i głębi, siatka jako korzeń renderu) — rozgrzany z góry
+        // pipeline zapisu pamięci (cel HalfFloat bez MSAA i głębi, siatka jako korzeń renderu) — rozgrzany z góry; pamięć
+        // działa dopiero z gotowym pipeline'em (skyCacheHook — do tego czasu niebo wprost)
         if (Core3D.warmup) Core3D.warmup.add({ name: 'mgławica: pamięć nieba', objects: () => (this.mesh ? [this.mesh] : []),
             layer: 1, target: () => this.cacheTarget, scene: null, phase: 'loading',
-            variant: { apply: (m) => { const prev = m.material; m.material = this.cacheWriteMaterial; return () => { m.material = prev; }; } } });
+            variant: { apply: (m) => { const prev = m.material; m.material = this.cacheWriteMaterial; return () => { m.material = prev; }; } } })
+            .promise.then(() => { this.cacheWriteReady = true; });
+        else this.cacheWriteReady = true;
     },
     // ── Pamięć nieba (2026-10-17) ──
     // Niebo (tekstura + gwiazdy na piksel) zależy tylko od położenia płaszczyzny mgławicy na ekranie (paralaksa 0,02 —
@@ -388,7 +392,7 @@ const NebulaSystem = {
     // punkty płaszczyzny przesuną się na ekranie o więcej niż SKY_CACHE_PX albo zmieni się rozmiar / tekstura; zgięcie
     // warpa i rulon (przesunięcia na piksel) — liczone wprost. Jasność strefy, rozjaśnienie i smuga cienia — w passie
     // tła na pamięci (tanie). A/B: Core3D.skyCacheEnabled = false. Liczniki: NebulaSystem.cacheStats.
-    cacheTarget: null, cacheWriteMaterial: null, cacheValid: false, cacheTexVersion: -1,
+    cacheTarget: null, cacheWriteMaterial: null, cacheWriteReady: false, cacheValid: false, cacheTexVersion: -1,
     cacheP0: new THREE.Vector2(), cacheP1: new THREE.Vector2(),
     cacheStats: { renders: 0, reused: 0, direct: 0 },
     _skyV: new THREE.Vector4(), _skyQ0: new THREE.Vector2(), _skyQ1: new THREE.Vector2(),
@@ -401,7 +405,9 @@ const NebulaSystem = {
         const u = this.uniforms, rt = this.cacheTarget, renderer = Core3D.renderer;
         if (!u || !rt || !this.mesh || !renderer) return;
         const st = this.cacheStats;
-        if (Core3D.skyCacheEnabled === false || !this.mesh.visible || warpSkyBendCount() > 0 || rulonActive()) {
+        // Bez gotowego pipeline'u zapisu (wpis rozgrzewki „mgławica: pamięć nieba”) — niebo wprost, ten sam obraz: pierwszy
+        // zapis nie kompiluje się w klatce, gdy kolejka rozgrzewki nie zdążyła przed nią (klatka zero workera).
+        if (Core3D.skyCacheEnabled === false || !this.cacheWriteReady || !this.mesh.visible || warpSkyBendCount() > 0 || rulonActive()) {
             u.skyCacheMode.value = 0; this.cacheValid = false; st.direct++; return;
         }
         const ct = Core3D.composerTarget;
@@ -557,13 +563,35 @@ const StarSystem = {
 const _planetCullCenter = new THREE.Vector3();
 const _planetCullEdgeX = new THREE.Vector3();
 const _planetCullEdgeY = new THREE.Vector3();
+// Soczewka świata (worldLens.js) liczy w osiach EKRANU: przesunięcie (u, v) [j.] od środka kadru → świat =
+// kamera + R(roll)·(u, v) (obrót kadru — viewRoll.js; bez obrotu: kamera + (u, v)). Jeden obiekt wyniku (bez alokacji).
+const _lensWorld = { x: 0, y: 0 };
+function lensToWorld(L, u, v) {
+    const roll = Number(L.roll) || 0;
+    if (!roll) { _lensWorld.x = L.camX + u; _lensWorld.y = L.camY + v; return _lensWorld; }
+    const c = Math.cos(roll);
+    const s = Math.sin(roll);
+    _lensWorld.x = L.camX + c * u - s * v;
+    _lensWorld.y = L.camY + s * u + c * v;
+    return _lensWorld;
+}
 function isCircleVisibleInGameCamera(x, y, radius, cam, viewportWidth, viewportHeight) {
     if (!cam) return false;
     const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
     const halfVpX = Math.max(1, Number(viewportWidth) || 1) * 0.5 / zoom + radius;
     const halfVpY = Math.max(1, Number(viewportHeight) || 1) * 0.5 / zoom + radius;
-    return Math.abs(x - (Number(cam.x) || 0)) <= halfVpX &&
-        Math.abs(y - (Number(cam.y) || 0)) <= halfVpY;
+    let dx = x - (Number(cam.x) || 0);
+    let dy = y - (Number(cam.y) || 0);
+    // Obrócony kadr (cam.roll — viewRoll.js): przesunięcie w osiach ekranu.
+    const roll = cameraRoll(cam);
+    if (roll) {
+        const c = Math.cos(roll);
+        const s = Math.sin(roll);
+        const rx = c * dx + s * dy;
+        dy = -s * dx + c * dy;
+        dx = rx;
+    }
+    return Math.abs(dx) <= halfVpX && Math.abs(dy) <= halfVpY;
 }
 // Czy kula (księżyc, słońce) MOŻE być w kadrze — wyłącznie dla flag warstw
 // w Core3D (pomijanie pustych passów planet i halo), niczego nie chowa.
@@ -585,8 +613,14 @@ function isBodyLikelyOnScreen(gameX, gameY, visualZ, worldRadius, anchoredToRing
     _planetCullCenter.set(gameX, -gameY, visualZ).project(camera);
     _planetCullEdgeX.set(gameX + r, -gameY, visualZ).project(camera);
     _planetCullEdgeY.set(gameX, -gameY + r, visualZ).project(camera);
-    const ndcRadiusX = Math.max(0.001, Math.abs(_planetCullEdgeX.x - _planetCullCenter.x));
-    const ndcRadiusY = Math.max(0.001, Math.abs(_planetCullEdgeY.y - _planetCullCenter.y));
+    let ndcRadiusX = Math.max(0.001, Math.abs(_planetCullEdgeX.x - _planetCullCenter.x));
+    let ndcRadiusY = Math.max(0.001, Math.abs(_planetCullEdgeY.y - _planetCullCenter.y));
+    if (cameraRoll(cam)) {
+        // Obrócony kadr (viewRoll.js): oś świata nie jest osią ekranu — promień w NDC z długości odcinków.
+        const ra = Math.hypot(_planetCullEdgeX.x - _planetCullCenter.x, _planetCullEdgeX.y - _planetCullCenter.y);
+        const rb = Math.hypot(_planetCullEdgeY.x - _planetCullCenter.x, _planetCullEdgeY.y - _planetCullCenter.y);
+        ndcRadiusX = ndcRadiusY = Math.max(0.001, ra, rb);
+    }
     const pad = BODY_ACTIVITY_NDC_PAD;
     return !(
         _planetCullCenter.x < (-1 - ndcRadiusX - pad) ||
@@ -651,6 +685,11 @@ class DirectPlanet {
         this.lensBody = newLensBody(this.name);
         this._lensed = false;
         this._ringOuter = 0;
+        // Ustawienie tarczy celu soczewki (lensFaceQuat): bieżące w skoku (_lensFaceNow, wchodzi z β) i własna orientacja
+        // planety po przylocie (_lensFace — zostaje, aż planeta znów będzie celem). null — orientacja gry.
+        this._lensFace = null;
+        this._lensFaceNow = null;
+        this._lensWasTarget = false;
         this.init();
     }
     // Pozwala ręcznie dostroić pas cienia ringu (promień/zasięg w jednostkach
@@ -849,6 +888,7 @@ class DirectPlanet {
         // Skok gracza: kadr i rozstawienie robi soczewka świata (applyWarpWorldLens) po wszystkich ciałach.
         if (lensOn) { this._lensPrepare(dt, scale, visualZ); return; }
         if (this._lensed) this._lensRestore();
+        if (this._ringLens) this._ringLens.on = false;   // ring „Halo” na prawdziwym miejscu
         let offScreen = false;
         const renderCamera = anchoredToRing ? Core3D.cameraOrtho : Core3D.cameraPersp;
         if (Core3D.isFreePerspectiveCamera(cam)) {
@@ -948,7 +988,8 @@ class DirectPlanet {
             this.uniforms.uRingShadowCenter.value.set(Number(this.data.x) || 0, -(Number(this.data.y) || 0));
         }
         this._spin(dt);
-        this._orient(null);
+        // Po przylocie skokiem — ustawienie tarczy z soczewki (_lensFace), inaczej orientacja gry.
+        this._orient(null, this._lensFace);
     }
     _spin(dt) {
         const d = Math.max(0, Number(dt) || 0);
@@ -1038,10 +1079,17 @@ class DirectPlanet {
             const gapPx = (Math.sqrt(ex * ex + ey * ey) - (this._ringOuter + LENS_RING_EXTENT)) * L.zoom;
             gate = lensSmooth01(gapPx / Math.max(1, LENS_GATE_RAMP * Math.min(L.W, L.H)));
         }
-        // Ring wchodzi w kadr — planeta wraca od razu; ring wychodzi (statek w skoku mija go w ~0,05 s) —
-        // planeta wjeżdża w soczewkę płynnie (zza kadru, bez szarpnięcia).
+        // Ring decyduje tylko o WEJŚCIU w soczewkę (planeta startu stoi przy swoim ringu, póki ring jest w kadrze).
+        // Bramka raz otwarta w tym skoku zostaje otwarta (user 2026-10-19: „mijane planety dziwnie skaczą, planeta
+        // docelowa pokazuje się, znika i znowu wskakuje”): dawniej ring wchodzący w kadr przy przelocie (Mars) i przy
+        // dolocie (cel) w 2–3 klatkach wyrywał planetę z soczewki na prawdziwe miejsce — setki tysięcy jednostek
+        // w bok, przy zoomie 0,3 skok o ~20 tys. px. Ciało w soczewce wraca na prawdziwe miejsce z β (wyjście).
+        if (b.gateOpenSession === _warpLens.session) gate = 1;
+        // Ring wchodzi w kadr (przed otwarciem) — planeta wraca od razu; ring wychodzi (statek w skoku mija go
+        // w ~0,05 s) — planeta wjeżdża w soczewkę płynnie (zza kadru, bez szarpnięcia).
         if (!this._lensed || gate <= b.gate) b.gate = gate;
         else b.gate += (gate - b.gate) * (1 - Math.exp(-Math.max(0, Number(dt) || 0) / LENS_GATE_OPEN));
+        if (b.gate >= 0.999) { b.gate = 1; b.gateOpenSession = _warpLens.session; }
         b.ready = true;
     }
     // Soczewka: wynik (b.out) → kadr po rulonie, grupa w głębokości passa ciała, obrót przelotu, słońce, cienie.
@@ -1055,13 +1103,32 @@ class DirectPlanet {
         this._visibilityCulled = fit.off;
         // j. świata na px w głębokości ciała (płaszczyzna gry: 1 / zoom; tło: perspektywa kamery passa).
         const k = anchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
+        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lwx = lw.x;
+        const lwy = lw.y;
         // Maska słońca i cień ringu czytają płaszczyznę gry pod pikselem — w soczewce to nie punkt ciała.
         const real = 1 - o.beta;
         // Tarcza w smugach słońca idzie za ciałem w kadrze skoku i gaśnie z β jak maska i pas ringu
         // (dawniej zostawała w prawdziwym miejscu — przy wejściu w soczewkę i wylocie z niej smuga stała
         // obok planety); kierunek smugi z prawdziwego środka. Także poza kadrem — smuga sięga dalej.
         if (real > 1e-3 && typeof Core3D.pushShaftDiscWorld === 'function') {
-            Core3D.pushShaftDiscWorld(L.camX + o.x * k, L.camY + o.y * k, Math.max(1e-3, fit.size * k), real, b.z, b.x, b.y);
+            Core3D.pushShaftDiscWorld(lwx, lwy, Math.max(1e-3, fit.size * k), real, b.z, b.x, b.y);
+        }
+        const turned = o.angle > 1e-5;
+        if (turned) { _lensAxis.set(o.ax, o.ay, 0); _lensQ.setFromAxisAngle(_lensAxis, o.angle); }
+        // Ring „Halo” planety jedzie w soczewce razem z nią (worldLens.js: WARP_RING_LENS → haloRingGame.js): środek
+        // obrazu, skala obrazu do prawdziwego promienia kuli (b.r), obrót przelotu, udział prawdziwego widoku.
+        if (anchored) {
+            if (!this._ringLens) this._ringLens = warpRingLensSlot(this.data?.id || this.name);
+            const rl = this._ringLens;
+            rl.on = true;
+            rl.x = lwx;
+            rl.y = lwy;
+            rl.k = Math.max(1e-6, fit.size * k) / Math.max(1e-6, b.r);
+            rl.real = real;
+            rl.vis = !fit.off;
+            rl.turned = turned;
+            if (turned) { if (!rl.q) rl.q = new THREE.Quaternion(); rl.q.copy(_lensQ); }
         }
         if (fit.off) {
             if (this.group.visible) this.group.visible = false;
@@ -1069,17 +1136,24 @@ class DirectPlanet {
         }
         if (!this.group.visible) this.group.visible = true;
         if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(anchored, true);
-        this.group.position.set(L.camX + o.x * k, -(L.camY + o.y * k), b.z);
+        this.group.position.set(lwx, -lwy, b.z);
         const s = Math.max(1e-3, fit.size * k);
         this.group.scale.set(s, s, s);
-        // Obrót przelotu na bryle (poświata limbu — płaski dysk — zostaje twarzą do kamery). Cel: tarcza
-        // obrócona pasami do statku (demo), z β — przy wyjściu wraca do orientacji gry razem z przelotem.
-        const turned = o.angle > 1e-5;
-        if (turned) { _lensAxis.set(o.ax, o.ay, 0); _lensQ.setFromAxisAngle(_lensAxis, o.angle); }
-        let base = null;
-        if (o.isTarget && !this.saturnRing && o.beta > 1e-4) {
-            lensFaceQuat(L.shipX - b.x, b.y - L.shipY, LENS_TARGET_FACE, _lensQo);
-            base = _lensQb.identity().slerp(_lensQo, o.beta);
+        // Obrót przelotu na bryle (poświata limbu — płaski dysk — zostaje twarzą do kamery; cel go nie ma — worldLens.js).
+        // Cel: tarcza obrócona pasami do statku (demo) — wchodzi z β (cel wlatuje do kadru zza krawędzi), przy przylocie
+        // (L.exitAge ≥ 0) zostaje zamrożona i po skoku jest własną orientacją planety (_lensFace) — user 2026-10-19: „przy
+        // wejściu planeta się obraca, a powinna być taka sama, jak mi się pokazała”. Dawniej wracała z β do orientacji gry.
+        // (obrót przelotu `turned` / _lensQ — wyżej, wspólny z ringiem)
+        let base = this._lensFace;
+        if (o.isTarget && !this.saturnRing) {
+            if (!this._lensFaceNow) this._lensFaceNow = new THREE.Quaternion();
+            if (!(L.exitAge >= 0) || !this._lensWasTarget) {
+                lensFaceQuat(L.shipX - b.x, b.y - L.shipY, LENS_TARGET_FACE, _lensQo);
+                if (this._lensFace) this._lensFaceNow.copy(this._lensFace); else this._lensFaceNow.identity();
+                this._lensFaceNow.slerp(_lensQo, o.beta);
+            }
+            this._lensWasTarget = true;
+            base = this._lensFaceNow;
         }
         this._orient(turned ? _lensQ : null, base);
         // Słońce obraca się razem z bryłą (demo: słońce w układzie ciała — terminator jedzie z przelotem).
@@ -1109,7 +1183,13 @@ class DirectPlanet {
         this.uniforms.uSunShadowRecv.value = this.isRingAnchored ? 1.0 : 0.0;
         const atmU = this.atmosphere?.material?.uniforms;
         if (this.isRingAnchored && atmU?.uSunShadowRecv) atmU.uSunShadowRecv.value = 1.0;
-        this._orient(null);
+        // Cel tego skoku: jego ustawienie tarczy zostaje własną orientacją planety (bez obrotu przy końcu soczewki).
+        if (this._lensWasTarget && this._lensFaceNow) {
+            if (!this._lensFace) this._lensFace = new THREE.Quaternion();
+            this._lensFace.copy(this._lensFaceNow);
+        }
+        this._lensWasTarget = false;
+        this._orient(null, this._lensFace);
     }
     dispose() { if (this.group && this.group.parent) this.group.parent.remove(this.group); }
 }
@@ -1277,10 +1357,13 @@ class DirectMoon {
         // Księżyc w soczewce stoi przy statku w płaszczyźnie gry — nie rzuca cienia (mapa cienia słońca).
         if (this.mesh) this.mesh.castShadow = false;
         const k = this.isRingAnchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
+        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lwx = lw.x;
+        const lwy = lw.y;
         // Tarcza w smugach słońca za ciałem w kadrze skoku, gaśnie z β (jak planety — DirectPlanet._lensPlace).
         const real = 1 - o.beta;
         if (this.mesh && real > 1e-3 && typeof Core3D.pushShaftDiscWorld === 'function') {
-            Core3D.pushShaftDiscWorld(L.camX + o.x * k, L.camY + o.y * k, Math.max(1e-3, fit.size * k), real, b.z, b.x, b.y);
+            Core3D.pushShaftDiscWorld(lwx, lwy, Math.max(1e-3, fit.size * k), real, b.z, b.x, b.y);
         }
         if (fit.off || !this.mesh) {
             if (this.group.visible) this.group.visible = false;
@@ -1288,7 +1371,7 @@ class DirectMoon {
         }
         if (!this.group.visible) this.group.visible = true;
         if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(this.isRingAnchored, true);
-        this.group.position.set(L.camX + o.x * k, -(L.camY + o.y * k), b.z);
+        this.group.position.set(lwx, -lwy, b.z);
         const s = Math.max(1e-3, fit.size * k);
         this.mesh.scale.set(s, s, s);
         if (this.halo) this.halo.scale.set(s, s, s);
@@ -1465,9 +1548,12 @@ class DirectSmallBody {
         const fit = lensFitView(o, 1.1);
         this._lensed = true;
         const k = 1 / L.zoom;
+        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lwx = lw.x;
+        const lwy = lw.y;
         const real = 1 - o.beta;
         if (real > 1e-3 && typeof Core3D.pushShaftDiscWorld === 'function') {
-            Core3D.pushShaftDiscWorld(L.camX + o.x * k, L.camY + o.y * k, Math.max(1e-3, fit.size * k * this._inner / this._extent), real, 0, b.x, b.y);
+            Core3D.pushShaftDiscWorld(lwx, lwy, Math.max(1e-3, fit.size * k * this._inner / this._extent), real, 0, b.x, b.y);
         }
         if (fit.off) {
             if (this.group.visible) this.group.visible = false;
@@ -1476,7 +1562,7 @@ class DirectSmallBody {
         if (!this.group.visible) this.group.visible = true;
         if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(true, true);
         const s = Math.max(1e-3, fit.size * k) / Math.max(1e-3, this._extent);
-        this._place(L.camX + o.x * k, L.camY + o.y * k, s);
+        this._place(lwx, lwy, s);
         const turned = o.angle > 1e-5;
         if (turned) {
             _lensAxis.set(o.ax, o.ay, 0);

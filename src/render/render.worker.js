@@ -31,7 +31,9 @@ if (isWorker) {
     // strumień rozkazów (RW-40b): czytelnik pierścienia strony, pociski-lustra po slocie (SHOTS)
     cmd: null, cmdBuf: null, evFrame: -1, pageEv: new Float64Array(64).fill(-1), shots: [], shotList: [],
     // wieże 3D (blok TURRETS — rekordy Turret2D tej klatki po stronie gry, RW-26): lustro → rekordy
-    turByEnt: new Map(), turPool: [], turrets: null
+    turByEnt: new Map(), turPool: [], turrets: null,
+    // klatka zero: rozgrzewka widocznych obiektów przed pierwszym rysunkiem strony gry (renderPage)
+    firstPageWarm: true
   };
   // tło menu gotowe (RW-41c) — reszta init workera (efekty) rusza po nim
   st.menuReadyP = new Promise((r) => { st.menuReadyRes = r; });
@@ -130,9 +132,18 @@ if (isWorker) {
     await import('../3d/planet3d.assets.js');
     st.dust = (await import('../3d/dust/spaceDust3D.js')).SpaceDust3D;
     st.hallDust = (await import('../3d/gasField/hallDust.js')).HallDust;
+    // gaz w otwartej przestrzeni (pas — docs/PLAN-gazy-kosmos.md): bloki `spaceGas` (wejście) i `gasObst` (kadłuby;
+    // ten sam blok podaje przeszkody gazu wybuchów — kopia GAS_OBST_IN strony, RW-11c)
+    st.spaceGas = (await import('../3d/spaceGas/spaceGas.js')).SpaceGas;
+    st.spaceGasBlk = await import('./blocks/spaceGasBlock.js');
+    st.gasObstBlk = await import('./blocks/gasObstBlock.js');
     // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
     st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
     st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
+    // statki ruchu v2 w bańce (E6): blok `traffic` → proxy kadłubów (ShipProxyBatch3D) i dysze MAIN w liście kadłubów
+    st.trafficMods = { blk: await import('./blocks/trafficBlock.js'), proxy: (await import('../3d/shipProxyBatch3D.js')).ShipProxyBatch3D };
+    st.trafficList = [];
+    st.hexList = [];
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -150,7 +161,9 @@ if (isWorker) {
     st.warpMirror = warpBlock.createWarpMirror();
     st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
     st.warpRamp = { active: false, age: 0, tBrake: 0 };
-    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: st.warpObj, trafficTime: 0, lensAllowed: false };
+    // hipercruise gracza w kształcie warpa (skalary HYPER_* — RenderWorld.hyper, WarpNurt, struga, lakier)
+    st.hyperObj = { state: 'idle', charge: 0, chargeTime: 0, speed: 0, vmax: 0, dir: 0 };
+    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: st.warpObj, hyper: st.hyperObj, trafficTime: 0, lensAllowed: false };
     st.ringMirror = ringBlockMod.createRingMirror();
     st.rockets = rktBlock.createRocketMirror();
     st.weaponDefs = new Map();
@@ -177,6 +190,11 @@ if (isWorker) {
     st.ret = ret.createReturnViews(m.retBuffer);
     st.canvas = new OffscreenCanvas(Math.max(1, Math.round(m.W * (m.dpr || 1))), Math.max(1, Math.round(m.H * (m.dpr || 1))));
     hex.initHexShips3D({ canvas: st.canvas });
+    // Stałe światła sceny (latarnie stacji pirackiej, intensywność 0) od razu po scenie — jak initWorld3D() strony przy
+    // starcie. Zestaw świateł passa jest w kluczu materiałów (pułapka 34): latarnie dodane dopiero przez wpis rozgrzewki
+    // „stacja piracka” zmieniały go w środku kolejki — wszystko rozgrzane wcześniej (krok fx wybuchów, wieże, dysze SIDE)
+    // budowało się drugi raz, a w klatce zero synchronicznie (2026-10-20, docs/AUDYT-start-sync-worker-2026-10-20.md).
+    st.w3.initWorld3D();
     Core3D.resize(m.W, m.H);
     const sid = models.shipModel3DIdFor;
     hex.setBeamSkinSuppressor((e) => !!e.beamHull?.world || !!sid(e));
@@ -258,6 +276,13 @@ if (isWorker) {
         st.ventsBlk = ventsBlk;
         st.ventsMirror = ventsBlk.createPirateVentsFrame();
       } catch (e) { report(e, 'wyrwy bazy'); }
+      // bitwa w głębi sceny „Wojna” (tłum nad i pod płaszczyzną, planeta w głębi, bohaterowie): stan z bloku warBackdrop
+      try {
+        const [wbMod, wbBlk] = await Promise.all([import('../3d/warBackdrop/warBackdrop3D.js'), import('./blocks/warBackdropBlock.js')]);
+        st.warBd = wbMod.createWarBackdrop3D(Core3D);
+        st.warBdBlk = wbBlk;
+        st.warBdMirror = wbBlk.createWarBackdropFrame();
+      } catch (e) { report(e, 'bitwa w głębi'); }
       // mostki (model 3D, okna, wyrzut atmosfery) i obraz rdzeni reaktora — na lustrach (RW-11b)
       bridgeFx.BridgeFx3D.attach(Core3D.scene, { weaponFx: wfx.WeaponFx });
       bridge3d.Bridge3D.attach(Core3D.scene);
@@ -266,13 +291,17 @@ if (isWorker) {
         objects: () => [...bridge3d.Bridge3D.warmupMeshes(), bridgeFx.BridgeFx3D.mesh].filter(Boolean) });
       st.reactorFx = reactorFx.createReactorBlastFx(Core3D, { rocketFx, weaponFx: wfx.WeaponFx });
       const rc = st.hazMods.core;
+      // reaktor w obudowie nad kadłubem (pass ortho): poza renderu gracza, maskowanie w środku rdzenia i „Statki 3D”
+      // jak strona (reactorModelVisibility w index.html)
+      const sid3 = models.shipModel3DIdFor;
       st.reactorModel = st.hazMods.model.createReactor3D({
-        scene: Core3D.scene, markLayerActive: () => Core3D.setShieldLayerActive(true),
-        colorFor: (core) => core.color || [0.3, 0.7, 1.0], frameOf: rc.reactorCoreFrame, hostReady: (h) => !!rc.reactorHull(h)
+        scene: Core3D.scene, colorFor: (core) => core.color || [0.3, 0.7, 1.0],
+        frameOf: (core, out) => rc.reactorCoreFrame(core, out, st.playerPoseOf(core.host)), hostReady: (h) => !!rc.reactorHull(h),
+        visibility: (core, wx, wy) => (sid3(core.host) ? 0 : cloakLook.entityCloakVisAt(core.host, wx, wy))
       });
-      st.reactorModelOpts = { origin: { x: 0, y: 0 } };
-      Core3D.warmup.add({ name: 'model reaktora (reactor3D)', layer: 7, phase: 'loading',
-        objects: () => Object.values(st.reactorModel?.meshes || {}).flatMap((k) => [k.structure, k.plasma]).filter(Boolean) });
+      st.reactorModelOpts = { origin: { x: 0, y: 0 }, view: st.cull, zoom: 1 };
+      Core3D.warmup.add({ name: 'model reaktora (reactor3D)', layer: 0, phase: 'loading',
+        objects: () => (st.reactorModel ? st.reactorModel.warmupMeshes() : []) });
       await yieldTask();
       st.dust.init();
       await yieldTask();
@@ -473,6 +502,7 @@ if (isWorker) {
         else if (op === 'anchors') field.setSmallBodyAnchors(arg);
         else if (op === 'peaks') field.familyPeaks();
         else if (op === 'wake') field.wakeSpots.push(arg);
+        else if (op === 'holes') field.setHoles(arg);   // wyrwy po wydobyciu (ruch v2 → beltWorld.setHoles)
       };
       const giants = { entries: [],
         get readyCount() { let n = 0; for (const e of this.entries) if (e.giant && e.giant.ready) n++; return n; },
@@ -688,6 +718,14 @@ if (isWorker) {
     st.players.ship = rm.player;
     st.players.player2Ship = rm.player2;
     {
+      const W0 = v.world, ho = st.hyperObj;
+      const hs = W0[WD.HYPER_STATE];
+      ho.state = hs >= 0 ? st.dict.value(hs) : 'idle';
+      ho.charge = W0[WD.HYPER_CHARGE]; ho.chargeTime = W0[WD.HYPER_CHARGE_TIME];
+      ho.speed = W0[WD.HYPER_SPEED]; ho.vmax = W0[WD.HYPER_VMAX]; ho.dir = W0[WD.HYPER_DIR];
+      st.players.hyper = ho;
+    }
+    {
       const ix = h[H.INTERP_X], iy = h[H.INTERP_Y], ia = h[H.INTERP_ANGLE];
       if (ix === ix && iy === iy && ia === ia) {
         const ip = st.interpPose;
@@ -724,6 +762,9 @@ if (isWorker) {
     } catch (e) { modFail('drony', e); }
     // rozkazy klatek ≤ tej strony (pominięte strony też — efekty się sumują)
     if (st.cmd) { try { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); } catch (e) { modFail('rozkazy', e); } }
+    // przeszkody gazu wybuchów tej strony (hale K-7, budowle misji, kadłuby przy domenach) — krok efektów czyta je
+    // w renderSingle; bez tego dym w workerze przenikał kadłuby i hale (strona woła setObstacleInput na swoim reżyserze)
+    try { const ex = globalThis.__explosions; if (ex && st.gasObstBlk) ex.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); } catch (e) { modFail('przeszkody gazu', e); }
     const cam = st.cam;
     cam.x = h[H.CAM_X]; cam.y = h[H.CAM_Y]; cam.zoom = h[H.CAM_ZOOM];
     const c = st.cull;
@@ -798,6 +839,11 @@ if (isWorker) {
     } } catch (e) { modFail('pas', e); }
     // pył hal K-7: wejście klatki = blok HALL (kopia HALL_DUST_IN strony); krok Core3D.fx czyta tylko tę tablicę
     try { if (st.hallDust && v.hall) st.hallDust.submit(v.hall); } catch (e) { modFail('pył hal', e); }
+    // gaz przestrzeni: wejście = blok `spaceGas` (kopia SPACE_GAS_IN strony), kadłuby z bloku `gasObst`
+    try { if (st.spaceGas) {
+      const sg = st.spaceGasBlk.spaceGasInputOf(v);
+      if (sg) { st.spaceGas.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); st.spaceGas.submit(sg); }
+    } } catch (e) { modFail('gaz przestrzeni', e); }
     try { if (st.dust) {
       const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM] });
       st.dust.frame(dt, cns, null, st.dustOn !== false);
@@ -839,12 +885,30 @@ if (isWorker) {
       if (pl) { bp.x = pl.pos ? pl.pos.x : pl.x; bp.y = pl.pos ? pl.pos.y : pl.y; bp.angle = pl.angle || 0; }
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     } } catch (e) { modFail('luk', e); }
-    try { hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
+    // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
+    let hexList = rm.lists[L.RENDER];
+    try {
+      const tm = st.trafficMods, blk = v.blocks.traffic;
+      const list = tm.blk.applyTrafficBlock(blk, st.trafficList);
+      tm.proxy.drawList(cam, list, list.length, null);
+      const engines = tm.proxy.engineEntities;
+      if (engines.length) {
+        const out = st.hexList;
+        out.length = 0;
+        for (let i = 0; i < hexList.length; i++) out.push(hexList[i]);
+        for (let i = 0; i < engines.length; i++) out.push(engines[i]);
+        hexList = out;
+      }
+    } catch (e) { modFail('statki ruchu', e); }
+    try { hex.updateHexShips3D(cam, hexList, c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
     // wyrwy bazy piratów (po kadłubach — bank Fx3D ma początek układu tej klatki)
     try { if (st.vents && v.blocks.pirateVents && v.blocks.pirateVents.f64) {
       const vm = st.ventsBlk.applyPirateVentsBlock(v.blocks.pirateVents, st.ventsMirror);
       st.vents.update(vm, vm.has ? vm.dt : 0);
     } } catch (e) { modFail('wyrwy bazy', e); }
+    try { if (st.warBd && v.blocks.warBackdrop && v.blocks.warBackdrop.f64) {
+      st.warBd.update(st.warBdBlk.applyWarBackdropBlock(v.blocks.warBackdrop, st.warBdMirror), cam);
+    } } catch (e) { modFail('bitwa w głębi', e); }
     try { if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: st.playerPoseOf, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }
@@ -860,9 +924,17 @@ if (isWorker) {
       st.reactorFx.syncHazards(rdt);
       if (st.reactorModel) {
         st.reactorModelOpts.origin.x = cam.x; st.reactorModelOpts.origin.y = cam.y;
+        st.reactorModelOpts.zoom = cam.zoom;
         st.reactorModel.sync(rm.cores, 0, rdt, st.reactorModelOpts);
       }
     } } catch (e) { modFail('reaktory', e); }
+    // Klatka zero (pierwsza strona gry, pod kurtyną ładowania): to, co po aktualizacji modułów WIDAĆ w passach, kompiluje
+    // się w tle przed rysunkiem (Core3D.prewarmVisibleNow) — rysunki z pipeline'em w budowie Core3D pomija. Kolejka
+    // rozgrzewki nie musi zdążyć przed tą klatką (strona czeka na `prepare` z limitem, flush ma limit 4 s).
+    if (st.firstPageWarm) {
+      st.firstPageWarm = false;
+      try { Core3D.prewarmVisibleNow(); } catch (e) { modFail('rozgrzewka klatki zero', e); }
+    }
     const t1 = performance.now();
     let bmp = null;
     try { if ((h[H.FLAGS] & layoutMod.HEAD_FLAG.SKIP_WORLD_3D) !== 0) {

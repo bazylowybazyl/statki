@@ -7,7 +7,8 @@ const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8'
 
 test('capital AI checks line of fire only when a weapon is ready to fire', () => {
   const fireGate = capitalAi.indexOf('if (weapon.cd <= 0 && weapon._losRetryCd <= 0)');
-  const lineCheck = capitalAi.indexOf('window.isLineOfFireBlocked?.(npc, bestTarget, range)');
+  // 4. argument — pas szerokiej wiązki (promień śmierci, 2026-10-20); zwykłe działa podają 0 (pas pocisku 15 j.)
+  const lineCheck = capitalAi.indexOf('window.isLineOfFireBlocked?.(npc, bestTarget, range, weapon.losPad)');
   const spawn = capitalAi.indexOf('window.spawnBulletAdapter(npc, bestTarget');
 
   assert.ok(fireGate >= 0, 'weapon fire gate is missing');

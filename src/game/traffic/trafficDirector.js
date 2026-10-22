@@ -7,11 +7,11 @@
  * Zestrzelona flota górnicza to realnie mniej rudy na stacji, nie animacja.
  *
  * Trzy źródła kursów:
- *   PRZEWÓZ    — nadwyżka u jednego, niedobór u drugiego (`planShipment`)
+ *   PRZEWÓZ    — oferta sprzedaży u jednego, zamówienie skupu u drugiego (API rynku, `marketBook.js`)
  *   WYDOBYCIE  — surowce, których nie robi żadna stacja: ruda uranu z Kuipera
  *   TANKOWANIE — dowóz paliwa tam, gdzie kursy stają z pustym zbiornikiem
  *
- * Księgowość ładunku zostaje w `cargoFleet.js` — ten moduł tylko ją wywołuje,
+ * Księgowość ładunku jest w `shipmentOrders.js` — ten moduł tylko ją wywołuje,
  * nigdy nie dotyka magazynów wprost. Dzięki temu niezmiennik „jedna partia,
  * jeden właściciel" pilnują wciąż te same, przetestowane funkcje.
  */
@@ -20,11 +20,10 @@ import { RESOURCES, getBagMass, getBagValue } from '../../data/resources.js';
 import {
   createShipmentOrder, tryDeliverShipmentOrder, wreckShipmentOrder,
   getBlockedPairs, blockRoute, tickCooldowns, pickVanClass, VAN_CLASSES,
-  SHIPMENT_STATUS
-} from '../cargoFleet.js';
+  SHIPMENT_STATUS, getShipmentOrder
+} from './shipmentOrders.js';
 import {
-  runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, getStationSurpluses,
-  stationWantsResource, stationNetRates
+  runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, stationWantsResource
 } from '../stationEconomy.js';
 import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js';
 import {
@@ -33,7 +32,11 @@ import {
   travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage,
   getCourse
 } from './courseRegistry.js';
-import { laneThreat, depositLoot, recordPirateLoss } from './piracy.js';
+import { laneThreat, depositLoot, recordPirateLoss, pirateInterest } from './piracy.js';
+import {
+  createMarketBook, openMarket, reserveInbound, inboundUnits, buyOrderUnits, hasSellOffer,
+  takeSellOffer, requote, putStock, moveStock, sellOfferTo
+} from './marketBook.js';
 import {
   chooseRoute, getNode, DRIVE_MODES, interceptChance, randomFieldSpot, approachPoint
 } from './travelNetwork.js';
@@ -54,13 +57,16 @@ import {
   summarizeConvoys
 } from './convoy.js';
 import {
-  marketSnapshot, findBestTrade, buyCargo, sellCargo, recordLoss, getAgent,
+  findBestTrade, buyCargo, sellCargo, recordLoss, getAgent,
   agentIsBusy, attachCourses, releaseCourse, caravanEscortCost, maintainCaravan
 } from './agentFleets.js';
 import {
   createPatrolRegistry, collectLevy, recordLaneLoss, planPatrols,
   patrolMultiplier, summarizePatrols
 } from './patrols.js';
+import {
+  pickMiningField, planExpedition, recordExtraction, tickMiningFields, noteHarvestDelivered
+} from './miningFields.js';
 
 /** Ile trwa załadunek i rozładunek. Wchodzi w plan jako etap, nie jako kara. */
 const LOAD_SECONDS = 90;
@@ -106,8 +112,12 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    *
    * Przepustowość portu i tak wyznaczają stanowiska — kolejka dłuższa niż one
    * niczego nie przyspiesza, tylko zamraża towar w rekordach.
+   *
+   * 0,1 zamiast 0,6 (2026-10-21): przy 0,6 eksport Westy trzymał na redzie
+   * średnio ~2,4 kursu, choć tempo i tak wyznaczały stanowiska. Statek, który
+   * czeka, czeka w porcie macierzystym — to nie zapycha redy.
    */
-  loadQueueRatio: 0.6,
+  loadQueueRatio: 0.1,
   /**
    * Ile pustych przerzutów wolno wystawić na jeden cykl gospodarczy.
    *
@@ -145,7 +155,18 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    * nosa, bo gdzieś daleko wypadł mu rzut. Skrypt i demo nie mają encji, więc
    * domyślnie wyłączone i ich przebiegi się nie zmieniają.
    */
-  protectObserved: false
+  protectObserved: false,
+  /**
+   * Skąd planista bierze ofertę sprzedaży (API rynku, `marketBook.js`):
+   *   'surplus'     — nadwyżka ponad 70% magazynu (`getStationSurpluses`), niezależna od ceny;
+   *   'reservation' — cena rezerwacji producenta, ten sam model co u kupców (`sellOfferTo`):
+   *                   producent sprzedaje, dopóki skup odbiorcy przebija jego cenę żądania przy
+   *                   zapasie PO sprzedaży (z marżą `sellOfferMargin`), nie schodząc poniżej zapasu
+   *                   roboczego na własne potrzeby. Własna stocznia nie ma pierwszeństwa.
+   */
+  sellOffers: 'surplus',
+  /** Marża ceny rezerwacji w modelu 'reservation' — przewoźnik frakcji bierze fracht, nie marżę. */
+  sellOfferMargin: 0
 });
 
 // ============================================================
@@ -159,11 +180,12 @@ export function createDirector(network, registry, options = {}) {
   if (options.maxActiveCourses === undefined) {
     config.maxActiveCourses = Math.round(DIRECTOR_DEFAULTS.maxActiveCourses * Math.max(1, config.economyScale));
   }
+  const book = createMarketBook({ config, getEconomy: options.getEconomy });
   return {
     network,
     registry,
     config,
-    /** Stan floty z cargoFleet — trzyma zlecenia i karencje par. */
+    /** Stan floty (`shipmentOrders.js`) — trzyma zlecenia i karencje par. */
     fleet: options.fleet,
     /** Firmy transportowe i ich jednostki. Bez tego kurs powstaje znikąd. */
     companies: options.companies || null,
@@ -189,14 +211,14 @@ export function createDirector(network, registry, options = {}) {
     economyTimer: 0,
     /** Ile kursów wyszło z danego portu — wejście do wyceny pustego powrotu. */
     outboundTally: new Map(),
-    /** `stacja:surowiec` → sztuki w drodze. Przeliczany raz na tick. */
-    inbound: new Map(),
-    /** `stacja:surowiec` → dostawy `{ units, eta }`, do kontroli zapasu w czasie. */
-    inboundSchedule: new Map(),
-    /** `stacja` → nominalne saldo zasobów/s przy skali gospodarki 1. */
-    demandRates: new Map(),
-    /** Surowce dostępne u kogokolwiek na zbyciu. Też raz na tick. */
-    surplus: new Set(),
+    /**
+     * Księga rynku (`marketBook.js`, API rynku): notowania, oferty sprzedaży i zamówienia skupu,
+     * rezerwacje towaru w drodze — liczona raz na tick (`openMarket`), wspólna dla planisty,
+     * kupców i licytacji stoczni.
+     */
+    book,
+    /** Rezerwacje `stacja:surowiec` → sztuki w drodze — ta sama mapa co `book.inbound` (narzędzia, testy). */
+    inbound: book.inbound,
     /** `stacja` → ile kursów stoi tam na redzie, czekając na stanowisko. */
     portQueue: new Map(),
     /**
@@ -212,12 +234,13 @@ export function createDirector(network, registry, options = {}) {
     convoys: createConvoyRegistry(),
     /** Niezależni kupcy i górnicy — ruch po marżę, nie po niedobór. */
     agents: options.agents || null,
+    /**
+     * Pola wydobywcze z danych pasa (`miningFields.js`): wybór pola, punkt i urobek wyprawy, rejestr
+     * uszczuplenia i wyrwy. Bez niego (sieć z własnymi polami) wyprawy kopią jak dawniej — z `yields` pola.
+     */
+    mining: options.mining || null,
     /** Patrole: bezpieczeństwo szlaku jako wielkość ekonomiczna. */
     patrols: createPatrolRegistry(),
-    /** Migawka rynku: sprzedający z zapasem i kupujący wg pilności. */
-    market: { sellers: new Map(), buyers: [], cursor: 0 },
-    /** Notowania cen — wejście dla agentów, przeliczane raz na tick. */
-    quotes: new Map(),
     /** `stacja` → jednostki stojące w porcie, posortowane po ładowni. */
     parked: new Map(),
     /** Wraki czekające na holownik: { nodeId, orderId, at }. */
@@ -311,9 +334,14 @@ function tryDeadhead(director, targetStationId, requiredCapacity) {
       kind: COURSE_KIND.HAUL,
       unitClass: candidate.ship.hullId,
       factionId: candidate.company.factionId,
+      // Pusty statek nie ładuje ani nie rozładowuje, więc nie zajmuje
+      // stanowiska: czeka na orbicie oczekiwania w punkcie manewrowym portu.
+      // Ze stanowiskami pod „załadunek” i „rozładunek” puste przeloty były
+      // większością kolejki na redzie Westy (2026-10-21: ~6 z 9,5 kursu).
       stages: stagesFromRoute(route, candidate.ship.stationId, targetStationId, {
         loadSeconds: 30,
         unloadSeconds: 30,
+        dwellReason: DWELL_REASON.HOLD,
         ...manoeuvrePoints(director, candidate.ship.stationId, targetStationId)
       }),
       fuelCapacity: fuelCapacityFor(route),
@@ -475,34 +503,97 @@ function syncPorts(director) {
   for (const course of aktywne) {
     const stage = currentStage(course);
     if (!needsService(stage, docks)) continue;
-    const port = portOf(director, stage.nodeId);
-    if (!port) continue;
-
-    const przydzial = requestService(portControl, stage.nodeId, course, now, stage.seconds);
-    if (!przydzial) continue;
-    course.portStationId = stage.nodeId;
-
-    if (przydzial.berth) {
-      if (course.berthId !== przydzial.berthId) {
-        // Statek leci na stanowisko z bramy wjazdowej albo wprost z kolejki.
-        moveDwellTo(course, stage, { x: przydzial.berth.x, y: przydzial.berth.y },
-          config.approachSeconds);
-        course.berthId = przydzial.berthId;
-        course.berthRef = przydzial.berth;
-        course.holdSlot = null;
-      }
-      course.blocked = false;
-      continue;
-    }
-
-    if (course.holdSlot !== przydzial.slot) {
-      moveDwellTo(course, stage, holdingSlotPosition(portControl, port, przydzial.slot),
-        config.approachSeconds);
-      course.holdSlot = przydzial.slot;
-    }
-    course.blocked = true;
-    director.portQueue.set(stage.nodeId, (director.portQueue.get(stage.nodeId) || 0) + 1);
+    assignPortService(director, course, stage, now);
   }
+}
+
+/**
+ * Krok 3 kontroli ruchu dla jednego kursu: stanowisko albo miejsce w kolejce
+ * i lot do niego. Wołane z `syncPorts` i przy przeniesieniu kursu ze
+ * stanowiska, które zajął gracz (`setPlayerBerthHolds`).
+ */
+function assignPortService(director, course, stage, now) {
+  const { portControl } = director;
+  const config = portControl.config;
+  const port = portOf(director, stage.nodeId);
+  if (!port) return;
+
+  const przydzial = requestService(portControl, stage.nodeId, course, now, stage.seconds);
+  if (!przydzial) return;
+  course.portStationId = stage.nodeId;
+
+  if (przydzial.berth) {
+    if (course.berthId !== przydzial.berthId) {
+      // Statek leci na stanowisko z bramy wjazdowej albo wprost z kolejki.
+      moveDwellTo(course, stage, { x: przydzial.berth.x, y: przydzial.berth.y },
+        config.approachSeconds);
+      course.berthId = przydzial.berthId;
+      course.berthRef = przydzial.berth;
+      course.holdSlot = null;
+    }
+    course.blocked = false;
+    return;
+  }
+
+  if (course.holdSlot !== przydzial.slot) {
+    moveDwellTo(course, stage, holdingSlotPosition(portControl, port, przydzial.slot),
+      config.approachSeconds);
+    course.holdSlot = przydzial.slot;
+  }
+  course.blocked = true;
+  director.portQueue.set(stage.nodeId, (director.portQueue.get(stage.nodeId) || 0) + 1);
+}
+
+/** Znacznik właściciela stanowiska zajętego przez gracza (`berth.occupantId`). */
+export const PLAYER_BERTH_HOLDER = 'player';
+
+/**
+ * Stanowiska zajęte przez gracza (E6, `berth-hold`): pełny zbiór id. Wolne
+ * dostają znacznik gracza — dyspozytor ich nie przydziela (`findBerth`
+ * z `freeOnly` pomija zajęte). Stanowisko przydzielone kursowi, który jeszcze
+ * do niego leci (`canLeave(course)` — encja bańki przed korytarzem albo rekord
+ * w dojściu), wraca do puli, a kurs dostaje od razu inne miejsce albo kolejkę.
+ * Kurs, który już stoi na polu, zostaje — przydział gracza czeka na następne
+ * wywołanie. Zwolnione przez gracza stanowiska rozdaje zwykły `grantWaiting`.
+ * Zwraca liczbę przeniesionych kursów.
+ */
+export function setPlayerBerthHolds(director, berthIds, canLeave = null) {
+  const { docks, registry, portControl } = director;
+  if (!docks?.size) return 0;
+  const now = registry.clock;
+  const wanted = new Set((berthIds || []).map(String));
+  const held = director.playerBerths || (director.playerBerths = new Set());
+  let moved = 0;
+  for (const layout of docks.values()) {
+    for (const berth of layout.berths) {
+      const id = berth.id;
+      if (!wanted.has(id)) {
+        if (held.has(id)) {
+          held.delete(id);
+          if (berth.occupantId === PLAYER_BERTH_HOLDER) releaseBerth(berth, now);
+        }
+        continue;
+      }
+      if (berth.occupantId === PLAYER_BERTH_HOLDER) { held.add(id); continue; }
+      if (berth.occupantId) {
+        const course = getCourse(registry, berth.occupantId);
+        const stage = course ? currentStage(course) : null;
+        if (course && stage && course.berthId === id && (!canLeave || canLeave(course))) {
+          releaseService(portControl, course.id, now);
+          course.berthId = null;
+          course.berthRef = null;
+          reserveBerth(berth, PLAYER_BERTH_HOLDER, now);
+          held.add(id);
+          assignPortService(director, course, stage, now);
+          moved++;
+        }
+        continue;
+      }
+      reserveBerth(berth, PLAYER_BERTH_HOLDER, now);
+      held.add(id);
+    }
+  }
+  return moved;
 }
 
 /** Zwalnia stanowisko i jednostkę po zamknięciu kursu. */
@@ -565,8 +656,13 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // w środku planety. Bez `entryPos` świeżo wystawiony kurs siedział przez
   // jeden tick w punkcie zerowym stacji, zanim dyspozytor portu przydzielił mu
   // stanowisko; przy dużym ruchu widać to było jako grudkę w środku globu.
-  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS, DWELL_REASON.LOAD,
-    options.originBerthPos, { entryPos: options.originBerthPos || options.departPoint }));
+  // `dwellReason` podmienia oba postoje (pusty przelot: HOLD, bez stanowiska —
+  // wtedy statek stoi w punktach manewrowych, nie w środku stacji).
+  const hold = options.dwellReason === DWELL_REASON.HOLD;
+  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS,
+    options.dwellReason || DWELL_REASON.LOAD,
+    options.originBerthPos || (hold ? depart : undefined),
+    { entryPos: options.originBerthPos || options.departPoint }));
   if (depart) {
     stages.push(travelStage(originId, originId, {
       mode: 'conventional',
@@ -597,7 +693,7 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   // Wcześniej ostatni manewr celował w `destinationPos`, czyli w sam środek
   // stacji: wszystko zlatywało się do jednego punktu i było stamtąd odbijane.
   stages.push(dwellStage(destinationId, options.unloadSeconds ?? UNLOAD_SECONDS,
-    DWELL_REASON.UNLOAD, null, { entryPos: arrive }));
+    options.dwellReason || DWELL_REASON.UNLOAD, hold ? arrive : null, { entryPos: arrive }));
   return stages;
 }
 
@@ -670,7 +766,7 @@ function dispatchAgent(director, stations) {
 
   // Notowania liczone RAZ na tick, nie przy każdej próbie: to 28 surowców
   // × wszystkie stacje, a agent pyta o nie kilka razy na sekundę gry.
-  const okazja = findBestTrade(agent, director.quotes, director.network, {
+  const okazja = findBestTrade(agent, director.book.quotes, director.network, {
     piracyPressure: config.piracyPressure
   });
   if (!okazja) { agents.stats.idle++; return { ok: false, reason: 'brak opłacalnej okazji' }; }
@@ -744,6 +840,13 @@ function dispatchAgent(director, stations) {
   }
 
   attachCourses(agent, kursy.map(course => course.id));
+  // Następny kupiec w tym samym ticku ma widzieć chudszego nadawcę i towar już
+  // lecący do odbiorcy — inaczej cała pula wolnych karawan rzuca się na tę samą
+  // parę, a nadmiar przepada przy rozładunku.
+  reserveInbound(director.book, opportunity.target.id, opportunity.resourceId, wyslane,
+    route.seconds + (dojazd?.seconds || 0));
+  requote(director.book, opportunity.source.id, opportunity.resourceId);
+  requote(director.book, opportunity.target.id, opportunity.resourceId, wyslane);
   // Karawana leci razem Z DEFINICJI: to jeden właściciel i jeden towar, więc
   // nie pytamy `shouldConvoy` — ta funkcja rozstrzyga, czy OBCYM kursom opłaca
   // się zebrać w grupę. Osłona jest już wliczona w rachunek okazji.
@@ -810,127 +913,13 @@ function unitClassFor(mass) {
   return pickVanClass(mass).npcType;
 }
 
-/**
- * Przelicza indeks „co jest w drodze i dokąd" — RAZ na tick.
- *
- * Wcześniej liczyło się to przez przemiatanie wszystkich kursów przy KAŻDEJ
- * próbie wysyłki (osiem prób na wysyłkę), czyli O(kursy × próby). Przy kilkunastu
- * kursach to nie miało znaczenia, przy kilku tysiącach jest to główny koszt
- * całej warstwy. Jedno przejście na tick wystarcza, bo w obrębie ticku nic
- * poza dyspozytorem tego nie zmienia.
- */
-function rebuildInboundIndex(director) {
-  const index = director.inbound;
-  index.clear();
-  director.inboundSchedule.clear();
-  const add = (target, resourceId, units, eta) => {
-    const amount = Math.max(0, Number(units) || 0);
-    if (!(amount > 0)) return;
-    const key = `${target}:${resourceId}`;
-    index.set(key, (index.get(key) || 0) + amount);
-    const arrivals = director.inboundSchedule.get(key) || [];
-    arrivals.push({ units: amount, eta: Math.max(0, Number(eta) || 0) });
-    director.inboundSchedule.set(key, arrivals);
-  };
-  for (const course of getActiveCourses(director.registry)) {
-    const payload = course.payload;
-    if (!payload) continue;
-    const target = payload.targetStationId || course.destinationId;
-    if (payload.resourceId && payload.units > 0) {
-      add(target, payload.resourceId, payload.units, course.remaining);
-    }
-    if (payload.harvest) {
-      for (const [id, amount] of Object.entries(payload.harvest)) {
-        add(target, id, amount, course.remaining);
-      }
-    }
-  }
-  // Kurs może już być zamknięty, ale atomowy rozładunek nadal czekać
-  // na miejsce. Taki manifest wciąż jest inbound i nie wolno zamówić duplikatu.
-  for (const order of director.fleet?.activeOrders || []) {
-    if (order?.status !== SHIPMENT_STATUS.AWAITING_UNLOAD) continue;
-    for (const [id, amount] of Object.entries(order.cargo || {})) {
-      add(order.targetStationId, id, amount, 0);
-    }
-  }
-}
-
-/** Ile sztuk danego surowca jest już w drodze do danej stacji. */
-function inboundUnits(director, stationId, resourceId) {
-  return director.inbound.get(`${stationId}:${resourceId}`) || 0;
-}
-
-/** Dopisuje nowy kurs do indeksu jeszcze w tym samym ticku dyspozytora. */
-function bumpInbound(director, stationId, resourceId, units, eta = 0) {
-  const amount = Math.max(0, Number(units) || 0);
-  if (!(amount > 0)) return;
-  const key = `${stationId}:${resourceId}`;
-  director.inbound.set(key, (director.inbound.get(key) || 0) + amount);
-  const arrivals = director.inboundSchedule.get(key) || [];
-  arrivals.push({ units: amount, eta: Math.max(0, Number(eta) || 0) });
-  director.inboundSchedule.set(key, arrivals);
-}
-
-/** Ile z już wystawionych ładunków dotrze nie później niż kandydat. */
-function inboundDueWithin(director, stationId, resourceId, seconds) {
-  const arrivals = director.inboundSchedule.get(`${stationId}:${resourceId}`) || [];
-  const horizon = Math.max(0, Number(seconds) || 0) + 1e-6;
-  let units = 0;
-  for (const arrival of arrivals) {
-    if (arrival.eta <= horizon) units += Math.max(0, Number(arrival.units) || 0);
-  }
-  return units;
-}
-
-/** Nominalny import potrzebny stacji na sekundę przy aktualnej skali gospodarki. */
-function plannedDemandPerSecond(director, station, resourceId) {
-  let rates = director.demandRates.get(String(station.id));
-  if (!rates) {
-    rates = stationNetRates(station);
-    director.demandRates.set(String(station.id), rates);
-  }
-  const net = Number(rates?.[resourceId]) || 0;
-  return Math.max(0, -net) * Math.max(0, Number(director.config.economyScale) || 0);
-}
+// Rezerwacje towaru w drodze, oferty sprzedaży i zamówienia skupu (wielkość zamówienia:
+// `buyOrderUnits`) — API rynku, `marketBook.js`.
 
 /** Pełny czas od rozpoczęcia załadunku do końca rozładunku. */
 function shipmentLeadSeconds(route) {
   return Math.max(0, Number(route?.seconds) || 0)
     + LOAD_SECONDS + UNLOAD_SECONDS + MANOEUVRE_SECONDS * 2;
-}
-
-/**
- * Ile jeszcze należy wysłać, aby pozycja magazynowa pokryła lot i zapas.
- *
- * `stored + inbound` jest pozycją magazynową. Cel zawiera stały zapas roboczy
- * oraz planowane zużycie przez CAŁY czas dostawy. Poprzedni regulator patrzył
- * wyłącznie na brak do 25% magazynu; dla 29-minutowej trasy Merkury→Ziemia
- * narzucał przez to przepływ mniejszy niż połowa zapotrzebowania Ziemi.
- */
-function requiredInboundUnits(director, station, resourceId, leadSeconds = 0) {
-  const econ = director.getEconomy(station.id);
-  const capacity = Number(econ?.capacity?.[resourceId]);
-  if (!(capacity > 0)) return 0;
-
-  const stored = Math.max(0, Number(econ.resources?.[resourceId]) || 0);
-  const safetyFill = Math.min(1, Math.max(0,
-    Number(director.config.inventorySafetyFill) || 0));
-  const leadMargin = Math.max(1, Number(director.config.inboundOvershoot) || 1);
-  const demand = plannedDemandPerSecond(director, station, resourceId);
-  const lead = Math.max(0, Number(leadSeconds) || 0);
-  const due = inboundDueWithin(director, station.id, resourceId, lead);
-  // Liczy się zapas przewidywany W CHWILI przybycia kandydata. Późniejszy,
-  // daleki kurs nie może blokować pilnej dostawy tylko dlatego, że też jest
-  // zapisany jako "inbound". Ujemnego zapasu nie ma — utraconego popytu nie
-  // próbujemy fizycznie upchnąć później do magazynu.
-  const projectedAtArrival = Math.max(0, stored + due - demand * lead * leadMargin);
-  const safety = capacity * safetyFill;
-  // Wiele wysyłek z jednego dużego ticku ma praktycznie ten sam ETA. Ich suma
-  // nie może przekroczyć pojemności, bo rozładunek jest atomowy i nadmiar
-  // przeszedłby w AWAITING_UNLOAD bez aktywnego kursu.
-  const pipelineRoom = Math.max(0, capacity - inboundUnits(director, station.id, resourceId));
-  return Math.max(0, Math.min(pipelineRoom,
-    Math.ceil(safety - projectedAtArrival - 1e-9)));
 }
 
 /** Ile brakuje stacji do progu niedoboru. Zwraca 0, gdy nie brakuje nic. */
@@ -941,128 +930,12 @@ function missingUnits(director, station, resourceId) {
   return deficit ? Math.max(0, deficit.missing) : 0;
 }
 
-/**
- * Doładowuje przesyłkę do pełnej ładowni.
- *
- * `planShipment` wysyła dokładnie tyle, ile brakuje do progu niedoboru — a próg
- * bywa mały, więc powstawały kursy typu „płyta kadłuba ×3" lecące 40 minut
- * z ładownią na 380 ton. Skoro statek i tak leci, ma lecieć pełny: to podnosi
- * przepustowość bez dokładania ani jednego kursu.
- *
- * Ograniczenia są dwa i oba twarde: nadwyżka nadawcy (nie zabieramy mu zapasu
- * roboczego) oraz WOLNE MIEJSCE u odbiorcy pomniejszone o to, co już leci —
- * rozładunek jest all-or-nothing, więc przeładowany kurs utknąłby pod stacją.
- */
-function topUpShipment(director, shipment) {
-  const resourceId = shipment.resourceId;
-  const def = RESOURCES[resourceId];
-  const sourceEcon = director.getEconomy(shipment.source.id);
-  const targetEcon = director.getEconomy(shipment.target.id);
-  if (!def || !sourceEcon || !targetEcon) return shipment;
-
-  const spare = getStationSurpluses(shipment.source, sourceEcon, 16)
-    .find(entry => entry.id === resourceId)?.spare ?? shipment.units;
-  const capacity = Number(targetEcon.capacity?.[resourceId]);
-  const stored = Number(targetEcon.resources?.[resourceId]) || 0;
-  const free = Number.isFinite(capacity)
-    ? Math.max(0, capacity - stored - inboundUnits(director, shipment.target.id, resourceId))
-    : Infinity;
-
-  const biggestHold = Math.max(...VAN_CLASSES.map(cls => cls.capacity));
-  const byHold = Math.floor(biggestHold / Math.max(def.mass, 1e-6));
-  const units = Math.floor(Math.min(spare, free, byHold));
-  if (!(units > shipment.units)) return shipment;
-  return { ...shipment, units, vanClass: pickVanClass(units * def.mass) };
-}
-
-/** Czy warto jeszcze cokolwiek wysyłać, czy pozycja magazynowa już wystarcza. */
-function needsMore(director, station, resourceId, leadSeconds = 0) {
-  return requiredInboundUnits(director, station, resourceId, leadSeconds) > 0;
-}
-
 /** Wyprawa po złoże zachowuje prosty limit brak→inbound; jej trasa jest w obie strony. */
 function needsMoreMining(director, station, resourceId) {
   const missing = missingUnits(director, station, resourceId);
   if (missing <= 0) return false;
-  return inboundUnits(director, station.id, resourceId)
+  return inboundUnits(director.book, station.id, resourceId)
     < missing * Math.max(1, Number(director.config.inboundOvershoot) || 1);
-}
-
-/**
- * Migawka rynku: co kto oddaje i czego komu brakuje — liczona RAZ na tick.
- *
- * `planShipment` z `cargoFleet.js` przelicza nadwyżki i niedobory dla każdej
- * pary stacji przy każdym wywołaniu. Przy kilkunastu kursach to nie miało
- * znaczenia; przy skali, na której w locie jest kilkaset jednostek, dyspozytor
- * wołany 25 razy na tick spędzał na tym 7 z 13 ms. Tutaj liczymy to raz i
- * zdejmujemy nadwyżkę lokalnie, więc kolejne wysyłki w tym samym ticku widzą
- * już pomniejszony zapas.
- */
-function rebuildMarket(director, stations) {
-  const market = director.market;
-  market.sellers.clear();
-  market.buyers.length = 0;
-  director.surplus.clear();
-  director.demandRates.clear();
-
-  for (const station of stations) {
-    // Opuszczona stacja NIE JEST uczestnikiem rynku. Nie ma załogi, nie ma
-    // przemysłu i nikt tam niczego nie zamawia.
-    //
-    // Bez tego warunku Neptun zasysał cały ruch układu: jego gospodarka nigdy
-    // nie chodzi, więc magazyny stoją na zerze, a `stationWantsResource` i tak
-    // odpowiada „tak" dla tlenu, polimeru, stali i paliwa, bo to zużycie bytowe.
-    // Zapełnienie 0% czyniło go wiecznie najpilniejszym odbiorcą w całym układzie.
-    if (isDerelict(station) || station.factionId === FACTION.PIRATES) continue;
-    const econ = director.getEconomy(station.id);
-    if (!econ) continue;
-    director.demandRates.set(String(station.id), stationNetRates(station));
-
-    const spare = new Map();
-    for (const surplus of getStationSurpluses(station, econ, 20)) {
-      spare.set(surplus.id, surplus.spare);
-      director.surplus.add(surplus.id);
-    }
-    if (spare.size) market.sellers.set(station.id, { station, spare });
-
-    // Zamówienie musi pojawić się PRZED przekroczeniem dawnego progu 25%.
-    // Dlatego rynek widzi wszystkie zasoby o stałym popycie; konkretny sprzedawca
-    // i jego ETA dopiero w `nextShipment` rozstrzygają, czy trzeba już wysłać.
-    for (const [id, def] of Object.entries(RESOURCES)) {
-      if (!stationWantsResource(station, id)) continue;
-      const capacity = Number(econ.capacity?.[id]);
-      if (!(capacity > 0)) continue;
-      const stored = Math.max(0, Number(econ.resources?.[id]) || 0);
-      const fill = stored / capacity;
-      const demand = plannedDemandPerSecond(director, station, id);
-      const safety = capacity * Math.min(1, Math.max(0,
-        Number(director.config.inventorySafetyFill) || 0));
-      if (!(demand > 0) && stored >= safety) continue;
-      const secondsToSafety = demand > 0
-        ? (stored - safety) / demand
-        : (stored < safety ? -Infinity : Infinity);
-      market.buyers.push({
-        station, id, fill, value: def.value, secondsToSafety,
-        belowSafety: stored < safety,
-        demandIntensity: demand / capacity
-      });
-    }
-  }
-  // Poniżej zapasu roboczego najpierw ratujemy najpustszy i najszybciej
-  // zużywany magazyn. Powyżej niego wygrywa najkrótszy czas do progu.
-  market.buyers.sort((a, b) => {
-    if (a.belowSafety !== b.belowSafety) return a.belowSafety ? -1 : 1;
-    if (a.belowSafety) {
-      return a.fill - b.fill || b.demandIntensity - a.demandIntensity;
-    }
-    return a.secondsToSafety - b.secondsToSafety || b.demandIntensity - a.demandIntensity;
-  });
-  market.cursor = 0;
-}
-
-/** Czy ktokolwiek ma ten surowiec na zbyciu. Jeśli tak, taniej go kupić niż kopać. */
-function anyStationHasSurplus(director, _stations, resourceId) {
-  return director.surplus.has(resourceId);
 }
 
 /**
@@ -1140,8 +1013,11 @@ function returnParkedShip(director, crew) {
  * jest częścią decyzji o wielkości zapasu w drodze.
  */
 function nextShipment(director, blocked = new Set()) {
-  const market = director.market;
+  const market = director.book;
   const biggestHold = Math.max(...VAN_CLASSES.map(cls => cls.capacity));
+  // Model oferty sprzedaży (`sellOffers`): w 'reservation' sprzedać może każdy uczestnik rynku,
+  // ile — mówi jego cena rezerwacji wobec skupu tego odbiorcy.
+  const reservation = director.config.sellOffers === 'reservation';
 
   while (market.cursor < market.buyers.length) {
     const buyerIndex = market.cursor;
@@ -1151,13 +1027,17 @@ function nextShipment(director, blocked = new Set()) {
 
     let bestReady = null;
     let bestShipless = null;
-    for (const seller of market.sellers.values()) {
-      if (seller.station.id === buyer.station.id) continue;
-      if (blocked.has(`${seller.station.id}>${buyer.station.id}`)) continue;
-      if (portIsBacklogged(director, seller.station.id)) continue;
-      const spare = seller.spare.get(buyer.id) || 0;
+    for (const entry of (reservation ? market.members : market.sellers.values())) {
+      const seller = reservation ? null : entry;
+      const source = reservation ? entry : entry.station;
+      if (source.id === buyer.station.id) continue;
+      if (blocked.has(`${source.id}>${buyer.station.id}`)) continue;
+      if (portIsBacklogged(director, source.id)) continue;
+      const spare = reservation
+        ? sellOfferTo(market, source.id, buyer.station.id, buyer.id, director.config.sellOfferMargin)
+        : (seller.spare.get(buyer.id) || 0);
       if (spare <= 0) continue;
-      if (areFactionsHostile(seller.station.factionId, buyer.station.factionId)) continue;
+      if (areFactionsHostile(source.factionId, buyer.station.factionId)) continue;
       if (!stationWantsResource(buyer.station, buyer.id)) continue;
 
       const byHold = Math.floor(biggestHold / Math.max(def.mass, 1e-6));
@@ -1165,20 +1045,20 @@ function nextShipment(director, blocked = new Set()) {
       if (candidateUnits <= 0) continue;
 
       const candidateMass = candidateUnits * def.mass;
-      const route = chooseRoute(director.network, seller.station.id, buyer.station.id, {
+      const route = chooseRoute(director.network, source.id, buyer.station.id, {
         mass: candidateMass,
         value: candidateUnits * (Number(def.value) || 0),
         piracyPressure: director.config.piracyPressure
       });
       if (!route) continue;
 
-      const required = requiredInboundUnits(director, buyer.station, buyer.id,
+      const required = buyOrderUnits(director.book, buyer.station, buyer.id,
         shipmentLeadSeconds(route));
       const units = Math.floor(Math.min(candidateUnits, required));
       if (units <= 0) continue;
 
       const candidate = {
-        source: seller.station,
+        source,
         target: buyer.station,
         resourceId: buyer.id,
         units,
@@ -1188,7 +1068,7 @@ function nextShipment(director, blocked = new Set()) {
         buyerIndex
       };
       const hasShip = !director.companies
-        || (director.parked.get(String(seller.station.id))?.length || 0) > 0;
+        || (director.parked.get(String(source.id))?.length || 0) > 0;
       if (hasShip) {
         if (!bestReady || route.seconds < bestReady.route.seconds) bestReady = candidate;
       } else if (!bestShipless || route.seconds < bestShipless.route.seconds) {
@@ -1270,7 +1150,7 @@ export function dispatchHaul(director, stations) {
       blockRoute(fleet, candidate.source, candidate.target);
       continue;
     }
-    const required = requiredInboundUnits(director, candidate.target, candidate.resourceId,
+    const required = buyOrderUnits(director.book, candidate.target, candidate.resourceId,
       shipmentLeadSeconds(exactRoute));
     const units = Math.min(capacityUnits, required);
     if (units <= 0) { returnParkedShip(director, found); continue; }
@@ -1363,16 +1243,18 @@ export function dispatchHaul(director, stations) {
 
   // Dopiero udany kurs rezerwuje nadwyżkę i pozycję magazynową. Dzięki temu
   // następna wysyłka w tym samym ticku widzi dokładnie to, co już leci.
-  if (shipment.sellerState) {
-    const spare = shipment.sellerState.spare.get(shipment.resourceId) || 0;
-    shipment.sellerState.spare.set(shipment.resourceId, Math.max(0, spare - shipment.units));
+  takeSellOffer(director.book, shipment.sellerState, shipment.resourceId, shipment.units);
+  if (director.config.sellOffers === 'reservation') {
+    // Cena rezerwacji liczy się od zapasu: nadawca schudł, do odbiorcy leci towar.
+    requote(director.book, shipment.source.id, shipment.resourceId);
+    requote(director.book, shipment.target.id, shipment.resourceId, shipment.units);
   }
-  bumpInbound(director, shipment.target.id, shipment.resourceId, shipment.units,
+  reserveInbound(director.book, shipment.target.id, shipment.resourceId, shipment.units,
     shipmentLeadSeconds(route));
   if (Number.isInteger(shipment.buyerIndex)) {
     // Ten sam pilny odbiorca może dostać kilka statków w jednym dużym kroku
-    // czasu; `requiredInboundUnits` przesunie kursor dalej po osiągnięciu celu.
-    director.market.cursor = Math.min(director.market.cursor, shipment.buyerIndex);
+    // czasu; `buyOrderUnits` przesunie kursor dalej po osiągnięciu celu.
+    director.book.cursor = Math.min(director.book.cursor, shipment.buyerIndex);
   }
 
   if (crew) {
@@ -1403,21 +1285,27 @@ export function dispatchMining(director, stations) {
     return { ok: false, reason: 'limit kursów w powietrzu' };
   }
 
+  const model = director.mining;
   let best = null;
   for (const station of stations) {
     if (isDerelict(station) || station.factionId === FACTION.PIRATES) continue;
     const econ = director.getEconomy(station.id);
     if (!econ) continue;
     for (const deficit of getStationDeficits(station, econ, 8)) {
-      const field = network.fields.find(candidate => candidate.yields?.[deficit.id] > 0);
-      if (!field) continue;
+      // Pole z danych pasa wybiera się dopiero dla kandydata, który wygrywa (udział rudy, dostępność
+      // po uszczupleniu, odległość) — tu wystarczy, że jakieś pole ją ma.
+      const field = model ? null : network.fields.find(candidate => candidate.yields?.[deficit.id] > 0);
+      if (!model && !field) continue;
+      if (model && !network.fields.some(candidate => candidate.yields?.[deficit.id] > 0)) continue;
       // Kopie się tylko to, czego NIE DA SIĘ KUPIĆ. Jeśli ktokolwiek w układzie
       // ma nadwyżkę, tańszy i szybszy jest przewóz — a wyprawa górnicza po rudę,
       // której pełno u sąsiada, wypychała przewozy do zera (zmierzone: 0 kursów
       // handlowych na 158 wypraw).
-      if (anyStationHasSurplus(director, stations, deficit.id)) continue;
+      if (hasSellOffer(director.book, deficit.id)) continue;
       if (!needsMoreMining(director, station, deficit.id)) continue;
-      if (!best || deficit.fill < best.deficit.fill) best = { station, field, deficit };
+      if (best && deficit.fill >= best.deficit.fill) continue;
+      const pick = field || pickMiningField(model, network, station, deficit.id);
+      if (pick) best = { station, field: pick, deficit };
     }
   }
   if (!best) return { ok: false, reason: 'nie ma czego kopać — wszystko da się kupić' };
@@ -1436,7 +1324,15 @@ export function dispatchMining(director, stations) {
   // Każda wyprawa kopie GDZIE INDZIEJ. Pole to wycinek pasa o szerokości setek
   // tysięcy jednostek, a trzymanie jego środka ustawiało wszystkich górników
   // w jedną kolumnę lecącą w ten sam punkt.
-  const spot = randomFieldSpot(best.field, director.rng);
+  //
+  // Z danymi pasa (E3): punkt w skałach pola (poszukiwania po gęstości i składzie,
+  // potem kopalnia rosnąca od jednego miejsca), urobek ze składu w tym punkcie,
+  // czas wydobycia z gęstości. Bez modelu — dawny los po pierścieniu.
+  const plan = model ? planExpedition(model, best.field, best.deficit.id, units, director.rng) : null;
+  if (model && !plan) return { ok: false, reason: 'pole wyczerpane' };
+  const spot = plan ? plan.spot : randomFieldSpot(best.field, director.rng);
+  const harvest = plan ? plan.harvest : { [best.deficit.id]: units };
+  const harvestMass = plan ? getBagMass(harvest) : mass;
   const out = manoeuvrePoints(director, best.station.id, best.field.id);
   const back = manoeuvrePoints(director, best.field.id, best.station.id);
 
@@ -1451,7 +1347,7 @@ export function dispatchMining(director, stations) {
       fromPos: index === 0 ? out.departPoint : null,
       toPos: index === outbound.legs.length - 1 ? spot : null
     })),
-    dwellStage(best.field.id, best.field.extractionSeconds, DWELL_REASON.EXTRACT, spot),
+    dwellStage(best.field.id, plan ? plan.seconds : best.field.extractionSeconds, DWELL_REASON.EXTRACT, spot),
     ...inbound.legs.map((leg, index) => travelStage(leg.from, leg.to, {
       ...leg,
       fromPos: index === 0 ? spot : null,
@@ -1460,10 +1356,12 @@ export function dispatchMining(director, stations) {
     dwellStage(best.station.id, UNLOAD_SECONDS, DWELL_REASON.UNLOAD, null,
       { entryPos: back.arrivePoint })
   ];
+  // Indeks etapu wydobycia: postój załadunku, manewr, odcinki dolotu.
+  const extractStage = 2 + outbound.legs.length;
 
   const course = launchCourse(registry, {
     kind: COURSE_KIND.MINE,
-    unitClass: unitClassFor(mass),
+    unitClass: unitClassFor(harvestMass),
     factionId: best.station.factionId ?? null,
     stages,
     fuelCapacity: fuelCapacityFor(outbound) + fuelCapacityFor(inbound),
@@ -1472,22 +1370,57 @@ export function dispatchMining(director, stations) {
     // Wyprawa górnicza wraca z towarem, którego nikt wcześniej nie posiadał —
     // nie ma zlecenia, więc ładunek dopisuje się dopiero przy powrocie.
     payload: {
-      harvest: { [best.deficit.id]: units },
-      mass,
+      harvest,
+      mass: harvestMass,
       resourceId: best.deficit.id,
       targetStationId: best.station.id,
       fieldId: best.field.id,
-      mode: inbound.id
+      mode: inbound.id,
+      // Punkt i tony urobku do rejestru uszczuplenia pasa — księgowane po etapie wydobycia
+      // (`bookMiningExtractions`); przechwyt przed nim niczego z pasa nie zabiera.
+      extract: plan
+        ? { x: spot.x, y: spot.y, tons: Object.values(harvest).reduce((s, n) => s + n, 0), stage: extractStage, booked: false }
+        : null
     },
     now: registry.clock
   });
   if (!course) return { ok: false, reason: 'plan wyprawy odrzucony' };
 
-  bumpInbound(director, best.station.id, best.deficit.id, units, course.duration);
+  for (const [id, amount] of Object.entries(harvest)) {
+    reserveInbound(director.book, best.station.id, id, amount, course.duration);
+  }
   director.stats.mining++;
   note(director, `wyprawa: ${best.station.id} → ${best.field.label} po `
-    + `${RESOURCES[best.deficit.id].label} ×${units}`);
+    + `${RESOURCES[best.deficit.id].label} ×${harvest[best.deficit.id] || 0}`);
   return { ok: true, course };
+}
+
+/**
+ * Wydobycie z pasa trafia do rejestru uszczuplenia, gdy wyprawa SKOŃCZY etap wydobycia (pierwszy
+ * odcinek powrotu — zdarzenie `stage`); kurs domknięty bez tego zdarzenia (bańka) księguje przy `done`.
+ */
+function bookMiningExtractions(director, events) {
+  if (!director.mining || !events?.length) return;
+  for (const event of events) {
+    if (event?.type !== 'stage') continue;
+    const extract = event.course?.payload?.extract;
+    if (!extract || extract.booked || event.course.stageIndex <= extract.stage) continue;
+    bookExtraction(director, extract);
+  }
+}
+
+function bookExtraction(director, extract) {
+  extract.booked = true;
+  recordExtraction(director.mining, extract.x, extract.y, extract.tons, 'npc');
+}
+
+/**
+ * Wydobycie gracza (platforma → ładownia) w tym samym rejestrze co wyprawy NPC: tony rudy w punkcie świata.
+ * Zwraca komórkę rejestru albo null (świat bez pól z danych pasa).
+ */
+export function recordPlayerMining(director, x, y, tons) {
+  if (!director?.mining) return null;
+  return recordExtraction(director.mining, Number(x), Number(y), Number(tons), 'player');
 }
 
 // ============================================================
@@ -1499,6 +1432,24 @@ export function dispatchMining(director, stations) {
  * przelatuje przez tę pętlę nietknięty — nietykalność wynika z modelu, nie
  * z osobnego wyjątku.
  */
+/**
+ * Ile jest wart ładunek kursu W TEJ CHWILI — wejście do zainteresowania
+ * piratów. Wyprawa górnicza leci w pole pusto i dopiero wraca z urobkiem.
+ */
+function cargoValueNow(course) {
+  const payload = course?.payload;
+  if (!payload || payload.deadhead) return 0;
+  const value = Number(payload.value);
+  if (value > 0) return value;
+  if (!payload.harvest) return 0;
+  const stages = course.stages || [];
+  for (let i = 0; i < course.stageIndex && i < stages.length; i++) {
+    const stage = stages[i];
+    if (stage.toId === payload.fieldId || stage.nodeId === payload.fieldId) return getBagValue(payload.harvest);
+  }
+  return 0;
+}
+
 function rollPiracy(director, dt) {
   const { registry, config } = director;
   if (!config.piracyEnabled || config.piracyPressure <= 0) return;
@@ -1517,8 +1468,11 @@ function rollPiracy(director, dt) {
     if (!stage || stage.kind !== STAGE_KIND.TRAVEL || !(stage.risk > 0)) continue;
     if (course.kind === COURSE_KIND.PATROL) continue;
 
+    // Ekspozycja = droga w tym kroku: średnia prędkość etapu (hipercruise ma w czasie rozruch i rozpęd —
+    // jego prędkość szczytowa zawyżałaby drogę), bez dystansu — prędkość napędu.
     const mode = DRIVE_MODES[stage.mode];
-    const exposure = (mode?.speed || 0) * dt * stage.risk;
+    const v = stage.distance > 0 && stage.seconds > 0 ? stage.distance / stage.seconds : (mode?.speed || 0);
+    const exposure = v * dt * stage.risk;
     if (!(exposure > 0)) continue;
     // Patrol na szlaku zbija ryzyko — to jedyne miejsce, w którym pieniądze
     // frakcji przekładają się na bezpieczeństwo transportu.
@@ -1527,12 +1481,19 @@ function rollPiracy(director, dt) {
     // patrolu. Dzięki temu szlak da się realnie oczyścić, zabijając rejdera,
     // zamiast tylko przeczekać złą passę losowania.
     const zagrozenie = director.piracy ? laneThreat(director.piracy, stage.fromId, stage.toId) : 1;
-    const solo = interceptChance(exposure, director.network.config, config.piracyPressure)
+    const ryzyko = interceptChance(exposure, director.network.config, config.piracyPressure)
       * oslona * zagrozenie;
 
     const konwoj = convoyOf(director.convoys, course.id);
     if (konwoj) {
-      for (const id of konwoj.courseIds) rozliczone.add(id);
+      // Konwój kusi łupem CAŁEJ grupy — razem jest celem, nawet gdy pojedyncze
+      // statki wiozą drobnicę.
+      let lup = 0;
+      for (const id of konwoj.courseIds) {
+        rozliczone.add(id);
+        lup += cargoValueNow(getCourse(registry, id));
+      }
+      const solo = ryzyko * pirateInterest(lup, director.piracy?.config);
       // Konwój z choćby jednym oglądanym statkiem gracz widzi w całości —
       // o jego losie rozstrzyga gra, nie rzut.
       if (config.protectObserved && convoyIsObserved(registry, konwoj)) continue;
@@ -1551,7 +1512,8 @@ function rollPiracy(director, dt) {
     }
 
     if (config.protectObserved && course.actorId) continue;
-    if (director.rng() >= solo) continue;
+    // Pirat poluje na łup: pusty przelot i tani urobek to słaby cel.
+    if (director.rng() >= ryzyko * pirateInterest(cargoValueNow(course), director.piracy?.config)) continue;
     strikeCourse(director, course);
     note(director, `PRZECHWYT: ${course.originId}→${course.destinationId}`);
   }
@@ -1602,7 +1564,7 @@ function strikeCourse(director, course, options = {}) {
   if (orderId) {
     // Kurs zniknął, więc order nie może dalej udawać `IN_TRANSIT`: taki duch
     // pozostawał w pozycji magazynowej i na zawsze blokował wysyłkę zastępczą.
-    const order = fleet?.orders?.find(candidate => candidate.id === orderId);
+    const order = getShipmentOrder(fleet, orderId);
     if (order) {
       wreckShipmentOrder(order, `wreck:${course.id}`, null, registry.clock);
       removeActiveShipmentOrder(fleet, order);
@@ -1680,14 +1642,10 @@ export function applyStockDelta(director, stationId, bag) {
     if (!RESOURCES[id]) continue;
     const delta = Number(raw);
     if (!Number.isFinite(delta) || delta === 0) continue;
-    const stock = Math.max(0, Number(econ.resources[id]) || 0);
-    const cap = Number(econ.capacity?.[id]);
-    const next = delta > 0
-      ? (Number.isFinite(cap) && cap > 0 ? Math.min(cap, stock + delta) : stock + delta)
-      : Math.max(0, stock + delta);
-    if (next === stock) continue;
-    econ.resources[id] = next;
-    applied[id] = next - stock;
+    // API rynku: przyjęcie do pojemności albo wydanie do zera (`marketBook.js`).
+    const moved = moveStock(econ, id, delta);
+    if (moved === 0) continue;
+    applied[id] = moved;
   }
   return applied;
 }
@@ -1876,20 +1834,21 @@ export function settleCourseEvents(director, events) {
       }
       if (course.payload?.orderId) {
         const econ = director.getEconomy(course.destinationId);
-        const order = fleet.orders.find(candidate => candidate.id === course.payload.orderId);
+        // Przez indeks id, nie przegląd całej listy zleceń — patrz `getShipmentOrder`.
+        const order = getShipmentOrder(fleet, course.payload.orderId);
         if (order && tryDeliverShipmentOrder(order, econ, registry.clock).changed) {
           removeActiveShipmentOrder(fleet, order);
           director.stats.delivered++;
         }
       } else if (course.payload?.harvest) {
+        // Kurs domknięty bez zdarzenia `stage` po wydobyciu (bańka) — urobek i tak zszedł z pasa.
+        const extract = course.payload.extract;
+        if (extract && !extract.booked && director.mining) bookExtraction(director, extract);
         // Wyprawa górnicza wnosi do gospodarki surowiec spoza przemysłu stacji.
         const econ = director.getEconomy(course.payload.targetStationId);
         if (econ?.resources) {
-          for (const [id, amount] of Object.entries(course.payload.harvest)) {
-            const cap = Number(econ.capacity?.[id]);
-            const next = (Number(econ.resources[id]) || 0) + amount;
-            econ.resources[id] = Number.isFinite(cap) ? Math.min(cap, next) : next;
-          }
+          for (const [id, amount] of Object.entries(course.payload.harvest)) putStock(econ, id, amount);
+          if (director.mining) noteHarvestDelivered(director.mining, course.payload.harvest);
           director.stats.delivered++;
         }
       }
@@ -1924,6 +1883,9 @@ export function tickDirector(director, dt, stations) {
   const { registry, fleet, config } = director;
   const events = advanceCourses(registry, dt);
   settleCourseEvents(director, events);
+  // Pas: urobek wypraw po etapie wydobycia do rejestru uszczuplenia, regeneracja (domyślnie brak).
+  bookMiningExtractions(director, events);
+  tickMiningFields(director.mining, dt);
 
   rollPiracy(director, dt);
   syncPorts(director);
@@ -1979,10 +1941,13 @@ export function tickDirector(director, dt, stations) {
 
   // Indeksy przeliczane raz na tick, tuż przed fazą wysyłek — to one czynią
   // dyspozytora liniowym wobec liczby kursów i floty zamiast kwadratowym.
-  rebuildInboundIndex(director);
-  rebuildMarket(director, stations);
+  // Rynek: rezerwacje towaru w drodze, oferty i zamówienia skupu, a z kupcami — notowania.
+  openMarket(director.book, stations, {
+    courses: getActiveCourses(registry),
+    orders: fleet?.activeOrders || [],
+    withQuotes: !!director.agents || config.sellOffers === 'reservation'
+  });
   rebuildParkedIndex(director);
-  if (director.agents) director.quotes = marketSnapshot(stations, id => director.getEconomy(id));
 
   // Odstęp wysyłek skaluje się z gospodarką: N× większy przepływ przy tej samej
   // ładowni to N× więcej kursów, więc dyspozytor musi wystawiać je N× częściej.

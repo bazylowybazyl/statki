@@ -29,6 +29,7 @@ import {
 import { SHAPE_COUNT, SHAPE_VARIANTS, FAMILY } from '../../game/asteroidRockKinds.js';
 import { octDecode, octTexUv } from './tslCommon.js';
 import { octEncodeCpu, shapeRadiusAt } from '../../game/asteroidShapeRadius.js';
+import { compileAsyncNaCelu } from '../rozgrzewka.js';
 
 export const ROCK_SHAPE_DEFAULTS = Object.freeze({
   count: SHAPE_COUNT,
@@ -592,6 +593,23 @@ function createBakeMaterials(bank, procTexture) {
   };
 }
 
+// Przejścia pieczenia [materiał, cel] skompilowane w tle: compileAsync quada z celem przejścia (format, typ, głębia
+// celu — compileAsyncNaCelu, pułapka 30), na końcu cel sprzed wywołania; obietnica — pipeline'y gotowe.
+async function compileBakePasses(renderer, quad, passes) {
+  const prev = renderer.getRenderTarget();
+  const jobs = [];
+  try {
+    for (const [mat, target] of passes) {
+      quad.material = mat;
+      renderer.setRenderTarget(target);
+      jobs.push(compileAsyncNaCelu(renderer, quad, quad.camera));
+    }
+  } finally {
+    renderer.setRenderTarget(prev);
+  }
+  await Promise.all(jobs);
+}
+
 // ---------------------------------------------------------------------------
 // Bank
 
@@ -697,12 +715,23 @@ export class RockShapeBankGPU {
     const mats = createBakeMaterials(this, proc.texture);
     const U = mats.U;
     const quad = new THREE.QuadMesh(mats.proc);
-    const prevTarget = renderer.getRenderTarget();
+    // Cel odczytu promienia (przed normalizacją) — przed kompilacją przejść: jego format wchodzi do klucza pipeline'u.
+    const R = this.readbackSize;
+    const rb = new THREE.RenderTarget(R, R * this.count, {
+      type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
+      generateMipmaps: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter
+    });
+    let prevTarget = renderer.getRenderTarget();
     try {
       // Pamięć mipmap alokowana przy pierwszym użyciu celu (z włączonymi
       // mipmapami); potem generujemy je RAZ, po ostatniej warstwie.
       renderer.initRenderTarget(this.targetA);
       renderer.initRenderTarget(this.targetB);
+      // Pipeline'y czterech przejść w tle (compileAsync), zanim pierwszy rysunek utworzyłby je synchronicznie
+      // (ekran ładowania strony w trybie off, klatki tła menu w workerze) — każde na celu swojego przejścia.
+      await compileBakePasses(renderer, quad, [[mats.proc, proc], [mats.readback, rb], [mats.normal, this.targetA], [mats.mask, this.targetB]]);
+      quad.material = mats.proc;
+      prevTarget = renderer.getRenderTarget();
       this.targetA.texture.generateMipmaps = false;
       this.targetB.texture.generateMipmaps = false;
       for (let k = 0; k < this.count; k++) {
@@ -711,11 +740,6 @@ export class RockShapeBankGPU {
         quad.render(renderer);
       }
       // Odczyt promienia (przed normalizacją) → skala każdej bryły i długa oś.
-      const R = this.readbackSize;
-      const rb = new THREE.RenderTarget(R, R * this.count, {
-        type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
-        generateMipmaps: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter
-      });
       quad.material = mats.readback;
       renderer.setRenderTarget(rb);
       quad.render(renderer);

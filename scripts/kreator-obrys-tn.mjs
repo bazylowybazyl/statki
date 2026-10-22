@@ -1,5 +1,5 @@
-// Obrys pancerza ze sprite'a okrętu → wielokąty projektu kreatora kadłuba (narzędzie autora gotowych projektów,
-// src/game/hullDesign/hullDesignPresets.js). Jasne, mało nasycone piksele = płyty pancerza (poziom 1), ciemne
+// Obrys pancerza ze sprite'a okrętu — POMIAR płyt i rowów maszynowni sprite'a (wzór przy układaniu presetów
+// z klocków; presety obrysu nie używają — scripts/kreator-tn-ab.mjs: IoU i podkład). Jasne, mało nasycone piksele = płyty pancerza (poziom 1), ciemne
 // wnętrze sylwetki = rama z maszynownią (poziom 0). Maska jest symetryzowana względem osi okrętu (szukanej po
 // alfie), domykana (szwy płyt), małe dziury (kratki, nity, napisy) zalane, drobne wyspy usunięte; z górnej połowy
 // kontury (traceBlockContours), uproszczone Douglasem–Peuckerem. Kontur na osi → wielokąt `sym` (połowa od osi do

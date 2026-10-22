@@ -8,8 +8,9 @@
 //
 // Obraz pasa (src/3d/asteroids/asteroidBelt.js) ma WŁASNĄ instancję pola (id i układ skał są
 // deterministyczne — ta sama konfiguracja daje te same skały) i dostaje od gry tylko dane:
-//   • konfigurację pola — operacje `setExclusions`, `setSmallBodyAnchors`, `familyPeaks`, `addWakeSpot`
-//     idą do pola gry i do subskrybentów w kolejności (`subscribeField` — powtarza historię);
+//   • konfigurację pola — operacje `setExclusions`, `setSmallBodyAnchors`, `familyPeaks`, `addWakeSpot`, `setHoles`
+//     (wyrwy po wydobyciu z ruchu v2) idą do pola gry i do subskrybentów w kolejności (`subscribeField` — powtarza
+//     historię);
 //   • gotowe sektory cienia pól (`exportSectors`, zdarzenie 'occlusion');
 //   • wejście klatki: zegar skał `time` (czas bezwzględny — pominięta klatka niczego nie gubi), dt klatki;
 //   • siatki SDF olbrzymów (`giants.entries[].giant.grid` — SharedArrayBuffer), zbiór `rig.taken`,
@@ -21,7 +22,7 @@
 // Olbrzymy budują się przy punktach uwagi z kamery I statków (`frame` — co klatkę, niezależnie od
 // tego, czy kadr dotyka pasa: kolizje z olbrzymem istnieją, zanim kamera do niego podejdzie).
 
-import { AsteroidBeltField } from './asteroidBeltField.js';
+import { AsteroidBeltField, BELT_HOLE_CONFIG } from './asteroidBeltField.js';
 import { FieldSunOcclusion, nightKnee } from './asteroidFieldLight.js';
 import { BeltGiants } from './asteroidBeltGiants.js';
 import { GiantBuilder } from './asteroidGiantBuilder.js';
@@ -72,6 +73,9 @@ export class BeltWorld {
     });
     this._fieldOps = [];
     this._fieldSubs = [];
+    this._holes = new Map();
+    // Koszt przeliczeń cienia pól po wyrwach (setHoles): liczba, ms, kolumny, próbki pola.
+    this.lightStats = { updates: 0, ms: 0, lastMs: 0, columns: 0, samples: 0 };
     this._occSubs = [];
     this._miningSubs = [];
     this.setExclusions(this.giants.exclusions());
@@ -101,6 +105,7 @@ export class BeltWorld {
     else if (op === 'anchors') field.setSmallBodyAnchors(arg);
     else if (op === 'peaks') field.familyPeaks();
     else if (op === 'wake') { if (!field.wakeSpots.includes(arg)) field.wakeSpots.push(arg); }
+    else if (op === 'holes') field.setHoles(arg);
   }
 
   /**
@@ -143,6 +148,45 @@ export class BeltWorld {
    */
   addWakeSpot(spot) {
     if (spot) this._fieldOp('wake', spot);
+  }
+
+  /**
+   * Wyrwy po wydobyciu (E3): zmiany `[{ id, x, y, r, depth }]` z rejestru uszczuplenia świata ruchu (most ruchu v2,
+   * zdarzenie `belt-holes`); depth 0 usuwa. Idą do pola gry i do obrazu (`AsteroidBeltField.setHoles` — skały pasm
+   * gry i tła przerzedzone, komórki przeładowane). Historia operacji trzyma jeden wpis z pełnym stanem wyrw.
+   */
+  setHoles(list) {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const copy = [];
+    for (const h of list) {
+      if (!h || h.id == null) continue;
+      const hole = { id: String(h.id), x: Number(h.x), y: Number(h.y), r: Number(h.r), depth: Number(h.depth) || 0 };
+      copy.push(hole);
+      if (hole.depth > 0) this._holes.set(hole.id, hole);
+      else this._holes.delete(hole.id);
+    }
+    if (!copy.length) return;
+    const version = this.field.holeVersion;
+    this._applyFieldOp(this.field, 'holes', copy);
+    // Cień pól w wyrwie (mniej pyłu = więcej słońca w wyrwie i za nią): kolumny siatki przez prostokąt zmian,
+    // W MIEJSCU — sektory dzieli obraz (SharedArrayBuffer w workerze, te same tablice w trybie off), więc
+    // przeliczenie idzie PRZED operacją dla repliki obrazu: render przeładowuje mgłę i mapę już z nowym cieniem.
+    if (this.field.holeVersion !== version) {
+      const d = this.field.holeDirty[this.field.holeDirty.length - 1];
+      const m = BELT_HOLE_CONFIG.reach;
+      const res = this.occlusion.recomputeRect(d.x0 + m, d.y0 + m, d.x1 - m, d.y1 - m);
+      const L = this.lightStats;
+      L.updates++;
+      L.ms += res.ms;
+      L.lastMs = res.ms;
+      L.columns += res.columns;
+      L.samples += res.samples;
+    }
+    for (let i = 0; i < this._fieldSubs.length; i++) this._fieldSubs[i]('holes', copy);
+    const full = [...this._holes.values()];
+    const at = this._fieldOps.findIndex((e) => e[0] === 'holes');
+    if (at >= 0) this._fieldOps[at] = ['holes', full];
+    else this._fieldOps.push(['holes', full]);
   }
 
   // ── Cień pól ────────────────────────────────────────────────────────────────

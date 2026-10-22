@@ -82,7 +82,8 @@ export const SYSTEM_MAP_PLANET_BY_ID = Object.freeze(Object.fromEntries(
  */
 export const SYSTEM_MAP_MOONS = Object.freeze([
   // --- Ziemia: jeden księżyc, wojskowo-przemysłowy ---
-  { id: 'luna', label: 'Luna', parentId: 'earth', orbitRadius: 96_000, angle: 0.42, role: 'node' },
+  // Luna — kopalnia od 2026-10-22 (E10): glin, tytan, ziemie rzadkie wg `PLANET_YIELD`.
+  { id: 'luna', label: 'Luna', parentId: 'earth', orbitRadius: 96_000, angle: 0.42, role: 'mine' },
 
   // --- Mars: dwie bryłki, za małe na kopalnie ---
   { id: 'fobos', label: 'Fobos', parentId: 'mars', orbitRadius: 58_000, angle: 2.10, role: 'node' },

@@ -100,8 +100,9 @@ export class WarpFrame {
     // Zgięcie tła: wciąganie w szczeliny i soczewka bańki (tylko mgławica).
     this.seamLens = new Pool(caps.seamLens, () => ({ x: 0, y: 0, angle: 0, halfLen: 0, band: 0, amp: 0 }));
     this.lens = new Pool(caps.lens, () => ({ x: 0, y: 0, angle: 0, a: 0, b: 0, amp: 0, front: 3 }));
-    // Fale (przezroczysta refrakcja całej klatki — źródła zniekształceń Core3D).
-    this.waves = new Pool(caps.waves, () => ({ x: 0, y: 0, r: 0, width: 0, amp: 0 }));
+    // Fale (przezroczysta refrakcja całej klatki — źródła zniekształceń Core3D): kind 0 — fala, 1 — implozja
+    // (naciąg przed skokiem, styl „akcent”), 2 — soczewka bańki (styl „soczewka”: r = półoś w poprzek, asp, kurs dx/dy).
+    this.waves = new Pool(caps.waves, () => ({ x: 0, y: 0, r: 0, width: 0, amp: 0, kind: 0, dx: 1, dy: 0, asp: 1 }));
     // Błyski (okrągłe) i poprzeczne linie blasku.
     this.flashes = new Pool(caps.flashes, () => ({ x: 0, y: 0, size: 0, k: 0, pal: null, raw: false }));
     this.glares = new Pool(caps.glares, () => ({ x: 0, y: 0, angle: 0, len: 0, k: 0, pal: null }));
@@ -145,7 +146,21 @@ export class WarpFrame {
   addWave(x, y, r, width, amp) {
     const w = this.waves.add();
     if (!w) return;
-    w.x = x; w.y = y; w.r = r; w.width = width; w.amp = amp;
+    w.x = x; w.y = y; w.r = r; w.width = width; w.amp = amp; w.kind = 0;
+  }
+
+  /** Implozja: obraz wsysany do punktu (x, y) w promieniu r. */
+  addImplode(x, y, r, amp) {
+    const w = this.waves.add();
+    if (!w) return;
+    w.x = x; w.y = y; w.r = r; w.width = 0; w.amp = amp; w.kind = 1;
+  }
+
+  /** Soczewka bańki: elipsa (półoś w poprzek `across`, wzdłuż × asp), pierścień grubości `width`, kurs (dx, dy). */
+  addBubbleLens(x, y, dx, dy, across, width, asp, amp) {
+    const w = this.waves.add();
+    if (!w) return;
+    w.x = x; w.y = y; w.r = across; w.width = width; w.amp = amp; w.kind = 2; w.dx = dx; w.dy = dy; w.asp = asp;
   }
 
   addFlash(x, y, size, k, pal, raw = false) {

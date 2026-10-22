@@ -167,3 +167,55 @@ Nowe, mają domyślną odpowiedź (do potwierdzenia przy okazji):
 - **D8. Ślady okrętów ukrytych mgłą wojny.** Kadłuby i dysze okrętów spoza wzroku gracza też rozpychają gaz — kanał zdradza
   okręt („kanał zdradza okręt” z `PLAN-gazy.md`), ale pod nakładką mgły wojny widać go słabo. Domyślnie: **zostaje** (tak
   działa fizyka). Alternatywa: okręty ukryte nie są przeszkodą ani źródłem.
+
+**Decyzje użytkownika 2026-10-22: rekomendacje D1–D8 przyjęte** („jedziemy, rekomendacje zaakceptowane”):
+
+- jeden silnik w otwartej przestrzeni;
+- pył zostaje (80 tys. drobin na Wysokiej);
+- kolejność scen: pas → ring → ławice;
+- wiatr jako przepływ;
+- komórka 64 j., okno 128 / 256 / 384 komórek;
+- strefy ściśliwe;
+- rozgrywka gazu na CPU z pola dalekiego;
+- kanały okrętów ukrytych mgłą wojny zostają.
+
+Port prowadzi sesja E11 planu ekonomii (`docs/PLAN-ekonomia-rynki.md`).
+
+## 6. Postęp
+
+- **GK-1 (2026-10-22):** rdzeń pola `src/3d/spaceGas/spaceGasSim.js` i szum `spaceGasNoise.js`, testy `tests/spaceGas.test.mjs`.
+  - Kernele są 1:1 z dema.
+  - Układ: świat gry względem kotwicy sceny, liczony w double na CPU. Bufory trzymają tylko stan komórek, więc kernel przesunięcia początku pul nie jest potrzebny.
+  - Bufor `flagB` zastąpił znacznik w `velB.w` (stała = 2). `kAdvect` i `kProject` mają po 7 buforów storage.
+  - Kadłuby wchodzą jako maski obrysu z rekordów `GAS_HULL_REC`; „pług” liczy się od prostokąta maski.
+  - Obraz ma dwie pary tekstur zapisywane na zmianę, każdą z własnym rogiem okna. Przenikanie idzie według ułamka kroku.
+  - Szum: z layoutem jest tylko `gnoise`, a `fbm` jest wklejana (pułapka 35).
+- **GK-2, GK-3 i GK-5, część pierwsza (2026-10-22):** gaz pasa w grze (commit `ecd3d672`).
+  - Wejście gry: `src/game/spaceGasInput.js` → blok `spaceGas`. Kotwica to Słońce. Obwiednia 32 × 32 bierze się z `sampleMacro` (wzór płatów mgły × `hole` + `gas` z E3) i przesuwa się przyrostowo. Dochodzi do tego odgazowanie lodowych skał.
+  - Render: `src/3d/spaceGas/spaceGas.js` (dysze `EngineFrame`, kadłuby z `GAS_OBST_IN`, gdy okno pola jest w prostokątach domen), mapy compute i warstwa.
+  - Odstępstwo od planu: zamiast 8 plasterków są **dwie połowy warstwy** (dolna pod kadłubami, górna po efektach). W kamerze z góry to złożenie dema z głębią. Plasterki z paralaksą dla kamer 3D przyjdą później.
+  - Pomiar (`scripts/webgpu/gaz-kosmos-gra.mjs`, RTX, 1600 × 900): w trybach off i worker obraz jest zgodny, pipeline'ów sync 0, błędów 0. GPU: render +0,08 ms, compute +0,16 ms.
+- **GK-8, część pierwsza:** opcja „Gazy i mgły w pasie asteroid” (Wł. / Wył., preset Niska — Wył.).
+- **Do zrobienia:**
+  - GK-4: pył gazu (D2: 80 tys.).
+  - GK-5, część druga:
+    - przekroje olbrzymów pasa jako przeszkody;
+    - wybuchy (reżyser) i pociski jako źródła;
+    - gaz zamiast płytkich płatów `fog.js` (dziś są obie mgły) — po scaleniu E3, które zmienia `fog.js`.
+  - GK-8, część druga: okno 128 / 256 / 384 i mapy z presetu.
+  - GK-6 (ring Jowisza), GK-7 (ławice mgły), GK-9 (odbiór).
+  - Kamery 3D: plasterki z paralaksą i mipmapy map.
+- **GK-4 (2026-10-22): pył gazu** (`src/3d/spaceGas/spaceGasDust.js`).
+  - 80 tys. drobin rodzonych z gęstości (ρ/ρ₀)³, płynących z gazem.
+  - Pozycje względem rogu okna pola, przesuwane razem z oknem — bez float32 przy 1,6 mln j.
+  - Kwad instancji w passie ortho (renderOrder −40).
+  - Światło: mapa światła, siatka świateł i maska słońca.
+  - W grze w trybach off i worker: pipeline'ów sync 0, błędów 0.
+  - GPU z pyłem: render +0,13 ms, compute +0,17 ms.
+- **GK-5, część druga (2026-10-22, zlecenie orkiestratora po decyzjach użytkownika):**
+  - Olbrzymy pasa jako przeszkody: raster przekroju 128 × 128 z SDF gry w teksturze R8 (komórki stałe i zasłona strug).
+  - Wybuchy (`GameBlasts`: front + wyrzut, budżet przed dyszami) i pociski (`bullets`) jako źródła.
+  - JEDNA MGŁA: płytkie płaty `fog.js` gasną pod gazem (`SpaceGasCover`).
+  - Pył ławicy siarki o 30% ciemniejszy.
+  - Rzednięcie w wyrwach E3 sprawdzone testem na prawdziwym polu: w środku wyrwy obwiednia < 5%, poza nią bez zmian; źródło `gas` pola dokłada gęstość.
+  - Pomiar: off i worker — pipeline'ów sync 0, błędów 0. GPU: render +0,10 ms, compute +0,18 ms.

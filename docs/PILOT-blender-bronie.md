@@ -3,7 +3,8 @@
 Pytanie użytkownika: czy Claude w Blenderze zrobi wyraźnie lepsze modele broni niż obecne z `weapons3D.js`?
 Pilot na jednej rodzinie: `yamato` (`special_yamato_cannon`). Od 2026-10-13 w grze (sekcja „Integracja w grze”).
 Ten sam dzień: Tempest Ion (`tempest1`, `tempest2`) i Lanca (`lance`) (sekcja „Tempest i Lanca”); wszystkie
-rodziny w grze z LOD wg oddalenia kamery (sekcja „LOD wg oddalenia kamery”).
+rodziny w grze z LOD wg oddalenia kamery (sekcja „LOD wg oddalenia kamery”). 2026-10-20: Promień Śmierci „Gungnir”
+(sekcja „Promień Śmierci”).
 
 ## Jak powstał model
 
@@ -144,6 +145,53 @@ Demo: `dema/atlas3d-webgpu.html?bronie=blender` (pole „Yamato z Blendera” w 
   --zoomy 0.9,1.8,3.2 --tryby 2d3d --kamery3d tactical,orbit --zoom3d 3.2` (log: wieże w partii LOD0 / LOD1 na kadr).
 - Testy: `tests/weaponGlb.test.mjs` („LOD wg oddalenia kamery (tryb AUTO)” — histereza, progi, części na LOD,
   tablice partii), `tests/turretBatch3D.test.mjs` (partia rodziny × LOD w `syncTurrets`).
+
+## Promień Śmierci „Gungnir” (2026-10-20; wygląd zaakceptowany przez użytkownika — „zostaw w rejestrze gry”)
+
+- Zlecenie: wieża superbroni `death_ray` (rodzina `deathRay`) jako wbudowana wieża jednego celu supercapitala Terra Nova
+  (Colossus, gniazdo `builtin` na dziobie — gniazdo i AI robi osobna sesja). Skrypt `scripts/blender/deathRay.py`
+  (wspólne `bryly.py`: doszła paleta `E_MINT` i `add_loft` — bryła przez kolejne przekroje, zęby zbiegające się ku osi),
+  pliki `assets/weapons3d/deathRay.glb` / `deathRay_lod1.glb`, w rejestrze gry `WEAPON_GLB_GAME.deathRay` = AUTO.
+- Wygląd wg kadłuba Colossusa (`src/assets/ships/terransupercapital.png`: jasne płyty ze ściętymi rogami, ciemne rowy
+  z przewodami, okrągłe włazy w ośmiokątnych blokach): obrotnica r 25 ze śrubami, ośmioboczna obudowa z jarzmem —
+  lufa w kanale otwartym od góry i od przodu (od góry widać zamek; podniesienie do 50° bez otworu w licu, wzór
+  Tempesta), cztery kapsuły kondensatorów na burtach, rowy policzków z przewodami i miętową żyłką, grzbiet z dwiema
+  kratkami i włazem, kratki rufy; lufa: zamek z jasną płytą i czterema miętowymi szczelinami, akcelerator (rura r 3,6)
+  z trzema kołnierzami i żebrami cewek nad świecącym paskiem grzbietu, przewody po bokach, stożkowa głowica z jasnym
+  pierścieniem, wnęka ze świecącą soczewką (kopułka) i korona czterech zębów po przekątnych (z góry dwa kolce jak
+  sylwetka `SPECS.deathRay`) zbiegających się do wylotu.
+- Układ bez zmian: czop (16; 7,4), wylot 62 w układzie wieży = `muzzleX` 46 (czubki zębów), pochylenie −5…50°.
+
+| model | trójkąty (pierścień + obudowa + lufa) | GLB |
+|---|---|---|
+| dziś (`weapons3D.js`) | 1 430 (212 + 410 + 808) | — |
+| Blender LOD0 | 12 550 (956 + 6 798 + 4 796) | 583 KB |
+| Blender LOD1 | 3 524 (332 + 1 504 + 1 688) | 228 KB |
+
+  LOD1 bez faz, śrub, lamel, przewodów bocznych lufy i włazu; żebra cewek i szczeliny zamka ZOSTAJĄ (z góry to główny
+  rysunek lufy — bez nich LOD1 miał gładką rurę z dwoma świecącymi paskami). Wieża jednego okrętu — budżet LOD1 nie
+  musi trzymać się „budowniczy + 25%” rodzin masowych (3,5 tys. ≈ 2,5 × budowniczy, limit 6 tys.).
+- LOD AUTO: sylwetka r 64 × Capital 1,75 = 112 px przy zoomie 1 → LOD0 od zoomu ~1,43, z powrotem LOD1 poniżej ~1,14
+  (zmierzone w grze: 0,35 / 0,9 / 1,4 — `deathRay@1`, 1,8 / 3,2 — `deathRay`; kamery 3D z bliska — prawie wszystkie LOD0).
+- Pomiar w grze (`node scripts/webgpu/wieza-promienia-gra.mjs` — Colossus z `DevScene.equipDeathRay`, na tej gałęzi
+  promień na 9 gniazdach special; oraz `bronie-blender-gra.mjs --bronie death_ray --zaczep special` na Atlasie): tryb off
+  i worker — 0 pipeline'ów synchronicznych, 0 błędów konsoli (poza favicon), partia `deathRay` / `deathRay@1` jednym
+  rysunkiem.
+- Wynik A/B (użytkownik zaakceptował wygląd 2026-10-20): z góry przy 1,8–3,2 Blender czytelniejszy — obrotnica, cztery kapsuły
+  z miętowymi punktami, świecący zamek, żebrowana lufa i korona; stary to dysk z płaskim klockiem i kratką. Przy 0,9
+  (LOD1) oba czytelne, nowy drobniejszy. W kamerach 3D największa różnica: stary — kanciasta skrzynka z rurą i świecącą
+  głowicą, nowy — bryła z jarzmem, kołnierzami i koroną. Słabości: obudowa ma ciemne, gładkie ściany boczne (z góry nie
+  widać, w 3D tak); paleta broni nie ma bieli Colossusa (`BRIGHT` #959eaa to najjaśniejszy materiał), więc wieża jest
+  ciemniejsza od kadłuba; zęby korony z bliska wyglądają jak klatka z kanciastych prętów.
+- Lekcja (bloom gry): pierwsza wersja miała świecące całe rdzenie kapsuł (tarcze r 2), oba przewody rowów i trzy paski
+  akceleratora — w kamerze 3D z bloomem gry wieża zlewała się w zieloną plamę (podgląd Cycles tego nie pokazuje). Teraz
+  świeci mało: punkty r 0,75 w ciemnym szkle kapsuł, żyłka na dnie rowu, pasek grzbietu, szczeliny zamka, soczewka,
+  żyłki zębów. Oceniaj ilość emisji w grze (kamera 3D), nie w Cyclesie.
+- Pułapki harnessów: `bronie-blender-gra.mjs` zostawiał kamerę 3D w preferencjach — drugi wariant (świeża strona)
+  startował w kamerze 3D i jego „kadry z góry” były z perspektywy (poprawione: powrót do `classic` po kadrach 3D);
+  w drugim wariancie kamery 3D bywa brak tekstury pokładu modelu kadłuba (sprawdzone odwróconą kolejnością — dotyczy
+  wariantu, który idzie drugi, także starego modelu; nie GLB). Kadry kamer 3D w trybie worker nie przełączają się
+  przez ten harness (tylko off).
 
 ## Integracja w grze — plan pilota
 

@@ -14,7 +14,7 @@ import { parseWeaponGlb, parseWeaponGlbList, weaponGlbFile, weaponGlbUrl } from 
  * weaponGlbFile: yamato2 → yamato). Brak pliku = model z weapons3D.js (ostrzeżenie). W GRZE aktywne są tylko
  * rodziny z WEAPON_GLB_GAME (weaponGlb.js) — reszta po akceptacji A/B (?bronieGlb=… w grze).
  */
-export const BLENDER_WEAPON_FAMILIES = Object.freeze(['yamato', 'yamato2', 'tempest1', 'tempest2', 'lance']);
+export const BLENDER_WEAPON_FAMILIES = Object.freeze(['yamato', 'yamato2', 'tempest1', 'tempest2', 'lance', 'deathRay']);
 
 /** Rodzina → adres GLB LOD0 (zgodność wstecz). */
 export const BLENDER_WEAPONS = Object.freeze(Object.fromEntries(BLENDER_WEAPON_FAMILIES.map((f) => [f, weaponGlbUrl(f, 0)])));

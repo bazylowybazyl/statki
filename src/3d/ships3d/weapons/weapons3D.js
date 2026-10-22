@@ -52,6 +52,8 @@ export const WEAPON3D_FAMILY = Object.freeze({
   supernova_missile: 'supernova', siege_torpedo: 'torpedo', siege_torpedo_mk2: 'torpedo',
   special_goliath_autocannon: 'goliath', special_plasma_gatling: 'plasmaGatling',
   special_valkyrie_railgun: 'valkyrie', special_yamato_cannon: 'yamato', siege_railgun: 'mjolnir',
+  // promień śmierci (2026-10-19): własna wieża — akcelerator z głowicą ogniskującą
+  death_ray: 'deathRay',
   // warianty rozmiarowe broni specjalnej: model rodzica (Yamato L — ta sama wieża z dwiema skrajnymi lufami)
   special_valkyrie_s: 'valkyrie', special_valkyrie_m: 'valkyrie', special_yamato_l: 'yamato2',
   // Lanca M / L (klasa snajperska): wieża Tempesta z długą lufą
@@ -70,7 +72,7 @@ export const WEAPON3D_FAMILY_LABEL = Object.freeze({
   flakL: 'Kartacz Flak', flakH: 'Grad / Perun Flak', cruise: 'Wyrzutnia Cruise', fast: 'Fast Missile Rack',
   osa: 'Osa Mk I', supernova: 'Supernova', torpedo: 'Torpedy oblężnicze', goliath: 'Goliath',
   plasmaGatling: 'Ion Plasma Gatling', valkyrie: 'Valkyrie', mjolnir: 'Mjolnir', yamato: 'Yamato',
-  yamato2: 'Yamato (2 lufy)', lance: 'Lanca (klasa snajperska)'
+  yamato2: 'Yamato (2 lufy)', lance: 'Lanca (klasa snajperska)', deathRay: 'Promień Śmierci „Gungnir”'
 });
 
 // ---------------------------------------------------------------------------
@@ -427,6 +429,33 @@ const FAMILIES = {
     for (const x of [26, 40, 54, 68]) boxX(L, x - tx, x + 2 - tx, 4.4, 4.2, { mat: M.PANEL, c: 0.9 });
     L.mirrorY(() => L.box(49 - tx, 3.65, 0, 58, 0.14, 2.2, { mat: M.E_ICE }));
     return { trunnion: [tx, tz], barrels: [[0, 0]], muzzleX: 80 - tx, recoil: 4.5, light: 'ice', kind: 'rail', pitch: [-5, 45] };
+  },
+
+  // PROMIEŃ ŚMIERCI — szeroka ośmioboczna obudowa z bankami kondensatorów, żebrowany akcelerator z cewkami,
+  // głowica ogniskująca (stożek i pierścień ze świecącą soczewką) i dwa kolce ogniskujące; mięta (barwa wiązki).
+  // Wylot 62 jak SPECS.deathRay w turret2D.js.
+  deathRay: ({ R, H, L }) => {
+    ring(R, 24);
+    const z0 = 1.2;
+    shell(H, octPoly(-18, -20, 20, 20, [5, 7, 7, 5]), z0, 12);
+    sidePacks(H, -15, 12, 14, 22, z0 + 1, 9, M.E_MINT);
+    vent(H, -16, -9, -9, 9, z0 + 12, 6);
+    H.box(4, 0, z0 + 12.8, 16, 14, 1.6, { mat: M.STEEL, bevel: [0.5, 0.5] });
+    receiver(H, 17, 22.4, 0, z0 + 6.2, 14, 10);
+    const tx = 16; const tz = z0 + 6.2;
+    // zamek i żebrowany akcelerator
+    boxX(L, 6 - tx, 16 - tx, 6.2, 6.0, { mat: M.PANEL });
+    for (let x = 16; x < 40; x += 2.4) boxX(L, x - tx, x + 1.2 - tx, 4.8, 4.8, { mat: M.DARK, c: 1.0 });
+    tubeX(L, 16 - tx, 50 - tx, 3.4, 3.0, M.METAL);
+    collar(L, 24 - tx, 1.8, 5.6, M.PANEL);
+    collar(L, 34 - tx, 1.8, 5.4, M.PANEL);
+    L.box(30 - tx, 0, 3.6, 22, 1.0, 0.5, { mat: M.E_MINT });
+    // głowica ogniskująca: stożek, pierścień z soczewką
+    L.cylinder([50 - tx, 0, 0], [56 - tx, 0, 0], 3.2, 7.4, { seg: 16, mat: M.STEEL });
+    L.cylinder([56 - tx, 0, 0], [60 - tx, 0, 0], 7.4, 6.6, { seg: 16, mat: M.BRIGHT, capMat: M.E_MINT });
+    // kolce ogniskujące po bokach głowicy
+    L.mirrorY(() => L.alongX(44 - tx, 62 - tx, rectPoly(6.8, -0.9, 8.4, 0.9), { mat: M.METAL, bevel: [0.2, 0.2] }));
+    return { trunnion: [tx, tz], barrels: [[0, 0]], muzzleX: 62 - tx, recoil: 2.4, light: 'mint', kind: 'energy', pitch: [-5, 50] };
   },
 
   // YAMATO — okrągła wieża pancernika z trzema lufami (środkowa dłuższa), cyjan.

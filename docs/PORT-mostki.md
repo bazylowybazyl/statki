@@ -953,6 +953,89 @@ node --test tests/shipBridgeBeams.test.mjs tests/mostkiRdzenieTSL.test.mjs tests
 - P2 (podzielony ekran) nie dostaje mostków — utrata dowodzenia drugiego gracza nie ma ścieżki śmierci.
 - Zimne wraki na belkach nie istnieją jeszcze (etap 3) — rekord modelu na wraku zostaje do TTL.
 
+## 10. Mostki na poziomy klas I–VI (2026-10-21)
+
+Decyzja użytkownika (2026-10-21): „miejsce na mostek w kreatorze zgodne ze strefami gry i modele mostków na poziomy
+klas I–VI”. Poziom mostka = klasa okrętu (etap 2 stoczni, `src/data/shipClasses.js`, `docs/PROPOZYCJA-KLASY-MOSTEK-RDZEN.md`).
+
+### 10.1 Jedno źródło: obrys modelu = strefa gry = gniazdo kreatora
+
+`src/data/bridgeLevels.js` (`BRIDGE_LEVELS`): na poziom obrys `w × h` [j. świata], faza pokładu `ch` i rodzaj
+modelu (`tn_1` … `tn_6`).
+
+| Poziom | Klasa | Obrys [j.] | Faza | Okręt TN | Trójkątów | Okien | Lamp | zMax |
+|---|---|---|---|---|---|---|---|---|
+| I | Fregata | 28 × 16 | 3 | Custos | 570 | 14 | 1 | 9,6 |
+| II | Niszczyciel | 42 × 22 | 4 | Hasta | 788 | 29 | 1 | 13,4 |
+| III | Krążownik | 58 × 30 | 5,5 | — (projekty gracza) | 1006 | 47 | 2 | 17,9 |
+| IV | Pancernik | 78 × 40 | 7 | Bellator | 1212 | 63 | 2 | 23,2 |
+| V | Kapitał | 108 × 54 | 10 | Citadella | 1690 | 89 | 3 | 34,6 |
+| VI | Superkapitał | 150 × 76 | 14 | Colossus | 1986 | 134 | 3 | 51,4 |
+
+- STREFA GRY (`BRIDGE_LAYOUT_PROPOSALS`): środek = moduł `bridge` presetu TN (x, y = 0) przeliczony ramą sprite'a
+  `HD_TN_SPRITE_FRAMES` (px = x / s − dx, py = −dy), wymiary = obrys poziomu / s, pole `level` (normalizeBridgeDef
+  je przepuszcza; lustro workera kopiuje `def` — obraz w workerze jak w `off`).
+- MODEL: `resolveBridgeModelKind` — strefa z `level` → model poziomu (kadłub bez znaczenia). Model wypełnia obrys
+  dokładnie (pokład = `octPoly` z fazą `ch`), skala strefa / model = 1 na każdym kadłubie TN.
+- KREATOR: moduł `bridge` v 2 — gniazdo poziomu (`lv`; poziom projektu `bridgeLevel` ma pierwszeństwo, 0 — `lv`
+  modułu). `normalizeHullDesign` liczy pół-wymiary z obrysu i `rim` (szczelina + rama), bryła modułu (poziom 3)
+  sięga ramy, trasy sieci omijają ramę.
+- Strażnik: `tests/bridgeLevels.test.mjs` (preset = strefa, model = obrys, wzrost z poziomem, gniazdo bez kolizji
+  z modułami presetu, strefa poza obudową reaktora i na prawdziwym kadłubie belkowym).
+
+### 10.2 Zmiany stref zabicia (rozgrywka)
+
+Wymiary w j. świata (układ projektu kreatora; px PNG w danych). Pole = obrys strefy — liczba komórek to tyle
+kwadratów 15 j., ile ma środek w strefie, a mostek pada po utracie 35% z nich (`killFrac`).
+
+| Okręt | Dawna strefa (x, w × h) | Nowa strefa (x, w × h, poziom) | Pole | Komórki (próg 35%) | Uwagi |
+|---|---|---|---|---|---|
+| Custos | −47,0, 34,4 × 17,6 | −42, 28 × 16, I | −26% | 3 → 2 (1 → 1) | między zbiornikiem paliwa a komorą reaktora |
+| Hasta | −67,7, 56,3 × 28,5 | −64, 42 × 22, II | −42% | 8 → 4 (3 → 2) | rów przy zbiorniku zostaje dla rury paliwa |
+| Bellator | −151,7, 127,2 × 49,6 | −217, 78 × 40, IV | −51% | 36 → 10 (13 → 4) | 65 j. ku rufie (rufowy blok, między gniazdem PD a zbiornikiem); kopuła sprite'a zostaje odkryta |
+| Citadella | −355,9, 61,4 × 104 (w poprzek) | −339, 108 × 54, V | −9% | 28 → 28 (10 → 10) | wzdłuż osi, środek rufowego kasztelu |
+| Colossus | −76,5, 323,8 × 115,7 | −150, 150 × 76, VI | −70% | 176 → 50 (62 → 18) | 73,5 j. ku rufie, wieża z kratą i rufowa część bloku TERRA NOVA |
+
+Skutek: mostek Bellatora i Colossusa to mniejszy cel, ale pada po mniejszej liczbie komórek (strefa zabicia =
+obrys modelu — decyzja użytkownika). Pancerz strefy (`armorMul` 1,5) i próg (`killFrac` 0,35) bez zmian — bez
+wyrównania czasu zabicia pancerzem (decyzja użytkownika 2026-10-21). Piraci i Atlas bez zmian (28; 51 + 16).
+
+- CITADELLA — rozstrzygnięcie: mostek i gniazdo przeniesione na środek rufowego kasztelu (−339), tam gdzie cytadela
+  sprite'a (kopuły i mechanizm) i dawna strefa gry; kratka (−357) i kapsuły (−354 ±39) kasztelu zdjęte spod gniazda.
+  Strefa gry stoi teraz wzdłuż osi (108 × 54) zamiast w poprzek (61 × 104).
+- COLOSSUS — napis TERRA NOVA presetu skrócony (58 j., −37) przed gniazdem.
+- Ograniczenia, które wyznaczyły obrysy: zapas `bridgeZoneMargin` od wież gry (Bellator — gniazdo PD rufy −271,9;
+  Citadella — PD −410 ±24; Custos — działa −33,5 ±16), obudowy reaktorów (rama 1,2 r + 0,8 jd), zbiorniki paliwa
+  i gniazda broni kreatora (`HD_PRESET_MOUNTS`).
+
+### 10.3 Modele (`buildTerranLevel`, `src/3d/bridge3DShapes.js`)
+
+Jeden język brył dawnych mostków TN (pokład-ośmiokąt, hala z oknami na burtach, wieża z koroną okien, kopuła
+sensorów, maszty z lampami, kopułki czujników) i jeden graf / materiał (rodzaje = poziomy, paleta `TN_STYLE`).
+Z poziomem rośnie: I — niska hala bez okien, wieża i maszt; II — okna hali, poprzeczka, antena, kopułki; III — druga
+kondygnacja wieży, pierścień kopuły, drugi maszt; IV — okna z przodu hali, kratki pokładu; V — górna hala, górny
+mostek, posterunki obserwacyjne, trzy maszty; VI — dwa rzędy okien hali, krata na wieży, korona na sześciu ścianach,
+kapsuła czujników, anteny biczowe. Skosy z oknami ≥ ~50° (n.z > 0,5 — z góry widać szyby tylko na skosach):
+skos hali = 0,72–0,78 jej wysokości.
+
+Usunięte modele per kadłub (Bellator, Custos, Hasta, Citadella, Colossus, `buildTerranCommand`). Piraci, Atlas
+i lokomotywa — bez zmian. Modele okrętów 3D (tryb „Statki 3D”, `fleetHull3D.js`) stawiają model poziomu na
+strefie przez `bridgeModelOnHull(nazwa)`.
+
+### 10.4 Gniazdo w kreatorze (kompozytor, moduł `bridge` v 2)
+
+Płyta pokładu w obrysie (szwy paneli, śruby przy brzegu, przepust kabli w środku), mocowania modelu (poziom + 1
+na burtę, od IV — także dziób i rufa; bursztynowa lampka), belki poziomu przy dziobowym brzegu (tyle, ile poziom),
+szczelina, pancerna rama z podwójną linią, nitami i żółtymi skosami narożników. `B.z` modułu = poziom + faza / 100.
+
+### 10.5 Sprawdzenie
+
+- `node --test tests/bridgeLevels.test.mjs tests/bridge3D.test.mjs tests/shipBridge.test.mjs tests/hullDesign.test.mjs tests/hullDesignNetwork.test.mjs`
+- Kreator: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy mostek --tylko custos,hasta,bellator,citadella,colossus,mostki`
+  (gniazda z modelem i bez, galeria I–VI).
+- Gra: `node scripts/webgpu/mostki-gra.mjs [--query renderWorker=1]` (flota TN, zabicie mostka Bellatora, pirat,
+  Atlas, pipeline'y sync strony i workera).
+
 ## Aneks: benchmark
 
 Pociski od zbitej tarczy do killa, cel stoi, jedno działo, deterministycznie

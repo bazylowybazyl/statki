@@ -43,7 +43,7 @@ paths:
 
 - `initPlanets3D(planets, SUN)` — inicjalizacja.
 
-- `updatePlanets3D(dt, cam)` — aktualizacja.
+- `updatePlanets3D(dt, cam)` — aktualizacja. W skoku gracza ciała rozstawia soczewka świata (`applyWarpWorldLens`, reguła `warp` — SOCZEWKA ŚWIATA); planeta z ringiem „Halo” publikuje przy tym slot ringu (`warpRingLensSlot` → `WARP_RING_LENS`: obraz, skala, obrót przelotu — ring jedzie z planetą, reguła `ring-halo`), poza soczewką `on = false`. Planeta, do której gracz przyleciał skokiem, zostaje z ustawieniem tarczy z soczewki (`DirectPlanet._lensFace` — pasy do kierunku przylotu, bez obrotu przy końcu soczewki); zwykła klatka orientuje bryłę przez `_orient(null, this._lensFace)` — nowa ścieżka orientacji planety też je składa.
 
 - Planety są częścią wizualnej warstwy 3D, gameplay nadal jest liczony w 2D.
 

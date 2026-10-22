@@ -15,6 +15,8 @@ test('smuga jest wyborem receptury jak w demie; lekka broń nie dostaje trwałeg
   for (const [id, entry] of Object.entries(WEAPON_FX)) {
     const def = MASTER_WEAPONS[id];
     if (def.category === 'beam') continue;
+    // rodzina tylko w grze (promień śmierci, 2026-10-19 — nie pocisk): bez smugi gazu
+    if (!DEMO_RECIPES[entry.fx]) { assert.equal(RECIPES[entry.fx].projectile(def.size).trail, -1, id); continue; }
     const demo = DEMO_RECIPES[entry.fx].projectile({ def });
     const game = RECIPES[entry.fx].projectile(def.size);
     assert.equal(game.trail >= 0, !!demo.trailOpts, id);

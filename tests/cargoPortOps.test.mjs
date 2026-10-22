@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import { RESOURCES, RESOURCE_KEYS, CATEGORY } from '../src/data/resources.js';
 import { getHullRenderSize } from '../src/data/ships.js';
-import { VAN_CLASSES } from '../src/game/cargoFleet.js';
+import { VAN_CLASSES } from '../src/game/traffic/shipmentOrders.js';
 import { hullForVanClass } from '../src/game/traffic/transportCompanies.js';
 import {
   CARGO_HOLD_LAYOUTS,

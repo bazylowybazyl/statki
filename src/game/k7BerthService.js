@@ -283,6 +283,10 @@ export function syncK7BerthLamps(svc, hallIndex, berths) {
     if (!b) continue;
     const occ = rec.lamp === K7_SERVICE_LAMP.occupied ? 'player' : null;
     const res = rec.lamp >= K7_SERVICE_LAMP.reserved ? 'player' : null;
+    // Wolny automat nie zdejmuje cudzych znaczników — statek ruchu v2 przy stanowisku ('traffic', E6) pisze gra
+    // z bańki ruchu i ona go zdejmuje.
+    if (rec.lamp === K7_SERVICE_LAMP.free && b.occupied !== 'player' && b.reserved !== 'player'
+      && (b.occupied || b.reserved)) continue;
     if (b.occupied !== occ || b.reserved !== res) { b.occupied = occ; b.reserved = res; changed = true; }
   }
   return changed;

@@ -176,7 +176,7 @@ export const TRAFFIC_HULLS = Object.freeze({
  */
 export const TRAFFIC_UNIT_HULLS = Object.freeze({
   // Kursy bez przypisanego statku — przewozy i wyprawy górnicze (trafficDirector
-  // unitClassFor → cargoFleet.pickVanClass). Sylwetki jak vany w index.html
+  // unitClassFor → shipmentOrders.pickVanClass). Sylwetki jak vany w index.html
   // (FREIGHTER_HULL_BY_TYPE) poza `capital`: klasy heavy i mega (≥ 380 t) to
   // ciężki frachtowiec, jak statki firm (transportCompanies.hullForVanClass).
   'freighter-small': 'inter_station_shuttle',

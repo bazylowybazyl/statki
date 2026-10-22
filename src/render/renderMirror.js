@@ -45,7 +45,7 @@ export class MirrorEntity {
     this.isRingSegment = false; this.isCapitalShip = false; this.isBridgeHulk = false;
     this.lightsOff = false; this.roadLightsOff = false;
     this.__lightsHidden = false; this.__enginesHidden = false; this.__turretsHidden = false;
-    this.__editorBoost = false; this.__fSysBoost = false; this.__warpPreview = false;
+    this.__editorBoost = false; this.__fSysBoost = false; this.__warpPreview = false; this.__hyperMode = undefined;
     this.fogHidden = false;
     this.state = undefined; this.phase = undefined;
     this.id = undefined; this.uid = undefined; this.name = undefined;
@@ -220,6 +220,8 @@ export function applyEntityPage(rm, m, v, s) {
   m.phase = dict.value(i32[bi + EI.PHASE]);
   m.model3DProfileId = dict.value(i32[bi + EI.MODEL3D]);
   m.fighter = (flags2 & ENT_FLAG2.FIGHTER) !== 0;
+  m.__hyperMode = (flags2 & ENT_FLAG2.HYPER_ACTIVE) !== 0 ? 'active'
+    : (flags2 & ENT_FLAG2.HYPER_CHARGING) !== 0 ? 'charging' : undefined;
   m.weaponTier = dict.value(i32[bi + EI.WEAPON_TIER]);
   m.faction = dict.value(i32[bi + EI.FACTION]);
   m.factionId = dict.value(i32[bi + EI.FACTION_ID]);
@@ -513,7 +515,7 @@ function applyCores(rm, v) {
       c = {
         uid: d.uid, id: d.id, lineage: d.lineage, gx: d.gx, gy: d.gy, gridR: d.gridR, classId: d.classId, color: d.color,
         kind: d.kind, armorMul: d.armorMul, meltdownSec: d.meltdownSec, chamberMaxHpSum: d.chamberMaxHpSum,
-        cellX: d.cellX, cellY: d.cellY, cellBaseHp: d.cellBaseHp, cellMaxHp: d.cellMaxHp,
+        cellX: d.cellX, cellY: d.cellY, cellBaseHp: d.cellBaseHp, cellMaxHp: d.cellMaxHp, model: d.model || null,
         cellState: new Uint8Array(d.cellX ? d.cellX.length : 0),
         host: null, state: undefined, invalid: null, integrity: 0, meltdownRemaining: 0, meltdownDuration: 0,
         deadCount: 0, elsewhereCount: 0, aliveCount: 0, lastX: 0, lastY: 0

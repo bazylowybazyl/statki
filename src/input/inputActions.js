@@ -46,6 +46,7 @@ export const INPUT_ACTIONS = Object.freeze([
   { id: 'fly.damper', name: 'Damper grawitacyjny', cat: 'lot', kind: 'edge', ctx: G },
   { id: 'fly.stabilizer', name: 'Stabilizator kursu', cat: 'lot', kind: 'edge', ctx: G },
   { id: 'nav.warp', name: 'Warp', cat: 'lot', kind: 'edge', ctx: GC },
+  { id: 'nav.hypercruise', name: 'Hipercruise: rozruch / wyjście', cat: 'lot', kind: 'edge', ctx: G },
   // --- okręt i tryby ---
   { id: 'ship.ram', name: 'System okrętu: szarża / manewr (z Q, E, A, D) / zryw / szybki ogień', cat: 'okret', kind: 'edge', ctx: G },
   { id: 'wpn.rocketKey', name: 'Rakieta (kadłub bez systemu okrętu)', cat: 'bron', kind: 'edge', ctx: G, shares: 'ship.ram' },
@@ -138,6 +139,7 @@ export const KEYBOARD_LAYOUT = Object.freeze({
   'fly.damper': ['KeyC'],
   'fly.stabilizer': ['KeyB'],
   'nav.warp': ['CapsLock', 'Digit9', 'Numpad9'],
+  'nav.hypercruise': ['KeyO'],
   'ship.ram': ['KeyF'],
   'wpn.rocketKey': ['KeyF'],
   'ship.cloak': ['KeyI'],
@@ -229,6 +231,7 @@ export const PAD_LAYOUT = Object.freeze({
   'fly.damper': null,
   'fly.stabilizer': null,
   'nav.warp': { button: PB.Y },
+  'nav.hypercruise': null,
   'ship.ram': null,
   'wpn.rocketKey': null,
   'ship.cloak': null,
@@ -313,7 +316,7 @@ export const KEYDOWN_ORDER = Object.freeze([
   'wpn.group1', 'wpn.group2', 'wpn.group3', 'tgt.priority', 'tgt.queue', 'wpn.posture', 'wpn.special',
   'wpn.lance', 'wpn.energy', 'ui.cicMap', 'ui.journal', 'mode.fleet', 'fly.damper', 'ship.lights',
   'fly.stabilizer', 'ui.pause', 'tgt.scan', 'ui.cic', 'cic.pan', 'ship.ram', 'wpn.rocketKey', 'ship.scout', 'tgt.drone',
-  'cic.systemView', 'wpn.fighters', 'ship.repair', 'fly.driveMode', 'ship.engines'
+  'cic.systemView', 'wpn.fighters', 'ship.repair', 'fly.driveMode', 'ship.engines', 'nav.hypercruise'
 ]);
 
 /** Kod klawisza → akcje głównego keydown (w kolejności KEYDOWN_ORDER). */

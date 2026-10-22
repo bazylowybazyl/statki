@@ -105,6 +105,7 @@ export function createSnapshotFrame() {
     coresOf: null,              // (listy) → rdzenie (ReactorGame.cores) z list migawki: [gracz, P2], NPC i wraki widoczne, zimne
     sun: null, skyZone: null,
     warp: null, boost: null,
+    hyper: null,                // hipercruise gracza w kształcie warpa (GameState.hyper)
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
     turretFrame: null,          // faza finish (RW-26): rekordy klatki { frameCount, recordAt(i) } (Turret2D po syncFrame)
                                 // — pierwszeństwo przed turretsOf
@@ -654,6 +655,8 @@ export class SnapshotPacker {
     if (e.__warpPreview === true) flags |= ENT_FLAG.WARP_PREVIEW;
     if (e.fighter) flags2 |= ENT_FLAG2.FIGHTER;
     if (e._shieldForcedOff) flags2 |= ENT_FLAG2.SH_FORCED_OFF;
+    if (e.__hyperMode === 'active') flags2 |= ENT_FLAG2.HYPER_ACTIVE;
+    else if (e.__hyperMode === 'charging') flags2 |= ENT_FLAG2.HYPER_CHARGING;
     i32[bi + EI.STATE] = ec.code(ecb + 1, e.state);
     i32[bi + EI.PHASE] = ec.code(ecb + 2, e.phase);
     i32[bi + EI.OWNER_ID] = this._tierBI[tbi + 2];
@@ -1361,6 +1364,13 @@ export class SnapshotPacker {
     w[WORLD.WARP_TARGET_BODY] = -1;   // AGENT: RW-11c — indeks planety warp.targetBody na liście planet
     const bo = f.boost;
     w[WORLD.BOOST_STATE] = bo ? this.dict.code(bo.state) : -1;
+    const hy = f.hyper;
+    w[WORLD.HYPER_STATE] = hy ? this.dict.code(hy.state) : -1;
+    w[WORLD.HYPER_CHARGE] = hy ? raw(hy.charge) : NaN;
+    w[WORLD.HYPER_CHARGE_TIME] = hy ? raw(hy.chargeTime) : NaN;
+    w[WORLD.HYPER_SPEED] = hy ? raw(hy.speed) : NaN;
+    w[WORLD.HYPER_VMAX] = hy ? raw(hy.vmax) : NaN;
+    w[WORLD.HYPER_DIR] = hy ? raw(hy.dir) : NaN;
   }
 
   _packTurrets(v, f) {

@@ -497,6 +497,28 @@ test('zniekształcenia (lustro CPU): gorące powietrze bez kierunku zakotwiczone
   assert.equal(Math.hypot(up.x, up.y), 0, 'pod prąd poza maską');
 });
 
+test('zniekształcenia (lustro CPU): soczewka bańki — w elipsie zero (kadłub ostry), przód najmocniej, boki słabiej, tył prawie wcale', () => {
+  const F = new DistortionField();
+  F.begin();
+  // Kurs +x świata, półoś w poprzek 100, wzdłuż × 1,5 (150), grubość pierścienia 60, siła 30 px.
+  assert.ok(F.bubble(0, 0, 100, 60, 30, 1, 0, 1.5));
+  assert.equal(F.qdata[0], DISTORT.BUBBLE);
+  F.commit(0, 0, 1, 1000, 1000, 0);
+  const at = (px, py) => ({ ...distortionOffsetCpu(F, px, py) });
+  for (const [x, y] of [[0, 0], [140, 0], [-140, 0], [0, 95], [0, -95], [100, 60]]) {
+    const o = at(500 + x, 500 - y);
+    assert.equal(Math.hypot(o.x, o.y), 0, `w elipsie bez przesunięcia (${x}, ${y})`);
+  }
+  const front = at(500 + 150 + 0.71 * 60, 500);
+  const back = at(500 - 150 - 0.71 * 60, 500);
+  const side = at(500, 500 - 100 - 0.71 * 60);
+  assert.ok(front.x > 25, `przód: próbka na zewnątrz (${front.x.toFixed(2)})`);
+  assert.ok(Math.abs(back.x) < front.x * 0.2, `tył prawie bez soczewki (${back.x.toFixed(2)})`);
+  assert.ok(side.y > 5 && side.y < front.x, 'boki słabiej niż przód');
+  const far = at(500 + 150 + 5 * 60, 500);
+  assert.ok(Math.abs(far.x) < 0.01, 'poza pierścieniem gaśnie');
+});
+
 test('zniekształcenia TSL: jeden bufor uniformów w passie, pętla po źródłach, próbkowanie z dyspersją', () => {
   const F = new DistortionField({ name: 'tstDistort' });
   const tex = texture(new THREE.DataTexture(new Uint8Array(4), 1, 1));

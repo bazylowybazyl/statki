@@ -34,9 +34,19 @@ import {
   setWorldCapacityFromGame, destroyWorldStation
 } from './trafficWorld.js';
 import {
+  addMarket, addMarketBuilding, setMarketOwner, removeMarket, describeMarket
+} from './markets.js';
+import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber
 } from './trafficProtocol.js';
+import { BELT_MSG } from './trafficProtocol.js';
+import { recordPlayerMining, setPlayerBerthHolds } from './trafficDirector.js';
+import { takeHoleUpdates } from './miningFields.js';
+import {
+  createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
+  releaseWorldBubbleCourse, refreshFleetStock
+} from './workerBubble.js';
 
 /** Ile ostatnich wraków dyspozytora trzymać po wysłaniu do gry. */
 const WRECK_LOG_LIMIT = 256;
@@ -81,9 +91,28 @@ export function createTrafficCore(post, options = {}) {
     wreckCursor: 0,
     warWreckSeq: 0,
     stationFactionsDirty: false,
+    /** `world.marketsVersion` ostatniej tabeli stacji wysłanej do gry. */
+    marketsVersion: 0,
+    marketsDirty: false,
     scratch: new Float64Array(COURSE_STRIDE * 256),
     segment: { x0: 0, y0: 0, x1: 0, y1: 0, t0: 0, dur: 0, dwell: false, mode: null },
-    stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0 }
+    /** Bańka w workerze (E6, `workerBubble.js`) — null przy `init { bubble: false }`. */
+    bubble: null,
+    /** Kursy wybrane przez `buildBubble` — kandydaci do materializacji. */
+    candidates: [],
+    /** id stanowiska → { port, index } (`PORT` / `BERTH` w buforach). */
+    berthById: new Map(),
+    actorHullsSent: 0,
+    actorsSent: 0,
+    stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0, actors: 0, actorMs: 0 }
+  };
+
+  /** Tabele bufora encji — te same co bufora kursów. */
+  const actorIndex = {
+    hull: (unitClass) => hullIndexOf(unitClass),
+    faction: (id) => core.factionIndex.get(id) ?? -1,
+    berthById: (id) => core.berthById.get(id) || null,
+    courseId: (num, id) => { core.courseIds.set(num, id); }
   };
 
   function handle(message) {
@@ -103,6 +132,12 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.STATION: return station(message);
         case TRAFFIC_MSG.CONFIG: return config(message);
         case TRAFFIC_MSG.SNAPSHOT: return snapshot(message);
+        case TRAFFIC_MSG.MARKET_ADD: return marketAdd(message);
+        case TRAFFIC_MSG.MARKET_BUILDING: return marketBuilding(message);
+        case TRAFFIC_MSG.MARKET_OWNER: return marketOwner(message);
+        case TRAFFIC_MSG.MARKET_REMOVE: return marketRemove(message);
+        case TRAFFIC_MSG.BERTH_HOLD: return berthHold(message);
+        case BELT_MSG.MINED: return beltMined(message);
         default: return undefined;
       }
     } catch (error) {
@@ -140,11 +175,10 @@ export function createTrafficCore(post, options = {}) {
       }
     });
     core.world = world;
-    core.stationIndex = new Map(world.stations.map((entry, index) => [entry.id, index]));
     core.berthIndex = new WeakMap();
-    for (const layout of world.docks.values()) {
-      layout.berths.forEach((berth, index) => core.berthIndex.set(berth, index));
-    }
+    indexMarkets();
+    core.bubble = message.bubble === false ? null : createWorldBubble(world);
+    if (core.bubble) refreshFleetStock(core.bubble);
     if (message.focus) setFocus(message.focus);
     const buildMs = now() - t0;
 
@@ -156,29 +190,15 @@ export function createTrafficCore(post, options = {}) {
       seed: message.seed ?? null,
       economyScale: world.config.economyScale,
       capacityMultiplier: world.config.capacityMultiplier,
-      stations: world.stations.map(entry => {
-        const node = getNode(world.network, entry.id);
-        return {
-          id: entry.id,
-          name: entry.name,
-          factionId: entry.factionId || null,
-          x: entry.x,
-          y: entry.y,
-          moon: !!node?.moon,
-          outpost: !!node?.outpost,
-          derelict: !entry.factionId,
-          parentId: node?.parentId || null,
-          hasPort: world.docks.has(entry.id)
-        };
-      }),
+      stations: stationTable(),
       resources: [...RESOURCE_KEYS],
       factions: [...FACTION_IDS],
       kinds: [...KINDS],
       // `BERTH` w rekordzie kursu to indeks w tej liście — id stanowisk są te
       // same co w układach gry (`earth:K7-1:…` z haloPortTraffic), więc bańka
       // wie, do którego padu i hali leci statek, bez własnej kopii doków.
-      berths: Object.fromEntries([...world.docks].map(([stationId, layout]) =>
-        [stationId, layout.berths.map(berth => berth.id)])),
+      berths: berthTable(),
+      bubblePorts: bubblePortTable(),
       buildMs
     });
     // Rynek od razu, nie po pierwszych pięciu sekundach — terminal handlu
@@ -193,12 +213,83 @@ export function createTrafficCore(post, options = {}) {
     if (!(dt > 0)) return;
     const t0 = now();
     const steps = advanceTrafficWorld(world, dt);
-    if (!steps) return;
-    const ms = now() - t0;
-    core.stats.steps += steps;
-    core.stats.stepMs = ms / steps;
-    core.stats.maxStepMs = Math.max(core.stats.maxStepMs, core.stats.stepMs);
-    publishTick(steps, ms);
+    if (steps) {
+      const ms = now() - t0;
+      core.stats.steps += steps;
+      core.stats.stepMs = ms / steps;
+      core.stats.maxStepMs = Math.max(core.stats.maxStepMs, core.stats.stepMs);
+      publishTick(steps, ms);
+      publishBeltHoles();
+      // Zapas floty na padach K-7 (okręty bez kursów) — po kroku świata (stocznie, wojna zmieniają liczby).
+      if (core.bubble) refreshFleetStock(core.bubble);
+    }
+    stepBubble(dt);
+  }
+
+  // ============================================================
+  // Bańka w workerze (E6) — `workerBubble.js`
+  // ============================================================
+
+  /**
+   * Krok lekkich statków o ten sam `dt`, który dostał świat (po jego kroku —
+   * jak w teście integracyjnym bańki), i bufor póz do gry. Zdarzenia kursów
+   * rozlicza dyspozytor od razu; nowe kursy (odlot po rozładunku) wchodzą
+   * do kandydatów w tym samym `advance`.
+   */
+  function stepBubble(dt) {
+    const state = core.bubble;
+    if (!state) return;
+    const wasActive = state.active;
+    if (stepWorldBubble(state, core.focus, dt, now) > 0) selectBubbleCourses(null);
+    core.stats.actorMs = state.stats.ms;
+    if (!state.active && !wasActive && core.actorsSent === 0) return;
+    publishActors();
+  }
+
+  function publishActors() {
+    const state = core.bubble;
+    const packed = packWorldBubble(state, actorIndex, core.kindIndex, core.focus);
+    core.stats.actors = packed.count;
+    // Pusta bańka idzie raz (gra gasi encje), potem cisza do następnej.
+    core.actorsSent = packed.count;
+    const message = {
+      type: TRAFFIC_MSG.ACTORS,
+      time: trafficWorldTime(core.world),
+      count: packed.count,
+      data: packed.data,
+      ms: state.stats.ms
+    };
+    if (core.hulls.length !== core.actorHullsSent) {
+      message.hulls = [...core.hulls];
+      core.actorHullsSent = core.hulls.length;
+    }
+    send(message, [packed.data.buffer]);
+  }
+
+  /** Stanowiska gracza (pełny zbiór) — dyspozytor ich nie przydziela, kurs w podejściu leci na inne. */
+  function berthHold(message) {
+    const director = core.world?.director;
+    if (!director) return;
+    const ids = Array.isArray(message.berths) ? message.berths : [];
+    const state = core.bubble;
+    setPlayerBerthHolds(director, ids, state ? (course) => courseCanLeaveBerth(state, course) : null);
+  }
+
+  // ============================================================
+  // Pas w ekonomii (E3): urobek gracza → rejestr uszczuplenia, wyrwy → gra
+  // ============================================================
+
+  function beltMined(message) {
+    const director = core.world?.director;
+    if (!director) return;
+    recordPlayerMining(director, finite(message.x, NaN), finite(message.y, NaN), finite(message.tons));
+    // Wyrwa po urobku gracza idzie od razu, nie dopiero po kroku świata.
+    publishBeltHoles();
+  }
+
+  function publishBeltHoles() {
+    const holes = takeHoleUpdates(core.world?.director?.mining);
+    if (holes) send({ type: BELT_MSG.HOLES, holes, full: false });
   }
 
   function setFocus(spec) {
@@ -248,7 +339,10 @@ export function createTrafficCore(post, options = {}) {
 
   function attach(message) {
     const course = resolveCourse(message.course);
-    if (course) attachActor(course, `game:${courseNumber(course.id)}`);
+    if (!course) return;
+    // Kurs prowadzony przez bańkę workera (E6) — gra go przejmuje: encja wraca do rekordu z postępem.
+    if (core.bubble && String(course.actorId || '').startsWith('bubble:')) releaseWorldBubbleCourse(core.bubble, course);
+    attachActor(course, `game:${courseNumber(course.id)}`);
   }
 
   function detach(message) {
@@ -293,6 +387,84 @@ export function createTrafficCore(post, options = {}) {
       destroyWorldStation(world, String(message.stationId || ''));
       core.stationFactionsDirty = true;
     }
+  }
+
+  // ============================================================
+  // Rynki (E1) — `markets.js`
+  // ============================================================
+
+  /** Indeksy stacji i stanowisk po zmianie listy rynków. */
+  function indexMarkets() {
+    const world = core.world;
+    core.stationIndex = new Map(world.stations.map((entry, index) => [entry.id, index]));
+    core.berthById.clear();
+    for (const [stationId, layout] of world.docks) {
+      const port = core.stationIndex.get(stationId) ?? -1;
+      layout.berths.forEach((berth, index) => {
+        core.berthIndex.set(berth, index);
+        core.berthById.set(berth.id, { port, index });
+      });
+    }
+    core.marketsVersion = world.marketsVersion;
+  }
+
+  function stationTable() {
+    const world = core.world;
+    return world.stations.map(entry => describeMarket(world, entry));
+  }
+
+  function berthTable() {
+    return Object.fromEntries([...core.world.docks].map(([stationId, layout]) =>
+      [stationId, layout.berths.map(berth => berth.id)]));
+  }
+
+  /**
+   * Geometria stanowisk portów bańki (E6) w układzie gry — gra wyznacza z niej, na którym stanowisku stoi
+   * gracz (`berth-hold`), i znajduje stanowisko w rejestrze ringu (lampki). Te same liczby, które ma bańka.
+   */
+  function bubblePortTable() {
+    const out = {};
+    for (const stationId of core.bubble?.ports || []) {
+      const layout = core.world.docks.get(stationId);
+      if (!layout) continue;
+      out[stationId] = layout.berths.map(b => ({
+        id: b.id, x: b.x, y: b.y, angle: b.angle, length: b.length, width: b.width,
+        maxLength: b.maxLength ?? null, maxBeam: b.maxBeam ?? null, complex: b.complex ?? null,
+        hall: b.hall ?? null, bayId: b.bayId ?? null, k7BerthId: b.k7BerthId ?? null
+      }));
+    }
+    return out;
+  }
+
+  /** Zmiana listy rynków dociera do gry od razu, nie po kroku świata. */
+  function marketsChanged() {
+    indexMarkets();
+    core.marketsDirty = true;
+    publishTick(0, 0);
+  }
+
+  function marketAdd(message) {
+    const world = core.world;
+    if (!world || !message.def) return;
+    if (addMarket(world, message.def)) marketsChanged();
+  }
+
+  function marketBuilding(message) {
+    const world = core.world;
+    if (!world) return;
+    if (addMarketBuilding(world, String(message.stationId || ''), String(message.role || ''))) marketsChanged();
+  }
+
+  function marketOwner(message) {
+    const world = core.world;
+    if (!world) return;
+    if (setMarketOwner(world, String(message.stationId || ''), message.factionId || null)) marketsChanged();
+  }
+
+  function marketRemove(message) {
+    const world = core.world;
+    if (!world) return;
+    if (removeMarket(world, String(message.stationId || ''))) marketsChanged();
   }
 
   function config(message) {
@@ -344,6 +516,9 @@ export function createTrafficCore(post, options = {}) {
         queued: core.stats.queued,
         berthed: core.stats.berthed,
         bubble: bubble.count,
+        actors: core.stats.actors,
+        actorMs: core.stats.actorMs,
+        bubbleStats: core.bubble ? { ...core.bubble.bubble.stats } : null,
         hauls: director.stats.hauls,
         mining: director.stats.mining,
         delivered: director.stats.delivered,
@@ -361,6 +536,13 @@ export function createTrafficCore(post, options = {}) {
     if (core.stationFactionsDirty) {
       core.stationFactionsDirty = false;
       message.stationFactions = world.stations.map(entry => entry.factionId || null);
+    }
+    if (core.marketsDirty || core.marketsVersion !== world.marketsVersion) {
+      // Tabela rynków przed `market` — bufor rynku ma już jej układ.
+      if (core.marketsVersion !== world.marketsVersion) indexMarkets();
+      core.marketsDirty = false;
+      message.stations = stationTable();
+      message.berths = berthTable();
     }
     send(message, [market.buffer, bubble.data.buffer]);
   }
@@ -399,15 +581,50 @@ export function createTrafficCore(post, options = {}) {
    */
   function buildBubble() {
     const world = core.world;
-    const { registry, network, director } = world;
+    const { registry, director } = world;
+    const f = core.focus;
+    const time = trafficWorldTime(world);
+    const clock = registry.clock;
+    const hullsBefore = core.hulls.length;
+    const count = selectBubbleCourses((course, seg, index) => {
+      let buffer = core.scratch;
+      if ((index + 1) * COURSE_STRIDE > buffer.length) {
+        const bigger = new Float64Array(buffer.length * 2);
+        bigger.set(buffer);
+        buffer = core.scratch = bigger;
+      }
+      writeCourse(buffer, index * COURSE_STRIDE, course, seg, director);
+    });
+    core.published.x = f.x;
+    core.published.y = f.y;
+    core.published.r = f.r;
+    pruneCourseIds(registry);
+
+    const bubble = { clock, time, count, data: core.scratch.slice(0, count * COURSE_STRIDE) };
+    if (core.hulls.length !== core.hullsSent || hullsBefore !== core.hulls.length) {
+      bubble.hulls = [...core.hulls];
+      core.hullsSent = core.hulls.length;
+    }
+    return bubble;
+  }
+
+  /**
+   * Kursy w bańce: przypięte do encji i te, których odcinek w horyzoncie kroku
+   * świata zbliża się do fokusu. `write(course, seg, index)` — zapis do bufora
+   * kursów (`buildBubble`); te same kursy to kandydaci bańki workera (E6).
+   * Zwraca ich liczbę.
+   */
+  function selectBubbleCourses(write) {
+    const world = core.world;
+    const { registry, network } = world;
     const f = core.focus;
     const time = trafficWorldTime(world);
     const clock = registry.clock;
     const horizon = world.config.step;
     const r2 = f.r * f.r;
     const seg = core.segment;
-    const hullsBefore = core.hulls.length;
-    let buffer = core.scratch;
+    const list = core.candidates;
+    list.length = 0;
     let count = 0;
     let queued = 0;
     let berthed = 0;
@@ -420,30 +637,16 @@ export function createTrafficCore(post, options = {}) {
       if (!attached && !f.active) continue;
       if (!segmentOf(network, course, clock, seg)) continue;
       if (!attached && !segmentNear(seg, time, time + horizon, f.x, f.y, r2)) continue;
-
-      if ((count + 1) * COURSE_STRIDE > buffer.length) {
-        const bigger = new Float64Array(buffer.length * 2);
-        bigger.set(buffer);
-        buffer = core.scratch = bigger;
-      }
-      writeCourse(buffer, count * COURSE_STRIDE, course, seg, director);
+      list.push(course);
+      if (write) write(course, seg, count);
       count++;
     }
 
     core.stats.bubble = count;
     core.stats.queued = queued;
     core.stats.berthed = berthed;
-    core.published.x = f.x;
-    core.published.y = f.y;
-    core.published.r = f.r;
-    pruneCourseIds(registry);
-
-    const bubble = { clock, time, count, data: buffer.slice(0, count * COURSE_STRIDE) };
-    if (core.hulls.length !== core.hullsSent || hullsBefore !== core.hulls.length) {
-      bubble.hulls = [...core.hulls];
-      core.hullsSent = core.hulls.length;
-    }
-    return bubble;
+    if (core.bubble) setBubbleCandidates(core.bubble, list);
+    return count;
   }
 
   function writeCourse(buffer, offset, course, seg, director) {

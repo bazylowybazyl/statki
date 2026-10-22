@@ -9,14 +9,15 @@
  */
 
 import { createSuite, runIfMain } from './harness.mjs';
-import { RESOURCE_KEYS, RESOURCES } from '../../src/data/resources.js';
+import { RESOURCE_KEYS, RESOURCES, RECIPES } from '../../src/data/resources.js';
 import { FACTION } from '../../src/data/factions.js';
 import {
   WARSHIP_CLASSES, WARSHIP_ORDER, SHIPYARD_MODEL, FLEET_DOCTRINE, pickWarshipClass,
   createShipyardRegistry, registerShipyard, tickShipyards,
   readyShips, fleetPower, addShips, takeShips, returnShips,
-  canAfford, summarizeShipyards
+  canAfford, summarizeShipyards, reservedForMarket, WARSHIP_COMPONENTS, WARSHIP_BUILD_PORTION
 } from '../../src/game/traffic/shipyards.js';
+import { snapshotMarket, restockTarget } from '../../src/game/traffic/tradeMarket.js';
 
 /** Magazyn z zadanym zapasem podzespołów. */
 function makeEcon(fill = 0) {
@@ -128,6 +129,45 @@ export function run() {
   }
 
   // ----------------------------------------------------------
+  t.section('Silniki hipercruise — towary z kontraktu E5 ↔ E8');
+
+  // Id i vmax to kontrakt z tabelą napędów (PLAN-ekonomia-rynki § 3.4): E5 stroi
+  // vmax w 20–40 tys. j./s, ale id się nie zmieniają. Cena ma rosnąć szybciej niż
+  // prędkość, inaczej Mk3 byłby oczywistym wyborem dla każdego kadłuba.
+  const KONTRAKT = { hypercruise_mk1: 20000, hypercruise_mk2: 30000, hypercruise_mk3: 40000 };
+  let poprzedni = 0;
+  for (const [id, vmax] of Object.entries(KONTRAKT)) {
+    t.check(`${id} jest towarem z recepturą`,
+      !!RESOURCES[id] && Object.values(RECIPES).some(r => r.out[id] > 0));
+    t.check(`${id} buduje jakaś klasa okrętu`,
+      Object.values(WARSHIP_CLASSES).some(cls => cls.build[id] > 0));
+    const zaTysiac = (RESOURCES[id]?.value || 0) / (vmax / 1000);
+    t.check(`${id} kosztuje więcej za tysiąc j./s niż słabszy`, zaTysiac > poprzedni,
+      `(${poprzedni.toFixed(1)} → ${zaTysiac.toFixed(1)} CR)`);
+    poprzedni = zaTysiac;
+  }
+  // Napęd warp Mk I–III (2026-10-22): vmax w 100–250 tys. j./s stroi E5. Cena na
+  // tysiąc j./s ma rosnąć dla Mk II w 150–200 tys. — szerszego okna nie spełni
+  // żaden cennik, w którym Mk III nie jest absurdalnie drogi.
+  const WARP = { warp_mk1: [100000, 100000], warp_mk2: [150000, 200000], warp_mk3: [250000, 250000] };
+  let warpPoprzedniMax = 0;
+  for (const [id, [vMin, vMax]] of Object.entries(WARP)) {
+    t.check(`${id} jest towarem z recepturą`,
+      !!RESOURCES[id] && Object.values(RECIPES).some(r => r.out[id] > 0));
+    t.check(`${id} buduje jakaś klasa okrętu`,
+      Object.values(WARSHIP_CLASSES).some(cls => cls.build[id] > 0));
+    const zaTysiacMin = (RESOURCES[id]?.value || 0) / (vMax / 1000);
+    t.check(`${id} kosztuje więcej za tysiąc j./s niż słabszy`, zaTysiacMin > warpPoprzedniMax,
+      `(${warpPoprzedniMax.toFixed(1)} → ${zaTysiacMin.toFixed(1)} CR)`);
+    warpPoprzedniMax = (RESOURCES[id]?.value || 0) / (vMin / 1000);
+  }
+
+  t.check('każdy okręt ma napęd przelotowy i moduł hipercruise',
+    Object.values(WARSHIP_CLASSES).every(cls =>
+      (cls.build.drive_light || cls.build.drive_heavy)
+      && Object.keys(KONTRAKT).some(id => cls.build[id] > 0)));
+
+  // ----------------------------------------------------------
   t.section('Zapas roboczy portu jest nietykalny');
 
   // Bez tego stocznia ogałaca magazyn i reszta przemysłu staje.
@@ -138,6 +178,52 @@ export function run() {
   tickShipyards(pusty, 1, { getEconomy: () => makeEcon(0) });
   t.equal('bez podzespołów nic nie powstaje', pusty.yards[0].building.length, 0);
   t.check('i jest to odnotowane', pusty.stats.blocked > 0);
+
+  // ----------------------------------------------------------
+  t.section('Licytacja: stocznia producenta ustępuje głodniejszej');
+
+  // Producent ma podzespoły na 40% magazynu, druga stocznia stoi na zerze od
+  // godziny (przyduszenie). Własna stocznia nie ma bezwzględnego pierwszeństwa:
+  // odkłada dla rynku tyle, ile brakuje tamtej, a z reszty buduje.
+  const prodSt = { id: 'prod', factionId: FACTION.MARS, extraDemand: [...WARSHIP_COMPONENTS] };
+  const glodSt = { id: 'glod', factionId: FACTION.MARS, extraDemand: [...WARSHIP_COMPONENTS] };
+  const prodEcon = makeEcon(80);
+  const glodEcon = makeEcon(0);
+  glodEcon.duress = Object.fromEntries(WARSHIP_COMPONENTS.map(id => [id, 3600]));
+  const notowania = snapshotMarket([prodSt, glodSt], id => (id === 'prod' ? prodEcon : glodEcon),
+    { demandRate: id => (id === 'glod' ? 0.005 : 0) });
+  const rezerwa = reservedForMarket(notowania, 'prod', prodEcon);
+  t.check('producent odkłada podzespoły dla głodnej stoczni', rezerwa.get('hull_plate') > 0);
+  t.check('nie więcej, niż tamta potrzebuje', rezerwa.get('hull_plate') <= 200);
+  t.check('rezerwa blokuje budowę z odłożonego zapasu',
+    canAfford(prodEcon, WARSHIP_CLASSES.frigate)
+    && !canAfford(prodEcon, WARSHIP_CLASSES.frigate, {
+      reserved: new Map([...rezerwa].map(([id]) => [id, 80]))
+    }));
+  // Gdy głodna stocznia ma już to, czego chce, licytacja się kończy.
+  for (const id of WARSHIP_COMPONENTS) glodEcon.resources[id] = 60;
+  glodEcon.duress = {};
+  const syte = snapshotMarket([prodSt, glodSt], id => (id === 'prod' ? prodEcon : glodEcon),
+    { demandRate: id => (id === 'glod' ? 0.005 : 0) });
+  t.equal('syta stocznia niczego nie rezerwuje', reservedForMarket(syte, 'prod', prodEcon).size, 0);
+
+  // Stocznia bez własnych podzespołów nie startuje z zerem: zapas na kilka
+  // godzin planowego zużycia, nie 45% magazynu.
+  const startSt = { id: 'mercury', factionId: FACTION.INNER_CONSORTIUM };
+  const startEcon = makeEcon(0);
+  registerShipyard(createShipyardRegistry(),
+    { station: startSt, econ: startEcon, stationId: 'mercury', economyScale: 1 });
+  t.check('zapas startowy podzespołów', startEcon.resources.hull_plate > 0);
+  t.check('nie ponad magazyn', startEcon.resources.hull_plate <= startEcon.capacity.hull_plate);
+  // Stocznia zużywa podzespół porcjami, więc skupuje nie mniej niż kilka porcji —
+  // nawet gdy planowe zużycie rzadkiego napędu daje na dwie godziny mniej niż jedną.
+  t.equal('dolny próg skupu = porcje na kilka budów', startSt.restockFloor.drive_heavy,
+    WARSHIP_BUILD_PORTION.drive_heavy * SHIPYARD_MODEL.restockBuilds);
+  t.check('porcja to największe zużycie jednej klasy', WARSHIP_BUILD_PORTION.hull_plate === 60);
+  t.equal('skup bez planowego zużycia sięga dolnego progu',
+    restockTarget({ capacity: 100, demandRate: 0, restockFloor: 12 }), 12);
+  t.check('i nie przekracza magazynu',
+    restockTarget({ capacity: 10, demandRate: 0, restockFloor: 12 }) === 10);
 
   // ----------------------------------------------------------
   t.section('Okręt trafia do zapasu frakcji');

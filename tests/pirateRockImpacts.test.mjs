@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 globalThis.window = globalThis.window || {};
 const THREE = await import('three/webgpu');
 const { RC, RenderCommandWriter, RenderCommandReader } = await import('../src/render/renderCommands.js');
-const { ROCK_IMPACT_CODE, ROCK_IMPACT_REC, ROCK_EVENT, ROCK_BODY_KINDS } = await import('../src/render/rockImpactRecord.js');
+const { ROCK_IMPACT_CODE, ROCK_IMPACT_REC, ROCK_EVENT, ROCK_BODY_KINDS, ROCK_FOOT_BINS } = await import('../src/render/rockImpactRecord.js');
 const RI = await import('../src/game/story/pirateRockImpacts.js');
 const { createPirateRockLayout } = await import('../src/3d/portBuildings/pirateRockLayout.js');
 const { placePirateBase } = await import('../src/game/story/pirateBaseSite.js');
@@ -57,7 +57,10 @@ test('rekord ROCK_IMPACT: kod 112 w zakresie „świat”, unikalny w RC, układ
   assert.equal(ROCK_IMPACT_CODE, 112);
   const vals = Object.values(RC);
   assert.equal(vals.filter((v) => v === 112).length, 1, 'kod unikalny');
-  const idx = Object.entries(ROCK_IMPACT_REC).filter(([k]) => k !== 'WORDS').map(([, v]) => v).sort((a, b) => a - b);
+  // pola nazwane + tablica promieni obrysu od FR (ROCK_FOOT_BINS słów) — bez dziur i nakładek
+  const idx = Object.entries(ROCK_IMPACT_REC).filter(([k]) => k !== 'WORDS' && k !== 'FR').map(([, v]) => v);
+  for (let k = 0; k < ROCK_FOOT_BINS; k++) idx.push(ROCK_IMPACT_REC.FR + k);
+  idx.sort((a, b) => a - b);
   assert.deepEqual(idx, Array.from({ length: ROCK_IMPACT_REC.WORDS }, (_, i) => i));
   assert.deepEqual([...ROCK_BODY_KINDS], ['other', 'tower', 'disc', 'drum', 'core', 'debris', 'cable']);
 });
@@ -84,6 +87,24 @@ test('kontrakt: rockImpact / rockScrape / rockSettle → rekord → dekoder → 
   assert.equal(e.speed, 1800); assert.equal(e.slide, 240); assert.equal(e.size, 900);
   assert.equal(e.energy, 0.5 * 5e7 * (1800 * 1800 + 240 * 240), 'energia z masy i prędkości, gdy jej nie podano');
   assert.equal(e.vz, -1700);
+  assert.equal(e.fn, 0, 'bez obrysu — fn = 0 (obraz bierze koło z rozmiaru)');
+  // obrys bryły (pył na boki): środek rzutu, kierunek kąta 0 (⊥ normalnej, jednostkowy) i profil promieni przez rekord
+  clock = 11;
+  const fr = Array.from({ length: ROCK_FOOT_BINS }, (_, k) => 300 + 20 * k);
+  assert.equal(RI.rockImpact({ id: 'dysk', kind: 'disc', x: 3.2e6, y: -1.4e6, z: -9000, nx: 0, ny: 0, nz: 1, speed: 900, size: 700,
+    fx: 3.2e6 + 150, fy: -1.4e6 - 40, fz: -9000, ux: 2, uy: 0, uz: 0.5, fr }), true);
+  const f = got.at(-1);
+  assert.equal(f.fx, 3.2e6 + 150); assert.equal(f.fy, -1.4e6 - 40); assert.equal(f.fz, -9000);
+  assert.equal(f.fn, ROCK_FOOT_BINS);
+  for (let k = 0; k < ROCK_FOOT_BINS; k++) assert.equal(f.fr[k], fr[k], `promień ${k}`);
+  assert.ok(Math.abs(f.ux - 1) < 1e-12 && Math.abs(f.uy) < 1e-12 && Math.abs(f.uz) < 1e-12, 'kierunek kąta 0 ⊥ normalnej');
+  got.pop();
+  // same zera — bez obrysu
+  clock = 11.6;
+  RI.rockImpact({ id: 'dysk', kind: 'disc', x: 3.2e6, y: -1.4e6, z: -9000, nx: 0, ny: 0, nz: 1, speed: 2000, mass: 1e9, size: 700,
+    fx: 3.2e6, fy: -1.4e6, fz: -9000, ux: 1, uy: 0, uz: 0, fr: new Array(ROCK_FOOT_BINS).fill(0) });
+  assert.equal(got.at(-1).fn, 0);
+  got.pop();
   // szorowanie: odstęp na ciało (scrapeGap), osiadanie raz
   clock = 10.1;
   assert.equal(RI.rockScrape({ id: 'wieza', kind: 'tower', x: 3.21e6, y: -1.39e6, z: -9000, slide: 300, size: 700 }), false, 'zaraz po uderzeniu — kłąb uderzenia jest');
@@ -388,7 +409,8 @@ test('ślady uderzeń na skale: lustro reguły (lód na dnie i w promieniach, ci
   assert.equal(pirateRockScarCpu(1.3, 0, 1).ice < cRay.ice, true, 'między promieniami — bez lodu');
   assert.deepEqual(cFar, { ice: 0, dark: 0 });
   const prevWarn = console.warn; console.warn = () => {};
-  const r = new PirateRock3D(createPirateRockLayout());
+  const RL = createPirateRockLayout();
+  const r = new PirateRock3D(RL);
   console.warn = prevWarn;
   r.setFrame(portModuleFrame(4.2e6, -1.3e6, 0.7), { x: 4.2e6, y: 1.3e6 });
   r.mesh.updateWorldMatrix(true, false);
@@ -397,13 +419,13 @@ test('ślady uderzeń na skale: lustro reguły (lód na dnie i w promieniach, ci
   const A = r._scarA.array, B = r._scarB.array;
   assert.equal(r._scarCount, 1);
   assert.ok(Math.abs(A[0].x - 1) < 1e-6 && Math.abs(A[0].y) < 1e-6 && Math.abs(A[0].z) < 1e-6, 'kierunek w układzie siatki kuli');
-  assert.ok(Math.abs(A[0].w - 600 / 16000) < 1e-9, 'promień kątowy');
+  assert.ok(Math.abs(A[0].w - 600 / RL.R) < 1e-9, 'promień kątowy');
   assert.ok(Math.abs(B[0].w - Math.cos(A[0].w * 2.7)) < 1e-9, 'próg zasięgu pętli');
   // bliski ślad — scalenie (bez nowego wpisu, większy)
   const q = new THREE.Vector3(1, 0.01, 0).normalize().applyMatrix4(r.mesh.matrixWorld);
   r.addScar(q.x, q.y, q.z, 500, 0.8);
   assert.equal(r._scarCount, 1);
-  assert.ok(A[0].w > 600 / 16000);
+  assert.ok(A[0].w > 600 / RL.R);
   // sufit: kolejne ślady w różnych miejscach — najwyżej PIRATE_ROCK_SCAR_CAP
   for (let i = 0; i < 40; i++) {
     const a = (i / 40) * Math.PI * 2;
@@ -476,7 +498,7 @@ test('RockImpactFx: dopasowanie zasięgu gazu do elipsoidy domeny (_fitAlong / _
   };
   fx.getGas = () => gas;
   fx.onEvent(ROCK_EVENT.IMPACT, { id: 1, kind: 'tower', x: 0, y: 0, z: -8000, nx: 0, ny: 0, nz: 1, speed: 1900, slide: 0, mass: 1e6, size: 1280, energy: 1e12, vx: 0, vy: 0, vz: -1900 });
-  assert.ok(jets.length >= 14);
+  assert.ok(jets.length >= 12, `strumieni ${jets.length}`);
   const sl = gas.grid.slots[0];
   for (const j of jets) {
     const l = Math.hypot(j.dx, j.dy, j.dz);
@@ -484,11 +506,84 @@ test('RockImpactFx: dopasowanie zasięgu gazu do elipsoidy domeny (_fitAlong / _
     const reach = j.len + j.speed * (j.dur + T.gasCoast);
     assert.ok(reach <= 0.8 * avail + 1e-6, `zasięg ${reach.toFixed(0)} > ${(0.8 * avail).toFixed(0)}`);
   }
-  // pióropusz (strumień wzdłuż +z) — wolniejszy niż bez dopasowania
-  const plume = jets.find((j) => j.dz > 0.99);
-  const q = Math.min(T.qMax, (1900 - T.speed0) / T.speedK);
-  const Rc = Math.min(T.cloudMax, 1280 * (T.cloudBase + T.cloudQ * q));
-  assert.ok(plume && plume.speed < Rc * (1.2 + 0.8 * q), 'pióropusz dopasowany do sufitu domeny');
+  // pył NA BOKI (2026-10-19): bez pióropusza wzdłuż normalnej — strumienie ≥ 63° od niej (dz ≤ 0,45)
+  for (const j of jets) {
+    const l = Math.hypot(j.dx, j.dy, j.dz);
+    assert.ok(j.dz / l < 0.45, `strumień ${Math.round(Math.acos(j.dz / l) * 180 / Math.PI)}° od normalnej`);
+  }
+});
+
+test('RockImpactFx: pył z KRAWĘDZI obrysu bryły na zewnątrz (gaz i cząstki poza obrysem, błysk pod bryłą)', () => {
+  const fx = new RockImpactFx({ layer: 1 });
+  fx.setRock(0, 0, -24000, 16000);
+  const src = [];
+  const gas = {
+    grid: { slots: [], time: 0, feed() {} },
+    director: {
+      jet(slot, x, y, z, dx, dy, dz, r) { src.push({ kind: 'jet', x, y, z, dx, dy, dz, r }); },
+      puff(slot, x, y, z, r, delay, dur, fuel, radial, o) { src.push({ kind: 'puff', x, y, z, r, dx: o.dir[0], dy: o.dir[1], dz: o.dir[2] }); }
+    },
+    deepDomain(x, y, z, R, o) {
+      const h = R * o.domainScale / 96;
+      this.grid.slots[0] = { active: true, deep: true, tag: o.tag, h, n: 96, nz: 36, cx: x, cy: -y, cz: z + o.upShift * 36 * h };
+      src.push({ kind: 'domain', x, y, z, R });
+      return 0;
+    },
+    setDeepSun() {}
+  };
+  fx.getGas = () => gas;
+  // leżąca wieża z okrągłą głową: obrys = koło r 880 (głowa, środek w obrysie przesunięty o 600 j. wzdłuż +x) ∪ pas
+  // 2 × 1300 na 2 × 220 (szyja wzdłuż osi x) — profil biegunowy jak z fizyki (największy promień w wycinku)
+  const inShape = (x, y) => Math.hypot(x - 600, y) <= 880 || (Math.abs(x) <= 1300 && Math.abs(y) <= 220);
+  const K = ROCK_FOOT_BINS;
+  const fr = new Array(K).fill(0);
+  for (let px = -1400; px <= 1500; px += 10) for (let py = -900; py <= 900; py += 10) {
+    if (!inShape(px, py)) continue;
+    let a = Math.atan2(py, px); if (a < 0) a += Math.PI * 2;
+    const k = Math.min(K - 1, Math.floor(a / (Math.PI * 2) * K));
+    fr[k] = Math.max(fr[k], Math.hypot(px, py));
+  }
+  // środek obrysu w grze (200, 0); scena: x = x gry, y = −y gry (oś u = +x, v = n × u = +y sceny)
+  fx.onEvent(ROCK_EVENT.IMPACT, { id: 1, kind: 'tower', x: 1300, y: 0, z: -8000, nx: 0, ny: 0, nz: 1, speed: 1900, slide: 0, mass: 1e6,
+    size: 1600, energy: 1e12, vx: 0, vy: 0, vz: -1900, fx: 200, fy: 0, fz: -8000, ux: 1, uy: 0, uz: 0, fn: K, fr });
+  const dom = src.find((s) => s.kind === 'domain');
+  assert.ok(dom && Math.abs(dom.x - 200) < 1e-6, 'domena na środku obrysu');
+  assert.ok(dom.R >= Math.max(...fr), 'obłok obejmuje obrys');
+  // poza PRAWDZIWYM kształtem (koło głowy i pas szyi — bez prostokątnej ramki) i ku zewnątrz od środka obrysu
+  const outside = (x, y) => !inShape(x - 200, y);
+  let n = 0, nearRound = 0;
+  for (const s of src) {
+    if (s.kind === 'domain') continue;
+    n++;
+    assert.ok(outside(s.x, s.y), `${s.kind} w obrysie: ${s.x.toFixed(0)}, ${s.y.toFixed(0)}`);
+    assert.ok((s.x - 200) * s.dx + s.y * s.dy > 0, `${s.kind} leci pod bryłę`);
+    const l = Math.hypot(s.dx, s.dy, s.dz);
+    assert.ok(s.dz / l < 0.45, `${s.kind} ${Math.round(Math.acos(s.dz / l) * 180 / Math.PI)}° od normalnej`);
+    // źródło przy głowie: kula źródła styka się z okręgiem głowy od zewnątrz (okrąg + margines), nie z rogiem prostokątnej
+    // obwiedni (róg ~1245 j. od środka głowy)
+    if (s.x > 1000) {
+      const dHead = Math.hypot(s.x - 800, s.y) - s.r;
+      assert.ok(dHead < 1200, `${s.kind} przy głowie ${dHead.toFixed(0)} j. od jej środka (róg obwiedni?)`);
+      nearRound++;
+    }
+  }
+  assert.ok(n >= 18, `źródeł gazu ${n}`);
+  assert.ok(nearRound >= 3, `źródła wokół okrągłej głowy: ${nearRound}`);
+  // cząstki: odłamki, pył, pierścień i kłęby — poza obrysem (pozycje względem środka skały); błysk i żar — w punkcie styku
+  const A = fx.alpha.arr;
+  let inside = 0, count = 0;
+  for (let i = 0; i < fx.alpha.used; i++) {
+    const o = i * 20;
+    if (A[o + 3] > 1e8) continue;
+    count++;
+    if (!outside(A[o], A[o + 1])) inside++;
+  }
+  assert.ok(count > 50, `cząstek ${count}`);
+  assert.equal(inside, 0, 'cząstki pyłu spod obrysu');
+  const B = fx.add.arr;
+  let flash = 0;
+  for (let i = 0; i < fx.add.used; i++) if (Math.abs(B[i * 20 + 9] - 4) < 0.5) { flash++; assert.ok(Math.abs(B[i * 20] - 1300) < 1e-3, 'błysk w punkcie styku'); }
+  assert.ok(flash >= 1);
 });
 
 test('RockImpactFx: wybuch w głębi (BLAST) — gaz w domenie głębokiej z nośnikiem, odłamki lądują na kuli skały, błysk', () => {

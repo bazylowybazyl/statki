@@ -13,9 +13,8 @@ import { run as runResources } from './tests/resources.test.mjs';
 import { run as runSalvage } from './tests/salvage.test.mjs';
 import { run as runFactions } from './tests/factions.test.mjs';
 import { run as runStationEconomy } from './tests/stationEconomy.test.mjs';
-import { run as runCargoFleet } from './tests/cargoFleet.test.mjs';
-import { run as runTransitController } from './tests/transitController.test.mjs';
-import { run as runCargoTransit } from './tests/cargoTransit.test.mjs';
+import { run as runShipmentOrders } from './tests/shipmentOrders.test.mjs';
+import { run as runMarketBook } from './tests/marketBook.test.mjs';
 import { run as runCourseRegistry } from './tests/courseRegistry.test.mjs';
 import { run as runTravelNetwork } from './tests/travelNetwork.test.mjs';
 import { run as runDockLayout } from './tests/dockLayout.test.mjs';
@@ -51,9 +50,8 @@ const suites = [
   runSalvage,
   runFactions,
   runStationEconomy,
-  runCargoFleet,
-  runTransitController,
-  runCargoTransit,
+  runShipmentOrders,
+  runMarketBook,
   runCourseRegistry,
   runTravelNetwork,
   runDockLayout,

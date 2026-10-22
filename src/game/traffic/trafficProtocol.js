@@ -24,7 +24,24 @@
  *   station    { stationId, destroyed: true }
  *   config     { piracyPressure?, piracyEnabled?, protectObserved? }
  *   snapshot   { requestId }          podsumowanie dla konsoli
- *   (zarezerwowane dla Z13 + portu Z2: berth-hold / berth-release gracza)
+ *   berth-hold { berths: [id…] }      stanowiska zajęte przez gracza (pełny zbiór; [] = żadne) —
+ *              dyspozytor ich nie przydziela, kurs w podejściu przenosi na inne (E6)
+ *
+ *   BAŃKA W WORKERZE (E6, docs/PLAN-ekonomia-rynki.md § 3.5): lot materializowany
+ *   (`materializedFlight.js`) liczy się TU, obok rekordów kursów — gra nie
+ *   odtwarza kursów. Po każdym `advance` worker wysyła `actors` (bufor
+ *   `ACTOR_FIELD`), gra liczy na nim trafienia i taran, a zniszczenie zgłasza
+ *   `destroyed` (kurs → wrak z ładunkiem, `strikeCourse`). `attach` / `detach` /
+ *   `progress` / `stage-done` zostają dla encji prowadzonych przez grę (awans
+ *   do pełnego NPC — później).
+ *
+ *   RYNKI (E1, docs/PLAN-ekonomia-rynki.md § 3.1) — `src/game/traffic/markets.js`
+ *   market-add      { def }                  nowy rynek (MarketDef, `src/data/markets.js`)
+ *   market-building { stationId, role }      budynek przemysłu na rynku
+ *   market-owner    { stationId, factionId } nowy właściciel (null = opuszczony)
+ *   market-remove   { stationId }            rynek znika ze świata
+ *   Po każdej zmianie worker od razu wysyła `tick` z nową tabelą `stations`
+ *   i `berths` — indeksy rynku i `PORT` kursów liczą się od tej tabeli.
  *
  * WORKER → GRA
  *   ready      { version, clock, step, seed, economyScale, capacityMultiplier,
@@ -32,8 +49,12 @@
  *              `berths`: { stationId: [id stanowiska…] } — `BERTH` kursu to
  *              indeks w liście jego portu (`PORT`), id jak w układach gry.
  *   tick       { clock, steps, stepMs, stats, stockSeq, market, bubble,
- *                wrecks, warWrecks, stationFactions? }   po każdym kroku świata
+ *                wrecks, warWrecks, stationFactions?, stations?, berths? }
+ *              po każdym kroku świata; `stations` i `berths` (jak w `ready`)
+ *              tylko po zmianie listy rynków — przed `market` z nowym układem
  *   bubble     { clock, count, data, hulls? }            po przesunięciu fokusu
+ *   actors     { time, count, data, hulls?, ms }         po każdym `advance` (E6): encje
+ *              bańki — `ACTOR_FIELD`, `time` = czas mostu, w którym pozy są ważne
  *   snapshot-result { requestId, snapshot }
  *   error      { message, stack, during }
  *
@@ -58,6 +79,16 @@ export const TRAFFIC_MSG = Object.freeze({
   STATION: 'station',
   CONFIG: 'config',
   SNAPSHOT: 'snapshot',
+
+  // Rynki (E1) — `markets.js`.
+  MARKET_ADD: 'market-add',
+  MARKET_BUILDING: 'market-building',
+  MARKET_OWNER: 'market-owner',
+  MARKET_REMOVE: 'market-remove',
+
+  // Bańka w workerze (E6).
+  BERTH_HOLD: 'berth-hold',
+  ACTORS: 'actors',
 
   READY: 'ready',
   TICK: 'tick',
@@ -122,6 +153,72 @@ export const COURSE_KIND_SHIFT = 12;
 export const COURSE_KIND_MASK = 15;
 
 /**
+ * Encja bańki (E6): poza lekkiego statku w chwili `actors.time` (czas mostu).
+ * Gra ekstrapoluje ją do swojego czasu (wiadomość przychodzi klatkę po
+ * `advance`, który ją policzył): `VX`, `VY`, `ANG_VEL` to ruch FAKTYCZNY
+ * ostatniego kroku bańki (z rozpychaniem, dociąganiem przechwytu i cofaniem —
+ * nie sama prędkość wzdłuż dziobu), `AX`, `AY` — przyspieszenie z dwóch kroków.
+ * Ekstrapolacja drugiego rzędu trzyma skok pozy przy nowym buforze poniżej
+ * jednostki (przy 240 Hz obraz nie drga co klatkę fizyki).
+ *
+ * `LENGTH` × `WIDTH` to obrys kadłuba (`trafficHullFootprint`) — ten sam,
+ * którym bańka mieści statek na stanowisku; gra liczy na nim trafienia.
+ * `PORT` / `BERTH` jak w kursie: stanowisko, na które statek leci (`APPROACH`),
+ * przy którym stoi (faza `capture` / `docked` / `undock`) albo z którego
+ * właśnie wychodzi (`LEAVING`); −1, gdy żadne.
+ */
+export const ACTOR_STRIDE = 20;
+export const ACTOR_FIELD = Object.freeze({
+  /** Numer kursu (`courseNumber`) — ten sam, który gra odsyła w `destroyed`. */
+  ID: 0,
+  X: 1,
+  Y: 2,
+  ANGLE: 3,
+  VX: 4,
+  VY: 5,
+  ANG_VEL: 6,
+  /** Indeks w tabeli `hulls` (wspólna z buforem kursów). */
+  HULL: 7,
+  FACTION: 8,
+  /** Indeks w `ACTOR_PHASES`. */
+  PHASE: 9,
+  FLAGS: 10,
+  /** −1…1: przyspieszenie wzdłuż dziobu (dysze główne / wsteczne). */
+  THROTTLE: 11,
+  LENGTH: 12,
+  WIDTH: 13,
+  PORT: 14,
+  BERTH: 15,
+  /** Czas od przechwytu na stanowisku [s] (sekwencja obsługi). */
+  DOCK_TIME: 16,
+  /** Prędkość wzdłuż dziobu (ujemna = cofanie) i przelotowa etapu — dysze. */
+  SPEED: 17,
+  /** Przyspieszenie faktyczne [j./s²] — ekstrapolacja drugiego rzędu w grze. */
+  AX: 18,
+  AY: 19
+});
+
+/** Fazy encji w kolejności indeksów `ACTOR_FIELD.PHASE` (= wartości `ACTOR_PHASE`). */
+export const ACTOR_PHASES = Object.freeze(['fly', 'capture', 'docked', 'undock', 'hold', 'station']);
+
+export const ACTOR_FLAG = Object.freeze({
+  /** Etap warpu — dysze na dopalaczu, bez plazmy. */
+  WARP: 1,
+  /** Leci na przydzielone stanowisko (`PORT` / `BERTH`). */
+  APPROACH: 2,
+  /** Wychodzi ze stanowiska `PORT` / `BERTH` (pole jeszcze nie wolne). */
+  LEAVING: 4,
+  CONVOY: 8,
+  AGENT: 16,
+  DEADHEAD: 32,
+  /**
+   * Okręt z zapasu floty frakcji portu na padzie hali K-7 (`placeFleetStock`, Z2) — BEZ kursu: stoi,
+   * `ID` ujemny (nie numer kursu), nie przyjmuje obrażeń i nie idzie do `destroyed`.
+   */
+  STOCK: 64
+});
+
+/**
  * Rynek: stacje × surowce × pola, w kolejności tabel `stations` i `resources`
  * z `ready`. `BID`/`ASK` to ceny przy neutralnej reputacji — gra, która zna
  * reputację gracza, liczy swoje z `resourcePrice` na kopii magazynu.
@@ -149,3 +246,19 @@ export function courseNumber(courseId) {
   const tail = id.slice(dash + 1);
   return /^\d+$/.test(tail) ? Number(tail) : NaN;
 }
+
+/**
+ * PAS W EKONOMII (E3, docs/PLAN-ekonomia-rynki.md § 3.3) — uszczuplenie pasa i wyrwy
+ * (`traffic/miningFields.js`). Osobna tabela, bo `TRAFFIC_MSG` rozbudowuje rynek.
+ *
+ * GRA → WORKER
+ *   belt-mined { x, y, tons }       urobek platformy gracza (ładownia) w punkcie świata gry —
+ *                                   ten sam rejestr uszczuplenia co wyprawy NPC
+ * WORKER → GRA
+ *   belt-holes { holes, full }      zmienione wyrwy `[{ id, x, y, r, depth }]` (depth 0 = usunięta);
+ *                                   `full` — pełna lista (po `ready`), inaczej tylko zmiany od ostatniej
+ */
+export const BELT_MSG = Object.freeze({
+  MINED: 'belt-mined',
+  HOLES: 'belt-holes'
+});

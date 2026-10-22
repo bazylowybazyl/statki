@@ -82,6 +82,10 @@ export function run() {
   earthEcon.resources.silicon_ore = 200;
   earthEcon.resources.titanium_ore = 150;
   earthEcon.resources.raw_crystal = 120;
+  // Glin z Księżyca i Westy (E10): bez niego nie ma stopu tytanu ani płyt.
+  earthEcon.resources.aluminum_ore = 150;
+  // Ruda niklu z pasa: gal i german do układów scalonych (E10).
+  earthEcon.resources.nickel_ore = 60;
   runStationEconomy(earth, earthEcon, 20, seededRng(2));
   t.check('Ziemia zużyła dostarczoną rudę', earthEcon.resources.iron_ore < 200, `(${earthEcon.resources.iron_ore.toFixed(1)})`);
   t.check('Ziemia wyprodukowała płyty kadłuba', earthEcon.resources.hull_plate > 0, `(${earthEcon.resources.hull_plate.toFixed(1)})`);
@@ -94,9 +98,20 @@ export function run() {
   // — ostatnio 2026-08-20, gdy Ziemia i Mars dostały zbrojownie, a Wenus
   // i Saturn amunicjownie. Rosnący apetyt Ziemi na rudę jest tu skutkiem
   // zamierzonym: uzbrojenie to nowy, stały odbiorca metalu.
-  t.close('plan Ziemi wymaga 1390,846 rudy żelaza/h', earthNet.iron_ore * 3600, -1390.8463520161451, 1e-6);
-  t.close('plan Ziemi wymaga 754,339 rudy krzemu/h', earthNet.silicon_ore * 3600, -754.3389223147897, 1e-6);
-  t.close('plan Merkurego eksportuje 1318,364 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1318.3643796574736, 1e-6);
+  // 2026-10-21 (receptury E8): osiem rodzin luf i napędy na rudach pasa — Ziemia
+  // +2,7% żelaza (flak, wyrzutnia torped, napędy w stoczni), −1,5% krzemu (mniej emiterów).
+  // 2026-10-22 (napędy warp Mk I–III w roli stoczni): stocznia Ziemi dzieli moc na
+  // więcej linii, więc topi mniej — −6% żelaza, krzem +1%.
+  // 2026-10-22 (E10, receptury realistyczne): amunicja na materiale wybuchowym,
+  // stop tytanu z glinem zamiast stali (Ti-6Al-4V) i glin w płytach — Ziemia −16%
+  // żelaza i −8% krzemu (moc huty przeszła na glin), Merkury eksportuje +5% żelaza;
+  // taśma nadprzewodząca w elektronice i reaktor fuzyjny — Ziemia dalej −5% Fe, −4% Si.
+  // emitery tarcz w zakładach systemowych — Ziemia −3% Fe, +1% Si.
+  // układy scalone z niklem (Ga, Ge) — Ziemia −22% krzemu, +2% Fe.
+  // warp Mk I–III na taśmie nadprzewodzącej, fregata z warpem Mk I — Ziemia −3% Fe, −3% Si.
+  t.close('plan Ziemi wymaga 1031,138 rudy żelaza/h', earthNet.iron_ore * 3600, -1031.1380183740011, 1e-6);
+  t.close('plan Ziemi wymaga 509,769 rudy krzemu/h', earthNet.silicon_ore * 3600, -509.769265759327, 1e-6);
+  t.close('plan Merkurego eksportuje 1412,130 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1412.1304873239783, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });
@@ -383,6 +398,15 @@ export function run() {
     `(${realShortages.map(s => `${s.id} ${(s.ratio * 100).toFixed(0)}%`).join(', ')})`);
   t.check('uran pozostaje wąskim gardłem wymagającym wydobycia w pasach',
     (supply.uranium_ore || 0) === 0);
+  // Rudy pasa idą w podzespoły (decyzja użytkownika 2026-10-21): każda ma
+  // odbiorcę w recepturach i własne źródło w Unii Pasa, niezależne od wypraw.
+  for (const ruda of ['carbon_ore', 'nickel_ore', 'platinum_ore']) {
+    t.check(`${ruda} ma odbiorcę i pokryty popyt`,
+      (demand[ruda] || 0) > 0 && (supply[ruda] || 0) >= demand[ruda],
+      `(podaż ${(supply[ruda] || 0).toFixed(2)} / popyt ${(demand[ruda] || 0).toFixed(2)})`);
+  }
+  t.check('ruda uranu nie trafia na planety ani księżyce przy rudach pasa',
+    Object.values(PLANET_YIELD).every(e => !e.yields.uranium_ore));
 
   // OGÓLNA POSTAĆ BŁĘDU, który to przegapił: receptura istnieje w resources.js,
   // ale żaden profil przemysłowy jej nie wykonuje. Tak zniknęła rafinacja uranu —
@@ -430,7 +454,8 @@ export function run() {
   });
 
   t.check('nowa stacja dostaje działający profil bez ręcznego strojenia',
-    rozszerzony.psyche.recipes.length === 5 && rozszerzony.psyche.capacity === 3.0);
+    rozszerzony.psyche.recipes.length === new Set([...INDUSTRY_ARCHETYPES.foundry.recipes,
+      ...INDUSTRY_ARCHETYPES.electronics.recipes]).size && rozszerzony.psyche.capacity === 3.0);
   t.check('moc rozkłada się na linie i sumuje do zadeklarowanej',
     Math.abs(Object.values(rozszerzony.psyche.lines).reduce((a, b) => a + b, 0) - 3.0) < 1e-6);
   t.check('role dzielące recepturę nie dublują linii',

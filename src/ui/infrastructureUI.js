@@ -2,12 +2,8 @@
 // Accesses globals via window: stationUI, stations, Game, camera, clamp, worldToScreen, screenToWorld, planetOrbitRadii
 
 import {
-  RESOURCES, RESOURCE_KEYS, TIER, CATEGORY, migrateResourceBag, getResourceCapacityFactor
+  RESOURCES, RESOURCE_KEYS, TIER, CATEGORY, getResourceCapacityFactor
 } from '../data/resources.js';
-import { isDerelict } from '../data/factions.js';
-
-// Bump przy każdej zmianie kluczy surowców — wymusza migrację magazynów w locie.
-const ECONOMY_SCHEMA_VERSION = 3;
 
 const INFRASTRUCTURE_BUILDINGS = [
   { id: 'solar_array', name: 'Orbitalna Elektrownia Słoneczna', buildTime: 75, icon: 'solar', footprint: { w: 4, h: 4 } },
@@ -30,20 +26,16 @@ const INFRASTRUCTURE_BUILDINGS = [
   { id: 'gas_refinery', name: 'Gas Refinery', buildTime: 140, icon: 'gas_refinery', footprint: { w: 4, h: 4 }, requiresSolarSystem: true, allowedPlanetTypes: ['gas'] },
   { id: 'sensor_station', name: 'Stacja Sensorowa', buildTime: 95, icon: 'sensor', footprint: { w: 3, h: 3 } }
 ];
-// LEGACY: ekonomia siatki wokół stacji orbitalnej. Mechanika (tick, pojemności,
-// produkcja) jest generyczna i działa na dowolnych kluczach, więc podpięliśmy ją
-// pod ujednolicony rejestr z resources.js. Sam system budynków-na-siatce zostanie
-// zastąpiony wydobyciem z asteroid i kolektorami planetarnymi.
-const ECONOMY_RESOURCE_KEYS = RESOURCE_KEYS;
-
+// Budynki na siatce wokół stacji orbitalnej podnoszą pojemności magazynów (premie z kategorii surowców
+// z resources.js). Zapasem i produkcją rządzi ruch v2 — patrz `getStationCapacity` niżej.
 const ECONOMY_BASE_CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
 // `capacityFactor` odróżnia skrzynię amunicji od torpedy — obie są komponentem
 // T2, ale port trzyma dziesiątki tysięcy jednych i kilkaset drugich. Bez tego
 // mnożnika gra liczyłaby magazyny inaczej niż demo i skrypt pomiarowy.
-const ECONOMY_BASE_CAPACITY = Object.fromEntries(
+const ECONOMY_BASE_CAPACITY = Object.freeze(Object.fromEntries(
   RESOURCE_KEYS.map(key => [key,
     (ECONOMY_BASE_CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100) * getResourceCapacityFactor(key)])
-);
+));
 
 // Magazyny podnoszą pojemność wszystkiego, co należy do ich kategorii.
 const STORAGE_BONUS_CATEGORIES = {
@@ -74,13 +66,6 @@ const ECONOMY_STORAGE_BONUS = Object.fromEntries(
   ])
 );
 
-// Produkcja przeniesiona do src/game/stationEconomy.js — tam stacje wydobywają
-// wg PLANET_YIELD i przetwarzają wg receptur z resources.js, dla WSZYSTKICH
-// stacji, nie tylko dla tej z otwartym UI. Zostawienie tu reguł oznaczałoby
-// dwa silniki produkujące równolegle do tego samego magazynu.
-// Ta siatka odpowiada już tylko za pojemności magazynów.
-const ECONOMY_BUILDING_RULES = {};
-const ECONOMY_TICK_SECONDS = 60;
 const INFRA_BUILDING_MAP = new Map(INFRASTRUCTURE_BUILDINGS.map(b => [b.id, b]));
 
 const INFRA_CELL_WORLD_SIZE = 220;
@@ -387,13 +372,11 @@ function ensureInfrastructureState(station) {
   return state;
 }
 
-function createEmptyEconomyResources() {
-  const res = {};
-  for (const key of ECONOMY_RESOURCE_KEYS) {
-    res[key] = 0;
-  }
-  return res;
-}
+// Pojemności magazynów z budynków (skala 1, bez hal) — klucz stacji → pojemności. Zapas, produkcja i ceny
+// stacji żyją w świecie ruchu v2 (worker); gra wysyła mu te pojemności przez most (`syncTrafficV2Capacities`
+// w index.html → `worldCapacityFromGame` w traffic/markets.js). Siatka odpowiada już tylko za budynki.
+const stationCapacities = new Map();
+const stationCapacityCounts = new Map();
 
 function getEconomyStationKey(ctx) {
   if (!ctx) return null;
@@ -402,29 +385,10 @@ function getEconomyStationKey(ctx) {
   return getInfrastructureStationKey(ctx);
 }
 
-function ensureStationEconomy(ctx) {
+/** Pojemności magazynów stacji z ukończonych budynków; stacja bez budynków (albo bez siatki) — baza. */
+function getStationCapacity(ctx) {
   const key = getEconomyStationKey(ctx);
-  if (!key) return null;
-  if (!window.Game.stationEconomy) window.Game.stationEconomy = new Map();
-  let econ = window.Game.stationEconomy.get(key);
-  if (!econ) {
-    econ = {
-      stationKey: key,
-      resources: createEmptyEconomyResources(),
-      capacity: { ...ECONOMY_BASE_CAPACITY },
-      timer: 0,
-      schemaVersion: ECONOMY_SCHEMA_VERSION
-    };
-    window.Game.stationEconomy.set(key, econ);
-  } else if (econ.schemaVersion !== ECONOMY_SCHEMA_VERSION) {
-    // Magazyn sprzed ujednolicenia trzyma stare klucze (gas/fuel/rawMetal/...).
-    // Przepisujemy go na nowe, żeby zapas gracza nie wyparował.
-    econ.resources = { ...createEmptyEconomyResources(), ...migrateResourceBag(econ.resources) };
-    econ.capacity = { ...ECONOMY_BASE_CAPACITY };
-    econ.schemaVersion = ECONOMY_SCHEMA_VERSION;
-  }
-  econ.stationRef = ctx?.stationRef || ctx || findStationByKey(key);
-  return econ;
+  return (key && stationCapacities.get(key)) || ECONOMY_BASE_CAPACITY;
 }
 
 function computeEconomyCapacities(buildingCounts) {
@@ -439,62 +403,21 @@ function computeEconomyCapacities(buildingCounts) {
   return capacity;
 }
 
-function clampEconomyResources(econ) {
-  if (!econ) return;
-  for (const key of ECONOMY_RESOURCE_KEYS) {
-    const cap = econ.capacity?.[key];
-    const value = econ.resources?.[key] ?? 0;
-    econ.resources[key] = Number.isFinite(cap) ? window.clamp(value, 0, cap) : Math.max(0, value);
-  }
+function sameBuildingCounts(a, b) {
+  const keysA = Object.keys(a);
+  if (keysA.length !== Object.keys(b).length) return false;
+  for (const key of keysA) if (a[key] !== b[key]) return false;
+  return true;
 }
 
-function applyEconomyProduction(econ, buildingCounts, ticks) {
-  if (!econ || ticks <= 0) return;
-  for (const [buildingId, rule] of Object.entries(ECONOMY_BUILDING_RULES)) {
-    const count = buildingCounts?.[buildingId] || 0;
-    if (!count) continue;
-    const cycles = count * ticks;
-    let ratio = 1;
-    if (rule.consume) {
-      for (const [res, amount] of Object.entries(rule.consume)) {
-        const required = amount * cycles;
-        if (required <= 0) continue;
-        const available = econ.resources?.[res] ?? 0;
-        ratio = Math.min(ratio, available / required);
-      }
-    }
-    if (ratio <= 0) continue;
-    if (rule.consume) {
-      for (const [res, amount] of Object.entries(rule.consume)) {
-        const delta = amount * cycles * ratio;
-        econ.resources[res] = Math.max(0, (econ.resources?.[res] ?? 0) - delta);
-      }
-    }
-    if (rule.produce) {
-      for (const [res, amount] of Object.entries(rule.produce)) {
-        const current = econ.resources?.[res] ?? 0;
-        const cap = econ.capacity?.[res];
-        const next = current + amount * cycles * ratio;
-        econ.resources[res] = Number.isFinite(cap) ? Math.min(cap, next) : next;
-      }
-    }
-  }
-  clampEconomyResources(econ);
-}
-
-function updateStationEconomyFromBuildings(state, buildingCounts, dt) {
-  const econ = ensureStationEconomy(state);
-  if (!econ) return;
-  econ.capacity = computeEconomyCapacities(buildingCounts || {});
-  clampEconomyResources(econ);
-  // Stacja bez właściciela nic nie produkuje — zostaje tylko to, co po
-  // poprzednich mieszkańcach zostało w magazynach.
-  if (isDerelict(econ.stationRef)) return;
-  econ.timer = (econ.timer || 0) + dt;
-  if (econ.timer < ECONOMY_TICK_SECONDS) return;
-  const ticks = Math.floor(econ.timer / ECONOMY_TICK_SECONDS);
-  econ.timer -= ticks * ECONOMY_TICK_SECONDS;
-  applyEconomyProduction(econ, buildingCounts, ticks);
+/** Przelicza pojemności tylko przy zmianie liczby ukończonych budynków. */
+function updateStationCapacity(state, buildingCounts) {
+  const key = getEconomyStationKey(state);
+  if (!key) return;
+  const prev = stationCapacityCounts.get(key);
+  if (prev && sameBuildingCounts(prev, buildingCounts)) return;
+  stationCapacityCounts.set(key, { ...buildingCounts });
+  stationCapacities.set(key, computeEconomyCapacities(buildingCounts));
 }
 
 function setInfrastructureActiveStation(station) {
@@ -1515,7 +1438,7 @@ function updateInfrastructureState(dt) {
         changed = true;
       }
     });
-    updateStationEconomyFromBuildings(state, buildingCounts, dt);
+    updateStationCapacity(state, buildingCounts);
   });
   if (changed) {
     if (infrastructureBuilder.isVisible) {
@@ -1657,6 +1580,6 @@ export const InfrastructureUI = {
   setActiveStation: setInfrastructureActiveStation,
   setVisible: setInfrastructureUIVisible,
   hasBuildings: infrastructureHasBuildings,
-  ensureEconomy: ensureStationEconomy,
+  getCapacity: getStationCapacity,
   getStationKey: getInfrastructureStationKey,
 };

@@ -14,7 +14,8 @@ import {
   PRICE_MODEL, scarcityMultiplier, factionPriceProfile, resourcePrice
 } from '../../src/game/stationEconomy.js';
 import {
-  snapshotMarket, findTradeOpportunities, netProfit, MIN_MARGIN_RATIO
+  snapshotMarket, findTradeOpportunities, netProfit, MIN_MARGIN_RATIO,
+  tradableUnits, sellDownToFill, restockTarget, refreshQuote, RESTOCK_SECONDS, RESTOCK_MIN_FILL
 } from '../../src/game/traffic/tradeMarket.js';
 
 /** Stacja z jednym surowcem o zadanym zapełnieniu. */
@@ -87,6 +88,9 @@ export function run() {
   // ----------------------------------------------------------
   t.section('Szukanie marży');
 
+  // Skupuje tylko ten, kto towar zużywa — stacja bez przemysłu dostaje popyt
+  // wprost, jak stocznia (`extraDemand`).
+  pusta.station.extraDemand = ['iron_ore'];
   const stations = [pelna.station, pusta.station];
   const econs = new Map([['pelna', pelna.econ], ['pusta', pusta.econ]]);
   const quotes = snapshotMarket(stations, id => econs.get(id));
@@ -113,9 +117,53 @@ export function run() {
 
   // Wrogie frakcje nie handlują wprost.
   const wrog = makeStation('wrog', FACTION.PIRATES, { iron_ore: 0 });
+  wrog.station.extraDemand = ['iron_ore'];
   const zWrogiem = snapshotMarket([pelna.station, wrog.station],
     id => (id === 'pelna' ? pelna.econ : wrog.econ));
   t.equal('nie wozimy wprost do wroga', findTradeOpportunities(zWrogiem).length, 0);
+
+  // Pusty magazyn bez popytu to nie odbiorca: kupiec woziłby towar w martwy punkt.
+  const obojetna = makeStation('obojetna', FACTION.TERRA_NOVA, { iron_ore: 0 });
+  const bezPopytu = snapshotMarket([pelna.station, obojetna.station],
+    id => (id === 'pelna' ? pelna.econ : obojetna.econ));
+  t.equal('stacja, która towaru nie zużywa, nie skupuje', findTradeOpportunities(bezPopytu).length, 0);
+
+  // ----------------------------------------------------------
+  t.section('Cena rezerwacji producenta');
+
+  // Producent z zapasem 50% — poniżej dawnego progu nadwyżki 70% — sam używa
+  // rudy. Głodny odbiorca z długim przyduszeniem przebija jego cenę, więc
+  // producent sprzedaje, choć planista frakcji nic by nie wystawił.
+  const producent = makeStation('producent', FACTION.TERRA_NOVA, { iron_ore: 500 });
+  producent.station.extraDemand = ['iron_ore'];
+  const glodny = makeStation('glodny', FACTION.TERRA_NOVA, { iron_ore: 0 });
+  glodny.station.extraDemand = ['iron_ore'];
+  glodny.econ.duress = { iron_ore: 7200 };
+  const rynekRez = snapshotMarket([producent.station, glodny.station],
+    id => (id === 'producent' ? producent.econ : glodny.econ),
+    { demandRate: id => (id === 'glodny' ? 0.1 : 0) });
+  const askP = rynekRez.get('producent').prices.get('iron_ore');
+  const bidG = rynekRez.get('glodny').prices.get('iron_ore');
+  t.equal('poniżej 70% planista nie ma nadwyżki', askP.available, 0);
+  const ile = tradableUnits(askP, bidG);
+  t.check('a rynek kupców ma — skup przebija cenę rezerwacji', ile.offered > 0);
+  t.check('producent nie schodzi poniżej zapasu roboczego',
+    askP.stored - ile.offered >= askP.capacity * PRICE_MODEL.offerFloorFill - 1e-6);
+  t.check('niższa oferta skupu wyciąga mniej towaru',
+    sellDownToFill(askP, 9) > sellDownToFill(askP, 12));
+  t.close('potrzeba odbiorcy to zużycie na RESTOCK_SECONDS plus podłoga',
+    restockTarget(bidG), 0.1 * RESTOCK_SECONDS + bidG.capacity * RESTOCK_MIN_FILL);
+  t.check('skup nie przekracza potrzeby odbiorcy', ile.room <= restockTarget(bidG) + 1e-6);
+  const okazjeRez = findTradeOpportunities(rynekRez, { holdCapacity: 380 });
+  t.check('okazja producent→głodny istnieje',
+    okazjeRez.some(o => o.source.id === 'producent' && o.target.id === 'glodny'));
+  // Kupiec w tym samym ticku widzi już skutki poprzedniej transakcji.
+  producent.econ.resources.iron_ore -= 50;
+  refreshQuote(rynekRez, 'producent', 'iron_ore');
+  const poZakupie = refreshQuote(rynekRez, 'glodny', 'iron_ore', 50);
+  t.equal('towar w drodze trafia do notowania odbiorcy', poZakupie.inbound, 50);
+  t.check('i zmniejsza dalszy skup', tradableUnits(rynekRez.get('producent').prices.get('iron_ore'),
+    poZakupie).room < ile.room);
 
   // ----------------------------------------------------------
   t.section('Zysk netto — marża to nie wszystko');

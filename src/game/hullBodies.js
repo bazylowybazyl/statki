@@ -80,9 +80,9 @@ export const HULL_BODY_CONFIG = {
   // przy ~2000 j/s; 1 — wyłączone.
   fallPairEvery: 1,
   // Odłam bryły 3D poniżej tej wysokości (spadł w otchłań) znika (pętla wraków gry). Od 2026-10-19 bryły bazy piratów
-  // lądują na planetoidzie pod bazą (teren silnika — src/game/story/pirateBaseFall.js; skała 8–40 km pod płaszczyzną),
-  // więc dno leży pod skałą (dawniej −6000: odłamy znikały pod habitatem).
-  solidFloorZ: -45000,
+  // lądują na planetoidzie pod bazą (teren silnika — src/game/story/pirateBaseFall.js; skała 24–88 km pod płaszczyzną
+  // — pirateRockLayout.js, skala świata 2), więc dno leży pod skałą (dawniej −6000: odłamy znikały pod habitatem).
+  solidFloorZ: -130000,
   // Tarcie styku brył 3D (para bierze większe z dwóch; kadłuby — friction): przewrócona wieża szoruje po koronie bębna
   // i dysku, zamiast się z nich zsuwać.
   solidFriction: 0.75,

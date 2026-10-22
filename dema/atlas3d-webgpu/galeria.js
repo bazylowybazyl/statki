@@ -17,7 +17,8 @@ const PICK = {
   armata: 'armata_mk1', beamC: 'beam_continuous', beamP: 'beam_pulse', ciws1: 'ciws_mk1', ciws2: 'ciws_mk2', heliosPd: 'laser_pd_mk1',
   flakL: 'flak_m', flakH: 'flak_capital', cruise: 'missile_rack', fast: 'fast_missile_rack', osa: 'osa_micro_missile',
   supernova: 'supernova_missile', torpedo: 'siege_torpedo_mk2', goliath: 'special_goliath_autocannon',
-  plasmaGatling: 'special_plasma_gatling', valkyrie: 'special_valkyrie_railgun', mjolnir: 'siege_railgun', yamato: 'special_yamato_cannon'
+  plasmaGatling: 'special_plasma_gatling', valkyrie: 'special_valkyrie_railgun', mjolnir: 'siege_railgun', yamato: 'special_yamato_cannon',
+  deathRay: 'death_ray'
 };
 
 const FIT_LENGTH = 80;

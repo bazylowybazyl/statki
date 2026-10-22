@@ -49,6 +49,12 @@ export function getLeadAim(shooter, target, projSpeed, out = _leadAimOut, shoote
   let vy = target.vy ?? target.vel?.y ?? 0;
   if (!Number.isFinite(vx)) vx = 0;
   if (!Number.isFinite(vy)) vy = 0;
+  // Broń natychmiastowa (`baseSpeed: Infinity` — promień śmierci): bez wyprzedzenia. Wzór niżej dawał −∞ / −∞ = NaN.
+  if (!Number.isFinite(projSpeed)) {
+    out.x = targetX;
+    out.y = targetY;
+    return out;
+  }
   let svx = shooterVel ? Number(shooterVel.x) : 0;
   let svy = shooterVel ? Number(shooterVel.y) : 0;
   if (!Number.isFinite(svx)) svx = 0;

@@ -10,13 +10,14 @@ import { buildBeamStructure } from '../src/game/beamBody3D.js';
 import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js';
 import { HULL_BODY_CONFIG as C } from '../src/game/hullBodies.js';
 import {
-  PIRATE_ROCK_SHAPE, PIRATE_FALL_TUNE, createPirateRockTerrain, decodeRockShape, fallKindOf
+  PIRATE_ROCK_SHAPE, PIRATE_FALL_TUNE, bodyFootprint, createPirateRockTerrain, decodeRockShape, fallKindOf
 } from '../src/game/story/pirateBaseFall.js';
 import { createPirateRockLayout } from '../src/3d/portBuildings/pirateRockLayout.js';
 import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
 import { placePirateBase } from '../src/game/story/pirateBaseSite.js';
 import { SMALL_BODY_MAPS, SMALL_BODY_SHAPE_RANGE } from '../src/3d/planetMaps.js';
 import { SMALL_BODY_SEGMENTS, decodeSmallBodyShape, displaceSmallBodyGeometry } from '../src/3d/smallBodyShape.js';
+import { ROCK_FOOT_BINS } from '../src/render/rockImpactRecord.js';
 
 function gameConfig() {
   const cfg = createBeamConfig(15);
@@ -135,6 +136,70 @@ test('studnia grawitacji: przyspieszenie ku punktowi, stałe (r0 = 0) albo ∝ 1
   const c = body(s, { gravity: { x: 0, y: 0, z: -1000 }, gravityWell: { x: 0, y: 5000, z: 0, g: 100, r0: 0 } });
   D.integrate(dt, [c]);
   assert.ok(Math.abs(c.vel.z) < 1e-9 && c.vel.y > 0);
+  // SUFIT prędkości ku środkowi (vmax): przyspieszenie dokłada się tylko do vmax; składowa styczna bez zmian; ciało
+  // szybsze niż vmax nie hamuje (próżnia — sufit tylko nie dokłada)
+  const w = { x: 0, y: 0, z: -1e6, g: 600, r0: 0, vmax: 500 };
+  const d = body(s, { gravityWell: w });
+  d.vel.x = 300;
+  for (let k = 0; k < 120; k++) D.integrate(dt, [d]);
+  assert.ok(Math.abs(-d.vel.z - 500) < 5, `vz ${d.vel.z.toFixed(1)} przy suficie 500`);
+  // styczna gaśnie tylko tłumieniem liniowym silnika (studnia daleko — kierunek ku niej prawie stały)
+  const vxDamped = 300 * Math.exp(-D.config.linearDamping * 120 * dt);
+  assert.ok(Math.abs(d.vel.x - vxDamped) < 0.01 * vxDamped, `styczna ${d.vel.x.toFixed(1)} vs ${vxDamped.toFixed(1)}`);
+  const e = body(s, { gravityWell: { ...w, vmax: 2500 } });
+  e.vel.z = -3000;
+  D.integrate(dt, [e]);
+  assert.ok(e.vel.z <= -2990, 'szybsze niż sufit — bez hamowania');
+});
+
+test('obrys bryły z góry (bodyFootprint): rzut węzłów — profil biegunowy (okrągła głowa daje okrąg, nie prostokąt)', () => {
+  const K = ROCK_FOOT_BINS;
+  // „wieża”: talerz r 800 (środek x = 500 ciała) ∪ szyja 2 × 1300 na 2 × 150 wzdłuż x — węzły co 30 j. w płaszczyźnie x–y
+  const inShape = (x, y) => Math.hypot(x - 500, y) <= 800 || (Math.abs(x) <= 1300 && Math.abs(y) <= 150);
+  const pts = [];
+  for (let x = -1300; x <= 1300; x += 30) for (let y = -800; y <= 800; y += 30) if (inShape(x, y)) pts.push([x, y]);
+  const store = {
+    count: pts.length, active: new Uint8Array(pts.length).fill(1),
+    x: Float64Array.from(pts, (p) => p[0]), y: Float64Array.from(pts, (p) => p[1]), z: new Float64Array(pts.length)
+  };
+  const b = { nodeStore: store, cellSize: 30, quat: { x: 0, y: 0, z: 0, w: 1 }, pos: { x: 100, y: 200, z: 500 } };
+  const out = {};
+  bodyFootprint(b, 0, 0, 0, 0, 0, 1, out);
+  assert.equal(out.n, K);
+  assert.ok(Math.abs(out.ux - 1) < 1e-12 && Math.abs(out.uz) < 1e-12, 'kąt 0 wzdłuż osi x ciała');
+  // środek rzutu = środek węzłów (na płaszczyźnie styku z = 0)
+  const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length, my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+  assert.ok(Math.abs(out.cx - (100 + mx)) < 1e-6 && Math.abs(out.cy - (200 + my)) < 1e-6 && Math.abs(out.cz) < 1e-9);
+  // wycinek ku głowie pod kątem 30–45° od osi: promień do OKRĘGU talerza (rzut bez rogów), dużo mniej niż do rogu obwiedni
+  // prostokątnej (1300, 800)
+  const nodeR = 30 * 0.55;
+  const toCircle = (a) => {   // odległość od środka rzutu do brzegu talerza w kierunku a (największa t)
+    const dx = Math.cos(a), dy = Math.sin(a), ox = mx - 500, oy = my;
+    const bq = ox * dx + oy * dy, c = ox * ox + oy * oy - 800 * 800;
+    return -bq + Math.sqrt(bq * bq - c);
+  };
+  const k2 = Math.floor((37.5 / 360) * K);   // wycinek [30°, 45°)
+  const exact = Math.max(toCircle(Math.PI / 6), toCircle(Math.PI / 4)) + nodeR;
+  assert.ok(Math.abs(out.r[k2] - exact) < 45, `wycinek 30–45°: ${out.r[k2].toFixed(0)} vs okrąg ${exact.toFixed(0)}`);
+  const corner = Math.hypot(1300 - mx, 800 - my);
+  assert.ok(out.r[k2] < 0.85 * corner, `nie róg obwiedni (${corner.toFixed(0)})`);
+  // obrót 30° wokół z: profil ten sam (kąt 0 jedzie z osią ciała)
+  const R0 = Float64Array.from(out.r);
+  b.quat = { x: 0, y: 0, z: Math.sin(Math.PI / 12), w: Math.cos(Math.PI / 12) };
+  bodyFootprint(b, 0, 0, 0, 0, 0, 1, out);
+  for (let k = 0; k < K; k++) assert.ok(Math.abs(out.r[k] - R0[k]) < 1e-6, `obrót: wycinek ${k}`);
+  assert.ok(Math.abs(out.ux - Math.cos(Math.PI / 6)) < 1e-9 && Math.abs(out.uy - Math.sin(Math.PI / 6)) < 1e-9);
+  // przechył 90° wokół x (talerz pionowo — z góry tylko kreska): w poprzek (wycinki ~90° i ~270°) promień ≈ węzeł
+  const s2 = Math.SQRT1_2;
+  b.quat = { x: s2, y: 0, z: 0, w: s2 };
+  bodyFootprint(b, 0, 0, 0, 0, 0, 1, out);
+  assert.ok(out.r[Math.floor(K / 4)] < 60 && out.r[Math.floor(3 * K / 4)] < 60, `kreska: ${out.r[Math.floor(K / 4)].toFixed(0)}`);
+  const maxX = Math.max(...pts.map((p) => p[0])), minX = Math.min(...pts.map((p) => p[0]));
+  assert.ok(Math.abs(Math.max(out.r[0], out.r[K - 1]) - (maxX - mx + nodeR)) < 1e-6, 'wzdłuż +x — do końca szyi');
+  assert.ok(Math.abs(Math.max(out.r[K / 2 - 1], out.r[K / 2]) - (mx - minX + nodeR)) < 1e-6, 'wzdłuż −x — do końca szyi');
+  // bez węzłów — brak obrysu
+  bodyFootprint({ quat: b.quat, pos: b.pos }, 0, 0, 0, 0, 0, 1, out);
+  assert.equal(out.n, 0);
 });
 
 test('wrak z rozpadu bryły dziedziczy studnię rodzica', () => {

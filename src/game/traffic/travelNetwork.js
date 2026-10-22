@@ -20,41 +20,38 @@
  */
 
 import { buildSystemMap, SYSTEM_MAP_MOONS, moonWorldPosition } from '../../data/systemMap.js';
+import { DEFAULT_GATE_HUBS, DERELICT_MARKETS } from '../../data/markets.js';
+import {
+  TRAFFIC_CONVENTIONAL, TRAFFIC_CLASS_DRIVE, TRAFFIC_DEFAULT_CLASS,
+  trafficHypercruiseMode, trafficWarpMode, trapezoidSeconds
+} from '../../data/driveModes.js';
 
 // ============================================================
 // Napędy
 // ============================================================
 
 /**
- * Trzy sposoby podróży. Liczby są punktem wyjścia do strojenia suwakami —
- * w prototypie mają być ruchome, bo to one decydują, czy piractwo ma sens.
+ * Sposoby podróży — z JEDNEJ tabeli napędów gracza, NPC i ruchu (`src/data/driveModes.js`, E5).
  *
- * `fuelPerUnit` to zużycie na jednostkę dystansu. Warp pali ~10× więcej na
- * jednostkę drogi I droższy surowiec, więc jest realnie kosztowny, a nie „lepszy".
+ *   conventional — statek bez silnika hipercruise (1200 j./s) i manewry przy portach, pełna ekspozycja;
+ *   hypercruise  — frachtowiec z silnikiem hipercruise (20–40 tys. j./s wg klasy), DA SIĘ GO PRZERWAĆ,
+ *                  więc ekspozycja jak konwencjonalny: przechwyt liczy się od DROGI, nie od czasu —
+ *                  szybszy przelot skraca kurs, ale nie zmienia szansy przechwytu na trasie;
+ *   warp         — napęd warp klasy (Mk I / II / III: 100 / 175 / 250 tys. j./s, ta sama tabela co gracz)
+ *                  + narzut ładowania i wyjścia, nietykalny;
+ *   gate         — procedura skoku (`gateTransitSeconds`) plus dolot do bramy i od bramy.
+ *
+ * `fuelPerUnit` to zużycie na jednostkę dystansu. Warp pali więcej na jednostkę
+ * drogi I droższy surowiec, więc jest realnie kosztowny, a nie „lepszy".
+ * Hipercruise pali więcej wodoru niż napęd konwencjonalny — rachunek masówki zostaje
+ * po stronie paliwa i ryzyka, nie czasu.
  */
 export const DRIVE_MODES = Object.freeze({
-  conventional: Object.freeze({
-    id: 'conventional',
-    label: 'konwencjonalny',
-    speed: 800,
-    fuelId: 'hydrogen',
-    fuelPerUnit: 1 / 40_000,
-    /** Pełna ekspozycja na przechwyt — to jest cała trasa pirata. */
-    risk: 1
-  }),
-  warp: Object.freeze({
-    id: 'warp',
-    label: 'warp',
-    speed: 20_000,
-    fuelId: 'fusion_fuel',
-    // Skalibrowane wobec ŁADOWNI, nie z sufitu: typowy kurs w rdzeniu (~1 mln j.)
-    // to ~17 t paliwa fuzyjnego przy ładowni haulera 160 t. Pierwsza wersja
-    // (1/4000) dawała 263 t paliwa na kurs — więcej, niż statek unosi towaru,
-    // i 26 tys. CR kosztu, przez co warp był martwą opcją dla każdego ładunku.
-    fuelPerUnit: 1 / 60_000,
-    /** Nietykalny z założenia. Dopóki nie ma disruptorów, to jest zero. */
-    risk: 0
-  }),
+  conventional: TRAFFIC_CONVENTIONAL,
+  /** Tryb klasy domyślnej (hauler); inna klasa — `driveModeFor('hypercruise', klasa)`. */
+  hypercruise: trafficHypercruiseMode(TRAFFIC_DEFAULT_CLASS),
+  /** Tryb klasy domyślnej (hauler — warp Mk I); inna klasa — `driveModeFor('warp', klasa)`. */
+  warp: trafficWarpMode(TRAFFIC_DEFAULT_CLASS),
   gate: Object.freeze({
     id: 'gate',
     label: 'brama',
@@ -66,6 +63,35 @@ export const DRIVE_MODES = Object.freeze({
   })
 });
 
+// Tryb hipercruise per klasa ładowni — stała tabela (niezmienna), liczona raz.
+const HYPERCRUISE_BY_VAN_CLASS = Object.freeze(Object.fromEntries(
+  Object.keys(TRAFFIC_CLASS_DRIVE).map(cls => [cls, trafficHypercruiseMode(cls)])
+));
+const WARP_BY_VAN_CLASS = Object.freeze(Object.fromEntries(
+  Object.keys(TRAFFIC_CLASS_DRIVE).map(cls => [cls, trafficWarpMode(cls)])
+));
+
+/**
+ * Tryb napędu odcinka: `hypercruise` zależy od klasy przewoźnika (silnik i rozpęd kadłuba,
+ * `TRAFFIC_CLASS_DRIVE`), reszta jest wspólna. `null` dla nieznanego napędu.
+ */
+export function driveModeFor(modeId, vanClass = null) {
+  if (modeId === 'hypercruise') {
+    return HYPERCRUISE_BY_VAN_CLASS[vanClass] || DRIVE_MODES.hypercruise;
+  }
+  if (modeId === 'warp') {
+    return WARP_BY_VAN_CLASS[vanClass] || DRIVE_MODES.warp;
+  }
+  return DRIVE_MODES[modeId] || null;
+}
+
+/** Czas lotu odcinka trybem: profil rozpędu (hipercruise) albo prędkość stała + narzut. */
+export function driveLegSeconds(mode, distance) {
+  if (!mode || !(mode.speed > 0) || !Number.isFinite(mode.speed)) return 0;
+  if (mode.accel > 0) return trapezoidSeconds(distance, mode.speed, mode.accel, mode.decel, mode.overheadSeconds || 0);
+  return distance / mode.speed + (Number(mode.overheadSeconds) || 0);
+}
+
 /** Domyślne parametry ekonomiczne. Wszystkie do wystawienia na suwaki. */
 export const NETWORK_DEFAULTS = Object.freeze({
   /** CR za jednostkę paliwa — bierze się z `RESOURCES[fuelId].value`, to fallback. */
@@ -73,6 +99,13 @@ export const NETWORK_DEFAULTS = Object.freeze({
   /** Opłata za skok: stała plus od tony. Brama ma być TAŃSZA od warpa. */
   gateFeeBase: 250,
   gateFeePerTon: 1.2,
+  /**
+   * Procedura skoku bramy [s] (kolejka do okna, wyrównanie, przejście). Od napędów warp Mk I–III
+   * (2026-10-22) najwolniejszy warp leci 100 tys. j./s — bez tej procedury dolot hipercruise'em do bram
+   * hubów (~2 × 11–23 s) byłby krótszy od skoku Mars↔Jowisz warpem Mk I (~39 s), a brama ma być TAŃSZA,
+   * nie szybsza (strażnik w `scripts/tests/travelNetwork.test.mjs`).
+   */
+  gateTransitSeconds: 30,
   /** Ile CR jest wart jeden przestój sekundy. Podnosi wagę czasu w rachunku. */
   timeValuePerSecond: 0.08,
   /**
@@ -99,12 +132,10 @@ export const NODE_KIND = Object.freeze({
 });
 
 /**
- * Bramy stoją TYLKO przy największych hubach — to była decyzja projektowa,
- * nie optymalizacja. Pomiar (`scripts/analiza-ruchu.mjs`) mówi, że Ziemia odbiera
- * 55% importu, a Ziemia z Marsem 82%, więc te dwie plus jeden przyczółek
- * w układzie zewnętrznym obsługują praktycznie cały ruch dalekobieżny.
+ * Bramy stoją TYLKO przy największych hubach — lista żyje w tabeli rynków
+ * (`src/data/markets.js`, pole `gate`), tu zostaje dla zgodności importów.
  */
-export const DEFAULT_GATE_HUBS = Object.freeze(['earth', 'mars', 'jupiter']);
+export { DEFAULT_GATE_HUBS };
 
 /**
  * Jak daleko od macierzystej stacji wisi brama.
@@ -114,7 +145,9 @@ export const DEFAULT_GATE_HUBS = Object.freeze(['earth', 'mars', 'jupiter']);
  * dolot do niej i od niej na napędzie konwencjonalnym. Przy bramie tuż przy stacji
  * skok byłby jednocześnie tańszy i szybszy od warpa, więc warp stałby się martwy.
  *
- * 150 tys. j. to ~3 minuty dolotu z każdej strony.
+ * 150 tys. j. to ~15 s dolotu hipercruise'em z każdej strony (haulerem Mk I; ~3 min
+ * konwencjonalnie). Warp między hubami trwa 8–18 s, więc brama zostaje wolniejsza dla
+ * każdej klasy i silnika (strażnik w `scripts/tests/travelNetwork.test.mjs`).
  */
 const DEFAULT_GATE_OFFSET_UNITS = 150_000;
 
@@ -153,6 +186,174 @@ function planetAngleFor(options) {
 }
 
 /**
+ * Sieć bez węzłów stacji: geometria układu (AU w jednostkach świata, Słońce,
+ * orbity i kąty planet z `systemMap.js`). Węzły rynków dokłada `addMarket`
+ * (`markets.js`) przez `addPlanetNode` / `addOutpostNode` / `addMoonNode` —
+ * przy budowie świata i w trakcie gry tą samą drogą.
+ *
+ * `list`, `stations`, `gates` i `fields` rosną razem z mapą `nodes`, więc
+ * węzeł dołożony w biegu jest od razu widoczny dla trasowania i dyspozytora.
+ */
+export function createTravelNetwork(options = {}) {
+  const beltEdgeAu = Number(options.beltEdgeAu) || 140;
+  const origin = originOf(options);
+  const { auInWorldUnits, planets } = buildSystemMap(beltEdgeAu, {
+    angleFor: planetAngleFor(options),
+    planetScale: options.planetScale,
+    sunRadius: options.sunRadius
+  });
+  return {
+    auInWorldUnits,
+    /** Pozycja Słońca — środek orbit planet, placówek i pól. */
+    origin,
+    nodes: new Map(),
+    list: [],
+    gates: [],
+    stations: [],
+    fields: [],
+    /** Orbity i kąty planet z mapy układu — na nich stają węzły rynków planet. */
+    planets: new Map(planets.map(planet => [planet.id, planet])),
+    placement: {
+      berthsPerStation: options.berthsPerStation ?? 6,
+      gateOffsetUnits: Number(options.gateOffsetUnits) || DEFAULT_GATE_OFFSET_UNITS,
+      gateThroughputPerHour: options.gateThroughputPerHour ?? 90
+    },
+    config: { ...NETWORK_DEFAULTS, ...(options.config || {}) }
+  };
+}
+
+/** Wpisuje węzeł do mapy i do tablicy pochodnej jego rodzaju. */
+function pushNode(network, node) {
+  network.nodes.set(node.id, node);
+  network.list.push(node);
+  if (node.kind === NODE_KIND.STATION) network.stations.push(node);
+  else if (node.kind === NODE_KIND.GATE) network.gates.push(node);
+  else if (node.kind === NODE_KIND.FIELD) network.fields.push(node);
+  return node;
+}
+
+/**
+ * Brama przy hubie. Siedzi na tej samej orbicie, kawałek dalej po kącie —
+ * żeby dolot do niej był realnym odcinkiem, a nie zerem.
+ */
+function addGateNode(network, station, name) {
+  const { origin, placement } = network;
+  const gateAngle = station.angle + placement.gateOffsetUnits / Math.max(1, station.orbitRadius);
+  const gatePos = positionOnOrbit(station.orbitRadius, gateAngle, origin.x, origin.y);
+  return pushNode(network, {
+    id: `gate:${station.id}`,
+    kind: NODE_KIND.GATE,
+    label: `Brama ${name}`,
+    x: gatePos.x,
+    y: gatePos.y,
+    stationId: station.id,
+    /** Przepustowość skoków na godzinę — wejście dla slotów. */
+    throughputPerHour: placement.gateThroughputPerHour
+  });
+}
+
+/**
+ * Węzeł planety: orbita i kąt z mapy układu. `flags`: `derelict`, `gate`,
+ * `berths`, `label`. Zwraca węzeł albo `null` (nieznana planeta, zajęte id).
+ */
+export function addPlanetNode(network, planetId, flags = {}) {
+  const planet = network?.planets?.get(String(planetId || ''));
+  if (!planet || network.nodes.has(planet.id)) return null;
+  const { origin } = network;
+  const derelict = Boolean(flags.derelict);
+  const pos = positionOnOrbit(planet.orbitRadius, planet.angle, origin.x, origin.y);
+  const node = pushNode(network, {
+    id: planet.id,
+    kind: NODE_KIND.STATION,
+    label: flags.label || planet.name,
+    x: pos.x,
+    y: pos.y,
+    orbitRadius: planet.orbitRadius,
+    angle: planet.angle,
+    derelict,
+    /** Ile stanowisk — wejście dla kolejkowania slotowego. */
+    berths: derelict ? 0 : (flags.berths ?? network.placement.berthsPerStation),
+    hasGate: Boolean(flags.gate) && !derelict
+  });
+  if (node.hasGate) addGateNode(network, node, planet.name);
+  return node;
+}
+
+/**
+ * Stacja spoza tabeli planet: osada w asteroidach, przyczółek piracki,
+ * stacja misji — wszystko, co ma magazyn i cenę, ale nie krąży wokół planety.
+ * Dla warstwy ruchu nieodróżnialna od stacji planetarnej — ma pozycję,
+ * stanowiska i frakcję, więc handel, doki, patrole i agenci obsługują ją bez
+ * zmian. `outpost`: `id`, `label`, `orbitAU`, `angle` (albo wprost `x`, `y`),
+ * `berths`, `derelict`, `gate`.
+ */
+export function addOutpostNode(network, outpost = {}) {
+  const id = String(outpost.id || '');
+  if (!network?.nodes || !id || network.nodes.has(id)) return null;
+  const { origin } = network;
+  const radius = Number(outpost.orbitAU) * network.auInWorldUnits;
+  const angle = Number(outpost.angle) || 0;
+  const pos = positionOnOrbit(radius, angle, origin.x, origin.y);
+  const derelict = Boolean(outpost.derelict);
+  const node = pushNode(network, {
+    id,
+    kind: NODE_KIND.STATION,
+    label: outpost.label || outpost.id,
+    x: Number.isFinite(outpost.x) ? outpost.x : pos.x,
+    y: Number.isFinite(outpost.y) ? outpost.y : pos.y,
+    orbitRadius: radius,
+    angle,
+    derelict,
+    // Przyczółek jest mniejszy od portu planetarnego — mniej stanowisk,
+    // brak pierścienia, ale to nadal pełnoprawny rynek.
+    berths: derelict ? 0 : (outpost.berths ?? 4),
+    hasGate: Boolean(outpost.gate) && !derelict,
+    outpost: true
+  });
+  if (node.hasGate) addGateNode(network, node, node.label);
+  return node;
+}
+
+/**
+ * KSIĘŻYC — pozycję liczy się OD RODZICA, więc rodzic musi już być w sieci.
+ *
+ * Pełnoprawna stacja: ma port, magazyn, frakcję i rynek, więc handel, doki,
+ * patrole i agenci obsługują ją bez żadnej zmiany. Różni ją tylko to, skąd
+ * bierze współrzędne — i `parentId`, dzięki któremu wiadomo, czyim jest
+ * zapleczem. `moon`: wpis jak w `SYSTEM_MAP_MOONS` plus `derelict`.
+ */
+export function addMoonNode(network, moon = {}) {
+  const id = String(moon.id || '');
+  if (!network?.nodes || !id || network.nodes.has(id)) return null;
+  const parent = network.nodes.get(String(moon.parentId || ''));
+  if (!parent) return null;
+  const pos = moonWorldPosition(moon, parent);
+  const pusty = moon.role === 'empty' || Boolean(moon.derelict);
+  return pushNode(network, {
+    id,
+    kind: NODE_KIND.STATION,
+    label: moon.label || moon.id,
+    x: pos.x,
+    y: pos.y,
+    // Orbita wokół GWIAZDY jest tu tylko informacyjna — księżyc trzyma się
+    // planety, a nie własnego toru wokół Słońca.
+    orbitRadius: parent.orbitRadius,
+    angle: parent.angle,
+    parentId: parent.id,
+    moon: true,
+    moonOrbitRadius: Number(moon.orbitRadius) || 0,
+    moonAngle: Number(moon.angle) || 0,
+    role: moon.role || 'node',
+    // Pusty księżyc nie ma załogi ani nabrzeży: to działka do zajęcia,
+    // nie port. Stąd zero stanowisk — dokładnie jak opuszczony Neptun.
+    derelict: pusty,
+    berths: pusty ? 0 : (moon.berths ?? 3),
+    hasGate: false,
+    outpost: true
+  });
+}
+
+/**
  * Buduje węzły układu na podstawie mapy z `systemMap.js`.
  *
  * `fields` to pola wydobywcze podawane w AU mapy — pas główny i Kuiper. Nie
@@ -162,115 +363,24 @@ function planetAngleFor(options) {
  * Z gry przychodzą trzy rzeczy, bez których sieć nie pokryje się z mapą:
  * `origin` (pozycja Słońca), `planetAngles` i te same `planetScale`/`sunRadius`,
  * którymi gra liczy orbity w `buildSystemMap`.
+ *
+ * `stations: false` — bez węzłów stacji (planet, placówek, księżyców): świat
+ * ruchu dokłada je sam, rynek po rynku (`buildTrafficWorld` → `addMarket`).
  */
 export function buildTravelNetwork(options = {}) {
-  const beltEdgeAu = Number(options.beltEdgeAu) || 140;
-  const origin = originOf(options);
-  const { auInWorldUnits, planets } = buildSystemMap(beltEdgeAu, {
-    angleFor: planetAngleFor(options),
-    planetScale: options.planetScale,
-    sunRadius: options.sunRadius
-  });
-  const gateHubs = new Set(options.gateHubs || DEFAULT_GATE_HUBS);
-  const derelict = new Set(options.derelict || ['neptune']);
-  const nodes = new Map();
+  const network = createTravelNetwork(options);
+  const { auInWorldUnits, origin, nodes } = network;
+  const add = node => pushNode(network, node);
 
-  const add = node => { nodes.set(node.id, node); return node; };
-
-  for (const planet of planets) {
-    const pos = positionOnOrbit(planet.orbitRadius, planet.angle, origin.x, origin.y);
-    add({
-      id: planet.id,
-      kind: NODE_KIND.STATION,
-      label: planet.name,
-      x: pos.x,
-      y: pos.y,
-      orbitRadius: planet.orbitRadius,
-      angle: planet.angle,
-      derelict: derelict.has(planet.id),
-      /** Ile stanowisk — wejście dla kolejkowania slotowego. */
-      berths: derelict.has(planet.id) ? 0 : (options.berthsPerStation ?? 6),
-      hasGate: gateHubs.has(planet.id) && !derelict.has(planet.id)
-    });
-
-    if (gateHubs.has(planet.id) && !derelict.has(planet.id)) {
-      // Brama siedzi na tej samej orbicie, kawałek dalej po kącie — żeby dolot
-      // do niej był realnym odcinkiem, a nie zerem.
-      const gateOffset = Number(options.gateOffsetUnits) || DEFAULT_GATE_OFFSET_UNITS;
-      const gateAngle = planet.angle + gateOffset / Math.max(1, planet.orbitRadius);
-      const gatePos = positionOnOrbit(planet.orbitRadius, gateAngle, origin.x, origin.y);
-      add({
-        id: `gate:${planet.id}`,
-        kind: NODE_KIND.GATE,
-        label: `Brama ${planet.name}`,
-        x: gatePos.x,
-        y: gatePos.y,
-        stationId: planet.id,
-        /** Przepustowość skoków na godzinę — wejście dla slotów. */
-        throughputPerHour: options.gateThroughputPerHour ?? 90
-      });
+  if (options.stations !== false) {
+    const gateHubs = new Set(options.gateHubs || DEFAULT_GATE_HUBS);
+    const derelict = new Set(options.derelict || DERELICT_MARKETS);
+    for (const planet of network.planets.values()) {
+      addPlanetNode(network, planet.id, { derelict: derelict.has(planet.id), gate: gateHubs.has(planet.id) });
     }
-  }
-
-  // Stacje spoza tabeli planet: osady w asteroidach, przyczółki pirackie,
-  // wszystko, co ma magazyn i cenę, ale nie krąży wokół planety. Dla warstwy
-  // ruchu są nieodróżnialne od stacji planetarnych — mają pozycję, stanowiska
-  // i frakcję, więc handel, doki, patrole i agenci obsługują je bez zmian.
-  for (const outpost of options.outposts || []) {
-    const radius = Number(outpost.orbitAU) * auInWorldUnits;
-    const angle = Number(outpost.angle) || 0;
-    const pos = positionOnOrbit(radius, angle, origin.x, origin.y);
-    add({
-      id: String(outpost.id),
-      kind: NODE_KIND.STATION,
-      label: outpost.label || outpost.id,
-      x: Number.isFinite(outpost.x) ? outpost.x : pos.x,
-      y: Number.isFinite(outpost.y) ? outpost.y : pos.y,
-      orbitRadius: radius,
-      angle,
-      derelict: false,
-      // Przyczółek jest mniejszy od portu planetarnego — mniej stanowisk,
-      // brak pierścienia, ale to nadal pełnoprawny rynek.
-      berths: outpost.berths ?? 4,
-      hasGate: false,
-      outpost: true
-    });
-  }
-
-  // KSIĘŻYCE — po planetach, bo pozycję liczy się OD RODZICA.
-  //
-  // Dokładane jako pełnoprawne stacje: mają port, magazyn, frakcję i rynek,
-  // więc handel, doki, patrole i agenci obsługują je bez żadnej zmiany. Różni
-  // je tylko to, skąd biorą współrzędne — i `parentId`, dzięki któremu wiadomo,
-  // czyim są zapleczem.
-  const moons = options.moons === false ? [] : (options.moons || SYSTEM_MAP_MOONS);
-  for (const moon of moons) {
-    const parent = nodes.get(String(moon.parentId || ''));
-    if (!parent) continue;
-    const pos = moonWorldPosition(moon, parent);
-    const pusty = moon.role === 'empty' || derelict.has(moon.id);
-    add({
-      id: String(moon.id),
-      kind: NODE_KIND.STATION,
-      label: moon.label || moon.id,
-      x: pos.x,
-      y: pos.y,
-      // Orbita wokół GWIAZDY jest tu tylko informacyjna — księżyc trzyma się
-      // planety, a nie własnego toru wokół Słońca.
-      orbitRadius: parent.orbitRadius,
-      angle: parent.angle,
-      parentId: parent.id,
-      moon: true,
-      moonOrbitRadius: Number(moon.orbitRadius) || 0,
-      moonAngle: Number(moon.angle) || 0,
-      role: moon.role || 'node',
-      // Pusty księżyc nie ma załogi ani nabrzeży: to działka do zajęcia,
-      // nie port. Stąd zero stanowisk — dokładnie jak opuszczony Neptun.
-      derelict: pusty,
-      berths: pusty ? 0 : (moon.berths ?? 3),
-      hasGate: false,
-      outpost: true
-    });
+    for (const outpost of options.outposts || []) addOutpostNode(network, outpost);
+    const moons = options.moons === false ? [] : (options.moons || SYSTEM_MAP_MOONS);
+    for (const moon of moons) addMoonNode(network, { ...moon, derelict: derelict.has(moon.id) });
   }
 
   for (const field of options.fields || []) {
@@ -317,17 +427,7 @@ export function buildTravelNetwork(options = {}) {
     });
   }
 
-  return {
-    auInWorldUnits,
-    /** Pozycja Słońca — środek orbit planet, placówek i pól. */
-    origin,
-    nodes,
-    list: [...nodes.values()],
-    gates: [...nodes.values()].filter(node => node.kind === NODE_KIND.GATE),
-    stations: [...nodes.values()].filter(node => node.kind === NODE_KIND.STATION),
-    fields: [...nodes.values()].filter(node => node.kind === NODE_KIND.FIELD),
-    config: { ...NETWORK_DEFAULTS, ...(options.config || {}) }
-  };
+  return network;
 }
 
 /**
@@ -449,18 +549,20 @@ export function priceRoute(network, legs, cargo = {}) {
   for (const leg of legs) {
     const from = getNode(network, leg.from);
     const to = getNode(network, leg.to);
-    const mode = DRIVE_MODES[leg.mode];
+    const mode = driveModeFor(leg.mode, cargo.vanClass);
     if (!from || !to || !mode) return null;
 
     if (mode.id === 'gate') {
-      // Skok jest natychmiastowy, ale kosztuje opłatę zależną od tonażu.
+      // Skok trwa tyle, co procedura bramy, i kosztuje opłatę zależną od tonażu.
+      const gateSeconds = Math.max(0, Number(config.gateTransitSeconds) || 0);
       gateFee += Number(config.gateFeeBase || 0) + Number(config.gateFeePerTon || 0) * mass;
-      stages.push({ from: from.id, to: to.id, mode: mode.id, distance: 0, seconds: 0, fuel: 0, risk: 0 });
+      seconds += gateSeconds;
+      stages.push({ from: from.id, to: to.id, mode: mode.id, distance: 0, seconds: gateSeconds, fuel: 0, risk: 0 });
       continue;
     }
 
     const legDistance = distanceBetween(from, to);
-    const legSeconds = legDistance / mode.speed;
+    const legSeconds = driveLegSeconds(mode, legDistance);
     const legFuel = legDistance * mode.fuelPerUnit;
 
     distance += legDistance;
@@ -504,13 +606,14 @@ export function priceRoute(network, legs, cargo = {}) {
 /**
  * Buduje warianty dojazdu z A do B i zwraca je posortowane po koszcie.
  *
- * Warianty są trzy, bo tyle jest napędów:
- *   1. prosto konwencjonalnie — najtaniej w paliwie, najdłużej, pełne ryzyko
+ * Warianty są trzy:
+ *   1. na wprost — hipercruise'em (frachtowiec z silnikiem; `cargo.hypercruise === false` —
+ *      konwencjonalnie): tanio w paliwie, pełne ryzyko, bo hipercruise da się przerwać
  *   2. przez bramy — dolot do bramy, skok, dolot od bramy; ryzyko tylko na dolotach
  *   3. warpem — natychmiast i bezpiecznie, ale paliwo fuzyjne kosztuje
  *
  * Brama bywa wolniejsza od warpa od drzwi do drzwi i to jest zamierzone:
- * ma być TAŃSZA, nie szybsza.
+ * ma być TAŃSZA, nie szybsza. `cargo.vanClass` — klasa przewoźnika (silnik, rozpęd).
  */
 export function planRouteOptions(network, fromId, toId, cargo = {}) {
   const from = getNode(network, fromId);
@@ -519,8 +622,9 @@ export function planRouteOptions(network, fromId, toId, cargo = {}) {
 
   const options = [];
 
-  const direct = priceRoute(network, [{ from: from.id, to: to.id, mode: 'conventional' }], cargo);
-  if (direct) options.push({ id: 'conventional', label: 'konwencjonalnie', ...direct });
+  const directMode = cargo.hypercruise === false ? 'conventional' : 'hypercruise';
+  const direct = priceRoute(network, [{ from: from.id, to: to.id, mode: directMode }], cargo);
+  if (direct) options.push({ id: directMode, label: directMode === 'hypercruise' ? 'hipercruise\'em' : 'konwencjonalnie', ...direct });
 
   if (!cargo.noWarp) {
     const warp = priceRoute(network, [{ from: from.id, to: to.id, mode: 'warp' }], cargo);
@@ -528,14 +632,14 @@ export function planRouteOptions(network, fromId, toId, cargo = {}) {
   }
 
   // Bramy działają tylko wtedy, gdy OBA końce mają swoją. Inaczej trzeba by
-  // dolecieć konwencjonalnie przez pół układu i skok nic nie daje.
+  // dolecieć przez pół układu i skok nic nie daje. Doloty — tym samym napędem co lot na wprost.
   const fromGate = getNode(network, `gate:${from.id}`);
   const toGate = getNode(network, `gate:${to.id}`);
   if (fromGate && toGate) {
     const viaGate = priceRoute(network, [
-      { from: from.id, to: fromGate.id, mode: 'conventional' },
+      { from: from.id, to: fromGate.id, mode: directMode },
       { from: fromGate.id, to: toGate.id, mode: 'gate' },
-      { from: toGate.id, to: to.id, mode: 'conventional' }
+      { from: toGate.id, to: to.id, mode: directMode }
     ], cargo);
     if (viaGate) options.push({ id: 'gate', label: 'przez bramę', ...viaGate });
   }
