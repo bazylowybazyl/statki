@@ -18,12 +18,18 @@
  * byłby tym samym światem co pierwszy.
  *
  * Definicje progów (propozycja E4, akceptuje użytkownik):
- *   przechwyty  — przechwycone kursy Z ŁADUNKIEM / (dostarczone + przechwycone
+ *   przechwyty  — w paśmie 12–20% (cel ~15%, decyzja użytkownika 2026-10-22):
+ *                 przechwycone kursy Z ŁADUNKIEM / (dostarczone + przechwycone
  *                 z ładunkiem + bez paliwa). Puste przeloty (repozycjonowanie
  *                 floty) idą osobno: dyspozytor liczy stracone do przechwytów,
  *                 a udanych nie liczy wcale, więc w jednym worku zawyżały wynik
  *   głód        — najdłuższy CIĄGŁY czas, w którym surowiec chciany przez stację
- *                 (`stationWantsResource`) stoi poniżej 1% magazynu; liczone tylko
+ *                 (`stationWantsResource`) stoi NA ZERZE: poniżej mniejszej z dwóch
+ *                 wartości — 1% magazynu albo 15 min planowego zużycia brutto
+ *                 (`stationConsumptionRates`). Sam 1% magazynu nie mówi „zero”
+ *                 przy podzespołach stoczni: magazyn to setki godzin ich zużycia,
+ *                 więc dwie godziny zapasu wyglądały jak głód. Dawna miara (1%)
+ *                 jest w wyniku obok (`glodDawny…`); liczone tylko
  *                 dla surowców, które ktoś w układzie wytwarza albo wydobywa
  *                 (złom bierze się z wraków gracza — jak w `symulacja-ruchu.mjs`)
  *   stocznia    — najdłuższy ciągły czas z pustymi pochylniami (nic w budowie)
@@ -41,8 +47,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
 
 export const PROGI = Object.freeze({
-  /** Udział przechwyconych wśród rozstrzygniętych kursów (presja ×1). */
-  przechwytyMax: 0.15,
+  /**
+   * Udział przechwyconych wśród rozstrzygniętych kursów z ładunkiem (presja ×1)
+   * ma leżeć w PAŚMIE: piractwo ma być odczuwalne, nie tylko nie za duże.
+   * Decyzja użytkownika 2026-10-22: „za mało piractwa” — cel ~15%, pasmo 12–20%.
+   */
+  przechwytyMin: 0.12,
+  przechwytyMax: 0.20,
   /** Najdłuższy ciągły głód chcianego surowca, minuty gry. */
   glodMinMax: 30,
   /** Najdłuższy ciągły postój stoczni bez niczego na pochylni, minuty gry. */
@@ -53,8 +64,10 @@ export const PROGI = Object.freeze({
   tickMsMax: 25
 });
 
-/** Zapełnienie, poniżej którego surowiec liczy się jako „na zerze”. */
+/** Zapełnienie, poniżej którego surowiec liczy się jako „na zerze”… */
 const PUSTO = 0.01;
+/** …o ile to mniej niż tyle sekund planowego zużycia stacji. */
+const PUSTO_SEKUND = 900;
 
 function parseArgs(argv) {
   const out = {
@@ -83,7 +96,7 @@ function parseArgs(argv) {
 
 async function jedenBieg(args) {
   const { RESOURCES, RESOURCE_KEYS, RECIPES, PLANET_YIELD } = await import('../src/data/resources.js');
-  const { stationWantsResource } = await import('../src/game/stationEconomy.js');
+  const { stationWantsResource, stationConsumptionRates } = await import('../src/game/stationEconomy.js');
   const { directorSnapshot } = await import('../src/game/traffic/trafficDirector.js');
   const { summarizeShipyards } = await import('../src/game/traffic/shipyards.js');
   const { summarizeAgents } = await import('../src/game/traffic/agentFleets.js');
@@ -123,7 +136,10 @@ async function jedenBieg(args) {
       if (!obtainable.has(id)) continue;
       if (!(Number(econ.capacity?.[id]) > 0)) continue;
       if (!stationWantsResource(station, id)) continue;
-      pary.push({ stationId: station.id, econ, id, od: -1, max: 0, sumaPusto: 0 });
+      const zuzycie = (Number(stationConsumptionRates(station)[id]) || 0) * args.skala;
+      const cap = Number(econ.capacity[id]) || 0;
+      const prog = zuzycie > 0 ? Math.max(1, Math.min(cap * PUSTO, zuzycie * PUSTO_SEKUND)) : cap * PUSTO;
+      pary.push({ stationId: station.id, econ, id, prog, od: -1, max: 0, sumaPusto: 0, odD: -1, maxD: 0 });
     }
   }
   const stocznie = shipyards.yards.map(yard => ({ yard, od: -1, max: 0, sumaPusto: 0 }));
@@ -158,12 +174,16 @@ async function jedenBieg(args) {
 
     for (const p of pary) {
       const cap = Number(p.econ.capacity[p.id]) || 0;
-      const fill = cap > 0 ? (Number(p.econ.resources[p.id]) || 0) / cap : 1;
-      if (fill < PUSTO) {
+      const stan = Number(p.econ.resources[p.id]) || 0;
+      if (stan < p.prog) {
         if (p.od < 0) p.od = t - STEP;
         p.sumaPusto += STEP;
         p.max = Math.max(p.max, t - p.od);
       } else p.od = -1;
+      if (cap > 0 && stan / cap < PUSTO) {
+        if (p.odD < 0) p.odD = t - STEP;
+        p.maxD = Math.max(p.maxD, t - p.odD);
+      } else p.odD = -1;
     }
     for (const s of stocznie) {
       if (s.yard.building.length === 0) {
@@ -218,6 +238,9 @@ async function jedenBieg(args) {
     glod: glod.slice(0, 40),
     glodNajdluzszyMin: glod[0]?.maxMin || 0,
     glodPozycjiPonadProg: glod.filter(g => g.maxMin > PROGI.glodMinMax).length,
+    /** Dawna miara (poniżej 1% magazynu) — do porównań z biegami sprzed 2026-10-22. */
+    glodDawnyMaxMin: Math.round(Math.max(0, ...pary.map(p => p.maxD)) / 60 * 10) / 10,
+    glodDawnyPonadProg: pary.filter(p => p.maxD / 60 > PROGI.glodMinMax).length,
     stocznie: stocznie.map(s => ({
       stacja: s.yard.stationId, frakcja: s.yard.factionId,
       bezPochylniMaxMin: Math.round(s.max / 60 * 10) / 10,
@@ -251,12 +274,15 @@ function ocen(bieg) {
   const stoczniaMax = bieg.stocznie[0]?.bezPochylniMaxMin || 0;
   const wyniki = [
     { prog: 'przechwyty', wartosc: bieg.kursy.udzialPrzechwyconych, limit: PROGI.przechwytyMax,
-      opis: `${(bieg.kursy.udzialPrzechwyconych * 100).toFixed(1)}% kursów z ładunkiem (≤ ${PROGI.przechwytyMax * 100}%); `
+      minimum: PROGI.przechwytyMin,
+      opis: `${(bieg.kursy.udzialPrzechwyconych * 100).toFixed(1)}% kursów z ładunkiem `
+        + `(pasmo ${PROGI.przechwytyMin * 100}–${PROGI.przechwytyMax * 100}%); `
         + `dawna miara ${(bieg.kursy.udzialPrzechwyconychDawny * 100).toFixed(1)}%, `
         + `puste przeloty ${bieg.kursy.pustePrzeloty} (stracone ${bieg.kursy.pusteStracone})` },
     { prog: 'głód', wartosc: bieg.glodNajdluzszyMin, limit: PROGI.glodMinMax,
       opis: `${bieg.glodNajdluzszyMin} min (${bieg.glod[0] ? `${bieg.glod[0].stacja} ${bieg.glod[0].short}` : '—'}), `
-        + `${bieg.glodPozycjiPonadProg} pozycji > ${PROGI.glodMinMax} min` },
+        + `${bieg.glodPozycjiPonadProg} pozycji > ${PROGI.glodMinMax} min; dawna miara (1% magazynu) `
+        + `${bieg.glodDawnyMaxMin} min, ${bieg.glodDawnyPonadProg} pozycji` },
     { prog: 'stocznie', wartosc: stoczniaMax, limit: PROGI.stoczniaMinMax,
       opis: `${stoczniaMax} min (${bieg.stocznie[0]?.stacja || '—'})` },
     { prog: 'kolejka', wartosc: kolejkaMax, limit: PROGI.kolejkaMax,
@@ -264,7 +290,7 @@ function ocen(bieg) {
     { prog: 'tick', wartosc: bieg.tick.przySzczycieMs, limit: PROGI.tickMsMax,
       opis: `${bieg.tick.przySzczycieMs.toFixed(1)} ms przy szczycie ${bieg.kursy.szczyt}` }
   ];
-  for (const w of wyniki) w.ok = w.wartosc <= w.limit;
+  for (const w of wyniki) w.ok = w.wartosc <= w.limit && !(w.wartosc < (w.minimum ?? -Infinity));
   return wyniki;
 }
 

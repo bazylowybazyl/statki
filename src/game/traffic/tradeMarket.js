@@ -31,6 +31,8 @@ function quoteOf(station, econ, resourceId, inbound, demandRate) {
   price.inbound = Math.max(0, Number(inbound) || 0);
   /** Planowe zużycie stacji, sztuk na sekundę gry — od niego zależy, ile skupuje. */
   price.demandRate = Math.max(0, Number(demandRate) || 0);
+  /** Dolny próg skupu w sztukach — stocznia chce kilka porcji na budowę (`restockFloor`). */
+  price.restockFloor = Math.max(0, Number(station?.restockFloor?.[resourceId]) || 0);
   // Skup liczy się tylko u tego, kto towaru UŻYWA. Pusty magazyn księżyca
   // bez stoczni wycenia płyty kadłuba na 1,7× bazy, ale nikt ich tam nie zje —
   // kupiec woziłby towar w martwy punkt.
@@ -128,10 +130,18 @@ export const RESTOCK_SECONDS = 7200;
 /** Najmniejszy zapas, do którego stacja skupuje towar bez planowego zużycia. */
 export const RESTOCK_MIN_FILL = 0.02;
 
-/** Do ilu sztuk (z towarem w drodze) stacja skupuje, zanim zabraknie jej potrzeby. */
+/**
+ * Do ilu sztuk (z towarem w drodze) stacja skupuje, zanim zabraknie jej potrzeby.
+ *
+ * Nie mniej niż `restockFloor` stacji: stocznia zużywa podzespół PORCJAMI
+ * (krążownik bierze dwa napędy ciężkie naraz), a dla rzadkich towarów dwie
+ * godziny planowego zużycia to mniej niż jedna porcja — stocznia schodziła
+ * wtedy do zera po każdej stępce i czekała na kupca (Westa, Uran: do 40 min).
+ */
 export function restockTarget(bid) {
   const cap = Math.max(0, Number(bid.capacity) || 0);
-  return Math.min(cap, (bid.demandRate || 0) * RESTOCK_SECONDS + cap * RESTOCK_MIN_FILL);
+  const byRate = (bid.demandRate || 0) * RESTOCK_SECONDS + cap * RESTOCK_MIN_FILL;
+  return Math.min(cap, Math.max(byRate, Number(bid.restockFloor) || 0));
 }
 
 /**

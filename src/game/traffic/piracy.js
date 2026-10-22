@@ -96,8 +96,11 @@ export const PIRACY_MODEL = Object.freeze({
    * rozstrzygniętych kursów ginęło. Piractwo dusiło przewóz rudy, choć żyć ma
    * z tłustych celów: karawan kupieckich, podzespołów i amunicji.
    */
-  lootReference: 25_000,
-  minInterest: 0.15
+  //
+  // Decyzja użytkownika 2026-10-22: „za mało piractwa” — przy 25 000 / 0,15
+  // ginęło ~6% kursów z ładunkiem, cel ~15% (pasmo 12–20%).
+  lootReference: 3_000,
+  minInterest: 0.7
 });
 
 /**

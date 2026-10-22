@@ -158,12 +158,27 @@ export function defineMarket(def = {}) {
   });
 }
 
+/**
+ * Porty większe, niż wynika z planowego przeładunku (`stationHaulTonnage`).
+ *
+ * Plan nie widzi wypraw górniczych, które Saturn i Uran wysyłają z własnego
+ * portu po uran z Kuipera (postój „service” i rozładunek urobku), ani kupców
+ * wożących podzespoły do ich stoczni. Zmierzone 2026-10-22 (bramka bilansu,
+ * 3 ziarna): przy jednym komplecie stanowisk średnia kolejka na redzie 5,2–7,7,
+ * z czego ~3,9 u Urana to same wyprawy górnicze.
+ */
+export const PLANET_DOCK_OVERRIDES = Object.freeze({
+  saturn: Object.freeze({ berthMultiplier: 4 }),
+  uranus: Object.freeze({ berthMultiplier: 3 })
+});
+
 const planetMarkets = SYSTEM_MAP_PLANETS.map(planet => defineMarket({
   id: planet.id,
   kind: MARKET_KIND.PLANET,
   position: { source: MARKET_POSITION.PLANET },
   derelict: DERELICT_MARKETS.includes(planet.id),
-  gate: DEFAULT_GATE_HUBS.includes(planet.id)
+  gate: DEFAULT_GATE_HUBS.includes(planet.id),
+  docks: PLANET_DOCK_OVERRIDES[planet.id]
 }));
 
 // UNIA PASA (2026-10-12, strumień C planu docs/PLAN-pas-realizm.md): stacje na
