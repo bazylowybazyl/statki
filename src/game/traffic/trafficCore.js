@@ -41,8 +41,12 @@ import {
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber
 } from './trafficProtocol.js';
 import { BELT_MSG } from './trafficProtocol.js';
-import { recordPlayerMining, setPlayerBerthHolds } from './trafficDirector.js';
+import { recordPlayerMining, setPlayerBerthHolds, openDirectorMarket } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
+import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
+import { summarizeTrade, portOfferFromQuote } from './tradeSummary.js';
+import { inboundUnits } from './marketBook.js';
+import { isDerelict } from '../../data/factions.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
   releaseWorldBubbleCourse, refreshFleetStock
@@ -104,7 +108,12 @@ export function createTrafficCore(post, options = {}) {
     berthById: new Map(),
     actorHullsSent: 0,
     actorsSent: 0,
-    stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0, actors: 0, actorMs: 0 }
+    stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0, actors: 0, actorMs: 0 },
+    /** Zapis ekonomii czekający na rynki dokładane po starcie (E7, `economySave.js`). */
+    pendingRestore: null,
+    /** Bufory oferty portu w `buildMarket` — bez alokacji na stację × towar. */
+    offerScratch: { sell: 0, buy: 0 },
+    quoteScratch: { capacity: 0, stored: 0, room: 0, offerFloor: 0, wanted: false, demandRate: 0, restockFloor: 0 }
   };
 
   /** Tabele bufora encji — te same co bufora kursów. */
@@ -137,6 +146,8 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.MARKET_OWNER: return marketOwner(message);
         case TRAFFIC_MSG.MARKET_REMOVE: return marketRemove(message);
         case TRAFFIC_MSG.BERTH_HOLD: return berthHold(message);
+        case TRAFFIC_MSG.ECONOMY_SAVE: return economySave(message);
+        case TRAFFIC_MSG.TRADE_SUMMARY: return tradeSummary(message);
         case BELT_MSG.MINED: return beltMined(message);
         default: return undefined;
       }
@@ -177,6 +188,11 @@ export function createTrafficCore(post, options = {}) {
     core.world = world;
     core.berthIndex = new WeakMap();
     indexMarkets();
+    // Zapis ekonomii (E7) — przed bańką, bo zapas floty w portach bierze się z przywróconej floty.
+    const restored = message.restore ? restoreEconomyState(world, message.restore) : null;
+    core.pendingRestore = restored?.pending.size ? restored : null;
+    // Księga rynku od startu: pierwszy bufor rynku niesie już ofertę portu (skup), nie dopiero po pierwszym kroku.
+    openDirectorMarket(world.director, world.stations);
     core.bubble = message.bubble === false ? null : createWorldBubble(world);
     if (core.bubble) refreshFleetStock(core.bubble);
     if (message.focus) setFocus(message.focus);
@@ -199,11 +215,16 @@ export function createTrafficCore(post, options = {}) {
       // wie, do którego padu i hali leci statek, bez własnej kopii doków.
       berths: berthTable(),
       bubblePorts: bubblePortTable(),
+      restored: restored
+        ? { stations: restored.applied, pending: restored.pending.size, mining: restored.mining, fleets: restored.fleets }
+        : null,
       buildMs
     });
     // Rynek od razu, nie po pierwszych pięciu sekundach — terminal handlu
     // w grze ma co pokazać, zanim świat zrobi pierwszy krok.
     publishTick(0, 0);
+    // Wyrwy z zapisu (E7) — też od razu, nie po pierwszym kroku świata.
+    publishBeltHoles();
   }
 
   function advance(message) {
@@ -446,7 +467,30 @@ export function createTrafficCore(post, options = {}) {
   function marketAdd(message) {
     const world = core.world;
     if (!world || !message.def) return;
-    if (addMarket(world, message.def)) marketsChanged();
+    if (!addMarket(world, message.def)) return;
+    // Magazyn z zapisu dla rynku dokładanego po starcie (stacja gracza) — E7.
+    const id = String(message.def.id || '');
+    const pending = core.pendingRestore;
+    if (pending?.pending.has(id)) {
+      restoreStationEconomy(world, id, pending.pending.get(id), pending.keys, pending.ratio);
+      pending.pending.delete(id);
+      if (!pending.pending.size) core.pendingRestore = null;
+    }
+    marketsChanged();
+  }
+
+  // ============================================================
+  // Gracz na rynku i zapis (E7)
+  // ============================================================
+
+  function economySave(message) {
+    const world = core.world;
+    send({ type: TRAFFIC_MSG.ECONOMY_SAVE_RESULT, requestId: message.requestId ?? null, state: world ? exportEconomyState(world) : null });
+  }
+
+  function tradeSummary(message) {
+    const world = core.world;
+    send({ type: TRAFFIC_MSG.TRADE_SUMMARY_RESULT, requestId: message.requestId ?? null, summary: world ? summarizeTrade(world) : null });
   }
 
   function marketBuilding(message) {
@@ -548,7 +592,7 @@ export function createTrafficCore(post, options = {}) {
   }
 
   /**
-   * Rynek: stacje × surowce × [zapas, pojemność, głód, bid, ask]. Nowy bufor
+   * Rynek: stacje × surowce × [zapas, pojemność, głód, bid, ask, oferta sprzedaży, skup]. Nowy bufor
    * na każdy krok, bo odchodzi do gry jako transferable (w workerze po
    * wysłaniu jest odłączony) — 35 KB co pięć sekund gry.
    */
@@ -556,9 +600,14 @@ export function createTrafficCore(post, options = {}) {
     const world = core.world;
     const resourceCount = RESOURCE_KEYS.length;
     const data = new Float64Array(world.stations.length * resourceCount * MARKET_STRIDE);
+    const book = world.director?.book;
+    const offer = core.offerScratch;
+    const quoteFields = core.quoteScratch;
     world.stations.forEach((entry, stationIndex) => {
       const econ = world.getEconomy(entry.id);
       if (!econ) return;
+      const quote = book?.quotes?.get(entry.id) || null;
+      const derelict = isDerelict(entry);
       for (let r = 0; r < resourceCount; r++) {
         const key = RESOURCE_KEYS[r];
         const offset = (stationIndex * resourceCount + r) * MARKET_STRIDE;
@@ -568,6 +617,23 @@ export function createTrafficCore(post, options = {}) {
         const price = resourcePrice(entry, econ, key);
         data[offset + MARKET_FIELD.BID] = finite(price?.bid);
         data[offset + MARKET_FIELD.ASK] = finite(price?.ask);
+        // Oferta dla kupca na świeżym zapasie; popyt i towar w drodze z notowań księgi (E7).
+        // Opuszczona stacja oddaje wszystko, co zostało, i niczego nie skupuje.
+        if (derelict || !price) {
+          data[offset + MARKET_FIELD.SELL] = derelict ? Math.floor(finite(econ.resources?.[key])) : 0;
+          continue;
+        }
+        const q = quote?.prices.get(key);
+        quoteFields.capacity = price.capacity;
+        quoteFields.stored = price.stored;
+        quoteFields.room = price.room;
+        quoteFields.offerFloor = price.offerFloor;
+        quoteFields.wanted = q ? q.wanted : false;
+        quoteFields.demandRate = q?.demandRate || 0;
+        quoteFields.restockFloor = q?.restockFloor || 0;
+        portOfferFromQuote(quoteFields, book ? inboundUnits(book, entry.id, key) : 0, offer);
+        data[offset + MARKET_FIELD.SELL] = offer.sell;
+        data[offset + MARKET_FIELD.BUY] = offer.buy;
       }
     });
     return data;

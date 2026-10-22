@@ -15,6 +15,7 @@ import { run as runFactions } from './tests/factions.test.mjs';
 import { run as runStationEconomy } from './tests/stationEconomy.test.mjs';
 import { run as runShipmentOrders } from './tests/shipmentOrders.test.mjs';
 import { run as runMarketBook } from './tests/marketBook.test.mjs';
+import { run as runEconomySave } from './tests/economySave.test.mjs';
 import { run as runCourseRegistry } from './tests/courseRegistry.test.mjs';
 import { run as runTravelNetwork } from './tests/travelNetwork.test.mjs';
 import { run as runDockLayout } from './tests/dockLayout.test.mjs';
@@ -52,6 +53,7 @@ const suites = [
   runStationEconomy,
   runShipmentOrders,
   runMarketBook,
+  runEconomySave,
   runCourseRegistry,
   runTravelNetwork,
   runDockLayout,
