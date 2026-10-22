@@ -1142,8 +1142,12 @@
     import {
       createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
       damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates, createPortBerthIndex,
-      stepPlayerBerthHolds
+      stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion
     } from "./src/game/trafficBubble.js";
+    import {
+      createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion, trafficPromotionVerdict,
+      trafficFleePoint, trafficActorPromotable, trafficPromotionOrder
+    } from "./src/game/trafficPromotion.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
     import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
@@ -16051,8 +16055,9 @@
     let trafficBubble = null;
     /** Czas mostu w bieżącym kroku fizyki (pozy encji do testów trafień). */
     let _trafficStepTime = 0;
-    /** Stanowiska portu Ziemi w układzie gry (geometria z workera — `ready.bubblePorts`) — postój gracza. */
+    /** Stanowiska portów bańki w układzie gry (geometria z workera — `ready.bubblePorts`) — postój gracza. */
     let _trafficPortIndex = null;
+    let _trafficPortTables = null;
     const _trafficBerthStates = new Map();
     const _trafficBerthMarked = new Map();
     const _trafficRegistryBerths = new Map();
@@ -16060,24 +16065,33 @@
     /** Koszt bańki na wątku gry (dekodowanie, pozy, stanowiska, pozy klatki) — `TrafficBubble.stats.gameMs` (średnia). */
     let _trafficGameMs = 0;
 
-    function trafficEarthPortIndex() {
-      if (_trafficPortIndex) return _trafficPortIndex;
-      const berths = trafficV2?.tables?.bubblePorts?.earth;
-      if (!berths) return null;
+    /** Indeks stanowisk WSZYSTKICH portów bańki — przebudowa, gdy worker przyśle nową tabelę (rynki w biegu). */
+    function trafficPortIndex() {
+      const tables = trafficV2?.tables?.bubblePorts || null;
+      if (!tables) return null;
+      if (_trafficPortIndex && _trafficPortTables === tables) return _trafficPortIndex;
+      const berths = [];
+      for (const list of Object.values(tables)) for (const b of list) berths.push(b);
+      _trafficPortTables = tables;
       _trafficPortIndex = createPortBerthIndex({ berths });
+      _trafficRegistryBerths.clear();
       return _trafficPortIndex;
     }
 
-    /** Stanowisko rejestru ringu Ziemi (lampki hal K-7 i zatok) dla id stanowiska ruchu → { b, owner } albo null. */
+    /**
+     * Stanowisko rejestru ringu (lampki hal K-7 i zatok Ziemi, Marsa, Jowisza) dla id stanowiska ruchu →
+     * { b, owner } albo null (pomosty portów bez ringu nie mają lampek).
+     */
     function trafficRegistryBerth(id) {
       if (_trafficRegistryBerths.has(id)) return _trafficRegistryBerths.get(id);
       let found = null;
-      const info = trafficEarthPortIndex()?.byId.get(id);
-      const entry = haloWorld?.entry('earth');
-      if (!info || !entry) return null;   // przed `ready` / bez ringu — bez zapamiętania
-      {
+      const info = trafficPortIndex()?.byId.get(id);
+      if (!info) return null;   // przed `ready` — bez zapamiętania
+      const key = info.stationId;
+      const entry = key ? haloWorld?.entry(key) : null;
+      if (entry && info.hall) {
         if (info.hall === 'K-7') {
-          const owner = haloWorld.hall('earth', info.complex);
+          const owner = haloWorld.hall(key, info.complex);
           const b = owner?.layout?.berths?.find((x) => x.id === info.k7BerthId);
           if (b) found = { b, owner };
         } else {
@@ -16163,7 +16177,7 @@
       }
       if (ship && !ship.dead && dt > 0) {
         const speed = Math.hypot(ship.vel.x, ship.vel.y);
-        stepPlayerBerthHolds(tb, trafficEarthPortIndex(), ship.pos.x, ship.pos.y, speed, dt);
+        stepPlayerBerthHolds(tb, trafficPortIndex(), ship.pos.x, ship.pos.y, speed, dt);
       }
       _trafficGameMs += performance.now() - t0;
       tb.stats.gameMs = tb.stats.gameMs * 0.9 + _trafficGameMs * 0.1;
@@ -16176,7 +16190,7 @@
       out.count = 0;
       const tb = trafficBubble;
       // `TrafficBubble.hideRender` — A/B kosztu obrazu (narzędzie ruch-banka-gra.mjs): rozgrywka bez zmian, bez proxy.
-      if (!tb || !tb.list.length || !trafficV2 || tb.hideRender) return out;
+      if (!tb || !trafficV2 || tb.hideRender || (!tb.list.length && !trafficPromotion?.alive.size)) return out;
       const t0 = performance.now();
       const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
       for (let i = 0; i < tb.list.length; i++) {
@@ -16198,8 +16212,169 @@
         r.mode = a.mode;
         out.count++;
       }
+      // Awansowany NPC, którego kadłub na belkach jeszcze się nie zbudował (sprite, budżet budowy w klatce) — proxy
+      // w pozie NPC, żeby statek nie znikał na klatkę między encją bańki a modelem kadłuba.
+      if (trafficPromotion) {
+        for (const [id, npc] of trafficPromotion.alive) {
+          if (npc.beamHull || npc.dead) continue;
+          let r = out.list[out.count];
+          if (!r) {
+            r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
+              vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+            out.list[out.count] = r;
+          }
+          r.courseId = id;
+          r.hullId = npc.shipFrame;
+          r.unitClass = npc.shipFrame;
+          r.x = npc.x;
+          r.y = npc.y;
+          r.angle = npc.angle;
+          r.prevX = NaN;
+          r.vx = npc.vx;
+          r.vy = npc.vy;
+          r.speed = Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy);
+          r.throttle = 0;
+          r.mode = null;
+          out.count++;
+        }
+      }
       _trafficGameMs += performance.now() - t0;
       return out;
+    }
+
+    // AWANS DO PEŁNEGO NPC (E6, src/game/trafficPromotion.js): encja z kursem trafiona przez gracza (pocisk, taran)
+    // staje się NPC gry — kadłub na belkach ze sprite'a kadłuba ruchu (buduje go drawNPCPretty jak kadłuby
+    // DEV_HULL_SPAWNS), lot i rozkazy NPC, rany, wrak. Kurs przejmuje gra (`attach` — rekord stoi). Najwyżej jeden
+    // awans na klatkę. Zginął → `destroyCourse` (wrak z ładunkiem w świecie ruchu); po walce i poza zasięgiem →
+    // `detach` z pozą (bańka materializuje kurs tam, gdzie był NPC) i cichy koniec NPC.
+    let trafficPromotion = null;
+    let _trafficNpcDefs = null;
+    const _trafficFlee = { x: 0, y: 0 };
+
+    /** Liczby NPC kadłuba ruchu (punkty życia, prędkość) — z DEV_HULL_SPAWNS; kadłub spoza tabeli — null. */
+    function trafficNpcDef(hullId) {
+      if (!_trafficNpcDefs) {
+        _trafficNpcDefs = new Map();
+        for (const def of Object.values(DEV_HULL_SPAWNS)) if (!_trafficNpcDefs.has(def.hull)) _trafficNpcDefs.set(def.hull, def);
+      }
+      return _trafficNpcDefs.get(hullId) || null;
+    }
+
+    /** Trafienie encji przez gracza (pocisk, taran — `damageTrafficActor`, encja żyje): prośba o awans. */
+    function onTrafficActorHit(a, amount, cause) {
+      const st = trafficPromotion;
+      if (!st || cause !== 'player' || !trafficActorPromotable(a, st.tune)) return;
+      // Kadłub na belkach buduje się ze sprite'a — wczytanie rusza od razu, NPC powstaje klatkę później.
+      loadHullSprite(HULL_SPRITE_PATHS_BY_ID[a.hullId] || TRAFFIC_HULLS[a.hullId]?.sprite);
+      requestTrafficPromotion(st, a.id);
+    }
+
+    function trafficNpcOrder(npc, order) {
+      if (order === 'flee' && ship && !ship.dead) {
+        trafficFleePoint(npc, ship.pos.x, ship.pos.y, trafficPromotion.tune.fleeDistance, _trafficFlee);
+        npc.command = { type: 'move', target: { x: _trafficFlee.x, y: _trafficFlee.y }, arrival: 600 };
+      } else {
+        npc.command = { type: 'hold', faceAngle: npc.angle };
+      }
+    }
+
+    /** Encja bańki → NPC gry w tej samej pozie i ruchu, z ułamkiem punktów życia encji. */
+    function spawnTrafficNpc(a) {
+      const def = trafficNpcDef(a.hullId);
+      const maxHp = def?.hp ?? a.maxHp;
+      const speed = def?.speed ?? 160;
+      const npc = makeNPCBase({ x: a.cx, y: a.cy }, {
+        hp: maxHp,
+        maxSpeed: speed,
+        accel: speed * 0.6,
+        turn: 1.2,
+        friction: 0.99,
+        radius: Math.round((HULL_RENDER_PROFILES[a.hullId]?.radius || 100) * HULL_RENDER_WORLD_SCALE),
+        isCollidable: true
+      });
+      npc.hp = Math.max(1, Math.round(maxHp * Math.max(0, a.hp) / Math.max(1, a.maxHp)));
+      npc.id = `traffic:${a.id}`;
+      npc.type = def?.type || a.hullId;
+      npc.shipFrame = a.hullId;
+      npc.devHull = true;
+      // Bez despawnu NPC_DESPAWN_RADIUS — o powrocie do bańki decyduje trafficPromotionVerdict.
+      npc.mission = true;
+      npc.combatDisabled = true;
+      npc.factionId = a.factionId;
+      npc.isPirate = a.factionId === FACTION.PIRATES || !!def?.pirate;
+      npc.friendly = false;
+      npc.color = npc.isPirate ? '#ff5c7c' : '#9fb6c8';
+      npc.displayName = a.unitClass || a.hullId;
+      npc.angle = a.ca;
+      npc.desiredAngle = a.ca;
+      // Ruch encji, najwyżej 1,5 × prędkość NPC (dalej tnie model lotu).
+      const v = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+      const k = v > speed * 1.5 ? speed * 1.5 / v : 1;
+      npc.vx = a.vx * k;
+      npc.vy = a.vy * k;
+      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+      npc.trafficCourse = a.id;
+      npc.__trafficPromotedAt = gameTime;
+      npc._lastPlayerHit = gameTime;
+      npcs.push(npc);
+      return npc;
+    }
+
+    /** NPC wraca do bańki: znika bez wraku i wybuchu (wzór dematerializeSupportUnit). */
+    function dismissTrafficNpc(npc) {
+      npc.dead = true;
+      npc.removed = true;
+      npc.isCollidable = false;
+      TowSystem.detachBody(npc, 'traffic-demote');
+      releaseNpcHexBody(npc);
+      forgetPurgedNpc(npc);
+    }
+
+    /** Klatka (po `advance`): awans z kolejki (najwyżej `maxPerFrame`) i los awansowanych NPC. */
+    function stepTrafficPromotion() {
+      const st = trafficPromotion;
+      const tb = trafficBubble;
+      if (!st || !tb || !trafficV2) return;
+      let promoted = 0;
+      while (promoted < st.tune.maxPerFrame) {
+        const id = takeTrafficPromotion(st);
+        if (id === null) break;
+        const a = tb.byId.get(id);
+        if (!a || !trafficActorPromotable(a, st.tune)) {
+          st.stats.refused++;
+          continue;
+        }
+        const npc = spawnTrafficNpc(a);
+        markTrafficActorPromoted(tb, a);
+        trafficV2.attach(id);
+        st.alive.set(id, npc);
+        st.stats.promoted++;
+        promoted++;
+        trafficNpcOrder(npc, trafficPromotionOrder(a.phase));
+      }
+      if (!st.alive.size) return;
+      const px = ship ? ship.pos.x : Infinity;
+      const py = ship ? ship.pos.y : Infinity;
+      for (const [id, npc] of st.alive) {
+        const verdict = trafficPromotionVerdict(st, npc, gameTime, px, py);
+        if (verdict === 'dead') {
+          st.alive.delete(id);
+          releaseTrafficPromotion(tb, id, true);
+          trafficV2.destroyCourse(id, { x: npc.x, y: npc.y, reason: 'player', byPirates: false });
+          st.stats.destroyed++;
+        } else if (verdict === 'demote') {
+          st.alive.delete(id);
+          trafficV2.detach(id, null, { x: npc.x, y: npc.y, angle: npc.angle, speed: Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy) });
+          dismissTrafficNpc(npc);
+          releaseTrafficPromotion(tb, id, false);
+          st.stats.demoted++;
+        } else if (!npc.command) {
+          // Dotarł do punktu ucieczki: dalej, póki gracz blisko, potem stoi.
+          const dx = npc.x - px;
+          const dy = npc.y - py;
+          trafficNpcOrder(npc, dx * dx + dy * dy < st.tune.releaseRadius * st.tune.releaseRadius ? 'flee' : 'hold');
+        }
+      }
     }
 
 
@@ -16208,8 +16383,10 @@
       window.TrafficV2 = trafficV2;
       // Komputer handlowy w CIC (E7): agregat z workera na żądanie.
       CICDisplay.setTradeSource(() => (trafficV2?.ready ? trafficV2.requestTradeSummary() : Promise.resolve(null)));
-      trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed });
+      trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed, onHit: onTrafficActorHit });
       window.TrafficBubble = trafficBubble;
+      trafficPromotion = createTrafficPromotion();
+      window.TrafficPromotion = trafficPromotion;
     } else {
       console.warn('[ruch v2] wyłączony (?trafficV2=0) — stacje bez rynku, terminal nie handluje');
     }
@@ -27709,6 +27886,7 @@
         trafficV2.setFocus(ship.pos.x, ship.pos.y, TRAFFIC_V2_BUBBLE_RADIUS);
         tickEconomyAutosave(performance.now());
         stepTrafficBerths(steps * PHYS_DT);
+        stepTrafficPromotion();
         PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
 

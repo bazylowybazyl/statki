@@ -59,8 +59,11 @@
  *              po każdym kroku świata; `stations` i `berths` (jak w `ready`)
  *              tylko po zmianie listy rynków — przed `market` z nowym układem
  *   bubble     { clock, count, data, hulls? }            po przesunięciu fokusu
- *   actors     { time, count, data, hulls?, ms }         po każdym `advance` (E6): encje
- *              bańki — `ACTOR_FIELD`, `time` = czas mostu, w którym pozy są ważne
+ *   actors     { time, count, data, hulls?, ms, docks?, undocked? }   po każdym `advance` (E6): encje
+ *              bańki — `ACTOR_FIELD`, `time` = czas mostu, w którym pozy są ważne;
+ *              `docks` — postoje przy stanowisku, które się zaczęły albo zmieniły
+ *              (`DockRecord` niżej), `undocked` — numery kursów, których postój się skończył
+ *              (odłączenie, zniknięcie z bańki). Tylko zmiany — stan trzyma most (`actorDocks`).
  *   snapshot-result { requestId, snapshot }
  *   economy-save-result  { requestId, state }     (E7)
  *   trade-summary-result { requestId, summary }   (E7)
@@ -211,6 +214,25 @@ export const ACTOR_FIELD = Object.freeze({
   AX: 18,
   AY: 19
 });
+
+/**
+ * Postój statku przy stanowisku (kontrakt E6 ↔ E12 — przeładunek: ładownie, roje dronów, taśmociągi):
+ *   { id, berthId, stationId, mode, cargo, fill, t0, dur, hull, unitClass }
+ *   id        — numer kursu (= `ACTOR_FIELD.ID` encji),
+ *   berthId   — id stanowiska jak w `ready.berths` / układach doków gry,
+ *   mode      — powód postoju (`DWELL_REASON`): 'load' | 'unload' | 'extract' | 'refuel' | 'service' | 'hold',
+ *   cargo     — { towar: ilość } w jednostkach ŚWIATA ruchu (zapas × skala gospodarki): to, co statek
+ *               wyładowuje ('unload') albo bierze ('load'); urobek wyprawy — cały worek; pusty przelot,
+ *               patrol — {},
+ *   (Obok, w każdej wiadomości `actors`: `cargo` — Float32Array rekordów przeładunku encji przy stanowisku,
+ *   krok `ACTOR_CARGO_STRIDE` — `bubbleCargo.js`, kontrakt E12 przyjęty przez orkiestratora; null bez rekordów.)
+ *   fill      — 0…1: masa ładunku (`payload.mass`) / ładowność klasy kursu (`VAN_CLASSES[].capacity`, ta sama
+ *               skala co masa); null — klasa bez ładowni (okręty, rejdery) albo kurs bez masy (pusty → 0),
+ *   t0, dur   — obsługa przy stanowisku w CZASIE MOSTU: od `t0` (koniec przechwytu) przez `dur` s
+ *               (postęp = (czas − t0) / dur; dojście w porcie nie wchodzi),
+ *   hull      — id kadłuba proxy (`resolveTrafficHullId`), unitClass — klasa kursu.
+ */
+export const DOCK_MODES = Object.freeze(['load', 'unload', 'extract', 'refuel', 'service', 'hold']);
 
 /** Fazy encji w kolejności indeksów `ACTOR_FIELD.PHASE` (= wartości `ACTOR_PHASE`). */
 export const ACTOR_PHASES = Object.freeze(['fly', 'capture', 'docked', 'undock', 'hold', 'station']);

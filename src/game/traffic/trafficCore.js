@@ -49,8 +49,10 @@ import { inboundUnits } from './marketBook.js';
 import { isDerelict } from '../../data/factions.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
-  releaseWorldBubbleCourse, refreshFleetStock
+  releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
+  packBubbleCargo
 } from './workerBubble.js';
+import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
 /** Ile ostatnich wraków dyspozytora trzymać po wysłaniu do gry. */
 const WRECK_LOG_LIMIT = 256;
@@ -58,6 +60,9 @@ const WRECK_LOG_LIMIT = 256;
 const FOCUS_REPUBLISH_FRACTION = 0.25;
 
 const KINDS = Object.freeze(Object.values(COURSE_KIND));
+/** Indeks towaru w `ready.resources` (kontrakt przeładunku E12 — `actors.cargo`). */
+const RESOURCE_INDEX = new Map(RESOURCE_KEYS.map((key, index) => [key, index]));
+const resourceIndexOf = (id) => RESOURCE_INDEX.get(id) ?? -1;
 
 function defaultNow() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -273,18 +278,28 @@ export function createTrafficCore(post, options = {}) {
     core.stats.actors = packed.count;
     // Pusta bańka idzie raz (gra gasi encje), potem cisza do następnej.
     core.actorsSent = packed.count;
+    const time = trafficWorldTime(core.world);
     const message = {
       type: TRAFFIC_MSG.ACTORS,
-      time: trafficWorldTime(core.world),
+      time,
       count: packed.count,
       data: packed.data,
       ms: state.stats.ms
     };
+    // Postoje przy stanowisku (kontrakt E12) — tylko zmiany.
+    const docks = collectDockChanges(state, time, resolveTrafficHullId);
+    if (docks) {
+      if (docks.docks) message.docks = docks.docks;
+      if (docks.undocked) message.undocked = docks.undocked;
+    }
     if (core.hulls.length !== core.actorHullsSent) {
       message.hulls = [...core.hulls];
       core.actorHullsSent = core.hulls.length;
     }
-    send(message, [packed.data.buffer]);
+    // Przeładunek przy stanowiskach (kontrakt E12, `bubbleCargo.js`) — co wiadomość, null bez rekordów.
+    const cargo = packBubbleCargo(state, resourceIndexOf);
+    message.cargo = cargo;
+    send(message, cargo ? [packed.data.buffer, cargo.buffer] : [packed.data.buffer]);
   }
 
   /** Stanowiska gracza (pełny zbiór) — dyspozytor ich nie przydziela, kurs w podejściu leci na inne. */
@@ -369,8 +384,17 @@ export function createTrafficCore(post, options = {}) {
   function detach(message) {
     const course = resolveCourse(message.course);
     if (!course) return;
-    const value = Number(message.progress);
-    detachActor(course, Number.isFinite(value) ? { stageProgress: value } : null);
+    const value = message.progress == null ? NaN : Number(message.progress);
+    const snapshot = Number.isFinite(value) ? { stageProgress: value } : {};
+    // Poza z gry (E6: NPC wraca do bańki) — bańka materializuje kurs w tym miejscu (`viewState.handoff`).
+    const pose = message.pose;
+    if (pose && Number.isFinite(Number(pose.x)) && Number.isFinite(Number(pose.y))) {
+      Object.assign(snapshot, {
+        x: Number(pose.x), y: Number(pose.y), angle: Number(pose.angle) || 0,
+        speed: Number(pose.speed) || 0, handoff: true, stageIndex: course.stageIndex
+      });
+    }
+    detachActor(course, Object.keys(snapshot).length ? snapshot : null);
   }
 
   function progress(message) {
@@ -445,11 +469,12 @@ export function createTrafficCore(post, options = {}) {
    */
   function bubblePortTable() {
     const out = {};
-    for (const stationId of core.bubble?.ports || []) {
+    if (!core.bubble) return out;
+    for (const stationId of bubblePortIds(core.bubble)) {
       const layout = core.world.docks.get(stationId);
       if (!layout) continue;
       out[stationId] = layout.berths.map(b => ({
-        id: b.id, x: b.x, y: b.y, angle: b.angle, length: b.length, width: b.width,
+        id: b.id, stationId, x: b.x, y: b.y, angle: b.angle, length: b.length, width: b.width,
         maxLength: b.maxLength ?? null, maxBeam: b.maxBeam ?? null, complex: b.complex ?? null,
         hall: b.hall ?? null, bayId: b.bayId ?? null, k7BerthId: b.k7BerthId ?? null
       }));
@@ -460,6 +485,7 @@ export function createTrafficCore(post, options = {}) {
   /** Zmiana listy rynków dociera do gry od razu, nie po kroku świata. */
   function marketsChanged() {
     indexMarkets();
+    if (core.bubble) refreshWorldBubblePorts(core.bubble);
     core.marketsDirty = true;
     publishTick(0, 0);
   }
@@ -587,6 +613,7 @@ export function createTrafficCore(post, options = {}) {
       core.marketsDirty = false;
       message.stations = stationTable();
       message.berths = berthTable();
+      message.bubblePorts = bubblePortTable();
     }
     send(message, [market.buffer, bubble.data.buffer]);
   }
@@ -821,6 +848,8 @@ export function createTrafficCore(post, options = {}) {
     handle,
     /** Świat — dla testów i trybu awaryjnego; gra rozmawia przez `handle`. */
     get world() { return core.world; },
+    /** Bańka workera (E6) — dla testów i diagnostyki (`workerBubble.js`). */
+    get bubble() { return core.bubble; },
     get stats() { return { ...core.stats }; }
   };
 }

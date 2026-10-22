@@ -99,7 +99,13 @@ export class TrafficBridge {
      * Encje bańki workera (E6): `data` (Float64Array, `ACTOR_STRIDE`), `count`,
      * `time` (czas mostu, w którym pozy są ważne), `seq` (numer wiadomości), `ms`.
      */
-    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0 };
+    // `cargo` — przeładunek przy stanowiskach (kontrakt E12, `bubbleCargo.js`): Float32Array albo null.
+    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0, cargo: null };
+    /**
+     * Postoje statków ruchu przy stanowiskach (kontrakt `DockRecord`, `trafficProtocol.js` — przeładunek E12):
+     * numer kursu → { id, berthId, stationId, mode, cargo, t0, dur, hull, unitClass }. Worker przysyła zmiany.
+     */
+    this.actorDocks = new Map();
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
@@ -277,7 +283,11 @@ export class TrafficBridge {
   }
 
   attach(course) { this._send({ type: TRAFFIC_MSG.ATTACH, course }); }
-  detach(course, progress) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress }); }
+  /**
+   * Gra oddaje kurs (`pose` — { x, y, angle, speed }: NPC wraca do bańki tam, gdzie był — E6, awans
+   * do pełnego NPC). `progress` — postęp etapu albo null (bez zmiany).
+   */
+  detach(course, progress, pose = null) { this._send({ type: TRAFFIC_MSG.DETACH, course, progress, pose }); }
   reportProgress(course, progress) { this._send({ type: TRAFFIC_MSG.PROGRESS, course, progress }); }
   completeStage(course) { this._send({ type: TRAFFIC_MSG.STAGE_DONE, course }); }
 
@@ -465,6 +475,7 @@ export class TrafficBridge {
     if (Array.isArray(message.stations) && this.tables) {
       this.tables.stations = message.stations;
       if (message.berths) this.tables.berths = message.berths;
+      if (message.bubblePorts) this.tables.bubblePorts = message.bubblePorts;
       this._indexStations();
       this._emit('markets', this.tables.stations);
     }
@@ -522,7 +533,12 @@ export class TrafficBridge {
     actors.count = Number(message.count) || 0;
     actors.time = Number(message.time) || 0;
     actors.ms = Number(message.ms) || 0;
+    actors.cargo = message.cargo instanceof Float32Array ? message.cargo : null;
     actors.seq++;
+    if (Array.isArray(message.undocked)) for (const id of message.undocked) this.actorDocks.delete(id);
+    if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);
+    // Pusta bańka (wyjście z zasięgu portów) — postoje znikają razem z encjami.
+    if (!actors.count && this.actorDocks.size) this.actorDocks.clear();
   }
 
   _applyBubble(bubble) {
