@@ -45,7 +45,8 @@ import { recordPlayerMining, setPlayerBerthHolds } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
-  releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges
+  releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
+  packBubbleCargo
 } from './workerBubble.js';
 import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
@@ -55,6 +56,9 @@ const WRECK_LOG_LIMIT = 256;
 const FOCUS_REPUBLISH_FRACTION = 0.25;
 
 const KINDS = Object.freeze(Object.values(COURSE_KIND));
+/** Indeks towaru w `ready.resources` (kontrakt przeładunku E12 — `actors.cargo`). */
+const RESOURCE_INDEX = new Map(RESOURCE_KEYS.map((key, index) => [key, index]));
+const resourceIndexOf = (id) => RESOURCE_INDEX.get(id) ?? -1;
 
 function defaultNow() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -271,7 +275,10 @@ export function createTrafficCore(post, options = {}) {
       message.hulls = [...core.hulls];
       core.actorHullsSent = core.hulls.length;
     }
-    send(message, [packed.data.buffer]);
+    // Przeładunek przy stanowiskach (kontrakt E12, `bubbleCargo.js`) — co wiadomość, null bez rekordów.
+    const cargo = packBubbleCargo(state, resourceIndexOf);
+    message.cargo = cargo;
+    send(message, cargo ? [packed.data.buffer, cargo.buffer] : [packed.data.buffer]);
   }
 
   /** Stanowiska gracza (pełny zbiór) — dyspozytor ich nie przydziela, kurs w podejściu leci na inne. */

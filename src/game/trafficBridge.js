@@ -93,7 +93,8 @@ export class TrafficBridge {
      * Encje bańki workera (E6): `data` (Float64Array, `ACTOR_STRIDE`), `count`,
      * `time` (czas mostu, w którym pozy są ważne), `seq` (numer wiadomości), `ms`.
      */
-    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0 };
+    // `cargo` — przeładunek przy stanowiskach (kontrakt E12, `bubbleCargo.js`): Float32Array albo null.
+    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0, cargo: null };
     /**
      * Postoje statków ruchu przy stanowiskach (kontrakt `DockRecord`, `trafficProtocol.js` — przeładunek E12):
      * numer kursu → { id, berthId, stationId, mode, cargo, t0, dur, hull, unitClass }. Worker przysyła zmiany.
@@ -508,6 +509,7 @@ export class TrafficBridge {
     actors.count = Number(message.count) || 0;
     actors.time = Number(message.time) || 0;
     actors.ms = Number(message.ms) || 0;
+    actors.cargo = message.cargo instanceof Float32Array ? message.cargo : null;
     actors.seq++;
     if (Array.isArray(message.undocked)) for (const id of message.undocked) this.actorDocks.delete(id);
     if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);

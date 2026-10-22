@@ -43,6 +43,7 @@ import {
 } from './trafficProtocol.js';
 import { convoyOf } from './convoy.js';
 import { VAN_CLASSES } from './shipmentOrders.js';
+import { ACTOR_CARGO_STRIDE, writeBubbleCargo } from './bubbleCargo.js';
 
 /** Przyspieszenie w buforze najwyżej tyle [j./s²] — skok prędkości (przechwyt, zmiana etapu) to nie rozpęd. */
 const ACCEL_LIMIT = 200_000;
@@ -326,6 +327,32 @@ function cargoOf(course) {
   }
   if (p.resourceId && Number(p.units) > 0) return { [p.resourceId]: Number(p.units) };
   return {};
+}
+
+/**
+ * Kontrakt przeładunku E12 (`bubbleCargo.js`, pole `cargo` wiadomości `actors`): rekord na encję przy stanowisku
+ * (przechwyt, postój, odłączanie — `dockedEntry`) w postoju LOAD / UNLOAD z ładunkiem. Co wiadomość, obok `data`
+ * (bez zmiany `ACTOR_STRIDE`). `resourceIndex(id)` — indeks w tabeli `ready.resources`. Zwraca kopię albo null.
+ */
+export function packBubbleCargo(state, resourceIndex) {
+  const list = state.bubble.list;
+  let buf = state.cargoBuf || (state.cargoBuf = new Float32Array(ACTOR_CARGO_STRIDE * 32));
+  let n = 0;
+  for (let k = 0; k < list.length; k++) {
+    const a = list[k];
+    if (!a.dockedEntry) continue;
+    if (a.phase !== ACTOR_PHASE.CAPTURE && a.phase !== ACTOR_PHASE.DOCKED && a.phase !== ACTOR_PHASE.UNDOCK) continue;
+    const course = getCourse(state.world.registry, a.courseId);
+    const num = courseNumber(a.courseId);
+    if (!course || !Number.isFinite(num)) continue;
+    if ((n + 1) * ACTOR_CARGO_STRIDE > buf.length) {
+      const grown = new Float32Array(buf.length * 2);
+      grown.set(buf);
+      buf = state.cargoBuf = grown;
+    }
+    n += writeBubbleCargo(buf, n, num, course, resourceIndex);
+  }
+  return n ? buf.slice(0, n * ACTOR_CARGO_STRIDE) : null;
 }
 
 const HOLD_BY_VAN_CLASS = new Map(VAN_CLASSES.map((c) => [c.id, c.capacity]));

@@ -10,6 +10,7 @@ import {
 import { getCourse, COURSE_STATUS } from '../src/game/traffic/courseRegistry.js';
 import { PLAYER_BERTH_HOLDER } from '../src/game/traffic/trafficDirector.js';
 import { BUBBLE_PORT_RANGE } from '../src/game/traffic/workerBubble.js';
+import { ACTOR_CARGO_STRIDE, ACTOR_CARGO_FIELD, ACTOR_CARGO_MODE } from '../src/game/traffic/bubbleCargo.js';
 
 const F = ACTOR_FIELD;
 
@@ -303,4 +304,31 @@ test('awans do NPC i powrót: attach zamraża rekord, detach z pozą (bez postę
   assert.ok(back, 'kurs wraca do bańki w następnym advance');
   assert.ok(Math.hypot(back.x - px, back.y - py) < 50, `encja w pozie NPC (${Math.round(back.x - px)}, ${Math.round(back.y - py)})`);
   assert.equal(course.viewState, null, 'poza oddana raz');
+});
+
+test('przeładunek (kontrakt E12 `actors.cargo`): rekordy encji przy stanowisku w postoju LOAD / UNLOAD', () => {
+  const berth0 = world.docks.get('earth').berths.find((b) => b.id.includes(':Z-'));
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: berth0.x, y: berth0.y, r: 60_000 });
+  let records = 0;
+  let checked = 0;
+  for (let f = 0; f < 30 * 60; f++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+    const cargo = got.actors.cargo;
+    if (!cargo) continue;
+    assert.ok(cargo instanceof Float32Array);
+    assert.equal(cargo.length % ACTOR_CARGO_STRIDE, 0);
+    const atBerth = new Set(decode(got.actors).filter((a) => ['capture', 'docked', 'undock'].includes(a.phase)).map((a) => a.id));
+    for (let o = 0; o < cargo.length; o += ACTOR_CARGO_STRIDE) {
+      records++;
+      const C = ACTOR_CARGO_FIELD;
+      assert.ok(atBerth.has(cargo[o + C.ID]), 'rekord tylko dla encji przy stanowisku');
+      assert.ok(cargo[o + C.MODE] === ACTOR_CARGO_MODE.LOAD || cargo[o + C.MODE] === ACTOR_CARGO_MODE.UNLOAD);
+      assert.ok(cargo[o + C.FILL] >= 0 && cargo[o + C.FILL] <= 1);
+      assert.ok(cargo[o + C.DWELL] >= cargo[o + C.MOVE]);
+      const ri = cargo[o + C.RES];
+      assert.ok(ri === -1 || (ri >= 0 && ri < got.ready.resources.length), 'indeks towaru w ready.resources');
+      checked++;
+    }
+  }
+  assert.ok(records > 0 && checked === records, 'statki przy zatokach Ziemi przeładowują');
 });

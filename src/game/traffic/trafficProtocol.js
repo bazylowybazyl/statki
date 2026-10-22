@@ -210,6 +210,8 @@ export const ACTOR_FIELD = Object.freeze({
  *   cargo     — { towar: ilość } w jednostkach ŚWIATA ruchu (zapas × skala gospodarki): to, co statek
  *               wyładowuje ('unload') albo bierze ('load'); urobek wyprawy — cały worek; pusty przelot,
  *               patrol — {},
+ *   (Obok, w każdej wiadomości `actors`: `cargo` — Float32Array rekordów przeładunku encji przy stanowisku,
+ *   krok `ACTOR_CARGO_STRIDE` — `bubbleCargo.js`, kontrakt E12 przyjęty przez orkiestratora; null bez rekordów.)
  *   fill      — 0…1: masa ładunku (`payload.mass`) / ładowność klasy kursu (`VAN_CLASSES[].capacity`, ta sama
  *               skala co masa); null — klasa bez ładowni (okręty, rejdery) albo kurs bez masy (pusty → 0),
  *   t0, dur   — obsługa przy stanowisku w CZASIE MOSTU: od `t0` (koniec przechwytu) przez `dur` s
