@@ -332,3 +332,25 @@ test('przeładunek (kontrakt E12 `actors.cargo`): rekordy encji przy stanowisku 
   }
   assert.ok(records > 0 && checked === records, 'statki przy zatokach Ziemi przeładowują');
 });
+
+test('stacja gracza dodana w biegu (zapis E7 → market-add) jest portem bańki: stanowiska w tabeli i w bańce, fokus przy niej', async () => {
+  const { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } = await import('../src/data/markets.js');
+  const { bubblePortNear } = await import('../src/game/traffic/workerBubble.js');
+  const at = { x: earth.x + 400_000, y: earth.y + 250_000 };
+  core.handle({ type: TRAFFIC_MSG.MARKET_ADD, def: {
+    id: 'gracz-test', label: 'Test', kind: MARKET_KIND.PLAYER,
+    position: { source: MARKET_POSITION.POINT, x: at.x, y: at.y },
+    factionId: null, industry: { buildings: [], size: 0.3 }, docks: { layout: DOCK_LAYOUT.PIERS }
+  } });
+  const berths = got.tick.bubblePorts?.['gracz-test'];
+  assert.ok(Array.isArray(berths) && berths.length > 0, 'tick niesie stanowiska nowego portu');
+  const state = core.bubble;
+  assert.ok([...bubblePortIdsOf(state)].includes('gracz-test'));
+  assert.equal(bubblePortNear(state, at.x, at.y), true, 'fokus przy stacji gracza budzi bańkę');
+  assert.ok(state.bubble.ports.layouts.has('gracz-test'), 'układ doków w indeksie portów bańki');
+  assert.ok([...state.bubble.ports.berths.values()].some((r) => r.stationId === 'gracz-test'), 'stanowiska w indeksie portów bańki');
+});
+
+function bubblePortIdsOf(state) {
+  return state.ports || state.world.docks.keys();
+}
