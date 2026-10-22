@@ -14,7 +14,7 @@
 //   ringu, − = — pochylenie. Konsola / harness: window.__slup.
 import * as THREE from 'three/webgpu';
 import { EarthBitePlume } from '../src/3d/earthBitePlume3D.js';
-import { EarthBitePlant, createPlantLook } from '../src/3d/earthBitePlant.js';
+import { EarthBitePlant, createPlantLook, plantFrameMatrix } from '../src/3d/earthBitePlant.js';
 import { createPlumeLook } from '../src/3d/earthBitePlumeShape.js';
 import { fxRandom } from '../src/3d/fx/fxRandom.js';
 import { createHaloRing } from '../src/3d/haloRing/index.js';
@@ -248,6 +248,30 @@ async function start() {
     ringOverBite: () => ringOverBite(),
     ready: () => !!plume,
     ringReady: () => (ring ? ring.isReady : true),
+    /**
+     * Kadr szczegółu elektrowni w RAMIE ELEKTROWNI (earthBitePlantFrame.js: y — wysokość nad dnem gryzu, x — wschód,
+     * z — południe; R Ziemi): kamera w `from`, patrzy na `at`, `fov` [°], słońce z kierunku `sun` (rama, nie musi być
+     * jednostkowy). Ustawia stan kamery dema (az / el / dist / look, pora, wysokość słońca).
+     */
+    viewPlant({ at, from, fov = 40, sun = [0.6, 0.8, 0.3] }) {
+      const body = body0();
+      if (!body?.mesh || !plant) return false;
+      body.mesh.updateMatrixWorld(true);
+      const M = plantFrameMatrix(plant.biteRadius).premultiply(body.mesh.matrixWorld);
+      const A = new THREE.Vector3(...at).applyMatrix4(M);
+      const F = new THREE.Vector3(...from).applyMatrix4(M);
+      const d = new THREE.Vector3(...sun).transformDirection(M);
+      const s = P.S;
+      s.target = null;
+      s.dist = F.length();
+      s.az = Math.atan2(F.x, F.z);
+      s.el = Math.asin(Math.max(-1, Math.min(1, F.y / s.dist)));
+      s.look.copy(A);
+      s.fov = fov;
+      s.sunEl = Math.asin(Math.max(-1, Math.min(1, d.y))) / DEG;
+      s.pora = Math.round(((Math.atan2(d.x, d.z) - s.az) / DEG + 540) % 360 - 180);
+      return true;
+    },
     /** Po zmianie pól `look`. */
     apply() { plume?.applyLook(); plant?.applyLook(); },
     setTime(t) {

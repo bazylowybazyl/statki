@@ -1,26 +1,30 @@
-// Zrzuty dema planet ze SŁUPEM KONWEKCYJNYM nad wielkim gryzem Ziemi (dema/planety-webgpu.html?slup=1, dodatek
-// dema/planety-slup.js, src/3d/earthBitePlume*.js). Kadry jak w grze (kamera z daleka w płaszczyźnie równika, oś doby
-// pionowo, słońce w poziomie — terminator pionowy; `x` = położenie gryzu na tarczy w poziomie, + ku słońcu) i z bliska.
-// Zegar słupa stoi (setTime), błyski z ziarnem (burst) — zrzuty powtarzalne.
+// Zrzuty dema planet z ELEKTROWNIĄ „KOREK” w wielkim gryzie Ziemi (dema/planety-webgpu.html?korek=1, dodatek
+// dema/planety-slup.js, src/3d/earthBitePlant*.js — korek, obudowa dziury, windy, odbiornik, promień do ringu) i opcjonalnie
+// słupem dymu (?slup=1, src/3d/earthBitePlume*.js). Kadry:
+//   • gra-* — jak w grze (kamera z daleka w płaszczyźnie równika, oś doby pionowo, słońce w poziomie; `x` = położenie
+//     gryzu na tarczy w poziomie, + ku słońcu),
+//   • szczegóły (korek-*, obudowa, brzeg, odbiornik, winda, promien, nad-gryzem) — kamera w RAMIE ELEKTROWNI
+//     (`__slup.viewPlant`: y — wysokość nad dnem gryzu, R Ziemi; dno 0, płaszczyzna brzegu ~0,354, odbiornik ~0,535),
+//   • blisko* — kamera nad gryzem z ukosa.
+// Zegar stoi (setTime), błyski dymu z ziarnem (burst) — zrzuty powtarzalne. Grupy: --tylko gra | szczegoly | nazwy,po,przecinku.
 //
-//   node scripts/webgpu/slup-demo.mjs [--out .tmp/slup/demo] [--tag v1] [--tylko gra-dzien,gra-krawedz]
-//        [--korek 1] [--dym 0] [--wariant parasol|smukly] [--query "mapyGryz=.tmp/planety-gryz/046"] [--czas 40] [--look '{"sigmaAnvil":30}']
-//        [--bez 1] (bez słupa)
+//   node scripts/webgpu/slup-demo.mjs [--out .tmp/korek/demo] [--tag v1] [--tylko szczegoly] [--port 5413]
+//        [--dym 1] [--korek 0] [--wariant parasol|smukly] [--query "x=1"] [--czas 40] [--look '{"beamGain":1.5}']
+//        [--bez 1] (bez elektrowni i dymu)
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
 
 const args = parseArgs();
-const out = resolve(repo, args.out || '.tmp/slup/demo');
-const tag = String(args.tag || 'slup');
-const query = args.query !== undefined ? `&${args.query}` : '&mapyGryz=.tmp/planety-gryz/046';
-const only = args.tylko ? new Set(String(args.tylko).split(',')) : null;
+const out = resolve(repo, args.out || '.tmp/korek/demo');
+const tag = String(args.tag || 'korek');
+const query = args.query !== undefined ? `&${args.query}` : '';
 const czas = Number(args.czas ?? 40);
 const look = args.look ? JSON.parse(String(args.look)) : null;
 const bez = String(args.bez || '') === '1';
 const wariant = args.wariant ? `&slupWariant=${args.wariant}` : '';
-// --korek 1 — elektrownia „KOREK” (promień, odbiornik, windy), --dym 0 — bez słupa dymu
-const warstwy = `${String(args.dym ?? '1') === '0' ? '' : '&slup=1'}${String(args.korek || '') === '1' ? '&korek=1' : ''}`;
+// --korek 0 — bez elektrowni (domyślnie jest), --dym 1 — ze słupem dymu (domyślnie bez)
+const warstwy = `${String(args.dym ?? '0') === '1' ? '&slup=1' : ''}${String(args.korek ?? '1') === '0' ? '' : '&korek=1'}`;
 mkdirSync(out, { recursive: true });
 
 // x — położenie gryzu na tarczy (ułamek promienia, + ku słońcu); half — pół wysokości kadru [R] (whole — cała tarcza);
@@ -36,8 +40,24 @@ const VIEWS = [
   { name: 'gra-krawedz', x: 0.997, half: 0.5 },
   { name: 'gra-krawedz-noc', x: -0.997, half: 0.5, burst: [11, 3] },
   { name: 'blisko', near: { dist: 2.15, tilt: 28, pora: 55, sunEl: 25 } },
-  { name: 'blisko-noc', near: { dist: 2.15, tilt: 28, pora: 165, sunEl: 10 }, burst: [5, 4] }
+  { name: 'blisko-noc', near: { dist: 2.15, tilt: 28, pora: 165, sunEl: 10 }, burst: [5, 4] },
+  // szczegóły w ramie elektrowni (at / from — punkty ramy, sun — kierunek słońca w ramie)
+  { name: 'nad-gryzem', plant: { at: [0, 0.15, 0], from: [0.3, 0.8, 0.35], fov: 58, sun: [0.35, 0.85, 0.4] } },
+  { name: 'korek-gora', plant: { at: [0, 0.05, 0], from: [0.07, 0.36, 0.05], fov: 46, sun: [0.4, 1, 0.2] } },
+  { name: 'korek-bok', plant: { at: [0, 0.045, 0], from: [0.21, 0.12, 0.13], fov: 40, sun: [0.3, 1, 0.5] } },
+  { name: 'korek-noc', plant: { at: [0, 0.045, 0], from: [0.21, 0.12, 0.13], fov: 40, sun: [0.3, -1, 0.5] } },
+  { name: 'korek-wylot', plant: { at: [0, 0.07, 0], from: [0.05, 0.115, 0.035], fov: 40, sun: [0.3, 1, 0.5] } },
+  { name: 'obudowa', plant: { at: [0.3, 0.15, 0], from: [-0.12, 0.3, 0.08], fov: 50, sun: [-0.3, 1, 0.2] } },
+  { name: 'brzeg', plant: { at: [0.35, 0.34, -0.35], from: [0.2, 0.45, -0.2], fov: 40, sun: [-0.5, 0.8, 0.5] } },
+  { name: 'odbiornik', plant: { at: [0, 0.53, 0], from: [0.1, 0.5, 0.12], fov: 40, sun: [0.5, 0.6, 0.5] } },
+  { name: 'winda', plant: { at: [0.197, 0.453, -0.197], from: [0.112, 0.47, -0.282], fov: 50, sun: [-0.5, 0.6, 0.5] } },
+  { name: 'promien', plant: { at: [0, 0.25, 0], from: [0.26, 0.22, 0.12], fov: 45, sun: [0.3, 1, 0.4] } }
 ];
+const GROUPS = {
+  gra: VIEWS.filter((v) => v.name.startsWith('gra-')).map((v) => v.name),
+  szczegoly: VIEWS.filter((v) => v.plant).map((v) => v.name)
+};
+const only = args.tylko ? new Set(String(args.tylko).split(',').flatMap((k) => GROUPS[k] ?? [k])) : null;
 
 const { server, base } = await startVite(Number(args.port || 5413));
 const chrome = await startChrome({ width: 1600, height: 900 });
@@ -65,7 +85,9 @@ try {
       const phi = (lon + 180) * D, c = Math.cos(lat * D);
       const d = [-Math.cos(phi) * c, Math.sin(lat * D), Math.sin(phi) * c];
       const siteAz = Math.atan2(d[0], d[2]);
-      if (v.near) {
+      if (v.plant) {
+        if (!window.__slup.viewPlant(v.plant)) throw new Error('viewPlant: brak elektrowni');
+      } else if (v.near) {
         const latC = lat * D - v.near.tilt * D;
         S.az = siteAz; S.el = latC; S.dist = 1 + (v.near.dist - 1) * skala / 0.3;
         S.look.set(d[0], d[1], d[2]);
