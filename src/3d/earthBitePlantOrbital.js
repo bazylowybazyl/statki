@@ -12,7 +12,8 @@
 // Promień przekaźnikowy biegnie ze środka odbiornika do najbliższego punktu ringu (`hubRelayDir`: w ramie prawie poziomo,
 // w azymucie ~270°, 4° w górę) — przez LUFĘ nadajnika i BRAMĘ w pierścieniu (soczewka z pierścieniami cewek, w kadrze
 // gry widziana od czoła jako tarcza z koncentrycznymi kręgami). Moduł naprzeciw bramy (~90°) to FRONT: dok serwisowy
-// z oświetloną halą, maszt łączności; obok — kopuły i anteny.
+// z CIEMNĄ halą (dwie kondygnacje sterowni na tylnej ścianie, lampy suwnicy, chłodne światła wrót i podejścia), maszt
+// łączności; obok — przeszklone galerie (szyby osobno, z przekosem — błyski, nie smuga) i gondole.
 //   • PIERŚCIEŃ-STACJA: moduły z łącznikami i kołnierzami — węzły przy szprychach (większe, blok węzła, kopuła, chłodne
 //     belki świateł, białe stroboskopy), przemysłowe pod łopatami (zbiorniki), mieszkalne (pasy okien, świetliki, ciepła
 //     listwa, wyposażenie z ziarna: nadbudówki, maszty z antenami, kopuły, gondole pod stępką); szyna energii (fala
@@ -21,8 +22,10 @@
 //     obrzeże z ciągłą cienką cewką (czytelna z profilu), fartuch z cewkami, żebrami i światłami na wardze.
 //   • SZPRYCHY: kratownice magazyn → węzeł z przewodami energii; MAGAZYN — stosy ciemnych ogniw przy rdzeniu z cienkimi
 //     pierścieniami cewek (w = −1, jasność wg naładowania) między ogniwami.
-//   • ŁOPATY RADIATORÓW: ciemne żebrowane płyty (krawędzią do osi — z góry linie), rury cieplne wzdłuż promienia i kolektor
-//     u nasady — żar tylko w rurach i na krawędziach, gasnący ku końcowi łopaty.
+//   • ŁOPATY RADIATORÓW: ciemne, matowe płyty żaru o płytkiej fali (krawędzią do osi — z góry linie), rury cieplne
+//     wzdłuż promienia z gorącym szwem i kolektor u nasady — żar w rurach i na krawędziach, gasnący ku końcowi łopaty;
+//     nocą obrys ciepłą listwą i światła pozycyjne w rogach końca.
+//   • ŚWIATŁA POZYCYJNE (`lamp`): ciemna oprawa z małą soczewką — zgaszone to metal z szybką, nie kolorowa kula.
 //   • NADAJNIK w środku (`hubCenterObject`): świecący rdzeń w sferze armilarnej cewek i dwóch pierścieniach gimbala
 //     (w sferze mieści się kula ładowania promienia), lufa z cewkami i dyszą ku ringowi przez szczelinę w kołnierzu.
 // Z góry (oś gryzu) odbiornik wisi nad korkiem i go nie zasłania: otwarty pierścień, kratownice i łopaty krawędzią do
@@ -165,14 +168,22 @@ class PartBuf {
   }
 }
 
-/** Rejestr części jednego materiału: `part(rodzaj, ziarno, z, w)` → bufor; `finish(dy)` → części po finalizePart. */
+/**
+ * Rejestr części jednego materiału: `part(rodzaj, ziarno, z, w)` → bufor; `shared(klucz, …)` — jedna wspólna część na
+ * klucz (np. oprawy wszystkich świateł); `finish(dy)` → części po finalizePart.
+ */
 function partList() {
   const list = [];
+  const byKey = new Map();
   return {
     part(kind, seed = 0, z = 0, w = 0) {
       const b = new PartBuf();
       list.push({ b, kind, seed, z, w });
       return b;
+    },
+    shared(key, kind, seed = 0, z = 0, w = 0) {
+      if (!byKey.has(key)) byKey.set(key, this.part(kind, seed, z, w));
+      return byKey.get(key);
     },
     finish(dy) {
       return list.filter((e) => e.b.i.length > 0).map((e) => {
@@ -357,10 +368,54 @@ const angDiff = (a, b) => {
   return d;
 };
 
-/** Światło pozycyjne: mała kula w punkcie P (okrągłe z każdej strony — nie romb). */
-function lamp(B, P, r = 0.0005) {
-  B.add(new THREE.SphereGeometry(r, 10, 6), new THREE.Matrix4().makeTranslation(P.x, P.y, P.z));
+const _lq = new THREE.Quaternion();
+/**
+ * Światło pozycyjne na powierzchni w punkcie S (normalna `nrm`): ciemna sześciokątna OPRAWA (stal — wspólna część
+ * wszystkich opraw) wpuszczona w kadłub i mała kopułka SOCZEWKI (BEACON) na niej. W fazie zgaszonej czyta się jak ciemny
+ * metal z szybką, nie jak kolorowa kula; z daleka zostaje błysk soczewki. r — promień oprawy.
+ */
+function lamp(M, bc, S, nrm, r = 0.0003) {
+  const m = new THREE.Matrix4().makeRotationFromQuaternion(_lq.setFromUnitVectors(Y_UP, nrm)).setPosition(S);
+  const rl = r * 0.6, top = r * 0.5, hh = r * 0.55;
+  const housing = M.shared('oprawy', PART.STRUCT, 0.58);
+  const s0 = housing.count;
+  prism(housing, [[0, -hh], [r, -hh], [r, top], [rl, top]], 6, Math.PI / 6);
+  housing.transformFrom(s0, m);
+  const lens = new THREE.SphereGeometry(rl, 8, 3, 0, TAU, 0, Math.PI / 2);
+  lens.translate(0, top, 0);
+  bc.add(lens, m);
 }
+
+/** Kierunek od osi w azymucie a, uniesiony o `up` (znormalizowany) — normalne świateł na krawędziach. */
+const outDir = (a, up = 0) => v3(Math.cos(a), up, -Math.sin(a)).normalize();
+
+/**
+ * Część w trybie WŁASNEGO uv (kontrakt aPart.z < 0): wierzchołki od `start` dostają STAŁE uv.y = v (listwa: v = STRIP_V —
+ * oś pierwszej rurki światła; listwa świeci równo z bliska i z daleka, bez trafiania w przerwy między rurkami rzutu
+ * pudełkowego) i uv.x = droga wzdłuż [R] zapisana przez prymityw (`bar`) + pół segmentu albo — `u` podane — stałe
+ * (małe lampy z pudełek: uv pudełka 0…1 to nie [R]).
+ */
+function pinUv(B, start, v, u = null) {
+  for (let k = start; k < B.count; k++) {
+    B.t[k * 2] = u === null ? B.t[k * 2] + 0.00125 : u;
+    B.t[k * 2 + 1] = v;
+  }
+}
+/**
+ * Belki `bar` (z wieczkami: 4 ściany × 4 wierzchołki + 2 × 4) od wierzchołka `start` w trybie własnego uv części żaru:
+ * uv.y = położenie w poprzek ściany [R] (−s/2 … s/2) — szew płyt (uv.y = 0) biegnie osią każdej ściany belki, wieczka
+ * całe na szwie; uv.x (droga wzdłuż belki) bez zmian.
+ */
+function seamBars(B, start, s) {
+  for (let k = start; k < B.count; k++) {
+    const i = (k - start) % 24;
+    B.t[k * 2 + 1] = i < 16 ? (B.t[k * 2 + 1] - Math.floor(i / 4) - 0.5) * s : 0;
+  }
+}
+/** uv.y osi pierwszej rurki listwy w trybie własnego uv (stripLight: v0 = 0,00035 R). */
+const STRIP_V = 0.00035;
+/** uv.y linii kondygnacji pasa okien w trybie własnego uv (windowSlots: środek pasa WIN_BAND = 0,0045 R). */
+const WIN_LINE_V = 0.00225;
 
 /**
  * Antena talerzowa: cienka czasza (paraboloida z wargą — widoczna z obu stron), wspornik i promiennik w ognisku.
@@ -457,7 +512,8 @@ function buildRing(M, L, rng, lay) {
     }
     // pasy okien (rzędy okien rysuje materiał): zewnętrzne, wewnętrzne, świetliki na barkach pokładu
     const wa0 = a0 + cs * 1.6, wa1 = a1 - cs * 1.6;
-    const dens = ind ? 0.2 : (node ? 0.6 : isFront ? 0.9 : 0.72 + rng.next() * 0.18);
+    // gęstość zapalonych ~0,8 (nocą pierścień w kadrze gry czyta się rytmem pasów okien); przemysłowe rzadziej
+    const dens = ind ? 0.55 : (node ? 0.8 : isFront ? 0.85 : 0.8 + rng.next() * 0.12);
     const win = M.part(PART.WINDOW, seed, dens);
     const sh0 = S.dw + S.dh + 0.0004, sh1 = W - S.c - 0.0003;
     const bands = ind
@@ -474,7 +530,7 @@ function buildRing(M, L, rng, lay) {
     // spód (widok od korka): rzadkie okna na barkach stępki
     if (!ind && !node) {
       const k0 = S.kw + S.kh + 0.0004, k1 = W - S.c - 0.0004;
-      const under = M.part(PART.WINDOW, seed, 0.3);
+      const under = M.part(PART.WINDOW, seed, 0.5);
       for (const band of [[[-k1, -H - e], [-k0, -H - e]], [[k0, -H - e], [k1, -H - e]]]) sweep(under, band, R0, wa0, wa1, 8, false);
     }
     // listwa grzbietu: ciepła (mieszkalne), chłodna (przemysłowe) — cienka, pod progiem bloomu
@@ -492,10 +548,11 @@ function buildRing(M, L, rng, lay) {
     }
     // światło pozycyjne na ściętej krawędzi (czerwone naprzemiennie; białe stroboskopy na węzłach)
     const bc = M.part(PART.BEACON, node ? 0 : (i % 2) * 0.5, node ? 1.1 : 0.5, node ? 1 : 0);
-    const br = R0 + W - S.c * 0.5 + 0.0003, by = H - S.c * 0.5 + 0.0003;
-    lamp(bc, polar(br, a1 - cs * 2.5, by), node ? 0.0006 : 0.00045);
-    if (node) lamp(bc, polar(br, a0 + cs * 2.5, by), 0.0006);
-    if (node) lamp(M.part(PART.BEACON, 0.5, 0.5, 0), polar(R0, ac, -H - S.kh - 0.0004), 0.0005);
+    const br = R0 + W - S.c * 0.5, by = H - S.c * 0.5;
+    for (const am of node ? [a1 - cs * 2.5, a0 + cs * 2.5] : [a1 - cs * 2.5]) {
+      lamp(M, bc, polar(br, am, by), outDir(am, 1), node ? 0.00036 : 0.0003);
+    }
+    if (node) lamp(M, M.part(PART.BEACON, 0.5, 0.5, 0), polar(R0, ac, -H - S.kh), v3(0, -1, 0), 0.00032);
     if (ind) {
       // zbiorniki chłodziwa na barkach (graniaste) i rura zbiorcza
       const tk = M.part(PART.HULL, seed * 0.7 + 0.1);
@@ -564,24 +621,55 @@ function buildServiceDock(M, R0, W, H, S, ac, span, seed) {
   hull.add(new THREE.BoxGeometry(depth, wall, hw * 2 + wall * 2), radial(ac, (r0 + r1) / 2, yt + wall / 2, 0));
   hull.add(new THREE.BoxGeometry(depth, wall, hw * 2 + wall * 2), radial(ac, (r0 + r1) / 2, yb - wall / 2, 0));
   for (const sg of [-1, 1]) st.add(new THREE.BoxGeometry(0.0004, yt - yb + wall * 2.4, 0.0005), radial(ac, r1 + 0.0002, (yt + yb) / 2, sg * (hw + wall * 0.7)));
-  // tylna ściana hali: ciepłe światło wnętrza (pod progiem bloomu), nad nią pas chłodnej listwy wrót
-  const back = M.part(PART.STRIP, seed, 0.24, 0);
-  back.add(new THREE.PlaneGeometry(hw * 2, yt - yb), radial(ac, R0 + W + 0.00012, (yt + yb) / 2, 0).multiply(new THREE.Matrix4().makeRotationY(Math.PI / 2)));
-  // suwnica w hali: dwie belki poziome i słupki (łamie płaską poświatę tła)
-  for (const y of [yb + (yt - yb) * 0.42, yb + (yt - yb) * 0.78]) st.add(new THREE.BoxGeometry(0.00035, 0.0003, hw * 2), radial(ac, R0 + W + 0.0007, y, 0));
-  for (const z of [-hw * 0.45, hw * 0.35]) st.add(new THREE.BoxGeometry(0.0003, yt - yb, 0.0003), radial(ac, R0 + W + 0.0005, (yt + yb) / 2, z));
+  // WNĘTRZE HALI CIEMNE (w kadrze gry hala stoi frontem do kamery — jednolita świecąca ściana czytała się jak szyld):
+  // tylna ściana ze stali, na niej DWIE KONDYGNACJE sterowni (pasy okien własnego uv: linia kondygnacji w środku pasa —
+  // z daleka dwie bursztynowe kreski, z bliska rzędy szczelin) z półkami pomostów; światło głównie z suwnicy i wrót
+  const rot = new THREE.Matrix4().makeRotationY(ac);
+  const at = (x, y, z) => v3(x, y, z).applyMatrix4(rot);
+  const out = outDir(ac);
+  const rb = R0 + W + 0.00012;
+  st.add(new THREE.PlaneGeometry(hw * 2, yt - yb), radial(ac, rb, (yt + yb) / 2, 0).multiply(new THREE.Matrix4().makeRotationY(Math.PI / 2)));
+  const hb = 0.00034, vc = WIN_LINE_V;
+  [[0.62, 0.86, [[-0.92, -0.08], [0.06, 0.92]]], [0.8, 0.7, [[-0.92, 0.3], [0.44, 0.92]]]].forEach(([f, dens, segs], k) => {
+    const win = M.part(PART.WINDOW, seed * 0.37 + 0.13 * (k + 1), -dens);
+    const y = yb + (yt - yb) * f;
+    for (const [z0, z1] of segs) {
+      const p = [[z0, -hb], [z1, -hb], [z1, hb], [z0, hb]].map(([zz, dy]) => {
+        const P = at(rb + 0.00008, y + dy, zz * hw);
+        return win.v(P.x, P.y, P.z, out.x, out.y, out.z, (zz - z0) * hw, vc + dy);
+      });
+      win.quad(p[0], p[1], p[2], p[3]);
+    }
+    // półka pomostu pod pasem okien (stal) — w świetle wrót łapie krawędź
+    st.add(new THREE.BoxGeometry(0.0005, 0.00012, hw * 2), radial(ac, rb + 0.00025, y - hb - 0.0001, 0));
+  });
+  // SUWNICA pod stropem: szyny na ścianach bocznych, most, wózek, lina z hakiem; pod mostem trzy ciepłe lampy (sód)
+  const yr = yt - 0.0005, xm = rb + depth * 0.5;
+  for (const sg of [-1, 1]) st.add(new THREE.BoxGeometry(depth - 0.0006, 0.0002, 0.0002), radial(ac, rb + (depth - 0.0006) / 2, yr, sg * (hw - 0.0001)));
+  st.add(new THREE.BoxGeometry(0.0004, 0.00035, hw * 2), radial(ac, xm, yr - 0.00028, 0));
+  st.add(new THREE.BoxGeometry(0.0006, 0.0003, 0.0006), radial(ac, xm, yr - 0.0006, -hw * 0.25));
+  bar(st, at(xm, yr - 0.00075, -hw * 0.25), at(xm, yb + 0.0027, -hw * 0.25), 0.00007, 0.00007, X_AX);
+  st.add(new THREE.BoxGeometry(0.0003, 0.00022, 0.0003), radial(ac, xm, yb + 0.0026, -hw * 0.25));
+  const craneL = M.part(PART.STRIP, 0, -0.55, 0);
+  const sc = craneL.count;
+  for (const z of [-0.62, 0.04, 0.62]) craneL.add(new THREE.BoxGeometry(0.00028, 0.00018, 0.0005), radial(ac, xm + 0.0003, yr - 0.00055, z * hw));
+  pinUv(craneL, sc, STRIP_V, 0.00125);
+  // wrota: chłodne listwy progu i nadproża, na posadzce trzy chłodne światła podejścia
   const lip = M.part(PART.STRIP, seed, 0.9, 1);
   for (const y of [yt + wall + 0.00012, yb - wall - 0.00012]) lip.add(new THREE.BoxGeometry(0.00025, 0.00018, hw * 2), radial(ac, r1 + 0.0001, y, 0));
-  // holownik w hali: kadłub, kabina, światło
+  const land = M.part(PART.STRIP, 0, -0.35, 1);
+  const sl = land.count;
+  for (const z of [-0.6, 0, 0.6]) land.add(new THREE.BoxGeometry(0.0003, 0.00005, 0.0003), radial(ac, r1 - 0.0004, yb + 0.000025, z * hw));
+  pinUv(land, sl, STRIP_V, 0.00125);
+  // holownik w hali (pod hakiem suwnicy): kadłub, kabina, światło na dziobie
   const tug = M.part(PART.HULL, 0.77);
   tug.add(new THREE.BoxGeometry(0.0016, 0.0011, 0.0022), radial(ac, r0 + 0.0011, yb + 0.0009, -0.0006));
   tug.add(new THREE.BoxGeometry(0.0009, 0.0007, 0.0011), radial(ac, r0 + 0.0013, yb + 0.0018, -0.0009));
-  lamp(M.part(PART.BEACON, 0.61, 0.9, 1), polar(r0 + 0.0021, ac, yb + 0.0015), 0.00028);
-  // światła wrót (rogi): białe
+  lamp(M, M.part(PART.BEACON, 0.61, 0.9, 1), at(r0 + 0.0019, yb + 0.0009, -0.0006), out, 0.00016);
+  // światła wrót (rogi, na czołach słupków): białe, małe
   const bc = M.part(PART.BEACON, 0.27, 0.7, 1);
-  for (const [sy, sz] of [[yt, -1], [yt, 1], [yb, -1], [yb, 1]]) {
-    const P = new THREE.Vector3(r1 + 0.0003, sy + Math.sign(sy) * 0.0006, sz * (hw + 0.0006)).applyMatrix4(radial(ac));
-    lamp(bc, P, 0.00032);
+  for (const [y, sz] of [[yt + wall * 0.5, -1], [yt + wall * 0.5, 1], [yb - wall * 0.5, -1], [yb - wall * 0.5, 1]]) {
+    lamp(M, bc, at(r1 + 0.0004, y, sz * (hw + wall * 0.7)), out, 0.00019);
   }
   // maszt łączności nad pokładem (wzdłuż osi — w kadrze gry kreska w stronę ringu) z anteną talerzową
   const yd = H + S.dh;
@@ -591,7 +679,7 @@ function buildServiceDock(M, R0, W, H, S, ac, span, seed) {
   bar(st, polar(R0 + S.dw * 0.5, am, yd + 0.0028), polar(R0 + S.dw * 0.5 + 0.0016, am, yd + 0.0028), 0.00022, 0.00022);
   dishAntenna(M.part(PART.STRUCT, 0.81), 0.0014, 0.00055,
     radial(am, R0 + S.dw * 0.5 + 0.0016, yd + 0.0028, 0).multiply(new THREE.Matrix4().makeRotationZ(-Math.PI * 0.3)));
-  lamp(M.part(PART.BEACON, 0.43, 0.6, 0), Qm, 0.00034);
+  lamp(M, M.part(PART.BEACON, 0.43, 0.6, 0), Qm, Y_UP, 0.00024);
 }
 
 /** Moduły obok frontu: przeszklona galeria widokowa na zewnętrznej ścianie (szprosy, czoła) i gondola pod stępką. */
@@ -605,9 +693,39 @@ function buildOuterDomes(M, R0, W, H, ac, span, seed, side) {
     return p;
   };
   const g0 = ac - span * 0.34, g1 = ac + span * 0.34;
-  sweep(glass, arc(rg), R0, g0, g1, 14, false);
-  // szprosy (łuki stali co ~0,0011 R) i czoła galerii
+  // SZYBY osobno między szprosami i ślemionami, każda lekko WYPUKŁA (normalne w rogach odchylone od środka szyby) i z
+  // własnym PRZEKOSEM (do ~20°, większym niż wypukłość): słońce odbija się tylko w nielicznych szybach, krótkimi
+  // błyskami, nie ciągłą białą smugą przez całą galerię (gładka fasetka po łuku łapała je na całej długości)
   const nm = Math.max(3, Math.round((g1 - g0) * R0 / 0.0011));
+  const prof = arc(rg);
+  const jr = plantRng(Math.floor(seed * 1e6) + 913);
+  const tilt = 0.1, jit = 0.35;
+  for (let k = 0; k < nm; k++) {
+    const am = [g0 + (g1 - g0) * (k / nm), g0 + (g1 - g0) * ((k + 1) / nm)];
+    for (let j = 0; j < prof.length - 1; j++) {
+      const [r1, y1] = prof[j], [r2, y2] = prof[j + 1];
+      const tx = r2 - r1, ty = y2 - y1, len = Math.sqrt(tx * tx + ty * ty);
+      const nr = ty / len, ny = -tx / len, dr = tx / len, dy = ty / len;
+      const jx = (jr.next() - 0.5) * 2 * jit, jy = (jr.next() - 0.5) * 2 * jit;
+      const q = [];
+      for (const [ia, ip] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+        const a = am[ia], c = Math.cos(a), s = Math.sin(a);
+        const su = ia ? 1 : -1, sv = ip ? 1 : -1;
+        const r = R0 + (ip ? r2 : r1), y = ip ? y2 : y1;
+        // normalna fasetki + odchylenie ku rogowi (wzdłuż łuku: −sin, 0, −cos; wzdłuż przekroju: dr, dy) + przekos szyby
+        const kt = tilt * su + jx, kp = tilt * sv + jy;
+        _n.set(nr * c - kt * s + kp * dr * c, ny + kp * dy, -nr * s - kt * c - kp * dr * s).normalize();
+        q.push(glass.v(r * c, y, -r * s, _n.x, _n.y, _n.z));
+      }
+      glass.quad(q[0], q[1], q[2], q[3]);
+    }
+  }
+  // ślemiona (stal) na co drugim załamaniu przekroju — szyby w siatce, nie pasy na całą długość
+  for (const j of [2, 4]) {
+    const [pr, py] = prof[j], qq = 0.00007;
+    sweep(st, [[pr - qq, py - qq], [pr + qq, py - qq], [pr + qq, py + qq], [pr - qq, py + qq]], R0, g0, g1, 14);
+  }
+  // szprosy (łuki stali co ~0,0011 R) i czoła galerii
   const mul = [[W - 0.0002, yc - rg - 0.00012], ...arc(rg + 0.00012).slice(1, -1), [W - 0.0002, yc + rg + 0.00012]];
   for (let k = 0; k <= nm; k++) {
     const am = g0 + (g1 - g0) * (k / nm), da = (k === 0 || k === nm ? 0.00035 : 0.00012) / R0;
@@ -624,7 +742,7 @@ function buildOuterDomes(M, R0, W, H, ac, span, seed, side) {
   hull.add(new THREE.BoxGeometry(0.0032, 0.0034, 0.0042), radial(a, R0 + 0.0008, -H - 0.0022, 0));
   M.part(PART.WINDOW, seed, 0.7).add(new THREE.PlaneGeometry(0.0034, 0.0012), radial(a, R0 + 0.0024 + EPS, -H - 0.0025, 0)
     .multiply(new THREE.Matrix4().makeRotationY(Math.PI / 2)));
-  lamp(M.part(PART.BEACON, seed, 0.45, 0), polar(R0 + 0.0008, a, -H - 0.0042), 0.00032);
+  lamp(M, M.part(PART.BEACON, seed, 0.45, 0), polar(R0 + 0.0008, a, -H - 0.0039), v3(0, -1, 0), 0.00024);
 }
 
 /** Wyposażenie modułu mieszkalnego (ziarno): skrzynie, nadbudówka, maszt z anteną albo gondola pod stępką. */
@@ -654,12 +772,12 @@ function buildHabKit(M, R0, W, H, S, ac, a0, a1, span, cs, seed, rng) {
     bar(M.part(PART.STRUCT, seed), P, Q, 0.00028, 0.00028, X_AX);
     dishAntenna(M.part(PART.STRUCT, 0.81), 0.0009, 0.00035,
       radial(a, R0 + S.dw * 0.7 + 0.00035, yd + 0.0018, 0).multiply(new THREE.Matrix4().makeRotationZ(-Math.PI * 0.36)));
-    lamp(M.part(PART.BEACON, rng.next(), 0.3, 1), Q, 0.0003);
+    lamp(M, M.part(PART.BEACON, rng.next(), 0.3, 1), Q, Y_UP, 0.00022);
   } else if (kit === 2) {
     // gondola pod stępką
     const a = ac + (rng.next() - 0.5) * span * 0.3;
     hull.add(new THREE.BoxGeometry(0.0028, 0.0026, span * R0 * 0.3), radial(a, R0 + 0.0006, -H - S.kh - 0.0011, 0));
-    lamp(M.part(PART.BEACON, rng.next(), 0.4, 0), polar(R0 + 0.0006, a, -H - S.kh - 0.0026), 0.0003);
+    lamp(M, M.part(PART.BEACON, rng.next(), 0.4, 0), polar(R0 + 0.0006, a, -H - S.kh - 0.0024), v3(0, -1, 0), 0.00022);
   }
 }
 
@@ -706,9 +824,10 @@ function buildGate(M, L, gate, conn) {
   }
   // światła na obwodzie (białe, wolne)
   const bc = M.part(PART.BEACON, 0.71, 0.4, 1);
+  const gateN = new THREE.Vector3(0, 1, 0).transformDirection(m);
   for (let k = 0; k < 4; k++) {
     const a = (k / 4) * TAU;
-    lamp(bc, new THREE.Vector3(Math.cos(a) * (ro + 0.0004), d + 0.0005, -Math.sin(a) * (ro + 0.0004)).applyMatrix4(m), 0.00036);
+    lamp(M, bc, new THREE.Vector3(Math.cos(a) * (ro - 0.0009), d, -Math.sin(a) * (ro - 0.0009)).applyMatrix4(m), gateN, 0.00026);
   }
   // łącznik z bramy do następnego modułu (poprzedni moduł dochodzi swoim)
   const pitch = TAU / L.hubModules;
@@ -892,7 +1011,7 @@ function buildDish(M, F, L, spokeAz) {
     [aB[0] - 0.0009, aB[1] + 0.0005]], sides, rot, true);
   for (let k = 0; k < 8; k++) {
     const a = ((k + 0.5) / 8) * TAU;
-    lamp(M.part(PART.BEACON, 0.25 + (k % 2) * 0.1, k % 2 ? 0.5 : 0.9, k % 2 ? 0 : 1), polar(aB[0] + 0.0009, a, aB[1] - 0.0002), 0.00042);
+    lamp(M, M.part(PART.BEACON, 0.25 + (k % 2) * 0.1, k % 2 ? 0.5 : 0.9, k % 2 ? 0 : 1), polar(aB[0] + 0.0005, a, aB[1]), outDir(a, -0.35), 0.0003);
   }
   // zastrzały grzbiet → kołnierz rdzenia i przewody energii czasza → rdzeń
   for (const a of spokeAz) {
@@ -921,24 +1040,24 @@ function cylinderPath(P, Q, r) {
 }
 
 // ── Szprychy: kratownice magazyn → węzeł modułu, przewody energii w środku ───────────────────────────────────────
-/** Kratownica wzdłuż +X od x0 do x1 (przekrój kwadratowy 2s, przęsła Warrena). */
+/** Kratownica wzdłuż +X od x0 do x1 (przekrój kwadratowy 2s, przęsła Warrena); pręty bez wieczek (końce w węzłach). */
 function truss(B, x0, x1, s) {
   const bays = Math.max(2, Math.round((x1 - x0) / 0.0026));
   const cw = 0.00042, fw = 0.0003;
-  for (const [y, z] of [[s, s], [s, -s], [-s, s], [-s, -s]]) bar(B, v3(x0, y, z), v3(x1, y, z), cw, cw);
+  for (const [y, z] of [[s, s], [s, -s], [-s, s], [-s, -s]]) bar(B, v3(x0, y, z), v3(x1, y, z), cw, cw, Y_UP, false);
   for (let k = 0; k <= bays; k++) {
     const x = x0 + (x1 - x0) * (k / bays);
-    bar(B, v3(x, s, -s), v3(x, s, s), fw, fw);
-    bar(B, v3(x, -s, -s), v3(x, -s, s), fw, fw);
-    bar(B, v3(x, -s, s), v3(x, s, s), fw, fw, X_AX);
-    bar(B, v3(x, -s, -s), v3(x, s, -s), fw, fw, X_AX);
+    bar(B, v3(x, s, -s), v3(x, s, s), fw, fw, Y_UP, false);
+    bar(B, v3(x, -s, -s), v3(x, -s, s), fw, fw, Y_UP, false);
+    bar(B, v3(x, -s, s), v3(x, s, s), fw, fw, X_AX, false);
+    bar(B, v3(x, -s, -s), v3(x, s, -s), fw, fw, X_AX, false);
     if (k === bays) break;
     const xb = x0 + (x1 - x0) * ((k + 1) / bays);
     const f = k % 2 ? 1 : -1;
-    bar(B, v3(x, s, -s * f), v3(xb, s, s * f), fw, fw);
-    bar(B, v3(x, -s, s * f), v3(xb, -s, -s * f), fw, fw);
-    bar(B, v3(x, -s * f, s), v3(xb, s * f, s), fw, fw, X_AX);
-    bar(B, v3(x, s * f, -s), v3(xb, -s * f, -s), fw, fw, X_AX);
+    bar(B, v3(x, s, -s * f), v3(xb, s, s * f), fw, fw, Y_UP, false);
+    bar(B, v3(x, -s, s * f), v3(xb, -s, -s * f), fw, fw, Y_UP, false);
+    bar(B, v3(x, -s * f, s), v3(xb, s * f, s), fw, fw, X_AX, false);
+    bar(B, v3(x, s * f, -s), v3(xb, -s * f, -s), fw, fw, X_AX, false);
   }
 }
 
@@ -1013,29 +1132,36 @@ function buildSpire(M, L, a) {
   st.transformFrom(s0s, m);
   coil.transformFrom(s0c, m);
   const P = new THREE.Vector3(0, 0, 0).applyMatrix4(m);
-  lamp(M.part(PART.BEACON, 0.07 + (a > 1 ? 0.3 : 0), 0.7, 1), v3(P.x, yS + 0.0004, P.z), 0.00045);
-  lamp(M.part(PART.BEACON, 0.37 + (a > 1 ? 0.2 : 0), 0.45, 0), v3(P.x + 0.0007 * Math.cos(a), y0 + 0.0115, P.z - 0.0007 * Math.sin(a)), 0.00032);
+  lamp(M, M.part(PART.BEACON, 0.07 + (a > 1 ? 0.3 : 0), 0.7, 1), v3(P.x, yS, P.z), Y_UP, 0.0003);
+  lamp(M, M.part(PART.BEACON, 0.37 + (a > 1 ? 0.2 : 0), 0.45, 0), v3(P.x + 0.0007 * Math.cos(a), y0 + 0.0115, P.z - 0.0007 * Math.sin(a)),
+    outDir(a), 0.00022);
 }
 
-// ── ŁOPATY RADIATORÓW: ciemna blacha FALISTA (krawędzią do osi gryzu), rury cieplne w dolinach fal — żar tylko w rurach ──
-// Fale biegną od nasady do końca łopaty i zbiegają się ze zwężeniem (wachlarz) — światło łapią grzbiety fal, nie płaska
-// tafla (płaska płyta z rurami czytała się jak panel słoneczny). Rury żarzą się u nasady i gasną ku końcowi.
+// ── ŁOPATY RADIATORÓW: ciemna, matowa blacha (krawędzią do osi gryzu) o PŁYTKIEJ fali, grube rury cieplne ─────────────
+// Blacha to płyty żaru (HOT) o niskim cieple: najciemniejszy i najbardziej matowy metal — grzbiety nie łapią szarego
+// połysku (głęboka fala z jasnymi grzbietami czytała się jak żaluzje); u nasady szwy płyt ledwie się żarzą (nocą łopata
+// nie znika). Rysunek łopaty dają RURY CIEPLNE (sześć grubych po obu stronach, żar od nasady gasnący ku końcowi), rama
+// z żarem, kolektor i usztywnienia. Nocą obrys: cienka ciepła listwa na krawędziach i światła pozycyjne w rogach końca.
 const Z_AX = new THREE.Vector3(0, 0, 1);
 function buildRadiators(M, L, lay) {
   const R0 = L.hubRing;
   const root = R0 + L.hubTubeW * 1.22 + 0.0004;
   const s0 = root + 0.0012, s4 = root + L.hubRadLen;
-  const x0 = s0 + 0.0016;                       // początek fal (za kolektorem)
+  const x0 = s0 + 0.0016;                       // początek blachy (za kolektorem)
   const h0 = L.hubRadH, h1 = L.hubRadH * 0.55;  // pół-wysokość u nasady i na końcu (zwężenie — wrzeciono w kadrze gry)
   const h = (x) => h0 + (h1 - h0) * (x - s0) / (s4 - s0);
-  const tp = 0.00016, dz = 0.0003, nL = 13;     // grubość blachy, amplituda i liczba linii fal
-  // żar: od nasady (z ≈ 0,58 — pomarańcz na progu bloomu) gaśnie ku końcowi łopaty (rampa c³ materiału)
+  const tp = 0.00016, dz = 0.00007, nL = 17;    // grubość blachy, amplituda (płytka — ~4°) i liczba linii fal
+  // żar: od nasady gaśnie ku końcowi łopaty (rampa c³ materiału); rury z ≈ 0,6 u nasady (pomarańcz na progu bloomu)
   const heatOf = (zo) => (i, x, y, z) => {
     const t = Math.min(1, Math.max(0, (Math.sqrt(x * x + z * z) - s0) / (s4 - s0)));
     return zo * (1 - 0.68 * t);
   };
-  const hotPipe = M.part(PART.HOT, 0.31, heatOf(0.58));
+  // rury: własne uv (z < 0 — kontrakt, |z| — żar) z SZWEM płyt żaru wzdłuż osi każdej ściany rury (`seamBars`) —
+  // ciemna rura z gorącą linią na całej długości (w rzucie pudełkowym żar dawał tylko kropki na przecięciach szwów)
+  const hotPipe = M.part(PART.HOT, 0.31, (i, x, y, z) => -heatOf(0.46)(i, x, y, z));
   const hotEdge = M.part(PART.HOT, 0.37, heatOf(0.4));
+  const sheet = M.part(PART.HOT, 0.53, heatOf(0.2));
+  const edgeL = M.part(PART.STRIP, 0.29, -0.17, 0);
   // linie fal: k parzyste — grzbiet od przodu (z = +dz), nieparzyste — dolina
   const lineY = (k, x) => ((k / (nL - 1)) * 2 - 1) * (h(x) - 0.0005);
   const lineZ = (k) => (k % 2 ? -dz : dz);
@@ -1045,14 +1171,13 @@ function buildRadiators(M, L, lay) {
     const node = lay.nodeAz.has(a);
     const W = L.hubTubeW * (node ? 1.22 : 1);
     const S = M.part(PART.STRUCT, seed);
-    const sheet = M.part(PART.STRUCT, seed * 0.5 + 0.5);
     const hull = M.part(PART.HULL, seed);
-    const sp = hotPipe.count, se = hotEdge.count;
+    const sp = hotPipe.count, se = hotEdge.count, ss = sheet.count, sl = edgeL.count;
     // nasada na ścianie modułu i dźwigar łopaty wzdłuż osi
     hull.add(new THREE.BoxGeometry(s0 + 0.0004 - (R0 + W - 0.0006), 0.0098, 0.0028),
       new THREE.Matrix4().makeTranslation((s0 + 0.0004 + R0 + W - 0.0006) / 2, 0, 0));
     bar(S, v3(s0, -h0 - 0.0005, 0), v3(s0, h0 + 0.0005, 0), 0.0012, 0.0014, X_AX);
-    // blacha falista: pasy między liniami fal, obie strony (normalne płaskie, w stronę strony)
+    // blacha: pasy między liniami fal, obie strony (normalne płaskie, w stronę strony)
     const xa = x0, xb = s4;
     for (const side of [1, -1]) {
       const zo = side * tp / 2;
@@ -1061,34 +1186,50 @@ function buildRadiators(M, L, lay) {
         const B1 = v3(xb, lineY(j + 1, xb), lineZ(j + 1) + zo), B0 = v3(xb, lineY(j, xb), lineZ(j) + zo);
         _n.subVectors(B1, A0).cross(_p.subVectors(B0, A1)).normalize();
         if (_n.z * side < 0) _n.negate();
-        const q = [A0, A1, B1, B0].map((P, t) => sheet.v(P.x, P.y, P.z, _n.x, _n.y, _n.z, P.x, t < 2 ? P.y : P.y));
+        const q = [A0, A1, B1, B0].map((P) => sheet.v(P.x, P.y, P.z, _n.x, _n.y, _n.z, P.x, P.y));
         sheet.quad(q[0], q[1], q[2], q[3]);
       }
     }
-    // rury cieplne w dolinach fal (od przodu — linie nieparzyste, od tyłu — parzyste bez krawędzi)
-    const rp = 0.00017;
-    for (let j = 1; j < nL - 1; j++) {
-      const side = j % 2 ? 1 : -1;
-      const z = lineZ(j) + side * (tp / 2 + rp);
-      const xe = s4 - 0.0012;
-      bar(hotPipe, v3(x0 - 0.0006, lineY(j, x0), z), v3(xe, lineY(j, xe), z), rp * 2, rp * 2, Z_AX);
+    // RURY CIEPLNE: sześć grubych po obu stronach (nad grzbietami fal), zbiegają się ze zwężeniem łopaty
+    const rp = 0.00021, xe = s4 - 0.0012;
+    for (let j = 0; j < 6; j++) {
+      const f = (2 * j + 1) / 6 - 1;
+      for (const side of [1, -1]) {
+        const z = side * (dz + tp / 2 + rp);
+        bar(hotPipe, v3(x0 - 0.0006, f * (h(x0) - 0.0005), z), v3(xe, f * (h(xe) - 0.0005), z), rp * 2, rp * 2, Z_AX);
+      }
     }
+    seamBars(hotPipe, sp, rp * 2 * 1.3);
     // kolektor u nasady (pion wzdłuż osi, obie strony) i krawędzie łopaty (rama z żarem gasnącym ku końcowi)
     for (const sg of [-1, 1]) {
-      bar(hotEdge, v3(s0 + 0.0009, -h0 + 0.0003, sg * (dz + 0.0003)), v3(s0 + 0.0009, h0 - 0.0003, sg * (dz + 0.0003)), 0.0006, 0.0005, X_AX);
+      bar(hotEdge, v3(s0 + 0.0009, -h0 + 0.0003, sg * (dz + 0.0004)), v3(s0 + 0.0009, h0 - 0.0003, sg * (dz + 0.0004)), 0.0006, 0.0005, X_AX);
     }
-    for (const sg of [-1, 1]) bar(hotEdge, v3(s0, sg * (h0 - 0.0001), 0), v3(s4, sg * (h1 - 0.0001), 0), 0.0005, dz * 2 + 0.0005, Z_AX);
-    // usztywnienia w poprzek fal (dwa, obie strony) i belka końca
+    for (const sg of [-1, 1]) bar(hotEdge, v3(s0, sg * (h0 - 0.0001), 0), v3(s4, sg * (h1 - 0.0001), 0), 0.0005, dz * 2 + 0.0006, Z_AX);
+    // usztywnienia w poprzek blachy (dwa, obie strony) i belka końca
     for (const f of [0.36, 0.7]) {
       const x = s0 + (s4 - s0) * f, hx = h(x) - 0.0003;
-      for (const sg of [-1, 1]) bar(S, v3(x, -hx, sg * (dz + tp / 2 + 0.00016)), v3(x, hx, sg * (dz + tp / 2 + 0.00016)), 0.0005, 0.00026, Z_AX);
+      for (const sg of [-1, 1]) bar(S, v3(x, -hx, sg * (dz + tp / 2 + rp * 2 + 0.00013)), v3(x, hx, sg * (dz + tp / 2 + rp * 2 + 0.00013)), 0.0005, 0.00026, Z_AX);
     }
-    bar(S, v3(s4 + 0.0003, -h1 - 0.0002, 0), v3(s4 + 0.0003, h1 + 0.0002, 0), 0.0008, dz * 2 + 0.0006, Z_AX);
-    for (const B of [S, sheet, hull]) B.transformFrom(0, m);
+    bar(S, v3(s4 + 0.0003, -h1 - 0.0002, 0), v3(s4 + 0.0003, h1 + 0.0002, 0), 0.0008, dz * 2 + 0.0007, Z_AX);
+    // OBRYS NOCĄ: ciepła listwa w segmentach na krawędziach (górna, dolna — nad ramą żaru; czoło końca), słaba — pod
+    // progiem bloomu i pod jasnością korony (chłodny pełny obrys czytał się jak ramka zaznaczenia)
+    const lw = 0.00016, lt = 0.00016, xt = s4 + 0.0007 + lw / 2;
+    for (const sg of [-1, 1]) {
+      bar(edgeL, v3(s0 + 0.002, sg * (h(s0 + 0.002) + 0.00015 + lw / 2), 0), v3(xt, sg * (h(xt) + 0.00015 + lw / 2), 0), lw, lt, Z_AX);
+    }
+    bar(edgeL, v3(xt, -h1 - 0.0002 - lw, 0), v3(xt, h1 + 0.0002 + lw, 0), lw, lt, Z_AX);
+    pinUv(edgeL, sl, STRIP_V);
+    for (const B of [S, hull]) B.transformFrom(0, m);
     hotPipe.transformFrom(sp, m);
     hotEdge.transformFrom(se, m);
-    // światło na końcu łopaty (czerwone / białe na przemian)
-    lamp(M.part(PART.BEACON, (k % 2) * 0.5, 0.5, k % 2), polar(s4 + 0.0008, a, h1 + 0.0002), 0.00042);
+    sheet.transformFrom(ss, m);
+    edgeL.transformFrom(sl, m);
+    // światła pozycyjne w rogach końca łopaty (czerwone / białe — na przemian w rogach i między łopatami)
+    for (const sg of [1, -1]) {
+      const white = (k + (sg > 0 ? 0 : 1)) % 2;
+      const S0 = v3(s4 + 0.0007, sg * (h1 + 0.0002), 0).applyMatrix4(m);
+      lamp(M, M.part(PART.BEACON, ((k * 2 + (sg > 0 ? 0 : 1)) % 4) * 0.25, 0.5, white), S0, v3(1, sg, 0).normalize().transformDirection(m), 0.0003);
+    }
   });
 }
 

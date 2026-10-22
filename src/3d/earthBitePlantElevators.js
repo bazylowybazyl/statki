@@ -1,28 +1,33 @@
 // Elektrownia „KOREK” — WINDY KOSMICZNE DO RINGU PLANETARNEGO (decyzja użytkownika 2026-10-22: „winda ma być do ringu
 // planetarnego”). Ziemia obraca się wokół osi ringu (earthSpin.js), ring gry jest równikowy i stoi względem gruntu, więc
 // liny są STAŁE w układzie Ziemi. Geometria CPU w ramie elektrowni (earthBitePlantFrame.js), części z rodzajem
-// powierzchni (PART): bryły — materiał metalu, liny i pion energii — materiał przepływu; kabiny jadą na GPU (dodatek
-// `extras`, earthBitePlantClimbers.tsl.js).
-//   • KOTWICE-STACJE na placach korony obudowy (azymuty L.elevators, oś wieży w rimAngle + anchorPad + elevTowerOff):
-//     dwustopniowy podest (sześciokąt) na skraju placu, hala przyłącza nakrywająca koniec wiązki rur obudowy
-//     (liningTerminalPoint — rury wchodzą w czoło hali), budynki obsługi z oknami, lądowisko ze światłami; WIEŻA
-//     KRATOWNICOWA o wygiętych nogach (4 nogi, rygle, krzyżulce, szprychy do pionu, pokłady serwisowe z gondolami okien,
-//     czerwone światła przeszkodowe), w osi PION ENERGII (przewód od hali przez bramę u stóp do doku); na szczycie DOK:
-//     pokład z pierścieniem cewki, bęben z masztem stroboskopu i ośmiokątne RAMIONA lin (wrota kabin, kołnierz, cewka).
-//   • LINY: szczyt wieży → najbliższy punkt WEWNĘTRZNEJ KRAWĘDZI RINGU (ringPointObject w układzie obiektu kuli). Linia
-//     wpadająca w promień, odbiornik albo promień przekaźnikowy (kotwice w południku gryzu — 90° i 270°) rozchodzi się
-//     w WIDEŁKI: dwie wiązki do punktów ringu obróconych o ±Δ wokół osi obrotu (najmniejsze Δ z zapasem
-//     elevClearHub / elevClearRelay; z kamery gry widełki północnej kotwicy obramowują promień); wózki na szynie
-//     rozsunięte co najmniej o elevRailSep. Wiązka: dwie liny pasów (w = ±1; kabiny jadą PO ZEWNĘTRZNEJ stronie liny),
-//     między nimi przewód energii (PIPE — impulsy ku ringowi, z daleka linia barwy energii w wachlarzu), ramki rozporowe
-//     co elevSpread ze światłami prowadzącymi (błysk biegnie od kotwicy do ringu).
+// powierzchni (PART): bryły — materiał metalu, liny i przewody — materiał przepływu; kabiny i linie energii wiązek jadą
+// na GPU (dodatki `extras`, earthBitePlantClimbers.tsl.js).
+//   • KOTWICE-STACJE na placach korony obudowy (azymuty L.elevators = 0, 60, …, 300 — bez południka gryzu; oś wieży
+//     w rimAngle + anchorPad + elevTowerOff): dwustopniowy podest (sześciokąt) na skraju placu, hala przyłącza nakrywająca
+//     koniec wiązki rur obudowy (liningTerminalPoint — rury wchodzą w czoło hali), budynki obsługi z oknami, lądowisko.
+//     WIEŻA = MEGASTRUKTURA (~200 km): PANCERNY RDZEŃ (ośmiobok zwężany ku górze, własne uv — panele i pasy okien
+//     kondygnacji), cztery PŁETWY-PRZYPORY u stopy (po przekątnych) przechodzące w pilastry do głowicy, dwa kołnierze
+//     ze światłami przeszkodowymi; PION ENERGII — przewód na licu rdzenia od strony hali (z daleka linia energii, dodatek
+//     GPU); GŁOWICA DOKU: kielich rozszerzający się z rdzenia, pokład z jasnym pierścieniem cewki i oknami sterowni,
+//     bęben z masztem stroboskopu i ośmiokątne RAMIONA lin (wrota kabin, kołnierz, cewka) — lina wychodzi z czoła ramienia.
+//   • LINY: czoło ramienia głowicy → najbliższy punkt WEWNĘTRZNEJ KRAWĘDZI RINGU (ringPointObject w układzie obiektu
+//     kuli); przy azymutach 0, 60, …, 300 wszystkie liny omijają promień, odbiornik i przekaźnik (gdyby nie — widełki ±Δ
+//     wokół osi obrotu, elevClearHub / elevClearRelay). Wiązka: dwie liny pasów (w = ±1; kabiny jadą PO ZEWNĘTRZNEJ
+//     stronie liny), między nimi przewód energii (PIPE — impulsy ku ringowi; z daleka LINIA ENERGII z pakietami rysowana
+//     na GPU z szerokością ≥ 1,6 px — w kadrze gry liny są drugie w hierarchii jasności po promieniu), ramki rozporowe
+//     co elevSpread ze światłami prowadzącymi.
 //   • SZYNA RINGU — płaszcz obracający się z Ziemią: pełny okrąg w płaszczyźnie równika osi obrotu, tuż wewnątrz
 //     krawędzi ringu (oś szyny w ringInnerR − elevRailInset), przekrój skrzynkowy z fazami, na wierzchu krótkie ciepłe
-//     lampy (odróżniają się od nieruchomych chłodnych kresek ringu), od planety przerywane chłodne listwy, obejmy co 1/256
-//     obwodu, rzadkie światła — w grze szyna z lampami sunie wzdłuż nieruchomego ringu z dobą Ziemi.
+//     lampy (przy wózkach gęściej i jaśniej — widać, gdzie lina dochodzi do ringu), od planety przerywane chłodne listwy,
+//     obejmy co 1/256 obwodu, rzadkie światła.
 //   • WÓZKI na szynie w punktach zaczepu lin (jak wagon na torze): wózki jezdne obejmujące szynę, ośmiokątny kadłub
-//     z pasem okien i jasnym obrysem grzbietu, dok kabin skierowany ku kotwicy (wrota, kołnierz, pierścień cewki), światła.
-// Wszystko ELEV leży w walcu < ringInnerR − 0,002 od osi obrotu (z kamery gry nic nie wchodzi na ring).
+//     z pasem okien i JASNYM OBRYSEM na grzbiecie (z kamery gry ramka wagonu), długi dok kabin ku kotwicy, światła.
+//   • TERMINAL PRZEKAŹNIKA: na szynie w punkcie, w którym kończy się promień przekaźnikowy (ringPointObject(środek
+//     odbiornika, oś obrotu, ringInnerR)) — większy wózek z pylonem i CZASZĄ odbiorczą zwróconą ku odbiornikowi (środek
+//     czaszy na linii promienia, elevTermDish przed punktem ringu; pierścienie cewki, róg odbiorczy w ognisku), odbieraki
+//     prądu do ściany ringu.
+// Wszystko ELEV leży w walcu < ringInnerR od osi obrotu (z kamery gry nic nie wchodzi na ring).
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
@@ -30,26 +35,29 @@ import {
   objectToFrameMatrix, ringPointObject, segmentClearsSphere
 } from './earthBitePlantFrame.js';
 import { earthSpinAxis } from './earthSpin.js';
-import { createClimbers, CLIMBER_MAX } from './earthBitePlantClimbers.tsl.js';
+import { createClimbers, createTetherGlow, CLIMBER_MAX } from './earthBitePlantClimbers.tsl.js';
 
 /** Wymiary wind (R Ziemi). Azymuty (`elevators`), odsunięcie kotwic (`anchorPad`), ring (`ringInnerR`) — w PLANT_LAYOUT. */
 export const ELEV_DEFAULTS = Object.freeze({
   elevTowerOff: 0.0045,   // oś wieży za rimAngle + anchorPad (plac obudowy kończy się na + 0,0115, hala przyłącza przed wieżą)
   elevTowerH: 0.034,      // wysokość pokładu doku nad gruntem (wyżej, jeśli lina nie omija kuli z zapasem 1,004)
-  elevTowerBase: 0.0041,  // pół-bok podstawy wieży (osie nóg)
-  elevTowerTop: 0.0016,   // pół-bok szczytu wieży
-  elevTowerLevels: 10,    // poziomy rygli (panele krzyżulców między nimi)
-  elevTowerFlare: 1.6,    // wygięcie nóg (pół-bok ∝ (1 − wysokość)^flare — rozłożona stopa jak w wieży Eiffla)
+  elevTowerBase: 0.0042,  // apotema rdzenia wieży u stopy
+  elevTowerTop: 0.0024,   // apotema rdzenia pod głowicą
+  elevTowerFin: 0.0072,   // zasięg płetw-przypór u stopy (od osi, po przekątnej)
+  elevTowerFinH: 0.016,   // wysokość płetw nad gruntem (wyżej — pilastry do głowicy)
   elevLaneW: 0.0020,      // odsunięcie lin pasów od osi wiązki
-  elevTetherR: 0.0005,    // promień liny pasa (środkowa — 0,6 ×)
+  elevTetherR: 0.0005,    // promień liny pasa (środkowa — 0,7 ×)
   elevSpread: 0.025,      // odstęp ramek rozporowych wzdłuż liny
   elevRailInset: 0.0045,  // szyna ringu: oś w ringInnerR − inset (zewnętrzna ściana szyny ~0,003 R przed ścianą ringu)
   elevRailSeg: 1024,      // próbki obwodu szyny (≥ 1024)
   elevRailSep: 2.2,       // najmniejszy odstęp wózków na szynie [°]
+  elevRailNear: 12,       // lampy szyny gęściej i jaśniej w ±tylu próbkach od wózka
   elevClearHub: 0.015,    // zapas liny od odbiornika (ponad pierścień i radiatory) [R]
   elevClearRelay: 0.05,   // zapas liny od promienia przekaźnikowego [R]
   elevCabins: 6,          // kabiny na wiązkę (razem ≤ CLIMBER_MAX)
-  elevCabinTrip: 40       // docelowy czas przejazdu [s] (prędkość z długości, w granicach 0,006–0,015 R/s)
+  elevCabinTrip: 40,      // docelowy czas przejazdu [s] (prędkość z długości, w granicach 0,006–0,015 R/s)
+  elevTermDish: 0.019,    // terminal przekaźnika: środek czaszy na linii promienia, tyle przed punktem ringu [R] (nad osią szyny)
+  elevTermDishR: 0.0038   // promień czaszy terminala
 });
 
 /** Doki i kabiny (R Ziemi) — wspólne dla brył CPU i kabin na GPU (earthBitePlantClimbers.tsl.js). */
@@ -59,12 +67,16 @@ export const ELEV_DOCK = Object.freeze({
   headH: 0.0022,     // pół-grubość ramion doków
   headLift: 0.0023,  // oś ramion nad pokładem doku (środek bębna)
   drumR: 0.0040,     // bęben doku na pokładzie (ramiona wychodzą z niego)
-  houseLen: 0.0075,  // dok wózka: od czoła (koniec lin) do środka kadłuba wózka
+  houseLen: 0.0110,  // dok wózka: od czoła (koniec lin) do środka kadłuba wózka
   portIn: 0.005,     // środek kadłuba wózka od osi szyny ku planecie
   cabR: 0.0012,      // promień kabiny
   cabGap: 0.0002,    // luz kabiny od liny
   dockIn: 0.0028     // środek kabiny w doku: za czołem doku (kabina schowana)
 });
+
+/** Linia energii wiązki (dodatek GPU): promień przewodu środkowego, ramki ze światłami (koniec, odstęp). */
+const PIPE_R = 0.00035;
+const FRAME_END = 0.012;
 
 const TAU = Math.PI * 2;
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -103,9 +115,16 @@ function box(m, x0, x1, y0, y1, z0, z1) {
   return g.applyMatrix4(m);
 }
 
-/** Graniastosłup / stożek ścięty n-kątny wzdłuż Y bazy m (y0 → y1, promień R0 → R1), obrót wokół osi `rot`. */
-function prism(m, n, R0, y0, y1, { rot = 0, R1 = R0, open = false, cx = 0, cz = 0, hard = true } = {}) {
+/**
+ * Graniastosłup / stożek ścięty n-kątny wzdłuż Y bazy m (y0 → y1, promień R0 → R1), obrót wokół osi `rot`. `uv` = [obwód,
+ * wysokość] [R] — własne uv części (uv.x wokół, uv.y wzdłuż; kontrakt: aPart.z < 0).
+ */
+function prism(m, n, R0, y0, y1, { rot = 0, R1 = R0, open = false, cx = 0, cz = 0, hard = true, uv = null } = {}) {
   const g = new THREE.CylinderGeometry(R1, R0, y1 - y0, n, 1, open);
+  if (uv) {
+    const a = g.attributes.uv;
+    for (let i = 0; i < a.count; i++) a.setXY(i, a.getX(i) * uv[0], a.getY(i) * uv[1]);
+  }
   g.rotateY(rot);
   g.translate(cx, (y0 + y1) / 2, cz);
   g.applyMatrix4(m);
@@ -114,6 +133,42 @@ function prism(m, n, R0, y0, y1, { rot = 0, R1 = R0, open = false, cx = 0, cz = 
 
 /** Pręt (walec n-boczny) P → Q, r → r1. */
 const rod = (P, Q, r, n = 4, r1 = r) => cylinderBetween(P, Q, r, n, true, r1);
+
+/**
+ * Płyta: wypukły wielokąt `pts` [[x, y], …] (przeciwnie do wskazówek zegara) w płaszczyźnie xy bazy m, wyciągnięty
+ * wzdłuż z o ±h (płetwy, wsporniki). Normalne płaskie.
+ */
+function slab(m, pts, h) {
+  const p = [], idx = [];
+  const n = pts.length;
+  for (const z of [-h, h]) for (const [x, y] of pts) p.push(x, y, z);
+  for (let i = 1; i < n - 1; i++) {
+    idx.push(0, i + 1, i);              // przód (−z)
+    idx.push(n, n + i, n + i + 1);      // tył (+z)
+  }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    idx.push(i, j, n + j, i, n + j, n + i);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p), 3));
+  g.setIndex(idx);
+  g.applyMatrix4(m);
+  return flat(g);
+}
+
+/** Odwraca strony trójkątów (powierzchnia widoczna od środka — wnętrze czaszy). */
+function flipFaces(g) {
+  const ix = g.index;
+  for (let i = 0; i < ix.count; i += 3) {
+    const a = ix.getX(i + 1);
+    ix.setX(i + 1, ix.getX(i + 2));
+    ix.setX(i + 2, a);
+  }
+  const nr = g.attributes.normal;
+  for (let i = 0; i < nr.count; i++) nr.setXYZ(i, -nr.getX(i), -nr.getY(i), -nr.getZ(i));
+  return g;
+}
 
 /** Zbiornik części: geometrie jednego rodzaju i parametrów scalane w jedną część (mniej części do scalenia). */
 class Sink {
@@ -164,12 +219,32 @@ function patchSeeds(g, seedAt) {
   return g;
 }
 
-// ── Układ: kotwice, wiązki lin, wózki, szyna ───────────────────────────────────────────────────────────────────────
+// ── Układ: kotwice, wiązki lin, wózki, szyna, terminal przekaźnika ─────────────────────────────────────────────────
 
 /**
- * Układ wind (liczony raz na budowę): kotwice (rama: baza, szczyt, wysokość wieży), wiązki lin (obiekt kuli i rama: S —
- * czoło głowicy, E — czoło doku wózka, kierunek d, boki U / V, długość), wózki (punkt na osi szyny, kierunek promieniowy
- * i styczny) i szyna (środek, oś, baza płaszczyzny, promień) — w ramie elektrowni.
+ * Kształt wieży w bazie kotwicy (x — od brzegu na zewnątrz, y — pion, z — wzdłuż brzegu; początek: oś wieży na gruncie):
+ * stopa rdzenia y0, spód głowicy Hc, spód pokładu doku H0, apotema rdzenia a(y), PION ENERGII (łamana: hala → lico
+ * rdzenia od strony hali → w kielich głowicy).
+ */
+function towerShape(L, H) {
+  const off = L.anchorPad + L.elevTowerOff;
+  const y0 = 0.0058;                // wierzch podestu
+  const H0 = H - 0.0012;            // spód pokładu doku
+  const Hc = H0 - 0.0045;           // spód kielicha głowicy (koniec zwężanego rdzenia)
+  const aB = L.elevTowerBase, aT = L.elevTowerTop;
+  const a = (y) => aB + (aT - aB) * Math.min(1, Math.max(0, (y - y0) / (Hc - y0)));
+  const hx0 = 0.0082 - off, hx1 = 0.0128 - off;   // hala przyłącza (od brzegu: 0,0082–0,0128)
+  const feedY = 0.0075;
+  const so = 0.0007;                // odsunięcie pionu od lica rdzenia
+  const riser = [V3(hx1 - 0.0004, feedY, 0), V3(-(a(feedY) + so), feedY, 0), V3(-(aT + so), Hc + 0.0012, 0)];
+  return { off, y0, H0, Hc, aB, aT, a, hx0, hx1, feedY, so, riser };
+}
+
+/**
+ * Układ wind (liczony raz na budowę): kotwice (rama: baza, szczyt, wysokość wieży, pion energii), wiązki lin (obiekt kuli
+ * i rama: S — czoło głowicy, E — czoło doku wózka, kierunek d, boki U / V, długość), wózki (punkt na osi szyny, kierunek
+ * promieniowy i styczny), szyna (środek, oś, baza płaszczyzny, promień) i terminal przekaźnika (punkt ringu T, środek
+ * czaszy, kierunek ku odbiornikowi) — w ramie elektrowni.
  */
 export function elevatorLayout(L, b) {
   const D = ELEV_DOCK;
@@ -192,6 +267,7 @@ export function elevatorLayout(L, b) {
   e1.normalize();
   const e2 = V3().crossVectors(axO, e1);
   const ringAngle = (P) => Math.atan2(P.dot(e2), P.dot(e1));
+  const radialAt = (th) => e1.clone().multiplyScalar(Math.cos(th)).addScaledVector(e2, Math.sin(th));
   const rRail = L.ringInnerR - L.elevRailInset;
 
   const anchors = [];
@@ -209,7 +285,7 @@ export function elevatorLayout(L, b) {
     while (H < 0.09 && !segmentClearsSphere(topAt(H), ringPointObject(topAt(H), axO, rRail, V3()), 1.004)) H += 0.002;
     const topO = topAt(H);
     const q0 = ringPointObject(topO, axO, L.ringInnerR, V3());
-    // widełki: lina przez promień / odbiornik / przekaźnik → dwie wiązki obrócone o ±Δ (najmniejsze z zapasem)
+    // widełki (zapas na inne azymuty): lina przez promień / odbiornik / przekaźnik → dwie wiązki obrócone o ±Δ
     let deltas = [0];
     if (clearance(topO, q0) < 0) {
       for (let dd = 0.25; dd <= 30; dd += 0.25) {
@@ -218,13 +294,18 @@ export function elevatorLayout(L, b) {
         if (ok) { deltas = [-a, a]; break; }
       }
     }
-    const anchor = { i, az, phi, th, H, basis: new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(base), base, X, Y, Z, topO, bundles: [] };
+    const basis = new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(base);
+    const shape = towerShape(L, H);
+    const riserO = shape.riser.map((p) => toO(p.clone().applyMatrix4(basis)));
+    const anchor = { i, az, phi, th, H, basis, base, X, Y, Z, topO, shape, riserO, bundles: [] };
     anchors.push(anchor);
     for (const dl of deltas) targets.push({ anchor, theta: ringAngle(q0) + dl, split: deltas.length > 1 });
   });
-  // wózki rozsunięte na szynie: odstęp ≥ elevRailSep (relaksacja par sąsiednich po obwodzie)
+  // terminal przekaźnika: stały punkt szyny (koniec promienia przekaźnikowego)
+  const termTheta = ringAngle(relayO);
+  // wózki rozsunięte na szynie: odstęp ≥ elevRailSep (relaksacja par sąsiednich po obwodzie; terminal stoi)
   const sep = L.elevRailSep * DEG;
-  const order = targets.slice().sort((p, q) => p.theta - q.theta);
+  const order = [...targets, { fixed: true, theta: termTheta }].sort((p, q) => p.theta - q.theta);
   for (let it = 0; it < 64; it++) {
     let moved = false;
     for (let k = 0; k < order.length; k++) {
@@ -232,9 +313,10 @@ export function elevatorLayout(L, b) {
       let gap = B.theta - A.theta;
       if (k === order.length - 1) gap += TAU;
       if (order.length > 1 && gap < sep) {
-        const push = (sep - gap) * 0.5 + 1e-6;
-        A.theta -= push;
-        B.theta += push;
+        const push = sep - gap + 1e-6;
+        const wa = A.fixed ? 0 : B.fixed ? 1 : 0.5;
+        A.theta -= push * wa;
+        B.theta += push * (1 - wa);
         moved = true;
       }
     }
@@ -243,7 +325,7 @@ export function elevatorLayout(L, b) {
 
   const bundles = targets.map((t, k) => {
     const { anchor } = t;
-    const radO = e1.clone().multiplyScalar(Math.cos(t.theta)).addScaledVector(e2, Math.sin(t.theta));
+    const radO = radialAt(t.theta);
     const railO = radO.clone().multiplyScalar(rRail);
     const portO = railO.clone().addScaledVector(radO, -D.portIn);
     const d = V3().subVectors(portO, anchor.topO).normalize();
@@ -265,8 +347,19 @@ export function elevatorLayout(L, b) {
     anchor.bundles.push(bundle);
     return bundle;
   });
+  // terminal: czasza na linii promienia przekaźnikowego, elevTermDish przed punktem ringu, zwrócona ku odbiornikowi
+  const tRad = radialAt(termTheta);
+  const tTan = V3().crossVectors(axO, tRad);
+  const nO = V3().subVectors(hubO, relayO).normalize();
+  const dishO = relayO.clone().addScaledVector(nO, L.elevTermDish);
+  const terminal = {
+    theta: termTheta, seed: 0.577,
+    obj: { T: relayO.clone(), H: hubO.clone(), n: nO, dish: dishO, rail: tRad.clone().multiplyScalar(rRail), rad: tRad, tan: tTan },
+    T: toF(relayO), H: toF(hubO), n: dirF(nO), dish: toF(dishO), rail: toF(tRad.clone().multiplyScalar(rRail)),
+    rad: dirF(tRad), tan: dirF(tTan)
+  };
   const rail = { center: toF(V3()), axis: dirF(axO), e1: dirF(e1), e2: dirF(e2), r: rRail, axO, e1O: e1, e2O: e2 };
-  return { anchors, bundles, rail };
+  return { anchors, bundles, rail, terminal };
 }
 
 // ── Kotwica-stacja i wieża ─────────────────────────────────────────────────────────────────────────────────────────
@@ -280,21 +373,17 @@ function buildAnchor(L, A, sink, flow) {
   const m = A.basis;
   const seed = seedOf(A.i, 1);
   const P = (x, y, z) => V3(x, y, z).applyMatrix4(m);
-  const off = L.anchorPad + L.elevTowerOff;     // odległość osi wieży od brzegu
-  const sx = (s) => s - off;                     // współrzędna x z odległości od brzegu
+  const { y0, H0, Hc, aB, aT, a, hx0, hx1, so, riser } = A.shape;
   const H = A.H;
-  const bh = L.elevTowerBase, th = L.elevTowerTop;
-  const y0 = 0.0058;                              // wierzch podestu (stopy nóg)
-  const H0 = H - 0.0012;                          // spód pokładu doku
-  // pół-bok wieży: nogi wygięte (rozłożona stopa, smukły trzon)
-  const half = (y) => th + (bh - th) * Math.pow(Math.max(0, 1 - (y - y0) / (H0 - y0)), L.elevTowerFlare);
+  const kc = 1 / Math.cos(Math.PI / 8);   // apotema → promień opisany ośmiokąta
+  const perim = (ap) => 16 * ap * Math.tan(Math.PI / 8);
+  const rot8 = Math.PI / 8;
 
   // PODEST: dwa sześciokąty (dolny wchodzi w stok placu), listwa ciepła na krawędzi górnego
-  sink.add(prism(m, 6, 0.0086, -0.003, 0.0042, { rot: Math.PI / 2 }), PART.HULL, seed);
-  sink.add(prism(m, 6, 0.0070, 0.0042, y0, { rot: Math.PI / 2 }), PART.HULL, seedOf(A.i, 2));
-  sink.add(prism(m, 6, 0.00706, y0 - 0.0005, y0 - 0.0001, { rot: Math.PI / 2, open: true }), PART.STRIP, seed, 0.3, 0);
+  sink.add(prism(m, 6, 0.0092, -0.003, 0.0042, { rot: Math.PI / 2 }), PART.HULL, seed);
+  sink.add(prism(m, 6, 0.0080, 0.0042, y0, { rot: Math.PI / 2 }), PART.HULL, seedOf(A.i, 2));
+  sink.add(prism(m, 6, 0.00806, y0 - 0.0005, y0 - 0.0001, { rot: Math.PI / 2, open: true }), PART.STRIP, seed, 0.3, 0);
   // HALA PRZYŁĄCZA nad końcem wiązki rur obudowy (skrzynia przyłącza s 0,0091–0,0119 w środku hali; rury wchodzą w czoło)
-  const hx0 = sx(0.0082), hx1 = sx(0.0128);
   sink.add(box(m, hx0, hx1, 0.0026, 0.0106, -0.0088, 0.0088), PART.HULL, seed);
   sink.add(box(m, hx0 - 0.0001, hx1 + 0.0001, 0.0064, 0.0086, -0.0089, 0.0089), PART.WINDOW, seed, 0.55);
   sink.add(box(m, hx0 - 0.0002, hx0 + 0.0003, 0.0106, 0.0109, -0.0080, 0.0080), PART.STRIP, seed, 0.4, 1);
@@ -304,12 +393,12 @@ function buildAnchor(L, A, sink, flow) {
     sink.add(prism(m, 12, 0.0012, 0.0106, 0.0110, { cx, cz: z, hard: false }), PART.STRUCT, seed);
     sink.add(prism(m, 12, 0.0010, 0.0110, 0.0126, { cx, cz: z, hard: false }), PART.COIL, seed, (A.i / 6 + (z > 0 ? 0.5 : 0)) % 1, 0.6);
   }
-  // BUDYNKI OBSŁUGI po bokach wieży (poza obrysem nóg)
+  // BUDYNKI OBSŁUGI po bokach wieży (między płetwami)
   for (const sg of [-1, 1]) {
-    const z0 = sg * 0.0052, z1 = sg * 0.0072;
+    const z0 = sg * 0.0050, z1 = sg * 0.0070;
     sink.add(box(m, -0.0021, 0.0011, 0.0040, 0.0084, Math.min(z0, z1), Math.max(z0, z1)), PART.HULL, seed);
     sink.add(box(m, -0.0022, 0.0012, 0.0052, 0.0076, Math.min(z0, z1) - 0.0001, Math.max(z0, z1) + 0.0001), PART.WINDOW, seed, 0.6);
-    sink.add(box(m, -0.0004, 0.0002, 0.0084, 0.0089, sg * 0.0062 - 0.0003, sg * 0.0062 + 0.0003), PART.BEACON, seedOf(A.i * 2 + sg, 5), 0.4, 0);
+    sink.add(box(m, -0.0004, 0.0002, 0.0084, 0.0089, sg * 0.0060 - 0.0003, sg * 0.0060 + 0.0003), PART.BEACON, seedOf(A.i * 2 + sg, 5), 0.4, 0);
   }
   // LĄDOWISKO na zewnątrz: niska płyta na kładce, ciepły pierścień, światła wokół
   const px = 0.0118;
@@ -318,91 +407,88 @@ function buildAnchor(L, A, sink, flow) {
   sink.add(prism(m, 12, 0.0036, 0.0010, 0.0016, { cx: px, hard: false }), PART.HULL, seedOf(A.i, 4));
   sink.add(prism(m, 24, 0.00365, 0.0012, 0.0015, { cx: px, open: true, hard: false }), PART.STRIP, seed, 0.3, 0);
   for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * TAU + Math.PI / 6;
-    const x = px + Math.cos(a) * 0.0030, z = Math.sin(a) * 0.0030;
+    const an = (k / 6) * TAU + Math.PI / 6;
+    const x = px + Math.cos(an) * 0.0030, z = Math.sin(an) * 0.0030;
     sink.add(box(m, x - 0.0002, x + 0.0002, 0.0016, 0.0020, z - 0.0002, z + 0.0002), PART.BEACON, seedOf(k, A.i), 0.8, 1);
   }
 
-  // WIEŻA: nogi wygięte (odcinki między poziomami), rygle, krzyżulce, szprychy do pionu, pokłady serwisowe
-  const C4 = [[1, 1], [-1, 1], [-1, -1], [1, -1]];   // narożniki; ściana (1, 2) — od otworu (−x): w dolnym panelu brama rur
-  const corner = (k, y) => P(C4[k][0] * half(y), y, C4[k][1] * half(y));
-  // poziomy: pierwszy nad bramą rur, panele maleją ku górze (ciąg geometryczny)
-  const n = Math.max(3, L.elevTowerLevels | 0);
-  const yA = 0.0135, yB = H - 0.0042;
-  const ratio = 0.88;
-  const unit = (yB - yA) * (1 - ratio) / (1 - ratio ** (n - 1));
-  const lv = [yA];
-  for (let j = 0; j < n - 1; j++) lv.push(lv[j] + unit * ratio ** j);
-  const legY = [y0, ...lv, H0];
-  const legR = (y) => 0.0006 + (0.00034 - 0.0006) * (y - y0) / (H0 - y0);
+  // WIEŻA — PANCERNY RDZEŃ: ośmiobok zwężany od stopy do kielicha głowicy, własne uv (panele w poprzek i wzdłuż wieży)
+  const coreH = Hc - (y0 - 0.0004);
+  sink.add(prism(m, 8, aB * kc, y0 - 0.0004, Hc, { rot: rot8, R1: aT * kc, uv: [perim((aB + aT) / 2), coreH] }), PART.HULL, seedOf(A.i, 6), -1);
+  // pasy okien kondygnacji (WINDOW z własnym uv: z = −gęstość) — dwa nisko między płetwami, trzy nad płetwami
+  const fH = L.elevTowerFinH;
+  const bands = [y0 + 0.0026, y0 + 0.0062, fH + 0.0014, fH + 0.0048, fH + 0.0082].filter((y) => y + 0.0021 < Hc - 0.0008);
+  bands.forEach((yb, j) => {
+    const y1 = yb + 0.0021;
+    sink.add(prism(m, 8, a(yb) * kc + 0.00008, yb, y1, { rot: rot8, R1: a(y1) * kc + 0.00008, open: true, uv: [perim(a(yb)), 0.0021] }),
+      PART.WINDOW, seedOf(A.i * 5 + j, 8), -0.8);
+  });
+  // PŁETWY-PRZYPORY po przekątnych (płyty: stopa na podeście, skos do rdzenia), dalej PILASTRY do kielicha
+  const fin = L.elevTowerFin;
   for (let k = 0; k < 4; k++) {
-    sink.add(box(m, C4[k][0] * bh - 0.0008, C4[k][0] * bh + 0.0008, y0 - 0.0002, y0 + 0.0006, C4[k][1] * bh - 0.0008, C4[k][1] * bh + 0.0008), PART.STRUCT, seed);
-    for (let j = 0; j < legY.length - 1; j++) {
-      sink.add(rod(corner(k, legY[j]), corner(k, legY[j + 1]), legR(legY[j]), 6, legR(legY[j + 1])), PART.STRUCT, seed);
+    const an = Math.PI / 4 + k * Math.PI / 2;
+    const mf = m.clone().multiply(new THREE.Matrix4().makeRotationY(-an));
+    const pts = [[a(y0) * 0.8, y0 - 0.0006], [fin, y0 - 0.0006], [fin, y0 + 0.0016], [a(fH) + 0.0005, fH], [a(fH) * 0.8, fH]];
+    sink.add(slab(mf, pts, 0.00055), PART.HULL, seedOf(A.i * 4 + k, 9));
+    sink.add(box(mf, fin - 0.0004, fin + 0.0002, y0 - 0.0002, y0 + 0.0004, -0.0007, 0.0007), PART.STRUCT, seed);
+    const c = Math.cos(an), s = Math.sin(an);
+    const at = (y, e) => P(c * (a(y) + e), y, s * (a(y) + e));
+    sink.add(rod(at(fH - 0.001, 0.0002), at(Hc + 0.0006, 0.00025), 0.00045, 4), PART.STRUCT, seed);
+  }
+  // KOŁNIERZE z czerwonymi światłami przeszkodowymi (po przekątnych, przy pilastrach)
+  for (const yc of [fH + 0.0003, Hc - 0.0012]) {
+    sink.add(prism(m, 8, a(yc) * kc + 0.00035, yc - 0.00035, yc + 0.00035, { rot: rot8 }), PART.STRUCT, seed);
+    for (let k = 0; k < 4; k++) {
+      const an = Math.PI / 4 + k * Math.PI / 2;
+      const r = a(yc) + 0.0009;
+      const x = Math.cos(an) * r, z = Math.sin(an) * r;
+      sink.add(box(m, x - 0.0003, x + 0.0003, yc - 0.0003, yc + 0.0003, z - 0.0003, z + 0.0003), PART.BEACON, seedOf(k, A.i * 3 + (yc > 0.02 ? 1 : 0)), 0.5, 0);
     }
   }
-  const panels = legY.slice(0, -1).map((y, j) => [y, legY[j + 1]]).slice(0, -1);
-  panels.forEach(([ya, yb], j) => {
-    for (let k = 0; k < 4; k++) {
-      const k2 = (k + 1) % 4;
-      if (j === 0 && k === 1) continue;          // brama rur od strony otworu
-      sink.add(rod(corner(k, ya), corner(k2, yb), 0.00015), PART.STRUCT, seed);
-      sink.add(rod(corner(k2, ya), corner(k, yb), 0.00015), PART.STRUCT, seed);
-    }
-  });
-  lv.forEach((y, j) => {
-    for (let k = 0; k < 4; k++) {
-      sink.add(rod(corner(k, y), corner((k + 1) % 4, y), 0.0002), PART.STRUCT, seed);
-      // szprychy do pionu (z góry: krzyż w każdym poziomie)
-      sink.add(rod(P(C4[k][0] * 0.0007, y, C4[k][1] * 0.0007), corner(k, y), 0.00013), PART.STRUCT, seed);
-    }
-    sink.add(prism(m, 8, 0.0011, y - 0.00025, y + 0.00025, { rot: Math.PI / 8 }), PART.STRUCT, seed);
-    // światła przeszkodowe na co trzecim poziomie (czerwone, na zewnątrz nóg)
-    if (j % 3 === 1) {
-      for (let k = 0; k < 4; k++) {
-        const h = half(y) + 0.0006;
-        const x = C4[k][0] * h, z = C4[k][1] * h;
-        sink.add(box(m, x - 0.00025, x + 0.00025, y - 0.00025, y + 0.00025, z - 0.00025, z + 0.00025), PART.BEACON, seedOf(j * 4 + k, A.i), 0.5, 0);
-      }
-    }
-  });
-  // pokłady serwisowe z gondolą okien (dwa poziomy)
-  for (const j of [Math.round(n * 0.3), Math.round(n * 0.65)]) {
-    const y = lv[Math.min(j, lv.length - 1)];
-    const h = half(y);
-    sink.add(box(m, -h, h, y - 0.00025, y + 0.00035, -h, h), PART.HULL, seedOf(A.i, j));
-    sink.add(prism(m, 8, h * 0.86, y - 0.0018, y - 0.00025, { rot: Math.PI / 8 }), PART.WINDOW, seedOf(A.i, j), 0.65);
-    sink.add(prism(m, 8, h * 0.55, y - 0.0023, y - 0.0018, { rot: Math.PI / 8, R1: h * 0.86 }), PART.HULL, seedOf(A.i, j));
+  // PION ENERGII na licu od strony hali (przepływ; z daleka — linia energii, dodatek GPU) i obejmy co ~0,005
+  flow.push(pipeAlong(riser.map((p) => p.clone().applyMatrix4(m)), [0.0005, 0.0007], seed));
+  sink.add(box(m, -0.0011 - a(A.shape.feedY), -a(A.shape.feedY) + 0.0002, A.shape.feedY - 0.0011, A.shape.feedY + 0.0011, -0.0011, 0.0011), PART.STRUCT, seed);
+  for (const yk of [0.012, 0.018, 0.024]) {
+    if (yk > Hc - 0.001) continue;
+    sink.add(box(m, -(a(yk) + so + 0.0009), -a(yk) + 0.0001, yk - 0.0003, yk + 0.0003, -0.0009, 0.0009), PART.STRUCT, seed);
   }
-  // PION ENERGII: przewód od tyłu hali przez bramę do osi, w górę do doku (impulsy ku dokowi)
-  const feedY = 0.0075;
-  const path = [P(hx1 - 0.0004, feedY, 0), P(0, feedY, 0), P(0, H0 + 0.0002, 0)];
-  flow.push(pipeAlong(path, [0.0005, 0.0007], seed));
-  sink.add(box(m, -0.0011, 0.0011, feedY - 0.0011, feedY + 0.0011, -0.0011, 0.0011), PART.STRUCT, seed);
 
-  // DOK na szczycie: pokład z pierścieniem cewki, wsporniki, światła, BĘBEN z ramionami lin (widełki — dwa ramiona)
-  sink.add(prism(m, 8, 0.0050, H0, H, { rot: Math.PI / 8 }), PART.HULL, seedOf(A.i, 7));
-  sink.add(prism(m, 32, 0.0052, H0 + 0.0003, H0 + 0.0009, { open: true, hard: false }), PART.COIL, seed, A.i / L.elevators.length, 1.0);
+  // GŁOWICA DOKU: kielich z rdzenia, pas okien sterowni, pokład z jasnym pierścieniem cewki, światła, bęben z ramionami
+  const deckA = 0.0054;
+  const capA = (y) => aT + (deckA * 0.96 - aT) * (y - Hc) / (H0 - Hc);
+  sink.add(prism(m, 8, aT * kc, Hc, H0, { rot: rot8, R1: capA(H0) * kc, uv: [perim((aT + deckA) / 2), H0 - Hc] }), PART.HULL, seedOf(A.i, 7), -1);
+  const wy0 = H0 - 0.0019, wy1 = H0 - 0.0006;
+  sink.add(prism(m, 8, capA(wy0) * kc + 0.00008, wy0, wy1, { rot: rot8, R1: capA(wy1) * kc + 0.00008, open: true, uv: [perim(capA(wy1)), wy1 - wy0] }),
+    PART.WINDOW, seedOf(A.i, 12), -0.9);
+  sink.add(prism(m, 8, deckA * kc, H0, H, { rot: rot8 }), PART.HULL, seedOf(A.i, 7));
+  sink.add(prism(m, 32, deckA * kc + 0.0003, H0 + 0.0002, H0 + 0.0010, { open: true, hard: false }), PART.COIL, seed, A.i / L.elevators.length, 1.4);
+  sink.add(prism(m, 8, deckA * kc + 0.00004, H - 0.00018, H - 0.00002, { rot: rot8, open: true }), PART.STRIP, seed, 0.9, 1);
   for (let k = 0; k < 4; k++) {
-    sink.add(rod(corner(k, H - 0.0075), P(C4[k][0] * 0.0032, H0, C4[k][1] * 0.0032), 0.00018), PART.STRUCT, seed);
-    const a = (k / 4) * TAU + Math.PI / 4;
-    const x = Math.cos(a) * 0.0045, z = Math.sin(a) * 0.0045;
-    sink.add(box(m, x - 0.00025, x + 0.00025, H, H + 0.0005, z - 0.00025, z + 0.00025), PART.BEACON, seedOf(k, A.i + 9), 0.5, 0);
+    const an = (k / 4) * TAU + Math.PI / 4;
+    const x = Math.cos(an) * 0.0050, z = Math.sin(an) * 0.0050;
+    sink.add(box(m, x - 0.0003, x + 0.0003, H, H + 0.0006, z - 0.0003, z + 0.0003), PART.BEACON, seedOf(k, A.i + 9), 0.5, 1);
   }
   const top = 2 * D.headLift;
-  sink.add(prism(m, 8, D.drumR, H, H + top, { rot: Math.PI / 8 }), PART.HULL, seedOf(A.i, 8));
-  sink.add(prism(m, 8, D.drumR * 1.04, H + top * 0.42, H + top * 0.58, { rot: Math.PI / 8 }), PART.WINDOW, seedOf(A.i, 8), 0.7);
-  sink.add(prism(m, 8, D.drumR * 0.72, H + top, H + top + 0.0006, { rot: Math.PI / 8, R1: D.drumR * 0.6 }), PART.STRUCT, seed);
+  sink.add(prism(m, 8, D.drumR, H, H + top, { rot: rot8 }), PART.HULL, seedOf(A.i, 8));
+  sink.add(prism(m, 8, D.drumR * 1.04, H + top * 0.42, H + top * 0.58, { rot: rot8 }), PART.WINDOW, seedOf(A.i, 8), 0.7);
+  sink.add(prism(m, 8, D.drumR * 0.72, H + top, H + top + 0.0006, { rot: rot8, R1: D.drumR * 0.6 }), PART.STRUCT, seed);
   // biały stroboskop na maszcie bębna
   sink.add(box(m, -0.00015, 0.00015, H + top + 0.0006, H + top + 0.0026, -0.00015, 0.00015), PART.STRUCT, seed);
   sink.add(box(m, -0.0004, 0.0004, H + top + 0.0026, H + top + 0.0034, -0.0004, 0.0004), PART.BEACON, seedOf(A.i, 11), 1.1, 1);
   for (const B of A.bundles) buildArm(B, B.top, 0.0012, D.headLen, sink, seed, true);
 }
 
-/** Ośmiokątny graniastosłup wzdłuż Y bazy m (płaskie ściany w ±x / ±z), pół-szerokość w, pół-grubość h, y0 → y1. */
-function octBar(m, w, h, y0, y1, open = false) {
+/**
+ * Ośmiokątny graniastosłup wzdłuż Y bazy m (płaskie ściany w ±x / ±z), pół-szerokość w, pół-grubość h, y0 → y1. `ownUv` —
+ * uv w R (wokół, wzdłuż) dla części z własnym uv (aPart.z < 0: panele wzdłuż bryły, nie ukośnie z rzutu pudełkowego).
+ */
+function octBar(m, w, h, y0, y1, open = false, ownUv = false) {
   const k = 1 / Math.cos(Math.PI / 8);
   const g = new THREE.CylinderGeometry(1, 1, y1 - y0, 8, 1, open);
+  if (ownUv) {
+    const a = g.attributes.uv, per = 8 * Math.tan(Math.PI / 8) * 2 * (w + h), len = Math.abs(y1 - y0);
+    for (let i = 0; i < a.count; i++) a.setXY(i, a.getY(i) * len, a.getX(i) * per);
+  }
   g.rotateY(Math.PI / 8);
   g.scale(w * k, 1, h * k);
   g.translate(0, (y0 + y1) / 2, 0);
@@ -421,17 +507,20 @@ function buildArm(B, O, y0, y1, sink, seed, front) {
   const w = D.headW, h = D.headH;
   const f = front ? y1 : y0, s = front ? 1 : -1;
   const span = (a, c) => [Math.min(a, c), Math.max(a, c)];
-  sink.add(octBar(m, w, h, y0, y1), PART.HULL, seed);
+  sink.add(octBar(m, w, h, y0, y1, false, true), PART.HULL, seed, -1);
   // wrota (ciemne szkło) w czole, kołnierz (szerszy pierścień), pierścień cewki za kołnierzem
   const [g0, g1] = span(f, f + s * 0.0001);
   sink.add(octBar(m, w * 0.82, h * 0.7, g0, g1), PART.GLASS, seed);
+  // jasna ramka czoła wokół wrót (z kamery gry lina wchodzi w świecący prostokąt doku)
+  const [r0, r1] = span(f, f + s * 0.00006);
+  sink.add(octBar(m, w * 0.95, h * 0.92, r0, r1), PART.STRIP, seed, 1.4, 1);
   const [k0, k1] = span(f - s * 0.0005, f + s * 0.00005);
   sink.add(octBar(m, w + 0.0004, h + 0.0004, k0, k1, true), PART.STRUCT, seed);
   const [c0, c1] = span(f - s * 0.0014, f - s * 0.0009);
-  sink.add(octBar(m, w + 0.0002, h + 0.0002, c0, c1, true), PART.COIL, seed, B.seed, 0.7);
+  sink.add(octBar(m, w + 0.0002, h + 0.0002, c0, c1, true), PART.COIL, seed, B.seed, 0.9);
   // listwa chłodna na grzbiecie i czerwone światła przy czole
   const [l0, l1] = span(f - s * 0.0018, f - s * (Math.abs(y1 - y0) - 0.0008));
-  sink.add(box(m, -w * 0.5, w * 0.5, l0, l1, h, h + 0.0002), PART.STRIP, seed, 0.4, 1);
+  sink.add(box(m, -w * 0.5, w * 0.5, l0, l1, h, h + 0.0002), PART.STRIP, seed, 0.6, 1);
   for (const sg of [-1, 1]) {
     const x = sg * (w * 0.62), y = f - s * 0.0025;
     sink.add(box(m, x - 0.00025, x + 0.00025, y - 0.00025, y + 0.00025, h - 0.0001, h + 0.0004), PART.BEACON, (B.seed + (sg > 0 ? 0.5 : 0)) % 1, 0.45, 0);
@@ -457,6 +546,12 @@ function pipeAlong(path, radii, seed) {
 
 // ── Liny ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** Odstęp ramek rozporowych wiązki (ich światła — też w linii energii na GPU). */
+function frameStep(L, len) {
+  const count = Math.max(1, Math.round((len - 2 * FRAME_END) / L.elevSpread));
+  return { count, step: (len - 2 * FRAME_END) / count };
+}
+
 /** Wiązka: liny pasów ±1 i przewód energii między nimi (przepływ), ramki rozporowe z obejmą i światłem prowadzącym (metal). */
 function buildBundle(L, B, sink, flow, beacons) {
   const w = L.elevLaneW, r = L.elevTetherR;
@@ -465,14 +560,13 @@ function buildBundle(L, B, sink, flow, beacons) {
     const g = cylinderBetween(S.clone().addScaledVector(U, off), E.clone().addScaledVector(U, off), r, 10);
     flow.push(finalizePart(g, PART.TETHER, B.seed, len, lane));
   }
-  // lina środkowa — przewód energii do ringu (impulsy od kotwicy ku szynie; z daleka linia barwy energii w wachlarzu)
-  flow.push(finalizePart(cylinderBetween(S, E, r * 0.7, 10), PART.PIPE, B.seed, len, 1));
+  // lina środkowa — przewód energii do ringu (impulsy od kotwicy ku szynie; z daleka linia energii — dodatek GPU)
+  flow.push(finalizePart(cylinderBetween(S, E, PIPE_R, 10), PART.PIPE, B.seed, len, 1));
   // ramki co elevSpread (z dala od doków), błysk świateł biegnie od kotwicy do ringu
-  const end = 0.012;
-  const count = Math.max(1, Math.round((len - 2 * end) / L.elevSpread));
+  const { count, step } = frameStep(L, len);
   const m = new THREE.Matrix4();
   for (let k = 0; k < count; k++) {
-    const a = end + (k + 0.5) * (len - 2 * end) / count;
+    const a = FRAME_END + (k + 0.5) * step;
     const C = S.clone().addScaledVector(d, a);
     m.makeBasis(U, d, V).setPosition(C);
     sink.add(rod(C.clone().addScaledVector(U, -w), C.clone().addScaledVector(U, w), 0.00022, 4), PART.STRUCT, B.seed);
@@ -486,19 +580,19 @@ function buildBundle(L, B, sink, flow, beacons) {
 
 /**
  * Szyna: przekrój (ρ — od osi obrotu na zewnątrz, z — wzdłuż osi) z fazami górnych krawędzi; pas środkowy wierzchu —
- * lampy (2 / 8 okresu), pas ściany od planety — przerywane listwy (5 / 8), obejmy co 4 próbki, światła co 16.
+ * lampy (2 / 8 okresu; w ±elevRailNear próbkach od wózka 2 / 4 i jaśniej), pas ściany od planety — przerywane listwy
+ * (5 / 8), obejmy co 4 próbki, światła co 16. `stops` — kąty wózków i terminala [rad].
  */
-function buildRail(L, rail, sink, metal) {
+function buildRail(L, rail, stops, sink, metal) {
   const N = Math.max(1024, L.elevRailSeg | 0);
   const { center, axis, e1, e2, r } = rail;
   const hr = 0.0015, hz = 0.0020, ch = 0.0004, bw = 0.0006, bz = 0.0005;
   // wielokąt przekroju przeciwnie do wskazówek zegara w (ρ, z); pasy listew: krawędzie 4 (wierzch) i 8 (od planety)
   const prof = [[-hr, -hz], [hr, -hz], [hr, hz - ch], [hr - ch, hz], [bw, hz], [-bw, hz], [-hr + ch, hz], [-hr, hz - ch], [-hr, bz], [-hr, -bz]];
-  const bands = new Set([4, 8]);
   const cs = new Float64Array(N + 1), sn = new Float64Array(N + 1);
   for (let j = 0; j <= N; j++) { cs[j] = Math.cos((j / N) * TAU); sn[j] = Math.sin((j / N) * TAU); }
   const radial = (j, out) => out.copy(e1).multiplyScalar(cs[j]).addScaledVector(e2, sn[j]);
-  const hull = new Acc(), strip = new Acc();
+  const hull = new Acc(), strip = new Acc(), lamps = new Acc(), lampsNear = new Acc();
   const c = V3(), Pt = V3(), Nn = V3();
   const emit = (acc, k, j0, j1) => {
     const [p0, p1] = [prof[k], prof[(k + 1) % prof.length]];
@@ -515,28 +609,31 @@ function buildRail(L, rail, sink, metal) {
       acc.i.push(a, cq, bq, bq, cq, dq);
     }
   };
-  // pas wierzchu: krótkie jasne lampy (2 z 8 próbek, ciepłe — odróżniają się od nieruchomych chłodnych kresek ringu;
-  // z kamery gry kropki sunące z dobą), pas od planety: długie przygaszone listwy chłodne (5 z 8, pół okresu dalej)
-  const lamps = new Acc();
-  const dashed = (k, acc, len, shift) => {
-    let j = 0;
-    for (let p = -shift; p < N; p += 8) {
-      const a = Math.max(0, p), e = Math.min(N, p + len);
-      if (e <= a) continue;
-      if (a > j) emit(hull, k, j, a);
-      emit(acc, k, a, e);
-      j = e;
+  // próbki przy wózkach (lampy gęściej)
+  const near = new Uint8Array(N);
+  for (const th of stops) {
+    const jc = Math.round(((th / TAU) % 1 + 1) % 1 * N);
+    for (let dj = -L.elevRailNear; dj <= L.elevRailNear; dj++) near[((jc + dj) % N + N) % N] = 1;
+  }
+  // przebiegi jednego rodzaju (ściana k, odcinki j → j + 1 wg `pick(j)`)
+  const runs = (k, pick) => {
+    let j0 = 0, cur = pick(0);
+    for (let j = 1; j <= N; j++) {
+      const nx = j < N ? pick(j) : null;
+      if (nx !== cur) { emit(cur, k, j0, j); j0 = j; cur = nx; }
     }
-    if (j < N) emit(hull, k, j, N);
   };
   for (let k = 0; k < prof.length; k++) {
-    if (!bands.has(k)) emit(hull, k, 0, N);
-    else if (k === 4) dashed(k, lamps, 2, 0);
-    else dashed(k, strip, 5, 4);
+    // wierzch: ciepłe lampy (z kamery gry kropki sunące z dobą; odróżniają się od nieruchomych chłodnych kresek ringu)
+    if (k === 4) runs(k, (j) => (near[j] ? (j % 4 < 2 ? lampsNear : hull) : (j % 8 < 2 ? lamps : hull)));
+    // ściana od planety: długie przygaszone listwy chłodne (5 z 8, pół okresu dalej)
+    else if (k === 8) runs(k, (j) => ((j + 4) % 8 < 5 ? strip : hull));
+    else emit(hull, k, 0, N);
   }
   metal.push(finalizePart(hull.geometry(), PART.HULL, 0.731));
   metal.push(finalizePart(strip.geometry(), PART.STRIP, 0.731, 0.3, 1));
   metal.push(finalizePart(lamps.geometry(), PART.STRIP, 0.731, 0.7, 0));
+  if (lampsNear.count) metal.push(finalizePart(lampsNear.geometry(), PART.STRIP, 0.731, 1.3, 0));
   // obejmy (stal) co 4 próbki i światła co 16 (na zmianę czerwone / białe; faza z położenia)
   const m = new THREE.Matrix4();
   const tng = V3();
@@ -547,7 +644,6 @@ function buildRail(L, rail, sink, metal) {
     m.makeBasis(tng, c, axis).setPosition(Pt.copy(center).addScaledVector(c, r));
     sink.add(box(m, -0.0005, 0.0005, -hr - 0.0003, hr + 0.0003, -hz - 0.0003, hz + 0.0003), PART.STRUCT, 0.413);
     if (j % 16 === 8) {
-      radial(j, c);
       lights[(j / 16) % 2 < 1 ? 0 : 1].push({ g: box(m, -0.0003, 0.0003, 0.0006, 0.0012, hz, hz + 0.0005), seed: (j / N * 13) % 1 });
     }
   }
@@ -555,34 +651,94 @@ function buildRail(L, rail, sink, metal) {
 }
 
 /**
- * Wózek na szynie w punkcie zaczepu wiązki (jak wagon na torze): dwa wózki jezdne obejmujące szynę, kadłub
- * (ośmiokątny, wzdłuż szyny) od strony planety z pasem okien i jasnym obrysem grzbietu, światła, dok kabin ku kotwicy.
+ * Kadłub wózka na szynie (jak wagon na torze) w punkcie `C` ({ rail, rad, tan }): dwa wózki jezdne obejmujące szynę,
+ * ośmiokątny kadłub (wzdłuż szyny) od strony planety z pasem okien, JASNY OBRYS na płaskim grzbiecie (z kamery gry
+ * ramka wagonu, czytelna od ~0,0004 R/px), światła. Zwraca bazę m (x — wzdłuż szyny, y — ku planecie, z — oś obrotu)
+ * i wymiary.
  */
-function buildCarriage(B, rail, sink) {
+function carriageBody(C, rail, sink, seed, { hl = 0.0080, hw = 0.0035, hh = 0.0034, glow = 1.3 } = {}) {
   const D = ELEV_DOCK;
-  const seed = B.seed;
-  // baza wózka: x — wzdłuż szyny, y — ku planecie, z — wzdłuż osi obrotu (początek na osi szyny)
-  const m = new THREE.Matrix4().makeBasis(B.tan, B.rad.clone().negate(), rail.axis).setPosition(B.rail);
-  // kadłub: ośmiokąt wzdłuż szyny — baza (promień, styczna, oś), środek cy ku planecie
+  const m = new THREE.Matrix4().makeBasis(C.tan, C.rad.clone().negate(), rail.axis).setPosition(C.rail);
   const cy = D.portIn + 0.0008;
-  const mb = new THREE.Matrix4().makeBasis(B.rad, B.tan, rail.axis).setPosition(B.rail.clone().addScaledVector(B.rad, -cy));
-  const hw = 0.0035, hh = 0.0034, hl = 0.0080;
-  sink.add(octBar(mb, hw, hh, -hl, hl), PART.HULL, seed);
+  const mb = new THREE.Matrix4().makeBasis(C.rad, C.tan, rail.axis).setPosition(C.rail.clone().addScaledVector(C.rad, -cy));
+  sink.add(octBar(mb, hw, hh, -hl, hl, false, true), PART.HULL, seed, -1);
   sink.add(octBar(mb, hw * 0.8, hh * 0.8, -hl - 0.0006, hl + 0.0006), PART.STRUCT, seed);
-  sink.add(octBar(mb, hw + 0.00006, hh + 0.00006, -hl * 0.72, hl * 0.72), PART.WINDOW, seed, 0.65);
+  sink.add(octBar(mb, hw + 0.00006, hh + 0.00006, -hl * 0.72, hl * 0.72, false, true), PART.WINDOW, seed, -0.65);
   // wózki jezdne obejmujące szynę (wchodzą w kadłub)
-  for (const x of [-0.0064, 0.0064]) {
+  const bx = hl * 0.8;
+  for (const x of [-bx, bx]) {
     sink.add(box(m, x - 0.0016, x + 0.0016, -0.0026, 0.0030, -0.0032, 0.0032), PART.STRUCT, seed);
     sink.add(box(m, x - 0.00025, x + 0.00025, -0.0010, -0.0004, 0.0032, 0.0037), PART.BEACON, (seed + x * 31 + 1) % 1, 0.6, 0);
   }
-  // obrys grzbietu (z kamery gry jasna ramka wagonu) i biały błysk
+  // OBRYS na płaskim grzbiecie (ściana z = hh ośmioboku: |y − cy| ≤ 0,41 hw): dwie długie i dwie krótkie listwy chłodne
+  const z0 = hh + 0.00008, z1 = hh + 0.00022;
+  const ey = hw * 0.34, ex = hl * 0.94, t = 0.00026;
   for (const sg of [-1, 1]) {
-    const y = cy + sg * hw * 0.62;
-    sink.add(box(m, -hl * 0.9, hl * 0.9, y - 0.0002, y + 0.0002, hh - 0.0001, hh + 0.00012), PART.STRIP, seed, 0.45, 1);
+    sink.add(box(m, -ex, ex, cy + sg * ey - t, cy + sg * ey + t, z0, z1), PART.STRIP, seed, glow, 1);
+    sink.add(box(m, sg * ex - t, sg * ex + t, cy - ey, cy + ey, z0, z1), PART.STRIP, seed, glow, 1);
   }
-  sink.add(box(m, -0.0004, 0.0004, cy - 0.0004, cy + 0.0004, hh, hh + 0.0007), PART.BEACON, (seed + 0.3) % 1, 1.0, 1);
-  // dok kabin: od wnętrza kadłuba ku kotwicy (czoło = koniec lin)
-  buildArm(B, B.E, 0, D.houseLen, sink, seed, false);
+  sink.add(box(m, -0.0004, 0.0004, cy - 0.0004, cy + 0.0004, z1, z1 + 0.0006), PART.BEACON, (seed + 0.3) % 1, 1.0, 1);
+  return { m, cy, hl, hw, hh };
+}
+
+/** Wózek w punkcie zaczepu wiązki: kadłub (carriageBody) i długi dok kabin ku kotwicy (czoło = koniec lin). */
+function buildCarriage(B, rail, sink) {
+  carriageBody(B, rail, sink, B.seed);
+  buildArm(B, B.E, 0, ELEV_DOCK.houseLen, sink, B.seed, false);
+}
+
+/**
+ * TERMINAL PRZEKAŹNIKA: większy wózek w punkcie szyny, w którym kończy się promień przekaźnikowy, pylon i CZASZA odbiorcza
+ * zwrócona ku odbiornikowi (środek na linii promienia, elevTermDish przed punktem ringu T): wnętrze ciemne szkło,
+ * pierścienie cewki (brzeg i środek — z kamery gry cyjanowa tarcza na końcu promienia), róg odbiorczy w ognisku,
+ * odbieraki prądu nad szyną do ściany ringu.
+ */
+function buildTerminal(L, Tm, rail, sink) {
+  const seed = Tm.seed;
+  const { m, cy, hl, hw, hh } = carriageBody(Tm, rail, sink, seed, { hl: 0.0115, hw: 0.0042, hh: 0.0040, glow: 1.5 });
+  // czasza: baza prawoskrętna (styczna szyny, n, styczna × n) w środku czaszy — odbicie odwróciłoby strony trójkątów
+  const n = Tm.n.clone();
+  const t1 = Tm.tan.clone().addScaledVector(n, -Tm.tan.dot(n)).normalize();
+  const t2 = V3().crossVectors(t1, n);
+  const md = new THREE.Matrix4().makeBasis(t1, n, t2).setPosition(Tm.dish);
+  const rD = L.elevTermDishR, dep = 0.0011;
+  // wnętrze (stożek wklęsły, widoczny od przodu) — ciemne szkło; skorupa od tyłu i denko — kadłub
+  const inner = new THREE.CylinderGeometry(rD, 0.0007, dep, 32, 1, true);
+  inner.translate(0, -dep / 2, 0);
+  sink.add(flipFaces(inner.applyMatrix4(md)), PART.GLASS, seed);
+  sink.add(prism(md, 32, rD * 1.04, -dep * 1.7, 0.00004, { R1: rD * 1.04, open: true, hard: false }), PART.HULL, seed);
+  sink.add(prism(md, 16, rD * 1.04, -dep * 1.9, -dep * 1.7, { R1: rD * 1.04 }), PART.HULL, seed);
+  // pierścienie cewki na czole (brzeg i środek) i róg odbiorczy w ognisku
+  const ring = (r0, r1, y) => {
+    const g = new THREE.RingGeometry(r0, r1, 40, 1);
+    g.rotateX(-Math.PI / 2);
+    g.translate(0, y, 0);
+    return g.applyMatrix4(md);
+  };
+  sink.add(ring(rD * 0.9, rD * 1.08, 0.00008), PART.COIL, seed, 0.0, 1.6);
+  sink.add(ring(rD * 0.64, rD * 0.7, -dep * 0.28 + 0.00005), PART.COIL, seed, 0.33, 1.1);
+  sink.add(ring(rD * 0.4, rD * 0.47, -dep * 0.52 + 0.00005), PART.COIL, seed, 0.66, 1.3);
+  const F = Tm.dish.clone().addScaledVector(n, -dep * 0.75);
+  sink.add(rod(F, Tm.dish.clone().addScaledVector(n, 0.0016), 0.0006, 8, 0.00035), PART.COIL, seed, 0.25, 2.0);
+  // pylon: od grzbietu kadłuba do denka czaszy (ośmiokąt wzdłuż osi obrotu), dwa zastrzały do brzegu czaszy
+  const top = V3(0, cy, hh).applyMatrix4(m);
+  const back = Tm.dish.clone().addScaledVector(n, -dep * 1.9);
+  const mp = new THREE.Matrix4().makeBasis(t1, V3().subVectors(back, top).normalize(), V3().crossVectors(t1, V3().subVectors(back, top).normalize()).normalize()).setPosition(top);
+  sink.add(octBar(mp, 0.0011, 0.0011, -0.0002, top.distanceTo(back) + 0.0003), PART.HULL, seed);
+  for (const sg of [-1, 1]) {
+    const foot = V3(sg * hl * 0.7, cy, hh).applyMatrix4(m);
+    const rim = Tm.dish.clone().addScaledVector(t1, sg * rD * 0.85).addScaledVector(n, -dep * 1.6);
+    sink.add(rod(foot, rim, 0.00032, 6), PART.STRUCT, seed);
+  }
+  // odbieraki prądu: od grzbietu kadłuba nad szyną do ściany ringu (cewki — energia idzie w ring)
+  for (const x of [-hl * 0.45, 0, hl * 0.45]) {
+    sink.add(box(m, x - 0.00035, x + 0.00035, -L.elevRailInset + 0.00025, cy - hw * 0.3, hh * 0.55, hh * 0.55 + 0.0006), PART.COIL, seed, 0.15, 1.1);
+  }
+  // światła pozycyjne na narożach kadłuba
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+    const x = sx * hl * 0.98, y = cy + sy * hw * 0.5;
+    sink.add(box(m, x - 0.0003, x + 0.0003, y - 0.0003, y + 0.0003, hh, hh + 0.0005), PART.BEACON, seedOf(sx + 2 * sy + 3, 13), 0.7, sy > 0 ? 1 : 0);
+  }
 }
 
 // ── Złożenie ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -599,7 +755,9 @@ export function buildElevators(L, b) {
     buildBundle(L, B, sink, flow, beacons);
     buildCarriage(B, layout.rail, sink);
   }
-  const railLights = buildRail(L, layout.rail, sink, metal);
+  buildTerminal(L, layout.terminal, layout.rail, sink);
+  const stops = [...layout.bundles.map((B) => B.theta), layout.terminal.theta];
+  const railLights = buildRail(L, layout.rail, stops, sink, metal);
   // łańcuchy świateł: jedna część na barwę, ziarno (faza błysku) per wierzchołek
   const chain = (list, z, w) => {
     if (!list.length) return;
@@ -643,5 +801,30 @@ export function climberInstances(L, b) {
   return out;
 }
 
-/** Dodatki elektrowni (kontrakt w nagłówku earthBitePlant.js): kabiny wind na GPU. */
-export const extras = [(uniforms) => createClimbers(uniforms, climberInstances)];
+/**
+ * Linie energii (dodatek na GPU): przewód środkowy każdej wiązki (S → E, pakiety i czerwone światła ramek) i pion energii
+ * każdej wieży (lico rdzenia → kielich głowicy) — rekordy w układzie OBIEKTU kuli: S, E, bok U, promień przewodu,
+ * przesunięcie drogi s0 (zgodność pakietów z przewodem PIPE), ziarno, odstęp i koniec ramek (0 — bez świateł).
+ */
+export function tetherGlowInstances(L, b) {
+  const { bundles, anchors } = elevatorLayout(L, b);
+  const out = [];
+  for (const B of bundles) {
+    const { step } = frameStep(L, B.len);
+    out.push({ S: B.obj.S, E: B.obj.E, U: B.obj.U, r: PIPE_R, s0: 0, seed: B.seed, step, end: FRAME_END });
+  }
+  for (const A of anchors) {
+    const [h, f, t] = A.riserO;
+    const d = V3().subVectors(t, f).normalize();
+    let U = V3().crossVectors(d, V3().subVectors(f, h));
+    if (U.lengthSq() < 1e-12) U = V3(0, 1, 0).cross(d);
+    out.push({ S: f, E: t, U: U.normalize(), r: 0.0007, s0: h.distanceTo(f), seed: seedOf(A.i, 4), step: 0, end: 0 });
+  }
+  return out;
+}
+
+/** Dodatki elektrowni (kontrakt w nagłówku earthBitePlant.js): kabiny wind i linie energii wiązek na GPU. */
+export const extras = [
+  (uniforms) => createClimbers(uniforms, climberInstances),
+  (uniforms) => createTetherGlow(uniforms, tetherGlowInstances)
+];

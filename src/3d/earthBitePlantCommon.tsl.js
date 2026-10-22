@@ -350,11 +350,17 @@ export function plantContactAO(C, n) {
 /**
  * Barwa powierzchni w kontekście C (plantLightContext): słońce (Lambert + GGX), żar jeziora (owinięty Lambert + szeroki
  * odblask), poświata promienia, niebo za dnia (półkula i odblask Fresnela na krawędziach); nocą zostaje żar i promień.
- * a2 = α², f0 — odbicie na wprost, specOcc — przesłonięcie odblasku (szwy, wnęki).
+ * a2 = α², f0 — odbicie na wprost, specOcc — przesłonięcie odblasku (szwy, wnęki). opt (stałe JS, czas budowy grafu):
+ * `beamSpec` — mnożnik odblasku poświaty promienia (domyślnie 1), `beamSpecTint` — 1 barwa promienia, 0 odblask
+ * neutralny (pancerz przewodów: cyjan tylko w szczelinach i pakietach, nie połysk wzdłuż rury).
  */
-export function plantLighting(C, n, albedo, a2, f0, specOcc) {
+export function plantLighting(C, n, albedo, a2, f0, specOcc, opt = {}) {
   const T = PLANT_COLORS;
   const LT = PLANT_LIGHT;
+  const beamSpecK = opt.beamSpec ?? 1;
+  const beamSpecTint = opt.beamSpecTint ?? 1;
+  const beamSpecBase = beamSpecTint >= 1 ? vec3(...T.beam) : mix(vec3(0.68, 0.7, 0.72), vec3(...T.beam), beamSpecTint);
+  const beamSpecCol = beamSpecK === 1 ? beamSpecBase : beamSpecBase.mul(beamSpecK);
   const nl = max(dot(n, C.L), 0.0);
   // okluzja kontaktowa: pełna dla nieba i promienia, połowiczna dla słońca (tani cień kontaktowy), żar jeziora bez niej
   // (jezioro świeci od dołu — przy lawie jest źródłem, nie zasłoną)
@@ -376,7 +382,7 @@ export function plantLighting(C, n, albedo, a2, f0, specOcc) {
     .add(hemi);
   const spec = vec3(...T.sun).mul(plantGGX(n, C.L, C.V, a2, f0).mul(sunE))
     .add(vec3(...T.lava).mul(plantGGX(n, C.lakeDir, C.V, min(a2.add(0.2), 1.0), f0).mul(C.lakeE)))
-    .add(vec3(...T.beam).mul(plantGGX(n, C.beamDir, C.V, min(a2.add(0.01), 1.0), f0).mul(beamE)));
+    .add(beamSpecCol.mul(plantGGX(n, C.beamDir, C.V, min(a2.add(0.01), 1.0), f0).mul(beamE)));
   // otoczenie w odblasku: Fresnel na krawędziach (gładsze — wyraźniej); w przestrzeni nad horyzontem czarne
   const fc = float(1.0).sub(max(dot(n, C.V), 0.0));
   const fc2 = fc.mul(fc);

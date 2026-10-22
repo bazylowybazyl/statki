@@ -7,8 +7,9 @@
 //   • MASYW — wielokąt 72 ścian: spódnica w lawie, ŚCIANA WARSTWOWA (pasy radiatorów ze stali żebrowanej, półka,
 //     wnęki okien różnej wysokości, cienkie listwy), kołnierz z wnęką okien, pokład górny, uskoki z oknami, taras
 //     środkowy, ziggurat akceleratora (3 stopnie + warga krateru), lej i gardziel wylotu;
-//   • 36 PRZĘSEŁ między stalowymi PILASTRAMI (wspornik pod kołnierzem, zastrzał w lawę); w przęsłach baterie
-//     wymienników na linii lawy (żar tylko w wąskim pasie przy lawie), skrzynie wentylatorów z żarem i kolektory rur;
+//   • 36 PRZĘSEŁ między stalowymi PILASTRAMI (wspornik pod kołnierzem, zastrzał w lawę); w przęsłach wymienniki: grube
+//     przegrody z kołnierzem i kolektor rur z nogami w lawie (żar tylko w wąskim pasie przy lawie), skrzynie
+//     wentylatorów (wnęki z łopatkami, żar w piaście) i kolektory rur;
 //     między mostami na przemian 3 KANAŁY wlotu lawy i 3 WYLOTY; 6 BRAM mostów;
 //   • MOSTY nad lawą (azymuty wind) od bramy do STOPY ŚCIANY (`wallFootPoint`): stalowy dźwigar skrzynkowy z galerią
 //     okien, pod nim kratownica z podwieszoną galerią rur na filarach V (gdzie płytko — nasyp), przewody energii na
@@ -17,12 +18,13 @@
 //   • gdzie przed ścianą korka leży już PAS OSŁON stopy ściany (obudowa; ~75–105° i ~280–315°) — bez wymienników, kanał
 //     wlotu skraca się do wrót śluzy, wylot — do obudowy nad pasem (`bandH`);
 //   • GROBLE energii w azymutach mostów: od zigguratu po tarasach do bram (2 przewody PIPE) — 6 szprych koła;
-//   • pokład górny: 24 hale turbin (wnęki okien, generatory na kołyskach), szyna zbiorcza (PIPE), rozdzielnie przy
-//     groblach, 3 ARKOLOGIE (wieże z gęstymi rzędami okien — skala setek kilometrów) i 3 lądowiska w środkach
-//     sektorów, maszyny w lukach (farmy zbiorników, stopniowe bloki);
-//   • taras środkowy: 6 chłodni (powłoka ze stali żebrowanej, żebra, wieńce, korona świateł), maszyny między
-//     chłodnią a groblami, pierścień estakady rur, kratownicowe anteny, MASZTY KOLEKTORÓW (pary przy groblach) wokół
-//     akceleratora;
+//   • pokład górny: 12 MASZYNOWNI wzdłuż obwodu (po dwie w sektorze: hala pod jednym dachem ze świetlikiem,
+//     przybudówka sterowni, plac generatorów pod suwnicą bramową), pierścień estakady rur z odgałęzieniami do hal,
+//     szyna zbiorcza (PIPE), rozdzielnie przy groblach, 3 ARKOLOGIE (wieże z gęstymi rzędami okien — skala setek
+//     kilometrów) i 3 lądowiska w środkach sektorów;
+//   • taras środkowy: 6 chłodni (powłoka ze stali żebrowanej, żebra, wieńce, korona świateł), przy każdej farma
+//     zbiorników i blok transformatorów spięte z nią mostami rurowymi, pierścień estakady rur, kratownicowe anteny,
+//     MASZTY KOLEKTORÓW (pary przy groblach) wokół akceleratora;
 //   • akcelerator: 4 pierścienie COIL z obejmami i 6 smukłych emiterów-zębów (pancerne segmenty, jarzma, cyjanowa
 //     ściana ku osi) nad wylotem — w stałych azymutach (corkToothAz + k · 60°).
 // Konwencja świateł: listwy STRIP cienkie (≤ 0,0006 R, z 0,3–0,5 — pod progiem bloomu), koncentryczne pierścienie
@@ -40,8 +42,8 @@ export const CORK_DEFAULTS = Object.freeze({
   corkCraterR: 0.024,
   // chłodnie na tarasie środkowym (po jednej w środku sektora między mostami): pierścień, promień podstawy, wysokość
   corkTowers: 6, corkTowerRing: 0.073, corkTowerR: 0.0122, corkTowerH: 0.036,
-  // przęsła ściany (pilastry), hale turbin na pokładzie górnym
-  corkSpans: 36, corkHalls: 24,
+  // przęsła ściany (pilastry); maszynownie pokładu górnego — po dwie w sektorze między mostami
+  corkSpans: 36,
   // arkologie na pokładzie górnym (wysokość bez anteny), szczyt bram kolektorów nad groblami (r ≥ 0,048 — pod
   // pierścieniami zamknięcia promienia od y 0,13)
   corkArcoH: 0.05, corkCollectorH: 0.104,
@@ -258,6 +260,20 @@ function box(F, cu, cw, hu, hw, v0, v1, acc, z = 0, w = 0, chamfer = 0) {
   prism(F, rect(cu, cw, hu, hw), rows, acc, z, w);
 }
 
+/**
+ * Blok sterowni (dyspozytornie bram, rozdzielnie): kadłub z JEDNYM ciągłym pasem okien we wnęce (głębokość 0,00022 R)
+ * w środkowej części wysokości i fazowanym dachem — nie „biurowiec” z oknami na całych ścianach.
+ */
+function bandBlock(F, cu, cw, hu, hw, y0, y1, hull, win) {
+  const h = y1 - y0, d = 0.00022, ch = 0.0004;
+  const sIn = [(hu - d) / hu, (hw - d) / hw];
+  const b0 = y0 + h * 0.34, b1 = y0 + h * 0.64;
+  prism(F, rect(cu, cw, hu, hw), [
+    { v: y0, side: hull }, { v: b0, side: hull }, { v: b0, s: sIn, side: win }, { v: b1, s: sIn, side: hull },
+    { v: b1, side: hull }, { v: y1 - ch, side: hull }, { v: y1, s: [1 - ch / hu, 1 - ch / hw] }
+  ], { side: hull, top: hull, bottom: null }, 0.88);
+}
+
 /** Wielokąt foremny (n wierzchołków, półosie ru, rw) — przekrój filarów i stóp. */
 function ngon(n, ru, rw, rot = Math.PI / n) {
   const out = [];
@@ -270,12 +286,15 @@ function ngon(n, ru, rw, rot = Math.PI / n) {
 
 const val2 = (f, r, y) => (typeof f === 'function' ? f(r, y) : (f ?? 0));
 
+const AXIS_X = Object.freeze(new V3(1, 0, 0));
+
 /**
- * Bryła obrotowa wokół pionu (cx, cy, cz): profil [r, y] (bryła po LEWEJ przy marszu — wtedy normalne na zewnątrz),
- * `segs[i]` — atrybuty odcinka i → i + 1: { acc, smooth, z, w } (z / w: liczba albo (r, y) → wartość).
- * Odcinki płaskie (smooth: false) — ściany wielokąta o `n` bokach, gładkie — normalne obracane z profilem.
+ * Bryła obrotowa wokół osi (domyślnie pion przez (cx, cy, cz)): profil [r, y] (y — wzdłuż osi; bryła po LEWEJ przy
+ * marszu — wtedy normalne na zewnątrz), `segs[i]` — atrybuty odcinka i → i + 1: { acc, smooth, z, w } (z / w: liczba
+ * albo (r, y) → wartość). Odcinki płaskie (smooth: false) — ściany wielokąta o `n` bokach, gładkie — normalne obracane
+ * z profilem. `axis` / `e1` — własna oś (jednostkowa) i kierunek kąta 0 (⟂ osi): wentylatory na ścianie korka.
  */
-function lathe(profile, segs, n, { cx = 0, cy = 0, cz = 0, theta0 = 0 } = {}) {
+function lathe(profile, segs, n, { cx = 0, cy = 0, cz = 0, theta0 = 0, axis = UP, e1 = AXIS_X } = {}) {
   const cs = [], sn = [], csM = [], snM = [];
   for (let j = 0; j <= n; j++) {
     const t = theta0 + (j / n) * TAU;
@@ -283,34 +302,53 @@ function lathe(profile, segs, n, { cx = 0, cy = 0, cz = 0, theta0 = 0 } = {}) {
     const tm = theta0 + ((j + 0.5) / n) * TAU;
     csM.push(Math.cos(tm)); snM.push(Math.sin(tm));
   }
-  const P = (r, y, j, out) => out.set(cx + r * cs[j], cy + y, cz - r * sn[j]);
+  // baza (e1, e2 = oś × e1, oś) — przy osi pionowej e2 = −Z: ten sam obieg co dawniej (normalne na zewnątrz)
+  const e2 = new V3().crossVectors(axis, e1);
+  const P = (r, y, j, out) => out.set(cx, cy, cz).addScaledVector(e1, r * cs[j]).addScaledVector(e2, r * sn[j]).addScaledVector(axis, y);
+  const nrm = (nr, ny, c0, s0, out) => out.copy(e1).multiplyScalar(nr * c0).addScaledVector(e2, nr * s0).addScaledVector(axis, ny);
   const a = new V3(), b = new V3(), c = new V3(), d = new V3(), nn = new V3();
   let vAcc = 0;
+  // ostatni pierścień gładkiego odcinka: następny gładki odcinek tego samego rodzaju (ciągłe z / w, załamanie < ~35°)
+  // dzieli go — normalne uśrednione (wieże, lej), bez podwójnych rzędów wierzchołków
+  let prev = null;
   for (let i = 0; i + 1 < profile.length; i++) {
     const s = segs[i];
     const [r0, y0] = profile[i], [r1, y1] = profile[i + 1];
     const len = Math.sqrt((r1 - r0) ** 2 + (y1 - y0) ** 2);
-    if (!s?.acc || len < 1e-9) { vAcc += len; continue; }
+    if (!s?.acc || len < 1e-9) { vAcc += len; prev = null; continue; }
     const A = s.acc;
     const nr = (y1 - y0) / len, ny = -(r1 - r0) / len;
     const z0 = val2(s.z, r0, y0), z1 = val2(s.z, r1, y1);
     const w0 = val2(s.w, r0, y0), w1 = val2(s.w, r1, y1);
     const v0 = vAcc * 40, v1 = (vAcc + len) * 40;
     if (s.smooth) {
-      const base = A.count;
-      for (let j = 0; j <= n; j++) {
-        nn.set(nr * cs[j], ny, -nr * sn[j]);
-        A.vert(P(r0, y0, j, a), nn, j / n, v0, z0, w0);
-        A.vert(P(r1, y1, j, d), nn, j / n, v1, z1, w1);
+      let ringA;
+      if (prev && prev.A === A && prev.z === z0 && prev.w === w0 && prev.nr * nr + prev.ny * ny > 0.82) {
+        ringA = prev.ring;
+        let ar = prev.nr + nr, ay = prev.ny + ny;
+        const al = Math.sqrt(ar * ar + ay * ay);
+        ar /= al; ay /= al;
+        for (let j = 0; j <= n; j++) {
+          nrm(ar, ay, cs[j], sn[j], nn);
+          const q = (ringA + j) * 3;
+          A.nrm[q] = nn.x; A.nrm[q + 1] = nn.y; A.nrm[q + 2] = nn.z;
+        }
+      } else {
+        ringA = A.count;
+        for (let j = 0; j <= n; j++) A.vert(P(r0, y0, j, a), nrm(nr, ny, cs[j], sn[j], nn), j / n, v0, z0, w0);
       }
+      const ringD = A.count;
+      for (let j = 0; j <= n; j++) A.vert(P(r1, y1, j, d), nrm(nr, ny, cs[j], sn[j], nn), j / n, v1, z1, w1);
       for (let j = 0; j < n; j++) {
-        const ia = base + j * 2, id = ia + 1, ib = ia + 2, ic = ia + 3;
+        const ia = ringA + j, ib = ia + 1, id = ringD + j, ic = id + 1;
         A.tri(ia, ib, ic);
         A.tri(ia, ic, id);
       }
+      prev = { A, ring: ringD, z: z1, w: w1, nr, ny };
     } else {
+      prev = null;
       for (let j = 0; j < n; j++) {
-        nn.set(nr * csM[j], ny, -nr * snM[j]);
+        nrm(nr, ny, csM[j], snM[j], nn);
         const i0 = A.vert(P(r0, y0, j, a), nn, j / n, v0, z0, w0);
         const i1 = A.vert(P(r0, y0, j + 1, b), nn, (j + 1) / n, v0, z0, w0);
         const i2 = A.vert(P(r1, y1, j + 1, c), nn, (j + 1) / n, v1, z1, w1);
@@ -323,14 +361,27 @@ function lathe(profile, segs, n, { cx = 0, cy = 0, cz = 0, theta0 = 0 } = {}) {
   }
 }
 
-/** Torus wokół pionu (środek przekroju r0, y0; promień rury rt) — gładki. */
-function torus(A, r0, y0, rt, n, m = 10, opts = {}, z = 0, w = 0) {
-  const prof = [];
-  for (let k = 0; k <= m; k++) {
-    const t = (k / m) * TAU;
-    prof.push([r0 + Math.cos(t) * rt, y0 + Math.sin(t) * rt]);
+/** Torus wokół pionu (środek przekroju r0, y0; promień rury rt) — gładki, siatka (n + 1) × (m + 1) wspólnych wierzchołków. */
+function torus(A, r0, y0, rt, n, m = 10, { cx = 0, cy = 0, cz = 0 } = {}, z = 0, w = 0) {
+  const base = A.count;
+  const p = new V3(), nn = new V3();
+  for (let j = 0; j <= n; j++) {
+    const t = (j / n) * TAU, ct = Math.cos(t), st = Math.sin(t);
+    for (let k = 0; k <= m; k++) {
+      const s = (k / m) * TAU, cs = Math.cos(s), ss = Math.sin(s);
+      const r = r0 + cs * rt, y = y0 + ss * rt;
+      nn.set(cs * ct, ss, -cs * st);
+      A.vert(p.set(cx + r * ct, cy + y, cz - r * st), nn, j / n, k / m, val2(z, r, y), val2(w, r, y));
+    }
   }
-  lathe(prof, prof.map(() => ({ acc: A, smooth: true, z, w })), n, opts);
+  // obieg jak w `lathe` (profil przeciwnie do wskazówek zegara w (r, y) — normalne na zewnątrz rury)
+  for (let j = 0; j < n; j++) {
+    for (let k = 0; k < m; k++) {
+      const ia = base + j * (m + 1) + k, id = ia + 1, ib = ia + m + 1, ic = ib + 1;
+      A.tri(ia, ib, ic);
+      A.tri(ia, ic, id);
+    }
+  }
 }
 
 /**
@@ -419,21 +470,55 @@ function cylinder(A, P, Q, r0, r1, n, caps = true, z = 0, w = 0) {
 /** Pręt kratownicy P → Q (cienki graniastosłup bez denek). */
 const beam = (A, P, Q, r, n = 4) => cylinder(A, P, Q, r, r, n, false);
 
-/** Tarcza (n-kąt) o środku C, normalnej nrm (oś u w płaszczyźnie: uAxis) i promieniu r — jedna ściana. */
-function disc(A, C, nrm, uAxis, r, n, z = 0, w = 0) {
-  const e2 = new V3().crossVectors(nrm, uAxis).normalize();
-  const e1 = new V3().crossVectors(e2, nrm).normalize();
-  const base = A.vert(C, nrm, 0.5, 0.5, z, w);
-  const p = new V3();
-  for (let j = 0; j < n; j++) {
-    const t = (j / n) * TAU;
-    A.vert(p.copy(C).addScaledVector(e1, Math.cos(t) * r).addScaledVector(e2, Math.sin(t) * r), nrm, 0.5 + Math.cos(t) * 0.5, 0.5 + Math.sin(t) * 0.5, z, w);
+/**
+ * Blok łukowy — budynek wzdłuż obwodu (pokład korka): pierścień ρ ∈ [r0, r1], azymut ∈ [a0, a1] (rad, a0 < a1),
+ * wiersze `rows` ({ v, d, side }) jak w `prism`: d — wcięcie wszystkich ścian [R] (ujemne — gzyms wysunięty), dwa wiersze
+ * na tej samej wysokości z innym d = półka / nadproże. Ściany: 'out' (łuk zewnętrzny), 'in' (łuk ku osi), 'end' (czoła
+ * promieniste); `side` — Acc, null albo (ściana) → Acc | null; `acc` — Acc albo { side, top }. Dach płaski (bez dna).
+ * Łuki z `nA` odcinków (cięciwy — ugięcie < 0,0001 R przy 20° i ρ 0,12).
+ */
+function arcBlock(r0, r1, a0, a1, rows, acc, nA = 8, z = 0, w = 0) {
+  const side = acc instanceof Acc ? acc : acc.side;
+  const top = acc instanceof Acc ? acc : acc.top;
+  const rm = (r0 + r1) / 2;
+  const ring = rows.map((row) => {
+    const d = row.d ?? 0;
+    const ri = r0 + d, ro = r1 - d, da = d / rm;
+    const O = [], I = [];
+    for (let j = 0; j <= nA; j++) {
+      const a = lerp(a0 + da, a1 - da, j / nA);
+      O.push(polar(ro, a, row.v));
+      I.push(polar(ri, a, row.v));
+    }
+    return { O, I };
+  });
+  const hint = new V3(), m = new V3(), out = new V3();
+  // strona pasa z profilu (jak w prism): ściana na zewnątrz, półka w górę, nadproże w dół
+  const face = (A, a, b, c, d, n) => {
+    m.addVectors(c, d).sub(a).sub(b);
+    const dv = m.y, dd = m.dot(n);
+    hint.copy(n).multiplyScalar(dv).addScaledVector(UP, -dd);
+    if (hint.lengthSq() < 1e-24) hint.copy(n);
+    quad(A, a, b, c, d, hint, z, w);
+  };
+  for (let r = 0; r + 1 < rows.length; r++) {
+    const sd = rows[r].side !== undefined ? rows[r].side : side;
+    const pick = (f) => (typeof sd === 'function' ? sd(f) : sd);
+    const lo = ring[r], hi = ring[r + 1];
+    const Ao = pick('out'), Ai = pick('in'), Ae = pick('end');
+    for (let j = 0; j < nA; j++) {
+      const am = lerp(a0, a1, (j + 0.5) / nA);
+      if (Ao) face(Ao, lo.O[j], lo.O[j + 1], hi.O[j + 1], hi.O[j], dirAz(am, out));
+      if (Ai) face(Ai, lo.I[j], lo.I[j + 1], hi.I[j + 1], hi.I[j], dirAz(am, out).negate());
+    }
+    if (Ae) {
+      face(Ae, lo.I[0], lo.O[0], hi.O[0], hi.I[0], tanAz(a0, out).negate());
+      face(Ae, lo.I[nA], lo.O[nA], hi.O[nA], hi.I[nA], tanAz(a1, out));
+    }
   }
-  // kolejność: przeciwnie do wskazówek zegara patrząc od strony normalnej
-  const ccw = new V3().crossVectors(e1, e2).dot(nrm) > 0;
-  for (let j = 0; j < n; j++) {
-    const a = base + 1 + j, b = base + 1 + ((j + 1) % n);
-    if (ccw) A.tri(base, a, b); else A.tri(base, b, a);
+  if (top) {
+    const t = ring[ring.length - 1];
+    for (let j = 0; j < nA; j++) quad(top, t.I[j], t.O[j], t.O[j + 1], t.I[j + 1], UP, z, w);
   }
 }
 
@@ -645,12 +730,14 @@ function buildPilaster(ctx, az, i) {
 }
 
 /**
- * Przęsło wymienników: bateria żeber na linii lawy (żar tylko w wąskim pasie przy lawie, wyżej stal), nad nią skrzynia
- * z trzema wentylatorami (tarcze z żarem we wnękach obudów), wyżej dwa kolektory rur przez całe przęsło — tylko tam,
- * gdzie pod kołnierzem jest miejsce (z boków, gdzie lawa stoi wysoko, zostają same żebra).
+ * Przęsło wymienników: dwie GRUBE PRZEGRODY z kołnierzem na linii lawy (żar tylko w wąskim pasie przy lawie, wyżej stal)
+ * niosą KOLEKTOR RUR — dwa poziome przewody przez całe przęsło z nogami zanurzonymi w lawie (żarzące się obejmy na linii
+ * lawy) i pionami do skrzyni; nad nimi skrzynia z trzema wentylatorami (wnęka z łopatkami, żar tylko w piaście), wyżej
+ * dwa kolektory rur przez całe przęsło — tylko tam, gdzie pod kołnierzem jest miejsce (z boków, gdzie lawa stoi wysoko,
+ * zostają same przegrody i kolektor).
  */
 function buildExchanger(ctx, az, wl, i, rng) {
-  const { L, M } = ctx;
+  const { L, M, b, z0 } = ctx;
   const n = L.corkSpans;
   const R = L.corkR;
   const span = (TAU / n) * (R + 0.004);
@@ -662,32 +749,60 @@ function buildExchanger(ctx, az, wl, i, rng) {
   const hW = wl.y;
   const ceil = 0.0388;                      // pod skosem kołnierza
   const usable = span - 0.0034;
-  const heat = (p) => 0.5 * clamp01(1 - (p.y - hW) / 0.0042);
   const finTop = Math.min(hW + 0.0085, ceil);
-  const fins = 8;
-  for (let k = 0; k < fins; k++) {
-    const u = -usable / 2 + (usable * (k + 0.5)) / fins;
-    const w1 = wl.r + 0.0072 + rng.range(-0.0008, 0.0008);
-    const rows = [{ v: hW - 0.007, side: hot }, { v: hW + 0.0021, side: hot }, { v: hW + 0.0042, side: st }]
-      .filter((r) => r.v < finTop - 0.0005);
-    rows.push({ v: finTop, o: [0, -0.003] });
-    prism(F, rect(u, (wl.r - 0.004 + w1) / 2, 0.0004, (w1 - wl.r + 0.004) / 2), rows, { side: st, top: st, bottom: null }, heat);
+  // przegrody: żar od lawy (lustro w połowie widocznej długości — dno gryzu wznosi się ku ścianie) do 0,0004 nad nią,
+  // kołnierz tuż nad linią lawy, skośny wierzch ku ścianie
+  const wIn = wl.r - 0.004, wOut = wl.r + 0.0068 + rng.range(-0.0004, 0.0004);
+  const hM = lavaHeight(az, (wl.r + wOut) / 2, b, z0);
+  const heat = (p) => 0.48 * clamp01(1 - (p.y - hM + 0.0004) / 0.0011);
+  for (const s of [-1, 1]) {
+    const u = s * usable * 0.3;
+    prism(F, rect(u, (wIn + wOut) / 2, 0.0009, (wOut - wIn) / 2),
+      [{ v: hM - 0.007, side: hot }, { v: hM - 0.0004, side: hot }, { v: hM + 0.0004, side: st }, { v: finTop, o: [0, -0.003] }],
+      { side: st, top: st, bottom: null }, heat);
+    box(F, u, (wl.r + wOut) / 2 + 0.0003, 0.0016, (wOut - wl.r) / 2 + 0.0006, hM + 0.0004, hM + 0.0014, st, 0, 0, 0.0002);
+  }
+  // kolektor: przewód główny na kołnierzach (nogi w lawę z żarzącymi się obejmami) i drugi wyżej (piony do skrzyni)
+  const wH = wl.r + 0.0032, yH = hM + 0.0024;
+  const wH2 = wl.r + 0.0016, yH2 = Math.min(hM + 0.0048, finTop - 0.0009);
+  const hL = lavaHeight(az, wH + 0.0002, b, z0);
+  cylinder(st, F.at(-usable / 2 - 0.0004, yH, wH), F.at(usable / 2 + 0.0004, yH, wH), 0.0010, 0.0010, 10, false);
+  if (yH2 > yH + 0.0016) cylinder(st, F.at(-usable / 2 - 0.0004, yH2, wH2), F.at(usable / 2 + 0.0004, yH2, wH2), 0.0007, 0.0007, 8, false);
+  for (const f of [-0.45, -0.15, 0.15, 0.45]) {
+    const u = f * usable;
+    cylinder(st, F.at(u, yH, wH), F.at(u, hL - 0.004, wH + 0.0004), 0.0005, 0.0005, 6, false);
+    cylinder(hot, F.at(u, hL - 0.0006, wH + 0.0002), F.at(u, hL + 0.0005, wH + 0.0001), 0.0008, 0.0008, 8, false, 0.42);
   }
   if (finTop + 0.0045 > ceil) return;
+  // piony z kolektora do skrzyni
+  if (yH2 > yH + 0.0016) for (const f of [-0.15, 0.15]) cylinder(st, F.at(f * usable, yH2, wH2), F.at(f * usable, finTop + 0.0004, Math.min(wH2, R + 0.005)), 0.00045, 0.00045, 6, false);
   // skrzynia wentylatorów (lico w linii pilastrów) z trzema wentylatorami
   const hy0 = finTop, hy1 = finTop + 0.0045;
   box(F, 0, R + 0.0037, usable / 2, 0.0025, hy0, hy1, hull, 0, 0, 0.0004);
-  const fy = (hy0 + hy1) / 2, fr = 0.0016;
-  for (let k = -1; k <= 1; k++) {
-    const u = k * usable * 0.31;
-    cylinder(hull, F.at(u, fy, R + 0.0060), F.at(u, fy, R + 0.0068), fr, fr, 12, false);
-    disc(hot, F.at(u, fy, R + 0.0064), F.W, F.U, fr * 0.98, 12, 0.3);
-    box(F, u, R + 0.00655, fr * 0.95, 0.0001, fy - 0.00011, fy + 0.00011, st);
-    box(F, u, R + 0.00655, 0.00011, 0.0001, fy - fr * 0.95, fy + fr * 0.95, st);
-  }
+  const fy = (hy0 + hy1) / 2;
+  for (let k = -1; k <= 1; k++) wallFan(M, F, k * usable * 0.31, fy, R + 0.0062, 0.0016, seed, hull, st, hot, (k + 1) * 0.37 + i * 0.61);
   // kolektory rur nad skrzynią (wchodzą w pilastry — z daleka ciągłe poziome linie)
   if (hy1 + 0.0036 > ceil) return;
   for (const dy of [0.0011, 0.0027]) cylinder(st, F.at(-span / 2, hy1 + dy, R + 0.0044), F.at(span / 2, hy1 + dy, R + 0.0044), 0.0007, 0.0007, 8, false);
+}
+
+/**
+ * Wentylator wymiennika na licu skrzyni (oś wzdłuż F.W, lico na `wFace`): obręcz wysunięta przed lico (wnęka głębokości
+ * 0,0006 R), ciemna przegroda w dnie wnęki, 6 skośnych łopatek promienistych i piasta z żarem (HOT) — bez krzyża.
+ */
+function wallFan(M, F, u, fy, wFace, fr, seed, hull, st, hot, rot) {
+  const C = F.at(u, fy, wFace);
+  const ri = fr - 0.0001, rh = fr * 0.3;
+  lathe([[fr + 0.0002, -0.0001], [fr + 0.0002, 0.0007], [ri, 0.0007], [ri, 0.0001], [rh, 0.0001], [rh, 0.00035], [0, 0.00035]],
+    [{ acc: hull, smooth: true }, { acc: hull, smooth: true }, { acc: hull, smooth: true }, { acc: st, smooth: true },
+      { acc: st, smooth: true }, { acc: hot, smooth: true, z: 0.42 }], 8, { cx: C.x, cy: C.y, cz: C.z, axis: F.W, e1: F.U });
+  // łopatki: krawędź natarcia wyżej (0,0006 przed dnem), spływu niżej — skręt widać w świetle bocznym
+  const P = (r, t, h) => C.clone().addScaledVector(F.U, r * Math.cos(t)).addScaledVector(F.V, r * Math.sin(t)).addScaledVector(F.W, h);
+  const r0 = fr * 0.33, r1 = ri - 0.0001;
+  for (let k = 0; k < 6; k++) {
+    const t = rot + (k / 6) * TAU;
+    quad(st, P(r0, t, 0.0006), P(r1, t, 0.0006), P(r1, t + 0.42, 0.00016), P(r0, t + 0.9, 0.00016), F.W);
+  }
 }
 
 /**
@@ -837,8 +952,7 @@ function buildGate(ctx, az, i, C) {
   // (na wierzchu bramy: przy krótkiej bramie dyspozytornia cofa się nad pokład, antena stoi obok niej)
   const top = T + 0.0018;
   const wD = Math.min(R + 0.0055, (R - 0.002 + r1) / 2);
-  box(F, 0, wD, 0.0042, 0.003, top, top + 0.0032, { side: M.acc(PART.WINDOW, 0.9), top: hull, bottom: null }, 0.88);
-  box(F, 0, wD, 0.0046, 0.0034, top + 0.0032, top + 0.0040, hull, 0, 0, 0.0004);
+  bandBlock(F, 0, wD, 0.0044, 0.0032, top, top + 0.0040, hull, M.acc(PART.WINDOW, 0.9));
   latticeMast(M, F, -0.0066, Math.min(R + 0.0098, r1 - 0.0013), top, 0.014, 0.0008, 0.00035, 4, (i * 0.29 + 0.1) % 1, { antenna: 0.004 });
 }
 
@@ -1099,14 +1213,24 @@ function appendGeometry(A, g, z, w, swapUv = false) {
   g.dispose();
 }
 
-// ── Pokład górny: hale turbin, szyna zbiorcza, rozdzielnie, arkologie, lądowiska, maszyny ───────────────────────────
+// ── Pokład górny: maszynownie, estakada, szyna zbiorcza, rozdzielnie, arkologie, lądowiska ──────────────────────────
+/**
+ * Pokład górny w każdym sektorze między mostami: rozdzielnia przy moście, DWIE MASZYNOWNIE (kompleksy turbin pod jednym
+ * dachem wzdłuż obwodu, `buildMachineHall`), w środku sektora arkologia albo lądowisko; od strony osi pierścień ESTAKADY
+ * RUR nad drogą obwodową (odgałęzienia do maszynowni), na krawędzi szyna zbiorcza.
+ */
 function buildTopDeck(ctx) {
-  const { L, M, rng } = ctx;
+  const { L, M } = ctx;
   const T = L.corkTopH, R = L.corkR, Mr = L.corkMidR;
-  const nH = L.corkHalls;
-  const step = TAU / nH;
-  const rc = (R - 0.002 + Mr + 0.0015) / 2 - 0.0015;   // środek hal
-  for (let i = 0; i < nH; i++) buildHall(ctx, ctx.az0 + (i + 0.5) * step, rc, i, rng);
+  const rc = (R - 0.002 + Mr + 0.0015) / 2 - 0.0015;   // środek pasa zabudowy (arkologie, lądowiska, rozdzielnie)
+  const nB = ctx.bridgeAz.length;
+  const sec = TAU / nB;
+  // maszynownie: po dwie w sektorze, ±(¼ sektora − 5°) — luz do rozdzielni i podium arkologii
+  const half = Math.max(2 * DEG, sec / 4 - 5 * DEG);
+  ctx.bridgeAz.forEach((a, s) => {
+    for (const k of [0, 1]) buildMachineHall(ctx, a + sec * (k ? 0.75 : 0.25), half, s * 2 + k);
+  });
+  buildPipeRack(ctx, Mr + 0.0038, T, { portals: 48, seed: 0.44, segs: 96 });
   // szyna zbiorcza: pierścień przewodu na krawędzi pokładu (impulsy wokół; długość — wielokrotność odstępu impulsów)
   const rb = R - 0.0032;
   const ring = new THREE.TorusGeometry(rb, 0.00085, 8, 288);
@@ -1141,22 +1265,12 @@ function buildTopDeck(ctx) {
   // wsporniki szyny co 7,5°
   const st = M.acc(PART.STRUCT, 0.35);
   for (let k = 0; k < 48; k++) box(radialFrame((k / 48) * TAU, 0, 0), 0, rb, 0.0004, 0.0012, T, T + 0.0006, st);
-  // luki między halami: rozdzielnie przy mostach; w środkach sektorów co drugi arkologia, reszta — lądowiska;
-  // pozostałe luki — maszyny (blok stopniowy za mostem, farma zbiorników przed następnym)
-  const nB = ctx.bridgeAz.length;
-  for (let i = 0; i < nH; i++) {
-    const az = ctx.az0 + i * step;
-    let kB = 0;
-    for (let k = 1; k < nB; k++) if (Math.abs(angDiff(az, ctx.bridgeAz[k])) < Math.abs(angDiff(az, ctx.bridgeAz[kB]))) kB = k;
-    const d = angDiff(az, ctx.bridgeAz[kB]);
-    if (Math.abs(d) < 0.01) buildSwitchyard(ctx, az, rc, i);
-    else if (Math.abs(Math.abs(d) - Math.PI / nB) < 0.01) {
-      const s = d > 0 ? kB : (kB - 1 + nB) % nB;
-      if (s % 2 === 0) buildArcology(ctx, az, rc, s); else buildPad(ctx, az, rc + 0.001, i);
-    } else if (d > 0) steppedBlock(ctx, radialFrame(az, 0, 0), 0, rc + 0.0012, 0.0062, 0.0092, T, (i * 0.137 + 0.3) % 1);
-    else tankFarm(ctx, radialFrame(az, 0, 0), 0, rc + 0.0012, 0.0062, 0.0094, T, (i * 0.137 + 0.6) % 1);
-  }
-  // droga obwodowa pokładu: cienka ciepła listwa (pod progiem bloomu)
+  // przy mostach rozdzielnie; w środkach sektorów co drugi arkologia, reszta — lądowiska
+  ctx.bridgeAz.forEach((a, s) => {
+    buildSwitchyard(ctx, a, rc, s);
+    if (s % 2 === 0) buildArcology(ctx, a + sec / 2, rc, s); else buildPad(ctx, a + sec / 2, rc + 0.001, s);
+  });
+  // droga obwodowa pokładu: cienka ciepła listwa (pod progiem bloomu) — pod estakadą
   stripRing(M, Mr + 0.0045, T, 0.00022, 0.35, 0, 144);
 }
 
@@ -1166,53 +1280,95 @@ function stripRing(M, r, y, hw, z, w, n) {
 }
 
 /**
- * Hala turbin: długi promienisty blok — cokół, pochyłe ściany z dwiema wnękami okien (ciągłe pasy) na długich bokach,
- * płaski dach z grzbietem świetlika (cienkie chłodne listwy) i wentylatorami; generator na kołyskach za czołem hali
- * (z odstępem od ściany i pokładu) i transformator na drugim końcu.
+ * MASZYNOWNIA — kompleks turbin wzdłuż obwodu pokładu (azymut ac ± half), od osi ku krawędzi:
+ *   • przybudówka sterowni (niska, jeden ciągły pas okien ku osi), odgałęzienia estakady rur nad nią do hali;
+ *   • HALA GŁÓWNA pod jednym dużym dachem: cokół, pas okien przy cokole dzielony pilastrami na wnęki, gładka ściana,
+ *     gzyms; na dachu świetlik z ciemnego szkła (cienkie chłodne listwy u podstawy — z góry łuki pierścieni) i bloki
+ *     wentylacji;
+ *   • PLAC GENERATORÓW na zewnątrz: trzy bębny na kołyskach z uzwojeniem COIL i szynoprzewodami do hali, nad nimi
+ *     SUWNICA bramowa na dwóch szynach (nogi A, dźwigar wysunięty nad okap hali, wózek, światło pozycyjne).
+ * Wymiary od krawędzi pokładu (R) i od uskoku tarasu (Mr) — w luzie do szyny zbiorczej (R − 0,0032 ± 0,0012).
  */
-function buildHall(ctx, az, rc, i, rng) {
+function buildMachineHall(ctx, ac, half, i) {
   const { L, M } = ctx;
-  const T = L.corkTopH;
-  const F = radialFrame(az, 0, 0);
-  const seed = (i * 0.0417 + 0.02) % 1;
+  const T = L.corkTopH, R = L.corkR, Mr = L.corkMidR;
+  const rng = plantRng(L.corkSeed * 131 + i * 977 + 3);
+  const seed = (i * 0.0833 + 0.04) % 1;
   const hull = M.acc(PART.HULL, seed);
   const win = M.acc(PART.WINDOW, seed);
   const st = M.acc(PART.STRUCT, seed);
-  const hl = 0.009 + rng.range(-0.0004, 0.0004);
-  const hu = 0.0047;
-  const v0 = T, v1 = T + 0.0009, v2 = v1 + 0.0042 + rng.range(-0.0004, 0.0004);
-  box(F, 0, rc, hu + 0.0011, hl + 0.0012, v0, v1, hull, 0, 0, 0.0003);
-  const lean = (v) => lerp(1, 0.88, (v - v1) / (v2 - v1));
-  const d = 0.00028;
-  const sOut = (v) => [lean(v), 1];
-  const sIn = (v) => [lean(v) * (hu - d) / hu, 1];
-  const longW = (A) => (k, nu) => (Math.abs(nu) > 1e-6 ? A : hull);
-  const b0 = v1 + 0.0008, b1 = b0 + 0.0013, b2 = b1 + 0.0006, b3 = b2 + 0.0007;
-  prism(F, rect(0, rc, hu, hl), [
-    { v: v1, s: sOut(v1), side: hull },
-    { v: b0, s: sOut(b0), side: longW(hull) }, { v: b0, s: sIn(b0), side: longW(win) }, { v: b1, s: sIn(b1), side: longW(hull) },
-    { v: b1, s: sOut(b1), side: hull },
-    { v: b2, s: sOut(b2), side: longW(hull) }, { v: b2, s: sIn(b2), side: longW(win) }, { v: b3, s: sIn(b3), side: longW(hull) },
-    { v: b3, s: sOut(b3), side: hull },
-    { v: v2 - 0.0005, s: [lean(v2 - 0.0005), 0.985] }
-  ], { side: hull, top: null, bottom: null }, 0.88);
-  prism(F, rect(0, rc, hu, hl), [{ v: v2 - 0.0005, s: [lean(v2 - 0.0005), 0.985] }, { v: v2, s: [0.84, 0.975] }], { side: hull, top: hull, bottom: null });
-  // grzbiet świetlika (kadłub) z cienkimi chłodnymi listwami u podstawy
-  box(F, 0, rc, 0.0011, hl * 0.84, v2, v2 + 0.0012, hull, 0, 0, 0.0002);
-  for (const s of [-1, 1]) box(F, s * 0.00118, rc, 0.00008, hl * 0.8, v2 + 0.0004, v2 + 0.0007, M.acc(PART.STRIP, 0.4), 0.35, 1);
-  // wentylatory na dachu (naprzemiennie po bokach grzbietu)
-  for (let k = 0; k < 4; k++) {
-    const w = rc - hl * 0.66 + (hl * 1.32 * k) / 3;
-    box(F, (k % 2 ? 1 : -1) * 0.0026, w, 0.0008, 0.0011, v2, v2 + 0.0007, hull, 0, 0, 0.0002);
+  const a0 = ac - half, a1 = ac + half;
+  const rIn = Mr + 0.0084, rOut = R - 0.013;
+  const hTop = T + 0.0056 + rng.range(-0.0003, 0.0003);
+  // przybudówka sterowni (ściana ku hali schowana w hali)
+  const aI = 0.6 * DEG;
+  arcBlock(Mr + 0.0064, rIn + 0.0002, a0 + aI, a1 - aI, [
+    { v: T, side: hull }, { v: T + 0.0010, side: hull }, { v: T + 0.0010, d: 0.00025, side: (f) => (f === 'out' ? null : win) },
+    { v: T + 0.0019, d: 0.00025, side: hull }, { v: T + 0.0019, side: hull }, { v: T + 0.0029, d: 0 }, { v: T + 0.0031, d: 0.0003 }
+  ], { side: (f) => (f === 'out' ? null : hull), top: hull }, 8, 0.88);
+  // hala główna: pas okien tylko na zewnątrz i na czołach (od osi zasłania go przybudówka)
+  const low = (A) => (f) => (f === 'in' ? null : A);
+  arcBlock(rIn, rOut, a0, a1, [
+    { v: T, side: low(hull) }, { v: T + 0.0008, side: low(hull) }, { v: T + 0.0008, d: 0.0003, side: low(win) },
+    { v: T + 0.0018, d: 0.0003, side: low(hull) }, { v: T + 0.0018, side: hull }, { v: hTop - 0.0004, side: hull },
+    { v: hTop - 0.0004, d: -0.0002, side: hull }, { v: hTop, d: -0.0002 }
+  ], hull, 8, 0.88);
+  // pilastry na ścianie od placu (dzielą pas okien na wnęki)
+  const nP = Math.max(3, Math.round((2 * half * rOut) / 0.0046));
+  for (let k = 0; k <= nP; k++) {
+    const F = radialFrame(lerp(a0 + 0.4 * DEG, a1 - 0.4 * DEG, k / nP), 0, 0);
+    box(F, 0, rOut + 0.00016, 0.00032, 0.00018, T, hTop - 0.0004, hull);
   }
-  // generator: bęben wzdłuż promienia na dwóch kołyskach, z pierścieniem uzwojenia (COIL)
-  const g0 = rc + hl + 0.0016, g1 = rc + hl + 0.0038, gr = 0.0017, gy = T + 0.0004 + gr;
-  for (const w of [g0 + 0.0005, g1 - 0.0005]) box(F, 0, w, 0.0012, 0.0003, T, T + 0.0011, st);
-  cylinder(hull, F.at(0, gy, g0), F.at(0, gy, g1), gr, gr * 0.92, 16, true);
-  cylinder(M.acc(PART.COIL, seed), F.at(0, gy, (g0 + g1) / 2 - 0.0002), F.at(0, gy, (g0 + g1) / 2 + 0.0002), gr * 1.04, gr * 1.04, 16, false, rng.next(), 0.25);
-  // transformator na końcu wewnętrznym
-  box(F, 0, rc - hl - 0.0024, 0.0028, 0.0013, v0, v1 + 0.0022, hull, 0, 0, 0.0004);
-  box(F, 0, rc - hl - 0.0024, 0.0020, 0.0003, v1 + 0.0022, v1 + 0.0027, M.acc(PART.COIL, seed), rng.next(), 0.3);
+  // świetlik: ciemne szkło na długich bokach, okap; u podstawy cienkie chłodne listwy (z góry — łuki pierścieni)
+  const m0 = rIn + 0.0036, m1 = rOut - 0.0036, aM = 1.1 * DEG;
+  arcBlock(m0, m1, a0 + aM, a1 - aM, [
+    { v: hTop - 0.0001, side: hull }, { v: hTop + 0.0002, side: (f) => (f === 'end' ? hull : M.acc(PART.GLASS, seed)) },
+    { v: hTop + 0.0009, side: hull }, { v: hTop + 0.0009, d: -0.00025, side: hull }, { v: hTop + 0.0011, d: -0.00025 }
+  ], hull, 8);
+  const strip = M.acc(PART.STRIP, 0.4);
+  for (const r of [m0 - 0.0005, m1 + 0.0005]) {
+    arcBlock(r - 0.00008, r + 0.00008, a0 + aM, a1 - aM, [{ v: hTop - 0.0001 }, { v: hTop + 0.00012 }], { side: (f) => (f === 'end' ? null : strip), top: strip }, 8, 0.35, 1);
+  }
+  // bloki wentylacji na dachu (między świetlikiem a okapem, od strony placu)
+  for (const f of [-0.62, 0.05, 0.6]) {
+    const F = radialFrame(ac + f * half + rng.range(-0.6, 0.6) * DEG, 0, 0);
+    box(F, 0, (m1 + rOut) / 2, 0.0011 + rng.range(0, 0.0004), 0.0007, hTop, hTop + 0.0006, hull, 0, 0, 0.00015);
+  }
+  // plac generatorów: szyny suwnicy, trzy zespoły wzdłuż hali (bęben na kołyskach z uzwojeniem COIL i wzbudnicą),
+  // szynoprzewody do hali
+  const wR0 = R - 0.0116, wR1 = R - 0.0056;
+  for (const r of [wR0, wR1]) arcBlock(r - 0.00018, r + 0.00018, a0, a1, [{ v: T }, { v: T + 0.00025 }], { side: (f) => (f === 'end' ? null : st), top: st }, 8);
+  const wc = (wR0 + wR1) / 2, gl = 0.0026, gr = 0.0016, gy = T + 0.0005 + gr;
+  const coil = M.acc(PART.COIL, seed);
+  [-0.62, 0, 0.62].forEach((f, k) => {
+    const F = radialFrame(ac + f * half, 0, 0);
+    const s = k % 2 ? 1 : -1;   // wzbudnica na przemian z obu stron
+    for (const u of [-gl + 0.0007, gl - 0.0007]) box(F, u, wc, 0.00035, 0.0011, T, T + 0.0013, st);
+    cylinder(hull, F.at(-gl, gy, wc), F.at(gl, gy, wc), gr, gr, 10, true);
+    cylinder(coil, F.at(-0.0002, gy, wc), F.at(0.0002, gy, wc), gr * 1.05, gr * 1.05, 10, false, rng.next(), 0.25);
+    cylinder(hull, F.at(s * gl, gy - 0.0003, wc), F.at(s * (gl + 0.0013), gy - 0.0003, wc), gr * 0.55, gr * 0.5, 8, true);
+    box(F, 0, (rOut + wc - gr) / 2, 0.0005, (wc - gr - rOut) / 2 + 0.0002, gy - 0.0005, gy + 0.0005, st);
+  });
+  // suwnica bramowa między bębnami: nogi A na szynach, wózki jezdne, dźwigar nad okapem hali, wózek z hakiem
+  const F = radialFrame(ac + (0.31 + rng.range(-0.05, 0.05)) * half * (i % 2 ? 1 : -1), 0, 0);
+  const yG = hTop + 0.0010;
+  for (const w of [wR0, wR1]) {
+    box(F, 0, w, 0.0017, 0.00032, T + 0.00025, T + 0.0008, st);
+    for (const s of [-1, 1]) beam(st, F.at(s * 0.0013, T + 0.0008, w), F.at(s * 0.0003, yG, w), 0.00022);
+  }
+  box(F, 0, (rOut - 0.0006 + R - 0.0046) / 2, 0.00045, (R - 0.0046 - rOut + 0.0006) / 2, yG, yG + 0.0008, st, 0, 0, 0.00015);
+  const wt = lerp(rOut, wR1, 0.3 + rng.next() * 0.5);
+  box(F, 0, wt, 0.0007, 0.0006, yG + 0.0008, yG + 0.0013, hull, 0, 0, 0.0001);
+  beam(st, F.at(0, yG, wt), F.at(0, gy + gr + 0.0012, wt), 0.00007, 3);
+  box(F, 0, wt, 0.00025, 0.00025, gy + gr + 0.0006, gy + gr + 0.0012, st);
+  box(F, 0, R - 0.0050, 0.00025, 0.00025, yG + 0.0008, yG + 0.0013, M.acc(PART.BEACON, (seed * 7.3) % 1), 0.5, 0);
+  // odgałęzienia estakady (wspólny pierścień od osi) nad przybudówką do ściany hali
+  const yE = T + 0.0046;
+  for (const f of [-0.5, 0.5]) {
+    const Fb = radialFrame(ac + f * half, 0, 0);
+    for (const o of [-0.0005, 0.0005]) cylinder(st, Fb.at(o, yE, Mr + 0.0038), Fb.at(o, yE, rIn + 0.0003), 0.00036, 0.00036, 6, false);
+    box(Fb, 0, Mr + 0.0074, 0.0009, 0.00018, T + 0.0031, yE - 0.0003, st);
+  }
 }
 
 /** Rozdzielnia nad bramą mostu: dwa rzędy izolatorów z akcentami COIL po bokach grobli przewodów, budynek łączy. */
@@ -1229,8 +1385,7 @@ function buildSwitchyard(ctx, az, rc, i) {
       box(F, u, w, 0.0009, 0.0002, T + 0.0040, T + 0.0044, M.acc(PART.COIL, 0.66), (k * 0.25 + (u > 0 ? 0.12 : 0)) % 1, 0.3);
     }
   }
-  box(F, 0.0062, rc + 0.0088, 0.0017, 0.0024, T, T + 0.0030, { side: M.acc(PART.WINDOW, 0.66), top: hull, bottom: null }, 0.88);
-  box(F, 0.0062, rc + 0.0088, 0.0020, 0.0027, T + 0.0030, T + 0.0036, hull, 0, 0, 0.0004);
+  bandBlock(F, 0.0062, rc + 0.0088, 0.0019, 0.0026, T, T + 0.0036, hull, M.acc(PART.WINDOW, 0.66));
 }
 
 /**
@@ -1374,11 +1529,29 @@ function tankFarm(ctx, F, cu, cw, hu, hw, y, seed) {
 }
 
 /**
- * Stopniowy blok w prostokącie (cu ± hu, cw ± hw): 3 kondygnacje z uskokami po 0,0012 R, w każdej wnęka pasa okien
- * (ciągły pas), na uskokach cienkie listwy; na dachu wentylatory z żarem albo (`coils`) izolatory z akcentami COIL
- * (blok transformatorów), światło pozycyjne na narożu.
+ * Most rurowy: dwie rury od A do B (rama elektrowni, poziomo) na wysokości yp, piony z pokładu (y) przy A, portal
+ * w połowie — spina maszyny tarasu w kompleks.
  */
-function steppedBlock(ctx, F, cu, cw, hu, hw, y, seed, coils = false) {
+function pipeBridge(M, A, B, y, yp, seed) {
+  const st = M.acc(PART.STRUCT, seed);
+  const d = new V3(B.x - A.x, 0, B.z - A.z).normalize();
+  const s = new V3(-d.z, 0, d.x);
+  const at = (P, o, h) => new V3(P.x, h, P.z).addScaledVector(s, o);
+  for (const o of [-0.0006, 0.0006]) {
+    cylinder(st, at(A, o, y), at(A, o, yp), 0.00035, 0.00035, 6, false);
+    cylinder(st, at(A, o, yp), at(B, o, yp), 0.00035, 0.00035, 6, false);
+  }
+  const m = new V3((A.x + B.x) / 2, 0, (A.z + B.z) / 2);
+  for (const o of [-0.0012, 0.0012]) beam(st, at(m, o, y), at(m, o, yp - 0.0004), 0.00018);
+  box(frame(m, s, UP.clone(), d), 0, 0, 0.0014, 0.0002, yp - 0.0007, yp - 0.0003, st);
+}
+
+/**
+ * Stopniowy blok w prostokącie (cu ± hu, cw ± hw): 3 kondygnacje z uskokami po 0,0012 R, w dolnych `winTiers`
+ * wnęka pasa okien (ciągły pas), na uskokach cienkie listwy; na dachu wentylatory z żarem albo (`coils`) izolatory
+ * z akcentami COIL (blok transformatorów), światło pozycyjne na narożu.
+ */
+function steppedBlock(ctx, F, cu, cw, hu, hw, y, seed, coils = false, winTiers = 3) {
   const { M } = ctx;
   const rng = plantRng(Math.floor(seed * 1e6) + 9);
   const hull = M.acc(PART.HULL, seed);
@@ -1391,10 +1564,11 @@ function steppedBlock(ctx, F, cu, cw, hu, hw, y, seed, coils = false) {
     const d = 0.00022, ch = 0.00025;
     const sIn = [(su - d) / su, (sw - d) / sw];
     const b0 = v + h * 0.3, b1 = b0 + Math.min(0.0011, h * 0.38);
-    prism(F, rect(cu, cw, su, sw), [
+    prism(F, rect(cu, cw, su, sw), t < winTiers ? [
       { v, side: hull }, { v: b0, side: hull }, { v: b0, s: sIn, side: win }, { v: b1, s: sIn, side: hull },
       { v: b1, side: hull }, { v: v + h - ch, side: hull }, { v: v + h, s: [1 - ch / su, 1 - ch / sw] }
-    ], { side: hull, top: hull, bottom: null }, 0.88);
+    ] : [{ v, side: hull }, { v: v + h - ch, side: hull }, { v: v + h, s: [1 - ch / su, 1 - ch / sw] }],
+    { side: hull, top: hull, bottom: null }, 0.88);
     const nu = su - 0.0012, nw = sw - 0.0012;
     if (t < 2) box(F, cu, cw, nu + 0.0002, nw + 0.0002, v + h, v + h + 0.00025, M.acc(PART.STRIP, seed), 0.34, t % 2);
     v += h; su = nu; sw = nw;
@@ -1416,12 +1590,15 @@ function steppedBlock(ctx, F, cu, cw, hu, hw, y, seed, coils = false) {
   box(F, cu + su * 0.8, cw + sw * 0.8, 0.0003, 0.0003, v, v + 0.0007, M.acc(PART.BEACON, seed), 0.6, rng.chance(0.25) ? 1 : 0);
 }
 
-/** Estakada rur: pierścień portali (co 5°, bez portali nad groblami) i trzech rur procesowych na promieniu rr. */
-function buildPipeRack(ctx, rr, y) {
+/**
+ * Estakada rur: pierścień portali (`portals` na obwód, bez portali nad groblami — tam rury przechodzą przęsłem) i trzech
+ * rur procesowych na promieniu rr (taras środkowy; pokład górny — nad drogą obwodową, z odgałęzieniami do maszynowni).
+ */
+function buildPipeRack(ctx, rr, y, { portals = 60, seed = 0.52, segs = 112 } = {}) {
   const { M } = ctx;
-  const st = M.acc(PART.STRUCT, 0.52);
+  const st = M.acc(PART.STRUCT, seed);
   const hP = 0.0042;
-  const nP = 72;
+  const nP = portals;
   for (let k = 0; k < nP; k++) {
     const a = ctx.az0 + ((k + 0.5) / nP) * TAU;
     if (ctx.bridgeAz.some((q) => Math.abs(angDiff(a, q)) * rr < 0.0065)) continue;
@@ -1430,7 +1607,7 @@ function buildPipeRack(ctx, rr, y) {
     box(F, 0, rr, 0.00025, 0.0021, y + hP - 0.0004, y + hP, st);
     if (k % 6 === 3) box(F, 0, rr + 0.0019, 0.00028, 0.00028, y + hP, y + hP + 0.0005, M.acc(PART.BEACON, (k * 0.07) % 1), 0.5, 0);
   }
-  [-0.0011, 0, 0.0011].forEach((o, j) => torus(M.acc(PART.STRUCT, 0.52 + j * 0.12), rr + o, y + hP + 0.00042, 0.00042, 128, 6));
+  [-0.0011, 0, 0.0011].forEach((o, j) => torus(M.acc(PART.STRUCT, (seed + j * 0.12) % 1), rr + o, y + hP + 0.00042, 0.00042, segs, 6));
 }
 
 // ── Taras środkowy: chłodnie, maszyny, estakada, anteny, bramy kolektorów ──────────────────────────────────────────
@@ -1442,12 +1619,19 @@ function buildMidTerrace(ctx) {
     const az = ctx.az0 + ((i + 0.5) / L.corkTowers) * TAU;
     buildTower(ctx, polar(L.corkTowerRing, az, y), i, rng);
   }
-  // między chłodnią a groblami: farma zbiorników (przed środkiem sektora) i blok transformatorów (za nim);
-  // przed chłodnią (od strony osi) — kratownicowa antena z piętrami świateł
+  // między chłodnią a groblami: farma zbiorników (przed środkiem sektora) i blok transformatorów (za nim), oba spięte
+  // z chłodnią mostami rurowymi (jeden kompleks); przed chłodnią (od strony osi) — kratownicowa antena z piętrami świateł
   const off = 19 * DEG;
+  const wM = 0.0735, hu = 0.0056;
   ctx.sectorAz.forEach((c, s) => {
-    tankFarm(ctx, radialFrame(c - off, 0, 0), 0, 0.0735, 0.0056, 0.0102, y, (s * 0.19 + 0.11) % 1);
-    steppedBlock(ctx, radialFrame(c + off, 0, 0), 0, 0.0735, 0.0056, 0.0098, y, (s * 0.23 + 0.47) % 1, true);
+    const Ft = radialFrame(c - off, 0, 0), Fs = radialFrame(c + off, 0, 0);
+    tankFarm(ctx, Ft, 0, wM, hu, 0.0102, y, (s * 0.19 + 0.11) % 1);
+    steppedBlock(ctx, Fs, 0, wM, hu, 0.0098, y, (s * 0.23 + 0.47) % 1, true, 1);
+    const Ct = polar(L.corkTowerRing, c, y);
+    for (const A of [Ft.at(hu + 0.0006, y, wM - 0.0024), Fs.at(-hu - 0.0006, y, wM - 0.0024)]) {
+      const d = new V3(Ct.x - A.x, 0, Ct.z - A.z).normalize();
+      pipeBridge(M, A, Ct.clone().addScaledVector(d, -(L.corkTowerR - 0.0006)), y, y + 0.0052, (s * 0.29 + 0.07) % 1);
+    }
     const F = radialFrame(c, 0, 0);
     box(F, 0, 0.052, 0.0019, 0.0019, y, y + 0.0008, M.acc(PART.HULL, 0.25), 0, 0, 0.0002);
     latticeMast(M, F, 0, 0.052, y + 0.0008, 0.020 + rng.range(-0.002, 0.002), 0.0014, 0.0005, 6, (s * 0.31 + 0.2) % 1, { antenna: 0.007 });
@@ -1503,7 +1687,7 @@ function buildTower(ctx, c, i, rng) {
       [{ acc: hull }, { acc: hull, smooth: true }, { acc: hull }, null], N, opts);
   }
   // żebra zewnętrzne wzdłuż profilu
-  const nR = 10;
+  const nR = 8;
   for (let k = 0; k < nR; k++) {
     const a = ((k + 0.5) / nR) * TAU;
     const dir = dirAz(a);
@@ -1548,7 +1732,7 @@ function buildCollector(ctx, phi, i) {
     const u0 = s * 0.0064, u1 = s * 0.0050;
     const sd = (seed + (s > 0 ? 0.5 : 0)) % 1;
     box(F, u0, wc, 0.0017, 0.0017, y0, y0 + 0.0012, hull, 0, 0, 0.0003);
-    latticeMast(M, F, u0, wc, y0 + 0.0012, hM, 0.0011, 0.0005, 7, sd, { cu1: u1 });
+    latticeMast(M, F, u0, wc, y0 + 0.0012, hM, 0.0011, 0.0005, 6, sd, { cu1: u1 });
     const yh = y0 + 0.0012 + hM;
     box(F, u1, wc, 0.0009, 0.0011, yh - 0.0004, yh + 0.0022, hull, 0, 0, 0.0002);
     cylinder(M.acc(PART.COIL, seed), F.at(u1, yh + 0.0009, wc - 0.0011), F.at(u1, yh + 0.0009, wc - 0.0016), 0.0008, 0.0008, 14, true, (i * 0.17 + (s > 0 ? 0.3 : 0)) % 1, 0.55);

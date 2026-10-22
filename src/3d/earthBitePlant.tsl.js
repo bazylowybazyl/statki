@@ -37,6 +37,13 @@ const roughA2 = (r, nPix) => clamp(r.mul(r).mul(r).mul(r).add(nPix.mul(nPix).mul
 /** Odległość od krawędzi komórki (f — część ułamkowa, s — rozmiar komórki [R]). */
 const edgeDist = (f, s) => min(f, float(1.0).sub(f)).mul(s);
 
+/**
+ * Widoczność OKRESOWEGO rzędu linii (żebra, podszwy, rowki, doliny stali) o okresie `period` [R]: pełna przy ≥ ~8 px,
+ * zero przy ≤ ~3,3 px. Ostrzej niż lodFade — gęsty rząd linii o okresie 2–5 px czytał się jak ukośne kreskowanie
+ * („karbon”) na częściach skośnych w rzucie.
+ */
+const lodLines = (pix, period) => sdown(0.12, 0.3, pix.div(period));
+
 // ── Kadłub: duże panele (L1), podpanele / przęsła żeber (L2), rowki (L3), luki serwisowe, rzędy świateł ──────────────
 // q — uv [R], pu / pv — piksel wzdłuż u / v [R], pix — piksel izotropowy, wall — 1 ściana (żebrowanie pionowe), 0 pokład,
 // ring — 1 pokład w rzucie pudełkowym (u = ρφ, v = ρ): panele w pierścieniach, szwy promieniste (u liczone na środku
@@ -70,8 +77,9 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   const e2v = plantVar(edgeDist(f2.y, sub.y));
   const lod1u = plantVar(lodFade(pu, P1.x));
   const lod1v = plantVar(lodFade(pv, P1.y));
-  const lod2u = plantVar(lodFade(pu, sub.x));
-  const lod2v = plantVar(lodFade(pv, sub.y));
+  // podpanele i żebra — rzędy gęstych linii (ostrzejszy LOD)
+  const lod2u = plantVar(lodLines(pu, sub.x));
+  const lod2v = plantVar(lodLines(pv, sub.y));
   const lod1 = plantVar(min(lod1u, lod1v));
   const lod2 = plantVar(min(lod2u, lod2v));
   // LUK SERWISOWY (~4% dużych paneli): prostokąt w środku panelu, obrys wklęsły, ciemniejszy, bez podziałów
@@ -94,7 +102,7 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   const sgnU = select(f2.x.lessThan(0.5), float(1.0), float(-1.0));
   // profil żebra: płaski grzbiet, zaokrąglone boki (normalna od osi żebra), u podstawy wygaszenie
   const ribT = e2u.div(ribW);
-  const ribTilt = sgnU.mul(smoothstep(0.4, 1.0, ribT)).mul(sdown(1.0, 1.3, ribT)).mul(0.35).mul(lodRib);
+  const ribTilt = sgnU.mul(smoothstep(0.4, 1.0, ribT)).mul(sdown(1.0, 1.3, ribT)).mul(0.25).mul(lodRib).mul(lod2u);
   // skos krawędzi dużego panelu (normalna ku najbliższej krawędzi — łapie słońce) + lekkie przekoszenie płyt
   const dirE = select(e1u.lessThan(e1v), vec2(sign(f1.x.sub(0.5)), 0.0), vec2(0.0, sign(f1.y.sub(0.5))));
   const bevel = sdown(0.0, 0.0003, min(e1u, e1v)).mul(min(lodFade(pu, 0.0008), lodFade(pv, 0.0008)));
@@ -104,7 +112,7 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   const gAxis = step01(h2, 0.9);
   const gc = mix(q.y, q.x, gAxis).div(0.0004);
   const pg = mix(pv, pu, gAxis);
-  const groove = plantVar(aaLine(abs(fract(gc).sub(0.5)).mul(0.0004), float(0.00005), pg).mul(lodFade(pg, 0.0004))
+  const groove = plantVar(aaLine(abs(fract(gc).sub(0.5)).mul(0.0004), float(0.00005), pg).mul(lodLines(pg, 0.0004))
     .mul(step01(h2, 0.8)).mul(float(1.0).sub(inHatch)));
   // TON: rozrzut ±5% (panel), ±4% (podpanel), ±5% (część) — czarny anodowany kadłub, nie mozaika
   const tone = plantVar(mix(1.0, float(0.95).add(h1.mul(0.1)), lod1)
@@ -118,17 +126,20 @@ function hullPanels(q0, pu, pv, pix, seed, time, wall, ring, uvMode) {
   // połyskiem; KRAWĘDZIE wytarte do metalu (gładsze, mocniejsze odbicie) — łapią słońce cienką linią, grzbiety żeber też
   const wear = plantVar(sdown(0.00004, 0.00028, min(e1u, e1v)).mul(min(lodFade(pu, 0.0012), lodFade(pv, 0.0012)))
     .mul(float(1.0).sub(seam1)).add(rib.mul(0.6)));
-  const rough = plantVar(mix(0.68, float(0.62).add(h1.mul(0.1)), lod1).add(h2.sub(0.5).mul(0.08).mul(lod2))
-    .add(seam1.mul(0.2)).add(groove.mul(0.12)).add(inHatch.mul(0.05)).sub(wear.mul(0.3)));
+  // powłoka matowa (0,72–0,76): szeroki odblask słońca z góry nie szarzeje całych płyt i pokładów (runda 3 — czarna
+  // megastruktura), wytarte krawędzie zostają gładsze
+  const rough = plantVar(mix(0.72, float(0.66).add(h1.mul(0.1)), lod1).add(h2.sub(0.5).mul(0.08).mul(lod2))
+    .add(seam1.mul(0.2)).add(groove.mul(0.12)).add(inHatch.mul(0.05)).sub(wear.mul(0.34)));
   // rzadkie podpanele bez powłoki (mocniejszy odblask) — ~1,5%
-  const f0 = plantVar(float(0.026).add(step01(h2, 0.985).mul(lod2).mul(0.035)).add(wear.mul(0.04)));
-  // RZĘDY ŚWIATEŁ: część poziomych szwów dużych paneli świeci pod progiem, lampy co 0,0055 R (HDR); z daleka rytm
+  const f0 = plantVar(float(0.022).add(step01(h2, 0.985).mul(lod2).mul(0.035)).add(wear.mul(0.045)));
+  // RZĘDY ŚWIATEŁ: część poziomych szwów dużych paneli świeci pod progiem, lampy co 0,0077 R (HDR) na ~co trzecim
+  // szwie — z daleka rytm, nie siatka białych kropek na całych pasach okładziny
   const seamI = plantVar(floor(q.y.div(P1.y).add(0.5)));
   const dv = plantVar(q.y.sub(seamI.mul(P1.y)));
-  const rowOn = plantVar(step01(hash12(vec2(seamI, sv.y.add(3.3))), 0.6));
+  const rowOn = plantVar(step01(hash12(vec2(seamI, sv.y.add(3.3))), 0.68));
   const glowSeam = plantVar(aaLine(abs(dv), float(0.00007), pv).mul(rowOn));
-  const lampI = floor(q.x.div(0.0055));
-  const lu = fract(q.x.div(0.0055)).sub(0.5).mul(0.0055);
+  const lampI = floor(q.x.div(0.0077));
+  const lu = fract(q.x.div(0.0077)).sub(0.5).mul(0.0077);
   const hl = plantVar(hash12(vec2(lampI, seamI.add(7.0))));
   const red = plantVar(step01(hl, 0.82));
   const bx = plantVar(fract(time.mul(0.35).add(hl.mul(5.0))));
@@ -153,25 +164,33 @@ function structDetail(q, pu, pv, seed) {
     return mix(0.5, mix(hash12(vec2(i, k)), hash12(vec2(i.add(1.0), k)), sm), lodFade(pv, scale * 2.5));
   };
   const st = plantVar(streak(0.00011, 3.1).mul(0.5).add(streak(0.00037, 7.7).mul(0.5)));
-  const rx = plantVar(fract(q.x.div(0.0009)));
-  const lodR = plantVar(lodFade(pu, 0.0009));
-  const valley = plantVar(aaLine(min(rx, float(1.0).sub(rx)).mul(0.0009), float(0.00006), pu).mul(lodR));
+  // żebrowanie WZDŁUŻ u (równolegle do szczotkowania — bez kratki „karbon” z dwóch rzędów linii w poprzek siebie)
+  const rx = plantVar(fract(q.y.div(0.0009)));
+  const lodR = plantVar(lodLines(pv, 0.0009));
+  const valley = plantVar(aaLine(min(rx, float(1.0).sub(rx)).mul(0.0009), float(0.00006), pv).mul(lodR));
   // kontrast niski: na częściach skośnych względem ramy (żebra obudowy, wsporniki) rzut pudełkowy kładzie smugi
-  // w poprzek części — przy mocnym kontraście czytały się jak ukośne kreskowanie
+  // w poprzek części — przy mocnym kontraście czytały się jak ukośne kreskowanie; doliny żebrowania gasną, zanim ich
+  // rząd zgęstnieje do ~3 px. Szorstkość ≥ 0,6 — grzbiety nie łapią szarego połysku
   const part = float(0.56).add(fract(seed.mul(71.3)).mul(0.1));
-  const tone = part.mul(float(0.93).add(st.mul(0.14))).mul(float(1.0).sub(valley.mul(0.2)));
-  const rough = float(0.5).add(st.mul(0.12)).add(valley.mul(0.08));
-  return { tone: plantVar(tone), rough: plantVar(rough), tilt: plantVar(vec2(sin(rx.mul(TAU)).mul(0.09).mul(lodR), 0.0), 'vec2') };
+  const tone = part.mul(float(0.94).add(st.mul(0.12))).mul(float(1.0).sub(valley.mul(0.14)));
+  const rough = float(0.6).add(st.mul(0.1)).add(valley.mul(0.08));
+  return { tone: plantVar(tone), rough: plantVar(rough), tilt: plantVar(vec2(0.0, sin(rx.mul(TAU)).mul(0.06).mul(lodR)), 'vec2') };
 }
 
-// ── Okna: z bliska szczeliny w rzędach ~0,0005 R (bloki 4 × 4 = pomieszczenia, zapalone wg gęstości z), DALEJ — ciągłe
-// linie kondygnacji (jedna zapalona linia na kondygnację 4 rzędów, jasność zmienia się wolno wzdłuż u, okres ≥ 0,012 R),
-// z daleka równa poświata pasa. Przeważnie bursztyn, co ósmy blok / kondygnacja chłodne. Poziom szczegółu osobno wzdłuż
-// u i v (pu, pv). W części z własnym uv (uvMode) kondygnacje liczą się od krawędzi pasa (uv.y = 0).
-function windowSlots(q, pu, pv, pix, seed, dens) {
-  const rowH = 0.0005;
+// ── Okna: z bliska szczeliny w rzędach (bloki 4 × 4 = pomieszczenia, zapalone wg gęstości z), DALEJ — jedna ostra
+// zapalona LINIA na kondygnację (nasycony bursztyn w HDR ~1–1,5, jasność zmienia się wolno wzdłuż u, okres ≥ 0,013 R)
+// na czarnym pasie (bez równej poświaty pasa — z daleka to były beżowe „kafle”). Linia drobniejsza niż piksel grubieje
+// do piksela z zachowaniem energii; dopiero gdy linie są gęstsze niż ~2,5 px — średnia. Przeważnie bursztyn, co ósmy
+// blok / kondygnacja chłodne. Poziom szczegółu osobno wzdłuż u i v (pu, pv).
+// Część z własnym uv (uvMode — pasy fasady korony i galerii, ~0,0045 R): pas = JEDNA kondygnacja (8 rzędów okien,
+// linia kondygnacji w środku pasa, uv.y od krawędzi pasa), rzut pudełkowy — kondygnacje co 0,002 R (4 rzędy), z daleka
+// co trzecia (0,006 R). lit — słońce (za dnia szczeliny przygasają mocniej niż linie kondygnacji). Zwraca szczelinę
+// (szkło) i emisję.
+const WIN_BAND = 0.0045;
+function windowSlots(q, pu, pv, pix, seed, dens, uvMode, lit) {
+  const rowH = plantVar(mix(0.0005, WIN_BAND / 8.0, uvMode));
   const colW = 0.0011;
-  const floorH = rowH * 4.0;
+  const floorH = plantVar(mix(0.002, WIN_BAND, uvMode));
   const wv = plantVar(q.y.div(rowH));
   const row = plantVar(floor(wv));
   const blockRow = plantVar(floor(row.mul(0.25)));
@@ -179,9 +198,9 @@ function windowSlots(q, pu, pv, pix, seed, dens) {
   const col = plantVar(floor(wu));
   const lodV = plantVar(sdown(0.12, 0.3, pv.div(rowH)));
   const lodU = plantVar(sdown(0.25, 0.5, pu.div(colW)));
-  const lodB = plantVar(sdown(0.25, 0.5, pv.div(floorH)));
+  const lodB = plantVar(sdown(0.25, 0.5, pv.div(rowH.mul(4.0))));
   const lodW = min(lodU, lodV);
-  const slotV = mix(0.26, aaBox(abs(fract(wv).sub(0.5)).mul(rowH), rowH * 0.13, pv), lodV);
+  const slotV = mix(0.26, aaBox(abs(fract(wv).sub(0.5)).mul(rowH), rowH.mul(0.13), pv), lodV);
   const slotU = mix(0.6, aaBox(abs(fract(wu).sub(0.5)).mul(colW), colW * 0.3, pu), lodU);
   const slot = plantVar(slotV.mul(slotU));
   const hb = plantVar(hash12(vec2(blockRow.add(seed.mul(17.0)), floor(col.mul(0.25)))));
@@ -193,10 +212,16 @@ function windowSlots(q, pu, pv, pix, seed, dens) {
   const blockLit = step01(dens, hb);
   const near = plantVar(slot.mul(blockLit).mul(winLit));
   const tintNear = mix(amber, cool, step01(fract(hb.mul(7.9)), 0.875));
-  // LINIE KONDYGNACJI: kondygnacja = blok 4 rzędów; zapalona linia w jej środku, jasność wolno zmienna wzdłuż u
+  // LINIE KONDYGNACJI: zapalona linia w środku kondygnacji, jasność wolno zmienna wzdłuż u; w rzucie pudełkowym, gdy
+  // linie gęstnieją poniżej ~5 px, zostaje co trzecia (jaśniejsza ×3 — ta sama energia), dwie pozostałe gasną
   const fl = plantVar(floor(q.y.div(floorH)));
   const dl = abs(fract(q.y.div(floorH)).sub(0.5)).mul(floorH);
-  const line = aaLine(dl, float(rowH * 0.42), pv);
+  const thin = plantVar(float(1.0).sub(uvMode).mul(smoothstep(0.2, 0.32, pv.div(floorH))));
+  const keep = float(1.0).sub(step01(abs(fl.sub(floor(fl.div(3.0)).mul(3.0)).sub(1.0)), 0.5));
+  const thinW = mix(float(1.0).sub(thin), mix(1.0, 3.0, thin), keep);
+  const P = plantVar(floorH.mul(mix(1.0, 3.0, thin)));
+  const lw = plantVar(mix(0.00021, 0.00026, uvMode));
+  const line = aaLine(dl, lw, pv).mul(thinW);
   const su = plantVar(q.x.div(0.013).add(hash12(vec2(fl, seed.mul(29.0))).mul(17.0)));
   const si = floor(su);
   const sf = fract(su);
@@ -204,13 +229,17 @@ function windowSlots(q, pu, pv, pix, seed, dens) {
   const hFl = plantVar(hash12(vec2(fl, seed.mul(37.0).add(5.0))));
   const vary = mix(hash12(vec2(si, fl.add(seed.mul(11.0)))), hash12(vec2(si.add(1.0), fl.add(seed.mul(11.0)))), ss);
   const floorLit = smoothstep(float(0.92).sub(dens), float(1.12).sub(dens), vary.mul(0.7).add(hFl.mul(0.3)));
-  const mid = plantVar(line.mul(floorLit).mul(0.7));
-  const tintMid = mix(amber, cool, step01(fract(hFl.mul(5.3)), 0.875));
-  // z daleka — średnia (linie kondygnacji gęstsze niż ~3 px)
-  const far = dens.mul(0.14);
-  const lodL = plantVar(sdown(0.28, 0.45, pv.div(floorH)));
-  const emitMid = mix(vec3(far).mul(mix(amber, cool, 0.125)), tintMid.mul(mid), lodL);
-  const emit = mix(emitMid, tintNear.mul(near), lodB.mul(lodV));
+  // z daleka linia jaśniejsza (energia linii grubszej niż piksel rozkłada się na piksel — bez tego gaśnie); nasycony
+  // bursztyn (po ACES nie krem)
+  const farK = plantVar(float(1.0).sub(lodFade(pv, lw.mul(6.0))));
+  const mid = plantVar(line.mul(floorLit).mul(mix(1.25, 3.2, farK)));
+  const amberL = vec3(1.0, 0.36, 0.08);
+  const tintMid = mix(amberL, vec3(0.45, 0.72, 1.0), step01(fract(hFl.mul(5.3)), 0.875));
+  // średnia (linie gęstsze niż ~2,5 px): energia linii na kondygnację (∫ linii aaLine = lw), ciemniej niż dawna poświata
+  const lodL = plantVar(sdown(0.3, 0.42, pv.div(P)));
+  const far = dens.mul(0.7).mul(lw).div(floorH).mul(3.2);
+  const emitMid = mix(mix(amberL, cool, 0.125).mul(far), tintMid.mul(mid), lodL).mul(float(1.0).sub(lit.mul(0.25)));
+  const emit = mix(emitMid, tintNear.mul(near).mul(float(1.0).sub(lit.mul(0.6))).mul(1.5), lodB.mul(lodV));
   return { slot, emit: plantVar(emit, 'vec3') };
 }
 
@@ -278,7 +307,7 @@ function buildMetalGraph() {
     const H = hullPanels(B.uv, B.pu, B.pv, pix, seed, time, wallH, float(1.0).sub(wallH).mul(float(1.0).sub(B.uvMode))
       .mul(B.deck), B.uvMode);
     const S = structDetail(B.uv, B.pu, B.pv, seed);
-    const W = windowSlots(B.uv, B.pu, B.pv, pix, seed, zOr(0.5));
+    const W = windowSlots(B.uv, B.pu, B.pv, pix, seed, zOr(0.5), B.uvMode, C.lit);
     const kOther = plantVar(float(1.0).sub(kPlate).sub(kStruct).sub(kGlass));
     const winGlass = plantVar(W.slot.mul(kWin));
     // brud i sadza (~0,011 R, plamy szumu wartości; przy jeziorze ciemniej) — kadłub i stal, z daleka zostaje
@@ -290,14 +319,17 @@ function buildMetalGraph() {
       mix(hash12(gi.add(vec2(0.0, 1.0))), hash12(gi.add(vec2(1.0, 1.0))), gs.x), gs.y);
     const grime = plantVar(smoothstep(0.5, 0.9, vn).mul(0.1).mul(lodFade(pix, 0.011))
       .add(clamp(C.lakeE.mul(0.06), 0.0, 0.22)).mul(kPlate.add(kStruct)));
+    // POKŁADY (powierzchnie poziome, |n·A| > ~0,8 — wierzch korka, pierścienie zamknięcia, dachy): w słońcu z góry
+    // ciemniej o ~15% (albedo i odbicie na wprost — matowy odblask powłoki dominuje na wierzchu) — czarna megastruktura
+    const deckK = plantVar(mix(1.0, 0.85, smoothstep(0.78, 0.9, abs(dot(n0, C.A))).mul(kPlate.add(kStruct))));
     // płyty żaru: niskie albedo (sadza, nalot)
     const tone = plantVar(H.tone.mul(kPlate.mul(0.85)).mul(mix(1.0, 0.55, kHot)).add(S.tone.mul(kStruct))
       .add(kOther.mul(0.8)).add(kGlass.mul(0.3))
-      .mul(float(1.0).sub(winGlass.mul(0.7))).mul(float(1.0).sub(grime)));
+      .mul(float(1.0).sub(winGlass.mul(0.7))).mul(float(1.0).sub(grime)).mul(deckK));
     const rough = H.rough.mul(kPlate).add(S.rough.mul(kStruct)).add(kOther.mul(0.45)).add(kGlass.mul(0.07)).add(grime.mul(0.5))
       .add(kHot.mul(0.12));
     const roughW = plantVar(mix(rough, 0.1, winGlass));
-    const f0 = plantVar(H.f0.mul(kPlate).add(kStruct.mul(0.04)).add(kOther.mul(0.04)).add(kGlass.mul(0.06)));
+    const f0 = plantVar(H.f0.mul(kPlate).add(kStruct.mul(0.032)).add(kOther.mul(0.04)).add(kGlass.mul(0.06)).mul(deckK));
     const tilt = plantVar(H.tilt.mul(kPlate).add(S.tilt.mul(kStruct)), 'vec2');
     const n = plantVar(normalize(n0.add(B.tu.mul(tilt.x)).add(B.tv.mul(tilt.y))), 'vec3');
     const albedo = vec3(...T.metal).mul(tone);
@@ -320,9 +352,8 @@ function buildMetalGraph() {
     // KADŁUB: świecące szwy rzędów świateł (pod progiem bloomu; ciepłe w gryzie, chłodne na orbicie) i lampy
     const seamCol = mix(vec3(0.42, 0.75, 1.0).mul(0.36), vec3(1.0, 0.5, 0.17).mul(0.42), C.bowl);
     col.addAssign(seamCol.mul(H.glowSeam).add(H.lampCol.mul(H.lamp)).mul(kHull));
-    // OKNA: nocą świecą, w pełnym słońcu przygasają (dominuje odblask szyby); z daleka lekko podbite (rytm w kadrze gry)
-    const winFar = mix(1.0, 1.5, float(1.0).sub(lodFade(pix, 0.003)));
-    col.addAssign(W.emit.mul(float(1.0).sub(C.lit.mul(0.6))).mul(winFar.mul(1.5)).mul(kWin));
+    // OKNA: nocą świecą, w pełnym słońcu szczeliny przygasają (dominuje odblask szyby), linie kondygnacji — mniej
+    col.addAssign(W.emit.mul(kWin));
     // LISTWA: z — jasność, w — 0 ciepła (bursztyn) / 1 chłodna (cyjan, wolny przepływ); świetlne rurki w ciemnej obudowie
     const coolF = step01(vPart.w, 0.5);
     const flowS = mix(1.0, sin(B.uv.x.div(0.012).sub(time.mul(0.35)).mul(TAU)).mul(0.22).add(0.82), coolF);
@@ -439,9 +470,13 @@ function buildFlowGraph() {
     // pakiet w szczelinie ≤ ~1,7 × barwa promienia (lekki bloom, po ACES zostaje cyjan, nie biel); prześwit pakietu przez
     // pancerz tylko z daleka (szczeliny drobniejsze niż piksel — biegnący impuls na ciemnej linii), z bliska słaby —
     // inaczej cała rura świeci bladym cyjanem jak plastik
-    const armorGlow = mix(0.2, 0.04, slitLod);
-    const pipeEmit = vec3(...T.beam).mul(slit.mul(packet.mul(0.45).add(0.15)).add(packet.mul(armorGlow))
-      .mul(float(1.0).sub(collar.mul(0.9))).mul(U.uPlantBeam.x));
+    // prześwit wg szerokości rury na ekranie (π / nPix px): rura węższa niż ~5 px — impuls na ciemnej linii (nasycony
+    // cyjan, nie blady), szersza niż ~12 px — zero (cyjan tylko w szczelinach; prześwit z ogonem pakietu barwił całe
+    // przęsła rury między opaskami bladym cyjanem)
+    const armorGlow = smoothstep(0.25, 0.6, nPix).mul(0.14);
+    const pipeEmit = vec3(...T.beam).mul(slit.mul(packet.mul(0.45).add(0.15)))
+      .add(vec3(0.1, 0.55, 1.0).mul(packet.mul(armorGlow)))
+      .mul(float(1.0).sub(collar.mul(0.9))).mul(U.uPlantBeam.x);
     // LINA: światła prowadzące co 0,03 R (co czwarte czerwone), fala jasności w górę; kabiny jeżdżą na GPU (dodatek
     // wind) — w materiale liny ich nie ma. Światło na samych końcach liny (kotwica s ≈ 0, dok na szynie s ≈ z) zgaszone:
     // przy czołach doków świeciłoby jak reflektor; gaśnie wg położenia LAMPY (cała lampa, nie jej połowa)
@@ -453,11 +488,12 @@ function buildFlowGraph() {
     const chase = sdown(0.0, 0.18, fract(gi.mul(0.05).sub(time.mul(0.15))));
     const red = step01(fract(gi.mul(0.25)), 0.7);
     const tetherEmit = mix(vec3(2.6, 2.4, 2.1), vec3(3.0, 0.3, 0.12), red).mul(guide.mul(chase.mul(0.75).add(0.25)));
-    // światło: ciemna stal pancerza (opaski polerowane), lina gładsza
+    // światło: pancerz — ciemny metal (F0 0,04, szorstkość 0,45; opaski gładsze), lina gładsza; odblask poświaty promienia
+    // NEUTRALNY i słabszy (×0,5) — cyjan tylko w szczelinach i pakietach, nie bladocyjanowy połysk wzdłuż rury
     const tone = mix(mix(0.7, 0.9, collar).mul(float(1.0).sub(slit.mul(0.6))), 0.9, kTether);
-    const rough = mix(mix(0.64, 0.42, collar), 0.42, kTether);
-    const col = plantVar(plantLighting(C, n, vec3(...T.metal).mul(tone), roughA2(rough, nPix), mix(0.028, 0.05, collar),
-      float(1.0)), 'vec3');
+    const rough = mix(mix(0.45, 0.38, collar), 0.42, kTether);
+    const col = plantVar(plantLighting(C, n, vec3(...T.metal).mul(tone), roughA2(rough, nPix), mix(0.04, 0.05, collar),
+      float(1.0), { beamSpec: 0.5, beamSpecTint: 0.15 }), 'vec3');
     col.addAssign(mix(pipeEmit, tetherEmit, kTether));
     return vec4(max(col, vec3(0.0)), 1.0);
   })();

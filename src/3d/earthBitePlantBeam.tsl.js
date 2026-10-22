@@ -1,13 +1,13 @@
 // Elektrownia „KOREK” — materiał PROMIENIA energii (główny: wylot korka → czasza odbiornika, przekaźnikowy: odbiornik →
 // ring), POLA pierścieni zamknięcia i ROZBŁYSKÓW (wylot krateru, uderzenie w czaszę, kula ładowania magazynu, trafienie
-// w ring).
+// w czaszy terminala na szynie ringu).
 //
 // Siatki są tylko OSŁONAMI (walec wokół osi, kula / półkula wokół rozbłysku); jasność liczy się analitycznie z odległości
 // promienia widzenia od osi odcinka (albo od środka rozbłysku) w przestrzeni widoku (modelViewMatrix — w grze składana
 // w double, pozycje świata 5–10 mln j. bez drżenia). Ten sam obraz z boku, z ukosa i od czoła: z góry promień to jasny
 // punkt z poświatą i okręgiem włókien, nie walec widziany od dna. Atrybuty (stałe na siatce, earthBitePlantBeam.js):
 //   aBeamA — początek osi (układ lokalny siatki) | środek rozbłysku; w — rodzaj: 0 promień, 1 wylot, 2 uderzenie,
-//            3 kula ładowania, 4 trafienie w ring, 5 pole pierścienia (oś odcinka, jak promień),
+//            3 kula ładowania, 4 trafienie przekaźnika (czasza terminala), 5 pole pierścienia (oś odcinka, jak promień),
 //   aBeamB — koniec osi | punkt środek + oś × 1 R (kierunek tarczy rozbłysku); w — > 0: przekaźnik, mnożnik jasności
 //            (× uPlantState.x),
 //   aBeamR — promień: rdzeń, otoczka, osłona, wygaszanie końców [R]; rozbłysk: rdzeń, halo, osłona, tarcza [R];
@@ -37,7 +37,7 @@ export const BEAM_LAYER = Object.freeze({ INNER: 0, GLOW: 1, RELAY: 2, FLARE: 3 
 
 // styl (R Ziemi, s)
 const FLOW_SPEED = 0.15;     // pakiety energii w górę promienia [R/s]
-const FLOW_STEP = 0.0235;    // odstęp pakietów [R] — ~2,5 impulsu na odstęp pierścieni zamknięcia (0,058 R)
+const FLOW_STEP = 0.0235;    // odstęp pakietów [R] — ~3 impulsy na odstęp pierścieni zamknięcia (0,0715 R)
 const PK_AVG = 0.125;        // średnia jasność pakietu (z daleka i od czoła — zamiast impulsów)
 const FIL_FLOW = 0.42;       // smugi na włóknach płyną w górę [R/s]
 const FIL_STEP = 0.011;      // długość smugi włókna [R]
@@ -259,8 +259,13 @@ function buildBeamGraph() {
       const r0 = min(vP.x, rd.mul(0.8));
       const rcE = max(rc, pix.mul(0.9));
       const xc = dq.div(rcE);
-      // jak rdzeń promienia: z bliska spokojniej (bloom), z daleka energia punktu zachowana
-      const ball = exp(xc.mul(xc).mul(-2.0)).mul(rc.div(rcE).mul(rc.div(rcE))).mul(mix(1.0, 0.3, smoothstep(4.0, 40.0, rc.div(max(pix, 1e-9)))));
+      // jak rdzeń promienia: z bliska spokojniej (bloom), z daleka energia punktu zachowana; wylot gaśnie wcześniej (już
+      // przy kilku px promienia punktu) — w średnim planie (mat-wieza, cork-akcelerator) nie rozlewa bieli na krater
+      const nrB = rc.div(max(pix, 1e-9));
+      const ballNear = mix(smoothstep(4.0, 40.0, nrB), smoothstep(2.5, 18.0, nrB), kM);
+      const ball = exp(xc.mul(xc).mul(-2.0)).mul(rc.div(rcE).mul(rc.div(rcE))).mul(mix(1.0, 0.3, ballNear));
+      // biel tylko w środku gorącego punktu, brzeg cyjanowy (jak rdzeń promienia — bloom barwi otoczenie cyjanem)
+      const ballC = mix(vec3(...C_CORE_EDGE), vec3(...C_CORE), exp(xc.mul(xc).mul(-5.0)));
       const halo = softFall(dq.div(rh));
       // tarcza: słabe wypełnienie i dwie fale rozchodzące się od r0 (wylot — od krawędzi gardzieli po wargę krateru);
       // z boku cieńsza i jaśniejsza
@@ -279,14 +284,14 @@ function buildBeamGraph() {
         .add(aaLine(abs(dd.sub(r0.add(f2.mul(span)))), wr, pixD).mul(g2.mul(g2)));
       const flicker = float(0.92).add(sin(T.mul(13.1)).mul(sin(T.mul(5.3).add(1.0))).mul(0.08));
       const breathe = float(0.85).add(sin(T.mul(1.3)).mul(0.15));
-      const ballG = kM.mul(5.0).add(kI.mul(4.0)).add(kO.mul(float(1.0).add(charge.mul(1.4)).mul(float(1.0).add(relayOn.mul(0.4))))).add(kR.mul(4.0));
+      const ballG = kM.mul(2.6).add(kI.mul(4.0)).add(kO.mul(float(1.0).add(charge.mul(1.4)).mul(float(1.0).add(relayOn.mul(0.4))))).add(kR.mul(4.0));
       const haloG = kM.mul(0.45).add(kI.mul(0.35)).add(kO.mul(charge.mul(0.25).add(0.05))).add(kR.mul(0.4));
       const diskG = kM.mul(0.035).add(kI.mul(0.12)).add(kR.mul(0.25));
       const ripG = kM.mul(0.7).add(kI.mul(0.9)).add(kR.mul(0.9));
       const pulse = mix(1.0, flicker, kM.add(kI)).mul(mix(1.0, breathe, kO));
-      // trafienie w ring zapala się dopiero, gdy czoło wybiegającego promienia dojdzie do celu
+      // trafienie przekaźnika zapala się dopiero, gdy czoło wybiegającego promienia dojdzie do celu
       const gainF = U.uPlantBeam.x.mul(mix(1.0, smoothstep(0.82, 1.0, relayOn).mul(relayK), relay));
-      col.assign(vec3(...C_CORE).mul(ball.mul(ballG))
+      col.assign(ballC.mul(ball.mul(ballG))
         .add(vec3(...C_SHEATH).mul(halo.mul(haloG)))
         .add(vec3(...C_GLOW).mul(fill.mul(diskG).add(ripple.mul(ripG)).mul(edge)))
         .mul(pulse).mul(gainF));

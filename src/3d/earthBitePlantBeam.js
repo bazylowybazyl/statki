@@ -1,6 +1,7 @@
 // Elektrownia „KOREK” — PROMIEŃ ENERGII: główny z krateru korka do czaszy odbiornika (siatki w układzie obiektu kuli,
-// dzieci grupy elektrowni) i przekaźnikowy z odbiornika do wewnętrznej krawędzi ringu (siatki w układzie gospodarza —
-// grupa elektrowni po `attachRing`; ustawia je `placeRelay`), rozbłyski na końcach, kula ładowania magazynu i POLE
+// dzieci grupy elektrowni) i przekaźnikowy z odbiornika do czaszy TERMINALA na szynie w wewnętrznej krawędzi ringu
+// (terminal stawiają windy; siatki w układzie gospodarza — grupa elektrowni po `attachRing`; ustawia je `placeRelay`),
+// rozbłyski na końcach, kula ładowania magazynu i POLE
 // pierścieni zamknięcia (linie strumienia między pierścieniem a promieniem), a w ramie elektrowni SPRZĘT: pierścienie
 // zamknięcia unoszące się wokół promienia (`buildBeamHardware` — części metalu, scala orkiestrator).
 // Materiał: earthBitePlantBeam.tsl.js (siatki to osłony, jasność analityczna z odległości od osi — opis tam).
@@ -8,7 +9,8 @@
 // Warstwy i rysunki: główny — rdzeń z otoczką, włóknami i pakietami (wąska osłona, od gardzieli wylotu), szeroka poświata
 // (od krawędzi krateru), rozbłyski i pole (wylot na wardze krateru, uderzenie pod czaszą — półkula, która nie wychodzi
 // ponad czaszę, kula ładowania w sferze armilarnej nadajnika, walce pola w pierścieniach) — 3 rysunki; przekaźnik —
-// promień (wszystkie warstwy w jednej osłonie) i trafienie w ring — 2 rysunki (źródłem przekazu jest kula ładowania).
+// promień (wszystkie warstwy w jednej osłonie) i trafienie w czaszy terminala — 2 rysunki (źródłem przekazu jest kula
+// ładowania).
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PART, finalizePart, hubHeight, plantRng } from './earthBitePlantFrame.js';
@@ -26,12 +28,22 @@ export const BEAM_DEFAULTS = Object.freeze({
   beamImpactR: 0.0195,  // rozbłysk uderzenia: półkula pod czaszą odbiornika (≤ promień czaszy hubDishR)
   beamOrbR: 0.0042,     // kula ładowania magazynu (osłona) w sferze armilarnej nadajnika (cewki r 0,0039, gimbal 0,0049)
   beamOrbLift: 0,       // wysokość kuli ładowania nad środkiem odbiornika [R]
-  // pierścienie zamknięcia: od wysokości From do To, promień wewnętrzny R0 (dół) → R1 (góra)
-  beamRings: 7, beamRingFrom: 0.13, beamRingTo: 0.48, beamRingR0: 0.03, beamRingR1: 0.024,
+  // pierścienie zamknięcia: od wysokości From do To, promień wewnętrzny R0 (dół) → R1 (góra). Krok 0,0715: w kadrze gry
+  // (orto z bieguna obrotu, 10° nad płaszczyzną elektrowni) BRAMA PROMIENIA obudowy (nadproże i wieże nad południową
+  // koroną: wzdłuż promienia s ≈ 0,45–0,47) wypada w odstępie między pierścieniami 0,416 i 0,4875 — portal jest ramą
+  // wylotu, a nie „beczką” z pierścieniem; ten sam odstęp mieści bramę w kadrach gry dema (kamera nad środkiem planety,
+  // przy gryzie ~4° paralaksy: brama s ≈ 0,425–0,44). Przy kroku 0,058 (7 sztuk) któryś pierścień zawsze trafia w bramę.
+  beamRings: 6, beamRingFrom: 0.13, beamRingTo: 0.4875, beamRingR0: 0.03, beamRingR1: 0.024,
   beamFieldH: 0.02,     // pół wysokości pola pierścienia (linie strumienia od otoczki do wargi pierścienia)
   relayScale: 0.65,     // przekaźnikowy cieńszy od głównego
-  relayGain: 0.6        // i słabszy (hierarchia: główny > przekaźnik)
+  relayGain: 0.6,       // i słabszy (hierarchia: główny > przekaźnik)
+  // trafienie przekaźnika: w CZASZY TERMINALA na szynie ringu (windy: elevTermDish przed punktem ringu, czasza
+  // elevTermDishR, głęboka ~0,0011) — promień kończy się tyle za płaszczyzną brzegu czaszy, rozbłysk nie większy od czaszy
+  relayHitInset: 0.0006, relayHitR: 0.0036
 });
+
+/** Głębokość czaszy terminala przekaźnika na szynie ringu (earthBitePlantElevators.js, buildTerminal: `dep`) [R]. */
+const RELAY_DISH_DEPTH = 0.0011;
 
 // ── Osłony promienia i rozbłysków ──────────────────────────────────────────────────────────────────────────────────
 
@@ -172,8 +184,9 @@ function chaseSeed(i, f, dt) {
  * Pierścień zamknięcia na wysokości h: korpus o przekroju „C” otwartym ku promieniowi, w kanale uzwojenie (COIL na
  * tylnej ścianie, słabszy na suficie i podłodze kanału — cyjanowa poświata pola od środka „C”; impuls z fazą rosnącą
  * z wysokością — fala biegnie w górę stosu) przedzielone przekładkami, wśród nich 6 jasnych STABILIZATORÓW (cewki
- * wysunięte ku promieniowi); na zewnątrz pancerz z 6 łuków (w szczelinach węzły), dwa płaskie skrzydła radiatorów,
- * listwa na wierzchu. Światła pozycyjne w STAŁYCH azymutach (nie z obrotem pierścienia): dwa białe od północy (ku
+ * wysunięte ku promieniowi); na górnej wewnętrznej fazie cienka cewka (od góry, w słońcu, cyjanowy okrąg wokół promienia —
+ * kanał „C” widać tylko z boku i od dołu); na zewnątrz pancerz z 6 łuków (w szczelinach węzły), dwa płaskie skrzydła
+ * radiatorów, listwa na wierzchu. Światła pozycyjne w STAŁYCH azymutach (nie z obrotem pierścienia): dwa białe od północy (ku
  * kamerze gry; ±42° od osi promienia na ekranie) błyskają po kolei od dołu stosu w górę — kierunek przepływu energii —
  * i czerwone od południa. Obrót korpusu każdego pierścienia z ziarna — stos nie jest identyczny.
  */
@@ -181,16 +194,23 @@ function confinementRing(metal, h, ri, i, n, rng) {
   const W = ri * 0.3;               // szerokość korpusu (radialnie)
   const T = 0.0038 - 0.0006 * (i / Math.max(1, n - 1));   // wysokość korpusu
   const ro = ri + W, ch = T * 0.18, tl = T * 0.28, dc = W * 0.45;
+  // górna wewnętrzna faza: płaska (~28° od wierzchu — z góry i z ukosa z zewnątrz widać ją także po bliższej stronie
+  // pierścienia, faza 45° odwraca się tam od kamery)
+  const cih = 0.0013, civ = Math.min(0.0007, tl - 0.00015);
   const seed = (k) => ((i * 97 + k * 13) % 101) / 101;
-  // przekrój CCW: spód, zewnątrz, wierzch, przednia warga górna, kanał (sufit, uzwojenie, podłoga), warga dolna
+  // przekrój CCW: spód, zewnątrz, wierzch, górna wewnętrzna faza (cewka), przednia warga górna, kanał (sufit, uzwojenie,
+  // podłoga), warga dolna
   const prof = [
-    [ri + ch, -T / 2], [ro - ch, -T / 2], [ro, -T / 2 + ch], [ro, T / 2 - ch], [ro - ch, T / 2], [ri + ch, T / 2],
-    [ri, T / 2 - ch], [ri, T / 2 - tl], [ri + dc, T / 2 - tl], [ri + dc, -T / 2 + tl], [ri, -T / 2 + tl], [ri, -T / 2 + ch]
+    [ri + ch, -T / 2], [ro - ch, -T / 2], [ro, -T / 2 + ch], [ro, T / 2 - ch], [ro - ch, T / 2], [ri + cih, T / 2],
+    [ri, T / 2 - civ], [ri, T / 2 - tl], [ri + dc, T / 2 - tl], [ri + dc, -T / 2 + tl], [ri, -T / 2 + tl], [ri, -T / 2 + ch]
   ];
   const SEG = 72;   // 5° na odcinek — strzałka cięciwy ~0,5 px przy kadrze „pierscien-zamkniecia”
   const phase = n > 1 ? i / (n - 1) : 0;
-  // korpus bez kanału (odcinki 7 → 10: sufit, tylna ściana, podłoga — cewka)
-  metal.push(finalizePart(latheBands(prof, SEG, h, 0, 7), PART.HULL, seed(1)));
+  // korpus bez kanału (odcinki 7 → 10: sufit, tylna ściana, podłoga — cewka) i bez górnej wewnętrznej fazy (5 — cienka
+  // cewka: z góry, w słońcu, pancerz jest szary, a kanał „C” widać tylko z boku i od dołu — faza rysuje cyjanowy okrąg
+  // na wewnętrznej krawędzi wierzchu, koncentryczny z promieniem)
+  metal.push(finalizePart(mergeGeometries([latheBands(prof, SEG, h, 0, 5), latheBands(prof, SEG, h, 6, 7)]), PART.HULL, seed(1)));
+  metal.push(finalizePart(latheBands(prof, SEG, h, 5, 6), PART.COIL, seed(14), phase, 0.3));
   metal.push(finalizePart(latheBands(prof, SEG, h, 10, 12), PART.HULL, seed(2)));
   metal.push(finalizePart(latheBands(prof, SEG, h, 8, 9), PART.COIL, seed(3), phase, 0.34));
   metal.push(finalizePart(mergeGeometries([latheBands(prof, SEG, h, 7, 8), latheBands(prof, SEG, h, 9, 10)]), PART.COIL, seed(10), phase, 0.14));
@@ -334,8 +354,10 @@ export class PlantBeam {
     const rimY = hHub - 0.008 - (L.hubDishDepth ?? 0.005);
     const rI = Math.min(L.beamImpactR, (L.hubDishR ?? 0.0205) - 0.0008);
     const yI = Math.min(y1, rimY + 0.0015);
+    // gorący punkt wylotu: ~1,5 szerokości rdzenia promienia (biel w środku, brzeg cyjanowy — materiał), nie kula kilku
+    // rdzeni rozlewająca się bloomem na krater i sąsiednie bryły
     const flares = [
-      flareShell(K.MOUTH, L.apertureH + 0.0006, [0.003, rdM * 0.62, rdM * 1.04, rdM], matrix, 0, { P: [L.apertureR, 0, 0, 0] }),
+      flareShell(K.MOUTH, L.apertureH + 0.0006, [L.beamCore * 1.5, rdM * 0.62, rdM * 1.04, rdM], matrix, 0, { P: [L.apertureR, 0, 0, 0] }),
       flareShell(K.IMPACT, yI, [0.0032, rI * 0.72, rI, rI * 0.95], matrix, 0, { capY: rimY - 0.0003 }),
       // kula ładowania w sferze armilarnej nadajnika (osłona nie wychodzi za cewki i gimbal)
       flareShell(K.ORB, hHub + L.beamOrbLift, [L.beamOrbR * 0.66, L.beamOrbR * 0.9, L.beamOrbR, L.beamOrbR * 0.5], matrix)
@@ -362,11 +384,18 @@ export class PlantBeam {
     const g = new THREE.CylinderGeometry(rp, rp, 1, 24, 1, false);
     g.translate(0, 0.5, 0);
     r.beam.geometry.dispose();
-    r.beam.geometry = tagBeam(g, [0, 0, 0, 0], [0, 1, 0, L.relayGain], [L.beamCore * k * 0.75, L.beamSheath * k, rp, 0.004]);
-    const rh = L.beamImpactR * 0.6;
-    const f = new THREE.SphereGeometry(rh, 20, 12);
+    // wygaszanie końców krótkie: początek chowa lufa nadajnika, koniec — czasza terminala (dłuższe gasiłoby promień przed
+    // czaszą, jakby nie dochodził do celu)
+    r.beam.geometry = tagBeam(g, [0, 0, 0, 0], [0, 1, 0, L.relayGain], [L.beamCore * k * 0.75, L.beamSheath * k, rp, 0.0015]);
+    // TRAFIENIE w czaszy terminala: mały gorący punkt na rogu odbiorczym, poświata w czaszy i fale po czaszy od rogu do
+    // brzegu (tarcza ⟂ promienia = płaszczyzna czaszy); osłona tylko po stronie odbiornika od dna czaszy (za czaszą nic —
+    // z boku poświata kończy się na grzbiecie czaszy). Bez terminala (brak elevTermDish) — rozbłysk przy krawędzi ringu.
+    const term = (L.elevTermDish ?? 0) > 0;
+    const rh = term ? Math.min(L.relayHitR, (L.elevTermDishR ?? L.relayHitR) * 1.05) : L.beamImpactR * 0.6;
+    const R = term ? [0.0006, rh * 0.62, rh, rh * 0.92] : [0.0018, rh * 0.7, rh, rh * 0.7];
     r.flare.geometry.dispose();
-    r.flare.geometry = tagBeam(f, [0, 0, 0, BEAM_KIND.RELAY_HIT], [0, 1, 0, L.relayGain], [0.0018, rh * 0.7, rh, rh * 0.7]);
+    r.flare.geometry = flareShell(BEAM_KIND.RELAY_HIT, 0, R, new THREE.Matrix4(), L.relayGain,
+      term ? { capY: RELAY_DISH_DEPTH - L.relayHitInset, P: [0.0009, 0, 0, 0] } : {});
   }
 
   /**
@@ -404,13 +433,17 @@ export class PlantBeam {
     const d = _rd.subVectors(this._relayT, this._relayH);
     const len = d.length();
     _rq.setFromUnitVectors(_ry, d.divideScalar(Math.max(len, 1e-9)));
-    // widoczny promień od wylotu dyszy nadajnika (energia z kuli ładowania idzie lufą)
+    // widoczny promień od wylotu dyszy nadajnika (energia z kuli ładowania idzie lufą) do czaszy terminala na szynie ringu
+    // (windy: środek czaszy elevTermDish przed punktem ringu na tej samej linii) — kończy się relayHitInset za płaszczyzną
+    // jej brzegu, na rogu odbiorczym; bez terminala — tuż przed krawędzią ringu (połowa kuli nie chowa się w jego bryle)
+    const L = this.look;
+    const back = ((L.elevTermDish ?? 0) > 0 ? L.elevTermDish - L.relayHitInset : L.beamImpactR * 0.3) * unit;
     const m0 = Math.min(HUB_RELAY_MUZZLE * unit, len * 0.5);
+    const m1 = Math.max(len - back, m0 + 1e-6);
     r.beam.position.copy(this._relayH).addScaledVector(d, m0);
     r.beam.quaternion.copy(_rq);
-    r.beam.scale.set(unit, Math.max(len - m0, 1e-6), unit);
-    // trafienie tuż przed krawędzią ringu (połowa kuli nie chowa się w jego bryle)
-    r.flare.position.copy(this._relayT).addScaledVector(d, -this.look.beamImpactR * 0.3 * unit);
+    r.beam.scale.set(unit, m1 - m0, unit);
+    r.flare.position.copy(this._relayH).addScaledVector(d, m1);
     r.flare.quaternion.copy(_rq);
     r.flare.scale.setScalar(unit);
   }
