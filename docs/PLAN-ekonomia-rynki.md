@@ -343,4 +343,28 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
     | nikiel (najciaśniejsza nowa ruda) | 131% | 111% |
 
   - Testy: `npm test` 1699 zielone, build przechodzi.
+- 2026-10-22 do `main` (283129a0) weszły E2b i E4.
+  - E2b — wspólne API rynku:
+    - `marketBook.js`, `marketStock.js`, `director.book`: oferty i rezerwacje dla przewoźników, kupców, gracza, stoczni, wojny, złomiarzy i pasera;
+    - indeks okazji handlowych per surowiec;
+    - domyślny model `surplus`; wariant `reservation` za przełącznikiem, bo nie zalicza bramki (Wenus: kolejka 348–2059, głód rudy 42–71 min); opis A/B w `docs/E2b-api-rynku.md`.
+  - E4 — garnizon K-7: patrole i floty frakcji mają postój i tankowanie w K-7.
+  - Przy scalaniu dwa proste konflikty (`trafficWorld.js`, `warDispatcher.js`).
+  - Bramka na całości (`e2b-e4`, ziarna 7 / 11 / 23):
+
+    | próg | wynik | ocena |
+    |---|---|---|
+    | przechwyty | 15,0–15,7% | zaliczone |
+    | głód | ≤ 6,8 min | zaliczone |
+    | stocznie | 0 min | zaliczone |
+    | kolejki | ≤ 1,47 | zaliczone |
+    | tick | 24,3 / 24,8 / 29,2 ms | dwa ziarna zaliczone; ostatnie do okna ciszy |
+
+  - Testy: `npm test` 1734 zielone, build przechodzi.
+- 2026-10-22 E6 (`claude/frosty-moser-69ca47`):
+  - płynne pozy przy 240 Hz: ekstrapolacja drugiego rzędu, p99 skoku 0,19 j.;
+  - napęd z tabeli napędów;
+  - zapas floty jako encje STOCK na padach K-7;
+  - `berth-hold` gracza.
+  - Czeka na `git merge main` po swojej stronie; scalenie po nim.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
