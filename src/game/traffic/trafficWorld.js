@@ -265,7 +265,7 @@ function buildTickOptions(world) {
   const { shipyards, stations, network, registry, getEconomy, war, director, rng } = world;
   return {
     // Notowania dyspozytora z tego kroku — stocznie licytują się nimi o podzespoły.
-    shipyards: { getEconomy, quotes: () => director.quotes },
+    shipyards: { getEconomy, quotes: () => director.book.quotes },
     war: { shipyards, stations, network, registry, getEconomy, rng },
     piracy: {
       stations, registry, getEconomy, rng,
