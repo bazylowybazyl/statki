@@ -1135,6 +1135,13 @@
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { projectilePassesAlly, beamPassesAlly } from "./src/game/friendlyFire.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
+    import {
+      createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
+      damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates, createPortBerthIndex,
+      stepPlayerBerthHolds
+    } from "./src/game/trafficBubble.js";
+    import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
+    import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
     import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
@@ -15803,9 +15810,173 @@
       if (trafficV2?.hasStation(station?.id)) trafficV2.stationDestroyed(station.id);
     }
 
+    // ============================================================
+    // BAŃKA RUCHU v2 W GRZE (E6, docs/PLAN-ekonomia-rynki.md § 3.5) — src/game/trafficBubble.js. Lot statków
+    // ruchu liczy worker (traffic/workerBubble.js, tylko przy porcie Ziemi), gra dostaje pozy po każdym `advance`:
+    // ekstrapoluje je do kroku fizyki i klatki, liczy trafienia ogniem gracza i taran (obrys kadłuba), punkty
+    // życia, stanowiska ruchu w rejestrze ringu (lampki, postój gracza) i stanowiska gracza (`berth-hold`). Proxy
+    // rysuje ShipProxyBatch3D: w workerze renderu z bloku `traffic`, w trybie `off` — tutaj.
+    // ============================================================
+    let trafficBubble = null;
+    /** Czas mostu w bieżącym kroku fizyki (pozy encji do testów trafień). */
+    let _trafficStepTime = 0;
+    /** Stanowiska portu Ziemi w układzie gry (geometria z workera — `ready.bubblePorts`) — postój gracza. */
+    let _trafficPortIndex = null;
+    const _trafficBerthStates = new Map();
+    const _trafficBerthMarked = new Map();
+    const _trafficRegistryBerths = new Map();
+    const _trafficRender = { list: [], count: 0 };
+    /** Koszt bańki na wątku gry (dekodowanie, pozy, stanowiska, pozy klatki) — `TrafficBubble.stats.gameMs` (średnia). */
+    let _trafficGameMs = 0;
+
+    function trafficEarthPortIndex() {
+      if (_trafficPortIndex) return _trafficPortIndex;
+      const berths = trafficV2?.tables?.bubblePorts?.earth;
+      if (!berths) return null;
+      _trafficPortIndex = createPortBerthIndex({ berths });
+      return _trafficPortIndex;
+    }
+
+    /** Stanowisko rejestru ringu Ziemi (lampki hal K-7 i zatok) dla id stanowiska ruchu → { b, owner } albo null. */
+    function trafficRegistryBerth(id) {
+      if (_trafficRegistryBerths.has(id)) return _trafficRegistryBerths.get(id);
+      let found = null;
+      const info = trafficEarthPortIndex()?.byId.get(id);
+      const entry = haloWorld?.entry('earth');
+      if (!info || !entry) return null;   // przed `ready` / bez ringu — bez zapamiętania
+      {
+        if (info.hall === 'K-7') {
+          const owner = haloWorld.hall('earth', info.complex);
+          const b = owner?.layout?.berths?.find((x) => x.id === info.k7BerthId);
+          if (b) found = { b, owner };
+        } else {
+          const e = entry.collider?.registry?.entries?.find((x) => x.owner?.kind === 'bay'
+            && x.owner?.layout?.id === info.bayId && x.berth?.id === info.k7BerthId);
+          if (e) found = { b: e.berth, owner: e.owner };
+        }
+      }
+      _trafficRegistryBerths.set(id, found);
+      return found;
+    }
+
+    /** Zniszczony statek ruchu: wybuch w miejscu kadłuba (kurs i wrak z ładunkiem rozlicza worker). */
+    function onTrafficActorDestroyed(a, x, y) {
+      triggerReactorBlow3D(x, y, Math.max(120, a.length * 0.45), { vx: a.vx, vy: a.vy });
+    }
+
+    /** Krok fizyki: nowy bufor z workera i pozy encji w czasie tego kroku (przed pociskami i taranem). */
+    function trafficBubbleStep(dt) {
+      const tb = trafficBubble;
+      if (!tb) return;
+      const t0 = performance.now();
+      _trafficStepTime += dt;
+      syncTrafficBubble(tb, _trafficStepTime);
+      if (tb.list.length) setTrafficBubbleTime(tb, _trafficStepTime);
+      _trafficGameMs += performance.now() - t0;
+    }
+
+    /**
+     * Taran (po kolizjach z ringiem): kadłub gracza kontra obrys statku ruchu — gracz wychodzi z obrysu, prędkość
+     * zbliżenia gaśnie z małym odbiciem, statek ruchu dostaje obrażenia ∝ v². Hipercruise jest duchem dla kadłubów.
+     */
+    function stepTrafficRam() {
+      const tb = trafficBubble;
+      if (!tb || !tb.list.length || !ship || ship.dead || ship.noHullCollisions) return;
+      const c = trafficRamContact(tb, ship.pos.x, ship.pos.y, ship.angle, Number(ship.w) || 0, Number(ship.h) || 0,
+        ship.vel.x, ship.vel.y);
+      if (!c) return;
+      const a = c.actor;
+      ship.pos.x += c.nx * c.depth;
+      ship.pos.y += c.ny * c.depth;
+      const vn = (ship.vel.x - a.vx) * c.nx + (ship.vel.y - a.vy) * c.ny;
+      if (vn < 0) {
+        ship.vel.x -= c.nx * vn * 1.2;
+        ship.vel.y -= c.ny * vn * 1.2;
+      }
+      tb.stats.rams++;
+      const dmg = trafficRamDamage(tb, c.speed);
+      if (dmg > 0) damageTrafficActor(tb, a, dmg, ship.pos.x - c.nx * Number(ship.h || 0) * 0.5,
+        ship.pos.y - c.ny * Number(ship.h || 0) * 0.5, 'player');
+    }
+
+    /**
+     * Klatka (po krokach fizyki i `advance`): stanowiska ruchu → rejestr ringu Ziemi (zajęte / zarezerwowane —
+     * lampki i automat obsługi nie biorą ich za wolne), stanowiska pod graczem → worker (`berth-hold`).
+     */
+    function stepTrafficBerths(dt) {
+      const tb = trafficBubble;
+      if (!tb) return;
+      const t0 = performance.now();
+      _trafficStepTime = trafficV2.time;
+      trafficBerthStates(tb, _trafficBerthStates);
+      for (const [id, rb] of _trafficBerthMarked) {
+        if (_trafficBerthStates.has(id)) continue;
+        _trafficBerthMarked.delete(id);
+        let changed = false;
+        if (rb.b.occupied === 'traffic') { rb.b.occupied = null; changed = true; }
+        if (rb.b.reserved === 'traffic') { rb.b.reserved = null; changed = true; }
+        if (changed && rb.owner && Number.isFinite(rb.owner.berthVersion)) rb.owner.berthVersion++;
+      }
+      for (const [id, state] of _trafficBerthStates) {
+        const rb = trafficRegistryBerth(id);
+        if (!rb) continue;
+        const b = rb.b;
+        if ((b.occupied && b.occupied !== 'traffic') || (b.reserved && b.reserved !== 'traffic')) continue;
+        const occ = state === 'occupied' ? 'traffic' : null;
+        if (b.occupied !== occ || b.reserved !== 'traffic') {
+          b.occupied = occ;
+          b.reserved = 'traffic';
+          if (rb.owner && Number.isFinite(rb.owner.berthVersion)) rb.owner.berthVersion++;
+        }
+        _trafficBerthMarked.set(id, rb);
+      }
+      if (ship && !ship.dead && dt > 0) {
+        const speed = Math.hypot(ship.vel.x, ship.vel.y);
+        stepPlayerBerthHolds(tb, trafficEarthPortIndex(), ship.pos.x, ship.pos.y, speed, dt);
+      }
+      _trafficGameMs += performance.now() - t0;
+      tb.stats.gameMs = tb.stats.gameMs * 0.9 + _trafficGameMs * 0.1;
+      _trafficGameMs = 0;
+    }
+
+    /** Pozy statków ruchu w chwili klatki renderu (interpolacja kroku fizyki jak gracz: T − (1 − alpha)·dt). */
+    function trafficRenderFrame(alpha) {
+      const out = _trafficRender;
+      out.count = 0;
+      const tb = trafficBubble;
+      // `TrafficBubble.hideRender` — A/B kosztu obrazu (narzędzie ruch-banka-gra.mjs): rozgrywka bez zmian, bez proxy.
+      if (!tb || !tb.list.length || !trafficV2 || tb.hideRender) return out;
+      const t0 = performance.now();
+      const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
+      for (let i = 0; i < tb.list.length; i++) {
+        const a = tb.list[i];
+        let r = out.list[out.count];
+        if (!r) {
+          r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
+            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+          out.list[out.count] = r;
+        }
+        trafficActorPoseAt(a, t, r);
+        r.courseId = a.id;
+        r.hullId = a.hullId;
+        r.unitClass = a.unitClass;
+        r.vx = a.vx;
+        r.vy = a.vy;
+        r.speed = Math.abs(a.speed);
+        r.throttle = a.throttle;
+        r.mode = a.mode;
+        out.count++;
+      }
+      _trafficGameMs += performance.now() - t0;
+      return out;
+    }
+
+
     if (DevFlags.trafficV2) {
       trafficV2 = initTrafficV2();
       window.TrafficV2 = trafficV2;
+      trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed });
+      window.TrafficBubble = trafficBubble;
     } else {
       console.warn('[ruch v2] wyłączony (?trafficV2=0) — stacje bez rynku, terminal nie handluje');
     }
@@ -23478,6 +23649,25 @@
         } // for hullPass — kolejny przebieg tylko po wylocie z kadłuba (przebicie, 18-B)
         if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
 
+        // --- STATKI RUCHU v2 (E6, src/game/trafficBubble.js): ogień gracza kontra obrys kadłuba proxy, odcinek
+        // w ruchu względnym statku ruchu; obrażenia w grze, zniszczenie → worker (kurs, wrak z ładunkiem).
+        if (!hitNPC && trafficBubble && trafficBubble.list.length && (b.owner === 'player' || b.owner === 'player2')) {
+          const th = trafficBulletHit(trafficBubble, b.x, b.y, b.vx, b.vy, candSpan, Number(b.r) || 0, ship.pos.x, ship.pos.y);
+          if (th) {
+            const ta = th.actor;
+            const tx = th.x;
+            const ty = th.y;
+            const tDmg = (Number.isFinite(b.damage) ? b.damage : 0) * (b.type === 'ciws' ? 0.2 : 1);
+            writeImpactHit(_impactHit, null, tx, ty, b.vx - ta.vx, b.vy - ta.vy, 'hull');
+            ActiveCarrier.set(writeCarrierVelocity(ta.vx, ta.vy, CLOCK_SIM, SimClock.sim, _impactCarrier));
+            spawnBulletImpactEffect(b, tx, ty, 1.0, _impactHit);
+            ActiveCarrier.clear();
+            damageTrafficActor(trafficBubble, ta, tDmg, tx, ty, 'player');
+            removeBulletAt(i);
+            continue;
+          }
+        }
+
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- OLBRZYMY PASA ASTEROID (zadanie 21): skała olbrzyma w płaszczyźnie gry
         // zatrzymuje pociski jak płyta ringu. Małe skały leżą pod płaszczyzną — pociski
@@ -24859,6 +25049,8 @@
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1, brainTick = -1, aiMaintDone = false, frameInfoDeferred = false) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
+      // Bańka ruchu v2 (E6): pozy statków ruchu w czasie tego kroku — przed pociskami i taranem.
+      trafficBubbleStep(dt);
       // Holownik serwisowy: poza renderu holownika (gracz na pokładzie — beginRender) wraca do pozy fizyki.
       ServiceTugGame.restorePose();
       let tPhysSection0 = performance.now();
@@ -25764,6 +25956,8 @@
       // Ring „Halo” (Ziemia, Mars): płyta podłogi przecina płaszczyznę gry,
       // przez ring prowadzą tranzyty; ściany hal K-7 i zatok portu dla graczy.
       stepShipRingCollisions(dt);
+      // Statki ruchu v2 (E6): taran gracza — obrys kadłuba proxy.
+      stepTrafficRam();
       // Suchy dok piratów (misja 1): taran bram i ogrodzenia parkingu.
       // Wydobycie skał (zadanie 21b): drony, piła, ładunki, wiązka i fizyka skał w czasie gry.
       stepAsteroidMining(dt);
@@ -27271,6 +27465,7 @@
         // wyżej) i przycięte klatki zatrzymują ją tak samo jak resztę świata.
         if (steps > 0) trafficV2.advance(steps * PHYS_DT);
         trafficV2.setFocus(ship.pos.x, ship.pos.y, TRAFFIC_V2_BUBBLE_RADIUS);
+        stepTrafficBerths(steps * PHYS_DT);
         PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
 
@@ -27534,6 +27729,8 @@
       if (RW_WORKER) renderSnapshot.addBlock(createViewBlock());
       // RW-40b: rój dronów naprawczych (id rigu jak w rekordach REPAIR_FX)
       if (RW_WORKER) renderSnapshot.addBlock(createRepairBlock({ idOf: (rig) => RepairFxEvents.idOf(rig) }));
+      // E6: statki ruchu v2 w bańce (pozy klatki) — proxy kadłubów i dysze rysuje worker
+      if (RW_WORKER) renderSnapshot.addBlock(createTrafficBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -27674,6 +27871,7 @@
       f.cloak = cloakFrame;
       f.rockets = RW_WORKER ? (window.rocketSystem3D?.rockets || null) : null;
       f.repair = RW_WORKER ? RepairSwarm : null;
+      f.traffic = RW_WORKER ? _trafficRender : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -28661,6 +28859,8 @@
 
       // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
       const renderEntities = [];
+      // Statki ruchu v2 (E6): pozy w chwili klatki — dla bloku `traffic` (worker) albo rysunku tutaj (off).
+      trafficRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -28746,6 +28946,8 @@
           packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY, cloakFrame);
           PerfHUD.addTiming('renderMirrorTime', performance.now() - tMirror);
         } else {
+          // Statki ruchu v2 (E6): proxy kadłubów i ich dysze MAIN (widoki encji w liście kadłubów).
+          ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
         }
         // RW-30: wygaszanie wstrząsu strzałów — raz na klatkę, po próbkowaniu kamery (dawniej WeaponFx.sync).

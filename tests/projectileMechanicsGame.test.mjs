@@ -118,6 +118,8 @@ const game = {
   cometField: null,
   // rój dronów naprawczych (src/game/repairSwarm.js): bez dronów w powietrzu — pocisk ich nie sprawdza
   RepairSwarm: { out: 0 },
+  // bańka ruchu v2 (E6, src/game/trafficBubble.js): bez statków ruchu — pocisk ich nie sprawdza
+  trafficBubble: null,
   window: { asteroidField: null, AudioSys: null }
 };
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };

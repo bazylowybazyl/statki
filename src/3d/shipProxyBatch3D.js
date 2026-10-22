@@ -14,7 +14,7 @@
 //  - Materiał w TSL (shipProxyBatch3D.tsl.js): graf raz na moduł, rodzaj = lekki
 //    ShipProxyNodeMaterial z teksturą w `uniforms.uSprite.value`.
 //  - Światło jak kadłuby (lustro rdzenia hullFragmentNode z hexShips3D.tsl.js): poduszkowa normalna,
-//    słońce z window.SUN (z = 600), strojenie window.__shipLightTune, maska cieni
+//    słońce z RenderWorld.sun (z = 600), strojenie świateł kadłubów (getHullLightTuning), maska cieni
 //    Core3D (sunVisibility / sunFill), mrok pola i glow niebieskich elementów.
 //    Bez lakieru, świateł statku, żaru i cienia SDF — proxy jest małe i daleko.
 //  - Poza interpolowana między krokami bańki: prev + (bieżąca − prev) · alpha
@@ -41,6 +41,9 @@ import { acquireHullVisualTexture, releaseHullVisualTexture, getHullLightTuning 
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
 import { buildEntityEngineFx } from '../data/engineFx.js';
+import { RenderWorld } from '../render/renderWorld.js';
+import { loadImageBitmap, createCanvas2D } from './canvas2d.js';
+import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 
 const INITIAL_CAPACITY = 32;
 const MAX_CAPACITY = 1024;
@@ -68,7 +71,7 @@ let quadGeometry = null;
 const kinds = new Map();          // url sprite'a → rodzaj (mesh + tekstura)
 const kindList = [];
 const hullInfos = new Map();      // unitClass / hullId → dane kadłuba
-const ownImages = new Map();      // url → Image (gdy gra nie podała resolvera)
+const ownImages = new Map();      // url → ImageBitmap | null (w drodze) — gdy gra nie podała resolvera
 const engineRecords = new Map();  // klucz proxy → { view, frame }
 let imageResolver = null;
 let engineLayoutResolver = null;
@@ -128,22 +131,19 @@ function clampNum(v, min, max, fallback) {
 
 function imageReady(img) {
   if (!img) return false;
-  if (typeof HTMLImageElement !== 'undefined' && img instanceof HTMLImageElement) {
-    return img.complete && img.naturalWidth > 0;
-  }
-  return (Number(img.width) || 0) > 0 && (Number(img.height) || 0) > 0;
+  if (img.complete === false) return false;
+  return (Number(img.naturalWidth ?? img.width) || 0) > 0 && (Number(img.height) || 0) > 0;
 }
 
+// Obraz przez fetch + createImageBitmap (canvas2d.js) — działa na stronie i w workerze renderu (bez DOM).
+// Do czasu wczytania rodzaj czeka (stats.waitingImage), błąd zostawia rodzaj pusty z jednym ostrzeżeniem.
 function defaultImage(url) {
-  let img = ownImages.get(url);
-  if (!img) {
-    if (typeof Image === 'undefined') return null;
-    img = new Image();
-    img.decoding = 'async';
-    img.src = url;
-    ownImages.set(url, img);
-  }
-  return img;
+  if (ownImages.has(url)) return ownImages.get(url);
+  ownImages.set(url, null);
+  loadImageBitmap(url).then((bitmap) => { ownImages.set(url, bitmap); }, (err) => {
+    console.warn('[ShipProxyBatch3D] sprite', url, err?.message || err);
+  });
+  return null;
 }
 
 // ---------------------------------------------------------------- kadłuby
@@ -304,6 +304,25 @@ function prewarmKind(kind) {
   }
 }
 
+// Rozgrzewka (E6): rodzaje dzielą graf i klucz programu, więc jedna siatka z teksturą zastępczą tego samego
+// rodzaju (createManagedTexture z obrazu — jak sprite) kompiluje pipeline passa ortho dla wszystkich kadłubów
+// na ekranie ładowania. Bez niej pierwszy statek ruchu w kadrze czekał na prewarmKind w trakcie gry.
+let warmKind = null;
+function warmupMeshes() {
+  if (!Core3D.isInitialized || !Core3D.scene) return null;
+  if (!warmKind) {
+    const canvas = createCanvas2D(4, 4);
+    const ctx = canvas.getContext('2d');
+    if (ctx) { ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, 4, 4); }
+    const texture = acquireHullVisualTexture(canvas);
+    if (!texture) return null;
+    warmKind = { url: 'rozgrzewka', image: canvas, texture, material: new ShipProxyNodeMaterial(texture), mesh: null, buffer: null };
+    warmKind.mesh = makeMesh(warmKind, 2);
+  }
+  return [warmKind.mesh];
+}
+Core3D.warmup?.add?.({ name: 'proxy statków ruchu', objects: warmupMeshes, phase: 'loading', variant: WARIANT_INSTANCJI });
+
 // Pełny rodzaj: nowa siatka ×2 (rzadko — pojemność zostaje na zawsze).
 function growKind(kind) {
   if (kind.capacity >= MAX_CAPACITY) return false;
@@ -435,7 +454,7 @@ export const ShipProxyBatch3D = {
    * @param {object} [options]
    *   cull     false = bez przycinania do kadru (np. split-screen)
    *   engines  false = bez dysz
-   *   sun      { x, y } zamiast window.SUN
+   *   sun      { x, y } zamiast RenderWorld.sun
    */
   begin(camera = Core3D.activeCam1, options = {}) {
     frame.t0 = performance.now();
@@ -448,8 +467,8 @@ export const ShipProxyBatch3D = {
     frame.zoom = Math.max(0.0001, Number(camera?.zoom) || 1);
     frame.camX = Number(camera?.x) || 0;
     frame.camY = Number(camera?.y) || 0;
-    const viewW = Number(Core3D.width) || (typeof window !== 'undefined' ? window.innerWidth : 1920) || 1920;
-    const viewH = Number(Core3D.height) || (typeof window !== 'undefined' ? window.innerHeight : 1080) || 1080;
+    const viewW = Number(Core3D.width) || Number(RenderWorld.viewWidth) || 1920;
+    const viewH = Number(Core3D.height) || Number(RenderWorld.viewHeight) || 1080;
     frame.halfW = viewW * 0.5 / frame.zoom;
     frame.halfH = viewH * 0.5 / frame.zoom;
     frame.margin = DRAW_MARGIN_PX / frame.zoom;
@@ -462,7 +481,7 @@ export const ShipProxyBatch3D = {
     stats.culled = 0;
     stats.waitingImage = 0;
 
-    const sun = options.sun || (typeof window !== 'undefined' ? window.SUN : null);
+    const sun = options.sun || RenderWorld.sun;
     if (sun && Number.isFinite(Number(sun.x)) && Number.isFinite(Number(sun.y))) {
       lightUniforms.uSunRel.value.set(Number(sun.x) - origin.x, -Number(sun.y) - origin.y);
       lightUniforms.uHasSun.value = 1;
@@ -623,6 +642,25 @@ export const ShipProxyBatch3D = {
       for (let i = 0; i < actors.length; i++) this.pushActor(actors[i], alpha);
     }
     this.end();
+  },
+
+  /**
+   * Cała klatka z listy rekordów encji (pierwsze `count`, poza już w chwili klatki — alpha 1): bańka ruchu
+   * v2 w grze (E6) — tryb `off` w index.html i worker renderu z bloku `traffic`. Dysze proxy dopisuje do
+   * `entities` (lista kadłubów updateHexShips3D). Pusta lista po pustej klatce nic nie robi.
+   */
+  drawList(camera, list, count, entities = null) {
+    if (!Core3D.isInitialized || (!(count > 0) && !stats.drawn)) {
+      this.engineEntities.length = 0;
+      return;
+    }
+    this.begin(camera);
+    for (let i = 0; i < count; i++) this.pushActor(list[i], 1);
+    this.end();
+    if (entities) {
+      const engines = this.engineEntities;
+      for (let i = 0; i < engines.length; i++) entities.push(engines[i]);
+    }
   },
 
   /**

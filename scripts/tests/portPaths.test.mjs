@@ -244,7 +244,66 @@ export function run() {
   }
   t.check('sufit dojścia na pole STOP poniżej progu przechwytu', PORT_PATH_SPEED.berth < CAPTURE_DEFAULTS.maxSpeed);
 
+  pierSettleSection(t);
+
   return t.results;
+}
+
+/**
+ * Regresja (E6, krok 0): prom przy pomoście stał w pozie (0 / 0,7 j., 0°), ale
+ * kurs drgał co krok — przeskakiwał pole STOP o ułamek jednostki i wracał, a
+ * prawo kursu przełączało się między pościgiem (poprawka w poprzek) i gołą
+ * osią. `angVel` ~0,16 > 0,07, więc okno przechwytu go odrzucało, a stanowisko
+ * łapał strażnik po 25 s. Przy długim kroku (0,2 s — świat ×60 w teście
+ * integracyjnym) tak kończyło się ~6% podejść do pomostu.
+ */
+function pierSettleSection(t) {
+  t.section('Pomost: prom staje na polu STOP bez drgań kursu (krok 0,2 s)');
+
+  const STEP = 0.2;
+  const station = { id: 'luna', x: 0, y: 0, r: 160 };
+  const docks = buildStationDocks(station);
+  const network = { nodes: new Map([['luna', { id: 'luna', x: 0, y: 0 }], ['far', { id: 'far', x: 50_000, y: 0 }]]) };
+  let runs = 0;
+  let forced = 0;
+  let uncaptured = 0;
+  let slowest = 0;
+  for (const berth of docks.berths) {
+    for (let k = 0; k < 12; k++) {
+      const angIn = (k + 0.5) / 12 * Math.PI * 2;
+      const registry = createCourseRegistry();
+      const course = launchCourse(registry, {
+        kind: COURSE_KIND.HAUL, unitClass: 'inter_station_shuttle',
+        stages: [
+          dwellStage('luna', 60, DWELL_REASON.UNLOAD, null, { entryPos: { x: Math.cos(angIn) * 6000, y: Math.sin(angIn) * 6000 } }),
+          travelStage('luna', 'far', { fromPos: { x: berth.x, y: berth.y }, toPos: { x: 50_000, y: 0 }, seconds: 200 })
+        ]
+      });
+      course.berthId = berth.id;
+      course.berthRef = berth;
+      course.portStationId = 'luna';
+      moveDwellTo(course, currentStage(course), { x: berth.x, y: berth.y }, 30);
+      const bubble = createBubble({ docks: new Map([['luna', docks]]) });
+      const active = new Map([[course.id, course]]);
+      let near = 0;
+      let captured = false;
+      for (let step = 0; step < 200 / STEP && !captured; step++) {
+        updateBubble(bubble, network, registry, active, { x: 0, y: 0 }, 90_000, STEP);
+        const a = getActorList(bubble)[0];
+        if (!a) break;
+        if (a.nearTime > near) near = a.nearTime;
+        if (a.phase === ACTOR_PHASE.CAPTURE) captured = true;
+      }
+      runs++;
+      forced += bubble.stats.forcedCaptures + bubble.stats.forcedStages;
+      if (!captured) uncaptured++;
+      if (near > slowest) slowest = near;
+    }
+  }
+  t.note(`${runs} podejść do ${docks.berths.length} stanowisk pomostu; najdłużej tuż przy polu bez przechwytu ${slowest.toFixed(1)} s`);
+  t.equal('każde podejście kończy się przechwytem', uncaptured, 0);
+  t.equal('bez wymuszonych przechwytów (strażnik 25 s)', forced, 0);
+  t.check('przechwyt najpóźniej kilka sekund po dojściu do pola', slowest < 5, `(${slowest.toFixed(1)} s)`);
 }
 
 /** SAT dwóch prostokątów kadłubów (×0,9). */

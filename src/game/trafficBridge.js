@@ -89,6 +89,11 @@ export class TrafficBridge {
     this.market = new Map();
     /** Kursy w bańce: `data` (Float64Array, `COURSE_STRIDE`), `count`, `clock`. */
     this.courses = { data: new Float64Array(0), count: 0, clock: 0, time: 0 };
+    /**
+     * Encje bańki workera (E6): `data` (Float64Array, `ACTOR_STRIDE`), `count`,
+     * `time` (czas mostu, w którym pozy są ważne), `seq` (numer wiadomości), `ms`.
+     */
+    this.actors = { data: new Float64Array(0), count: 0, time: 0, seq: 0, ms: 0 };
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
@@ -275,6 +280,14 @@ export class TrafficBridge {
     this._send({ type: TRAFFIC_MSG.DESTROYED, course, ...options });
   }
 
+  /**
+   * Stanowiska zajęte przez gracza (pełny zbiór id jak w `ready.berths`) —
+   * dyspozytor ich nie przydziela, kurs w podejściu przenosi na inne (E6).
+   */
+  setBerthHolds(berthIds) {
+    this._send({ type: TRAFFIC_MSG.BERTH_HOLD, berths: Array.isArray(berthIds) ? berthIds.map(String) : [] });
+  }
+
   stationDestroyed(stationId) {
     this._send({ type: TRAFFIC_MSG.STATION, stationId: String(stationId || ''), destroyed: true });
   }
@@ -368,6 +381,7 @@ export class TrafficBridge {
         case TRAFFIC_MSG.READY: this._onReady(message); break;
         case TRAFFIC_MSG.TICK: this._onTick(message); break;
         case TRAFFIC_MSG.BUBBLE: this._applyBubble(message); this._emit('bubble', this.courses); break;
+        case TRAFFIC_MSG.ACTORS: this._applyActors(message); break;
         case TRAFFIC_MSG.SNAPSHOT_RESULT: {
           const pending = this._pending.get(message.requestId);
           this._pending.delete(message.requestId);
@@ -395,7 +409,9 @@ export class TrafficBridge {
       factions: message.factions || [],
       kinds: message.kinds || [],
       /** `stationId` → id stanowisk portu; `BERTH` kursu to indeks w tej liście. */
-      berths: message.berths || {}
+      berths: message.berths || {},
+      /** Porty bańki (E6): `stationId` → stanowiska z geometrią w układzie gry ({ id, x, y, angle, … }). */
+      bubblePorts: message.bubblePorts || {}
     };
     this.step = Number(message.step) || this.step;
     this.clock = Number(message.clock) || 0;
@@ -472,6 +488,17 @@ export class TrafficBridge {
     // Zmiany gry, których ten stan jeszcze nie zawiera, nakładamy ponownie.
     this._pendingStock = this._pendingStock.filter(entry => entry.seq > stockSeq);
     for (const entry of this._pendingStock) applyToMirror(this.market.get(entry.stationId), entry.bag);
+  }
+
+  /** Bufor encji bańki z workera — gra czyta go co klatkę (`trafficBubble.js`) po `seq`. */
+  _applyActors(message) {
+    if (Array.isArray(message.hulls)) this.hulls = message.hulls;
+    const actors = this.actors;
+    actors.data = message.data instanceof Float64Array ? message.data : new Float64Array(0);
+    actors.count = Number(message.count) || 0;
+    actors.time = Number(message.time) || 0;
+    actors.ms = Number(message.ms) || 0;
+    actors.seq++;
   }
 
   _applyBubble(bubble) {
@@ -562,6 +589,8 @@ export class TrafficBridge {
       time: this.time,
       clock: this.clock,
       courses: this.courses.count,
+      actors: this.actors.count,
+      actorMs: this.actors.ms,
       pendingStock: this._pendingStock.length,
       stats: this.stats,
       lastError: this.lastError

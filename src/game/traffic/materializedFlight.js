@@ -48,7 +48,7 @@ import {
   currentStage, stageProgress, STAGE_KIND, COURSE_STATUS,
   completeCurrentStage, syncActorStageProgress, attachActor, detachActor
 } from './courseRegistry.js';
-import { DRIVE_MODES, getNode } from './travelNetwork.js';
+import { DRIVE_MODES, driveModeFor, getNode } from './travelNetwork.js';
 import { hullFootprint } from './dockLayout.js';
 import { needsService } from './portControl.js';
 import {
@@ -174,17 +174,64 @@ function wrapPi(a) {
   return v;
 }
 
-/** Klasa jednostki → gabaryty z prawdziwych kadłubów gry. */
+/**
+ * Klasa jednostki → gabaryty z prawdziwych kadłubów gry: obrys kadłuba proxy
+ * (`trafficHullFootprint` przez `hullFootprint` — klasa kursu przechodzi przez
+ * rejestr kadłubów ruchu, frachtowiec „capital” to ciężki frachtowiec, nie
+ * kontenerowiec). Ten sam obrys mieści statek na stanowisku i dostaje trafienia.
+ */
 function actorSize(unitClass) {
   const size = hullFootprint(unitClass);
   return { length: Math.max(40, size.length), width: Math.max(20, size.width) };
 }
 
-/** Prędkość przelotowa etapu — warp leci swoją, reszta konwencjonalną. */
-function cruiseFor(stage) {
-  if (stage?.kind !== STAGE_KIND.TRAVEL) return DRIVE_MODES.conventional.speed;
-  const speed = DRIVE_MODES[stage?.mode]?.speed;
+/**
+ * Klasa ładowni kursu (`TRAFFIC_CLASS_DRIVE`: silnik hipercruise, klasa lotu, napęd warp) — z kadłuba
+ * przewoźnika (`hullForVanClass`) albo z klasy kursu bez statku (`VAN_CLASSES.npcType`).
+ */
+const VAN_CLASS_OF_UNIT = Object.freeze({
+  inter_station_shuttle: 'van', 'freighter-small': 'van',
+  container_ship: 'hauler', 'freighter-medium': 'hauler',
+  long_haul_freighter: 'bulk', 'freighter-large': 'bulk',
+  heavy_freighter: 'heavy', 'freighter-capital': 'heavy',
+  megafreighter: 'mega'
+});
+
+/**
+ * Napęd etapu z jednej tabeli (`src/data/driveModes.js` przez `driveModeFor`): hipercruise i warp wg klasy
+ * ładowni kursu — prędkość silnika klasy (van Mk II 30 tys. j./s, reszta Mk I 20 tys.) i rozpęd z
+ * `HYPERCRUISE_BY_CLASS` (5–12 s do 20 tys.), te same liczby, którymi rekord liczy czas odcinka. Postój
+ * i brama — konwencjonalny.
+ */
+function driveFor(stage, course) {
+  if (stage?.kind !== STAGE_KIND.TRAVEL) return DRIVE_MODES.conventional;
+  const vanClass = course?.payload?.vanClassId || VAN_CLASS_OF_UNIT[course?.unitClass] || null;
+  return driveModeFor(stage?.mode, vanClass) || DRIVE_MODES.conventional;
+}
+
+/** Prędkość przelotowa etapu — z napędu kursu; brama i nieznany tryb lecą konwencjonalnym. */
+function cruiseFor(stage, course) {
+  const speed = driveFor(stage, course).speed;
   return Number.isFinite(speed) && speed > 0 ? speed : DRIVE_MODES.conventional.speed;
+}
+
+/** Napęd etapu na encję: prędkość przelotowa i — gdy tabela je ma (hipercruise) — rozpęd i hamowanie. */
+function applyDrive(actor, stage, course) {
+  const mode = driveFor(stage, course);
+  actor.cruise = cruiseFor(stage, course);
+  actor.mode = stage?.mode || null;
+  actor.driveAccel = mode.accel > 0 ? mode.accel : 0;
+  actor.driveDecel = mode.decel > 0 ? mode.decel : 0;
+}
+
+/** Rozpęd w swobodnym locie: z tabeli napędu, inaczej ułamek prędkości przelotowej. */
+function freeAccel(cfg, actor) {
+  return actor.driveAccel > 0 ? actor.driveAccel : actor.cruise * cfg.accelRatio * actor.accelScale;
+}
+
+/** Hamowanie w swobodnym locie: z tabeli napędu, inaczej ułamek prędkości przelotowej. */
+function freeBrake(cfg, actor) {
+  return actor.driveDecel > 0 ? actor.driveDecel : actor.cruise * cfg.brakeRatio * actor.accelScale;
 }
 
 // ============================================================
@@ -270,6 +317,13 @@ function createActor(bubble, course) {
     speed: 0,
     cruise: DRIVE_MODES.conventional.speed,
     mode: null,
+    /** Rozpęd i hamowanie z tabeli napędu (hipercruise) [j./s²]; 0 = ułamek prędkości przelotowej. */
+    driveAccel: 0,
+    driveDecel: 0,
+    /** Ruch faktyczny ostatniego kroku (pakowanie bufora encji w workerze ruchu — E6). */
+    effVx: 0,
+    effVy: 0,
+    effSeen: false,
     /** Poza z początku ostatniego `updateBubble` — interpolacja renderu. */
     prevX: 0,
     prevY: 0,
@@ -516,9 +570,9 @@ function planTravel(bubble, network, course, stage, actor) {
   let vEnd = 0;
   let fEnd = WP.STOP;
   if (next) {
-    const brake = actor.cruise * bubble.config.brakeRatio * actor.accelScale;
+    const brake = freeBrake(bubble.config, actor);
     if (next.kind === STAGE_KIND.TRAVEL) {
-      vEnd = Math.min(actor.cruise, cruiseFor(next));
+      vEnd = Math.min(actor.cruise, cruiseFor(next, course));
       fEnd = 0;
     } else if (next.pos) {
       const dist = Math.hypot(next.pos.x - ex, next.pos.y - ey);
@@ -709,8 +763,7 @@ function materialize(bubble, network, course, focus, inner) {
   const stage = currentStage(course);
   if (!stage) return null;
   const actor = createActor(bubble, course);
-  actor.cruise = cruiseFor(stage);
-  actor.mode = stage.mode || null;
+  applyDrive(actor, stage, course);
   const ok = stage.kind === STAGE_KIND.TRAVEL
     ? placeTravel(bubble, network, course, stage, actor)
     : placeDwell(bubble, network, course, stage, actor);
@@ -860,7 +913,7 @@ function speedProfile(bubble, actor, i, s, stopIdx, precise, dt = 0) {
   const d = path.data;
   const n = path.count;
   const cfg = bubble.config;
-  const brakeFree = actor.cruise * cfg.brakeRatio * actor.accelScale;
+  const brakeFree = freeBrake(cfg, actor);
   const bPort = actor.accelPort;
   let vmax = precise ? Math.min(actor.cruise, actor.portCap) : actor.cruise;
   if (n < 2) return 0;
@@ -980,9 +1033,19 @@ function followPath(bubble, actor, dt) {
   let desired = dxT * dxT + dyT * dyT > 1 ? Math.atan2(dyT, dxT) : Math.atan2(uy, ux);
   if (reverse) desired += Math.PI;
   let over = 0;
-  if (i === stopIdx && along > len) {
-    over = along - len;
-    desired = Math.atan2(uy, ux) + (reverse ? Math.PI : 0);
+  if (i === stopIdx) {
+    // Przy punkcie stopu liczy się kurs osi (okno przechwytu: ≤ 7°), a odchyłka
+    // w poprzek mieści się w oknie — poprawka pościgu wygasa liniowo na
+    // ostatnich `look` jednostkach i od punktu dziób trzyma oś. Przejście musi
+    // być CIĄGŁE: przełącznik „przed punktem pościg, za nim oś” skakał co krok,
+    // gdy statek przeskakiwał pole STOP o ułamek jednostki i cofał się na nie —
+    // kurs drgał o atan(w poprzek / look), `angVel` nie schodził pod próg
+    // przechwytu i stanowisko łapał dopiero strażnik po 25 s (prom przy
+    // pomoście, krok 0,2 s).
+    const axis = Math.atan2(uy, ux) + (reverse ? Math.PI : 0);
+    const w = clamp((len - along) / look, 0, 1);
+    desired = axis + wrapPi(desired - axis) * w;
+    if (along > len) over = along - len;
   }
   const omega = precise ? actor.turnPort : actor.turnFree;
   const err = wrapPi(desired - actor.angle);
@@ -1022,11 +1085,14 @@ function followPath(bubble, actor, dt) {
     desiredSpeed = reverse ? back : -back;
   }
 
-  const accel = precise ? actor.accelPort : actor.cruise * cfg.accelRatio * actor.accelScale;
-  // Nadmiar prędkości (np. po etapie warpu) hamuje się proporcjonalnie do niej.
+  const accel = precise ? actor.accelPort : freeAccel(cfg, actor);
+  // Nadmiar prędkości (np. po etapie warpu) hamuje się proporcjonalnie do niej; w granicach przelotu
+  // napęd z tabeli (hipercruise) hamuje swoim hamowaniem.
   const brake = precise
     ? Math.max(actor.accelPort, (v0Abs(actor) - actor.portCap) * cfg.brakeRatio * actor.accelScale)
-    : Math.max(actor.cruise, v0Abs(actor)) * cfg.brakeRatio * actor.accelScale;
+    : (actor.driveDecel > 0 && v0Abs(actor) <= actor.cruise
+      ? actor.driveDecel
+      : Math.max(actor.cruise, v0Abs(actor)) * cfg.brakeRatio * actor.accelScale);
   const v0 = actor.speed;
   const speedingUp = v0 >= 0 ? desiredSpeed > v0 && desiredSpeed > 0 : desiredSpeed < v0 && desiredSpeed < 0;
   const lim = (speedingUp ? accel : brake) * dt;
@@ -1317,8 +1383,7 @@ function enterStage(bubble, network, course, actor) {
   const stage = currentStage(course);
   actor.stageIndex = course.stageIndex;
   if (!stage) return;
-  actor.cruise = cruiseFor(stage);
-  actor.mode = stage.mode || null;
+  applyDrive(actor, stage, course);
   actor.dwell = Math.max(0, Number(course.stageElapsed) || 0);
   actor.pathStart = 0;
   if (stage.kind === STAGE_KIND.DWELL) planDwell(bubble, network, course, stage, actor);
@@ -1626,6 +1691,17 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
     separate(bubble, step);
   }
   return events;
+}
+
+/**
+ * Zwalnia encję JEDNEGO kursu do rekordu (z postępem etapu) — gdy kurs przejmuje ktoś inny (w workerze ruchu:
+ * `attach` z gry, awans do NPC — E6). Zwraca true, gdy encja była.
+ */
+export function releaseBubbleCourse(bubble, network, course) {
+  const actor = course ? bubble?.actors?.get(course.id) : null;
+  if (!actor) return false;
+  release(bubble, network, course, actor);
+  return true;
 }
 
 /**
