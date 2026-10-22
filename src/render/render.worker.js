@@ -144,6 +144,8 @@ if (isWorker) {
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
       model: await import('../3d/reactor3D.js'), core: await import('../game/reactorCore.js') };
     st.hazards = st.hazMods.blk.createHazardMirrorState();
+    // przeszkody gazu wybuchów (blok `gasObst` — kopia GAS_OBST_IN strony; RW-11c)
+    st.gasObstBlk = await import('./blocks/gasObstBlock.js');
     // luk Atlasa (fregata zwiadu): rig ładowni i dziura w skórze lustra gracza; postęp wrót z wiadomości strony
     st.bayMod = await import('../3d/cargo/scoutBay3D.js');
     // stacja piracka (world3d.js): bryła na lustrze stacji, którą strona podpięła (`world3dPirate` w opisie)
@@ -747,6 +749,9 @@ if (isWorker) {
     } catch (e) { modFail('drony', e); }
     // rozkazy klatek ≤ tej strony (pominięte strony też — efekty się sumują)
     if (st.cmd) { try { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); } catch (e) { modFail('rozkazy', e); } }
+    // przeszkody gazu wybuchów tej strony (hale K-7, budowle misji, kadłuby przy domenach) — krok efektów czyta je
+    // w renderSingle; bez tego dym w workerze przenikał kadłuby i hale (strona woła setObstacleInput na swoim reżyserze)
+    try { const ex = globalThis.__explosions; if (ex && st.gasObstBlk) ex.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); } catch (e) { modFail('przeszkody gazu', e); }
     const cam = st.cam;
     cam.x = h[H.CAM_X]; cam.y = h[H.CAM_Y]; cam.zoom = h[H.CAM_ZOOM];
     const c = st.cull;
