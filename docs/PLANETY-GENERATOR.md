@@ -83,6 +83,34 @@ Moduły: `wspolne.py` (siatka, szum 3D na kuli bez szwów, normalne z wysokości
 - Zrzuty w prawdziwej grze: `node scripts/webgpu/planety-mapy-gra.mjs [--tag nowe] [--query planety=stare --tag stare]
   [--obok stare]` (menu, cała Ziemia, gryz w dzień, przy brzegu tarczy, na brzegu, przy terminatorze, z bliska, Mars).
 
+## Elektrownia „KOREK” w gryzie i doba Ziemi wokół osi ringu (2026-10-22)
+
+Prośba użytkownika: „wymodeluj ją porządnie — production ready… windy, promień, obudowa dziury — megaprojekt godny gry
+AAA”; „winda ma być do ringu planetarnego”. Decyzja po dwóch pytaniach: ring rozgrywki stoi, ZIEMIA OBRACA SIĘ WOKÓŁ
+OSI RINGU (`src/3d/earthSpin.js`) — ring w jej układzie równikowy, liny i promień przekaźnikowy stałe; z Ziemią kręci się
+szyna w wewnętrznej krawędzi ringu (płaszcz pierścienia orbitalnego). Stan i zasady: reguła `planety`, kontrakt
+i kierunek artystyczny: `docs/BRIEF-korek.md`.
+
+- Wymiary (R Ziemi = 37 800 j.): korek — promień 0,13 R (~830 km), wierzch 0,053 nad dnem gryzu, krater wylotu 0,073;
+  odbiornik 1,075 R od środka Ziemi (pierścień 0,05 R); ring — wewnętrzna krawędź 1,1058 R (41 800 j.); liny wind
+  0,15–0,59 R (kotwice w azymutach 0, 60, …, 300 ramy gryzu, najwyżej ~32° nad płaszczyzną ringu); przekaźnik ~0,19 R.
+- Kadr gry: biegun obrotu ku kamerze, gryz (10° N) krąży przy krawędzi tarczy (wcięcie w obrysie na ±25° obwodu);
+  w ramie gryzu zawsze ten sam rzut (z północy ~10° nad płaszczyzną elektrowni) — fasada południowej korony.
+- Budżet końcowy (test `tests/earthBitePlant.test.mjs`): metal 576 tys. wierzchołków (limit 600 tys.), przepływ 79 tys.
+  (150 tys.), razem z dodatkami 658 tys. (900 tys.); 9 rysunków (metal, przepływ, promień ×3, przekaźnik ×2, kabiny —
+  36 instancji, linie energii wind). Budowa brył ~0,5–0,9 s CPU (rozgrzewka ekranu ładowania). WGSL fragmentu: metal
+  ~74 tys. znaków, budowa grafu ~0,1 s (pułapka 40: `plantVar`).
+- Pomiar w grze (`node scripts/webgpu/korek-gra.mjs`, RTX 5080, kadr całego gryzu przy zoomie 0,032): GPU klatki 0,61 ms
+  bez elektrowni, 0,90–1,02 ms z elektrownią (~0,3–0,4 ms); pipeline'y synchroniczne 0, błędy konsoli 0 — w trybie
+  `off` i w workerze renderu.
+- Przebieg pracy: 4 rundy ról (MAT, CORK, LINING, ELEV, ORBIT, BEAM) z krytykiem — oceny kadrów gry 5 → 7,5 → 8,5 → 9,
+  szczegółów 6,5 → 7,5 → 8 → 8,5. Zrzuty dema: `node scripts/webgpu/slup-demo.mjs --tylko gra,szczegoly` (grupy ról:
+  mat, cork, lining, orbit, beam, elev).
+- Otwarte (krytyk 5): łopaty radiatorów odbiornika w profilu gry czytają się jak ramka; dok wózka i szyna z bliska
+  ubogie; fasada z daleka jak równa drabinka listew; nocne płaszczyzny brązowe; okna z bardzo bliska płaskie. Poza
+  elektrownią: ściana gryzu w słońcu jak beżowy marmur, jezioro płaszcza w słońcu jak błoto (shader gryzu), spód ringu
+  z bliska (ring „Halo”). Tło menu ma własną Ziemię z obrotem wokół Y — bez elektrowni.
+
 ## Merkury i Wenus: rola w ekonomii na mapie (2026-10-08)
 
 Prośba użytkownika: pozostałe planety mają pokazywać swoją rolę w ekonomii gry (`PLANET_YIELD` w
