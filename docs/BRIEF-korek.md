@@ -35,6 +35,13 @@ test `tests/earthBitePlant.test.mjs`.
   przekaźnikowy do ringu, liny wind przez szczelinę do szyny ringu i samą szynę z wózkami. KOREK NA DNIE z kamery gry
   jest pod powierzchnią — widać go w kadrach szczegółów (perspektywa: przerywniki, demo, ewentualne ujęcia kinowe).
   Kadry `gra-*` w demie (`__slup.viewGame`) to widoki gry; ich jakość jest PRIORYTETEM, kadry szczegółów — jakość z bliska.
+- FASADA BOHATERA (krytyk, runda 2): biegun obrotu jest stały w układzie Ziemi, więc w ramie gryzu kadr gry to ZAWSZE ten
+  sam rzut — z północy, ~10° nad płaszczyzną elektrowni (zmienia się tylko obrót obrazu, zoom i światło). Gracz zawsze
+  widzi od frontu fasadę POŁUDNIOWEJ korony i górny pas południowej ściany (h ≈ 0,19–0,354, azymut ≈ 200–340°), północną
+  koronę od zewnątrz, promień z boku, pierścienie zamknięcia i odbiornik prawie z profilu. Południk gryzu (azymuty 90°
+  i 270°) zawiera kierunek kamery — wszystko w nim rzutuje się na promień: tam nie ma wind (`L.elevators` = 0, 60, …, 300),
+  a na osi 270° stoi BRAMA PROMIENIA obudowy (pylony od stopy ściany, wieże nad koroną, nadproże z cewkami).
+- HIERARCHIA JASNOŚCI w kadrze gry: promień > liny wind (z pakietami energii) > korona i maszty pola > cięciwy pola i listwy.
 - Wniosek: TRZY skale detalu, każda czytelna w swoim zakresie: (1) sylwetka i rytm świateł czytelne przy 0,00076 R/px
   (wcięcie z koroną świateł, promień, odbiornik, wachlarz lin do szyny ringu), (2) budowle 0,002–0,02 R w geometrii
   (hale, wieże, żebra, kratownice, doki, wózki), (3) mikro-detal w shaderze 0,0001–0,002 R (panele, okna, szwy, listwy),
@@ -76,7 +83,9 @@ test `tests/earthBitePlant.test.mjs`.
   jasność ×; w = −1 → wskaźnik MAGAZYNU: jasność wg `uPlantState.y`, szybszy puls przy przekazie), HOT 5 (żar: z 0…1
   per wierzchołek), BEACON 6 (światło pozycyjne: z — częstotliwość, w — 0 czerwone / 1 białe), GLASS 7 (ciemne szkło),
   PIPE 8 (przewód: uv.y wzdłuż, z — długość [R], w — kierunek impulsów ±1), TETHER 9 (lina: uv.y 0 kotwica → 1
-  odbiornik, z — długość, w — pas kabin ±1). Metal: rodzaje 0–7, przepływ: 8–9.
+  ring (dok wózka na szynie), z — długość, w — pas kabin ±1). Metal: rodzaje 0–7, przepływ: 8–9. WŁASNE UV CZĘŚCI:
+  z < 0 przy HULL, STRUCT, WINDOW, STRIP i HOT — wzór idzie po uv części w [R] (uv.x wzdłuż, uv.y w poprzek profilu —
+  części przeciągane: korona, galerie, osłony, żebra), |z| to parametr rodzaju; z ≥ 0 — rzut pudełkowy w ramie.
 - UNIFORMY (`PLANT_KEYS`, `earthBitePlantCommon.tsl.js`): wspólne obiekty `{ value }` wszystkich materiałów
   elektrowni; `uPlantTime`, `uPlantShape` (z0, światło jeziora, —, h korka), `uPlantBeam` (jasność, h wylotu, h odbiornika,
   promień rdzenia), `uPlantLayer` (warstwa siatki przezroczystej), `uPlantBeamLen`, `uPlantState` (przekaz, magazyn),
@@ -88,8 +97,10 @@ test `tests/earthBitePlant.test.mjs`.
   (`liningTerminalPoint(L, b, φ)` — koniec wiązki rur na placu korony). Lina: szczyt wieży kotwicy → najbliższy punkt
   wewnętrznej krawędzi ringu: `ringPointObject(P, oś, L.ringInnerR)` w układzie OBIEKTU kuli (oś obrotu
   `earthSpinAxis()` z `src/3d/earthSpin.js`; rama ↔ obiekt: `plantFrameMatrix` / `objectToFrameMatrix`). Lina z kotwicy
-  > ~35° nad płaszczyzną ringu przechodzi przez planetę (`segmentClearsSphere`) — przy biegunie w 90° N wszystkie
-  6 kotwic (najwyżej ~35°, azymut 90°) sięga ringu; wieża kotwicy może być wyższa, żeby mieć zapas.
+  > ~35° nad płaszczyzną ringu przechodzi przez planetę (`segmentClearsSphere`) — przy biegunie w 90° N i windach
+  w azymutach 0, 60, …, 300 wszystkie 6 lin sięga ringu bez rozwidleń (najwyżej ~32°, azymuty 60° i 120°).
+  Z Ziemią obraca się SZYNA w wewnętrznej krawędzi ringu (oś w ringInnerR − 0,0045) z wózkami w punktach zaczepu lin;
+  kabiny (48, jeden rysunek) jadą po linach na GPU z postojami w dokach (`earthBitePlantClimbers.tsl.js`).
 - PROMIEŃ (rola BEAM, runda 1): warstwy `uPlantLayer` 0 — rdzeń / otoczka / włókna / pakiety, 1 — poświata,
   2 — przekaźnik, 3 — rozbłyski; pierścienie zamknięcia od y = 0,13 do ~0,48 (nad zębami-emiterami korka — w promieniu
   r < 0,05 od osi nic powyżej y ≈ 0,12); koniec promienia i rozbłysk uderzenia na `hubHeight − 0,01` (spód czaszy

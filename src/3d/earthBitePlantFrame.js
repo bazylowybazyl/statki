@@ -19,7 +19,9 @@ export const DEG = Math.PI / 180;
 
 /**
  * Rodzaje powierzchni (aPart.x). Materiał metalu: 0–7, materiał przepływu (rury, liny): 8–9. Przy każdym — znaczenie
- * aPart.z / aPart.w (0 = wartość domyślna rodzaju) i uv.
+ * aPart.z / aPart.w (0 = wartość domyślna rodzaju) i uv. WŁASNE UV CZĘŚCI: aPart.z < 0 przy HULL, STRUCT, WINDOW, STRIP
+ * i HOT — wzór (panele, okna, listwy) idzie po uv części w [R] (uv.x wzdłuż części, uv.y w poprzek profilu; części
+ * przeciągane: korona, galerie, osłony, żebra), |z| to parametr rodzaju; z ≥ 0 — rzut pudełkowy w ramie elektrowni.
  */
 export const PART = Object.freeze({
   HULL: 0,    // czarny kadłub megastruktury (panele, szwy, drobne światła)

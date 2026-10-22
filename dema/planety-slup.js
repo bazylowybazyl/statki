@@ -238,6 +238,8 @@ async function start() {
       const d = new THREE.Vector3(...sun).transformDirection(M);
       P.camera.up.copy(new THREE.Vector3(...up).transformDirection(M));
       const s = P.S;
+      // dysk poświaty limbu jest dla kamery z daleka — z wnętrza gryzu jego krawędź tnie niebo cienką linią
+      s.atmOn = false;
       s.target = null;
       s.dist = F.length();
       s.az = Math.atan2(F.x, F.z);
@@ -262,6 +264,7 @@ async function start() {
       const site = new THREE.Vector3(0, 0, 0).applyMatrix4(M);
       const sAz = Math.atan2(hub.x, hub.z);
       const s = P.S;
+      s.atmOn = true;
       s.target = null;
       s.az = 0;
       s.el = Math.PI / 2;
