@@ -141,7 +141,9 @@ export const ENT_FLAG = Object.freeze({
 /** Bity ENT.FLAGS2. */
 export const ENT_FLAG2 = Object.freeze({
   IS_PLAYER_FIELD: 1, CAPITAL: 2, SLEEPING: 4, CLOAK_FORCED: 8, FIGHTER: 16, SH_FORCE_OFF: 32, SH_FORCED_OFF: 64,
-  HAS_RS: 128, HAS_COLD_SNAP: 256
+  HAS_RS: 128, HAS_COLD_SNAP: 256,
+  // hipercruise encji (`__hyperMode` 'charging' / 'active' — struga plazmy WARP na dyszach MAIN, engineVfxSystem.js)
+  HYPER_CHARGING: 512, HYPER_ACTIVE: 1024
 });
 
 /** Wyrzut atmosfery mostka (obiekt `vent` gry; ID = numer obiektu — tożsamość dla prepareEmitterDelays). */
@@ -229,6 +231,8 @@ export const WORLD = fields([
   // warp gracza (GameState.warp) i dopalacz (GameState.boost)
   'WARP_STATE', 'WARP_CHARGE', 'WARP_CHARGE_TIME', 'WARP_GEAR', 'WARP_DIR', 'WARP_FLYBY', 'WARP_CRUISE', 'WARP_SPEED',
   'WARP_EXIT_ACTIVE', 'WARP_EXIT_AGE', 'WARP_EXIT_TBRAKE', 'WARP_TARGET_BODY', 'BOOST_STATE',
+  // hipercruise gracza w kształcie warpa (GameState.hyper — efekt „silnika warp” w hipercruisie, E5 2026-10-22)
+  'HYPER_STATE', 'HYPER_CHARGE', 'HYPER_CHARGE_TIME', 'HYPER_SPEED', 'HYPER_VMAX', 'HYPER_DIR',
   // słownik napisów: liczba wpisów (nowe — kanałem bocznym)
   'DICT_N'
 ]);

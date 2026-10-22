@@ -157,7 +157,9 @@ if (isWorker) {
     st.warpMirror = warpBlock.createWarpMirror();
     st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
     st.warpRamp = { active: false, age: 0, tBrake: 0 };
-    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: st.warpObj, trafficTime: 0, lensAllowed: false };
+    // hipercruise gracza w kształcie warpa (skalary HYPER_* — RenderWorld.hyper, WarpNurt, struga, lakier)
+    st.hyperObj = { state: 'idle', charge: 0, chargeTime: 0, speed: 0, vmax: 0, dir: 0 };
+    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: st.warpObj, hyper: st.hyperObj, trafficTime: 0, lensAllowed: false };
     st.ringMirror = ringBlockMod.createRingMirror();
     st.rockets = rktBlock.createRocketMirror();
     st.weaponDefs = new Map();
@@ -711,6 +713,14 @@ if (isWorker) {
     } catch (e) { modFail('lustra', e); }
     st.players.ship = rm.player;
     st.players.player2Ship = rm.player2;
+    {
+      const W0 = v.world, ho = st.hyperObj;
+      const hs = W0[WD.HYPER_STATE];
+      ho.state = hs >= 0 ? st.dict.value(hs) : 'idle';
+      ho.charge = W0[WD.HYPER_CHARGE]; ho.chargeTime = W0[WD.HYPER_CHARGE_TIME];
+      ho.speed = W0[WD.HYPER_SPEED]; ho.vmax = W0[WD.HYPER_VMAX]; ho.dir = W0[WD.HYPER_DIR];
+      st.players.hyper = ho;
+    }
     {
       const ix = h[H.INTERP_X], iy = h[H.INTERP_Y], ia = h[H.INTERP_ANGLE];
       if (ix === ix && iy === iy && ia === ia) {

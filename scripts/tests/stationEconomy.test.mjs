@@ -82,6 +82,10 @@ export function run() {
   earthEcon.resources.silicon_ore = 200;
   earthEcon.resources.titanium_ore = 150;
   earthEcon.resources.raw_crystal = 120;
+  // Glin z Księżyca i Westy (E10): bez niego nie ma stopu tytanu ani płyt.
+  earthEcon.resources.aluminum_ore = 150;
+  // Ruda niklu z pasa: gal i german do układów scalonych (E10).
+  earthEcon.resources.nickel_ore = 60;
   runStationEconomy(earth, earthEcon, 20, seededRng(2));
   t.check('Ziemia zużyła dostarczoną rudę', earthEcon.resources.iron_ore < 200, `(${earthEcon.resources.iron_ore.toFixed(1)})`);
   t.check('Ziemia wyprodukowała płyty kadłuba', earthEcon.resources.hull_plate > 0, `(${earthEcon.resources.hull_plate.toFixed(1)})`);
@@ -98,9 +102,16 @@ export function run() {
   // +2,7% żelaza (flak, wyrzutnia torped, napędy w stoczni), −1,5% krzemu (mniej emiterów).
   // 2026-10-22 (napędy warp Mk I–III w roli stoczni): stocznia Ziemi dzieli moc na
   // więcej linii, więc topi mniej — −6% żelaza, krzem +1%.
-  t.close('plan Ziemi wymaga 1340,093 rudy żelaza/h', earthNet.iron_ore * 3600, -1340.0927833985027, 1e-6);
-  t.close('plan Ziemi wymaga 750,479 rudy krzemu/h', earthNet.silicon_ore * 3600, -750.4793355139908, 1e-6);
-  t.close('plan Merkurego eksportuje 1334,222 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1334.2222163168465, 1e-6);
+  // 2026-10-22 (E10, receptury realistyczne): amunicja na materiale wybuchowym,
+  // stop tytanu z glinem zamiast stali (Ti-6Al-4V) i glin w płytach — Ziemia −16%
+  // żelaza i −8% krzemu (moc huty przeszła na glin), Merkury eksportuje +5% żelaza;
+  // taśma nadprzewodząca w elektronice i reaktor fuzyjny — Ziemia dalej −5% Fe, −4% Si.
+  // emitery tarcz w zakładach systemowych — Ziemia −3% Fe, +1% Si.
+  // układy scalone z niklem (Ga, Ge) — Ziemia −22% krzemu, +2% Fe.
+  // warp Mk I–III na taśmie nadprzewodzącej, fregata z warpem Mk I — Ziemia −3% Fe, −3% Si.
+  t.close('plan Ziemi wymaga 1031,138 rudy żelaza/h', earthNet.iron_ore * 3600, -1031.1380183740011, 1e-6);
+  t.close('plan Ziemi wymaga 509,769 rudy krzemu/h', earthNet.silicon_ore * 3600, -509.769265759327, 1e-6);
+  t.close('plan Merkurego eksportuje 1412,130 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1412.1304873239783, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });
@@ -443,7 +454,8 @@ export function run() {
   });
 
   t.check('nowa stacja dostaje działający profil bez ręcznego strojenia',
-    rozszerzony.psyche.recipes.length === 5 && rozszerzony.psyche.capacity === 3.0);
+    rozszerzony.psyche.recipes.length === new Set([...INDUSTRY_ARCHETYPES.foundry.recipes,
+      ...INDUSTRY_ARCHETYPES.electronics.recipes]).size && rozszerzony.psyche.capacity === 3.0);
   t.check('moc rozkłada się na linie i sumuje do zadeklarowanej',
     Math.abs(Object.values(rozszerzony.psyche.lines).reduce((a, b) => a + b, 0) - 3.0) < 1e-6);
   t.check('role dzielące recepturę nie dublują linii',

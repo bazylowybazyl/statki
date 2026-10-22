@@ -37,6 +37,8 @@ export const GameState = {
   warp: null,
   // dopalacz w strefie planety (Shift) — struga silników MAIN przechodzi na dopalanie
   boost: null,
+  // hipercruise gracza — wygląd jak warp (index.html, blok „HIPERCRUISE”: hyperLook; obraz — RenderWorld.hyper)
+  hyper: null,
   input: null,
   mouse: null
 };

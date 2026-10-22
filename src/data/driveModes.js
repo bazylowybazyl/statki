@@ -136,7 +136,9 @@ export const HYPERCRUISE_BY_CLASS = Object.freeze({
 /** Wspólne strojenie hipercruise'u (gracz). */
 export const HYPERCRUISE_TUNE = Object.freeze({
   refVmax: 20000,        // [j/s] prędkość, do której liczy się accelTime klasy
-  minZone: 0.3,          // strefa przy planetach (jak warp) — niżej nie schodzi
+  // Strefa przy planetach (decyzja użytkownika 2026-10-22: × 0,6 zamiast warpowego × 0,3 — Luna ~60 s); automat
+  // przycina mnożnik strefy do tego minimum (pas × 0,8 zostaje). Warp ma własne strefy (WARP_DRIVE.zones).
+  minZone: 0.6,
   exitSpeed: 1000,       // [j/s] wyjście kończy się przy tej prędkości (dalej regulator do limitu bojowego)
   massLockRange: 12000,  // [j.] wróg bliżej (bez mgły wojny — to zjawisko fizyczne; maskowanie chroni) — nie wejdzie / wypada
   interruptDecelMul: 4,  // wyjście wymuszone (przechwyt) hamuje × tyle — statek staje przy przechwytującym

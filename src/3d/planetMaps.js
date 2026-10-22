@@ -1,8 +1,8 @@
 // Ścieżki map planet (gra: planet3d.assets.js, tło menu: menuBackdrop3D.js).
 //
-// Mapy planet z generatora (scripts/planety/: Ziemia „zajechana” z wielką kopalnią ringu, Mars
+// Mapy planet z generatora (scripts/planety/: Ziemia „zajechana” z wielkim gryzem (materiał na ring), Mars
 // w trakcie terraformacji). Dawne zdjęcia NASA zostają do porównania: `?planety=stare` albo
-// localStorage `sc_planet_maps = 'stare'` (bez dziury i bez map Marsa).
+// localStorage `sc_planet_maps = 'stare'` (bez gryzu i bez map Marsa).
 import { RenderWorld } from '../render/renderWorld.js';
 const PLANET_MAPS_OLD = (() => {
     try {

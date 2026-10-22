@@ -172,6 +172,13 @@ test('lustro: trafienia tarczy (najnowsze pierwsze), wyłączenie wymuszone, zim
   assert.equal(m.model3DProfileId, 'bellator');
   assert.equal(m.faction, 'terra_nova');
   assert.equal(m.weaponTier, 'L');
+  // hipercruise (E5, 2026-10-22): `__hyperMode` → bity FLAGS2 → lustro (struga plazmy WARP — engineVfxSystem.js)
+  assert.equal(m.__hyperMode, undefined);
+  for (const mode of ['charging', 'active', undefined]) {
+    e.__hyperMode = mode;
+    step();
+    assert.equal(rm.player.__hyperMode, mode, `__hyperMode ${mode}`);
+  }
   const mc = rm.lists[LIST.COLD][0];
   assert.equal(mc.isCold, true);
   assert.equal(mc._coldSnapshot.kind, 'beam');

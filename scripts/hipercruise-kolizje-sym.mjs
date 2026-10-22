@@ -26,6 +26,8 @@ const { HullBodies } = await import('../src/game/hullBodies.js');
 const { BulletSpatialGrid } = await import('../src/game/bulletSpatialGrid.js');
 const { HaloRingCollider } = await import('../src/game/haloRingCollision.js');
 const { haloGameToLocal } = await import('../src/game/haloRingPlanets.js');
+const HC = await import('../src/game/flight/hypercruise.js');
+const { HYPERCRUISE_TUNE: HC_TUNE, HYPERCRUISE_ENGINES: HC_ENGINES } = await import('../src/data/driveModes.js');
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n, f) => { const i = process.argv.indexOf('--' + n); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : f; };
@@ -180,23 +182,82 @@ function rocketsFuse(fuse) {
 }
 
 // ---------------------------------------------------------------- 3. ring
-// Kadłub (w × h gry) leci ze stałą prędkością v na płytę ringu pod kątem `kat` do płyty (90° — prostopadle), start
-// 3000 j. nad podłogą, kąt świata 0,4 rad od tranzytów. Co krok: ruch, constrainShip (jak stepShipRingCollisions — gracz
-// ze ścianami portu). Pierwszy styk zrywa hipercruise (gra: resetHypercruise) — liczymy stronę płyty po kroku styku
-// i prędkość, z którą statek zostaje (składowa w głąb płyty zerowana przez kolider).
+// Kadłub (w × h gry) w hipercruise na płytę ringu pod kątem `kat` do płyty (90° — prostopadle), kąt świata z dala od
+// tranzytów i hal; 12 faz kroku. Dwa warianty na tym samym torze:
+//   przed — stała prędkość vmax silnika, co krok ruch i constrainShip (dawny stepShipRingCollisions): pierwszy styk zrywa
+//           hipercruise, składowa w głąb płyty zerowana, wzdłuż płyty zostaje;
+//   po    — pętla gry z bezpiecznikami E9: automat hipercruise'u (start 70 km przed płytą, strefa planety pominięta —
+//           najgorszy przypadek), wyjście wymuszone, gdy płyta wchodzi w drogę hamowania (rayToSlab +
+//           hypercruiseObstacleAction), test odcinka (blockTunnel) i przycięcie prędkości po uderzeniu.
+// Przebicie = środek statku po stronie planety (za połową płyty). v po = prędkość po uderzeniu albo na końcu wyjścia.
 const SHIPS = [
-  { key: 'atlas', w: 1800, h: 806 },
-  { key: 'destroyer', w: 288, h: 215 },
-  { key: 'frigate', w: 192, h: 143 }
+  { key: 'atlas', w: 1800, h: 806, klasa: 'supercapital' },
+  { key: 'destroyer', w: 288, h: 215, klasa: 'destroyer' },
+  { key: 'frigate', w: 192, h: 143, klasa: 'frigate' }
 ];
+const ENGINES = ['hypercruise_mk1', 'hypercruise_mk2', 'hypercruise_mk3'];
+
+function ringPose(col, ang, kat, dist, w, h) {
+  const nx = Math.cos(ang), ny = Math.sin(ang), tx = -ny, ty = nx;
+  const k = kat * Math.PI / 180;
+  const dx = -nx * Math.sin(k) + tx * Math.cos(k), dy = -ny * Math.sin(k) + ty * Math.cos(k);
+  const L = dist / Math.sin(k);
+  const ax = col.place.x + nx * (col.floorMid + 60), ay = col.place.y + ny * (col.floorMid + 60);
+  return { pos: { x: ax - dx * L, y: ay - dy * L }, vel: { x: 0, y: 0 }, angle: Math.atan2(dy, dx), w, h, radius: Math.hypot(w, h) / 2, dx, dy };
+}
+
+function ringBefore(col, ang, sh, kat, v, phase, mid) {
+  const ship = ringPose(col, ang, kat, 3000 + phase * v * DT * Math.sin(kat * Math.PI / 180), sh.w, sh.h);
+  ship.vel.x = ship.dx * v; ship.vel.y = ship.dy * v;
+  for (let k = 0; k < 900; k++) {
+    ship.pos.x += ship.vel.x * DT; ship.pos.y += ship.vel.y * DT;
+    const res = col.constrainShip(ship, true);
+    if (Math.hypot(ship.pos.x - col.place.x, ship.pos.y - col.place.y) < mid) return { through: true, v: Math.hypot(ship.vel.x, ship.vel.y) };
+    if (res.hit) return { through: false, v: Math.hypot(ship.vel.x, ship.vel.y) };
+  }
+  return { through: false, v };
+}
+
+function ringAfter(col, ang, sh, kat, engine, phase, mid) {
+  const hc = HC.createHypercruise();
+  HC.configureHypercruise(hc, engine, sh.klasa);
+  hc.state = HC.HC_ACTIVE; hc.speed = hc.vmax;
+  const ship = ringPose(col, ang, kat, 70000 + phase * hc.vmax * DT * Math.sin(kat * Math.PI / 180), sh.w, sh.h);
+  const reach = ship.radius;
+  let prevOk = false, px = 0, py = 0, through = false, hit = false, guard = false;
+  for (let step = 0; step < 60 * 40; step++) {
+    if (HC.hypercruiseDriving(hc)) {
+      const dist = col.rayToSlab(ship.pos.x, ship.pos.y, Math.cos(ship.angle), Math.sin(ship.angle), HC.hypercruiseObstacleLookAhead(hc, DT) + reach, reach) - reach;
+      const act = HC.hypercruiseObstacleAction(hc, dist, DT);
+      if (act === 'drop') { HC.dropHypercruise(hc, 'ring', true); guard = true; } else if (act === 'brake') hc.interrupted = true;
+    }
+    HC.stepHypercruise(hc, { speed: hc.speed, zone: 1, remaining: Infinity, stopMargin: 0, align: 1, thrust: 1 }, DT);
+    if (HC.hypercruiseDriving(hc)) { ship.vel.x = Math.cos(ship.angle) * hc.speed; ship.vel.y = Math.sin(ship.angle) * hc.speed; }
+    ship.pos.x += ship.vel.x * DT; ship.pos.y += ship.vel.y * DT;
+    const hcRing = HC.hypercruiseDriving(hc);
+    let tunnel = false;
+    if (hcRing && prevOk) tunnel = col.blockTunnel(ship, px, py).hit;
+    const res = col.constrainShip(ship, true);
+    if (hcRing && (tunnel || res.hit)) {
+      hit = true;
+      HC.resetHypercruise(hc);
+      const v = Math.hypot(ship.vel.x, ship.vel.y), vmax = HC_TUNE.exitSpeed;
+      if (v > vmax) { ship.vel.x *= vmax / v; ship.vel.y *= vmax / v; }
+    }
+    prevOk = HC.hypercruiseDriving(hc);
+    px = ship.pos.x; py = ship.pos.y;
+    if (Math.hypot(ship.pos.x - col.place.x, ship.pos.y - col.place.y) < mid) through = true;
+    if (!HC.hypercruiseDriving(hc)) break;
+  }
+  return { through, hit, guard, v: Math.hypot(ship.vel.x, ship.vel.y) };
+}
+
 function ring() {
-  console.log('\n== 3. Płyta ringu: przebicia (statek po stronie planety) i prędkość po uderzeniu ==');
-  const VR = [6000, 12000, 20000, 30000, 40000];
+  console.log('\n== 3. Płyta ringu: przebicia i prędkość po uderzeniu / wyjściu — przed → po (bezpieczniki E9) ==');
   const KATY = [90, 45, 15];
   for (const id of ['earth', 'mars', 'jupiter']) {
     const col = new HaloRingCollider({ id, name: id, x: 0, y: 0 });
     const mid = (col.back + col.floorMid) * 0.5;
-    // Kierunek świata z dala od tranzytów i hal (lokalny układ ringu — kąt od osi x lokalnej).
     let ang = 0;
     for (let s = 0; s < 64; s++) {
       const a = s * Math.PI * 2 / 64 + 0.05;
@@ -207,29 +268,21 @@ function ring() {
       for (const kat of KATY) {
         let line = `${id.padEnd(8)} płyta ${String(Math.round(col.floorMid - col.back)).padStart(4)} j. ${sh.key.padEnd(9)} ${String(kat).padStart(2)}° |`;
         const row = { ring: id, plyta: col.floorMid - col.back, statek: sh.key, kat, v: {} };
-        for (const v of VR) {
-          let through = 0, slideMax = 0, N = 0;
+        for (const engine of ENGINES) {
+          const vmax = HC_ENGINES[engine].vmax;
+          let thB = 0, thA = 0, vB = 0, vA = 0, hits = 0, guards = 0, N = 0;
           for (let f = 0; f < 12; f++) {
-            const nx = Math.cos(ang), ny = Math.sin(ang);       // na zewnątrz (habitat)
-            const tx = -ny, ty = nx;
-            const a = kat * Math.PI / 180;
-            const vx = (-nx * Math.sin(a) + tx * Math.cos(a)) * v, vy = (-ny * Math.sin(a) + ty * Math.cos(a)) * v;
-            const r0 = col.floorMid + 3000 + (f / 12) * v * DT * Math.sin(a);
-            const ship = { pos: { x: nx * r0 - tx * 3000 / Math.tan(Math.max(a, 0.2)), y: ny * r0 - ty * 3000 / Math.tan(Math.max(a, 0.2)) },
-              vel: { x: vx, y: vy }, angle: Math.atan2(vy, vx), w: sh.w, h: sh.h, radius: Math.hypot(sh.w, sh.h) / 2 };
-            let hit = false;
-            for (let k = 0; k < 600 && !hit; k++) {
-              ship.pos.x += ship.vel.x * DT; ship.pos.y += ship.vel.y * DT;
-              const res = col.constrainShip(ship, true);
-              if (res.hit) hit = true;
-              const rc = Math.hypot(ship.pos.x, ship.pos.y);
-              if (rc < mid) { through++; hit = true; }
-            }
+            const b = ringBefore(col, ang, sh, kat, vmax, f / 12, mid);
+            const a = ringAfter(col, ang, sh, kat, engine, f / 12, mid);
             N++;
-            slideMax = Math.max(slideMax, Math.hypot(ship.vel.x, ship.vel.y));
+            if (b.through) thB++;
+            if (a.through) thA++;
+            if (a.hit) hits++;
+            if (a.guard) guards++;
+            vB = Math.max(vB, b.v); vA = Math.max(vA, a.v);
           }
-          row.v[v] = { przebicia: through / N, predkoscPo: slideMax };
-          line += ` ${String(v / 1000).padStart(2)}k: ${pct(through, N)} ${String(Math.round(slideMax)).padStart(5)} j/s |`;
+          row.v[vmax] = { przebiciaPrzed: thB / N, przebiciaPo: thA / N, vPoPrzed: vB, vPoPo: vA, uderzeniaPo: hits / N, wyjsciaPo: guards / N };
+          line += ` ${vmax / 1000}k: ${pct(thB, N)}→${pct(thA, N)} v ${String(Math.round(vB)).padStart(5)}→${String(Math.round(vA)).padStart(4)} |`;
         }
         console.log(line);
         wyniki.ring.push(row);

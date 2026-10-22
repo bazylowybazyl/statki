@@ -4,6 +4,7 @@ paths:
   - "src/game/trafficBridge.js"
   - "src/game/stationEconomy.js"
   - "src/data/markets.js"
+  - "src/data/resources.js"
   - "scripts/symulacja-ruchu.mjs"
   - "scripts/bramka-bilansu.mjs"
 ---
@@ -45,15 +46,25 @@ Jedno źródło zapasu, ceny i zleceń dla WSZYSTKICH, którzy handlują: przewo
 
 ## Napędy (E5)
 
-- Jedna tabela `src/data/driveModes.js` dla gracza, NPC gry i ruchu: warp `WARP_SPEED` 260 tys. j./s (nietykalny, paliwo fuzyjne), hipercruise `HYPERCRUISE_ENGINES` `hypercruise_mk1..3` = 20 / 30 / 40 tys. j./s (id stałe — kontrakt z recepturami E8), konwencjonalny 1200 j./s, klasa ładowni → silnik `TRAFFIC_CLASS_DRIVE`. Ruch liczy z niej czasy, paliwo i ryzyko przechwytu (`travelNetwork.js`; ekspozycja `rollPiracy` z ŚREDNIEJ prędkości etapu). Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`.
+- Jedna tabela `src/data/driveModes.js` dla gracza, NPC gry i ruchu: warp — napędy `warp_mk1..3` = 100 / 175 / 250 tys. j./s (`WARP_DRIVES`, klasa ładowni → napęd: van i hauler Mk I, bulk i heavy Mk II, mega Mk III; nietykalny, paliwo fuzyjne; brama ma procedurę skoku `gateTransitSeconds` 30 s — inaczej byłaby szybsza od warpa Mk I), hipercruise `HYPERCRUISE_ENGINES` `hypercruise_mk1..3` = 20 / 30 / 40 tys. j./s (id stałe — kontrakt z recepturami E8), konwencjonalny 1200 j./s, klasa ładowni → silnik `TRAFFIC_CLASS_DRIVE`. Ruch liczy z niej czasy, paliwo i ryzyko przechwytu (`travelNetwork.js`; ekspozycja `rollPiracy` z ŚREDNIEJ prędkości etapu). Pomiary: `docs/POMIAR-napedy-E5-2026-10-21.md`.
 
 ## Pola górnicze i wyrwy (E3)
 
 - Pola wydobywcze z danych pasa (`miningFields.js`, `MINING_FIELDS_CONFIG`): punkt wyprawy z gęstości pola, urobek ze składu w tym miejscu, Hildy, Trojańczycy, Kuiper (uran tylko tam). Rejestr uszczuplenia w świecie ruchu jest autorytatywny; urobek gracza idzie do tego samego rejestru (`reportMining` → `belt-mined`). Po progu powstaje wyrwa → `belt-holes` → `beltWorld.setHoles` (pole gry i replika obrazu — reguła `pas-asteroid`). Pas się nie regeneruje. Opis i liczby: `docs/E3-pas-w-ekonomii.md`.
 
+## Towary i receptury (E8, E10)
+
+- Towary, receptury i wydobycie planet: `src/data/resources.js` (63 towary: T0 17, T1 18, T2 28; 46 receptur), przemysł stacji z ról `INDUSTRY_ARCHETYPES` + `SYSTEM_INDUSTRY_SPEC` (`stationEconomy.js`; solver dzieli moc stacji między linie według popytu), składy okrętów `WARSHIP_CLASSES` (`shipyards.js`), pobór floty `FLEET_DEMAND` / `MILITARY_UPKEEP`. Receptury są realistyczne w wariancie grywalnym (`docs/PROPOZYCJA-receptury-realistyczne.md` § 4, wdrożenie § 8): amunicja na materiale wybuchowym z amoniaku i metanu, glin z Luny, Westy i Ceres, ceramika pancerna (glin + węgiel), taśma nadprzewodząca z ziem rzadkich (Luna ~90%, Mars, odzysk z wraków) w reaktorze D–He-3, dyszach magnetycznych, tarczach i warpie, układy scalone z krzemu i niklu (Ga, Ge), azot z Tytana i Trytona.
+- Nowy towar idzie NA KONIEC swojej grupy poziomu (`RESOURCE_KEYS` liczy się po kolejności obiektu; protokół workera i bufory — po indeksie). Każdy ma producenta i odbiorcę (`scripts/tests/resources.test.mjs`: marża 1,05–2,2, osiągalność; `stationEconomy` § 12: każda receptura ma wykonawcę, pokrycie popytu). Nowa ruda wchodzi RAZEM ze swoją recepturą — urobek bez popytu zapycha magazyny i redy. Ruda dokładana planecie idzie PONAD dawny urobek (`rate` w górę, pozostałe tony na cykl bez zmian).
+- Kolejność receptur w roli = kolejność w cyklu: półprodukt przed odbiorcą (huta topi glin przed stopem tytanu — inaczej pierwszy cykl nie robi stopu).
+- Jednoźródłowe celowo: ruda uranu (tylko Kuiper; reaktor bierze 1 pręt na rozruch, więc popyt jest o połowę mniejszy niż przy 2 prętach) i złom (wraki). Ziemie rzadkie mają drugie, małe źródło (Mars) i odzysk z wraków (`SALVAGE_COMPONENTS.superconductor`).
+- Koszt okrętu na punkt siły rośnie z klasą (fregata < niszczyciel < krążownik < nosiciel; test `shipyards`, `node scripts/koszt-okretow.mjs`). Ceramika pancerna i emitery tarcz tylko na okrętach wojennych; fregata ma warp Mk I.
+- Analityczny bilans podaży i popytu: sekcja 12 `scripts/tests/stationEconomy.test.mjs`; migawka 2a (plan Ziemi i Merkurego) zmienia się przy każdej zmianie receptur lub ról — przestaw ją świadomie, z opisem w komentarzu.
+
 ## Bramka bilansu (E4)
 
-- `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. `--dyrektor '{json}'` — opcje dyspozytora (`directorOptions`) do A/B przełączników. Progi (`PLAN-ekonomia-rynki.md` § 5, `PROGI` w skrypcie): przechwyty w paśmie 12–20% kursów z ładunkiem, głód chcianego surowca ≤ 30 min, stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms (pod obciążeniem maszyny tick rośnie — A/B tylko po kolei). Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
+- `node scripts/bramka-bilansu.mjs [--etykieta X] [--ziarna 7,11,23] [--minuty 240] [--rownolegle]` — 3 ziarna po kolei, każde w osobnym procesie; wynik `.tmp/bramka-bilansu/*.json`, kod 1 przy niezaliczeniu. `--dyrektor '{json}'` — opcje dyspozytora (`directorOptions`) do A/B przełączników. Progi (`PLAN-ekonomia-rynki.md` § 5, `PROGI` w skrypcie): przechwyty w paśmie 12–20% kursów z ładunkiem (decyzja użytkownika 2026-10-22: cel ~15%; puste przeloty liczone osobno), głód chcianego surowca ≤ 30 min (na zerze = poniżej min(1% magazynu, 15 min zużycia brutto stacji)), stocznia bez podzespołów ≤ 30 min, średnia kolejka na redzie ≤ 2, tick ≤ 25 ms (mierz w ciszy — przy innych sesjach ta sama baza skacze 25 → 55 ms).
+- Port większy niż z planu przeładunku: `MARKET_DOCK_OVERRIDES` w `src/data/markets.js` (`berthMultiplier` dla id rynku); plan (`stationHaulTonnage`) nie widzi wypraw górniczych z portu ani kupców. Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main bez decyzji użytkownika.
 
 ## Pułapki
 
