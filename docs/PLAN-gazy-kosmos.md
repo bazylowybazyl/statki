@@ -205,3 +205,10 @@ Port prowadzi sesja E11 planu ekonomii (`docs/PLAN-ekonomia-rynki.md`).
   - GK-8, część druga: okno 128 / 256 / 384 i mapy z presetu.
   - GK-6 (ring Jowisza), GK-7 (ławice mgły), GK-9 (odbiór).
   - Kamery 3D: plasterki z paralaksą i mipmapy map.
+- **GK-4 (2026-10-22): pył gazu** (`src/3d/spaceGas/spaceGasDust.js`).
+  - 80 tys. drobin rodzonych z gęstości (ρ/ρ₀)³, płynących z gazem.
+  - Pozycje względem rogu okna pola, przesuwane razem z oknem — bez float32 przy 1,6 mln j.
+  - Kwad instancji w passie ortho (renderOrder −40).
+  - Światło: mapa światła, siatka świateł i maska słońca.
+  - W grze w trybach off i worker: pipeline'ów sync 0, błędów 0.
+  - GPU z pyłem: render +0,13 ms, compute +0,17 ms.

@@ -274,3 +274,31 @@ test('GK-3: warstwa — dwie połowy w passie ortho, test głębi bez zapisu, do
   assert.equal(layer.lower.position.y, 3e6, 'scena: −y gry');
   assert.ok(layer.lower.position.z < -10.4 && layer.upper.position.z > 15);
 });
+
+test('GK-4: pył gazu — kernele w Node (storage ≤ 7), pozycje względem rogu okna, przesunięcie okna przesuwa drobiny', async () => {
+  const { SpaceGasDust, SPACE_GAS_DUST_ORDER } = await import('../src/3d/spaceGas/spaceGasDust.js');
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = new SpaceGasMaps(sim, scene, { w: 64, h: 36 });
+  const dust = new SpaceGasDust(sim, maps, { count: 256 });
+  for (const k of dust.kernels()) {
+    const code = wgsl(k);
+    assert.ok((code.match(/var<storage/g) || []).length <= 7, k.name);
+  }
+  assert.equal(dust.mesh.geometry.instanceCount, 256);
+  assert.ok(SPACE_GAS_DUST_ORDER > -45 && SPACE_GAS_DUST_ORDER < 0, 'po dolnej połowie gazu, przed efektami');
+  const calls = [];
+  const r = { compute(L) { calls.push(Array.isArray(L) ? L.map((k) => k.name) : [L.name]); } };
+  const rect = { cx: 0, cy: 0, w: 3000, h: 1700 };
+  sim.ox = 10; sim.oy = 20;
+  dust.frame(r, 1 / 60, null, 1e6, 0, rect, 1);
+  assert.deepEqual(calls[0], ['spaceGasDustInit', 'spaceGasDustStep'], 'pierwsza klatka — start drobin');
+  assert.equal(dust.mesh.position.x, 1e6 + 10 * sim.cell, 'siatka w rogu okna (kotwica + róg)');
+  assert.equal(dust.mesh.position.y, -(20 * sim.cell), 'scena: −y gry');
+  sim.ox = 13;
+  dust.frame(r, 1 / 60, null, 1e6, 0, rect, 1);
+  assert.deepEqual(calls[1], ['spaceGasDustStep']);
+  assert.equal(dust.U.shift.value.x, -3 * sim.cell, 'okno o 3 komórki w prawo — drobiny o tyle w lewo względem rogu');
+  dust.frame(r, 1 / 60, null, 1e6, 0, rect, 1);
+  assert.equal(dust.U.shift.value.x, 0);
+});

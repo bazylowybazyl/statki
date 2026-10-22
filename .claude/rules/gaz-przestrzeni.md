@@ -16,13 +16,12 @@ paths:
 
 Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) według planu `docs/PLAN-gazy-kosmos.md`. Decyzje D1–D8 przyjęte 2026-10-22, postęp w § 6 planu.
 
-- Zrobione: GK-1 (rdzeń pola), GK-2 (wejście gry), GK-3 (mapy i dwie połowy warstwy) i GK-5 (scena pasa, część pierwsza).
+- Zrobione: GK-1 (rdzeń pola), GK-2 (wejście gry), GK-3 (mapy i dwie połowy warstwy), GK-4 (pył gazu), GK-5 (scena pasa, część pierwsza) i GK-8 (opcja Wł. / Wył.).
 - Czekają:
-  - GK-4: pył gazu;
   - GK-5: przekroje olbrzymów pasa jako przeszkody, wybuchy i pociski jako źródła;
   - GK-6: ring Jowisza;
   - GK-7: ławice mgły;
-  - GK-8: opcje grafiki;
+  - GK-8: okno i mapy z presetu;
   - GK-9: odbiór.
 - Hale K-7 mają osobny gaz (reguła `pyl-hal-k7`, `src/3d/hallGas3d`). Ten moduł do hal nie wchodzi.
 
@@ -68,6 +67,18 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
 - Światło: mapa światła × `sunVisibility()`, otoczenie × `sunFill`, siatka `Core3D.fx.grid` z kolanem. Gaz sam nie świeci.
 - Zanik przy oddaleniu: `fadeView`.
 
+## Pył gazu (`spaceGasDust.js`, GK-4)
+
+- Działa 1:1 jak w demie (`dustStep`):
+  - drobiny rodzą się z gęstości pola, z przyjęciem (ρ / ρ₀)³, w kadrze × 1,25;
+  - lecą z prędkością gazu;
+  - w rzednącym gazie gasną szybciej;
+  - poza oknem i w komórce stałej giną.
+- Liczba: `SPACE_GAS_TUNE.dustCount` = 80 000 (D2), ustalana przy budowie. A/B: `SpaceGas.tune.dust`.
+- POZYCJE WZGLĘDEM ROGU OKNA POLA. Przesunięcie okna przesuwa drobiny w tym samym kroku (`U.shift`), siatka stoi w rogu okna (`mesh.position`, double). Nie zapisuj drobinom pozycji względem kotwicy ani świata — w pasie (1,6 mln j. od Słońca) drobny ruch ginąłby we float32.
+- Obraz: kwad instancji (`Mesh` + `InstancedBufferGeometry`, pozycja z buforów storage w `positionNode`), mieszanie addytywne, renderOrder −40 (po dolnej połowie gazu, przed efektami — górna połowa go przygasza).
+- Światło: mapa światła i siatka świateł w wierzchołkach, maska słońca we fragmencie. Wygląd: `look.dustColor`, `dustW`, `dustRho`, `SpaceGas.dust.U.gain`.
+
 ## Narzędzia
 
 - Testy: `node --test tests/spaceGas.test.mjs` (WGSL w Node, limity wiązań, okno, wejście, mapy, warstwa).
@@ -77,4 +88,4 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
   - `SpaceGas.scene.look` + `SpaceGas.syncLook()`;
   - `SpaceGas.sim.tune` + `syncTune()`;
   - `SpaceGasInputTune.enabled` — A/B dla całego gazu, działa też w workerze.
-- Koszt (2026-10-22, RTX, 1600 × 900, okno 256, mapy 768 × 432): render +0,08 ms, compute +0,16 ms na klatkę w gęstym polu. Poza pasem: 0 dispatchy i 0 rysunków.
+- Koszt (2026-10-22, RTX, 1600 × 900, okno 256, mapy 768 × 432, pył 80 tys.): render +0,13 ms, compute +0,17 ms na klatkę w gęstym polu (bez pyłu +0,08 / +0,16). Poza pasem: 0 dispatchy i 0 rysunków.

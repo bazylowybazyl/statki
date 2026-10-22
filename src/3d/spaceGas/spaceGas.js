@@ -11,13 +11,14 @@
 //
 // Klatka (krok Core3D.fx „gaz przestrzeni”): wejście → źródła i przeszkody → pole (spaceGasSim.js, kroki 1/60 s czasu
 // gry) → mapy gazu i światła (spaceGasMaps.js) → warstwy w passie ortho (spaceGasLayer.js). Poza obszarem gazu: 0
-// dispatchy i 0 rysunków. Rozgrzewka: `warm` kroku (puste dispatche) + wpis rejestru (siatki warstw).
+// dispatchy i 0 rysunków. Pył gazu (spaceGasDust.js, GK-4) rodzi się z gęstości pola i płynie z gazem. Rozgrzewka: `warm` kroku (puste dispatche) + wpis rejestru (siatki warstw).
 
 import { Core3D } from '../core3d.js';
 import { EngineFrame } from '../engineFrame.js';
 import { SpaceGasSim, SPACE_GAS_CELL, SPACE_GAS_SRC } from './spaceGasSim.js';
 import { SpaceGasMaps } from './spaceGasMaps.js';
 import { SpaceGasLayer } from './spaceGasLayer.js';
+import { SpaceGasDust } from './spaceGasDust.js';
 import { BeltGasScene } from './spaceGasBelt.js';
 import { SPACE_GAS_IN, SPACE_GAS_SCENE } from './spaceGasLayout.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
@@ -30,6 +31,8 @@ export const SPACE_GAS_TUNE = {
   windowCells: 256,       // okno pola (D5: 128 / 256 / 384 — preset grafiki)
   mapW: 768,              // mapy gazu i światła [teksle]
   mapH: 432,
+  dustCount: 80000,       // drobiny pyłu gazu (D2: 80 tys. na Wysokiej; 0 — bez pyłu) — przy budowie
+  dust: true,             // A/B: pył gazu wł. / wył. (na żywo)
   sim: true,              // A/B: false — samo pole dalekie (G dema)
   amount: 1.0,            // gęstość gazu w obrazie
   fadeView: [40000, 80000], // zanik obrazu przy oddaleniu: pół kadru [j.]
@@ -60,6 +63,7 @@ class SpaceGasSystem {
     this.sim = null;
     this.maps = null;
     this.layer = null;
+    this.dust = null;
     this.scene = null;
     this.step = null;
     this._serial = -1;
@@ -77,13 +81,17 @@ class SpaceGasSystem {
     this.sim = new SpaceGasSim({ farEnv: (q, U) => sc.farEnv(q, U), N: T.windowCells, cell: SPACE_GAS_CELL, maxHulls: T.maxHullObstacles });
     this.maps = new SpaceGasMaps(this.sim, sc, { w: T.mapW, h: T.mapH });
     this.layer = new SpaceGasLayer(this.maps, { grid: Core3D.fx.grid, layer: 0 });
+    if (T.dustCount > 0) {
+      this.dust = new SpaceGasDust(this.sim, this.maps, { count: T.dustCount, grid: Core3D.fx.grid, layer: 0 });
+      this.layer.group.add(this.dust.mesh);
+    }
     this.syncLook();
     Core3D.scene.add(this.layer.group);
     this.step = Core3D.addFxStep({
       name: 'gaz przestrzeni',
       update: (ctx) => this._update(ctx),
       // pipeline'y compute powstają synchronicznie — puste dispatche na ekranie ładowania
-      warm: (ctx) => { this.sim.warm(ctx.renderer); this.maps.warm(ctx.renderer); }
+      warm: (ctx) => { this.sim.warm(ctx.renderer); this.maps.warm(ctx.renderer); if (this.dust) this.dust.warm(ctx.renderer); }
     });
     return true;
   }
@@ -95,6 +103,7 @@ class SpaceGasSystem {
     this.maps.syncLook(k);
     this.layer.L.sun.value.setRGB(k.sun[0] * k.sunGain, k.sun[1] * k.sunGain, k.sun[2] * k.sunGain);
     this.layer.L.ambient.value.setRGB(k.ambient[0], k.ambient[1], k.ambient[2]);
+    if (this.dust) this.dust.syncLook(k);
     const d = k.decay;
     this.sim.tune.decay = d;
     this.sim.syncTune();
@@ -113,7 +122,8 @@ class SpaceGasSystem {
 
   /** Siatki warstw do rozgrzewki (Core3D.warmup, ekran ładowania). */
   warmupMeshes() {
-    return this._ensure() ? this.layer.warmupMeshes() : [];
+    if (!this._ensure()) return [];
+    return this.dust ? [...this.layer.warmupMeshes(), this.dust.mesh] : this.layer.warmupMeshes();
   }
 
   _update(ctx) {
@@ -123,6 +133,7 @@ class SpaceGasSystem {
     st.active = on;
     if (!on) {
       this.layer.setVisible(false);
+      if (this.dust) this.dust.setVisible(false);
       st.substeps = 0;
       st.dispatches = 0;
       // po wyjściu z obszaru pole startuje od nowa (pole dalekie) przy powrocie
@@ -143,7 +154,9 @@ class SpaceGasSystem {
     this._hulls(ax, ay);
     st.sources = sim.srcN;
     st.hulls = sim.hullN;
+    const resets = sim.stats.resets;
     sim.frame(T.sim ? ctx.renderer : null, T.sim ? dt : 0, IN[I.camX], IN[I.camY], IN[I.windX], IN[I.windY]);
+    if (this.dust && sim.stats.resets !== resets) this.dust.requestReset();
     st.substeps = sim.stats.substeps;
 
     // mapy wokół kadru
@@ -161,6 +174,12 @@ class SpaceGasSystem {
     this.layer.L.fade.value = fade;
     this.layer.place(ax + r.cx, ay + r.cy, r.w, r.h);
     this.layer.setVisible(fade > 0.004);
+    // pył gazu: po polu (czyta jego prędkość i gęstość) i mapach (światło); tylko z ruchem gazu
+    const dustOn = !!(this.dust && T.dust && T.sim && fade > 0.004);
+    if (this.dust) {
+      if (dustOn) st.dispatches += this.dust.frame(ctx.renderer, dt, ctx, ax, ay, r, fade);
+      this.dust.setVisible(dustOn);
+    }
     st.cpuMs = performance.now() - t0;
   }
 
