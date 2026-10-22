@@ -636,3 +636,22 @@ Razem 52 → 63 towary (z `warp_mk1..3` od E8 i azotem), 46 receptur.
 Najciaśniejsze rafinaty trzymają 106–108% jak przedtem (solver).
 
 Koszt na punkt siły (`scripts/koszt-okretow.mjs`): fregata 6104, niszczyciel 6424, krążownik 7276, nosiciel 9105 CR. Przedtem 4540 / 5894 / 6405 / 8337 CR.
+
+### 8.3 Bramka bilansu po krokach (ziarna 7 / 11 / 23, 240 min)
+
+Każdy krok liczony na swoim commicie w osobnej kopii (git worktree), przebiegi po kolei. Pliki: `.tmp/bramka-bilansu/e10-*.json`.
+
+| krok | commit | przechwyty | głód max | stocznie | kolejka max (port) | zwodowane |
+|---|---|---|---|---|---|---|
+| baza (`main` e92c867c) | — | 15,5–16,3% | 14,7 min (Saturn U) | 0 min | 2,59–3,28 (Ceres, Oberon) | 844–862 |
+| 1 materiał wybuchowy | 73194046 | 16,0–16,6% | 14,6 min | 0 | 1,60–2,84 (Ceres) | 803–847 |
+| 2 glin, ceramika, Luna | 49910997 | 15,5–16,2% | 14,2 min | 0 | 3,47–5,62 (Ceres) | 825–886 |
+| 3 ziemie rzadkie, taśma, reaktor | c6f45425 | 15,0–15,4% | 8,9 min | 0 | 2,00–3,22 (Ceres) | 785–843 |
+| 4 emiter tarczy | daece75b | 15,0% | 8,2 min | 0 | 1,46–4,46 (Ceres) | 816–854 |
+| 5 układy z niklem, azot | fc593c36 | 15,2–15,3% | 8,6 min | 0 | 1,82–2,13 (Ceres) | 835–883 |
+| 6 warp + glin na Ceres (HEAD) | 1a530756 | 14,7–15,6% | 6,4 min | 0 | **1,60–1,67** (Wenus, Oberon, Ceres) | 832–874 |
+
+Wnioski:
+- **Głód uranu** na Saturnie spada z 14,7 do 6,4 min, bo reaktor bierze połowę prętów.
+- **Kolejka Ceres** rosła po kroku 2 (huta Ceres topiła glin bez własnej rudy). Po złożu glinu na Ceres wszystkie porty mają ≤ 1,67, czyli lepiej niż baza (Ceres 2,6–3,3, Oberon 2,1–2,7).
+- **Tick** (40–119 ms) nie nadaje się do oceny w żadnym przebiegu, także w bazie: równolegle liczyły bramki E2 i E4. Czysty pomiar zrobi E4 na scalonym `main`.
