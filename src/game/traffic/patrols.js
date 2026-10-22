@@ -15,6 +15,14 @@
  * idzie na szlak z największymi stratami, bo tylko tam się zwraca.
  */
 
+import {
+  COURSE_KIND, COURSE_STATUS, DWELL_REASON, launchCourse, travelStage, dwellStage, getCourse
+} from './courseRegistry.js';
+import { berthFits, berthRole, BERTH_ROLE } from './dockLayout.js';
+import { getNode } from './travelNetwork.js';
+import { WARSHIP_CLASSES, readyShips } from './shipyards.js';
+import { TRAFFIC_CONVENTIONAL } from '../../data/driveModes.js';
+
 export const PATROL_MODEL = Object.freeze({
   /** Ułamek wartości dostawy odkładany na patrole. To jest podatek od handlu. */
   levyRate: 0.04,
@@ -208,4 +216,222 @@ export function summarizePatrols(registry) {
     hotspots: [...registry.losses.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5),
     stats: { ...registry.stats }
   };
+}
+
+// ============================================================
+// Rotacja garnizonu: okręty frakcji w porcie wojskowym
+// ============================================================
+//
+// K-7 to port wojskowy (decyzja użytkownika), a do 2026-10-22 jego hale stały
+// puste: zapas okrętów frakcji był liczbą w stoczni, a jedyne kursy wojskowe
+// (kampanie) nie miały postoju w żadnym porcie — pomiar na ziarnie 7: przez
+// 60 min zajętych 0 ze 112 stanowisk K-7 Ziemi.
+//
+// Rotacja to WIDOK garnizonu, który i tak stoi przy porcie: okręt wraca
+// z patrolu wokół portu, staje na stanowisku wojskowym (postój i tankowanie),
+// wylatuje z powrotem. Okręty NIE schodzą z zapasu frakcji — obrona portu
+// i kampanie liczą się dokładnie jak wcześniej, więc rotacja nie zmienia ani
+// wojny, ani bilansu. Liczba okrętów w rotacji idzie za zapasem frakcji
+// (`dutyShare`) i nie przekracza części stanowisk wojskowych (`berthShare`) —
+// port nie jest zawalony całą flotą naraz, a kolejka wojskowa nie rośnie.
+
+export const GARRISON_MODEL = Object.freeze({
+  /** Jaka część gotowej floty frakcji jest jednocześnie w rotacji przez porty. */
+  dutyShare: 0.3,
+  /** Ile stanowisk wojskowych mieszczących okręt może zająć rotacja jednego portu. */
+  berthShare: 0.6,
+  /** Postój i tankowanie przy stanowisku, sekundy gry. */
+  serviceSeconds: 1200,
+  /** Jak daleko od portu kończy się i zaczyna odcinek patrolu, j. świata. */
+  patrolRadius: 250_000,
+  /** Co ile sekund gry dowództwo uzupełnia rotację. */
+  decisionSeconds: 60,
+  /** Ile okrętów najwyżej wchodzi do jednego portu na decyzję — przyloty się rozkładają. */
+  launchesPerDecision: 4,
+  /** Ilu ocalałych z kampanii wraca do portu domowego kursem (reszta — tylko do zapasu). */
+  returnCap: 6
+});
+
+/** Najmniejszy okręt wojenny — stanowisko, na które on nie wejdzie, nie liczy się dla rotacji. */
+const SMALLEST_WARSHIP_HULL = 'terran_frigate';
+
+export function createGarrisonState(options = {}) {
+  return {
+    config: { ...GARRISON_MODEL, ...(options.config || {}) },
+    /** Kursy w rotacji: { courseId, factionId, stationId, kind: 'rotation' | 'return' }. */
+    visits: [],
+    sinceDecision: 0,
+    /**
+     * Własny strumień losowości i własne id kursów. Rotacja nie zmienia
+     * gospodarki, więc nie może też przesuwać losowań ani numeracji świata —
+     * inaczej każdy bieg rozjeżdżałby się chaotycznie od pierwszej wizyty.
+     */
+    rngState: (Number(options.seed) >>> 0) || 0x4741524e,
+    nextId: 1,
+    stats: { rotations: 0, returns: 0 }
+  };
+}
+
+/** Losowanie rotacji (mulberry32 na stanie garnizonu) — patrz `rngState`. */
+function garrisonRandom(garrison) {
+  garrison.rngState = (garrison.rngState + 0x6D2B79F5) >>> 0;
+  let x = garrison.rngState;
+  x = Math.imul(x ^ (x >>> 15), x | 1);
+  x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+  return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+}
+
+/** Stanowiska wojskowe portu, na które wejdzie okręt wojenny. */
+export function militaryWarshipBerths(layout) {
+  if (!layout?.berths) return 0;
+  let count = 0;
+  for (const berth of layout.berths) {
+    if (berthRole(berth) === BERTH_ROLE.MILITARY && berthFits(berth.cls, SMALLEST_WARSHIP_HULL)) count++;
+  }
+  return count;
+}
+
+/** Porty domowe frakcji, które mają stanowiska wojskowe — tylko tam stoi garnizon. */
+export function garrisonPorts(stations, docks, factionId) {
+  const out = [];
+  for (const station of stations || []) {
+    if (!factionId || station.factionId !== factionId) continue;
+    const berths = militaryWarshipBerths(docks?.get?.(station.id));
+    if (berths > 0) out.push({ station, berths });
+  }
+  return out;
+}
+
+/** Klasa okrętu do kursu: losowo, ale w proporcji do tego, co frakcja ma w zapasie. */
+function pickVisitingClass(fleet, rng) {
+  let total = 0;
+  for (const count of Object.values(fleet || {})) total += Math.max(0, count);
+  if (total <= 0) return null;
+  let roll = rng() * total;
+  for (const [classId, count] of Object.entries(fleet)) {
+    roll -= Math.max(0, count);
+    if (roll < 0) return classId;
+  }
+  return Object.keys(fleet)[0] || null;
+}
+
+/** Etapy wizyty: dolot z patrolu, postój i tankowanie przy stanowisku, wylot na patrol. */
+function visitStages(node, patrolPos, entryPos, config) {
+  const seconds = config.patrolRadius / TRAFFIC_CONVENTIONAL.speed;
+  const leg = { seconds, distance: config.patrolRadius, risk: 0 };
+  return [
+    travelStage(node.id, node.id, { ...leg, fromPos: patrolPos, toPos: entryPos }),
+    // Stanowisko przydziela dyspozytor portu (rola `military` — kurs PATROL).
+    dwellStage(node.id, config.serviceSeconds, DWELL_REASON.REFUEL, null, { entryPos }),
+    travelStage(node.id, node.id, { ...leg, fromPos: entryPos, toPos: patrolPos })
+  ];
+}
+
+/** Gdzie dolot kończy się na obrzeżu portu — jak manewry frachtowców, nie w środku planety. */
+const PORT_ENTRY_RADIUS = 30_000;
+
+function launchVisit(garrison, registry, network, port, factionId, classId, kind, rng, fromPos = null) {
+  const node = getNode(network, port.station.id);
+  const hull = WARSHIP_CLASSES[classId]?.hull;
+  if (!node || !hull) return null;
+  // Powrót z kampanii przylatuje od strony bitwy, rotacja — z dowolnego kierunku patrolu.
+  const angle = fromPos
+    ? Math.atan2(fromPos.y - node.y, fromPos.x - node.x)
+    : rng() * Math.PI * 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const radius = garrison.config.patrolRadius;
+  const patrolPos = { x: node.x + cos * radius, y: node.y + sin * radius };
+  const entryPos = { x: node.x + cos * PORT_ENTRY_RADIUS, y: node.y + sin * PORT_ENTRY_RADIUS };
+  const course = launchCourse(registry, {
+    id: `garrison-${String(garrison.nextId++).padStart(5, '0')}`,
+    kind: COURSE_KIND.PATROL,
+    factionId,
+    unitClass: hull,
+    originId: port.station.id,
+    destinationId: port.station.id,
+    stages: visitStages(node, patrolPos, entryPos, garrison.config),
+    fuelCapacity: 0,
+    payload: { garrison: kind, classId }
+  });
+  if (!course) return null;
+  garrison.visits.push({ courseId: course.id, factionId, stationId: port.station.id, kind });
+  if (kind === 'return') garrison.stats.returns++;
+  else garrison.stats.rotations++;
+  return course;
+}
+
+/**
+ * Ocalali z kampanii wracają do portu domowego na postój i tankowanie.
+ * Do zapasu frakcji wracają jak wcześniej (`returnShips` w `tickWar`) —
+ * kurs tylko pokazuje powrót floty w hali K-7. `fromPos` to miejsce bitwy.
+ */
+export function launchCampaignReturn(garrison, options, factionId, ships, fromPos) {
+  const { stations, docks, network, registry } = options;
+  const rng = () => garrisonRandom(garrison);
+  if (!garrison || !registry || !network) return 0;
+  const ports = garrisonPorts(stations, docks, factionId);
+  if (!ports.length) return 0;
+  let launched = 0;
+  for (const [classId, count] of Object.entries(ships || {})) {
+    for (let i = 0; i < count && launched < garrison.config.returnCap; i++) {
+      const port = ports[Math.floor(rng() * ports.length)];
+      if (launchVisit(garrison, registry, network, port, factionId, classId, 'return', rng, fromPos)) launched++;
+    }
+  }
+  return launched;
+}
+
+/**
+ * Jeden krok rotacji. `options`: { shipyards, stations, docks, network, registry, rng }.
+ * Uzupełnia rotację każdego portu wojskowego do celu: udział portu w stanowiskach
+ * frakcji × `dutyShare` gotowej floty, najwyżej `berthShare` stanowisk portu.
+ */
+export function tickGarrison(garrison, dt, options = {}) {
+  const { shipyards, stations, docks, network, registry } = options;
+  if (!garrison || !shipyards || !registry || !network || !docks) return;
+  const rng = () => garrisonRandom(garrison);
+
+  for (let i = garrison.visits.length - 1; i >= 0; i--) {
+    const course = getCourse(registry, garrison.visits[i].courseId);
+    if (!course || course.status !== COURSE_STATUS.ACTIVE) garrison.visits.splice(i, 1);
+  }
+
+  garrison.sinceDecision += Math.max(0, Number(dt) || 0);
+  if (garrison.sinceDecision < garrison.config.decisionSeconds) return;
+  garrison.sinceDecision = 0;
+
+  const active = new Map();
+  for (const visit of garrison.visits) {
+    active.set(visit.stationId, (active.get(visit.stationId) || 0) + 1);
+  }
+
+  for (const [factionId, fleet] of shipyards.fleets) {
+    const ports = garrisonPorts(stations, docks, factionId);
+    if (!ports.length) continue;
+    const ready = readyShips(shipyards, factionId);
+    const onDuty = Math.floor(ready * garrison.config.dutyShare);
+    if (onDuty <= 0) continue;
+    const totalBerths = ports.reduce((sum, port) => sum + port.berths, 0);
+    for (const port of ports) {
+      const target = Math.min(
+        Math.floor(port.berths * garrison.config.berthShare),
+        Math.round(onDuty * port.berths / totalBerths));
+      let missing = target - (active.get(port.station.id) || 0);
+      for (let n = 0; n < garrison.config.launchesPerDecision && missing > 0; n++, missing--) {
+        const classId = pickVisitingClass(fleet, rng);
+        if (!classId) break;
+        if (!launchVisit(garrison, registry, network, port, factionId, classId, 'rotation', rng)) break;
+      }
+    }
+  }
+}
+
+/** Migawka do panelu i pomiarów. */
+export function summarizeGarrison(garrison) {
+  const byStation = {};
+  for (const visit of garrison?.visits || []) {
+    byStation[visit.stationId] = (byStation[visit.stationId] || 0) + 1;
+  }
+  return { visits: garrison?.visits.length || 0, byStation, stats: { ...(garrison?.stats || {}) } };
 }

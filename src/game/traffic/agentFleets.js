@@ -24,6 +24,7 @@ import { snapshotMarket, findTradeOpportunities, netProfit } from './tradeMarket
 import { chooseRoute } from './travelNetwork.js';
 import { convoyInterceptChance, escortCost, ESCORT_MODEL } from './convoy.js';
 import { FALLBACK_HOME_PORT } from '../../data/markets.js';
+import { takeStock, putStock } from './marketBook.js';
 
 /**
  * Profile agentów. Różnica sprowadza się do JEDNEJ rzeczy — ile ryzyka wolno
@@ -385,7 +386,7 @@ export function buyCargo(agent, econ, resourceId, units, unitPrice) {
   const stan = Number(econ.resources[resourceId]) || 0;
   const koszt = unitPrice * units;
   if (stan < units || agent.capital < koszt) return false;
-  econ.resources[resourceId] = stan - units;
+  takeStock(econ, resourceId, units);
   agent.capital -= koszt;
   agent.ledger.spent += koszt;
   return true;
@@ -394,11 +395,9 @@ export function buyCargo(agent, econ, resourceId, units, unitPrice) {
 /** Agent sprzedaje towar stacji. Zwraca utarg. */
 export function sellCargo(agent, econ, resourceId, units, unitPrice) {
   if (!agent || !econ?.resources) return 0;
-  const cap = Number(econ.capacity?.[resourceId]);
-  const stan = Number(econ.resources[resourceId]) || 0;
-  const zmiesci = Number.isFinite(cap) ? Math.min(units, Math.max(0, cap - stan)) : units;
+  // Nadmiar ponad magazyn nie wchodzi i nie jest płatny (API rynku, `putStock`).
+  const zmiesci = putStock(econ, resourceId, units);
   if (zmiesci <= 0) return 0;
-  econ.resources[resourceId] = stan + zmiesci;
   const utarg = unitPrice * zmiesci;
   agent.capital += utarg;
   agent.ledger.revenue += utarg;

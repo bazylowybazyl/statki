@@ -290,6 +290,35 @@ export class BeltGiants {
     return maxDepth;
   }
 
+  /**
+   * Wyjście z GŁĘBI skały (E9 2026-10-22): warp i hipercruise są duchami, więc statek może skończyć lot w środku
+   * olbrzyma (18–62 km), a `collideShip` widzi tylko pasmo SDF przy powierzchni (w głębi gradient 0 — bez wypchnięcia).
+   * Punkt głębiej niż pół pasma: szuka najbliższej płytkiej skały / próżni w 16 kierunkach (krok ¾ pasma) i zapisuje
+   * w `out` kierunek (x, y) i odległość (dist); poza głębią skały — null. Płytsze wbicie wypycha zwykły `collideShip`.
+   */
+  escapeFromRock(x, y, out = { x: 0, y: 0, dist: 0 }) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const giant = this.entries[i].giant;
+      if (!giant || !giant.ready || !giant.containsWorld(x, y, 0)) continue;
+      const deep = -0.5 * giant.band;
+      if (giant.sampleWorld(x, y, 0) >= deep) continue;
+      const step = giant.band * 0.75;
+      const maxDist = 2 * (giant.plan.half[0] + giant.plan.half[1]) + giant.band;
+      let best = Infinity, bx = 0, by = 0;
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const cx = Math.cos(a), cy = Math.sin(a);
+        for (let s = step; s < best && s <= maxDist; s += step) {
+          if (giant.sampleWorld(x + cx * s, y + cy * s, 0) >= deep) { best = s; bx = cx; by = cy; break; }
+        }
+      }
+      if (!Number.isFinite(best)) continue;
+      out.x = bx; out.y = by; out.dist = best;
+      return out;
+    }
+    return null;
+  }
+
   /** Czy punkt płaszczyzny gry (z = 0) leży w skale olbrzyma (pociski). */
   pointBlocked(x, y) {
     for (let i = 0; i < this.entries.length; i++) {

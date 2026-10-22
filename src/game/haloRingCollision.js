@@ -210,6 +210,91 @@ export class HaloRingCollider {
     return Math.sqrt(d2) <= this.floorMid + Math.max(HALO_COLLISION.padHeight, h);
   }
 
+  // Odległość wzdłuż promienia (x, y) + s·(dx, dy), s ∈ [0, len], (dx, dy) jednostkowy, do pierwszego punktu płyty
+  // poszerzonej o `pad` (połowa kadłuba) poza tranzytami; Infinity — kurs płyty nie przecina. Bezpiecznik hipercruise'u
+  // (E9 2026-10-22): wyjście, zanim płyta wejdzie w drogę hamowania. Daleko od ringu: dwa pierwiastki.
+  rayToSlab(x, y, dx, dy, len, pad = 0) {
+    const C = HALO_COLLISION;
+    const ox = x - this.place.x;
+    const oy = y - this.place.y;
+    const ro = this.floorMid + C.terrainReach + pad;
+    const ri = Math.max(0, this.back - pad);
+    // |o + s d|² = R²  →  s² + 2 b s + c = 0
+    const b = ox * dx + oy * dy;
+    const oo = ox * ox + oy * oy;
+    const discO = b * b - (oo - ro * ro);
+    if (discO <= 0) return Infinity;
+    const qO = Math.sqrt(discO);
+    let a0 = Math.max(0, -b - qO);
+    const a1 = Math.min(len, -b + qO);
+    if (a0 > a1) return Infinity;
+    // Wnętrze (strona planety) wycięte: [i0, i1] w środku przedziału.
+    const discI = b * b - (oo - ri * ri);
+    let i0 = Infinity, i1 = -Infinity;
+    if (discI > 0) { const qI = Math.sqrt(discI); i0 = -b - qI; i1 = -b + qI; }
+    const step = Math.max(40, Math.min(150, (this.floorMid - this.back) / 3));
+    const transitHalf = Math.max(0, this.transitHalf - pad / this.floorMid);
+    const lim = this.floorMid;
+    for (let s = a0; s <= a1; s += step) {
+      if (s > i0 && s < i1) { s = i1; if (s > a1) break; }
+      const px = x + dx * s;
+      const py = y + dy * s;
+      const r = Math.sqrt((px - this.place.x) * (px - this.place.x) + (py - this.place.y) * (py - this.place.y));
+      if (r < ri || r > ro) continue;
+      const p = haloGameToLocal(this.place, px, py, this._c);
+      let th = Math.atan2(p.y, p.x);
+      let inTransit = false;
+      for (let i = 0; i < this.transitAngles.length; i++) {
+        let d = th - this.transitAngles[i];
+        d -= TAU * Math.round(d / TAU);
+        if (Math.abs(d) < transitHalf) { inTransit = true; break; }
+      }
+      if (inTransit) continue;
+      const h = this.terrainHeightAt ? Number(this.terrainHeightAt(p.x, p.y)) || 0 : 0;
+      if (r <= lim + Math.max(C.padHeight, h) + C.clearance + pad) return s;
+    }
+    return Infinity;
+  }
+
+  // Ostatnia linia przeciw przebiciu płyty (hipercruise, E9): środek statku przeszedł w tym kroku przez połowę płyty
+  // [kadłub ringu, podłoga] poza tranzytem (z (prevX, prevY) do pozy bieżącej) — dyskretny test podłogi wypchnąłby go na
+  // drugą stronę. Statek wraca do pozy sprzed kroku, prędkość w głąb płyty zerowana. Wynik w this.result.
+  blockTunnel(ship, prevX, prevY) {
+    const res = this.result;
+    res.hit = false; res.floor = 0; res.walls = 0; res.impactSpeed = 0;
+    if (!ship?.pos || !Number.isFinite(prevX) || !Number.isFinite(prevY)) return res;
+    const cx = this.place.x, cy = this.place.y;
+    const mid = (this.back + this.floorMid) * 0.5;
+    const ax = prevX - cx, ay = prevY - cy;
+    const bx = ship.pos.x - cx, by = ship.pos.y - cy;
+    const ra = Math.sqrt(ax * ax + ay * ay);
+    const rb = Math.sqrt(bx * bx + by * by);
+    if ((ra > mid) === (rb > mid)) return res;
+    // Punkt przejścia przez okrąg połowy płyty (pierwiastek odcinka a → b).
+    const ex = bx - ax, ey = by - ay;
+    const A = ex * ex + ey * ey;
+    if (A < 1e-9) return res;
+    const B = ax * ex + ay * ey;
+    const disc = B * B - A * (ra * ra - mid * mid);
+    if (disc < 0) return res;
+    const q = Math.sqrt(disc);
+    let t = (-B - q) / A;
+    if (t < 0 || t > 1) t = (-B + q) / A;
+    t = Math.max(0, Math.min(1, t));
+    const qx = prevX + (ship.pos.x - prevX) * t;
+    const qy = prevY + (ship.pos.y - prevY) * t;
+    const p = haloGameToLocal(this.place, qx, qy, this._c);
+    if (this._inTransit(p.x, p.y)) return res;
+    ship.pos.x = prevX;
+    ship.pos.y = prevY;
+    // Normalna ku stronie, z której statek przyleciał (habitat — na zewnątrz, planeta — do środka).
+    const sgn = ra > mid ? 1 : -1;
+    this._cancelInto(ship, sgn * (qx - cx), sgn * (qy - cy));
+    res.hit = true;
+    res.floor = Math.abs(rb - ra);
+    return res;
+  }
+
   // Wypchnięcie statku z płyty ringu i (walls = true) ze ścian portu.
   // Modyfikuje ship.pos i ship.vel; wynik w this.result (bez alokacji).
   constrainShip(ship, walls = false) {

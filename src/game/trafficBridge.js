@@ -25,6 +25,7 @@ import {
   TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD
 } from './traffic/trafficProtocol.js';
 import { BELT_MSG } from './traffic/trafficProtocol.js';
+import { moveStock } from './traffic/marketStock.js';
 
 /** Ile ostatnich wraków trzymać do podglądu w konsoli. */
 const RECENT_WRECK_LIMIT = 64;
@@ -41,7 +42,7 @@ function createMirror(resources) {
   return { resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros() };
 }
 
-/** Te same reguły co `applyStockDelta` w dyspozytorze: 0…pojemność, 0 = bez limitu. */
+/** Te same reguły co `applyStockDelta` w workerze — wspólne `moveStock` (API rynku): 0…pojemność, 0 = bez limitu. */
 function applyToMirror(mirror, bag) {
   const applied = {};
   if (!mirror || !bag) return applied;
@@ -49,14 +50,8 @@ function applyToMirror(mirror, bag) {
     if (!(id in mirror.resources)) continue;
     const delta = Number(raw);
     if (!Number.isFinite(delta) || delta === 0) continue;
-    const stock = Math.max(0, Number(mirror.resources[id]) || 0);
-    const cap = Number(mirror.capacity[id]);
-    const next = delta > 0
-      ? (Number.isFinite(cap) && cap > 0 ? Math.min(cap, stock + delta) : stock + delta)
-      : Math.max(0, stock + delta);
-    if (next === stock) continue;
-    mirror.resources[id] = next;
-    applied[id] = next - stock;
+    const moved = moveStock(mirror, id, delta);
+    if (moved !== 0) applied[id] = moved;
   }
   return applied;
 }

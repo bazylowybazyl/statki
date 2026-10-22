@@ -26,9 +26,12 @@ test('duch gracza: skok i rampa — tak; po rampie, dopóki stoi w kadłubie; po
     warp: { state: 'idle', exitRamp: null }, ship, npcs: [npc], _cachedAllDestructibles: null,
     worldBodies: { withEntities: (list) => list }, HullBodies, _warpGhostLinger: false, playerHullOverlapsAny: null,
     // Hipercruise (E5) bezczynny — duch tylko od warpa.
-    hypercruise: { state: 'idle' }, hypercruiseDriving: () => false
+    hypercruise: { state: 'idle' }, hypercruiseDriving: () => false,
+    // Pas bez olbrzymów — głąb skały nie trzyma ducha (osobny test: tests/hipercruisePrzeszkody.test.mjs).
+    beltWorld: null, ROCK_ESCAPE_SPEED: 3000, _rockEscape: { x: 0, y: 0, dist: 0 }, playerRockEscape: null
   };
   scope.playerHullOverlapsAny = loadIndexFunction(html, 'function playerHullOverlapsAny(bodies) {', 'playerHullOverlapsAny', scope);
+  scope.playerRockEscape = loadIndexFunction(html, 'function playerRockEscape() {', 'playerRockEscape', scope);
   const update = loadIndexFunction(html, 'function updatePlayerWarpGhost() {', 'updatePlayerWarpGhost', scope);
   try {
     assert.equal(update(), false, 'zwykły lot w kadłubie okrętu: kolizje (bez ducha)');
@@ -62,6 +65,6 @@ test('physicsStep: flaga ducha przed kolizjami gracza; olbrzymy, ring i budzenie
   }
   assert.match(sliceFunction(html, 'function stepShipAsteroidCollisions(dt) {'), /if \(ship && !ship\.dead && !ship\.noHullCollisions\) belt\.collideShip\(ship\);/);
   // Ring: duch warpa omija płytę, hipercruise (E5) NIE — płyta zostaje przeszkodą i zrywa lot.
-  assert.match(sliceFunction(html, 'function stepShipRingCollisions(dt) {'), /if \(ship && !ship\.dead && \(!ship\.noHullCollisions \|\| hcRing\)\) \{\n\s+const hit = haloWorld\.constrainShip\(ship, true\);\n\s+if \(hcRing && hit && hit\.hit\) \{\n\s+hypercruise\.reason = 'ring';\n\s+resetHypercruise\(hypercruise\);/);
+  assert.match(sliceFunction(html, 'function stepShipRingCollisions(dt) {'), /if \(ship && !ship\.dead && \(!ship\.noHullCollisions \|\| hcRing\)\) \{[\s\S]*?const hit = haloWorld\.constrainShip\(ship, true\);\s+if \(hcRing && \(tunnel \|\| \(hit && hit\.hit\)\)\) \{\s+hypercruise\.reason = 'ring';\s+resetHypercruise\(hypercruise\);/);
   assert.match(step, /wakeSleepingWrecksNearBodies\(_sleepingWrecksBuffer, dynamicDestructibles, isPlayerWarpGhost\(\) \? ship : null\);/);
 });

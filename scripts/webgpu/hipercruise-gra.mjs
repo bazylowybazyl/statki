@@ -2,11 +2,12 @@
 // Vite + headless Chrome z WebGPU (CDP), gra swobodna bez kampanii i mgły wojny, Atlas z silnikiem Mk III (konsola:
 // ship.hypercruiseEngine). Hipercruise wymuszony od razu w stanie 'active' z prędkością vmax (narzędzie, nie rozgrywka).
 //
-//   node scripts/webgpu/hipercruise-gra.mjs [--etapy ring,duch,koszt] [--query renderWorker=1] [--port 5381]
+//   node scripts/webgpu/hipercruise-gra.mjs [--etapy ring,duch,olbrzym,koszt] [--query renderWorker=1] [--port 5381]
 //
 // Etapy:
-//   ring  — Atlas z daleka (poza studnią Ziemi, strefa 1) kursem na płytę ringu pod kątem 90° i 30°: prędkość przy
-//           uderzeniu (strefa planety × 0,3 hamuje automat), przebicie płyty, prędkość i droga po zerwaniu hipercruise'u;
+//   ring  — Atlas z daleka (poza studnią Ziemi, strefa 1) kursem na płytę ringu pod kątem 90° i 30°: wyjście przed
+//           płytą (bezpiecznik E9, powód 'ring') albo uderzenie — prędkość, przebicie, odstęp od podłogi, droga po;
+//   olbrzym — hipercruise kończy się w najgłębszym punkcie olbrzyma pasa: duch trwa, statek wylatuje ku próżni;
 //   duch  — przelot przez szereg 12 okrętów (sojusznicy — bez blokady masy): styki pary w silniku belek, straty węzłów,
 //           ship.noHullCollisions w locie i po wyjściu;
 //   koszt — bitwa ~60 okrętów 30 km od gracza; okna po 4 s na zmianę: A — lot bojowy (stoi), B — hipercruise 40 tys.
@@ -28,6 +29,22 @@ const logs = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 120000) => evaluate(cdp, e, t);
 const report = { query, etapy: {} };
+
+// Konsola workerów (tryb gracza: render.worker loguje „pipeline sync” w klatkach, wyjątki modułów).
+const workerLogs = [];
+let msgId = 900000;
+cdp.on((msg) => {
+  if (msg.method === 'Target.attachedToTarget') {
+    for (const method of ['Runtime.enable', 'Runtime.runIfWaitingForDebugger']) cdp.ws.send(JSON.stringify({ id: ++msgId, method, sessionId: msg.params.sessionId }));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.consoleAPICalled') {
+    workerLogs.push(`[${msg.params.type}] ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 2000));
+  }
+  if (msg.sessionId && msg.method === 'Runtime.exceptionThrown') {
+    workerLogs.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`.slice(0, 2000));
+  }
+});
+await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
 
 await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   try { localStorage.setItem('sc_story_campaign', '0'); localStorage.setItem('sc_story_tutorial', '0'); localStorage.setItem('sc_fog_of_war', '0'); } catch {}
@@ -72,6 +89,7 @@ try {
     const cam = window.camera; cam.manualZoom = true; cam.zoom = cam.targetZoom = 0.05; return true; })()`);
   await ev(`(async () => { window.__GS = (await import('/src/game/gameState.js')).GameState; return !!window.__GS.zoneState; })()`);
   const pipes0 = await ev('window.__pipeRec.pipes.length');
+  const workerStart = workerLogs.length;
 
   // ------------------------------------------------------------------ RING
   if (etapy.has('ring')) {
@@ -122,7 +140,10 @@ try {
       if (!plan) { console.log('ring: brak ringu Ziemi'); break; }
       const h = await ev(HIPER);
       await pauza(false);
-      await czekaj('(window.__ringLog || []).some((r) => r.hit) || (window.__ringLog || []).length > 60 * 40', 240000);
+      // Koniec lotu: uderzenie w płytę albo wyjście (bezpiecznik E9 — reason 'ring'), potem 10 s gry.
+      await czekaj(`(window.__ringLog || []).some((r) => r.hit) || ((window.__ringLog || []).length > 10 && window.hypercruise.state === 'idle')
+        || (window.__ringLog || []).length > 60 * 40`, 240000);
+      const powod = await ev('window.hypercruise.reason || ""');
       await czekajGra(10);
       await pauza(true);
       const r = await ev(`(() => {
@@ -138,9 +159,11 @@ try {
           vStrefa: wejscieStrefy >= 0 ? Math.round(L[wejscieStrefy].v0) : null,
           v1s: i >= 0 ? Math.round(at(1).v1) : null, v5s: i >= 0 ? Math.round(at(5).v1) : null, v10s: i >= 0 ? Math.round(at(10).v1) : null,
           droga10s: i >= 0 ? drog(10) : null, hcPo: window.hypercruise.state, duchPo: !!window.ship.noHullCollisions,
-          kolejneUderzenia: L.filter((q, j) => j > i && q.hit).length };
+          kolejneUderzenia: L.filter((q, j) => j > i && q.hit).length,
+          // Bez uderzenia (bezpiecznik): najbliżej podłogi [j. środka nad podłogą] i prędkość na końcu dziennika.
+          odstepOdPodlogi: Math.round(minR - R.fm), vKoniec: Math.round(L[L.length - 1].v1), uderzenia: L.filter((q) => q.hit).length };
       })()`);
-      const row = { kat, plan, hiper: h, ...r };
+      const row = { kat, plan, hiper: h, powod, ...r };
       console.log('RING', JSON.stringify(row));
       wyn.push(row);
     }
@@ -217,6 +240,62 @@ try {
     await ev(`for (const e of window.__e9cele) e.dead = true; true`);
   }
 
+  // ------------------------------------------------------------------ OLBRZYM
+  // Hipercruise kończy się w GŁĘBI olbrzyma pasa (najgłębszy punkt przekroju z = 0): duch ma trwać, statek ma wylecieć
+  // ku próżni (BeltGiants.escapeFromRock → playerRockEscape), a na koniec stać poza skałą (collideShip).
+  if (etapy.has('olbrzym')) {
+    await pauza(true);
+    const site = await ev(`(() => {
+      const W = window.__beltWorld; if (!W || !W.giants) return null;
+      const e = W.giants.entries[0];
+      window.cancelTravel && window.cancelTravel(null);
+      window.__hypercruiseReset(); window.setShipMode('combat', true);
+      window.DevScene.teleport(e.x - e.halfX - 15000, e.y, 0); window.DevScene.syncCamera();
+      window.__e9giant = e;
+      return { id: e.id, x: Math.round(e.x), y: Math.round(e.y), halfX: e.halfX, halfY: e.halfY };
+    })()`);
+    await pauza(false);
+    const gotowy = site && await czekaj('!!(window.__e9giant.giant && window.__e9giant.giant.ready)', 240000);
+    if (!gotowy) { console.log('olbrzym: nie zbudował się', JSON.stringify(site)); report.etapy.olbrzym = { site, gotowy: false }; }
+    else {
+      await pauza(true);
+      const deep = await ev(`(() => {
+        const G = window.__e9giant.giant, v = G.plan.voxel * 2;
+        let best = { d: Infinity, x: 0, y: 0 };
+        for (let x = -G.plan.half[0]; x <= G.plan.half[0]; x += v) for (let y = -G.plan.half[1]; y <= G.plan.half[1]; y += v) {
+          const d = G.sampleLocal(x, y, 0); if (d < best.d) best = { d, x: G.x + x, y: G.y + y };
+        }
+        return { sdf: Math.round(best.d), band: G.band, x: best.x, y: best.y };
+      })()`);
+      const h = await ev(HIPER);
+      await pauza(false);
+      await czekajGra(0.3);                // duch z hipercruise'u (updatePlayerWarpGhost)
+      await pauza(true);
+      await ev(`(() => { const s = window.ship, p = ${JSON.stringify({ x: deep.x, y: deep.y })};
+        s.pos.x = p.x; s.pos.y = p.y; window.DevScene.syncCamera(); window.__hypercruiseReset(); s.vel.x = 0; s.vel.y = 0; return true; })()`);
+      const t0 = await simT();
+      await pauza(false);
+      const probki = [];
+      let wyszedl = null;
+      for (let k = 0; k < 600; k++) {
+        await sleep(100);
+        const p = await ev(`(() => { const s = window.ship, G = window.__e9giant.giant;
+          return { t: (window.WarpTraffic && window.WarpTraffic.time) || 0, sdf: Math.round(G.sampleWorld(s.pos.x, s.pos.y, 0)),
+            duch: s.noHullCollisions === true, v: Math.round(Math.hypot(s.vel.x, s.vel.y)) }; })()`);
+        p.t = +(p.t - t0).toFixed(2);
+        probki.push(p);
+        if (wyszedl === null && !p.duch && k > 2) wyszedl = p.t;
+        if (wyszedl !== null && p.t - wyszedl > 3) break;
+        if (p.t > 60) break;
+      }
+      await pauza(true);
+      const row = { site, deep, hiper: h, duchNaStarcie: probki[0]?.duch ?? null, czasWyjscia: wyszedl, sdfKoniec: probki.at(-1)?.sdf,
+        vMax: Math.max(...probki.map((p) => p.v)), probki: probki.filter((_, i) => i % 5 === 0).slice(0, 30) };
+      console.log('OLBRZYM', JSON.stringify({ ...row, probki: undefined }));
+      report.etapy.olbrzym = row;
+    }
+  }
+
   // ------------------------------------------------------------------ KOSZT
   if (etapy.has('koszt')) {
     await pauza(true);
@@ -279,7 +358,10 @@ try {
   const pipes = await ev(`window.__pipeRec.pipes.slice(${pipes0})`);
   report.pipelineSync = pipes.filter((p) => p.sync).length;
   report.pipelineSyncNazwy = [...new Set(pipes.filter((p) => p.sync).map((p) => p.nazwa))].slice(0, 12);
-  console.log('pipeline\'y synchroniczne po starcie:', report.pipelineSync, report.pipelineSyncNazwy);
+  report.pipelineSyncWorker = workerLogs.slice(workerStart).filter((l) => l.includes('pipeline sync')).map((l) => l.replace(/^.*pipeline sync #\d+ k=\d+: /, '')).slice(0, 20);
+  report.bledyWorkera = workerLogs.filter((l) => /^\[(error|exception)\]|modFail/.test(l)).slice(0, 20);
+  console.log('pipeline\'y synchroniczne po starcie: strona', report.pipelineSync, report.pipelineSyncNazwy,
+    '| worker', report.pipelineSyncWorker.length, report.pipelineSyncWorker, '| błędy workera', report.bledyWorkera.length);
 } finally {
   report.bledy = logs.errors().filter((l) => !/AudioSys/.test(l)).slice(0, 12);
   if (report.bledy.length) console.log('błędy:', report.bledy);

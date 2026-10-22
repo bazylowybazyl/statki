@@ -101,6 +101,8 @@ class RenderWorldFacade {
   get driveState() { const s = this._src; return s ? s.driveState : W().shipDriveState; }
   get warp() { const s = this._src; return s ? s.warp : W().warp; }
   get boost() { const s = this._src; return s ? s.boost : GameState.boost; }
+  // hipercruise gracza w kształcie warpa (GameState.hyper; worker — skalary HYPER_* migawki)
+  get hyper() { const s = this._src; return s ? s.hyper : GameState.hyper; }
 
   // listy
   get bullets() { const s = this._src; return s ? s.bullets : W().bullets; }
@@ -150,5 +152,6 @@ export function createMirrorPlayersSource() {
   const src = Object.create(new RenderWorldFacade());
   Object.defineProperty(src, 'ship', { value: null, writable: true, enumerable: true });
   Object.defineProperty(src, 'player2Ship', { value: null, writable: true, enumerable: true });
+  Object.defineProperty(src, 'hyper', { value: null, writable: true, enumerable: true });
   return src;
 }

@@ -22,6 +22,7 @@ import { SpaceGasDust } from './spaceGasDust.js';
 import { BeltGasScene } from './spaceGasBelt.js';
 import { SPACE_GAS_IN, SPACE_GAS_SCENE } from './spaceGasLayout.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
+import { SpaceGasCover } from './spaceGasState.js';
 
 const I = SPACE_GAS_IN;
 
@@ -33,6 +34,7 @@ export const SPACE_GAS_TUNE = {
   mapH: 432,
   dustCount: 80000,       // drobiny pyłu gazu (D2: 80 tys. na Wysokiej; 0 — bez pyłu) — przy budowie
   dust: true,             // A/B: pył gazu wł. / wył. (na żywo)
+  fogReplace: true,       // gaz zamiast płytkich płatów mgły pasa (fog.js) — jedna mgła; false — obie (A/B)
   sim: true,              // A/B: false — samo pole dalekie (G dema)
   amount: 1.0,            // gęstość gazu w obrazie
   fadeView: [40000, 80000], // zanik obrazu przy oddaleniu: pół kadru [j.]
@@ -52,6 +54,21 @@ export const SPACE_GAS_TUNE = {
   ventRate: 2.0,
   ventReach: 350,
   ventInject: 1.6,
+  // wybuchy (wejście gry): FRONT wypycha gaz na zewnątrz (dziura z wałem), wyrzut pyłu (kanał w); dema: boom()
+  // × k = rozmiar / 280 (Atlas): prędkość frontu 1500·√k, grubość 380·k, siła 9000·k, wyrzut 200·k
+  blastPush: 1400,
+  blastSpeed: 1500,
+  blastWidth: 380,
+  blastEjectaR: 200,
+  blastEjectaRate: 2.2,
+  blastEjectaLife: 0.5,
+  // pociski (wejście gry): gaz wleczony za pociskiem (dema: bolts)
+  boltLen: 650,
+  boltWidth: 55,
+  boltSpeed: 900,
+  boltRate: 3,
+  boltVol: 0.3,
+  boltLag: 600,
   maxHullObstacles: 32
 };
 
@@ -69,7 +86,7 @@ class SpaceGasSystem {
     this._serial = -1;
     this._scene = SPACE_GAS_SCENE.none;
     this._rect = { cx: 0, cy: 0, w: 1, h: 1 };
-    this.stats = { active: false, cpuMs: 0, sources: 0, vents: 0, hulls: 0, substeps: 0, dispatches: 0 };
+    this.stats = { active: false, cpuMs: 0, sources: 0, vents: 0, blasts: 0, bolts: 0, hulls: 0, raster: false, substeps: 0, dispatches: 0 };
   }
 
   _ensure() {
@@ -131,6 +148,7 @@ class SpaceGasSystem {
     const IN = this.input, T = this.tune, st = this.stats;
     const on = !!(T.enabled && IN[I.active] > 0.5 && IN[I.scene] === SPACE_GAS_SCENE.belt);
     st.active = on;
+    SpaceGasCover.belt = 0;
     if (!on) {
       this.layer.setVisible(false);
       if (this.dust) this.dust.setVisible(false);
@@ -149,11 +167,16 @@ class SpaceGasSystem {
 
     const sim = this.sim;
     sim.beginInputs();
+    // budżet źródeł (64): wybuchy pierwsze, potem dysze, odgazowanie, pociski (plan § 2 pkt 2)
+    this._blasts(IN);
     this._engines(ax, ay);
     this._vents(IN);
+    this._bolts(IN);
+    sim.setRaster(IN, I);
     this._hulls(ax, ay);
     st.sources = sim.srcN;
     st.hulls = sim.hullN;
+    st.raster = IN[I.rasterOn] > 0.5;
     const resets = sim.stats.resets;
     sim.frame(T.sim ? ctx.renderer : null, T.sim ? dt : 0, IN[I.camX], IN[I.camY], IN[I.windX], IN[I.windY]);
     if (this.dust && sim.stats.resets !== resets) this.dust.requestReset();
@@ -174,6 +197,8 @@ class SpaceGasSystem {
     this.layer.L.fade.value = fade;
     this.layer.place(ax + r.cx, ay + r.cy, r.w, r.h);
     this.layer.setVisible(fade > 0.004);
+    // płytkie płaty mgły pasa gasną pod gazem (jedna mgła — fog.js)
+    SpaceGasCover.belt = T.fogReplace ? fade : 0;
     // pył gazu: po polu (czyta jego prędkość i gęstość) i mapach (światło); tylko z ruchem gazu
     const dustOn = !!(this.dust && T.dust && T.sim && fade > 0.004);
     if (this.dust) {
@@ -210,6 +235,44 @@ class SpaceGasSystem {
       v++;
     }
     this.stats.vents = v;
+  }
+
+  // Wybuchy (wejście gry): front wybuchu (strefa ściśliwa — dziura z wałem na brzegu) i wyrzut pyłu na początku.
+  _blasts(IN) {
+    const T = this.tune, sim = this.sim;
+    const n = IN[I.blasts] | 0;
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      const b = I.blastBase + i * I.blastStride;
+      const x = IN[b], y = IN[b + 1], size = IN[b + 2], age = IN[b + 3], life = IN[b + 4];
+      const kz = Math.min(4, Math.max(0.25, size / 280));
+      const k = Math.max(0, 1 - age / life);
+      const speed = T.blastSpeed * Math.sqrt(kz);
+      if (!sim.addSource(x, y, 1, 0, 120 + speed * age, T.blastWidth * kz, 0, T.blastPush * k * k * Math.sqrt(kz), 10, 0,
+        SPACE_GAS_SRC.front, 0)) break;
+      m++;
+      const el = T.blastEjectaLife * Math.sqrt(kz);
+      if (age < el) {
+        const ke = 1 - age / el;
+        if (!sim.addSource(x, y, 1, 0, T.blastEjectaR * kz, 0, 0, 160 * ke, 2, 0, SPACE_GAS_SRC.ball, 0, 0, 0, 0, T.blastEjectaRate * ke)) break;
+      }
+    }
+    this.stats.blasts = m;
+  }
+
+  // Pociski (wejście gry): narzucona prędkość w wąskim stożku za pociskiem (gaz wleczony jak za strzałem dema).
+  _bolts(IN) {
+    const T = this.tune, sim = this.sim;
+    const n = IN[I.bolts] | 0;
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      const b = I.boltBase + i * I.boltStride;
+      const dx = IN[b + 2], dy = IN[b + 3];
+      if (!sim.addSource(IN[b] - dx * T.boltLag, IN[b + 1] - dy * T.boltLag, dx, dy, T.boltLen, T.boltWidth, 0.05, T.boltSpeed,
+        T.boltRate, T.boltVol, SPACE_GAS_SRC.cone, T.boltLen)) break;
+      m++;
+    }
+    this.stats.bolts = m;
   }
 
   // Kadłuby z wejścia przeszkód (GAS_OBST_IN) w oknie pola.

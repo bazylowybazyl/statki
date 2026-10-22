@@ -16,9 +16,14 @@ paths:
 
 Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) według planu `docs/PLAN-gazy-kosmos.md`. Decyzje D1–D8 przyjęte 2026-10-22, postęp w § 6 planu.
 
-- Zrobione: GK-1 (rdzeń pola), GK-2 (wejście gry), GK-3 (mapy i dwie połowy warstwy), GK-4 (pył gazu), GK-5 (scena pasa, część pierwsza) i GK-8 (opcja Wł. / Wył.).
+- Zrobione:
+  - GK-1: rdzeń pola;
+  - GK-2: wejście gry;
+  - GK-3: mapy i dwie połowy warstwy;
+  - GK-4: pył gazu;
+  - GK-5: scena pasa z olbrzymami, wybuchami, pociskami i jedną mgłą;
+  - GK-8: opcja Wł. / Wył.
 - Czekają:
-  - GK-5: przekroje olbrzymów pasa jako przeszkody, wybuchy i pociski jako źródła;
   - GK-6: ring Jowisza;
   - GK-7: ławice mgły;
   - GK-8: okno i mapy z presetu;
@@ -33,12 +38,19 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
   - wiatr wzdłuż orbity;
   - kierunek ku Słońcu;
   - siatka obwiedni 32 × 32 z `field.sampleMacro`;
-  - strugi odgazowania lodowych skał.
+  - strugi odgazowania lodowych skał;
+  - wybuchy: pierścień `recent` / `count` w `src/game/explosionEvents.js` (`GameBlasts`), przyjęte raz i starzone czasem gry;
+  - pociski z `bullets` w oknie;
+  - RASTER PRZEKROJU OLBRZYMÓW (z = 0): 128 × 128 bitów na okno, z `giant.sampleWorld`, próbkowany tylko w pudłach gotowych olbrzymów i przesuwany przyrostowo.
 - Siatka obwiedni korzysta z tego samego wzoru co płaty mgły `fog.js`, z `hole` i `gas` z E3. Przesuwa się przyrostowo: przy ruchu kamery próbkowane są tylko nowe wiersze i kolumny. Przy nowej `holeVersion` liczy się cała.
 - Render (`SpaceGas`, `src/3d/spaceGas/spaceGas.js`, krok Core3D.fx „gaz przestrzeni”) czyta tylko:
   - to wejście;
   - kadłuby z `GAS_OBST_IN` (gra dokłada okno pola do prostokątów domen przeszkód);
   - dysze MAIN z `EngineFrame`.
+- Budżet źródeł (64 na klatkę) w kolejności: wybuchy (front + wyrzut), dysze, odgazowanie, pociski.
+- JEDNA MGŁA w pasie: `SpaceGasCover.belt` (`spaceGasState.js`) = zanik gazu w tej klatce. Płytkie płaty `fog.js` (pass gry) mają alfę × (1 − pokrycie). Głębokie płaty tła zostają.
+  - Gaz wyłączony (opcja, preset Niska) albo oddalenie — stara mgła wraca.
+  - A/B: `SpaceGas.tune.fogReplace`.
 - Tryb off woła `SpaceGas.submit` w `render()`. Worker bierze bloki `spaceGas` i `gasObst`.
 - UKŁAD POLA: świat gry WZGLĘDEM KOTWICY.
   - Bufory GPU trzymają tylko stan komórek, więc kernel przesunięcia początku pul nie jest potrzebny.
@@ -49,6 +61,7 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
 ## Pole (`spaceGasSim.js`)
 
 - Kernele są 1:1 z dema, strojenie w `createSpaceGasTune` (= `SIMT` dema).
+- Raster olbrzymów to tekstura R8 (`sim.setRaster`, wysyłka tylko przy nowej wersji). Daje komórki stałe i zasłonę strug, buforów storage nie przybywa.
 - Komórka stała = `velB.w` 2, prędkość ciała w `velB.xy` (bufora `flagB` nie ma). `kAdvect` i `kProject` mają po 7 buforów storage, limit to 8. Nowy bufor w tych kernelach = zmiana układu. Strażnik w teście.
 - Okno przesuwa się TYLKO w klatce z krokiem (lekcja drżenia dema).
 - Obraz: dwie pary tekstur kroków zapisywane na zmianę, każda z własnym rogiem okna (`sim.image`). Mapy przenikają poprzedni i bieżący krok według ułamka kroku, z opóźnieniem 1/60 s.
@@ -77,12 +90,13 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
 - Liczba: `SPACE_GAS_TUNE.dustCount` = 80 000 (D2), ustalana przy budowie. A/B: `SpaceGas.tune.dust`.
 - POZYCJE WZGLĘDEM ROGU OKNA POLA. Przesunięcie okna przesuwa drobiny w tym samym kroku (`U.shift`), siatka stoi w rogu okna (`mesh.position`, double). Nie zapisuj drobinom pozycji względem kotwicy ani świata — w pasie (1,6 mln j. od Słońca) drobny ruch ginąłby we float32.
 - Obraz: kwad instancji (`Mesh` + `InstancedBufferGeometry`, pozycja z buforów storage w `positionNode`), mieszanie addytywne, renderOrder −40 (po dolnej połowie gazu, przed efektami — górna połowa go przygasza).
-- Światło: mapa światła i siatka świateł w wierzchołkach, maska słońca we fragmencie. Wygląd: `look.dustColor`, `dustW`, `dustRho`, `SpaceGas.dust.U.gain`.
+- Światło: mapa światła i siatka świateł w wierzchołkach, maska słońca we fragmencie. Wygląd: `look.dustColor`, `dustW`, `dustRho`, `dustSulfurDim`, `SpaceGas.dust.U.gain`.
+- Pył w ławicy siarki jest ciemniejszy: jasność × (1 − `dustSulfurDim` · udział siarki w gazie komórki drobiny). `dustSulfurDim` = 0,3 (decyzja użytkownika 2026-10-22).
 
 ## Narzędzia
 
-- Testy: `node --test tests/spaceGas.test.mjs` (WGSL w Node, limity wiązań, okno, wejście, mapy, warstwa).
-- Gra: `node scripts/webgpu/gaz-kosmos-gra.mjs [--query renderWorker=1]`. Robi zrzuty z A/B bez gazu (postój, ciąg, kanał, przelot, oddalenie), liczy pipeline'y synchroniczne strony i workera (ma być 0) i podaje koszt GPU w trybie off.
+- Testy: `node --test tests/spaceGas.test.mjs`. Sprawdzają WGSL w Node, limity wiązań, okno, wejście, mapy, warstwę, pył, wybuchy, pociski, raster olbrzyma i rzednięcie w wyrwie E3 (prawdziwe pole pasa).
+- Gra: `node scripts/webgpu/gaz-kosmos-gra.mjs [--query renderWorker=1]`. Robi zrzuty z A/B bez gazu (postój, ciąg, kanał, przelot, oddalenie, wybuch, olbrzym, ciąg przy olbrzymie), liczy pipeline'y synchroniczne strony i workera (ma być 0) i podaje koszt GPU w trybie off.
 - Konsola (`?dev`):
   - `SpaceGas.stats`, `SpaceGas.tune`;
   - `SpaceGas.scene.look` + `SpaceGas.syncLook()`;

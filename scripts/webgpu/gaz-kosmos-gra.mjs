@@ -5,6 +5,8 @@
 // i dziennik workera („[render.worker] pipeline sync”, tryb worker) — ma być 0; błędy konsoli strony i workera;
 // koszt GPU z gazem i bez (tryb off — Core3D strony).
 //
+// Dalej: wybuch przy Atlasie (GameBlasts) i olbrzym pasa (raster przekroju — przeszkoda gazu), ciąg w stronę olbrzyma.
+//
 //   node scripts/webgpu/gaz-kosmos-gra.mjs [--out .tmp/gaz-kosmos] [--rozmiar 1600x900] [--zoom 0.35] [--query renderWorker=1]
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -167,6 +169,39 @@ try {
   await setZoom(0.1);
   await sleep(1500);
   await shotAB('06-oddalenie');
+
+  // wybuch przy Atlasie (GameBlasts — jak śmierć okrętu): front wydmuchuje dziurę w gazie, wał na brzegu, wyrzut pyłu
+  await setZoom(0.22);
+  await ev(`(() => { const s = window.ship; window.__hold = { x: s.pos.x, y: s.pos.y, heading: s.angle, on: true };
+    const a = s.angle + 1.2; window.GameBlasts.blast({ x: s.pos.x + Math.cos(a) * 2600, y: s.pos.y + Math.sin(a) * 2600, size: 420, profile: 'capital' }); return true; })()`);
+  await sleep(700);
+  await shotAB('07-wybuch-0.7s');
+  await sleep(2500);
+  await shotAB('08-wybuch-3s');
+
+  // olbrzym pasa: Atlas przy brzegu najbliższego olbrzyma (raster przekroju — gaz opływa skałę)
+  report.olbrzym = await ev(`(async () => {
+    const G = window.__beltWorld.giants, s = window.ship;
+    let best = null;
+    for (const e of G.entries) { const d = Math.hypot(e.x - s.pos.x, e.y - s.pos.y); if (!best || d < best.d) best = { e, d }; }
+    const e = best.e;
+    const x = e.x - e.halfX - 2500, y = e.y;
+    window.__hold = { x, y, heading: 0, on: true };
+    window.DevScene.teleport(x, y, 0);
+    window.DevScene.syncCamera();
+    G.requestNear(x, y);
+    const t0 = performance.now();
+    while (!(e.giant && e.giant.ready) && performance.now() - t0 < 90000) await new Promise((q) => setTimeout(q, 250));
+    return { id: e.id, ready: !!(e.giant && e.giant.ready), half: [Math.round(e.halfX), Math.round(e.halfY)] };
+  })()`, 120000);
+  console.log('olbrzym:', JSON.stringify(report.olbrzym));
+  await setZoom(0.12);
+  await sleep(6000);
+  await shotAB('09-olbrzym');
+  await down('w');
+  await sleep(3000);
+  await shotAB('10-olbrzym-ciag');
+  await up('w');
 
   const pipes = await ev('window.__pipeRec.pipes');
   report.pipeline = {

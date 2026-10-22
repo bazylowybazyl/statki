@@ -101,3 +101,43 @@ synchronicznie: 0 (tryb `off`).
   `driveModeFor('hypercruise', vanClass)`: van Mk II (30 tys.) leci w bańce wolniej niż w rekordzie.
 - Rozpęd i hamowanie `cruise × 0,6 / 0,9` — 12 / 18 tys. j/s²: 0 → 20 tys. w 1,7 s (tabela E5: 5–12 s).
 - `separationRadius` 900 j. i `lookAheadMax` 4000 j. — przy 20 tys. j/s to 1,4 kroku i 0,2 s.
+
+## 6. Bezpieczniki wdrożone (E9 etap 2, 2026-10-22 — propozycje 1–3 i 5 przyjęte; 4 zrobiło E5: broń zimna w hipercruise'ie)
+
+1. Wyjście przed płytą ringu: klej (`stepPlayerHypercruise`) mierzy odległość wzdłuż kursu do płyty
+   (`haloWorld.rayToSlab`, płyta poszerzona o pół kadłuba, tranzyty przepuszcza), automat (`hypercruiseObstacleAction`)
+   wymusza wyjście z hamowaniem przechwytu, gdy płyta wchodzi w drogę hamowania + 1500 j. + dwa kroki; trwające wyjście
+   zwykłe przechodzi na hamowanie przechwytu.
+2. Uderzenie w płytę w hipercruise'ie: prędkość przycięta do prędkości wyjścia (1000 j/s); test odcinka środka
+   z poprzedniego kroku (`haloWorld.blockTunnel`) cofa statek, który przeszedł przez połowę płyty.
+3. Głąb olbrzyma pasa po warpie / hipercruise'ie: duch trwa, statek wylatuje ku najbliższej płytkiej skale / próżni
+   (`BeltGiants.escapeFromRock`, ≥ 3000 j/s), resztę wypycha `collideShip`.
+
+Przebicia płyty (Node, `--tryb ring`, 12 faz; „po” — pętla gry z automatem, strefa planety pominięta = najgorszy
+przypadek) — przed → po:
+
+| ring | kadłub | kąt | 20 tys. | 30 tys. | 40 tys. |
+|---|---|---|---|---|---|
+| Ziemia | niszczyciel | 90° | 0 → 0% | 25 → 0% | 42 → 0% |
+| Ziemia | niszczyciel | 45° | 0 → 0% | 0 → 0% | 17 → 0% |
+| Ziemia | fregata | 90° | 0 → 0% | 33 → 0% | 42 → 0% |
+| Ziemia | fregata | 45° | 0 → 0% | 0 → 0% | 25 → 0% |
+| wszystkie pozostałe | | | 0 → 0% | 0 → 0% | 0 → 0% |
+
+Prędkość po uderzeniu / na końcu wyjścia: przed do 40 tys. j/s (wzdłuż płyty), po 1,1–1,6 tys. (prędkość wyjścia +
+jeden krok hamowania). We wszystkich 81 konfiguracjach „po” lot kończy bezpiecznik — bez styku z płytą w hipercruise'ie.
+Sama ostatnia linia (test odcinka + przycięcie, bez bezpiecznika): fregata i niszczyciel 30 / 40 tys. j/s, 90° i 45° —
+0 / 24 przebić (przed 25–42%).
+
+Gra (`hipercruise-gra.mjs --etapy ring,olbrzym`, Atlas Mk III, Ziemia):
+
+| | przed | po |
+|---|---|---|
+| 90°: prędkość przy płycie | 38 311 j/s (w hipercruise'ie) | 962 j/s (zwykły lot po wyjściu, powód `ring`) |
+| 30°: prędkość przy płycie / tuż po | 37 333 / 31 939 j/s | 507 / 432 j/s |
+| 30°: droga w 10 s po styku | 17 106 j. | 1 159 j. |
+| przebicie | nie | nie |
+
+Olbrzym (Labirynt, najgłębszy punkt przekroju z = 0, SDF −576 = pełne pasmo): duch od początku, wyjście ze skały
+w 0,49 s gry (3000 j/s), na końcu SDF +576 (poza skałą). Przed: kolider bez gradientu w głębi — statek zostawał w skale.
+Testy: `tests/hipercruisePrzeszkody.test.mjs`.

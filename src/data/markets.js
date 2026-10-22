@@ -166,10 +166,19 @@ export function defineMarket(def = {}) {
  * wożących podzespoły do ich stoczni. Zmierzone 2026-10-22 (bramka bilansu,
  * 3 ziarna): przy jednym komplecie stanowisk średnia kolejka na redzie 5,2–7,7,
  * z czego ~3,9 u Urana to same wyprawy górnicze.
+ *
+ * Ceres i Oberon (2026-10-22, po fali 2): Ceres — przewozy planisty w obie
+ * strony przy dwóch kompletach (kolejka 3,2–3,3); Oberon — eksport rudy
+ * megafrachtowcami, a księżyc z jednym kompletem ma tylko 2 stanowiska „mega”
+ * (kolejka 2,7, ~1,5 z niej to megafrachtowce pod załadunkiem).
+ *
+ * Klucz to id rynku — planety, stacje małych ciał i księżyce.
  */
-export const PLANET_DOCK_OVERRIDES = Object.freeze({
+export const MARKET_DOCK_OVERRIDES = Object.freeze({
   saturn: Object.freeze({ berthMultiplier: 4 }),
-  uranus: Object.freeze({ berthMultiplier: 3 })
+  uranus: Object.freeze({ berthMultiplier: 3 }),
+  ceres: Object.freeze({ berthMultiplier: 5 }),
+  oberon: Object.freeze({ berthMultiplier: 2 })
 });
 
 const planetMarkets = SYSTEM_MAP_PLANETS.map(planet => defineMarket({
@@ -178,7 +187,7 @@ const planetMarkets = SYSTEM_MAP_PLANETS.map(planet => defineMarket({
   position: { source: MARKET_POSITION.PLANET },
   derelict: DERELICT_MARKETS.includes(planet.id),
   gate: DEFAULT_GATE_HUBS.includes(planet.id),
-  docks: PLANET_DOCK_OVERRIDES[planet.id]
+  docks: MARKET_DOCK_OVERRIDES[planet.id]
 }));
 
 // UNIA PASA (2026-10-12, strumień C planu docs/PLAN-pas-realizm.md): stacje na
@@ -190,7 +199,8 @@ const smallBodyMarkets = SMALL_BODY_STATIONS.map(body => defineMarket({
   label: body.label,
   kind: MARKET_KIND.SMALL_BODY,
   position: { source: MARKET_POSITION.SMALL_BODY, bodyId: body.id },
-  berths: body.station.berths
+  berths: body.station.berths,
+  docks: MARKET_DOCK_OVERRIDES[body.station.id]
 }));
 
 const hideoutMarkets = PIRATE_OUTPOSTS.map(outpost => defineMarket({
@@ -217,7 +227,8 @@ const moonMarkets = SYSTEM_MAP_MOONS.map(moon => defineMarket({
     role: moon.role || 'node'
   },
   derelict: moon.role === 'empty' || DERELICT_MARKETS.includes(moon.id),
-  berths: Number.isFinite(moon.berths) ? moon.berths : null
+  berths: Number.isFinite(moon.berths) ? moon.berths : null,
+  docks: MARKET_DOCK_OVERRIDES[moon.id]
 }));
 
 /**

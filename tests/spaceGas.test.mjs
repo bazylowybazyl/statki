@@ -302,3 +302,97 @@ test('GK-4: pył gazu — kernele w Node (storage ≤ 7), pozycje względem rogu
   dust.frame(r, 1 / 60, null, 1e6, 0, rect, 1);
   assert.equal(dust.U.shift.value.x, 0);
 });
+
+test('E3: gaz rzednie w wyrwie — obwiednia z sampleMacro × hole, nowa wersja wyrw = cała siatka od nowa', async () => {
+  const { AsteroidBeltField } = await import('../src/game/asteroidBeltField.js');
+  const AU = 42253.52;
+  const field = new AsteroidBeltField({ auToWorld: AU });
+  let p = null;
+  for (let i = 0; i < 3600; i++) {
+    const a = (i / 3600) * Math.PI * 2;
+    const x = Math.cos(a) * 38.6 * AU, y = Math.sin(a) * 38.6 * AU;
+    const m = field.sampleMacro(x, y);
+    if (!p || m.cluster > p.c) p = { x, y, c: m.cluster };
+  }
+  const I = SPACE_GAS_IN, G = SPACE_GAS_ENV_RES;
+  const out = new Float64Array(I.size);
+  const st = createSpaceGasInputState();
+  const o = { dt: 1 / 60, camX: p.x, camY: p.y, halfW: 3000, halfH: 1700, field, sunX: 0, sunY: 0, windowCells: 256, cell: 64 };
+  // próbka siatki najbliższa punktowi (x, y) świata
+  const envAt = (x, y) => {
+    const c = out[I.envCell];
+    const i = Math.round((x - out[I.envX0]) / c), j = Math.round((y - out[I.envY0]) / c);
+    return out[I.envBase + (j * G + i) * 2];
+  };
+  packSpaceGasFrame(out, st, o);
+  assert.equal(out[I.active], 1, 'rdzeń pola — gaz');
+  const before = envAt(p.x, p.y), far = envAt(p.x + 7000, p.y + 7000);
+  assert.ok(before > 0.3, `obwiednia w rdzeniu ${before}`);
+  const ver = out[I.envVer];
+  field.setHoles([{ id: 'w1', x: p.x, y: p.y, r: 5000, depth: 1 }]);
+  packSpaceGasFrame(out, st, o);
+  assert.ok(out[I.envVer] > ver, 'nowa wersja wyrw — nowa siatka (i wysyłka tekstury)');
+  assert.ok(envAt(p.x, p.y) < before * 0.05, `środek wyrwy: ${envAt(p.x, p.y)} (było ${before})`);
+  assert.ok(Math.abs(envAt(p.x + 7000, p.y + 7000) - far) < 1e-9, 'poza wyrwą bez zmian');
+  // źródło gazu pola (`gas` — E3 zostawiło miejsce) dokłada gęstość także w wyrwie
+  const orig = field.sampleMacro.bind(field);
+  field.sampleMacro = (x, y) => { const m = orig(x, y); m.gas = 0.5; return m; };
+  field.holeVersion++;
+  packSpaceGasFrame(out, st, o);
+  assert.ok(Math.abs(envAt(p.x, p.y) - 0.5) < 0.05, 'gaz pola w wyrwie');
+});
+
+test('GK-5b: wybuchy (pierścień GameBlasts), pociski i raster olbrzyma w wejściu; raster w polu', async () => {
+  const { createExplosionEvents } = await import('../src/game/explosionEvents.js');
+  const writer = { ring: { data: new Float64Array(64) }, str: () => 0, _begin: () => 0, _commit() {} };
+  const ev = createExplosionEvents(writer);
+  ev.ready = true;
+  const I = SPACE_GAS_IN;
+  const out = new Float64Array(I.size);
+  const st = createSpaceGasInputState();
+  const field = fakeField();
+  // olbrzym: koło r = 2000 j. 1500 j. na prawo od kamery
+  const gx = 101500, gy = 0;
+  const giants = { entries: [{ x: gx, y: gy, halfX: 2000, halfY: 2000, giant: { ready: true, band: 0, sampleWorld: (x, y) => Math.hypot(x - gx, y - gy) - 2000 } }] };
+  const o = { dt: 1 / 60, camX: 100000, camY: 0, halfW: 3000, halfH: 1700, field, sunX: 0, sunY: 0, windowCells: 256, cell: 64,
+    blasts: ev, giants, bullets: [{ x: 100200, y: 50, vx: 3000, vy: 0 }, { x: 900000, y: 0, vx: 3000, vy: 0 }] };
+  ev.blast({ x: 999, y: 999, size: 280 });   // przed pierwszą klatką — pomijany
+  packSpaceGasFrame(out, st, o);
+  assert.equal(out[I.blasts], 0);
+  const samples = st.rasterSamples;
+  ev.blast({ x: 100100, y: 20, size: 560 });
+  packSpaceGasFrame(out, st, o);
+  assert.equal(out[I.blasts], 1);
+  assert.equal(out[I.blastBase], 100100, 'względem kotwicy (Słońce 0, 0)');
+  assert.ok(Math.abs(out[I.blastBase + 4] - 1.2 * Math.SQRT2) < 1e-9, 'życie × √(560 / 280)');
+  assert.equal(out[I.bolts], 1, 'pocisk poza oknem pominięty');
+  assert.ok(out[I.boltBase + 2] > 0.99 && out[I.boltBase + 4] === 3000);
+  assert.equal(out[I.rasterOn], 1);
+  assert.ok(samples > 0 && samples < 128 * 128, `próbki tylko w pudle olbrzyma (${samples})`);
+  // bit w środku olbrzyma zapalony, przy kamerze zgaszony
+  const tex = out[I.rasterTexel];
+  const bit = (x, y) => {
+    const k = Math.floor((y - out[I.rasterY0]) / tex) * 128 + Math.floor((x - out[I.rasterX0]) / tex);
+    return (out[I.rasterBase + (k >>> 5)] >>> (k & 31)) & 1;
+  };
+  assert.equal(bit(gx, gy), 1);
+  assert.equal(bit(97000, 0), 0, 'poza olbrzymem');
+  // ruch w obrębie teksla — bez próbkowania; wybuch wygasa po życiu
+  o.camX += 10;
+  packSpaceGasFrame(out, st, o);
+  assert.equal(st.rasterSamples, 0);
+  o.dt = 2;
+  packSpaceGasFrame(out, st, o);
+  assert.equal(out[I.blasts], 0, 'wybuch po życiu');
+  // render: raster do tekstury pola tylko przy nowej wersji
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const v0 = sim.rasterTex.version;
+  sim.setRaster(out, I);
+  assert.ok(sim.rasterTex.version > v0 && sim.U.raster.value.w === 1);
+  const v1 = sim.rasterTex.version;
+  sim.setRaster(out, I);
+  assert.equal(sim.rasterTex.version, v1, 'ta sama wersja — bez wysyłki');
+  assert.match(wgsl(sim.kAdvect), /spaceGasRaster|texture/);
+  assert.equal((wgsl(sim.kAdvect).match(/var<storage/g) || []).length, 7, 'raster jako tekstura — bufory storage bez zmian');
+});

@@ -26,7 +26,8 @@ export function createBeltGasLook() {
     iceShift: 1.0,      // udział lodu przesuwa skład ku lodowi amoniakalnemu
     dustW: [1, 0.5, 0.3, 1],
     dustRho: 0.45,
-    dustColor: [0.1, 0.085, 0.07]
+    dustColor: [0.1, 0.085, 0.07],
+    dustSulfurDim: 0.3  // pył w ławicy siarki o 30% ciemniejszy (decyzja użytkownika 2026-10-22)
   };
 }
 

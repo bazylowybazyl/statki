@@ -310,3 +310,37 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - E11: GK-5b, siarka, jedna mgła;
   - E2: E2b;
   - E6: bańka — najpierw prom przy Księżycu.
+- 2026-10-22 do `main` (facd99cc) weszły:
+  - E9: bezpieczniki hipercruise — przebicia płyty Ziemi spadły z 17–42% do 0%;
+  - E11 GK-5b: olbrzymy jako przeszkody gazu, wybuchy i pociski jako źródła gazu, jedna mgła w pasie, siarka −30%, gaz rzednie w wyrwach.
+  - Testy: `npm test` 1693 zielone, `node --test` bez nowych porażek, build przechodzi, start w workerze 0 pipeline'ów sync.
+- 2026-10-22 E6 (sesja uruchomiona przez użytkownika):
+  - krok 0: prom przy Księżycu naprawiony (`e71377f5`); poprawka kursu wygasa na ostatnich j., 312 podejść, 0 wymuszeń;
+  - krok 1, zatwierdzony przez orkiestratora: lot bańki liczy worker ruchu, gra dostaje bufor aktorów i sama liczy trafienia, taran i rejestr stanowisk (`destroyed`, `berth-hold`), proxy rysuje worker renderu; tylko przy Ziemi.
+- 2026-10-22 E5 w `main` (46299757): hipercruise ma OBECNY efekt warpa (plazma WARP, bańka i ośrodek „Nurtu”, smugi, kop kamery) i leci ×0,6 przy planetach.
+  - Luna trwa 75 s; resztę czasu zabiera warp i końcowy dolot.
+  - Przy scalaniu jeden konflikt w regule `statek-gracza`: opis efektu (E5) połączony z bezpiecznikami (E9).
+  - Testy zielone, build przechodzi, w grze 0 pipeline'ów sync (`scripts/webgpu/hipercruise-efekt-gra.mjs`).
+- 2026-10-22 E10: wszystkie 6 kroków receptur zacommitowane, bramki kroków biegną. Czysty pomiar ticku zrobi E4 na końcu, na scalonym `main`, w oknie ciszy.
+- 2026-10-22 E4 w `main` (3d19d01a):
+  - kolejki zaliczone: 1,75–1,96 (`MARKET_DOCK_OVERRIDES`: Ceres ×5, Oberon ×2);
+  - pamięć `stationWantsResource`: symulacja identyczna, tick −30% pod tym samym obciążeniem.
+  - Następne gorące miejsce, `findTradeOpportunities` (24% ticku), przekazane E2 do E2b jako indeks per surowiec bez zmiany wyniku.
+  - Tick (50–68 ms pod obciążeniem innych sesji) zmierzymy w jednym oknie ciszy po E2b, E6 i E10.
+- 2026-10-22 E10, krok 3: głód uranu na Saturnie spadł z 14,4 do 8,7 min, kolejka Ceres wróciła do poziomu bazy.
+- 2026-10-22 E10 w `main` (4f42a2aa): wariant grywalny receptur.
+  - Towary 55 → 63, receptur 46. Nowe: materiał wybuchowy, ruda glinu i glin, ceramika pancerna, ruda ziem rzadkich (Luna ~90%), taśma nadprzewodząca, emiter tarczy (okręty 1 / 3 / 6 / 9), azot (Tytan, Tryton).
+  - Reaktor: 2 taśmy + 1 pręt.
+  - Warp Mk I / II / III: 870 / 4000 / 7000 CR. Fregata ma warp Mk I.
+  - Koszt na punkt siły: 6104 / 6424 / 7276 / 9105 CR.
+  - Bramka po scaleniu: przechwyty 15,0–15,7%, głód maks. 6,8 min, kolejki ≤ 1,47, stocznie 0 min, zwodowane 785–881. Tick czeka na okno ciszy.
+  - Bilans analityczny:
+
+    | surowiec | przed | po |
+    |---|---|---|
+    | uran (na cykl) | 2,40 | 1,15 |
+    | krzem | 130% | 191% |
+    | nikiel (najciaśniejsza nowa ruda) | 131% | 111% |
+
+  - Testy: `npm test` 1699 zielone, build przechodzi.
+- 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).

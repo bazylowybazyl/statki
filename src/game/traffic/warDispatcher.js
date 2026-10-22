@@ -25,6 +25,8 @@ import { areFactionsHostile, getFactionStance } from '../../data/factions.js';
 import { RESOURCES } from '../../data/resources.js';
 import { getStationIndustry, militaryScale } from '../stationEconomy.js';
 import { WARSHIP_CLASSES, takeShips, returnShips, fleetPower } from './shipyards.js';
+import { takeStock, declareDemand } from './marketBook.js';
+import { createGarrisonState, tickGarrison, launchCampaignReturn } from './patrols.js';
 
 export const WAR_MODEL = Object.freeze({
   /** Co ile sekund frakcja w ogóle rozważa wyprawę. */
@@ -145,15 +147,11 @@ export function drawAmmo(econ, power, config = WAR_MODEL) {
   for (const id of ids) {
     const need = potrzeba[id];
     if (!(need > 0)) continue;
-    const stan = Math.max(0, Number(econ.resources[id]) || 0);
-    const wziete = Math.min(stan, need);
+    const wziete = takeStock(econ, id, need);
     const w = need * (RESOURCES[id]?.value || 1);
     waga += w;
     pokryte += w * (wziete / need);
-    if (wziete > 0) {
-      econ.resources[id] = stan - wziete;
-      taken[id] = wziete;
-    }
+    if (wziete > 0) taken[id] = wziete;
   }
   const ratio = waga > 0 ? Math.max(0, Math.min(1, pokryte / waga)) : 1;
   return { ratio, taken, needed: potrzeba };
@@ -175,9 +173,7 @@ export function declareAmmoDemand(stations, config = WAR_MODEL) {
     // Skrzynie wozi się tam, gdzie stacjonuje flota — czyli do ośrodków
     // przemysłowych. Kopalnia bez fabryki nie ma czym strzelać ani czego bronić.
     if (militaryScale(getStationIndustry(station)) <= 0) continue;
-    const juz = new Set(station.extraDemand || []);
-    for (const id of ids) juz.add(id);
-    station.extraDemand = [...juz];
+    for (const id of ids) declareDemand(station, id);
     ile++;
   }
   return ile;
@@ -256,6 +252,8 @@ export function createWarState(options = {}) {
     garrisons: new Map(),
     /** Wraki czekające na złomiarzy: { id, x, y, scrap, factionId, classId }. */
     wrecks: [],
+    /** Rotacja garnizonu przez porty wojskowe (K-7) — patrz `tickGarrison`. */
+    garrison: createGarrisonState(options.garrison),
     sinceDecision: 0,
     nextWreckId: 1,
     log: [],
@@ -417,6 +415,10 @@ export function tickWar(war, dt, options = {}) {
   const events = [];
   const step = Math.max(0, Number(dt) || 0);
 
+  // 0. Garnizon w portach wojskowych — widok floty, nie ruch zapasu.
+  if (!war.garrison) war.garrison = createGarrisonState();
+  tickGarrison(war.garrison, step, options);
+
   // 1. Kampanie w drodze — czy dotarły.
   for (let i = war.campaigns.length - 1; i >= 0; i--) {
     const campaign = war.campaigns[i];
@@ -477,6 +479,9 @@ export function tickWar(war, dt, options = {}) {
         if (wraca > 0) ocalali[classId] = wraca;
       }
       returnShips(shipyards, campaign.attacker, ocalali);
+      // Ocalali wracają do portu domowego na postój i tankowanie (hale K-7).
+      launchCampaignReturn(war.garrison, options, campaign.attacker, ocalali,
+        { x: target.x, y: target.y });
 
       war.stats.battles++;
       if (wynik.attackerWins) war.stats.attackerWins++; else war.stats.defenderWins++;

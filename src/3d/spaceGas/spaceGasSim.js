@@ -21,6 +21,7 @@
 //     przenosić (rozgrzanie Jacobiego po przesunięciu okna od zera — 7 buforów).
 //   • KADŁUBY = maski obrysu z żywych węzłów belek (rekord GAS_HULL_REC — jak przeszkody gazu wybuchów), nie koła; pas
 //     „pługa” wokół prostokąta maski z normalną od najbliższego punktu prostokąta.
+//   • OLBRZYMY PASA = raster przekroju z = 0 od gry (128 × 128 na okno, tekstura R8): komórki stałe i zasłona strug.
 //   • POLE DALEKIE wstrzykiwane przez scenę (`farEnv(q, U)` → vec4 gęstości kanałów; q — punkt względem kotwicy).
 //   • OBRAZ 60 Hz → dwie pary tekstur (krok na zmianę): obraz przenika poprzedni i bieżący krok wg ułamka kroku (plan
 //     § 2 pkt 5), każda tekstura z własnym rogiem okna (przesunięcie okna nie przestawia już zapisanej tekstury).
@@ -35,6 +36,7 @@ import {
 } from 'three/tsl';
 import { gnoise } from './spaceGasNoise.js';
 import { GAS_HULL_MASK } from '../gas/gasObstacleLayout.js';
+import { SPACE_GAS_RASTER } from './spaceGasLayout.js';
 
 /** Bok komórki pola [j.] — strojenie jest w jednostkach komórek (D5: stała). */
 export const SPACE_GAS_CELL = 64;
@@ -177,7 +179,9 @@ export class SpaceGasSim {
       hullA: v4Array(maxHulls, `${name}HullA`),
       hullB: v4Array(maxHulls, `${name}HullB`),
       hullC: v4Array(maxHulls, `${name}HullC`),
-      hullD: v4Array(maxHulls, `${name}HullD`)
+      hullD: v4Array(maxHulls, `${name}HullD`),
+      // raster olbrzymów: róg [j., względem kotwicy], bok rastra [j.], 1 — ma bryły
+      raster: uniform(new THREE.Vector4(0, 0, 1, 0))
     };
     const ST = this.ST = {};
     for (const k of ['drag', 'dragVac', 'vacRho', 'dragQuad', 'cmTau', 'hullShell', 'vort', 'soft', 'baro', 'baroFloor',
@@ -194,6 +198,18 @@ export class SpaceGasSim {
     mt.name = `${name}HullMasks`;
     mt.needsUpdate = true;
     this.hullMaskTex = mt;
+    // raster przekroju olbrzymów (R8, filtr liniowy, próg 0,5 — brzeg na granicy teksli)
+    const RS = SPACE_GAS_RASTER;
+    this.rasterData = new Uint8Array(RS * RS);
+    const rt = new THREE.DataTexture(this.rasterData, RS, RS, THREE.RedFormat, THREE.UnsignedByteType);
+    rt.minFilter = THREE.LinearFilter;
+    rt.magFilter = THREE.LinearFilter;
+    rt.wrapS = rt.wrapT = THREE.ClampToEdgeWrapping;
+    rt.generateMipmaps = false;
+    rt.name = `${name}Raster`;
+    rt.needsUpdate = true;
+    this.rasterTex = rt;
+    this._rasterVer = -1;
 
     const B = this.buf = {
       velA: instancedArray(NN, 'vec2').setName(`${name}VelA`),
@@ -286,10 +302,19 @@ export class SpaceGasSim {
       return { A, Bh, rel, q };
     };
 
-    // Komórka stała w punkcie świata: koła (przekroje olbrzymów, jądra), kadłuby (maska obrysu, prędkość ciała + ω × r).
+    // Raster olbrzymów w punkcie świata (> 0,5 — skała).
+    const rasterAt = (pw) => {
+      const R = U.raster;
+      const uv = pw.sub(R.xy).div(R.z);
+      return texture(this.rasterTex, uv).level(0).x;
+    };
+    // Komórka stała w punkcie świata: raster olbrzymów, koła (jądra), kadłuby (maska obrysu, prędkość ciała + ω × r).
     // vec3(stała, vx, vy) [komórki/s].
     const solidAt = (pw) => {
       const f = vec3(0).toVar();
+      If(U.raster.w.greaterThan(0.5), () => {
+        If(rasterAt(pw).greaterThan(0.5), () => { f.assign(vec3(1.0, 0.0, 0.0)); });
+      });
       Loop({ start: 0, end: U.rockCount, type: 'int', condition: '<', name: 'sgr' }, ({ sgr }) => {
         const r = U.rock.element(sgr);
         If(length(pw.sub(r.xy)).lessThan(r.z), () => { f.assign(vec3(1.0, 0.0, 0.0)); });
@@ -316,6 +341,9 @@ export class SpaceGasSim {
         const r = U.rock.element(sgo);
         const t = saturate(dot(r.xy.sub(a), ab).div(ab2));
         If(length(a.add(ab.mul(t)).sub(r.xy)).lessThan(r.z), () => { vis.assign(0.0); });
+      });
+      If(U.raster.w.greaterThan(0.5), () => {
+        for (const k of [0.2, 0.4, 0.6, 0.8]) If(rasterAt(a.add(ab.mul(k))).greaterThan(0.5), () => { vis.assign(0.0); });
       });
       return vis;
     };
@@ -642,6 +670,22 @@ export class SpaceGasSim {
     U.srcC.array[n].set(rate, vol, mode, reach);
     U.srcD.array[n].set(i1, i2, i3, ie);
     return true;
+  }
+
+  /**
+   * Raster olbrzymów z wejścia gry (SPACE_GAS_IN: rasterOn, róg, bok teksla, wersja, słowa bitów) — rozpakowanie
+   * i wysyłka tylko przy nowej wersji.
+   */
+  setRaster(IN, I) {
+    const on = IN[I.rasterOn] > 0.5;
+    const RS = SPACE_GAS_RASTER;
+    this.U.raster.value.set(IN[I.rasterX0], IN[I.rasterY0], IN[I.rasterTexel] * RS, on ? 1 : 0);
+    const ver = IN[I.rasterVer];
+    if (!on || ver === this._rasterVer) return;
+    this._rasterVer = ver;
+    const D = this.rasterData;
+    for (let k = 0; k < RS * RS; k++) D[k] = ((IN[I.rasterBase + (k >>> 5)] >>> (k & 31)) & 1) ? 255 : 0;
+    this.rasterTex.needsUpdate = true;
   }
 
   /** Koło-przeszkoda (świat gry względem kotwicy). */

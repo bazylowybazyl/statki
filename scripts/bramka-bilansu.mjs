@@ -12,6 +12,7 @@
  *   node scripts/bramka-bilansu.mjs --etykieta baza         nazwa pliku wyniku
  *   node scripts/bramka-bilansu.mjs --ziarna 7 --minuty 120 szybki przebieg roboczy
  *   node scripts/bramka-bilansu.mjs --rownolegle            ziarna naraz (czas ticku traci sens)
+ *   node scripts/bramka-bilansu.mjs --dyrektor '{"sellOffers":"reservation"}'   A/B opcji dyspozytora
  *
  * Każde ziarno idzie w OSOBNYM procesie: moduły ruchu trzymają liczniki na
  * poziomie modułu (np. id agentów), więc drugi świat w tym samym procesie nie
@@ -72,7 +73,7 @@ const PUSTO_SEKUND = 900;
 function parseArgs(argv) {
   const out = {
     minuty: 240, presja: 1, magazyny: 4, skala: 60, ziarna: [7, 11, 23],
-    etykieta: '', rownolegle: false, dziecko: null, wynik: null
+    etykieta: '', rownolegle: false, dziecko: null, wynik: null, dyrektor: null
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -86,6 +87,8 @@ function parseArgs(argv) {
     else if (a === '--rownolegle') out.rownolegle = true;
     else if (a === '--dziecko') out.dziecko = Number(next());
     else if (a === '--wynik') out.wynik = String(next());
+    // Opcje dyspozytora (JSON) do A/B przełączników bez zmiany kodu — `directorOptions` świata.
+    else if (a === '--dyrektor') out.dyrektor = JSON.parse(String(next()));
   }
   return out;
 }
@@ -111,7 +114,8 @@ async function jedenBieg(args) {
     capacityMultiplier: args.magazyny,
     piracyPressure: args.presja,
     piracyEnabled: args.presja > 0,
-    seed: args.dziecko
+    seed: args.dziecko,
+    directorOptions: args.dyrektor || undefined
   });
   const { stations, economies, registry, director, shipyards, network } = world;
   const STEP = TRAFFIC_STEP_SECONDS;
@@ -300,7 +304,8 @@ function uruchomDziecko(args, ziarno, plik) {
       fileURLToPath(import.meta.url),
       '--dziecko', String(ziarno), '--wynik', plik,
       '--minuty', String(args.minuty), '--presja', String(args.presja),
-      '--magazyny', String(args.magazyny), '--skala', String(args.skala)
+      '--magazyny', String(args.magazyny), '--skala', String(args.skala),
+      ...(args.dyrektor ? ['--dyrektor', JSON.stringify(args.dyrektor)] : [])
     ], { stdio: ['ignore', 'inherit', 'inherit'], cwd: ROOT });
     child.on('exit', code => code === 0 ? resolve() : reject(new Error(`ziarno ${ziarno}: kod ${code}`)));
   });

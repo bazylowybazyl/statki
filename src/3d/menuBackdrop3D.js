@@ -22,7 +22,7 @@ import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
 import { HALO_HDR, HALO_STATION_ANGLE } from './haloRing/haloRingConfig.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from './menuBackdrop3D.tsl.js';
 import { PLANET_MAPS } from './planetMaps.js';
-import { earthPitGeometry } from './earthPit3D.js';
+import { earthBiteGeometry } from './earthBite3D.js';
 
 const DEG = Math.PI / 180;
 
@@ -287,7 +287,7 @@ export class MenuBackdrop3D {
     const pit = !!PLANET_MAPS.earth.pit;
     const air = PLANET_MAPS.earth.menuAir || null;
     const earthM = createMenuEarthMaterial(ring, tex, { pitMode: pit ? 1 : 0, air });
-    const atmM = createMenuAtmosphereMaterial(ring, R + 1250);
+    const atmM = createMenuAtmosphereMaterial(ring, R + 1250, { bite: pit });
     const sphere = new THREE.SphereGeometry(1, 192, 128);
     const atmSphere = new THREE.SphereGeometry((R + 1250) / R, 128, 96);
     materials.push(earthM.material, atmM.material);
@@ -302,11 +302,11 @@ export class MenuBackdrop3D {
     const earth = new THREE.Mesh(sphere, earthM.material);
     let pitMesh = null;
     if (pit) {
-      // wielka kopalnia ringu: łata-bryła na kuli (geometria wspólna z grą — nie zwalniana tutaj)
+      // wielki gryz: łata (ściany, dno, kołnierz) na kuli (geometria wspólna z grą — nie zwalniana tutaj)
       const pitM = createMenuEarthMaterial(ring, tex, { pitMode: 2, shared: earthM.uniforms, air });
       materials.push(pitM.material);
-      pitMesh = new THREE.Mesh(earthPitGeometry(), pitM.material);
-      pitMesh.name = 'MenuEarthPit';
+      pitMesh = new THREE.Mesh(earthBiteGeometry(), pitM.material);
+      pitMesh.name = 'MenuEarthBite';
       earth.add(pitMesh);
     }
     const atmosphere = new THREE.Mesh(atmSphere, atmM.material);
@@ -486,10 +486,11 @@ export class MenuBackdrop3D {
     o.earth.updateMatrix();
     o.atmosphere.updateMatrix();
     o.earthUniforms.uLocal.value.multiplyMatrices(o.earthGroup.matrix, o.earth.matrix);
-    // słońce w układzie siatki Ziemi (cień samorzucany w dziurze liczy łata)
+    // słońce w układzie siatki Ziemi (cień ścian gryzu liczy łata); poświata: układ ringu → siatka Ziemi (wcięcie)
     this._inv.copy(o.earthUniforms.uLocal.value).invert();
     o.earthUniforms.uSunObj.value.copy(ring.uniforms.uSunDir.value).transformDirection(this._inv);
     o.atmUniforms.uLocal.value.multiplyMatrices(o.earthGroup.matrix, o.atmosphere.matrix);
+    o.atmUniforms.uEarthInv.value.copy(this._inv);
 
     // lot fabuły: w końcówce (kamera prawie z góry) ring liczy jak w kamerze gry — wycięcia nad halą i górna ściana
     const fl = this.flight;

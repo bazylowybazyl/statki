@@ -28,6 +28,7 @@ import {
   COURSE_KIND, launchCourse, travelStage, dwellStage, DWELL_REASON, getCourse
 } from './courseRegistry.js';
 import { RESOURCES } from '../../data/resources.js';
+import { putStock } from './marketBook.js';
 
 export const PIRACY_MODEL = Object.freeze({
   /**
@@ -433,11 +434,7 @@ export function tickPiracy(piracy, dt, options = {}) {
     // Towar wchodzi na rynek legalny, kryjówka dostaje kredyty. To jest ten
     // moment, w którym łup staje się pieniądzem i wraca jako kolejny rejd.
     const econ = typeof getEconomy === 'function' ? getEconomy(run.targetId) : null;
-    if (econ?.resources) {
-      const cap = Number(econ.capacity?.[run.resourceId]) || 0;
-      const teraz = Number(econ.resources[run.resourceId]) || 0;
-      econ.resources[run.resourceId] = cap > 0 ? Math.min(cap, teraz + run.units) : teraz + run.units;
-    }
+    putStock(econ, run.resourceId, run.units);
     if (nest) nest.credits += run.sell;
     piracy.stats.smugglesRun++;
     piracy.stats.fenced += run.units;

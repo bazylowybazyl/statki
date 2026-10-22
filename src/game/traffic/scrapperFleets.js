@@ -22,6 +22,7 @@ import {
   COURSE_KIND, launchCourse, travelStage, dwellStage, DWELL_REASON, getCourse
 } from './courseRegistry.js';
 import { salvageManifest } from './warDispatcher.js';
+import { putStock } from './marketBook.js';
 
 export const SCRAPPER_MODEL = Object.freeze({
   /**
@@ -223,13 +224,8 @@ export function tickScrappers(scrappers, dt, options = {}) {
 
     const econ = typeof getEconomy === 'function' ? getEconomy(job.stationId) : null;
     if (econ?.resources) {
-      const cap = id => Number(econ.capacity?.[id]) || 0;
-      const wsyp = (id, amount) => {
-        const teraz = Number(econ.resources[id]) || 0;
-        econ.resources[id] = cap(id) > 0 ? Math.min(cap(id), teraz + amount) : teraz + amount;
-      };
-      wsyp('scrap', job.manifest.scrap);
-      for (const [id, qty] of Object.entries(job.manifest.components)) wsyp(id, qty);
+      putStock(econ, 'scrap', job.manifest.scrap);
+      for (const [id, qty] of Object.entries(job.manifest.components)) putStock(econ, id, qty);
     }
 
     scrappers.stats.recovered++;
