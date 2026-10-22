@@ -255,7 +255,7 @@ async function start() {
      * (0 — w prawo, 90 — w górę), słońce w płaszczyźnie ringu z fazą `phase` [°] względem południka gryzu (0 — południe,
      * 90 — terminator, 180 — północ), `half` — pół wysokości kadru [R], `center` — 'planet' | 'bite' | 'hub'.
      */
-    viewGame({ angle = 0, phase = 30, half = 1.25, center = 'planet', dist = 14 }) {
+    viewGame({ angle = 0, phase = 30, half = 1.25, center = 'planet', dist = 60 }) {
       const body = body0();
       if (!body?.mesh || !plant) return false;
       body.mesh.updateMatrixWorld(true);
