@@ -140,6 +140,10 @@ if (isWorker) {
     // drony naprawcze (blok `repair` + rekordy REPAIR_FX po id rigu)
     st.repairMods = { blk: await import('./blocks/repairBlock.js'), drones: await import('../3d/repair/repairDrones3D.js') };
     st.repairMirror = { rigs: [], out: 0, _rigs: new Map() };
+    // statki ruchu v2 w bańce (E6): blok `traffic` → proxy kadłubów (ShipProxyBatch3D) i dysze MAIN w liście kadłubów
+    st.trafficMods = { blk: await import('./blocks/trafficBlock.js'), proxy: (await import('../3d/shipProxyBatch3D.js')).ShipProxyBatch3D };
+    st.trafficList = [];
+    st.hexList = [];
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -871,7 +875,22 @@ if (isWorker) {
       if (pl) { bp.x = pl.pos ? pl.pos.x : pl.x; bp.y = pl.pos ? pl.pos.y : pl.y; bp.angle = pl.angle || 0; }
       st.bay.sync(pl, pl ? bp : null, bm ? bm.door : 0, st.sun, !bm || bm.hidden, h[H.VFX_TIME]);
     } } catch (e) { modFail('luk', e); }
-    try { hex.updateHexShips3D(cam, rm.lists[L.RENDER], c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
+    // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
+    let hexList = rm.lists[L.RENDER];
+    try {
+      const tm = st.trafficMods, blk = v.blocks.traffic;
+      const list = tm.blk.applyTrafficBlock(blk, st.trafficList);
+      tm.proxy.drawList(cam, list, list.length, null);
+      const engines = tm.proxy.engineEntities;
+      if (engines.length) {
+        const out = st.hexList;
+        out.length = 0;
+        for (let i = 0; i < hexList.length; i++) out.push(hexList[i]);
+        for (let i = 0; i < engines.length; i++) out.push(engines[i]);
+        hexList = out;
+      }
+    } catch (e) { modFail('statki ruchu', e); }
+    try { hex.updateHexShips3D(cam, hexList, c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
     // wyrwy bazy piratów (po kadłubach — bank Fx3D ma początek układu tej klatki)
     try { if (st.vents && v.blocks.pirateVents && v.blocks.pirateVents.f64) {
       const vm = st.ventsBlk.applyPirateVentsBlock(v.blocks.pirateVents, st.ventsMirror);

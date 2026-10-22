@@ -174,7 +174,12 @@ function wrapPi(a) {
   return v;
 }
 
-/** Klasa jednostki → gabaryty z prawdziwych kadłubów gry. */
+/**
+ * Klasa jednostki → gabaryty z prawdziwych kadłubów gry: obrys kadłuba proxy
+ * (`trafficHullFootprint` przez `hullFootprint` — klasa kursu przechodzi przez
+ * rejestr kadłubów ruchu, frachtowiec „capital” to ciężki frachtowiec, nie
+ * kontenerowiec). Ten sam obrys mieści statek na stanowisku i dostaje trafienia.
+ */
 function actorSize(unitClass) {
   const size = hullFootprint(unitClass);
   return { length: Math.max(40, size.length), width: Math.max(20, size.width) };
@@ -1636,6 +1641,17 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
     separate(bubble, step);
   }
   return events;
+}
+
+/**
+ * Zwalnia encję JEDNEGO kursu do rekordu (z postępem etapu) — gdy kurs przejmuje ktoś inny (w workerze ruchu:
+ * `attach` z gry, awans do NPC — E6). Zwraca true, gdy encja była.
+ */
+export function releaseBubbleCourse(bubble, network, course) {
+  const actor = course ? bubble?.actors?.get(course.id) : null;
+  if (!actor) return false;
+  release(bubble, network, course, actor);
+  return true;
 }
 
 /**

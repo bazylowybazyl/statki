@@ -495,34 +495,97 @@ function syncPorts(director) {
   for (const course of aktywne) {
     const stage = currentStage(course);
     if (!needsService(stage, docks)) continue;
-    const port = portOf(director, stage.nodeId);
-    if (!port) continue;
-
-    const przydzial = requestService(portControl, stage.nodeId, course, now, stage.seconds);
-    if (!przydzial) continue;
-    course.portStationId = stage.nodeId;
-
-    if (przydzial.berth) {
-      if (course.berthId !== przydzial.berthId) {
-        // Statek leci na stanowisko z bramy wjazdowej albo wprost z kolejki.
-        moveDwellTo(course, stage, { x: przydzial.berth.x, y: przydzial.berth.y },
-          config.approachSeconds);
-        course.berthId = przydzial.berthId;
-        course.berthRef = przydzial.berth;
-        course.holdSlot = null;
-      }
-      course.blocked = false;
-      continue;
-    }
-
-    if (course.holdSlot !== przydzial.slot) {
-      moveDwellTo(course, stage, holdingSlotPosition(portControl, port, przydzial.slot),
-        config.approachSeconds);
-      course.holdSlot = przydzial.slot;
-    }
-    course.blocked = true;
-    director.portQueue.set(stage.nodeId, (director.portQueue.get(stage.nodeId) || 0) + 1);
+    assignPortService(director, course, stage, now);
   }
+}
+
+/**
+ * Krok 3 kontroli ruchu dla jednego kursu: stanowisko albo miejsce w kolejce
+ * i lot do niego. Wołane z `syncPorts` i przy przeniesieniu kursu ze
+ * stanowiska, które zajął gracz (`setPlayerBerthHolds`).
+ */
+function assignPortService(director, course, stage, now) {
+  const { portControl } = director;
+  const config = portControl.config;
+  const port = portOf(director, stage.nodeId);
+  if (!port) return;
+
+  const przydzial = requestService(portControl, stage.nodeId, course, now, stage.seconds);
+  if (!przydzial) return;
+  course.portStationId = stage.nodeId;
+
+  if (przydzial.berth) {
+    if (course.berthId !== przydzial.berthId) {
+      // Statek leci na stanowisko z bramy wjazdowej albo wprost z kolejki.
+      moveDwellTo(course, stage, { x: przydzial.berth.x, y: przydzial.berth.y },
+        config.approachSeconds);
+      course.berthId = przydzial.berthId;
+      course.berthRef = przydzial.berth;
+      course.holdSlot = null;
+    }
+    course.blocked = false;
+    return;
+  }
+
+  if (course.holdSlot !== przydzial.slot) {
+    moveDwellTo(course, stage, holdingSlotPosition(portControl, port, przydzial.slot),
+      config.approachSeconds);
+    course.holdSlot = przydzial.slot;
+  }
+  course.blocked = true;
+  director.portQueue.set(stage.nodeId, (director.portQueue.get(stage.nodeId) || 0) + 1);
+}
+
+/** Znacznik właściciela stanowiska zajętego przez gracza (`berth.occupantId`). */
+export const PLAYER_BERTH_HOLDER = 'player';
+
+/**
+ * Stanowiska zajęte przez gracza (E6, `berth-hold`): pełny zbiór id. Wolne
+ * dostają znacznik gracza — dyspozytor ich nie przydziela (`findBerth`
+ * z `freeOnly` pomija zajęte). Stanowisko przydzielone kursowi, który jeszcze
+ * do niego leci (`canLeave(course)` — encja bańki przed korytarzem albo rekord
+ * w dojściu), wraca do puli, a kurs dostaje od razu inne miejsce albo kolejkę.
+ * Kurs, który już stoi na polu, zostaje — przydział gracza czeka na następne
+ * wywołanie. Zwolnione przez gracza stanowiska rozdaje zwykły `grantWaiting`.
+ * Zwraca liczbę przeniesionych kursów.
+ */
+export function setPlayerBerthHolds(director, berthIds, canLeave = null) {
+  const { docks, registry, portControl } = director;
+  if (!docks?.size) return 0;
+  const now = registry.clock;
+  const wanted = new Set((berthIds || []).map(String));
+  const held = director.playerBerths || (director.playerBerths = new Set());
+  let moved = 0;
+  for (const layout of docks.values()) {
+    for (const berth of layout.berths) {
+      const id = berth.id;
+      if (!wanted.has(id)) {
+        if (held.has(id)) {
+          held.delete(id);
+          if (berth.occupantId === PLAYER_BERTH_HOLDER) releaseBerth(berth, now);
+        }
+        continue;
+      }
+      if (berth.occupantId === PLAYER_BERTH_HOLDER) { held.add(id); continue; }
+      if (berth.occupantId) {
+        const course = getCourse(registry, berth.occupantId);
+        const stage = course ? currentStage(course) : null;
+        if (course && stage && course.berthId === id && (!canLeave || canLeave(course))) {
+          releaseService(portControl, course.id, now);
+          course.berthId = null;
+          course.berthRef = null;
+          reserveBerth(berth, PLAYER_BERTH_HOLDER, now);
+          held.add(id);
+          assignPortService(director, course, stage, now);
+          moved++;
+        }
+        continue;
+      }
+      reserveBerth(berth, PLAYER_BERTH_HOLDER, now);
+      held.add(id);
+    }
+  }
+  return moved;
 }
 
 /** Zwalnia stanowisko i jednostkę po zamknięciu kursu. */

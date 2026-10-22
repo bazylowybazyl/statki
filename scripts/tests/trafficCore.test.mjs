@@ -26,7 +26,9 @@ import {
 } from '../../src/game/traffic/trafficProtocol.js';
 import { worldDigest } from './trafficWorld.test.mjs';
 
-const OPTS = { seed: 42, economyScale: 4, capacityMultiplier: 4, piracyPressure: 1 };
+// Warstwa rekordów i protokół: bez bańki workera (E6) — ta przy Ziemi przejęłaby kursy (lot zamiast zegara
+// analitycznego, `bubble:` zamiast przypięcia gry). Bańkę workera sprawdza tests/workerBubble.test.mjs.
+const OPTS = { seed: 42, economyScale: 4, capacityMultiplier: 4, piracyPressure: 1, bubble: false };
 const STEPS = 720;   // godzina gry
 const FRAME = 1 / 60;
 
