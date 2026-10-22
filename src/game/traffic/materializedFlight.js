@@ -980,9 +980,19 @@ function followPath(bubble, actor, dt) {
   let desired = dxT * dxT + dyT * dyT > 1 ? Math.atan2(dyT, dxT) : Math.atan2(uy, ux);
   if (reverse) desired += Math.PI;
   let over = 0;
-  if (i === stopIdx && along > len) {
-    over = along - len;
-    desired = Math.atan2(uy, ux) + (reverse ? Math.PI : 0);
+  if (i === stopIdx) {
+    // Przy punkcie stopu liczy się kurs osi (okno przechwytu: ≤ 7°), a odchyłka
+    // w poprzek mieści się w oknie — poprawka pościgu wygasa liniowo na
+    // ostatnich `look` jednostkach i od punktu dziób trzyma oś. Przejście musi
+    // być CIĄGŁE: przełącznik „przed punktem pościg, za nim oś” skakał co krok,
+    // gdy statek przeskakiwał pole STOP o ułamek jednostki i cofał się na nie —
+    // kurs drgał o atan(w poprzek / look), `angVel` nie schodził pod próg
+    // przechwytu i stanowisko łapał dopiero strażnik po 25 s (prom przy
+    // pomoście, krok 0,2 s).
+    const axis = Math.atan2(uy, ux) + (reverse ? Math.PI : 0);
+    const w = clamp((len - along) / look, 0, 1);
+    desired = axis + wrapPi(desired - axis) * w;
+    if (along > len) over = along - len;
   }
   const omega = precise ? actor.turnPort : actor.turnFree;
   const err = wrapPi(desired - actor.angle);
