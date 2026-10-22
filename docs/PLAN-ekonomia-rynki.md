@@ -406,6 +406,9 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
     - taśmociągi: budowle Z7, `src/3d/portBuildings/`;
     - kontenery Z5: `src/data/cargoContainers.js`, `src/game/cargoPortOps.js`;
     - wszystko podpięte pod dokowanie w bańce E6.
+- 2026-10-22 decyzja użytkownika dla E12: rój dronów w grze liczony NA ŻYWO NA GPU, z symulacji z dema (ORCA, wieża), a nie z analitycznego planu.
+  - Wymagania: sloty stanowisk w jednej puli; statek zastany w połowie postoju startuje ze stanu zgodnego z zegarem kursu, bez przewijania minut w jednej klatce; koniec postoju domyka obraz zgodnie z ekonomią.
+  - Koszt mierzony przy ok. 20 stanowiskach. Jeśli za drogo, symulacja na żywo tylko dla N stanowisk najbliżej kamery, a reszta pokazuje stan z zegara.
   - bańka dla pozostałych portów i awans do pełnego NPC (do zlecenia);
   - E7: gracz na rynku i zapis ekonomii.
 - 2026-10-22 E6: hale K-7 Ziemi nie dostawały statków ruchu, bo nic wojskowego nie cumuje w porcie. Decyzja orkiestratora, zgodna z „K-7 = port wojskowy”: patrole i floty frakcji mają postój i tankowanie w K-7 portu domowego (zadanie E4). E6 może dodatkowo pokazać zapas okrętów stojący na padach K-7 (`placeFleetStock`).
