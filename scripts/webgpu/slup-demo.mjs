@@ -24,8 +24,10 @@ const czas = Number(args.czas ?? 40);
 const look = args.look ? JSON.parse(String(args.look)) : null;
 const bez = String(args.bez || '') === '1';
 const wariant = args.wariant ? `&slupWariant=${args.wariant}` : '';
-// --korek 0 — bez elektrowni (domyślnie jest), --dym 1 — ze słupem dymu (domyślnie bez)
-const warstwy = `${String(args.dym ?? '0') === '1' ? '&slup=1' : ''}${String(args.korek ?? '1') === '0' ? '' : '&korek=1'}`;
+// --korek 0 — bez elektrowni i ringu (sam gryz; elektrownia zbudowana i schowana — daje ramę kadrów szczegółów),
+// --dym 1 — ze słupem dymu (domyślnie bez)
+const bezKorka = String(args.korek ?? '1') === '0';
+const warstwy = `${String(args.dym ?? '0') === '1' ? '&slup=1' : ''}&korek=1${bezKorka ? '&ring=0' : ''}`;
 mkdirSync(out, { recursive: true });
 
 // near — kamera nad gryzem z ukosa (odległość, odchylenie od pionu, pora, słońce); burst — błyski dymu (ziarno, liczba).
@@ -144,6 +146,7 @@ try {
   if (!bez && !await waitFor(cdp, '!!(window.__slup && window.__slup.ready())', 60000, 300)) throw new Error('słup nie wstał');
   // ring z gry buduje się asynchronicznie (mapy, miasto, hale K-7)
   if (!bez && !await waitFor(cdp, '!!(window.__slup && window.__slup.ringReady())', 120000, 500)) throw new Error('ring nie wstał');
+  if (!bez && bezKorka) await ev('(() => { window.__slup.togglePlant(false); return true; })()');
   if (look) await ev(`(() => { Object.assign(window.__slup.look, ${JSON.stringify(look)}); window.__slup.apply(); return true; })()`);
   await settle(2500);
   const skala = await ev('window.__planety.biteScale ? window.__planety.biteScale() : 0.16');

@@ -27,16 +27,22 @@ const KM = 1 / EARTH_RADIUS_KM;
 
 export const EARTH_BITE_TSL = Object.freeze({
   cutPad: B.cutPad,
-  // żar (HDR — świeci w bloomie): szwy płyt dna ~2 500 K, płyty i ściany ciemniej
+  // żar (HDR — świeci w bloomie): szwy płyt dna ~2 500 K (żółtobiały rdzeń, pomarańczowe brzegi), płyty i ściany ciemniej
   seam: 2.8,
   plate: 0.12,
   wall: 0.55,
   smelter: [4.0, 3.5, 2.6],
   field: [0.22, 0.72, 1.0],
-  fieldGain: 0.32,
+  // pole siłowe ścian — na ciemnej skale ta sama waga w kadrze co dawniej na jasnej przy 0,32
+  fieldGain: 0.24,
+  // światło jeziora na ścianach (piec): przy dnie pełne, ku brzegowi gaśnie do forgeTop
   forge: [1.0, 0.42, 0.12],
-  forgeGain: 1.5,
-  skyFill: 0.10
+  forgeGain: 2.6,
+  forgeTop: 0.15,
+  skyFill: 0.10,
+  // masa powietrza we wnętrzu × masa z punktu wejścia do otworu: atmosfera stoi nad otworem (trzyma ją pole), w jamie
+  // jej nie ma — pełna dawała ciemnej skale liliowy welon (graf planety rozprasza w jamie bez zabarwienia)
+  pitAir: 0.15
 });
 
 // β(φ, ψ; b) — wklejane (bez layoutu) do funkcji z layoutem; lustro earthBiteRadius.
@@ -189,31 +195,47 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   const nFine = earthBiteNoise(p.mul(2100.0).add(7.7));    // ~3 km
   const lodMid = lod(pix, 430.0).toVar();
   const lodFine = lod(pix, 2100.0);
-  // ŚCIANY: skorupa (0–40 km) w jasnych warstwach, płaszcz — oliwin (szarozielony), głębiej brąz i czerwień
-  const sIdx = dKm.div(6.0).add(nBig.mul(2.5));
-  const sBand = fract(sIdx);
-  const sPick = fract(floor(sIdx).mul(0.618034));
-  const crust = mix(mix(vec3(0.42, 0.33, 0.24), vec3(0.30, 0.22, 0.17), smoothstep(0.3, 0.6, sPick)), vec3(0.36, 0.34, 0.30), smoothstep(0.65, 0.9, sPick))
-    .mul(float(0.85).add(smoothstep(0.75, 1.0, sBand).mul(0.25)));
-  // warstwy płaszcza: pasy wzdłuż głębokości (falowane), co kilka — jaśniejszy oliwin albo rdzawy pas utlenienia
-  const lIdx = dKm.add(nBig.mul(70.0)).add(nMid.mul(12.0)).div(38.0);
-  const lPick = fract(sin(floor(lIdx).mul(78.233)).mul(43758.5453));
-  const lEdge = smoothstep(0.0, 0.25, fract(lIdx)).mul(sdown(0.75, 1.0, fract(lIdx)));
-  const layer = mix(mix(vec3(0.15, 0.155, 0.12), vec3(0.22, 0.20, 0.155), smoothstep(0.55, 0.75, lPick)),
-    vec3(0.21, 0.12, 0.08), smoothstep(0.88, 0.97, lPick));
-  const mantle = mix(layer, vec3(0.16, 0.095, 0.07), smoothstep(0.35, 0.9, dN).mul(0.6))
-    .mul(float(0.76).add(lEdge.mul(0.22)).add(nMid.sub(0.5).mul(lodMid.mul(0.3))).add(nFine.sub(0.5).mul(lodFine.mul(0.22))));
-  const wallAlb = mix(crust, mantle, smoothstep(30.0, 70.0, dKm)).toVar();
+  // szum drobniejszy niż piksel → jego średnia (z daleka bez ziarna)
+  const nBigL = mix(float(0.5), nBig, lod(pix, 95.0)).toVar();
+  const nMidL = mix(float(0.5), nMid, lodMid).toVar();
+  const nFineL = mix(float(0.5), nFine, lodFine).toVar();
+  // smugi wzdłuż spadku: szum w (kierunek od osi gryzu, głębokość), dwie skale — ~45 km i ~15 km w poprzek, setki km
+  // wzdłuż ściany
+  const perp = p.sub(C.mul(dot(p, C))).add(east.mul(1e-6)).toVar();
+  const pixA = pix.div(max(length(perp), 0.1)).toVar();
+  const hDir = normalize(perp).toVar();
+  const streakW = mix(float(0.5), earthBiteNoise(hDir.mul(60.0).add(C.mul(dN.mul(8.0))).add(5.3)), lod(pixA, 60.0));
+  const streakN = mix(float(0.5), earthBiteNoise(hDir.mul(170.0).add(C.mul(dN.mul(12.0))).add(9.1)), lod(pixA, 170.0));
+  const streak = streakW.mul(0.6).add(streakN.mul(0.4)).toVar();
+  // ŚCIANY: skała płaszcza — perydotyt (oliwkowa czerń, zielonkawe bloki oliwinu, rdzawe przebarwienia), głębiej
+  // ciemny brąz dolnego płaszcza; bez pasów (dawny „marmur”): plamy i smugi, przejście w głąb szerokie i rozmyte
+  // szumem. Skała w słońcu niewiele jaśniejsza od metalu elektrowni — okładzina nie odcina się od niej jak klatka.
+  const rock = mix(mix(vec3(0.084, 0.082, 0.068), vec3(0.066, 0.070, 0.058), smoothstep(0.3, 0.75, nBigL)),
+    vec3(0.100, 0.075, 0.055), smoothstep(0.62, 0.85, nBigL.mul(0.5).add(nMidL.mul(0.5))).mul(0.45));
+  const lower = mix(vec3(0.072, 0.060, 0.050), vec3(0.062, 0.052, 0.045), smoothstep(0.4, 0.7, nBigL));
+  const mantle = mix(rock, lower, smoothstep(400.0, 1400.0, dKm.add(nBigL.sub(0.5).mul(500.0))))
+    .mul(float(0.86).add(nMidL.sub(0.5).mul(0.2)).add(nFineL.sub(0.5).mul(0.1)).add(streak.sub(0.5).mul(0.4)));
+  // skorupa (0–40 km): ciemna szarość pod sadzą
+  const rockAlb = mix(vec3(0.075, 0.070, 0.064), mantle, smoothstep(30.0, 60.0, dKm));
+  // przypalona: sadza gazów uchodzących otworem ku brzegowi (smugi spływają niżej — ciągnie przypalony pas wypieku
+  // brzegu) i szkliwo przy jeziorze
+  const soot = sdown(0.0, float(0.08).add(streak.mul(0.3)), dN).toVar();
+  const scorch = smoothstep(0.62, 0.86, dN.add(nBigL.sub(0.5).mul(0.08)).add(streak.sub(0.5).mul(0.1)));
+  const wallAlb = mix(mix(rockAlb, vec3(0.028, 0.025, 0.023), soot.mul(0.88)), vec3(0.036, 0.025, 0.021), scorch.mul(0.75)).toVar();
   // pęknięcia ścian: grzbiety szumu, gęściej i jaśniej w głąb
   const ridge1 = float(1.0).sub(abs(nMid.mul(2.0).sub(1.0)));
   const ridge2 = float(1.0).sub(abs(earthBiteNoise(p.mul(1300.0).add(11.0)).mul(2.0).sub(1.0)));
   const ramp = smoothstep(0.04, 1.0, dN).toVar();
   const wallCracks = mix(float(0.035), pow(max(0.0, ridge1), float(16.0).sub(ramp.mul(6.0))).mul(0.8), lod(pix, 1700.0))
     .add(mix(float(0.01), pow(max(0.0, ridge2), 22.0).mul(0.45), lod(pix, 5200.0)));
-  // żar ciała ściany rośnie z głębokością (płaszcz ~1 600 K pod skorupą → ~2 500 K przy dnie)
-  const wallEmit = heat(ramp).mul(wallCracks.mul(ramp).mul(T.wall).add(ramp.mul(ramp).mul(0.16)));
+  // żar pęknięć rośnie z głębokością (ciemna wiśnia w połowie ściany → pomarańcz przy dnie); skała przy jeziorze
+  // świeci czerwono (bez dawnej beżowej poświaty całej ściany)
+  const hot = smoothstep(0.55, 1.0, dN).toVar();
+  const wallEmit = heat(ramp.mul(0.75)).mul(wallCracks.mul(ramp).mul(T.wall))
+    .add(heat(hot.mul(0.4)).mul(hot.mul(hot).mul(0.07)));
 
-  // DNO: jezioro płaszcza pod zastygającą skorupą — płyty, jasne szwy, rzeki spływające ze ścian, huty
+  // DNO: jezioro płaszcza pod zastygającą skorupą — ciemne płyty (słońce prawie ich nie rozjaśnia), szwy z żółtobiałym
+  // rdzeniem i pomarańczowymi brzegami, rzeki spływające ze ścian, huty
   const lake = smoothstep(0.80, 0.90, dN).toVar();
   const rKm = sps.mul(beta).mul(EARTH_RADIUS_KM);
   const xy = vec2(cph, sph).mul(rKm).toVar();
@@ -221,13 +243,17 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   const vor = earthBiteVoronoi(xy.add(warp).div(135.0)).toVar();
   const vor2 = earthBiteVoronoi(xy.add(warp.mul(0.4)).div(38.0).add(5.3));
   const core = smoothstep(0.93, 1.0, dN).toVar();
-  const seamW = float(0.022).add(core.mul(0.035)).add(vor.z.mul(0.015));
-  const seam = aaLine(vor.y, seamW, pix.mul(EARTH_RADIUS_KM / 135.0)).toVar();
+  const seamW = float(0.022).add(core.mul(0.035)).add(vor.z.mul(0.015)).toVar();
+  const seamPix = pix.mul(EARTH_RADIUS_KM / 135.0).toVar();
+  const seam = aaLine(vor.y, seamW, seamPix).toVar();
+  const seamCore = aaLine(vor.y, seamW.mul(0.4), seamPix);
   const seam2 = aaLine(vor2.y, float(0.03), pix.mul(EARTH_RADIUS_KM / 38.0)).mul(0.3);
   // płyta: im cieńsza skorupa (hasz komórki), tym cieplejsza
   const plateHot = smoothstep(0.55, 1.0, vor.z).mul(0.8).add(core.mul(0.6));
-  const lakeAlb = vec3(0.040, 0.031, 0.028).mul(float(1.0).add(nFine.sub(0.5).mul(lodFine.mul(0.5))));
-  const lakeEmit = heat(float(0.7).add(core.mul(0.3))).mul(max(seam, seam2).mul(T.seam).mul(float(0.65).add(core.mul(0.35))))
+  const lakeAlb = vec3(0.018, 0.015, 0.014).mul(float(1.0).add(nFineL.sub(0.5).mul(0.5)));
+  const seamK = float(T.seam).mul(float(0.65).add(core.mul(0.35)));
+  const lakeEmit = heat(float(0.5)).mul(max(seam, seam2).mul(seamK).mul(0.6))
+    .add(heat(float(0.9).add(core.mul(0.1))).mul(seamCore.mul(seamK).mul(1.2)))
     .add(heat(float(0.15).add(plateHot.mul(0.35))).mul(plateHot.mul(T.plate).add(0.008)));
   // rzeki ze ścian: kanały wzdłuż spadku (azymut pofalowany szumem), od połowy ściany do brzegu jeziora
   const rq = fract(phi.mul(7.0 / TAU).add(nBig.mul(0.9)).add(nMid.mul(0.15)));
@@ -247,16 +273,18 @@ export function earthBiteShade(p, sunObj, c, bite, east, pix) {
   const hexLine = aaLine(hx.x, float(0.035), pix.mul(EARTH_RADIUS_KM / 80.0));
   const press = smoothstep(0.55, 0.9, earthBiteNoise(p.mul(40.0).add(vec3(hx.y.mul(3.0)))));
   const fieldMask = smoothstep(0.015, 0.06, dN).mul(float(1.0).sub(smoothstep(0.7, 0.82, dN)));
-  // jak tarcza w grze: heksy widać tam, gdzie płaszcz napiera (plamy), reszta pola — ledwie
-  const field = hexLine.mul(float(0.08).add(press.mul(0.92))).add(press.mul(0.05)).mul(fieldMask).mul(cav).toVar();
+  // jak tarcza w grze: heksy widać tam, gdzie płaszcz napiera (plamy), reszta pola — ledwie (na ciemnej skale w cieniu
+  // pełniejsza siatka czytała się jak druciany płot i liliowy połysk pod kątem)
+  const field = hexLine.mul(float(0.025).add(press.mul(0.975))).add(press.mul(0.03)).mul(fieldMask).mul(cav).toVar();
 
   const albedo = mix(wallAlb, lakeAlb, lake).toVar();
-  const emit = mix(wallEmit, lakeEmit, lake).add(heat(float(0.85)).mul(river.mul(T.seam * 0.55)).mul(float(1.0).sub(lake)))
+  const emit = mix(wallEmit, lakeEmit, lake).add(heat(float(0.7)).mul(river.mul(T.seam * 0.55)).mul(float(1.0).sub(lake)))
     .add(vec3(...T.smelter).mul(smelt)).toVar();
-  // światło dna na ścianach (piec): kierunek ku środkowi dna, gaśnie ku brzegowi
+  // światło dna na ścianach (piec): kierunek ku środkowi dna, ku brzegowi gaśnie (ciemna góra, rozżarzony dół — głębia)
   const bottom = C.mul(float(1.0).sub(b));
   const toB = normalize(bottom.sub(p));
-  const forge = max(dot(normal, toB), 0.0).mul(float(0.35).add(smoothstep(0.05, 0.8, dN).mul(0.65))).mul(float(1.0).sub(lake.mul(0.7)));
+  const fz = smoothstep(0.3, 0.92, dN);
+  const forge = max(dot(normal, toB), 0.0).mul(mix(float(T.forgeTop), float(1.0), fz.mul(fz))).mul(float(1.0).sub(lake.mul(0.7)));
   emit.addAssign(albedo.mul(vec3(...T.forge)).mul(forge.mul(T.forgeGain)));
   emit.mulAssign(cav);
   return { normal, shadow, albedo, emit, field, cav, dN };

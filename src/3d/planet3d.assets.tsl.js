@@ -324,6 +324,8 @@ function buildSurfaceGraph(flow = null) {
     const pitField = float(0.0).toVar();
     // wysokość widoku dla mgiełki we wnętrzu gryzu: z punktu, w którym promień widzenia wchodzi do otworu (kula R)
     const biteMu = float(0.0).toVar();
+    // masa powietrza we wnętrzu (× masa z punktu wejścia): atmosfera stoi nad otworem; kamera w gryzie — bez powietrza
+    const pitAir = float(1.0).toVar();
     // rozmiar piksela w układzie obiektu — pochodne poza gałęziami (detal gryzu z daleka gaśnie do średniej)
     const pixL = length(fwidth(vLocal)).toVar();
     If(U.uPitMode.greaterThan(0.5), () => {
@@ -342,11 +344,15 @@ function buildSurfaceGraph(flow = null) {
         pitOwn.assign(sh.cav);
         pitEmit.assign(sh.emit);
         pitField.assign(sh.field);
-        const vObj = normalize(modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(vec4(viewDir, 0.0))).xyz);
+        // ku kamerze w układzie obiektu (długość = odległość do kamery)
+        const toCam = modelWorldMatrixInverse.mul(cameraWorldMatrix.mul(vec4(vViewPosition, 0.0))).xyz.toVar();
+        const vObj = normalize(toCam);
         const pv = dot(pL, vObj);
-        const tq = pv.negate().add(sqrt(max(pv.mul(pv).sub(dot(pL, pL)).add(1.0), 0.0)));
+        const tq = pv.negate().add(sqrt(max(pv.mul(pv).sub(dot(pL, pL)).add(1.0), 0.0))).toVar();
         // ≥ 0,35: przez wcięcie na brzegu tarczy promień wychodzi stycznie — pełna masa powietrza dawała mleczną taflę
         biteMu.assign(clamp(dot(normalize(pL.add(vObj.mul(tq))), vObj), 0.35, 1.0));
+        // kamera bliżej niż wyjście z kuli (w jamie — kadry szczegółów dema) — promień nie przechodzi przez atmosferę
+        pitAir.assign(smoothstep(0.0, 0.01, length(toCam).sub(tq)).mul(EARTH_BITE_TSL.pitAir));
       });
     });
 
@@ -383,25 +389,29 @@ function buildSurfaceGraph(flow = null) {
     const cityOn = float(1.0).sub(smoothstep(-0.10, 0.06, geoMu).mul(sunVisP));
     const cities = nightBase.mul(0.55).mul(smoothstep(0.006, 0.025, cityBrightness)).add(cityGlow).mul(cityOn).mul(float(1.0).sub(pitOwn));
     const finalColor = dayLit.add(pitSky).add(cities).toVar();
-    // Żar gryzu (płaszcz ~2 500 K na dnie) świeci tak samo w dzień i w nocy; pole siłowe ścian (język tarcz)
-    // widać pod kątem i w cieniu.
-    finalColor.addAssign(pitEmit);
+    // Pole siłowe ścian gryzu (język tarcz) widać pod kątem i w cieniu.
     const fieldFr = float(1.0).sub(abs(dot(normal, viewDir)));
     finalColor.addAssign(vec3(...EARTH_BITE_TSL.field).mul(pitField.mul(EARTH_BITE_TSL.fieldGain))
       .mul(float(0.35).add(fieldFr.mul(fieldFr).mul(0.65))).mul(float(1.0).sub(min(sunL.mul(2.0), 1.0).mul(0.85))));
 
+    // ekstynkcja mgiełki (żar gryzu dodawany niżej, po cieniu ringu, gaśnie tylko w niej)
+    const airExt = vec3(1.0).toVar();
     If(U.uHazeStrength.greaterThan(0.0005), () => {
-      // we wnętrzu gryzu (ściany, dno) promień wychodzi przez otwór — wysokość widoku z punktu wejścia (biteMu)
+      // we wnętrzu gryzu (ściany, dno) promień wychodzi przez otwór — wysokość widoku z punktu wejścia (biteMu),
+      // masa powietrza tylko nad otworem (pitAir)
       const mu = mix(clamp(dot(geoN, viewDir), 0.0, 1.0), biteMu, pitOwn);
-      // we wnętrzu gryzu połowa masy powietrza (wnętrze jest wypełnione żarem, nie stokiem powłoki)
-      const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05)).mul(float(1.0).sub(pitOwn.mul(0.5)));
+      const airmass = U.uHazeStrength.div(mu.mul(0.95).add(0.05)).mul(mix(1.0, pitAir, pitOwn));
       const extinction = exp(airmass.negate().mul(U.uHazeBeta)).toVar();
+      airExt.assign(extinction);
       // Mgiełka świeci światłem słońca, które do niej doszło: za dnia barwa mgiełki, przy terminatorze
       // złoto i czerwień, za nim łuna powietrza, które jeszcze widzi słońce.
       const muAir = geoMu.add(SUNSET.airDip).toVar();
       const airLit = smoothstep(-0.02, 0.06, muAir).mul(smoothstep(-0.06, 0.30, muAir)).mul(sunVisP);
       const hazeCol = U.uHazeColor.mul(sunTransmittance(muAir, U)).mul(airLit);
-      finalColor.assign(finalColor.mul(extinction).add(hazeCol.mul(float(1.0).sub(extinction))));
+      // we wnętrzu gryzu welon bez zabarwienia (niebieskawy na ciemnej skale dawał liliowy połysk)
+      const scat = hazeCol.mul(float(1.0).sub(extinction)).toVar();
+      scat.assign(mix(scat, vec3(dot(scat, vec3(0.299, 0.587, 0.114))), pitOwn));
+      finalColor.assign(finalColor.mul(extinction).add(scat));
       finalColor.addAssign(sunsetGlow(muAir, airmass, sunVisP, U));
     });
 
@@ -412,6 +422,8 @@ function buildSurfaceGraph(flow = null) {
     finalColor.assign(max(finalColor, vec3(0.0)));
 
     applyRingShadow(finalColor, vWorldPosition, dayAmount, U);
+    // Żar gryzu (płaszcz ~2 500 K na dnie) świeci tak samo w dzień i w nocy — po cieniu ringu, przez samą ekstynkcję.
+    finalColor.addAssign(pitEmit.mul(airExt));
 
     const luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
     const bloomPush = smoothstep(0.85, 1.0, luminance).mul(U.uPlanetBloom);
