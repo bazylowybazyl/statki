@@ -28242,6 +28242,8 @@
     const _portDockRender = { list: [], count: 0 };
     function portDockRenderFrame(cam) {
       portDocks.renderList(cam.x, cam.y, PORT_DOCK_RENDER_RANGE, _portDockRender.list);
+      // `PortDocks.hideRender = true` — budowle znikają z obrazu (pomiar kosztu A/B w tym samym kadrze), rozgrywka bez zmian.
+      if (portDocks.hideRender) _portDockRender.list.length = 0;
       _portDockRender.count = _portDockRender.list.length;
     }
     // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).

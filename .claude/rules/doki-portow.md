@@ -34,4 +34,4 @@ paths:
 ## Jak sprawdzać
 
 - `node --test tests/portDocks.test.mjs`, `node scripts/tests/portPaths.test.mjs` (sekcja budowli), `node --test tests/workerBubble.test.mjs` (porty bez ringu).
-- W grze: konsola `PortDocks.docks` (budowle, bryły), `TrafficV2.tables.bubbleDocks`; przegląd portów `node scripts/webgpu/ruch-banka-gra.mjs --obserwacja 8 [--query renderWorker=1]`.
+- W grze: konsola `PortDocks.docks` (budowle, bryły), `PortDocks.hideRender` (A/B obrazu), `TrafficV2.tables.bubbleDocks`; przegląd portów `node scripts/webgpu/ruch-banka-gra.mjs --obserwacja 8 [--query renderWorker=1]`; zrzuty i koszt `node scripts/webgpu/doki-portow-gra.mjs [--query renderWorker=1] [--porty fobos,mercury,ceres] [--koszt 3]` (bez `--porty` — port każdego rodzaju z kursami przy stanowiskach, krzyż czeka `--krzyz` s świata). Koszt (2026-10-23): GPU +0,01–0,03 ms, CPU workera renderu +0,04–0,36 ms na budowlę w kadrze — `docs/E14-doki-portow.md`.

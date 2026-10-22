@@ -3,7 +3,7 @@
 // do tego pipeline'y synchroniczne (strona i worker renderu), błędy konsoli i kolizja gracza z bryłą.
 //
 //   node scripts/webgpu/doki-portow-gra.mjs [--query renderWorker=1] [--out .tmp/e14] [--porty io,mercury,ceres]
-//        [--rozgrzewka 2400] [--postoj 8] [--szczelina 240] [--krzyz 1800] [--krzyzMin 1] [--port 5463]
+//        [--rozgrzewka 2400] [--postoj 8] [--szczelina 240] [--krzyz 1800] [--krzyzMin 1] [--koszt 3] [--port 5463]
 //
 // Świat ruchu ziarno 7 rozgrzany `--rozgrzewka` s gry (kursy w portach), zegar krokowy harnessu (`__harness.step`).
 // Gracz stoi poza dyskiem zapasu budowli, kamera w trybie `rts` nad środkiem budowli (zoom dobrany do dysku).
@@ -19,6 +19,7 @@ const query = `&${args.query || 'renderWorker=1'}`;
 const WARM = Number(args.rozgrzewka || 2400);
 const STAY = Number(args.postoj || 8);
 const SLOT_WAIT = Number(args.szczelina || 240);
+const COST = Number(args.koszt || 0);
 const PORTS = args.porty ? String(args.porty).split(',').map((s) => s.trim()).filter(Boolean) : null;
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 
@@ -162,6 +163,41 @@ try {
     await waitGame(0.1);
     const tag = `${pi}-${at.kind}-${id}`;
     await screenshotPng(cdp, join(out, `${tag}-kadr.png`));
+    if (COST > 0) {
+      // Koszt A/B w tym samym kadrze (cała budowla): budowle widoczne / schowane (`PortDocks.hideRender`), naprzemiennie
+      // ABAB × COST, po 8 odczytów co 0,25 s gry po 0,5 s ustalenia. GPU klatki i CPU workera renderu (tryb worker),
+      // w trybie off — GPU strony.
+      const sample = async (hide) => {
+        await ev(`(() => { window.PortDocks.hideRender = ${hide}; return true; })()`);
+        await waitGame(0.5);
+        const rows = [];
+        for (let i = 0; i < 8; i++) {
+          await waitGame(0.25);
+          rows.push(await ev(`(() => { const h = window.RenderWorkerHost; if (h && h.readStats) h.readStats(); const st = h ? h.stats : null;
+            return { gpu: st ? st[0] : (window.Core3D.gpuFrameMs || 0), cpu: st ? st[6] : 0 }; })()`));
+        }
+        return rows;
+      };
+      const acc = { z: { gpu: [], cpu: [] }, bez: { gpu: [], cpu: [] } };
+      for (let r = 0; r < COST; r++) {
+        for (const hide of (r % 2 ? [true, false] : [false, true])) {
+          const rows = await sample(hide);
+          const k = hide ? 'bez' : 'z';
+          for (const row of rows) { acc[k].gpu.push(Number(row.gpu) || 0); acc[k].cpu.push(Number(row.cpu) || 0); }
+        }
+      }
+      await ev('(() => { window.PortDocks.hideRender = false; return true; })()');
+      const mean = (a) => +(a.reduce((q, v) => q + v, 0) / Math.max(1, a.length)).toFixed(3);
+      const med = (a) => { const b = a.slice().sort((x, y) => x - y); return +(b[Math.floor(b.length / 2)] || 0).toFixed(3); };
+      report.koszt = report.koszt || {};
+      report.koszt[id] = {
+        rodzaj: at.kind,
+        zDokiem: { gpuMs: mean(acc.z.gpu), gpuMed: med(acc.z.gpu), cpuWorkerMs: mean(acc.z.cpu), cpuMed: med(acc.z.cpu) },
+        bezDoku: { gpuMs: mean(acc.bez.gpu), gpuMed: med(acc.bez.gpu), cpuWorkerMs: mean(acc.bez.cpu), cpuMed: med(acc.bez.cpu) },
+        probek: acc.z.gpu.length
+      };
+      console.log('koszt', id, JSON.stringify(report.koszt[id]));
+    }
     // Zbliżenie: statek na stanowisku tego portu (albo czubek ramienia / ściana koła, gdy pusto).
     const near = await ev(`(() => { ${LOCAL}
       const d = window.PortDocks.docks.find((x) => x.stationId === ${JSON.stringify(id)});

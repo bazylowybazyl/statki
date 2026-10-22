@@ -58,6 +58,8 @@ export class PortDockWorld {
     /** Budowle: `{ stationId, kind, spec, x, y, angle, keepR, style, solids: [{ tag, poly: [{x, z}], minX… }] }`. */
     this.docks = [];
     this.version = -1;
+    /** Pomiar kosztu A/B: budowle znikają z obrazu (lista renderu pusta), kolizje zostają. */
+    this.hideRender = false;
     this._outline = makePoints(PORT_DOCK_COLLISION.shipPoints);
     this._poly = makePoints(PORT_DOCK_COLLISION.shipPoints, 'z');
     this._mtv = { x: 0, z: 0 };

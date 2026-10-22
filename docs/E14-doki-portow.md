@@ -47,9 +47,33 @@ Porty bez ringu (planety bez „Halo”, księżyce, Ceres, Westa, kryjówki) mi
   penetracji, prędkość w głąb zerowana; hipercruise nie przelatuje brył (zerwanie jak na płycie ringu, E9). Statki
   bańki nie mają kolizji z bryłami — omijają je ścieżkami (sprawdzone testami).
 
-## Pomiary
+## Pomiary (2026-10-23, RTX 5080, headless Chrome)
 
-(uzupełnienie po przebiegach — symulacja przed / po, testy, przegląd portów, koszt A/B)
+- **Gospodarka:** `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` na `main` (a4323a4b) i na E14 — wynik
+  identyczny liczba w liczbę (różnią się tylko linie czasu ticku: 9,30 / 9,43 ms). Bramka bilansu niepotrzebna.
+- **Testy:** `npm test` zielony; `node --test "tests/*.test.mjs"` — te same 3 porażki i 2 TODO co na `main`
+  (z `node_modules` w worktree — bez niego testy czytające źródła three padają w obu wersjach). Nowe:
+  `tests/portDocks.test.mjs` (7), `tests/portDockBlock.test.mjs` (6), sekcja budowli w
+  `scripts/tests/portPaths.test.mjs` (krok 0,2 s, 5 wariantów — 0 wymuszeń, 0 kroków w bryle i w zacumowanym
+  statku, odlot za dysk zapasu w każdym cyklu).
+- **Gra, przegląd portów** `ruch-banka-gra.mjs --obserwacja 8`: tryb worker i `off` — 0 nowych pipeline'ów sync,
+  0 błędów; Westa 96–112 encji (do 40 zadokowanych), Merkury 49–64, Ceres 3–11. Ostrzał, awans, taran i postój
+  gracza jak w E6.
+- **Zrzuty** `doki-portow-gra.mjs` (`.tmp/e14/worker2/`): krzyż Fobos z promem na stanowisku, okrąg Merkury
+  (16–24 zadokowanych), koło Westa (statek w szczelinie, statki przy wewnętrznej ścianie); 0 sync, 0 błędów,
+  gracz wpuszczony w ramię krzyża — wypchnięty.
+- **Start w workerze** `start-sync-gra.mjs` (3 przebiegi `main`, 3 E14): 0 pipeline'ów sync; drugi flush workera
+  951 → 1023 ms (+72), przygotowanie po klatce zero 464 → 474 ms (+10). Pierwszy flush dobija do limitu 4 s już na
+  `main`.
+- **Koszt A/B** (tryb worker, cała budowla w kadrze, `PortDocks.hideRender`, ABAB × 3, 24 próbki na stronę):
+
+| port (rodzaj) | GPU klatki ms bez / z | CPU workera renderu ms (mediana) bez / z |
+|---|---|---|
+| Fobos (krzyż ×1) | 0,138 / 0,150 | 0,81 / 0,98 |
+| Merkury (okrąg ×3) | 0,180 / 0,192 | 0,91 / 0,94 |
+| Ceres (koło ×5) | 0,857 / 0,887 | 1,11 / 1,47 |
+
+- **Wątek gry** (Node, 24 budowle): kolizja kadłuba w dysku koła 0,5–1 µs, bramka dalekiego NPC i pocisk ~0,06 µs.
 
 ## Ruch wielu statków (Node, krok 0,2 s, statki największych klas mieszczących się na polu)
 
