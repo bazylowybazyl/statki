@@ -39,7 +39,8 @@ function now() {
 
 function createMirror(resources) {
   const zeros = () => Object.fromEntries(resources.map(key => [key, 0]));
-  return { resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros() };
+  // `sell` / `buy` — oferta portu dla kupca (E7): ile sprzeda ponad rezerwę, ile skupi do celu.
+  return { resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros(), sell: zeros(), buy: zeros() };
 }
 
 /** Te same reguły co `applyStockDelta` w workerze — wspólne `moveStock` (API rynku): 0…pojemność, 0 = bez limitu. */
@@ -51,7 +52,12 @@ function applyToMirror(mirror, bag) {
     const delta = Number(raw);
     if (!Number.isFinite(delta) || delta === 0) continue;
     const moved = moveStock(mirror, id, delta);
-    if (moved !== 0) applied[id] = moved;
+    if (moved === 0) continue;
+    applied[id] = moved;
+    // Oferta portu kurczy się od razu: kupione schodzi z oferty sprzedaży, sprzedane — ze skupu
+    // (skup −1 = port towaru nie używa — zostaje, nawet gdy towar wszedł inną drogą, np. rozbiórka wraku).
+    if (moved < 0 && mirror.sell) mirror.sell[id] = Math.max(0, (Number(mirror.sell[id]) || 0) + moved);
+    if (moved > 0 && mirror.buy?.[id] > 0) mirror.buy[id] = Math.max(0, mirror.buy[id] - moved);
   }
   return applied;
 }
@@ -328,10 +334,24 @@ export class TrafficBridge {
 
   /** Podsumowanie świata (dyspozytor, stocznie, wojna, piractwo…) — do konsoli. */
   requestSnapshot() {
+    return this._request(TRAFFIC_MSG.SNAPSHOT);
+  }
+
+  /** Stan ekonomii do zapisu gry (E7, `economySave.js`) — obietnica obiektu JSON albo `null`. */
+  requestEconomySave() {
+    return this._request(TRAFFIC_MSG.ECONOMY_SAVE);
+  }
+
+  /** Agregat dla komputera handlowego (E7, `tradeSummary.js`): trasy, porty, towar w drodze, okazje. */
+  requestTradeSummary() {
+    return this._request(TRAFFIC_MSG.TRADE_SUMMARY);
+  }
+
+  _request(type) {
     const requestId = this._requestId++;
     return new Promise((resolve, reject) => {
       this._pending.set(requestId, { resolve, reject });
-      this._send({ type: TRAFFIC_MSG.SNAPSHOT, requestId });
+      this._send({ type, requestId });
     });
   }
 
@@ -382,10 +402,12 @@ export class TrafficBridge {
         case TRAFFIC_MSG.TICK: this._onTick(message); break;
         case TRAFFIC_MSG.BUBBLE: this._applyBubble(message); this._emit('bubble', this.courses); break;
         case TRAFFIC_MSG.ACTORS: this._applyActors(message); break;
-        case TRAFFIC_MSG.SNAPSHOT_RESULT: {
+        case TRAFFIC_MSG.SNAPSHOT_RESULT:
+        case TRAFFIC_MSG.ECONOMY_SAVE_RESULT:
+        case TRAFFIC_MSG.TRADE_SUMMARY_RESULT: {
           const pending = this._pending.get(message.requestId);
           this._pending.delete(message.requestId);
-          pending?.resolve(message.snapshot);
+          pending?.resolve(message.snapshot ?? message.state ?? message.summary ?? null);
           break;
         }
         case TRAFFIC_MSG.ERROR:
@@ -483,6 +505,8 @@ export class TrafficBridge {
         else delete mirror.duress[key];
         mirror.bid[key] = data[offset + MARKET_FIELD.BID];
         mirror.ask[key] = data[offset + MARKET_FIELD.ASK];
+        mirror.sell[key] = data[offset + MARKET_FIELD.SELL];
+        mirror.buy[key] = data[offset + MARKET_FIELD.BUY];
       }
     });
     // Zmiany gry, których ten stan jeszcze nie zawiera, nakładamy ponownie.

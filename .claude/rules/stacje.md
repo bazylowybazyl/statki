@@ -20,6 +20,8 @@ paths:
 
 - `updateStations3D(stations)` — synchronizacja stacji 2D -> 3D.
 
+- Stacja gracza (`style: 'player'`, rynek dodany w biegu — reguła `ruch-v2`, § „Stacja gracza”) nie ma bryły: `isPlayerStation` pomija ją w `prepareStations3D`, `initStations3D` i `updateStations3D` (model dodany po ekranie ładowania kompiluje pipeline w klatce), w grze rysuje ją znacznik 2D. Model stacji gracza = szablon w rozgrzewce na ekranie ładowania i dopiero wtedy zdjęcie wyjątku.
+
 - Zniszczenie stacji: `destroyStation3D` → `Destruction3D.shatter` (odłamki paneli + wygaszenie bryły), progi HP →
   `Destruction3D.detachChunk` (fragment leci, pęka na kawałki z maską cięcia, potem odłamki). Materiały rozpadu w TSL
   (`src/vfx/shatterMaterial.js`); nowa bryła stacji ma przejść przez `Destruction3D.prebake` (wypiek + rozgrzewka — bez niej

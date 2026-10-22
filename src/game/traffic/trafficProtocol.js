@@ -35,6 +35,12 @@
  *   `progress` / `stage-done` zostają dla encji prowadzonych przez grę (awans
  *   do pełnego NPC — później).
  *
+ *   GRACZ NA RYNKU I ZAPIS (E7) — `economySave.js`, `tradeSummary.js`
+ *   init.restore         zapis ekonomii (`exportEconomyState`) nakładany na świeży świat; magazyny
+ *                        rynków, których jeszcze nie ma (stacja gracza), po ich `market-add`
+ *   economy-save    { requestId }   stan do zapisu gry
+ *   trade-summary   { requestId }   agregat dla komputera handlowego (trasy, porty, okazje)
+ *
  *   RYNKI (E1, docs/PLAN-ekonomia-rynki.md § 3.1) — `src/game/traffic/markets.js`
  *   market-add      { def }                  nowy rynek (MarketDef, `src/data/markets.js`)
  *   market-building { stationId, role }      budynek przemysłu na rynku
@@ -56,6 +62,8 @@
  *   actors     { time, count, data, hulls?, ms }         po każdym `advance` (E6): encje
  *              bańki — `ACTOR_FIELD`, `time` = czas mostu, w którym pozy są ważne
  *   snapshot-result { requestId, snapshot }
+ *   economy-save-result  { requestId, state }     (E7)
+ *   trade-summary-result { requestId, summary }   (E7)
  *   error      { message, stack, during }
  *
  * `course` w wiadomościach to NUMER kursu — część liczbowa jego id
@@ -89,6 +97,12 @@ export const TRAFFIC_MSG = Object.freeze({
   // Bańka w workerze (E6).
   BERTH_HOLD: 'berth-hold',
   ACTORS: 'actors',
+
+  // Gracz na rynku i zapis (E7).
+  ECONOMY_SAVE: 'economy-save',
+  ECONOMY_SAVE_RESULT: 'economy-save-result',
+  TRADE_SUMMARY: 'trade-summary',
+  TRADE_SUMMARY_RESULT: 'trade-summary-result',
 
   READY: 'ready',
   TICK: 'tick',
@@ -223,14 +237,18 @@ export const ACTOR_FLAG = Object.freeze({
  * z `ready`. `BID`/`ASK` to ceny przy neutralnej reputacji — gra, która zna
  * reputację gracza, liczy swoje z `resourcePrice` na kopii magazynu.
  */
-export const MARKET_STRIDE = 5;
+export const MARKET_STRIDE = 7;
 export const MARKET_FIELD = Object.freeze({
   STOCK: 0,
   CAPACITY: 1,
   /** Sekundy głodu (`econ.duress`) — trzeci składnik ceny. */
   DURESS: 2,
   BID: 3,
-  ASK: 4
+  ASK: 4,
+  /** Oferta portu dla kupca (gracz): ile sprzeda ponad rezerwę na własne potrzeby (E7, `portOfferFromQuote`). */
+  SELL: 5,
+  /** …i ile skupi do celu uzupełnienia, licząc z towarem w drodze (0 — ma dość, −1 — port towaru nie używa). */
+  BUY: 6
 });
 
 /** Indeks rekordu rynku dla stacji `s` i surowca `r`. */
