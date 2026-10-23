@@ -611,6 +611,39 @@ export function reserveParkingSpot(registry, ship) {
   return registry.byShip.get(id) || null;
 }
 
+/**
+ * Statek `toId` przejmuje miejsce statku `fromId` (pad hali — `stockBerths`, reda / hangar — `byShip`); własne
+ * miejsce `toId` się zwalnia. Strata okrętu zapasu floty w grze (E6): zapas klasy maleje o OSTATNI numer
+ * (`fleetStockShips` liczy id z liczności), więc zniszczony okręt bierze miejsce ostatniego — jego pad zostaje
+ * pusty, reszta stoi tam, gdzie stała. `fromId` bez miejsca — `toId` tylko zwalnia swoje.
+ */
+export function renameParkedShip(registry, fromId, toId) {
+  if (!registry) return false;
+  const from = String(fromId);
+  const to = String(toId);
+  if (from === to) return false;
+  const own = registry.byShip.get(to);
+  if (own) releaseSpot(registry, to, own);
+  registry.stockBerths?.delete(to);
+  const spot = registry.byShip.get(from);
+  if (spot) {
+    registry.byShip.delete(from);
+    spot.shipId = to;
+    registry.byShip.set(to, spot);
+    if (spot.kind === 'hangar' && registry.hangar.delete(from)) registry.hangar.add(to);
+    if (spot.kind === 'reda') {
+      const band = registry.state.get(spot.zoneId)?.bands.get(spot.cls);
+      if (band && band.owners[spot.index] === from) band.owners[spot.index] = to;
+    }
+  }
+  const pad = registry.stockBerths?.get(from);
+  if (pad) {
+    registry.stockBerths.delete(from);
+    registry.stockBerths.set(to, pad);
+  }
+  return true;
+}
+
 /** Równy rozkład między strefy: mniejsze obłożenie, remis — rotacja. */
 function lighterZone(registry, a, b) {
   const lhs = a.taken * b.capacity;

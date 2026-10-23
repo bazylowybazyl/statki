@@ -121,6 +121,18 @@ export const TRAFFIC_MSG = Object.freeze({
   // Bańka w workerze (E6).
   BERTH_HOLD: 'berth-hold',
   ACTORS: 'actors',
+  /**
+   * Encja BEZ kursu (zapas floty STOCK, postój PARKED — id ujemny; odlot DEPARTED — numer zamkniętego kursu)
+   * przejęta przez grę jako pełny NPC (taran, ogień): `{ id, on }` — `on`: statek firmy schodzi z puli dyspozytora
+   * (nie dostanie kursu, dopóki NPC żyje), odlot znika z bańki; `on: false` — statek wraca na postój.
+   */
+  ENTITY_HOLD: 'entity-hold',
+  /**
+   * Encja bez kursu zniszczona w grze: `{ id, x, y, reason }` — zapas floty → strata z zapasu frakcji
+   * (`settleGarrisonLosses`, wrak ze złomem), statek firmy (postój, odlot) → firma traci statek (`loseShip`; kurs,
+   * który zdążył dostać, ginie z nim). Bez kursu nie ma ładunku do rozliczenia.
+   */
+  ENTITY_LOST: 'entity-lost',
 
   // Gracz na rynku i zapis (E7).
   ECONOMY_SAVE: 'economy-save',
@@ -272,18 +284,19 @@ export const ACTOR_FLAG = Object.freeze({
   DEADHEAD: 32,
   /**
    * Okręt z zapasu floty frakcji portu na padzie hali K-7 (`placeFleetStock`, Z2) — BEZ kursu: stoi,
-   * `ID` ujemny (nie numer kursu), nie przyjmuje obrażeń i nie idzie do `destroyed`.
+   * `ID` ujemny (nie numer kursu). Fizyczny jak każda encja (obrażenia, awans przed taranem); strata →
+   * `entity-lost` (ubytek zapasu frakcji), nie `destroyed`.
    */
   STOCK: 64,
   /**
    * Kurs skończył się przy stanowisku (rozładunek u celu): encja dokańcza odlot BEZ kursu — odłączanie, korytarz,
-   * lot poza bańkę. Numer kursu zostaje (ciągłość encji), ale nie przyjmuje obrażeń i nie awansuje (jak STOCK).
+   * lot poza bańkę. Numer kursu zostaje (ciągłość encji); obrażenia i awans jak STOCK (`entity-hold` / `entity-lost`).
    */
   DEPARTED: 128,
   /**
    * Statek BEZ kursu na postoju przy porcie (E15): statek firmy na redzie albo orbicie postojowej
    * (`portParking.js`) albo nadmiar zapasu floty na redzie wojskowej (wtedy razem ze STOCK). `ID` ujemny,
-   * stoi (prędkość 0); nietykalny jak STOCK — pocisk staje, bez obrażeń i awansu.
+   * stoi (prędkość 0); obrażenia i awans jak STOCK (`entity-hold` / `entity-lost`).
    */
   PARKED: 256
 });

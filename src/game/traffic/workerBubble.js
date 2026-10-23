@@ -33,16 +33,18 @@ import {
 import { createRingObstaclesForNetwork } from './ringRouter.js';
 import { getCourse, COURSE_STATUS } from './courseRegistry.js';
 import {
-  createParkingRegistry, placeFleetStock, syncParking, reserveParkingSpot, buildDockOrbitParking
+  createParkingRegistry, placeFleetStock, syncParking, reserveParkingSpot, buildDockOrbitParking, renameParkedShip
 } from './portParking.js';
 import { portEntryForBerth } from './portPaths.js';
-import { SHIP_STATE, getShip } from './transportCompanies.js';
+import { SHIP_STATE, getShip, getCompany, loseShip, releaseShipAt } from './transportCompanies.js';
+import { settleGarrisonLosses } from './warDispatcher.js';
+import { createGarrisonState } from './patrols.js';
 import { SYSTEM_MAP_PLANETS } from '../../data/systemMap.js';
 import { haloRingKey } from '../haloRingPlanets.js';
 import { computeHaloRingLayout } from '../../3d/haloRing/haloRingLayout.js';
 import { BERTH_ROLE, hullFootprint } from './dockLayout.js';
 import { getNode } from './travelNetwork.js';
-import { settleCourseEvents } from './trafficDirector.js';
+import { settleCourseEvents, destroyCourse } from './trafficDirector.js';
 import {
   ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG, COURSE_KIND_SHIFT, courseNumber
 } from './trafficProtocol.js';
@@ -312,11 +314,145 @@ export function refreshFleetStock(state) {
         id: entityId(state, shipId), hullId: spot.hullId, factionId: spot.factionId, x: spot.x, y: spot.y,
         angle: spot.angle, berthId: reda ? null : spot.berthId, length: size.length, width: size.width,
         flags: reda ? ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED : ACTOR_FLAG.STOCK, phase: reda ? PHASE_HOLD : PHASE_DOCKED,
-        shipId: null
+        shipId: null, fleetShipId: shipId, classId: spot.classId || null, portId
       });
     }
   }
   return stock.list.length;
+}
+
+// ============================================================
+// Encje bez kursu przejęte przez grę (E6, 2026-10-23): taran i ogień — nietykalnych nie ma
+// ============================================================
+
+/**
+ * Encja bańki bez kursu po id z bufora: zapas floty (`stock`, id ujemny), postój statku firmy (`parked`, id ujemny),
+ * odlot po końcu kursu (`departed`, numer zamkniętego kursu). Null — nie ma jej w bańce.
+ */
+export function resolveBubbleEntity(state, id) {
+  const num = Number(id);
+  if (!Number.isFinite(num)) return null;
+  const world = state.world;
+  if (num < 0) {
+    for (const e of state.stock.list) {
+      if (e.id === num) return { kind: 'stock', id: num, fleetShipId: e.fleetShipId, factionId: e.factionId, classId: e.classId, portId: e.portId };
+    }
+    for (const e of state.parked.list) {
+      if (e.id !== num) continue;
+      const ship = getShip(world.companies, e.shipId);
+      return ship ? { kind: 'parked', id: num, ship } : null;
+    }
+    return null;
+  }
+  for (const a of state.bubble.list) {
+    if (!a.departed || courseNumber(a.courseId) !== num) continue;
+    const course = getCourse(world.registry, a.courseId);
+    const shipId = course?.payload?.shipId;
+    return {
+      kind: 'departed', id: num, actor: a, ship: shipId ? getShip(world.companies, shipId) : null,
+      factionId: course?.factionId || null, courseKind: course?.kind || null, x: a.x, y: a.y
+    };
+  }
+  return null;
+}
+
+/**
+ * Gra przejęła encję bez kursu jako pełny NPC (`on`) albo oddała ją (`!on`). Statek firmy (postój, odlot) schodzi
+ * z puli dyspozytora na czas walki: `BUSY` bez kursu (`gameHold`) — firma nie da mu kursu, a postój go nie
+ * pokazuje (inaczej po nowym kursie statek byłby w grze dwa razy); oddany wraca na postój w swoim porcie. Odlot
+ * znika z bańki (NPC jest teraz statkiem). Zapas floty zostaje w zapasie — encję ukrywa gra. Zwraca true, gdy
+ * encja jest (była) przejęta.
+ */
+export function holdBubbleEntity(state, id, on) {
+  const held = state.held || (state.held = new Map());
+  const num = Number(id);
+  if (!on) {
+    const ref = held.get(num);
+    held.delete(num);
+    const ship = ref?.ship;
+    if (ship?.gameHold) {
+      ship.gameHold = false;
+      if (ship.state === SHIP_STATE.BUSY && !ship.courseId) {
+        releaseShipAt(ship, ship.stationId, state.world.registry.clock);
+      }
+    }
+    return !!ref;
+  }
+  if (held.has(num)) return true;
+  const ref = resolveBubbleEntity(state, num);
+  if (!ref) return false;
+  if (ref.actor) dropDepartedActor(state.bubble, ref.actor);
+  if (ref.ship) {
+    state.parked?.departing?.delete(String(ref.ship.id));
+    if (ref.ship.state === SHIP_STATE.PARKED) {
+      ref.ship.state = SHIP_STATE.BUSY;
+      ref.ship.courseId = null;
+      ref.ship.gameHold = true;
+    }
+  }
+  held.set(num, ref);
+  return true;
+}
+
+/**
+ * Encja bez kursu zniszczona w grze. Zapas floty i okręt garnizonu w odlocie → strata z zapasu frakcji
+ * (`settleGarrisonLosses` od razu: zapas klasy −1, wrak ze złomem jak po bitwie); zniszczony okręt zapasu
+ * przejmuje miejsce i id encji okrętu o ostatnim numerze (ten znika z liczności) — pad zniszczonego zostaje pusty.
+ * Statek firmy (postój, odlot) → firma traci statek (`loseShip`); kurs, który zdążył dostać, ginie z nim
+ * (`destroyCourse`). Zwraca opis straty albo null.
+ */
+export function loseBubbleEntity(state, id, info = {}) {
+  const world = state.world;
+  const num = Number(id);
+  const ref = state.held?.get(num) || resolveBubbleEntity(state, num);
+  state.held?.delete(num);
+  if (!ref) return null;
+  const x = Number.isFinite(Number(info.x)) ? Number(info.x) : (ref.x ?? 0);
+  const y = Number.isFinite(Number(info.y)) ? Number(info.y) : (ref.y ?? 0);
+  if (ref.actor) dropDepartedActor(state.bubble, ref.actor);
+  if (ref.ship) {
+    const ship = ref.ship;
+    ship.gameHold = false;
+    state.parked?.departing?.delete(String(ship.id));
+    const course = ship.courseId ? getCourse(world.registry, ship.courseId) : null;
+    if (course && course.status === COURSE_STATUS.ACTIVE) {
+      destroyCourse(world.director, course, { reason: info.reason || 'player', x, y });
+    } else {
+      loseShip(world.companies, getCompany(world.companies, ship.companyId), ship, 0);
+    }
+    return { kind: ref.kind, shipId: String(ship.id) };
+  }
+  const garrisonCourse = ref.kind === 'departed' && (ref.courseKind === 'patrol' || ref.courseKind === 'war');
+  if (ref.kind === 'stock' || garrisonCourse) {
+    const war = world.war;
+    if (!war || !world.shipyards || !ref.factionId) return null;
+    const garrison = war.garrison || (war.garrison = createGarrisonState());
+    garrison.losses.push({
+      factionId: ref.factionId, classId: ref.classId || null, stationId: ref.portId || null, x, y,
+      reason: info.reason || 'player'
+    });
+    const events = [];
+    settleGarrisonLosses(war, world.shipyards, world.rng, events);
+    const lost = events[0] || null;
+    if (ref.kind === 'stock' && lost) handOverStockSpot(state, ref, lost.classId);
+    return { kind: ref.kind, classId: lost?.classId || null, factionId: ref.factionId };
+  }
+  return { kind: ref.kind };
+}
+
+/** Po stracie okrętu zapasu: zniknął ostatni numer klasy — zniszczony bierze jego miejsce i id encji. */
+function handOverStockSpot(state, ref, classId) {
+  const fleet = state.world.shipyards?.fleets?.get(String(ref.factionId));
+  if (!fleet || classId !== ref.classId) return;
+  const lastId = `${ref.factionId}:${classId}:${(Number(fleet[classId]) || 0) + 1}`;
+  const lostId = ref.fleetShipId;
+  if (!lostId || lastId === lostId) return;
+  for (const reg of state.stock.regs.values()) renameParkedShip(reg, lastId, lostId);
+  const ids = state.stock.ids;
+  const lastEntity = ids.get(lastId);
+  if (lastEntity !== undefined) ids.set(lostId, lastEntity);
+  else ids.delete(lostId);
+  ids.delete(lastId);
 }
 
 /** Stałe id ujemne encji bez kursu (zapas floty, postój) — po id statku, jedno źródło dla obu list. */

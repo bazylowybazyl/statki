@@ -299,18 +299,12 @@ export function trafficBulletHit(tb, x, y, vx, vy, dt, pad, fromX, fromY) {
 }
 
 /**
- * Obrażenia encji. Zwraca true, gdy encja zginęła (kurs zgłoszony workerowi:
- * `destroyCourse` — kurs zniszczony, wrak z ładunkiem w świecie ruchu).
+ * Obrażenia encji. Zwraca true, gdy encja zginęła (strata zgłoszona workerowi: kurs — `destroyCourse`, wrak
+ * z ładunkiem w świecie ruchu; zapas floty, postój, odlot — `entityLost`, ubytek zapasu frakcji / statku firmy).
+ * Nietykalnych nie ma (2026-10-23): STOCK, PARKED i DEPARTED biorą obrażenia i awansują jak kursy.
  */
 export function damageTrafficActor(tb, a, amount, x, y, cause = 'player') {
   if (!a?.alive || !(amount > 0)) return false;
-  // Zapas floty bez kursu, postój na redzie / orbicie (PARKED, E15) i odlot po końcu kursu (DEPARTED): nie ma czego
-  // zgłosić workerowi — pocisk staje, bez obrażeń.
-  if (a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED | ACTOR_FLAG.DEPARTED)) {
-    a.hitAt = tb.time;
-    tb.stats.hits++;
-    return false;
-  }
   a.hp -= amount;
   a.hitAt = tb.time;
   tb.stats.hits++;
@@ -331,8 +325,58 @@ export function destroyTrafficActor(tb, a, x = a.cx, y = a.cy, cause = 'player')
   const at = tb.list.indexOf(a);
   if (at >= 0) tb.list.splice(at, 1);
   tb.stats.destroyed++;
-  tb.bridge?.destroyCourse?.(a.id, { x, y, reason: cause, byPirates: false });
+  // Kurs (numer ≥ 0, bez DEPARTED) — kurs zniszczony; encja bez kursu — strata statku po stronie świata.
+  if (a.id >= 0 && !(a.flags & ACTOR_FLAG.DEPARTED)) tb.bridge?.destroyCourse?.(a.id, { x, y, reason: cause, byPirates: false });
+  else tb.bridge?.entityLost?.(a.id, { x, y, reason: cause });
   tb.hooks.onDestroyed?.(a, x, y, cause);
+}
+
+/**
+ * Czas do kontaktu kadłuba gracza z obrysem encji [s] — awans przed taranem (`trafficPromotion.js`). Gracz:
+ * prostokąt `length × width` w (x, y) pod kątem `angle`, ruch (vx, vy); encja — prostokąt obrysu w pozie kroku
+ * (`cx`, `cy`, `ca`). W układzie encji obrys gracza to jego rzut na osie encji (dokładny przy równoległych osiach,
+ * dla ukosu — pudło opisane), dodany do obrysu encji z zapasem `pad`; ruch względny prostoliniowy (test płyt).
+ * 0 — obrysy już zachodzą, Infinity — miną się albo rozjeżdżają.
+ */
+export function trafficContactTime(a, x, y, vx, vy, angle, length, width, pad = 0) {
+  const c = Math.cos(a.ca);
+  const s = Math.sin(a.ca);
+  const dc = Math.cos(angle - a.ca);
+  const ds = Math.sin(angle - a.ca);
+  const rx = x - a.cx;
+  const ry = y - a.cy;
+  const px = rx * c + ry * s;
+  const py = -rx * s + ry * c;
+  const wx = vx - a.vx;
+  const wy = vy - a.vy;
+  const qx = wx * c + wy * s;
+  const qy = -wx * s + wy * c;
+  const pl = length * 0.5;
+  const pw = width * 0.5;
+  const hx = a.length * 0.5 + (dc < 0 ? -dc : dc) * pl + (ds < 0 ? -ds : ds) * pw + pad;
+  const hy = a.width * 0.5 + (ds < 0 ? -ds : ds) * pl + (dc < 0 ? -dc : dc) * pw + pad;
+  if (px <= hx && px >= -hx && py <= hy && py >= -hy) return 0;
+  let t0 = 0;
+  let t1 = Infinity;
+  if (qx > -1e-9 && qx < 1e-9) {
+    if (px > hx || px < -hx) return Infinity;
+  } else {
+    let ta = (-hx - px) / qx;
+    let tb2 = (hx - px) / qx;
+    if (ta > tb2) { const t = ta; ta = tb2; tb2 = t; }
+    if (ta > t0) t0 = ta;
+    if (tb2 < t1) t1 = tb2;
+  }
+  if (qy > -1e-9 && qy < 1e-9) {
+    if (py > hy || py < -hy) return Infinity;
+  } else {
+    let ta = (-hy - py) / qy;
+    let tb2 = (hy - py) / qy;
+    if (ta > tb2) { const t = ta; ta = tb2; tb2 = t; }
+    if (ta > t0) t0 = ta;
+    if (tb2 < t1) t1 = tb2;
+  }
+  return t0 <= t1 ? t0 : Infinity;
 }
 
 /**
