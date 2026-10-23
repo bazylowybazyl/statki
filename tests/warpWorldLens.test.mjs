@@ -54,6 +54,83 @@ test('mapowanie: β = 0 — prawdziwy widok; cel daleko przed dziobem — przy k
   assert.equal(viewEdgeDistance(0, -1, 960, 540, 0, 0), 540);
 });
 
+test('przelot z daleka (2026-10-23, „przelot jak dotarcie do celu — planeta się po prostu pojawia”): punkt zbiegu, powolny wzrost, trawers jak dawniej, za rufą bez zmian', () => {
+  const P = WORLD_LENS_DEFAULTS;
+  const S = 0.002;
+  // Kurs w górę ekranu, statek 150 px pod środkiem kadru 1600 × 900 — do krawędzi przed dziobem 600 px.
+  const o = { zoom: 0.1, flatScale: 0.1, beta: 1, velAngle: -Math.PI / 2, lensScale: S, viewHalfW: 800, viewHalfH: 450,
+    shipSx: 0, shipSy: 150, sizeDepth: P.sizeDepth };
+  const E = 600 * P.approachEdge;
+  const A0 = E / S;
+  const r = 30000;
+  const lat = 75000;
+  const at = (along, approach = 1, beta = 1, l = lat) => mapWorldLens(l, -along, r, { ...o, approach, beta }, {});
+  // Daleko przed dziobem: w kadrze przy punkcie zbiegu, mała; bez perspektywy (dawniej) — setki px za krawędzią.
+  const far = at(1e6);
+  assert.ok(far.y < 0 && -far.y < E && -far.y > 0.75 * E, `punkt zbiegu (${far.y})`);
+  assert.ok(far.size < r * S * 0.25, `mała z daleka (${far.size})`);
+  assert.ok(-at(1e6, 0).y > 600 * 2, 'dawniej: daleko za krawędzią kadru');
+  // Rośnie powoli i monotonicznie w miarę zbliżania; trawers — dokładnie dawny obraz (ciągłość), za rufą bez zmian.
+  let prev = 0;
+  for (const a of [1e6, 6e5, 3e5, 1.5e5, 6e4, 2e4, 5e3]) {
+    const m = at(a);
+    assert.ok(m.size > prev, `rośnie (${a})`);
+    prev = m.size;
+  }
+  const k = A0 / (3e5 + A0);
+  assert.ok(near(at(3e5).size, r * S * k, 1e-9) && near(at(3e5).x, lat * S * k, 1e-9), 'położenie i wielkość × k');
+  const abeam = at(1), abeamOld = at(1, 0);
+  assert.ok(Math.abs(abeam.x - abeamOld.x) < 1e-3 && Math.abs(abeam.size - abeamOld.size) < 1e-3, 'trawers bez zmian');
+  const behind = at(-50000), behindOld = at(-50000, 0);
+  assert.ok(near(behind.x, behindOld.x) && near(behind.y, behindOld.y) && near(behind.size, behindOld.size), 'za rufą bez zmian');
+  // Przejście β (przegląd 2026-10-23): ciągłe przy każdym β — β → 0 zbiega do prawdziwego obrazu (położenie i wielkość),
+  // także dla ciała blisko statku (start skoku z planetą w kadrze przed dziobem, wyjście przy planecie spoza celu).
+  for (const a of [6e5, 6e4, 8000]) {
+    const real = at(a, 1, 0);
+    const eps = at(a, 1, 1e-6);
+    const tol = (v) => 1e-4 * Math.abs(v) + 0.05;   // β = 1e-6: zbieżność liniowa w β
+    assert.ok(Math.abs(eps.x - real.x) < tol(real.x) && Math.abs(eps.y - real.y) < tol(real.y) && Math.abs(eps.size - real.size) < tol(real.size),
+      `β → 0 = prawdziwy obraz (${a}: ${eps.x.toFixed(2)},${eps.y.toFixed(2)} r ${eps.size.toFixed(2)} vs ${real.x},${real.y} r ${real.size})`);
+    let pr = real;
+    for (let i = 1; i <= 200; i++) {
+      const m = at(a, 1, i / 200);
+      const jump = Math.hypot(m.x - pr.x, m.y - pr.y);
+      // krok β = 0,005 — przesunięcie ograniczone (bez skoku) względem drogi real → soczewka
+      assert.ok(jump < Math.hypot(real.x - full1(a).x, real.y - full1(a).y) * 0.2 + 1, `β ${i / 200}: skok ${jump.toFixed(1)} px (${a})`);
+      assert.ok(Math.abs(Math.log(m.size / pr.size)) < 0.2, `β ${i / 200}: wielkość ${pr.size.toFixed(1)} → ${m.size.toFixed(1)} (${a})`);
+      pr = m;
+    }
+  }
+  function full1(a) { return at(a, 1, 1); }
+  // Ciało daleko od kursu (przy mijaniu i tak poza kadrem) — bez perspektywy; cel (trzymanie przy krawędzi) — bez perspektywy.
+  const wide = 600000;   // 1200 px w bok przy S = 0,002 — przy mijaniu poza kadrem (do krawędzi w bok 800 px)
+  assert.ok(near(at(6e5, 1, 1, wide).x, at(6e5, 0, 1, wide).x), 'daleko w bok — dawny obraz');
+  const tgt = { ...o, hold: 1, approach: 1, gapPx: P.edgeGap, holdSize: P.holdSize, holdPeek: P.holdPeek, holdSoft: P.holdSoft };
+  assert.deepEqual(mapWorldLens(0, -6e5, r, tgt, {}), mapWorldLens(0, -6e5, r, { ...tgt, approach: 0 }, {}));
+  // Tylko ciała mijane w tym skoku: za końcem skoku (approachMax — bliski brzeg celu wzdłuż kursu) bez perspektywy.
+  const beyond = mapWorldLens(lat, -9e5, r, { ...o, approach: 1, approachMax: 5e5 }, {});
+  const beyondOld = mapWorldLens(lat, -9e5, r, { ...o, approach: 0 }, {});
+  assert.ok(near(beyond.x, beyondOld.x) && near(beyond.y, beyondOld.y) && near(beyond.size, beyondOld.size), 'za celem — dawny obraz');
+  const before = mapWorldLens(lat, -3e5, r, { ...o, approach: 1, approachMax: 5e5 }, {});
+  assert.ok(near(before.size, at(3e5).size), 'przed celem — perspektywa');
+  // Sterownik: mijane ciała z perspektywą, cel bez; koniec skoku = bliski brzeg celu wzdłuż kursu.
+  const src = read('src/3d/warp/worldLens.js');
+  assert.match(src, /o\.approach = isTarget \? 0 : 1;\s*mapWorldLens\(dx, dy, b\.r, o, m\);/);
+  assert.match(src, /o\.approachMax = Math\.max\(0, tdx \* Math\.cos\(o\.velAngle\) \+ tdy \* Math\.sin\(o\.velAngle\) - target\.r\);/);
+});
+
+test('ring w soczewce (przegląd 2026-10-23): warstwy tła tylko przy przesuniętym obrazie, próg px bramkuje rysowanie i budowę', () => {
+  const ring = read('src/3d/haloRing/haloRingGame.js');
+  // Planeta czekająca na prawdziwym miejscu (bramka, wejście −1, puszczony przylot) ma lens.on, ale real = 1 — ring
+  // prawdziwy, FG (dachy hal K-7, górna ściana) nad statkami w halach.
+  assert.match(ring, /const lensBg = lensOn && \(Number\(lens\.real\) \|\| 0\) < HALO_GAME\.lensBgReal;/);
+  assert.match(ring, /if \(!!e\.lensLayers !== lensBg\) \{\s*e\.lensLayers = lensBg;\s*ring\.setLayers\(lensBg \? HALO_GAME\.lensLayers : HALO_GAME\.layers\);/);
+  // Mały obraz ringu w soczewce — ani rysunek, ani budowa ringu-archetypu w tle.
+  assert.match(ring, /const lensSmall = lensOn && L\.radii\.max \* ks \* zoom < HALO_GAME\.lensMinPx;/);
+  assert.match(ring, /\(lensOn && lens\.vis && !lensSmall\)\)\) this\._ensureRing\(e\);/);
+  assert.match(ring, /&& !lensSmall;/);
+});
+
 function rig() {
   const lens = new WarpWorldLens();
   const ctx = {
@@ -270,6 +347,11 @@ test('ring w soczewce (2026-10-19, „a co z ringami”): slot raz na planetę, 
   assert.match(ring, /ring\.group\.position\.set\(ox, -oy, 0\);\s*ring\.group\.scale\.setScalar\(ks\);/);
   assert.match(ring, /if \(lensOn && lens\.turned && lens\.q\) ring\.group\.quaternion\.copy\(lens\.q\)\.multiply\(_qRot\);\s*else ring\.group\.quaternion\.copy\(_qRot\);/);
   assert.match(ring, /const shadowK = lensOn \? Math\.max\(0, Math\.min\(1, Number\(lens\.real\) \|\| 0\)\) : 1;/);
+  // Ring w soczewce = tło jak planeta (2026-10-23, „planeta przebija się przez statek”): części FG (górna ściana,
+  // moduły) na warstwie tła — pass FG rysuje się po kadłubach; po soczewce zwykłe warstwy (FG nad statkiem w hali).
+  assert.match(ring, /lensLayers: Object\.freeze\(\{ default: 1, fg: 1 \}\)/);
+  // Ring w soczewce dopiero od `lensMinPx` na ekranie (mijana planeta jest w kadrze od początku skoku — ring kosztuje
+  // ~3 ms CPU i ~50 rysunków także jako kreska wokół kilkupikselowej tarczy).
   // Klucz slotu = klucz wpisu ringu (id planety z mapy układu).
   assert.match(planets, /warpRingLensSlot\(this\.data\?\.id \|\| this\.name\)/);
 });

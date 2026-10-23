@@ -68,10 +68,19 @@ export const WARP_LENS_TIMING = Object.freeze({ kick: 0.5 });
  * siły w px ekranu (refrakcja — bez świecących obrysów, pamięć shockwave-style):
  *   NACIĄG     — w ładowaniu przestrzeń wsysana do punktu skoku `jumpAhead` L przed dziobem (implozja z ładowaniem),
  *   PĘKNIĘCIE  — przy skoku naciąg pęka falą z punktu skoku (statek przelatuje przez nią),
- *   SPRĘŻENIE  — przy wyjściu przestrzeń przed dziobem wraca falą (razem z frontem gwiazd).
+ *   SPRĘŻENIE  — w chwili zatrzymania (hamowanie rampy) przestrzeń przed dziobem wraca falą — razem z błyskiem
+ *                i żarem hamowania, zamiast fali hamowania (przylot = jedno zdarzenie, WARP_ARRIVAL_ACCENT).
  */
 // Punkt skoku 1,6 L przed dziobem: w kadrze ładowania przy zoomie gracza (3,2 L wypadało poza kadr — zrzuty dema).
 export const WARP_ACCENT = Object.freeze({ jumpAhead: 1.6, pullR: 1.3, pullAmp: 40, snapAmp: 16, snapLife: 0.9, springAmp: 14, springLife: 1.0 });
+/**
+ * PRZYLOT = JEDNO ZDARZENIE (2026-10-23, user: „przylot staje podwójnie: jeden wybuch haze i drugi wybuch heat”).
+ * Pomiar w demie „Pęd”: przy hamowaniu błysk + fala refrakcji, a żar brzegu kadłuba (zanik τ 2,2 s) wyłaniał się
+ * 0,6–1,5 s później, gdy kadr przylotu dosuwał kamerę — drugi „wybuch”; styl 'akcent' dokładał SPRĘŻENIE już na
+ * starcie wyjścia (1,15 s przed hamowaniem). Teraz wszystko w chwili zatrzymania: fala (w 'akcent' — SPRĘŻENIE zamiast
+ * fali hamowania), błysk, wstrząs, iskry, żar kadłuba jako krótki impuls (`heatTau`). Hipercruise — dawny zanik żaru.
+ */
+export const WARP_ARRIVAL_ACCENT = Object.freeze({ heatTau: 0.45, heatTauHyper: 2.2 });
 /** Soczewka bańki (styl 'soczewka'): półoś w poprzek × promień bańki, grubość pierścienia × L, siła [px]. */
 export const WARP_LENS_BUBBLE = Object.freeze({ across: 1.05, width: 0.42, amp: 46 });
 /**
@@ -393,8 +402,9 @@ export class WarpPlayerFx {
         frame.addWave(this.kickMX - medium.camMX + c * ahead, this.kickMY - medium.camMY + sn * ahead,
           L * (0.2 + 4.5 * easeOut3(u)), L * 0.32, ac.snapAmp * (1 - u) ** 2);
       }
-      if (exiting && tx >= 0 && tx < ac.springLife) {
-        const u = tx / ac.springLife;
+      // SPRĘŻENIE w chwili zatrzymania (WARP_ARRIVAL_ACCENT) — zamiast fali hamowania niżej.
+      if (exiting && tb >= 0 && tb < ac.springLife) {
+        const u = tb / ac.springLife;
         frame.addWave(sx + c * L * 0.9, sy + sn * L * 0.9, L * (0.3 + 3.8 * easeOut3(u)), L * 0.3, ac.springAmp * (1 - u) ** 2);
       }
     } else if (this.style === 'soczewka') {
@@ -435,7 +445,7 @@ export class WarpPlayerFx {
         frame.addFlash(bx, by, L * 0.55, k * 1.8, pal, false);
         frame.addGlare(bx, by, this.angle + Math.PI * 0.5, L * 1.6, k * 1.2, pal);
       }
-      if (tb >= 0 && tb < 1.3) {
+      if (tb >= 0 && tb < 1.3 && this.style !== 'akcent') {
         const ag = tb / 1.3;
         frame.addWave(sx + c * L * 0.5, sy + sn * L * 0.5, L * (0.25 + 3.2 * easeOut3(ag)), L * 0.24, 11 * (1 - ag) ** 2 * Math.min(1.2, size * 1.2));
       }
@@ -443,7 +453,9 @@ export class WarpPlayerFx {
         this.brakeShaken = true;
         if (this.onShake) this.onShake(22, 0.3);   // demo: 11 px · e^(−t/0,3)
       }
-      // Żar przy hamowaniu (cała energia w kadłub).
+      // Żar przy hamowaniu (cała energia w kadłub) — impuls razem z błyskiem (WARP_ARRIVAL_ACCENT), nie osobny żar
+      // wyłaniający się po nim.
+      const heatTau = this.hyper ? WARP_ARRIVAL_ACCENT.heatTauHyper : WARP_ARRIVAL_ACCENT.heatTau;
       if (tb >= 0 && tb < 8) {
         hull.on = true;
         hull.revealMode = 0;
@@ -451,7 +463,7 @@ export class WarpPlayerFx {
         hull.seamLine = -L * 4;
         hull.seam = 0;
         hull.seamW = Math.max(5, L * 0.007);
-        hull.heat = 0.95 * smooth(0, 0.06, tb) * Math.exp(-Math.max(0, tb - 0.06) / 2.2);
+        hull.heat = 0.95 * smooth(0, 0.06, tb) * Math.exp(-Math.max(0, tb - 0.06) / heatTau);
         heatColor(hull.heat, hull.heatRGB);
         hull.rimW = Math.max(8, L * 0.011);
         if (hull.heat < 0.003 && tb > 0.1) hull.on = false;

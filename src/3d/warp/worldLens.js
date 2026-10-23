@@ -29,7 +29,16 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   zoomRefSpeed: 150000, // [j/s] wolniejszy skok — ciaśniejszy kadr (ciała mijają kadr w tym samym tempie)
   lensScaleMax: 0.5,    // S najwyżej × zoom kamery
   lensScaleLag: 0.15,   // [s] wygładzenie zmian S
-  sizeDepth: 30000,     // [j.] h perspektywy wzdłuż kursu
+  sizeDepth: 30000,     // [j.] h perspektywy wzdłuż kursu (za rufą; przed dziobem — perspektywa przelotu niżej)
+  // PRZELOT Z DALEKA (2026-10-23, user: „przelot ma wyglądać podobnie do dotarcia do celu — planeta z daleka, powoli
+  // rośnie, pod statkiem duża, potem ucieka za statek; obecnie się po prostu pojawia”): mijane ciało przed dziobem
+  // w perspektywie z punktem zbiegu na kursie (approachEdge × odległość statek → krawędź kadru przed dziobem):
+  // położenie i wielkość × k = A0 / (a + A0), A0 = E / S (w trawersie k = 1 — obraz jak dawniej, za rufą bez zmian).
+  // Tylko ciała, które w tym skoku miniemy: obraz w trawersie w kadrze (odstęp od kursu × S do approachLatNear /
+  // approachLatFar drogi od statku do krawędzi kadru w bok) i przed końcem skoku (cel — WarpWorldLens: approachMax).
+  approachEdge: 0.8,    // punkt zbiegu: ułamek drogi od statku do krawędzi kadru przed dziobem
+  approachLatNear: 0.8, // odstęp od kursu w trawersie (× droga do krawędzi kadru w bok): do tego pełna perspektywa,
+  approachLatFar: 1.2,  // od tego żadna (ciało i tak nie wejdzie w kadr przy mijaniu)
   flybyHeight: 100000,  // [j.] wysokość wirtualnej kamery obrotu przelotu
   flybyTilt: 1,         // siła obrotu przelotu
   targetWindow: 450000, // [j.] cel bliżej niż to zjeżdża od krawędzi kadru ku statkowi
@@ -161,6 +170,42 @@ export function mapWorldLens(dx, dy, r, o, out = {}) {
   out.size = size;
   out.theta = theta;
   out.gap = gap;
+  // PRZELOT Z DALEKA (mijane ciało przed dziobem, nie cel): perspektywa z punktem zbiegu na kursie. Pełna soczewka
+  // (β = 1): położenie i wielkość × k = A0 / (a + A0), A0 = E / S. Przejście β (wejście w soczewkę, wyjście) w tej samej
+  // rodzinie rzutów: skala S_β = flat^(1−β) · S^β (logarytmicznie), k_β = 1 / (1 + a · β / A0) — β → 0 daje prawdziwy
+  // obraz (położenie i wielkość), β = 1 perspektywę, bez skoku przy każdym β (przegląd 2026-10-23: wielkość × β
+  // w punkcie zbiegu, a przy β = 0 prawdziwy obraz — planeta przed dziobem przy wyjściu kurczyła się do kropki
+  // i wskakiwała na prawdziwe miejsce). Przy trawersie (a → 0) i za rufą — obraz jak wyżej. Tylko ciała, które w tym
+  // skoku miniemy: blisko kursu (approachLat*) i przed końcem skoku (o.approachMax [j.] wzdłuż kursu — cel).
+  const app = clamp(Number(o.approach) || 0, 0, 1) * (1 - hold);
+  if (app > 0 && along > 0) {
+    const ux = Math.cos(va);
+    const uy = Math.sin(va);
+    const lat = d * Math.sin(theta - va);
+    const sideX = lat >= 0 ? -uy : uy;
+    const sideY = lat >= 0 ? ux : -ux;
+    const acrossPx = Math.max(1, viewEdgeDistance(sideX, sideY, o.viewHalfW, o.viewHalfH, o.shipSx, o.shipSy));
+    const pLat = Number(o.approachLatNear) || P.approachLatNear;
+    const pFar = Math.max(pLat + 1e-3, Number(o.approachLatFar) || P.approachLatFar);
+    const edgePx = viewEdgeDistance(ux, uy, o.viewHalfW, o.viewHalfH, o.shipSx, o.shipSy);
+    const E = Math.max(1, edgePx * (Number(o.approachEdge) || P.approachEdge));
+    const A0 = E / S;
+    const aMax = Number.isFinite(o.approachMax) ? o.approachMax : Infinity;
+    // udział: blisko kursu pełny, płynnie od trawersu (ciągłość przy a ≈ 0), przed końcem skoku (za celem — żaden)
+    const w = app * (1 - smoothstep(pLat, pFar, Math.abs(lat) * S / acrossPx)) * smoothstep(0, 0.05 * A0, along)
+      * (aMax < Infinity ? 1 - smoothstep(aMax * 0.85, aMax, along) : 1);
+    if (w > 0) {
+      const Sb = Math.exp(Math.log(Math.max(1e-12, flat)) * (1 - beta) + Math.log(S) * beta);
+      const kb = 1 / (1 + along * beta / A0);
+      const lx = Sb * kb * (along * ux - lat * uy);
+      const ly = Sb * kb * (along * uy + lat * ux);
+      const ls = rr * Sb * kb * (1 + ((Number(o.sizeBoost) || 1) - 1) * beta);
+      out.x += (lx - out.x) * w;
+      out.y += (ly - out.y) * w;
+      out.size = size + (ls - size) * w;
+      out.gap = Math.sqrt(out.x * out.x + out.y * out.y) - out.size;
+    }
+  }
   return out;
 }
 
@@ -277,7 +322,9 @@ export class WarpWorldLens {
       viewHalfW: 400, viewHalfH: 300, shipSx: 0, shipSy: 0, targetWindow: p.targetWindow,
       sizeK: p.sizeK, sizeD0: p.sizeD0, gapPx: p.edgeGap,
       hullHalfLen: 0, hullHalfWid: 0, hold: 0, holdSize: p.holdSize,
-      holdPeek: p.holdPeek, holdSoft: p.holdSoft, beta: 0, velAngle: 0, sizeBoost: 1
+      holdPeek: p.holdPeek, holdSoft: p.holdSoft, beta: 0, velAngle: 0, sizeBoost: 1,
+      approach: 0, approachEdge: p.approachEdge, approachLatNear: p.approachLatNear, approachLatFar: p.approachLatFar,
+      approachMax: Infinity
     };
     this._map = { x: 0, y: 0, size: 0, d: 0, edge: 0, theta: 0, gap: 0 };
     this._tgt = { x: 0, y: 0, size: 0, d: 0, edge: 0, theta: 0, gap: 0 };
@@ -412,11 +459,15 @@ export class WarpWorldLens {
     let tBeta = 0;
     let arrHold = 0;
     const tg = this._tgt;
+    // Przelot z daleka tylko przed końcem skoku: z celem — do jego bliskiego brzegu wzdłuż kursu; swobodny skok — bez
+    // końca (każde ciało przed dziobem może zostać minięte).
+    o.approachMax = Infinity;
     if (target && target.ready) {
       const twx = target.x - sx0;
       const twy = target.y - sy0;
       const tdx = rc * twx + rs * twy;
       const tdy = -rs * twx + rc * twy;
+      o.approachMax = Math.max(0, tdx * Math.cos(o.velAngle) + tdy * Math.sin(o.velAngle) - target.r);
       o.hold = 1;
       o.beta = 1;
       o.flatScale = target.flat;
@@ -452,7 +503,9 @@ export class WarpWorldLens {
         if (b.entrySession !== this.session || b.entry !== 1) {
           o.beta = 1;
           o.flatScale = fl;
+          o.approach = 1;
           mapWorldLens(dx, dy, b.r, o, full);
+          o.approach = 0;
           e = this._entry(b, dx, dy, full, ctx, vis);
         }
         bb = beta * clamp(b.gate, 0, 1) * e;
@@ -471,8 +524,11 @@ export class WarpWorldLens {
         o.beta = bb;
         o.flatScale = fl;
         o.hold = isTarget ? 1 : 0;
+        // mijane ciało przed dziobem — przelot z daleka (perspektywa z punktem zbiegu); cel ma trzymanie przy krawędzi
+        o.approach = isTarget ? 0 : 1;
         mapWorldLens(dx, dy, b.r, o, m);
         o.hold = 0;
+        o.approach = 0;
       }
       const out = b.out;
       out.x = ctx.shipSx + m.x;

@@ -25,8 +25,8 @@ export const WARP_DEBRIS = Object.freeze({
   depthMin: 2500,      // [j.] pod płaszczyzną gry — najpłytsza skała
   depthMax: 24000,     // [j.] najgłębsza (paralaksa: ~⅓ prędkości ekranu płytkiej)
   rMin: 70,            // [j.] promień skały (rozkład logarytmiczny)
-  rMax: 560,
-  exposure: 0.055,     // [s] czas naświetlania smugi: długość = prędkość × to (~74 px przy zoomie skoku — jak gwiazdy)
+  rMax: 800,
+  exposure: 0.055,     // [s] czas naświetlania smugi: długość = prędkość × to × mnożnik wyglądu (WARP_DEBRIS_LOOKS)
   minStretch: 0.05,    // smugi gwiazd, od których pas jest w trybie skoku
   speedFallback: 14000, // [j/s] przepływ, gdy kamera gwiazd nie ma limitu
   boxMul: 1.12,        // zapas pudła ponad kadr na najgłębszej warstwie
@@ -37,6 +37,17 @@ export const WARP_DEBRIS = Object.freeze({
   growTime: 0.25,      // [s] skała wyrasta
   fadeTime: 0.3        // [s] skała nadmiaru maleje
 });
+
+// WYGLĄD SMUGI (2026-10-23, user: „słabo się rozciągają, potrzebny lepszy wygląd”): uniformy wariantu `smear`
+// materiału skał (rockMaterial.js) — przełączanie bez nowych pipeline'ów. `length` — mnożnik długości (× prędkość ×
+// `exposure`), `taper` — koniec smugi / promień skały, `tail` — krycie ogona za skałą (głowa pełna), `fade` — wykładnik
+// zaniku alfy, `blur` — mipy tekstur w ogonie, `sunMix` — normalna ogona ku słońcu, `gain` — jasność skały. Dawny
+// wygląd (2026-10-19): kapsuła — długość × 1, bez zwężenia i rozmycia, alfa ogona 1 → 0,3 (pełna szara „pałka”).
+export const WARP_DEBRIS_LOOKS = Object.freeze({
+  slad: Object.freeze({ label: 'ślad światła — długi, cienki ogon od oświetlonej strony, jaśniejsza głowa', length: 3.4, taper: 0.2, tail: 0.55, fade: 1, blur: 4.5, sunMix: 1, gain: 2 }),
+  klin: Object.freeze({ label: 'klin — krótszy ślad, wyraźna oświetlona skała u czoła', length: 1.6, taper: 0.6, tail: 0.5, fade: 1.4, blur: 3, sunMix: 0.4, gain: 2.2 })
+});
+export const WARP_DEBRIS_LOOK_DEFAULT = 'slad';
 
 // Paleta typów smug: wypełniacz kamienny i węglowy, widmowe C / S / M / V, rzadko ruda (wagi).
 const TYPE_PALETTE = [
@@ -101,6 +112,22 @@ export class WarpDebris {
     this._prevX = NaN;
     this._prevY = NaN;
     this.stats = { rocks: 0, density: 0, target: 0, speed: 0 };
+    this.look = '';
+    this._lookLength = 1;
+    this.setLook(WARP_DEBRIS_LOOK_DEFAULT);
+  }
+
+  /** Wygląd smugi (klucz WARP_DEBRIS_LOOKS) — uniformy materiału, bez nowych pipeline'ów. Zwraca klucz albo null. */
+  setLook(name) {
+    const L = WARP_DEBRIS_LOOKS[name];
+    if (!L) return null;
+    this.look = name;
+    this._lookLength = L.length;
+    const sm = this.material && this.material.smear;
+    if (sm) {
+      for (const k of ['taper', 'tail', 'fade', 'blur', 'sunMix', 'gain']) if (sm[k]) sm[k].value = L[k];
+    }
+    return name;
   }
 
   /** Grupa siatek (rozgrzewka pasa — pass tła). */
@@ -212,7 +239,7 @@ export class WarpDebris {
     }
     // Smuga: wektor w scenie (y w górę) w stronę, z której skała nadleciała (+kurs), długość = prędkość × naświetlanie.
     const stretch = Math.min(1, Math.max(0, Number(f.stretch) || 0));
-    const len = speed * c.exposure * stretch;
+    const len = speed * c.exposure * this._lookLength * stretch;
     this.material.smear.vec.value.set(dirX * len, -dirY * len, 0);
     this.set.setOrigin(f.originX, f.originY);
     this.set.set(list);

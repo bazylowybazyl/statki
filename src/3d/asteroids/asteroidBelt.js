@@ -340,10 +340,21 @@ export class AsteroidBelt {
       }
     };
     const promises = [];
-    promises.push(run('pas asteroid: skały, minerały, mgła, burza, iskry (passy PLAY i BACK)', () => withShown((o) => !mining.has(o), () => Promise.all([
-      Core3D.prewarmPass(root, BELT_LAYER_PLAY),
-      Core3D.prewarmPass(root, BELT_LAYER_BACK)
-    ]))));
+    // Smugi skał w skoku (warpDebris.js): grupa schowana poza skokiem — na czas rozgrzewki odsłonięta (schowana grupa
+    // wypadała z kompilacji: pierwszy przelot przez pas kompilował `rocksSmear` synchronicznie, 2026-10-23).
+    const debris = this.warpDebris ? this.warpDebris.group : null;
+    promises.push(run('pas asteroid: skały, minerały, mgła, burza, iskry, smugi skoku (passy PLAY i BACK)', () => {
+      const debrisHidden = !!debris && debris.visible === false;
+      if (debrisHidden) debris.visible = true;
+      try {
+        return withShown((o) => !mining.has(o), () => Promise.all([
+          Core3D.prewarmPass(root, BELT_LAYER_PLAY),
+          Core3D.prewarmPass(root, BELT_LAYER_BACK)
+        ]));
+      } finally {
+        if (debrisHidden) debris.visible = false;
+      }
+    }));
     if (mining.size) {
       promises.push(run('pas asteroid: wydobycie (skały z wycięciami, wnętrze, minerały, okruchy, drony, wiązki)', () => withShown((o) => mining.has(o), () => {
         const list = [];

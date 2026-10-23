@@ -39,6 +39,7 @@ import { HaloRingGame } from '../src/3d/haloRing/haloRingGame.js';
 import { computeHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
 import { createBeltWorld } from '../src/game/beltWorld.js';
 import { createAsteroidBelt } from '../src/3d/asteroids/asteroidBelt.js';
+import { WARP_DEBRIS_LOOKS, WARP_DEBRIS_LOOK_DEFAULT } from '../src/3d/asteroids/warpDebris.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
@@ -96,6 +97,8 @@ const S = {
   // Zoom w skoku (Z): stały — kadr skoku liczony od domyślnego zoomu statku, nie od zoomu gracza (stepCameraRigWarp:
   // zoomRef); 'gracz' — oddalenie × zoom gracza (dawniej).
   warpZoom: params.get('zoomSkoku') === 'gracz' ? 'gracz' : 'staly',
+  // Smugi skał pasa w skoku (B): wygląd WARP_DEBRIS_LOOKS (warpDebris.js) — uniformy materiału smug.
+  debrisLook: WARP_DEBRIS_LOOKS[params.get('smugi')] ? params.get('smugi') : WARP_DEBRIS_LOOK_DEFAULT,
   // Lot swobodny (F): W/S ciąg, A/D obrót, Shift dopalacz, CapsLock / 9 — warp (jak w grze: przełącznik).
   free: false,
   keys: { w: false, s: false, a: false, d: false, shift: false }
@@ -156,6 +159,10 @@ const renderList = [];
 
 // Kamera: rig gry (kop i oddalenie warpa w czasie gry, wyprzedzenie lotu) + zoom gracza (kółko).
 const camTune = createCameraRigTune();
+// Obrót kadru w skoku szybciej niż domyślne 3,2/s (2026-10-23, „dopracować efekt lotu”): przy kursie ~150° od
+// północy kadr kończył obrót sekundę PO skoku — kop, pęknięcie i wybuch smug gwiazd szły w obracającym się kadrze.
+// 5/s: przy skoku (0,8 s ładowania) zostaje ~9% obrotu, kadr stoi ~0,3 s po skoku. W grze obrót niewpięty — port.
+camTune.warpRollOmega = 5;
 const rig = createCameraRig();
 let zoomBase = 0.2;
 const cam = { x: 0, y: 0, zoom: 0.2 };            // bez wstrząsu (planety, ośrodek)
@@ -703,6 +710,7 @@ function syncPanel() {
   $('btn-stop').classList.toggle('on', !S.momentum);
   for (const b of document.querySelectorAll('#camroll button')) b.classList.toggle('on', b.dataset.roll === S.camRoll);
   for (const b of document.querySelectorAll('#warpzoom button')) b.classList.toggle('on', b.dataset.zoom === S.warpZoom);
+  for (const b of document.querySelectorAll('#debris button')) b.classList.toggle('on', b.dataset.look === S.debrisLook);
   $('btn-pause').classList.toggle('on', S.paused);
   $('btn-slow').classList.toggle('on', S.timeScale !== 1);
   $('pedK').value = String(S.dropK);
@@ -733,6 +741,13 @@ function setWarpZoom(mode) {
   syncPanel();
   return true;
 }
+function setDebrisLook(name) {
+  if (!WARP_DEBRIS_LOOKS[name]) return false;
+  S.debrisLook = name;
+  asteroidBelt?.warpDebris?.setLook(name);
+  syncPanel();
+  return true;
+}
 function setRoute(key) {
   if (!ROUTES[key]) return false;
   S.route = key;
@@ -747,6 +762,7 @@ const ACTIONS = {
   momentum: () => setMomentum(!S.momentum),
   camRoll: () => setCamRoll(CAMERA_WARP_ROLL_MODES[(CAMERA_WARP_ROLL_MODES.indexOf(S.camRoll) + 1) % CAMERA_WARP_ROLL_MODES.length]),
   warpZoom: () => setWarpZoom(S.warpZoom === 'staly' ? 'gracz' : 'staly'),
+  debrisLook: () => { const keys = Object.keys(WARP_DEBRIS_LOOKS); setDebrisLook(keys[(keys.indexOf(S.debrisLook) + 1) % keys.length]); },
   jowisz: () => setRoute('jowisz'), mars: () => setRoute('mars'),
   free: () => setFree(!S.free),
   warp: () => toggleFreeWarp(),
@@ -761,6 +777,7 @@ function bindPanel() {
   for (const b of document.querySelectorAll('#routes button')) b.addEventListener('click', () => setRoute(b.dataset.trasa));
   for (const b of document.querySelectorAll('#camroll button')) b.addEventListener('click', () => setCamRoll(b.dataset.roll));
   for (const b of document.querySelectorAll('#warpzoom button')) b.addEventListener('click', () => setWarpZoom(b.dataset.zoom));
+  for (const b of document.querySelectorAll('#debris button')) b.addEventListener('click', () => setDebrisLook(b.dataset.look));
   $('btn-ped').addEventListener('click', () => setMomentum(true));
   $('btn-stop').addEventListener('click', () => setMomentum(false));
   $('pedK').addEventListener('input', (e) => { S.dropK = Number(e.target.value) || 3; S.momentum = true; syncPanel(); });
@@ -785,7 +802,7 @@ function bindInput() {
     if (e.repeat) return;
     const k = e.key.toLowerCase();
     const map = {
-      1: 'style1', 2: 'style2', 3: 'style3', 4: 'style4', p: 'momentum', k: 'camRoll', z: 'warpZoom', j: 'jowisz', m: 'mars', f: 'free',
+      1: 'style1', 2: 'style2', 3: 'style3', 4: 'style4', p: 'momentum', k: 'camRoll', z: 'warpZoom', b: 'debrisLook', j: 'jowisz', m: 'mars', f: 'free',
       capslock: 'warp', 9: 'warp', ' ': 'jump', escape: 'pause', t: 'slow', h: 'clean'
     };
     const a = map[k];
@@ -820,7 +837,7 @@ function loop(now) {
 window.__warpPed = {
   ready: false, S, warp, trip,
   get atlas() { return atlas; },
-  setStyle, setMomentum, setRoute, setFree, setCamRoll, setWarpZoom, toggleFreeWarp, restart: () => restartTrip(), act: (k) => ACTIONS[k]?.(),
+  setStyle, setMomentum, setRoute, setFree, setCamRoll, setWarpZoom, setDebrisLook, toggleFreeWarp, restart: () => restartTrip(), act: (k) => ACTIONS[k]?.(),
   get roll() { return rig.roll; },
   /** Lot swobodny z harnessu: klawisze trzymane (w, s, a, d, shift). */
   keys(state) { Object.assign(S.keys, state || {}); return { ...S.keys }; },
@@ -863,10 +880,13 @@ window.__warpPed = {
       window.__warpPed.error = 'webgpu';
       return;
     }
-    await Core3D.warmup.run('kadłuby, mapa ran, broń (hexShips3D)', () => prewarmHexShips3D({ canvas: glCanvas }));
     planets = buildPlanets();
     window.planets = planets;
     window.initPlanets3D(planets, SUN);
+    // Rozgrzewka kadłubów i efektów (w tym plazmy WARP na dyszach) PO planetach, jak w grze: initPlanets3D dokłada
+    // stałe światła sceny, a ich zestaw jest w kluczu każdego pipeline'u — rozgrzane wcześniej `WarpPlume` kompilowały
+    // się synchronicznie przy pierwszym skoku (2026-10-23).
+    await Core3D.warmup.run('kadłuby, mapa ran, broń (hexShips3D)', () => prewarmHexShips3D({ canvas: glCanvas }));
     // Ringi „Halo” i pas asteroid jak w grze (index.html: initHaloRings, start świata, startGame): kolidery i pole od
     // razu, cień pól i start GPU pasa; ringi budowane z góry (w grze — gdy kadr zbliży się do planety; w skoku planeta
     // mija kadr w kilka s, a ring-archetyp buduje się ~2–3 s).
@@ -880,6 +900,7 @@ window.__warpPed = {
     window.__asteroidBelt = asteroidBelt;
     await beltWorld.precompute(() => {});
     await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
+    asteroidBelt.warpDebris?.setLook(S.debrisLook);
     const rings = ['earth', 'mars', 'jupiter'].map((k) => haloRings.showcaseRing(k)).filter(Boolean);
     let ringsReady = false;
     Promise.all(rings.map((r) => Promise.resolve(r.ready))).then(() => { ringsReady = true; }, () => { ringsReady = true; });
