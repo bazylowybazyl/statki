@@ -98,6 +98,11 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Warstwa barw nie zmienia geometrii: `hullDesignShapeKey` pomija `palette`, `paint` (projekt, klocki, kasztele),
   `decals` i `name`. Nowe pole tylko-barwne → dopisz do pomijanych; pole zmieniające kształt, sieć albo mapy NIE może
   być na tej liście (ścieżka barw pokazałaby stary kształt).
+- WYGLĄD kompozytora — `bevel`, `round`, `panels`, `windows` i „okna → albedo” — nie zmienia pola, sieci ani ciała gry
+  (żaden czysty moduł ich nie czyta): `hullDesignLookKey` je pomija, a ścieżka wyglądu (`runColors(rev, true)`) robi
+  wszystkie passy na polu i pakietach ostatniej budowy, albedo i mapę powierzchni kopiuje na GPU do skóry
+  (`HullSurface._entries` — gdy wysłana; inaczej z odczytu). Pole i sieć od zera należą się tylko przy `detail`,
+  gęstość sieci liczy samą sieć. Nowe pole czytane przez czyste moduły NIE może trafić do pomijanych.
 - Demo, ścieżka barw (`runColors`): ten sam klucz kształtu co POKAZANY pełny obraz (`S.shownShapeKey`; podgląd go
   zeruje) i wolna budowa → passy barw, albedo z celu ALB kopiowane na GPU do tekstury skóry kadłuba
   (`acquireHullVisualTexture` + `copyTextureToTexture`, mipmapy robi three), kanwa CPU odczytem w tle tylko poza

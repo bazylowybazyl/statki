@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  HD_PALETTES, HD_PALETTE_KEYS, HD_PALETTE_ROWS, HD_FACTION_PALETTE, HD_PALETTE_EMBLEM, hullDesignShapeKey, normalizeHullDesign,
+  HD_PALETTES, HD_PALETTE_KEYS, HD_PALETTE_ROWS, HD_FACTION_PALETTE, HD_PALETTE_EMBLEM, hullDesignShapeKey, hullDesignLookKey, normalizeHullDesign,
   expandHullDesign, expandHullDecals
 } from '../src/game/hullDesign/hullDesignSchema.js';
 import { HD_EMBLEMS } from '../src/game/hullDesign/hullEmblems.js';
@@ -81,4 +81,16 @@ test('pędzel: walidacja, warstwa barw poza kluczem kształtu i poza geometrią 
   assert.deepEqual(expandHullDecals(nd, ex.decals.filter((q) => q.part)), ex.decals);
   // ten sam raster dla tej samej siatki (strona liczy go sama w ścieżce barw)
   assert.equal(hullPaintLayer(nd, g).key, pl.key);
+});
+
+test('wygląd kompozytora (faza, profil fazy, panele, okna) poza kluczem wyglądu; detal i sieć — w nim', () => {
+  const d = normalizeHullDesign(hullDesignPreset('bellator'));
+  const k = hullDesignLookKey(d), s0 = hullDesignShapeKey(d);
+  for (const [f, v] of [['bevel', 1.7], ['round', 1 - (d.round ?? 0)], ['panels', 0.3], ['windows', (d.windows ?? 1) > 0.5 ? 0 : 1]]) {
+    const e = normalizeHullDesign({ ...d, [f]: v });
+    assert.equal(hullDesignLookKey(e), k, `${f}: ten sam klucz wyglądu`);
+    assert.notEqual(hullDesignShapeKey(e), s0, `${f}: inny klucz kształtu (mapy kompozytora)`);
+  }
+  assert.notEqual(hullDesignLookKey(normalizeHullDesign({ ...d, detail: d.detail * 1.1 })), k, 'detal zmienia pole');
+  assert.notEqual(hullDesignLookKey(normalizeHullDesign({ ...d, pipeNet: { density: 0.5 } })), k, 'gęstość sieci zmienia sieć');
 });

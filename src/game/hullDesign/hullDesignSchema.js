@@ -604,6 +604,15 @@ export function hullDesignShapeKey(design) {
   return JSON.stringify(design, (k, v) => (k === 'palette' || k === 'paint' || k === 'decals' || k === 'name' ? undefined : v));
 }
 
+/**
+ * Klucz projektu bez warstwy barw i bez WYGLĄDU kompozytora (`bevel` — faza płyt, `round` — profil fazy, `panels` —
+ * widoczność paneli, `windows` — okna tarasów): ten sam klucz = to samo pole, sieć i ciało gry (alfa), inne mogą być
+ * tylko mapy kompozytora (relief, normalne, emisja) — wszystkie passy, bez workera.
+ */
+export function hullDesignLookKey(design) {
+  return hullDesignShapeKey({ ...design, bevel: undefined, round: undefined, panels: undefined, windows: undefined });
+}
+
 /** Bloki z poziomem ≥ L (zbiór kluczy 'bx,by'). */
 export function blocksAtLevel(blocks, level) {
   const out = new Set();

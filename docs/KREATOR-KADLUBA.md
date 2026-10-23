@@ -512,6 +512,9 @@ tekstur float16 w `setDesign` (~70 ms), wypiek z odczytem trzech celów, ciało 
 | klocek, kasztel, suwak detalu, wielokąt | geometria + sieć | wszystkie passy | po puszczeniu |
 | przeciąganie (fast) | pole w ½ rozdzielczości, sieć z poprzedniego podglądu | passy bez odczytu, kwad podglądu | — |
 | klasa, rdzeń, priorytet mocy | klasa + moc (martwe kable: raster sieci) | wszystkie passy | po zmianie |
+| faza płyt, profil fazy, panele, okna, okna → albedo | — (ścieżka wyglądu dema) | wszystkie passy na pakietach ostatniej budowy | albedo i mapa powierzchni kopiowane na GPU; belki bez zmian |
+| suwak detalu | geometria + sieć od zera (inna rozdzielczość i pasmo pola) | wszystkie passy | po puszczeniu |
+| gęstość sieci | tylko sieć | wszystkie passy | po puszczeniu |
 
 - Worker: `src/game/hullDesign/hullDesignBuild.worker.js` (+ klient `hullDesignBuildClient.js`). Etapy z pamięcią
   po kluczu wejścia (JSON brył rozwiniętych, rowków, modułów…), pakiety tekstur liczone w workerze (float16 tym samym
@@ -541,6 +544,11 @@ Od puszczenia do pełnego obrazu [ms], przed (runda 1 / 2) → po (runda 1 / 2):
 
 („usuń” cofa świeżo dodany klocek — geometria z pamięci; suwak detalu liczy pole i sieć od zera w pełnej rozdzielczości.
 Paleta i cofnij w tym pomiarze szły jeszcze pełną budową — ścieżka barw niżej skraca je do ~10–20 ms.)
+
+Sprawdzenie rozrzutu (Colossus, 2 przebiegi po ścieżce wyglądu): gniazdo 275 / 276 ms (worker: geometria z pamięci
+0,2 ms, sieć 187 ms — trasy A* do nowego miejsca gniazda), suwak detalu 420 / 395 ms (geometria 95–117 ms + sieć
+136–142 ms od zera), suwak fazy płyt 1 / 1 ms (ścieżka wyglądu, 0 długich zadań). Dawne 673 i 944 ms z drugiej rundy A/B
+to obciążenie maszyny (sieć 510 ms zamiast ~190 ms, ten sam kod).
 
 Drednot TN klasy VII (5,4 km; lokalne scalenie gałęzi `claude/serene-hodgkin-65a19b` z `main` / z tą gałęzią, bez
 commita): długie zadania przed 3–7 (max 790–1453 ms) → po 1–2 (max 113–185 ms — budowa ciała z belkami po puszczeniu),

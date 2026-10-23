@@ -2,7 +2,8 @@
 // typowe edycje na żywej pętli dema (bez ?test=1 — klatki z requestAnimationFrame) i ich koszt — czas od puszczenia do
 // gotowego obrazu, długie zadania wątku strony (PerformanceObserver 'longtask', > 50 ms), największa przerwa między
 // klatkami, liczba obrazów w trakcie przeciągania, czasy etapów budowy (S.timing). Edycje: przeciąganie klocka (1 s),
-// dodanie i usunięcie klocka, przeciąganie gniazda broni (1 s), suwak detalu (1 s), zmiana palety, cofnij. Zrzuty
+// dodanie i usunięcie klocka, przeciąganie gniazda broni (1 s), suwak detalu (1 s), suwak fazy płyt (1 s — wygląd
+// kompozytora, `faza`), zmiana palety, cofnij. Zrzuty
 // pełnego wypieku po każdym okręcie (porównanie przed / po: `--porownaj <katalog przed>` liczy różnicę pikseli).
 //
 //   node scripts/webgpu/kreator-plynnosc.mjs [--out .tmp/kreator-plynnosc/<tag>] [--tylko custos,bellator,colossus]
@@ -15,7 +16,7 @@ import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, scree
 const args = parseArgs();
 const out = resolve(repo, args.out || '.tmp/kreator-plynnosc/pomiar');
 const ships = String(args.tylko || 'custos,bellator,colossus').split(',');
-const edits = String(args.edycje || 'przesun,dodaj,usun,modul,suwak,paleta,cofnij').split(',');
+const edits = String(args.edycje || 'przesun,dodaj,usun,modul,suwak,faza,paleta,cofnij').split(',');
 mkdirSync(out, { recursive: true });
 
 const { server, base } = await startVite(Number(args.port || 5433));
@@ -113,6 +114,7 @@ const EDITS = {
   usun: `__plyn.measure('usuń klocek', async () => { const s = __kreator.S.design.shapes; s.splice(s.length - 1, 1); const t = performance.now(); __kreator.requestBuild ? __kreator.requestBuild(false) : __kreator.edit(() => {}); return t; })`,
   modul: `__plyn.measure('przesuń gniazdo broni (1 s)', () => { const m = __plyn.moduleToMove(); return m ? __plyn.drag(m, 12, 0, 1000, 0.5) : performance.now(); })`,
   suwak: `__plyn.measure('suwak detalu (1 s)', async () => { const S = __kreator.S, d = S.design, D0 = d.detail; S.drag = { kind: 'stocznia-suwak' }; const t0 = performance.now(); let last = -1; for (;;) { const t = Math.min(1, (performance.now() - t0) / 1000); const v = Math.round((D0 * (1 + 0.15 * t)) * 200) / 200; if (v !== last) { last = v; d.detail = v; __kreator.requestBuild ? __kreator.requestBuild(true) : __kreator.edit(() => {}); } if (t >= 1) break; await new Promise((ok) => requestAnimationFrame(ok)); } S.drag = null; const tr = performance.now(); __kreator.requestBuild ? __kreator.requestBuild(false) : __kreator.edit(() => {}); return tr; })`,
+  faza: `__plyn.measure('suwak fazy płyt (1 s)', async () => { const S = __kreator.S, d = S.design, B0 = d.bevel ?? 1; S.drag = { kind: 'stocznia-suwak' }; const t0 = performance.now(); let last = -1; for (;;) { const t = Math.min(1, (performance.now() - t0) / 1000); const v = Math.round((B0 * (1 + 0.6 * t)) * 100) / 100; if (v !== last) { last = v; d.bevel = v; __kreator.requestBuild(true); } if (t >= 1) break; await new Promise((ok) => requestAnimationFrame(ok)); } S.drag = null; const tr = performance.now(); __kreator.requestBuild(false); return tr; })`,
   paleta: `__plyn.measure('paleta: piraci', async () => { const d = __kreator.S.design; d.palette = d.palette === 'pirate' ? 'terra' : 'pirate'; const t = performance.now(); __kreator.requestBuild ? __kreator.requestBuild(false) : __kreator.edit(() => {}); return t; })`,
   cofnij: `__plyn.measure('cofnij', async () => { const t = performance.now(); document.getElementById('yard-undo').click(); return t; })`
 };

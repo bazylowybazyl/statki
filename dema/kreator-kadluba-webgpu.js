@@ -21,7 +21,7 @@ import { HullBodies } from '../src/game/hullBodies.js';
 import { SimClock } from '../src/game/simClock.js';
 import {
   HD_BLOCK, HD_DETAIL, HD_LEVELS, HD_LEVEL_NAMES, HD_MODULES, HD_MODULE_TYPES, HD_PALETTES, HD_PALETTE_KEYS, HD_STYLE_NAMES,
-  normalizeHullDesign, expandHullDecals, hullDesignShapeKey
+  normalizeHullDesign, expandHullDecals, hullDesignShapeKey, hullDesignLookKey
 } from '../src/game/hullDesign/hullDesignSchema.js';
 import { hullPaintLayer } from '../src/game/hullDesign/hullDesignPaint.js';
 import { HD_PRESETS, HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
@@ -239,18 +239,23 @@ function requestBuild(fast = false) {
 
 function scheduleBuild(fast) {
   S.rev++;
-  // tylko warstwa barw (paleta, pędzel, naklejki) przy wolnej budowie (miniatura palety w toku nie przeszkadza: jej
-  // passy i odczyt już poszły do kolejki): same passy barw, bez workera i ciała gry
-  if ((!S.busy || S.thumbBusy) && !S.pending && colorsOnly()) { runColors(S.rev); return; }
+  // tylko warstwa barw (paleta, pędzel, naklejki) albo wygląd kompozytora (faza, profil fazy, panele, okna, okna →
+  // albedo) przy wolnej budowie (miniatura palety w toku nie przeszkadza: jej passy i odczyt już poszły do kolejki):
+  // passy kompozytora bez workera i ciała gry
+  if ((!S.busy || S.thumbBusy) && !S.pending && S.field && S.bakeOpts) {
+    const nd = normalizeHullDesign(S.design);
+    if (colorsOnly(nd)) { runColors(S.rev, false); return; }
+    if (S.shownLookKey && S.shownLookKey === hullDesignLookKey(nd)) { runColors(S.rev, true); return; }
+  }
   S.pending = { fast };
   if (S.busy && S.building && (!fast || !S.building.fast)) builder.cancel();
   if (!S.busy) runBuild();
 }
 
 /** Czy od pokazanego obrazu zmieniła się tylko warstwa barw (ten sam klucz kształtu, te same ustawienia wypieku). */
-function colorsOnly() {
+function colorsOnly(nd = normalizeHullDesign(S.design)) {
   return !!(S.field && S.bakeOpts && S.shownShapeKey && S.bakeOpts.glowToAlbedo === S.glowToAlbedo
-    && S.shownShapeKey === hullDesignShapeKey(normalizeHullDesign(S.design)));
+    && S.shownShapeKey === hullDesignShapeKey(nd));
 }
 
 /**
@@ -258,8 +263,11 @@ function colorsOnly() {
  * HullComposer.setColors / setDecals + renderColors (3 passy na GPU), albedo z celu ALB kopiowane na GPU do tekstury
  * skóry kadłuba (bez odczytu i bez ciała gry); kanwa CPU kadłuba (lakier, cienie, mapy podglądu) — odczytem w tle.
  * Cele z cudzymi mapami (miniatury palety) — pełny render z pakietów tej budowy (bez pól na CPU).
+ * `look` — zmiana WYGLĄDU kompozytora (hullDesignLookKey: faza, profil fazy, panele, okna, okna → albedo): wszystkie
+ * passy na polu i pakietach tej budowy, do skóry kadłuba albedo i mapa powierzchni (HullSurface) — ciało gry (alfa,
+ * belki) bez zmian.
  */
-function runColors(rev) {
+function runColors(rev, look = false) {
   const t0 = performance.now();
   try {
     const d = normalizeHullDesign(S.design);
@@ -268,9 +276,11 @@ function runColors(rev) {
     const atlas = decalAtlasFor(decals);
     const paint = hullPaintLayer(d, S.field.grid);
     exp.design = d; exp.decals = decals;
-    if (composer.mapsRev !== S.mapsRev) {
+    if (look || composer.mapsRev !== S.mapsRev) {
+      S.bakeOpts = { ...S.bakeOpts, glowToAlbedo: S.glowToAlbedo };
       S.mapsRev = composer.setDesign(S.field, atlas, { ...S.bakeOpts, paint });
       composer.render();
+      S.shownShapeKey = hullDesignShapeKey(d);
     } else {
       composer.setColors(d, paint);
       composer.setDecals(decals, atlas);
@@ -284,14 +294,30 @@ function runColors(rev) {
       Core3D.renderer.copyTextureToTexture(composer.targets.alb.texture, tex);
       releaseHullVisualTexture(visual);
       const bake = S.bake;
+      // wygląd: mapa powierzchni (relief, normalne, AO) — wprost do tekstury HullSurface, gdy już wysłana; inaczej z odczytu
+      const surf = look ? HullSurface._entries.get(visual) : null;
+      if (surf?.state === 'ready' && surf.texture) Core3D.renderer.copyTextureToTexture(composer.targets.surf.texture, surf.texture);
+      if (look && bake) { bake.emission = null; bake.emissionReq = null; }
+      // przeciąganie suwaka wyglądu: mapa powierzchni na CPU (mapy podglądu, HullSurface przed wysłaniem) — po puszczeniu
+      if (look && S.drag) S.surfaceDirty = true;
       // kanwa CPU — raz na koniec pociągnięcia pędzla / przeciągania naklejki (w trakcie wystarczy tekstura na GPU)
-      if (!S.drag) composer.readAlbedo().then((alb) => {
-        if (ship.visual !== visual) return;
-        visual.getContext('2d', { willReadFrequently: true }).putImageData(new ImageData(alb, visual.width, visual.height), 0, 0);
-        if (bake) { bake.albedo = alb; S.maps = null; }
-      });
+      if (!S.drag) {
+        composer.readAlbedo().then((alb) => {
+          if (ship.visual !== visual) return;
+          visual.getContext('2d', { willReadFrequently: true }).putImageData(new ImageData(alb, visual.width, visual.height), 0, 0);
+          if (bake) { bake.albedo = alb; S.maps = null; }
+        });
+        if (look || S.surfaceDirty) {
+          S.surfaceDirty = false;
+          composer._read(composer.targets.surf, composer.targets.w, composer.targets.h).then((sd) => {
+            if (ship.visual !== visual) return;
+            if (bake) bake.surface = sd;
+            if (!(surf?.state === 'ready')) { const e = HullSurface._entries.get(visual); if (e) HullSurface._finish(e, new Uint8Array(sd.buffer, sd.byteOffset, sd.byteLength), visual.width, visual.height, 0); }
+          });
+        }
+      }
     }
-    const timing = S.timing = { barwy: t1 - t0, total: performance.now() - t0, kolory: true };
+    const timing = S.timing = { barwy: t1 - t0, total: performance.now() - t0, kolory: !look, wyglad: look };
     // koniec pracy GPU tej zmiany (passy barw i kopia albedo; późniejsza praca — np. miniatury palety — się nie liczy)
     Core3D.renderer.backend.device.queue.onSubmittedWorkDone().then(() => { timing.gpu = performance.now() - t0; });
     S.colorChanges = (S.colorChanges || 0) + 1;
@@ -333,8 +359,9 @@ async function runBuild() {
       const bakeOpts = { texPerUnit: job.fast ? tpu * 0.5 : tpu, glowToAlbedo: S.glowToAlbedo };
       S.mapsRev = composer.setDesign(field, decalAtlasFor(field.expanded.decals), bakeOpts);
       S.bakeOpts = bakeOpts;
-      // ścieżka barw (runColors) tylko na pełnym obrazie — podgląd przeciągania jej nie dostaje
+      // ścieżka barw i wyglądu (runColors) tylko na pełnym obrazie — podgląd przeciągania jej nie dostaje
       S.shownShapeKey = null;
+      S.shownLookKey = null;
       const t2 = performance.now();
       // nowsza zmiana już czeka — ten wynik tylko jako podgląd (bez odczytu i ciała gry)
       preview = job.fast || !!S.pending;
@@ -363,6 +390,7 @@ async function runBuild() {
           S.timing = { worker: res.timing, czekanie: t1 - t0, kompozytor: t2 - t1, odczyt: t3 - t2, cialo: t4 - t3, ...S.hullT, total: t4 - t0, fast: false };
           S.builtRev = rev;
           S.shownShapeKey = shapeKey;
+          S.shownLookKey = hullDesignLookKey(normalizeHullDesign(JSON.parse(json)));
           placeRef();
           updateRecipe();
           updateBlockStats();
