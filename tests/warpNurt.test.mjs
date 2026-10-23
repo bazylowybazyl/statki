@@ -278,7 +278,15 @@ test('styl akcent: naciąg (implozja przed dziobem) w ładowaniu, pęknięcie w 
     assert.equal(fx.mode, 'exit');
     t += 0.1; step(t, 0.1);
     const bow = { x: sx + Math.cos(game.angle) * 1800 * 0.9, y: sy + Math.sin(game.angle) * 1800 * 0.9 };
-    assert.ok(waves().some((w) => w.kind === 0 && near(w.x, bow.x, 1e-6) && near(w.y, bow.y, 1e-6)), 'sprężenie przed dziobem');
+    const atBow = () => waves().filter((w) => w.kind === 0 && near(w.x, bow.x, 1e-6) && near(w.y, bow.y, 1e-6));
+    // Przylot = jedno zdarzenie (2026-10-23): na starcie wyjścia bez sprężenia — fala przychodzi w chwili zatrzymania.
+    assert.equal(atBow().length, 0, 'start wyjścia bez sprężenia');
+    const tBrake = game.exitRamp.tBrake;
+    for (let i = 0; i < 200 && fx.exitAge(t) < tBrake + 0.1; i++) { t += dt; step(t, dt); }
+    assert.equal(atBow().length, 1, 'sprężenie przed dziobem w chwili zatrzymania');
+    const mid = { x: sx + Math.cos(game.angle) * 1800 * 0.5, y: sy + Math.sin(game.angle) * 1800 * 0.5 };
+    assert.equal(waves().filter((w) => w.kind === 0 && near(w.x, mid.x, 1e-6) && near(w.y, mid.y, 1e-6)).length, 0,
+      'jedna fala: sprężenie zamiast fali hamowania');
   } finally {
     setWarpStyle(null);
   }
@@ -404,7 +412,11 @@ test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna);
   assert.ok(fx.bubble.front < 1.3, 'bańka zapada się od dziobu');
   assert.equal(shakes.length, 3, 'wstrząs hamowania');
   for (let i = 0; i < 6; i++) { t += dt; ramp.age = t - tEx; step(t, dt); }
-  assert.ok(fx.hull.on && fx.hull.heat > 0.8, 'żar kadłuba po hamowaniu');
+  assert.ok(fx.hull.on && fx.hull.heat > 0.6, 'żar kadłuba w chwili hamowania (razem z błyskiem)');
+  // Przylot = jedno zdarzenie (2026-10-23): żar to impuls z błyskiem — 1,2 s po hamowaniu prawie zgasł (dawniej
+  // τ 2,2 s: wyłaniał się jako drugi „wybuch”, gdy kadr przylotu dosuwał kamerę).
+  while (t < tEx + ramp.tBrake + 1.2) { t += dt; ramp.age = t - tEx; step(t, dt); }
+  assert.ok(fx.hull.heat < 0.1, `żar gaśnie z błyskiem (${fx.hull.heat})`);
   while (t < tEx + ramp.tHalt + 1.0) { t += dt; step(t, dt); }
   assert.equal(frame.mediumFade, 4, 'ośrodek gaśnie po zatrzymaniu');
   for (let i = 0; i < 200; i++) { t += dt; step(t, dt); }
