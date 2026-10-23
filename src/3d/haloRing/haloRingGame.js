@@ -47,6 +47,10 @@ export const HALO_GAME = Object.freeze({
   // początku skoku (przelot z daleka, worldLens.js), a ring kosztuje ~3 ms CPU aktualizacji i ~50 rysunków także jako
   // kreska wokół kilkupikselowej tarczy (demo „Pęd”, 2026-10-23).
   lensMinPx: 30,
+  // Warstwy tła dla FG ringu tylko, gdy jego obraz naprawdę stoi w soczewce (udział prawdziwego widoku `real` poniżej
+  // tego progu): planeta czekająca na prawdziwym miejscu (bramka ringu, wejście −1, puszczony przylot) ma `lens.on`,
+  // ale jej ring jest prawdziwy — dachy hal K-7 i górna ściana zostają nad statkami w halach (przegląd 2026-10-23).
+  lensBgReal: 0.999,
   sunElevationDeg: 49,
   // ring BUDOWA (Jowisz): najwięcej świateł roboczych (spawanie, maszty) w siatce świateł na klatkę
   workLightCap: 28,
@@ -353,8 +357,10 @@ export class HaloRingGame {
       if (e.shadowReady && shadowK > 0.001) {
         Core3D.setShaftRingOccluder?.(e.occluderKey, e.place.x, e.place.y, ringMid, ringMid * HALO_GAME.occluderReachMul, shadowK);
       } else Core3D.removeShaftRingOccluder?.(e.occluderKey);
+      // Ring w soczewce mniejszy niż lensMinPx (mijana planeta z daleka — kilka px) ani się nie rysuje, ani nie buduje.
+      const lensSmall = lensOn && L.radii.max * ks * zoom < HALO_GAME.lensMinPx;
       // budowa: kadr blisko planety albo jej obraz w soczewce w kadrze (przelot, cel przy krawędzi)
-      if (!e.ring && (Math.hypot(e.place.x - cx, e.place.y - cy) < HALO_GAME.activateDistance || (lensOn && lens.vis))) this._ensureRing(e);
+      if (!e.ring && (Math.hypot(e.place.x - cx, e.place.y - cy) < HALO_GAME.activateDistance || (lensOn && lens.vis && !lensSmall))) this._ensureRing(e);
       const ring = e.ring;
       if (!ring) continue;
       // budowa ringu-archetypu w tle: kroki co klatkę, także poza kadrem (archRing.js, ARCH_BUILD_BUDGET)
@@ -366,17 +372,19 @@ export class HaloRingGame {
       const inView = !opts.splitScreen && (free3d
         ? Math.hypot(eye.x - ox, eye.y + oy, eye.z) < reach + HALO_GAME.activateDistance
         : Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach)
-        && (!lensOn || L.radii.max * ks * zoom >= HALO_GAME.lensMinPx);
+        && !lensSmall;
       ring.group.visible = inView;
       e.visible = inView;
       if (!inView) continue;
       visible++;
-      // W soczewce ring jest tłem jak jego planeta: części FG na warstwie tła (kadłub zawsze nad nim), po soczewce —
-      // zwykłe warstwy (pass FG nad statkiem w hali); przełączenie tylko przy zmianie (ta sama kamera perspektywy —
-      // pipeline'y bez zmian).
-      if (!!e.lensLayers !== lensOn) {
-        e.lensLayers = lensOn;
-        ring.setLayers(lensOn ? HALO_GAME.lensLayers : HALO_GAME.layers);
+      // W soczewce ring jest tłem jak jego planeta: części FG na warstwie tła (kadłub zawsze nad nim) — tylko gdy jego
+      // obraz naprawdę jest przesunięty (real < lensBgReal); prawdziwy ring (też przy włączonej soczewce) — zwykłe
+      // warstwy (pass FG nad statkiem w hali). Przełączenie tylko przy zmianie (ta sama kamera perspektywy — pipeline'y
+      // bez zmian).
+      const lensBg = lensOn && (Number(lens.real) || 0) < HALO_GAME.lensBgReal;
+      if (!!e.lensLayers !== lensBg) {
+        e.lensLayers = lensBg;
+        ring.setLayers(lensBg ? HALO_GAME.lensLayers : HALO_GAME.layers);
       }
       ring.group.position.set(ox, -oy, 0);
       ring.group.scale.setScalar(ks);
