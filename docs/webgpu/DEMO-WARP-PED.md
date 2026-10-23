@@ -12,14 +12,15 @@ materiale. Propozycja: „Pęd” — prędkość jako rdzeń, soczewka najwyże
 
 Start: `npm run dev` → `/dema/warp-ped.html`. Adres: `?styl=rulon|ped|akcent|soczewka`, `?trasa=jowisz|mars`,
 `?ped=0` (wyjście do zatrzymania) albo `?ped=1..6` (k), `?kamera=up|right|off`, `?zoomSkoku=gracz` (dawny zoom skoku),
-`?smugi=slad|klin` (wygląd smug skał pasa),
+`?smugi=slad|klin` (wygląd smug skał pasa), `?naped=mk1|mk2|mk3` (napęd warp jak w grze — domyślnie Mk I, 100 tys. j/s),
 `?clean=1` (bez paneli), `?test=1` (klatki tylko z `__warpPed.runFrames` / `until` — harness).
 
 ## Co pokazuje
 
 Podróż w pętli: Atlas stoi nad terminatorem Ziemi → ładowanie (0,8 s jak w grze) → skok z prędkością przelotową
-z `planWarpCruise` (Ziemia → Jowisz ~10,9 s, Mars mijany ~75 tys. j. od kursu — statek zwalnia do 15%, planeta
-przelatuje w soczewce świata) → wyjście (rampa: zwolnienie, wlot, hamowanie) → ślizg → od nowa.
+z `planWarpCruise` (napęd i strefy jak w grze — niżej, „Prędkość jak w grze”; Ziemia → Jowisz ~34 s przy Mk I,
+Mars mijany 75 tys. j. od kursu — statek zwalnia do ~16%, planeta przelatuje w soczewce świata) → wyjście (rampa:
+zwolnienie, wlot, hamowanie) → ślizg → od nowa.
 
 | Klawisz | Styl skoku (`warpDrive.js`: `setWarpStyle`) | Co widać |
 |---|---|---|
@@ -223,6 +224,26 @@ Cztery uwagi przeglądu gałęzi, wszystkie potwierdzone i poprawione:
    błędów konsoli; przebieg z objazdem studni kończy skrypt w drugim odcinku warpu (skrypt czeka ~20 s po pierwszym).
 4. **Budowa ringu przy kilku px** — `lensMinPx` chował ring, ale `lens.vis` wyzwalał budowę ringu-archetypu; teraz ten
    sam próg bramkuje budowę.
+
+## Prędkość jak w grze — napęd Mk I, 100 tys. j/s (2026-10-23)
+
+User: „warp leci 260k? jak w grze?” → „jeszcze wolniej. 100k”. Demo miało stałe 260 tys. j/s (dawna jedna prędkość
+warpa) i czas skoku strojony na nie, bez stref; gra od 2026-10-22 ma napędy Mk I / II / III (100 / 175 / 250 tys. j/s,
+Atlas — Mk II) i strefy. Teraz demo bierze napęd z tabeli gry (`WARP_DRIVES`, `src/data/driveModes.js`; domyślnie
+Mk I, `?naped=mk2|mk3`), czas skoku z celem jak `planPlayerWarp` gry (`warpTripTuneFor(prędkość)`), strefy jak
+`detectZones` (studnia grawitacyjna planety × 0,3 — z ringiem „Halo”: obwiednia ringu + 12 tys. j.; pas główny × 0,8)
+w planie i w fizyce (przelotowa × strefa × zwolnienie przy ciałach). Jedna różnica wobec gry: sufit prędkości
+przelotowej = prędkość napędu (w grze plan może ją przekroczyć — Mk I do 230 tys. j/s — żeby nadgonić zwolnienia;
+w demie skok wtedy trwa dłużej).
+
+Przy okazji: Mars mijał kurs w ~31 tys. j., nie 75 tys. (`marsAngle` przesuwał punkt kursu w bok i rzutował go
+z powrotem na orbitę kątem — rzut zjadał odstęp) — przy strefach z gry kurs wchodził w studnię Marsa (47 tys. j.)
+i przelot trwał ~10 s przy 7–9 tys. j/s. Teraz Mars stoi na orbicie dokładnie 75 tys. j. od kursu.
+
+Tempo (Mk I): Ziemia → Jowisz — przelotowa 100 tys. j/s, przy Marsie do ~16 tys. (zwolnienie przelotu ~16%),
+w pasie 80 tys., od skoku do zatrzymania 33,7 s (dawniej 10,9 s przy ~240 tys.); Ziemia → Mars — przelotowa 72 tys.
+(plan czasu z gry przy krótszym odcinku daje mniej niż napęd), 13,9 s. `warp-ped-skoki.mjs` na obu trasach: 0 skoków,
+0 mignięć, cel w kadrze przez cały przylot. Arkusz: `.tmp/warp-ped/r1023/arkusz-100k-jowisz.jpg`.
 
 ## Z czego jest zbudowane (wszystko z gry)
 
