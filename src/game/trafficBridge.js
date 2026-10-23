@@ -11,7 +11,8 @@
  * krok świata co 5 s gry trafia w klatkę (śr. 12–18 ms przy ×60) i widać to
  * w wierszu PerfHUD („ruch v2”).
  *
- * Czas: `time` to czas świata ruchu po stronie gry — suma `advance(dt)`.
+ * Czas: `time` to czas świata ruchu po stronie gry — suma `advance(dt)`
+ * plus przeliczona już rozgrzewka świata (E15, `warmup.seconds` z workera).
  * Gra woła `advance` z krokami fizyki, więc pauza (brak kroków) zatrzymuje
  * gospodarkę. Odcinki kursów w buforze mają `T0` w tym samym czasie.
  *
@@ -22,7 +23,7 @@
  */
 
 import {
-  TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD
+  TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD, TRAFFIC_WARMUP_FALLBACK_SECONDS
 } from './traffic/trafficProtocol.js';
 import { BELT_MSG } from './traffic/trafficProtocol.js';
 import { moveStock } from './traffic/marketStock.js';
@@ -84,6 +85,11 @@ export class TrafficBridge {
     /** Ostatni błąd zgłoszony przez rdzeń (świat działa dalej). */
     this.lastError = null;
     this.time = 0;
+    /**
+     * Rozgrzewka świata w workerze (E15): `{ total, seconds, active, ms }` — `seconds` są już w `time`
+     * (zegar mostu = zegar świata także po rozgrzewce). Bańka rusza po jej końcu.
+     */
+    this.warmup = { total: 0, seconds: 0, active: false, ms: 0 };
     this.clock = 0;
     this.step = 5;
     this.seed = null;
@@ -185,6 +191,8 @@ export class TrafficBridge {
   _startFallback(reason) {
     this.mode = 'main-fallback';
     this.fallbackReason = String(reason?.message || reason || '');
+    // Na głównym wątku rozgrzewka przycinałaby menu i pierwsze klatki — tryb awaryjny startuje bez niej (E15).
+    if (this._initMessage && this._initMessage.warmup) this._initMessage.warmup = TRAFFIC_WARMUP_FALLBACK_SECONDS;
     if (typeof this.options.coreFactory === 'function') {
       this._attachCore(this.options.coreFactory);
       return;
@@ -462,6 +470,7 @@ export class TrafficBridge {
     this.clock = Number(message.clock) || 0;
     this.seed = message.seed ?? null;
     this.buildMs = Number(message.buildMs) || 0;
+    this._applyWarmup(message.warmup);
     this.market.clear();
     this._indexStations();
     this._emit('ready', message);
@@ -483,6 +492,7 @@ export class TrafficBridge {
   _onTick(message) {
     this.clock = Number(message.clock) || 0;
     this.stats = message.stats || null;
+    this._applyWarmup(message.warmup);
     // Nowa tabela rynków (MARKET_* albo zniszczona stacja) przed rynkiem —
     // bufor `market` ma już jej układ.
     if (Array.isArray(message.stations) && this.tables) {
@@ -540,6 +550,24 @@ export class TrafficBridge {
     // Zmiany gry, których ten stan jeszcze nie zawiera, nakładamy ponownie.
     this._pendingStock = this._pendingStock.filter(entry => entry.seq > stockSeq);
     for (const entry of this._pendingStock) applyToMirror(this.market.get(entry.stationId), entry.bag);
+  }
+
+  /**
+   * Postęp rozgrzewki (E15): przeliczone sekundy świata dochodzą do `time` od razu — czasy z workera
+   * (`actors.time`, `T0` kursów, `DockRecord.t0`) liczą się od zegara świata, który rozgrzewka przesunęła.
+   * Koniec rozgrzewki → zdarzenie `warmup`.
+   */
+  _applyWarmup(info) {
+    if (!info) return;
+    const w = this.warmup;
+    const seconds = Math.max(0, Number(info.seconds) || 0);
+    if (seconds > w.seconds) this.time += seconds - w.seconds;
+    const wasActive = w.active;
+    w.seconds = Math.max(w.seconds, seconds);
+    w.total = Math.max(0, Number(info.total) || 0);
+    w.active = !!info.active;
+    w.ms = Number(info.ms) || 0;
+    if (wasActive && !w.active) this._emit('warmup', { ...w });
   }
 
   /** Bufor encji bańki z workera — gra czyta go co klatkę (`trafficBubble.js`) po `seq`. */
@@ -645,6 +673,7 @@ export class TrafficBridge {
       buildMs: this.buildMs,
       time: this.time,
       clock: this.clock,
+      warmup: { ...this.warmup },
       courses: this.courses.count,
       actors: this.actors.count,
       actorMs: this.actors.ms,
@@ -658,7 +687,7 @@ export class TrafficBridge {
   // Zdarzenia
   // ============================================================
 
-  /** `ready`, `tick`, `market`, `markets` (nowa tabela stacji), `bubble`, `wrecks`, `war-wrecks`, `belt-holes`, `error`. Zwraca wypisanie. */
+  /** `ready`, `tick`, `market`, `markets` (nowa tabela stacji), `bubble`, `wrecks`, `war-wrecks`, `belt-holes`, `warmup` (koniec rozgrzewki), `error`. Zwraca wypisanie. */
   on(type, listener) {
     if (typeof listener !== 'function') return () => {};
     let list = this.listeners.get(type);

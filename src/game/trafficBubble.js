@@ -304,8 +304,9 @@ export function trafficBulletHit(tb, x, y, vx, vy, dt, pad, fromX, fromY) {
  */
 export function damageTrafficActor(tb, a, amount, x, y, cause = 'player') {
   if (!a?.alive || !(amount > 0)) return false;
-  // Zapas floty bez kursu i odlot po końcu kursu (DEPARTED): nie ma czego zgłosić workerowi — pocisk staje, bez obrażeń.
-  if (a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.DEPARTED)) {
+  // Zapas floty bez kursu, postój na redzie / orbicie (PARKED, E15) i odlot po końcu kursu (DEPARTED): nie ma czego
+  // zgłosić workerowi — pocisk staje, bez obrażeń.
+  if (a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED | ACTOR_FLAG.DEPARTED)) {
     a.hitAt = tb.time;
     tb.stats.hits++;
     return false;

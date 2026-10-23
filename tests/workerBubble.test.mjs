@@ -67,7 +67,8 @@ test('statki ruchu przy Ziemi: encje po każdym advance, fazy i stanowiska z tab
   assert.ok(phases.has('fly'));
   for (const a of actors) {
     // Kurs: numer ≥ 0; zapas floty na padach K-7 (STOCK): id ujemny.
-    assert.ok((a.flags & ACTOR_FLAG.STOCK ? a.id < 0 : a.id >= 0) && Number.isFinite(a.x) && a.length >= 40 && a.width >= 20);
+    // Encje bez kursu (zapas floty, postój E15) mają id ujemny.
+    assert.ok((a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED) ? a.id < 0 : a.id >= 0) && Number.isFinite(a.x) && a.length >= 40 && a.width >= 20);
     if (a.berth >= 0) {
       const stationId = got.ready.stations[a.port]?.id;
       assert.ok(got.ready.berths[stationId]?.[a.berth], 'stanowisko z tabeli `berths`');
@@ -122,7 +123,7 @@ test('berth-hold: stanowisko gracza poza pulą, kurs w podejściu dostaje inne, 
 });
 
 test('destroyed z gry: kurs encji zniszczony, wrak z ładunkiem w ticku, encja znika w następnym advance', () => {
-  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.DEPARTED)));
+  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED | ACTOR_FLAG.DEPARTED)));
   const target = actors.find((a) => {
     const c = getCourse(world.registry, core.world.registry.byId && [...world.registry.byId.keys()].find((id) => courseNumber(id) === a.id));
     return c && c.payload?.orderId;
@@ -147,7 +148,7 @@ test('destroyed z gry: kurs encji zniszczony, wrak z ładunkiem w ticku, encja z
 test('attach z gry przejmuje kurs bańki: encja wraca do rekordu z postępem i nie wraca do bańki', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
-  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.DEPARTED)));
+  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED | ACTOR_FLAG.DEPARTED)));
   const pick = actors.find((a) => a.phase === 'fly') || actors[0];
   assert.ok(pick);
   const courseId = [...world.registry.byId.keys()].find((id) => courseNumber(id) === pick.id);
@@ -165,7 +166,8 @@ test('zapas floty Ziemi stoi na padach hal K-7: encje STOCK z id ujemnym, bez ku
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   for (let i = 0; i < 12; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 5 });
   const actors = decode(got.actors);
-  const stock = actors.filter((a) => a.flags & ACTOR_FLAG.STOCK);
+  // Na padach: STOCK bez PARKED (nadmiar na redzie wojskowej — E15, osobny test).
+  const stock = actors.filter((a) => (a.flags & ACTOR_FLAG.STOCK) && !(a.flags & ACTOR_FLAG.PARKED));
   const fleet = world.shipyards.fleets.get(world.stations.find((s) => s.id === 'earth').factionId) || {};
   const owned = Object.values(fleet).reduce((sum, n) => sum + n, 0);
   assert.ok(owned > 0, 'Terra Nova ma zapas okrętów');
@@ -201,7 +203,7 @@ test('garnizon K-7 (E4: PATROL / WAR) dokuje w halach przez bańkę i nie staje 
       if (!(a.phase === 'docked' || a.phase === 'capture' || a.phase === 'undock')) continue;
       if (onPad.has(id)) overlap++;
       onPad.set(id, a.id);
-      if (!(a.flags & ACTOR_FLAG.STOCK)) garrison.add(a.id);
+      if (!(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED))) garrison.add(a.id);
     }
   }
   assert.ok(garrison.size > 0, 'okręty garnizonu zadokowane w K-7 (kursy, nie zapas)');
@@ -281,7 +283,7 @@ test('encje w podejściu niosą stanowisko (APPROACH) — gra rezerwuje je w rej
 test('awans do NPC i powrót: attach zamraża rekord, detach z pozą (bez postępu) materializuje encję w miejscu NPC', () => {
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
-  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.DEPARTED)));
+  const actors = decode(got.actors).filter((a) => !(a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED | ACTOR_FLAG.DEPARTED)));
   const pick = actors.find((a) => a.phase === 'fly') || actors[0];
   assert.ok(pick);
   const courseId = [...world.registry.byId.keys()].find((id) => courseNumber(id) === pick.id);
