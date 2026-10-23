@@ -148,7 +148,10 @@ export const HYPERCRUISE_TUNE = Object.freeze({
   minLeg: 6000,          // [j.]
   shortLeg: 30000,       // [j.]
   minSpool: 1.0,         // [s]
-  interruptible: true    // przechwyt: trafienie albo blokada masy przerywa hipercruise
+  interruptible: true,   // przechwyt: trafienie albo blokada masy przerywa hipercruise
+  // WYGLĄD: wychylenie dysz MAIN przy A/D w locie (gimbal −26° × moment — thrusterModel.js) × tyle; kurs prowadzi
+  // automat, więc to sam obraz (zgłoszenie użytkownika 2026-10-23: plazma „wyginała się” na boki)
+  nozzleGimbal: 0.2
 });
 
 /** Klasa lotu → wpis HYPERCRUISE_BY_CLASS (nieznana — superkapitał). */

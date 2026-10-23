@@ -8,6 +8,9 @@
 // odniesienia kamery — środka kadru (kamera z góry) albo rzutu oka na płaszczyznę gry (kamery 3D).
 // Początki kafli szumu liczone tu w double i zawinięte do [0, 1) — shader nie widzi współrzędnych 5–10 mln j.
 import { FOG_DATA_LEN, FOG_MAX_CIRCLES, FOG_MAX_MASSES, FOG_TILE_WORLD } from './fogOfWarPost.js';
+import { rolledHalfExtents } from '../viewRoll.js';
+
+const _rollHalf = { hw: 0, hh: 0 };
 
 // Wiatr mgły (kafle / s czasu gry): dwie warstwy w różne strony — chmury się przelewają, nie suną jak tapeta.
 export const FOG_WIND_A = Object.freeze([0.00055, 0.00022]);
@@ -36,8 +39,11 @@ export function packFogView(u, world, view) {
   const refX = Number(view.refX) || 0;
   const refY = Number(view.refY) || 0;
   // Kadr w j. świata z zapasem na rulon (zgięty świat pokazuje więcej niż kadr): ×2.
-  const halfW = persp ? Infinity : bufW / zoom;
-  const halfH = persp ? Infinity : bufH / zoom;
+  // obrót kadru (`view.roll`, kamera z góry): pudło osi świata wokół obróconego kadru
+  const roll = persp ? 0 : (Number(view.roll) || 0);
+  const rh = rolledHalfExtents(bufW / zoom, bufH / zoom, roll, _rollHalf);
+  const halfW = persp ? Infinity : rh.hw;
+  const halfH = persp ? Infinity : rh.hh;
 
   const dst = u.uFogData.value;
   const C = world.circles;
@@ -67,6 +73,7 @@ export function packFogView(u, world, view) {
   u.uFogCount.value = n;
   u.uFogMassCount.value = m;
   u.uFogZoom.value = zoom;
+  if (u.uFogRot) u.uFogRot.value.set(Math.cos(roll), -Math.sin(roll));
   u.uFogBuf.value.set(bufW, bufH);
   u.uFogPersp.value = persp ? 1 : 0;
   if (persp) {

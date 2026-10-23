@@ -109,6 +109,16 @@ test('pakowanie nie zapisuje do obiektów gry; strona odczytana z potrójnego bu
   const h = v.head;
   assert.equal(h[HEAD.K], 1);
   assert.equal(h[HEAD.CAM_X], 5_000_000.125, 'kamera w Float64 bez zaokrąglenia');
+  // obrót kadru (hipercruise, 2026-10-23): brak pola = 0, wartość kamery klatki i kamery bez wstrząsu osobno
+  assert.equal(h[HEAD.CAM_ROLL], 0);
+  assert.equal(h[HEAD.CAMNS_ROLL], 0);
+  frame.cam.roll = 1.25; frame.camNoShake.roll = -0.5;
+  packer.begin(frame);
+  packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.head[HEAD.CAM_ROLL], 1.25);
+  assert.equal(reader.page.head[HEAD.CAMNS_ROLL], -0.5);
+  delete frame.cam.roll; delete frame.camNoShake.roll;
   assert.equal(h[HEAD.FRAME_DT], 1 / 60);
   assert.ok(h[HEAD.FLAGS] & HEAD_FLAG.CULL_SET);
   assert.equal(v.listCount[LIST.RENDER], 3);

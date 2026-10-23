@@ -528,13 +528,16 @@ function resolveEntityEngineFx(entity) {
   return fallback;
 }
 
-/** Tryb napędu skokowego encji: 'off' | 'charging' | 'active'. */
+/** Tryb napędu skokowego encji: 'off' | 'charging' | 'active' | 'preheat' | 'drop' (dwa ostatnie — hipercruise). */
 function resolveWarpMode(entity) {
   if (entity.__warpPreview === true) return 'active';
-  // Hipercruise (E5, decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”): ta sama plazma
-  // WARP na dyszach MAIN — rozruch jak ładowanie, lot jak skok (gracz i NPC: `__hyperMode` z gry / lustra).
+  // Hipercruise (E5, decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”): plazma WARP na
+  // dyszach MAIN, „nie ma / jest” (2026-10-23 — warpPlume3D.js: WARP_PLUME_HYPER): rozruch = żar bez płomienia,
+  // start lotu = zapłon, wyjście = dogasanie (gracz i NPC: `__hyperMode` z gry / lustra).
   const hyper = entity.__hyperMode;
-  if (hyper === 'active' || hyper === 'charging') return hyper;
+  if (hyper === 'active') return 'active';
+  if (hyper === 'charging') return 'preheat';
+  if (hyper === 'drop') return 'drop';
   const player = RenderWorld.ship;
   if (player && entity === player) {
     const w = RenderWorld.warp;
@@ -571,13 +574,18 @@ function resolveMainBoost(entity) {
 function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx) {
   let plume = item.warp;
   if (!plume) {
-    if (mode === 'off') return 'none';
+    // dogasanie bez palącej się plazmy — nie ma czego gasić; rozgrzewanie bez wolnej instancji — sama struga MAIN
+    if (mode === 'off' || mode === 'drop') return 'none';
     plume = WarpPlume3D.acquire();
-    if (!plume) return 'fallback';
+    if (!plume) return mode === 'preheat' ? 'none' : 'fallback';
     item.warp = plume;
   }
   if (mode === 'off') {
     plume.shutdown();
+  } else if (mode === 'preheat') {
+    plume.preheat();             // żar i drżenie, bez płomienia — struga MAIN pracuje dalej (lot zwykły)
+  } else if (mode === 'drop') {
+    if (plume.state !== 'fading' && plume.state !== 'shutdown' && plume.state !== 'off') plume.fade();
   } else {
     plume.ignite();              // bez skutku, gdy już pali
     plume.setBoost(mode === 'active');
@@ -591,7 +599,7 @@ function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx) {
     item.warp = null;
     return 'none';
   }
-  return (plume.state === 'ignition' || plume.state === 'running') ? 'on' : 'none';
+  return (plume.state === 'ignition' || plume.state === 'running' || plume.state === 'fading') ? 'on' : 'none';
 }
 
 // Kontekst klatki (jeden obiekt, bez alokacji per klatkę).

@@ -64,8 +64,10 @@ paths:
   renderze), gorące powietrze = uniform `uHeatOn`: przełączniki bez przebudowy. Strojenie bloomu = uniformy
   (`_applyBloomPassConfig` co klatkę, konsola `DevVFX.bloom`). Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1.
 
-- OBRÓT KADRU (`cam.roll`, 2026-10-19 — dziś obraca tylko demo `dema/warp-ped.html`: kamera w skoku kursem w górę):
-  kamera gry może nieść kąt `roll` [rad] (brak pola = 0); konwencja `src/3d/viewRoll.js` — ekran = R(−roll)·(świat −
+- OBRÓT KADRU (`cam.roll`, 2026-10-19; obraca demo `dema/warp-ped.html` — kamera w skoku kursem w górę — i od
+  2026-10-23 HIPERCRUISE gracza w grze, reguła `kamera`):
+  kamera gry może nieść kąt `roll` [rad] (brak pola = 0); konwencja `src/render/viewRoll.js` (warstwa szwu — liczy z nią też
+  HUD gry; `src/3d/viewRoll.js` to re-eksport dla modułów renderu) — ekran = R(−roll)·(świat −
   kamera)·zoom w osiach gry (y w dół): `cameraRoll(cam)`, `rollToScreen` / `rollToWorld`, `rolledHalfExtents` (pół pudła
   osi świata wokół obróconego kadru — culling i pudła). `syncCamera` obraca kamery three (`cameraOrtho.rotation.z =
   −roll`, `cameraPersp.up = (sin roll, cos roll, 0)` przed `lookAt`, `Core3D.viewRoll`); obrót znają: maska słońca
@@ -73,9 +75,13 @@ paths:
   roll)` — pozycje i kierunki źródeł w osiach ekranu), kadr efektów (`FxFrame._viewRect`), warp „Nurt” (pudła ośrodka,
   odcinanie, mgławica, smugi, rulon), soczewka świata i culling planet (`planet3d.assets.js`: `lensToWorld`,
   `isCircleVisibleInGameCamera`), okno pola pasa (`AsteroidBelt._computeView`) i ringi „Halo” (kamera ringu, pudło
-  kadru — `HaloRingGame.update`). Przy roll = 0 każda z tych ścieżek daje te same liczby co bez obrotu. W grze
-  `camera.roll` nie ma — port (HUD `View3D`, migawka workera, rig w `index.html`, culling CPU stacji i pyłu)
-  czeka na decyzję usera (`docs/webgpu/DEMO-WARP-PED.md`).
+  kadru — `HaloRingGame.update`), mgła wojny w poście (`uFogRot` — punkt świata piksela, `packFogView` z pudłem
+  obróconego kadru), pył kosmiczny (`G4.yz` — wzór drobin i smugi do osi ekranu, kontener z obróconego kadru), komety
+  (`_inView`). Przy roll = 0 każda z tych ścieżek daje te same liczby co bez obrotu. W grze kąt niesie migawka workera
+  (`HEAD.CAM_ROLL` / `CAMNS_ROLL` → `cam.roll` / `camNs.roll` w `render.worker.js`); po stronie gry z obrotem liczą
+  rzuty HUD-u (`worldToScreenInto` / `screenToWorld`, `screenAngleFor`), pudło cullingu kadłubów (`fillHexCullInfo`),
+  bramka efektów trafień i okno gazu przestrzeni. Stacje (`updateStations3D` bez pudła) i dysze (pudło z `fillHexCullInfo`)
+  nie potrzebują nic więcej. Nowy moduł rzutujący sam — `rollToScreen` / `rolledHalfExtents`.
 
 - Efekty GPU (`src/3d/fx/`, opis `docs/webgpu/FX-INFRA.md`): `Core3D.fx` (`fxFrame.js`) raz na klatkę rAF na starcie
   `render()`, przed passami (drugi `renderSingle` podzielonego ekranu nic nie robi): kroki

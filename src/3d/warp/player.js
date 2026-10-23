@@ -42,6 +42,22 @@ export const WARP_FLOW = Object.freeze({ gear1: 16000, gear2: 21000, travel: 210
  */
 export const HYPER_FLOW = Object.freeze({ ref: 30000, min: 0.2, max: 1.4, shake: 0.5 });
 /**
+ * Hipercruise BEZ OŚRODKA (zgłoszenie użytkownika 2026-10-23: „usunięcie efektu cząsteczkowego”; zrzuty faz —
+ * dominowały drobiny ośrodka: turkusowy front i pomarańczowy warkocz wokół statku od rozruchu do wyjścia): bańka
+ * i iskry hamowania to przegródki ośrodka, więc w hipercruisie ich nie ma — zostają smugi gwiazd, soczewka bańki
+ * na tle, fale, błyski i żar kadłuba. `?hcOsrodek=1` w adresie (także w workerze renderu) — ośrodek jak w E5 (A/B).
+ */
+let _hyperMediumSearch = null;
+let _hyperMediumOn = false;
+export function hyperMediumOn(search = RenderWorld.pageSearch) {
+  const s = typeof search === 'string' ? search : '';
+  if (s !== _hyperMediumSearch) {
+    _hyperMediumSearch = s;
+    _hyperMediumOn = /[?&]hcOsrodek=1(?:&|$)/.test(s);
+  }
+  return _hyperMediumOn;
+}
+/**
  * Soczewka świata (worldLens.js — planety w skoku): β rośnie przez `kick` s po skoku; przy wyjściu
  * trzyma się do końca zwolnienia i spada do zera przy zatrzymaniu — cel „wlatuje” w locie hamującym
  * (demo: scenes.js — w.beta).
@@ -291,6 +307,8 @@ export class WarpPlayerFx {
     const tx = t - this.exitT;
     const ramp = this.ramp;
     const tb = tx - ramp.tBrake;   // czas od początku hamowania (wyjście)
+    // Hipercruise bez ośrodka (HYPER_FLOW wyżej: hyperMediumOn) — bez przegródek i poświaty drobin.
+    const medOn = !this.hyper || hyperMediumOn();
 
     // --- bańka gracza w ośrodku ---
     const bub = this.bubble;
@@ -320,7 +338,7 @@ export class WarpPlayerFx {
       bub.rearT = exiting ? this.exitT + ramp.tHalt + 0.05 : Infinity;
       bub.lensAmp = 26 * A;
       if (bub.on) {
-        frame.pushBubble(bub);
+        if (medOn) frame.pushBubble(bub);
         frame.addLens(sx, sy, this.angle, a, R, bub.lensAmp, bub.front);
       }
     }
@@ -345,8 +363,10 @@ export class WarpPlayerFx {
       st.frontS = lerp(18000, -18000, smooth(0, ramp.slow, tx));
     }
 
-    frame.warpVis = Math.max(frame.warpVis, mode === 'warp' ? smooth(this.kickT, this.kickT + 0.4, t)
-      : (exiting ? 1 - smooth(0, ramp.slow, tx) : 0));
+    if (medOn) {
+      frame.warpVis = Math.max(frame.warpVis, mode === 'warp' ? smooth(this.kickT, this.kickT + 0.4, t)
+        : (exiting ? 1 - smooth(0, ramp.slow, tx) : 0));
+    }
     // Po zatrzymaniu (i iskrach hamowania) ośrodek gaśnie — bez chmury drobin wokół okrętu.
     if (exiting && tx >= ramp.tHalt + 0.6 && tx < ramp.tHalt + 2.2) frame.mediumFade = Math.max(frame.mediumFade, 4);
 
@@ -392,7 +412,7 @@ export class WarpPlayerFx {
       const size = warpSizeScale(L);
       const p = this.push;
       if (p) {
-        p.on = tb > -0.05 && tb < 0.5;
+        p.on = medOn && tb > -0.05 && tb < 0.5;
         if (p.on) {
           p.x = sx; p.y = sy;
           p.angle = this.angle;

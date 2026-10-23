@@ -167,6 +167,13 @@ test('świat mgły → uniformy postu: osie sceny, kadr z zapasem, zawinięte ka
   packFogView(U, world, { ...view, refX: view.refX + FOG_TILE_WORLD });
   assert.ok(Math.abs(U.uFogBaseA.value.x - a.x) < 1e-9 && Math.abs(U.uFogBaseA.value.y - a.y) < 1e-9);
   assert.ok(U.uFogTime.value < FOG_TIME_WRAP);
+  // obrót kadru (hipercruise, 2026-10-23): uFogRot = (cos, −sin roll), bez obrotu (1, 0)
+  assert.equal(U.uFogRot.value.x, 1);
+  assert.equal(U.uFogRot.value.y, -0);
+  packFogView(U, world, { ...view, roll: Math.PI / 2 });
+  assert.ok(Math.abs(U.uFogRot.value.x) < 1e-12 && Math.abs(U.uFogRot.value.y + 1) < 1e-12);
+  assert.equal(U.uFogCount.value, 1, 'koła z pudła obróconego kadru (tu ten sam wynik)');
+  packFogView(U, world, view);
   // kamery 3D: bez cullingu, wysokość oka
   packFogView(U, world, { persp: true, refX: 5_000_000, refY: 7_000_000, bufW: 1920, bufH: 1080, camZ: 8000, inv: null });
   assert.equal(U.uFogPersp.value, 1);

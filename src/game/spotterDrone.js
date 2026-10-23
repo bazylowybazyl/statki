@@ -219,7 +219,7 @@ export const SpotterDroneSystem = {
 
       ctx.save();
       ctx.translate(scr.x, scr.y);
-      ctx.rotate(d.angle);
+      ctx.rotate(d.angle - (Number(cam?.roll) || 0));   // obrót kadru (hipercruise — cam.roll)
 
       // Drone body — small triangle
       const size = Math.max(4, 8 * cam.zoom);

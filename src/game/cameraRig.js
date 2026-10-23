@@ -659,6 +659,13 @@ function wrapPi(a) {
 
 export const CAMERA_WARP_ROLL_MODES = Object.freeze(['up', 'right', 'off']);
 
+// Opcja „Kamera w hipercruisie” (menu → Sterowanie, localStorage sc_camera_hyper_roll; 2026-10-23, zgłoszenie
+// użytkownika: „odpalenie hipercruise = przestawienie kamery za statkiem”): 'up' — kadr kursem w górę (domyślnie),
+// 'off' — północ w górę jak w zwykłym locie; 'right' (kurs w prawo) tylko z adresu `?hcKamera=right` (A/B).
+export function normalizeCameraHyperRollMode(mode) {
+  return CAMERA_WARP_ROLL_MODES.includes(mode) ? mode : 'up';
+}
+
 // OBRÓT KADRU W SKOKU (user 2026-10-19: „obracajmy kamerę na czas warpu w kierunku lotu — możemy wtedy lepiej
 // bawić się tym, co jest przed nami”; demo „Pęd”, dema/warp-ped.html). Od startu ładowania do `warpRollHold` s po
 // zatrzymaniu na rampie wyjścia kadr obraca się KURSEM W GÓRĘ ekranu (mode 'up': roll = kurs + π/2; 'right' — kurs
@@ -666,14 +673,15 @@ export const CAMERA_WARP_ROLL_MODES = Object.freeze(['up', 'right', 'off']);
 // Sprężyna krytyczna na kącie (`warpRollOmega`), najkrótszą drogą, dokładna w kroku — nie zależy od FPS.
 // input: dt (czas gry tej klatki; w pauzie 0 — stoi), state ('idle' | 'charging' | 'active'), dirX, dirY (kurs skoku),
 //        exitAge, exitHalt (rampa wyjścia — jak stepCameraRigWarp), arriving (ślizg z pędem po rampie — kurs trzymany
-//        do końca ślizgu), enabled (kamera statku), mode.
+//        do końca ślizgu), hold (kurs trzymany — np. hamowanie wyjścia z hipercruise'u w grze, 2026-10-23; po nim
+//        wołający podaje exitAge od końca hamowania z exitHalt 0), enabled (kamera statku), mode.
 // Wynik: rig.roll [rad] — kamera gry `cam.roll` (src/3d/viewRoll.js: ekran = R(−roll)·(świat − kamera)). Rig
 // liczy wyprzedzenie i kop w osiach EKRANU: wołający obraca prędkość i kurs o −roll, a offset o +roll.
 export function stepCameraRigRoll(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const dt = Math.max(0, finite(input.dt, 0));
   const mode = CAMERA_WARP_ROLL_MODES.includes(input.mode) ? input.mode : 'up';
   const exitAge = finite(input.exitAge, -1);
-  const inWarp = input.state === 'charging' || input.state === 'active' || input.arriving === true
+  const inWarp = input.state === 'charging' || input.state === 'active' || input.arriving === true || input.hold === true
     || (exitAge >= 0 && exitAge < finite(input.exitHalt, 0) + finite(tune.warpRollHold, 0.5));
   const on = input.enabled !== false && mode !== 'off' && inWarp;
   let target = 0;

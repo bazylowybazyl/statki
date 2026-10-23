@@ -6,6 +6,7 @@ import { ActiveCarrier } from '../game/carrierVelocity.js';
 // (RW-20: liczone na wątku głównym — osobny ciąg od strumienia renderu fxRandom).
 import { fxRandomGame } from '../game/fxRandomGame.js';
 import { RenderCommands } from '../render/renderCommands.js';
+import { cameraRoll } from '../render/viewRoll.js';
 
 // NOSNIK (src/game/carrierVelocity.js): czastka, blysk i fala rodza sie
 // z predkoscia kadluba, z ktorego wyszly, i rysuja sie w  pos + v * (T - t0)
@@ -378,7 +379,8 @@ export const CanvasVFX = {
     const svx = (Number(b.vx) || 0) - (Number(b.ivx) || 0);
     const svy = (Number(b.vy) || 0) - (Number(b.ivy) || 0);
     const prevS = projectInto(rx - svx * BULLET_STREAK_DT, ry - svy * BULLET_STREAK_DT, cam, _prevScratch);
-    const angle = (svx !== 0 || svy !== 0) ? Math.atan2(svy, svx) : Math.atan2(b.vy, b.vx);
+    // kąt na ekranie: obrót kadru (`cam.roll` — src/render/viewRoll.js; kamery 3D go nie niosą)
+    const angle = ((svx !== 0 || svy !== 0) ? Math.atan2(svy, svx) : Math.atan2(b.vy, b.vx)) - cameraRoll(cam);
     const lenPx = (vfx.len || 50) * cam.zoom;
 
     // Pociski poza kadrem: petla rysujaca leci po WSZYSTKICH pociskach swiata,

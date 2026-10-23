@@ -418,6 +418,14 @@
                 <p class="mm-note">Wł.: przy skoku statek wyrywa się do przodu w kadrze, na czas skoku kamera się oddala, po wyjściu wraca do ustawionego zoomu. Wył.: kamera w warpie jak w zwykłym locie.</p>
               </div>
               <div class="mm-field">
+                <div class="mm-field-label">Kamera w hipercruisie</div>
+                <div class="menu-chip-group" role="group" aria-label="Kamera w hipercruisie">
+                  <button class="menu-chip" data-camera-hyper-roll="up">Za statkiem</button>
+                  <button class="menu-chip" data-camera-hyper-roll="off">Północ</button>
+                </div>
+                <p class="mm-note">Za statkiem: od rozruchu hipercruise'u kadr obraca się kursem w górę — statek nisko, przed dziobem widać, co nadlatuje; po wyjściu wraca północ. Północ: kadr zawsze północą w górę.</p>
+              </div>
+              <div class="mm-field">
                 <div class="mm-field-label">Kadr bitwy</div>
                 <div class="menu-chip-group" role="group" aria-label="Kadr bitwy">
                   <button class="menu-chip" data-camera-frame="full">Pełny</button>
@@ -1129,8 +1137,10 @@
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
       defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
-      normalizeCameraWarpKickMode, createCameraKick, addCameraKick, stepCameraKick
+      normalizeCameraWarpKickMode, createCameraKick, addCameraKick, stepCameraKick, stepCameraRigRoll,
+      normalizeCameraHyperRollMode
     } from "./src/game/cameraRig.js";
+    import { cameraRoll, rollToScreen, rollToWorld, rolledHalfExtents } from "./src/render/viewRoll.js";
     import {
       cameraDirectorTune, createCameraDirector, stepCameraDirector, beginCameraDirectorPoints, pushCameraDirectorPoint,
       noteCameraDirectorCue, noteCameraDirectorWheel, foldCameraDirectorZoom, resetCameraDirector,
@@ -2042,6 +2052,8 @@
       cameraLook: 'auto',
       // Kop kamery przy warpie (skok, wyjście, oddalenie zoomu): 'on' | 'off' — src/game/cameraRig.js.
       cameraWarpKick: 'on',
+      // Kamera w hipercruisie (kadr kursem w górę — obrót kadru): 'up' | 'off' ('right' — adres ?hcKamera=right) — cameraRig.js.
+      cameraHyperRoll: 'up',
       // Kadr bitwy (reżyser kadru — kamera pokazuje wrogów i przyloty): 'full' (środek i zoom) | 'pan' (sam środek)
       // | 'off' — src/game/cameraDirector.js.
       cameraFrame: 'full',
@@ -5456,7 +5468,7 @@
       const s = worldToScreen(ship.pos.x, ship.pos.y, cam);
       const R = Math.max(ship.w, ship.h) * camera.zoom * 0.6 + 30;
       for (const p of HUD.navArrows) {
-        const ang = Math.atan2(p.y - ship.pos.y, p.x - ship.pos.x);
+        const ang = screenAngleFor(Math.atan2(p.y - ship.pos.y, p.x - ship.pos.x), cam);
         const a = Math.max(0, 1 - p.age / p.life);
         ctx.save(); ctx.globalAlpha = 0.3 + 0.7 * a;
         drawArrowOnRing(s.x, s.y, R, ang, 12, '#60a5fa');
@@ -5467,10 +5479,12 @@
     function drawStabilizerHeadingMarker(ship, cam, renderPos = null, renderAngle = null) {
       if (!flightAssist?.stabilizer || !ship || ship.destroyed) return;
       const st = ship.__stabilizerState;
-      const targetAngle = Number.isFinite(Number(st?.output?.targetAngle))
+      const targetWorld = Number.isFinite(Number(st?.output?.targetAngle))
         ? Number(st.output.targetAngle)
         : Number(st?.targetAngle);
-      if (!Number.isFinite(targetAngle)) return;
+      if (!Number.isFinite(targetWorld)) return;
+      // kąty na ekranie (obrót kadru — screenAngleFor)
+      const targetAngle = screenAngleFor(targetWorld, cam);
 
       const pos = renderPos || ship.pos;
       const s = worldToScreen(pos.x, pos.y, cam);
@@ -5480,7 +5494,7 @@
       const outerR = Math.max(innerR + 34, baseRadius * zoom * 0.62 + 42);
       const dx = Math.cos(targetAngle);
       const dy = Math.sin(targetAngle);
-      const currentAngle = Number.isFinite(Number(renderAngle)) ? Number(renderAngle) : (Number(ship.angle) || 0);
+      const currentAngle = screenAngleFor(Number.isFinite(Number(renderAngle)) ? Number(renderAngle) : (Number(ship.angle) || 0), cam);
       const error = wrapAngle(targetAngle - currentAngle);
       const errorNorm = clamp(Math.abs(error) / (Math.PI / 3), 0, 1);
       const color = errorNorm > 0.32 ? 'rgba(255,216,116,0.96)' : 'rgba(96,232,255,0.96)';
@@ -12768,11 +12782,14 @@
     const IMPACT_FX_CELL_PX = 24;    // komórka cooldownu ≈ 24 px ekranu (min. 60 j.)
     const _impactFxLastMs = new Map();
 
+    const _impactRollOff = { x: 0, y: 0 };
     function impactScreenPxForCamera(x, y, sizeWorld, cam, vpX, vpW) {
       if (!cam) return 0;
       const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
-      const sx = (x - (Number(cam.x) || 0)) * zoom + vpX + vpW * 0.5;
-      const sy = (y - (Number(cam.y) || 0)) * zoom + H * 0.5;
+      // obrót kadru (hipercruise): przesunięcie do osi ekranu (src/render/viewRoll.js)
+      const off = rollToScreen(x - (Number(cam.x) || 0), y - (Number(cam.y) || 0), cameraRoll(cam), _impactRollOff);
+      const sx = off.x * zoom + vpX + vpW * 0.5;
+      const sy = off.y * zoom + H * 0.5;
       const reach = IMPACT_FX_MARGIN_PX + sizeWorld * zoom;
       if (sx < vpX - reach || sx > vpX + vpW + reach || sy < -reach || sy > H + reach) return 0;
       return sizeWorld * zoom;
@@ -17623,7 +17640,8 @@
       hyperLook.speed = hypercruiseDriving(hc) ? hc.speed : 0;
       hyperLook.vmax = hc.vmax;
       hyperLook.dir = ship ? ship.angle : 0;
-      if (ship) ship.__hyperMode = next === 'idle' ? undefined : next;
+      // Dysze (2026-10-23, „nie ma / jest”): rozruch = żar bez płomienia, lot = ogień, wyjście = dogasanie ('drop').
+      if (ship) ship.__hyperMode = next !== 'idle' ? next : (hc.state === 'drop' ? 'drop' : undefined);
       // Kamera: kop jak przy skoku warpa (rig — cameraRig.js) przy starcie lotu i impuls przy wyjściu.
       if (next === 'active' && prev !== 'active') noteCameraRigWarp(cameraRig, 'kick');
       else if (prev === 'active' && next !== 'active') noteCameraRigWarp(cameraRig, 'exit');
@@ -18964,6 +18982,8 @@
     const scanOverlayView = {
       W: 0, H: 0, time: 0, ship: null, cam: null, blockedRects: null,
       hidden: (e) => SensorSystem.hides(e),   // mgła wojny: wynik skanu znika razem z kontaktem
+      // kąt świata → ekranu (obrót kadru w hipercruisie)
+      screenAngle(a) { return screenAngleFor(a, this.cam); },
       project(x, y, out) {
         if (isView3DCamera(this.cam)) return View3D.project(x, y, 0, out);
         worldToScreenInto(x, y, this.cam, out);
@@ -25957,7 +25977,10 @@
         // (gaz skrętu ≥18%) pchały statek w bok od celu i przy dolocie krążył.
         // Przy stabilizatorze dysze główne dostają tylko jego moment — surowe
         // A/D omijało regulator.
-        mainTorque: maneuverAction
+        // Hipercruise w locie: kurs prowadzi automat (gałąź niżej — bez momentu dysz), więc wychylenie dysz MAIN
+        // to sam wygląd — × HYPERCRUISE_TUNE.nozzleGimbal (zgłoszenie użytkownika 2026-10-23: „żeby się nie
+        // wyginało tak mocno”; pełne −26° obracało plazmę WARP na boki).
+        mainTorque: (maneuverAction
           ? 0
           : commandHeadingActive
           ? (_playerCommandTurnCapability.mainAssist ? manualTorqueInput : 0)
@@ -25966,7 +25989,7 @@
             : (((Number(ship?.thrusterInput?.main) || 0) > 1e-3
               || (Math.abs(manualTorqueInput) > 1e-3 && playerNeedsMainEngineTurning()))
               ? manualTorqueInput
-              : 0),
+              : 0)) * (hypercruiseDriving(hypercruise) ? HYPERCRUISE_TUNE.nozzleGimbal : 1),
         suppressManualTorque: stabilizerActive || maneuverAction === 'turn'
       });
       const thrusterDrive = updateShipThrusterState(ship, dt);
@@ -27964,6 +27987,43 @@
     // kamery dla stepCameraRig i drżenie ładowania z tego samego stanu. Tylko gracz 1 (P2 nie ma
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
     const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: true };
+    // OBRÓT KADRU W HIPERCRUISIE (2026-10-23, zgłoszenie użytkownika: „kamera jak w warp — odpalenie hipercruise =
+    // przestawienie kamery za statkiem”; port obrotu z dema „Pęd” — cameraRig.js: stepCameraRigRoll, konwencja
+    // src/render/viewRoll.js): od rozruchu kadr obraca się kursem w górę ekranu (rig: statek nisko, przed dziobem to, co
+    // nadlatuje), trzyma przez hamowanie wyjścia i `warpRollHold` po nim, potem wraca do północy. Tylko gracz 1 i kamera
+    // statku z góry (RTS, podzielony ekran, kamery 3D, ujęcia fabuły — północ); warp gry bez obrotu (nowy warp — demo).
+    // Wynik: cameraRig.roll → `camera.roll` / `cam.roll` w render(). Opcja „Kamera w hipercruisie”
+    // (OPTIONS.cameraHyperRoll, menu → Sterowanie), A/B z adresu `?hcKamera=up|right|off`.
+    const _cameraRollInput = { dt: 0, state: 'idle', dirX: 1, dirY: 0, exitAge: -1, exitHalt: 0, enabled: true, mode: 'up', hold: false };
+    const _rollTmp = { x: 0, y: 0 };
+    let _hyperRollPrev = 'idle';
+    let _hyperRollAfter = -1;   // [s gry] od końca hamowania wyjścia (−1 — poza oknem)
+    let _hyperInsetW = 0;       // waga „cały kadłub nad HUD-em” riga w hipercruisie (render)
+    const _hyperRollUrl = (() => { const m = /[?&]hcKamera=(up|right|off)(?:&|$)/.exec(location.search); return m ? m[1] : null; })();
+    function cameraHyperRollMode() {
+      return _hyperRollUrl || normalizeCameraHyperRollMode(OPTIONS.cameraHyperRoll);
+    }
+    // Krok obrotu (czas gry; w pauzie dt = 0) — w loop() tuż przed updateCameraWarpKick: kurs kopu i wyprzedzenia
+    // riga liczą się w osiach ekranu.
+    function updateCameraHyperRoll(gameDt) {
+      const r = _cameraRollInput;
+      const hc = hypercruise;
+      const warpIdle = warp.state === 'idle' && !warp.exitRamp?.active;
+      if ((_hyperRollPrev === 'drop' || _hyperRollPrev === 'active') && hc.state === 'idle') _hyperRollAfter = 0;
+      else if (hc.state !== 'idle') _hyperRollAfter = -1;
+      else if (_hyperRollAfter >= 0) _hyperRollAfter += gameDt;
+      _hyperRollPrev = hc.state;
+      r.dt = gameDt;
+      r.state = warpIdle ? hyperLook.state : 'idle';
+      r.hold = warpIdle && hc.state === 'drop';
+      r.exitAge = warpIdle && _hyperRollAfter >= 0 && _hyperRollAfter < 3 ? _hyperRollAfter : -1;
+      r.exitHalt = 0;
+      if (ship) { r.dirX = Math.cos(ship.angle); r.dirY = Math.sin(ship.angle); }
+      r.mode = cameraHyperRollMode();
+      r.enabled = camera.mode === 'ship' && !!ship && !ship.destroyed && !splitScreenMode && !View3D.active
+        && !(camera.transition && camera.transition.kind !== 'ship');
+      stepCameraRigRoll(cameraRig, r, cameraRigTune);
+    }
     function updateCameraWarpKick(gameDt) {
       const w = _cameraWarpInput;
       w.dt = gameDt;
@@ -27971,6 +28031,8 @@
       // Hipercruise (E5, 2026-10-22): kop i oddalenie jak skok warpa (rozruch = ładowanie, lot = skok), bez rulonu —
       // gdy warp stoi; warp ma pierwszeństwo.
       const hyperCam = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
+      // obrót kadru (updateCameraHyperRoll): kurs kopu w osiach ekranu
+      const roll = Number(cameraRig.roll) || 0;
       w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
       w.state = hyperCam ? hyperLook.state : warp.state;
       w.charge = hyperCam ? hyperLook.charge : (warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0);
@@ -27978,6 +28040,7 @@
       if (hyperCam) { w.dirX = Math.cos(hyperLook.dir); w.dirY = Math.sin(hyperLook.dir); }
       else if (dir && (dir.x || dir.y)) { w.dirX = dir.x; w.dirY = dir.y; }
       else if (ship) { w.dirX = Math.cos(ship.angle); w.dirY = Math.sin(ship.angle); }
+      if (roll) { const d = rollToScreen(w.dirX, w.dirY, roll, _rollTmp); w.dirX = d.x; w.dirY = d.y; }
       // Rampa wyjścia (kamera za statkiem, oddalenie do końca zwolnienia) i chwila po zatrzymaniu
       // (kamera dogania statek: WARP_EXIT.settle) — po rampie jej wiek rośnie zegarem gry.
       const ramp = warp.exitRamp;
@@ -28043,6 +28106,7 @@
       if (PAUSED || StoryGame.worldFrozen) {
         saveState();
         updateCameraTarget(frame);
+        updateCameraHyperRoll(0);
         updateCameraWarpKick(0);
         updateCameraZoom(frame);
         zoomIndicator.update(frame);
@@ -28176,6 +28240,7 @@
         camera.shakeTime -= frame;
         if (camera.shakeTime <= 0) camera.shakeMag = 0;
       }
+      updateCameraHyperRoll(frame);
       updateCameraWarpKick(frame);
       updateCameraZoom(frame);
       updateCamera2(alpha, frame);
@@ -28283,6 +28348,7 @@
     // RW-26: rekordy wież (Turret2D.syncFrame) po stronie gry — te same encje co kadłuby 3D (src/render/drawBox.js).
     const _turretSyncOpts = { cull: _hexCullInfo, zoom: 1, hidden: (e) => SensorSystem.hides(e), poseOf: bridgeRenderPose, enabled: true };
 
+    const _cullRollHalf = { hw: 0, hh: 0 };
     // Pudło cullingu kadłubów z kamery klatki: halfW/H = pudło rozgrzania (OVERSCAN × pół kadru), drawHalfW/H = kadr;
     // podzielony ekran — pudło obejmuje obie kamery; kamera 3D — rzut bryły widzenia na płaszczyznę gry.
     function fillHexCullInfo(cam, out, box3d) {
@@ -28295,8 +28361,10 @@
       const cullCamX = (camX + cam2X) / 2;
       const cullCamY = (camY + cam2Y) / 2;
       const cullExtra = (splitScreenMode && camera2) ? Math.hypot(camX - cam2X, camY - cam2Y) / 2 : 0;
-      const viewHalfW = (W * 0.5) / zoomNow + cullExtra;
-      const viewHalfH = (H * 0.5) / zoomNow + cullExtra;
+      // obrót kadru (hipercruise): pudło osi świata wokół obróconego kadru (src/render/viewRoll.js)
+      const rh = rolledHalfExtents((W * 0.5) / zoomNow, (H * 0.5) / zoomNow, cameraRoll(cam), _cullRollHalf);
+      const viewHalfW = rh.hw + cullExtra;
+      const viewHalfH = rh.hh + cullExtra;
 
       // --- OVERSCAN = PUDLO ROZGRZANIA ---
       // Mnoznik POLOWY wymiarow widoku, wiec 3.0 daje pudlo o DZIEWIECIU polach
@@ -28615,11 +28683,20 @@
       const camX = Number(cam?.x) || 0;
       const camY = Number(cam?.y) || 0;
       const vp = getViewportForCamera(cam);
-      out.x = (wx - camX) * zoomNow + vp.x + vp.w / 2;
-      out.y = (wy - camY) * zoomNow + vp.y + vp.h / 2;
+      // Obrót kadru (`cam.roll`, hipercruise — src/render/viewRoll.js): ekran = R(−roll)·(świat − kamera)·zoom.
+      const roll = cameraRoll(cam);
+      let dx = wx - camX;
+      let dy = wy - camY;
+      if (roll) { const c = Math.cos(roll), s = Math.sin(roll); const rx = c * dx + s * dy; dy = -s * dx + c * dy; dx = rx; }
+      out.x = dx * zoomNow + vp.x + vp.w / 2;
+      out.y = dy * zoomNow + vp.y + vp.h / 2;
       return out;
     }
     window.worldToScreenInto = worldToScreenInto;
+    // Kąt w osiach świata → kąt na ekranie kamery (obrót kadru; kamery 3D — bez zmian, rzut liczy View3D).
+    function screenAngleFor(angle, cam) {
+      return isView3DCamera(cam) ? angle : angle - cameraRoll(cam);
+    }
 
     function worldToScreen(wx, wy, cam, wz = 0) {
       return worldToScreenInto(wx, wy, cam, { x: 0, y: 0 }, wz);
@@ -28766,6 +28843,7 @@
     const spaceGasState = createSpaceGasInputState();
     const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
     const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
+    const _spaceGasRollHalf = { hw: 0, hh: 0 };
     // Ring w budowie (Jowisz, GK-6): pole gazu ringu (src/game/ringGasField.js) — kotwica w środku planety, pas pyłu
     // i oparów budowy wokół obręczy, odgazowanie frontów. Gdy kadr nie dotyka pasa asteroid.
     let _ringGasFields = null;
@@ -28782,7 +28860,9 @@
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
       o.dt = dt; o.camX = cam.x; o.camY = cam.y;
-      o.halfW = W * 0.5 / zoom; o.halfH = H * 0.5 / zoom;
+      // obrót kadru: pudło osi świata wokół obróconego kadru
+      const rh = rolledHalfExtents(W * 0.5 / zoom, H * 0.5 / zoom, cameraRoll(cam), _spaceGasRollHalf);
+      o.halfW = rh.hw; o.halfH = rh.hh;
       const belt = beltWorld ? beltWorld.field : null;
       const reach = Math.max(SPACE_GAS_TUNE.windowCells * 32, o.halfW, o.halfH) * SPACE_GAS_INPUT_TUNE.envMargin;
       const ring = belt && belt.rectTouchesBelt(cam.x - reach, cam.y - reach, cam.x + reach, cam.y + reach) ? null : ringGasFieldNear(cam.x, cam.y, reach);
@@ -29102,7 +29182,7 @@
 
       if (isFighterUnit(npc)) {
         const size = Math.max(4, (npc.radius || 12) * _zoom);
-        const drawAngle = Number.isFinite(_npcDrawAngle) ? _npcDrawAngle : (npc.angle || 0);
+        const drawAngle = screenAngleFor(Number.isFinite(_npcDrawAngle) ? _npcDrawAngle : (npc.angle || 0), _currentCam);
         ctx.save();
         ctx.translate(s.x, s.y);
         ctx.rotate(drawAngle);
@@ -29299,24 +29379,41 @@
             }
           }
         }
-        rigIn.velX = scouting ? (Number(scoutSn.vx) || 0) : ship.vel.x;
-        rigIn.velY = scouting ? (Number(scoutSn.vy) || 0) : ship.vel.y;
+        // Obrót kadru (hipercruise — updateCameraHyperRoll): rig liczy w osiach EKRANU — wejścia ze świata obrócone
+        // o −roll, offset riga do świata o +roll (src/render/viewRoll.js; przy roll = 0 liczby bez zmian).
+        const rigRoll = splitScreenMode ? 0 : (Number(cameraRig.roll) || 0);
+        const vwx = scouting ? (Number(scoutSn.vx) || 0) : ship.vel.x;
+        const vwy = scouting ? (Number(scoutSn.vy) || 0) : ship.vel.y;
+        const vScr = rollToScreen(vwx, vwy, rigRoll, _rollTmp);
+        rigIn.velX = vScr.x;
+        rigIn.velY = vScr.y;
         rigIn.maxSpeed = scouting ? Math.max(100, Number(scoutSn.maxSpeed) || 400) : hullVmax;
         rigIn.mode = scouting ? 'never' : OPTIONS.cameraLook;
         rigIn.leadGain = scouting ? cameraRigTune.scoutLead : NaN;
+        // Hipercruise (kadr za statkiem, wyprzedzenie na maksimum): nad pasami HUD zostaje CAŁY kadłub z dyszami, nie sam
+        // środek — do pasów półwymiar kadłuba w pionie ekranu; waga gładka (zacisk kadru w rigu skakałby przy zmianie).
+        _hyperInsetW += ((hypercruise.state !== 'idle' || _hyperRollAfter >= 0 ? 1 : 0) - _hyperInsetW) * (1 - Math.exp(-(frameDt || 0) * 2.5));
+        let hcHullV = 0;
+        if (_hyperInsetW > 1e-3 && !scouting) {
+          const sa = interpAngle - rigRoll;
+          const sk = (ship.visual?.spriteScale || 1) * 0.5 * zoomSafe;
+          hcHullV = (Math.abs(Math.sin(sa)) * (Number(ship.w) || 0) + Math.abs(Math.cos(sa)) * (Number(ship.h) || 0)) * sk * _hyperInsetW;
+        }
         // Reżyser kadru: środek kadru ku bitwie (j. świata → px tej klatki) i słabsze zaglądanie za kursorem.
         stepCameraDirectorFrame(frameDt || 0, interpPos.x, interpPos.y);
-        rigIn.biasX = cameraDirector.biasX * zoomSafe;
-        rigIn.biasY = cameraDirector.biasY * zoomSafe;
+        const bScr = rollToScreen(cameraDirector.biasX * zoomSafe, cameraDirector.biasY * zoomSafe, rigRoll, _rollTmp);
+        rigIn.biasX = bScr.x;
+        rigIn.biasY = bScr.y;
         rigIn.lookScale = cameraDirector.lookScale;
-        rigIn.insetTop = _camDirInsets.top;
-        rigIn.insetBottom = _camDirInsets.bottom;
+        rigIn.insetTop = _camDirInsets.top + hcHullV;
+        rigIn.insetBottom = _camDirInsets.bottom + hcHullV;
         stepCameraRig(cameraRig, rigIn, cameraRigTune);
         // prowadzony okręt: Atlas, przy sterach fregaty — fregata (przejazd wagą scoutCamW)
         const followX = scoutCamW > 0 ? interpPos.x + (scoutCamLast.x - interpPos.x) * scoutCamW : interpPos.x;
         const followY = scoutCamW > 0 ? interpPos.y + (scoutCamLast.y - interpPos.y) * scoutCamW : interpPos.y;
-        let rigX = followX + cameraRig.offsetX / zoomSafe;
-        let rigY = followY + cameraRig.offsetY / zoomSafe;
+        const offW = rollToWorld(cameraRig.offsetX / zoomSafe, cameraRig.offsetY / zoomSafe, rigRoll, _rollTmp);
+        let rigX = followX + offW.x;
+        let rigY = followY + offW.y;
         // Ujęcie fabuły (StoryGame cinema.lookAt): kamera odjeżdża od statku nad punkt i wraca — waga w czasie
         // rzeczywistym, cel riga mieszany z punktem; zoom niżej.
         const storyLookW = stepStoryCameraLook(frameDt || 0);
@@ -29373,10 +29470,14 @@
         camBaseY = lerp(prevCameraState.y, camera.y, alpha);
       }
 
-      let camNoShake = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
+      // Obrót kadru (hipercruise, cameraRig.roll — updateCameraHyperRoll): tylko kamera statku gracza 1 z góry; niesie
+      // go `camera` i kamery klatki (`cam`, `camNoShake`) — Core3D, migawka workera, worldToScreen / screenToWorld.
+      const camRoll = (camera.mode === 'ship' && !splitScreenMode) ? (Number(cameraRig.roll) || 0) : 0;
+      camera.roll = camRoll;
+      let camNoShake = { x: camBaseX, y: camBaseY, zoom: camBaseZoom, roll: camRoll };
       let camShakePxX = 0;
       let camShakePxY = 0;
-      let cam = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
+      let cam = { x: camBaseX, y: camBaseY, zoom: camBaseZoom, roll: camRoll };
       // Wstrząs w PX EKRANU (dawniej w jednostkach świata: 18 j. to 3 px przy
       // zoomie 0,15 i 58 px przy 3,2), gładkim szumem zamiast białego co klatkę.
       // camera.addShake + wstrząs strzałów z WeaponFx ruszają CAŁĄ klatką
@@ -29394,19 +29495,23 @@
         const shakePx = cameraShakeAmplitudePx(addShakeMag, weaponShakeMag, cameraRigTune, cameraRig.warpShakePx);
         if (shakePx > 0) {
           sampleCameraShakePx(shakePx, vfxTime, cameraRigTune, _cameraShakePx);
-          cam.x += _cameraShakePx.x / cam.zoom;
-          cam.y += _cameraShakePx.y / cam.zoom;
+          // px ekranu → świat (obrót kadru: R(roll))
+          const sw = rollToWorld(_cameraShakePx.x, _cameraShakePx.y, camRoll, _rollTmp);
+          cam.x += sw.x / cam.zoom;
+          cam.y += sw.y / cam.zoom;
           camShakePxX = _cameraShakePx.x;
           camShakePxY = _cameraShakePx.y;
         }
       }
-      // Kopnięcie kadru od strzałów gracza (cameraRig.stepCameraKick) — w tym samym `cam` co wstrząs.
+      // Kopnięcie kadru od strzałów gracza (cameraRig.stepCameraKick) — w tym samym `cam` co wstrząs. Kierunek z lufy
+      // (osie świata); camShakePx* — px ekranu.
       stepCameraKick(cameraKick, frameDt || 0, cameraRigTune);
       if (!DevFlags.disableCameraShake && (cameraKick.x !== 0 || cameraKick.y !== 0)) {
         cam.x += cameraKick.x / cam.zoom;
         cam.y += cameraKick.y / cam.zoom;
-        camShakePxX += cameraKick.x;
-        camShakePxY += cameraKick.y;
+        const ks = rollToScreen(cameraKick.x, cameraKick.y, camRoll, _rollTmp);
+        camShakePxX += ks.x;
+        camShakePxY += ks.y;
       }
 
       // --- KAMERY 3D (src/game/game3D.js, camera3DRig.js) — sam widok, rozgrywka w płaszczyźnie ---
@@ -29888,7 +29993,7 @@
             if (baseAlpha <= 0) continue;
             ctx.save();
             ctx.translate(s.x, s.y);
-            ctx.rotate(platform.rotation);
+            ctx.rotate(screenAngleFor(platform.rotation, cam));
             ctx.globalAlpha = baseAlpha;
             ctx.drawImage(platform.canvas, -size / 2, -size / 2, size, size);
             if (platform.hitFlash > 0) {
@@ -30040,7 +30145,7 @@
           ctx.save();
           ctx.translate(shipS.x, shipS.y);
           ctx.scale(camera.zoom, camera.zoom);
-          ctx.rotate(interpAngle);
+          ctx.rotate(screenAngleFor(interpAngle, cam));
 
           // --- 1. OBLICZANIE ACTIVE THRUSTERS ---
           // Gdy statek gracza jest renderowany w 3D, pomijamy 2D exhausty, bo nakładają się na kadłub.
@@ -30104,7 +30209,7 @@
             ctx.fill();
 
             ctx.save();
-            ctx.rotate(-interpAngle);
+            ctx.rotate(-screenAngleFor(interpAngle, cam));
             const glare = ctx.createRadialGradient(0, -visualH * 0.18, 6 * spriteScale, 0, -visualH * 0.18, visualW * 0.5);
             glare.addColorStop(0, 'rgba(255,255,255,0.25)');
             glare.addColorStop(1, 'rgba(255,255,255,0)');
@@ -30640,7 +30745,8 @@
         const scale = _reticleScale();
         const radius = Math.max(70 * scale, halfLen + 26 * scale);
         const bearing = Math.atan2(cursor.y - shipScreen.y, cursor.x - shipScreen.x);
-        drawArcCompass(ctx, shipScreen.x, shipScreen.y, radius, interpAngle, list, count, bearing, _reticleHud.compassAlpha * 0.9, scale);
+        // kurs kadłuba na ekranie (obrót kadru — screenAngleFor); kierunek kursora już w osiach ekranu
+        drawArcCompass(ctx, shipScreen.x, shipScreen.y, radius, screenAngleFor(interpAngle, camRef), list, count, bearing, _reticleHud.compassAlpha * 0.9, scale);
       }
 
       function drawWarpCourseOverlay(camRef, clipX, clipW) {
@@ -31084,10 +31190,13 @@
       const camX = Number(camRef?.x) || 0;
       const camY = Number(camRef?.y) || 0;
       const vp = getViewportForCamera(camRef);
-      return {
-        x: camX + (sx - (vp.x + vp.w / 2)) / zoomNow,
-        y: camY + (sy - (vp.y + vp.h / 2)) / zoomNow
-      };
+      // Obrót kadru: świat = kamera + R(roll)·ekran / zoom (src/render/viewRoll.js).
+      const ex = (sx - (vp.x + vp.w / 2)) / zoomNow;
+      const ey = (sy - (vp.y + vp.h / 2)) / zoomNow;
+      const roll = cameraRoll(camRef);
+      if (!roll) return { x: camX + ex, y: camY + ey };
+      const c = Math.cos(roll), s = Math.sin(roll);
+      return { x: camX + c * ex - s * ey, y: camY + s * ex + c * ey };
     }
     window.screenToWorld = screenToWorld;
 
@@ -33617,6 +33726,32 @@
       if (savedWarpKick) OPTIONS.cameraWarpKick = normalizeCameraWarpKickMode(savedWarpKick);
     } catch { }
     updateCameraWarpKickUI();
+
+    // --- KAMERA W HIPERCRUISIE (obrót kadru kursem w górę — updateCameraWarpKick, cameraRig.js: stepCameraRigRoll) ---
+
+    function updateCameraHyperRollUI() {
+      const current = normalizeCameraHyperRollMode(window.OPTIONS && window.OPTIONS.cameraHyperRoll);
+      document.querySelectorAll('[data-camera-hyper-roll]').forEach(btn => {
+        const isActive = (btn.dataset.cameraHyperRoll === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    document.querySelectorAll('[data-camera-hyper-roll]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = normalizeCameraHyperRollMode(e.currentTarget.dataset.cameraHyperRoll);
+        if (window.OPTIONS) window.OPTIONS.cameraHyperRoll = mode;
+        try { localStorage.setItem('sc_camera_hyper_roll', mode); } catch { }
+        updateCameraHyperRollUI();
+      });
+    });
+
+    try {
+      const savedHyperRoll = localStorage.getItem('sc_camera_hyper_roll');
+      if (savedHyperRoll) OPTIONS.cameraHyperRoll = normalizeCameraHyperRollMode(savedHyperRoll);
+    } catch { }
+    updateCameraHyperRollUI();
 
     // --- KADR BITWY (src/game/cameraDirector.js: reżyser kadru) ---
 

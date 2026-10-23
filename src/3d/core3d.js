@@ -585,7 +585,7 @@ const _bbRight = new THREE.Vector3();
 const _bbUp = new THREE.Vector3();
 const _bbFwd = new THREE.Vector3();
 // Mgła wojny: widok renderu (packFogView) — pola przepisywane w miejscu.
-const _fogView = { persp: false, refX: 0, refY: 0, zoom: 1, bufW: 1, bufH: 1, camZ: 1, inv: new THREE.Matrix4() };
+const _fogView = { persp: false, refX: 0, refY: 0, zoom: 1, roll: 0, bufW: 1, bufH: 1, camZ: 1, inv: new THREE.Matrix4() };
 const _fogRot = new THREE.Matrix4();
 
 export const Core3D = {
@@ -2273,6 +2273,7 @@ export const Core3D = {
       v.refX = Number(cam.x) || 0;
       v.refY = Number(cam.y) || 0;
       v.zoom = this.viewZoom(cam);   // px bufora na j. świata
+      v.roll = cameraRoll(cam);      // obrót kadru (viewRoll.js)
     }
     packFogView(u, world, v);
     // Pamięć szumu: kamera z góry bez rulonu (punkt świata piksela = px / zoom w prostym kadrze) i zoom, przy którym
