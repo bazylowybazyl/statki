@@ -270,6 +270,10 @@ test('ring w soczewce (2026-10-19, „a co z ringami”): slot raz na planetę, 
   assert.match(ring, /ring\.group\.position\.set\(ox, -oy, 0\);\s*ring\.group\.scale\.setScalar\(ks\);/);
   assert.match(ring, /if \(lensOn && lens\.turned && lens\.q\) ring\.group\.quaternion\.copy\(lens\.q\)\.multiply\(_qRot\);\s*else ring\.group\.quaternion\.copy\(_qRot\);/);
   assert.match(ring, /const shadowK = lensOn \? Math\.max\(0, Math\.min\(1, Number\(lens\.real\) \|\| 0\)\) : 1;/);
+  // Ring w soczewce = tło jak planeta (2026-10-23, „planeta przebija się przez statek”): części FG (górna ściana,
+  // moduły) na warstwie tła — pass FG rysuje się po kadłubach; po soczewce zwykłe warstwy (FG nad statkiem w hali).
+  assert.match(ring, /lensLayers: Object\.freeze\(\{ default: 1, fg: 1 \}\)/);
+  assert.match(ring, /if \(!!e\.lensLayers !== lensOn\) \{\s*e\.lensLayers = lensOn;\s*ring\.setLayers\(lensOn \? HALO_GAME\.lensLayers : HALO_GAME\.layers\);/);
   // Klucz slotu = klucz wpisu ringu (id planety z mapy układu).
   assert.match(planets, /warpRingLensSlot\(this\.data\?\.id \|\| this\.name\)/);
 });

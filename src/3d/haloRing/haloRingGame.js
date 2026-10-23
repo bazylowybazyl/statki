@@ -40,6 +40,9 @@ const _qRot = new THREE.Quaternion();
 
 export const HALO_GAME = Object.freeze({
   layers: Object.freeze({ default: 1, fg: 2 }),
+  // Ring w soczewce warpa (obraz planety pod płaszczyzną gry): części nad płaszczyzną (górna ściana, moduły, dach hal)
+  // też na warstwie tła — pass FG rysuje się PO kadłubach (zgłoszenie 2026-10-23: „planeta przebija się przez statek”).
+  lensLayers: Object.freeze({ default: 1, fg: 1 }),
   sunElevationDeg: 49,
   activateDistance: 420000,   // ring powstaje, gdy środek kadru jest bliżej planety
   hallReach: 9000,            // hale K-7 wystają za krawędź ścian (płyta przed G-01)
@@ -162,6 +165,7 @@ export class HaloRingGame {
       buildInBackground: true
     });
     ring.setLayers(HALO_GAME.layers);
+    e.lensLayers = false;
     ring.group.rotation.z = e.place.rot;
     ring.group.position.set(e.place.x, -e.place.y, 0);
     ring.group.visible = false;
@@ -242,6 +246,7 @@ export class HaloRingGame {
     const e = this.entries.find((v) => v.key === key);
     if (!e?.ring) return;
     e.ring.setLayers(HALO_GAME.layers);
+    e.lensLayers = false;
     e.ring.setCutaway(0, null);
     e.ring.setCutaway(1, null);
     e.ring.group.visible = false;
@@ -359,6 +364,13 @@ export class HaloRingGame {
       e.visible = inView;
       if (!inView) continue;
       visible++;
+      // W soczewce ring jest tłem jak jego planeta: części FG na warstwie tła (kadłub zawsze nad nim), po soczewce —
+      // zwykłe warstwy (pass FG nad statkiem w hali); przełączenie tylko przy zmianie (ta sama kamera perspektywy —
+      // pipeline'y bez zmian).
+      if (!!e.lensLayers !== lensOn) {
+        e.lensLayers = lensOn;
+        ring.setLayers(lensOn ? HALO_GAME.lensLayers : HALO_GAME.layers);
+      }
       ring.group.position.set(ox, -oy, 0);
       ring.group.scale.setScalar(ks);
       // obrót: port pod kątem stacji (place.rot), w soczewce poprzedzony obrotem przelotu bryły planety
