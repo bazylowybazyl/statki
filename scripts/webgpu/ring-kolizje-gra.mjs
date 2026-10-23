@@ -2,7 +2,7 @@
 // HaloRingCollider w src/game/haloRingWorld.js), więc działa w trybie `off` i w workerze renderu
 // (`--query renderWorker=1`; obrazu ringu na stronie wtedy nie ma). Gra w czasie rzeczywistym (bez zegara
 // harnessu), tryb single, statek przy porcie ringu (?haloTest=<ring>&haloAt=port).
-// Teren kolidera: Mars (ECUMENE) i Jowisz (Fable) od razu z planów CPU (przy powstaniu świata), Ziemia z mapy
+// Teren kolidera: Mars (ECUMENE) i Jowisz (BUDOWA) od razu z planów CPU (przy powstaniu świata), Ziemia z mapy
 // CPU ringu obrazu po jego zbudowaniu (`off`: funkcja ringu, worker: mapa przez postMessage) — sonda notuje,
 // kiedy powstał świat i kiedy wpis dostał teren (`terrainReady`).
 // Sprawdza (wynik `ok`, kod wyjścia 1 przy porażce):
@@ -13,7 +13,7 @@
 //     pod kadłubem (back − 30) i nad terenem (floorMid + 1 500) wolno — pointInSlab;
 //   • punkt w połowie najwyższego zbocza jest w płycie tylko z terenem (pointInSlab z terenem i bez), a kopia
 //     statku gracza postawiona w nim zostaje wypchnięta (constrainShip) — gdy teren sięga wyżej niż 2 × płyty
-//     portu (7 j.); płaski pokład Jowisza (Fable, 0…7 j.) zbocza nie ma (`slope.brak`, nie porażka);
+//     portu (7 j.); pokład Jowisza (BUDOWA) jest płaski — teren to płyty doków i baraki w płaszczyźnie gry (zbocze = ściana baraku); bez nich (`slope.brak`, nie porażka);
 //   • kopia statku w środku płyty zostaje wypchnięta.
 //
 //   node scripts/webgpu/ring-kolizje-gra.mjs [--ring earth|mars|jupiter] [--query renderWorker=1]
@@ -127,7 +127,7 @@ try {
     if (!(n > 0 && nonZero > 0)) fails.push('teren: same zera na obwodzie podłogi');
     if (!(plyta.probki > 0 && plyta.wPlycie === plyta.probki)) fails.push('płyta: brzegi płyty poza płytą');
     if (plyta.podKadlubem || plyta.nadTerenem) fails.push('płyta: kolizja pod kadłubem albo nad terenem');
-    // płaski pokład (Jowisz — Fable, teren 0…7 j.): zbocza nie ma, płytę trzymają płyty portu
+    // płaski pokład bez baraków w płaszczyźnie gry: zbocza nie ma, płytę trzymają płyty portu
     if (!slope) slope = { brak: 'teren nie wyższy niż 2 × płyty portu (płaski pokład)' };
     else if (!slope.inSlab || slope.inSlabFlat || !slope.hit) fails.push('zbocze: punkt nie w płycie z terenem / w płycie bez terenu / brak wypchnięcia');
     if (!mid?.hit) fails.push('środek płyty: brak wypchnięcia');

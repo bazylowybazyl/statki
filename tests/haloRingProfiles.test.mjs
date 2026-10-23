@@ -1,5 +1,5 @@
 // Profile ringów per planeta (Z6, 2026-09-26/27): Ziemia bez zmian (tło
-// menu), Mars = ECUMENE, Jowisz = ring Fable — INNE RINGI (decyzja
+// menu), Mars = ECUMENE, Jowisz = BUDOWA (ring w budowie) — INNE RINGI (decyzja
 // użytkownika 2026-09-27: „kompletnie inne ringi, nie tylko skórka”), doki
 // w stylu dem, geometria stanowisk i kolizje doków w standardzie K-7. Bez GPU.
 // node --test tests/haloRingProfiles.test.mjs
@@ -61,13 +61,13 @@ test('Ziemia = liczby sprzed profili (ring Ziemi i tło menu bez zmian)', () => 
   assert.deepEqual([L.radii.rim, L.radii.floorMid, L.radii.back], [43752, 42252, 41800]);
 });
 
-test('Mars = ECUMENE, Jowisz = ring Fable: archetyp, geometria (mniejsze niż ring Ziemi), plan dzielnic', () => {
+test('Mars = ECUMENE, Jowisz = BUDOWA: archetyp, geometria (mniejsze niż ring Ziemi), plan dzielnic', () => {
   assert.deepEqual([...HALO_PROFILE_KEYS], ['earth', 'mars', 'jupiter']);
   assert.equal(resolveHaloProfile('venus'), HALO_RING_PROFILES.earth);
   const M = HALO_RING_PROFILES.mars;
   const J = HALO_RING_PROFILES.jupiter;
   assert.equal(M.archetype, 'ecumene');
-  assert.equal(J.archetype, 'fable');
+  assert.equal(J.archetype, 'budowa');
   // ECUMENE: wstęga 3 200 (podłoga 2 780), krawędzie 3 × 54 jak w demie, kadłub 600, 12 dzielnic dema (każda raz)
   const LM = layoutOf('mars');
   assert.equal(LM.archetype, 'ecumene');
@@ -76,9 +76,9 @@ test('Mars = ECUMENE, Jowisz = ring Fable: archetyp, geometria (mniejsze niż ri
   assert.equal(LM.hullThickness, 600);
   assert.equal(LM.sectors.length, 12);
   assert.deepEqual(LM.sectors.map((s) => s.district).sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-  // Fable: wstęga 3 000 (podłoga 2 550), ściany 250, kadłub 450 (kratownica), 12 układów dema × 2
+  // BUDOWA: wstęga 3 000 (podłoga 2 550), ściany 250, kadłub 450, 24 sektory (nazwy księżyców)
   const LJ = layoutOf('jupiter');
-  assert.equal(LJ.archetype, 'fable');
+  assert.equal(LJ.archetype, 'budowa');
   assert.equal(LJ.floor.spanZ, 2550);
   assert.equal(LJ.wallHeight, 250);
   assert.equal(LJ.hullThickness, 450);
@@ -91,17 +91,13 @@ test('Mars = ECUMENE, Jowisz = ring Fable: archetyp, geometria (mniejsze niż ri
     assert.equal(L.radii.rim, L.envelope.outerRadius);
   }
   assert.equal(LJ.sectors.length, 24);
-  const layouts = new Set(LJ.sectors.map((s) => s.layout));
-  assert.equal(layouts.size, 12);
   // kompleksy portu (co 90°) trafiają na dzielnice portowe, nie na kopuły ani supertalle
   const sectorAt = (L, th) => L.sectorIndexAt(wrap(th));
   const mPorts = haloPortComplexAngles().map((a) => LM.sectors[sectorAt(LM, a)].district);
   assert.deepEqual(mPorts, [7, 10, 1, 5], 'KEPLER (gracz), DAEDALUS, VESPER, DEMETER');
-  const jPorts = haloPortComplexAngles().map((a) => LJ.sectors[sectorAt(LJ, a)].layout);
-  assert.deepEqual(jPorts, ['port', 'shipyard', 'port', 'shipyard']);
-  // tranzyty (środki między kompleksami) Jowisza: las i rolnictwo, bez kopuł
-  const jTransit = haloTransitAngles().map((a) => LJ.sectors[sectorAt(LJ, a)].layout);
-  for (const l of jTransit) assert.ok(l === 'forest' || l === 'farms', `tranzyt w sektorze ${l}`);
+  // kompleksy portu Jowisza w sektorach przemysłowych (co 6 sektorów), port gracza w pierwszym
+  const jPorts = haloPortComplexAngles().map((a) => LJ.sectors[sectorAt(LJ, a)].type);
+  assert.deepEqual(jPorts, ['industrial', 'industrial', 'industrial', 'industrial']);
   // nazwy własne (bez powtórek z ringiem Ziemi)
   const earthNames = new Set(HALO_SECTOR_PLAN_16.map((s) => s.name));
   for (const L of [LM, LJ]) for (const s of L.sectors) assert.ok(!earthNames.has(s.name), `${s.name} jak na Ziemi`);

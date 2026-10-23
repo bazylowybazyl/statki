@@ -86,7 +86,7 @@ renderer.backend.device.addEventListener('uncapturederror', (e) => reportError(`
 const planetKey = HALO_RING_PLANETS[params.get('planet')] ? params.get('planet') : 'earth';
 const planetSpec = HALO_RING_PLANETS[planetKey];
 const planetProfile = resolveHaloProfile(planetSpec.profile);
-// Mars = ECUMENE, Jowisz = ring Fable (src/3d/haloRing/arch/): inne ringi,
+// Mars = ECUMENE, Jowisz = BUDOWA — ring w budowie (src/3d/haloRing/arch/): inne ringi,
 // geometria przekroju z profilu planety (jak w grze)
 const archetype = planetProfile.archetype || 'halo';
 const geomDefaults = { ...HALO_GEOMETRY_DEFAULTS, ...(planetProfile.geometry || {}) };
@@ -1310,7 +1310,7 @@ const COMPILE_MEASURED = ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall
   'HaloCity_garden', 'HaloCity_industry', 'HaloTrees',
   'K7_bg_box', 'K7_plates', 'K7_labels', 'K7_hoses',
   'EcumeneSurface_0', 'EcuCity', 'EcuTrees', 'EcuStructureFG', 'EcumeneShell', 'EcumeneShellFG', 'EcumeneDomeGlass', 'EcumeneDomeLattice',
-  'FableSurface', 'FabStruct', 'FabTrees', 'FabStructFG', 'FableHull', 'FableHullFG', 'FableDomeGlass', 'FableDomeLattice', 'ArchLights'];
+  'BudowaDeck', 'BudowaHull', 'BudowaHullFG', 'BudStruct', 'BudStructFG', 'BudowaHouses', 'BudowaHousesCyl', 'BudowaDrones', 'ArchLights'];
 async function measureCompile(name) {
   const mesh = ring.group.getObjectByName(name);
   if (!mesh || typeof renderer.compileAsync !== 'function') return null;

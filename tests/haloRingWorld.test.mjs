@@ -8,7 +8,7 @@ import { HaloRingWorld, HALO_WORLD } from '../src/game/haloRingWorld.js';
 import { HALO_GAME } from '../src/3d/haloRing/haloRingGame.js';
 import { k7BeaconClock } from '../src/3d/haloRing/haloPortK7Lights.js';
 import { createEcumenePlan } from '../src/3d/haloRing/arch/ecumenePlan.js';
-import { createFablePlan } from '../src/3d/haloRing/arch/fablePlan.js';
+import { createBudowaPlan } from '../src/3d/haloRing/arch/budowaPlan.js';
 import { createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
 import { HALO_RING_PLANETS } from '../src/game/haloRingPlanets.js';
 import { resolveRingPlanetWorldRadius } from '../src/3d/ringScale.js';
@@ -27,7 +27,7 @@ test('teren: Mars i Jowisz od razu z planów CPU (jak treść ringu-archetypu), 
   const earth = w.entry('earth');
   assert.equal(earth.collider.terrainHeightAt, null, 'Ziemia: sama płyta do mapy ringu');
   assert.equal(earth.terrainReady, false);
-  for (const [key, planet, make] of [['mars', MARS, createEcumenePlan], ['jupiter', JUPITER, createFablePlan]]) {
+  for (const [key, planet, make] of [['mars', MARS, createEcumenePlan], ['jupiter', JUPITER, createBudowaPlan]]) {
     const e = w.entry(key);
     assert.equal(e.terrainReady, true, key);
     // layout jak w archRing.js (createHaloRingLayout z opcji ringu gry)

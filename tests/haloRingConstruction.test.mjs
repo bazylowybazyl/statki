@@ -1,7 +1,7 @@
 // Ring w budowie (Jowisz, decyzja użytkownika 2026-10-22: „unfinished”): przerwy w płycie są
 // PRAWDZIWYMI przelotami w płaszczyźnie gry — kolider, pociski, router ruchu v2, reda portu i radar
 // widzą je tak samo; port i tranzyty stoją na zbudowanych segmentach; konstrukcja i zabudowa
-// archetypu Fable nie stoją w przerwach, a front budowy ma plac budowy zamiast zabudowy.
+// archetypu BUDOWA — tests/haloRingBudowa.test.mjs (w przerwie nic nie przecina płaszczyzny gry).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -14,22 +14,25 @@ import { createRingObstacle, pointInRingSlab, transitIndexAt, routeRing } from '
 import { createPath, pathReset, pathFinalize, pathX, pathY } from '../src/game/traffic/portPaths.js';
 import { buildHaloPortTrafficLayout } from '../src/3d/haloRing/haloPortTraffic.js';
 import { buildPortParking } from '../src/game/traffic/portParking.js';
-import { FZ, buildFableCity, buildFableStructure, createFablePlan } from '../src/3d/haloRing/arch/fablePlan.js';
 
 const jupiter = haloRingLayoutFor({ id: 'jupiter' });
 const K = jupiter.construction;
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
-test('profil: Jowisz w budowie (3 przerwy, segmenty, front), Ziemia i Mars pełne', () => {
+test('profil: Jowisz w budowie (11 przerw — większość obwodu, segmenty = wyspy, front), Ziemia i Mars pełne', () => {
   assert.equal(K.active, true);
-  assert.equal(K.gaps.length, 3);
-  assert.equal(K.segments.length, 3);
+  // decyzja użytkownika 2026-10-23: ring w budowie = WIĘKSZOŚĆ obwodu niezbudowana
+  assert.equal(K.gaps.length, 11);
+  assert.equal(K.segments.length, 11);
   assert.ok(K.front > 0);
   for (const key of ['earth', 'mars']) assert.equal(haloRingLayoutFor({ id: key }).construction.active, false);
   // segmenty + przerwy = cały obwód
   const built = K.segments.reduce((s, g) => s + (g.a1 - g.a0), 0);
   const open = K.gaps.reduce((s, g) => s + 2 * g.half, 0);
   assert.ok(Math.abs(built + open - Math.PI * 2) < 1e-9);
+  assert.ok(open / (Math.PI * 2) > 0.5, `przerwy ${(100 * open / (Math.PI * 2)).toFixed(0)}% obwodu`);
+  // wyspy (segmenty) nie węższe niż dwa fronty
+  for (const g of K.segments) assert.ok(g.a1 - g.a0 >= 2 * K.front);
   // przerwy realne dla okrętów: ≥ 5 tys. j. na podłodze
   for (const g of K.gaps) assert.ok(2 * g.half * jupiter.radii.floorMid > 5000);
   // port i tranzyty na segmentach, z frontem budowy i zapasem
@@ -42,6 +45,9 @@ test('profil: Jowisz w budowie (3 przerwy, segmenty, front), Ziemia i Mars pełn
   // przerwa na porcie = błąd profilu
   const bad = { ...HALO_RING_PROFILES.jupiter, construction: { gaps: [{ at: 0, half: 0.1 }], front: 0.05 } };
   assert.throws(() => haloRingConstruction(bad, jupiter.radii.floorMid), /kompleksie portu/);
+  // przerwy zachodzące na siebie (albo wyspa węższa niż dwa fronty) = błąd profilu
+  const overlap = { ...HALO_RING_PROFILES.jupiter, construction: { gaps: [{ at: 0.40, half: 0.12 }, { at: 0.60, half: 0.12 }], front: 0.012 } };
+  assert.throws(() => haloRingConstruction(overlap, jupiter.radii.floorMid), /zachodzą na siebie/);
 });
 
 test('kolider: przerwa = przelot (statek i pociski), segment = płyta; czoło segmentu wypycha do przerwy', () => {
@@ -135,39 +141,9 @@ test('ruch v2: router widzi przerwy jako szerokie przeloty, reda nie zasłania i
   }
 });
 
-test('Fable w budowie: konstrukcja, rury i zabudowa nie stoją w przerwach; front = plac budowy', () => {
-  const plan = createFablePlan(jupiter);
-  const L = { add() { L.n++; }, n: 0 };
-  const st = buildFableStructure(plan, L);
-  assert.equal(st.site.fronts, K.gaps.length * 2);
-  assert.ok(st.site.welds > 50 && st.site.drones > 50 && st.site.props > 200, JSON.stringify(st.site));
-  const centers = (b) => {
-    const out = [];
-    for (let i = 0; i < b.count; i++) out.push([b.m[i * 16 + 12], b.m[i * 16 + 13], b.m[i * 16 + 14]]);
-    return out;
-  };
-  for (const [x, y] of centers(st.bg.all).concat(centers(st.fg.all))) {
-    const th = Math.atan2(y, x);
-    // drony wiszą też nad krawędzią przerwy (0,2 frontu) — dalej w przerwie nic
-    assert.ok(haloGapEdgeDistance(th, K) > -K.front * 0.25, `bryła w przerwie θ = ${th.toFixed(4)}`);
-  }
-  const city = buildFableCity(plan);
-  for (const B of city.per) {
-    for (const b of [B.box, B.tree]) {
-      for (const [x, y] of centers(b)) assert.ok(haloGapEdgeDistance(Math.atan2(y, x), K) > K.front * 0.9, 'zabudowa na froncie albo w przerwie');
-    }
-  }
-  for (const d of plan.domes) assert.ok(haloGapEdgeDistance(d.theta, K) > K.front, 'kopuła przy przerwie');
-  // strefa frontu na mapie stref
-  const g = K.gaps[0];
-  const s = (g.center + g.half + K.front * 0.5 - jupiter.sectorStart + Math.PI * 4) % (Math.PI * 2) * plan.R;
-  assert.equal(plan.zoneWithPort(s, 0).t, FZ.BUILD);
-});
-
-test('wpięcie: radar rysuje płytę z lukami przerw, shader Fable zna strefę BUILD, światła spawania migoczą', () => {
+test('wpięcie: radar rysuje płytę z lukami przerw, światła spawania migoczą', () => {
   const radar = read('src/ui/radar/radarTerrain.js');
   assert.match(radar, /col\.construction\?\.active \? col\.construction\.gaps/);
-  assert.match(read('src/3d/haloRing/arch/fable.js'), /front budowy \(ring w budowie\)/);
   assert.match(read('src/3d/haloRing/arch/archTSL.js'), /faza ≥ 1: spawanie/);
   assert.match(read('index.html'), /PRZELOT TRANZYTEM ALBO PRZERWĄ BUDOWY/);
 });

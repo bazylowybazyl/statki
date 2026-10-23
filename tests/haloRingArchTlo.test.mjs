@@ -1,4 +1,4 @@
-// Zadanie 23 portu WebGPU: ring-archetyp (Mars = ECUMENE, Jowisz = Fable) budowany KROKAMI w klatkach gry
+// Zadanie 23 portu WebGPU: ring-archetyp (Mars = ECUMENE, Jowisz = BUDOWA) budowany KROKAMI w klatkach gry
 // (createArchRing z buildInBackground, archRing.js) — dawniej 0,4 s (Mars) i 0,7 s (Jowisz) CPU w jednej
 // klatce pierwszego zbliżenia. Ta sama geometria co budowa synchroniczna, ready dopiero po krokach, dispose
 // w trakcie budowy → ready false; klej gry kroczy budowę co klatkę, także poza kadrem. Bez GPU.
@@ -58,7 +58,7 @@ const camera = () => {
   return cam;
 };
 
-for (const [planet, stepsMin] of [['mars', 20], ['jupiter', 100]]) {
+for (const [planet, stepsMin] of [['mars', 20], ['jupiter', 6]]) {
   test(`ring ${planet}: budowa w tle krokami = ta sama geometria co synchroniczna; ready po krokach`, async () => {
     const restore = fakeDocument();
     try {

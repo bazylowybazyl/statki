@@ -28783,7 +28783,7 @@
       o.anchorX = ring ? ring.anchorX : NaN; o.anchorY = ring ? ring.anchorY : NaN;
       o.iceTypes = ring ? RING_GAS_VENT_TYPES : _spaceGasIce;
       // olbrzymy pasa (raster przekroju — przeszkody gazu), pociski (gaz wleczony), wybuchy — pierścień GameBlasts
-      o.giants = beltWorld && !ring ? beltWorld.giants : null;
+      o.giants = ring ? ring.giants : beltWorld ? beltWorld.giants : null;
       o.bullets = window.bullets || null;
       o.sunX = SUN ? SUN.x : 0; o.sunY = SUN ? SUN.y : 0;
       o.windowCells = SPACE_GAS_TUNE.windowCells;

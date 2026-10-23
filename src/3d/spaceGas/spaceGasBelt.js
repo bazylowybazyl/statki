@@ -39,7 +39,7 @@ export function createBeltGasLook() {
  */
 export function createRingGasLook() {
   return {
-    albedo: [[0.5, 0.46, 0.4], [0.66, 0.6, 0.45], [0.44, 0.5, 0.58]],
+    albedo: [[0.5, 0.46, 0.4], [0.66, 0.6, 0.45], [0.34, 0.37, 0.42]],
     ejecta: [0.5, 0.46, 0.42],
     sun: [1.0, 0.92, 0.8],
     sunGain: 1.35,

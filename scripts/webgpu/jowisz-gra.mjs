@@ -143,7 +143,7 @@ try {
     if (only && !only.has(view.name)) continue;
     const info = await place(view);
     await ev('window.__harness.frames(8)');
-    // ring Jowisza (Fable) buduje się asynchronicznie przy pierwszym zbliżeniu — zrzuty z gotowym
+    // ring Jowisza (BUDOWA) buduje się asynchronicznie przy pierwszym zbliżeniu — zrzuty z gotowym
     const ringReady = `!!window.__haloRings?.entries?.find((q) => q.key === 'jupiter')?.ring?.mapsReady`;
     for (let i = 0; i < 400 && !(await ev(ringReady)); i++) await ev('window.__harness.frames(2)');
     await waitFor(cdp, 'window.__harness.scene.uploadsIdle()', 60000, 250);

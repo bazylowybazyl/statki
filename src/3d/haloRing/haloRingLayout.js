@@ -69,7 +69,7 @@ export function resolveFlightLevel(value) {
 // HALO_SECTOR_MIX, od 2026-09-23 bez sektorów przemysłowych — przemysł tylko
 // wokół doków), bez dwóch takich samych typów obok siebie, deterministycznie
 // z seeda. Sektor 0 (port) to krajobraz górski. Liczba = długość planu
-// ręcznego profilu (Ziemia 16, ECUMENE 12, Fable 24) — plan ręczny.
+// ręcznego profilu (Ziemia 16, ECUMENE 12, Jowisz 24) — plan ręczny.
 export function buildHaloSectorPlan(count, seed, profileKey) {
   const profile = resolveHaloProfile(profileKey);
   const mix = profile.sectorMix;
@@ -216,7 +216,7 @@ export function habitatVisibleStripBrief(floorRadius, width, wallHeight, cameraH
 
 export function createHaloRingLayout(options = {}) {
   // profil planety (haloRingProfiles.js): plan sektorów i geometria archetypu
-  // (Mars = ECUMENE, Jowisz = Fable) — opcje wywołania mają pierwszeństwo
+  // (Mars = ECUMENE, Jowisz = BUDOWA) — opcje wywołania mają pierwszeństwo
   const profile = resolveHaloProfile(options.profile);
   const g = { ...HALO_GEOMETRY_DEFAULTS, ...(profile.geometry || {}) };
   const planetRadius = Math.max(2000, Number(options.planetRadius) || g.planetRadius);

@@ -7,10 +7,9 @@
 import * as THREE from 'three';
 import { createCanvas2D } from '../../canvas2d.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { archRingTubeBoxes, archRunSteps } from './archFrame.js';
+import { archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archPointsMesh } from './archMaterials.js';
-import { BUD_COLORS, buildBudowaDrones, buildBudowaHouses, buildBudowaStructure, createBudowaPlan, wallAt } from './budowaPlan.js';
-import { ringStrip } from './fable.js';
+import { buildBudowaDrones, buildBudowaHouses, buildBudowaStructure, createBudowaPlan, wallAt } from './budowaPlan.js';
 
 // Tekstury płyt (kanwa 1024²): 'deck' — pokład wyspy, 'hull' — lica kadłuba, 'wall' — ściany.
 // Brud: plamy sadzy, zacieki rdzy, ślady spawania, łaty nowych płyt, starte pasy ostrzegawcze.
@@ -133,6 +132,66 @@ function makeDirtyTextures(kind, seed, size = 1024) {
   return { map: mk(c), emissiveMap: mk(e) };
 }
 
+// Pas wokół ringu (ringStrip dema orbital_ring_demo_2, dawniej w fable.js): od (u0, h0) do (u1, h1), normalna (nU, nH)
+// w (z, promień); u = z, h wysokość nad podłogą (na zewnątrz).
+// keep(θ, i) — quad kolumny i rysuje się tylko, gdy zwróci true (ring w budowie: przerwy i front obłożenia).
+function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 1, repV = 1, extraRing = false, keep = null } = {}) {
+  const R = plan.R;
+  const cols = segments + 1;
+  const rows = across + 1;
+  const pos = new Float32Array(cols * rows * 3);
+  const nor = new Float32Array(cols * rows * 3);
+  const uv = new Float32Array(cols * rows * 2);
+  const ringA = extraRing ? new Float32Array(cols * rows * 2) : null;
+  const nl = Math.hypot(nU, nH) || 1;
+  nU /= nl; nH /= nl;
+  const th0 = plan.layout.sectorStart;
+  for (let i = 0; i < cols; i++) {
+    const th = th0 + (i / segments) * Math.PI * 2;
+    const c = Math.cos(th);
+    const s = Math.sin(th);
+    for (let j = 0; j < rows; j++) {
+      const t = j / across;
+      const u = u0 + (u1 - u0) * t;
+      const h = h0 + (h1 - h0) * t;
+      const r = R + h;
+      const idx = i * rows + j;
+      pos[idx * 3] = r * c; pos[idx * 3 + 1] = r * s; pos[idx * 3 + 2] = u;
+      nor[idx * 3] = c * nH; nor[idx * 3 + 1] = s * nH; nor[idx * 3 + 2] = nU;
+      uv[idx * 2] = (i / segments) * repU; uv[idx * 2 + 1] = t * repV;
+      if (ringA) { ringA[idx * 2] = (i / segments) * plan.CIRC; ringA[idx * 2 + 1] = u; }
+    }
+  }
+  const idx = [];
+  for (let i = 0; i < segments; i++) {
+    if (keep && !keep(th0 + ((i + 0.5) / segments) * Math.PI * 2, i)) continue;
+    for (let j = 0; j < across; j++) {
+      const a = i * rows + j;
+      const b = a + 1;
+      const c = a + rows;
+      const d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  if (ringA) geo.setAttribute('aRing', new THREE.BufferAttribute(ringA, 2));
+  geo.setIndex(idx);
+  // nawinięcie zgodne z normalną
+  const pa = new THREE.Vector3().fromArray(pos, 0);
+  const pb = new THREE.Vector3().fromArray(pos, rows * 3);
+  const pc = new THREE.Vector3().fromArray(pos, 3);
+  const fn = new THREE.Vector3().subVectors(pb, pa).cross(new THREE.Vector3().subVectors(pc, pa));
+  if (fn.dot(new THREE.Vector3().fromArray(nor, 0)) < 0) {
+    const ia = geo.getIndex().array;
+    for (let i = 0; i < ia.length; i += 3) { const tt = ia[i + 1]; ia[i + 1] = ia[i + 2]; ia[i + 2] = tt; }
+  }
+  geo.computeBoundingSphere();
+  return geo;
+}
+
 export function buildBudowaRing(args) {
   return archRunSteps(buildBudowaRingSteps(args));
 }
@@ -228,16 +287,6 @@ export function* buildBudowaRingSteps({ layout, uniforms, materials, geos, quali
   yield;
   // ---- kręgosłup i plac budowy ----
   const st = buildBudowaStructure(plan, lights);
-  const { STEEL, DARK } = BUD_COLORS;
-  // pasy wzdłużne kratownicy (cztery naroża każdego pasa) w przerwach i na frontach
-  const bare = (th) => plan.edgeDist(th) < K.front;
-  const hTop = -8;
-  const hBot = -TB + 8;
-  for (const sd of [-1, 1]) {
-    for (const [z, h, r] of [[sd * (uSide - 10), hTop, 13], [sd * (uSide - 10), hBot, 16], [sd * plan.section.zIn, hTop, 11], [sd * plan.section.zIn, hBot, 13]]) {
-      archRingTubeBoxes(z > zTop - 1 ? st.fg : st.bg, plan.R, h, z, r, 2048, h > -TB * 0.5 ? STEEL : DARK, 0, 0.35, bare);
-    }
-  }
   if (portSolid) st.bg.append(portSolid);
   const matBG = materials.instanced(false);
   const matFG = materials.instanced(true);
@@ -284,6 +333,8 @@ export function* buildBudowaRingSteps({ layout, uniforms, materials, geos, quali
     },
     heightAt: (theta, z) => plan.heightAt(theta, z),
     plan,
+    // światła robocze (spawanie, maszty) dla siatki świateł gry — haloRingGame.js `_workLights`
+    workLights: st.work,
     update(camLocal, frustum, pixelAngle) {
       // baraki tylko, gdy wyspa ma choć kilka px (z daleka obóz to piksel; okna i tak w średniej)
       for (const d of islandMeshes) {

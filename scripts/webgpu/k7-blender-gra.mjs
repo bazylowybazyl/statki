@@ -9,7 +9,7 @@
 //   dok      — zoomy 0,22 / 0,5 / 1 / 2 (stanowisko C-01, słupek zachodni);
 //   odlacz   — ODDOKUJ sekwencją fabuły (storyUndockPose): upust, odryglowanie, składanie ramion, złożone;
 //   zbiorniki, brama (G-01 z nadprożem i ościeżnicą), hala (cała, zoom 0,12), noc (lampy hali), k3d (kamera 3D
-//   gry — orbita nad słupkiem), mars / jowisz (hala K-7 ringów ECUMENE i Fable — ta sama hala, inna paleta);
+//   gry — orbita nad słupkiem), mars / jowisz (hala K-7 ringów ECUMENE i BUDOWA — ta sama hala, inna paleta);
 //   --menu 1 — tło menu (ring Ziemi z halami) przed startem.
 // Koszt (--koszt 1): GPU klatki (mediana Core3D.gpuFrameMs) z halami i z ukrytymi halami (różnica = koszt hal),
 // draw calle i trójkąty klatki (window.__rendererInfo), CPU Core3D.render, pipeline'y SYNCHRONICZNE w klatkach od

@@ -2,7 +2,7 @@
 // Ziemia, Mars i Jowisz mają ring; ringi Marsa i Jowisza ORAZ ICH DOKI
 // wyglądają inaczej niż ring Ziemi — i to są INNE RINGI, nie skórka
 // (2026-09-27): Ziemia = silnik Halo (ten katalog), Mars = ECUMENE, Jowisz =
-// ring Fable (src/3d/haloRing/arch/, dema/orbital_ring_demo*.html). Profil to
+// BUDOWA — ring w budowie (src/3d/haloRing/arch/). Profil to
 // same dane (bez Three i DOM): archetyp i geometria przekroju (ten sam układ
 // dostają render, kolizje, ruch v2 i stacja-port), plan dzielnic, światło
 // i styl hal K-7 z zatokami (czyta go też Z7: portBuildingStyle.js).
@@ -65,7 +65,7 @@ export const HALO_MEGA_PALETTE_SIZE = 32;
 const EARTH = {
   key: 'earth',
   label: 'Ziemia',
-  // silnik ringu: 'halo' (ten moduł), 'ecumene' / 'fable' (arch/, Mars i Jowisz)
+  // silnik ringu: 'halo' (ten moduł), 'ecumene' / 'budowa' (arch/, Mars i Jowisz)
   archetype: 'halo',
   // geometria przekroju (null = HALO_GEOMETRY_DEFAULTS)
   geometry: null,
@@ -207,10 +207,9 @@ const EARTH = {
 
 // ---------------------------------------------------------------------------
 // Mars i Jowisz: INNE RINGI, nie skórka ringu Ziemi (decyzja użytkownika
-// 2026-09-27: „kompletnie inne ringi — sprawdź ECUMENE i ring od Fable z dem”).
-// Mars = ECUMENE (dema/orbital_ring_demo.html), Jowisz = ring Fable
-// (dema/orbital_ring_demo_2.html) — własne moduły renderu (src/3d/haloRing/arch/),
-// habitat na zewnątrz jak Ziemia, ląd 1:1 z dem, skala ×3. Z silnika Halo
+// 2026-09-27: „kompletnie inne ringi”). Mars = ECUMENE (dema/orbital_ring_demo.html, ląd 1:1 z dema,
+// skala ×3), Jowisz = BUDOWA (ring w budowie, 2026-10-23) — własne moduły renderu (src/3d/haloRing/arch/),
+// habitat na zewnątrz jak Ziemia. Z silnika Halo
 // zostają: układ (geometria archetypu poniżej — ten sam układ dostają kolizje,
 // ruch v2 i stacja-port), model światła, wycięcia FG i hala K-7 z zatokami
 // (stanowiska standardu K-7) w stylu dema. Pola Halo profilu (palety terenu,
@@ -300,47 +299,33 @@ const MARS = {
   habitatVault: { apex: 620, segment: 140, bay: 6, sag: 0.32 }
 };
 
-// Fable: 12 układów sektorów dema, ×2 wokół ringu (24 sektory — ring Jowisza
-// jest 2,25 × dłuższy od dema ×3; sektor ma długość jak w demie). Kompleksy
-// portu co 6 sektorów trafiają na ORBITAL PORT (gracz) i SHIPYARDS, tranzyty
-// (środki sektorów 3 i 9 cyklu) na las i rolnictwo; drugi cykl z innym ziarnem.
-const FABLE_CYCLE = [
-  ['port', 'GALILEO'], ['tech', 'AMALTHEA'], ['reservoir', 'THEBE'], ['forest', 'ADRASTEA'],
-  ['metropolis', 'METIS'], ['parkcity', 'HIMALIA'], ['shipyard', 'ELARA'], ['luxury', 'LYSITHEA'],
-  ['residential', 'LEDA'], ['farms', 'CARME'], ['biodomes', 'ANANKE'], ['industry', 'PASIPHAE']
-];
-const FABLE_NAMES_B = ['KALLISTO', 'THEMISTO', 'CALLIRRHOE', 'SINOPE', 'KALE', 'EUPORIE', 'IOCASTE',
-  'HARPALYKE', 'PRAXIDIKE', 'TAYGETE', 'CHALDENE', 'AITNE'];
-const FABLE_SECTORS = [0, 1].flatMap((cycle) => FABLE_CYCLE.map(([layout, name], i) => ({
-  type: layout === 'port' || layout === 'shipyard' || layout === 'industry' ? 'industrial' : layout === 'metropolis' || layout === 'tech' ? 'glass' : 'garden',
-  name: cycle ? FABLE_NAMES_B[i] : name,
-  layout,
-  cycle,
-  ...(cycle === 0 && i === 0 ? { port: true } : {})
-})));
+// Sektory Jowisza (24 — nazwy księżyców; układ i stacja-port czytają nazwę i typ): co 6 sektorów kompleks
+// portu (sektor przemysłowy), pierwszy — port gracza. Wygląd ringu nie zależy od sektorów (budowaPlan.js).
+const JUPITER_MOONS = ['GALILEO', 'AMALTHEA', 'THEBE', 'ADRASTEA', 'METIS', 'HIMALIA', 'ELARA', 'LYSITHEA',
+  'LEDA', 'CARME', 'ANANKE', 'PASIPHAE', 'KALLISTO', 'THEMISTO', 'CALLIRRHOE', 'SINOPE', 'KALE', 'EUPORIE',
+  'IOCASTE', 'HARPALYKE', 'PRAXIDIKE', 'TAYGETE', 'CHALDENE', 'AITNE'];
+const JUPITER_SECTORS = JUPITER_MOONS.map((name, i) => ({
+  type: i % 6 === 0 ? 'industrial' : 'garden',
+  name,
+  ...(i === 0 ? { port: true } : {})
+}));
 
 const JUPITER = {
   ...EARTH,
   key: 'jupiter',
   label: 'Jowisz',
   // RING W BUDOWIE (decyzja użytkownika 2026-10-23: „ring w budowie oznacza zupełnie inny ring, z pojedynczymi
-  // »brudnymi« domami, wszędzie pył, gaz, małe części stoją”; wersja Fable z przerwami — odrzucona): archetyp
+  // »brudnymi« domami, wszędzie pył, gaz, małe części stoją”; ring z dema z przerwami — odrzucony): archetyp
   // BUDOWA (arch/budowa.js, budowaPlan.js) — kręgosłup z kratownicy, wyspy płyty przy portach i tranzytach.
   archetype: 'budowa',
   // Ring PRZEMYSŁOWY, cienki (decyzja użytkownika 2026-10-21): 1,9 g na
   // ringu, pasy radiacyjne, obwód 11× ziemskiego — z materiału księżyców (Io,
   // Ganimedes, Kallisto) tylko port i rafinerie dla tankowców, załoga
   // w osłoniętych halach. Wstęga 3 000 (dolna granica HALO_LIMITS.width;
-  // podłoga 2 550 — mapa stref dema przycięta do środka), ściany 250, grubość
-  // 225, kadłub 450: pełny pokład `hullTruss.deck` pod podłogą, niżej
-  // kratownica (ażur — żebra, krzyżulce na licach, pasy dolne). Z góry obręcz
-  // 700 zamiast 2 680. Dawniej dema ×3: 5 940 / 780 / 1 900.
+  // podłoga 2 550), ściany 250, grubość 225, kadłub 450 (`hullTruss.deck` — pokład wysp,
+  // budowaSection). Z góry obręcz 700.
   geometry: { width: 3000, wallHeight: 250, hullThickness: 450, wallThickness: 225, roofDetailMax: 0, sectorCount: 24 },
   hullTruss: { deck: 130 },
-  // podłoga ringu PRZEMYSŁOWEGO (2026-10-22): poza kopułami załogi strefy dema Fable (lasy, parki, pola,
-  // plaże, jeziora) = pola radiatorów, pokład z estakadami, baterie kolektorów, składowiska rudy z Io,
-  // baseny chłodziwa, rozlewnie zbiorników (fablePlan.js, FZ_INDUSTRIAL); zieleń tylko w kopułach
-  industrialFloor: true,
   // Ring W BUDOWIE (decyzje użytkownika 2026-10-22 „unfinished” i 2026-10-23 „zupełnie inny ring”): WIĘKSZOŚĆ
   // OBWODU to przerwy (prawdziwe przeloty w płaszczyźnie gry; stoi w nich tylko kręgosłup poza płaszczyzną) —
   // 11 przerw, ~58% obwodu. Zbudowane segmenty = wyspy płyty: 4 przy kompleksach K-7 (~28–31 tys. j. — hala
@@ -361,7 +346,7 @@ const JUPITER = {
     ],
     front: 0.012
   },
-  sectorPlan: FABLE_SECTORS,
+  sectorPlan: JUPITER_SECTORS,
   sky: { tint: [0.30, 0.42, 0.60], cloudTint: [0.8, 0.8, 0.8] },
   light: {
     ...EARTH.light,
@@ -383,7 +368,8 @@ const JUPITER = {
     ...EARTH.port,
     name: 'PORT GALILEO',
     terminal: 'K-7 / TERMINAL ORBITALNY',
-    // porty dema Fable: płyty konstrukcji (aeb4bc), ciemny metal (585c66),
+    // hale K-7 w stylu „fable” (haloPortK7Build — dach i ściany z dema orbital_ring_demo_2):
+    // płyty konstrukcji (aeb4bc), ciemny metal (585c66),
     // radiatory (2c2e33 z czerwonym żarem), bursztynowe bramy hangarów,
     // cyjan, czerwone i zielone światła nawigacyjne
     k7Palette: [0xaeb4bc, 0x2c2e33, 0xc8ccd2, 0xd98a2a, 0xc05a1e, 0x3a8fb0, 0x5c6068, 0x9ea4ad,

@@ -1,4 +1,4 @@
-// Ringi-archetypy (Mars = ECUMENE, Jowisz = Fable) w PRAWDZIWEJ grze: zrzuty z kamery gry i z kamery 3D,
+// Ringi-archetypy (Mars = ECUMENE, Jowisz = BUDOWA) w PRAWDZIWEJ grze: zrzuty z kamery gry i z kamery 3D,
 // geometria przekroju z układu ringu, pipeline'y synchroniczne w klatkach (ma być 0; licznik w backendzie
 // three — tylko tryb `off`, w workerze backend jest poza stroną) i błędy konsoli. Gra w czasie rzeczywistym
 // (bez zegara harnessu), statek przy porcie ringu (?haloTest=<ring>&haloAt=port).
@@ -136,6 +136,9 @@ const VIEWS = [
   ['3d-baraki', { ang: 'barak', r: 'floor+900', zoom: 0.75, mode3d: true, az: 95, el: 52 }],
   ['3d-baraki-bok', { ang: 'barak', r: 'floor+900', zoom: 0.9, mode3d: true, az: -150, el: 24 }],
   ['3d-kregoslup', { ang: 'wyspa', dAng: 0.06, r: 'rim+', zoom: 0.22, mode3d: true, az: 50, el: 24 }],
+  // przelot przerwą: statek w płaszczyźnie gry w środku przerwy (między pasami kratownicy — korytarz przelotu)
+  ['przelot-z02', { ang: 'przerwa', r: 'mid', zoom: 0.2, camR: 'mid' }],
+  ['3d-przelot', { ang: 'przerwa', r: 'mid', zoom: 0.35, mode3d: true, az: 70, el: 16 }],
   ['3d-habitat', { ang: 'slonce', r: 'rim+', zoom: 0.06, mode3d: true, az: 25, el: 32 }],
   ['3d-wzdluz', { ang: 'slonce', r: 'rim+', zoom: 0.08, mode3d: true, az: 82, el: 8 }],
   ['3d-spod', { ang: 'slonce', r: 'back-', zoom: 0.08, mode3d: true, az: 200, el: 30 }],

@@ -14,7 +14,7 @@
 // (`heightAt`). Na wyspach POJEDYNCZE brudne baraki robotników (kontenery, prefabrykaty, moduły),
 // rozrzucone i w małych obozach, bez miasta, parków i wody; ściany stoją tylko kawałkami.
 //
-// Układ jak w Fable: θ wzdłuż ringu, u = z w poprzek, h nad podłogą promieniowo NA ZEWNĄTRZ (h < 0 —
+// Układ jak w archFrame.js: θ wzdłuż ringu, u = z w poprzek, h nad podłogą promieniowo NA ZEWNĄTRZ (h < 0 —
 // kadłub od strony planety).
 import { HALO_TRANSIT, haloPortComplexAngles, haloPortSites, haloTransitAngles } from '../haloRingConfig.js';
 import { haloAngleDiff, haloGapEdgeDistance } from '../haloRingConstruction.js';
@@ -34,8 +34,9 @@ export const BUD = Object.freeze({
 
 const HS = BUD.house;
 
-// Rodzaje materiału instancji (archTSL): 7 — barak (brud, rdza, okna), 8 — dron (lot w shaderze).
-export const BUD_KIND = Object.freeze({ plain: 0, glow: 2, panel: 4, barak: 7, drone: 8 });
+// Rodzaje materiału instancji (archTSL): 7 — barak (brud, rdza, okna), 8 — dron (lot w shaderze), 9 — stal budowy
+// (rdza plamami, sadza i ślady spawów przy węzłach).
+export const BUD_KIND = Object.freeze({ plain: 0, glow: 2, panel: 4, barak: 7, drone: 8, steel: 9 });
 
 // Przekrój z układu: podłoga ±HW, ściany WH / WT, kadłub TB (z kratownicą — pokład TD).
 export function budowaSection(layout) {
@@ -78,7 +79,7 @@ export function createBudowaPlan(layout, seed = layout.seed) {
   const edgeDist = (theta) => haloGapEdgeDistance(theta, construction);
   const inFront = (theta, margin = 0) => edgeDist(theta) < K.front + margin;
 
-  // ---- port (płyty doków, jak Fable) -----------------------------------------
+  // ---- port (płyty doków, jak ECUMENE) -----------------------------------------
   const sites = haloPortSites(R);
   const wrapD = (d) => d - Math.PI * 2 * Math.round(d / (Math.PI * 2));
   function portClass(theta, z, margin = 0) {
@@ -134,7 +135,8 @@ export function createBudowaPlan(layout, seed = layout.seed) {
     len *= HS; dep *= HS; hgt *= HS;
     const rad = Math.hypot(len, dep) * 0.5;
     if (!okSpot(theta, u, rad) || !free(theta, u, rad)) return false;
-    houses.push({ theta, u, len, dep, hgt, stack, type, rad, yaw: hr.range(-0.35, 0.35) + (hr.chance(0.25) ? Math.PI * 0.5 : 0), seed: hr.next() });
+    // kąt w [0, 2π) — wyspa portu 0 leży na przejściu przez 2π (teren szuka baraków po posortowanym kącie)
+    houses.push({ theta: ((theta % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2), u, len, dep, hgt, stack, type, rad, yaw: hr.range(-0.35, 0.35) + (hr.chance(0.25) ? Math.PI * 0.5 : 0), seed: hr.next() });
     return true;
   };
   for (const isl of islands) {
@@ -204,9 +206,15 @@ export function createBudowaPlan(layout, seed = layout.seed) {
 }
 
 // ---------------------------------------------------------------------------
-// Barwy (sRGB dema → liniowe, przyciemnione jak konstrukcja Fable)
+// Barwy (sRGB → liniowe, przyciemnione). STEEL / DARK to znaczniki „stali budowy”: belka z taką barwą dostaje
+// odcień przęsła (STEEL_TONES — szara, brunatna, ciemna, podkład czerwony, ocynk) i rodzaj 9 (rdza, sadza, spawy).
 const STEEL = archHex(0x7c828a).map((v) => v * 0.7);
 const DARK = archHex(0x4c5058).map((v) => v * 0.9);
+const desat = (c, k) => { const g = (c[0] + c[1] + c[2]) / 3; return c.map((v) => v + (g - v) * k); };
+const STEEL_TONES = [
+  [0x6c737b, 0.62, 0.34], [0x6e655a, 0.6, 0.22], [0x4a4c50, 0.75, 0.2], [0x5f646a, 0.6, 0.12],
+  [0x7a3424, 0.62, 0.1], [0x8d9196, 0.55, 0.02]
+].map(([h, k, w]) => ({ c: archHex(h).map((v) => v * k), w }));
 const RUST = archHex(0x8a5a2a).map((v) => v * 0.5);
 const IO = archHex(0xb59a45).map((v) => v * 0.5);
 const HAZ = archHex(0xd9a21e).map((v) => v * 0.75);
@@ -217,8 +225,10 @@ const COL_WHITE = [1.35, 1.28, 1.12];
 const COL_AMBER = [1.3, 0.72, 0.16];
 const COL_SODIUM = [1.35, 0.66, 0.22];
 const WELD = [2.2, 2.45, 2.8];
-// kontenery i prefabrykaty (sprane, brudne)
-const HOUSE_COLS = [0x8a4a22, 0x3b5770, 0x5d6040, 0x6b6e70, 0x9a968a, 0x7a2a20, 0x8c7a52, 0x4a5a58].map((h) => archHex(h).map((v) => v * 0.62));
+// kontenery i prefabrykaty: sprane, przygaszone (pół drogi do szarości), ciemne
+const HOUSE_COLS = [0x8a4a22, 0x3b5770, 0x5d6040, 0x6b6e70, 0x9a968a, 0x7a2a20, 0x8c7a52, 0x4a5a58, 0x55524c].map((h) => desat(archHex(h), 0.5).map((v) => v * 0.5));
+const PIPE = desat(archHex(0x6a5444), 0.3).map((v) => v * 0.5);
+const DOOR = [0.018, 0.017, 0.016];
 
 // Kręgosłup, półżebra, fronty budowy, płyty i belki na orbicie, sprzęt na wyspach.
 // lights.add(x, y, z, barwa, rozmiar [j.], faza) — faza ≥ 1 = spawanie (archTSL: migotanie ~19 Hz).
@@ -235,19 +245,43 @@ export function buildBudowaStructure(plan, lights) {
   const pb = {};
   const rng = plan.subRng('structure');
   const stats = { panels: 0, ribs: 0, parked: 0, fronts: 0, welds: 0, props: 0 };
+  // odcień stali bieżącego przęsła / żebra (tone()) i jego rdza — STEEL / DARK w beam() i box() → stal budowy
+  let tone = STEEL_TONES[0].c;
+  let rust = 0.3;
+  const toneW = STEEL_TONES.reduce((s, t) => s + t.w, 0);
+  const pickTone = () => {
+    let x = rng.next() * toneW;
+    let t = STEEL_TONES[0];
+    for (const c of STEEL_TONES) { x -= c.w; if (x <= 0) { t = c; break; } }
+    const v = 0.85 + 0.3 * rng.next();
+    tone = t.c.map((c) => c * v);
+    rust = rng.next() * rng.next();
+  };
+  const steelOf = (color, kind, p1) => (color === STEEL ? [tone, BUD_KIND.steel, rust] : color === DARK ? [tone.map((c) => c * 0.62), BUD_KIND.steel, rust + 0.2] : [color, kind, p1]);
   const beam = (th0, u0, h0, th1, u1, h1, w, color, kind = 0, p1 = 0.3) => {
     archBeamMatrix(archPoint(R, th0, u0, h0, pa), archPoint(R, th1, u1, h1, pb), w, m);
-    side((u0 + u1) * 0.5).push16(m, color, kind, rng.next(), p1, 0);
+    const [c, k, p] = steelOf(color, kind, p1);
+    side((u0 + u1) * 0.5).push16(m, c, k, rng.next(), p, 0);
   };
   const box = (th, u, h, yaw, sx, sy, sz, color, kind = 0, p1 = 0.3) => {
     archMatrix(R, th, u, h, sx, sy, sz, yaw, m);
-    side(u).push16(m, color, kind, rng.next(), p1, 0);
+    const [c, k, p] = steelOf(color, kind, p1);
+    side(u).push16(m, c, k, rng.next(), p, 0);
   };
   const nav = (th, u, h, color, size, phase) => {
     const p = archPoint(R, th, u, h, pa);
     lights.add(p.x, p.y, p.z, color, size, phase);
   };
-  const weld = (th, u, h, size = 20) => { nav(th, u, h, WELD, size, 1 + rng.next()); stats.welds++; };
+  // światła robocze dla siatki świateł gry (haloRingGame.js — spawanie oświetla pył i kadłuby): x, y, z lokalne, faza
+  // (≥ 1 — spawanie, migocze jak sprite; < 0 — maszt, stałe)
+  const work = [];
+  const weld = (th, u, h, size = 20) => {
+    const phase = 1 + rng.next();
+    nav(th, u, h, WELD, size, phase);
+    const p = archPoint(R, th, u, h, pa);
+    work.push(p.x, p.y, p.z, phase);
+    stats.welds++;
+  };
   const open = (th) => plan.edgeDist(th) < K.front;   // przerwa albo front (goła kratownica)
 
   // ---- pasy kratownicy (kręgosłup): przęsła Warrena na czterech licach pasa ----
@@ -260,6 +294,14 @@ export function buildBudowaStructure(plan, lights) {
     const a1 = a0 + dA;
     if (!open(a0 + dA * 0.5)) continue;
     stats.panels++;
+    // przęsła montowane partiami: odcień i rdza zmieniają się co kilka przęseł
+    if (i % 5 === 0 || rng.chance(0.12)) pickTone();
+    // pasy wzdłużne (cztery naroża pasa): odcinek na przęsło, ciemniejsze dolne
+    for (const sd of [-1, 1]) {
+      for (const [z, h, r] of [[sd * (uSide - 10), hTop, 13], [sd * (uSide - 10), hBot, 16], [sd * zIn, hTop, 11], [sd * zIn, hBot, 13]]) {
+        beam(a0, z, h, a1 + dA * 0.02, z, h, 2 * r, h > -TB * 0.5 ? STEEL : DARK);
+      }
+    }
     const up = (i & 1) === 0;
     for (const sd of [-1, 1]) {
       const zo = sd * (uSide - 10);
@@ -289,6 +331,7 @@ export function buildBudowaStructure(plan, lights) {
       for (let s = rng.range(500, 1400); s < gLen - 400; s += rng.range(1300, 3400)) {
         const th = g0 + s / R;
         stats.ribs++;
+        pickTone();
         for (const sd of [-1, 1]) {
           if (rng.chance(0.18)) continue;
           const zi = sd * zIn;
@@ -315,6 +358,7 @@ export function buildBudowaStructure(plan, lights) {
         const sd = rng.chance(0.5) ? 1 : -1;
         const u = sd * (zIn + (uSide - zIn) * 0.5);
         const top = WH * rng.range(0.7, 1.6);
+        pickTone();
         const w = 80;
         const d = (uSide - zIn) * 0.9;
         for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) beam(th + dx * w * 0.5 / R, u + dz * d * 0.5, 0, th + dx * w * 0.5 / R, u + dz * d * 0.5, top, 7, STEEL);
@@ -358,6 +402,7 @@ export function buildBudowaStructure(plan, lights) {
     for (const gap of K.gaps) {
       for (const sgn of [-1, 1]) {
         stats.fronts++;
+        pickTone();
         const edge = gap.center + sgn * gap.half;
         const at = (x) => edge + sgn * x / R;
         for (const u of [-uSide, 0, uSide]) nav(at(20), u, hTop + 12, COL_AMBER, 28, 0.3 + rng.next() * 0.6);
@@ -401,6 +446,7 @@ export function buildBudowaStructure(plan, lights) {
   // ---- wyspy: słupki ścian (gdzie ściany jeszcze nie ma), rury po podłodze, maszty świateł ----
   for (const isl of plan.islands) {
     const span = isl.a1 - isl.a0;
+    pickTone();
     for (let s = Fw0(plan); s < isl.len - Fw0(plan); s += rng.range(260, 420)) {
       const th = isl.a0 + s / R;
       if (plan.nearTransit(th, 0.004)) continue;
@@ -420,6 +466,8 @@ export function buildBudowaStructure(plan, lights) {
       beam(th, u, 0, th, u, hM, 6, DARK);
       box(th, u, hM, rng.next(), 26, 5, 8, DARK, 0, 0.2);
       nav(th, u, hM + 6, COL_WHITE, 34, 0.1);
+      const p = archPoint(R, th, u, hM + 6, pa);
+      work.push(p.x, p.y, p.z, -1);
       nav(th + 10 / R, u, hM + 4, COL_WHITE, 26, 0.12);
     }
     // rury i kable po podłodze przy ścianach
@@ -433,7 +481,7 @@ export function buildBudowaStructure(plan, lights) {
       }
     }
   }
-  return { bg: bgAll, fg: fgAll, stats, NP };
+  return { bg: bgAll, fg: fgAll, stats, NP, work: Float32Array.from(work) };
 }
 
 // szerokość frontu w j. łuku (plan bez przerw: 0)
@@ -451,12 +499,17 @@ export function wallAt(plan, theta, sd) {
   return plan.hash1(cell * 1.731 + (sd > 0 ? 0.37 : 0.83)) < p;
 }
 
-// Baraki: bryły (skrzynki i walce) per wyspa, światła drzwi i dachów, graty wokół.
-// Zwraca listę { island, box: ArchBatch, cyl: ArchBatch, center: {θ} }.
+// Baraki: bryły (skrzynki i walce) per wyspa, detal i graty, światła drzwi i dachów.
+// Barak składa się z modułów (bryła główna, dobudówki, stos kontenerów, piętra) i osprzętu przyczepionego do lic
+// modułu głównego: drzwi z daszkiem, rury pionowe i pozioma, skrzynki na ścianach (klimatyzatory, rozdzielnie), łaty
+// z innej blachy, drabina na dach; na dachu klimatyzatory, zbiornik, komin z sadzą, antena z lampą, talerz; w obozie
+// kable z dachu na dach. Rama baraku: x wzdłuż jego osi (po obrocie `yaw`), z w poprzek (+z — lico z drzwiami).
+// Zwraca { per: [{ island, box: ArchBatch, cyl: ArchBatch, theta }], count }.
 export function buildBudowaHouses(plan, lights) {
   const { R } = plan;
   const m = new Array(16);
   const pa = {};
+  const pb = {};
   const rng = plan.subRng('house-parts');
   const per = plan.islands.map((isl) => ({ island: isl, box: new ArchBatch('BudHouses'), cyl: new ArchBatch('BudHousesCyl'), theta: (isl.a0 + isl.a1) * 0.5 }));
   const islandOf = (theta) => {
@@ -464,11 +517,27 @@ export function buildBudowaHouses(plan, lights) {
     return per[0];
   };
   const nav = (th, u, h, color, size, phase) => { const p = archPoint(R, th, u, h, pa); lights.add(p.x, p.y, p.z, color, size, phase); };
-  // przesunięcie w ramie baraku (x wzdłuż obróconej osi, z w poprzek) → (θ, u)
-  const off = (H, x, z) => [H.theta + (x * Math.cos(H.yaw) + z * Math.sin(H.yaw)) / R, H.u + (-x * Math.sin(H.yaw) + z * Math.cos(H.yaw))];
+  // punkt ramy baraku (x wzdłuż obróconej osi, z w poprzek) → (θ, u) — ta sama rama co archMatrix z yaw
+  const off = (H, x, z) => {
+    const c = Math.cos(H.yaw);
+    const s = Math.sin(H.yaw);
+    return [H.theta + (x * c + z * s) / R, H.u + (x * s - z * c)];
+  };
   let n = 0;
+  const tops = [];
   for (const H of plan.houses) {
     const P = islandOf(H.theta);
+    const put = (x, z, h, sx, sy, sz, color, kind = 0, p1 = 0.3, dyaw = 0, cyl = false) => {
+      const [th, u] = off(H, x, z);
+      archMatrix(R, th, u, h, sx, sy, sz, H.yaw + dyaw, m);
+      (cyl ? P.cyl : P.box).push16(m, color, kind, rng.next(), p1, 0);
+    };
+    const bar = (x0, z0, h0, x1, z1, h1, w, color, rustA = 0.5) => {
+      const [t0, u0] = off(H, x0, z0);
+      const [t1, u1] = off(H, x1, z1);
+      archBeamMatrix(archPoint(R, t0, u0, h0, pa), archPoint(R, t1, u1, h1, pb), w, m);
+      P.box.push16(m, color, BUD_KIND.steel, rng.next(), rustA, 0);
+    };
     const col = HOUSE_COLS[Math.floor(H.seed * HOUSE_COLS.length) % HOUSE_COLS.length];
     const col2 = HOUSE_COLS[Math.floor(H.seed * 97) % HOUSE_COLS.length];
     // gęstość okien: kontener mieszkalny rzadko (część to magazyny bez okien), barak i moduł — co drugie pole
@@ -477,76 +546,144 @@ export function buildBudowaHouses(plan, lights) {
     if (H.type === 0) {
       const lh = H.hgt / H.stack;
       for (let k = 0; k < H.stack; k++) {
-        const [th, u] = off(H, rng.range(-6, 6) * HS, rng.range(-3, 3) * HS);
-        archMatrix(R, th, u, k * lh, H.len, lh - 1, H.dep, H.yaw + rng.range(-0.06, 0.06), m);
-        P.box.push16(m, k === 0 ? col : (rng.chance(0.5) ? col2 : col), BUD_KIND.barak, rng.next(), win, 0);
+        put(rng.range(-6, 6) * HS, rng.range(-3, 3) * HS, k * lh, H.len, lh - 1, H.dep, k === 0 ? col : (rng.chance(0.5) ? col2 : col), BUD_KIND.barak, win, rng.range(-0.06, 0.06));
       }
+      // kontener obok, inny kolor, przesunięty (obóz z kontenerów)
+      if (rng.chance(0.4)) put(rng.range(-0.3, 0.3) * H.len, H.dep + 6 * HS, 0, H.len * rng.range(0.6, 1), H.hgt / H.stack - 1, H.dep, col2, BUD_KIND.barak, 0, rng.range(-0.1, 0.1));
     } else if (H.type === 1) {
-      archMatrix(R, H.theta, H.u, 0, H.len, H.hgt, H.dep, H.yaw, m);
-      P.box.push16(m, col, BUD_KIND.barak, rng.next(), win, 0);
-      // dobudówka (łata innego koloru)
-      if (rng.chance(0.55)) {
-        const [th, u] = off(H, H.len * 0.5 + 12 * HS, rng.range(-H.dep * 0.2, H.dep * 0.2));
-        archMatrix(R, th, u, 0, 26 * HS, H.hgt * 0.75, H.dep * 0.6, H.yaw, m);
-        P.box.push16(m, col2, BUD_KIND.barak, rng.next(), 0.5, 0);
-      }
+      put(0, 0, 0, H.len, H.hgt, H.dep, col, BUD_KIND.barak, win);
+      // dobudówki: przedsionek przy końcu i niska przybudówka z tyłu
+      if (rng.chance(0.65)) put(H.len * 0.5 + 12 * HS, rng.range(-0.2, 0.2) * H.dep, 0, 26 * HS, H.hgt * 0.75, H.dep * 0.6, col2, BUD_KIND.barak, 0.3);
+      if (rng.chance(0.5)) put(rng.range(-0.25, 0.25) * H.len, -H.dep * 0.5 - 9 * HS, 0, H.len * rng.range(0.3, 0.55), H.hgt * 0.6, 18 * HS, rng.chance(0.5) ? col2 : col, BUD_KIND.barak, 0);
+      // nadstawka na dachu (piętro z prefabrykatu, krótsze)
+      if (rng.chance(0.35)) { put(rng.range(-0.2, 0.2) * H.len, 0, H.hgt, H.len * 0.4, H.hgt * 0.8, H.dep * 0.85, col2, BUD_KIND.barak, win); top = H.hgt * 1.8; }
     } else if (H.type === 2) {
-      archMatrix(R, H.theta, H.u, 0, H.len, H.hgt, H.dep, H.yaw, m);
-      P.cyl.push16(m, col, BUD_KIND.barak, rng.next(), win, 0);
-      archMatrix(R, H.theta, H.u, H.hgt, H.len * 0.6, 6 * HS, H.dep * 0.6, H.yaw, m);
-      P.cyl.push16(m, col2, 0, 0, 0.2, 0);
+      put(0, 0, 0, H.len, H.hgt, H.dep, col, BUD_KIND.barak, win, 0, true);
+      put(0, 0, H.hgt, H.len * 0.6, 6 * HS, H.dep * 0.6, col2, 0, 0.2, 0, true);
       top += 6 * HS;
+      // pierścienie łączeń segmentów modułu
+      for (let k = 1; k < 3; k++) put(0, 0, H.hgt * k / 3 - 2 * HS, H.len * 1.04, 4 * HS, H.dep * 1.04, PIPE, BUD_KIND.steel, 0.6, 0, true);
+      // śluza z boku
+      put(0, H.dep * 0.5 + 8 * HS, 0, 18 * HS, 22 * HS, 16 * HS, col2, BUD_KIND.barak, 0);
     } else {
       const lh = H.hgt / H.stack;
       for (let k = 0; k < H.stack; k++) {
         const f = 1 - k * 0.22;
-        const [th, u] = off(H, rng.range(-12, 12) * k * HS, rng.range(-8, 8) * k * HS);
-        archMatrix(R, th, u, k * lh, H.len * f, lh - 1, H.dep * f, H.yaw + rng.range(-0.15, 0.15), m);
-        P.box.push16(m, rng.chance(0.4) ? col2 : col, BUD_KIND.barak, rng.next(), win, 0);
+        put(rng.range(-12, 12) * k * HS, rng.range(-8, 8) * k * HS, k * lh, H.len * f, lh - 1, H.dep * f, rng.chance(0.4) ? col2 : col, BUD_KIND.barak, win, rng.range(-0.15, 0.15));
       }
+      // schody zewnętrzne na piętro (skośna belka i podest)
+      bar(-H.len * 0.5 - 4 * HS, H.dep * 0.3, 0, -H.len * 0.5 - 4 * HS, -H.dep * 0.2, lh, 5 * HS, PIPE);
+      put(-H.len * 0.5 - 4 * HS, -H.dep * 0.25, lh - 2 * HS, 10 * HS, 2 * HS, 14 * HS, PIPE, BUD_KIND.steel, 0.5);
     }
-    // dach: klimatyzatory, zbiornik, antena z lampą
-    const nRoof = H.type === 0 ? rng.int(0, 1) : rng.int(1, 3);
-    for (let k = 0; k < nRoof; k++) {
-      const [th, u] = off(H, rng.range(-0.35, 0.35) * H.len, rng.range(-0.3, 0.3) * H.dep);
-      const s = rng.range(9, 18) * HS;
-      archMatrix(R, th, u, top, s, s * 0.7, s, H.yaw, m);
-      P.box.push16(m, DARK, 0, 0, 0.3, 0);
-    }
-    if (rng.chance(0.45)) {
-      const [th, u] = off(H, rng.range(-0.3, 0.3) * H.len, rng.range(-0.25, 0.25) * H.dep);
-      const d = rng.range(10, 17) * HS;
-      archMatrix(R, th, u, top, d, rng.range(14, 26) * HS, d, 0, m);
-      P.cyl.push16(m, rng.chance(0.5) ? RUST : STEEL, 0, 0, 0.4, 0);
-    }
-    if (rng.chance(0.5)) {
-      const [th, u] = off(H, H.len * 0.4, -H.dep * 0.3);
-      const hA = rng.range(30, 80) * HS;
-      archMatrix(R, th, u, top, 2.5 * HS, hA, 2.5 * HS, 0, m);
-      P.cyl.push16(m, DARK, 0, 0, 0.3, 0);
-      nav(th, u, top + hA + 6, COL_RED, 22, 0.3 + rng.next() * 0.6);
-    }
-    // lampa nad drzwiami (sód), czasem migająca (zepsuta)
+    // wysokość modułu głównego (osprzęt lic) — kontenery: dolny kontener
+    const hM = H.type === 0 ? H.hgt / H.stack : H.hgt;
+    const len = H.len;
+    const dep = H.dep;
+    // drzwi z daszkiem i lampą (sód, czasem zepsuta — miga)
     {
-      const [th, u] = off(H, rng.range(-0.3, 0.3) * H.len, H.dep * 0.5 + 6);
+      const dx = rng.range(-0.3, 0.3) * len;
+      const dz = dep * 0.5 + 1.2 * HS;
+      put(dx, dz, 0, 12 * HS, Math.min(22 * HS, hM * 0.8), 2 * HS, DOOR, 0, 0.1);
+      put(dx, dz + 3 * HS, Math.min(23 * HS, hM * 0.82), 18 * HS, 1.6 * HS, 7 * HS, PIPE, BUD_KIND.steel, 0.7);
+      const [th, u] = off(H, dx, dz + 4 * HS);
       nav(th, u, Math.min(top, 26 * HS) - 10, COL_SODIUM, rng.range(18, 28), rng.chance(0.15) ? 0.3 + rng.next() * 0.6 : 0.1);
     }
-    // graty obok: skrzynie, butle, generator
-    const nJunk = rng.int(0, 4);
+    // rury pionowe po licach (spływ, kable w peszlu) i pozioma wzdłuż tylnego lica
+    const nPipe = rng.int(1, 3);
+    for (let k = 0; k < nPipe; k++) {
+      const pz = (rng.chance(0.5) ? 1 : -1) * (dep * 0.5 + 2 * HS);
+      put(rng.range(-0.45, 0.45) * len, pz, 0, 3 * HS, hM + 4 * HS, 3 * HS, PIPE, BUD_KIND.steel, 0.7, 0, true);
+    }
+    if (rng.chance(0.6)) put(0, -dep * 0.5 - 2.5 * HS, hM * rng.range(0.5, 0.75), len * 0.9, 3 * HS, 3 * HS, PIPE, BUD_KIND.steel, 0.7);
+    // skrzynki na licach (klimatyzatory, rozdzielnie) i łaty z innej blachy
+    const nBox = rng.int(1, 3);
+    for (let k = 0; k < nBox; k++) {
+      const front = rng.chance(0.5) ? 1 : -1;
+      const s = rng.range(7, 12) * HS;
+      put(rng.range(-0.42, 0.42) * len, front * (dep * 0.5 + s * 0.3), hM * rng.range(0.25, 0.7), s, s * 0.8, s * 0.6, rng.chance(0.5) ? DARK : col2, 0, 0.2);
+    }
+    const nPatch = rng.int(0, 3);
+    for (let k = 0; k < nPatch; k++) {
+      const front = rng.chance(0.5) ? 1 : -1;
+      const w = rng.range(10, 26) * HS;
+      put(rng.range(-0.4, 0.4) * len, front * (dep * 0.5 + 0.6 * HS), hM * rng.range(0.05, 0.55), w, w * rng.range(0.4, 0.9), 1 * HS, desat(col2, 0.3), BUD_KIND.barak, 0);
+    }
+    // drabina na dach (dwie poręcze i szczeble)
+    if (H.type !== 2 && rng.chance(0.35)) {
+      const lx = len * 0.5 + 2 * HS;
+      const lz = rng.range(-0.25, 0.25) * dep;
+      for (const dz of [-4 * HS, 4 * HS]) bar(lx, lz + dz, 0, lx, lz + dz, hM + 8 * HS, 1.4 * HS, PIPE, 0.8);
+      for (let h = 6 * HS; h < hM; h += 7 * HS) bar(lx, lz - 4 * HS, h, lx, lz + 4 * HS, h, 1 * HS, PIPE, 0.8);
+    }
+    // dach: klimatyzatory, zbiornik, komin z sadzą, antena z lampą, talerz łączności
+    const nRoof = H.type === 0 ? rng.int(0, 2) : rng.int(1, 3);
+    for (let k = 0; k < nRoof; k++) {
+      const s = rng.range(9, 18) * HS;
+      put(rng.range(-0.35, 0.35) * len, rng.range(-0.3, 0.3) * dep, top, s, s * 0.7, s, rng.chance(0.6) ? DARK : PIPE, 0, 0.3);
+    }
+    if (rng.chance(0.45)) {
+      const d = rng.range(10, 17) * HS;
+      put(rng.range(-0.3, 0.3) * len, rng.range(-0.25, 0.25) * dep, top, d, rng.range(14, 26) * HS, d, rng.chance(0.5) ? RUST : PIPE, BUD_KIND.steel, 0.8, 0, true);
+    }
+    if (rng.chance(0.35)) {
+      const cx = rng.range(-0.35, 0.35) * len;
+      const cz = rng.range(-0.3, 0.3) * dep;
+      const ch = rng.range(18, 34) * HS;
+      put(cx, cz, top, 5 * HS, ch, 5 * HS, PIPE, BUD_KIND.steel, 0.9, 0, true);
+      put(cx, cz, top + ch, 5.6 * HS, 4 * HS, 5.6 * HS, DOOR, 0, 0.1, 0, true);
+    }
+    if (rng.chance(0.55)) {
+      const ax = len * 0.4;
+      const az = -dep * 0.3;
+      const hA = rng.range(30, 80) * HS;
+      put(ax, az, top, 2.5 * HS, hA, 2.5 * HS, DARK, 0, 0.3, 0, true);
+      const [th, u] = off(H, ax, az);
+      nav(th, u, top + hA + 6, COL_RED, 22, 0.3 + rng.next() * 0.6);
+    }
+    if (rng.chance(0.25)) {
+      const dx = -len * 0.3;
+      put(dx, 0, top, 3 * HS, 8 * HS, 3 * HS, DARK, 0, 0.3, 0, true);
+      put(dx, 0, top + 8 * HS, 18 * HS, 2.5 * HS, 18 * HS, PIPE, BUD_KIND.steel, 0.4, 0, true);
+    }
+    // graty obok: butle, palety blach, skrzynie
+    const nJunk = rng.int(1, 5);
     for (let k = 0; k < nJunk; k++) {
-      const [th, u] = off(H, rng.range(-0.8, 0.8) * H.len, (rng.chance(0.5) ? 1 : -1) * (H.dep * 0.5 + rng.range(10, 40) * HS));
-      if (Math.abs(u) > plan.HW - 30) continue;
-      if (rng.chance(0.3)) {
+      const jx = rng.range(-0.8, 0.8) * len;
+      const jz = (rng.chance(0.5) ? 1 : -1) * (dep * 0.5 + rng.range(10, 40) * HS);
+      const ju = off(H, jx, jz)[1];
+      if (Math.abs(ju) > plan.HW - 30) continue;
+      const r = rng.next();
+      if (r < 0.3) {
         const d = rng.range(5, 9) * HS;
-        archMatrix(R, th, u, 0, d, rng.range(12, 20) * HS, d, 0, m);
-        P.cyl.push16(m, rng.chance(0.5) ? HAZ : STEEL, 0, 0, 0.4, 0);
+        const nb = rng.int(1, 4);
+        for (let q = 0; q < nb; q++) put(jx + q * d * 1.1, jz, 0, d, rng.range(12, 20) * HS, d, rng.chance(0.5) ? HAZ : PIPE, BUD_KIND.steel, 0.5, 0, true);
+      } else if (r < 0.5) {
+        const nb = rng.int(2, 5);
+        for (let q = 0; q < nb; q++) put(jx, jz, q * 2.2 * HS, 40 * HS, 2 * HS, 24 * HS, rng.chance(0.6) ? IO : PIPE, BUD_KIND.steel, 0.7, rng.range(-0.1, 0.1));
       } else {
         const s = rng.range(8, 22) * HS;
-        archMatrix(R, th, u, 0, s, s * rng.range(0.5, 0.9), s * rng.range(0.6, 1.2), rng.range(-0.6, 0.6), m);
-        P.box.push16(m, rng.chance(0.3) ? col2 : DARK, 0, 0, 0.25, 0);
+        put(jx, jz, 0, s, s * rng.range(0.5, 0.9), s * rng.range(0.6, 1.2), rng.chance(0.3) ? col2 : DARK, BUD_KIND.barak, 0, rng.range(-0.6, 0.6));
       }
     }
+    tops.push({ H, P, hM });
     n++;
+  }
+  // kable między barakami obozu (z dachu na dach, z ugięciem) — sąsiedzi w kolejności kąta na tej samej wyspie
+  for (let i = 1; i < tops.length; i++) {
+    const a = tops[i - 1];
+    const b = tops[i];
+    if (a.P !== b.P) continue;
+    const ds = (b.H.theta - a.H.theta) * R;
+    const du = b.H.u - a.H.u;
+    const d = Math.sqrt(ds * ds + du * du);
+    if (d > 900 || d < 1) continue;
+    const h0 = a.hM * 0.92;
+    const h1 = b.hM * 0.92;
+    const p0 = archPoint(R, a.H.theta, a.H.u, h0, {});
+    const p1 = archPoint(R, (a.H.theta + b.H.theta) * 0.5, (a.H.u + b.H.u) * 0.5, Math.min(h0, h1) * 0.6, {});
+    const p2 = archPoint(R, b.H.theta, b.H.u, h1, {});
+    archBeamMatrix(p0, p1, 1.2 * HS, m); a.P.box.push16(m, DOOR, 0, 0, 0.1, 0);
+    archBeamMatrix(p1, p2, 1.2 * HS, m); a.P.box.push16(m, DOOR, 0, 0, 0.1, 0);
   }
   return { per, count: n };
 }

@@ -25,7 +25,8 @@ import {
   makeArchStripNodes
 } from './archTSL.js';
 
-export const ARCH_KIND = Object.freeze({ plain: 0, ecumene: 1, glow: 2, fable: 3, panel: 4, radiator: 5, water: 6 });
+// rodzaje materiału instancji (archTSL.js; 3 i 6 — dawne Fable, wolne)
+export const ARCH_KIND = Object.freeze({ plain: 0, ecumene: 1, glow: 2, panel: 4, radiator: 5, barak: 7, drone: 8, steel: 9 });
 
 // Bryły jednostkowe (podstawa na y = 0, jak `assets.box` / UNIT_BOX_BASE dem).
 export function archUnitGeometries() {
@@ -240,24 +241,13 @@ export function archHemisphere() {
   return g;
 }
 
-// Drzewo jednostkowe z barwą w wierzchołkach (pień ciemniej):
-//  'ico'  — ECUMENE: korona-ikosfera (środek 0,64, promień 0,5 × 0,46) i pień
-//           0,06 × 0,68; skala instancji x/z = 2 × promień korony, y = wysokość;
-//  'cone' — Fable: dwa stożki korony + pień (createTreeGeometry dema).
-export function archTreeGeometry(kind = 'ico') {
-  let parts;
-  if (kind === 'cone') {
-    parts = [
-      new THREE.ConeGeometry(0.5, 0.75, 6, 1).translate(0, 0.62, 0),
-      new THREE.ConeGeometry(0.36, 0.5, 6, 1).translate(0, 0.85, 0),
-      new THREE.CylinderGeometry(0.05, 0.07, 0.3, 5).translate(0, 0.15, 0)
-    ];
-  } else {
-    parts = [
-      new THREE.IcosahedronGeometry(0.5, 1).scale(1, 0.92, 1).translate(0, 0.64, 0),
-      new THREE.BoxGeometry(0.06, 0.68, 0.06).translate(0, 0.34, 0)
-    ];
-  }
+// Drzewo jednostkowe z barwą w wierzchołkach (pień ciemniej) — ECUMENE: korona-ikosfera (środek 0,64,
+// promień 0,5 × 0,46) i pień 0,06 × 0,68; skala instancji x/z = 2 × promień korony, y = wysokość.
+export function archTreeGeometry() {
+  const parts = [
+    new THREE.IcosahedronGeometry(0.5, 1).scale(1, 0.92, 1).translate(0, 0.64, 0),
+    new THREE.BoxGeometry(0.06, 0.68, 0.06).translate(0, 0.34, 0)
+  ];
   const flat = parts.map((g) => { const n = g.index ? g.toNonIndexed() : g; if (n.getAttribute('uv')) n.deleteAttribute('uv'); return n; });
   const merged = mergeGeometries(flat, false);
   for (const g of new Set([...parts, ...flat])) g.dispose();
@@ -265,8 +255,8 @@ export function archTreeGeometry(kind = 'ico') {
   const col = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i);
-    const trunk = kind === 'cone' ? y < 0.31 : Math.abs(pos.getX(i)) < 0.031 && Math.abs(pos.getZ(i)) < 0.031 && y < 0.69;
-    const v = trunk ? 0.35 : (kind === 'cone' ? 0.55 + 0.6 * y : 0.8 + 0.35 * y);
+    const trunk = Math.abs(pos.getX(i)) < 0.031 && Math.abs(pos.getZ(i)) < 0.031 && y < 0.69;
+    const v = trunk ? 0.35 : 0.8 + 0.35 * y;
     col[i * 3] = v; col[i * 3 + 1] = v; col[i * 3 + 2] = v;
   }
   merged.setAttribute('color', new THREE.BufferAttribute(col, 3));

@@ -8,6 +8,9 @@
 // Obwiednia: pas pyłu budowy wokół obręczy ringu (szerszy od strony habitatu, gdzie stoją doki), gęściej przy
 // frontach budowy (spawanie, cięcie, odgazowanie), rzadziej przy halach K-7 (hala ma własny gaz — reguła `pyl-hal-k7`).
 // Odgazowanie: struga z każdego frontu (od strony habitatu i od strony planety) — „skały” z kierunkiem wylotu.
+// Przeszkoda: płyta ringu (wyspy, nie przerwy) jako „olbrzym” rastra przekroju (`giants` — to samo API co olbrzymy
+// pasa: `giant.sampleWorld` < 0 w bryle) — gaz płynie przerwami, płyta wysp go zatrzymuje; płyta z kolidera gry
+// (`pointInSlab`: przerwy, tranzyty, teren), więc gaz widzi tę samą płytę co statki i pociski.
 // Czysty moduł: bez three, DOM i `window`.
 
 import { haloGapEdgeDistance, haloAngleDiff } from '../3d/haloRing/haloRingConstruction.js';
@@ -30,7 +33,7 @@ export const RING_GAS_TUNE = {
   wind: 22,           // dryf wzdłuż obręczy [j/s]
   windOut: 6,         // od planety [j/s]
   ventSize: 110,      // „promień skały” strugi frontu [j.] (szerokość wylotu)
-  ventGain: 0.35      // wydajność strugi względem skały pasa (struga frontu to opary, nie gejzer)
+  ventGain: 0.16      // wydajność strugi względem skały pasa (struga frontu to opary, nie gejzer)
 };
 
 const _m = { weight: 0, cluster: 1, hole: 1, gas: 0, ice: 0 };
@@ -75,8 +78,20 @@ export function createRingGasField(entry) {
     }
   }
 
+  // płyta ringu w rastrze przeszkód gazu: jeden „olbrzym” na cały ring (pudło obręczy), próbka = kolider gry
+  const giants = {
+    entries: [{
+      x: place.x,
+      y: place.y,
+      halfX: R.rim + 1500,
+      halfY: R.rim + 1500,
+      giant: { ready: true, band: 0, sampleWorld: (wx, wy) => (col.pointInSlab(wx, wy) ? -1 : 1) }
+    }]
+  };
+
   return {
     key: entry.key,
+    giants,
     anchorX: place.x,
     anchorY: place.y,
     wind: T.wind,
@@ -119,7 +134,8 @@ export function createRingGasField(entry) {
     forEachRockInRect(kind, x0, y0, x1, y1, minSize, cb) {
       for (let i = 0; i < vents.length; i++) {
         const v = vents[i];
-        if (v.x < x0 || v.x > x1 || v.y < y0 || v.y > y1 || v.r * 2 < minSize) continue;
+        // strugi frontu to nie skały: bez progu rozmiaru skały odgazowującej (minSize pasa)
+        if (v.x < x0 || v.x > x1 || v.y < y0 || v.y > y1) continue;
         cb(v);
       }
     }
