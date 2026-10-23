@@ -106,4 +106,25 @@ ticku (dwie bramki liczone równolegle: ziarno 7 — 25,3 ms wobec 24,0 ms bazy,
   rozładunku) — częstsze jest przejęcie pozy odlotu przez nowy kurs.
 - Zapis z menu w trakcie rozgrzewki: wyrwy pasa z zapisu dodają się do urobku rozgrzewki.
 - Statek na redzie może na chwilę nachodzić na kurs, który przelatuje przez redę (bańka nie rozpycha postoju).
-- Koszt w ciszy — osobny pomiar A/B (niżej).
+
+## Koszt A/B w ciszy (2026-10-23 14:55–15:04)
+
+A = baza bf1ca8a7 (bańka E6, harness rozgrzewa świat 60 min), B = E15 (rozgrzewka gry 60 min), przebiegi A/B/A/B
+`ruch-banka-gra.mjs --query renderWorker=1 --obserwacja 8 --porty mars`. Koszt przy Ziemi w tym samym miejscu, z proxy /
+bez proxy (`TrafficBubble.hideRender`). W tle przez cały pomiar chodził obcy harness `ringi-archetypy-gra.mjs`
+(inna sesja użytkownika) — wartości bezwzględne zawyżone, porównanie A/B przeplatane.
+
+| | encji przy Ziemi | CPU workera renderu ms (z / bez proxy) | GPU ms (z / bez) | krok bańki w workerze ruchu ms |
+|---|---|---|---|---|
+| A1 | 67 | 3,60 / 3,31 | 0,43 / 0,42 | 0,08 |
+| B1 | 319 | 2,72 / 2,59 | 0,43 / 0,40 | 0,13 |
+| A2 | 67 | 4,37 / 3,62 | 0,49 / 0,44 | 0,46 |
+| B2 | 319 | 2,04 / 2,25 | 0,42 / 0,43 | 0,13 |
+
+- Proxy ~320 encji: CPU workera renderu +0,13 / −0,20 ms (B) wobec +0,29 / +0,75 ms przy 67 encjach (A) — w szumie
+  przebiegów; GPU bez różnicy. Całkowity CPU workera renderu w B nie wyższy niż w A.
+- Krok bańki w workerze ruchu: 0,13 ms przy 319 encjach (A: 0,08–0,46 ms przy 67).
+- Mars po 8 s: A 27–32 encje w locie + 34 zapasu; B 95 w locie, 161 postoju, 69 zapasu floty.
+- Wątek gry (bańka, most): harness zamraża `performance.now()`, pomiar w nim = 0 — mikrobenchmark E6 (~8 µs na
+  klatkę przy 40 encjach) skaluje się liniowo, przy ~320 encjach rzędu 60 µs.
+- 0 pipeline'ów synchronicznych i 0 błędów we wszystkich czterech przebiegach.
