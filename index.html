@@ -1236,7 +1236,8 @@
     // Gaz w otwartej przestrzeni (port dema gazy-transport — docs/PLAN-gazy-kosmos.md): wejście klatki pakuje gra
     // (pas: obwiednia z pola, odgazowanie skał), krok Core3D.fx „gaz przestrzeni” czyta tylko tę tablicę.
     import { SpaceGas, SPACE_GAS_TUNE } from "./src/3d/spaceGas/spaceGas.js";
-    import { packSpaceGasFrame, createSpaceGasInputState, SPACE_GAS_IN, SPACE_GAS_ICY_TYPES, SPACE_GAS_INPUT_TUNE } from "./src/game/spaceGasInput.js";
+    import { packSpaceGasFrame, createSpaceGasInputState, SPACE_GAS_IN, SPACE_GAS_ICY_TYPES, SPACE_GAS_INPUT_TUNE, SPACE_GAS_SCENE } from "./src/game/spaceGasInput.js";
+    import { createRingGasField, RING_GAS_VENT_TYPES } from "./src/game/ringGasField.js";
     import { createSpaceGasBlock } from "./src/render/blocks/spaceGasBlock.js";
     // Szew renderu (docs/PLAN-render-worker.md, RW-10): migawka klatki za ?szew=inline, sloty slot + generacja.
     import { SnapshotPacker, createSnapshotFrame } from "./src/render/snapshotPack.js";
@@ -28756,15 +28757,33 @@
     const spaceGasIn = new Float64Array(SPACE_GAS_IN.size);
     const spaceGasState = createSpaceGasInputState();
     const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
-    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
+    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
+    // Ring w budowie (Jowisz, GK-6): pole gazu ringu (src/game/ringGasField.js) — kotwica w środku planety, pas pyłu
+    // i oparów budowy wokół obręczy, odgazowanie frontów. Gdy kadr nie dotyka pasa asteroid.
+    let _ringGasFields = null;
+    function ringGasFieldNear(cx, cy, r) {
+      if (!_ringGasFields) {
+        if (!haloWorld || !haloWorld.entries.length) return null;
+        _ringGasFields = [];
+        for (const e of haloWorld.entries) { const f = createRingGasField(e); if (f) _ringGasFields.push(f); }
+      }
+      for (const f of _ringGasFields) if (f.rectTouchesBelt(cx - r, cy - r, cx + r, cy + r)) return f;
+      return null;
+    }
     function packSpaceGas(cam, dt) {
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
       o.dt = dt; o.camX = cam.x; o.camY = cam.y;
       o.halfW = W * 0.5 / zoom; o.halfH = H * 0.5 / zoom;
-      o.field = beltWorld ? beltWorld.field : null;
+      const belt = beltWorld ? beltWorld.field : null;
+      const reach = Math.max(SPACE_GAS_TUNE.windowCells * 32, o.halfW, o.halfH) * SPACE_GAS_INPUT_TUNE.envMargin;
+      const ring = belt && belt.rectTouchesBelt(cam.x - reach, cam.y - reach, cam.x + reach, cam.y + reach) ? null : ringGasFieldNear(cam.x, cam.y, reach);
+      o.field = ring || belt;
+      o.scene = ring ? SPACE_GAS_SCENE.ring : SPACE_GAS_SCENE.belt;
+      o.anchorX = ring ? ring.anchorX : NaN; o.anchorY = ring ? ring.anchorY : NaN;
+      o.iceTypes = ring ? RING_GAS_VENT_TYPES : _spaceGasIce;
       // olbrzymy pasa (raster przekroju — przeszkody gazu), pociski (gaz wleczony), wybuchy — pierścień GameBlasts
-      o.giants = beltWorld ? beltWorld.giants : null;
+      o.giants = beltWorld && !ring ? beltWorld.giants : null;
       o.bullets = window.bullets || null;
       o.sunX = SUN ? SUN.x : 0; o.sunY = SUN ? SUN.y : 0;
       o.windowCells = SPACE_GAS_TUNE.windowCells;
