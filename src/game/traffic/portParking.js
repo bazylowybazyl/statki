@@ -322,6 +322,129 @@ function buildBands(zone, rowsByClass, cfg) {
 }
 
 // ============================================================
+// Orbita postojowa przy budowli doku (E15, porty bez ringu)
+// ============================================================
+
+export const DOCK_ORBIT_DEFAULTS = Object.freeze({
+  /**
+   * Pierwszy rząd tyle za dyskiem zapasu budowli (`model.keepR`): łuk objazdu bańki biegnie ~1,6 tys. j. za
+   * dyskiem (`DOCK_ARC_MARGIN` w materializedFlight.js) i swobodny lot ścina go o ≤ 1,5 tys. — reda stoi dalej.
+   */
+  gap: 5000,
+  /**
+   * Kolejne odstępy, gdy przy `gap` ścieżki zabierają ponad połowę slotów (dok okrągły: wejścia promieniowe
+   * dookoła obręczy) — orbita odsuwa się za koniec lejków i odlotów (`keepOut` sięga ~12 tys. j. za budowlę).
+   */
+  gapRetry: Object.freeze([9000, 14000, 20000]),
+  /** Pół-rozpiętość łuku po stronie budowli OD węzła portu (planeta / ciało za budowlą, nie pod redą). */
+  halfAngle: (75 * Math.PI) / 180,
+  /** Rozstaw na orbicie: × `pitch` slotu (luźniej niż w rzędach redy przy ringu). */
+  pitchScale: 1.6,
+  /** Ile slotów każdej klasy (razem ≈ `parkingSlots` układu doków: 24) — reszta postoju idzie do hangaru. */
+  quota: Object.freeze({ s: 6, m: 8, l: 5, capital: 3, mega: 2 }),
+  /** Luz od ścieżek podejścia i wyjścia (`keepOut`) ponad połowę głębokości slotu [j.]. */
+  pathClearance: 1500
+});
+
+/**
+ * Plan postoju portu BEZ ringu z budowlą doku (E14 `layout.model`): orbita postojowa za dyskiem zapasu
+ * budowli, po stronie od węzła portu (planeta albo ciało stoją po drugiej stronie budowli), rzędy klas
+ * od środka na zewnątrz (S, M, L, capital, mega), dziobem od budowli. Sloty kolidujące z odcinkami `keepOut`
+ * (`[ax, ay, bx, by] × n` — ścieżki podejścia i wyjścia bańki, lejki, odloty) wypadają. Pojemność to
+ * `quota` (≈ `parkingSlots` 24); nadmiar stoi w hangarze (`plan.hangar`, bez obrazu) — jak dotąd.
+ * Ten sam kształt planu co `buildPortParking` (strefa cywilna) — rejestr `createParkingRegistry`.
+ */
+export function buildDockOrbitParking(layout, node, options = {}) {
+  const m = layout?.model;
+  if (!m || !(m.keepR > 0)) return null;
+  const cfg = { ...DOCK_ORBIT_DEFAULTS, ...options };
+  let quota = 0;
+  for (const cls of SLOT_ORDER) quota += Math.max(0, Math.floor(Number(cfg.quota?.[cls.id]) || 0));
+  let best = null;
+  for (const gap of [cfg.gap, ...(cfg.gapRetry || [])]) {
+    const plan = dockOrbitPlan(layout, node, m, cfg, gap);
+    if (!best || plan.capacity[BERTH_ROLE.CIVIL].total > best.capacity[BERTH_ROLE.CIVIL].total) best = plan;
+    if (best.capacity[BERTH_ROLE.CIVIL].total * 2 >= quota) break;
+  }
+  return best;
+}
+
+function dockOrbitPlan(layout, node, m, cfg, gap) {
+  const stationId = String(layout.stationId || node?.id || '');
+  const nx = Number(node?.x);
+  const ny = Number(node?.y);
+  const away = Number.isFinite(nx) && (m.x !== nx || m.y !== ny) ? Math.atan2(m.y - ny, m.x - nx) : (m.angle || 0) + Math.PI;
+  const zone = makeZone({
+    id: `${stationId}:orbita`, role: BERTH_ROLE.CIVIL, complex: -1, side: 0,
+    cx: m.x, cy: m.y, r0: m.keepR + gap, anchor: away, far: away
+  });
+  zone.a0 = away - cfg.halfAngle;
+  zone.a1 = away + cfg.halfAngle;
+  const keepOut = cfg.keepOut || [];
+  let r = zone.r0;
+  for (const cls of SLOT_ORDER) {
+    const quota = Math.max(0, Math.floor(Number(cfg.quota?.[cls.id]) || 0));
+    if (!quota) continue;
+    const aisle = Math.max(PORT_PARKING_DEFAULTS.aisleMin, cls.depth * PORT_PARKING_DEFAULTS.aisleRatio);
+    const rc = r + aisle / 2 + cls.depth / 2;
+    const pitch = cls.pitch * cfg.pitchScale;
+    const n = Math.max(0, Math.floor(((zone.a1 - zone.a0) * rc) / pitch));
+    const free = [];
+    for (let j = 0; j < n; j++) {
+      const theta = away + ((j - (n - 1) / 2) * pitch) / rc;
+      const x = m.x + Math.cos(theta) * rc;
+      const y = m.y + Math.sin(theta) * rc;
+      const clear = cls.depth / 2 + cfg.pathClearance;
+      if (nearKeepOut(keepOut, x, y, clear)) continue;
+      free.push({ x, y, angle: wrapPi(theta), r: rc, theta, row: 0 });
+    }
+    // Od środka łuku (najdalej od węzła) na boki; `quota` pierwszych.
+    free.sort((p, q) => Math.abs(wrapPi(p.theta - away)) - Math.abs(wrapPi(q.theta - away)) || p.theta - q.theta);
+    const slots = free.slice(0, quota);
+    slots.forEach((slot, index) => { slot.index = index; });
+    zone.bands.push({ cls: cls.id, rank: cls.rank, r0: r, r1: r + cls.depth + aisle, slots });
+    r += cls.depth + aisle;
+  }
+  zone.r1 = r;
+  const capacity = { [BERTH_ROLE.CIVIL]: {}, [BERTH_ROLE.MILITARY]: {} };
+  const civil = capacity[BERTH_ROLE.CIVIL];
+  civil.total = 0;
+  for (const band of zone.bands) {
+    civil[band.cls] = band.slots.length;
+    civil.total += band.slots.length;
+  }
+  return {
+    stationId,
+    x: m.x,
+    y: m.y,
+    hasRing: false,
+    mode: 'reda',
+    zones: [zone],
+    hangar: { id: `${stationId}:hangar`, x: m.x, y: m.y, capacity: Infinity },
+    capacity,
+    overflowRadius: r + 5000
+  };
+}
+
+/** Czy punkt leży bliżej niż `clear` od któregoś odcinka `keepOut` ([ax, ay, bx, by] × n). */
+function nearKeepOut(list, x, y, clear) {
+  const c2 = clear * clear;
+  for (let i = 0; i + 3 < list.length; i += 4) {
+    const ax = list[i];
+    const ay = list[i + 1];
+    const dx = list[i + 2] - ax;
+    const dy = list[i + 3] - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((x - ax) * dx + (y - ay) * dy) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const px = ax + dx * t - x;
+    const py = ay + dy * t - y;
+    if (px * px + py * py < c2) return true;
+  }
+  return false;
+}
+
+// ============================================================
 // Rejestr: kto gdzie stoi
 // ============================================================
 
@@ -357,6 +480,11 @@ export function createParkingRegistry(plan, options = {}) {
     hangarCapacity: options.hangarCapacity ?? plan?.hangar?.capacity ?? Infinity,
     /** Zapas okrętów w halach: `shipId` → miejsce przy stanowisku (placeFleetStock). */
     stockBerths: new Map(),
+    /**
+     * `(slot, cls) → bool` — czy wolny slot wolno dać NOWEMU statkowi (E15: gracz ma pierwszeństwo do miejsca —
+     * slot pod nim się pomija). Statek, który już stoi, zostaje na swoim. Brak = każdy wolny.
+     */
+    isFree: typeof options.isFree === 'function' ? options.isFree : null,
     placedInZones: 0,
     overflowSeq: 0
   };
@@ -435,14 +563,17 @@ function tryZones(registry, id, hullId, cls) {
   for (const slotCls of SLOT_ORDER) {
     if (slotCls.rank < cls.rank) continue;
     let best = null;
+    let bestIndex = -1;
     for (const entry of registry.state.values()) {
       const band = entry.bands.get(slotCls.id);
       if (!band || band.taken >= band.owners.length) continue;
-      if (!best || lighterZone(registry, entry, best)) best = entry;
+      const free = firstFreeSlot(registry, band, slotCls);
+      if (free < 0) continue;
+      if (!best || lighterZone(registry, entry, best)) { best = entry; bestIndex = free; }
     }
     if (!best) continue;
     const band = best.bands.get(slotCls.id);
-    const index = band.owners.indexOf(null);
+    const index = bestIndex;
     const slot = band.band.slots[index];
     band.owners[index] = id;
     band.taken++;
@@ -456,6 +587,28 @@ function tryZones(registry, id, hullId, cls) {
     return true;
   }
   return false;
+}
+
+/** Pierwszy wolny slot pasma w kolejności zapełniania, który `registry.isFree` dopuszcza; −1 — brak. */
+function firstFreeSlot(registry, band, cls) {
+  const owners = band.owners;
+  for (let i = 0; i < owners.length; i++) {
+    if (owners[i] !== null) continue;
+    if (!registry.isFree || registry.isFree(band.band.slots[i], cls)) return i;
+  }
+  return -1;
+}
+
+/**
+ * Miejsce dla statku, który dopiero przylatuje (E15: odlot po końcu kursu leci na swoje miejsce redy) —
+ * jak nowy statek w `syncParking`; statek, który już stoi, zostaje. Następne `syncParking` z tym statkiem
+ * na liście trzyma miejsce, bez niego — zwalnia. Zwraca miejsce.
+ */
+export function reserveParkingSpot(registry, ship) {
+  if (!registry || ship?.id == null) return null;
+  const id = String(ship.id);
+  if (!registry.byShip.has(id)) assignSpot(registry, { id, hullId: ship.hullId || null });
+  return registry.byShip.get(id) || null;
 }
 
 /** Równy rozkład między strefy: mniejsze obłożenie, remis — rotacja. */

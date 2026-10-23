@@ -6,6 +6,13 @@
 //
 //   node scripts/webgpu/ruch-banka-gra.mjs [--query renderWorker=1] [--out .tmp/ruch-banka] [--port 5461]
 //        [--rozgrzewka 2400] [--obserwacja 40] [--porty mars,jupiter,luna,ceres,mercury,vesta] [--odlot 1|tylko]
+//        [--zimny 30,120,300] [--dok ceres]
+//
+// `--rozgrzewka 0` — ZIMNY START jak u gracza (E15): bez rozgrzewki narzędzia, świat ruchu liczy tylko własną
+// rozgrzewkę gry w workerze (`TRAFFIC_WARMUP_SECONDS`, od startu strony, w menu). Etap `zimny`: encje przy
+// Ziemi po `--zimny` s gry (lot / postój / zapas floty), kiedy skończyła się rozgrzewka, kursy w świecie, zrzuty
+// po pierwszym punkcie: port Ziemi (`10-zimny-ziemia.png`), port z dokiem E14 `--dok` (`11-zimny-dok-*.png`),
+// reda z czekającymi statkami (`12-reda.png`).
 //
 // `--odlot 1` — koniec kursu przy stanowisku (rozładunek u celu, flaga DEPARTED): kadr na statku, zrzuty co 0,25 s
 // przez odłączanie i początek lotu (`08-odlot-NNN.png`), pozy w każdym kroku (ciągłość); `tylko` — sam ten etap.
@@ -75,9 +82,10 @@ const ZOOM = (z) => `(() => { const c = window.camera; c.minZoom = 0.003; c.manu
 const bubbleState = () => ev(`(() => {
   const tb = window.TrafficBubble, br = window.TrafficV2, s = window.ship;
   const phases = {}, berths = { k7: 0, bay: 0 }, docked = [];
-  let stock = 0;
+  let stock = 0, parked = 0;
   for (const a of tb.list) {
-    if (a.flags & 64) { stock++; continue; }   // zapas floty na padach K-7 (STOCK) — osobno
+    if (a.flags & 64) { stock++; continue; }   // zapas floty na padach K-7 i redzie wojskowej (STOCK) — osobno
+    if (a.flags & 256) { parked++; continue; } // postój bez kursu: reda / orbita postojowa (PARKED, E15) — osobno
     phases[a.phase] = (phases[a.phase] || 0) + 1;
     if (a.berthId && (a.phase === 'docked' || a.phase === 'capture')) {
       if (a.berthId.includes(':K7-')) berths.k7++; else berths.bay++;
@@ -89,8 +97,9 @@ const bubbleState = () => ev(`(() => {
   const reg = window.__haloWorld?.entry('earth')?.collider?.registry;
   let lamps = 0;
   if (reg) for (const e of reg.entries) if (e.berth.occupied === 'traffic' || e.berth.reserved === 'traffic') lamps++;
-  return { t: br.time, actors: tb.list.length - stock, stock, phases, berths, lamps, docked: docked.slice(0, 40),
+  return { t: br.time, actors: tb.list.length - stock - parked, stock, parked, phases, berths, lamps, docked: docked.slice(0, 40),
     held: tb.held.slice(), stats: { ...tb.stats }, actorMs: st.actorMs, bridgeCourses: st.courses,
+    warmup: st.warmup, kursy: st.stats ? { active: st.stats.active, berthed: st.stats.berthed, queued: st.stats.queued } : null,
     player: { x: s.pos.x, y: s.pos.y } };
 })()`);
 
@@ -133,6 +142,77 @@ try {
   await ev(ZOOM(0.045));
   await waitGame(4);
   await screenshotPng(cdp, join(out, '01-port-ziemi.png'));
+
+  if (WARM === 0 && args.zimny !== '-') {
+    // ZIMNY START (E15): czas gry od kliknięcia Start = czas mostu minus rozgrzewka świata (most dokłada ją do zegara).
+    const marks = String(args.zimny || '30,120,300').split(',').map(Number).filter((v) => v > 0).sort((a, b) => a - b);
+    const playT = () => ev('(() => { const b = window.TrafficV2; return b.time - (b.warmup?.seconds || 0); })()');
+    const rows = [];
+    let shots = false;
+    for (const mark of marks) {
+      for (;;) {
+        const t = await playT();
+        if (t >= mark) break;
+        await waitGame(Math.min(10, Math.max(1 / 60, mark - t)));
+      }
+      const st = await bubbleState();
+      const row = { t: Math.round(await playT()), encji: st.actors + st.parked + st.stock, lot: st.actors, postoj: st.parked,
+        zapasFloty: st.stock, fazy: st.phases, rozgrzewka: st.warmup, kursy: st.kursy, msBanki: st.actorMs };
+      rows.push(row);
+      console.log('zimny start', JSON.stringify(row));
+      if (!shots) {
+        shots = true;
+        await screenshotPng(cdp, join(out, '10-zimny-ziemia.png'));
+        // Port z dokiem E14 (koło, okrąg, krzyż) po tych samych sekundach — gracz przy budowli, 3 s gry na bańkę.
+        const dockId = String(args.dok || 'ceres');
+        const at = await ev(`(() => {
+          const d = window.TrafficV2.tables.bubbleDocks?.[${JSON.stringify(dockId)}];
+          const st = window.TrafficV2.getStation(${JSON.stringify(dockId)});
+          if (!d || !st) return null;
+          const dx = d.x - st.x, dy = d.y - st.y, dd = Math.hypot(dx, dy) || 1;
+          const r = d.keepR + 9000;
+          const x = d.x + dx / dd * r, y = d.y + dy / dd * r;
+          window.devTeleportTo(x, y, { angle: Math.atan2(-dy, -dx), quiet: true });
+          window.ship.vel.x = 0; window.ship.vel.y = 0;
+          return { x: Math.round(x), y: Math.round(y), kind: d.kind, keepR: d.keepR };
+        })()`);
+        if (at) {
+          await ev(ZOOM(0.03));
+          await waitGame(3);
+          const ds = await bubbleState();
+          report.etapy.zimnyDok = { port: dockId, ...at, lot: ds.actors, postoj: ds.parked, fazy: ds.phases };
+          console.log('zimny start, dok', dockId, JSON.stringify(report.etapy.zimnyDok));
+          await screenshotPng(cdp, join(out, `11-zimny-dok-${dockId}.png`));
+        }
+        // Reda: kadr nad statkami postoju (PARKED bez STOCK) przy Ziemi.
+        await ev(`(() => { window.devTeleportTo(${spot.x}, ${spot.y}, { angle: 0, quiet: true }); window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+        await waitGame(2);
+        const reda = await ev(`(() => {
+          const list = window.TrafficBubble.list.filter((a) => (a.flags & 256) && !(a.flags & 64));
+          if (!list.length) return null;
+          let best = list[0], bestN = 0;
+          for (const a of list) {
+            let n = 0;
+            for (const b of list) if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < 6000) n++;
+            if (n > bestN) { best = a; bestN = n; }
+          }
+          window.devTeleportTo(best.cx + 1800, best.cy + 1800, { angle: 0, quiet: true });
+          window.ship.vel.x = 0; window.ship.vel.y = 0;
+          return { statkow: list.length, wKadrze: bestN, x: Math.round(best.cx), y: Math.round(best.cy) };
+        })()`);
+        report.etapy.reda = reda;
+        if (reda) {
+          await ev(ZOOM(0.09));
+          await waitGame(1);
+          await screenshotPng(cdp, join(out, '12-reda.png'));
+        }
+        console.log('reda', JSON.stringify(reda));
+        await ev(`(() => { window.devTeleportTo(${spot.x}, ${spot.y}, { angle: 0, quiet: true }); window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+        await ev(ZOOM(0.045));
+      }
+    }
+    report.etapy.zimny = rows;
+  }
 
   if (args.odlot) {
     // Statek, którego kurs kończy się przy stanowisku: czekamy na flagę DEPARTED (128) w fazie odłączania.
@@ -185,7 +265,7 @@ try {
   let movedToK7 = false;
   for (;;) {
     const s = await bubbleState();
-    samples.push({ t: +(s.t - t0).toFixed(1), actors: s.actors, zapasK7: s.stock, phases: s.phases, berths: s.berths, lampki: s.lamps, actorMs: s.actorMs });
+    samples.push({ t: +(s.t - t0).toFixed(1), actors: s.actors, postoj: s.parked, zapasK7: s.stock, phases: s.phases, berths: s.berths, lampki: s.lamps, actorMs: s.actorMs });
     for (const d of s.docked) { seenDocked.set(d.id, d.berth); }
     if (s.actors) for (const id of await ev('window.TrafficBubble.list.map((a) => a.id)')) seen.add(id);
     if (s.t - t0 > OBS * (shot + 1) / 4 && shot < 4) {
@@ -591,7 +671,7 @@ try {
       await waitGame(2);
       await screenshotPng(cdp, join(out, `07-port-${pi}-${id}-zblizenie.png`));
     }
-    report.porty[id] = { ...at, encji: s.actors, zapas: s.stock, fazy: s.phases, zadokowane: s.docked.filter((d) => d.berth?.startsWith(`${id}:`)).length,
+    report.porty[id] = { ...at, encji: s.actors, postoj: s.parked, zapas: s.stock, fazy: s.phases, zadokowane: s.docked.filter((d) => d.berth?.startsWith(`${id}:`)).length,
       gpuMs: avg('gpu'), cpuWorkerMs: avg('cpu'), actorMs: avg('actorMs'), bezProxy: { gpuMs: bezProxy('gpu'), cpuWorkerMs: bezProxy('cpu') } };
     console.log('port', id, JSON.stringify(report.porty[id]));
   }
