@@ -41,6 +41,7 @@ const HOOK = `(() => {
 // Statek i kamera: `ang` — kąt w układzie lokalnym ringu (port gracza = kąt stacji), `r` — promień od środka
 // planety, kamera gry (RTS) w punkcie (camAng, camR), zoom; mode3d — kamera 3D (az względem kierunku na zewnątrz
 // ringu w punkcie statku, el).
+// (szablon: wyrażenia regularne z podwójnym \ — w literale szablonu `\d` traci ukośnik)
 const VIEW = (key, v) => `(() => {
   const e = window.__haloWorld.entries.find((x) => x.key === '${key}');
   const L = e.collider.layout, R = L.radii, p = e.collider.place;
@@ -58,6 +59,27 @@ const VIEW = (key, v) => `(() => {
     for (const c of K.gaps) if (Math.cos(c.center - sun) > Math.cos(g.center - sun)) g = c;
     v.ang = (v.ang === 'przerwa' ? g.center : g.center + g.half + K.front * 0.55) - port;
   }
+  // 'barak': obóz baraków (ring BUDOWA) najbliżej Słońca — kąt policzony przed kadrami (window.__budBarak)
+  if (v.ang === 'barak') {
+    if (!Number.isFinite(window.__budBarak)) return false;
+    v.ang = window.__budBarak - port;
+  }
+  // 'wyspa': środek luźnej wyspy płyty (segment bez portu i tranzytu) najbliżej Słońca — ring BUDOWA
+  if (v.ang === 'wyspa') {
+    if (!K || !K.active) return false;
+    const sx = window.SUN.x - p.x, sy = -(window.SUN.y - p.y);
+    const sun = Math.atan2(-sx * p.sin + sy * p.cos, sx * p.cos + sy * p.sin);
+    const marks = [0, 1, 2, 3].flatMap((k) => [port + k * Math.PI / 2, port + Math.PI / 4 + k * Math.PI / 2]);
+    const has = (s, a) => { let d = a - s.a0; d -= 2 * Math.PI * Math.floor(d / (2 * Math.PI)); return d < s.a1 - s.a0; };
+    let best = null;
+    for (const s of K.segments) {
+      if (marks.some((a) => has(s, a))) continue;
+      const c = 0.5 * (s.a0 + s.a1);
+      if (!best || Math.cos(c - sun) > Math.cos(best - sun)) best = c;
+    }
+    if (best == null) return false;
+    v.ang = best - port + (v.dAng || 0);
+  }
   if (v.ang === 'slonce') {
     const dx = window.SUN.x - p.x, dy = -(window.SUN.y - p.y);
     const a = Math.atan2(-dx * p.sin + dy * p.cos, dx * p.cos + dy * p.sin) - port;
@@ -69,7 +91,7 @@ const VIEW = (key, v) => `(() => {
     }
     v.ang = best;
   }
-  const rOf = (s) => /^rim\+\d+$/.test(s) ? R.rim + Number(s.slice(4)) : s === 'rim+' ? R.rim + 900 : s === 'mid' ? 0.5 * (R.back + R.rim) : s === 'back-' ? R.back - 1400 : s === 'dock' ? R.rim + 2500 + 1500 : Number(s);
+  const rOf = (s) => /^floor\\+\\d+$/.test(s) ? R.floorMid + Number(s.slice(6)) : /^rim\\+\\d+$/.test(s) ? R.rim + Number(s.slice(4)) : s === 'rim+' ? R.rim + 900 : s === 'mid' ? 0.5 * (R.back + R.rim) : s === 'back-' ? R.back - 1400 : s === 'dock' ? R.rim + 2500 + 1500 : Number(s);
   const sh = toGame(port + v.ang, rOf(v.r));
   const s = window.ship;
   s.pos.x = sh.x; s.pos.y = sh.y; s.vel.x = 0; s.vel.y = 0;
@@ -107,6 +129,13 @@ const VIEWS = [
   // ring w budowie (Jowisz): przerwa w płycie i front budowy z kamery gry
   ['przerwa-z005', { ang: 'przerwa', r: 'rim+', zoom: 0.05, camR: 'mid' }],
   ['front-z02', { ang: 'front', r: 'rim+', zoom: 0.2, camR: 'mid' }],
+  // ring BUDOWA (Jowisz): luźna wyspa z barakami i kręgosłup przy niej
+  ['wyspa-z02', { ang: 'wyspa', r: 'rim+', zoom: 0.2, camR: 'mid' }],
+  ['wyspa-z006', { ang: 'wyspa', r: 'rim+', zoom: 0.06, camR: 'mid' }],
+  ['3d-wyspa', { ang: 'wyspa', r: 'rim+', zoom: 0.3, mode3d: true, az: 20, el: 30 }],
+  ['3d-baraki', { ang: 'barak', r: 'floor+900', zoom: 0.75, mode3d: true, az: 95, el: 52 }],
+  ['3d-baraki-bok', { ang: 'barak', r: 'floor+900', zoom: 0.9, mode3d: true, az: -150, el: 24 }],
+  ['3d-kregoslup', { ang: 'wyspa', dAng: 0.06, r: 'rim+', zoom: 0.22, mode3d: true, az: 50, el: 24 }],
   ['3d-habitat', { ang: 'slonce', r: 'rim+', zoom: 0.06, mode3d: true, az: 25, el: 32 }],
   ['3d-wzdluz', { ang: 'slonce', r: 'rim+', zoom: 0.08, mode3d: true, az: 82, el: 8 }],
   ['3d-spod', { ang: 'slonce', r: 'back-', zoom: 0.08, mode3d: true, az: 200, el: 30 }],
@@ -136,6 +165,26 @@ try {
     const worker = await ev('!(window.Core3D && window.Core3D.gpuReady)');
     if (!worker && !await waitFor(cdp, `!!window.__haloRings?.entries?.find((x) => x.key === '${key}')?.ring?.isReady`, 300000, 400)) throw new Error(`ring ${key} nie powstał`);
     const hook = await ev(HOOK);
+    // ring BUDOWA: kąt obozu baraków najbliżej Słońca (plan liczony w stronie — ten sam moduł co obraz)
+    await ev(`(async () => {
+      const e = window.__haloWorld.entries.find((x) => x.key === '${key}');
+      const L = e.collider.layout;
+      if (L.archetype !== 'budowa') return false;
+      const m = await import('/src/3d/haloRing/arch/budowaPlan.js');
+      const P = m.createBudowaPlan(L);
+      const p = e.collider.place;
+      const sx = window.SUN.x - p.x, sy = -(window.SUN.y - p.y);
+      const sun = Math.atan2(-sx * p.sin + sy * p.cos, sx * p.cos + sy * p.sin);
+      let best = null, bs = -1e9;
+      for (const h of P.houses) {
+        let n = 0;
+        for (const o of P.houses) if (Math.abs(o.theta - h.theta) * P.R < 1400) n++;
+        const sc = n + 4 * Math.cos(h.theta - sun);
+        if (sc > bs) { bs = sc; best = h; }
+      }
+      window.__budBarak = best ? best.theta : NaN;
+      return true;
+    })()`);
     // pętla gry ruszyła (kamera eksportowana co klatkę) — w workerze start czeka dłużej na ekranie ładowania
     if (!await waitFor(cdp, '!!(window.camera && window.Game3D)', 240000, 400)) throw new Error('pętla gry nie ruszyła');
     await sleep(worker ? 25000 : 3000);

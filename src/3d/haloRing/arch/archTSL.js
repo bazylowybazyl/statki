@@ -13,6 +13,9 @@
 //   4 — płyty metalu (szwy, kratki, odcień płyty)
 //   5 — radiator (ciemny, czerwony żar × aInst.z)
 //   6 — woda (połysk słońca, fresnel nieba)
+//   7 — barak ringu BUDOWA (brud u dołu, sadza u góry, zacieki rdzy, łaty, karby blach; aInst.z = gęstość okien)
+//   8 — dron ringu BUDOWA (lot po krzywej Lissajous w wierzchołkach: aInst.z = amplituda [j.], aInst.w = tempo;
+//       migająca lampa na grzbiecie)
 //
 // Instancje: zwykła siatka z InstancedBufferGeometry (macierz 4 × vec4, barwa, aInst w JEDNYM
 // przeplecionym buforze — ARCH_INST_STRIDE), nie THREE.InstancedMesh: uuid InstancedMesh wchodzi
@@ -145,12 +148,19 @@ export function makeArchInstancedNodes({ u, fg = false, vertexColors = false }) 
     const normal = normalGeometry;
     const lp = mat4(c0, c1, c2, c3).mul(vec4(position, 1.0)).toVar();
     const sc = vec3(length(c0.xyz), length(c1.xyz), length(c2.xyz)).toVar();
+    const inst = attribute('aInst', 'vec4');
+    // rodzaj 8 (dron ringu BUDOWA): przesunięcie po krzywej Lissajous w osiach bryły (maska 0 / 1, bez gałęzi)
+    const drone = step(7.5, inst.x).mul(step(inst.x, 8.5)).toVar();
+    const tD = U.uTime.mul(inst.w).add(inst.y.mul(6.2831853)).toVar();
+    const fly = normalize(c0.xyz).mul(sin(tD)).add(normalize(c2.xyz).mul(sin(tD.mul(0.71).add(1.3))))
+      .add(normalize(c1.xyz).mul(sin(tD.mul(1.37)).mul(0.3))).mul(inst.z);
+    lp.assign(vec4(lp.xyz.add(fly.mul(drone)), lp.w));
     v.n.assign(normalize(mat3(c0.xyz, c1.xyz, c2.xyz).mul(normal.div(max(sc.mul(sc), vec3(1e-6))))));
     v.pos.assign(lp.xyz);
     v.obj.assign(position);
     v.objN.assign(normal);
     v.scale.assign(sc);
-    v.inst.assign(attribute('aInst', 'vec4'));
+    v.inst.assign(inst);
     const c = vertexColors ? attribute('iCol', 'vec3').mul(attribute('color', 'vec3')) : attribute('iCol', 'vec3');
     v.col.assign(c);
     return cameraProjectionMatrix.mul(modelViewMatrix.mul(lp));
@@ -193,6 +203,10 @@ export function makeArchInstancedNodes({ u, fg = false, vertexColors = false }) 
     const fy = hWorld.div(floorH).toVar();
     const fx = hc.div(colW).toVar();
     const fabFw = fwidth(fx).add(fwidth(fy)).toVar();
+    // barak ringu BUDOWA: okna 26 × 30 j. (bryły ×3 dema — okno Fable byłoby sitem)
+    const bx = hc.div(26.0).toVar();
+    const by = hWorld.div(30.0).toVar();
+    const barFw = fwidth(bx).add(fwidth(by)).toVar();
 
     // Okna ECUMENE (makeBuildingMaterial dema, × 3).
     const ecumeneFacade = (night) => {
@@ -292,6 +306,44 @@ export function makeArchInstancedNodes({ u, fg = false, vertexColors = false }) 
       return a;
     };
 
+    // Barak ringu BUDOWA (rodzaj 7): brudne prefabrykaty i kontenery robotników — karby blach, zacieki rdzy
+    // od dachu, łaty, sadza u góry, błoto u dołu, smoła na dachu; okna (aInst.z = gęstość) z fx / fy Fable
+    // (kolumna 26 j., rząd 30 j. — pochodne barFw liczone przed gałęziami), część migocze.
+    const barak = (night) => {
+      const a = albedo.toVar();
+      const hTop = vScale.y.toVar();
+      const sideF = float(1.0).sub(step(0.5, abs(vObjN.y))).toVar();
+      a.mulAssign(mix(float(0.48), float(1.0), smoothstep(0.0, 9.0, hWorld)));
+      a.mulAssign(mix(float(1.0), float(0.86).add(float(0.14).mul(step(0.5, fract(hc.div(4.5))))), sideF));
+      const colH = archHash(vec2(floor(hc.div(6.0)).add(seedI.mul(0.37)), seedI)).toVar();
+      const streak = step(0.7, colH).mul(float(1.0).sub(smoothstep(0.0, colH.mul(hTop).mul(0.9).add(4.0), hTop.sub(hWorld)))).mul(sideF);
+      a.assign(mix(a, vec3(0.16, 0.07, 0.025).mul(float(0.6).add(float(0.5).mul(colH))), streak.mul(0.7)));
+      const pH = archHash(vec2(floor(hc.div(16.0)).add(seedI.mul(1.3)), floor(hWorld.div(12.0)).add(seedI.mul(0.7)))).toVar();
+      a.assign(mix(a, a.mul(vec3(1.3, 1.24, 1.12)), step(0.87, pH).mul(sideF)));
+      a.mulAssign(float(1.0).sub(float(0.5).mul(step(pH, 0.07)).mul(sideF)));
+      a.mulAssign(float(1.0).sub(float(0.45).mul(smoothstep(hTop.mul(0.62), hTop, hWorld)).mul(step(0.45, seed))));
+      If(vObjN.y.greaterThan(0.5), () => {
+        const rp = archHash(vec2(floor(vObj.x.mul(vScale.x).div(9.0)).add(seedI), floor(vObj.z.mul(vScale.z).div(9.0))));
+        a.assign(albedo.mul(0.4).mul(float(0.75).add(float(0.5).mul(rp))));
+      });
+      If(sideF.greaterThan(0.5).and(vInst.z.greaterThan(0.01)), () => {
+        const wid = vec2(floor(bx), floor(by)).toVar();
+        const wf = vec2(fract(bx), fract(by)).toVar();
+        const rowOk = step(hWorld, hTop.sub(12.0)).mul(step(10.0, hWorld));
+        const has = step(float(1.0).sub(vInst.z), archHash(wid.add(vec2(seedI.mul(0.61), seedI.mul(0.23)))));
+        const winMask = step(0.3, wf.x).mul(step(wf.x, 0.7)).mul(step(0.35, wf.y)).mul(step(wf.y, 0.72)).mul(rowOk).mul(has).toVar();
+        const lit = step(float(0.86).sub(float(0.3).mul(night)), archHash(wid.add(vec2(seedI.mul(1.7), 3.1)))).toVar();
+        const flick = step(0.9, archHash(wid.add(vec2(seedI, 7.7))));
+        lit.mulAssign(mix(float(1.0), step(0.35, fract(U.uTime.mul(5.3).add(colH.mul(9.0)))), flick));
+        const wc = mix(vec3(1.0, 0.66, 0.32), vec3(0.62, 0.86, 1.0), step(0.7, archHash(vec2(seedI, 2.0))));
+        const farBlend = smoothstep(0.3, 1.4, barFw).toVar();
+        a.assign(mix(a, a.mul(0.22), winMask.mul(float(1.0).sub(farBlend))));
+        const w = mix(winMask.mul(lit), vInst.z.mul(0.1).mul(float(0.4).add(night)), farBlend);
+        emit.addAssign(wc.mul(1.2).mul(w).mul(float(0.2).add(float(0.9).mul(night))).mul(U.uLayers.y));
+      });
+      return a;
+    };
+
     If(inRange(kind, 1.5, 2.5), () => {
       // światło: HDR bez cieniowania (miganie: faza w aInst.w > 0)
       const blink = vInst.w.greaterThan(0.0).select(
@@ -313,11 +365,22 @@ export function makeArchInstancedNodes({ u, fg = false, vertexColors = false }) 
       }).ElseIf(kind.lessThan(4.5), () => {
         albedo.assign(panels());
         gloss.assign(0.3);
-      }).Else(() => {
+      }).ElseIf(kind.lessThan(6.5), () => {
         // radiator: ciemne lamele, czerwony żar
         const fin = float(0.8).add(float(0.2).mul(step(0.5, fract(vObj.x.mul(vScale.x).div(12.0)))));
         albedo.mulAssign(fin);
         emit.addAssign(vec3(0.55, 0.08, 0.02).mul(vInst.z));
+      }).ElseIf(kind.lessThan(7.5), () => {
+        albedo.assign(barak(night));
+        gloss.assign(0.1);
+      }).Else(() => {
+        // dron: jasny kadłub, pas świateł na boku, migająca czerwona lampa na grzbiecie
+        gloss.assign(0.45);
+        const band = float(1.0).sub(step(0.5, abs(vObjN.y))).mul(step(abs(vObj.y.sub(0.5)), 0.14));
+        emit.addAssign(vec3(0.35, 0.9, 1.2).mul(band).mul(0.8).mul(U.uLayers.y));
+        const blink = step(0.62, fract(U.uTime.mul(1.3).add(seed.mul(7.0))));
+        const lamp = step(0.5, vObjN.y).mul(float(1.0).sub(smoothstep(0.12, 0.22, length(vObj.xz))));
+        emit.addAssign(vec3(1.3, 0.18, 0.06).mul(lamp).mul(blink).mul(3.0).mul(U.uLayers.y));
       });
       col.assign(archShade(vPos, n, albedo, gloss).add(emit));
     });

@@ -323,7 +323,10 @@ const JUPITER = {
   ...EARTH,
   key: 'jupiter',
   label: 'Jowisz',
-  archetype: 'fable',
+  // RING W BUDOWIE (decyzja użytkownika 2026-10-23: „ring w budowie oznacza zupełnie inny ring, z pojedynczymi
+  // »brudnymi« domami, wszędzie pył, gaz, małe części stoją”; wersja Fable z przerwami — odrzucona): archetyp
+  // BUDOWA (arch/budowa.js, budowaPlan.js) — kręgosłup z kratownicy, wyspy płyty przy portach i tranzytach.
+  archetype: 'budowa',
   // Ring PRZEMYSŁOWY, cienki (decyzja użytkownika 2026-10-21): 1,9 g na
   // ringu, pasy radiacyjne, obwód 11× ziemskiego — z materiału księżyców (Io,
   // Ganimedes, Kallisto) tylko port i rafinerie dla tankowców, załoga
@@ -338,14 +341,25 @@ const JUPITER = {
   // plaże, jeziora) = pola radiatorów, pokład z estakadami, baterie kolektorów, składowiska rudy z Io,
   // baseny chłodziwa, rozlewnie zbiorników (fablePlan.js, FZ_INDUSTRIAL); zieleń tylko w kopułach
   industrialFloor: true,
-  // Ring W BUDOWIE (decyzja użytkownika 2026-10-22: „unfinished”): trzy przerwy w płycie (prawdziwe
-  // przeloty w płaszczyźnie gry), w wolnych łukach między kompleksem portu a tranzytem; wszystkie hale
-  // K-7, zatoki i tranzyty na zbudowanych segmentach. at — środek względem kąta stacji [rad], half —
-  // pół-rozpiętość [rad] (przy podłodze 54 500: ~12 / ~8,7 / ~6,5 tys. j.), front — pas końca segmentu
-  // z gołą kratownicą i placem budowy [rad] (~2,7 tys. j.). Moduł: haloRingConstruction.js.
+  // Ring W BUDOWIE (decyzje użytkownika 2026-10-22 „unfinished” i 2026-10-23 „zupełnie inny ring”): WIĘKSZOŚĆ
+  // OBWODU to przerwy (prawdziwe przeloty w płaszczyźnie gry; stoi w nich tylko kręgosłup poza płaszczyzną) —
+  // 11 przerw, ~58% obwodu. Zbudowane segmenty = wyspy płyty: 4 przy kompleksach K-7 (~28–31 tys. j. — hala
+  // i zatoki), 4 małe przy tranzytach (~4,3 tys. j.) i 3 luźne (~2,7–3,8 tys. j.). Każdy łuk port ↔ tranzyt
+  // ma okno ~0,49 rad poza portem i tranzytem; w czterech łukach dwie przerwy z luźną wyspą między nimi.
+  // at — środek względem kąta stacji [rad], half — pół-rozpiętość [rad], front — pas końca wyspy z gołą
+  // kratownicą i placem budowy [rad] (~650 j.). Moduł: haloRingConstruction.js.
   construction: {
-    gaps: [{ at: 1.064, half: 0.11 }, { at: 3.649, half: 0.08 }, { at: 5.219, half: 0.06 }],
-    front: 0.05
+    gaps: [
+      { at: 0.3622, half: 0.1078 }, { at: 0.6382, half: 0.1082 },
+      { at: 1.0694, half: 0.2450 },
+      { at: 2.0962, half: 0.2210 },
+      { at: 2.5326, half: 0.1374 }, { at: 2.8026, half: 0.0826 },
+      { at: 3.6420, half: 0.2460 },
+      { at: 4.0430, half: 0.0770 }, { at: 4.3230, half: 0.1330 },
+      { at: 5.2128, half: 0.2460 },
+      { at: 5.7618, half: 0.2250 }
+    ],
+    front: 0.012
   },
   sectorPlan: FABLE_SECTORS,
   sky: { tint: [0.30, 0.42, 0.60], cloudTint: [0.8, 0.8, 0.8] },

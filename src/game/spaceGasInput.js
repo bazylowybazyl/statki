@@ -48,7 +48,7 @@ export function createSpaceGasInputState() {
   return {
     env: new Float32Array(G * G * 2),
     envB: new Float32Array(G * G * 2),
-    ix0: NaN, iy0: NaN, cell: 0, holeVer: -1, ver: 0, anchorX: NaN, anchorY: NaN, max: 0,
+    ix0: NaN, iy0: NaN, cell: 0, holeVer: -1, ver: 0, anchorX: NaN, anchorY: NaN, scene: 0, max: 0,
     samples: 0,   // próbek pola w ostatniej klatce (koszt CPU)
     jetSeen: 0,
     // wybuchy w polu: x, y (świat gry), rozmiar, wiek, życie; `blastSeen` — ile wybuchów z pierścienia gry już przyjęto
@@ -100,27 +100,37 @@ export function packSpaceGasFrame(out, st, o) {
     const r = Math.max(halfWin, viewHalf) * T.envMargin;
     on = field.rectTouchesBelt(o.camX - r, o.camY - r, o.camX + r, o.camY + r);
   }
-  out[I.scene] = on ? SPACE_GAS_SCENE.belt : SPACE_GAS_SCENE.none;
+  // scena: pas (domyślnie) albo ring w budowie (o.scene + pole ringu — src/game/ringGasField.js)
+  const scene = o.scene || SPACE_GAS_SCENE.belt;
+  out[I.scene] = on ? scene : SPACE_GAS_SCENE.none;
   stepBlasts(st, o.blasts, out[I.dt]);
   out[I.blasts] = 0;
   out[I.bolts] = 0;
   out[I.rasterOn] = 0;
   if (!on) { out[I.active] = 0; return out; }
 
-  const ax = o.sunX || 0, ay = o.sunY || 0;
-  if (ax !== st.anchorX || ay !== st.anchorY) { st.anchorX = ax; st.anchorY = ay; st.ix0 = NaN; }
+  // kotwica: pas — Słońce, ring — środek planety (o.anchorX / o.anchorY); zmiana sceny = nowa siatka obwiedni
+  const ax = Number.isFinite(o.anchorX) ? o.anchorX : (o.sunX || 0);
+  const ay = Number.isFinite(o.anchorY) ? o.anchorY : (o.sunY || 0);
+  if (ax !== st.anchorX || ay !== st.anchorY || scene !== st.scene) { st.anchorX = ax; st.anchorY = ay; st.scene = scene; st.ix0 = NaN; }
   const cx = o.camX - ax, cy = o.camY - ay;
   out[I.anchorX] = ax; out[I.anchorY] = ay;
   out[I.camX] = cx; out[I.camY] = cy;
   out[I.halfW] = o.halfW; out[I.halfH] = o.halfH;
   out[I.windowCells] = cells;
   out[I.cell] = cell;
-  // kierunek ku Słońcu (kotwica) z punktu kamery; wiatr: wzdłuż orbity + od Słońca
+  // kierunek ku Słońcu z punktu kamery (pas: Słońce = kotwica); wiatr: wzdłuż orbity wokół kotwicy + od kotwicy
+  // (pole może podać własny: ring — dryf wzdłuż obręczy)
   const rl = Math.sqrt(cx * cx + cy * cy) || 1;
-  const sx = -cx / rl, sy = -cy / rl;
+  const kx = -cx / rl, ky = -cy / rl;
+  const qx = (o.sunX || 0) - o.camX, qy = (o.sunY || 0) - o.camY;
+  const ql = Math.sqrt(qx * qx + qy * qy) || 1;
+  const sx = qx / ql, sy = qy / ql;
   out[I.sunX] = sx; out[I.sunY] = sy;
-  out[I.windX] = -sy * T.wind - sx * T.windOut;
-  out[I.windY] = sx * T.wind - sy * T.windOut;
+  const wind = Number.isFinite(field.wind) ? field.wind : T.wind;
+  const windOut = Number.isFinite(field.windOut) ? field.windOut : T.windOut;
+  out[I.windX] = -ky * wind - kx * windOut;
+  out[I.windY] = kx * wind - ky * windOut;
 
   // siatka obwiedni: zakotwiczona w świecie (względem kotwicy), przesuwana o całe próbki
   const envCell = Math.max(64, Math.ceil(halfWin * 2 * T.envMargin / (G - 1) / 64) * 64);
@@ -166,15 +176,17 @@ export function packSpaceGasFrame(out, st, o) {
     const h = halfWin * T.jetSearch;
     let n = 0;
     const t = o.time || 0;
+    const ventGain = Number.isFinite(field.ventGain) ? field.ventGain : 1;
     field.forEachRockInRect(0, o.camX - h, o.camY - h, o.camX + h, o.camY + h, T.jetMinR * 2, (rock) => {
       if (n >= SPACE_GAS_MAX_JETS || !o.iceTypes.has(rock.type)) return;
       const b = I.jetBase + n * JET;
       out[b] = rock.x - ax; out[b + 1] = rock.y - ay;
-      out[b + 2] = -sx; out[b + 3] = -sy;
+      // wylot: od Słońca (skały pasa) albo kierunek strugi pola (ring: od frontu budowy)
+      if (Number.isFinite(rock.dx)) { out[b + 2] = rock.dx; out[b + 3] = rock.dy; } else { out[b + 2] = -sx; out[b + 3] = -sy; }
       out[b + 4] = rock.r;
       // wydajność: własna faza i tempo z ziarna skały (deterministyczne, bez losowań gry)
       const s = rock.seed || 0;
-      out[b + 5] = 0.55 + 0.45 * Math.sin(t * (0.3 + (s * 0.173) % 0.4) + s * 17.0);
+      out[b + 5] = (0.55 + 0.45 * Math.sin(t * (0.3 + (s * 0.173) % 0.4) + s * 17.0)) * ventGain;
       n++;
     });
     out[I.jets] = n;

@@ -411,7 +411,7 @@ function makePanelTextures(kind, seedTag, size = 1024) {
 // Pas wokół ringu (ringStrip dema): od (u0, h0) do (u1, h1), normalna (nU, nH)
 // w (z, promień); u = z, h wysokość nad podłogą (na zewnątrz).
 // keep(θ, i) — quad kolumny i rysuje się tylko, gdy zwróci true (ring w budowie: przerwy i front obłożenia).
-function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 1, repV = 1, extraRing = false, keep = null } = {}) {
+export function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 1, repV = 1, extraRing = false, keep = null } = {}) {
   const R = plan.R;
   const cols = segments + 1;
   const rows = across + 1;

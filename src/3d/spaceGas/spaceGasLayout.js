@@ -5,7 +5,7 @@
 // K-7 i przeszkody gazu wybuchów: Float64Array o stałym układzie, bez referencji do encji.
 
 /** Rodzaje scen gazu (render wybiera pole dalekie i wygląd). */
-export const SPACE_GAS_SCENE = Object.freeze({ none: 0, belt: 1 });
+export const SPACE_GAS_SCENE = Object.freeze({ none: 0, belt: 1, ring: 2 });
 
 /** Bok siatki obwiedni [próbki]. */
 export const SPACE_GAS_ENV_RES = 32;

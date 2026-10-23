@@ -30,9 +30,10 @@ import { buildArchPortBodies } from './archPort.js';
 import { archRunSteps } from './archFrame.js';
 import { buildEcumeneRing, buildEcumeneRingSteps } from './ecumene.js';
 import { buildFableRing, buildFableRingSteps } from './fable.js';
+import { buildBudowaRing, buildBudowaRingSteps } from './budowa.js';
 
-export const ARCH_BUILDERS = Object.freeze({ ecumene: buildEcumeneRing, fable: buildFableRing });
-const ARCH_BUILD_STEPS = Object.freeze({ ecumene: buildEcumeneRingSteps, fable: buildFableRingSteps });
+export const ARCH_BUILDERS = Object.freeze({ ecumene: buildEcumeneRing, fable: buildFableRing, budowa: buildBudowaRing });
+const ARCH_BUILD_STEPS = Object.freeze({ ecumene: buildEcumeneRingSteps, fable: buildFableRingSteps, budowa: buildBudowaRingSteps });
 
 // Budowa w tle (zadanie 23, opcja buildInBackground — klej gry): budowa ringu to 0,4 s CPU przy Marsie
 // i 0,7 s przy Jowiszu (mapa stref, teren i zabudowa dzielnic) — dawniej w JEDNEJ klatce pierwszego

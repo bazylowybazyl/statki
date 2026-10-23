@@ -41,6 +41,13 @@ export function haloRingConstruction(profile, floorMid = 54500) {
       if (Math.abs(haloAngleDiff(g.center, a)) < g.half + front + transitHalf) throw new Error(`haloRingConstruction: przerwa ${g.center.toFixed(3)} na tranzycie`);
     }
   }
+  // przerwy nie zachodzą na siebie (między nimi zostaje wyspa ≥ 2 fronty) — inaczej segment wyszedłby na cały ring
+  for (let i = 0; i < gaps.length; i++) {
+    const g = gaps[i];
+    const next = gaps[(i + 1) % gaps.length];
+    const a1 = next.center - next.half + (i === gaps.length - 1 ? HALO_TAU : 0);
+    if (a1 - (g.center + g.half) < 2 * front - 1e-9) throw new Error(`haloRingConstruction: przerwy ${g.center.toFixed(3)} i ${next.center.toFixed(3)} zachodzą na siebie albo wyspa węższa niż 2 fronty`);
+  }
   // segmenty między przerwami (od końca przerwy i do początku następnej, kąty rosnące)
   const segments = gaps.map((g, i) => {
     const next = gaps[(i + 1) % gaps.length];

@@ -31,6 +31,29 @@ export function createBeltGasLook() {
   };
 }
 
+/**
+ * Wygląd sceny RINGU W BUDOWIE (Jowisz, GK-6; decyzja użytkownika 2026-10-23 „wszędzie pył, gaz”): te same kanały
+ * i ten sam wzór pola co pas (bez nowych pipeline'ów — scena to obwiednia z gry i barwy w uniformach), inna mieszanka:
+ * szarobrunatny pył budowy (x), żółtawe opary spawania i cięcia płyt z Io (y), sinobiałe odgazowanie (z — przy
+ * frontach; obwiednia: src/game/ringGasField.js). Więcej otoczenia — poświata Jowisza.
+ */
+export function createRingGasLook() {
+  return {
+    albedo: [[0.5, 0.46, 0.4], [0.66, 0.6, 0.45], [0.44, 0.5, 0.58]],
+    ejecta: [0.5, 0.46, 0.42],
+    sun: [1.0, 0.92, 0.8],
+    sunGain: 1.35,
+    ambient: [0.03, 0.026, 0.022],
+    decay: [0.002, 0.003, 0.004, 0.04],
+    envGain: 1.2,
+    iceShift: 1.0,
+    dustW: [1, 0.6, 0.2, 1],
+    dustRho: 0.45,
+    dustColor: [0.1, 0.09, 0.08],
+    dustSulfurDim: 0.15
+  };
+}
+
 export class BeltGasScene {
   constructor() {
     this.look = createBeltGasLook();

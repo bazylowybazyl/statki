@@ -25,6 +25,7 @@ import { k7BeaconClock } from '../3d/haloRing/haloPortK7Lights.js';
 import { resolveHaloProfile } from '../3d/haloRing/haloRingProfiles.js';
 import { createEcumenePlan } from '../3d/haloRing/arch/ecumenePlan.js';
 import { createFablePlan } from '../3d/haloRing/arch/fablePlan.js';
+import { createBudowaPlan } from '../3d/haloRing/arch/budowaPlan.js';
 
 export const HALO_WORLD = Object.freeze({
   // Wysokość słońca nad płaszczyzną ringu [°] (jak obraz — HALO_GAME.sunElevationDeg; zgodność pilnuje test).
@@ -37,7 +38,7 @@ export const HALO_WORLD = Object.freeze({
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 // Teren ringów-archetypów z planu (archRing.js `terrainHeightAt`: θ = atan2(y, x) w [0, 2π), z = 0).
-const ARCH_PLANS = Object.freeze({ ecumene: createEcumenePlan, fable: createFablePlan });
+const ARCH_PLANS = Object.freeze({ ecumene: createEcumenePlan, fable: createFablePlan, budowa: createBudowaPlan });
 
 function archTerrainFor(key, layout) {
   const spec = HALO_RING_PLANETS[key];
