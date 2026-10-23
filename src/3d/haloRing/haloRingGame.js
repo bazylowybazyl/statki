@@ -43,6 +43,10 @@ export const HALO_GAME = Object.freeze({
   // Ring w soczewce warpa (obraz planety pod płaszczyzną gry): części nad płaszczyzną (górna ściana, moduły, dach hal)
   // też na warstwie tła — pass FG rysuje się PO kadłubach (zgłoszenie 2026-10-23: „planeta przebija się przez statek”).
   lensLayers: Object.freeze({ default: 1, fg: 1 }),
+  // Ring w soczewce rysuje się dopiero od takiego promienia na ekranie [px bufora]: mijana planeta jest w kadrze od
+  // początku skoku (przelot z daleka, worldLens.js), a ring kosztuje ~3 ms CPU aktualizacji i ~50 rysunków także jako
+  // kreska wokół kilkupikselowej tarczy (demo „Pęd”, 2026-10-23).
+  lensMinPx: 30,
   sunElevationDeg: 49,
   activateDistance: 420000,   // ring powstaje, gdy środek kadru jest bliżej planety
   hallReach: 9000,            // hale K-7 wystają za krawędź ścian (płyta przed G-01)
@@ -359,7 +363,8 @@ export class HaloRingGame {
       // środka ringu; resztę (bryła widzenia, LOD) liczy ring sam z kamery.
       const inView = !opts.splitScreen && (free3d
         ? Math.hypot(eye.x - ox, eye.y + oy, eye.z) < reach + HALO_GAME.activateDistance
-        : Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach);
+        : Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach)
+        && (!lensOn || L.radii.max * ks * zoom >= HALO_GAME.lensMinPx);
       ring.group.visible = inView;
       e.visible = inView;
       if (!inView) continue;

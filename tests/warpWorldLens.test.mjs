@@ -316,6 +316,9 @@ test('ring w soczewce (2026-10-19, „a co z ringami”): slot raz na planetę, 
   // moduły) na warstwie tła — pass FG rysuje się po kadłubach; po soczewce zwykłe warstwy (FG nad statkiem w hali).
   assert.match(ring, /lensLayers: Object\.freeze\(\{ default: 1, fg: 1 \}\)/);
   assert.match(ring, /if \(!!e\.lensLayers !== lensOn\) \{\s*e\.lensLayers = lensOn;\s*ring\.setLayers\(lensOn \? HALO_GAME\.lensLayers : HALO_GAME\.layers\);/);
+  // Ring w soczewce dopiero od `lensMinPx` na ekranie (mijana planeta jest w kadrze od początku skoku — ring kosztuje
+  // ~3 ms CPU i ~50 rysunków także jako kreska wokół kilkupikselowej tarczy).
+  assert.match(ring, /&& \(!lensOn \|\| L\.radii\.max \* ks \* zoom >= HALO_GAME\.lensMinPx\);/);
   // Klucz slotu = klucz wpisu ringu (id planety z mapy układu).
   assert.match(planets, /warpRingLensSlot\(this\.data\?\.id \|\| this\.name\)/);
 });
