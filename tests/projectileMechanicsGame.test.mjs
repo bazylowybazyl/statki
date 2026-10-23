@@ -120,6 +120,8 @@ const game = {
   RepairSwarm: { out: 0 },
   // bańka ruchu v2 (E6, src/game/trafficBubble.js): bez statków ruchu — pocisk ich nie sprawdza
   trafficBubble: null,
+  // doki portów bez ringu (E14, src/game/portDockWorld.js): bez budowli — pocisk ich nie sprawdza
+  portDocks: { count: 0 },
   window: { asteroidField: null, AudioSys: null }
 };
 const load = (header, name) => { game[name] = loadIndexFunction(html, header, name, game); };

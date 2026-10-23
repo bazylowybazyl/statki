@@ -18,7 +18,7 @@ import {
   Fn, If, Loop, Discard,
   float, int, vec2, vec3, vec4, mat3, mat4,
   attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry,
-  modelViewMatrix, modelWorldMatrix, cameraProjectionMatrix, cameraViewMatrix, texture,
+  modelViewMatrix, modelWorldMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraWorldMatrix, texture,
   abs, clamp, cross, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, smoothstep, step
 } from 'three/tsl';
 import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
@@ -28,6 +28,7 @@ import { PB_CHANNELS, PB_MAX_GROUPS, PB_MAX_LAMPS } from './portBuildingScene.js
 import { hullSkinField } from '../ships3d/hullSkin3D.js';
 import { hullDamagePool, sampleHullDamage, damageCoolHeat } from '../hullDamageMap.tsl.js';
 import { SolidWounds } from '../solidWounds.js';
+import { getBeltMedium } from '../asteroids/beltMedium.js';
 import { fxNoise } from '../fx/noise.js';
 
 // Skóra ciała świata (wariant „skin”): wartości obiektu z userData siatki (worldBodies3D.js).
@@ -166,6 +167,34 @@ export function portBuildingGraphs(haloU = null) {
   if (haloU) HALO_GRAPHS.set(haloU, G);
   else SPACE_GRAPHS = G;
   return G;
+}
+
+let SPACE_VOLUME_GRAPHS = null;
+
+/**
+ * Wariant „przestrzeń + ośrodek pasa” (E14: budowle doków portów bez ringu rysują zestaw BG w passie gry z zapisem
+ * głębi — Ceres i Westa leżą w pasie): instancje i płyty składają `kolor · a + rgb` ośrodka objętościowego
+ * (`src/3d/asteroids/beltMedium.js`, jak hak `hullVolume` kadłubów — reguła `pas-asteroid`). Punkt fragmentu
+ * z pozycji widoku z wierzchołków (`vPbLit` = model-widok · punkt — w trybie przestrzeni) → lokalnie pola. Poza
+ * polem ośrodek zwraca (0, 0, 0, 1) — obraz bez zmian. Graf raz (zasada 4); napisy i skóry bez wariantu.
+ */
+export function portBuildingVolumeGraphs() {
+  if (SPACE_VOLUME_GRAPHS) return SPACE_VOLUME_GRAPHS;
+  const G = portBuildingGraphs(null);
+  const medium = getBeltMedium();
+  const withVolume = (frag) => Fn(() => {
+    const c = vec4(frag).toVar();
+    const lit = varyingProperty('vec3', 'vPbLit');
+    const P = cameraWorldMatrix.mul(vec4(lit, 0.0)).xyz.add(medium.camLocal).toVar();
+    const vol = medium.sample(P).toVar();
+    return vec4(c.xyz.mul(vol.w).add(vol.xyz), c.w);
+  })();
+  SPACE_VOLUME_GRAPHS = {
+    ...G,
+    instance: { vertexNode: G.instance.vertexNode, fragmentNode: withVolume(G.instance.fragmentNode) },
+    plate: { vertexNode: G.plate.vertexNode, fragmentNode: withVolume(G.plate.fragmentNode) }
+  };
+  return SPACE_VOLUME_GRAPHS;
 }
 
 function buildGraphs(haloU) {

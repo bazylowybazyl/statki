@@ -16,7 +16,8 @@
 import { createSuite, runIfMain } from './harness.mjs';
 import { ringWorld } from './ringRouter.test.mjs';
 import { K7_BANK_SLOTS } from '../../src/3d/haloRing/haloPortK7Layout.js';
-import { buildStationDocks, hullFitsBerth } from '../../src/game/traffic/dockLayout.js';
+import { buildStationDocks, hullFitsBerth, hullFootprint } from '../../src/game/traffic/dockLayout.js';
+import { buildPortDockGeometry, portDockSolidsInGame } from '../../src/3d/portDocks/portDockLayout.js';
 import {
   COURSE_KIND, COURSE_STATUS, DWELL_REASON, createCourseRegistry, launchCourse,
   travelStage, dwellStage, currentStage, moveDwellTo
@@ -245,8 +246,114 @@ export function run() {
   t.check('sufit dojścia na pole STOP poniżej progu przechwytu', PORT_PATH_SPEED.berth < CAPTURE_DEFAULTS.maxSpeed);
 
   pierSettleSection(t);
+  modelDockSection(t);
+  modelDockDepartureSection(t);
 
   return t.results;
+}
+
+/** Wielokąt kadłuba (×0,9) w pozie encji / stanowiska. */
+function hullPoly(x, y, angle, length, width) {
+  const c = Math.cos(angle);
+  const n = Math.sin(angle);
+  const hl = length * 0.45;
+  const hw = width * 0.45;
+  return [[hl, hw], [-hl, hw], [-hl, -hw], [hl, -hw]].map(([u, v]) => ({ x: x + u * c - v * n, y: y + u * n + v * c }));
+}
+
+function polysOverlap(a, b) {
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      const nx = p.y - q.y;
+      const ny = q.x - p.x;
+      let a0 = Infinity; let a1 = -Infinity; let b0 = Infinity; let b1 = -Infinity;
+      for (const v of a) { const d = v.x * nx + v.y * ny; a0 = Math.min(a0, d); a1 = Math.max(a1, d); }
+      for (const v of b) { const d = v.x * nx + v.y * ny; b0 = Math.min(b0, d); b1 = Math.max(b1, d); }
+      if (a1 <= b0 || b1 <= a0) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Budowle doków portów bez ringu (E14): krzyż, okrąg i koło z wlotem. Statek bańki
+ * (największy kadłub, który mieści się na stanowisku) przylatuje z punktu manewrowego
+ * węzła, dokuje z krokiem 0,2 s, po obsłudze odlatuje w różne strony. Przez cały cykl
+ * kadłub nie wchodzi w lite bryły budowli ani w statki stojące na pozostałych polach
+ * (wszystkie zajęte), a z budowli wychodzi za jej dysk zapasu (koło — szczeliną).
+ */
+function modelDockSection(t) {
+  t.section('Budowle doków (krzyż, okrąg, koło): dokowanie z krokiem 0,2 s bez wymuszeń, kadłub poza bryłami i statkami');
+  const STEP = 0.2;
+  for (const [kind, repeats] of [['cross', 1], ['round', 2], ['round', 3], ['wheel', 4], ['wheel', 5]]) {
+    const station = { id: 'port', x: 0, y: 0, r: 120 };
+    const docks = buildStationDocks(station, { berthMultiplier: repeats, model: { kind, direction: 0.7 } });
+    const solids = portDockSolidsInGame(buildPortDockGeometry(docks.model), docks.model)
+      .map((sol) => sol.points);
+    const parked = docks.berths.map((b) => {
+      const f = hullFootprint(largestFitting(b));
+      return { id: b.id, poly: hullPoly(b.x, b.y, b.angle, f.length, f.width) };
+    });
+    const seen = new Set();
+    const pick = docks.berths.filter((b) => {
+      const key = `${b.cls}|${b.dockId}|${b.side}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    let runs = 0; let forced = 0; let uncaptured = 0; let slow = 0; let inSolid = 0; let inShip = 0; let away = 0;
+    pick.forEach((berth, bi) => {
+      const hullId = largestFitting(berth);
+      for (let k = 0; k < 3; k++) {
+        const angIn = (k + 0.5 + bi * 0.37) / 3 * Math.PI * 2;
+        const angOut = angIn + 2.2 + bi;
+        const far = { x: Math.cos(angOut) * 90_000, y: Math.sin(angOut) * 90_000 };
+        const network = { nodes: new Map([['port', { id: 'port', x: 0, y: 0 }], ['far', { id: 'far', ...far }]]) };
+        const registry = createCourseRegistry();
+        const course = launchCourse(registry, {
+          kind: COURSE_KIND.HAUL, unitClass: hullId,
+          stages: [
+            dwellStage('port', 30, DWELL_REASON.UNLOAD, null, { entryPos: { x: Math.cos(angIn) * 6670, y: Math.sin(angIn) * 6670 } }),
+            travelStage('port', 'far', { fromPos: { x: berth.x, y: berth.y }, toPos: far, seconds: 400 })
+          ]
+        });
+        course.berthId = berth.id;
+        course.berthRef = berth;
+        course.portStationId = 'port';
+        moveDwellTo(course, currentStage(course), { x: berth.x, y: berth.y }, 30);
+        const bubble = createBubble({ docks: new Map([['port', docks]]) });
+        const active = new Map([[course.id, course]]);
+        let captured = false;
+        let near = 0;
+        let out = false;
+        for (let step = 0; step < 1400 / STEP; step++) {
+          updateBubble(bubble, network, registry, active, { x: 0, y: 0 }, 300_000, STEP);
+          const a = getActorList(bubble)[0];
+          if (!a) break;
+          if (a.nearTime > near) near = a.nearTime;
+          if (a.phase === ACTOR_PHASE.CAPTURE || a.phase === ACTOR_PHASE.DOCKED) captured = true;
+          const poly = hullPoly(a.x, a.y, a.angle, a.length, a.width);
+          if (solids.some((sol) => polysOverlap(poly, sol))) inSolid++;
+          if (parked.some((pk) => pk.id !== berth.id && polysOverlap(poly, pk.poly))) inShip++;
+          if (captured && Math.hypot(a.x - docks.model.x, a.y - docks.model.y) > docks.model.keepR + 2000) { out = true; break; }
+        }
+        runs++;
+        forced += bubble.stats.forcedCaptures + bubble.stats.forcedStages;
+        if (!captured) uncaptured++;
+        if (out) away++;
+        if (near > slow) slow = near;
+      }
+    });
+    const name = `${kind} ×${repeats} (${docks.berths.length} stanowisk)`;
+    t.note(`${name}: ${runs} cykli na ${pick.length} stanowiskach; najdłużej tuż przy polu bez przechwytu ${slow.toFixed(1)} s`);
+    t.equal(`${name}: każde podejście kończy się przechwytem`, uncaptured, 0);
+    t.equal(`${name}: bez wymuszonych przechwytów i etapów`, forced, 0);
+    t.equal(`${name}: kroki z kadłubem w bryle budowli`, inSolid, 0);
+    t.equal(`${name}: kroki z kadłubem w statku na innym polu`, inShip, 0);
+    t.equal(`${name}: odlot za dysk zapasu`, away, runs);
+  }
 }
 
 /**
@@ -328,6 +435,58 @@ function rectsOverlap(a, b) {
     }
   }
   return true;
+}
+
+/**
+ * Odlot po końcu kursu przy stanowisku budowli (E6 `beginDeparture`): kurs kończy się postojem, encja odlatuje bez
+ * kursu wylotem budowli (koło — szczeliną) i dalej od środka BUDOWLI. Od węzła portu linia odlotu szła przez
+ * budowlę (szczelina koła i ramię 0 krzyża patrzą na węzeł): 12–410 kroków w bryle.
+ */
+function modelDockDepartureSection(t) {
+  t.section('Budowle doków: odlot po końcu kursu (E6) wylotem budowli, bez kroków w bryle');
+  for (const [kind, repeats] of [['cross', 1], ['round', 3], ['wheel', 4]]) {
+    const docks = buildStationDocks({ id: 'port', x: 0, y: 0, r: 120 }, { berthMultiplier: repeats, model: { kind, direction: 0.7 } });
+    const solids = portDockSolidsInGame(buildPortDockGeometry(docks.model), docks.model).map((sol) => sol.points);
+    const network = { nodes: new Map([['port', { id: 'port', x: 0, y: 0 }]]) };
+    const seen = new Set();
+    const pick = docks.berths.filter((b) => {
+      const key = `${b.cls}|${b.dockId}|${b.side}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    let departed = 0; let inSolid = 0; let away = 0;
+    for (const berth of pick) {
+      const registry = createCourseRegistry();
+      const course = launchCourse(registry, {
+        kind: COURSE_KIND.HAUL, unitClass: largestFitting(berth),
+        stages: [dwellStage('port', 20, DWELL_REASON.UNLOAD, null, { entryPos: { x: berth.x, y: berth.y } })]
+      });
+      course.berthId = berth.id;
+      course.berthRef = berth;
+      course.portStationId = 'port';
+      moveDwellTo(course, currentStage(course), { x: berth.x, y: berth.y }, 0);
+      const bubble = createBubble({ docks: new Map([['port', docks]]) });
+      const active = new Map([[course.id, course]]);
+      let dep = false;
+      let maxR = 0;
+      for (let step = 0; step < 400 / 0.2; step++) {
+        updateBubble(bubble, network, registry, active, { x: 0, y: 0 }, 400_000, 0.2);
+        const a = getActorList(bubble)[0];
+        if (!a) break;
+        if (a.departed) dep = true;
+        const poly = hullPoly(a.x, a.y, a.angle, a.length, a.width);
+        if (solids.some((sol) => polysOverlap(poly, sol))) inSolid++;
+        maxR = Math.max(maxR, Math.hypot(a.x - docks.model.x, a.y - docks.model.y));
+      }
+      if (dep) departed++;
+      if (maxR > docks.model.keepR + 20_000) away++;
+    }
+    const name = `${kind} ×${repeats}`;
+    t.equal(`${name}: odlot po końcu kursu przy każdym stanowisku`, departed, pick.length);
+    t.equal(`${name}: kroki odlotu z kadłubem w bryle budowli`, inSolid, 0);
+    t.equal(`${name}: odlot za dysk zapasu (> 20 tys. j.)`, away, pick.length);
+  }
 }
 
 runIfMain(import.meta.url, run);

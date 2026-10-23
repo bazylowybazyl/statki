@@ -244,7 +244,9 @@ test('planista objazdów omija inne studnie, ale nie odsyła od brzegu studni ce
   const fn = html.slice(start, html.indexOf('\n    }', start) + 6);
   const earth = { x: 0, y: 0 }, mars = { x: 400000, y: 0 };
   const h = { planets: [earth, mars], travelNav: { obstacleMargin: 1100 },
-    planetOrbitRadii: () => ({ gravityWell: 100000 }) };
+    planetOrbitRadii: () => ({ gravityWell: 100000 }),
+    // doki portów bez ringu (E14, src/game/portDockWorld.js): bez budowli — bez ich dysków
+    portDocks: { pushCruiseObstacles: (out) => out } };
   vm.createContext(h); vm.runInContext(fn, h);
   const obstacles = h.getCruiseGravityObstacles({ x: 95000, y: 0 }, { x: 250000, y: 0 });
   assert.equal(obstacles.length, 1);

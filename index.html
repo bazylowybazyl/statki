@@ -1151,6 +1151,9 @@
     } from "./src/game/trafficPromotion.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
+    import { PortDockWorld } from "./src/game/portDockWorld.js";
+    import { updatePortDocks3D } from "./src/3d/portDocks3D.js";
+    import { createPortDockBlock } from "./src/render/blocks/portDockBlock.js";
     import { createCargoOpsBlock } from "./src/render/blocks/cargoOpsBlock.js";
     import { createPortCargoFrame, buildPortCargoFrame, syncPortCargoContract } from "./src/game/portCargoFrame.js";
     import { sharedPortCargo3D } from "./src/3d/cargo/portCargo3D.js";
@@ -12276,9 +12279,12 @@
         teleport(x, y, heading = ship.angle) {
           ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
           if (Number.isFinite(heading)) ship.angle = heading;
+          // Doki portów bez ringu (E14): teleport w bryłę wypycha kadłub z niej (kamera zostaje w punkcie celu).
+          syncPortDocks();
+          portDocks.constrainShip(ship);
           camera.x = camera.targetX = x;
           camera.y = camera.targetY = y;
-          return { x, y };
+          return { x: ship.pos.x, y: ship.pos.y };
         },
         // Kamera RTS rysuje się z interpolacji prevCameraState → camera (stan zapisywany
         // w krokach fizyki); przy zatrzymanym czasie harness ustawia oba punkty naraz.
@@ -16106,6 +16112,21 @@
     const _trafficBerthMarked = new Map();
     const _trafficRegistryBerths = new Map();
     const _trafficRender = { list: [], count: 0 };
+    // DOKI PORTÓW BEZ RINGU (E14) — src/game/portDockWorld.js: budowle (krzyż, okrąg, koło) z tabeli workera ruchu
+    // (`bubbleDocks` — rodzaj, skład, środek, kąt). Kolizje kadłubów, pocisków i bezpiecznik hipercruise'u
+    // (`stepShipDockCollisions`), objazdy autopilota (`getCruiseGravityObstacles`); obraz — PortDocks3D (worker renderu
+    // z bloku `portDocks`, tryb `off` — w `render()`).
+    const portDocks = new PortDockWorld();
+    window.PortDocks = portDocks;
+    let _portDocksBeltVersion = -1;
+    function syncPortDocks() {
+      if (trafficV2?.tables) portDocks.sync(trafficV2.tables.bubbleDocks, trafficV2.docksVersion);
+      // Pas asteroid: w dysku budowli doku pasmo gry nie stawia skał (Ceres, Westa — jak wokół olbrzymów).
+      if (beltWorld && portDocks.version !== _portDocksBeltVersion) {
+        _portDocksBeltVersion = portDocks.version;
+        beltWorld.setExtraExclusions('portDocks', portDocks.docks.map((d) => ({ x: d.x, y: d.y, rx: d.keepR, ry: d.keepR })));
+      }
+    }
     /** Koszt bańki na wątku gry (dekodowanie, pozy, stanowiska, pozy klatki) — `TrafficBubble.stats.gameMs` (średnia). */
     let _trafficGameMs = 0;
 
@@ -17242,6 +17263,8 @@
           r: radius
         });
       }
+      // Budowle doków portów bez ringu (E14) — dysk zapasu (bryły i statki na stanowiskach), chyba że start albo cel w nim.
+      portDocks.pushCruiseObstacles(out, start, target);
       return out;
     }
 
@@ -24283,6 +24306,14 @@
           if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
           continue;
         }
+        // --- DOKI PORTÓW BEZ RINGU (E14): lite bryły krzyża, okręgu i koła zatrzymują pociski (ramię ≥ 360 j.).
+        if (portDocks.count && portDocks.pointInSolid(b.x, b.y)) {
+          writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'ring');
+          spawnBulletImpactEffect(b, b.x, b.y, 0.95, _impactHit);
+          removeBulletAt(i);
+          if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
+          continue;
+        }
         if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
@@ -24954,11 +24985,14 @@
       ship.angVel = 0;
       if (Number.isFinite(opts.angle)) ship.angle = opts.angle;
       ship.command = null;
+      // Doki portów bez ringu (E14): teleport w bryłę budowli wypycha kadłub z niej.
+      syncPortDocks();
+      portDocks.constrainShip(ship);
 
       // Snap interpolacji renderu do nowej pozycji.
       if (prevState) {
-        prevState.pos.x = x;
-        prevState.pos.y = y;
+        prevState.pos.x = ship.pos.x;
+        prevState.pos.y = ship.pos.y;
         prevState.angle = ship.angle;
       }
 
@@ -26539,6 +26573,8 @@
       // Ring „Halo” (Ziemia, Mars): płyta podłogi przecina płaszczyznę gry,
       // przez ring prowadzą tranzyty; ściany hal K-7 i zatok portu dla graczy.
       stepShipRingCollisions(dt);
+      // Doki portów bez ringu (E14): lite bryły krzyża, okręgu i koła — gracz i NPC.
+      stepShipDockCollisions(dt);
       // Statki ruchu v2 (E6): taran gracza — obrys kadłuba proxy.
       stepTrafficRam();
       // Suchy dok piratów (misja 1): taran bram i ogrodzenia parkingu.
@@ -27685,6 +27721,46 @@
       }
     }
 
+    // Doki portów bez ringu (E14, src/game/portDockWorld.js): budowle statyczne i niezniszczalne jak płyta ringu —
+    // wypchnięcie kadłuba z brył (gracz, drugi gracz, NPC w dysku budowli), prędkość w głąb bryły zerowana.
+    // Hipercruise (duch dla kadłubów) bryły doku NIE przelatuje: przejście środka kadłuba przez bryłę w kroku cofa
+    // statek do pozy sprzed kroku i zrywa hipercruise (jak płyta ringu, E9).
+    let _dockNoticeAtMs = 0;
+    let _dockPrevOk = false, _dockPrevX = 0, _dockPrevY = 0;
+    function stepShipDockCollisions(dt) {
+      syncPortDocks();
+      if (!portDocks.count) return;
+      const hc = hypercruiseDriving(hypercruise);
+      if (ship && !ship.dead && (!ship.noHullCollisions || hc)) {
+        const tunnel = _dockPrevOk && portDocks.blockTunnel(ship, _dockPrevX, _dockPrevY).hit;
+        const hit = portDocks.constrainShip(ship);
+        if (hc && (tunnel || hit.hit)) {
+          hypercruise.reason = 'dock';
+          resetHypercruise(hypercruise);
+          const vx = ship.vel.x, vy = ship.vel.y, v = Math.sqrt(vx * vx + vy * vy), vmax = HYPERCRUISE_TUNE.exitSpeed;
+          if (v > vmax) { ship.vel.x = vx * vmax / v; ship.vel.y = vy * vmax / v; }
+          pushZoneMessage('HIPERCRUISE: PRZERWANY — KONSTRUKCJA DOKU', 1.8, { tone: 'warn', label: 'NAPĘD' });
+        }
+        const nowMs = performance.now();
+        if (hit.impactSpeed > 150 && nowMs - _dockNoticeAtMs > 2500) {
+          _dockNoticeAtMs = nowMs;
+          pushZoneMessage('PORT: KONSTRUKCJA DOKU', 2.2);
+        }
+      }
+      _dockPrevOk = !!(ship && !ship.dead && hypercruiseDriving(hypercruise));
+      if (_dockPrevOk) { _dockPrevX = ship.pos.x; _dockPrevY = ship.pos.y; }
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) portDocks.constrainShip(player2Ship);
+      const body = _npcCollisionBody;
+      for (let i = 0; i < npcs.length; i++) {
+        const npc = npcs[i];
+        if (!npc) continue;
+        const reach = Math.max(Number(npc.radius) || 0, 0.5 * (Math.abs(Number(npc.w) || 0) + Math.abs(Number(npc.h) || 0)), 60);
+        if (!portDocks.dockAt(Number(npc.x) || 0, Number(npc.y) || 0, reach)) continue;
+        if (!npcCollidesWithWorld(npc)) continue;
+        if (portDocks.constrainShip(loadNpcCollisionBody(body, npc)).hit) storeNpcCollisionBody(body, npc);
+      }
+    }
+
     // ============== SPLIT SCREEN STATE (early declaration) ==============
     let splitScreenMode = false;
     let player2Ship = null;
@@ -28316,6 +28392,8 @@
       if (RW_WORKER) renderSnapshot.addBlock(createRepairBlock({ idOf: (rig) => RepairFxEvents.idOf(rig) }));
       // E6: statki ruchu v2 w bańce (pozy klatki) — proxy kadłubów i dysze rysuje worker
       if (RW_WORKER) renderSnapshot.addBlock(createTrafficBlock());
+      // E14: budowle doków portów bez ringu w zasięgu kadru — rysuje worker (updatePortDocks3D)
+      if (RW_WORKER) renderSnapshot.addBlock(createPortDockBlock());
       if (RW_WORKER) renderSnapshot.addBlock(createCargoOpsBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
@@ -28323,6 +28401,16 @@
       if (RW_WORKER) renderSnapshot.addBlock(createWorldBodiesBlock());
     }
     const _snapFrame = createSnapshotFrame();
+    // Doki portów bez ringu (E14): budowle w zasięgu kadru (rekordy PortDockWorld) — blok `portDocks` (worker) albo
+    // rysunek tutaj (off, updatePortDocks3D). Zasięg ponad pół przekątnej kadru przy najmniejszym zoomie gry.
+    const PORT_DOCK_RENDER_RANGE = 90_000;
+    const _portDockRender = { list: [], count: 0 };
+    function portDockRenderFrame(cam) {
+      portDocks.renderList(cam.x, cam.y, PORT_DOCK_RENDER_RANGE, _portDockRender.list);
+      // `PortDocks.hideRender = true` — budowle znikają z obrazu (pomiar kosztu A/B w tym samym kadrze), rozgrywka bez zmian.
+      if (portDocks.hideRender) _portDockRender.list.length = 0;
+      _portDockRender.count = _portDockRender.list.length;
+    }
     // Nadpisanie dachu hali K-7 przez fabułę (intro) — stan gry dla bloku `ring` migawki (render dostaje je też wprost).
     let storyHallRoof = null;
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
@@ -28458,6 +28546,7 @@
       f.rockets = RW_WORKER ? (window.rocketSystem3D?.rockets || null) : null;
       f.repair = RW_WORKER ? RepairSwarm : null;
       f.traffic = RW_WORKER ? _trafficRender : null;
+      f.portDocks = RW_WORKER ? _portDockRender : null;
       f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
@@ -29448,6 +29537,8 @@
       const renderEntities = [];
       // Statki ruchu v2 (E6): pozy w chwili klatki — dla bloku `traffic` (worker) albo rysunku tutaj (off).
       trafficRenderFrame(alpha);
+      // Doki portów bez ringu (E14): budowle w zasięgu kadru — dla bloku `portDocks` (worker) albo rysunku tutaj (off).
+      portDockRenderFrame(cam);
       // Przeładunek (E12): ramka klatki — pola zatok, statki przy stanowiskach, luk Atlasa (blok `cargoOps` / off niżej).
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
       if (ship && !ship.dead) renderEntities.push(ship);
@@ -29539,6 +29630,8 @@
           // Przeładunek (E12): obraz przed proxy — dziury w lukach otwartych ładowni (moduł podpina resolver proxy sam).
           if (portCargoFrame) sharedPortCargo3D().update(portCargoFrame, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
+          // Doki portów bez ringu (E14): budowle krzyż / okrąg / koło (worker — z bloku `portDocks`).
+          updatePortDocks3D(_portDockRender.list, _portDockRender.count, PAUSED ? 0 : frameDt);
           updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks, cloakFrame);
         }
         // RW-30: wygaszanie wstrząsu strzałów — raz na klatkę, po próbkowaniu kamery (dawniej WeaponFx.sync).

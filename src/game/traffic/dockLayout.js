@@ -22,32 +22,21 @@
 
 import { HULL_RENDER_PROFILES, HULL_RENDER_WORLD_SCALE } from '../../data/ships.js';
 import { trafficHullProfile } from '../../data/trafficHulls.js';
+import { BERTH_CLASSES, BERTH_CLASS_ORDER, BERTH_MIXES, PORT_DOCK_PLACEMENT } from '../../data/portDocks.js';
+import { buildPortDockGeometry, dockLocalToGame } from '../../3d/portDocks/portDockLayout.js';
 
 // ============================================================
 // Klasy stanowisk
 // ============================================================
 
 /**
- * Klasy dobrane tak, żeby każdy cywilny kadłub z gry miał gdzie stanąć.
- * `rank` steruje dopasowaniem: statek wchodzi na najmniejsze stanowisko,
- * w które się mieści, żeby nie blokował większego bez potrzeby.
- *
- * Klasa `capital` jest wymagana od początku — Atlas ma 1800×600 j. i nie mieści
- * się w największym stanowisku handlowym.
+ * Klasy stanowisk i składy doków są danymi wspólnymi z obrazem (`src/data/portDocks.js`, E14 — model doku liczy pola
+ * z tych samych wymiarów). Klasy dobrane tak, żeby każdy cywilny kadłub z gry miał gdzie stanąć; `rank` steruje
+ * dopasowaniem: statek wchodzi na najmniejsze stanowisko, w które się mieści, żeby nie blokował większego bez
+ * potrzeby. Klasa `capital` jest wymagana od początku — Atlas ma 1800×600 j. i nie mieści się w największym
+ * stanowisku handlowym; `mega` — megafrachtowiec (2760 j.) cumuje przodem składu.
  */
-export const BERTH_CLASSES = Object.freeze({
-  s: { id: 's', rank: 0, length: 170, width: 140, label: 'S' },
-  m: { id: 'm', rank: 1, length: 380, width: 280, label: 'M' },
-  l: { id: 'l', rank: 2, length: 660, width: 400, label: 'L' },
-  capital: { id: 'capital', rank: 3, length: 2000, width: 720, label: 'CAP' },
-  // Megafrachtowiec (2760 j.) nie mieści się w całości nigdzie — cumuje przodem
-  // składu, reszta zostaje w próżni. Osobna, rzadka klasa.
-  mega: { id: 'mega', rank: 4, length: 3000, width: 1000, label: 'MEGA' }
-});
-
-export const BERTH_CLASS_ORDER = Object.freeze(
-  Object.values(BERTH_CLASSES).sort((a, b) => a.rank - b.rank)
-);
+export { BERTH_CLASSES, BERTH_CLASS_ORDER };
 
 /**
  * Ile razy powielić skład stanowisk, żeby port uniósł swój ruch.
@@ -161,9 +150,7 @@ export function berthRole(berth) {
  * Skład stanowisk w jednym doku. Przewaga klasy M, bo to jej odpowiada
  * `container_ship` — najczęstsza jednostka w ruchu towarowym.
  */
-const DEFAULT_BERTH_MIX = Object.freeze([
-  's', 's', 'm', 'm', 'm', 'm', 'm', 'm', 'l', 'l', 'l', 'capital', 'mega'
-]);
+const DEFAULT_BERTH_MIX = BERTH_MIXES.default;
 
 /** Odstęp między stanowiskami wzdłuż pomostu. */
 const BERTH_PITCH = 1.25;
@@ -227,6 +214,14 @@ function toWorld(dock, lx, ly) {
  * `station` musi mieć `x`, `y` oraz opcjonalnie `ringWorldRadius`. Doki przy
  * pierścieniu siedzą NA jego promieniu i są ustawione stycznie — wyglądają jak
  * pomosty wyrastające z obręczy, a nie jak przypadkowe prostokąty obok.
+ *
+ * `options.model` (E14, port bez ringu) — budowla doku: `{ kind ('cross' |
+ * 'round' | 'wheel'), direction (kąt węzeł → środek budowli w grze), clearance?,
+ * style? }`. Stanowiska stoją wtedy na budowli (`src/3d/portDocks/portDockLayout.js`),
+ * a wszystko, co widzi gospodarka, zostaje jak przy pomostach: id, klasy,
+ * kolejność, role, doki (`dok<k>` z `ringAngle`), `dockRadius`, `parkingRadius`,
+ * `parkingSlots`. Układ dostaje `model` (rodzaj, środek, kąt, dysk zapasu, skład)
+ * — ścieżki bańki, kolizje gry i obraz liczą z niego tę samą geometrię.
  */
 export function buildStationDocks(station, options = {}) {
   if (!station) return null;
@@ -283,6 +278,10 @@ export function buildStationDocks(station, options = {}) {
     docks.push(dock);
   }
 
+  const model = !hasRing && options.model
+    ? placeDockModel(station, options.model, baseMix, repeats, count, docks)
+    : null;
+
   return {
     stationId: station.id,
     hasRing,
@@ -290,6 +289,7 @@ export function buildStationDocks(station, options = {}) {
     dockRadius,
     docks,
     berths: docks.flatMap(dock => dock.berths),
+    model,
     /**
      * Orbita postojowa — tu czekają jednostki bez zlecenia. Leży ZA dokami,
      * żeby postój nie zasłaniał podejścia do stanowisk.
@@ -297,6 +297,73 @@ export function buildStationDocks(station, options = {}) {
     parkingRadius: dockRadius * 1.45,
     parkingSlots: Math.max(8, Math.floor(options.parkingSlots ?? 24))
   };
+}
+
+/** Klucz składu z `BERTH_MIXES` (lista spoza tabeli — ona sama). */
+function mixKeyOf(mix) {
+  for (const [key, list] of Object.entries(BERTH_MIXES)) {
+    if (list === mix || (list.length === mix.length && list.every((c, i) => c === mix[i]))) return key;
+  }
+  return Array.from(mix);
+}
+
+/**
+ * Budowla doku (E14): środek na kierunku `direction` od węzła, tak daleko, żeby
+ * dysk zapasu (bryły i statki na stanowiskach) zaczynał się `clearance` od węzła —
+ * punkty manewrowe dyspozytora (~6,7 tys. j.) i pierwszy łuk kolejki leżą poza nim.
+ * Oś +u budowli patrzy na węzeł. Pozycje stanowisk (i punkty podejścia — punkt
+ * czekania ścieżki) przechodzą na budowlę; id, klasy i kolejność — bez zmian.
+ */
+function placeDockModel(station, spec, baseMix, repeats, dockCount, docks) {
+  const mix = mixKeyOf(baseMix);
+  const geometry = buildPortDockGeometry({ kind: spec.kind, mix, repeats, dockCount });
+  const direction = Number(spec.direction) || 0;
+  const clearance = Number.isFinite(spec.clearance) ? spec.clearance : PORT_DOCK_PLACEMENT.nodeClearance;
+  const dist = clearance + geometry.keepR;
+  const frame = {
+    x: station.x + Math.cos(direction) * dist,
+    y: station.y + Math.sin(direction) * dist,
+    angle: direction + Math.PI
+  };
+  const model = {
+    kind: geometry.kind,
+    key: geometry.key,
+    mix,
+    repeats,
+    dockCount,
+    x: frame.x,
+    y: frame.y,
+    angle: frame.angle,
+    keepR: geometry.keepR,
+    style: spec.style || null
+  };
+  const tmp = {};
+  docks.forEach((dock) => {
+    dock.kind = geometry.kind;
+    dock.x = frame.x;
+    dock.y = frame.y;
+    dock.angle = frame.angle;
+    dock.model = model;
+  });
+  let k = 0;
+  for (const dock of docks) {
+    for (const berth of dock.berths) {
+      const g = geometry.berths[k];
+      berth.modelIndex = k++;
+      berth.lx = g.u;
+      berth.ly = g.v;
+      berth.heading = g.heading;
+      berth.side = g.armSide ?? g.half ?? berth.side;
+      dockLocalToGame(frame, g.u, g.v, tmp);
+      berth.x = tmp.x;
+      berth.y = tmp.y;
+      berth.angle = frame.angle + g.heading;
+      dockLocalToGame(frame, g.inbound[0], g.inbound[1], tmp);
+      berth.approachX = tmp.x;
+      berth.approachY = tmp.y;
+    }
+  }
+  return model;
 }
 
 /** Ile pasm postojowych — dalej parking przestaje wyglądać jak parking. */

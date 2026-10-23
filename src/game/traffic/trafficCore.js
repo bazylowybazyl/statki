@@ -221,6 +221,7 @@ export function createTrafficCore(post, options = {}) {
       // wie, do którego padu i hali leci statek, bez własnej kopii doków.
       berths: berthTable(),
       bubblePorts: bubblePortTable(),
+      bubbleDocks: bubbleDockTable(),
       restored: restoredCounts(restored),
       buildMs
     });
@@ -481,6 +482,24 @@ export function createTrafficCore(post, options = {}) {
     return out;
   }
 
+  /**
+   * Budowle doków portów bez ringu (E14): `stationId` → `{ kind, mix, repeats, dockCount, x, y, angle, keepR, style }`
+   * — z tych liczb gra (kolizje) i obraz (model) liczą tę samą geometrię co bańka (`portDockLayout.js`).
+   */
+  function bubbleDockTable() {
+    const out = {};
+    if (!core.world) return out;
+    for (const [stationId, layout] of core.world.docks) {
+      const m = layout?.model;
+      if (!m) continue;
+      out[stationId] = {
+        kind: m.kind, mix: m.mix, repeats: m.repeats, dockCount: m.dockCount,
+        x: m.x, y: m.y, angle: m.angle, keepR: m.keepR, style: m.style
+      };
+    }
+    return out;
+  }
+
   /** Zmiana listy rynków dociera do gry od razu, nie po kroku świata. */
   function marketsChanged() {
     indexMarkets();
@@ -638,6 +657,7 @@ export function createTrafficCore(post, options = {}) {
       message.stations = stationTable();
       message.berths = berthTable();
       message.bubblePorts = bubblePortTable();
+      message.bubbleDocks = bubbleDockTable();
     }
     send(message, [market.buffer, bubble.data.buffer]);
   }

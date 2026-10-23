@@ -21,7 +21,8 @@ import { RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor } from '../..
 import { FACTION } from '../../data/factions.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../../data/asteroidTypes.js';
 import { SYSTEM_MAP_PLANET_BY_ID, computeWorldUnitsPerAu } from '../../data/systemMap.js';
-import { SMALL_BODY_BY_ID, smallBodyStationPosition } from '../../data/smallBodies.js';
+import { SMALL_BODY_BY_ID, smallBodyStationPosition, smallBodyStationAngle } from '../../data/smallBodies.js';
+import { BERTH_MIXES, portDockKindFor, portDockStyleFor } from '../../data/portDocks.js';
 import {
   MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT, DEFAULT_SHIPYARD_WEIGHT, DEFAULT_NODE_BERTHS, defineMarket
 } from '../../data/markets.js';
@@ -176,15 +177,43 @@ function addMarketNode(world, def) {
 // ============================================================
 
 /** Megadok: jeden długi pomost pod duże kadłuby. */
-const MEGADOCK_MIX = Object.freeze(['m', 'm', 'l', 'l', 'l', 'capital', 'capital', 'mega', 'mega']);
+const MEGADOCK_MIX = BERTH_MIXES.megadock;
 /** Hangar kryjówki albo przyczółka: kilka małych stanowisk. */
-const HANGAR_MIX = Object.freeze(['s', 's', 'm', 'm', 'l']);
+const HANGAR_MIX = BERTH_MIXES.hangar;
+
+/**
+ * Kierunek budowli doku od węzła (E14, `PORT_DOCK_PLACEMENT` w src/data/portDocks.js): księżyc — od planety-rodzica,
+ * stacja małego ciała — od ciała (na przedłużeniu ciało → stacja), reszta (planeta, kryjówka, stacja gracza) — ku
+ * Słońcu: strona dzienna, poza cieniem planety.
+ */
+function dockDirection(world, def, node) {
+  if (node.moon && node.parentId) {
+    const parent = getNode(world.network, node.parentId);
+    if (parent) return Math.atan2(node.y - parent.y, node.x - parent.x);
+  }
+  if (def.position.source === MARKET_POSITION.SMALL_BODY) {
+    const body = SMALL_BODY_BY_ID[def.position.bodyId];
+    if (body?.station) return smallBodyStationAngle(body, world.placement.planetAngles || null);
+  }
+  const origin = world.network.origin || { x: 0, y: 0 };
+  return Math.atan2(origin.y - node.y, origin.x - node.x);
+}
+
+/** Budowla doku portu bez ringu: rodzaj z wielkości portu (`portDockKindFor`), kierunek, styl frakcji. */
+function dockModelSpec(world, def, node, repeats) {
+  return {
+    kind: portDockKindFor(repeats, def.docks.kind || null),
+    direction: dockDirection(world, def, node),
+    style: portDockStyleFor(def.factionId)
+  };
+}
 
 /**
  * Doki rynku. Ziemia i Mars mają pierścienie „Halo”: ich port to kompleksy
  * K-7 z gry (hale = wojsko, zatoki = terminale przeładunkowe, decyzja
  * 2026-09-26) — te same stanowiska, które rysuje render, więc kurs staje tam,
- * gdzie gracz widzi pad. Reszta dostaje pomosty na orbicie wokół stacji.
+ * gdzie gracz widzi pad. Reszta dostaje budowlę doku (E14: krzyż, okrąg albo
+ * koło — `dockModelSpec`) z tymi samymi stanowiskami, co dawne pomosty.
  */
 function buildMarketDocks(world, def, node, station) {
   const layoutKind = def.docks.layout;
@@ -209,11 +238,13 @@ function buildMarketDocks(world, def, node, station) {
   if (layoutKind === DOCK_LAYOUT.MEGADOCK) {
     return buildStationDocks(site, { berthMultiplier, dockCount: 1, berthMix: MEGADOCK_MIX });
   }
+  // Hangar kryjówki misji (baza piratów na planetoidzie, kryjówka najemnika, stocznia piratów) bez budowli doku:
+  // miejsce misji ma własną scenę i pomosty (baza misji 1 — planetoida 16 tys. j.), budowla obok weszłaby w nią.
   if (layoutKind === DOCK_LAYOUT.HANGAR) {
     return buildStationDocks({ ...site, ringWorldRadius: 0 },
       { berthMultiplier, dockCount: 1, berthMix: HANGAR_MIX, parkingSlots: 8 });
   }
-  return buildStationDocks(site, { berthMultiplier });
+  return buildStationDocks(site, { berthMultiplier, model: ringWorldRadius > 0 ? null : dockModelSpec(world, def, node, berthMultiplier) });
 }
 
 /**

@@ -74,7 +74,11 @@ export function run() {
     ziemia.docks.every(dock => dock.berths.every(berth =>
       berthRole(berth) === (dock.kind === 'k7' ? 'military' : 'civil'))));
   t.check('Mars też ma port K-7', world.docks.get('mars')?.docks.some(dock => dock.kind === 'k7'));
-  t.check('Merkury ma zwykłe pomosty', !world.docks.get('mercury')?.docks.some(dock => dock.kind));
+  // E14: port bez ringu cumuje na budowli doku (krzyż / okrąg / koło), stanowiska jak dawne pomosty.
+  const portMerkurego = world.docks.get('mercury');
+  t.check('Merkury ma budowlę doku (E14)', ['cross', 'round', 'wheel'].includes(portMerkurego?.model?.kind)
+    && portMerkurego.docks.every(dock => dock.kind === portMerkurego.model.kind && dock.model === portMerkurego.model));
+  t.check('port K-7 bez budowli doku', !ziemia.model);
   const pomosty = buildTrafficWorld({ economyScale: 4, capacityMultiplier: 4, seed: 11, ringPorts: false });
   t.check('ringPorts: false wraca do dawnych pomostów',
     !pomosty.docks.get('earth')?.docks.some(dock => dock.kind === 'k7'));
