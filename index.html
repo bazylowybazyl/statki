@@ -15787,9 +15787,15 @@
         if (isDerelict(station)) spec.stock = rollDerelictLoot(capacity);
         stationSpecs[station.id] = spec;
       }
+      // Rozgrzewka świata w tle (E15, `TRAFFIC_WARMUP_SECONDS` w trafficProtocol.js): gra startuje z godziną ruchu
+      // za sobą, nie z pustką. `?trafficWarmup=N` — inne sekundy świata (0 = bez rozgrzewki; narzędzia, A/B).
+      const warmupParam = params.get('trafficWarmup');
+      const warmup = warmupParam !== null && warmupParam !== '' && Number.isFinite(Number(warmupParam))
+        ? Math.max(0, Number(warmupParam)) : true;
       const bridge = new TrafficBridge();
       bridge.init({
         seed,
+        warmup,
         economyScale: scale > 0 ? scale : 60,
         capacityMultiplier: TRAFFIC_V2_CAPACITY_MULTIPLIER,
         piracyPressure: 1,
@@ -15807,6 +15813,8 @@
           + `budowa świata ${Math.round(ready.buildMs)} ms`);
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
+      bridge.on('warmup', w => console.info(`[ruch v2] rozgrzewka świata: ${Math.round(w.seconds / 60)} min `
+        + `w ${Math.round(w.ms)} ms CPU workera, ${bridge.stats?.active ?? '?'} aktywnych kursów`));
       // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
       for (const station of stations) registerTrafficV2Market(station, bridge);
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.

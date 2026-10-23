@@ -38,7 +38,7 @@ import {
 } from './markets.js';
 import {
   TRAFFIC_MSG, TRAFFIC_PROTOCOL_VERSION, COURSE_STRIDE, COURSE_FIELD, COURSE_FLAG,
-  COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber
+  COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
 import { BELT_MSG } from './trafficProtocol.js';
 import { recordPlayerMining, setPlayerBerthHolds, openDirectorMarket } from './trafficDirector.js';
@@ -50,7 +50,7 @@ import { isDerelict } from '../../data/factions.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
   releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
-  packBubbleCargo
+  packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures
 } from './workerBubble.js';
 import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
@@ -58,6 +58,20 @@ import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 const WRECK_LOG_LIMIT = 256;
 /** O jaki ułamek promienia bańki musi przesunąć się fokus, żeby przebudować bańkę. */
 const FOCUS_REPUBLISH_FRACTION = 0.25;
+/**
+ * Rozgrzewka (E15): kawałek liczenia [ms] przed oddaniem sterowania — wiadomości gry (`market`, `berth-hold`,
+ * zapis) czekają najwyżej tyle plus jeden krok świata (do ~45 ms).
+ */
+const WARMUP_SLICE_MS = 12;
+/** Rynek w trakcie rozgrzewki idzie do gry najwyżej tak często [ms] — nie po każdym kawałku. */
+const WARMUP_PUBLISH_MS = 250;
+/** Fokus przeskoczył dalej niż tyle [j.] od ostatniego rozstawienia postoju (E15) — rozstawienie od razu. */
+const PARKED_REFRESH_JUMP = 30_000;
+
+/** Oddanie sterowania poza workerem (testy, Node): następne zadanie pętli zdarzeń. */
+function defaultSchedule(fn) {
+  setTimeout(fn, 0);
+}
 
 const KINDS = Object.freeze(Object.values(COURSE_KIND));
 /** Indeks towaru w `ready.resources` (kontrakt przeładunku E12 — `actors.cargo`). */
@@ -81,11 +95,15 @@ function finite(value, fallback = 0) {
 export function createTrafficCore(post, options = {}) {
   const now = typeof options.now === 'function' ? options.now : defaultNow;
   const send = typeof post === 'function' ? post : () => {};
+  // `schedule(fn)` — następny kawałek rozgrzewki po wiadomościach, które już czekają (worker: kanał wiadomości).
+  const schedule = typeof options.schedule === 'function' ? options.schedule : defaultSchedule;
 
   const core = {
     world: null,
     focus: { x: 0, y: 0, r: 0, active: false },
     published: { x: NaN, y: NaN, r: 0 },
+    /** Fokus ostatniego rozstawienia postoju (E15) — skok dalej niż `PARKED_REFRESH_JUMP` rozstawia od razu. */
+    parkedAt: { x: NaN, y: NaN },
     /** Ostatnia zastosowana zmiana zapasu z gry — gra odrzuca na jej podstawie potwierdzone. */
     stockSeq: 0,
     hulls: [],
@@ -116,6 +134,11 @@ export function createTrafficCore(post, options = {}) {
     stats: { stepMs: 0, maxStepMs: 0, steps: 0, bubble: 0, queued: 0, berthed: 0, actors: 0, actorMs: 0 },
     /** Zapis ekonomii czekający na rynki dokładane po starcie (E7, `economySave.js`). */
     pendingRestore: null,
+    /**
+     * Rozgrzewka świata w tle (E15, `startWarmup`): `total` / `seconds` [s świata], `ms` CPU, `steps`;
+     * `restores` — `economy-restore`, które przyszły w trakcie (nakładane po końcu, magazyny = zapis).
+     */
+    warmup: { total: 0, seconds: 0, active: false, ms: 0, steps: 0, publishedAt: -Infinity, restores: [] },
     /** Bufory oferty portu w `buildMarket` — bez alokacji na stację × towar. */
     offerScratch: { sell: 0, buy: 0, wanted: false },
     quoteScratch: { capacity: 0, stored: 0, room: 0, offerFloor: 0, wanted: false, demandRate: 0, restockFloor: 0 }
@@ -203,6 +226,13 @@ export function createTrafficCore(post, options = {}) {
     if (core.bubble) refreshFleetStock(core.bubble);
     if (message.focus) setFocus(message.focus);
     const buildMs = now() - t0;
+    const warmup = core.warmup;
+    warmup.total = warmupSeconds(message.warmup, world.config.step);
+    warmup.seconds = 0;
+    warmup.ms = 0;
+    warmup.steps = 0;
+    warmup.active = warmup.total > 0;
+    warmup.restores.length = 0;
 
     send({
       type: TRAFFIC_MSG.READY,
@@ -223,13 +253,15 @@ export function createTrafficCore(post, options = {}) {
       bubblePorts: bubblePortTable(),
       bubbleDocks: bubbleDockTable(),
       restored: restoredCounts(restored),
-      buildMs
+      buildMs,
+      warmup: warmupInfo()
     });
     // Rynek od razu, nie po pierwszych pięciu sekundach — terminal handlu
     // w grze ma co pokazać, zanim świat zrobi pierwszy krok.
     publishTick(0, 0);
     // Wyrwy z zapisu (E7) — też od razu, nie po pierwszym kroku świata.
     publishBeltHoles();
+    if (warmup.active) schedule(warmupSlice);
   }
 
   function advance(message) {
@@ -246,10 +278,74 @@ export function createTrafficCore(post, options = {}) {
       core.stats.maxStepMs = Math.max(core.stats.maxStepMs, core.stats.stepMs);
       publishTick(steps, ms);
       publishBeltHoles();
-      // Zapas floty na padach K-7 (okręty bez kursów) — po kroku świata (stocznie, wojna zmieniają liczby).
-      if (core.bubble) refreshFleetStock(core.bubble);
+      // Zapas floty na padach K-7 i postój statków bez kursu (E15) — po kroku świata (stocznie, wojna, firmy
+      // zmieniają liczby); statek z redy, który dostał w tym kroku kurs, oddaje mu pozę przed krokiem bańki.
+      if (!core.warmup.active) refreshStanding();
     }
     stepBubble(dt);
+  }
+
+  // ============================================================
+  // Rozgrzewka świata (E15) — `TRAFFIC_WARMUP_SECONDS`
+  // ============================================================
+
+  /** `init.warmup` → sekundy świata w pełnych krokach (`true` = stała protokołu, brak = 0). */
+  function warmupSeconds(spec, step) {
+    const seconds = spec === true ? TRAFFIC_WARMUP_SECONDS : Math.max(0, finite(spec));
+    return step > 0 ? Math.floor(seconds / step + 1e-9) * step : 0;
+  }
+
+  function warmupInfo() {
+    const w = core.warmup;
+    return { total: w.total, seconds: w.seconds, active: w.active, ms: w.ms };
+  }
+
+  /**
+   * Kawałek rozgrzewki: pełne kroki świata do `WARMUP_SLICE_MS`, potem oddanie sterowania (`schedule`) —
+   * wiadomości gry przechodzą między kawałkami. Czas gry (`advance`) w tym czasie dokłada się do świata
+   * normalnie: oba idą przez `world.pending`, więc kolejność kroków świata nie zależy od podziału na kawałki
+   * (to samo ziarno = ten sam świat). Bańka stoi do końca rozgrzewki (`stepBubble`): encje startują
+   * w świecie po godzinie ruchu, a nie w połowie rozgrzewki, która przesuwa zegar o setki sekund naraz.
+   */
+  function warmupSlice() {
+    const w = core.warmup;
+    const world = core.world;
+    if (!w.active || !world) return;
+    const step = world.config.step;
+    const t0 = now();
+    let steps = 0;
+    while (w.seconds < w.total) {
+      steps += advanceTrafficWorld(world, step);
+      w.seconds += step;
+      if (now() - t0 >= WARMUP_SLICE_MS) break;
+    }
+    const ms = now() - t0;
+    w.ms += ms;
+    w.steps += steps;
+    if (w.seconds >= w.total) {
+      finishWarmup(steps, ms);
+      return;
+    }
+    const t = now();
+    if (t - w.publishedAt >= WARMUP_PUBLISH_MS) {
+      w.publishedAt = t;
+      publishTick(steps, ms);
+      publishBeltHoles();
+    }
+    schedule(warmupSlice);
+  }
+
+  /** Koniec rozgrzewki: zapis wybrany w jej trakcie, zapas floty i reda bańki, rynek z zegarem rozgrzewki. */
+  function finishWarmup(steps, ms) {
+    const w = core.warmup;
+    w.active = false;
+    // Zapis ekonomii z menu nakłada się na KONIEC rozgrzewki: magazyny, flota i stacje gracza są wtedy dokładnie
+    // takie jak w zapisie (rozgrzewka nie postarza ich o resztę godziny).
+    const restores = w.restores.splice(0);
+    for (const message of restores) economyRestore(message);
+    refreshStanding();
+    publishTick(steps, ms);
+    publishBeltHoles();
   }
 
   // ============================================================
@@ -264,12 +360,34 @@ export function createTrafficCore(post, options = {}) {
    */
   function stepBubble(dt) {
     const state = core.bubble;
-    if (!state) return;
+    // W trakcie rozgrzewki (E15) bańka stoi: pusta, gra nie dostaje `actors`.
+    if (!state || core.warmup.active) return;
     const wasActive = state.active;
+    // Odlot statku, który dostał już nowy kurs, oddaje mu pozę przed krokiem (E15).
+    handoffDepartures(state);
     if (stepWorldBubble(state, core.focus, dt, now) > 0) selectBubbleCourses(null);
+    // Bańka weszła w port albo fokus przeskoczył (teleport, warp do innego portu): postój od razu w tym buforze,
+    // nie po następnym kroku świata.
+    const f = core.focus;
+    const p = core.parkedAt;
+    if (state.active && (!wasActive || (f.x - p.x) ** 2 + (f.y - p.y) ** 2 > PARKED_REFRESH_JUMP ** 2)) {
+      refreshParkedShips(state, f);
+      p.x = f.x;
+      p.y = f.y;
+    }
     core.stats.actorMs = state.stats.ms;
     if (!state.active && !wasActive && core.actorsSent === 0) return;
     publishActors();
+  }
+
+  /** Encje bez kursu bańki (E15): zapas floty i postój przy portach fokusu. */
+  function refreshStanding() {
+    const state = core.bubble;
+    if (!state) return;
+    refreshFleetStock(state);
+    refreshParkedShips(state, core.focus);
+    core.parkedAt.x = core.focus.x;
+    core.parkedAt.y = core.focus.y;
   }
 
   function publishActors() {
@@ -329,9 +447,12 @@ export function createTrafficCore(post, options = {}) {
   }
 
   function setFocus(spec) {
-    const r = Math.max(0, finite(spec?.r));
-    core.focus.x = finite(spec?.x);
-    core.focus.y = finite(spec?.y);
+    const x = finite(spec?.x);
+    const y = finite(spec?.y);
+    // Przy porcie i w studni planety bańka jest szersza niż promień gry (E15, `BUBBLE_PORT_FOCUS_RADIUS`).
+    const r = core.bubble ? bubbleFocusRadius(core.bubble, x, y, finite(spec?.r)) : Math.max(0, finite(spec?.r));
+    core.focus.x = x;
+    core.focus.y = y;
     core.focus.r = r;
     core.focus.active = r > 0;
   }
@@ -539,6 +660,11 @@ export function createTrafficCore(post, options = {}) {
    * `init.restore`, potem księga, zapas floty bańki, rynek i wyrwy od razu — jak po `ready`.
    */
   function economyRestore(message) {
+    // W trakcie rozgrzewki (E15): zapis czeka do jej końca (`finishWarmup`) — odpowiedź też.
+    if (core.warmup.active) {
+      core.warmup.restores.push(message);
+      return;
+    }
     const world = core.world;
     const restored = world && message.state ? restoreEconomyState(world, message.state) : null;
     if (restored) {
@@ -603,7 +729,8 @@ export function createTrafficCore(post, options = {}) {
         scrappers: summarizeScrappers(world.scrappers),
         agents: summarizeAgents(world.agents),
         log: world.director.log.slice(-30),
-        core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size }
+        core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size },
+        warmup: { ...warmupInfo(), steps: core.warmup.steps }
       } : null
     });
   }
@@ -644,7 +771,8 @@ export function createTrafficCore(post, options = {}) {
       market,
       bubble,
       wrecks: collectWrecks(),
-      warWrecks: collectWarWrecks()
+      warWrecks: collectWarWrecks(),
+      warmup: warmupInfo()
     };
     if (core.stationFactionsDirty) {
       core.stationFactionsDirty = false;
