@@ -43,7 +43,8 @@ export const CATEGORY = Object.freeze({
   COMPONENT: 'component',  // gotowe podzespoły okrętowe
   WEAPON: 'weapon',        // lufy i emitery — to, co siada na podstawie
   ORDNANCE: 'ordnance',    // amunicja, rakiety, torpedy — zużywa się przy każdym starciu
-  SALVAGE: 'salvage'       // złom z wraków
+  SALVAGE: 'salvage',      // złom z wraków
+  CREW: 'crew'             // ludzie na kontraktach (workforce) — nie towar terminala „Handel”
 });
 
 // ============================================================
@@ -494,10 +495,33 @@ export const RESOURCES = Object.freeze({
     tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
     label: 'Torpeda', short: 'Trp', unit: 'szt', form: 'solid',
     mass: 6.0, value: 725, color: '#fb7185', capacityFactor: 0.25
+  },
+
+  // ---------- WORKFORCE (E16, docs/PROPOZYCJA-workforce.md) ----------
+  //
+  // Ludzie na kontraktach rotacyjnych: zapas w magazynie rynku = obsada na
+  // miejscu (1 sztuka = 1 osoba). Źródłem są ośrodki ludności (`POPULATION_CENTERS`
+  // w src/data/workforce.js), zużyciem — rotacja kontraktów. Na samym końcu
+  // tabeli, a nie w grupie T0: indeksy wszystkich dawnych towarów (protokół
+  // workera, bufory rynku) zostają bez zmian.
+  //   mass 0,25  fotel, podtrzymywanie życia i bagaż — prom klasy van (60) wiezie 240 osób
+  //   safetyFill zapas roboczy planisty i podłoga oferty ponad domyślne 0,25 —
+  //              pojemność (kwatery) to 2 N, więc 0,6 trzyma obsadę ≥ 1,2 N
+  //              (PROPOZYCJA § 3.3, pułapka 1)
+  workforce: {
+    tier: TIER.RAW, category: CATEGORY.CREW,
+    label: 'Workforce', short: 'WF', unit: 'os.', form: 'solid',
+    mass: 0.25, value: 15, color: '#fde68a', safetyFill: 0.6
   }
 });
 
 export const RESOURCE_KEYS = Object.freeze(Object.keys(RESOURCES));
+
+/**
+ * Towary terminala „Handel” i paneli magazynu — bez ludzi. Workforce ma własną
+ * kartę „Kadry” (W5); do tego czasu nie leży w ładowni obok rudy.
+ */
+export const TRADE_RESOURCE_KEYS = Object.freeze(RESOURCE_KEYS.filter(k => RESOURCES[k].category !== CATEGORY.CREW));
 
 export const RESOURCE_KEYS_BY_TIER = Object.freeze({
   0: Object.freeze(RESOURCE_KEYS.filter(k => RESOURCES[k].tier === TIER.RAW)),

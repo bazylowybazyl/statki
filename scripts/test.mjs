@@ -40,6 +40,7 @@ import { run as runHaloPortTraffic } from './tests/haloPortTraffic.test.mjs';
 import { run as runPortParking } from './tests/portParking.test.mjs';
 import { run as runTrafficWorld } from './tests/trafficWorld.test.mjs';
 import { run as runTrafficCore } from './tests/trafficCore.test.mjs';
+import { run as runWorkforce } from './tests/workforce.test.mjs';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -77,7 +78,8 @@ const suites = [
   runHaloPortTraffic,
   runPortParking,
   runTrafficWorld,
-  runTrafficCore
+  runTrafficCore,
+  runWorkforce
 ];
 const results = [];
 
