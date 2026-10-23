@@ -178,6 +178,7 @@ Awans do pełnego NPC przyjdzie później.
 | E12 | Przeładunek w portach: ładownie floty, rój dronów liczony na żywo na GPU, taśmociągi | 4 | E6 (kontrakt `actors.cargo`) | `src/3d/cargo/`, `src/3d/swarm/`, `src/game/swarm/`, `src/game/portCargoFrame.js`, `src/render/blocks/cargoOpsBlock.js` |
 | E13 | Kadłuby ruchu: mostki, rdzenie, zbiorniki paliwa, gniazda i dysze; broń i AI bojowa awansowanych okrętów; sprite'y Z11 | 5 | E6; E12 (ładownia ciężkiego frachtowca) | `src/data/trafficHulls.js`, `hardpointEditorDefaults.js`, `reactorCores.js`, `engineFx.js`, `src/game/trafficPromotion.js`, blok „BAŃKA RUCHU v2 W GRZE” w `index.html`, `assets/ships/` |
 | E14 | Doki portów bez ringu: dok krzyżowy, dok okrągły, koło z wlotem (jak stacja z Elite Dangerous, płaska) | 5 | E6 | `dockLayout.js`, `DOCK_LAYOUT` w `src/data/markets.js`, `portPaths.js`, nowy moduł 3D doków, kolizje 2D |
+| E15 | Widoczny ruch: rozgrzewka świata ruchu przy ładowaniu, reda i orbita postojowa w bańce, bańka w studni grawitacyjnej i większy promień przy portach | 5 | E6, E14 | `trafficCore.js`, `workerBubble.js`, `materializedFlight.js`, `portParking.js`, `src/game/trafficBubble.js`, blok „BAŃKA RUCHU v2 W GRZE” w `index.html` |
 
 Fala 1 (E1, E3, E4, E5, E8) rusza równolegle, każda sesja we własnym worktree. Pliki wspólne (`trafficWorld.js`, `travelNetwork.js`, `trafficProtocol.js`, `trafficBridge.js`, `agentFleets.js`, `trafficDirector.js`) dzielimy po FUNKCJACH, jak w tabeli. Konflikty przy scalaniu rozwiązuje orkiestrator.
 
@@ -479,3 +480,7 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Przed scaleniem: `git merge main` (5 konfliktów) i sprawdzenie odlotu E6 (`DEPARTED`) przez korytarz wylotu doku.
 - 2026-10-23 E14 w `main` (63c10099), po scaleniu z `main` i poprawce odlotu (151b0af3): odlot po końcu kursu (`DEPARTED`) wychodzi wylotem budowli, przy kole szczeliną (0 kroków w bryle); symulacja na ziarnie 7 identyczna z `main`; testy, start i przegląd portów czyste.
 - **Stan 2026-10-23: wszystkie zadania E1–E14 są w `main`.** Do decyzji użytkownika zostaje „Wczytaj grę” (rekomendacja: przy pełnym zapisie gry). Znane ryzyka do późniejszych zadań: okręt awansowany w hali K-7 wylatuje bez ścieżki doku; NPC odbijają się od brył doków bez objazdu; lampki stanowisk doków świecą stale; przy kole więcej chwilowych nałożeń kadłubów przed szczeliną; odlatujący statek (`DEPARTED`) nie przyjmuje obrażeń.
+- 2026-10-23 użytkownik: ruchu w grze prawie nie widać. Diagnoza orkiestratora:
+  - zimny start: świat ruchu rusza pusty — w powietrzu 91 kursów po 15 min gry, 248 po 30 min, 741 po 60 min (`SEED=7 … 60 1 4 60`); harnessy maskowały to rozgrzewką 40 min;
+  - bańka tylko 60 tys. j. od gracza i do 180 tys. j. od portu; statki bez kursu na redzie i orbicie postojowej nierysowane.
+  - Decyzja użytkownika: bez osobnych cywilnych NPC (druga, udawana ekonomia). Sesja E15: rozgrzewka świata ruchu przy ładowaniu (~60 min świata w tle w workerze), reda i orbita postojowa w bańce (nietykalne jak STOCK), bańka w studni grawitacyjnej i większy promień przy portach — bez zmiany ekonomii.
