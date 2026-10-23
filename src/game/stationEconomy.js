@@ -950,7 +950,10 @@ function runWorkforceRotation(station, econ, cycles) {
   if (!(need > 0)) return;
   const staffed = Math.min(amountOf(econ, 'workforce'), need);
   econ.workforceRatio = staffed / need;
-  takeResource(econ, 'workforce', staffed * ECONOMY_CYCLE_SECONDS / WORKFORCE_CONTRACT_SECONDS);
+  const leaving = takeResource(econ, 'workforce', staffed * ECONOMY_CYCLE_SECONDS / WORKFORCE_CONTRACT_SECONDS);
+  // Ludzie po kontrakcie czekają na prom do domu (W2: powrót przewoźnika, `returning`) —
+  // to sam obraz i znacznik kursu, bez księgowości; czekających najwyżej tylu, ilu pracuje.
+  econ.workforceLeaving = Math.min(need, (Number(econ.workforceLeaving) || 0) + leaving);
 }
 
 /**

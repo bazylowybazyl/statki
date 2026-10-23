@@ -37,6 +37,11 @@
  *   kolejka     — średnia liczba kursów na redzie portu w czasie biegu
  *   tick        — średni czas kroku świata w krokach, w których w powietrzu jest
  *                 co najmniej 90% szczytu kursów
+ *   obsada      — workforce (E16, decyzja D12): obsada rynku r = zapas / potrzeba N
+ *                 (przycięta do 1) w każdym kroku; średnia każdego rynku z obsadą
+ *                 ≥ 0,95 i żaden nie stoi poniżej 0,8 dłużej niż 30 min. Powroty
+ *                 promów z ludźmi po kontrakcie (bez zlecenia) liczą się jak puste
+ *                 przeloty, nie jak kursy z ładunkiem
  */
 
 import { spawn } from 'node:child_process';
@@ -62,7 +67,12 @@ export const PROGI = Object.freeze({
   /** Średnia kolejka na redzie w każdym porcie. */
   kolejkaMax: 2,
   /** Średni tick przy szczycie kursów, ms. */
-  tickMsMax: 25
+  tickMsMax: 25,
+  /** Workforce (D12): średnia obsada każdego rynku z potrzebą… */
+  obsadaSredniaMin: 0.95,
+  /** …i najdłuższy ciągły czas poniżej `obsadaNiska`, minuty gry. */
+  obsadaNiska: 0.8,
+  obsadaNiskaMinMax: 30
 });
 
 /** Zapełnienie, poniżej którego surowiec liczy się jako „na zerze”… */
@@ -127,6 +137,8 @@ async function jedenBieg(args) {
     if (entry.rate > 0) for (const id of Object.keys(entry.yields)) obtainable.add(id);
   }
   for (const field of network.fields) for (const id of Object.keys(field.yields || {})) obtainable.add(id);
+  // Workforce bierze się z ośrodków ludności (E16), nie z receptur ani wydobycia.
+  if (stations.some(station => station.workforce?.rate > 0)) obtainable.add('workforce');
 
   // Pary stacja × surowiec do śledzenia: stacja frakcyjna, surowiec chciany
   // i możliwy do zdobycia. Liczone raz po budowie — stocznie i wojna dopisują
@@ -147,6 +159,11 @@ async function jedenBieg(args) {
     }
   }
   const stocznie = shipyards.yards.map(yard => ({ yard, od: -1, max: 0, sumaPusto: 0 }));
+  // Obsada rynków (workforce, E16): rynki z potrzebą, bez źródeł opuszczonych.
+  const obsady = stations
+    .filter(station => station.factionId && station.workforce?.need > 0)
+    .map(station => ({ station, econ: economies.get(station.id), suma: 0, min: 1, od: -1, max: 0 }));
+  const bezLadunku = course => !!(course?.payload?.deadhead || (course?.payload?.passengers && !course.payload.orderId));
   const kolejki = new Map();
 
   const totalSeconds = args.minuty * 60;
@@ -163,12 +180,12 @@ async function jedenBieg(args) {
     const t0 = process.hrtime.bigint();
     const wynikKroku = stepTrafficWorld(world, STEP);
     for (const ev of wynikKroku.events || []) {
-      if (ev.type === 'done' && ev.course?.payload?.deadhead) pustePrzeloty++;
+      if (ev.type === 'done' && bezLadunku(ev.course)) pustePrzeloty++;
     }
     for (const wrak of director.wrecks) {
       if (wrakiWidziane.has(wrak.courseId)) continue;
       wrakiWidziane.add(wrak.courseId);
-      if (wrak.reason === 'pirate' && getCourse(registry, wrak.courseId)?.payload?.deadhead) pusteStracone++;
+      if (wrak.reason === 'pirate' && bezLadunku(getCourse(registry, wrak.courseId))) pusteStracone++;
     }
     tickMs.push(Number(process.hrtime.bigint() - t0) / 1e6);
     t = registry.clock;
@@ -195,6 +212,16 @@ async function jedenBieg(args) {
         s.sumaPusto += STEP;
         s.max = Math.max(s.max, t - s.od);
       } else s.od = -1;
+    }
+    for (const o of obsady) {
+      const need = o.station.workforce.need * args.skala;
+      const r = Math.min(1, (Number(o.econ?.resources?.workforce) || 0) / need);
+      o.suma += r;
+      if (r < o.min) o.min = r;
+      if (r < PROGI.obsadaNiska) {
+        if (o.od < 0) o.od = t - STEP;
+        o.max = Math.max(o.max, t - o.od);
+      } else o.od = -1;
     }
     for (const [stationId] of world.docks) {
       const q = director.portQueue.get(String(stationId)) || 0;
@@ -255,6 +282,13 @@ async function jedenBieg(args) {
       stacja, srednia: Math.round(suma / Math.max(1, kroki) * 100) / 100,
       koniec: director.portQueue.get(String(stacja)) || 0
     })).sort((a, b) => b.srednia - a.srednia),
+    obsady: obsady.map(o => ({
+      stacja: o.station.id,
+      srednia: Math.round(o.suma / Math.max(1, kroki) * 1000) / 1000,
+      min: Math.round(o.min * 1000) / 1000,
+      niskaMaxMin: Math.round(o.max / 60 * 10) / 10
+    })).sort((a, b) => a.srednia - b.srednia),
+    powrotyPromow: snap.stats.passengerReturns || 0,
     tick: {
       sredniMs: tickMs.reduce((a, b) => a + b, 0) / Math.max(1, kroki),
       przySzczycieMs: nSzczyt ? sumaSzczyt / nSzczyt : 0
@@ -294,6 +328,17 @@ function ocen(bieg) {
     { prog: 'tick', wartosc: bieg.tick.przySzczycieMs, limit: PROGI.tickMsMax,
       opis: `${bieg.tick.przySzczycieMs.toFixed(1)} ms przy szczycie ${bieg.kursy.szczyt}` }
   ];
+  if (bieg.obsady?.length) {
+    const najnizsza = bieg.obsady[0];
+    const niska = [...bieg.obsady].sort((a, b) => b.niskaMaxMin - a.niskaMaxMin)[0];
+    // Próg „w górę”: wartość = brak do średniej 0,95 (≤ 0 zaliczone).
+    wyniki.push({ prog: 'obsada', wartosc: Math.max(0, PROGI.obsadaSredniaMin - najnizsza.srednia), limit: 0,
+      opis: `średnia najniżej ${najnizsza.srednia} (${najnizsza.stacja}, min ${najnizsza.min}); `
+        + `poniżej ${PROGI.obsadaNiska} najdłużej ${niska.niskaMaxMin} min (${niska.stacja}); `
+        + `powroty promów ${bieg.powrotyPromow}` });
+    wyniki.push({ prog: 'obsada < 0,8', wartosc: niska.niskaMaxMin, limit: PROGI.obsadaNiskaMinMax,
+      opis: `${niska.niskaMaxMin} min (${niska.stacja})` });
+  }
   for (const w of wyniki) w.ok = w.wartosc <= w.limit && !(w.wartosc < (w.minimum ?? -Infinity));
   return wyniki;
 }

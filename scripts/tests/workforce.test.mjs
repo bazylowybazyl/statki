@@ -7,7 +7,10 @@ import {
   STATION_INDUSTRY, INDUSTRY_ARCHETYPES, composeFromBuildings, runStationEconomy, stationNetRates,
   stationConsumptionRates, stationWantsResource, resourcePrice
 } from '../../src/game/stationEconomy.js';
-import { buildTrafficWorld } from '../../src/game/traffic/trafficWorld.js';
+import { buildTrafficWorld, stepTrafficWorld, TRAFFIC_STEP_SECONDS } from '../../src/game/traffic/trafficWorld.js';
+import { getActiveCourses, STAGE_KIND } from '../../src/game/traffic/courseRegistry.js';
+import { resolveTrafficHullId } from '../../src/data/trafficHulls.js';
+import { writeBubbleCargo } from '../../src/game/traffic/bubbleCargo.js';
 import { PLANET_YIELD, RESOURCES, TRADE_RESOURCE_KEYS, RESOURCE_KEYS } from '../../src/data/resources.js';
 import { MARKET_DEF_BY_ID, defineMarket, SHIPYARD_WEIGHT } from '../../src/data/markets.js';
 import {
@@ -133,6 +136,31 @@ export function run() {
   t.check('Ziemia startuje ponad progiem nadwyżki (75% magazynu)',
     Math.abs(earthEcon.resources.workforce / earthEcon.capacity.workforce - 0.75) < 1e-9);
   t.check('opuszczony Neptun bez potrzeby', byId('neptune').workforce.need === 0);
+
+  t.section('8. Promy: kursy z ludźmi i powroty (W2)');
+  let outbound = null;
+  let inbound = null;
+  for (let i = 0; i < (40 * 60) / TRAFFIC_STEP_SECONDS && !(outbound && inbound); i++) {
+    stepTrafficWorld(world);
+    for (const course of getActiveCourses(world.registry)) {
+      const p = course.payload || {};
+      if (!p.passengers) continue;
+      if (!outbound && p.orderId) outbound = course;
+      if (!inbound && p.returning !== undefined) inbound = course;
+    }
+  }
+  t.check('planista wysyła ludzi promem', !!outbound);
+  if (outbound) {
+    t.check(`klasa crew-* (${outbound.unitClass} → ${resolveTrafficHullId(outbound.unitClass)})`,
+      /^crew-/.test(outbound.unitClass));
+    const dwells = outbound.stages.filter(stage => stage.kind === STAGE_KIND.DWELL);
+    t.check('zaokrętowanie i wyokrętowanie po 60 s',
+      dwells.length >= 2 && dwells[0].seconds === 60 && dwells[dwells.length - 1].seconds >= 60);
+    t.check('prom niesie ludzi, nie kontenery (obraz przeładunku E12 go pomija)',
+      writeBubbleCargo([], 0, 1, { ...outbound, stages: [dwells[0]], stageIndex: 0 }, () => 0) === 0);
+  }
+  t.check('prom wraca do źródła z ludźmi po kontrakcie', !!inbound
+    && Number.isFinite(inbound.payload.returning) && !inbound.payload.orderId && inbound.payload.value === 0);
 
   return t.results;
 }

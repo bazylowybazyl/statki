@@ -76,6 +76,19 @@ export const POPULATION_CENTERS = Object.freeze({
   jupiter: Object.freeze({ ring: 14.0 })
 });
 
+/**
+ * PROMY (W2): kurs z ludźmi leci klasą `crew-*` dobraną do ładowni statku przewoźnika
+ * (`TRAFFIC_UNIT_HULLS` w src/data/trafficHulls.js daje kadłub — do czasu własnych sprite'ów
+ * W7 obecne frachtowce). Ludzi nie wozi się w megafrachtowcach: ciężkie klasy lecą
+ * jako liniowiec dalekiego zasięgu.
+ */
+export const CREW_CLASS_BY_VAN = Object.freeze({
+  van: 'crew-small', hauler: 'crew-medium', bulk: 'crew-large', heavy: 'crew-large', mega: 'crew-large'
+});
+/** Zaokrętowanie i wyokrętowanie rękawem (s) — towar: 90 / 120 s z dronami. */
+export const PASSENGER_BOARD_SECONDS = 60;
+export const PASSENGER_DISEMBARK_SECONDS = 60;
+
 /** Etykiety źródeł do UI. */
 export const POPULATION_SOURCE_LABEL = Object.freeze({
   ring: 'Ring Halo',
