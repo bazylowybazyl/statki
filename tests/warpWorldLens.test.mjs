@@ -54,6 +54,48 @@ test('mapowanie: β = 0 — prawdziwy widok; cel daleko przed dziobem — przy k
   assert.equal(viewEdgeDistance(0, -1, 960, 540, 0, 0), 540);
 });
 
+test('przelot z daleka (2026-10-23, „przelot jak dotarcie do celu — planeta się po prostu pojawia”): punkt zbiegu, powolny wzrost, trawers jak dawniej, za rufą bez zmian', () => {
+  const P = WORLD_LENS_DEFAULTS;
+  const S = 0.002;
+  // Kurs w górę ekranu, statek 150 px pod środkiem kadru 1600 × 900 — do krawędzi przed dziobem 600 px.
+  const o = { zoom: 0.1, flatScale: 0.1, beta: 1, velAngle: -Math.PI / 2, lensScale: S, viewHalfW: 800, viewHalfH: 450,
+    shipSx: 0, shipSy: 150, sizeDepth: P.sizeDepth };
+  const E = 600 * P.approachEdge;
+  const A0 = E / S;
+  const r = 30000;
+  const lat = 75000;
+  const at = (along, approach = 1, beta = 1, l = lat) => mapWorldLens(l, -along, r, { ...o, approach, beta }, {});
+  // Daleko przed dziobem: w kadrze przy punkcie zbiegu, mała; bez perspektywy (dawniej) — setki px za krawędzią.
+  const far = at(1e6);
+  assert.ok(far.y < 0 && -far.y < E && -far.y > 0.75 * E, `punkt zbiegu (${far.y})`);
+  assert.ok(far.size < r * S * 0.25, `mała z daleka (${far.size})`);
+  assert.ok(-at(1e6, 0).y > 600 * 2, 'dawniej: daleko za krawędzią kadru');
+  // Rośnie powoli i monotonicznie w miarę zbliżania; trawers — dokładnie dawny obraz (ciągłość), za rufą bez zmian.
+  let prev = 0;
+  for (const a of [1e6, 6e5, 3e5, 1.5e5, 6e4, 2e4, 5e3]) {
+    const m = at(a);
+    assert.ok(m.size > prev, `rośnie (${a})`);
+    prev = m.size;
+  }
+  const k = A0 / (3e5 + A0);
+  assert.ok(near(at(3e5).size, r * S * k, 1e-9) && near(at(3e5).x, lat * S * k, 1e-9), 'położenie i wielkość × k');
+  const abeam = at(1), abeamOld = at(1, 0);
+  assert.ok(Math.abs(abeam.x - abeamOld.x) < 1e-3 && Math.abs(abeam.size - abeamOld.size) < 1e-3, 'trawers bez zmian');
+  const behind = at(-50000), behindOld = at(-50000, 0);
+  assert.ok(near(behind.x, behindOld.x) && near(behind.y, behindOld.y) && near(behind.size, behindOld.size), 'za rufą bez zmian');
+  // Wejście w soczewkę przed dziobem: wyrasta w miejscu perspektywy (wielkość × β), nie wjeżdża zza kadru.
+  const half = at(6e5, 1, 0.5), full = at(6e5, 1, 1);
+  assert.ok(near(half.x, full.x, 1e-6) && near(half.y, full.y, 1e-6) && near(half.size, full.size * 0.5, 1e-6));
+  // Ciało daleko od kursu (w kadrze nie przeleci) — bez perspektywy; cel (trzymanie przy krawędzi) — bez perspektywy.
+  const wide = 2e6;
+  assert.ok(near(at(6e5, 1, 1, wide).x, at(6e5, 0, 1, wide).x), 'daleko w bok — dawny obraz');
+  const tgt = { ...o, hold: 1, approach: 1, gapPx: P.edgeGap, holdSize: P.holdSize, holdPeek: P.holdPeek, holdSoft: P.holdSoft };
+  assert.deepEqual(mapWorldLens(0, -6e5, r, tgt, {}), mapWorldLens(0, -6e5, r, { ...tgt, approach: 0 }, {}));
+  // Sterownik: mijane ciała z perspektywą, cel bez.
+  const src = read('src/3d/warp/worldLens.js');
+  assert.match(src, /o\.approach = isTarget \? 0 : 1;\s*mapWorldLens\(dx, dy, b\.r, o, m\);/);
+});
+
 function rig() {
   const lens = new WarpWorldLens();
   const ctx = {

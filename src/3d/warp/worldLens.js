@@ -29,7 +29,14 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   zoomRefSpeed: 150000, // [j/s] wolniejszy skok — ciaśniejszy kadr (ciała mijają kadr w tym samym tempie)
   lensScaleMax: 0.5,    // S najwyżej × zoom kamery
   lensScaleLag: 0.15,   // [s] wygładzenie zmian S
-  sizeDepth: 30000,     // [j.] h perspektywy wzdłuż kursu
+  sizeDepth: 30000,     // [j.] h perspektywy wzdłuż kursu (za rufą; przed dziobem — perspektywa przelotu niżej)
+  // PRZELOT Z DALEKA (2026-10-23, user: „przelot ma wyglądać podobnie do dotarcia do celu — planeta z daleka, powoli
+  // rośnie, pod statkiem duża, potem ucieka za statek; obecnie się po prostu pojawia”): mijane ciało przed dziobem
+  // w perspektywie z punktem zbiegu na kursie (approachEdge × odległość statek → krawędź kadru przed dziobem):
+  // położenie i wielkość × k = A0 / (a + A0), A0 = E / S (w trawersie k = 1 — obraz jak dawniej, za rufą bez zmian).
+  approachEdge: 0.8,    // punkt zbiegu: ułamek drogi od statku do krawędzi kadru przed dziobem
+  approachLatNear: 1.5, // ciała dalej od kursu (× pół kadru w bok) bez perspektywy — od pełnej do żadnej
+  approachLatFar: 3,
   flybyHeight: 100000,  // [j.] wysokość wirtualnej kamery obrotu przelotu
   flybyTilt: 1,         // siła obrotu przelotu
   targetWindow: 450000, // [j.] cel bliżej niż to zjeżdża od krawędzi kadru ku statkowi
@@ -161,6 +168,36 @@ export function mapWorldLens(dx, dy, r, o, out = {}) {
   out.size = size;
   out.theta = theta;
   out.gap = gap;
+  // PRZELOT Z DALEKA (mijane ciało przed dziobem, nie cel): perspektywa z punktem zbiegu na kursie — położenie
+  // i wielkość × k = A0 / (a + A0), A0 = E / S; przy trawersie (a → 0) obraz jak wyżej, za rufą bez zmian. Wejście
+  // w soczewkę (β < 1) ciała przed dziobem: wyrasta w swoim miejscu perspektywy (wielkość × β) zamiast wjeżdżać
+  // z prawdziwego miejsca zza kadru. Ciała daleko od kursu (w kadrze nie przelecą) — bez perspektywy.
+  const app = clamp(Number(o.approach) || 0, 0, 1) * (1 - hold);
+  if (app > 0 && along > 0) {
+    const ux = Math.cos(va);
+    const uy = Math.sin(va);
+    const lat = d * Math.sin(theta - va);
+    const sideX = lat >= 0 ? -uy : uy;
+    const sideY = lat >= 0 ? ux : -ux;
+    const acrossPx = Math.max(1, viewEdgeDistance(sideX, sideY, o.viewHalfW, o.viewHalfH, o.shipSx, o.shipSy));
+    const pLat = Number(o.approachLatNear) || P.approachLatNear;
+    const pFar = Math.max(pLat + 1e-3, Number(o.approachLatFar) || P.approachLatFar);
+    const edgePx = viewEdgeDistance(ux, uy, o.viewHalfW, o.viewHalfH, o.shipSx, o.shipSy);
+    const E = Math.max(1, edgePx * (Number(o.approachEdge) || P.approachEdge));
+    const A0 = E / S;
+    // udział: blisko kursu pełny, płynnie od trawersu (ciągłość wejścia w soczewkę przy a ≈ 0)
+    const w = app * (1 - smoothstep(pLat, pFar, Math.abs(lat) * S / acrossPx)) * smoothstep(0, 0.05 * A0, along);
+    if (w > 0) {
+      const k = A0 / (along + A0);
+      const lx = S * k * (along * ux - lat * uy);
+      const ly = S * k * (along * uy + lat * ux);
+      const ls = rr * S * (Number(o.sizeBoost) || 1) * k * beta;
+      out.x += (lx - out.x) * w;
+      out.y += (ly - out.y) * w;
+      out.size = size + (ls - size) * w;
+      out.gap = Math.sqrt(out.x * out.x + out.y * out.y) - out.size;
+    }
+  }
   return out;
 }
 
@@ -277,7 +314,8 @@ export class WarpWorldLens {
       viewHalfW: 400, viewHalfH: 300, shipSx: 0, shipSy: 0, targetWindow: p.targetWindow,
       sizeK: p.sizeK, sizeD0: p.sizeD0, gapPx: p.edgeGap,
       hullHalfLen: 0, hullHalfWid: 0, hold: 0, holdSize: p.holdSize,
-      holdPeek: p.holdPeek, holdSoft: p.holdSoft, beta: 0, velAngle: 0, sizeBoost: 1
+      holdPeek: p.holdPeek, holdSoft: p.holdSoft, beta: 0, velAngle: 0, sizeBoost: 1,
+      approach: 0, approachEdge: p.approachEdge, approachLatNear: p.approachLatNear, approachLatFar: p.approachLatFar
     };
     this._map = { x: 0, y: 0, size: 0, d: 0, edge: 0, theta: 0, gap: 0 };
     this._tgt = { x: 0, y: 0, size: 0, d: 0, edge: 0, theta: 0, gap: 0 };
@@ -452,7 +490,9 @@ export class WarpWorldLens {
         if (b.entrySession !== this.session || b.entry !== 1) {
           o.beta = 1;
           o.flatScale = fl;
+          o.approach = 1;
           mapWorldLens(dx, dy, b.r, o, full);
+          o.approach = 0;
           e = this._entry(b, dx, dy, full, ctx, vis);
         }
         bb = beta * clamp(b.gate, 0, 1) * e;
@@ -471,8 +511,11 @@ export class WarpWorldLens {
         o.beta = bb;
         o.flatScale = fl;
         o.hold = isTarget ? 1 : 0;
+        // mijane ciało przed dziobem — przelot z daleka (perspektywa z punktem zbiegu); cel ma trzymanie przy krawędzi
+        o.approach = isTarget ? 0 : 1;
         mapWorldLens(dx, dy, b.r, o, m);
         o.hold = 0;
+        o.approach = 0;
       }
       const out = b.out;
       out.x = ctx.shipSx + m.x;
