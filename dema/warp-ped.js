@@ -159,6 +159,10 @@ const renderList = [];
 
 // Kamera: rig gry (kop i oddalenie warpa w czasie gry, wyprzedzenie lotu) + zoom gracza (kółko).
 const camTune = createCameraRigTune();
+// Obrót kadru w skoku szybciej niż domyślne 3,2/s (2026-10-23, „dopracować efekt lotu”): przy kursie ~150° od
+// północy kadr kończył obrót sekundę PO skoku — kop, pęknięcie i wybuch smug gwiazd szły w obracającym się kadrze.
+// 5/s: przy skoku (0,8 s ładowania) zostaje ~9% obrotu, kadr stoi ~0,3 s po skoku. W grze obrót niewpięty — port.
+camTune.warpRollOmega = 5;
 const rig = createCameraRig();
 let zoomBase = 0.2;
 const cam = { x: 0, y: 0, zoom: 0.2 };            // bez wstrząsu (planety, ośrodek)
