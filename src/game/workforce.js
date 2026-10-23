@@ -16,7 +16,8 @@ import { INDUSTRY_ARCHETYPES, ECONOMY_CYCLE_SECONDS } from './stationEconomy.js'
 import {
   WORKFORCE_PER_BUILDING, WORKFORCE_PER_MINE_RATE, WORKFORCE_PER_CIVIL_BERTH,
   WORKFORCE_PER_STORE, WORKFORCE_PER_YARD_WEIGHT, WORKFORCE_CONTRACT_SECONDS,
-  WORKFORCE_QUARTERS, WORKFORCE_SOURCE_HOURS, WORKFORCE_MIN_RATIO
+  WORKFORCE_QUARTERS, WORKFORCE_SOURCE_HOURS, WORKFORCE_MIN_RATIO,
+  WORKFORCE_MIN_SHIPMENT, WORKFORCE_MIN_SHIPMENT_SHARE, WORKFORCE_URGENT_RATIO
 } from '../data/workforce.js';
 
 let recipeRoleMap = null;
@@ -107,4 +108,16 @@ export function workforceRatio(stored, need) {
 export function workforceEfficiency(ratio) {
   const r = Math.max(0, Math.min(1, Number(ratio) || 0));
   return r < WORKFORCE_MIN_RATIO ? 0 : r;
+}
+
+/**
+ * Czy planista ma wysłać partię `units` ludzi do `station` (świat, `stored` — zapas odbiorcy):
+ * partia co najmniej `WORKFORCE_MIN_SHIPMENT` albo 5% obsady, chyba że obsada spadła poniżej
+ * `WORKFORCE_URGENT_RATIO` — wtedy leci każda.
+ */
+export function workforceShipmentWorthIt(station, units, stored, economyScale = 1) {
+  const need = (Number(station?.workforce?.need) || 0) * Math.max(0, Number(economyScale) || 0);
+  if (!(need > 0)) return true;
+  if ((Number(stored) || 0) < WORKFORCE_URGENT_RATIO * need) return true;
+  return units >= Math.max(WORKFORCE_MIN_SHIPMENT, WORKFORCE_MIN_SHIPMENT_SHARE * need);
 }

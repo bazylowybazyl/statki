@@ -26,6 +26,7 @@ import {
   runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, stationWantsResource
 } from '../stationEconomy.js';
 import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js';
+import { workforceShipmentWorthIt } from '../workforce.js';
 import {
   COURSE_KIND, DWELL_REASON, COURSE_STATUS,
   launchCourse, advanceCourses, getActiveCourses, currentStage, stageProgress,
@@ -1056,6 +1057,8 @@ function nextShipment(director, blocked = new Set()) {
         shipmentLeadSeconds(route));
       const units = Math.floor(Math.min(candidateUnits, required));
       if (units <= 0) continue;
+      if (buyer.id === 'workforce' && !workforceShipmentWorthIt(buyer.station, units,
+        director.getEconomy(buyer.station.id)?.resources?.workforce, director.config.economyScale)) continue;
 
       const candidate = {
         source,

@@ -178,6 +178,16 @@ export function inboundDueWithin(book, stationId, resourceId, seconds) {
 
 // ---------- oferty sprzedaży i zamówienia skupu ----------
 
+/**
+ * Zapas roboczy planisty dla surowca: `inventorySafetyFill` dyspozytora albo wyższy próg
+ * towaru (`RESOURCES[id].safetyFill` — workforce: kwatery 2 N, zapas roboczy 1,2 N).
+ */
+function safetyFillOf(book, resourceId) {
+  const base = Number(book.config.inventorySafetyFill) || 0;
+  const own = Number(RESOURCES[resourceId]?.safetyFill) || 0;
+  return Math.min(1, Math.max(0, base, own));
+}
+
 /** Nominalny import potrzebny stacji na sekundę przy aktualnej skali gospodarki. */
 export function plannedDemandPerSecond(book, station, resourceId) {
   let rates = book.demandRates.get(String(station.id));
@@ -234,8 +244,7 @@ export function postOffers(book, stations) {
       const stored = Math.max(0, Number(econ.resources?.[id]) || 0);
       const fill = stored / capacity;
       const demand = plannedDemandPerSecond(book, station, id);
-      const safety = capacity * Math.min(1, Math.max(0,
-        Number(book.config.inventorySafetyFill) || 0));
+      const safety = capacity * safetyFillOf(book, id);
       if (!(demand > 0) && stored >= safety) continue;
       const secondsToSafety = demand > 0
         ? (stored - safety) / demand
@@ -306,8 +315,7 @@ export function buyOrderUnits(book, station, resourceId, leadSeconds = 0) {
   if (!(capacity > 0)) return 0;
 
   const stored = Math.max(0, Number(econ.resources?.[resourceId]) || 0);
-  const safetyFill = Math.min(1, Math.max(0,
-    Number(book.config.inventorySafetyFill) || 0));
+  const safetyFill = safetyFillOf(book, resourceId);
   const leadMargin = Math.max(1, Number(book.config.inboundOvershoot) || 1);
   const demand = plannedDemandPerSecond(book, station, resourceId);
   const lead = Math.max(0, Number(leadSeconds) || 0);

@@ -50,6 +50,17 @@ export const WORKFORCE_QUARTERS = 2;
 export const WORKFORCE_RESTOCK_FLOOR = 1.3;
 /** Magazyn źródła mieści tyle godzin jego podaży (gdy to więcej niż kwatery). */
 export const WORKFORCE_SOURCE_HOURS = 1;
+/** Zapas startowy źródła (ułamek magazynu) — ponad progiem nadwyżki planisty (70%). */
+export const WORKFORCE_SOURCE_SEED_FILL = 0.75;
+/**
+ * Najmniejsza partia ludzi w jednym kursie planisty (osoby, świat): 80% promu klasy van
+ * albo 5% obsady odbiorcy (~2 min rotacji), co większe. Planista dolewa zapas do progu
+ * co tick, więc bez podłogi rotacja szła w kursach po ~96 osób (~2000 kursów/h, pomiar W1).
+ * Poniżej `WORKFORCE_URGENT_RATIO` obsady leci każda partia.
+ */
+export const WORKFORCE_MIN_SHIPMENT = 192;
+export const WORKFORCE_MIN_SHIPMENT_SHARE = 0.05;
+export const WORKFORCE_URGENT_RATIO = 0.9;
 /** Poniżej tej obsady (zapas / N) zakład stoi (D3) — skutek wchodzi w kroku W3. */
 export const WORKFORCE_MIN_RATIO = 0.2;
 

@@ -18,6 +18,7 @@ import {
   RECIPES, RESOURCES, RESOURCE_KEYS, PLANET_YIELD, rollPlanetYield, getResourceMass
 } from '../data/resources.js';
 import { normalizeFaction, isDerelict, getFaction, getFactionPriceMultiplier } from '../data/factions.js';
+import { WORKFORCE_CONTRACT_SECONDS } from '../data/workforce.js';
 
 // ============================================================
 // Profile przemysłowe
@@ -848,6 +849,11 @@ export function stationNetRates(station) {
     add(id, -amount / ECONOMY_CYCLE_SECONDS);
   }
 
+  // Workforce (E16): podaż ośrodka ludności i rotacja kontraktów pełnej obsady.
+  const workforce = station?.workforce;
+  if (workforce?.rate > 0) add('workforce', workforce.rate / ECONOMY_CYCLE_SECONDS);
+  if (workforce?.need > 0) add('workforce', -workforce.need / WORKFORCE_CONTRACT_SECONDS);
+
   return net;
 }
 
@@ -874,6 +880,7 @@ export function stationConsumptionRates(station) {
   for (const [id, amount] of Object.entries(systemDemandFor(industry))) {
     add(id, amount / ECONOMY_CYCLE_SECONDS);
   }
+  if (station?.workforce?.need > 0) add('workforce', station.workforce.need / WORKFORCE_CONTRACT_SECONDS);
   return out;
 }
 
@@ -921,6 +928,29 @@ function runExtraction(station, econ, cycles, rng) {
     const id = rollPlanetYield(planetId, rng);
     if (id) addResource(econ, id, perDraw);
   }
+}
+
+/**
+ * Ośrodek ludności (E16): nowi ludzie na kontraktach, `station.workforce.rate` na cykl
+ * w skali 1 — jak wydobycie, POZA solverem mocy, więc linie przemysłu się nie zmieniają.
+ */
+function runPopulation(station, econ, cycles) {
+  const rate = Number(station?.workforce?.rate) || 0;
+  if (rate > 0) addResource(econ, 'workforce', rate * cycles);
+}
+
+/**
+ * Rotacja kontraktów (E16): z pracującej obsady (najwyżej potrzeba N) co cykl odchodzi
+ * `obsada × cykl / T` — ludzie wracają do domu, a dowóz musi ich zastąpić. Nadmiar ponad
+ * N czeka w kwaterach i nie rotuje. Zapisuje obsadę `r` w magazynie (`econ.workforceRatio`)
+ * — od kroku W3 dławi produkcję, dziś tylko się ją liczy.
+ */
+function runWorkforceRotation(station, econ, cycles) {
+  const need = (Number(station?.workforce?.need) || 0) * Math.max(0, cycles);
+  if (!(need > 0)) return;
+  const staffed = Math.min(amountOf(econ, 'workforce'), need);
+  econ.workforceRatio = staffed / need;
+  takeResource(econ, 'workforce', staffed * ECONOMY_CYCLE_SECONDS / WORKFORCE_CONTRACT_SECONDS);
 }
 
 /**
@@ -1014,8 +1044,10 @@ export function runStationEconomy(station, econ, cycles = 1, rng = Math.random, 
   if (runs <= 0) return false;
 
   runExtraction(station, econ, runs, rng);
+  runPopulation(station, econ, runs);
   runRecipes(station, econ, runs);
   runLifeSupport(station, econ, runs);
+  runWorkforceRotation(station, econ, runs);
   // Po produkcji i zużyciu, czyli na stanie, który naprawdę zostaje w magazynie.
   //
   // `cycles` znaczy DWIE różne rzeczy zależnie od wołającego: w grze to liczba
@@ -1382,7 +1414,8 @@ export function resourcePrice(station, econ, resourceId, options = {}) {
     /** Cena przy mnożniku niedoboru 1, bez rozstępu i reputacji. */
     unitMarket: def.value * profile * duress,
     /** Poniżej tego zapełnienia stacja nie sprzedaje — patrz `offerFloorFill`. */
-    offerFloor: stationWantsResource(station, resourceId) ? PRICE_MODEL.offerFloorFill : 0
+    offerFloor: stationWantsResource(station, resourceId)
+      ? Math.max(PRICE_MODEL.offerFloorFill, Number(def.safetyFill) || 0) : 0
   };
 }
 

@@ -1535,6 +1535,8 @@
       RESOURCES,
       RESOURCE_KEYS,
       RESOURCE_KEYS_BY_TIER,
+      TRADE_RESOURCE_KEYS,
+      CATEGORY as RESOURCE_CATEGORY,
       TIER,
       TIER_LABEL_PL,
       getResourceLabel as resourceLabel,
@@ -14460,6 +14462,8 @@
         resTable.appendChild(headRow);
 
         for (const key of RESOURCE_KEYS_BY_TIER[tier]) {
+          // Workforce (E16) ma własną kartę „Kadry” (W5) — nie leży na liście towarów.
+          if (RESOURCES[key].category === RESOURCE_CATEGORY.CREW) continue;
           const row = document.createElement('tr');
           row.dataset.resourceKey = key;
           const labelCell = document.createElement('td');
@@ -14619,7 +14623,7 @@
         head.appendChild(th);
       }
       table.appendChild(head);
-      for (const key of RESOURCE_KEYS) {
+      for (const key of TRADE_RESOURCE_KEYS) {
         const row = document.createElement('tr');
         row.dataset.marketKey = key;
 

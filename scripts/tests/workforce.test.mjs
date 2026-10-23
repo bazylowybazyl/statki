@@ -3,7 +3,11 @@
  * Liczby z docs/PROPOZYCJA-workforce.md § 1–2 (skala 1; świat mnoży ×60).
  */
 
-import { STATION_INDUSTRY, INDUSTRY_ARCHETYPES, composeFromBuildings } from '../../src/game/stationEconomy.js';
+import {
+  STATION_INDUSTRY, INDUSTRY_ARCHETYPES, composeFromBuildings, runStationEconomy, stationNetRates,
+  stationConsumptionRates, stationWantsResource, resourcePrice
+} from '../../src/game/stationEconomy.js';
+import { buildTrafficWorld } from '../../src/game/traffic/trafficWorld.js';
 import { PLANET_YIELD, RESOURCES, TRADE_RESOURCE_KEYS, RESOURCE_KEYS } from '../../src/data/resources.js';
 import { MARKET_DEF_BY_ID, defineMarket, SHIPYARD_WEIGHT } from '../../src/data/markets.js';
 import {
@@ -11,7 +15,7 @@ import {
 } from '../../src/data/workforce.js';
 import {
   industryBuildings, stationWorkforceNeed, populationRate, rotationPerCycle,
-  workforceCapacity, workforceRatio, workforceEfficiency
+  workforceCapacity, workforceRatio, workforceEfficiency, workforceShipmentWorthIt
 } from '../../src/game/workforce.js';
 import { createSuite, runIfMain } from './harness.mjs';
 
@@ -91,6 +95,44 @@ export function run() {
   t.check('rynek bez potrzeby ma pełną obsadę', workforceRatio(0, 0) === 1);
   t.check('wydajność proporcjonalna od progu 0,2 (D3)',
     workforceEfficiency(0.19) === 0 && workforceEfficiency(0.2) === 0.2 && workforceEfficiency(0.8) === 0.8);
+
+  t.section('6. Gospodarka stacji: podaż źródła i rotacja (W1)');
+  const source = { id: 'zrodlo', factionId: 'terra_nova', workforce: { need: 0, rate: 10, capacity: 1800 } };
+  const sourceEcon = { resources: { workforce: 0 }, capacity: { workforce: 1800 } };
+  runStationEconomy(source, sourceEcon, 1, () => 0.5);
+  t.close('źródło: +10 osób na cykl', sourceEcon.resources.workforce, 10, 1e-9);
+  const plant = { id: 'zaklad', factionId: 'terra_nova', workforce: { need: 2700, rate: 0, capacity: 5400 } };
+  const plantEcon = { resources: { workforce: 4000 }, capacity: { workforce: 5400 } };
+  runStationEconomy(plant, plantEcon, 1, () => 0.5);
+  t.close('rotuje tylko pracująca obsada (N = 2700 → 20 na cykl)', plantEcon.resources.workforce, 3980, 1e-9);
+  t.close('obsada pełna', plantEcon.workforceRatio, 1, 1e-9);
+  const thin = { resources: { workforce: 1350 }, capacity: { workforce: 5400 } };
+  runStationEconomy(plant, thin, 1, () => 0.5);
+  t.close('połowa obsady → r = 0,5', thin.workforceRatio, 0.5, 1e-9);
+  t.close('plan: rotacja w saldzie (−N / T na s)', stationNetRates(plant).workforce, -1, 1e-9);
+  t.close('plan: rotacja w zużyciu brutto', stationConsumptionRates(plant).workforce, 1, 1e-9);
+  t.check('partia 100 osób do dużego rynku przy pełnej obsadzie — za mała',
+    !workforceShipmentWorthIt(plant, 100, 3000, 1));
+  t.check('partia 192 osób do małego rynku — wystarczy', workforceShipmentWorthIt({ workforce: { need: 100 } }, 192, 120, 1));
+  t.check('przy obsadzie < 0,9 leci każda partia', workforceShipmentWorthIt(plant, 10, 2000, 1));
+
+  t.section('7. Świat ruchu: rynki niosą obsadę i popyt (W1)');
+  const world = buildTrafficWorld({ economyScale: 60, capacityMultiplier: 4, seed: 7, ringPorts: true });
+  const byId = id => world.stations.find(s => s.id === id);
+  const earth = byId('earth');
+  const venus = byId('venus');
+  const venusEcon = world.economies.get('venus');
+  t.close('Ziemia: potrzeba w świecie ~68 tys. osób', earth.workforce.need * 60, 68253, 68253 * 0.015);
+  t.check('Ziemia jest źródłem (ring Halo)', earth.workforce.rate === 15.6);
+  t.check('Wenus chce workforce', stationWantsResource(venus, 'workforce'));
+  t.close('Wenus: kwatery 2 N', venusEcon.capacity.workforce, 2 * venus.workforce.need * 60, 1e-6);
+  t.close('Wenus: zapas startowy 1,3 N', venusEcon.resources.workforce, 1.3 * venus.workforce.need * 60, 1e-6);
+  t.check('Wenus nie sprzedaje własnej obsady poniżej 1,2 N',
+    Math.abs(resourcePrice(venus, venusEcon, 'workforce').offerFloor - 0.6) < 1e-9);
+  const earthEcon = world.economies.get('earth');
+  t.check('Ziemia startuje ponad progiem nadwyżki (75% magazynu)',
+    Math.abs(earthEcon.resources.workforce / earthEcon.capacity.workforce - 0.75) < 1e-9);
+  t.check('opuszczony Neptun bez potrzeby', byId('neptune').workforce.need === 0);
 
   return t.results;
 }
