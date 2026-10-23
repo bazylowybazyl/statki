@@ -20,8 +20,9 @@ import '../src/3d/planet3d.assets.js';
 import { SimClock } from '../src/game/simClock.js';
 import {
   planWarpCruise, warpFlybyFactor, createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance,
-  setWarpStyle, warpStyle, warpRulonEnabled, WARP_EXIT, WARP_STYLES
+  setWarpStyle, warpStyle, warpRulonEnabled, warpTripTuneFor, WARP_EXIT, WARP_STYLES
 } from '../src/game/warpDrive.js';
+import { WARP_DRIVES, WARP_DRIVE } from '../src/data/driveModes.js';
 import {
   createCameraRig, createCameraRigTune, stepCameraRig, stepCameraRigWarp, stepCameraRigRoll, noteCameraRigWarp,
   defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, CAMERA_WARP_ROLL_MODES
@@ -59,7 +60,14 @@ window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.r
 
 const PHYS_DT = 1 / 120;
 const ATLAS = SHIP_FLIGHT_SPECS.atlas;          // gracz kalibruje się do tej tabeli: bojowa 500 j/s, hamowanie 200 j/s²
-const WARP_SPEED = 260000;                      // index.html: jedna prędkość warpa (swobodny skok)
+// Napęd warp jak w grze (src/data/driveModes.js — Mk I / II / III: 100 / 175 / 250 tys. j/s w przestrzeni
+// międzyplanetarnej, strefy mnożą). Demo domyślnie Mk I (user 2026-10-23: „jeszcze wolniej, 100k”); ?naped=mk2|mk3.
+const WARP_DRIVE_ID = { mk1: 'warp_mk1', mk2: 'warp_mk2', mk3: 'warp_mk3' }[params.get('naped')] || 'warp_mk1';
+const WARP_SPEED = WARP_DRIVES[WARP_DRIVE_ID].speed;
+// Czas skoku z celem przeskalowany do prędkości napędu (gra: planPlayerWarp — warpTripTuneFor(warp.speed)). Sufit
+// prędkości przelotowej = prędkość napędu (user: „100k”): w grze plan może ją przekroczyć (Mk I do 230 tys. j/s),
+// żeby nadgonić zwolnienia przy ciałach — w demie skok wtedy po prostu trwa dłużej.
+const WARP_TRIP_TUNE = Object.freeze({ ...warpTripTuneFor(WARP_SPEED), vMax: WARP_SPEED });
 const STYLE_INFO = {
   rulon: { k: 'RULON', d: 'dziś w grze — świat zwija się w walec i lejek do statku' },
   ped: { k: 'PĘD', d: 'sama prędkość — nic się nie gnie: smugi, ośrodek, planety mijają' },
@@ -107,7 +115,7 @@ setWarpStyle(S.style);
 
 // Automat warpa — pola jak `warp` gry (index.html): czytają je WarpNurt, dysze (engineVfxSystem) i rig kamery.
 const warp = {
-  state: 'idle', charge: 0, chargeTime: 0.8, speed: WARP_SPEED, cruise: WARP_SPEED,
+  state: 'idle', charge: 0, chargeTime: 0.8, speed: WARP_SPEED, cruise: WARP_SPEED, zone: 1,
   flybyFactor: 1, originBody: null, targetBody: null, tripPlan: null, gear: 1,
   dir: { x: 1, y: 0 }, entryProgress: 0, entryDuration: 0.9, entryBaseSpeed: 0, chargeAngle: NaN, exitRamp: null,
   isBusy() { return this.state !== 'idle' || !!(this.exitRamp && this.exitRamp.active); }
@@ -201,8 +209,46 @@ function bodyStopRadius(p) {
 }
 function planetById(id) { return planets.find((p) => p.id === id) || null; }
 
-// Kąt orbity Marsa: punkt kursu Ziemia → Jowisz na promieniu orbity Marsa, przesunięty o MARS_LATERAL w bok
-// dalszy od Słońca.
+// STREFY WARPA jak w grze (index.html: detectZones → warpMultiplier): w studni grawitacyjnej planety × 0,3 (planeta
+// z ringiem „Halo” — obwiednia ringu + 12 tys. j., inaczej orbitZone.gravity albo zapas z promienia — planetOrbitRadii),
+// w pasie głównym (BELT_DEFINITIONS `main`, promień od Słońca) × 0,8 (WARP_DRIVE.zones), poza nimi × 1.
+const _wellR = new Map();
+let _beltIn = 0, _beltOut = 0;
+function gravityWellRadius(p) {
+  let w = _wellR.get(p);
+  if (w !== undefined) return w;
+  const r = Number.isFinite(p.r) ? p.r : 100;
+  if (RING_PLANET_WORLD_RADII[p.id]) w = computeHaloRingLayout(p).outerRadius + 3000 + 9000;
+  else if (p.orbitZone) w = p.orbitZone.gravity || r * 8;
+  else w = Math.max(r * 2.2, r + 1500) + 4000 + 6000;
+  _wellR.set(p, w);
+  return w;
+}
+function setupZones() {
+  _wellR.clear();
+  const main = BELT_DEFINITIONS.find((b) => b.id === 'main' && b.shape === 'ring');
+  const au = Number(window.WORLD_UNITS_PER_AU) || 0;
+  _beltIn = main && au ? Math.max(50, main.innerAU * au) : 0;
+  _beltOut = main && au ? main.outerAU * au : 0;
+}
+function warpZoneAt(x, y) {
+  for (let i = 0; i < planets.length; i++) {
+    const p = planets[i];
+    const dx = x - p.x, dy = y - p.y;
+    const w = gravityWellRadius(p);
+    if (dx * dx + dy * dy <= w * w) return WARP_DRIVE.zones.planet;
+  }
+  if (_beltOut > 0) {
+    const sx = x - SUN.x, sy = y - SUN.y;
+    const rr = Math.sqrt(sx * sx + sy * sy);
+    if (rr >= _beltIn && rr <= _beltOut) return WARP_DRIVE.zones.belt;
+  }
+  return 1;
+}
+
+// Kąt orbity Marsa: punkt orbity Marsa (promień rM) MARS_LATERAL od kursu Ziemia → Jowisz, po stronie dalszej od
+// Słońca, najbliżej przecięcia kursu z orbitą. (Dawniej: przecięcie przesunięte o MARS_LATERAL w bok i z powrotem
+// rzutowane na orbitę kątem — rzut zjadał większość odstępu, Mars mijał kurs w ~31 tys. j., w studni grawitacyjnej.)
 function marsAngle(rE, rM, rJ) {
   const ex = rE * Math.cos(EARTH_ANGLE), ey = rE * Math.sin(EARTH_ANGLE);
   const jx = rJ * Math.cos(JUPITER_ANGLE), jy = rJ * Math.sin(JUPITER_ANGLE);
@@ -216,7 +262,14 @@ function marsAngle(rE, rM, rJ) {
   const len = Math.sqrt(a);
   let nx = -dy / len, ny = dx / len;
   if (nx * px + ny * py < 0) { nx = -nx; ny = -ny; }   // bok dalszy od Słońca
-  return Math.atan2(py + ny * MARS_LATERAL, px + nx * MARS_LATERAL);
+  // n · P(θ) = n · E + MARS_LATERAL, P(θ) = rM (cos θ, sin θ) → cos(θ − φ) = k
+  const phi = Math.atan2(ny, nx);
+  const k = Math.max(-1, Math.min(1, (nx * ex + ny * ey + MARS_LATERAL) / rM));
+  const a0 = Math.atan2(py, px);
+  const th1 = phi + Math.acos(k);
+  const th2 = phi - Math.acos(k);
+  const near = (th) => Math.abs(Math.atan2(Math.sin(th - a0), Math.cos(th - a0)));
+  return near(th1) <= near(th2) ? th1 : th2;
 }
 
 function buildPlanets() {
@@ -366,7 +419,8 @@ function engageWarp() {
     bodies.push({ along: ox * dirX + oy * dirY, lateral: oy * dirX - ox * dirY, r: b.r });
   }
   const v0 = Math.hypot(e.vx, e.vy);
-  const plan = planWarpCruise({ dist, v0, hullLength: hullLength(), bodies, zone: null, entry: warp.entryDuration, lag: 6, dt: 1 / 30 });
+  const zone = (sd) => warpZoneAt(e.x + dirX * sd, e.y + dirY * sd);
+  const plan = planWarpCruise({ dist, v0, hullLength: hullLength(), bodies, zone, entry: warp.entryDuration, lag: 6, dt: 1 / 30 }, WARP_TRIP_TUNE);
   warp.cruise = plan.speed;
   warp.tripPlan = { dist: Math.round(dist), speed: Math.round(plan.speed), time: +plan.time.toFixed(2) };
   warp.flybyFactor = 1;
@@ -455,7 +509,9 @@ function physicsStep(dt) {
     const ease = smooth01(warp.entryProgress);
     warp.flybyFactor = warpFlybyFactor(e.x, e.y, warp.dir.x, warp.dir.y, flyBodies, nFly);
     trip.flyMin = Math.min(trip.flyMin, warp.flybyFactor);
-    const maxV = (warp.cruise || warp.speed) * warp.flybyFactor;
+    // gra: maxWarpSpeed = przelotowa × strefa × zwolnienie przy ciałach
+    warp.zone = warpZoneAt(e.x, e.y);
+    const maxV = (warp.cruise || warp.speed) * warp.zone * warp.flybyFactor;
     const startV = Math.min(warp.entryBaseSpeed, maxV);
     const target = startV + (maxV - startV) * ease;
     const k = Math.min(1, 6 * dt);
@@ -692,7 +748,8 @@ function updateHud() {
   const lines = [];
   lines.push(`<b>${(1000 / Math.max(1, S.frameMs)).toFixed(0)} FPS</b> · CPU ${S.cpuMs.toFixed(2)} ms · GPU ${(Number(Core3D.gpuFrameMs) || 0).toFixed(2)} ms · draw ${info.drawCalls ?? info.calls ?? 0}${S.paused ? ' · <span class="warn">PAUZA</span>' : ''}${S.timeScale !== 1 ? ` · czas ×${S.timeScale}` : ''}`);
   lines.push(`faza       ${phaseLabel()}`);
-  lines.push(`prędkość   ${v >= 10000 ? `${(v / 1000).toFixed(1)} tys.` : v.toFixed(0)} j/s${warp.state === 'active' ? `  (przelot ${(warp.cruise / 1000).toFixed(0)} tys. × ${warp.flybyFactor.toFixed(2)})` : ''}`);
+  lines.push(`prędkość   ${v >= 10000 ? `${(v / 1000).toFixed(1)} tys.` : v.toFixed(0)} j/s${warp.state === 'active' ? `  (przelot ${(warp.cruise / 1000).toFixed(0)} tys. × strefa ${warp.zone.toFixed(1)} × ${warp.flybyFactor.toFixed(2)})` : ''}`);
+  lines.push(`napęd      ${WARP_DRIVES[WARP_DRIVE_ID].label} — ${(WARP_SPEED / 1000).toFixed(0)} tys. j/s (jak w grze: ?naped=mk1|mk2|mk3)`);
   lines.push(S.free
     ? 'trasa      lot swobodny — W/S ciąg, A/D obrót, Shift dopalacz, CapsLock / 9 warp'
     : `trasa      ${ROUTES[S.route].label} · plan ${trip.planTime.toFixed(1)} s · do celu ${(Math.hypot(trip.endX - atlas.x, trip.endY - atlas.y) / 1000).toFixed(1)} km`);
@@ -882,6 +939,7 @@ window.__warpPed = {
     }
     planets = buildPlanets();
     window.planets = planets;
+    setupZones();
     window.initPlanets3D(planets, SUN);
     // Rozgrzewka kadłubów i efektów (w tym plazmy WARP na dyszach) PO planetach, jak w grze: initPlanets3D dokłada
     // stałe światła sceny, a ich zestaw jest w kluczu każdego pipeline'u — rozgrzane wcześniej `WarpPlume` kompilowały
