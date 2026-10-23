@@ -1,7 +1,7 @@
 // Ring „Halo” w grze (port do gry 2026-09-25): klej między grą (świat 2D,
 // Core3D) a modułem ringu (createHaloRing). Opis: docs/PORT-halo-ring.md.
 //
-//  - ringi Ziemi (Halo), Marsa (ECUMENE) i Jowisza (Fable) — archetyp,
+//  - ringi Ziemi (Halo), Marsa (ECUMENE) i Jowisza (BUDOWA) — archetyp,
 //    promień planety i ziarno z profilu i src/game/haloRingPlanets.js; Mars
 //    i Jowisz to inne ringi (src/3d/haloRing/arch/, decyzja użytkownika
 //    2026-09-27) z tym samym API; grupa w środku planety, obrócona tak, żeby
@@ -48,6 +48,8 @@ export const HALO_GAME = Object.freeze({
   // kreska wokół kilkupikselowej tarczy (demo „Pęd”, 2026-10-23).
   lensMinPx: 30,
   sunElevationDeg: 49,
+  // ring BUDOWA (Jowisz): najwięcej świateł roboczych (spawanie, maszty) w siatce świateł na klatkę
+  workLightCap: 28,
   activateDistance: 420000,   // ring powstaje, gdy środek kadru jest bliżej planety
   hallReach: 9000,            // hale K-7 wystają za krawędź ścian (płyta przed G-01)
   viewMargin: 14000,          // zapas kadru: perspektywa górnej ściany nad płaszczyzną gry
@@ -149,7 +151,7 @@ export class HaloRingGame {
     // (update() spróbuje w następnej klatce).
     if (!this.renderer) return null;
     const spec = HALO_RING_PLANETS[e.key];
-    // Mars = ECUMENE, Jowisz = ring Fable (arch/): inne ringi niż Ziemia,
+    // Mars = ECUMENE, Jowisz = BUDOWA (arch/): inne ringi niż Ziemia,
     // to samo API, geometria przekroju z profilu (jak kolizje i ruch v2)
     const archetype = resolveHaloProfile(spec.profile).archetype || 'halo';
     const ring = (archetype === 'halo' ? createHaloRing : createArchRing)({
@@ -385,9 +387,43 @@ export class HaloRingGame {
       ring.update(dt, { camera: this.camera, viewportHeight: vh, gameView: !free3d });
       this._applySun(e, opts.sun);
       this._portVisuals(e, dt, opts.ship || null, gameDt);
+      if (!lensOn) this._workLights(e, cx, cy, halfW, halfH);
     }
     this.stats.visible = visible;
     this.stats.updateMs = performance.now() - t0;
+  }
+
+  // Ring BUDOWA (Jowisz): spawanie i maszty świateł roboczych w siatce świateł gry (Core3D.fx.lights — oświetlają pył
+  // i gaz ringu oraz kadłuby): przy kadrze, do HALO_GAME.workLightCap; spawanie migocze z zegara ringu w rytmie
+  // sprite'ów spawania (~19 Hz, archTSL), maszty świecą stale. Wysokość przycięta do ±260 j. — pasy kręgosłupa stoją
+  // ~1,3 tys. j. od płaszczyzny, a gaz i pył leżą w niej (światło ma sięgnąć chmury przy kratownicy).
+  _workLights(e, cx, cy, halfW, halfH) {
+    const W = e.ring.workLights;
+    const L = Core3D.fx?.lights;
+    if (!W || !L) return;
+    const c = Math.cos(e.place.rot);
+    const s = Math.sin(e.place.rot);
+    const t = Math.floor((Number(e.ring.uniforms?.uTime?.value) || 0) * 19);
+    const mx = halfW + 800;
+    const my = halfH + 800;
+    let n = 0;
+    for (let i = 0; i < W.length && n < HALO_GAME.workLightCap; i += 4) {
+      const lx = W[i];
+      const ly = W[i + 1];
+      const gx = e.place.x + lx * c - ly * s;
+      const gy = e.place.y - (lx * s + ly * c);
+      if (Math.abs(gx - cx) > mx || Math.abs(gy - cy) > my) continue;
+      const ph = W[i + 3];
+      const z = Math.max(-260, Math.min(260, W[i + 2]));
+      if (ph < 0) {
+        if (L.point(gx, gy, 1.0, 0.88, 0.7, 0.9, 900, z)) n++;
+        continue;
+      }
+      const hv = Math.sin(t * 12.9898 + ph * 7607.3) * 43758.5453;
+      const f = hv - Math.floor(hv);
+      if (f < 0.45) continue;
+      if (L.point(gx, gy, 0.55, 0.72, 1.0, f < 0.85 ? 1.9 : 4.0, 650, z)) n++;
+    }
   }
 
   _applySun(e, sun) {

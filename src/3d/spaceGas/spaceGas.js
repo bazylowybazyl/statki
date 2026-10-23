@@ -19,7 +19,7 @@ import { SpaceGasSim, SPACE_GAS_CELL, SPACE_GAS_SRC } from './spaceGasSim.js';
 import { SpaceGasMaps } from './spaceGasMaps.js';
 import { SpaceGasLayer } from './spaceGasLayer.js';
 import { SpaceGasDust } from './spaceGasDust.js';
-import { BeltGasScene } from './spaceGasBelt.js';
+import { BeltGasScene, createRingGasLook } from './spaceGasBelt.js';
 import { SPACE_GAS_IN, SPACE_GAS_SCENE } from './spaceGasLayout.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
 import { SpaceGasCover } from './spaceGasState.js';
@@ -95,6 +95,8 @@ class SpaceGasSystem {
     const T = this.tune;
     this.scene = new BeltGasScene();
     const sc = this.scene;
+    // wygląd per scena (pole dalekie i kernele te same — przełączane barwy i strojenie w uniformach)
+    this.looks = { [SPACE_GAS_SCENE.belt]: sc.look, [SPACE_GAS_SCENE.ring]: createRingGasLook() };
     this.sim = new SpaceGasSim({ farEnv: (q, U) => sc.farEnv(q, U), N: T.windowCells, cell: SPACE_GAS_CELL, maxHulls: T.maxHullObstacles });
     this.maps = new SpaceGasMaps(this.sim, sc, { w: T.mapW, h: T.mapH });
     this.layer = new SpaceGasLayer(this.maps, { grid: Core3D.fx.grid, layer: 0 });
@@ -146,7 +148,8 @@ class SpaceGasSystem {
   _update(ctx) {
     const t0 = performance.now();
     const IN = this.input, T = this.tune, st = this.stats;
-    const on = !!(T.enabled && IN[I.active] > 0.5 && IN[I.scene] === SPACE_GAS_SCENE.belt);
+    const scene = IN[I.scene];
+    const on = !!(T.enabled && IN[I.active] > 0.5 && (scene === SPACE_GAS_SCENE.belt || scene === SPACE_GAS_SCENE.ring));
     st.active = on;
     SpaceGasCover.belt = 0;
     if (!on) {
@@ -158,7 +161,12 @@ class SpaceGasSystem {
       if (this._scene !== SPACE_GAS_SCENE.none) { this._scene = SPACE_GAS_SCENE.none; this.sim.requestReset(T.warmStart); }
       return;
     }
-    if (this._scene !== IN[I.scene]) { this._scene = IN[I.scene]; this.sim.requestReset(T.warmStart); }
+    if (this._scene !== scene) {
+      this._scene = scene;
+      // pas ↔ ring: wygląd sceny (barwy, zanik kanałów, pył) i pole od nowa
+      if (this.looks[scene] && this.scene.look !== this.looks[scene]) { this.scene.look = this.looks[scene]; this.syncLook(); }
+      this.sim.requestReset(T.warmStart);
+    }
     const fresh = IN[I.serial] !== this._serial;
     this._serial = IN[I.serial];
     const dt = fresh ? IN[I.dt] : 0;
@@ -198,7 +206,7 @@ class SpaceGasSystem {
     this.layer.place(ax + r.cx, ay + r.cy, r.w, r.h);
     this.layer.setVisible(fade > 0.004);
     // płytkie płaty mgły pasa gasną pod gazem (jedna mgła — fog.js)
-    SpaceGasCover.belt = T.fogReplace ? fade : 0;
+    SpaceGasCover.belt = T.fogReplace && scene === SPACE_GAS_SCENE.belt ? fade : 0;
     // pył gazu: po polu (czyta jego prędkość i gęstość) i mapach (światło); tylko z ruchem gazu
     const dustOn = !!(this.dust && T.dust && T.sim && fade > 0.004);
     if (this.dust) {

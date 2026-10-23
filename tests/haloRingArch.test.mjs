@@ -1,5 +1,5 @@
-// Ringi-archetypy (Z6, 2026-09-27): Mars = ECUMENE, Jowisz = ring Fable.
-// Plany z dem (czysta matematyka, bez GPU): ląd, zabudowa, kopuły,
+// Ringi-archetypy (Z6, 2026-09-27): Mars = ECUMENE, Jowisz = BUDOWA (ring w budowie — tests/haloRingBudowa.test.mjs).
+// Plany (czysta matematyka, bez GPU): ląd, zabudowa, kopuły,
 // konstrukcja, bryły portu; port gry (płyty doków, tranzyty) wolny od
 // zabudowy; płaszczyzna gry przecina tylko płytę kolizji.
 // node --test tests/haloRingArch.test.mjs
@@ -19,7 +19,6 @@ import {
   buildEcumeneStructure,
   createEcumenePlan
 } from '../src/3d/haloRing/arch/ecumenePlan.js';
-import { FZ, buildFableCity, buildFableDomes, buildFableStructure, createFablePlan } from '../src/3d/haloRing/arch/fablePlan.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const lights = () => ({ n: 0, pos: [], add(x, y, z) { this.n++; this.pos.push(x, y, z); } });
@@ -57,21 +56,27 @@ test('rama archetypu: prawoskrętna, góra od planety, belka od p0 do p1', () =>
 
 test('ECUMENE: ląd z dema (morze PELAGIC, jeziora, kwartały), wszystko skończone', () => {
   const plan = createEcumenePlan(mars);
-  assert.equal(plan.W, 6300);
+  // ring mniejszy niż ziemski (2026-10-21): wstęga 3 200, podłoga 2 780, kadłub 600 — mapa dzielnic dema przycięta
+  assert.equal(plan.W, 2780);
+  assert.equal(plan.section.KH, 600 / 1600);
   assert.ok(plan.stretch > 1 && plan.stretch < 2);
   // PELAGIC (id 9): środek dzielnicy to morze; HELIX (id 0): plac w centrum
   assert.ok(plan.waterField(plan.LEN * 0.5, 0, 9) < 0);
   assert.equal(plan.districtType(plan.LEN * 0.48, -30 * 3, 0), 7);
-  // arterie z = ±850 × 3
-  assert.equal(plan.districtType(plan.LEN * 0.3, 850 * 3, 4), 6);
+  // arterie: w demie z = ±850 × 3, na węższej wstędze tyle samo od krawędzi podłogi
+  assert.equal(plan.zArt, plan.HW - 200 * 3);
+  assert.equal(plan.districtType(plan.LEN * 0.3, plan.zArt, 4), 6);
   const inst = buildEcumeneInstances(plan);
-  assert.ok(inst.stats.buildings > 3000, `budynki ${inst.stats.buildings}`);
-  assert.ok(inst.stats.trees > 15000, `drzewa ${inst.stats.trees}`);
+  assert.ok(inst.stats.buildings > 600, `budynki ${inst.stats.buildings}`);
+  assert.ok(inst.stats.trees > 4000, `drzewa ${inst.stats.trees}`);
+  // zabudowa dzielnic tylko na podłodze
+  for (const B of inst.per) for (const b of [B.box, B.cyl, B.tree]) for (const [, , z] of centers(b)) assert.ok(Math.abs(z) < plan.HW, `bryła poza podłogą z = ${z}`);
   for (const B of inst.per) for (const b of [B.box, B.cyl, B.tree]) assert.ok(allFinite(b));
   const L = lights();
   const domes = buildEcumeneDomes(plan, inst.per, L);
-  // wszystkie 12 kopuł dema: te na porcie przesunięte wzdłuż dzielnicy albo za płyty
-  assert.equal(domes.length, ECU_DOME_PLANS.length, `kopuły ${domes.length}`);
+  // kopuły dema: te na porcie przesunięte wzdłuż dzielnicy; na węższej wstędze dwie w dzielnicach kompleksów portu
+  // (ELYSIUM, UTOPIA) nie mają miejsca obok płyt — reszta stoi
+  assert.ok(domes.length >= ECU_DOME_PLANS.length - 2, `kopuły ${domes.length}`);
   for (const d of domes) {
     assert.equal(plan.portClass(d.theta, d.z, d.r), 0, `${d.name} pod dokiem`);
     assert.ok(Math.abs(d.z) + d.r < plan.HW, `${d.name} na podłodze`);
@@ -120,53 +125,8 @@ test('ECUMENE: konstrukcja — żebra co segment, radiatory na skrzydłach, FG p
   }
 });
 
-test('Fable: strefy dema (12 układów × 2), zabudowa per komórka, port wolny', () => {
-  const plan = createFablePlan(jupiter);
-  assert.equal(plan.W, 5400);
-  assert.equal(plan.N, 24);
-  const zm = plan.bakeZoneMap(1024, 64);
-  const types = new Set();
-  for (let i = 0; i < zm.length; i += 4) types.add((zm[i] - 8) / 16);
-  for (const t of [FZ.WATER, FZ.PARK, FZ.FOREST, FZ.FARM, FZ.RESIDENTIAL, FZ.CITY, FZ.CORE, FZ.INDUSTRIAL, FZ.PORT, FZ.TECH, FZ.PAD]) {
-    assert.ok(types.has(t), `strefa ${t}`);
-  }
-  const city = buildFableCity(plan);
-  assert.ok(city.stats.buildings > 20000, `budynki ${city.stats.buildings}`);
-  assert.ok(city.stats.trees > 50000, `drzewa ${city.stats.trees}`);
-  let onPad = 0;
-  for (const B of city.per) {
-    assert.ok(allFinite(B.box) && allFinite(B.tree));
-    for (const b of [B.box, B.tree]) for (const [x, y, z] of centers(b)) if (plan.portClass(Math.atan2(y, x), z) === 2) onPad++;
-  }
-  assert.equal(onPad, 0, 'bryły na płytach doków');
-  assert.ok(plan.domes.length >= 10);
-  for (const d of plan.domes) assert.equal(plan.portClass(d.theta, d.u, d.r), 0);
-  const L = lights();
-  const domes = buildFableDomes(plan, city.per, L);
-  assert.equal(domes.length, plan.domes.length);
-  assert.ok(L.n > 100);
-});
-
-test('Fable: konstrukcja jedną partią na stronę; kadłub z żebrami mieści się w płycie kolizji', () => {
-  const plan = createFablePlan(jupiter);
-  const L = lights();
-  const st = buildFableStructure(plan, L);
-  assert.equal(st.bg.struct, st.bg.all);
-  assert.ok(st.bg.all.count > 5000 && st.fg.all.count > 500);
-  assert.ok(allFinite(st.bg.all) && allFinite(st.fg.all));
-  // w płaszczyźnie gry (|z| małe) pod podłogą: nic głębiej niż płyta kolizji
-  const hull = jupiter.radii.floorMid - jupiter.radii.back;
-  for (const [x, y, z] of centers(st.bg.all)) {
-    if (Math.abs(z) > 60) continue;
-    const r = Math.hypot(x, y);
-    assert.ok(r > plan.R - hull - 5, `bryła pod płytą na z≈0: h = ${(r - plan.R).toFixed(0)}`);
-  }
-  for (const [, , z] of centers(st.fg.all)) assert.ok(z > jupiter.z.topIn - 1);
-  assert.ok(L.n > 3000, 'światła pozycyjne');
-});
-
 test('bryły portu: 8 zatok (za krawędzią ringu, na pylonach z płyty portu) i 4 tranzyty w stylu dema', () => {
-  for (const [L, dress] of [[mars, 'ecumene'], [jupiter, 'fable']]) {
+  for (const [L, dress] of [[mars, 'ecumene'], [jupiter, 'budowa']]) {
     const p = buildArchPortBodies(L, L.planetProfile.port, dress);
     assert.ok(p.solid.count > 8 * 40 + 4 * 20, `${dress}: brył ${p.solid.count}`);
     assert.ok(allFinite(p.solid));
@@ -181,7 +141,7 @@ test('bryły portu: 8 zatok (za krawędzią ringu, na pylonach z płyty portu) i
 
 test('shadery archetypów (TSL, zadanie 10): bez GLSL, precyzja (modelViewMatrix), ziarno kwantowane, bez udawanego ruchu', () => {
   // dawne archGLSL.js zastąpione archTSL.js (odpowiedniki TSL dawnych reguł; WGSL — tests/haloRingK7ArchTSL.test.mjs)
-  const files = ['archTSL.js', 'archMaterials.js', 'ecumene.js', 'fable.js', 'archRing.js'];
+  const files = ['archTSL.js', 'archMaterials.js', 'ecumene.js', 'budowa.js', 'budowaPlan.js', 'archRing.js'];
   // kod bez komentarzy (komentarze opisują dawne nazwy GLSL, np. gl_PointSize)
   const src = files.map((f) => read(`src/3d/haloRing/arch/${f}`).replace(/\/\/.*$/gm, '')).join('\n');
   assert.doesNotMatch(src, /\/\* glsl \*\/|new THREE\.ShaderMaterial|gl_FragColor|gl_Position|gl_PointSize|from '\.\.\/haloRingGLSL\.js'|from '\.\/archGLSL\.js'/, 'bez GLSL');
@@ -192,8 +152,6 @@ test('shadery archetypów (TSL, zadanie 10): bez GLSL, precyzja (modelViewMatrix
   assert.ok((lib.match(/cameraProjectionMatrix\.mul\(modelViewMatrix\.mul\(/g) || []).length >= 4, 'wierzchołki przez modelViewMatrix');
   // ziarno instancji kwantowane (szum okien z interpolacji „stałego” atrybutu): floor(vInst.y · 1000 + 0,5)
   assert.match(lib, /const seedI = floor\(mad\(vInst\.y, 1000\.0, 0\.5\)\)/);
-  // ring nie udaje życia: bez smug ruchu aut i impulsów maglevu dema
-  assert.doesNotMatch(read('src/3d/haloRing/arch/fable.js'), /traffic1|traffic2|uTime\.mul\(2\.2\)|uTime \* 2\.2/);
   // partie instancji bez THREE.InstancedMesh (uuid w kluczu programu = NodeBuilder na partię), światła bez THREE.Points
   // (punkt WebGPU ma 1 px)
   assert.doesNotMatch(src, /new THREE\.InstancedMesh\(|new THREE\.Points\(/);
@@ -208,5 +166,5 @@ test('gra: klej tworzy ring-archetyp dla Marsa i Jowisza, Ziemia zostaje na siln
     assert.ok(arch.includes(api), `archRing: ${api}`);
   }
   // jedyny renderer = Core3D (AGENTS.md)
-  assert.doesNotMatch(arch + read('src/3d/haloRing/arch/ecumene.js') + read('src/3d/haloRing/arch/fable.js'), /new THREE\.WebGLRenderer/);
+  assert.doesNotMatch(arch + read('src/3d/haloRing/arch/ecumene.js') + read('src/3d/haloRing/arch/budowa.js'), /new THREE\.WebGLRenderer/);
 });

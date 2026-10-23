@@ -171,7 +171,10 @@ export function buildHaloPortTrafficLayout(ringLayout, station = { id: 'earth', 
       transitAngles: haloTransitAngles().map(gameAngle),
       // pół-rozpiętość płyt kompleksu i tranzytu wzdłuż łuku [j. na floorMid]
       complexHalfArc,
-      transitHalfArc: transit ? transit.halfS : 0
+      transitHalfArc: transit ? transit.halfS : 0,
+      // ring w budowie (Jowisz): przerwy w płycie — oś (kąt w grze) i pół-rozpiętość łuku [j. na floorMid]
+      gaps: (ringLayout.construction?.active ? ringLayout.construction.gaps : [])
+        .map((g) => ({ angle: gameAngle(g.center), halfArc: g.half * ringLayout.radii.floorMid }))
     }
   };
 }

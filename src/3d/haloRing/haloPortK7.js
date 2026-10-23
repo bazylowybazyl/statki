@@ -29,7 +29,7 @@ import {
   Fn, If, Loop, Discard,
   float, int, vec2, vec3, vec4, mat3, mat4,
   attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry,
-  modelViewMatrix, cameraProjectionMatrix,
+  modelViewMatrix, cameraProjectionMatrix, screenSize,
   abs, clamp, cos, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, select, sin, smoothstep, step
 } from 'three/tsl';
 import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
@@ -51,6 +51,12 @@ const HOSE_SIDES = 10;   // wierzchołków w przekroju
 const HOSE_RIB = 96;     // uv.y = metry przewodu od złączki / HOSE_RIB (żebro co 6 j. — shader: fract(uv.y · 16))
 const MAX_SPOTS = 10;    // reflektory hali (haloPortK7Lights.js) — 3 × vec4: pozycja + zasięg, oś + cos zewn., barwa + cos wewn.
 const K7_SPOT_DECK_GAIN = 0.9;    // reflektory na pokładzie (model światła ringu) względem mocy w siatce gry
+const K7_DECK_MEAN = 0.136;       // średnia jasność płyt pokładu (k7Plates: 0,14 · zacieki) — tło piksela cienkiej bryły
+const K7_THIN_PX = 3;             // bryła węższa niż tyle px (oś pozioma) — poszerzona o 1 px z każdej strony, pokrycie we fragmencie
+// … tylko bryła leżąca NA pokładzie (spód ≤ 6 j. K-7 nad nim — pasy, obrysy, znaczniki; zatoki mają te same wysokości):
+// reszta piksela to wtedy naprawdę pokład. Szyny na ciemnych listwach czy listwy ścian z tłem „pokład” jaśniały.
+const K7_DECK_TOP_HUB = k7HeightToZ(0);
+const K7_THIN_ON_DECK = 6;
 const r4 = (x) => +x.toFixed(4);   // stałe jak dawne literały GLSL (f3: 4 miejsca)
 const srgb = (hex) => {
   const c = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
@@ -224,17 +230,33 @@ export function k7Graphs(u) {
     const psz = vec2(260.0).div(cells).toVar();
     const d = min(fcell, vec2(1.0).sub(fcell)).mul(psz).toVar();   // odległość od krawędzi płyty [j.]
     const aa = fw.mul(1.2).add(0.2).toVar();
+    // Ślad piksela w płytach (pół szerokości na oś; fw = fwidth u + fwidth v ≈ 2 j. na px) i zanik wzoru płyt
+    // mniejszych niż ~3 px (6 px → 2,5 px): z daleka losowa jasność, zacieki i jasna krawędź przeskakiwały z płyty na
+    // płytę przy każdym ułamku piksela ruchu kamery (pokład „mrugał”). Średnie z wzoru (Node, 2026-10-23): krawędź ~0,10
+    // w paśmie zaniku, zaciek 0,251 · 0,5.
+    const wC = vec2(fw.mul(0.25)).div(psz).toVar();
+    const far = smoothstep(0.08, 0.2, max(wC.x, wC.y)).toVar();
     const seam = float(1.0).sub(smoothstep(0.35, float(0.35).add(aa), min(d.x, d.y))).toVar();
     const hl = float(1.0).sub(smoothstep(0.7, float(0.7).add(aa), fcell.x.mul(psz.x)))
       .add(float(1.0).sub(smoothstep(0.7, float(0.7).add(aa), float(1.0).sub(fcell.y).mul(psz.y)))).toVar();
     hl.mulAssign(float(1.0).sub(seam));
-    const v = haloHash12(id.add(deck.select(float(17.0), float(3.0)))).toVar();
+    hl.assign(mix(hl, 0.1, far));
+    // Jasność płyty filtrowana śladem piksela (4 sąsiednie płyty, wagi z pokrycia — z bliska ta sama płyta co dawniej,
+    // na granicy płyt przejście szerokości piksela); ślad większy niż płyta — odchylenie maleje jak średnia z płyt.
+    const seed = deck.select(float(17.0), float(3.0));
+    const wb = min(wC, vec2(0.5)).toVar();
+    const i0 = floor(g.sub(wb)).toVar();
+    const tb = clamp(g.add(wb).sub(i0.add(1.0)).div(max(wb.mul(2.0), vec2(1e-4))), 0.0, 1.0).toVar();
+    const v0 = mix(haloHash12(i0.add(seed)), haloHash12(i0.add(vec2(1.0, 0.0)).add(seed)), tb.x);
+    const v1 = mix(haloHash12(i0.add(vec2(0.0, 1.0)).add(seed)), haloHash12(i0.add(vec2(1.0, 1.0)).add(seed)), tb.x);
+    const spread = float(1.0).div(max(wC.x.mul(2.0), 1.0).mul(max(wC.y.mul(2.0), 1.0)).sqrt());
+    const v = mix(v0, v1, tb.y).sub(0.5).mul(spread).add(0.5).toVar();
     const b = abs(fcell.mul(psz).sub(4.4)).toVar();
     const b2 = abs(vec2(1.0).sub(fcell).mul(psz).sub(4.4)).toVar();
     const bolt = float(1.0).sub(smoothstep(0.7, float(0.7).add(aa),
       min(min(length(b), length(b2)), min(length(vec2(b.x, b2.y)), length(vec2(b2.x, b.y)))))).toVar();
     const sc = fcell.sub(vec2(0.8, 0.7)).toVar();
-    const stain = exp(dot(sc, sc).negate().mul(9.0)).mul(haloHash12(id.add(5.0))).toVar();
+    const stain = mix(exp(dot(sc, sc).negate().mul(9.0)).mul(haloHash12(id.add(5.0))), 0.1255, far).toVar();
     const detail = float(1.0).sub(smoothstep(0.8, 3.0, fw)).toVar();
     // jasność płyt jak w teksturze K-7 (sRGB → liniowo): ściany 167–195/255,
     // pokład 66–85/255 na ciemnym tle — pokład ciemny, oznakowanie jasne
@@ -283,7 +305,9 @@ export function k7Graphs(u) {
   // Cieniowanie (dawne k7Shade): v — varyingi materiału (ring, n, hub), group — indeks emisji grupy.
   // glb — hala z Blendera (haloPortK7Glb.js): { ao, plate, aoDirect } (AO z wypieku, waga płyt proceduralnych);
   // bez niego graf jak dawniej (instancje, płyty starej hali — WGSL bez zmian)
-  const k7Shade = (v, albedo0, m, hubN, fuv, fw, group, glb = null) => {
+  // cover — pokrycie piksela przez bryłę poszerzoną w wierzchołkach (AA cienkich brył, instancje): reszta piksela to
+  // średni pokład (albedo, chropowatość, metal, emisja ważone pokryciem — energia jak u bryły węższej niż piksel)
+  const k7Shade = (v, albedo0, m, hubN, fuv, fw, group, glb = null, cover = null) => {
     const N = normalize(v.n).toVar();
     const p = vec3(v.ring).toVar();
     const V = normalize(U.uCamLocal.sub(p)).toVar();
@@ -307,6 +331,12 @@ export function k7Graphs(u) {
     const rough = inRange(m, 6.5, 7.5).select(float(0.38), inRange(m, 9.5, 10.5).select(float(0.45),
       inRange(m, 10.5, 11.5).select(float(0.2), float(0.72)))).toVar();
     const metal = inRange(m, 6.5, 7.5).select(float(0.86), plated.select(float(0.5), float(0.1))).toVar();
+    if (cover) {
+      albedo.assign(mix(k7Palette(float(6.0)).mul(K7_DECK_MEAN), albedo, cover));
+      rough.assign(mix(0.72, rough, cover));
+      metal.assign(mix(0.1, metal, cover));
+    }
+    const coverMix = (lit, own) => (cover ? mix(lit, own, cover) : own);
     const sunVis = H.haloSunVisibility(p.add(N.mul(2.0)), L).toVar();
     const NdL = max(dot(N, L), 0.0).toVar();
     const NdV = max(dot(N, V), 1e-3).toVar();
@@ -336,11 +366,12 @@ export function k7Graphs(u) {
     // odbicie otoczenia: kosmos czarny, planeta poniżej
     color.addAssign(F0.mul(float(0.02).add(float(0.05).mul(float(1.0).sub(max(N.z, 0.0))))).mul(float(1.0).sub(rough)));
     If(inRange(m, 13.5, 18.5), () => {
-      color.assign(k7Emit(m).mul(float(0.85).add(float(0.15).mul(sin(hallLights.z.mul(2.0).add(v.hub.x.mul(0.01)))))));
+      color.assign(coverMix(color, k7Emit(m).mul(float(0.85).add(float(0.15).mul(sin(hallLights.z.mul(2.0).add(v.hub.x.mul(0.01))))))));
     });
-    If(inRange(m, 18.5, 19.5), () => { color.assign(surf.element(int(S.emit).add(int(group.add(0.5)))).xyz); });
+    If(inRange(m, 18.5, 19.5), () => { color.assign(coverMix(color, surf.element(int(S.emit).add(int(group.add(0.5)))).xyz)); });
     If(inRange(m, 10.5, 11.5), () => {
-      color.addAssign(surf.element(S.glow).xyz.add(surf.element(S.glow + 1).xyz.mul(float(0.3).add(float(0.7).mul(float(1.0).sub(hallLights.y))))));
+      const glow = surf.element(S.glow).xyz.add(surf.element(S.glow + 1).xyz.mul(float(0.3).add(float(0.7).mul(float(1.0).sub(hallLights.y)))));
+      color.addAssign(cover ? glow.mul(cover) : glow);
     });
     return max(color, vec3(0.0));
   };
@@ -359,23 +390,40 @@ export function k7Graphs(u) {
 
   // ---- instancje (dawne K7_INSTANCE_VERTEX / _FRAGMENT)
   const vi = k7Varyings();
+  // AA cienkich brył: pół rozmiaru prawdziwej bryły na osiach x / z (−1 = oś nieposzerzona)
+  const vAa = varyingProperty('vec2', 'vK7Aa');
   const instanceVertex = Fn(() => {
     const iA = attribute('iA', 'vec4');     // środek xyz, skala pionowa
     const iB = attribute('iB', 'vec4');     // rozmiar xyz, materiał
     const iQ = attribute('iQ', 'vec4');     // kwaternion
     const iC = attribute('iC', 'vec4');     // grupa
-    const lp = positionGeometry.mul(iB.xyz).toVar();
-    const r = haloQrot(iQ, lp).toVar();
-    const hubP = iA.xyz.add(vec3(r.x, r.y.mul(iA.w), r.z)).toVar();
-    const nl = normalize(normalGeometry.div(max(iB.xyz, vec3(1e-3)))).toVar();
-    const nr0 = haloQrot(iQ, nl).toVar();
-    const nr = vec3(nr0.x, nr0.y.div(max(iA.w, 1e-3)), nr0.z).toVar();
     const g4 = int(iC.x.add(0.5)).mul(4).toVar();
     const c0 = groups.element(g4).toVar();
     const c1 = groups.element(g4.add(1)).toVar();
     const c2 = groups.element(g4.add(2)).toVar();
     const c3 = groups.element(g4.add(3)).toVar();
-    const gp = mat4(c0, c1, c2, c3).mul(vec4(hubP, 1.0)).toVar();
+    const gm = mat4(c0, c1, c2, c3).toVar();
+    // Cienkie bryły na pokładzie (pasy, obrysy i znaczniki — 4–23 j., z daleka ułamek piksela): prostopadłościan obrócony
+    // tylko wokół pionu, ze spodem przy pokładzie, węższy niż K7_THIN_PX na osi poziomej, rośnie o 1 px z każdej strony;
+    // fragment liczy pokrycie piksela przez prawdziwą bryłę (vAa). Bez tego pas trafiał w środek piksela albo nie — przy
+    // ruchu kamery o ułamek piksela znikał i wracał. Wierzchołek prostopadłościanu (BoxGeometry 1³) ma |x| = |z| = 0,5 —
+    // walce i torusy nie.
+    const pg = positionGeometry;
+    const boxYaw = abs(abs(pg.x).sub(0.5)).lessThan(1e-3).and(abs(abs(pg.z).sub(0.5)).lessThan(1e-3))
+      .and(abs(iQ.x).add(abs(iQ.z)).lessThan(1e-4))
+      .and(iA.y.sub(iB.y.mul(0.5).mul(iA.w)).lessThan(K7_DECK_TOP_HUB + K7_THIN_ON_DECK));
+    // j. świata na px w środku bryły (clip.w = głębia widoku w perspektywie, 1 w ortho)
+    const clipC = cameraProjectionMatrix.mul(modelViewMatrix.mul(gm.mul(vec4(iA.xyz, 1.0)))).toVar();
+    const upp = clipC.w.mul(2.0).div(max(abs(cameraProjectionMatrix.element(1).y).mul(screenSize.y), 1.0)).toVar();
+    const thin = boxYaw.select(vec2(step(iB.x, upp.mul(K7_THIN_PX)), step(iB.z, upp.mul(K7_THIN_PX))), vec2(0.0)).toVar();
+    vAa.assign(mix(vec2(-1.0), iB.xz.mul(0.5), thin));
+    const lp = positionGeometry.mul(iB.xyz.add(vec3(thin.x, 0.0, thin.y).mul(upp.mul(2.0)))).toVar();
+    const r = haloQrot(iQ, lp).toVar();
+    const hubP = iA.xyz.add(vec3(r.x, r.y.mul(iA.w), r.z)).toVar();
+    const nl = normalize(normalGeometry.div(max(iB.xyz, vec3(1e-3)))).toVar();
+    const nr0 = haloQrot(iQ, nl).toVar();
+    const nr = vec3(nr0.x, nr0.y.div(max(iA.w, 1e-3)), nr0.z).toVar();
+    const gp = gm.mul(vec4(hubP, 1.0)).toVar();
     const gn = normalize(mat3(c0.xyz, c1.xyz, c2.xyz).mul(nr)).toVar();
     vi.hub.assign(gp.xyz);
     vi.hubN.assign(gn);
@@ -395,7 +443,14 @@ export function k7Graphs(u) {
     const kn = abs(localN).toVar();
     const fuv = kn.y.greaterThan(0.55).select(local.xz, kn.x.greaterThan(0.55).select(local.zy, local.xy)).toVar();
     const fw = fwidth(fuv.x).add(fwidth(fuv.y)).toVar();
-    const c = k7Shade(vi, k7Palette(m), m, normalize(vi.hubN), fuv, fw, vi.group).toVar();
+    // pokrycie piksela przez prawdziwą bryłę na osiach poszerzonych w wierzchołkach (ślad piksela = fwidth położenia;
+    // pochodne przed gałęziami); na licu górnym / dolnym — boki cienkiej bryły zostają w jej barwie
+    const fwL = max(vec2(fwidth(local.x), fwidth(local.z)), vec2(1e-4)).toVar();
+    const aaH = vec2(vAa).toVar();
+    const covAxis = (t, h, f) => h.lessThan(0.0).select(float(1.0),
+      clamp(t.add(f.mul(0.5)), h.negate(), h).sub(clamp(t.sub(f.mul(0.5)), h.negate(), h)).div(f));
+    const cover = kn.y.greaterThan(0.55).select(min(covAxis(local.x, aaH.x, fwL.x).mul(covAxis(local.z, aaH.y, fwL.y)), 1.0), float(1.0)).toVar();
+    const c = k7Shade(vi, k7Palette(m), m, normalize(vi.hubN), fuv, fw, vi.group, null, cover).toVar();
     // soczewka światła hali: emisja z kodu migania (haloPortK7Lights.js), zgaszona — ciemne szkło w barwie światła
     const blink = vec3(vi.blink).toVar();
     If(blink.x.greaterThan(0.5), () => {

@@ -274,7 +274,9 @@ function applyZone(bubble, actor) {
  *   `zoneAt`   — `(x, y) → mnożnik strefy` (studnie planet; `applyZone`), bez niego — bez strefy.
  */
 export function createBubble(options = {}) {
-  const { rings = null, ports = null, docks = null, holdPose = null, records = null, zoneAt = null, ...rest } = options;
+  const {
+    rings = null, ports = null, docks = null, holdPose = null, records = null, zoneAt = null, departTarget = null, ...rest
+  } = options;
   const bubble = {
     config: { ...FLIGHT_DEFAULTS, ...rest },
     /** `courseId` → encja. */
@@ -287,6 +289,11 @@ export function createBubble(options = {}) {
     dockDiscs: new Float64Array(0),
     holdPose: typeof holdPose === 'function' ? holdPose : null,
     zoneAt: typeof zoneAt === 'function' ? zoneAt : null,
+    /**
+     * `(course, actor, out) → bool` (E15): odlot po końcu kursu leci na miejsce postoju statku (`out`: x, y,
+     * angle — slot redy / orbity, `workerBubble.js`) i tam znika; bez haka albo `false` — 90 tys. j. od portu.
+     */
+    departTarget: typeof departTarget === 'function' ? departTarget : null,
     records: { ...DEFAULT_RECORDS, ...(records || {}) },
     pathPool: [],
     /** `courseId` → czas bańki, do którego kurs się nie materializuje. */
@@ -517,6 +524,8 @@ const _q = { x: 0, y: 0, angle: 0, index: 1 };
 const _hold = { x: 0, y: 0, angle: 0 };
 const _pose = { along: 0, across: 0, angle: 0 };
 const _rec = { x: 0, y: 0 };
+/** Miejsce postoju po odlocie (`departTarget`, E15). */
+const _depart = { x: 0, y: 0, angle: 0 };
 
 /**
  * Punkt abstrakcyjny (środek planety z ringiem) → lejek w stronę `towards`.
@@ -1642,8 +1651,19 @@ function beginDeparture(bubble, network, course, actor) {
     d = 1;
   }
   const far = bubble.config.departDistance;
-  routeAround(bubble, path, ax, ay, ax + dx / d * far, ay + dy / d * far, actor.cruise, 0);
-  actor.endKind = END_PASS;
+  if (bubble.departTarget && bubble.departTarget(course, actor, _depart)) {
+    // Statek staje na redzie tego portu (E15): ostatni odcinek wzdłuż osi slotu (dziób jak u postoju), stop na
+    // slocie; encja znika na końcu, a w tym samym buforze stoi tam statek postoju (`workerBubble.js`).
+    const back = Math.max(actor.length * 1.5, 300);
+    const px = _depart.x - Math.cos(_depart.angle) * back;
+    const py = _depart.y - Math.sin(_depart.angle) * back;
+    routeAround(bubble, path, ax, ay, px, py, actor.cruise, 0);
+    pathPush(path, _depart.x, _depart.y, 0, WP.STOP);
+    actor.endKind = END_STOP;
+  } else {
+    routeAround(bubble, path, ax, ay, ax + dx / d * far, ay + dy / d * far, actor.cruise, 0);
+    actor.endKind = END_PASS;
+  }
   finishPath(bubble, actor);
   bubble.stats.departures = (bubble.stats.departures || 0) + 1;
   return true;
@@ -1985,6 +2005,16 @@ export function releaseBubbleCourse(bubble, network, course) {
   const actor = course ? bubble?.actors?.get(course.id) : null;
   if (!actor) return false;
   release(bubble, network, course, actor);
+  return true;
+}
+
+/**
+ * Usuwa encję ODLOTU (po końcu kursu, bez rekordu — `beginDeparture`) od razu: jej statek dostał nowy kurs, który
+ * przejmuje pozę (E15, `workerBubble.js`). Stanowisko pod nią się zwalnia. Zwraca true, gdy encja była w bańce.
+ */
+export function dropDepartedActor(bubble, actor) {
+  if (!bubble || !actor?.departed || !(actor.slot >= 0) || bubble.list[actor.slot] !== actor) return false;
+  removeActor(bubble, actor);
   return true;
 }
 

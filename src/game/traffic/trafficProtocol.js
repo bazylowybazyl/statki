@@ -8,10 +8,12 @@
  * GRA → WORKER
  *   init       { seed, economyScale, capacityMultiplier, piracyPressure,
  *                origin, planetAngles, planetScale, sunRadius,
- *                stations: { id: { factionId?, capacity?, stock? } }, focus? }
+ *                stations: { id: { factionId?, capacity?, stock? } }, focus?, warmup? }
  *              `capacity` i `stock` w jednostkach gry (skala 1) — worker sam
  *              mnoży przez skalę (`worldCapacityFromGame`); `stock` tylko dla
- *              stacji opuszczonych (resztki po mieszkańcach).
+ *              stacji opuszczonych (resztki po mieszkańcach). `warmup` (E15) —
+ *              sekundy świata do przeliczenia w tle po `ready` (`true` =
+ *              `TRAFFIC_WARMUP_SECONDS`; brak = start od zera: testy, narzędzia).
  *   advance    { dt }                 co klatkę z krokami fizyki; pauza = brak
  *   focus      { x, y, r }            środek i promień bańki (~10 Hz)
  *   stock      { seq, stationId, bag, reason }   handel, rozbiórka wraku
@@ -53,13 +55,16 @@
  *
  * WORKER → GRA
  *   ready      { version, clock, step, seed, economyScale, capacityMultiplier,
- *                stations, resources, factions, kinds, berths, buildMs }
+ *                stations, resources, factions, kinds, berths, buildMs, warmup }
  *              `berths`: { stationId: [id stanowiska…] } — `BERTH` kursu to
  *              indeks w liście jego portu (`PORT`), id jak w układach gry.
  *   tick       { clock, steps, stepMs, stats, stockSeq, market, bubble,
- *                wrecks, warWrecks, stationFactions?, stations?, berths? }
+ *                wrecks, warWrecks, stationFactions?, stations?, berths?, warmup }
  *              po każdym kroku świata; `stations` i `berths` (jak w `ready`)
- *              tylko po zmianie listy rynków — przed `market` z nowym układem
+ *              tylko po zmianie listy rynków — przed `market` z nowym układem.
+ *              `warmup { total, seconds, active, ms }` (E15): rozgrzewka świata w tle —
+ *              `seconds` już przeliczone; most dokłada je do swojego zegara (`time`), więc
+ *              czas mostu = czas świata także po rozgrzewce (pułapka 4 reguły `ruch-v2`).
  *   bubble     { clock, count, data, hulls? }            po przesunięciu fokusu
  *   actors     { time, count, data, hulls?, ms, docks?, undocked? }   po każdym `advance` (E6): encje
  *              bańki — `ACTOR_FIELD`, `time` = czas mostu, w którym pozy są ważne;
@@ -77,6 +82,20 @@
  */
 
 export const TRAFFIC_PROTOCOL_VERSION = 1;
+
+/**
+ * ROZGRZEWKA ŚWIATA RUCHU (E15) — ile sekund świata przelicza worker w tle zaraz po `ready`, zanim gracz
+ * wyleci do portu. Świeży świat startuje pusty (kursy rodzą się z gospodarki): po 15 min gry w powietrzu jest
+ * ~90 kursów, po 30 min ~250, po 60 min ~740 (ziarno 7, ×60). Godzina daje grę z pełnym ruchem od pierwszej
+ * klatki; koszt to ~6 s CPU workera (720 kroków po 5 s świata, krok do ~45 ms), liczone kawałkami w menu.
+ * Wołający prosi o nią jawnie (`init.warmup: true`) — symulacja, bramka bilansu i testy startują od zera.
+ */
+export const TRAFFIC_WARMUP_SECONDS = 3600;
+/**
+ * Tryb awaryjny (rdzeń na głównym wątku): bez rozgrzewki — 720 kroków po 12–45 ms to kilka sekund przycinania
+ * menu i pierwszych klatek gry; świat startuje pusty jak przed E15 (rzadka ścieżka: brak `Worker`).
+ */
+export const TRAFFIC_WARMUP_FALLBACK_SECONDS = 0;
 
 export const TRAFFIC_MSG = Object.freeze({
   INIT: 'init',
@@ -260,7 +279,13 @@ export const ACTOR_FLAG = Object.freeze({
    * Kurs skończył się przy stanowisku (rozładunek u celu): encja dokańcza odlot BEZ kursu — odłączanie, korytarz,
    * lot poza bańkę. Numer kursu zostaje (ciągłość encji), ale nie przyjmuje obrażeń i nie awansuje (jak STOCK).
    */
-  DEPARTED: 128
+  DEPARTED: 128,
+  /**
+   * Statek BEZ kursu na postoju przy porcie (E15): statek firmy na redzie albo orbicie postojowej
+   * (`portParking.js`) albo nadmiar zapasu floty na redzie wojskowej (wtedy razem ze STOCK). `ID` ujemny,
+   * stoi (prędkość 0); nietykalny jak STOCK — pocisk staje, bez obrażeń i awansu.
+   */
+  PARKED: 256
 });
 
 /**
