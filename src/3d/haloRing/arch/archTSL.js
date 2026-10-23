@@ -380,7 +380,9 @@ export function makeArchStripNodes({ u, fg = false, atlas = false, map, emap, ti
 // ---------------------------------------------------------------------------
 // Szkło kopuł (instancje półkul): fresnel, odbicie nieba, blask słońca, nocna poświata wnętrza.
 // Przezroczyste, bez zapisu głębi (dawne ARCH_GLASS_VERTEX / _FRAGMENT).
-export function makeArchGlassNodes({ u, fg = false, glassAlpha }) {
+// fresnel — udział odbicia pod kątem w kryciu (kopuły dema 0,5; szkło kopuł przęseł Marsa lżejsze, żeby
+// z kamer 3D było widać podłogę pod nim) — stała grafu (osobny materiał na wartość).
+export function makeArchGlassNodes({ u, fg = false, glassAlpha, fresnel = 0.5 }) {
   const { H, U, archNight } = archLitTSL(u);
   const vPosV = varyingProperty('vec3', 'vArchPos');
   const vNV = varyingProperty('vec3', 'vArchN');
@@ -418,7 +420,7 @@ export function makeArchGlassNodes({ u, fg = false, glassAlpha }) {
       .mul(U.uSunColor).mul(max(vis, vec3(0.2))).toVar();
     col.addAssign(U.uSunColor.mul(vis).mul(spec));
     col.addAssign(U.uHdrWarm.mul(float(0.16).add(float(0.05).mul(band))).mul(night).mul(U.uLayers.y).mul(float(1.0).sub(float(0.6).mul(fres))));
-    const alpha = glassAlpha.add(float(0.5).mul(fres)).add(spec.mul(0.4)).add(float(0.1).mul(night).mul(U.uLayers.y));
+    const alpha = glassAlpha.add(float(fresnel).mul(fres)).add(spec.mul(0.4)).add(float(0.1).mul(night).mul(U.uLayers.y));
     return vec4(col, clamp(alpha, 0.0, 0.85));
   })();
   return { vertexNode, fragmentNode };
@@ -460,6 +462,9 @@ export function makeArchPointNodes({ u, fg = false, pointScale }) {
     const phase = iLight.y;
     const blink = float(0.35).add(float(0.65).mul(step(0.5, fract(U.uTime.mul(0.9).add(phase.mul(4.0)))))).toVar();
     blink.assign(mix(1.0, blink, step(0.25, phase)));
+    // faza ≥ 1: spawanie (ring w budowie) — nieregularne błyski ~19 Hz, szczyty HDR
+    const flick = haloHash12(vec2(floor(U.uTime.mul(19.0)), phase.mul(97.0))).toVar();
+    blink.assign(mix(blink, float(0.08).add(step(0.45, flick).mul(1.2)).add(step(0.85, flick).mul(1.3)), step(1.0, phase)));
     vBlinkV.assign(blink);
     vColV.assign(iCol);
     vPosV.assign(iPos);

@@ -57,21 +57,27 @@ test('rama archetypu: prawoskrętna, góra od planety, belka od p0 do p1', () =>
 
 test('ECUMENE: ląd z dema (morze PELAGIC, jeziora, kwartały), wszystko skończone', () => {
   const plan = createEcumenePlan(mars);
-  assert.equal(plan.W, 6300);
+  // ring mniejszy niż ziemski (2026-10-21): wstęga 3 200, podłoga 2 780, kadłub 600 — mapa dzielnic dema przycięta
+  assert.equal(plan.W, 2780);
+  assert.equal(plan.section.KH, 600 / 1600);
   assert.ok(plan.stretch > 1 && plan.stretch < 2);
   // PELAGIC (id 9): środek dzielnicy to morze; HELIX (id 0): plac w centrum
   assert.ok(plan.waterField(plan.LEN * 0.5, 0, 9) < 0);
   assert.equal(plan.districtType(plan.LEN * 0.48, -30 * 3, 0), 7);
-  // arterie z = ±850 × 3
-  assert.equal(plan.districtType(plan.LEN * 0.3, 850 * 3, 4), 6);
+  // arterie: w demie z = ±850 × 3, na węższej wstędze tyle samo od krawędzi podłogi
+  assert.equal(plan.zArt, plan.HW - 200 * 3);
+  assert.equal(plan.districtType(plan.LEN * 0.3, plan.zArt, 4), 6);
   const inst = buildEcumeneInstances(plan);
-  assert.ok(inst.stats.buildings > 3000, `budynki ${inst.stats.buildings}`);
-  assert.ok(inst.stats.trees > 15000, `drzewa ${inst.stats.trees}`);
+  assert.ok(inst.stats.buildings > 600, `budynki ${inst.stats.buildings}`);
+  assert.ok(inst.stats.trees > 4000, `drzewa ${inst.stats.trees}`);
+  // zabudowa dzielnic tylko na podłodze
+  for (const B of inst.per) for (const b of [B.box, B.cyl, B.tree]) for (const [, , z] of centers(b)) assert.ok(Math.abs(z) < plan.HW, `bryła poza podłogą z = ${z}`);
   for (const B of inst.per) for (const b of [B.box, B.cyl, B.tree]) assert.ok(allFinite(b));
   const L = lights();
   const domes = buildEcumeneDomes(plan, inst.per, L);
-  // wszystkie 12 kopuł dema: te na porcie przesunięte wzdłuż dzielnicy albo za płyty
-  assert.equal(domes.length, ECU_DOME_PLANS.length, `kopuły ${domes.length}`);
+  // kopuły dema: te na porcie przesunięte wzdłuż dzielnicy; na węższej wstędze dwie w dzielnicach kompleksów portu
+  // (ELYSIUM, UTOPIA) nie mają miejsca obok płyt — reszta stoi
+  assert.ok(domes.length >= ECU_DOME_PLANS.length - 2, `kopuły ${domes.length}`);
   for (const d of domes) {
     assert.equal(plan.portClass(d.theta, d.z, d.r), 0, `${d.name} pod dokiem`);
     assert.ok(Math.abs(d.z) + d.r < plan.HW, `${d.name} na podłodze`);
@@ -122,17 +128,31 @@ test('ECUMENE: konstrukcja — żebra co segment, radiatory na skrzydłach, FG p
 
 test('Fable: strefy dema (12 układów × 2), zabudowa per komórka, port wolny', () => {
   const plan = createFablePlan(jupiter);
-  assert.equal(plan.W, 5400);
+  // ring przemysłowy (2026-10-21): wstęga 3 000, podłoga 2 550, kadłub 450 z kratownicą pod pokładem
+  assert.equal(plan.W, 2550);
+  assert.equal(plan.section.truss, true);
   assert.equal(plan.N, 24);
   const zm = plan.bakeZoneMap(1024, 64);
   const types = new Set();
-  for (let i = 0; i < zm.length; i += 4) types.add((zm[i] - 8) / 16);
-  for (const t of [FZ.WATER, FZ.PARK, FZ.FOREST, FZ.FARM, FZ.RESIDENTIAL, FZ.CITY, FZ.CORE, FZ.INDUSTRIAL, FZ.PORT, FZ.TECH, FZ.PAD]) {
+  for (let i = 0; i < zm.length; i += 4) types.add((zm[i] - 4) / 8);
+  // ring przemysłowy (2026-10-22): zieleń i woda dema tylko w kopułach, poza nimi przemysł
+  for (const t of [FZ.RESIDENTIAL, FZ.CITY, FZ.CORE, FZ.INDUSTRIAL, FZ.PORT, FZ.TECH, FZ.PAD, FZ.BUILD,
+    FZ.DECK, FZ.RADIATOR, FZ.TANKS, FZ.COLLECTOR, FZ.POOL]) {
     assert.ok(types.has(t), `strefa ${t}`);
   }
+  for (let y = 0; y < 64; y += 3) {
+    for (let x = 0; x < 1024; x += 7) {
+      const t = (zm[(y * 1024 + x) * 4] - 4) / 8;
+      if (t !== FZ.FOREST && t !== FZ.FARM && t !== FZ.WATER) continue;
+      const s = (x + 0.5) / 1024 * plan.CIRC;
+      const u = ((y + 0.5) / 64 - 0.5) * plan.W;
+      assert.ok(plan.inDome(s, u), `zieleń / woda poza kopułą (${t})`);
+    }
+  }
   const city = buildFableCity(plan);
-  assert.ok(city.stats.buildings > 20000, `budynki ${city.stats.buildings}`);
-  assert.ok(city.stats.trees > 50000, `drzewa ${city.stats.trees}`);
+  // ring w budowie (2026-10-22): przerwy i fronty budowy bez zabudowy
+  assert.ok(city.stats.buildings > 12000, `budynki i bryły przemysłu ${city.stats.buildings}`);
+  assert.ok(city.stats.trees > 3000 && city.stats.trees < 12000, `drzewa (kopuły) ${city.stats.trees}`);
   let onPad = 0;
   for (const B of city.per) {
     assert.ok(allFinite(B.box) && allFinite(B.tree));

@@ -52,9 +52,10 @@ po `terrainHeightAt` (przed odczytem 0), `k7Halls`, `landmarks`; `mapsReady` = b
 razu (`ready` rozwiązane — plan i teren liczą się na CPU, bez map GPU). Biblioteka shaderów: `haloRingTSL.js`
 (`haloRingTSL(ring.uniforms)` → funkcje jak w GLSL, np. `H.haloSunVisibility(p, L)`). Adapter
 `material.uniforms` jest wspólny (`src/3d/tsl/uniformy.js`), przy ringu zostaje blok uniformów
-(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze, że kolider płyty dostaje teren z mapy
-CPU po `ready` (wysokości ≠ 0, `pointInSlab`, `constrainShip`): `node scripts/webgpu/ring-kolizje-gra.mjs
---ring earth|mars|jupiter`.
+(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze kolidera płyty na świecie gry
+(`__haloWorld`, RW-27: Ziemia — teren z mapy CPU ringu obrazu po `ready`, Mars i Jowisz — od razu z planów CPU;
+wysokości ≠ 0, `pointInSlab`, `constrainShip`, w `off` zgodność z obrazem): `node scripts/webgpu/ring-kolizje-gra.mjs
+--ring earth|mars|jupiter [--query renderWorker=1]`.
 
 **Teren (port, zadanie 07):** `HaloTerrain` rysuje NodeMaterial (`makeHaloTerrainNodes` w `haloRingTerrain.js`,
 1:1 z dawnym GLSL: CDLOD z kaskadowym morphem w `Loop`, strefy, parki, zabudowa z odciskiem zestawu
@@ -524,11 +525,13 @@ przed/po: różnica ~0 pikseli, te same draw calle).
   kolizje (`haloRingLayoutFor`), ruch v2 (`buildHaloPortTrafficLayout`, `ringRouter`) i stacja-port
   (`computeHaloPortStation`) dostają ją same. Plan sektorów z dema: ECUMENE 12 dzielnic
   (port = THARSIS), Fable 24 sektory = 2 × 12 stref dema (port = GALILEO).
-- **Geometria** (dema × 3): Mars szerokość 6 720, ściany 162, kadłub 1 600 → obwiednia 33 488 –
-  35 088 (podłoga) – 35 250, stacja-port na R 38 670; Jowisz (promień 48 000) szerokość 5 940,
-  ściany 780, kadłub 1 900 → 52 070 – 53 970 – 54 750, stacja na R 57 552. Długość dzielnicy =
-  obwód / liczba sektorów (rozciągnięcie względem dema 1,44 ECUMENE, 1,12 Fable): wymiary
-  bezwzględne × 3, ułamki długości × rozciągnięcie, częstotliwości szumu / 3.
+- **Geometria** (od 2026-10-21 MNIEJSZA niż ring Ziemi — § „Mniejsze ringi Marsa i Jowisza” niżej): Mars
+  szerokość 3 200 (podłoga 2 780), ściany 162, kadłub 600 → kadłub 34 488 – podłoga 35 088 – krawędź
+  35 250, stacja-port na R 38 670; Jowisz (promień 48 000) szerokość 3 000 (podłoga 2 550), ściany 250,
+  kadłub 450 (kratownica pod pokładem 130) → 54 050 – 54 500 – 54 750, stacja na R 57 552. Do 2026-10-21
+  dema × 3: Mars 6 720 / 162 / 1 600, Jowisz 5 940 / 780 / 1 900. Długość dzielnicy = obwód / liczba
+  sektorów (rozciągnięcie względem dema 1,44 ECUMENE, 1,12 Fable): wymiary bezwzględne × 3, ułamki
+  długości × rozciągnięcie, częstotliwości szumu / 3.
 - **Render** (`src/3d/haloRing/arch/`): `archRing.js` (`createArchRing`, API jak `createHaloRing`:
   hale K-7, reguły FG, wycięcia, słońce, jakość, `terrainHeightAt`), `ecumene.js` + `ecumenePlan.js`,
   `fable.js` + `fablePlan.js` (plan = czysta matematyka, bez Three), `archPort.js` (zatoki
@@ -566,6 +569,126 @@ przed/po: różnica ~0 pikseli, te same draw calle).
   wpada w ring/port/redę (`systemMap.js`, poza Z6 — propozycja ~85 tys.); mapa stref Fable może
   iść do workera; w silniku Halo zostały nieużywane gałęzie dawnej „skórki” Marsa/Jowisza (siarka,
   linie, burza, kratery, kaniony, miasto kopuł, landmarki przemysłowe, kit 7, zatoki „berm”).
+
+### Mniejsze ringi Marsa i Jowisza (decyzja użytkownika 2026-10-21)
+
+Ring Ziemi zostaje największy — tylko tam taki habitat ma sens; ringi Marsa i Jowisza są węższe
+i mają cieńszą obręcz. Rachunek z rozmowy (prawdziwa skala, ring na ~1,15 R planety, ring się nie
+obraca, „dół” = ku planecie; w grze planety są ściśnięte — Mars 30 000 j. = 0,79 × Ziemi, Jowisz
+48 000 j. = 1,27 × — więc to argument lore, nie cel geometrii 1 : 1):
+
+| | grawitacja na ringu | obwód | obciążenie (∝ g·R) | rola |
+|---|---|---|---|---|
+| Ziemia | 0,76 g | 1 × | 1 × | habitat ludzkości; ściany 253 km ≈ 23 wysokości skali atmosfery |
+| Mars | 0,29 g (powierzchnia 0,38 g) | ~24 000 km (0,53 ×) | 0,2 × | ludzie wolą terraformowaną powierzchnię; ring = port, przemysł, stocznie; niskie ściany ECUMENE (~27 km ≈ 1 wysokość skali przy 0,29 g) nie utrzymają otwartej atmosfery |
+| Jowisz | 1,9 g (nie do życia) | ~500 000 km (11 ×) | 28 × | ring PRZEMYSŁOWY z materiału księżyców (Io, Ganimedes, Kallisto): port i rafinerie dla tankowców, załoga w osłoniętych halach, reszta automatyczna; najsilniejsze pasy radiacyjne. Bez infrastruktury w atmosferze (decyzja 2026-10-08: gaz zasysają statki) |
+
+Kamera gry patrzy wzdłuż osi ringu (Z), więc z góry ring to obręcz: widać promień obręczy (z obwiedni,
+`computeHaloEnvelope` — bez zmian) i GRUBOŚĆ RADIALNĄ = ściany + kadłub. Szerokość wstęgi W biegnie do
+kamery — widać ją w kamerach 3D (K) i ujęciach kinowych.
+
+| ring | W (podłoga) | ściany | kadłub | grubość z góry | dawniej |
+|---|---|---|---|---|---|
+| Ziemia (Halo) | 6 000 | 1 500 | 452 | 1 952 | bez zmian |
+| Mars (ECUMENE) | 3 200 (2 780) | 162 | 600 | 762 (−57%) | 6 720 / 162 / 1 600 → 1 762 |
+| Jowisz (Fable) | 3 000 (2 550) | 250 | 450 (pokład 130 + kratownica) | 700 (−74%) | 5 940 / 780 / 1 900 → 2 680 |
+
+Krawędź ścian leży na zewnętrznej granicy obwiedni (habitat na zewnątrz), więc doki (`k7DockBackRadius` =
+krawędź + `dockGap`), 4 tranzyty, strefy orbit i stacja-port stoją tam, gdzie stały; cieńszy kadłub
+przesuwa tylko jego spód (od strony planety), a niższe ściany Jowisza — podłogę o 530 j. na zewnątrz
+(pylony doków krótsze o tyle samo). Płyta kolizji = ten sam profil (`createHaloRingLayout`), cieńsza.
+
+**Jak to zrobione (archetypy bez przebudowy silnika):**
+- ECUMENE (`ecumeneSection` w `ecumenePlan.js`): mapa dzielnic dema NIE jest ściskana — przycięta do
+  środka wstęgi (bryły, drzewa i kwartały w wymiarach dema, bez zniekształceń); arterie (`zArt`, w demie
+  z = ±850 × 3) i siatka katastralna od nich przesunięte do środka o tę samą odległość od krawędzi
+  (`uEcu.w` w shaderze powierzchni). Kopuły dema: promień ≤ podłoga, środek w poprzek przycięty; dwie
+  (ELYSIUM, UTOPIA — dzielnice kompleksów portu) nie mieszczą się obok płyt i odpadają (10 z 12).
+  Konstrukcja, powłoka, rury i tablice sektorów: krańce brył przez `mapZ` (w obrębie podłogi liniowo, poza
+  krawędzią — ściany, skrzydła radiatorów — ta sama odległość od krawędzi) i `mapH` (pod podłogą × kadłub /
+  1 600). Zabudowa: 931 budynków, 5 979 drzew (dawniej 5 092 / 28 610).
+- Fable (`fableSection` w `fablePlan.js`): ściany (WH, WT) i kadłub z układu; mapa stref przycięta do
+  środka (strefy dema liczą się w świecie), kopuły ≤ podłoga. Z profilem `hullTruss: { deck }` (Jowisz)
+  kadłub to pełny POKŁAD 130 j. pod podłogą, a niżej do 450 KRATOWNICA (ażur): żebra przez całą szerokość
+  co segment (~390 j.), słupki i krzyżulce na obu licach, pasy dolne i górne wzdłuż ringu, stężenia na
+  spodzie; radiatory, hangary, moduły i anteny z liczb dema przez `mapU` / `mapH`. Z góry przez lico FG
+  widać prześwity między krzyżulcami. Zabudowa: 10 525 budynków, 33 536 drzew, 17 kopuł (dawniej
+  35 397 / 94 218 / 17).
+- Zrzuty przed / po w prawdziwej grze: `node scripts/webgpu/ringi-archetypy-gra.mjs [--ringi mars,jupiter]
+  [--query renderWorker=1] --out .tmp/ringi/<katalog>` (kamera gry przy porcie i nad obręczą po stronie
+  Słońca, kamery 3D: habitat, wzdłuż, spód, port; pipeline'y synchroniczne w trybie `off` = 0).
+
+**Decyzje (2026-10-22):** Jowisz — ring NIEDOKOŃCZONY („unfinished”, § niżej); Mars — habitaty kryte
+TAK („tak, robić kopuły”; kształt do wyboru — kopuły przęseł, § „Podłogi…”).
+
+### Jowisz w budowie (decyzja użytkownika 2026-10-22: „unfinished”)
+
+- **Geometria** (`haloRingConstruction.js`, czysta matematyka; profil `construction`, układ
+  `layout.construction`): 3 przerwy w płycie w wolnych łukach między kompleksem portu a tranzytem —
+  środki 1,064 / 3,649 / 5,219 rad od kąta stacji, pół-rozpiętości 0,11 / 0,08 / 0,06 rad (przy podłodze
+  54 500: ~12 / ~8,7 / ~6,5 tys. j.), front budowy 0,05 rad (~2,7 tys. j.) na końcu każdego segmentu.
+  Hale K-7, zatoki i tranzyty stoją na segmentach — budowa układu rzuca błąd, gdy przerwa (z frontem
+  i zapasem) wchodzi na port albo tranzyt.
+- **Rozgrywka**: przerwa = PRAWDZIWY przelot. Kolider (`_inTransit`) otwiera ją jak tranzyt (statki,
+  pociski `pointInSlab`); czoło segmentu wypycha wzdłuż ringu do przerwy, gdy krócej niż przez grubość
+  płyty (statek lecący wzdłuż przerwy nie skacze promieniowo o 450 j.); front należy do płyty
+  (kratownica jest przeszkodą). Komunikat kolizji: „PRZELOT TRANZYTEM ALBO PRZERWĄ BUDOWY”. Radar
+  (`radarTerrain.js`) rysuje płytę z lukami przerw. Ruch v2: router (`ringRouter.js`) ma przerwy jako
+  szerokie przeloty (`transitHalfWidths`, zapas `gapMargin` 900 j. od czoła segmentu), reda portu
+  (`portParking.js`) kończy się przed wylotem przerwy (`layout.ring.gaps` z `haloPortTraffic.js`).
+  Autopiloty i AI nie omijają ringu same (zdaje się na kolider) — przerwy tylko dokładają przelotów;
+  TRAVEL TO i studnie warpa liczą ring jako pełny dysk (ostrożnie, bez zmian). Debug:
+  `HaloRingDebug.goto('jupiter', 'gap')`.
+- **Obraz** (Fable): pasy podłogi, pokładu, lic i ścian bez przerw, a na froncie obłożenie kończy się
+  stopniowo (`clad` w `fable.js`: od krawędzi goła kratownica, dalej płyty kładzione losowo, dalej
+  pełne — pokład od 0,2–0,4 frontu, podłoga 0,35–0,6, lica 0,45–0,7, ściany i korony 0,55–0,75);
+  konstrukcja, rury, zabudowa i kopuły tylko na segmentach; plac budowy na frontach
+  (`buildFableStructure` → `site`): roboty-pająki na węzłach gołej kratownicy, roboty spawalnicze
+  wzdłuż krawędzi obłożenia, rusztowania, stosy płyt z Io i stali, kontenery, drony z lampkami,
+  światła ostrzegawcze na czole; bez suwnic. Strefa `FZ.BUILD` (świeże płyty pokładu, pas
+  ostrzegawczy). Światła spawania = światła pozycyjne z fazą ≥ 1 — nieregularne błyski ~19 Hz z
+  pikami HDR (`makeArchPointNodes`).
+- Nie zmienione (kosmetyka, poza tym zadaniem): cień ringu na tarczy planety i okluder ringu w masce
+  słońca to pełny okrąg (`planet3d.assets.js` — pliki sesji Ziemi, `Core3D.setShaftRingOccluder`).
+
+### Podłogi Marsa i Jowisza bliżej ringu Ziemi (2026-10-22)
+
+Porównanie zrzutów podłóg trzech ringów (narzędzie niżej, kadry `3d-podloga`, `3d-podloga-bok`):
+Ziemia ma powietrze, chmury, naturalną paletę i gęsty detal; Jowisz miał „schodki” brzegów stref
+(mapa stref NEAREST, skok o komórkę 5 m dema), kreskówkowe barwy wody i zieleni (parki, lasy
+i jeziora na ringu 1,9 g w pasach radiacyjnych); Mars — dominującą ciemną siatkę ulic i bryły na
+ciemnym tle. Silnik Halo NIE został przemalowany na archetypy (decyzja 2026-09-27 „kompletnie inne
+ringi”) — zmiany są w ich własnych shaderach i planach:
+
+- **Jowisz — ring rafineryjny** (`industrialFloor` profilu): poza kopułami załogi strefy dema
+  zamieniają się (`FZ_INDUSTRIAL` w `fablePlan.js`): las → pole radiatorów (lamele z metalu ze słabym
+  żarem), park i łąka → pokład z estakadami rurociągów (co trzecie pole — rozlewnia zbiorników
+  paliwa), pola → baterie kolektorów, plaża → składowisko rudy z Io (siarka, ochra, sól), jezioro →
+  basen chłodziwa (ciemna, oleista toń z betonową obwódką wanny). Zieleń i woda zostają w kopułach.
+  Mapa stref: typ · 8 + 4 (do 31 typów). Brzegi stref organiczne: współrzędne zakrzywione gładkim
+  szumem, typ z „głosowania” 4 sąsiednich tekseli wagami dwuliniowymi (granica po izolinii).
+  Zabudowa: 17,5 tys. brył (miasto załogi + przemysł), 6 tys. drzew (kopuły) — dawniej 35 tys. /
+  94 tys.
+- **Mars — podłoga miasta**: podwórza kwartałów (jasny bruk w płytach albo ogród, losowo per działka),
+  cień kontaktowy (AO) wokół śladu budynku, ulice z chodnikami przy krawężnikach, jaśniejsza paleta
+  miasta i ulic, ciemniejsza woda.
+- **Mars — kryte habitaty, KOPUŁY PRZĘSEŁ** (decyzja użytkownika „tak, robić kopuły”; `habitatVault`
+  profilu: `apex` 620 j., przęsło `bay` 6 × `segment` 140 = 840 j., `sag` 0,32; `null` = otwarty
+  habitat): ciąg szklanych kopuł na żebrach od korony do korony ścian — w poprzek łuk paraboliczny,
+  wzdłuż ringu każde przęsło wybrzusza się ku środkowi i opada przy żebrach o 32% wzniosu, więc
+  z kamery gry krawędź szkła ma falisty, czytelny obrys (kopuły „koralikami” wzdłuż ringu). Ciągła
+  siatka szkła na odcinek przykrycia (jedna instancja materiału szkła archetypów, lżejszy Fresnel —
+  `fresnel` 0,2, żeby z kamer 3D było widać podłogę), szklane czoła na końcach odcinka, żebra po krzywej
+  szkła ze światłami na szczytach, szprosy wzdłuż ringu (partie konstrukcji). Bez kopuł nad płytami
+  portu i tranzytami (na Marsie ~połowa obwodu), nad kopułami dema i supertallami; przęsło
+  przykryte w całości albo wcale — pokrycie ~28% obwodu. Budynki pod szkłem przycięte do jego
+  wysokości nad obrysem bryły. Szkło leży w z ≤ HW, więc rysuje się w BG jak podłoga.
+
+**Narzędzie**: `node scripts/webgpu/ringi-archetypy-gra.mjs [--ringi earth,mars,jupiter] [--kadry …]
+[--gpu] [--query renderWorker=1] --out .tmp/ringi/<katalog>` — kadry z kamery gry (port, obręcz,
+przerwa i front budowy) i z kamer 3D (habitat, wzdłuż, spód, port, podłoga z bliska, przerwa, front),
+sonda kolizji na świecie gry, pipeline'y synchroniczne (tryb off), `--gpu` — `Core3D.gpuFrameMs`
+i draw calle na stałych kadrach.
 
 ## Po porcie (gameplay)
 

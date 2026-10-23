@@ -21,11 +21,11 @@ import {
   modelViewMatrix, cameraProjectionMatrix,
   abs, clamp, floor, fract, fwidth, length, max, min, mix, normalize, sin, smoothstep, step
 } from 'three/tsl';
-import { haloHash12, haloHash22, haloPureFn } from '../haloRingTSL.js';
+import { haloHash12, haloPureFn } from '../haloRingTSL.js';
 import { archLitTSL, archNodeMaterial } from './archTSL.js';
 import { ArchBatch, archHex, archRingTubeBoxes, archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
-import { FAB_S, buildFableCitySteps, buildFableDomes, buildFableStructure, createFablePlan, fableTubes } from './fablePlan.js';
+import { FAB_DEMO_T, FAB_S, buildFableCitySteps, buildFableDomes, buildFableStructure, createFablePlan, fableTubes } from './fablePlan.js';
 
 const S = FAB_S;
 
@@ -56,7 +56,8 @@ const fw2 = (f) => vec2(fwidth(f.x), fwidth(f.y));
 
 // Materiał powierzchni (dawne FAB_SURFACE_*): zone — tekstura stref (węzeł texture z uv-atrapą),
 // fab — uniform vec4 (obwód s, W, komórka siatki, S).
-export function makeFableSurfaceNodes({ u, zone, fab }) {
+export function makeFableSurfaceNodes({ u, zone, fab, zoneSize = [8192, 256] }) {
+  const ZS = vec2(zoneSize[0], zoneSize[1]);
   const { H, U, archNight, archShade, archWater, archSAbs } = archLitTSL(u);
   const vPosV = varyingProperty('vec3', 'vArchPos');
   const vNV = varyingProperty('vec3', 'vArchN');
@@ -74,12 +75,43 @@ export function makeFableSurfaceNodes({ u, zone, fab }) {
     const Sc = fab.w;
     const ring = vec2(vRingV).toVar();
     const rd = ring.div(Sc).toVar();                     // współrzędne dema (m)
-    const jit = haloHash22(floor(rd.div(5.0))).sub(0.5).mul(9.0).mul(Sc).toVar();
-    const zuv = vec2(ring.x.add(jit.x).div(fab.x), ring.y.add(jit.y).div(fab.y).add(0.5));
-    const zm = zone.sample(zuv).toVar();
-    const type = floor(zm.r.mul(255.0).div(16.0)).toVar();
-    const dens = zm.g.toVar();
-    const extra = zm.b.toVar();
+    // Organiczne brzegi stref (2026-10-22, dawniej skok o komórkę 5 m dema — schodki tekseli): współrzędne
+    // zakrzywione gładkim szumem (±14 m + ±3 m dema), typ z „głosowania” 4 sąsiednich tekseli wagami
+    // dwuliniowymi — granica biegnie po izolinii, nie po krawędziach tekseli NEAREST.
+    const warp = vec2(fabNoise(rd.mul(0.045)), fabNoise(rd.mul(0.045).add(vec2(17.3, 5.1)))).sub(0.5).mul(28.0)
+      .add(vec2(fabNoise(rd.mul(0.21).add(3.7)), fabNoise(rd.mul(0.21).add(9.2))).sub(0.5).mul(6.0)).mul(Sc).toVar();
+    const zuv = vec2(ring.x.add(warp.x).div(fab.x), ring.y.add(warp.y).div(fab.y).add(0.5));
+    const tc = zuv.mul(ZS).sub(0.5).toVar();
+    const i0 = floor(tc).toVar();
+    const fr = fract(tc).toVar();
+    const zAt = (dx, dy) => zone.sample(i0.add(vec2(dx + 0.5, dy + 0.5)).div(ZS)).toVar();
+    const z00 = zAt(0, 0);
+    const z10 = zAt(1, 0);
+    const z01 = zAt(0, 1);
+    const z11 = zAt(1, 1);
+    const tOf = (z) => floor(z.r.mul(255.0).div(8.0)).toVar();
+    const t00 = tOf(z00);
+    const t10 = tOf(z10);
+    const t01 = tOf(z01);
+    const t11 = tOf(z11);
+    const w00 = float(1.0).sub(fr.x).mul(float(1.0).sub(fr.y)).toVar();
+    const w10 = fr.x.mul(float(1.0).sub(fr.y)).toVar();
+    const w01 = float(1.0).sub(fr.x).mul(fr.y).toVar();
+    const w11 = fr.x.mul(fr.y).toVar();
+    const eqT = (a, b) => float(1.0).sub(step(0.5, abs(a.sub(b))));
+    const score = (t) => w00.mul(eqT(t00, t)).add(w10.mul(eqT(t10, t))).add(w01.mul(eqT(t01, t))).add(w11.mul(eqT(t11, t)));
+    const type = t00.toVar();
+    const best = score(t00).toVar();
+    for (const t of [t10, t01, t11]) {
+      const sc = score(t);
+      If(sc.greaterThan(best), () => { best.assign(sc); type.assign(t); });
+    }
+    // gęstość i dodatek: średnia tekseli zwycięskiego typu
+    const wSel = (w, t) => w.mul(eqT(t, type));
+    const gb = z00.gb.mul(wSel(w00, t00)).add(z10.gb.mul(wSel(w10, t10))).add(z01.gb.mul(wSel(w01, t01))).add(z11.gb.mul(wSel(w11, t11)))
+      .div(max(best, 1e-4)).toVar();
+    const dens = gb.x.toVar();
+    const extra = gb.y.toVar();
     const n = normalize(vNV).toVar();
     const night = archNight(vPos).toVar();
     const dist = length(U.uCamLocal.sub(vPos)).toVar();
@@ -93,6 +125,7 @@ export function makeFableSurfaceNodes({ u, zone, fab }) {
     const n2 = fabNoise(rd.mul(0.15)).toVar();
     const isUrban = float(0.0).toVar();
     const water = float(0.0).toVar();       // bool jako 0/1
+    const pool = float(0.0).toVar();        // basen chłodziwa / paliwa (ring przemysłowy)
     const waterDepth = float(0.0).toVar();
     // ---- pochodne linii przed gałęziami stref (patrz nagłówek)
     const gPark = fabFold(rd.add(vec2(n1.mul(40.0), 0.0)), 180.0).toVar();
@@ -179,10 +212,53 @@ export function makeFableSurfaceNodes({ u, zone, fab }) {
       albedo.mulAssign(float(1.0).sub(fabGridAA(gFine, gFineFw, 0.8).mul(0.25)));
     }).ElseIf(type.lessThan(12.5), () => {
       albedo.assign(vec3(0.48, 0.42, 0.29).mul(float(0.9).add(float(0.2).mul(n2))));
-    }).Else(() => {
+    }).ElseIf(type.lessThan(13.5), () => {
       // płyta doku gry: beton z siatką 120 j.
       albedo.assign(vec3(0.26, 0.27, 0.285).mul(float(0.9).add(float(0.12).mul(haloHash12(floor(ring.div(120.0)))))));
       albedo.mulAssign(float(1.0).sub(fabGridAA(gPad, gPadFw, 1.5).mul(0.35)));
+    }).ElseIf(type.lessThan(14.5), () => {
+      // front budowy (ring w budowie): świeże płyty pokładu (ciemniejsze i różne — kładzione partiami),
+      // szwy co 120 j., przy krawędzi obłożenia pas ostrzegawczy (dens = postęp 0 … 1 od krawędzi przerwy)
+      const plate = haloHash12(floor(ring.div(120.0)).add(5.0)).toVar();
+      albedo.assign(mix(vec3(0.12, 0.125, 0.13), vec3(0.22, 0.225, 0.23), plate).mul(float(0.85).add(float(0.25).mul(n2))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gPad, gPadFw, 2.0).mul(0.5)));
+      const hazBand = float(1.0).sub(smoothstep(0.62, 0.7, dens)).mul(smoothstep(0.5, 0.56, dens)).toVar();
+      const stripe = step(0.5, fract(ring.x.add(ring.y).div(Sc.mul(14.0))));
+      albedo.assign(mix(albedo, mix(vec3(0.03, 0.03, 0.03), vec3(0.62, 0.45, 0.06), stripe), hazBand.mul(0.85)));
+    }).ElseIf(type.lessThan(15.5), () => {
+      // pokład (ring przemysłowy): płyty stali z szwami, wydeptane ścieżki serwisowe, żółte linie przejść
+      const plate = haloHash12(floor(rd.div(28.0)).add(11.0)).toVar();
+      albedo.assign(mix(vec3(0.13, 0.135, 0.14), vec3(0.20, 0.205, 0.21), plate).mul(float(0.85).add(float(0.3).mul(n2))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gFine, gFineFw, 0.6).mul(0.35)));
+      albedo.assign(mix(albedo, vec3(0.20, 0.19, 0.17), smoothstep(0.55, 0.8, n1).mul(0.5)));
+      albedo.assign(mix(albedo, vec3(0.50, 0.40, 0.10), fabGridAA(gCell, gCellFw, Sc.mul(0.8)).mul(0.6)));
+    }).ElseIf(type.lessThan(16.5), () => {
+      // pole radiatorów: ciemna krata pod lamelami, smugi nalotu
+      albedo.assign(vec3(0.045, 0.047, 0.052).mul(float(0.8).add(float(0.4).mul(n2))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gFine, gFineFw, 0.5).mul(0.4)));
+      emissive.addAssign(vec3(0.18, 0.025, 0.008).mul(smoothstep(0.6, 0.9, n1)).mul(0.25).mul(U.uLayers.y));
+    }).ElseIf(type.lessThan(17.5), () => {
+      // rozlewnia zbiorników: jasny beton płyt, szwy dylatacji, ciemne obwódki wanien wychwytowych
+      albedo.assign(vec3(0.30, 0.30, 0.29).mul(float(0.88).add(float(0.2).mul(n2))).mul(float(0.92).add(float(0.1).mul(cellHash))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gCell, gCellFw, Sc.mul(2.5)).mul(0.55)));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gFine, gFineFw, 0.4).mul(0.15)));
+    }).ElseIf(type.lessThan(18.5), () => {
+      // składowisko rudy z Io: pył siarki i ochry, ciemniejsze placki żużlu
+      albedo.assign(mix(vec3(0.24, 0.19, 0.07), vec3(0.36, 0.30, 0.10), n1).mul(float(0.8).add(float(0.35).mul(n2))));
+      albedo.assign(mix(albedo, vec3(0.12, 0.115, 0.11), smoothstep(0.6, 0.78, fabNoise(rd.mul(0.03).add(4.0))).mul(0.7)));
+    }).ElseIf(type.lessThan(19.5), () => {
+      // baterie kolektorów: żwir pod płytami, rowy kablowe
+      albedo.assign(vec3(0.085, 0.088, 0.092).mul(float(0.85).add(float(0.3).mul(n2))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gCell, gCellFw, Sc.mul(1.2)).mul(0.5)));
+    }).Else(() => {
+      // basen chłodziwa / paliwa: przy brzegu (głos tekseli < 0,8) betonowa obwódka wanny
+      If(best.greaterThan(0.8), () => {
+        water.assign(1.0);
+        pool.assign(1.0);
+        waterDepth.assign(smoothstep(0.8, 1.0, best).mul(0.7));
+      }).Else(() => {
+        albedo.assign(vec3(0.34, 0.34, 0.33).mul(float(0.9).add(float(0.15).mul(n2))));
+      });
     });
     // drogi i kwartały w strefach miejskich
     const road = fabGridAA(gCell, gCellFw, Sc.mul(5.0)).mul(isUrban).toVar();
@@ -194,7 +270,8 @@ export function makeFableSurfaceNodes({ u, zone, fab }) {
     const hwLane = fabLineAA(hwX, hwFw, 0.6).add(fabLineAA(hwLaneX, hwLaneFw, 0.5)).toVar();
     const crossHw = fabLineAA(crossX, crossFw, 14.0).toVar();
     const hwCol = water.greaterThan(0.5).select(vec3(0.22, 0.22, 0.24), vec3(0.06, 0.06, 0.065));
-    const onPad = step(12.5, type).toVar();
+    // płyta doku i front budowy bez arterii (przemysł ringu przemysłowego — z arteriami)
+    const onPad = step(12.5, type).mul(step(type, 14.5)).toVar();
     const arter = max(hw, crossHw).mul(float(1.0).sub(onPad));
     albedo.assign(mix(albedo, hwCol, arter));
     albedo.assign(mix(albedo, vec3(0.55, 0.5, 0.3), clamp(hwLane, 0.0, 1.0).mul(hw).mul(0.7).mul(float(1.0).sub(onPad))));
@@ -222,7 +299,9 @@ export function makeFableSurfaceNodes({ u, zone, fab }) {
     emissive.addAssign(vec3(1.0, 0.8, 0.5).mul(hw.add(crossHw)).mul(0.10).mul(lightsOn).mul(float(1.0).sub(onPad)));
     const col = vec3(0.0).toVar();
     If(water.greaterThan(0.5), () => {
-      col.assign(archWater(vPos, n, rd, vec3(0.008, 0.035, 0.07), vec3(0.03, 0.15, 0.19), waterDepth));
+      // woda kopuł (dema) albo basen chłodziwa (ciemna, oleista toń)
+      col.assign(archWater(vPos, n, rd, mix(vec3(0.008, 0.035, 0.07), vec3(0.016, 0.034, 0.038), pool),
+        mix(vec3(0.03, 0.15, 0.19), vec3(0.055, 0.095, 0.09), pool), waterDepth));
       col.addAssign(vec3(0.4, 0.35, 0.3).mul(0.02).mul(night).mul(U.uLayers.y));
     }).Else(() => {
       col.assign(archShade(vPos, n, albedo, 0.0));
@@ -331,7 +410,8 @@ function makePanelTextures(kind, seedTag, size = 1024) {
 
 // Pas wokół ringu (ringStrip dema): od (u0, h0) do (u1, h1), normalna (nU, nH)
 // w (z, promień); u = z, h wysokość nad podłogą (na zewnątrz).
-function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 1, repV = 1, extraRing = false } = {}) {
+// keep(θ, i) — quad kolumny i rysuje się tylko, gdy zwróci true (ring w budowie: przerwy i front obłożenia).
+function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 1, repV = 1, extraRing = false, keep = null } = {}) {
   const R = plan.R;
   const cols = segments + 1;
   const rows = across + 1;
@@ -360,6 +440,7 @@ function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 
   }
   const idx = [];
   for (let i = 0; i < segments; i++) {
+    if (keep && !keep(th0 + ((i + 0.5) / segments) * Math.PI * 2, i)) continue;
     for (let j = 0; j < across; j++) {
       const a = i * rows + j;
       const b = a + 1;
@@ -406,9 +487,8 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const lights = { add: (x, y, z, c, s, p) => (z > zTop - 1 ? lightsFG : lightsBG).add(x, y, z, c, s, p) };
   for (const l of portLights) lightsBG.add(l.x, l.y, l.z, l.color, l.size, l.phase);
   const HW = plan.HW;
-  const T = 460 * S;
-  const WH = 260 * S;
-  const WT = 90 * S;
+  // przekrój z układu (fableSection): ściany WH / WT, spód pełnej płyty kadłuba TD (z kratownicą — pokład)
+  const { WH, WT, TD, truss, mapH } = plan.section;
 
   // ---- mapa stref + powierzchnia ----
   const ZW = 8192;
@@ -426,10 +506,21 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   // W, komórka siatki, S
   const uZone = texture(zoneTex, vec2(0.0));
   const uFab = uniform(new THREE.Vector4(plan.CIRC, plan.W, plan.CIRC / Math.round(plan.CIRC / (56 * S)), S));
-  const surfMat = archNodeMaterial('FableSurface', makeFableSurfaceNodes({ u: uniforms, zone: uZone, fab: uFab }), {}, { ...uniforms, uZone, uFab });
+  const surfMat = archNodeMaterial('FableSurface', makeFableSurfaceNodes({ u: uniforms, zone: uZone, fab: uFab, zoneSize: [ZW, ZH] }), {}, { ...uniforms, uZone, uFab });
   disposables.push(surfMat);
+  // Ring w budowie (Jowisz): pasy bez przerw, a na froncie budowy obłożenie kończy się stopniowo —
+  // od krawędzi przerwy goła kratownica, dalej płyty kładzione (losowo w paśmie przejścia), dalej pełne.
+  // clad(od, do): ułamki frontu (0 = krawędź przerwy, 1 = koniec frontu).
+  const K = plan.construction;
+  const quadHash = (i) => { const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
+  const clad = (from, to) => (K.active ? (th, i) => {
+    const d = plan.edgeDist(th) / K.front;
+    if (d < from) return false;
+    if (d >= to) return true;
+    return quadHash(i) < (d - from) / (to - from);
+  } : null);
   const segSurf = Math.round(plan.CIRC / 110);
-  const floorGeo = ringStrip(plan, -HW, 0, HW, 0, 0, 1, segSurf, { across: 6, extraRing: true });
+  const floorGeo = ringStrip(plan, -HW, 0, HW, 0, 0, 1, segSurf, { across: 6, extraRing: true, keep: clad(0.35, 0.6) });
   const floorMesh = new THREE.Mesh(floorGeo, surfMat);
   floorMesh.name = 'FableSurface';
   floorMesh.frustumCulled = false;
@@ -467,14 +558,18 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const hullFG = [];
   const wallBG = [];
   const wallFG = [];
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -T, HW + WT, -T, 0, -1, SEG, { across: 4, repU: circPanels, repV: (plan.W + 2 * WT) / (420 * S) }), 0));
-  hullFG.push(tagAtlas(ringStrip(plan, HW + WT, -T, HW + WT, WH, 1, 0, SEG, { across: 2, repU: circPanels, repV: (T + WH) / (420 * S) }), 0));
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -T, -HW - WT, WH, -1, 0, SEG, { across: 2, repU: circPanels, repV: (T + WH) / (420 * S) }), 0));
-  hullFG.push(tagAtlas(ringStrip(plan, HW, WH, HW + WT, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }), 0));
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, WH, -HW, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }), 0));
-  wallFG.push(tagAtlas(ringStrip(plan, HW, 0, HW, WH, -1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S) }), 1));
-  wallBG.push(tagAtlas(ringStrip(plan, -HW, 0, -HW, WH, 1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S) }), 1));
-  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT + 40 * S, -T + 140 * S, HW + WT - 40 * S, -T + 140 * S, 0, -1, SEG, { across: 2, repU: circPanels * 1.5, repV: 3 }), 0));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, HW + WT, -TD, 0, -1, SEG, { across: 4, repU: circPanels, repV: (plan.W + 2 * WT) / (420 * S), keep: clad(0.2, 0.4) }), 0));
+  hullFG.push(tagAtlas(ringStrip(plan, HW + WT, -TD, HW + WT, WH, 1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S), keep: clad(0.45, 0.7) }), 0));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, -TD, -HW - WT, WH, -1, 0, SEG, { across: 2, repU: circPanels, repV: (TD + WH) / (420 * S), keep: clad(0.45, 0.7) }), 0));
+  hullFG.push(tagAtlas(ringStrip(plan, HW, WH, HW + WT, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25, keep: clad(0.6, 0.75) }), 0));
+  hullBG.push(tagAtlas(ringStrip(plan, -HW - WT, WH, -HW, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25, keep: clad(0.6, 0.75) }), 0));
+  wallFG.push(tagAtlas(ringStrip(plan, HW, 0, HW, WH, -1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S), keep: clad(0.55, 0.75) }), 1));
+  wallBG.push(tagAtlas(ringStrip(plan, -HW, 0, -HW, WH, 1, 0, SEG, { across: 2, repU: wallRep, repV: WH / (300 * S), keep: clad(0.55, 0.75) }), 1));
+  // pokład wewnętrzny nad płytą (bez kratownicy; z kratownicą pod pokładem jest ażur)
+  if (!truss) {
+    const hDeck = mapH(-FAB_DEMO_T + 140 * S);
+    hullBG.push(tagAtlas(ringStrip(plan, -HW - WT + 40 * S, hDeck, HW + WT - 40 * S, hDeck, 0, -1, SEG, { across: 2, repU: circPanels * 1.5, repV: 3 }), 0));
+  }
   const stripMesh = (geos_, mat, name) => {
     const g = mergeGeometries(geos_, false);
     for (const x of geos_) x.dispose();
@@ -494,10 +589,12 @@ export function* buildFableRingSteps({ layout, uniforms, materials, geos, qualit
   const matFG = materials.instanced(true);
   // rury i belki wzdłuż ringu (tori dema) jako odcinki w tej samej partii,
   // bryły portu (zatoki, tranzyty) dopisane do BG — jedno wywołanie na stronę
-  for (const t of fableTubes()) {
-    const z = t.u * S;
+  for (const t of fableTubes(plan.section)) {
+    const z = t.u;
     const color = t.color == null ? [0.35 * 1.2, 0.8 * 1.2, 1.0 * 1.2] : archHex(t.color).map((v) => v * (t.square ? 0.28 : 0.8));
-    archRingTubeBoxes(z > zTop - 1 ? st.fg.all : st.bg.all, plan.R, t.h * S, z, t.r * S, 512, color, t.color == null ? 2 : 0, t.color == null ? 1 : 0.35);
+    // pasy kratownicy (pod pokładem) do krawędzi przerwy, rury i pasy świateł na koronach — za obłożeniem
+    const keep = K.active ? (th) => plan.edgeDist(th) > (t.h > 0 ? K.front * 0.75 : 0) : null;
+    archRingTubeBoxes(z > zTop - 1 ? st.fg.all : st.bg.all, plan.R, t.h, z, t.r, 512, color, t.color == null ? 2 : 0, t.color == null ? 1 : 0.35, keep);
   }
   if (portSolid) st.bg.all.append(portSolid);
   for (const [set, mat, list] of [[st.bg, matBG, bg], [st.fg, matFG, fg]]) {
