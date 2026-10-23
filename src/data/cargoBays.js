@@ -201,6 +201,18 @@ export const CARGO_BAY_HULLS = Object.freeze({
     cargoToday: 900, todayNote: 'klasa ruchu heavy',
     bays: [bay({ id: 'luki', label: 'Luki 3 × 8', x: -128, y: 11, w: 648, h: 344, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
   }),
+  // Megafrachtowiec RUCHU (E12, 2026-10-23 — zgłoszenie „ogromny transportowiec, kilka dronów”: cumował na polu MEGA bez
+  // ładowni): jeden sprite składu 2760 j. (trafficHulls.megafreighter — assets/megafreighter.png), obraz z pustymi lukami
+  // assets/ships/megafreighter_empty.png na tym samym płótnie. Jedna ładownia: dwa rzędy po 10 luków (PNG x 440…1146,
+  // y 270…368 i 478…572) z grzbietem między nimi — w obrazie z ładunkiem grzbiet też niesie kontenery.
+  megafreighter: hull({
+    label: 'Megafrachtowiec (ruch)', family: 'frachtowce', sprite: 'assets/ships/megafreighter_empty.png', png: { w: 1774, h: 887 },
+    renderLength: 2760, profile: null, editorKey: null, bridgeKey: null,
+    // Szerokość kadłuba na płótnie (alfa: y 138…708 px) — mapa przeszkód roju bez maski sprite'a (swarmPort).
+    beamPx: 570,
+    cargoToday: 2400, todayNote: 'klasa ruchu mega',
+    bays: [bay({ id: 'luki', label: 'Luki 2 × 10 + grzbiet', x: -94, y: -22, w: 706, h: 302, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
+  }),
   megafreighter_wagon: hull({
     label: 'Wagon megafrachtowca', family: 'frachtowce', sprite: 'assets/ships/megafreighterwagon_empty.png', png: { w: 1672, h: 941 },
     renderLength: 2760, profile: null, editorKey: null, bridgeKey: null,
@@ -225,7 +237,9 @@ export const TRAFFIC_CARGO_BAY_HULLS = Object.freeze({
   container_ship: 'container_ship',
   long_haul_freighter: 'long_haul_freighter',
   // Od E13 (2026-10-23) proxy rysuje własny sprite Z11 (heavy_freighter.png) — ładownia 3 × 8 tego obrazka.
-  heavy_freighter: 'heavy_freighter'
+  heavy_freighter: 'heavy_freighter',
+  // Megafrachtowiec ruchu: jeden sprite składu (nie pociąg wagonów — ten jest tylko w NPC) — ładownia na luki tego obrazka.
+  megafreighter: 'megafreighter'
 });
 
 /** Kadłub z ładowniami albo null. */

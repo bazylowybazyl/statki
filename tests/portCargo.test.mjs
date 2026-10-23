@@ -11,7 +11,7 @@ import {
   shipInBerth
 } from '../src/game/swarm/berthTransfer.js';
 import { TRAFFIC_CARGO_BAY_HULLS, cargoBayHull, cargoHullBays } from '../src/data/cargoBays.js';
-import { TRAFFIC_HULLS, trafficHullRenderSize } from '../src/data/trafficHulls.js';
+import { TRAFFIC_HULLS, trafficHullFootprint, trafficHullRenderSize } from '../src/data/trafficHulls.js';
 import { SWARM_DRONE_CLASSES, SWARM_LOADED_SPEED } from '../src/data/swarmDrones.js';
 import { applyCargoOpsBlock, cargoOpsBlockSize, packCargoOpsBlock } from '../src/render/blocks/cargoOpsBlock.js';
 import { ACTOR_CARGO_STRIDE, writeBubbleCargo } from '../src/game/traffic/bubbleCargo.js';
@@ -378,16 +378,44 @@ test('regresja 4: slot trzyma kopię stanowiska (rekord ramki z puli), slot bez 
 
 test('gniazda roju poza sylwetką kadłuba: każde gniazdo ma drona, przy pełnej liczbie dronów (96 — MEGA)', () => {
   const pool = createSwarmBerthPool(fakeCore());
-  const cases = [['inter_station_shuttle', 'S'], ['container_ship', 'M'], ['long_haul_freighter', 'L'], ['heavy_freighter', 'MEGA']];
+  const cases = [['inter_station_shuttle', 'S'], ['container_ship', 'M'], ['long_haul_freighter', 'L'], ['heavy_freighter', 'MEGA'], ['megafreighter', 'MEGA']];
   for (const [hull, size] of cases) {
     const P = PORT_CARGO_PADS[size];
-    const yard = berthYardGeometry({ size, padLength: P.padLength, padBeam: P.padBeam, portalGap: P.portalGap, halfBeam: P.yardHalfBeam });
+    // Plac jak w grze (portCargo3D.yardGeoOf): za burtą najszerszego statku pola — obrys kursu (trafficHullFootprint).
+    const half = Math.max(P.yardHalfBeam, trafficHullFootprint(hull).width / 2);
+    const yard = berthYardGeometry({ size, padLength: P.padLength, padBeam: P.padBeam, portalGap: P.portalGap, halfBeam: half });
     const s = pool.activate({ key: hull, seed: 1, hull, mode: 'unload', fill: 1, resourceId: 'steel', progress: 0, remainingSec: 5,
       ship: { u: 0, v: 0, angle: 0 }, yard, berth: { x: 0, y: 0, angle: 0 } });
     assert.equal(pool.stats.padsBlocked, 0, `${hull}: gniazdo pod kadłubem / placem`);
     if (size === 'MEGA') assert.equal(s.drones, SWARM_POOL_TUNE.dronesPerSlot, 'MEGA: 96 dronów w ciasnym oknie');
     pool.release(s, 'test');
   }
+});
+
+test('olbrzym przy niskim wypełnieniu nie dostaje „kilku dronów”; pełny ciężki frachtowiec bez obcinania kontenerów', () => {
+  const pool = createSwarmBerthPool(fakeCore());
+  const P = PORT_CARGO_PADS.MEGA;
+  const yardFor = (hull) => berthYardGeometry({ size: 'MEGA', padLength: P.padLength, padBeam: P.padBeam, portalGap: P.portalGap,
+    halfBeam: Math.max(P.yardHalfBeam, trafficHullFootprint(hull).width / 2) });
+  const at = (hull, fill, remainingSec = 101) => pool.activate({ key: hull + fill, seed: 1, hull, mode: 'unload', fill, resourceId: 'steel',
+    progress: 0, remainingSec, ship: { u: 0, v: 0, angle: 0 }, yard: yardFor(hull), berth: { x: 0, y: 0, angle: 0 } });
+  // Kurs ciężkiego frachtowca z 4% ładunku (typowe 0,04–0,26 w świecie ruchu): 31 warstw — dawniej 6 dronów.
+  const h = at('heavy_freighter', 0.04);
+  assert.ok(h.drones >= 30, `ciężki 4%: ${h.drones} dronów`);
+  pool.release(h, 't');
+  // Megafrachtowiec ruchu (kurs ~20%) ma ładownię i rój.
+  const m = at('megafreighter', 0.2);
+  assert.ok(m.drones >= 51 && pool.stats.unitsCut === 0, `mega 20%: ${m.drones} dronów, obcięte ${pool.stats.unitsCut}`);
+  pool.release(m, 't');
+  // Prom zostaje mały.
+  const sh = pool.activate({ key: 'p', seed: 1, hull: 'inter_station_shuttle', mode: 'unload', fill: 1, resourceId: 'steel', progress: 0,
+    remainingSec: 101, ship: { u: 0, v: 0, angle: 0 }, yard: berthYardGeometry({ size: 'S', padLength: PORT_CARGO_PADS.S.padLength,
+      padBeam: PORT_CARGO_PADS.S.padBeam, portalGap: 0, halfBeam: PORT_CARGO_PADS.S.yardHalfBeam }), berth: { x: 0, y: 0, angle: 0 } });
+  assert.equal(sh.drones, 2);
+  pool.release(sh, 't');
+  const full = at('heavy_freighter', 1);
+  assert.equal(pool.stats.unitsCut, 0, 'pełna ładownia ciężkiego frachtowca w zakresie slotu');
+  assert.equal(full.units, 3040);
 });
 
 test('regresja 2: przechwyt (poza w drodze na stanowisko) przechodzi przez blok — obraz bez roju na żywo', () => {

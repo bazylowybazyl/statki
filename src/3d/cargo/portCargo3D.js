@@ -150,12 +150,18 @@ export function createPortCargo3D(Core3D) {
     return v;
   }
 
+  // Plac pola: stoły, taśmy i gniazda za burtą NAJSZERSZEGO statku przy polu w tej klatce (yard._shipHalf — obrys kursu),
+  // nie tylko za szerokością klasy pola: megafrachtowiec (połowa 456 j.) przykrywał stoły pola MEGA (±318 j.).
+  const _yardSpec = { size: 'M', padLength: 0, padBeam: 0, portalGap: 0, halfBeam: 0 };
   function yardGeoOf(yard) {
+    const half = Math.max(yard.halfBeam || 0, yard._shipHalf || 0);
     let g = yard._yardGeo;
     if (!g || g._size !== yard.size || g.padLength !== yard.padLength || g.padBeam !== yard.padBeam
-      || g._portal !== yard.portalGap || g._half !== yard.halfBeam) {
-      g = berthYardGeometry(yard);
-      g._size = yard.size; g._portal = yard.portalGap; g._half = yard.halfBeam;
+      || g._portal !== yard.portalGap || g._half !== half) {
+      _yardSpec.size = yard.size; _yardSpec.padLength = yard.padLength; _yardSpec.padBeam = yard.padBeam;
+      _yardSpec.portalGap = yard.portalGap; _yardSpec.halfBeam = half;
+      g = berthYardGeometry(_yardSpec);
+      g._size = yard.size; g._portal = yard.portalGap; g._half = half;
       yard._yardGeo = g;
     }
     return g;
@@ -318,7 +324,7 @@ export function createPortCargo3D(Core3D) {
       const yardPhase = _yardPhase;
       const nYard = frame ? frame.yardCount : 0;
       yardPhase.length = nYard;
-      for (let i = 0; i < nYard; i++) yardPhase[i] = 0;
+      for (let i = 0; i < nYard; i++) { yardPhase[i] = 0; frame.yards[i]._shipHalf = 0; }
       // 1) Przeładunki tej klatki: czasy postoju, kandydaci do roju na żywo (w kadrze, wg odległości od środka).
       _byKey.clear();
       _seen.clear();
@@ -332,11 +338,16 @@ export function createPortCargo3D(Core3D) {
         const e = timingFor(op);
         if (!e.tm) continue;
         op._yard = yard;
+        if (op.halfBeam > (yard._shipHalf || 0)) yard._shipHalf = op.halfBeam;
         op._e = e;
         op._berth = op._berth || { x: 0, y: 0, angle: 0 };
         op._berth.x = yard.x; op._berth.y = yard.y; op._berth.angle = yard.angle;
         const r = Math.max(yard.padLength, yard.padBeam) * 0.6;
+        // Kolejka do slotu roju: odległość od środka kadru ważona wielkością ładowni — olbrzym (ciężki frachtowiec,
+        // megafrachtowiec) wygrywa z kontenerowcem bliżej środka (przy 4 slotach Średniej zostawał bez dronów).
         op._dist = Math.abs(yard.x - camG.x) / halfW + Math.abs(yard.y - camG.y) / halfH;
+        op._size = e.tm.geo.containers;
+        op._prio = op._dist / (1 + Math.log2(1 + op._size / 64));
         op._inView = inView(yard.x, yard.y, r + T.cullPad, camG, halfW, halfH);
         op._keep = inView(yard.x, yard.y, r, camG, halfW * (1 + T.keepMargin), halfH * (1 + T.keepMargin));
         _seen.add(op.seed);
@@ -366,21 +377,29 @@ export function createPortCargo3D(Core3D) {
         live.delete(victim.key);
         pool.release(victim, 'preset grafiki');
       }
-      _cand.sort((a, b) => a._dist - b._dist);
+      _cand.sort((a, b) => a._prio - b._prio);
       // Sloty na żywo dopiero po rozgrzaniu roju (siatki, kernele — faza 'after' rejestru): bez kompilacji w klatce.
       let budget = cap > 0 && api.swarmWarm && api.bayWarm ? T.activatePerFrame : 0;
       for (let i = 0; i < _cand.length && budget > 0; i++) {
         const op = _cand[i];
         if (live.has(op.seed)) continue;
         if (live.size >= cap) {
-          // Wywłaszczenie: slot przeładunku poza kadrem (albo już bez ramki) ustępuje stanowisku w kadrze.
+          // Wywłaszczenie: slot przeładunku poza kadrem (albo już bez ramki) ustępuje stanowisku w kadrze; w kadrze —
+          // slot co najmniej 4× mniejszego statku, który nie pracuje (rój przed startem albo po końcu: drony w gniazdach).
           let victim = null;
           for (const s of pool.slots) {
             if (!s.active) continue;
             const o2 = _byKey.get(s.key);
             if (!o2 || !o2._keep) { victim = s; break; }
           }
-          if (!victim) break;
+          if (!victim) {
+            for (const s of pool.slots) {
+              if (!s.active || (s.started && !s.finished)) continue;
+              const o2 = _byKey.get(s.key);
+              if (o2 && o2._size * 4 <= op._size && (!victim || o2._size < _byKey.get(victim.key)._size)) victim = s;
+            }
+          }
+          if (!victim) continue;
           live.delete(victim.key);
           pool.release(victim, 'wywłaszczenie');
         }
