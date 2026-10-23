@@ -225,6 +225,34 @@ test('compileNow (klatka zero): od razu, bez kolejki — widoczne z warstwy, roz
   assert.equal(stats.flush.wLocie, 1, 'limit czasu minął przed pipeline’em');
 });
 
+test('drainNow (klatka zero): reszta kolejki od razu — także siatki ukryte do haka passa; wpisy after zostają w tle', async () => {
+  const { core, calls } = fakeCore({ hang: true });
+  const w = new Rozgrzewka(core);
+  w.start();
+  await w.flush({ timeoutMs: 20 });                     // pierwszy flush (menu): faza 'after' otwarta
+  const dust = mesh('pył', 0, { visible: false });       // pył kosmiczny: odsłaniany dopiero w haku passa ortho
+  const fleet = mesh('flota', 0);
+  w.add({ name: 'pył kosmiczny', objects: () => [dust] });
+  w.add({ name: 'modele floty', objects: () => [fleet], phase: 'after' });
+  const n = w.drainNow();                               // synchronicznie — przed jakimkolwiek zadaniem w tle
+  const names = calls.map((c) => c.obj.name);
+  assert.ok(n >= 1 && names.includes('pył'), 'wpis z kolejki skompilowany przed rysunkiem klatki zero');
+  assert.ok(!names.includes('flota'), "wpis 'after' zostaje w tle");
+  assert.equal(dust.visible, false, 'stan wraca');
+  // Przed pierwszym flushem (klatka zero przed „przygotowaniem” workera): wpisy 'loading' też — to już gra.
+  const two = fakeCore({ hang: true });
+  const w2 = new Rozgrzewka(two.core);
+  w2.start();
+  const hall = mesh('pył hal', 0);
+  w2.add({ name: 'pył hal K-7', objects: () => [hall], phase: 'loading' });
+  w2.drainNow();
+  assert.deepEqual(two.calls.map((c) => c.obj.name), ['pył hal']);
+  // Core3D: klatka zero dokańcza kolejkę przed przeglądem widocznych siatek.
+  const fn = read('src/3d/core3d.js');
+  const body = fn.slice(fn.indexOf('  prewarmVisibleNow() {'), fn.indexOf('  prewarmShadowPass(object3d) {'));
+  assert.ok(body.indexOf('w.drainNow()') > 0 && body.indexOf('w.drainNow()') < body.indexOf('w.compileNow('), 'drainNow przed compileNow');
+});
+
 test('worker renderu: stałe światła sceny przed urządzeniem, klatka zero rozgrzewa to, co widać, przed rysunkiem', () => {
   const worker = read('src/render/render.worker.js');
   // latarnie stacji pirackiej (world3d.js) w scenie od jej powstania, jak initWorld3D() strony przy starcie: zestaw

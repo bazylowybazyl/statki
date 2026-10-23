@@ -38,6 +38,8 @@
  *   GRACZ NA RYNKU I ZAPIS (E7) — `economySave.js`, `tradeSummary.js`
  *   init.restore         zapis ekonomii (`exportEconomyState`) nakładany na świeży świat; magazyny
  *                        rynków, których jeszcze nie ma (stacja gracza), po ich `market-add`
+ *   economy-restore { requestId, state }  ten sam zapis na świat już zbudowany (gra: wybór w menu, przed
+ *                        pierwszym krokiem); odpowiedź `economy-restore-result { restored }`
  *   economy-save    { requestId }   stan do zapisu gry
  *   trade-summary   { requestId }   agregat dla komputera handlowego (trasy, porty, okazje)
  *
@@ -104,6 +106,8 @@ export const TRAFFIC_MSG = Object.freeze({
   // Gracz na rynku i zapis (E7).
   ECONOMY_SAVE: 'economy-save',
   ECONOMY_SAVE_RESULT: 'economy-save-result',
+  ECONOMY_RESTORE: 'economy-restore',
+  ECONOMY_RESTORE_RESULT: 'economy-restore-result',
   TRADE_SUMMARY: 'trade-summary',
   TRADE_SUMMARY_RESULT: 'trade-summary-result',
 
@@ -251,7 +255,12 @@ export const ACTOR_FLAG = Object.freeze({
    * Okręt z zapasu floty frakcji portu na padzie hali K-7 (`placeFleetStock`, Z2) — BEZ kursu: stoi,
    * `ID` ujemny (nie numer kursu), nie przyjmuje obrażeń i nie idzie do `destroyed`.
    */
-  STOCK: 64
+  STOCK: 64,
+  /**
+   * Kurs skończył się przy stanowisku (rozładunek u celu): encja dokańcza odlot BEZ kursu — odłączanie, korytarz,
+   * lot poza bańkę. Numer kursu zostaje (ciągłość encji), ale nie przyjmuje obrażeń i nie awansuje (jak STOCK).
+   */
+  DEPARTED: 128
 });
 
 /**

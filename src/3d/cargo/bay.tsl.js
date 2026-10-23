@@ -107,9 +107,18 @@ function buildInteriorMaterial() {
     vN.assign(attribute('normal', 'vec3'));
     return positionGeometry;
   })();
-  m.fragmentNode = Fn(() => {
-    const P = positionLocal.toVar();
-    const N = normalize(vN).toVar();
+  m.fragmentNode = bayInteriorFragment(uBay, uGridA, uGridB, positionLocal, vN);
+  return m;
+}
+
+/**
+ * Fragment wnętrza (wspólny dla rigu ładowni i partii floty — bayBatch.tsl.js): uBay — indeks rekordu w tablicy
+ * ładowni (int), uGridA / uGridB — siatka slotów, pNode — pozycja w układzie ładowni, nNode — normalna w tym układzie.
+ */
+export function bayInteriorFragment(uBay, uGridA, uGridB, pNode, nNode) {
+  return Fn(() => {
+    const P = pNode.toVar();
+    const N = normalize(nNode).toVar();
     const rec = bayRecord(uBay);
     const hA = rec.r1.x;
     const hB = rec.r1.y;
@@ -189,7 +198,6 @@ function buildInteriorMaterial() {
     const col = cargoShade(albedo, N, Ll, vis, occl, lamp, specK, float(28.0));
     return vec4(cargoSurfaceCap(col).add(emis), 1.0);
   })();
-  return m;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +229,17 @@ function buildLeafMaterial() {
     vFace.assign(attribute('aFace', 'float'));
     return positionGeometry;
   })();
-  m.fragmentNode = Fn(() => {
+  m.fragmentNode = bayLeafFragment(uBay, uUV, uDims, uInfo, vU, vN, vFace);
+  return m;
+}
+
+/**
+ * Fragment skrzydła wrót (wspólny dla rigu i partii floty): uUV — wycinek sprite'a (tekstura obiektu `uSprite`),
+ * uDims — L, W, grubość, uInfo — strona, przy osi, kieszeń, środek skrzydła w b; vU — pozycja w pudle jednostkowym,
+ * vN — normalna, vFace — ściana (aFace).
+ */
+export function bayLeafFragment(uBay, uUV, uDims, uInfo, vU, vN, vFace) {
+  return Fn(() => {
     const u = vU.toVar();
     const t = u.xy.add(0.5);
     const suv = mix(uUV.xy, uUV.zw, t).toVar();
@@ -286,7 +304,6 @@ function buildLeafMaterial() {
     const outc = select(face.equal(0).and(spr.a.lessThan(0.5)), vec3(0.02), cargoSurfaceCap(col)).add(emis);
     return vec4(outc, 1.0);
   })();
-  return m;
 }
 
 let _interiorTemplate = null;

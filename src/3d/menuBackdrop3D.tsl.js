@@ -222,12 +222,15 @@ export function createMenuEarthMaterial(ring, tex, { pitMode = 0, shared = null,
     surf.assign(mix(surf, cloudCol, cloud.mul(0.94)));
     // cienka atmosfera wzdłuż promienia: błękit w dzień, zachód przy terminatorze
     const mu = mix(max(dot(Ng, V), 0.0), muHole, pitMode === 2 ? pitOwn : float(0.0));
-    const airmass = float(1.0).div(mu.add(0.045));
+    // we wnętrzu gryzu powietrze tylko nad otworem (jak w grze — EARTH_BITE_TSL.pitAir)
+    const airmass = pitMode === 2 ? float(1.0).div(mu.add(0.045)).mul(mix(1.0, EARTH_BITE_TSL.pitAir, pitOwn)) : float(1.0).div(mu.add(0.045));
     const ext = exp(vec3(...airExt).negate().mul(airmass)).toVar();
     const dayF = smoothstep(-0.1, 0.3, NgL);
     const sunsetF = smoothstep(-0.2, 0.0, NgL).mul(float(1.0).sub(smoothstep(0.0, 0.28, NgL))).toVar();
     const scat = mix(vec3(...airDay), vec3(1.0, 0.42, 0.16), sunsetF).mul(dayF.mul(0.9).add(sunsetF.mul(0.35))).mul(ringVis);
-    surf.assign(surf.mul(ext).add(scat.mul(U.uSunColor).mul(vec3(1.0).sub(ext)).mul(0.62)));
+    const veil = scat.mul(U.uSunColor).mul(vec3(1.0).sub(ext)).mul(0.62);
+    // we wnętrzu gryzu welon bez zabarwienia (jak w grze)
+    surf.assign(surf.mul(ext).add(pitMode === 2 ? mix(veil, vec3(dot(veil, LUMA)), pitOwn) : veil));
     if (pitMode === 1) Discard(biteC.x.lessThan(biteC.w.add(EARTH_BITE_TSL.cutPad)));
     return vec4(max(surf, vec3(0.0)), 1.0);
   })();

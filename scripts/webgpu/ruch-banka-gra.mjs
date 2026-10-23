@@ -5,7 +5,10 @@
 // Vite + headless Chrome z WebGPU (CDP), gra swobodna.
 //
 //   node scripts/webgpu/ruch-banka-gra.mjs [--query renderWorker=1] [--out .tmp/ruch-banka] [--port 5461]
-//        [--rozgrzewka 2400] [--obserwacja 40] [--porty mars,jupiter,luna,ceres,mercury,vesta]
+//        [--rozgrzewka 2400] [--obserwacja 40] [--porty mars,jupiter,luna,ceres,mercury,vesta] [--odlot 1|tylko]
+//
+// `--odlot 1` — koniec kursu przy stanowisku (rozładunek u celu, flaga DEPARTED): kadr na statku, zrzuty co 0,25 s
+// przez odłączanie i początek lotu (`08-odlot-NNN.png`), pozy w każdym kroku (ciągłość); `tylko` — sam ten etap.
 //
 // Przebieg: start gry → świat ruchu rozgrzany `--rozgrzewka` s czasu świata (`TrafficV2.advance` — gospodarka
 // startuje od zera, a statki do portu Ziemi lecą minuty) → gracz przy porcie Ziemi → obserwacja `--obserwacja` s
@@ -130,6 +133,47 @@ try {
   await ev(ZOOM(0.045));
   await waitGame(4);
   await screenshotPng(cdp, join(out, '01-port-ziemi.png'));
+
+  if (args.odlot) {
+    // Statek, którego kurs kończy się przy stanowisku: czekamy na flagę DEPARTED (128) w fazie odłączania.
+    let target = null;
+    for (let k = 0; k < 240 && !target; k++) {
+      target = await ev(`(() => { const a = window.TrafficBubble.list.find((x) => (x.flags & 128) && x.phase === 'undock');
+        return a ? { id: a.id, hull: a.hullId, berth: a.berthId, x: a.cx, y: a.cy, len: a.length } : null; })()`);
+      if (!target) await waitGame(0.5);
+    }
+    report.etapy.odlot = { cel: target };
+    if (target) {
+      const look = Math.max(1600, target.len * 3);
+      const rows = [];
+      let last = null;
+      for (let n = 0; n < 40; n++) {
+        const a = await ev(`(() => { const a = window.TrafficBubble.byId.get(${target.id});
+          return a ? { faza: a.phase, x: a.cx, y: a.cy, flagi: a.flags, v: Math.round(Math.hypot(a.vx, a.vy)) } : null; })()`);
+        if (a) {
+          // kadr za statkiem (gracz poza polem, kamera nad statkiem)
+          await ev(`(() => { const c = window.camera; c.minZoom = 0.003; c.manualZoom = true;
+            const z = Math.min(0.5, (window.innerHeight || 900) / ${look}); c.zoom = c.targetZoom = c.zoomBase = z;
+            window.devTeleportTo(${a.x} + ${look} * 0.6, ${a.y} + ${look} * 0.3, { angle: 0, quiet: true });
+            window.ship.vel.x = 0; window.ship.vel.y = 0; window.DevScene?.syncCamera?.(); return true; })()`);
+          await screenshotPng(cdp, join(out, `08-odlot-${String(n).padStart(3, '0')}.png`));
+        }
+        const skok = a && last ? Math.round(Math.hypot(a.x - last.x, a.y - last.y)) : null;
+        rows.push({ n, ...(a ? { faza: a.faza, v: a.v, skok } : { znikl: true }) });
+        if (!a) break;
+        last = a;
+        await waitGame(0.25);
+      }
+      report.etapy.odlot.klatki = rows;
+      console.log('odlot:', JSON.stringify({ cel: target.hull, fazy: [...new Set(rows.map((r) => r.faza || 'znikł'))],
+        maxSkok: Math.max(0, ...rows.map((r) => r.skok || 0)), znikl: rows.some((r) => r.znikl) }));
+    } else console.log('odlot: brak statku z końcem kursu przy stanowisku w 120 s');
+    if (args.odlot === 'tylko') {
+      report.syncKoniec = syncWorker();
+      report.syncStronaKoniec = await syncPage();
+      throw new Error('tylko odlot — koniec');
+    }
+  }
 
   // Obserwacja: fazy encji, stanowiska K-7 / zatok, kursy, które przeszły przez przechwyt — najpierw przy zatoce,
   // potem nad halą K-7 tego samego kompleksu (stanowiska wojskowe: okręty i patrole).
@@ -367,6 +411,84 @@ try {
     await ev('(() => { window.TrafficPromotion.tune.calmSeconds = 20; return true; })()');
     console.log('awans i powrót:', JSON.stringify({ npc: npc && { rozkaz: npc.rozkaz, belki: npc.belki }, npcPo2s: npc2 && { v: npc2.v, belki: npc2.belki },
       wrocil: back, skok: report.etapy.powrot.skok, staty: d1 }));
+  }
+
+  // Odpowiedź ogniem (E13): okręt ruchu (garnizon terran_*, łowca, policja, rajder, przemytnik) trafiony słabą bronią
+  // awansuje z bronią i mózgiem klasy (src/game/trafficPromotion.js) — celuje w gracza i strzela (pociski ze `source`
+  // = NPC, stempel trafienia gracza `__fcHitPlayerAt`); potem gracz odlatuje i okręt wraca do bańki.
+  // `--odpowiedz terran_destroyer,terran_frigate` — zawęża kadłuby (np. tylko Terra Nova: ścieżka urazy `playerGrudge`).
+  const COMBAT_HULLS = args.odpowiedz ? String(args.odpowiedz).split(',').map((s) => s.trim()).filter(Boolean)
+    : ['terran_frigate', 'terran_destroyer', 'terran_battleship', 'terran_carrier', 'pirate_raider', 'smuggler', 'bounty_hunter', 'police_cutter'];
+  const warship = weak ? await ev(`(() => {
+    const tb = window.TrafficBubble, s = window.ship, ok = new Set(${JSON.stringify(COMBAT_HULLS)});
+    const list = tb.list.filter((a) => a.alive && a.id >= 0 && !(a.flags & 65) && ok.has(a.hullId) && Math.hypot(a.vx, a.vy) < 2000);
+    // Najpierw okręt poza halą (pociski z zewnątrz hali K-7 zatrzymuje jej konstrukcja), potem najbliższy.
+    list.sort((a, b) => ((a.phase === 'docked') - (b.phase === 'docked'))
+      || Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
+    const a = list[0];
+    if (!a) return { brak: true, kadluby: [...new Set(tb.list.map((x) => x.hullId))] };
+    // Gracz na zewnątrz portu (od Ziemi), 2500 j. od celu — jak w etapie ostrzału.
+    const earth = window.TrafficV2.getStation('earth');
+    const ox = a.cx - earth.x, oy = a.cy - earth.y, od = Math.hypot(ox, oy) || 1;
+    window.devTeleportTo(a.cx + ox / od * 2500, a.cy + oy / od * 2500, { angle: Math.atan2(-oy, -ox), quiet: true });
+    s.vel.x = a.vx; s.vel.y = a.vy;
+    return { id: a.id, hull: a.hullId, faza: a.phase, hp: a.hp, maxHp: a.maxHp };
+  })()`) : null;
+  if (warship && !warship.brak) {
+    const FIGHT = (id) => `(() => { const n = window.TrafficPromotion?.alive.get(${id}); const s = window.ship;
+      if (!n) return null;
+      let broni = 0; for (const k in (n.weapons || {})) broni += (n.weapons[k] || []).length;
+      let pociski = 0; for (const b of (window.bullets || [])) if (b && b.source === n) pociski++;
+      return { typ: n.type, kadlub: n.shipFrame, belki: !!n.beamHull, mostek: !!n.bridgeState, rdzen: !!(n.reactorCores && n.reactorCores.length),
+        zbiornik: !!(n.fuelTank && !n.fuelTank.auto), broni, mozg: typeof n.ai === 'function', walczy: n.combatDisabled !== true,
+        uraza: !!n.playerGrudge, wrogi: !!window.isHostileNpc?.(n), celGracz: n.target === s, pociski,
+        trafilGracza: Number.isFinite(n.__fcHitPlayerAt), hp: Math.round(n.hp), tarcza: Math.round(n.shield?.val || 0),
+        d: Math.round(Math.hypot(n.x - s.pos.x, n.y - s.pos.y)) }; })()`;
+    const PLAYER_HP = `(() => { const s = window.ship; return { kadlub: Math.round(s.hull?.val ?? s.hp ?? 0), tarcza: Math.round(s.shield?.val ?? 0) }; })()`;
+    const p0 = await ev(PLAYER_HP);
+    const h0 = await ev('window.TrafficBubble.stats.hits');
+    let strzalow = 0;
+    for (let k = 0; k < 12; k++) {
+      const kind = await ev(FIRE_AT(warship.id, weak));
+      if (kind !== 'encja') break;
+      strzalow++;
+      await waitGame(0.4);
+    }
+    warship.strzalow = strzalow;
+    warship.trafien = (await ev('window.TrafficBubble.stats.hits')) - h0;
+    await ev(ZOOM(0.22));
+    const probki = [];
+    let maxPociski = 0;
+    for (let i = 0; i < 12; i++) {
+      await waitGame(1);
+      const f = await ev(FIGHT(warship.id));
+      if (f) { probki.push(f); maxPociski = Math.max(maxPociski, f.pociski); }
+      if (i === 1) await screenshotPng(cdp, join(out, '06-okret-odpowiada-ogniem.png'));
+      if (i === 5) await screenshotPng(cdp, join(out, '06b-okret-odpowiada-ogniem-5s.png'));
+      if (!f) break;
+    }
+    const p1 = await ev(PLAYER_HP);
+    const losAwansu = await ev('({ ...window.TrafficPromotion.stats })');
+    // Gracz odlatuje — koniec walki (4 s narzędzia) i powrót okrętu do bańki.
+    await ev(`(() => { const n = window.TrafficPromotion.alive.get(${warship.id}); const s = window.ship;
+      window.TrafficPromotion.tune.calmSeconds = 4;
+      if (n) { const dx = s.pos.x - n.x, dy = s.pos.y - n.y, d = Math.hypot(dx, dy) || 1;
+        window.devTeleportTo(n.x + dx / d * 30000, n.y + dy / d * 30000, { angle: 0, quiet: true }); }
+      s.vel.x = 0; s.vel.y = 0; return true; })()`);
+    let wrocil = null;
+    for (let i = 0; i < 24 && !wrocil; i++) {
+      await waitGame(0.5);
+      wrocil = await ev(`(() => { const a = window.TrafficBubble.byId.get(${warship.id}); return a && a.alive ? a.phase : null; })()`);
+    }
+    await ev('(() => { window.TrafficPromotion.tune.calmSeconds = 20; return true; })()');
+    const ost = probki[probki.length - 1] || null;
+    report.etapy.odpowiedz = { cel: warship, bron: weak, probki, maxPociski, gracz: { przed: p0, po: p1 }, awans: losAwansu, wrocil };
+    console.log('odpowiedź ogniem:', JSON.stringify({ cel: warship.hull, npc: ost && { typ: ost.typ, broni: ost.broni, mozg: ost.mozg,
+      walczy: ost.walczy, uraza: ost.uraza, wrogi: ost.wrogi, celGracz: ost.celGracz, mostek: ost.mostek, rdzen: ost.rdzen,
+      zbiornik: ost.zbiornik, trafilGracza: ost.trafilGracza }, probek: probki.length, maxPociski, gracz: { przed: p0, po: p1 }, awans: losAwansu, wrocil }));
+  } else {
+    report.etapy.odpowiedz = { cel: warship };
+    console.log('odpowiedź ogniem: brak okrętu ruchu w bańce', JSON.stringify(warship));
   }
 
   // Stanowisko gracza: gracz staje na wolnym stanowisku zatoki → `berth-hold` → worker nie przydziela go innym.

@@ -115,8 +115,19 @@ i kierunek artystyczny: `docs/BRIEF-korek.md`.
   naświetlaczy; okna z bliska — `windowPane` (rama, szprosy, głębia, bursztyn zamiast kremu). Metal 583 tys.
   wierzchołków; w grze (`korek-gra.mjs`, tryb `off`) GPU klatki 0,61 ms bez elektrowni, 0,95–1,07 ms z nią,
   pipeline'y synchroniczne 0, błędy 0.
-- Otwarte: poza elektrownią ściana gryzu w słońcu jak beżowy marmur, jezioro płaszcza w słońcu jak błoto (shader
-  gryzu), spód ringu z bliska (ring „Halo”). Tło menu ma własną Ziemię z obrotem wokół Y — bez elektrowni.
+- Wnętrze gryzu w słońcu (2026-10-22, uwagi krytyka: ściana jak beżowo-liliowy marmur w poziome pasy — okładzina
+  elektrowni jak klatka na gołej skale, jama bez głębi; jezioro w słońcu jak beżowe błoto z białymi żyłami): ściana to
+  ciemna skała płaszcza bez pasów (smugi wzdłuż spadku, sadza ku brzegowi, szkliwo i czerwony żar przy jeziorze, światło
+  jeziora skupione przy dnie), jezioro — prawie czarna skorupa, szwy z żółtobiałym rdzeniem i pomarańczowymi brzegami,
+  żar po cieniu ringu (dzień = noc); welon mgiełki w jamie słabszy (`pitAir` 0,15) i bez zabarwienia (niebieskawy dawał
+  liliowy połysk), kamera w jamie (kadry szczegółów) bez powietrza; pole siłowe słabsze (siła 0,32 → 0,24, siatka heksów
+  poza plamami naporu 0,08 → 0,025 — na ciemnej skale ta sama waga w kadrze co dawniej na jasnej).
+  Migotanie w kadrach gry (sam gryz, kadr przesunięty o 0,37 px, wnętrze wcięcia): średnia |A − B| 4,0 → 1,1, 1,9 → 0,6,
+  1,1 → 0,4, 1,3 → 0,8 (względem jasności bez wzrostu poza kadrem z góry tarczy: 0,012 → 0,019 — heksy pola na ciemnej
+  skale). Nocą ściany ciemnieją ku górze (dawniej cała misa równo pomarańczowa), jezioro bez zmian. Zrzuty:
+  `gryz-demo.mjs`, `slup-demo.mjs --tylko gra,szczegoly,cork,lining` i `--korek 0` (sam gryz), `korek-gra.mjs`.
+- Otwarte: poza elektrownią spód ringu z bliska (ring „Halo”). Tło menu ma własną Ziemię z obrotem wokół Y — bez
+  elektrowni.
 
 ## Merkury i Wenus: rola w ekonomii na mapie (2026-10-08)
 

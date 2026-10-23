@@ -23,7 +23,7 @@ import {
   Fn, If, Discard,
   float, vec2, vec3, vec4,
   uniform, attribute, varying, uv, positionGeometry,
-  clamp, dot, max, normalize, pow, select, smoothstep, step,
+  clamp, dot, fract, max, normalize, pow, screenCoordinate, select, smoothstep, step,
   renderGroup
 } from 'three/tsl';
 import { fieldDarkness, sunFill, sunVisibility } from './sunShadowMask.js';
@@ -65,6 +65,11 @@ function buildGraph() {
   const vUv = varying(vec2(uv().x, float(1.0).sub(uv().y)), 'vProxyUv');
   const vRot = varying(iRot.xy, 'vProxyRot');
   const vOpacity = varying(iRot.z, 'vProxyOpacity');
+  // Otwarty luk ładowni (E12, przeładunek w bańce — src/3d/cargo/portCargo3D.js): prostokąt otworu w uv sprite'a
+  // (u0, v0) w iAxisX.zw, (u1, v1) w iAxisY.zw; pusty (u1 ≤ u0) — skóra cała. Pod otworem wnętrze ładowni.
+  const vCut = varying(vec4(iAxisX.zw, iAxisY.zw), 'vProxyCut');
+  // Skóra w otworze 0…1 (iRot.w): przy domykaniu / otwieraniu wrót skóra przenika się ze skrzydłami (dithering ekranu).
+  const vCutSkin = varying(iRot.w, 'vProxyCutSkin');
   // Słońce jak u kadłubów: (słońce − statek, 600) w układzie sceny, oba punkty względem
   // tego samego początku przy kamerze.
   const vLightDir = varying(
@@ -77,6 +82,12 @@ function buildGraph() {
     const armor = teksturaObiektu('uSprite', PLACEHOLDER_SPRITE, spriteUV);
     const alpha = armor.a.mul(clamp(vOpacity, 0.0, 1.0)).toVar();
     If(alpha.lessThan(0.01), () => {
+      Discard();
+    });
+    const inCut = step(vCut.x, spriteUV.x).mul(step(spriteUV.x, vCut.z)).mul(step(vCut.y, spriteUV.y)).mul(step(spriteUV.y, vCut.w));
+    // Szum przeplotu (IGN) w pikselach ekranu: piksel otworu pokazuje skórę, gdy szum < vCutSkin.
+    const ign = fract(float(52.9829189).mul(fract(dot(screenCoordinate.xy, vec2(0.06711056, 0.00583715)))));
+    If(inCut.greaterThan(0.5).and(vCut.z.greaterThan(vCut.x)).and(ign.greaterThanEqual(vCutSkin)), () => {
       Discard();
     });
     const armorRgb = armor.rgb.toVar();

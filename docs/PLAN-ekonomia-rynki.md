@@ -175,6 +175,9 @@ Awans do pełnego NPC przyjdzie później.
 | E2b | Jeden model handlu: API rynku (oferty, rezerwacje) dla wszystkich — przewoźnicy, kupcy, gracz, stocznie, wojna, złomiarze, paser | 2 | E2 i końcowe strojenie E4 | moduły ruchu v2 (`agentFleets.js`, `shipyards.js`, `scrapperFleets.js`, `piracy.js`, planista) |
 | E6 | Bańka w grze (Z13 zwężone, § 3.5) | 3 | E1, E2, E5 | nowy `src/game/trafficBubble.js`, `materializedFlight.js`, `shipProxyBatch3D.js` + `src/render/`, `haloPortDocking.js`, `index.html` |
 | E7 | Gracz na rynku: terminal na ofertach, komputer handlowy, stacja gracza jako rynek, zapis stanu ekonomii i wyrw | 4 | E2 | `src/ui/`, `index.html`, zapis gry |
+| E12 | Przeładunek w portach: ładownie floty, rój dronów liczony na żywo na GPU, taśmociągi | 4 | E6 (kontrakt `actors.cargo`) | `src/3d/cargo/`, `src/3d/swarm/`, `src/game/swarm/`, `src/game/portCargoFrame.js`, `src/render/blocks/cargoOpsBlock.js` |
+| E13 | Kadłuby ruchu: mostki, rdzenie, zbiorniki paliwa, gniazda i dysze; broń i AI bojowa awansowanych okrętów; sprite'y Z11 | 5 | E6; E12 (ładownia ciężkiego frachtowca) | `src/data/trafficHulls.js`, `hardpointEditorDefaults.js`, `reactorCores.js`, `engineFx.js`, `src/game/trafficPromotion.js`, blok „BAŃKA RUCHU v2 W GRZE” w `index.html`, `assets/ships/` |
+| E14 | Doki portów bez ringu: dok krzyżowy, dok okrągły, koło z wlotem (jak stacja z Elite Dangerous, płaska) | 5 | E6 | `dockLayout.js`, `DOCK_LAYOUT` w `src/data/markets.js`, `portPaths.js`, nowy moduł 3D doków, kolizje 2D |
 
 Fala 1 (E1, E3, E4, E5, E8) rusza równolegle, każda sesja we własnym worktree. Pliki wspólne (`trafficWorld.js`, `travelNetwork.js`, `trafficProtocol.js`, `trafficBridge.js`, `agentFleets.js`, `trafficDirector.js`) dzielimy po FUNKCJACH, jak w tabeli. Konflikty przy scalaniu rozwiązuje orkiestrator.
 
@@ -445,3 +448,32 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Próbne scalenie z `main`: testy zielone (poza `cicBeltLayer` pod obciążeniem), build, start w workerze 0 sync, przegląd 6 portów 0 sync i 0 błędów. Rozgrzewka przy ładowaniu dłuższa o ok. 0,9 s (flush workera 1659 → 2565 ms).
   - Niezależny przegląd kodu znalazł błędy obrazu: `snap()` cofa przeniesione kontenery, slot zakładany w fazie przechwytu (przesunięta ładownia), nieaktualny odczyt po ponownym użyciu slotu, resztki slotu na cudzym stanowisku, podwójna `SwarmSim` z rozgrzewki, alokacje co klatkę, `?przeladunek=0` nie wyłącza rozgrzewki. Scalenie wstrzymane do poprawek (runda 3).
   - Decyzja orkiestratora: ciężki frachtowiec (1320 kontenerów, 48 dronów przenosi ok. 970) dostaje 96 dronów na slot pola MEGA, jak scena „wymiana” w demie; postój bez zmian, więc ekonomia i bramka nietknięte. Resztka na koniec okna chowa się za zamkniętymi wrotami albo poza kadrem.
+- 2026-10-22 decyzje użytkownika (lista po E6 i E7):
+  1. Budowa stacji gracza — nie na tym etapie. Stacja gracza wyjdzie z fabuły, późno; interfejs budowy i model 3D odłożone, hak `?dev` zostaje.
+  2. Zysk ze stacji idzie do frakcji: stacja Terra Novy zarabia dla Terra Novy. Gracz jest oficerem — po kilku misjach w Atlasie zostaje zdradzony i zaczyna od zera.
+  3. „Nowa gra” czyści zapis ekonomii (zadanie dla sesji E2).
+  4. Nowy terminal zostaje: rudę sprzedaje się w hucie.
+  5–7. Nowa sesja E13: dane kadłubów ruchu (mostki, rdzenie, zbiorniki, gniazda), potem broń i AI bojowa awansowanych okrętów; sprite'y Z11 wpięte.
+  8. Nowa sesja E14: modele doków portów bez ringu — dok krzyżowy, dok okrągły i koło z wlotem (jak stacja z Elite Dangerous, tylko płaska).
+  - Po zakończeniu pracy sesji komputer ma się wyłączyć (polecenie użytkownika).
+- 2026-10-23 E12 w `main` (c542b208), runda 3:
+  - poprawione znaleziska przeglądu: koniec postoju bez `snap` (wieża bez nowych zadań od zamykania wrót, ładownia chowa się za domkniętymi wrotami), slot po przechwycie, odczyt ważny od dołączenia slotu, własna kopia stanowiska, jedno `ensure()`, bez alokacji w klatce, `?przeladunek=0` bez importu i rozgrzewki, kamery 3D i maskowanie; testy regresji padają na starej puli;
+  - 96 dronów przy polach MEGA: ciężki frachtowiec 1320 / 1320 kontenerów w ~60 s, koniec postoju bez skoku (skrzydła wrót przenikają się ze skórą);
+  - koszt: CPU w szumie, GPU +0,06 ms przy 14 stanowiskach, poza portem 0; ładowanie średnio +0,33 s (przebiegi bez przeładunku różnią się o 0,7 s). Rozgrzewka kerneli na żądanie odrzucona (przestój ~140 ms w grze).
+  - Po scaleniu: `npm test` 1781 zielone, build, start w workerze 0 sync. Przegląd portów i `rynek-gra` pokazały synchroniczny pył kosmiczny (`spaceDust:fg`, `:ortho`) w pierwszej klatce przy obciążeniu — E12 sprawdza A/B z `?przeladunek=0`.
+- 2026-10-23 E2 w `main` (8601b039): „Nowa gra” od zera — świat ruchu przy starcie strony zawsze świeży, zapis ekonomii nakłada się tylko po wyborze przed startem (`economy-restore`), start bez wyboru kasuje stary zapis. `rynek-gra`: zapis → wczytanie (34 rynki, 6 wyrw, stacja gracza), zapis → Nowa gra (0 wyrw, bez stacji gracza). `npm test` 1792 zielone, build.
+  - Do decyzji użytkownika: „Wczytaj grę” w menu jest wyłączone, więc zapis ekonomii wczytuje dziś tylko hak `DevEconomy.loadEconomy()`. Rekomendacja orkiestratora: włączyć „Wczytaj grę”, gdy będzie pełny zapis gry (statek, fabuła, ekonomia).
+- 2026-10-23 E13 w `main` (a39d6a4b): kadłuby ruchu v2 jako pełne kadłuby gry.
+  - 18 kadłubów (15 z zadania + łowca, kuter policji, ratownik z Z11): mostki (poziom z pola kadłuba, modele poziomów Terra Novy), rdzenie, zbiorniki paliwa, gniazda broni, dysze MAIN i SIDE (MAIN cywili tylko obraz — lot bez zmian); strażnik `tests/trafficHullData.test.mjs`.
+  - Okręty po awansie (garnizon K-7, łowca, policja, rajder, przemytnik) walczą bronią z gniazd i mózgiem klasy (`TRAFFIC_COMBAT_HULLS`); uraza do gracza (`playerGrudge`) — wrogie graczowi bez względu na reputację, cel tylko widoczny gracz; reputacja spada za zestrzelenie; hulk mostka nie wraca do bańki.
+  - Sprite'y Z11 wpięte, ciężki frachtowiec z ładownią 3 × 8 (E12: 96 dronów, 1536 zadań, koniec postoju bez skoku). Klasy stanowisk bez zmian — bramka niepotrzebna.
+  - Znane: okręt awansowany w hali K-7 wylatuje bez ścieżki doku; mostki mają też frachtowce cywilne i vany gry na tych samych sprite'ach.
+- 2026-10-23 E6 w `main` (6804c26b): statek przy końcu kursu odlatuje ze stanowiska (odłączanie, korytarz, lot poza bańkę — flaga `DEPARTED`), zamiast znikać w jednej klatce. Odlatujący nie przyjmuje obrażeń i nie awansuje (bez kursu nie ma czego rozliczyć).
+  - Po scaleniu E13 i E6: `npm test` 1792 zielone; `node --test` 3208, 2 porażki czasowe pod obciążeniem (`cicBeltLayer`, potrójny bufor 1000 Hz — oba skaczą też w bazie); build; start w workerze 0 sync; `ruch-banka-gra --query renderWorker=1 --odlot 1`: odlot ciężkiego frachtowca `undock` → `fly` bez zniknięcia, awans lotniskowca garnizonu z wrakiem, taran, powrót do bańki, fregata po awansie z bronią i mózgiem klasy; 0 sync, 0 błędów.
+- 2026-10-23 poprawka rozgrzewki z sesji E12 w `main` (9cdc8ac0): synchroniczny pył kosmiczny (oraz pył hal K-7 i maska słońca) przy starcie pod obciążeniem nie pochodził z E12 — ten sam wyścig był przy `?przeladunek=0`. Moduły z hakiem passa odsłaniają siatki dopiero w passie, a ich wpis mógł czekać w kolejce rejestru; klatka zero dokańcza teraz kolejkę (`Core3D.warmup.drainNow()`, bez wpisów `'after'`). `start-sync-gra --stres 150`: 5 → 0 sync.
+- 2026-10-23 E14 (`claude/e14-doki-portow-96f445`, 5bdae064 / 2b860d9f / 60e4b278): doki portów bez ringu.
+  - Przydział (według liczby stanowisk): krzyż — 14 księżyców, Gniazdo Hildy, Złomowisko, stacja gracza; okrąg — Luna, Oberon, Merkury, Wenus, Uran; koło z wlotem — Saturn, Westa, Ceres (szczelina z 4 pasami, obraca się tylko piasta). Kryjówki misji bez budowli. Stacja planety zostaje w węźle, budowla stoi obok.
+  - Gospodarka bez zmian (symulacja na ziarnie 7 identyczna). Kolizje 2D (`src/game/portDockWorld.js`), ścieżki bańki z objazdem budowli i korytarzem wylotu, pas bez skał wokół doków, reguła `doki-portow`.
+  - Koszt: GPU +0,01–0,03 ms, CPU workera +0,04–0,36 ms, start +72 ms; 0 sync, 0 błędów. Zrzuty: `.tmp/e14/worker2/` w worktree E14.
+  - Ryzyka: przy kole więcej chwilowych nałożeń kadłubów przed szczeliną, lampki stanowisk świecą stale, NPC odbijają się od brył (bez objazdu), `?szew=inline` nie rysuje doków.
+  - Przed scaleniem: `git merge main` (5 konfliktów) i sprawdzenie odlotu E6 (`DEPARTED`) przez korytarz wylotu doku.
