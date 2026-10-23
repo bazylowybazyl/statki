@@ -195,6 +195,17 @@ export const haloSmooth = (e0, e1, x) => {
   return t.mul(t).mul(float(3.0).sub(t.mul(2.0)));
 };
 
+// Fala prostokątna step(e, fract(x)) filtrowana śladem piksela w okresach (w): całka fali na [x − w/2, x + w/2] / w,
+// liczona od fract(x) (różnica całek nie traci precyzji przy dużym x). Z bliska ten sam step (krawędź przejściem
+// szerokości śladu), przy śladzie ≥ okres średnia 1 − e — wzór co kilka j. (kreski, okna) z daleka nie migocze.
+// Ślad podawaj ~2 px (np. fwidth × 1,5): filtr szerokości jednego piksela zostawia okres ~3 px jako morę.
+export const haloSquareWave = (x, e, w) => {
+  const hw = max(w, 1e-3).mul(0.5).toVar();
+  const xl = fract(x).toVar();
+  const F = (t) => floor(t).mul(1.0 - e).add(max(fract(t).sub(e), 0.0));
+  return F(xl.add(hw)).sub(F(xl.sub(hw))).div(hw.mul(2.0));
+};
+
 // ===========================================================================
 // COMMON
 export const haloLuma = pure('haloLuma', 'float', [['c', 'vec3']], (a) => dot(a.c, vec3(0.2126, 0.7152, 0.0722)));

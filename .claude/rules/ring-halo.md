@@ -36,6 +36,31 @@ paths:
 
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 
+- Z DALEKA BEZ MIGOTANIA (2026-10-23, zgłoszenie „doki mrygają z daleka”; `docs/AUDYT-migotanie-z-daleka-2026-10-23.md`):
+  mruganie hal K-7 i bloków ringu przy oddalonej kamerze to ALIASING detalu mniejszego niż piksel, nie z-fighting (A/B near
+  kamery perspektywy nic nie zmienia — `LessEqual` i monotoniczne zaokrąglenie głębi trzymają warstwy pokładu). Detal < ~1–3 px
+  gaśnie do średniej albo jest filtrowany śladem piksela: płyty K-7 (`k7Plates` — jasność płyty filtrowana pudełkowo po 4
+  płytach, zaciek i jasna krawędź → średnie przy płytach < ~3 px), CIENKIE BRYŁY NA POKŁADZIE (instancje K-7: prostopadłościan
+  obrócony wokół pionu, spód ≤ `K7_THIN_ON_DECK` j. K-7 nad pokładem, oś pozioma < `K7_THIN_PX` px → wierzchołek poszerza o 1 px
+  z każdej strony — j./px z `clip.w` i `screenSize` — a fragment liczy pokrycie piksela przez prawdziwą bryłę `vK7Aa`; reszta
+  piksela = średni pokład `K7_DECK_MEAN`, `k7Shade(…, cover)`: albedo, chropowatość, metal i emisja ważone pokryciem), okna brył
+  megastruktury (emisja 1–2: ramka i zapalenie → 0,3 · 0,45 przy oknie < ~1 px, jak fasady megabudowli). Bryła nad czymś innym
+  niż pokład (szyny listew, listwy ścian) nie jest poszerzana — tło „pokład” ją rozjaśniało. DACH RINGU (`roofImpressionTSL`,
+  `haloRingStructure.js`): przerywane światła maglev i kreski dróg — fala prostokątna filtrowana śladem piksela
+  (`haloSquareWave` w `haloRingTSL.js`: całka fali na śladzie ~2 px, z daleka średnia wypełnienia; ta sama dla okien
+  pociągów maglev w `haloRingMegastructure.js` — jadący pociąg z niefiltrowanymi oknami co 5 j. dawał mrugającą kratkę); cienkie linie (pasy kratownicy, obwódki i siatka
+  placów, narożniki, kreski, krawędzie świateł maglev) — `roofLine`: linia węższa niż pół śladu rośnie do ~2 px z jasnością
+  × (dawna całka w poprzek), szersza — dawny wzór bit w bit; wypełnienia brył działek i kontenery — pokrycie piksela z SDF
+  (`roofSdCover`), nie `If(sd < 0)` / `step`; cienie — brzeg przejściem (`haloRoofSegBoxSoft`: dwie próbki metody płyt
+  pudła ± ¼ śladu, `haloRoofSegCircle(…, blur)`, pasy cienia `roofBandHit`); pas przemysłowy przy komórce 56 j. < ~6 → 3 px
+  (`farI`): jasność płyt, cienie (→ średni cień klasy `ROOF_IND_SHADE_MEAN` z lustra CPU) i plamki lamp (→ średnia plamek)
+  przechodzą w średnią; lampy sodowe liczą też 3 sąsiednie komórki od strony piksela (plamka rośnie z `fw` — dawniej
+  ucinała ją granica komórki). Reguły komórek i działek (`haloRoofIndCell`, `haloRoofPlot`) bez zmian — parzystość z CPU.
+  Nowy wzór z haszu na komórkę albo cienka bryła / linia w ringu, hali czy dachu — ten sam przepis (średnia z wzoru, pokrycie
+  piksela albo linia z zachowaną całką). Pomiar: `node scripts/webgpu/migotanie-gra.mjs --out .tmp/webgpu/migotanie/<tag>`
+  (kadry hali i dachu co ¼ px, druga różnica; dach z bliska `--kadry dachBlisko`), A/B wersji po kolei albo
+  `HULLFALL_AB_DIR=<katalog z plikami „przed”>`.
+
 - Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
   po zadaniu 11 zostaje tylko dla budowli Z7 poza portem i narzędzia parzystości — tło menu czyta już TSL), uniformy ringu
   w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu

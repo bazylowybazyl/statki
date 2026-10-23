@@ -198,14 +198,27 @@ test('K-7 WGSL: wierzchołek instancji = bliźniak JS (kwaternion, skala pionowa
   assert.deepEqual(['iA', 'iB', 'iQ', 'iC'].map((k) => geo.getAttribute(k).offset), [0, 4, 8, 12]);
   assert.equal(geo.getAttribute('iA').data.stride, 16);
   const v = mainBody(out.K7_bg_box.vertex);
-  const lp = v.match(/(nodeVar\d+) = \( position \* iB\.xyz \);/);
-  assert.ok(lp, 'lp = position · rozmiar');
+  // AA cienkich brył (2026-10-23): rozmiar + 2 px (j. na px z clip.w środka bryły i wysokości celu) tylko na osiach x / z
+  // prostopadłościanu obróconego wokół pionu, węższych niż 3 px; pół prawdziwego rozmiaru do fragmentu (vK7Aa, −1 = bez)
+  const upp = v.match(/(nodeVar\d+) = \( \( (nodeVar\d+)\.w \* 2\.0 \) \/ max\( \( abs\( render\.cameraProjectionMatrix\[ 1u \]\.y \) \* object\.nodeUniform\d+\.y \), 1\.0 \) \);/);
+  assert.ok(upp, 'j. na px = 2 · clip.w / (P[1][1] · wysokość celu)');
+  assert.match(v, new RegExp(`${upp[2]} = \\( render\\.cameraProjectionMatrix \\* \\( modelViewMatrix \\* \\( nodeVar\\d+ \\* vec4<f32>\\( iA\\.xyz, 1\\.0 \\) \\) \\) \\);`), 'clip środka bryły (grupa ruchoma)');
+  assert.match(v, /abs\( \( abs\( position\.x \) - 0\.5 \) \) < 0\.001 \) && \( abs\( \( abs\( position\.z \) - 0\.5 \) \) < 0\.001 \) \) && \( \( abs\( iQ\.x \) \+ abs\( iQ\.z \) \) < 0\.0001 \)/,
+    'poszerzany tylko prostopadłościan obrócony wokół pionu');
+  // … leżący na pokładzie (spód ≤ 6 j. K-7 nad pokładem, hub y pokładu = k7HeightToZ(0) = −116): tło piksela = pokład
+  assert.match(v, /&& \( \( iA\.y - \( \( iB\.y \* 0\.5 \) \* iA\.w \) \) < -110\.0 \)/, 'tylko bryły na pokładzie');
+  assert.match(v, new RegExp(`step\\( iB\\.x, \\( ${upp[1]} \\* 3\\.0 \\) \\), step\\( iB\\.z, \\( ${upp[1]} \\* 3\\.0 \\) \\)`), 'próg 3 px');
+  assert.match(v, /varyings\.vK7Aa = mix\( vec2<f32>\( -1\.0, -1\.0 \), \( iB\.xz \* vec2<f32>\( 0\.5 \) \), nodeVar\d+ \);/);
+  const lp = v.match(new RegExp(`(nodeVar\\d+) = \\( position \\* \\( iB\\.xyz \\+ \\( vec3<f32>\\( (nodeVar\\d+)\\.x, 0\\.0, \\2\\.y \\) \\* vec3<f32>\\( \\( ${upp[1]} \\* 2\\.0 \\) \\) \\) \\) \\);`));
+  assert.ok(lp, 'lp = position · (rozmiar + 2 px na osiach cienkich)');
   const r = v.match(new RegExp(`(nodeVar\\d+) = haloQrot\\( iQ, ${lp[1]} \\);`));
   assert.ok(r, 'obrót kwaternionem');
   assert.match(v, new RegExp(`\\( iA\\.xyz \\+ vec3<f32>\\( ${r[1]}\\.x, \\( ${r[1]}\\.y \\* iA\\.w \\), ${r[1]}\\.z \\) \\)`), 'hubP = iA.xyz + r (r.y · skala pionowa)');
   assert.match(v, /\( nodeVar\d+\.y \/ max\( iA\.w, 0\.001 \) \)/, 'normalna: y / skala pionowa');
   assert.match(v, /\( i32\( \( iC\.x \+ 0\.5 \) \) \* 4 \)/, 'grupa ruchoma z iC.x (4 kolumny na macierz)');
-  assert.match(v, /mat4x4<f32>\( nodeVar\d+, nodeVar\d+, nodeVar\d+, nodeVar\d+ \) \* vec4<f32>\( nodeVar\d+, 1\.0 \)/);
+  const gm = v.match(/(nodeVar\d+) = mat4x4<f32>\( nodeVar\d+, nodeVar\d+, nodeVar\d+, nodeVar\d+ \);/);
+  assert.ok(gm, 'macierz grupy ruchomej');
+  assert.match(v, new RegExp(`\\( ${gm[1]} \\* vec4<f32>\\( nodeVar\\d+, 1\\.0 \\) \\)`), 'pozycja przez macierz grupy');
   assert.match(v, /render\.cameraProjectionMatrix \* \( modelViewMatrix \* nodeVar\d+ \)/, 'pozycja przez modelViewMatrix (double na CPU)');
   // qrot: t = 2·(q.xyz × v); v + q.w·t + q.xyz × t
   const q = fnBody(out.K7_bg_box.vertex, 'haloQrot');
@@ -232,6 +245,13 @@ test('K-7 WGSL: wierzchołek instancji = bliźniak JS (kwaternion, skala pionowa
     }
   }
   assert.match(mainBody(out.K7_bg_box.fragment), /k7Surf\.value\[ \( 0 \+ i32\( \( vK7Group \+ 0\.5 \) \) \) \]\.xyz/, 'emisja grupy (złączki węży)');
+  // AA cienkich brył: pokrycie piksela z vK7Aa, reszta piksela = średni pokład (albedo palety pokładu · 0,136);
+  // płyty bez poszerzania (bez pokrycia)
+  const fb = mainBody(out.K7_bg_box.fragment);
+  assert.match(fb, /vK7Aa/);
+  assert.match(fb, /= mix\( \( nodeVar\d+ \* vec3<f32>\( 0\.136 \) \), nodeVar\d+, nodeVar\d+ \);/, 'albedo: tło pokładu ważone pokryciem');
+  assert.match(fb, /= mix\( 0\.72, nodeVar\d+, nodeVar\d+ \);/, 'chropowatość pokładu ważona pokryciem');
+  assert.doesNotMatch(mainBody(out.K7_plates.fragment), /vK7Aa|vec3<f32>\( 0\.136 \)/);
   // wąż: pow z nieujemną podstawą (max), bez tablic hali
   assert.deepEqual(powExponents(out.K7_hoses.fragment).filter((e) => !['1.4', '1.5'].includes(e)), ['24.0']);
   assert.ok(!uniformBuffers(out.K7_hoses.fragment).includes(K7_SURF_BLOCK));

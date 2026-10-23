@@ -34,7 +34,7 @@ import {
 } from 'three/tsl';
 import { HALO_HDR, haloQualityLod } from './haloRingConfig.js';
 import { HALO_INSTANCE_STRIDE, HALO_LIGHT_STRIDE, HALO_PRIM_NAMES, HALO_TRAIN_STRIDE } from './haloRingRoofPlan.js';
-import { HALO_PI, haloFma, haloFmaV2, haloHash12, haloPureFn, haloRingTSL, haloSmooth } from './haloRingTSL.js';
+import { HALO_PI, haloFma, haloFmaV2, haloHash12, haloPureFn, haloRingTSL, haloSmooth, haloSquareWave } from './haloRingTSL.js';
 import { nodeOf } from './haloUniformsAdapter.js';
 import { zbierzZakres } from '../zakresyWysylki.js';
 
@@ -302,7 +302,9 @@ export function makeHaloPrimFragment({ u, v, fg = false, faceFromLocal = false, 
       // pociąg: pas okien + reflektory czoła
       const head = emitK.sub(float(2.0).mul(floor(emitK.add(0.5).mul(0.5)))).greaterThan(0.5).select(float(1.0), float(0.0));
       const band = side.select(float(1.0).sub(smoothstep(1.2, 1.6, abs(vLocal.z.sub(vSize.z.mul(0.55))).div(1.4))), float(0.0));
-      const win = step(0.45, fract(vLocal.x.div(5.0))).mul(band);
+      // okna co 5 j. (świeci 55%): fala filtrowana śladem piksela (fw — pochodne przed gałęziami) — z daleka okno ma
+      // ułamek piksela, a pociąg jedzie: niefiltrowane okna dawały mrugającą kratkę na torze maglev
+      const win = haloSquareWave(vLocal.x.div(5.0), 0.45, fw.mul(1.5).div(5.0)).mul(band);
       emit.addAssign(vec3(0.55, 0.82, 1.25).mul(win).mul(float(0.35).add(float(0.65).mul(night))));
       const front = head.mul(step(0.5, lN.x)).mul(float(1.0).sub(smoothstep(2.0, 3.0, abs(vLocal.z.sub(vSize.z.mul(0.5))))));
       emit.addAssign(vec3(r3(NAV_WHITE), r3(NAV_WHITE), r3(NAV_WHITE * 0.95)).mul(front).mul(0.6));
@@ -313,12 +315,19 @@ export function makeHaloPrimFragment({ u, v, fg = false, faceFromLocal = false, 
       const wg = vec2(fuv.x.div(wgS.x), vLocal.z.sub(4.0).div(wgS.y)).toVar();
       const wc = floor(wg).toVar();
       const wf = fract(wg).toVar();
-      const frame = step(0.2, wf.x).mul(step(wf.x, 0.8)).mul(step(0.25, wf.y)).mul(step(wf.y, 0.75))
-        .mul(step(0.0, vLocal.z.sub(4.0))).mul(step(vLocal.z, vSize.z.sub(4.0))).toVar();
+      const zIn = step(0.0, vLocal.z.sub(4.0)).mul(step(vLocal.z, vSize.z.sub(4.0))).toVar();
+      const frameC = step(0.2, wf.x).mul(step(wf.x, 0.8)).mul(step(0.25, wf.y)).mul(step(wf.y, 0.75)).toVar();
       const lit = step(0.55, haloHash12(haloFmaV2(vSeed, 57.0, wc)));
+      // okno mniejsze niż ~piksel (ślad piksela w oknach z pochodnych fasady fcFw — poza gałęziami): ramka i zapalenie
+      // przechodzą w średnią (ramka 0,6 × 0,5 = 0,3, zapalone 45%) jak okna fasad megabudowli (farA) — bez tego z daleka
+      // każdy piksel trafiał przy ruchu kamery w inne okno, zapalone albo nie (miasto nocą migotało)
+      const fpW = vec2(fcFw.x.mul(5.0).div(wgS.x), fcFw.y.mul(4.5).div(wgS.y));
+      const farW = smoothstep(0.35, 0.85, max(fpW.x, fpW.y).div(U.uDetailScale)).toVar();
+      const frame = mix(frameC, 0.3, farW).mul(zIn).toVar();
+      const litW = mix(frameC.mul(lit), 0.135, farW).mul(zIn);
       const aa = float(1.0).sub(smoothstep(0.4, 1.2, fw.div(float(4.0).mul(U.uDetailScale)))).toVar();
       const wcol = emitType.lessThan(1.5).select(U.uHdrWarm, U.uHdrCool);
-      emit.addAssign(wcol.mul(frame).mul(lit).mul(night).mul(mix(0.28, 1.0, aa)).mul(0.9).mul(U.uLayers.y).mul(U.uNightLights));
+      emit.addAssign(wcol.mul(litW).mul(night).mul(mix(0.28, 1.0, aa)).mul(0.9).mul(U.uLayers.y).mul(U.uNightLights));
       albedo.assign(mix(albedo, vec3(0.02, 0.025, 0.03), frame.mul(aa).mul(0.8)));
     }).ElseIf(emitType.greaterThan(2.5).and(emitType.lessThan(3.5)), () => {
       emit.addAssign(U.uHdrStrip.mul(0.9));
