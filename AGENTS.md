@@ -123,11 +123,11 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
 | `niebo` | Wypiekacz nieba, tło kosmosu |
-| `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz): świat ringów, kolizje, render |
+| `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz w budowie — archetyp BUDOWA): świat ringów, kolizje, render |
 | `doki-portow` | Doki portów bez ringu (krzyż, okrąg, koło z wlotem): geometria, ścieżki bańki, kolizje, model |
 | `k7-obsluga` | Hala K-7: obsługa paliwowa stanowisk, ramiona SCARA, przewody, hala z Blendera |
 | `pyl-hal-k7` | Pył i para w halach K-7, źródła gazu, światła i pola siłowe hali |
-| `gaz-przestrzeni` | Gaz w otwartej przestrzeni (port dema gazy-transport): pole z transportem gęstości, scena pasa, mapy i warstwa |
+| `gaz-przestrzeni` | Gaz w otwartej przestrzeni (port dema gazy-transport): pole z transportem gęstości, sceny pasa i ringu Jowisza w budowie, mapy i warstwa |
 | `pas-asteroid` | Pas asteroid: pole, olbrzymy, wydobycie, rumowiska, populacje, NEA, nowy typ skały |
 | `komety` | Komety |
 | `ruch-v2` | Ruch v2 — jedyna ekonomia gry: rynki (`addMarket`), kursy i zlecenia, most i worker, napędy ruchu, pola górnicze i wyrwy, bramka bilansu |

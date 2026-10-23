@@ -205,6 +205,12 @@ Port prowadzi sesja E11 planu ekonomii (`docs/PLAN-ekonomia-rynki.md`).
   - GK-8, część druga: okno 128 / 256 / 384 i mapy z presetu.
   - GK-6 (ring Jowisza), GK-7 (ławice mgły), GK-9 (odbiór).
   - Kamery 3D: plasterki z paralaksą i mipmapy map.
+- **GK-6 (2026-10-23): scena ringu Jowisza w budowie** (sesja ring-jowisza-budowa; ring = archetyp BUDOWA).
+  - Pole `src/game/ringGasField.js` z API pola pasa: kotwica w środku Jowisza, obwiednia wokół obręczy, fronty budowy
+    gęściej, hale K-7 rzadziej, strugi odgazowania z frontów, dryf wzdłuż obręczy.
+  - Płyta wysp w rastrze przeszkód z kolidera gry (gaz płynie przerwami); kierunek ku Słońcu niezależny od kotwicy.
+  - Wygląd sceny w uniformach (`createRingGasLook`) — bez nowych pipeline'ów; światła spawania ringu w siatce świateł.
+  - Kominy i chłodnie z planu Fable (pierwotny zakres GK-6) odpadły razem z Fable; okluder ringu w marszu ku Słońcu — nie.
 - **GK-4 (2026-10-22): pył gazu** (`src/3d/spaceGas/spaceGasDust.js`).
   - 80 tys. drobin rodzonych z gęstości (ρ/ρ₀)³, płynących z gazem.
   - Pozycje względem rogu okna pola, przesuwane razem z oknem — bez float32 przy 1,6 mln j.

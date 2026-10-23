@@ -2,7 +2,7 @@
 
 > Stan: **podpięty do gry 2026-09-25** (§ „W grze” niżej) — ring Ziemi i Marsa, stacja-port
 > w hali K-7, kolizje, tryb jakości „Ultra”. **Od 2026-09-27 (Z6) Mars i Jowisz mają INNE ringi**
-> (ECUMENE i Fable z dem, § „Ringi-archetypy”); ten dokument poza tą sekcją opisuje ring Halo
+> (ECUMENE z dema i BUDOWA — ring w budowie, § „Ringi-archetypy”; Fable — historia, usunięty 2026-10-23); ten dokument poza tą sekcją opisuje ring Halo
 > Ziemi. Stary ring (`planetaryRing3D.js`, `ringCity*.js`)
 > usunięty. Demo `dema/halo_ring_demo.html` zostaje warsztatem ringu. Decyzje użytkownika:
 > `docs/BRIEF-ring-halo.md` §1 (habitat w stronę kosmosu, port ringu zastępuje stację Ziemi,
@@ -511,7 +511,11 @@ trwa 1–2 min (skrypt czeka do 4 min i wypisuje postęp ładowania).
 - kokpit: przycisk lotu nad ringiem (dawny `RingCityFlight`) wyłączony z opisem „w przygotowaniu”
   — docelowo kamera kinowa dema (`dema/halo_ring_demo.js`, dynamiczny near).
 
-## Ringi-archetypy: Mars = ECUMENE, Jowisz = Fable (Z6, 2026-09-27)
+## Ringi-archetypy: Mars = ECUMENE, Jowisz = BUDOWA (Z6, 2026-09-27; Jowisz od 2026-10-23)
+
+> Od 2026-10-23 Jowisz to ring W BUDOWIE — archetyp BUDOWA (§ „Jowisz: ring w budowie (archetyp BUDOWA)” niżej).
+> Do tego dnia Jowisz był ringiem Fable z dema `dema/orbital_ring_demo_2.html`; opis Fable w tej sekcji to historia —
+> moduły `fable.js` / `fablePlan.js` usunięte z gry (decyzja użytkownika 2026-10-23 „tak usuwamy”; demo zostaje).
 
 Decyzja użytkownika (2026-09-26/27): ringi Marsa i Jowisza oraz ich doki mają być **kompletnie
 inne niż ring Ziemi**, nie przemalowane — z dem `dema/orbital_ring_demo.html` (ECUMENE) i
@@ -621,37 +625,77 @@ przesuwa tylko jego spód (od strony planety), a niższe ściany Jowisza — pod
 **Decyzje (2026-10-22):** Jowisz — ring NIEDOKOŃCZONY („unfinished”, § niżej); Mars — habitaty kryte
 TAK („tak, robić kopuły”; kształt do wyboru — kopuły przęseł, § „Podłogi…”).
 
-### Jowisz w budowie (decyzja użytkownika 2026-10-22: „unfinished”)
+### Jowisz: ring w budowie (archetyp BUDOWA, 2026-10-23)
 
-- **Geometria** (`haloRingConstruction.js`, czysta matematyka; profil `construction`, układ
-  `layout.construction`): 3 przerwy w płycie w wolnych łukach między kompleksem portu a tranzytem —
-  środki 1,064 / 3,649 / 5,219 rad od kąta stacji, pół-rozpiętości 0,11 / 0,08 / 0,06 rad (przy podłodze
-  54 500: ~12 / ~8,7 / ~6,5 tys. j.), front budowy 0,05 rad (~2,7 tys. j.) na końcu każdego segmentu.
-  Hale K-7, zatoki i tranzyty stoją na segmentach — budowa układu rzuca błąd, gdy przerwa (z frontem
-  i zapasem) wchodzi na port albo tranzyt.
-- **Rozgrywka**: przerwa = PRAWDZIWY przelot. Kolider (`_inTransit`) otwiera ją jak tranzyt (statki,
-  pociski `pointInSlab`); czoło segmentu wypycha wzdłuż ringu do przerwy, gdy krócej niż przez grubość
-  płyty (statek lecący wzdłuż przerwy nie skacze promieniowo o 450 j.); front należy do płyty
-  (kratownica jest przeszkodą). Komunikat kolizji: „PRZELOT TRANZYTEM ALBO PRZERWĄ BUDOWY”. Radar
-  (`radarTerrain.js`) rysuje płytę z lukami przerw. Ruch v2: router (`ringRouter.js`) ma przerwy jako
-  szerokie przeloty (`transitHalfWidths`, zapas `gapMargin` 900 j. od czoła segmentu), reda portu
-  (`portParking.js`) kończy się przed wylotem przerwy (`layout.ring.gaps` z `haloPortTraffic.js`).
-  Autopiloty i AI nie omijają ringu same (zdaje się na kolider) — przerwy tylko dokładają przelotów;
-  TRAVEL TO i studnie warpa liczą ring jako pełny dysk (ostrożnie, bez zmian). Debug:
-  `HaloRingDebug.goto('jupiter', 'gap')`.
-- **Obraz** (Fable): pasy podłogi, pokładu, lic i ścian bez przerw, a na froncie obłożenie kończy się
-  stopniowo (`clad` w `fable.js`: od krawędzi goła kratownica, dalej płyty kładzione losowo, dalej
-  pełne — pokład od 0,2–0,4 frontu, podłoga 0,35–0,6, lica 0,45–0,7, ściany i korony 0,55–0,75);
-  konstrukcja, rury, zabudowa i kopuły tylko na segmentach; plac budowy na frontach
-  (`buildFableStructure` → `site`): roboty-pająki na węzłach gołej kratownicy, roboty spawalnicze
-  wzdłuż krawędzi obłożenia, rusztowania, stosy płyt z Io i stali, kontenery, drony z lampkami,
-  światła ostrzegawcze na czole; bez suwnic. Strefa `FZ.BUILD` (świeże płyty pokładu, pas
-  ostrzegawczy). Światła spawania = światła pozycyjne z fazą ≥ 1 — nieregularne błyski ~19 Hz z
-  pikami HDR (`makeArchPointNodes`).
-- Nie zmienione (kosmetyka, poza tym zadaniem): cień ringu na tarczy planety i okluder ringu w masce
-  słońca to pełny okrąg (`planet3d.assets.js` — pliki sesji Ziemi, `Core3D.setShaftRingOccluder`).
+Decyzje użytkownika: 2026-10-22 „unfinished” (ring Jowisza niedokończony); 2026-10-23 — pierwsza wersja (ring Fable
+z trzema przerwami, frontami budowy i „rafineryjną” podłogą) „do kosza”: „ring w budowie oznacza zupełnie inny ring,
+z pojedynczymi »brudnymi« domami, wszędzie pył, gaz, małe części stoją”. Szkic v2 przyjęty („tak”, z poprawkami
+baraków i kratownicy), archetyp Fable usunięty z gry („tak usuwamy”).
+
+- **Układ** (`haloRingConstruction.js`, profil `construction`): 11 przerw = ~58% obwodu, front 0,012 rad (~650 j.).
+  Każdy łuk port ↔ tranzyt ma okno ~0,49 rad poza kompleksem portu (pół 13 100 j. — hala, zatoki, kołnierz)
+  i tranzytem; w czterech łukach dwie przerwy z luźną wyspą między nimi. Zbudowane segmenty = WYSPY płyty
+  (`plan.islands`): 4 przy K-7 (~28–31 tys. j.), 4 przy tranzytach (~4,3 tys. j.), 3 luźne (~2,7–3,8 tys. j.).
+  Przerwy zachodzące na siebie albo wyspa węższa niż 2 fronty — błąd profilu (dawniej nie sprawdzane: zachodzące
+  przerwy dawały segment prawie na cały ring).
+- **Kręgosłup w przerwach** (`buildBudowaStructure`, partia konstrukcji BG + FG): dwa pasy kratownicy Warrena na
+  krawędziach wstęgi — z = ±(1 205 … 1 490), h = −442 … −8 (przyszłe lica kadłuba), przęsło 320 j., pasy wzdłużne,
+  słupki, krzyżulce na czterech licach; z góry lico +z w FG (statek w przerwie przelatuje POD nim). Pojedyncze
+  PÓŁŻEBRA co 1,3–3,4 tys. j. od pasów ku środkowi (koniec 400–945 j. od płaszczyzny) z prętami zbrojenia,
+  robotami, spawaniem; rusztowania na pasach; płyty i belki zaparkowane na orbicie (stosy płyt z Io i stali,
+  wiązki belek, linki do pasów, bursztynowe znaczniki) — poza korytarzem przelotu. Stal budowy (rodzaj 9 materiału
+  instancji): odcień przęsła z `STEEL_TONES` (szara, brunatna, ciemna, podkład czerwony, ocynk — partiami po kilka
+  przęseł), rdza plamami (dwie skale komórek), smugi, sadza i ślady spawów przy węzłach (końce belki).
+- **Rozgrywka spójna z obrazem** (wybór: kręgosłup POZA płaszczyzną gry): nic z konstrukcji w przerwie nie wchodzi
+  w |z| < `BUD.slot` = 340 j. (test: zakres z każdej bryły dalej niż 300 j. od krawędzi przerwy) — przerwa jest
+  przelotem w koliderze (`_inTransit`, `pointInSlab`, `rayToSlab`), radarze, routerze ruchu v2 i redzie portu
+  (ta sama infrastruktura przerw co v1, więcej przerw). Wyspa = płyta = kolizja; front (~650 j.) ma pełne żebra
+  przez całą szerokość (jest płytą). Teren kolidera z planu (`plan.heightAt`): płyty doków `PORT_PAD_H`, baraki
+  stojące w płaszczyźnie gry (dach w obrysie AABB po obrocie) — `ring-kolizje-gra.mjs`: teren kolidera = obraz
+  (różnica 0), ściana baraku wypycha statek. Drony to obraz (12–40 j., BG), nie przeszkoda.
+- **Wyspy** (`budowa.js`): pasy `ringStrip` z `keep` — pokład (tekstura z kanwy: płyty, łaty, plamy sadzy, rdza,
+  ślady spawania, starte pasy ostrzegawcze), spód i lica kadłuba (dziury w licach 4–6%), ściany kawałkami
+  (`wallAt`: komórki ~640 j., ~40%, przy kompleksie portu ~85%); obłożenie frontu stopniowo (`clad`); słupki ścian
+  tam, gdzie ściany nie ma; maszty świateł roboczych; rury i kable po podłodze; front: roboty spawalnicze na
+  krawędzi obłożenia, stosy płyt.
+- **Brudne baraki** (`buildBudowaHouses`, ~70): obozy po 2–6 i pojedyncze (port gęściej — robotnicy przy porcie),
+  bez miasta, zieleni i wody. Typy: kontenery w stosach, barak z prefabrykatów (przedsionek, przybudówka,
+  nadstawka), moduł-walec (pierścienie łączeń, śluza), buda piętrowa (schody). Osprzęt: drzwi z daszkiem i lampą
+  sodową (część miga), rury pionowe i pozioma, skrzynki na licach, łaty z innej blachy, drabina, klimatyzatory,
+  zbiornik, komin z sadzą, antena z lampą, talerz, graty (butle, palety blach, skrzynie), kable z dachu na dach
+  w obozie. Barwy sprane — pół drogi do szarości. Materiał baraku (rodzaj 7): karby blach, zacieki rdzy od dachu,
+  łaty, sadza u góry, błoto u dołu, smoła na dachu, okna 26 × 30 j. (część zapalona, część migocze).
+- **Drony** (`buildBudowaDrones`, ~600; rodzaj 8): kadłub-skrzynka bez wirników lata po krzywej Lissajous wokół
+  punktu zawieszenia (przesunięcie w shaderze wierzchołków — maska rodzaju, bez gałęzi), pas świateł na boku
+  i migająca lampa na grzbiecie.
+- **Światła**: pozycyjne (bursztyn na pasach, nawigacja, maszty, drzwi) i spawanie (faza ≥ 1 — migotanie ~19 Hz);
+  światła robocze (spawanie, maszty) dodatkowo w siatce świateł gry — `HaloRingGame._workLights` (do 28 na
+  klatkę przy kadrze, wysokość przycięta do ±260 j.), oświetlają pył, gaz i kadłuby.
+- **Pył i gaz** — scena `ring` gazu w otwartej przestrzeni (GK-6 planu `docs/PLAN-gazy-kosmos.md`; reguła
+  `gaz-przestrzeni`): pole ringu `src/game/ringGasField.js` z API pola pasa — kotwica w środku Jowisza, obwiednia =
+  pas wokół obręczy (σ 3,2 tys. j. od planety, 5,2 tys. od habitatu i doków) × tło budowy + fronty, rzadziej przy
+  halach K-7 (własny gaz hali), strugi odgazowania po dwie na front, dryf wzdłuż obręczy; płyta wysp (kolider gry)
+  w rastrze przeszkód — gaz płynie przerwami. Barwy sceny w uniformach (bez nowych pipeline'ów): szarobrunatny pył
+  budowy, żółtawe opary cięcia płyt z Io, sinawe odgazowanie. Skutków rozgrywki gaz nie ma (jak w pasie).
+- **Bez**: suwnic, infrastruktury w atmosferze Jowisza, miasta, zieleni, wody i kopuł. Hale K-7 w stylu „fable”
+  (`haloPortK7Build` — dach i ściany z dema orbital_ring_demo_2) i bryły zatok i tranzytów (`archPort.js`) zostają.
+- **Weryfikacja** (2026-10-23, RTX 5080, headless, 1600 × 900): `ringi-archetypy-gra.mjs --ringi jupiter` — kadry
+  `wyspa-z006`, `wyspa-z02`, `przelot-z02`, `port-z02`, `3d-baraki`, `3d-kregoslup`, `3d-przelot`, `3d-port` (off
+  i `--query renderWorker=1`), pipeline'y synchroniczne 0, błędy konsoli 0; worker: `start-sync-gra.mjs --query
+  "renderWorker=1&haloTest=jupiter&haloAt=gap"` — sync 0 na starcie i po 120 krokach; `ring-kolizje-gra.mjs --ring
+  jupiter` (off i worker) ok. Koszt klatki GPU (`--gpu`, cała klatka): obręcz z kamery gry 0,40 ms / 35 draw calli
+  (ring Fable v1 0,49 ms), przelot 0,41 / 43, kamery 3D 0,60–0,68 ms / 49–68 (Fable 0,68) — z gazem ringu.
+  Plan i bryły w Node ~30 ms CPU (ring Fable: sama mapa stref ~0,5 s).
+- **Testy**: `tests/haloRingBudowa.test.mjs` (wyspy, korytarz przelotu, FG, stal budowy, światła robocze, baraki
+  i teren, drony, pole gazu ringu i pakowanie sceny), `tests/haloRingConstruction.test.mjs` (11 przerw, nakładanie,
+  kolider, router, reda, radar).
+- Nie zmienione (kosmetyka, poza tym zadaniem): cień ringu na tarczy planety i okluder ringu w masce słońca to pełny
+  okrąg (`planet3d.assets.js`, `Core3D.setShaftRingOccluder`); kamery 3D widzą gaz jako warstwę w płaszczyźnie gry
+  (plasterki z paralaksą dema nie przeniesione).
 
 ### Podłogi Marsa i Jowisza bliżej ringu Ziemi (2026-10-22)
+
+> Część o Jowiszu (ring rafineryjny Fable) to historia — archetyp Fable usunięty 2026-10-23; Mars bez zmian.
 
 Porównanie zrzutów podłóg trzech ringów (narzędzie niżej, kadry `3d-podloga`, `3d-podloga-bok`):
 Ziemia ma powietrze, chmury, naturalną paletę i gęsty detal; Jowisz miał „schodki” brzegów stref
