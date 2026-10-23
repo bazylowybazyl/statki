@@ -77,6 +77,14 @@ test('kolider: przerwa = przelot (statek i pociski), segment = płyta; czoło se
   assert.ok(Math.abs(Math.hypot(ship.pos.x - planet.x, ship.pos.y - planet.y) - Math.hypot(before.x - planet.x, before.y - planet.y)) < 5, 'promień bez zmian');
   assert.notEqual(Math.sign(haloAngleDiff(after, beforeA)), 0);
   assert.ok(res.building, 'wynik zna ring w budowie (komunikat)');
+  // bezpiecznik hipercruise'u (E9): promień ku planecie przez środek przerwy płyty nie trafia, w segment — trafia
+  for (const [theta, open] of [[g.center, true], [g.center + g.half + 0.03, false]]) {
+    const from = at(theta, R.rim + 3000);
+    const to = at(theta, R.back - 3000);
+    const len = Math.hypot(to.x - from.x, to.y - from.y);
+    const s = col.rayToSlab(from.x, from.y, (to.x - from.x) / len, (to.y - from.y) / len, len, 200);
+    assert.equal(Number.isFinite(s), !open, open ? 'przerwa przepuszcza promień' : 'segment zatrzymuje promień');
+  }
 });
 
 test('ruch v2: router widzi przerwy jako szerokie przeloty, reda nie zasłania ich wylotów', () => {

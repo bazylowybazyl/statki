@@ -169,7 +169,35 @@ try {
       const r = c.constrainShip(fake, false);
       return { ...n, plyta: [Math.round(R.back), Math.round(R.floorMid)], wypchniety: r.hit, push: +r.floor.toFixed(1) };
     })()`);
-    const rep = report.rings[key] = { worker, geo, kolizje, hook, kadry: [] };
+    // Przelot (ring w budowie): statek nad krawędzią ścian pchnięty ku planecie przez środek przerwy i — dla porównania —
+    // w segment; po 5 s w przerwie ma być pod kadłubem ringu, w segmencie — zatrzymany na podłodze.
+    let przelot = null;
+    if (await ev(`!!window.__haloWorld.entries.find((x) => x.key === '${key}').collider.construction?.active`)) {
+      przelot = {};
+      for (const [nazwa, off] of [['przerwa', 0], ['segment', 1]]) {
+        await ev(`(() => {
+          const c = window.__haloWorld.entries.find((x) => x.key === '${key}').collider;
+          const R = c.layout.radii, p = c.place, g = c.construction.gaps[0];
+          const a = g.center + ${off} * (g.half + c.construction.front * 0.5);
+          const r = R.rim + 1200;
+          const lx = Math.cos(a) * r, ly = Math.sin(a) * r;
+          const x = p.x + lx * p.cos - ly * p.sin, y = p.y - (lx * p.sin + ly * p.cos);
+          const s = window.ship, ux = (p.x - x) / Math.hypot(p.x - x, p.y - y), uy = (p.y - y) / Math.hypot(p.x - x, p.y - y);
+          s.pos.x = x; s.pos.y = y; s.angle = Math.atan2(uy, ux); s.vel.x = ux * 900; s.vel.y = uy * 900;
+          window.camera.x = window.camera.targetX = x; window.camera.y = window.camera.targetY = y;
+          return true;
+        })()`);
+        await sleep(5000);
+        przelot[nazwa] = await ev(`(() => {
+          const c = window.__haloWorld.entries.find((x) => x.key === '${key}').collider;
+          const R = c.layout.radii, s = window.ship;
+          const r = Math.hypot(s.pos.x - c.place.x, s.pos.y - c.place.y);
+          return { r: Math.round(r), back: Math.round(R.back), floor: Math.round(R.floorMid), pod: r < R.back - 50, naPodlodze: r >= R.floorMid - 5 };
+        })()`);
+      }
+      console.log('  przelot', JSON.stringify(przelot));
+    }
+    const rep = report.rings[key] = { worker, geo, kolizje, przelot, hook, kadry: [] };
     console.log(key, worker ? '(worker)' : '(off)', JSON.stringify(geo));
     console.log('  kolizje', JSON.stringify(kolizje));
     for (const [name, v] of VIEWS) {
