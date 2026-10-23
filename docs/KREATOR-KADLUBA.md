@@ -29,8 +29,11 @@ okrętów Terra Novy odtworzonych w kreatorze i porównanie A/B z ich sprite'ami
   sprite bez projektu, błękit — projekt bez sprite'a; `--bez-projektu` — sam sprite do odczytu wymiarów). Obrys płyt
   sprite'a (pomiar płyt i rowów): `node scripts/kreator-obrys-tn.mjs --kadlub terran_carrier` → `.tmp/kreator/obrys/`.
 - Testy: `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
-  tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs` (klocki, suma wielokątów, szczelina, strażnik „bez czitowania”,
-  sieć systemów, klasy okrętów — § „Klasy okrętów”).
+  tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs tests/hullDesignBuild.test.mjs tests/hullDesignPaint.test.mjs`
+  (klocki, suma wielokątów, szczelina, strażnik „bez czitowania”, sieć systemów, klasy okrętów — § „Klasy okrętów”;
+  budowa etapami i pakiety float16; palety nacji i pędzel — § „Płynność edycji i malowanie barwami nacji”).
+- Płynność: `node scripts/webgpu/kreator-plynnosc.mjs [--tylko custos,bellator,colossus] [--edycje …] [--profil suwak]`
+  (długie zadania, przerwy klatek, czas do obrazu); barwy nacji i pędzel: `node scripts/webgpu/kreator-barwy.mjs`.
 
 ## Format projektu v2 (`src/game/hullDesign/hullDesignSchema.js`)
 
@@ -490,6 +493,110 @@ limitów Custosa; liczby w `raport.json` → `klasa`).
 `energyCost` broni zacznie coś znaczyć; gniazda z projektu zamiast `SHIP_EDITOR_DEFAULTS` (`hullDesignMounts` daje
 już typ, rozmiar i broń); NPC — wybór gniazd po `spec` zostaje albo przechodzi na pobór mocy.
 
+## Płynność edycji i malowanie barwami nacji (2026-10-23)
+
+Prośba użytkownika (2026-10-23): „sam generator jest znacznie lepszy, ale byle zmiana muli strasznie — jakieś algorytmy
+muszą mocno liczyć, gdy się robi zmianę. Teksturowanie daj osobno, żeby można było »malować« barwami nacji: Terra Nova,
+piraci itp.”
+
+### Co liczy się kiedy
+
+Każda zmiana przebudowywała wszystko na wątku strony: pole poziomów (150–330 ms), sieć A* (80–225 ms), pakowanie
+tekstur float16 w `setDesign` (~70 ms), wypiek z odczytem trzech celów, ciało gry z belkami (20–80 ms, w grze z GPU do
+280 ms — odczyt kanwy). Teraz:
+
+| Zmiana | Worker (`hullDesignBuild.js`) | Kompozytor | Ciało gry |
+|---|---|---|---|
+| barwy nacji, pędzel, naklejki, nadpisania barw | — (ścieżka barw dema) | passy barw BASE / ALB / EOUT | tekstura skóry kopiowana na GPU z celu ALB |
+| gniazdo / moduł bez bryły | sieć (geometria z pamięci) | wszystkie passy, tekstury pól bez wysyłki | po puszczeniu |
+| klocek, kasztel, suwak detalu, wielokąt | geometria + sieć | wszystkie passy | po puszczeniu |
+| przeciąganie (fast) | pole w ½ rozdzielczości, sieć z poprzedniego podglądu | passy bez odczytu, kwad podglądu | — |
+| klasa, rdzeń, priorytet mocy | klasa + moc (martwe kable: raster sieci) | wszystkie passy | po zmianie |
+
+- Worker: `src/game/hullDesign/hullDesignBuild.worker.js` (+ klient `hullDesignBuildClient.js`). Etapy z pamięcią
+  po kluczu wejścia (JSON brył rozwiniętych, rowków, modułów…), pakiety tekstur liczone w workerze (float16 tym samym
+  algorytmem co `DataUtils.toHalfFloat` — `hullDesignHalf.js`, test bit w bit), przekazywane tablice, na stronę tylko
+  to, czego klucz się zmienił. Nowsza praca przerywa starszą na granicy etapu (gdy nowa albo trwająca jest pełna;
+  podglądy przeciągania kończą się, żeby obraz nadążał). Kontrola sieci, systemy i spójność ramy liczą się PO obrazie.
+- Strona: kompozytor (`setDesign` z pakietami — tekstura na GPU tylko przy nowym kluczu; `render()` bez odczytu),
+  odczyt tylko ALB i SURF (emisja na żądanie mapy), ciało gry w osobnych zadaniach z kanw CPU (`willReadFrequently` —
+  odczyt kanwy z GPU czekał w `createHull` na kolejkę: 100–280 ms).
+- Podgląd przeciągania: `dema/kreator-kadluba-podglad.js` — cele kompozytora wprost na kwadzie w passie gry
+  (hullPbrSun z mapą powierzchni i poświata niebieskich paneli), ciało gry ukryte (`hideHexVisual`); bez lakieru,
+  samocienia, modelu mostka i lamp — po puszczeniu wraca ciało gry.
+
+### Pomiar (scripts/webgpu/kreator-plynnosc.mjs, A/B naprzemiennie, 2 rundy, rytm 60 Hz)
+
+Długie zadania strony (> 50 ms) przy każdej edycji: przed 1–7 (max 216–616 ms, suma do 1,9 s) → **po 0** we wszystkich
+edycjach Custosa, Bellatora i Colossusa. Największa przerwa między klatkami: przed 205–693 ms → po ≤ 37 ms. Obrazy
+w trakcie 1 s przeciągania: przed ~5 (każdy = przycięcie strony), po: klocek 10–12, gniazdo 26, suwak 2–5.
+
+Od puszczenia do pełnego obrazu [ms], przed (runda 1 / 2) → po (runda 1 / 2):
+
+| Okręt | klocek | dodaj | usuń | gniazdo | suwak | paleta | cofnij |
+|---|---|---|---|---|---|---|---|
+| Custos | 444/395 → 372/302 | 425/393 → 308/250 | 411/391 → 52/37 | 422/453 → 172/157 | 408/372 → 299/270 | 368/321 → 28/25 | 341/258 → 50/34 |
+| Bellator | 808/532 → 515/404 | 689/443 → 496/387 | 666/477 → 64/59 | 710/520 → 256/230 | 722/483 → 576/431 | 549/442 → 48/36 | 514/426 → 51/32 |
+| Colossus | 563/447 → 430/372 | 467/359 → 395/383 | 456/370 → 78/84 | 652/531 → 369/673 | 571/420 → 582/944 | 503/399 → 87/105 | 491/382 → 76/127 |
+
+(„usuń” cofa świeżo dodany klocek — geometria z pamięci; suwak detalu liczy pole i sieć od zera w pełnej rozdzielczości.
+Paleta i cofnij w tym pomiarze szły jeszcze pełną budową — ścieżka barw niżej skraca je do ~10–20 ms.)
+
+Drednot TN klasy VII (5,4 km; lokalne scalenie gałęzi `claude/serene-hodgkin-65a19b` z `main` / z tą gałęzią, bez
+commita): długie zadania przed 3–7 (max 790–1453 ms) → po 1–2 (max 113–185 ms — budowa ciała z belkami po puszczeniu),
+przerwa klatek 787–1595 → 116–207 ms; od puszczenia: klocek 2062 → 1409, gniazdo 1934 → 779, suwak 1929 → 1390,
+paleta 1199 → 360, cofnij 1254 → 376 ms. Scalenie z drednotem: konflikt tylko w `hullDesignSchema.js` (npc /
+bridgeLevel — jak w notatce drednota); sufit kompozytora 8 192 px scala się sam.
+
+Obraz pełnego wypieku: albedo bajt w bajt jak w `main` (custos, bellator, colossus, pirate, drednot — także po
+rozdzieleniu map i barw).
+
+### Warstwa barw (malowanie barwami nacji)
+
+- **Mapy i barwy w kompozytorze**: GEO, EMIS (bez barwy okien — siła okien w kanale A, barwę dokłada pass barw)
+  i SURF zależą tylko od kształtu; BASE (paleta, pędzel, naklejki), ALB i EOUT to passy barw. `setColors(design,
+  pędzel)`, `setDecals`, `renderColors()` (3 passy, ~3 ms GPU każdy), `bakeColors()` (passy barw + odczyt albedo).
+- **Palety frakcji gry** (`HD_PALETTES`, mapa `HD_FACTION_PALETTE` z `src/data/factions.js`): Terra Nova, Stocznie
+  Marsjańskie (rdzawe płyty, karmazyn), Konsorcjum Wewnętrzne (piasek, złoto), Unia Pasa (zużyta szara blacha, żółć
+  górnicza), Konsorcjum Zewnętrzne (szarofioletowa, fiolet z czerwonym ≥ 0,25 — nie świeci), Piraci; do tego Atlas
+  i Cywilny. Żadna barwa poza oknami nie zapala `hullGlowMask` (test); `glowSafeLinear` ścisza niebieski przy czerwonym
+  < 0,25 (zgodnie z maską gry, dawniej < 0,2).
+- **Emblematy nacji** (`HD_PALETTE_EMBLEM`, barwa `HD_PALETTE_EMBLEM_COLOR`): TN — orzeł, piraci — skrzyżowane
+  kordelasy nad proporcem (BEZ czaszek — decyzja użytkownika), Mars — koło zębate, Konsorcjum Wewnętrzne — słońce,
+  Unia Pasa — skała, Konsorcjum Zewnętrzne — pierścień, Atlas — skrzydło, cywilny — bez.
+- **Pędzel**: `paint` na klocku albo kasztelu (slot `HD_PAINT_SLOTS` albo '#rrggbb') — płyty w tej barwie zamiast płyty /
+  nadbudówki palety; raster na siatce pola (`hullDesignPaint.js`, 2 × 2 próbki, tabela do 15 barw), barwy slotów
+  z palety w chwili wypieku (zmiana nacji przemalowuje też pomalowane klocki). `design.paint` (nadpisania wierszy palety)
+  zostaje jak było.
+- **Stocznia, Malowanie**: „Barwy nacji” — jedno kliknięcie: paleta i emblemat nacji (emblematy poprzedniej nacji
+  podmienione w miejscu, bez nich — para na pancerzu za śródokręciem); „Pędzel” — slot (Płyta, Nadbudówka, Linia,
+  Akcent, Ostrzegawcze, Maszynownia, Wrota, Silniki), Własna barwa (kolor naklejek), Gumka: klik albo przeciągnięcie po
+  klockach i kasztelach, jedno pociągnięcie = jeden wpis cofania.
+- **Ścieżka barw dema** (`runColors`): zmiana tylko warstwy barw (`hullDesignShapeKey` bez palety, `paint`, naklejek
+  i nazwy — ten sam co pokazany pełny obraz) — bez workera i ciała gry: passy barw, albedo z celu ALB kopiowane na GPU
+  do tekstury skóry kadłuba, kanwa CPU odczytem w tle (raz na koniec pociągnięcia). Obraz = pełna przebudowa w tej
+  samej palecie (0 różnych bajtów — `kreator-barwy.mjs`, `zgodnosc`).
+
+Pomiar (`node scripts/webgpu/kreator-barwy.mjs`, 60 Hz): zmiana nacji — CPU strony 0,3–8 ms, do końca pracy GPU
+6–49 ms (zwykle 9–25 ms; Custos, Bellator, Colossus), bez długich zadań; pociągnięcie pędzlem po 7–13 klockach
+~0,1–0,26 s razem z ruchem myszy, bez długich zadań (raster pędzla 5–7 ms na krok). Zrzuty: `<okręt>-nacja-<paleta>.png`,
+`<okręt>-pedzel.png`, `<okręt>-stocznia-malowanie.png`.
+
+### W grze, etap 3: jeden projekt, kilka barw (do wpięcia — dziś nic w grze)
+
+NPC różnych frakcji na tym samym kadłubie nie potrzebują osobnych wypieków kształtu: `HullComposer.bakeLiveries(field,
+atlas, [{ palette, paint, brush }, …])` liczy mapy raz (pełny wypiek pierwszej barwy: albedo, mapa powierzchni, emisja,
+alfa fizyki wspólna), potem dla każdej barwy tylko passy barw i odczyt albedo (~3 passy na GPU + odczyt). Do wpięcia:
+
+1. Przy ładowaniu (jak `prebake` sprite'ów): dla każdego projektu NPC — `bakeLiveries` z paletami frakcji, które go
+   używają (`HD_FACTION_PALETTE[npc.faction]`); jedna mapa powierzchni (`HullSurface`, kształt bez barw) i jedna alfa
+   fizyki (belki) na projekt, albedo per frakcja (obraz skóry: `visualImage` encji).
+2. Klucz tekstury skóry = (projekt, paleta) — `acquireSharedVisualTexture` dzieli ją między NPC tej samej frakcji.
+3. Emblemat i naklejki nacji w palecie frakcji (`HD_PALETTE_EMBLEM`) — w `bakeLiveries` przez `design.decals` podany
+   do `setDecals` per barwa (dziś wspólne dla wszystkich barw; do dopisania przy wpięciu).
+4. Bez kompozytora w grze (np. worker renderu) — albedo barw pieczone w demie / przy budowie paczki i zapisane jak
+   sprite'y; mapa powierzchni wspólna.
+
 ## Demo — narzędzia
 
 **Stocznia** (domyślny interfejs, `dema/kreator-kadluba-stocznia.js`; prośba użytkownika 2026-10-21: „jak generator
@@ -498,8 +605,8 @@ podstawowe kształty z przeciąganiem i powtarzaniem, żeby fajnie budowało si�
 
 - z lewej paleta kart z miniaturami pieczonymi przez kompozytor okrętu w jego barwach i stylu (Kształty — 22 klocki
   z warstwą, wycięciem i rozmiarem ×1–×4; Systemy; Uzbrojenie — wieże i gniazda z rozmiarem; Detale — luki, kratki,
-  pierścienie, kasztel, gotowe części TN; Malowanie — barwy, krawędzie, naklejki, kolor, napis, detal płyt, rury,
-  okna); karta przeciągnięta na okręt stawia element (duch z kopią lustra; klocek blisko burty przywiera — magnes,
+  pierścienie, kasztel, gotowe części TN; Malowanie — barwy nacji z emblematem, pędzel, krawędzie, naklejki, kolor,
+  napis, detal płyt, rury, okna); karta przeciągnięta na okręt stawia element (duch z kopią lustra; klocek blisko burty przywiera — magnes,
   Alt bez), kółko w trakcie stawiania klocka zmienia rozmiar;
 - powtarzanie: klik w kartę — stempel (klik — kopia, przeciągnięcie — rząd stykających się kopii), Ctrl+D — powiel
   (po przesunięciu kopii następne powtarza przesunięcie), Shift+przeciągnij — kopia, Ctrl+C / Ctrl+V — schowek;

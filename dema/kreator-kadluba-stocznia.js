@@ -10,17 +10,21 @@
 // POWTARZANIE: klik w kartę — stempel (każdy klik na okręcie stawia kopię, przeciągnięcie — rząd stykających się kopii),
 // Ctrl+D — powiel (po przesunięciu kopii kolejne Ctrl+D powtarza to samo przesunięcie), Ctrl+C / Ctrl+V — schowek
 // (wklejenie pod kursorem).
+// MALOWANIE (warstwa barw — bez przebudowy kadłuba): karta nacji — jednym kliknięciem paleta i emblemat nacji (piraci —
+// własny znak bez czaszek), PĘDZEL — karta slotu barwy (płyta, nadbudówka, linia, akcent, …), własnej barwy (kolor
+// naklejek) albo gumki: klik albo przeciągnięcie po klockach i kasztelach maluje ich płyty (`paint`), jedno pociągnięcie
+// = jeden wpis cofania. Zmiany barw idą ścieżką barw dema (runColors: same passy barw kompozytora).
 // Miniatury kart piecze kompozytor okrętu w barwach i stylu projektu (api.composerExclusive — między wypiekami
 // projektu), do czasu wypieku karta ma rysunek wektorowy.
 // Z dema bierze tylko `api` (shipyardApi w dema/kreator-kadluba-webgpu.js). Zakończona zmiana projektu → requestBuild(false)
 // (wpis historii cofania); w trakcie przeciągania S.drag jest ustawione i budowa idzie szybka, bez historii.
 import {
-  HD_BLOCK_PALETTE, HD_BLOCK_PALETTE_GROUPS, HD_BLOCK_ROT_STEP, blockLocalLoops, blockWorldLoops, hullBlockFromPalette,
-  hullBlockPaletteUnit, snapBlockRot
+  HD_BLOCK_PALETTE, HD_BLOCK_PALETTE_GROUPS, HD_BLOCK_ROT_STEP, HD_PAINT_SLOTS, blockLocalLoops, blockWorldLoops,
+  hullBlockFromPalette, hullBlockPaletteUnit, snapBlockRot
 } from '../src/game/hullDesign/hullDesignBlocks.js';
 import {
-  HD_DETAIL, HD_LEVEL_NAMES, HD_MODULES, HD_MOUNT_RADIUS_DU, HD_PALETTES, HD_PALETTE_KEYS, HD_STYLE_NAMES, hullDesignMountOf,
-  normalizeHullDesign
+  HD_DETAIL, HD_LEVEL_NAMES, HD_MODULES, HD_MOUNT_RADIUS_DU, HD_PALETTES, HD_PALETTE_KEYS, HD_PALETTE_EMBLEM, HD_PALETTE_EMBLEM_COLOR, HD_STYLE_NAMES,
+  hullDesignMountOf, hullDesignPalette, normalizeHullDesign
 } from '../src/game/hullDesign/hullDesignSchema.js';
 import { HD_PARTS, HD_PART_IDS } from '../src/game/hullDesign/hullDesignParts.js';
 import { HD_EMBLEMS, HD_EMBLEM_KEYS } from '../src/game/hullDesign/hullEmblems.js';
@@ -46,6 +50,13 @@ const LEVELS = [
 /** Wielkości okrętu od zera: detal floty TN danej klasy (Custos, Hasta, —, Bellator, Citadella, Colossus). */
 const NEW_SHIP_DETAIL = [0.09, 0.145, 0.23, 0.366, 0.63, 0.906];
 const DECAL_COLORS = ['#d06a22', '#b8342a', '#d8b83a', '#e9e5dc', '#3b3a37', '#6b7a3a'];
+/** Pędzel: sloty barw palety po ludzku (HD_PAINT_SLOTS). */
+const BRUSH_LABELS = {
+  hull: 'Płyta', upper: 'Nadbudówka', trim: 'Linia', accent: 'Akcent', hazard: 'Ostrzegawcze', metal: 'Maszynownia',
+  door: 'Wrota', engine: 'Silniki'
+};
+/** Emblematy nacji (podmienia je wybór palety; emblemat obecnej nacji — także bez znacznika `nation`). */
+const NATION_EMBLEMS = new Set(Object.values(HD_PALETTE_EMBLEM).filter(Boolean));
 
 const SYSTEMS = [
   ['reactor', 'Reaktor', 'Serce okrętu: moc dla wszystkich urządzeń'],
@@ -93,7 +104,10 @@ function buildCatalog() {
   for (const [type, label, hint] of DETAILS) items.push({ key: `mod:${type}`, cat: 'detale', group: 'Detale pancerza', kind: 'module', type, label, hint, onHull: true });
   items.push({ key: 'castle', cat: 'detale', group: 'Nadbudówki', kind: 'castle', label: 'Kasztel', hint: 'Schodkowa nadbudówka z fazami', onHull: true });
   for (const id of HD_PART_IDS) items.push({ key: `part:${id}`, cat: 'detale', group: 'Gotowe części Terra Novy', kind: 'part', id, label: HD_PARTS[id].label.replace(/ TN\b/, ''), hint: 'Gotowy fragment okrętu' });
-  for (const k of HD_PALETTE_KEYS) items.push({ key: `pal:${k}`, cat: 'farba', group: 'Barwy kadłuba', kind: 'paint', id: k, label: HD_PALETTES[k].label, hint: 'Kliknij albo upuść na okręt' });
+  for (const k of HD_PALETTE_KEYS) items.push({ key: `pal:${k}`, cat: 'farba', group: 'Barwy nacji', kind: 'paint', id: k, label: HD_PALETTES[k].label, hint: 'Kliknij: barwy i emblemat nacji' });
+  for (const s of HD_PAINT_SLOTS) items.push({ key: `brush:${s}`, cat: 'farba', group: 'Pędzel', kind: 'brush', paint: s, label: BRUSH_LABELS[s], hint: 'Kliknij, potem maluj klocki i kasztele' });
+  items.push({ key: 'brush:own', cat: 'farba', group: 'Pędzel', kind: 'brush', paint: 'own', label: 'Własna barwa', hint: 'Barwa z pola „Kolor” — maluj klocki i kasztele' });
+  items.push({ key: 'brush:erase', cat: 'farba', group: 'Pędzel', kind: 'brush', paint: null, label: 'Gumka', hint: 'Zdejmij farbę pędzla z klocka' });
   for (const s of ['chamfer', 'rounded', 'sharp']) items.push({ key: `sty:${s}`, cat: 'farba', group: 'Krawędzie', kind: 'style', id: s, label: cap(HD_STYLE_NAMES[s]), hint: 'Styl rogów kadłuba' });
   for (const k of HD_EMBLEM_KEYS) items.push({ key: `emb:${k}`, cat: 'farba', group: 'Naklejki', kind: 'decal', decal: 'emblem', id: k, label: HD_EMBLEMS[k].label, hint: 'Emblemat w kolorze naklejek', onHull: true });
   items.push({ key: 'dec:text', cat: 'farba', group: 'Naklejki', kind: 'decal', decal: 'text', label: 'Napis', hint: 'Tekst z pola „Napis”', onHull: true });
@@ -559,6 +573,7 @@ export function installShipyard(api) {
     const base = { sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, w0: w, moved: false, button: e.button };
     if (e.button === 1 || e.button === 2) { U.drag = { ...base, mode: 'pan' }; return; }
     if (e.button !== 0) return;
+    if (U.armed?.kind === 'brush') { U.drag = { ...base, mode: 'brush', item: U.armed, done: new Set() }; brushAt(U.drag, w); return; }
     if (U.armed) { U.drag = { ...base, mode: 'stamp', item: U.armed, row: null }; return; }
     const h = handleAt(e.clientX, e.clientY);
     if (h) {
@@ -588,6 +603,9 @@ export function installShipyard(api) {
     } else if (dr.mode === 'palette') {
       if (dist > 5) dr.moved = true;
       moveGhost(e.clientX, e.clientY, dr.moved && !m.over);
+    } else if (dr.mode === 'brush') {
+      if (dist > 3) dr.moved = true;
+      brushAt(dr, w);
     } else if (dr.mode === 'stamp') {
       if (dist > 8) dr.moved = true;
       if (dr.moved) dr.row = rowFor(dr.item, dr.w0, w);
@@ -617,6 +635,9 @@ export function installShipyard(api) {
       hideGhost();
       if (!dr.moved) clickCard(dr.item);
       else if (overCanvas(e.clientX, e.clientY)) dropItem(dr.item, w);
+    } else if (dr.mode === 'brush') {
+      if (S.drag?.kind === 'stocznia-pedzel') S.drag = null;
+      if (dr.done.size) { commit(); toast(`${dr.item.label}: ${dr.done.size === 1 ? 'pomalowano' : `pomalowano ${dr.done.size}`}`); }
     } else if (dr.mode === 'stamp') {
       const placed = dr.moved && dr.row ? placeRow(dr.row) : dropItem(dr.item, dr.w0, true);
       void placed;
@@ -760,15 +781,83 @@ export function installShipyard(api) {
   function clickCard(item) {
     if (item.kind === 'paint' || item.kind === 'style') { applyLook(item); return; }
     arm(item);
-    if (U.armed) toast(`Stempel: ${item.label} — klikaj na okręcie albo przeciągnij, by ułożyć rząd (Esc — koniec)`);
+    if (U.armed?.kind === 'brush') toast(`Pędzel: ${item.label} — klikaj albo przeciągaj po klockach i kasztelach (Esc — koniec)`);
+    else if (U.armed) toast(`Stempel: ${item.label} — klikaj na okręcie albo przeciągnij, by ułożyć rząd (Esc — koniec)`);
   }
   function applyLook(item) {
     const d = design();
-    if (item.kind === 'paint') { if (d.palette === item.id) return; d.palette = item.id; }
-    else { if (d.style === item.id) return; d.style = item.id; }
-    toast(item.kind === 'paint' ? `Barwy: ${item.label}` : `Krawędzie: ${item.label.toLowerCase()}`);
+    let em = null;
+    if (item.kind === 'paint') {
+      if (d.palette === item.id) return;
+      d.palette = item.id;
+      em = applyNationEmblem(d, item.id);
+    } else { if (d.style === item.id) return; d.style = item.id; }
+    toast(item.kind === 'paint' ? `Barwy: ${item.label}${em ? ` · emblemat ${em}` : ''}` : `Krawędzie: ${item.label.toLowerCase()}`);
     commit();
     renderCards();
+  }
+  /**
+   * Emblemat nacji przy wyborze palety: emblematy nacji (znacznik `nation` albo emblemat dotychczasowej nacji) dostają
+   * znak nowej (te same miejsca, pole zachowane); bez nich — jedna para na pancerzu za śródokręciem. Zwraca opis albo null.
+   */
+  function applyNationEmblem(d, palette) {
+    const id = HD_PALETTE_EMBLEM[palette] ?? null;
+    const prev = HD_PALETTE_EMBLEM[U.lastPalette ?? ''] ?? null;
+    const mine = d.decals.filter((q) => q.kind === 'emblem' && (q.nation || (NATION_EMBLEMS.has(q.id) && (q.id === prev || q.id === 'eagle'))));
+    U.lastPalette = palette;
+    if (mine.length) {
+      if (!id) { d.decals = d.decals.filter((q) => !mine.includes(q)); return 'zdjęty'; }
+      for (const q of mine) {
+        if (q.id !== id) { const s = Math.sqrt(q.w * q.h); q.w = s; q.h = s; }
+        q.id = id;
+        q.color = HD_PALETTE_EMBLEM_COLOR[palette] || q.color;
+        q.nation = true;
+      }
+      return `„${HD_EMBLEMS[id].label}”`;
+    }
+    if (!id || !S.field) return null;
+    const spot = emblemSpot();
+    if (!spot) return null;
+    d.decals.push({ kind: 'emblem', id, x: spot.x, y: spot.y, w: spot.s, h: spot.s, rot: 0, color: HD_PALETTE_EMBLEM_COLOR[palette] || hullDesignPalette(d).trim, opacity: 0.9, nation: true });
+    return `„${HD_EMBLEMS[id].label}”`;
+  }
+  /** Miejsce emblematu nacji: płyta pancerza za śródokręciem, przy burcie (kopia lustra po drugiej). */
+  function emblemSpot() {
+    const F = S.field, b = F.bounds;
+    const L = b.maxX - b.minX, Wd = b.maxY - b.minY;
+    const s = Math.max(4, Math.min(60, Math.min(L * 0.05, Wd * 0.22)));
+    for (const fx of [0.62, 0.5, 0.72, 0.4, 0.8, 0.3]) {
+      const x = b.minX + L * fx;
+      for (let fy = 0.08; fy <= 0.42; fy += 0.02) {
+        const y = -Wd * fy;
+        if (sampleHullField(F, 1, x, y) < -s * 0.75) return { x, y, s };
+      }
+    }
+    return null;
+  }
+  /** Pędzel pod kursorem: kasztel albo wierzchni klocek (moduły na nim nie przeszkadzają). */
+  function paintTargetAt(wx, wy) {
+    const p = api.pick(wx, wy);
+    if (p?.kind === 'castle') return p.obj;
+    const list = design().shapes;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const o = list[i];
+      if (o.kind !== 'block' || o.op === 'cut') continue;
+      const r = { kind: 'shape', obj: o };
+      for (const m of mirrorCopy(r) ? [false, true] : [false]) if (loopDistance(blockWorldLoops(o, m), wx, wy) <= 0) return o;
+    }
+    return null;
+  }
+  function brushAt(dr, w) {
+    const o = paintTargetAt(w.x, w.y);
+    if (!o || dr.done.has(o)) return;
+    const v = dr.item.paint === 'own' ? S.color : dr.item.paint;
+    if ((o.paint || null) === (v || null)) { dr.done.add(o); return; }
+    if (v) o.paint = v; else delete o.paint;
+    dr.done.add(o);
+    fxAt(w.x, w.y, 'pop');
+    S.drag = { kind: 'stocznia-pedzel' };
+    api.requestBuild(true);
   }
   /** Upuszczenie karty w punkcie świata (`stamp` — stempel: zostaje zaznaczenie bez zmian). Zwraca postawiony element. */
   function dropItem(item, w, stamp = false) {
@@ -1142,6 +1231,7 @@ export function installShipyard(api) {
     let h;
     if (dr?.mode === 'palette' && dr.moved) h = `Upuść na okręcie${design()?.mirror ? ' — kopia stanie po drugiej burcie' : ''} · z powrotem nad paletę — anuluj`;
     else if (dr?.mode === 'move') h = dr.trash ? 'Puść, by usunąć' : 'Upuść na paletę, by usunąć · Shift przy chwytaniu — kopia';
+    else if (U.armed?.kind === 'brush' || dr?.mode === 'brush') h = `Pędzel „${(U.armed || dr.item).label}”: <kbd>klik</kbd> / <kbd>przeciągnij</kbd> po klockach i kasztelach — malowanie · <kbd>Esc</kbd> / <kbd>PPM</kbd> — koniec`;
     else if (U.armed || dr?.mode === 'stamp') h = `Stempel „${(U.armed || dr.item).label}”: <kbd>klik</kbd> — kopia · <kbd>przeciągnij</kbd> — rząd kopii · <kbd>Esc</kbd> / <kbd>PPM</kbd> — koniec`;
     else if (U.sel.length) h = '<kbd>R</kbd> obrót 90° (<kbd>⇧R</kbd> 45°) · <kbd>F</kbd> odbij · <kbd>Ctrl+D</kbd> powiel · <kbd>kółko</kbd> rozmiar · <kbd>1–4</kbd> warstwa · <kbd>Del</kbd> usuń · <kbd>Ctrl+C/V</kbd> schowek';
     else h = 'Przeciągnij kartę na okręt · <kbd>klik</kbd> w kartę — stempel · <kbd>Shift</kbd>+przeciągnij — kopia · <kbd>Ctrl</kbd>+ramka · <kbd>kółko</kbd> przybliż · tło — przesuń';
@@ -1273,7 +1363,7 @@ export function installShipyard(api) {
       h = `<div class="yoptl">Rozmiar nowych gniazd (mostek ${cls.roman}: do ${cls.weaponSize})</div><div class="ychips"><button class="ychip${!U.mountSize ? ' on' : ''}" data-msize="">jak klasa</button>${MOUNT_SIZES.map((s) => `<button class="ychip${U.mountSize === s ? ' on' : ''}" data-msize="${s}" ${sizeRank(s) > sizeRank(cls.weaponSize) ? 'disabled' : ''}>${s}</button>`).join('')}</div>`;
     } else if (U.cat === 'farba') {
       const d = design();
-      h = `<div class="yoptl">Kolor naklejek</div><div class="ychips">${DECAL_COLORS.map((c) => `<button class="yswatch${S.color === c ? ' on' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('')}<input type="color" class="ycolor" value="${S.color}" title="własny kolor"></div>
+      h = `<div class="yoptl">Kolor naklejek i pędzla „Własna barwa”</div><div class="ychips">${DECAL_COLORS.map((c) => `<button class="yswatch${S.color === c ? ' on' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('')}<input type="color" class="ycolor" value="${S.color}" title="własny kolor"></div>
         <div class="yoptl">Napis</div><input class="ytext" value="${esc(U.text)}" maxlength="16" spellcheck="false">
         <div class="yoptl">Wykończenie</div>
         <label class="yslider"><span>Detal płyt</span><input type="range" data-k="detail" min="${HD_DETAIL.min}" max="${HD_DETAIL.max}" step="0.005" value="${d?.detail ?? 0.6}"></label>
@@ -1314,7 +1404,7 @@ export function installShipyard(api) {
     for (const r of decals) r.obj.color = c;
     if (decals.length) commit();
     if (rerender) renderOpts();
-    for (const it of items) if (it.kind === 'decal') paintCard(it);
+    for (const it of items) if (it.kind === 'decal' || it.kind === 'brush') paintCard(it);
   }
 
   /** Kolejność kart kształtów w grupach (wpisy palety spoza listy — na końcu swojej grupy). */
@@ -1393,7 +1483,22 @@ export function installShipyard(api) {
       g.lineWidth = 1.2 * TH.dpr; g.strokeStyle = edge; g.stroke();
     };
     if (it.kind === 'block') { plate(blockLocalLoops(hullBlockFromPalette(it.id, 1))); return; }
-    if (it.kind === 'paint') { shipIcon(g, HD_PALETTES[it.id], W, H); return; }
+    if (it.kind === 'paint') { shipIcon(g, HD_PALETTES[it.id], W, H, HD_PALETTE_EMBLEM[it.id]); return; }
+    if (it.kind === 'brush') {
+      const palD = design() ? hullDesignPalette(design()) : pal;
+      const fill = it.paint === 'own' ? S.color : (it.paint ? palD[it.paint] : palD.hull);
+      plate([[[-1, -0.62], [0.55, -0.62], [1, 0], [0.55, 0.62], [-1, 0.62]]], fill, palD.trim);
+      g.save();
+      g.translate(W * 0.66, H * 0.3); g.rotate(0.7);
+      g.fillStyle = '#e8e3d6'; g.fillRect(-2.2 * TH.dpr, -H * 0.2, 4.4 * TH.dpr, H * 0.26);
+      g.fillStyle = it.paint ? fill : '#d9b9b0'; g.fillRect(-3.6 * TH.dpr, H * 0.06, 7.2 * TH.dpr, H * 0.12);
+      g.restore();
+      if (!it.paint) {
+        g.strokeStyle = BAD; g.lineWidth = 2 * TH.dpr;
+        g.beginPath(); g.moveTo(W * 0.3, H * 0.3); g.lineTo(W * 0.5, H * 0.7); g.moveTo(W * 0.5, H * 0.3); g.lineTo(W * 0.3, H * 0.7); g.stroke();
+      }
+      return;
+    }
     if (it.kind === 'style') {
       const r = 0.22;
       const sq = it.id === 'sharp' ? [[-1, -0.6], [1, -0.6], [1, 0.6], [-1, 0.6]]
@@ -1436,8 +1541,8 @@ export function installShipyard(api) {
     corner(1 - r, -0.6 + r, -Math.PI / 2); corner(1 - r, 0.6 - r, 0); corner(-1 + r, 0.6 - r, Math.PI / 2); corner(-1 + r, -0.6 + r, Math.PI);
     return out;
   }
-  /** Mała sylwetka okrętu w barwach palety (karta „Barwy kadłuba”). */
-  function shipIcon(g, pal, W, H) {
+  /** Mała sylwetka okrętu w barwach palety z emblematem nacji (karta „Barwy nacji”). */
+  function shipIcon(g, pal, W, H, emblem = null) {
     const P = [[-0.95, -0.34], [0.35, -0.34], [0.95, 0], [0.35, 0.34], [-0.95, 0.34], [-0.82, 0]];
     const k = Math.min(W * 0.44, H * 1.1), ox = W / 2, oy = H / 2;
     const path = (pts) => { g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x * k + ox, y * k + oy) : g.moveTo(x * k + ox, y * k + oy))); g.closePath(); };
@@ -1448,6 +1553,12 @@ export function installShipyard(api) {
     path([[-0.6, -0.18], [0.2, -0.18], [0.42, 0], [0.2, 0.18], [-0.6, 0.18]]); g.fillStyle = pal.upper; g.fill();
     path([[-0.95, -0.06], [0.7, -0.06], [0.82, 0], [0.7, 0.06], [-0.95, 0.06]]); g.fillStyle = pal.accent; g.fill();
     path(P); g.lineWidth = 1.2 * TH.dpr; g.strokeStyle = pal.trim; g.stroke();
+    if (emblem && HD_EMBLEMS[emblem]) {
+      const s = k * 0.34 / 100, ex = ox - k * 0.42 - 50 * s, ey = oy - 50 * s;
+      g.beginPath();
+      for (const pth of HD_EMBLEMS[emblem].paths) { pth.forEach(([x, y], i) => (i ? g.lineTo(x * s + ex, y * s + ey) : g.moveTo(x * s + ex, y * s + ey))); g.closePath(); }
+      g.fillStyle = pal.trim; g.fill('evenodd');
+    }
   }
 
   /** Projekt miniatury: jeden element (moduł na płycie pancerza) w detalu 0,6, bez sieci rur. */
@@ -1652,6 +1763,7 @@ export function installShipyard(api) {
     /** Upuszczenie karty `key` w punkcie świata (jak przeciągnięcie z palety): true — element postawiony. */
     drop(key, x, y) { return !!dropItem(byKey.get(key), { x, y }); },
     arm(key) { clickCard(byKey.get(key)); return U.armed?.key || null; },
+    disarm() { arm(null); return true; },
     row(key, ax, ay, bx, by) { const row = rowFor(byKey.get(key), { x: ax, y: ay }, { x: bx, y: by }); return row ? (placeRow(row) || []).length : 0; },
     duplicate() { duplicateSel(); return U.sel.length; },
     selectLast(kind = 'shape') { const list = listFor(kind); const obj = list[list.length - 1]; select(obj ? [{ kind, obj }] : []); return !!obj; },
@@ -1676,6 +1788,6 @@ export function installShipyard(api) {
   return {
     draw, insets, onUi, harness,
     /** Po wczytaniu projektu (preset): karta okrętu od nowa, miniatury w jego barwach. */
-    refresh() { U.statsKey = ''; if (S.ui === 'stocznia') scheduleThumbs(); syncTop(); }
+    refresh() { U.statsKey = ''; U.lastPalette = design()?.palette; if (S.ui === 'stocznia') scheduleThumbs(); syncTop(); }
   };
 }

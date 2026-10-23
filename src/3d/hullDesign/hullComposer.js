@@ -24,6 +24,12 @@
 //                   opcjonalnie emisja jako niebieska poświata (gra dziś świeci tylko z albedo: hullGlowMask)
 //   EOUT  (RGBA8)   emisja do podglądu (sRGB, /3)
 //
+// MAPY i BARWY (malowanie barwami nacji jako osobna warstwa): GEO, EMIS (bez barwy okien — w kanale A siła okien,
+// barwę dokłada pass barw) i SURF zależą tylko od projektu bez barw; BASE (paleta, pędzel — mapa malowania klocków
+// src/game/hullDesign/hullDesignPaint.js — i naklejki), ALB i EOUT to PASSY BARW. Zmiana palety, pędzla albo naklejek:
+// setColors / setDecals + renderColors() (3 passy, bez pól, sieci i wysyłki tekstur pól), odczyt samego albedo —
+// bakeColors(). Ta sama ścieżka da grze jeden projekt w barwach kilku frakcji (bakeLiveries).
+//
 // Obraz ma `tpu` tekseli na j.: dłuższy bok ~HD_TEX.targetSide (fregata 150 j. → ~16 tek./j., lotniskowiec → ~2,4).
 
 import * as THREE from 'three/webgpu';
@@ -34,6 +40,7 @@ import {
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { srgbEncode } from '../skybake/skyGameColor.js';
 import { HD_BRIDGE_SOCKET, HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { HD_PAINT_MAX } from '../../game/hullDesign/hullDesignPaint.js';
 import { bridgeLevel } from '../../data/bridgeLevels.js';
 import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
 
@@ -102,12 +109,19 @@ function srgbToLinear(hex) {
 }
 
 /**
- * Barwa bezpieczna dla skóry gry: hullGlowMask (hullLighting.tsl.js) zapala albedo z niebieskim > 0,42 i
- * czerwonym < 0,15 (liniowo) — niebieski pas wyglądałby jak świecąca tarcza. Taki kolor ściszony do b = 0,38.
+ * Barwa bezpieczna dla skóry gry: hullGlowMask (hullLighting.tsl.js) zapala albedo z niebieskim > 0,42 przy
+ * czerwonym < 0,25 (liniowo; od 0,15 maska maleje) — niebieski pas wyglądałby jak świecąca tarcza. Taki kolor ściszony
+ * do b = 0,38 (maska 0).
  */
 export function glowSafeLinear(c) {
-  if (c[2] > 0.38 && c[0] < 0.2) { const k = 0.38 / c[2]; return [c[0] * k, c[1] * k, 0.38]; }
+  if (c[2] > 0.38 && c[0] < 0.25) { const k = 0.38 / c[2]; return [c[0] * k, c[1] * k, 0.38]; }
   return c;
+}
+
+/** Barwa '#rrggbb' → liniowo, bezpieczna dla skóry gry (okna bez ściszenia — świecą z założenia). */
+export function hullColorLinear(hex, isWindow = false) {
+  const c = srgbToLinear(hex);
+  return isWindow ? c : glowSafeLinear(c);
 }
 
 /** Tekseli na j. dla pudła obrazu (w × h j.). */
@@ -219,7 +233,8 @@ export class HullComposer {
       bev: uniform(1.0),                                 // skala fazy krawędzi płyt (design.bevel)
       grv: uniform(new THREE.Vector4(1, 0, 0, 0)),       // widoczność losowych paneli (design.panels)
       dome: uniform(new THREE.Vector4(0, 0, 0, 0)),      // skala kopuły [j. na 1 rozmytej sylwetki]
-      pal: uniformArray(Array.from({ length: 12 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPalette'),
+      // paleta: wiersze HD_PALETTE_ROWS (0–11), potem tabela pędzla (12 + indeks − 1; hullPaintLayer)
+      pal: uniformArray(Array.from({ length: 12 + HD_PAINT_MAX + 1 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPalette'),
       mods: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.modules * 2 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignModules'),
       modCount: uniform(0, 'int'),
       decals: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.decals * 4 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignDecals'),
@@ -227,6 +242,7 @@ export class HullComposer {
       // sieć rur: x — włączona (0 / 1), y — okres obejm [jd]; biegi (3 × vec4: promienie rur 0–3, 4–7 [jd],
       // pół-szerokość, odstęp, najgrubsza, materiał (3 — kable) + 8 · na płytach), osprzęt (2 × vec4: x, y, rodzaj + 16 · na płytach, obrót;
       // pół-wymiary [jd], p1, p2)
+      // z — mapa malowania włączona (0 / 1)
       pnet: uniform(new THREE.Vector4(0, 26, 0, 0)),
       pruns: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeRuns * 3 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeRuns'),
       pfits: uniformArray(Array.from({ length: HD_COMPOSER_LIMITS.pipeFits * 2 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPipeFits')
@@ -239,6 +255,7 @@ export class HullComposer {
       pipeA: texture(placeholder(THREE.HalfFloatType), vec2(0)),   // sieć rur: przesunięcie w poprzek [j.], cos φ, sin φ, odcinek
       pipeB: texture(placeholder(THREE.UnsignedByteType), vec2(0)), // sieć rur: numer biegu, numer osprzętu (textureLoad)
       atlas: texture(placeholder(THREE.UnsignedByteType), vec2(0)),
+      paint: texture(placeholder(THREE.UnsignedByteType), vec2(0)),   // pędzel: R — indeks barwy, A — pokrycie (siatka pola)
       geo: texture(placeholder(THREE.HalfFloatType), vec2(0)),
       base: texture(placeholder(THREE.HalfFloatType), vec2(0)),
       emis: texture(placeholder(THREE.HalfFloatType), vec2(0)),
@@ -251,6 +268,8 @@ export class HullComposer {
     this._pipeATex = null;
     this._pipeBTex = null;
     this._atlasTex = null;
+    this._paintTex = null;
+    this.mapsRev = 0;
     this._build();
   }
 
@@ -589,9 +608,20 @@ export class HullComposer {
     const engK = float(0.0).toVar();      // gondola MAIN (poziom ramy): pod nią wysokość samej ramy, bez okruchów płyt
     const cutK = float(0.0).toVar();      // KANAŁ SERWISOWY (SIDE, zbiornik): płyty zdjęte — maszynownia z siecią
     const emis = vec3(0.0).toVar();
+    const winE = float(0.0).toVar();      // okna (barwa z palety w passie barw — EMIS.a)
     const hullC = this._pal(0), upperC = this._pal(1), trimC = this._pal(2), accent = this._pal(3), metal = this._pal(4);
-    const hazard = this._pal(5), winC = this._pal(6), pipeC = this._pal(7), engC = this._pal(8), doorC = this._pal(9);
+    const hazard = this._pal(5), pipeC = this._pal(7), engC = this._pal(8), doorC = this._pal(9);
     const plateC = mix(hullC, upperC, upperK).toVar();
+    // PĘDZEL (warstwa barw): płyty pomalowanego klocka / kasztelu w barwie slotu albo własnej (mapa na siatce pola)
+    {
+      const fuvP = this._fuv(p);
+      const on = U.pnet.z;
+      const pc = this.T.paint.sample(fuvP).level(0).w.mul(on);
+      const ipP = ivec2(floor(fuvP.mul(U.fieldSize))).mul(int(on));
+      const ipC = ivec2(clamp(ipP.x, int(0), int(U.fieldSize.x).sub(1)), clamp(ipP.y, int(0), int(U.fieldSize.y).sub(1)));
+      const idx = int(floor(textureLoad(this.T.paint, ipC).x.mul(255.0).add(0.5)));
+      plateC.assign(mix(plateC, U.pal.element(idx.add(11)).xyz, clamp(pc, 0.0, 1.0)));
+    }
     Loop({ start: 0, end: HD_COMPOSER_LIMITS.modules, type: 'int', condition: '<', name: 'mi' }, ({ mi }) => {
       If(mi.greaterThanEqual(U.modCount), () => { Break(); });
       const A = U.mods.element(mi.mul(2)).toVar();
@@ -935,7 +965,7 @@ export class HullComposer {
           modH.addAssign(dish.mul(clamp(dd.div(dr), 0.0, 1.0).mul(1.2).add(0.3)).sub(glass.mul(0.5)));
           modK.assign(max(modK, max(glass, dish)));
           modCol.assign(mix(mix(plateC.mul(1.02), engC.mul(1.3), dish), vec3(0.03, 0.04, 0.05), glass));
-          emis.addAssign(winC.mul(glass).mul(L.windowGlow * 1.2).mul(U.det.z.mul(0.85).add(0.15)));
+          winE.addAssign(glass.mul(L.windowGlow * 1.2).mul(U.det.z.mul(0.85).add(0.15)));
         });
       }).ElseIf(type.lessThan(8.5), () => {
         // kratka (v = 0): biała ramka, ciemna wnęka, żebra w poprzek dłuższej osi; RADIATOR TN (v = 1): gruba rama,
@@ -1447,8 +1477,9 @@ export class HullComposer {
 
     const out = { h: hTot.mul(D), alpha, seam, dome: ax.x.mul(U.dome.x), d0, d1, d2, d3, s1, s2, s3 };
     if (want.emis) {
-      emis.addAssign(winC.mul(wMask).mul(L.windowGlow).mul(U.det.z));
+      winE.addAssign(wMask.mul(L.windowGlow).mul(U.det.z));
       out.emis = emis.mul(alpha);
+      out.winE = winE.mul(alpha);
     }
     if (want.base) {
       const col = plateC.mul(tone).toVar();
@@ -1531,7 +1562,7 @@ export class HullComposer {
     const emisNode = Fn(() => {
       const p = this._worldOf(this._pix());
       const pt = this._point(p, { emis: true });
-      return vec4(pt.emis, 1.0);
+      return vec4(pt.emis, pt.winE);
     })();
     // SURF: normalne (Sobel na reliefie + kopule), AO (próbki reliefu wokół), relief
     const surfNode = Fn(() => {
@@ -1632,23 +1663,25 @@ export class HullComposer {
       const chip = smoothstep(0.62, 0.8, vnoise(P.mul(0.9).add(13.0))).mul(smoothstep(0.08, 0.35, slope)).mul(U.style.w).mul(bright);
       col.assign(mix(col, this._pal(4).mul(1.6), chip.mul(L.wear)));
       // emisja jako niebieska poświata w albedo (gra: hullGlowMask) — tylko chłodna (okna, wentyle)
-      const e = this._load(T.emis, ip).xyz;
+      const eT = this._load(T.emis, ip);
+      const e = eT.xyz.add(this._pal(6).mul(eT.w));
       const cool = clamp(e.z.sub(e.x.mul(0.5)).mul(0.8), 0.0, 1.0);
       col.assign(mix(col, vec3(...L.glowCyan), cool.mul(U.style.y)));
       return vec4(srgbEncode(clamp(col, vec3(0.0), vec3(1.0))), g.y);
     })();
     const eoutNode = Fn(() => {
       const ip = ivec2(floor(this._pix()));
-      const e = this._load(T.emis, ip).xyz;
+      const eT = this._load(T.emis, ip);
+      const e = eT.xyz.add(this._pal(6).mul(eT.w));
       return vec4(srgbEncode(clamp(e.div(3.0), vec3(0.0), vec3(1.0))), 1.0);
     })();
     this.passes = [
       { name: 'geo', type: THREE.HalfFloatType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:geo', geoNode)) },
-      { name: 'base', type: THREE.HalfFloatType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:base', baseNode)) },
+      { name: 'base', type: THREE.HalfFloatType, colors: true, quad: new THREE.QuadMesh(makeMaterial('HullDesign:base', baseNode)) },
       { name: 'emis', type: THREE.HalfFloatType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:emis', emisNode)) },
       { name: 'surf', type: THREE.UnsignedByteType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:surf', surfNode)) },
-      { name: 'alb', type: THREE.UnsignedByteType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:alb', albNode)) },
-      { name: 'eout', type: THREE.UnsignedByteType, quad: new THREE.QuadMesh(makeMaterial('HullDesign:eout', eoutNode)) }
+      { name: 'alb', type: THREE.UnsignedByteType, colors: true, quad: new THREE.QuadMesh(makeMaterial('HullDesign:alb', albNode)) },
+      { name: 'eout', type: THREE.UnsignedByteType, colors: true, quad: new THREE.QuadMesh(makeMaterial('HullDesign:eout', eoutNode)) }
     ];
   }
 
@@ -1683,7 +1716,9 @@ export class HullComposer {
 
   /**
    * Projekt do uniformów: pole (buildHullField), atlas naklejek ({ data, width, height, rects: Map decal → uv }),
-   * opcje { texPerUnit (0 — z rozmiaru), glowToAlbedo, grime, wear }.
+   * opcje { texPerUnit (0 — z rozmiaru), glowToAlbedo, grime, wear, paint (warstwa pędzla hullPaintLayer; brak —
+   * `field.packed.paint` albo bez pędzla) }. Zwraca numer stanu map (`mapsRev`) — pass barw sam (renderColors) ma
+   * sens tylko, gdy cele mają mapy tego projektu.
    */
   setDesign(field, atlas, opts = {}) {
     const U = this.U, L = this.look;
@@ -1733,12 +1768,7 @@ export class HullComposer {
     U.style.value.set(design.round ?? (design.style === 'rounded' ? 1 : 0), opts.glowToAlbedo === false ? 0 : 1, opts.grime ?? 1, opts.wear ?? 1);
     U.bev.value = design.bevel ?? 1;
     U.grv.value.set(design.panels ?? 1, 0, 0, 0);
-    // paleta (liniowo)
-    const pal = hullDesignPalette(design);
-    HD_PALETTE_ROWS.forEach((k, i) => {
-      const c = k === 'window' ? srgbToLinear(pal[k]) : glowSafeLinear(srgbToLinear(pal[k]));
-      U.pal.array[i].set(c[0], c[1], c[2], 1);
-    });
+    this.setColors(design, opts.paint !== undefined ? opts.paint : (field.packed?.paint || null));
     // moduły
     let mi = 0;
     // gondole MAIN z kanałem serwisowym (sieć systemów: przy szyjce brak rowu) — znacznik w kodzie typu (+0,25)
@@ -1755,7 +1785,66 @@ export class HullComposer {
       mi++;
     }
     U.modCount.value = mi;
-    // naklejki
+    this.setDecals(decals, atlas);
+    this._ensureTargets(W, H);
+    return ++this.mapsRev;
+  }
+
+  /**
+   * WARSTWA BARW: paleta projektu (paleta nacji + nadpisania gracza `design.paint`, liniowo, bez niebieskiego, które
+   * świeci w grze) i pędzel `paint` (hullPaintLayer: tabela barw slotów / własnych + mapa na siatce pola; null — bez
+   * pędzla). Mapa idzie na GPU tylko przy nowym kluczu.
+   */
+  setColors(design, paint = null) {
+    const U = this.U;
+    const pal = hullDesignPalette(design);
+    HD_PALETTE_ROWS.forEach((k, i) => {
+      const c = hullColorLinear(pal[k], k === 'window');
+      U.pal.array[i].set(c[0], c[1], c[2], 1);
+    });
+    const table = paint?.table || [];
+    for (let i = 0; i < HD_PAINT_MAX; i++) {
+      const v = table[i];
+      const hex = v ? (pal[v] || v) : '#000000';
+      const c = hullColorLinear(hex);
+      U.pal.array[12 + i].set(c[0], c[1], c[2], 1);
+    }
+    const on = !!(paint?.data && table.length);
+    if (!on) {
+      if (this._paintKey !== null) {
+        this._paintTex?.dispose();
+        this._paintTex = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+        this._paintTex.magFilter = THREE.LinearFilter;
+        this._paintTex.minFilter = THREE.LinearFilter;
+        this._paintTex.generateMipmaps = false;
+        this._paintTex.colorSpace = THREE.NoColorSpace;
+        this._paintTex.needsUpdate = true;
+        this.T.paint.value = this._paintTex;
+        this._paintKey = null;
+      }
+    } else if (paint.key !== this._paintKey) {
+      const t = this._paintTex;
+      if (t && t.image.width === paint.w && t.image.height === paint.h) {
+        t.image.data = paint.data;
+        t.needsUpdate = true;
+      } else {
+        t?.dispose();
+        this._paintTex = new THREE.DataTexture(paint.data, paint.w, paint.h, THREE.RGBAFormat, THREE.UnsignedByteType);
+        this._paintTex.magFilter = THREE.LinearFilter;
+        this._paintTex.minFilter = THREE.LinearFilter;
+        this._paintTex.generateMipmaps = false;
+        this._paintTex.colorSpace = THREE.NoColorSpace;
+        this._paintTex.needsUpdate = true;
+        this.T.paint.value = this._paintTex;
+      }
+      this._paintKey = paint.key;
+    }
+    U.pnet.value.z = on ? 1 : 0;
+  }
+
+  /** Naklejki (warstwa barw): pasy, kontury, emblematy i napisy z atlasu ({ data, width, height, rects }). */
+  setDecals(decals, atlas) {
+    const U = this.U;
     let di = 0;
     for (const d of decals) {
       if (di >= HD_COMPOSER_LIMITS.decals) break;
@@ -1788,7 +1877,6 @@ export class HullComposer {
       this._atlasTex = at;
       this.T.atlas.value = at;
     }
-    this._ensureTargets(W, H);
   }
 
   /**
@@ -1889,18 +1977,53 @@ export class HullComposer {
     });
   }
 
-  /** Passy w kolejności (bez odczytu): wynik w celach `targets` (podgląd w trakcie przeciągania czyta je wprost). */
-  render() {
+  /**
+   * Passy w kolejności (bez odczytu): wynik w celach `targets` (podgląd w trakcie przeciągania czyta je wprost).
+   * `colorsOnly` — same passy barw (BASE, ALB, EOUT) na mapach już w celach (renderColors).
+   */
+  render(colorsOnly = false) {
     const r = this.renderer;
     const prev = r.getRenderTarget();
     try {
       for (const p of this.passes) {
+        if (colorsOnly && !p.colors) continue;
         r.setRenderTarget(this.targets[p.name]);
         p.quad.render(r);
       }
     } finally {
       r.setRenderTarget(prev);
     }
+  }
+
+  /** Same passy barw (po setColors / setDecals): mapy GEO, EMIS, SURF z ostatniego render() zostają. */
+  renderColors() {
+    this.render(true);
+  }
+
+  /** Passy barw i odczyt albedo (RGBA8 sRGB + alfa, wiersz 0 = góra): { width, height, albedo, ms }. */
+  async bakeColors() {
+    const t0 = performance.now();
+    this.renderColors();
+    const { w, h } = this.targets;
+    const albedo = await this._read(this.targets.alb, w, h);
+    return { width: w, height: h, albedo, ms: performance.now() - t0 };
+  }
+
+  /**
+   * JEDEN PROJEKT, KILKA BARW (gra, etap 3 — NPC różnych frakcji): mapy liczone raz, potem dla każdej barwy tylko
+   * passy barw. `liveries` — [{ palette, paint (nadpisania wierszy), brush (hullPaintLayer albo null) }]; wynik: pełny
+   * wypiek pierwszej barwy (albedo, mapa powierzchni, emisja — wspólne) + albedo każdej barwy po kolei.
+   */
+  async bakeLiveries(field, atlas, liveries, opts = {}) {
+    const base = field.expanded.design;
+    this.setDesign(field, atlas, opts);
+    const first = await this.bake();
+    const albedos = [];
+    for (const lv of liveries) {
+      this.setColors({ ...base, palette: lv.palette ?? base.palette, paint: lv.paint ?? base.paint }, lv.brush ?? opts.paint ?? field.packed?.paint ?? null);
+      albedos.push((await this.bakeColors()).albedo);
+    }
+    return { ...first, albedos };
   }
 
   /** Wypiek (passy w kolejności) i odczyt: { width, height, tpu, albedo, surface, emission (RGBA8, wiersz 0 = góra), ms }. */
@@ -1915,6 +2038,11 @@ export class HullComposer {
     ]);
     this.lastMs = performance.now() - t0;
     return { width: w, height: h, tpu: this.size.tpu, albedo, surface, emission, ms: this.lastMs };
+  }
+
+  /** Odczyt albedo z celu ALB (RGBA8 sRGB + alfa, wiersz 0 = góra) — np. po renderColors. */
+  readAlbedo() {
+    return this._read(this.targets.alb, this.targets.w, this.targets.h);
   }
 
   /** Odczyt emisji ostatniego wypieku (RGBA8 sRGB / 3, wiersz 0 = góra). */

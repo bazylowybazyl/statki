@@ -23,7 +23,7 @@ export function createHullDesignBuildClient() {
   const checkWaiters = new Map();   // id → zakończenie kontroli pełnej budowy (systemy, sieć, rama — po obrazie)
   const checkPromises = new Map();
   let seq = 0;
-  const last = { geo: null, field: null, aux: null, groove: null, pipes: null };
+  const last = { geo: null, field: null, aux: null, groove: null, pipes: null, paint: null };
   let local = null;
   let localJob = null;
 
@@ -34,13 +34,17 @@ export function createHullDesignBuildClient() {
     if (pk.aux.data) last.aux = pk.aux;
     if (pk.groove.data) last.groove = pk.groove;
     if (pk.pipes.a) last.pipes = { key: pk.pipes.key, a: pk.pipes.a, b: pk.pipes.b };
+    if (pk.paint?.data) last.paint = pk.paint;
     const g = last.geo;
     if (!g || g.key !== m.keys.geo) throw new Error('budowa projektu: brak geometrii dla klucza');
     const field = {
       expanded: m.expanded, style: g.style, scale: g.scale, grid: g.grid, levels: g.levels, oct: null, loops: g.loops,
       bounds: g.bounds, image: g.image, band: g.band, dome: null, domeSigma: g.domeSigma, groove: null, grooveBand: m.grooveBand,
       pipeNet: m.pipeNet, pipeTex: null, area: g.area, integrity: null,
-      packed: { field: last.field, aux: last.aux, groove: last.groove, pipes: { ...last.pipes, on: pk.pipes.on, w: pk.pipes.w, h: pk.pipes.h } }
+      packed: {
+        field: last.field, aux: last.aux, groove: last.groove, pipes: { ...last.pipes, on: pk.pipes.on, w: pk.pipes.w, h: pk.pipes.h },
+        paint: pk.paint ? { ...last.paint, table: pk.paint.table } : null
+      }
     };
     return {
       field, keys: m.keys, fast: m.fast, cls: m.cls, recipe: m.recipe, mounts: m.mounts, timing: m.timing,

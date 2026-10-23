@@ -11,7 +11,7 @@ import { createHullDesignBuilder } from './hullDesignBuild.js';
 const builder = createHullDesignBuilder();
 let current = null;     // { id }
 let waiting = null;     // najnowsza praca w kolejce
-const sent = { geo: null, field: null, aux: null, groove: null, pipes: null };
+const sent = { geo: null, field: null, aux: null, groove: null, pipes: null, paint: null };
 
 const yieldLoop = () => new Promise((ok) => setTimeout(ok, 0));
 // Klucze etapów to długie napisy (bryły projektu) — do strony idą krótkie numery.
@@ -91,7 +91,8 @@ function post(id, res) {
     field: pack('field', pk.field, { data: pk.field.data }),
     aux: pack('aux', pk.aux, { data: pk.aux.data }),
     groove: pack('groove', pk.groove, { data: pk.groove.data }),
-    pipes: { ...pack('pipes', pk.pipes, { a: pk.pipes.a, b: pk.pipes.b }), on: pk.pipes.on, w: pk.pipes.w, h: pk.pipes.h }
+    pipes: { ...pack('pipes', pk.pipes, { a: pk.pipes.a, b: pk.pipes.b }), on: pk.pipes.on, w: pk.pipes.w, h: pk.pipes.h },
+    paint: pk.paint ? { ...pack('paint', pk.paint, { data: pk.paint.data }), table: pk.paint.table, w: pk.paint.w, h: pk.paint.h } : null
   };
   const pipeNet = f.pipeNet ? { ...f.pipeNet, base: undefined } : null;
   const msg = {

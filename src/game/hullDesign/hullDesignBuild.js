@@ -22,6 +22,7 @@ import { hullDesignRecipe, hullDesignMounts } from './hullDesignRecipe.js';
 import { hullDesignSystems } from './hullDesignSystems.js';
 import { pipeNetworkCheck } from './hullDesignPipes.js';
 import { packHalfChannel, toHalfBits, halfFromF32Bits } from './hullDesignHalf.js';
+import { hullPaintLayer } from './hullDesignPaint.js';
 
 // Pola obiektów rozwiniętych, które nie wpływają na wynik etapów (odwołania do części / kasztelu, znacznik kopii
 // lustra) — poza kluczem (inaczej klucz niósłby całe definicje części).
@@ -166,9 +167,11 @@ export function createHullDesignBuilder() {
     if (!pgr) pgr = C.packGroove.set(kGroove, packHullGrooveTexture(gr.groove, gr.grooveBand, n));
     let pp = C.packPipes.get(kPower);
     if (!pp) pp = C.packPipes.set(kPower, packHullPipeTextures(pw.pipeNet, pw.pipeTex, geo.grid));
+    // pędzel (warstwa barw): raster pomalowanych klocków i kaszteli na siatce pola
+    const paint = hullPaintLayer(d, geo.grid);
     field.packed = {
       field: { key: kGeo, data: pg.field }, aux: { key: kGeo, data: pg.aux }, groove: { key: kGroove, data: pgr },
-      pipes: { key: kPower, ...pp }
+      pipes: { key: kPower, ...pp }, paint: paint.data ? paint : null
     };
     lap('pakiety');
     const out = { field, keys: { geo: kGeo, groove: kGroove, pipes: kNet, power: kPower }, cls, recipe, mounts, timing: T, fast: !!opts.fast, pipesStale };

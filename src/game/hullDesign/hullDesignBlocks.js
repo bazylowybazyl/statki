@@ -9,7 +9,8 @@
 //     [j.] — inaczej niż 'rect' i kasztele, które mają pół-wymiary), rot (obrót [rad], zawsze wielokrotność 45°),
 //     flip (odbicie lewo-prawo w układzie klocka, przed obrotem), level (0 rama … 3 mostek; domyślnie 1 — pancerz),
 //     op ('add' | 'cut'), gap (szczelina płyty [jd]; brak — HD_BLOCK_TUNE.gapDu, 0 — płyta scala się z sąsiadem),
-//     mirror (false — bez kopii po drugiej burcie),
+//     mirror (false — bez kopii po drugiej burcie), paint (pędzel: slot barwy HD_PAINT_SLOTS albo własna '#rrggbb' —
+//     płyty klocka w tej barwie zamiast płyty / nadbudówki palety; warstwa barw, bez wpływu na geometrię),
 //     rect: c [4] — fazy rogów [j.] (lewy-górny, prawy-górny, prawy-dolny, lewy-dolny),
 //     trap: a, b — górna krawędź wcięta o a z lewej i o b z prawej [j.] (ujemne — wysunięta; równoległobok: a = −b),
 //     tri:  a — wierzchołek na górnej krawędzi, a [j.] od lewego rogu (0 — trójkąt prostokątny, w / 2 — klin),
@@ -115,6 +116,16 @@ export function snapBlockRot(rot) {
 export const blockRotStep = (rot) => ((Math.round(num(rot) / HD_BLOCK_ROT_STEP) % 8) + 8) % 8;
 
 /** Klocek po walidacji (null — niepoprawny). `levelShift` — migracja v1 → v2 (jak bryły). */
+/** Sloty barw pędzla (wiersze palety, które można położyć na płycie klocka albo kasztelu). */
+export const HD_PAINT_SLOTS = Object.freeze(['hull', 'upper', 'trim', 'accent', 'hazard', 'metal', 'door', 'engine']);
+const PAINT_HEX = /^#[0-9a-f]{6}$/i;
+/** Barwa pędzla po walidacji: slot palety albo '#rrggbb' (małe litery); inaczej null. */
+export function normalizeHullPaint(v) {
+  if (typeof v !== 'string') return null;
+  if (HD_PAINT_SLOTS.includes(v)) return v;
+  return PAINT_HEX.test(v) ? v.toLowerCase() : null;
+}
+
 export function normalizeBlock(s, levels = 4, levelShift = 0) {
   if (!s || s.kind !== 'block') return null;
   const shape = HD_BLOCK_SHAPES.includes(s.shape) ? s.shape : 'rect';
@@ -144,6 +155,8 @@ export function normalizeBlock(s, levels = 4, levelShift = 0) {
   }
   if (s.gap !== undefined && out.op === 'add') out.gap = clamp(num(s.gap, HD_BLOCK_TUNE.gapDu), 0, 80);
   if (s.mirror === false) out.mirror = false;
+  const paint = out.op === 'add' ? normalizeHullPaint(s.paint) : null;
+  if (paint) out.paint = paint;
   return out;
 }
 

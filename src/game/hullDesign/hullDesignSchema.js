@@ -184,7 +184,9 @@ export function hullDesignMountOf(m) {
 /**
  * Barwy frakcji (sRGB): pancerz, nadbudówka, linie paneli, akcent (pasy), maszynownia, ostrzegawcze, okna, rury
  * (miedź), silniki, wrota, brud, stal (jasne rury sieci). Terra Nova — z median sprite'ów (płyty #c8c5be…#dcd9d1, maszynownia #2c2a26, rury
- * miedziane #75604a, wrota #4f5155).
+ * miedziane #75604a, wrota #4f5155). Frakcje gry (src/data/factions.js) — w duchu ich barw (kolor / akcent frakcji),
+ * ale w stylu kadłuba TN: jasne płyty, ciemna maszynownia; NIEBIESKIE albedo świeci w grze (hullGlowMask), więc barwy
+ * poza oknami nie mogą mieć niebieskiego > 0,38 przy czerwonym < 0,25 (liniowo) — pilnuje tests/hullDesignPaint.test.mjs.
  */
 export const HD_PALETTES = Object.freeze({
   terra: Object.freeze({
@@ -202,9 +204,44 @@ export const HD_PALETTES = Object.freeze({
   civil: Object.freeze({
     label: 'Cywilny', hull: '#a99d82', upper: '#cfc8b8', trim: '#45525a', accent: '#d8b83a', metal: '#343a3e',
     hazard: '#d8b83a', window: '#d8f4ff', pipe: '#7a6040', engine: '#4a4d50', door: '#3e464c', grime: '#5a5040', steel: '#8e8d87'
+  }),
+  // Stocznie Marsjańskie (róż / karmazyn frakcji): rdzawoczerwone płyty, karmazynowy akcent, ciepłe okna
+  mars: Object.freeze({
+    label: 'Stocznie Marsjańskie', hull: '#b58a76', upper: '#c49c88', trim: '#4a2b27', accent: '#a3242c', metal: '#2e2422',
+    hazard: '#d49a2a', window: '#ffd9bf', pipe: '#7a4636', engine: '#4a3a36', door: '#4a2f2b', grime: '#5a3a2c', steel: '#8c7468'
+  }),
+  // Konsorcjum Wewnętrzne (bursztyn): piaskowe płyty, złoty akcent — huty Wenus i Merkurego
+  inner: Object.freeze({
+    label: 'Konsorcjum Wewnętrzne', hull: '#c9b58c', upper: '#d8c8a2', trim: '#4b3e2a', accent: '#c4821a', metal: '#302a20',
+    hazard: '#e0b030', window: '#fff0c8', pipe: '#7a5a34', engine: '#4e463a', door: '#4a4232', grime: '#5e4e36', steel: '#9a8c74'
+  }),
+  // Unia Pasa (żółć górnicza): zużyta szara blacha, żółty akcent jak oznaczenia sprzętu kopalni
+  belt: Object.freeze({
+    label: 'Unia Pasa', hull: '#8f8b7d', upper: '#a39e8a', trim: '#2f2d28', accent: '#d9a21c', metal: '#2b2a27',
+    hazard: '#e8b422', window: '#e8f4ff', pipe: '#6d5a40', engine: '#45433e', door: '#3d3b36', grime: '#4d4436', steel: '#87847a'
+  }),
+  // Konsorcjum Zewnętrzne (fiolet): chłodna szarofioletowa blacha, fioletowy akcent (czerwony ≥ 0,25 liniowo — nie świeci)
+  outer: Object.freeze({
+    label: 'Konsorcjum Zewnętrzne', hull: '#a8a4b3', upper: '#bdb9c7', trim: '#2c2838', accent: '#8a5cc8', metal: '#2a2830',
+    hazard: '#d6a63a', window: '#e6dcff', pipe: '#6a5a4a', engine: '#45434c', door: '#3a3644', grime: '#4a4450', steel: '#8e8a98'
   })
 });
 export const HD_PALETTE_KEYS = Object.freeze(Object.keys(HD_PALETTES));
+/** Paleta kadłuba frakcji gry (src/data/factions.js: FACTION.*) — NPC frakcji dostają te same mapy, inny pass barw. */
+export const HD_FACTION_PALETTE = Object.freeze({
+  terra_nova: 'terra', mars_yards: 'mars', inner_consortium: 'inner', belt_union: 'belt', outer_consortium: 'outer', pirates: 'pirate'
+});
+/**
+ * Emblemat nacji (src/game/hullDesign/hullEmblems.js) — stawiany / podmieniany przy wyborze palety w Stoczni. Piraci —
+ * własny znak bez czaszek (decyzja użytkownika). Paleta bez emblematu (cywilna) zdejmuje emblematy nacji.
+ */
+export const HD_PALETTE_EMBLEM = Object.freeze({
+  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null
+});
+/** Barwa emblematu nacji (kontrast z płytą jej palety: ciemny na jasnej, jasny na ciemnej pirackiej). */
+export const HD_PALETTE_EMBLEM_COLOR = Object.freeze({
+  terra: '#34332f', atlas: '#d06a22', pirate: '#cdbb9a', mars: '#4a2b27', inner: '#4b3e2a', belt: '#2f2d28', outer: '#2c2838', civil: '#45525a'
+});
 /** Kolejność barw palety w kompozytorze (wiersze tablicy uniformów). */
 export const HD_PALETTE_ROWS = Object.freeze(['hull', 'upper', 'trim', 'accent', 'metal', 'hazard', 'window', 'pipe', 'engine', 'door', 'grime', 'steel']);
 
@@ -323,7 +360,10 @@ function normDecal(d, levelShift = 0) {
       ...base, x: num(d.x), y: num(d.y), rot: num(d.rot), w: Math.max(1, num(d.w, 40)), h: Math.max(1, num(d.h, 40)),
       flip: d.flip === true
     };
-    if (d.kind === 'emblem') out.id = String(d.id || 'wing');
+    if (d.kind === 'emblem') {
+      out.id = String(d.id || 'wing');
+      if (d.nation === true) out.nation = true;   // emblemat nacji: podmienia go wybór palety w Stoczni
+    }
     else {
       out.text = String(d.text || 'HF').slice(0, 24);
       if (d.weight !== undefined) out.weight = clampInt(d.weight, 300, 900);
@@ -521,17 +561,7 @@ export function expandHullDesign(input) {
     const r = m.type === 'engine' ? Math.min(m.h * 0.35, 16) : Math.min(m.h * 0.55, 12);
     shapes.push({ kind: 'rect', op: 'add', x: m.x, y: m.y, w: m.w, h: m.h, r, ch: 0, rot: m.rot, level: def.level, module: m.type });
   }
-  const decals = [...partDecals];
-  for (const d of design.decals) {
-    decals.push(d);
-    if (!mirrorOf(d) || d.kind === 'contour') continue;
-    if (d.kind === 'stripe') {
-      if (Math.abs(d.y0) > MIRROR_EPS || Math.abs(d.y1) > MIRROR_EPS) decals.push({ ...d, y0: -d.y0, y1: -d.y1, mirrorOf: true });
-    } else if (Math.abs(d.y) > MIRROR_EPS) {
-      // Emblemat po drugiej burcie odbity (jak lustro), napis czytelny (bez odbicia obrazu).
-      decals.push({ ...d, y: -d.y, rot: -d.rot, flip: d.kind === 'emblem' ? !d.flip : d.flip, mirrorOf: true });
-    }
-  }
+  const decals = expandHullDecals(design, partDecals);
   const grooves = [];
   for (const g of design.grooves) {
     grooves.push(g);
@@ -544,6 +574,34 @@ export function expandHullDesign(input) {
     if (mirrorOf(q) && q.pts.some(([, y]) => Math.abs(y) > MIRROR_EPS)) pipes.push({ ...q, pts: q.pts.map(([x, y]) => [x, -y]), src: i, mirrorOf: true });
   });
   return { design, blocks, shapes, modules, decals, grooves, pipes };
+}
+
+/**
+ * Naklejki rozwinięte (warstwa barw — bez reszty rozwinięcia): naklejki części (`partDecals`, z poprzedniego
+ * rozwinięcia), potem naklejki projektu z kopiami lustra. `design` — po normalizeHullDesign.
+ */
+export function expandHullDecals(design, partDecals = []) {
+  const mirrorOf = (o) => design.mirror && o.mirror !== false;
+  const decals = [...partDecals];
+  for (const d of design.decals) {
+    decals.push(d);
+    if (!mirrorOf(d) || d.kind === 'contour') continue;
+    if (d.kind === 'stripe') {
+      if (Math.abs(d.y0) > MIRROR_EPS || Math.abs(d.y1) > MIRROR_EPS) decals.push({ ...d, y0: -d.y0, y1: -d.y1, mirrorOf: true });
+    } else if (Math.abs(d.y) > MIRROR_EPS) {
+      // Emblemat po drugiej burcie odbity (jak lustro), napis czytelny (bez odbicia obrazu).
+      decals.push({ ...d, y: -d.y, rot: -d.rot, flip: d.kind === 'emblem' ? !d.flip : d.flip, mirrorOf: true });
+    }
+  }
+  return decals;
+}
+
+/**
+ * Klucz projektu BEZ warstwy barw (paleta, nadpisania i pędzel `paint`, naklejki, nazwa): ten sam klucz = ta sama
+ * geometria, sieć i mapy kompozytora — zmiana dotyczy tylko passów barw (HullComposer.setColors / renderColors).
+ */
+export function hullDesignShapeKey(design) {
+  return JSON.stringify(design, (k, v) => (k === 'palette' || k === 'paint' || k === 'decals' || k === 'name' ? undefined : v));
 }
 
 /** Bloki z poziomem ≥ L (zbiór kluczy 'bx,by'). */

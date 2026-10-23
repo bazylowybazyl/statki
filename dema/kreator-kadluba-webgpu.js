@@ -9,7 +9,9 @@
 //   ?preset=citadella|custos|hasta|bellator|colossus|klocki|tnparts|tnparts2|orbis|atlas2|destroyer|pirate|empty
 //   ?clean=1 (bez paneli)   ?test=1 (klatki z __kreator.runFrames — skrypt scripts/webgpu/kreator-kadluba-demo.mjs)
 import { Core3D } from '../src/3d/core3d.js';
-import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D } from '../src/3d/hexShips3D.js';
+import {
+  initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D, prewarmHexShips3D, acquireHullVisualTexture, releaseHullVisualTexture
+} from '../src/3d/hexShips3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { HullSurface } from '../src/3d/hullSurface.js';
 import { HullLighting } from '../src/3d/hullLighting.js';
@@ -19,8 +21,9 @@ import { HullBodies } from '../src/game/hullBodies.js';
 import { SimClock } from '../src/game/simClock.js';
 import {
   HD_BLOCK, HD_DETAIL, HD_LEVELS, HD_LEVEL_NAMES, HD_MODULES, HD_MODULE_TYPES, HD_PALETTES, HD_PALETTE_KEYS, HD_STYLE_NAMES,
-  normalizeHullDesign
+  normalizeHullDesign, expandHullDecals, hullDesignShapeKey
 } from '../src/game/hullDesign/hullDesignSchema.js';
+import { hullPaintLayer } from '../src/game/hullDesign/hullDesignPaint.js';
 import { HD_PRESETS, HD_PRESET_KEYS, hullDesignPreset } from '../src/game/hullDesign/hullDesignPresets.js';
 import { HD_EMBLEMS, HD_EMBLEM_KEYS } from '../src/game/hullDesign/hullEmblems.js';
 import { HD_PARTS, HD_PART_IDS } from '../src/game/hullDesign/hullDesignParts.js';
@@ -231,10 +234,75 @@ function decalAtlasFor(decals) {
  */
 function requestBuild(fast = false) {
   if (!fast && !S.drag) histCommit();
+  scheduleBuild(fast);
+}
+
+function scheduleBuild(fast) {
   S.rev++;
+  // tylko warstwa barw (paleta, pędzel, naklejki) przy wolnej budowie (miniatura palety w toku nie przeszkadza: jej
+  // passy i odczyt już poszły do kolejki): same passy barw, bez workera i ciała gry
+  if ((!S.busy || S.thumbBusy) && !S.pending && colorsOnly()) { runColors(S.rev); return; }
   S.pending = { fast };
   if (S.busy && S.building && (!fast || !S.building.fast)) builder.cancel();
   if (!S.busy) runBuild();
+}
+
+/** Czy od pokazanego obrazu zmieniła się tylko warstwa barw (ten sam klucz kształtu, te same ustawienia wypieku). */
+function colorsOnly() {
+  return !!(S.field && S.bakeOpts && S.shownShapeKey && S.bakeOpts.glowToAlbedo === S.glowToAlbedo
+    && S.shownShapeKey === hullDesignShapeKey(normalizeHullDesign(S.design)));
+}
+
+/**
+ * WARSTWA BARW: paleta nacji, nadpisania, pędzel (klocki i kasztele) i naklejki na mapach z ostatniej budowy —
+ * HullComposer.setColors / setDecals + renderColors (3 passy na GPU), albedo z celu ALB kopiowane na GPU do tekstury
+ * skóry kadłuba (bez odczytu i bez ciała gry); kanwa CPU kadłuba (lakier, cienie, mapy podglądu) — odczytem w tle.
+ * Cele z cudzymi mapami (miniatury palety) — pełny render z pakietów tej budowy (bez pól na CPU).
+ */
+function runColors(rev) {
+  const t0 = performance.now();
+  try {
+    const d = normalizeHullDesign(S.design);
+    const exp = S.field.expanded;
+    const decals = expandHullDecals(d, exp.decals.filter((q) => q.part));
+    const atlas = decalAtlasFor(decals);
+    const paint = hullPaintLayer(d, S.field.grid);
+    exp.design = d; exp.decals = decals;
+    if (composer.mapsRev !== S.mapsRev) {
+      S.mapsRev = composer.setDesign(S.field, atlas, { ...S.bakeOpts, paint });
+      composer.render();
+    } else {
+      composer.setColors(d, paint);
+      composer.setDecals(decals, atlas);
+      composer.renderColors();
+    }
+    const t1 = performance.now();
+    const visual = ship.visual;
+    const sameSize = visual && composer.targets.w === visual.width && composer.targets.h === visual.height;
+    if (!previewQuad.visible && ship.entity && sameSize) {
+      const tex = acquireHullVisualTexture(visual);
+      Core3D.renderer.copyTextureToTexture(composer.targets.alb.texture, tex);
+      releaseHullVisualTexture(visual);
+      const bake = S.bake;
+      // kanwa CPU — raz na koniec pociągnięcia pędzla / przeciągania naklejki (w trakcie wystarczy tekstura na GPU)
+      if (!S.drag) composer.readAlbedo().then((alb) => {
+        if (ship.visual !== visual) return;
+        visual.getContext('2d', { willReadFrequently: true }).putImageData(new ImageData(alb, visual.width, visual.height), 0, 0);
+        if (bake) { bake.albedo = alb; S.maps = null; }
+      });
+    }
+    const timing = S.timing = { barwy: t1 - t0, total: performance.now() - t0, kolory: true };
+    // koniec pracy GPU tej zmiany (passy barw i kopia albedo; późniejsza praca — np. miniatury palety — się nie liczy)
+    Core3D.renderer.backend.device.queue.onSubmittedWorkDone().then(() => { timing.gpu = performance.now() - t0; });
+    S.colorChanges = (S.colorChanges || 0) + 1;
+    if (!S.drag) S.builtRev = rev;
+    reactorDemoCoresFrom(S.field);
+    updateClassPanel();
+  } catch (err) {
+    reportError(err.stack || String(err));
+    S.builtRev = rev;
+  }
+  wakeBuilt();
 }
 
 async function runBuild() {
@@ -244,6 +312,7 @@ async function runBuild() {
   S.busy = true;
   const rev = S.rev;
   const json = JSON.stringify(S.design);
+  const shapeKey = hullDesignShapeKey(normalizeHullDesign(S.design));
   let preview = false;
   try {
     const t0 = performance.now();
@@ -261,7 +330,11 @@ async function runBuild() {
       const field = res.field;
       S.cls = res.cls;
       const tpu = hullComposerTexPerUnit(field.image.w, field.image.h);
-      composer.setDesign(field, decalAtlasFor(field.expanded.decals), { texPerUnit: job.fast ? tpu * 0.5 : tpu, glowToAlbedo: S.glowToAlbedo });
+      const bakeOpts = { texPerUnit: job.fast ? tpu * 0.5 : tpu, glowToAlbedo: S.glowToAlbedo };
+      S.mapsRev = composer.setDesign(field, decalAtlasFor(field.expanded.decals), bakeOpts);
+      S.bakeOpts = bakeOpts;
+      // ścieżka barw (runColors) tylko na pełnym obrazie — podgląd przeciągania jej nie dostaje
+      S.shownShapeKey = null;
       const t2 = performance.now();
       // nowsza zmiana już czeka — ten wynik tylko jako podgląd (bez odczytu i ciała gry)
       preview = job.fast || !!S.pending;
@@ -289,6 +362,7 @@ async function runBuild() {
           bridgeDemoAttach(field);
           S.timing = { worker: res.timing, czekanie: t1 - t0, kompozytor: t2 - t1, odczyt: t3 - t2, cialo: t4 - t3, ...S.hullT, total: t4 - t0, fast: false };
           S.builtRev = rev;
+          S.shownShapeKey = shapeKey;
           placeRef();
           updateRecipe();
           updateBlockStats();
@@ -322,10 +396,12 @@ async function runBuild() {
 async function composerExclusive(fn) {
   while (!composer || S.busy || S.pending) await new Promise((ok) => setTimeout(ok, 40));
   S.busy = true;
+  S.thumbBusy = true;
   try {
     return await fn(composer);
   } finally {
     S.busy = false;
+    S.thumbBusy = false;
     if (S.pending) runBuild();
     else wakeBuilt();
   }
@@ -866,19 +942,20 @@ function mapCanvas(view) {
     const k = view === 'ao' ? 2 : 3;
     for (let i = 0; i < n; i++) { const v = b.surface[i * 4 + k]; px[i * 4] = v; px[i * 4 + 1] = v; px[i * 4 + 2] = v; px[i * 4 + 3] = 255; }
   } else if (view === 'emis') {
-    // emisja nie idzie z pełnym wypiekiem (ciało gry jej nie potrzebuje) — odczyt na żądanie widoku
-    if (!b.emission) {
-      if (!b.emissionReq && composer.targets?.w === b.width && composer.targets?.h === b.height) {
-        b.emissionReq = composer.readEmission().then((e) => { b.emission = e; if (S.maps) delete S.maps.emis; });
-      }
-      return null;
-    }
+    if (!b.emission) { ensureEmission(); return null; }
     px.set(b.emission);
   } else if (view === 'cells') {
     for (let i = 0; i < n; i++) { const a = b.albedo[i * 4 + 3]; px[i * 4] = a * 0.25; px[i * 4 + 1] = a * 0.3; px[i * 4 + 2] = a * 0.35; px[i * 4 + 3] = 255; }
   }
   S.maps[view] = makeCanvas(b.width, b.height, px);
   return S.maps[view];
+}
+
+/** Emisja nie idzie z pełnym wypiekiem (ciało gry jej nie potrzebuje) — odczyt na żądanie widoku mapy emisji. */
+function ensureEmission() {
+  const b = S.bake;
+  if (!b || b.emission || b.emissionReq || composer.targets?.w !== b.width || composer.targets?.h !== b.height) return;
+  b.emissionReq = composer.readEmission().then((e) => { b.emission = e; if (S.maps) delete S.maps.emis; });
 }
 
 function drawMap(cam) {
@@ -1375,7 +1452,7 @@ function bindPanel() {
   selE.addEventListener('change', () => { S.emblem = selE.value; S.tool = 'emblem'; syncPanel(); });
   $('inp-color').addEventListener('input', (e) => { S.color = e.target.value; });
   $('inp-text').addEventListener('input', (e) => { S.text = e.target.value; });
-  for (const v of ['game', 'albedo', 'normal', 'ao', 'relief', 'emis', 'cells']) $(`view-${v}`).addEventListener('click', () => { S.view = v; syncPanel(); });
+  for (const v of ['game', 'albedo', 'normal', 'ao', 'relief', 'emis', 'cells']) $(`view-${v}`).addEventListener('click', () => { S.view = v; if (v === 'emis') ensureEmission(); syncPanel(); });
   $('btn-grid').addEventListener('click', () => { ACTIONS.g(); syncPanel(); });
   $('btn-glow').addEventListener('click', () => { S.glowToAlbedo = !S.glowToAlbedo; requestBuild(); syncPanel(); });
   $('zoom-022').addEventListener('click', () => setZoom(0.22));
@@ -1483,9 +1560,7 @@ function histGo(step) {
   S.design = normalizeHullDesign(JSON.parse(HIST.stack[i]));
   S.classValid = null; S.selected = null;
   S.blkSel.clear();
-  S.rev++;
-  S.pending = { fast: false };
-  if (!S.busy) runBuild();
+  scheduleBuild(false);
   syncPanel();
   return true;
 }
@@ -2275,7 +2350,8 @@ window.__kreator = {
   get ref() { return refShip; },
   act(k) { ACTIONS[k]?.(); syncPanel(); return true; },
   async preset(k) { await loadPreset(k); return true; },
-  setView(v) { S.view = v; syncPanel(); return true; },
+  /** Widok mapy pakietu; emisja — po odczycie na żądanie (obietnica). */
+  setView(v) { S.view = v; if (v === 'emis') ensureEmission(); syncPanel(); return S.bake?.emissionReq && v === 'emis' ? S.bake.emissionReq.then(() => true) : true; },
   setZoom(z) { setZoom(z); return true; },
   setAb(on, focus = 'design') { S.ab = !!on; S.abFocus = focus; const f = focusPoint(); S.cam.x = f.x; S.cam.y = f.y; updateAbTag(); syncPanel(); return true; },
   setCamera(x, y, zoom) { S.cam.x = x; S.cam.y = y; S.cam.zoom = zoom; return true; },
