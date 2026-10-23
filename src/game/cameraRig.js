@@ -101,7 +101,10 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   // Obrót kadru w skoku (stepCameraRigRoll — demo „Pęd”, 2026-10-19): sprężyna krytyczna kąta [1/s]
   // (90° w ~1 s) i ile sekund po zatrzymaniu kadr jeszcze trzyma kurs, zanim wróci do północy.
   warpRollOmega: 3.2,
-  warpRollHold: 0.5
+  warpRollHold: 0.5,
+  // Obrót kadru w skoku WARPA gracza (gra, port dema „Pęd” 2026-10-23 — input.omega): szybciej niż hipercruise, żeby kadr
+  // stał już przy kopie (przy 3,2/s i kursie ~150° obrót trwał jeszcze sekundę lotu).
+  warpJumpRollOmega: 5
 });
 
 // Zakresy strojenia (sanityzacja wartości z konsoli i testów).
@@ -146,7 +149,8 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   warpArrivalOmega: [0.5, 12],
   warpChargeShakePx: [0, 16],
   warpRollOmega: [0.5, 12],
-  warpRollHold: [0, 3]
+  warpRollHold: [0, 3],
+  warpJumpRollOmega: [0.5, 12]
 });
 
 // Impulsy kopu warpa (s): narastanie i zanik — stałe dema (dema/warp-webgpu/scenes.js).
@@ -472,7 +476,7 @@ export function noteCameraRigWarp(rig, event) {
 //                     (przejście startuje z zoomu na ekranie, więc bez skoku)
 //   exitAge         — wiek rampy wyjścia [s] (< 0: brak), exitSlow / exitHalt — koniec zwolnienia
 //                     i zatrzymanie (warpDrive.js: createWarpExitRamp)
-//   rulon           — false: styl skoku bez rulonu (`?warp=…`, `?rulon=0` — warpRulonEnabled) — statek nie idzie na środek lejka
+//   rulon           — false: styl skoku bez rulonu (domyślny 'ped' — warpRulonEnabled) — statek nie idzie na środek lejka
 //   zoomRef, zoomBase — UJEDNOLICONY KADR SKOKU (user 2026-10-19: „na przybliżonej kamerze największe skoki, na
 //                     oddalonej w miarę ok — może ujednolicić kamerę na czas warpa”): zoom odniesienia (domyślny zoom
 //                     statku — defaultShipZoom) i zoom gracza; w skoku kadr = zoomRef × warpZoomOut niezależnie od
@@ -674,7 +678,8 @@ export function normalizeCameraHyperRollMode(mode) {
 // input: dt (czas gry tej klatki; w pauzie 0 — stoi), state ('idle' | 'charging' | 'active'), dirX, dirY (kurs skoku),
 //        exitAge, exitHalt (rampa wyjścia — jak stepCameraRigWarp), arriving (ślizg z pędem po rampie — kurs trzymany
 //        do końca ślizgu), hold (kurs trzymany — np. hamowanie wyjścia z hipercruise'u w grze, 2026-10-23; po nim
-//        wołający podaje exitAge od końca hamowania z exitHalt 0), enabled (kamera statku), mode.
+//        wołający podaje exitAge od końca hamowania z exitHalt 0), enabled (kamera statku), mode, omega (opcjonalnie —
+//        sprężyna tego wejścia [1/s]; warp gracza w grze: warpJumpRollOmega).
 // Wynik: rig.roll [rad] — kamera gry `cam.roll` (src/3d/viewRoll.js: ekran = R(−roll)·(świat − kamera)). Rig
 // liczy wyprzedzenie i kop w osiach EKRANU: wołający obraca prędkość i kurs o −roll, a offset o +roll.
 export function stepCameraRigRoll(rig, input, tune = CAMERA_RIG_DEFAULTS) {
@@ -691,7 +696,9 @@ export function stepCameraRigRoll(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   }
   const cur = finite(rig.roll, 0);
   rig.rollVel = finite(rig.rollVel, 0);
-  springAxis(rig, 'roll', 'rollVel', cur + wrapPi(target - cur), Math.max(0.1, finite(tune.warpRollOmega, 3.2)), dt);
+  // input.omega — sprężyna tego wejścia (warp gracza: warpJumpRollOmega), inaczej warpRollOmega strojenia.
+  const omega = finite(input.omega, 0) > 0 ? input.omega : finite(tune.warpRollOmega, 3.2);
+  springAxis(rig, 'roll', 'rollVel', cur + wrapPi(target - cur), Math.max(0.1, omega), dt);
   // Kąt bez narastania (pełne obroty niewidoczne); po powrocie dokładne zero — kadr osiami świata jak dawniej.
   if (Math.abs(rig.roll) > Math.PI) rig.roll = wrapPi(rig.roll);
   if (!on && Math.abs(rig.roll) < 1e-4 && Math.abs(rig.rollVel) < 1e-3) {

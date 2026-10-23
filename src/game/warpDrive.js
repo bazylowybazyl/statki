@@ -561,21 +561,25 @@ export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EX
 /**
  * STYL WARPA (user 2026-10-19: „przekombinowałem z zawijanym efektem warp — dodaj przełącznik rulon 0”; porównanie
  * w demie „Pęd”, dema/warp-ped.html):
- *   'rulon'    — zwinięcie świata w walec i lejek (rulon.js) — dziś domyślny w grze, do decyzji usera;
- *   'ped'      — sama prędkość: bez gięcia świata (smugi gwiazd, ośrodek, soczewka świata, kop kamery);
+ *   'rulon'    — zwinięcie świata w walec i lejek (rulon.js) — dawny domyślny, dziś tylko z adresu (A/B);
+ *   'ped'      — sama prędkość: bez gięcia świata (smugi gwiazd, ośrodek, soczewka świata, kop kamery) — domyślny;
  *   'akcent'   — prędkość + krótkie akcenty soczewki na przejściach (naciąg przed dziobem w ładowaniu, fala
  *                w punkcie skoku, sprężenie przestrzeni przed dziobem przy wyjściu);
  *   'soczewka' — prędkość + soczewka bańki wokół statku przez cały skok (kadłub nietknięty).
- * Adres strony: `?warp=ped|akcent|soczewka|rulon`; `?rulon=0` (off / false / nie) = 'ped'. search — `location.search`
+ * Adres strony: `?warp=ped|akcent|soczewka|rulon`; `?rulon=1` (on / true / tak) = 'rulon', `?rulon=0` = 'ped'. search — `location.search`
  * strony (render: RenderWorld.pageSearch — także w workerze); wynik pamiętany dla ostatniego napisu. Demo ustawia
  * styl wprost (`setWarpStyle`, null — wraca do adresu). Bez rulonu kamera trzyma zwykłe wyprzedzenie (cameraRig.js).
  */
 export const WARP_STYLES = Object.freeze(['rulon', 'ped', 'akcent', 'soczewka']);
 const RULON_OFF_RE = /[?&]rulon=(?:0|off|false|nie)(?:&|$)/i;
+const RULON_ON_RE = /[?&]rulon=(?:1|on|true|tak)(?:&|$)/i;
 const WARP_STYLE_RE = /[?&]warp=([a-z]+)(?:&|$)/i;
 let _styleSet = null;
 let _styleSearch = null;
-let _styleFromSearch = 'rulon';
+// Styl domyślny = 'ped' (decyzja użytkownika 2026-10-23: „wrzuć nowy warp do gry” — „ped”, nie bańka); dawny rulon
+// i reszta stylów z adresu (`?warp=rulon|akcent|soczewka`) do A/B.
+export const WARP_STYLE_DEFAULT = 'ped';
+let _styleFromSearch = WARP_STYLE_DEFAULT;
 export function setWarpStyle(style) {
   _styleSet = WARP_STYLES.includes(style) ? style : null;
   return _styleSet;
@@ -587,7 +591,8 @@ export function warpStyle(search) {
     _styleSearch = s;
     const m = WARP_STYLE_RE.exec(s);
     const v = m ? m[1].toLowerCase() : '';
-    _styleFromSearch = WARP_STYLES.includes(v) ? v : (RULON_OFF_RE.test(s) ? 'ped' : 'rulon');
+    _styleFromSearch = WARP_STYLES.includes(v) ? v
+      : (RULON_ON_RE.test(s) ? 'rulon' : (RULON_OFF_RE.test(s) ? 'ped' : WARP_STYLE_DEFAULT));
   }
   return _styleFromSearch;
 }

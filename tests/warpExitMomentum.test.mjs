@@ -188,3 +188,129 @@ test('ślizg z flagą wyjścia: mózg w trybie dolotu (travel) nie podtrzyma nad
     }
   }
 });
+
+// GRACZ (port dema „Pęd” do gry, 2026-10-23): rampa wyjścia kończy się na k × prędkość bojowa, potem ślizg tabelowym
+// hamowaniem kadłuba do prędkości bojowej; TRAVEL TO i ręczny kurs liczą wyjście z drogi rampy + ślizgu (koniec ślizgu
+// w punkcie odcinka); przeszkoda na kursie (płyta ringu, koło doku) — ślizg staje przed nią.
+import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance } from '../src/game/warpDrive.js';
+import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
+
+function playerExitScope(over = {}) {
+  const html = readIndexHtml();
+  const scope = {
+    PLAYER_WARP_MOMENTUM: { k: WARP_EXIT_MOMENTUM.k },
+    _playerWarpExit: { vEnd: 0, vMin: 0, decel: 200, ramp: 0, slide: 0, total: 0 },
+    PLAYER_WARP_SLIDE_MARGIN: Number(/const PLAYER_WARP_SLIDE_MARGIN = (\d+);/.exec(html)[1]),
+    driveState: { flightSpec: { maxSpeed: 600, decel: 150 }, brakeAccel: 200 },
+    warpExitRampDistance,
+    playerWarpHullLength: () => 1800,
+    getPlayerSpeed: () => 175000,
+    ship: { pos: { x: 0, y: 0 }, radius: 1000, w: 1800, h: 600 },
+    haloWorld: null,
+    portDocks: { count: 0, docks: [] },
+    warp: { exitSlide: null },
+    ...over
+  };
+  for (const [header, name] of [
+    ['function playerWarpExitPlan(v0, momentum = true, out = _playerWarpExit) {', 'playerWarpExitPlan'],
+    ['function playerWarpExitDistance(momentum = true) {', 'playerWarpExitDistance'],
+    ['function playerWarpObstacleAhead(x, y, dx, dy, range) {', 'playerWarpObstacleAhead'],
+    ['function startPlayerWarpSlide(dirX, dirY, speed) {', 'startPlayerWarpSlide'],
+    ['function stopPlayerWarpSlide() {', 'stopPlayerWarpSlide']
+  ]) scope[name] = loadIndexFunction(html, header, name, scope);
+  return { html, scope };
+}
+
+// Ślizg jak w physicsStep (gałąź warp.exitSlide): prędkość maleje decel·dt, droga = Σ v·dt.
+function runSlide(sl, dt = 1 / 600) {
+  let x = 0;
+  for (let i = 0; i < 1e6 && sl.active; i++) {
+    sl.speed = Math.max(sl.vMin, sl.speed - sl.decel * dt);
+    x += sl.speed * dt;
+    if (sl.speed <= sl.vMin + 1e-6) sl.active = false;
+  }
+  return x;
+}
+
+test('gracz: plan wyjścia z pędem — vEnd = k × prędkość bojowa, ślizg tabelowym hamowaniem, droga = rampa + ślizg', () => {
+  const { scope } = playerExitScope();
+  const v0 = 175000;
+  const p = scope.playerWarpExitPlan(v0, true, {});
+  assert.equal(p.vEnd, 3 * 600);
+  assert.equal(p.vMin, 600);
+  assert.equal(p.decel, 200);
+  assert.equal(p.ramp, warpExitRampDistance(v0, 1800, 1800));
+  assert.equal(p.slide, (1800 ** 2 - 600 ** 2) / (2 * 200));
+  assert.equal(p.total, p.ramp + p.slide);
+  assert.equal(scope.playerWarpExitDistance(), p.total);
+  // bez pędu (holownik, hamowanie grawitacyjne, ?pedGracz=0) — rampa do zatrzymania jak dawniej
+  const stop = scope.playerWarpExitPlan(v0, false, {});
+  assert.equal(stop.vEnd, 0);
+  assert.equal(stop.slide, 0);
+  assert.equal(stop.total, warpExitRampDistance(v0, 1800));
+  scope.PLAYER_WARP_MOMENTUM = { k: 0 };
+  assert.equal(scope.playerWarpExitDistance(), warpExitRampDistance(v0, 1800));
+  // rampa z vEnd kończy się na vEnd, ślizg z niej przejeżdża dokładnie `slide`
+  scope.PLAYER_WARP_MOMENTUM = { k: 3 };
+  const r = createWarpExitRamp({ v0, hullLength: 1800, vEnd: p.vEnd });
+  const s = sampleWarpExitRamp(r, r.tHalt + 1, {});
+  assert.equal(s.phase, 'done');
+  assert.ok(Math.abs(s.speed - p.vEnd) < 1e-6, `koniec rampy ${s.speed}`);
+  scope.startPlayerWarpSlide(1, 0, s.speed);
+  const sl = scope.warp.exitSlide;
+  assert.equal(sl.active, true);
+  const d = runSlide(sl);
+  assert.ok(Math.abs(d - p.slide) < p.slide * 0.002, `ślizg ${d.toFixed(1)} vs ${p.slide}`);
+  assert.ok(Math.abs(sl.speed - 600) < 1e-6, 'dalej zwykły lot z prędkością bojową');
+  scope.startPlayerWarpSlide(1, 0, 600);
+  assert.equal(scope.warp.exitSlide.active, false, 'wyjście nie szybsze od prędkości bojowej — bez ślizgu');
+});
+
+test('gracz: ślizg nie wjeżdża w płytę ringu ani w koło doku — staje przed przeszkodą z zapasem', () => {
+  const margin = Number(/const PLAYER_WARP_SLIDE_MARGIN = (\d+);/.exec(readIndexHtml())[1]);
+  const reach = 1000;
+  const cases = [
+    ['płyta ringu', { haloWorld: { rayToSlab: (x, y, dx, dy, len, pad) => (pad === reach ? 4000 + reach : Infinity) } }, 4000],
+    ['koło doku', { portDocks: { count: 1, docks: [{ x: 6000, y: 0, keepR: 1000 }] } }, 6000 - 1000 - reach]
+  ];
+  for (const [name, over, obst] of cases) {
+    const { scope } = playerExitScope(over);
+    assert.ok(Math.abs(scope.playerWarpObstacleAhead(0, 0, 1, 0, 1e5) - obst) < 1e-6, name);
+    scope.startPlayerWarpSlide(1, 0, 1800);
+    const sl = scope.warp.exitSlide;
+    assert.equal(sl.vMin, 0, `${name}: do zatrzymania`);
+    const d = runSlide(sl);
+    assert.ok(d <= obst - margin + 2 && d > obst - margin - 50, `${name}: staje ${d.toFixed(0)} j. (przeszkoda ${obst})`);
+    assert.equal(sl.speed, 0);
+  }
+  // przeszkoda dalej niż droga ślizgu — zwykły ślizg do prędkości bojowej
+  const far = playerExitScope({ portDocks: { count: 1, docks: [{ x: 60000, y: 0, keepR: 1000 }] } }).scope;
+  far.startPlayerWarpSlide(1, 0, 1800);
+  assert.equal(far.warp.exitSlide.vMin, 600);
+  // statek już w kole doku (wyjście przy porcie) i dok za rufą / z boku — nie staje w miejscu
+  for (const dock of [{ x: 300, y: 0, keepR: 1000 }, { x: -6000, y: 0, keepR: 1000 }, { x: 6000, y: 5000, keepR: 1000 }]) {
+    const sc = playerExitScope({ portDocks: { count: 1, docks: [dock] } }).scope;
+    assert.equal(sc.playerWarpObstacleAhead(0, 0, 1, 0, 1e5), Infinity, JSON.stringify(dock));
+  }
+});
+
+test('gracz: exitWarp z vEnd, ślizg w physicsStep, TRAVEL TO / kurs / HUD z drogi ślizgu, holownik bez pędu, resety', () => {
+  const html = readIndexHtml();
+  const exitWarp = sliceFunction(html, 'function exitWarp(opts) {');
+  assert.match(exitWarp, /const plan = playerWarpExitPlan\(speed, !\(opts && opts\.momentum === false\)\);/);
+  assert.match(exitWarp, /createWarpExitRamp\(\{\s*v0: speed, hullLength: playerWarpHullLength\(\), dirX: dir\.x, dirY: dir\.y, vEnd: plan\.vEnd\s*\}\)/);
+  assert.match(html, /if \(s\.phase === 'done'\) \{\s*r\.active = false;[\s\S]{0,160}?if \(s\.speed > 1\) startPlayerWarpSlide\(r\.dirX, r\.dirY, s\.speed\);/);
+  assert.match(html, /else if \(warp\.exitSlide && warp\.exitSlide\.active\) \{[\s\S]{0,400}?if \(playerHasManualInput\(\) \|\| hypercruise\.state !== 'idle'\) \{/);
+  const nav = sliceFunction(html, 'function stepTravelNav() {');
+  assert.match(nav, /if \(along <= playerWarpExitDistance\(\)\) \{/);
+  assert.match(nav, /nav\.phase === 'exit' && !warp\.exitRamp\?\.active && !warp\.exitSlide\?\.active/);
+  assert.doesNotMatch(nav, /warpExitRampDistance\(/);
+  assert.match(sliceFunction(html, 'function stepWarpCourse(dt) {'), /warpCourse\.aim, playerWarpExitDistance\(\)\)\)/);
+  assert.match(html, /const rampDist = playerWarpExitDistance\(!_tugWarp\.active\);/);
+  // holownik: zestaw staje (droga bez pędu — rampa do zatrzymania)
+  assert.match(html, /_tugWarp\.aim, warpExitRampDistance\(getPlayerSpeed\(\), playerWarpHullLength\(\)\)\)\) \{\s*warp\.state = 'idle';[\s\S]{0,120}?exitWarp\(\{ momentum: false \}\);/);
+  // kop i resety gaszą ślizg
+  assert.match(sliceFunction(html, 'function engageWarp(dirToMouse) {'), /stopPlayerWarpSlide\(\);/);
+  assert.ok((html.match(/warp\.exitRamp = null;\s*stopPlayerWarpSlide\(\);/g) || []).length >= 2, 'resety');
+  assert.match(html, /\[\?&\]pedGracz=\(\?:0\|off\|nie\)/);
+});

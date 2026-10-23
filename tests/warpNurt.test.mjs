@@ -10,7 +10,7 @@ import {
   WARP_DEPARTURE_BASE, WARP_ARRIVAL_SHAPE, WARP_RUSH, WARP_EXIT, createWarpDeparture, sampleWarpDeparture, warpSizeScale,
   createWarpArrival, planWarpRush, sampleWarpRush, warpArrivalSpeed, warpBrakeTime,
   createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, warpRulonBend, warpRulonEnabled,
-  warpStyle, setWarpStyle, WARP_STYLES
+  warpStyle, setWarpStyle, WARP_STYLES, WARP_STYLE_DEFAULT
 } from '../src/game/warpDrive.js';
 import { RenderWorld } from '../src/render/renderWorld.js';
 import { WarpPlayerFx, WARP_FLOW, WARP_BUBBLE, WARP_ACCENT, WARP_LENS_BUBBLE, WARP_HULL_SHADOW } from '../src/3d/warp/player.js';
@@ -174,42 +174,53 @@ function playerRig() {
 }
 
 test('skok gracza: ładowanie ściśnięte do 0,8 s (naprężenie ×3,75, wzbudzenie ×3,75^0,6), bańka rośnie, rulon się zwija', () => {
-  const { fx, frame, game, step } = playerRig();
-  const dt = 1 / 60;
-  let t = 0;
-  game.state = 'charging';
-  const A = [];
-  for (let i = 1; i <= 48; i++) {
-    t += dt;
-    game.charge = Math.min(1, i / 48);
-    step(t, dt);
-    A.push(fx.bubble.A);
+  // styl 'rulon' (od 2026-10-23 domyślny jest 'ped' — rulon tylko z adresu, A/B)
+  setWarpStyle('rulon');
+  try {
+    const { fx, frame, game, step } = playerRig();
+    const dt = 1 / 60;
+    let t = 0;
+    game.state = 'charging';
+    const A = [];
+    for (let i = 1; i <= 48; i++) {
+      t += dt;
+      game.charge = Math.min(1, i / 48);
+      step(t, dt);
+      A.push(fx.bubble.A);
+    }
+    assert.equal(fx.mode, 'charging');
+    assert.ok(near(fx.chargeK, 3 / 0.8, 1e-12));
+    assert.ok(near(fx.chargeBoost, Math.pow(3 / 0.8, 0.6), 1e-12));
+    for (let i = 1; i < A.length; i++) assert.ok(A[i] >= A[i - 1] - 1e-12, 'amplituda bańki nie maleje w ładowaniu');
+    assert.ok(near(A[A.length - 1], 1, 1e-9));
+    assert.equal(frame.bubbles.length, 1);
+    assert.ok(frame.bubbles[0].excite > 1.6 * 2, 'wzbudzenie wzmocnione (krótkie ładowanie gry)');
+    assert.ok(frame.lens.count === 1, 'soczewka bańki na mgławicy');
+    assert.ok(frame.stars.stretch > 0.3 && frame.stars.stretch < 0.33, 'gwiazdy płasko 0,32·ładowanie²');
+    assert.ok(near(fx.rulonBend, 1, 1e-9) && near(fx.rulonField, 1, 1e-9), 'rulon i lejek zwinięte na końcu ładowania');
+    assert.ok(near(frame.bubbles[0].R, 1800 * WARP_BUBBLE.radiusK) && near(frame.bubbles[0].asp, WARP_BUBBLE.asp));
+  } finally {
+    setWarpStyle(null);
   }
-  assert.equal(fx.mode, 'charging');
-  assert.ok(near(fx.chargeK, 3 / 0.8, 1e-12));
-  assert.ok(near(fx.chargeBoost, Math.pow(3 / 0.8, 0.6), 1e-12));
-  for (let i = 1; i < A.length; i++) assert.ok(A[i] >= A[i - 1] - 1e-12, 'amplituda bańki nie maleje w ładowaniu');
-  assert.ok(near(A[A.length - 1], 1, 1e-9));
-  assert.equal(frame.bubbles.length, 1);
-  assert.ok(frame.bubbles[0].excite > 1.6 * 2, 'wzbudzenie wzmocnione (krótkie ładowanie gry)');
-  assert.ok(frame.lens.count === 1, 'soczewka bańki na mgławicy');
-  assert.ok(frame.stars.stretch > 0.3 && frame.stars.stretch < 0.33, 'gwiazdy płasko 0,32·ładowanie²');
-  assert.ok(near(fx.rulonBend, 1, 1e-9) && near(fx.rulonField, 1, 1e-9), 'rulon i lejek zwinięte na końcu ładowania');
-  assert.ok(near(frame.bubbles[0].R, 1800 * WARP_BUBBLE.radiusK) && near(frame.bubbles[0].asp, WARP_BUBBLE.asp));
 });
 
-test('przełącznik rulonu: ?rulon=0 (off / false / nie) wyłącza, inne adresy zostawiają rulon', () => {
-  for (const s of ['?rulon=0', '?dev&rulon=0', '?rulon=off&x=1', '?rulon=false', '?rulon=NIE']) assert.equal(warpRulonEnabled(s), false, s);
-  for (const s of ['', '?rulon=1', '?dev', '?xrulon=0', '?rulon=01', undefined, null]) assert.equal(warpRulonEnabled(s), true, String(s));
+test('przełącznik rulonu: domyślnie bez rulonu (styl ped); ?rulon=1 (on / true / tak) albo ?warp=rulon włącza, ?rulon=0 wyłącza', () => {
+  for (const s of ['?rulon=0', '?dev&rulon=0', '?rulon=off&x=1', '?rulon=false', '?rulon=NIE', '', '?dev', '?xrulon=1', '?rulon=01', undefined, null]) {
+    assert.equal(warpRulonEnabled(s), false, String(s));
+  }
+  for (const s of ['?rulon=1', '?dev&rulon=on', '?rulon=TRUE&x=1', '?rulon=tak', '?warp=rulon']) assert.equal(warpRulonEnabled(s), true, s);
 });
 
-test('styl warpa: ?warp=… (rulon / ped / akcent / soczewka), ?rulon=0 = ped, setWarpStyle (demo) nadpisuje adres', () => {
+test('styl warpa: domyślnie ped; ?warp=… (rulon / ped / akcent / soczewka), ?rulon=0 = ped, setWarpStyle (demo) nadpisuje adres', () => {
   assert.deepEqual([...WARP_STYLES], ['rulon', 'ped', 'akcent', 'soczewka']);
-  assert.equal(warpStyle(''), 'rulon');
+  assert.equal(WARP_STYLE_DEFAULT, 'ped');
+  assert.equal(warpStyle(''), 'ped');
+  assert.equal(warpStyle('?warp=rulon'), 'rulon');
+  assert.equal(warpStyle('?rulon=1'), 'rulon');
   assert.equal(warpStyle('?warp=ped'), 'ped');
   assert.equal(warpStyle('?dev&warp=akcent'), 'akcent');
   assert.equal(warpStyle('?warp=SOCZEWKA&x=1'), 'soczewka');
-  assert.equal(warpStyle('?warp=xyz'), 'rulon');
+  assert.equal(warpStyle('?warp=xyz'), 'ped');
   assert.equal(warpStyle('?rulon=0'), 'ped');
   assert.equal(warpStyle('?warp=akcent&rulon=0'), 'akcent', 'jawny styl wygrywa');
   assert.equal(warpRulonEnabled('?warp=soczewka'), false);
@@ -377,52 +388,58 @@ test('skok gracza z ?rulon=0: ładowanie, skok i wyjście bez zwinięcia (adres 
 });
 
 test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna); wyjście z rampy rozgrywki — zwolnienie, hamowanie (błysk, fala, żar, iskry), ośrodek gaśnie', () => {
-  const { fx, frame, game, med, step, shakes } = playerRig();
-  const dt = 1 / 60;
-  let t = 1;
-  game.state = 'charging'; game.charge = 1;
-  step(t, dt);
-  game.state = 'active';
-  t += dt; step(t, dt);
-  assert.equal(fx.mode, 'warp');
-  assert.equal(shakes.length, 1, 'jeden wstrząs przy kopnięciu');
-  assert.ok(near(fx.visibleFlow(fx.kickT), 900));
-  assert.ok(near(fx.visibleFlow(fx.kickT + 0.45), WARP_FLOW.travel, 1e-6));
-  assert.equal(frame.waves.count, 1);
-  for (let i = 0; i < 30; i++) { t += dt; step(t, dt); }
-  const w = frame.waves.items[0];
-  assert.ok(w.x * Math.cos(fx.angle) + w.y * Math.sin(fx.angle) < -1000, 'fala skoku za statkiem (przestrzeń widoczna)');
-  assert.ok(frame.stars.stretch > 0.9 && frame.warpVis > 0.99);
-  assert.ok(fx.rulonBend >= 1 - 1e-9, 'rulon w locie');
-  // Wyjście: rampa z gry (wiek rośnie zegarem gry).
-  const ramp = createWarpExitRamp({ v0: 40000, hullLength: 1800, dirX: Math.cos(0.3), dirY: Math.sin(0.3) });
-  game.exitRamp = ramp;
-  game.state = 'idle';
-  t += dt; step(t, dt);
-  assert.equal(fx.mode, 'exit');
-  assert.equal(frame.stars.frontOn, 1);
-  assert.equal(shakes.length, 2, 'lekki wstrząs na początku wyjścia');
-  assert.ok(fx.visibleFlow(t) > 1000, 'zwolnienie z prędkości widocznej');
-  assert.ok(fx.visibleFlow(fx.exitT + ramp.slow + 0.01) === null, 'po zwolnieniu ośrodek idzie za prawdziwą kamerą');
-  const tEx = fx.exitT;
-  while (t < tEx + ramp.tBrake + 0.05) { t += dt; ramp.age = t - tEx; step(t, dt); }
-  assert.ok(near(fx.rulonBend, 0, 1e-9), 'rulon rozwinięty po zwolnieniu');
-  assert.ok(frame.glares.count === 1 && frame.flashes.count >= 1, 'błysk i blask na dziobie przy hamowaniu');
-  assert.ok(frame.bubbles.includes(fx.push), 'iskry ośrodka przed dziobem');
-  assert.ok(fx.bubble.front < 1.3, 'bańka zapada się od dziobu');
-  assert.equal(shakes.length, 3, 'wstrząs hamowania');
-  for (let i = 0; i < 6; i++) { t += dt; ramp.age = t - tEx; step(t, dt); }
-  assert.ok(fx.hull.on && fx.hull.heat > 0.6, 'żar kadłuba w chwili hamowania (razem z błyskiem)');
-  // Przylot = jedno zdarzenie (2026-10-23): żar to impuls z błyskiem — 1,2 s po hamowaniu prawie zgasł (dawniej
-  // τ 2,2 s: wyłaniał się jako drugi „wybuch”, gdy kadr przylotu dosuwał kamerę).
-  while (t < tEx + ramp.tBrake + 1.2) { t += dt; ramp.age = t - tEx; step(t, dt); }
-  assert.ok(fx.hull.heat < 0.1, `żar gaśnie z błyskiem (${fx.hull.heat})`);
-  while (t < tEx + ramp.tHalt + 1.0) { t += dt; step(t, dt); }
-  assert.equal(frame.mediumFade, 4, 'ośrodek gaśnie po zatrzymaniu');
-  for (let i = 0; i < 200; i++) { t += dt; step(t, dt); }
-  assert.equal(fx.mode, 'idle');
-  assert.equal(fx.rulonBend, 0);
-  assert.ok(med.camMX !== 0, 'kamera ośrodka jechała w skoku');
+  // styl 'rulon' (od 2026-10-23 domyślny jest 'ped' — rulon tylko z adresu, A/B)
+  setWarpStyle('rulon');
+  try {
+    const { fx, frame, game, med, step, shakes } = playerRig();
+    const dt = 1 / 60;
+    let t = 1;
+    game.state = 'charging'; game.charge = 1;
+    step(t, dt);
+    game.state = 'active';
+    t += dt; step(t, dt);
+    assert.equal(fx.mode, 'warp');
+    assert.equal(shakes.length, 1, 'jeden wstrząs przy kopnięciu');
+    assert.ok(near(fx.visibleFlow(fx.kickT), 900));
+    assert.ok(near(fx.visibleFlow(fx.kickT + 0.45), WARP_FLOW.travel, 1e-6));
+    assert.equal(frame.waves.count, 1);
+    for (let i = 0; i < 30; i++) { t += dt; step(t, dt); }
+    const w = frame.waves.items[0];
+    assert.ok(w.x * Math.cos(fx.angle) + w.y * Math.sin(fx.angle) < -1000, 'fala skoku za statkiem (przestrzeń widoczna)');
+    assert.ok(frame.stars.stretch > 0.9 && frame.warpVis > 0.99);
+    assert.ok(fx.rulonBend >= 1 - 1e-9, 'rulon w locie');
+    // Wyjście: rampa z gry (wiek rośnie zegarem gry).
+    const ramp = createWarpExitRamp({ v0: 40000, hullLength: 1800, dirX: Math.cos(0.3), dirY: Math.sin(0.3) });
+    game.exitRamp = ramp;
+    game.state = 'idle';
+    t += dt; step(t, dt);
+    assert.equal(fx.mode, 'exit');
+    assert.equal(frame.stars.frontOn, 1);
+    assert.equal(shakes.length, 2, 'lekki wstrząs na początku wyjścia');
+    assert.ok(fx.visibleFlow(t) > 1000, 'zwolnienie z prędkości widocznej');
+    assert.ok(fx.visibleFlow(fx.exitT + ramp.slow + 0.01) === null, 'po zwolnieniu ośrodek idzie za prawdziwą kamerą');
+    const tEx = fx.exitT;
+    while (t < tEx + ramp.tBrake + 0.05) { t += dt; ramp.age = t - tEx; step(t, dt); }
+    assert.ok(near(fx.rulonBend, 0, 1e-9), 'rulon rozwinięty po zwolnieniu');
+    assert.ok(frame.glares.count === 1 && frame.flashes.count >= 1, 'błysk i blask na dziobie przy hamowaniu');
+    assert.ok(frame.bubbles.includes(fx.push), 'iskry ośrodka przed dziobem');
+    assert.ok(fx.bubble.front < 1.3, 'bańka zapada się od dziobu');
+    assert.equal(shakes.length, 3, 'wstrząs hamowania');
+    for (let i = 0; i < 6; i++) { t += dt; ramp.age = t - tEx; step(t, dt); }
+    assert.ok(fx.hull.on && fx.hull.heat > 0.6, 'żar kadłuba w chwili hamowania (razem z błyskiem)');
+    // Przylot = jedno zdarzenie (2026-10-23): żar to impuls z błyskiem — 1,2 s po hamowaniu prawie zgasł (dawniej
+    // τ 2,2 s: wyłaniał się jako drugi „wybuch”, gdy kadr przylotu dosuwał kamerę).
+    while (t < tEx + ramp.tBrake + 1.2) { t += dt; ramp.age = t - tEx; step(t, dt); }
+    assert.ok(fx.hull.heat < 0.1, `żar gaśnie z błyskiem (${fx.hull.heat})`);
+    while (t < tEx + ramp.tHalt + 1.0) { t += dt; step(t, dt); }
+    assert.equal(frame.mediumFade, 4, 'ośrodek gaśnie po zatrzymaniu');
+    for (let i = 0; i < 200; i++) { t += dt; step(t, dt); }
+    assert.equal(fx.mode, 'idle');
+    assert.equal(fx.rulonBend, 0);
+    assert.ok(med.camMX !== 0, 'kamera ośrodka jechała w skoku');
+  } finally {
+    setWarpStyle(null);
+  }
 });
 
 test('soczewka świata (2026-10-07): β 0 → 1 w 0,5 s po skoku, do końca zwolnienia 1, przy zatrzymaniu 0; przepływ zwalnia przy mijanym ciele', () => {

@@ -418,12 +418,12 @@
                 <p class="mm-note">Wł.: przy skoku statek wyrywa się do przodu w kadrze, na czas skoku kamera się oddala, po wyjściu wraca do ustawionego zoomu. Wył.: kamera w warpie jak w zwykłym locie.</p>
               </div>
               <div class="mm-field">
-                <div class="mm-field-label">Kamera w hipercruisie</div>
-                <div class="menu-chip-group" role="group" aria-label="Kamera w hipercruisie">
+                <div class="mm-field-label">Kamera w hipercruisie i warpie</div>
+                <div class="menu-chip-group" role="group" aria-label="Kamera w hipercruisie i warpie">
                   <button class="menu-chip" data-camera-hyper-roll="up">Za statkiem</button>
                   <button class="menu-chip" data-camera-hyper-roll="off">Północ</button>
                 </div>
-                <p class="mm-note">Za statkiem: od rozruchu hipercruise'u kadr obraca się kursem w górę — statek nisko, przed dziobem widać, co nadlatuje; po wyjściu wraca północ. Północ: kadr zawsze północą w górę.</p>
+                <p class="mm-note">Za statkiem: od rozruchu hipercruise'u i od ładowania warpa kadr obraca się kursem w górę — statek nisko, przed dziobem widać, co nadlatuje; po wyjściu wraca północ. Północ: kadr zawsze północą w górę.</p>
               </div>
               <div class="mm-field">
                 <div class="mm-field-label">Kadr bitwy</div>
@@ -2054,7 +2054,7 @@
       cameraLook: 'auto',
       // Kop kamery przy warpie (skok, wyjście, oddalenie zoomu): 'on' | 'off' — src/game/cameraRig.js.
       cameraWarpKick: 'on',
-      // Kamera w hipercruisie (kadr kursem w górę — obrót kadru): 'up' | 'off' ('right' — adres ?hcKamera=right) — cameraRig.js.
+      // Kamera w hipercruisie i warpie (kadr kursem w górę — obrót kadru): 'up' | 'off' ('right' — adres ?hcKamera=right) — cameraRig.js.
       cameraHyperRoll: 'up',
       // Kadr bitwy (reżyser kadru — kamera pokazuje wrogów i przyloty): 'full' (środek i zoom) | 'pan' (sam środek)
       // | 'off' — src/game/cameraDirector.js.
@@ -6426,7 +6426,7 @@
       feedCameraDirector();
       // Hipercruise (od rozruchu do końca okna po wyjściu — obrót kadru): reżyser gaśnie jak w warpie — dopasowanie
       // zoomu i pasy HUD liczy w osiach świata, a blokada masy (wróg < 12 km) i tak wyklucza walkę w hipercruisie.
-      const warpBusy = warp.state !== 'idle' || !!warp.exitRamp || hypercruiseBusy(hypercruise) || _hyperRollAfter >= 0;
+      const warpBusy = playerWarpCameraBusy() || hypercruiseBusy(hypercruise) || _hyperRollAfter >= 0;
       inp.dt = frameDt || 0;
       inp.viewW = W;
       inp.viewH = H;
@@ -9781,7 +9781,8 @@
       if (warp.state === 'active' && _tugWarp.aim && warpCourseExitDue(ship.pos, warp.dir.x, warp.dir.y,
         _tugWarp.aim, warpExitRampDistance(getPlayerSpeed(), playerWarpHullLength()))) {
         warp.state = 'idle';
-        exitWarp();
+        // zestaw z holownikiem staje (bez pędu — holownik podpływa do burty)
+        exitWarp({ momentum: false });
       }
       if (!tugCarryWarpBusy()) {
         _tugWarp.active = false;
@@ -12080,6 +12081,7 @@
       }
       if (warp.state !== 'idle') { warp.state = 'idle'; exitWarp({ abrupt: true }); }
       warp.exitRamp = null;
+      stopPlayerWarpSlide();
       if (typeof cancelTravel === 'function') cancelTravel(null);
       ship.pos.x = px; ship.pos.y = py; ship.vel.x = 0; ship.vel.y = 0; ship.angle = heading; ship.angVel = 0;
       camera.mode = 'ship';
@@ -17994,7 +17996,8 @@
         }
         const leg = nav.leg;
         const along = (leg.x - ship.pos.x) * warp.dir.x + (leg.y - ship.pos.y) * warp.dir.y;
-        if (along <= warpExitRampDistance(getPlayerSpeed(), playerWarpHullLength())) {
+        // Koniec ślizgu (wyjście z pędem) w punkcie odcinka: droga rampy + ślizgu (playerWarpExitDistance).
+        if (along <= playerWarpExitDistance()) {
           nav.exitByNav = true;
           warp.state = 'idle';
           exitWarp();
@@ -18002,7 +18005,7 @@
         }
         return;
       }
-      if (nav.phase === 'exit' && !warp.exitRamp?.active) {
+      if (nav.phase === 'exit' && !warp.exitRamp?.active && !warp.exitSlide?.active) {
         nav.exitByNav = false;
         nav.phase = 'leg';
       }
@@ -18015,7 +18018,7 @@
       if (ship.destroyed) { cancelTravel(null); return; }
       if (warp.state === 'active') {
         if (warpCourse.autoExit && warpCourse.aim && warpCourseExitDue(ship.pos, warp.dir.x, warp.dir.y,
-          warpCourse.aim, warpExitRampDistance(getPlayerSpeed(), playerWarpHullLength()))) {
+          warpCourse.aim, playerWarpExitDistance())) {
           warp.state = 'idle';
           exitWarp();
           pushZoneMessage('WARP: AUTOMATYCZNE WYJŚCIE', 1.8, { tone: 'good' });
@@ -24973,17 +24976,93 @@
     // WAŻNE: Upubliczniamy warp, żeby planet3d.assets.js (gwiazdy) go widziały!
     window.warp = warp;
 
+    // WYJŚCIE GRACZA Z PĘDEM (port dema „Pęd” do gry, decyzja użytkownika 2026-10-23: „wrzuć nowy warp do gry”; user
+    // 2026-10-19: „lecenie à la Star Wars, a nie stanie pasywne”): rampa wyjścia hamuje do vEnd = k × prędkość bojowa
+    // (tabela lotu kadłuba), potem ŚLIZG — nadmiar maleje tabelowym hamowaniem kadłuba (`driveState.brakeAccel`, Atlas
+    // 200 j/s²) do prędkości bojowej i statek leci dalej zwykłym lotem. TRAVEL TO, ręczny kurs i podgląd HUD liczą
+    // wyjście z drogi rampy + ślizgu (playerWarpExitDistance) — koniec ślizgu wypada w punkcie odcinka. Bez pędu:
+    // hamowanie grawitacyjne (abrupt), holownik (zestaw), `?pedGracz=0` (A/B — statek staje jak dawniej).
+    const PLAYER_WARP_MOMENTUM = Object.freeze({
+      k: /[?&]pedGracz=(?:0|off|nie)(?:&|$)/i.test(location.search) ? 0 : WARP_EXIT_MOMENTUM.k
+    });
+    const _playerWarpExit = { vEnd: 0, vMin: 0, decel: 200, ramp: 0, slide: 0, total: 0 };
+    // Plan wyjścia z prędkości v0: prędkość końca rampy, prędkość bojowa, hamowanie ślizgu, drogi rampy i ślizgu.
+    function playerWarpExitPlan(v0, momentum = true, out = _playerWarpExit) {
+      const spec = driveState.flightSpec;
+      const vMax = Math.max(0, Number(spec?.maxSpeed) || 0);
+      const decel = Math.max(20, Number(driveState.brakeAccel) || Number(spec?.decel) || 200);
+      const k = momentum ? PLAYER_WARP_MOMENTUM.k : 0;
+      out.vEnd = k > 0 && vMax > 0 ? Math.min(Math.max(0, Number(v0) || 0), k * vMax) : 0;
+      out.vMin = vMax;
+      out.decel = decel;
+      out.ramp = warpExitRampDistance(v0, playerWarpHullLength(), out.vEnd);
+      out.slide = out.vEnd > vMax ? (out.vEnd * out.vEnd - vMax * vMax) / (2 * decel) : 0;
+      out.total = out.ramp + out.slide;
+      return out;
+    }
+    // Droga od decyzji o wyjściu do końca ślizgu (z bieżącej prędkości) — TRAVEL TO, ręczny kurs, podgląd HUD.
+    function playerWarpExitDistance(momentum = true) {
+      return playerWarpExitPlan(getPlayerSpeed(), momentum).total;
+    }
+    // Ślizg po rampie (stan w warp.exitSlide — prowadzi go physicsStep jak rampę: prędkość wzdłuż kursu, bez ciągu).
+    // Przeszkoda na kursie (płyta ringu „Halo”, bryły doków portu) bliżej niż droga ślizgu — ślizg hamuje mocniej i staje
+    // przed nią (zadanie 2026-10-23: „ślizg nie może wjechać w płytę ringu ani bryły doków portu”).
+    const PLAYER_WARP_SLIDE_MARGIN = 600;   // [j.] zapas przed przeszkodą
+    function playerWarpObstacleAhead(x, y, dx, dy, range) {
+      const reach = Math.max(Number(ship.radius) || 0, Math.sqrt((Number(ship.w) || 0) ** 2 + (Number(ship.h) || 0) ** 2) * 0.5);
+      let best = Infinity;
+      if (haloWorld) best = haloWorld.rayToSlab(x, y, dx, dy, range + reach, reach) - reach;
+      if (portDocks && portDocks.count) {
+        for (const d of portDocks.docks) {
+          // koło `keepR` doku + zasięg kadłuba (budowle w nim): najbliższe przecięcie promienia
+          const ox = d.x - x, oy = d.y - y;
+          const along = ox * dx + oy * dy;
+          const R = (Number(d.keepR) || 0) + reach;
+          const oo = ox * ox + oy * oy;
+          const lat2 = oo - along * along;
+          // statek już w kole doku (wyjście przy porcie) — bryły pilnuje PortDocks.constrainShip, ślizg nie staje w miejscu
+          if (oo <= R * R || along <= 0 || lat2 >= R * R) continue;
+          const hit = along - Math.sqrt(R * R - lat2);
+          if (hit < best) best = Math.max(0, hit);
+        }
+      }
+      return best;
+    }
+    function startPlayerWarpSlide(dirX, dirY, speed) {
+      const plan = playerWarpExitPlan(speed, true);
+      const sl = warp.exitSlide || (warp.exitSlide = { active: false, dirX: 1, dirY: 0, speed: 0, vMin: 0, decel: 200 });
+      sl.dirX = dirX;
+      sl.dirY = dirY;
+      sl.speed = speed;
+      sl.vMin = Math.min(speed, plan.vMin);
+      sl.decel = plan.decel;
+      // droga ślizgu do prędkości bojowej + jej droga hamowania — przeszkoda bliżej: stop przed nią
+      const need = (speed * speed - sl.vMin * sl.vMin) / (2 * sl.decel) + (sl.vMin * sl.vMin) / (2 * sl.decel);
+      const obst = playerWarpObstacleAhead(ship.pos.x, ship.pos.y, dirX, dirY, need + PLAYER_WARP_SLIDE_MARGIN);
+      if (obst < need + PLAYER_WARP_SLIDE_MARGIN) {
+        sl.vMin = 0;
+        sl.decel = Math.max(sl.decel, (speed * speed) / (2 * Math.max(1, obst - PLAYER_WARP_SLIDE_MARGIN)));
+      }
+      sl.active = speed > sl.vMin + 1;
+    }
+    function stopPlayerWarpSlide() {
+      if (warp.exitSlide) warp.exitSlide.active = false;
+    }
+
     function exitWarp(opts) {
       const abrupt = !!(opts && opts.abrupt);
       // Wyjście = PRZYLOT jak u okrętów NPC (demo „Nurt” 2026-10-03, warpDrive.js: WARP_EXIT):
       // rampa prowadzi statek — zwolnienie do prędkości wlotu, wlot, gwałtowne hamowanie na ~0,9
       // długości kadłuba. Widać ją w warpie „Nurt” (player.js: rulon się rozwija, smugi gasną,
       // błysk dziobu, fala, żar); wstrząsy i impuls zoomu (na początku hamowania) — tam i w rampie.
-      // opts.abrupt — bez rampy (hamowanie grawitacyjne prowadzi warp.gravityBrake).
+      // opts.abrupt — bez rampy (hamowanie grawitacyjne prowadzi warp.gravityBrake); opts.momentum === false — rampa do
+      // zatrzymania (holownik), inaczej z pędem (vEnd — PLAYER_WARP_MOMENTUM, potem ślizg).
       const speed = getPlayerSpeed();
       const dir = (warp.dir.x || warp.dir.y) ? warp.dir : { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+      const plan = playerWarpExitPlan(speed, !(opts && opts.momentum === false));
+      stopPlayerWarpSlide();
       warp.exitRamp = abrupt ? null : createWarpExitRamp({
-        v0: speed, hullLength: playerWarpHullLength(), dirX: dir.x, dirY: dir.y
+        v0: speed, hullLength: playerWarpHullLength(), dirX: dir.x, dirY: dir.y, vEnd: plan.vEnd
       });
       if (abrupt) {
         camera.addShake(18, 0.22);
@@ -25023,6 +25102,7 @@
       warp.gravityBrake.active = false;
       warp.gravityBrake.timer = 0;
       warp.exitRamp = null;
+      stopPlayerWarpSlide();
       warp.chargeAngle = NaN;
       warpBrakeTimer = 0;
 
@@ -25193,6 +25273,7 @@
 
       warp.dir.x = dirX;
       warp.dir.y = dirY;
+      stopPlayerWarpSlide();
       // Prędkość przelotowa, ciała zwolnienia, planeta startu i cel soczewki świata.
       planPlayerWarp(dirX, dirY);
       warp.flybyFactor = 1;
@@ -26068,7 +26149,7 @@
       else if (warp.exitRamp && warp.exitRamp.active) {
         // Wyjście z warpa = przylot jak u NPC (warpDrive.js): prędkość wzdłuż kursu z rampy
         // (zwolnienie → wlot → hamowanie), bez ciągu i bez skrętu; na końcu prędkość `vEnd` rampy
-        // (0 — statek stoi; wyjście z pędem — dalej leci, nadmiar zbiera zwykły lot).
+        // (0 — statek stoi; wyjście z pędem — dalej ślizg `warp.exitSlide` do prędkości bojowej).
         const r = warp.exitRamp;
         const wasBrake = r.age >= r.tBrake;
         r.age += dt;
@@ -26082,7 +26163,27 @@
         const desired = Math.atan2(r.dirY, r.dirX);
         ship.angle = wrapAngle(ship.angle + clamp(wrapAngle(desired - ship.angle), -warp.alignRate * dt, warp.alignRate * dt));
         ship.angVel = 0;
-        if (s.phase === 'done') r.active = false;
+        if (s.phase === 'done') {
+          r.active = false;
+          // Wyjście z pędem: ślizg od prędkości końca rampy do prędkości bojowej (PLAYER_WARP_MOMENTUM).
+          if (s.speed > 1) startPlayerWarpSlide(r.dirX, r.dirY, s.speed);
+        }
+      }
+      else if (warp.exitSlide && warp.exitSlide.active) {
+        // ŚLIZG PO WYJŚCIU Z PĘDEM: prędkość wzdłuż kursu maleje tabelowym hamowaniem do prędkości bojowej (albo do zera
+        // przed przeszkodą), bez ciągu; lot ręczny gracza albo hipercruise kończą ślizg — dalej zwykły lot z tą prędkością.
+        const sl = warp.exitSlide;
+        if (playerHasManualInput() || hypercruise.state !== 'idle') {
+          sl.active = false;
+        } else {
+          sl.speed = Math.max(sl.vMin, sl.speed - sl.decel * dt);
+          ship.vel.x = sl.dirX * sl.speed;
+          ship.vel.y = sl.dirY * sl.speed;
+          const desired = Math.atan2(sl.dirY, sl.dirX);
+          ship.angle = wrapAngle(ship.angle + clamp(wrapAngle(desired - ship.angle), -warp.alignRate * dt, warp.alignRate * dt));
+          ship.angVel = 0;
+          if (sl.speed <= sl.vMin + 1e-6) sl.active = false;
+        }
       }
       else if (hypercruiseDriving(hypercruise)) {
         // HIPERCRUISE (E5): automat prowadzi prędkość wzdłuż dziobu (jak rampa wyjścia warpa — bez ciągu dysz);
@@ -27990,15 +28091,21 @@
     // raz na klatkę przed zoomem i rigiem — człon log(zoom) dla updateCameraZoom, cofnięcie
     // kamery dla stepCameraRig i drżenie ładowania z tego samego stanu. Tylko gracz 1 (P2 nie ma
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
-    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: true };
+    const _cameraWarpInput = {
+      dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35,
+      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, viewW: 0, viewH: 0
+    };
     // OBRÓT KADRU W HIPERCRUISIE (2026-10-23, zgłoszenie użytkownika: „kamera jak w warp — odpalenie hipercruise =
     // przestawienie kamery za statkiem”; port obrotu z dema „Pęd” — cameraRig.js: stepCameraRigRoll, konwencja
     // src/render/viewRoll.js): od rozruchu kadr obraca się kursem w górę ekranu (rig: statek nisko, przed dziobem to, co
     // nadlatuje), trzyma przez hamowanie wyjścia i `warpRollHold` po nim, potem wraca do północy. Tylko gracz 1 i kamera
-    // statku z góry (RTS, podzielony ekran, kamery 3D, ujęcia fabuły — północ); warp gry bez obrotu (nowy warp — demo).
-    // Wynik: cameraRig.roll → `camera.roll` / `cam.roll` w render(). Opcja „Kamera w hipercruisie”
+    // statku z góry (RTS, podzielony ekran, kamery 3D, ujęcia fabuły — północ).
+    // WARP GRACZA (port dema „Pęd”, 2026-10-23 — „wrzuć nowy warp do gry”): od ładowania kadr kursem skoku w górę (sprężyna
+    // `warpJumpRollOmega` 5/s — kadr stoi przy kopie), trzyma przez rampę wyjścia, ślizg z pędem (`arriving`) i `warpRollHold`
+    // po zatrzymaniu, potem wraca do północy; warp ma pierwszeństwo przed hipercruise'em.
+    // Wynik: cameraRig.roll → `camera.roll` / `cam.roll` w render(). Opcja „Kamera w hipercruisie i warpie”
     // (OPTIONS.cameraHyperRoll, menu → Sterowanie), A/B z adresu `?hcKamera=up|right|off`.
-    const _cameraRollInput = { dt: 0, state: 'idle', dirX: 1, dirY: 0, exitAge: -1, exitHalt: 0, enabled: true, mode: 'up', hold: false };
+    const _cameraRollInput = { dt: 0, state: 'idle', dirX: 1, dirY: 0, exitAge: -1, exitHalt: 0, enabled: true, mode: 'up', hold: false, arriving: false, omega: 0 };
     const _rollTmp = { x: 0, y: 0 };
     let _hyperRollPrev = 'idle';
     let _hyperRollAfter = -1;   // [s gry] od końca hamowania wyjścia (−1 — poza oknem)
@@ -28020,9 +28127,15 @@
     function cameraFrameRoll() {
       return cameraFrameRollAllowed() ? (Number(cameraRig.roll) || 0) : 0;
     }
-    // Waga insetów riga w hipercruisie (render): 1 od rozruchu do końca okna po wyjściu, gładko (2,5/s), potem dokładne 0.
+    // Kamera skoku warpa gracza (obrót, ujednolicony zoom, kadr przylotu): ładowanie, lot, rampa wyjścia (do jej zdjęcia po
+    // `WARP_EXIT.settle` w updateCameraWarpKick) i ślizg z pędem.
+    function playerWarpCameraBusy() {
+      return warp.state !== 'idle' || !!warp.exitRamp || !!warp.exitSlide?.active;
+    }
+    // Waga insetów riga w hipercruisie i warpie (render): 1 od rozruchu / ładowania do końca okna po wyjściu, gładko
+    // (2,5/s), potem dokładne 0.
     function stepHyperInsetWeight(frameDt) {
-      const on = hypercruise.state !== 'idle' || _hyperRollAfter >= 0;
+      const on = hypercruise.state !== 'idle' || _hyperRollAfter >= 0 || playerWarpCameraBusy();
       _hyperInsetW += ((on ? 1 : 0) - _hyperInsetW) * (1 - Math.exp(-(Number(frameDt) || 0) * 2.5));
       if (!on && _hyperInsetW < 1e-3) _hyperInsetW = 0;
       return _hyperInsetW;
@@ -28041,11 +28154,26 @@
       }
       _hyperRollPrev = hc.state;
       r.dt = gameDt;
-      r.state = warpIdle ? hyperLook.state : 'idle';
-      r.hold = warpIdle && hc.state === 'drop';
-      r.exitAge = warpIdle && _hyperRollAfter >= 0 ? _hyperRollAfter : -1;
-      r.exitHalt = 0;
-      if (ship) { r.dirX = Math.cos(ship.angle); r.dirY = Math.sin(ship.angle); }
+      if (playerWarpCameraBusy()) {
+        // Warp gracza: kurs skoku od ładowania, rampa wyjścia (wiek i zatrzymanie) i ślizg z pędem — jak demo „Pęd”.
+        const ramp = warp.exitRamp;
+        r.state = warp.state;
+        r.hold = false;
+        r.arriving = !!warp.exitSlide?.active;
+        r.exitAge = ramp ? ramp.age : -1;
+        r.exitHalt = ramp ? ramp.tHalt : 0;
+        r.omega = cameraRigTune.warpJumpRollOmega;
+        if (warp.dir.x || warp.dir.y) { r.dirX = warp.dir.x; r.dirY = warp.dir.y; }
+        else if (ship) { r.dirX = Math.cos(ship.angle); r.dirY = Math.sin(ship.angle); }
+      } else {
+        r.state = warpIdle ? hyperLook.state : 'idle';
+        r.hold = warpIdle && hc.state === 'drop';
+        r.arriving = false;
+        r.exitAge = warpIdle && _hyperRollAfter >= 0 ? _hyperRollAfter : -1;
+        r.exitHalt = 0;
+        r.omega = 0;
+        if (ship) { r.dirX = Math.cos(ship.angle); r.dirY = Math.sin(ship.angle); }
+      }
       r.mode = cameraHyperRollMode();
       r.enabled = cameraFrameRollAllowed() && !!ship && !ship.destroyed;
       stepCameraRigRoll(cameraRig, r, cameraRigTune);
@@ -28053,7 +28181,8 @@
     function updateCameraWarpKick(gameDt) {
       const w = _cameraWarpInput;
       w.dt = gameDt;
-      // Styl skoku bez rulonu (`?warp=ped|akcent|soczewka`, `?rulon=0` — warpDrive.js: warpRulonEnabled): kamera bez środka lejka.
+      // Styl skoku bez rulonu (domyślny 'ped', `?warp=akcent|soczewka`; rulon tylko z `?warp=rulon` / `?rulon=1` — warpDrive.js:
+      // warpRulonEnabled): kamera bez środka lejka.
       // Hipercruise (E5, 2026-10-22): kop i oddalenie jak skok warpa (rozruch = ładowanie, lot = skok), bez rulonu —
       // gdy warp stoi; warp ma pierwszeństwo.
       const hyperCam = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
@@ -28081,6 +28210,29 @@
           warp.exitRamp = null;
         }
       }
+      // UJEDNOLICONY KADR SKOKU (warp gracza, port dema „Pęd” 2026-10-23): oddalenie liczy się od domyślnego zoomu statku
+      // (`zoomRef` — jak camera.defaultZoom), nie od zoomu gracza — soczewka świata, przeloty i przylot są projektowane dla
+      // jednego kadru; ślizg z pędem trzyma kadr (`arriving`); KADR PRZYLOTU — odległość od bliskiego brzegu tarczy celu
+      // (`warp.targetBody`, warpBodyRadius jak soczewka). Hipercruise — zoom gracza × kop (bez zoomRef, decyzja 2026-10-23).
+      if (hyperCam || !ship) {
+        w.zoomRef = 0;
+        w.arriving = false;
+        w.arrivalDist = -1;
+      } else {
+        w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
+        w.arriving = !!warp.exitSlide?.active;
+        const tgt = warp.targetBody;
+        if (tgt) {
+          const ax = tgt.x - ship.pos.x;
+          const ay = tgt.y - ship.pos.y;
+          w.arrivalDist = Math.max(0, Math.sqrt(ax * ax + ay * ay) - warpBodyRadius(tgt));
+        } else {
+          w.arrivalDist = -1;
+        }
+      }
+      w.zoomBase = cameraZoomBase(camera);
+      w.viewW = W;
+      w.viewH = H;
       w.enabled = normalizeCameraWarpKickMode(OPTIONS.cameraWarpKick) === 'on'
         && camera.mode === 'ship' && !!ship && !ship.destroyed;
       // Zoom prowadzi przejście (fokus stacji, edytor) — kop znika od razu, jak w updateCameraZoom.
@@ -30785,7 +30937,8 @@
         const dx = Math.cos(angle), dy = Math.sin(angle);
         const pass = warpCoursePass(ship.pos, dx, dy, leg, _warpCoursePass);
         const autoExit = travelNav.active || warpCourse.autoExit;
-        const rampDist = warpExitRampDistance(getPlayerSpeed(), playerWarpHullLength());
+        // koniec ślizgu (wyjście z pędem) — tam statek wraca do zwykłego lotu
+        const rampDist = playerWarpExitDistance(!_tugWarp.active);
         const previewDist = warp.state === 'charging' ? Math.max(0, pass.along) : rampDist;
         const s = _warpCourseHud;
         worldToScreenInto(interpPos.x, interpPos.y, camRef, _warpCourseShipScreen);
@@ -33753,7 +33906,7 @@
     } catch { }
     updateCameraWarpKickUI();
 
-    // --- KAMERA W HIPERCRUISIE (obrót kadru kursem w górę — updateCameraWarpKick, cameraRig.js: stepCameraRigRoll) ---
+    // --- KAMERA W HIPERCRUISIE I WARPIE (obrót kadru kursem w górę — updateCameraHyperRoll, cameraRig.js: stepCameraRigRoll) ---
 
     function updateCameraHyperRollUI() {
       const current = normalizeCameraHyperRollMode(window.OPTIONS && window.OPTIONS.cameraHyperRoll);

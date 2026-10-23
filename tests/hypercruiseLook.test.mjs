@@ -189,7 +189,7 @@ function hyperRollScope() {
     _hyperRollPrev: 'idle',
     _hyperRollAfter: -1,
     hypercruise: { state: 'idle' },
-    warp: { state: 'idle', exitRamp: null },
+    warp: { state: 'idle', exitRamp: null, exitSlide: null, dir: { x: 0, y: 0 } },
     hyperLook: { state: 'idle' },
     ship: { angle: 0, destroyed: false },
     camera: { mode: 'ship', transition: null },
@@ -205,6 +205,7 @@ function hyperRollScope() {
   };
   scope.cameraFrameRollAllowed = loadIndexFunction(html, 'function cameraFrameRollAllowed() {', 'cameraFrameRollAllowed', scope);
   scope.cameraFrameRoll = loadIndexFunction(html, 'function cameraFrameRoll() {', 'cameraFrameRoll', scope);
+  scope.playerWarpCameraBusy = loadIndexFunction(html, 'function playerWarpCameraBusy() {', 'playerWarpCameraBusy', scope);
   const update = loadIndexFunction(html, 'function updateCameraHyperRoll(gameDt) {', 'updateCameraHyperRoll', scope);
   const inset = loadIndexFunction(html, 'function stepHyperInsetWeight(frameDt) {', 'stepHyperInsetWeight', scope);
   const set = (hc, look) => { scope.hypercruise.state = hc; scope.hyperLook.state = look; };
@@ -266,13 +267,55 @@ test('po hipercruisie zwykły lot ma insety riga i obrót jak przed (okno po wyj
   assert.equal(scope.cameraFrameRoll(), 0, 'RTS — bez obrotu od razu');
 });
 
-test('obrót tylko dla kamery statku z góry gracza 1, nie w warpie; opcja Północ i A/B z adresu', () => {
+test('warp gracza (port „Pęd”): od ładowania kurs skoku w górę (5/s), trzyma przez rampę, ślizg i warpRollHold, potem północ', () => {
+  const { rig, scope, update, set } = hyperRollScope();
+  scope.ship.angle = 2.5;                                   // dziób nieważny — kurs skoku z warp.dir
+  scope.warp.dir = { x: Math.cos(-0.6), y: Math.sin(-0.6) };
+  scope.warp.state = 'charging';
+  set('spool', 'charging');                                  // warp ma pierwszeństwo przed hipercruise'em
+  for (let i = 0; i < 48; i++) update(DT);                   // ładowanie 0,8 s
+  assert.equal(scope._cameraRollInput.omega, cameraRigTune.warpJumpRollOmega);
+  assert.ok(Math.abs(wrapPi(rig.roll - (-0.6 + Math.PI / 2))) < 0.1, `kadr stoi przy kopie (${rig.roll})`);
+  set('idle', 'idle');
+  scope.warp.state = 'active';
+  for (let i = 0; i < 120; i++) update(DT);
+  assert.ok(Math.abs(wrapPi(rig.roll - (-0.6 + Math.PI / 2))) < 1e-3, 'lot: kurs w górę');
+  // rampa wyjścia, potem ślizg z pędem (rampa zdjęta po settle — trzyma `arriving`)
+  scope.warp.state = 'idle';
+  scope.warp.exitRamp = { active: true, age: 0, tHalt: 1.35 };
+  for (let i = 0; i < 60; i++) { scope.warp.exitRamp.age += DT; update(DT); }
+  scope.warp.exitRamp = null;
+  scope.warp.exitSlide = { active: true };
+  for (let i = 0; i < 300; i++) update(DT);
+  assert.equal(scope._cameraRollInput.arriving, true);
+  assert.ok(Math.abs(wrapPi(rig.roll - (-0.6 + Math.PI / 2))) < 1e-3, 'ślizg: kurs trzymany');
+  scope.warp.exitSlide.active = false;
+  for (let i = 0; i < 300; i++) update(DT);
+  assert.equal(rig.roll, 0, 'po ślizgu północ — dokładne zero');
+  // zatrzymanie bez ślizgu: rampa trzyma kurs do tHalt + warpRollHold
+  scope.warp.state = 'active';
+  for (let i = 0; i < 120; i++) update(DT);
+  scope.warp.state = 'idle';
+  scope.warp.exitRamp = { active: false, age: 1.35, tHalt: 1.35 };
+  for (let i = 0; i < Math.round(cameraRigTune.warpRollHold / DT) - 3; i++) { scope.warp.exitRamp.age += DT; update(DT); }
+  assert.ok(Math.abs(wrapPi(rig.roll - (-0.6 + Math.PI / 2))) < 0.05, 'chwilę po zatrzymaniu (warpRollHold) dalej kurs');
+  for (let i = 0; i < 300; i++) { scope.warp.exitRamp.age += DT; update(DT); }
+  assert.equal(rig.roll, 0, 'potem północ');
+  // opcja Północ — warp bez obrotu
+  const b = hyperRollScope();
+  b.scope.mode = 'off';
+  b.scope.warp.dir = { x: 0, y: 1 };
+  b.scope.warp.state = 'active';
+  for (let i = 0; i < 120; i++) b.update(DT);
+  assert.equal(b.rig.roll, 0);
+});
+
+test('obrót tylko dla kamery statku z góry gracza 1; opcja Północ i A/B z adresu', () => {
   const cases = [
     ['RTS', (s) => { s.camera.mode = 'rts'; }],
     ['podzielony ekran', (s) => { s.splitScreenMode = true; }],
     ['kamera 3D', (s) => { s.View3D.active = true; }],
     ['przejście fokusu', (s) => { s.camera.transition = { kind: 'focus' }; }],
-    ['warp gracza', (s) => { s.warp.state = 'charging'; }],
     ['opcja Północ', (s) => { s.mode = 'off'; }]
   ];
   for (const [name, apply] of cases) {

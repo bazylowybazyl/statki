@@ -548,9 +548,9 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
   const scope = {
     _cameraWarpInput: { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true },
     warp: { state: 'charging', charge: 0.4, chargeTime: 0.8, dir: { x: 0, y: -1 } },
-    ship: { angle: 1.2, destroyed: false },
+    ship: { angle: 1.2, destroyed: false, pos: { x: 0, y: 0 }, w: 1800, h: 600 },
     OPTIONS: { cameraWarpKick: 'on' },
-    camera: { mode: 'ship', zoomImpulseLog: 0 },
+    camera: { mode: 'ship', zoomImpulseLog: 0, minZoom: 0.035, maxZoom: 3.2 },
     cameraRig: rig,
     cameraRigTune: tune,
     stepCameraRigWarp,
@@ -558,7 +558,12 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     cameraDirector: createCameraDirector(),
     resetCameraDirector,
     warpRulonEnabled,
-    location: { search: '' },
+    // ujednolicony kadr skoku (port „Pęd”): zoom gracza = zoom odniesienia — człon ujednolicenia 0 (osobny test niżej)
+    W: 1600, H: 900,
+    defaultShipZoom: () => 0.5,
+    cameraZoomBase: () => 0.5,
+    warpBodyRadius: () => 1000,
+    location: { search: '?warp=rulon' },
     // Hipercruise (E5): poza nim człon oddalenia 0.
     hypercruise: { speed: 0, vmax: 20000 },
     hypercruiseDriving: () => false,
@@ -569,12 +574,14 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
   for (let i = 0; i < 60; i++) update(1 / 60);
   assert.equal(scope._cameraWarpInput.charge, 0.5);
   assert.equal(scope._cameraWarpInput.rulon, true);
-  // `?rulon=0` (warpDrive.js: warpRulonEnabled) — kamera bez środka lejka.
-  scope.location.search = '?rulon=0';
-  update(1 / 60);
-  assert.equal(scope._cameraWarpInput.rulon, false);
-  assert.equal(rig.warpLeadScale, 1);
-  scope.location.search = '';
+  // `?rulon=0` i styl domyślny 'ped' (warpDrive.js: warpRulonEnabled) — kamera bez środka lejka.
+  for (const search of ['?rulon=0', '']) {
+    scope.location.search = search;
+    update(1 / 60);
+    assert.equal(scope._cameraWarpInput.rulon, false, search);
+    assert.equal(rig.warpLeadScale, 1);
+  }
+  scope.location.search = '?warp=rulon';
   assert.ok(Math.abs(scope.camera.zoomImpulseLog - Math.log(1 - 0.45 * smoothDemo(0.5))) < 1e-9, 'człon ładowania');
   assert.equal(rig.warpDirX, 0);
   assert.equal(rig.warpDirY, -1);
@@ -604,6 +611,60 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
   assert.equal(rig.warpHold, 1);
   assert.equal(rig.warpLagPx, 0);
   assert.equal(scope.camera.zoomImpulseLog, 0);
+});
+
+test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, ślizg trzyma kadr, kadr przylotu z celu; hipercruise bez', () => {
+  const rig = createCameraRig();
+  const camera = { mode: 'ship', zoomImpulseLog: 0, minZoom: 0.035, maxZoom: 3.2, zoom: 0.2, targetZoom: 0.2 };
+  const scope = {
+    _cameraWarpInput: { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true },
+    warp: { state: 'charging', charge: 0, chargeTime: 0.8, dir: { x: 1, y: 0 }, exitRamp: null, exitSlide: null, targetBody: null },
+    ship: { angle: 0, destroyed: false, pos: { x: 0, y: 0 }, w: 1800, h: 600 },
+    hyperLook: { state: 'idle', charge: 0, dir: 0 },
+    OPTIONS: { cameraWarpKick: 'on' },
+    camera,
+    cameraRig: rig,
+    cameraRigTune: tune,
+    stepCameraRigWarp,
+    normalizeCameraWarpKickMode,
+    cameraDirector: createCameraDirector(),
+    resetCameraDirector,
+    warpRulonEnabled,
+    W: 1600, H: 900,
+    defaultShipZoom, cameraZoomBase,
+    warpBodyRadius: (p) => p.r,
+    WARP_EXIT: { settle: 1.3 },
+    location: { search: '' },
+    cameraFrameRoll: () => 0
+  };
+  const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
+  const zRef = defaultShipZoom(1600, 1800, tune, 0.035, 3.2);
+  for (let i = 0; i < 48; i++) { scope.warp.charge = Math.min(0.8, (i + 1) / 60); update(1 / 60); }
+  scope.warp.state = 'active';
+  for (let i = 0; i < 120; i++) update(1 / 60);
+  const w = scope._cameraWarpInput;
+  assert.equal(w.zoomRef, zRef);
+  assert.equal(w.zoomBase, 0.2);
+  assert.equal(w.arrivalDist, -1, 'skok swobodny — bez celu');
+  // w skoku zoom = zoom odniesienia × warpZoomOut, niezależnie od zoomu gracza
+  const zoom = 0.2 * Math.exp(camera.zoomImpulseLog);
+  assert.ok(Math.abs(zoom - zRef * tune.warpZoomOut) < 1e-6, `${zoom} vs ${zRef * tune.warpZoomOut}`);
+  // ślizg z pędem po rampie: `arriving`, kadr przylotu z odległości od brzegu tarczy celu
+  scope.warp.state = 'idle';
+  scope.warp.targetBody = { x: 50000, y: 0, r: 8000 };
+  scope.warp.exitSlide = { active: true };
+  update(1 / 60);
+  assert.equal(w.arriving, true);
+  assert.equal(w.arrivalDist, 42000);
+  assert.ok(rig.warpUnifyW > 0.99 && rig.warpArrOn, 'ślizg trzyma ujednolicony kadr i kadr przylotu');
+  // hipercruise: zoom gracza × kop, bez zoomu odniesienia i celu
+  scope.warp.exitSlide.active = false;
+  scope.warp.targetBody = null;
+  scope.hyperLook.state = 'active';
+  update(1 / 60);
+  assert.equal(w.zoomRef, 0);
+  assert.equal(w.arriving, false);
+  assert.equal(w.arrivalDist, -1);
 });
 
 test('render: kamera statku z riga, bez dawnego ×2,0 za kursorem', () => {
