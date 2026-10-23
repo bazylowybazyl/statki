@@ -192,8 +192,17 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     this.name = smear ? 'AsteroidBelt:rocksSmear' : (backdrop ? 'AsteroidBelt:rocksBack' : 'AsteroidBelt:rocks');
     // SMUGA (warpDebris.js — skały pasa w skoku, 2026-10-19): wariant z tylną półkulą skały przesuniętą wzdłuż wektora
     // smugi `smear.vec` (j. sceny, lokalnie; skąd skała przyleciała względem kamery) — zwykłe warstwy bez niego (ten sam
-    // WGSL co dawniej).
-    this.smear = smear ? { vec: uniform(new THREE.Vector3()) } : null;
+    // WGSL co dawniej). Wygląd smugi (2026-10-23, user: „słabo się rozciągają, potrzebny lepszy wygląd” — kapsuła
+    // z rozciągniętą teksturą tyłu skały czytała się jak rozmazany kamyk) = uniformy (wygląd bez nowych pipeline'ów,
+    // warianty — WARP_DEBRIS_LOOKS): `taper` — promień końca smugi / promień skały (ogon zwęża się jak ślad ruchu),
+    // `tail` — krycie ogona tuż za skałą (głowa zawsze pełna), `fade` — wykładnik zaniku alfy ku końcowi, `blur` —
+    // poziomy mip tekstur kształtu w ogonie (relief i albedo rozmyte wzdłuż ruchu zamiast rozciągniętego wzoru),
+    // `sunMix` — normalna ogona ku słońcu (ślad oświetlonej strony), `gain` — jasność skały smugi (głowa odcina się
+    // od tła).
+    this.smear = smear ? {
+      vec: uniform(new THREE.Vector3()),
+      taper: uniform(0.5), tail: uniform(0.5), fade: uniform(1.3), blur: uniform(3), sunMix: uniform(0.35), gain: uniform(1.6)
+    } : null;
     this.lights = true;
     // Siatka świateł gry: tryb „optIn” (fxFrame.js) — skały czytają ją jawnie.
     enableGridLights(this);
@@ -297,12 +306,14 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       let pl = iPos.xyz.add(local);
       if (this.smear) {
         // Smuga: wierzchołki półkuli zwróconej w stronę wektora smugi (kierunek z kształtu po obrocie — bez dzielenia
-        // przez zero przy skale 0) przesunięte o cały wektor, przejście miękkie przez równik skały.
-        const sv = this.smear.vec;
+        // przez zero przy skale 0) przesunięte o cały wektor, przejście miękkie przez równik skały; tylna półkula
+        // ściągnięta do `taper` promienia — ogon zwęża się ku końcowi (klin śladu ruchu, nie kapsuła).
+        const sm = this.smear;
+        const sv = sm.vec;
         const sd = sv.div(max(length(sv), 1e-3));
         const nd = quatRotate(q, dir);
         const tail = smoothstep(-0.15, 0.4, dot(nd, sd)).toVar();
-        pl = pl.add(sv.mul(tail));
+        pl = iPos.xyz.add(local.mul(mix(float(1.0), sm.taper, tail))).add(sv.mul(tail));
         if (withVaryings) V.smearT.assign(tail);
       }
       const pLocal = pl.toVar();
@@ -373,9 +384,14 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       const fogLit = this._surf.diffAlbedo.mul(v.rgb).mul(S.fogLit).mul(clamp(Nv.z.mul(0.6).add(0.4), 0.0, 1.0));
       col.assign(col.add(fogLit).mul(v.a).add(v.rgb));
     }
-    // Smuga: ogon zanika ku końcowi do 30% (rozmycie ruchu — ciemna skała zanikająca do zera ginie na tle nieba), głowa
-    // pełna; skała smugi jaśniejsza (×1,5) — oświetlona strona odcina się od tła w ruchu.
-    if (this.smear) return vec4(max(col.mul(1.5), vec3(0.0)), mix(float(1.0), float(0.3), smoothstep(0.0, 1.0, this.V.smearT)));
+    // Smuga: głowa (przednia półkula) pełna — kształt i światło skały; za równikiem ogon od krycia `tail` gaśnie do
+    // zera (wykładnik `fade`, podstawa ≥ 0); skała smugi jaśniejsza (`gain`) — oświetlona strona odcina się od tła.
+    if (this.smear) {
+      const sm = this.smear;
+      const t = clamp(this.V.smearT, 0.0, 1.0);
+      const a = mix(float(1.0), sm.tail.mul(pow(float(1.0).sub(t), sm.fade)), smoothstep(0.0, 0.3, t));
+      return vec4(max(col.mul(sm.gain), vec3(0.0)), a);
+    }
     return vec4(max(col, vec3(0.0)), 1.0);
   }
 
@@ -391,7 +407,8 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     const layer = int(V.info.x.add(0.5)).toVar();
     const type = int(V.info.y.add(0.5)).toVar();
     const seed = V.info.z.toVar();
-    const lod = V.info.w.toVar();
+    // Smuga: w ogonie tekstury kształtu z wyższego mipa (wzór rozmyty wzdłuż ruchu, nie rozciągnięty).
+    const lod = (this.smear ? V.info.w.add(V.smearT.mul(this.smear.blur)) : V.info.w).toVar();
     const pxPerUnit = V.misc.y.toVar();
     const uvs = octTexUv(dir, S.shapeSize).toVar();
     const sa = texture(bankA, uvs).depth(layer).level(lod).toVar();
@@ -790,8 +807,10 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     // Iskry ziaren: rzadkie komórki, dopiero gdy komórka ma ≥ 2 px.
     const sparkBase = step(0.965, nd.b).mul(step(0.62, nd.a)).mul(sparkK).mul(0.5).mul(smoothstep(1.5, 3.0, pxPerUnit.mul(11.0))).toVar();
 
+    // Smuga: normalna ogona skręca ku słońcu (`sunMix`) — ogon niesie ślad oświetlonej strony, nie cień tyłu skały.
+    const Nlit = this.smear ? normalize(mix(Nv, Ls, V.smearT.mul(this.smear.sunMix))) : Nv;
     return {
-      N: Nv, V: Vv, mu, diffAlbedo, lunarK: S.lunar.mul(float(1.0).sub(metal)), wrap: S.wrap,
+      N: Nlit, V: Vv, mu, diffAlbedo, lunarK: S.lunar.mul(float(1.0).sub(metal)), wrap: S.wrap,
       gloss, specK, specTint, sparkBase, sparkCol, sunVis, emissive,
       // Słońce pola (surfaceLighting.start): kierunek w widoku i barwa × moc.
       sunDirView: Ls, sunColor: S.sunColor
