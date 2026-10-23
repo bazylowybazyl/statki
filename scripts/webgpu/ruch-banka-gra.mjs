@@ -81,7 +81,7 @@ async function shootFerry(name) {
   const f = s.promyList.find((p) => p.phase === 'docked' || p.phase === 'capture') || s.promyList[0];
   if (!f) return { promy: 0 };
   const back = s.player;
-  await ev(`(() => { window.devTeleportTo(${f.x} + 700, ${f.y} + 300, { angle: 0, quiet: true });
+  await ev(`(() => { window.devTeleportTo(${f.x} + 2600, ${f.y} - 900, { angle: 0, quiet: true });
     window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
   await ev(ZOOM(0.2));
   await waitGame(1.5);
