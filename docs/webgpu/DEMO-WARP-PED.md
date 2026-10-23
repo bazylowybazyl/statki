@@ -190,9 +190,10 @@ innych sesji — CPU zaszumione): przed rundą (`main` 99a30b09) lot GPU 0,89 ms
 w kadrze od początku skoku — tarcza z atmosferą; jego ring „Halo” w soczewce rysuje się dopiero od 30 px promienia,
 `HALO_GAME.lensMinPx`: bez progu ring kosztował ~3 ms CPU aktualizacji i ~50 rysunków przez cały lot — 82 rysunki,
 CPU ~5,6 ms), przelot 1,2–1,4 / 5–6 / 94, pas 1,0 / 1,9–2,7 / 48–58, wyjście 1,1–1,3 / 4,1–4,5 / 73. Pipeline'y
-kompilowane synchronicznie w skoku: przed — `AsteroidBelt:rocksSmear` (+ dwa `WarpPlume`), po — tylko dwa
-`WarpPlume` / `WarpPlumeParticles` (plazma WARP na dyszach, `warpPlume3D.js` — obszar sesji hipercruise'u, do sprawdzenia
-tam). Gra (TRAVEL TO,
+kompilowane synchronicznie w skoku: przed — `AsteroidBelt:rocksSmear` i plazma dysz `WarpPlume` /
+`WarpPlumeParticles`, po — 0 (dwie pełne podróże, akcent i rulon). Plazmę demo rozgrzewało (`prewarmHexShips3D`)
+PRZED `initPlanets3D`, które dokłada stałe światła sceny — zestaw świateł jest w kluczu pipeline'u, więc rozgrzewka
+nie trafiała w klucz rysunku; teraz kolejność jak w grze (planety, potem kadłuby i efekty). Gra (TRAVEL TO,
 `travel-gra.mjs`): podróż do celu (błąd 10 j.), wezwanie i POWRÓT bez błędów konsoli.
 
 ## Z czego jest zbudowane (wszystko z gry)

@@ -880,10 +880,13 @@ window.__warpPed = {
       window.__warpPed.error = 'webgpu';
       return;
     }
-    await Core3D.warmup.run('kadłuby, mapa ran, broń (hexShips3D)', () => prewarmHexShips3D({ canvas: glCanvas }));
     planets = buildPlanets();
     window.planets = planets;
     window.initPlanets3D(planets, SUN);
+    // Rozgrzewka kadłubów i efektów (w tym plazmy WARP na dyszach) PO planetach, jak w grze: initPlanets3D dokłada
+    // stałe światła sceny, a ich zestaw jest w kluczu każdego pipeline'u — rozgrzane wcześniej `WarpPlume` kompilowały
+    // się synchronicznie przy pierwszym skoku (2026-10-23).
+    await Core3D.warmup.run('kadłuby, mapa ran, broń (hexShips3D)', () => prewarmHexShips3D({ canvas: glCanvas }));
     // Ringi „Halo” i pas asteroid jak w grze (index.html: initHaloRings, start świata, startGame): kolidery i pole od
     // razu, cień pól i start GPU pasa; ringi budowane z góry (w grze — gdy kadr zbliży się do planety; w skoku planeta
     // mija kadr w kilka s, a ring-archetyp buduje się ~2–3 s).
