@@ -1,7 +1,8 @@
 // RYNEK w PRAWDZIWEJ grze (E2 / E7 — reguła `ruch-v2`): ruch v2 rusza bez flagi, terminal stacji pokazuje ofertę
 // portu (ile ma, ile sprzeda, ile skupi i za ile) z mostu, kupno i sprzedaż przyciskami terminalu zmieniają zapas
 // kopii od razu i zostają po kroku workera; stacja gracza jako rynek (hak konsoli `DevEconomy.foundStation`),
-// komputer handlowy w CIC (warstwa „HANDEL”), zapis ekonomii → F5 → wczytanie (magazyny, wyrwy, stacja gracza).
+// komputer handlowy w CIC (warstwa „HANDEL”), zapis ekonomii → F5 → wczytanie przed startem (magazyny, wyrwy, stacja
+// gracza) → F5 → „Nowa gra” bez wczytania (gospodarka od zera, stary zapis skasowany).
 // Zrzuty terminali i CIC, pipeline'y synchroniczne (strona i worker renderu — ma być 0) i błędy.
 //
 //   node scripts/webgpu/rynek-gra.mjs [--out .tmp/rynek] [--stacja earth] [--query renderWorker=1] [--bez-f5 1]
@@ -61,10 +62,18 @@ const rowState = (key, id = stationId) => `(() => {
   };
 })()`;
 
-/** Start (i restart po F5): menu → gra swobodna → ruch v2 gotowy z rynkiem. Zwraca początek dziennika klatek. */
-async function startGame() {
+/**
+ * Start (i restart po F5): menu → gra swobodna → ruch v2 gotowy z rynkiem. `wczytaj` — zapis ekonomii na świat
+ * ruchu w menu, przed „Nową grą” (`DevEconomy.loadEconomy`; bez tego nowa gra kasuje zapis). Zwraca początek
+ * dziennika klatek.
+ */
+async function startGame({ wczytaj = false } = {}) {
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
   await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready) || !!window.RenderWorkerHost', 240000, 500);
+  if (wczytaj) {
+    result.przywrocono = await ev('window.DevEconomy.loadEconomy()');
+    console.log('przywrócono', JSON.stringify(result.przywrocono));
+  }
   await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
   await new Promise((r) => setTimeout(r, 900));
   await ev(`(() => { document.querySelector('[data-story-campaign="0"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
@@ -202,7 +211,7 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
     })()`);
     console.log('zapis', JSON.stringify(result.zapis));
     await cdp.send('Page.reload', { ignoreCache: false });
-    const begLog2 = await startGame();
+    const begLog2 = await startGame({ wczytaj: true });
     await waitWorldTick(10);
     result.wczytanie = await ev(`(() => {
       const econ = window.TrafficV2.getEconomy('earth');
@@ -217,6 +226,28 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
     console.log('dziennik ruchu', JSON.stringify(result.dziennikRuchu));
     console.log('wczytanie', JSON.stringify(result.wczytanie));
     result.pipelineCzesc2 = (await ev(`window.__harness.frameStats(${begLog2})`)).pipeline;
+
+    // 6. Zapis → F5 → „Nowa gra” bez wczytania: świat ruchu od zera (magazyny startowe, bez wyrw i stacji gracza),
+    // stary zapis skasowany — autozapis nowej gry pisze już świeży stan.
+    await ev('window.DevEconomy.saveEconomy()');
+    await cdp.send('Page.reload', { ignoreCache: false });
+    const begLog3 = await startGame();
+    await waitWorldTick(10);
+    result.nowaGra = await ev(`(() => {
+      const econ = window.TrafficV2.getEconomy('earth');
+      let zapis = null;
+      try {
+        const z = JSON.parse(localStorage.getItem('economy'));
+        zapis = z ? { stacjeGracza: z.playerStations?.length ?? null, pas: z.world?.mining?.length ?? null } : null;
+      } catch { zapis = 'nieczytelny'; }
+      return { stacjeGracza: window.DevEconomy.playerStations().length,
+        encja: !!(window.stations || []).find((s) => s.id === ${JSON.stringify(playerId)}),
+        rynekGracza: window.TrafficV2.hasStation(${JSON.stringify(playerId)}),
+        ziemia: econ ? econ.resources[${JSON.stringify(key)}] : null,
+        wyrwy: window.TrafficV2.beltHoles.size, zapis };
+    })()`);
+    console.log('nowa gra', JSON.stringify(result.nowaGra));
+    result.pipelineCzesc3 = (await ev(`window.__harness.frameStats(${begLog3})`)).pipeline;
   }
 
   result.syncWorker = workerLogs.filter((l) => l.includes('pipeline sync')).map((l) => l.replace(/^.*pipeline sync #\d+ k=\d+: /, ''));
@@ -232,6 +263,7 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
 writeFileSync(join(out, 'wynik.json'), JSON.stringify(result, null, 2) + '\n');
 console.log('wynik →', out);
 console.log('pipeline:', JSON.stringify(result.pipelineCzesc1?.sync ?? null), '/', JSON.stringify(result.pipelineCzesc2?.sync ?? null),
+  '/', JSON.stringify(result.pipelineCzesc3?.sync ?? null),
   '| sync w workerze:', (result.syncWorker || []).length, (result.syncWorker || []).slice(0, 5).join(' | '));
 console.log('błędy workerów:', (result.bledyWorkerow || []).length, (result.bledyWorkerow || []).slice(0, 5).join(' | '));
 console.log('błędy strony:', (result.bledy || []).length, (result.bledy || []).slice(0, 5).join(' | '));

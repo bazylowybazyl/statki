@@ -2521,6 +2521,10 @@ export const Core3D = {
       this._passTogglesDirty = false;
     }
     this._syncSceneMatrices();
+    // Reszta kolejki rejestru od razu (bez wpisów 'after'): siatki odsłaniane dopiero w haku passa (pył kosmiczny, pył
+    // hal K-7, maska słońca) są tu jeszcze ukryte, a ich wpis mógł czekać w kolejce — pierwsza klatka kompilowała je
+    // synchronicznie (start pod obciążeniem, `start-sync-gra.mjs --stres 150`).
+    if (typeof w.drainNow === 'function') w.drainNow();
     const ortho = this.isFreePerspectiveCamera() ? false : undefined;
     const jobs = [];
     for (const layer of GAME_PASS_LAYERS) {

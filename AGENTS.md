@@ -154,6 +154,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `silniki` | Silniki MAIN / WARP / SIDE, zapłon i gaszenie |
 | `drony-naprawcze` | Rój dronów naprawczych (R) |
 | `roj-przeladunkowy` | Rój dronów przeładunkowych (demo) |
+| `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `mgla-wojny` | Mgła wojny |

@@ -91,6 +91,16 @@ export function bridgeZoneMargin(renderPerPng, tier = 'L') {
 // przeliczony ramą sprite'a HD_TN_SPRITE_FRAMES (px = x / s − dx, py = −dy), wymiary = obrys modelu poziomu / s
 // — strefa zabicia to dokładnie obrys modelu 3D (tests/bridgeLevels.test.mjs). Przesuwasz mostek presetu TN albo
 // zmieniasz obrys poziomu → ten sam ruch tutaj. Zmiany stref z 2026-10-21: docs/PORT-mostki.md § 10.
+// Strefa mostka kadłuba ruchu v2 (jedna, `primary`, model poziomu `level`).
+const trafficBridge = (label, windowColor, zone) => Object.freeze({
+  label,
+  windowColor,
+  variants: Object.freeze({
+    standard: Object.freeze([Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', ...zone, rot: 0 })])
+  }),
+  defaultVariant: 'standard'
+});
+
 export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
   battleship: Object.freeze({
     label: 'Bellator',
@@ -228,7 +238,31 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
       ])
     }),
     defaultVariant: 'standard'
-  })
+  }),
+  // --- Kadłuby ruchu v2 (E13, 2026-10-22): statki bańki awansowane do pełnego NPC (src/game/trafficPromotion.js) ---
+  // Poziom mostka = klasa z pola kadłuba (alfa sprite'a × skala renderu², progi `areaMax` w src/data/shipClasses.js),
+  // strefa = obrys modelu poziomu / s jak u floty TN (model `tn_<poziom>` z bridge3DShapes — jeden język brył), na
+  // namalowanej sterówce / nadbudówce. Wahadłowiec i dron naprawczy: obrys I nie mieści się między dyszami SIDE —
+  // strefa pomniejszona (× 0,93 i × 0,8, proporcje te same, model skaluje się do strefy). Zapas od dysz i gniazd:
+  // tests/trafficHullData.test.mjs. Okna: cywile #ffe0b0, piraci #ff9a4a, łowca i policja #e4f3ff.
+  inter_station_shuttle: trafficBridge('Wahadłowiec międzystacyjny', '#ffe0b0', { x: 140, y: -5, w: 385, h: 206.2, level: 1 }),
+  container_ship: trafficBridge('Kontenerowiec', '#ffe0b0', { x: 395, y: -12, w: 238.8, h: 125.1, level: 2 }),
+  long_haul_freighter: trafficBridge('Frachtowiec dalekiego zasięgu', '#ffe0b0', { x: 290, y: -20, w: 190.5, h: 98.6, level: 3 }),
+  heavy_freighter: trafficBridge('Ciężki frachtowiec', '#ffe0b0', { x: 420, y: -20, w: 147.8, h: 74.9, level: 6 }),
+  heavy_harvester: trafficBridge('Ciężki kombajn górniczy', '#ffe0b0', { x: 260, y: -10, w: 207, h: 108.4, level: 2 }),
+  belter: trafficBridge('Belter', '#ffe0b0', { x: 340, y: -20, w: 276, h: 157.7, level: 1 }),
+  surveyor: trafficBridge('Zwiadowca złóż', '#ffe0b0', { x: 330, y: -20, w: 258.7, h: 147.8, level: 1 }),
+  refinery_tender: trafficBridge('Mobilna rafineria', '#ffe0b0', { x: 310, y: -20, w: 214.4, h: 110.9, level: 3 }),
+  tanker: trafficBridge('Tankowiec', '#ffe0b0', { x: 520, y: -20, w: 191.2, h: 99, level: 3 }),
+  salvage_hauler: trafficBridge('Złomiarz', '#ffe0b0', { x: 300, y: -20, w: 245, h: 126.7, level: 3 }),
+  construction_tug: trafficBridge('Holownik budowlany', '#ffe0b0', { x: 400, y: -15, w: 230, h: 131.4, level: 1 }),
+  smuggler: trafficBridge('Przemytnik', '#ff9a4a', { x: 320, y: -15, w: 230, h: 131.4, level: 1 }),
+  pirate_raider: trafficBridge('Rajder piratów', '#ff9a4a', { x: 340, y: -15, w: 258.7, h: 135.5, level: 2 }),
+  distress_beacon_ship: trafficBridge('Statek z boją alarmową', '#ffe0b0', { x: 270, y: -10, w: 207, h: 118.3, level: 1 }),
+  repair_drone: trafficBridge('Dron naprawczy', '#ffe0b0', { x: 130, y: -40, w: 358.4, h: 204.8, level: 1 }),
+  bounty_hunter: trafficBridge('Łowca nagród', '#e4f3ff', { x: 70, y: -5, w: 282.2, h: 147.8, level: 2 }),
+  police_cutter: trafficBridge('Kuter policji', '#e4f3ff', { x: 190, y: -5, w: 276, h: 157.7, level: 1 }),
+  rescue_ship: trafficBridge('Statek ratunkowy', '#ffe0b0', { x: 220, y: -5, w: 310.4, h: 162.6, level: 2 })
 });
 
 // ---------------------------------------------------------------------------

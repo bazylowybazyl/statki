@@ -214,6 +214,20 @@ export const CARGO_BAY_HULLS = Object.freeze({
 
 export const CARGO_BAY_HULL_ORDER = Object.freeze(Object.keys(CARGO_BAY_HULLS));
 
+/**
+ * Kadłub proxy ruchu v2 (`TRAFFIC_HULLS`, src/data/trafficHulls.js) → kadłub z ładownią (E12: przeładunek
+ * w bańce). Ładownia musi leżeć na TYM obrazku, który rysuje proxy: sprite proxy `assets/X.png` ma ten
+ * sam układ płótna co `assets/ships/X_empty.png` (puste pokłady Z11), a długość rysunku = renderLength
+ * (test `tests/portCargo.test.mjs`). Okręty (garnizon K-7) przeładunku nie mają.
+ */
+export const TRAFFIC_CARGO_BAY_HULLS = Object.freeze({
+  inter_station_shuttle: 'inter_station_shuttle',
+  container_ship: 'container_ship',
+  long_haul_freighter: 'long_haul_freighter',
+  // Od E13 (2026-10-23) proxy rysuje własny sprite Z11 (heavy_freighter.png) — ładownia 3 × 8 tego obrazka.
+  heavy_freighter: 'heavy_freighter'
+});
+
 /** Kadłub z ładowniami albo null. */
 export function cargoBayHull(id) {
   return CARGO_BAY_HULLS[String(id || '')] || null;

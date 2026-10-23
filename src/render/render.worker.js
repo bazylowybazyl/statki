@@ -147,6 +147,12 @@ if (isWorker) {
     st.portDockMods = { blk: await import('./blocks/portDockBlock.js'), mod: await import('../3d/portDocks3D.js') };
     st.portDockList = [];
     st.hexList = [];
+    // przeładunek w portach (E12): blok `cargoOps` → ładownie, kontenery, rój dronów, taśmy (import rejestruje rozgrzewkę);
+    // `?przeladunek=0` strony (A/B kosztu) — bez importu: bez rozgrzewki, symulacji i kroku efektów
+    let cargoOn = true;
+    try { cargoOn = !m.pageBase || new URL(m.pageBase).searchParams.get('przeladunek') !== '0'; } catch (_) { /* adres bez składni URL */ }
+    st.cargoMods = cargoOn ? { blk: await import('./blocks/cargoOpsBlock.js'), shared: (await import('../3d/cargo/portCargo3D.js')).sharedPortCargo3D } : null;
+    st.cargoFrame = {};
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -896,6 +902,15 @@ if (isWorker) {
         pd.mod.updatePortDocks3D(list, list.length, dt);
       }
     } catch (e) { modFail('doki portów', e); }
+    // przeładunek (E12): po luku Atlasa (rekord 0 tablicy ładowni), przed proxy — dziury w lukach otwartych ładowni
+    try {
+      const cblk = v.blocks.cargoOps;
+      if (cblk && cblk.f64 && st.cargoMods) {
+        const fr = st.cargoMods.blk.applyCargoOpsBlock(cblk, st.cargoFrame);
+        if (!st.portCargo && (fr.yardCount || fr.opCount || fr.player)) st.portCargo = st.cargoMods.shared();
+        if (st.portCargo) st.portCargo.update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
+      }
+    } catch (e) { modFail('przeładunek', e); }
     // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
     let hexList = rm.lists[L.RENDER];
     try {

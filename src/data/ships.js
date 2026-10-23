@@ -250,6 +250,11 @@ export const HULL_RENDER_PROFILES = {
   // Jak statek ratunkowy z Z11 (rescue_ship), którego zastępuje: kadłub bez
   // masztu 1179 × 410 px płótna 1774 → w grze ~160 × 55.
   distress_beacon_ship: { id: 'distress_beacon_ship', length: 400, radius: 150 },
+  // Role ruchu v2 z własnymi sprite'ami Z11 (assets/ships/*.prompt.md, E13 2026-10-22): łowca nagród i kuter
+  // policji (uzbrojone — mostek, gniazda) oraz statek ratunkowy (cywilny).
+  bounty_hunter: { id: 'bounty_hunter', length: 440, radius: 150 },
+  police_cutter: { id: 'police_cutter', length: 300, radius: 110 },
+  rescue_ship: { id: 'rescue_ship', length: 400, radius: 150 },
   // Holownik serwisowy (2026-10-08, src/game/serviceTug.js): naprawia rojem dronów i zabiera „na pakę” statek bez
   // napędu — pokład (ładownia sprite'a, 648 × 344 px płótna 1774) mieści Atlasa (1800 × ~600 j.): 8300 × 0,6 =
   // 4980 j. kadłuba, ~1820 × 970 j. pokładu. Za duży na stanowiska portu (berthClassForHull → null) — przy K-7 stoi
@@ -312,6 +317,8 @@ export const WEAPON_TIER_BY_HULL = Object.freeze({
   // Kadłuby ruchu v2 z uzbrojeniem po awansie do NPC (bez wpisu: Capital).
   pirate_raider: 'M',
   smuggler: 'S',
+  bounty_hunter: 'S',
+  police_cutter: 'S',
   megafreighter: 'Capital',
   supercapital: 'Capital',
   atlas: 'Capital'

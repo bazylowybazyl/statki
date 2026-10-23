@@ -127,6 +127,12 @@ export const FLIGHT_DEFAULTS = Object.freeze({
   undockWaitMax: 60,
   /** Kurs odrzucony przy materializacji (ścieżka poza bańką) — przerwa [s]. */
   materializeCooldown: 2,
+  /**
+   * Odlot po końcu kursu przy stanowisku (rozładunek u celu — ostatni etap przewozu): encja odłącza się, wychodzi
+   * korytarzem i leci tyle [j.] od portu (poza bańkę — tam ją zwalnia krok 1), najwyżej `departTimeout` s.
+   */
+  departDistance: 90000,
+  departTimeout: 240,
   /** Obrót na redzie / w kolejce względem obrotu w porcie. */
   holdTurnRatio: 0.5
 });
@@ -1596,9 +1602,83 @@ function enterStage(bubble, network, course, actor) {
 
 /** Domyka bieżący etap. Zwraca true, gdy kurs się skończył (encja do usunięcia). */
 function finishStage(bubble, network, registry, course, actor, events) {
-  if (bubble.records.complete(registry, course, events)) return true;
+  // Kurs skończony przy stanowisku (rozładunek u celu): statek nie znika z pola — odlatuje bez kursu.
+  if (bubble.records.complete(registry, course, events)) return !beginDeparture(bubble, network, course, actor);
   enterStage(bubble, network, course, actor);
   return false;
+}
+
+/**
+ * Odlot encji, której kurs skończył się przy stanowisku: `departed` (bez kursu — gra dostaje flagę `DEPARTED`),
+ * odłączanie (UNDOCK, sekwencja stanowiska), wyjście korytarzem i lot od portu trybem pierwszego przelotu kursu.
+ * Zwalnia ją krok 1 (poza bańką), koniec ścieżki albo `departTimeout`. Encja w locie (koniec kursu w punkcie, nie
+ * przy stanowisku) — false: znika jak dotąd.
+ */
+function beginDeparture(bubble, network, course, actor) {
+  const e = actor.dockedEntry;
+  if (!e || (actor.phase !== ACTOR_PHASE.DOCKED && actor.phase !== ACTOR_PHASE.UNDOCK)) return false;
+  actor.departed = true;
+  actor.departTime = 0;
+  actor.entry = null;
+  actor.stageIndex = -1;
+  let mode = null;
+  for (const s of course.stages || []) if (s.kind === STAGE_KIND.TRAVEL && s.mode) { mode = s.mode; break; }
+  applyDrive(actor, { kind: STAGE_KIND.TRAVEL, mode: mode || 'conventional' }, course);
+  beginPath(bubble, actor);
+  const path = actor.path;
+  const ax = lastX(path);
+  const ay = lastY(path);
+  // Kierunek: od środka portu przez koniec korytarza (pomost, hala, zatoka); bez węzła — tyłem od stanowiska.
+  // Budowla doku (E14): od środka BUDOWLI przez koniec wylotu (za dyskiem zapasu) — od węzła linia szłaby przez
+  // budowlę (szczelina koła i ramię 0 krzyża patrzą na węzeł); trasa objeżdża dyski innych budowli.
+  const node = getNode(network, e.stationId);
+  const from = e.kind === 'model' && e.dock?.model ? e.dock.model : node;
+  let dx = ax - (from ? from.x : e.x);
+  let dy = ay - (from ? from.y : e.y);
+  let d = Math.sqrt(dx * dx + dy * dy);
+  if (!(d > 1)) {
+    dx = -Math.cos(e.angle);
+    dy = -Math.sin(e.angle);
+    d = 1;
+  }
+  const far = bubble.config.departDistance;
+  routeAround(bubble, path, ax, ay, ax + dx / d * far, ay + dy / d * far, actor.cruise, 0);
+  actor.endKind = END_PASS;
+  finishPath(bubble, actor);
+  bubble.stats.departures = (bubble.stats.departures || 0) + 1;
+  return true;
+}
+
+/** Krok encji po końcu kursu (`beginDeparture`). Zwraca true, gdy ma zniknąć. */
+function stepDeparture(bubble, actor, dt) {
+  actor.departTime += dt;
+  if (actor.phase === ACTOR_PHASE.UNDOCK) {
+    stepUndock(actor, dt);
+    return false;
+  }
+  actor.phaseTime += dt;
+  applyZone(bubble, actor);
+  const result = followPath(bubble, actor, dt);
+  return result === STEP_REACHED || actor.departTime > bubble.config.departTimeout;
+}
+
+/** Odłączanie przy stanowisku: sekwencja stanowiska, potem lot (gdy korytarz wolny — `undockHold`). */
+function stepUndock(actor, dt) {
+  actor.phaseTime += dt;
+  actor.speed = 0;
+  actor.vx = 0;
+  actor.vy = 0;
+  const e = actor.dockedEntry;
+  const need = e?.sequence?.undock ?? 4.2;
+  if (actor.phaseTime < need) return;
+  if (actor.undockHold) {
+    actor.waitTime += dt;
+    return;
+  }
+  actor.waitTime = 0;
+  actor.phase = ACTOR_PHASE.FLY;
+  actor.phaseTime = 0;
+  actor.docked = false;
 }
 
 /** Postój naliczany: obsługa przy stanowisku albo w punkcie bez doku. */
@@ -1707,21 +1787,7 @@ function stepActor(bubble, network, registry, course, actor, dt, events) {
       return false;
     }
     case ACTOR_PHASE.UNDOCK: {
-      actor.phaseTime += dt;
-      actor.speed = 0;
-      actor.vx = 0;
-      actor.vy = 0;
-      const e = actor.dockedEntry;
-      const need = e?.sequence?.undock ?? 4.2;
-      if (actor.phaseTime < need) return false;
-      if (actor.undockHold) {
-        actor.waitTime += dt;
-        return false;
-      }
-      actor.waitTime = 0;
-      actor.phase = ACTOR_PHASE.FLY;
-      actor.phaseTime = 0;
-      actor.docked = false;
+      stepUndock(actor, dt);
       return false;
     }
     default:
@@ -1842,13 +1908,18 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
   // 1. Zwolnij to, co wyszło poza bańkę albo przestało być aktywne.
   for (let k = list.length - 1; k >= 0; k--) {
     const a = list[k];
+    const dx = a.x - focus.x;
+    const dy = a.y - focus.y;
+    // Odlot po końcu kursu: bez rekordu — poza bańką po prostu znika.
+    if (a.departed) {
+      if (dx * dx + dy * dy > outer * outer) removeActor(bubble, a);
+      continue;
+    }
     const course = activeCourses.get(a.courseId);
     if (!course || course.status !== COURSE_STATUS.ACTIVE) {
       removeActor(bubble, a);
       continue;
     }
-    const dx = a.x - focus.x;
-    const dy = a.y - focus.y;
     if (dx * dx + dy * dy > outer * outer) release(bubble, network, course, a);
   }
 
@@ -1883,6 +1954,10 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
     updateCorridors(bubble, step);
     for (let k = list.length - 1; k >= 0; k--) {
       const a = list[k];
+      if (a.departed) {
+        if (stepDeparture(bubble, a, step)) removeActor(bubble, a);
+        continue;
+      }
       const course = activeCourses.get(a.courseId);
       if (!course || course.status !== COURSE_STATUS.ACTIVE) {
         removeActor(bubble, a);

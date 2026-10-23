@@ -37,7 +37,10 @@ const TRAFFIC_LABELS = {
   smuggler: ['Przemytnik', 'Przemytnik'],
   repair_drone: ['Dron naprawczy', 'Dron naprawczy'],
   distress_beacon_ship: ['Statek z boją alarmową', 'Boja alarmowa'],
-  service_tug: ['Holownik serwisowy', 'Holownik serwisowy']
+  service_tug: ['Holownik serwisowy', 'Holownik serwisowy'],
+  bounty_hunter: ['Łowca nagród', 'Łowca'],
+  police_cutter: ['Kuter policji', 'Kuter policji'],
+  rescue_ship: ['Statek ratunkowy', 'Ratownik']
 };
 
 // Ścieżki PNG w repo (TRAFFIC_HULLS ma URL-e modułu — tu ścieżki do testów, dema i generatora).
@@ -45,7 +48,7 @@ const TRAFFIC_SPRITES = {
   inter_station_shuttle: 'assets/inter_station_shuttle.png',
   container_ship: 'assets/container_ship.png',
   long_haul_freighter: 'assets/long_haul_freighter.png',
-  heavy_freighter: 'assets/long_haul_freighter.png',
+  heavy_freighter: 'assets/ships/heavy_freighter.png',
   megafreighter: 'assets/megafreighter.png',
   heavy_harvester: 'assets/heavy_harvester.png',
   belter: 'assets/belter.png',
@@ -58,7 +61,10 @@ const TRAFFIC_SPRITES = {
   smuggler: 'assets/smuggler.png',
   repair_drone: 'assets/repair_drone.png',
   distress_beacon_ship: 'assets/distress_beacon_ship.png',
-  service_tug: 'assets/ships/service_tug.png'
+  service_tug: 'assets/ships/service_tug.png',
+  bounty_hunter: 'assets/ships/bounty_hunter.png',
+  police_cutter: 'assets/ships/police_cutter.png',
+  rescue_ship: 'assets/ships/rescue_ship.png'
 };
 
 const PIRATE_TRAFFIC = new Set(['pirate_raider', 'smuggler']);
@@ -114,8 +120,7 @@ export const AUTO3D_TABLE = {
   ...Object.fromEntries(Object.keys(TRAFFIC_LABELS).map((id) => [id, {
     label: TRAFFIC_LABELS[id][0], short: TRAFFIC_LABELS[id][1],
     faction: PIRATE_TRAFFIC.has(id) ? 'pirate' : 'civil', profile: id,
-    sprite: TRAFFIC_SPRITES[id], nozzles: 'traffic',
-    ...(id === 'heavy_freighter' ? { outlineOf: 'long_haul_freighter' } : {})
+    sprite: TRAFFIC_SPRITES[id], nozzles: 'traffic'
   }]))
 };
 
