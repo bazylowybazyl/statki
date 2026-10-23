@@ -69,6 +69,41 @@ w ruchu v2 bez zmiany ekonomii.
   100 tys. obejmuje całą redę Ziemi i podejścia z obu stron ringu; 120 tys. dokłada mało (+10%). Limit encji:
   lot `maxActors` 400, razem `BUBBLE_ENTITY_LIMIT` 512 = blok migawki `traffic`.
 
-## Pomiary w grze
+## Pomiary w grze (2026-10-23, RTX 5080, headless Chrome, `renderWorker=1`, ziarno 7)
 
-(uzupełnienie niżej)
+`node scripts/webgpu/ruch-banka-gra.mjs --query renderWorker=1 --rozgrzewka 0 --obserwacja 8` — zimny start jak
+u gracza (Start klikany zaraz po menu, harness nie rozgrzewa świata). Przed E15 przy tym samym starcie świat był pusty
+(~90 kursów w powietrzu po 15 min gry, przy Ziemi pojedyncze statki).
+
+| czas gry od Startu | encji przy Ziemi | lot | postój (reda) | zapas floty | aktywne kursy |
+|---|---|---|---|---|---|
+| 30 s | 301 | 129 | 142 | 30 | 654 |
+| 2 min | 337 | 137 | 160 | 40 | 610 |
+| 5 min | 362 | 158 | 164 | 40 | 662 |
+
+- Rozgrzewka 60 min świata: 9,5–10,3 s CPU workera ruchu, skończona przed 30 s gry. Dwa przebiegi dały te same liczby
+  przy 30 s (powtarzalność w grze).
+- Porty (po 8 s gry przy porcie; encje w locie / postój / zapas): Mars 118 / 169 / 74, Jowisz 22 / 92 / 62, Luna 79 / 84 /
+  11, Ceres 10 / 24 / 0, Merkury 54 / 1 / 0, Westa 53 / 0 / 0, Tytan (krzyż) 14 / 24 / 0.
+- Ostrzał, awans do NPC, taran, powrót do bańki, odpowiedź ogniem, postój gracza (`berth-hold`) — bez zmian.
+- Pipeline'y synchroniczne: 0 na starcie i na końcu (worker i strona); `start-sync-gra.mjs --query renderWorker=1`: 0 / 0.
+  Błędy strony i workerów: 0.
+- Koszt (bez ciszy — orientacyjnie, A/B w tym samym miejscu, `TrafficBubble.hideRender`): Ziemia ~300–340 encji — CPU
+  workera renderu +0,23–0,31 ms z proxy, GPU w szumie (0,40 / 0,39 ms), krok bańki w workerze ruchu 0,1–0,5 ms.
+- Zrzuty: `.tmp/e15/zimny/10-zimny-ziemia.png` (port Ziemi po 30 s), `.tmp/e15/zimny/12-reda.png` (reda z czekającymi
+  frachtowcami), `.tmp/e15/doki/11-zimny-dok-tytan.png` (krzyż Tytana z orbitą postojową po 30 s),
+  `.tmp/e15/doki/07-port-*.png` (Ceres, Luna, Tytan).
+
+Ekonomia bez zmian: `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` identyczna z bazą liczba w liczbę (poza czasem
+ticku); bramka bilansu na 3 ziarnach — wszystkie pozycje gospodarki identyczne z bazą bf1ca8a7, różni się tylko czas
+ticku (dwie bramki liczone równolegle: ziarno 7 — 25,3 ms wobec 24,0 ms bazy, próg 25 ms; bramka nie używa rdzenia).
+
+## Ryzyka i czego nie zrobiono
+
+- Statek z orbity, któremu firma daje kurs zaczynający się w INNYM porcie (rekord: postój załadunku tam), znika
+  z orbity bez lotu — skrót gospodarki; pokazanie przelotu wymagałoby zmiany ekonomii (Tytan: 6 takich w 3 min).
+- Statki na postoju stoją (bez dryfu). Odlot na slot redy jest rzadki przy Ziemi (statki dostają kurs 5–15 s po
+  rozładunku) — częstsze jest przejęcie pozy odlotu przez nowy kurs.
+- Zapis z menu w trakcie rozgrzewki: wyrwy pasa z zapisu dodają się do urobku rozgrzewki.
+- Statek na redzie może na chwilę nachodzić na kurs, który przelatuje przez redę (bańka nie rozpycha postoju).
+- Koszt w ciszy — osobny pomiar A/B (niżej).
