@@ -15,7 +15,9 @@
 // high 'out' / od osi przy 'in' — np. 0,4: górna półka z kratą jak kasztel rufowy Citadelli; kasztel na osi przy
 // 'out' dostaje dwie półki, po jednej przy każdej burcie; 1 — piętro na prawie całym kasztelu), vent ('slats' |
 // 'grid' | 'none'), port (iluminator), hatches (0–4 klap), mirror }]. Strona burty = znak y (kasztel na osi —
-// symetryczny, faza z obu stron). Lustro: kopia po drugiej burcie odbita.
+// symetryczny, faza z obu stron). Lustro: kopia po drugiej burcie odbita. `paint` — barwa pędzla jak u klocka.
+
+import { normalizeHullPaint } from './hullDesignBlocks.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, lo, hi) => (v < lo ? lo : (v > hi ? hi : v));
@@ -39,6 +41,8 @@ export function normalizeCastle(c, levels = 4) {
   if (c.taperB !== undefined) out.taperB = clamp(num(c.taperB), 0, 1.9);
   if (c.clip !== undefined) out.clip = clamp(Math.round(num(c.clip)), 0, levels - 1);
   if (c.mirror === false) out.mirror = false;
+  const paint = normalizeHullPaint(c.paint);
+  if (paint) out.paint = paint;
   return out;
 }
 

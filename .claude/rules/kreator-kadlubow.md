@@ -23,11 +23,15 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   `hullDesignSystems.js` (sieć systemów: kto z kim), `hullDesignSystemSlots.js` (sloty systemów presetów),
   `hullDesignPipes.js` (trasy sieci, kontrola `pipeNetworkCheck`, raster, martwe kable `markPipeNetPower`), `hullDesignRegularize.js` (standaryzacja wielokątów `reg`), `hullDesignPresets.js`
   (presety — tylko elementy edytora gracza), `hullDesignRecipe.js` (receptura, mocowania), `hullDesignClass.js` (klasa
-  okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`.
-- `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól), `hullDecalAtlas.js`.
+  okrętu: limity mostka, bilans mocy rdzenia, straż akcji); dane klas i rdzeni — `src/data/shipClasses.js`;
+  `hullDesignBuild.js` (budowa etapami z pamięcią — § „Budowa: worker i pamięć etapów”) z workerem
+  `hullDesignBuild.worker.js` i klientem strony `hullDesignBuildClient.js`, `hullDesignHalf.js` (float16 bez three),
+  `hullDesignPaint.js` (pędzel — § „Warstwa barw”).
+- `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól; mapy i passy barw), `hullDecalAtlas.js`.
 - Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami) z dwoma interfejsami: STOCZNIA
   (domyślny, przyjazny: `dema/kreator-kadluba-stocznia.js` — § „Stocznia”) i WARSZTAT (pełny panel narzędzi,
-  `?ui=warsztat`), testy `tests/hullDesign.test.mjs`,
+  `?ui=warsztat`), podgląd przeciągania `dema/kreator-kadluba-podglad.js`, testy `tests/hullDesign.test.mjs`,
+  `tests/hullDesignBuild.test.mjs`, `tests/hullDesignPaint.test.mjs`,
   `tests/hullDesignBlocks.test.mjs`, `tests/hullDesignNetwork.test.mjs`, `tests/hullDesignClass.test.mjs` i `tests/shipClasses.test.mjs`, zrzuty `scripts/webgpu/kreator-kadluba-demo.mjs`, pomiar floty TN (IoU alfy,
   podkład do układania klocków) `scripts/kreator-tn-ab.mjs`, gniazda broni TN z gry `scripts/kreator-gniazda-tn.mjs`.
 
@@ -48,6 +52,61 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   klasy VI); limity mostka TWARDE (edytor nie pozwala ich przekroczyć), moc rdzenia — limit MIĘKKI (urządzenia ponad moc
   gasną wg priorytetu gracza, zapas mocy w napęd); liczby z tabel propozycji, moc rdzeni skalibrowana na domyślnym
   uzbrojeniu NPC.
+- Malowanie barwami nacji (2026-10-23): „teksturowanie osobno, żeby można było »malować« barwami nacji” — warstwa barw
+  (paleta nacji, pędzel, naklejki) zmienia się bez przebudowy kadłuba; piraci mają własny znak BEZ czaszek.
+
+## Budowa: worker i pamięć etapów
+
+- Każda zmiana projektu → `requestBuild(fast)` (historia + `scheduleBuild`) → worker budowy: etapy z pamięcią po
+  kluczu wejścia (`hullDesignBuild.js`: rozwinięcie → GEOMETRIA (bryły rozwinięte, styl, detal, rozdzielczość) →
+  rowki → SIEĆ (moduły, rury, ustawienia sieci + geometria) → MOC (martwe kable) → klasa / receptura / mocowania →
+  PAKIETY tekstur float16 → przy pełnej budowie alfa fizyki i komórki). Klucze pomijają odwołania `part` / `castle`
+  i `mirrorOf`. Kontrola sieci, systemy i spójność ramy (`res.checks`, `field.integrity`) przychodzą PO obrazie —
+  panele odświeżają się drugi raz; kod strony nie liczy `hullFrameIntegrity` na nowym polu sam (bierze ostatnią znaną).
+- Nowa ścieżka edycji woła `requestBuild` (jak dotąd); nowe pole projektu czytane przez etap → do klucza tego etapu
+  (`kGeo` / `kPipes` w `hullDesignBuild.js`), inaczej pamięć odda stary wynik. Pakiety (`packHull*`) muszą dawać te
+  same bity co ścieżka bez pakietów w `HullComposer.setDesign` (test `hullDesignBuild`).
+- Przeciąganie (`fast`): pole w połowie rozdzielczości, sieć z poprzedniego podglądu na tej samej siatce (`pipesStale`;
+  A* dopiero po puszczeniu), kompozytor `render()` bez odczytu, obraz z celów kompozytora na kwadzie podglądu (ciało gry
+  ukryte `hideHexVisual`), BEZ ciała gry. Nowsza praca przerywa starszą na granicy etapu, gdy nowa albo trwająca jest
+  pełna; podgląd w toku kończy się i pokazuje.
+- Pole na stronie (`S.field`) ma `levels`, `loops`, `grid`, pudła, `expanded`, `pipeNet`, `packed` — bez `oct`,
+  `dome`, `groove`, `pipeTex` (są tylko w pakietach). Ciało gry: alfa fizyki i komórki z workera, albedo i mapa
+  powierzchni z odczytu (ALB, SURF; emisja na żądanie widoku — `readEmission`), kanwy CPU (`willReadFrequently`:
+  odczyt kanwy z GPU w `createHull` czekał na kolejkę), kanwy i kadłub w osobnych zadaniach.
+- Miniatury palety (`composerExclusive`) zajmują kompozytor między budowami (`S.thumbBusy`); po nich cele kompozytora
+  mają cudze mapy — `composer.mapsRev` ≠ `S.mapsRev`, ścieżka barw robi wtedy pełny render z pakietów `S.field`.
+- Pomiar: `node scripts/webgpu/kreator-plynnosc.mjs` (rytm 60 Hz — bez niego headless zapycha kolejkę GPU; długie zadania
+  ma być 0 przy edycjach Custosa…Colossusa), liczby — `docs/KREATOR-KADLUBA.md` § „Płynność edycji”.
+
+## Warstwa barw (malowanie barwami nacji)
+
+- Kompozytor: GEO, EMIS (bez barwy okien — siła okien w kanale A; okna i mostek dokładają `winE`, nie `winC`) i SURF to
+  MAPY (tylko kształt); BASE, ALB i EOUT — PASSY BARW (`p.colors`). Barwy: `setColors(design, pędzel)` (paleta
+  z nadpisaniami `design.paint` + tabela pędzla w wierszach 12+ `U.pal`, mapa pędzla przy nowym kluczu), `setDecals`,
+  `renderColors()`, `bakeColors()`; gra (etap 3, niewpięte) — `bakeLiveries` (mapy raz, barwy po kolei).
+- Nowa barwa używana w passach map → przenieś ją do passu barw (jak okna: siła w mapie, barwa w ALB / EOUT), inaczej
+  zmiana palety nie odświeży obrazu ścieżką barw.
+- Palety (`HD_PALETTES`): Terra Nova, frakcje gry (`HD_FACTION_PALETTE`: mars, inner, belt, outer, pirate), Atlas,
+  Cywilny. Żadna barwa poza oknami nie może zapalać `hullGlowMask` (test `hullDesignPaint`); `glowSafeLinear` ścisza
+  niebieski do 0,38 przy czerwonym < 0,25 (zgodnie z maską). Emblemat nacji `HD_PALETTE_EMBLEM` (piraci — `raider`,
+  bez czaszek), barwa `HD_PALETTE_EMBLEM_COLOR`; emblemat z wyboru palety ma `nation: true`.
+- Pędzel: `paint` na klocku (nie wycięciu) albo kasztelu — slot `HD_PAINT_SLOTS` albo '#rrggbb' (`normalizeHullPaint`);
+  płyty w tej barwie zamiast płyty / nadbudówki palety (`plateC`). Raster `hullPaintLayer` na siatce pola (2 × 2
+  próbki; R — indeks w tabeli, A — pokrycie), barwy slotów rozwiązuje kompozytor z palety w chwili wypieku. Nowy
+  element do malowania → `hullPaintStrokes` + walidacja w normalizacji.
+- Warstwa barw nie zmienia geometrii: `hullDesignShapeKey` pomija `palette`, `paint` (projekt, klocki, kasztele),
+  `decals` i `name`. Nowe pole tylko-barwne → dopisz do pomijanych; pole zmieniające kształt, sieć albo mapy NIE może
+  być na tej liście (ścieżka barw pokazałaby stary kształt).
+- WYGLĄD kompozytora — `bevel`, `round`, `panels`, `windows` i „okna → albedo” — nie zmienia pola, sieci ani ciała gry
+  (żaden czysty moduł ich nie czyta): `hullDesignLookKey` je pomija, a ścieżka wyglądu (`runColors(rev, true)`) robi
+  wszystkie passy na polu i pakietach ostatniej budowy, albedo i mapę powierzchni kopiuje na GPU do skóry
+  (`HullSurface._entries` — gdy wysłana; inaczej z odczytu). Pole i sieć od zera należą się tylko przy `detail`,
+  gęstość sieci liczy samą sieć. Nowe pole czytane przez czyste moduły NIE może trafić do pomijanych.
+- Demo, ścieżka barw (`runColors`): ten sam klucz kształtu co POKAZANY pełny obraz (`S.shownShapeKey`; podgląd go
+  zeruje) i wolna budowa → passy barw, albedo z celu ALB kopiowane na GPU do tekstury skóry kadłuba
+  (`acquireHullVisualTexture` + `copyTextureToTexture`, mipmapy robi three), kanwa CPU odczytem w tle tylko poza
+  przeciąganiem. Obraz = pełna przebudowa (0 różnych bajtów — `kreator-barwy.mjs`, `zgodnosc`).
 
 ## Klocki
 
@@ -88,6 +147,11 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   `shipyard.insets()` w `fit()`, `shipyard.refresh()` w `loadPreset`, bramka `S.ui === 'stocznia'` na początku obsług
   myszy i klawiszy warsztatu (`onDown`, `onMove`, `onUp`, `onWheel`, klawisze, `onBlockKey`) — nowa obsługa warsztatu
   też ją dostaje.
+- Malowanie: „Barwy nacji” — klik: paleta + emblemat nacji (`applyNationEmblem`: emblematy z `nation` albo poprzedniej
+  nacji podmienione w miejscu z barwą nacji, bez nich — para na pancerzu za śródokręciem); „Pędzel” (karty `brush:*`:
+  sloty, Własna barwa = kolor naklejek, Gumka) — uzbrojona karta jak stempel, klik albo przeciągnięcie po klockach
+  i kasztelach (`paintTargetAt`: kasztel, potem wierzchni klocek pod modułami) maluje `paint`, w trakcie
+  `S.drag = { kind: 'stocznia-pedzel' }` + `requestBuild(true)` (ścieżka barw), na koniec jeden wpis cofania.
 - Z lewej paleta kart (Kształty, Systemy, Uzbrojenie, Detale, Malowanie): przeciągnięcie karty na okręt stawia element
   (duch z kopią lustra w trakcie), klik w kartę — STEMPEL (klik na okręcie — kopia, przeciągnięcie — rząd stykających
   się kopii), kółko przy stawianiu klocka — rozmiar ×1–×4. Na okręcie: element pod kursorem świeci, przeciągnięcie
@@ -218,6 +282,12 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 
 - `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
   tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs` (WGSL kompozytora buduje się w Node).
+- Testy budowy i barw: `node --test tests/hullDesignBuild.test.mjs tests/hullDesignPaint.test.mjs`.
+- Płynność: `node scripts/webgpu/kreator-plynnosc.mjs --out .tmp/kreator-plynnosc/<katalog> [--tylko custos,bellator,colossus]
+  [--profil suwak]` (długie zadania strony — 0, przerwa klatek, czas do obrazu, hash albedo; A/B — ten sam skrypt
+  w worktree drugiej wersji, przebiegi na przemian); barwy nacji i pędzel:
+  `node scripts/webgpu/kreator-barwy.mjs --out .tmp/kreator/barwy [--tylko bellator,colossus]` (czas zmiany barw do GPU,
+  zrzuty nacji, pędzel prawdziwą myszą, zgodność ścieżki barw z pełną przebudową).
 - Klasy: `node scripts/webgpu/kreator-kadluba-demo.mjs --etapy klasa --out .tmp/kreator/klasa` (panel klasy, gniazda
   Bellatora i Colossusa, niedobór mocy z martwymi kablami, odmowy limitów; liczby w `raport.json` → `klasa`).
 - Zrzuty: `node scripts/webgpu/kreator-kadluba-demo.mjs --out .tmp/kreator/<katalog> [--etapy ab,rury,...,klocki]
