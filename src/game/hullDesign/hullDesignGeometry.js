@@ -526,6 +526,20 @@ export function octagonalField(f, w, h, res, band) {
  */
 export function buildHullField(input, opts = {}) {
   const expanded = expandHullDesign(input);
+  const geo = hullFieldGeometry(expanded, opts);
+  const { groove, grooveBand } = hullFieldGrooves(expanded, geo);
+  const { pipeNet, pipeTex } = opts.pipes === false ? { pipeNet: null, pipeTex: null } : hullFieldPipes(expanded, geo, opts.pipeTune);
+  const { style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, area } = geo;
+  return { expanded, style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, groove, grooveBand, pipeNet, pipeTex, area };
+}
+
+/**
+ * ETAP GEOMETRII pola (buildHullField bez rowków i sieci): pola poziomów, metryka ośmiokątna, kopuła, pudła —
+ * zależy tylko od brył projektu rozwiniętego (`expanded.shapes`, bloki), stylu, detalu i rozdzielczości, więc
+ * przebudowa po zmianie samych modułów, naklejek albo barw bierze wynik z pamięci (hullDesignBuild.js).
+ * Zwraca { style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, area }.
+ */
+export function hullFieldGeometry(expanded, opts = {}) {
   const { design, blocks, shapes } = expanded;
   // Styk brył (łuk / faza) w j. przy detail 0,6 — skalowany z detalem (fregata nie dostaje łuku większego od siebie).
   const base = { ...HD_SHAPE_TUNE, ...(opts.tune || {}) };
@@ -646,14 +660,21 @@ export function buildHullField(input, opts = {}) {
   // metryka ośmiokątna poziomów płyt (pancerz, nadbudówka, mostek) — offsety i rury z fazami 45°
   const oct = [null];
   for (let L = 1; L < HD_LEVELS; L++) oct.push(octagonalField(levels[L], w, h, res, band));
-  // rowki: odległość od najbliższej łamanej [j.], obcięta do grooveBand
-  const grooveBand = Math.max(8 * D, 3 / res);
-  const groove = grooveField(expanded.grooves, grid, grooveBand);
-  // sieć rur (generowana + ręczne) i jej raster na siatce pola (src/game/hullDesign/hullDesignPipes.js)
-  const base0 = { expanded, grid, levels, bounds, band };
-  const pipeNet = opts.pipes === false ? null : buildPipeNetwork(base0, opts.pipeTune);
-  const pipeTex = pipeNet ? rasterPipeNetwork(pipeNet, grid) : null;
-  return { expanded, style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, groove, grooveBand, pipeNet, pipeTex, area: covSum * inv * inv };
+  return { style, scale, grid, levels, oct, loops, bounds, image, band, dome, domeSigma, area: covSum * inv * inv };
+}
+
+/** ETAP ROWKÓW: odległość od łamanych rowków [j.] na siatce pola geometrii, obcięta do grooveBand. */
+export function hullFieldGrooves(expanded, geo) {
+  const D = expanded.design.detail;
+  const grooveBand = Math.max(8 * D, 3 / geo.grid.res);
+  return { groove: grooveField(expanded.grooves, geo.grid, grooveBand), grooveBand };
+}
+
+/** ETAP SIECI: sieć rur (generowana + ręczne) i jej raster na siatce pola (src/game/hullDesign/hullDesignPipes.js). */
+export function hullFieldPipes(expanded, geo, pipeTune) {
+  const { grid, levels, bounds, band } = geo;
+  const pipeNet = buildPipeNetwork({ expanded, grid, levels, bounds, band }, pipeTune);
+  return { pipeNet, pipeTex: pipeNet ? rasterPipeNetwork(pipeNet, grid) : null };
 }
 
 /**

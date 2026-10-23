@@ -1697,30 +1697,35 @@ export class HullComposer {
     // pole: RGBA16F (d0, d1, d2, d3), kopuła: RGBA16F (rozmyta sylwetka 0..1)
     const g = field.grid;
     const n = g.w * g.h;
-    const half = new Uint16Array(n * 4);
-    const aux = new Uint16Array(n * 4);
-    const toHalf = THREE.DataUtils.toHalfFloat;
-    const oct = field.oct || [null, field.levels[1], field.levels[2], field.levels[3]];
-    for (let i = 0; i < n; i++) {
-      for (let c = 0; c < 4; c++) half[i * 4 + c] = toHalf(field.levels[c][i]);
-      aux[i * 4] = toHalf(field.dome[i]);
-      for (let c = 1; c < 4; c++) aux[i * 4 + c] = toHalf(oct[c][i]);
+    if (field.packed) this._setPacked(field.packed, g);
+    else {
+      this._packKeys = null;
+      const half = new Uint16Array(n * 4);
+      const aux = new Uint16Array(n * 4);
+      const toHalf = THREE.DataUtils.toHalfFloat;
+      const oct = field.oct || [null, field.levels[1], field.levels[2], field.levels[3]];
+      for (let i = 0; i < n; i++) {
+        for (let c = 0; c < 4; c++) half[i * 4 + c] = toHalf(field.levels[c][i]);
+        aux[i * 4] = toHalf(field.dome[i]);
+        for (let c = 1; c < 4; c++) aux[i * 4 + c] = toHalf(oct[c][i]);
+      }
+      const gr = new Uint16Array(n * 4);
+      const gf = field.groove;
+      const gcap = toHalf(field.grooveBand || 1e3);
+      const g14 = toHalf(1.4);
+      for (let i = 0; i < n; i++) { gr[i * 4] = gf ? toHalf(gf[i]) : gcap; gr[i * 4 + 1] = gf?.width ? toHalf(gf.width[i]) : g14; }
+      this._fieldTex?.dispose();
+      this._auxTex?.dispose();
+      this._grooveTex?.dispose();
+      this._fieldTex = halfTexture(half, g.w, g.h);
+      this._auxTex = halfTexture(aux, g.w, g.h);
+      this._grooveTex = halfTexture(gr, g.w, g.h);
+      this.T.field.value = this._fieldTex;
+      this.T.aux.value = this._auxTex;
+      this.T.grooves.value = this._grooveTex;
+      this._setPipes(field, n, toHalf);
     }
-    const gr = new Uint16Array(n * 4);
-    const gf = field.groove;
-    const gcap = toHalf(field.grooveBand || 1e3);
-    const g14 = toHalf(1.4);
-    for (let i = 0; i < n; i++) { gr[i * 4] = gf ? toHalf(gf[i]) : gcap; gr[i * 4 + 1] = gf?.width ? toHalf(gf.width[i]) : g14; }
-    this._fieldTex?.dispose();
-    this._auxTex?.dispose();
-    this._grooveTex?.dispose();
-    this._fieldTex = halfTexture(half, g.w, g.h);
-    this._auxTex = halfTexture(aux, g.w, g.h);
-    this._grooveTex = halfTexture(gr, g.w, g.h);
-    this.T.field.value = this._fieldTex;
-    this.T.aux.value = this._auxTex;
-    this.T.grooves.value = this._grooveTex;
-    this._setPipes(field, n, toHalf);
+    this._setPipeUniforms(field.pipeNet, field.packed ? field.packed.pipes.on : !!(field.pipeNet && field.pipeNet.runs.length + field.pipeNet.fits.length > 0));
     U.field.value.set(g.x0, g.y0, g.res, field.band);
     U.fieldSize.value.set(g.w, g.h);
     U.det.value.set(design.detail, 1 / design.detail, design.windows ?? 1, opts.rivets ?? 1);
@@ -1771,7 +1776,8 @@ export class HullComposer {
       di++;
     }
     U.decalCount.value = di;
-    if (atlas?.data) {
+    if (atlas?.data && atlas !== this._atlasSrc) {
+      this._atlasSrc = atlas;
       const at = new THREE.DataTexture(atlas.data, atlas.width, atlas.height, THREE.RGBAFormat, THREE.UnsignedByteType);
       at.magFilter = THREE.LinearFilter;
       at.minFilter = THREE.LinearFilter;
@@ -1792,7 +1798,7 @@ export class HullComposer {
    * wymiary). Bez sieci — tekstury 1 × 1 i wyłącznik w uniformie.
    */
   _setPipes(field, n, toHalf) {
-    const U = this.U, g = field.grid;
+    const g = field.grid;
     const net = field.pipeNet, pt = field.pipeTex;
     this._pipeATex?.dispose();
     this._pipeBTex?.dispose();
@@ -1822,7 +1828,49 @@ export class HullComposer {
     this._pipeBTex = bTex;
     this.T.pipeA.value = aTex;
     this.T.pipeB.value = bTex;
-    const on = !!(net && net.runs.length + net.fits.length > 0);
+  }
+
+  /**
+   * Pakiety tekstur z budowy w workerze (src/game/hullDesign/hullDesignBuild.js — te same bity co ścieżka wyżej):
+   * { field, aux, groove: { key, data: Uint16Array }, pipes: { key, a: Uint16Array, b: Uint8Array, w, h } }.
+   * Tekstura idzie na GPU tylko przy nowym kluczu (ten sam rozmiar — podmiana danych w miejscu).
+   */
+  _setPacked(pk, g) {
+    const K = this._packKeys || (this._packKeys = {});
+    const put = (old, data, w, h, type) => {
+      if (old && old.image.width === w && old.image.height === h && old.type === type) {
+        old.image.data = data;
+        old.needsUpdate = true;
+        return old;
+      }
+      old?.dispose();
+      if (type === THREE.HalfFloatType) return halfTexture(data, w, h);
+      const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, type);
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestFilter;
+      t.generateMipmaps = false;
+      t.colorSpace = THREE.NoColorSpace;
+      t.needsUpdate = true;
+      return t;
+    };
+    if (K.field !== pk.field.key) { this._fieldTex = put(this._fieldTex, pk.field.data, g.w, g.h, THREE.HalfFloatType); K.field = pk.field.key; }
+    if (K.aux !== pk.aux.key) { this._auxTex = put(this._auxTex, pk.aux.data, g.w, g.h, THREE.HalfFloatType); K.aux = pk.aux.key; }
+    if (K.groove !== pk.groove.key) { this._grooveTex = put(this._grooveTex, pk.groove.data, g.w, g.h, THREE.HalfFloatType); K.groove = pk.groove.key; }
+    if (K.pipes !== pk.pipes.key) {
+      this._pipeATex = put(this._pipeATex, pk.pipes.a, pk.pipes.w, pk.pipes.h, THREE.HalfFloatType);
+      this._pipeBTex = put(this._pipeBTex, pk.pipes.b, pk.pipes.w, pk.pipes.h, THREE.UnsignedByteType);
+      K.pipes = pk.pipes.key;
+    }
+    this.T.field.value = this._fieldTex;
+    this.T.aux.value = this._auxTex;
+    this.T.grooves.value = this._grooveTex;
+    this.T.pipeA.value = this._pipeATex;
+    this.T.pipeB.value = this._pipeBTex;
+  }
+
+  /** Uniformy sieci rur: wyłącznik, okres obejm, biegi i osprzęt. */
+  _setPipeUniforms(net, on) {
+    const U = this.U;
     U.pnet.value.set(on ? 1 : 0, net ? net.clampJ / net.detail : 26, 0, 0);
     if (!on) return;
     const R = U.pruns.array;
@@ -1841,10 +1889,9 @@ export class HullComposer {
     });
   }
 
-  /** Wypiek (passy w kolejności) i odczyt: { width, height, tpu, albedo, surface, emission (RGBA8, wiersz 0 = góra), ms }. */
-  async bake() {
+  /** Passy w kolejności (bez odczytu): wynik w celach `targets` (podgląd w trakcie przeciągania czyta je wprost). */
+  render() {
     const r = this.renderer;
-    const t0 = performance.now();
     const prev = r.getRenderTarget();
     try {
       for (const p of this.passes) {
@@ -1854,12 +1901,25 @@ export class HullComposer {
     } finally {
       r.setRenderTarget(prev);
     }
+  }
+
+  /** Wypiek (passy w kolejności) i odczyt: { width, height, tpu, albedo, surface, emission (RGBA8, wiersz 0 = góra), ms }. */
+  async bake(opts = {}) {
+    const t0 = performance.now();
+    this.render();
     const { w, h } = this.targets;
+    // `emission: false` — bez odczytu emisji (mapa emisji podglądu czyta ją sama: readEmission)
     const [albedo, surface, emission] = await Promise.all([
-      this._read(this.targets.alb, w, h), this._read(this.targets.surf, w, h), this._read(this.targets.eout, w, h)
+      this._read(this.targets.alb, w, h), this._read(this.targets.surf, w, h),
+      opts.emission === false ? null : this._read(this.targets.eout, w, h)
     ]);
     this.lastMs = performance.now() - t0;
     return { width: w, height: h, tpu: this.size.tpu, albedo, surface, emission, ms: this.lastMs };
+  }
+
+  /** Odczyt emisji ostatniego wypieku (RGBA8 sRGB / 3, wiersz 0 = góra). */
+  readEmission() {
+    return this._read(this.targets.eout, this.targets.w, this.targets.h);
   }
 
   async _read(rt, w, h) {

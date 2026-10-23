@@ -1171,7 +1171,7 @@ export function installShipyard(api) {
     if (!c || !d || !S.field) return;
     if (document.activeElement?.classList?.contains('yname')) return;   // nie przerywać pisania nazwy
     const mountSel = U.sel.length === 1 && U.sel[0].kind === 'module' && hullDesignMountOf(U.sel[0].obj) ? U.sel[0].obj : null;
-    const key = `${S.builtRev}|${d.name}|${mountSel ? JSON.stringify(mountSel) : ''}|${U.sel.length}`;
+    const key = `${S.builtRev}|${S.checksRev || 0}|${d.name}|${mountSel ? JSON.stringify(mountSel) : ''}|${U.sel.length}`;
     if (key === U.statsKey) return;
     U.statsKey = key;
     const cls = c.check.cls, p = c.power, r = S.recipe;
@@ -1181,8 +1181,10 @@ export function installShipyard(api) {
       return `<div class="ymeter"><div class="ymh"><span>${label}</span><b>${fmt(v)} <i>/ ${fmt(max)} ${unit}</i></b></div><div class="ybar"><i class="${tone}" style="width:${Math.min(100, k * 100).toFixed(1)}%"></i></div></div>`;
     };
     const sys = S.systems;
-    let it = U.integrity.get(S.field);
+    // spójność ramy liczy worker budowy po obrazie (field.integrity); do tego czasu — ostatnia znana
+    let it = S.field.integrity || U.integrity.get(S.field) || U.lastIntegrity;
     if (!it) U.integrity.set(S.field, it = hullFrameIntegrity(S.field));
+    U.lastIntegrity = it;
     const nc = S.netCheck;
     const check = (ok, text, hint = '') => `<li class="${ok ? 'ok' : 'no'}"><span>${ok ? '✓' : '✗'}</span>${text}${!ok && hint ? `<small>${hint}</small>` : ''}</li>`;
     const bridges = S.field.expanded.modules.filter((m) => m.type === 'bridge').length;
