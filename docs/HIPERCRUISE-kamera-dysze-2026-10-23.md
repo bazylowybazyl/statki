@@ -73,7 +73,8 @@ rozruch — żar wylotu bez płomienia, narasta ~1 s i drży (poświata wylotu 1
 start lotu — błysk ×1,5 od razu i pchnięcie płomienia (~0,2 s do szczytu, strumień ×1,75), potem praca z dopalaczem;
 wyjście — 0,9 s dogasania z krztuszeniem (plazma w sondzie po 0,3 s wyjścia jeszcze się pali), potem gaszenie z
 poświatą. Decyzja: w rozruchu bez płomienia — „nie ma → jest” zaczyna się przy starcie lotu; struga MAIN w rozruchu
-pracuje wg ciągu (lot zwykły trwa). NPC z `__hyperMode` — ten sam wygląd.
+pracuje wg ciągu (lot zwykły trwa). `__hyperMode` pisze dziś tylko gra dla statku gracza (`syncHyperLook`) — NPC
+hipercruise'u nie mają; obraz dysz czyta flagę z encji, więc NPC z tą flagą dostałby ten sam wygląd.
 
 ## 4. Wygięcie na boki
 
@@ -81,7 +82,7 @@ pracuje wg ciągu (lot zwykły trwa). NPC z `__hyperMode` — ten sam wygląd.
 obraca ją GIMBAL dysz MAIN — wychylenie −26° × moment (`applyPlayerThrusterVisualState`). Moment dysz MAIN idzie tylko
 przy ciągu W (albo gdy kadłub nie ma dysz bocznych): w locie z W i A/D wszystkie 5 dysz Atlasa stało pod 26° do osi
 (HEAD), sam A/D — 0°. W hipercruisie kurs prowadzi automat (gałąź fizyki bez momentu dysz), więc gimbal to sam obraz —
-× `HYPERCRUISE_TUNE.nozzleGimbal` 0,2 → 5,2° (pomiar: HEAD 26,0°, po 5,2° na każdej dyszy; zrzuty
+× `HYPERCRUISE_TUNE.nozzleGimbal` 0,2 → 5,2° W OBRAZIE dysz (`engineVfxSystem.js`; po przeglądzie 2026-10-23 — pierwsza wersja skalowała rozkaz dysz i przez wygładzone `mainTorqueAssist` przeciekała do fizyki po wyjściu) (pomiar: HEAD 26,0°, po 5,2° na każdej dyszy; zrzuty
 `.tmp/hc/gimbal-przed-p3.png` / `gimbal-po-p3.png`). Dysze SIDE przy skręcie pracują jak dotąd (impulsy na dziobie
 i rufie — krótkie, bez zgięcia).
 
@@ -99,3 +100,17 @@ i rufie — krótkie, bez zgięcia).
 - Testy: `node --test "tests/*.test.mjs"` 3242 ok; porażki zastane (te same na eksporcie HEAD: `hallGas` LF,
   `shadowShaftsQuality` emitery), TODO `PORT poprawka 1/3`, chwiejne pod obciążeniem (`cicBeltLayer` budżet czasu,
   `capitalAiFlight` — w izolacji 3/3 ok). `npm test` — wszystko OK. Build Vite — OK.
+
+## Poprawki po przeglądzie (2026-10-23)
+
+- Okno po wyjściu z hipercruise'u kończy się po `HYPER_ROLL_AFTER` (3 s): waga „cały kadłub nad HUD-em” riga zostawała
+  1 na zawsze po pierwszym hipercruisie (zwykły lot miał pasy HUD większe o pół kadłuba, przy dużym zoomie bez
+  pionowego wyprzedzenia). Test `tests/hypercruiseLook.test.mjs` („zwykły lot ma insety jak przed”), przebieg w grze
+  niżej.
+- Jedno źródło obrotu kamery tej klatki (`cameraFrameRoll`): RTS, podzielony ekran, kamery 3D i przejście fokusu —
+  od razu 0 (dawniej sprężyna ~1 s przekręcała kąty na kanwie i kurs kopu warpa).
+- Culling z obróconego kadru także w proxy statków ruchu, przeładunku w portach, budżecie marszu wybuchów i bitwie
+  w głębi.
+- Wydobycie: kursor przez `screenToWorld`; w locie hipercruise'u tryb wydobycia się wyłącza (jak w warpie).
+- Reżyser kadru gaśnie w hipercruisie (jak w warpie) zamiast liczyć w osiach świata.
+- Gimbal × 0,2 tylko w obrazie dysz (wyżej, § 4).

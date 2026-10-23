@@ -149,8 +149,8 @@ export const HYPERCRUISE_TUNE = Object.freeze({
   shortLeg: 30000,       // [j.]
   minSpool: 1.0,         // [s]
   interruptible: true,   // przechwyt: trafienie albo blokada masy przerywa hipercruise
-  // WYGLĄD: wychylenie dysz MAIN przy A/D w locie (gimbal −26° × moment — thrusterModel.js) × tyle; kurs prowadzi
-  // automat, więc to sam obraz (zgłoszenie użytkownika 2026-10-23: plazma „wyginała się” na boki)
+  // WYGLĄD: wychylenie dysz MAIN przy A/D w locie (gimbal −26° × moment — thrusterModel.js) × tyle W OBRAZIE dysz
+  // (engineVfxSystem.js — fizyka bierze prawdziwy kąt); zgłoszenie użytkownika 2026-10-23: plazma „wyginała się” na boki
   nozzleGimbal: 0.2
 });
 

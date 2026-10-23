@@ -199,11 +199,16 @@ function hyperRollScope() {
     cameraRigTune,
     stepCameraRigRoll,
     cameraHyperRollMode: () => scope.mode,
-    mode: 'up'
+    mode: 'up',
+    HYPER_ROLL_AFTER: Number(/const HYPER_ROLL_AFTER = ([\d.]+);/.exec(html)[1]),
+    _hyperInsetW: 0
   };
+  scope.cameraFrameRollAllowed = loadIndexFunction(html, 'function cameraFrameRollAllowed() {', 'cameraFrameRollAllowed', scope);
+  scope.cameraFrameRoll = loadIndexFunction(html, 'function cameraFrameRoll() {', 'cameraFrameRoll', scope);
   const update = loadIndexFunction(html, 'function updateCameraHyperRoll(gameDt) {', 'updateCameraHyperRoll', scope);
+  const inset = loadIndexFunction(html, 'function stepHyperInsetWeight(frameDt) {', 'stepHyperInsetWeight', scope);
   const set = (hc, look) => { scope.hypercruise.state = hc; scope.hyperLook.state = look; };
-  return { rig, scope, update, set };
+  return { rig, scope, update, inset, set };
 }
 
 const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -232,6 +237,33 @@ test('kamera za statkiem: od rozruchu kurs w górę ekranu, trzyma przez hamowan
   const r0 = rig.roll;
   for (let i = 0; i < 30; i++) update(0);
   assert.equal(rig.roll, r0);
+});
+
+test('po hipercruisie zwykły lot ma insety riga i obrót jak przed (okno po wyjściu się kończy)', () => {
+  const { rig, scope, update, inset, set } = hyperRollScope();
+  scope.ship.angle = 0.4;
+  const frame = (n, dt = DT) => { for (let i = 0; i < n; i++) { update(dt); inset(dt); } };
+  assert.equal(inset(DT), 0, "przed hipercruise'em — waga 0");
+  set('spool', 'charging'); frame(240);
+  set('active', 'active'); frame(120);
+  assert.ok(scope._hyperInsetW > 0.99, 'w hipercruisie cały kadłub nad HUD-em');
+  set('drop', 'idle'); frame(60);
+  set('idle', 'idle'); frame(30);
+  assert.ok(scope._hyperRollAfter > 0, 'okno po wyjściu trwa');
+  frame(Math.round((scope.HYPER_ROLL_AFTER + 4) / DT));
+  assert.equal(scope._hyperRollAfter, -1, 'okno po wyjściu zamknięte');
+  assert.equal(scope._hyperInsetW, 0, "waga insetów dokładnie 0 — zwykły lot jak przed hipercruise'em");
+  assert.equal(rig.roll, 0, 'kadr północą');
+  // render: insety = pasy HUD + półwymiar kadłuba × waga (0 → dawne pasy), wyliczenie tylko przy wadze > 0
+  assert.match(html, /const hcInsetW = stepHyperInsetWeight\(frameDt\);\s*let hcHullV = 0;\s*if \(hcInsetW > 1e-3 && !scouting\) \{/);
+  assert.match(html, /rigIn\.insetTop = _camDirInsets\.top \+ hcHullV;\s*rigIn\.insetBottom = _camDirInsets\.bottom \+ hcHullV;/);
+  // obrót kamery tej klatki: 0 od razu w RTS / podzielonym ekranie / kamerze 3D (rig dogania zero w tle)
+  set('spool', 'charging'); frame(240);
+  assert.ok(Math.abs(scope.cameraFrameRoll()) > 0.1);
+  scope.View3D.active = true;
+  assert.equal(scope.cameraFrameRoll(), 0, 'kamera 3D — kadr bez obrotu od razu');
+  scope.View3D.active = false; scope.camera.mode = 'rts';
+  assert.equal(scope.cameraFrameRoll(), 0, 'RTS — bez obrotu od razu');
 });
 
 test('obrót tylko dla kamery statku z góry gracza 1, nie w warpie; opcja Północ i A/B z adresu', () => {
@@ -303,7 +335,9 @@ test('HUD i mysz: worldToScreenInto / screenToWorld z obrotem — punkt przed dz
 });
 
 test('rig w render(): wejścia ze świata obrócone do osi ekranu, offset i wstrząs z powrotem do świata; roll w kamerach klatki', () => {
-  assert.match(html, /const camRoll = \(camera\.mode === 'ship' && !splitScreenMode\) \? \(Number\(cameraRig\.roll\) \|\| 0\) : 0;\s*camera\.roll = camRoll;/);
+  assert.match(html, /const camRoll = cameraFrameRoll\(\);\s*camera\.roll = camRoll;/);
+  assert.match(html, /const rigRoll = cameraFrameRoll\(\);/);
+  assert.match(html, /const roll = cameraFrameRoll\(\);/);
   assert.match(html, /let camNoShake = \{ x: camBaseX, y: camBaseY, zoom: camBaseZoom, roll: camRoll \};/);
   assert.match(html, /let cam = \{ x: camBaseX, y: camBaseY, zoom: camBaseZoom, roll: camRoll \};/);
   assert.match(html, /const sw = rollToWorld\(_cameraShakePx\.x, _cameraShakePx\.y, camRoll, _rollTmp\);/);
@@ -323,7 +357,11 @@ test('pył kosmiczny: obrót kadru w uniformach (G4.yz) i kontener wzoru z obró
   assert.ok(Math.abs(u1[17] - Math.SQRT1_2) < 1e-6 && Math.abs(u1[18] - Math.SQRT1_2) < 1e-6);
 });
 
-test('dysze MAIN w locie hipercruise\'u: wychylenie × nozzleGimbal (sam wygląd — kurs prowadzi automat)', () => {
+test('dysze MAIN w locie hipercruise\'u: wychylenie × nozzleGimbal tylko w obrazie (fizyka bez zmian)', () => {
   assert.ok(HYPERCRUISE_TUNE.nozzleGimbal > 0 && HYPERCRUISE_TUNE.nozzleGimbal < 0.5);
-  assert.match(html, /\* \(hypercruiseDriving\(hypercruise\) \? HYPERCRUISE_TUNE\.nozzleGimbal : 1\),/);
+  const vfx = readFileSync(new URL('../src/3d/engineVfxSystem.js', import.meta.url), 'utf8');
+  assert.match(vfx, /const hyperGimbalK = \(entity\.__hyperMode === 'active' \|\| entity\.__hyperMode === 'drop'\) \? HYPERCRUISE_TUNE\.nozzleGimbal : 1;/);
+  assert.match(vfx, /resolveSlotForward\(slot, slot\.kind === 'side' \? 1 : hyperGimbalK\)/);
+  // rozkaz dysz gry (moment, mainTorqueAssist w fizyce) — bez skali hipercruise'u
+  assert.doesNotMatch(html, /HYPERCRUISE_TUNE\.nozzleGimbal/);
 });

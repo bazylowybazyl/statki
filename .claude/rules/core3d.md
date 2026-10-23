@@ -77,7 +77,7 @@ paths:
   `isCircleVisibleInGameCamera`), okno pola pasa (`AsteroidBelt._computeView`) i ringi „Halo” (kamera ringu, pudło
   kadru — `HaloRingGame.update`), mgła wojny w poście (`uFogRot` — punkt świata piksela, `packFogView` z pudłem
   obróconego kadru), pył kosmiczny (`G4.yz` — wzór drobin i smugi do osi ekranu, kontener z obróconego kadru), komety
-  (`_inView`). Przy roll = 0 każda z tych ścieżek daje te same liczby co bez obrotu. W grze kąt niesie migawka workera
+  (`_inView`), proxy statków ruchu (`ShipProxyBatch3D.begin`), przeładunek w portach (`portCargo3D` — pudło kadru stanowisk), budżet marszu wybuchów, bitwa w głębi (`warBackdrop3D`). Przy roll = 0 każda z tych ścieżek daje te same liczby co bez obrotu. W grze kąt niesie migawka workera
   (`HEAD.CAM_ROLL` / `CAMNS_ROLL` → `cam.roll` / `camNs.roll` w `render.worker.js`); po stronie gry z obrotem liczą
   rzuty HUD-u (`worldToScreenInto` / `screenToWorld`, `screenAngleFor`), pudło cullingu kadłubów (`fillHexCullInfo`),
   bramka efektów trafień i okno gazu przestrzeni. Stacje (`updateStations3D` bez pudła) i dysze (pudło z `fillHexCullInfo`)

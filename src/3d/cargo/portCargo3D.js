@@ -35,6 +35,7 @@ import { CARGO_LIGHT, CargoBayTable, setCargoSun } from './cargoLight.tsl.js';
 import { CARGO_LIGHT_VIEW } from './drones.tsl.js';
 import { SWARM_LOOK } from '../swarm/swarmDrones.tsl.js';
 import { SWARM_POOL_TUNE, createSwarmBerthPool } from '../swarm/swarmBerthPool.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import { BERTH_TRANSFER_TUNE, berthDoorAt, berthTransferTiming, berthYardGeometry, shipInBerth } from '../../game/swarm/berthTransfer.js';
 import {
   CARGO_CONTAINER, TRAFFIC_CARGO_BAY_HULLS, cargoBayDoorTimeline, cargoBayHull, cargoBaySlots, cargoHullBays, cargoModuleContainer, cargoShipToWorld
@@ -102,6 +103,7 @@ export function createPortCargo3D(Core3D) {
   const _berth = { x: 0, y: 0, angle: 0 };
   const _bt = { x: 0, y: 0, angle: 0 };
   const _camG = { x: 0, y: 0 };
+  const _rollHalf = { hw: 0, hh: 0 };
   const _yardPhase = [];
   const _byKey = new Map();          // numer kursu → op tej klatki (sloty puli)
   const _cand = [];
@@ -297,8 +299,10 @@ export function createPortCargo3D(Core3D) {
       if (!resolverSet) { ShipProxyBatch3D.setBayCutResolver((ref) => api.cutForRef(ref)); resolverSet = true; }
       sceneOriginNearCamera(origin, Core3D.activeCam1);
       const zoom = Math.max(1e-4, Number(cam?.zoom) || 1);
-      const halfW = viewW * 0.5 / zoom;
-      const halfH = viewH * 0.5 / zoom;
+      // obrót kadru (hipercruise — viewRoll.js): pudło osi świata wokół obróconego kadru
+      const rh = rolledHalfExtents(viewW * 0.5 / zoom, viewH * 0.5 / zoom, cameraRoll(cam), _rollHalf);
+      const halfW = rh.hw;
+      const halfH = rh.hh;
       const camG = _camG;
       camG.x = Number(cam?.x) || 0; camG.y = Number(cam?.y) || 0;
       bays.begin(origin);

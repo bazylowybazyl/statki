@@ -44,6 +44,9 @@ import { buildEntityEngineFx } from '../data/engineFx.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { loadImageBitmap, createCanvas2D } from './canvas2d.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
+import { cameraRoll, rolledHalfExtents } from './viewRoll.js';
+
+const _rollHalf = { hw: 0, hh: 0 };
 
 const INITIAL_CAPACITY = 32;
 const MAX_CAPACITY = 1024;
@@ -480,8 +483,10 @@ export const ShipProxyBatch3D = {
     frame.camY = Number(camera?.y) || 0;
     const viewW = Number(Core3D.width) || Number(RenderWorld.viewWidth) || 1920;
     const viewH = Number(Core3D.height) || Number(RenderWorld.viewHeight) || 1080;
-    frame.halfW = viewW * 0.5 / frame.zoom;
-    frame.halfH = viewH * 0.5 / frame.zoom;
+    // obrót kadru (hipercruise — viewRoll.js): pudło osi świata wokół obróconego kadru
+    const rh = rolledHalfExtents(viewW * 0.5 / frame.zoom, viewH * 0.5 / frame.zoom, cameraRoll(camera), _rollHalf);
+    frame.halfW = rh.hw;
+    frame.halfH = rh.hh;
     frame.margin = DRAW_MARGIN_PX / frame.zoom;
 
     for (let k = 0; k < kindList.length; k++) kindList[k].count = 0;

@@ -6422,7 +6422,9 @@
       scanCameraDirectorContacts(nowMs);
       measureCameraDirectorInsets(nowMs);
       feedCameraDirector();
-      const warpBusy = warp.state !== 'idle' || !!warp.exitRamp;
+      // Hipercruise (od rozruchu do końca okna po wyjściu — obrót kadru): reżyser gaśnie jak w warpie — dopasowanie
+      // zoomu i pasy HUD liczy w osiach świata, a blokada masy (wróg < 12 km) i tak wyklucza walkę w hipercruisie.
+      const warpBusy = warp.state !== 'idle' || !!warp.exitRamp || hypercruiseBusy(hypercruise) || _hyperRollAfter >= 0;
       inp.dt = frameDt || 0;
       inp.viewW = W;
       inp.viewH = H;
@@ -17627,7 +17629,8 @@
     // WYGLĄD hipercruise'u dla renderu (decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”):
     // ten sam kształt co warp — rozruch = 'charging' (charge 0…1), lot = 'active', wyjście = 'idle' (efekt skoku gracza
     // w WarpNurt kończy się wyjściem); GameState.hyper → RenderWorld.hyper (worker — skalary HYPER_* migawki).
-    // Statek dostaje `__hyperMode` (struga plazmy WARP na dyszach MAIN — engineVfxSystem.js; NPC — ta sama flaga).
+    // Statek dostaje `__hyperMode` (plazma WARP na dyszach MAIN — engineVfxSystem.js; flagę czyta obraz z encji — NPC
+    // hipercruise'u dziś nie mają, ten sam wygląd dostałaby encja NPC z tą flagą).
     const hyperLook = { state: 'idle', charge: 0, chargeTime: 0, speed: 0, vmax: 0, dir: 0 };
     publishGameState({ hyper: hyperLook });
     function syncHyperLook() {
@@ -25977,10 +25980,7 @@
         // (gaz skrętu ≥18%) pchały statek w bok od celu i przy dolocie krążył.
         // Przy stabilizatorze dysze główne dostają tylko jego moment — surowe
         // A/D omijało regulator.
-        // Hipercruise w locie: kurs prowadzi automat (gałąź niżej — bez momentu dysz), więc wychylenie dysz MAIN
-        // to sam wygląd — × HYPERCRUISE_TUNE.nozzleGimbal (zgłoszenie użytkownika 2026-10-23: „żeby się nie
-        // wyginało tak mocno”; pełne −26° obracało plazmę WARP na boki).
-        mainTorque: (maneuverAction
+        mainTorque: maneuverAction
           ? 0
           : commandHeadingActive
           ? (_playerCommandTurnCapability.mainAssist ? manualTorqueInput : 0)
@@ -25989,7 +25989,7 @@
             : (((Number(ship?.thrusterInput?.main) || 0) > 1e-3
               || (Math.abs(manualTorqueInput) > 1e-3 && playerNeedsMainEngineTurning()))
               ? manualTorqueInput
-              : 0)) * (hypercruiseDriving(hypercruise) ? HYPERCRUISE_TUNE.nozzleGimbal : 1),
+              : 0),
         suppressManualTorque: stabilizerActive || maneuverAction === 'turn'
       });
       const thrusterDrive = updateShipThrusterState(ship, dt);
@@ -27393,7 +27393,9 @@
       if (!rig) return;
       rig.beginFrame();
       // (RTS nie wyłącza trybu — mysz należy wtedy do RTS, lasery gasną z puszczonym LPM.)
-      if (miningInput.active && (ship.destroyed || ship.dead || stationUI.open || warp.state === 'active' || splitScreenMode)) {
+      // hipercruise w locie (20–40 tys. j/s, broń zimna) — jak warp
+      if (miningInput.active && (ship.destroyed || ship.dead || stationUI.open || warp.state === 'active' || splitScreenMode
+        || hypercruiseDriving(hypercruise))) {
         setMiningMode(false, true);
       }
       if (!miningInput.active) return;
@@ -27403,11 +27405,9 @@
         rig.pointer(aim.x, aim.y, !!aim.down);
         return;
       }
-      const zoomNow = Math.max(0.0001, Number(camera.zoom) || 1);
-      const vp = getViewportForCamera(camera);
-      const wx = camera.x + (mouse.x - (vp.x + vp.w / 2)) / zoomNow;
-      const wy = camera.y + (mouse.y - (vp.y + vp.h / 2)) / zoomNow;
-      rig.pointer(wx, wy, miningInput.laserDown && mouse.overCanvas !== false);
+      // kursor → świat jak reszta HUD-u (obrót kadru, kamery 3D — screenToWorld)
+      const w = screenToWorld(mouse.x, mouse.y, camera);
+      rig.pointer(w.x, w.y, miningInput.laserDown && mouse.overCanvas !== false);
     }
 
     function stepAsteroidMining(dt) {
@@ -27998,10 +27998,30 @@
     const _rollTmp = { x: 0, y: 0 };
     let _hyperRollPrev = 'idle';
     let _hyperRollAfter = -1;   // [s gry] od końca hamowania wyjścia (−1 — poza oknem)
+    // Okno „po hipercruisie” [s gry]: obrót trzyma kurs `warpRollHold`, potem wraca do północy; waga insetów riga gaśnie.
+    // Po oknie `_hyperRollAfter` wraca do −1 — zwykły lot bez śladu hipercruise'u.
+    const HYPER_ROLL_AFTER = 3;
     let _hyperInsetW = 0;       // waga „cały kadłub nad HUD-em” riga w hipercruisie (render)
     const _hyperRollUrl = (() => { const m = /[?&]hcKamera=(up|right|off)(?:&|$)/.exec(location.search); return m ? m[1] : null; })();
     function cameraHyperRollMode() {
       return _hyperRollUrl || normalizeCameraHyperRollMode(OPTIONS.cameraHyperRoll);
+    }
+    // Obrót kadru TEJ klatki — jedno źródło dla riga, kursu kopu, kamer klatki i HUD-u: kąt riga tylko tam, gdzie kadr się
+    // obraca (kamera statku z góry gracza 1, bez przejścia fokusu); RTS, podzielony ekran i kamery 3D — od razu 0 (rig
+    // dogania zero sprężyną w tle, kadr go nie niesie).
+    function cameraFrameRollAllowed() {
+      return camera.mode === 'ship' && !splitScreenMode && !View3D.active
+        && !(camera.transition && camera.transition.kind !== 'ship');
+    }
+    function cameraFrameRoll() {
+      return cameraFrameRollAllowed() ? (Number(cameraRig.roll) || 0) : 0;
+    }
+    // Waga insetów riga w hipercruisie (render): 1 od rozruchu do końca okna po wyjściu, gładko (2,5/s), potem dokładne 0.
+    function stepHyperInsetWeight(frameDt) {
+      const on = hypercruise.state !== 'idle' || _hyperRollAfter >= 0;
+      _hyperInsetW += ((on ? 1 : 0) - _hyperInsetW) * (1 - Math.exp(-(Number(frameDt) || 0) * 2.5));
+      if (!on && _hyperInsetW < 1e-3) _hyperInsetW = 0;
+      return _hyperInsetW;
     }
     // Krok obrotu (czas gry; w pauzie dt = 0) — w loop() tuż przed updateCameraWarpKick: kurs kopu i wyprzedzenia
     // riga liczą się w osiach ekranu.
@@ -28011,17 +28031,19 @@
       const warpIdle = warp.state === 'idle' && !warp.exitRamp?.active;
       if ((_hyperRollPrev === 'drop' || _hyperRollPrev === 'active') && hc.state === 'idle') _hyperRollAfter = 0;
       else if (hc.state !== 'idle') _hyperRollAfter = -1;
-      else if (_hyperRollAfter >= 0) _hyperRollAfter += gameDt;
+      else if (_hyperRollAfter >= 0) {
+        _hyperRollAfter += gameDt;
+        if (_hyperRollAfter >= HYPER_ROLL_AFTER) _hyperRollAfter = -1;
+      }
       _hyperRollPrev = hc.state;
       r.dt = gameDt;
       r.state = warpIdle ? hyperLook.state : 'idle';
       r.hold = warpIdle && hc.state === 'drop';
-      r.exitAge = warpIdle && _hyperRollAfter >= 0 && _hyperRollAfter < 3 ? _hyperRollAfter : -1;
+      r.exitAge = warpIdle && _hyperRollAfter >= 0 ? _hyperRollAfter : -1;
       r.exitHalt = 0;
       if (ship) { r.dirX = Math.cos(ship.angle); r.dirY = Math.sin(ship.angle); }
       r.mode = cameraHyperRollMode();
-      r.enabled = camera.mode === 'ship' && !!ship && !ship.destroyed && !splitScreenMode && !View3D.active
-        && !(camera.transition && camera.transition.kind !== 'ship');
+      r.enabled = cameraFrameRollAllowed() && !!ship && !ship.destroyed;
       stepCameraRigRoll(cameraRig, r, cameraRigTune);
     }
     function updateCameraWarpKick(gameDt) {
@@ -28031,8 +28053,8 @@
       // Hipercruise (E5, 2026-10-22): kop i oddalenie jak skok warpa (rozruch = ładowanie, lot = skok), bez rulonu —
       // gdy warp stoi; warp ma pierwszeństwo.
       const hyperCam = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
-      // obrót kadru (updateCameraHyperRoll): kurs kopu w osiach ekranu
-      const roll = Number(cameraRig.roll) || 0;
+      // obrót kadru tej klatki (cameraFrameRoll): kurs kopu w osiach ekranu
+      const roll = cameraFrameRoll();
       w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
       w.state = hyperCam ? hyperLook.state : warp.state;
       w.charge = hyperCam ? hyperLook.charge : (warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0);
@@ -29381,7 +29403,7 @@
         }
         // Obrót kadru (hipercruise — updateCameraHyperRoll): rig liczy w osiach EKRANU — wejścia ze świata obrócone
         // o −roll, offset riga do świata o +roll (src/render/viewRoll.js; przy roll = 0 liczby bez zmian).
-        const rigRoll = splitScreenMode ? 0 : (Number(cameraRig.roll) || 0);
+        const rigRoll = cameraFrameRoll();
         const vwx = scouting ? (Number(scoutSn.vx) || 0) : ship.vel.x;
         const vwy = scouting ? (Number(scoutSn.vy) || 0) : ship.vel.y;
         const vScr = rollToScreen(vwx, vwy, rigRoll, _rollTmp);
@@ -29392,12 +29414,12 @@
         rigIn.leadGain = scouting ? cameraRigTune.scoutLead : NaN;
         // Hipercruise (kadr za statkiem, wyprzedzenie na maksimum): nad pasami HUD zostaje CAŁY kadłub z dyszami, nie sam
         // środek — do pasów półwymiar kadłuba w pionie ekranu; waga gładka (zacisk kadru w rigu skakałby przy zmianie).
-        _hyperInsetW += ((hypercruise.state !== 'idle' || _hyperRollAfter >= 0 ? 1 : 0) - _hyperInsetW) * (1 - Math.exp(-(frameDt || 0) * 2.5));
+        const hcInsetW = stepHyperInsetWeight(frameDt);
         let hcHullV = 0;
-        if (_hyperInsetW > 1e-3 && !scouting) {
+        if (hcInsetW > 1e-3 && !scouting) {
           const sa = interpAngle - rigRoll;
           const sk = (ship.visual?.spriteScale || 1) * 0.5 * zoomSafe;
-          hcHullV = (Math.abs(Math.sin(sa)) * (Number(ship.w) || 0) + Math.abs(Math.cos(sa)) * (Number(ship.h) || 0)) * sk * _hyperInsetW;
+          hcHullV = (Math.abs(Math.sin(sa)) * (Number(ship.w) || 0) + Math.abs(Math.cos(sa)) * (Number(ship.h) || 0)) * sk * hcInsetW;
         }
         // Reżyser kadru: środek kadru ku bitwie (j. świata → px tej klatki) i słabsze zaglądanie za kursorem.
         stepCameraDirectorFrame(frameDt || 0, interpPos.x, interpPos.y);
@@ -29472,7 +29494,7 @@
 
       // Obrót kadru (hipercruise, cameraRig.roll — updateCameraHyperRoll): tylko kamera statku gracza 1 z góry; niesie
       // go `camera` i kamery klatki (`cam`, `camNoShake`) — Core3D, migawka workera, worldToScreen / screenToWorld.
-      const camRoll = (camera.mode === 'ship' && !splitScreenMode) ? (Number(cameraRig.roll) || 0) : 0;
+      const camRoll = cameraFrameRoll();
       camera.roll = camRoll;
       let camNoShake = { x: camBaseX, y: camBaseY, zoom: camBaseZoom, roll: camRoll };
       let camShakePxX = 0;

@@ -21,6 +21,9 @@ import { zbierzZakres } from '../zakresyWysylki.js';
 import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 import { WB_CLASSES, WB_BAND_FG, planWarHero } from '../../render/warBackdropPlan.js';
 import { WB_PLANET_MAPS } from '../../render/blocks/warBackdropBlock.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
+
+const _wbRollHalf = { hw: 0, hh: 0 };
 import { createWarBackdropSim, WB_MODE, WB_STEP, WB_NOOP_SINK } from './warBackdropSim.js';
 import {
   createWarBackdropUniforms, createWarBackdropMaterials, createQuadBatch, WB_HULL_STRIDE, WB_GLOW_STRIDE, WB_EVENT_STRIDE, WB_EVK
@@ -239,8 +242,10 @@ export class WarBackdrop3D {
     const tanH = Math.tan(fov * 0.5);
     C.free = !!(core.isFreePerspectiveCamera && core.isFreePerspectiveCamera());
     C.H = (h * 0.5) / tanH / zoom;
-    C.halfW = (w * 0.5) / zoom;
-    C.halfH = (h * 0.5) / zoom;
+    // obrót kadru (viewRoll.js): pudło osi świata wokół obróconego kadru
+    const rh = rolledHalfExtents((w * 0.5) / zoom, (h * 0.5) / zoom, cameraRoll(cam), _wbRollHalf);
+    C.halfW = rh.hw;
+    C.halfH = rh.hh;
     C.relX = (Number(cam?.x) || 0) - frame.cx;
     C.relY = (Number(cam?.y) || 0) - frame.cy;
     const bufH = h * (Number(core.pxScale) || 1);

@@ -32,6 +32,7 @@ import { SideNozzleFrame, SIDE_NOZZLE_RADIUS, SIDE_NOZZLE_MOUTH } from './sideNo
 // Dysze SIDE na WebGPU (2026-10-07): struga TSL, gaz w pulach GPU, światło na blasze — zamiast engineExhaustBatch.
 import { SideJets3D, createSideJetState, SIDE_JET_TUNE, SIDE_JET_REACH_R } from './sideJets3D.js';
 import { buildEntityEngineFx, fallbackNozzleRadius } from '../data/engineFx.js';
+import { HYPERCRUISE_TUNE } from '../data/driveModes.js';
 import { cloakVisAtWorld } from '../game/cloakLook.js';
 // Rozpad kadłuba belkowego: dysza gaśnie, gdy komórka pod nią nie jest już żywym węzłem ciała właściciela.
 import {
@@ -133,8 +134,9 @@ function inferSideFromMount(mount, y = 0) {
 
 // Kierunek dyszy zależy od slotu (stały od buildSlots) i czterech pól źródła — nozzleDeg zmienia się tylko przy
 // ruchu gimbala. Pamięć per slot: te same surowe wartości = ten sam wynik (bez normalizacji i trzech obiektów
-// na dyszę na klatkę). Wynik tylko do odczytu.
-function resolveSlotForward(slot) {
+// na dyszę na klatkę). Wynik tylko do odczytu. `gimbalK` — mnożnik wychylenia W OBRAZIE (lot hipercruise'u:
+// HYPERCRUISE_TUNE.nozzleGimbal; fizyka bierze prawdziwy kąt dyszy — thrusterModel.js: mainTorqueAssist).
+function resolveSlotForward(slot, gimbalK = 1) {
   if (!slot) return { x: 0, y: 1 };
   const source = slot.source;
   const b = source?.baseDeg;
@@ -142,17 +144,17 @@ function resolveSlotForward(slot) {
   const g1 = source?.gimbalMaxDeg;
   const nz = source?.nozzleDeg;
   const memo = slot._fwdMemo;
-  if (memo !== undefined && memo.b === b && memo.g0 === g0 && memo.g1 === g1 && memo.nz === nz) return memo.fwd;
-  const fwd = computeSlotForward(slot, source);
+  if (memo !== undefined && memo.b === b && memo.g0 === g0 && memo.g1 === g1 && memo.nz === nz && memo.k === gimbalK) return memo.fwd;
+  const fwd = computeSlotForward(slot, source, gimbalK);
   if (memo !== undefined) {
-    memo.b = b; memo.g0 = g0; memo.g1 = g1; memo.nz = nz; memo.fwd = fwd;
+    memo.b = b; memo.g0 = g0; memo.g1 = g1; memo.nz = nz; memo.k = gimbalK; memo.fwd = fwd;
   } else {
-    slot._fwdMemo = { b, g0, g1, nz, fwd };
+    slot._fwdMemo = { b, g0, g1, nz, k: gimbalK, fwd };
   }
   return fwd;
 }
 
-function computeSlotForward(slot, source) {
+function computeSlotForward(slot, source, gimbalK = 1) {
   const baseDeg = Number.isFinite(Number(source?.baseDeg))
     ? normalizeDeg(source.baseDeg, slot.baseDeg)
     : normalizeDeg(slot.baseDeg, forwardToDeg(slot.forward));
@@ -168,7 +170,8 @@ function computeSlotForward(slot, source) {
     ? source.nozzleDeg
     : (Number.isFinite(Number(slot.nozzleDeg)) ? slot.nozzleDeg : baseDeg);
   const nozzleDeg = clampNozzleDegToGimbal(nozzleRaw, baseDeg, range.min, range.max);
-  return degToForward(nozzleDeg);
+  if (gimbalK === 1) return degToForward(nozzleDeg);
+  return degToForward(baseDeg + normalizeDeg(nozzleDeg - baseDeg, 0) * gimbalK);
 }
 
 function buildSlots(entity) {
@@ -533,7 +536,7 @@ function resolveWarpMode(entity) {
   if (entity.__warpPreview === true) return 'active';
   // Hipercruise (E5, decyzja użytkownika 2026-10-22: „obecny silnik warp będzie hypercruise”): plazma WARP na
   // dyszach MAIN, „nie ma / jest” (2026-10-23 — warpPlume3D.js: WARP_PLUME_HYPER): rozruch = żar bez płomienia,
-  // start lotu = zapłon, wyjście = dogasanie (gracz i NPC: `__hyperMode` z gry / lustra).
+  // start lotu = zapłon, wyjście = dogasanie (`__hyperMode` z encji gry / lustra — dziś pisze go tylko statek gracza).
   const hyper = entity.__hyperMode;
   if (hyper === 'active') return 'active';
   if (hyper === 'charging') return 'preheat';
@@ -749,6 +752,9 @@ function updateEffects(entity, fxData, dt) {
   // MAIN: rozmiar i paleta per statek, tryb skoku, dopalacz — raz na encję.
   const engineFx = resolveEntityEngineFx(entity);
   const warpMode = resolveWarpMode(entity);
+  // Lot hipercruise'u (zgłoszenie użytkownika 2026-10-23: „żeby się nie wyginało tak mocno”): wychylenie dysz MAIN
+  // przy A/D × nozzleGimbal — sam obraz (kurs prowadzi automat gry, gimbal −26° × moment obracał plazmę na boki).
+  const hyperGimbalK = (entity.__hyperMode === 'active' || entity.__hyperMode === 'drop') ? HYPERCRUISE_TUNE.nozzleGimbal : 1;
   // Silniki MAIN wyłączone / zapłon / gaszenie (src/game/engineIgnition.js — etap E2): moc strugi MAIN (z płomykiem
   // jałowym) × mnożnik stanu; rampa mocy strugi (mainExhaust3D) wygładza resztę. Encja bez stanu — 1.
   const plumeK = entity.engineIgn ? enginePlumeScale(entity) : 1;
@@ -850,7 +856,7 @@ function updateEffects(entity, fxData, dt) {
       continue;
     }
 
-    const slotForward = resolveSlotForward(slot);
+    const slotForward = resolveSlotForward(slot, slot.kind === 'side' ? 1 : hyperGimbalK);
     const offset = slot.offset || { x: 0, y: 0 };
     const lx = slot.mode === 'normalized'
       ? (offset.x || 0) * halfL

@@ -53,6 +53,7 @@ import { EngineFrame } from '../engineFrame.js';
 import { MAIN_EXHAUST_PALETTES } from '../../data/engineFx.js';
 import { ENGINE_IGNITION, ENGINE_SHUTDOWN, ENGINE_IGNITION_TUNE } from '../../game/engineIgnition.js';
 import { ActiveCarrier, writeCarrierVelocity } from '../../game/carrierVelocity.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import {
   explosionProfile, countScale, fireRadius, explosionLod, explosionInView, rollRange,
   GAS_MIN_PX, LOD_GAS, LOD_PARTICLES, LOD_OFF
@@ -634,7 +635,9 @@ export class ExplosionFx {
     let x0, y0, x1, y1;
     if (!free && cam) {
       const z = typeof core.viewZoom === 'function' ? core.viewZoom(cam) : Math.max(1e-4, Number(cam.zoom) || 1);
-      const hw = W * 0.5 / z, hh = H * 0.5 / z;
+      // obrót kadru (viewRoll.js): pudło osi świata wokół obróconego kadru
+      const rh = rolledHalfExtents(W * 0.5 / z, H * 0.5 / z, cameraRoll(cam), this._rollHalf || (this._rollHalf = { hw: 0, hh: 0 }));
+      const hw = rh.hw, hh = rh.hh;
       const cx = Number(cam.x) || 0, cy = Number(cam.y) || 0;
       x0 = cx - hw; x1 = cx + hw; y0 = cy - hh; y1 = cy + hh;
     } else {

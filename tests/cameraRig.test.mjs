@@ -561,7 +561,9 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     location: { search: '' },
     // Hipercruise (E5): poza nim człon oddalenia 0.
     hypercruise: { speed: 0, vmax: 20000 },
-    hypercruiseDriving: () => false
+    hypercruiseDriving: () => false,
+    // obrót kadru tej klatki (hipercruise — cameraFrameRoll): w warpie 0
+    cameraFrameRoll: () => 0
   };
   const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
   for (let i = 0; i < 60; i++) update(1 / 60);
