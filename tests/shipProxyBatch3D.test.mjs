@@ -98,17 +98,19 @@ test('pusty rodzaj: count 0 i visible = false (zero draw calli)', () => {
   assert.equal(ShipProxyBatch3D.stats.drawCalls, 0);
 });
 
-test('jedna siatka na teksturę: ciężki frachtowiec dzieli sprite i mesh z dalekiego zasięgu', () => {
+test('jedna siatka na teksturę: ciężki frachtowiec ma własny sprite Z11 (E13) — osobna siatka w skali 1800 j.', () => {
   const list = [
     actor({ id: 'haul-00010', hull: 'long_haul_freighter', x: cam.x, y: cam.y }),
-    actor({ id: 'haul-00011', cls: 'freighter-capital', x: cam.x + 300, y: cam.y })
+    actor({ id: 'haul-00011', cls: 'freighter-capital', x: cam.x + 300, y: cam.y }),
+    actor({ id: 'haul-00012', cls: 'freighter-capital', x: cam.x + 600, y: cam.y })
   ];
   ShipProxyBatch3D.update(list, 1, cam);
-  const mesh = meshOf('long_haul_freighter.png');
-  assert.equal(countOf(mesh), 2);
-  assert.equal(ShipProxyBatch3D.stats.drawCalls, 1);
+  assert.equal(countOf(meshOf('long_haul_freighter.png')), 1);
+  const mesh = meshOf('heavy_freighter.png');
+  assert.equal(countOf(mesh), 2, 'dwa ciężkie frachtowce — jedna siatka');
+  assert.equal(ShipProxyBatch3D.stats.drawCalls, 2);
   const M = dataOf(mesh);
-  assert.equal(Math.round(M[16]), trafficHullRenderSize('heavy_freighter').w, 'druga instancja w skali 1800 j.');
+  assert.equal(Math.round(M[0]), trafficHullRenderSize('heavy_freighter').w, 'instancja w skali 1800 j.');
 });
 
 test('rodzaj rośnie ponad pojemność początkową bez gubienia instancji', () => {

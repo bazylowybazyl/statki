@@ -31,6 +31,10 @@ export const HULL_COLLISION_ARMOR = Object.freeze({
   smuggler: 0.8,
   repair_drone: 0.35,
   distress_beacon_ship: 0.5,
+  // Sprite'y Z11 (E13): łowca i kuter policji — lekkie okręty (jak fregata TN 1, ciut pewniej niż przemytnik), ratownik — cywil.
+  bounty_hunter: 1.1,
+  police_cutter: 1,
+  rescue_ship: 0.6,
   // Holownik serwisowy: ciężka rama pokładu-kołyski (nosi supercapital) — jak megafrachtowiec.
   service_tug: 2,
   fighter: 0.35,

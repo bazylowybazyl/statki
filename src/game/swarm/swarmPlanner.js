@@ -852,9 +852,10 @@ export function createSwarmPlanner(port, drones, opts = {}) {
   /**
    * Klatka planisty: status — Float32Array (4 na drona: faza, wykonane zadania, niesione
    * kontenery, czas czekania) z odczytu GPU (albo wykonawcy CPU); writer(drone, serial, rekord)
-   * — zapis zadania do pierścienia (slot serial % 2).
+   * — zapis zadania do pierścienia (slot serial % 2). assignNew = false — bez nowych przydziałów (gra: koniec
+   * okna postoju — drony kończą zadania w toku i wracają do gniazd; księga dalej przyjmuje wykonane).
    */
-  function update(time, status, writer) {
+  function update(time, status, writer, assignNew = true) {
     for (const dr of D) {
       const o = dr.index * 4;
       const phase = status[o] | 0;
@@ -879,6 +880,7 @@ export function createSwarmPlanner(port, drones, opts = {}) {
       mt = Math.max(mt, st.trim);
     }
     stats.maxTrim = Math.max(stats.maxTrim, mt);
+    if (!assignNew) return;
     // Przydziały: kolejka z wyprzedzeniem (smart) albo tylko wolne drony (naive).
     const depth = smart ? T.lookahead : 1;
     const n = D.length;

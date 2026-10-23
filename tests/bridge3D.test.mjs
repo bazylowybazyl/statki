@@ -412,7 +412,8 @@ test('every model stands on its zone and its cell block fits the damage rows', (
       covered.add(name);
     }
   }
-  assert.deepEqual([...covered].sort(), BRIDGE3D_KIND_ORDER.filter((n) => n !== 'tn_3').sort(), 'każdy rodzaj modelu (poza III — bez kadłuba TN) na kadłubie dema');
+  // Poziom III (krążownik) nie ma kadłuba TN, ale od E13 stoi na kadłubach ruchu (frachtowiec DZ, rafineria…).
+  assert.deepEqual([...covered].sort(), [...BRIDGE3D_KIND_ORDER].sort(), 'każdy rodzaj modelu na kadłubie dema');
   assert.equal(BRIDGE3D_TUNE.enabled, true);
 });
 

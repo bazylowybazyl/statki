@@ -7,12 +7,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { isAbsolute } from 'node:path';
 
 // hullBodies.js czyta window.wrecks — przed importem.
 globalThis.window = globalThis.window || {};
 window.wrecks = window.wrecks || [];
 
 const { SHIP_EDITOR_DEFAULTS } = await import('../src/data/hardpointEditorDefaults.js');
+const { TRAFFIC_HULLS } = await import('../src/data/trafficHulls.js');
 const { getHullRenderSize, getWeaponTierForHull } = await import('../src/data/ships.js');
 const { HullBodies } = await import('../src/game/hullBodies.js');
 const { makeBridgeShip } = await import('./helpers/bridgeHulls.mjs');
@@ -372,11 +375,15 @@ const BRIDGE_HULL_SPRITES = {
   pirate_frigate: ['src/assets/ships/piratefrigate.png', 1942, 809, 'pirate_frigate'],
   pirate_destroyer: ['src/assets/ships/piratedestroyer.png', 1840, 854, 'pirate_destroyer'],
   pirate_supercapital: ['src/assets/ships/piratecapital.png', 1671, 941, 'pirate_supercapital'],
-  megafreighter: ['assets/megafreighterfront.png', 1672, 941, 'megafreighter']
+  megafreighter: ['assets/megafreighterfront.png', 1672, 941, 'megafreighter'],
+  // Kadłuby ruchu v2 (E13): sprite i płótno z rejestru TRAFFIC_HULLS (profil = id kadłuba).
+  ...Object.fromEntries(Object.keys(TRAFFIC_HULLS)
+    .filter((id) => !TRAFFIC_HULLS[id].editorKey && id !== 'megafreighter' && id !== 'service_tug')
+    .map((id) => [id, [fileURLToPath(TRAFFIC_HULLS[id].sprite), TRAFFIC_HULLS[id].png[0], TRAFFIC_HULLS[id].png[1], id]]))
 };
 
 function pngSize(path) {
-  const b = readFileSync(new URL(`../${path}`, import.meta.url));
+  const b = readFileSync(isAbsolute(path) ? path : new URL(`../${path}`, import.meta.url));
   return [b.readUInt32BE(16), b.readUInt32BE(20)];
 }
 
@@ -395,7 +402,8 @@ test('proposed zones clear every hardpoint, engine slot and core of the editor d
     assert.ok(cfg, `editor defaults for ${key}`);
     const [, pw, ph, profile] = BRIDGE_HULL_SPRITES[key];
     const size = getHullRenderSize(profile, pw, ph);
-    const margin = bridgeZoneMargin(Math.min(size.w / pw, size.h / ph), getWeaponTierForHull(profile));
+    // Kadłub cywilny bez wież (wpis `sideOnly` — kadłuby ruchu, E13): strefa nie przykrywa osi dysz (zapas 14 px PNG).
+    const margin = cfg.sideOnly ? 14 : bridgeZoneMargin(Math.min(size.w / pw, size.h / ph), getWeaponTierForHull(profile));
     for (const [variant, list] of Object.entries(entry.variants)) {
       const issues = validateBridgeLayout(list, cfg, { margin });
       assert.deepEqual(issues, [], `${key}/${variant}: ${JSON.stringify(issues)}`);
@@ -424,7 +432,10 @@ test('bridge hull keys: player hull ids, NPC types and frames, megafreighter loc
   assert.equal(npc({ type: 'megafreighter_front', shipFrame: 'megafreighter' }), 'megafreighter');
   assert.equal(npc({ type: 'megafreighter_wagon', shipFrame: 'megafreighter' }), null);
   assert.equal(npc({ type: 'megafreighter_back', shipFrame: 'megafreighter' }), null);
-  assert.equal(npc({ type: 'freighter-large', shipFrame: 'long_haul_freighter' }), null);
+  // Od E13 frachtowce ruchu mają mostek z ramy; frachtowiec bez ramy (typ vana) — nie.
+  assert.equal(npc({ type: 'freighter-large', shipFrame: 'long_haul_freighter' }), 'long_haul_freighter');
+  assert.equal(npc({ type: 'freighter-large' }), null);
+  assert.equal(npc({ type: 'frigate', isPirate: true, shipFrame: 'pirate_raider' }), 'pirate_raider');
   for (const key of Object.keys(BRIDGE_LAYOUT_PROPOSALS)) assert.ok(SHIP_EDITOR_DEFAULTS.ships[key], `${key}: klucz edytora`);
 });
 

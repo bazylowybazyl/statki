@@ -5,8 +5,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TRAFFIC_PROMOTION_TUNE, createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion,
-  trafficPromotionVerdict, trafficFleePoint, trafficActorPromotable, trafficPromotionOrder
+  trafficPromotionVerdict, trafficFleePoint, trafficActorPromotable, trafficPromotionOrder,
+  TRAFFIC_COMBAT_HULLS, trafficCombatRole, trafficWeaponFaction, trafficGrudgeTarget
 } from '../src/game/trafficPromotion.js';
+import { TRAFFIC_HULLS, TRAFFIC_UNIT_HULLS, resolveTrafficHullId } from '../src/data/trafficHulls.js';
+import { SUPPORT_SHIP_TEMPLATES, CAPITAL_SHIP_TEMPLATES } from '../src/data/ships.js';
+import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
+import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
 import { ACTOR_FLAG } from '../src/game/traffic/trafficProtocol.js';
 
 test('kolejka awansów: bez powtórek, limit NPC z ruchu naraz, kolejność trafień', () => {
@@ -30,6 +35,7 @@ test('kto awansuje: kurs (nie zapas floty), bez warpa, poniżej prędkości hipe
   assert.equal(trafficActorPromotable({ ...base, alive: false }), false);
   assert.equal(trafficActorPromotable({ ...base, id: -3, flags: ACTOR_FLAG.STOCK }), false, 'zapas floty jest nietykalny');
   assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.WARP }), false);
+  assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.DEPARTED }), false, 'odlot po końcu kursu — bez kursu do przejęcia');
   assert.equal(trafficActorPromotable({ ...base, vx: TRAFFIC_PROMOTION_TUNE.maxSpeed + 1 }), false, 'hipercruise ucieka');
   assert.equal(trafficActorPromotable({ ...base, hullId: 'megafreighter' }), false, 'megafrachtowiec to pociąg modułów');
 });
@@ -57,4 +63,41 @@ test('punkt ucieczki: od napastnika wzdłuż linii, napastnik w środku — dzio
   assert.deepEqual([Math.round(p.x), Math.round(p.y)], [1100, 0]);
   const q = trafficFleePoint({ x: 5, y: 5, angle: Math.PI / 2 }, 5, 5, 1000);
   assert.ok(Math.abs(q.x - 5) < 1e-9 && Math.abs(q.y - 1005) < 1e-9);
+});
+
+// E13 (2026-10-22): okręty ruchu po awansie walczą — broń z gniazd kadłuba, mózg i liczby klasy (szablon wezwania).
+test('okręty ruchu: rola bojowa ze szablonem i gniazdami, model lotu; cywile i role cywilne bez roli', () => {
+  for (const [hull, role] of Object.entries(TRAFFIC_COMBAT_HULLS)) {
+    assert.ok(TRAFFIC_HULLS[hull], `${hull}: kadłub ruchu`);
+    const tpl = role.capital ? CAPITAL_SHIP_TEMPLATES[role.template] : SUPPORT_SHIP_TEMPLATES[role.template];
+    assert.ok(tpl, `${hull}: szablon ${role.template}`);
+    assert.ok(['frigate', 'destroyer', 'battleship', 'carrier'].includes(role.type), `${hull}: typ ${role.type}`);
+    const editor = SHIP_EDITOR_DEFAULTS.ships[TRAFFIC_HULLS[hull].editorKey || hull];
+    assert.ok(editor?.hardpoints?.length > 0, `${hull}: gniazda broni`);
+    assert.ok(SHIP_FLIGHT_SPECS[hull], `${hull}: model lotu okrętu`);
+  }
+  // Role okrętowe kursów: garnizon / wojna (terran_*), łowca, policja, rajd, przemyt — walczą.
+  for (const unit of ['hunter', 'police', 'raider', 'smuggler', 'warfleet']) assert.ok(trafficCombatRole(resolveTrafficHullId(unit)), unit);
+  // Cywile: przewozy, górnictwo, złomiarze, ratownik — bez roli (uciekają albo stoją).
+  for (const unit of ['freighter-small', 'freighter-capital', 'tug', 'rescue', 'heavy_harvester', 'tanker', 'repair_drone']) {
+    assert.equal(trafficCombatRole(resolveTrafficHullId(unit)), null, unit);
+  }
+  assert.equal(TRAFFIC_UNIT_HULLS.rescue, 'rescue_ship');
+  assert.equal(trafficWeaponFaction('pirates'), 'pirate');
+  assert.equal(trafficWeaponFaction('terra_nova'), 'terran');
+  assert.equal(trafficWeaponFaction('belt_union', true), 'pirate');
+  assert.equal(trafficWeaponFaction('mars_yards'), 'terran');
+});
+
+test('okręt z urazą bije gracza tylko widocznego (maskowanie) i w zasięgu; hulk mostka nie wraca do bańki', () => {
+  const npc = { x: 0, y: 0 };
+  const player = { pos: { x: 5000, y: 0 } };
+  assert.equal(trafficGrudgeTarget(npc, player, () => false), player);
+  assert.equal(trafficGrudgeTarget(npc, player, () => true), null, 'zamaskowany');
+  assert.equal(trafficGrudgeTarget(npc, { pos: { x: 25000, y: 0 } }, () => false), null, 'poza zasięgiem');
+  assert.equal(trafficGrudgeTarget(npc, { ...player, dead: true }, () => false), null);
+  const st = createTrafficPromotion();
+  const hulk = { x: 1e6, y: 0, isBridgeHulk: true, _lastPlayerHit: 0, __trafficPromotedAt: 0 };
+  assert.equal(trafficPromotionVerdict(st, hulk, 1000, 0, 0), 'keep', 'hulk dryfuje do wraku');
+  assert.equal(trafficPromotionVerdict(st, { ...hulk, isBridgeHulk: false }, 1000, 0, 0), 'demote');
 });

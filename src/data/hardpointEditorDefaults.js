@@ -7,7 +7,12 @@ export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 const civilSide = (id, x, y, mount) => ({
   id, x, y, deg: y < 0 ? 180 : 0, offsetX: 0, offsetY: 0, mount, gimbalMinDeg: -90, gimbalMaxDeg: 90
 });
-// Frachtowiec dalekiego zasięgu — ten sam sprite rysuje dziś ciężki frachtowiec (TRAFFIC_HULLS.heavy_freighter).
+// Dysza MAIN kadłuba ruchu (oś z TRAFFIC_HULLS[].main): deg 90 — wydech ku rufie, jak dysze MAIN floty.
+const trafficMain = (id, x, y) => ({ id, x, y, deg: 90, offsetX: 0, offsetY: 0 });
+// Kadłub cywilny ruchu v2: dysze MAIN tylko do obrazu i SIDE (runtime NPC — applySideOnlyLayout), bez gniazd.
+const trafficCivilHull = (label, main, side) => ({ label, frontAxis: '+X', sideOnly: true, engines: { main, side } });
+// Frachtowiec dalekiego zasięgu.
+const LONG_HAUL_MAIN = [trafficMain('main_1', -786, -148), trafficMain('main_2', -805, -18), trafficMain('main_3', -786, 114)];
 const LONG_HAUL_SIDE = [
   civilSide('side_front_left', 300, -196, 'upper_left'),
   civilSide('side_front_right', 300, 165, 'upper_right'),
@@ -34,10 +39,10 @@ export const SHIP_EDITOR_DEFAULTS = {
       engines: { main: [], side: [] },
       lights: { position: [], road: [] }
     },
-    // Frachtowce cywilne i lokomotywa megafrachtowca NPC (2026-10-07): SAME dysze SIDE — modele 3D dysz w szarej
+    // Frachtowce cywilne i lokomotywa megafrachtowca NPC (2026-10-07): dysze SIDE — modele 3D dysz w szarej
     // palecie cywilnej (sideThrusterPaletteFor) i strugi SIDE. `sideOnly`: runtime NPC (npcHardpointRuntime.js)
-    // bierze z wpisu tylko dysze SIDE — bez dysz MAIN (npcHasPhysicalThrusters przełączyłby frachtowcom ścieżkę
-    // lotu), gniazd, rdzeni i świateł. Po 4 w narożnikach kadłuba: oś dyszy na płaskim odcinku krawędzi alfy
+    // bierze z wpisu tylko dysze — SIDE i (od E13, 2026-10-22) MAIN jako sam obraz (`visual.mainVisualOnly`:
+    // npcHasPhysicalThrusters nie przełącza frachtowcom ścieżki lotu), bez gniazd, rdzeni i świateł. Po 4 w narożnikach kadłuba: oś dyszy na płaskim odcinku krawędzi alfy
     // sprite'a, ~0,5 promienia wylotu (SIDE_NOZZLE_RADIUS × skala klasy kadłuba) w głąb, sponson poza lukami
     // ładowni (cargoBays.js) i strefą mostka lokomotywy; px PNG od środka płótna, y w dół = prawa burta.
     // Lokomotywa ma własny klucz: wpis `megafreighter` czyta układ gracza (applyPlayerEditorEngineLayoutFromStorage
@@ -47,7 +52,7 @@ export const SHIP_EDITOR_DEFAULTS = {
       frontAxis: '+X',
       sideOnly: true,
       engines: {
-        main: [],
+        main: [trafficMain('main_1', -448, -114), trafficMain('main_2', -448, 104)],
         side: [
           civilSide('side_front_left', 160, -131, 'upper_left'),
           civilSide('side_front_right', 160, 120, 'upper_right'),
@@ -61,7 +66,7 @@ export const SHIP_EDITOR_DEFAULTS = {
       frontAxis: '+X',
       sideOnly: true,
       engines: {
-        main: [],
+        main: [trafficMain('main_1', -785, -156), trafficMain('main_2', -814, -12), trafficMain('main_3', -785, 132)],
         side: [
           civilSide('side_front_left', 375, -221, 'upper_left'),
           civilSide('side_front_right', 375, 194, 'upper_right'),
@@ -74,13 +79,22 @@ export const SHIP_EDITOR_DEFAULTS = {
       label: 'Frachtowiec dalekiego zasięgu',
       frontAxis: '+X',
       sideOnly: true,
-      engines: { main: [], side: LONG_HAUL_SIDE }
+      engines: { main: LONG_HAUL_MAIN, side: LONG_HAUL_SIDE }
     },
+    // Ciężki frachtowiec — własny sprite Z11 (E13): 4 dysze MAIN, SIDE poza lukami ładowni 3 × 8.
     heavy_freighter: {
       label: 'Ciężki frachtowiec',
       frontAxis: '+X',
       sideOnly: true,
-      engines: { main: [], side: LONG_HAUL_SIDE }
+      engines: {
+        main: [trafficMain('main_1', -815, -181), trafficMain('main_2', -815, -71), trafficMain('main_3', -815, 40), trafficMain('main_4', -815, 148)],
+        side: [
+          civilSide('side_front_left', 300, -232, 'upper_left'),
+          civilSide('side_front_right', 300, 195, 'upper_right'),
+          civilSide('side_rear_left', -670, -256, 'lower_left'),
+          civilSide('side_rear_right', -672, 216, 'lower_right')
+        ]
+      }
     },
     // Holownik serwisowy (src/game/serviceTug.js; sprite zastępczy = przebarwiony heavy_freighter_empty.png, px płótna
     // 1774 × 887 od środka): 4 bębny dysz MAIN na rufie (ciąg i plazma skoku z ładunkiem), 4 dysze SIDE poza pokładem
@@ -133,6 +147,133 @@ export const SHIP_EDITOR_DEFAULTS = {
         ]
       }
     },
+    // Kadłuby ruchu v2 (E13, 2026-10-22): dane pełnego kadłuba gry dla statków bańki awansowanych do NPC
+    // (src/game/trafficPromotion.js). Cywile — wpis `sideOnly` jak frachtowce wyżej: dysze SIDE (modele i strugi) i dysze
+    // MAIN tylko do obrazu (`trafficCivilHull`, runtime: visual.mainVisualOnly — lot bez zmian); mostek, rdzeń i zbiornik
+    // są w tabelach BRIDGE_LAYOUT_PROPOSALS, REACTOR_CORE_MARKERS i FUEL_TANK_MARKERS. Okręty (przemytnik, rajder,
+    // łowca nagród, kuter policji) — pełny wpis: gniazda (broń dostają po awansie — equipNpcWeapons), dysze MAIN i SIDE.
+    // Dysze MAIN = TRAFFIC_HULLS[].main (te same osie co proxy bańki), SIDE dobrane regułami
+    // tests/freighterSideThrusters.test.mjs (oś ~0,5 R od krawędzi alfy, wydech w pustkę, sponson na kadłubie).
+    // Zrzuty znaczników: .tmp/e13/znaczniki_<kadłub>.png (narzędzie w opisie commita E13).
+    heavy_harvester: trafficCivilHull('Ciężki kombajn górniczy', [trafficMain('main_1', -797, -193), trafficMain('main_2', -838, -96), trafficMain('main_3', -827, -24), trafficMain('main_4', -837, 50), trafficMain('main_5', -797, 145)], [
+      civilSide('side_front_left', 200, -250, 'upper_left'),
+      civilSide('side_front_right', 200, 202, 'upper_right'),
+      civilSide('side_rear_left', -560, -296, 'lower_left'),
+      civilSide('side_rear_right', -560, 248, 'lower_right')
+    ]),
+    belter: trafficCivilHull('Belter', [trafficMain('main_1', -594, -161), trafficMain('main_2', -591, -22), trafficMain('main_3', -594, 116)], [
+      civilSide('side_front_left', 78, -195, 'upper_left'),
+      civilSide('side_front_right', 78, 151, 'upper_right'),
+      civilSide('side_rear_left', -560, -193, 'lower_left'),
+      civilSide('side_rear_right', -560, 148, 'lower_right')
+    ]),
+    surveyor: trafficCivilHull('Zwiadowca złóż', [trafficMain('main_1', -740, -43), trafficMain('main_2', -740, 29)], [
+      civilSide('side_front_left', 24, -176, 'upper_left'),
+      civilSide('side_front_right', 22, 158, 'upper_right'),
+      civilSide('side_rear_left', -450, -253, 'lower_left'),
+      civilSide('side_rear_right', -450, 236, 'lower_right')
+    ]),
+    refinery_tender: trafficCivilHull('Mobilna rafineria', [trafficMain('main_1', -757, -186), trafficMain('main_2', -758, -18), trafficMain('main_3', -757, 150)], [
+      civilSide('side_front_left', 50, -267, 'upper_left'),
+      civilSide('side_front_right', 48, 232, 'upper_right'),
+      civilSide('side_rear_left', -600, -305, 'lower_left'),
+      civilSide('side_rear_right', -600, 269, 'lower_right')
+    ]),
+    tanker: trafficCivilHull('Tankowiec', [trafficMain('main_1', -784, -153), trafficMain('main_2', -806, -17), trafficMain('main_3', -784, 121)], [
+      civilSide('side_front_left', 310, -212, 'upper_left'),
+      civilSide('side_front_right', 308, 179, 'upper_right'),
+      civilSide('side_rear_left', -560, -240, 'lower_left'),
+      civilSide('side_rear_right', -560, 205, 'lower_right')
+    ]),
+    salvage_hauler: trafficCivilHull('Złomiarz', [trafficMain('main_1', -789, -149), trafficMain('main_2', -808, -16), trafficMain('main_3', -789, 118)], [
+      civilSide('side_front_left', 350, -179, 'upper_left'),
+      civilSide('side_front_right', 350, 151, 'upper_right'),
+      civilSide('side_rear_left', -628, -217, 'lower_left'),
+      civilSide('side_rear_right', -628, 186, 'lower_right')
+    ]),
+    construction_tug: trafficCivilHull('Holownik budowlany', [trafficMain('main_1', -727, -132), trafficMain('main_2', -728, -18), trafficMain('main_3', -727, 97)], [
+      civilSide('side_front_left', 308, -160, 'upper_left'),
+      civilSide('side_front_right', 308, 125, 'upper_right'),
+      civilSide('side_rear_left', -638, -173, 'lower_left'),
+      civilSide('side_rear_right', -638, 138, 'lower_right')
+    ]),
+    smuggler: {
+      label: 'Przemytnik',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'smu_main_1', type: 'main', x: 500, y: -15 },
+        { id: 'smu_main_2', type: 'main', x: 90, y: -15 },
+        { id: 'smu_aux_3', type: 'aux', x: -250, y: -160 },
+        { id: 'smu_aux_4', type: 'aux', x: -250, y: 135 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -732, -111), trafficMain('main_2', -730, -11), trafficMain('main_3', -732, 89)],
+        side: [civilSide('side_front_left', 238, -167, 'upper_left'), civilSide('side_front_right', 238, 143, 'upper_right'), civilSide('side_rear_left', -500, -212, 'lower_left'), civilSide('side_rear_right', -500, 189, 'lower_right')]
+      }
+    },
+    pirate_raider: {
+      label: 'Rajder piratów',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'pir_main_1', type: 'main', x: 160, y: -185 },
+        { id: 'pir_main_2', type: 'main', x: 160, y: 178 },
+        { id: 'pir_main_3', type: 'main', x: -140, y: -205 },
+        { id: 'pir_main_4', type: 'main', x: -140, y: 192 },
+        { id: 'pir_aux_5', type: 'aux', x: 30, y: -118 },
+        { id: 'pir_aux_6', type: 'aux', x: 30, y: 98 },
+        { id: 'pir_missile_7', type: 'missile', x: -110, y: -20 },
+        { id: 'pir_missile_8', type: 'missile', x: -250, y: -20 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -784, -122), trafficMain('main_2', -778, -2), trafficMain('main_3', -784, 118)],
+        side: [civilSide('side_front_left', 70, -166, 'upper_left'), civilSide('side_front_right', 70, 163, 'upper_right'), civilSide('side_rear_left', -550, -229, 'lower_left'), civilSide('side_rear_right', -550, 225, 'lower_right')]
+      }
+    },
+    distress_beacon_ship: trafficCivilHull('Statek z boją alarmową', [trafficMain('main_1', -560, -72), trafficMain('main_2', -560, 98)], [
+      civilSide('side_front_left', 126, -163, 'upper_left'),
+      civilSide('side_front_right', 150, 186, 'upper_right'),
+      civilSide('side_rear_left', -390, -166, 'lower_left'),
+      civilSide('side_rear_right', -388, 193, 'lower_right')
+    ]),
+    repair_drone: trafficCivilHull('Dron naprawczy', [trafficMain('main_1', -320, -116), trafficMain('main_2', -320, 34)], [
+      civilSide('side_rear_left', -70, -215, 'lower_left'),
+      civilSide('side_rear_right', -70, 143, 'lower_right')
+    ]),
+    bounty_hunter: {
+      label: 'Łowca nagród',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'bou_main_1', type: 'main', x: 290, y: -5 },
+        { id: 'bou_main_2', type: 'main', x: -410, y: -155 },
+        { id: 'bou_main_3', type: 'main', x: -410, y: 115 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -812, -124), trafficMain('main_2', -812, 115)],
+        side: [civilSide('side_front_left', 118, -150, 'upper_left'), civilSide('side_front_right', 118, 142, 'upper_right'), civilSide('side_rear_left', -560, -213, 'lower_left'), civilSide('side_rear_right', -560, 202, 'lower_right')]
+      }
+    },
+    police_cutter: {
+      label: 'Kuter policji',
+      frontAxis: '+X',
+      hardpoints: [
+        { id: 'pol_main_1', type: 'main', x: 390, y: -5 },
+        { id: 'pol_main_2', type: 'main', x: -390, y: -5 }
+      ],
+      cores: [],
+      engines: {
+        main: [trafficMain('main_1', -754, -172), trafficMain('main_2', -754, 173)],
+        side: [civilSide('side_front_left', 372, -173, 'upper_left'), civilSide('side_front_right', 374, 172, 'upper_right'), civilSide('side_rear_left', -500, -303, 'lower_left'), civilSide('side_rear_right', -500, 302, 'lower_right')]
+      }
+    },
+    rescue_ship: trafficCivilHull('Statek ratunkowy', [trafficMain('main_1', -770, -172), trafficMain('main_2', -770, 168)], [
+      civilSide('side_front_left', 240, -262, 'upper_left'),
+      civilSide('side_front_right', 240, 258, 'upper_right'),
+      civilSide('side_rear_left', -560, -277, 'lower_left'),
+      civilSide('side_rear_right', -560, 273, 'lower_right')
+    ]),
     "capital_carrier": {
     "label": "Legacy Capital Carrier",
     "frontAxis": "+X",
