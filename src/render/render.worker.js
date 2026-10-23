@@ -26,7 +26,7 @@ if (isWorker) {
     renderMode: 'msg', ticks: 0, waits: 0, abandoned: 0, rendered: 0, msgRenders: 0, msgLagSum: 0, msgN: 0,
     descriptors: [], topologies: [], coreDescs: new Map(), stationDescs: [], resources: [],
     dict: { values: [], value(c) { return c >= 0 ? this.values[c] : undefined; } },
-    cam: { x: 0, y: 0, zoom: 1 }, cull: { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 },
+    cam: { x: 0, y: 0, zoom: 1, roll: 0 }, cull: { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 },
     sun: { x: 0, y: 0, r: 0 }, frames: 0, errors: 0,
     // strumień rozkazów (RW-40b): czytelnik pierścienia strony, pociski-lustra po slocie (SHOTS)
     cmd: null, cmdBuf: null, evFrame: -1, pageEv: new Float64Array(64).fill(-1), shots: [], shotList: [],
@@ -775,7 +775,7 @@ if (isWorker) {
     // w renderSingle; bez tego dym w workerze przenikał kadłuby i hale (strona woła setObstacleInput na swoim reżyserze)
     try { const ex = globalThis.__explosions; if (ex && st.gasObstBlk) ex.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); } catch (e) { modFail('przeszkody gazu', e); }
     const cam = st.cam;
-    cam.x = h[H.CAM_X]; cam.y = h[H.CAM_Y]; cam.zoom = h[H.CAM_ZOOM];
+    cam.x = h[H.CAM_X]; cam.y = h[H.CAM_Y]; cam.zoom = h[H.CAM_ZOOM]; cam.roll = h[H.CAM_ROLL] || 0;   // obrót kadru (hipercruise — viewRoll.js)
     const c = st.cull;
     c.x = h[H.CULL_X]; c.y = h[H.CULL_Y]; c.halfW = h[H.CULL_HALF_W]; c.halfH = h[H.CULL_HALF_H];
     c.drawHalfW = h[H.CULL_DRAW_HALF_W]; c.drawHalfH = h[H.CULL_DRAW_HALF_H];
@@ -804,7 +804,7 @@ if (isWorker) {
       if (ra < 0) wo.exitRamp = null;
       else { const r = st.warpRamp; r.active = ra === 1; r.age = W0[WD.WARP_EXIT_AGE]; r.tBrake = W0[WD.WARP_EXIT_TBRAKE]; wo.exitRamp = r; }
       const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
-      cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
+      cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM]; cns.roll = h[H.CAMNS_ROLL] || 0;
       const wf = st.warpFrame;
       wf.dt = Number.isFinite(mir.frame.dt) ? mir.frame.dt : dt; wf.cam = cns; wf.camShake = cam; wf.camFollow = mir.frame.camFollow;
       wf.ship = rm.player; wf.trafficTime = mir.frame.trafficTime; wf.lensAllowed = mir.frame.lensAllowed;
@@ -812,7 +812,7 @@ if (isWorker) {
     } } catch (e) { modFail('warp', e); }
     try { if (st.planets && globalThis.updatePlanets3D) {
       const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
-      cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM];
+      cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM]; cns.roll = h[H.CAMNS_ROLL] || 0;
       if (globalThis.setSkyZone) globalThis.setSkyZone(st.skyZone || null);
       globalThis.updatePlanets3D(h[H.FRAME_DT], cns);
     } } catch (e) { modFail('planety', e); }
@@ -854,7 +854,7 @@ if (isWorker) {
       if (sg) { st.spaceGas.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); st.spaceGas.submit(sg); }
     } } catch (e) { modFail('gaz przestrzeni', e); }
     try { if (st.dust) {
-      const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM] });
+      const cns = st.camNs || (st.camNs = { x: h[H.CAMNS_X], y: h[H.CAMNS_Y], zoom: h[H.CAMNS_ZOOM], roll: h[H.CAMNS_ROLL] || 0 });
       st.dust.frame(dt, cns, null, st.dustOn !== false);
     } } catch (e) { modFail('pył', e); }
     try { stations.updateStations3D(rm.stations); } catch (e) { modFail('stacje', e); }

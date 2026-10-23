@@ -626,17 +626,19 @@ test('kursor zamrożony przy menu PPM, kole ŚPM, Alt, tablecie i CIC; poza kanw
   const render = sliceFunction(html, 'function render(alpha, frameDt) {');
   assert.match(render, /rigIn\.lookAway = !mouse\.overCanvas;/);
   // reżyser kadru przed rigiem: przesunięcie w px tej klatki i tłumienie kursora
-  assert.match(render, /stepCameraDirectorFrame\(frameDt \|\| 0, interpPos\.x, interpPos\.y\);\s*rigIn\.biasX = cameraDirector\.biasX \* zoomSafe;\s*rigIn\.biasY = cameraDirector\.biasY \* zoomSafe;\s*rigIn\.lookScale = cameraDirector\.lookScale;[\s\S]{0,160}?stepCameraRig\(/);
+  // (obrót kadru w hipercruisie, 2026-10-23: przesunięcie reżysera do osi ekranu — rollToScreen o −roll)
+  assert.match(render, /stepCameraDirectorFrame\(frameDt \|\| 0, interpPos\.x, interpPos\.y\);\s*const bScr = rollToScreen\(cameraDirector\.biasX \* zoomSafe, cameraDirector\.biasY \* zoomSafe, rigRoll, _rollTmp\);\s*rigIn\.biasX = bScr\.x;\s*rigIn\.biasY = bScr\.y;\s*rigIn\.lookScale = cameraDirector\.lookScale;[\s\S]{0,160}?stepCameraRig\(/);
 });
 
 test('stery fregaty zwiadu: kamera prowadzi fregatę — wyprzedzenie z jej prędkości, bez zaglądania za kursorem', () => {
   const render = sliceFunction(html, 'function render(alpha, frameDt) {');
-  assert.match(render, /rigIn\.velX = scouting \? \(Number\(scoutSn\.vx\) \|\| 0\) : ship\.vel\.x;/);
+  // prędkość prowadzonego okrętu w osiach ekranu (obrót kadru — rollToScreen)
+  assert.match(render, /const vwx = scouting \? \(Number\(scoutSn\.vx\) \|\| 0\) : ship\.vel\.x;[\s\S]{0,200}?rollToScreen\(vwx, vwy, rigRoll, _rollTmp\);\s*rigIn\.velX = vScr\.x;/);
   assert.match(render, /rigIn\.maxSpeed = scouting \? Math\.max\(100, Number\(scoutSn\.maxSpeed\) \|\| 400\) : hullVmax;/);
   assert.match(render, /rigIn\.mode = scouting \? 'never' : OPTIONS\.cameraLook;/);
   assert.match(render, /rigIn\.leadGain = scouting \? cameraRigTune\.scoutLead : NaN;/);
   // kadr = prowadzony okręt + offset riga (dawniej offset zerowany — fregata zawsze na środku)
-  assert.match(render, /let rigX = followX \+ cameraRig\.offsetX \/ zoomSafe;/);
+  assert.match(render, /const offW = rollToWorld\(cameraRig\.offsetX \/ zoomSafe, cameraRig\.offsetY \/ zoomSafe, rigRoll, _rollTmp\);\s*let rigX = followX \+ offW\.x;/);
   assert.doesNotMatch(render, /rigX \+= \(scoutCamLast\.x - rigX\) \* scoutCamW;/);
   // uśpione okręty misji nie włączają postawy walki (skradanie z wyprzedzeniem lotu)
   const sig = sliceFunction(html, 'function sampleCameraCombatSignals(nowMs) {');

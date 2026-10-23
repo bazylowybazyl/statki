@@ -581,7 +581,7 @@ function drawHexlanceProjectiles(ctx, camera, worldToScreen) {
         const screen = worldToScreen(proj.x, proj.y, camera);
         ctx.save();
         ctx.translate(screen.x, screen.y);
-        ctx.rotate(proj.angle); 
+        ctx.rotate(proj.angle - (Number(camera?.roll) || 0));   // obrót kadru (hipercruise — cam.roll)
         
         ctx.globalCompositeOperation = 'screen';
         const aberrationOffset = 2 * zoom;

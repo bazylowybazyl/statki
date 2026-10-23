@@ -472,6 +472,30 @@ const QUALITY = Object.freeze({ steps: 44, oct: 3, particles: 520, jitter: 1.0 }
 const MAX_LEN = 110.0;
 const MAX_RAD = 3.0;
 
+/**
+ * Plazma HIPERCRUISE'U „nie ma / jest” (zgłoszenie użytkownika 2026-10-23: „brak ognia, hipercruise odpalony =
+ * ogień — zrobić fajny efekt”). Warp ładuje się dalej przez `ignite()` bez rozgrzania (wygląd bez zmian).
+ *   ROZGRZEWANIE (rozruch, `preheat`): bez płomienia — żar wylotu (`heat`, narasta z czasem heatRise) w poświatach
+ *     heatHot / heatMag, wylot pęcznieje (heatSize) i drży (tremor);
+ *   ZAPŁON (start lotu, `ignite` z rozgrzania): faza żarzenia pominięta (igniteSkip) — błysk × flash od razu, potem
+ *     PCHNIĘCIE płomienia: impuls 0 → 1 → 0 (kickRise / kickFall) wydłuża strumień × (1 + kickLen), rdzeń
+ *     × (1 + kickCore), przepływ × (1 + kickFlow);
+ *   DOGASANIE (wyjście, `fade`): ciąg opada przez `fade` s do fadeFloor i pulsuje (sputter — krztuszenie), potem
+ *     zwykłe gaszenie z poświatą.
+ */
+export const WARP_PLUME_HYPER = (() => {
+  const t = {
+    heatRise: 1.1, heatHot: 2.2, heatMag: 0.55, heatSize: 0.45, tremor: 0.32,
+    igniteSkip: 0.24, flash: 1.5,
+    kickRise: 0.12, kickFall: 0.45, kickLen: 0.75, kickCore: 0.5, kickFlow: 0.9,
+    fade: 0.9, fadeFloor: 0.14, sputter: 0.45
+  };
+  // szczyt impulsu (1 − e^(−k/rise))·e^(−k/fall) — normalizacja do 1
+  const kp = t.kickRise * Math.log(1 + t.kickFall / t.kickRise);
+  t.kickPeak = (1 - Math.exp(-kp / t.kickRise)) * Math.exp(-kp / t.kickFall);
+  return Object.freeze(t);
+})();
+
 const _m1 = new THREE.Matrix4();
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -507,10 +531,16 @@ export class WarpPlumeFX {
 
     this.ch = {
       power: 0, core: 0, len: 0, wid: 0, bright: 0,
-      sheath: 0, glow: 0, emit: 0, afterglow: 0, ignite: 0, boost: 0
+      sheath: 0, glow: 0, emit: 0, afterglow: 0, ignite: 0, boost: 0,
+      // hipercruise (2026-10-23): żar rozgrzanej dyszy bez płomienia (preheat), pchnięcie płomienia przy zapłonie
+      heat: 0, kick: 0
     };
     this.boost = false;
-    this.state = 'off';          // off | ignition | running | shutdown
+    // off | preheat (rozruch hipercruise'u: żar i drżenie, bez płomienia) | ignition | running
+    //     | fading (wyjście z hipercruise'u: płomień dogasa i się krztusi) | shutdown
+    this.state = 'off';
+    this._fromPreheat = false;   // zapłon z rozgrzanej dyszy: błysk od razu i pchnięcie płomienia (WARP_PLUME_HYPER)
+    this._kickAge = -1;          // wiek pchnięcia płomienia [s] (−1 — brak)
     this.throttle = 0;
     this._stateT = 0;
     this._time = fxRandom.next() * 10;
@@ -626,9 +656,30 @@ export class WarpPlumeFX {
 
   ignite() {
     if (this.state === 'ignition' || this.state === 'running') return;
+    // Z rozgrzanej dyszy (hipercruise) zapłon bez fazy żarzenia — błysk od razu, potem pchnięcie płomienia.
+    this._fromPreheat = this.state === 'preheat';
     this.state = 'ignition';
-    this._stateT = 0;
+    this._stateT = this._fromPreheat ? WARP_PLUME_HYPER.igniteSkip : 0;
     this.throttle = Math.max(this.throttle, 1);
+  }
+
+  /** Rozruch hipercruise'u: dysza żarzy się i drży, płomienia nie ma (zapłon — `ignite`). */
+  preheat() {
+    if (this.state === 'preheat' || this.state === 'ignition' || this.state === 'running') return;
+    this.state = 'preheat';
+    this._stateT = 0;
+    this.boost = false;
+  }
+
+  /** Wyjście z hipercruise'u: płomień dogasa (krztusi się) przez `WARP_PLUME_HYPER.fade` s, potem gaśnie. */
+  fade() {
+    if (this.state !== 'ignition' && this.state !== 'running') {
+      this.shutdown();
+      return;
+    }
+    this.state = 'fading';
+    this._stateT = 0;
+    this.boost = false;
   }
 
   shutdown() {
@@ -642,7 +693,8 @@ export class WarpPlumeFX {
   /** Instancja zgasła do końca — można ją oddać do puli. */
   get finished() {
     const ch = this.ch;
-    return this.state === 'off' && ch.bright < 0.004 && ch.sheath < 0.004 && ch.glow < 0.004 && ch.ignite < 0.01;
+    return this.state === 'off' && ch.bright < 0.004 && ch.sheath < 0.004 && ch.glow < 0.004 && ch.ignite < 0.01
+      && ch.heat < 0.004;
   }
 
   /** Stan jak po utworzeniu — przed ponownym użyciem z puli. */
@@ -650,6 +702,8 @@ export class WarpPlumeFX {
     for (const k of Object.keys(this.ch)) this.ch[k] = 0;
     this.boost = false;
     this.state = 'off';
+    this._fromPreheat = false;
+    this._kickAge = -1;
     this.throttle = 0;
     this._stateT = 0;
     this._ph.stretch = 1;
@@ -681,10 +735,16 @@ export class WarpPlumeFX {
     /* --------- automat stanów: każdy kanał ma inną charakterystykę ------- */
     let cmd = this.throttle;
     ch.ignite = approach(ch.ignite, 0, 9.0, dt);
+    const H = WARP_PLUME_HYPER;
 
     if (this.state === 'off') {
       cmd = 0;
       ch.afterglow = approach(ch.afterglow, 0, 5.0, dt);
+    } else if (this.state === 'preheat') {
+      // Rozruch hipercruise'u: płomienia nie ma (cmd 0), żar wylotu rośnie z czasem rozruchu.
+      cmd = 0;
+      ch.afterglow = approach(ch.afterglow, 0, 5.0, dt);
+      ch.heat = approach(ch.heat, 1 - Math.exp(-this._stateT / H.heatRise), 6.0, dt);
     } else if (this.state === 'ignition') {
       const T = this._stateT;
       ch.afterglow = 0;
@@ -692,7 +752,11 @@ export class WarpPlumeFX {
         cmd = 0.035 + 0.05 * (T / 0.24);
         ch.glow = approach(ch.glow, 1.35 * (0.25 + T / 0.24), 14, dt);
       } else {
-        if (ch.ignite < 0.05 && T < 0.34) ch.ignite = 1.0;   // błysk zapłonu
+        if (ch.ignite < 0.05 && T < 0.34) {
+          // błysk zapłonu; z rozgrzanej dyszy (hipercruise) mocniejszy, z pchnięciem płomienia
+          ch.ignite = this._fromPreheat ? H.flash : 1.0;
+          if (this._fromPreheat) this._kickAge = 0;
+        }
         const u = clampJs((T - 0.24) / 0.62, 0, 1);
         const e = 1 - Math.pow(1 - u, 2.6);
         cmd = lerp(0.085, this.throttle, e);
@@ -700,15 +764,33 @@ export class WarpPlumeFX {
       }
     } else if (this.state === 'running') {
       ch.afterglow = approach(ch.afterglow, 0, 6.0, dt);
+    } else if (this.state === 'fading') {
+      // Wyjście z hipercruise'u: ciąg opada do „krztuszenia” i pulsuje, potem zwykłe gaszenie (poświata).
+      const u = clampJs(this._stateT / H.fade, 0, 1);
+      const sput = Math.sin(t * 29.0) * 0.6 + Math.sin(t * 71.3) * 0.4;
+      cmd = lerp(this.throttle, H.fadeFloor, 1 - Math.pow(1 - u, 1.6)) * (1 + H.sputter * u * sput);
+      ch.afterglow = approach(ch.afterglow, 0, 6.0, dt);
+      if (this._stateT >= H.fade) { this.state = 'shutdown'; this._stateT = 0; }
     } else { // shutdown
       cmd = 0;
       ch.afterglow = approach(ch.afterglow, 1, 7.0, dt);
       if (this._stateT > 1.5) this.state = 'off';
     }
+    if (this.state !== 'preheat') ch.heat = approach(ch.heat, 0, this.state === 'ignition' ? 4.0 : 2.2, dt);
+    // Pchnięcie płomienia po zapłonie z rozgrzania: impuls 0 → 1 → 0 (szczyt ~0,25 s po błysku).
+    if (this._kickAge >= 0) {
+      this._kickAge += dt;
+      const k = this._kickAge;
+      ch.kick = (1 - Math.exp(-k / H.kickRise)) * Math.exp(-k / H.kickFall) / H.kickPeak;
+      if (k > H.kickFall * 6) { this._kickAge = -1; ch.kick = 0; }
+    } else {
+      ch.kick = 0;
+    }
 
     // 'dying' = shutdown ORAZ off — inaczej po zgaśnięciu kanały wracałyby
     // do wartości spoczynkowych i plume odradzałby się jako stały kikut.
-    const dying = (this.state === 'shutdown' || this.state === 'off');
+    // Rozgrzewanie (preheat) gasi kanały płomienia tak samo — świeci tylko żar (ch.heat).
+    const dying = (this.state === 'shutdown' || this.state === 'off' || this.state === 'preheat');
 
     ch.power = approach(ch.power, cmd, dying ? 7.5 : 3.6, dt);
     const coreTgt = Math.pow(clampJs((cmd - 0.07) / 0.93, 0, 1), 0.75);
@@ -732,14 +814,19 @@ export class WarpPlumeFX {
     const unstable = P.flicker * (0.45 + 0.95 * (1 - ch.power)) * (ch.power > 0.01 ? 1 : 0);
     const f = Math.sin(t * 37.3) * 0.5 + Math.sin(t * 91.7) * 0.28 + Math.sin(t * 13.1) * 0.22;
     this._flickMul = 1 + unstable * 0.11 * f + ch.ignite * 0.9;
+    // Drżenie rozgrzanej dyszy (rozruch hipercruise'u): rośnie z żarem, szybsze niż migotanie płomienia.
+    const hf = Math.sin(t * 47.1) * 0.5 + Math.sin(t * 113.3) * 0.3 + Math.sin(t * 19.7) * 0.2;
+    const heatFlick = 1 + H.tremor * ch.heat * hf;
 
     /* ----------------------------- uniformy plume ------------------------ */
     const U = this.plumeMat.uniforms;
     // B = siła dopalacza: strumień SZYBSZY, dłuższy, nieco węższy i gorętszy.
     const B = ch.boost * P.boostAmount;
-    const len = WARP_PLUME_BASE_LEN * P.plumeLength * Math.max(ch.len, 0.0001) * (1 + WARP_PLUME_BOOST_LEN * B);
+    const K = ch.kick;
+    const len = WARP_PLUME_BASE_LEN * P.plumeLength * Math.max(ch.len, 0.0001) * (1 + WARP_PLUME_BOOST_LEN * B)
+      * (1 + H.kickLen * K);
     const width = P.plumeWidth * Math.max(ch.wid, 0.0001) * (1 - 0.10 * Math.min(B, 1.4));
-    const flow = P.flowSpeed * (0.45 + 0.80 * ch.power) * (1 + 1.70 * B);
+    const flow = P.flowSpeed * (0.45 + 0.80 * ch.power) * (1 + 1.70 * B) * (1 + H.kickFlow * K);
 
     // Całkowanie faz: prędkość strumienia = pochodna fazy, więc zmiana flow
     // zmienia tylko tempo. Oktawy żyją w przestrzeni szumu (z·k); simplex ma
@@ -761,7 +848,7 @@ export class WarpPlumeFX {
     U.uTime.value = t % 1000;
     U.uLen.value = len;
     U.uWidth.value = width;
-    U.uCore.value = P.coreBrightness * ch.core * this._flickMul * (1 + 0.30 * B);
+    U.uCore.value = P.coreBrightness * ch.core * this._flickMul * (1 + 0.30 * B) * (1 + H.kickCore * K);
     U.uBright.value = Math.max(ch.bright, ch.sheath * 0.60) * this._flickMul * (1 + 0.10 * B);
     U.uTurb.value = P.turbulence * (1 + 0.45 * B);
     U.uFlowPh.value.set(ph.o1, ph.o2, ph.o3);
@@ -795,12 +882,14 @@ export class WarpPlumeFX {
     const glowT = t % GLOW_TIME_WRAP;
     const gh = this.glowHot.material.uniforms;
     gh.uTime.value = glowT;
-    gh.uSize.value = (0.80 + 0.50 * ch.power) * scl;
-    gh.uIntensity.value = (0.95 * ch.core + 3.2 * ch.ignite + 0.28 * ch.glow) * this._flickMul * (1 - ch.afterglow * 0.85);
+    gh.uSize.value = (0.80 + 0.50 * ch.power + H.heatSize * ch.heat) * scl;
+    gh.uIntensity.value = (0.95 * ch.core + 3.2 * ch.ignite + 0.28 * ch.glow) * this._flickMul * (1 - ch.afterglow * 0.85)
+      + H.heatHot * ch.heat * heatFlick;
     const gm = this.glowMag.material.uniforms;
     gm.uTime.value = glowT;
     gm.uSize.value = (2.3 + 1.7 * ch.power) * scl;
-    gm.uIntensity.value = (0.30 * ch.bright + 0.8 * ch.ignite) * this._flickMul * (1 - ch.afterglow * 0.35);
+    gm.uIntensity.value = (0.30 * ch.bright + 0.8 * ch.ignite) * this._flickMul * (1 - ch.afterglow * 0.35)
+      + H.heatMag * ch.heat * heatFlick;
     this.glowMag.position.z = 0.40 + 0.55 * ch.len;
     const gb = this.glowBlue.material.uniforms;
     gb.uTime.value = glowT;

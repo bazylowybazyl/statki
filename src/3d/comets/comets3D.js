@@ -20,6 +20,7 @@
 
 import * as THREE from 'three/webgpu';
 import { COMET_TUNE } from '../../data/comets.js';
+import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import { cometSheetExtent } from '../../game/comets.js';
 import { buildNucleusSurface, NUCLEUS_SDF_RANGE } from '../../game/cometNucleus.js';
 import {
@@ -50,6 +51,7 @@ function geometryFromSurface(surface) {
   return geo;
 }
 
+const _cometRollHalf = { hw: 0, hh: 0 };
 export class CometsView {
   /**
    * @param {object} core Core3D
@@ -263,7 +265,9 @@ export class CometsView {
     if (!cam) return false;
     if (free) return true;
     const z = Math.max(1e-5, Number(cam.zoom) || 1);
-    const hw = W * 0.5 / z, hh = H * 0.5 / z;
+    // obrót kadru (src/3d/viewRoll.js): pudło osi świata wokół obróconego kadru
+    const rh = rolledHalfExtents(W * 0.5 / z, H * 0.5 / z, cameraRoll(cam), _cometRollHalf);
+    const hw = rh.hw, hh = rh.hh;
     const cx = Number(cam.x) || 0, cy = -(Number(cam.y) || 0);
     const dx = Math.max(0, Math.abs(px - cx) - hw);
     const dy = Math.max(0, Math.abs(py - cy) - hh);

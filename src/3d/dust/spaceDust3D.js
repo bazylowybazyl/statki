@@ -131,15 +131,19 @@ export function createSpaceDustVertex(U, V, grid = null, tune = SPACE_DUST_TUNE)
     const SB = U.element(si.add(1)).toVar();     // prędkość [px/s], —, z w siatce świateł
     // Najbliższa kopia drobiny w kontenerze wokół środka kadru.
     const pos = fract(A0.xy.sub(SA.xy).add(0.5)).sub(0.5).mul(SA.z).toVar();
+    // Obrót kadru (hipercruise — src/3d/viewRoll.js): piksele kadru = R(roll)·osie sceny, G4.yz = (cos, sin roll);
+    // bez obrotu (1, 0). Światło i stożki dysz czytają punkt w osiach sceny (`pos`).
+    const posS = vec2(pos.x.mul(G4.y).sub(pos.y.mul(G4.z)), pos.x.mul(G4.z).add(pos.y.mul(G4.y))).toVar();
     const fade = clamp(SA.w.mul(1.0 + band).sub(A0.z).div(band), 0.0, 1.0);
     const speed = length(SB.xy).toVar();
     const L = min(speed.mul(G0.w), G1.x).toVar();
-    const dir = select(speed.greaterThan(1e-3), SB.xy.div(max(speed, 1e-3)), vec2(1.0, 0.0)).toVar();
+    const dir0 = select(speed.greaterThan(1e-3), SB.xy.div(max(speed, 1e-3)), vec2(1.0, 0.0));
+    const dir = vec2(dir0.x.mul(G4.y).sub(dir0.y.mul(G4.z)), dir0.x.mul(G4.z).add(dir0.y.mul(G4.y))).toVar();
     const w = max(A1.x, 0.3).toVar();
     const weight = fade.mul(G3.w).mul(motionGain(G1, speed, L, w)).mul(A1.y).mul(twinkleOf(G0.z, A1.w)).toVar();
     const reach = L.add(w.mul(2.6)).add(1.0);
     const out = vec4(2.0, 2.0, 2.0, 1.0).toVar();   // poza bryłą obcinania (drobina pominięta)
-    If(abs(pos.x).lessThan(G0.x.add(reach)).and(abs(pos.y).lessThan(G0.y.add(reach))).and(weight.greaterThan(1e-3)), () => {
+    If(abs(posS.x).lessThan(G0.x.add(reach)).and(abs(posS.y).lessThan(G0.y.add(reach))).and(weight.greaterThan(1e-3)), () => {
       const light = vec3(0.0).toVar();
       // Punkt płaszczyzny pod drobiną (scena względem kamery), z warstwy — głębszy pył dalej od świateł.
       const P = pos.div(G2.z).toVar();
@@ -150,7 +154,7 @@ export function createSpaceDustVertex(U, V, grid = null, tune = SPACE_DUST_TUNE)
         light.mulAssign(G2.w);
       }
       light.addAssign(plumeLight(U, dustPlumeBase(), int(G4.x), P, SB.w));
-      const px = writeStreak(V, pos, dir, L, w, weight, G3.xyz, light, A1.zw);
+      const px = writeStreak(V, posS, dir, L, w, weight, G3.xyz, light, A1.zw);
       // Głębia i w z rzutu początku siatki (kamera z góry: zależą tylko od z), xy w pikselach kadru.
       const ref = cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(0.0, 0.0, 0.0, 1.0))).toVar();
       out.assign(vec4(px.div(G0.xy).mul(ref.w), ref.z, ref.w));
@@ -271,7 +275,7 @@ function createDustGeometry(inst) {
   return geometry;
 }
 
-const _view = { camX: 0, camY: 0, zoomPx: 1, halfW: 1, halfH: 1, velX: 0, velY: 0, gridX: 0, gridY: 0, time: 0, vis: 0, plumes: 0 };
+const _view = { camX: 0, camY: 0, zoomPx: 1, halfW: 1, halfH: 1, roll: 0, velX: 0, velY: 0, gridX: 0, gridY: 0, time: 0, vis: 0, plumes: 0 };
 const _view3 = { camX: 0, camY: 0, camZ: 0, dist: 1, halfW: 1, halfH: 1, velX: 0, velY: 0, velZ: 0, gridX: 0, gridY: 0, gridZ: 0, time: 0, vis: 0, plumes: 0 };
 
 function copyToArray(node, data) {
@@ -440,6 +444,8 @@ export const SpaceDust3D = {
     _view.zoomPx = zoomPx;
     _view.halfW = target.width * 0.5;
     _view.halfH = target.height * 0.5;
+    // obrót kadru: kamera ortho three obrócona o −roll (Core3D.syncCamera)
+    _view.roll = -(Number(camera.rotation?.z) || 0);
     // tracker: świat gry (y w dół) → scena (y w górę)
     _view.velX = view.tracker.vx;
     _view.velY = -view.tracker.vy;

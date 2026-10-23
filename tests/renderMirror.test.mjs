@@ -174,7 +174,7 @@ test('lustro: trafienia tarczy (najnowsze pierwsze), wyłączenie wymuszone, zim
   assert.equal(m.weaponTier, 'L');
   // hipercruise (E5, 2026-10-22): `__hyperMode` → bity FLAGS2 → lustro (struga plazmy WARP — engineVfxSystem.js)
   assert.equal(m.__hyperMode, undefined);
-  for (const mode of ['charging', 'active', undefined]) {
+  for (const mode of ['charging', 'active', 'drop', undefined]) {
     e.__hyperMode = mode;
     step();
     assert.equal(rm.player.__hyperMode, mode, `__hyperMode ${mode}`);

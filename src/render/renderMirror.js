@@ -221,7 +221,8 @@ export function applyEntityPage(rm, m, v, s) {
   m.model3DProfileId = dict.value(i32[bi + EI.MODEL3D]);
   m.fighter = (flags2 & ENT_FLAG2.FIGHTER) !== 0;
   m.__hyperMode = (flags2 & ENT_FLAG2.HYPER_ACTIVE) !== 0 ? 'active'
-    : (flags2 & ENT_FLAG2.HYPER_CHARGING) !== 0 ? 'charging' : undefined;
+    : (flags2 & ENT_FLAG2.HYPER_CHARGING) !== 0 ? 'charging'
+    : (flags2 & ENT_FLAG2.HYPER_DROP) !== 0 ? 'drop' : undefined;
   m.weaponTier = dict.value(i32[bi + EI.WEAPON_TIER]);
   m.faction = dict.value(i32[bi + EI.FACTION]);
   m.factionId = dict.value(i32[bi + EI.FACTION_ID]);

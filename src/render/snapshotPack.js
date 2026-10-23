@@ -516,6 +516,9 @@ export class SnapshotPacker {
     h[HEAD.CAMNS_X] = ns ? raw(ns.x) : NaN;
     h[HEAD.CAMNS_Y] = ns ? raw(ns.y) : NaN;
     h[HEAD.CAMNS_ZOOM] = ns ? raw(ns.zoom) : NaN;
+    // obrót kadru (brak pola = 0 — kadr osiami świata)
+    h[HEAD.CAM_ROLL] = cam ? num(cam.roll) : 0;
+    h[HEAD.CAMNS_ROLL] = ns ? num(ns.roll) : 0;
     h[HEAD.SHAKE_PX_X] = num(f.shakePxX);
     h[HEAD.SHAKE_PX_Y] = num(f.shakePxY);
     const free = !!(cam && cam.mode === 'free3d' && cam.position && cam.quaternion);
@@ -657,6 +660,7 @@ export class SnapshotPacker {
     if (e._shieldForcedOff) flags2 |= ENT_FLAG2.SH_FORCED_OFF;
     if (e.__hyperMode === 'active') flags2 |= ENT_FLAG2.HYPER_ACTIVE;
     else if (e.__hyperMode === 'charging') flags2 |= ENT_FLAG2.HYPER_CHARGING;
+    else if (e.__hyperMode === 'drop') flags2 |= ENT_FLAG2.HYPER_DROP;
     i32[bi + EI.STATE] = ec.code(ecb + 1, e.state);
     i32[bi + EI.PHASE] = ec.code(ecb + 2, e.phase);
     i32[bi + EI.OWNER_ID] = this._tierBI[tbi + 2];

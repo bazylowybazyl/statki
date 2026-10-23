@@ -70,7 +70,9 @@ export const HEAD = fields([
   'N_ENT', 'N_BODY', 'N_NOZZLES', 'N_SHOTS', 'N_TURRETS', 'N_STATIONS', 'N_CORES',
   'NODE_F64_USED', 'NODE_U8_USED', 'N_BODIES_PACKED', 'N_NODES_PACKED',
   // pierścień rozkazów: numer ostatniego rekordu klatki (RW-21)
-  'EVENT_LAST'
+  'EVENT_LAST',
+  // obrót kadru kamery klatki i kamery bez wstrząsu (`cam.roll` [rad] — hipercruise, src/3d/viewRoll.js; 2026-10-23)
+  'CAM_ROLL', 'CAMNS_ROLL'
 ]);
 
 /** Bity HEAD.FLAGS. */
@@ -142,8 +144,9 @@ export const ENT_FLAG = Object.freeze({
 export const ENT_FLAG2 = Object.freeze({
   IS_PLAYER_FIELD: 1, CAPITAL: 2, SLEEPING: 4, CLOAK_FORCED: 8, FIGHTER: 16, SH_FORCE_OFF: 32, SH_FORCED_OFF: 64,
   HAS_RS: 128, HAS_COLD_SNAP: 256,
-  // hipercruise encji (`__hyperMode` 'charging' / 'active' — struga plazmy WARP na dyszach MAIN, engineVfxSystem.js)
-  HYPER_CHARGING: 512, HYPER_ACTIVE: 1024
+  // hipercruise encji (`__hyperMode` 'charging' / 'active' / 'drop' — plazma WARP na dyszach MAIN: żar, ogień,
+  // dogasanie — engineVfxSystem.js)
+  HYPER_CHARGING: 512, HYPER_ACTIVE: 1024, HYPER_DROP: 2048
 });
 
 /** Wyrzut atmosfery mostka (obiekt `vent` gry; ID = numer obiektu — tożsamość dla prepareEmitterDelays). */
