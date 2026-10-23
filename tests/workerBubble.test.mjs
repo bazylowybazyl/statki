@@ -361,15 +361,22 @@ test('koniec kursu przy stanowisku (rozładunek u celu): encja nie znika z pola 
   let prev = new Map();
   let vanishedDocked = 0;
   const seen = new Map();
+  // Odlot liczy się od końca kursu widzianego w tym teście — encja, która odlatywała już wcześniej (inny fokus
+  // poprzednich testów), nie pokaże odłączania.
+  const withCourse = new Set();
   let maxJump = 0;
   for (let f = 0; f < 10 * 400 && !([...seen.values()].some((v) => v.phases.includes('fly') && v.dist > 3000)); f++) {
     core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 10 });
     const cur = new Map(decode(got.actors).filter((a) => a.id >= 0).map((a) => [a.id, a]));
     for (const [id, a] of prev) if (!cur.has(id) && (a.phase === 'docked' || a.phase === 'capture')) vanishedDocked++;
     for (const [id, a] of cur) {
-      if (!(a.flags & ACTOR_FLAG.DEPARTED)) continue;
+      if (!(a.flags & ACTOR_FLAG.DEPARTED)) { withCourse.add(id); continue; }
       let v = seen.get(id);
-      if (!v) { v = { phases: [], x0: a.x, y0: a.y, dist: 0 }; seen.set(id, v); }
+      if (!v) {
+        if (!withCourse.has(id)) continue;
+        v = { phases: [], x0: a.x, y0: a.y, dist: 0 };
+        seen.set(id, v);
+      }
       if (v.phases[v.phases.length - 1] !== a.phase) v.phases.push(a.phase);
       v.dist = Math.hypot(a.x - v.x0, a.y - v.y0);
       const p = prev.get(id);

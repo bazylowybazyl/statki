@@ -75,6 +75,26 @@ Porty bez ringu (planety bez „Halo”, księżyce, Ceres, Westa, kryjówki) mi
 
 - **Wątek gry** (Node, 24 budowle): kolizja kadłuba w dysku koła 0,5–1 µs, bramka dalekiego NPC i pocisk ~0,06 µs.
 
+## Po scaleniu z `main` (a2cb2750: E12, E2, E13, E6 odlot, `drainNow`)
+
+- **Odlot po końcu kursu (E6 `beginDeparture`, flaga `DEPARTED`)** przy budowli: kierunek liczony od węzła portu
+  prowadził statek z końca wylotu przez budowlę (szczelina koła i ramię 0 krzyża patrzą na węzeł). Próba w Node
+  (każde stanowisko, krok 0,2 s): kroki z kadłubem w bryle krzyż ×1 / okrąg ×3 / koło ×4 / koło ×5 = 12 / 74 / 220 /
+  410. Poprawka: kierunek od środka budowli i `routeAround` (objazd dysków innych budowli) — 0 / 0 / 0 / 0, odlot za
+  dysk przy każdym stanowisku; regresja w `scripts/tests/portPaths.test.mjs` („odlot po końcu kursu”). W grze
+  (`doki-portow-gra.mjs --query renderWorker=1 --odlot 600`, próbki co 0,25 s gry, `.tmp/e14/odlot2/`): krzyż Fobos
+  (prom), okrąg Merkury (frachtowiec dalekiego zasięgu), koło Ceres (kontenerowiec) — odłączanie → lot, 0 próbek
+  ze środkiem albo rogiem kadłuba w bryle, skok między próbkami = prędkość × krok (≤ 320 j. przy 1200 j./s), wyjście
+  za dysk zapasu; na Ceres statek przecina obręcz w szczelinie (v = 700 — pas wylotu, połowa szczeliny 3000).
+- Po scaleniu: symulacja ziarna 7 identyczna z `main` a2cb2750 (poza czasem ticku), `npm test` zielony,
+  `node --test` bez porażek spoza `main`, start w workerze i przegląd portów — 0 pipeline'ów sync, 0 błędów.
+- **Oddanie kursu z pozą (E6 `detach { pose }`)**: kandydat bańki był wybierany po miejscu REKORDU — postój bez
+  `fromPos` (obsługa w porcie) stoi w rekordzie od razu w punkcie docelowym, często poza bańką, więc kurs oddany przez
+  NPC nie wracał (uśpione na `main`; wyszło w `tests/workerBubble.test.mjs`, bo ruch przy budowlach zmienia, który
+  statek test bierze). Teraz kandydat liczy się z pozy oddania (`viewState.handoff` w etapie oddania).
+- Test odlotu przy Ziemi (`workerBubble`) bierze tylko encje widziane w teście jeszcze z kursem — encja, która
+  odlatywała przed testem (fokus poprzednich testów), nie pokaże odłączania.
+
 ## Ruch wielu statków (Node, krok 0,2 s, statki największych klas mieszczących się na polu)
 
 Próba `20–30 kursów, przylot co 5–10 s, postój 60 s, odlot w losowym kierunku`; liczba kroków, w których dwa statki

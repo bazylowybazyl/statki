@@ -1934,6 +1934,13 @@ export function updateBubble(bubble, network, registry, activeCourses, focus, ra
       if (course.actorId || bubble.actors.has(course.id)) continue;
       if (course.status !== COURSE_STATUS.ACTIVE) continue;
       if (!recordPosition(network, course, _rec)) continue;
+      // Kurs oddany przez grę z pozą (E6) — w bańkę wchodzi tam, gdzie był NPC, nie w miejscu rekordu
+      // (postój bez `fromPos` stoi w rekordzie od razu w punkcie docelowym, często poza bańką).
+      const vs = course.viewState;
+      if (vs && vs.handoff && vs.stageIndex === course.stageIndex && Number.isFinite(vs.x) && Number.isFinite(vs.y)) {
+        _rec.x = vs.x;
+        _rec.y = vs.y;
+      }
       const dx = _rec.x - focus.x;
       const dy = _rec.y - focus.y;
       if (dx * dx + dy * dy > inner * inner) continue;

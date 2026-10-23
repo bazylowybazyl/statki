@@ -3,7 +3,7 @@
 // do tego pipeline'y synchroniczne (strona i worker renderu), błędy konsoli i kolizja gracza z bryłą.
 //
 //   node scripts/webgpu/doki-portow-gra.mjs [--query renderWorker=1] [--out .tmp/e14] [--porty io,mercury,ceres]
-//        [--rozgrzewka 2400] [--postoj 8] [--szczelina 240] [--krzyz 1800] [--krzyzMin 1] [--koszt 3] [--port 5463]
+//        [--rozgrzewka 2400] [--postoj 8] [--szczelina 240] [--krzyz 1800] [--krzyzMin 1] [--koszt 3] [--odlot 120] [--odlotKlatki 480] [--port 5463]
 //
 // Świat ruchu ziarno 7 rozgrzany `--rozgrzewka` s gry (kursy w portach), zegar krokowy harnessu (`__harness.step`).
 // Gracz stoi poza dyskiem zapasu budowli, kamera w trybie `rts` nad środkiem budowli (zoom dobrany do dysku).
@@ -20,6 +20,8 @@ const WARM = Number(args.rozgrzewka || 2400);
 const STAY = Number(args.postoj || 8);
 const SLOT_WAIT = Number(args.szczelina || 240);
 const COST = Number(args.koszt || 0);
+const ODLOT = Number(args.odlot || 0);
+const ODLOT_N = Number(args.odlotKlatki || 480);
 const PORTS = args.porty ? String(args.porty).split(',').map((s) => s.trim()).filter(Boolean) : null;
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 
@@ -217,6 +219,52 @@ try {
     }
     report.porty[id] = { ...at, statki: s, zblizenie: near };
     console.log('port', id, at.kind, JSON.stringify(s));
+
+    if (ODLOT) {
+      // Odlot po końcu kursu (E6, flaga DEPARTED 128) przy tej budowli: statek w odłączaniu, potem `--odlotKlatki`
+      // próbek co 0,25 s gry (do wyjścia za dysk zapasu) — środek i rogi kadłuba w bryłach doku
+      // (`PortDocks.pointInSolid`), skok pozy między próbkami; koło — gdzie statek przecina obręcz (|v| ≤ połowa szczeliny).
+      let target = null;
+      for (let k = 0; k < ODLOT * 2 && !target; k++) {
+        target = await ev(`(() => { const a = window.TrafficBubble.list.find((x) => (x.flags & 128) && x.phase === 'undock'
+          && x.berthId && x.berthId.startsWith(${JSON.stringify(id)} + ':'));
+          return a ? { id: a.id, hull: a.hullId, berth: a.berthId, len: a.length } : null; })()`);
+        if (!target) await waitGame(0.5);
+      }
+      const rows = [];
+      let rim = null;
+      if (target) {
+        let last = null;
+        for (let n = 0; n < ODLOT_N; n++) {
+          const a = await ev(`(() => { ${LOCAL} const a = window.TrafficBubble.byId.get(${target.id});
+            if (!a) return null;
+            const d = window.PortDocks.docks.find((x) => x.stationId === ${JSON.stringify(id)});
+            const l = toLocal(d, a.cx, a.cy);
+            const c = Math.cos(a.angle), s = Math.sin(a.angle), hl = a.length * 0.45, hw = a.width * 0.45;
+            let inSolid = window.PortDocks.pointInSolid(a.cx, a.cy) ? 1 : 0;
+            for (const [u, v] of [[hl, hw], [-hl, hw], [-hl, -hw], [hl, -hw]]) if (window.PortDocks.pointInSolid(a.cx + u * c - v * s, a.cy + u * s + v * c)) inSolid++;
+            return { faza: a.phase, x: a.cx, y: a.cy, v: Math.round(Math.hypot(a.vx, a.vy)), inSolid,
+              r: Math.round(Math.hypot(l.u, l.v)), lu: Math.round(l.u), lv: Math.round(l.v), keepR: d.keepR,
+              Rin: d.geometry.model.Rin ?? null, Rout: d.geometry.model.Rout ?? null, slotHalf: d.geometry.model.slotHalf ?? null }; })()`);
+          if (a && n % 40 === 0) {
+            await ev(CAMERA(a.x, a.y, Math.min(0.3, 900 / Math.max(1600, target.len * 4))));
+            await waitGame(0.02);
+            await screenshotPng(cdp, join(out, `${tag}-odlot-${String(n).padStart(2, '0')}.png`));
+          }
+          const skok = a && last ? Math.round(Math.hypot(a.x - last.x, a.y - last.y)) : null;
+          rows.push({ n, ...(a ? { faza: a.faza, v: a.v, skok, wBryle: a.inSolid, r: a.r, u: a.lu, w: a.lv } : { znikl: true }) });
+          if (a && a.Rin && last && last.r < a.Rin && a.r >= a.Rin) rim = { u: a.lu, v: a.lv, slotHalf: Math.round(a.slotHalf) };
+          if (!a || a.r > a.keepR + 3000) break;
+          last = a;
+          await waitGame(0.25);
+        }
+      }
+      report.porty[id].odlot = { cel: target, obrecz: rim, klatki: rows };
+      console.log('odlot', id, target ? JSON.stringify({ kadlub: target.hull, fazy: [...new Set(rows.map((r) => r.faza || 'znikł'))],
+        wBryle: rows.reduce((q, r) => q + (r.wBryle || 0), 0), maxSkok: Math.max(0, ...rows.map((r) => r.skok || 0)),
+        maxV: Math.max(0, ...rows.map((r) => r.v || 0)), probki: rows.length, rMax: Math.max(0, ...rows.map((r) => r.r || 0)),
+        obrecz: rim }) : `brak statku z końcem kursu przy stanowisku w ${ODLOT} s`);
+    }
 
     if (at.kind === 'wheel') {
       // Statek w szczelinie: czekanie (zegar krokowy) na encję między wewnętrzną a zewnętrzną krawędzią obręczy.
