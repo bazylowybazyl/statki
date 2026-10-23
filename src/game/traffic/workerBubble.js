@@ -27,11 +27,16 @@
  */
 
 import {
-  createBubble, updateBubble, clearBubble, releaseBubbleCourse, setBubblePorts, ACTOR_PHASE, VAN_CLASS_OF_UNIT
+  createBubble, updateBubble, clearBubble, releaseBubbleCourse, setBubblePorts, ACTOR_PHASE, VAN_CLASS_OF_UNIT,
+  dropDepartedActor
 } from './materializedFlight.js';
 import { createRingObstaclesForNetwork } from './ringRouter.js';
 import { getCourse, COURSE_STATUS } from './courseRegistry.js';
-import { createParkingRegistry, placeFleetStock } from './portParking.js';
+import {
+  createParkingRegistry, placeFleetStock, syncParking, reserveParkingSpot, buildDockOrbitParking
+} from './portParking.js';
+import { portEntryForBerth } from './portPaths.js';
+import { SHIP_STATE, getShip } from './transportCompanies.js';
 import { SYSTEM_MAP_PLANETS } from '../../data/systemMap.js';
 import { haloRingKey } from '../haloRingPlanets.js';
 import { computeHaloRingLayout } from '../../3d/haloRing/haloRingLayout.js';
@@ -65,8 +70,31 @@ export const BUBBLE_PORTS = null;
  * port z każdej strony i podejścia do niego, a nie sięga Księżyca.
  */
 export const BUBBLE_PORT_RANGE = 180_000;
+/**
+ * Promień fokusu przy portach i w studni planety (E15) — gra prosi o 60 tys. j. (`TRAFFIC_V2_BUBBLE_RADIUS`),
+ * przy porcie bańka bierze co najmniej tyle: statki w podejściu i odlocie widać dłużej, reda i orbita postojowa
+ * mieszczą się całe. Liczba z pomiaru kosztu (`docs/E15-widoczny-ruch.md`); górny limit encji — `maxActors`
+ * lotu (400) plus postój (`PARKED_VISIBLE_SLOTS`).
+ */
+export const BUBBLE_PORT_FOCUS_RADIUS = 100_000;
+/**
+ * Reda przy ringu (E15): statek firmy widać, gdy jego slot jest wśród tylu pierwszych w kolejności zapełniania
+ * pasma strefy (zwarty blok przy kotwicy strefy) — przy Ziemi ≤ 8 stref × 5 klas × N. Dalsze sloty stoją
+ * w rekordzie bez obrazu. Widoczność zależy od slotu, nie od gracza — statek nie miga przy ruchu kamery.
+ */
+export const PARKED_VISIBLE_SLOTS = 4;
+/**
+ * Najwyżej tyle encji w buforze `actors` — tyle mieści blok migawki obrazu (`TRAFFIC_BLOCK.CAP` w
+ * `src/render/blocks/trafficBlock.js`, strażnik w `tests/workerBubble.test.mjs`). Lot ma swój limit (`maxActors`
+ * 400), encje bez kursu (zapas floty, postój) biorą resztę, w tej kolejności.
+ */
+export const BUBBLE_ENTITY_LIMIT = 512;
+/** Nowy statek nie dostaje slotu redy bliżej gracza niż głębokość slotu + tyle [j.] (gracz ma pierwszeństwo). */
+const PARKED_PLAYER_CLEARANCE = 1500;
 
 const PHASE_INDEX = new Map(ACTOR_PHASES.map((phase, index) => [phase, index]));
+const PHASE_DOCKED = PHASE_INDEX.get(ACTOR_PHASE.DOCKED) ?? 2;
+const PHASE_HOLD = PHASE_INDEX.get(ACTOR_PHASE.HOLD) ?? 4;
 
 /**
  * Stan bańki rdzenia. `world` — świat ruchu (`buildTrafficWorld`).
@@ -80,13 +108,28 @@ export function createWorldBubble(world, options = {}) {
     rings: createRingObstaclesForNetwork(world.network, world.docks),
     docks: world.docks,
     zoneAt: (x, y) => planetZoneAt(wells, x, y),
+    departTarget: (course, actor, out) => departToParking(state, course, actor, out),
     ...(options.flight || {})
   });
   const state = {
     world,
     bubble,
     ports,
+    /** Studnie planet `[x, y, r²] × n` — bańka żyje w nich także z dala od portu (E15). */
+    wells,
     range: Number(options.range) > 0 ? Number(options.range) : BUBBLE_PORT_RANGE,
+    /** Promień fokusu przy portach (`bubbleFocusRadius`); 0 — tylko promień gry (testy). */
+    portRadius: options.portRadius !== undefined ? Math.max(0, Number(options.portRadius) || 0) : BUBBLE_PORT_FOCUS_RADIUS,
+    /**
+     * Postój bez kursu (E15, `refreshParkedShips`): plany i rejestry redy / orbity per port (`null` — port
+     * bez widocznego postoju: hangar kryjówki), widoczne statki (`list`), pokazane w ostatnim rozstawieniu
+     * (`shown`: `shipId` → wpis — oddanie pozy kursowi), odloty lecące na swój slot (`departing`: `shipId` →
+     * encja), porty przy fokusie, ostatni fokus (pierwszeństwo gracza).
+     */
+    parked: {
+      regs: new Map(), list: [], shown: new Map(), departing: new Map(), ports: new Set(),
+      byStation: new Map(), focus: { x: 0, y: 0, active: false }, handoffs: 0
+    },
     /** Kursy, które bańka może zmaterializować (z `buildBubble` rdzenia). */
     candidates: [],
     view: null,
@@ -148,7 +191,7 @@ export function bubblePortIds(state) {
   return state.ports || state.world.docks.keys();
 }
 
-/** Czy fokus jest przy porcie bańki. */
+/** Czy fokus jest przy porcie bańki albo w studni grawitacyjnej planety (E15). */
 export function bubblePortNear(state, x, y) {
   const network = state.world.network;
   const r2 = state.range * state.range;
@@ -159,15 +202,26 @@ export function bubblePortNear(state, x, y) {
     const dy = node.y - y;
     if (dx * dx + dy * dy <= r2) return true;
   }
-  return false;
+  return !!state.wells && planetZoneAt(state.wells, x, y) !== 1;
+}
+
+/**
+ * Promień bańki dla fokusu gry (E15): przy porcie i w studni planety co najmniej `BUBBLE_PORT_FOCUS_RADIUS`,
+ * gdzie indziej — promień gry.
+ */
+export function bubbleFocusRadius(state, x, y, r) {
+  const want = Math.max(0, Number(r) || 0);
+  if (!state || !(want > 0) || !(state.portRadius > want)) return want;
+  return bubblePortNear(state, x, y) ? state.portRadius : want;
 }
 
 /**
  * Po zmianie rynków (`market-add` / `market-remove`, kryjówki misji): układy doków świata do indeksu portów
- * bańki (stanowiska nowych rynków dostają ścieżki pomostu / hangaru).
+ * bańki (stanowiska nowych rynków dostają ścieżki pomostu / hangaru). Plany postoju liczą się od nowa.
  */
 export function refreshWorldBubblePorts(state) {
   setBubblePorts(state.bubble, state.world.docks);
+  state.parked.regs.clear();
 }
 
 /** Kandydaci do materializacji — kursy aktywne z bufora bańki rdzenia. */
@@ -230,8 +284,8 @@ export function releaseWorldBubbleCourse(state, course) {
 
 /**
  * Zapas okrętów frakcji portu (`world.shipyards.fleets` właściciela portu) rozstawiony na padach hal K-7
- * (`placeFleetStock`, rejestr redy wojskowej portu). Woła rdzeń po każdym kroku świata. Okręty na redzie
- * (nadmiar) nie wchodzą — pady to hala, reda czeka na rysowanie postoju bez kursu.
+ * (`placeFleetStock`, rejestr redy wojskowej portu). Woła rdzeń po każdym kroku świata. Nadmiar stoi na redzie
+ * wojskowej (E15: encja STOCK + PARKED, faza `hold`); chmura przelewu i hangar — bez obrazu.
  */
 export function refreshFleetStock(state) {
   const world = state.world;
@@ -251,17 +305,242 @@ export function refreshFleetStock(state) {
     const own = fleets.get(owner);
     const result = placeFleetStock(layout, reg, own ? { [owner]: own } : {});
     for (const [shipId, spot] of result.placements) {
-      if (spot.kind !== 'berth') continue;
-      let id = stock.ids.get(shipId);
-      if (id === undefined) stock.ids.set(shipId, id = -(++stock.seq));
+      const reda = spot.kind === 'reda';
+      if (spot.kind !== 'berth' && !reda) continue;
       const size = hullFootprint(spot.hullId);
       stock.list.push({
-        id, hullId: spot.hullId, factionId: spot.factionId, x: spot.x, y: spot.y, angle: spot.angle,
-        berthId: spot.berthId, length: size.length, width: size.width
+        id: entityId(state, shipId), hullId: spot.hullId, factionId: spot.factionId, x: spot.x, y: spot.y,
+        angle: spot.angle, berthId: reda ? null : spot.berthId, length: size.length, width: size.width,
+        flags: reda ? ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED : ACTOR_FLAG.STOCK, phase: reda ? PHASE_HOLD : PHASE_DOCKED,
+        shipId: null
       });
     }
   }
   return stock.list.length;
+}
+
+/** Stałe id ujemne encji bez kursu (zapas floty, postój) — po id statku, jedno źródło dla obu list. */
+function entityId(state, shipId) {
+  const stock = state.stock;
+  let id = stock.ids.get(shipId);
+  if (id === undefined) stock.ids.set(shipId, id = -(++stock.seq));
+  return id;
+}
+
+// ============================================================
+// Postój bez kursu (E15): reda przy ringu, orbita postojowa przy budowli doku
+// ============================================================
+
+/**
+ * Rejestr postoju cywilnego portu (leniwie): port z ringiem — reda świata (`world.parking`, strefy cywilne);
+ * port z budowlą doku E14 — orbita postojowa za dyskiem zapasu (`buildDockOrbitParking`, z dala od ścieżek
+ * bańki); reszta (hangar kryjówki) — `null`, statki w hangarze bez obrazu jak dotąd.
+ */
+function parkedRegistry(state, portId) {
+  const regs = state.parked.regs;
+  if (regs.has(portId)) return regs.get(portId);
+  const world = state.world;
+  const layout = world.docks.get(portId);
+  let plan = null;
+  if (layout?.hasRing) plan = world.parking?.get(portId) || null;
+  else if (layout?.model) {
+    plan = buildDockOrbitParking(layout, getNode(world.network, portId), { keepOut: dockKeepOut(state, portId, layout) });
+  }
+  const focus = state.parked.focus;
+  const reg = plan ? createParkingRegistry(plan, {
+    role: BERTH_ROLE.CIVIL,
+    mode: 'reda',
+    hangarCapacity: Infinity,
+    // Gracz ma pierwszeństwo do miejsca: slot pod nim nie idzie nowemu statkowi.
+    isFree: (slot, cls) => {
+      if (!focus.active) return true;
+      const dx = slot.x - focus.x;
+      const dy = slot.y - focus.y;
+      const clear = cls.depth + PARKED_PLAYER_CLEARANCE;
+      return dx * dx + dy * dy > clear * clear;
+    }
+  }) : null;
+  regs.set(portId, reg);
+  return reg;
+}
+
+/** Odcinek drogi odlotu i lejka za budowlą [j.] — tyle wolnego od orbity postojowej. */
+const DOCK_LANE_REACH = 12000;
+
+/**
+ * Odcinki ruchu bańki przy budowli doku (E14) dla orbity postojowej: ścieżki wejścia i wyjścia każdego stanowiska,
+ * lejek (promieniowo od środka budowli przez lejek — ostatni odcinek trasy z przestrzeni) i odlot (promieniowo
+ * przez koniec wylotu — `beginDeparture`). Płaska lista `[ax, ay, bx, by] × n`.
+ */
+function dockKeepOut(state, portId, layout) {
+  const index = state.bubble.ports;
+  const m = layout.model;
+  const out = [];
+  const ray = (x, y) => {
+    const dx = x - m.x;
+    const dy = y - m.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    out.push(x, y, x + dx / d * DOCK_LANE_REACH, y + dy / d * DOCK_LANE_REACH);
+  };
+  const polyline = (pts, n) => {
+    for (let k = 0; k + 1 < n; k++) out.push(pts[k * 4], pts[k * 4 + 1], pts[(k + 1) * 4], pts[(k + 1) * 4 + 1]);
+  };
+  for (const berth of layout.berths || []) {
+    const ref = index.berths.get(String(berth.id));
+    const entry = portEntryForBerth(index, berth, ref?.dock || null, portId);
+    if (!entry || entry.kind !== 'model') continue;
+    polyline(entry.inbound, entry.inboundCount);
+    if (entry.outbound) polyline(entry.outbound, entry.outboundCount);
+    if (entry.funnelX === entry.funnelX) {
+      out.push(entry.funnelX, entry.funnelY, entry.inbound[0], entry.inbound[1]);
+      ray(entry.funnelX, entry.funnelY);
+    } else ray(entry.inbound[0], entry.inbound[1]);
+    const k = (entry.outboundCount || 0) - 1;
+    if (k >= 0) ray(entry.outbound[k * 4], entry.outbound[k * 4 + 1]);
+  }
+  return out;
+}
+
+/** Czy miejsce postoju ma obraz: reda przy ringu — pierwsze sloty pasma strefy; orbita — każdy slot. */
+function parkedSpotVisible(reg, spot) {
+  if (!spot || spot.kind !== 'reda') return false;
+  return !reg.plan?.hasRing || spot.index < PARKED_VISIBLE_SLOTS;
+}
+
+/**
+ * Statki firm stojące bez kursu w portach przy fokusie (E15) → rejestry postoju (`syncParking` — stabilnie:
+ * statek stoi na swoim slocie, dopóki nie odleci) i lista encji bańki (`PARKED`, id ujemny). Woła rdzeń po
+ * kroku świata i przy wejściu bańki w port. Statek pokazany ostatnio, który dostał kurs, oddaje kursowi pozę
+ * (`viewState.handoff`) — encja kursu zaczyna lot z miejsca na redzie, w tym samym buforze, bez mignięcia.
+ */
+export function refreshParkedShips(state, focus) {
+  const world = state.world;
+  const parked = state.parked;
+  const f = parked.focus;
+  f.active = !!focus?.active && focus.r > 0;
+  f.x = Number(focus?.x) || 0;
+  f.y = Number(focus?.y) || 0;
+  const previous = parked.shown;
+  const shown = new Map();
+  parked.list.length = 0;
+  const near = parked.ports;
+  near.clear();
+  if (f.active) {
+    const r2 = state.range * state.range;
+    for (const id of bubblePortIds(state)) {
+      const node = getNode(world.network, id);
+      if (!node) continue;
+      const dx = node.x - f.x;
+      const dy = node.y - f.y;
+      if (dx * dx + dy * dy <= r2 && parkedRegistry(state, id)) near.add(id);
+    }
+  }
+
+  if (near.size) {
+    const byStation = parked.byStation;
+    for (const list of byStation.values()) list.length = 0;
+    const factions = new Map();
+    for (const company of world.companies?.companies || []) {
+      for (const ship of company.ships) {
+        if (ship.state !== SHIP_STATE.PARKED || !near.has(ship.stationId)) continue;
+        let list = byStation.get(ship.stationId);
+        if (!list) byStation.set(ship.stationId, list = []);
+        list.push(ship);
+        factions.set(ship.id, company.factionId || null);
+      }
+    }
+    for (const portId of near) {
+      const reg = parkedRegistry(state, portId);
+      const ships = byStation.get(portId) || [];
+      syncParking(reg, ships);
+      for (const ship of ships) {
+        const spot = reg.byShip.get(String(ship.id));
+        if (!parkedSpotVisible(reg, spot)) continue;
+        const size = hullFootprint(ship.hullId);
+        const entry = {
+          id: entityId(state, ship.id), hullId: ship.hullId, factionId: factions.get(ship.id) ?? null,
+          x: spot.x, y: spot.y, angle: spot.angle, berthId: null, length: size.length, width: size.width,
+          flags: ACTOR_FLAG.PARKED, phase: PHASE_HOLD, shipId: String(ship.id)
+        };
+        parked.list.push(entry);
+        shown.set(entry.shipId, entry);
+      }
+    }
+  }
+
+  // Statek z redy dostał kurs: encja kursu startuje z miejsca postoju (oddanie pozy jak po awansie, E6).
+  for (const [shipId, entry] of previous) {
+    if (shown.has(shipId)) continue;
+    const ship = getShip(world.companies, shipId);
+    if (!ship || ship.state === SHIP_STATE.PARKED || !ship.courseId) continue;
+    const course = getCourse(world.registry, ship.courseId);
+    if (!course || course.status !== COURSE_STATUS.ACTIVE || course.actorId || course.viewState) continue;
+    course.viewState = {
+      handoff: true, stageIndex: course.stageIndex, x: entry.x, y: entry.y, angle: entry.angle, speed: 0
+    };
+    parked.handoffs++;
+  }
+  parked.shown = shown;
+  return parked.list.length;
+}
+
+/**
+ * Statek w odlocie na swój slot dostał nowy kurs, zanim doleciał (dyspozytor daje go często przy rozliczeniu
+ * rozładunku): kurs przejmuje pozę encji odlotu, a ta znika — przed krokiem bańki, w którym kurs się
+ * materializuje (ten sam bufor, jeden statek). Kurs spoza kandydatów bańki czeka (odlot leci dalej). Woła rdzeń
+ * przed każdym krokiem bańki; zwraca liczbę oddanych póz.
+ */
+export function handoffDepartures(state) {
+  const parked = state?.parked;
+  if (!parked?.departing.size) return 0;
+  const world = state.world;
+  let n = 0;
+  for (const [shipId, actor] of parked.departing) {
+    if (!(actor.slot >= 0) || !actor.departed) {
+      parked.departing.delete(shipId);
+      continue;
+    }
+    const ship = getShip(world.companies, shipId);
+    if (!ship || ship.state === SHIP_STATE.PARKED || !ship.courseId) continue;
+    const course = getCourse(world.registry, ship.courseId);
+    if (!course || course.status !== COURSE_STATUS.ACTIVE || course.actorId) {
+      // Kurs już ma encję albo nie żyje — odlot nie ma kogo zasłaniać.
+      dropDepartedActor(state.bubble, actor);
+      parked.departing.delete(shipId);
+      continue;
+    }
+    if (!state.candidates.includes(course)) continue;
+    course.viewState = {
+      handoff: true, stageIndex: course.stageIndex, x: actor.x, y: actor.y, angle: actor.angle,
+      speed: Math.abs(actor.speed) || 0
+    };
+    parked.handoffs++;
+    dropDepartedActor(state.bubble, actor);
+    parked.departing.delete(shipId);
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Hak odlotu (`departTarget`, E15): statek firmy, którego kurs skończył się przy stanowisku tego portu, leci na
+ * swoje miejsce postoju (rezerwacja w rejestrze, `reserveParkingSpot`) — o ile miejsce ma obraz. Do jego końca
+ * statek postoju w buforze jest zasłonięty (`departing`), potem stoi dokładnie tam, gdzie encja znikła.
+ */
+function departToParking(state, course, actor, out) {
+  const shipId = course?.payload?.shipId;
+  const portId = actor?.dockedEntry?.stationId;
+  if (!shipId || !portId || String(course.destinationId || '') !== portId) return false;
+  const reg = parkedRegistry(state, portId);
+  const ship = reg ? getShip(state.world.companies, shipId) : null;
+  if (!ship) return false;
+  const spot = reserveParkingSpot(reg, ship);
+  if (!parkedSpotVisible(reg, spot)) return false;
+  out.x = spot.x;
+  out.y = spot.y;
+  out.angle = spot.angle;
+  state.parked.departing.set(String(shipId), actor);
+  return true;
 }
 
 /**
@@ -404,7 +683,8 @@ export function packWorldBubble(state, index, kindIndex = null, focus = null) {
   const list = state.bubble.list;
   const n = list.length;
   const stock = state.active && focus ? state.stock.list : null;
-  const total = n + (stock ? stock.length : 0);
+  const parked = state.active && focus ? state.parked.list : null;
+  const total = n + (stock ? stock.length : 0) + (parked ? parked.length : 0);
   let data = state.data;
   if (total * ACTOR_STRIDE > data.length) {
     let size = data.length;
@@ -484,43 +764,56 @@ export function packWorldBubble(state, index, kindIndex = null, focus = null) {
     data[o + ACTOR_FIELD.AX] = ax;
     data[o + ACTOR_FIELD.AY] = ay;
   }
-  // Zapas floty na padach K-7 w promieniu fokusu: stoją (faza `docked`, prędkość 0), flaga STOCK, id ujemny.
+  // Encje bez kursu w promieniu fokusu: zapas floty na padach K-7 (STOCK, faza `docked`) i na redzie wojskowej
+  // (STOCK + PARKED), statki firm na redzie / orbicie postojowej (PARKED, faza `hold`). Stoją, id ujemny.
   let m = n;
-  if (stock) {
-    const r2 = focus.r * focus.r;
-    const docked = PHASE_INDEX.get(ACTOR_PHASE.DOCKED) ?? 2;
-    for (let k = 0; k < stock.length; k++) {
-      const s = stock[k];
-      const dx = s.x - focus.x;
-      const dy = s.y - focus.y;
-      if (dx * dx + dy * dy > r2) continue;
-      const o = m * ACTOR_STRIDE;
-      const berth = index.berthById(s.berthId);
-      data[o + ACTOR_FIELD.ID] = s.id;
-      data[o + ACTOR_FIELD.X] = s.x;
-      data[o + ACTOR_FIELD.Y] = s.y;
-      data[o + ACTOR_FIELD.ANGLE] = s.angle;
-      data[o + ACTOR_FIELD.VX] = 0;
-      data[o + ACTOR_FIELD.VY] = 0;
-      data[o + ACTOR_FIELD.ANG_VEL] = 0;
-      data[o + ACTOR_FIELD.HULL] = index.hull(s.hullId);
-      data[o + ACTOR_FIELD.FACTION] = index.faction(s.factionId);
-      data[o + ACTOR_FIELD.PHASE] = docked;
-      data[o + ACTOR_FIELD.FLAGS] = ACTOR_FLAG.STOCK;
-      data[o + ACTOR_FIELD.THROTTLE] = 0;
-      data[o + ACTOR_FIELD.LENGTH] = s.length;
-      data[o + ACTOR_FIELD.WIDTH] = s.width;
-      data[o + ACTOR_FIELD.PORT] = berth ? berth.port : -1;
-      data[o + ACTOR_FIELD.BERTH] = berth ? berth.index : -1;
-      data[o + ACTOR_FIELD.DOCK_TIME] = 0;
-      data[o + ACTOR_FIELD.SPEED] = 0;
-      data[o + ACTOR_FIELD.AX] = 0;
-      data[o + ACTOR_FIELD.AY] = 0;
-      m++;
-    }
-  }
+  if (stock) m = packStanding(state, stock, data, m, index, focus);
+  const s0 = m;
+  if (parked) m = packStanding(state, parked, data, m, index, focus);
   state.count = m;
   state.stats.actors = n;
-  state.stats.stock = m - n;
+  state.stats.stock = s0 - n;
+  state.stats.parked = m - s0;
   return { data: data.slice(0, m * ACTOR_STRIDE), count: m };
+}
+
+/** Encje stojące bez kursu (`refreshFleetStock`, `refreshParkedShips`) od pozycji `m` bufora; zwraca nowe `m`. */
+function packStanding(state, items, data, m, index, focus) {
+  const r2 = focus.r * focus.r;
+  const departing = state.parked.departing;
+  for (let k = 0; k < items.length && m < BUBBLE_ENTITY_LIMIT; k++) {
+    const s = items[k];
+    const dx = s.x - focus.x;
+    const dy = s.y - focus.y;
+    if (dx * dx + dy * dy > r2) continue;
+    // Statek leci jeszcze na swój slot (odlot po kursie) — stanie tu, gdy encja odlotu zniknie.
+    if (s.shipId && departing.size) {
+      const a = departing.get(s.shipId);
+      if (a && a.slot >= 0 && a.departed) continue;
+    }
+    const o = m * ACTOR_STRIDE;
+    const berth = s.berthId ? index.berthById(s.berthId) : null;
+    data[o + ACTOR_FIELD.ID] = s.id;
+    data[o + ACTOR_FIELD.X] = s.x;
+    data[o + ACTOR_FIELD.Y] = s.y;
+    data[o + ACTOR_FIELD.ANGLE] = s.angle;
+    data[o + ACTOR_FIELD.VX] = 0;
+    data[o + ACTOR_FIELD.VY] = 0;
+    data[o + ACTOR_FIELD.ANG_VEL] = 0;
+    data[o + ACTOR_FIELD.HULL] = index.hull(s.hullId);
+    data[o + ACTOR_FIELD.FACTION] = index.faction(s.factionId);
+    data[o + ACTOR_FIELD.PHASE] = s.phase;
+    data[o + ACTOR_FIELD.FLAGS] = s.flags;
+    data[o + ACTOR_FIELD.THROTTLE] = 0;
+    data[o + ACTOR_FIELD.LENGTH] = s.length;
+    data[o + ACTOR_FIELD.WIDTH] = s.width;
+    data[o + ACTOR_FIELD.PORT] = berth ? berth.port : -1;
+    data[o + ACTOR_FIELD.BERTH] = berth ? berth.index : -1;
+    data[o + ACTOR_FIELD.DOCK_TIME] = 0;
+    data[o + ACTOR_FIELD.SPEED] = 0;
+    data[o + ACTOR_FIELD.AX] = 0;
+    data[o + ACTOR_FIELD.AY] = 0;
+    m++;
+  }
+  return m;
 }
