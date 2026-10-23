@@ -17,7 +17,9 @@
  * Plan: docs/PLAN-ekonomia-rynki.md § 3.1 (E1).
  */
 
-import { RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor } from '../../data/resources.js';
+import { RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor, PLANET_YIELD } from '../../data/resources.js';
+import { WORKFORCE_RESTOCK_FLOOR, WORKFORCE_SOURCE_SEED_FILL } from '../../data/workforce.js';
+import { stationWorkforceNeed, populationRate, workforceCapacity } from '../workforce.js';
 import { FACTION } from '../../data/factions.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../../data/asteroidTypes.js';
 import { SYSTEM_MAP_PLANET_BY_ID, computeWorldUnitsPerAu } from '../../data/systemMap.js';
@@ -35,7 +37,8 @@ import { stationDestroyed } from './trafficDirector.js';
 import { registerShipyard } from './shipyards.js';
 import { declareAmmoDemand } from './warDispatcher.js';
 import { registerNest } from './piracy.js';
-import { buildStationDocks, suggestBerthMultiplier } from './dockLayout.js';
+import { buildStationDocks, suggestBerthMultiplier, BERTH_ROLE } from './dockLayout.js';
+import { declareDemand } from './marketBook.js';
 import { buildPortParking } from './portParking.js';
 import { haloRingKey, haloRingLayoutFor } from '../haloRingPlanets.js';
 import { buildHaloPortTrafficLayout } from '../../3d/haloRing/haloPortTraffic.js';
@@ -326,6 +329,62 @@ function syncOwnerParts(world, station, def) {
 }
 
 // ============================================================
+// Workforce (E16)
+// ============================================================
+
+/** Stanowiska cywilne portu rynku — hale wojskowe K-7 obsadza garnizon, nie workforce. */
+function civilBerthCount(layout) {
+  let count = 0;
+  for (const dock of layout?.docks || []) {
+    for (const berth of dock.berths || []) if (berth.role !== BERTH_ROLE.MILITARY) count++;
+  }
+  return count;
+}
+
+/**
+ * Obsada i ośrodek ludności rynku (`station.workforce`, skala 1): potrzeba z budynków,
+ * kopalni, portu, magazynów i pochylni (`stationWorkforceNeed`), podaż z `def.population`,
+ * pojemność magazynu workforce (kwatery 2 N albo godzina podaży źródła). Wołane przy
+ * `addMarket`, nowym budynku i zmianie właściciela. Popyt idzie przez API rynku
+ * (`declareDemand` z podłogą 1,3 N), więc planista, kupcy i terminal widzą go sami.
+ * Opuszczony rynek nie ma ani potrzeby, ani ludności. Docs: PROPOZYCJA-workforce.md § 3–4.
+ */
+function syncStationWorkforce(world, station, def) {
+  const scale = world.config.economyScale;
+  const owned = Boolean(station.factionId);
+  const hasYard = world.shipyards.yards.some(yard => yard.stationId === station.id);
+  const need = owned ? stationWorkforceNeed(getStationIndustry(station), {
+    mineRate: PLANET_YIELD[station.id]?.rate || 0,
+    civilBerths: civilBerthCount(world.docks.get(station.id)),
+    stores: world.config.capacityMultiplier,
+    yardWeight: hasYard ? (def?.shipyardWeight || DEFAULT_SHIPYARD_WEIGHT) : 0
+  }).total : 0;
+  const rate = owned ? populationRate(def?.population) : 0;
+  const previous = station.workforce || null;
+  station.workforce = Object.freeze({ need, rate, capacity: workforceCapacity(need, rate) });
+  const econ = world.economies.get(station.id);
+  if (!econ) return;
+  if (station.workforce.capacity > 0) econ.capacity.workforce = station.workforce.capacity * scale;
+  if (need > 0) declareDemand(station, 'workforce', { floor: WORKFORCE_RESTOCK_FLOOR * need * scale });
+  // Zapas startowy — dopiero przy pierwszym wyliczeniu (nowy budynek nie drukuje ludzi):
+  // rynek pracy na podłodze skupu (1,3 N, ponad zapasem roboczym), źródło ponad progiem
+  // nadwyżki planisty (70%). Źródło na 45% przez pierwsze ~30 min nic nie wystawiało,
+  // a obsada odbiorców spadała w tym czasie do 0,33–0,5 (pomiar W1, ziarno 7).
+  if (!previous && econ.capacity.workforce > 0) {
+    const seeded = Math.max(WORKFORCE_RESTOCK_FLOOR * need * scale,
+      rate > 0 ? econ.capacity.workforce * WORKFORCE_SOURCE_SEED_FILL : 0);
+    econ.resources.workforce = Math.min(econ.capacity.workforce, seeded);
+  }
+}
+
+/** Pojemność workforce rynku w świecie (do nadpisania pojemności z budynków gry) albo `null`. */
+export function workforceWorldCapacity(world, stationId) {
+  const station = world.stations.find(entry => entry.id === String(stationId || ''));
+  const capacity = station?.workforce?.capacity;
+  return capacity > 0 ? capacity * world.config.economyScale : null;
+}
+
+// ============================================================
 // Rynek
 // ============================================================
 
@@ -406,6 +465,7 @@ export function addMarket(world, rawDef) {
   }
 
   syncOwnerParts(world, station, def);
+  syncStationWorkforce(world, station, def);
   world.markets.set(def.id, def);
   if (!world.building) world.marketsVersion++;
   return station;
@@ -482,6 +542,7 @@ export function setMarketOwner(world, stationId, factionId) {
     }
   }
   syncOwnerParts(world, station, def);
+  syncStationWorkforce(world, station, def);
   world.marketsVersion++;
   return true;
 }
@@ -508,6 +569,7 @@ export function addMarketBuilding(world, stationId, roleId, size = null) {
   if (!industry) return null;
   station.industry = industry;
   syncShipyard(world, station, world.markets.get(id) || null);
+  syncStationWorkforce(world, station, world.markets.get(id) || null);
   world.marketsVersion++;
   return industry;
 }

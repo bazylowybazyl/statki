@@ -75,6 +75,22 @@ async function waitGame(seconds) {
     left -= n;
   }
 }
+// Zbliżenie na prom z ludźmi (crew-*) w bańce, kadr wraca potem na gracza w miejscu sprzed zdjęcia.
+async function shootFerry(name) {
+  const s = await bubbleState();
+  const f = s.promyList.find((p) => p.phase === 'docked' || p.phase === 'capture') || s.promyList[0];
+  if (!f) return { promy: 0 };
+  const back = s.player;
+  await ev(`(() => { window.devTeleportTo(${f.x} + 2600, ${f.y} - 900, { angle: 0, quiet: true });
+    window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+  await ev(ZOOM(0.2));
+  await waitGame(1.5);
+  await screenshotPng(cdp, join(out, name));
+  await ev(`(() => { window.devTeleportTo(${back.x}, ${back.y}, { angle: 0, quiet: true });
+    window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+  await ev(ZOOM(0.045));
+  return { promy: s.promy, zdjecie: name, prom: f };
+}
 // Kamera nad graczem w zadanym zoomie (jak inne narzędzia: manualZoom + zoomBase, minimum gry obniżone).
 const ZOOM = (z) => `(() => { const c = window.camera; c.minZoom = 0.003; c.manualZoom = true;
   c.zoom = c.targetZoom = c.zoomBase = ${z}; window.DevScene?.syncCamera?.(); return true; })()`;
@@ -83,10 +99,13 @@ const bubbleState = () => ev(`(() => {
   const tb = window.TrafficBubble, br = window.TrafficV2, s = window.ship;
   const phases = {}, berths = { k7: 0, bay: 0 }, docked = [];
   let stock = 0, parked = 0;
+  const promy = [];
   for (const a of tb.list) {
     if (a.flags & 64) { stock++; continue; }   // zapas floty na padach K-7 i redzie wojskowej (STOCK) — osobno
     if (a.flags & 256) { parked++; continue; } // postój bez kursu: reda / orbita postojowa (PARKED, E15) — osobno
     phases[a.phase] = (phases[a.phase] || 0) + 1;
+    // Promy z ludźmi (workforce, E16 W2): klasy kursu crew-*.
+    if (/^crew-/.test(a.unitClass || '')) promy.push({ id: a.id, cls: a.unitClass, hull: a.hullId, phase: a.phase, x: a.x, y: a.y });
     if (a.berthId && (a.phase === 'docked' || a.phase === 'capture')) {
       if (a.berthId.includes(':K7-')) berths.k7++; else berths.bay++;
       docked.push({ id: a.id, berth: a.berthId, x: a.cx, y: a.cy, hull: a.hullId, phase: a.phase });
@@ -98,6 +117,7 @@ const bubbleState = () => ev(`(() => {
   let lamps = 0;
   if (reg) for (const e of reg.entries) if (e.berth.occupied === 'traffic' || e.berth.reserved === 'traffic') lamps++;
   return { t: br.time, actors: tb.list.length - stock - parked, stock, parked, phases, berths, lamps, docked: docked.slice(0, 40),
+    promy: promy.length, promyList: promy.slice(0, 12),
     held: tb.held.slice(), stats: { ...tb.stats }, actorMs: st.actorMs, bridgeCourses: st.courses,
     warmup: st.warmup, kursy: st.stats ? { active: st.stats.active, berthed: st.stats.berthed, queued: st.stats.queued } : null,
     player: { x: s.pos.x, y: s.pos.y } };
@@ -142,6 +162,8 @@ try {
   await ev(ZOOM(0.045));
   await waitGame(4);
   await screenshotPng(cdp, join(out, '01-port-ziemi.png'));
+  // Prom z ludźmi przy Ziemi (workforce, E16 W2): zbliżenie, gdy jest w bańce.
+  report.promyZiemi = await shootFerry('01-prom-ziemi.png');
 
   if (WARM === 0 && args.zimny !== '-') {
     // ZIMNY START (E15): czas gry od kliknięcia Start = czas mostu minus rozgrzewka świata (most dokłada ją do zegara).
@@ -671,7 +693,9 @@ try {
       await waitGame(2);
       await screenshotPng(cdp, join(out, `07-port-${pi}-${id}-zblizenie.png`));
     }
+    const prom = await shootFerry(`07-port-${pi}-${id}-prom.png`);
     report.porty[id] = { ...at, encji: s.actors, postoj: s.parked, zapas: s.stock, fazy: s.phases, zadokowane: s.docked.filter((d) => d.berth?.startsWith(`${id}:`)).length,
+      promy: s.promy, promZdjecie: prom.zdjecie || null,
       gpuMs: avg('gpu'), cpuWorkerMs: avg('cpu'), actorMs: avg('actorMs'), bezProxy: { gpuMs: bezProxy('gpu'), cpuWorkerMs: bezProxy('cpu') } };
     console.log('port', id, JSON.stringify(report.porty[id]));
   }

@@ -33,6 +33,8 @@
  *   derelict            opuszczony (bez załogi, bez doków, zero stanowisk)
  *   hideout             kryjówka piratów (gniazdo łupu i przemytu)
  *   stockFill           zapełnienie startowe magazynu (księżyc chudo — 0,18)
+ *   population          ośrodek ludności — źródło workforce: `{ ring, green, habitat }` podaży na cykl
+ *                       w skali 1 (src/data/workforce.js); `null` = wpis `POPULATION_CENTERS[id]` albo brak
  *
  * Moduł jest czystymi danymi: bez logiki świata ruchu, bez DOM.
  */
@@ -40,6 +42,7 @@
 import { SYSTEM_MAP_PLANETS, SYSTEM_MAP_MOONS } from './systemMap.js';
 import { SMALL_BODY_STATIONS } from './smallBodies.js';
 import { FACTION, getDefaultStationFaction } from './factions.js';
+import { POPULATION_CENTERS } from './workforce.js';
 
 export const MARKET_KIND = Object.freeze({
   PLANET: 'planet',
@@ -152,6 +155,9 @@ export function defineMarket(def = {}) {
     hideout: Boolean(def.hideout),
     stockFill: Number.isFinite(def.stockFill) ? def.stockFill
       : (kind === MARKET_KIND.MOON ? MOON_STOCK_FILL : DEFAULT_STOCK_FILL),
+    // Źródło workforce (E16). Opuszczony rynek nie ma mieszkańców.
+    population: derelict ? null
+      : (def.population ? Object.freeze({ ...def.population }) : (POPULATION_CENTERS[id] || null)),
     // Pojemność i zapas w jednostkach gry (skala 1) — jak `stationSpecs` z gry.
     capacity: def.capacity ? Object.freeze({ ...def.capacity }) : null,
     stock: def.stock ? Object.freeze({ ...def.stock }) : null

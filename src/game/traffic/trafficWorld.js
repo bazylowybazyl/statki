@@ -36,7 +36,7 @@ import { createShipyardRegistry, tickShipyards } from './shipyards.js';
 import { createAgentRegistry, buildMerchants } from './agentFleets.js';
 import { createMiningFields, miningFieldSpecs } from './miningFields.js';
 import {
-  addMarket, destroyMarketStation, smallBodyMarketPlacement, worldCapacityFromGame
+  addMarket, destroyMarketStation, smallBodyMarketPlacement, worldCapacityFromGame, workforceWorldCapacity
 } from './markets.js';
 
 export { SHIPYARD_WEIGHT } from '../../data/markets.js';
@@ -343,8 +343,11 @@ export function applyWorldStockDelta(world, stationId, bag) {
 
 /** Pojemności z budynków gry (skala 1) → magazyn stacji w świecie ruchu. */
 export function setWorldCapacityFromGame(world, stationId, gameCapacity) {
-  return setCapacity(world.director, stationId,
-    worldCapacityFromGame(gameCapacity, world.config));
+  const capacity = worldCapacityFromGame(gameCapacity, world.config);
+  // Kwatery workforce liczy świat z obsady rynku (E16), nie budynki magazynowe gry.
+  const quarters = workforceWorldCapacity(world, stationId);
+  if (quarters !== null) capacity.workforce = quarters;
+  return setCapacity(world.director, stationId, capacity);
 }
 
 /**

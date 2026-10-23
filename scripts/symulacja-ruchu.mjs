@@ -219,6 +219,8 @@ for (const entry of Object.values(PLANET_YIELD)) {
   if (entry.rate > 0) for (const id of Object.keys(entry.yields)) obtainable.add(id);
 }
 for (const field of network.fields) for (const id of Object.keys(field.yields || {})) obtainable.add(id);
+// Workforce z ośrodków ludności (E16).
+if (stations.some(station => station.workforce?.rate > 0)) obtainable.add('workforce');
 const unsourced = RESOURCE_KEYS.filter(id => !obtainable.has(id));
 
 console.log('\n=== FIRMY TRANSPORTOWE ===\n');

@@ -48,7 +48,8 @@ export function writeBubbleCargo(out, k, courseNumber, course, resourceIndex) {
   const mode = stage.reason === DWELL_REASON.LOAD ? ACTOR_CARGO_MODE.LOAD
     : stage.reason === DWELL_REASON.UNLOAD ? ACTOR_CARGO_MODE.UNLOAD : ACTOR_CARGO_MODE.NONE;
   const p = course.payload || {};
-  if (!mode || p.deadhead || !(Number(p.mass) > 0)) return 0;
+  // Ludzie (workforce, E16) wchodzą rękawem — bez dronów i kontenerów.
+  if (!mode || p.deadhead || p.passengers || !(Number(p.mass) > 0)) return 0;
   const cap = courseCargoCapacity(course);
   const F = ACTOR_CARGO_FIELD;
   const o = k * ACTOR_CARGO_STRIDE;

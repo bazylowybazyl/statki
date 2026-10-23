@@ -1,0 +1,168 @@
+/**
+ * WORKFORCE (E16): potrzeba obsady, podaż ośrodków ludności, rotacja, pojemność.
+ * Liczby z docs/PROPOZYCJA-workforce.md § 1–2 (skala 1; świat mnoży ×60).
+ */
+
+import {
+  STATION_INDUSTRY, INDUSTRY_ARCHETYPES, composeFromBuildings, runStationEconomy, stationNetRates,
+  stationConsumptionRates, stationWantsResource, resourcePrice
+} from '../../src/game/stationEconomy.js';
+import { buildTrafficWorld, stepTrafficWorld, TRAFFIC_STEP_SECONDS } from '../../src/game/traffic/trafficWorld.js';
+import { getActiveCourses, STAGE_KIND } from '../../src/game/traffic/courseRegistry.js';
+import { resolveTrafficHullId } from '../../src/data/trafficHulls.js';
+import { writeBubbleCargo } from '../../src/game/traffic/bubbleCargo.js';
+import { PLANET_YIELD, RESOURCES, TRADE_RESOURCE_KEYS, RESOURCE_KEYS } from '../../src/data/resources.js';
+import { MARKET_DEF_BY_ID, defineMarket, SHIPYARD_WEIGHT } from '../../src/data/markets.js';
+import {
+  WORKFORCE_PER_BUILDING, POPULATION_CENTERS, WORKFORCE_CONTRACT_SECONDS
+} from '../../src/data/workforce.js';
+import {
+  industryBuildings, stationWorkforceNeed, populationRate, rotationPerCycle,
+  workforceCapacity, workforceRatio, workforceEfficiency, workforceShipmentWorthIt
+} from '../../src/game/workforce.js';
+import { createSuite, runIfMain } from './harness.mjs';
+
+// Magazyn 180 osób (doc § 1.3 liczył 200 — stąd Luna 2469 i Fobos 1032 zamiast 2549 i 1112).
+// Stanowiska cywilne portów z `buildTrafficWorld` (2026-10-23): K-7 — 112 zatok, pomosty i budowle doków.
+const CIVIL_BERTHS = { mercury: 78, venus: 78, earth: 112, mars: 112, jupiter: 112, saturn: 104, uranus: 78,
+  ceres: 130, vesta: 104, luna: 52, oberon: 52 };
+const MOON_BERTHS = 26;
+
+function siteOf(id) {
+  const industry = STATION_INDUSTRY[id];
+  return {
+    mineRate: PLANET_YIELD[id]?.rate || 0,
+    civilBerths: CIVIL_BERTHS[id] ?? MOON_BERTHS,
+    stores: 4,
+    yardWeight: industry?.capacity > 0 ? (SHIPYARD_WEIGHT[id] ?? 0.6) : 0
+  };
+}
+
+export function run() {
+  const t = createSuite('workforce');
+
+  t.section('1. Towar i tabele');
+  t.check('workforce jest towarem', !!RESOURCES.workforce);
+  t.check('workforce na końcu tabeli (indeksy dawnych towarów bez zmian)',
+    RESOURCE_KEYS[RESOURCE_KEYS.length - 1] === 'workforce');
+  t.check('terminal „Handel” nie widzi ludzi', !TRADE_RESOURCE_KEYS.includes('workforce')
+    && TRADE_RESOURCE_KEYS.length === RESOURCE_KEYS.length - 1);
+  const roles = Object.keys(INDUSTRY_ARCHETYPES);
+  const missing = roles.filter(role => !(WORKFORCE_PER_BUILDING[role] > 0));
+  t.check('każda rola przemysłu ma obsadę', missing.length === 0, `(${missing.join(', ')})`);
+  t.check('kontrakt 45 min (D2)', WORKFORCE_CONTRACT_SECONDS === 2700);
+
+  t.section('2. Potrzeba rynków (PROPOZYCJA § 1.3, ludzie świata = skala 1 × 60)');
+  const expected = { earth: 68253, mars: 61753, jupiter: 39649, ceres: 37371, venus: 20447, luna: 2469, fobos: 1032 };
+  for (const [id, people] of Object.entries(expected)) {
+    const need = stationWorkforceNeed(STATION_INDUSTRY[id], siteOf(id));
+    t.close(`${id}: ${Math.round(need.total * 60)} osób`, need.total * 60, people, people * 0.015);
+  }
+  const neptune = stationWorkforceNeed(STATION_INDUSTRY.neptune, siteOf('neptune'));
+  t.check('opuszczony Neptun nie potrzebuje nikogo', neptune.total === 0);
+  t.check('rynek bez profilu nie potrzebuje nikogo', stationWorkforceNeed(null, siteOf('earth')).total === 0);
+
+  let total = 0;
+  for (const id of Object.keys(STATION_INDUSTRY)) total += stationWorkforceNeed(STATION_INDUSTRY[id], siteOf(id)).total;
+  t.close(`układ: ${Math.round(total * 60)} osób`, total * 60, 305500, 305500 * 0.015);
+
+  t.section('3. Budynki stacji gracza liczą się wprost');
+  const own = composeFromBuildings(['foundry', 'foundry', 'shipworks'], 0.5);
+  const counted = industryBuildings(own);
+  t.check('dwie huty i stocznia', counted.foundry === 2 && counted.shipworks === 1, JSON.stringify(counted));
+  const ownNeed = stationWorkforceNeed(own, { civilBerths: 26, stores: 4 });
+  t.close('obsada: 2 × 40 + 80 + port + magazyny', ownNeed.total, 2 * 40 + 80 + 26 * 0.2 + 4 * 3, 1e-9);
+  t.check('linie stacji świata dają ekwiwalenty roli (Ziemia: huta ~9,2)',
+    Math.abs(industryBuildings(STATION_INDUSTRY.earth).foundry - 9.24) < 0.05);
+
+  t.section('4. Źródła i bilans (PROPOZYCJA § 2.2)');
+  t.close('Mars: ring + strefy zielone', populationRate(POPULATION_CENTERS.mars), 18.7, 1e-9);
+  t.check('rynek Ziemi niesie ośrodek ludności', MARKET_DEF_BY_ID.earth.population?.ring === 15.6);
+  t.check('rynek Marsa ma dwa źródła', MARKET_DEF_BY_ID.mars.population?.green === 7.5);
+  t.check('Wenus nie jest źródłem', MARKET_DEF_BY_ID.venus.population === null);
+  t.check('opuszczony rynek nie ma ludności',
+    defineMarket({ id: 'earth', derelict: true }).population === null);
+  t.check('nowy rynek niesie własne źródło (baza w asteroidzie)',
+    defineMarket({ id: 'hygiea-baza', population: { habitat: 3 } }).population?.habitat === 3);
+  let supply = 0;
+  for (const population of Object.values(POPULATION_CENTERS)) supply += populationRate(population);
+  const rotation = rotationPerCycle(total);
+  t.close('podaż układu na cykl', supply, 48.3, 1e-9);
+  t.check(`podaż ≥ 1,25 × rotacja (${(supply / rotation).toFixed(2)}×)`, supply >= 1.25 * rotation);
+
+  t.section('5. Rotacja, pojemność, obsada, wydajność');
+  t.close('rotacja: 2700 osób na kontrakcie → 20 na cykl', rotationPerCycle(2700), 20, 1e-9);
+  t.close('kwatery rynku pracy = 2 N', workforceCapacity(100, 0), 200, 1e-9);
+  t.close('magazyn źródła = godzina podaży', workforceCapacity(10, 15.6), 15.6 * 180, 1e-9);
+  t.check('obsada przycięta do 1', workforceRatio(500, 100) === 1 && workforceRatio(50, 100) === 0.5);
+  t.check('rynek bez potrzeby ma pełną obsadę', workforceRatio(0, 0) === 1);
+  t.check('wydajność proporcjonalna od progu 0,2 (D3)',
+    workforceEfficiency(0.19) === 0 && workforceEfficiency(0.2) === 0.2 && workforceEfficiency(0.8) === 0.8);
+
+  t.section('6. Gospodarka stacji: podaż źródła i rotacja (W1)');
+  const source = { id: 'zrodlo', factionId: 'terra_nova', workforce: { need: 0, rate: 10, capacity: 1800 } };
+  const sourceEcon = { resources: { workforce: 0 }, capacity: { workforce: 1800 } };
+  runStationEconomy(source, sourceEcon, 1, () => 0.5);
+  t.close('źródło: +10 osób na cykl', sourceEcon.resources.workforce, 10, 1e-9);
+  const plant = { id: 'zaklad', factionId: 'terra_nova', workforce: { need: 2700, rate: 0, capacity: 5400 } };
+  const plantEcon = { resources: { workforce: 4000 }, capacity: { workforce: 5400 } };
+  runStationEconomy(plant, plantEcon, 1, () => 0.5);
+  t.close('rotuje tylko pracująca obsada (N = 2700 → 20 na cykl)', plantEcon.resources.workforce, 3980, 1e-9);
+  t.close('obsada pełna', plantEcon.workforceRatio, 1, 1e-9);
+  const thin = { resources: { workforce: 1350 }, capacity: { workforce: 5400 } };
+  runStationEconomy(plant, thin, 1, () => 0.5);
+  t.close('połowa obsady → r = 0,5', thin.workforceRatio, 0.5, 1e-9);
+  t.close('plan: rotacja w saldzie (−N / T na s)', stationNetRates(plant).workforce, -1, 1e-9);
+  t.close('plan: rotacja w zużyciu brutto', stationConsumptionRates(plant).workforce, 1, 1e-9);
+  t.check('partia 100 osób do dużego rynku przy pełnej obsadzie — za mała',
+    !workforceShipmentWorthIt(plant, 100, 3000, 1));
+  t.check('partia 192 osób do małego rynku — wystarczy', workforceShipmentWorthIt({ workforce: { need: 100 } }, 192, 120, 1));
+  t.check('przy obsadzie < 0,9 leci każda partia', workforceShipmentWorthIt(plant, 10, 2000, 1));
+
+  t.section('7. Świat ruchu: rynki niosą obsadę i popyt (W1)');
+  const world = buildTrafficWorld({ economyScale: 60, capacityMultiplier: 4, seed: 7, ringPorts: true });
+  const byId = id => world.stations.find(s => s.id === id);
+  const earth = byId('earth');
+  const venus = byId('venus');
+  const venusEcon = world.economies.get('venus');
+  t.close('Ziemia: potrzeba w świecie ~68 tys. osób', earth.workforce.need * 60, 68253, 68253 * 0.015);
+  t.check('Ziemia jest źródłem (ring Halo)', earth.workforce.rate === 15.6);
+  t.check('Wenus chce workforce', stationWantsResource(venus, 'workforce'));
+  t.close('Wenus: kwatery 2 N', venusEcon.capacity.workforce, 2 * venus.workforce.need * 60, 1e-6);
+  t.close('Wenus: zapas startowy 1,3 N', venusEcon.resources.workforce, 1.3 * venus.workforce.need * 60, 1e-6);
+  t.check('Wenus nie sprzedaje własnej obsady poniżej 1,2 N',
+    Math.abs(resourcePrice(venus, venusEcon, 'workforce').offerFloor - 0.6) < 1e-9);
+  const earthEcon = world.economies.get('earth');
+  t.check('Ziemia startuje ponad progiem nadwyżki (75% magazynu)',
+    Math.abs(earthEcon.resources.workforce / earthEcon.capacity.workforce - 0.75) < 1e-9);
+  t.check('opuszczony Neptun bez potrzeby', byId('neptune').workforce.need === 0);
+
+  t.section('8. Promy: kursy z ludźmi i powroty (W2)');
+  let outbound = null;
+  let inbound = null;
+  for (let i = 0; i < (40 * 60) / TRAFFIC_STEP_SECONDS && !(outbound && inbound); i++) {
+    stepTrafficWorld(world);
+    for (const course of getActiveCourses(world.registry)) {
+      const p = course.payload || {};
+      if (!p.passengers) continue;
+      if (!outbound && p.orderId) outbound = course;
+      if (!inbound && p.returning !== undefined) inbound = course;
+    }
+  }
+  t.check('planista wysyła ludzi promem', !!outbound);
+  if (outbound) {
+    t.check(`klasa crew-* (${outbound.unitClass} → ${resolveTrafficHullId(outbound.unitClass)})`,
+      /^crew-/.test(outbound.unitClass));
+    const dwells = outbound.stages.filter(stage => stage.kind === STAGE_KIND.DWELL);
+    t.check('zaokrętowanie i wyokrętowanie po 60 s',
+      dwells.length >= 2 && dwells[0].seconds === 60 && dwells[dwells.length - 1].seconds >= 60);
+    t.check('prom niesie ludzi, nie kontenery (obraz przeładunku E12 go pomija)',
+      writeBubbleCargo([], 0, 1, { ...outbound, stages: [dwells[0]], stageIndex: 0 }, () => 0) === 0);
+  }
+  t.check('prom wraca do źródła z ludźmi po kontrakcie', !!inbound
+    && Number.isFinite(inbound.payload.returning) && !inbound.payload.orderId && inbound.payload.value === 0);
+
+  return t.results;
+}
+
+runIfMain(import.meta.url, run);

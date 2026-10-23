@@ -26,6 +26,10 @@ import {
   runStationEconomy, ECONOMY_CYCLE_SECONDS, getStationDeficits, stationWantsResource
 } from '../stationEconomy.js';
 import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js';
+import { workforceShipmentWorthIt } from '../workforce.js';
+import {
+  CREW_CLASS_BY_VAN, PASSENGER_BOARD_SECONDS, PASSENGER_DISEMBARK_SECONDS
+} from '../../data/workforce.js';
 import {
   COURSE_KIND, DWELL_REASON, COURSE_STATUS,
   launchCourse, advanceCourses, getActiveCourses, currentStage, stageProgress,
@@ -257,7 +261,9 @@ export function createDirector(network, registry, options = {}) {
     log: [],
     stats: {
       hauls: 0, mining: 0, delivered: 0, lost: 0, lostValue: 0, stranded: 0,
-      deadheads: 0, noShip: 0
+      deadheads: 0, noShip: 0,
+      // Workforce (E16 W2): powroty promów z ludźmi po kontrakcie.
+      passengerReturns: 0
     }
   };
 }
@@ -285,6 +291,60 @@ function countOutbound(director, stationId) {
  * Bez niego jednostki gromadzą się na Ziemi (55% importu układu) i ruch zamiera
  * przy pełnych magazynach nadawców.
  */
+/**
+ * POWRÓT PROMU (workforce, E16 W2): statek, który dowiózł ludzi, od razu wraca do portu
+ * nadania z ludźmi, którym skończył się kontrakt (`econ.workforceLeaving` odbiorcy, do
+ * ładowności). Ekonomii to nie zmienia — rotacja zeszła już z magazynu rynku pracy, a powrót
+ * niesie tylko znacznik `returning` (obraz, piractwo W4). Zajmuje stanowisko na zaokrętowanie
+ * i wyokrętowanie jak każdy prom. Paliwo płaci przewoźnik jak za pusty przelot.
+ */
+function launchPassengerReturn(director, delivered) {
+  const { registry, network, companies } = director;
+  const payload = delivered.payload || {};
+  if (!companies || !payload.shipId) return null;
+  const ship = getShip(companies, payload.shipId);
+  const company = ship ? getCompany(companies, ship.companyId) : null;
+  if (!ship || !company || ship.state !== SHIP_STATE.PARKED) return null;
+  const fromId = String(delivered.destinationId || '');
+  const homeId = String(delivered.originId || '');
+  if (!fromId || !homeId || fromId === homeId || ship.stationId !== fromId) return null;
+  const route = chooseRoute(network, fromId, homeId, { mass: 0, value: 0, piracyPressure: director.config.piracyPressure });
+  if (!route) return null;
+  const econ = director.getEconomy(fromId);
+  const perPerson = Math.max(RESOURCES.workforce.mass, 1e-6);
+  const returning = Math.floor(Math.min(Number(econ?.workforceLeaving) || 0, ship.capacity / perPerson));
+  if (econ && returning > 0) econ.workforceLeaving -= returning;
+  const vanClassId = ship.vanClassId || payload.vanClassId || null;
+  const course = launchCourse(registry, {
+    kind: COURSE_KIND.HAUL,
+    unitClass: CREW_CLASS_BY_VAN[vanClassId] || delivered.unitClass,
+    factionId: company.factionId,
+    stages: stagesFromRoute(route, fromId, homeId, {
+      loadSeconds: PASSENGER_BOARD_SECONDS,
+      unloadSeconds: PASSENGER_DISEMBARK_SECONDS,
+      ...manoeuvrePoints(director, fromId, homeId)
+    }),
+    fuelCapacity: fuelCapacityFor(route),
+    originId: fromId,
+    destinationId: homeId,
+    // Bez zlecenia i bez wartości: ludzie wracają do domu, magazynu to nie rusza.
+    payload: {
+      passengers: true, returning, vanClassId, shipId: ship.id, mode: route.id,
+      mass: returning * perPerson, value: 0
+    },
+    now: registry.clock
+  });
+  if (!course) return null;
+  assignShipToCourse(ship, course.id);
+  const bucket = director.parked.get(fromId);
+  const at = bucket ? bucket.findIndex(item => item.ship === ship) : -1;
+  if (at >= 0) bucket.splice(at, 1);
+  billDeadhead(company, route.cost.total);
+  countOutbound(director, fromId);
+  director.stats.passengerReturns++;
+  return course;
+}
+
 function tryDeadhead(director, targetStationId, requiredCapacity) {
   const { registry, network, companies } = director;
   if (!companies) return null;
@@ -1056,6 +1116,8 @@ function nextShipment(director, blocked = new Set()) {
         shipmentLeadSeconds(route));
       const units = Math.floor(Math.min(candidateUnits, required));
       if (units <= 0) continue;
+      if (buyer.id === 'workforce' && !workforceShipmentWorthIt(buyer.station, units,
+        director.getEconomy(buyer.station.id)?.resources?.workforce, director.config.economyScale)) continue;
 
       const candidate = {
         source,
@@ -1213,12 +1275,19 @@ export function dispatchHaul(director, stations) {
     return { ok: false, reason: 'towar zniknął między planowaniem a załadunkiem' };
   }
 
+  // Ludzie (workforce, E16 W2) lecą promem: klasa `crew-*` z ładowni statku, zaokrętowanie
+  // i wyokrętowanie rękawem, a po dostawie prom wraca z ludźmi po kontrakcie (`launchPassengerReturn`).
+  const passengers = shipment.resourceId === 'workforce';
+  const vanClassId = crew?.ship.vanClassId || shipment.vanClass.id;
   const course = launchCourse(registry, {
     kind: COURSE_KIND.HAUL,
-    unitClass: crew ? crew.ship.hullId : unitClassFor(mass),
+    unitClass: passengers ? (CREW_CLASS_BY_VAN[vanClassId] || 'crew-small')
+      : (crew ? crew.ship.hullId : unitClassFor(mass)),
     factionId: crew ? crew.company.factionId : (shipment.source.factionId ?? null),
-    stages: stagesFromRoute(route, shipment.source.id, shipment.target.id,
-      manoeuvrePoints(director, shipment.source.id, shipment.target.id)),
+    stages: stagesFromRoute(route, shipment.source.id, shipment.target.id, {
+      ...(passengers ? { loadSeconds: PASSENGER_BOARD_SECONDS, unloadSeconds: PASSENGER_DISEMBARK_SECONDS } : {}),
+      ...manoeuvrePoints(director, shipment.source.id, shipment.target.id)
+    }),
     fuelCapacity: fuelCapacityFor(route),
     originId: shipment.source.id,
     destinationId: shipment.target.id,
@@ -1229,7 +1298,8 @@ export function dispatchHaul(director, stations) {
       companyId: crew?.company.id || null,
       // Fracht płacony przewoźnikowi. Marża nad kosztem trasy — to z niej firma
       // odkłada kapitał, który później pozwala jej na pusty powrót.
-      freight: route.cost.total * 1.35
+      freight: route.cost.total * 1.35,
+      ...(passengers ? { passengers: true, vanClassId } : {})
     },
     now: registry.clock
   });
@@ -1840,6 +1910,7 @@ export function settleCourseEvents(director, events) {
           removeActiveShipmentOrder(fleet, order);
           director.stats.delivered++;
         }
+        if (course.payload.passengers) launchPassengerReturn(director, course);
       } else if (course.payload?.harvest) {
         // Kurs domknięty bez zdarzenia `stage` po wydobyciu (bańka) — urobek i tak zszedł z pasa.
         const extract = course.payload.extract;

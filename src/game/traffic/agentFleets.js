@@ -264,6 +264,9 @@ export function findBestTrade(agent, quotes, network, options = {}) {
 
   let best = null;
   for (const pelna of okazje) {
+    // Ludzi (workforce, E16) nie kupuje się na spekulację: wozi ich przewoźnik frakcji
+    // promem (`crew-*`, powrót po kontrakcie), nie frachtowiec kupca.
+    if (pelna.resourceId === 'workforce') continue;
     // Agent musi mieć czym zapłacić ZA TOWAR — to jest różnica wobec przewoźnika,
     // który wozi cudze i ryzykuje tylko statkiem. Na pełną ładownię drogiego
     // podzespołu go nie stać (540 podstaw uzbrojenia to ~750 tys. CR), więc

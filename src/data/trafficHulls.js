@@ -212,7 +212,12 @@ export const TRAFFIC_UNIT_HULLS = Object.freeze({
   // Role, których ruch v2 jeszcze nie wystawia — kadłuby Z11: kuter policji (bojowy, mostek i 2 gniazda)
   // i statek ratunkowy (cywilny, mostek cywilny bez gniazd).
   police: 'police_cutter',
-  rescue: 'rescue_ship'
+  rescue: 'rescue_ship',
+  // Promy z ludźmi (workforce, E16 W2 — src/data/workforce.js `CREW_CLASS_BY_VAN`): do czasu własnych
+  // sprite'ów (W7: crew_shuttle, crew_liner, colony_liner) kadłuby frachtowców tej samej ładowni.
+  'crew-small': 'inter_station_shuttle',
+  'crew-medium': 'container_ship',
+  'crew-large': 'long_haul_freighter'
 });
 
 /** Klasa spoza rejestru: obrys jak w dockLayout.hullFootprint (kontenerowiec). */
