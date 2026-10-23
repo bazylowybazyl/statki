@@ -5,8 +5,8 @@
 //   • `entries` [{ key, planet, collider, place, service }] — kolidery (płyta, teren, ściany portu K-7:
 //     HaloRingCollider), rejestr hal i zatok (pozy obsługi stanowisk, lampki, poziom lamp), automat obsługi
 //     stanowisk capital (k7BerthService.js);
-//   • teren w kolizjach: Mars (ECUMENE) i Jowisz (Fable) od razu z czystych planów CPU (ecumenePlan.js,
-//     fablePlan.js — ta sama funkcja, którą ring-archetyp liczy z treści po zbudowaniu); Ziemia z mapy CPU ringu
+//   • teren w kolizjach: Mars (ECUMENE) i Jowisz (BUDOWA) od razu z czystych planów CPU (ecumenePlan.js,
+//     budowaPlan.js — ta sama funkcja, którą ring-archetyp liczy z treści po zbudowaniu); Ziemia z mapy CPU ringu
 //     renderu po jego zbudowaniu (`setRingTerrain` — w trybie `inline` funkcja ringu, w workerze profil z = 0
 //     przez postMessage);
 //   • automat obsługi stanowisk K-7 w CZASIE GRY dla każdego ringu, bez bramki widoczności (dawniej krokowany
@@ -24,7 +24,7 @@ import { createK7BerthService, stepK7BerthService, syncK7BerthLamps } from './k7
 import { k7BeaconClock } from '../3d/haloRing/haloPortK7Lights.js';
 import { resolveHaloProfile } from '../3d/haloRing/haloRingProfiles.js';
 import { createEcumenePlan } from '../3d/haloRing/arch/ecumenePlan.js';
-import { createFablePlan } from '../3d/haloRing/arch/fablePlan.js';
+import { createBudowaPlan } from '../3d/haloRing/arch/budowaPlan.js';
 
 export const HALO_WORLD = Object.freeze({
   // Wysokość słońca nad płaszczyzną ringu [°] (jak obraz — HALO_GAME.sunElevationDeg; zgodność pilnuje test).
@@ -37,7 +37,7 @@ export const HALO_WORLD = Object.freeze({
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 // Teren ringów-archetypów z planu (archRing.js `terrainHeightAt`: θ = atan2(y, x) w [0, 2π), z = 0).
-const ARCH_PLANS = Object.freeze({ ecumene: createEcumenePlan, fable: createFablePlan });
+const ARCH_PLANS = Object.freeze({ ecumene: createEcumenePlan, budowa: createBudowaPlan });
 
 function archTerrainFor(key, layout) {
   const spec = HALO_RING_PLANETS[key];

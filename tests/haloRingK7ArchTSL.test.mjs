@@ -1,5 +1,5 @@
 // Port WebGPU ringu „Halo” (zadanie 10, ring 5/5): hala K-7 i ringi-archetypy Marsa (ECUMENE) i Jowisza
-// (Fable) w TSL. Bez GPU: WGSL budowany w Node (WGSLNodeBuilder, atrapa kanwy — jak
+// (BUDOWA) w TSL. Bez GPU: WGSL budowany w Node (WGSLNodeBuilder, atrapa kanwy — jak
 // tests/haloRingMegaCityTSL.test.mjs). K-7: graf na ring, wartości na halę (onObjectUpdate, tablice
 // pakowane per obiekt), stan renderu jak dawne ShaderMaterial. Archetypy: warianty (FG, atlas, barwy
 // w wierzchołkach) budowane raz, partie instancji bez InstancedMesh, kwadraty świateł zamiast punktów,
@@ -21,7 +21,6 @@ import { ArchBatch } from '../src/3d/haloRing/arch/archFrame.js';
 import { ArchLights, ArchMaterials, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry, archUnitGeometries } from '../src/3d/haloRing/arch/archMaterials.js';
 import { ARCH_INST_LAYOUT, ARCH_INST_STRIDE, ARCH_HASH_FMA } from '../src/3d/haloRing/arch/archTSL.js';
 import { makeEcumeneSurfaceNodes } from '../src/3d/haloRing/arch/ecumene.js';
-import { makeFableSurfaceNodes } from '../src/3d/haloRing/arch/fable.js';
 import { ECU_TYPE_PALETTE } from '../src/3d/haloRing/arch/ecumenePlan.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
 import { HALO_RING_PLANETS } from '../src/game/haloRingPlanets.js';
@@ -109,7 +108,7 @@ const meshesOf = (hall) => {
 // ---------------------------------------------------------------------------
 
 test('K-7 i archetypy: bez GLSL w src/3d/haloRing (poza haloRingGLSL.js dla budowli Z7 i narzędzia parzystości)', () => {
-  const files = ['haloPortK7.js', 'arch/archTSL.js', 'arch/archMaterials.js', 'arch/ecumene.js', 'arch/fable.js', 'arch/archRing.js'];
+  const files = ['haloPortK7.js', 'arch/archTSL.js', 'arch/archMaterials.js', 'arch/ecumene.js', 'arch/budowa.js', 'arch/archRing.js'];
   for (const f of files) {
     const src = read(`src/3d/haloRing/${f}`);
     assert.doesNotMatch(src, /\/\* glsl \*\/|new THREE\.ShaderMaterial|gl_FragColor|gl_Position|from '\.\/haloRingGLSL\.js'|from '\.\.\/haloRingGLSL\.js'/, `${f}: bez GLSL`);
@@ -267,7 +266,10 @@ function makeArch(key) {
   const m = new Array(16).fill(0);
   m[0] = 10; m[5] = 20; m[10] = 30; m[12] = layout.radii.floorMid; m[15] = 1;
   batch.push16(m, [0.5, 0.4, 0.3], 1, 0.123, 2, 0);
-  batch.push16(m, [0.5, 0.4, 0.3], 3, 0.456, 5, 0);
+  // ring BUDOWA: barak (7), dron (8 — lot w wierzchołkach), stal budowy (9)
+  batch.push16(m, [0.5, 0.4, 0.3], 7, 0.456, 0.5, 0);
+  batch.push16(m, [0.5, 0.4, 0.3], 8, 0.789, 120, 0.2);
+  batch.push16(m, [0.5, 0.4, 0.3], 9, 0.321, 0.4, 0);
   const lights = new ArchLights();
   lights.add(layout.radii.floorMid, 0, 10, [1, 0.5, 0.2], 20, 0.4);
   const tex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
@@ -276,7 +278,7 @@ function makeArch(key) {
   const meshes = {
     instanced: archBatchMesh(batch, geos.box, mats.instanced(false)),
     instancedFG: archBatchMesh(batch, geos.box, mats.instanced(true)),
-    trees: archBatchMesh(batch, archTreeGeometry('cone'), mats.instanced(false, true)),
+    trees: archBatchMesh(batch, archTreeGeometry(), mats.instanced(false, true)),
     stripAtlas: new THREE.Mesh(new THREE.PlaneGeometry(1, 1).setAttribute('aAtlas', new THREE.Float32BufferAttribute([0, 0, 0, 0], 1)),
       mats.strip({ map: tex, emap: tex, atlas: true, fg: true })),
     strip: new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mats.strip({ map: tex, emap: tex })),
@@ -299,7 +301,7 @@ test('archetypy: materiały ze stanem dawnych ShaderMaterial, warianty raz, part
   // jeden przepleciony bufor instancji: macierz (4 × vec4), barwa, aInst
   const geo = M.instanced.geometry;
   assert.ok(geo.isInstancedBufferGeometry);
-  assert.equal(geo.instanceCount, 2);
+  assert.equal(geo.instanceCount, 4);
   for (const [name, [offset, size]] of Object.entries(ARCH_INST_LAYOUT)) {
     assert.equal(geo.getAttribute(name).offset, offset, name);
     assert.equal(geo.getAttribute(name).itemSize, size, name);
@@ -374,7 +376,7 @@ test('archetypy WGSL: limity, pochodne przed gałęziami rodzaju, hasze przez fm
   }
 });
 
-test('powierzchnie ECUMENE i Fable (TSL): czyste funkcje pól, pochodne linii przed gałęziami stref, mapa stref textureLoad', () => {
+test('powierzchnia ECUMENE (TSL): czyste funkcje pól, pętla palety, stałe zwinięte jak w bazie', () => {
   const mars = layoutOf('mars');
   const um = createHaloUniforms(mars);
   const ecu = uniform(new THREE.Vector4(12000, 3, 6300, 0));
@@ -396,29 +398,4 @@ test('powierzchnie ECUMENE i Fable (TSL): czyste funkcje pól, pochodne linii pr
   // stałe 8 · 4,14 i 3 · 4,14 zwinięte w float32 jak w bazie (kreski osi arterii)
   assert.match(em, /ecuMod\( [^;]*, \( 33\.119998931884766 \* [^;]*\( 12\.420000076293945 \* /);
 
-  const jup = layoutOf('jupiter');
-  const uj = createHaloUniforms(jup);
-  const zoneTex = new THREE.DataTexture(new Uint8Array(16 * 4 * 4), 16, 4, THREE.RGBAFormat);
-  zoneTex.magFilter = THREE.NearestFilter;
-  zoneTex.minFilter = THREE.NearestFilter;
-  zoneTex.wrapS = THREE.RepeatWrapping;
-  zoneTex.wrapT = THREE.ClampToEdgeWrapping;
-  const fg = new THREE.PlaneGeometry(1, 1);
-  fg.setAttribute('aRing', new THREE.Float32BufferAttribute(new Float32Array(8), 2));
-  const fMesh = new THREE.Mesh(fg, haloNodeMaterial('FableSurface',
-    makeFableSurfaceNodes({ u: uj, zone: texture(zoneTex, vec2(0.0)), fab: uniform(new THREE.Vector4(340000, 5400, 168, 3)) }), {}, {}));
-  const F = buildWGSL(fMesh);
-  checkLimits('FableSurface', fMesh, F);
-  const fm = mainBody(F.fragment);
-  assert.match(fm, /textureLoad\( /, 'mapa stref NEAREST: textureLoad');
-  assert.match(fm, /tsl_coord_repeatS_clamp_2dT\(/, 'zawinięcie: powtórzenie wzdłuż, obcięcie w poprzek');
-  const chain = fm.indexOf('< 0.5 ) ) {');
-  assert.ok(chain > 0 && fm.indexOf('fwidth(') < chain, 'pochodne przed gałęziami stref');
-  const firstIf = fm.indexOf('if ( ( nodeVar');
-  const zoneIf = fm.indexOf('floor( ( ( nodeVar');
-  assert.ok(zoneIf > 0 && firstIf > 0);
-  // wszystkie fwidth przed pierwszą gałęzią typu strefy (łańcuch If na typie)
-  const typeChain = fm.search(/if \( \( nodeVar\d+ < 0\.5 \) \) \{\s*nodeVar\d+ = 1\.0;/);
-  assert.ok(typeChain > 0 && fm.lastIndexOf('fwidth(') < typeChain, 'fwidth przed łańcuchem stref');
-  for (const f of ['fabNoise', 'fabFbm3']) assert.doesNotMatch(fnBody(F.fragment, f), /haloRingU|\bobject\./, `${f} czysta`);
 });

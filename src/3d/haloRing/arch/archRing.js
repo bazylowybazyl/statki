@@ -1,7 +1,7 @@
-// Ringi-archetypy (Z6, 2026-09-27): Mars = ECUMENE, Jowisz = ring Fable —
+// Ringi-archetypy (Z6, 2026-09-27): Mars = ECUMENE, Jowisz = BUDOWA (ring w budowie, 2026-10-23) —
 // INNE RINGI niż ring Ziemi (decyzja użytkownika: „kompletnie inne ringi, nie
-// tylko skórka — sprawdź ECUMENE i ring od Fable z dem”). Habitat na zewnątrz
-// jak Ziemia, ląd 1:1 z dem (dema/orbital_ring_demo.html, _2.html) w skali ×3.
+// tylko skórka”). Habitat na zewnątrz jak Ziemia; ECUMENE — ląd 1:1 z dema
+// (dema/orbital_ring_demo.html) w skali ×3, BUDOWA — kręgosłup i wyspy płyty (budowaPlan.js).
 //
 // API = createHaloRing (index.js), więc klej gry (haloRingGame.js), kolizje,
 // ruch v2 i demo biorą ring bez rozróżniania:
@@ -15,7 +15,7 @@
 // i model światła (haloRingTSL.js), hala K-7 z zatokami (standard stanowisk)
 // i reguły FG (górna ściana nad płaszczyzną gry: zanik przy dużym
 // powiększeniu, schowanie nad wąwozem habitatu, wycięcia nad graczem).
-// Własne: cała reszta ringu (ecumene.js / fable.js) i bryły zatok i tranzytów
+// Własne: cała reszta ringu (ecumene.js / budowa.js) i bryły zatok i tranzytów
 // w stylu dema (archPort.js). Nie tworzy renderera (AGENTS.md).
 import * as THREE from 'three';
 import { HALO_DEFAULT_LAYER, HALO_FG, HALO_QUALITY, haloPortComplexAngles, haloQualityLod, resolveHaloQuality } from '../haloRingConfig.js';
@@ -29,14 +29,14 @@ import { ArchMaterials, archBatchMesh, archUnitGeometries } from './archMaterial
 import { buildArchPortBodies } from './archPort.js';
 import { archRunSteps } from './archFrame.js';
 import { buildEcumeneRing, buildEcumeneRingSteps } from './ecumene.js';
-import { buildFableRing, buildFableRingSteps } from './fable.js';
+import { buildBudowaRing, buildBudowaRingSteps } from './budowa.js';
 
-export const ARCH_BUILDERS = Object.freeze({ ecumene: buildEcumeneRing, fable: buildFableRing });
-const ARCH_BUILD_STEPS = Object.freeze({ ecumene: buildEcumeneRingSteps, fable: buildFableRingSteps });
+export const ARCH_BUILDERS = Object.freeze({ ecumene: buildEcumeneRing, budowa: buildBudowaRing });
+const ARCH_BUILD_STEPS = Object.freeze({ ecumene: buildEcumeneRingSteps, budowa: buildBudowaRingSteps });
 
 // Budowa w tle (zadanie 23, opcja buildInBackground — klej gry): budowa ringu to 0,4 s CPU przy Marsie
 // i 0,7 s przy Jowiszu (mapa stref, teren i zabudowa dzielnic) — dawniej w JEDNEJ klatce pierwszego
-// zbliżenia (przestój w gęstym polu przy Marsie). Kroki budowy (generatory ecumene.js / fable.js, `yield`
+// zbliżenia (przestój w gęstym polu przy Marsie). Kroki budowy (generatory ecumene.js / budowa.js, `yield`
 // co kilka ms pracy) idą w klatkach gry: pumpBuild() najwyżej `maxSteps` kroków i do `ms` czasu
 // (performance.now; przy stojącym zegarze harnessu liczy się sam limit kroków). Kroki w Chrome (RTX 5080,
 // 7800X3D): mediana 0,7 ms (Mars) / 4,5 ms (Jowisz), najdłuższy ~19 ms (hale K-7, kopuły, atlas płyt);
@@ -390,6 +390,8 @@ export function createArchRing(options = {}) {
     get plan() { return { landmarks: parts?.content.landmarks || [], domes: parts?.content.domes || [], docks: [], transits: [] }; },
     get landmarks() { return parts?.content.landmarks || []; },
     get domes() { return parts?.content.domes || []; },
+    // ring BUDOWA: światła robocze (x, y, z lokalne, faza — ≥ 1 spawanie, < 0 maszt) dla siatki świateł gry
+    get workLights() { return attached ? parts?.content.workLights || null : null; },
 
     dispose() {
       disposeParts();

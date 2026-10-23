@@ -2,13 +2,14 @@
 paths:
   - "src/3d/spaceGas/**"
   - "src/game/spaceGasInput.js"
+  - "src/game/ringGasField.js"
   - "src/render/blocks/spaceGasBlock.js"
   - "scripts/webgpu/gaz-kosmos-gra.mjs"
   - "tests/spaceGas.test.mjs"
   - "dema/gazy-transport-webgpu.html"
 ---
 
-# Gaz w otwartej przestrzeni: pole z transportem gęstości (port dema gazy-transport), scena pasa
+# Gaz w otwartej przestrzeni: pole z transportem gęstości (port dema gazy-transport), sceny pasa i ringu Jowisza
 
 > Reguła obszaru. Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Nową wiedzę o obszarze dopisuj tutaj: stan i zasady w czasie teraźniejszym, historię i wyniki pomiarów — do `docs/`.
 
@@ -22,9 +23,9 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
   - GK-3: mapy i dwie połowy warstwy;
   - GK-4: pył gazu;
   - GK-5: scena pasa z olbrzymami, wybuchami, pociskami i jedną mgłą;
+  - GK-6: scena ringu Jowisza w budowie (2026-10-23, § „Scena ringu” niżej);
   - GK-8: opcja Wł. / Wył.
 - Czekają:
-  - GK-6: ring Jowisza;
   - GK-7: ławice mgły;
   - GK-8: okno i mapy z presetu;
   - GK-9: odbiór.
@@ -33,12 +34,12 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
 ## Szew i układ
 
 - Gra pakuje wejście klatki. `packSpaceGasFrame` w `src/game/spaceGasInput.js` daje Float64Array `SPACE_GAS_IN` (układ w czystym `src/3d/spaceGas/spaceGasLayout.js`):
-  - kotwica sceny (pas — Słońce) w double;
+  - scena (`SPACE_GAS_SCENE`: `belt` 1, `ring` 2 — `o.scene`, domyślnie pas) i kotwica sceny w double (`o.anchorX / anchorY`; bez nich Słońce — pas); zmiana kotwicy albo sceny = nowa siatka obwiedni;
   - kamera i kadr względem kotwicy;
-  - wiatr wzdłuż orbity;
-  - kierunek ku Słońcu;
+  - wiatr wzdłuż orbity wokół kotwicy + od kotwicy (pole może podać własny: `field.wind`, `field.windOut`);
+  - kierunek ku Słońcu z punktu kamery (`o.sunX / sunY`, niezależnie od kotwicy — dla pasa ten sam wynik bit w bit);
   - siatka obwiedni 32 × 32 z `field.sampleMacro`;
-  - strugi odgazowania lodowych skał;
+  - strugi odgazowania lodowych skał (`field.forEachRockInRect`; skała może podać kierunek wylotu `dx, dy`, pole — mnożnik wydajności `field.ventGain`);
   - wybuchy: pierścień `recent` / `count` w `src/game/explosionEvents.js` (`GameBlasts`), przyjęte raz i starzone czasem gry;
   - pociski z `bullets` w oknie;
   - RASTER PRZEKROJU OLBRZYMÓW (z = 0): 128 × 128 bitów na okno, z `giant.sampleWorld`, próbkowany tylko w pudłach gotowych olbrzymów i przesuwany przyrostowo.
@@ -48,7 +49,8 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
   - kadłuby z `GAS_OBST_IN` (gra dokłada okno pola do prostokątów domen przeszkód);
   - dysze MAIN z `EngineFrame`.
 - Budżet źródeł (64 na klatkę) w kolejności: wybuchy (front + wyrzut), dysze, odgazowanie, pociski.
-- JEDNA MGŁA w pasie: `SpaceGasCover.belt` (`spaceGasState.js`) = zanik gazu w tej klatce. Płytkie płaty `fog.js` (pass gry) mają alfę × (1 − pokrycie). Głębokie płaty tła zostają.
+- Pole pasa i pole ringu mają to samo API (`sampleMacro`, `rectTouchesBelt`, `holeVersion`, `forEachRockInRect`, raster przez `giants`) — packer i render są wspólne. Wybór sceny: `packSpaceGas` w `index.html` (blok „GAZ PRZESTRZENI”) — pas, gdy kadr go dotyka, inaczej ring w budowie przy kadrze.
+- JEDNA MGŁA w pasie: `SpaceGasCover.belt` (`spaceGasState.js`) = zanik gazu w tej klatce (tylko scena pasa). Płytkie płaty `fog.js` (pass gry) mają alfę × (1 − pokrycie). Głębokie płaty tła zostają.
   - Gaz wyłączony (opcja, preset Niska) albo oddalenie — stara mgła wraca.
   - A/B: `SpaceGas.tune.fogReplace`.
 - Tryb off woła `SpaceGas.submit` w `render()`. Worker bierze bloki `spaceGas` i `gasObst`.
@@ -57,6 +59,14 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
   - Szum dostaje argumenty rzędu setek.
   - Mapy i warstwa są ustawiane przez `mesh.position` w double.
   - Nowe dane pola (źródło, przeszkoda) podajesz względem kotwicy, nie w świecie ani względem `fx.origin`.
+
+## Scena ringu (GK-6, ring Jowisza w budowie — decyzja użytkownika 2026-10-23 „wszędzie pył, gaz”)
+
+- Pole `src/game/ringGasField.js` (`createRingGasField(haloWorld.entries[i])`, tylko ring z `construction.active`): kotwica = środek planety; obwiednia = pas wokół obręczy (`RING_GAS_TUNE`: σ 3 200 j. od planety, 5 200 od habitatu i doków) × (tło budowy + fronty), ×0,45 przy halach K-7 (hala ma własny gaz); `ice` (kanał z — odgazowanie) rośnie przy frontach; strugi odgazowania po dwie na front (habitat i strona planety, wylot ku przerwie i od obręczy, typ `RING_GAS_VENT_TYPE`, bez progu rozmiaru skały, `ventGain` 0,16); dryf 22 j/s wzdłuż obręczy, 6 j/s od planety.
+- PRZESZKODA: płyta ringu jako jeden „olbrzym” rastra przekroju (`field.giants`) z próbką z kolidera gry (`pointInSlab` — przerwy, tranzyty, teren): gaz płynie przerwami, płyta wysp go zatrzymuje (ta sama płyta co statki i pociski).
+- Render: ta sama klasa sceny i kernele co pas (pole dalekie i detal pasa) — scena różni się obwiednią z gry i WYGLĄDEM (`createRingGasLook` w `spaceGasBelt.js`: szarobrunatny pył budowy, żółtawe opary cięcia płyt z Io, sinawe odgazowanie; więcej otoczenia — poświata Jowisza). `SpaceGas.looks[scena]` przełącza `scene.look` + `syncLook()` przy zmianie sceny (uniformy — bez nowych pipeline'ów i rozgrzewki).
+- Światła spawania i masztów ringu idą do siatki świateł (`HaloRingGame._workLights` → `Core3D.fx.lights.point`), więc gaz i pył przy kratownicy błyskają spawaniem.
+- Skutków rozgrywki gaz nie ma (jak w pasie). Testy: `tests/haloRingBudowa.test.mjs` (pole, strugi, przeszkoda, pakowanie sceny `ring`).
 
 ## Pole (`spaceGasSim.js`)
 

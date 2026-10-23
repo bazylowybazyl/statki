@@ -1,4 +1,4 @@
-// Ringi-archetypy (Mars = ECUMENE, Jowisz = Fable; Z6 2026-09-27) — rama
+// Ringi-archetypy (Mars = ECUMENE, Jowisz = BUDOWA; Z6 2026-09-27) — rama
 // ringu i zapis instancji. Czysta matematyka, bez Three (testy node).
 //
 // Układ lokalny ringu jak w silniku Halo: oś ringu = Z, planeta w (0, 0, 0),
@@ -134,12 +134,14 @@ export class ArchBatch {
 
 // Rura / belka wzdłuż ringu jako odcinki-skrzynki (cięciwy) — w partii
 // konstrukcji zamiast osobnej siatki torusa (jedno wywołanie mniej na stronę).
-// h — wysokość osi rury nad podłogą, z — położenie w poprzek, r — pół przekroju.
-export function archRingTubeBoxes(batch, R, h, z, r, segs, color, kind = 0, p1 = 0.3) {
+// h — wysokość osi rury nad podłogą, z — położenie w poprzek, r — pół przekroju; keep(θ) — odcinek
+// tylko tam, gdzie zwróci true (ring w budowie: bez przerw).
+export function archRingTubeBoxes(batch, R, h, z, r, segs, color, kind = 0, p1 = 0.3, keep = null) {
   const m = new Array(16);
   const dA = (Math.PI * 2) / segs;
   const chord = 2 * (R + h) * Math.sin(dA * 0.5) * 1.02;
   for (let i = 0; i < segs; i++) {
+    if (keep && !keep((i + 0.5) * dA)) continue;
     archMatrix(R, (i + 0.5) * dA, z, h - r, chord, 2 * r, 2 * r, 0, m);
     batch.push16(m, color, kind, 0, p1, 0);
   }
@@ -151,50 +153,6 @@ const lin = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4
 export function archHex(hex) {
   return [lin(((hex >> 16) & 255) / 255), lin(((hex >> 8) & 255) / 255), lin((hex & 255) / 255)];
 }
-// HSL → RGB bez dekodowania gamma (THREE.Color.setHSL w przestrzeni roboczej,
-// czyli liniowej — tak liczą barwy dema Fable).
-export function archHslLinear(h, s, l) {
-  return archHslRaw(h, s, l);
-}
-function archHslRaw(h, s, l) {
-  const hue2 = (p, q, t) => {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1 / 6) return p + (q - p) * 6 * t;
-    if (t < 1 / 2) return q;
-    if (t < 2 / 3) return p + (q - p) * 6 * (2 / 3 - t);
-    return p;
-  };
-  const hh = ((h % 1) + 1) % 1;
-  if (s === 0) return [l, l, l];
-  const q = l <= 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
-  return [hue2(p, q, hh + 1 / 3), hue2(p, q, hh), hue2(p, q, hh - 1 / 3)];
-}
-export function archHsl(h, s, l) {
-  // HSL w sRGB → liniowe
-  const hue2 = (p, q, t) => {
-    if (t < 0) t += 1;
-    if (t > 1) t -= 1;
-    if (t < 1 / 6) return p + (q - p) * 6 * t;
-    if (t < 1 / 2) return q;
-    if (t < 2 / 3) return p + (q - p) * 6 * (2 / 3 - t);
-    return p;
-  };
-  const hh = ((h % 1) + 1) % 1;
-  let r;
-  let g;
-  let b;
-  if (s === 0) { r = g = b = l; } else {
-    const q = l <= 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    r = hue2(p, q, hh + 1 / 3);
-    g = hue2(p, q, hh);
-    b = hue2(p, q, hh - 1 / 3);
-  }
-  return [lin(r), lin(g), lin(b)];
-}
-
 // Generator ziarnisty jak w demach (mulberry32).
 export function archRng(seed) {
   let a = seed >>> 0;
@@ -213,8 +171,8 @@ export const smooth = (t) => t * t * (3 - 2 * t);
 export const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 export const modp = (a, n) => ((a % n) + n) % n;
 
-// Budowa ringu-archetypu krokami (zadanie 23): ciężkie pętle budowy (mapa stref Fable, teren i zabudowa
-// dzielnic ECUMENE) są generatorami z `yield` co kilka ms pracy — klej gry (haloRingGame.js) kroczy je
+// Budowa ringu-archetypu krokami (zadanie 23): ciężkie pętle budowy (teren i zabudowa dzielnic ECUMENE,
+// plan i bryły BUDOWY) są generatorami z `yield` co kilka ms pracy — klej gry (haloRingGame.js) kroczy je
 // w klatkach (createArchRing z buildInBackground), a wersje synchroniczne (testy, demo) biegną do końca tu.
 // Wynik ten sam: kroki nie zmieniają kolejności obliczeń.
 export function archRunSteps(gen) {

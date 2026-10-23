@@ -488,7 +488,7 @@ export function createRadarTerrain(tune = RADAR_TUNE) {
       g.arc(_pt.x, _pt.y, r, 0, TAU);
       limbStroke(g, _pt.x, _pt.y, r, Math.max(1.1, Math.min(3, r * 0.02)));
     }
-    // ring „Halo”: płyta między kadłubem a podłogą, luki tranzytów, ściany portu
+    // ring „Halo”: płyta między kadłubem a podłogą, luki tranzytów i przerw ringu w budowie, ściany portu
     const rings = Array.isArray(world.rings) ? world.rings : [];
     for (const entry of rings) {
       const col = entry?.collider;
@@ -506,14 +506,18 @@ export function createRadarTerrain(tune = RADAR_TUNE) {
       const dc = Math.hypot(_pt.x - T / 2, _pt.y - T / 2);
       if (dc - rOut > T * 0.8 || rIn - dc > T * 0.8) continue;
       back.drawn++;
-      // luki: kąty świata gry (lokalny ring → gra: −(t + rot))
+      // luki: tranzyty i przerwy (Jowisz w budowie) — kąty świata gry (lokalny ring → gra: −(t + rot))
       const half = Number(col.transitHalf) || 0;
-      const angles = (col.transitAngles || []).map((t) => normA(-(t + (place.rot || 0)))).sort((a, b) => a - b);
+      const rot = place.rot || 0;
+      const gaps = col.construction?.active ? col.construction.gaps : [];
+      const open = (half > 0 ? (col.transitAngles || []).map((t) => ({ c: normA(-(t + rot)), h: half })) : [])
+        .concat(gaps.map((gp) => ({ c: normA(-(gp.center + rot)), h: gp.half })))
+        .sort((a, b) => a.c - b.c);
       g.beginPath();
-      if (angles.length && half > 0) {
-        for (let i = 0; i < angles.length; i++) {
-          const a0 = angles[i] + half;
-          const a1 = (i + 1 < angles.length ? angles[i + 1] : angles[0] + TAU) - half;
+      if (open.length) {
+        for (let i = 0; i < open.length; i++) {
+          const a0 = open[i].c + open[i].h;
+          const a1 = (i + 1 < open.length ? open[i + 1].c : open[0].c + TAU) - (i + 1 < open.length ? open[i + 1] : open[0]).h;
           if (a1 <= a0) continue;
           g.moveTo(_pt.x + Math.cos(a0) * rOut, _pt.y + Math.sin(a0) * rOut);
           g.arc(_pt.x, _pt.y, rOut, a0, a1);

@@ -232,7 +232,7 @@ const SCENES = {
     js: `S.cam(ship.pos.x, ship.pos.y, 0.2);`
   },
   'jowisz-ring': {
-    opis: 'Ring Jowisza (archetyp Fable) przy porcie K-7, zoom 0,2',
+    opis: 'Ring Jowisza (archetyp BUDOWA — ring w budowie) przy porcie K-7, zoom 0,2',
     hud: false, warm: 45, warstwy: true,
     js: `S.cam(ship.pos.x, ship.pos.y, 0.2);`
   },

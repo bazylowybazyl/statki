@@ -186,15 +186,21 @@ function ringZones(stationId, ring, cfg) {
   const zones = [];
   ring.complexAngles.forEach((complexAngle, c) => {
     for (const side of [-1, 1]) {
-      // Najbliższy tranzyt po tej stronie kompleksu.
+      // Najbliższy przelot po tej stronie kompleksu: tranzyt albo krawędź przerwy ringu w budowie
+      // (reda nie zasłania wylotu przerwy).
       let reach = Infinity;
+      let reachHalf = ring.transitHalfArc;
       for (const transitAngle of ring.transitAngles || []) {
         const delta = wrapTau(side * (transitAngle - complexAngle));
-        if (delta > 1e-9 && delta < reach) reach = delta;
+        if (delta > 1e-9 && delta < reach) { reach = delta; reachHalf = ring.transitHalfArc; }
       }
-      if (!Number.isFinite(reach)) reach = Math.PI / Math.max(1, ring.complexAngles.length);
+      for (const gap of ring.gaps || []) {
+        const delta = wrapTau(side * (gap.angle - complexAngle));
+        if (delta > 1e-9 && delta - gap.halfArc / R < reach - reachHalf / R) { reach = delta; reachHalf = gap.halfArc; }
+      }
+      if (!Number.isFinite(reach)) { reach = Math.PI / Math.max(1, ring.complexAngles.length); reachHalf = ring.transitHalfArc; }
       const inner = (ring.complexHalfArc + cfg.complexClearance) / R;
-      const outer = reach - (ring.transitHalfArc + cfg.transitClearance) / R;
+      const outer = reach - (reachHalf + cfg.transitClearance) / R;
       if (outer <= inner) continue;
       const split = inner + (outer - inner) * cfg.civilShare;
       const halfGap = cfg.roleGap / 2 / r0;

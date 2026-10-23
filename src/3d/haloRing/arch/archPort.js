@@ -5,7 +5,7 @@
 // hala kompleksu (HaloPortK7), kolizje liczy haloPortDocking.js z tych samych
 // liczb. Tu tylko wygląd: paleta i światła doków z profilu planety oraz
 // „ubranie” w stylu dema (ECUMENE: stalowe cięgna, złote głowice, ciepłe
-// i zimne pasy; Fable: radiatory z żarem, anteny, bursztynowe bramy).
+// i zimne pasy; BUDOWA — styl dema orbital_ring_demo_2: radiatory z żarem, anteny, bursztynowe bramy).
 // Czysta matematyka — Three buduje siatki w archRing.js.
 import { HALO_PORT, HALO_TRANSIT, haloTransitAngles } from '../haloRingConfig.js';
 import { bayArms, haloBayLayouts } from '../haloPortBays.js';
@@ -219,7 +219,7 @@ export function buildArchPortBodies(layout, style, dress = 'ecumene') {
         light(th, rF, sd * (len * 0.5 - HALO_PORT.sideWall * 0.5), D + 30, zW + 60, emit[E.cyan], 26, 0.1);
       }
     } else {
-      // Fable: radiatory na koronie ścian (ciemne lamele z żarem), anteny
+      // BUDOWA (styl dema orbital_ring_demo_2): radiatory na koronie ścian (ciemne lamele z żarem), anteny
       // z czerwonymi światłami na stopach pylonów, bursztynowe bramy terminalu
       for (const sd of [-1, 1]) {
         const xw = sd * (len - HALO_PORT.sideWall) * 0.5;
