@@ -196,6 +196,34 @@ PRZED `initPlanets3D`, które dokłada stałe światła sceny — zestaw świate
 nie trafiała w klucz rysunku; teraz kolejność jak w grze (planety, potem kadłuby i efekty). Gra (TRAVEL TO,
 `travel-gra.mjs`): podróż do celu (błąd 10 j.), wezwanie i POWRÓT bez błędów konsoli.
 
+### Przegląd rundy (orkiestrator, 2026-10-23)
+
+Cztery uwagi przeglądu gałęzi, wszystkie potwierdzone i poprawione:
+1. **Skok obrazu przy β → 0** — perspektywa przelotu miała wagę niezależną od β, a wielkość × β: ciało przed dziobem
+   przy wyjściu (swobodny skok, cel = null; planeta spoza celu) kurczyło się do kropki w punkcie zbiegu, a przy β = 0
+   wskakiwał prawdziwy obraz; przy starcie z planetą w kadrze przed dziobem znikała w pierwszej klatce β > 0. Teraz
+   przejście β w tej samej rodzinie rzutów (`S_β = flat^(1−β) · S^β`, `k_β = 1 / (1 + a·β / A0)`) — β → 0 zbiega do
+   prawdziwego obrazu. W demie: przy starcie Mars wjeżdża do punktu zbiegu górną krawędzią w ostatnich ~0,1 s
+   narastania β (−579 → −370 px, 18 → 12 px), przy swobodnym wyjściu z Marsem przed dziobem odjeżdża płynnie ku
+   prawdziwemu miejscu za kadrem (−247 → −429 → −2583 px, rośnie 25 → 36 → 198 px). `warp-ped-skoki.mjs` (Jowisz,
+   Mars; zoomy 0,2 i 0,6): 0 skoków, 0 mignięć ciał, cel w kadrze 322 / 322 klatki przylotu.
+2. **Ring K-7 w tle przy prawdziwym miejscu** — warstwy tła FG ringu włączało samo `lens.on`, także gdy planeta
+   czeka na prawdziwym miejscu (bramka przy odlocie spod K-7, wejście −1, puszczony przylot). Teraz tło tylko przy
+   `lens.real` < 0,999 (`HALO_GAME.lensBgReal`). W grze (sonda sesji: TRAVEL TO spod hali K-7 Ziemi na 600 tys. j.
+   i z 700 tys. j. pod halę, co klatkę `WARP_RING_LENS.earth` i warstwy ringu): przy odlocie dawny warunek (`lens.on`)
+   trzymał prawdziwy, widoczny ring w warstwie tła przez 77 klatek (bramka ringu — planeta czeka na prawdziwym
+   miejscu), przy przylocie przez 1; po poprawce 0 i 0, a ring przesunięty w soczewce (1031 widocznych klatek
+   przylotu) dalej w tle. Przy puszczaniu celu po przylocie (0,8 s) obraz ringu Ziemi na ~0,15 s wychodzi z kadru
+   i wraca — kompozycja przybycia w grze, poza tą rundą.
+3. **Za szerokie okno perspektywy** — 1,5 / 3 × droga do krawędzi kadru w bok i bez końca skoku: ciało za celem
+   (Jowisz na trasie do Marsa) stało w punkcie zbiegu bliżej niż cel. Teraz tylko ciała mijane w tym skoku: obraz
+   w trawersie w kadrze (0,8 / 1,2) i przed bliskim brzegiem celu wzdłuż kursu (`approachMax`). Trasa Mars: Jowisz nie
+   pojawia się w skoku.
+   Gra (`travel-gra.mjs`, po scaleniu `main` 25bb5f41): podróż TRAVEL TO do celu (błąd 14 j.), wezwanie i POWRÓT bez
+   błędów konsoli; przebieg z objazdem studni kończy skrypt w drugim odcinku warpu (skrypt czeka ~20 s po pierwszym).
+4. **Budowa ringu przy kilku px** — `lensMinPx` chował ring, ale `lens.vis` wyzwalał budowę ringu-archetypu; teraz ten
+   sam próg bramkuje budowę.
+
 ## Z czego jest zbudowane (wszystko z gry)
 
 - `Core3D` + `hexShips3D` (Atlas na belkach — `dema/mostki-webgpu/swiat.js`, jak demo dronów naprawczych),
