@@ -1,6 +1,7 @@
 ---
 paths:
   - "src/data/weapons.js"
+  - "src/game/weaponController.js"
   - "src/game/fireControl.js"
   - "src/game/weaponAim.js"
   - "src/ui/weaponReticle.js"
@@ -16,6 +17,8 @@ paths:
 > Reguła obszaru (podział AGENTS.md, 2026-10-19). Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Odnośnik „§ X” = nagłówek sekcji w tej albo innej regule (`grep -rn "## X" .claude/rules`). Nową wiedzę o obszarze dopisuj tutaj: stan i zasady w czasie teraźniejszym, historię i wyniki pomiarów — do `docs/`.
 
 ## Zasięgi broni (2026-10-07, `src/data/weapons.js` § ZASIĘGI)
+
+- **Skala klas kadłuba** (`src/data/shipRanges.js`, decyzja użytkownika 2026-10-23): bazowe zasięgi uzbrojenia okrętów są skrócone o połowę, a fregata / destroyer / battleship / capital (lotniskowiec) / supercapital dostają mnożnik ×1 / ×1,25 / ×1,5 / ×1,75 / ×2. Atlas jest supercapitalem i zachowuje swoje zasięgi. Rozmiary gniazd S/M/L/Capital pozostają niezależne od klasy kadłuba. Pasma podane niżej opisują EFEKTYWNE zasięgi na supercapitalu; `MASTER_WEAPONS.baseRange` zawiera połowę tych liczb. Obrona punktowa (`aux`) i broń myśliwców zachowują własne pasma bez tej premii. `weaponRangeFor` nakłada klasę kadłuba przed źródłami modyfikatorów i sufitem modułu snajperskiego; strzały, dobór i skan celów NPC, dystans pilota, torpedy, Hexlance, promień śmierci oraz karty i lista broni WYPOSAŻENIA używają tej samej wartości. `weaponRangeWithModule` / `fitStats` dostają id kadłuba. Testy: `tests/shipRanges.test.mjs`.
 
 - Decyzja użytkownika („bronie mają za duży zasięg — zdecydowanie”): zasięgi 3–5× krótsze niż od marca (Yamato 20 → 7 km, Tempest L 16 → 6, Mjolnir 100 → 20, Hexlance 60 → 15). Zasada: pocisk leci do końca zasięgu 0,3–1,4 s (strzał z maksymalnego dystansu jeszcze trafia — dawniej fregata schodziła z toru o kilometry), a bateria główna Atlasa mieści się w domyślnym kadrze (9 × 5 km — kadłub 20% szerokości, `cameraRig.js`) w kierunku celowania. Pasma: obrona punktowa 1–2,2 km, flak do 5,2 km przeciw myśliwcom (przeciw rakietom 3D od 2026-10-12 tylko do 0,6 zasięgu — § „Rakiety”, obrona punktowa), bliski 1,8–4,5 km (działka, wiązki, armata, Goliath, Plasma Gatling), linia 3–4,5 km (Tempest i Helios S / M), daleki 6–7 km (L, Yamato), snajper (klasa `weaponClass: 'sniper'`, niżej) Lanca 8 / 10 km (main M / L), Valkyrie 6,5 / 7 / 9 km i Mjolnir 20 km (postój), Hexlance 15 km, Promień Śmierci 12 km (superbroń natychmiastowa, niżej), rakiety 4,5–15 km, torpedy 7–9 km (dolot 5–12 s). Wzrok Atlasa (18 km) sięga dalej niż jego bateria.
 

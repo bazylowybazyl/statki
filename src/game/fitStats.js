@@ -8,6 +8,7 @@
 // amunicja). Supernova (special_missile) i Hexlance (superbroń) są w każdej karcie — nie wchodzą do profilu.
 
 import { moduleModifierSource, moduleSlotType, moduleShieldMul } from '../data/shipModules.js';
+import { hullWeaponRangeMul } from '../data/shipRanges.js';
 
 export const FIT_PROFILE_STEP_KM = 0.25;
 export const FIT_PROFILE_MAX_KM = 18;
@@ -21,8 +22,8 @@ export function weaponDps(def) {
 }
 
 /** Zasięg broni z modułem (premia klasy z sufitem — jak weaponRangeFor w shipModifiers.js). */
-export function weaponRangeWithModule(def, moduleId) {
-  const r0 = Number(def?.baseRange) || 0;
+export function weaponRangeWithModule(def, moduleId, hullId = null) {
+  const r0 = (Number(def?.baseRange) || 0) * hullWeaponRangeMul(hullId, def);
   const src = moduleModifierSource(moduleId);
   const cls = def?.weaponClass;
   const mul = cls && src?.classRange ? (src.classRange[cls] || 1) : 1;
@@ -39,6 +40,7 @@ export function weaponRangeWithModule(def, moduleId) {
  * @param {(hp:object)=>string|null} [o.currentOf]
  * @param {object} o.weapons                    MASTER_WEAPONS
  * @param {string|null} [o.module]
+ * @param {string|null} [o.hullId]               klasa kadłuba dla premii zasięgu
  * @param {{max:number}} [o.shieldBase]         tarcza kadłuba bez modułu
  */
 export function fitStats(o) {
@@ -69,7 +71,7 @@ export function fitStats(o) {
       continue;
     }
     if (eff === 'special_missile' || def.category === 'superweapon') continue;
-    const r = weaponRangeWithModule(def, o.module || null);
+    const r = weaponRangeWithModule(def, o.module || null, o.hullId);
     const d = weaponDps(def);
     const isMissile = eff === 'missile';
     const arr = isMissile ? miss : guns;

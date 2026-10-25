@@ -6,8 +6,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MASTER_WEAPONS, getWeaponSizeRank } from '../src/data/weapons.js';
+import { SHIP_WEAPON_BASE_RANGE_SCALE } from '../src/data/shipRanges.js';
 
-const SNIPER_RANGE_MIN = 6500;
+const SNIPER_RANGE_MIN = 6500 * SHIP_WEAPON_BASE_RANGE_SCALE;
 const SNIPER_FLIGHT_MAX = 1.4;
 
 // DPS jak w planie fitowania (§ 3.4): obrażenia × lufy × salwa / przeładowanie.
@@ -25,10 +26,10 @@ test('klasa: pole weaponClass tylko „sniper”, skład klasy, kategoria bez zm
     'lance_rail_l', 'lance_rail_m', 'siege_railgun', 'special_valkyrie_m', 'special_valkyrie_railgun', 'special_valkyrie_s'
   ]);
   for (const d of snipers) assert.equal(d.category, 'rail', `${d.id}: klasa to nie kategoria`);
-  assert.equal(MASTER_WEAPONS.special_valkyrie_s.baseRange, 6500, 'Kolec 5 → 6,5 km (D10)');
+  assert.equal(MASTER_WEAPONS.special_valkyrie_s.baseRange, SNIPER_RANGE_MIN, 'Kolec: krótka baza + premia kadłuba');
 });
 
-test('zasięg ≥ 6,5 km i pocisk do końca zasięgu ≤ 1,4 s', () => {
+test('bazowy zasięg snajpera ≥ 3,25 km i pocisk do końca zasięgu ≤ 1,4 s', () => {
   for (const d of snipers) {
     assert.ok(d.baseRange >= SNIPER_RANGE_MIN, `${d.id}: zasięg ${d.baseRange}`);
     const t = d.baseRange / d.baseSpeed;

@@ -114,7 +114,7 @@
       <option value="station">stacja swobodna</option>
       <option value="anchored">stacja zakotwiczona</option>
       <option value="wall">ściana K-7 (przęsło)</option>
-      <option value="drydock">suchy dok piratów (moduł stanowisk)</option>
+      <option value="drydock">suchy dok piratów (brama taranowa parkingu)</option>
     </select></div>
     <button class="wide" id="btn-fire-test" disabled>Próba ostrzału — 10 s</button>
 
@@ -449,18 +449,20 @@ function createWallModel() {
   return root;
 }
 
-// Moduł suchego doku piratów (misja 1): dwa odcinki trzonu przy środkowych stanowiskach, trzy pirsy serwisowe,
-// dwie suwnice — te same bryły co render gry (pirateDryDockScene.js, kawałki = grupy renderu). Układ dema:
-// X = strona stanowisk (+z doku — statek taranuje od otwartej strony basenów), Y = wysokość, Z = wzdłuż trzonu.
+// Moduł suchego doku piratów (misja 1): koniec parkingu od strony wjazdu — odcinek trzonu, rama z pylonami, cienka
+// brama taranowa G-W, ogrodzenie z bramami pierwszych stanowisk — te same bryły co render gry
+// (pirateDryDockScene.js, kawałki = grupy renderu). Układ dema: obrót o 180° wokół pionu — X = −x doku (brama
+// G-W od strony +X: statek taranuje wzdłuż toru parkingu), Y = wysokość, Z = −z doku.
 function createDryDockModel() {
   const layout = createPirateDryDockLayout();
   const style = resolvePortBuildingStyle('pirate');
   const scene = buildPirateDryDockScene(layout, style);
   const solids = dryDockChunkSolids(layout, scene, DRYDOCK_TEST_MODULE);
-  const toDemo = new THREE.Matrix4().set(0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1);
+  const toDemo = new THREE.Matrix4().set(-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1);
   const byMat = new Map();
   const box = new THREE.BoxGeometry(1, 1, 1);
   const cyl = new THREE.CylinderGeometry(1, 1, 1, 10, 1, false);
+  const cone = new THREE.ConeGeometry(1, 1, 8, 1);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Matrix4(), t = new THREE.Matrix4(), v = new THREE.Matrix4();
   for (const so of solids) {
     q.set(so.q[0], so.q[1], so.q[2], so.q[3]);
@@ -468,7 +470,7 @@ function createDryDockModel() {
     m.copy(toDemo).multiply(t.makeTranslation(so.center[0], so.center[1], so.center[2]))
       .multiply(v.makeScale(1, so.vs, 1)).multiply(s.makeRotationFromQuaternion(q))
       .multiply(new THREE.Matrix4().makeScale(so.size[0], so.size[1], so.size[2]));
-    const g = (so.kind === 'box' ? box : cyl).clone().applyMatrix4(m);
+    const g = (so.kind === 'box' ? box : so.kind === 'cone' ? cone : cyl).clone().applyMatrix4(m);
     const k = Math.round(so.mat);
     if (!byMat.has(k)) byMat.set(k, []);
     byMat.get(k).push(g);
@@ -481,7 +483,7 @@ function createDryDockModel() {
     for (const g of list) g.dispose();
     root.add(new THREE.Mesh(merged, mat));
   }
-  box.dispose(); cyl.dispose();
+  box.dispose(); cyl.dispose(); cone.dispose();
   return root;
 }
 
@@ -506,7 +508,7 @@ function ensureAuxStructures() {
     if (wallStructure.skin) BeamShips3D._ensureSkinGeometries(wallStructure.skin);
     wallCellSize = cellSize;
   }
-  // moduł doku: większy od stacji (2 stanowiska) — komórka ×1,4, skorupa 1 warstwa (wnętrza puste, wręgi)
+  // moduł doku: większy od stacji (koniec parkingu z bramą) — komórka ×1,4, skorupa 1 warstwa (wnętrza puste, wręgi)
   if (targetMode === 'drydock' && (!dockStructure || dockCellSize !== cellSize)) {
     if (dockStructure?.skin) BeamShips3D.disposeSkinAssets(dockStructure.skin);
     const root = createDryDockModel();
@@ -530,10 +532,11 @@ function pinTarget(body) {
     return pinBeamNodes(body, (x, y, z) => y < minY + 1.2 * cs || y > maxY - 1.2 * cs || z < minZ + 1.2 * cs || z > maxZ - 1.2 * cs);
   }
   if (targetMode === 'drydock') {
-    // moduł wycięty z doku: cięcia trzonu na końcach (Z) i tył trzonu od strony hali (−X) trzyma reszta doku
+    // moduł wycięty z doku (X = −x doku, Z = −z doku): tył trzonu od strony hali (największe Z) i cięcie ku reszcie
+    // parkingu i trzonu (najmniejsze X) trzyma reszta doku; brama G-W (największe X) wolna — do taranu
     let minX = Infinity;
     for (let i = 0; i < s.count; i++) if (s.active[i] && s.ox[i] < minX) minX = s.ox[i];
-    return pinBeamNodes(body, (x, y, z) => z < minZ + 1.2 * cs || z > maxZ - 1.2 * cs || x < minX + 1.2 * cs);
+    return pinBeamNodes(body, (x, y, z) => z > maxZ - 1.2 * cs || x < minX + 1.2 * cs);
   }
   return pinBeamNodes(body, (x, y) => y < minY + 1.5 * cs);
 }

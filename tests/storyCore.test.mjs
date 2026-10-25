@@ -1,6 +1,7 @@
 // Fabuła (2026-09-30): reżyser misji, dialogi, EXP, maskowanie, tor kamery intro, układ stoczni, geometria K-7.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { weaponRangeFor } from '../src/game/shipModifiers.js';
 
 import { createStoryRunner, isStoryCancelled } from '../src/game/story/storyRunner.js';
 import { createDialogueQueue } from '../src/game/story/dialogue.js';
@@ -275,7 +276,7 @@ test('stocznia: rząd burta w burtę na osi, punkt zbiórki przed nim, poza czuj
   // (salwy w nadlatujących zamiast pół minuty ciszy, pomiar scripts/webgpu/zasiegi-gra.mjs).
   const FORM_UP_AHEAD = 5000;
   assert.ok(SHIPYARD_TUNE.counterDistance - FORM_UP_AHEAD > MASTER_WEAPONS.armata_mk1.baseRange, 'szyk piratów poza zasięgiem ich armat');
-  assert.ok(SHIPYARD_TUNE.counterDistance <= MASTER_WEAPONS.missile_rack.baseRange, 'front odwetu w zasięgu rakiet Atlasa');
+  assert.ok(SHIPYARD_TUNE.counterDistance <= weaponRangeFor({ activeHullId: 'atlas' }, MASTER_WEAPONS.missile_rack, MASTER_WEAPONS.missile_rack.baseRange), 'front odwetu w zasięgu rakiet Atlasa');
   assert.ok(s.rally.x < s.rowStart.x, 'zbiórka od strony gracza');
   const wave = planFleetWave({ x: 0, y: 0 }, 0, { battleship: 7, destroyer: 8, frigate: 15 });
   assert.equal(wave.length, 30);

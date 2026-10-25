@@ -17,6 +17,19 @@
 //   to zoomBase — zoom gracza; człon go nie rusza, targetZoom też nie, więc po impulsie kamera
 //   wraca dokładnie do zoomu gracza. Bez członu (0 / brak pola) zoom = zoomBase jak dawniej.
 
+import { shipMinZoom } from '../data/shipRanges.js';
+
+// Limit kadłuba obowiązuje także RTS, kop warpa i reżysera kadru (wszyscy czytają cam.minZoom).
+// Fokus stacji ma osobny kadr. Zmiana kadłuba przycina także bieżący stan sprężyny.
+export function syncCameraZoomLimits(cam, entity) {
+  cam.minZoom = shipMinZoom(cam.mode === 'focus' || cam.mode === 'infrastructure' ? null : entity);
+  cam.targetZoom = Math.min(cam.maxZoom, Math.max(cam.minZoom, cam.targetZoom));
+  if (cam.zoom < cam.minZoom) {
+    cam.zoom = cam.zoomBase = cam._zoomSpringOut = cam.minZoom;
+    cam.zoomVel = 0;
+  }
+}
+
 export const CAMERA_ZOOM_SMOOTH = Object.freeze({
   // 1/s. Pojedynczy ząbek: połowa drogi po ~0,14 s, 95% po ~0,4 s.
   omega: 12,

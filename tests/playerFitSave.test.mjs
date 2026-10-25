@@ -466,9 +466,9 @@ test('karty z magazynu (komplety): każda bez zakupów i zastępstw, moduł i sy
       assert.equal(player.shield.max, ATLAS_SHIELD.max, `${id}: tarcza kadłuba`);
     }
     if (id === 'sniper') {
-      assert.equal(weaponRangeFor(player, lance, lance.baseRange), Math.min(18000, lance.baseRange * 1.5), 'Komputer balistyczny');
+      assert.equal(weaponRangeFor(player, lance, lance.baseRange), Math.min(18000, lance.baseRange * 2 * 1.5), 'Komputer balistyczny na Atlasie');
     } else {
-      assert.equal(weaponRangeFor(player, lance, lance.baseRange), lance.baseRange, `${id}: zasięg bez modułu`);
+      assert.equal(weaponRangeFor(player, lance, lance.baseRange), lance.baseRange * 2, `${id}: zasięg Atlasa bez modułu`);
     }
     if (id === 'missile') {
       const conv = baseSlotsOf(player, HP.SPECIAL);

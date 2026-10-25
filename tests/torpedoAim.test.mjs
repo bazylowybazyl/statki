@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { weaponRangeFor } from '../src/game/shipModifiers.js';
 import {
   isTorpedoWeapon, torpedoTubesOf, torpedoSpreadRad, writeTorpedoFan, solveTorpedoLead,
   torpedoLauncherState, TORPEDO_ALIGN_RAD, TORPEDO_TUBES_MAX, TORPEDO_SPREAD_DEFAULT
@@ -27,7 +28,7 @@ test('torpedy z danych: kategoria, rury, wąski < szeroki, grywalny czas dolotu'
     assert.ok(torpedoSpreadRad(def, false) < torpedoSpreadRad(def, true), `${id}: wąski < szeroki`);
     // Pełny zasięg w 5–12 s: wolniej niż pocisk działa (≤ 1,4 s), ale bez minuty dolotu. Dawniej
     // 45–80 tys. j. przy 500–800 j/s (do 100 s), potem 14–22 km (10–25 s); od 2026-10-07 torpedy 7–9 km.
-    const t = def.baseRange / def.baseSpeed;
+    const t = weaponRangeFor({ activeHullId: 'atlas' }, def, def.baseRange) / def.baseSpeed;
     assert.ok(t >= 5 && t <= 12, `${id}: dolot na pełny zasięg ${t.toFixed(1)} s`);
   }
   assert.equal(torpedoTubesOf(MASTER_WEAPONS.torpedo_salvo), 6);

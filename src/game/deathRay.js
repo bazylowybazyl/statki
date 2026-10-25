@@ -25,6 +25,7 @@
 // z0 / z1, barwa, szerokość). Moduł czysty: bez three i DOM, bez Math.random, bez alokacji w kroku (pule).
 
 import { MASTER_WEAPONS } from '../data/weapons.js';
+import { weaponRangeFor } from './shipModifiers.js';
 // Kody rekordów promienia — wspólne z dekoderem renderu (src/render/renderCommands.js; render nie importuje src/game).
 import { RAY_HIT, RAY_STATE, RAY_FLAG } from '../render/renderCommands.js';
 // Lufa wieży (czysta geometria sylwetki — jak WeaponController.computeMountedMuzzle): wylot NPC z czopu gniazda.
@@ -275,7 +276,7 @@ export function createDeathRaySystem(env) {
       r.lx = r.ly = 0;
     }
     const range = Number(o?.range);
-    r.range = Number.isFinite(range) && range > 0 ? range : (Number(d.baseRange) || 12000);
+    r.range = Number.isFinite(range) && range > 0 ? range : weaponRangeFor(shooter, d, Number(d.baseRange) || 6000);
     r.len = r.range;
     // Jeden cel: promień nie leci dalej niż za obwiednię celu strzału — także gdy kadłub celu się wymknie (linia
     // ognia AI sprawdza drogę tylko do celu, sojusznik za nim byłby bez ochrony).
@@ -413,7 +414,7 @@ export function createDeathRaySystem(env) {
     if (!w || !shooter) return;
     barrelTip(shooter, def, x, y, angle, _mz);
     const c = carrierOf(shooter, _mz.x, _mz.y);
-    const range = Number(def.baseRange) || 12000;
+    const range = weaponRangeFor(shooter, def, Number(def.baseRange) || 6000);
     let guide = range;
     if (target && typeof target === 'object') {
       const gx = posX(target) - _mz.x, gy = posY(target) - _mz.y;
@@ -439,7 +440,7 @@ export function createDeathRaySystem(env) {
         const o = ord.opts;
         // laser naprowadzający: do celu (najwyżej zasięg) / do końca strzału wizualnego
         const gx = (ord.kind === 'visual' ? ord.x1 : ord.tx) - ord.mx, gy = (ord.kind === 'visual' ? ord.y1 : ord.ty) - ord.my;
-        const range = Number(o?.range) > 0 ? Number(o.range) : (Number(ord.def?.baseRange) || 12000);
+        const range = Number(o?.range) > 0 ? Number(o.range) : weaponRangeFor(ord.shooter, ord.def, Number(ord.def?.baseRange) || 6000);
         const guide = Math.min(ord.kind === 'visual' ? Infinity : range, Math.sqrt(gx * gx + gy * gy));
         w.deathRayCharge(ord, ord.mx, ord.my, ord.kind === 'visual' ? ord.z0 : 0, ord.angle, u, dt,
           Number(o?.chargeScale) || 1, o?.color || null, carrierOf(ord.kind === 'visual' ? null : ord.shooter, ord.mx, ord.my), guide);

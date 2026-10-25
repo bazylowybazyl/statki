@@ -15,7 +15,7 @@ import { MOUNT_ARCS, mountFireArc } from '../game/weaponAim.js';
 import { AI_SNAP_FIGHTER, trafficAvoidanceObjects, trafficAvoidanceRange, trafficAvoidanceSnapshot } from './aiNeighborKernels.js';
 import { getWreckIndex, wreckLowerBound } from './aiWreckIndex.js';
 import { npcHasEngineBurst, stepNpcShipSystem } from './npcShipSystem.js';
-import { modifierFireRate } from '../game/shipModifiers.js';
+import { modifierFireRate, weaponRangeFor } from '../game/shipModifiers.js';
 import {
   flightSpeedLimit,
   flightTurnTime,
@@ -1455,7 +1455,7 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
   for (let i = 0; i < npc.autoWeapons.length; i++) {
     const weapon = npc.autoWeapons[i];
     if ((weapon.scanProfile || 'slow') !== scanProfile) continue;
-    maxRange = Math.max(maxRange, Number(weapon.def?.baseRange) || 1000);
+    maxRange = Math.max(maxRange, weaponRangeFor(npc, weapon.def, Number(weapon.def?.baseRange) || 1000));
     if (!needsRocketThreats && weapon.prefers?.includes('rocket')) needsRocketThreats = true;
   }
   if (!(maxRange > 0)) maxRange = 1000;
@@ -1724,7 +1724,7 @@ export function processAutonomousWeapons(npc, dt) {
       continue;
     }
 
-    const range = weapon.def.baseRange || 1000;
+    const range = weaponRangeFor(npc, weapon.def, weapon.def.baseRange || 1000);
     const rangeSq = range * range;
     weapon.scanCd = Math.max(0, (weapon.scanCd || 0) - dt);
     let bestTarget = weapon.cachedTarget || null;

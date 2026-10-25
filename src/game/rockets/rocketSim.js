@@ -47,6 +47,7 @@ import { shieldImpactClass, submunitionDef } from "../../data/weapons.js";
 import { SimClock } from "../simClock.js";
 import { writePointVelocity, writeEntityVelocity, isInterpolatedEntity } from "../carrierVelocity.js";
 import { fighterSideOf, fighterSideSparesAlly } from "../friendlyFire.js";
+import { weaponRangeFor, weaponSpeedMul } from "../shipModifiers.js";
 
 /*
  * UKŁAD RAKIETY (src/game/carrierVelocity.js). Rakieta startuje z prędkością
@@ -186,9 +187,9 @@ function wrapPi(a) {
     return a - Math.PI;
 }
 
-function resolveRocketProfile(weaponDef) {
-    const desiredSpeed = Math.max(400, Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200);
-    const maxRange = Math.max(3000, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 12000);
+function resolveRocketProfile(weaponDef, shooter = null) {
+    const desiredSpeed = Math.max(400, (Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200) * weaponSpeedMul(shooter, weaponDef));
+    const maxRange = Math.max(1, weaponRangeFor(shooter, weaponDef, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 6000));
     const blastRadius = Math.max(24, Number(weaponDef?.explodeRadius) || Number(weaponDef?.explosionRadius) || 48);
     const turnRateDeg = Math.max(25, Number(weaponDef?.turnRate) || 180);
     const speedFactor = clamp(desiredSpeed / 1200, 0.6, 4.0);
@@ -621,7 +622,7 @@ class RocketSystem3D {
         }
         if (!r) return null;
 
-        const profile = resolveRocketProfile(weaponDef);
+        const profile = resolveRocketProfile(weaponDef, launch?.shooter);
         const mode = launch ? launch.mode : (profile.elevation > 0.02 ? LAUNCH_ELEVATED : LAUNCH_RAIL);
         const index = launch ? launch.index : 0;
         const count = launch ? Math.max(1, launch.count) : 1;

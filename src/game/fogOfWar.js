@@ -16,19 +16,20 @@
 // Obraz: post Core3D (src/3d/fog/) — koła wzroku i soczewki sygnatur; logika rysunku omija byty `fogHides`.
 // ============================================================
 
+import { SHIP_RANGE_PROFILES, shipRangeClassOf } from '../data/shipRanges.js';
+
 export const FOG_TUNE = Object.freeze({
-  // Zasięg wzroku (j. świata). Atlas 18 km — ~2,5× dalej niż jego bateria (Yamato 7 km od 2026-10-07,
-  // src/data/weapons.js § ZASIĘGI): wroga widać przed walką; dalej strzela się z cudzego zwiadu (sojusznik,
-  // dron) — Mjolnir 20 km. Brzeg kręgu widać po oddaleniu kamery (domyślny kadr Atlasa ma ~9 km szerokości —
-  // kadłub 20% kadru, cameraRig.js; najdalszy zoom 0,035 — ~46 km przy 1600 px). Okręt z profilem czujników
-  // `role: 'radar'` (Corvus) to zwiadowca.
+  // Wzrok i limit kamery z tej samej skali klas (shipRanges.js): 5/8/11/14/18 km.
+  // Atlas widzi przed walką (Yamato po premii 7 km); Mjolnir 20 km wymaga cudzego zwiadu.
+  // Corvus ma 7 km jako fregata zwiadu; jawne visionRange (np. fregata z ładowni) wygrywa.
   vision: Object.freeze({
-    atlas: 18000,
-    capital: 15000,
-    battleship: 13000,
-    destroyer: 10000,
-    frigate: 8000,
-    radar: 26000,
+    atlas: SHIP_RANGE_PROFILES.supercapital.visionRange,
+    supercapital: SHIP_RANGE_PROFILES.supercapital.visionRange,
+    capital: SHIP_RANGE_PROFILES.capital.visionRange,
+    battleship: SHIP_RANGE_PROFILES.battleship.visionRange,
+    destroyer: SHIP_RANGE_PROFILES.destroyer.visionRange,
+    frigate: SHIP_RANGE_PROFILES.frigate.visionRange,
+    radar: 7000,
     fighter: 5000,
     drone: 20000,
     probe: 18000,
@@ -72,11 +73,8 @@ export function visionRangeOf(e, tune = FOG_TUNE) {
   if (e.sensors?.role === 'radar' || e.sensorProfile?.role === 'radar') return V.radar;
   const type = String(e.type || e.shipFrame || '').toLowerCase();
   if (e.fighter || FIGHTER_RE.test(type)) return V.fighter;
-  if (e.isPlayer === true || type === 'atlas') return V.atlas;
-  if (e.isCapitalShip || type.includes('carrier') || type.includes('supercapital') || type.includes('capital')) return V.capital;
-  if (type.includes('battleship')) return V.battleship;
-  if (type.includes('destroyer')) return V.destroyer;
-  return V.frigate;
+  const cls = shipRangeClassOf(e);
+  return cls === 'supercapital' ? V.atlas : (V[cls] || V.frigate);
 }
 
 export function createFogState(tune = FOG_TUNE) {

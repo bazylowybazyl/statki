@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as THREE from 'three';
-import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { weaponsForHull } from './helpers/hullWeapons.mjs';
+const MASTER_WEAPONS = weaponsForHull('atlas');
 
 // rocketSystem3D's GPU particle classes build a gradient sprite via a 2D canvas
 // in their constructors; stub just enough DOM for headless Node.

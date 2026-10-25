@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CAMERA_ZOOM_SMOOTH, stepCameraZoom, cameraZoomBase, wheelDeltaPx } from '../src/game/cameraZoom.js';
+import { CAMERA_ZOOM_SMOOTH, stepCameraZoom, cameraZoomBase, wheelDeltaPx, syncCameraZoomLimits } from '../src/game/cameraZoom.js';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
 
 // Ząbek kółka przy deltaY = 100 i camera.wheelSpeed = 0,002.
@@ -162,7 +162,9 @@ test('delta kółka: linie (Firefox) i strony liczone jak piksele', () => {
 const indexHtml = readIndexHtml();
 
 function loadUpdateCameraZoom(scope) {
-  return loadIndexFunction(indexHtml, 'function updateCameraZoom(dt) {', 'updateCameraZoom', scope);
+  return loadIndexFunction(indexHtml, 'function updateCameraZoom(dt) {', 'updateCameraZoom', {
+    ship: { activeHullId: 'atlas' }, syncCameraZoomLimits, ...scope
+  });
 }
 
 test('RTS: punkt świata pod kursorem stoi przez całą animację (też w interpolacji)', () => {

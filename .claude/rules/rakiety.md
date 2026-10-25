@@ -13,6 +13,8 @@ paths:
 
 ## Rakiety (`src/3d/rockets/`, port WebGPU zadanie 19; opis `docs/webgpu/DEMO-RAKIETY.md` § Port w grze)
 
+- Zasięg lotu rakiety z salwy pochodzi z `weaponRangeFor(strzelec, broń, baseRange)` w `resolveRocketProfile`, prędkość z `weaponSpeedMul`; każda komora liczy je dla swojego strzelca przy wyrzucie. Bazy okrętowe są krótsze, a kadłub dodaje premię z `src/data/shipRanges.js` (×1…×2). Nie przywracaj podłogi 3 km — krótkie rakiety fregaty muszą kończyć lot na rzeczywistym zasięgu. `fire()` bez strzelca dostaje surowy profil (dema, samodzielne testy lotu); testy lotu na Atlasie używają `tests/helpers/hullWeapons.mjs`. Obrona punktowa i broń myśliwców nie dostają premii kadłuba.
+
 - Lot, naprowadzanie, trafienia i obrażenia zostają w GRZE — `src/game/rockets/rocketSim.js` (RW-23, 2026-10-15: dawniej `src/effects3d/rocketSystem3D.js`; bez three — `rocketMath.js` z wzorami three r183, wynik bit w bit; profil lotu z `weaponDef`, pula
   rakiet bez pól wyglądu); obraz z dema `rakiety-webgpu` to reżyser `RocketEffects` (`effects.js`) na zdarzeniach lotu
   (`onLaunch / onIgnite / onFly / prepareContact / onDetonate / update`) i krok efektów „rakiety” (`rocketFx.js`): dym compute

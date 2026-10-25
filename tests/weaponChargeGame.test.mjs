@@ -212,7 +212,7 @@ test('AI: działo z chargeTime ładuje przed strzałem (Valkyrie 0,28 s), Mjolni
       spawnWeaponChargeFx: (owner, weapon, u) => { charges.push(u); }
     });
     const npc = {
-      id: 'ai', x: 0, y: 0, vx: npcVx, vy: 0, angle: 0, angVel: 0, friendly: true,
+      id: 'ai', shipFrame: 'terran_supercapital', x: 0, y: 0, vx: npcVx, vy: 0, angle: 0, angVel: 0, friendly: true,
       weapons: { main: [{ hp: { id: 'm0', type: 'main', x: 0, y: 0, mount: weaponId }, weapon: MASTER_WEAPONS[weaponId] }], aux: [], missile: [] }
     };
     let clock = 0;

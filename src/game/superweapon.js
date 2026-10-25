@@ -16,6 +16,7 @@ import { RenderCommands } from '../render/renderCommands.js';
 import { createCarrier, writeCarrier } from './carrierVelocity.js';
 import { buildHexlanceBurst } from './weaponCharge.js';
 import { weaponRecoil, weaponShake } from './weaponFeel.js';
+import { weaponRangeFor, weaponSpeedMul } from './shipModifiers.js';
 // Losowość wizualiów (zadanie 23): nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu. Strumień GRY
 // (RW-20: liczone na wątku głównym — osobny ciąg od strumienia renderu fxRandom).
 import { fxRandomGame } from './fxRandomGame.js';
@@ -53,11 +54,11 @@ function getHexlanceStat(key, fallback) {
     return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function syncSuperweaponProfile() {
+function syncSuperweaponProfile(ship = null) {
     superweaponState.cooldownMax = getHexlanceStat('cooldown', 6.0);
     superweaponState.chargeTime = getHexlanceStat('chargeTime', 1.2);
-    superweaponState.projectileSpeed = getHexlanceStat('baseSpeed', 12000);
-    superweaponState.range = getHexlanceStat('baseRange', 15000);
+    superweaponState.projectileSpeed = getHexlanceStat('baseSpeed', 12000) * weaponSpeedMul(ship, HEXLANCE_DEF);
+    superweaponState.range = weaponRangeFor(ship, HEXLANCE_DEF, getHexlanceStat('baseRange', 7500));
     superweaponState.damage = getHexlanceStat('baseDamage', 9999);
     superweaponState.shotDelay = getHexlanceStat('burstDelay', 0.12);
 }
@@ -236,7 +237,7 @@ function fireSingleMount(ship, cannonIndex) {
         vx: m.dir.x * superweaponState.projectileSpeed + carrier.vx,
         vy: m.dir.y * superweaponState.projectileSpeed + carrier.vy,
         ivx: carrier.vx, ivy: carrier.vy,
-        life: projectileLife, traveled: 0,
+        life: projectileLife, traveled: 0, range: superweaponState.range,
         beamWidth: superweaponState.beamWidth,
         angle: angle,
         // Smuga 3D: uchwyt emitera, odstęp między fontannami na rzazie
@@ -280,7 +281,7 @@ function prepareSuperweaponSalvo(ship) {
 }
 
 export function tryFireSuperweapon(ship) {
-    syncSuperweaponProfile();
+    syncSuperweaponProfile(ship);
     if (!ship) return false;
     if (getActiveMounts(ship).length === 0) return false; // Brak broni, nie strzelaj
     if (superweaponState.queue.length > 0) return false;
@@ -300,7 +301,7 @@ export function tryFireSuperweapon(ship) {
 }
 
 export function updateSuperweapon(dt, ship, aimPos) {
-    syncSuperweaponProfile();
+    syncSuperweaponProfile(ship);
     globalTime += dt;
     if (superweaponState.recoilOffset > 0) {
         superweaponState.recoilOffset = Math.max(0, superweaponState.recoilOffset - superweaponState.recoilRecovery * dt);
@@ -532,7 +533,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
             }
         }
 
-        if (proj.life <= 0 || proj.traveled > superweaponState.range) {
+        if (proj.life <= 0 || proj.traveled > proj.range) {
             // Historia smugi gaśnie dalej sama; zwalniamy tylko slot żywej głowy.
             if (proj.slug) RenderCommands.writer.hexlanceEnd(proj.slug, proj.x, proj.y);
             hexlanceProjectiles.splice(i, 1);

@@ -1,3 +1,5 @@
+import { weaponRangeFor, weaponRangeMul, weaponSpeedMul } from '../game/shipModifiers.js';
+
 const DEFAULT_BATTLESHIP_IDEAL_RANGE = 1200;
 const CAPITAL_CLEARANCE_MARGIN = 520;
 
@@ -68,10 +70,10 @@ export function resolveAiPersonality(npc) {
 
 // Skuteczny zasięg jednej broni: nominalny, ale nie dalej, niż pocisk doleci
 // w AI_EFFECTIVE_TIME_OF_FLIGHT. Wiązki (prędkość Infinity) — pełny zasięg.
-export function effectiveWeaponRange(def, timeOfFlight = AI_EFFECTIVE_TIME_OF_FLIGHT) {
-  const range = finitePositive(def?.baseRange ?? def?.range);
+export function effectiveWeaponRange(def, timeOfFlight = AI_EFFECTIVE_TIME_OF_FLIGHT, npc = null) {
+  const range = weaponRangeFor(npc, def, finitePositive(def?.baseRange ?? def?.range));
   if (!range) return 0;
-  const speed = Number(def?.baseSpeed ?? def?.speed);
+  const speed = Number(def?.baseSpeed ?? def?.speed) * weaponSpeedMul(npc, def);
   if (!Number.isFinite(speed) || speed <= 0) return range;
   return Math.min(range, speed * timeOfFlight);
 }
@@ -82,18 +84,29 @@ export function effectiveWeaponRange(def, timeOfFlight = AI_EFFECTIVE_TIME_OF_FL
 export function resolveMainBatteryRange(npc) {
   const main = npc?.weapons?.main;
   if (!Array.isArray(main) || main.length === 0) return 0;
-  if (npc.__mainRangeSrc === main && npc.__mainRangeN === main.length) return npc.__mainRangeVal;
+  const rangeMul = weaponRangeMul(npc, main[0]?.weapon);
+  const speedMul = weaponSpeedMul(npc, main[0]?.weapon);
+  const rangeClasses = npc.__modClasses;
+  if (npc.__mainRangeSrc === main && npc.__mainRangeN === main.length
+    && npc.__mainRangeMul === rangeMul && npc.__mainSpeedMul === speedMul
+    && npc.__mainRangeClasses === rangeClasses?.range && npc.__mainSpeedClasses === rangeClasses?.projectileSpeed
+    && npc.__mainRangeCap === rangeClasses?.rangeCap) return npc.__mainRangeVal;
   const ranges = [];
   for (let i = 0; i < main.length; i++) {
     const entry = main[i];
     if (!entry || entry.hp?.destroyed) continue;
-    const r = effectiveWeaponRange(entry.weapon);
+    const r = effectiveWeaponRange(entry.weapon, AI_EFFECTIVE_TIME_OF_FLIGHT, npc);
     if (r > 0) ranges.push(r);
   }
   ranges.sort((a, b) => a - b);
   const value = ranges.length ? ranges[(ranges.length - 1) >> 1] : 0;
   npc.__mainRangeSrc = main;
   npc.__mainRangeN = main.length;
+  npc.__mainRangeMul = rangeMul;
+  npc.__mainSpeedMul = speedMul;
+  npc.__mainRangeClasses = rangeClasses?.range;
+  npc.__mainSpeedClasses = rangeClasses?.projectileSpeed;
+  npc.__mainRangeCap = rangeClasses?.rangeCap;
   npc.__mainRangeVal = value;
   return value;
 }

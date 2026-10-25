@@ -16,6 +16,7 @@ const {
 } = await import('../src/game/fireControl.js');
 const { chargeTimeOf } = await import('../src/game/weaponCharge.js');
 const { MASTER_WEAPONS } = await import('../src/data/weapons.js');
+const { weaponRangeFor } = await import('../src/game/shipModifiers.js');
 const {
   createRamBurn, canStartRamBurn, startRamBurn, stopRamBurn, stepRamBurn, RAM_BURN_END, RAM_BURN_READY
 } = await import('../src/game/flight/ramBurn.js');
@@ -91,7 +92,7 @@ const loadout = (weaponId, x, y, id) => ({ hp: { id, pos: { x, y }, mount: weapo
 const enemy = (x, y, kind, extra = {}) => ({ x, y, vx: 0, vy: 0, radius: kind === 'battleship' ? 300 : kind === 'destroyer' ? 150 : 90, kind, hp: 2000, ...extra });
 
 function makeScene({ main = 0, special = 0, missile = 0, mainId = 'railgun_mk2', specialId = 'special_yamato_cannon', missileIds = null } = {}) {
-  const ship = { pos: { x: 0, y: 0 }, angle: 0, vel: { x: 0, y: 0 } };
+  const ship = { activeHullId: 'atlas', pos: { x: 0, y: 0 }, angle: 0, vel: { x: 0, y: 0 } };
   const weapons = { main: [], special: [], missile: [] };
   for (let i = 0; i < main; i++) weapons.main.push(loadout(mainId, (i - main / 2) * 100, i % 2 ? 300 : -300, `m${i}`));
   for (let i = 0; i < special; i++) weapons.special.push(loadout(specialId, -200 - i * 150, i % 2 ? 250 : -250, `s${i}`));
@@ -117,7 +118,7 @@ function makeScene({ main = 0, special = 0, missile = 0, mainId = 'railgun_mk2',
     velAt: (x, y, out) => { out.x = ship.vel.x; out.y = ship.vel.y; return out; },
     lead: (base, target, speed, vel) => getLeadAim(base, target, speed, leadOut, vel),
     speedOf: (w) => w.baseSpeed,
-    rangeOf: (w) => w.baseRange,
+    rangeOf: (w) => weaponRangeFor(ship, w, w.baseRange),
     chargeTime: chargeTimeOf,
     skip: () => false,
     outwardOf: (lo) => ship.angle + Math.atan2(lo.hp.pos.y, lo.hp.pos.x),

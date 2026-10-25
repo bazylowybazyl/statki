@@ -205,7 +205,7 @@ test('profil ognia: UNIWERSALNA, TANK (D4), SNAJPER z komputerem balistycznym â€
   const run = (id) => {
     const hardpoints = atlasSlots();
     const p = plan(FIT_PRESETS[id], hardpoints, startStock());
-    return fitStats({ hardpoints, mounts: p.mounts, weapons: MASTER_WEAPONS, module: p.module, shieldBase: { max: 18000 } });
+    return fitStats({ hullId: 'atlas', hardpoints, mounts: p.mounts, weapons: MASTER_WEAPONS, module: p.module, shieldBase: { max: 18000 } });
   };
   const uni = run('universal');
   assert.equal(Math.round(uni.gunsAt(3)), 3600);
@@ -219,9 +219,9 @@ test('profil ognia: UNIWERSALNA, TANK (D4), SNAJPER z komputerem balistycznym â€
   assert.equal(Math.round(sniper.gunsAt(12)), 1667);
   assert.equal(Math.round(sniper.gunsAt(15)), 1000);
   assert.equal(sniper.maxGun, 20000);
-  assert.equal(weaponRangeWithModule(MASTER_WEAPONS.lance_rail_l, 'ballistic_computer'), 15000);
-  assert.equal(weaponRangeWithModule(MASTER_WEAPONS.siege_railgun, 'ballistic_computer'), 20000);
-  assert.equal(weaponRangeWithModule(MASTER_WEAPONS.special_yamato_cannon, 'ballistic_computer'), 7000);
+  assert.equal(weaponRangeWithModule(MASTER_WEAPONS.lance_rail_l, 'ballistic_computer', 'atlas'), 15000);
+  assert.equal(weaponRangeWithModule(MASTER_WEAPONS.siege_railgun, 'ballistic_computer', 'atlas'), 20000);
+  assert.equal(weaponRangeWithModule(MASTER_WEAPONS.special_yamato_cannon, 'ballistic_computer', 'atlas'), 7000);
   assert.equal(Math.round(weaponDps(MASTER_WEAPONS.special_yamato_cannon)), 510);
 });
 

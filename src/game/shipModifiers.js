@@ -15,6 +15,8 @@
 // Przeliczenie tylko przy zmianie źródła (rekordy źródeł i obiekt `modifiers` pamiętane na encji — bez alokacji
 // w krokach gry).
 
+import { hullWeaponRangeMul } from '../data/shipRanges.js';
+
 export const MODIFIER_FIELDS = Object.freeze(['range', 'damage', 'projectileSpeed', 'fireRate']);
 
 /** Mnożnik przeładowania (pole fireRate) dla szybkostrzelności ×rateMul (rateMul > 1 — szybciej). */
@@ -154,23 +156,24 @@ export function setModifierSourceWithClasses(entity, source, mods) {
   return changed;
 }
 
-/** Mnożnik zasięgu broni `def` dla encji: pole ogólne × pole klasy broni. */
+/** Mnożnik zasięgu: klasa kadłuba × pole ogólne × pole klasy broni (bez sufitu modułu). */
 export function weaponRangeMul(entity, def) {
   const m = entity?.modifiers;
-  if (!m) return 1;
+  const hull = hullWeaponRangeMul(entity, def);
+  if (!m) return hull;
   const base = Number(m.range) > 0 ? m.range : 1;
   const cls = def?.weaponClass;
   const k = entity.__modClasses;
   const c = cls && k?.range ? (k.range[cls] || 1) : 1;
-  return base * c;
+  return hull * base * c;
 }
 
 /**
- * Zasięg broni `def` na encji: `baseRange` × mnożniki; premia klasy przycięta sufitem `rangeCap` (nigdy poniżej
- * zasięgu bez premii klasy — Mjolnir 20 km zostaje 20 km przy suficie 18 km).
+ * Zasięg broni `def` na encji: baza × premia kadłuba × modyfikatory źródeł. Sufit `rangeCap` dotyczy dopiero
+ * premii modułu do klasy broni (nie skraca naturalnego zasięgu kadłuba — Mjolnir Atlasa ma 20 km przy suficie 18 km).
  */
 export function weaponRangeFor(entity, def, baseRange) {
-  const r0 = Number(baseRange) || 0;
+  const r0 = (Number(baseRange) || 0) * hullWeaponRangeMul(entity, def);
   const m = entity?.modifiers;
   if (!m) return r0;
   const general = r0 * (Number(m.range) > 0 ? m.range : 1);

@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { weaponsForHull } from './helpers/hullWeapons.mjs';
+const MASTER_WEAPONS = weaponsForHull('atlas');
 import { ciwsShotHitsRocket, ciwsRocketReach } from '../src/game/rocketIntercept.js';
 import { loadIndexFunction } from './helpers/indexSource.mjs';
 

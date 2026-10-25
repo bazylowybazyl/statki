@@ -1133,7 +1133,7 @@
     import { ciwsShotHitsRocket, ciwsRocketReach, RocketThreatGrid } from "./src/game/rocketIntercept.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
-    import { stepCameraZoom, cameraZoomBase, wheelDeltaPx } from "./src/game/cameraZoom.js";
+    import { stepCameraZoom, cameraZoomBase, wheelDeltaPx, syncCameraZoomLimits } from "./src/game/cameraZoom.js";
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
       defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
@@ -13961,12 +13961,14 @@
         presets: () => FIT_PRESET_IDS.map((id) => FIT_PRESETS[id]),
         plan: (preset, mode) => buildPlayerFitPlan(preset, mode),
         stats: (mounts, moduleId) => fitStats({
+          hullId: PLAYER.activeHullId,
           hardpoints: playerFitSlots(), mounts, currentOf: (slot) => slot.mount ?? null, weapons: WEAPONS,
           module: moduleId, shieldBase: { max: Number(hullDef()?.shield?.max) || BASE_PLAYER_PROFILE.shieldMax }
         }),
         startStats: () => {
           const plan = buildPlayerFitPlan(FIT_PRESETS[FIT_START_PRESET], 'buy', null, { weaponPrice: () => 0 });
           return fitStats({
+            hullId: PLAYER.activeHullId,
             hardpoints: playerFitSlots(), mounts: plan.mounts, weapons: WEAPONS, module: plan.module,
             shieldBase: { max: Number(hullDef()?.shield?.max) || BASE_PLAYER_PROFILE.shieldMax }
           });
@@ -28092,6 +28094,7 @@
       camera.zoomImpulseLog = cameraRig.warpZoomLog + cameraDirector.zoomLog;
     }
     function updateCameraZoom(dt) {
+      syncCameraZoomLimits(camera, ship);
       const anchor = camera.zoomAnchor;
       if (camera.transition && camera.transition.kind !== 'ship') {
         camera.zoomVel = 0;
@@ -29283,9 +29286,8 @@
       camera2.y = y;
       camera2.targetX = x;
       camera2.targetY = y;
-      // Independent zoom for P2 — smooth interpolation
-      const zoomLerp2 = 1 - Math.exp(-8 * frameDt);
-      camera2.zoom += (camera2.targetZoom - camera2.zoom) * zoomLerp2;
+      syncCameraZoomLimits(camera2, p2);
+      stepCameraZoom(camera2, frameDt);
       if (camera2.shakeTime > 0) {
         camera2.shakeTime -= frameDt;
         if (camera2.shakeTime <= 0) camera2.shakeMag = 0;
@@ -30464,7 +30466,7 @@
             range = Number(Superweapon?.superweaponState?.range);
           }
           if (!Number.isFinite(range) || range <= 0) range = AIM_LINE_LEN;
-          return Math.max(80, range);
+          return Math.max(80, weaponRangeFor(ship, weapon, range));
         }
 
         // BUILTIN weapons — TYLKO TO ZOSTAJE (Pomarańczowa linia dla Superbroni)

@@ -1,6 +1,7 @@
 ---
 paths:
   - "src/game/fogOfWar.js"
+  - "src/game/sensorSystem.js"
   - "src/3d/fog/**"
   - "src/ui/fogHud.js"
 ---
@@ -11,7 +12,7 @@ paths:
 
 ## Mgła wojny (2026-10-04, `src/game/fogOfWar.js`, obraz `src/3d/fog/`, HUD `src/ui/fogHud.js`)
 
-- Gracz WIDZI tylko to, co jest w zasięgu wzroku strony gracza: Atlas (i P2), sojusznicy, drony zwiadu, sondy, stacje czujników, przyjazne stacje, strefy fabuły (`revealArea`). Zasięg wzroku (`FOG_TUNE.vision`: Atlas 18 km, fregata 8, Corvus/`role: 'radar'` 26, dron 25) jest celowo MNIEJSZY niż czujniki pasywne AI (`SHIP_SENSOR_PROFILES`, `fleetAwareness` — AI widzi po staremu). Opcja „Mgła wojny” w panelu Nowa gra (`sc_fog_of_war`, domyślnie wł.; konsola `setFogOfWar(bool)`).
+- Gracz WIDZI tylko to, co jest w zasięgu wzroku strony gracza: Atlas (i P2), sojusznicy, drony zwiadu, sondy, stacje czujników, przyjazne stacje, strefy fabuły (`revealArea`). Wzrok z tabeli `src/data/shipRanges.js`: fregata 5 km, destroyer 8, battleship 11, capital 14, supercapital/Atlas 18; Corvus/`role: 'radar'` 7 km, dron 20. Klasa jest rozpoznawana po aktywnym kadłubie / ramie PRZED ogólnym typem i flagami `isPlayer` / `isCapitalShip` — gracz we fregacie nie ma wzroku Atlasa, NPC supercapital nie wpada do capital. Jawne `sensors.visionRange` wygrywa. Wzrok jest celowo MNIEJSZY niż czujniki pasywne AI (`SHIP_SENSOR_PROFILES`, `fleetAwareness` — AI widzi po staremu). Opcja „Mgła wojny” w panelu Nowa gra (`sc_fog_of_war`, domyślnie wł.; konsola `setFogOfWar(bool)`).
 
 - Orkiestracja: `SensorSystem.update` (krok czujników w `physicsStep`) — źródła → flagi bytów → sygnatury masy → świat mgły dla Core3D (`SensorSystem.fogWorld`, `Core3D.setFogOfWar`). Świadomość NPC (`_sensorAwareness`: radar kokpitu, CIC, znaczniki krawędzi) = wzrok; zgubiony kontakt zostaje duchem. Bez mgły — dawne koło 18 km.
 
