@@ -28,6 +28,7 @@ import {
   defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, CAMERA_WARP_ROLL_MODES
 } from '../src/game/cameraRig.js';
 import { rolledHalfExtents } from '../src/3d/viewRoll.js';
+import { createWarpShakeState, stepWarpShakes } from '../src/game/warpShakes.js';
 import { buildSystemMap } from '../src/data/systemMap.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../src/data/asteroidTypes.js';
 import { DEFAULT_PLANET_SCALE } from '../src/config/constants.js';
@@ -192,6 +193,9 @@ const rigIn = {
 };
 const rollIn = { dt: 0, state: 'idle', dirX: 1, dirY: 0, exitAge: -1, exitHalt: 0, enabled: true, mode: 'up' };
 const _rollHalf = { hw: 0, hh: 0 };
+// Wstrząsy skoku (kop, wyjście, hamowanie) zgłasza „gra” — jak index.html (src/game/warpShakes.js; efekt już nie wstrząsa).
+const _warpShakes = createWarpShakeState();
+const _warpShakeIn = { alive: true, jumping: false, hyper: false, charging: false, ramp: null };
 const _shakeOut = { x: 0, y: 0 };
 const pose = { x: 0, y: 0, angle: 0 };
 
@@ -551,6 +555,10 @@ function physicsStep(dt) {
     }
   }
   trip.maxSpeed = Math.max(trip.maxSpeed, Math.hypot(e.vx, e.vy));
+  _warpShakeIn.jumping = warp.state === 'active';
+  _warpShakeIn.charging = warp.state === 'charging';
+  _warpShakeIn.ramp = warp.exitRamp;
+  stepWarpShakes(_warpShakes, _warpShakeIn, dt, addShake);
 
   // Fazy podróży (pętla).
   if (S.free) {
@@ -648,7 +656,7 @@ function stepCamera(realDt, gameDt) {
   cam.y = pose.y + rs * ox + rc * oy;
   cam.zoom = zoom;
   cam.roll = roll;
-  // wstrząs: camera.addShake (WarpNurt.onShake) + drżenie ładowania (rig.warpShakePx) — px ekranu → świat
+  // wstrząs: camera.addShake (wstrząsy skoku — warpShakes.js w physicsStep) + drżenie ładowania (rig.warpShakePx) — px ekranu → świat
   if (shake.dur > 0) { shake.t += realDt; if (shake.t >= shake.dur) shake.dur = 0; }
   const mag = shake.dur > 0 ? shake.mag * (1 - shake.t / shake.dur) : 0;
   const amp = cameraShakeAmplitudePx(mag, 0, camTune, rig.warpShakePx);
@@ -967,7 +975,6 @@ window.__warpPed = {
       await new Promise((ok) => requestAnimationFrame(() => ok()));
     }
     WarpNurt.init();
-    WarpNurt.onShake = (mag, dur) => addShake(mag, dur);
     world = new World();
     atlas = world.add('atlas', { x: 0, y: 0, angle: 0, throttle: 0.6 });
     window.ship = atlas;

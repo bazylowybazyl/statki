@@ -399,7 +399,8 @@ test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna);
     game.state = 'active';
     t += dt; step(t, dt);
     assert.equal(fx.mode, 'warp');
-    assert.equal(shakes.length, 1, 'jeden wstrząs przy kopnięciu');
+    // Wstrząsy skoku zgłasza gra (src/game/warpShakes.js — tests/warpWorkerMirror.test.mjs), efekt już nie wstrząsa.
+    assert.equal(shakes.length, 0, 'efekt nie wstrząsa przy kopnięciu (gra: warpShakes.js)');
     assert.ok(near(fx.visibleFlow(fx.kickT), 900));
     assert.ok(near(fx.visibleFlow(fx.kickT + 0.45), WARP_FLOW.travel, 1e-6));
     assert.equal(frame.waves.count, 1);
@@ -415,7 +416,7 @@ test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna);
     t += dt; step(t, dt);
     assert.equal(fx.mode, 'exit');
     assert.equal(frame.stars.frontOn, 1);
-    assert.equal(shakes.length, 2, 'lekki wstrząs na początku wyjścia');
+    assert.equal(shakes.length, 0, 'efekt nie wstrząsa na początku wyjścia');
     assert.ok(fx.visibleFlow(t) > 1000, 'zwolnienie z prędkości widocznej');
     assert.ok(fx.visibleFlow(fx.exitT + ramp.slow + 0.01) === null, 'po zwolnieniu ośrodek idzie za prawdziwą kamerą');
     const tEx = fx.exitT;
@@ -424,7 +425,7 @@ test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna);
     assert.ok(frame.glares.count === 1 && frame.flashes.count >= 1, 'błysk i blask na dziobie przy hamowaniu');
     assert.ok(frame.bubbles.includes(fx.push), 'iskry ośrodka przed dziobem');
     assert.ok(fx.bubble.front < 1.3, 'bańka zapada się od dziobu');
-    assert.equal(shakes.length, 3, 'wstrząs hamowania');
+    assert.equal(shakes.length, 0, 'efekt nie wstrząsa przy hamowaniu');
     for (let i = 0; i < 6; i++) { t += dt; ramp.age = t - tEx; step(t, dt); }
     assert.ok(fx.hull.on && fx.hull.heat > 0.6, 'żar kadłuba w chwili hamowania (razem z błyskiem)');
     // Przylot = jedno zdarzenie (2026-10-23): żar to impuls z błyskiem — 1,2 s po hamowaniu prawie zgasł (dawniej

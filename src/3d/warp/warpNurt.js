@@ -125,7 +125,8 @@ export const WarpNurt = {
   _rulonArgs: { bend: 0, field: 0, hx: 1, hy: 0, shipX: 0, shipY: 0, bubbleW: 50, bubbleL: 70, W: 1, H: 1, F: 1, strength: 1 },
   _medCtx: { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 },
   _fxStep: null,
-  onShake: null,
+  // Wstrząsy skoku gracza i wyrzutów NPC zgłasza GRA (src/game/warpShakes.js — te same chwile i wartości, także
+  // w workerze renderu); dawny hak `onShake` sterownika zniknął (etap W nowego warpa, 2026-10-25).
   stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, seams: 0, rifts: 0, glows: 0, smears: 0, waves: 0, arrivals: 0, flow: 0, lens: 0 },
 
   // Opcje grafiki („Szczegóły efektów”): liczba drobin ośrodka, najwyżej pojemność z init. setCount losuje
@@ -159,7 +160,6 @@ export const WarpNurt = {
     this.player = new WarpPlayerFx();
     this.player.bubble = newWarpSlot();
     this.player.push = newWarpSlot();
-    this.player.onShake = (mag, dur) => this.onShake?.(mag, dur);
     Core3D.scene.add(this.medium.mesh);
     this.rifts.mesh.layers.set(0);
     this.glow.mesh.layers.set(0);
@@ -885,7 +885,7 @@ export const WarpNurt = {
   warpBegin(id, kind, fx, entity) {
     if (!fx) return null;
     const departure = kind === 'departure';
-    const v = { id, kind, fx, entity: entity || null, burstShaken: false, dress: null };
+    const v = { id, kind, fx, entity: entity || null, dress: null };
     v.dress = departure ? dressWarpDeparture(fx) : dressWarpArrival(fx);
     this.arrivals.push(v);
     return v;
@@ -933,10 +933,6 @@ export const WarpNurt = {
           else this._applyHull(en, v.dress.hull);
           en.__warpNurtMode = v.dress.plasmaMode;
         }
-        if (!v.burstShaken && t >= fx.tBrake) {
-          v.burstShaken = true;
-          this._burstShake(fx, camX, camY);
-        }
       } else {
         const e = v.entity;
         const alive = !!(e && !e.dead);
@@ -963,16 +959,6 @@ export const WarpNurt = {
     u.b.set(0, 0, 0, 4);
     u.c.set(0, 0, 0, 1);
     this._hullTouched.add(e);
-  },
-
-  _burstShake(fx, camX, camY) {
-    if (!this.onShake) return;
-    const ddx = fx.x - camX;
-    const ddy = fx.y - camY;
-    const d = Math.sqrt(ddx * ddx + ddy * ddy);
-    const near = Math.max(0, 1 - d / Math.max(4000, fx.hullLength * 6));
-    if (near <= 0) return;
-    this.onShake(12 * (0.4 + 0.8 * fx.sizeScale) * near, 0.35);   // demo: 6 px × (0,4 + 0,8 s)
   },
 
   /** Wygląd do zera (WARP_CLEAR, nowa gra; skok gracza też). */

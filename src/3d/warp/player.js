@@ -22,7 +22,8 @@
 //              HAMOWANIE (błysk dziobu, blask, fala, żar, iskry ośrodka lecą dalej, bańka zapada
 //              się od dziobu); po zatrzymaniu ośrodek gaśnie.
 // Kamerą rządzi rig gry (cameraRig.js) — kop, oddalenie, statek na środku lejka i wysunięcie
-// przy wyjściu są tam; tu zostaje wstrząs przez `onShake`.
+// przy wyjściu są tam. Wstrząsy kopu, wyjścia i hamowania zgłasza GRA (src/game/warpShakes.js — te same chwile
+// i wartości; działają też w workerze renderu), efekt już nie wstrząsa.
 
 import { warpPalette, heatColor } from './palette.js';
 import { WARP_EXIT, warpArrivalSpeed, warpBrakeTime, warpBrakeBubbleFront, warpRulonBend, warpStyle, warpSizeScale } from '../../game/warpDrive.js';
@@ -37,7 +38,8 @@ export const WARP_BUBBLE = Object.freeze({ radiusK: 0.62, asp: 1.35 });
 export const WARP_FLOW = Object.freeze({ gear1: 16000, gear2: 21000, travel: 21000, exitRest: 160, slowMin: 2500 });
 /**
  * Hipercruise (E5, 2026-10-22 — ten sam efekt co skok warpa): przepływ ośrodka × (prędkość / ref), w [min, max] —
- * Mk I (20 tys.) ~14 tys., Mk III (40 tys.) ~28 tys. j/s widocznie; wstrząs kopu × shake. Rulon i soczewka świata
+ * Mk I (20 tys.) ~14 tys., Mk III (40 tys.) ~28 tys. j/s widocznie; wstrząs kopu × shake (zgłasza gra — warpShakes.js:
+ * WARP_SHAKE.hyperKickMul, ta sama wartość). Rulon i soczewka świata
  * (kompozycja skoku z celem) w hipercruisie wyłączone — gra obok statku zostaje czytelna (hipercruise da się przerwać).
  */
 export const HYPER_FLOW = Object.freeze({ ref: 30000, min: 0.2, max: 1.4, shake: 0.5 });
@@ -133,7 +135,6 @@ export class WarpPlayerFx {
     this.bubble = null;   // przegródka ośrodka (tworzy sterownik: newWarpSlot)
     this.push = null;     // przegródka iskier hamowania (tworzy sterownik)
     this.hull = { on: false, revealMode: 0, revealLine: 0, seamLine: 0, seamW: 0, seam: 0, seamRGB: [0, 0, 0], heat: 0, heatRGB: [0, 0, 0], rimW: 0 };
-    this.onShake = null;  // (mag px, dur s) — wstrząs kamery
     this.ramp = { slow: WARP_EXIT.slow, coast: WARP_EXIT.coast, brake: 0.2, vArr: 16000, v0: 16000, tBrake: 1.15, tHalt: 1.35 };
     this.reset();
   }
@@ -153,7 +154,6 @@ export class WarpPlayerFx {
     this.chargeBoost = 1;
     this.chargeK = 1;
     this.angle = 0;
-    this.brakeShaken = false;
     this.rulonBend = 0;          // zwinięcie rulonu (sterownik → RULON)
     this.rulonField = 0;         // lejek
     this.style = 'ped';          // styl warpa (warpDrive.js: warpStyle) — z adresu strony albo z dema
@@ -224,7 +224,6 @@ export class WarpPlayerFx {
         this.flowGear = WARP_FLOW.travel;
         this.kickMX = medium.camMX + (game.x - map.camX);
         this.kickMY = medium.camMY + (game.y - map.camY);
-        if (this.onShake) this.onShake(18 * (this.hyper ? HYPER_FLOW.shake : 1), 0.3);   // ~9 px (cameraRig: mag × 0,5)
       }
       this.charge = 1;
       if (this.hyper) {
@@ -285,10 +284,8 @@ export class WarpPlayerFx {
     }
     this.flowAtExit = Math.max(WARP_FLOW.exitRest, this.visibleFlowAt(t - dt));
     this.lensAtExit = smooth(0, WARP_LENS_TIMING.kick, t - this.kickT);
-    this.brakeShaken = false;
     // Ładowanie zużyte (po wyjściu rulon nie wraca przez gałąź „przerwanego ładowania”).
     this.charge = 0;
-    if (this.onShake) this.onShake(8, 0.4);   // demo: 4 px · impuls(0,05 / 0,4 s)
   }
 
   /** Przejścia i klatka naraz (testy, proste użycie). Sterownik woła advance → ruch kamery → fill. */
@@ -448,10 +445,6 @@ export class WarpPlayerFx {
       if (tb >= 0 && tb < 1.3 && this.style !== 'akcent') {
         const ag = tb / 1.3;
         frame.addWave(sx + c * L * 0.5, sy + sn * L * 0.5, L * (0.25 + 3.2 * easeOut3(ag)), L * 0.24, 11 * (1 - ag) ** 2 * Math.min(1.2, size * 1.2));
-      }
-      if (tb >= 0 && !this.brakeShaken) {
-        this.brakeShaken = true;
-        if (this.onShake) this.onShake(22, 0.3);   // demo: 11 px · e^(−t/0,3)
       }
       // Żar przy hamowaniu (cała energia w kadłub) — impuls razem z błyskiem (WARP_ARRIVAL_ACCENT), nie osobny żar
       // wyłaniający się po nim.

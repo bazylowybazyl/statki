@@ -87,6 +87,12 @@ if (isWorker) {
     globalThis.SUN = st.sun;
     const { RenderWorld, createMirrorPlayersSource } = await import('./renderWorld.js');
     st.players = createMirrorPlayersSource();
+    // Adres STRONY gry (A/B z adresu — `?warp=…`, `?hcOsrodek=1`, `?ksiezyce=orbita`, `?planety=stare`, `?k7=stara`…):
+    // bez pola własnego getter prototypu czytał `location.search` SKRYPTU workera (Vite: `?worker_file&type=module`),
+    // więc przełączniki z adresu działały tylko w trybie off. Przed importem modułów renderu (czytają adres przy imporcie).
+    let pageSearch = '';
+    try { pageSearch = m.pageBase ? new URL(m.pageBase).search : ''; } catch (_) { /* adres bez składni URL */ }
+    Object.defineProperty(st.players, 'pageSearch', { value: pageSearch, writable: false, enumerable: true });
     // Poza renderu gracza (interpolowana między krokami fizyki — window.__interpShipPose strony) z HEAD.INTERP strony:
     // bez niej kadłub gracza (hexShips3D), dysze, rakiety i warp szły w pozie KROKU fizyki (60 Hz), a kamera i wieże za
     // pozą interpolowaną — przy 240 Hz kadłub skakał między 4 położeniami („kilka statków”, w warpie dwa obok siebie;
@@ -110,8 +116,9 @@ if (isWorker) {
     ]);
     const [rktBlock, rktCmd, viewBlock, coldMod] = await Promise.all([import('./blocks/rocketBlock.js'), import('../3d/rockets/rocketFxCommands.js'),
       import('./blocks/viewBlock.js'), import('../game/coldWrecks.js')]);
-    const [warpMod, warpCmd, warpBlock] = await Promise.all([
-      import('../3d/warp/warpNurt.js'), import('../3d/warp/warpTrafficCommands.js'), import('./blocks/warpBlock.js')
+    const [warpMod, warpCmd, warpBlock, warpWorld] = await Promise.all([
+      import('../3d/warp/warpNurt.js'), import('../3d/warp/warpTrafficCommands.js'), import('./blocks/warpBlock.js'),
+      import('./warpWorldMirror.js')
     ]);
     // uderzenia w planetoidę pod bazą piratów (rekord ROCK_IMPACT — cel: obraz planetoidy z pirateBaseGame.js)
     const rockImpactMod = await import('../3d/pirateRockImpactFx.js');
@@ -166,13 +173,17 @@ if (isWorker) {
     st.w3Station = null;
     st.bayPose = { x: 0, y: 0, angle: 0 };
     st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: (e) => st.playerPoseOf(e), hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock, rockImpactMod };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock, warpWorld, rockImpactMod };
     st.warpMirror = warpBlock.createWarpMirror();
-    st.warpObj = { state: undefined, charge: 0, chargeTime: 0, gear: 0, dir: 0, flybyFactor: 1, cruise: 0, speed: 0, exitRamp: null };
-    st.warpRamp = { active: false, age: 0, tBrake: 0 };
+    // warp gracza i dopalacz z WORLD (warpWorldMirror.js — pełny kształt GameState.warp: rampa, ślizg, kurs, ciało celu
+    // i startu z list ciał workera): RenderWorld.warp / .boost workera (plazma WARP i dopalacza gracza, lakier) i klatka
+    // „Nurtu”; dt efektu z zegara efektu strony (pominięte strony nie gubią czasu osi kopu i wyjścia)
+    st.warpMir = warpWorld.createWarpWorldMirror();
+    warpWorld.installWarpPlayerFields(st.players);
+    st.warpFxClock = { prev: NaN };
     // hipercruise gracza w kształcie warpa (skalary HYPER_* — RenderWorld.hyper, WarpNurt, struga, lakier)
     st.hyperObj = { state: 'idle', charge: 0, chargeTime: 0, speed: 0, vmax: 0, dir: 0 };
-    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: st.warpObj, hyper: st.hyperObj, trafficTime: 0, lensAllowed: false };
+    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: st.hyperObj, trafficTime: 0, lensAllowed: false, anchorSX: NaN, anchorSY: NaN };
     st.ringMirror = ringBlockMod.createRingMirror();
     st.rockets = rktBlock.createRocketMirror();
     st.weaponDefs = new Map();
@@ -734,6 +745,12 @@ if (isWorker) {
       ho.speed = W0[WD.HYPER_SPEED]; ho.vmax = W0[WD.HYPER_VMAX]; ho.dir = W0[WD.HYPER_DIR];
       st.players.hyper = ho;
     }
+    // warp gracza i dopalacz (lustro WORLD — przed modułami: plazma WARP i dopalacza na dyszach gracza, lakier, „Nurt”)
+    try {
+      const ww = st.mods.warpWorld;
+      ww.applyWarpWorld(v.world, st.dict, st.warpMir, st.planets || null, st.small || null);
+      ww.publishWarpPlayerFields(st.players, st.warpMir);
+    } catch (e) { modFail('lustro warpa', e); }
     {
       const ix = h[H.INTERP_X], iy = h[H.INTERP_Y], ia = h[H.INTERP_ANGLE];
       if (ix === ix && iy === iy && ia === ia) {
@@ -796,17 +813,18 @@ if (isWorker) {
     try { if (v.blocks.warp && v.blocks.warp.f64) {
       const { warpMod, warpBlock } = st.mods;
       const mir = warpBlock.applyWarpBlock(v.blocks.warp, st.dict, st.warpMirror);
-      const W0 = v.world, wo = st.warpObj;
-      wo.state = st.dict.value(W0[WD.WARP_STATE]); wo.charge = W0[WD.WARP_CHARGE]; wo.chargeTime = W0[WD.WARP_CHARGE_TIME];
-      wo.gear = W0[WD.WARP_GEAR]; wo.dir = W0[WD.WARP_DIR]; wo.flybyFactor = W0[WD.WARP_FLYBY];
-      wo.cruise = W0[WD.WARP_CRUISE]; wo.speed = W0[WD.WARP_SPEED];
-      const ra = W0[WD.WARP_EXIT_ACTIVE];
-      if (ra < 0) wo.exitRamp = null;
-      else { const r = st.warpRamp; r.active = ra === 1; r.age = W0[WD.WARP_EXIT_AGE]; r.tBrake = W0[WD.WARP_EXIT_TBRAKE]; wo.exitRamp = r; }
       const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
       cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM]; cns.roll = h[H.CAMNS_ROLL] || 0;
       const wf = st.warpFrame;
-      wf.dt = Number.isFinite(mir.frame.dt) ? mir.frame.dt : dt; wf.cam = cns; wf.camShake = cam; wf.camFollow = mir.frame.camFollow;
+      // warp gracza: lustro WORLD (pełna rampa, ślizg, kurs, cel — jak obiekt gry w trybie off)
+      wf.warp = st.warpMir.hasWarp ? st.warpMir.warp : null;
+      // dt efektu z zegara efektu strony (suma dt klatek „Nurtu” strony) — strona pominięta przez workera dokłada swój
+      // czas; bez zegara — dt klatki „Nurtu” tej strony
+      const pageDt = Number.isFinite(mir.frame.dt) ? mir.frame.dt : dt;
+      wf.dt = st.mods.warpWorld.warpFxDt(st.warpFxClock, st.warpMir.fxClock, pageDt);
+      wf.cam = cns; wf.camShake = cam; wf.camFollow = mir.frame.camFollow;
+      // kotwica kadru skoku (DECYZJE M3) — jak `o.anchorSX / SY` klatki „Nurtu” strony
+      wf.anchorSX = st.warpMir.anchorSX; wf.anchorSY = st.warpMir.anchorSY;
       wf.ship = rm.player; wf.trafficTime = mir.frame.trafficTime; wf.lensAllowed = mir.frame.lensAllowed;
       warpMod.WarpNurt.update(wf);
     } } catch (e) { modFail('warp', e); }

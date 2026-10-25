@@ -29,6 +29,7 @@ import { createTripleBuffer, TripleBufferWriter } from './tripleBuffer.js';
 import { createRenderIds } from './renderIds.js';
 import { describeEntity, describeCore, describeStation } from './describeEntity.js';
 import { describeBodyTopology } from './mirrorBody.js';
+import { packWarpWorld } from './warpWorldMirror.js';
 
 const EF = ENT.F64, EI = ENT.I32;
 const BF = BODY.F64, BI = BODY.I32;
@@ -105,6 +106,9 @@ export function createSnapshotFrame() {
     coresOf: null,              // (listy) → rdzenie (ReactorGame.cores) z list migawki: [gracz, P2], NPC i wraki widoczne, zimne
     sun: null, skyZone: null,
     warp: null, boost: null,
+    // warp gracza (warpWorldMirror.js): listy ciał (indeks celu / startu skoku — ta sama kolejność, którą strona wysyła
+    // workerowi), zegar efektu warpa strony (suma dt klatek „Nurtu”), kotwica kadru skoku (px ekranu od środka kadru)
+    planets: null, smallBodies: null, warpFxClock: NaN, warpAnchorSX: NaN, warpAnchorSY: NaN,
     hyper: null,                // hipercruise gracza w kształcie warpa (GameState.hyper)
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
     turretFrame: null,          // faza finish (RW-26): rekordy klatki { frameCount, recordAt(i) } (Turret2D po syncFrame)
@@ -1352,22 +1356,8 @@ export class SnapshotPacker {
     w[WORLD.SUN_Y] = sun ? raw(sun.y) : NaN;
     w[WORLD.SUN_R] = sun ? raw(sun.r) : NaN;
     w[WORLD.SKY_ZONE] = this.dict.code(f.skyZone);
-    const wp = f.warp;
-    w[WORLD.WARP_STATE] = wp ? this.dict.code(wp.state) : -1;
-    w[WORLD.WARP_CHARGE] = wp ? raw(wp.charge) : NaN;
-    w[WORLD.WARP_CHARGE_TIME] = wp ? raw(wp.chargeTime) : NaN;
-    w[WORLD.WARP_GEAR] = wp ? raw(wp.gear) : NaN;
-    w[WORLD.WARP_DIR] = wp ? raw(wp.dir) : NaN;
-    w[WORLD.WARP_FLYBY] = wp ? raw(wp.flybyFactor) : NaN;
-    w[WORLD.WARP_CRUISE] = wp ? raw(wp.cruise) : NaN;
-    w[WORLD.WARP_SPEED] = wp ? raw(wp.speed) : NaN;
-    const ramp = wp ? wp.exitRamp : null;
-    w[WORLD.WARP_EXIT_ACTIVE] = ramp ? (ramp.active ? 1 : 0) : -1;
-    w[WORLD.WARP_EXIT_AGE] = ramp ? raw(ramp.age) : NaN;
-    w[WORLD.WARP_EXIT_TBRAKE] = ramp ? raw(ramp.tBrake) : NaN;
-    w[WORLD.WARP_TARGET_BODY] = -1;   // AGENT: RW-11c — indeks planety warp.targetBody na liście planet
-    const bo = f.boost;
-    w[WORLD.BOOST_STATE] = bo ? this.dict.code(bo.state) : -1;
+    // warp gracza i dopalacz (pełny kształt — rampa, ślizg, kurs, ciała, zegary, kotwica kadru): warpWorldMirror.js
+    packWarpWorld(w, f, this.dict);
     const hy = f.hyper;
     w[WORLD.HYPER_STATE] = hy ? this.dict.code(hy.state) : -1;
     w[WORLD.HYPER_CHARGE] = hy ? raw(hy.charge) : NaN;

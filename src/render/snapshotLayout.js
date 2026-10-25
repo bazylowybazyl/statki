@@ -29,7 +29,9 @@
 
 import { HALL_DUST_IN } from '../3d/gasField/hallDustLayout.js';
 
-export const SNAPSHOT_LAYOUT_VERSION = 1;
+// 2 (2026-10-25): WORLD — warp gracza w pełnym kształcie (warpWorldMirror.js: rampa, ślizg, kurs x / y, ciała, zegary,
+// kotwica kadru); dawne WARP_DIR (obiekt pakowany jako liczba — zawsze NaN) zniknęło.
+export const SNAPSHOT_LAYOUT_VERSION = 2;
 
 function fields(names) {
   const o = {};
@@ -231,9 +233,27 @@ export const CORE = record({
 // ── WORLD (Float64, skalary) ─────────────────────────────────────────────────────────────────────────────────
 export const WORLD = fields([
   'SUN_X', 'SUN_Y', 'SUN_R', 'SKY_ZONE',
-  // warp gracza (GameState.warp) i dopalacz (GameState.boost)
-  'WARP_STATE', 'WARP_CHARGE', 'WARP_CHARGE_TIME', 'WARP_GEAR', 'WARP_DIR', 'WARP_FLYBY', 'WARP_CRUISE', 'WARP_SPEED',
-  'WARP_EXIT_ACTIVE', 'WARP_EXIT_AGE', 'WARP_EXIT_TBRAKE', 'WARP_TARGET_BODY', 'BOOST_STATE',
+  // warp gracza (GameState.warp) i dopalacz (GameState.boost) — pakuje i rozpakowuje src/render/warpWorldMirror.js
+  // (układ 2, 2026-10-25: pełna rampa wyjścia, ślizg, kurs x / y, ciała celu i startu, znaczniki zegara, kotwica kadru)
+  'WARP_STATE', 'WARP_CHARGE', 'WARP_CHARGE_TIME', 'WARP_GEAR', 'WARP_DIR_X', 'WARP_DIR_Y', 'WARP_FLYBY', 'WARP_CRUISE',
+  'WARP_SPEED', 'WARP_ENTRY',
+  // ciało celu / startu skoku: indeks na liście planet (i), małe ciała za nimi (planets.length + j); −1 — brak
+  'WARP_TARGET_BODY', 'WARP_ORIGIN_BODY',
+  // SimClock.sim w chwili skoku (engageWarp) i zegar efektu warpa strony (suma dt klatek „Nurtu” — 0 w pauzie)
+  'WARP_KICK_SIM', 'WARP_FX_CLOCK',
+  // rampa wyjścia (warp.exitRamp — createWarpExitRamp): ACTIVE −1 = brak rampy (null), 0 / 1 = active
+  'WARP_EXIT_ACTIVE', 'WARP_EXIT_AGE', 'WARP_EXIT_T0', 'WARP_EXIT_SLOW', 'WARP_EXIT_COAST', 'WARP_EXIT_BRAKE',
+  'WARP_EXIT_TSLOW', 'WARP_EXIT_TBRAKE', 'WARP_EXIT_THALT', 'WARP_EXIT_V0', 'WARP_EXIT_VARR', 'WARP_EXIT_VEND',
+  'WARP_EXIT_DIST', 'WARP_EXIT_DIR_X', 'WARP_EXIT_DIR_Y', 'WARP_EXIT_HULL',
+  // ślizg po wyjściu z pędem (warp.exitSlide): ACTIVE −1 = brak obiektu
+  'WARP_SLIDE_ACTIVE', 'WARP_SLIDE_SPEED', 'WARP_SLIDE_VMIN', 'WARP_SLIDE_DECEL', 'WARP_SLIDE_DIR_X', 'WARP_SLIDE_DIR_Y',
+  // hamowanie grawitacyjne (exitWarp({ abrupt }) — warp.gravityBrake.active)
+  'WARP_ABRUPT',
+  // kotwica kadru skoku (DECYZJE M3): nominalne miejsce statku w kadrze — sprężyna riga BEZ impulsu kopu i BEZ
+  // wysunięcia przy wyjściu (cameraRig.nominalX / Y), px ekranu CSS od środka kadru, osie ekranu (po obrocie), y w dół;
+  // NaN — kamera nie prowadzi statku (RTS, fokus)
+  'WARP_ANCHOR_SX', 'WARP_ANCHOR_SY',
+  'BOOST_STATE',
   // hipercruise gracza w kształcie warpa (GameState.hyper — efekt „silnika warp” w hipercruisie, E5 2026-10-22)
   'HYPER_STATE', 'HYPER_CHARGE', 'HYPER_CHARGE_TIME', 'HYPER_SPEED', 'HYPER_VMAX', 'HYPER_DIR',
   // słownik napisów: liczba wpisów (nowe — kanałem bocznym)

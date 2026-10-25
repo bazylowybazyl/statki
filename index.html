@@ -1389,6 +1389,8 @@
     import { RenderCommands } from "./src/render/renderCommands.js";
     // RW-30: wstrząsy kamery po stronie gry — wstrząs strzałów i kopnięcie kadru z rekordu SHOT, żądania wstrząsu z renderu.
     import { createWeaponShotShake, addWeaponShotShake, stepWeaponShotShake, requestCameraShake, requestCameraShakePeak, ShotFeel } from "./src/game/cameraShakes.js";
+    // Wstrząsy skoku gracza (kop, wyjście, hamowanie) i wyrzutów NPC z tunelu — decyzje gry (działają też w workerze renderu).
+    import { createWarpShakeState, stepWarpShakes, stepWarpBurstShakes } from "./src/game/warpShakes.js";
     import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
     import {
       FLAK_TUNING,
@@ -9297,6 +9299,10 @@
     }
     window.returnSupportWingToEarth = returnSupportWingToEarth;
 
+    // Wstrząsy warpa po stronie gry (src/game/warpShakes.js): żądanie do kamery (nie słabsze od bieżącego wstrząsu);
+    // wyrzut okrętu NPC z tunelu (dawniej WarpNurt._burstShake) — przylot rejestru po chwili hamowania, raz na oś.
+    const _requestWarpShake = (mag, dur) => { requestCameraShake(camera, mag, dur); };
+    const _warpBurstSeen = new WeakSet();
     // Klatka przed render(): spawn wezwań w klatce wyrzutu i kroki powrotów — potem krok rejestru ruchu warpa
     // (warpTraffic.step) przesuwa zegar tej klatki o `dt` (dt gry: 0 w pauzie i przy zamrożonym świecie fabuły).
     function stepSupportWarp(dt) {
@@ -9306,6 +9312,8 @@
       storyWarpOut.step(dt, dt);
       tugWarpOut.step(dt, dt);
       warpTraffic.step(dt);
+      // wyrzuty NPC z tunelu: wstrząs przy kamerze (bez wstrząsu) — zegar rejestru, raz na oś przylotu
+      stepWarpBurstShakes(warpTraffic.records, warpTraffic.time, _warpBurstSeen, camera.x, camera.y, _requestWarpShake);
     }
 
     // Fabuła: odlot tunelem dowolnej grupy (np. ucieczka piratów) do wskazanego punktu — ten sam automat co
@@ -24958,6 +24966,8 @@
       entryProgress: 0,
       entryDuration: 0.9,
       entryBaseSpeed: 0,
+      // Znacznik zegara gry (SimClock.sim) chwili skoku — dla obrazu (oś kopu w migawce workera, warpWorldMirror.js).
+      kickSim: NaN,
       // Kurs skoku ustalony przy ładowaniu (rulon — oś stoi od ładowania; NaN = dziób statku).
       chargeAngle: NaN,
       // Rampa wyjścia (warpDrive.js: createWarpExitRamp) — wyjście = przylot jak u NPC: zwolnienie,
@@ -25064,7 +25074,7 @@
       const plan = playerWarpExitPlan(speed, !(opts && opts.momentum === false));
       stopPlayerWarpSlide();
       warp.exitRamp = abrupt ? null : createWarpExitRamp({
-        v0: speed, hullLength: playerWarpHullLength(), dirX: dir.x, dirY: dir.y, vEnd: plan.vEnd
+        v0: speed, hullLength: playerWarpHullLength(), dirX: dir.x, dirY: dir.y, vEnd: plan.vEnd, startTime: SimClock.sim
       });
       if (abrupt) {
         camera.addShake(18, 0.22);
@@ -25241,6 +25251,24 @@
       return !!(ship && ship.noHullCollisions);
     }
 
+    // Wstrząsy skoku gracza po stronie GRY (src/game/warpShakes.js; dawniej WarpPlayerFx.onShake w renderze — w workerze
+    // renderu ginęły): kop 18 / 0,3 s (hipercruise × 0,5), wyjście 8 / 0,4 s, hamowanie 22 / 0,3 s w chwili tBrake osi
+    // wyjścia (rampa gry albo czasy domyślne — hipercruise, hamowanie grawitacyjne). Raz na krok fizyki, po automacie
+    // warpa i hipercruise'u.
+    const _warpShakes = createWarpShakeState();
+    const _warpShakeIn = { alive: false, jumping: false, hyper: false, charging: false, ramp: null };
+    function stepPlayerWarpShakes(dt) {
+      const i = _warpShakeIn;
+      const warpOn = warp.state === 'active';
+      const hyperOn = hyperLook.state === 'active';
+      i.alive = !!(ship && !ship.dead);
+      i.jumping = warpOn || hyperOn;
+      i.hyper = !warpOn && hyperOn;
+      i.charging = warp.state === 'charging' || hyperLook.state === 'charging';
+      i.ramp = warp.exitRamp;
+      stepWarpShakes(_warpShakes, i, dt, _requestWarpShake);
+    }
+
     function attemptWarp() {
       // 9, pad i UI: przejęcie sterów zachowuje wyznaczony cel.
       takeManualWarpCourse();
@@ -25285,6 +25313,7 @@
       warp.state = 'active';
       warp.entryProgress = 0;
       warp.entryBaseSpeed = Math.hypot(ship.vel.x, ship.vel.y);
+      warp.kickSim = SimClock.sim;
 
       if (DevFlags.unlimitedWarp) {
         warp.fuel = warp.fuelMax;
@@ -26715,6 +26744,8 @@
       // szereg 40 okrętów — styk z 23 (60 Hz) / 39 (120 Hz), rampa (87 → 16 tys. j/s) przeorywała okręty na drodze
       // (scripts/webgpu/tunelowanie-gra.mjs --tryb gra). Pociski, AI i mgła widzą gracza jak dotąd.
       if (ship) ship.noHullCollisions = updatePlayerWarpGhost();
+      // Wstrząsy skoku gracza (kop / wyjście / hamowanie — decyzje gry, ten sam efekt w trybie off i w workerze).
+      stepPlayerWarpShakes(dt);
 
       // Kolizje statków z asteroidami — przed destruktorem, żeby wypchnięcie ze
       // skały zadziałało przed kolizjami heksów w tym samym podkroku.
@@ -28743,6 +28774,7 @@
       _mirrorPlayers.player2Ship = rm.player2;
     }
 
+    let _warpFxClock = 0;
     function packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, shakePxX, shakePxY, cloakFrame = null) {
       const f = _snapFrame;
       f.frameId = renderFrameId;
@@ -28791,9 +28823,20 @@
       f.warp = warp;
       f.boost = boost;
       f.hyper = hyperLook;
+      // warp gracza w migawce (src/render/warpWorldMirror.js): listy ciał — indeks celu / startu skoku w tej samej
+      // kolejności, w jakiej rwHost.syncPlanets wysyła ciała workerowi
+      f.planets = planets;
+      f.smallBodies = window.smallBodies || null;
       // ruch warpa NPC (osie rejestru gry) i klatka „Nurtu” — ta sama, którą dostaje WarpNurt.update
       f.warpTraffic = warpTraffic;
       f.warpNurt = _warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam);
+      // kotwica kadru skoku (DECYZJE M3) z klatki „Nurtu” (_warpNurtFrame: anchorSX / SY)
+      f.warpAnchorSX = f.warpNurt.anchorSX;
+      f.warpAnchorSY = f.warpNurt.anchorSY;
+      // zegar efektu warpa strony: suma dt klatek „Nurtu” (przycięte jak w WarpNurt.update) — worker liczy z niego dt
+      // efektu, więc strony, których nie narysował, nie gubią czasu osi kopu i wyjścia
+      _warpFxClock += Math.max(0, Math.min(0.1, Number(f.warpNurt.dt) || 0));
+      f.warpFxClock = _warpFxClock;
       // baza piratów misji 1: stan klatki obrazu (ten sam, który dostaje updatePirateBase3D) i dt gry
       f.pirateBase = storyBaseFrameState();
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
@@ -29455,7 +29498,7 @@
     // ============== END SPLIT SCREEN RENDER ==============
 
     // Warp „Nurt” (src/3d/warp/warpNurt.js): jeden obiekt wejścia na grę (bez alokacji na klatkę).
-    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: null, npcs: null };
+    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: null, npcs: null, anchorSX: NaN, anchorSY: NaN };
     function _warpNurtFrame(dt, camNoShake, camShake) {
       const o = _warpNurtCtx;
       o.dt = dt;
@@ -29471,10 +29514,17 @@
       // Soczewka świata (planety w skoku — src/3d/warp/worldLens.js) tylko w kamerze z góry jednego gracza:
       // planety są wspólne dla obu widoków podzielonego ekranu, a kamery 3D i kino fabuły patrzą inaczej.
       o.lensAllowed = !splitScreenMode && !View3D.active;
+      // Kotwica kadru skoku (nowy warp, DECYZJE M3): nominalne miejsce statku w kadrze — sprężyna riga BEZ impulsu kopu
+      // i BEZ wysunięcia przy wyjściu (cameraRig.nominalX / Y — offset kamery od statku), px ekranu CSS od środka kadru,
+      // osie ekranu; NaN poza kamerą statku. Worker dostaje to samo skalarami migawki (WORLD.WARP_ANCHOR_SX / SY).
+      // AGENT: etap integracji soczewki — czytaj `o.anchorSX / SY` klatki „Nurtu” (off; w workerze `wf.anchorSX / SY` z lustra).
+      const anchorOn = camera.mode === 'ship' && !View3D.active;
+      o.anchorSX = anchorOn ? -cameraRig.nominalX : NaN;
+      o.anchorSY = anchorOn ? -cameraRig.nominalY : NaN;
       return o;
     }
-    // Wstrząs efektu warpa (kop przy skoku, wyrzut okrętu z tunelu) — nie słabszy od bieżącego.
-    WarpNurt.onShake = (mag, dur) => { requestCameraShake(camera, mag, dur); };
+    // Wstrząsy warpa (kop, wyjście, hamowanie, wyrzut okrętu z tunelu) zgłasza gra (stepPlayerWarpShakes,
+    // stepWarpBurstShakes — src/game/warpShakes.js), nie efekt.
 
     function render(alpha, frameDt) {
       const tRenderProfile0 = performance.now();

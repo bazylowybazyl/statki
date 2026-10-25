@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 
 const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 const planetSource = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+// strojenie księżyców (okresy obrotu, orbity) — src/3d/moonOrbit.js (etap W nowego warpa, 2026-10-25)
+const moonOrbitSource = readFileSync(new URL('../src/3d/moonOrbit.js', import.meta.url), 'utf8');
 const planetTslSource = readFileSync(new URL('../src/3d/planet3d.assets.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const gameSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
@@ -73,7 +75,7 @@ test('Earth moon shares the anchored scale and render pass', () => {
 });
 
 test('moons rotate visibly and receive a correctly layered halo', () => {
-  assert.match(planetSource, /spinPeriodSec:\s*72/);
+  assert.match(moonOrbitSource, /spinPeriodSec:\s*72/);
   assert.match(planetSource, /this\.spinSpeed\s*=\s*\(Math\.PI\s*\*\s*2\)\s*\/\s*spinPeriodSec/);
   // Kąt doby w polu (soczewka świata w skoku składa z nim obrót przelotu — worldLens.js).
   assert.match(planetSource, /this\._spinAngle\s*=\s*\(this\._spinAngle\s*\+\s*this\.spinSpeed/);

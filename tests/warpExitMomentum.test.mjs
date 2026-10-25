@@ -298,7 +298,8 @@ test('gracz: exitWarp z vEnd, ślizg w physicsStep, TRAVEL TO / kurs / HUD z dro
   const html = readIndexHtml();
   const exitWarp = sliceFunction(html, 'function exitWarp(opts) {');
   assert.match(exitWarp, /const plan = playerWarpExitPlan\(speed, !\(opts && opts\.momentum === false\)\);/);
-  assert.match(exitWarp, /createWarpExitRamp\(\{\s*v0: speed, hullLength: playerWarpHullLength\(\), dirX: dir\.x, dirY: dir\.y, vEnd: plan\.vEnd\s*\}\)/);
+  // startTime — znacznik zegara gry rampy (SimClock.sim; obraz w workerze — warpWorldMirror.js, rozgrywka go nie czyta)
+  assert.match(exitWarp, /createWarpExitRamp\(\{\s*v0: speed, hullLength: playerWarpHullLength\(\), dirX: dir\.x, dirY: dir\.y, vEnd: plan\.vEnd, startTime: SimClock\.sim\s*\}\)/);
   assert.match(html, /if \(s\.phase === 'done'\) \{\s*r\.active = false;[\s\S]{0,160}?if \(s\.speed > 1\) startPlayerWarpSlide\(r\.dirX, r\.dirY, s\.speed\);/);
   assert.match(html, /else if \(warp\.exitSlide && warp\.exitSlide\.active\) \{[\s\S]{0,400}?if \(playerHasManualInput\(\) \|\| hypercruise\.state !== 'idle'\) \{/);
   const nav = sliceFunction(html, 'function stepTravelNav() {');

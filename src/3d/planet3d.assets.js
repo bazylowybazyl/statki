@@ -28,6 +28,7 @@ import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector, earthBiteCente
 import { EARTH_SPIN, earthSpinAxis, earthSpinBase, earthSpinQuaternion } from './earthSpin.js';
 import { EarthBitePlant } from './earthBitePlant.js';
 import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
+import { MOON_TUNE, JUPITER_MOONS_TUNE, moonGameNode, moonStartAngle, moonOrbitRadius, moonOrbits, moonOrbitSpeed, moonPlaceInto } from './moonOrbit.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
 import {
@@ -82,27 +83,8 @@ const SUN_SIZE_MULTIPLIER = 6.0;
 const HALO_DEFAULTS = Object.freeze({ sizeMul: 0.985, coefMul: 1.08, coefAdd: 0.12, powerMul: 1.0, powerAdd: 1.5, sunMul: 1.0 });
 const MOON_HALO_DEFAULTS = Object.freeze({ size: 1.075, coef: 0.52, power: 9.5, sunMul: 0.62 });
 const SUN_SHADOW_TUNE = Object.freeze({ color: 0xffeedd, intensity: 1.45, mapSize: 4096, near: 1, far: 10000, lightHeight: 120000, offsetMin: 70000, frustumMul: 1.45, frustumPad: 560, frustumMin: 2800, frustumMax: 22000, bias: -0.0003, normalBias: 0.08 });
-const MOON_TUNE = Object.freeze({
-    orbitRadiusMul: 3.0,
-    orbitRadiusMin: 30000,
-    orbitPeriodSec: 220,
-    spinPeriodSec: 72,
-    sizeRatioToParent: 0.24,
-    z: -50020
-});
-// Dekoracyjne księżyce Jowisza. Od Z6 (2026-09-26) Jowisz ma ring „Halo”
-// (promień 48 000, ring do ~54 750, port z redą do ~70 tys.): dawne orbity
-// 20–48 tys. leżały w planecie i ringu. Orbity = promienie księżyców mapy
-// (systemMap.js: Io 60 tys. — pod ringiem, więc 86 tys.; Europa 105,
-// Ganimedes 165, Kallisto 250 tys.), okresy wydłużone proporcjonalnie
-// (prędkość liniowa jak dawniej). Rozmiar: ułamek promienia planety przy ringu.
-// Mapy (dzień, noc, normalne) — MOON_MAPS w planetMaps.js po `id` (Luna: 'moon').
-const JUPITER_MOONS_TUNE = Object.freeze([
-    Object.freeze({ id: 'io', orbitRadius: 86000, orbitPeriodSec: 352, spinPeriodSec: 48, sizeRatioToParent: 0.05, phase: 0.0, haloColor: 0xffb16f }),
-    Object.freeze({ id: 'europa', orbitRadius: 105000, orbitPeriodSec: 412, spinPeriodSec: 58, sizeRatioToParent: 0.042, phase: 1.4, haloColor: 0x9fc8ff }),
-    Object.freeze({ id: 'ganymede', orbitRadius: 165000, orbitPeriodSec: 669, spinPeriodSec: 74, sizeRatioToParent: 0.06, phase: 2.2, haloColor: 0xb6c3d6 }),
-    Object.freeze({ id: 'callisto', orbitRadius: 250000, orbitPeriodSec: 1016, spinPeriodSec: 92, sizeRatioToParent: 0.055, phase: 3.1, haloColor: 0x91a7c4 })
-]);
+// Księżyce z bryłą (Luna, księżyce Jowisza): strojenie i MIEJSCE — src/3d/moonOrbit.js (węzły gry SYSTEM_MAP_MOONS,
+// bez Math.random — etap W nowego warpa, 2026-10-25; czyste funkcje sprawdza tests/warpWorkerMirror.test.mjs).
 const SATURN_VISUAL_RING = Object.freeze({
     innerRadius: 1.22,
     outerRadius: 1.77,
@@ -1194,6 +1176,7 @@ class DirectPlanet {
     dispose() { if (this.group && this.group.parent) this.group.parent.remove(this.group); }
 }
 
+const _moonPlace = { x: 0, y: 0 };
 class DirectMoon {
     constructor(parentData, tune = MOON_TUNE) {
         this.parentData = parentData || null;
@@ -1208,8 +1191,11 @@ class DirectMoon {
         this.halo = null;
         const spinPeriodSec = Math.max(1, Number(this.tune?.spinPeriodSec) || MOON_TUNE.spinPeriodSec);
         this.spinSpeed = (Math.PI * 2) / spinPeriodSec;
-        this.orbitAngle = Number(this.tune?.phase);
-        if (!Number.isFinite(this.orbitAngle)) this.orbitAngle = Math.random() * Math.PI * 2;
+        // Węzeł gry (systemMap) — kąt i promień orbity; bez wpisu: faza strojenia albo 0 (deterministycznie) — moonOrbit.js.
+        this.gameNode = moonGameNode(this.tune);
+        this.orbitAngle = moonStartAngle(this.tune, this.gameNode);
+        // A/B: dawny obieg (`?ksiezyce=orbita`) — od kąta węzła, całkowany z dt klatki (adres strony — też w workerze).
+        this.orbits = moonOrbits(this.gameNode, RenderWorld.pageSearch);
         this._spinAngle = 0;
         // Soczewka świata w skoku gracza (worldLens.js): rekord ciała; `parent` = rekord planety (initPlanets3D).
         this.lensBody = newLensBody(this.tune?.id || 'moon');
@@ -1291,16 +1277,14 @@ class DirectMoon {
         const parentR = this.isRingAnchored
             ? resolveRingPlanetWorldRadius(this.parentData)
             : Math.max(100, Number(this.parentData.r) || 2800);
-        const orbitRadiusMin = Math.max(0, Number(this.tune?.orbitRadiusMin) || 0);
-        const orbitRadiusAbs = Math.max(0, Number(this.tune?.orbitRadius) || 0);
-        const orbitRadiusMul = Math.max(0, Number(this.tune?.orbitRadiusMul) || 0);
-        const orbitRadius = Math.max(orbitRadiusAbs, orbitRadiusMin, parentR * orbitRadiusMul);
-        const orbitPeriodSec = Math.max(1, Number(this.tune?.orbitPeriodSec) || MOON_TUNE.orbitPeriodSec);
-        const orbitSpeed = (Math.PI * 2) / orbitPeriodSec;
-        this.orbitAngle = (this.orbitAngle + orbitSpeed * Math.max(0, Number(dt) || 0)) % (Math.PI * 2);
-
-        const mx = parentX + Math.cos(this.orbitAngle) * orbitRadius;
-        const my = parentY + Math.sin(this.orbitAngle) * orbitRadius;
+        // Miejsce = węzeł gry (moonOrbit.js; strojenie tylko odsuwa — Io spod ringu Jowisza), obieg tylko bez węzła / A/B.
+        const orbitRadius = moonOrbitRadius(this.tune, this.gameNode, parentR);
+        if (this.orbits) {
+            this.orbitAngle = (this.orbitAngle + moonOrbitSpeed(this.tune) * Math.max(0, Number(dt) || 0)) % (Math.PI * 2);
+        }
+        const place = moonPlaceInto(_moonPlace, parentX, parentY, this.orbitAngle, orbitRadius);
+        const mx = place.x;
+        const my = place.y;
         const z = this.isRingAnchored
             ? RING_PLANET_VISUAL_Z
             : (Number(this.tune?.z ?? MOON_TUNE.z) || MOON_TUNE.z);

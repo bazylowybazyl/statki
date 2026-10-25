@@ -266,7 +266,12 @@ export function createCameraRig() {
     // Rulon (stepCameraRigWarp → stepCameraRig): mnożnik celu offsetu (1 − lejek; 0 przy wyjściu)
     // i wysunięcie statku przed kamerę przy wyjściu [× pół kadru wzdłuż kursu].
     warpLeadScale: 1,
-    warpAheadK: 0
+    warpAheadK: 0,
+    // Kotwica kadru skoku (nowy warp, DECYZJE M3): nominalny offset kamery [px ekranu] — sprężyna + reżyser kadru, BEZ
+    // impulsu kopu warpa i BEZ wysunięcia statku przy wyjściu (wynik stepCameraRig obok offsetX / Y). Statek w kadrze
+    // nominalnie w (−nominalX, −nominalY) px od środka; gra publikuje to do migawki (WORLD.WARP_ANCHOR_SX / SY).
+    nominalX: 0,
+    nominalY: 0
   };
 }
 
@@ -453,6 +458,9 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const by = finite(input.biasY, 0);
   rig.offsetX = clamp(rig.springX - wdx * lag + bx, -maxX, maxX);
   rig.offsetY = clamp(rig.springY - wdy * lag + by, -maxYDown, maxYUp);
+  // Kotwica kadru skoku: to samo bez kopu i wysunięcia (createCameraRig: nominalX / Y).
+  rig.nominalX = clamp(rig.springX + bx, -maxX, maxX);
+  rig.nominalY = clamp(rig.springY + by, -maxYDown, maxYUp);
   return rig;
 }
 
