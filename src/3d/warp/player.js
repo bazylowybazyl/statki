@@ -156,7 +156,7 @@ export class WarpPlayerFx {
     this.brakeShaken = false;
     this.rulonBend = 0;          // zwinięcie rulonu (sterownik → RULON)
     this.rulonField = 0;         // lejek
-    this.style = 'rulon';        // styl warpa (warpDrive.js: warpStyle) — z adresu strony albo z dema
+    this.style = 'ped';          // styl warpa (warpDrive.js: warpStyle) — z adresu strony albo z dema
     this.hyper = false;          // efekt prowadzi hipercruise (game.hyper — od rozruchu do końca wyjścia)
     this.hull.on = false;
     WARP_HULL_SHADOW.player = 1;
