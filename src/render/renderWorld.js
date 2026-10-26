@@ -98,6 +98,18 @@ class RenderWorldFacade {
   get ship() { const s = this._src; return s ? s.ship : W().ship; }
   get player2Ship() { const s = this._src; return s ? s.player2Ship : W().player2Ship; }
   get playerPose() { const s = this._src; return s ? s.playerPose : W().__interpShipPose; }
+  /**
+   * Okręt prowadzony przez kamerę zamiast statku gracza (fregata zwiadu przy sterach): { x, y, v, w } — poza renderu,
+   * prędkość [j/s], waga przejazdu kamery 0…1 (index.html `scoutCamW`); null albo w = 0 — kamera prowadzi statek.
+   * Worker: HEAD.LEAD_* migawki. Czyta niebo-sfera (sky3D.js — obrót z drogi prowadzonego okrętu).
+   */
+  get cameraLead() { const s = this._src; return s ? s.cameraLead : W().__cameraLead; }
+  /**
+   * Zegar klatek strony [s] — suma dt klatek (HEAD.T_FRAME): w workerze czas między dwiema NARYSOWANYMI stronami, także gdy
+   * worker pominął strony (dt klatki to wtedy dt jednej strony). Off / inline: null — każda klatka jest rysowana, moduł
+   * bierze dt klatki.
+   */
+  get frameClock() { const s = this._src; return s ? s.frameClock : null; }
   get driveState() { const s = this._src; return s ? s.driveState : W().shipDriveState; }
   get warp() { const s = this._src; return s ? s.warp : W().warp; }
   get boost() { const s = this._src; return s ? s.boost : GameState.boost; }

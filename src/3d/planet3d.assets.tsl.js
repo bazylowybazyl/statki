@@ -948,6 +948,13 @@ export function createStarMaterial(u) {
       const offset = positionGeometry.xy.mul(quadSize).mul(2.0).div(viewportSize).mul(clipPosition.w);
       out.assign(vec4(clipPosition.xy.add(offset), clipPosition.zw));
     });
+    // Niebo-sfera (sky3D.js, DECYZJE-2 N3) zastępuje warstwę deep (paralaksa 0,010–0,028; mid od 0,055): jej gwiazdy
+    // zwinięte poza bryłę obcinania (pułapka 16) — jednolity warunek z uniformu, bez nowego pipeline'u przy zmianie.
+    if (u.hideDeep) {
+      If(u.hideDeep.greaterThan(0.5).and(aParallax.lessThan(0.04)), () => {
+        out.assign(vec4(2.0, 2.0, 2.0, 1.0));
+      });
+    }
     return out;
   })();
 

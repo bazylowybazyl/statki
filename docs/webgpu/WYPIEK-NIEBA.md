@@ -1,7 +1,9 @@
 # Wypiekacz nieba (tło kosmosu) — `src/3d/skybake/`
 
-Stan: 2026-10-06. Kroki 1–3 zrobione: pętla oceny, styl „galaktyka” (w grze — § „W grze”: `nebula.webp`, jasność wg
-strefy) i styl „mgławica” (mgławica objętościowa, § „Krok 3” — kandydat wypieczony, tło gry NIE podmienione).
+Stan: 2026-10-26. Kroki 1–3 zrobione: pętla oceny, styl „galaktyka” (w grze — § „W grze”: `nebula.webp`, jasność wg
+strefy) i styl „mgławica” (mgławica objętościowa, § „Krok 3” — kandydat wypieczony, tło gry NIE podmienione). Od
+2026-10-26 tło gry to NIEBO-SFERA (§ „Niebo-sfera”, DECYZJE-2 N1–N3): equirect całego nieba z wypiekacza w trybie sfery,
+obracany z drogi statku; dawna płaszczyzna (`nebula.webp`) zostaje dla tła menu i A/B `?niebo=plaska`.
 
 ## Po co
 
@@ -223,3 +225,124 @@ oglądania, nie do repo. Pętla: `niebo-arkusz.mjs --styl mglawica` (iteracje m0
    docelowo per region (§ „Otwarte” wyżej, pkt 2).
 2. Kompozycja referencyjnych nastaw (obręcz rozety, filary ref. 9) — dziś jedna geometria mas dla wszystkich nastaw.
 3. Faza wsteczna stała (−0,35) i udział 0,35 — ewentualnie suwak.
+
+## Niebo-sfera (DECYZJE-2 N1–N3, 2026-10-26)
+
+Decyzja użytkownika po teście warpa: „no to robimy [skybox]”. Tło gry to sfera w nieskończoności zamiast płaszczyzny
+z paralaksą 0,02 (która w walce stała — 0,11 px/s, w warpie płynęła 39 px/s bez związku z resztą warstw). Analiza opcji:
+raport skybox i krytyk (katalog opcji sesji 2026-10-26); tu stan i pomiary.
+
+### Obrót z drogi statku (`src/3d/skyScroll.js`, moduł czysty)
+
+- Kwaternion świat ← niebo całkowany co klatkę renderu z drogi STATKU (`RenderWorld.playerPose`, bez niej encja): oś =
+  z × kierunek ruchu w osiach sceny, kąt = min(droga, 14 000 · dt) · p · zoom / f (p = 0,03, zoom = px bufora / j.,
+  f = (H / 2) / tg 17,5° px bufora / rad). Na ekranie: tempo = min(v, 14 tys.) · p · zoom — to samo prawo co warstwy
+  GameStars (`starParallax.js`), więc hierarchia warstw (DECYZJE-2 W0) trzyma się w każdym trybie lotu. Kop warpa i
+  wysunięcie riga nie szarpią nieba (droga statku, nie kamery). Skok położenia > 4 · max(v, v poprzedniej klatki) · dt
+  + 50 j. (teleport, cięcie, odrodzenie) nie obraca nieba. Orientacji nie zapisujemy — start `SKY_START` (ten sam kadr co
+  dawna płaszczyzna: środek tekstury 7,5° od rdzenia pasa, pas pod 27°, zgrubienie ~39° dalej wzdłuż pasa); nowa gra
+  przeładowuje stronę, więc zawsze startuje z `SKY_START`.
+- Droga = okręt PROWADZONY PRZEZ KAMERĘ: statek gracza, a przy sterach fregaty zwiadu fregata (`RenderWorld.cameraLead`
+  — { x, y, v, w }: poza z kamery fregaty `scoutCamLast`, prędkość, waga przejazdu kamery `scoutCamW`; strona —
+  `window.__cameraLead` z getterami w bloku ZWIAD `index.html`, worker — `HEAD.LEAD_*` migawki). Każdy okręt ma swój
+  tropiciel drogi z cięciem (`skyTrackStep`), drogi miesza waga w (przejazd kamery Atlas ↔ fregata nie obraca nieba o
+  drogę kamery między okrętami, test). Fregata 510–1470 j/s → niebo 7–19 px/s przy zoomie fregaty.
+- Podzielony ekran (co-op): gracz 2 ma własny stan obrotu (droga `RenderWorld.player2Ship`, zoom i obrót kadru
+  `RenderWorld.camera2`); hak passa tła ustawia widok (macierz, udział drobnych gwiazd) przed każdym `renderSingle`
+  (kamera gracza 2 = `Core3D.activeCam1` drugiego renderu), pamięć nieba w podziale wyłączona (dwa widoki w klatce).
+- CZAS KROKU = przyrost zegara klatek strony (`RenderWorld.frameClock` — w workerze `HEAD.T_FRAME`, suma dt klatek; off —
+  dt klatki). Worker rysuje najnowszą stronę i pomija strony: z dt jednej strony droga kilku stron wyglądała na teleport
+  (cięcie) albo sufit 14 tys. j/s przycinał obrót — w warpie niebo obracało się w workerze o 7,3° zamiast 32,3° (44 cięcia
+  w jednym przebiegu). Po poprawce (2026-10-27, 2560 × 1440): warp 32,26° w workerze / 32,25° w off, 1 cięcie na teleport.
+- Fregata zwiadu w trybie off rysuje się w pozie kroku fizyki (60 Hz, bez `renderPoses`) — niebo przy jej sterach idzie
+  wtedy krokami 60 Hz jak kadr; w workerze (poza interpolowana) płynnie: 12,65 px/s przy 1483 j/s i zoomie 0,284 = prawo.
+- Obrót kadru (`cam.roll` — kurs w górę w skoku i hipercruisie) wchodzi w macierz widok → niebo, więc niebo płynie od
+  dziobu ku rufie przy każdym kursie (test).
+- Holonomia: krążenie w bitwie (r 20 tys., 507 j/s) obraca niebo wokół osi widoku o < 2° na okrążenie (test).
+
+| tryb lotu | niebo [px/s] | °/s | dawne deep (schowane) | mid | speed |
+|---|---|---|---|---|---|
+| walka (zoom 0,2133, 507 j/s) | 3,2 | 0,11 | 1,1–3,0 | 5,9–19,5 | 110–192 |
+| walka z bliska (0,45) | 6,8 | 0,23 | 2,3–6,4 | 12,5–41,1 | 233–406 |
+| dopalacz (1137 j/s) | 7,3 | 0,24 | 2,4–6,8 | 13,3–43,7 | 247–432 |
+| hipercruise Mk I / III (20 / 40 tys.) | 49,3 | 1,65 | 16,4–46,0 | 90–296 | 1675–2923 |
+| warp Mk I / II / III (100 / 175 / 250 tys.) | 49,3 | 1,65 | 16,4–46,0 | 90–296 | 1675–2923 |
+
+Px CSS przy 1080p (kadr skoku i hipercruise'u: zoom 0,2133 · 0,55; sufit kamery gwiazd 14 tys. j/s). Skok o medianie
+21 s obraca niebo o ~35°. Smugi gwiazd nieba ≤ 16 px (jak warstwa deep). Skały w warpie (zespół S): 621–1402 px/s —
+między mid a speed. Pomiar w grze (`niebo-gra.mjs --klip 1`): 5,9 px CSS/s przy ~430 j/s i zoomie 0,45 — zgodnie z prawem.
+
+### Obraz (`src/3d/sky3D.js`: `SkySphere`, materiały `src/3d/skySphere.tsl.js`)
+
+- KAMERA Z GÓRY: czworokąt pełnoekranowy w passie tła (warstwa 1, renderOrder −1000), piksel → kierunek RZUTEM
+  RÓWNOODLEGŁYM (r / f = kąt od osi widoku): tempo i smugi równe w całym kadrze także na 32:9 (rzut gnomoniczny dawałby
+  brzegi ×2,26 szybciej; kadr 32:9 — 5120 × 1440, f = 2283,5 px / rad — widzi ±64,2° w poziomie (2560 / f = 1,121 rad),
+  rozciągnięcie styczne brzegu θ / sin θ ≈ 1,25; ruch nieba przy kursie w górę: brzeg w kierunku ruchu płynie jak środek,
+  brzeg boczny wolniej — test „rzut równoodległy” w `tests/skyScroll.test.mjs`). Soczewka bańki
+  (`skyBend.js`) przesuwa piksel przed wyznaczeniem kierunku. Bez rulonu (`rulonBend = false`, bez `rulonInverse`).
+- TREŚĆ: `public/assets/sky-equirect.webp` (6144 × 3072, WebP bezstratny 11,2 MB, wartości tekstury po odwróceniu ACES jak
+  `nebula.webp`, bez gwiazd) + gwiazdy drobne (siatki 1–2) liczone na piksel w PRZESTRZENI KIERUNKÓW: ściany sześcianu w
+  rzucie równokątnym (α = atan u, β = atan v; kąt bryłowy komórki 0,71–1, gęstość poprawiona o niego), 2 × 2 komórki na
+  siatkę (8 zamiast 26 płaszczyzny), profil Gaussa σ_eff² = σ² + 1/12 znormalizowany; gęstość i odcień z gładkiego nieba
+  jak na płaszczyźnie. Gasną przy szybkim niebie — próg w PRĘDKOŚCI KĄTOWEJ 2 → 4 °/s (= 60 → 120 px CSS/s przy 1080p),
+  niezależny od rozdzielczości: tempo w px rośnie z wysokością okna (zoom kamery ∝ wysokość CSS — 0,2133 przy 1080p,
+  0,1778 przy 900p), kąt nie. Udział wygładzony w czasie (stała 0,35 s). Hipercruise i warp: 1,65 °/s przy każdym ekranie
+  (1080p, 1440p, 4K, 5120 × 1440) — nie gasną. Koniec ślizgu wyjścia z warpa (statek ≥ 14 tys. j/s, zoom wraca do
+  bojowego): do ~2,8 °/s przez ułamek sekundy — po wygładzeniu udział najniżej 0,91 (pomiar w grze, 2560 × 1440, off;
+  worker 0,999), tak samo na każdym ekranie (dawny próg w px CSS: 1440p → ~0,2, 4K w stałym warpie → ~0,4).
+- JASNE GWIAZDY (siatki 3–4 z halo): ~14,7 tys. kandydatów z haszu (ten sam lowbias32, sól ściany i komórki co GPU —
+  te same gwiazdy, które kamery 3D liczą na piksel), kwady instancjonowane (jeden przeplatany bufor, jeden rysunek),
+  gęstość i odcień z tekstury w wierzchołku; w skoku smuga wzdłuż KURSU na ekranie (`WARP_STARS.heading` — jeden wektor,
+  nie wachlarz) o długości warstwy deep (0,22 · `stretchPx`) i front wyjścia od dziobu (`WARP_STARS.frontPx`); światło
+  dokładane tak jak na pikselu płaszczyzny: acesGryInv((gładkie + gwiazda) · jasność) − acesGryInv(gładkie · jasność).
+- PAMIĘĆ NIEBA: jak płaszczyzna — niebo z gwiazdami drobnymi do celu HalfFloat w rozmiarze bufora, przeliczane, gdy obraz
+  obróci się o ≥ 0,25 px na brzegu kadru (kąt · max(f, pół przekątnej)), zmieni się rozmiar, tekstura albo udział gwiazd
+  drobnych. WPROST (bez pamięci): soczewka bańki, podzielony ekran i niebo płynące ≥ 0,25 px NA KLATKĘ (obrót widoku tej
+  klatki — droga i obrót kadru; `cacheStats.fast`): w warpie i hipercruisie (49 px/s przy 1080p, 66 px/s przy 1440p) i
+  przy obrocie kadru pamięć przeliczałaby się w każdej klatce (zapis + odczyt drożej niż rysunek wprost). W walce pamięć
+  przelicza się co ~10–40 klatek. A/B: `Core3D.skyCacheEnabled`.
+- JASNOŚĆ STREFY (`skyRegion.js`) i smuga cienia słońca (`sunShaftBackdrop`) — jak na płaszczyźnie; pas asteroid 0,56
+  w obu trybach (zrzut `niebo-gra.mjs`).
+- WARSTWA DEEP GameStars (paralaksa 0,010–0,028) w trybie sfery jest zwinięta w wierzchołku (uniform `hideDeep` materiału
+  gwiazd) — niebo ją zastępuje (N3); mid i speed bez zmian.
+- KAMERY 3D: sfera `Sky3D` z tą samą treścią (kierunek sceny → nieba macierzą `worldMat`, siatki 3–4 na piksel 3 × 3).
+- MENU: bez zmian — płat mgławicy `nebula.webp` w materiale tła menu (`menuBackdrop3D.tsl.js`, poza zakresem zespołu;
+  przejście na equirect = nowy materiał nieba menu i nowe ustawienie kadru menu — do oceny użytkownika).
+- Rozgrzewka: wpisy `niebo-sfera: kamera z góry`, `niebo-sfera: jasne gwiazdy`, `niebo-sfera: pamięć nieba` (faza
+  `'loading'`), sfera kamer 3D — dawny wpis `kamery 3D: niebo`. Pipeline'y synchroniczne po starcie: 0 (tryb off i worker,
+  `warp-ped-gra.mjs`, `hipercruise-efekt-gra.mjs`).
+- Koszt GPU (5120 × 1440, RTX 5080, ta sama sesja, mediana `Core3D.gpuFrameMs`): sfera z pamięcią 0,63 ms klatki, bez
+  kwadów 0,61, bez pamięci (najgorszy przypadek — soczewka bańki) 0,88, bez nieba 0,54; płaszczyzna: 0,69 z pamięcią,
+  1,23 bez pamięci. Niebo-sfera kosztuje ~0,09 ms z pamięcią (walka, postój) i ~0,34 ms wprost — warp, hipercruise,
+  obrót kadru, podzielony ekran (dwa rysunki wprost), soczewka bańki (płaszczyzna ~0,6 ms bez pamięci). Przed przejściem
+  na rysunek wprost w szybkim locie pamięć przeliczała się prawie w każdej klatce (warp: zapis + odczyt — szacunek z pomiarów wyżej ~0,43 ms przy 5120 × 1440).
+- PAMIĘĆ GPU: equirect 6144 × 3072 RGBA8 ~75 MB (wgranie w wolnej chwili z kolejki `Core3D.queueTextureUpload`, nie w
+  klatce gry); `nebula.webp` (~65 MB) ładuje się dalej — tło menu pożycza teksturę płaszczyzny (strona i worker), więc
+  razem ~141 MB. Paczka Electrona +11,7 MB.
+
+### Wypiek sfery (`SkyBaker({ sphere: true })`, styl galaktyki z `sphere`)
+
+- Cel = equirect 2 : 1 (λ = (x / W − 0,5) · 2π, φ = (0,5 − y / H) · π, wiersz 0 = biegun N), `ctx.dir()`, `ctx.lonLat()`;
+  gęstość tekseli jak płaszczyzna gry (6144 / 2π = 977,8 tekseli / rad; jednostka nieba = 3200 tekseli = 3,27 rad;
+  `resScale` = szerokość / 6144).
+- Galaktyka na WIELKIM KOLE (równik): s = λ / K, d = φ / K; szumy pasa WALCOWE (punkt (k·s + c, …) na walcu o obwodzie
+  k · P — pas zamyka się na 2π bez szwu, częstotliwość wzdłuż pasa jak na płaszczyźnie; `skyFbm3`, nowy `skyRidged3`),
+  szumy izotropowe (grudkowatość, mgiełka) — 3D z kierunku, rzeczy lokalne (zgrubienie, odnogi, gromady, H II) —
+  różnica s zawinięta. Kąt pasa i krzywizna nie działają na sferze; eksport z `srodekX = srodekY = 0`.
+- Łaty mgławic: wypiekacze płaskie stylu „mgławica” (½ rozdzielczości, bez gwiazd) — nastawa `gra` (ziarno 3) na
+  λ 22°, φ 38°, `kolorowa` (ziarno 1, siła 0,75) na λ −150°, φ −36°, pół szerokości 48° / 44°; pass „laty” kładzie obraz
+  rzutem równoodległym wokół kierunku łaty, miękki brzeg 14 %, złożenie „ekranem”.
+- Narzędzie: `node scripts/webgpu/niebo-sfera.mjs [--res 1] [--zapisz 1] [--plaska 1] [--set klucz=w]` (demo
+  `dema/niebo-webgpu.html`: `__demo.sfera.bake / snapshot / exportPrepare`, nastawy `SFERA_DEFAULTS`): wypiek 6144 × 3072
+  ~3,5–4,6 s na RTX 5080 (z łatami), podgląd całości i kadrów gry (rzut równoodległy, bez bloomu), eksport do
+  `public/assets/sky-equirect.webp`. W grze: `node scripts/webgpu/niebo-gra.mjs --query niebo=sfera [--klip 1]`.
+
+### Otwarte
+
+1. Menu na equirect (jedno niebo także w menu) — decyzja użytkownika (kadr menu jest ustawiony pod płat mgławicy).
+2. Kompozycja całej sfery: dziś pas + dwie łaty + mgiełka — połowa sfery > 30° od pasa jest ciemna (zgodnie z raportem
+   skybox); kolejne łaty / gromady kulistych mgławic — strojenie na `niebo-sfera.mjs`.
+3. Warstwa deep GameStars znika w trybie sfery (kilka miękkich punktów na ekran) — jeśli ich brakuje, można ją wrócić z
+   paralaksą ≥ 0,03 (między niebem a mid), bez łamania hierarchii.
+4. `nebula.webp` w trybie sfery służy tylko tłu menu (~65 MB GPU obok equirect) — zwolnienie po wejściu do gry wymaga
+   ponownego wczytania przy powrocie do tła menu (worker też rysuje menu); do zrobienia razem z decyzją o menu na equirect.

@@ -119,6 +119,22 @@ test('pakowanie nie zapisuje do obiektów gry; strona odczytana z potrójnego bu
   assert.equal(reader.page.head[HEAD.CAM_ROLL], 1.25);
   assert.equal(reader.page.head[HEAD.CAMNS_ROLL], -0.5);
   delete frame.cam.roll; delete frame.camNoShake.roll;
+  // okręt prowadzony przez kamerę (fregata zwiadu — niebo-sfera, 2026-10-27): brak / w = 0 → LEAD_W 0, inaczej poza
+  assert.equal(reader.page.head[HEAD.LEAD_W], 0);
+  frame.cameraLead = { x: 5_000_123.25, y: -7_000_050, v: 900, w: 0.5 };
+  packer.begin(frame);
+  packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.head[HEAD.LEAD_W], 0.5);
+  assert.equal(reader.page.head[HEAD.LEAD_X], 5_000_123.25);
+  assert.equal(reader.page.head[HEAD.LEAD_Y], -7_000_050);
+  assert.equal(reader.page.head[HEAD.LEAD_V], 900);
+  frame.cameraLead.w = 0;
+  packer.begin(frame);
+  packer.finish(frame);
+  assert.ok(reader.acquire());
+  assert.equal(reader.page.head[HEAD.LEAD_W], 0);
+  delete frame.cameraLead;
   assert.equal(h[HEAD.FRAME_DT], 1 / 60);
   assert.ok(h[HEAD.FLAGS] & HEAD_FLAG.CULL_SET);
   assert.equal(v.listCount[LIST.RENDER], 3);

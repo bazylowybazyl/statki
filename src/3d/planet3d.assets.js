@@ -17,7 +17,7 @@ import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
 import { applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { WARP_STAR_CAMERA } from './warp/stars.js';
-import { createSky3D, getSky3D, SKY3D_TUNE } from './sky3D.js';
+import { createSky3D, getSky3D, SKY3D_TUNE, SkySphere } from './sky3D.js';
 import {
     WARP_WORLD_LENS, WARP_LENS_SHARED, WARP_LENS_EXTRA, newLensBody, warpLensAnchorSlot, writeLensAnchor, clearWarpLensAnchors,
     lensImageToWorld
@@ -328,6 +328,20 @@ function createRingAtmosphere(key, planetRadius) {
 // Pamięć nieba: przesunięcie obrazu płaszczyzny mgławicy [px bufora], od którego niebo liczy się od nowa — gwiazdy
 // mają profil σ ≈ 0,5–0,75 px; ćwierć piksela przez kilka klatek (wstrząs kamery, dryf paralaksy) jest niewidoczne.
 const SKY_CACHE_PX = 0.25;
+// Niebo-sfera (sky3D.js): poza i prędkość okrętu z encji gry albo lustra (x / y albo pos; vx / vy albo vel).
+function skyShipPose(e) {
+    if (!e || e.dead) return null;
+    if (Number.isFinite(e.x) && Number.isFinite(e.y)) return e;
+    if (e.pos && Number.isFinite(e.pos.x) && Number.isFinite(e.pos.y)) return e.pos;
+    return null;
+}
+function skyShipSpeed(e) {
+    if (!e) return 0;
+    const vx = Number(Number.isFinite(e.vx) ? e.vx : e.vel?.x) || 0;
+    const vy = Number(Number.isFinite(e.vy) ? e.vy : e.vel?.y) || 0;
+    return Math.sqrt(vx * vx + vy * vy);
+}
+const _skyP2 = { cam: null, x: 0, y: 0, v: 0 };
 const NebulaSystem = {
     mesh: null, uniforms: null, parallaxFactor: 0.98, baseScale: 800000, aspectRatio: 1.6,
     // Jasność wg strefy gry (src/game/skyRegion.js): cel z index.html (window.setSkyZone), dojście płynne.
@@ -363,6 +377,9 @@ const NebulaSystem = {
         Core3D.scene.add(this.mesh);
         Core3D.enableBackground3D(this.mesh);
         Core3D.addPassHook('bg', (camera) => this.skyCacheHook(camera));
+        // Niebo-sfera (sky3D.js: SkySphere, DECYZJE-2 N1–N3): `?niebo=sfera` — sfera w nieskończoności obracana z drogi statku
+        // zamiast tej płaszczyzny (płaszczyzna zostaje w scenie schowana — tło menu pożycza jej teksturę).
+        SkySphere.init(Core3D, RenderWorld.pageSearch);
         Core3D.skyCacheStats = this.cacheStats;   // narzędzia (licznik przeliczeń / odczytów pamięci nieba)
         // pipeline zapisu pamięci (cel HalfFloat bez MSAA i głębi, siatka jako korzeń renderu) — rozgrzany z góry; pamięć
         // działa dopiero z gotowym pipeline'em (skyCacheHook — do tego czasu niebo wprost)
@@ -444,6 +461,27 @@ const NebulaSystem = {
         const sky = getSky3D();
         if (sky) sky.u.nebula.value = SKY3D_TUNE.nebulaGain * this.region;
         const flat = !Core3D.isFreePerspectiveCamera(gameCamera);
+        if (SkySphere.active) {
+            // Sfera nieba zamiast płaszczyzny: obrót z drogi statku (poza renderu gracza — RenderWorld.playerPose, jak warp
+            // „Nurt”; bez niej encja), prędkość do cięcia przy teleporcie. Przy sterach fregaty zwiadu kamera prowadzi
+            // fregatę — niebo jedzie z JEJ drogi (RenderWorld.cameraLead, waga przejazdu kamery). Podzielony ekran: gracz 2
+            // z własnym niebem (droga RenderWorld.player2Ship, kamera RenderWorld.camera2).
+            if (this.mesh.visible) this.mesh.visible = false;
+            const ship = RenderWorld.ship;
+            const ip = ship && !ship.dead ? RenderWorld.playerPose : null;
+            const pose = (ip && Number.isFinite(ip.x) && Number.isFinite(ip.y)) ? ip : skyShipPose(ship);
+            let p2 = null;
+            const cam2 = RenderWorld.splitScreenMode ? RenderWorld.camera2 : null;
+            const ship2 = cam2 ? RenderWorld.player2Ship : null;
+            const pose2 = ship2 && !ship2.destroyed ? skyShipPose(ship2) : null;
+            if (pose2) {
+                p2 = _skyP2;
+                p2.cam = cam2; p2.x = pose2.x; p2.y = pose2.y; p2.v = skyShipSpeed(ship2);
+            } else _skyP2.cam = null;
+            SkySphere.update(dt, gameCamera, pose, skyShipSpeed(ship), this.region, flat, RenderWorld.cameraLead || null, p2,
+                RenderWorld.frameClock);
+            return;
+        }
         if (this.mesh.visible !== flat) this.mesh.visible = flat;
         if (!flat) return;
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0;
@@ -495,6 +533,8 @@ const StarSystem = {
             exitWhipFactor: uniform(0.0), exitWhipStrength: uniform(1.75),
             viewportSize: uniform(new THREE.Vector2(RenderWorld.viewWidth || 1, RenderWorld.viewHeight || 1)),
             thinningStrength: uniform(38.0), baseSizeMul: uniform(1.65),
+            // Niebo-sfera (sky3D.js) zastępuje warstwę deep: jej gwiazdy zwinięte w wierzchołku (DECYZJE-2 N3)
+            hideDeep: uniform(SkySphere.active ? 1.0 : 0.0),
             planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)), 'vec4')
         });
         const mat = createStarMaterial(this.uniforms);

@@ -75,7 +75,10 @@ export const HEAD = fields([
   // pierścień rozkazów: numer ostatniego rekordu klatki (RW-21)
   'EVENT_LAST',
   // obrót kadru kamery klatki i kamery bez wstrząsu (`cam.roll` [rad] — hipercruise, src/3d/viewRoll.js; 2026-10-23)
-  'CAM_ROLL', 'CAMNS_ROLL'
+  'CAM_ROLL', 'CAMNS_ROLL',
+  // okręt prowadzony przez kamerę zamiast statku (fregata zwiadu — RenderWorld.cameraLead: poza, prędkość, waga
+  // przejazdu kamery; LEAD_W = 0 — kamera prowadzi statek gracza; niebo-sfera sky3D.js, 2026-10-27)
+  'LEAD_X', 'LEAD_Y', 'LEAD_V', 'LEAD_W'
 ]);
 
 /** Bity HEAD.FLAGS. */

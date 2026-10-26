@@ -99,6 +99,11 @@ if (isWorker) {
     // zgłoszenie użytkownika 2026-10-17). Pole własne źródła tylko w workerze (inline czyta globalną pozę strony).
     Object.defineProperty(st.players, 'playerPose', { value: null, writable: true, enumerable: true });
     st.interpPose = { x: 0, y: 0, angle: 0 };
+    // okręt prowadzony przez kamerę (fregata zwiadu przy sterach) z HEAD.LEAD_* strony — RenderWorld.cameraLead (niebo-sfera)
+    Object.defineProperty(st.players, 'cameraLead', { value: null, writable: true, enumerable: true });
+    st.cameraLead = { x: 0, y: 0, v: 0, w: 0 };
+    // zegar klatek strony (HEAD.T_FRAME — suma dt klatek): czas między narysowanymi stronami z pominiętymi (niebo-sfera)
+    Object.defineProperty(st.players, 'frameClock', { value: null, writable: true, enumerable: true });
     // poseOf modułów na lustrach (mostki, modele 3D, drony naprawcze) — jak bridgeRenderPose strony: gracz w pozie
     // interpolowanej, NPC i wraki mają ją już w ENT migawki (renderPoses)
     st.playerPoseOf = (e) => (e === st.players.ship ? st.players.playerPose : null);
@@ -762,6 +767,14 @@ if (isWorker) {
         ip.x = ix; ip.y = iy; ip.angle = ia;
         st.players.playerPose = ip;
       } else st.players.playerPose = null;
+      const lw = h[H.LEAD_W];
+      if (lw > 0) {
+        const cl = st.cameraLead;
+        cl.x = h[H.LEAD_X]; cl.y = h[H.LEAD_Y]; cl.v = h[H.LEAD_V]; cl.w = lw;
+        st.players.cameraLead = cl;
+      } else st.players.cameraLead = null;
+      const tf = h[H.T_FRAME];
+      st.players.frameClock = tf === tf ? tf : null;
     }
     // zegary gry tej strony (efekty niesione nośnikiem, smugi pocisków)
     const SC = st.mods.clock.SimClock;
