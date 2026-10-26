@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   TRAFFIC_PROMOTION_TUNE, createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion,
   trafficPromotionVerdict, trafficFleePoint, trafficActorPromotable, trafficPromotionOrder, trafficActorHasCourse,
-  TRAFFIC_COMBAT_HULLS, trafficCombatRole, trafficWeaponFaction, trafficGrudgeTarget
+  TRAFFIC_COMBAT_HULLS, trafficCombatRole, trafficWeaponFaction, trafficGrudgeTarget, trafficRamLead
 } from '../src/game/trafficPromotion.js';
 import { TRAFFIC_HULLS, TRAFFIC_UNIT_HULLS, resolveTrafficHullId } from '../src/data/trafficHulls.js';
 import { SUPPORT_SHIP_TEMPLATES, CAPITAL_SHIP_TEMPLATES } from '../src/data/ships.js';
@@ -42,7 +42,9 @@ test('kto awansuje: kurs, zapas floty, postój i odlot — bez warpa, poniżej p
   assert.equal(trafficActorHasCourse({ ...base, flags: ACTOR_FLAG.DEPARTED }), false, 'kurs zamknięty — entity-hold');
   assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.WARP }), false);
   assert.equal(trafficActorPromotable({ ...base, vx: TRAFFIC_PROMOTION_TUNE.maxSpeed + 1 }), false, 'hipercruise ucieka');
-  assert.equal(trafficActorPromotable({ ...base, hullId: 'megafreighter' }), false, 'megafrachtowiec to pociąg modułów');
+  // Megafrachtowiec: jeden kadłub na belkach ze sprite'a składu (2026-10-26); holownik serwisowy nie jest klasą ruchu.
+  assert.equal(trafficActorPromotable({ ...base, hullId: 'megafreighter' }), true, 'megafrachtowiec');
+  assert.equal(trafficActorPromotable({ ...base, hullId: 'service_tug' }), false, 'holownik serwisowy');
 });
 
 test('rozkaz świeżego NPC: przy stanowisku i w kolejce stoi, w locie ucieka', () => {
@@ -129,4 +131,19 @@ test('taran: na początek kolejki (za wcześniejszymi taranami), własny zapas l
   assert.ok(!st.rams.has(10));
   assert.equal(requestTrafficPromotion(st, -7, true), true, 'zapas floty (id ujemny) też');
   assert.deepEqual(st.queue, [11, 2, -7, 1]);
+});
+
+test('próg taranu: czas do gotowości kadłuba (kolejka, klatki, budowa, sprite) z zapasem — nie stała', () => {
+  const t = TRAFFIC_PROMOTION_TUNE;
+  const base = trafficRamLead(t, 0, 1 / 60, 0, true);
+  assert.ok(Math.abs(base - (t.ramMargin + t.ramFrames / 60)) < 1e-12);
+  // Każdy taran przed encją i kadłub w budowie — klatka więcej; wolniejsza klatka renderu — więcej czasu gry.
+  assert.ok(Math.abs(trafficRamLead(t, 2, 1 / 60, 0, true) - base - 2 / 60) < 1e-12);
+  assert.ok(trafficRamLead(t, 0, 1 / 30, 0, true) > base);
+  assert.equal(trafficRamLead(t, 0, 1 / 240, 0, true), base, 'klatka krótsza niż krok fizyki — liczy krok');
+  // Zmierzona budowa kadłuba (megafrachtowiec ~kilkanaście ms) i sprite w drodze.
+  assert.ok(Math.abs(trafficRamLead(t, 0, 1 / 60, 30, true) - base - 0.03) < 1e-12);
+  assert.ok(Math.abs(trafficRamLead(t, 0, 1 / 60, 0, false) - base - t.ramSpriteSec) < 1e-12);
+  // Przy dopalaczu (1137 j/s) awans rusza z odległości ≥ lead · v przed kontaktem obrysów.
+  assert.ok(trafficRamLead(t) * 1137 > 300);
 });

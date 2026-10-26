@@ -16,10 +16,12 @@
 //
 // `--odlot 1` — koniec kursu przy stanowisku (rozładunek u celu, flaga DEPARTED): kadr na statku, zrzuty co 0,25 s
 // przez odłączanie i początek lotu (`08-odlot-NNN.png`), pozy w każdym kroku (ciągłość); `tylko` — sam ten etap.
-// `--taran 1|tylko` — taran z awansem przed kontaktem (E6, 2026-10-23): gracz `--taranV` (450) j/s w burtę ciężkiego
-// frachtowca, okrętu zapasu w K-7 i statku na redzie; klatka po klatce (`09-taran-<cel>-NNN.png` co 4 klatki):
-// awans i kadłub na belkach przed kontaktem, kontakty SAT (awaryjne), punkty życia, wrak; potem taran w tłum zatoki
-// — ile kadłubów na belkach naraz i koszt workera renderu.
+// `--taran 1|tylko` — taran z awansem przed kontaktem (E6, 2026-10-23): gracz `--taranV` (450; lista po przecinku,
+// np. `450,1137` — dopalacz) j/s w burtę celów `--taranCele` (domyślnie `frachtowiec,zapas,reda`; `megafrachtowiec` —
+// szukany po portach bańki); klatka po klatce (`09-taran-<cel>[@v]-NNN.png` co 4 klatki, od kontaktu co klatkę):
+// awans i kadłub na belkach przed kontaktem, kontakty SAT (po awansie / miękkie przed kadłubem / awaryjne z obrażeniami),
+// punkty życia, klatka zgonu względem kontaktu, wrak, zmierzona budowa kadłubów; potem taran w tłum zatoki — ile
+// kadłubów na belkach naraz i koszt workera renderu.
 //
 // Przebieg: start gry → świat ruchu rozgrzany `--rozgrzewka` s czasu świata (`TrafficV2.advance` — gospodarka
 // startuje od zera, a statki do portu Ziemi lecą minuty) → gracz przy porcie Ziemi → obserwacja `--obserwacja` s
@@ -241,9 +243,15 @@ try {
   }
 
   if (args.taran) {
-    const RAM_V = Number(args.taranV || 450);
+    // `--taranV 450,1137` — prędkości po kolei (dopalacz 1137 j/s), `--taranCele frachtowiec,megafrachtowiec` — cele.
+    const SPEEDS = String(args.taranV || 450).split(',').map(Number).filter((v) => v > 0);
+    const CELE = String(args.taranCele || 'frachtowiec,zapas,reda').split(',');
     report.etapy.taranAwans = {};
+    const portIds = await ev('Object.keys(window.TrafficV2.tables.bubblePorts || {})');
     const PICK = {
+      // megafrachtowiec (jeden kadłub ze sprite'a składu, 2760 j.): stoi albo pełznie — na redzie, w kolejce, przy
+      // stanowisku, w podejściu; szukany po portach bańki
+      megafrachtowiec: `(a) => a.alive && a.hullId === 'megafreighter' && !(a.flags & 1) && Math.hypot(a.vx, a.vy) < 200`,
       // ciężki frachtowiec, który stoi: na redzie (PARKED, statek firmy) albo w kolejce portu (kurs, faza `hold`);
       // w locie cywil po awansie ucieka (Atlas ~500 j/s go nie dogoni), przy stanowisku w zatoce gracz staje na
       // konstrukcji zatoki, zanim dotknie kadłuba
@@ -253,10 +261,14 @@ try {
       reda: `(a) => a.alive && (a.flags & 256) && !(a.flags & 64)`
     };
     const earthSpot = spot;
-    for (const [name, pick] of Object.entries(PICK)) for (let attempt = 0; attempt < 3; attempt++) {
-      // Cel najbliżej gracza; zapas K-7 — gracz nad halą, reda — gracz nad redą (encje pojawiają się w bańce).
+    for (const RAM_V of SPEEDS) for (const name of CELE) for (let attempt = 0; attempt < 3; attempt++) {
+      const pick = PICK[name];
+      const key = SPEEDS.length > 1 ? `${name}@${RAM_V}` : name;
+      // Cel najbliżej gracza; zapas K-7 — gracz nad halą, reda — gracz nad redą (encje pojawiają się w bańce);
+      // megafrachtowiec — co 12 s gry następny port bańki.
       let target = null;
-      for (let k = 0; k < 90 && !target; k++) {
+      let port = 0;
+      for (let k = 0; k < (name === 'megafrachtowiec' ? 12 * portIds.length + 12 : 90) && !target; k++) {
         target = await ev(`(() => { const tb = window.TrafficBubble, s = window.ship, f = ${pick};
           const list = tb.list.filter(f);
           list.sort((a, b) => Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
@@ -266,19 +278,32 @@ try {
         if (!target) {
           if (k === 10 && name === 'zapas') await ev(`(() => { const b = window.TrafficV2.tables.bubblePorts.earth.find((x) => x.hall === 'K-7');
             window.devTeleportTo(b.x + 2500, b.y + 2500, { angle: 0, quiet: true }); window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+          if (name === 'megafrachtowiec' && k % 12 === 11 && port < portIds.length) {
+            const id = portIds[port++];
+            await ev(`(() => { const berths = window.TrafficV2.tables.bubblePorts[${JSON.stringify(id)}];
+              const st = window.TrafficV2.getStation(${JSON.stringify(id)}); if (!berths?.length || !st) return false;
+              const b = berths[0], dx = b.x - st.x, dy = b.y - st.y, d = Math.hypot(dx, dy) || 1;
+              window.devTeleportTo(b.x + dx / d * 8000, b.y + dy / d * 8000, { angle: 0, quiet: true });
+              window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+          }
           await waitGame(1);
         }
       }
-      if (!target) { report.etapy.taranAwans[name] = { brak: true }; console.log('taran', name, ': brak celu'); break; }
+      if (!target) { report.etapy.taranAwans[key] = { brak: true }; console.log('taran', key, ': brak celu'); break; }
       // Gracz z boku (prostopadle do osi kadłuba), dziobem w środek, `RAM_V` względnie; czas do kontaktu ~1,4 s; od
       // zewnątrz (od planety jest ring). Zapas K-7: od RUFY wzdłuż osi — okręt stoi dziobem do ściany hali, aleja jest
       // za rufą (`approach` padów w haloPortK7Layout.js).
       const astern = name === 'zapas';
       const setup = await ev(`(() => { const s = window.ship, t = ${JSON.stringify(target)};
         const half = 0.5 * Math.max(Number(s.w) || 0, Number(s.h) || 0);
-        const earth = window.TrafficV2.getStation('earth');
+        // Od zewnątrz najbliższej stacji portu bańki (ring, budowla doku).
+        let earth = null, best = Infinity;
+        for (const id of Object.keys(window.TrafficV2.tables.bubblePorts || {})) {
+          const st = window.TrafficV2.getStation(id); if (!st) continue;
+          const d = Math.hypot(st.x - t.x, st.y - t.y); if (d < best) { best = d; earth = st; }
+        }
         let sx = Math.cos(t.ca + Math.PI / 2), sy = Math.sin(t.ca + Math.PI / 2);
-        if ((t.x - earth.x) * sx + (t.y - earth.y) * sy < 0) { sx = -sx; sy = -sy; }
+        if (earth && (t.x - earth.x) * sx + (t.y - earth.y) * sy < 0) { sx = -sx; sy = -sy; }
         let d = t.wid / 2 + half + ${RAM_V} * 1.4;
         if (${astern}) { sx = -Math.cos(t.ca); sy = -Math.sin(t.ca); d = t.len / 2 + half + ${RAM_V} * 1.4; }
         window.devTeleportTo(t.x + sx * d, t.y + sy * d, { angle: Math.atan2(-sy, -sx), quiet: true });
@@ -290,7 +315,9 @@ try {
         s.vel.x = t.vx + ex / el * ${RAM_V}; s.vel.y = t.vy + ey / el * ${RAM_V};
         const c = window.camera; c.minZoom = 0.003; c.manualZoom = true;
         const z = Math.min(0.5, 900 / (2.2 * (d + t.len))); c.zoom = c.targetZoom = c.zoomBase = z; window.DevScene?.syncCamera?.();
-        return { d: Math.round(d), half: Math.round(half), zoom: z, rams0: window.TrafficBubble.stats.rams, late0: window.TrafficBubble.stats.ramsLate || 0 }; })()`);
+        const tbs = window.TrafficBubble.stats;
+        return { d: Math.round(d), half: Math.round(half), zoom: z, rams0: tbs.rams, late0: tbs.ramsLate || 0,
+          soft0: tbs.ramsSoft || 0, fallback0: tbs.ramsFallback || 0 }; })()`);
       const rows = [];
       let firstBeam = -1;
       let firstHit = -1;
@@ -311,22 +338,30 @@ try {
           return { npc: !!npc, belki: !!(npc && npc.beamHull), hp: npc ? Math.round(npc.hp) : e ? Math.round(e.hp) : null,
             martwy: !!(npc && npc.dead), encja: !!e, v: Math.round(Math.hypot(s.vel.x, s.vel.y)),
             d: Math.round(Math.hypot(x - s.pos.x, y - s.pos.y)), sat: tb.stats.rams, satLate: tb.stats.ramsLate || 0,
+            miekki: tb.stats.ramsSoft || 0, awaryjny: tb.stats.ramsFallback || 0, kolejka: st.queue.length,
+            taranWKolejce: st.rams.has(${target.id}),
             graczHp: Math.round(s.hull ?? s.hp ?? 0), awans: st.stats.promoted, zgon: st.stats.destroyed,
             npcStan: npc ? { dead: !!npc.dead, removed: !!npc.removed, wreck: !!npc.isWreck, hp: Math.round(npc.hp), maxHp: npc.maxHp } : null }; })()`);
         rows.push({ n, ...r });
         if (firstBeam < 0 && r.belki) firstBeam = n;
-        if (firstHit < 0 && rows.length > 1 && r.hp !== null && rows[rows.length - 2].hp !== null && r.hp < rows[rows.length - 2].hp) firstHit = n;
+        // Ubytek punktów NPC (encja i NPC mają inne skale punktów — awans to nie trafienie).
+        if (firstHit < 0 && rows.length > 1 && r.npc && rows[rows.length - 2].npc && r.hp !== null && rows[rows.length - 2].hp !== null && r.hp < rows[rows.length - 2].hp) firstHit = n;
         // Kontakt: ubytek punktów NPC albo spadek prędkości gracza o ≥ 25% w klatce (zderzenie kadłubów).
         if (contact < 0 && rows.length > 1 && (n === firstHit || r.v < rows[rows.length - 2].v * 0.75)) contact = n;
-        if (n % 4 === 0) await screenshotPng(cdp, join(out, `09-taran-${name}-${String(n).padStart(3, '0')}.png`));
+        // Zrzuty co 4 klatki, od kontaktu co klatkę przez 12 klatek.
+        if (n % 4 === 0 || (contact >= 0 && n - contact < 12)) await screenshotPng(cdp, join(out, `09-taran-${key}-${String(n).padStart(3, '0')}.png`));
+        // Po kontakcie i 150 klatkach wystarczy (wrak albo walka).
+        if (contact >= 0 && n - contact > 150) break;
       }
       await waitGame(3);
       const end = await ev(`(() => { const st = window.TrafficPromotion, p = ${JSON.stringify({ x: target.x, y: target.y })};
         const w = (window.wrecks || []).filter((n) => Math.hypot(n.x - p.x, n.y - p.y) < 8000);
         const npc = st.alive.get(${target.id});
+        const tbs = window.TrafficBubble.stats;
         return { wrakow: w.length, wrakBelki: w.some((n) => !!n.beamHull), npcZyje: !!(npc && !npc.dead), npcHp: npc ? Math.round(npc.hp) : null,
-          stats: { ...st.stats }, sat: window.TrafficBubble.stats.rams, satLate: window.TrafficBubble.stats.ramsLate || 0 }; })()`);
-      await screenshotPng(cdp, join(out, `09-taran-${name}-koniec.png`));
+          stats: { ...st.stats }, sat: tbs.rams, satLate: tbs.ramsLate || 0, miekki: tbs.ramsSoft || 0, awaryjny: tbs.ramsFallback || 0,
+          budowaMs: Object.fromEntries([...(st.hullBuildMs || [])].map(([k, v]) => [k, +v.toFixed(1)])) }; })()`);
+      await screenshotPng(cdp, join(out, `09-taran-${key}-koniec.png`));
       // Cel zniknął przed awansem (koniec kursu, warp, wyjście z bańki) — nowy cel, najwyżej 3 próby.
       if (firstBeam < 0 && rows.slice(0, 10).some((r) => !r.encja && !r.npc) && attempt < 2) {
         console.log('taran', name, ': cel zniknął przed awansem — próba', attempt + 2);
@@ -335,10 +370,15 @@ try {
         await waitGame(5);
         continue;
       }
-      report.etapy.taranAwans[name] = { cel: target, setup, pierwszeBelki: firstBeam, pierwszyUbytek: firstHit, kontakt: contact, klatki: rows, koniec: end };
-      console.log('taran', name, JSON.stringify({ cel: target.hull, faza: target.phase, belkiOdKlatki: firstBeam, ubytekOdKlatki: firstHit,
-        satKontakty: end.sat - setup.rams0, satAwaryjne: end.satLate - setup.late0, hp: `${rows[0].hp} → ${rows[rows.length - 1].hp}`,
-        martwyWKlatce: rows.findIndex((r) => r.martwy), wrak: end.wrakow, wrakBelki: end.wrakBelki, npcZyje: end.npcZyje, kontakt: contact }));
+      const dead = rows.findIndex((r) => r.martwy || (r.npc === false && r.encja === false && r.hp === null && rows[0].encja));
+      report.etapy.taranAwans[key] = { cel: target, v: RAM_V, setup, pierwszeBelki: firstBeam, pierwszyUbytek: firstHit, kontakt: contact,
+        zgon: dead, klatki: rows, koniec: end };
+      console.log('taran', key, JSON.stringify({ cel: target.hull, faza: target.phase, flagi: target.flags, belkiOdKlatki: firstBeam,
+        ubytekOdKlatki: firstHit, kontakt: contact, belkiPrzedKontaktem: firstBeam >= 0 && (contact < 0 || firstBeam < contact),
+        satKontakty: end.sat - setup.rams0, satPoAwansie: end.satLate - setup.late0, miekkie: end.miekki - setup.soft0,
+        awaryjne: end.awaryjny - setup.fallback0, hp: `${rows[0].hp} → ${rows[rows.length - 1].hp}`, zgonKlatka: dead,
+        zgonPoKontakcie: dead >= 0 && contact >= 0 ? dead - contact : null, wrak: end.wrakow, wrakBelki: end.wrakBelki,
+        npcZyje: end.npcZyje, budowaMs: end.budowaMs }));
       // z powrotem przy zatoce (cele kolejnych etapów są przy Ziemi)
       await ev(`(() => { const p = ${JSON.stringify(earthSpot)}; window.devTeleportTo(p.x, p.y, { angle: 0, quiet: true });
         window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);

@@ -9,8 +9,8 @@
  *   - kolejka awansów — najwyżej `maxPerFrame` na klatkę (budowa kadłuba kosztuje), najwyżej `maxAlive` NPC
  *     z ruchu naraz (reszta zostaje encjami i ginie na obrysie); taran wchodzi na początek kolejki i ma własny
  *     zapas `ramReserve` ponad limitem — statek, na który gracz wlatuje, nie czeka za ostrzelanymi;
- *   - czas do kontaktu kadłuba gracza z obrysem encji (`trafficContactTime`) — próg `ramLead` (budowa kadłuba
- *     z zapasem);
+ *   - czas do kontaktu kadłuba gracza z obrysem encji (`trafficContactTime` — odległość / prędkość zbliżania) —
+ *     próg `trafficRamLead`: czas do gotowości kadłuba na belkach (kolejka, klatki, zmierzona budowa, sprite) z zapasem;
  *   - werdykt dla awansowanego NPC: żyje, zginął (kurs → `destroyed` do workera), albo wraca do bańki —
  *     po `calmSeconds` bez trafienia gracza i dalej niż `releaseRadius` (zasięg życia NPC gry,
  *     `NPC_DESPAWN_RADIUS`) — `detach` z pozą, bańka materializuje kurs tam, gdzie był NPC;
@@ -37,11 +37,16 @@ export const TRAFFIC_PROMOTION_TUNE = {
   /** Szybciej [j./s] (hipercruise) — encja nie awansuje: ucieka, trafienia zostają na obrysie bańki. */
   maxSpeed: 2500,
   /**
-   * Taran: awans, gdy kontakt kadłuba gracza z obrysem encji za mniej niż tyle [s]. Kolejka (1 awans na klatkę)
-   * + budowa kadłuba na belkach ze sprite'a w `drawNPCPretty` (sprite wczytany zawczasu, budżet budowy kadłubów
-   * na klatkę) to kilka klatek — 0,75 s to kilkanaście klatek zapasu także przy 60 Hz.
+   * Taran: awans, gdy kontakt kadłuba gracza z obrysem encji (czas z prędkości zbliżania) krótszy niż czas do
+   * gotowości kadłuba na belkach (`trafficRamLead`): `ramFrames` klatek (awans w klatce prośby, budowa w
+   * `drawNPCPretty`, krok fizyki z kadłubem) + po klatce na każdy taran przed nim w kolejce i kadłub w budowie
+   * + czas budowy (zmierzony w grze dla kadłuba, inaczej `ramBuildMs`) + `ramSpriteSec`, gdy sprite się jeszcze
+   * wczytuje, + zapas `ramMargin` (przyspieszenie gracza, skręt). Nie zdążył — kontakt miękki do gotowości kadłuba.
    */
-  ramLead: 0.75,
+  ramFrames: 3,
+  ramBuildMs: 40,
+  ramSpriteSec: 0.5,
+  ramMargin: 0.3,
   /** Zapas limitu `maxAlive` tylko dla taranu. */
   ramReserve: 4,
   /** Zapas obrysu w teście kontaktu [j.] (obrysy gracza i encji — prostokąty). */
@@ -56,10 +61,23 @@ export const TRAFFIC_PROMOTION_TUNE = {
 };
 
 /**
- * Kadłuby bez pełnego NPC: megafrachtowiec to w grze pociąg modułów (`megafreighterTrain.js`), a proxy rysuje cały
- * skład jednym sprite'em; holownik serwisowy (8300 j.) nie jest klasą ruchu. Giną na obrysie bańki.
+ * Próg taranu [s czasu gry]: czas od prośby o awans do kadłuba na belkach w kroku fizyki, z zapasem.
+ * `queueAhead` — tarany przed encją w kolejce + awansowane NPC bez kadłuba (budowa 1 na klatkę, gdy kadłub duży),
+ * `frameDt` — czas gry na klatkę renderu (nie mniej niż krok 60 Hz), `buildMs` — budowa kadłuba (klatka dłuższa
+ * o tyle — tyle czasu gry więcej), `spriteReady` — sprite kadłuba wczytany.
  */
-export const TRAFFIC_PROMOTION_SKIP_HULLS = new Set(['megafreighter', 'service_tug']);
+export function trafficRamLead(tune = TRAFFIC_PROMOTION_TUNE, queueAhead = 0, frameDt = 1 / 60, buildMs = tune.ramBuildMs, spriteReady = true) {
+  const dt = frameDt > 1 / 60 ? frameDt : 1 / 60;
+  const build = buildMs > 0 ? buildMs / 1000 : 0;
+  return tune.ramMargin + (Math.max(0, queueAhead) + tune.ramFrames) * dt + build + (spriteReady ? 0 : tune.ramSpriteSec);
+}
+
+/**
+ * Kadłuby bez pełnego NPC: holownik serwisowy (8300 j.) nie jest klasą ruchu. Megafrachtowiec awansuje jako JEDEN
+ * kadłub na belkach ze sprite'a całego składu (2760 j., ~8,7 tys. węzłów, budowa ~2,3 ms — `scripts/koszt-kadluba-ruchu.mjs`),
+ * nie jako pociąg modułów `megafreighterTrain.js`; mostek — wariant `sklad` strefy lokomotywy (`resolveBridgeVariant`).
+ */
+export const TRAFFIC_PROMOTION_SKIP_HULLS = new Set(['service_tug']);
 
 /**
  * Okręty ruchu, które po awansie WALCZĄ (E13): `type` — typ NPC (mózg runCallInCombatAI, spec broni ramy

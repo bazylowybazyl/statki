@@ -283,3 +283,74 @@ w każdej klatce do pierwszego kontaktu; zapis co klatkę, zrzuty co 4 klatki (`
 - 0 błędów strony i workerów, 0 pipeline'ów synchronicznych (worker i strona) w całym przebiegu z przeglądem portów.
 - Symulacja `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` identyczna liczba w liczbę (poza czasem ticku) —
   straty bez gracza się nie dzieją.
+
+## Taran w megafrachtowiec i szybki wlot (2026-10-26)
+
+Zgłoszenie użytkownika: „wleciałem w capital frachtowiec i wybuchł od razu, jak go dotknąłem”. Przyczyna:
+megafrachtowiec był na liście kadłubów bez awansu (`TRAFFIC_PROMOTION_SKIP_HULLS` — „pociąg modułów”), więc taran szedł
+ścieżką awaryjną SAT z obrażeniami `ramK · v²` na obrysie: przy dopalaczu 0,02 · 1137² ≈ 25,9 tys. > 9000 punktów
+encji — zniszczenie w pierwszej klatce kontaktu. Zlecenie orkiestratora: megafrachtowiec na belkach, próg awansu
+z czasu budowy kadłuba i prędkości zbliżania, kontakt miękki do gotowości kadłuba, ścieżka awaryjna bez wybuchu
+w pierwszej klatce.
+
+### Decyzje
+
+- **Megafrachtowiec = jeden kadłub na belkach ze sprite'a składu** (`TRAFFIC_HULLS.megafreighter`, 2760 × 1380 j.),
+  nie pociąg `megafreighterTrain.js` — koszt pozwala (pomiar niżej), wariant z wagonami niepotrzebny. Mostek: wariant
+  `sklad` strefy lokomotywy (`BRIDGE_LAYOUT_PROPOSALS.megafreighter.variants.sklad`, wybór `resolveBridgeVariant` —
+  typ `megafreighter`; ten sam blok „C” dziobu, który na sprite'cie składu jest ×1,19 w px, strefa w świecie jak u
+  lokomotywy, więc model `megafreighter` siada bez skalowania). Rdzeń i zbiornik z automatu. Bez dysz MAIN / SIDE
+  po awansie (wpis edytora `megafreighter` to profil lokomotywy gracza — pusty) — tylko obraz.
+- **Próg awansu = czas do gotowości kadłuba** (`trafficRamLead`, `trafficPromotion.js`): zapas `ramMargin` 0,3 s
+  + (`ramFrames` 3 + tarany przed encją w kolejce + awansowane NPC bez kadłuba) × czas gry na klatkę renderu (średnia,
+  nie mniej niż krok 60 Hz) + zmierzona budowa kadłuba tego typu (`hullBuildMs`, pomiar w `drawNPCPretty`; przed
+  pierwszym pomiarem `ramBuildMs` 40 ms) + `ramSpriteSec` 0,5 s, gdy sprite jeszcze się wczytuje. Czas do kontaktu
+  (`trafficContactTime`) to odległość obrysów / prędkość zbliżania — przy dopalaczu awans rusza ~1137 · 0,35 ≈ 400 j.
+  przed kontaktem obrysów, przy 450 j/s ~160 j.
+- **Kontakt miękki do gotowości kadłuba** (`stepTrafficSoftContact`): awansowany NPC bez `beamHull` (kolejka budowy,
+  sprite, ponowna próba) odpycha gracza obrysem encji (`__trafficLen × __trafficWid`, `trafficRectContact`) bez obrażeń.
+- **Ścieżka awaryjna bez wybuchu w pierwszej klatce**: encja do awansu, która nie zdążyła (w kolejce) — odepchnięcie bez
+  obrażeń; bez awansu (holownik serwisowy, limit awansów pełny) — `trafficRamFallbackDamage`: `ramK · v²`, najwyżej
+  `ramMaxFrac` 15% maks. punktów na kontakt i kontakt najwyżej co `ramCooldown` 0,5 s (tarcie zabija po kilku sekundach);
+  encja w warpie i w hipercruisie (> `ramGhostSpeed` 2500 j/s) to duch — bez kontaktu (bezpiecznik E9 gracza zostaje).
+
+### Koszt kadłuba megafrachtowca na wątku gry (Node, `node scripts/koszt-kadluba-ruchu.mjs`)
+
+Prawdziwy `HullBodies` w Node: sprite ruchu przeskalowany do rozmiaru renderu (jak `getNpcHexInitSource`), budowa
+(mediana z 5), krok w spoczynku (60 kroków) i taran drugim kadłubem (ciężki frachtowiec) w burtę — 120 kroków 60 Hz.
+
+| kadłub | obraz [j.] | budowa | węzły / belki | krok w spoczynku | krok w taranie 450 j/s (śr. / p95 / maks.) | krok w taranie 1137 j/s |
+|---|---|---|---|---|---|---|
+| megafrachtowiec | 2760 × 1380 | 2,3–2,4 ms | 8729 / 35 542 | 0,04 ms | 0,88 / 3,0 / 6,3 ms | 1,5 / 5,0 / 6,9 ms |
+| ciężki frachtowiec | 1800 × 900 | 1,0 ms | 3592 / 14 526 | 0,01 ms | 0,66 / 1,9 / 3,1 ms | 0,96 / 2,2 / 3,9 ms |
+| frachtowiec dalekiego zasięgu | 540 × 270 | 0,3 ms | 262 | — | — | — |
+| kontenerowiec | 312 × 156 | 0,1 ms | 110 | — | — | — |
+
+(`--powtorz 7 --kroki 120`, Node 22, ten sam komputer co pomiary w grze; krok w taranie = oba kadłuby w `HullBodies.step`.)
+
+Budowa w grze dokłada skalowanie sprite'a na kanwie i `getImageData` (pierwszy raz na rozmiar — potem z pamięci
+`NPC_HEX_IMAGE_CACHE`). Jeden kadłub składu ma ~2,4× węzłów ciężkiego frachtowca — wagony nic by nie dały (suma węzłów
+ta sama, dochodzą sprzęgi).
+
+### Pomiary w grze (RTX 5080, headless Chrome, tryb gracza `renderWorker=1`, ziarno 7)
+
+`node scripts/webgpu/ruch-banka-gra.mjs --query renderWorker=1 --taran tylko --taranV 450,1137 --taranCele frachtowiec,megafrachtowiec`
+— gracz prowadzony na środek celu w każdej klatce do kontaktu, burtą; zapis co klatkę, zrzuty co 4 klatki i co klatkę
+przez 12 klatek od kontaktu (`09-taran-<cel>@<v>-NNN.png`). Zegar krokowy harnessu zamraża `performance.now`, więc
+zmierzona budowa kadłuba wynosi tam 0 ms — próg liczy same klatki i zapas.
+
+| cel (ziarno 7) | v [j/s] | kadłub na belkach od klatki | kontakt (pierwszy ubytek NPC) | zapas | kontakty miękkie / awaryjne | punkty po kontakcie (klatki k, k+1, k+2…) | koniec |
+|---|---|---|---|---|---|---|---|
+| ciężki frachtowiec w kolejce portu | 450 | 55 | 101 | 46 klatek | 0 / 0 | 4000 → 3980 → … → 3881 (k+11) | przecięty, żyje (1640 pkt), 1 odłam na belkach |
+| megafrachtowiec na redzie (PARKED) | 450 | 52 | 107 | 55 klatek | 0 / 0 | 9000 → 8941 → … → 8831 (k+14) | przecięty, żyje (7951 pkt), 2 odłamy |
+| ciężki frachtowiec | 1137 | 60 | 99 | 39 klatek | 0 / 0 | 4000 → 3745 → … → 3335 (k+11) | rozcięty na 15 odłamów, zginął > 150 klatek po kontakcie |
+| megafrachtowiec na redzie | 1137 | 66 | 97 | 31 klatek | 0 / 0 | 9000 → 8887 (k…k+14) | rozcięty: 20 odłamów, żyje (4272 pkt) |
+
+- Żaden cel nie wybuchł w pierwszej klatce kontaktu: punkty spadają co kilka klatek (sufit konstrukcji), prędkość gracza
+  maleje stopniowo (1137 → 853 j/s w 14 klatek w megafrachtowcu, 1137 → 897 w ciężkim frachtowcu). Kadłub na belkach był
+  gotowy 31–55 klatek przed kontaktem (obrysy prostokątne są większe od sylwetek sprite'ów — próg wychodzi z zapasem),
+  ścieżka awaryjna ani kontakt miękki nie zadziałały ani razu.
+- Taran w tłum zatoki (36 statków, 500 j/s, 12 s): do 5 kadłubów na belkach naraz, 23 awanse na taran, 15 powrotów do
+  bańki, 3 zniszczone, 0 odmów; worker renderu CPU 3,9 ms, GPU 1,9 ms.
+- 0 błędów strony i workerów, 0 pipeline'ów synchronicznych (worker i strona).
+- Symulacja `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` identyczna z bazą liczba w liczbę.

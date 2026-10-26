@@ -57,7 +57,8 @@ test('chwyty się zagnieżdżają: kolumnę obsługuje każda klasa, której chw
 });
 
 test('ładownie: obrys modułu = wielokrotność chwytu klasy, która je obsługuje', () => {
-  const want = { atlas: 'L', terran_frigate: 'S', terran_battleship: 'M', container_ship: 'M', long_haul_freighter: 'M', heavy_freighter: 'L', megafreighter_wagon: 'C' };
+  // Ciężki frachtowiec i megafrachtowiec ruchu: moduł 4 × 2 — drony Capital (E12 runda 5: wystarczalność w oknie postoju).
+  const want = { atlas: 'L', terran_frigate: 'S', terran_battleship: 'M', container_ship: 'M', long_haul_freighter: 'M', heavy_freighter: 'C', megafreighter: 'C', megafreighter_wagon: 'C' };
   for (const [id, cls] of Object.entries(want)) {
     for (const g of cargoHullBays(CARGO_BAY_HULLS[id])) assert.equal(swarmClassForFootprint(g.module.nx, g.module.ny), cls, `${id}/${g.id}`);
   }

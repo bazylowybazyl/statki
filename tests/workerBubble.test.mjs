@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTrafficCore } from '../src/game/traffic/trafficCore.js';
 import {
-  TRAFFIC_MSG, ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG, courseNumber
+  TRAFFIC_MSG, ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG, courseNumber, PLAYER_HOME_BERTHS
 } from '../src/game/traffic/trafficProtocol.js';
 import { getCourse, COURSE_STATUS } from '../src/game/traffic/courseRegistry.js';
 import { PLAYER_BERTH_HOLDER } from '../src/game/traffic/trafficDirector.js';
@@ -160,6 +160,26 @@ test('attach z gry przejmuje kurs bańki: encja wraca do rekordu z postępem i n
   assert.ok(!decode(got.actors).some((a) => a.id === pick.id), 'kurs gry nie wraca do bańki workera');
   core.handle({ type: TRAFFIC_MSG.DETACH, course: pick.id, progress: 0.5 });
   assert.equal(course.actorId, null);
+});
+
+test('stanowisko domowe Atlasa (init.homeBerths): zajęte od budowy świata, berth-hold [] go nie zwalnia, zapas floty zapełnia jego halę', () => {
+  const home = createTrafficCore(() => {});
+  home.handle({ type: TRAFFIC_MSG.INIT, seed: 7, economyScale: 60, capacityMultiplier: 4, piracyPressure: 1, homeBerths: [...PLAYER_HOME_BERTHS] });
+  const layout = home.world.docks.get('earth');
+  const berth = layout.berths.find((b) => b.id === PLAYER_HOME_BERTHS[0]);
+  assert.ok(berth, 'C-01 hali K7-1 w porcie Ziemi');
+  assert.equal(berth.occupantId, PLAYER_BERTH_HOLDER, 'trzymane od init');
+  home.handle({ type: TRAFFIC_MSG.BERTH_HOLD, berths: [] });
+  assert.equal(berth.occupantId, PLAYER_BERTH_HOLDER, 'pusty zbiór gracza nie zwalnia stanowiska domowego');
+  // Zapas Terra Novy jak po godzinie rozgrzewki (ziarno 7): jeden nosiciel, pięć krążowników.
+  home.world.shipyards.fleets.set('terra_nova', { frigate: 24, destroyer: 10, cruiser: 5, carrier: 1 });
+  home.handle({ type: TRAFFIC_MSG.FOCUS, x: berth.x, y: berth.y, r: 60_000 });
+  home.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 5 });
+  const inHall = home.bubble.stock.list.filter((e) => e.berthId && e.berthId.startsWith('earth:K7-1:'));
+  assert.ok(!inHall.some((e) => e.berthId === berth.id), 'okręt zapasu na stanowisku Atlasa');
+  const pads = layout.berths.filter((b) => b.dockId === 'earth:K7-1' && b.id !== berth.id && !b.occupantId);
+  assert.equal(inHall.length, pads.length, 'hala Atlasa pełna okrętów Terra Novy');
+  assert.ok(inHall.every((e) => e.factionId === 'terra_nova' && e.hullId.startsWith('terran_')));
 });
 
 test('zapas floty Ziemi stoi na padach hal K-7: encje STOCK z id ujemnym, bez kursu, na stanowiskach K-7', () => {

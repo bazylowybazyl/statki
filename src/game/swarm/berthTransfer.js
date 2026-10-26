@@ -80,6 +80,9 @@ export const BERTH_TRANSFER_TUNE = Object.freeze({
   workShare: 0.62,
   /** Wrota: start roju po tej części przebiegu otwarcia; zapas przed zamknięciem [s gry]. */
   doorLead: 0.6,
+  /** LOAD (rój na żywo — berthTransferTiming): start z otwarciem wrót — pierwszy kurs to dolot do stołów i chwyt, do ładowni
+   * dron schodzi po pełnym otwarciu, a okno załadunku jest krótkie (90 s postoju, w tym ~45 s dojścia). */
+  doorLeadLoad: 0,
   closeMargin: 0.6
 });
 
@@ -95,7 +98,8 @@ export const BERTH_TABLE_FOOTPRINT = Object.freeze({
   S: Object.freeze({ nx: 1, ny: 1 }),
   M: Object.freeze({ nx: 1, ny: 2 }),
   L: Object.freeze({ nx: 1, ny: 2 }),
-  MEGA: Object.freeze({ nx: 2, ny: 2 }),
+  // Pas MEGA: ciężki frachtowiec i megafrachtowiec (moduł 4 × 2 — drony Capital).
+  MEGA: Object.freeze({ nx: 4, ny: 2 }),
   CAPITAL: Object.freeze({ nx: 2, ny: 2 })
 });
 
@@ -129,7 +133,8 @@ export function berthYardGeometry(berth) {
   const W = fp.ny * C.W + (fp.ny - 1) * C.gap;
   // Odstęp stołów = odstęp kolumn placu roju (swarmPort: chwyt klasy + yardGap) — stoły, które rysuje port, są tymi
   // samymi kolumnami, na które drony symulacji GPU odkładają warstwy (swarmBerthPool.js).
-  const yardGap = size === 'MEGA' || size === 'CAPITAL' ? 3.5 : 2.5;
+  // (= SWARM_PORT_PARAMS.yardGap klasy chwytu stołu: Capital 5, L 3,5, M / S 2,5).
+  const yardGap = size === 'MEGA' ? 5 : size === 'CAPITAL' ? 3.5 : 2.5;
   const halfBeam = Math.max(10, Number(berth?.halfBeam) || (Number(berth?.maxBeam) || padBeam * 0.68) / 2);
   const beltW = W + T.beltWidthPad;
   const v0 = halfBeam + T.hullClear;
@@ -515,7 +520,7 @@ const _pf = { s: 0, v: 0, a: 0 };
 
 /**
  * Czasy postoju bez planu dronów (rój z symulacji GPU — swarmBerthPool.js): okno, wrota, start roju i koniec pracy
- * [s zegara postoju]. ctx: { hull, dwell, moveSeconds }.
+ * [s zegara postoju]. ctx: { hull, dwell, moveSeconds, mode? ('load' — start roju z otwarciem wrót) }.
  */
 export function berthTransferTiming(ctx) {
   const H = typeof ctx.hull === 'string' ? cargoBayHull(ctx.hull) : ctx.hull;
@@ -525,7 +530,7 @@ export function berthTransferTiming(ctx) {
   const door = cargoBayDoorTimeline(geo);
   const doorOpen = win.start;
   const doorClose = Math.max(doorOpen + door.total, win.end - door.total);
-  const swarmStart = doorOpen + door.total * T.doorLead;
+  const swarmStart = doorOpen + door.total * (ctx.mode === 'load' ? T.doorLeadLoad : T.doorLead);
   const workEnd = Math.max(swarmStart + 1, doorClose - T.closeMargin);
   return { geo, window: win, doorOpen, doorClose, doorTotal: door.total, swarmStart, workEnd };
 }

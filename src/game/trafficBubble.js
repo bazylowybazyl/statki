@@ -42,6 +42,15 @@ export const TRAFFIC_BUBBLE_TUNE = {
   ramK: 0.02,
   /** Taran poniżej tej prędkości zbliżenia — tylko rozepchnięcie. */
   ramMinSpeed: 40,
+  /**
+   * Taran AWARYJNY (encja bez awansu — kadłub bez pełnego NPC, limit awansów pełny): najwyżej taki ułamek maks.
+   * punktów na kontakt i kontakt nie częściej niż co `ramCooldown` s na encję — obrażenia rozkładają się w czasie,
+   * nic nie ginie w pierwszej klatce (2026-10-26, „wybuchł od razu, jak go dotknąłem”).
+   */
+  ramMaxFrac: 0.15,
+  ramCooldown: 0.5,
+  /** Encja w warpie albo szybsza (hipercruise encji) — taran jej nie dotyka (duch). */
+  ramGhostSpeed: 2500,
   /** Zniszczona encja znika z obrazu na tyle sekund (worker usuwa ją krok później). */
   deadHold: 6,
   /** Postój gracza na stanowisku: prędkość poniżej i zapas pola [j.]. */
@@ -78,6 +87,8 @@ export function createTrafficBubble(bridge, options = {}) {
     dead: new Map(),
     /** Numery kursów awansowanych do pełnego NPC gry (`trafficPromotion.js`) — nie wracają jako encje. */
     promoted: new Set(),
+    /** numer kursu → czas gry ostatnich obrażeń taranu awaryjnego (`trafficRamFallbackDamage`). */
+    ramAt: new Map(),
     seq: -1,
     frame: 0,
     /** Czas gry, w którym policzone są `cx`, `cy`, `ca` (`setTime`). */
@@ -399,58 +410,65 @@ export function releaseTrafficPromotion(tb, id, destroyed = false) {
 }
 
 const _ram = { actor: null, nx: 0, ny: 0, depth: 0, speed: 0 };
+const _sat = { nx: 0, ny: 0 };
+
+/**
+ * SAT dwóch prostokątów: P (środek w odstępie (dx, dy) od A, osie cos/sin `pc`, `ps`, wymiary `pl` × `pw`) kontra
+ * A (`ac`, `as`, `al` × `aw`). Głębokość wnikania (≤ 0 — bez kontaktu), normalna od A do P w `_sat`.
+ */
+function rectDepth(dx, dy, pc, ps, pl, pw, ac, as, al, aw) {
+  let minDepth = Infinity;
+  for (let k = 0; k < 4; k++) {
+    const axX = k === 0 ? pc : k === 1 ? -ps : k === 2 ? ac : -as;
+    const axY = k === 0 ? ps : k === 1 ? pc : k === 2 ? as : ac;
+    const projP = Math.abs(pc * axX + ps * axY) * pl * 0.5 + Math.abs(-ps * axX + pc * axY) * pw * 0.5;
+    const projA = Math.abs(ac * axX + as * axY) * al * 0.5 + Math.abs(-as * axX + ac * axY) * aw * 0.5;
+    const dist = dx * axX + dy * axY;
+    const depth = projP + projA - Math.abs(dist);
+    if (depth <= 0) return -1;
+    if (depth < minDepth) {
+      minDepth = depth;
+      const sign = dist >= 0 ? 1 : -1;
+      _sat.nx = axX * sign;
+      _sat.ny = axY * sign;
+    }
+  }
+  return minDepth;
+}
 
 /**
  * Taran: kadłub gracza (prostokąt `length` × `width` w (x, y), kurs `angle`,
  * prędkość (vx, vy)) kontra obrysy encji — SAT dwóch prostokątów. Zwraca
  * najgłębszy kontakt `{ actor, nx, ny, depth, speed }` (normalna od encji do
- * gracza, prędkość zbliżenia ≥ 0) albo null. Bez zmian stanu.
+ * gracza, prędkość zbliżenia ≥ 0) albo null. Bez zmian stanu. Encja w warpie
+ * albo szybsza niż `tune.ramGhostSpeed` (hipercruise) to duch — bez kontaktu.
  */
 export function trafficRamContact(tb, x, y, angle, length, width, vx, vy) {
   const list = tb.list;
   if (!list.length) return null;
   const r2 = tb.tune.hitRadius * tb.tune.hitRadius;
+  const g2 = tb.tune.ramGhostSpeed * tb.tune.ramGhostSpeed;
   const pr = Math.sqrt(length * length + width * width) * 0.5;
   const pc = Math.cos(angle);
   const ps = Math.sin(angle);
   let best = null;
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
-    if (!a.alive) continue;
+    if (!a.alive || (a.flags & ACTOR_FLAG.WARP) || a.vx * a.vx + a.vy * a.vy > g2) continue;
     const dx = x - a.cx;
     const dy = y - a.cy;
     const d2 = dx * dx + dy * dy;
     if (d2 > r2) continue;
     const ar = Math.sqrt(a.length * a.length + a.width * a.width) * 0.5;
     if (d2 > (pr + ar) * (pr + ar)) continue;
-    const ac = Math.cos(a.ca);
-    const as = Math.sin(a.ca);
-    // Osie SAT: dwie osie gracza i dwie encji.
-    let minDepth = Infinity;
-    let nx = 0;
-    let ny = 0;
-    for (let k = 0; k < 4; k++) {
-      const axX = k === 0 ? pc : k === 1 ? -ps : k === 2 ? ac : -as;
-      const axY = k === 0 ? ps : k === 1 ? pc : k === 2 ? as : ac;
-      const projP = Math.abs(pc * axX + ps * axY) * length * 0.5 + Math.abs(-ps * axX + pc * axY) * width * 0.5;
-      const projA = Math.abs(ac * axX + as * axY) * a.length * 0.5 + Math.abs(-as * axX + ac * axY) * a.width * 0.5;
-      const dist = dx * axX + dy * axY;
-      const depth = projP + projA - Math.abs(dist);
-      if (depth <= 0) { minDepth = -1; break; }
-      if (depth < minDepth) {
-        minDepth = depth;
-        const sign = dist >= 0 ? 1 : -1;
-        nx = axX * sign;
-        ny = axY * sign;
-      }
-    }
-    if (minDepth <= 0) continue;
-    if (!best || minDepth > best.depth) {
-      const closing = -((vx - a.vx) * nx + (vy - a.vy) * ny);
+    const depth = rectDepth(dx, dy, pc, ps, length, width, Math.cos(a.ca), Math.sin(a.ca), a.length, a.width);
+    if (depth <= 0) continue;
+    if (!best || depth > best.depth) {
+      const closing = -((vx - a.vx) * _sat.nx + (vy - a.vy) * _sat.ny);
       _ram.actor = a;
-      _ram.nx = nx;
-      _ram.ny = ny;
-      _ram.depth = minDepth;
+      _ram.nx = _sat.nx;
+      _ram.ny = _sat.ny;
+      _ram.depth = depth;
       _ram.speed = closing > 0 ? closing : 0;
       best = _ram;
     }
@@ -458,10 +476,49 @@ export function trafficRamContact(tb, x, y, angle, length, width, vx, vy) {
   return best;
 }
 
+const _soft = { actor: null, nx: 0, ny: 0, depth: 0, speed: 0 };
+
+/**
+ * Kontakt kadłuba gracza z prostokątem `bl` × `bw` w (bx, by), kurs `ba`, prędkość (bvx, bvy) — awansowany NPC,
+ * którego kadłub na belkach jeszcze się nie zbudował (kontakt miękki: gra odpycha gracza bez obrażeń). Wynik jak
+ * `trafficRamContact` (`actor` = null) albo null.
+ */
+export function trafficRectContact(x, y, angle, length, width, vx, vy, bx, by, ba, bl, bw, bvx, bvy) {
+  const dx = x - bx;
+  const dy = y - by;
+  const r = (Math.sqrt(length * length + width * width) + Math.sqrt(bl * bl + bw * bw)) * 0.5;
+  if (dx * dx + dy * dy > r * r) return null;
+  const depth = rectDepth(dx, dy, Math.cos(angle), Math.sin(angle), length, width, Math.cos(ba), Math.sin(ba), bl, bw);
+  if (depth <= 0) return null;
+  const closing = -((vx - bvx) * _sat.nx + (vy - bvy) * _sat.ny);
+  _soft.nx = _sat.nx;
+  _soft.ny = _sat.ny;
+  _soft.depth = depth;
+  _soft.speed = closing > 0 ? closing : 0;
+  return _soft;
+}
+
 /** Obrażenia taranu dla prędkości zbliżenia `speed` (0 poniżej progu). */
 export function trafficRamDamage(tb, speed) {
   const t = tb.tune;
   return speed > t.ramMinSpeed ? t.ramK * speed * speed : 0;
+}
+
+/**
+ * Obrażenia taranu AWARYJNEGO dla encji `a` (bez awansu): `ramK · v²`, najwyżej `ramMaxFrac` maks. punktów na
+ * kontakt, kontakt liczy się najwyżej co `ramCooldown` s na encję (0 między) — encja nie ginie w pierwszej klatce,
+ * przy dłuższym tarciu po kilku sekundach. Zapisuje czas kontaktu (`tb.ramAt`).
+ */
+export function trafficRamFallbackDamage(tb, a, speed) {
+  const raw = trafficRamDamage(tb, speed);
+  if (!(raw > 0) || !a) return 0;
+  const t = tb.tune;
+  const last = tb.ramAt.get(a.id);
+  if (last !== undefined && tb.time - last < t.ramCooldown) return 0;
+  if (tb.ramAt.size > 32) for (const [id, at] of tb.ramAt) if (tb.time - at >= t.ramCooldown) tb.ramAt.delete(id);
+  tb.ramAt.set(a.id, tb.time);
+  const cap = (a.maxHp > 0 ? a.maxHp : t.hpMin) * t.ramMaxFrac;
+  return raw < cap ? raw : cap;
 }
 
 // ============================================================

@@ -8,12 +8,16 @@
  * GRA → WORKER
  *   init       { seed, economyScale, capacityMultiplier, piracyPressure,
  *                origin, planetAngles, planetScale, sunRadius,
- *                stations: { id: { factionId?, capacity?, stock? } }, focus?, warmup? }
+ *                stations: { id: { factionId?, capacity?, stock? } }, focus?, warmup?,
+ *                homeBerths? }
  *              `capacity` i `stock` w jednostkach gry (skala 1) — worker sam
  *              mnoży przez skalę (`worldCapacityFromGame`); `stock` tylko dla
  *              stacji opuszczonych (resztki po mieszkańcach). `warmup` (E15) —
  *              sekundy świata do przeliczenia w tle po `ready` (`true` =
  *              `TRAFFIC_WARMUP_SECONDS`; brak = start od zera: testy, narzędzia).
+ *              `homeBerths` — stanowiska domowe gracza (`PLAYER_HOME_BERTHS`):
+ *              trzymane dla gracza od budowy świata, a ich hala jest pierwsza
+ *              dla zapasu floty; brak = żadne (symulacja, bramka, testy).
  *   advance    { dt }                 co klatkę z krokami fizyki; pauza = brak
  *   focus      { x, y, r }            środek i promień bańki (~10 Hz)
  *   stock      { seq, stationId, bag, reason }   handel, rozbiórka wraku
@@ -96,6 +100,15 @@ export const TRAFFIC_WARMUP_SECONDS = 3600;
  * menu i pierwszych klatek gry; świat startuje pusty jak przed E15 (rzadka ścieżka: brak `Worker`).
  */
 export const TRAFFIC_WARMUP_FALLBACK_SECONDS = 0;
+
+/**
+ * STANOWISKO DOMOWE ATLASA (2026-10-26, zgłoszenie użytkownika: na stanowisku Atlasa stał nosiciel zapasu floty
+ * i oba „skakały”) — C-01 hali K-7 nr 0 Ziemi (`earth:K7-1`), gdzie fabuła stawia gracza na starcie misji 1
+ * (`_dockPlace('C-01')`) i dokąd wraca (`dockReturn`); holownik serwisowy też tam wiezie. Gra wysyła je w `init`:
+ * dyspozytor trzyma je dla gracza od budowy świata (jak `berth-hold`, ale stale), a zapas floty zapełnia jego halę
+ * jako pierwszą (`placeFleetStock`, `homeDocks`).
+ */
+export const PLAYER_HOME_BERTHS = Object.freeze(['earth:K7-1:C-01']);
 
 export const TRAFFIC_MSG = Object.freeze({
   INIT: 'init',

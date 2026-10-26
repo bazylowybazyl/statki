@@ -31,16 +31,19 @@ import {
 } from '../../game/swarm/swarmPort.js';
 import { createSwarmPlanner } from '../../game/swarm/swarmPlanner.js';
 import { BERTH_TRANSFER_TUNE } from '../../game/swarm/berthTransfer.js';
-import { SWARM_DRONE_CLASS_LIST, swarmContainerMass, swarmDroneClass } from '../../data/swarmDrones.js';
+import { SWARM_DRONE_CLASS_LIST, swarmClassForFootprint, swarmContainerMass, swarmDroneClass, swarmPackTiles } from '../../data/swarmDrones.js';
 import { CARGO_CONTAINER, cargoHullBays } from '../../data/cargoBays.js';
 
 export const SWARM_POOL_TUNE = {
   /** Stanowisk liczonych na żywo (N) — reszta pokazuje stan z zegara postoju bez dronów (portCargo3D). */
   slots: 8,
-  /** Drony na slot (górna granica — liczba z gęstości i czasu w activate): pola MEGA jak scena „wymiana” dema (96). */
-  dronesPerSlot: 96,
-  /** Kontenery i kolumny na slot: pełny ciężki frachtowiec (3040 kontenerów, 380 kolumn ładowni) i megafrachtowiec do ~43%
-   * (7128 kontenerów, 891 kolumn; kursy niosą typowo ~20%). Nadmiar kontenerów — stats.unitsCut (stan z zegara). */
+  /** Drony na slot (górna granica — liczba z gęstości i czasu w activate): załadunek ciężkiego frachtowca i megafrachtowca
+   * (drony Capital, ~31 s pracy roju w oknie postoju) — 192 (160: 94% pełnego ciężkiego); rozładunek najwyżej
+   * dronesUnloadMax (więcej = tłok nad ładownią). */
+  dronesPerSlot: 192,
+  dronesUnloadMax: 96,
+  /** Kontenery i kolumny na slot: pełny ciężki frachtowiec (2880 kontenerów, 180 kolumn ładowni) i megafrachtowiec do ~44%
+   * (6912 kontenerów, 432 kolumny; kursy niosą typowo ~20%). Nadmiar kontenerów — stats.unitsCut (stan z zegara). */
   unitsPerSlot: 3072,
   colsPerSlot: 1024,
   /** Odstęp slotów w przestrzeni symulacji (oś y) i pół szerokości prostokąta slotu (oś x) [j.]. */
@@ -51,8 +54,9 @@ export const SWARM_POOL_TUNE = {
   /** Zegar roju = czas gry × clock; najwyżej tyle kroków 1/60 s na klatkę (przy niskim FPS rój zwalnia). */
   clock: 4,
   maxSteps: 8,
-  /** Poziomy stosów stołu przeładunkowego (plac przy burcie). */
+  /** Poziomy stosów stołu przeładunkowego (plac przy burcie): co najmniej tyle, więcej — gdy ładunek się nie mieści. */
   yardLevels: 4,
+  yardLevelsMax: 6,
   /** Gęstość roju jak w demie (wymiana frachtowca: 96 L na 760 kursów): dron na tyle warstw, w granicach. */
   layersPerDrone: 8,
   /** Najmniej dronów z wielkości statku: × √(kontenery ładowni) — przy niskim wypełnieniu olbrzym nie dostaje kilku
@@ -64,6 +68,8 @@ export const SWARM_POOL_TUNE = {
   /** Gniazda: najwyżej tyle kolumn w rzędzie (więcej dronów = więcej rzędów za taśmą) — blok przy dziobie pola, z dala od
    * szerokiej części kadłuba (24 kolumny ciężkiego frachtowca wchodziły pod jego sylwetkę: drony krążyły nad gniazdem). */
   padColsMax: 12,
+  /** Gniazda najdalej tyle za brzegiem pola (pas stanowiska; MEGA: pole 1150 j., pas 1300 j.) [j.]. */
+  nestLaneMargin: 75,
   /** Przyjazd ładunku taśmą (LOAD) przed startem roju i odjazd (UNLOAD) po końcu pracy [s gry]. */
   beltLead: 6,
   beltDrain: 10,
@@ -236,7 +242,21 @@ export function createSwarmBerthPool(Core3D) {
     const geo = cargoHullBays(o.hull)[0];
     if (!geo) return null;
     const S = { x: 0, y: slotCenterY(k) };
-    const cls = swarmDroneClass(swarmClassFromModule(geo.module));
+    const mnx = geo.module.nx;
+    const mny = geo.module.ny;
+    const totalLayers = Math.ceil(Math.max(0, Math.min(geo.containers, Math.ceil(geo.containers * Math.max(0, Math.min(1, o.fill)) - 1e-9))) / (mnx * mny));
+    const remainLayers = Math.max(0, totalLayers - Math.round(totalLayers * Math.max(0, Math.min(1, o.progress))));
+    // Drony: gęstość jak w demie (dron na layersPerDrone chwytów), a gdy okno jest ciasne — tyle, żeby pozostałe chwyty
+    // zdążyły (swarmSecPerLayer — zmierzony czas kursu z czekaniem, czas roju) w pozostałym oknie × 4.
+    const remainSwarm = Math.max(20, (Number(o.remainingSec) || 60) * T.clock * 0.85);
+    const tilesOf = (c) => Math.max(1, Math.floor(mnx / c.pack.nx) * Math.floor(mny / c.pack.ny));
+    const byTimeOf = (c) => Math.ceil(remainLayers * tilesOf(c) * T.swarmSecPerLayer / remainSwarm);
+    // Klasa drona = największy chwyt, który dzieli obrys modułu (jak kolumny ładowni w buildSwarmPort): 4 × 2 — Capital.
+    // Mały ładunek na olbrzymie — drony L (więcej, mniejszych; kończą szybko, wrota zamykają się wcześniej): Capital tylko,
+    // gdy L nie zdążą w oknie z dronesUnloadMax dronami.
+    const big = swarmDroneClass(swarmClassForFootprint(mnx, mny));
+    const cls = big.id === 'C' && swarmPackTiles('L', mnx, mny) && byTimeOf(swarmDroneClass('L')) <= T.dronesUnloadMax ? swarmDroneClass('L') : big;
+    const tilesPerTier = tilesOf(cls);
     const yard = o.yard;
     // Stoły w obrysie chwytu klasy drona slotu: warstwa ładowni = warstwa stołu (ta sama liczba komórek).
     const yardCls = cls.id;
@@ -251,26 +271,31 @@ export function createSwarmBerthPool(Core3D) {
       // Rekord tablicy ładowni slotu (światło kontenerów i dronów w ładowni): stały 1 + slot, chyba że podany.
       bayIndexOf: () => (Number.isFinite(o.table) && o.table > 0 ? o.table : 1 + k)
     };
-    const ycls = SWARM_DRONE_CLASS_LIST.find((c) => c.id === yardCls);
-    const yardGapPitch = ycls.payload.L + ({ S: 2.5, M: 2.5, L: 3.5, C: 5 })[yardCls];
     // Stoły = kolumny placu: liczba i odstęp jak berthYardGeometry (ten sam obraz stołów co bez roju).
-    const cols = yard.sides[0].tables.length;
-    void yardGapPitch;
-    const totalLayers = Math.ceil(Math.max(0, Math.min(geo.containers, Math.ceil(geo.containers * Math.max(0, Math.min(1, o.fill)) - 1e-9))) / (geo.module.nx * geo.module.ny));
-    // Drony: gęstość jak w demie (dron na layersPerDrone warstw), a gdy okno jest ciasne — tyle, żeby pozostałe warstwy
-    // zdążyły (swarmSecPerLayer — zmierzony czas kursu warstwy z czekaniem, czas roju) w pozostałym oknie × 4.
-    const remainLayers = Math.max(0, totalLayers - Math.round(totalLayers * Math.max(0, Math.min(1, o.progress))));
-    const remainSwarm = Math.max(20, (Number(o.remainingSec) || 60) * T.clock * 0.85);
-    const byTime = Math.ceil(remainLayers * T.swarmSecPerLayer / remainSwarm);
-    const bySize = Math.min(Math.max(1, remainLayers), Math.round(Math.sqrt(geo.containers) * T.dronesPerSqrtContainer));
-    const dronesTotal = Math.min(T.dronesPerSlot, Math.max(2 * T.minDronesPerSide, Math.ceil(totalLayers / T.layersPerDrone), byTime, bySize));
+    const tbl = yard.sides[0].tables;
+    const cols = tbl.length;
+    const tablePitch = cols > 1 ? tbl[1] - tbl[0] : 0;
+    // Stosy placu: tyle poziomów, żeby plac pomieścił ładunek (warstwy chwytu klasy; pełny ciężki frachtowiec na polu MEGA —
+    // 5), najwyżej yardLevelsMax — inaczej rozładunek stawał po zapełnieniu stołów, a załadunek nie miał skąd brać reszty.
+    const yardLevels = Math.max(T.yardLevels, Math.min(T.yardLevelsMax, Math.ceil(totalLayers * tilesPerTier / Math.max(1, 2 * cols))));
+    const remainGrips = remainLayers * tilesPerTier;
+    const byTime = byTimeOf(cls);
+    const bySize = Math.min(Math.max(1, remainGrips), Math.round(Math.sqrt(geo.containers) * T.dronesPerSqrtContainer));
+    // Rozładunek najwyżej dronesUnloadMax: ponad tę liczbę drony tłoczą się nad ładownią i przenoszą MNIEJ (pomiar w grze);
+    // załadunek (krótkie okno, czas idzie na pierwszy kurs do stołów) — do dronesPerSlot.
+    const cap = o.mode === 'unload' ? Math.min(T.dronesPerSlot, T.dronesUnloadMax) : T.dronesPerSlot;
+    const dronesTotal = Math.min(cap, Math.max(2 * T.minDronesPerSide, Math.ceil(totalLayers * tilesPerTier / T.layersPerDrone), byTime, bySize));
     const perSide = Math.ceil(dronesTotal / 2);
     const padPitch = 2 * cls.padRadius + 3;
-    const padRows = Math.max(2, Math.ceil(perSide / T.padColsMax));
-    const padCols = Math.max(1, Math.ceil(perSide / padRows));
+    // Gniazda w pasie stanowiska: rzędy od taśmy na zewnątrz najwyżej do brzegu pasa (pół pola + nestLaneMargin — Capital
+    // przy megafrachtowcu wychodziły na sąsiedni pas MEGA), reszta w kolejnych kolumnach wzdłuż pola (do jego długości).
+    const vNest0 = Math.abs(sides[0].vBelt) + sides[0].belt.width / 2 + padPitch;
+    const maxRows = Math.max(1, Math.floor((yard.padBeam / 2 + T.nestLaneMargin - vNest0 - padPitch / 2) / padPitch) + 1);
+    const padRows = Math.min(Math.max(2, Math.ceil(perSide / T.padColsMax)), maxRows);
+    const padCols = Math.max(1, Math.min(Math.ceil(perSide / padRows), Math.floor((yard.padLength - 80) / padPitch)));
     for (const sd of sides) {
       // Stoły pola (plac) w rzędzie przy burcie; gniazda za taśmą, przy dziobie.
-      spec.yards.push({ id: `plac${sd.side}`, classId: yardCls, x: S.x, y: S.y - sd.vTable, yaw: 0, cols, rows: 1, levels: T.yardLevels, z: tableZ });
+      spec.yards.push({ id: `plac${sd.side}`, classId: yardCls, x: S.x, y: S.y - sd.vTable, yaw: 0, cols, rows: 1, levels: yardLevels, z: tableZ, pitchA: tablePitch });
       const vPad = Math.abs(sd.vBelt) + sd.belt.width / 2 + padPitch;
       spec.pads.push({ id: `gn${sd.side}`, classId: cls.id, x: S.x + yard.padLength / 2 - 40 - padCols * padPitch / 2, y: S.y - Math.sign(sd.vTable) * (vPad + padPitch * (padRows - 1) / 2), yaw: 0, cols: padCols, rows: padRows, z: deckZ });
     }
@@ -294,28 +319,45 @@ export function createSwarmBerthPool(Core3D) {
     // Warstwy ładowni w kolejności załadunku.
     const holdLayers = [];
     for (const c of hold) for (let lv = 0; lv < c.levels; lv++) holdLayers.push([c, lv]);
-    // Stoły: na zmianę burtami, od rufy, stos po stosie (yardSlots — miejsca warstw na placu).
+    // Miejsca warstw na placu (yardSlots — [stół, poziom] w kolejności odkładania). UNLOAD (warstwy już przeniesione przy
+    // dołączeniu w połowie postoju): stos po stosie, na zmianę burtami od rufy. LOAD: ładunek czeka na stołach najbliżej
+    // ładowni (okno załadunku ~26–31 s gry przy ciężkim frachtowcu), poziomami na tylu stołach, ilu jest dronów — stos
+    // obsługuje jeden dron naraz: 6 chwytów w dwóch stosach szło po kolei przez całe okno (zgłoszenie 2026-10-26).
     const yardSlots = [];
     const bySide = [yards.filter((c) => c.y > S.y), yards.filter((c) => c.y <= S.y)];
-    for (let lv = 0; lv < T.yardLevels; lv++) {
-      for (let i = 0; i < cols; i++) for (const list of bySide) if (list[i]) yardSlots.push([list[i], lv]);
+    const order = [];
+    for (let i = 0; i < cols; i++) for (const list of bySide) if (list[i]) order.push(list[i]);
+    if (o.mode === 'unload') {
+      for (const c of order) for (let lv = 0; lv < yardLevels; lv++) yardSlots.push([c, lv]);
+    } else {
+      let hx = 0;
+      for (const c of hold) hx += c.x;
+      hx /= Math.max(1, hold.length);
+      order.sort((p, q) => Math.abs(p.x - hx) - Math.abs(q.x - hx));
+      const grips = Math.max(1, (Math.min(totalLayers, hold.length * geo.module.nz) - moved) * tilesPerTier);
+      const K = Math.min(order.length, Math.max(Math.ceil(grips / yardLevels), Math.min(grips, dronesTotal)));
+      for (let lv = 0; lv < yardLevels; lv++) for (let i = 0; i < K; i++) yardSlots.push([order[i], lv]);
+      for (let i = K; i < order.length; i++) for (let lv = 0; lv < yardLevels; lv++) yardSlots.push([order[i], lv]);
     }
     const yardH = new Int32Array(port.columns.length);
+    let yardAt = 0;
     const takeYard = () => {
-      // Najniższy wolny poziom stołu (stosy rosną równo; warstwa nie wisi nad pustym stołem).
-      for (const [c] of yardSlots) {
-        if (yardH[c.index] < T.yardLevels) { const lv = yardH[c.index]++; return [c, lv]; }
+      // Następne miejsce z listy, na które da się odłożyć (warstwa nie wisi nad pustym stołem).
+      for (; yardAt < yardSlots.length; yardAt++) {
+        const [c, lv] = yardSlots[yardAt];
+        if (yardH[c.index] === lv) { yardH[c.index]++; yardAt++; return [c, lv]; }
       }
       return null;
     };
     const n = Math.min(totalLayers, holdLayers.length);
+    // Warstwa ładowni (moduł) = tilesPerTier warstw stołu (chwyt klasy: drony L przy module 4 × 2 — dwie).
     if (unload) {
       // W ładowni: pierwsze (n − moved) warstw (rozładunek bierze od końca); reszta już na stołach.
       for (let i = 0; i < n - moved; i++) pushLayer(holdLayers[i][0], holdLayers[i][1], { kind: 'yard' });
-      for (let i = 0; i < moved; i++) { const y = takeYard(); if (y) pushLayer(y[0], y[1], null); }
+      for (let i = 0; i < moved * tilesPerTier; i++) { const y = takeYard(); if (y) pushLayer(y[0], y[1], null); }
     } else {
       for (let i = 0; i < moved; i++) pushLayer(holdLayers[i][0], holdLayers[i][1], null);
-      for (let i = moved; i < n; i++) { const y = takeYard(); if (y) pushLayer(y[0], y[1], { kind: 'ship', ship: 'statek' }); }
+      for (let i = moved * tilesPerTier; i < n * tilesPerTier; i++) { const y = takeYard(); if (y) pushLayer(y[0], y[1], { kind: 'ship', ship: 'statek' }); }
     }
     stats.unitsCut = Math.max(0, unitsList.length - T.unitsPerSlot);
     port.units = unitsList.slice(0, T.unitsPerSlot);
@@ -416,7 +458,7 @@ export function createSwarmBerthPool(Core3D) {
     };
     Object.assign(slot, {
       active: true, key: o.key, seed: seedBase, hull: o.hull, mode: o.mode, port, planner, writer, cls,
-      drones: droneDefs.length, dBase, uBase, cBase, S, started: false, finished: false, frozen: false, frozenT: 0,
+      drones: droneDefs.length, dBase, uBase, cBase, S, yardLevels, beltFrom: -1, started: false, finished: false, frozen: false, frozenT: 0,
       holdHidden: false, hideDone: -1, drain: false, drainChecked: false, statusView: null, units: port.units.length, moved, totalLayers: n,
       yard, lastSeen: 0, beltPhase: 0, drainT: 0, missing: 0,
       // Odczyt stanu dronów ważny dla slotu dopiero z polecenia po dołączeniu (wcześniejsze niosą drony poprzedniego
@@ -575,7 +617,7 @@ export function createSwarmBerthPool(Core3D) {
       // Przyjazd: dalsze stoły i niższe poziomy pierwsze; odjazd: bliższe portalu i górne poziomy pierwsze.
       const dN = Math.max(0, Math.min(1, d / (yard.padLength + 80)));
       const lag = arriving ? Math.min(0.6, u.level * 0.1 + (1 - dN) * 0.4)
-        : Math.min(0.6, (T.yardLevels - 1 - u.level) * 0.1 + dN * 0.4);
+        : Math.min(0.6, (slot.yardLevels - 1 - u.level) * 0.1 + dN * 0.4);
       const k = Math.max(0, Math.min(1, (t - lag) / 0.4));
       const o4 = (slot.uBase + u.id) * UV * 4;
       let x, y, z;
@@ -634,7 +676,9 @@ export function createSwarmBerthPool(Core3D) {
       lastOrigin = origin;
       uLo = Infinity;
       uHi = -Infinity;
-      pendingDt = dt * T.clock;
+      // Suma do kroku efektów: Core3D.fx idzie raz na klatkę rAF, a worker potrafi przetworzyć kilka stron migawki między
+      // nimi — nadpisanie gubiło czas roju (pomiar: rój w 59–87% tempa gry). Krok bierze najwyżej maxSteps (sim.step).
+      pendingDt += dt * T.clock;
       let active = 0;
       let busy = 0;
       let dronesN = 0;
@@ -676,8 +720,10 @@ export function createSwarmBerthPool(Core3D) {
           slot.missing = 0;
           if (!slot.started) {
             if (!unload && st.dockTime < st.swarmStart && slot.moved === 0) {
-              // LOAD: ładunek przyjeżdża taśmą na stoły przed startem roju.
-              const tb = (st.dockTime - Math.max(0, st.swarmStart - T.beltLead)) / T.beltLead;
+              // LOAD: ładunek przyjeżdża taśmą na stoły przed startem roju — od dołączenia slotu, gdy do startu zostało mniej
+              // niż beltLead (start z otwarciem wrót): bez przeskoku reszty taśmy na stoły w chwili startu.
+              if (!(slot.beltFrom >= 0)) slot.beltFrom = Math.min(st.dockTime, Math.max(0, st.swarmStart - T.beltLead));
+              const tb = (st.dockTime - slot.beltFrom) / Math.max(0.5, st.swarmStart - slot.beltFrom);
               writeBeltUnits(slot, Math.max(0, Math.min(1, tb)), true);
             }
             if (st.dockTime >= st.swarmStart) {
@@ -757,9 +803,4 @@ export function createSwarmBerthPool(Core3D) {
 
 
 /** Klasa drona z obrysu modułu ładowni (moduł = wielokrotność chwytu klasy). */
-function swarmClassFromModule(mod) {
-  if (mod.nx >= 2 && mod.ny >= 2) return 'L';
-  if (mod.ny >= 2) return 'M';
-  return 'S';
-}
 

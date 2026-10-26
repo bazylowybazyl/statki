@@ -234,9 +234,73 @@ w kadrze 9000 j. — A 0,633 ms, B14 0,742 (drugi przebieg; pierwszy 1,43 — od
 kosztują, narzut +0,11 ms (budżet ≤ +0,35). Kadr 2600 j.: A 0,28, B14 0,40 (+0,12). CPU workera w szumie przebiegów
 bez ciszy (A 3,8 ms, B14 4,3–5,0 ms w kadrze 9000).
 
+## Runda 5 — „dwa capitale w doku, jeden rozładowywany, drugi bezczynny” (zgłoszenie użytkownika, 2026-10-26)
+
+**Odtworzenie** (`przeladunek-gra.mjs --dwa 1`, ziarno ruchu 7, zatoka Z-02 Ziemi; ta sama para w każdym przebiegu):
+
+| statek | pole | tryb | wypełnienie | slot | dlaczego tak wygląda |
+|---|---|---|---|---|---|
+| megafrachtowiec 3336 | Z02-MG2 | rozładunek | 7% (512 kontenerów) | tak, 50–51 dronów | pracuje ~40 s, kończy 512 / 512 |
+| ciężki frachtowiec 4144 | Z02-MG1 | załadunek | 1% (24 kontenery, ~9 t z 900 t) | tak | 24 kontenery to kilka kursów: 6 dronów L (runda 4), wrota otwarte do końca okna przy prawie pustej ładowni — „stał bezczynny i wyleciał” |
+
+Pula slotów nie była zajęta (Wysoka: 3 sloty z 8), pole ma plac, slot powstał po przechwycie. To ekonomia (kurs niesie 1% ładowni), nie błąd przydziału. Inne przypadki „bezczynnego” olbrzyma na polu MEGA (świat ruchu w Node, 40 min przy Ziemi po rozgrzewce): odlot po rozładunku (faza `undock`, `DEPARTED`) i etap lotu po załadunku — kilkanaście sekund z zamkniętymi wrotami; promy z ludźmi (`crew-large` na sprite'cie frachtowca dalekiego zasięgu) — postój 60 s bez dronów z założenia (ludzie wchodzą rękawem). Wypełnienia kursów: ciężki rozładunek p50 0,75 (47% kursów ≥ 0,9), załadunek p50 0,07 (29% ≥ 0,9); megafrachtowiec p90 0,15.
+
+**Okno postoju:** kursy w zatokach mają `move` = 45 s dojścia z postoju — przy stanowisku zostaje 75 s (rozładunek) i 45 s (załadunek); rój pracuje ~56 s i ~26 s gry (×4 — 225 i 105 s roju).
+
+**Wystarczalność przed rundą** (`--proba unload|load --move 45`, pełna ładownia, `.tmp/e12/r5-proba-*`):
+
+| kadłub | rozładunek | załadunek |
+|---|---|---|
+| prom, kontenerowiec, dalekiego zasięgu | 100% | 100% |
+| ciężki (3040, drony L ×96) | 70,7% | 37% (plac mieścił 2528 — 512 kontenerów nie powstawało) |
+| megafrachtowiec (slot 3072, L ×96) | 68% | 34% |
+
+Plac pola MEGA miał 79 stołów 2 × 2 na burtę × 4 poziomy = 632 warstwy przy 760 warstwach pełnego ciężkiego — rozładunek nie mógł przekroczyć ~83% niezależnie od dronów. Tempo 96 dronów L: ~43 kontenery / s gry w obu trybach.
+
+**Zegar roju gubił czas (błąd, poprawiony):** pula NADPISYWAŁA czas gry do kroku (`pendingDt = dt × 4`), a krok `Core3D.fx` idzie raz na klatkę rAF — gdy worker przetworzył kilka stron migawki na jedną klatkę rAF, czas przepadał. W harnessie rój szedł w 59–87% tempa gry (wiersz „zegar roju” próby), w grze — tyle, ile stron przypadało na klatkę rAF workera. Teraz czas się sumuje (test „regresja runda 5”). Próby z tabeli niżej przed poprawką mierzyły rój w ~87% tempa — wnioski o liczbie dronów są z nich, liczby końcowe — po poprawce.
+
+**Próby przed poprawką zegara** (ciężki / megafrachtowiec, pełna ładownia, rój ~0,87 tempa):
+
+| wariant | rozładunek | załadunek |
+|---|---|---|
+| moduł 4 × 2, Capital ×96 | 96,9% / 88,5% | 55% / 50,5% |
+| + start załadunku z otwarciem wrót | — | 55,6% / 52,3% |
+| Capital ×160 | 90% / 79,9% (tłok nad ładownią) | 87,5% / 81,5% |
+| Capital ×192 | — | 89,7% / 85,2% |
+| ×160 + ładunek na stołach najbliżej ładowni (pełne stosy) | — | 89,2% / 83,9% |
+| ×160 + ładunek poziomami na stołach najbliżej ładowni | — | 91,7% / — |
+
+**Wynik końcowy** (po poprawce zegara, `--krokiMax 64` — „zegar roju” 0,999–1,001; `.tmp/e12/r5-k64-*`; rozładunek do 96 dronów, załadunek do 192):
+
+| kadłub | drony | rozładunek | drony | załadunek |
+|---|---|---|---|---|
+| prom | 2 | 100% | 2 | 100% |
+| kontenerowiec | 8 | 100% | 15 | 100% |
+| dalekiego zasięgu | 16 | 100% | 28 | 100% |
+| ciężki (2880) | 96 C | **100%** | 192 C | **97,2%** |
+| megafrachtowiec (slot 3072 z 6912) | 96 C | **98,7%** | 192 C | **100%** |
+
+Przy 160 dronach po poprawce: załadunek ciężkiego 93,9%, megafrachtowca 97,4%.
+
+**Mały ładunek na olbrzymie:** z modułem 4 × 2 kurs 1% dostawał 3 drony Capital i robił je do końca okna — teraz drony L (podbloki 2 × 2), gdy zdążą w oknie z 96 dronami: ciężki 25% rozładunku — 57 L, 720 / 720 w ~45 s; 1% załadunku — 8 L, 32 / 32 w ~22 s (wcześniej ładunek leżał w dwóch stosach na stołach od rufy i 6 dronów brało go po kolei przez całe okno); wrota zamykają się po pracy.
+
+**Wygląd przy presetach** (`--dwa 1 --flaga grafika=…`, ta sama para): Wysoka i Średnia — oba statki ze slotem (3 sloty w użyciu), Niska — oba w stanie z zegara (wrota otwarte, ładunek ubywa, bez dronów); 0 pipeline'ów sync, 0 błędów. `.tmp/e12/r5-dwa-*`.
+
+**Koszt** (A/B po kolei, bez ciszy innych sesji, po 1 przebiegu; `.tmp/e12/r5-koszt-A|B20`; B14: 8 slotów w pracy — ciężkie 0,85, załadunek 192 Capital, rozładunek 96):
+
+| | A (`przeladunek=0`) | B14 | różnica |
+|---|---|---|---|
+| GPU passów, kadr 9000 j. | 0,595 ms | 0,806 ms | +0,21 |
+| GPU passów, kadr 2600 j. | 0,301 ms | 0,564 ms | +0,26 |
+| GPU passów, poza portem | 0,139 ms | 0,146 ms | 0 |
+| CPU workera, kadr 9000 / 2600 j. | 3,34 / 1,49 ms | 3,80 / 2,04 ms | +0,46 / +0,56 |
+
+GPU w budżecie (≤ +0,35). CPU workera rośnie, bo po poprawce zegara rój liczy pełne tempo (4 kroki na klatkę zamiast obciętych) i wieża prowadzi do 192 dronów — przy 14 stanowiskach naraz; typowy port ma mniej pełnych olbrzymów w kadrze.
 ## Ryzyka i dalsze kroki
 
-- **Megafrachtowiec ponad ~43% wypełnienia** nie mieści się w slocie (3072 z 7128) — nadmiar ładowni jest pusty
+- **Pełny załadunek ciężkiego frachtowca** (29% kursów załadunku ≥ 0,9) — rój przenosi ~97% w oknie, resztę taśma wywozi z placu po zamknięciu wrót. Rój przy < 30 kl./s workera zwalnia (`maxSteps` na klatkę) — wtedy olbrzymy nie zdążą.
+
+- **Megafrachtowiec ponad ~44% wypełnienia** nie mieści się w slocie (3072 z 6912) — nadmiar ładowni jest pusty
   (`stats.unitsCut`). Kurs megafrachtowca w przebiegu harnessu niósł 7% ładowni.
 
 - **Wydajność wieży i ORCA w grze** zmierzona na 2 typach statków; prom i frachtowiec dalekiego zasięgu bez osobnego

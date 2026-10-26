@@ -305,7 +305,7 @@ export function refreshFleetStock(state) {
     let reg = stock.regs.get(portId);
     if (!reg) stock.regs.set(portId, reg = createParkingRegistry(plan, { role: BERTH_ROLE.MILITARY }));
     const own = fleets.get(owner);
-    const result = placeFleetStock(layout, reg, own ? { [owner]: own } : {});
+    const result = placeFleetStock(layout, reg, own ? { [owner]: own } : {}, homeStockOptions(world.director, layout));
     for (const [shipId, spot] of result.placements) {
       const reda = spot.kind === 'reda';
       if (spot.kind !== 'berth' && !reda) continue;
@@ -319,6 +319,18 @@ export function refreshFleetStock(state) {
     }
   }
   return stock.list.length;
+}
+
+/**
+ * Hale stanowisk domowych gracza w porcie (`director.homeBerths`, `init.homeBerths`) → opcje `placeFleetStock`:
+ * zapas floty zapełnia je pierwsze (hala Atlasa na starcie kampanii — pełna okrętów frakcji). Brak — `undefined`.
+ */
+function homeStockOptions(director, layout) {
+  const home = director?.homeBerths;
+  if (!home?.size) return undefined;
+  let docks = null;
+  for (const berth of layout.berths) if (home.has(berth.id)) (docks || (docks = new Set())).add(berth.dockId);
+  return docks ? { homeDocks: docks } : undefined;
 }
 
 // ============================================================

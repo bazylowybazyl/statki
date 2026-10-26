@@ -144,6 +144,170 @@ try {
   report.spot = spot;
   await waitGame(3);
 
+  if (args.dwa) {
+    // Dwa duże statki na polach MEGA jednej zatoki naraz (zgłoszenie 2026-10-26: „jeden rozładowywany, drugi stał
+    // bezczynny i wyleciał”): kadr na oba pola, co kilka sekund zrzut i stan każdego — kontrakt E12 (tryb, wypełnienie),
+    // przeładunek w ramce, slot roju (tak / nie i dlaczego), wrota.
+    const { ACTOR_FLAG } = await import('../../src/game/traffic/trafficProtocol.js');
+    const flagNames = (f) => Object.entries(ACTOR_FLAG).filter(([, v]) => typeof v === 'number' && v > 0 && v < 1 << 12 && (f & v)).map(([k]) => k);
+    const giantsAt = () => ev(`(() => {
+      const tb = window.TrafficBubble; const bays = new Map();
+      for (const a of tb.list) {
+        if (!a.alive || !a.berthId || !/-MG\\d+$/.test(a.berthId) || !(a.phase === 'docked' || a.phase === 'capture') || a.length < ${Number(args.dlugosc || 1500)}) continue;
+        const bay = a.berthId.slice(0, a.berthId.lastIndexOf('-'));
+        if (!bays.has(bay)) bays.set(bay, []);
+        bays.get(bay).push({ id: a.id, unit: a.unitClass, hull: a.hullId, berth: a.berthId, phase: a.phase, dock: +a.dockTime.toFixed(1), x: a.cx, y: a.cy, len: a.length });
+      }
+      return [...bays].filter(([, l]) => l.length >= 2).map(([bay, l]) => ({ bay, list: l }));
+    })()`);
+    let pair = null;
+    const SEARCH2 = Number(args.szukaj || 300);
+    for (let k = 0; k < SEARCH2 && !pair; k++) {
+      // Para, w której jeden statek właśnie zadokował (widać cały jego postój), drugi — jak najwcześniej w swoim.
+      const found = (await giantsAt()).filter((p) => Math.min(...p.list.map((x) => x.dock)) < 6);
+      found.sort((a, b) => Math.max(...a.list.map((x) => x.dock)) - Math.max(...b.list.map((x) => x.dock)));
+      pair = found[0] || null;
+      if (!pair) await waitGame(1);
+    }
+    report.dwa = { para: pair, probki: [] };
+    console.log('dwa olbrzymy:', JSON.stringify(pair));
+    if (pair) {
+      const cx = pair.list.reduce((s, a) => s + a.x, 0) / pair.list.length;
+      const cy = pair.list.reduce((s, a) => s + a.y, 0) / pair.list.length;
+      const span = Math.max(...pair.list.map((a) => Math.hypot(a.x - cx, a.y - cy)));
+      await ev(`(() => {
+        const earth = window.TrafficV2.getStation('earth');
+        const dx = ${cx} - earth.x, dy = ${cy} - earth.y, d = Math.hypot(dx, dy) || 1;
+        window.devTeleportTo(${cx} + dx / d * 7000, ${cy} + dy / d * 7000, { angle: Math.atan2(-dy, -dx), quiet: true });
+        window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+      const vh = Math.max(2600, span * 2 + 2400);
+      await ev(`window.PortCargo.look(${cx}, ${cy}, ${vh})`);
+      const ids = pair.list.map((a) => a.id);
+      const N = Number(args.probki || 16);
+      for (let i = 0; i < N; i++) {
+        await waitGame(i ? Number(args.co || 6) : 0.6);
+        const st = await ev(`(() => { const f = window.PortCargo.frame; const out = [];
+          for (const id of ${JSON.stringify(ids)}) {
+            const a = window.TrafficBubble.byId.get(id); const c = f._cargo.get(id);
+            const op = f.ops.slice(0, f.opCount).find((o) => o.seed === id);
+            out.push({ id, unit: a ? a.unitClass : null, phase: a ? a.phase : 'zniknął', dock: a ? +a.dockTime.toFixed(1) : null, flags: a ? a.flags : 0,
+              kontrakt: c ? { mode: c.mode, fill: +c.fill.toFixed(2), dwell: c.dwell, move: +c.move.toFixed(1) } : null,
+              op: op ? { mode: op.mode, fill: +op.fill.toFixed(2), capture: op.capture } : null });
+          }
+          return { t: +window.TrafficV2.time.toFixed(1), ops: f.opCount, statki: out, liveSlots: f.liveSlots }; })()`);
+        if (report.tryb === 'worker') {
+          const d = await evalWorker(`import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((m) => { const p = m.sharedPortCargo3D(); const ids = ${JSON.stringify(ids)};
+            const slots = p.pool ? p.pool.slots.filter((x) => x.active) : [];
+            return JSON.stringify({ sloty: slots.map((x) => ({ key: x.key, hull: x.hull, mode: x.mode, started: x.started, finished: x.finished, frozen: x.frozen, drones: x.drones, done: x.planner ? x.planner.stats.done : null, total: x.planner ? x.planner.stats.total : null })),
+              wrota: ids.map((id) => { const c = p.cutForRef({ courseId: id }); return c ? +(c.door || 0).toFixed(2) : 0; }), stats: { ops: p.stats.ops, live: p.stats.live, clock: p.stats.clock, containers: p.stats.containers } }); }).catch((e) => String(e))`);
+          try { st.obraz = JSON.parse(d); } catch { st.obraz = d; }
+        }
+        for (const s of st.statki) s.flagi = flagNames(s.flags);
+        report.dwa.probki.push(st);
+        console.log('próbka', i, JSON.stringify({ t: st.t, statki: st.statki.map((s) => [s.id, s.unit, s.phase, s.dock, s.flagi.join('|'), s.kontrakt && `${s.kontrakt.mode}:${s.kontrakt.fill}`, s.op ? 'op' : '-']),
+          sloty: st.obraz && st.obraz.sloty ? st.obraz.sloty.map((x) => [x.key, x.hull, x.drones, `${x.done}/${x.total}`, x.started ? (x.finished ? 'koniec' : 'praca') : 'start']) : null, wrota: st.obraz && st.obraz.wrota }));
+        await screenshotPng(cdp, join(out, `60-dwa-${String(i).padStart(2, '0')}.png`));
+        if (st.statki.every((s) => s.phase !== 'docked' && s.phase !== 'capture')) break;
+      }
+    }
+    report.syncKoniec = syncWorker();
+    report.bledyStrony = logs.errors().filter((l) => !/favicon|powerPreference|[vite]|DevTools|Unable to decode audio|AudioSys/.test(l)).slice(0, 20);
+    report.bledyWorkera = workerLogs.filter((l) => l.startsWith('[error]') || l.startsWith('[exception]')).slice(0, 20);
+    console.log('pipeline sync workera: start', report.syncStart.length, '| koniec', report.syncKoniec.length - report.syncStart.length);
+    console.log('błędy strony', report.bledyStrony.length, '| workera', report.bledyWorkera.length);
+    for (const l of [...report.bledyStrony, ...report.bledyWorkera].slice(0, 4)) console.log('  ', l.slice(0, 300));
+    throw new Error('dwa — koniec');
+  }
+
+  if (args.proba) {
+    // Wystarczalność roju: pełne postoje od zera (`PortCargo.probe`) na polach zatoki w kadrze, kadłub × tryb przy
+    // wypełnieniu `--wypelnienie` (1); co 2 s gry postęp wieży slotu (przeniesione / wszystkie), na końcu okna — tabela.
+    const { trafficHullFootprint } = await import('../../src/data/trafficHulls.js');
+    const ALL = ['inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter', 'megafreighter'];
+    const spec = String(args.proba);
+    const items = (spec === 'unload' || spec === 'load' ? ALL.map((h) => `${h}:${spec}`) : spec.split(','))
+      .map((s) => { const [hull, mode, fill] = s.split(':'); return { hull, mode: mode || 'unload', fill: Number(fill || args.wypelnienie || 1), move: Number(args.move || 0), halfBeam: trafficHullFootprint(hull).width / 2 }; });
+    const bay = await ev(`(() => {
+      const berths = window.TrafficV2.tables.bubblePorts.earth.filter((x) => x.hall === 'ZATOKA');
+      const mg = berths.find((x) => /-MG1$/.test(x.id)); const pre = mg.id.slice(0, mg.id.lastIndexOf('-'));
+      const list = berths.filter((x) => x.id.startsWith(pre));
+      const cx = list.reduce((s, b) => s + b.x, 0) / list.length, cy = list.reduce((s, b) => s + b.y, 0) / list.length;
+      const span = Math.max(...list.map((b) => Math.hypot(b.x - cx, b.y - cy)));
+      const earth = window.TrafficV2.getStation('earth');
+      const dx = cx - earth.x, dy = cy - earth.y, d = Math.hypot(dx, dy) || 1;
+      window.devTeleportTo(cx + dx / d * 9000, cy + dy / d * 9000, { angle: Math.atan2(-dy, -dx), quiet: true });
+      window.ship.vel.x = 0; window.ship.vel.y = 0;
+      return { bay: pre, cx, cy, span, pola: list.map((b) => b.id) };
+    })()`);
+    const vh = Math.max(3000, bay.span * 2.4 + 1500);
+    await ev(`window.PortCargo.look(${bay.cx}, ${bay.cy}, ${vh})`);
+    await waitGame(1);
+    if (args.krokiMax && report.tryb === 'worker') {
+      // Harness przesuwa grę szybciej, niż worker renderuje — pula (maxSteps kroków na klatkę workera) zostaje w tyle.
+      // Wyższy limit na czas próby = tempo roju jak w grze przy ≥ 30 kl./s workera (wiersz „zegar roju” ~1).
+      report.krokiMax = await evalWorker(`import(new URL('../3d/swarm/swarmBerthPool.js', self.location.href).href).then((m) => { m.SWARM_POOL_TUNE.maxSteps = ${Number(args.krokiMax)}; return m.SWARM_POOL_TUNE.maxSteps; })`);
+    }
+    const t0 = await ev(`window.PortCargo.probe(${JSON.stringify(items)})`);
+    // `--rt 1`: gra porcjami po 4 klatki z przerwą ~60 ms (bliżej czasu rzeczywistego). Do pomiaru wystarczalności lepsze
+    // `--krokiMax 64` przy zwykłych krokach — wiersz „zegar roju” ma być ≈ 1.
+    const stepProbe = async (sec) => {
+      if (!args.rt) return waitGame(sec);
+      for (let left = Math.round(sec * 60); left > 0; left -= 4) {
+        await ev(`window.__harness.step(${Math.min(4, left)}).then(() => true)`);
+        await new Promise((r) => setTimeout(r, 60));
+      }
+    };
+    const res = new Map();
+    // Zegar roju względem czasu gry (×4): pula robi najwyżej maxSteps kroków na klatkę workera — gdy worker renderuje
+    // wolniej niż harness przesuwa grę, rój zwalnia (w grze przy ≥ 30 kl./s workera — nie) i próba zaniża wynik.
+    let simT0 = null; let simDt0 = 0; let simLag = null;
+    const maxDwell = Math.max(...items.map((it) => (it.mode === 'load' ? 90 : 120)));
+    for (let k = 0, shot = 0; ; k++) {
+      await stepProbe(2);
+      const dt = (await ev('window.TrafficV2.time')) - t0;
+      const d = await evalWorker(`import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((m) => { const p = m.sharedPortCargo3D();
+        return JSON.stringify({ simT: p.pool && p.pool.sim ? p.pool.sim.time : null, slots: p.pool ? p.pool.slots.filter((x) => x.active && x.key >= 800000).map((x) => ({ key: x.key, hull: x.hull, mode: x.mode, drones: x.drones, started: x.started, finished: x.finished, frozen: x.frozen, units: x.units, cut: p.pool.stats.unitsCut, done: x.planner ? x.planner.stats.done : null, total: x.planner ? x.planner.stats.total : null })) : [] }); }).catch((e) => String(e))`);
+      let slots = [];
+      try {
+        const r = JSON.parse(d);
+        slots = r.slots;
+        // Tylko odcinki, w których rój pracował na obu końcach (krok stoi, gdy żaden slot nie pracuje).
+        const busy = slots.some((s) => s.started && !s.finished);
+        if (r.simT != null && busy && simT0 != null) {
+          simLag = simLag || { swarm: 0, gra: 0 };
+          simLag.swarm = +(simLag.swarm + r.simT - simT0).toFixed(2);
+          simLag.gra = +(simLag.gra + dt - simDt0).toFixed(2);
+        }
+        simT0 = busy ? r.simT : null;
+        simDt0 = dt;
+      } catch {}
+      for (const s of slots) {
+        const r = res.get(s.key) || { hull: s.hull, mode: s.mode, drones: s.drones, units: s.units, total: s.total, done: 0, koniecRoju: null };
+        r.done = Math.max(r.done, s.done || 0);
+        r.total = s.total || r.total;
+        if (s.finished && r.koniecRoju == null) r.koniecRoju = +dt.toFixed(1);
+        res.set(s.key, r);
+      }
+      if (k % 10 === 0) {
+        console.log('próba', +dt.toFixed(1), JSON.stringify(slots.map((s) => [s.key - 800000, s.hull, s.mode, s.drones, `${s.done}/${s.total}`, s.started ? (s.finished ? 'koniec' : 'praca') : 'start'])));
+        await screenshotPng(cdp, join(out, `70-proba-${String(shot++).padStart(2, '0')}.png`));
+      }
+      if (dt > maxDwell + 2) break;
+    }
+    await ev('window.PortCargo.probe(null)');
+    report.proba = { bay, items, zegar: simLag, wyniki: [...res].map(([key, r]) => ({ i: key - 800000, ...r, proc: r.total ? +(100 * r.done / r.total).toFixed(1) : null })) };
+    console.log('zegar roju [s] / czas gry × 4:', JSON.stringify(simLag), simLag && simLag.gra > 0 ? (simLag.swarm / (4 * simLag.gra)).toFixed(3) : '');
+    console.log('wystarczalność:');
+    for (const r of report.proba.wyniki) console.log(`  ${r.hull} ${r.mode}: drony ${r.drones}, ${r.done}/${r.total} (${r.proc}%), koniec roju ${r.koniecRoju ?? '—'} s`);
+    report.syncKoniec = syncWorker();
+    report.bledyStrony = logs.errors().filter((l) => !/favicon|powerPreference|[vite]|DevTools|Unable to decode audio|AudioSys/.test(l)).slice(0, 20);
+    report.bledyWorkera = workerLogs.filter((l) => l.startsWith('[error]') || l.startsWith('[exception]')).slice(0, 20);
+    console.log('pipeline sync workera: start', report.syncStart.length, '| koniec', report.syncKoniec.length - report.syncStart.length);
+    console.log('błędy strony', report.bledyStrony.length, '| workera', report.bledyWorkera.length);
+    for (const l of [...report.bledyStrony, ...report.bledyWorkera].slice(0, 4)) console.log('  ', l.slice(0, 300));
+    throw new Error('proba — koniec');
+  }
+
   // Frachtowiec przy stanowisku zatoki: świeżo zadokowany (wrota przed otwarciem), kadłub z większą ładownią
   // przed promem; po `--szukaj` s — najkrótszy postój, jaki jest.
   const PRIO = { container_ship: 0, long_haul_freighter: 1, heavy_freighter: 2, megafreighter: 2, inter_station_shuttle: 3 };
@@ -281,7 +445,8 @@ try {
     throw new Error('tylko koszt — koniec');
   }
 
-  // Luk Atlasa: gracz na wolnym polu MEGA zatoki z ładunkiem — postój (berth-hold) otwiera luk, kontenery z ładunku.
+  // Luk Atlasa: gracz na wolnym polu MEGA zatoki z ładunkiem i otwartym terminalem stacji — luk się otwiera,
+  // kontenery z ładunku (sam postój — berth-hold — luku nie otwiera: domyślnie zamknięty, 2026-10-26).
   await ev(`window.PortCargo.lookEnd()`);
   report.atlas = await ev(`(() => {
     const mass = window.PortCargo.devCargo({ steel: 6, copper_ore: 4, chips: 2 });
@@ -293,12 +458,16 @@ try {
     window.ship.vel.x = 0; window.ship.vel.y = 0;
     return { mass, berth: b.id };
   })()`);
+  await waitGame(2);
+  report.atlas.doorPostoj = await ev('window.PortCargo.playerDoor');
+  await ev(`window.openStationUI((window.stations || []).find((s) => s.id === 'earth'), 'trade')`);
   await waitGame(9);
   report.atlas.door = await ev('window.PortCargo.playerDoor');
   report.atlas.held = await ev('window.TrafficBubble.held.slice()');
   await ev(`(() => { const c = window.camera; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = 0.55; window.DevScene?.syncCamera?.(); return true; })()`);
   await waitGame(1);
   await screenshotPng(cdp, join(out, '40-luk-atlasa.png'));
+  await ev('window.closeStationUI()');
   console.log('Atlas:', JSON.stringify(report.atlas));
 
   report.syncKoniec = syncWorker();
