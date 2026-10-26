@@ -32,7 +32,8 @@ import { HALL_DUST_IN } from '../3d/gasField/hallDustLayout.js';
 // 2 (2026-10-25): WORLD — warp gracza w pełnym kształcie (warpWorldMirror.js: rampa, ślizg, kurs x / y, ciała, zegary,
 // kotwica kadru); dawne WARP_DIR (obiekt pakowany jako liczba — zawsze NaN) zniknęło.
 // 3 (2026-10-26): WORLD — oś β soczewki świata (WARP_LENS_*: rekord stepWarpLensPhase strony gry).
-// 4 (2026-10-26, DECYZJE-2 T2): WORLD — plan trasy skoku gracza (WARP_ROUTE_*: warp.route z planPlayerWarp).
+// 4 (2026-10-26, DECYZJE-2 T2): WORLD — plan trasy skoku gracza (WARP_ROUTE_*: warp.route z planPlayerWarp);
+//   HEAD — okręt prowadzony przez kamerę (LEAD_*: niebo-sfera, 2026-10-27).
 export const SNAPSHOT_LAYOUT_VERSION = 4;
 
 function fields(names) {
