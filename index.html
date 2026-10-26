@@ -16648,6 +16648,8 @@
     const PORT_CARGO_STRESS = Number(_portCargoQuery.get('przeladunekStres')) || 0;
     /** Stanowiska z rojem na żywo (preset grafiki — GFX_EFFECTS.cargoSwarmSlots, applyGraphicsEffects). */
     let _portCargoLiveSlots = 8;
+    /** Narzędzia (?dev, PortCargo.probe): pełne postoje od zera na polach w kadrze — wystarczalność roju. */
+    let _portCargoProbe = null;
     const _portCargoFrame = createPortCargoFrame();
     const _portCargoCam = { x: 0, y: 0, zoom: 1 };
     /** Luk Atlasa przy handlu: postęp wrót 0…1 (jak ScoutBay.door) — luk rysuje scoutBay3D. */
@@ -16701,7 +16703,7 @@
       const cargo = trafficV2?.actors ? syncPortCargoContract(_portCargoFrame, trafficV2.actors, trafficV2.tables?.resources) : null;
       buildPortCargoFrame(_portCargoFrame, {
         bubble: tb, ports: trafficV2?.tables?.bubblePorts || null, time: trafficV2 ? trafficV2.time : 0,
-        cam: _portCargoCam, viewW: W, viewH: H, cargo, stress: PORT_CARGO_STRESS, player, liveSlots: _portCargoLiveSlots
+        cam: _portCargoCam, viewW: W, viewH: H, cargo, stress: PORT_CARGO_STRESS, probe: _portCargoProbe, player, liveSlots: _portCargoLiveSlots
       });
       return _portCargoFrame;
     }
@@ -16716,6 +16718,13 @@
         return true;
       },
       lookEnd() { if (storyCameraLook) storyCameraLook.holdSec = 0; return true; },
+      // Narzędzia (?dev): próba wystarczalności roju — [{ hull, mode, fill, dwell?, move?, halfBeam? }] od teraz, null — koniec.
+      probe(list) {
+        if (!_portCargoQuery.has('dev')) return false;
+        _portCargoProbe = Array.isArray(list) && list.length ? { t0: trafficV2 ? trafficV2.time : 0, list: list.map((x) => ({ ...x, berthId: null })) } : null;
+        return _portCargoProbe ? _portCargoProbe.t0 : null;
+      },
+      get probeState() { return _portCargoProbe; },
       // Narzędzia (?dev): ładunek gracza do zrzutów luku Atlasa ({ surowiec: sztuki }).
       devCargo(bag) {
         if (!_portCargoQuery.has('dev')) return false;

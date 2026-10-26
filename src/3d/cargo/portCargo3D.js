@@ -42,7 +42,8 @@ import {
 } from '../../data/cargoBays.js';
 
 export const PORT_CARGO_TUNE = {
-  containers: 8192,
+  /** Kontenery stanu z zegara i luku gracza (partia): kilka pełnych olbrzymów bez slotu roju w kadrze (ciężki 2880). */
+  containers: 16384,
   /** Nowych slotów roju na klatkę (dołączenie ciężkiego frachtowca ~3–5 ms CPU) — reszta czeka klatkę. */
   activatePerFrame: 1,
   /** Zapas kadru [j.] przy obcinaniu stanowisk (taśma za portalem, drony nad placem). */
@@ -134,12 +135,12 @@ export function createPortCargo3D(Core3D) {
 
   function timingFor(op) {
     let e = timings.get(op.seed);
-    if (e && e.hull === op.hull && e.dwell === op.dwell && e.move === op.move) { e.seen = frameNo; return e; }
-    const tm = berthTransferTiming({ hull: op.hull, dwell: op.dwell, moveSeconds: op.move });
+    if (e && e.hull === op.hull && e.dwell === op.dwell && e.move === op.move && e.mode === op.mode) { e.seen = frameNo; return e; }
+    const tm = berthTransferTiming({ hull: op.hull, dwell: op.dwell, moveSeconds: op.move, mode: op.mode });
     // Okno przenikania skóry proxy i skrzydeł: czas domkniętych skrzydeł w przebiegu wrót (ostrzeżenie + zamki).
     const tl = tm ? cargoBayDoorTimeline(tm.geo) : null;
     const skinSec = tl ? Math.max(0.25, (tl.warn || 0) + (tl.unlock || 0)) : 1;
-    e = { hull: op.hull, dwell: op.dwell, move: op.move, tm, seen: frameNo, liveClose: Infinity, skinSec };
+    e = { hull: op.hull, dwell: op.dwell, move: op.move, mode: op.mode, tm, seen: frameNo, liveClose: Infinity, skinSec };
     timings.set(op.seed, e);
     return e;
   }
@@ -439,8 +440,16 @@ export function createPortCargo3D(Core3D) {
         if (slot && slot.finished && !Number.isFinite(e.liveClose)) e.liveClose = Math.max(tm.doorOpen + tm.doorTotal, op.dockTime + 0.6);
         const door = berthDoorAt(tm, op.dockTime, Math.min(tm.doorClose, e.liveClose));
         const geo = tm.geo;
+        // Stan z zegara (bez slotu roju): warstwy w ładowni wg postępu postoju. Gdy partia kontenerów jest pełna, wrota
+        // zostają zamknięte — otwarta pusta ładownia przy statku z ładunkiem wyglądała na zepsutą.
+        let clockLayers = 0;
+        if (!slot) {
+          const span = Math.max(1e-3, tm.workEnd - tm.swarmStart);
+          clockLayers = bayLayersAt(geo, op.fill, op.mode, Math.max(0, Math.min(1, (op.dockTime - tm.swarmStart) / span)));
+        }
+        const fits = !!slot || containers.count + clockLayers * geo.module.nx * geo.module.ny <= containers.capacity;
         // Ładownie floty po swojej rozgrzewce (faza 'after'): wcześniej statek pokazuje zamknięte wrota (skóra proxy).
-        if (door > 1e-3 && api.bayWarm) {
+        if (door > 1e-3 && api.bayWarm && fits) {
           const tbl = slot ? 1 + slot.k : (table < 40 ? table++ : -1);
           // Skrzydła domknięte: skóra proxy przenika się z nimi w otworze (przy door → 0 jest cała — bez przeskoku).
           const skin = Math.max(0, Math.min(1, 1 - door / e.skinSec));
@@ -458,10 +467,10 @@ export function createPortCargo3D(Core3D) {
               }
             }
             if (!slot) {
-              const span = Math.max(1e-3, tm.workEnd - tm.swarmStart);
-              const p = Math.max(0, Math.min(1, (op.dockTime - tm.swarmStart) / span));
-              pushBayClock(op, geo, bayLayersAt(geo, op.fill, op.mode, p), tbl);
+              pushBayClock(op, geo, clockLayers, tbl);
               stats.clock++;
+              // Taśma pola jedzie przez pracę z zegara (ładunek ubywa / przybywa bez dronów) — widać, że coś się dzieje.
+              if (op.dockTime > tm.swarmStart && op.dockTime < tm.workEnd) yardPhase[op.yard] = (time || 0) * BERTH_TRANSFER_TUNE.beltSpeed;
             }
           }
         }

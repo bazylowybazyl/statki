@@ -227,7 +227,7 @@ test('partie (ładownie floty, taśmy, drony z bufora CPU): WGSL się buduje, li
   const wd = buildWGSL(drones.warmupMeshes()[0]);
   assert.ok(wd.vertex.includes('portCargoDrones'));
   // Rekordy ładowni floty w tablicy świateł: ładownia rodzaju jest geometrią kadłuba.
-  assert.ok(cargoHullBays('heavy_freighter')[0].module.nx === 2);
+  assert.ok(cargoHullBays('heavy_freighter')[0].module.nx === 4);
 });
 
 // ---------------------------------------------------------------------------
@@ -288,6 +288,26 @@ function fakeReadback(pool, frame, fill = null) {
   return rb;
 }
 const st = (b, o = {}) => ({ berth: b, dockTime: 30, swarmStart: 8, doorClose: 100, workEnd: 99, doorShut: 105, ...o });
+
+test('regresja runda 5: kilka klatek puli na jeden krok Core3D.fx nie gubi czasu roju', () => {
+  // Worker przetwarza czasem kilka stron migawki między klatkami rAF (krok efektów idzie raz na klatkę rAF); nadpisany
+  // czas kroku dawał rój w 59–87% tempa gry, a pełny załadunek ciężkiego frachtowca kończył się na ~90%.
+  const core = fakeCore();
+  const pool = createSwarmBerthPool(core);
+  pool.ensure();
+  const b = { x: 5e6, y: 6e6, angle: 0.3 };
+  const s = pool.activate(slotOp(1, 'unload', 0));
+  const rb = fakeReadback(pool, 5);
+  rb.request = () => {};
+  const step = core.steps[0];
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, () => st(b), 1);
+  pool.update(1 / 60, { x: 5e6, y: -6e6 }, () => st(b), 1);
+  assert.ok(s.started && !s.finished);
+  step.update({ renderer: { compute() {} } });
+  assert.equal(pool.stats.steps, 8, 'dwie klatki gry × 4 = 8 kroków roju (dawniej 4)');
+  step.update({ renderer: { compute() {} } });
+  assert.equal(pool.stats.steps, 0, 'czas zużyty — drugi krok bez nowej klatki nic nie liczy');
+});
 
 test('regresja 5: rozgrzewka wołana od razu przy addFxStep nie buduje drugiej symulacji ani siatek', () => {
   const plain = fakeCore();
@@ -376,7 +396,7 @@ test('regresja 4: slot trzyma kopię stanowiska (rekord ramki z puli), slot bez 
   assert.equal(pool.stats.working, 1, 'rój liczy dalej (bez zamrożenia dronów w powietrzu)');
 });
 
-test('gniazda roju poza sylwetką kadłuba: każde gniazdo ma drona, przy pełnej liczbie dronów (96 — MEGA)', () => {
+test('gniazda roju poza sylwetką kadłuba i w pasie stanowiska: każde gniazdo ma drona, przy pełnej liczbie dronów', () => {
   const pool = createSwarmBerthPool(fakeCore());
   const cases = [['inter_station_shuttle', 'S'], ['container_ship', 'M'], ['long_haul_freighter', 'L'], ['heavy_freighter', 'MEGA'], ['megafreighter', 'MEGA']];
   for (const [hull, size] of cases) {
@@ -384,11 +404,25 @@ test('gniazda roju poza sylwetką kadłuba: każde gniazdo ma drona, przy pełne
     // Plac jak w grze (portCargo3D.yardGeoOf): za burtą najszerszego statku pola — obrys kursu (trafficHullFootprint).
     const half = Math.max(P.yardHalfBeam, trafficHullFootprint(hull).width / 2);
     const yard = berthYardGeometry({ size, padLength: P.padLength, padBeam: P.padBeam, portalGap: P.portalGap, halfBeam: half });
-    const s = pool.activate({ key: hull, seed: 1, hull, mode: 'unload', fill: 1, resourceId: 'steel', progress: 0, remainingSec: 5,
-      ship: { u: 0, v: 0, angle: 0 }, yard, berth: { x: 0, y: 0, angle: 0 } });
-    assert.equal(pool.stats.padsBlocked, 0, `${hull}: gniazdo pod kadłubem / placem`);
-    if (size === 'MEGA') assert.equal(s.drones, SWARM_POOL_TUNE.dronesPerSlot, 'MEGA: 96 dronów w ciasnym oknie');
-    pool.release(s, 'test');
+    for (const mode of ['unload', 'load']) {
+      const s = pool.activate({ key: hull + mode, seed: 1, hull, mode, fill: 1, resourceId: 'steel', progress: 0, remainingSec: 5,
+        ship: { u: 0, v: 0, angle: 0 }, yard, berth: { x: 0, y: 0, angle: 0 } });
+      assert.equal(pool.stats.padsBlocked, 0, `${hull} ${mode}: gniazdo pod kadłubem / placem`);
+      if (size === 'MEGA') {
+        // Ciasne okno: rozładunek — do dronesUnloadMax (więcej = tłok nad ładownią), załadunek — do dronesPerSlot.
+        const want = mode === 'unload' ? SWARM_POOL_TUNE.dronesUnloadMax : SWARM_POOL_TUNE.dronesPerSlot;
+        assert.equal(s.drones, want, `MEGA ${hull} ${mode}: ${s.drones} dronów`);
+        assert.equal(s.cls.id, 'C');
+      }
+      // Gniazda nie wychodzą na sąsiedni pas (pole + nestLaneMargin) ani poza długość pola.
+      const pad = s.cls.padRadius;
+      for (const c of s.port.columns) {
+        if (c.kind !== 'pad') continue;
+        assert.ok(Math.abs(c.y - s.S.y) + pad <= P.padBeam / 2 + SWARM_POOL_TUNE.nestLaneMargin + 1e-6, `${hull} ${mode}: gniazdo v ${Math.abs(c.y - s.S.y).toFixed(0)}`);
+        assert.ok(Math.abs(c.x - s.S.x) + pad <= P.padLength / 2, `${hull} ${mode}: gniazdo u ${(c.x - s.S.x).toFixed(0)}`);
+      }
+      pool.release(s, 'test');
+    }
   }
 });
 
@@ -399,13 +433,19 @@ test('olbrzym przy niskim wypełnieniu nie dostaje „kilku dronów”; pełny c
     halfBeam: Math.max(P.yardHalfBeam, trafficHullFootprint(hull).width / 2) });
   const at = (hull, fill, remainingSec = 101) => pool.activate({ key: hull + fill, seed: 1, hull, mode: 'unload', fill, resourceId: 'steel',
     progress: 0, remainingSec, ship: { u: 0, v: 0, angle: 0 }, yard: yardFor(hull), berth: { x: 0, y: 0, angle: 0 } });
-  // Kurs ciężkiego frachtowca z 4% ładunku (typowe 0,04–0,26 w świecie ruchu): 31 warstw — dawniej 6 dronów.
+  // Kurs ciężkiego frachtowca z 4% ładunku (typowe 0,04–0,26 w świecie ruchu): mały ładunek — drony L (Capital tylko,
+  // gdy L nie zdążą), 30 chwytów — dawniej 6 dronów.
   const h = at('heavy_freighter', 0.04);
+  assert.equal(h.cls.id, 'L');
   assert.ok(h.drones >= 30, `ciężki 4%: ${h.drones} dronów`);
   pool.release(h, 't');
+  // Pełny ciężki w ciasnym oknie — Capital.
+  const hc = at('heavy_freighter', 1, 56);
+  assert.equal(hc.cls.id, 'C');
+  pool.release(hc, 't');
   // Megafrachtowiec ruchu (kurs ~20%) ma ładownię i rój.
   const m = at('megafreighter', 0.2);
-  assert.ok(m.drones >= 51 && pool.stats.unitsCut === 0, `mega 20%: ${m.drones} dronów, obcięte ${pool.stats.unitsCut}`);
+  assert.ok(m.drones >= 50 && pool.stats.unitsCut === 0, `mega 20%: ${m.drones} dronów, obcięte ${pool.stats.unitsCut}`);
   pool.release(m, 't');
   // Prom zostaje mały.
   const sh = pool.activate({ key: 'p', seed: 1, hull: 'inter_station_shuttle', mode: 'unload', fill: 1, resourceId: 'steel', progress: 0,
@@ -415,7 +455,7 @@ test('olbrzym przy niskim wypełnieniu nie dostaje „kilku dronów”; pełny c
   pool.release(sh, 't');
   const full = at('heavy_freighter', 1);
   assert.equal(pool.stats.unitsCut, 0, 'pełna ładownia ciężkiego frachtowca w zakresie slotu');
-  assert.equal(full.units, 3040);
+  assert.equal(full.units, 2880);
 });
 
 test('regresja 2: przechwyt (poza w drodze na stanowisko) przechodzi przez blok — obraz bez roju na żywo', () => {
@@ -445,6 +485,15 @@ test('ramka: zatoki ze wszystkich portów bańki (bez hal K-7 i pomostów), slot
   buildPortCargoFrame(frame, { ports, bubble: { list: [] }, cam: { x: 0, y: 0, zoom: 0.01 }, viewW: 1920, viewH: 1080, stress: 5, time: 10 });
   assert.equal(frame.opCount, 2);
   assert.ok(frame.ops.slice(0, 2).every((o) => o.mode && o.resourceId && o.hull));
+  // Próba wystarczalności (PortCargo.probe): pole klasy kadłuba najbliżej środka kadru, stałe przez próbę; zegar od t0,
+  // koniec po postoju (LOAD 90 s).
+  const probe = { t0: 100, list: [{ hull: 'heavy_freighter', mode: 'load', fill: 1, move: 45 }, { hull: 'long_haul_freighter', mode: 'unload' }, { hull: 'container_ship', mode: 'unload' }] };
+  buildPortCargoFrame(frame, { ports, bubble: { list: [] }, cam: { x: 0, y: 0, zoom: 0.01 }, viewW: 1920, viewH: 1080, probe, time: 130 });
+  assert.equal(frame.opCount, 2, 'kontenerowiec bez pola M w kadrze');
+  assert.deepEqual(probe.list.map((x) => x.berthId), ['earth:Z-01:Z01-MG1', 'mars:Z-02:Z02-L03', undefined]);
+  assert.deepEqual([frame.ops[0].hull, frame.ops[0].mode, frame.ops[0].dockTime, frame.ops[0].move], ['heavy_freighter', 'load', 30, 45]);
+  buildPortCargoFrame(frame, { ports, bubble: { list: [] }, cam: { x: 0, y: 0, zoom: 0.01 }, viewW: 1920, viewH: 1080, probe, time: 195 });
+  assert.deepEqual(frame.ops.slice(0, frame.opCount).map((o) => o.hull), ['long_haul_freighter'], 'załadunek skończył postój po 90 s');
 });
 
 test('materiały roju z ramą slotów i mapą klas: WGSL się buduje (gra); bez ramy — jak demo', () => {

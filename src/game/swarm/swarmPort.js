@@ -251,7 +251,8 @@ export function buildSwarmPort(spec) {
   for (const y of spec.yards || []) {
     const cls = SWARM_DRONE_CLASSES[y.classId];
     const gap = P.yardGap[y.classId] ?? 3;
-    const pitchA = cls.payload.L + gap;
+    // pitchA z zewnątrz: kolumny na stołach pola (berthYardGeometry), także gdy klasa drona jest mniejsza niż stół.
+    const pitchA = Number(y.pitchA) > 0 ? Number(y.pitchA) : cls.payload.L + gap;
     const pitchB = cls.payload.W + gap;
     const levels = Math.max(1, y.levels | 0);
     const deckY = Number.isFinite(y.z) ? y.z : P.deckZ;
