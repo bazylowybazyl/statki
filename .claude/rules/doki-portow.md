@@ -12,7 +12,7 @@ paths:
 
 # Doki portów bez ringu (E14): krzyż, okrąg, koło z wlotem
 
-> Reguła obszaru (E14, 2026-10-23). Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Bańka ruchu i ekonomia: reguła `ruch-v2`. Decyzje, przydział i pomiary: `docs/E14-doki-portow.md`.
+> Reguła obszaru (E14, 2026-10-23). Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Bańka ruchu: reguła `ruch-banka`, ekonomia: `ruch-v2`. Decyzje, przydział i pomiary: `docs/E14-doki-portow.md`.
 
 ## Stan
 

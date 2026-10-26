@@ -2,7 +2,7 @@
 
 Zadanie E14 z `docs/PLAN-ekonomia-rynki.md` (decyzja użytkownika 2026-10-22: osobna sesja na modele doków, trzy
 rodzaje — dok krzyżowy, dok okrągły i koło, do którego się wlatuje, jak stacja z Elite Dangerous, tylko płaska).
-Stan i zasady obszaru: reguła `doki-portow`; bańka ruchu: reguła `ruch-v2`, § „Bańka w grze”. Ten dokument trzyma
+Stan i zasady obszaru: reguła `doki-portow`; bańka ruchu: reguła `ruch-banka`. Ten dokument trzyma
 decyzje, przydział i pomiary.
 
 ## Przed E14

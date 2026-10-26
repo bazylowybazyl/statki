@@ -75,7 +75,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Broń i obrażenia myśliwców → filtr IFF z `src/game/friendlyFire.js`; jednostka gracza poza frakcjami → `playerOwned = true`.
 - Obrażenia od broni gracza → `applyDamageToNPC(…, byPlayer)` (znacznik trafienia); obrażenia gracza od pocisku NPC → stempel `__fcHitPlayerAt` strzelca; obrażenia zatrzymywane przez tarczę → test przebicia `isShieldBreachedAt`; obrażenia obszarowe → też `RepairSwarm.blast` (drony naprawcze).
 - Zestrzelenie rakiety lub torpedy → tylko `killRocketThreat`.
-- Nowa ścieżka obrażeń od gracza (wiązka, rakieta, wybuch) → też statki ruchu v2 w bańce (`damageTrafficActor`, `src/game/trafficBubble.js`); zniszczenie tylko tak — kurs i wrak z ładunkiem rozlicza worker ruchu (reguła `ruch-v2`, § „Bańka w grze”).
+- Nowa ścieżka obrażeń od gracza (wiązka, rakieta, wybuch) → też statki ruchu v2 w bańce (`damageTrafficActor`, `src/game/trafficBubble.js`); zniszczenie tylko tak — kurs i wrak z ładunkiem rozlicza worker ruchu (reguła `ruch-banka`).
 - Przylot, odlot, wezwanie NPC tunelem warpa → rejestr `warpTraffic` (nie `WarpNurt`); wyjście z warpa → `exitWarp`; przylot wroga spoza kolejki wezwań → `noteCameraDirectorCue`; sterowanie skrzydłem pomija jednostki z `__warpReturn`. Nowa ścieżka wyjścia NPC z warpa → pęd z `warpExitMomentum` (punkt przylotu = koniec ślizgu) i flaga `__warpExitSlide` (model lotu trzyma limit bojowy do końca ślizgu), nie zerowanie prędkości.
 - Kamera: wejście ustawia `camera.targetZoom` (sprężyna raz na klatkę renderu, nie w `physicsStep`); offsety kamery tylko w rigu (`src/game/cameraRig.js`); wstrząs z modułu renderu → hak `onShake` (żądanie do gry), nie `window.camera`.
 - Ciąg, skok, szarża, hipercruise → `mainEngineFraction` / `engineThrustScale` / `engineBlocksDrive` (uszkodzenie i stan silników).
@@ -131,7 +131,8 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `gaz-przestrzeni` | Gaz w otwartej przestrzeni (port dema gazy-transport): pole z transportem gęstości, sceny pasa i ringu Jowisza w budowie, mapy i warstwa |
 | `pas-asteroid` | Pas asteroid: pole, olbrzymy, wydobycie, rumowiska, populacje, NEA, nowy typ skały |
 | `komety` | Komety |
-| `ruch-v2` | Ruch v2 — jedyna ekonomia gry: rynki (`addMarket`), kursy i zlecenia, most i worker, napędy ruchu, pola górnicze i wyrwy, bramka bilansu |
+| `ruch-v2` | Ruch v2 — jedyna ekonomia gry: rynki (`addMarket`), API rynku, kursy i zlecenia, most i worker, rozgrzewka świata, zapis ekonomii, napędy ruchu, pola górnicze i wyrwy, towary i receptury, obsada (workforce), bramka bilansu |
+| `ruch-banka` | Statki ruchu v2 w grze: bańka przy portach i w studniach planet, zapas floty i postój, stanowiska, trafienia, taran, awans do NPC, kadłuby ruchu, proxy 3D |
 | `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, upadek, powietrze, uderzenia |
 | `fabula` | Fabuła: reżyser misji, intro w K-7, kampania |
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |

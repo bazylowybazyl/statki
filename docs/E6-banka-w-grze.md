@@ -1,7 +1,6 @@
 # E6 — bańka ruchu v2 w grze (fala 3, wersja zwężona)
 
-Zadanie E6 z `docs/PLAN-ekonomia-rynki.md` (§ 3.5, wiersz E6), 2026-10-22. Stan i zasady obszaru: reguła `ruch-v2`,
-§ „Bańka w grze”. Ten dokument trzyma decyzje, pomiary i plan dalszych kroków.
+Zadanie E6 z `docs/PLAN-ekonomia-rynki.md` (§ 3.5, wiersz E6), 2026-10-22. Stan i zasady obszaru: reguła `ruch-banka`. Ten dokument trzyma decyzje, pomiary i plan dalszych kroków.
 
 ## Krok 0 — prom kręcił się na stanowisku pomostu
 

@@ -27,8 +27,8 @@ paths:
   HALA ATLASA (2026-10-26, prośby użytkownika: „zachowaj wolny slot dla Atlasa”, „zapełnij resztę slotów statkami Terra
   Nova”, „zamknij domyślnie ładownię Atlasa”): C-01 hali K-7 nr 0 to stanowisko domowe gracza w ruchu v2
   (`PLAYER_HOME_BERTHS`, `init.homeBerths`) — zapas floty i kursy nigdy na nim nie stają, a hala jest zapełniona okrętami
-  frakcji portu (Terra Nova) pierwsza i do końca (reguła `ruch-v2`, § „Bańka w grze”: ZAPAS FLOTY — hala domowa,
-  STANOWISKA — stanowisko domowe). Okręty hali widać już w odprawie (bańka w zatrzymanym świecie). Luk Atlasa w doku
+  frakcji portu (Terra Nova) pierwsza i do końca (reguła `ruch-banka`: HALA DOMOWA,
+  STANOWISKO DOMOWE). Okręty hali widać już w odprawie (bańka w zatrzymanym świecie). Luk Atlasa w doku
   zamknięty (otwiera go tylko terminal stacji — reguła `przeladunek-portow`). Sprawdzenie w grze: kampania od menu,
   `TrafficBubble.list` z `berthId` `earth:K7-1:…` (27 encji, żadna na C-01), `PortCargo.playerDoor` = 0.
 
