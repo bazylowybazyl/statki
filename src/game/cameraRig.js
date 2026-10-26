@@ -24,11 +24,10 @@
 //   (cameraZoom.js: camera.zoom = zoomBase · e^człon) — targetZoom gracza nietknięty.
 //   Oś kopu biegnie w czasie gry (w pauzie stoi): stepCameraRigWarp raz na klatkę przed
 //   zoomem i rigiem; zdarzenia z automatu warpa gracza: noteCameraRigWarp('kick' | 'exit').
-// - Wyjście z warpa (2026-10-03, demo „Nurt” iteracja 3): WYJŚCIE = przylot jak u NPC — kamera
-//   zostaje ZA statkiem (nigdy go nie wyprzedza): statek wysuwa się w stronę celu do WARP_EXIT.ahead
-//   pół kadru i tam staje, kamera dogania go w WARP_EXIT.settle s; oddalenie trzymane do końca
-//   zwolnienia (input.exitAge / exitSlow / exitHalt — rampa wyjścia rozgrywki). Wyjście Z CELEM (K1, 2026-10-26):
-//   bez wysunięcia — kadr przylotu (src/render/warpArrivalFrame.js) prowadzi zoom tak, by cel był w kadrze.
+// - Wyjście z warpa: WYJŚCIE = przylot jak u NPC; oddalenie trzymane do końca zwolnienia (input.exitAge / exitSlow /
+//   exitHalt — rampa wyjścia rozgrywki). Każdy skok gracza ma cel albo punkt końca (DECYZJE-2 T2, 2026-10-26: warp
+//   zawsze do celu — dawna gałąź swobodnego skoku z wysunięciem statku 0,4 pół kadru i powrotem wyprzedzenia usunięta):
+//   bez wysunięcia — kadr przylotu (K1, src/render/warpArrivalFrame.js) prowadzi zoom tak, by cel był w kadrze.
 //
 // Dawniej (do 2026-09-27) kamera brała 2× odległość kursora od środka bez
 // limitu i bez wygładzania: statek wypadał z kadru, gdy kursor odjechał o ćwierć
@@ -102,7 +101,7 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   // KADR PRZYLOTU Z CELEM (DECYZJE K1, 2026-10-26 — etap integracji soczewki świata): podłoga zoomu kadru przylotu
   // × zoomRef (wyjątek od limitu kadłuba tylko przy warpArrOn — cameraZoom.js: cameraZoomFloor; Atlas 1080p ~0,015),
   // trzymanie kadru po zatrzymaniu (koniec rampy i ślizgu) [s] i powrót do zoomu gracza smoothstep [s]. Przy wyjściu
-  // z celem statek się nie wysuwa (WARP_EXIT.ahead × 0), wyprzedzenie zostaje. Swobodny skok — bez zmian.
+  // statek się nie wysuwa, wyprzedzenie zostaje (każdy skok ma cel albo punkt końca — DECYZJE-2 T2).
   warpArrivalFloor: 0.07,
   warpArrivalHold: 1,
   warpArrivalReturn: 2,
@@ -287,10 +286,6 @@ export function createCameraRig() {
     // i prędkość sprężyny.
     roll: 0,
     rollVel: 0,
-    // Wyjście swobodnego skoku (stepCameraRigWarp → stepCameraRig): mnożnik celu offsetu (0 przy wysunięciu, wraca
-    // do 1 po dogonieniu) i wysunięcie statku przed kamerę [× pół kadru wzdłuż kursu].
-    warpLeadScale: 1,
-    warpAheadK: 0,
     // Kotwica kadru skoku (nowy warp, DECYZJE M3): nominalny offset kamery [px ekranu] — sprężyna + reżyser kadru, BEZ
     // impulsu kopu warpa i BEZ wysunięcia statku przy wyjściu (wynik stepCameraRig obok offsetX / Y). Statek w kadrze
     // nominalnie w (−nominalX, −nominalY) px od środka; gra publikuje to do migawki (WORLD.WARP_ANCHOR_SX / SY).
@@ -442,10 +437,8 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const padPx = halfH * 2 * HUD_PAD;
   const maxYUp = Math.max(0, halfH - Math.max(marginPx, finite(input.insetTop, 0) + padPx));
   const maxYDown = Math.max(0, halfH - Math.max(marginPx, finite(input.insetBottom, 0) + padPx));
-  // Wyjście swobodnego skoku: wyprzedzenie wraca po dogonieniu statku (stepCameraRigWarp: warpLeadScale).
-  const leadScale = clamp(finite(rig.warpLeadScale, 1), 0, 1);
-  const targetX = clamp((lookX + leadX) * leadScale, -maxX, maxX);
-  const targetY = clamp((lookY + leadY) * leadScale, -maxYDown, maxYUp);
+  const targetX = clamp(lookX + leadX, -maxX, maxX);
+  const targetY = clamp(lookY + leadY, -maxYDown, maxYUp);
   rig.targetX = targetX;
   rig.targetY = targetY;
 
@@ -464,25 +457,16 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // --- Kop warpa: kamera cofa się wzdłuż kursu (statek wyrywa się do przodu), PO sprężynie —
   // impuls ma kształt z dema (sprężyna ω 3–8/s zjadłaby szczyt po 0,11 s). Kadr pilnuje sumy.
   // Px dema przy 1080 wierszach — w innym kadrze proporcjonalnie (jak wyprzedzenie).
-  // Wyjście: kamera ZA statkiem — statek wysuwa się wzdłuż kursu o warpAheadK pół kadru (pół
-  // kadru mierzone wzdłuż kursu: do brzegu w tym kierunku).
   const wdx = finite(rig.warpDirX, 0);
   const wdy = finite(rig.warpDirY, 0);
-  const ahK = Math.max(0, finite(rig.warpAheadK, 0));
-  let ahead = 0;
-  if (ahK > 0) {
-    const ax = Math.abs(wdx);
-    const ay = Math.abs(wdy);
-    ahead = ahK * Math.min(ax > 1e-3 ? halfW / ax : Infinity, ay > 1e-3 ? halfH / ay : Infinity);
-  }
-  const lag = finite(rig.warpLagPx, 0) * (halfH * 2 / WARP_KICK_REF_H) + ahead;
+  const lag = finite(rig.warpLagPx, 0) * (halfH * 2 / WARP_KICK_REF_H);
   // Reżyser kadru (cameraDirector.js): przesunięcie ku bitwie — już wygładzone, dokładane po sprężynie; kadr
   // statku pilnuje suma.
   const bx = finite(input.biasX, 0);
   const by = finite(input.biasY, 0);
   rig.offsetX = clamp(rig.springX - wdx * lag + bx, -maxX, maxX);
   rig.offsetY = clamp(rig.springY - wdy * lag + by, -maxYDown, maxYUp);
-  // Kotwica kadru skoku: to samo bez kopu i wysunięcia (createCameraRig: nominalX / Y).
+  // Kotwica kadru skoku: to samo bez kopu (createCameraRig: nominalX / Y).
   rig.nominalX = clamp(rig.springX + bx, -maxX, maxX);
   rig.nominalY = clamp(rig.springY + by, -maxYDown, maxYUp);
   return rig;
@@ -526,10 +510,12 @@ export function noteCameraRigWarp(rig, event) {
 //                     (hipercruise gracza karmi te same stany — index.html: updateCameraWarpKick, E5 2026-10-22)
 //   arrivalDepthK   — cel na tle (planety bez ringu, z = −50 000): głębokość / ogniskowa w px CSS (warpArrivalDepthK —
 //                     src/render/warpArrivalFrame.js); 0 — płaszczyzna gry. Kadr przylotu liczy brzeg PRAWDZIWEGO obrazu.
-//   K1 (DECYZJE, etap integracji soczewki świata 2026-10-26) — wyjście Z CELEM (arrivalDist ≥ 0): statek się nie wysuwa,
-//                     wyprzedzenie zostaje; kadr przylotu trzymany do zatrzymania (koniec rampy i ślizgu) + warpArrivalHold s,
-//                     potem powrót do zoomu gracza smoothstep w warpArrivalReturn s; podłoga zoomu warpArrivalFloor × zoomRef
-//                     (rig.warpZoomFloor → camera.zoomImpulseMin — cameraZoom.js). Swobodny skok — jak dawniej. Nowe
+//   K1 (DECYZJE, etap integracji soczewki świata 2026-10-26) — wyjście z celem (arrivalDist ≥ 0; gra podaje go przy
+//                     KAŻDYM skoku warpa — ciało celu albo punkt końca: punkt w próżni, skok awaryjny, DECYZJE-2 T2): statek
+//                     się nie wysuwa, wyprzedzenie zostaje; kadr przylotu trzymany do zatrzymania (koniec rampy i ślizgu)
+//                     + warpArrivalHold s, potem powrót do zoomu gracza smoothstep w warpArrivalReturn s; podłoga zoomu
+//                     warpArrivalFloor × zoomRef (rig.warpZoomFloor → camera.zoomImpulseMin — cameraZoom.js). Bez celu
+//                     (arrivalDist < 0 — hipercruise, demo) kadru przylotu nie ma; wysunięcia statku nie ma nigdy. Nowe
 //                     ładowanie przy zatrzaśniętym kadrze — zejście do kadru skoku smoothstep w warpArrivalRelease s
 //                     (rig.warpArrRelAge), podłoga trzyma do końca zejścia.
 // Wynik w rig: warpZoomLog (człon log(zoom)), warpLagPx, warpShakePx, warpDirX/Y, warpZoomFloor.
@@ -553,8 +539,6 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     rig.warpZoomLog = 0;
     rig.warpLagPx = 0;
     rig.warpShakePx = 0;
-    rig.warpLeadScale = 1;
-    rig.warpAheadK = 0;
     return rig;
   }
 
@@ -587,23 +571,10 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     // Wyjście: oddalenie zostaje do końca zwolnienia (demo: zoom wraca od wlotu).
     else if (exitAge >= 0 && exitAge < exitSlow) target = Math.min(rig.warpHold, zoomOut);
   }
-  // Ładowanie i lot: zwykłe wyprzedzenie (dawny środek lejka rulonu usunięty — jeden warp), przy wyjściu kamera za
-  // statkiem.
-  // Wyjście Z CELEM (input.arrivalDist ≥ 0 — K1): statek się nie wysuwa (kadr przylotu liczy krawędź od nominalnego
-  // miejsca statku), wyprzedzenie zostaje. Swobodny skok — wysunięcie i powrót wyprzedzenia jak dawniej.
+  // Ładowanie, lot i wyjście: zwykłe wyprzedzenie (dawny środek lejka rulonu usunięty — jeden warp; dawne wysunięcie
+  // statku przy wyjściu swobodnego skoku usunięte — DECYZJE-2 T2: każdy skok ma cel albo punkt końca, kadr przylotu
+  // liczy krawędź od nominalnego miejsca statku).
   const arrDist = finite(input.arrivalDist, -1);
-  const withTarget = arrDist >= 0;
-  let leadScale = 1;
-  let aheadK = 0;
-  if (on && state !== 'charging' && state !== 'active') {
-    if (exitAge >= 0 && !withTarget) {
-      const settle = WARP_EXIT.settle;
-      aheadK = WARP_EXIT.ahead * smoothRange(exitSlow, exitHalt, exitAge) * (1 - smoothRange(exitHalt, exitHalt + settle, exitAge));
-      leadScale = smoothRange(exitHalt, exitHalt + settle, exitAge);
-    }
-  }
-  rig.warpLeadScale = leadScale;
-  rig.warpAheadK = aheadK;
   if (target < rig.warpHold - 1e-9) {
     // oddalanie: za celem z limitem tempa (ładowanie — po krzywej dema, skok celu — rampa)
     rig.warpHold = Math.max(target, rig.warpHold - WARP_ZOOM_OUT_RATE * dt);
@@ -645,7 +616,7 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     rig.warpUnifyRelAge = -1;
   } else if (rig.warpUnifyW > 0) {
     // Powrót do zoomu gracza: po kadrze przylotu (K1) smoothstep w warpArrivalReturn s (bez największego nachylenia na
-    // starcie — easeOut³ dawał 7,5% zoomu na klatkę), swobodny skok — easeOut³ w warpZoomReturn s jak dawniej.
+    // starcie — easeOut³ dawał 7,5% zoomu na klatkę), bez kadru przylotu (hipercruise) — easeOut³ w warpZoomReturn s.
     if (rig.warpUnifyRelAge < 0) { rig.warpUnifyRelAge = 0; rig.warpUnifyFrom = rig.warpUnifyW; rig.warpUnifySmooth = rig.warpArrOn; }
     else rig.warpUnifyRelAge += dt;
     const u = rig.warpUnifySmooth

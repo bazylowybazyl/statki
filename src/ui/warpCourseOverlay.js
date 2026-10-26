@@ -1,4 +1,7 @@
 // HUD kursu warpa. Kąty ekranowe dostaje po rzucie worldToScreen (także kamery 3D).
+// Warp zawsze do celu (DECYZJE-2 T1): każdy skok ma punkt wyjścia — kurs TRAVEL TO (±5°), cel w stożku ±20° albo skok
+// awaryjny (s.jumpKind: 'course' | 'cone' | 'emergency'); podpis s.label = cel skoku. Kurs w stożku ±20° (s.inCone) też
+// daje skok kursem (komputer dociąga dziób w ładowaniu) — zielone pasmo ±5° zostaje jako „kurs OK”.
 const GREEN = '#75efb0', AMBER = '#ffc978', RED = '#ff897e';
 const units = (n) => `${Math.round(Math.max(0, n)).toLocaleString('pl-PL')} j.`;
 
@@ -77,7 +80,10 @@ export function drawWarpCourseHud(ctx, s) {
   ctx.fillStyle = '#c0d3df';
   ctx.fillText(busy ? `MINIĘCIE PUNKTU: ${units(s.miss)}` : `DO PUNKTU: ${units(s.dist)}`, x, y + 68, width - 24);
   ctx.fillText(s.exiting ? 'Rampa wyjścia zatrzymuje okręt'
-    : (good ? (busy ? 'Komputer zakończy skok przy punkcie kursu' : 'Komputer doprecyzuje kurs i zakończy skok')
-      : (busy ? 'Bez automatu · wyjście: CapsLock lub 9' : 'Obróć dziób według strzałki · tolerancja ±5°')), x, y + 90, width - 24);
+    : (good ? (busy ? (s.jumpKind === 'emergency' ? 'Skok awaryjny · komputer zakończy go przy punkcie'
+      : 'Komputer zakończy skok przy punkcie') : 'Komputer doprecyzuje kurs i zakończy skok')
+      : (busy ? 'Bez automatu · wyjście: CapsLock lub 9'
+        : (s.inCone ? 'CAPS / 9: skok kursem · komputer obróci dziób'
+          : 'Poza ±20° od kursu CAPS: cel przed dziobem / skok awaryjny'))), x, y + 90, width - 24);
   ctx.restore();
 }

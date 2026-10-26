@@ -21,7 +21,10 @@ import { recordExtraction } from './miningFields.js';
 import { WARSHIP_CLASSES } from './shipyards.js';
 import { trafficWorldTime } from './trafficWorld.js';
 
-export const ECONOMY_SAVE_VERSION = 1;
+// 2 (2026-10-26, DECYZJE-2 T3): zapis gry niesie ziarno świata (`worldSeed` obok `world` — kąty planet, systemMap.js:
+// resolveWorldSeed / systemMapAngleForSeed; pisze je index.html: buildEconomySave); zapis wersji 1 powstał przy losowych
+// kątach (magazyny, wyrwy pasa i stacje gracza w innym układzie planet) — nie wczytuje się (świat od zera).
+export const ECONOMY_SAVE_VERSION = 2;
 
 function finitePositive(value) {
   const n = Number(value);

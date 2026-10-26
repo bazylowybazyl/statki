@@ -11,7 +11,8 @@ import { WORLD, SNAPSHOT_LAYOUT_VERSION } from '../src/render/snapshotLayout.js'
 import { SnapshotPacker, SnapshotDict, createSnapshotFrame } from '../src/render/snapshotPack.js';
 import {
   packWarpWorld, applyWarpWorld, createWarpWorldMirror, installWarpPlayerFields, publishWarpPlayerFields,
-  warpBodyIndex, warpBodyAt, warpFxDt, WARP_RAMP_FIELDS, WARP_SLIDE_FIELDS, WARP_SCALAR_FIELDS, WARP_LENS_FIELDS
+  warpBodyIndex, warpBodyAt, warpFxDt, WARP_RAMP_FIELDS, WARP_SLIDE_FIELDS, WARP_SCALAR_FIELDS, WARP_LENS_FIELDS,
+  WARP_ROUTE_FIELDS
 } from '../src/render/warpWorldMirror.js';
 import {
   createWarpLensTrack, createWarpLensPhase, stepWarpLensPhase, warpLensBeta, WARP_LENS_PHASE, WARP_LENS_EXIT_SPAN
@@ -98,8 +99,15 @@ test('warpNurt czyta z obiektu warpa te pola, które kopiuje gameView testu (str
   assert.match(vfx, /const w = RenderWorld\.warp;[\s\S]{0,400}r && r\.active && r\.age < r\.tBrake \+ 0\.25/);
 });
 
-test('układ migawki 3: WORLD bez dawnego WARP_DIR (obiekt → zawsze NaN), z kursem x / y, rampą, ślizgiem, ciałami, zegarami, kotwicą, osią β soczewki', () => {
-  assert.equal(SNAPSHOT_LAYOUT_VERSION, 3);
+test('układ migawki 4: WORLD bez dawnego WARP_DIR (obiekt → zawsze NaN), z kursem x / y, rampą, ślizgiem, ciałami, zegarami, kotwicą, osią β soczewki, planem trasy', () => {
+  assert.equal(SNAPSHOT_LAYOUT_VERSION, 4);
+  // plan trasy (DECYZJE-2 T2 — warp.route z index.html): każde pole liczbowe ma słowo migawki; rodzaj, przylot i ciało osobno
+  const routeKeys = new Set(WARP_ROUTE_FIELDS.map((p) => p[1]));
+  for (const k of Object.keys(createWarpWorldMirror().route)) {
+    if (k === 'active' || k === 'kind' || k === 'arrive' || k === 'flyBody') continue;
+    assert.ok(routeKeys.has(k), `pole planu trasy „${k}” bez słowa migawki`);
+  }
+  for (const k of ['WARP_ROUTE_KIND', 'WARP_ROUTE_ARRIVE', 'WARP_ROUTE_FLY_BODY']) assert.ok(Number.isInteger(WORLD[k]), k);
   // oś β soczewki (warpLensPhase.js): każde pole liczbowe rekordu strony gry ma słowo migawki; stan i flagi osobno
   const lensKeys = new Set(WARP_LENS_FIELDS.map((p) => p[1]));
   for (const k of Object.keys(createWarpLensPhase())) {
@@ -195,6 +203,54 @@ test('pakowanie → lustro: ładowanie, lot, rampa (zwolnienie / wlot / hamowani
   assert.equal(mir.hasWarp, false);
   assert.equal(mir.hasBoost, false);
   assert.ok(Number.isNaN(mir.anchorSX), 'kotwica: NaN poza kamerą statku');
+});
+
+test('plan trasy skoku (DECYZJE-2 T2): warp.route → WORLD WARP_ROUTE_* → lustro — każde pole równe, mijane ciało podstawione, poza skokiem brak', () => {
+  const page = makeBodies();
+  const wk = clone(page);
+  const dict = new SnapshotDict();
+  const w = new Float64Array(WORLD.COUNT);
+  const f = createSnapshotFrame();
+  const mir = createWarpWorldMirror();
+  const warp = makeGameWarp();
+  warp.route = {
+    active: true, kind: 'emergency', arrive: 'point', x0: 1_100_000.25, y0: -20_000.5, x1: 1_500_000.25, y1: -20_000.5,
+    dist: 400_000, exitT: 6.57, time: 12.97, cruise: 91_200.5, flyBody: page.planets[3], flyAlong: 200_000,
+    flyLateral: -300_000, flyT: 3.9, beltIn: 50_000, beltOut: NaN, beltTIn: 1.2, beltTOut: NaN
+  };
+  const pack = () => {
+    packWarpWorld(w, packFrame(f, warp, page), dict);
+    applyWarpWorld(w, dict, mir, wk.planets, wk.small);
+  };
+  pack();
+  const r = mir.warp.route;
+  assert.equal(mir.route, r, 'lustro trzyma jeden obiekt planu (bez alokacji)');
+  for (const k of Object.keys(warp.route)) {
+    if (k === 'flyBody') continue;
+    assert.ok(Object.is(r[k], warp.route[k]), `route.${k}: ${r[k]} vs ${warp.route[k]}`);
+  }
+  assert.equal(r.flyBody, wk.planets[3], 'mijane ciało — obiekt workera pod tym samym indeksem');
+  warp.route.kind = 'cone'; warp.route.arrive = 'body'; warp.route.flyBody = page.small[0];
+  pack();
+  assert.equal(r.kind, 'cone');
+  assert.equal(r.arrive, 'body');
+  assert.equal(r.flyBody, wk.small[0]);
+  // poza skokiem (ładowanie kasuje plan): lustro bez planu
+  warp.route.active = false;
+  pack();
+  assert.equal(r.active, false);
+  assert.equal(r.kind, 'none');
+  assert.ok(Number.isNaN(r.x1) && Number.isNaN(r.time));
+  assert.equal(r.flyBody, null);
+  // obiekt warpa bez planu (narzędzia, dawne harnessy) — jak poza skokiem
+  delete warp.route;
+  pack();
+  assert.equal(r.active, false);
+  // gra: plan liczy planPlayerWarp przy kopie, wyjście przed planem przenosi koniec (exitWarp), ładowanie go kasuje
+  const html = read('index.html');
+  assert.match(html, /function planPlayerWarp\(dirX, dirY\) \{[\s\S]*?const rt = warp\.route;[\s\S]*?warpLegTimeline\(/);
+  assert.match(html, /function exitWarp\(opts\) \{[\s\S]*?const rt = warp\.route;/);
+  assert.match(html, /if \(!\(warp\.charge > 0\)\) warp\.route\.active = false;/);
 });
 
 test('SnapshotPacker._packWorld pakuje warp przez warpWorldMirror (te same słowa co packWarpWorld)', () => {
@@ -417,8 +473,8 @@ test('kotwica kadru skoku (DECYZJE M3): sprężyna riga bez kopu warpa i bez wys
   for (let i = 0; i < 120; i++) stepCameraRig(rig, input, CAMERA_RIG_DEFAULTS);
   assert.equal(rig.nominalX, rig.offsetX);
   assert.equal(rig.nominalY, rig.offsetY, 'bez kopu i wysunięcia kotwica = offset riga');
-  // kop warpa (cofnięcie wzdłuż kursu) i wysunięcie przy wyjściu ruszają offset, kotwica stoi
-  rig.warpDirX = 0; rig.warpDirY = -1; rig.warpLagPx = 140; rig.warpAheadK = 0.4;
+  // kop warpa (cofnięcie wzdłuż kursu) rusza offset, kotwica stoi (wysunięcia przy wyjściu nie ma — DECYZJE-2 T2)
+  rig.warpDirX = 0; rig.warpDirY = -1; rig.warpLagPx = 140;
   stepCameraRig(rig, input, CAMERA_RIG_DEFAULTS);
   assert.notEqual(rig.offsetY, rig.nominalY);
   assert.ok(Math.abs(rig.nominalY - rig.springY) < 1e-9);

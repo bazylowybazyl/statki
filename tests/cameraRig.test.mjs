@@ -493,15 +493,19 @@ test('kop warpa — jeden warp (sprzątanie S1): w ładowaniu i locie zwykłe wy
   const lead = (rulon) => {
     const rig = createCameraRig();
     const wIn = { dt: 1 / 60, state: 'charging', charge: 0.9, dirX: 1, dirY: 0, enabled: true, rulon };
+    const rIn = { dt: 1 / 60, viewW: 1920, viewH: 1080, mode: 'never', velX: 400, velY: 0, maxSpeed: 500, lookEnabled: false };
     stepCameraRigWarp(rig, wIn, tune);
-    const charging = rig.warpLeadScale;
+    stepCameraRig(rig, rIn, tune);
+    const charging = [rig.offsetX, rig.warpZoomLog];
     noteCameraRigWarp(rig, 'kick');
     wIn.state = 'active';
     stepCameraRigWarp(rig, wIn, tune);
-    return [charging, rig.warpLeadScale];
+    stepCameraRig(rig, rIn, tune);
+    return [...charging, rig.offsetX, rig.warpZoomLog];
   };
   // styl 'rulon' (statek na środku lejka) usunięty — każda wartość dawnego pola daje to samo
-  for (const rulon of [undefined, true, false]) assert.deepEqual(lead(rulon), [1, 1], String(rulon));
+  const ref = lead(undefined);
+  for (const rulon of [true, false]) assert.deepEqual(lead(rulon), ref, String(rulon));
   assert.doesNotMatch(readFileSync(new URL('../src/game/cameraRig.js', import.meta.url), 'utf8'), /warpRulonBend|rulonOn/);
 });
 
@@ -560,6 +564,7 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     warpRulonEnabled,
     haloRingKey: () => null,
     warpArrivalDepthK,
+    warpPlayerArriving,
     // ujednolicony kadr skoku (port „Pęd”): zoom gracza = zoom odniesienia — człon ujednolicenia 0 (osobny test niżej)
     W: 1600, H: 900,
     defaultShipZoom: () => 0.5,
@@ -578,11 +583,14 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
   assert.equal(scope._cameraWarpInput.charge, 0.5);
   // Jeden warp (sprzątanie S1): dawny adres `?warp=rulon` / `?rulon=1` nic nie włącza — kamera bez środka lejka przy
   // każdym adresie (pole wejścia `rulon` rig ignoruje — nie przypinamy jego wartości).
+  const zl = scope.camera.zoomImpulseLog;
   for (const search of ['?warp=rulon&rulon=1', '?rulon=0', '']) {
     scope.location.search = search;
     update(1 / 60);
-    assert.equal(rig.warpLeadScale, 1, search);
+    assert.ok(Math.abs(scope.camera.zoomImpulseLog - zl) < 1e-12, search);
   }
+  // gałąź swobodnego skoku (wysunięcie statku) usunięta — DECYZJE-2 T2
+  assert.equal('warpAheadK' in rig || 'warpLeadScale' in rig, false);
   scope.location.search = '?warp=rulon&rulon=1';
   assert.ok(Math.abs(scope.camera.zoomImpulseLog - Math.log(1 - 0.45 * smoothDemo(0.5))) < 1e-9, 'człon ładowania');
   assert.equal(rig.warpDirX, 0);
@@ -651,7 +659,8 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
   const w = scope._cameraWarpInput;
   assert.equal(w.zoomRef, zRef);
   assert.equal(w.zoomBase, 0.2);
-  assert.equal(w.arrivalDist, -1, 'skok swobodny — bez celu');
+  // każdy skok ma cel albo punkt końca (DECYZJE-2 T2): bez ciała celu — punkt (kadr przylotu K1 bez odsuwania)
+  assert.equal(w.arrivalDist, 0, 'skok bez ciała celu — punkt');
   // w skoku zoom = zoom odniesienia × warpZoomOut, niezależnie od zoomu gracza
   const zoom = 0.2 * Math.exp(camera.zoomImpulseLog);
   assert.ok(Math.abs(zoom - zRef * tune.warpZoomOut) < 1e-6, `${zoom} vs ${zRef * tune.warpZoomOut}`);
@@ -964,30 +973,35 @@ test('kadr przylotu (2026-10-19): przy wyjściu kamera odsuwa się do celu — b
   assert.equal(r2.warpArrOn, false);
 });
 
-test('K1 (DECYZJE, etap integracji soczewki): wyjście z celem bez wysunięcia statku, wyprzedzenie zostaje; swobodny skok jak dawniej', () => {
+test('K1 + DECYZJE-2 T2: wyjście bez wysunięcia statku i z wyprzedzeniem — dla ciała celu, punktu i bez celu (gałąź swobodna usunięta)', () => {
   const dt = 1 / 60;
   const run = (arrivalDist) => {
     const rig = createCameraRig();
     const w = { dt, state: 'active', charge: 0, dirX: 0, dirY: -1, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: false,
       zoomRef: 0.2, zoomBase: 0.2, viewW: 1920, viewH: 1080, arrivalDist };
-    for (let i = 0; i < 120; i++) stepCameraRigWarp(rig, w, tune);
+    const rIn = { dt, viewW: 1920, viewH: 1080, mode: 'never', velX: 0, velY: -400, maxSpeed: 500, lookEnabled: false };
+    for (let i = 0; i < 120; i++) { stepCameraRigWarp(rig, w, tune); stepCameraRig(rig, rIn, tune); }
     w.state = 'idle';
-    let maxAhead = 0;
-    let minLead = 1;
+    let maxDev = 0;
+    let minLead = Infinity;
     for (let a = 0; a < 2.5; a += dt) {
       w.exitAge = a;
       stepCameraRigWarp(rig, w, tune);
-      maxAhead = Math.max(maxAhead, rig.warpAheadK);
-      minLead = Math.min(minLead, rig.warpLeadScale);
+      stepCameraRig(rig, rIn, tune);
+      // offset = kotwica (bez kopu — nie było zdarzenia 'kick'): statek nie wysuwa się przed kamerę
+      maxDev = Math.max(maxDev, Math.abs(rig.offsetX - rig.nominalX), Math.abs(rig.offsetY - rig.nominalY));
+      minLead = Math.min(minLead, Math.abs(rig.targetY));
     }
-    return { maxAhead, minLead };
+    return { maxDev, minLead, rig };
   };
-  const withTarget = run(60000);
-  assert.equal(withTarget.maxAhead, 0, 'z celem — statek się nie wysuwa');
-  assert.equal(withTarget.minLead, 1, 'z celem — wyprzedzenie zostaje');
-  const free = run(-1);
-  assert.ok(free.maxAhead > 0.3, `swobodny skok — wysunięcie jak dawniej (${free.maxAhead})`);
-  assert.equal(free.minLead, 0, 'swobodny skok — wyprzedzenie wraca po zatrzymaniu');
+  for (const d of [60000, 0, -1]) {
+    const r = run(d);
+    assert.equal(r.maxDev, 0, `arrivalDist ${d}: statek się nie wysuwa`);
+    assert.ok(r.minLead > 1, `arrivalDist ${d}: wyprzedzenie zostaje (${r.minLead})`);
+    assert.equal('warpAheadK' in r.rig || 'warpLeadScale' in r.rig, false);
+  }
+  const src = readFileSync(new URL('../src/game/cameraRig.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /WARP_EXIT\.ahead|warpAheadK|warpLeadScale/);
 });
 
 test('K1: kadr przylotu = warpArrivalFrame.js (cel na tle z perspektywą), podłoga zoomu tylko przy zatrzaśniętym kadrze, powrót smoothstep', () => {
@@ -1194,7 +1208,7 @@ test('K1: limit członu ±3 jak dawniej (swobodny skok przy dużym zoomie gracza
 test('K1: hamowanie grawitacyjne z celem — dolot kamery = warpPlayerArriving jak soczewka; reżyser kadru gaśnie przy kadrze przylotu', () => {
   const html = readIndexHtml();
   const kick = sliceFunction(html, 'function updateCameraWarpKick(gameDt) {');
-  assert.match(kick, /if \(tgt\) \{[\s\S]*?w\.arriving = warpPlayerArriving\(warp\);/);
+  assert.match(kick, /w\.arriving = warpPlayerArriving\(warp\);[\s\S]*?if \(tgt\) \{/);
   assert.match(html, /import \{[^}]*warpPlayerArriving[^}]*\} from "\.\/src\/render\/warpLensPhase\.js";/);
   const dir = sliceFunction(html, 'function stepCameraDirectorFrame(frameDt, shipX, shipY) {');
   assert.match(dir, /const warpBusy = playerWarpCameraBusy\(\) \|\| playerWarpArrivalLive\(\) \|\|/);
@@ -1202,7 +1216,7 @@ test('K1: hamowanie grawitacyjne z celem — dolot kamery = warpPlayerArriving j
   assert.match(live, /warp\.state === 'idle' && !!cameraRig\.warpArrOn && cameraRig\.warpUnifyW > 0/);
 });
 
-test('K1: hamowanie grawitacyjne z celem w updateCameraWarpKick — kadr przylotu zatrzaśnięty; bez celu — jak dawniej', () => {
+test('K1: hamowanie grawitacyjne w updateCameraWarpKick — kadr przylotu zatrzaśnięty z celem i bez (punkt — DECYZJE-2 T2)', () => {
   const html = readIndexHtml();
   const run = (targetBody) => {
     const rig = createCameraRig();
@@ -1232,7 +1246,9 @@ test('K1: hamowanie grawitacyjne z celem w updateCameraWarpKick — kadr przylot
   const withT = run({ x: 60000, y: 0, r: 8000, smallBody: true });
   assert.equal(withT.w.arriving, true);
   assert.ok(withT.rig.warpArrOn, 'z celem — kadr przylotu zatrzaśnięty');
-  const free = run(null);
-  assert.equal(free.w.arriving, false, 'swobodny skok — hamowanie nie trzyma kadru (jak dawniej)');
-  assert.equal(free.rig.warpArrOn, false);
+  // każdy skok ma cel albo punkt końca: hamowanie bez ciała celu — kadr przylotu punktu (odległość 0, bez odsuwania)
+  const point = run(null);
+  assert.equal(point.w.arriving, true);
+  assert.equal(point.w.arrivalDist, 0);
+  assert.ok(point.rig.warpArrOn, 'punkt — kadr przylotu zatrzaśnięty');
 });

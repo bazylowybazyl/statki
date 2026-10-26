@@ -4,7 +4,7 @@
 //
 //   • fizyka skoku: planWarpCruise / warpTripTuneFor / warpTripTime, warpFlybyFactor (zwolnienie przy ciałach), strefy
 //     (pas × 0,8, studnie × 0,3), createWarpExitRamp / sampleWarpExitRamp, ślizg z pędem (k = 3, Atlas), wyjście TRAVEL TO
-//     (rampa + ślizg przed końcem odcinka) albo ręczne (swobodny skok);
+//     (rampa + ślizg przed końcem odcinka; każdy skok ma koniec — DECYZJE-2 T1/T2, także skok awaryjny);
 //   • kamera: stepCameraRigWarp + stepCameraRig (cameraRig.js) — zoom skoku, kop, wyprzedzenie, kadr przylotu — KAMERA
 //     GRY z K1 (DECYZJE K1, wpięte w etapie integracji 2026-10-26): przy wyjściu z celem bez wysunięcia statku,
 //     wyprzedzenie zostaje, kadr przylotu celu NA TLE z perspektywą (input.arrivalDepthK — warpArrivalFrame.js), trzymanie
@@ -19,10 +19,12 @@
 //     ringScale.js, haloRingLayout.js. Ringi „Halo” i pierścień Saturna się nie rysują (kontrola kadłuba liczy tarczę
 //     z ringiem — rExt).
 //
-// Scenariusze: S1 Ziemia → Jowisz z Marsem w trawersie, S2 Ziemia → Mars krótki, S3 swobodny skok obok Jowisza,
+// Scenariusze: S1 Ziemia → Jowisz z Marsem w trawersie, S2 Ziemia → Mars krótki, S3 punkt w próżni obok Jowisza
+// (kadr przylotu K1 punktu, DECYZJE-2 T2; dawniej swobodny skok bez przylotu),
 // S4 Jowisz → Saturn (cel NA TLE, z = −50 000), S5 przerwane ładowanie (S1 do 60% ładowania), S6 Ziemia → Mars z Jowiszem
 // w stożku za celem, S7 start z portu Ceres (ciało startu z dokiem w kadrze za rufą — O1-2: wylatuje dołem i znika),
-// S8 przylot do Io tuż po minięciu Jowisza (duża tarcza pod statkiem w chwili wyjścia — tempo zanurzenia, P4 wyjścia).
+// S8 przylot do Io tuż po minięciu Jowisza (duża tarcza pod statkiem w chwili wyjścia — tempo zanurzenia, P4 wyjścia),
+// S9 skok awaryjny 400 tys. j. w dziób (najczęstszy skok z klawisza).
 //
 // Wynik: tory ciał co 0,5 s (środek na ekranie od środka kadru [px, y w dół], promień [px], prędkość [px/s]) i KONTROLE
 // (DECYZJE P4 + BRIEF C1–C5 + stożek M4 + start O1-2). C1 (widać świat) jest INFORMACYJNA (DECYZJE-2 O1-3: mapa O1
@@ -32,7 +34,7 @@
 // „tak” (inne wartości: ostrzeżenie).
 //
 // Użycie:
-//   node scripts/webgpu/warp-soczewka-sym.mjs [--scen S1,S2,S3,S4,S5,S6,S7,S8] [--res 1080,1440] [--k1 tak] [--B1 87464]
+//   node scripts/webgpu/warp-soczewka-sym.mjs [--scen S1,S2,S3,S4,S5,S6,S7,S8,S9] [--res 1080,1440] [--k1 tak] [--B1 87464]
 //     [--naped mk1|mk2|mk3] [--aspect 16:9|21:9|32:9|W:H] [--param klucz=liczba,…] [--tory gl|wszystkie|nie] [--md plik.md] [--json plik.json]
 //     [--scisle-dzis] [--origin-ruch]
 //     [--wpiecie nowe|dzis]
@@ -62,7 +64,7 @@ const arg = (name, def) => {
   return i >= 0 && i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[i + 1] : def;
 };
 const flag = (name) => argv.includes('--' + name);
-const SCENS = String(arg('scen', 'S1,S2,S3,S4,S5,S6,S7,S8')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+const SCENS = String(arg('scen', 'S1,S2,S3,S4,S5,S6,S7,S8,S9')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
 const RESS = String(arg('res', '1080,1440')).split(',').map((s) => Number(s.trim())).filter((h) => h > 0);
 const K1MODE = String(arg('k1', 'tak'));
 if (K1MODE !== 'tak') console.warn('[sym] --k1 ' + K1MODE + ': kamera bez K1 nie istnieje już w kodzie gry (cameraRig.js) — liczę K1');
@@ -249,14 +251,35 @@ function scenarioS2(extra = {}) {
     world, S0, u, leg, target: 'mars', origin: 'earth', free: false };
 }
 
+// S3 — PUNKT W PRÓŻNI (DECYZJE-2 T2: każdy skok ma koniec — TRAVEL TO do punktu z mapy CIC; dawniej swobodny skok bez
+// przylotu z wyjściem ręcznym): plan prędkości jak każdy skok z końcem, wyjście automatyczne (rampa + ślizg w punkcie),
+// kadr przylotu K1 punktu (index.html: updateCameraWarpKick — odległość 0: kadr skoku bez odsuwania, bez wysunięcia
+// statku). Jowisz 300 tys. j. z boku w połowie odcinka 1,2 mln j.
 function scenarioS3() {
   const JR = ORB('jupiter');
   const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 200 * deg, mars: 120 * deg, jupiter: 0, saturn: 75 * deg, uranus: 110 * deg, neptune: 300 * deg };
   const world = buildWorld(angles);
   const u = { x: 0, y: 1 };
   const S0 = { x: JR - 300000, y: -700000 };
-  return { name: 'S3', title: 'Swobodny skok przez pas, Jowisz 300 tys. j. z boku w połowie (księżyce w węzłach gry), wyjście ręczne po 1,2 mln j.',
-    world, S0, u, leg: 1200000, target: null, origin: null, free: true, flyby: 'jupiter', flybyLat: 300000 };
+  return { name: 'S3', title: 'Punkt w próżni (TRAVEL TO z mapy), odcinek 1,2 mln j. przez pas, Jowisz 300 tys. j. z boku w połowie (księżyce w węzłach gry), kadr przylotu K1 punktu',
+    world, S0, u, leg: 1200000, target: null, origin: null, point: true, flyby: 'jupiter', flybyLat: 300000 };
+}
+
+// S9 — SKOK AWARYJNY 400 tys. j. w dziób (DECYZJE-2 T1: CapsLock bez kursu i bez celu w stożku; warpDrive.js:
+// WARP_EMERGENCY) z Jowiszem 300 tys. j. z boku w połowie — w domyślnej liście (recenzja T ust. 2: najczęstszy skok
+// z klawisza). AGENT: zespół T (2026-10-26) — na mapie C kontrola P4-mig nie przechodzi: duże ciało mijane < ~400 tys. j.
+// przed wyjściem zanurza się na froncie wyjścia z ~73 px do 0 w ~0,18 s (ostatni krok 3,2 → 0,3 px — próg POP_RATIO);
+// dawny S3 (wyjście 500 tys. j. za trawersem) tego nie pokrywał. Z mapą O1 (worldLens.js z worktree warp-o1, 2026-10-26)
+// S9 (u zespołu T — S7) P4-mig przechodzi (0 mignięć); mapa O1 scalona razem z T (2026-10-27).
+function scenarioS9() {
+  const JR = ORB('jupiter');
+  const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 200 * deg, mars: 120 * deg, jupiter: 0, saturn: 75 * deg, uranus: 110 * deg, neptune: 300 * deg };
+  const world = buildWorld(angles);
+  const u = { x: 0, y: 1 };
+  const leg = WD.WARP_EMERGENCY.dist;
+  const S0 = { x: JR - 300000, y: -leg / 2 };
+  return { name: 'S9', title: `Skok awaryjny ${Math.round(leg / 1000)} tys. j. w dziób (punkt w próżni), Jowisz 300 tys. j. z boku w połowie`,
+    world, S0, u, leg, target: null, origin: null, point: true, flyby: 'jupiter', flybyLat: 300000 };
 }
 
 // S4 — cel NA TLE (z = −50 000, bez ringu): kadr przylotu i trzymanie celu w perspektywie (recenzja 2026-10-26, ust. 1).
@@ -317,7 +340,7 @@ function scenarioS8() {
   return { name: 'S8', title: `Przylot do Io tuż po minięciu Jowisza (${Math.round(lat / 1000)} tys. j. z boku — 2 tys. j. za brzegiem studni; Io ${Math.round(D / 1000)} tys. j. od Jowisza), odcinek ${Math.round(leg / 1000)} tys. j.`,
     world, S0, u, leg, target: 'io', origin: null, free: false, exitBody: 'jupiter' };
 }
-const SCEN_FN = { S1: scenarioS1, S2: scenarioS2, S3: scenarioS3, S4: scenarioS4, S5: scenarioS5, S6: scenarioS6, S7: scenarioS7, S8: scenarioS8 };
+const SCEN_FN = { S1: scenarioS1, S2: scenarioS2, S3: scenarioS3, S4: scenarioS4, S5: scenarioS5, S6: scenarioS6, S7: scenarioS7, S8: scenarioS8, S9: scenarioS9 };
 
 function zoneAt(x, y, sc) {
   const r = hyp(x, y);
@@ -447,7 +470,9 @@ function simulate(sc, H, k1) {
     // ---- kamera (raz na klatkę: stepCameraRigWarp → zoom → stepCameraRig), osie ekranu (kurs w górę)
     const exitAge = state === 'exit' ? t - exitT0 : -1;
     const camExitAge = state === 'exit' && exitAge < ramp.tHalt + WD.WARP_EXIT.settle + 0.3 ? exitAge : -1;
-    const arrivalDist = tgtW ? Math.max(0, hyp(tgtW.x - shipX, tgtW.y - shipY) - tgtW.r) : -1;
+    // punkt w próżni (skok awaryjny — S3): kadr przylotu K1 z odległością 0 — kadr skoku bez odsuwania (index.html:
+    // updateCameraWarpKick, DECYZJE-2 T2)
+    const arrivalDist = tgtW ? Math.max(0, hyp(tgtW.x - shipX, tgtW.y - shipY) - tgtW.r) : (sc.point ? 0 : -1);
     // index.html: updateCameraWarpKick — kadr przylotu z odległości od brzegu tarczy celu, cel na tle z perspektywą
     // (input.arrivalDepthK = warpArrivalDepthK(H) — tu ogniskowa z H, jak kamera gry w px CSS)
     const rigState = state === 'exit' || state === 'aborted' ? 'idle' : state;

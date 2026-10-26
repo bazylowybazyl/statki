@@ -32,7 +32,8 @@ import { HALL_DUST_IN } from '../3d/gasField/hallDustLayout.js';
 // 2 (2026-10-25): WORLD — warp gracza w pełnym kształcie (warpWorldMirror.js: rampa, ślizg, kurs x / y, ciała, zegary,
 // kotwica kadru); dawne WARP_DIR (obiekt pakowany jako liczba — zawsze NaN) zniknęło.
 // 3 (2026-10-26): WORLD — oś β soczewki świata (WARP_LENS_*: rekord stepWarpLensPhase strony gry).
-export const SNAPSHOT_LAYOUT_VERSION = 3;
+// 4 (2026-10-26, DECYZJE-2 T2): WORLD — plan trasy skoku gracza (WARP_ROUTE_*: warp.route z planPlayerWarp).
+export const SNAPSHOT_LAYOUT_VERSION = 4;
 
 function fields(names) {
   const o = {};
@@ -265,6 +266,14 @@ export const WORLD = fields([
   'WARP_LENS_STATE', 'WARP_LENS_CHARGE', 'WARP_LENS_KICK_AGE', 'WARP_LENS_EXIT_AGE', 'WARP_LENS_EXIT_SLOW',
   'WARP_LENS_EXIT_HALT', 'WARP_LENS_EXIT_BETA', 'WARP_LENS_ABORT_AGE', 'WARP_LENS_ABORT_BETA', 'WARP_LENS_HYPER',
   'WARP_LENS_ARRIVING', 'WARP_LENS_ZOOM_REF', 'WARP_LENS_ZOOM_JUMP', 'WARP_LENS_ARRIVAL_FILL', 'WARP_LENS_BETA',
+  // plan trasy skoku (układ 4, DECYZJE-2 T2 — warp.route, warpWorldMirror.js: WARP_ROUTE_FIELDS): rodzaj i przylot
+  // (słownik; −1 — brak / poza skokiem), punkt skoku, miejsce zatrzymania, droga, czasy (początek wyjścia, zatrzymanie),
+  // prędkość przelotowa, mijane ciało (indeks jak WARP_TARGET_BODY, miejsce względem punktu skoku, chwila trawersu),
+  // pierwszy przelot przez pas (drogi i chwile)
+  'WARP_ROUTE_KIND', 'WARP_ROUTE_ARRIVE', 'WARP_ROUTE_X0', 'WARP_ROUTE_Y0', 'WARP_ROUTE_X1', 'WARP_ROUTE_Y1',
+  'WARP_ROUTE_DIST', 'WARP_ROUTE_EXIT_T', 'WARP_ROUTE_TIME', 'WARP_ROUTE_CRUISE', 'WARP_ROUTE_FLY_BODY',
+  'WARP_ROUTE_FLY_ALONG', 'WARP_ROUTE_FLY_LATERAL', 'WARP_ROUTE_FLY_T', 'WARP_ROUTE_BELT_IN', 'WARP_ROUTE_BELT_OUT',
+  'WARP_ROUTE_BELT_T_IN', 'WARP_ROUTE_BELT_T_OUT',
   'BOOST_STATE',
   // hipercruise gracza w kształcie warpa (GameState.hyper — efekt „silnika warp” w hipercruisie, E5 2026-10-22)
   'HYPER_STATE', 'HYPER_CHARGE', 'HYPER_CHARGE_TIME', 'HYPER_SPEED', 'HYPER_VMAX', 'HYPER_DIR',

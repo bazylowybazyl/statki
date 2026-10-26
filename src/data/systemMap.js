@@ -212,7 +212,8 @@ export function computeWorldRadius(beltEdgeAu = 0, options = {}) {
  * raz, zamiast szacować gdziekolwiek indziej.
  *
  * `angleFor(def, index)` pozwala wstrzyknąć deterministyczne kąty w testach
- * i w skryptach pomiarowych; gra losuje je przy każdym starcie.
+ * i w skryptach pomiarowych; gra podaje kąty z ziarna świata zapisu (systemMapAngleForSeed — DECYZJE-2 T3),
+ * bez `angleFor` kąty są losowe.
  */
 export function buildSystemMap(beltEdgeAu = 0, options = {}) {
   const planets = options.planets || SYSTEM_MAP_PLANETS;
@@ -256,6 +257,72 @@ export function buildSystemMap(beltEdgeAu = 0, options = {}) {
   });
 
   return { auInWorldUnits, planets: layout };
+}
+
+/**
+ * STAŁE KĄTY PLANET W ZAPISIE (DECYZJE-2 T3, 2026-10-26; user: „planety w stałych miejscach w danym zapisie — trasy
+ * da się dopracować po kolei”): ziarno świata (uint32) daje kąt każdej planety deterministycznie z ziarna i id planety
+ * (nie z kolejności tabeli — nowa planeta w tabeli nie przestawia pozostałych). Gra: ziarno z zapisu gry (klucz
+ * `economy`, pole `worldSeed` — resolveWorldSeed), bez zapisu — nowe; `?ziarno=<liczba>` / `nowe`. AGENT: „Nowa gra” nie przeładowuje strony, a autozapis niesie to samo ziarno,
+ * więc w praktyce układ jest stały na profil przeglądarki (odstępstwo od DECYZJE-2 T3 „nowa gra = nowe ziarno” — do decyzji
+ * użytkownika).
+ */
+export function normalizeWorldSeed(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > 0xFFFFFFFF || Math.floor(n) !== n) return null;
+  return n >>> 0;
+}
+
+function hashSeedId(seed, id) {
+  // FNV-1a po id, zmieszane z ziarnem, na końcu mieszanie murmur3 (fmix32) — równomierny rozkład kątów
+  let h = (0x811C9DC5 ^ (seed >>> 0)) >>> 0;
+  const s = String(id);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85EBCA6B) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xC2B2AE35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/** Kąt planety `id` [rad, 0…2π) z ziarna świata. */
+export function planetAngleFromSeed(seed, id) {
+  return (hashSeedId(normalizeWorldSeed(seed) ?? 0, id) / 4294967296) * Math.PI * 2;
+}
+
+/**
+ * Ziarno świata przy starcie strony (zanim powstaną planety): `?ziarno=<uint32>` (A/B, narzędzia, symulator tras),
+ * `?ziarno=nowe` — nowe; inaczej ziarno z zapisu gry (`saved` — obiekt albo tekst JSON klucza `economy`, tylko wersja
+ * `version` = ECONOMY_SAVE_VERSION — economySave.js); bez zapisu — nowe z `random()` (rozgrywka, nie obraz).
+ * Wynik: { seed, source: 'url' | 'save' | 'new' }.
+ */
+export function resolveWorldSeed(search, saved, version, random = Math.random) {
+  let param = null;
+  try { param = new URLSearchParams(String(search || '')).get('ziarno'); } catch { param = null; }
+  const fresh = () => ((Number(random()) || 0) * 4294967296) >>> 0;
+  if (param === 'nowe' || param === 'new') return { seed: fresh(), source: 'new' };
+  const fromUrl = normalizeWorldSeed(param);
+  if (fromUrl !== null) return { seed: fromUrl, source: 'url' };
+  let state = saved;
+  if (typeof state === 'string') {
+    try { state = JSON.parse(state); } catch { state = null; }
+  }
+  if (state && typeof state === 'object' && state.version === version) {
+    const s = normalizeWorldSeed(state.worldSeed);
+    if (s !== null) return { seed: s, source: 'save' };
+  }
+  return { seed: fresh(), source: 'new' };
+}
+
+/** `angleFor` dla buildSystemMap z ziarna świata (kąt z id planety). */
+export function systemMapAngleForSeed(seed) {
+  const s = normalizeWorldSeed(seed) ?? 0;
+  return (def) => planetAngleFromSeed(s, def?.id);
 }
 
 /**
