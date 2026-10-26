@@ -561,6 +561,13 @@ export class SnapshotPacker {
     h[HEAD.INTERP_X] = ip ? raw(ip.x) : NaN;
     h[HEAD.INTERP_Y] = ip ? raw(ip.y) : NaN;
     h[HEAD.INTERP_ANGLE] = ip ? raw(ip.angle) : NaN;
+    // okręt prowadzony przez kamerę (fregata zwiadu — window.__cameraLead strony; w = 0 — statek gracza)
+    const cl = f.cameraLead;
+    const lw = cl ? num(cl.w) : 0;
+    h[HEAD.LEAD_W] = lw;
+    h[HEAD.LEAD_X] = lw > 0 ? raw(cl.x) : 0;
+    h[HEAD.LEAD_Y] = lw > 0 ? raw(cl.y) : 0;
+    h[HEAD.LEAD_V] = lw > 0 ? num(cl.v) : 0;
     h[HEAD.EVENT_LAST] = 0;
   }
 

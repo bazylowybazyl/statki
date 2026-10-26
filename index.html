@@ -9769,6 +9769,14 @@
     let scoutCamW = 0;
     const _scoutCamPose = { x: 0, y: 0, angle: 0 };
     const scoutCamLast = { x: 0, y: 0 };
+    // Okręt prowadzony przez kamerę zamiast Atlasa (RenderWorld.cameraLead; worker — HEAD.LEAD_* migawki): fregata przy
+    // sterach, w = waga przejazdu kamery (rig w render() poniżej). Niebo-sfera (src/3d/sky3D.js) obraca się z JEGO drogi.
+    window.__cameraLead = {
+      get w() { return camera.mode === 'ship' ? scoutCamW : 0; },
+      get x() { return scoutCamLast.x; },
+      get y() { return scoutCamLast.y; },
+      get v() { const n = ScoutBay.npc; return ScoutBay.controlling && n && !n.dead ? Math.sqrt((Number(n.vx) || 0) ** 2 + (Number(n.vy) || 0) ** 2) : 0; }
+    };
 
 
     // Statek gracza bez napędu głównego, chyba że jedzie na pokładzie holownika (skok robi wtedy holownik).
@@ -29382,6 +29390,7 @@
       f.cam2 = window.__splitCamera2;
       f.cull = fillHexCullInfo(cam, _snapCull, _snapCullBox3D);
       f.interpPose = window.__interpShipPose;
+      f.cameraLead = window.__cameraLead;
       f.ship = ship;
       f.p2 = player2Ship;
       f.poseOf = npcRenderLerpOn ? _snapPoseLerp : (ServiceTugGame.missions.length ? _snapTugPose : null);

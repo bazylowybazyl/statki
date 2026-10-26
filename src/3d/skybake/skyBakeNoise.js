@@ -181,6 +181,31 @@ export const skyFbm3 = /*@__PURE__*/ Fn(([p, oct, lac, gain]) => {
   inputs: [{ name: 'p', type: 'vec3' }, { name: 'oct', type: 'int' }, { name: 'lac', type: 'float' }, { name: 'gain', type: 'float' }]
 });
 
+/**
+ * Grzbietowy multifraktal 3D (jak skyRidged) — włókna pyłu galaktyki na sferze (szum walcowy wzdłuż pasa, tryb sfery
+ * wypiekacza). Wynik [0, 1].
+ */
+export const skyRidged3 = /*@__PURE__*/ Fn(([p, oct, lac, gain]) => {
+  const sum = float(0).toVar();
+  const norm = float(0).toVar();
+  const amp = float(1).toVar();
+  const w = float(1).toVar();
+  const q = vec3(p).toVar();
+  Loop({ start: 0, end: oct, type: 'int', condition: '<', name: 'o' }, () => {
+    const s = float(1.0).sub(abs(noise3At(q))).toVar();
+    s.assign(s.mul(s).mul(w));
+    sum.addAssign(s.mul(amp));
+    norm.addAssign(amp);
+    w.assign(clamp(s.mul(1.8), 0.0, 1.0));
+    q.assign(rotOct3(q).mul(lac).add(vec3(5.1, 11.9, 2.7)));
+    amp.mulAssign(gain);
+  });
+  return sum.div(max(norm, 1e-6));
+}).setLayout({
+  name: 'skyRidged3', type: 'float',
+  inputs: [{ name: 'p', type: 'vec3' }, { name: 'oct', type: 'int' }, { name: 'lac', type: 'float' }, { name: 'gain', type: 'float' }]
+});
+
 /** Kłębiasty szum 3D (suma |n|) — „kalafior” kłębów mgławicy, [0, ~1]. */
 export const skyBillow3 = /*@__PURE__*/ Fn(([p, oct, lac, gain]) => {
   const sum = float(0).toVar();

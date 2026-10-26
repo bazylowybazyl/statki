@@ -1,7 +1,10 @@
 // Tło kosmosu w PRAWDZIWEJ grze: Vite + headless Chrome z WebGPU, bez zmian w kodzie gry.
 //
 //   node scripts/webgpu/niebo-gra.mjs [--tekstura .tmp/niebo/nebula-gra-1.png] [--nazwa b] [--out .tmp/niebo/gra]
-//        [--zoomy 0.2,0.45,0.9] [--rozmiar 1920x1080]
+//        [--zoomy 0.2,0.45,0.9] [--rozmiar 1920x1080] [--query niebo=sfera] [--klip 1]
+//
+// --query — doklejane do adresu gry (`niebo=sfera` — niebo-sfera DECYZJE-2 N1–N3, `renderWorker=1` — tryb gracza).
+// --klip 1 — lot z prędkością bojową w pustce: 4 kadry co 1 s (ruch nieba) + sonda nieba-sfery (tempo, pamięć nieba).
 //
 // --tekstura: kandydat z wypiekacza (dema/niebo-webgpu.html) podstawiany w odpowiedzi na żądanie
 // assets/nebula.webp / .png (CDP Fetch) — gra, menu i kamery 3D czytają go jak prawdziwy plik. Bez
@@ -18,6 +21,7 @@ mkdirSync(out, { recursive: true });
 const name = args.nazwa || (args.tekstura ? 'b' : 'a');
 const zoomy = String(args.zoomy || '0.2,0.45,0.9').split(',').map(Number);
 const texFile = args.tekstura ? resolve(repo, args.tekstura) : null;
+const query = args.query ? `&${args.query}` : '';
 if (texFile && !existsSync(texFile)) throw new Error(`brak tekstury ${texFile}`);
 
 const { server, base } = await startVite(Number(args.port || 5431));
@@ -25,7 +29,7 @@ const chrome = await startChrome({ width: W, height: H });
 const logs = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 120000) => evaluate(cdp, e, t);
-const report = { tekstura: texFile, kadry: [], podmiany: 0 };
+const report = { tekstura: texFile, query: args.query || '', kadry: [], podmiany: 0 };
 
 if (texFile) {
   const body = readFileSync(texFile).toString('base64');
@@ -55,7 +59,7 @@ async function shot(label) {
 const setZoom = (z) => ev(`(() => { const c = window.camera; c.minZoom = Math.min(c.minZoom, ${z}); c.maxZoom = Math.max(c.maxZoom, ${z}); c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${z}; return true; })()`);
 
 try {
-  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
+  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1${query}` });
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship)', 240000, 400)) throw new Error('gra nie wstała');
   await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 500);
   await sleep(2500);
@@ -90,6 +94,21 @@ try {
     })()`);
     report[`kadr-z${z}`] = probe;
     console.log(`  z${z}:`, JSON.stringify(probe));
+  }
+  // --klip 1: lot w pustce z prędkością bojową — kadry co 1 s (ruch nieba na ekranie) i sonda nieba-sfery
+  if (args.klip === '1') {
+    await setZoom(0.45);
+    const probeSky = () => ev(`(() => { const S = window.Core3D?.skySphere; if (!S) return null;
+      return { aktywne: S.active, tempoCss: S.speedCss, obrot: S.scroll.turned, ciecia: S.scroll.cuts, pamiec: { ...S.cacheStats },
+        q: Array.from(S.scroll.q).map((v) => +v.toFixed(6)) }; })()`);
+    report.klip = { start: await probeSky(), kadry: [] };
+    await ev(`(() => { const s = window.ship; const a = -0.6; s.angle = a; const v = 600;
+      if (s.vel) { s.vel.x = Math.cos(a) * v; s.vel.y = Math.sin(a) * v; } if ('vx' in s) { s.vx = Math.cos(a) * v; s.vy = Math.sin(a) * v; } return true; })()`);
+    for (let i = 0; i < 4; i++) {
+      await shot(`klip-${i}`);
+      report.klip.kadry.push(await probeSky());
+    }
+    console.log('  klip:', JSON.stringify(report.klip.kadry[report.klip.kadry.length - 1]));
   }
   // --koszt: czas klatki GPU (Core3D.gpuFrameMs, średnia ~3 s) z mgławicą i bez — koszt materiału tła z gwiazdami.
   if (args.koszt) {
