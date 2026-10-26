@@ -24,6 +24,7 @@ import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { sunShadeUnlit } from './hexShips3D.tsl.js';
 import { averageImageRGB } from '../render/bodyColor.js';
+import { zbierzZakres } from './zakresyWysylki.js';
 
 const MAX_IMPOSTORS = 2048;
 
@@ -195,6 +196,8 @@ export const HexBodyImpostorBatch = {
   getCount() { return count; },
 
   dispose() {
+    // kropki soczewki (HexBodyLensBatch) dzielą materiał — najpierw one
+    HexBodyLensBatch.dispose();
     if (mesh) {
       if (mesh.parent) mesh.parent.remove(mesh);
       mesh.material.dispose();
@@ -204,5 +207,98 @@ export const HexBodyImpostorBatch = {
     geo = null;
     arrays = null;
     count = 0;
+  }
+};
+
+// SOCZEWKA ŚWIATA — KROPKI FLOT, NPC I WRAKÓW (DECYZJE E2 / E3, etap 3A 2026-10-26): druga partia smug na TYM SAMYM
+// materiale (ten sam graf TSL i układ atrybutów — ten sam pipeline, rozgrzany wpisem niżej), siatka na z = WARP_LENS_DOT_Z
+// pod płaszczyzną gry: kropki soczewki skoku gracza rysują się w passie gry POD kadłubami (test głębi, bez zapisu) —
+// nic z soczewki nie leży na statku. Jeden rysunek, tylko w skoku (pusta partia — schowana). Pisze hexShips3D
+// (encje z kropką soczewki — `lensDot`, zimne wraki, rekordy dodatkowe ze smugą: olbrzymy pasa). Wysyłka zakresami
+// (zakresyWysylki.js), bez DynamicDrawUsage.
+export const WARP_LENS_DOT_Z = -640;
+const LENS_MAX = 2048;
+let lensMesh = null;
+let lensGeo = null;
+let lensArrays = null;
+let lensCount = 0;
+const lensOrigin = { x: 0, y: 0 };
+
+function ensureLensBuilt() {
+  if (lensMesh) return true;
+  if (!ensureBuilt()) return false;
+  const base = new THREE.PlaneGeometry(1, 1);
+  lensGeo = new THREE.InstancedBufferGeometry();
+  lensGeo.index = base.index;
+  lensGeo.setAttribute('position', base.attributes.position);
+  lensGeo.setAttribute('uv', base.attributes.uv);
+  lensGeo.instanceCount = 0;
+  lensArrays = {};
+  for (const [name, itemSize] of [['aPos', 2], ['aRot', 1], ['aSize', 2], ['aColor', 3], ['aOpacity', 1]]) {
+    const array = new Float32Array(LENS_MAX * itemSize);
+    lensGeo.setAttribute(name, new THREE.InstancedBufferAttribute(array, itemSize));
+    lensArrays[name] = array;
+  }
+  lensMesh = new THREE.Mesh(lensGeo, mesh.material);
+  lensMesh.name = 'HexBodyLensBatch';
+  lensMesh.frustumCulled = false;
+  lensMesh.renderOrder = 8;
+  lensMesh.visible = false;
+  Core3D.scene.add(lensMesh);
+  return true;
+}
+
+Core3D.warmup?.add({ name: 'kropki soczewki skoku (HexBodyLensBatch)', objects: () => (ensureLensBuilt() ? lensMesh : null), layer: 0, phase: 'loading' });
+
+export const HexBodyLensBatch = {
+  MAX_IMPOSTORS: LENS_MAX,
+
+  /** Początek klatki (po Core3D.syncCamera): pusta partia, początek układu przy kamerze (sceneOrigin.js). */
+  begin() {
+    lensCount = 0;
+    sceneOriginNearCamera(lensOrigin);
+  },
+
+  /** Smuga w scenie (x, −y gry), obrót sceny, połowy boków [j. sceny], barwa, krycie. false — partia pełna. */
+  pushRaw(x, y, rot, halfW, halfH, r, g, b, opacity) {
+    if (!ensureLensBuilt()) return false;
+    if (lensCount >= LENS_MAX) return false;
+    const i = lensCount++;
+    const i2 = i * 2;
+    const i3 = i * 3;
+    lensArrays.aPos[i2] = x - lensOrigin.x;
+    lensArrays.aPos[i2 + 1] = y - lensOrigin.y;
+    lensArrays.aRot[i] = rot;
+    lensArrays.aSize[i2] = halfW;
+    lensArrays.aSize[i2 + 1] = halfH;
+    lensArrays.aColor[i3] = r;
+    lensArrays.aColor[i3 + 1] = g;
+    lensArrays.aColor[i3 + 2] = b;
+    lensArrays.aOpacity[i] = opacity;
+    return true;
+  },
+
+  flush() {
+    if (!lensMesh) return;
+    const visible = lensCount > 0;
+    if (lensMesh.visible !== visible) lensMesh.visible = visible;
+    if (lensGeo.instanceCount !== lensCount) lensGeo.instanceCount = lensCount;
+    if (!visible) return;
+    lensMesh.position.set(lensOrigin.x, lensOrigin.y, WARP_LENS_DOT_Z);
+    for (const name in lensArrays) {
+      const attr = lensGeo.getAttribute(name);
+      zbierzZakres(attr, 0, lensCount * attr.itemSize);
+    }
+  },
+
+  getCount() { return lensCount; },
+
+  dispose() {
+    if (lensMesh && lensMesh.parent) lensMesh.parent.remove(lensMesh);
+    if (lensGeo) lensGeo.dispose();
+    lensMesh = null;
+    lensGeo = null;
+    lensArrays = null;
+    lensCount = 0;
   }
 };

@@ -355,6 +355,20 @@ test('mgła wojny: SEEN bez ukrytych; zimne wraki z ciałem w SEEN_COLD; stacje'
   assert.equal(packer.stats.stations, 1);
 });
 
+test('soczewka skoku (E2, W3): zimny wrak zastąpiony smugą soczewki — bez dodatków (COLD_NEAR), pozostałe zostają', () => {
+  const ents = [makeShip(1, 0, 0), makeShip(2, 10, 0), makeShip(3, 20, 0)];
+  const coldDot = { isCold: true, dead: false, beamHull: ents[1].beamHull, x: 0, y: 0, __lensDot: true };
+  const coldNear = { isCold: true, dead: false, beamHull: ents[2].beamHull, x: 0, y: 0, __lensDot: false };
+  const packer = new SnapshotPacker({ shared: false });
+  const frame = baseFrame([ents[0]], { lensDots: true, hides: () => false, coldRenderList: [coldDot, coldNear] });
+  packer.begin(frame); packer.finish(frame);
+  assert.deepEqual(packer._lists[LIST.COLD_NEAR], [coldNear], 'w skoku tylko wrak bez kropki');
+  // poza skokiem flaga nie liczy się (strona zdejmuje ją i tak — withColdNearWrecks)
+  const frame2 = baseFrame([ents[0]], { lensDots: false, coldRenderList: [coldDot, coldNear] });
+  packer.begin(frame2); packer.finish(frame2);
+  assert.equal(packer._lists[LIST.COLD_NEAR].length, 2);
+});
+
 test('worker (consumeDirty: odbior): brud skóry zdejmowany dopiero po odbiorze strony — pominięta strona nie gubi węzłów', () => {
   // Worker bierze NAJNOWSZĄ stronę: strona k z listą brudnych węzłów bywa pominięta. Dawniej lista wychodziła raz (flagi
   // gry zerowane przy pakowaniu) — przy pominięciu worker dostawał węzły bez ich numerów na liście i nie przepisywał

@@ -4,7 +4,7 @@
 // w kadrze, a grupa schowana). Zgłoszenie usera 2026-10-19: „mijane planety lubią dziwnie skakać, planeta docelowa
 // pokazuje się na chwilę, potem jej nie widać i znowu wskakuje — przy przybliżonej kamerze najbardziej”.
 //
-//   node scripts/webgpu/warp-ped-skoki.mjs [--zoomy 0.06,0.2,0.6,1.2] [--kamera up,off] [--style ped]
+//   node scripts/webgpu/warp-ped-skoki.mjs [--zoomy 0.06,0.2,0.6,1.2] [--kamera up,off] [--osrodek 0|1]
 //     [--trasa jowisz|mars] [--prog 25] [--out .tmp/warp-ped/skoki] [--zrzuty 1] [--zoomSkoku staly,gracz]
 //
 // Wynik: tabela na konsoli, <out>/raport.json (zdarzenia z kontekstem; `cel` — przebieg celu od wyjścia: czas, β,
@@ -18,7 +18,8 @@ const [W, H] = (args.rozmiar || '1600x900').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/warp-ped/skoki');
 const zoomy = String(args.zoomy || '0.06,0.2,0.6,1.2').split(',').map(Number);
 const kamery = String(args.kamera || 'up,off').split(',');
-const style = String(args.style || 'ped');
+// Jeden warp (sprzątanie S1, 2026-10-26 — style skoku usunięte); ośrodek drobin tylko A/B (`--osrodek 1`).
+const osrodek = String(args.osrodek || '0') === '1';
 const zoomySkoku = String(args.zoomSkoku || 'staly').split(',');
 const prog = Number(args.prog || 25);
 mkdirSync(out, { recursive: true });
@@ -139,7 +140,7 @@ function analyze(rows) {
 }
 
 try {
-  await cdp.send('Page.navigate', { url: `${base}/dema/warp-ped.html?test=1&styl=${style}${args.trasa ? `&trasa=${args.trasa}` : ''}` });
+  await cdp.send('Page.navigate', { url: `${base}/dema/warp-ped.html?test=1${osrodek ? '&warpOsrodek=1' : ''}${args.trasa ? `&trasa=${args.trasa}` : ''}` });
   if (!await waitFor(cdp, '!!(window.__warpPed && (window.__warpPed.ready || window.__warpPed.error))', 300000, 500)) throw new Error('demo nie wstało');
   const err = await ev('window.__warpPed.error || null');
   if (err) throw new Error(`demo: ${err}`);
@@ -147,7 +148,7 @@ try {
   const poT = Number(args.po || 4);
   for (const zs of zoomySkoku) for (const kam of kamery) {
     for (const z of zoomy) {
-      await ev(`(() => { const d = window.__warpPed; d.setStyle(${JSON.stringify(style)}); d.setCamRoll(${JSON.stringify(kam)}); d.setWarpZoom(${JSON.stringify(zs)}); d.setZoom(${z}); return true; })()`);
+      await ev(`(() => { const d = window.__warpPed; d.setMedium(${osrodek}); d.setCamRoll(${JSON.stringify(kam)}); d.setWarpZoom(${JSON.stringify(zs)}); d.setZoom(${z}); return true; })()`);
       const { rows, cel } = await ev(RECORD(poT));
       const { perBody, ev: zdarzenia } = analyze(rows);
       const celA = analyzeTarget(cel);

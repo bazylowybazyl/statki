@@ -65,7 +65,6 @@ function gameView(warp, g) {
   g.state = warp.state;
   g.charge = warp.chargeTime > 0 ? Math.min(1, (Number(warp.charge) || 0) / warp.chargeTime) : 0;
   g.chargeTime = Number(warp.chargeTime) || 0.8;
-  g.gear = warp.gear || 1;
   g.angle = warp.state === 'active' && warp.dir && (warp.dir.x || warp.dir.y) ? Math.atan2(warp.dir.y, warp.dir.x) : g.poseAngle;
   g.exitRamp = warp.exitRamp || null;
   g.flyby = Number.isFinite(warp.flybyFactor) ? warp.flybyFactor : 1;
@@ -81,13 +80,14 @@ test('warpNurt czyta z obiektu warpa te pola, które kopiuje gameView testu (str
     /g\.state = warp\.state;/,
     /g\.charge = warp\.chargeTime > 0 \? Math\.min\(1, \(Number\(warp\.charge\) \|\| 0\) \/ warp\.chargeTime\) : 0;/,
     /g\.chargeTime = Number\(warp\.chargeTime\) \|\| 0\.8;/,
-    /g\.gear = warp\.gear \|\| 1;/,
     /g\.angle = warp\.state === 'active' && warp\.dir && \(warp\.dir\.x \|\| warp\.dir\.y\) \? Math\.atan2\(warp\.dir\.y, warp\.dir\.x\) : pose\.angle;/,
     /g\.exitRamp = warp\.exitRamp \|\| null;/,
     /g\.flyby = Number\.isFinite\(warp\.flybyFactor\) \? warp\.flybyFactor : 1;/,
     /g\.cruise = Number\(warp\.cruise\) \|\| Number\(warp\.speed\) \|\| 0;/,
     /L\.target = o\.warp\?\.targetBody \|\| null;/
   ]) assert.match(src, re);
+  // bieg warpa (`warp.gear`) — martwy od jednej prędkości skoku; sterownik go nie czyta (sprzątanie S1, 2026-10-26)
+  assert.doesNotMatch(src, /warp\.gear/);
   // każde pole obiektu warpa czytane przez sterownik i moduły renderu (warpNurt, plazma dysz, lakier) jest w lustrze
   const mir = createWarpWorldMirror();
   const fields = new Set();

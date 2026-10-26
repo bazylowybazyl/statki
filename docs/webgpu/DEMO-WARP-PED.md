@@ -1,5 +1,11 @@
 # Demo warpa „Pęd” (2026-10-19)
 
+> **STAN (2026-10-26): dokument historyczny.** Style skoku (rulon / pęd / akcenty / soczewka bańki) i ich wybór
+> (`?warp=`, `?styl=`, klawisze 1–4) są usunięte z gry i z dema — jest JEDEN warp gracza „podniesiony świat”
+> (świat w soczewce, mapa C, oś β z zegara gry, kadr przylotu K1, ośrodek drobin tylko A/B `?warpOsrodek=1`, klawisz O
+> w demie). Opis bieżący, decyzje i lista sprawdzeń w grze: `docs/webgpu/WARP-SOCZEWKA.md`; reguła: `.claude/rules/warp.md`.
+> Sekcje niżej („W grze dziś”, „Po decyzji usera”, narzędzia z `--style`) opisują stan z 2026-10-19 – 10-23.
+
 `dema/warp-ped.html` (+ `dema/warp-ped.js`). Porównanie stylów skoku Atlasa i wyjścia z warpa — na PRAWDZIWYCH
 modułach gry, bez kopii (inaczej niż `dema/warp-webgpu`, którego port do gry kosztował zadanie 22 i kilka rund
 „w demie było inaczej”).

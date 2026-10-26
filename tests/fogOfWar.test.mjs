@@ -225,7 +225,8 @@ test('wpięcie w grę: render, celowanie, HUD i post respektują mgłę (źród�
   assert.match(html, /updateShields3D\(PAUSED \? 0 : frameDt, renderSeen,/);
   assert.match(html, /syncShipModels3D\(\{ entities: renderSeenCold,/);
   // RW-11a: lustra (`?szew=inline`) — flaga mgły ze strony migawki (to samo pytanie przy pakowaniu)
-  assert.match(html, /setEntityHiddenTest\(\(e\) => \(e\.__mirror === true \? e\.fogHidden : SensorSystem\.hides\(e\)\)\);/);
+  // (+ kropka soczewki skoku gracza — etap 3A: encję zastąpioną kropką soczewki chowa ten sam predykat)
+  assert.match(html, /setEntityHiddenTest\(\(e\) => \(e\.__mirror === true \? e\.fogHidden : \(SensorSystem\.hides\(e\) \|\| e\.__lensDot === true\)\)\);/);
   assert.match(html, /setWorld3DHiddenTest\(\(st\) => SensorSystem\.hides\(st\)\);/);
   assert.match(html, /isPlayerLockTargetInRange\(target\) && !SensorSystem\.hides\(target\);/, 'namiar tylko na widziane');
   assert.match(html, /if \(SensorSystem\.hides\(e\)\) return;   \/\/ mgła wojny: wieże/, 'wieże na auto nie strzelają w mgłę');
@@ -237,7 +238,10 @@ test('wpięcie w grę: render, celowanie, HUD i post respektują mgłę (źród�
   assert.match(hex, /if \(entity\.__hiddenFromView === true\) continue;   \/\/ mgła wojny: cień zdradzałby okręt/);
   // siatka zostaje (validSet przed testem) — bez przebudowy skóry na brzegu kręgu wzroku
   const loop = hex.slice(hex.indexOf('if (hasBody) validSet.add(entity);'), hex.indexOf('if (entityHiddenTest && entityHiddenTest(entity))'));
-  assert.ok(loop.length > 0 && loop.length < 80);
+  // między nimi tylko kropka soczewki skoku (etap 3A — kropka ukrytej mgłą encji nie powstaje: flaga strony gry)
+  const bare = loop.replace(/\s*\/\/[^\n]*\n/g, '\n')
+    .replace(/\s*if \(lensDots && lensDotFlag\(entity\) && pushEntityLensDot\(entity\)\) lodFrameStats\.lensDots\+\+;/, '');
+  assert.ok(loop.length > 0 && bare.length < 80, bare);
   const core = read('src/3d/core3d.js');
   const render = core.slice(core.indexOf('\n  render() {'), core.indexOf('\n  _runScenePass('));
   assert.ok(render.indexOf('this._updateFogUniforms(freePerspective);') > render.indexOf('this.syncCamera(this.activeCam1, this.composerTarget.width'), 'rzut na kamerę TEGO renderu');

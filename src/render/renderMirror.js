@@ -47,6 +47,7 @@ export class MirrorEntity {
     this.__lightsHidden = false; this.__enginesHidden = false; this.__turretsHidden = false;
     this.__editorBoost = false; this.__fSysBoost = false; this.__warpPreview = false; this.__hyperMode = undefined;
     this.fogHidden = false;
+    this.lensDot = false;   // kropka soczewki skoku gracza zamiast skóry (ENT_FLAG.LENS_DOT — hexShips3D: HexBodyLensBatch)
     this.state = undefined; this.phase = undefined;
     this.id = undefined; this.uid = undefined; this.name = undefined;
     this.type = undefined; this.shipFrame = undefined; this.activeHullId = undefined;
@@ -215,6 +216,7 @@ export function applyEntityPage(rm, m, v, s) {
   m.__fSysBoost = (flags & ENT_FLAG.FSYS_BOOST) !== 0;
   m.__warpPreview = (flags & ENT_FLAG.WARP_PREVIEW) !== 0;
   m.fogHidden = (flags & ENT_FLAG.FOG_HIDDEN) !== 0;
+  m.lensDot = (flags & ENT_FLAG.LENS_DOT) !== 0;
   const dict = rm.dict;
   m.state = dict.value(i32[bi + EI.STATE]);
   m.phase = dict.value(i32[bi + EI.PHASE]);

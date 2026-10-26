@@ -134,11 +134,15 @@ export const ENT = record({
   ]
 });
 
-/** Bity ENT.FLAGS. 131072 i 524288 wolne (dawne HAS_HEXGRID i ASTEROID_HEX — kadłuby heksowe, usunięte 2026-10-19). */
+/**
+ * Bity ENT.FLAGS. 524288 wolne (dawne ASTEROID_HEX — kadłuby heksowe, usunięte 2026-10-19). LENS_DOT (131072, dawne
+ * HAS_HEXGRID) — encję zastępuje w skoku gracza kropka soczewki świata (index.html: stampWarpLensDots; FOG_HIDDEN też
+ * ustawione — skóra i dodatki schowane, mgła wojny ma pierwszeństwo: ukryta mgłą nie ma LENS_DOT).
+ */
 export const ENT_FLAG = Object.freeze({
   DEAD: 1, WRECK: 2, FRAGMENT: 4, PLAYER: 8, P2: 16, FOG_HIDDEN: 32, BRIDGE_HULK: 64, LIGHTS_OFF: 128,
   ROAD_LIGHTS_OFF: 256, COLD: 512, HAS_POS: 1024, HAS_SHIELD: 2048, HAS_CLOAK: 4096, PIRATE: 8192,
-  FRIENDLY: 16384, HIDE_HEX: 32768, HAS_VEL: 65536, RING_SEGMENT: 262144,
+  FRIENDLY: 16384, HIDE_HEX: 32768, HAS_VEL: 65536, LENS_DOT: 131072, RING_SEGMENT: 262144,
   LIGHTS_HIDDEN: 1048576, ENGINES_HIDDEN: 2097152, TURRETS_HIDDEN: 4194304,
   EDITOR_BOOST: 8388608, FSYS_BOOST: 16777216, WARP_PREVIEW: 33554432, IGN_HOT: 67108864
 });

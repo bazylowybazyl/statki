@@ -68,6 +68,15 @@ import { MiningView } from './miningView.js';
 import { WarpDebris } from './warpDebris.js';
 import { WARP_STARS, WARP_STAR_CAMERA } from '../warp/stars.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
+import { warpLensExtraBody, setWarpLensExtra } from '../warp/worldLens.js';
+import { WARP_LENS_DOT_SWAP } from '../../render/warpLensPhase.js';
+
+// SOCZEWKA ŚWIATA — OLBRZYMY PASA (DECYZJE E1, etap 3A 2026-10-26): olbrzym ma rekord dodatkowy soczewki skoku gracza
+// (worldLens.js: `giant:<id>` — środek, promień = większa półoś, smuga `smudge`) w tym samym przebiegu co ciała; jego
+// obraz w skoku to IMPOSTOR — elipsa półosi × skala obrazu w barwie skały w partii kropek soczewki (hexShips3D:
+// HexBodyLensBatch, pod kadłubami), bez budowy SDF (pole olbrzyma powstaje < 420 tys. j. i w skoku i tak jest schowane).
+// Prawdziwy widok olbrzyma gaśnie, gdy jego obraz soczewki go zastępuje (udział soczewki ≥ WARP_LENS_DOT_SWAP).
+const GIANT_LENS_COLOR = Object.freeze({ r: 0.4, g: 0.37, b: 0.33 });
 
 /** Warstwy passów Core3D: gra (ortho) i tło (perspektywa). */
 export const BELT_LAYER_PLAY = 0;
@@ -433,6 +442,7 @@ export class AsteroidBelt {
    * Bez alokacji — zapamiętane referencje.
    */
   prepareFrame(time, dt, ship, player2, npcs) {
+    this._lensGiants();
     const i = this._in;
     i.time = Number(time) || 0;
     // dt SUMOWANE do zużycia przez krok pasa (raz na klatkę rAF Core3D.fx): kilka klatek gry na jedną klatkę rAF
@@ -783,6 +793,30 @@ export class AsteroidBelt {
     this.fog.U.sunOcc.value = 1;
   }
 
+  /** Rekordy soczewki olbrzymów (co klatkę, także poza skokiem — gotowe na pierwszą klatkę soczewki). */
+  _lensGiants() {
+    const giants = this.world?.giants;
+    if (!giants || !giants.entries) return;
+    const map = this._giantLens || (this._giantLens = new Map());
+    for (const e of giants.entries) {
+      let rec = map.get(e.id);
+      const R = Math.max(1, e.halfX, e.halfY);
+      if (!rec) {
+        rec = warpLensExtraBody(`giant:${e.id}`, 'small');
+        rec.smudge = { r: GIANT_LENS_COLOR.r, g: GIANT_LENS_COLOR.g, b: GIANT_LENS_COLOR.b, ax: e.halfX / R, ay: e.halfY / R, rot: 0 };
+        map.set(e.id, rec);
+      }
+      setWarpLensExtra(rec, e.x, e.y, R, 0);
+    }
+  }
+
+  /** Olbrzym zastąpiony obrazem soczewki skoku (smuga w HexBodyLensBatch) — prawdziwy widok schowany. */
+  _giantLensed(e) {
+    const rec = this._giantLens ? this._giantLens.get(e.id) : null;
+    const a = rec ? rec.anchor : null;
+    return !!(a && a.on && 1 - a.real >= WARP_LENS_DOT_SWAP);
+  }
+
   _updateGiants(dt, ox, oy) {
     const giants = this.giants;
     const v = this._view;
@@ -816,7 +850,8 @@ export class AsteroidBelt {
         Core3D.prewarmPass(view.mesh, BELT_LAYER_PLAY);
       }
       // Widoczny, gdy obrys olbrzyma dotyka kadru (z zapasem).
-      const vis = Math.abs(e.x - v.x) < halfW * 1.5 + e.halfX && Math.abs(e.y - v.y) < halfH * 1.5 + e.halfY;
+      const vis = Math.abs(e.x - v.x) < halfW * 1.5 + e.halfX && Math.abs(e.y - v.y) < halfH * 1.5 + e.halfY
+        && !this._giantLensed(e);
       view.setVisible(vis);
       if (!vis) continue;
       gf.sunT = this.sunT(e.x, e.y);

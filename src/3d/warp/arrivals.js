@@ -82,6 +82,8 @@ export const arrivalFxPose = arrivalAxisPose;
  * odsłanianie, żar), plazma (v.plasmaMode; v — ubiór, domyślnie sama oś). `ship` = { x, y, angle, vx, vy, visible } — poza
  * encji w świecie (albo null przed `attach`; drive — z arrivalFxPose). camX, camY — kamera.
  * Zwraca wstrząs 0..1 (× skala wołającego).
+ * AGENT: wynik nieczytany — `warpNurt.js: _updateArrivals` go pomija, wstrząsy przylotów i odlotów zgłasza gra
+ * (`src/game/warpShakes.js`). Usunąć razem z porządkami C2 (docs/webgpu/WARP-SOCZEWKA.md, „Otwarte sprawy”).
  */
 export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a) {
   const s = sampleWarpArrival(a, t, v.sample);
@@ -239,7 +241,7 @@ export function planWarpDepartureFx(o) {
 /** Pozycja okrętu w odlocie z osi (drive): świat, prędkość (oś: gra). */
 export const departFxPose = departAxisPose;
 
-/** Stan odlotu w chwili t → klatka, kadłub (v.hull), plazma (v — ubiór). Zwraca wstrząs. */
+/** Stan odlotu w chwili t → klatka, kadłub (v.hull), plazma (v — ubiór). Zwraca wstrząs (AGENT: nieczytany — jak wyżej). */
 export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d) {
   const s = sampleWarpDeparture(d, t, v.sample);
   const pal = v.pal;

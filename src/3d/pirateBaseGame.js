@@ -28,9 +28,79 @@ import { PirateRockSite3D } from './portBuildings/pirateRockSite3D.js';
 import { createPirateRockLayout } from './portBuildings/pirateRockLayout.js';
 import { RockImpactFx, setRockImpactHost } from './pirateRockImpactFx.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
+import { WARP_WORLD_LENS, warpLensExtraBody, setWarpLensExtra, lensImageToWorld, lensPivotElements } from './warp/worldLens.js';
 
 const LAYER_BG = 1;
 const LAYER_FG = 2;
+
+// SOCZEWKA ŚWIATA — HIDALGO I BAZA (DECYZJE E1, etap 3A 2026-10-26): planetoida ma rekord dodatkowy soczewki skoku
+// gracza (worldLens.js: `hidalgo` — środek skały W GŁĘBOKOŚCI sceny, promień skały, zasięg bazy jako rzecz przypięta)
+// jak małe ciało z głębokością; w skoku skała, osada z windą i bryła bazy jadą za obrazem skały: root.matrix = macierz
+// soczewki (punkt sceny p → obraz środka skały + k · (p − środek skały)) · ramka, w passie tła (FG bazy → tło —
+// wzór HALO_GAME.lensLayers; pass tła rysuje się przed statkiem). Kawałki bazy w bańce gracza (skóra ciał świata
+// — worldBodies3D) i światła masztów w siatce świateł gasną na czas soczewki (nie da się ich przeskalować).
+let _lensRec = null;
+let _lensOn = false;
+const _lensWorld = { x: 0, y: 0, k: 1 };
+const _lensEl = new Array(16).fill(0);
+const _lensM = new THREE.Matrix4();
+/** Ramki korzeni sprzed soczewki (root → Matrix4) — przywracane po skoku. */
+const _lensFrames = new Map();
+
+const _lensRootList = [];
+/** Korzenie w soczewce (lista trzymana — bez alokacji w klatce). */
+function lensRoots() {
+  const out = _lensRootList;
+  out.length = 0;
+  if (rock?.root?.parent) out.push(rock.root);
+  // (rockSite.fx.root — dym i ogień rozpadu — stoi `position` z matrixAutoUpdate: zostaje na prawdziwym miejscu)
+  if (rockSite?.root?.parent) out.push(rockSite.root);
+  if (base?.root?.parent) out.push(base.root);
+  return out;
+}
+
+/** Hidalgo w soczewce skoku (rekord co klatkę; w soczewce — korzenie przeskalowane wokół środka skały). */
+function applyPirateBaseLens() {
+  if (!rock || !rock.root.parent) return;
+  const R = Number(rock.layout.R) || 32000;
+  const cz = Number(rock.layout.center[1]) || 0;
+  if (!_lensRec) _lensRec = warpLensExtraBody('hidalgo', 'small');
+  setWarpLensExtra(_lensRec, rockAt.x, rockAt.y, R, cz);
+  if (place && place.origin) {
+    const dx = place.origin.x - rockAt.x;
+    const dy = place.origin.y - rockAt.y;
+    _lensRec.attachR = Math.sqrt(dx * dx + dy * dy) + (Number(place.radius) || 0);
+  }
+  const a = _lensRec.anchor;
+  const on = !!(a && a.on && a.real < 0.999);
+  if (!on && !_lensOn) return;
+  const roots = lensRoots();
+  if (on) {
+    if (!_lensOn) {
+      _lensFrames.clear();
+      for (let i = 0; i < roots.length; i++) _lensFrames.set(roots[i], roots[i].matrix.clone());
+      if (base) base.setLayers(LAYER_BG, LAYER_BG);
+      _lensOn = true;
+    }
+    // obraz środka skały w jej głębokości (perspektywa passa tła); skala k = obraz / prawdziwy rozmiar
+    const o = _lensRec.out;
+    lensImageToWorld(WARP_WORLD_LENS, o.x, o.y, cz, false, _lensWorld);
+    lensPivotElements(_lensWorld.x, -_lensWorld.y, cz, Math.max(1e-6, a.k), rockAt.x, -rockAt.y, cz, _lensEl);
+    _lensM.fromArray(_lensEl);
+    for (let i = 0; i < roots.length; i++) {
+      const r = roots[i];
+      let f = _lensFrames.get(r);
+      if (!f) { f = r.matrix.clone(); _lensFrames.set(r, f); }
+      r.matrix.multiplyMatrices(_lensM, f);
+      r.matrixWorldNeedsUpdate = true;
+    }
+  } else if (_lensOn) {
+    for (const [r, f] of _lensFrames) { r.matrix.copy(f); r.matrixWorldNeedsUpdate = true; }
+    _lensFrames.clear();
+    if (base) base.setLayers(LAYER_BG, LAYER_FG);
+    _lensOn = false;
+  }
+}
 
 let prebuilt = null;
 let base = null;
@@ -175,6 +245,12 @@ function collapsePirateRockSite() {
 export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt, impact: rockImpact } : null; }
 
 function detachPirateBase3D() {
+  if (_lensOn) {
+    for (const [r, f] of _lensFrames) { r.matrix.copy(f); r.matrixWorldNeedsUpdate = true; }
+    _lensFrames.clear();
+    if (base) base.setLayers(LAYER_BG, LAYER_FG);
+    _lensOn = false;
+  }
   for (const r of [rock?.root, rockSite?.root, rockSite?.fx.root, rockImpact?.root]) r?.removeFromParent();
   rockImpact?.reset();
   if (!base) return;
@@ -191,7 +267,7 @@ function attachPirateBaseBodies3D(sites) {
       building: base,
       root: base.root,
       layers: { bg: LAYER_BG, fg: LAYER_FG },
-      hidden: () => fogHidden,
+      hidden: () => fogHidden || _lensOn,
       setSkinned: (piece, on) => base.setChunkSkinned(piece.id, on),
       // statyka kawałka straconego trzymana, dopóki skóra odłamów się piecze (wypiek w workerze — worldBodies3D)
       setHold: (piece, on) => base.setChunkHold(piece.id, on),
@@ -214,6 +290,7 @@ const _sunOpts = { sun: null, at: null };
  */
 export function updatePirateBase3D(dt, state = {}) {
   if (!base || !base.root.parent) return;
+  applyPirateBaseLens();
   const hidden = !!state.hidden;
   if (hidden !== fogHidden) {
     fogHidden = hidden;
@@ -250,5 +327,5 @@ export function updatePirateBase3D(dt, state = {}) {
   const dead = !!state.habitatDead;
   _state.lampPower = dead ? 0.15 : undefined;
   base.update(dt, _state);
-  if (place && !dead) base.pushGridLights(Core3D.fx?.lights, place.toGame);
+  if (place && !dead && !_lensOn) base.pushGridLights(Core3D.fx?.lights, place.toGame);
 }

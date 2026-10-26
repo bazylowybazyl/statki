@@ -188,10 +188,11 @@ test('hipercruise bez ośrodka: bez przegródek i poświaty drobin; soczewka ba�
 
 // Odcisk wyjść efektu hipercruise'u (WarpPlayerFx z game.hyper) na stałym skrypcie: rozruch 4 s, lot 200 klatek z rosnącą
 // prędkością prowadzoną, wyjście 5 s. Wartości zmierzone na player.js sprzed etapu integracji soczewki (2026-10-26,
-// ebc4e00d) — ten sam skrypt, te same liczby co do 12 cyfr znaczących.
+// ebc4e00d) — ten sam skrypt, te same liczby co do 12 cyfr znaczących. Pole `rulon` (zawsze 0 w hipercruisie) wypadło
+// w sprzątaniu S1 (2026-10-26) — efekt nie ma już rulonu; reszta odcisku bez zmian.
 const HYPER_FINGERPRINT_BASE = Object.freeze({
   n: 760, stretch: 237.556356052, tint: 269.7, front: -3276000, waves: 163, waveAmp: 577.844078144, flashes: 43, glares: 21,
-  lens: 527, lensAmp: 11029.8927334, bubbles: 0, heat: 87.4313033151, warpVis: 0, fade: 384, beta: 0, rulon: 0,
+  lens: 527, lensAmp: 11029.8927334, bubbles: 0, heat: 87.4313033151, warpVis: 0, fade: 384, beta: 0,
   flow: 5027953.03384, A: 424.226643593
 });
 
@@ -205,7 +206,7 @@ function hyperFingerprint() {
   const map = { camX: 900, camY: 1900 };
   const med = { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 };
   const fp = { n: 0, stretch: 0, tint: 0, front: 0, waves: 0, waveAmp: 0, flashes: 0, glares: 0, lens: 0, lensAmp: 0, bubbles: 0,
-    heat: 0, warpVis: 0, fade: 0, beta: 0, rulon: 0, flow: 0, A: 0 };
+    heat: 0, warpVis: 0, fade: 0, beta: 0, flow: 0, A: 0 };
   let t = 0;
   const step = () => {
     t += DT;
@@ -234,7 +235,6 @@ function hyperFingerprint() {
     fp.warpVis += frame.warpVis;
     fp.fade += frame.mediumFade;
     fp.beta += fx.lensBeta(t);
-    fp.rulon += fx.rulonBend;
     fp.flow += med.flow;
     fp.A += fx.bubble.on ? fx.bubble.A : 0;
   };

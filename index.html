@@ -1392,7 +1392,7 @@
     // Wstrząsy skoku gracza (kop, wyjście, hamowanie) i wyrzutów NPC z tunelu — decyzje gry (działają też w workerze renderu).
     import { createWarpShakeState, stepWarpShakes, stepWarpBurstShakes } from "./src/game/warpShakes.js";
     // Soczewka świata w skoku gracza (nowy warp, etap integracji): oś β z zegara gry i kadr przylotu — czyste moduły szwu.
-    import { createWarpLensTrack, createWarpLensPhase, stepWarpLensPhase, warpPlayerArriving } from "./src/render/warpLensPhase.js";
+    import { createWarpLensTrack, createWarpLensPhase, stepWarpLensPhase, warpPlayerArriving, warpLensHudBeta, warpLensDotFor, WARP_LENS_DOT_SWAP } from "./src/render/warpLensPhase.js";
     import { warpArrivalDepthK } from "./src/render/warpArrivalFrame.js";
     import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
     import {
@@ -6798,7 +6798,8 @@
     setBeamSkinSuppressor((e) => !!e.beamHull?.world || !!shipModel3DIdFor(e));
     // Mgła wojny: kadłub ukryty przed graczem (siatka żyje — bez przebudowy na brzegu kręgu wzroku).
     // lustra (RW-11a, `?szew=inline`): flaga mgły ze strony migawki (to samo pytanie zadane przy pakowaniu)
-    setEntityHiddenTest((e) => (e.__mirror === true ? e.fogHidden : SensorSystem.hides(e)));
+    // Mgła wojny albo kropka soczewki skoku (stampWarpLensDots — skórę zastępuje kropka): kadłub, dysze, lampy schowane.
+    setEntityHiddenTest((e) => (e.__mirror === true ? e.fogHidden : (SensorSystem.hides(e) || e.__lensDot === true)));
     setWorld3DHiddenTest((st) => SensorSystem.hides(st));
     // tryb worker (RW-40b): zdarzenia obrazu bazy idą do workera (bryła bazy tam); `rwHost` — przy zdarzeniu (po starcie)
     onPirateBaseEvent((t, a, b, c) => (rwHost ? rwHost.pirateBaseEvent(t, a, b, c) : pirateBase3DEvent(t, a, b, c)));
@@ -7787,7 +7788,7 @@
       SMALL_BODIES, resolveSmallBodyAngles, smallBodyPosition, smallBodyStationOrbit, smallBodyStationAngle,
       smallBodyZones, smallBodyExclusions
     } from './src/data/smallBodies.js';
-    import { moonsOf } from './src/data/systemMap.js';
+    import { moonsOf, SYSTEM_MAP_MOON_BY_ID } from './src/data/systemMap.js';
     import { AsteroidBeltField } from './src/game/asteroidBeltField.js';
     import { planBeltGiantSites, BELT_GIANTS_CONFIG } from './src/game/asteroidBeltGiants.js';
 
@@ -25534,6 +25535,12 @@
         for (let i = 0; i < list.length; i++) {
           const w = list[i];
           if (!w || !w.isCold || w.dead || !w.beamHull) continue;
+          // w soczewce skoku (E2) wrak zastąpiony smugą na pozycji soczewki (ta sama decyzja co render) — bez mostka,
+          // modelu i rdzenia; flagę czyta też pakowanie migawki (snapshotPack: COLD_NEAR)
+          const dot = _lensDotsActive && lensDotAt(Number.isFinite(w.x) ? w.x : (w.pos ? w.pos.x : 0),
+            Number.isFinite(w.y) ? w.y : (w.pos ? w.pos.y : 0));
+          w.__lensDot = dot;
+          if (dot) continue;
           w._coldExtrasFrame = renderFrameId;
           _coldNearList.push(w);
         }
@@ -28321,6 +28328,8 @@
       s.zoomRef = zr > 0 ? zr : NaN;
       s.zoomJump = zr > 0 ? zr * (Number(cameraRigTune.warpZoomOut) || 1) : NaN;
       s.arrivalFill = Number(cameraRigTune.warpArrivalFill) > 0 ? Number(cameraRigTune.warpArrivalFill) : NaN;
+      // Znaczniki świata na kanwie gasną z β soczewki (E4 — warpLensHudBeta, ta sama oś co kropki flot).
+      _hudLensAlpha = warpLensOverlayAllowed() ? 1 - warpLensHudBeta(s) : 1;
       return s;
     }
     function updateCameraZoom(dt) {
@@ -28754,8 +28763,26 @@
     // rysunek tutaj (off, updatePortDocks3D). Zasięg ponad pół przekątnej kadru przy najmniejszym zoomie gry.
     const PORT_DOCK_RENDER_RANGE = 90_000;
     const _portDockRender = { list: [], count: 0 };
+    // ≤ PORT_DOCKS3D.keep (src/3d/portDocks3D.js — pula budowli obrazu); dok to 4–5 rysunków, budowa ~kilka ms
+    const PORT_DOCK_LENS_KEEP = 4;
+    function addWarpLensPortDocks(out) {
+      // lot — doki ciała startu (i jego księżyców: start z Luny — ciało startu Ziemia), wyjście — celu; w ładowaniu ciało
+      // startu jest jeszcze z poprzedniego skoku (planPlayerWarp przy kopnięciu), a statek stoi w zasięgu swojego doku
+      if (warp.state === 'charging') return;
+      const id = _warpLensPhase.exitAge >= 0 ? warp.targetBody?.id : warp.originBody?.id;
+      if (id == null) return;
+      for (const d of portDocks.docks) {
+        if (out.length >= PORT_DOCK_LENS_KEEP) return;
+        const moon = SYSTEM_MAP_MOON_BY_ID[d.stationId];
+        if ((d.stationId !== id && (!moon || moon.parentId !== id)) || out.includes(d)) continue;
+        out.push(d);
+      }
+    }
     function portDockRenderFrame(cam) {
       portDocks.renderList(cam.x, cam.y, PORT_DOCK_RENDER_RANGE, _portDockRender.list);
+      // Soczewka skoku gracza (E1): dok portu startu i celu (ciało albo jego księżyc) zostaje w obrazie poza zasięgiem
+      // kadru — jedzie w soczewce za obrazem ciała (portDocks3D.js); najwyżej PORT_DOCK_LENS_KEEP budowli (pula obrazu).
+      if (warpLensOverlayAllowed() && (_warpLensPhase.beta > 0 || _warpLensPhase.exitAge >= 0)) addWarpLensPortDocks(_portDockRender.list);
       // `PortDocks.hideRender = true` — budowle znikają z obrazu (pomiar kosztu A/B w tym samym kadrze), rozgrywka bez zmian.
       if (portDocks.hideRender) _portDockRender.list.length = 0;
       _portDockRender.count = _portDockRender.list.length;
@@ -28764,7 +28791,8 @@
     let storyHallRoof = null;
     const _snapCull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
     const _snapCullBox3D = { x: 0, y: 0, halfW: 0, halfH: 0 };
-    const _snapHides = (e) => SensorSystem.hides(e);
+    // mgła wojny albo kropka soczewki skoku (stampWarpLensDots): FOG_HIDDEN encji i listy *_SEEN migawki bez niej
+    const _snapHides = (e) => SensorSystem.hides(e) || e.__lensDot === true;
     const _snapCoresOf = (lists) => ReactorGame.cores(lists);
     // Poza renderu holownika pod graczem (RW-31, § 2.6 p. 27): liczona przy pakowaniu, bez zapisu w encji. Dziś render
     // czyta jeszcze żywe encje, więc ServiceTugGame.beginRender / restorePose zostają do renderu z luster (RW-11).
@@ -28861,6 +28889,8 @@
       // jak listy mostków i modeli gry (nowe ciało dołącza w następnej klatce)
       f.coldRenderList = SZEW_LATE ? _coldNearList : coldWreckSystem.renderList;
       f.coldNearExtras = coldWreckSystem.config.nearExtras !== false;
+      // soczewka skoku (E2): encje z kropką ukryte jak we mgle także przy wyłączonej mgle (snapshotPack: _buildLists)
+      f.lensDots = _lensDotsActive;
       f.stations = stations;
       f.bullets = window.bullets;
       f.hides = _snapHides;
@@ -29100,13 +29130,90 @@
     // Okręt w mgle, który trafia gracza, jest widoczny tyle sekund (namiar z toru pocisku).
     const FOG_FIRE_REVEAL_SEC = 4;
     function fogSeenInto(list, out) {
-      if (!SensorSystem.fogEnabled || !Array.isArray(list)) return list;
+      if ((!SensorSystem.fogEnabled && !_lensDotsActive) || !Array.isArray(list)) return list;
       out.length = 0;
       for (let i = 0; i < list.length; i++) {
         const e = list[i];
-        if (e && !SensorSystem.hides(e)) out.push(e);
+        if (e && !SensorSystem.hides(e) && e.__lensDot !== true) out.push(e);
       }
       return out;
+    }
+
+    // SOCZEWKA ŚWIATA — FLOTY, NPC I WRAKI (DECYZJE E2, etap 3A, src/render/warpLensPhase.js): encja, którą soczewka
+    // skoku gracza zastępuje kropką (udział soczewki PUNKTU w jej miejscu ≥ WARP_LENS_DOT_SWAP — warpLensDotFor /
+    // warpLensPointBeta: ta sama funkcja i jednostki świata co mapPoint renderu; w wyjściu punkt wraca 0,3 s po przejściu
+    // frontu smug gwiazd), dostaje `__lensDot`: skóra, dysze, lampy, wieże, mostki, modele 3D, tarcze, rdzenie i nakładki
+    // 2D chowają się jak we mgle (predykat kadłubów, fogSeenInto, migawka: FOG_HIDDEN + LENS_DOT), a render rysuje jej
+    // kropkę na pozycji soczewki (hexShips3D: HexBodyLensBatch, min ~2 px, barwa sprite'a). Mgła wojny wygrywa — ukryta
+    // encja nie ma kropki. Gracz i drugi gracz zawsze normalnie. Zimne wraki: dodatki (mostki, modele, rdzenie) chowa
+    // ta sama decyzja per wrak (withColdNearWrecks), smugę na pozycji soczewki rysuje render (smuga z migawki). Statki ruchu
+    // v2 (proxy bańki) od tego samego progu znikają z listy obrazu (lensHideTrafficProxies) — dok i stacja odpływają
+    // z ciałem, a zacumowane przy nich proxy zostałyby w prawdziwym miejscu.
+    let _lensDotsActive = false;
+    // Kontekst decyzji klatki (prepareWarpLensDots — raz na klatkę renderu, przed listami obrazu): kurs i statek.
+    const _lensDotCtx = { cu: 0, cv: 0, sx: 0, sy: 0 };
+    // Znaczniki świata na kanwie (podpisy planet, kontakty, nakładki NPC, rozkazy, cele fabuły) gasną z β (E4):
+    // alfa = 1 − warpLensHudBeta (cała warstwa; HUD kursu warpa zostaje — namiar w mapie C jest prawdziwy). Liny,
+    // zaznaczenie i ikony infrastruktury (rysują z absolutną alfą, wskazują encje zastąpione kropkami) — chowane od
+    // progu kropki (warpLensHudWorld).
+    let _hudLensAlpha = 1;
+    function warpLensOverlayAllowed() { return !splitScreenMode && !View3D.active; }
+    function warpLensHudWorld() { return _hudLensAlpha > 1 - WARP_LENS_DOT_SWAP; }
+    function prepareWarpLensDots() {
+      const s = _warpLensPhase;
+      const on = warpLensOverlayAllowed() && warpLensHudBeta(s) > 0;
+      _lensDotsActive = on;
+      if (!on) return false;
+      // kurs skoku (front wyjścia idzie wzdłuż niego): rampa wyjścia, kierunek lotu, dziób przy ładowaniu
+      const ramp = warp.exitRamp;
+      let cu = ramp && (ramp.dirX || ramp.dirY) ? ramp.dirX : (warp.dir?.x || 0);
+      let cv = ramp && (ramp.dirX || ramp.dirY) ? ramp.dirY : (warp.dir?.y || 0);
+      if (!cu && !cv) {
+        const a = Number.isFinite(warp.chargeAngle) ? warp.chargeAngle : (ship?.angle || 0);
+        cu = Math.cos(a);
+        cv = Math.sin(a);
+      }
+      const c = _lensDotCtx;
+      c.cu = cu;
+      c.cv = cv;
+      c.sx = ship?.pos ? ship.pos.x : 0;
+      c.sy = ship?.pos ? ship.pos.y : 0;
+      return true;
+    }
+    /** Czy punkt świata (x, y) zastępuje w tej klatce kropka soczewki (po prepareWarpLensDots). */
+    function lensDotAt(x, y, hidden = false) {
+      if (!_lensDotsActive) return false;
+      const c = _lensDotCtx;
+      return warpLensDotFor(_warpLensPhase, x - c.sx, y - c.sy, c.cu, c.cv, 1, hidden);
+    }
+    function stampWarpLensDots(list) {
+      if (!_lensDotsActive) {
+        // poza skokiem: żadna encja z flagą (także wracająca do list — wrak budzony z zimnych, encja spoza list w skoku)
+        for (let i = 0; i < list.length; i++) { const e = list[i]; if (e && e.__lensDot === true) e.__lensDot = false; }
+        return;
+      }
+      const c = _lensDotCtx;
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        if (!e) continue;
+        if (e === ship || e === player2Ship) { e.__lensDot = false; continue; }
+        const ex = Number.isFinite(e.x) ? e.x : (e.pos ? e.pos.x : c.sx);
+        const ey = Number.isFinite(e.y) ? e.y : (e.pos ? e.pos.y : c.sy);
+        e.__lensDot = lensDotAt(ex, ey, SensorSystem.hides(e));
+      }
+    }
+    /** Statki ruchu v2 (proxy bańki, W2): od progu kropki poza listą obrazu (rekordy przestawione, bez alokacji). */
+    function lensHideTrafficProxies(out) {
+      if (!_lensDotsActive || !out || !(out.count > 0)) return;
+      const list = out.list;
+      let k = 0;
+      for (let i = 0; i < out.count; i++) {
+        const r = list[i];
+        if (lensDotAt(r.x, r.y)) continue;
+        if (k !== i) { list[i] = list[k]; list[k] = r; }
+        k++;
+      }
+      out.count = k;
     }
 
     // GAZ PRZESTRZENI (port dema gazy-transport — docs/PLAN-gazy-kosmos.md, src/game/spaceGasInput.js): wejście
@@ -29964,8 +30071,11 @@
 
       // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
       const renderEntities = [];
+      // Soczewka skoku gracza (E2): decyzja kropek tej klatki (kurs, statek) — przed listami obrazu.
+      prepareWarpLensDots();
       // Statki ruchu v2 (E6): pozy w chwili klatki — dla bloku `traffic` (worker) albo rysunku tutaj (off).
       trafficRenderFrame(alpha);
+      lensHideTrafficProxies(_trafficRender);
       // Doki portów bez ringu (E14): budowle w zasięgu kadru — dla bloku `portDocks` (worker) albo rysunku tutaj (off).
       portDockRenderFrame(cam);
       // Przeładunek (E12): ramka klatki — pola zatok, statki przy stanowiskach, luk Atlasa (blok `cargoOps` / off niżej).
@@ -29975,6 +30085,8 @@
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
       for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
       for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
+      // Soczewka skoku gracza (E2): NPC i wraki zastąpione kropką — przed listami mostków, tarcz, modeli i migawką.
+      stampWarpLensDots(renderEntities);
       // Mgła wojny: ukryte NPC i wraki zostają w liście kadłubów (siatka żyje, hexShips3D ich nie rysuje —
       // setEntityHiddenTest), a mostki, tarcze i modele 3D dostają listę bez nich.
       const renderSeen = fogSeenInto(renderEntities, _renderSeenList);
@@ -30244,12 +30356,27 @@
           const infraState = InfrastructureUI.ensureState(stationUI.station);
           if (infraState) InfrastructureUI.drawGrid(ctx, cam, stationUI.station, infraState);
         }
-        InfrastructureUI.drawInstances(ctx, cam);
-        drawPlanetLabels(ctx, cam);
+        // Znaczniki świata gasną w skoku z β soczewki (E4 — _hudLensAlpha; świat stoi w soczewce gdzie indziej). Ikony
+        // infrastruktury, liny i zaznaczenie rysują z absolutną alfą (globalAlpha = stała) — chowane od progu kropki.
+        const hudLensA = _hudLensAlpha;
+        const hudLensWorld = warpLensHudWorld();
+        if (hudLensA > 0.01) {
+          ctx.save();
+          if (hudLensA < 0.999) ctx.globalAlpha *= hudLensA;
+          if (hudLensWorld) InfrastructureUI.drawInstances(ctx, cam);
+          drawPlanetLabels(ctx, cam);
+          ctx.restore();
+        }
 
         CanvasVFX.drawShockwaves(ctx, cam);
-        drawTowRopes(ctx, cam);
-        drawPlayerStations2D(ctx, cam);
+        if (hudLensA > 0.01) {
+          ctx.save();
+          if (hudLensA < 0.999) ctx.globalAlpha *= hudLensA;
+          // lina wskazuje holowany wrak — w soczewce jest on już kropką
+          if (hudLensWorld) drawTowRopes(ctx, cam);
+          drawPlayerStations2D(ctx, cam);
+          ctx.restore();
+        }
 
         if (!window.USE_STATION_3D) {
           for (const st of stations) {
@@ -30307,14 +30434,16 @@
 
         // Wraki renderowane przez hexShips3D
 
-        // NPC (filtered by sensor visibility)
+        // NPC (filtered by sensor visibility); nakładki gasną z β soczewki (E4)
+        ctx.save();
+        if (hudLensA < 0.999) ctx.globalAlpha *= Math.max(0, hudLensA);
         const npcDrawList = _npcDrawList;
         npcDrawList.length = 0;
         for (const npc of npcs) {
           if (!npc || npc.dead) continue;
           // Mgła wojny: ukryty okręt z ciałem / myśliwiec — nic do rysowania. Bez ciała zostaje w liście:
           // drawNPCPretty buduje mu kadłub (kolizje), ale bez nakładek (_npcFogQuiet).
-          if (SensorSystem.hides(npc) && (npc.beamHull || isFighterUnit(npc))) continue;
+          if ((SensorSystem.hides(npc) || npc.__lensDot === true) && (npc.beamHull || isFighterUnit(npc))) continue;
           npcDrawList.push(npc);
         }
         npcDrawList.sort((a, b) => (a.drawLayer || 0) - (b.drawLayer || 0));
@@ -30342,23 +30471,35 @@
           // przechodzą zawsze, bo drawNPCPretty buduje go leniwie,
           // od którego zależą kolizje i obrażenia kadłuba także poza ekranem.
           if ((npc.beamHull || isFighterUnit(npc)) && !isNpcOverlayOnScreen(npc, s, npcDrawZoom, W, H)) continue;
-          _npcFogQuiet = SensorSystem.hides(npc);
+          _npcFogQuiet = SensorSystem.hides(npc) || npc.__lensDot === true || _hudLensAlpha < 0.01;
           drawNPCPretty(ctx, npc, s);
           _npcFogQuiet = false;
         }
         // Bomby lotnicze po myśliwcach (maleją i bledną w drodze na kadłub; poza celu z interpolacji — gracz).
         if (FighterBombs.count > 0) drawFighterBombs(ctx, FighterBombs, _bombToScreen, npcDrawZoom, _bombRenderPose);
+        ctx.restore();
         PerfHUD.addTiming('render2dNpcTime', performance.now() - tRender2dSection);
         tRender2dSection = performance.now();
 
-        drawActiveCommandMarkers(ctx, cam, interpPos);
+        if (hudLensA > 0.01) {
+          ctx.save();
+          if (hudLensA < 0.999) ctx.globalAlpha *= hudLensA;
+          drawActiveCommandMarkers(ctx, cam, interpPos);
+          ctx.restore();
+        }
         // Wydobycie (zadanie 21b): skaner rdzeni i panel platformy w trybie wydobycia.
         drawMiningOverlay(ctx, cam);
         // Tryb torped: wachlarze wyrzutni i duchy celów (wskaźnik wyprzedzenia).
         drawTorpedoOverlay(ctx, cam);
         drawScoutOverlay(ctx, cam);
 
-        drawSelectionOverlay(ctx, cam, interpPos);
+        // zaznaczenie (pierścienie, paski życia z absolutną alfą) — encje zaznaczone są w soczewce kropkami
+        if (hudLensWorld) {
+          ctx.save();
+          if (hudLensA < 0.999) ctx.globalAlpha *= hudLensA;
+          drawSelectionOverlay(ctx, cam, interpPos);
+          ctx.restore();
+        }
 
         updateAndDrawFighterClouds(ctx, cam);
 
@@ -31378,11 +31519,22 @@
       if (!CICDisplay.active && gameStarted) {
         // Dolny margines znaczników nad paskiem broni i kopułą kokpitu (skala kokpitu, 1080p = 1).
         _contactMarkersLayout.bottom = Math.round(118 * (window.cockpitUI?.scale || 1));
-        ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission, false, _contactMarkersLayout);
+        // znaczniki kontaktów gasną z β soczewki skoku (E4; prawdziwe pozycje nie odpowiadają kropkom soczewki)
+        if (_hudLensAlpha > 0.01) {
+          ctx.save();
+          if (_hudLensAlpha < 0.999) ctx.globalAlpha *= _hudLensAlpha;
+          ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission, false, _contactMarkersLayout);
+          ctx.restore();
+        }
       }
       if (!CICDisplay.active && gameStarted && !stationUI.open && !ship.destroyed && !StoryGame.hudHidden && !StoryGame.letterbox) {
-        drawStoryTargets(cam);
-        drawFogHud(cam);
+        if (_hudLensAlpha > 0.01) {
+          ctx.save();
+          if (_hudLensAlpha < 0.999) ctx.globalAlpha *= _hudLensAlpha;
+          drawStoryTargets(cam);
+          drawFogHud(cam);
+          ctx.restore();
+        }
         // Drony zwiadowcze (PPM → DRON ZWIADU, CIC → SEND DRONE): znacznik drona w kadrze (kamera z góry).
         if (!isView3DCamera(cam) && SpotterDroneSystem.getDrones().length) SpotterDroneSystem.drawDrones(ctx, cam, worldToScreen, gameTime);
       }

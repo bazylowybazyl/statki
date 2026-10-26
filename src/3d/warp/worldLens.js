@@ -48,13 +48,20 @@
 // przelotach nieaktywna; najwyżej do skali prawdziwego obrazu — statek w promieniu pierścienia). KROPKI (M5): rekord
 // z `minDot` nie mniejszy niż tyle px (planety, słońce), słońce × sunBoost; obraz < minPx gaśnie.
 //
+// RESZTA ŚWIATA (DECYZJE E1–E3, etap 3A): REJESTR KOTWIC (WARP_LENS_ANCHORS — obraz każdego ciała dla rzeczy przypiętych:
+// ring, stacje, doki; writeLensAnchor / lensAnchorPoint), REKORDY DODATKOWE (WARP_LENS_EXTRA — komety, olbrzymy pasa,
+// Hidalgo, doki bez ciała: ten sam przebieg update co ciała) i PUNKTY (WARP_LENS_SHARED.mapPoint — floty, NPC, wraki jako
+// kropki; udział soczewki punktu = warpLensPointBeta strony gry, w wyjściu powrót 0,3 s od przejścia frontu); wszystko
+// w skoku pod statkiem (pass tła — warstwa 1, perspektywa jak FG: stacje, doki, Hidalgo, ring / z ≤ WARP_LENS_UNDER_Z
+// w passie gry: komety, kropki / przed passem ortho).
+//
 // Czysty moduł (bez three, bez DOM, bez alokacji w update). Stan klatki pisze sterownik warpa (warpNurt.js:
 // WARP_WORLD_LENS), ciała rozstawia planet3d.assets.js (applyWarpWorldLens), β liczy src/render/warpLensPhase.js.
 // Weryfikacja: tests/warpWorldLens.test.mjs, tests/warpLensMapC.test.mjs, tests/warpLensPrzejscia.test.mjs,
 // `node scripts/webgpu/warp-soczewka-sym.mjs` (S1–S6, oba warianty kamery, `--wpiecie dzis`).
 
 import { WARP_ARRIVAL_FRAME, warpViewEdgePx, warpArrivalScale } from '../../render/warpArrivalFrame.js';
-import { WARP_LENS_PHASE, warpExitFrontS, warpBodySubmerge, warpLensExitSlow } from '../../render/warpLensPhase.js';
+import { WARP_LENS_PHASE, warpExitFrontS, warpBodySubmerge, warpLensExitSlow, warpExitFrontCross } from '../../render/warpLensPhase.js';
 
 export const WORLD_LENS_DEFAULTS = Object.freeze({
   // MAPA C (M1–M2; px — ułamki dróg od kotwicy do krawędzi kadru, skalują się z rozdzielczością)
@@ -95,6 +102,10 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   arrivalHoldMax: 8,    // [s] po rampie najdłużej tyle trzymania
   // Ciało, które pojawia się w trakcie skoku (bryła gotowa później — `ready`), wynurza się w miejscu w tyle s
   lateTime: 0.4,
+  // Punkty w wyjściu (mapPoint — kropki flot i wraków): prawdziwe miejsce poza kadrem o tyle px (brzeg kadłuba) —
+  // kropka gaśnie w pierwszej połowie zanurzenia (dalej jedzie na prawdziwe miejsce niewidoczna); w kadrze — jedzie
+  // widoczna i oddaje miejsce skórze
+  pointEdgeSoft: 96,
   // Obrót przelotu
   flybyHeight: 100000,  // [j.] wysokość wirtualnej kamery obrotu przelotu
   flybyTilt: 1,         // siła obrotu przelotu
@@ -421,23 +432,193 @@ export function setWarpLensAnchor(L, cssX, cssY, pxScale) {
 }
 
 /**
- * RING „HALO” W SOCZEWCE (user 2026-10-19: ring ma iść w soczewce razem z planetą). Pisze planet3d.assets.js
- * (DirectPlanet._lensPlace — planety z ringiem), czyta haloRingGame.js: ring = obraz planety przesunięty
- * i przeskalowany wokół jej środka. Klucz = id planety ('earth', 'mars', 'jupiter').
- *   on — planeta w soczewce w tej klatce; x, y — środek obrazu planety (świat gry); k — skala obrazu do prawdziwej
- *   (1 — prawdziwy widok); q — obrót przelotu bryły (THREE.Quaternion, kopia) albo null; real — udział prawdziwego
- *   widoku 1 − β; vis — obraz planety w kadrze.
+ * REJESTR KOTWIC SOCZEWKI (DECYZJE E1, etap 3A 2026-10-26 — uogólnienie dawnego slotu ringu WARP_RING_LENS): obraz
+ * każdego ciała soczewki dla rzeczy PRZYPIĘTYCH do niego (ring „Halo”, stacje przy planetach i małych ciałach, doki
+ * portów bez ringu) i obiektów z własnym rekordem (komety, olbrzymy pasa, Hidalgo, doki bez ciała —
+ * `warpLensExtraBody`). Pisze planet3d.assets.js po rozstawieniu ciał (`writeLensAnchor`; poza soczewką
+ * `clearWarpLensAnchors` — on = false), czytają moduły rzeczy. Klucz = id ciała ('earth', 'venus', 'luna', 'ceres'…)
+ * albo klucz rekordu dodatkowego ('comet:<id>', 'giant:<id>', 'hidalgo', 'dock:<id>').
+ *   on — ciało w soczewce w tej klatce; x, y — punkt PŁASZCZYZNY GRY pod obrazem środka ciała [świat gry] (ciało tła
+ *   z paralaksą: przy β → 0 dokładnie prawdziwy środek w płaszczyźnie — writeLensAnchor); k — skala obrazu do
+ *   prawdziwego widoku dla rzeczy w płaszczyźnie gry (promień obrazu / prawdziwy promień w px; 1 — prawdziwy widok);
+ *   rx, ry — prawdziwy środek ciała; px — promień obrazu [px bufora]; real — udział prawdziwego widoku (1 − β ciała);
+ *   vis — obraz w kadrze; q — obrót przelotu bryły (THREE.Quaternion, kopia — przypina właściciel ringu) albo null,
+ *   turned; reach — [j.] zasięg rzeczy przypiętych od środka ciała (piszą właściciele rzeczy co klatkę, planet3d
+ *   zeruje go po odczycie: decyzja wejścia ciała widzi rzecz przypiętą w kadrze — `b.attachR`, worldLens._decide).
+ * Rzecz przypięta (punkt płaszczyzny gry p): p' = (x, y) + k · (p − (rx, ry)) — `lensAnchorPoint`; w skoku przechodzi
+ * na warstwę pod statkiem (tło / z ≤ WARP_LENS_UNDER_Z w passie gry / przed passem ortho — wzór HALO_GAME.lensLayers).
+ * Obrót przelotu dostaje tylko ring (duża płaska bryła wokół planety); małe rzeczy przypięte jadą bez niego.
  */
-export const WARP_RING_LENS = Object.create(null);
+export const WARP_LENS_ANCHORS = Object.create(null);
+const _anchorList = [];
 
-/** Rekord ringu w soczewce dla planety `id` (tworzony raz; `q` przypina właściciel — three nie jest tu importowane). */
-export function warpRingLensSlot(id) {
-  let s = WARP_RING_LENS[id];
+/** Kotwica soczewki dla klucza `id` (tworzona raz; `q` przypina właściciel — three nie jest tu importowane). */
+export function warpLensAnchorSlot(id) {
+  const key = String(id || '');
+  let s = WARP_LENS_ANCHORS[key];
   if (!s) {
-    s = { on: false, x: 0, y: 0, k: 1, q: null, turned: false, real: 1, vis: false };
-    WARP_RING_LENS[id] = s;
+    s = { id: key, on: false, x: 0, y: 0, k: 1, rx: 0, ry: 0, px: 0, q: null, turned: false, real: 1, vis: false, reach: 0 };
+    WARP_LENS_ANCHORS[key] = s;
+    _anchorList.push(s);
   }
   return s;
+}
+
+/** Wszystkie kotwice: on = false (soczewka wyłączona — rzeczy przypięte na prawdziwych miejscach). Bez alokacji. */
+export function clearWarpLensAnchors() {
+  for (let i = 0; i < _anchorList.length; i++) _anchorList[i].on = false;
+}
+
+/** Kotwica `id` w soczewce w tej klatce i z obrazem przesuniętym (udział prawdziwego widoku < `realMax`) albo null. */
+export function warpLensAnchorOn(id, realMax = 0.999) {
+  const s = id ? WARP_LENS_ANCHORS[id] : undefined;
+  return s && s.on && s.real < realMax ? s : null;
+}
+
+/**
+ * RING „HALO” W SOCZEWCE (user 2026-10-19: ring ma iść w soczewce razem z planetą) — kotwica planety z rejestru
+ * (ten sam obiekt: klucz = id planety 'earth', 'mars', 'jupiter'); pisze planet3d.assets.js, czyta haloRingGame.js:
+ * ring = obraz planety przesunięty i przeskalowany wokół jej środka (on, x, y, k, q, turned, real, vis).
+ */
+export const WARP_RING_LENS = WARP_LENS_ANCHORS;
+/** Dawna nazwa kotwicy ringu (zgodność importów). */
+export const warpRingLensSlot = warpLensAnchorSlot;
+
+/** [j. sceny] Rzeczy soczewki w passie płaszczyzny gry (ortho) stoją tak głęboko pod nią — zawsze pod kadłubami. */
+export const WARP_LENS_UNDER_Z = -400;
+
+const _anchorWorld = { x: 0, y: 0, k: 1 };
+
+/**
+ * Kotwica ciała po rozstawieniu soczewki (b — rekord newLensBody z wynikiem `out` tej klatki; L — WARP_WORLD_LENS;
+ * size — promień obrazu [px bufora] (po powiększeniu lejka rulonu, gdy jest); vis — obraz w kadrze). Ciało tła
+ * (flat ≠ zoom): obraz środka przesunięty o różnicę prawdziwych obrazów płaszczyzny i tła × udział prawdziwego obrazu
+ * (out.realW) — przy β → 0 kotwica = prawdziwy środek ciała w płaszczyźnie gry (rzecz przypięta na swoim miejscu).
+ */
+export function writeLensAnchor(slot, L, b, size, vis) {
+  const o = b.out;
+  const zoom = Math.max(1e-9, num(L.zoom, 1));
+  const fl = b.flat > 0 ? b.flat : zoom;
+  let X = o.x;
+  let Y = o.y;
+  const w = clamp(num(o.realW, 1 - num(o.beta, 0)), 0, 1);
+  if (w > 0 && Math.abs(fl - zoom) > 1e-12 * zoom) {
+    const roll = num(L.roll, 0);
+    const rc = roll ? Math.cos(roll) : 1;
+    const rs = roll ? Math.sin(roll) : 0;
+    const wdx = b.x - num(L.shipX, 0);
+    const wdy = b.y - num(L.shipY, 0);
+    const dx = rc * wdx + rs * wdy;
+    const dy = -rs * wdx + rc * wdy;
+    const sx = num(L.shipSx, 0);
+    const sy = num(L.shipSy, 0);
+    const m = 1 - fl / zoom;
+    X += w * (sx * m + dx * (zoom - fl));
+    Y += w * (sy * m + dy * (zoom - fl));
+  }
+  const aw = lensImageToWorld(L, X, Y, 0, true, _anchorWorld);
+  slot.on = true;
+  slot.x = aw.x;
+  slot.y = aw.y;
+  slot.k = b.r > 0 ? Math.max(0, num(size, 0)) / (fl * b.r) : 1;
+  slot.rx = b.x;
+  slot.ry = b.y;
+  slot.px = Math.max(0, num(size, 0));
+  slot.real = 1 - clamp(num(o.beta, 0), 0, 1);
+  slot.vis = !!vis;
+  return slot;
+}
+
+/**
+ * Koło w płaszczyźnie gry (środek wx, wy, promień r [j.]) dotyka kadru soczewki tej klatki (L — WARP_WORLD_LENS: kamera
+ * bez wstrząsu, obrót kadru, bufor W × H, zoom). Rzecz przypięta sprawdza swój obraz (ciało może być już za kadrem).
+ */
+export function lensWorldInFrame(L, wx, wy, r) {
+  const zoom = Math.max(1e-9, num(L.zoom, 1));
+  const roll = num(L.roll, 0);
+  const ux = (wx - num(L.camX, 0)) * zoom;
+  const uy = (wy - num(L.camY, 0)) * zoom;
+  const c = roll ? Math.cos(roll) : 1;
+  const s = roll ? Math.sin(roll) : 0;
+  return lensDiscInFrame(c * ux + s * uy, -s * ux + c * uy, Math.max(0, num(r, 0)) * zoom, Math.max(1, num(L.W, 1)), Math.max(1, num(L.H, 1)));
+}
+
+/** Rzecz przypięta: punkt płaszczyzny gry (px, py) → obraz w soczewce (out.x, out.y) [świat gry]; out.k — skala. */
+export function lensAnchorPoint(slot, px, py, out) {
+  const k = slot.k;
+  out.x = slot.x + k * (px - slot.rx);
+  out.y = slot.y + k * (py - slot.ry);
+  out.k = k;
+  return out;
+}
+
+/**
+ * Macierz soczewki dla rzeczy z ramką w `root.matrix` (budowle: doki, baza piratów) — punkt sceny p → A + s · (p − C)
+ * (A, C — scena: x, −y gry, z), kolumnami jak Matrix4.elements; właściciel mnoży: root.matrix = M · ramka.
+ * Skala dodatnia — wyznacznik ramki bez zmiany znaku (pułapka 37: ten sam pipeline).
+ */
+export function lensPivotElements(ax, ay, az, s, cx, cy, cz, out) {
+  out[0] = s; out[1] = 0; out[2] = 0; out[3] = 0;
+  out[4] = 0; out[5] = s; out[6] = 0; out[7] = 0;
+  out[8] = 0; out[9] = 0; out[10] = s; out[11] = 0;
+  out[12] = ax - s * cx; out[13] = ay - s * cy; out[14] = az - s * cz; out[15] = 1;
+  return out;
+}
+
+/**
+ * REKORDY DODATKOWE SOCZEWKI — obiekty świata z własnym miejscem spoza planet3d (komety, olbrzymy pasa, Hidalgo, doki
+ * portów bez ciała): rekord newLensBody w tym samym przebiegu WarpWorldLens.update co ciała (te same tryby przejścia,
+ * front wyjścia, stożek za celem, kropki i próg widoczności). Właściciel (moduł obiektu) co klatkę, także poza soczewką,
+ * pisze x, y [świat gry], r [j.], z (0 — płaszczyzna gry, < 0 — tło z perspektywą), `plane` i `alive = true`; planet3d
+ * (applyWarpWorldLens) liczy `flat` z kadru tej klatki, dokłada rekord do przebiegu, pisze kotwicę (klucz rekordu)
+ * i zeruje `alive` — właściciel odświeża go po planetach, więc położenie ma jedną klatkę zwłoki (obiekty stoją albo
+ * jadą wolno). Opcjonalnie `smudge` { r, g, b, ax, ay, rot } — obraz rekordu rysuje partia smug soczewki
+ * (hexShips3D: HexBodyLensBatch — elipsa ax · promień × ay · promień w barwie r, g, b), bez własnej bryły.
+ */
+export const WARP_LENS_EXTRA = [];
+
+/** Rekord dodatkowy soczewki dla klucza (tworzony raz). kind — jak newLensBody ('small' bez kropki, 'planet' z kropką). */
+export function warpLensExtraBody(key, kind = 'small') {
+  const id = String(key || '');
+  for (let i = 0; i < WARP_LENS_EXTRA.length; i++) if (WARP_LENS_EXTRA[i].id === id) return WARP_LENS_EXTRA[i];
+  const rec = newLensBody(id, kind);
+  rec.extra = true;
+  rec.alive = false;
+  rec.plane = true;
+  rec.smudge = null;
+  rec.anchor = warpLensAnchorSlot(id);
+  WARP_LENS_EXTRA.push(rec);
+  return rec;
+}
+
+/** Właściciel: rekord dodatkowy w tej klatce (miejsce, promień, głębokość). Bez alokacji. */
+export function setWarpLensExtra(rec, x, y, r, z = 0) {
+  rec.x = num(x, 0);
+  rec.y = num(y, 0);
+  rec.r = Math.max(1, num(r, 1));
+  rec.z = num(z, 0);
+  rec.plane = !(rec.z < 0);
+  rec.alive = true;
+  return rec;
+}
+
+/**
+ * Właściciel zwalnia rekord dodatkowy (obiekt znika na stałe — np. budowla doku zwolniona z puli portDocks3D): rekord
+ * wypada z przebiegu soczewki, jego kotwica z rejestru (rejestry nie rosną przy długiej sesji). Poza klatką.
+ */
+export function dropWarpLensExtra(rec) {
+  if (!rec) return;
+  const i = WARP_LENS_EXTRA.indexOf(rec);
+  if (i >= 0) WARP_LENS_EXTRA.splice(i, 1);
+  const a = rec.anchor;
+  if (a) {
+    a.on = false;
+    const j = _anchorList.indexOf(a);
+    if (j >= 0) _anchorList.splice(j, 1);
+    if (WARP_LENS_ANCHORS[a.id] === a) delete WARP_LENS_ANCHORS[a.id];
+  }
+  rec.alive = false;
+  rec.anchor = null;
 }
 
 /**
@@ -459,6 +640,7 @@ export function newLensBody(id, kind = '') {
     gateOpenSession: -1, // skok (WarpWorldLens.session), w którym bramka się otworzyła — potem zostaje otwarta
     gatePrev: 1,     // bramka w poprzedniej klatce soczewki (otwarcie bramki = nowa decyzja trybu)
     parent: null,    // rekord planety (księżyce)
+    attachR: 0,      // [j.] zasięg rzeczy przypiętych (kotwica: reach) — decyzja wejścia widzi je w kadrze (_decide)
     ready: false,    // rekord odświeżony w tej klatce
     sizeBoost: k === 'sun' ? P.sunBoost : 1, // promień w soczewce × tyle (β = 1)
     minDot: k === 'sun' || k === 'planet' ? P.minDot : 0, // [px] kropka w soczewce
@@ -467,7 +649,9 @@ export function newLensBody(id, kind = '') {
     cross: -1,       // [s] wiek wyjścia, w którym front dotknął obrazu (< 0 — jeszcze nie)
     seenFrame: -1,   // ostatnia klatka soczewki (WarpWorldLens._frame), w której rekord był gotowy
     lateAge: -1,     // [s] wynurzenie ciała, które pojawiło się w trakcie skoku (< 0 — brak)
-    out: { x: 0, y: 0, size: 0, beta: 0, ax: 1, ay: 0, angle: 0, isTarget: false, q: 0 }
+    // realW — udział prawdziwego obrazu w położeniu (ruch: 1 − β ciała; wynurzenie: 1 przy β ≤ emerge0, potem 0) —
+    // kotwica rzeczy przypiętych do ciała tła (writeLensAnchor: paralaksa płaszczyzna ↔ tło)
+    out: { x: 0, y: 0, size: 0, beta: 0, ax: 1, ay: 0, angle: 0, isTarget: false, q: 0, realW: 1 }
   };
 }
 
@@ -519,6 +703,10 @@ export class WarpWorldLens {
       zoom: 1, W: 1, H: 1, sx: 0, sy: 0, ax: 0, ay: 0, sdx: 0, sdy: 0, pa: 1, pb: 1, fill: 0.75, dt: 0,
       exiting: false, exitAge: -1, exitHalt: 0, zoomRef: NaN, zoomJump: NaN, floorW: 0
     };
+    // Punkty (mapPoint — floty, NPC, wraki): stan ostatniego update (statek, obrót kadru, β, koniec zwolnienia).
+    this.live = false;
+    this._pt = { shipX: 0, shipY: 0, rc: 1, rs: 0, beta: 0, exitSlow: 0 };
+    this._qp = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1 };
   }
 
   /** Koniec skoku (soczewka wyłączona): tryby ciał i trzymanie celu od nowa. */
@@ -527,7 +715,66 @@ export class WarpWorldLens {
     this._epoch++;
     this._sessionFrames = 0;
     this._exitOn = false;
+    this.live = false;
     this._arrivalReset();
+  }
+
+  /**
+   * PUNKT w soczewce tej klatki (E2: floty, NPC, wraki — bez stanu i bez trybów przejścia): świat gry (wx, wy), promień
+   * `r` [j.] (brzeg kadłuba — tylko w wyjściu) → obraz out.x, out.y [px bufora od środka kadru, osie ekranu], out.q
+   * [px/j.], out.beta — udział soczewki punktu (src/render/warpLensPhase.js: warpLensPointBeta — ta sama funkcja decyduje
+   * o kropce na stronie gry), out.alpha — krycie kropki. Ta sama mapa C co ciała (rodzina q_β ruchu, kotwica P0(β))
+   * w płaszczyźnie gry (flat = zoom). WYJŚCIE (P3 jak ciała): front smug gwiazd mija prawdziwe miejsce punktu
+   * (warpExitFrontCross, j. świata), punkt wraca na nie w `submerge` s (rodzina q_β, β = b0 · zanurzenie); prawdziwe
+   * miejsce poza kadrem (o pointEdgeSoft px) — kropka gaśnie w pierwszej połowie zanurzenia, więc nie przelatuje przez
+   * kadr; w kadrze dojeżdża widoczna (kropka na prawdziwym miejscu oddaje je skórze przy WARP_LENS_DOT_SWAP). Przed
+   * update tej klatki albo poza soczewką (`live` = false) — prawdziwy obraz. Bez alokacji.
+   */
+  mapPoint(wx, wy, out, r = 0) {
+    const L = this._L;
+    const P = this._pt;
+    const wdx = num(wx, 0) - P.shipX;
+    const wdy = num(wy, 0) - P.shipY;
+    const dx = P.rc * wdx + P.rs * wdy;
+    const dy = -P.rs * wdx + P.rc * wdy;
+    const zoom = L.zoom;
+    out.alpha = 1;
+    if (!this.live) {
+      out.x = L.sx + zoom * dx;
+      out.y = L.sy + zoom * dy;
+      out.q = zoom;
+      out.beta = 0;
+      return out;
+    }
+    const F = this._F;
+    let bb = P.beta;
+    let bDot = bb;
+    if (L.exiting) {
+      const sub = warpBodySubmerge(warpExitFrontCross(dx * F.cu + dy * F.cv, P.exitSlow), L.exitAge, WARP_LENS_PHASE);
+      bDot = P.beta * sub;
+      bb = bDot;
+      if (sub < 1) {
+        // prawdziwe miejsce względem kadru (brzeg kadłuba poza kadrem o e px → w = 0): w kadrze kropka jedzie na nie
+        // widoczna; poza kadrem stoi w obrazie soczewki, póki gaśnie (zanurzenie 1 → 0,5), potem jedzie niewidoczna
+        // (koniec zawsze na prawdziwym miejscu — przy częściowym w kropka i tak kończy poza kadrem)
+        const ex = Math.max(0, Math.abs(L.sx + zoom * dx) - L.W * 0.5);
+        const ey = Math.max(0, Math.abs(L.sy + zoom * dy) - L.H * 0.5);
+        const e = Math.sqrt(ex * ex + ey * ey) - Math.max(0, num(r, 0)) * zoom;
+        const w = 1 - smoothstep(0, Math.max(1, this.params.pointEdgeSoft), e);
+        const hold = sub >= 0.5 ? 1 : sub * 2;
+        bb = P.beta * (w * sub + (1 - w) * hold);
+        out.alpha = w + (1 - w) * smoothstep(0.5, 1, sub);
+      }
+    }
+    const m = warpLensQ(dx, dy, bb, zoom, F, this._qp);
+    const ax = L.sx + (L.ax - L.sx) * bb;
+    const ay = L.sy + (L.ay - L.sy) * bb;
+    out.x = ax + m.q * dx;
+    out.y = ay + m.q * dy;
+    out.q = m.q;
+    // udział soczewki DECYZJI kropki (strona gry: warpLensDotFor — ta sama wartość); położenie może zostać w obrazie
+    out.beta = bDot;
+    return out;
   }
 
   _arrivalReset() {
@@ -602,7 +849,9 @@ export class WarpWorldLens {
     const mb = fl / L.zoom;
     const X = L.sx * mb + dx * fl;
     const Y = L.sy * mb + dy * fl;
-    const R = b.r * fl;
+    // Rzeczy przypięte do ciała (stacja, dok — kotwica: reach) w kadrze liczą się jak ciało w kadrze: tryb ruchu, obraz
+    // ciała zbiega z prawdziwym przy β → 0 (wynurzenie przestawiłoby dok pod statkiem w klatce emerge0).
+    const R = Math.max(b.r, num(b.attachR, 0)) * fl;
     let realIn = lensDiscInFrame(X, Y, R, L.W, L.H);
     if (L.exiting) return isTarget || realIn ? MOVE : FAR;
     // Ładowanie oddala kamerę do kadru skoku (zoomJump): prawdziwy obraz, który wejdzie w kadr po oddaleniu, też „w kadrze”
@@ -668,6 +917,7 @@ export class WarpWorldLens {
     let size;
     let qp;
     let sf = 1;
+    out.realW = b.entry === FAR ? (bb <= p.emerge0 ? 1 : 0) : 1 - (bb > 1 ? 1 : (bb > 0 ? bb : 0));
     if (b.entry === FAR && bb <= p.emerge0) {
       // Wynurzenie przed startem / po zanurzeniu (promień w soczewce byłby 0): DOKŁADNIE prawdziwy obraz (poza kadrem —
       // tryb FAR wybiera się tylko wtedy), więc β → 0 = prawdziwy widok, a smugi słońca i ring liczą się z prawdziwego.
@@ -801,6 +1051,14 @@ export class WarpWorldLens {
     const origin = ctx.origin || null;
     const sx0 = num(ctx.shipX, 0);
     const sy0 = num(ctx.shipY, 0);
+    const PT = this._pt;
+    PT.shipX = sx0;
+    PT.shipY = sy0;
+    PT.rc = rc;
+    PT.rs = rs;
+    PT.beta = beta;
+    PT.exitSlow = exitSlow;
+    this.live = true;
     const tilt = Math.max(0, p.flybyTilt);
     const hCam = Math.max(1, p.flybyHeight);
     const coneCos0 = Math.cos(Math.max(0, p.coneDeg) * Math.PI / 180);
@@ -882,6 +1140,7 @@ export class WarpWorldLens {
         out.size = b.r * T.qp * T.sf * (fl === T.flat || w <= 0 ? 1 : Math.pow(fl / T.flat, w));
         out.q = T.qp;
         out.beta = T.bb;
+        out.realW = w;
         b.entry = target.entry;
         b.seenFrame = this._frame;
         this._fadeTiny(out, T.bb);
@@ -923,3 +1182,10 @@ export class WarpWorldLens {
     return n;
   }
 }
+
+/**
+ * WSPÓLNA soczewka gry (jedna na wątek renderu): ciała i rekordy dodatkowe rozstawia planet3d.assets.js
+ * (applyWarpWorldLens — update raz na klatkę, przed modułami rzeczy), punkty (floty, NPC, wraki) mapują moduły po nim
+ * (hexShips3D: mapPoint) — te same β, kadr i kotwica tej klatki. Testy i dema tworzą własne `new WarpWorldLens()`.
+ */
+export const WARP_LENS_SHARED = new WarpWorldLens();

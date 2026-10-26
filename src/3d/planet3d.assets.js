@@ -18,7 +18,10 @@ import { applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { WARP_STAR_CAMERA } from './warp/stars.js';
 import { createSky3D, getSky3D, SKY3D_TUNE } from './sky3D.js';
-import { WARP_WORLD_LENS, WarpWorldLens, newLensBody, warpRingLensSlot, lensImageToWorld } from './warp/worldLens.js';
+import {
+    WARP_WORLD_LENS, WARP_LENS_SHARED, WARP_LENS_EXTRA, newLensBody, warpLensAnchorSlot, writeLensAnchor, clearWarpLensAnchors,
+    lensImageToWorld
+} from './warp/worldLens.js';
 import { cameraRoll } from './viewRoll.js';
 import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { warpSkyBendCount } from './warp/skyBend.js';
@@ -107,7 +110,8 @@ const SATURN_VISUAL_RING = Object.freeze({
 // zostaje twarzą do kamery), słońce obrócone razem z bryłą. Rulon gnie siatki sam (hak w materiałach);
 // tu tylko powiększenie w lejku (rulonBoostCpu) i kadr po rulonie. Planeta z ringiem „Halo” zostaje na
 // swoim miejscu, póki jej prawdziwy ring (z portem K-7) jest w kadrze — bramka `gate`.
-const _warpLens = new WarpWorldLens();
+// Jedna soczewka gry (worldLens.js: WARP_LENS_SHARED) — punkty flot i wraków mapuje po niej hexShips3D (mapPoint).
+const _warpLens = WARP_LENS_SHARED;
 const _lensList = [];
 const _lensQ = new THREE.Quaternion();
 const _lensQa = new THREE.Quaternion();
@@ -657,6 +661,8 @@ class DirectPlanet {
         // Soczewka świata w skoku gracza (rekord worldLens.js) i obwiednia ringu „Halo” (bramka soczewki).
         // rodzaj 'planet' — kropka minDot w soczewce (worldLens.js: M5); rExt — ring „Halo” / pierścień Saturna (_lensPrepare)
         this.lensBody = newLensBody(this.name, 'planet');
+        // Kotwica soczewki (worldLens.js: WARP_LENS_ANCHORS, klucz = id planety) — ring „Halo”, stacja, dok portu.
+        this._anchor = warpLensAnchorSlot(this.data?.id || this.name);
         this._lensed = false;
         this._ringOuter = 0;
         // Ustawienie tarczy celu soczewki (lensFaceQuat): bieżące w skoku (_lensFaceNow, wchodzi z β) i własna orientacja
@@ -862,7 +868,7 @@ class DirectPlanet {
         // Skok gracza: kadr i rozstawienie robi soczewka świata (applyWarpWorldLens) po wszystkich ciałach.
         if (lensOn) { this._lensPrepare(dt, scale, visualZ); return; }
         if (this._lensed) this._lensRestore();
-        if (this._ringLens) this._ringLens.on = false;   // ring „Halo” na prawdziwym miejscu
+        // (kotwica soczewki — ring „Halo”, stacje, doki na prawdziwym miejscu: clearWarpLensAnchors w updatePlanets3D)
         let offScreen = false;
         const renderCamera = anchoredToRing ? Core3D.cameraOrtho : Core3D.cameraPersp;
         if (Core3D.isFreePerspectiveCamera(cam)) {
@@ -1094,20 +1100,12 @@ class DirectPlanet {
         }
         const turned = o.angle > 1e-5;
         if (turned) { _lensAxis.set(o.ax, o.ay, 0); _lensQ.setFromAxisAngle(_lensAxis, o.angle); }
-        // Ring „Halo” planety jedzie w soczewce razem z nią (worldLens.js: WARP_RING_LENS → haloRingGame.js): środek
-        // obrazu, skala obrazu do prawdziwego promienia kuli (b.r), obrót przelotu, udział prawdziwego widoku.
-        if (anchored) {
-            if (!this._ringLens) this._ringLens = warpRingLensSlot(this.data?.id || this.name);
-            const rl = this._ringLens;
-            rl.on = true;
-            rl.x = lwx;
-            rl.y = lwy;
-            rl.k = Math.max(1e-6, fit.size * k) / Math.max(1e-6, b.r);
-            rl.real = real;
-            rl.vis = !fit.off;
-            rl.turned = turned;
-            if (turned) { if (!rl.q) rl.q = new THREE.Quaternion(); rl.q.copy(_lensQ); }
-        }
+        // Kotwica soczewki planety (worldLens.js: WARP_LENS_ANCHORS — writeLensAnchor): ring „Halo” jedzie z nią
+        // (haloRingGame.js: środek obrazu, skala obrazu do prawdziwego promienia kuli, obrót przelotu, udział prawdziwego
+        // widoku), stacje (stations3D.js) i doki portu (portDocks3D.js) — ta sama skala w płaszczyźnie gry.
+        const an = writeLensAnchor(this._anchor, L, b, fit.size, !fit.off);
+        an.turned = anchored && turned;
+        if (an.turned) { if (!an.q) an.q = new THREE.Quaternion(); an.q.copy(_lensQ); }
         if (fit.off) {
             if (this.group.visible) this.group.visible = false;
             return;
@@ -1195,6 +1193,8 @@ class DirectMoon {
         this._spinAngle = 0;
         // Soczewka świata w skoku gracza (worldLens.js): rekord ciała; `parent` = rekord planety (initPlanets3D).
         this.lensBody = newLensBody(this.tune?.id || 'moon', 'moon');
+        // Kotwica soczewki (klucz = węzeł gry księżyca: 'luna', 'io', 'ganimedes'… — id portu ruchu v2 i doku E14).
+        this._anchor = warpLensAnchorSlot(this.tune?.mapId || this.tune?.id || 'moon');
         this._lensed = false;
         this.init();
     }
@@ -1334,6 +1334,7 @@ class DirectMoon {
         const o = b.out;
         const fit = lensFitView(o, MOON_HALO_DEFAULTS.size);
         this._lensed = true;
+        writeLensAnchor(this._anchor, L, b, fit.size, !fit.off);
         // Księżyc w soczewce stoi przy statku w płaszczyźnie gry — nie rzuca cienia (mapa cienia słońca).
         if (this.mesh) this.mesh.castShadow = false;
         const lw = lensImageToWorld(L, o.x, o.y, b.z, this.isRingAnchored, _lensWorld);
@@ -1421,6 +1422,8 @@ class DirectSmallBody {
         this._extent = 1;          // promień obwiedni / promień średni (po kształcie)
         this._inner = 1;           // najmniejszy promień bryły / promień średni (tarcza w masce słońca)
         this.lensBody = newLensBody(this.id, 'small');
+        // Kotwica soczewki (klucz = id ciała: stacja Unii i dok portu przy Ceres / Weście jadą z obrazem ciała).
+        this._anchor = warpLensAnchorSlot(this.id);
         this._lensed = false;
         this.init();
     }
@@ -1527,6 +1530,7 @@ class DirectSmallBody {
         const o = b.out;
         const fit = lensFitView(o, 1.1);
         this._lensed = true;
+        writeLensAnchor(this._anchor, L, b, fit.size, !fit.off);
         const lw = lensImageToWorld(L, o.x, o.y, 0, true, _lensWorld);
         const k = lw.k;
         const lwx = lw.x;
@@ -1779,15 +1783,26 @@ window.updatePlanets3D = function (dt, cam) {
     NebulaSystem.update(dt, cam); StarSystem.update(dt, cam, RenderWorld.ship);
     // Skok gracza: planety i księżyce w soczewce świata (warpNurt.js pisze WARP_WORLD_LENS przed tym krokiem).
     const lensOn = WARP_WORLD_LENS.active === true;
+    // Zasięg rzeczy przypiętych (kotwica: reach — stacje, doki; piszą ich moduły po planetach) → decyzja wejścia ciała.
+    for (let i = 0; i < _entities.length; i++) {
+        const ent = _entities[i];
+        if (ent._anchor && ent.lensBody) { ent.lensBody.attachR = ent._anchor.reach; ent._anchor.reach = 0; }
+    }
     if (window._entities) window._entities.forEach(ent => { if (ent.update) ent.update(dt, cam, lensOn); });
     if (lensOn) applyWarpWorldLens();
-    else _warpLens.reset();
+    else {
+        _warpLens.reset();
+        clearWarpLensAnchors();
+        for (let i = 0; i < WARP_LENS_EXTRA.length; i++) WARP_LENS_EXTRA[i].alive = false;
+    }
 };
 
 // Soczewka świata: rekordy wszystkich ciał tej klatki → jeden przebieg (cel pierwszy, jego księżyce wokół
 // jego obrazu) → rozstawienie na scenie.
 function applyWarpWorldLens() {
     const L = WARP_WORLD_LENS;
+    // Kotwice od nowa (ciało bez rekordu w tej klatce — rzeczy przypięte na prawdziwym miejscu).
+    clearWarpLensAnchors();
     let n = 0;
     let target = null;
     let origin = null;
@@ -1798,6 +1813,17 @@ function applyWarpWorldLens() {
         if (L.target && ent.data === L.target) target = b;
         if (L.originBody && ent.data === L.originBody) origin = b;
     }
+    // Rekordy dodatkowe (worldLens.js: WARP_LENS_EXTRA — komety, olbrzymy, Hidalgo, doki bez ciała): miejsce z modułu
+    // obiektu (poprzednia klatka), skala prawdziwego widoku z kadru tej klatki.
+    const nBodies = n;
+    for (let i = 0; i < WARP_LENS_EXTRA.length; i++) {
+        const b = WARP_LENS_EXTRA[i];
+        if (!b.alive) continue;
+        b.flat = b.plane ? L.zoom : L.focal / Math.max(1, L.camZ - b.z);
+        b.gate = 1;
+        b.ready = true;
+        _lensList[n++] = b;
+    }
     // Ciało startu skoku (warp.originBody — sterownik: originBody) → rekord soczewki (A/B originMove, worldLens.js).
     L.origin = origin;
     _warpLens.update(_lensList, n, L, target, lensDiscVisible);
@@ -1806,6 +1832,14 @@ function applyWarpWorldLens() {
         if (!b || !b.ready) continue;
         ent._lensPlace();
         b.ready = false;
+    }
+    // Kotwice rekordów dodatkowych (klucz rekordu) — moduły obiektów rozstawiają je same (po planetach).
+    for (let i = nBodies; i < n; i++) {
+        const b = _lensList[i];
+        const fit = lensFitView(b.out, 1);
+        writeLensAnchor(b.anchor || warpLensAnchorSlot(b.id), L, b, fit.size, !fit.off);
+        b.ready = false;
+        b.alive = false;
     }
 }
 window.__warpWorldLens = { state: WARP_WORLD_LENS, lens: _warpLens, bodies: () => _entities.filter((e) => e.lensBody).map((e) => ({ id: e.lensBody.id, x: Math.round(e.lensBody.out.x), y: Math.round(e.lensBody.out.y), size: +e.lensBody.out.size.toFixed(1), beta: +e.lensBody.out.beta.toFixed(3), gate: +e.lensBody.gate.toFixed(3), entry: e.lensBody.entry, visible: !!e.group?.visible, target: e.lensBody.out.isTarget })) };

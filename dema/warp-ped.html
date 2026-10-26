@@ -48,24 +48,22 @@
 <body>
 <div id="root">
   <canvas id="webgl-layer"></canvas>
-  <canvas id="c" tabindex="0" aria-label="Demo warpa: skok Atlasa w wybranym stylu — rulon, sama prędkość, prędkość z akcentami soczewki albo soczewka bańki"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Demo warpa: skok Atlasa jak w grze — świat w soczewce, smugi gwiazd, wyjście z pędem"></canvas>
 </div>
-<div id="title"><div class="name">Warp „Pęd” · WebGPU</div><div class="hint">Ten sam warp co w grze (ośrodek, smugi, planety w soczewce świata, kop kamery, Atlas na belkach) — przełączasz tylko styl skoku i wyjście. Podróż leci w pętli.</div></div>
+<div id="title"><div class="name">Warp „Pęd” · WebGPU</div><div class="hint">Ten sam warp co w grze (świat w soczewce — daleko mały, przy mijaniu ogromny — smugi gwiazd, kop kamery, Atlas na belkach). Podróż leci w pętli.</div></div>
 <div id="styl"><div class="k" id="styl-k">—</div><div class="d" id="styl-d"></div></div>
 <div id="hud">ładowanie…</div>
 <div id="loading">Ładowanie planet, kadłuba i shaderów…</div>
 <div id="errors"></div>
 <div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
 <div id="panel">
-  <h1>WARP — STYL SKOKU</h1>
-  <div class="sub">Moduły gry: src/3d/warp (WarpNurt), planet3d.assets.js, hexShips3D, cameraRig.js. Styl: warpDrive.js → setWarpStyle (w grze: ?warp=…).</div>
+  <h1>WARP — PODNIESIONY ŚWIAT</h1>
+  <div class="sub">Moduły gry: src/3d/warp (WarpNurt, worldLens), planet3d.assets.js, hexShips3D, cameraRig.js. Jeden warp, jak w grze (docs/webgpu/WARP-SOCZEWKA.md).</div>
 
-  <h2>Styl</h2>
-  <div class="btns" id="styles">
-    <button data-styl="rulon" title="1">Rulon — dziś w grze<kbd>1</kbd><small>świat zwija się w walec i lejek</small></button>
-    <button data-styl="ped" title="2">Pęd — sama prędkość<kbd>2</kbd><small>nic się nie gnie: smugi, ośrodek, planety mijają</small></button>
-    <button data-styl="akcent" title="3">Pęd + akcenty<kbd>3</kbd><small>soczewka tylko na przejściach: naciąg, pęknięcie, sprężenie</small></button>
-    <button data-styl="soczewka" title="4">Soczewka bańki<kbd>4</kbd><small>przestrzeń gnie się wokół statku przez cały skok</small></button>
+  <h2>Ośrodek drobin (A/B)</h2>
+  <div class="btns two" id="medium">
+    <button data-medium="off" title="O">Bez ośrodka — jak w grze<kbd>O</kbd><small>świat w soczewce jest widowiskiem</small></button>
+    <button data-medium="on" title="O">Z ośrodkiem<kbd>O</kbd><small>dawny ośrodek drobin i soczewka bańki (?warpOsrodek=1)</small></button>
   </div>
 
   <h2>Wyjście</h2>
@@ -80,7 +78,7 @@
   <div class="btns" id="camroll">
     <button data-roll="up" title="K">Obrót: kurs w górę<kbd>K</kbd><small>kadr obraca się na czas skoku — to, co przed dziobem, u góry ekranu</small></button>
     <button data-roll="right" title="K">Obrót: kurs w prawo<kbd>K</kbd><small>kurs wzdłuż dłuższego boku kadru — więcej miejsca przed dziobem</small></button>
-    <button data-roll="off" title="K">Bez obrotu<kbd>K</kbd><small>kadr osiami świata, jak dziś w grze</small></button>
+    <button data-roll="off" title="K">Bez obrotu<kbd>K</kbd><small>kadr osiami świata</small></button>
   </div>
   <div class="btns two" id="warpzoom" style="margin-top:4px">
     <button data-zoom="staly" title="Z">Zoom stały<kbd>Z</kbd><small>ten sam kadr skoku przy każdym zoomie; przy przylocie kamera odsuwa się do celu</small></button>

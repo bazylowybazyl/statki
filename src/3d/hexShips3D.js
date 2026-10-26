@@ -28,7 +28,9 @@ import {
 import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
-import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
+import { HexBodyImpostorBatch, HexBodyLensBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
+import { WARP_WORLD_LENS, WARP_LENS_SHARED, WARP_LENS_EXTRA, lensImageToWorld } from './warp/worldLens.js';
+import { WARP_LENS_DOT_SWAP } from '../render/warpLensPhase.js';
 // Pudła klatki (rozgrzanie / rysowanie) i próg smugi — wspólne z grą (src/game/coldWreckView.js, RW-31).
 import {
   isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX, WRECK_IMPOSTOR_PX, wreckImpostorEnterPx,
@@ -129,7 +131,9 @@ const lodFrameStats = {
   shaftHulls: 0,
   shaftBakes: 0,
   // Smugi zimnych wraków w batchu (bez meshy, patrz coldWreckImpostors.js).
-  coldImpostors: 0
+  coldImpostors: 0,
+  // Kropki soczewki skoku gracza (HexBodyLensBatch: encje z lensDot, zimne wraki, smugi rekordów dodatkowych).
+  lensDots: 0
 };
 
 // Bufor okludera jednego kadłuba (packHullShaftOccluder -> pushShaftHullSdf).
@@ -230,6 +234,111 @@ function usesBillboardOrientation(entity) {
 
 // Pudło rozgrzania i pudło RYSOWANIA (isEntityInCull, isEntityInDrawBox, DRAW_BOX_MARGIN_PX) — src/render/drawBox.js:
 // te same reguły liczy gra (src/game/coldWreckView.js — flaga `__inDrawBox`, zimne wraki).
+
+// SOCZEWKA ŚWIATA — FLOTY, NPC I WRAKI JAKO KROPKI (DECYZJE E2 / E3, etap 3A 2026-10-26): w skoku gracza encja, którą
+// soczewka zastępuje (strona gry: index.html stampWarpLensDots → `__lensDot`, lustro workera: ENT_FLAG.LENS_DOT; skóra
+// i dodatki schowane jak we mgle — predykat ukrycia), rysuje się kropką partii HexBodyLensBatch (jeden rysunek, pod
+// kadłubami — WARP_LENS_DOT_Z) na swojej pozycji w soczewce (worldLens.js: WARP_LENS_SHARED.mapPoint — ta sama mapa
+// i β co ciała; w wyjściu punkt wraca na prawdziwe miejsce w 0,3 s od przejścia frontu smug gwiazd, a kropka, której
+// prawdziwe miejsce jest poza kadrem, gaśnie — out.alpha), barwa = średnia sprite'a jak smuga dalekiego wraku, najmniej
+// ~2 px widocznej plamki, krycie × widoczność maskowania (wróg z maskowaniem nie świeci kropką). Zimne wraki mapuje
+// render sam (smuga z migawki; udział soczewki ≥ WARP_LENS_DOT_SWAP — skóra i zwykła smuga pominięte w tej klatce).
+// Rekordy dodatkowe soczewki ze smugą (olbrzymy pasa) — elipsa w barwie rekordu.
+const LENS_DOT = Object.freeze({
+  minHalfLen: 2.2,     // [px bufora] połowa długości kropki (miękki brzeg smugi zjada ~45% — widać ~2,4 px)
+  minHalfWid: 1.8,     // [px bufora] połowa szerokości (widać ~2 px)
+  fallback: Object.freeze({ r: 0.62, g: 0.66, b: 0.72 })   // encja bez sprite'a kadłuba (myśliwce)
+});
+const _lensImg = { x: 0, y: 0, q: 0, beta: 0, alpha: 1 };
+const _lensWorld = { x: 0, y: 0, k: 1 };
+
+function lensDotFlag(entity) {
+  return entity.__mirror === true ? entity.lensDot === true : entity.__lensDot === true;
+}
+
+/** Smuga w partii kropek soczewki z obrazu [px bufora od środka kadru]; false — poza kadrem albo partia pełna. */
+function pushLensSmudge(ix, iy, rot, pxL, pxW, r, g, b, opacity) {
+  const L = WARP_WORLD_LENS;
+  const reach = pxL > pxW ? pxL : pxW;
+  if (Math.abs(ix) - reach > L.W * 0.5 || Math.abs(iy) - reach > L.H * 0.5) return false;
+  const zoom = Math.max(1e-9, Number(L.zoom) || 1);
+  lensImageToWorld(L, ix, iy, 0, true, _lensWorld);
+  return HexBodyLensBatch.pushRaw(_lensWorld.x, -_lensWorld.y, rot, pxL / zoom, pxW / zoom, r, g, b, opacity);
+}
+
+/** Kropka encji z `lensDot` na jej pozycji w soczewce (mapPoint) — długość i barwa z kadłuba na belkach. */
+function pushEntityLensDot(entity) {
+  const ex = getEntityPosX(entity);
+  const ey = getEntityPosY(entity);
+  const hull = isBeamHullEntity(entity) ? entity.beamHull : null;
+  let halfL;
+  let halfW;
+  let rot;
+  let color = null;
+  if (hull) {
+    halfL = (Number(hull.srcWidth) || 0) * (Number(hull.scale) || 1) * 0.5;
+    halfW = (Number(hull.srcHeight) || 0) * (Number(hull.scale) || 1) * 0.5;
+    rot = -((Number(entity.angle) || 0) + hullSpriteRotation(entity));
+    color = computeAverageBodyColor(hull.visualImage || hull.image);
+  } else {
+    halfL = Number(entity.radius) || Number(entity.r) || 60;
+    halfW = halfL * 0.6;
+    rot = -(Number(entity.angle) || 0);
+  }
+  const img = WARP_LENS_SHARED.mapPoint(ex, ey, _lensImg, halfL);
+  // maskowanie (hak przekrojowy: rzecz przy kadłubie gaśnie z nim) — widoczność wyglądu maskowania encji
+  const cl = entity.__cloakLook;
+  const opacity = img.alpha * (cl && cl.active ? Math.max(0, Math.min(1, Number(cl.vis) || 0)) : 1);
+  if (!(opacity > 0.004)) return false;
+  const c = color || LENS_DOT.fallback;
+  return pushLensSmudge(img.x, img.y, rot,
+    Math.max(img.q * halfL, LENS_DOT.minHalfLen), Math.max(img.q * halfW, LENS_DOT.minHalfWid), c.r, c.g, c.b, opacity);
+}
+
+/**
+ * Zimne wraki w soczewce: udział soczewki w miejscu wraku ≥ WARP_LENS_DOT_SWAP — smuga z migawki (`impostor`) na pozycji
+ * soczewki, znacznik `_lensDotFrame` (skóra ciała i zwykła smuga pomijają wrak w tej klatce). Zwraca liczbę smug.
+ */
+function pushColdWreckLensDots(coldWrecks, frameId) {
+  let n = 0;
+  for (let i = 0; i < coldWrecks.length; i++) {
+    const w = coldWrecks[i];
+    const imp = w?._coldSnapshot?.impostor;
+    if (!imp || w.dead) continue;
+    const img = WARP_LENS_SHARED.mapPoint(imp.wx, imp.wy, _lensImg, imp.halfW);
+    if (!(img.beta >= WARP_LENS_DOT_SWAP)) continue;
+    w._lensDotFrame = frameId;
+    w._coldSkinFrame = frameId;
+    const alpha = (Number.isFinite(imp.opacity) ? imp.opacity : COLD_WRECK_CONFIG.impostorOpacity) * img.alpha;
+    if (!(alpha > 0.004)) continue;
+    if (pushLensSmudge(img.x, img.y, imp.rot, Math.max(img.q * imp.halfW, LENS_DOT.minHalfLen),
+      Math.max(img.q * imp.halfH, LENS_DOT.minHalfWid), imp.r, imp.g, imp.b, alpha)) n++;
+  }
+  return n;
+}
+
+/** Rekordy dodatkowe soczewki ze smugą (olbrzymy pasa — worldLens.js: WARP_LENS_EXTRA, `smudge`): elipsa w kotwicy. */
+function pushLensExtraSmudges() {
+  const L = WARP_WORLD_LENS;
+  const zoom = Math.max(1e-9, Number(L.zoom) || 1);
+  const roll = Number(L.roll) || 0;
+  const rc = roll ? Math.cos(roll) : 1;
+  const rs = roll ? Math.sin(roll) : 0;
+  let n = 0;
+  for (let i = 0; i < WARP_LENS_EXTRA.length; i++) {
+    const rec = WARP_LENS_EXTRA[i];
+    const sm = rec.smudge;
+    const a = rec.anchor;
+    // smuga zastępuje prawdziwy widok od tego samego progu co kropki (właściciel chowa wtedy prawdziwy obiekt)
+    if (!sm || !a || !a.on || !a.vis || !(a.px > 0.3) || !(1 - a.real >= WARP_LENS_DOT_SWAP)) continue;
+    // kotwica = punkt płaszczyzny gry pod obrazem (tło z paralaksą — writeLensAnchor) → px od środka kadru (osie ekranu)
+    const ux = (a.x - L.camX) * zoom;
+    const uy = (a.y - L.camY) * zoom;
+    if (pushLensSmudge(rc * ux + rs * uy, -rs * ux + rc * uy, Number(sm.rot) || 0,
+      a.px * (Number(sm.ax) || 1), a.px * (Number(sm.ay) || 1), sm.r, sm.g, sm.b, 1)) n++;
+  }
+  return n;
+}
 
 function getInterpolatedRenderPose(entity) {
   const ship = RenderWorld.ship;
@@ -1147,6 +1256,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   state.lastCameraZoom = cameraZoom;
   DrawCallStats.begin();
   HexBodyImpostorBatch.begin();
+  // Soczewka skoku gracza (E2): kropki flot i wraków — tylko gdy soczewka tej klatki żyje (planet3d: update przed nami).
+  const lensDots = WARP_LENS_SHARED.live && WARP_WORLD_LENS.active === true;
+  HexBodyLensBatch.begin();
   lodFrameStats.fullBodies = 0;
   lodFrameStats.impostorBodies = 0;
   lodFrameStats.fullHexes = 0;
@@ -1158,6 +1270,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   lodFrameStats.shaftHulls = 0;
   lodFrameStats.shaftBakes = 0;
   lodFrameStats.coldImpostors = 0;
+  lodFrameStats.lensDots = 0;
 
   const valid = state.validEntities;
   const vfxEntities = state.vfxEntities;
@@ -1187,6 +1300,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     }
     const hasBody = isBeamHullEntity(entity);
     if (hasBody) validSet.add(entity);
+    // kropka soczewki (E2) — skórę i dodatki chowa predykat ukrycia niżej (lensDot ⊂ ukryte)
+    if (lensDots && lensDotFlag(entity) && pushEntityLensDot(entity)) lodFrameStats.lensDots++;
     if (entityHiddenTest && entityHiddenTest(entity)) {
       entity.__hiddenFromView = true;
       const data = state.entityMeshes.get(entity);
@@ -1260,6 +1375,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     hasRenderable = true;
   }
 
+  // Zimne wraki w soczewce skoku (E2): smugi na pozycjach soczewki — przed skórą ciał i zwykłą smugą (znacznik klatki).
+  if (lensDots && Array.isArray(coldWrecks) && coldWrecks.length > 0) lodFrameStats.lensDots += pushColdWreckLensDots(coldWrecks, frameId);
   // Zimne wraki na belkach (src/game/coldWrecks.js): w kadrze i większe od smugi — skóra z ciała do rysowania
   // (poza fizyką, ta sama skóra, mapa ran i cień co u wraku śpiącego); pozostałe — smuga z migawki (niżej).
   if (Array.isArray(coldWrecks) && coldWrecks.length > 0 &&
@@ -1386,6 +1503,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   }
 
   HexBodyImpostorBatch.flush();
+  // Kropki soczewki: rekordy dodatkowe ze smugą (olbrzymy pasa), potem jeden rysunek partii (pusta — schowana).
+  if (lensDots) lodFrameStats.lensDots += pushLensExtraSmudges();
+  HexBodyLensBatch.flush();
 
   vfxEntities.push(...visibleVfx);
   // margines pudła rysowania [j. świata] — okręt spoza pudła ma kadłub co najmniej tyle za kadrem (LOD dysz SIDE);
@@ -1589,6 +1709,13 @@ function updateColdBeamWrecks(coldWrecks, cull, camX, camY, cameraZoom, frameId,
     const inDraw = !drawBoxed || (Math.abs(imp.wx - cull.x) <= cull.drawHalfW + imp.reach + margin &&
       Math.abs(imp.wy - cull.y) <= cull.drawHalfH + imp.reach + margin);
     if (!drawn(w) || !isBeamHullEntity(w)) continue;
+    // w soczewce skoku (pushColdWreckLensDots) — smuga soczewki zamiast skóry
+    if (w._lensDotFrame === frameId) {
+      validSet.add(w);   // siatka zostaje (jak poza kadrem) — bez przebudowy skóry po skoku
+      const hidden = state.entityMeshes.get(w);
+      if (hidden?.mesh?.visible) hidden.mesh.visible = false;
+      continue;
+    }
     // Zimny rysuje się jak teren — bez mgły wojny (flaga z czasu, gdy był na liście encji, nie gasi cienia).
     w.__hiddenFromView = false;
     validSet.add(w);

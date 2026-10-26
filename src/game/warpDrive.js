@@ -438,9 +438,10 @@ export function sampleWarpDeparture(d, t, out = {}) {
 /**
  * WYJŚCIE GRACZA Z WARPA = przylot jak u NPC (user 2026-10-03: spójność — Atlas też „hamuje”):
  *   ZWOLNIENIE `slow` s — prędkość spada z warpowej do prędkości wlotu (warpArrivalSpeed),
- *                rulon się rozwija, smugi gwiazd i ośrodka gasną;
- *   WLOT `coast` s — statek leci z prędkością wlotu i wysuwa się przed kamerę (`ahead` × pół
- *                kadru w stronę celu; kamera nigdy go nie wyprzedza, dogania w `settle` s);
+ *                smugi gwiazd gasną frontem od dziobu, ciała soczewki świata zanurzają się z nim;
+ *   WLOT `coast` s — statek leci z prędkością wlotu; swobodny skok: wysuwa się przed kamerę (`ahead` × pół
+ *                kadru w stronę celu; kamera nigdy go nie wyprzedza, dogania w `settle` s), skok z celem — bez
+ *                wysunięcia (kadr przylotu K1, cameraRig.js);
  *   HAMOWANIE — droga WARP_RUSH.brakeDist × L ze stałym opóźnieniem.
  */
 export const WARP_EXIT = Object.freeze({ slow: 0.7, coast: 0.45, ahead: 0.4, settle: 1.3, zoomTail: 0.9 });
@@ -525,80 +526,27 @@ export function sampleWarpExitRamp(r, age, out = {}) {
 }
 
 /**
- * RULON (pomysł usera 2026-10-03, src/3d/warp/rulon.js): ładowanie ZWIJA rzeczywistość wokół
- * osi skoku i zawija ją do statku (lejek) — jedna faza; skok dociąga miękkim nabrzmieniem (> 1), wyjście
- * rozwija w `exitDur` s. state: 'charging' | 'active' | 'exit' | inne (0); kickAge — od skoku,
- * exitAge — od wyjścia. Lejek (field) = min(1, zwinięcie).
- * PŁYNNOŚĆ (user 2026-10-08: „upłynnij wejście i wyjście z warpa — zawijanie i rozwijanie”): zwijanie =
- * smoothstep po CAŁYM ładowaniu (dawniej smoothstep^1,4 między 5 a 95% — szczyt ~2,4/s przy końcu), nabrzmienie
- * przy skoku narasta gaussowsko (bez skoku nachylenia; dawniej +16% w 0,03 s — szarpnięcie 5/s), rozwijanie =
- * smoothstep (rusza od zera; dawniej easeOut³ — od razu 4,3/s) przez zwolnienie i wlot rampy (player.js).
+ * JEDEN WARP (sprzątanie S1 nowego warpa „podniesiony świat”, 2026-10-26; DECYZJE S1, projekt D § 6 „C1”): wybór stylu
+ * skoku usunięty — dawne style 'rulon' (zwinięcie świata w walec i lejek), 'akcent' (akcenty soczewki na przejściach)
+ * i 'soczewka' (soczewka bańki przez cały skok) zniknęły z efektu gracza (src/3d/warp/player.js) i z rigu kamery; adres
+ * `?warp=…` / `?rulon=…` niczego nie zmienia. Warp gracza = „pęd” + soczewka świata (worldLens.js). Hak wierzchołków
+ * rulonu (rulon.js, installRulonGlobal) zostaje do osobnej decyzji (C2) — nikt go już nie zwija.
+ * AGENT: API zgodne dla dawnych importów (index.html: `warpRulonEnabled(location.search)` → `w.rulon` riga kamery):
+ * `warpStyle` zawsze 'ped', `warpRulonEnabled` zawsze false, `setWarpStyle` nic nie ustawia. Nowy kod ich nie woła.
  */
-export const WARP_RULON = Object.freeze({
-  kickSwell: 0.1,   // nabrzmienie przy skoku (× zwinięcia)
-  kickRise: 0.1,    // [s] narastanie (1 − e^(−(t/τ)²))
-  kickFall: 0.5     // [s] gaśnięcie
-});
-
-export function warpRulonBend(state, charge, kickAge, exitAge, exitDur = WARP_EXIT.slow + WARP_EXIT.coast) {
-  if (state === 'charging') {
-    const c = clamp01(charge);
-    return c * c * (3 - 2 * c);
-  }
-  if (state !== 'active' && state !== 'exit') return 0;
-  const k = Number(kickAge);
-  const R = WARP_RULON;
-  const q = k / R.kickRise;
-  const swell = k > 0 ? (1 - Math.exp(-q * q)) * Math.exp(-k / R.kickFall) : 0;
-  let b = 1 + R.kickSwell * swell;
-  if (state === 'exit') {
-    const u = clamp01((Number(exitAge) || 0) / Math.max(0.05, exitDur));
-    b *= 1 - u * u * (3 - 2 * u);
-  }
-  return b;
-}
-
-/**
- * STYL WARPA (user 2026-10-19: „przekombinowałem z zawijanym efektem warp — dodaj przełącznik rulon 0”; porównanie
- * w demie „Pęd”, dema/warp-ped.html):
- *   'rulon'    — zwinięcie świata w walec i lejek (rulon.js) — dawny domyślny, dziś tylko z adresu (A/B);
- *   'ped'      — sama prędkość: bez gięcia świata (smugi gwiazd, ośrodek, soczewka świata, kop kamery) — domyślny;
- *   'akcent'   — prędkość + krótkie akcenty soczewki na przejściach (naciąg przed dziobem w ładowaniu, fala
- *                w punkcie skoku, sprężenie przestrzeni przed dziobem przy wyjściu);
- *   'soczewka' — prędkość + soczewka bańki wokół statku przez cały skok (kadłub nietknięty).
- * Adres strony: `?warp=ped|akcent|soczewka|rulon`; `?rulon=1` (on / true / tak) = 'rulon', `?rulon=0` = 'ped'. search — `location.search`
- * strony (render: RenderWorld.pageSearch — także w workerze); wynik pamiętany dla ostatniego napisu. Demo ustawia
- * styl wprost (`setWarpStyle`, null — wraca do adresu). Bez rulonu kamera trzyma zwykłe wyprzedzenie (cameraRig.js).
- */
-export const WARP_STYLES = Object.freeze(['rulon', 'ped', 'akcent', 'soczewka']);
-const RULON_OFF_RE = /[?&]rulon=(?:0|off|false|nie)(?:&|$)/i;
-const RULON_ON_RE = /[?&]rulon=(?:1|on|true|tak)(?:&|$)/i;
-const WARP_STYLE_RE = /[?&]warp=([a-z]+)(?:&|$)/i;
-let _styleSet = null;
-let _styleSearch = null;
-// Styl domyślny = 'ped' (decyzja użytkownika 2026-10-23: „wrzuć nowy warp do gry” — „ped”, nie bańka); dawny rulon
-// i reszta stylów z adresu (`?warp=rulon|akcent|soczewka`) do A/B.
+export const WARP_STYLES = Object.freeze(['ped']);
 export const WARP_STYLE_DEFAULT = 'ped';
-let _styleFromSearch = WARP_STYLE_DEFAULT;
-export function setWarpStyle(style) {
-  _styleSet = WARP_STYLES.includes(style) ? style : null;
-  return _styleSet;
+/** Zgodność: styl skoku jest jeden — zwraca null (nic nie ustawia). */
+export function setWarpStyle(_style) {
+  return null;
 }
-export function warpStyle(search) {
-  if (_styleSet) return _styleSet;
-  const s = typeof search === 'string' ? search : '';
-  if (s !== _styleSearch) {
-    _styleSearch = s;
-    const m = WARP_STYLE_RE.exec(s);
-    const v = m ? m[1].toLowerCase() : '';
-    _styleFromSearch = WARP_STYLES.includes(v) ? v
-      : (RULON_ON_RE.test(s) ? 'rulon' : (RULON_OFF_RE.test(s) ? 'ped' : WARP_STYLE_DEFAULT));
-  }
-  return _styleFromSearch;
+/** Zgodność: styl skoku jest jeden ('ped'), adres strony go nie zmienia. */
+export function warpStyle(_search) {
+  return WARP_STYLE_DEFAULT;
 }
-/** Czy skok zwija świat w rulon (styl 'rulon'). */
-export function warpRulonEnabled(search) {
-  return warpStyle(search) === 'rulon';
+/** Zgodność: skok nie zwija świata w rulon (styl 'rulon' usunięty) — zawsze false. */
+export function warpRulonEnabled(_search) {
+  return false;
 }
 
 

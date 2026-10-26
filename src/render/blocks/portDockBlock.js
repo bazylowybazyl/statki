@@ -1,18 +1,39 @@
 // src/render/blocks/portDockBlock.js — blok migawki: budowle doków portów bez ringu w zasięgu kadru (E14).
 //
 // Rozgrywka (kolizje, ścieżki bańki) liczy budowle w grze (`src/game/portDockWorld.js` — tabela `bubbleDocks`
-// z workera ruchu), obraz rysuje worker renderu (`updatePortDocks3D`, src/3d/portDocks3D.js). Na budowlę 8 liczb:
+// z workera ruchu), obraz rysuje worker renderu (`updatePortDocks3D`, src/3d/portDocks3D.js). Na budowlę 9 liczb:
 // indeks rodzaju (`PORT_DOCK_KIND_IDS`), składu (`BERTH_MIX_IDS`) i stylu (`PORT_DOCK_STYLE_IDS`), mnożnik składu,
-// liczba doków, środek i kąt osi +u w grze — geometrię obie strony liczą z `buildPortDockGeometry`.
+// liczba doków, środek i kąt osi +u w grze, kod ciała portu (kotwica soczewki) — geometrię obie strony liczą z `buildPortDockGeometry`.
 //
 // Rejestracja (strona gry): `packer.addBlock(createPortDockBlock())`, w klatce `frame.portDocks = { list, count }`
 // (rekordy budowli `PortDockWorld`: `kindIndex`, `mixIndex`, `styleIndex`, `spec.repeats`, `spec.dockCount`, `x`, `y`,
 // `angle`). Strona renderu: `applyPortDockBlock(view.blocks.portDocks, out)` → rekordy wielokrotnego użytku.
 // Czysty moduł (bez three, DOM i `window`).
+//
+// SOCZEWKA ŚWIATA (etap 3A, DECYZJE E1): budowla niesie kod ciała portu (ANCHOR — indeks w PORT_DOCK_ANCHOR_IDS:
+// planety, małe ciała, księżyce mapy; −1 — dok bez ciała, np. kryjówka) — w skoku gracza obraz doku jedzie za obrazem
+// swojego ciała (src/3d/portDocks3D.js: kotwica worldLens.js WARP_LENS_ANCHORS, księżyc bez bryły — kotwica planety).
+
+import { SYSTEM_MAP_PLANETS, SYSTEM_MAP_MOONS } from '../../data/systemMap.js';
+import { SMALL_BODIES } from '../../data/smallBodies.js';
+
+/** Klucze kotwic soczewki doków = id ciał (planety, małe ciała, księżyce mapy) — kod ANCHOR w bloku to indeks. */
+export const PORT_DOCK_ANCHOR_IDS = Object.freeze([
+  ...SYSTEM_MAP_PLANETS.map((p) => p.id),
+  ...SMALL_BODIES.map((b) => b.id),
+  ...SYSTEM_MAP_MOONS.map((m) => m.id)
+]);
+const ANCHOR_INDEX = new Map(PORT_DOCK_ANCHOR_IDS.map((id, i) => [id, i]));
+
+/** Kod kotwicy soczewki dla id portu (rynku): indeks ciała albo −1 (dok bez ciała). */
+export function portDockAnchorCode(stationId) {
+  const i = ANCHOR_INDEX.get(String(stationId || ''));
+  return i === undefined ? -1 : i;
+}
 
 export const PORT_DOCK_BLOCK = Object.freeze({
   HEAD: 2,                         // [liczba budowli, słowa użyte]
-  DOCK: Object.freeze({ KIND: 0, MIX: 1, STYLE: 2, REPEATS: 3, COUNT: 4, X: 5, Y: 6, ANGLE: 7, STRIDE: 8 }),
+  DOCK: Object.freeze({ KIND: 0, MIX: 1, STYLE: 2, REPEATS: 3, COUNT: 4, X: 5, Y: 6, ANGLE: 7, ANCHOR: 8, STRIDE: 9 }),
   /** Budowle w zasięgu kadru — przy księżycach olbrzymów 2–3, zapas. */
   CAP: 8
 });
@@ -37,6 +58,7 @@ export function packPortDockBlock(F, list, count) {
     F[o + D.X] = r.x;
     F[o + D.Y] = r.y;
     F[o + D.ANGLE] = r.angle;
+    F[o + D.ANCHOR] = portDockAnchorCode(r.stationId);
     o += D.STRIDE;
     k++;
   }
@@ -68,7 +90,7 @@ export function applyPortDockBlock(blk, out) {
   for (let i = 0; i < n; i++, o += D.STRIDE) {
     let r = out[i];
     if (!r) {
-      r = { kindIndex: 0, mixIndex: 0, styleIndex: 0, repeats: 1, dockCount: 1, x: 0, y: 0, angle: 0 };
+      r = { kindIndex: 0, mixIndex: 0, styleIndex: 0, repeats: 1, dockCount: 1, x: 0, y: 0, angle: 0, anchorId: null };
       out[i] = r;
     }
     r.kindIndex = F[o + D.KIND];
@@ -79,6 +101,8 @@ export function applyPortDockBlock(blk, out) {
     r.x = F[o + D.X];
     r.y = F[o + D.Y];
     r.angle = F[o + D.ANGLE];
+    const a = F[o + D.ANCHOR] | 0;
+    r.anchorId = a >= 0 && a < PORT_DOCK_ANCHOR_IDS.length ? PORT_DOCK_ANCHOR_IDS[a] : null;
   }
   out.length = n;
   return out;

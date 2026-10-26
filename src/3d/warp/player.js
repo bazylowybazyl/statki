@@ -3,30 +3,29 @@
 // Skok GRACZA w języku „Nurtu” (dema/warp-webgpu/scenes.js: createTripScene / createFreeScene,
 // iteracja 3 — 2026-10-03) na automacie warpa gry (index.html: `warp.state` idle → charging →
 // active → idle + rampa wyjścia `warp.exitRamp`). Czysty moduł (bez three, bez DOM): co klatkę
-// dostaje stan gry, wypełnia klatkę efektu (frame.js) — bańka w ośrodku, gwiazdy, rulon, fale,
-// błyski, żar kadłuba.
+// dostaje stan gry, wypełnia klatkę efektu (frame.js) — gwiazdy, fale, błyski, żar kadłuba, oś β soczewki świata
+// (worldLens.js); bańka w ośrodku tylko w hipercruisie z `?hcOsrodek=1` i w warpie z `?warpOsrodek=1` (A/B).
+// JEDEN WARP (sprzątanie S1, 2026-10-26): bez stylów skoku — dawne 'rulon' (zwinięcie świata), 'akcent' (naciąg,
+// pęknięcie, sprężenie) i 'soczewka' (soczewka bańki przez cały skok) usunięte; widowiskiem jest świat w soczewce.
 //
 // Fazy (widok ze środka):
-//   ŁADOWANIE  bańka rośnie: płaty ośrodka (turkus z przodu, pomarańcz z tyłu), gwiazdy
-//              wydłużają się płasko (0,32·ładowanie²); RULON zwija tło w walec ∩ wokół kursu
-//              i zawija je do statku (lejek, jedna faza — rulon.js). Kurs stoi od ładowania
-//              (rozgrywka: bramka kursu). Ładowanie gry trwa `warp.chargeTime` (0,8 s) — krzywe
-//              dema (3 s) biegną po ułamku ładowania; przerwane ładowanie zwija bańkę w ~0,25 s.
-//   SKOK       kop: gwiazdy strzelają w smugi z przestrzałem ×1,4 → 1, rulon szarpie (+16%),
-//              fala w punkcie skoku, błysk za rufą; przepływ ośrodka rośnie z prędkością gry.
-//   PODRÓŻ     opływ bańki, kopuła na obrysie kieszeni, pomarańczowe „V” warkocza w lejku;
-//              przepływ = prędkość WIDOCZNA (bieg I 16 tys., wyżej 21 tys. j/s — WARP_FLOW).
+//   ŁADOWANIE  gwiazdy wydłużają się płasko (0,32·ładowanie²), świat „wstaje” (β soczewki do 0,9). Kurs stoi od
+//              ładowania (rozgrywka: bramka kursu). Ładowanie gry trwa `warp.chargeTime` (0,8 s) — krzywe dema (3 s)
+//              biegną po ułamku ładowania; przerwane ładowanie opada w ~0,25 s (β — 0,3 s).
+//   SKOK       kop: gwiazdy strzelają w smugi z przestrzałem ×1,4 → 1 (bez ząbka w klatce kopu), fala w punkcie
+//              skoku, błysk za rufą, β domyka się do 1; przepływ widoczny rośnie z prędkością gry.
+//   PODRÓŻ     smugi gwiazd, świat w soczewce; przepływ = prędkość WIDOCZNA (21 tys. j/s — WARP_FLOW), przy
+//              mijanym ciele zwalnia ze statkiem.
 //   WYJŚCIE    = PRZYLOT jak u okrętów NPC (warpDrive.js: WARP_EXIT, rampa rozgrywki):
-//              ZWOLNIENIE (rulon się rozwija, smugi gwiazd i ośrodka gasną, front od dziobu),
-//              WLOT (statek naprawdę leci z prędkością wlotu, wysuwa się przed kamerę — rig),
-//              HAMOWANIE (błysk dziobu, blask, fala, żar, iskry ośrodka lecą dalej, bańka zapada
-//              się od dziobu); po zatrzymaniu ośrodek gaśnie.
-// Kamerą rządzi rig gry (cameraRig.js) — kop, oddalenie, statek na środku lejka i wysunięcie
-// przy wyjściu są tam. Wstrząsy kopu, wyjścia i hamowania zgłasza GRA (src/game/warpShakes.js — te same chwile
-// i wartości; działają też w workerze renderu), efekt już nie wstrząsa.
+//              ZWOLNIENIE (smugi gwiazd gasną frontem od dziobu, ciała soczewki zanurzają się z nim),
+//              WLOT (statek naprawdę leci z prędkością wlotu),
+//              HAMOWANIE = jedno zdarzenie (błysk dziobu, blask, fala, żar — WARP_ARRIVAL_ACCENT); dalej ślizg z pędem.
+// Kamerą rządzi rig gry (cameraRig.js) — kop, oddalenie, kadr przylotu K1 i wysunięcie przy swobodnym wyjściu są tam.
+// Wstrząsy kopu, wyjścia i hamowania zgłasza GRA (src/game/warpShakes.js — te same chwile i wartości; działają też
+// w workerze renderu), efekt już nie wstrząsa.
 
 import { warpPalette, heatColor } from './palette.js';
-import { WARP_EXIT, warpArrivalSpeed, warpBrakeTime, warpBrakeBubbleFront, warpRulonBend, warpStyle, warpSizeScale } from '../../game/warpDrive.js';
+import { WARP_EXIT, warpArrivalSpeed, warpBrakeTime, warpBrakeBubbleFront, warpSizeScale } from '../../game/warpDrive.js';
 import { RenderWorld } from '../../render/renderWorld.js';
 import { WARP_LENS_PHASE, WARP_LENS_EXIT_SPAN, warpLensBeta, warpLensChargeBeta, warpLensKickBeta } from '../../render/warpLensPhase.js';
 
@@ -34,14 +33,14 @@ import { WARP_LENS_PHASE, WARP_LENS_EXIT_SPAN, warpLensBeta, warpLensChargeBeta,
 export const WARP_BUBBLE = Object.freeze({ radiusK: 0.62, asp: 1.35 });
 /**
  * Widoczna prędkość przepływu ośrodka w podróży [j/s]. Warp ma JEDNĄ prędkość (QOL 2026-10-03 — biegi
- * przeniesione do PRZELOTU), więc przepływ to `travel` (bieg II dema); gear1 / gear2 — wartości dema.
+ * przeniesione do PRZELOTU), więc przepływ to `travel` (bieg II dema); `gear2` — normalizator smug gwiazd (demo).
  */
-export const WARP_FLOW = Object.freeze({ gear1: 16000, gear2: 21000, travel: 21000, exitRest: 160, slowMin: 2500 });
+export const WARP_FLOW = Object.freeze({ gear2: 21000, travel: 21000, exitRest: 160, slowMin: 2500 });
 /**
  * Hipercruise (E5, 2026-10-22 — ten sam efekt co skok warpa): przepływ ośrodka × (prędkość / ref), w [min, max] —
  * Mk I (20 tys.) ~14 tys., Mk III (40 tys.) ~28 tys. j/s widocznie; wstrząs kopu × shake (zgłasza gra — warpShakes.js:
- * WARP_SHAKE.hyperKickMul, ta sama wartość). Rulon i soczewka świata
- * (kompozycja skoku z celem) w hipercruisie wyłączone — gra obok statku zostaje czytelna (hipercruise da się przerwać).
+ * WARP_SHAKE.hyperKickMul, ta sama wartość). Soczewka świata
+ * (kompozycja skoku z celem) w hipercruisie wyłączona — gra obok statku zostaje czytelna (hipercruise da się przerwać).
  */
 export const HYPER_FLOW = Object.freeze({ ref: 30000, min: 0.2, max: 1.4, shake: 0.5 });
 /**
@@ -83,34 +82,19 @@ export function warpMediumOn(search = RenderWorld.pageSearch) {
   }
   return _warpMediumOn;
 }
-/**
- * Soczewka świata (worldLens.js): oś β z ZEGARA GRY (src/render/warpLensPhase.js — DECYZJE P1, etap integracji
- * 2026-10-26): ładowanie podnosi świat (β do 0,9 · smoothstep ładowania), kop domyka (0,9 → 1 easeOut³ w 0,45 s), lot 1,
- * wyjście — front smug gwiazd (soczewka per ciało), przerwane ładowanie opada w 0,3 s. W grze rekord osi liczy strona
- * gry (index.html: stepPlayerWarpLensPhase — game.lens, w workerze z migawki); bez niego (demo) — ten sam rekord
- * z zegara efektu (lensPhase). Hipercruise — β = 0. `kick` — dawna stała (0 → 1 w 0,5 s po skoku), zostaje dla dem.
- */
-export const WARP_LENS_TIMING = Object.freeze({ kick: 0.5 });
-/**
- * Akcenty soczewki (styl 'akcent' — warpDrive.js: warpStyle; demo „Pęd”, 2026-10-19). Długości w L kadłuba,
- * siły w px ekranu (refrakcja — bez świecących obrysów, pamięć shockwave-style):
- *   NACIĄG     — w ładowaniu przestrzeń wsysana do punktu skoku `jumpAhead` L przed dziobem (implozja z ładowaniem),
- *   PĘKNIĘCIE  — przy skoku naciąg pęka falą z punktu skoku (statek przelatuje przez nią),
- *   SPRĘŻENIE  — w chwili zatrzymania (hamowanie rampy) przestrzeń przed dziobem wraca falą — razem z błyskiem
- *                i żarem hamowania, zamiast fali hamowania (przylot = jedno zdarzenie, WARP_ARRIVAL_ACCENT).
- */
-// Punkt skoku 1,6 L przed dziobem: w kadrze ładowania przy zoomie gracza (3,2 L wypadało poza kadr — zrzuty dema).
-export const WARP_ACCENT = Object.freeze({ jumpAhead: 1.6, pullR: 1.3, pullAmp: 40, snapAmp: 16, snapLife: 0.9, springAmp: 14, springLife: 1.0 });
+// Soczewka świata (worldLens.js): oś β z ZEGARA GRY (src/render/warpLensPhase.js — DECYZJE P1, etap integracji
+// 2026-10-26): ładowanie podnosi świat (β do 0,9 · smoothstep ładowania), kop domyka (0,9 → 1 easeOut³ w 0,45 s), lot 1,
+// wyjście — front smug gwiazd (soczewka per ciało), przerwane ładowanie opada w 0,3 s. W grze rekord osi liczy strona
+// gry (index.html: stepPlayerWarpLensPhase — game.lens, w workerze z migawki); bez niego (demo) — ten sam rekord
+// z zegara efektu (WarpPlayerFx.lensPhase). Hipercruise — β = 0.
 /**
  * PRZYLOT = JEDNO ZDARZENIE (2026-10-23, user: „przylot staje podwójnie: jeden wybuch haze i drugi wybuch heat”).
  * Pomiar w demie „Pęd”: przy hamowaniu błysk + fala refrakcji, a żar brzegu kadłuba (zanik τ 2,2 s) wyłaniał się
- * 0,6–1,5 s później, gdy kadr przylotu dosuwał kamerę — drugi „wybuch”; styl 'akcent' dokładał SPRĘŻENIE już na
- * starcie wyjścia (1,15 s przed hamowaniem). Teraz wszystko w chwili zatrzymania: fala (w 'akcent' — SPRĘŻENIE zamiast
- * fali hamowania), błysk, wstrząs, iskry, żar kadłuba jako krótki impuls (`heatTau`). Hipercruise — dawny zanik żaru.
+ * 0,6–1,5 s później, gdy kadr przylotu dosuwał kamerę — drugi „wybuch”. Teraz wszystko w chwili zatrzymania: fala
+ * hamowania, błysk, wstrząs (gra — warpShakes.js), iskry (ośrodek — tylko A/B), żar kadłuba jako krótki impuls
+ * (`heatTau`). Hipercruise — dawny zanik żaru.
  */
 export const WARP_ARRIVAL_ACCENT = Object.freeze({ heatTau: 0.45, heatTauHyper: 2.2 });
-/** Soczewka bańki (styl 'soczewka'): półoś w poprzek × promień bańki, grubość pierścienia × L, siła [px]. */
-export const WARP_LENS_BUBBLE = Object.freeze({ across: 1.05, width: 0.42, amp: 46 });
 /**
  * Cień kadłuba GRACZA w masce słońca w skoku (pisze advance, mnoży siłę okluderu `hexShips3D.js`): ładowanie gasi,
  * w locie 0, po zatrzymaniu wraca. Smuga cienia na tle (kanał G — „długa smuga cienia”) przy słońcu z boku kursu
@@ -156,7 +140,7 @@ const NEVER = -1e9;
 
 /**
  * Stan skoku gracza. advance(t, dt, game, map, medium) → ruch kamery ośrodka → fill(...):
- *   game = { state: 'idle'|'charging'|'active', charge (0..1), chargeTime, gear, speed (j/s),
+ *   game = { state: 'idle'|'charging'|'active', charge (0..1), chargeTime, speed (j/s),
  *            angle (kurs), x, y (poza renderu kadłuba, świat), length, width (kadłub, j.),
  *            palette (id), entity, vRelX/Y, exitRamp (warp.exitRamp gry albo null),
  *            flyby (zwolnienie przy mijanych ciałach 0..1), cruise (nominalna prędkość skoku) }
@@ -176,8 +160,6 @@ export class WarpPlayerFx {
     this.charge = 0;
     this.kickT = NEVER;
     this.exitT = NEVER;
-    this.gearT = NEVER;
-    this.gear = 1;
     this.kickMX = 0;             // punkt skoku w przestrzeni ośrodka (widocznej)
     this.kickMY = 0;
     this.flowAtExit = 0;
@@ -186,14 +168,12 @@ export class WarpPlayerFx {
     this.chargeBoost = 1;
     this.chargeK = 1;
     this.angle = 0;
-    this.rulonBend = 0;          // zwinięcie rulonu (sterownik → RULON)
-    this.rulonField = 0;         // lejek
-    this.style = 'ped';          // styl warpa (warpDrive.js: warpStyle) — z adresu strony albo z dema
     this.hyper = false;          // efekt prowadzi hipercruise (game.hyper — od rozruchu do końca wyjścia)
     this.lensGame = null;        // rekord osi β strony gry (game.lens — warpLensPhase.js) albo null (demo: z zegara efektu)
     this.abortT = NEVER;         // przerwane ładowanie (rekord własny — demo)
     this.abortBeta = 0;
     this.lensExitLive = false;   // wiek wyjścia rekordu własnego trwa po bezczynności (do zatrzymania + WARP_LENS_EXIT_SPAN)
+    if (this._lensArriving === undefined) this._lensArriving = null;   // dolot rekordu własnego (setLensFrame — demo)
     if (!this._lensOwn) {
       this._lensOwn = { state: 'idle', charge: 0, kickAge: NaN, exitAge: -1, exitSlow: NaN, exitHalt: 0, exitBeta: NaN,
         abortAge: -1, abortBeta: 0, hyper: false, arriving: null, zoomRef: NaN, zoomJump: NaN, arrivalFill: NaN, beta: 0 };
@@ -240,8 +220,23 @@ export class WarpPlayerFx {
     s.abortAge = m === 'idle' && a >= 0 && a <= WARP_LENS_PHASE.abortTime ? a : -1;
     s.abortBeta = this.abortBeta;
     s.hyper = this.hyper;
-    s.arriving = null;
+    s.arriving = this._lensArriving;
     return s;
+  }
+
+  /**
+   * Kadr soczewki rekordu własnego (demo bez rekordu gry — dema/warp-ped.js; gra: index.html stepPlayerWarpLensPhase
+   * wypełnia te pola w rekordzie strony gry): zoom odniesienia skoku i kadr skoku [px CSS / j.] (rig: zoomRef,
+   * zoomRef × warpZoomOut), ułamek kadru przylotu (cameraRigTune.warpArrivalFill) i dolot (ślizg z pędem trwa — null:
+   * worldLens bierze zatrzymanie z czasu). Bez kadru (NaN) podgląd kadru przylotu celu nie ma miękkiego minimum z kadrem
+   * skoku — cel przy dolocie rośnie bez granicy, póki kamera go nie dogoni.
+   */
+  setLensFrame(zoomRef, zoomJump, arrivalFill, arriving = null) {
+    const s = this._lensOwn;
+    s.zoomRef = Number(zoomRef) > 0 ? Number(zoomRef) : NaN;
+    s.zoomJump = Number(zoomJump) > 0 ? Number(zoomJump) : NaN;
+    s.arrivalFill = Number(arrivalFill) > 0 ? Number(arrivalFill) : NaN;
+    this._lensArriving = arriving === true || arriving === false ? arriving : null;
   }
 
   /** β soczewki świata (0 — prawdziwy widok planet, 1 — soczewka skoku) — warpLensBeta(lensPhase(t)); hipercruise — 0. */
@@ -285,8 +280,6 @@ export class WarpPlayerFx {
       if (this.mode !== 'warp') {
         this.mode = 'warp';
         this.kickT = t;
-        this.gear = 1;
-        this.gearT = NEVER;
         this.flowGear = WARP_FLOW.travel;
         this.kickMX = medium.camMX + (game.x - map.camX);
         this.kickMY = medium.camMY + (game.y - map.camY);
@@ -315,16 +308,6 @@ export class WarpPlayerFx {
       if (this.mode !== 'exit') this.charge = Math.max(0, this.charge - dt / 0.25);
     }
     this.angle = Number(game.angle) || 0;
-    // Rulon i lejek (jedna faza z ładowaniem; szarpnięcie przy skoku; rozwinięcie w zwolnieniu).
-    const rs = this.mode === 'charging' || this.mode === 'idle' ? 'charging' : (this.mode === 'warp' ? 'active' : 'exit');
-    // Rozwijanie przy wyjściu przez zwolnienie i wlot rampy (płynnie — warpDrive.js: WARP_RULON).
-    // Styl warpa (`?warp=…`, `?rulon=0` — warpStyle; adres strony także w workerze renderu): rulon tylko w 'rulon'.
-    this.style = warpStyle(RenderWorld.pageSearch);
-    this.rulonBend = this.style === 'rulon' && !this.hyper
-      ? warpRulonBend(rs, this.charge, t - this.kickT, t - this.exitT, this.ramp.slow + this.ramp.coast)
-      : 0;
-    if (this.mode === 'idle' && this.charge <= 0.001) this.rulonBend = 0;
-    this.rulonField = Math.min(1, this.rulonBend);
     // Cień kadłuba w skoku (WARP_HULL_SHADOW): ładowanie gasi, lot 0, po zatrzymaniu wraca.
     let shadow = 1;
     if (this.mode === 'warp') shadow = 0;
@@ -353,7 +336,7 @@ export class WarpPlayerFx {
     this.flowAtExit = Math.max(WARP_FLOW.exitRest, this.visibleFlowAt(t - dt));
     // β wyjścia rekordu własnego (demo): β kopu z klatki przed wyjściem (warpLensPhase.js — wyjście w trakcie kopu < 1).
     this.lensAtExit = warpLensKickBeta(Math.max(0, t - dt - this.kickT));
-    // Ładowanie zużyte (po wyjściu rulon nie wraca przez gałąź „przerwanego ładowania”).
+    // Ładowanie zużyte (po wyjściu efekt nie wraca przez gałąź „przerwanego ładowania”).
     this.charge = 0;
     this.lensExitLive = !this.hyper;   // hipercruise — β = 0, bez trzymania
   }
@@ -407,8 +390,7 @@ export class WarpPlayerFx {
       bub.A = A;
       // Po wyjściu jak bańka przylotu NPC: zapada się od dziobu przy hamowaniu.
       bub.front = exiting ? warpBrakeBubbleFront(tb, ramp.brake) : 3;
-      const gearPulse = mode === 'warp' ? 2.2 * Math.exp(-(((t - this.gearT - 0.1) / 0.18) ** 2)) : 0;
-      bub.strain = mode === 'warp' ? 0.9 + gearPulse : exiting ? 1.1 : (1.25 + 3.2 * inhale) * this.chargeK;
+      bub.strain = mode === 'warp' ? 0.9 : exiting ? 1.1 : (1.25 + 3.2 * inhale) * this.chargeK;
       bub.excite = mode === 'warp' ? 1 : exiting ? 1.4 : (1.6 + 1.2 * inhale) * this.chargeBoost;
       bub.turb = 0.13;
       bub.pullR = 1; bub.pullGain = 0; bub.jetSpeed = 0; bub.heraldLen = 0; bub.heraldGain = 0;
@@ -458,35 +440,6 @@ export class WarpPlayerFx {
       if (age < 0.35) frame.addFlash(kx - c * L * 0.62, ky - sn * L * 0.62, R * 0.5, (1 - age / 0.35) ** 2, pal, false);
     }
 
-    // --- styl 'akcent': soczewka tylko na przejściach (naciąg → pęknięcie → sprężenie) ---
-    if (this.style === 'akcent') {
-      const ac = WARP_ACCENT;
-      const ahead = L * ac.jumpAhead;
-      if ((mode === 'charging' || mode === 'idle') && cT > 0.02) {
-        const k = smooth(0.02, 1, cT);
-        frame.addImplode(sx + c * ahead, sy + sn * ahead, L * ac.pullR * (0.55 + 0.45 * k), ac.pullAmp * k * k);
-      }
-      if (age >= 0 && age < ac.snapLife) {
-        // Punkt skoku stoi w przestrzeni widocznej — statek przelatuje przez pękający naciąg.
-        const u = age / ac.snapLife;
-        frame.addWave(this.kickMX - medium.camMX + c * ahead, this.kickMY - medium.camMY + sn * ahead,
-          L * (0.2 + 4.5 * easeOut3(u)), L * 0.32, ac.snapAmp * (1 - u) ** 2);
-      }
-      // SPRĘŻENIE w chwili zatrzymania (WARP_ARRIVAL_ACCENT) — zamiast fali hamowania niżej.
-      if (exiting && tb >= 0 && tb < ac.springLife) {
-        const u = tb / ac.springLife;
-        frame.addWave(sx + c * L * 0.9, sy + sn * L * 0.9, L * (0.3 + 3.8 * easeOut3(u)), L * 0.3, ac.springAmp * (1 - u) ** 2);
-      }
-    } else if (this.style === 'soczewka') {
-      // --- styl 'soczewka': bańka gnie przestrzeń wokół statku przez cały skok (kadłub w elipsie — bez zmian) ---
-      const lb = WARP_LENS_BUBBLE;
-      let k = 0;
-      if (mode === 'charging' || mode === 'idle') k = smooth(0.1, 1, cT);
-      else if (mode === 'warp') k = 1;
-      else if (exiting) k = 1 - smooth(0, ramp.slow + ramp.coast, tx);
-      if (k > 0.01) frame.addBubbleLens(sx, sy, c, sn, R * lb.across, L * lb.width, WARP_BUBBLE.asp, lb.amp * k);
-    }
-
     // --- wyjście: hamowanie jak przylot NPC (arrivals.js: brakeEffects) ---
     if (exiting) {
       const size = warpSizeScale(L);
@@ -515,7 +468,7 @@ export class WarpPlayerFx {
         frame.addFlash(bx, by, L * 0.55, k * 1.8, pal, false);
         frame.addGlare(bx, by, this.angle + Math.PI * 0.5, L * 1.6, k * 1.2, pal);
       }
-      if (tb >= 0 && tb < 1.3 && this.style !== 'akcent') {
+      if (tb >= 0 && tb < 1.3) {
         const ag = tb / 1.3;
         frame.addWave(sx + c * L * 0.5, sy + sn * L * 0.5, L * (0.25 + 3.2 * easeOut3(ag)), L * 0.24, 11 * (1 - ag) ** 2 * Math.min(1.2, size * 1.2));
       }

@@ -1,5 +1,9 @@
 # Demo WebGPU: warp „Nurt” (propozycja 2, 2026-09-27)
 
+> **STAN (2026-10-26): demo wycofane, dokument historyczny.** Warp gracza w grze to jeden warp „podniesiony świat”
+> (`docs/webgpu/WARP-SOCZEWKA.md`); demo „Nurt” buduje się i działa, ale ciała idą przez bezstanową mapę C
+> (`mapWorldLens`) bez trzymania celu — nie stroić na nim warpa gry.
+
 `dema/warp-webgpu.html` (+ `dema/warp-webgpu.js`, moduły w `dema/warp-webgpu/`). Propozycja
 efektu warpa od początku na `WebGPURenderer` + TSL (compute). Gra, `Core3D` i poprzednie demo
 warpa (`dema/warp-demo.html`, propozycja „Fałda”, `docs/BRIEF-warp.md`) bez zmian.

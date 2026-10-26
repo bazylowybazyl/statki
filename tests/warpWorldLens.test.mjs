@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   WORLD_LENS_DEFAULTS, WORLD_LENS_MODE, mapWorldLens, warpLensScale, warpDepthScale, flybyTurn, viewEdgeDistance,
-  WarpWorldLens, WARP_WORLD_LENS, newLensBody, resetWarpWorldLens, WARP_RING_LENS, warpRingLensSlot
+  WarpWorldLens, WARP_WORLD_LENS, newLensBody, resetWarpWorldLens, WARP_RING_LENS, warpRingLensSlot,
+  WARP_LENS_ANCHORS, warpLensAnchorSlot, writeLensAnchor, lensImageToWorld
 } from '../src/3d/warp/worldLens.js';
 import { WARP_ARRIVAL_FRAME, warpArrivalZoom } from '../src/render/warpArrivalFrame.js';
 import * as demoLens from '../dema/warp-webgpu/worldLens.js';
@@ -398,17 +399,34 @@ test('cel bez obrotu przelotu (2026-10-19: „przy wejściu planeta się obraca�
   assert.ok(mars.out.angle > 0.1, 'mijana planeta — obrót przelotu');
 });
 
-test('ring w soczewce (2026-10-19, „a co z ringami”): slot raz na planetę, planety go piszą, ring jedzie z obrazem planety', () => {
+test('ring w soczewce (2026-10-19, „a co z ringami”): kotwica planety z rejestru (etap 3A), planety ją piszą, ring jedzie z obrazem planety', () => {
   const s = warpRingLensSlot('test-ring');
   assert.equal(warpRingLensSlot('test-ring'), s, 'ten sam rekord (bez alokacji na klatkę)');
+  assert.equal(WARP_RING_LENS, WARP_LENS_ANCHORS, 'slot ringu = kotwica rejestru (jeden rejestr)');
+  assert.equal(warpLensAnchorSlot('test-ring'), s);
   assert.equal(WARP_RING_LENS['test-ring'], s);
-  assert.deepEqual(Object.keys(s).sort(), ['k', 'on', 'q', 'real', 'turned', 'vis', 'x', 'y']);
+  for (const k of ['k', 'on', 'q', 'real', 'turned', 'vis', 'x', 'y', 'rx', 'ry', 'px', 'reach']) assert.ok(k in s, k);
   assert.equal(s.on, false, 'poza soczewką ring na prawdziwym miejscu');
+  // Planeta z ringiem (płaszczyzna gry: flat = zoom): kotwica = dawny slot ringu — środek obrazu w świecie
+  // (lensImageToWorld), skala obrazu do prawdziwej (promień obrazu / (zoom · r)), udział prawdziwego widoku.
+  const L = { ...WARP_WORLD_LENS, zoom: 0.12, camX: 1e6, camY: 2e6, roll: 0.3, shipX: 1e6 + 500, shipY: 2e6, shipSx: 60, shipSy: 0 };
+  const b = newLensBody('earth', 'planet');
+  b.x = 1.2e6; b.y = 2.1e6; b.r = 37800; b.flat = L.zoom;
+  Object.assign(b.out, { x: 210, y: -95, size: 41, beta: 0.83, realW: 0.17 });
+  writeLensAnchor(s, L, b, 41, true);
+  const w = lensImageToWorld(L, 210, -95, 0, true, {});
+  assert.ok(Math.abs(s.x - w.x) < 1e-6 && Math.abs(s.y - w.y) < 1e-6);
+  assert.ok(Math.abs(s.k - 41 / (L.zoom * b.r)) < 1e-12);
+  assert.equal(s.on, true);
+  assert.ok(Math.abs(s.real - 0.17) < 1e-12);
+  assert.equal(s.vis, true);
   delete WARP_RING_LENS['test-ring'];
-  // Planeta z ringiem w soczewce: środek obrazu, skala obrazu do prawdziwej, udział prawdziwego widoku, obrót przelotu.
+  // Planety piszą kotwicę po rozstawieniu (writeLensAnchor), obrót przelotu tylko dla planet z ringiem; poza soczewką
+  // wszystkie kotwice gasną (clearWarpLensAnchors w updatePlanets3D, od nowa w każdej klatce soczewki).
   const planets = read('src/3d/planet3d.assets.js');
-  assert.match(planets, /const rl = this\._ringLens;\s*rl\.on = true;\s*rl\.x = lwx;\s*rl\.y = lwy;\s*rl\.k = Math\.max\(1e-6, fit\.size \* k\) \/ Math\.max\(1e-6, b\.r\);\s*rl\.real = real;\s*rl\.vis = !fit\.off;\s*rl\.turned = turned;/);
-  assert.match(planets, /if \(this\._ringLens\) this\._ringLens\.on = false;/);
+  assert.match(planets, /const an = writeLensAnchor\(this\._anchor, L, b, fit\.size, !fit\.off\);\s*an\.turned = anchored && turned;/);
+  assert.match(planets, /function applyWarpWorldLens\(\) \{\s*const L = WARP_WORLD_LENS;[\s\S]*?clearWarpLensAnchors\(\);/);
+  assert.match(planets, /else \{\s*_warpLens\.reset\(\);\s*clearWarpLensAnchors\(\);/);
   // Obraz ringu: grupa w obrazie planety, skala, obrót przelotu przed kątem portu; cień ringu × udział prawdziwego widoku.
   const ring = read('src/3d/haloRing/haloRingGame.js');
   assert.match(ring, /const lens = WARP_RING_LENS\[e\.key\];\s*const lensOn = !!\(lens && lens\.on\);/);
@@ -418,8 +436,6 @@ test('ring w soczewce (2026-10-19, „a co z ringami”): slot raz na planetę, 
   // Ring w soczewce = tło jak planeta (2026-10-23, „planeta przebija się przez statek”): części FG (górna ściana,
   // moduły) na warstwie tła — pass FG rysuje się po kadłubach; po soczewce zwykłe warstwy (FG nad statkiem w hali).
   assert.match(ring, /lensLayers: Object\.freeze\(\{ default: 1, fg: 1 \}\)/);
-  // Ring w soczewce dopiero od `lensMinPx` na ekranie (mijana planeta jest w kadrze od początku skoku — ring kosztuje
-  // ~3 ms CPU i ~50 rysunków także jako kreska wokół kilkupikselowej tarczy).
-  // Klucz slotu = klucz wpisu ringu (id planety z mapy układu).
-  assert.match(planets, /warpRingLensSlot\(this\.data\?\.id \|\| this\.name\)/);
+  // Klucz kotwicy = klucz wpisu ringu (id planety z mapy układu).
+  assert.match(planets, /this\._anchor = warpLensAnchorSlot\(this\.data\?\.id \|\| this\.name\);/);
 });

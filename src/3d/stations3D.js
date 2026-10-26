@@ -7,6 +7,7 @@ import { Destruction3D } from '../vfx/destruction3D.js';
 // Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
 import { fxRandom } from './fx/fxRandom.js';
 import { requestIdle } from './harmonogram.js';
+import { WARP_WORLD_LENS, WARP_LENS_ANCHORS, lensAnchorPoint, lensWorldInFrame } from './warp/worldLens.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
@@ -384,6 +385,35 @@ function ensureStationRecord(station) {
   return record;
 }
 
+const STATION_LENS_MIN_PX = 3;     // [px bufora] promień obrazu stacji w soczewce, od którego się rysuje (projekt D § 5.3)
+// Warstwa stacji w soczewce: pass TŁA (Core3D renderPassBg — warstwa 1, kamera perspektywy jak pass FG, rysowany przed
+// passem gry). Ta sama projekcja co FG — przełączenie nie przestawia wysokich części bryły (perspektywa → ortho dawała
+// skok z · odstęp / camZ), zmienia się tylko kolejność: stacja pod statkiem (E3, wzór HALO_GAME.lensLayers).
+const STATION_LENS_LAYER = 1;
+const _lensPt = { x: 0, y: 0, k: 1 };
+
+/** Kotwica soczewki ciała stacji (planeta / małe ciało — `station.planet.id`; lustro workera: opis `planet: { id }`). */
+function stationLensAnchor(station) {
+  const id = station?.planet?.id;
+  if (id == null) return null;
+  const a = WARP_LENS_ANCHORS[String(id)];
+  if (!a || !a.on) return null;
+  // zasięg rzeczy przypiętych — decyzja wejścia ciała w soczewkę widzi stację w kadrze (worldLens.js: attachR)
+  const dx = (Number(station.x) || 0) - a.rx;
+  const dy = (Number(station.y) || 0) - a.ry;
+  const reach = Math.sqrt(dx * dx + dy * dy) + Math.max(0, Number(station.r) || Number(station.baseR) || 0) * 2.8;
+  if (reach > a.reach) a.reach = reach;
+  return a.real < 0.999 ? a : null;
+}
+
+/** Warstwy stacji w soczewce: pass tła (1 — pod kadłubami, ta sama perspektywa co FG), poza nią FG (2). Tylko przy zmianie. */
+function setStationLensLayers(record, group, on) {
+  if (!!record.lensLayers === on) return;
+  record.lensLayers = on;
+  if (on) group.traverse((child) => { child.layers.set(STATION_LENS_LAYER); });
+  else Core3D.enableForeground3D(group);
+}
+
 function updateRecordTransform(record, station, devScale, visible) {
   const group = record.group;
   if (!group || !Core3D.scene) return;
@@ -399,6 +429,7 @@ function updateRecordTransform(record, station, devScale, visible) {
     // STACJA NA WIERZCH!
     Core3D.enableForeground3D(group);
     group.userData.fgCategory = 'stations';
+    record.lensLayers = false;
   }
 
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
@@ -423,9 +454,26 @@ function updateRecordTransform(record, station, devScale, visible) {
     record.lastPivotKey = pivotKey;
   }
 
-  group.scale.setScalar(effectiveScale);
-
-  group.position.set(station.x, -station.y, -100);
+  // SOCZEWKA ŚWIATA (DECYZJE E1, etap 3A): stacja przy planecie / małym ciele jedzie w skoku za obrazem swojego ciała
+  // (kotwica worldLens.js: WARP_LENS_ANCHORS[id ciała] — ta sama skala i punkt co ring i dok portu) i schodzi pod
+  // statek: pass tła (STATION_LENS_LAYER — perspektywa jak FG, przed passem gry; FG rysuje się nad kadłubami — E3),
+  // z jak poza soczewką (rzut bez zmian). Obraz mniejszy niż STATION_LENS_MIN_PX (3 px) — schowany (stolica Unii przy
+  // Ceres ~14 px, reszta ~2 px).
+  const lens = stationLensAnchor(station);
+  if (lens) {
+    lensAnchorPoint(lens, station.x, station.y, _lensPt);
+    const k = Math.max(0, _lensPt.k);
+    const worldR = effectiveScale * geometryRadius * k;
+    group.scale.setScalar(Math.max(1e-6, effectiveScale * k));
+    group.position.set(_lensPt.x, -_lensPt.y, -100);
+    setStationLensLayers(record, group, true);
+    const zoom = Number(WARP_WORLD_LENS.zoom) || 0;
+    visible = visible && worldR * zoom >= STATION_LENS_MIN_PX && lensWorldInFrame(WARP_WORLD_LENS, _lensPt.x, _lensPt.y, worldR);
+  } else {
+    setStationLensLayers(record, group, false);
+    group.scale.setScalar(effectiveScale);
+    group.position.set(station.x, -station.y, -100);
+  }
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset += 0.002;
@@ -463,6 +511,7 @@ export function initStations3D(_sceneIgnored, stations) {
           // STACJA NA WIERZCH!
           Core3D.enableForeground3D(record.group);
           record.group.userData.fgCategory = 'stations';
+          record.lensLayers = false;   // warstwy soczewki skoku ustawia od nowa updateRecordTransform
       }
       station._mesh3d = record.group;
       continue;

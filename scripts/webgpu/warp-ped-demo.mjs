@@ -1,8 +1,8 @@
 // Zrzuty dema warpa „Pęd” (dema/warp-ped.html) w headless Chrome z GPU (CDP), klatki z zegarem ręcznym
-// (?test=1 → __warpPed.until / runFrames): dla każdego stylu skoku (rulon, ped, akcent, soczewka) te same fazy —
+// (?test=1 → __warpPed.until / runFrames): jeden warp jak w grze (style skoku usunięte 2026-10-26), te same fazy —
 // ładowanie, skok, lot, przelot obok Marsa, wyjście (zwolnienie, hamowanie), po wyjściu (ślizg z pędem); błędy konsoli.
 //
-//   node scripts/webgpu/warp-ped-demo.mjs [--out .tmp/warp-ped/demo] [--rozmiar 1600x900] [--style ped,akcent]
+//   node scripts/webgpu/warp-ped-demo.mjs [--out .tmp/warp-ped/demo] [--rozmiar 1600x900] [--osrodek 0,1]
 //     [--ped 3|0] [--trasa jowisz|mars] [--fazy ladowanie,skok,lot,przelot,wyjscie,hamowanie,po] [--wolny 1]
 //     [--kamera up|right|off] (obrót kadru w skoku — domyślnie jak demo: kurs w górę)
 // --wolny 1 — na końcu lot swobodny: ciąg, warp z klawisza (CapsLock / 9), wyjście z klawisza, ślizg z pędem.
@@ -13,7 +13,8 @@ import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, scree
 const args = parseArgs();
 const [W, H] = (args.rozmiar || '1600x900').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/warp-ped/demo');
-const styles = String(args.style || 'rulon,ped,akcent,soczewka').split(',');
+// Warianty: 0 — jak w grze (bez ośrodka drobin, DECYZJE O1), 1 — A/B z ośrodkiem (`?warpOsrodek=1` gry).
+const variants = String(args.osrodek || '0').split(',').map((v) => v.trim() === '1');
 const only = args.fazy ? new Set(String(args.fazy).split(',')) : null;
 mkdirSync(out, { recursive: true });
 
@@ -44,8 +45,9 @@ try {
   if (err) throw new Error(`demo: ${err}`);
   // tekstury planet i rozgrzewka — chwila przed pierwszym zrzutem
   await ev('window.__warpPed.runFrames(60, 60)');
-  for (const style of styles) {
-    await ev(`(() => { window.__warpPed.setStyle(${JSON.stringify(style)}); window.__warpPed.restart(); return true; })()`);
+  for (const medium of variants) {
+    const style = medium ? 'osrodek' : 'warp';
+    await ev(`(() => { window.__warpPed.setMedium(${medium}); window.__warpPed.restart(); return true; })()`);
     for (const [name, cond, opis] of PHASES) {
       if (only && !only.has(name)) {
         await ev(`window.__warpPed.until((d) => ${cond}, 4000)`);

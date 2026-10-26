@@ -146,15 +146,87 @@ export function warpLensHudBeta(s, alongPx = NaN, zoom = NaN, P = WARP_LENS_PHAS
   if (s.state === 'charging' || s.state === 'active') return warpLensBeta(s, P);
   const x = Number(s.exitAge);
   if (!(x >= 0)) return warpLensAbortBeta(s, P);
-  const slow = warpLensExitSlow(s.exitSlow, P);
-  const b0 = warpLensExitBeta(s, P);
+  return warpLensFrontBeta(warpLensExitBeta(s, P), x, s.exitSlow, alongPx, zoom, P);
+}
+
+/**
+ * Udział soczewki ZNACZNIKA HUD-u w wyjściu (znaczniki strony): b0 — β wyjścia, exitAge / exitSlow — wiek wyjścia
+ * i koniec zwolnienia [s], alongPx — znacznik wzdłuż kursu od statku [px, + przed dziobem; prawdziwe miejsce], zoom — px
+ * na j. świata (front smug gwiazd w px). Znacznik wraca, gdy minie go front (pasmo hudBand px); bez położenia — cała
+ * warstwa naraz (do końca zwolnienia + zanurzenia). Kropki flot i wraków — warpLensPointBeta (zanurzenie 0,3 s).
+ */
+export function warpLensFrontBeta(b0, exitAge, exitSlow, alongPx = NaN, zoom = NaN, P = WARP_LENS_PHASE) {
+  const x = Number(exitAge);
+  const b = clamp01(num(b0, 0));
+  if (!(x >= 0) || !(b > 0)) return 0;
+  const slow = warpLensExitSlow(exitSlow, P);
   const y = Number(alongPx);
   const z = Number(zoom);
-  if (!Number.isFinite(y) || !(z > 0)) return b0 * (1 - smoothstep(0, slow + P.submerge, x));
+  if (!Number.isFinite(y) || !(z > 0)) return b * (1 - smoothstep(0, slow + P.submerge, x));
   // Za frontem (front poniżej znacznika) — prawdziwy świat; pasmo hudBand px wokół frontu.
-  const f = warpExitFrontS(x, slow, P) * z;
   if (x >= slow) return 0;
-  return b0 * smoothstep(-P.hudBand, P.hudBand, f - y);
+  const f = warpExitFrontS(x, slow, P) * z;
+  return b * smoothstep(-P.hudBand, P.hudBand, f - y);
+}
+
+/**
+ * Strona gry (E2): encja, którą soczewka zastępuje kropką — udział soczewki PUNKTU w miejscu encji (warpLensPointBeta)
+ * powyżej tego progu: skóra, mostki, modele, tarcze, wieże i nakładki 2D schowane jak we mgle, render rysuje kropkę
+ * (hexShips3D: HexBodyLensBatch). Przy 0,02 obraz soczewki ma ~97% prawdziwej skali w prawie tym samym miejscu.
+ */
+export const WARP_LENS_DOT_SWAP = 0.02;
+
+/**
+ * Wiek wyjścia [s], w którym FRONT smug gwiazd mija punkt `along` [j. świata wzdłuż kursu od statku, + przed dziobem]
+ * — odwrotność warpExitFrontS (front monotoniczny: frontFrom → frontTo w exitSlow s po smoothstepie, więc bez stanu).
+ * Punkt przed startem frontu — 0 (wraca od początku wyjścia), za jego końcem — exitSlow.
+ */
+export function warpExitFrontCross(along, exitSlow, P = WARP_LENS_PHASE) {
+  const slow = warpLensExitSlow(exitSlow, P);
+  const span = P.frontFrom - P.frontTo;
+  if (!(span > 0)) return 0;
+  const u = (P.frontFrom - num(along, 0)) / span;
+  if (!(u > 0)) return 0;
+  if (u >= 1) return slow;
+  // odwrotność smoothstepu 3x² − 2x³ = u
+  return slow * (0.5 - Math.sin(Math.asin(1 - 2 * u) / 3));
+}
+
+/**
+ * PUNKT w wyjściu (kropki flot, NPC i wraków — E2 jak ciała w P3): udział soczewki b0 · zanurzenie od chwili, gdy front
+ * smug gwiazd minął PRAWDZIWE miejsce punktu (`along` [j. świata wzdłuż kursu]; warpBodySubmerge — `submerge` s). Każdy
+ * punkt wraca w 0,3 s (dawne pasmo HUD-u ±120 px przenosiło kropkę z obrazu soczewki na prawdziwe miejsce w 2–3 klatki).
+ * Jednostki świata — strona gry i render liczą to samo bez px (CSS / bufor).
+ */
+export function warpLensPointExitBeta(b0, exitAge, exitSlow, along, P = WARP_LENS_PHASE) {
+  const x = Number(exitAge);
+  const b = clamp01(num(b0, 0));
+  if (!(x >= 0) || !(b > 0)) return 0;
+  return b * warpBodySubmerge(warpExitFrontCross(along, exitSlow, P), x, P);
+}
+
+/**
+ * Udział soczewki PUNKTU (E2) w klatce osi `s` — punkt `along` [j. świata wzdłuż kursu od statku]: ładowanie, kop i lot —
+ * β osi (warpLensBeta), wyjście — front + zanurzenie (warpLensPointExitBeta), przerwane ładowanie — β przerwania.
+ * Ta sama funkcja decyduje o kropce na stronie gry (warpLensDotFor) i o jej miejscu w renderze (worldLens.js: mapPoint).
+ */
+export function warpLensPointBeta(s, along, P = WARP_LENS_PHASE) {
+  if (!s || s.hyper) return 0;
+  if (s.state === 'charging' || s.state === 'active') return warpLensBeta(s, P);
+  const x = Number(s.exitAge);
+  if (!(x >= 0)) return warpLensAbortBeta(s, P);
+  return warpLensPointExitBeta(warpLensExitBeta(s, P), x, s.exitSlow, along, P);
+}
+
+/**
+ * Strona gry (E2): czy encję w (dx, dy) od statku [j. świata] zastępuje kropka soczewki — kurs (cu, cv) [wersor świata],
+ * `hidden` — mgła wojny chowa encję (wtedy nigdy: ukryta encja nie pojawia się w soczewce). `zoom` — nieużywany (dawny
+ * próg w px; decyzja liczy się w jednostkach świata, jak mapPoint renderu).
+ */
+export function warpLensDotFor(s, dx, dy, cu, cv, zoom, hidden = false, P = WARP_LENS_PHASE) {
+  if (hidden) return false;
+  const along = num(dx, 0) * num(cu, 0) + num(dy, 0) * num(cv, 0);
+  return warpLensPointBeta(s, along, P) >= WARP_LENS_DOT_SWAP;
 }
 
 /** Stan minimalny osi β (stepWarpLensTrack) — jeden na gracza, po stronie gry. */

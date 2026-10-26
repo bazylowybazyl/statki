@@ -24,8 +24,7 @@
 //   (cameraZoom.js: camera.zoom = zoomBase · e^człon) — targetZoom gracza nietknięty.
 //   Oś kopu biegnie w czasie gry (w pauzie stoi): stepCameraRigWarp raz na klatkę przed
 //   zoomem i rigiem; zdarzenia z automatu warpa gracza: noteCameraRigWarp('kick' | 'exit').
-// - Rulon warpa (2026-10-03, demo „Nurt” iteracja 3): w ładowaniu i w locie statek idzie na ŚRODEK
-//   kadru w lejku (wyprzedzenie i kursor × (1 − lejek)); WYJŚCIE = przylot jak u NPC — kamera
+// - Wyjście z warpa (2026-10-03, demo „Nurt” iteracja 3): WYJŚCIE = przylot jak u NPC — kamera
 //   zostaje ZA statkiem (nigdy go nie wyprzedza): statek wysuwa się w stronę celu do WARP_EXIT.ahead
 //   pół kadru i tam staje, kamera dogania go w WARP_EXIT.settle s; oddalenie trzymane do końca
 //   zwolnienia (input.exitAge / exitSlow / exitHalt — rampa wyjścia rozgrywki). Wyjście Z CELEM (K1, 2026-10-26):
@@ -36,7 +35,7 @@
 // ekranu (270 px w pionie przy 1080 p), a świat pod kursorem jechał 3× szybciej
 // niż ręka.
 
-import { WARP_EXIT, warpRulonBend } from './warpDrive.js';
+import { WARP_EXIT } from './warpDrive.js';
 // Kadr przylotu — jedno źródło z soczewką świata (czysty moduł szwu, bez three i DOM).
 import { WARP_ARRIVAL_FRAME, warpViewEdgePx, warpArrivalZoom, warpArrivalSoftMin } from '../render/warpArrivalFrame.js';
 
@@ -288,8 +287,8 @@ export function createCameraRig() {
     // i prędkość sprężyny.
     roll: 0,
     rollVel: 0,
-    // Rulon (stepCameraRigWarp → stepCameraRig): mnożnik celu offsetu (1 − lejek; 0 przy wyjściu)
-    // i wysunięcie statku przed kamerę przy wyjściu [× pół kadru wzdłuż kursu].
+    // Wyjście swobodnego skoku (stepCameraRigWarp → stepCameraRig): mnożnik celu offsetu (0 przy wysunięciu, wraca
+    // do 1 po dogonieniu) i wysunięcie statku przed kamerę [× pół kadru wzdłuż kursu].
     warpLeadScale: 1,
     warpAheadK: 0,
     // Kotwica kadru skoku (nowy warp, DECYZJE M3): nominalny offset kamery [px ekranu] — sprężyna + reżyser kadru, BEZ
@@ -443,7 +442,7 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const padPx = halfH * 2 * HUD_PAD;
   const maxYUp = Math.max(0, halfH - Math.max(marginPx, finite(input.insetTop, 0) + padPx));
   const maxYDown = Math.max(0, halfH - Math.max(marginPx, finite(input.insetBottom, 0) + padPx));
-  // Rulon warpa: statek na środku lejka (stepCameraRigWarp: warpLeadScale).
+  // Wyjście swobodnego skoku: wyprzedzenie wraca po dogonieniu statku (stepCameraRigWarp: warpLeadScale).
   const leadScale = clamp(finite(rig.warpLeadScale, 1), 0, 1);
   const targetX = clamp((lookX + leadX) * leadScale, -maxX, maxX);
   const targetY = clamp((lookY + leadY) * leadScale, -maxYDown, maxYUp);
@@ -509,7 +508,8 @@ export function noteCameraRigWarp(rig, event) {
 //                     (przejście startuje z zoomu na ekranie, więc bez skoku)
 //   exitAge         — wiek rampy wyjścia [s] (< 0: brak), exitSlow / exitHalt — koniec zwolnienia
 //                     i zatrzymanie (warpDrive.js: createWarpExitRamp)
-//   rulon           — false: styl skoku bez rulonu (domyślny 'ped' — warpRulonEnabled) — statek nie idzie na środek lejka
+//   rulon           — (dawne) ignorowane: styl 'rulon' usunięty (sprzątanie S1, 2026-10-26) — w ładowaniu i locie
+//                     zawsze zwykłe wyprzedzenie (index.html podaje jeszcze `warpRulonEnabled(…)` = false)
 //   zoomRef, zoomBase — UJEDNOLICONY KADR SKOKU (user 2026-10-19: „na przybliżonej kamerze największe skoki, na
 //                     oddalonej w miarę ok — może ujednolicić kamerę na czas warpa”): zoom odniesienia (domyślny zoom
 //                     statku — defaultShipZoom) i zoom gracza; w skoku kadr = zoomRef × warpZoomOut niezależnie od
@@ -587,19 +587,16 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     // Wyjście: oddalenie zostaje do końca zwolnienia (demo: zoom wraca od wlotu).
     else if (exitAge >= 0 && exitAge < exitSlow) target = Math.min(rig.warpHold, zoomOut);
   }
-  // Rulon: statek na środku lejka (ładowanie: × (1 − lejek), lot: 0), przy wyjściu kamera za nim.
-  // Bez rulonu (styl skoku — input.rulon === false) w ładowaniu i locie zwykłe wyprzedzenie, jak przed rulonem.
-  const rulonOn = input.rulon !== false;
+  // Ładowanie i lot: zwykłe wyprzedzenie (dawny środek lejka rulonu usunięty — jeden warp), przy wyjściu kamera za
+  // statkiem.
   // Wyjście Z CELEM (input.arrivalDist ≥ 0 — K1): statek się nie wysuwa (kadr przylotu liczy krawędź od nominalnego
   // miejsca statku), wyprzedzenie zostaje. Swobodny skok — wysunięcie i powrót wyprzedzenia jak dawniej.
   const arrDist = finite(input.arrivalDist, -1);
   const withTarget = arrDist >= 0;
   let leadScale = 1;
   let aheadK = 0;
-  if (on) {
-    if (state === 'charging') leadScale = rulonOn ? 1 - Math.min(1, warpRulonBend('charging', charge, 0, 0)) : 1;
-    else if (state === 'active') leadScale = rulonOn ? 0 : 1;
-    else if (exitAge >= 0 && !withTarget) {
+  if (on && state !== 'charging' && state !== 'active') {
+    if (exitAge >= 0 && !withTarget) {
       const settle = WARP_EXIT.settle;
       aheadK = WARP_EXIT.ahead * smoothRange(exitSlow, exitHalt, exitAge) * (1 - smoothRange(exitHalt, exitHalt + settle, exitAge));
       leadScale = smoothRange(exitHalt, exitHalt + settle, exitAge);

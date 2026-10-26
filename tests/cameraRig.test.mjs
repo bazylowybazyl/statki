@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   CAMERA_RIG_DEFAULTS,
@@ -488,7 +489,7 @@ test('kop warpa: strojenie w zakresach, zero wyłącza człony', () => {
   assert.equal(wild.warpZoomReturn, CAMERA_RIG_RANGES.warpZoomReturn[0]);
 });
 
-test('kop warpa bez rulonu (?rulon=0): w ładowaniu i locie zwykłe wyprzedzenie; z rulonem statek na środku lejka', () => {
+test('kop warpa — jeden warp (sprzątanie S1): w ładowaniu i locie zwykłe wyprzedzenie, dawne `input.rulon` bez znaczenia', () => {
   const lead = (rulon) => {
     const rig = createCameraRig();
     const wIn = { dt: 1 / 60, state: 'charging', charge: 0.9, dirX: 1, dirY: 0, enabled: true, rulon };
@@ -499,12 +500,9 @@ test('kop warpa bez rulonu (?rulon=0): w ładowaniu i locie zwykłe wyprzedzenie
     stepCameraRigWarp(rig, wIn, tune);
     return [charging, rig.warpLeadScale];
   };
-  const [c1, a1] = lead(undefined);
-  assert.ok(c1 < 0.1, `ładowanie z rulonem: ${c1}`);
-  assert.equal(a1, 0);
-  const [c0, a0] = lead(false);
-  assert.equal(c0, 1);
-  assert.equal(a0, 1);
+  // styl 'rulon' (statek na środku lejka) usunięty — każda wartość dawnego pola daje to samo
+  for (const rulon of [undefined, true, false]) assert.deepEqual(lead(rulon), [1, 1], String(rulon));
+  assert.doesNotMatch(readFileSync(new URL('../src/game/cameraRig.js', import.meta.url), 'utf8'), /warpRulonBend|rulonOn/);
 });
 
 // --- index.html ---
@@ -567,7 +565,7 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     defaultShipZoom: () => 0.5,
     cameraZoomBase: () => 0.5,
     warpBodyRadius: () => 1000,
-    location: { search: '?warp=rulon' },
+    location: { search: '?warp=rulon&rulon=1' },
     // Hipercruise (E5): poza nim człon oddalenia 0.
     hypercruise: { speed: 0, vmax: 20000 },
     hypercruiseDriving: () => false,
@@ -578,15 +576,14 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
   const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
   for (let i = 0; i < 60; i++) update(1 / 60);
   assert.equal(scope._cameraWarpInput.charge, 0.5);
-  assert.equal(scope._cameraWarpInput.rulon, true);
-  // `?rulon=0` i styl domyślny 'ped' (warpDrive.js: warpRulonEnabled) — kamera bez środka lejka.
-  for (const search of ['?rulon=0', '']) {
+  // Jeden warp (sprzątanie S1): dawny adres `?warp=rulon` / `?rulon=1` nic nie włącza — kamera bez środka lejka przy
+  // każdym adresie (pole wejścia `rulon` rig ignoruje — nie przypinamy jego wartości).
+  for (const search of ['?warp=rulon&rulon=1', '?rulon=0', '']) {
     scope.location.search = search;
     update(1 / 60);
-    assert.equal(scope._cameraWarpInput.rulon, false, search);
-    assert.equal(rig.warpLeadScale, 1);
+    assert.equal(rig.warpLeadScale, 1, search);
   }
-  scope.location.search = '?warp=rulon';
+  scope.location.search = '?warp=rulon&rulon=1';
   assert.ok(Math.abs(scope.camera.zoomImpulseLog - Math.log(1 - 0.45 * smoothDemo(0.5))) < 1e-9, 'człon ładowania');
   assert.equal(rig.warpDirX, 0);
   assert.equal(rig.warpDirY, -1);

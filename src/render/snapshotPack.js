@@ -101,7 +101,8 @@ export function createSnapshotFrame() {
     interpPose: null,           // window.__interpShipPose
     ship: null, p2: null, npcs: null, wrecks: null, coldWrecks: null, coldRenderList: null, coldNearExtras: true,
     stations: null, bullets: null,
-    hides: null,                // SensorSystem.hides (używane tylko przy fog)
+    hides: null,                // SensorSystem.hides (używane tylko przy fog albo lensDots)
+    lensDots: false,            // soczewka skoku gracza zastępuje encje kropkami (index.html: stampWarpLensDots; `hides` je obejmuje)
     reactorCores: null,         // lista rdzeni albo null — wtedy coresOf
     coresOf: null,              // (listy) → rdzenie (ReactorGame.cores) z list migawki: [gracz, P2], NPC i wraki widoczne, zimne
     sun: null, skyZone: null,
@@ -402,7 +403,8 @@ export class SnapshotPacker {
     const wrecks = f.wrecks || EMPTY;
     const rWreck = render.length;
     for (let i = 0; i < wrecks.length; i++) { const e = wrecks[i]; if (e && !e.dead) render.push(e); }
-    const hides = f.fog ? f.hides : null;
+    // mgła wojny albo kropki soczewki skoku (f.lensDots — index.html: stampWarpLensDots; `hides` gry obejmuje obie)
+    const hides = f.fog || f.lensDots ? f.hides : null;
     // mgła: jedno pytanie na encję listy RENDER (wynik w _fogR po indeksie) — listy NPCS_SEEN / WRECKS_SEEN i flaga
     // FOG_HIDDEN encji biorą je stąd (żywe NPC i wraki leżą w RENDER w tej samej kolejności)
     if (this._fogR.length < render.length) this._fogR = new Uint8Array(Math.max(render.length, this._fogR.length * 2));
@@ -414,13 +416,16 @@ export class SnapshotPacker {
       fogR[i] = h;
       if (!h) seenR.push(e);
     }
-    // zimne wraki z ciałem do rysowania (index.html: withColdNearWrecks — tu bez zapisu _coldExtrasFrame)
+    // zimne wraki z ciałem do rysowania (index.html: withColdNearWrecks — tu bez zapisu _coldExtrasFrame); wrak
+    // zastąpiony w skoku smugą soczewki (f.lensDots, flaga `__lensDot` z withColdNearWrecks) — bez dodatków
     const near = L[LIST.COLD_NEAR];
     const cold = f.coldRenderList || EMPTY;
+    const lensDots = f.lensDots === true;
     if (f.coldNearExtras !== false) {
       for (let i = 0; i < cold.length; i++) {
         const w = cold[i];
         if (!w || !w.isCold || w.dead || !w.beamHull) continue;
+        if (lensDots && w.__lensDot === true) continue;
         near.push(w);
       }
     }
@@ -566,7 +571,7 @@ export class SnapshotPacker {
     const st = this.stats;
     st.ents = 0; st.bodies = 0; st.bodiesPacked = 0; st.nodesPacked = 0; st.beamsPacked = 0; st.nozzles = 0;
     this._nodeF64 = 0; this._nodeU8 = 0; this._nodeI32 = 0; this._noz = 0; this._imp = 0; this._br = 0;
-    const hides = f.fog ? f.hides : null;
+    const hides = f.fog || f.lensDots ? f.hides : null;
     const ship = f.ship, p2 = f.p2;
     // kolejność: listy źródłowe po kolei, encja pakowana raz (pierwsze wystąpienie) — listy pochodne (SEEN ⊂ RENDER,
     // SEEN_COLD ⊂ RENDER ∪ COLD_NEAR, NPCS_SEEN ⊂ NPCS, WRECKS_SEEN ⊂ WRECKS) nie wnoszą nowych encji, a kolejność
@@ -649,6 +654,7 @@ export class SnapshotPacker {
     if (isPlayer) flags |= ENT_FLAG.PLAYER;
     if (isP2) flags |= ENT_FLAG.P2;
     if (fogHidden) flags |= ENT_FLAG.FOG_HIDDEN;
+    if (e.__lensDot === true) flags |= ENT_FLAG.LENS_DOT;
     if (e.isBridgeHulk) flags |= ENT_FLAG.BRIDGE_HULK;
     if (e.lightsOff) flags |= ENT_FLAG.LIGHTS_OFF;
     if (e.roadLightsOff) flags |= ENT_FLAG.ROAD_LIGHTS_OFF;

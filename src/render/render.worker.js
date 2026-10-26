@@ -87,7 +87,7 @@ if (isWorker) {
     globalThis.SUN = st.sun;
     const { RenderWorld, createMirrorPlayersSource } = await import('./renderWorld.js');
     st.players = createMirrorPlayersSource();
-    // Adres STRONY gry (A/B z adresu — `?warp=…`, `?hcOsrodek=1`, `?ksiezyce=orbita`, `?planety=stare`, `?k7=stara`…):
+    // Adres STRONY gry (A/B z adresu — `?warpOsrodek=1`, `?hcOsrodek=1`, `?ksiezyce=orbita`, `?planety=stare`, `?k7=stara`…):
     // bez pola własnego getter prototypu czytał `location.search` SKRYPTU workera (Vite: `?worker_file&type=module`),
     // więc przełączniki z adresu działały tylko w trybie off. Przed importem modułów renderu (czytają adres przy imporcie).
     let pageSearch = '';
@@ -415,6 +415,10 @@ if (isWorker) {
         if (def) field._addPlaced({ def, x: s.x, y: s.y, offset: s.offset, state: s.state, geo: s.geo });
       }
       st.cometsView = new CometsView(st.Core3D, field);
+      // Rozgrzewka arkusza i jąder (jak `prepareComets3D` strony w trybie off — jądro na siatce zastępczej o tym samym
+      // układzie, póki worker jąder liczy): bez wpisu pierwszy rysunek komety kompilował pipeline w klatce — w skoku
+      // gracza kometa wjeżdża w kadr soczewki świata z daleka (sanity etapu 3: `CometNucleus_hale-bopp`).
+      st.Core3D.warmup.add({ name: 'komety (arkusz gazu, jądra)', objects: () => (st.cometsView ? st.cometsView.warmupMeshes() : []) });
       st.cometField = field;
       field.build();
     } catch (e) { report(e, 'komety'); }

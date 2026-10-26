@@ -1,13 +1,13 @@
-// TRAVEL TO i warp „Nurt” (iteracja 3: rulon, lejek, wyjście = przylot jak u NPC) w PRAWDZIWEJ grze.
-// Vite + headless Chrome z WebGPU (CDP). Gra swobodna: rozkaz TRAVEL TO na punkt ~400 tys. j. od
-// statku (jak z mapy CIC) — obrót dziobu, ładowanie (rulon się zwija), skok, lot, wyjście (zwolnienie,
+// TRAVEL TO i warp gracza (jeden warp — soczewka świata, wyjście = przylot jak u NPC; docs/webgpu/WARP-SOCZEWKA.md)
+// w PRAWDZIWEJ grze. Vite + headless Chrome z WebGPU (CDP). Gra swobodna: rozkaz TRAVEL TO na punkt ~400 tys. j. od
+// statku (jak z mapy CIC) — obrót dziobu, ładowanie (świat „wstaje” w soczewce), skok, lot, wyjście (zwolnienie,
 // wlot, hamowanie) w celu; potem wezwanie okrętu (wlot z daleka i hamowanie) i POWRÓT (odlot).
 //
-//   node scripts/webgpu/travel-gra.mjs [--out .tmp/travel] [--rozmiar 1600x900] [--dystans 400000]
-//     [--query rulon=0] (dopisane do adresu gry — np. skok bez rulonu, renderWorker=1)
+//   node scripts/webgpu/travel-gra.mjs [--out .tmp/travel] [--rozmiar 1600x900] [--dystans 400000] [--zoom 0.02]
+//     [--query renderWorker=1] (dopisane do adresu gry — np. tryb gracza, A/B ośrodka warpOsrodek=1)
 //
 // Wynik: <out>/*.png (fazy) i <out>/raport.json (próbki: faza podróży, stan warpa, rampa, prędkość,
-// odległość do celu, rulon; błędy konsoli).
+// odległość do celu, zoom; błędy konsoli).
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
@@ -26,7 +26,6 @@ const ev = (e, t = 120000) => evaluate(cdp, e, t);
 const report = { probki: [], zdjecia: [], bledy: [] };
 
 const state = () => ev(`(async () => {
-  const { RULON } = await import('/src/3d/warp/rulon.js');
   const s = window.ship, w = window.warp, n = window.travelNav, r = w.exitRamp;
   const t = n.target;
   return {
@@ -34,7 +33,6 @@ const state = () => ev(`(async () => {
     v: Math.round(Math.hypot(s.vel.x, s.vel.y)), kat: +(s.angle).toFixed(3),
     doCelu: t ? Math.round(Math.hypot(t.x - s.pos.x, t.y - s.pos.y)) : null,
     x: Math.round(s.pos.x), y: Math.round(s.pos.y),
-    rulonK: +RULON.k.value.toExponential(2), lejek: +RULON.field.value.toFixed(2),
     zoom: +window.camera.zoom.toFixed(4), osrodek: !!window.WarpNurt?.stats?.awake,
     rysunki: window.__rendererInfo?.calls ?? null, klatkaMs: +(window.Core3D?.lastFramePerf?.renderTotalMs ?? 0).toFixed(2)
   };
@@ -57,12 +55,8 @@ try {
   if (!await waitFor(cdp, "document.getElementById('loading')?.classList.contains('hidden') && !!window.shipDriveState?.calib", 300000, 400)) throw new Error('gra nie ruszyła');
   await sleep(3000);
   await ev(`(() => { window.DevFlags && (window.DevFlags.unlimitedWarp = true); return true; })()`);
-  if (args.bezCullingu) {
-    // A/B kosztu: culling bez poszerzenia na czas rulonu (RULON_STATE.cullMargin zawsze 0).
-    await ev(`(async () => { const m = await import('/src/3d/warp/rulon.js'); Object.defineProperty(m.RULON_STATE, 'cullMargin', { get: () => 0, set: () => {} }); return true; })()`);
-  }
   if (args.zoom) {
-    // Oddalenie (np. --zoom 0.02 — Ziemia przy starcie w kadrze, widać jej zgięcie w rulonie).
+    // Oddalenie (np. --zoom 0.02 — Ziemia przy starcie w kadrze, widać, jak w ładowaniu odpływa w soczewce pod rufę).
     await ev(`(() => { const c = window.camera; c.minZoom = Math.min(c.minZoom, ${Number(args.zoom)}); c.targetZoom = ${Number(args.zoom)}; return true; })()`);
     await sleep(2500);
   }
@@ -83,7 +77,7 @@ try {
   // Klatki faz: strona sama pauzuje grę w zadanej chwili (rAF), CDP robi zdjęcie i wznawia —
   // ładowanie trwa 0,8 s, a zwolnienie wyjścia 0,7 s (odpytywanie przez CDP by je przegapiło).
   const stops = [
-    ['02-ladowanie-rulon', "w.state === 'charging' && w.charge / w.chargeTime >= 0.6"],
+    ['02-ladowanie', "w.state === 'charging' && w.charge / w.chargeTime >= 0.6"],
     ['03-skok', "w.state === 'active' && N.time - N.player.kickT > 0.3"],
     ['04-lot', "w.state === 'active' && N.time - N.player.kickT > 0.8"],
     ['05-wyjscie-zwolnienie', 'w.exitRamp && w.exitRamp.active && w.exitRamp.age > 0.35'],

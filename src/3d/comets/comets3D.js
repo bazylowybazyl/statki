@@ -17,9 +17,17 @@
 //
 // ROZGRZEWKA: wpis `komety` w Core3D.warmup (arkusz i jądro — jądro na siatce zastępczej o tym samym układzie
 // atrybutów i indeksów, zanim worker odda prawdziwą).
+//
+// SOCZEWKA ŚWIATA (DECYZJE E1, etap 3A 2026-10-26): każda kometa ma rekord dodatkowy soczewki skoku gracza
+// (worldLens.js: `comet:<id>` — miejsce jądra, promień komy, zasięg arkusza jako rzecz przypięta do decyzji wejścia),
+// rozstawiany przez planet3d w tym samym przebiegu co ciała (tryby przejścia, front wyjścia, stożek za celem, próg
+// widoczności). W skoku arkusz i jądro stoją w kotwicy rekordu (obraz jądra w płaszczyźnie gry), skala k całej komety
+// (mesh.scale — arkusz liczy w układzie lokalnym), z ≤ WARP_LENS_UNDER_Z (pod kadłubami, E3), odcinanie z obrazu.
+// Jasność komy zależy od rozmiaru jądra w px — w soczewce kometa jest mniejsza i ciemniejsza (do oceny w grze).
 
 import * as THREE from 'three/webgpu';
 import { COMET_TUNE } from '../../data/comets.js';
+import { WARP_LENS_UNDER_Z, warpLensExtraBody, setWarpLensExtra } from '../warp/worldLens.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import { cometSheetExtent } from '../../game/comets.js';
 import { buildNucleusSurface, NUCLEUS_SDF_RANGE } from '../../game/cometNucleus.js';
@@ -96,7 +104,7 @@ export class CometsView {
     nucleus.visible = false;
     this.group.add(sheet);
     this.group.add(nucleus);
-    const item = { site, sheet, nucleus, nucleusReady: false };
+    const item = { site, sheet, nucleus, nucleusReady: false, lensRec: warpLensExtraBody(`comet:${site.id}`, 'small') };
     this.items.push(item);
     this._initUniforms(item);
     return item;
@@ -204,15 +212,22 @@ export class CometsView {
     for (let i = 0; i < this.items.length; i++) {
       const it = this.items[i];
       const s = it.site;
-      const sx = s.x, sy = -s.y;
+      // soczewka skoku gracza: rekord komety co klatkę (obraz z poprzedniej — planet3d rozstawia przed modułami)
+      const rec = it.lensRec;
+      setWarpLensExtra(rec, s.x, s.y, s.reach * 1.1, 0);
+      rec.attachR = it.active ? it.sheetRadius + Math.sqrt(it.sheetCx * it.sheetCx + it.sheetCy * it.sheetCy) : 0;
+      const lens = rec.anchor.on && rec.anchor.real < 0.999 ? rec.anchor : null;
+      const k = lens ? Math.max(1e-6, lens.k) : 1;
+      const sx = lens ? lens.x : s.x, sy = lens ? -lens.y : -s.y;
+      const z = lens ? WARP_LENS_UNDER_Z - s.R * k * 1.5 : COMET_Z;
       // odcinanie: koło arkusza / jądra kontra koło kadru (kamera 1 i 2)
       const ct = Math.cos(it.thetaS), st = Math.sin(it.thetaS);
-      const scx = sx + it.sheetCx * ct - it.sheetCy * st;
-      const scy = sy + it.sheetCx * st + it.sheetCy * ct;
-      const sheetOn = T.sheet && it.active && (this._inView(cam, W, H, free, scx, scy, it.sheetRadius)
-        || (cam2 !== null && this._inView(cam2, W, H, false, scx, scy, it.sheetRadius)));
-      const nucOn = T.nucleus && it.nucleusReady && (this._inView(cam, W, H, free, sx, sy, s.reach * 1.1)
-        || (cam2 !== null && this._inView(cam2, W, H, false, sx, sy, s.reach * 1.1)));
+      const scx = sx + (it.sheetCx * ct - it.sheetCy * st) * k;
+      const scy = sy + (it.sheetCx * st + it.sheetCy * ct) * k;
+      const sheetOn = T.sheet && it.active && (!lens || lens.vis) && (this._inView(cam, W, H, free, scx, scy, it.sheetRadius * k)
+        || (cam2 !== null && this._inView(cam2, W, H, false, scx, scy, it.sheetRadius * k)));
+      const nucOn = T.nucleus && it.nucleusReady && (!lens || lens.vis) && (this._inView(cam, W, H, free, sx, sy, s.reach * 1.1 * k)
+        || (cam2 !== null && this._inView(cam2, W, H, false, sx, sy, s.reach * 1.1 * k)));
       it.sheet.visible = sheetOn;
       it.nucleus.visible = nucOn;
       if (!sheetOn && !nucOn) continue;
@@ -220,17 +235,18 @@ export class CometsView {
       const spinLocal = spinScene - it.thetaS;
       if (sheetOn) {
         vs++;
-        it.sheet.position.set(sx, sy, COMET_Z);
+        it.sheet.position.set(sx, sy, z);
         it.sheet.rotation.set(0, 0, it.thetaS);
+        it.sheet.scale.setScalar(k);
         this._phases(it.sheet.material.uniforms, t, spinLocal);
         it.sheet.material.uniforms.uGain.value.w = 1;
       }
       if (nucOn) {
         vn++;
         const n = it.nucleus;
-        n.position.set(sx, sy, COMET_Z);
+        n.position.set(sx, sy, z);
         n.rotation.set(0, 0, spinScene);
-        n.scale.setScalar(s.R);
+        n.scale.setScalar(s.R * k);
         const U = n.material.uniforms;
         this._phases(U, t, spinLocal);
         // Słońce: w scenie (−ax, +ay, 0) od jądra; w układzie bryły obrót o −spin
