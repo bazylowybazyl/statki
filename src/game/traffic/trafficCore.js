@@ -50,7 +50,7 @@ import { isDerelict } from '../../data/factions.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
   releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
-  packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures
+  packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity
 } from './workerBubble.js';
 import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
@@ -174,6 +174,8 @@ export function createTrafficCore(post, options = {}) {
         case TRAFFIC_MSG.MARKET_OWNER: return marketOwner(message);
         case TRAFFIC_MSG.MARKET_REMOVE: return marketRemove(message);
         case TRAFFIC_MSG.BERTH_HOLD: return berthHold(message);
+        case TRAFFIC_MSG.ENTITY_HOLD: return entityHold(message);
+        case TRAFFIC_MSG.ENTITY_LOST: return entityLost(message);
         case TRAFFIC_MSG.ECONOMY_SAVE: return economySave(message);
         case TRAFFIC_MSG.ECONOMY_RESTORE: return economyRestore(message);
         case TRAFFIC_MSG.TRADE_SUMMARY: return tradeSummary(message);
@@ -544,6 +546,19 @@ export function createTrafficCore(post, options = {}) {
       x: Number(message.x),
       y: Number(message.y)
     });
+  }
+
+  /** Encja bez kursu przejęta przez grę jako NPC (`on`) albo oddana — `holdBubbleEntity` (E6, taran i ogień). */
+  function entityHold(message) {
+    if (!core.bubble) return;
+    holdBubbleEntity(core.bubble, message.id, message.on !== false);
+  }
+
+  /** Encja bez kursu zniszczona w grze — strata zapasu frakcji albo statku firmy (`loseBubbleEntity`). */
+  function entityLost(message) {
+    if (!core.bubble) return;
+    const lost = loseBubbleEntity(core.bubble, message.id, { x: message.x, y: message.y, reason: message.reason || 'player' });
+    if (lost) core.stats.entitiesLost = (core.stats.entitiesLost || 0) + 1;
   }
 
   function station(message) {

@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import {
   createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
   segmentHitsActor, damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates,
-  createPortBerthIndex, playerBerthHolds, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion
+  createPortBerthIndex, playerBerthHolds, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion,
+  trafficContactTime, destroyTrafficActor
 } from '../src/game/trafficBubble.js';
 import {
   ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG
@@ -42,7 +43,7 @@ function fakeBridge(actors, time = 10) {
     data[o + F.AX] = a.ax || 0;
     data[o + F.AY] = a.ay || 0;
   });
-  const sent = { destroyed: [], holds: [] };
+  const sent = { destroyed: [], holds: [], lost: [] };
   return {
     actors: { data, count: actors.length, time, seq: 1, ms: 0 },
     hulls: ['container_ship', 'freighter-capital'],
@@ -51,6 +52,7 @@ function fakeBridge(actors, time = 10) {
       factions: ['terra_nova', 'pirates']
     },
     destroyCourse(id, opts) { sent.destroyed.push({ id, ...opts }); },
+    entityLost(id, opts) { sent.lost.push({ id, ...opts }); },
     setBerthHolds(ids) { sent.holds.push(ids.slice()); },
     sent
   };
@@ -128,7 +130,7 @@ test('zniszczenie: punkty życia w grze, kurs do workera (wrak z ładunkiem), en
   assert.equal(tb.list.length, 0);
 });
 
-test('zapas floty (STOCK, id ujemny): dekodowany, zatrzymuje pocisk, bez obrażeń i bez zgłoszenia do workera', () => {
+test('zapas floty (STOCK, id ujemny): dekodowany, zatrzymuje pocisk, bierze obrażenia, strata jako entityLost', () => {
   const br = fakeBridge([{ id: -3, x: 0, y: 0, phase: 'docked', flags: ACTOR_FLAG.STOCK, port: 0, berth: 1, length: 300, width: 150 }]);
   const tb = createTrafficBubble(br);
   syncTrafficBubble(tb, 10);
@@ -136,10 +138,12 @@ test('zapas floty (STOCK, id ujemny): dekodowany, zatrzymuje pocisk, bez obraże
   assert.equal(tb.list.length, 1);
   const a = tb.list[0];
   assert.ok(trafficBulletHit(tb, 0, 10, 0, 1200, 1 / 60, 0, 0, 0)?.actor === a);
-  assert.equal(damageTrafficActor(tb, a, 1e9, 0, 0), false);
-  assert.equal(a.alive, true);
-  assert.equal(br.sent.destroyed.length, 0);
   assert.equal(trafficBerthStates(tb, new Map()).get('earth:K7-1:C-02'), 'occupied', 'lampka padu: zajęty');
+  // Nietykalnych nie ma (2026-10-23): strzał zabójczy niszczy, worker dostaje stratę zapasu (nie `destroyed`).
+  assert.equal(damageTrafficActor(tb, a, 1e9, 0, 0), true);
+  assert.equal(a.alive, false);
+  assert.equal(br.sent.destroyed.length, 0);
+  assert.deepEqual(br.sent.lost.map((l) => l.id), [-3]);
 });
 
 test('taran: SAT dwóch prostokątów, normalna od statku ruchu do gracza, obrażenia ∝ v²', () => {
@@ -220,13 +224,19 @@ test('awans do NPC: trafienie gracza zgłasza encję (hak onHit), awansowana nie
   assert.equal(a.factionId, 'pirates', 'frakcja z tabeli `ready.factions`');
   damageTrafficActor(tb, a, 10, 0, 0, 'player');
   assert.deepEqual(hits, [[21, 10, 'player']]);
-  damageTrafficActor(tb, tb.byId.get(-4), 10, 9000, 0, 'player');
-  assert.equal(hits.length, 1, 'zapas floty nietykalny — bez awansu');
+  // Nietykalnych nie ma: zapas floty i odlot po końcu kursu biorą obrażenia i idą do awansu jak kursy.
+  const stock = tb.byId.get(-4);
+  const stockHp = stock.hp;
+  damageTrafficActor(tb, stock, 10, 9000, 0, 'player');
+  assert.equal(stock.hp, stockHp - 10, 'zapas floty (STOCK) bierze obrażenia');
   const gone = tb.byId.get(22);
-  const hp = gone.hp;
   damageTrafficActor(tb, gone, 10, 0, 0, 'player');
-  assert.equal(hits.length, 1, 'odlot po końcu kursu (DEPARTED) — bez obrażeń i awansu');
-  assert.equal(gone.hp, hp);
+  assert.deepEqual(hits.map((h) => h[0]), [21, -4, 22], 'STOCK i DEPARTED zgłaszają awans');
+  // Zniszczenie na obrysie: kurs → `destroyCourse`, encja bez kursu → `entityLost` (strata po stronie świata).
+  destroyTrafficActor(tb, stock, 9000, 0, 'player');
+  destroyTrafficActor(tb, gone, -9000, 0, 'player');
+  assert.deepEqual(br.sent.lost.map((l) => l.id), [-4, 22]);
+  assert.equal(br.sent.destroyed.length, 0);
   markTrafficActorPromoted(tb, a);
   assert.equal(tb.byId.has(21), false);
   assert.ok(!tb.list.includes(a));
@@ -242,4 +252,22 @@ test('awans do NPC: trafienie gracza zgłasza encję (hak onHit), awansowana nie
   br.actors.seq++;
   syncTrafficBubble(tb, 10.3);
   assert.ok(tb.byId.has(21), 'po powrocie do bańki encja znów jest');
+});
+
+test('czas do kontaktu kadłuba gracza z obrysem encji (awans przed taranem)', () => {
+  const a = { cx: 0, cy: 0, ca: 0, vx: 0, vy: 0, length: 1800, width: 660 };
+  // Gracz 600 × 200, dziobem na statek (kąt π), 2000 j. przed dziobem, 500 j/s: kontakt przy 900 + 300 j.
+  assert.ok(Math.abs(trafficContactTime(a, 2000, 0, -500, 0, Math.PI, 600, 200) - 1.6) < 1e-9);
+  // Z boku, dziobem w burtę (kąt −π/2): burta 330 + pół długości gracza 300.
+  assert.ok(Math.abs(trafficContactTime(a, 0, 1630, 0, -500, -Math.PI / 2, 600, 200) - 2) < 1e-9);
+  // Gracz bokiem (kąt 0) z tej samej strony: burta 330 + pół szerokości gracza 100 — później.
+  assert.ok(Math.abs(trafficContactTime(a, 0, 1630, 0, -500, 0, 600, 200) - 2.4) < 1e-9);
+  // Obrócony statek (90°): długość w poprzek osi x.
+  assert.ok(Math.abs(trafficContactTime({ ...a, ca: Math.PI / 2 }, 2000, 0, -500, 0, Math.PI, 600, 200) - (2000 - 630) / 500) < 1e-9);
+  // Mija (równolegle obok, 1000 j. od burty), oddala się, już zachodzi.
+  assert.equal(trafficContactTime(a, 2000, 1500, -500, 0, Math.PI, 600, 200), Infinity);
+  assert.equal(trafficContactTime(a, 2000, 0, 500, 0, Math.PI, 600, 200), Infinity);
+  assert.equal(trafficContactTime(a, 100, 0, 0, 0, 0, 600, 200), 0);
+  // Ruch względny: statek leci na gracza, gracz stoi.
+  assert.ok(Math.abs(trafficContactTime({ ...a, vx: 500 }, 2000, 0, 0, 0, Math.PI, 600, 200) - 1.6) < 1e-9);
 });

@@ -39,8 +39,10 @@ export const SWARM_POOL_TUNE = {
   slots: 8,
   /** Drony na slot (górna granica — liczba z gęstości i czasu w activate): pola MEGA jak scena „wymiana” dema (96). */
   dronesPerSlot: 96,
-  unitsPerSlot: 1536,
-  colsPerSlot: 640,
+  /** Kontenery i kolumny na slot: pełny ciężki frachtowiec (3040 kontenerów, 380 kolumn ładowni) i megafrachtowiec do ~43%
+   * (7128 kontenerów, 891 kolumn; kursy niosą typowo ~20%). Nadmiar kontenerów — stats.unitsCut (stan z zegara). */
+  unitsPerSlot: 3072,
+  colsPerSlot: 1024,
   /** Odstęp slotów w przestrzeni symulacji (oś y) i pół szerokości prostokąta slotu (oś x) [j.]. */
   slotPitch: 1800,
   slotHalfX: 2000,
@@ -53,6 +55,9 @@ export const SWARM_POOL_TUNE = {
   yardLevels: 4,
   /** Gęstość roju jak w demie (wymiana frachtowca: 96 L na 760 kursów): dron na tyle warstw, w granicach. */
   layersPerDrone: 8,
+  /** Najmniej dronów z wielkości statku: × √(kontenery ładowni) — przy niskim wypełnieniu olbrzym nie dostaje kilku
+   * dronów (zgłoszenie 2026-10-23); nie więcej niż warstw do przeniesienia. Prom 2, kontenerowiec 4, ciężki 33, mega 51. */
+  dronesPerSqrtContainer: 0.6,
   /** Czas roju na kurs jednej warstwy z czekaniem przy kolumnach (pomiar w grze: plac ~115 j. pod statkiem) [s]. */
   swarmSecPerLayer: 60,
   minDronesPerSide: 1,
@@ -257,7 +262,8 @@ export function createSwarmBerthPool(Core3D) {
     const remainLayers = Math.max(0, totalLayers - Math.round(totalLayers * Math.max(0, Math.min(1, o.progress))));
     const remainSwarm = Math.max(20, (Number(o.remainingSec) || 60) * T.clock * 0.85);
     const byTime = Math.ceil(remainLayers * T.swarmSecPerLayer / remainSwarm);
-    const dronesTotal = Math.min(T.dronesPerSlot, Math.max(2 * T.minDronesPerSide, Math.ceil(totalLayers / T.layersPerDrone), byTime));
+    const bySize = Math.min(Math.max(1, remainLayers), Math.round(Math.sqrt(geo.containers) * T.dronesPerSqrtContainer));
+    const dronesTotal = Math.min(T.dronesPerSlot, Math.max(2 * T.minDronesPerSide, Math.ceil(totalLayers / T.layersPerDrone), byTime, bySize));
     const perSide = Math.ceil(dronesTotal / 2);
     const padPitch = 2 * cls.padRadius + 3;
     const padRows = Math.max(2, Math.ceil(perSide / T.padColsMax));
@@ -311,6 +317,7 @@ export function createSwarmBerthPool(Core3D) {
       for (let i = 0; i < moved; i++) pushLayer(holdLayers[i][0], holdLayers[i][1], null);
       for (let i = moved; i < n; i++) { const y = takeYard(); if (y) pushLayer(y[0], y[1], { kind: 'ship', ship: 'statek' }); }
     }
+    stats.unitsCut = Math.max(0, unitsList.length - T.unitsPerSlot);
     port.units = unitsList.slice(0, T.unitsPerSlot);
     // Drony: gniazda po burtach.
     // Mapa przeszkód portu slotu (też do wierszy puli niżej); gniazdo z przeszkodą nad wejściem (kadłub, plac) — bez drona:
@@ -424,7 +431,7 @@ export function createSwarmBerthPool(Core3D) {
     nDrones = Math.max(nDrones, (k + 1) * T.dronesPerSlot);
     sim.count = nDrones;
     sim.U.nDrones.value = nDrones;
-    units.geometry.instanceCount = Math.max(units.geometry.instanceCount, (k + 1) * T.unitsPerSlot);
+    syncUnitInstances();
     units.mesh.visible = true;
     stats.activateMs = performance.now() - t0;
     stats.activations = (stats.activations || 0) + 1;
@@ -452,6 +459,7 @@ export function createSwarmBerthPool(Core3D) {
     slot.planner = null;
     slot.port = null;
     slot.hasBerth = false;
+    syncUnitInstances();
     void k;
   }
 
@@ -511,6 +519,13 @@ export function createSwarmBerthPool(Core3D) {
     parkSlotDrones(slot);
     slot.finished = true;
     slot.drainT = 0;
+  }
+
+  // Instancje kontenerów do końca zajętych zakresów slotów (nie do górnej granicy puli — każda instancja to wierzchołki).
+  function syncUnitInstances() {
+    let end = 0;
+    for (const sl of slots) if (sl.active) end = Math.max(end, sl.uBase + sl.units);
+    units.geometry.instanceCount = end;
   }
 
   function addRange(attr, start, count) {

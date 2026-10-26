@@ -254,19 +254,23 @@ test('statek z redy, który dostał kurs, startuje z miejsca postoju w tym samym
   assert.ok(shared.core.bubble.parked.handoffs > 0);
 });
 
-test('postój i zapas floty są nietykalne w grze (jak STOCK): pocisk staje, bez obrażeń i awansu', () => {
+test('postój i zapas floty są fizyczne (nietykalnych nie ma, E6 2026-10-23): obrażenia, awans, strata jako entityLost', () => {
   const actors = decode(shared.got.actors).filter((a) => a.flags & ACTOR_FLAG.PARKED);
   assert.ok(actors.length > 0);
-  const bridge = { actors: shared.got.actors, hulls: shared.core.world ? [] : [], tables: null, destroyCourse() { throw new Error('bez zgłoszeń'); } };
+  const lost = [];
+  const bridge = {
+    actors: shared.got.actors, hulls: [], tables: null,
+    destroyCourse() { throw new Error('encja bez kursu nie idzie do `destroyed`'); },
+    entityLost(id, opts) { lost.push({ id, ...opts }); }
+  };
   bridge.actors = { ...shared.got.actors, seq: 1, time: 0 };
   const tb = createTrafficBubble(bridge);
   syncTrafficBubble(tb, 0);
   const a = tb.list.find((x) => x.flags & ACTOR_FLAG.PARKED);
   assert.ok(a);
-  const hp = a.hp;
-  assert.equal(damageTrafficActor(tb, a, 1e6, a.x, a.y), false);
-  assert.equal(a.hp, hp);
-  assert.equal(trafficActorPromotable(a), false);
+  assert.equal(trafficActorPromotable(a), true, 'awans jak każda encja');
+  assert.equal(damageTrafficActor(tb, a, 1e6, a.x, a.y), true, 'strzał zabójczy niszczy');
+  assert.deepEqual(lost.map((l) => l.id), [a.id], 'strata statku po stronie świata');
 });
 
 test('orbita postojowa przy budowlach doków E14: za dyskiem zapasu, od strony przeciwnej do węzła, z dala od ścieżek', () => {

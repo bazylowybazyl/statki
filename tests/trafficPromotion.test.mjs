@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TRAFFIC_PROMOTION_TUNE, createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion,
-  trafficPromotionVerdict, trafficFleePoint, trafficActorPromotable, trafficPromotionOrder,
+  trafficPromotionVerdict, trafficFleePoint, trafficActorPromotable, trafficPromotionOrder, trafficActorHasCourse,
   TRAFFIC_COMBAT_HULLS, trafficCombatRole, trafficWeaponFaction, trafficGrudgeTarget
 } from '../src/game/trafficPromotion.js';
 import { TRAFFIC_HULLS, TRAFFIC_UNIT_HULLS, resolveTrafficHullId } from '../src/data/trafficHulls.js';
@@ -29,13 +29,18 @@ test('kolejka awansów: bez powtórek, limit NPC z ruchu naraz, kolejność traf
   assert.equal(requestTrafficPromotion(st, 5), true, 'po zdjęciu z kolejki znów można');
 });
 
-test('kto awansuje: kurs (nie zapas floty), bez warpa, poniżej prędkości hipercruise, kadłub z pełnym NPC', () => {
+test('kto awansuje: kurs, zapas floty, postój i odlot — bez warpa, poniżej prędkości hipercruise, kadłub z pełnym NPC', () => {
   const base = { alive: true, id: 4, flags: 0, vx: 100, vy: 0, hullId: 'container_ship' };
   assert.equal(trafficActorPromotable(base), true);
   assert.equal(trafficActorPromotable({ ...base, alive: false }), false);
-  assert.equal(trafficActorPromotable({ ...base, id: -3, flags: ACTOR_FLAG.STOCK }), false, 'zapas floty jest nietykalny');
+  // Nietykalnych nie ma (2026-10-23).
+  assert.equal(trafficActorPromotable({ ...base, id: -3, flags: ACTOR_FLAG.STOCK }), true, 'zapas floty');
+  assert.equal(trafficActorPromotable({ ...base, id: -5, flags: ACTOR_FLAG.PARKED }), true, 'postój');
+  assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.DEPARTED }), true, 'odlot po końcu kursu');
+  assert.equal(trafficActorHasCourse(base), true);
+  assert.equal(trafficActorHasCourse({ ...base, id: -3, flags: ACTOR_FLAG.STOCK }), false);
+  assert.equal(trafficActorHasCourse({ ...base, flags: ACTOR_FLAG.DEPARTED }), false, 'kurs zamknięty — entity-hold');
   assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.WARP }), false);
-  assert.equal(trafficActorPromotable({ ...base, flags: ACTOR_FLAG.DEPARTED }), false, 'odlot po końcu kursu — bez kursu do przejęcia');
   assert.equal(trafficActorPromotable({ ...base, vx: TRAFFIC_PROMOTION_TUNE.maxSpeed + 1 }), false, 'hipercruise ucieka');
   assert.equal(trafficActorPromotable({ ...base, hullId: 'megafreighter' }), false, 'megafrachtowiec to pociąg modułów');
 });
@@ -54,6 +59,13 @@ test('werdykt: zginął / koniec walki i poza zasięgiem → powrót do bańki /
   assert.equal(trafficPromotionVerdict(st, { ...npc, dead: true }, 110, 0, 0), 'dead');
   assert.equal(trafficPromotionVerdict(st, { ...npc, removed: true }, 110, 0, 0), 'dead');
   assert.equal(trafficPromotionVerdict(st, null, 110, 0, 0), 'dead');
+  // Awans na taran bez zderzenia: nietknięty, gracz dalej niż `ramReleaseRadius` — wraca po `ramCalmSeconds`.
+  const ram = { x: 6000, y: 0, __trafficPromotedAt: 100, _lastPlayerHit: 100, __trafficRamOnly: true, hp: 900, __trafficHp0: 900 };
+  assert.equal(trafficPromotionVerdict(st, ram, 103, 0, 0), 'keep', 'za wcześnie');
+  assert.equal(trafficPromotionVerdict(st, ram, 105, 0, 0), 'demote', 'nietknięty, gracz 6 tys. j. dalej');
+  assert.equal(trafficPromotionVerdict(st, { ...ram, x: 3000 }, 105, 0, 0), 'keep', 'gracz blisko');
+  assert.equal(trafficPromotionVerdict(st, { ...ram, hp: 850 }, 105, 0, 0), 'keep', 'zderzenie zdjęło punkty — walka');
+  assert.equal(trafficPromotionVerdict(st, { ...ram, _lastPlayerHit: 102 }, 105, 0, 0), 'keep', 'trafiony przez gracza');
   // Bez trafienia gracza liczy się chwila awansu.
   assert.equal(trafficPromotionVerdict(st, { x: 30000, y: 0, __trafficPromotedAt: 100 }, 119, 0, 0), 'keep');
 });
@@ -100,4 +112,21 @@ test('okręt z urazą bije gracza tylko widocznego (maskowanie) i w zasięgu; hu
   const hulk = { x: 1e6, y: 0, isBridgeHulk: true, _lastPlayerHit: 0, __trafficPromotedAt: 0 };
   assert.equal(trafficPromotionVerdict(st, hulk, 1000, 0, 0), 'keep', 'hulk dryfuje do wraku');
   assert.equal(trafficPromotionVerdict(st, { ...hulk, isBridgeHulk: false }, 1000, 0, 0), 'demote');
+});
+
+test('taran: na początek kolejki (za wcześniejszymi taranami), własny zapas limitu, trafienie w kolejce przechodzi na początek', () => {
+  const st = createTrafficPromotion({ maxAlive: 2, ramReserve: 2 });
+  assert.equal(requestTrafficPromotion(st, 1), true);
+  assert.equal(requestTrafficPromotion(st, 2), true);
+  assert.equal(requestTrafficPromotion(st, 3), false, 'trafienia: limit 2');
+  assert.equal(requestTrafficPromotion(st, 10, true), true, 'taran ponad limitem trafień');
+  assert.equal(requestTrafficPromotion(st, 11, true), true);
+  assert.equal(requestTrafficPromotion(st, 12, true), false, 'taran: limit + zapas');
+  assert.deepEqual(st.queue, [10, 11, 1, 2]);
+  assert.equal(requestTrafficPromotion(st, 2, true), true, 'trafiony, a teraz taranowany');
+  assert.deepEqual(st.queue, [10, 11, 2, 1]);
+  assert.equal(takeTrafficPromotion(st), 10);
+  assert.ok(!st.rams.has(10));
+  assert.equal(requestTrafficPromotion(st, -7, true), true, 'zapas floty (id ujemny) też');
+  assert.deepEqual(st.queue, [11, 2, -7, 1]);
 });

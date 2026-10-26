@@ -300,6 +300,15 @@ export class TrafficBridge {
   completeStage(course) { this._send({ type: TRAFFIC_MSG.STAGE_DONE, course }); }
 
   /** Statek kursu zginął w grze. `options`: `x`, `y`, `reason`, `byPirates`. */
+  /**
+   * Encja bez kursu (STOCK / PARKED — id ujemny, DEPARTED — numer zamkniętego kursu) przejęta przez grę jako
+   * pełny NPC (`on`) albo oddana (E6, taran i ogień): statek firmy nie dostanie kursu, dopóki NPC żyje.
+   */
+  entityHold(id, on = true) { this._send({ type: TRAFFIC_MSG.ENTITY_HOLD, id, on: !!on }); }
+
+  /** Encja bez kursu zniszczona w grze: strata zapasu frakcji albo statku firmy. `options`: `x`, `y`, `reason`. */
+  entityLost(id, options = {}) { this._send({ type: TRAFFIC_MSG.ENTITY_LOST, id, ...options }); }
+
   destroyCourse(course, options = {}) {
     this._send({ type: TRAFFIC_MSG.DESTROYED, course, ...options });
   }

@@ -192,7 +192,52 @@ Przegląd portów `ruch-banka-gra.mjs --obserwacja 8`: 0 pipeline'ów sync (work
 W jednym przebiegu start-sync **bez** przeładunku worker skompilował synchronicznie `HallDustBack` / `HallDustFront`
 (pył hal K-7) — poza E12.
 
+## Runda 4 — „ogromny transportowiec i tylko kilka dronów” (zgłoszenie użytkownika, 2026-10-23)
+
+Przyczyny (po scaleniu `main` z E15):
+1. **Megafrachtowiec ruchu nie miał ładowni.** Kurs `megafreighter` (jeden sprite składu 2760 j., nie pociąg wagonów)
+   nie był w `TRAFFIC_CARGO_BAY_HULLS` — 0 dronów; drony przy nim należały do sąsiednich stanowisk. Teraz kadłub
+   `megafreighter` (pusty wariant sprite'a, jedna ładownia na dwa rzędy luków z grzbietem, 7128 kontenerów 33 × 27).
+   Pole MEGA było dla niego za wąskie: stoły na ±318 j., kadłub ±456 j. — gniazda pod kadłubem (64 zablokowane).
+   Plac stoi teraz za burtą najszerszego statku przy polu, a mapa przeszkód bez maski sprite'a bierze szerokość
+   kadłuba (`beamPx`), nie płótna.
+2. **Ciężki frachtowiec przy niskim wypełnieniu dostawał kilka dronów.** Kursy ciężkich niosą typowo 4–26% ładowni,
+   a wzór liczył drony z warstw do przeniesienia: 4% → 6 dronów przy kadłubie 2000 j. Najmniej dronów idzie teraz
+   z wielkości statku: 0,6 × √(kontenery ładowni), nie więcej niż warstw do przeniesienia, w limicie 96.
+3. **Obcinanie kontenerów:** slot mieścił 1536 jednostek — pełny ciężki (3040) pokazywał połowę ładunku. Teraz 3072
+   (pełny ciężki bez obcinania, megafrachtowiec do ~43%, nadmiar w `stats.unitsCut`).
+4. **Pierwszeństwo do slotu** szło tylko po odległości od środka kadru — przy 4 slotach Średniej olbrzym przegrywał
+   z kontenerowcem bliżej środka. Teraz odległość jest ważona wielkością ładowni (`op._prio`), a przy pełnej puli
+   duży statek wywłaszcza slot ≥ 4× mniejszego, który nie pracuje (rój przed startem albo po końcu — drony w gniazdach).
+
+Drony na slot (UNLOAD 120 s, `byTime` = reszta w oknie, „przed” = wzór bez `bySize`; megafrachtowiec przed rundą — 0):
+
+| kadłub | kontenery | wypełnienie | warstwy | gęstość | byTime | bySize | przed | po | gniazda | zablok. | obcięte |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| prom | 2 | 1 | 2 | 1 | 1 | 1 | 2 | 2 | 4 | 0 | 0 |
+| kontenerowiec | 56 | 1 / 0,5 | 28 / 14 | 4 / 2 | 5 / 3 | 4 | 5 / 3 | 5 / 4 | 8 / 4 | 0 | 0 |
+| dalekiego zasięgu | 108 | 1 / 0,5 | 54 / 27 | 7 / 4 | 9 / 5 | 6 | 9 / 5 | 9 / 6 | 12 / 8 | 0 | 0 |
+| ciężki | 3040 | 1 | 760 | 95 | 133 | 33 | 96 | 96 | 96 | 0 | 0 (było 1504) |
+| ciężki | 3040 | 0,25 / 0,14 / 0,04 | 190 / 107 / 31 | 24 / 14 / 4 | 34 / 19 / 6 | 33 / 33 / 31 | 34 / 19 / 6 | 34 / 33 / 31 | 36 / 36 / 32 | 0 | 0 |
+| megafrachtowiec | 7128 | 0,4 / 0,2 | 713 / 357 | 90 / 45 | 125 / 63 | 51 | — (0) | 96 / 63 | 96 / 66 | 0 | 0 |
+
+W grze (`przeladunek-gra.mjs`, tryb gracza; harness czeka na rozgrzewkę świata E15 i stawia gracza 7000 j. od pola):
+- ciężki frachtowiec Z06-MG1, wypełnienie 1: 96 dronów, 2188 / 3040 kontenerów do odlotu (resztki za domkniętymi
+  wrotami), `.tmp/e12/v10-ciezki/`;
+- megafrachtowiec Z02-MG2, rozładunek 7%: 51 dronów, 524 / 524 w ~57 s, rój kończy, wrota domknięte,
+  `.tmp/e12/v10-mega/` (plac i gniazda za burtą, ładownia w obrysie luków);
+- 0 pipeline'ów sync, 0 błędów strony i workera w obu.
+
+Koszt (bez ciszy innych sesji, po 1–2 przebiegach, `--tylkoKoszt 1 --kosztPoza 1`; `.tmp/e12/v11-*`): GPU passów
+w kadrze 9000 j. — A 0,633 ms, B14 0,742 (drugi przebieg; pierwszy 1,43 — odstający jak w rundzie 2), B14 z dawnym
+`unitsPerSlot` 1536 — 0,742, B14 z pojemnością 3072, a treścią obciętą do 1536 — 0,741: puste instancje nic nie
+kosztują, narzut +0,11 ms (budżet ≤ +0,35). Kadr 2600 j.: A 0,28, B14 0,40 (+0,12). CPU workera w szumie przebiegów
+bez ciszy (A 3,8 ms, B14 4,3–5,0 ms w kadrze 9000).
+
 ## Ryzyka i dalsze kroki
+
+- **Megafrachtowiec ponad ~43% wypełnienia** nie mieści się w slocie (3072 z 7128) — nadmiar ładowni jest pusty
+  (`stats.unitsCut`). Kurs megafrachtowca w przebiegu harnessu niósł 7% ładowni.
 
 - **Wydajność wieży i ORCA w grze** zmierzona na 2 typach statków; prom i frachtowiec dalekiego zasięgu bez osobnego
   przebiegu harnessu. Zmierzone tempo (~60 s roju na kurs warstwy) siedzi w `swarmSecPerLayer`.

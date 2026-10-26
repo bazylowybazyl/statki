@@ -391,4 +391,50 @@ test('koniec kursu przy stanowisku (rozładunek u celu): encja nie znika z pola 
   assert.ok(flown, `odlot po końcu kursu (${seen.size} encji DEPARTED)`);
   assert.deepEqual(flown.phases.slice(0, 2), ['undock', 'fly'], 'odłączanie, potem lot');
   assert.ok(maxJump < 400, `ruch ciągły (największy skok w klatce 0,1 s: ${Math.round(maxJump)} j.)`);
+  // Odlot przejęty przez grę jako NPC (taran, ogień): znika z bańki — NPC jest teraz tym statkiem.
+  const departedId = [...seen.keys()].find((id) => decode(got.actors).some((a) => a.id === id));
+  if (departedId !== undefined) {
+    core.handle({ type: TRAFFIC_MSG.ENTITY_HOLD, id: departedId, on: true });
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 10 });
+    assert.ok(!decode(got.actors).some((a) => a.id === departedId), 'odlot przejęty — bez encji w bańce');
+  }
+});
+
+test('nietykalnych nie ma: zapas floty, postój i odlot przejęte przez grę (entity-hold) i zniszczone (entity-lost)', async () => {
+  const { getShip, SHIP_STATE } = await import('../src/game/traffic/transportCompanies.js');
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
+  for (let i = 0; i < 30; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  const state = core.bubble;
+
+  // 1. Okręt zapasu na padzie K-7: strata z zapasu frakcji (klasa −1, wrak ze złomem), encja znika.
+  const stock = decode(got.actors).find((a) => (a.flags & ACTOR_FLAG.STOCK) && !(a.flags & ACTOR_FLAG.PARKED));
+  assert.ok(stock, 'okręt zapasu przy Ziemi');
+  const ref = state.stock.list.find((e) => e.id === stock.id);
+  const fleet = world.shipyards.fleets.get(ref.factionId);
+  const before = fleet[ref.classId];
+  const wrecks = world.war.wrecks.length;
+  core.handle({ type: TRAFFIC_MSG.ENTITY_HOLD, id: stock.id, on: true });
+  core.handle({ type: TRAFFIC_MSG.ENTITY_LOST, id: stock.id, x: stock.x, y: stock.y, reason: 'player' });
+  assert.equal(fleet[ref.classId], before - 1, 'zapas klasy mniejszy o okręt');
+  assert.equal(world.war.wrecks.length, wrecks + 1, 'wrak ze złomem');
+  for (let i = 0; i < 30 * 6; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+  assert.ok(!decode(got.actors).some((a) => a.id === stock.id), 'zniszczony okręt nie wraca na pad');
+
+  // 2. Statek firmy na redzie: przejęty schodzi z puli dyspozytora, oddany wraca, zniszczony — firma go traci.
+  let parked = null;
+  for (let i = 0; i < 30 * 60 && !parked; i++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+    parked = decode(got.actors).find((a) => (a.flags & ACTOR_FLAG.PARKED) && !(a.flags & ACTOR_FLAG.STOCK)) || null;
+  }
+  assert.ok(parked, 'statek na redzie Ziemi');
+  const shipId = state.parked.list.find((e) => e.id === parked.id).shipId;
+  core.handle({ type: TRAFFIC_MSG.ENTITY_HOLD, id: parked.id, on: true });
+  const ship = getShip(world.companies, shipId);
+  assert.equal(ship.state, SHIP_STATE.BUSY, 'poza pulą dyspozytora');
+  assert.equal(ship.gameHold, true);
+  core.handle({ type: TRAFFIC_MSG.ENTITY_HOLD, id: parked.id, on: false });
+  assert.equal(ship.state, SHIP_STATE.PARKED, 'oddany — znów na postoju');
+  core.handle({ type: TRAFFIC_MSG.ENTITY_HOLD, id: parked.id, on: true });
+  core.handle({ type: TRAFFIC_MSG.ENTITY_LOST, id: parked.id, reason: 'player' });
+  assert.equal(getShip(world.companies, shipId), null, 'firma straciła statek');
 });
