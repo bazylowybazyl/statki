@@ -199,7 +199,9 @@ export const CARGO_BAY_HULLS = Object.freeze({
     label: 'Ciężki frachtowiec', family: 'frachtowce', sprite: 'assets/ships/heavy_freighter_empty.png', png: { w: 1774, h: 887 },
     renderLength: 1800, profile: 'heavy_freighter', editorKey: null, bridgeKey: null,
     cargoToday: 900, todayNote: 'klasa ruchu heavy',
-    bays: [bay({ id: 'luki', label: 'Luki 3 × 8', x: -128, y: 11, w: 648, h: 344, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
+    // Moduł 4 × 2 (2026-10-26): kolumny obsługują drony Capital (chwyt 4 × 2, płaski) — przy 2 × 2 drony L przenosiły
+    // w oknie postoju 71% pełnego rozładunku i 37% załadunku (docs/E12-przeladunek.md § „Runda 5”).
+    bays: [bay({ id: 'luki', label: 'Luki 3 × 8', x: -128, y: 11, w: 648, h: 344, door: 'pocket', module: { nx: 4, ny: 2, nz: 2 } })]
   }),
   // Megafrachtowiec RUCHU (E12, 2026-10-23 — zgłoszenie „ogromny transportowiec, kilka dronów”: cumował na polu MEGA bez
   // ładowni): jeden sprite składu 2760 j. (trafficHulls.megafreighter — assets/megafreighter.png), obraz z pustymi lukami
@@ -211,7 +213,7 @@ export const CARGO_BAY_HULLS = Object.freeze({
     // Szerokość kadłuba na płótnie (alfa: y 138…708 px) — mapa przeszkód roju bez maski sprite'a (swarmPort).
     beamPx: 570,
     cargoToday: 2400, todayNote: 'klasa ruchu mega',
-    bays: [bay({ id: 'luki', label: 'Luki 2 × 10 + grzbiet', x: -94, y: -22, w: 706, h: 302, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } })]
+    bays: [bay({ id: 'luki', label: 'Luki 2 × 10 + grzbiet', x: -94, y: -22, w: 706, h: 302, door: 'pocket', module: { nx: 4, ny: 2, nz: 2 } })]
   }),
   megafreighter_wagon: hull({
     label: 'Wagon megafrachtowca', family: 'frachtowce', sprite: 'assets/ships/megafreighterwagon_empty.png', png: { w: 1672, h: 941 },

@@ -137,8 +137,8 @@ export function buildPortCargoFrame(frame, o) {
       const size = bays[i].size;
       if (frame.yardCount >= 96) break;
       const pad = PORT_CARGO_PADS[size];
-      const r = rec(frame.yards, frame.yardCount, () => ({ x: 0, y: 0, angle: 0, size: 'M', padLength: 0, padBeam: 0, portalGap: 0, halfBeam: 0, seed: 0 }));
-      r.x = b.x; r.y = b.y; r.angle = b.angle; r.size = size;
+      const r = rec(frame.yards, frame.yardCount, () => ({ id: '', x: 0, y: 0, angle: 0, size: 'M', padLength: 0, padBeam: 0, portalGap: 0, halfBeam: 0, seed: 0 }));
+      r.id = b.id; r.x = b.x; r.y = b.y; r.angle = b.angle; r.size = size;
       r.padLength = pad.padLength; r.padBeam = pad.padBeam; r.portalGap = pad.portalGap;
       r.halfBeam = pad.yardHalfBeam;
       r.seed = frame.yardCount + 1;
@@ -150,6 +150,7 @@ export function buildPortCargoFrame(frame, o) {
   const list = o.bubble?.list;
   if (!frame.yardCount) return frame;
   if (o.stress > 0) return stressOps(frame, o);
+  if (o.probe) return probeOps(frame, o);
   if (!list) return frame;
   const cargo = o.cargo;
   for (let i = 0; i < list.length && frame.opCount < 48; i++) {
@@ -201,5 +202,46 @@ function stressOps(frame, o) {
   }
   frame.stats.ops = n;
   frame.stats.withCargo = n;
+  return frame;
+}
+
+// Narzędzia (`PortCargo.probe([...])`, ?dev): pełne postoje od zera na polach w kadrze (klasa pola wg kadłuba, pole stałe
+// przez próbę) zamiast statków bańki — ile ładunku rój przenosi w oknie postoju (wystarczalność). o.probe: { t0 (czas
+// mostu startu), list: [{ hull (kadłub ruchu), mode, fill, dwell?, move?, halfBeam? }] }.
+const PROBE_SIZE = Object.freeze({ inter_station_shuttle: 'S', container_ship: 'M', long_haul_freighter: 'L', heavy_freighter: 'MEGA', megafreighter: 'MEGA' });
+function probeOps(frame, o) {
+  const p = o.probe;
+  const dt = (Number(o.time) || 0) - (Number(p.t0) || 0);
+  for (let i = 0; i < p.list.length && frame.opCount < 48; i++) {
+    const it = p.list[i];
+    const hull = TRAFFIC_CARGO_BAY_HULLS[it.hull];
+    const dwell = Number(it.dwell) || (it.mode === 'load' ? 90 : 120);
+    if (!hull || dt > dwell) continue;
+    let yi = it.berthId ? frame._yardIndex.get(it.berthId) : undefined;
+    if (yi === undefined && !it.berthId) {
+      // Najbliższe środka kadru wolne pole tej klasy (slot roju dostają tylko pola w kadrze).
+      let best = Infinity;
+      for (let k = 0; k < frame.yardCount; k++) {
+        const y = frame.yards[k];
+        if (y.size !== PROBE_SIZE[it.hull] || p.list.some((q) => q.berthId === y.id)) continue;
+        const d = Math.abs(y.x - (o.cam?.x || 0)) + Math.abs(y.y - (o.cam?.y || 0));
+        if (d < best) { best = d; yi = k; }
+      }
+      if (yi !== undefined) it.berthId = frame.yards[yi].id;
+    }
+    if (yi === undefined) continue;
+    const y = frame.yards[yi];
+    const r = rec(frame.ops, frame.opCount, () => ({ seed: 0, yard: -1, hull: '', x: 0, y: 0, angle: 0, mode: null, fill: 0, resourceId: null, dwell: 0, move: 0, dockTime: 0, halfBeam: 0, capture: false }));
+    r.seed = 800000 + i; r.yard = yi; r.hull = hull; r.capture = false;
+    r.x = y.x; r.y = y.y; r.angle = y.angle;
+    r.mode = it.mode === 'load' ? 'load' : 'unload'; r.fill = Number.isFinite(it.fill) ? it.fill : 1;
+    r.resourceId = it.resourceId || 'steel';
+    r.dwell = dwell; r.move = Number(it.move) || 0;
+    r.dockTime = Math.max(0, dt);
+    r.halfBeam = Number(it.halfBeam) || 0;
+    frame.opCount++;
+  }
+  frame.stats.ops = frame.opCount;
+  frame.stats.withCargo = frame.opCount;
   return frame;
 }
