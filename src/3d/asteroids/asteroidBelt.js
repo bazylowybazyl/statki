@@ -40,7 +40,7 @@
 import * as THREE from 'three/webgpu';
 import { RenderWorld } from '../../render/renderWorld.js';
 import { Core3D } from '../core3d.js';
-import { compileAsyncNaCelu } from '../rozgrzewka.js';
+import { compileAsyncNaCelu, WARIANT_INSTANCJI } from '../rozgrzewka.js';
 import { View3D } from '../../game/view3D.js';
 import { BELT_BAND } from '../../game/asteroidBeltField.js';
 import { FieldSunOcclusion, NIGHT_KNEE, nightKnee } from '../../game/asteroidFieldLight.js';
@@ -65,10 +65,12 @@ import { GlowSprites } from './glowSprites.js';
 import { BeltVeil } from './beltVeil.js';
 import { MinedRocks } from './minedRocks.js';
 import { MiningView } from './miningView.js';
-import { WarpDebris } from './warpDebris.js';
+import { WarpDebris, WARP_DEBRIS, warpDebrisLookFromSearch } from './warpDebris.js';
+import { WarpTrailBatch } from './warpTrails.js';
+import { warpDeflectorOn } from './warpDeflector.js';
 import { WARP_STARS, WARP_STAR_CAMERA } from '../warp/stars.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
-import { warpLensExtraBody, setWarpLensExtra } from '../warp/worldLens.js';
+import { warpLensExtraBody, setWarpLensExtra, WARP_WORLD_LENS } from '../warp/worldLens.js';
 import { WARP_LENS_DOT_SWAP } from '../../render/warpLensPhase.js';
 
 // SOCZEWKA ŚWIATA — OLBRZYMY PASA (DECYZJE E1, etap 3A 2026-10-26): olbrzym ma rekord dodatkowy soczewki skoku gracza
@@ -281,12 +283,17 @@ export class AsteroidBelt {
         bandIndex: band, perspective: true, renderOrder: RENDER_ORDER.backRocks, minPx: 0.8, fadeZoom: BACK_FADE[band], maxLod: 3, sunT: this.sunT
       }));
     }
-    // Smugi skał w skoku gracza (warpDebris.js, 2026-10-19): pula skał w przestrzeni widocznej warpa — wariant materiału
-    // tła ze smugą (graf raz); siatki pod `root` — rozgrzewka razem z passem tła pola.
+    // Skały w skoku gracza (warpDebris.js, 2026-10-19; przebudowa DECYZJE-2 S1–S4 2026-10-26): pula skał w przestrzeni
+    // widocznej warpa (trzy pasma głębi) — wariant materiału tła ze smugą (rozmycie bryły; graf raz), ślady światła
+    // i łuki deflektora w jednej partii kwadów (warpTrails.js); siatki pod `root` — rozgrzewka razem z passem tła pola.
+    this.warpTrails = new WarpTrailBatch({ parent: root, layer: BELT_LAYER_BACK, capacity: WARP_DEBRIS.trailCap });
     this.warpDebris = new WarpDebris({
       parent: root, layer: BELT_LAYER_BACK, bank: this.bank, material: new RockNodeMaterial({ shared, backdrop: true, smear: true }),
-      field: this.field, sunT: this.sunT, renderOrder: RENDER_ORDER.backRocks
+      field: this.field, sunT: this.sunT, renderOrder: RENDER_ORDER.backRocks, trails: this.warpTrails
     });
+    // A/B wyglądu w grze: `?smugi=swiatlo|bryla|slad|klin` (adres strony — także w workerze renderu).
+    const look = warpDebrisLookFromSearch(RenderWorld.pageSearch);
+    if (look) this.warpDebris.setLook(look);
     this.veil = new BeltVeil({ parent: root, layer: BELT_LAYER_BACK });
     this.glow = new GlowSprites({ parent: root, capacity: 4096, layer: BELT_LAYER_PLAY });
     this.sparks = new Sparks({ renderer, parent: root, layer: BELT_LAYER_PLAY });
@@ -349,12 +356,16 @@ export class AsteroidBelt {
       }
     };
     const promises = [];
-    // Smugi skał w skoku (warpDebris.js): grupa schowana poza skokiem — na czas rozgrzewki odsłonięta (schowana grupa
-    // wypadała z kompilacji: pierwszy przelot przez pas kompilował `rocksSmear` synchronicznie, 2026-10-23).
+    // Skały w skoku (warpDebris.js): grupa schowana poza skokiem — na czas rozgrzewki odsłonięta (schowana grupa
+    // wypadała z kompilacji: pierwszy przelot przez pas kompilował `rocksSmear` synchronicznie, 2026-10-23). Partia
+    // śladów światła i łuków deflektora (warpTrails.js, nowy materiał `AsteroidBelt:warpTrails`) — schowana siatka
+    // odsłania `withShown`, licznik instancji ≥ 2 na czas kompilacji (WARIANT_INSTANCJI — jak przy rysunku).
     const debris = this.warpDebris ? this.warpDebris.group : null;
-    promises.push(run('pas asteroid: skały, minerały, mgła, burza, iskry, smugi skoku (passy PLAY i BACK)', () => {
+    const trailMesh = this.warpTrails ? this.warpTrails.mesh : null;
+    promises.push(run('pas asteroid: skały, minerały, mgła, burza, iskry, skały skoku i ich ślady (passy PLAY i BACK)', () => {
       const debrisHidden = !!debris && debris.visible === false;
       if (debrisHidden) debris.visible = true;
+      const trailRestore = trailMesh ? WARIANT_INSTANCJI.apply(trailMesh) : null;
       try {
         return withShown((o) => !mining.has(o), () => Promise.all([
           Core3D.prewarmPass(root, BELT_LAYER_PLAY),
@@ -362,6 +373,7 @@ export class AsteroidBelt {
         ]));
       } finally {
         if (debrisHidden) debris.visible = false;
+        if (trailRestore) trailRestore();
       }
     }));
     if (mining.size) {
@@ -739,7 +751,9 @@ export class AsteroidBelt {
   }
 
   // Klatka trybu skoku: grupa pola na początku pul (pole puste — po powrocie przepisze swoje dane od nowa), słońce
-  // i zegar skał, smugi skał w kadrze tej klatki (prędkość przepływu = kamera gwiazd, długość smugi z ich rozciągnięcia).
+  // i zegar skał, skały w kadrze tej klatki (przepływ = kamera gwiazd × udział z PRAWDZIWEJ prędkości kamery, rozmycie
+  // i ślad z rozciągnięcia smug gwiazd), deflektor skoku gracza (soczewka świata — kurs, statek, kadłub, β; ten sam stan
+  // w trybie off i w workerze: pisze go WarpNurt.update tej klatki) i jego fale refrakcji (Core3D.fxDistortion).
   _warpStep(ctx, stretch) {
     const origin = ctx.origin;
     this.root.position.set(origin.x, origin.y, 0);
@@ -749,19 +763,35 @@ export class AsteroidBelt {
     this._updateSun();
     this.shared.time.value = this.time;
     const v = this._view;
-    const wf = this._warpFrame || (this._warpFrame = { dt: 0, camX: 0, camY: 0, originX: 0, originY: 0, frame: null, speed: 0, stretch: 0 });
+    const wf = this._warpFrame || (this._warpFrame = {
+      dt: 0, camX: 0, camY: 0, originX: 0, originY: 0, frame: null, camSpeed: 0, flowCap: 0, stretch: 0, lens: null, deflect: true
+    });
     wf.dt = this._dt;
     wf.camX = v.x;
     wf.camY = v.y;
     wf.originX = origin.x;
     wf.originY = -origin.y;
     wf.frame = this._frame;
-    // przepływ widoczny: kamera gwiazd (limit), nie szybszy niż prawdziwa kamera (wyjście — hamowanie)
-    const cap = Number(WARP_STAR_CAMERA.speedCap) || 0;
-    wf.speed = cap > 0 ? Math.min(cap, this._camSpeed) : 0;
+    // przepływ widoczny: kamera gwiazd (limit) × udział z prawdziwej prędkości kamery (warpDebrisFlowQ)
+    wf.camSpeed = this._camSpeed || 0;
+    wf.flowCap = Number(WARP_STAR_CAMERA.speedCap) || 0;
     wf.stretch = stretch;
+    wf.lens = WARP_WORLD_LENS.active ? WARP_WORLD_LENS : null;
+    wf.deflect = warpDeflectorOn(RenderWorld.pageSearch);
     this.warpDebris.update(wf);
     this.stats.warpDebris = this.warpDebris.stats.rocks;
+    // Fale refrakcji deflektora (sama refrakcja — bez świecących okręgów; zasięg przycięty przed kadłubem).
+    const defl = this.warpDebris.deflector;
+    if (defl.stats.ripples > 0) {
+      const D = Core3D.fxDistortion?.();
+      if (D) {
+        const disp = defl.cfg.rippleDisp;
+        for (let i = 0; i < defl.ripples.length; i++) {
+          const r = defl.ripples[i];
+          if (r.alive && r.amp > 0.05 && r.r > 1) D.shock(r.x, r.y, r.r, r.w, r.amp, disp);
+        }
+      }
+    }
   }
 
   // Prędkość kamery kadru [j/s] (wygładzona ~0,1 s) — tryb skoku. Skok pozycji szybszy niż WARP_CUT_SPEED (teleport,

@@ -600,6 +600,9 @@ export class RockSet {
     this.maxLod = maxLod;
     this.origin = { x: 0, y: 0 };
     this.rocks = [];
+    // LOD z rozmiaru BRYŁY (skały w skoku — warpDebris.js): promień + `lodExtra` [j.] (połowa rozmycia ruchu), nie sama
+    // głowa — rozmyta skała dostaje gęstszą siatkę. 0 — dawny wybór z promienia.
+    this.lodExtra = 0;
     this.buckets = new LodBuckets({ bank, material, renderOrder, name, capacities: [512, 512, 256, 128, 64, 32], maxLod, layer });
     this.group = this.buckets.group;
     this.scene.add(this.group);
@@ -636,11 +639,12 @@ export class RockSet {
     B.begin();
     const M = this.minerals;
     M?.begin();
+    const lodExtra = this.lodExtra > 0 ? this.lodExtra : 0;
     for (const rock of this.rocks) {
       if (rock.alive === false) continue;
       const pxPerUnit = this.perspective ? f.focalPx / (camZ + (rock.z || 0)) : zoom;
       const rPx = rock.r * pxPerUnit;
-      const lod = pickRockLod(rPx, this.maxLod);
+      const lod = pickRockLod(lodExtra > 0 ? (rock.r + lodExtra) * pxPerUnit : rPx, this.maxLod);
       const b = B.slot(lod);
       if (b < 0) continue;
       const d = B.lods[lod].data;
