@@ -477,7 +477,10 @@ export function buildSwarmHeightfield(port, { cell = 6, shipMask = null, maxCell
         }
       }
     } else {
-      stampRect(s.center.x, s.center.y, s.yaw, w * 0.92, h * 0.92, P.hullTop);
+      // Bez maski sprite'a: prostokąt kadłuba — szerokość z `beamPx` hulla (zmierzony kadłub, gdy płótno jest dużo
+      // szersze: megafrachtowiec 570 z 887 px), inaczej 92% płótna.
+      const beam = Hh.beamPx ? Hh.beamPx * sc * 1.04 : h * 0.92;
+      stampRect(s.center.x, s.center.y, s.yaw, w * 0.92, beam, P.hullTop);
     }
   }
   for (const g of port.grids) {

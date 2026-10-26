@@ -84,7 +84,7 @@ async function waitGame(seconds) {
     left -= n;
   }
 }
-const CARGO_HULLS = ['inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter'];
+const CARGO_HULLS = ['inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter', 'megafreighter'];
 // Statki ruchu przy stanowiskach zatok z kadłubem z ładownią (faza, zegar postoju, stanowisko).
 const dockedFreighters = () => ev(`(() => {
   const tb = window.TrafficBubble; const hulls = ${JSON.stringify(CARGO_HULLS)};
@@ -117,9 +117,18 @@ try {
   console.log('tryb', report.tryb, extra, JSON.stringify(report.przeladunek));
 
   const tw0 = Date.now();
-  await ev(`(async () => { for (let i = 0; i < ${Math.ceil(WARM / 5)}; i++) { window.TrafficV2.advance(5); if (i % 40 === 39) await new Promise((r) => setTimeout(r, 0)); } return true; })()`, 600000);
-  if (!await waitFor(cdp, `(window.TrafficV2.clock || 0) >= ${WARM - 30}`, 600000, 500)) throw new Error('worker ruchu nie nadrobił rozgrzewki');
-  console.log('rozgrzewka świata', WARM, 's w', Date.now() - tw0, 'ms');
+  // Świat z własną rozgrzewką (E15 — godzina ruchu w workerze, bańka stoi do jej końca): czekamy na koniec. Własna
+  // rozgrzewka harnessu (`advance`) szła wtedy do kolejki świata PO niej — świat przewijał się potem szybciej niż gra
+  // i statki opuszczały stanowiska w kilka sekund.
+  const ownWarmup = await ev('!!(window.TrafficV2.warmup && window.TrafficV2.warmup.total > 0)');
+  if (ownWarmup) {
+    if (!await waitFor(cdp, '!window.TrafficV2.warmup.active && window.TrafficV2.warmup.seconds >= window.TrafficV2.warmup.total', 600000, 500)) throw new Error('rozgrzewka świata (E15) nie skończyła się');
+    console.log('rozgrzewka świata (E15)', await ev('window.TrafficV2.warmup.total'), 's w', Date.now() - tw0, 'ms');
+  } else {
+    await ev(`(async () => { for (let i = 0; i < ${Math.ceil(WARM / 5)}; i++) { window.TrafficV2.advance(5); if (i % 40 === 39) await new Promise((r) => setTimeout(r, 0)); } return true; })()`, 600000);
+    if (!await waitFor(cdp, `(window.TrafficV2.clock || 0) >= ${WARM - 30}`, 600000, 500)) throw new Error('worker ruchu nie nadrobił rozgrzewki');
+    console.log('rozgrzewka świata', WARM, 's w', Date.now() - tw0, 'ms');
+  }
 
   // Gracz przy zatoce Z-01 (7 tys. j. na zewnątrz — poza płytą ringu), kadr nad zatoką.
   const spot = await ev(`(() => {
@@ -137,7 +146,7 @@ try {
 
   // Frachtowiec przy stanowisku zatoki: świeżo zadokowany (wrota przed otwarciem), kadłub z większą ładownią
   // przed promem; po `--szukaj` s — najkrótszy postój, jaki jest.
-  const PRIO = { container_ship: 0, long_haul_freighter: 1, heavy_freighter: 2, inter_station_shuttle: 3 };
+  const PRIO = { container_ship: 0, long_haul_freighter: 1, heavy_freighter: 2, megafreighter: 2, inter_station_shuttle: 3 };
   let target = null;
   const SEARCH = args.tylkoKoszt ? 0 : Number(args.szukaj || 150);
   for (let k = 0; k < SEARCH && !target; k++) {
@@ -150,6 +159,15 @@ try {
   report.cel = target;
   console.log('cel:', JSON.stringify(target));
   if (target) {
+    // Gracz obok zatoki celu (7 tys. j. na zewnątrz portu): bańka ruchu żyje wokół GRACZA (E15 — bańka 100 tys. j.,
+    // reda), a podgląd kadru przenosi tylko kamerę — cel na drugim końcu portu wypadał z bańki po kilku sekundach.
+    report.przy = await ev(`(() => {
+      const earth = window.TrafficV2.getStation('earth');
+      const dx = ${target.x} - earth.x, dy = ${target.y} - earth.y, d = Math.hypot(dx, dy) || 1;
+      window.devTeleportTo(${target.x} + dx / d * 7000, ${target.y} + dy / d * 7000, { angle: Math.atan2(-dy, -dx), quiet: true });
+      window.ship.vel.x = 0; window.ship.vel.y = 0;
+      return { d: Math.round(d) };
+    })()`);
     // Kadr nad stanowiskiem: wysokość kadru ~1,3 długości pola (statek i plac po obu burtach).
     const vh = Math.max(700, target.len * 2.6);
     await ev(`window.PortCargo.look(${target.x}, ${target.y}, ${vh})`);
@@ -188,7 +206,9 @@ try {
         const op = f.ops.slice(0, f.opCount).find((o) => o.seed === ${target.id});
         return { t: +(window.TrafficV2.time - ${t0}).toFixed(1), dock: a ? +a.dockTime.toFixed(1) : null, phase: a ? a.phase : null,
           op: op ? { mode: op.mode, fill: +op.fill.toFixed(2), res: op.resourceId, dock: +op.dockTime.toFixed(1) } : null,
-          ops: f.opCount, yards: f.yardCount }; })()`);
+          ops: f.opCount, yards: f.yardCount,
+          naStanowisku: window.TrafficBubble.list.filter((b) => b.berthId === ${JSON.stringify(target.berth)}).map((b) => [b.id, b.hullId, b.phase, +b.dockTime.toFixed(1)]),
+          liczba: window.TrafficBubble.list.length }; })()`);
       if (args.diag && report.tryb === 'worker') st.diag = await evalWorker(`import(new URL('../3d/cargo/portCargo3D.js', self.location.href).href).then((m) => { const p = m.sharedPortCargo3D(); return JSON.stringify({ stats: p.stats, pool: p.pool ? { st: p.pool.stats, slots: p.pool.slots.filter((x) => x.active).map((x) => ({ k: x.k, key: x.key, started: x.started, finished: x.finished, drones: x.drones, units: x.units, done: x.planner ? x.planner.stats.done : null, total: x.planner ? x.planner.stats.total : null })) } : null }); }).catch((e) => String(e && e.stack || e))`);
       else if (args.diag) st.diag = await ev(`import('/src/3d/cargo/portCargo3D.js').then((m) => { const p = m.sharedPortCargo3D(); return { stats: { ...p.stats }, pool: p.pool ? { ...p.pool.stats, slots: p.pool.slots.filter((x) => x.active).map((x) => ({ k: x.k, key: x.key, started: x.started, finished: x.finished, drones: x.drones, units: x.units, done: x.planner ? x.planner.stats.done : null, total: x.planner ? x.planner.stats.total : null })) } : null }; }).catch((e) => String(e && e.stack || e))`);
       seq.push(st);
