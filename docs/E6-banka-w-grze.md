@@ -1,7 +1,6 @@
 # E6 — bańka ruchu v2 w grze (fala 3, wersja zwężona)
 
-Zadanie E6 z `docs/PLAN-ekonomia-rynki.md` (§ 3.5, wiersz E6), 2026-10-22. Stan i zasady obszaru: reguła `ruch-v2`,
-§ „Bańka w grze”. Ten dokument trzyma decyzje, pomiary i plan dalszych kroków.
+Zadanie E6 z `docs/PLAN-ekonomia-rynki.md` (§ 3.5, wiersz E6), 2026-10-22. Stan i zasady obszaru: reguła `ruch-banka`. Ten dokument trzyma decyzje, pomiary i plan dalszych kroków.
 
 ## Krok 0 — prom kręcił się na stanowisku pomostu
 
@@ -354,3 +353,34 @@ zmierzona budowa kadłuba wynosi tam 0 ms — próg liczy same klatki i zapas.
   bańki, 3 zniszczone, 0 odmów; worker renderu CPU 3,9 ms, GPU 1,9 ms.
 - 0 błędów strony i workerów, 0 pipeline'ów synchronicznych (worker i strona).
 - Symulacja `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` identyczna z bazą liczba w liczbę.
+
+## Hala Atlasa: stanowisko domowe, hala domowa zapasu, bańka bez `advance` (2026-10-26)
+
+Zgłoszenie użytkownika (start misji 1 w K-7): „na stanowisku, w którym stoi Atlas, jest lotniskowiec Citadella i nagle
+skaczą”. Przyczyna: zapas floty (`placeFleetStock`) rozstawiał okręty Terra Novy na padach hal K-7 od budowy świata,
+nosiciel trafiał na C-01 hali 1 (pierwszy wolny pad capital), a gracz dostawał pierwszeństwo dopiero po `berth-hold`,
+wysyłanym z kroku fizyki. W odprawie świat stoi (`StoryGame.worldFrozen`) — bez `advance` worker nie publikował bańki
+wcale, więc cała hala pojawiała się naraz w chwili odcumowania, z nosicielem w obrysie Atlasa (rozpychanie / taran).
+Prośby użytkownika: wolne stanowisko dla Atlasa, reszta hali pełna okrętów Terra Novy, luk Atlasa domyślnie zamknięty.
+
+- STANOWISKO DOMOWE: `PLAYER_HOME_BERTHS` (`trafficProtocol.js`) = `earth:K7-1:C-01` — C-01 hali K-7 nr 0 Ziemi
+  (start misji 1 — `_dockPlace('C-01')`, powrót `dockReturn`, holownik serwisowy). Gra wysyła je w `init.homeBerths`;
+  `setPlayerHomeBerths` (dyspozytor) trzyma je dla gracza (`occupantId = 'player'`) od budowy świata, PRZED pierwszym
+  rozstawieniem zapasu; `setPlayerBerthHolds` dokłada je do każdego zbioru z `berth-hold`, więc pusty zbiór gracza
+  ich nie zwalnia. Symulacja, bramka i testy `homeBerths` nie wysyłają — świat bez gracza bez zmian.
+- HALA DOMOWA ZAPASU: hala stanowiska domowego (`homeDocks` z `director.homeBerths`, `homeStockOptions` w
+  `workerBubble.js`) zapełnia się pierwsza i do końca: wygrywa wybór hali w `tryPad`, bez `keepFree` (wolnym
+  stanowiskiem przylotu jest stanowisko gracza), z osobnym przejściem awansu klas aż do capital (krążownik i niszczyciel
+  na padach capital, gdy frakcja ma jednego nosiciela). Pozostałe hale — równo, jak dotąd.
+- BAŃKA BEZ `advance`: gałąź pauzy w `loop` (sceny fabuły, pauza) wysyła fokus i dekoduje bufor
+  (`trafficBubbleStep(0)`, `stepTrafficBerths(0)`); rdzeń na `focus` otwiera NIEAKTYWNĄ bańkę krokiem 0
+  (`stepBubble(0)` — `updateBubble` z dt = 0 tylko materializuje, czas świata stoi).
+- Luk Atlasa: sam postój (`berth-hold`) go nie otwiera, tylko terminal stacji (reguła `przeladunek-portow`).
+
+Pomiary (ziarno 7, godzina rozgrzewki: zapas TN 24 fregaty / 10 niszczycieli / 5 krążowników / 1 nosiciel):
+- `placeFleetStock` z halą domową: hala K7-1 — 26 encji zapasu + kurs garnizonu na W-S01 = 27 / 27 padów poza C-01
+  (C-02 nosiciel, C-03 krążownik, C-04 niszczyciel, L — krążowniki, M — niszczyciele, S — fregaty); w 10 min gry kurs
+  garnizonu przestawił 1 okręt zapasu w tej hali.
+- Prawdziwa gra (kampania od menu, tryb `off`): hala pełna (27 encji, żadna na C-01) od odsłonięcia dachu w intro, przez
+  odprawę (świat stoi) do odcumowania; Atlas bez ruchu po odmrożeniu świata; `PortCargo.playerDoor` = 0 przy
+  `berth-hold` C-01; 0 błędów konsoli.

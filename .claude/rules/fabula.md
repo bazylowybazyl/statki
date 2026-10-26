@@ -24,6 +24,13 @@ paths:
   zamki pola) w czasie gry; napęd wraca przy zwolnieniu zamków (`driveAt`) — ramiona dokładają się nad płaszczyzną lotu
   w trakcie wylotu, bez automatycznego wysuwania (dawna animacja `lock.anim` nieużywana). Pozy idą do rejestru kolidera
   (hala rysuje z nich ramiona i przewody, źródła gazu — buchy pary).
+  HALA ATLASA (2026-10-26, prośby użytkownika: „zachowaj wolny slot dla Atlasa”, „zapełnij resztę slotów statkami Terra
+  Nova”, „zamknij domyślnie ładownię Atlasa”): C-01 hali K-7 nr 0 to stanowisko domowe gracza w ruchu v2
+  (`PLAYER_HOME_BERTHS`, `init.homeBerths`) — zapas floty i kursy nigdy na nim nie stają, a hala jest zapełniona okrętami
+  frakcji portu (Terra Nova) pierwsza i do końca (reguła `ruch-banka`: HALA DOMOWA,
+  STANOWISKO DOMOWE). Okręty hali widać już w odprawie (bańka w zatrzymanym świecie). Luk Atlasa w doku
+  zamknięty (otwiera go tylko terminal stacji — reguła `przeladunek-portow`). Sprawdzenie w grze: kampania od menu,
+  `TrafficBubble.list` z `berthId` `earth:K7-1:…` (27 encji, żadna na C-01), `PortCargo.playerDoor` = 0.
 
 - Skrypt misji to funkcja `async` na `createStoryRunner` (`ctx.wait` w CZASIE GRY, `until`, `event`, `spawn`, `phase`); gry dotyka tylko przez `api` z `storyGame.js` (zależności z bloku „FABUŁA” w `index.html`). Nowa misja = nowy skrypt w `missions/` + kwestie w `src/data/story/` (obsada i portrety: `cast.js`), nie logika w `index.html`.
 

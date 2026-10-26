@@ -1,7 +1,7 @@
 # E15 — widoczny ruch w grze (2026-10-23)
 
-Zadanie E15 z `docs/PLAN-ekonomia-rynki.md` (§ 4, wiersz E15). Stan i zasady obszaru: reguła `ruch-v2` (§ „Bańka w grze”,
-§ „Rozgrzewka świata”). Ten dokument trzyma decyzje, pomiary i ryzyka.
+Zadanie E15 z `docs/PLAN-ekonomia-rynki.md` (§ 4, wiersz E15). Stan i zasady obszaru: reguły `ruch-banka` i `ruch-v2`
+(§ „Rozgrzewka świata”). Ten dokument trzyma decyzje, pomiary i ryzyka.
 
 Diagnoza (orkiestrator): ruchu w grze prawie nie widać, bo (1) świat ruchu rusza pusty — po 15 min gry w powietrzu ~90
 kursów, po 60 min ~740 aktywnych; harnessy maskowały to rozgrzewką narzędzia (`--rozgrzewka 2400`), (2) bańka rysuje

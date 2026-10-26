@@ -77,6 +77,49 @@ test('komora z komórek siatki: rdzeń w punkcie markera, pancerz × armorMul, k
   } finally { cleanup([e]); }
 });
 
+test('komora pod strefą mostka (rdzeń Atlasa pod mostkiem rufowym): wspólne komórki z większym pancerzem, nie iloczynem', () => {
+  const e = makeBeamShip(HullBodies, 'battleship', 3e6, 1e6, 0);
+  try {
+    const { pngWidth, pngHeight, def } = hullImage('battleship');
+    const hull = reactorHull(e);
+    const s = hull.body.nodeStore;
+    // Komora bez mostka: jej komórki i HP bazowe.
+    attachReactorCores(e, def.cores, { pngWidth, pngHeight });
+    const probe = e.reactorCores[0];
+    const base = Array.from(probe.cellBaseHp);
+    const n = probe.cellX.length;
+    RC.detachReactorCores(e);
+    // Mostek ×1,5 na połowie komórek komory — jak attachBeamBridges (montowany przed rdzeniami): pancerz i baza.
+    const half = Math.max(1, n >> 1);
+    const cellX = probe.cellX.slice(0, half), cellY = probe.cellY.slice(0, half);
+    const cellBaseHp = new Float64Array(half);
+    for (let k = 0; k < half; k++) {
+      const i = reactorCellNode(hull, cellX[k], cellY[k]);
+      cellBaseHp[k] = s.maxHp[i];
+      s.maxHp[i] *= 1.5;
+      s.hp[i] *= 1.5;
+    }
+    e.bridgeState = { lineage: hull.dmgKey, bridges: [{ def: { armorMul: 1.5 }, cellX, cellY, cellBaseHp }] };
+    attachReactorCores(e, def.cores, { pngWidth, pngHeight });
+    const core = e.reactorCores[0];
+    assert.equal(core.cellX.length, n);
+    const mul = core.armorMul;
+    assert.ok(mul > 1.5, 'pancerz komory większy od mostka');
+    for (let k = 0; k < n; k++) {
+      const i = reactorCellNode(hull, core.cellX[k], core.cellY[k]);
+      assert.ok(Math.abs(core.cellBaseHp[k] - base[k]) < 1e-3, `baza komórki ${k} sprzed mostka`);
+      assert.ok(Math.abs(s.maxHp[i] - base[k] * mul) < 1e-3, `komórka ${k}: ${s.maxHp[i]} zamiast ${base[k] * mul}`);
+    }
+    RC.detachReactorCores(e);
+    for (let k = 0; k < n; k++) {
+      const i = reactorCellNode(hull, probe.cellX[k], probe.cellY[k]);
+      assert.ok(Math.abs(s.maxHp[i] - base[k]) < 1e-3, 'zdjęcie komory wraca do bazy');
+    }
+  } finally {
+    cleanup([e]);
+  }
+});
+
 test('stany: wyrwa w komorze → ODSŁONIĘTY → KRYTYCZNY → STOPIENIE → DETONACJA po odliczaniu', () => {
   const e = ship('battleship');
   try {
