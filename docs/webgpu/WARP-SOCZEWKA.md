@@ -107,12 +107,55 @@ warp, SimClock.render)`. Rekord `s` idzie do klatki „Nurtu” (`o.lensPhase`, 
   celu leży na 0,75 drogi do krawędzi przed dziobem (kamera tylko się odsuwa — miękkie minimum z kadrem skoku).
 - Podłoga zoomu tylko przy zatrzaśniętym kadrze przylotu: 0,07 · zoomRef (`rig.warpZoomFloor` → `camera.zoomImpulseMin`
   → `cameraZoomFloor`; wyjątek od limitu kadłuba 0,035 — kadr przylotu do Marsa przy 1080p ~0,019, Atlas wtedy mały).
-- Bez wysunięcia statku przy wyjściu z celem (`WARP_EXIT.ahead` × 0), wyprzedzenie zostaje. Swobodny skok — wysunięcie
-  0,4 pół kadru i dogonienie w 1,3 s jak dawniej.
+- Bez wysunięcia statku przy wyjściu, wyprzedzenie zostaje — przy KAŻDYM skoku (warp zawsze do celu, DECYZJE-2 T2;
+  dawna gałąź swobodnego skoku z wysunięciem 0,4 pół kadru i dogonieniem w 1,3 s usunięta razem z `WARP_EXIT.ahead`).
+  Cel = ciało: kadr z brzegu jego tarczy; cel = punkt (punkt w próżni, skok awaryjny, przerwany skok —
+  `warp.route.arrive` 'point'): odległość 0 — kadr skoku bez odsuwania, ta sama oś trzymania i powrotu.
 - Trzymanie kadru przylotu do końca ślizgu + 1 s, powrót do zoomu gracza smoothstep 2 s. Nowe ładowanie przy
   zatrzaśniętym kadrze — zejście do kadru skoku smoothstep 0,8 s.
 - Obrót kadru kursem w górę od ładowania do chwili po zatrzymaniu (`stepCameraRigRoll`, `warpJumpRollOmega` 5/s).
 - Hipercruise kolejnego odcinka TRAVEL TO przejmuje kamerę dopiero po powrocie kadru przylotu (`playerWarpArrivalLive()` w `index.html`).
+
+## Warp zawsze do celu (DECYZJE-2 T1–T4, 2026-10-26)
+
+Decyzja użytkownika po teście: „tak robimy [warp do celu]” (model C analizy „warp z miejsca do miejsca”). Każdy skok
+gracza ma cel albo punkt końca — swobodnego skoku w dziób bez końca nie ma (dawniej: 5,4% skoków wpadało w studnię bez
+rampy, 94,6% bez ręcznego wyjścia doleciałoby do brzegu świata).
+
+- **Klawisz warpa** (CapsLock / 9): (1) kurs TRAVEL TO, gdy dziób w ±5° od odcinka (zielone pasmo) albo w stożku ±20°
+  (kurs gracza wygrywa z innymi celami w stożku); (2) cel w stożku ±20° przed dziobem (ciało, port, stacja, punkt i cel
+  misji, olbrzym i pole pasa, wrak, wrogi kontakt — `collectTravelTargets`; tarcza studni ciała liczy się jak trafienie
+  w środek, wygrywa najmniejsza odchyłka, potem najbliższy; skok do ciała idzie tam, gdzie promień dzioba — obrócony
+  najmniej, ile trzeba — wchodzi w brzeg studni, więc namiar odchodzi od dzioba najwyżej o stożek; inne cele — do brzegu
+  budowli po pierwszym odcinku planisty TRAVEL TO ze studniami skoku); (3) skok awaryjny 400 tys. j. w dziób, skrócony
+  przed brzegiem studni (planety, małe ciała, słońce, baza piratów), przed jądrem studni startu (strefa orbit — ring,
+  planeta; z portu w głąb — odmowa) i przed brzegiem świata, bez dodatkowej ceny. Kurs = dokładny namiar przy starcie
+  ładowania; dziób dociąga się do niego w ładowaniu (`warpChargeTurn`, 24° w ~0,55 s z 0,8 s), w skoku bez skrętu.
+  Wyjście automatyczne przy punkcie, komunikat HUD. Ręczne wyjście w locie zostaje. Skok oddalający się od ciała nie
+  hamuje grawitacyjnie przy wylocie z jego stref orbit (`warpLeavingWell`) — dawniej skok z portu K-7 hamował bez rampy
+  kilka km po kopie.
+- **Czasy skoku awaryjnego** (bez ciał na kursie, Atlas): Mk I / II / III — prędkość przelotowa 52,0 / 60,1 / 60,1 tys.
+  j/s, do wyjścia 7,67 / 6,67 / 6,63 s, zatrzymanie (rampa 1,33 s + ślizg 5,07 s) po 14,1 / 13,1 / 13,0 s od kopu.
+- **CIC**: TRAVEL TO przyciąga do najbliższego celu w 28 px mapy (menu PPM pokazuje jego nazwę), w próżni — „PUNKT”.
+- **Plan trasy przy kopie** (`warp.route`, WORLD `WARP_ROUTE_*` — układ migawki 4): rodzaj skoku, przylot (ciało /
+  punkt), punkt skoku i zatrzymania, droga, czas do wyjścia i do zatrzymania, prędkość przelotowa, najbardziej widoczne
+  mijane ciało z chwilą trawersu, pierwszy przelot przez strefę pasa (drogi i chwile). Stała długość, ten sam obiekt
+  w trybie off i w workerze — dla akcentów, dźwięku i pasa jako zdarzenia trasy (zespół skał — opcja D).
+- **Kamera**: kadr przylotu K1 przy każdym wyjściu (ciało — z brzegu tarczy; punkt — bez odsuwania), bez wysunięcia
+  statku (§ „Kamera K1”).
+- **Stałe kąty planet** (T3): kąty z ziarna świata zapisanego w zapisie gry (`worldSeed`, wersja zapisu 2); ziarno
+  ustala się przy starcie strony — `?ziarno=<n>` / `?ziarno=nowe`, zapis, bez zapisu nowe. Zbiór tras między hubami
+  jest w danym zapisie skończony (45 par) — każdą da się przepuścić przez symulator. Menu nie ma jeszcze „Wczytaj”,
+  „Nowa gra” nie przeładowuje strony, a autozapis niesie to samo ziarno — w praktyce układ jest stały na profil
+  przeglądarki (nowy: `?reset=economy` / `?ziarno=nowe`); „nowa gra = nowe ziarno” czeka na decyzję (otwarte sprawy).
+- **Hipercruise krótkich odcinków TRAVEL TO** (T4): start dopiero od `minLeg + stopMargin` (6 + 4,1 km) — odcinek
+  6–10,1 km startował hipercruise co ~1 s z wyjściem po 2 klatkach.
+- Tempo warstw (W0) bez zmian: wszystkie warstwy gwiazd liczą tempo z tej samej prędkości kamery (min(v; 14 000 j/s) —
+  `STAR_SPEED_CAP`), więc kolejność deep < mid < speed nie zależy od skoku. Poza mijanym ciałem skok awaryjny leci
+  ≥ 52 tys. j/s, × 0,3 przy planetach ≥ 15,6 tys. j/s — ponad limitem, gwiazdy mają tempo zwykłego skoku (deep 16–46,
+  mid 90–296, speed 2217 px/s). Przy mijanym ciele (zwolnienie do 0,15) schodzi pod limit — Mk II 9,0 tys. j/s (64%
+  tempa gwiazd), w strefie planety 2,7 tys. j/s (19%); wszystkie warstwy zwalniają w tej samej proporcji, jak w każdym
+  skoku obok planety.
 
 ## Ośrodek wyłączony (DECYZJE O1)
 
@@ -213,8 +256,10 @@ w `tests/snapshotPack.test.mjs`.
 `node scripts/webgpu/warp-soczewka-sym.mjs` — symulator dowodowy bez przeglądarki: prawdziwe moduły gry i renderu
 w Node (fizyka skoku, rampa, ślizg, kamera gry z K1, oś β jak w grze, `WarpWorldLens` na rekordach jak
 `planet3d.assets.js`), krok 60 Hz. Scenariusze: S1 Ziemia → Jowisz z Marsem w trawersie, S2 Ziemia → Mars,
-S3 swobodny skok obok Jowisza, S4 Jowisz → Saturn (cel na tle), S5 przerwane ładowanie, S6 Ziemia → Mars z Jowiszem
-w stożku za celem. Opcje: `--scen S1,S4`, `--res 1080,1440`, `--B 45000`, `--tory gl|wszystkie|nie`, `--md plik.md`,
+S3 punkt w próżni obok Jowisza (TRAVEL TO do punktu, kadr przylotu K1 punktu — dawniej swobodny skok bez przylotu),
+S4 Jowisz → Saturn (cel na tle), S5 przerwane ładowanie, S6 Ziemia → Mars z Jowiszem w stożku za celem, S7 skok
+awaryjny 400 tys. j. z Jowiszem w połowie (najczęstszy skok z klawisza; na mapie C błąd P4-mig, z mapą O1 przechodzi —
+otwarte sprawy). Opcje: `--scen S1,S4`, `--res 1080,1440`, `--B 45000`, `--tory gl|wszystkie|nie`, `--md plik.md`,
 `--json plik.json`, `--origin-ruch` (A/B planety startu „ruchem”). Kod wyjścia ≠ 0, gdy kontrola nie przejdzie
 (progi P4: ruch środka ≤ 60 px/klatkę, promień ≤ 50 px/klatkę, 0 mignięć; kryteria C1–C5; stożek C6).
 
@@ -272,8 +317,13 @@ Tryb domyślny (worker); wybrane trasy powtórzyć z `?renderWorker=0`.
 2. **Ziemia → Mars (krótki skok)**: cel od kropki do kadru przylotu bez skoku; Luna przy starcie nie skacze.
 3. **Jowisz → Saturn**: cel NA TLE (planeta pod płaszczyzną gry) — rośnie i puszcza bez zmalenia po przylocie;
    pierścień Saturna.
-4. **Swobodny skok (CapsLock) w bok obok Jowisza** i wyjście klawiszem: bez celu, wysunięcie statku i powrót kamery
-   jak dawniej; Jowisz mijany duży.
+4. **CapsLock bez kursu** (warp zawsze do celu, § niżej): dziób na planetę / stację w ±20° — skok do niej (komunikat
+   „WARP: CEL PRZED DZIOBEM — …”); dziób w pustkę — skok awaryjny 400 km w dziób („WARP: SKOK AWARYJNY 400 KM”),
+   wyjście samo przy punkcie, bez wysunięcia statku; dziób na studnię tuż przed statkiem — odmowa z komunikatem.
+   Planeta 25–35° od dzioba z dużą studnią w stożku: dziób skręca w ŁADOWANIU najwyżej ~20°, w skoku bez skrętu.
+   Kurs TRAVEL TO 8–20° od dzioba i inna planeta na dziobie: skok idzie kursem. Z portu K-7 przy ringu dziobem
+   w pustkę: pełny skok bez hamowania po kilku km; dziobem na planetę — odmowa. Skok awaryjny obok Jowisza: Jowisz
+   mijany duży, przy wyjściu znika szybko (S7 symulatora — otwarte sprawy).
 5. **Przerwane ładowanie** (CapsLock dwa razy): świat opada w ~0,3 s bez przeskoku.
 6. **Start z portu bez ringu** (Luna, Ceres, Westa, Wenus): ciało startu jedzie w soczewce od ładowania. Patrz:
    dok i stacja jadą z ciałem (maleją i odpływają pod rufę), leżą POD statkiem (pass tła), bez skoku wysokich części
@@ -306,9 +356,18 @@ Tryb domyślny (worker); wybrane trasy powtórzyć z `?renderWorker=0`.
 
 ## Otwarte sprawy
 
-- **Pętla hipercruise'u w TRAVEL TO** (błąd rozgrywki sprzed etapu): odcinek o długości między `minLeg` (6 km)
-  a `minLeg + stopMargin` startuje hipercruise co ~1 s (`travelTryHypercruise`, `hcRetryAt`), a hipercruise wychodzi
-  po 2 klatkach. Propozycja: nie startować hipercruise'u przy `d < minLeg + stopMargin` — osobne zadanie.
+- **Skok awaryjny obok dużego ciała (S7 symulatora)**: na mapie C ciało mijane < ~400 tys. j. przed wyjściem (Jowisz
+  300 tys. j. z boku w połowie skoku 400 tys. j.) zanurza się na froncie wyjścia z ~73 px do 0 w ~0,18 s (ostatni krok
+  3,2 → 0,3 px — kontrola P4-mig nie przechodzi). Z mapą O1 (worktree `warp-o1`, 2026-10-26) S7 przechodzi P4-mig
+  (0 mignięć) — „warp zawsze do celu” scalać razem z mapą O1 albo po niej.
+- **Ręczne wyjście daleko od celu**: kamera kadruje punkt zatrzymania (`warp.route.arrive` 'point'), a soczewka trzyma
+  cel przy krawędzi do zatrzymania + `arrivalStopGrace` i puszcza w 0,6 s (`_arrivalHold` czyta `warp.targetBody`).
+  Pole `route.arrive` jest w migawce — pominięcie trzymania przy 'point' to zmiana soczewki (+ scenariusz symulatora).
+- **„Nowa gra = nowe ziarno”** (DECYZJE-2 T3) nie zachodzi: ziarno ustala się przy starcie strony, a „Nowa gra” jej nie
+  przeładowuje. Do decyzji: przeładowanie strony z nowym ziarnem przy „Nowej grze” albo planety stałe na profil.
+- **Narzędzia w grze** (`zrzuty.mjs`, `silniki.mjs`, `tsl-uuid-gra.mjs`, `tunelowanie-gra.mjs`) ustawiają ładowanie
+  wprost — skok dostaje koniec z planu awaryjnego (~7 s, 60–90 tys. j/s zamiast prędkości napędu): bazy zrzutów warpa
+  trzeba odświeżyć, a pomiar tunelowania ocenić na nowo.
 - **Io**: obraz na 86 tys. j., węzeł gry i port ruchu v2 na 60 tys. (węzeł leży pod ringiem Jowisza).
 - **Przekazanie kamery hipercruise'owi po przylocie**: po powrocie kadru przylotu hipercruise od razu oddala kadr
   (0,178 → 0,098 w ~0,5 s), a soczewka zeruje się przy hipercruisie odcinka od razu — warto przekazać kamerę wprost.

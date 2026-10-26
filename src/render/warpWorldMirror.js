@@ -17,7 +17,13 @@
 //     worker liczy z niego dt efektu, więc strony pominięte przez workera nie gubią czasu osi kopu i wyjścia);
 //   • kotwica kadru (DECYZJE M3) — dwa skalary na etap integracji soczewki (`anchorSX / anchorSY`);
 //   • oś β soczewki świata (układ 3, etap integracji): rekord `lens` (warpLensPhase.js — stepWarpLensPhase strony gry,
-//     tabela WARP_LENS_FIELDS) — worker liczy warpLensBeta z tych samych pól co tryb off (klatka „Nurtu”: lensPhase).
+//     tabela WARP_LENS_FIELDS) — worker liczy warpLensBeta z tych samych pól co tryb off (klatka „Nurtu”: lensPhase);
+//   • PLAN TRASY skoku (układ 4, DECYZJE-2 T2 — każdy skok ma plan przy kopie): `route` (index.html: planPlayerWarp /
+//     exitWarp — rodzaj, przylot 'body' | 'point', punkt skoku i zatrzymania, droga, czasy, prędkość, mijane ciało jako
+//     INDEKS jak cel, pierwszy przelot przez pas; tabela WARP_ROUTE_FIELDS) — render czyta `warp.route` tak samo w obu
+//     trybach (akcenty, dźwięk, pas jako zdarzenie trasy). Stała długość — bez listy mijanych ciał (lista ciał jest
+//     w renderze, kurs i punkt skoku tutaj). Plan OSTATNIEGO skoku — żyje od kopu do następnego ładowania (także po
+//     zatrzymaniu); czy skok trwa, mówi stan warpa (`state`, rampa, ślizg), nie obecność planu.
 // Pole nieobecne na obiekcie gry = NaN (jak reszta migawki). Rozpakowanie bez alokacji w klatce (obiekty lustra tworzy
 // `createWarpWorldMirror` raz). Czysty moduł (bez three, DOM i `window`).
 
@@ -54,6 +60,15 @@ export const WARP_LENS_FIELDS = Object.freeze([
   ['WARP_LENS_EXIT_SLOW', 'exitSlow'], ['WARP_LENS_EXIT_HALT', 'exitHalt'], ['WARP_LENS_EXIT_BETA', 'exitBeta'],
   ['WARP_LENS_ABORT_AGE', 'abortAge'], ['WARP_LENS_ABORT_BETA', 'abortBeta'], ['WARP_LENS_ZOOM_REF', 'zoomRef'],
   ['WARP_LENS_ZOOM_JUMP', 'zoomJump'], ['WARP_LENS_ARRIVAL_FILL', 'arrivalFill'], ['WARP_LENS_BETA', 'beta']
+].map(([K, k]) => Object.freeze([WORLD[K], k])));
+
+/** Pola liczbowe planu trasy skoku (`warp.route` — index.html: planPlayerWarp). Rodzaj, przylot i mijane ciało — osobno. */
+export const WARP_ROUTE_FIELDS = Object.freeze([
+  ['WARP_ROUTE_X0', 'x0'], ['WARP_ROUTE_Y0', 'y0'], ['WARP_ROUTE_X1', 'x1'], ['WARP_ROUTE_Y1', 'y1'],
+  ['WARP_ROUTE_DIST', 'dist'], ['WARP_ROUTE_EXIT_T', 'exitT'], ['WARP_ROUTE_TIME', 'time'], ['WARP_ROUTE_CRUISE', 'cruise'],
+  ['WARP_ROUTE_FLY_ALONG', 'flyAlong'], ['WARP_ROUTE_FLY_LATERAL', 'flyLateral'], ['WARP_ROUTE_FLY_T', 'flyT'],
+  ['WARP_ROUTE_BELT_IN', 'beltIn'], ['WARP_ROUTE_BELT_OUT', 'beltOut'], ['WARP_ROUTE_BELT_T_IN', 'beltTIn'],
+  ['WARP_ROUTE_BELT_T_OUT', 'beltTOut']
 ].map(([K, k]) => Object.freeze([WORLD[K], k])));
 
 /** Indeks ciała na liście (planety, potem małe ciała) albo −1. Bez alokacji (pętla po tożsamości). */
@@ -116,6 +131,14 @@ export function packWarpWorld(w, f, dict) {
   }
   w[WORLD.WARP_LENS_HYPER] = lp && lp.hyper ? 1 : 0;
   w[WORLD.WARP_LENS_ARRIVING] = lp && lp.arriving === true ? 1 : 0;
+  const rt = wp && wp.route && wp.route.active ? wp.route : null;
+  w[WORLD.WARP_ROUTE_KIND] = rt ? dict.code(rt.kind) : -1;
+  w[WORLD.WARP_ROUTE_ARRIVE] = rt ? dict.code(rt.arrive) : -1;
+  for (let i = 0; i < WARP_ROUTE_FIELDS.length; i++) {
+    const p = WARP_ROUTE_FIELDS[i];
+    w[p[0]] = rt ? raw(rt[p[1]]) : NaN;
+  }
+  w[WORLD.WARP_ROUTE_FLY_BODY] = rt ? warpBodyIndex(rt.flyBody, f.planets, f.smallBodies) : -1;
   const bo = f.boost || null;
   w[WORLD.BOOST_STATE] = bo ? dict.code(bo.state) : -1;
 }
@@ -127,10 +150,16 @@ export function createWarpWorldMirror() {
     slow: 0, coast: 0, brake: 0, tSlowEnd: 0, tBrake: 0, tHalt: 0, dist: 0
   };
   const slide = { active: false, dirX: 1, dirY: 0, speed: 0, vMin: 0, decel: 0 };
+  // plan trasy (kształt warp.route z index.html)
+  const route = {
+    active: false, kind: 'none', arrive: 'none', x0: NaN, y0: NaN, x1: NaN, y1: NaN, dist: NaN, exitT: NaN,
+    time: NaN, cruise: NaN, flyBody: null, flyAlong: NaN, flyLateral: NaN, flyT: NaN,
+    beltIn: NaN, beltOut: NaN, beltTIn: NaN, beltTOut: NaN
+  };
   const warp = {
     state: 'idle', charge: 0, chargeTime: 0.8, gear: 1, dir: { x: 0, y: 0 }, flybyFactor: 1, cruise: 0, speed: 0,
     entryProgress: 0, kickSim: NaN, targetBody: null, originBody: null, exitRamp: null, exitSlide: null,
-    gravityBrake: { active: false },
+    gravityBrake: { active: false }, route,
     isBusy() { return this.state !== 'idle' || !!(this.exitRamp && this.exitRamp.active); }
   };
   // oś β soczewki (kształt createWarpLensPhase — warpLensPhase.js)
@@ -139,9 +168,9 @@ export function createWarpWorldMirror() {
     abortAge: -1, abortBeta: 0, hyper: false, arriving: false, zoomRef: NaN, zoomJump: NaN, arrivalFill: NaN, beta: 0
   };
   return {
-    warp, ramp, slide, boost: { state: 'idle' }, lens,
+    warp, ramp, slide, route, boost: { state: 'idle' }, lens,
     hasWarp: false, hasBoost: false, hasLens: false,
-    targetIndex: -1, originIndex: -1,
+    targetIndex: -1, originIndex: -1, flyIndex: -1,
     fxClock: NaN, anchorSX: NaN, anchorSY: NaN
   };
 }
@@ -200,6 +229,18 @@ export function applyWarpWorld(w, dict, m, planets, small) {
   }
   lp.hyper = w[WORLD.WARP_LENS_HYPER] === 1;
   lp.arriving = w[WORLD.WARP_LENS_ARRIVING] === 1;
+  const rt = m.route;
+  const rk = w[WORLD.WARP_ROUTE_KIND];
+  rt.active = rk >= 0;
+  rt.kind = rk >= 0 ? dict.value(rk) : 'none';
+  const ra2 = w[WORLD.WARP_ROUTE_ARRIVE];
+  rt.arrive = ra2 >= 0 ? dict.value(ra2) : 'none';
+  for (let i = 0; i < WARP_ROUTE_FIELDS.length; i++) {
+    const p = WARP_ROUTE_FIELDS[i];
+    rt[p[1]] = w[p[0]];
+  }
+  m.flyIndex = w[WORLD.WARP_ROUTE_FLY_BODY];
+  rt.flyBody = warpBodyAt(m.flyIndex, planets, small);
   const bc = w[WORLD.BOOST_STATE];
   m.hasBoost = bc >= 0;
   m.boost.state = bc >= 0 ? dict.value(bc) : 'idle';

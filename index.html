@@ -869,7 +869,7 @@
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { formatLocalDistance, formatVelocity, resolveWorldUnitsPerAu } from './src/config/units.js';
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
-    import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from './src/data/systemMap.js';
+    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, resolveWorldSeed, systemMapAngleForSeed } from './src/data/systemMap.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -1585,9 +1585,9 @@
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpTripTuneFor, warpFlybyFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival } from "./src/game/warpDrive.js";
-    import { TRAVEL_TUNE, planTravelLeg } from "./src/game/travelNav.js";
-    import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from "./src/game/warpCourse.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpTripTuneFor, warpFlybyFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival, WARP_EMERGENCY, planWarpEmergency, warpExitRampTime, warpLegTimeline } from "./src/game/warpDrive.js";
+    import { TRAVEL_TUNE, planTravelLeg, travelHypercruiseLegOk, travelApproachPoint, snapTravelTarget } from "./src/game/travelNav.js";
+    import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue, chooseWarpJump, warpCourseInCone, warpChargeTurn } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { migratePirateSpriteLayout } from "./src/data/pirateSpriteMigration.js";
@@ -7127,6 +7127,23 @@
       return getOutermostBeltEdgeAu(BELT_DEFINITIONS);
     }
 
+    // STAŁE KĄTY PLANET W ZAPISIE (DECYZJE-2 T3, 2026-10-26; src/data/systemMap.js: resolveWorldSeed): ziarno świata
+    // ustala się przy starcie strony, ZANIM powstaną planety — z zapisu gry (klucz `economy`, pole `worldSeed`, tylko
+    // zapis wersji WORLD_SEED_SAVE_VERSION), bez zapisu nowe; `?ziarno=<liczba>` / `?ziarno=nowe`
+    // (A/B, narzędzia tras). Zapis gry niesie je dalej (buildEconomySave), więc po F5 planety stoją tam, gdzie zapisana
+    // ekonomia. Planety się nie poruszają (speed 0) — ziarno = cały układ tras między planetami.
+    // AGENT: WORLD_SEED_SAVE_VERSION = ECONOMY_SAVE_VERSION (blok „ZAPIS EKONOMII” — tam stała jest w TDZ w tej chwili);
+    // strażnik równości w tests/warpDoCelu.test.mjs.
+    const WORLD_SEED_SAVE_VERSION = 2;
+    const WORLD_SEED_INFO = (() => {
+      let raw = null;
+      try { raw = localStorage.getItem('economy'); } catch { raw = null; }
+      return resolveWorldSeed(location.search, raw, WORLD_SEED_SAVE_VERSION);
+    })();
+    const WORLD_SEED = WORLD_SEED_INFO.seed;
+    window.WORLD_SEED = WORLD_SEED;
+    console.info(`[świat] ziarno kątów planet ${WORLD_SEED} (${WORLD_SEED_INFO.source === 'save' ? 'z zapisu' : WORLD_SEED_INFO.source === 'url' ? 'z adresu' : 'nowe'})`);
+
     function makeSolarPlanets() {
       // Tabela orbit i rachunek skali mieszkają w src/data/systemMap.js — ten sam
       // moduł czytają skrypty pomiarowe i prototypy ruchu. Wcześniej ta tabela była
@@ -7134,7 +7151,9 @@
       // każda zmiana skali po cichu unieważniała dokumentację i pomiary.
       const { auInWorldUnits, planets } = buildSystemMap(getOuterAsteroidEdgeAU(), {
         planetScale: PLANET_SCALE,
-        sunRadius: SUN.r
+        sunRadius: SUN.r,
+        // kąty z ziarna świata (T3) — nie losowe przy każdym starcie
+        angleFor: systemMapAngleForSeed(WORLD_SEED)
       });
       window.BASE_ORBIT = auInWorldUnits;
       window.WORLD_UNITS_PER_AU = auInWorldUnits;
@@ -7728,8 +7747,43 @@
     window.beltFamilyAt = (x, y) => beltWorld?.field?.familyAt?.(x, y) || null;
     window.__beltFamilyZone = _beltFamilyZone;
 
+    // WYLOT ZE STUDNI W SKOKU (DECYZJE-2 T1 „zawsze rampa, nigdy hamowanie bez rampy”; recenzja T, ust. 8): skok, który od
+    // kopu oddala się od ciała studni (prosta od punktu skoku `warp.route` w kierunku `warp.dir` — odległość od ciała tylko
+    // rośnie, więc przejście w pas studni to wylot z jego stref orbit, np. z portu K-7 przy ringu), nie hamuje
+    // grawitacyjnie na tym pasie; dawniej hamował bez rampy kilka km po kopie (planet_outer → planet_gravity). Skok w głąb
+    // studni (przez ciało) hamuje jak dawniej — skok awaryjny w jądro studni startu planista odrzuca (planWarpEmergency).
+    function warpLeavingWell(zoneId) {
+      if (warp.state !== 'active') return false;
+      const rt = warp.route;
+      if (!rt || !Number.isFinite(rt.x0) || !Number.isFinite(rt.y0)) return false;
+      const dx = warp.dir.x;
+      const dy = warp.dir.y;
+      const away = (sx, sy) => (rt.x0 - sx) * dx + (rt.y0 - sy) * dy >= 0;
+      if (zoneId === 'sun') return !!SUN && away(SUN.x, SUN.y);
+      if (zoneId === 'pirate_gravity') {
+        const st = mercMission?.station;
+        return !!st && away(st.x, st.y);
+      }
+      if (zoneId !== 'planet_gravity') return false;
+      // ciała, w których studni statek jest teraz (planety i małe ciała) — od każdego skok musi się oddalać
+      let found = false;
+      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];
+      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
+        const b = i < planets.length ? planets[i] : bodies[i - planets.length];
+        if (!b) continue;
+        const radii = planetOrbitRadii(b);
+        const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
+        const ox = ship.pos.x - b.x;
+        const oy = ship.pos.y - b.y;
+        if (!(r > 0) || ox * ox + oy * oy > r * r) continue;
+        if (!away(b.x, b.y)) return false;
+        found = true;
+      }
+      return found;
+    }
+
     function handleZoneTransition(prevZoneId, currentZoneId) {
-      if (isGravityWellZoneId(currentZoneId) && currentZoneId !== prevZoneId) {
+      if (isGravityWellZoneId(currentZoneId) && currentZoneId !== prevZoneId && !warpLeavingWell(currentZoneId)) {
         triggerGravityWarpBrake(currentZoneId);
       }
       if (currentZoneId === 'pirate_inner' && prevZoneId !== 'pirate_inner') {
@@ -9783,6 +9837,8 @@
       warp.fuel = warp.fuelMax;
       warpCourse.aim = _tugWarp.aim;
       warpCourse.autoExit = true;
+      warpCourse.kind = 'tug';
+      warpCourse.label = '';
       warp.chargeAngle = bearing;
       warp.state = 'charging';
       warp.charge = 0;
@@ -15939,7 +15995,8 @@
     // ============================================================
 
     const ECONOMY_SAVE_KEY = 'economy';
-    const ECONOMY_SAVE_VERSION = 1;
+    // 2 (DECYZJE-2 T3): zapis niesie ziarno kątów planet `worldSeed` (= WORLD_SEED_SAVE_VERSION przy starcie strony).
+    const ECONOMY_SAVE_VERSION = 2;
     const ECONOMY_AUTOSAVE_MS = 20000;
     /** Ostatni stan workera (rejestr pasa, flota, skala) — po wczytaniu: wczytany zapis; nowa gra: pusty. */
     let economySaveCache = null;
@@ -15984,6 +16041,8 @@
       return {
         version: ECONOMY_SAVE_VERSION,
         savedAt: Date.now(),
+        // ziarno kątów planet tego świata (DECYZJE-2 T3 — WORLD_SEED): po F5 planety stają tam, gdzie ten zapis
+        worldSeed: WORLD_SEED,
         world: { ...base, resources: [...trafficV2.tables.resources], stations: stationsOut },
         playerStations: PLAYER_STATIONS.map(entry => ({ ...entry, buildings: [...entry.buildings] }))
       };
@@ -16028,6 +16087,11 @@
       if (!trafficV2 || gameStarted || economySessionLoaded) return Promise.resolve(null);
       const saved = loadEconomySave();
       if (!saved) return Promise.resolve(null);
+      // Zapis z innego układu planet (strona zbudowana z `?ziarno=…`) — nie nakładamy go (T3: kąty z ziarna zapisu).
+      if (saved.worldSeed !== WORLD_SEED) {
+        console.warn(`[ruch v2] zapis ekonomii z innego układu planet (ziarno ${saved.worldSeed}, świat ${WORLD_SEED}) — start bez zapisu`);
+        return Promise.resolve(null);
+      }
       economySessionLoaded = true;
       economySaveCache = saved.world;
       const restored = trafficV2.restoreEconomy(saved.world).then(counts => {
@@ -17360,7 +17424,9 @@
       // Hipercruise odcinka 'drive' (SimClock.sim): najwcześniejsza próba — po przechwycie 10 s przerwy.
       hcRetryAt: 0
     };
-    const warpCourse = { aim: null, autoExit: false, refreshLeft: 0 };
+    // aim / autoExit — punkt wyjścia skoku i automat wyjścia; kind — wybór skoku klawiszem warpa ('course' | 'cone' |
+    // 'emergency' — DECYZJE-2 T1, plan trasy `warp.route.kind`), label — podpis HUD-u kursu warpa.
+    const warpCourse = { aim: null, autoExit: false, refreshLeft: 0, kind: '', label: '' };
     const _warpCourseBearing = {}, _warpCoursePass = {};
     const _warpCourseHud = {}, _warpCourseShipScreen = {}, _warpCourseHeadingScreen = {}, _warpCourseAimScreen = {}, _warpCoursePreviewScreen = {};
     let PAUSED = false;
@@ -17679,13 +17745,27 @@
     }
 
     // Plan skoku przy kopnięciu: planeta startu, cel (planeta przy końcu odcinka — soczewka trzyma ją przy
-    // krawędzi kadru, przy wyjściu „wlatuje”), ciała zwolnienia i prędkość przelotowa. Skok z celem trwa jak
-    // podróż w demie (warpDrive.js: warpTripTime — Ziemia → Jowisz ~10 s); swobodny — WARP_SPEED.
+    // krawędzi kadru, przy wyjściu „wlatuje”), ciała zwolnienia, prędkość przelotowa i PLAN TRASY (warp.route —
+    // DECYZJE-2 T2). Każdy skok ma koniec (warp zawsze do celu — T1), więc trwa jak podróż w demie (warpDrive.js:
+    // warpTripTime — Ziemia → Jowisz ~10 s).
     function planPlayerWarp(dirX, dirY) {
       const tPlan = performance.now();
       const px = ship.pos.x;
       const py = ship.pos.y;
-      const end = playerWarpLegEnd();
+      let end = playerWarpLegEnd();
+      // Skok bez punktu końca (narzędzia i harness ustawiają ładowanie wprost): koniec z planu skoku awaryjnego wzdłuż
+      // kursu — każdy skok ma koniec i wyjście automatyczne (DECYZJE-2 T2; klawisz warpa wybiera punkt sam — T1).
+      if (!end && !travelNav.active && !_tugWarp.active) {
+        let em = planWarpEmergency(ship.pos, dirX, dirY, warpEmergencyWells(), WORLD, WARP_EMERGENCY, _warpEmergencyPlan);
+        // Klawisz takiego skoku by odmówił (studnia / jądro studni startu tuż przed dziobem) — narzędzie i tak skacze:
+        // koniec bez studni (tylko brzeg świata), jak dawny swobodny skok, ale z wyjściem automatycznym.
+        if (!em.ok) em = planWarpEmergency(ship.pos, dirX, dirY, null, WORLD, WARP_EMERGENCY, _warpEmergencyPlan);
+        warpCourse.aim = { x: em.x, y: em.y };
+        warpCourse.autoExit = true;
+        warpCourse.kind = 'emergency';
+        warpCourse.label = 'SKOK AWARYJNY';
+        end = warpCourse.aim;
+      }
       const origin = warpPlanetNear(px, py, WARP_ORIGIN_REACH);
       const target = end ? warpPlanetNear(end.x, end.y, WARP_TARGET_REACH) : null;
       warp.originBody = origin;
@@ -17705,17 +17785,39 @@
       }
       warp.cruise = warp.speed;
       warp.tripPlan = null;
+      // Plan trasy (T2): punkt skoku, koniec, rodzaj; czasy i mijane ciała niżej (z planu prędkości).
+      const rt = warp.route;
+      rt.active = !!end;
+      rt.kind = travelNav.active ? 'travel' : (_tugWarp.active ? 'tug' : (warpCourse.kind || 'course'));
+      rt.arrive = warp.targetBody ? 'body' : 'point';
+      rt.x0 = px; rt.y0 = py;
+      rt.x1 = NaN; rt.y1 = NaN; rt.dist = NaN; rt.exitT = NaN; rt.time = NaN; rt.cruise = warp.speed;
+      rt.flyBody = null; rt.flyAlong = NaN; rt.flyLateral = NaN; rt.flyT = NaN;
+      rt.beltIn = NaN; rt.beltOut = NaN; rt.beltTIn = NaN; rt.beltTOut = NaN;
       if (!end) return;
       const dist = (end.x - px) * dirX + (end.y - py) * dirY;
+      // koniec na osi kursu (rzut punktu wyjścia — kurs ma dokładny namiar, więc to sam punkt)
+      rt.dist = Math.max(0, dist);
+      rt.x1 = px + dirX * rt.dist;
+      rt.y1 = py + dirY * rt.dist;
       if (!(dist > 0)) return;
       const bodies = [];
+      let flySize = 0;
       for (let i = 0; i < _warpFlybyCount; i++) {
         const b = _warpFlybyBodies[i];
         const ox = b.x - px;
         const oy = b.y - py;
-        bodies.push({ along: ox * dirX + oy * dirY, lateral: oy * dirX - ox * dirY, r: b.r });
+        const along = ox * dirX + oy * dirY;
+        const lateral = oy * dirX - ox * dirY;
+        bodies.push({ along, lateral, r: b.r });
+        // najbardziej widoczne mijane ciało: r / (r + odstęp tarczy od kursu) — ta sama miara co zwolnienie (warpDrive.js)
+        if (along > 0 && along < dist) {
+          const size = b.r / (b.r + Math.max(0, Math.abs(lateral) - b.r));
+          if (size > flySize) { flySize = size; rt.flyBody = b.planet; rt.flyAlong = along; rt.flyLateral = lateral; }
+        }
       }
-      // Strefy wzdłuż kursu (pas asteroid × 0,8, okolice planet × 0,3) — plan liczy z tym samym mnożnikiem co fizyka.
+      // Strefy wzdłuż kursu (pas asteroid × 0,8, okolice planet × 0,3) — plan liczy z tym samym mnożnikiem co fizyka;
+      // pierwszy przelot przez strefę pasa (asteroid_belt, kuiper_belt, jupiter_trojans) idzie do planu trasy.
       const step = Math.max(4000, dist / 120);
       const n = Math.ceil(dist / step) + 1;
       const zones = new Float32Array(n);
@@ -17723,20 +17825,43 @@
       for (let i = 0; i < n; i++) {
         probe.x = px + dirX * i * step;
         probe.y = py + dirY * i * step;
-        zones[i] = detectZones(probe).current?.warpMultiplier ?? 1;
+        const cur = detectZones(probe).current;
+        zones[i] = cur?.warpMultiplier ?? 1;
+        const belt = cur && (cur.id === 'asteroid_belt' || cur.id === 'kuiper_belt' || cur.id === 'jupiter_trojans');
+        if (belt && !(rt.beltIn >= 0)) rt.beltIn = Math.min(dist, i * step);
+        else if (!belt && rt.beltIn >= 0 && !(rt.beltOut >= 0)) rt.beltOut = Math.min(dist, i * step);
       }
+      if (rt.beltIn >= 0 && !(rt.beltOut >= 0)) rt.beltOut = dist;
       const zone = (s) => zones[Math.max(0, Math.min(n - 1, Math.round(s / step)))];
       // Czas podróży jak w demie, przeskalowany do prędkości napędu warp (Mk I / II / III — warpTripTuneFor).
-      const plan = planWarpCruise({
+      const planIn = {
         dist, v0: getPlayerSpeed(), hullLength: playerWarpHullLength(), bodies, zone,
         entry: warp.entryDuration, lag: 6, dt: 1 / 30
-      }, warpTripTuneFor(warp.speed));
+      };
+      const plan = planWarpCruise(planIn, warpTripTuneFor(warp.speed));
       warp.cruise = plan.speed;
+      // Oś czasu planu (T2): chwile trawersu i przelotu przez pas, początek wyjścia; zatrzymanie = wyjście + rampa + ślizg.
+      _warpRouteMarks[0] = rt.flyAlong; _warpRouteMarks[1] = rt.beltIn; _warpRouteMarks[2] = rt.beltOut;
+      // wynik osi w _warpRouteTimeline (funkcja zwraca sam czas — recenzja T: test planPlayerWarp na prawdziwej funkcji)
+      warpLegTimeline(plan.speed, planIn, _warpRouteMarks, _warpRouteMarkT, _warpRouteTimeline, plan.target + 30);
+      const tl = _warpRouteTimeline;
+      rt.flyT = _warpRouteMarkT[0];
+      rt.beltTIn = _warpRouteMarkT[1];
+      rt.beltTOut = _warpRouteMarkT[2];
+      rt.cruise = plan.speed;
+      rt.exitT = tl.exitT;
+      const ex = playerWarpExitPlan(tl.exitV, !_tugWarp.active);
+      rt.time = tl.exitT + warpExitRampTime(tl.exitV, playerWarpHullLength(), ex.vEnd)
+        + (ex.vEnd > ex.vMin ? (ex.vEnd - ex.vMin) / Math.max(1, ex.decel) : 0);
       warp.tripPlan = {
         dist: Math.round(dist), speed: Math.round(plan.speed), time: +plan.time.toFixed(2), target: +plan.target.toFixed(2),
-        to: warp.targetBody?.id || null, ms: +(performance.now() - tPlan).toFixed(2)
+        to: warp.targetBody?.id || null, kind: rt.kind, stop: +rt.time.toFixed(2),
+        ms: +(performance.now() - tPlan).toFixed(2)
       };
     }
+    const _warpRouteMarks = new Float64Array(3);
+    const _warpRouteMarkT = new Float64Array(3);
+    const _warpRouteTimeline = { exitT: NaN, exitV: 0, exitS: 0 };
 
     // Zwolnienie skoku przy ciałach w bieżącym punkcie (planety się poruszają — pozycje z obiektów).
     function playerWarpFlybyFactor() {
@@ -17888,12 +18013,20 @@
     // Odcinek 'drive' TRAVEL TO: hipercruise (PRZELOTU nie ma — decyzja 2026-10-22), gdy jest silnik, odcinek nie
     // krótszy niż minLeg i nie było świeżego przechwytu. Krótki odcinek (do shortLeg) — skrócony rozruch
     // (hypercruiseLegSpool); krótszy niż minLeg — sam autopilot bojowy (hipercruise wyszedłby, zanim ruszy).
+    // Ile przed punktem odcinka kończy się hipercruise (stepPlayerHypercruise: ctx.stopMargin) — droga hamowania lotu
+    // zwykłego z prędkości wyjścia + pół promienia przylotu.
+    function playerHypercruiseStopMargin(exitSpeed = HYPERCRUISE_TUNE.exitSpeed) {
+      const brakeA = Math.max(50, Number(driveState.brakeAccel) || 200);
+      return (exitSpeed * exitSpeed) / (2 * brakeA) + TRAVEL_TUNE.arriveRadius * 0.5;
+    }
     function travelTryHypercruise(leg) {
       if (!leg || hypercruiseBusy(hypercruise) || SimClock.sim < travelNav.hcRetryAt) return false;
       const dx = leg.x - ship.pos.x;
       const dy = leg.y - ship.pos.y;
       const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < HYPERCRUISE_TUNE.minLeg) return false;
+      // DECYZJE-2 T4: odcinek krótszy niż minLeg + stopMargin — hipercruise wyszedłby po 2 klatkach lotu, a TRAVEL TO
+      // startowałby go znowu co ~1 s (wstrząs kopu na cykl); taki odcinek leci sam autopilot bojowy (travelNav.js).
+      if (!travelHypercruiseLegOk(d, HYPERCRUISE_TUNE.minLeg, playerHypercruiseStopMargin())) return false;
       travelNav.hcRetryAt = SimClock.sim + 1;
       if (!syncPlayerHypercruise()) return false;
       return startPlayerHypercruise({ target: { x: leg.x, y: leg.y }, quiet: true, spool: hypercruiseLegSpool(hypercruise.spool, d) });
@@ -17941,8 +18074,7 @@
         const cs = Math.max(0, Math.cos(wrapAngle(Math.atan2(dy, dx) - ship.angle)));
         c.align = cs * cs;
         // Koniec przed punktem: droga hamowania lotu zwykłego z prędkości wyjścia + pół promienia przylotu.
-        const brakeA = Math.max(50, Number(driveState.brakeAccel) || 200);
-        c.stopMargin = (c.exitSpeed * c.exitSpeed) / (2 * brakeA) + TRAVEL_TUNE.arriveRadius * 0.5;
+        c.stopMargin = playerHypercruiseStopMargin(c.exitSpeed);
       } else {
         c.remaining = Infinity;
         c.align = 1;
@@ -18109,7 +18241,7 @@
           nav.cmd = null;
           warp.state = 'charging';
           warp.charge = 0;
-          // Kurs skoku = dokładny namiar odcinka (dziób dociąga resztę w warpie — alignRate).
+          // Kurs skoku = dokładny namiar odcinka (resztę ≤ 1,5° dziób dociąga w ładowaniu — warpChargeTurn).
           warp.chargeAngle = bearing;
           nav.phase = 'charge';
         }
@@ -18159,9 +18291,10 @@
 
     // Ręczny kurs używa tego samego planisty co TRAVEL TO (objazd / brzeg studni).
     // Punkt jest zamrożony od ładowania; automat tylko kończy skok, nie przejmuje sterów po nim.
+    // Wyjście przy punkcie działa dla KAŻDEGO ręcznego skoku (kurs, cel w stożku, skok awaryjny — DECYZJE-2 T1), także
+    // bez kursu TRAVEL TO; skok z holownikiem kończy tugCarryWarpStep (wyjście bez pędu).
     function stepWarpCourse(dt) {
-      if (travelNav.active || !travelNav.target || PAUSED) return;
-      if (ship.destroyed) { cancelTravel(null); return; }
+      if (travelNav.active || PAUSED || _tugWarp.active) return;
       if (warp.state === 'active') {
         if (warpCourse.autoExit && warpCourse.aim && warpCourseExitDue(ship.pos, warp.dir.x, warp.dir.y,
           warpCourse.aim, playerWarpExitDistance())) {
@@ -18174,6 +18307,10 @@
       if (warp.state === 'charging' || warp.exitRamp?.active) return;
       warpCourse.aim = null;
       warpCourse.autoExit = false;
+      warpCourse.kind = '';
+      warpCourse.label = '';
+      if (!travelNav.target) return;
+      if (ship.destroyed) { cancelTravel(null); return; }
       const t = travelNav.target;
       if (Math.hypot(t.x - ship.pos.x, t.y - ship.pos.y) <= WARP_COURSE_TUNE.clearRadius) {
         cancelTravel(null);
@@ -18195,7 +18332,166 @@
         cancelTravel(null, true);
         warpCourse.aim = busy && aim?.kind === 'warp' ? { x: aim.x, y: aim.y } : null;
         warpCourse.autoExit = !!warpCourse.aim;
+        warpCourse.kind = warpCourse.aim ? 'course' : '';
+        warpCourse.label = warpCourse.aim ? travelNav.label : '';
       }
+    }
+
+    // === WARP ZAWSZE DO CELU (DECYZJE-2 T1, 2026-10-26 — user: „tak robimy [warp do celu]”) =========================
+    // CapsLock / 9 (attemptWarp → startManualWarpCharge) wybiera skok po kolei (src/game/warpCourse.js: chooseWarpJump):
+    // (1) KURS — odcinek 'warp' kursu TRAVEL TO, gdy dziób w ±5° (zielone pasmo) albo w stożku ±20° (kurs wygrywa z innymi
+    // celami w stożku); (2) CEL W STOŻKU ±20° przed dziobem — to, co gra zna jako cele (collectTravelTargets: planety
+    // i małe ciała, stacje i porty, punkty i cele misji, olbrzymy i pola pasa, wraki, wrogie kontakty), pierwszy odcinek
+    // planisty TRAVEL TO do niego musi być skokiem w stożku; ciało ze studnią — punkt na brzegu studni tam, gdzie wchodzi
+    // w nią promień dzioba (warpCourse.js: warpConeAimPoint — namiar ≤ stożek od dzioba); (3) SKOK AWARYJNY 400 tys. j.
+    // w dziób (warpDrive.js: planWarpEmergency — skrócony przed brzegiem studni planet, małych ciał, słońca, bazy piratów
+    // i świata, przed jądrem studni startu; zawsze z rampą), bez dodatkowej ceny. Każdy wybór: dokładny namiar przy starcie
+    // ładowania (dziób dociąga się w ładowaniu — warpChargeTurn), wyjście automatyczne przy punkcie (stepWarpCourse),
+    // komunikat HUD. Swobodnego skoku bez końca nie ma; ręczne wyjście w locie (CapsLock / 9) zostaje — koniec trasy
+    // przechodzi wtedy na miejsce zatrzymania (exitWarp).
+    const _warpEmergencyPlan = { ok: false, x: 0, y: 0, dist: 0, cut: 'none', well: null };
+    // Studnie skoku z klawisza (skok awaryjny i odcinki do celów ze stożka — jedna lista, recenzja T ust. 7): planety
+    // i małe ciała (studnie TRAVEL TO) + słońce i baza piratów (strefy hamowania grawitacyjnego — GRAVITY_WELL_IDS).
+    // rIn — jądro studni (strefa orbit ciała: ring, planeta; słońce — tarcza): skok ze studni startu nie celuje w nie
+    // (planWarpEmergency).
+    function warpEmergencyWells() {
+      const wells = [];
+      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];   // planety i małe ciała jak getTravelWells
+      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
+        const planet = i < planets.length ? planets[i] : bodies[i - planets.length];
+        if (!planet) continue;
+        const radii = planetOrbitRadii(planet);
+        const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
+        if (r > 0) wells.push({ x: Number(planet.x) || 0, y: Number(planet.y) || 0, r, rIn: Math.min(r, Number(radii.outer) || 0) });
+      }
+      if (SUN) wells.push({ x: SUN.x, y: SUN.y, r: Math.max(10, (Number(SUN.r) || 0) * 2), rIn: Math.max(0, Number(SUN.r) || 0) });
+      const pst = mercMission?.station;
+      if (pst) {
+        const pr = pirateOrbitRadii();
+        if (Number.isFinite(pr?.gravityWell) && pr.gravityWell > 0) {
+          wells.push({ x: pst.x, y: pst.y, r: pr.gravityWell, rIn: Math.min(pr.gravityWell, Number(pr.outer) || 0) });
+        }
+      }
+      return wells;
+    }
+    function planPlayerWarpEmergency(dirX, dirY) {
+      return planWarpEmergency(ship.pos, dirX, dirY, warpEmergencyWells(), WORLD, WARP_EMERGENCY, _warpEmergencyPlan);
+    }
+    // Cele, które gra zna (stożek warpa — chooseWarpJump, przyciąganie TRAVEL TO w CIC — travelSnapAt): { x, y — miejsce
+    // celu, r — „tarcza” do stożka (studnia ciała), snapR — tarcza do przyciągania na mapie (promień w płaszczyźnie gry),
+    // tx, ty — punkt podróży (brzeg studni / budowli + zapas od strony statku), label, kind }. Mgła wojny i maskowanie
+    // ukrywają stacje i kontakty (SensorSystem.hides, isCloakHidden). Wołane przy klawiszu warpa i kliknięciu mapy —
+    // nie co klatkę.
+    function collectTravelTargets(from = ship?.pos) {
+      const out = [];
+      if (!from) return out;
+      const hides = (e) => !!window.SensorSystem?.hides?.(e);
+      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];
+      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
+        const body = i < planets.length ? planets[i] : bodies[i - planets.length];
+        if (!body || !Number.isFinite(body.x)) continue;
+        const radii = planetOrbitRadii(body);
+        const well = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
+        const p = travelApproachPoint(body, from, well);
+        out.push({ x: body.x, y: body.y, r: well, snapR: warpBodyRadius(body), tx: p.x, ty: p.y,
+          label: String(body.label || body.name || body.id || 'CIAŁO'), kind: 'body', ref: body });
+      }
+      for (const st of stations) {
+        if (!st || !Number.isFinite(st.x) || !Number.isFinite(st.y) || st.dead || st.hp <= 0 || hides(st)) continue;
+        const sr = Math.max(120, Number(st.hitR) || Number(st.r) || 0);
+        const p = travelApproachPoint(st, from, sr, 1500);
+        out.push({ x: st.x, y: st.y, r: 0, snapR: sr, tx: p.x, ty: p.y, label: String(st.name || st.id || 'STACJA'),
+          kind: 'station', ref: st });
+      }
+      // Punkty i cele misji (fabuła: StoryGame.ui.markers / targets).
+      const ui = StoryGame?.ui;
+      if (ui?.markers) {
+        for (const m of ui.markers.values()) {
+          if (!m || !Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+          out.push({ x: m.x, y: m.y, r: 0, snapR: 0, tx: m.x, ty: m.y, label: String(m.label || 'PUNKT MISJI'), kind: 'mission' });
+        }
+      }
+      if (ui?.targets) {
+        for (const t of ui.targets.values()) {
+          const e = t?.entity;
+          const p = e?.pos || e;
+          if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || e.dead || hides(e)) continue;
+          const rr = Math.max(Number(t.radius) || 0, Number(e.radius) || 0);
+          const ap = travelApproachPoint(p, from, rr, 2000);
+          out.push({ x: p.x, y: p.y, r: 0, snapR: rr, tx: ap.x, ty: ap.y, label: String(t.label || 'CEL MISJI'), kind: 'mission', ref: e });
+        }
+      }
+      // Pas: olbrzymy (bryły 18–62 km) i pola rodzin (szczyty gęstych pól — beltWorld, liczone przy starcie).
+      const giants = beltWorld?.giants?.entries;
+      if (Array.isArray(giants)) {
+        for (const g of giants) {
+          if (!g || !Number.isFinite(g.x)) continue;
+          const gr = Number(g.radius) || 0;
+          const p = travelApproachPoint(g, from, gr, 3000);
+          out.push({ x: g.x, y: g.y, r: 0, snapR: gr, tx: p.x, ty: p.y,
+            label: `OLBRZYM · ${String(g.site?.preset?.label || g.id || '').toUpperCase()}`, kind: 'belt', ref: g });
+        }
+      }
+      const field = beltWorld?.field;
+      const peaks = field && typeof field.familyPeaks === 'function' ? field.familyPeaks() : null;
+      if (Array.isArray(peaks)) {
+        for (const pk of peaks) {
+          if (!pk || !Number.isFinite(pk.x)) continue;
+          const fam = pk.fam >= 0 ? field.families?.[pk.fam] : null;
+          out.push({ x: pk.x, y: pk.y, r: 0, snapR: 0, tx: pk.x, ty: pk.y,
+            label: fam ? `POLE · ${fam.title || `Rodzina ${fam.label}`}` : 'POLE PASA', kind: 'belt' });
+        }
+      }
+      // Wraki (gorące i zimne) i wrogie kontakty widoczne dla czujników (bitwa).
+      const pushWreck = (w) => {
+        const x = Number(w?.x), y = Number(w?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || hides(w)) return;
+        const wr = Number(w.radius) || 0;
+        const p = travelApproachPoint({ x, y }, from, wr, 2000);
+        out.push({ x, y, r: 0, snapR: wr, tx: p.x, ty: p.y, label: 'WRAK', kind: 'wreck', ref: w });
+      };
+      // Gorące — lista `wrecks`; zimne — kanoniczna lista `coldWrecks` (nie renderList systemu: ta niesie tylko wraki
+      // z ciałem do rysowania i bywa nieaktualna do następnego kroku — recenzja T ust. 14).
+      for (const w of wrecks) if (w && !w.dead && !w._inPool && !w.isCold) pushWreck(w);
+      for (const w of coldWrecks) if (w && w.isCold && !w.dead && !w._inPool) pushWreck(w);
+      for (const n of npcs) {
+        if (!n || n.dead || n.removed || n.isWreck || !(n.hp > 0) || n.__warpNurtMode || n.isCollidable === false) continue;
+        if (!isHostileNpc(n) || isCloakHidden(n) || hides(n)) continue;
+        const x = getTargetX(n), y = getTargetY(n);
+        const nr = Number(n.radius) || 0;
+        const p = travelApproachPoint({ x, y }, from, nr, 4000);
+        out.push({ x, y, r: 0, snapR: nr, tx: p.x, ty: p.y, label: `KONTAKT · ${String(n.name || n.type || 'WRÓG').toUpperCase()}`,
+          kind: 'contact', ref: n });
+      }
+      return out;
+    }
+    // Pierwszy odcinek planisty TRAVEL TO z miejsca statku do punktu (punkt skoku celu ze stożka — warpConeAimPoint,
+    // albo punkt podróży celu: tx / ty) — ten sam planista co kurs.
+    function travelLegToTarget(c, wells) {
+      const target = { x: clamp(Number(c.tx ?? c.x) || 0, 0, WORLD.w), y: clamp(Number(c.ty ?? c.y) || 0, 0, WORLD.h) };
+      const route = planCruiseRoute(ship.pos, target);
+      return planTravelLeg(ship.pos, target, route, wells, {
+        minWarp: travelMinWarpDist(),
+        warpOk: !!(DevFlags.unlimitedWarp || warp.fuelMax > 0)
+      });
+    }
+    function chooseManualWarpJump() {
+      const leg = travelNav.target ? nextTravelLeg() : null;
+      // te same studnie co skok awaryjny (ze słońcem i bazą piratów) — odcinek do celu kończy się przed nimi z rampą
+      const wells = warpEmergencyWells();
+      return chooseWarpJump({
+        pos: ship.pos,
+        heading: ship.angle,
+        courseLeg: leg,
+        courseLabel: travelNav.label,
+        candidates: collectTravelTargets(ship.pos),
+        legFor: (c, aim) => travelLegToTarget(aim || c, wells),
+        minDist: travelMinWarpDist(),
+        emergency: (dx, dy) => planPlayerWarpEmergency(dx, dy)
+      });
+    }
+    function formatWarpJumpKm(d) {
+      return `${Math.round(Math.max(0, Number(d) || 0) / 1000).toLocaleString('pl-PL')} KM`;
     }
 
     function startManualWarpCharge() {
@@ -18208,19 +18504,47 @@
       }
       // Silniki wyłączone / w rozruchu / gaszone (engineIgnition.js): autozapłon — skok po rozruchu.
       if (playerEnginesBlockDrive('WARP')) return;
+      // Wybór skoku: kurs → cel w stożku ±20° → skok awaryjny (warpCourse.js: chooseWarpJump).
+      const pick = chooseManualWarpJump();
+      if (!pick || !pick.kind) {
+        pushZoneMessage(pick?.reason === 'edge' ? 'WARP: BRZEG UKŁADU PRZED DZIOBEM — OBRÓĆ DZIÓB'
+          : 'WARP: STUDNIA GRAWITACJI PRZED DZIOBEM — OBRÓĆ DZIÓB', 2.2, { tone: 'warn', label: 'WARP' });
+        return;
+      }
       ship.command = null;
       clearPlayerAttackState();
-      const leg = travelNav.target ? nextTravelLeg() : null;
-      const b = leg ? warpCourseBearing(ship.pos, ship.angle, leg, _warpCourseBearing) : null;
-      warpCourse.autoExit = !!(b && leg.kind === 'warp' && warpCourseAligned(b.err));
-      warpCourse.aim = leg?.kind === 'warp' ? { x: leg.x, y: leg.y } : null;
-      // ±5° doprecyzowania przy starcie ładowania — w locie oś już się nie zmienia.
-      warp.chargeAngle = warpCourse.autoExit ? b.bearing : ship.angle;
+      warpCourse.aim = pick.aim;
+      warpCourse.autoExit = true;
+      warpCourse.kind = pick.kind;
+      warpCourse.label = pick.kind === 'course' ? travelNav.label : (pick.kind === 'cone' ? pick.label : 'SKOK AWARYJNY');
+      // Dokładny namiar punktu przy starcie ładowania — w locie oś się już nie zmienia.
+      warp.chargeAngle = pick.bearing;
       warp.state = 'charging';
       warp.charge = 0;
-      if (leg?.kind === 'warp') pushZoneMessage(warpCourse.autoExit ? 'WARP: WYJŚCIE PRZY PUNKCIE KURSU'
-        : 'WARP: POZA KURSEM — WYJŚCIE RĘCZNE', 2, { tone: warpCourse.autoExit ? 'good' : 'warn' });
+      if (pick.kind === 'course') {
+        pushZoneMessage('WARP: WYJŚCIE PRZY PUNKCIE KURSU', 2, { tone: 'good' });
+      } else if (pick.kind === 'cone') {
+        pushZoneMessage(`WARP: CEL PRZED DZIOBEM — ${pick.label.toUpperCase()}`, 2.2, { tone: 'good', label: 'WARP' });
+      } else {
+        const cut = pick.plan?.cut === 'well' ? ' · DO BRZEGU STUDNI' : (pick.plan?.cut === 'edge' ? ' · DO BRZEGU UKŁADU' : '');
+        pushZoneMessage(`WARP: SKOK AWARYJNY ${formatWarpJumpKm(pick.plan?.dist)}${cut}`, 2.2, { tone: 'warn', label: 'WARP' });
+      }
     }
+
+    // TRAVEL TO z mapy CIC przyciąga do najbliższego celu przy kliknięciu (DECYZJE-2 T1): cel w `radius` j. (tarcza ciała
+    // liczy się jak trafienie) → punkt podróży celu z jego nazwą; inaczej punkt w próżni zostaje „punktem”.
+    function travelSnapAt(worldX, worldY, radius) {
+      if (!ship) return null;
+      const c = snapTravelTarget(worldX, worldY, collectTravelTargets(ship.pos), Math.max(0, Number(radius) || 0));
+      return c ? { x: c.tx ?? c.x, y: c.ty ?? c.y, label: c.label, kind: c.kind } : null;
+    }
+    function travelToSnapped(worldX, worldY, radius) {
+      const snap = travelSnapAt(worldX, worldY, radius);
+      if (snap) return setTravelTarget(snap.x, snap.y, snap.label);
+      return setTravelTarget(worldX, worldY, 'PUNKT');
+    }
+    window.travelSnapAt = travelSnapAt;
+    window.travelToSnapped = travelToSnapped;
 
     // CIC attack orders (called from cicDisplay.js PPM handler)
     function cicAttackOrder(entity) {
@@ -25086,14 +25410,31 @@
       // Prędkość napędu warp (Mk I / II / III — driveModes.js; QOL 2026-10-03 — bez biegów) — jak w demie „Nurt”
       // (podróż Ziemia → Jowisz ~260 tys. j/s); strefy: pas asteroid × 0,8, przy planetach × 0,3.
       speed: WARP_SPEED,
-      // Skok z celem (TRAVEL TO, ręczny kurs w tolerancji): prędkość przelotowa z planu (planPlayerWarp —
-      // czas podróży jak w demie „Nurt”); swobodny skok — speed. Zwolnienie przy ciałach: flybyFactor
+      // Skok (każdy ma koniec — DECYZJE-2 T1): prędkość przelotowa z planu (planPlayerWarp — czas podróży jak w demie
+      // „Nurt”); poza skokiem — speed. Zwolnienie przy ciałach: flybyFactor
       // (ostatni krok fizyki). originBody / targetBody — planeta startu i celu (soczewka świata).
       cruise: WARP_SPEED,
       flybyFactor: 1,
       originBody: null,
       targetBody: null,
       tripPlan: null,
+      // PLAN TRASY SKOKU (DECYZJE-2 T2 — każdy skok ma plan przy kopie; planPlayerWarp, obiekt stały, pisany w miejscu):
+      // kind — 'travel' (odcinek TRAVEL TO) | 'course' | 'cone' | 'emergency' (klawisz warpa — warpCourse.js) | 'tug';
+      // arrive — 'body' (cel = ciało, targetBody) | 'point' (punkt w próżni, skok awaryjny); (x0, y0) — punkt skoku,
+      // (x1, y1) — miejsce zatrzymania (koniec ślizgu; wyjście przed planem — exitWarp przenosi je na faktyczne), dist —
+      // droga wzdłuż kursu, exitT / time — czas od kopu do początku wyjścia / do zatrzymania [s], cruise — prędkość
+      // przelotowa; flyBody — najbardziej widoczne mijane ciało (największe r / (r + odstęp od kursu); null — brak),
+      // flyAlong / flyLateral — jego miejsce względem punktu skoku, flyT — chwila trawersu [s od kopu]; beltIn / beltOut —
+      // pierwszy przelot przez pas (strefa pasa gry, droga od punktu skoku), beltTIn / beltTOut — chwile [s od kopu];
+      // NaN — brak / po początku wyjścia. Render czyta to samo w obu trybach (RenderWorld.warp.route; worker — WORLD
+      // WARP_ROUTE_*, warpWorldMirror.js). active — PLAN OSTATNIEGO SKOKU: true od kopu do następnego ładowania (kasuje
+      // plan), teleportu albo śmierci, więc zostaje też po zatrzymaniu (kadr przylotu kamery czyta `arrive` do końca
+      // powrotu zoomu). Czy skok trwa — warp.state / exitRamp / exitSlide (recenzja T, ust. 10), nie `active`.
+      route: {
+        active: false, kind: 'none', arrive: 'none', x0: NaN, y0: NaN, x1: NaN, y1: NaN, dist: NaN, exitT: NaN,
+        time: NaN, cruise: NaN, flyBody: null, flyAlong: NaN, flyLateral: NaN, flyT: NaN,
+        beltIn: NaN, beltOut: NaN, beltTIn: NaN, beltTOut: NaN
+      },
       gear: 1,
       fuelMax: 60, fuel: 60, consumeRate: 1.0, regenRate: 5,
       dir: { x: 0, y: 0 },
@@ -25156,6 +25497,8 @@
     // Przeszkoda na kursie (płyta ringu „Halo”, bryły doków portu) bliżej niż droga ślizgu — ślizg hamuje mocniej i staje
     // przed nią (zadanie 2026-10-23: „ślizg nie może wjechać w płytę ringu ani bryły doków portu”).
     const PLAYER_WARP_SLIDE_MARGIN = 600;   // [j.] zapas przed przeszkodą
+    // [j.] wyjście dalej od końca planu niż tyle — koniec trasy (warp.route) przechodzi na miejsce zatrzymania (exitWarp)
+    const PLAYER_WARP_ROUTE_CUT = 5000;
     function playerWarpObstacleAhead(x, y, dx, dy, range) {
       const reach = Math.max(Number(ship.radius) || 0, Math.sqrt((Number(ship.w) || 0) ** 2 + (Number(ship.h) || 0) ** 2) * 0.5);
       let best = Infinity;
@@ -25212,6 +25555,20 @@
       warp.exitRamp = abrupt ? null : createWarpExitRamp({
         v0: speed, hullLength: playerWarpHullLength(), dirX: dir.x, dirY: dir.y, vEnd: plan.vEnd, startTime: SimClock.sim
       });
+      // Plan trasy (DECYZJE-2 T2): wyjście przed końcem planu (ręczne, paliwo, przechwyt fabuły, hamowanie grawitacyjne)
+      // przenosi koniec trasy na miejsce zatrzymania (rampa + ślizg; bez rampy — tu) — kadr przylotu kamery bierze ten
+      // punkt. Wyjście przy punkcie planu (automat) zostawia plan.
+      const rt = warp.route;
+      if (rt && rt.active) {
+        const stopD = abrupt ? 0 : plan.total;
+        const left = Number.isFinite(rt.x1) ? (rt.x1 - ship.pos.x) * dir.x + (rt.y1 - ship.pos.y) * dir.y : Infinity;
+        if (abrupt || !(Math.abs(left - stopD) <= PLAYER_WARP_ROUTE_CUT)) {
+          rt.x1 = ship.pos.x + dir.x * stopD;
+          rt.y1 = ship.pos.y + dir.y * stopD;
+          rt.dist = Math.max(0, (rt.x1 - rt.x0) * dir.x + (rt.y1 - rt.y0) * dir.y);
+          if (rt.arrive === 'body' && warpPlanetNear(rt.x1, rt.y1, WARP_TARGET_REACH) !== warp.targetBody) rt.arrive = 'point';
+        }
+      }
       if (abrupt) {
         camera.addShake(18, 0.22);
         noteCameraRigWarp(cameraRig, 'exit');
@@ -25252,6 +25609,7 @@
       warp.exitRamp = null;
       stopPlayerWarpSlide();
       warp.chargeAngle = NaN;
+      warp.route.active = false;
       warpBrakeTimer = 0;
 
       ship.pos.x = x;
@@ -25432,7 +25790,7 @@
       // FIX: Pobieramy wektor z AKTUALNEGO kąta statku
       // W tym silniku 0 stopni to góra (0, -1), obrót zgodnie z zegarem
       // Kurs skoku = ustalony przy ładowaniu (TRAVEL TO: dokładny namiar odcinka; ręcznie: dziób
-      // z chwili startu ładowania) — w locie oś stoi (rulon), dziób dociąga resztę (alignRate).
+      // z chwili startu ładowania) — w locie oś stoi, dziób dociąga się w ładowaniu (warpChargeTurn), reszta — alignRate.
       const angle = Number.isFinite(warp.chargeAngle) ? warp.chargeAngle : ship.angle;
       const dirX = Math.cos(angle);
       const dirY = Math.sin(angle);
@@ -26301,11 +26659,17 @@
       }
       else if (warp.state === 'charging') {
         // Kurs stoi od ładowania (rulon zwija tło wokół osi skoku — decyzja usera 2026-10-03):
-        // obrót gaśnie, kurs = ustalony przy starcie ładowania (dawniej dziób szedł za kursorem).
+        // kurs = ustalony przy starcie ładowania (dawniej dziób szedł za kursorem).
         if (!Number.isFinite(warp.chargeAngle)) warp.chargeAngle = ship.angle;
+        // Plan trasy poprzedniego skoku nie żyje w ładowaniu nowego (nowy plan — planPlayerWarp przy kopie).
+        if (!(warp.charge > 0)) warp.route.active = false;
         warp.dir.x = Math.cos(warp.chargeAngle);
         warp.dir.y = Math.sin(warp.chargeAngle);
-        ship.angVel *= Math.exp(-8 * dt);
+        // Dziób dociąga się do namiaru skoku JESZCZE W ŁADOWANIU (DECYZJE-2 T1 — cel w stożku ±20°, kurs w stożku; krytyk
+        // § 5: 20° w ~0,3 s przy ładowaniu 0,8 s; warpCourse.js: warpChargeTurn) — w skoku bez skrętu (ograniczenie 15).
+        // Holownik — jak dawniej (obrót gaśnie, zestaw niesie holownik).
+        if (_tugWarp.active) ship.angVel *= Math.exp(-8 * dt);
+        else ship.angVel = warpChargeTurn(ship.angle, ship.angVel, warp.chargeAngle, warp.alignRate, dt);
         ship.angle = wrapAngle(ship.angle + ship.angVel * dt);
 
         // Ladowanie paska
@@ -28405,13 +28769,17 @@
         w.arrivalDepthK = 0;
       } else {
         w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
-        w.arriving = !!warp.exitSlide?.active;
-        const tgt = warp.targetBody;
+        // Dolot jak soczewka świata (warpLensPhase.js: warpPlayerArriving — ślizg albo hamowanie grawitacyjne): wyjście
+        // bez rampy też zatrzaskuje kadr przylotu.
+        w.arriving = warpPlayerArriving(warp);
+        // KAŻDY skok ma cel albo punkt końca (DECYZJE-2 T2 — warp zawsze do celu): kadr przylotu K1 (bez wysunięcia statku,
+        // trzymanie do zatrzymania + warpArrivalHold, powrót smoothstep). Ciało celu — kadr z odległości od brzegu jego
+        // tarczy (kamera odsuwa się, aż tarcza wejdzie w kadr). PUNKT (punkt w próżni, skok awaryjny, przerwany skok —
+        // warp.route.arrive 'point') — odległość 0: kadr skoku bez odsuwania (w punkcie nie ma czego pokazać; odsunięcie
+        // do miejsca zatrzymania dawało ×0,43 zoomu przy wyjściu i mignięcie ciał frontu w symulatorze — S3).
+        const rt = warp.route || null;
+        const tgt = rt && rt.active && rt.arrive === 'point' ? null : warp.targetBody;
         if (tgt) {
-          // Dolot z celem jak soczewka świata (warpLensPhase.js: warpPlayerArriving — ślizg albo hamowanie grawitacyjne):
-          // wyjście bez rampy z celem też zatrzaskuje kadr przylotu (inaczej soczewka trzymała cel w podglądzie kadru,
-          // który nie nadchodził). Swobodny skok — sam ślizg, jak dawniej.
-          w.arriving = warpPlayerArriving(warp);
           const ax = tgt.x - ship.pos.x;
           const ay = tgt.y - ship.pos.y;
           w.arrivalDist = Math.max(0, Math.sqrt(ax * ax + ay * ay) - warpBodyRadius(tgt));
@@ -28419,7 +28787,7 @@
           // (src/render/warpArrivalFrame.js — ta sama funkcja co podgląd celu w soczewce świata); ring i małe ciała — 0.
           w.arrivalDepthK = !haloRingKey(tgt) && !tgt.smallBody ? warpArrivalDepthK(H) : 0;
         } else {
-          w.arrivalDist = -1;
+          w.arrivalDist = 0;
           w.arrivalDepthK = 0;
         }
       }
@@ -31313,7 +31681,10 @@
 
       function drawWarpCourseOverlay(camRef, clipX, clipW) {
         const leg = warpCourse.aim || travelNav.leg;
-        if (!travelNav.target || !leg || ship.destroyed || stationUI.open || StoryGame.blocksInput) return;
+        // Skok bez kursu (cel w stożku, skok awaryjny — DECYZJE-2 T1) też ma punkt wyjścia: HUD na czas skoku (skok
+        // z holownikiem — bez HUD-u, jak dawniej).
+        const ownAim = !!warpCourse.aim && !_tugWarp.active;
+        if ((!travelNav.target && !ownAim) || !leg || ship.destroyed || stationUI.open || StoryGame.blocksInput) return;
         const fixed = warp.state === 'charging' || warp.state === 'active' || warp.exitRamp?.active;
         if (!warpCourseHudVisible(travelNav.leg, warpCourse.aim, fixed)) return;
         const angle = fixed ? (Number.isFinite(warp.chargeAngle) ? warp.chargeAngle : Math.atan2(warp.dir.y, warp.dir.x)) : ship.angle;
@@ -31338,10 +31709,13 @@
           * Math.hypot(_warpCourseHeadingScreen.x - s.shipX, _warpCourseHeadingScreen.y - s.shipY) / 2000 + 28 * s.scale);
         s.state = warp.state; s.exiting = !!warp.exitRamp?.active;
         s.autoExit = autoExit; s.aligned = warpCourseAligned(b.err); s.canWarp = leg.kind === 'warp';
+        // kurs w stożku ±20° — CapsLock da skok kursem, dziób dociągnie komputer w ładowaniu (warpCourse.js: chooseWarpJump)
+        s.inCone = warpCourseInCone(b.err);
         s.detour = leg.kind === 'drive' && leg.final === false;
         s.err = b.err; s.dist = b.dist; s.along = pass.along; s.miss = pass.miss;
         s.exitIn = (pass.along - rampDist) / Math.max(1, getPlayerSpeed());
-        s.label = travelNav.label;
+        s.label = (warpCourse.aim && warpCourse.label) || travelNav.label;
+        s.jumpKind = warpCourse.aim ? warpCourse.kind : '';
         drawWarpCourseHud(ctx, s);
       }
 

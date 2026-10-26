@@ -63,7 +63,8 @@ test('nowa gra: gospodarka od zera, zapis tylko po wyborze przed startem', async
 
   const restores = [];
   const founded = [];
-  const saved = { version: ECONOMY_SAVE_VERSION, world: { version: ECONOMY_SAVE_VERSION, stations: {} },
+  // ziarno kątów planet zapisu = ziarno świata strony (DECYZJE-2 T3 — index.html: WORLD_SEED)
+  const saved = { version: ECONOMY_SAVE_VERSION, worldSeed: 7, world: { version: ECONOMY_SAVE_VERSION, stations: {} },
     playerStations: [{ id: 'stacja-gracza-1', buildings: [] }] };
   const loadScope = {
     trafficV2: { restoreEconomy: state => { restores.push(state); return Promise.resolve({ stations: 3, mining: 0, fleets: 0 }); } },
@@ -73,9 +74,15 @@ test('nowa gra: gospodarka od zera, zapis tylko po wyborze przed startem', async
     stations: [],
     loadEconomySave: () => saved,
     foundPlayerStation: entry => founded.push(entry.id),
-    console: { info() {} }
+    WORLD_SEED: 7,
+    console: { info() {}, warn() {} }
   };
   const load = loadIndexFunction(src, 'function loadEconomyIntoWorld()', 'loadEconomyIntoWorld', loadScope);
+  // zapis z innego układu planet (strona z `?ziarno=…`) — nie nakłada się
+  loadScope.WORLD_SEED = 8;
+  assert.equal(await load(), null, 'inne ziarno świata — bez wczytania');
+  assert.equal(loadScope.economySessionLoaded, false);
+  loadScope.WORLD_SEED = 7;
   assert.deepEqual(await load(), { stations: 3, mining: 0, fleets: 0 });
   assert.equal(restores[0], saved.world, 'zapis idzie do workera');
   assert.deepEqual(founded, ['stacja-gracza-1'], 'stacje gracza z zapisu');

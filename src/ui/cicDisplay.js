@@ -46,6 +46,16 @@ const CIC_CONFIG = {
 };
 
 const CIC_FIGHTER_TYPES = new Set(['fighter', 'interceptor', 'drone']);
+// TRAVEL TO przyciąga do celu w tylu px mapy od kliknięcia (DECYZJE-2 T1 — index.html: travelSnapAt / travelToSnapped).
+const CIC_TRAVEL_SNAP_PX = 28;
+/** Podpis celu TRAVEL TO w menu PPM (skrót — menu ma 160 px, „▶ TRAVEL TO” zajmuje ~83 px monospace 11 px: podpis
+ * najwyżej 9 znaków ≈ 59 px, odstęp ~10 px; recenzja T ust. 11 — przy 11 znakach podpis wchodził na etykietę). */
+const CIC_TRAVEL_HINT_MAX = 9;
+const CIC_TRAVEL_HINT_PX = 60;
+function cicTravelHint(label) {
+  const t = String(label || '').toUpperCase();
+  return t.length > CIC_TRAVEL_HINT_MAX ? `${t.slice(0, CIC_TRAVEL_HINT_MAX - 1)}…` : t;
+}
 const CIC_SILHOUETTE_CACHE = new Map();
 const CIC_SOURCE_IDS = new WeakMap();
 const EMPTY_CIC_WORLD_FEATURES = Object.freeze([]);
@@ -878,8 +888,12 @@ export const CICDisplay = {
             // — dawne { type: 'moveTo', x, y } nie ruszało statku i nie miało linii.
             if (window.ship) window.ship.command = { type: 'move', target: { x: worldX, y: worldY }, arrival: 90 };
           } else if (item.action === 'travel') {
-            // TRAVEL TO (index.html: setTravelTarget) — napęd dobiera podróż (dziś warp odcinkami).
-            if (window.setTravelTarget) window.setTravelTarget(worldX, worldY);
+            // TRAVEL TO (index.html: setTravelTarget) — napęd dobiera podróż (warp odcinkami). Przyciąga do najbliższego
+            // celu przy kliknięciu (DECYZJE-2 T1 — index.html: travelToSnapped; promień CIC_TRAVEL_SNAP_PX na mapie),
+            // punkt w próżni zostaje „punktem”.
+            const snapR = CIC_TRAVEL_SNAP_PX / Math.max(1e-9, cicZoom);
+            if (window.travelToSnapped) window.travelToSnapped(worldX, worldY, snapR);
+            else if (window.setTravelTarget) window.setTravelTarget(worldX, worldY);
           } else if (item.action === 'drone') {
             const droneSystem = window.SpotterDroneSystem;
             const ship = window.ship;
@@ -935,10 +949,12 @@ export const CICDisplay = {
         const droneSystem = window.SpotterDroneSystem;
         const hasDroneSystem = !!droneSystem;
         const hasActiveDrones = !!droneSystem?.getDrones?.().some(d => d && !d.dead);
+        // TRAVEL TO: podgląd celu, do którego przyciągnie kliknięcie (index.html: travelSnapAt) — nazwa w menu.
+        const snap = window.travelSnapAt ? window.travelSnapAt(worldX, worldY, CIC_TRAVEL_SNAP_PX / Math.max(1e-9, cicZoom)) : null;
         cicContextMenu.items = [
           { label: 'ATAK', action: hasSelected ? 'attack' : null },
           { label: 'RUCH', action: 'move' },
-          { label: 'TRAVEL TO', action: 'travel' },
+          { label: 'TRAVEL TO', action: 'travel', hint: snap ? cicTravelHint(snap.label) : 'PUNKT' },
           { label: 'SEND DRONE', action: hasDroneSystem ? 'drone' : null },
           { label: 'RECALL DRONES', action: hasActiveDrones ? 'recallDrones' : null },
         ];
@@ -1472,6 +1488,12 @@ export const CICDisplay = {
         ctx.textAlign = 'left';
         ctx.fillStyle = disabled ? 'rgba(148, 163, 184, 0.35)' : '#94d4ff';
         ctx.fillText('▶ ' + item.label, mx + 10, iy + 17);
+        if (item.hint && !disabled) {
+          // cel, do którego przyciągnie TRAVEL TO (albo „PUNKT” w próżni)
+          ctx.textAlign = 'right';
+          ctx.fillStyle = 'rgba(148, 212, 255, 0.6)';
+          ctx.fillText(item.hint, mx + MENU_W - 8, iy + 17, CIC_TRAVEL_HINT_PX);
+        }
       }
     }
 

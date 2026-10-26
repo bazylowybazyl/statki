@@ -5,8 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TRAVEL_TUNE, planTravelLeg, segmentCircleEntry, wellAt } from '../src/game/travelNav.js';
-import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue } from '../src/game/warpCourse.js';
-import { warpExitRampDistance } from '../src/game/warpDrive.js';
+import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue, chooseWarpJump } from '../src/game/warpCourse.js';
+import { warpExitRampDistance, WARP_EMERGENCY, planWarpEmergency } from '../src/game/warpDrive.js';
 import vm from 'node:vm';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -43,7 +43,9 @@ test('ręczny warp: namiar ze znakiem przez ±π i tolerancja dokładnie ±5°',
 // Uruchamiamy prawdziwe funkcje sterowania z index.html, bez renderera i DOM.
 function manualWarpHarness() {
   const html = read('index.html');
-  const names = ['cancelTravel', 'takeManualWarpCourse', 'startManualWarpCharge', 'stepWarpCourse', 'attemptWarp', 'handleWarpKeyDown', 'handleWarpKeyUp'];
+  // + wybór skoku klawiszem warpa (DECYZJE-2 T1): kurs → cel w stożku → skok awaryjny
+  const names = ['cancelTravel', 'takeManualWarpCourse', 'startManualWarpCharge', 'stepWarpCourse', 'attemptWarp', 'handleWarpKeyDown', 'handleWarpKeyUp',
+    'chooseManualWarpJump', 'planPlayerWarpEmergency', 'formatWarpJumpKm'];
   const funcs = names.map(name => {
     const start = html.indexOf(`    function ${name}(`);
     assert.ok(start >= 0, name);
@@ -53,11 +55,18 @@ function manualWarpHarness() {
     ship: { pos: { x: 0, y: 0 }, angle: 0, command: null },
     warp: { state: 'idle', fuel: 20, dir: { x: 1, y: 0 }, exitRamp: null },
     travelNav: { active: true, target: { x: 500000, y: 0 }, leg: { x: 500000, y: 0, kind: 'warp' }, phase: 'align', cmd: {}, waypoints: [] },
-    warpCourse: { aim: null, autoExit: false, refreshLeft: 0 },
+    warpCourse: { aim: null, autoExit: false, refreshLeft: 0, kind: '', label: '' },
     DevFlags: { unlimitedWarp: false }, PAUSED: false, exits: 0,
     WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseExitDue, warpExitRampDistance,
     _warpCourseBearing: {},
-    pushZoneMessage() {}, travelRestoreStance() {}, clearPlayerAttackState() {},
+    // wybór skoku (T1): bez celów w stożku; skok awaryjny z prawdziwego planisty, świat bez studni
+    chooseWarpJump, planWarpEmergency, WARP_EMERGENCY, WORLD: null, _warpEmergencyPlan: {},   // statek w (0, 0) — bez brzegu świata
+    collectTravelTargets: () => state.coneTargets, coneTargets: [],
+    travelLegToTarget: (c) => ({ x: c.tx ?? c.x, y: c.ty ?? c.y, kind: 'warp' }),
+    getTravelWells: () => [], warpEmergencyWells: () => state.wells, wells: [], travelMinWarpDist: () => 40000,
+    _tugWarp: { active: false },
+    messages: [],
+    pushZoneMessage(m) { state.messages.push(m); }, travelRestoreStance() {}, clearPlayerAttackState() {},
     // Silniki sprawne (src/game/engineDamage.js — skok wymaga choć jednej dyszy MAIN).
     isMainDriveDestroyed: () => false, playerDriveDown: () => false,
     // Silniki w pracy (src/game/engineIgnition.js — skok wymaga pracy silników; etap E2).
@@ -101,35 +110,84 @@ test('gra: ręczny skok przejmuje cel, doprecyzowuje kurs ±5° i sam wychodzi p
   }
 });
 
-test('gra: poza ±5°, bez celu i na odcinku napędem — wolny skok; anulowanie i Shift zachowują cel', () => {
-  for (const deg of [-5.01, 5.01]) {
+test('gra (DECYZJE-2 T1): kurs w stożku ±20° (poza zielonym pasmem ±5°) wygrywa — dokładny namiar kursu i wyjście przy punkcie', () => {
+  for (const deg of [-19.9, -5.01, 5.01, 19.9]) {
+    const h = manualWarpHarness();
+    h.ship.angle = deg * Math.PI / 180;
+    h.coneTargets = [{ x: 300000, y: 300000 * Math.tan(h.ship.angle), r: 0, label: 'Mars', kind: 'body' }];
+    h.attemptWarp();
+    assert.equal(h.warpCourse.kind, 'course', `${deg}°: kurs gracza wygrywa z celem na dziobie`);
+    assert.equal(h.warp.chargeAngle, 0, 'dokładny namiar kursu');
+    assert.ok(h.messages.some((m) => /WYJŚCIE PRZY PUNKCIE KURSU/.test(m)));
+  }
+});
+
+test('gra (DECYZJE-2 T1): poza stożkiem kursu, bez celu i na odcinku napędem — skok awaryjny 400 tys. j. w dziób z wyjściem przy punkcie; anulowanie i ręczne wyjście zachowują cel', () => {
+  for (const deg of [-20.5, 20.5, 90]) {
     const h = manualWarpHarness();
     h.ship.angle = deg * Math.PI / 180;
     h.attemptWarp();
-    assert.equal(h.warpCourse.autoExit, false);
-    assert.equal(h.warp.chargeAngle, h.ship.angle);
-    h.warp.state = 'active'; h.ship.pos.x = 600000;
+    assert.equal(h.warp.state, 'charging');
+    assert.equal(h.warpCourse.kind, 'emergency');
+    assert.equal(h.warpCourse.autoExit, true, 'każdy skok ma koniec i wyjście automatyczne');
+    assert.equal(h.warp.chargeAngle, h.ship.angle, 'skok awaryjny — dokładnie w dziób');
+    assert.ok(near(Math.hypot(h.warpCourse.aim.x, h.warpCourse.aim.y), WARP_EMERGENCY.dist, 1e-6));
+    assert.ok(h.messages.some((m) => /SKOK AWARYJNY 400 KM/.test(m)), h.messages.join(' | '));
+    h.warp.state = 'active';
+    h.warp.dir = { x: Math.cos(h.ship.angle), y: Math.sin(h.ship.angle) };
     h.stepWarpCourse(1 / 120);
     assert.equal(h.exits, 0);
     h.handleWarpKeyUp();
-    assert.equal(h.exits, 1);
+    assert.equal(h.exits, 1, 'ręczne wyjście w locie zostaje');
     assert.ok(h.travelNav.target, 'ręczne wyjście zachowuje cel');
   }
+  // automatyczne wyjście skoku awaryjnego (bez kursu TRAVEL TO): rampa kończy się w punkcie
+  {
+    const h = manualWarpHarness();
+    h.cancelTravel(null);
+    h.ship.angle = 0;
+    h.attemptWarp();
+    assert.equal(h.warpCourse.kind, 'emergency');
+    h.warp.state = 'active';
+    h.ship.pos.x = WARP_EMERGENCY.dist - warpExitRampDistance(260000, 1800) + 1;
+    h.stepWarpCourse(1 / 120);
+    assert.equal(h.exits, 1, 'skok bez kursu też wychodzi sam');
+  }
   const h = manualWarpHarness();
+  h.ship.angle = 0.5;
   h.attemptWarp(); h.attemptWarp();
   assert.equal(h.warp.state, 'idle', 'drugi 9 / UI przerywa ładowanie');
   assert.ok(h.travelNav.target);
   assert.equal(h.warpCourse.autoExit, false);
+  h.ship.angle = 0;
   h.travelNav.leg.kind = 'drive';
   h.handleWarpKeyDown();
-  assert.equal(h.warpCourse.autoExit, false, 'krótki odcinek bez automatu warpa');
-  assert.equal(h.warpCourse.aim, null, 'dolot napędem nie daje znacznika wyjścia z warpa');
-  assert.equal(warpCourseHudVisible(h.travelNav.leg, h.warpCourse.aim, true), false);
+  assert.equal(h.warpCourse.kind, 'emergency', 'odcinek napędem nie jest kursem skoku — skok awaryjny');
+  assert.equal(warpCourseHudVisible(h.travelNav.leg, h.warpCourse.aim, true), true, 'HUD pokazuje punkt skoku awaryjnego');
   h.handleWarpKeyUp();
   h.cancelTravel(null);
   assert.equal(h.travelNav.target, null, 'jawne skasowanie kursu');
+});
+
+test('gra (DECYZJE-2 T1): cel w stożku ±20° przed dziobem wygrywa ze skokiem awaryjnym; studnia tuż przed dziobem — odmowa', () => {
+  const h = manualWarpHarness();
+  h.cancelTravel(null);
+  h.ship.angle = 15 * Math.PI / 180;
+  const c = { x: 300000, y: 0, r: 0, label: 'Mars', kind: 'body' };
+  h.coneTargets = [c];
   h.attemptWarp();
-  assert.equal(h.warpCourse.autoExit, false, 'bez celu zwykły warp');
+  assert.equal(h.warpCourse.kind, 'cone');
+  assert.equal(h.warpCourse.label, 'Mars');
+  assert.equal(h.warp.chargeAngle, 0, 'dokładny namiar celu przy starcie ładowania');
+  assert.ok(h.messages.some((m) => /CEL PRZED DZIOBEM — MARS/.test(m)));
+  // studnia 20 tys. j. przed dziobem — skok awaryjny za krótki: komunikat, bez ładowania
+  const g = manualWarpHarness();
+  g.cancelTravel(null);
+  g.ship.angle = 0;
+  g.wells = [{ x: 30000, y: 0, r: 8000 }];
+  g.attemptWarp();
+  assert.equal(g.warp.state, 'idle');
+  assert.ok(g.messages.some((m) => /STUDNIA GRAWITACJI PRZED DZIOBEM/.test(m)));
 });
 
 test('powrót do K-7: po rampie kończy się HUD warpa, cel pozostaje tylko do dolotu napędem', () => {
@@ -158,8 +216,9 @@ test('powrót do K-7: po rampie kończy się HUD warpa, cel pozostaje tylko do d
   assert.equal(h.travelNav.target, target, 'punkt K-7 pozostaje do dolotu');
   assert.equal(warpCourseHudVisible(h.travelNav.leg, h.warpCourse.aim, false), false);
   h.handleWarpKeyDown();
-  assert.equal(h.warpCourse.aim, null, 'wolny warp w pobliżu portu nie przywraca licznika');
-  assert.equal(warpCourseHudVisible(h.travelNav.leg, h.warpCourse.aim, true), false);
+  // DECYZJE-2 T1: dolot napędem nie jest kursem skoku — klawisz warpa daje skok awaryjny w dziób (z punktem i HUD-em)
+  assert.equal(h.warpCourse.kind, 'emergency');
+  assert.notEqual(h.warpCourse.aim, jump, 'wskazanie kursu K-7 nie wraca');
   h.handleWarpKeyUp();
   h.ship.pos = { ...target };
   h.stepWarpCourse(1 / 120);
@@ -257,7 +316,7 @@ test('planista objazdów omija inne studnie, ale nie odsyła od brzegu studni ce
 
 test('gra: TRAVEL TO zamiast CRUISE / SKOK / PRZELOT w mapie i menu; kurs warpa stoi od ładowania', () => {
   const cic = read('src/ui/cicDisplay.js');
-  assert.match(cic, /\{ label: 'TRAVEL TO', action: 'travel' \}/);
+  assert.match(cic, /\{ label: 'TRAVEL TO', action: 'travel'/);
   assert.doesNotMatch(cic, /CRUISE TO|cruiseNav/);
   const menu = read('src/game/worldCommandMenu.js');
   assert.match(menu, /\['travel', 'TRAVEL TO'\]/);

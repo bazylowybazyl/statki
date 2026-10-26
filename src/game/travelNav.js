@@ -109,3 +109,52 @@ export function planTravelLeg(pos, target, waypoints, wells, { minWarp = 60000, 
   const kind = warpOk && len >= minWarp ? 'warp' : 'drive';
   return { x: end.x, y: end.y, kind, final };
 }
+
+/**
+ * HIPERCRUISE ODCINKA 'drive' (DECYZJE-2 T4, błąd z etapu W): automat wychodzi `stopMargin` przed punktem (droga hamowania
+ * lotu zwykłego z prędkości wyjścia + pół promienia przylotu — index.html: playerHypercruiseStopMargin), więc odcinek
+ * krótszy niż `minLeg + stopMargin` kończył hipercruise po 2 klatkach lotu, a TRAVEL TO startował go znowu co ~1 s
+ * (wstrząs kopu na cykl). Start tylko, gdy odcinek jest co najmniej tak długi; krótszy — sam autopilot bojowy.
+ */
+export function travelHypercruiseLegOk(dist, minLeg, stopMargin) {
+  const d = Number(dist);
+  return Number.isFinite(d) && d >= Math.max(0, Number(minLeg) || 0) + Math.max(0, Number(stopMargin) || 0);
+}
+
+/**
+ * PUNKT PODRÓŻY do ciała ze studnią (CIC i stożek warpa — DECYZJE-2 T1): brzeg studni + zapas po stronie `from`
+ * (statku). Bez promienia studni — środek ciała. Wynik: { x, y }.
+ */
+export function travelApproachPoint(body, from, wellR, margin = TRAVEL_TUNE.wellMargin * 2) {
+  const bx = Number(body?.x) || 0;
+  const by = Number(body?.y) || 0;
+  const R = Math.max(0, Number(wellR) || 0);
+  if (!(R > 0)) return { x: bx, y: by };
+  let dx = (Number(from?.x) || 0) - bx;
+  let dy = (Number(from?.y) || 0) - by;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d > 1e-6) { dx /= d; dy /= d; } else { dx = 1; dy = 0; }
+  const k = R + Math.max(0, Number(margin) || 0);
+  return { x: bx + dx * k, y: by + dy * k };
+}
+
+/**
+ * PRZYCIĄGANIE TRAVEL TO do celu (mapa CIC — DECYZJE-2 T1): najbliższy cel z `candidates` ({ x, y, snapR?, label, … }),
+ * którego środek albo tarcza (snapR — promień ciała w płaszczyźnie gry, j. świata; nie studnia — stacja przy planecie
+ * ma wygrać z planetą) leży w `radius` [j.] od punktu kliknięcia; brak — null (punkt w próżni zostaje „punktem”).
+ * Odległość mierzona od brzegu tarczy (klik na tarczy = 0).
+ */
+export function snapTravelTarget(x, y, candidates, radius) {
+  if (!Array.isArray(candidates) || !(radius >= 0)) return null;
+  let best = null;
+  let bestD = Infinity;
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+    const dx = c.x - x;
+    const dy = c.y - y;
+    const d = Math.max(0, Math.sqrt(dx * dx + dy * dy) - Math.max(0, Number(c.snapR) || 0));
+    if (d <= radius && d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}

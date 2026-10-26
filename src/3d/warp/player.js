@@ -20,7 +20,7 @@
 //              ZWOLNIENIE (smugi gwiazd gasną frontem od dziobu, ciała soczewki zanurzają się z nim),
 //              WLOT (statek naprawdę leci z prędkością wlotu),
 //              HAMOWANIE = jedno zdarzenie (błysk dziobu, blask, fala, żar — WARP_ARRIVAL_ACCENT); dalej ślizg z pędem.
-// Kamerą rządzi rig gry (cameraRig.js) — kop, oddalenie, kadr przylotu K1 i wysunięcie przy swobodnym wyjściu są tam.
+// Kamerą rządzi rig gry (cameraRig.js) — kop, oddalenie i kadr przylotu K1 są tam (każdy skok ma cel albo punkt końca).
 // Wstrząsy kopu, wyjścia i hamowania zgłasza GRA (src/game/warpShakes.js — te same chwile i wartości; działają też
 // w workerze renderu), efekt już nie wstrząsa.
 

@@ -439,12 +439,13 @@ export function sampleWarpDeparture(d, t, out = {}) {
  * WYJŚCIE GRACZA Z WARPA = przylot jak u NPC (user 2026-10-03: spójność — Atlas też „hamuje”):
  *   ZWOLNIENIE `slow` s — prędkość spada z warpowej do prędkości wlotu (warpArrivalSpeed),
  *                smugi gwiazd gasną frontem od dziobu, ciała soczewki świata zanurzają się z nim;
- *   WLOT `coast` s — statek leci z prędkością wlotu; swobodny skok: wysuwa się przed kamerę (`ahead` × pół
- *                kadru w stronę celu; kamera nigdy go nie wyprzedza, dogania w `settle` s), skok z celem — bez
- *                wysunięcia (kadr przylotu K1, cameraRig.js);
+ *   WLOT `coast` s — statek leci z prędkością wlotu, bez wysunięcia przed kamerę (każdy skok ma cel albo punkt końca —
+ *                kadr przylotu K1, cameraRig.js; dawne wysunięcie swobodnego skoku `ahead` usunięte, DECYZJE-2 T2);
  *   HAMOWANIE — droga WARP_RUSH.brakeDist × L ze stałym opóźnieniem.
+ * `settle` — ile s po zatrzymaniu rampa wyjścia zostaje jeszcze w `warp.exitRamp` (zegar kamery po rampie, index.html:
+ * updateCameraWarpKick).
  */
-export const WARP_EXIT = Object.freeze({ slow: 0.7, coast: 0.45, ahead: 0.4, settle: 1.3, zoomTail: 0.9 });
+export const WARP_EXIT = Object.freeze({ slow: 0.7, coast: 0.45, settle: 1.3, zoomTail: 0.9 });
 
 /**
  * Rampa wyjścia (rozgrywka: prędkość statku gracza po wyjściu z warpa; efekt: oś wyjścia).
@@ -494,6 +495,91 @@ export function warpExitRampDistance(v0, hullLength, vEnd = 0) {
   const E = WARP_EXIT;
   const brake = warpBrakeTime(L, vArr) * (1 - vOut / vArr);
   return E.slow * (vStart + vArr) * 0.5 + E.coast * vArr + brake * (vArr + vOut) * 0.5;
+}
+
+/** Czas rampy wyjścia [s] od prędkości v0 do końca hamowania (= createWarpExitRamp(…).tHalt) — plan trasy skoku. */
+export function warpExitRampTime(v0, hullLength, vEnd = 0) {
+  const L = Math.max(40, Number(hullLength) || WARP_REF_HULL_LENGTH);
+  const vStart = Math.max(0, Number(v0) || 0);
+  const vArr = Math.max(1, Math.min(warpArrivalSpeed(L), vStart || 1));
+  const vOut = Math.max(0, Math.min(vArr, Number(vEnd) || 0));
+  return WARP_EXIT.slow + WARP_EXIT.coast + warpBrakeTime(L, vArr) * (1 - vOut / vArr);
+}
+
+/**
+ * SKOK AWARYJNY (DECYZJE-2 T1, krok 3 — CapsLock / 9 bez kursu w ±5° i bez celu w stożku ±20°): stała długość w dziób,
+ * bez dodatkowej ceny. Planista skraca skok przed brzegiem studni grawitacji (z zapasem `wellMargin` jak TRAVEL TO —
+ * travelNav.js: TRAVEL_TUNE.wellMargin) i przed brzegiem świata (`edgeMargin`), więc skok zawsze kończy się rampą
+ * wyjścia (nigdy hamowaniem grawitacyjnym bez rampy ani na ścianie świata). Studnia, w której statek stoi (port),
+ * nie skraca (wylot z niej) — chyba że dziób celuje w jej jądro (`rIn`: strefy orbit ciała — ring, planeta): wtedy
+ * koniec przed jądrem, a ze środka jądra w głąb — odmowa. Skok krótszy niż `minDist` (TRAVEL_TUNE.minWarp) — odmowa
+ * (out.ok false, out.cut — 'well' | 'edge'): studnia albo brzeg tuż przed dziobem.
+ */
+export const WARP_EMERGENCY = Object.freeze({
+  dist: 400000,       // [j.] długość skoku awaryjnego (Mk I / II / III: ~8,0 / 7,0 / 7,0 s — analiza „warp z miejsca do miejsca”)
+  minDist: 40000,     // [j.] = TRAVEL_TUNE.minWarp — najkrótszy skok
+  wellMargin: 1100,   // [j.] = TRAVEL_TUNE.wellMargin — koniec przed brzegiem studni
+  edgeMargin: 20000   // [j.] koniec przed brzegiem świata
+});
+
+/**
+ * Plan skoku awaryjnego z `pos` w kierunku (dirX, dirY). wells: [{ x, y, r, rIn? }] (studnie — r bez zapasu; rIn —
+ * jądro studni startu: strefa orbit ciała, opcjonalnie),
+ * bounds: { w, h } świata (0…w, 0…h) albo null. Wynik w `out`: { ok, x, y, dist, cut: 'none' | 'well' | 'edge',
+ * well (studnia, która skróciła, albo null) } — (x, y) = koniec skoku (koniec ślizgu wyjścia).
+ */
+export function planWarpEmergency(pos, dirX, dirY, wells, bounds, tune = WARP_EMERGENCY, out = {}) {
+  const dl = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+  const ux = dirX / dl;
+  const uy = dirY / dl;
+  const px = Number(pos?.x) || 0;
+  const py = Number(pos?.y) || 0;
+  let t = Math.max(0, Number(tune.dist) || 0);
+  let cut = 'none';
+  let well = null;
+  const n = Array.isArray(wells) ? wells.length : 0;
+  const margin = Number(tune.wellMargin) || 0;
+  for (let i = 0; i < n; i++) {
+    const w = wells[i];
+    if (!w) continue;
+    const R = (Number(w.r) || 0) + margin;
+    if (!(R > 0)) continue;
+    const fx = px - w.x;
+    const fy = py - w.y;
+    const c = fx * fx + fy * fy - R * R;
+    const b = fx * ux + fy * uy;
+    if (c <= 0) {
+      // Start w tej studni — wylot jej nie skraca, ale JĄDRO studni (`rIn` — strefy orbit ciała: ring, planeta; recenzja
+      // T, ust. 8) przed dziobem tak: skok w głąb przechodziłby przez ring i planetę i hamował grawitacyjnie (bez rampy)
+      // po drugiej stronie (index.html: warpLeavingWell — tylko skok oddalający się od ciała nie hamuje na jego pasie).
+      const Ri = (Number(w.rIn) || 0) > 0 ? Number(w.rIn) + margin : 0;
+      if (!(Ri > 0) || !(b < 0)) continue;
+      const ci = fx * fx + fy * fy - Ri * Ri;
+      if (ci <= 0) { t = 0; cut = 'well'; well = w; continue; }   // statek w jądrze (port przy ringu), dziób w głąb
+      const di = b * b - ci;
+      if (di < 0) continue;
+      const hitIn = -b - Math.sqrt(di);
+      if (hitIn < t) { t = Math.max(0, hitIn); cut = 'well'; well = w; }
+      continue;
+    }
+    const disc = b * b - c;
+    if (disc < 0) continue;
+    const hit = -b - Math.sqrt(disc);           // pierwsze wejście w okrąg (z zapasem)
+    if (hit > 0 && hit < t) { t = hit; cut = 'well'; well = w; }
+  }
+  if (bounds && Number(bounds.w) > 0 && Number(bounds.h) > 0) {
+    const m = Math.max(0, Number(tune.edgeMargin) || 0);
+    const lim = (p, u, max) => (u > 1e-9 ? (max - m - p) / u : (u < -1e-9 ? (m - p) / u : Infinity));
+    const te = Math.min(lim(px, ux, Number(bounds.w)), lim(py, uy, Number(bounds.h)));
+    if (te < t) { t = Math.max(0, te); cut = 'edge'; well = null; }
+  }
+  out.dist = t;
+  out.x = px + ux * t;
+  out.y = py + uy * t;
+  out.cut = cut;
+  out.well = well;
+  out.ok = t >= (Number(tune.minDist) || 0);
+  return out;
 }
 
 /**
@@ -687,6 +773,26 @@ export function warpTripTime(dist, tune = WARP_TRIP) {
  * wyjścia). Zwraca czas [s] (albo `limit`, gdy skok trwałby dłużej).
  */
 export function simulateWarpLeg(vc, o, limit = 60) {
+  return _simulateWarpLeg(vc, o, limit, null, null, null);
+}
+
+/**
+ * OŚ CZASU skoku z planu (plan trasy przy kopie — DECYZJE-2 T2): ten sam przebieg co simulateWarpLeg z prędkością
+ * przelotową `vc`; `marks` — odległości wzdłuż kursu od punktu skoku [j.], `markT` (tablica tej samej długości) dostaje
+ * czas [s od skoku], w którym statek je mija (NaN — nie dolatuje przed wyjściem). Wynik w `out`: { exitT — początek
+ * wyjścia [s], exitV — prędkość w tej chwili [j/s], exitS — droga do niej [j.] }.
+ */
+export function warpLegTimeline(vc, o, marks, markT, out = {}, limit = 60) {
+  return _simulateWarpLeg(vc, o, limit, marks, markT, out);
+}
+
+function _simulateWarpLeg(vc, o, limit, marks, markT, res) {
+  const nm = marks && markT ? Math.min(marks.length, markT.length) : 0;
+  for (let i = 0; i < nm; i++) markT[i] = marks[i] <= 0 ? 0 : NaN;   // za punktem skoku — od razu
+  const done = (t, v, s) => {
+    if (res) { res.exitT = t; res.exitV = v; res.exitS = s; }
+    return t;
+  };
   const dist = Math.max(0, Number(o.dist) || 0);
   const L = Math.max(40, Number(o.hullLength) || WARP_REF_HULL_LENGTH);
   const dt = Number(o.dt) > 0 ? o.dt : 1 / 60;
@@ -702,7 +808,7 @@ export function simulateWarpLeg(vc, o, limit = 60) {
   let prog = 0;
   const k = Math.min(1, lag * dt);
   while (t < limit) {
-    if (dist - s <= warpExitRampDistance(v, L)) return t;
+    if (dist - s <= warpExitRampDistance(v, L)) return done(t, v, s);
     prog = Math.min(1, prog + dt / entry);
     const ease = prog * prog * (3 - 2 * prog);
     let f = zone ? zone(s) : 1;
@@ -714,10 +820,15 @@ export function simulateWarpLeg(vc, o, limit = 60) {
     const vs = Math.min(v0, vmax);
     const target = vs + (vmax - vs) * ease;
     v += (target - v) * k;
+    const s0 = s;
     s += v * dt;
     t += dt;
+    for (let i = 0; i < nm; i++) {
+      // znacznik mijany w tym kroku (s0 < m ≤ s): czas liniowo w kroku
+      if (markT[i] !== markT[i] && marks[i] <= s) markT[i] = t - dt + dt * (marks[i] - s0) / Math.max(1e-9, s - s0);
+    }
   }
-  return limit;
+  return done(limit, v, s);
 }
 
 /**
