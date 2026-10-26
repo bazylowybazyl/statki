@@ -1151,13 +1151,13 @@
     import { TrafficBridge } from "./src/game/trafficBridge.js";
     import {
       createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
-      damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates, createPortBerthIndex,
-      stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion, trafficContactTime
+      damageTrafficActor, trafficRamContact, trafficRamFallbackDamage, trafficRectContact, trafficBerthStates,
+      createPortBerthIndex, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion, trafficContactTime
     } from "./src/game/trafficBubble.js";
     import {
       createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion, trafficPromotionVerdict,
       trafficFleePoint, trafficActorPromotable, trafficPromotionOrder, trafficCombatRole, trafficWeaponFaction,
-      trafficGrudgeTarget, trafficActorHasCourse
+      trafficGrudgeTarget, trafficActorHasCourse, trafficRamLead
     } from "./src/game/trafficPromotion.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
@@ -16243,7 +16243,10 @@
      */
     function stepTrafficRam() {
       const tb = trafficBubble;
-      if (!tb || !tb.list.length || !ship || ship.dead || ship.noHullCollisions) return;
+      if (!tb || !ship || ship.dead || ship.noHullCollisions) return;
+      stepTrafficSoftContact();
+      if (!tb.list.length) return;
+      // Encja w warpie i w hipercruisie to duch (trafficRamContact jej nie widzi) — bezpiecznik E9.
       const c = trafficRamContact(tb, ship.pos.x, ship.pos.y, ship.angle, Number(ship.w) || 0, Number(ship.h) || 0,
         ship.vel.x, ship.vel.y);
       if (!c) return;
@@ -16256,15 +16259,43 @@
         ship.vel.y -= c.ny * vn * 1.2;
       }
       tb.stats.rams++;
+      // Awans nie zdążył przed kontaktem (statek w kolejce albo dopiero teraz) — kontakt miękki, bez obrażeń: zderzenie
+      // rozstrzygnie kadłub na belkach. Bez awansu (kadłub bez pełnego NPC, limit pełny) — obrażenia z sufitem na
+      // kontakt i odstępem (trafficRamFallbackDamage), nigdy wybuch w pierwszej klatce.
       const st = trafficPromotion;
       if (st && trafficActorPromotable(a, st.tune)) {
         tb.stats.ramsLate = (tb.stats.ramsLate || 0) + 1;
-        requestTrafficPromotion(st, a.id, true);
-        return;
+        if (requestTrafficPromotion(st, a.id, true) || st.queued.has(a.id)) return;
       }
-      const dmg = trafficRamDamage(tb, c.speed);
+      tb.stats.ramsFallback = (tb.stats.ramsFallback || 0) + 1;
+      const dmg = trafficRamFallbackDamage(tb, a, c.speed);
       if (dmg > 0) damageTrafficActor(tb, a, dmg, ship.pos.x - c.nx * Number(ship.h || 0) * 0.5,
         ship.pos.y - c.ny * Number(ship.h || 0) * 0.5, 'player');
+    }
+
+    /**
+     * Awansowany NPC, którego kadłub na belkach jeszcze się nie zbudował (kolejka budowy, sprite, ponowna próba):
+     * obrys encji (`__trafficLen` × `__trafficWid`) odpycha gracza bez obrażeń — dopóki kadłub nie jest gotowy,
+     * zderzenie nie wchodzi w kadłub NPC, który za chwilę powstanie w tym samym miejscu.
+     */
+    function stepTrafficSoftContact() {
+      const st = trafficPromotion;
+      if (!st || !st.alive.size) return;
+      const tb = trafficBubble;
+      for (const npc of st.alive.values()) {
+        if (!npc || npc.dead || npc.beamHull || !(npc.__trafficLen > 0)) continue;
+        const c = trafficRectContact(ship.pos.x, ship.pos.y, ship.angle, Number(ship.w) || 0, Number(ship.h) || 0,
+          ship.vel.x, ship.vel.y, npc.x, npc.y, npc.angle, npc.__trafficLen, npc.__trafficWid, npc.vx, npc.vy);
+        if (!c) continue;
+        ship.pos.x += c.nx * c.depth;
+        ship.pos.y += c.ny * c.depth;
+        const vn = (ship.vel.x - npc.vx) * c.nx + (ship.vel.y - npc.vy) * c.ny;
+        if (vn < 0) {
+          ship.vel.x -= c.nx * vn * 1.2;
+          ship.vel.y -= c.ny * vn * 1.2;
+        }
+        tb.stats.ramsSoft = (tb.stats.ramsSoft || 0) + 1;
+      }
     }
 
     /**
@@ -16466,6 +16497,9 @@
         npc.ai = (dt) => runCallInCombatAI(npc, role.type, dt);
       }
       npc.trafficCourse = a.id;
+      // Obrys encji — kontakt miękki, dopóki kadłub na belkach się nie zbuduje (stepTrafficSoftContact).
+      npc.__trafficLen = a.length;
+      npc.__trafficWid = a.width;
       npc.__trafficPromotedAt = gameTime;
       npc._lastPlayerHit = gameTime;
       npcs.push(npc);
@@ -16484,12 +16518,22 @@
 
     /** Kadłuby ruchu, których sprite już się wczytuje (kadłub na belkach buduje się z niego przy awansie). */
     const _trafficSpritesAsked = new Set();
+    /** Zmierzona budowa kadłuba NPC ruchu [ms] na kadłub (drawNPCPretty) — próg taranu (`trafficRamLead`). */
+    const _trafficHullBuildMs = new Map();
+    /** Czas gry na klatkę renderu (średnia) — próg taranu liczy klatki do kadłuba w czasie gry. */
+    let _trafficFrameSim = 1 / 60;
+    function noteTrafficHullBuild(npc, ms) {
+      const id = npc.shipFrame;
+      const was = _trafficHullBuildMs.get(id);
+      _trafficHullBuildMs.set(id, was === undefined ? ms : Math.max(ms, was * 0.8 + ms * 0.2));
+    }
 
     /**
      * Taran z awansem (E6, 2026-10-23): encja na kursie kolizyjnym z kadłubem gracza — czas do kontaktu obrysu
-     * (`trafficContactTime`: obrys gracza `w × h` rzutowany na osie encji) krótszy niż `ramLead` — idzie na początek kolejki
-     * awansów (z zapasem limitu), żeby kadłub na belkach zdążył się zbudować przed zetknięciem; zderzenie
-     * rozstrzyga silnik belek jak przy każdym NPC. Sprite kadłuba encji w pobliżu wczytuje się zawczasu.
+     * (`trafficContactTime`: obrys gracza `w × h` rzutowany na osie encji, odległość / prędkość zbliżania) krótszy
+     * niż czas do gotowości jej kadłuba na belkach (`trafficRamLead`: tarany przed nią w kolejce i kadłuby w budowie,
+     * klatki, zmierzona budowa tego kadłuba, sprite) — idzie na początek kolejki awansów (z zapasem limitu);
+     * zderzenie rozstrzyga silnik belek jak przy każdym NPC. Sprite kadłuba encji w pobliżu wczytuje się zawczasu.
      */
     function stepTrafficRamAhead(st, tb) {
       if (!ship || ship.dead || ship.noHullCollisions || !tb.list.length) return;
@@ -16499,8 +16543,12 @@
       const vy = ship.vel.y;
       const pl = Number(ship.w) || 0;
       const pw = Number(ship.h) || 0;
-      const lead = st.tune.ramLead;
       const pad = st.tune.ramPad;
+      // Przed encją: tarany w kolejce i awansowane NPC, których kadłub jeszcze się buduje.
+      let building = 0;
+      for (const npc of st.alive.values()) if (npc && !npc.dead && !npc.beamHull) building++;
+      const ahead = st.rams.size + building;
+      const leadMax = trafficRamLead(st.tune, ahead, _trafficFrameSim, 200, false);
       const list = tb.list;
       for (let i = 0; i < list.length; i++) {
         const a = list[i];
@@ -16508,22 +16556,27 @@
         const dy = a.cy - py;
         const wx = a.vx - vx;
         const wy = a.vy - vy;
-        const reach = a.length * 0.5 + pl * 0.5 + pad + Math.sqrt(wx * wx + wy * wy) * lead + 2000;
+        const reach = a.length * 0.5 + pl * 0.5 + pad + Math.sqrt(wx * wx + wy * wy) * leadMax + 2000;
         if (dx * dx + dy * dy > reach * reach) continue;
-        if (!_trafficSpritesAsked.has(a.hullId)) {
-          _trafficSpritesAsked.add(a.hullId);
-          loadHullSprite(HULL_SPRITE_PATHS_BY_ID[a.hullId] || TRAFFIC_HULLS[a.hullId]?.sprite);
-        }
-        if (!trafficActorPromotable(a, st.tune)) continue;
+        const sprite = loadHullSprite(HULL_SPRITE_PATHS_BY_ID[a.hullId] || TRAFFIC_HULLS[a.hullId]?.sprite);
+        _trafficSpritesAsked.add(a.hullId);
+        if (!trafficActorPromotable(a, st.tune) || st.rams.has(a.id)) continue;
+        const built = _trafficHullBuildMs.get(a.hullId);
+        const lead = trafficRamLead(st.tune, ahead, _trafficFrameSim, built === undefined ? st.tune.ramBuildMs : built,
+          !!(sprite && sprite.ready));
         if (trafficContactTime(a, px, py, vx, vy, ship.angle, pl, pw, pad) < lead) requestTrafficPromotion(st, a.id, true);
       }
     }
 
-    /** Klatka (po `advance`): taran z awansem, awans z kolejki (najwyżej `maxPerFrame`) i los awansowanych NPC. */
-    function stepTrafficPromotion() {
+    /**
+     * Klatka (po `advance`): taran z awansem, awans z kolejki (najwyżej `maxPerFrame`) i los awansowanych NPC.
+     * `frameSim` — czas gry tej klatki (kroki × PHYS_DT; próg taranu liczy klatki do kadłuba w czasie gry).
+     */
+    function stepTrafficPromotion(frameSim = 0) {
       const st = trafficPromotion;
       const tb = trafficBubble;
       if (!st || !tb || !trafficV2) return;
+      if (frameSim > 0) _trafficFrameSim = _trafficFrameSim * 0.9 + Math.min(0.25, frameSim) * 0.1;
       stepTrafficRamAhead(st, tb);
       let promoted = 0;
       while (promoted < st.tune.maxPerFrame) {
@@ -16674,6 +16727,8 @@
       trafficBubble = createTrafficBubble(trafficV2, { onDestroyed: onTrafficActorDestroyed, onHit: onTrafficActorHit });
       window.TrafficBubble = trafficBubble;
       trafficPromotion = createTrafficPromotion();
+      // Narzędzia: zmierzona budowa kadłubów NPC ruchu [ms] (próg taranu — trafficRamLead).
+      trafficPromotion.hullBuildMs = _trafficHullBuildMs;
       window.TrafficPromotion = trafficPromotion;
     } else {
       console.warn('[ruch v2] wyłączony (?trafficV2=0) — stacje bez rynku, terminal nie handluje');
@@ -28450,7 +28505,7 @@
         trafficV2.setFocus(ship.pos.x, ship.pos.y, TRAFFIC_V2_BUBBLE_RADIUS);
         tickEconomyAutosave(performance.now());
         stepTrafficBerths(steps * PHYS_DT);
-        stepTrafficPromotion();
+        stepTrafficPromotion(steps * PHYS_DT);
         PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
 
@@ -29461,6 +29516,8 @@
           HullBodies.createHull(npc, (hexInit?.image || sprite.image), { visualImage: sprite.image, hullProfileId: getNpcHullRenderProfileId(npc) });
           _hullInitSpentMs += performance.now() - nowMs;
           if (npc.beamHull) {
+            // Statek ruchu: zmierzona budowa — próg taranu (trafficRamLead).
+            if (npc.trafficCourse !== undefined) noteTrafficHullBuild(npc, performance.now() - nowMs);
             prewarmHexShipVisual(sprite.image);
             attachEntityBridges(npc);
             attachEntityReactorCores(npc);

@@ -7,7 +7,7 @@ import {
   createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
   segmentHitsActor, damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates,
   createPortBerthIndex, playerBerthHolds, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion,
-  trafficContactTime, destroyTrafficActor
+  trafficContactTime, destroyTrafficActor, trafficRamFallbackDamage, trafficRectContact
 } from '../src/game/trafficBubble.js';
 import {
   ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG
@@ -270,4 +270,32 @@ test('czas do kontaktu kadłuba gracza z obrysem encji (awans przed taranem)', (
   assert.equal(trafficContactTime(a, 100, 0, 0, 0, 0, 600, 200), 0);
   // Ruch względny: statek leci na gracza, gracz stoi.
   assert.ok(Math.abs(trafficContactTime({ ...a, vx: 500 }, 2000, 0, 0, 0, Math.PI, 600, 200) - 1.6) < 1e-9);
+});
+
+// Taran w megafrachtowiec (2026-10-26, „wybuchł od razu, jak go dotknąłem”): ścieżka awaryjna nigdy nie zabija w
+// pierwszej klatce, encja w warpie i w hipercruisie to duch, NPC bez kadłuba odpycha bez obrażeń.
+test('taran awaryjny: duch (warp, hipercruise), obrażenia z sufitem na kontakt i odstępem, kontakt miękki NPC bez kadłuba', () => {
+  const br = fakeBridge([
+    { id: 3, x: 0, y: 0, angle: 0, length: 400, width: 100 },
+    { id: 4, x: 5000, y: 0, angle: 0, length: 400, width: 100, flags: ACTOR_FLAG.WARP },
+    { id: 5, x: 10000, y: 0, angle: 0, length: 400, width: 100, vx: 3000 }
+  ]);
+  const tb = createTrafficBubble(br);
+  syncTrafficBubble(tb, 10);
+  setTrafficBubbleTime(tb, 10);
+  assert.equal(trafficRamContact(tb, 5000, -180, 0, 1000, 300, 0, 500), null, 'encja w warpie — duch');
+  assert.equal(trafficRamContact(tb, tb.byId.get(5).cx, -180, 0, 1000, 300, 0, 500), null, 'hipercruise encji — duch');
+  const a = tb.byId.get(3);
+  // Dopalacz 1137 j/s: ramK · v² ≈ 25,9 tys. (dawniej zabijało od razu) — teraz najwyżej 15% maks. punktów.
+  const d1 = trafficRamFallbackDamage(tb, a, 1137);
+  assert.ok(Math.abs(d1 - a.maxHp * tb.tune.ramMaxFrac) < 1e-9, `sufit kontaktu: ${d1}`);
+  assert.equal(trafficRamFallbackDamage(tb, a, 1137), 0, 'ten sam kontakt w kolejnej klatce — bez obrażeń');
+  setTrafficBubbleTime(tb, 10 + tb.tune.ramCooldown);
+  assert.ok(trafficRamFallbackDamage(tb, a, 1137) > 0, 'po odstępie — kolejna porcja');
+  assert.ok(Math.abs(trafficRamFallbackDamage(tb, tb.byId.get(4), 60) - tb.tune.ramK * 60 * 60) < 1e-9, 'lekki taran (pod sufitem) — ramK · v²');
+  assert.equal(trafficRamFallbackDamage(tb, a, 20), 0, 'poniżej progu');
+  // Kontakt miękki: prostokąt NPC (obrys encji), normalna ku graczowi, prędkość zbliżenia.
+  const c = trafficRectContact(0, -(50 + 150 - 20), 0, 1000, 300, 0, 1137, 0, 0, 0, 400, 100, 0, 0);
+  assert.ok(c && Math.abs(c.depth - 20) < 1e-9 && Math.abs(c.ny + 1) < 1e-9 && c.speed === 1137);
+  assert.equal(trafficRectContact(0, -400, 0, 1000, 300, 0, 500, 0, 0, 0, 400, 100, 0, 0), null);
 });

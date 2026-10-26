@@ -235,6 +235,12 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
         // Blok „C” z włazem za dziobem, sterówka przed nim i kapsuły po bokach
         // (1672 × 941, render 2760 × 1553 — sprite powiększony ×1,65).
         Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: 456, y: -6, w: 222, h: 212, rot: 0 })
+      ]),
+      // Cały skład jednym sprite'em (TRAFFIC_HULLS.megafreighter — awans statku ruchu, 1774 × 887, render 2760 × 1380):
+      // ten sam blok „C” dziobu (dziób ×1,19 w px względem lokomotywy, czubek w x 1758), strefa w świecie jak
+      // w lokomotywie (model `megafreighter` bez skalowania). Wybór: `resolveBridgeVariant` (typ `megafreighter`).
+      sklad: Object.freeze([
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: 431, y: -23, w: 235, h: 225, rot: 0 })
       ])
     }),
     defaultVariant: 'standard'

@@ -29,6 +29,7 @@ const RT = await import('../src/game/shipBridgeRuntime.js');
 const BB = await import('../src/game/shipBridgeBeams.js');
 const { attachReactorCores, reactorCellNode, reactorHull } = await import('../src/game/reactorCore.js');
 const { attachFuelTank } = await import('../src/game/fuelTank.js');
+const { autoReactorMarker } = await import('../src/game/reactorCoreGame.js');
 
 const SHIPS = SHIP_EDITOR_DEFAULTS.ships;
 // Kadłuby ruchu z danymi pełnego kadłuba (bez floty z `editorKey`, megafrachtowca — pociąg modułów — i holownika
@@ -160,5 +161,47 @@ test('NPC ruchu: cywil — dysze MAIN tylko do obrazu (lot bez zmian) i SIDE; ok
       assert.equal(npcHasPhysicalThrusters(npc), false, `${id}: lot cywila bez zmian`);
       assert.equal(npc.editorHardpoints, undefined, `${id}: bez gniazd`);
     }
+  }
+});
+
+// Taran w megafrachtowiec (E6, 2026-10-26): statek ruchu awansuje jako JEDEN kadłub na belkach ze sprite'a całego
+// składu (nie pociąg modułów). Mostek — wariant `sklad` strefy lokomotywy (ten sam blok „C” dziobu), rdzeń i zbiornik
+// z automatu.
+test('megafrachtowiec ruchu: kadłub ze sprite\'a składu, mostek `sklad` na kadłubie, rdzeń i zbiornik z automatu', () => {
+  const id = 'megafreighter';
+  const img = png(id);
+  const s = scaleOf(id);
+  const e = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, mass: 1e4, hp: 1000, maxHp: 1000, type: id, shipFrame: id };
+  HullBodies.createHull(e, resizeBox(img, s.w, s.h), { visualImage: { naturalWidth: img.width, naturalHeight: img.height, width: img.width, height: img.height } });
+  try {
+    assert.ok(e.beamHull, 'kadłub belkowy');
+    assert.equal(RT.resolveBridgeHullKey(e), 'megafreighter');
+    assert.equal(RT.resolveBridgeVariant(e), 'sklad');
+    assert.equal(RT.resolveBridgeVariant({ type: 'megafreighter_front' }), null, 'lokomotywa pociągu — strefa domyślna');
+    RT.attachEntityBridges(e);
+    const st = e.bridgeState;
+    assert.ok(st && st.bridges.length === 1, 'mostek zamontowany');
+    const z = BRIDGE_LAYOUT_PROPOSALS.megafreighter.variants.sklad[0];
+    assert.equal(st.bridges[0].def.x, z.x, 'strefa `sklad`, nie lokomotywy');
+    // Strefa cała na kadłubie (komórki z węzłem) — bez dziur na starcie mostek nie jest od razu „zniszczony”.
+    assert.ok(st.bridges[0].total >= 4, `komórek strefy: ${st.bridges[0].total}`);
+    const hull = e.beamHull, cs = hull.body.cellSize, p = { x: 0, y: 0 };
+    for (const [ox, oy] of [[0, 0], [-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45]]) {
+      BB.beamPngToLattice(st, z.x + ox * z.w, z.y + oy * z.h, p);
+      assert.ok(BB.bridgeCellNode(hull, Math.floor(p.x / cs), Math.floor(p.y / cs)) >= 0, `róg strefy ${ox},${oy} poza kadłubem`);
+    }
+    // Strefa w świecie = strefa lokomotywy (model mostka bez skalowania), ±2%.
+    const loco = BRIDGE_LAYOUT_PROPOSALS.megafreighter.variants.standard[0];
+    const lk = getHullRenderSize('megafreighter', 1672, 941);
+    assert.ok(Math.abs(z.w * s.x / (loco.w * lk.w / 1672) - 1) < 0.02 && Math.abs(z.h * s.y / (loco.h * lk.h / 941) - 1) < 0.02);
+    assert.equal(REACTOR_CORE_MARKERS[id], undefined, 'rdzeń z automatu (ReactorGame.attach)');
+    const [core] = attachReactorCores(e, [autoReactorMarker(e, img.width, img.height)], { pngWidth: img.width, pngHeight: img.height });
+    assert.ok(core && !core.invalid && core.cellX.length >= 1, 'komora reaktora z automatu');
+    e.reactorCores = [core];
+    const tank = attachFuelTank(e, id);
+    assert.ok(tank && tank.cellX.length >= 1, 'zbiornik');
+    RT.releaseShipBridges?.(e);
+  } finally {
+    HullBodies.release(e);
   }
 });

@@ -51,9 +51,9 @@ export const TRAFFIC_HULLS = Object.freeze({
     png: [1774, 887],
     main: [[-815, -181, 90], [-815, -71, 92], [-815, 40, 92], [-815, 148, 90]]
   }),
-  // Jeden sprite całego składu (2760 j.) — tyle, ile widać z daleka i w porcie.
-  // TODO AGENT (Z13): pełny NPC megafrachtowca to pociąg z megafreighterTrain.js
-  // (lokomotywa + wagony + ogon); awans proxy → NPC musi wybrać jedno z dwóch.
+  // Jeden sprite całego składu (2760 j.) — tyle, ile widać z daleka i w porcie. Awans do NPC (E6, 2026-10-26):
+  // JEDEN kadłub na belkach z tego sprite'a (~8,7 tys. węzłów, budowa ~2,3 ms — scripts/koszt-kadluba-ruchu.mjs), nie
+  // pociąg megafreighterTrain.js; mostek — wariant `sklad` strefy lokomotywy (resolveBridgeVariant).
   megafreighter: Object.freeze({
     sprite: new URL('../../assets/megafreighter.png', import.meta.url).href,
     png: [1774, 887],
