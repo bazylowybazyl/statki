@@ -29516,9 +29516,9 @@
           HullBodies.createHull(npc, (hexInit?.image || sprite.image), { visualImage: sprite.image, hullProfileId: getNpcHullRenderProfileId(npc) });
           _hullInitSpentMs += performance.now() - nowMs;
           if (npc.beamHull) {
-            // Statek ruchu: zmierzona budowa — próg taranu (trafficRamLead).
-            if (npc.trafficCourse !== undefined) noteTrafficHullBuild(npc, performance.now() - nowMs);
             prewarmHexShipVisual(sprite.image);
+            // Statek ruchu: czas do gotowości kadłuba (budowa i rozgrzanie wyglądu) — próg taranu (trafficRamLead).
+            if (npc.trafficCourse !== undefined) noteTrafficHullBuild(npc, performance.now() - nowMs);
             attachEntityBridges(npc);
             attachEntityReactorCores(npc);
             drawNPCPretty(ctx, npc, s);
