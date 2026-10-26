@@ -36,7 +36,8 @@ zwolnienie, wlot, hamowanie) → ślizg → od nowa.
 | 4 | `soczewka` — soczewka bańki | pierścień refrakcji na elipsie bańki przez cały skok (przód najmocniej, boki słabiej, tył prawie wcale); kadłub w elipsie bez zmian |
 
 Inne: **K** — kamera w skoku (obrót kursem w górę / w prawo / bez obrotu — niżej), **Z** — zoom skoku stały / × zoom
-gracza (niżej, „Skaczące planety”), **B** — wygląd smug skał pasa (ślad światła / klin — niżej, „Runda 2026-10-23”),
+gracza (niżej, „Skaczące planety”), **B** — wygląd skał pasa w skoku (ślad światła = bryła + osobny ślad / bryła /
+dawne ślad i klin — `docs/webgpu/WARP-SKALY.md`), **G** — deflektor skoku (opływ skał wokół dziobu, `?deflektor=0`),
 **P** — wyjście z pędem / do zatrzymania (suwak k: rampa hamuje do k × 500 j/s, potem zwykły lot zbiera
 nadmiar hamowaniem 200 j/s² — przy k = 3 ślizg ~5 km / 5 s), **J / M** — trasa, **F** — lot swobodny (W/S ciąg,
 A/D obrót, Shift dopalacz, CapsLock / 9 warp, drugi raz — wyjście), **spacja** — skok od nowa, **Esc** — pauza,
