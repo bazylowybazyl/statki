@@ -316,7 +316,8 @@ export function attachReactorCores(entity, markers, options = {}) {
     killMode: options.killMode || CORE_DEFAULTS.killMode,
     config: { ...CORE_DEFAULTS, ...(options.config || {}) },
     color: options.color || null,
-    kind: options.kind || null
+    kind: options.kind || null,
+    bridgeCells: bridgeArmorCells(entity, hull)
   };
   const claimed = new Set();
   const cores = [];
@@ -352,10 +353,13 @@ function buildCore(entity, hull, marker, index, opts, claimed) {
     const key = s.ix[i] + s.iy[i] * dx;
     if (claimed.has(key)) continue; // komory się nie nakładają
     claimed.add(key);
-    // Pancerz: maxHp × armorMul, ten sam ułamek zdrowia.
-    const b0 = s.maxHp[i];
-    const frac = b0 > 0 ? Math.max(0, s.hp[i]) / b0 : 1;
-    s.maxHp[i] = b0 * armorMul;
+    // Pancerz: maxHp × armorMul, ten sam ułamek zdrowia. Komórka strefy mostka (rdzeń Atlasa pod mostkiem
+    // rufowym) — od bazy sprzed mostka i WIĘKSZY z mnożników, nie iloczyn.
+    const under = opts.bridgeCells?.get(key);
+    const b0 = under ? under.base : s.maxHp[i];
+    const cur = s.maxHp[i];
+    const frac = cur > 0 ? Math.max(0, s.hp[i]) / cur : 1;
+    s.maxHp[i] = b0 * (under ? Math.max(armorMul, under.mul) : armorMul);
     s.hp[i] = frac * s.maxHp[i];
     ixs.push(s.ix[i]); iys.push(s.iy[i]); base.push(b0); maxs.push(s.maxHp[i]);
   }
@@ -416,6 +420,27 @@ function buildCore(entity, hull, marker, index, opts, claimed) {
   };
   reactorCoreWorld(core, _p);
   return core;
+}
+
+/**
+ * Komórki stref mostków na belkach tego kadłuba (mostki montują się przed rdzeniami — `attachEntityBridges`):
+ * klucz siatki → { base (HP sprzed mostka), mul (pancerz strefy) }. Null — bez mostków albo z innego rodu.
+ */
+function bridgeArmorCells(entity, hull) {
+  const st = entity?.bridgeState;
+  if (!st || st.lineage !== hull.dmgKey || !Array.isArray(st.bridges)) return null;
+  const dx = hull.body.dims.x;
+  let map = null;
+  for (const b of st.bridges) {
+    if (!b?.cellX || !b.cellBaseHp) continue;
+    const mul = Number(b.def?.armorMul) || 1;
+    for (let k = 0; k < b.cellX.length; k++) {
+      const base = b.cellBaseHp[k];
+      if (!(base > 0)) continue;
+      (map || (map = new Map())).set(b.cellX[k] + b.cellY[k] * dx, { base, mul });
+    }
+  }
+  return map;
 }
 
 /** Zdejmuje rdzenie z encji i przywraca pancerz komór (tylko u bieżącego gospodarza). */

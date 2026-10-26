@@ -14,15 +14,17 @@
 // (px = x / s − przesunięcie, tabela w nagłówku hullDesignSystemSlots.js), hr = promień modułu `reactor` / s
 // (obudowa 3D stoi w gnieździe kreatora, wariant v 2). Promień komory r — dawny z automatu (rozgrywka bez zmian
 // poza miejscem). Miejsca nie nachodzą na wieże (SHIP_EDITOR_DEFAULTS) ani strefy mostków
-// (BRIDGE_LAYOUT_PROPOSALS) — tests/reactorCoreMarkers.test.mjs. Bellator, Iron Skull i Atlas — miejsca z dema
-// rdzenia (dema/rdzen-hulls-data.js, docs/webgpu/DEMO-RDZEN.md).
+// (BRIDGE_LAYOUT_PROPOSALS) — tests/reactorCoreMarkers.test.mjs. Bellator i Iron Skull — miejsca z dema
+// rdzenia (dema/rdzen-hulls-data.js, docs/webgpu/DEMO-RDZEN.md). Atlas — POD MOSTKIEM RUFOWYM (decyzja użytkownika
+// 2026-10-26: „rdzeń powinien być pod tylnym mostkiem”; środek strefy `mostek_rufowy`): komora leży w strefie mostka,
+// wspólne komórki mają większy z pancerzy, nie iloczyn (`bridgeArmorCells` w src/game/reactorCore.js).
 //
 // Klucz = id profilu renderu kadłuba (HULL_RENDER_PROFILES, getNpcHullRenderProfileId).
 
 const marker = (m) => Object.freeze([Object.freeze(m)]);
 
 export const REACTOR_CORE_MARKERS = Object.freeze({
-  atlas: marker({ id: 'atlas_A', x: -275, y: 94, r: 56, armorMul: 3, hr: 44, tier: 'R6', model: 'atlas' }),
+  atlas: marker({ id: 'atlas_A', x: -735, y: -13, r: 56, armorMul: 3, hr: 44, tier: 'R6', model: 'atlas' }),
   // Terra Nova — kreator: custos −20 (r 5), hasta −30 (r 8), bellator −17 (r 26), citadella −230 (r 24), colossus −330 (r 30)
   terran_frigate: marker({ id: 'custos_A', x: -214.5, y: 6, r: 295.8, hr: 62.5, tier: 'R1', model: 'terran' }),
   terran_destroyer: marker({ id: 'hasta_A', x: -92.5, y: -0.5, r: 88.9, hr: 21.3, tier: 'R2', model: 'terran' }),
