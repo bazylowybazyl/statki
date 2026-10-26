@@ -2,10 +2,15 @@
  * AWANS STATKU RUCHU DO PEŁNEGO NPC (E6, docs/E6-banka-w-grze.md § „Awans do pełnego NPC”).
  *
  * Encja bańki (lekki statek z workera ruchu) to obraz i prosty obrys. Gdy gracz wchodzi z nią w walkę
- * (trafienie, taran), staje się pełnym NPC gry: kadłub na belkach ze sprite'a (kratery, rozpad, wrak), lot
- * i rozkazy jak inne NPC. Ten moduł trzyma tylko DECYZJE (czysty, bez DOM i gry):
+ * (trafienie) albo leci na nią kadłubem (taran — PRZED kontaktem, z czasu do zderzenia), staje się pełnym NPC
+ * gry: kadłub na belkach ze sprite'a (cięcie, zgniot, kratery, rozpad, wrak), lot i rozkazy jak inne NPC. Także
+ * encje bez kursu — zapas floty (STOCK), postój (PARKED), odlot po końcu kursu (DEPARTED): nietykalnych nie ma.
+ * Ten moduł trzyma tylko DECYZJE (czysty, bez DOM i gry):
  *   - kolejka awansów — najwyżej `maxPerFrame` na klatkę (budowa kadłuba kosztuje), najwyżej `maxAlive` NPC
- *     z ruchu naraz (reszta zostaje encjami i ginie na obrysie);
+ *     z ruchu naraz (reszta zostaje encjami i ginie na obrysie); taran wchodzi na początek kolejki i ma własny
+ *     zapas `ramReserve` ponad limitem — statek, na który gracz wlatuje, nie czeka za ostrzelanymi;
+ *   - czas do kontaktu kadłuba gracza z obrysem encji (`trafficContactTime`) — próg `ramLead` (budowa kadłuba
+ *     z zapasem);
  *   - werdykt dla awansowanego NPC: żyje, zginął (kurs → `destroyed` do workera), albo wraca do bańki —
  *     po `calmSeconds` bez trafienia gracza i dalej niż `releaseRadius` (zasięg życia NPC gry,
  *     `NPC_DESPAWN_RADIUS`) — `detach` z pozą, bańka materializuje kurs tam, gdzie był NPC;
@@ -30,7 +35,24 @@ export const TRAFFIC_PROMOTION_TUNE = {
   /** Cywil ucieka tak daleko od napastnika [j.]. */
   fleeDistance: 18000,
   /** Szybciej [j./s] (hipercruise) — encja nie awansuje: ucieka, trafienia zostają na obrysie bańki. */
-  maxSpeed: 2500
+  maxSpeed: 2500,
+  /**
+   * Taran: awans, gdy kontakt kadłuba gracza z obrysem encji za mniej niż tyle [s]. Kolejka (1 awans na klatkę)
+   * + budowa kadłuba na belkach ze sprite'a w `drawNPCPretty` (sprite wczytany zawczasu, budżet budowy kadłubów
+   * na klatkę) to kilka klatek — 0,75 s to kilkanaście klatek zapasu także przy 60 Hz.
+   */
+  ramLead: 0.75,
+  /** Zapas limitu `maxAlive` tylko dla taranu. */
+  ramReserve: 4,
+  /** Zapas obrysu w teście kontaktu [j.] (obrysy gracza i encji — prostokąty). */
+  ramPad: 60,
+  /**
+   * Awans „na taran”, do którego zderzenie nie doszło (gracz minął statek albo skręcił — w ciasnym porcie częste):
+   * po tylu s, bez ubytku punktów i bez trafienia gracza, dalej niż `ramReleaseRadius` od gracza — NPC wraca do
+   * bańki, nie trzyma miejsca w limicie przez pełne `calmSeconds`.
+   */
+  ramCalmSeconds: 4,
+  ramReleaseRadius: 5000
 };
 
 /**
@@ -84,12 +106,23 @@ export function trafficGrudgeTarget(npc, player, hidden, range = TRAFFIC_PROMOTI
 /** Faz przy stanowisku (i postoju w miejscu) — NPC stoi, a nie ucieka. */
 const PHASES_HOLD = new Set(['capture', 'docked', 'undock', 'hold', 'station']);
 
-/** Czy encję bańki gry (`trafficBubble.js`) wolno awansować: kurs (nie zapas floty), bez warpa i hipercruise. */
+/**
+ * Czy encję bańki gry (`trafficBubble.js`) wolno awansować: kurs, zapas floty, postój, odlot — bez warpa
+ * i hipercruise (> `maxSpeed`), kadłub z pełnym NPC.
+ */
 export function trafficActorPromotable(a, tune = TRAFFIC_PROMOTION_TUNE) {
-  if (!a?.alive || !(a.id >= 0)) return false;
-  if (a.flags & (ACTOR_FLAG.STOCK | ACTOR_FLAG.PARKED | ACTOR_FLAG.WARP | ACTOR_FLAG.DEPARTED)) return false;
+  if (!a?.alive || !Number.isFinite(a.id)) return false;
+  if (a.flags & ACTOR_FLAG.WARP) return false;
   if (a.vx * a.vx + a.vy * a.vy > tune.maxSpeed * tune.maxSpeed) return false;
   return !TRAFFIC_PROMOTION_SKIP_HULLS.has(a.hullId);
+}
+
+/**
+ * Czy encja niesie kurs (numer ≥ 0, bez DEPARTED): awans przez `attach` / `detach`, strata przez `destroyed`.
+ * Inaczej (STOCK, PARKED — id ujemny; DEPARTED — kurs zamknięty) — `entity-hold` / `entity-lost`.
+ */
+export function trafficActorHasCourse(a) {
+  return !!a && a.id >= 0 && !(a.flags & ACTOR_FLAG.DEPARTED);
 }
 
 /** Rozkaz świeżego NPC: 'hold' (stoi przy stanowisku albo w kolejce) albo 'flee' (ucieka od napastnika). */
@@ -100,23 +133,43 @@ export function trafficPromotionOrder(phase) {
 export function createTrafficPromotion(tune = {}) {
   return {
     tune: { ...TRAFFIC_PROMOTION_TUNE, ...tune },
-    /** Numery kursów czekające na awans (kolejność trafień). */
+    /** Numery encji czekające na awans (taran na początku, potem kolejność trafień). */
     queue: [],
     queued: new Set(),
+    /** Taran w kolejce (pierwszeństwo, zapas limitu). */
+    rams: new Set(),
     /** numer kursu → NPC gry. */
     alive: new Map(),
-    stats: { requested: 0, promoted: 0, demoted: 0, destroyed: 0, refused: 0 }
+    stats: { requested: 0, promoted: 0, demoted: 0, destroyed: 0, refused: 0, rams: 0 }
   };
 }
 
-/** Prośba o awans encji `id` (trafienie, taran). Zwraca true, gdy weszła do kolejki. */
-export function requestTrafficPromotion(st, id) {
-  if (!st || !Number.isFinite(id) || st.alive.has(id) || st.queued.has(id)) return false;
-  if (st.alive.size + st.queue.length >= st.tune.maxAlive) {
+/**
+ * Prośba o awans encji `id` (trafienie; `ram` — taran: na początek kolejki, limit `maxAlive + ramReserve`;
+ * encja już w kolejce po trafieniu przechodzi na początek). Zwraca true, gdy weszła do kolejki albo przeszła
+ * na jej początek.
+ */
+export function requestTrafficPromotion(st, id, ram = false) {
+  if (!st || !Number.isFinite(id) || st.alive.has(id)) return false;
+  if (st.queued.has(id)) {
+    if (!ram || st.rams.has(id)) return false;
+    st.queue.splice(st.queue.indexOf(id), 1);
+    st.queue.splice(st.rams.size, 0, id);
+    st.rams.add(id);
+    st.stats.rams++;
+    return true;
+  }
+  const cap = st.tune.maxAlive + (ram ? st.tune.ramReserve : 0);
+  if (st.alive.size + st.queue.length >= cap) {
     st.stats.refused++;
     return false;
   }
-  st.queue.push(id);
+  if (ram) {
+    // Za wcześniejszymi taranami, przed trafieniami.
+    st.queue.splice(st.rams.size, 0, id);
+    st.rams.add(id);
+    st.stats.rams++;
+  } else st.queue.push(id);
   st.queued.add(id);
   st.stats.requested++;
   return true;
@@ -127,6 +180,7 @@ export function takeTrafficPromotion(st) {
   if (!st?.queue.length) return null;
   const id = st.queue.shift();
   st.queued.delete(id);
+  st.rams.delete(id);
   return id;
 }
 
@@ -139,11 +193,17 @@ export function trafficPromotionVerdict(st, npc, now, px, py) {
   // Hulk mostka (utrata dowodzenia) dryfuje do wraku — nie wraca do bańki jako cały statek.
   if (npc.isBridgeHulk || npc.bridgeState?.commandLost) return 'keep';
   const t = st.tune;
-  const lastHit = Math.max(Number(npc._lastPlayerHit) || -Infinity, Number(npc.__trafficPromotedAt) || -Infinity);
-  if (!(now - lastHit >= t.calmSeconds)) return 'keep';
   const dx = (Number(npc.x) || 0) - px;
   const dy = (Number(npc.y) || 0) - py;
-  return dx * dx + dy * dy > t.releaseRadius * t.releaseRadius ? 'demote' : 'keep';
+  const d2 = dx * dx + dy * dy;
+  const promotedAt = Number(npc.__trafficPromotedAt) || -Infinity;
+  // Awans na taran bez zderzenia: nietknięty (punkty, trafienie gracza), gracz odleciał — wraca szybko.
+  if (npc.__trafficRamOnly && !(Number(npc._lastPlayerHit) > promotedAt)
+    && !(Number(npc.hp) < Number(npc.__trafficHp0)) && now - promotedAt >= t.ramCalmSeconds
+    && d2 > t.ramReleaseRadius * t.ramReleaseRadius) return 'demote';
+  const lastHit = Math.max(Number(npc._lastPlayerHit) || -Infinity, promotedAt);
+  if (!(now - lastHit >= t.calmSeconds)) return 'keep';
+  return d2 > t.releaseRadius * t.releaseRadius ? 'demote' : 'keep';
 }
 
 /** Punkt ucieczki od napastnika (fx, fy): wzdłuż linii napastnik → statek, `distance` dalej. */

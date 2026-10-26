@@ -234,3 +234,52 @@ ringach), 8 s gry, potem 2 s próbek bez proxy i 2 s z proxy (`TrafficBubble.hid
 - 0 błędów strony i workerów; 0 pipeline'ów synchronicznych na Ziemi (przebieg 3). Przegląd portów (przebieg 2):
   3 pipeline'y synchroniczne modeli stacji planet (`station009_low`, `Space_Station_Top` z `src/stations/*.glb`,
   `stations3D`) przy pierwszym wejściu w kadr odległego portu — poza bańką (obszar `stacje`), do rozgrzewki stacji.
+
+## Taran z awansem i encje bez kursu (2026-10-23)
+
+Zgłoszenie użytkownika (gra na `main`): wlot Atlasa w duży frachtowiec bańki odpychał (SAT) albo od razu niszczył
+statek (obrażenia `ramK · v²` na obrysie), zamiast ciąć go silnikiem belek jak dawniej; okręty zapasu, statki na
+redzie i w odlocie były „niewrażliwe”. Zlecenie orkiestratora: awans PRZED kontaktem, pierwszeństwo taranu,
+SAT tylko awaryjnie; bez nietykalnych — strata w ekonomii.
+
+### Decyzje
+
+- **Awans z czasu do kontaktu.** `trafficContactTime` (`trafficBubble.js`) — prostokąt encji powiększony o rzut
+  obrysu gracza na osie encji, ruch względny prostoliniowy (test płyt). Pierwsza wersja liczyła gracza okręgiem
+  pół długości Atlasa (~900 j.) — w zatłoczonej zatoce „kontakt” łapały wszystkie statki w promieniu ~1 km
+  i limit się zapychał (139–1317 odmów w przebiegu, właściwy cel bez awansu). Próg `ramLead` 0,75 s.
+- **Pierwszeństwo i zapas.** Taran wchodzi na początek kolejki (za wcześniejszymi taranami), limit
+  `maxAlive + ramReserve` = 8 + 4; trafiony statek, na który gracz potem wlatuje, przechodzi na początek.
+- **Szybki powrót awansu bez zderzenia** (`ramCalmSeconds` 4 s, `ramReleaseRadius` 5 tys. j., NPC nietknięty) —
+  przelot przez port awansuje statki, obok których gracz tylko przeleciał; bez tego trzymały limit przez 20 s.
+- **SAT awaryjnie.** Kontakt z obrysem encji do awansu, która nie zdążyła: odepchnięcie bez obrażeń + taran na
+  początek kolejki. Encja bez awansu (megafrachtowiec, warp, hipercruise encji): jak dawniej.
+- **Nietykalnych nie ma.** STOCK / PARKED / DEPARTED biorą obrażenia i awansują. Bez kursu: `entity-hold`
+  (statek firmy poza pulą dyspozytora na czas walki — inaczej nowy kurs dałby drugi egzemplarz statku; odlot znika
+  z bańki) i `entity-lost` (zapas floty i okręt garnizonu w odlocie → `settleGarrisonLosses` od razu; statek firmy →
+  `loseShip`, jego nowy kurs ginie z nim). Zniszczony okręt zapasu przejmuje miejsce i id encji okrętu o ostatnim
+  numerze klasy (`renameParkedShip`) — pad zniszczonego zostaje pusty, reszta stoi, gdzie stała.
+
+### Pomiary (RTX 5080, headless Chrome, tryb gracza, ziarno 7)
+
+`node scripts/webgpu/ruch-banka-gra.mjs --query renderWorker=1 --taran 1 --odlot 1 --obserwacja 8` (przebieg pełny;
+`--taran tylko` — sam etap, 10 przebiegów strojenia harnessu i progu). Gracz 450 j/s względnie, prowadzony na cel
+w każdej klatce do pierwszego kontaktu; zapis co klatkę, zrzuty co 4 klatki (`09-taran-<cel>-NNN.png`).
+
+| cel | kadłub na belkach od klatki | pierwsze uderzenie (ubytek NPC) | kontakty SAT awaryjne | koniec |
+|---|---|---|---|---|
+| ciężki frachtowiec z kursem (kolejka portu) | 31 | 102 | 0 | NPC przeżył przecięty: 4000 → ~1690 pkt |
+| okręt zapasu (fregata TN) na padzie K-7, od rufy | 32 | 101–103 | 0 | NPC zniszczony, wrak na belkach |
+| statek firmy na redzie (frachtowiec dalekiego zasięgu) | 24 | 121 | 1 (inny statek obok) | NPC zniszczony, wrak na belkach |
+
+- Bez odepchnięcia i bez wybuchu w pierwszej klatce: punkty NPC spadają klatkami (np. 1200 → 814 → 786), prędkość
+  gracza maleje stopniowo; wybuch dopiero przy zniszczeniu kadłuba.
+- Cywil w locie po awansie ucieka (frachtowiec dalekiego zasięgu: kadłub na belkach ~1 s przed kontaktem, Atlas
+  ~500 j/s go nie dogonił) — zachowanie NPC, nie błąd.
+- Kadłuby na belkach naraz: sufit 12 (8 + zapas taranu 4). Taran w tłum zatoki (gracz orze najbliższe statki przy
+  stanowiskach 12 s): 0–4 kadłuby naraz po poprawkach (przed szybkim powrotem — do 12, limit zapchany awansami
+  bez zderzenia). Worker renderu w tym czasie: CPU 2,3–3,8 ms, GPU 0,55–0,9 ms; koszt fizyki kadłubów na wątku gry
+  zegar krokowy harnessu ukrywa (`performance.now` zamrożony).
+- 0 błędów strony i workerów, 0 pipeline'ów synchronicznych (worker i strona) w całym przebiegu z przeglądem portów.
+- Symulacja `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` identyczna liczba w liczbę (poza czasem ticku) —
+  straty bez gracza się nie dzieją.
