@@ -281,7 +281,8 @@ try {
     throw new Error('tylko koszt — koniec');
   }
 
-  // Luk Atlasa: gracz na wolnym polu MEGA zatoki z ładunkiem — postój (berth-hold) otwiera luk, kontenery z ładunku.
+  // Luk Atlasa: gracz na wolnym polu MEGA zatoki z ładunkiem i otwartym terminalem stacji — luk się otwiera,
+  // kontenery z ładunku (sam postój — berth-hold — luku nie otwiera: domyślnie zamknięty, 2026-10-26).
   await ev(`window.PortCargo.lookEnd()`);
   report.atlas = await ev(`(() => {
     const mass = window.PortCargo.devCargo({ steel: 6, copper_ore: 4, chips: 2 });
@@ -293,12 +294,16 @@ try {
     window.ship.vel.x = 0; window.ship.vel.y = 0;
     return { mass, berth: b.id };
   })()`);
+  await waitGame(2);
+  report.atlas.doorPostoj = await ev('window.PortCargo.playerDoor');
+  await ev(`window.openStationUI((window.stations || []).find((s) => s.id === 'earth'), 'trade')`);
   await waitGame(9);
   report.atlas.door = await ev('window.PortCargo.playerDoor');
   report.atlas.held = await ev('window.TrafficBubble.held.slice()');
   await ev(`(() => { const c = window.camera; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = 0.55; window.DevScene?.syncCamera?.(); return true; })()`);
   await waitGame(1);
   await screenshotPng(cdp, join(out, '40-luk-atlasa.png'));
+  await ev('window.closeStationUI()');
   console.log('Atlas:', JSON.stringify(report.atlas));
 
   report.syncKoniec = syncWorker();

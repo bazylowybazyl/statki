@@ -1149,6 +1149,7 @@
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { projectilePassesAlly, beamPassesAlly } from "./src/game/friendlyFire.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
+    import { PLAYER_HOME_BERTHS } from "./src/game/traffic/trafficProtocol.js";
     import {
       createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
       damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates, createPortBerthIndex,
@@ -15846,7 +15847,10 @@
         sunRadius: SUN.r,
         // Świat zawsze świeży — zapis ekonomii nakłada `loadEconomyIntoWorld` po wyborze w menu (blok „ZAPIS EKONOMII”).
         stations: stationSpecs,
-        focus: { x: ship.pos.x, y: ship.pos.y, r: TRAFFIC_V2_BUBBLE_RADIUS }
+        focus: { x: ship.pos.x, y: ship.pos.y, r: TRAFFIC_V2_BUBBLE_RADIUS },
+        // C-01 hali Atlasa: wolne dla gracza od budowy świata (start misji 1, powrót, holownik), a hala zapełniona
+        // okrętami frakcji portu (Terra Nova) — zapas floty nie staje już na stanowisku Atlasa.
+        homeBerths: [...PLAYER_HOME_BERTHS]
       }).then(ready => {
         console.info(`[ruch v2] ${bridge.mode === 'worker' ? 'worker' : 'GŁÓWNY WĄTEK (tryb awaryjny)'}: `
           + `${ready.stations.length} stacji, gospodarka ×${ready.economyScale}, ziarno ${ready.seed}, `
@@ -16593,18 +16597,20 @@
     let _portCargoLiveSlots = 8;
     const _portCargoFrame = createPortCargoFrame();
     const _portCargoCam = { x: 0, y: 0, zoom: 1 };
-    /** Luk Atlasa przy postoju i handlu: postęp wrót 0…1 (jak ScoutBay.door) — luk rysuje scoutBay3D. */
+    /** Luk Atlasa przy handlu: postęp wrót 0…1 (jak ScoutBay.door) — luk rysuje scoutBay3D. */
     let _playerCargoDoor = 0;
     const _playerCargoRes = [];
     const _playerCargoPairs = [];
     function playerCargoRecord(frameDt) {
       const p = _portCargoFrame._player;
       const atlas = !!ship && !ship.destroyed && isAtlasHullForScout();
-      const docked = atlas && (!!stationUI.open || (trafficBubble ? trafficBubble.held.length > 0 : false));
+      // Domyślnie zamknięty (decyzja użytkownika 2026-10-26: „zamknij domyślnie ładownię Atlasa — nie powinna być
+      // otwarta”): sam postój na stanowisku (`berth-hold` — start misji 1 w K-7) luku nie otwiera, tylko terminal stacji.
+      const docked = atlas && !!stationUI.open;
       // Maskowanie: ładunek w luku gaśnie z kadłubem jak luk (syncScoutBay3D — ten sam próg).
       const cl = atlas ? ship.__cloakLook : null;
       const cloaked = !!(cl && cl.active && cl.vis < 0.5);
-      // Przebieg wrót luku Atlasa (cargoBayDoorTimeline: ~6,9 s) — otwarcie przy postoju / handlu, zamknięcie po.
+      // Przebieg wrót luku Atlasa (cargoBayDoorTimeline: ~6,9 s) — otwarcie przy handlu, zamknięcie po.
       _playerCargoDoor = Math.max(0, Math.min(1, _playerCargoDoor + (docked ? 1 : -1) * (Number(frameDt) || 0) / 6.9));
       if (!atlas || cloaked || _playerCargoDoor <= 0) return null;
       const pose = window.__interpShipPose || { x: ship.pos.x, y: ship.pos.y, angle: ship.angle };
@@ -28353,6 +28359,14 @@
         ActiveCarrier.clear();
         StoryGame.tick(0);
         StoryGame.frame(frame);
+        // Ruch v2 w zamrożonym świecie: bez `advance` (gospodarka stoi), ale fokus i bufor bańki tak — worker otwiera
+        // bańkę krokiem 0, więc okręty w hali K-7 i statki przy stanowiskach widać już w odprawie, a nie dopiero
+        // po scenie (cała hala pojawiała się naraz w chwili odcumowania).
+        if (trafficV2) {
+          trafficV2.setFocus(ship.pos.x, ship.pos.y, TRAFFIC_V2_BUBBLE_RADIUS);
+          stepTrafficBerths(0);
+          trafficBubbleStep(0);
+        }
         // Mgła wojny w zamrożonym świecie (intro fabuły, dialogi startu misji): koła wzroku z bieżących pozycji, bez
         // upływu czasu — inaczej świat mgły z 0 kół do pierwszego kroku fizyki i kadr przy statku jest szary.
         if (StoryGame.worldFrozen) stepSensors(0);

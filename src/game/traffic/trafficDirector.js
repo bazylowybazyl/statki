@@ -615,13 +615,15 @@ export const PLAYER_BERTH_HOLDER = 'player';
  * w dojściu), wraca do puli, a kurs dostaje od razu inne miejsce albo kolejkę.
  * Kurs, który już stoi na polu, zostaje — przydział gracza czeka na następne
  * wywołanie. Zwolnione przez gracza stanowiska rozdaje zwykły `grantWaiting`.
- * Zwraca liczbę przeniesionych kursów.
+ * Stanowiska domowe (`director.homeBerths`, `setPlayerHomeBerths`) są w zbiorze
+ * zawsze — gracz nie musi na nich stać. Zwraca liczbę przeniesionych kursów.
  */
 export function setPlayerBerthHolds(director, berthIds, canLeave = null) {
   const { docks, registry, portControl } = director;
   if (!docks?.size) return 0;
   const now = registry.clock;
   const wanted = new Set((berthIds || []).map(String));
+  if (director.homeBerths) for (const id of director.homeBerths) wanted.add(id);
   const held = director.playerBerths || (director.playerBerths = new Set());
   let moved = 0;
   for (const layout of docks.values()) {
@@ -654,6 +656,16 @@ export function setPlayerBerthHolds(director, berthIds, canLeave = null) {
     }
   }
   return moved;
+}
+
+/**
+ * Stanowiska domowe gracza (`init.homeBerths`, `PLAYER_HOME_BERTHS`): trzymane
+ * stale, obok stanowisk, na których gracz stoi (`setPlayerBerthHolds`). Woła
+ * rdzeń przy budowie świata, przed pierwszym rozstawieniem zapasu floty.
+ */
+export function setPlayerHomeBerths(director, berthIds, canLeave = null) {
+  director.homeBerths = new Set((berthIds || []).map(String));
+  return setPlayerBerthHolds(director, [...(director.playerBerths || [])], canLeave);
 }
 
 /** Zwalnia stanowisko i jednostkę po zamknięciu kursu. */

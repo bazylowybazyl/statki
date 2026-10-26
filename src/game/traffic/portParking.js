@@ -747,12 +747,17 @@ export function fleetStockShips(fleets) {
  * Kurs wojskowy, który dostanie pad zajęty przez okręt z zapasu, ma pierwszeństwo:
  * przy następnym wywołaniu okręt przenosi się na inny pad albo na redę.
  * Hale zapełniają się równo (najmniej obłożona hala), pady w hali — na przemian
- * burtami. Zwraca { placements: Map(shipId → miejsce), berthed, reda, hangar, overflow }.
+ * burtami. Wyjątek: hala domowa gracza (`options.homeDocks` — Set id doków,
+ * hala stanowiska Atlasa) zapełnia się pierwsza i do końca — bez `keepFree`
+ * (wolnym stanowiskiem przylotu jest stanowisko gracza, trzymane przez
+ * dyspozytora) i z awansem klas aż do capital, żeby jej duże pady nie stały
+ * puste, gdy frakcja ma mało nosicieli.
+ * Zwraca { placements: Map(shipId → miejsce), berthed, reda, hangar, overflow }.
  */
 export function placeFleetStock(layout, registry, fleets, options = {}) {
   const cfg = { ...FLEET_STOCK_DEFAULTS, ...options };
   const ships = fleetStockShips(fleets);
-  const halls = militaryHalls(layout);
+  const halls = militaryHalls(layout, cfg.homeDocks);
   const memory = registry.stockBerths;
   const present = new Set(ships.map(ship => ship.id));
   for (const id of [...memory.keys()]) if (!present.has(id)) memory.delete(id);
@@ -772,6 +777,15 @@ export function placeFleetStock(layout, registry, fleets, options = {}) {
 
   // Nowi i wypchnięci przez kurs — do padów (najpierw własna klasa, potem wyżej).
   const pending = ships.filter(ship => !memory.has(ship.id) && !registry.byShip.has(ship.id));
+  // Hala domowa najpierw: każda klasa na swój pad, potem nadmiar coraz wyżej (krążownik na capital, niszczyciel
+  // na L…) — największe okręty pierwsze na każdym stopniu.
+  if (halls.home) {
+    for (let upgrade = 0; upgrade <= halls.maxRank; upgrade++) {
+      for (const ship of pending) {
+        if (!memory.has(ship.id)) tryPad(halls, memory, ship, upgrade, cfg, true);
+      }
+    }
+  }
   for (let upgrade = 0; upgrade <= cfg.maxUpgrade; upgrade++) {
     for (const ship of pending) {
       if (!memory.has(ship.id)) tryPad(halls, memory, ship, upgrade, cfg);
@@ -818,17 +832,23 @@ function fitsPad(berth, size) {
 /**
  * Hale wojskowe portu: dok → pady wg klasy, na przemian burtami. Liczone od
  * nowa przy każdym wywołaniu, bo zajętość kursami zmienia się co tick.
+ * `homeDocks` — hale domowe gracza (`hall.home`, `halls.home` = czy są).
  */
-function militaryHalls(layout) {
+function militaryHalls(layout, homeDocks = null) {
   const byDock = new Map();
   const byId = new Map();
+  let home = false;
+  let maxRank = 0;
   for (const berth of layout?.berths || []) {
     if (berthRole(berth) !== BERTH_ROLE.MILITARY) continue;
     let hall = byDock.get(berth.dockId);
     if (!hall) {
-      hall = { id: berth.dockId, order: byDock.size, total: 0, course: 0, stock: 0, byRank: new Map() };
+      const isHome = !!homeDocks?.has(berth.dockId);
+      if (isHome) home = true;
+      hall = { id: berth.dockId, order: byDock.size, total: 0, course: 0, stock: 0, home: isHome, byRank: new Map() };
       byDock.set(berth.dockId, hall);
     }
+    if (berth.rank > maxRank) maxRank = berth.rank;
     hall.total++;
     if (berth.occupantId) hall.course++;
     const pad = { berth, hall, stock: null };
@@ -854,7 +874,7 @@ function militaryHalls(layout) {
       hall.byRank.set(rank, interleaved);
     }
   }
-  return { halls: [...byDock.values()], byId, placed: 0, baseRank: new Map() };
+  return { halls: [...byDock.values()], byId, placed: 0, baseRank: new Map(), home, maxRank };
 }
 
 /** Najniższa ranga padu, na który okręt w ogóle wchodzi. */
@@ -868,7 +888,8 @@ function baseRankFor(halls, size) {
   return best;
 }
 
-function tryPad(halls, memory, ship, upgrade, cfg) {
+/** Pad dla okrętu w randze `base + upgrade`; hala domowa wygrywa z każdą inną, `homeOnly` — tylko ona. */
+function tryPad(halls, memory, ship, upgrade, cfg, homeOnly = false) {
   const size = sizeOf(ship.hullId);
   let base = halls.baseRank.get(ship.hullId);
   if (base === undefined) halls.baseRank.set(ship.hullId, base = baseRankFor(halls, size));
@@ -877,6 +898,7 @@ function tryPad(halls, memory, ship, upgrade, cfg) {
   let bestHall = null;
   let bestPad = null;
   for (const hall of halls.halls) {
+    if (homeOnly && !hall.home) continue;
     const list = hall.byRank.get(rank);
     if (!list) continue;
     let free = 0;
@@ -886,8 +908,9 @@ function tryPad(halls, memory, ship, upgrade, cfg) {
       free++;
       if (!first && fitsPad(pad.berth, size)) first = pad;
     }
-    const keep = Number(cfg.keepFree?.[list[0].berth.cls]) || 0;
+    const keep = hall.home ? 0 : Number(cfg.keepFree?.[list[0].berth.cls]) || 0;
     if (!first || free <= keep) continue;
+    if (hall.home) { bestHall = hall; bestPad = first; break; }
     if (!bestHall || lighterHall(halls, hall, bestHall)) { bestHall = hall; bestPad = first; }
   }
   if (!bestPad) return false;

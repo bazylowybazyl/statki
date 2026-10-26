@@ -41,7 +41,7 @@ import {
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
 import { BELT_MSG } from './trafficProtocol.js';
-import { recordPlayerMining, setPlayerBerthHolds, openDirectorMarket } from './trafficDirector.js';
+import { recordPlayerMining, setPlayerBerthHolds, setPlayerHomeBerths, openDirectorMarket } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
 import { summarizeTrade, portOfferFromQuote } from './tradeSummary.js';
@@ -224,6 +224,8 @@ export function createTrafficCore(post, options = {}) {
     core.pendingRestore = restored?.pending.size ? restored : null;
     // Księga rynku od startu: pierwszy bufor rynku niesie już ofertę portu (skup), nie dopiero po pierwszym kroku.
     openDirectorMarket(world.director, world.stations);
+    // Stanowisko domowe gracza (C-01 hali Atlasa) — zajęte, zanim zapas floty pierwszy raz stanie na padach.
+    if (Array.isArray(message.homeBerths) && message.homeBerths.length) setPlayerHomeBerths(world.director, message.homeBerths);
     core.bubble = message.bubble === false ? null : createWorldBubble(world);
     if (core.bubble) refreshFleetStock(core.bubble);
     if (message.focus) setFocus(message.focus);
@@ -462,6 +464,10 @@ export function createTrafficCore(post, options = {}) {
   function focus(message) {
     setFocus(message);
     if (!core.world) return;
+    // Bańka jeszcze nie weszła w port, a gra nie wysyła `advance` (sceny fabuły — odprawa w doku K-7, pauza): krok 0
+    // otwiera ją bez upływu czasu (`updateBubble` z dt = 0 tylko materializuje) — zapas floty w hali, postój i statki
+    // przy stanowiskach widać od pierwszego kadru sceny, nie naraz po jej końcu. W biegu bańkę otwiera `advance`.
+    if (core.bubble && !core.bubble.active) stepBubble(0);
     const f = core.focus;
     const p = core.published;
     const moved = Math.hypot(f.x - p.x, f.y - p.y);
