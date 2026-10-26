@@ -4,17 +4,25 @@
 // z przeszczepami z B „kropla 2.0” i D). Prośba usera (2026-10-25): „w warpie ustawiasz planetę daleko, jest mała,
 // i jak mijasz, to ogromna, potem znowu mała, i inne elementy gry też takie powinny być”.
 //
-// MAPA C (osie EKRANU, kurs = (cu, cv); ciało względem statku: a — wzdłuż kursu, + przed dziobem; l — w bok, + w prawo):
-//   W   = w_s · e_s                         pas boczny (e_s — droga od kotwicy do krawędzi kadru w bok)
-//   S_b = W / √(l² + B²)                    skala w trawersie [px/j.] — każde ciało, nawet 2 mln j. z boku, ma pas w kadrze
-//   E   = h_f · e_f (a ≥ 0) | h_b · e_b      punkt zbiegu przed dziobem / za rufą (h_b > 1 — POZA kadrem: ciało wyjeżdża
-//                                           dolną krawędzią malejąc, nie parkuje)
-//   A   = E / S_b,  |a|ε = √(a² + ε²) − ε,  ε = eps · A,  κ = A / (A + |a|ε)
-//   q   = S_b · κ;   obraz = P0 + q · (dx, dy),   promień = q · r
-// Namiar prawdziwy (obraz na kierunku ciała od kotwicy), tarcza nigdy nie zachodzi na statek (q · (d − r) > 0), przed
-// dziobem proste przechodzą w proste do punktu zbiegu („przelot po prostej”), wielkość z daleka ≈ r · E / a.
-// Przejście β (0 — prawdziwy obraz, 1 — soczewka): q_β = flat^(1−β) · S_b^β · A / (A + β · |a|ε) — β → 0 daje DOKŁADNIE
-// prawdziwy obraz, rodzina monotoniczna w β (ciało jedzie po swoim namiarze bez przestrzału).
+// MAPA O1 „kamera pochylona” (DECYZJE-2 O1-1, 2026-10-26 — wybór użytkownika zamiast mapy C; osie EKRANU, kurs = (cu, cv);
+// ciało względem statku: a — wzdłuż kursu, + przed dziobem; l — w bok, + w prawo). Homografia płaszczyzny gry — tak widzi
+// ją kamera pochylona nad statkiem: proste w świecie są prostymi na ekranie (tory bez zakrętu), JEDEN punkt zbiegu
+// przed dziobem (horyzont), ciała za płaszczyzną kamery niewidoczne:
+//   s   = w_s · ē_s / B1 · k_v              skala w trawersie [px/j.] (ē_s — średnia dróg od kotwicy do krawędzi w bok,
+//                                           najwyżej aspectMax 16:9 × połowa wysokości; k_v = min(1, speedRef / v napędu))
+//   E   = h_f · e_f                         punkt zbiegu przed dziobem [px od kotwicy] (e_f — droga do krawędzi przed dziobem)
+//   A   = E / s                             [j.] płaszczyzna kamery za statkiem (nie zależy od rozdzielczości ani od
+//                                           proporcji kadru szerszego niż 16:9; × 1 / k_v przy szybszym napędzie)
+//   w   = 1 + β · a / A                     głębia obrazu (1 — statek, 0 — płaszczyzna kamery)
+//   q   = flat^(1−β) · s^β / max(w, 1 / kMax);   obraz = P0 + q · (dx, dy),   promień = q · r · ukrycie(w)
+// β = 0 daje DOKŁADNIE prawdziwy obraz (w = 1, q = flat). Przy β = 1: przed dziobem obraz dąży do punktu zbiegu
+// (q · a → E przy a → ∞ — wielkość z daleka ≈ r · E / a), w trawersie skala s (Mars 75 tys. j. z boku: 659 px od
+// statku, promień 263 px przy 1080p — jak mapa C), za trawersem ciało rośnie i wylatuje z kadru (bokiem albo dołem).
+// Płaszczyzna kamery: skala stoi na kMax · s (bez osobliwości — obraz daleko za kadrem), a promień gaśnie przed nią:
+// ukrycie(w) = smoothstep(hideW0, hideW1, w) (hideW0 ≥ 1 / kMax) — planeta startu wylatuje dołem kadru i znika.
+// Namiar prawdziwy (obraz na kierunku ciała od kotwicy), tarcza nigdy nie zachodzi na statek (q · (d − r) > 0).
+// Odwrotność dla HUD-u w postaci zamkniętej (warpLensInverse). Dawna mapa C (pas W / √(l² + B²), dwa punkty zbiegu —
+// zawijanie toru wokół statku): docs/webgpu/WARP-SOCZEWKA.md § „Mapa O1” i „Historia”.
 //
 // KOTWICA P0 (M3): P0(β) = statek + (P0_nom − statek) · β, P0_nom — nominalne miejsce statku w kadrze (sprężyna riga bez
 // impulsu kopu i bez wysunięcia przy wyjściu, ctx.anchorSx / anchorSy; brak — statek). Przy β = 1 świat soczewki stoi
@@ -29,7 +37,9 @@
 //          × smoothstep(emerge0, emerge1, β) — nie przelatują przez kadr i nie wjeżdżają pod statek (reguła 10-08);
 //          przy β ≤ emerge0 (promień w soczewce 0) — dokładnie prawdziwy obraz (poza kadrem), więc β → 0 = prawdziwy widok.
 // Wyjście: ciało spoza celu prostuje się, gdy minie je FRONT smug gwiazd (src/render/warpLensPhase.js — od dziobu ku
-// rufie w czasie ramp.slow), w `submerge` s. Wyjście w trakcie kopu (β wyjścia < 1) zostawia tryby z wejścia. Ciało,
+// rufie w czasie ramp.slow), w `submerge` s — dłużej, gdy obraz jechałby szybciej niż exitMovePx / exitSizePx na klatkę
+// (duża tarcza pod statkiem: zaczyna przed frontem, kończy z oknem wyjścia). Wyjście w trakcie kopu (β wyjścia < 1)
+// zostawia tryby z wejścia. Ciało,
 // którego nie było w poprzedniej klatce skoku (bryła gotowa później), wynurza się w miejscu w lateTime s. Decyzja wejścia
 // widzi prawdziwy obraz także w kadrze skoku po oddaleniu ładowania (ctx.zoomJump).
 //
@@ -51,26 +61,40 @@
 // RESZTA ŚWIATA (DECYZJE E1–E3, etap 3A): REJESTR KOTWIC (WARP_LENS_ANCHORS — obraz każdego ciała dla rzeczy przypiętych:
 // ring, stacje, doki; writeLensAnchor / lensAnchorPoint), REKORDY DODATKOWE (WARP_LENS_EXTRA — komety, olbrzymy pasa,
 // Hidalgo, doki bez ciała: ten sam przebieg update co ciała) i PUNKTY (WARP_LENS_SHARED.mapPoint — floty, NPC, wraki jako
-// kropki; udział soczewki punktu = warpLensPointBeta strony gry, w wyjściu powrót 0,3 s od przejścia frontu); wszystko
-// w skoku pod statkiem (pass tła — warstwa 1, perspektywa jak FG: stacje, doki, Hidalgo, ring / z ≤ WARP_LENS_UNDER_Z
-// w passie gry: komety, kropki / przed passem ortho).
+// kropki; udział soczewki punktu = warpLensPointBeta strony gry, w wyjściu powrót 0,3 s od przejścia frontu; za płaszczyzną
+// kamery krycie gaśnie jak promień ciał); wszystko w skoku pod statkiem (pass tła — warstwa 1, perspektywa jak FG:
+// stacje, doki, Hidalgo, ring / z ≤ WARP_LENS_UNDER_Z w passie gry: komety, kropki / przed passem ortho).
 //
 // Czysty moduł (bez three, bez DOM, bez alokacji w update). Stan klatki pisze sterownik warpa (warpNurt.js:
 // WARP_WORLD_LENS), ciała rozstawia planet3d.assets.js (applyWarpWorldLens), β liczy src/render/warpLensPhase.js.
-// Weryfikacja: tests/warpWorldLens.test.mjs, tests/warpLensMapC.test.mjs, tests/warpLensPrzejscia.test.mjs,
-// `node scripts/webgpu/warp-soczewka-sym.mjs` (S1–S6, oba warianty kamery, `--wpiecie dzis`).
+// Weryfikacja: tests/warpWorldLens.test.mjs, tests/warpLensMapC.test.mjs (matematyka mapy O1 — nazwa pliku z czasów
+// mapy C), tests/warpLensPrzejscia.test.mjs, tests/warpLensAnchors.test.mjs, `node scripts/webgpu/warp-soczewka-sym.mjs`
+// (S1–S8, 1080p / 1440p, `--naped mk1|mk2|mk3`, `--aspect 21:9|32:9`, `--param klucz=liczba`).
 
 import { WARP_ARRIVAL_FRAME, warpViewEdgePx, warpArrivalScale } from '../../render/warpArrivalFrame.js';
 import { WARP_LENS_PHASE, warpExitFrontS, warpBodySubmerge, warpLensExitSlow, warpExitFrontCross } from '../../render/warpLensPhase.js';
 
 export const WORLD_LENS_DEFAULTS = Object.freeze({
-  // MAPA C (M1–M2; px — ułamki dróg od kotwicy do krawędzi kadru, skalują się z rozdzielczością)
-  hf: 0.8,              // punkt zbiegu przed dziobem × droga do krawędzi przed dziobem
-  hb: 1.25,             // punkt zbiegu za rufą × droga do krawędzi za rufą (> 1 — poza kadrem)
-  ws: 0.8,              // pas boczny × droga do krawędzi w bok (sędzia 2: dalszy brzeg Marsa 75 tys. w kadrze)
-  B: 45000,             // [j.] miękkość pasa (warp-soczewka-sym.mjs: kontrole przechodzą dla 40–52 tys., od 55 tys. Mars
-                        // 75 tys. w trawersie < 250 px przy 1080p; 45 tys. — środek: Mars 263 px)
-  eps: 0.5,             // zaokrąglenie trawersu: ε = eps · A
+  // MAPA O1 (DECYZJE-2 O1-1; px — ułamki dróg od kotwicy do krawędzi kadru, skalują się z rozdzielczością)
+  hf: 0.8,              // punkt zbiegu (horyzont) przed dziobem × droga do krawędzi przed dziobem
+  ws: 0.8,              // skala w trawersie: ciało B1 z boku stoi w trawersie ws × droga do krawędzi w bok od statku
+  B1: 87464,            // [j.] (prototyp O1: Mars 75 tys. j. z boku w trawersie 659 px od statku, promień 263 px przy
+                        // 1080p — jak w mapie C; s = ws · ē_s / B1 = 0,00878 px/j., płaszczyzna kamery A ≈ 66 tys. j.)
+  kMax: 20,             // najwyższe powiększenie homografii 1 / w — płaszczyzna kamery bez osobliwości (O1-2)
+  hideW0: 0.05,         // ukrycie za płaszczyzną kamery: promień × smoothstep(hideW0, hideW1, w), w = 1 + β · a / A
+  hideW1: 0.1,          // (obraz ciała w tym pasie leży ≥ 9 · E od kotwicy — za kadrem; hideW0 ≥ 1 / kMax)
+  aspectMax: 16 / 9,    // ē_s najwyżej aspectMax × połowa wysokości kadru (e16): szerszy ekran (21:9, 32:9) widzi po bokach
+                        // więcej świata, a skala s, płaszczyzna kamery A i tempo obrazu w środkowym kadrze 16:9 są jak na 16:9
+                        // (bez tego s rosło z szerokością: 32:9 — tempo × 2, A ≈ 33 tys. j.); węższy ekran — ē_s bez zmian;
+                        // 0 — dawne s z szerokości (A/B)
+  aspectFlow: 0,        // szerszy ekran: ē_s = e16 · (e16 / ē_s)^aspectFlow. 0 — świat jak na 16:9, boki kadru szybsze
+                        // (perspektywa: tempo obrazu rośnie z odległością od punktu zbiegu — na 32:9 ciała w bocznych pasach
+                        // do ~2 × P4); 1 — tempo w całym kadrze jak na 16:9, świat mniejszy (32:9 — × 0,5). Decyzja przy
+                        // teście na 32:9 (docs/webgpu/WARP-SOCZEWKA.md § „Mapa O1 — proporcje kadru”)
+  speedRef: 175000,     // [j/s] napęd odniesienia (Mk II, Atlas — driveModes.js: WARP_DRIVES.warp_mk2). Szybszy napęd
+                        // (ctx.driveSpeed — Mk III 250 tys.): s × speedRef / v — tempo obrazu s · v jak przy Mk II (P4:
+                        // wylot dołem blisko osi kursu 2,6 · s · v), świat w soczewce mniejszy (Mk III × 0,7); wolniejszy
+                        // napęd — s bez zmian; 0 — wyłączone (A/B)
   // Przejścia (P2)
   farRatio: 12,         // prawdziwy obraz dalej niż × obraz soczewki — wynurzenie / zanurzenie w miejscu
   moveLog: 3.5,         // ruch tylko, gdy d / (d − r) · ln(flat / Q) ≤ tyle (P4: ≤ 60 px/kl. przy wejściu w kadr przy β'
@@ -102,14 +126,22 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   arrivalHoldMax: 8,    // [s] po rampie najdłużej tyle trzymania
   // Ciało, które pojawia się w trakcie skoku (bryła gotowa później — `ready`), wynurza się w miejscu w tyle s
   lateTime: 0.4,
+  // Wyjście (recenzja O1 ust. 3): czas zanurzenia / powrotu ciała z TEMPA jego obrazu — środek i promień w kadrze najwyżej
+  // tyle px na klatkę 60 Hz przy 1080p (2/3 i 3/5 progów P4 60 / 50 — zapas: ciało mijane tuż przed wyjściem rośnie
+  // jeszcze w trakcie zanurzenia, symulator S8: Jowisz 552 → 737 px); najkrócej WARP_LENS_PHASE.submerge, najdłużej do
+  // końca okna wyjścia (exitSlow + submerge — wtedy β osi opada do 0). Duża tarcza pod statkiem (wyjście tuż po bliskim
+  // przelocie) zanurza się dłużej i wcześniej — zaczyna przed frontem, jeśli inaczej nie zdąży.
+  exitMovePx: 40,
+  exitSizePx: 30,
   // Punkty w wyjściu (mapPoint — kropki flot i wraków): prawdziwe miejsce poza kadrem o tyle px (brzeg kadłuba) —
   // kropka gaśnie w pierwszej połowie zanurzenia (dalej jedzie na prawdziwe miejsce niewidoczna); w kadrze — jedzie
   // widoczna i oddaje miejsce skórze
   pointEdgeSoft: 96,
   // Obrót przelotu
   flybyHeight: 100000,  // [j.] wysokość wirtualnej kamery obrotu przelotu
-  flybyTilt: 1,         // siła obrotu przelotu
-  // Dawna skala jednej soczewki (warpLensScale — demo „Nurt”, dema/warp-webgpu); mapa C jej nie używa
+  flybyTilt: 0.5,       // siła obrotu przelotu (DECYZJE-2 O1-3: 0,5 — prośba o obrót z 2026-09-26 zostaje, Jowisz w trawersie
+                        // ~36° zamiast 72°; spłaszczony ring był częścią „zawijania”)
+  // Dawna skala jednej soczewki (warpLensScale — demo „Nurt”, dema/warp-webgpu); mapa O1 jej nie używa
   framingDist: 90000,
   zoomRefSpeed: 150000,
   lensScaleMax: 0.5,
@@ -122,6 +154,7 @@ export const WORLD_LENS_MODE = Object.freeze({ NONE: 0, MOVE: 1, FAR: 2 });
 const MOVE = 1;
 const FAR = 2;
 const ENTRY_DECIDE_BB = 0.02;   // przy wejściu tryb ustalany, póki udział soczewki ciała mniejszy (zmiana niewidoczna)
+const PLUNGE_N = 16;            // próbki przebiegu zanurzenia przy wyjściu (_plungeTime)
 const GATE_CLOSED = 1e-6;       // bramka ringu „zamknięta”
 
 const clamp = (v, a, b) => (v < a ? a : (v > b ? b : v));
@@ -158,7 +191,7 @@ export function viewEdgeDistance(ux, uy, hw, hh, sx = 0, sy = 0) {
   return warpViewEdgePx(num(ux, 0), num(uy, 0), Math.max(0, num(hw, 0)), Math.max(0, num(hh, 0)), num(sx, 0), num(sy, 0));
 }
 
-/** Dawna skala jednej soczewki [px/j.] od nominalnej prędkości skoku (demo „Nurt”; mapa C jej nie używa). */
+/** Dawna skala jednej soczewki [px/j.] od nominalnej prędkości skoku (demo „Nurt”; mapa O1 jej nie używa). */
 export function warpLensScale(speed, edgePx, p = WORLD_LENS_DEFAULTS, maxScale = Infinity) {
   const vr = Math.max(1, Number(p.zoomRefSpeed) || WORLD_LENS_DEFAULTS.zoomRefSpeed);
   const v = Math.max(1, Math.abs(Number(speed) || 0));
@@ -167,7 +200,7 @@ export function warpLensScale(speed, edgePx, p = WORLD_LENS_DEFAULTS, maxScale =
   return Math.min(s, maxScale > 0 ? maxScale : Infinity);
 }
 
-/** Dawna perspektywa wzdłuż kursu h / √(a² + h²) (demo „Nurt”; mapa C jej nie używa). */
+/** Dawna perspektywa wzdłuż kursu h / √(a² + h²) (demo „Nurt”; mapa O1 jej nie używa). */
 export function warpDepthScale(along, depth) {
   const h = Math.max(1, Number(depth) || 1);
   const a = Number(along) || 0;
@@ -191,19 +224,24 @@ export function flybyTurn(ox, oy, h, out = { ax: 1, ay: 0, angle: 0 }) {
 
 /** Nowy kadr soczewki (rekord do warpLensFrame — raz, bez alokacji w klatce). */
 export function newWarpLensFrame() {
-  return { cu: 0, cv: -1, ef: 1, eb: 1, esR: 1, esL: 1, ec: 1, Ef: 1, Eb: 1, WR: 1, WL: 1, B: 1, eps: 0.5 };
+  return { cu: 0, cv: -1, ef: 1, eb: 1, esR: 1, esL: 1, ec: 1, Ef: 1, W: 1, s: 1, A: 1, kv: 1, kMax: 20, wMin: 0.05, h0: 0.05, h1: 0.1 };
 }
 
 /**
  * Kadr soczewki: kurs (cu, cv) w osiach ekranu, kadr hw × hh [px], kotwica P0 (p0x, p0y — px od środka kadru, y w dół).
- * Krawędzie liczone od kotwicy (ec — od środka kadru, przed dziobem: paralaksa tła w kadrze przylotu); E_f, E_b — punkty
- * zbiegu, W_R, W_L — pasy boczne [px]; p — parametry mapy.
+ * Krawędzie liczone od kotwicy (ec — od środka kadru, przed dziobem: paralaksa tła w kadrze przylotu); E_f — punkt
+ * zbiegu [px], W — pas trawersu (w_s · ē_s, ē_s — średnia dróg w bok, najwyżej aspectMax · hh) [px], s = W / B1 · kv —
+ * skala w trawersie [px/j.] (kv = speedRef / drive przy szybszym napędzie, inaczej 1), A = E_f / s — płaszczyzna kamery
+ * za statkiem [j.], kMax / wMin — powiększenie homografii najwyżej kMax (głębia nie mniejsza niż wMin = 1 / kMax), h0, h1
+ * — pas ukrycia za płaszczyzną kamery; p — parametry mapy; drive — prędkość napędu warp [j/s] (NaN — bez). Jedna skala
+ * w bok (średnia dróg do obu krawędzi, kotwica poza osią kursu w toku obrotu kadru) — proste zostają prostymi.
  */
-export function warpLensFrame(cu, cv, hw, hh, p0x, p0y, p = WORLD_LENS_DEFAULTS, out = newWarpLensFrame()) {
+export function warpLensFrame(cu, cv, hw, hh, p0x, p0y, p = WORLD_LENS_DEFAULTS, out = newWarpLensFrame(), drive = NaN) {
   const w = Math.max(0, num(hw, 0));
   const h = Math.max(0, num(hh, 0));
   const x0 = num(p0x, 0);
   const y0 = num(p0y, 0);
+  const P = WORLD_LENS_DEFAULTS;
   out.cu = cu;
   out.cv = cv;
   out.ef = warpViewEdgePx(cu, cv, w, h, x0, y0);
@@ -211,33 +249,43 @@ export function warpLensFrame(cu, cv, hw, hh, p0x, p0y, p = WORLD_LENS_DEFAULTS,
   out.esR = warpViewEdgePx(-cv, cu, w, h, x0, y0);
   out.esL = warpViewEdgePx(cv, -cu, w, h, x0, y0);
   out.ec = warpViewEdgePx(cu, cv, w, h, 0, 0);
-  out.Ef = Math.max(1, num(p.hf, WORLD_LENS_DEFAULTS.hf) * out.ef);
-  out.Eb = Math.max(1, num(p.hb, WORLD_LENS_DEFAULTS.hb) * out.eb);
-  const ws = num(p.ws, WORLD_LENS_DEFAULTS.ws);
-  out.WR = Math.max(1, ws * out.esR);
-  out.WL = Math.max(1, ws * out.esL);
-  out.B = Math.max(1, num(p.B, WORLD_LENS_DEFAULTS.B));
-  out.eps = Math.max(0, num(p.eps, WORLD_LENS_DEFAULTS.eps));
+  out.Ef = Math.max(1, num(p.hf, P.hf) * out.ef);
+  // ē_s z kadru najwyżej e16 = aspectMax · hh — na 21:9 / 32:9 s i A jak na 16:9 tej wysokości (× (e16 / ē_s)^aspectFlow)
+  const es = 0.5 * (out.esR + out.esL);
+  const am = num(p.aspectMax, P.aspectMax);
+  const e16 = am * h;
+  let esEff = es;
+  if (am > 0 && es > e16) {
+    const af = clamp(num(p.aspectFlow, P.aspectFlow), 0, 1);
+    esEff = af > 0 ? e16 * Math.pow(e16 / es, af) : e16;
+  }
+  out.W = Math.max(1, num(p.ws, P.ws) * esEff);
+  const vRef = num(p.speedRef, P.speedRef);
+  const vd = num(drive, NaN);
+  out.kv = vRef > 0 && vd > vRef ? vRef / vd : 1;
+  out.s = out.W / Math.max(1, num(p.B1, P.B1)) * out.kv;
+  out.A = out.Ef / out.s;
+  out.kMax = Math.max(1, num(p.kMax, P.kMax));
+  out.wMin = 1 / out.kMax;
+  out.h0 = Math.max(out.wMin, num(p.hideW0, P.hideW0));
+  // h1 ≤ 1: statek i wszystko przed nim (w ≥ 1) nigdy nie gaśnie — β → 0 (w = 1) zostaje dokładnie prawdziwym obrazem
+  out.h1 = Math.min(1, Math.max(out.h0 + 1e-6, num(p.hideW1, P.hideW1)));
   return out;
 }
 
 /**
- * Mapa C dla punktu / ciała: (dx, dy) — przesunięcie od statku w osiach ekranu [j.], β, flat — skala prawdziwego
+ * Mapa O1 dla punktu / ciała: (dx, dy) — przesunięcie od statku w osiach ekranu [j.], β, flat — skala prawdziwego
  * widoku [px/j.], F — kadr (warpLensFrame). Wynik: out.q — skala [px/j.] (obraz = kotwica + q · (dx, dy)), a, l, d,
- * sb (S_b), A, kappa (κ_β). Bez alokacji.
+ * sb (s — skala w trawersie), A, kappa (1 / max(w, 1 / kMax)), w (głębia 1 + β · a / A, bez ograniczenia), hide (mnożnik
+ * promienia: 1, a za płaszczyzną kamery → 0). Bez alokacji.
  */
 export function warpLensQ(dx, dy, beta, flat, F, out) {
   const a = dx * F.cu + dy * F.cv;
   const l = -dx * F.cv + dy * F.cu;
-  // Pas boczny: kotwica poza osią kursu (obrót kadru w toku) daje różne boki — przejście w |l| < B bez skoku.
-  const W = F.WR === F.WL ? F.WR : F.WL + (F.WR - F.WL) * smoothstep(-F.B, F.B, l);
-  const sb = W / Math.sqrt(l * l + F.B * F.B);
-  const E = a >= 0 ? F.Ef : F.Eb;
-  const A = E / sb;
-  const eps = F.eps * A;
-  const aa = Math.sqrt(a * a + eps * eps) - eps;
+  const sb = F.s;
   const b = beta > 1 ? 1 : (beta > 0 ? beta : 0);
-  const kb = A / (A + b * aa);
+  const w = 1 + b * a / F.A;
+  const kb = 1 / (w > F.wMin ? w : F.wMin);
   const fl = flat > 0 ? flat : sb;
   const qs = b >= 1 ? sb : (b <= 0 ? fl : Math.exp((1 - b) * Math.log(fl) + b * Math.log(sb)));
   out.q = qs * kb;
@@ -245,67 +293,56 @@ export function warpLensQ(dx, dy, beta, flat, F, out) {
   out.l = l;
   out.d = Math.sqrt(dx * dx + dy * dy);
   out.sb = sb;
-  out.A = A;
+  out.A = F.A;
   out.kappa = kb;
+  out.w = w;
+  out.hide = w >= F.h1 ? 1 : smoothstep(F.h0, F.h1, w);
   return out;
 }
 
 /**
- * Odwrotność mapy C (β = 1) dla HUD-u: punkt obrazu (X, Y — px od kotwicy, osie ekranu) → przesunięcie od statku
- * (out.dx, out.dy) [j.]. Postać zamknięta (namiar prawdziwy, ρ(d) rośnie monotonicznie na każdym promieniu).
- * Dokładna, gdy pas boczny nie przechodzi między stronami (W_R = W_L albo |l| ≥ B). Punkt poza rombem horyzontu —
- * out.ok = false (NaN).
+ * Odwrotność mapy O1 (β = 1) dla HUD-u: punkt obrazu (X, Y — px od kotwicy, osie ekranu) → przesunięcie od statku
+ * (out.dx, out.dy) [j.]. Postać zamknięta: wzdłuż kursu u = X_a / E_f = a / (A + a) → a = A · u / (1 − u), w bok
+ * l = X_l / (s · (1 − u)); poniżej u = 1 − kMax (za płaszczyzną kamery — skala kMax · s) dzielenie przez kMax · s.
+ * Punkt na horyzoncie i za nim (u ≥ 1) — nie jest obrazem żadnego punktu: out.ok = false (NaN). Obraz w paśmie ukrycia
+ * (ciało niewidoczne) też ma przeciwobraz.
  */
 export function warpLensInverse(X, Y, F, out) {
-  const rho = Math.sqrt(X * X + Y * Y);
   out.ok = false;
   out.dx = NaN;
   out.dy = NaN;
-  if (!(rho > 1e-12)) { out.ok = true; out.dx = 0; out.dy = 0; return out; }
-  const c = (X * F.cu + Y * F.cv) / rho;
-  const s = (-X * F.cv + Y * F.cu) / rho;
-  const E = c >= 0 ? F.Ef : F.Eb;
-  const W = s >= 0 ? F.WR : F.WL;
-  const K = E / rho;
-  const e = F.eps;
-  const ac = Math.abs(c);
-  // (1 − 2e)·y² − 2K(1 − e)·y + (K² − c²) = 0,  y = A / d,  √(c² + e²y²) = K − (1 − e)·y ≥ 0
-  let y = NaN;
-  const qa = 1 - 2 * e;
-  if (Math.abs(qa) < 1e-12) {
-    y = (K * K - c * c) / (2 * K * (1 - e));
+  const Xa = X * F.cu + Y * F.cv;
+  const Xl = -X * F.cv + Y * F.cu;
+  const u = Xa / F.Ef;
+  if (!(u < 1)) return out;
+  let a;
+  let l;
+  if (u >= 1 - F.kMax) {
+    a = F.A * u / (1 - u);
+    l = Xl / (F.s * (1 - u));
   } else {
-    const disc = K * K * e * e + qa * c * c;
-    if (disc >= 0) {
-      const sq = Math.sqrt(disc);
-      const y1 = (K * (1 - e) - sq) / qa;
-      const y2 = (K * (1 - e) + sq) / qa;
-      const ok1 = y1 > 0 && K - (1 - e) * y1 >= -1e-12;
-      const ok2 = y2 > 0 && K - (1 - e) * y2 >= -1e-12;
-      y = ok1 && ok2 ? Math.min(y1, y2) : (ok1 ? y1 : (ok2 ? y2 : NaN));
-    }
+    const k = F.kMax * F.s;
+    a = Xa / k;
+    l = Xl / k;
   }
-  if (!(y > 0) || !(K > ac - 1e-12)) return out;
-  const g = y * W / E;
-  const den = g * g - s * s;
-  if (!(den > 0)) return out;
-  const d = F.B / Math.sqrt(den);
-  out.dx = X / rho * d;
-  out.dy = Y / rho * d;
-  out.ok = true;
+  out.dx = a * F.cu - l * F.cv;
+  out.dy = a * F.cv + l * F.cu;
+  out.ok = Number.isFinite(out.dx) && Number.isFinite(out.dy);
   return out;
 }
 
 // Parametry i kadr mapWorldLens (bez alokacji).
-const _mP = { hf: 0, hb: 0, ws: 0, B: 0, eps: 0 };
+const _mP = { hf: 0, ws: 0, B1: 0, kMax: 0, hideW0: 0, hideW1: 0, aspectMax: 0, aspectFlow: 0, speedRef: 0 };
 const _mF = newWarpLensFrame();
-const _mQ = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1 };
+const _mQ = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
 
 /**
- * Mapa C jednego ciała (bez stanu): (dx, dy) — świat względem statku w OSIACH EKRANU [j.], y w dół; r — promień.
+ * Mapa O1 jednego ciała (bez stanu): (dx, dy) — świat względem statku w OSIACH EKRANU [j.], y w dół; r — promień.
  * o: { zoom, flatScale (domyślnie zoom), beta, velAngle (kurs w osiach ekranu), viewHalfW/H, shipSx/Sy (KOTWICA —
- * px od środka kadru), opcjonalnie hf, hb, ws, B, eps }. Wynik (przesunięcie od kotwicy): out.x, out.y, out.size, out.q,
- * out.gap (q · (d − r)), out.d, out.theta, out.edge (droga do krawędzi przed dziobem), out.a, out.l.
+ * px od środka kadru), opcjonalnie hf, ws, B1, kMax, hideW0, hideW1, aspectMax, aspectFlow, speedRef, driveSpeed (prędkość napędu
+ * warp [j/s]) }. Wynik (przesunięcie od kotwicy): out.x, out.y,
+ * out.size (× ukrycie za płaszczyzną kamery), out.q, out.gap (q · (d − r)), out.d, out.theta, out.edge (droga do krawędzi
+ * przed dziobem), out.a, out.l, out.w, out.hide.
  */
 export function mapWorldLens(dx, dy, r, o, out = {}) {
   const P = WORLD_LENS_DEFAULTS;
@@ -313,23 +350,30 @@ export function mapWorldLens(dx, dy, r, o, out = {}) {
   const flat = num(o.flatScale, 0) > 0 ? Number(o.flatScale) : zoom;
   const va = num(o.velAngle, 0);
   _mP.hf = num(o.hf, P.hf);
-  _mP.hb = num(o.hb, P.hb);
   _mP.ws = num(o.ws, P.ws);
-  _mP.B = num(o.B, P.B);
-  _mP.eps = num(o.eps, P.eps);
-  const F = warpLensFrame(Math.cos(va), Math.sin(va), num(o.viewHalfW, 0), num(o.viewHalfH, 0), num(o.shipSx, 0), num(o.shipSy, 0), _mP, _mF);
+  _mP.B1 = num(o.B1, P.B1);
+  _mP.kMax = num(o.kMax, P.kMax);
+  _mP.hideW0 = num(o.hideW0, P.hideW0);
+  _mP.hideW1 = num(o.hideW1, P.hideW1);
+  _mP.aspectMax = num(o.aspectMax, P.aspectMax);
+  _mP.aspectFlow = num(o.aspectFlow, P.aspectFlow);
+  _mP.speedRef = num(o.speedRef, P.speedRef);
+  const F = warpLensFrame(Math.cos(va), Math.sin(va), num(o.viewHalfW, 0), num(o.viewHalfH, 0), num(o.shipSx, 0), num(o.shipSy, 0), _mP, _mF,
+    num(o.driveSpeed, NaN));
   const Q = warpLensQ(dx, dy, num(o.beta, 0), flat, F, _mQ);
   const rr = Math.max(0, num(r, 0));
   out.q = Q.q;
   out.x = Q.q * dx;
   out.y = Q.q * dy;
-  out.size = Q.q * rr;
+  out.size = Q.q * rr * Q.hide;
   out.d = Q.d;
   out.gap = Q.q * (Q.d - rr);
   out.theta = Q.d > 1e-9 ? Math.atan2(dy, dx) : va;
   out.edge = F.ef;
   out.a = Q.a;
   out.l = Q.l;
+  out.w = Q.w;
+  out.hide = Q.hide;
   return out;
 }
 
@@ -342,7 +386,10 @@ export function mapWorldLens(dx, dy, r, o, out = {}) {
 export const WARP_WORLD_LENS = {
   active: false,      // soczewka w tej klatce (skok gracza, kamera z góry, bez podzielonego ekranu)
   beta: 0,            // 0..1 — oś czasu skoku (src/render/warpLensPhase.js: warpLensBeta; dawniej player.js: lensBeta)
-  speed: 0,           // nominalna prędkość skoku [j/s] (diagnostyka; mapa C jej nie używa)
+  speed: 0,           // nominalna prędkość skoku [j/s] (diagnostyka; mapa O1 jej nie używa)
+  driveSpeed: NaN,    // (nowe, recenzja O1 ust. 2) prędkość napędu warp gracza [j/s] (warp.speed — Mk I–III, stała dla
+                      // wyposażenia; sterownik: o.warp.speed, w workerze WARP_SPEED migawki): szybszy niż speedRef — skala
+                      // mapy × speedRef / v; NaN — bez
   velAngle: 0,        // kurs skoku (świat)
   zoom: 1,            // zoom kamery [px bufora / j.] — prawdziwy widok płaszczyzny gry
   W: 1, H: 1,         // bufor rysowania [px]
@@ -392,6 +439,7 @@ export function resetWarpWorldLens() {
   L.zoomJump = NaN;
   L.anchorSx = NaN;
   L.anchorSy = NaN;
+  L.driveSpeed = NaN;
   L.targetHold = 0;
 }
 
@@ -647,6 +695,8 @@ export function newLensBody(id, kind = '') {
     entry: 0,        // tryb przejścia (WORLD_LENS_MODE: 1 — ruch, 2 — wynurzenie / zanurzenie; 0 — nieustalony)
     entrySession: -1, // przejście (WarpWorldLens._epoch), w którym tryb ustalono
     cross: -1,       // [s] wiek wyjścia, w którym front dotknął obrazu (< 0 — jeszcze nie)
+    plunge: 0.3,     // [s] czas zanurzenia / powrotu w tym wyjściu (z tempa obrazu — exitMovePx / exitSizePx)
+    plungeEpoch: -1, // przejście (WarpWorldLens._epoch), w którym policzono plunge
     seenFrame: -1,   // ostatnia klatka soczewki (WarpWorldLens._frame), w której rekord był gotowy
     lateAge: -1,     // [s] wynurzenie ciała, które pojawiło się w trakcie skoku (< 0 — brak)
     // realW — udział prawdziwego obrazu w położeniu (ruch: 1 − β ciała; wynurzenie: 1 przy β ≤ emerge0, potem 0) —
@@ -677,7 +727,7 @@ export function lensDiscInFrame(x, y, r, W, H) {
 export class WarpWorldLens {
   constructor(params = {}) {
     this.params = { ...WORLD_LENS_DEFAULTS, ...params };
-    this.lensScale = 0;   // dawne pole (mapa C nie ma jednej skali)
+    this.lensScale = 0;   // dawne pole (mapa O1 nie ma jednej skali soczewki)
     this.session = 0;     // numer skoku (bramka ringu planet3d.assets.js: gateOpenSession)
     this._epoch = 0;      // numer przejścia (wejście / wyjście) — tryb ciała ustalany raz na przejście
     this._frame = 0;      // licznik klatek soczewki (rekord: seenFrame)
@@ -685,7 +735,7 @@ export class WarpWorldLens {
     this._exitOn = false;
     this._betaAtExit = 1;
     this._F = newWarpLensFrame();
-    this._q = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1 };
+    this._q = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
     this._turn = { ax: 1, ay: 0, angle: 0 };
     // Przylot: czas zbieżności kamery [s], czas puszczania [s] (< 0 — trzyma, Infinity — cięcie), poprzednia odległość
     // celu, wiek wyjścia przy zatrzymaniu.
@@ -695,6 +745,7 @@ export class WarpWorldLens {
     // Wynik ostatniego _full: pełna skala (β = 1, z kieszenią i podglądem celu) i jej stosunek do mapy.
     this._Qfull = 0;
     this._gfac = 1;
+    this._hideFull = 1;   // ukrycie za płaszczyzną kamery przy β = 1 (wynurzenie / zanurzenie w miejscu, decyzja wejścia)
     this._fa = 0;         // a i d ciała z ostatniego _full (stożek za celem)
     this._fd = 0;
     this._sf = 1;         // mnożnik promienia ostatniego _place (księżyce celu)
@@ -706,7 +757,7 @@ export class WarpWorldLens {
     // Punkty (mapPoint — floty, NPC, wraki): stan ostatniego update (statek, obrót kadru, β, koniec zwolnienia).
     this.live = false;
     this._pt = { shipX: 0, shipY: 0, rc: 1, rs: 0, beta: 0, exitSlow: 0 };
-    this._qp = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1 };
+    this._qp = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
   }
 
   /** Koniec skoku (soczewka wyłączona): tryby ciał i trzymanie celu od nowa. */
@@ -723,12 +774,13 @@ export class WarpWorldLens {
    * PUNKT w soczewce tej klatki (E2: floty, NPC, wraki — bez stanu i bez trybów przejścia): świat gry (wx, wy), promień
    * `r` [j.] (brzeg kadłuba — tylko w wyjściu) → obraz out.x, out.y [px bufora od środka kadru, osie ekranu], out.q
    * [px/j.], out.beta — udział soczewki punktu (src/render/warpLensPhase.js: warpLensPointBeta — ta sama funkcja decyduje
-   * o kropce na stronie gry), out.alpha — krycie kropki. Ta sama mapa C co ciała (rodzina q_β ruchu, kotwica P0(β))
+   * o kropce na stronie gry), out.alpha — krycie kropki. Ta sama mapa O1 co ciała (rodzina q_β ruchu, kotwica P0(β))
    * w płaszczyźnie gry (flat = zoom). WYJŚCIE (P3 jak ciała): front smug gwiazd mija prawdziwe miejsce punktu
    * (warpExitFrontCross, j. świata), punkt wraca na nie w `submerge` s (rodzina q_β, β = b0 · zanurzenie); prawdziwe
    * miejsce poza kadrem (o pointEdgeSoft px) — kropka gaśnie w pierwszej połowie zanurzenia, więc nie przelatuje przez
-   * kadr; w kadrze dojeżdża widoczna (kropka na prawdziwym miejscu oddaje je skórze przy WARP_LENS_DOT_SWAP). Przed
-   * update tej klatki albo poza soczewką (`live` = false) — prawdziwy obraz. Bez alokacji.
+   * kadr; w kadrze dojeżdża widoczna (kropka na prawdziwym miejscu oddaje je skórze przy WARP_LENS_DOT_SWAP). Za
+   * płaszczyzną kamery (O1-2) krycie × ukrycie mapy — kropka gaśnie jak promień ciał. Przed update tej klatki albo poza
+   * soczewką (`live` = false) — prawdziwy obraz. Bez alokacji.
    */
   mapPoint(wx, wy, out, r = 0) {
     const L = this._L;
@@ -772,6 +824,7 @@ export class WarpWorldLens {
     out.x = ax + m.q * dx;
     out.y = ay + m.q * dy;
     out.q = m.q;
+    if (m.hide < 1) out.alpha *= m.hide;
     // udział soczewki DECYZJI kropki (strona gry: warpLensDotFor — ta sama wartość); położenie może zostać w obrazie
     out.beta = bDot;
     return out;
@@ -786,10 +839,11 @@ export class WarpWorldLens {
   }
 
   /**
-   * Pełna skala ciała (β = 1) [px/j.]: mapa C × kieszeń kadłuba; cel — miękkie maksimum z podglądem kadru przylotu
+   * Pełna skala ciała (β = 1) [px/j.]: mapa O1 × kieszeń kadłuba; cel — miękkie maksimum z podglądem kadru przylotu
    * (skala OBRAZU celu przy zoomie kadru przylotu kamery: planety tła z perspektywą i paralaksą, miękkie minimum z kadrem
    * skoku — warpArrivalScale), po zatrzymaniu rampy — nie mniej niż prawdziwy obraz (podłoga L.floorW).
-   * Ustawia this._Qfull i this._gfac (Q / q mapy); this._q — wielkości mapy (a, l, A, κ).
+   * Ustawia this._Qfull, this._gfac (Q / q mapy) i this._hideFull (ukrycie za płaszczyzną kamery przy β = 1; cel —
+   * zawsze 1); this._q — wielkości mapy (a, l, A, κ, w).
    */
   _full(b, dx, dy, isTarget, F, L) {
     const p = this.params;
@@ -833,6 +887,7 @@ export class WarpWorldLens {
     }
     this._Qfull = Q;
     this._gfac = Q / m.q;
+    this._hideFull = isTarget ? 1 : m.hide;
     this._fa = m.a;
     this._fd = d;
     return Q;
@@ -865,6 +920,9 @@ export class WarpWorldLens {
     // Bramka ringu zamknięta (prawdziwy ring z portem w kadrze) — ruch: przy β · bramka → 0 dokładnie prawdziwy obraz
     // (ring jedzie w slocie za obrazem planety). Pierwsza klatka otwarcia ustala tryb od nowa (ring jest już za kadrem).
     if (!(b.gate > GATE_CLOSED) || realIn || (isOrigin && p.originMove)) return MOVE;
+    // Za płaszczyzną kamery (O1-2: obraz soczewki w paśmie ukrycia, prawdziwy poza kadrem) — wynurzenie w miejscu, czyli
+    // niewidoczne przez całe przejście (ruch rodziną q_β przy w → 1 / kMax mógłby przeciągnąć tarczę przez kadr).
+    if (!isTarget && this._hideFull < 1) return FAR;
     // Ruch tylko dla obrazów bliskich prawdziwemu (farRatio) i takich, których obraz wjeżdża w kadr wolno: przy wejściu
     // brzegu w kadr (podobieństwo wokół kotwicy) środek jedzie ≈ krawędź · d / (d − r) · ln(flat / Q) · β' — duża bliska
     // tarcza (planeta startu z ringiem: × 2,9 · 2,4) przekracza próg P4 — wynurza się w miejscu.
@@ -932,7 +990,7 @@ export class WarpWorldLens {
       const k = 1 + p.emergeLift * (1 - bb);
       out.x = L.ax + k * Q * dx;
       out.y = L.ay + k * Q * dy;
-      const full = Math.max(Q * b.r * boost, dot);
+      const full = Math.max(Q * b.r * boost, dot) * this._hideFull;
       let e = smoothstep(p.emerge0, p.emerge1, bb);
       if (b.lateAge >= 0) e *= smoothstep(0, Math.max(1e-3, p.lateTime), b.lateAge);
       size = full * e;
@@ -953,6 +1011,8 @@ export class WarpWorldLens {
       out.y = ay * mb + q * dy;
       size = q * b.r * (boost === 1 || bb <= 0 ? 1 : Math.pow(boost, bb));
       if (dot > 0 && size < dot * bb) size = dot * bb;
+      // za płaszczyzną kamery (O1-2) promień gaśnie — także kropka (ciało niewidoczne, obraz i tak daleko za kadrem)
+      if (!isTarget && this._q.hide < 1) size *= this._q.hide;
       qp = q;
       sf = b.r > 0 && q > 0 ? size / (b.r * q) : 1;
     }
@@ -967,6 +1027,48 @@ export class WarpWorldLens {
     const mp = this.params.minPx;
     if (!(mp > 0) || !(bb > 0) || out.size >= mp) return;
     out.size *= 1 - bb * (1 - smoothstep(mp * (2 / 3), mp, out.size));
+  }
+
+  /**
+   * WYJŚCIE (recenzja O1 ust. 3): czas zanurzenia / powrotu ciała [s] — raz na wyjście, w pierwszej klatce wyjścia
+   * (tryb już ustalony, pełna skala w this._Qfull). Przebieg obrazu przy β = b0 · (1 − smoothstep(x)), x 0 → 1, próbkowany
+   * w PLUNGE_N krokach (ten sam _place co klatka): najszybszy krok środka i promienia w kadrze (tarcza ≥ minPx) → czas,
+   * przy którym tempo na klatkę 60 Hz nie przekracza exitMovePx / exitSizePx (× wysokość kadru / 1080). Wynik w
+   * [WARP_LENS_PHASE.submerge, span] (span — okno wyjścia: exitSlow + submerge). Pisze b.out (nadpisuje go _place klatki).
+   */
+  _plungeTime(b, dx, dy, b0, F, L, span) {
+    const p = this.params;
+    const sub0 = WARP_LENS_PHASE.submerge;
+    if (!(b0 > 0) || !(span > sub0)) return sub0;
+    const k = Math.max(1e-6, L.H / 1080) * 60;
+    const limM = Math.max(1, p.exitMovePx) * k;
+    const limR = Math.max(1, p.exitSizePx) * k;
+    const mp = Math.max(0, p.minPx);
+    const out = b.out;
+    let need = 0;
+    let px = 0;
+    let py = 0;
+    let pr = 0;
+    let pin = false;
+    for (let i = 0; i <= PLUNGE_N; i++) {
+      const x = i / PLUNGE_N;
+      this._place(b, dx, dy, b0 * (1 - x * x * (3 - 2 * x)), false, F, L);
+      const inF = out.size >= mp && lensDiscInFrame(out.x, out.y, out.size, L.W, L.H);
+      // (jak P4: tarcza w kadrze w obu próbkach — przy β ≤ emerge0 wynurzenie przeskakuje na prawdziwy obraz poza kadrem
+      // z promieniem ~0, tego nie widać)
+      if (i > 0 && inF && pin) {
+        // dX/dx ≈ Δ · N; tempo [px/s] przy czasie T: Δ · N / T ≤ lim → T ≥ Δ · N / lim
+        const mv = Math.sqrt((out.x - px) * (out.x - px) + (out.y - py) * (out.y - py)) * PLUNGE_N / limM;
+        const sz = Math.abs(out.size - pr) * PLUNGE_N / limR;
+        if (mv > need) need = mv;
+        if (sz > need) need = sz;
+      }
+      px = out.x;
+      py = out.y;
+      pr = out.size;
+      pin = inF;
+    }
+    return clamp(need, sub0, span);
   }
 
   /**
@@ -1002,7 +1104,7 @@ export class WarpWorldLens {
 
   /**
    * bodies — rekordy newLensBody (gotowe: `ready`), n — ile; ctx — WARP_WORLD_LENS; target — rekord ciała celu albo null;
-   * visible — dawny test kadru po rulonie (mapa C go nie potrzebuje; zostaje w sygnaturze).
+   * visible — dawny test kadru po rulonie (mapa O1 go nie potrzebuje; zostaje w sygnaturze).
    */
   update(bodies, n, ctx, target = null, visible = lensDiscInFrame) { // visible — nieużywany (zgodność wywołań)
     const p = this.params;
@@ -1032,7 +1134,7 @@ export class WarpWorldLens {
     L.fill = num(ctx.arrivalFill, WARP_ARRIVAL_FRAME.fill);
     L.zoomRef = num(ctx.zoomRef, NaN);
     L.zoomJump = num(ctx.zoomJump, NaN);
-    const F = warpLensFrame(cu, cv, L.W * 0.5, L.H * 0.5, L.ax, L.ay, p, this._F);
+    const F = warpLensFrame(cu, cv, L.W * 0.5, L.H * 0.5, L.ax, L.ay, p, this._F, num(ctx.driveSpeed, NaN));
     // Wyjście: nowe przejście (tryby od nowa — poza wyjściem w trakcie kopu), front smug gwiazd, trzymanie celu.
     const exitAge = Number(ctx.exitAge);
     const exiting = exitAge >= 0;
@@ -1047,6 +1149,7 @@ export class WarpWorldLens {
     L.exitHalt = Math.max(0, num(ctx.exitHalt, 0));
     L.floorW = exiting ? smoothstep(L.exitHalt, L.exitHalt + Math.max(1e-3, p.arrivalFloorTime), exitAge) : 0;
     const exitSlow = warpLensExitSlow(ctx.exitSlow);
+    const exitSpan = exitSlow + WARP_LENS_PHASE.submerge;   // okno wyjścia: β osi (warpLensExitLive) do tej chwili
     const frontPx = exiting ? warpExitFrontS(exitAge, exitSlow) * L.zoom : Infinity;
     const origin = ctx.origin || null;
     const sx0 = num(ctx.shipX, 0);
@@ -1152,12 +1255,18 @@ export class WarpWorldLens {
       b.gatePrev = num(b.gate, 1);
       this._mode(b, false, b === origin, Q, dx, dy, bb, open, L);
       if (exiting) {
-        // Front smug gwiazd (od dziobu ku rufie): dotknął obrazu soczewki — ciało zanurza się / wraca w `submerge` s.
+        // Czas zanurzenia z tempa obrazu (raz na wyjście): ≥ submerge, duża tarcza w kadrze — dłużej (_plungeTime).
+        if (b.plungeEpoch !== this._epoch) {
+          b.plungeEpoch = this._epoch;
+          b.plunge = this._plungeTime(b, dx, dy, bb, F, L, exitSpan);
+        }
+        // Front smug gwiazd (od dziobu ku rufie): dotknął obrazu soczewki — ciało zanurza się / wraca w b.plunge s; ciało
+        // z dłuższym zanurzeniem zaczyna najpóźniej tak, żeby skończyć z oknem wyjścia (β osi opada wtedy do 0).
         if (b.cross < 0) {
           const lead = (L.ax + Q * dx - L.sx) * cu + (L.ay + Q * dy - L.sy) * cv + Q * b.r * num(b.sizeBoost, 1);
-          if (frontPx <= lead || exitAge >= exitSlow) b.cross = exitAge;
+          if (frontPx <= lead || exitAge >= exitSlow || exitAge >= exitSpan - b.plunge) b.cross = exitAge;
         }
-        bb *= warpBodySubmerge(b.cross, exitAge, WARP_LENS_PHASE);
+        if (b.cross >= 0) bb *= 1 - smoothstep(b.cross, Math.max(b.cross + 1e-3, Math.min(b.cross + b.plunge, exitSpan)), exitAge);
       }
       const fa = this._fa;
       const fd = this._fd;

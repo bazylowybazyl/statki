@@ -1,6 +1,7 @@
 // Etap 3A nowego warpa „podniesiony świat” (DECYZJE E1–E4, 2026-10-26): REJESTR KOTWIC soczewki (rzeczy przypięte do
 // ciał — ring, stacje, doki — jadą obrazem ciała, β → 0 = prawdziwe miejsce), REKORDY DODATKOWE (komety, olbrzymy,
-// Hidalgo, doki bez ciała — ta sama mapa co ciała), PUNKTY (floty, NPC, wraki — kropki na pozycjach mapy C), ukrycie
+// Hidalgo, doki bez ciała — ta sama mapa co ciała), PUNKTY (floty, NPC, wraki — kropki na pozycjach mapy soczewki — od
+// 2026-10-26 mapa O1), ukrycie
 // skór przy β, mgła wojny, HUD gaszony z β, warstwy pod statkiem.
 // node --test tests/warpLensAnchors.test.mjs
 import test from 'node:test';
@@ -154,7 +155,7 @@ test('rekordy dodatkowe (komety, olbrzymy, Hidalgo, doki bez ciała): ta sama ma
   assert.match(planets, /writeLensAnchor\(b\.anchor \|\| warpLensAnchorSlot\(b\.id\), L, b, fit\.size, !fit\.off\);/);
 });
 
-test('punkty (floty, NPC, wraki): mapPoint = mapa C w płaszczyźnie gry, β → 0 = prawdziwe miejsce, w wyjściu front smug gwiazd', () => {
+test('punkty (floty, NPC, wraki): mapPoint = mapa O1 w płaszczyźnie gry, β → 0 = prawdziwe miejsce, w wyjściu front smug gwiazd', () => {
   const pts = [[30_000, -8000], [-250_000, 40_000], [700_000, 1_200_000], [-1500, 900]];
   for (const beta of [0, 0.45, 1]) {
     const ctx = makeCtx(beta);
@@ -172,13 +173,14 @@ test('punkty (floty, NPC, wraki): mapPoint = mapa C w płaszczyźnie gry, β →
         near(out.y, ctx.shipSy + ctx.zoom * dy, 1e-6, 'β 0: y prawdziwe');
       }
       if (beta === 1) {
-        // bezstanowa mapa jednego ciała (mapWorldLens) przy tej samej kotwicy — ta sama mapa C
+        // bezstanowa mapa jednego ciała (mapWorldLens) przy tej samej kotwicy — ta sama mapa O1
         const m = mapWorldLens(dx, dy, 0, {
           zoom: ctx.zoom, beta: 1, velAngle: ctx.velAngle - ctx.roll, viewHalfW: ctx.W / 2, viewHalfH: ctx.H / 2,
           shipSx: ctx.anchorSx, shipSy: ctx.anchorSy
         });
-        near(out.x, ctx.anchorSx + m.x, 1e-6, 'β 1: x = mapa C');
-        near(out.y, ctx.anchorSy + m.y, 1e-6, 'β 1: y = mapa C');
+        near(out.x, ctx.anchorSx + m.x, 1e-6 * Math.max(1, Math.abs(m.x)), 'β 1: x = mapa O1');
+        near(out.y, ctx.anchorSy + m.y, 1e-6 * Math.max(1, Math.abs(m.y)), 'β 1: y = mapa O1');
+        near(out.alpha, m.hide, 1e-12, 'β 1: krycie kropki = ukrycie mapy (za płaszczyzną kamery 0, O1-2)');
         near(out.q, m.q, 1e-12, 'β 1: skala');
       }
     }
@@ -213,8 +215,10 @@ test('punkty w wyjściu (W1): front mija PRAWDZIWE miejsce (odwrotność frontu,
   assert.equal(warpLensPointBeta(ex(0.7 + P.submerge), -40_000), 0);
   assert.equal(warpLensPointBeta({ state: 'active', kickAge: 3 }, 5000), 1, 'lot: β osi');
   near(warpLensPointExitBeta(0.6, 0.2, 0.7, 50_000), 0.6 * (1 - (2 / 3) * (2 / 3) * (3 - 4 / 3)), 1e-12, 'wyjście w trakcie kopu: × β wyjścia');
-  // ciągłość: kadr 1080p, zoom 0,12, 60 Hz — kropka widoczna (krycie > 0,1) przesuwa się ≤ 70 px na klatkę (dawniej pasmo HUD-u:
-  // 240–895 px), punkt z prawdziwym miejscem poza kadrem stoi w obrazie, póki gaśnie; decyzja strony = udział renderu
+  // ciągłość: kadr 1080p, zoom 0,12, 60 Hz — kropka widoczna (krycie > 0,1) przesuwa się ≤ 80 px na klatkę (dawniej pasmo HUD-u:
+  // 240–895 px; mapa C ≤ 67 px — mapa O1 ma przy statku skalę 0,0088 zamiast 0,017 px/j., więc kropka 5000 j. przed dziobem
+  // wraca na prawdziwe miejsce z dalszego obrazu: 78 px/kl.), punkt z prawdziwym miejscem poza kadrem stoi w obrazie, póki
+  // gaśnie; decyzja strony = udział renderu
   const pts = [[0, -5000], [0, -12000], [0, -25000], [3000, -3000], [0, 4000], [6000, 0], [500, -800], [40_000, -40_000]];
   for (const [ox, oy] of pts) {
     let prev = null;
@@ -234,7 +238,7 @@ test('punkty w wyjściu (W1): front mija PRAWDZIWE miejsce (odwrotność frontu,
       if (swap === null && o.beta < WARP_LENS_DOT_SWAP) swap = o;
       prev = o;
     }
-    assert.ok(maxStep <= 70, `(${ox}, ${oy}): ruch widocznej kropki ${maxStep.toFixed(0)} px/kl`);
+    assert.ok(maxStep <= 80, `(${ox}, ${oy}): ruch widocznej kropki ${maxStep.toFixed(0)} px/kl`);
     // oddanie skórze: kropka na prawdziwym miejscu (w kadrze) albo zgaszona (poza kadrem)
     const real = [0.12 * ox, 0.12 * oy];
     const inFrame = lensDiscInFrame(real[0], real[1], 0.12 * 400, 1920, 1080);

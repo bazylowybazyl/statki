@@ -1,5 +1,6 @@
-// Soczewka świata w skoku gracza (src/3d/warp/worldLens.js — „podniesiony świat”, mapa C, DECYZJE M / P / T 2026-10-25):
-// mapa, przelot, cel i przylot, przejścia (ruch / wynurzenie), bramka ringu; wpięcie w grę. Matematyka mapy: warpLensMapC.test.mjs.
+// Soczewka świata w skoku gracza (src/3d/warp/worldLens.js — „podniesiony świat”, DECYZJE M / P / T 2026-10-25; od
+// 2026-10-26 mapa O1 „kamera pochylona”, DECYZJE-2 O1): mapa, przelot, cel i przylot, przejścia (ruch / wynurzenie), bramka
+// ringu; wpięcie w grę. Matematyka mapy: warpLensMapC.test.mjs (nazwa z czasów mapy C).
 // node --test tests/warpWorldLens.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import {
   WORLD_LENS_DEFAULTS, WORLD_LENS_MODE, mapWorldLens, warpLensScale, warpDepthScale, flybyTurn, viewEdgeDistance,
   WarpWorldLens, WARP_WORLD_LENS, newLensBody, resetWarpWorldLens, WARP_RING_LENS, warpRingLensSlot,
-  WARP_LENS_ANCHORS, warpLensAnchorSlot, writeLensAnchor, lensImageToWorld
+  WARP_LENS_ANCHORS, warpLensAnchorSlot, writeLensAnchor, lensImageToWorld, lensDiscInFrame
 } from '../src/3d/warp/worldLens.js';
 import { WARP_ARRIVAL_FRAME, warpArrivalZoom } from '../src/render/warpArrivalFrame.js';
 import * as demoLens from '../dema/warp-webgpu/worldLens.js';
@@ -37,15 +38,15 @@ test('skala soczewki: z nominalnej prędkości, od prędkości odniesienia stał
 // dziobem 729 px, za rufą 351 px, w bok 960 px (projekt C § 1).
 const FRAME_1080 = Object.freeze({ zoom: 0.1173, flatScale: 0.1173, beta: 1, velAngle: -Math.PI / 2, viewHalfW: 960, viewHalfH: 540, shipSx: 0, shipSy: 189 });
 
-test('mapa C (mapWorldLens, DECYZJE M1–M2): β = 0 — prawdziwy widok; β = 1 — namiar prawdziwy, pas boczny w kadrze, punkt zbiegu przed dziobem', () => {
+test('mapa O1 (mapWorldLens, DECYZJE-2 O1-1): β = 0 — prawdziwy widok; β = 1 — namiar prawdziwy, trawers w skali s, jeden punkt zbiegu przed dziobem', () => {
   const real = mapWorldLens(3000, -50000, 30000, { zoom: 0.1, flatScale: 0.1, beta: 0, velAngle: -Math.PI / 2 }, {});
   assert.ok(near(real.x, 300, 1e-12) && near(real.y, -5000, 1e-12) && near(real.size, 3000, 1e-12));
   const P = WORLD_LENS_DEFAULTS;
   const o = FRAME_1080;
-  // Mars mijany w trawersie 75 tys. j. w lewo: promień r · W / √(l² + B²), cały w kadrze (sędzia 2: w_s 0,8).
+  // Mars mijany w trawersie 75 tys. j. w lewo: skala s = w_s · e_s / B1 (jak w prototypie O1 i w mapie C — 263 px).
+  const s = P.ws * 960 / P.B1;
   const mars = mapWorldLens(-75000, 0, 30000, o, {});
-  const W = P.ws * 960;
-  assert.ok(near(mars.size, 30000 * W / Math.sqrt(75000 * 75000 + P.B * P.B), 1e-9));
+  assert.ok(near(mars.size, 30000 * s, 1e-9) && near(mars.x, -75000 * s, 1e-9));
   assert.ok(mars.size >= 250, `Mars w trawersie ${mars.size.toFixed(0)} px (BRIEF C2: ≥ 250 przy 1080p)`);
   assert.ok(-mars.x + mars.size < 960, 'dalszy brzeg Marsa w kadrze');
   assert.ok(near(mars.y, 0, 1e-9) && mars.x < 0, 'trawers po właściwej stronie');
@@ -61,40 +62,40 @@ test('mapa C (mapWorldLens, DECYZJE M1–M2): β = 0 — prawdziwy widok; β = 1
     assert.ok(m.gap > 0 && near(m.gap, m.q * (Math.hypot(dx, dy) - r), 1e-6), 'odstęp');
   }
   assert.equal(viewEdgeDistance(0, -1, 960, 540, 0, 189), 729);
+  // Obrót przelotu 0,5 (DECYZJE-2 O1-3): kąt = 0,5 · kąt wirtualnej kamery nad statkiem.
+  assert.equal(P.flybyTilt, 0.5);
 });
 
-test('przelot (mapa C, BRIEF C2–C4): rośnie do trawersu, maleje za rufą i wyjeżdża dolną krawędzią (punkt zbiegu za rufą poza kadrem); przed dziobem prosta do punktu zbiegu, trawers bez załamania', () => {
+test('przelot (mapa O1, BRIEF C2–C4): tor prosty (bez zakrętu w trawersie), ciało rośnie od punktu zbiegu przez trawers i wylatuje z kadru; za płaszczyzną kamery niewidoczne (O1-2)', () => {
   const o = FRAME_1080;
+  const P = WORLD_LENS_DEFAULTS;
   const at = (a) => mapWorldLens(-75000, -a, 30000, o, {});
   let prev = 0;
-  for (const a of [2e6, 1e6, 5e5, 2.5e5, 1e5, 4e4, 1e4, 0]) {
+  for (const a of [2e6, 1e6, 5e5, 2.5e5, 1e5, 4e4, 1e4, 0, -1e4, -2e4, -4e4]) {
     const m = at(a);
     assert.ok(m.size > prev, `rośnie (${a})`);
     prev = m.size;
   }
-  for (const a of [-1e4, -4e4, -1e5, -2.5e5, -5e5, -1e6]) {
-    const m = at(a);
-    assert.ok(m.size < prev, `maleje za rufą (${a})`);
-    prev = m.size;
-  }
-  // Za rufą: punkt zbiegu h_b · 351 px > 351 px — daleki obraz cały pod dolną krawędzią (bez parkowania w kadrze).
-  const back = at(-2e6);
-  assert.ok(back.y - back.size > 351 && back.y < WORLD_LENS_DEFAULTS.hb * 351 + 1e-6, `za rufą: ${back.y.toFixed(0)} px, r ${back.size.toFixed(1)}`);
-  // Przed dziobem (daleko od trawersu) obrazy ciała o stałym l leżą na prostej przez punkt zbiegu (0, −E_f).
-  const vy = -WORLD_LENS_DEFAULTS.hf * 729;
-  const pts = [3e5, 6e5, 1.2e6].map(at);
+  // Za trawersem wylatuje z kadru (Mars 75 tys. j. z boku: lewa krawędź kadru przy a ≈ −20 tys. j.), za płaszczyzną
+  // kamery (a ≈ −66 tys. j. przy 1080p) promień 0 — nie wraca pod statek i nie parkuje.
+  assert.ok(!lensDiscInFrame(at(-4e4).x, 189 + at(-4e4).y, at(-4e4).size, 1920, 1080), 'za trawersem poza kadrem');
+  for (const a of [-7e4, -1e5, -1e6]) assert.equal(at(a).size, 0, `za płaszczyzną kamery niewidoczne (${a})`);
+  assert.ok(at(-6.3e4).size > 0 && at(-6.3e4).hide < 1, 'pas ukrycia przed płaszczyzną kamery (płynnie)');
+  // Tor (stałe l) jest prostą przez punkt zbiegu (0, −E_f) — przed dziobem i za rufą (bez zakrętu w trawersie).
+  const vy = -P.hf * 729;
+  const pts = [1.2e6, 3e5, 1e4, 0, -1.5e4, -4e4].map(at);
   for (let i = 1; i < pts.length; i++) {
     const p = pts[0];
     const q = pts[i];
     const cr = (p.x * (q.y - vy) - (p.y - vy) * q.x) / (Math.hypot(p.x, p.y - vy) * Math.hypot(q.x, q.y - vy));
-    assert.ok(Math.abs(cr) < 0.02, `prosta do punktu zbiegu (sin ${cr.toFixed(4)})`);
+    assert.ok(Math.abs(cr) < 1e-9, `prosta do punktu zbiegu (sin ${cr.toExponential(2)})`);
   }
-  // Trawers: nachylenie toru dY/da ciągłe (zaokrąglenie ε), wielkość ciągła przy zmianie punktu zbiegu przód / tył.
+  // Trawers: nachylenie toru dY/da ciągłe, wielkość ciągła (jedna homografia przed i za statkiem).
   const e = 0.5;
   const sA = (at(e).y - at(0).y) / e;
   const sB = (at(0).y - at(-e).y) / e;
-  assert.ok(Math.abs(sA - sB) <= 1e-3 * Math.abs(sA), `nachylenie w trawersie ${sA} / ${sB}`);
-  assert.ok(Math.abs(at(1e-3).size - at(-1e-3).size) < 1e-6);
+  assert.ok(Math.abs(sA - sB) <= 1e-4 * Math.abs(sA), `nachylenie w trawersie ${sA} / ${sB}`);
+  assert.ok(Math.abs(at(1e-3).size - at(-1e-3).size) < 1e-4, 'wielkość ciągła (pochodna s · r / A ≈ 0,004 px na j.)');
 });
 
 test('ring w soczewce (przegląd 2026-10-23): warstwy tła tylko przy przesuniętym obrazie, próg px bramkuje rysowanie i budowę', () => {
@@ -274,14 +275,15 @@ test('wejście (DECYZJE P2, reguła 10-08): dalekie i duże bliskie ciała wynur
     beta: 1, velAngle: -Math.PI / 2, zoom: 0.2, W: 1920, H: 1080, roll: 0, shipX: 0, shipY: 0, shipSx: 0, shipSy: 0,
     hullHalfLen: 180, hullHalfWid: 80, dt: 1 / 60, exitAge: -1
   };
-  // Planeta startu z ringiem tuż za rufą (prawdziwy obraz daleko za kadrem, w soczewce duża pod statkiem).
+  // Planeta startu z ringiem tuż za rufą (prawdziwy obraz daleko za kadrem; w soczewce O1 za płaszczyzną kamery — ukryta).
   const earth = newLensBody('earth', 'planet');
   Object.assign(earth, { x: 0, y: 57750, r: 37800, rExt: 46250, flat: 0.2, ready: true });
-  // Mars daleko przed dziobem; Luna z boku blisko (obraz soczewki bliski prawdziwemu); Wenus z prawdziwym obrazem w kadrze.
+  // Mars daleko przed dziobem; Luna z boku blisko, tuż za trawersem (obraz soczewki bliski prawdziwemu — O1 powiększa za
+  // trawersem); Wenus z prawdziwym obrazem w kadrze.
   const mars = newLensBody('mars', 'planet');
   Object.assign(mars, { x: 30000, y: -1e6, r: 30000, flat: 0.2, ready: true });
   const luna = newLensBody('luna', 'moon');
-  Object.assign(luna, { x: 60000, y: 0, r: 9000, flat: 0.1173, ready: true });
+  Object.assign(luna, { x: 60000, y: 20000, r: 9000, flat: 0.1173, ready: true });
   const venus = newLensBody('venus', 'planet');
   Object.assign(venus, { x: 0, y: -3000, r: 1500, flat: 0.06, ready: true });
   const list = [earth, mars, luna, venus];
@@ -290,7 +292,8 @@ test('wejście (DECYZJE P2, reguła 10-08): dalekie i duże bliskie ciała wynur
   lens.reset();
   ctx.beta = 0.05;
   lens.update(list, 4, ctx, null);
-  assert.equal(earth.entry, WORLD_LENS_MODE.FAR, 'planeta startu wynurza się (nie wjeżdża pod statek)');
+  assert.equal(earth.entry, WORLD_LENS_MODE.FAR, 'planeta startu wynurza się w miejscu (nie wjeżdża pod statek)');
+  assert.equal(full[0].size, 0, 'planeta startu za płaszczyzną kamery — w soczewce niewidoczna (O1-2)');
   assert.equal(mars.entry, WORLD_LENS_MODE.FAR);
   assert.equal(luna.entry, WORLD_LENS_MODE.MOVE, 'bliski obraz — ruchem');
   assert.equal(venus.entry, WORLD_LENS_MODE.MOVE, 'prawdziwy obraz w kadrze — ruchem');
@@ -305,7 +308,9 @@ test('wejście (DECYZJE P2, reguła 10-08): dalekie i duże bliskie ciała wynur
   const em = t7 * t7 * (3 - 2 * t7);
   for (const [i, b] of [[0, earth], [1, mars]]) {
     const f = full[i];
-    assert.ok(near(b.out.x, f.x * (1 + 0.06 * 0.7), 1e-6) && near(b.out.y, f.y * (1 + 0.06 * 0.7), 1e-6), `${b.id}: w miejscu soczewki`);
+    // (ukryte ciało za płaszczyzną kamery: skala kMax · s — obraz daleko, liczony z tą samą dokładnością względną)
+    const tol = 1e-9 * Math.max(1, Math.abs(f.x), Math.abs(f.y));
+    assert.ok(near(b.out.x, f.x * (1 + 0.06 * 0.7), tol) && near(b.out.y, f.y * (1 + 0.06 * 0.7), tol), `${b.id}: w miejscu soczewki`);
     assert.ok(near(b.out.size, f.size * em, 1e-6), `${b.id}: promień wynurzenia ${b.out.size.toFixed(1)} / ${(f.size * em).toFixed(1)}`);
   }
   // Tryb ustalony, gdy przejście ruszyło (β ≥ 0,02): późniejsza zmiana skali nie zmienia trybu.
@@ -360,6 +365,9 @@ test('wpięcie: sterownik warpa pisze stan, planety rozstawia soczewka, gra plan
   assert.match(nurt, /L\.zoomJump = Number\(ph\.zoomJump\) > 0 \? Number\(ph\.zoomJump\) \* pxs : NaN;/);
   assert.match(nurt, /setWarpLensAnchor\(L, o\.anchorSX, o\.anchorSY, pxs\);/);
   assert.match(nurt, /L\.originBody = o\.warp\?\.originBody \|\| null;/);
+  // Napęd warp (recenzja O1 ust. 2): skala mapy O1 przy szybszym napędzie — warp.speed (off: GameState.warp, worker: WARP_SPEED)
+  assert.match(nurt, /L\.driveSpeed = Number\(o\.warp\?\.speed\) > 0 \? Number\(o\.warp\.speed\) : NaN;/);
+  assert.match(read('src/render/warpWorldMirror.js'), /\['WARP_SPEED', 'speed'\]/);
   const planets = read('src/3d/planet3d.assets.js');
   // Rekordy ciał z rodzajem (kropki, sunBoost — M5), słońce w soczewce, ciało startu mapowane jak cel, ring / pierścień — rExt
   assert.match(planets, /newLensBody\(this\.name, 'planet'\)/);

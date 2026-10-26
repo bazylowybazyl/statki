@@ -563,6 +563,7 @@ export const WarpNurt = {
     setWarpLensAnchor(L, o.anchorSX, o.anchorSY, pxs);
     L.originBody = o.warp?.originBody || null;
     L.speed = Math.max(1, Number(g.cruise) || 0);
+    L.driveSpeed = Number(o.warp?.speed) > 0 ? Number(o.warp.speed) : NaN;   // napęd Mk I–III (skala mapy O1 — worldLens.js: speedRef)
     L.velAngle = p.angle;
     L.zoom = zoom;
     L.W = view.bufW;

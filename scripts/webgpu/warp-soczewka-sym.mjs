@@ -13,23 +13,30 @@
 //   • oś β: src/render/warpLensPhase.js — stepWarpLensPhase na obiekcie warpa jak w grze (index.html:
 //     stepPlayerWarpLensPhase — zegar gry, wiek wyjścia od ramp.t0, ślizg = arriving; stan minimalny — przerwane
 //     ładowanie, β wyjścia);
-//   • soczewka: src/3d/warp/worldLens.js (WarpWorldLens — ten sam kod co w grze) na rekordach jak planet3d.assets.js
-//     (płaszczyzna gry / tło z = −50 000 / słońce z = −60 000, bramka ringu, księżyce w węzłach gry — moonOrbit.js),
-//     świat z systemMap.js, smallBodies.js, ringScale.js, haloRingLayout.js. Ringi „Halo” i pierścień Saturna się nie
-//     rysują (kontrola kadłuba liczy tarczę z ringiem — rExt).
+//   • soczewka: src/3d/warp/worldLens.js (WarpWorldLens — ten sam kod co w grze; MAPA O1 „kamera pochylona”, DECYZJE-2
+//     2026-10-26) na rekordach jak planet3d.assets.js (płaszczyzna gry / tło z = −50 000 / słońce z = −60 000, bramka
+//     ringu, księżyce w węzłach gry — moonOrbit.js, zasięg doku — attachR), świat z systemMap.js, smallBodies.js,
+//     ringScale.js, haloRingLayout.js. Ringi „Halo” i pierścień Saturna się nie rysują (kontrola kadłuba liczy tarczę
+//     z ringiem — rExt).
 //
 // Scenariusze: S1 Ziemia → Jowisz z Marsem w trawersie, S2 Ziemia → Mars krótki, S3 swobodny skok obok Jowisza,
 // S4 Jowisz → Saturn (cel NA TLE, z = −50 000), S5 przerwane ładowanie (S1 do 60% ładowania), S6 Ziemia → Mars z Jowiszem
-// w stożku za celem.
+// w stożku za celem, S7 start z portu Ceres (ciało startu z dokiem w kadrze za rufą — O1-2: wylatuje dołem i znika),
+// S8 przylot do Io tuż po minięciu Jowisza (duża tarcza pod statkiem w chwili wyjścia — tempo zanurzenia, P4 wyjścia).
 //
 // Wynik: tory ciał co 0,5 s (środek na ekranie od środka kadru [px, y w dół], promień [px], prędkość [px/s]) i KONTROLE
-// (DECYZJE P4 + BRIEF C1–C5 + stożek M4). Kod wyjścia ≠ 0, gdy kontrola nie przejdzie. Kamera bez K1 (dawny wariant
-// „dziś”) nie istnieje już w kodzie gry — --k1 przyjmuje tylko „tak” (inne wartości: ostrzeżenie).
+// (DECYZJE P4 + BRIEF C1–C5 + stożek M4 + start O1-2). C1 (widać świat) jest INFORMACYJNA (DECYZJE-2 O1-3: mapa O1
+// świadomie chowa ciała za płaszczyzną kamery — decyzja użytkownika) — nie liczy się do kodu wyjścia. Kod wyjścia ≠ 0,
+// gdy kontrola nie przejdzie. W0 (informacyjnie): tempo obrazu ciał soczewki w locie [px/s] — mediana, p90, max, daleko
+// (≥ 1,5 mln j. przed dziobem). Kamera bez K1 (dawny wariant „dziś”) nie istnieje już w kodzie gry — --k1 przyjmuje tylko
+// „tak” (inne wartości: ostrzeżenie).
 //
 // Użycie:
-//   node scripts/webgpu/warp-soczewka-sym.mjs [--scen S1,S2,S3,S4,S5,S6] [--res 1080,1440] [--k1 oba|tak|nie] [--B 45000]
-//     [--tory gl|wszystkie|nie] [--md plik.md] [--json plik.json] [--scisle-dzis] [--origin-ruch] [--wpiecie nowe|dzis]
-// Domyślnie: wszystkie scenariusze, obie rozdzielczości, oba warianty kamery, tory dla 1080p z K1, raport na stdout.
+//   node scripts/webgpu/warp-soczewka-sym.mjs [--scen S1,S2,S3,S4,S5,S6,S7,S8] [--res 1080,1440] [--k1 tak] [--B1 87464]
+//     [--naped mk1|mk2|mk3] [--aspect 16:9|21:9|32:9|W:H] [--param klucz=liczba,…] [--tory gl|wszystkie|nie] [--md plik.md] [--json plik.json]
+//     [--scisle-dzis] [--origin-ruch]
+//     [--wpiecie nowe|dzis]
+// Domyślnie: wszystkie scenariusze, obie rozdzielczości, kadr 16:9, napęd Mk II (Atlas), tory dla 1080p, raport na stdout.
 
 import { writeFileSync } from 'node:fs';
 
@@ -55,12 +62,32 @@ const arg = (name, def) => {
   return i >= 0 && i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[i + 1] : def;
 };
 const flag = (name) => argv.includes('--' + name);
-const SCENS = String(arg('scen', 'S1,S2,S3,S4,S5,S6')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+const SCENS = String(arg('scen', 'S1,S2,S3,S4,S5,S6,S7,S8')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
 const RESS = String(arg('res', '1080,1440')).split(',').map((s) => Number(s.trim())).filter((h) => h > 0);
 const K1MODE = String(arg('k1', 'tak'));
 if (K1MODE !== 'tak') console.warn('[sym] --k1 ' + K1MODE + ': kamera bez K1 nie istnieje już w kodzie gry (cameraRig.js) — liczę K1');
 const K1S = [true];
-const B_LENS = Number(arg('B', WL.WORLD_LENS_DEFAULTS.B));
+if (arg('B', '')) console.warn('[sym] --B: mapa C nie istnieje (mapa O1, DECYZJE-2) — skala w trawersie to --B1');
+const B1_LENS = Number(arg('B1', WL.WORLD_LENS_DEFAULTS.B1));
+// A/B parametrów soczewki: --param klucz=liczba[,klucz=liczba] (WORLD_LENS_DEFAULTS, np. aspectMax=0 — ē_s bez limitu,
+// speedRef=0 — skala bez napędu, exitSizePx=50)
+const LENS_PARAMS = Object.fromEntries(String(arg('param', '')).split(',').map((kv) => kv.trim()).filter(Boolean).map((kv) => {
+  const [k, v] = kv.split('=');
+  if (!(k in WL.WORLD_LENS_DEFAULTS) || !Number.isFinite(Number(v))) throw new Error('[sym] --param ' + kv);
+  return [k, Number(v)];
+}));
+const DRIVE_ID = 'warp_' + String(arg('naped', 'mk2')).toLowerCase().replace(/^warp_/, '');
+// Proporcje kadru (recenzja O1 ust. 1): '16:9' (domyślnie), '21:9' (3440 × 1440), '32:9' (5120 × 1440), 'W:H' albo liczba —
+// W = H · proporcje; progi P4 i W0 liczone względem WYSOKOŚCI kadru (× H / 1080)
+const ASPECT_ARG = String(arg('aspect', '16:9'));
+const ASPECT = (() => {
+  const named = { '16:9': 16 / 9, '21:9': 3440 / 1440, '32:9': 32 / 9 };
+  if (named[ASPECT_ARG]) return named[ASPECT_ARG];
+  const m = ASPECT_ARG.match(/^(\d+(?:\.\d+)?)[:x×/](\d+(?:\.\d+)?)$/);
+  const v = m ? Number(m[1]) / Number(m[2]) : Number(ASPECT_ARG);
+  if (!(v > 0.5 && v < 8)) throw new Error('[sym] --aspect: ' + ASPECT_ARG);
+  return v;
+})();
 const TORY = String(arg('tory', 'gl'));
 const MD = arg('md', '');
 const JSON_OUT = arg('json', '');
@@ -84,7 +111,11 @@ const BRAKE = 200;              // Atlas: driveState.brakeAccel — hamowanie ś
 const K_EXIT = WD.WARP_EXIT_MOMENTUM.k;
 const V_END = K_EXIT * V_MAX;
 const SLIDE = (V_END * V_END - V_MAX * V_MAX) / (2 * BRAKE);
-const DRIVE = DM.WARP_DRIVES.warp_mk2.speed;  // Atlas: PLAYER_HULL_DRIVE.atlas.warp = 'warp_mk2'
+if (!DM.WARP_DRIVES[DRIVE_ID]) throw new Error('[sym] --naped: ' + DRIVE_ID + ' (znane: ' + Object.keys(DM.WARP_DRIVES).join(', ') + ')');
+const DRIVE = DM.WARP_DRIVES[DRIVE_ID].speed;  // Atlas: PLAYER_HULL_DRIVE.atlas.warp = 'warp_mk2' (domyślnie)
+// skala mapy O1 przy szybszym napędzie (worldLens.js: speedRef — ctx.driveSpeed = warp.speed): × speedRef / v
+const SPEED_REF = LENS_PARAMS.speedRef ?? WL.WORLD_LENS_DEFAULTS.speedRef;
+const KV = SPEED_REF > 0 && DRIVE > SPEED_REF ? SPEED_REF / DRIVE : 1;
 const CHARGE_T = 0.8;           // warp.chargeTime
 const ENTRY_T = 0.9;            // warp.entryDuration
 const RING_R = RS.RING_PLANET_WORLD_RADII;
@@ -170,6 +201,8 @@ function onOrbitAtLateral(R, S0, u, lat, alongPref) {
 }
 
 const ORB = (id) => SM.SYSTEM_MAP_PLANET_BY_ID[id].orbitAU * AU;
+// Ciało świata po id (planeta — world.P, księżyc, małe ciało, słońce — lista) albo null.
+const bodyOf = (world, id) => (id ? (world.P[id] || world.bodies.find((b) => b.id === id) || null) : null);
 
 // Kąt ciała od kursu przy starcie [°] (+ w prawo) i odległość [tys. j.] — do tytułów scenariuszy.
 function bearingNote(world, id, S0, u) {
@@ -248,7 +281,43 @@ function scenarioS6() {
   const sc = scenarioS2({ jupiter: Math.atan2(jup.y, jup.x) });
   return { ...sc, name: 'S6', title: `Ziemia → Mars, Jowisz w stożku za celem (${bearingNote(sc.world, 'jupiter', sc.S0, sc.u)})`, coneBody: 'jupiter' };
 }
-const SCEN_FN = { S1: scenarioS1, S2: scenarioS2, S3: scenarioS3, S4: scenarioS4, S5: scenarioS5, S6: scenarioS6 };
+// S7 — start z portu Ceres (port bez ringu, DECYZJE-2 O1-2): statek przy stacji (1,7 promienia od środka), kurs prosto od
+// Ceres, ręczny skok bez celu. Dok w kadrze (zasięg rzeczy przypiętych — attachR, jak portDocks3D) wymusza RUCH ciała startu:
+// Ceres w kadrze od ładowania, w locie ma wylecieć DOLNĄ krawędzią kadru i zniknąć (za płaszczyzną kamery — promień 0).
+function scenarioS7() {
+  const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 150 * deg, mars: 250 * deg, jupiter: 20 * deg, saturn: 75 * deg, uranus: 110 * deg, neptune: 300 * deg };
+  const world = buildWorld(angles);
+  const ce = world.bodies.find((b) => b.id === 'ceres');
+  const dist = ce.r * SB.SMALL_BODY_BY_ID.ceres.station.orbitMul;   // stacja Ceres (smallBodies.js: orbitMul)
+  const rad = hyp(ce.x, ce.y);
+  const u = { x: -ce.y / rad, y: ce.x / rad };                      // stycznie do orbity (wzdłuż pasa)
+  const S0 = { x: ce.x + u.x * dist, y: ce.y + u.y * dist };
+  return { name: 'S7', title: `Start z portu Ceres: statek przy stacji ${Math.round(dist)} j. od środka Ceres (r ${ce.r}), kurs prosto od niej, dok w kadrze (ruch), swobodny skok 600 tys. j. wzdłuż pasa`,
+    world, S0, u, leg: 600000, target: null, origin: 'ceres', free: true, originAttach: dist + 3000, startCheck: true };
+}
+// S8 — przylot do księżyca tuż za brzegiem studni planety z ringiem (recenzja O1 ust. 3): TRAVEL TO do Io (obraz 86 tys. j.
+// od Jowisza), kurs mija Jowisza 2 tys. j. za brzegiem jego studni — wyjście tuż po bliskim przelocie: duża tarcza Jowisza
+// (z ringiem) pod statkiem w kadrze w chwili wyjścia, zanurza się (P4 wyjścia: tempo zanurzenia z tempa obrazu).
+function scenarioS8() {
+  const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 150 * deg, mars: 250 * deg, jupiter: 0, saturn: 75 * deg, uranus: 110 * deg, neptune: 300 * deg };
+  const world = buildWorld(angles);
+  const J = world.P.jupiter;
+  const io = world.bodies.find((b) => b.id === 'io');
+  const vx = J.x - io.x;
+  const vy = J.y - io.y;
+  const D = hyp(vx, vy);
+  const lat = WELL.jupiter + 2000;
+  const th = Math.acos(-Math.sqrt(Math.max(0, D * D - lat * lat)) / D);   // Jowisz za punktem końca, `lat` z boku kursu
+  const c = Math.cos(th);
+  const sn = Math.sin(th);
+  const u = { x: (vx * c - vy * sn) / D, y: (vx * sn + vy * c) / D };
+  const leg = 900000;
+  const stop = io.r + 3000;
+  const S0 = { x: io.x - u.x * (stop + leg), y: io.y - u.y * (stop + leg) };
+  return { name: 'S8', title: `Przylot do Io tuż po minięciu Jowisza (${Math.round(lat / 1000)} tys. j. z boku — 2 tys. j. za brzegiem studni; Io ${Math.round(D / 1000)} tys. j. od Jowisza), odcinek ${Math.round(leg / 1000)} tys. j.`,
+    world, S0, u, leg, target: 'io', origin: null, free: false, exitBody: 'jupiter' };
+}
+const SCEN_FN = { S1: scenarioS1, S2: scenarioS2, S3: scenarioS3, S4: scenarioS4, S5: scenarioS5, S6: scenarioS6, S7: scenarioS7, S8: scenarioS8 };
 
 function zoneAt(x, y, sc) {
   const r = hyp(x, y);
@@ -262,7 +331,7 @@ function zoneAt(x, y, sc) {
 
 // ------------------------------------------------------------------------------------------------ przebieg
 function simulate(sc, H, k1) {
-  const W = Math.round(H * 16 / 9);
+  const W = Math.round(H * ASPECT);
   const sPx = H / 1080;
   const u = sc.u;
   const course = Math.atan2(u.y, u.x);
@@ -275,8 +344,8 @@ function simulate(sc, H, k1) {
   const focal = (H * 0.5) / Math.tan(FOV * 0.5 * deg);
   const tune = CR.CAMERA_RIG_DEFAULTS;
   const world = sc.world;
-  const tgtW = sc.target ? world.P[sc.target] : null;
-  const orgW = sc.origin ? world.P[sc.origin] : null;
+  const tgtW = bodyOf(world, sc.target);
+  const orgW = bodyOf(world, sc.origin);
   const fly = world.bodies.filter((b) => b.fly > 0 && b !== tgtW && b !== orgW).map((b) => ({ x: b.x, y: b.y, r: b.fly }));
   let cruise = DRIVE;
   let plan = null;
@@ -286,7 +355,7 @@ function simulate(sc, H, k1) {
     cruise = plan.speed;
   }
   // Rekordy soczewki (jak planet3d.assets.js).
-  const lens = new WL.WarpWorldLens({ B: B_LENS, originMove: ORIGIN_MOVE });
+  const lens = new WL.WarpWorldLens({ ...LENS_PARAMS, B1: B1_LENS, originMove: ORIGIN_MOVE });
   const today = WIRING === 'dzis';
   const recs = world.bodies.map((b) => {
     const r = WL.newLensBody(b.id, today ? '' : b.kind);
@@ -298,6 +367,8 @@ function simulate(sc, H, k1) {
   for (const r of recs) r.parent = r.src.parentId ? byId[r.src.parentId] : null;
   const target = tgtW ? byId[tgtW.id] : null;
   const origin = orgW ? byId[orgW.id] : null;
+  // dok przy ciele startu (portDocks3D: zasięg rzeczy przypiętych w kotwicy → planet3d: b.attachR)
+  if (origin && sc.originAttach > 0) origin.attachR = sc.originAttach;
   const ctx = { ...WL.WARP_WORLD_LENS, targetHold: 0 };
   const rig = CR.createCameraRig();
   const track = PH.createWarpLensTrack();   // stan minimalny osi β (strona gry)
@@ -437,13 +508,13 @@ function simulate(sc, H, k1) {
     const on = beta > 0.0005 || (arriving && ctx.targetHold > 0.0005);
     if (on) {
       Object.assign(ctx, {
-        active: true, beta, speed: cruise, velAngle: course, zoom, W, H, focal, camZ, camX, camY, roll, shipX, shipY,
+        active: true, beta, speed: cruise, driveSpeed: DRIVE, velAngle: course, zoom, W, H, focal, camZ, camX, camY, roll, shipX, shipY,
         shipSx, shipSy, anchorSx, anchorSy, hullHalfLen: L_HULL * zoom * 0.5, hullHalfWid: W_HULL * zoom * 0.5, dt: DT,
         target, origin, exitAge: arriving ? lensExitAge : -1, exitSlow: phase.exitSlow > 0 ? phase.exitSlow : 0, exitHalt: phase.exitHalt,
         arriving: phase.arriving,       // warpLensPhase: ślizg z pędem (warp.exitSlide.active) / hamowanie grawitacyjne
         arrivalFill: fill, zoomRef, zoomJump: zoomRef * tune.warpZoomOut
       });
-      if (today) Object.assign(ctx, { anchorSx: NaN, anchorSy: NaN, origin: null, exitSlow: 0, arriving: null, arrivalFill: NaN, zoomRef: NaN, zoomJump: NaN });
+      if (today) Object.assign(ctx, { anchorSx: NaN, anchorSy: NaN, driveSpeed: NaN, origin: null, exitSlow: 0, arriving: null, arrivalFill: NaN, zoomRef: NaN, zoomJump: NaN });
       lens.update(recs, recs.length, ctx, target);
       for (const r of recs) r._lensed = true;
       lensOn = true;
@@ -482,7 +553,11 @@ function simulate(sc, H, k1) {
       }
       const inF = WL.lensDiscInFrame(x, y, size, W, H);
       const drawn = size >= 1.5 && inF;
-      fb[b.id] = { x, y, size, bb, inF, drawn, entry: r.entry };
+      const owx = b.x - shipX;
+      const owy = b.y - shipY;
+      // a, l — prawdziwe położenie względem statku wzdłuż kursu / w bok [j.]; ang — kąt obrotu przelotu (rysunek torów)
+      fb[b.id] = { x, y, size, bb, inF, drawn, entry: r.entry, ang: on && r.ready ? r.out.angle : 0,
+        a: owx * u.x + owy * u.y, l: owy * u.x - owx * u.y };
     }
     const [tdx, tdy] = tgtW ? toScreen(tgtW.x - shipX, tgtW.y - shipY) : [0, 0];
     frames.push({
@@ -521,7 +596,8 @@ function analyze(res) {
   const H = res.H;
   const ids = Object.keys(F[0].bodies);
   const checks = [];
-  const add = (id, name, pass, value, note = '') => checks.push({ id, name, pass, value, note });
+  // info — kontrola informacyjna (nie liczy się do kodu wyjścia): C1 — DECYZJE-2 O1-3
+  const add = (id, name, pass, value, note = '', info = false) => checks.push({ id, name, pass, value, note, info });
   // P4 / C5 — skoki klatka po klatce (ciała w kadrze w obu klatkach), per faza
   const jumps = {};
   let pops = [];
@@ -552,8 +628,13 @@ function analyze(res) {
       // (zanurzenie / wynurzenie przez próg minPx z małym krokiem promienia — nie mignięcie)
       // (obraz w kadrze ≥ POP_PX znika: wyskakuje z głębi kadru — następny ≥ 1,5 px poza kadrem — albo gaśnie w jednej
       // klatce do < 15% promienia; ciągłe zanurzanie przez próg 1,5 px z krokiem rzędu kilku px to nie mignięcie)
-      const popOut = p.drawn && !q.drawn && p.size >= POP_PX && deep(p) && (q.size >= 1.5 || q.size < POP_RATIO * p.size);
-      const popIn = !p.drawn && q.drawn && q.size >= POP_PX && deep(q) && (p.size >= 1.5 || p.size < POP_RATIO * q.size);
+      // (mała szybka tarcza, która w jednej klatce przejeżdża przez krawędź kadru ruchem ciągłym — krok ≤ progu P4, promień
+      // bez skoku — to wyjazd / wjazd, nie mignięcie: krok większy niż jej średnica przy krawędzi; skok ponad P4 łapie P4)
+      const byMotion = (o, n) => hyp(n.x - o.x, n.y - o.y) <= P4_MOVE * sPx && Math.abs(n.size - o.size) <= P4_SIZE * sPx;
+      const popOut = p.drawn && !q.drawn && p.size >= POP_PX && deep(p) && (q.size >= 1.5 || q.size < POP_RATIO * p.size)
+        && !(!q.inF && byMotion(p, q));
+      const popIn = !p.drawn && q.drawn && q.size >= POP_PX && deep(q) && (p.size >= 1.5 || p.size < POP_RATIO * q.size)
+        && !(!p.inF && byMotion(p, q));
       if (popOut) pops.push({ t: b.t, id, kind: 'zniknięcie', size: p.size, ph });
       if (popIn) pops.push({ t: b.t, id, kind: 'pojawienie', size: q.size, ph });
     }
@@ -572,15 +653,15 @@ function analyze(res) {
     const last = F[F.length - 1];
     const realEnd = Object.keys(last.bodies).every((id) => last.bodies[id].bb === 0);
     add('C7-przerwanie', 'po przerwaniu ładowania — prawdziwy widok (β = 0) w 1,5 s', realEnd && last.beta === 0, `β ${fmt(last.beta, 3)}`);
-    return { checks, jumps, pops, counts: { min: 0, max: 0, avg: 0 } };
+    return { checks, jumps, pops, counts: { min: 0, max: 0, avg: 0 }, w0: w0Stats(res) };
   }
-  // C1 — ciała w kadrze w locie
+  // C1 — ciała w kadrze w locie (INFORMACYJNIE — DECYZJE-2 O1-3: mapa O1 chowa ciała za płaszczyzną kamery)
   const flight = F.filter((f) => f.state === 'active' && f.t >= 0.6);
   const counts = flight.map((f) => ids.filter((id) => f.bodies[id].drawn).length);
   const cMin = counts.length ? Math.min(...counts) : 0;
   const cMax = counts.length ? Math.max(...counts) : 0;
   const cAvg = counts.length ? counts.reduce((x, y) => x + y, 0) / counts.length : 0;
-  add('C1-liczba', 'ciała w kadrze w locie (min / śr. / max)', cMin >= 3, `${cMin} / ${fmt(cAvg, 1)} / ${cMax}`, '≥ 3 przez cały lot');
+  add('C1-liczba', 'ciała w kadrze w locie (min / śr. / max)', cMin >= 3, `${cMin} / ${fmt(cAvg, 1)} / ${cMax}`, '≥ 3 przez cały lot (informacyjnie — O1-3)', true);
   // każda planeta i słońce: w kadrze ≥ 0,5 s (ładowanie + lot) albo powód
   const big = res.recs.filter((r) => r.src.kind === 'planet' || r.src.kind === 'sun').map((r) => r.id);
   const missing = [];
@@ -591,16 +672,35 @@ function analyze(res) {
     const why = reasonHidden(res, id);
     if (!why) missing.push(id); else seen.push(id + ' (' + why + ')');
   }
-  add('C1-planety', 'planety i słońce w kadrze (≥ 0,5 s) albo powód', missing.length === 0, missing.length ? 'brak: ' + missing.join(', ') : 'wszystkie', seen.join(', '));
+  add('C1-planety', 'planety i słońce w kadrze (≥ 0,5 s) albo powód', missing.length === 0, missing.length ? 'brak: ' + missing.join(', ') : 'wszystkie', seen.join(', ') + ' (informacyjnie — O1-3)', true);
   // C2 — Mars w trawersie (S1), dalekie małe
   if (res.sc.flyby) {
     const fid = res.sc.flyby;
     let peak = 0;
     let peakT = 0;
     for (const f of F) if (f.state === 'active' && f.bodies[fid].drawn && f.bodies[fid].size > peak) { peak = f.bodies[fid].size; peakT = f.t; }
-    const need = res.sc.name === 'S1' ? C2_MARS * sPx : 0;
-    add('C2-trawers', `${fid} w trawersie (${res.sc.flybyLat / 1000} tys. j.) — szczyt promienia`, peak >= need, `${fmt(peak)} px @${fmt(peakT, 2)} s`, need ? `≥ ${fmt(need)} px` : 'informacyjnie');
-    // monotoniczność: rośnie do szczytu, potem maleje (w locie, β = 1)
+    // promień W TRAWERSIE (a = 0 — przejście wzdłuż kursu, interpolacja klatek; recenzja O1 ust. 6: szczyt O1 wypada przy
+    // wylocie z kadru, więc szczyt nie mierzy trawersu); w locie, β = 1. Próg × skala napędu (worldLens.js: speedRef).
+    let trav = NaN;
+    let travT = NaN;
+    let travIn = false;
+    for (let i = 1; i < F.length && !Number.isFinite(trav); i++) {
+      const f = F[i];
+      const g = F[i - 1];
+      if (f.state !== 'active' || g.state !== 'active') continue;
+      const a0 = g.bodies[fid].a;
+      const a1 = f.bodies[fid].a;
+      if (!(a0 > 0 && a1 <= 0) || !(f.bodies[fid].bb >= 0.999)) continue;
+      const k = a0 / Math.max(1e-9, a0 - a1);
+      trav = g.bodies[fid].size + (f.bodies[fid].size - g.bodies[fid].size) * k;
+      travT = g.t + DT * k;
+      travIn = g.bodies[fid].drawn || f.bodies[fid].drawn;
+    }
+    const need = res.sc.name === 'S1' ? C2_MARS * sPx * KV : 0;
+    add('C2-trawers', `${fid} w trawersie (${res.sc.flybyLat / 1000} tys. j., a = 0) — promień`, Number.isFinite(trav) && trav >= need && (travIn || !need),
+      `${fmt(trav)} px @${fmt(travT, 2)} s${travIn ? '' : ' — poza kadrem'} (szczyt w kadrze ${fmt(peak)} px @${fmt(peakT, 2)} s)`,
+      need ? `≥ ${fmt(need)} px${KV < 1 ? ` (${C2_MARS} × skala napędu ${fmt(KV, 2)})` : ''}` : 'informacyjnie');
+    // monotoniczność: rośnie do szczytu (O1: trawers albo wylot z kadru), potem — jeśli jeszcze w kadrze — maleje (w locie, β = 1)
     let up = 0;
     let down = 0;
     let prev = null;
@@ -614,7 +714,7 @@ function analyze(res) {
       }
       prev = b.size;
     }
-    add('C2-mono', `${fid}: rośnie do trawersu, potem maleje`, up === 0 && down === 0, `nawroty ${up} / ${down}`);
+    add('C2-mono', `${fid}: rośnie do szczytu (trawers albo wylot z kadru), bez nawrotów`, up === 0 && down === 0, `nawroty ${up} / ${down}`);
   }
   let farWorst = 0;
   let farId = '';
@@ -677,7 +777,7 @@ function analyze(res) {
       const b = f.bodies[cid];
       if (!b.drawn || !(b.bb > 0)) continue;
       const [a, l] = alongOf(res, f, res.recs.find((q) => q.id === cid).src);
-      const tg = res.sc.world.P[res.sc.target];
+      const tg = bodyOf(res.sc.world, res.sc.target);
       const [ta] = alongOf(res, f, tg);
       const inCone = a > ta - tg.r && Math.atan2(Math.abs(l), a) / deg < WL.WORLD_LENS_DEFAULTS.coneDeg - WL.WORLD_LENS_DEFAULTS.coneSoftDeg;
       if (inCone && b.size > worst) { worst = b.size; worstAt = `@${fmt(f.t, 2)} (${f.phaseName})`; }
@@ -718,7 +818,55 @@ function analyze(res) {
         `@${fmt(ev.release, 2)} s: ruch ${fmt(mv, 1)} px/kl., Δr ${fmt(ds, 1)} px/kl., maleje ≤ ${fmt(dec * 100, 2)}%/kl.`, `≤ ${fmt(P4_MOVE * sPx)} / ${fmt(P4_SIZE * sPx)} px, ≤ 2%/kl.`);
     } else add('C5-puszczenie', 'puszczenie celu', false, 'cel nie został puszczony');
   }
-  return { checks, jumps, pops, counts: { min: cMin, max: cMax, avg: cAvg } };
+  // C8 — start z ciałem w kadrze (DECYZJE-2 O1-2): ciało startu w kadrze od ładowania, wylatuje DOLNĄ krawędzią kadru,
+  // nie wraca, za płaszczyzną kamery niewidoczne (promień 0) przed końcem lotu
+  if (res.sc.startCheck && res.sc.origin) {
+    const oid = res.sc.origin;
+    const startDrawn = F.some((f) => f.state === 'charging' && f.bodies[oid].drawn);
+    let lastI = -1;
+    let back = 0;
+    for (let i = 1; i < F.length; i++) {
+      const d = F[i].bodies[oid].drawn;
+      if (d) { if (lastI >= 0 && lastI < i - 1) back++; lastI = i; }
+    }
+    const last = lastI >= 0 ? F[lastI].bodies[oid] : null;
+    const next = lastI >= 0 && lastI + 1 < F.length ? F[lastI + 1].bodies[oid] : null;
+    const bottom = !!(last && next && next.y > 0 && (next.y - next.size - H * 0.5) >= (Math.abs(next.x) - next.size - W * 0.5) && next.y > last.y);
+    const flightEnd = [...F].reverse().find((f) => f.state === 'active');
+    const hiddenEnd = !!(flightEnd && flightEnd.bodies[oid].size < 1e-6);
+    add('C8-start', `ciało startu (${oid}) w kadrze od ładowania wylatuje dołem kadru i znika (O1-2)`, startDrawn && back === 0 && bottom && hiddenEnd,
+      last ? `ostatnio w kadrze @${fmt(F[lastI].t, 2)} s (${fmt(last.x)}, ${fmt(last.y)}) r ${fmt(last.size)} px; wylot ${bottom ? 'dołem' : 'NIE dołem'}; powroty ${back}; koniec lotu: promień ${fmt(flightEnd ? flightEnd.bodies[oid].size : NaN, 3)} px`
+        : 'nie było w kadrze', 'w kadrze od ładowania, wylot dolną krawędzią, 0 powrotów, za płaszczyzną kamery promień 0');
+  }
+  return { checks, jumps, pops, counts: { min: cMin, max: cMax, avg: cAvg }, w0: w0Stats(res) };
+}
+
+// W0 (DECYZJE-2, informacyjnie): tempo obrazu ciał soczewki w locie (kop + lot, β = 1, ciało rysowane w obu klatkach)
+// [px/s przy 1080p] — rozkład i ciała daleko przed dziobem (≥ FAR_A, przy punkcie zbiegu).
+function w0Stats(res) {
+  const F = res.frames;
+  const sp = [];
+  let max = 0;
+  let maxId = '';
+  let far = 0;
+  let farId = '';
+  for (let i = 1; i < F.length; i++) {
+    const f = F[i];
+    if (f.state !== 'active' || f.t < 0.6) continue;
+    const g = F[i - 1];
+    for (const id of Object.keys(f.bodies)) {
+      const b = f.bodies[id];
+      const a = g.bodies[id];
+      if (!b.drawn || !a.drawn || !(b.bb >= 0.999)) continue;
+      const v = hyp(b.x - a.x, b.y - a.y) / DT / res.sPx;
+      sp.push(v);
+      if (v > max) { max = v; maxId = id; }
+      if (b.a >= FAR_A && v > far) { far = v; farId = id; }
+    }
+  }
+  sp.sort((x, y) => x - y);
+  const pct = (q) => (sp.length ? sp[Math.min(sp.length - 1, Math.floor(q * sp.length))] : NaN);
+  return { n: sp.length, p10: pct(0.1), med: pct(0.5), p90: pct(0.9), max, maxId, far, farId };
 }
 
 function alongOf(res, f, b) {
@@ -735,7 +883,7 @@ function reasonHidden(res, id) {
   const F = res.frames.filter((f) => f.state === 'active');
   if (!F.length) return '';
   const b = res.recs.find((q) => q.id === id).src;
-  const tgt = res.sc.target ? res.sc.world.P[res.sc.target] : null;
+  const tgt = bodyOf(res.sc.world, res.sc.target);
   let behind = true;
   let cone = true;
   for (const f of F) {
@@ -783,7 +931,9 @@ let failed = 0;
 const out = [];
 out.push(`# Symulator soczewki świata „podniesiony świat” — ${new Date().toISOString().slice(0, 10)}`);
 out.push('');
-out.push(`Wpięcie: ${WIRING === 'dzis' ? 'DZIŚ (sterownik przed integracją — informacyjnie)' : 'nowe (etap integracji)'}${ORIGIN_MOVE ? ', planeta startu ruchem (A/B)' : ''}. B = ${B_LENS} j., mapa: h_f ${WL.WORLD_LENS_DEFAULTS.hf}, h_b ${WL.WORLD_LENS_DEFAULTS.hb}, w_s ${WL.WORLD_LENS_DEFAULTS.ws}, ε ${WL.WORLD_LENS_DEFAULTS.eps}·A; oś β: ładowanie ${PH.WARP_LENS_PHASE.chargeBeta}·smoothstep, kop ${PH.WARP_LENS_PHASE.kickTime} s easeOut³, front smug gwiazd w ramp.slow, zanurzenie ${PH.WARP_LENS_PHASE.submerge} s. Napęd Mk II ${DRIVE / 1000} tys. j/s, Atlas L ${L_HULL}, ślizg ${Math.round(SLIDE)} j.`);
+const WLD = WL.WORLD_LENS_DEFAULTS;
+const DRIVE_NAME = { warp_mk1: 'Mk I', warp_mk2: 'Mk II', warp_mk3: 'Mk III' }[DRIVE_ID] || DRIVE_ID;
+out.push(`Wpięcie: ${WIRING === 'dzis' ? 'DZIŚ (sterownik przed integracją — informacyjnie)' : 'nowe (etap integracji)'}${ORIGIN_MOVE ? ', planeta startu ruchem (A/B)' : ''}. Mapa O1 (kamera pochylona): h_f ${WLD.hf}, w_s ${WLD.ws}, B1 ${B1_LENS} j., kMax ${WLD.kMax}, ukrycie w ${WLD.hideW0}–${WLD.hideW1}, obrót przelotu ${WLD.flybyTilt}, ē_s ≤ ${fmt(WLD.aspectMax, 3)} · H/2, napęd odniesienia ${WLD.speedRef / 1000} tys. j/s; oś β: ładowanie ${PH.WARP_LENS_PHASE.chargeBeta}·smoothstep, kop ${PH.WARP_LENS_PHASE.kickTime} s easeOut³, front smug gwiazd w ramp.slow, zanurzenie ≥ ${PH.WARP_LENS_PHASE.submerge} s (z tempa obrazu: ${WLD.exitMovePx} / ${WLD.exitSizePx} px/kl.). Kadr ${ASPECT_ARG} (${fmt(ASPECT, 3)}).${Object.keys(LENS_PARAMS).length ? ' A/B: ' + JSON.stringify(LENS_PARAMS) + '.' : ''} Napęd ${DRIVE_NAME} ${DRIVE / 1000} tys. j/s (skala mapy × ${fmt(KV, 3)}), Atlas L ${L_HULL}, ślizg ${Math.round(SLIDE)} j. Kontrole C1 — informacyjnie (O1-3).`);
 out.push('');
 for (const name of SCENS) {
   const fn = SCEN_FN[name];
@@ -794,7 +944,7 @@ for (const name of SCENS) {
       const res = simulate(sc, H, k1);
       const an = analyze(res);
       const strict = k1 || STRICT_OFF;
-      const bad = an.checks.filter((c) => !c.pass);
+      const bad = an.checks.filter((c) => !c.pass && !c.info);
       if (strict && bad.length) failed += bad.length;
       runs.push({ res, an });
       const ev = res.ev;
@@ -804,8 +954,10 @@ for (const name of SCENS) {
       out.push('');
       out.push('| kontrola | wynik | wartość | próg / uwagi |');
       out.push('|---|---|---|---|');
-      for (const c of an.checks) out.push(`| ${c.name} | ${c.pass ? 'OK' : (strict ? '**BŁĄD**' : 'nie (info)')} | ${c.value} | ${c.note} |`);
+      for (const c of an.checks) out.push(`| ${c.name} | ${c.pass ? 'OK' : (strict && !c.info ? '**BŁĄD**' : 'nie (info)')} | ${c.value} | ${c.note} |`);
       out.push('');
+      const w = an.w0;
+      if (w && w.n) out.push(`W0 (informacyjnie): tempo obrazu ciał w locie [px/s przy 1080p] — p10 ${fmt(w.p10)}, mediana ${fmt(w.med)}, p90 ${fmt(w.p90)}, max ${fmt(w.max)} (${w.maxId}); daleko (≥ ${FAR_A / 1e6} mln j. przed dziobem) max ${fmt(w.far)}${w.farId ? ` (${w.farId})` : ''}.`, '');
       if (TORY === 'wszystkie' || (TORY === 'gl' && k1 && H === RESS[0])) {
         out.push(`### Tory ${sc.name} ${res.W}×${H} (co 0,5 s; x, y od środka kadru [px, y w dół], r [px], px/s, β ciała)`);
         out.push('');
@@ -823,8 +975,18 @@ out.push('| przebieg | ' + ids.join(' | ') + ' |');
 out.push('|---|' + ids.map(() => '---').join('|') + '|');
 for (const r of runs) {
   const strictRun = r.res.k1 || STRICT_OFF;
-  const m = Object.fromEntries(r.an.checks.map((c) => [c.id, c.pass ? 'OK' : (strictRun ? 'BŁĄD' : 'nie')]));
+  const m = Object.fromEntries(r.an.checks.map((c) => [c.id, c.pass ? 'OK' : (strictRun && !c.info ? 'BŁĄD' : 'info')]));
   out.push(`| ${r.res.sc.name} ${r.res.H}p ${r.res.k1 ? 'K1' : 'dziś'} | ` + ids.map((id) => m[id] || '—').join(' | ') + ' |');
+}
+out.push('');
+out.push(`W0 — tempo obrazu ciał soczewki w locie, napęd ${DRIVE_NAME} [px/s przy 1080p]:`);
+out.push('');
+out.push('| przebieg | p10 | mediana | p90 | max | daleko (≥ 1,5 mln j.) |');
+out.push('|---|---|---|---|---|---|');
+for (const r of runs) {
+  const w = r.an.w0;
+  if (!w || !w.n) continue;
+  out.push(`| ${r.res.sc.name} ${r.res.H}p | ${fmt(w.p10)} | ${fmt(w.med)} | ${fmt(w.p90)} | ${fmt(w.max)} (${w.maxId}) | ${fmt(w.far)}${w.farId ? ` (${w.farId})` : ''} |`);
 }
 out.push('');
 out.push(failed ? `**${failed} kontroli nie przeszło (wariant K1${STRICT_OFF ? ' i dziś' : ''}).**` : 'Wszystkie kontrole wariantu K1 przeszły.');
@@ -833,10 +995,13 @@ if (MD) writeFileSync(MD, text);
 else console.log(text);
 if (JSON_OUT) {
   writeFileSync(JSON_OUT, JSON.stringify(runs.map((r) => ({
-    scen: r.res.sc.name, H: r.res.H, k1: r.res.k1, ev: r.res.ev, checks: r.an.checks,
+    scen: r.res.sc.name, H: r.res.H, W: r.res.W, aspect: ASPECT_ARG, k1: r.res.k1, ev: r.res.ev, checks: r.an.checks, w0: r.an.w0, naped: DRIVE_ID, kv: KV,
     frames: r.res.frames.map((f) => ({ t: +f.t.toFixed(4), ph: f.phaseName, v: Math.round(f.v), beta: +f.beta.toFixed(4), zoom: +f.zoom.toFixed(5),
       ship: [+f.shipSx.toFixed(1), +f.shipSy.toFixed(1)], hold: +f.hold.toFixed(4),
-      b: Object.fromEntries(Object.entries(f.bodies).filter(([, b]) => b.inF).map(([id, b]) => [id, [+b.x.toFixed(1), +b.y.toFixed(1), +b.size.toFixed(2), +b.bb.toFixed(3)]])) }))
+      s: Math.round(f.s), anchor: [+f.anchorSx.toFixed(1), +f.anchorSy.toFixed(1)], hullL: +f.hullL.toFixed(1), hullW: +f.hullW.toFixed(1),
+      // ciało: [x, y, r, β, kąt przelotu, a, l, w kadrze, rysowane] (ciało mijane scenariusza i start — także poza kadrem)
+      b: Object.fromEntries(Object.entries(f.bodies).filter(([id, b]) => b.inF || id === r.res.sc.flyby || id === r.res.sc.origin).map(([id, b]) => [id,
+        [+b.x.toFixed(2), +b.y.toFixed(2), +b.size.toFixed(2), +b.bb.toFixed(3), +b.ang.toFixed(4), Math.round(b.a), Math.round(b.l), b.inF ? 1 : 0, b.drawn ? 1 : 0]])) }))
   }))));
 }
 if (MD) console.log(`raport: ${MD}; ${failed ? failed + ' kontroli nie przeszło' : 'kontrole K1: OK'}`);

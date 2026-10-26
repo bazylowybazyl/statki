@@ -1,7 +1,8 @@
 // Soczewka świata — przejścia i przylot po recenzji etapu „M-mapa” (2026-10-26): cel na tle (perspektywa i paralaksa
 // w kadrze przylotu, zbieżność na skali prawdziwego obrazu), podłoga celu po zatrzymaniu (kamera bez K1), przerwane
 // ładowanie i wyjście bez rampy (stan minimalny osi β), wyjście w trakcie kopu, stożek przy zanurzaniu, ciało gotowe
-// w trakcie skoku, decyzja wejścia w kadrze skoku, zbieżność w czasie (60 / 240 Hz), kieszeń przy pierścieniu, kotwica.
+// w trakcie skoku, decyzja wejścia w kadrze skoku, zbieżność w czasie (60 / 240 Hz), kieszeń przy pierścieniu, kotwica;
+// mapa O1 (DECYZJE-2 O1-2): ciało startu z dokiem w kadrze wylatuje dołem kadru i znika (P4 w ładowaniu, kopie i locie).
 // node --test tests/warpLensPrzejscia.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +18,7 @@ import {
   WARP_LENS_PHASE, warpLensBeta, warpLensKickBeta, warpLensHudBeta, createWarpLensTrack, stepWarpLensTrack,
   warpLensExitBeta
 } from '../src/render/warpLensPhase.js';
+import { CAMERA_RIG_DEFAULTS } from '../src/game/cameraRig.js';
 
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 const FOCAL = 540 / Math.tan(17.5 * Math.PI / 180);
@@ -205,7 +207,8 @@ test('wyjście w trakcie kopu (β wyjścia < 1): tryby z wejścia zostają — w
   const run = (exitBeta) => {
     const lens = new WarpWorldLens();
     const ctx = baseCtx({ zoom: 0.2, shipSy: 0, anchorSx: 0, anchorSy: 0 });
-    const luna = Object.assign(newLensBody('luna', 'moon'), { x: 60000, y: 0, r: 9000, flat: 0.1173, ready: true });
+    // Luna tuż za trawersem (O1: obraz soczewki bliski prawdziwemu — ruch), Mars daleko przed dziobem (wynurzenie)
+    const luna = Object.assign(newLensBody('luna', 'moon'), { x: 60000, y: 20000, r: 9000, flat: 0.1173, ready: true });
     const mars = Object.assign(newLensBody('mars', 'planet'), { x: 30000, y: -1e6, r: 30000, flat: 0.2, ready: true });
     const list = [luna, mars];
     for (let i = 0; i <= 20; i++) { ctx.beta = 0.9 * i / 20; lens.update(list, 2, ctx, null); }
@@ -330,9 +333,10 @@ test('kieszeń przy pierścieniu (statek wchodzi w promień z ringiem): skala og
 
 test('stan klatki: reset zeruje wszystkie pola sterownika; kotwica z px CSS × skala bufora (recenzja ust. 6, 9); demo „Nurt” ma lensScaleLag', () => {
   const L = WARP_WORLD_LENS;
-  Object.assign(L, { active: true, beta: 1, anchorSx: 5, anchorSy: 6, exitSlow: 0.9, exitHalt: 1.2, arriving: true, arrivalFill: 0.6, zoomRef: 0.2, zoomJump: 0.1, exitAge: 2, targetHold: 1, origin: {} });
+  Object.assign(L, { active: true, beta: 1, anchorSx: 5, anchorSy: 6, exitSlow: 0.9, exitHalt: 1.2, arriving: true, arrivalFill: 0.6, zoomRef: 0.2, zoomJump: 0.1, exitAge: 2, targetHold: 1, origin: {}, driveSpeed: 250000 });
   resetWarpWorldLens();
   assert.ok(Number.isNaN(L.anchorSx) && Number.isNaN(L.anchorSy) && Number.isNaN(L.arrivalFill) && Number.isNaN(L.zoomRef) && Number.isNaN(L.zoomJump));
+  assert.ok(Number.isNaN(L.driveSpeed), 'napęd (skala mapy O1) — brak');
   assert.ok(L.exitSlow === 0 && L.exitHalt === 0 && L.arriving === null && L.exitAge === -1 && L.targetHold === 0 && L.origin === null && L.active === false);
   setWarpLensAnchor(L, 12, -189, 1.5);
   assert.ok(L.anchorSx === 18 && L.anchorSy === -283.5, 'px bufora = px CSS × bufW / viewW');
@@ -342,4 +346,83 @@ test('stan klatki: reset zeruje wszystkie pola sterownika; kotwica z px CSS × s
   assert.ok(Number.isNaN(L.anchorSx), 'bez skali — statek');
   resetWarpWorldLens();
   assert.ok(Number.isFinite(WORLD_LENS_DEFAULTS.lensScaleLag) && WORLD_LENS_DEFAULTS.lensScaleLag > 0);
+});
+
+// Start z ciałem za rufą w kadrze (DECYZJE-2 O1-2): statek przy doku ciała (dok w kadrze — zasięg rzeczy przypiętych
+// wymusza RUCH), ładowanie 0,8 s (β 0 → 0,9, kamera oddala się do kadru skoku), kop 0,45 s, wejście w prędkość jak
+// w symulatorze (smoothstep 0,9 s, sprężyna 6/s). Ciało ma wylecieć DOLNĄ krawędzią kadru, nie wrócić, za płaszczyzną
+// kamery mieć promień 0; w kadrze ≤ 60 px ruchu i ≤ 50 px promienia na klatkę (P4) — przy 1080p i 1440p.
+function startRun({ dist, r, z = 0, vmax, H = 1080, W = Math.round(H * 16 / 9), attach = true, lat = 0, drive = NaN }) {
+  const DT = 1 / 60;
+  const sPx = H / 1080;
+  const focal = (H * 0.5) / Math.tan(17.5 * Math.PI / 180);
+  const zoomRef = 0.2133 * W / 1920;   // gra: defaultShipZoom(W, …) — zoom z SZEROKOŚCI kadru (32:9 — × 2 względem wysokości)
+  const zoomJump = zoomRef * CAMERA_RIG_DEFAULTS.warpZoomOut;
+  const sm = (x) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
+  const lens = new WarpWorldLens();
+  const b = Object.assign(newLensBody('start', z ? 'planet' : 'small'), { x: lat, y: dist, r, z, ready: true, gate: 1 });
+  const ctx = baseCtx({ W, H, zoomRef, zoomJump, focal, shipSy: 0, anchorSy: 0 });
+  let s = 0;
+  let v = 0;
+  let prog = 0;
+  let prev = null;
+  const R = { worstMove: 0, worstSize: 0, first: NaN, last: null, next: null, back: 0, finalSize: NaN, sPx, W, H, entry: 0 };
+  for (let t = -0.8; t < 3; t += DT) {
+    const charging = t < 0;
+    ctx.beta = charging ? warpLensBeta({ state: 'charging', charge: (t + 0.8) / 0.8 }) : warpLensBeta({ state: 'active', kickAge: t });
+    if (!charging) {
+      prog = Math.min(1, prog + DT / 0.9);
+      v += (vmax * sm(prog) - v) * Math.min(1, 6 * DT);
+      s += v * DT;
+    }
+    const zoom = charging ? Math.exp(Math.log(zoomRef) + sm((t + 0.8) / 0.8) * Math.log(zoomJump / zoomRef)) : zoomJump;
+    const ay = 189 * sPx * (charging ? sm((t + 0.8) / 0.8) : 1);
+    Object.assign(ctx, { zoom, shipY: -s, shipSy: ay, anchorSy: ay, hullHalfLen: 900 * zoom, hullHalfWid: 403 * zoom, camZ: focal / zoom, driveSpeed: drive });
+    b.flat = z ? focal / (focal / zoom - z) : zoom;
+    if (attach) b.attachR = dist + 3000;
+    b.ready = true;
+    lens.update([b], 1, ctx, null);
+    const o = { x: b.out.x, y: b.out.y, size: b.out.size };
+    o.drawn = o.size >= 1.5 && lensDiscInFrame(o.x, o.y, o.size, W, H);
+    if (o.drawn && Number.isNaN(R.first)) R.first = t;
+    if (prev && prev.drawn && o.drawn) {
+      R.worstMove = Math.max(R.worstMove, Math.hypot(o.x - prev.x, o.y - prev.y) / sPx);
+      R.worstSize = Math.max(R.worstSize, Math.abs(o.size - prev.size) / sPx);
+    }
+    if (prev && prev.drawn && !o.drawn) R.next = o;
+    if (prev && !prev.drawn && o.drawn && R.last) R.back++;
+    if (o.drawn) R.last = { ...o, t };
+    prev = o;
+  }
+  R.finalSize = b.out.size;
+  R.entry = b.entry;
+  return R;
+}
+
+// Kadry: 16:9 (1080p, 1440p) i 32:9 (5120 × 1440 — recenzja O1 ust. 1; zoom gry z szerokości, więc prawdziwy obraz ciała
+// startu jest 2 × większy względem wysokości: wchodzi w kadr później w ładowaniu). „Ceres 6 tys. j.” (1,3 tys. j. nad
+// powierzchnią, bliżej niż stacja) przy 32:9 — poza testem: Δr 50,6 / 56,4 px/kl. przy Mk II / III w ŁADOWANIU, tak samo
+// z aspectMax 0 i bez — przejście z prawdziwego obrazu (kamera), nie mapa.
+test('start z ciałem za rufą w kadrze (DECYZJE-2 O1-2): ciało startu wylatuje DOLNĄ krawędzią kadru i znika — bez osobliwości i mignięć, P4 w ładowaniu, kopie i locie (Mk I–III, 1080p / 1440p / 32:9)', () => {
+  const cases = [
+    { name: 'Ceres przy stacji (dok)', dist: 8019, r: 4717 },
+    { name: 'Ceres 6 tys. j. (dok)', dist: 6000, r: 4717, no329: true },
+    { name: 'skała 3 tys. j. z boku', dist: 3000, r: 800, lat: 2000, attach: false },
+    { name: 'planeta tła 20 tys. j. (dok)', dist: 20000, r: 12600, z: -50000 }
+  ];
+  for (const c of cases) {
+    for (const vmax of [100000, 175000, 250000]) {
+      for (const [W, H] of [[1920, 1080], [2560, 1440], [5120, 1440]]) {
+        if (c.no329 && W / H > 2) continue;
+        const R = startRun({ ...c, vmax, H, W, drive: vmax });
+        const tag = `${c.name}, ${vmax / 1000} tys. j/s, ${W}×${H}`;
+        assert.ok(R.first <= (W / H > 2 ? -0.2 : -0.5), `${tag}: w kadrze od ładowania (${R.first})`);
+        assert.equal(R.entry, WORLD_LENS_MODE.MOVE, `${tag}: ruch (dok / prawdziwy obraz w kadrze)`);
+        assert.ok(R.worstMove <= 60 && R.worstSize <= 50, `${tag}: P4 ${R.worstMove.toFixed(1)} px, Δr ${R.worstSize.toFixed(1)} px na klatkę (1080p)`);
+        assert.ok(R.last && R.next && R.next.y > R.last.y && R.next.y - R.next.size > R.H / 2 - 1e-6, `${tag}: wylot dolną krawędzią`);
+        assert.equal(R.back, 0, `${tag}: nie wraca do kadru`);
+        assert.equal(R.finalSize, 0, `${tag}: za płaszczyzną kamery promień 0`);
+      }
+    }
+  }
 });
