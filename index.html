@@ -1133,7 +1133,7 @@
     import { ciwsShotHitsRocket, ciwsRocketReach, RocketThreatGrid } from "./src/game/rocketIntercept.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
-    import { stepCameraZoom, cameraZoomBase, wheelDeltaPx, syncCameraZoomLimits } from "./src/game/cameraZoom.js";
+    import { stepCameraZoom, cameraZoomBase, wheelDeltaPx, syncCameraZoomLimits, cameraZoomFloor } from "./src/game/cameraZoom.js";
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
       defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
@@ -1391,6 +1391,9 @@
     import { createWeaponShotShake, addWeaponShotShake, stepWeaponShotShake, requestCameraShake, requestCameraShakePeak, ShotFeel } from "./src/game/cameraShakes.js";
     // Wstrząsy skoku gracza (kop, wyjście, hamowanie) i wyrzutów NPC z tunelu — decyzje gry (działają też w workerze renderu).
     import { createWarpShakeState, stepWarpShakes, stepWarpBurstShakes } from "./src/game/warpShakes.js";
+    // Soczewka świata w skoku gracza (nowy warp, etap integracji): oś β z zegara gry i kadr przylotu — czyste moduły szwu.
+    import { createWarpLensTrack, createWarpLensPhase, stepWarpLensPhase, warpPlayerArriving } from "./src/render/warpLensPhase.js";
+    import { warpArrivalDepthK } from "./src/render/warpArrivalFrame.js";
     import { installWeaponFxCommands } from "./src/3d/weapons/weaponFxCommands.js";
     import {
       FLAK_TUNING,
@@ -5994,6 +5997,9 @@
       // updateCameraWarpKick): camera.zoom = zoomBase · e^zoomImpulseLog.
       zoomBase: 1.0,
       zoomImpulseLog: 0,
+      // Podłoga zoomu NA EKRANIE przy członie < 0 (kadr przylotu warpa z celem — cameraZoom.js: cameraZoomFloor); NaN — limit
+      // kadłuba (minZoom).
+      zoomImpulseMin: NaN,
       zoomAnchor: { active: false, dx: 0, dy: 0 },
       manualZoom: false,
       shakeMag: 0,
@@ -6428,7 +6434,7 @@
       feedCameraDirector();
       // Hipercruise (od rozruchu do końca okna po wyjściu — obrót kadru): reżyser gaśnie jak w warpie — dopasowanie
       // zoomu i pasy HUD liczy w osiach świata, a blokada masy (wróg < 12 km) i tak wyklucza walkę w hipercruisie.
-      const warpBusy = playerWarpCameraBusy() || hypercruiseBusy(hypercruise) || _hyperRollAfter >= 0;
+      const warpBusy = playerWarpCameraBusy() || playerWarpArrivalLive() || hypercruiseBusy(hypercruise) || _hyperRollAfter >= 0;
       inp.dt = frameDt || 0;
       inp.viewW = W;
       inp.viewH = H;
@@ -6553,7 +6559,8 @@
       // w updateCameraZoom — raz na klatkę renderu, nie tu: w krokach fizyki
       // stały w klatkach bez kroku i przeskakiwały przy 2–3 krokach naraz.
 
-      camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
+      // dolna granica: limit kadłuba albo podłoga kadru przylotu warpa z celem (cameraZoom.js: cameraZoomFloor — K1)
+      camera.zoom = clamp(camera.zoom, cameraZoomFloor(camera), camera.maxZoom);
       mouse.dx = 0;
       mouse.dy = 0;
     }
@@ -6636,7 +6643,8 @@
         camera.x += (camera.targetX - camera.x) * posLerp;
         camera.y += (camera.targetY - camera.y) * posLerp;
       }
-      camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
+      // dolna granica: limit kadłuba albo podłoga kadru przylotu warpa z celem (cameraZoom.js: cameraZoomFloor — K1)
+      camera.zoom = clamp(camera.zoom, cameraZoomFloor(camera), camera.maxZoom);
     }
 
     window.addEventListener('resize', () => {
@@ -28126,7 +28134,7 @@
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
     const _cameraWarpInput = {
       dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35,
-      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, viewW: 0, viewH: 0
+      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0
     };
     // OBRÓT KADRU W HIPERCRUISIE (2026-10-23, zgłoszenie użytkownika: „kamera jak w warp — odpalenie hipercruise =
     // przestawienie kamery za statkiem”; port obrotu z dema „Pęd” — cameraRig.js: stepCameraRigRoll, konwencja
@@ -28164,6 +28172,12 @@
     // `WARP_EXIT.settle` w updateCameraWarpKick) i ślizg z pędem.
     function playerWarpCameraBusy() {
       return warp.state !== 'idle' || !!warp.exitRamp || !!warp.exitSlide?.active;
+    }
+    // Kadr przylotu z celem (K1) żyje po wyjściu: zatrzaśnięty i z wagą ujednolicenia (trzymanie i powrót do zoomu gracza).
+    // Reżyser kadru gaśnie też wtedy (jego oddalenie nie dokłada się do kadru przylotu ponad podłogę K1); obrót kadru
+    // i insety — bez zmian (hipercruise kolejnego odcinka TRAVEL TO obraca kadr od razu).
+    function playerWarpArrivalLive() {
+      return warp.state === 'idle' && !!cameraRig.warpArrOn && cameraRig.warpUnifyW > 0;
     }
     // Waga insetów riga w hipercruisie i warpie (render): 1 od rozruchu / ładowania do końca okna po wyjściu, gładko
     // (2,5/s), potem dokładne 0.
@@ -28217,8 +28231,11 @@
       // Styl skoku bez rulonu (domyślny 'ped', `?warp=akcent|soczewka`; rulon tylko z `?warp=rulon` / `?rulon=1` — warpDrive.js:
       // warpRulonEnabled): kamera bez środka lejka.
       // Hipercruise (E5, 2026-10-22): kop i oddalenie jak skok warpa (rozruch = ładowanie, lot = skok), bez rulonu —
-      // gdy warp stoi; warp ma pierwszeństwo.
-      const hyperCam = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
+      // gdy warp stoi; warp ma pierwszeństwo. Kadr przylotu warpa z celem (K1: do końca ślizgu + warpArrivalHold, powrót
+      // smoothstep) też: hipercruise odcinka TRAVEL TO tuż po ślizgu przejmuje kamerę dopiero po nim (inaczej zoom skakał
+      // w kilku klatkach z kadru przylotu do zoomu gracza).
+      const warpArrivalLive = playerWarpArrivalLive();
+      const hyperCam = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle' && !warpArrivalLive;
       // obrót kadru tej klatki (cameraFrameRoll): kurs kopu w osiach ekranu
       const roll = cameraFrameRoll();
       w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
@@ -28251,16 +28268,25 @@
         w.zoomRef = 0;
         w.arriving = false;
         w.arrivalDist = -1;
+        w.arrivalDepthK = 0;
       } else {
         w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
         w.arriving = !!warp.exitSlide?.active;
         const tgt = warp.targetBody;
         if (tgt) {
+          // Dolot z celem jak soczewka świata (warpLensPhase.js: warpPlayerArriving — ślizg albo hamowanie grawitacyjne):
+          // wyjście bez rampy z celem też zatrzaskuje kadr przylotu (inaczej soczewka trzymała cel w podglądzie kadru,
+          // który nie nadchodził). Swobodny skok — sam ślizg, jak dawniej.
+          w.arriving = warpPlayerArriving(warp);
           const ax = tgt.x - ship.pos.x;
           const ay = tgt.y - ship.pos.y;
           w.arrivalDist = Math.max(0, Math.sqrt(ax * ax + ay * ay) - warpBodyRadius(tgt));
+          // Cel NA TLE (planeta bez ringu — z = −50 000, perspektywa): kadr przylotu liczy brzeg prawdziwego obrazu
+          // (src/render/warpArrivalFrame.js — ta sama funkcja co podgląd celu w soczewce świata); ring i małe ciała — 0.
+          w.arrivalDepthK = !haloRingKey(tgt) && !tgt.smallBody ? warpArrivalDepthK(H) : 0;
         } else {
           w.arrivalDist = -1;
+          w.arrivalDepthK = 0;
         }
       }
       w.zoomBase = cameraZoomBase(camera);
@@ -28271,10 +28297,31 @@
       // Zoom prowadzi przejście (fokus stacji, edytor) — kop znika od razu, jak w updateCameraZoom.
       w.suspend = !!(camera.transition && camera.transition.kind !== 'ship');
       stepCameraRigWarp(cameraRig, w, cameraRigTune);
+      // Podłoga zoomu kadru przylotu z celem (K1 — cameraRig.js: warpZoomFloor; cameraZoom.js: cameraZoomFloor) — zoom na
+      // ekranie może zejść poniżej limitu kadłuba tylko przy zatrzaśniętym kadrze przylotu.
+      camera.zoomImpulseMin = cameraRig.warpZoomFloor;
       // Reżyser kadru (cameraDirector.js): jego oddalenie to drugi człon log(zoom) — tylko kamera statku; przejście
       // prowadzące zoom i inne tryby zerują go od razu (wejście w RTS przenosi je wcześniej na zoom gracza).
       if (camera.mode !== 'ship' || w.suspend) resetCameraDirector(cameraDirector);
       camera.zoomImpulseLog = cameraRig.warpZoomLog + cameraDirector.zoomLog;
+    }
+    // OŚ β SOCZEWKI ŚWIATA gracza (nowy warp, DECYZJE P1 — src/render/warpLensPhase.js): raz na klatkę renderu (render(),
+    // przed migawką i klatką „Nurtu”), ZEGAREM GRY (SimClock.render — w pauzie stoi): ładowanie podnosi świat, kop domyka,
+    // wyjście (wiek z zegara gry, ciągły do zatrzymania + WARP_LENS_EXIT_SPAN), przerwane ładowanie. Rekord idzie do klatki
+    // „Nurtu” (o.lensPhase — tryb off) i do migawki (WARP_LENS_* — worker): WarpPlayerFx liczy β tą samą funkcją
+    // (warpLensBeta) w obu trybach. Do tego kadr soczewki z kamery gry (zoom odniesienia skoku, kadr skoku, ułamek kadru
+    // przylotu — px CSS; sterownik przelicza na px bufora). Hipercruise — β = 0.
+    const _warpLensTrack = createWarpLensTrack();
+    const _warpLensPhase = createWarpLensPhase();
+    function stepPlayerWarpLensPhase() {
+      const s = _warpLensPhase;
+      const hyperOn = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
+      stepWarpLensPhase(_warpLensTrack, s, warp, SimClock.render, hyperOn);
+      const zr = Number(_cameraWarpInput.zoomRef);
+      s.zoomRef = zr > 0 ? zr : NaN;
+      s.zoomJump = zr > 0 ? zr * (Number(cameraRigTune.warpZoomOut) || 1) : NaN;
+      s.arrivalFill = Number(cameraRigTune.warpArrivalFill) > 0 ? Number(cameraRigTune.warpArrivalFill) : NaN;
+      return s;
     }
     function updateCameraZoom(dt) {
       syncCameraZoomLimits(camera, ship);
@@ -28833,6 +28880,8 @@
       // kotwica kadru skoku (DECYZJE M3) z klatki „Nurtu” (_warpNurtFrame: anchorSX / SY)
       f.warpAnchorSX = f.warpNurt.anchorSX;
       f.warpAnchorSY = f.warpNurt.anchorSY;
+      // oś β soczewki świata (stepPlayerWarpLensPhase — ten sam rekord co klatka „Nurtu”): worker liczy β z tych samych pól
+      f.warpLens = _warpLensPhase;
       // zegar efektu warpa strony: suma dt klatek „Nurtu” (przycięte jak w WarpNurt.update) — worker liczy z niego dt
       // efektu, więc strony, których nie narysował, nie gubią czasu osi kopu i wyjścia
       _warpFxClock += Math.max(0, Math.min(0.1, Number(f.warpNurt.dt) || 0));
@@ -29498,7 +29547,7 @@
     // ============== END SPLIT SCREEN RENDER ==============
 
     // Warp „Nurt” (src/3d/warp/warpNurt.js): jeden obiekt wejścia na grę (bez alokacji na klatkę).
-    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: null, npcs: null, anchorSX: NaN, anchorSY: NaN };
+    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: null, npcs: null, anchorSX: NaN, anchorSY: NaN, lensPhase: null };
     function _warpNurtFrame(dt, camNoShake, camShake) {
       const o = _warpNurtCtx;
       o.dt = dt;
@@ -29517,10 +29566,12 @@
       // Kotwica kadru skoku (nowy warp, DECYZJE M3): nominalne miejsce statku w kadrze — sprężyna riga BEZ impulsu kopu
       // i BEZ wysunięcia przy wyjściu (cameraRig.nominalX / Y — offset kamery od statku), px ekranu CSS od środka kadru,
       // osie ekranu; NaN poza kamerą statku. Worker dostaje to samo skalarami migawki (WORLD.WARP_ANCHOR_SX / SY).
-      // AGENT: etap integracji soczewki — czytaj `o.anchorSX / SY` klatki „Nurtu” (off; w workerze `wf.anchorSX / SY` z lustra).
+      // Sterownik (warpNurt.js: _commitWorldLens) przelicza ją na px bufora (setWarpLensAnchor); w workerze z lustra.
       const anchorOn = camera.mode === 'ship' && !View3D.active;
       o.anchorSX = anchorOn ? -cameraRig.nominalX : NaN;
       o.anchorSY = anchorOn ? -cameraRig.nominalY : NaN;
+      // Oś β soczewki świata (stepPlayerWarpLensPhase — raz na klatkę w render(), przed tym miejscem).
+      o.lensPhase = _warpLensPhase;
       return o;
     }
     // Wstrząsy warpa (kop, wyjście, hamowanie, wyrzut okrętu z tunelu) zgłasza gra (stepPlayerWarpShakes,
@@ -29569,7 +29620,8 @@
       // kursorem. Rig kroczy także w trakcie przejścia (wyjście z RTS, powrót
       // z edytora stacji) — przejście goni żywy cel, więc jego koniec nie skacze.
       if (camera.mode === 'ship') {
-        const zoomSafe = Math.max(camera.minZoom || 1e-4, camera.zoom || 1);
+        // podłoga: limit kadłuba albo — przy kadrze przylotu warpa z celem — niższa podłoga zoomu na ekranie (cameraZoomFloor)
+        const zoomSafe = Math.max(cameraZoomFloor(camera) || 1e-4, camera.zoom || 1);
         sampleCameraCombatSignals(performance.now());
         // Wyprzedzenie normalizowane do v_max bieżącego trybu napędu.
         const hullVmax = Math.max(100, Number(driveState?.modeMaxSpeed) || (SHIP_PHYSICS.SPEED / Math.max(1e-6, -Math.log(SHIP_PHYSICS.LINEAR_FRICTION) * 60)));
@@ -29781,6 +29833,8 @@
       window.__splitCamera2 = (splitScreenMode && camera2 && player2Ship && !player2Ship.destroyed)
         ? { x: camera2.x, y: camera2.y, zoom: camera2.zoom }
         : null;
+      // Oś β soczewki świata gracza (zegar gry) — raz na klatkę, przed migawką i klatką „Nurtu” (oba czytają ten rekord).
+      stepPlayerWarpLensPhase();
       // Szew renderu (RW-10, ?szew=pakuj): faza 1 migawki — po kamerze, przed aktualizacjami 3D. Lustra (?szew=inline):
       // faza 1 tuż przed updateHexShips3D (po wyglądzie maskowania i rekordach wież tej klatki — RW-26).
       if (renderSnapshot && !SZEW_LATE) packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, camShakePxX, camShakePxY);

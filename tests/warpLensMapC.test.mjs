@@ -5,9 +5,10 @@
 // node --test tests/warpLensMapC.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   WORLD_LENS_DEFAULTS, WORLD_LENS_MODE, warpLensFrame, newWarpLensFrame, warpLensQ, warpLensInverse, mapWorldLens,
-  WarpWorldLens, newLensBody, softMaxLog, softMaxCompact, viewEdgeDistance, lensDiscInFrame
+  WarpWorldLens, newLensBody, softMaxLog, softMaxCompact, viewEdgeDistance, lensDiscInFrame, lensImageToWorld
 } from '../src/3d/warp/worldLens.js';
 import { WARP_ARRIVAL_FRAME, warpViewEdgePx, warpArrivalZoom, warpArrivalSoftMin } from '../src/render/warpArrivalFrame.js';
 import {
@@ -337,4 +338,135 @@ test('oś β (src/render/warpLensPhase.js, P1): ładowanie 0,9 · smoothstep, ko
     assert.ok(h <= hp + 1e-12);
     hp = h;
   }
+});
+
+test('planeta tła przy β → 0 (etap integracji, planet3d.assets.js): obraz zbiega do prawdziwego bez odskoku — także z kotwicą ≠ statek; rozstawienie w świecie = prawdziwe miejsce', () => {
+  const lens = new WarpWorldLens();
+  // Saturn na tle (z = −50 000) w prawdziwym kadrze: kamera zoom 0,1173, ogniskowa 1080 / 2 / tan(17,5°)
+  const zoom = 0.1173;
+  const focal = 540 / Math.tan(17.5 * Math.PI / 180);
+  const camZ = focal / zoom;
+  const flat = focal / (camZ + 50000);
+  const sat = Object.assign(newLensBody('saturn', 'planet'), { x: 3000, y: -40000, r: 16650, z: -50000, flat, ready: true });
+  const ctx = { beta: 0, velAngle: -Math.PI / 2, zoom, W: 1920, H: 1080, shipX: 0, shipY: 0, shipSx: 0, shipSy: 189,
+    anchorSx: 0, anchorSy: 93, hullHalfLen: 105, hullHalfWid: 47, dt: 1 / 60, exitAge: -1, focal, camZ };
+  const outAt = (beta) => { ctx.beta = beta; lens.update([sat], 1, ctx, null); return { x: sat.out.x, y: sat.out.y, s: sat.out.size }; };
+  const real = outAt(0);
+  assert.equal(sat.entry, WORLD_LENS_MODE.MOVE, 'prawdziwy obraz w kadrze — ruch');
+  // planet3d.assets.js (_lensPlace, tło): świat = kamera + o · (camZ − z) / focal; przy β = 0 — prawdziwe miejsce ciała
+  const k = (camZ - sat.z) / focal;
+  const camX = 0 - ctx.shipSx / zoom;
+  const camY = 0 - ctx.shipSy / zoom;
+  assert.ok(near(camX + real.x * k, sat.x, 1e-6) && near(camY + real.y * k, sat.y, 1e-6), 'β = 0 — prawdziwe miejsce w świecie');
+  let prev = real;
+  for (const beta of [0.001, 0.01, 0.05, 0.1]) {
+    const o = outAt(beta);
+    const dPos = Math.hypot(o.x - real.x, o.y - real.y);
+    assert.ok(dPos < 2000 * beta + 1e-6, `β ${beta}: przesunięcie ${dPos.toFixed(3)} px (ciągłe w β)`);
+    assert.ok(Math.abs(o.s - real.s) < 2000 * beta + 1e-6, `β ${beta}: promień ciągły`);
+    prev = o;
+  }
+  assert.ok(prev);
+});
+
+// Kadr gry 1080p: kamera zoom 0,1173, perspektywa passa tła (ogniskowa z FOV 35°), statek 189 px pod środkiem.
+function lensScene1080() {
+  const zoom = 0.1173;
+  const focal = 540 / Math.tan(17.5 * Math.PI / 180);
+  const camZ = focal / zoom;
+  const mk = (id, kind, x, y, r, z) => Object.assign(newLensBody(id, kind), { x, y, r, z, flat: z ? focal / (camZ - z) : zoom, ready: true });
+  const bodies = [
+    mk('saturn', 'planet', 3000, -40000, 16650, -50000),      // tło, prawdziwy obraz w kadrze — ruch
+    mk('saturnFar', 'planet', 400000, -900000, 16650, -50000), // tło daleko — wynurzenie
+    mk('mars', 'planet', 120000, -300000, 9000, 0),            // płaszczyzna gry daleko — wynurzenie
+    mk('luna', 'moon', -6000, 4000, 1700, 0),                  // księżyc przy statku — ruch
+    Object.assign(mk('sun', 'sun', -2e6, 3e6, 60000, -60000), { sizeBoost: 5, minDot: 2 })
+  ];
+  const ctx = { beta: 0, velAngle: -Math.PI / 2, zoom, W: 1920, H: 1080, shipX: 0, shipY: 0, shipSx: 0, shipSy: 189,
+    anchorSx: 0, anchorSy: 93, hullHalfLen: 105, hullHalfWid: 47, dt: 1 / 60, exitAge: -1, focal, camZ, zoomJump: zoom * 0.55 };
+  return { bodies, ctx, zoom, focal, camZ };
+}
+
+// Największy krok obrazu (środek, promień) między kolejnymi próbkami β — tylko ciała widoczne w obu próbkach.
+function lensBetaSteps(betas) {
+  const { bodies, ctx } = lensScene1080();
+  const lens = new WarpWorldLens();
+  const vis = (q) => q.s > 0.5 && Math.abs(q.x) < 960 + q.s && Math.abs(q.y) < 540 + q.s;
+  const prev = bodies.map(() => null);
+  const worst = bodies.map((b) => ({ id: b.id, d: 0, r: 0, beta: 0 }));
+  for (const beta of betas) {
+    ctx.beta = beta;
+    lens.update(bodies, bodies.length, ctx, null);
+    bodies.forEach((b, i) => {
+      const o = { x: b.out.x, y: b.out.y, s: b.out.size };
+      const p = prev[i];
+      if (p && vis(o) && vis(p)) {
+        const d = Math.hypot(o.x - p.x, o.y - p.y);
+        if (d > worst[i].d) { worst[i].d = d; worst[i].beta = beta; }
+        worst[i].r = Math.max(worst[i].r, Math.abs(o.s - p.s));
+      }
+      prev[i] = o;
+    });
+  }
+  return worst;
+}
+
+test('oś β gęsto (recenzja etapu 2): obraz ciał ciągły w β — krok ograniczony na całym przedziale, nie tylko przy β → 0; profil ładowania + kopu 60 Hz w progach P4', () => {
+  // gęsto: Δβ = 0,005 — krok ≤ 2200 px na jednostkę β (= 60 px przy najszybszym ładowaniu 0,028 β / klatkę)
+  const dense = [];
+  for (let i = 0; i <= 200; i++) dense.push(i / 200);
+  for (const w of lensBetaSteps(dense)) {
+    assert.ok(w.d <= 2200 * 0.005, `${w.id}: krok ${w.d.toFixed(2)} px przy β ${w.beta.toFixed(3)} (Δβ 0,005)`);
+    assert.ok(w.r <= 2200 * 0.005, `${w.id}: promień ${w.r.toFixed(2)} px (Δβ 0,005)`);
+  }
+  // gra: ładowanie 0,8 s (48 klatek, β = 0,9 · smoothstep) i kop 0,45 s (easeOut³) — progi P4 (60 / 50 px na klatkę)
+  const game = [];
+  for (let i = 0; i <= 48; i++) game.push(warpLensChargeBeta(i / 48));
+  for (let i = 1; i <= 30; i++) game.push(warpLensKickBeta(i / 60));
+  for (const w of lensBetaSteps(game)) {
+    assert.ok(w.d <= 60, `${w.id}: ${w.d.toFixed(2)} px / klatkę (P4 ≤ 60)`);
+    assert.ok(w.r <= 50, `${w.id}: promień ${w.r.toFixed(2)} px / klatkę (P4 ≤ 50)`);
+  }
+});
+
+test('rozstawienie obrazu w świecie (lensImageToWorld — planet3d.assets.js, także SŁOŃCE): β = 0 — prawdziwe miejsce; obraz wraca rzutem kamery passa; obrót kadru', () => {
+  const { bodies, ctx, zoom, focal, camZ } = lensScene1080();
+  const sun = bodies[4];
+  const lens = new WarpWorldLens();
+  const camX = ctx.shipX - ctx.shipSx / zoom;
+  const camY = ctx.shipY - ctx.shipSy / zoom;
+  const L = { zoom, focal, camZ, camX, camY, roll: 0 };
+  const out = { x: 0, y: 0, k: 0 };
+  ctx.beta = 0;
+  lens.update(bodies, bodies.length, ctx, null);
+  for (const b of bodies) {
+    lensImageToWorld(L, b.out.x, b.out.y, b.z, b.z === 0, out);
+    assert.ok(near(out.x, b.x, 1e-6 * Math.max(1, Math.abs(b.x))) && near(out.y, b.y, 1e-6 * Math.max(1, Math.abs(b.y))),
+      `${b.id}: β = 0 — prawdziwe miejsce (${out.x}, ${out.y}) vs (${b.x}, ${b.y})`);
+  }
+  // słońce w soczewce (z = −60 000): j. świata na px = (camZ − z) / focal; obraz = (świat − kamera) / k
+  ctx.beta = 1;
+  for (let i = 0; i < 3; i++) lens.update(bodies, bodies.length, ctx, null);
+  lensImageToWorld(L, sun.out.x, sun.out.y, sun.z, false, out);
+  assert.ok(near(out.k, (camZ + 60000) / focal, 1e-12));
+  assert.ok(near((out.x - camX) / out.k, sun.out.x, 1e-9) && near((out.y - camY) / out.k, sun.out.y, 1e-9));
+  assert.ok(sun.out.size >= 2, `słońce w soczewce widoczne (minDot): ${sun.out.size}`);
+  // płaszczyzna gry: 1 / zoom
+  lensImageToWorld(L, 100, -50, 0, true, out);
+  assert.ok(near(out.k, 1 / zoom, 1e-12) && near(out.x, camX + 100 / zoom, 1e-9) && near(out.y, camY - 50 / zoom, 1e-9));
+  // obrót kadru (viewRoll.js): świat = kamera + R(roll)·(o · k)
+  const Lr = { ...L, roll: 0.7 };
+  lensImageToWorld(Lr, 100, -50, 0, true, out);
+  const u = 100 / zoom;
+  const v = -50 / zoom;
+  assert.ok(near(out.x, camX + Math.cos(0.7) * u - Math.sin(0.7) * v, 1e-9) && near(out.y, camY + Math.sin(0.7) * u + Math.cos(0.7) * v, 1e-9));
+  // planet3d.assets.js: wszystkie rozstawienia przez tę funkcję; słońce w głębokości SUN_Z, powrót widoczności po soczewce
+  const src = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  const sunCls = src.slice(src.indexOf('class DirectSun {'), src.indexOf('const _entities = [];'));
+  assert.match(sunCls, /this\.lensBody = newLensBody\('sun', 'sun'\);/);
+  assert.match(sunCls, /const lw = lensImageToWorld\(L, o\.x, o\.y, b\.z, false, _lensWorld\);[\s\S]*?this\.group\.position\.set\(lw\.x, -lw\.y, b\.z\);/);
+  assert.match(sunCls, /_lensRestore\(\) \{\s*this\._lensed = false;\s*if \(!this\.group\.visible\) this\.group\.visible = true;/);
+  assert.match(sunCls, /if \(lensOn\) this\._lensPrepare\(scale\);\s*else if \(this\._lensed\) this\._lensRestore\(\);/);
+  assert.doesNotMatch(src, /function lensToWorld\(/, 'jedna funkcja rozstawienia (worldLens.js)');
+  assert.equal((src.match(/lensImageToWorld\(L, o\.x, o\.y,/g) || []).length, 4, 'planety, księżyce, małe ciała, słońce');
 });

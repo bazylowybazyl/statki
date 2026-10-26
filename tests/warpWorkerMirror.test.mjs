@@ -11,8 +11,11 @@ import { WORLD, SNAPSHOT_LAYOUT_VERSION } from '../src/render/snapshotLayout.js'
 import { SnapshotPacker, SnapshotDict, createSnapshotFrame } from '../src/render/snapshotPack.js';
 import {
   packWarpWorld, applyWarpWorld, createWarpWorldMirror, installWarpPlayerFields, publishWarpPlayerFields,
-  warpBodyIndex, warpBodyAt, warpFxDt, WARP_RAMP_FIELDS, WARP_SLIDE_FIELDS, WARP_SCALAR_FIELDS
+  warpBodyIndex, warpBodyAt, warpFxDt, WARP_RAMP_FIELDS, WARP_SLIDE_FIELDS, WARP_SCALAR_FIELDS, WARP_LENS_FIELDS
 } from '../src/render/warpWorldMirror.js';
+import {
+  createWarpLensTrack, createWarpLensPhase, stepWarpLensPhase, warpLensBeta, WARP_LENS_PHASE, WARP_LENS_EXIT_SPAN
+} from '../src/render/warpLensPhase.js';
 import { createWarpExitRamp } from '../src/game/warpDrive.js';
 import { RenderWorld, createMirrorPlayersSource } from '../src/render/renderWorld.js';
 import { WarpPlayerFx, WARP_HULL_SHADOW } from '../src/3d/warp/player.js';
@@ -46,6 +49,7 @@ function makeGameWarp() {
 
 function packFrame(f, warp, bodies, extra = {}) {
   f.warp = warp;
+  f.warpLens = extra.lens || null;
   f.boost = extra.boost === undefined ? { state: 'idle' } : extra.boost;
   f.planets = bodies.planets;
   f.smallBodies = bodies.small;
@@ -67,6 +71,7 @@ function gameView(warp, g) {
   g.flyby = Number.isFinite(warp.flybyFactor) ? warp.flybyFactor : 1;
   g.cruise = Number(warp.cruise) || Number(warp.speed) || 0;
   g.hyper = false;
+  g.lens = g.lensRec || null;
   return g;
 }
 
@@ -93,8 +98,15 @@ test('warpNurt czyta z obiektu warpa te pola, które kopiuje gameView testu (str
   assert.match(vfx, /const w = RenderWorld\.warp;[\s\S]{0,400}r && r\.active && r\.age < r\.tBrake \+ 0\.25/);
 });
 
-test('układ migawki 2: WORLD bez dawnego WARP_DIR (obiekt → zawsze NaN), z kursem x / y, rampą, ślizgiem, ciałami, zegarami, kotwicą', () => {
-  assert.equal(SNAPSHOT_LAYOUT_VERSION, 2);
+test('układ migawki 3: WORLD bez dawnego WARP_DIR (obiekt → zawsze NaN), z kursem x / y, rampą, ślizgiem, ciałami, zegarami, kotwicą, osią β soczewki', () => {
+  assert.equal(SNAPSHOT_LAYOUT_VERSION, 3);
+  // oś β soczewki (warpLensPhase.js): każde pole liczbowe rekordu strony gry ma słowo migawki; stan i flagi osobno
+  const lensKeys = new Set(WARP_LENS_FIELDS.map((p) => p[1]));
+  for (const k of Object.keys(createWarpLensPhase())) {
+    if (k === 'state' || k === 'hyper' || k === 'arriving') continue;
+    assert.ok(lensKeys.has(k), `pole osi β „${k}” bez słowa migawki`);
+  }
+  for (const k of ['WARP_LENS_STATE', 'WARP_LENS_HYPER', 'WARP_LENS_ARRIVING']) assert.ok(Number.isInteger(WORLD[k]), k);
   assert.equal(WORLD.WARP_DIR, undefined);
   for (const k of ['WARP_DIR_X', 'WARP_DIR_Y', 'WARP_TARGET_BODY', 'WARP_ORIGIN_BODY', 'WARP_KICK_SIM', 'WARP_FX_CLOCK',
     'WARP_ENTRY', 'WARP_EXIT_ACTIVE', 'WARP_SLIDE_ACTIVE', 'WARP_ABRUPT', 'WARP_ANCHOR_SX', 'WARP_ANCHOR_SY', 'BOOST_STATE']) {
@@ -215,7 +227,8 @@ function fxRig() {
     length: 1800, width: 800, palette: 'magenta', vRelX: 0, vRelY: 0, exitRamp: null, flyby: 1, cruise: 0, hyper: false };
   const map = { camX: 900, camY: 1900 };
   const med = { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 };
-  const step = (t, dt, warp) => {
+  const step = (t, dt, warp, lens = null) => {
+    g.lensRec = lens;
     gameView(warp, g);
     frame.reset();
     fx.advance(t, dt, g, map, med);
@@ -331,7 +344,9 @@ test('dawne lustro workera ({ active, age, tBrake }, kurs = NaN): NaN w 1. klatc
     if (s.mode === 'exit' && Number.isNaN(s.beta)) nanBeta = true;
     if (s.mode === 'exit' && Number.isNaN(s.tint)) nanTint = true;
   }
-  assert.ok(nanBeta && nanTint, 'dawny kształt rampy dawał NaN (lensBeta, warpTint)');
+  // β soczewki nie zależy już od kształtu rampy w lustrze (oś β z rekordu strony gry — warpLensPhase.js, test niżej);
+  // smugi gwiazd (warpTint) z dawnej rampy dalej dają NaN
+  assert.ok(nanTint && !nanBeta, 'dawny kształt rampy dawał NaN (warpTint)');
   WARP_HULL_SHADOW.player = 1;
 });
 
@@ -476,4 +491,120 @@ test('worker: RenderWorld.pageSearch = adres STRONY (A/B z adresu działa też w
   Object.defineProperty(src, 'pageSearch', { value: '?ksiezyce=orbita&warp=ped', enumerable: true });
   RenderWorld.setSource(src);
   try { assert.equal(RenderWorld.pageSearch, '?ksiezyce=orbita&warp=ped'); } finally { RenderWorld.setSource(null); }
+});
+
+// ── oś β soczewki świata (etap integracji): strona gry liczy stepWarpLensPhase (zegar gry), migawka niesie rekord,
+// worker liczy warpLensBeta z tych samych pól — β off ≡ worker co klatkę, także przerwane ładowanie, wyjście w kopie,
+// wyjście bez rampy i wiek wyjścia po zdjęciu rampy ──
+
+/** Skrypt osi β: ładowanie przerwane, ładowanie → kop → wyjście w kopie, skok → wyjście z rampą (rampa zdjęta przy
+ *  settle) i ślizg, skok → hamowanie grawitacyjne (bez rampy). Zegar gry = sim (render = sim, krok 60 Hz). */
+function* lensScript(page) {
+  const warp = makeGameWarp();
+  let sim = 50;
+  const tick = function* (n) { for (let i = 0; i < n; i++) { sim += DT; yield { sim, warp }; } };
+  const charge = function* (frac) {
+    warp.state = 'charging'; warp.charge = 0;
+    while (warp.charge < warp.chargeTime * frac - 1e-9) { warp.charge = Math.min(warp.chargeTime, warp.charge + DT); sim += DT; yield { sim, warp }; }
+  };
+  const kick = () => { warp.state = 'active'; warp.kickSim = sim; warp.charge = 0; warp.targetBody = page.planets[1]; };
+  const exitRamp = () => {
+    warp.state = 'idle';
+    warp.exitRamp = createWarpExitRamp({ v0: 120000, hullLength: 1800, dirX: 1, dirY: 0, vEnd: 1521, startTime: sim });
+  };
+  yield* tick(10);
+  // 1. przerwane ładowanie (60%)
+  yield* charge(0.6);
+  warp.state = 'idle'; warp.charge = 0;
+  yield* tick(40);
+  // 2. ładowanie → kop → wyjście w trakcie kopu (0,2 s)
+  yield* charge(1);
+  kick();
+  yield* tick(12);
+  exitRamp();
+  for (let i = 0; i < 240; i++) {
+    sim += DT;
+    const r = warp.exitRamp;
+    if (r) {
+      if (r.active) { r.age += DT; if (r.age >= r.tHalt) { r.active = false; warp.exitSlide = { active: true, speed: 1521, vMin: 507, decel: 200, dirX: 1, dirY: 0 }; } }
+      else { r.age += DT; if (r.age > r.tHalt + 1.6) warp.exitRamp = null; }   // cameraRig: settle — rampa zdjęta
+    }
+    const sl = warp.exitSlide;
+    if (sl && sl.active) { sl.speed = Math.max(sl.vMin, sl.speed - sl.decel * DT); if (sl.speed <= sl.vMin + 1e-6) sl.active = false; }
+    yield { sim, warp };
+  }
+  // 3. skok → hamowanie grawitacyjne (exitWarp({ abrupt }) — bez rampy)
+  yield* charge(1);
+  kick();
+  yield* tick(90);
+  warp.state = 'idle'; warp.exitRamp = null; warp.gravityBrake.active = true;
+  yield* tick(60);
+  warp.gravityBrake.active = false;
+  yield* tick(200);
+}
+
+test('oś β soczewki: strona gry (stepWarpLensPhase, zegar gry) → migawka → worker (warpLensBeta) — β off ≡ worker co klatkę, pola trackera w migawce', () => {
+  const page = makeBodies();
+  const wk = clone(page);
+  const dict = new SnapshotDict();
+  const w = new Float64Array(WORLD.COUNT);
+  const f = createSnapshotFrame();
+  const mir = createWarpWorldMirror();
+  const track = createWarpLensTrack();
+  const s = createWarpLensPhase();
+  const off = fxRig();
+  const wrk = fxRig();
+  let t = 1;
+  let maxCharge = 0, sawAbort = false, sawExitKick = false, exitAfterRamp = 0, sawAbrupt = false, frames = 0;
+  let prevB = 0, maxStep = 0, prevExit = -1;
+  for (const { sim, warp } of lensScript(page)) {
+    t += DT;
+    stepWarpLensPhase(track, s, warp, sim, false);
+    s.zoomRef = 0.2133; s.zoomJump = 0.2133 * 0.55; s.arrivalFill = 0.75;
+    packWarpWorld(w, packFrame(f, warp, page, { lens: s }), dict);
+    applyWarpWorld(w, dict, mir, wk.planets, wk.small);
+    assert.equal(mir.hasLens, true);
+    for (const k of Object.keys(s)) assert.ok(Object.is(mir.lens[k], s[k]) || mir.lens[k] === s[k], `pole ${k}: strona ${s[k]} ≠ worker ${mir.lens[k]}`);
+    const bPage = warpLensBeta(s);
+    const bWorker = warpLensBeta(mir.lens);
+    assert.equal(bWorker, bPage, `β @${sim.toFixed(3)}`);
+    assert.equal(bPage, s.beta, 'β tej klatki = wynik stepWarpLensPhase');
+    // WarpPlayerFx (player.js): lensBeta z rekordu gry — ten sam wynik w trybie off i w workerze
+    const a = off.step(t, DT, warp, s);
+    const b = wrk.step(t, DT, mir.warp, mir.lens);
+    assert.equal(a.beta, bPage, 'off: WarpPlayerFx.lensBeta = warpLensBeta(rekord)');
+    assert.equal(b.beta, a.beta, 'worker = off');
+    assert.ok(Number.isFinite(bPage) && bPage >= 0 && bPage <= 1);
+    // (wyjście: β wyjścia stałe do końca frontu + zanurzenia, potem 0 — ciała gasną frontem per ciało w soczewce, więc
+    //  skok globalnego β na końcu nie jest widoczny; kontrola ciągłości — ładowanie, kop, przerwanie)
+    if (!(s.exitAge >= 0) || !(prevExit >= 0)) maxStep = Math.max(maxStep, Math.abs(bPage - prevB));
+    prevExit = s.exitAge;
+    prevB = bPage;
+    if (warp.state === 'charging') maxCharge = Math.max(maxCharge, bPage);
+    if (s.abortAge >= 0 && s.abortBeta > 0) sawAbort = true;
+    if (s.exitAge >= 0 && s.exitBeta < 1 - 1e-6 && s.exitBeta > WARP_LENS_PHASE.chargeBeta) sawExitKick = true;
+    if (s.exitAge >= 0 && !warp.exitRamp && !warp.gravityBrake.active && s.exitHalt > 0) exitAfterRamp++;
+    if (warp.gravityBrake.active && s.exitAge >= 0 && s.arriving === true) sawAbrupt = true;
+    frames++;
+  }
+  assert.ok(frames > 700, String(frames));
+  assert.ok(Math.abs(maxCharge - WARP_LENS_PHASE.chargeBeta) < 1e-9, `ładowanie podnosi świat do 0,9 (${maxCharge})`);
+  assert.ok(sawAbort, 'przerwane ładowanie: abortAge / abortBeta w migawce');
+  assert.ok(sawExitKick, 'wyjście w trakcie kopu: β wyjścia < 1 w migawce');
+  assert.ok(exitAfterRamp > 30, 'wiek wyjścia ciągły po zdjęciu rampy (trzymanie celu przy przylocie)');
+  assert.ok(sawAbrupt, 'hamowanie grawitacyjne: wyjście bez rampy z wiekiem i dolotem');
+  assert.ok(maxStep < 0.1, `β bez skoków w ładowaniu, kopie i przerwaniu (największy krok ${maxStep.toFixed(3)})`);
+  assert.ok(WARP_LENS_EXIT_SPAN >= 13, 'wiek wyjścia dłuższy niż ślizg + trzymanie celu');
+});
+
+test('oś β w grze: index.html krokuje stepWarpLensPhase raz na klatkę (zegar gry) przed migawką i klatką „Nurtu”, worker czyta rekord z lustra', () => {
+  const html = read('index.html');
+  assert.match(html, /stepWarpLensPhase\(_warpLensTrack, s, warp, SimClock\.render, hyperOn\);/);
+  assert.match(html, /stepPlayerWarpLensPhase\(\);(?:\s*\/\/[^\n]*\n)*\s*if \(renderSnapshot && !SZEW_LATE\) packRenderSnapshotBegin/);
+  assert.match(html, /f\.warpLens = _warpLensPhase;/);
+  assert.match(html, /o\.lensPhase = _warpLensPhase;/);
+  assert.match(read('src/render/render.worker.js'), /wf\.lensPhase = st\.warpMir\.hasLens \? st\.warpMir\.lens : null;/);
+  const nurt = read('src/3d/warp/warpNurt.js');
+  assert.match(nurt, /g\.lens = o\.lensPhase \|\| null;/);
+  assert.match(nurt, /const beta = ph \? warpLensBeta\(ph\) : 0;/);
 });

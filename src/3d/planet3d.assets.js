@@ -18,7 +18,7 @@ import { applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { WARP_STAR_CAMERA } from './warp/stars.js';
 import { createSky3D, getSky3D, SKY3D_TUNE } from './sky3D.js';
-import { WARP_WORLD_LENS, WarpWorldLens, newLensBody, warpRingLensSlot } from './warp/worldLens.js';
+import { WARP_WORLD_LENS, WarpWorldLens, newLensBody, warpRingLensSlot, lensImageToWorld } from './warp/worldLens.js';
 import { cameraRoll } from './viewRoll.js';
 import { rulonActive, rulonForwardCpu, rulonBoostCpu } from './warp/rulon.js';
 import { warpSkyBendCount } from './warp/skyBend.js';
@@ -545,18 +545,9 @@ const StarSystem = {
 const _planetCullCenter = new THREE.Vector3();
 const _planetCullEdgeX = new THREE.Vector3();
 const _planetCullEdgeY = new THREE.Vector3();
-// Soczewka świata (worldLens.js) liczy w osiach EKRANU: przesunięcie (u, v) [j.] od środka kadru → świat =
-// kamera + R(roll)·(u, v) (obrót kadru — viewRoll.js; bez obrotu: kamera + (u, v)). Jeden obiekt wyniku (bez alokacji).
-const _lensWorld = { x: 0, y: 0 };
-function lensToWorld(L, u, v) {
-    const roll = Number(L.roll) || 0;
-    if (!roll) { _lensWorld.x = L.camX + u; _lensWorld.y = L.camY + v; return _lensWorld; }
-    const c = Math.cos(roll);
-    const s = Math.sin(roll);
-    _lensWorld.x = L.camX + c * u - s * v;
-    _lensWorld.y = L.camY + s * u + c * v;
-    return _lensWorld;
-}
+// Soczewka świata (worldLens.js) liczy w osiach EKRANU: obraz → świat w głębokości ciała — lensImageToWorld (worldLens.js,
+// czysta funkcja z testem; j. świata na px w `k`). Jeden obiekt wyniku (bez alokacji).
+const _lensWorld = { x: 0, y: 0, k: 1 };
 function isCircleVisibleInGameCamera(x, y, radius, cam, viewportWidth, viewportHeight) {
     if (!cam) return false;
     const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
@@ -664,7 +655,8 @@ class DirectPlanet {
         this._spinAxis = this.name === 'earth' ? earthSpinAxis() : null;
         this._spinBase = this._spinAxis ? earthSpinBase() : null;
         // Soczewka świata w skoku gracza (rekord worldLens.js) i obwiednia ringu „Halo” (bramka soczewki).
-        this.lensBody = newLensBody(this.name);
+        // rodzaj 'planet' — kropka minDot w soczewce (worldLens.js: M5); rExt — ring „Halo” / pierścień Saturna (_lensPrepare)
+        this.lensBody = newLensBody(this.name, 'planet');
         this._lensed = false;
         this._ringOuter = 0;
         // Ustawienie tarczy celu soczewki (lensFaceQuat): bieżące w skoku (_lensFaceNow, wchodzi z β) i własna orientacja
@@ -1048,6 +1040,10 @@ class DirectPlanet {
         b.x = Number(this.data.x) || 0;
         b.y = Number(this.data.y) || 0;
         b.r = scale;
+        // Promień z ringiem „Halo” (obwiednia ringu) albo z pierścieniem Saturna — kieszeń kadłuba soczewki (ring jedzie
+        // w slocie skalą obrazu planety, więc tarcza z ringiem nie może zajść na statek).
+        b.rExt = this.isRingAnchored ? Math.max(scale, this._ringOuter || 0)
+            : (this.saturnRing ? scale * SATURN_VISUAL_RING.outerRadius : 0);
         b.z = visualZ;
         b.flat = this.isRingAnchored ? L.zoom : L.focal / Math.max(1, L.camZ - visualZ);
         let gate = 1;
@@ -1084,8 +1080,8 @@ class DirectPlanet {
         this._lensed = true;
         this._visibilityCulled = fit.off;
         // j. świata na px w głębokości ciała (płaszczyzna gry: 1 / zoom; tło: perspektywa kamery passa).
-        const k = anchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
-        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lw = lensImageToWorld(L, o.x, o.y, b.z, anchored, _lensWorld);
+        const k = lw.k;
         const lwx = lw.x;
         const lwy = lw.y;
         // Maska słońca i cień ringu czytają płaszczyznę gry pod pikselem — w soczewce to nie punkt ciała.
@@ -1198,7 +1194,7 @@ class DirectMoon {
         this.orbits = moonOrbits(this.gameNode, RenderWorld.pageSearch);
         this._spinAngle = 0;
         // Soczewka świata w skoku gracza (worldLens.js): rekord ciała; `parent` = rekord planety (initPlanets3D).
-        this.lensBody = newLensBody(this.tune?.id || 'moon');
+        this.lensBody = newLensBody(this.tune?.id || 'moon', 'moon');
         this._lensed = false;
         this.init();
     }
@@ -1340,8 +1336,8 @@ class DirectMoon {
         this._lensed = true;
         // Księżyc w soczewce stoi przy statku w płaszczyźnie gry — nie rzuca cienia (mapa cienia słońca).
         if (this.mesh) this.mesh.castShadow = false;
-        const k = this.isRingAnchored ? 1 / L.zoom : Math.max(1, L.camZ - b.z) / Math.max(1e-6, L.focal);
-        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lw = lensImageToWorld(L, o.x, o.y, b.z, this.isRingAnchored, _lensWorld);
+        const k = lw.k;
         const lwx = lw.x;
         const lwy = lw.y;
         // Tarcza w smugach słońca za ciałem w kadrze skoku, gaśnie z β (jak planety — DirectPlanet._lensPlace).
@@ -1424,7 +1420,7 @@ class DirectSmallBody {
         this._spinAngle = (Number(this.def.angle) || 0) * 3.1;
         this._extent = 1;          // promień obwiedni / promień średni (po kształcie)
         this._inner = 1;           // najmniejszy promień bryły / promień średni (tarcza w masce słońca)
-        this.lensBody = newLensBody(this.id);
+        this.lensBody = newLensBody(this.id, 'small');
         this._lensed = false;
         this.init();
     }
@@ -1531,8 +1527,8 @@ class DirectSmallBody {
         const o = b.out;
         const fit = lensFitView(o, 1.1);
         this._lensed = true;
-        const k = 1 / L.zoom;
-        const lw = lensToWorld(L, o.x * k, o.y * k);
+        const lw = lensImageToWorld(L, o.x, o.y, 0, true, _lensWorld);
+        const k = lw.k;
         const lwx = lw.x;
         const lwy = lw.y;
         const real = 1 - o.beta;
@@ -1585,10 +1581,17 @@ function registerSmallBodiesWarmup() {
     });
 }
 
+// SŁOŃCE W SOCZEWCE ŚWIATA (DECYZJE M5, etap integracji 2026-10-26): rekord rodzaju 'sun' (worldLens.js: sizeBoost
+// `sunBoost` i kropka `minDot` — obsługuje mapa), rozstawienie jak planety tła (perspektywa passa planet, z = −60 000):
+// kula przesuwa się i skaluje w kadrze skoku, blask = bloom kuli HDR (skaluje się z nią). Światło, maska słońca i smugi
+// zostają z PRAWDZIWEGO słońca (kierunek oświetlenia gry).
+const SUN_Z = -60000;
 class DirectSun {
     constructor(data) {
-        this.data = data; this.group = new THREE.Group(); this.group.position.z = -60000;
+        this.data = data; this.group = new THREE.Group(); this.group.position.z = SUN_Z;
         this.ambientLight = null; this.uniforms = { uTime: { value: 0.0 }, uIsOcclusion: { value: 0 } };
+        this.lensBody = newLensBody('sun', 'sun');
+        this._lensed = false;
         this.init();
     }
     init() {
@@ -1614,11 +1617,11 @@ class DirectSun {
         Core3D.setSunShadowLight?.(this.sunLight);
         this.ambientLight = new THREE.AmbientLight(0xffffff, 0.02); this.ambientLight.layers.enableAll(); Core3D.scene.add(this.ambientLight);
     }
-    update(dt, cam) {
+    update(dt, cam, lensOn = false) {
         if (!cam) return;
         if (this.uniforms) this.uniforms.uTime.value += dt;
         const x = this.data.x; const y = -this.data.y;
-        this.group.position.set(x, y, -60000);
+        this.group.position.set(x, y, SUN_Z);
         if (this.sunLight) {
             const targetX = (typeof cam.x === 'number') ? cam.x : x; const targetY = (typeof cam.y === 'number') ? -cam.y : y;
             const dirX = x - targetX; const dirY = y - targetY; const len = Math.hypot(dirX, dirY) || 1;
@@ -1626,11 +1629,13 @@ class DirectSun {
             if (this.sunTarget) { this.sunTarget.position.set(targetX, targetY, 0); this.sunTarget.updateMatrixWorld(); }
         }
         const scale = (this.data.r3D || this.data.r || 200) * SUN_SIZE_MULTIPLIER;
+        if (lensOn) this._lensPrepare(scale);
+        else if (this._lensed) this._lensRestore();
         this.mesh.scale.set(scale, scale, scale);
         // Słońce nie ma cullingu w grze; flaga warstwy planet z promieniem poświaty bloomu
-        // (1,3× promienia — margines dawnego sprite'a blasku 2,6× skali), bez halo.
-        if (typeof Core3D.markPlanetLayersActive === 'function'
-            && isBodyLikelyOnScreen(this.data.x, this.data.y, -60000, scale * 1.3, false, cam)) {
+        // (1,3× promienia — margines dawnego sprite'a blasku 2,6× skali), bez halo. W soczewce — _lensPlace.
+        if (!lensOn && typeof Core3D.markPlanetLayersActive === 'function'
+            && isBodyLikelyOnScreen(this.data.x, this.data.y, SUN_Z, scale * 1.3, false, cam)) {
             Core3D.markPlanetLayersActive(false, false);
         }
         
@@ -1654,6 +1659,42 @@ class DirectSun {
             shadowCam.left = -halfSpan; shadowCam.right = halfSpan; shadowCam.top = halfSpan; shadowCam.bottom = -halfSpan;
             shadowCam.updateProjectionMatrix(); this.sunLight.shadow.needsUpdate = true;
         }
+    }
+    // Soczewka: rekord słońca (prawdziwy środek, promień kuli, skala prawdziwego widoku w głębokości SUN_Z).
+    _lensPrepare(scale) {
+        const L = WARP_WORLD_LENS;
+        const b = this.lensBody;
+        b.x = Number(this.data.x) || 0;
+        b.y = Number(this.data.y) || 0;
+        b.r = scale;
+        b.z = SUN_Z;
+        b.flat = L.focal / Math.max(1, L.camZ - SUN_Z);
+        b.gate = 1;
+        b.ready = !!this.mesh;
+    }
+    // Soczewka: kula w kadrze skoku (jak planety tła — j. świata na px w głębokości ciała), blask = bloom kuli.
+    _lensPlace() {
+        const L = WARP_WORLD_LENS;
+        const b = this.lensBody;
+        const o = b.out;
+        const fit = lensFitView(o, 1.3);
+        this._lensed = true;
+        if (!this.mesh) return;
+        const lw = lensImageToWorld(L, o.x, o.y, b.z, false, _lensWorld);
+        const k = lw.k;
+        if (fit.off) {
+            if (this.group.visible) this.group.visible = false;
+            return;
+        }
+        if (!this.group.visible) this.group.visible = true;
+        if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(false, false);
+        this.group.position.set(lw.x, -lw.y, b.z);
+        const s = Math.max(1e-3, fit.size * k);
+        this.mesh.scale.set(s, s, s);
+    }
+    _lensRestore() {
+        this._lensed = false;
+        if (!this.group.visible) this.group.visible = true;
     }
     dispose() {
         if (this.group && this.group.parent) this.group.parent.remove(this.group);
@@ -1749,12 +1790,16 @@ function applyWarpWorldLens() {
     const L = WARP_WORLD_LENS;
     let n = 0;
     let target = null;
+    let origin = null;
     for (const ent of _entities) {
         const b = ent.lensBody;
         if (!b || !b.ready) continue;
         _lensList[n++] = b;
         if (L.target && ent.data === L.target) target = b;
+        if (L.originBody && ent.data === L.originBody) origin = b;
     }
+    // Ciało startu skoku (warp.originBody — sterownik: originBody) → rekord soczewki (A/B originMove, worldLens.js).
+    L.origin = origin;
     _warpLens.update(_lensList, n, L, target, lensDiscVisible);
     for (const ent of _entities) {
         const b = ent.lensBody;

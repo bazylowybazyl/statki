@@ -13,7 +13,8 @@ import {
   warpStyle, setWarpStyle, WARP_STYLES, WARP_STYLE_DEFAULT
 } from '../src/game/warpDrive.js';
 import { RenderWorld } from '../src/render/renderWorld.js';
-import { WarpPlayerFx, WARP_FLOW, WARP_BUBBLE, WARP_ACCENT, WARP_LENS_BUBBLE, WARP_HULL_SHADOW } from '../src/3d/warp/player.js';
+import { WarpPlayerFx, WARP_FLOW, WARP_BUBBLE, WARP_ACCENT, WARP_LENS_BUBBLE, WARP_HULL_SHADOW, setWarpMedium, warpStarStretch } from '../src/3d/warp/player.js';
+import { WARP_LENS_PHASE, WARP_LENS_EXIT_SPAN, warpLensBeta, createWarpLensTrack, createWarpLensPhase, stepWarpLensPhase } from '../src/render/warpLensPhase.js';
 import { WarpFrame, WARP_FRAME_CAPS, newWarpSlot } from '../src/3d/warp/frame.js';
 import {
   planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, departFxPose, warpDepartureFxState, HERALD_REACH,
@@ -174,8 +175,10 @@ function playerRig() {
 }
 
 test('skok gracza: ładowanie ściśnięte do 0,8 s (naprężenie ×3,75, wzbudzenie ×3,75^0,6), bańka rośnie, rulon się zwija', () => {
-  // styl 'rulon' (od 2026-10-23 domyślny jest 'ped' — rulon tylko z adresu, A/B)
+  // styl 'rulon' (od 2026-10-23 domyślny jest 'ped' — rulon tylko z adresu, A/B); ośrodek w warpie gracza — A/B
+  // ?warpOsrodek=1 (DECYZJE O1: domyślnie wyłączony — test „ośrodek w warpie gracza domyślnie wyłączony” niżej)
   setWarpStyle('rulon');
+  setWarpMedium(true);
   try {
     const { fx, frame, game, step } = playerRig();
     const dt = 1 / 60;
@@ -201,6 +204,7 @@ test('skok gracza: ładowanie ściśnięte do 0,8 s (naprężenie ×3,75, wzbudz
     assert.ok(near(frame.bubbles[0].R, 1800 * WARP_BUBBLE.radiusK) && near(frame.bubbles[0].asp, WARP_BUBBLE.asp));
   } finally {
     setWarpStyle(null);
+    setWarpMedium(null);
   }
 });
 
@@ -388,8 +392,9 @@ test('skok gracza z ?rulon=0: ładowanie, skok i wyjście bez zwinięcia (adres 
 });
 
 test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna); wyjście z rampy rozgrywki — zwolnienie, hamowanie (błysk, fala, żar, iskry), ośrodek gaśnie', () => {
-  // styl 'rulon' (od 2026-10-23 domyślny jest 'ped' — rulon tylko z adresu, A/B)
+  // styl 'rulon' (od 2026-10-23 domyślny jest 'ped' — rulon tylko z adresu, A/B); ośrodek — A/B ?warpOsrodek=1
   setWarpStyle('rulon');
+  setWarpMedium(true);
   try {
     const { fx, frame, game, med, step, shakes } = playerRig();
     const dt = 1 / 60;
@@ -440,21 +445,69 @@ test('skok gracza: kop — przepływ widoczny 900 → prędkość warpa (jedna);
     assert.ok(med.camMX !== 0, 'kamera ośrodka jechała w skoku');
   } finally {
     setWarpStyle(null);
+    setWarpMedium(null);
   }
 });
 
-test('soczewka świata (2026-10-07): β 0 → 1 w 0,5 s po skoku, do końca zwolnienia 1, przy zatrzymaniu 0; przepływ zwalnia przy mijanym ciele', () => {
+test('ośrodek w warpie gracza domyślnie wyłączony (DECYZJE O1): bez bańki i iskier w ośrodku, bez poświaty drobin i soczewki bańki; smugi gwiazd, fale, błyski i żar zostają', () => {
+  const { fx, frame, game, step } = playerRig();
+  const dt = 1 / 60;
+  let t = 0;
+  let bubbles = 0, lens = 0, vis = 0, waves = 0, flashes = 0, heat = 0, stretch = 0;
+  const look = () => {
+    bubbles += frame.bubbles.length; lens += frame.lens.count; vis = Math.max(vis, frame.warpVis);
+    waves = Math.max(waves, frame.waves.count); flashes = Math.max(flashes, frame.flashes.count);
+    heat = Math.max(heat, fx.hull.heat); stretch = Math.max(stretch, frame.stars.stretch);
+  };
+  game.state = 'charging';
+  for (let i = 1; i <= 48; i++) { t += dt; game.charge = i / 48; step(t, dt); look(); }
+  game.state = 'active'; game.charge = 1;
+  for (let i = 0; i < 90; i++) { t += dt; step(t, dt); look(); }
+  const ramp = createWarpExitRamp({ v0: 200000, hullLength: 1800, dirX: Math.cos(0.3), dirY: Math.sin(0.3) });
+  game.exitRamp = ramp;
+  game.state = 'idle';
+  for (let i = 0; i < 150; i++) { t += dt; ramp.age += dt; step(t, dt); look(); }
+  assert.equal(bubbles, 0, 'bez przegródek ośrodka (bańka, iskry hamowania)');
+  assert.equal(lens, 0, 'bez soczewki bańki na mgławicy');
+  assert.equal(vis, 0, 'bez poświaty drobin');
+  assert.ok(stretch > 0.9 && waves > 0 && flashes > 0 && heat > 0.5, 'smugi gwiazd, fale, błyski, żar zostają');
+});
+
+test('smugi gwiazd w klatce kopu bez ząbka (projekt D § 2.2): warp gracza rośnie z 0,32, hipercruise jak dawniej', () => {
+  const sf = 900 / WARP_FLOW.gear2;
+  // dawny wzór (hipercruise): klatka kopu 0,32 × (0,55 + 0,45 · u) = 0,18 — ząbek w dół
+  assert.ok(near(warpStarStretch(1, 1, Infinity, 1, sf), 0.32 * (0.55 + 0.45 * sf), 1e-12));
+  // warp gracza: mnożnik prędkości tylko na przyrost ponad 0,32 — klatka kopu = koniec ładowania
+  assert.ok(near(warpStarStretch(1, 1, Infinity, 1, sf, 0.7, true), 0.32, 1e-12));
+  let prev = 0.32;
+  for (let k = 1; k <= 7; k++) {
+    const v = warpStarStretch(1 + k / 60, 1, Infinity, 1, Math.min(1, (900 + 3000 * k) / WARP_FLOW.gear2), 0.7, true);
+    assert.ok(v >= prev - 1e-12, `smugi rosną po kopie (${k}: ${v.toFixed(3)} < ${prev.toFixed(3)})`);
+    prev = v;
+  }
+  // pełna prędkość — bez zmian (1,0 w locie)
+  assert.ok(near(warpStarStretch(3, 1, Infinity, 1, 1, 0.7, true), 1.0, 1e-9));
+  // player.js: warp gracza z flagą, hipercruise bez
+  const src = read('src/3d/warp/player.js');
+  assert.match(src, /warpStarStretch\(t, this\.kickT, Infinity, 1, speedFrac, WARP_EXIT\.slow, !this\.hyper\)/);
+});
+
+test('soczewka świata — oś β z zegara gry (DECYZJE P1): ładowanie podnosi świat do 0,9, kop domyka, wyjście z β wyjścia; przepływ zwalnia przy mijanym ciele', () => {
   const { fx, game, step } = playerRig();
   const dt = 1 / 60;
   let t = 1;
+  // rekord własny (demo — bez rekordu gry): ta sama funkcja warpLensBeta co gra
   game.state = 'charging'; game.charge = 0.6;
   step(t, dt);
-  assert.equal(fx.lensBeta(t), 0, 'w ładowaniu planety na swoich miejscach');
-  game.state = 'active'; game.charge = 1;
+  assert.ok(near(fx.lensBeta(t), WARP_LENS_PHASE.chargeBeta * 0.6 * 0.6 * (3 - 2 * 0.6), 1e-12), 'ładowanie: 0,9 · smoothstep');
+  game.charge = 1;
   t += dt; step(t, dt);
-  assert.equal(fx.lensBeta(fx.kickT), 0);
-  assert.ok(fx.lensBeta(fx.kickT + 0.25) > 0.3 && fx.lensBeta(fx.kickT + 0.25) < 0.7);
-  assert.ok(near(fx.lensBeta(fx.kickT + 0.5), 1));
+  assert.ok(near(fx.lensBeta(t), WARP_LENS_PHASE.chargeBeta, 1e-12), 'koniec ładowania: 0,9');
+  game.state = 'active';
+  t += dt; step(t, dt);
+  assert.ok(near(fx.lensBeta(fx.kickT), WARP_LENS_PHASE.chargeBeta, 1e-12), 'kop zaczyna z 0,9 — bez skoku');
+  assert.ok(fx.lensBeta(fx.kickT + 0.1) > 0.95 && fx.lensBeta(fx.kickT + 0.1) < 1, 'kop domyka (easeOut³)');
+  assert.ok(near(fx.lensBeta(fx.kickT + WARP_LENS_PHASE.kickTime), 1, 1e-12));
   // Przy mijanym ciele (zwolnienie fizyki gry: flyby) przepływ widoczny zwalnia jak w demie: max(2500, bieg · f^0,6).
   game.flyby = 0.2;
   for (let i = 0; i < 40; i++) { t += dt; step(t, dt); }
@@ -464,27 +517,68 @@ test('soczewka świata (2026-10-07): β 0 → 1 w 0,5 s po skoku, do końca zwol
   assert.ok(near(fx.visibleFlow(t), WARP_FLOW.slowMin, 1e-6), 'dolna granica przepływu');
   game.flyby = 1;
   t += dt; step(t, dt);
-  // Wyjście: β trzyma się przez zwolnienie, spada do zera w locie hamującym (cel „wlatuje”).
+  // Wyjście: β wyjścia (1) przez front i zanurzenie ciał (soczewka per ciało), potem 0
   const ramp = createWarpExitRamp({ v0: 200000, hullLength: 1800, dirX: Math.cos(0.3), dirY: Math.sin(0.3) });
   game.exitRamp = ramp;
   game.state = 'idle';
   t += dt; step(t, dt);
   assert.equal(fx.mode, 'exit');
   assert.ok(near(fx.lensBeta(fx.exitT + ramp.slow * 0.9), 1));
-  const mid = fx.lensBeta(fx.exitT + (ramp.slow + ramp.tHalt) * 0.5);
-  assert.ok(mid > 0.2 && mid < 0.8);
-  assert.equal(fx.lensBeta(fx.exitT + ramp.tHalt), 0);
-  // Krótki skok (wyjście przed końcem narastania): β z chwili wyjścia, bez skoku w górę.
+  assert.equal(fx.lensBeta(fx.exitT + ramp.slow + WARP_LENS_PHASE.submerge + 0.05), 0);
+  // Krótki skok (wyjście w trakcie kopu): β z chwili wyjścia, bez skoku w górę.
   const r2 = playerRig();
   let t2 = 1;
   r2.game.state = 'active'; r2.game.charge = 1;
   r2.step(t2, dt);
-  for (let i = 0; i < 12; i++) { t2 += dt; r2.step(t2, dt); }
+  for (let i = 0; i < 6; i++) { t2 += dt; r2.step(t2, dt); }
   const beforeExit = r2.fx.lensBeta(t2);
   r2.game.exitRamp = createWarpExitRamp({ v0: 30000, hullLength: 1800 });
   r2.game.state = 'idle';
   t2 += dt; r2.step(t2, dt);
-  assert.ok(beforeExit < 0.9 && r2.fx.lensBeta(t2) <= beforeExit + 0.05);
+  assert.ok(beforeExit < 1 && Math.abs(r2.fx.lensBeta(t2) - beforeExit) < 0.05, `wyjście w kopie: ${beforeExit} → ${r2.fx.lensBeta(t2)}`);
+  // Przerwane ładowanie: świat opada w abortTime
+  const r3 = playerRig();
+  let t3 = 1;
+  r3.game.state = 'charging';
+  for (let i = 1; i <= 30; i++) { t3 += dt; r3.game.charge = i / 48; r3.step(t3, dt); }
+  const b0 = r3.fx.lensBeta(t3);
+  r3.game.state = 'idle';
+  t3 += dt; r3.step(t3, dt);
+  assert.ok(r3.fx.lensBeta(t3) > 0 && r3.fx.lensBeta(t3) <= b0 + 1e-12, 'przerwanie bez zniknięcia w jednej klatce');
+  assert.equal(r3.fx.lensBeta(t3 + WARP_LENS_PHASE.abortTime + 0.01), 0);
+  // Hipercruise — β = 0
+  const r4 = playerRig();
+  r4.game.hyper = true; r4.game.state = 'active';
+  r4.step(1, dt);
+  assert.equal(r4.fx.lensBeta(1), 0);
+});
+
+test('soczewka świata w grze: WarpPlayerFx.lensBeta z rekordu osi gry (game.lens — zegar gry), nie z zegara efektu', () => {
+  const { fx, game, step } = playerRig();
+  const dt = 1 / 60;
+  const tr = createWarpLensTrack();
+  const rec = createWarpLensPhase();
+  const warp = { state: 'charging', charge: 0, chargeTime: 0.8, kickSim: NaN, exitRamp: null, exitSlide: null, gravityBrake: { active: false } };
+  let sim = 10;
+  let t = 100;   // zegar efektu inny niż zegar gry — β idzie za grą
+  for (let i = 1; i <= 48; i++) {
+    sim += dt; t += dt * 1.7;
+    warp.charge = Math.min(0.8, i * dt);
+    stepWarpLensPhase(tr, rec, warp, sim, false);
+    game.state = 'charging'; game.charge = warp.charge / 0.8; game.lens = rec;
+    step(t, dt);
+    assert.equal(fx.lensBeta(t), warpLensBeta(rec));
+  }
+  assert.ok(near(fx.lensBeta(t), WARP_LENS_PHASE.chargeBeta, 1e-9));
+  warp.state = 'active'; warp.kickSim = sim;
+  for (let i = 0; i < 40; i++) {
+    sim += dt; t += dt * 1.7;
+    stepWarpLensPhase(tr, rec, warp, sim, false);
+    game.state = 'active';
+    step(t, dt);
+    assert.equal(fx.lensBeta(t), warpLensBeta(rec));
+  }
+  assert.ok(near(fx.lensBeta(t), 1, 1e-12));
 });
 
 // ── przyloty i odloty NPC ────────────────────────────────────────────────────────────────────
@@ -851,4 +945,46 @@ test('rulon całej gry: hak w wierzchołkach każdego materiału, bez passa cien
   assert.match(read('src/3d/planet3d.assets.tsl.js'), /material\.rulonBend = false;/);
   const core = read('src/3d/core3d.js');
   assert.match(core, /RULON\.pass\.value = 1;\s*renderer\.render\(this\.scene, camera\);\s*RULON\.pass\.value = 0;/);
+});
+
+test('rekord własny osi β (demo, recenzja etapu 2): wiek wyjścia trwa po bezczynności do zatrzymania + WARP_LENS_EXIT_SPAN (trzymanie celu), nowe ładowanie go kończy; hipercruise — bez', () => {
+  const { fx, game, step } = playerRig();
+  const dt = 1 / 60;
+  let t = 1;
+  game.state = 'active'; game.charge = 1;
+  step(t, dt);
+  for (let i = 0; i < 60; i++) { t += dt; step(t, dt); }
+  const ramp = createWarpExitRamp({ v0: 200000, hullLength: 1800 });
+  game.exitRamp = ramp;
+  game.state = 'idle';
+  t += dt; step(t, dt);
+  assert.equal(fx.mode, 'exit');
+  const exitT = fx.exitT;
+  // automat efektu przechodzi w bezczynność po tHalt + 2,4 s — wiek wyjścia rekordu dalej rośnie (jak strona gry)
+  for (let i = 0; i < Math.round((ramp.tHalt + 4) / dt); i++) { t += dt; step(t, dt); }
+  assert.equal(fx.mode, 'idle');
+  const ph = fx.lensPhase(t);
+  assert.ok(near(ph.exitAge, t - exitT, 1e-9), `wiek wyjścia po bezczynności ${ph.exitAge}`);
+  assert.ok(Number.isFinite(ph.exitBeta));
+  assert.equal(fx.lensBeta(t), 0, 'β po wyjściu 0 (cel trzyma soczewka — targetHold)');
+  assert.equal(fx.lensPhase(exitT + ramp.tHalt + WARP_LENS_EXIT_SPAN + 0.1).exitAge, -1, 'po zatrzymaniu + WARP_LENS_EXIT_SPAN — koniec');
+  // nowe ładowanie kończy wiek wyjścia
+  game.state = 'charging'; game.charge = 0.2; game.exitRamp = null;
+  t += dt; step(t, dt);
+  assert.equal(fx.lensPhase(t).exitAge, -1);
+  game.state = 'idle';
+  t += dt; step(t, dt);
+  assert.equal(fx.lensPhase(t).exitAge, -1, 'przerwane ładowanie nie wskrzesza wieku wyjścia');
+  // hipercruise: wyjście bez trzymania (β = 0)
+  const r = playerRig();
+  let t2 = 1;
+  r.game.hyper = true; r.game.state = 'active';
+  r.step(t2, dt);
+  for (let i = 0; i < 30; i++) { t2 += dt; r.step(t2, dt); }
+  r.game.state = 'idle';
+  r.game.exitRamp = createWarpExitRamp({ v0: 30000, hullLength: 1800 });
+  t2 += dt; r.step(t2, dt);
+  for (let i = 0; i < Math.round((r.fx.ramp.tHalt + 3) / dt); i++) { t2 += dt; r.step(t2, dt); }
+  assert.equal(r.fx.mode, 'idle');
+  assert.equal(r.fx.lensPhase(t2).exitAge, -1);
 });

@@ -5,13 +5,14 @@
 //   • fizyka skoku: planWarpCruise / warpTripTuneFor / warpTripTime, warpFlybyFactor (zwolnienie przy ciałach), strefy
 //     (pas × 0,8, studnie × 0,3), createWarpExitRamp / sampleWarpExitRamp, ślizg z pędem (k = 3, Atlas), wyjście TRAVEL TO
 //     (rampa + ślizg przed końcem odcinka) albo ręczne (swobodny skok);
-//   • kamera: stepCameraRigWarp + stepCameraRig (cameraRig.js) — zoom skoku, kop, wyprzedzenie, wysunięcie przy wyjściu,
-//     kadr przylotu, podłoga minZoom; wariant K1 (DECYZJE K1, jeszcze NIE w kodzie gry — parametr symulatora): przy
-//     wyjściu z celem bez wysunięcia statku (warpAheadK 0) z wyprzedzeniem (warpLeadScale 1), podłoga zoomu kadru
-//     przylotu 0,07 · zoomRef, kadr przylotu trzymany do końca ślizgu + 1 s, powrót do zoomu gracza 2 s, kadr przylotu
-//     celu NA TLE z perspektywą (warpArrivalZoom z depthK — zmiana cameraRig.js etapu integracji, src/render/warpArrivalFrame.js);
-//   • oś β: src/render/warpLensPhase.js (ładowanie 0,9 · smoothstep, kop easeOut, wyjście — front smug gwiazd; stan
-//     minimalny stepWarpLensTrack — przerwane ładowanie, β wyjścia);
+//   • kamera: stepCameraRigWarp + stepCameraRig (cameraRig.js) — zoom skoku, kop, wyprzedzenie, kadr przylotu — KAMERA
+//     GRY z K1 (DECYZJE K1, wpięte w etapie integracji 2026-10-26): przy wyjściu z celem bez wysunięcia statku,
+//     wyprzedzenie zostaje, kadr przylotu celu NA TLE z perspektywą (input.arrivalDepthK — warpArrivalFrame.js), trzymanie
+//     do końca ślizgu + warpArrivalHold, powrót smoothstep warpArrivalReturn; podłoga zoomu na ekranie — cameraZoom.js
+//     (cameraZoomFloor: warpArrivalFloor · zoomRef przy zatrzaśniętym kadrze przylotu, inaczej limit kadłuba 0,035);
+//   • oś β: src/render/warpLensPhase.js — stepWarpLensPhase na obiekcie warpa jak w grze (index.html:
+//     stepPlayerWarpLensPhase — zegar gry, wiek wyjścia od ramp.t0, ślizg = arriving; stan minimalny — przerwane
+//     ładowanie, β wyjścia);
 //   • soczewka: src/3d/warp/worldLens.js (WarpWorldLens — ten sam kod co w grze) na rekordach jak planet3d.assets.js
 //     (płaszczyzna gry / tło z = −50 000 / słońce z = −60 000, bramka ringu, księżyce w węzłach gry — moonOrbit.js),
 //     świat z systemMap.js, smallBodies.js, ringScale.js, haloRingLayout.js. Ringi „Halo” i pierścień Saturna się nie
@@ -22,8 +23,8 @@
 // w stożku za celem.
 //
 // Wynik: tory ciał co 0,5 s (środek na ekranie od środka kadru [px, y w dół], promień [px], prędkość [px/s]) i KONTROLE
-// (DECYZJE P4 + BRIEF C1–C5 + stożek M4). Kod wyjścia ≠ 0, gdy kontrola wariantu K1 nie przejdzie (wariant „dziś” —
-// informacyjnie; --scisle-dzis — też on).
+// (DECYZJE P4 + BRIEF C1–C5 + stożek M4). Kod wyjścia ≠ 0, gdy kontrola nie przejdzie. Kamera bez K1 (dawny wariant
+// „dziś”) nie istnieje już w kodzie gry — --k1 przyjmuje tylko „tak” (inne wartości: ostrzeżenie).
 //
 // Użycie:
 //   node scripts/webgpu/warp-soczewka-sym.mjs [--scen S1,S2,S3,S4,S5,S6] [--res 1080,1440] [--k1 oba|tak|nie] [--B 45000]
@@ -45,6 +46,7 @@ const WL = await imp('src/3d/warp/worldLens.js');
 const PH = await imp('src/render/warpLensPhase.js');
 const WAF = await imp('src/render/warpArrivalFrame.js');
 const MO = await imp('src/3d/moonOrbit.js');
+const CZ = await imp('src/game/cameraZoom.js');
 
 // ------------------------------------------------------------------------------------------------ argumenty
 const argv = process.argv.slice(2);
@@ -55,17 +57,19 @@ const arg = (name, def) => {
 const flag = (name) => argv.includes('--' + name);
 const SCENS = String(arg('scen', 'S1,S2,S3,S4,S5,S6')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
 const RESS = String(arg('res', '1080,1440')).split(',').map((s) => Number(s.trim())).filter((h) => h > 0);
-const K1MODE = String(arg('k1', 'oba'));
-const K1S = K1MODE === 'tak' ? [true] : (K1MODE === 'nie' ? [false] : [true, false]);
+const K1MODE = String(arg('k1', 'tak'));
+if (K1MODE !== 'tak') console.warn('[sym] --k1 ' + K1MODE + ': kamera bez K1 nie istnieje już w kodzie gry (cameraRig.js) — liczę K1');
+const K1S = [true];
 const B_LENS = Number(arg('B', WL.WORLD_LENS_DEFAULTS.B));
 const TORY = String(arg('tory', 'gl'));
 const MD = arg('md', '');
 const JSON_OUT = arg('json', '');
 const STRICT_OFF = flag('scisle-dzis');
 const ORIGIN_MOVE = flag('origin-ruch');   // A/B: planeta startu „ruchem” (projekt B) zamiast reguły ogólnej
-// Wpięcie: 'nowe' — sterownik etapu integracji (oś β z warpLensPhase, kotwica, origin, exitSlow, arriving, kropki i słońce);
-// 'dzis' — dzisiejsze wpięcie (warpNurt._commitWorldLens + planet3d przed integracją): β z player.js lensBeta (0 → 1
-// w 0,5 s od kopu, wyjście: spadek od ramp.slow do tHalt), bez kotwicy, startu, exitSlow i arriving, bez kropek i słońca.
+// Wpięcie: 'nowe' — sterownik gry po integracji (warpNurt._commitWorldLens + planet3d.assets.js: oś β z warpLensPhase,
+// kotwica, origin, exitSlow, arriving, kropki i słońce); 'dzis' — wpięcie sprzed integracji (informacyjnie): β z dawnego
+// player.js lensBeta (0 → 1 w 0,5 s od kopu, wyjście: spadek od ramp.slow do tHalt), bez kotwicy, startu, exitSlow
+// i arriving, bez kropek i słońca (kamera — już z K1).
 const WIRING = String(arg('wpiecie', 'nowe'));
 const DEBUG_T = arg('debug-cel', '') ? String(arg('debug-cel', '')).split(',').map(Number) : null;   // --debug-cel t0,t1
 
@@ -269,7 +273,7 @@ function simulate(sc, H, k1) {
   const toWorld = (sx, sy) => [rc * sx - rs * sy, rs * sx + rc * sy];
   const zoomRef = CR.defaultShipZoom(W, L_HULL);
   const focal = (H * 0.5) / Math.tan(FOV * 0.5 * deg);
-  const tune = k1 ? { ...CR.CAMERA_RIG_DEFAULTS, warpZoomReturn: 2 } : CR.CAMERA_RIG_DEFAULTS;
+  const tune = CR.CAMERA_RIG_DEFAULTS;
   const world = sc.world;
   const tgtW = sc.target ? world.P[sc.target] : null;
   const orgW = sc.origin ? world.P[sc.origin] : null;
@@ -312,9 +316,12 @@ function simulate(sc, H, k1) {
   let stopT = NaN;
   let tEnd = Infinity;
   let lensOn = false;
-  let prevZoom = zoomRef;
-  let retFrom = 0;
-  let retT0 = 0;
+  // obiekt warpa gry dla osi β (index.html: GameState.warp — stan, ładowanie, kickSim, rampa z t0, ślizg)
+  const gw = { state: 'charging', charge: 0, chargeTime: CHARGE_T, kickSim: NaN, exitRamp: null, exitSlide: { active: false }, gravityBrake: { active: false } };
+  const phase = PH.createWarpLensPhase();
+  // camera gry (cameraZoom.js — stepCameraZoom: zoom gracza = zoomRef, człon riga, podłoga kadru przylotu, limit członu)
+  const cz = { zoom: zoomRef, targetZoom: zoomRef, zoomBase: zoomRef, _zoomSpringOut: zoomRef, zoomVel: 0, minZoom: 0.035,
+    maxZoom: 3.2, zoomImpulseMin: NaN, zoomImpulseLog: 0 };
   const kA = Math.min(1, 6 * DT);
   const frames = [];
   const ev = { kick: 0, exit: NaN, brake: NaN, halt: NaN, stop: NaN, release: NaN, releaseWhy: '' };
@@ -343,7 +350,7 @@ function simulate(sc, H, k1) {
         : sc.leg - s <= WD.warpExitRampDistance(v, L_HULL, Math.min(v, V_END)) + SLIDE;
       if (exitNow) {
         state = 'exit';
-        ramp = WD.createWarpExitRamp({ v0: v, hullLength: L_HULL, vEnd: Math.min(v, V_END) });
+        ramp = WD.createWarpExitRamp({ v0: v, hullLength: L_HULL, vEnd: Math.min(v, V_END), startTime: t });
         exitT0 = t;
         ev.exit = t;
         ev.brake = t + ramp.tBrake;
@@ -370,30 +377,19 @@ function simulate(sc, H, k1) {
     const exitAge = state === 'exit' ? t - exitT0 : -1;
     const camExitAge = state === 'exit' && exitAge < ramp.tHalt + WD.WARP_EXIT.settle + 0.3 ? exitAge : -1;
     const arrivalDist = tgtW ? Math.max(0, hyp(tgtW.x - shipX, tgtW.y - shipY) - tgtW.r) : -1;
-    const holdFrame = k1 && tgtW && stopT >= 0 && t - stopT < 1;   // K1: kadr przylotu do końca ślizgu + 1 s
-    // K1 + integracja kamery: kadr przylotu celu na tle z perspektywą (warpArrivalZoom z depthK — w cameraRig.js po
-    // wpięciu: input.arrivalDepthK). Rig dziś liczy edge · fill / arrivalDist — podajemy odległość równoważną.
-    let arrivalIn = arrivalDist;
-    if (k1 && tgtDepthK > 0 && arrivalDist >= 0) {
-      const edge = WAF.warpViewEdgePx(0, -1, W * 0.5, H * 0.5, -rig.offsetX, -rig.offsetY);
-      const ce = WAF.warpViewEdgePx(0, -1, W * 0.5, H * 0.5, 0, 0);
-      arrivalIn = Math.max(1, edge) * fill / WAF.warpArrivalZoom(edge, arrivalDist, fill, tgtDepthK, ce);
-    }
+    // index.html: updateCameraWarpKick — kadr przylotu z odległości od brzegu tarczy celu, cel na tle z perspektywą
+    // (input.arrivalDepthK = warpArrivalDepthK(H) — tu ogniskowa z H, jak kamera gry w px CSS)
     const rigState = state === 'exit' || state === 'aborted' ? 'idle' : state;
     CR.stepCameraRigWarp(rig, {
       dt: DT, enabled: true, state: rigState, charge: state === 'charging' ? (t + CHARGE_T) / CHARGE_T : 1,
       dirX: 0, dirY: -1, exitAge: camExitAge, exitSlow: ramp ? ramp.tSlowEnd : WD.WARP_EXIT.slow, exitHalt: ramp ? ramp.tHalt : 1.15,
-      rulon: false, zoomRef, zoomBase: zoomRef, arriving: slideOn || holdFrame, arrivalDist: arrivalIn, viewW: W, viewH: H
+      rulon: false, zoomRef, zoomBase: zoomRef, arriving: slideOn, arrivalDist, arrivalDepthK: tgtDepthK, viewW: W, viewH: H
     }, tune);
-    if (k1 && tgtW && state === 'exit') { rig.warpAheadK = 0; rig.warpLeadScale = 1; }
-    const minZoom = k1 && rig.warpArrOn ? 0.07 * zoomRef : 0.035;
-    let zoom = clamp(zoomRef * Math.exp(clamp(rig.warpZoomLog, -3, 3)), minZoom, 3.2);
-    // K1: po końcu ślizgu + 1 s powrót do zoomu gracza smoothstep 2 s (rig dziś: easeOut³ w warpZoomReturn).
-    if (k1 && tgtW && stopT >= 0 && t - stopT >= 1) {
-      if (!(retFrom > 0)) { retFrom = prevZoom; retT0 = t; }
-      zoom = Math.exp(Math.log(retFrom) + (Math.log(zoomRef) - Math.log(retFrom)) * smoothstep(0, 2, t - retT0));
-    }
-    prevZoom = zoom;
+    // cameraZoom.js: zoom na ekranie = zoom gracza × e^człon w [podłoga, max] (podłoga kadru przylotu — cameraZoomFloor)
+    cz.zoomImpulseMin = rig.warpZoomFloor;
+    cz.zoomImpulseLog = rig.warpZoomLog;
+    CZ.stepCameraZoom(cz, DT);
+    const zoom = cz.zoom;
     CR.stepCameraRig(rig, { dt: DT, viewW: W, viewH: H, mode: 'never', lookEnabled: false, velX: 0, velY: -v, maxSpeed: V_MAX }, tune);
     const shipSx = -rig.offsetX;
     const shipSy = -rig.offsetY;
@@ -404,10 +400,13 @@ function simulate(sc, H, k1) {
     const camX = shipX + cox;
     const camY = shipY + coy;
     const camZ = focal / zoom;
-    // ---- β (src/render/warpLensPhase.js; stan minimalny — przerwane ładowanie, β wyjścia)
-    const phase = { state: rigState, charge: state === 'charging' ? (t + CHARGE_T) / CHARGE_T : 1,
-      kickAge: (state === 'active' || state === 'exit') && t >= 0 ? t : NaN, exitAge, exitSlow: ramp ? ramp.tSlowEnd : NaN, hyper: false };
-    let beta = PH.stepWarpLensTrack(track, phase, t + CHARGE_T);
+    // ---- β (src/render/warpLensPhase.js: stepWarpLensPhase na obiekcie warpa — jak index.html stepPlayerWarpLensPhase)
+    gw.state = rigState;
+    gw.charge = state === 'charging' ? (t + CHARGE_T) : (state === 'active' ? CHARGE_T : 0);
+    if (state === 'active' && !Number.isFinite(gw.kickSim)) gw.kickSim = 0;
+    gw.exitRamp = ramp;
+    gw.exitSlide.active = state === 'exit' && slideOn;
+    let beta = PH.stepWarpLensPhase(track, phase, gw, t, false);
     if (today) {
       // player.js (przed integracją): lensBeta — smooth(0; 0,5; od kopu), wyjście lensAtExit · (1 − smooth(slow; tHalt)).
       if (state === 'active') beta = smoothstep(0, 0.5, t);
@@ -415,7 +414,7 @@ function simulate(sc, H, k1) {
       else beta = 0;
     }
     const lensExitAge = today ? exitAge : Number(phase.exitAge);
-    const arriving = lensExitAge >= 0 && lensExitAge < (ramp ? ramp.tHalt : 0) + 12;
+    const arriving = today ? lensExitAge >= 0 && lensExitAge < (ramp ? ramp.tHalt : 0) + 12 : lensExitAge >= 0;
     // ---- rekordy (planet3d.assets.js: _lensPrepare)
     for (const r of recs) {
       const b = r.src;
@@ -440,8 +439,8 @@ function simulate(sc, H, k1) {
       Object.assign(ctx, {
         active: true, beta, speed: cruise, velAngle: course, zoom, W, H, focal, camZ, camX, camY, roll, shipX, shipY,
         shipSx, shipSy, anchorSx, anchorSy, hullHalfLen: L_HULL * zoom * 0.5, hullHalfWid: W_HULL * zoom * 0.5, dt: DT,
-        target, origin, exitAge: arriving ? lensExitAge : -1, exitSlow: ramp ? ramp.tSlowEnd : 0, exitHalt: ramp ? ramp.tHalt : 0,
-        arriving: state === 'exit' ? slideOn : false,       // index.html: w.arriving = !!warp.exitSlide?.active
+        target, origin, exitAge: arriving ? lensExitAge : -1, exitSlow: phase.exitSlow > 0 ? phase.exitSlow : 0, exitHalt: phase.exitHalt,
+        arriving: phase.arriving,       // warpLensPhase: ślizg z pędem (warp.exitSlide.active) / hamowanie grawitacyjne
         arrivalFill: fill, zoomRef, zoomJump: zoomRef * tune.warpZoomOut
       });
       if (today) Object.assign(ctx, { anchorSx: NaN, anchorSy: NaN, origin: null, exitSlow: 0, arriving: null, arrivalFill: NaN, zoomRef: NaN, zoomJump: NaN });

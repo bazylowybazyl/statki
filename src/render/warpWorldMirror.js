@@ -15,7 +15,9 @@
 //     podstawia SWOJE obiekty ciał (te same, które dostało `initPlanets3D` — soczewka porównuje `ent.data === target`);
 //   • znaczniki zegara: `kickSim` (SimClock.sim przy skoku), zegar efektu warpa strony (suma dt klatek „Nurtu” —
 //     worker liczy z niego dt efektu, więc strony pominięte przez workera nie gubią czasu osi kopu i wyjścia);
-//   • kotwica kadru (DECYZJE M3) — dwa skalary na etap integracji soczewki (`anchorSX / anchorSY`).
+//   • kotwica kadru (DECYZJE M3) — dwa skalary na etap integracji soczewki (`anchorSX / anchorSY`);
+//   • oś β soczewki świata (układ 3, etap integracji): rekord `lens` (warpLensPhase.js — stepWarpLensPhase strony gry,
+//     tabela WARP_LENS_FIELDS) — worker liczy warpLensBeta z tych samych pól co tryb off (klatka „Nurtu”: lensPhase).
 // Pole nieobecne na obiekcie gry = NaN (jak reszta migawki). Rozpakowanie bez alokacji w klatce (obiekty lustra tworzy
 // `createWarpWorldMirror` raz). Czysty moduł (bez three, DOM i `window`).
 
@@ -41,6 +43,17 @@ export const WARP_RAMP_FIELDS = Object.freeze([
 export const WARP_SLIDE_FIELDS = Object.freeze([
   ['WARP_SLIDE_SPEED', 'speed'], ['WARP_SLIDE_VMIN', 'vMin'], ['WARP_SLIDE_DECEL', 'decel'],
   ['WARP_SLIDE_DIR_X', 'dirX'], ['WARP_SLIDE_DIR_Y', 'dirY']
+].map(([K, k]) => Object.freeze([WORLD[K], k])));
+
+/**
+ * Pola liczbowe rekordu osi β soczewki (src/render/warpLensPhase.js: createWarpLensPhase / stepWarpLensPhase — strona
+ * gry; worker liczy warpLensBeta z tych samych pól). Stan (`state`) i flagi (`hyper`, `arriving`) — osobno.
+ */
+export const WARP_LENS_FIELDS = Object.freeze([
+  ['WARP_LENS_CHARGE', 'charge'], ['WARP_LENS_KICK_AGE', 'kickAge'], ['WARP_LENS_EXIT_AGE', 'exitAge'],
+  ['WARP_LENS_EXIT_SLOW', 'exitSlow'], ['WARP_LENS_EXIT_HALT', 'exitHalt'], ['WARP_LENS_EXIT_BETA', 'exitBeta'],
+  ['WARP_LENS_ABORT_AGE', 'abortAge'], ['WARP_LENS_ABORT_BETA', 'abortBeta'], ['WARP_LENS_ZOOM_REF', 'zoomRef'],
+  ['WARP_LENS_ZOOM_JUMP', 'zoomJump'], ['WARP_LENS_ARRIVAL_FILL', 'arrivalFill'], ['WARP_LENS_BETA', 'beta']
 ].map(([K, k]) => Object.freeze([WORLD[K], k])));
 
 /** Indeks ciała na liście (planety, potem małe ciała) albo −1. Bez alokacji (pętla po tożsamości). */
@@ -95,6 +108,14 @@ export function packWarpWorld(w, f, dict) {
   w[WORLD.WARP_FX_CLOCK] = raw(f.warpFxClock);
   w[WORLD.WARP_ANCHOR_SX] = raw(f.warpAnchorSX);
   w[WORLD.WARP_ANCHOR_SY] = raw(f.warpAnchorSY);
+  const lp = f.warpLens || null;
+  w[WORLD.WARP_LENS_STATE] = lp ? dict.code(lp.state) : -1;
+  for (let i = 0; i < WARP_LENS_FIELDS.length; i++) {
+    const p = WARP_LENS_FIELDS[i];
+    w[p[0]] = lp ? raw(lp[p[1]]) : NaN;
+  }
+  w[WORLD.WARP_LENS_HYPER] = lp && lp.hyper ? 1 : 0;
+  w[WORLD.WARP_LENS_ARRIVING] = lp && lp.arriving === true ? 1 : 0;
   const bo = f.boost || null;
   w[WORLD.BOOST_STATE] = bo ? dict.code(bo.state) : -1;
 }
@@ -112,9 +133,14 @@ export function createWarpWorldMirror() {
     gravityBrake: { active: false },
     isBusy() { return this.state !== 'idle' || !!(this.exitRamp && this.exitRamp.active); }
   };
+  // oś β soczewki (kształt createWarpLensPhase — warpLensPhase.js)
+  const lens = {
+    state: 'idle', charge: 0, kickAge: NaN, exitAge: -1, exitSlow: NaN, exitHalt: 0, exitBeta: NaN,
+    abortAge: -1, abortBeta: 0, hyper: false, arriving: false, zoomRef: NaN, zoomJump: NaN, arrivalFill: NaN, beta: 0
+  };
   return {
-    warp, ramp, slide, boost: { state: 'idle' },
-    hasWarp: false, hasBoost: false,
+    warp, ramp, slide, boost: { state: 'idle' }, lens,
+    hasWarp: false, hasBoost: false, hasLens: false,
     targetIndex: -1, originIndex: -1,
     fxClock: NaN, anchorSX: NaN, anchorSY: NaN
   };
@@ -164,6 +190,16 @@ export function applyWarpWorld(w, dict, m, planets, small) {
   m.fxClock = w[WORLD.WARP_FX_CLOCK];
   m.anchorSX = w[WORLD.WARP_ANCHOR_SX];
   m.anchorSY = w[WORLD.WARP_ANCHOR_SY];
+  const ls = w[WORLD.WARP_LENS_STATE];
+  const lp = m.lens;
+  m.hasLens = ls >= 0;
+  lp.state = ls >= 0 ? dict.value(ls) : 'idle';
+  for (let i = 0; i < WARP_LENS_FIELDS.length; i++) {
+    const p = WARP_LENS_FIELDS[i];
+    lp[p[1]] = w[p[0]];
+  }
+  lp.hyper = w[WORLD.WARP_LENS_HYPER] === 1;
+  lp.arriving = w[WORLD.WARP_LENS_ARRIVING] === 1;
   const bc = w[WORLD.BOOST_STATE];
   m.hasBoost = bc >= 0;
   m.boost.state = bc >= 0 ? dict.value(bc) : 'idle';

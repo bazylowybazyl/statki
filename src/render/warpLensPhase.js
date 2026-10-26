@@ -29,6 +29,10 @@
 //               świat opada w abortTime s, nie znika w jednej klatce.
 // Wyjście bez rampy (exitWarp({ abrupt: true }) — warp.exitRamp = null) idzie tym samym frontem co zwykłe: stan minimalny
 // stepWarpLensTrack (strona gry, raz na klatkę) daje mu wiek wirtualnej rampy.
+//
+// WPIĘCIE (etap 2, 2026-10-26): strona gry raz na klatkę renderu woła stepWarpLensPhase(track, s, GameState.warp,
+// SimClock.render) (index.html: stepPlayerWarpLensPhase), klatka „Nurtu” niesie `s` (o.lensPhase), migawka — pola
+// WARP_LENS_* (warpWorldMirror.js), WarpPlayerFx.lensBeta = warpLensBeta(s) — ten sam wynik w trybie off i w workerze.
 
 export const WARP_LENS_PHASE = Object.freeze({
   chargeBeta: 0.9,     // β na końcu ładowania
@@ -155,7 +159,101 @@ export function warpLensHudBeta(s, alongPx = NaN, zoom = NaN, P = WARP_LENS_PHAS
 
 /** Stan minimalny osi β (stepWarpLensTrack) — jeden na gracza, po stronie gry. */
 export function createWarpLensTrack() {
-  return { prevState: 'idle', prevBeta: 0, prevExit: false, abortT: NaN, abortBeta: 0, exitT: NaN, exitBeta: NaN };
+  return {
+    prevState: 'idle', prevBeta: 0, prevExit: false, abortT: NaN, abortBeta: 0, exitT: NaN, exitBeta: NaN,
+    // zegar wyjścia strony (stepWarpLensPhase): chwila wyjścia [s zegara gry] i rampa z tej chwili
+    exitT0: NaN, exitRampT0: NaN, exitSlowAt: NaN, exitHaltAt: 0
+  };
+}
+
+/**
+ * Wiek wyjścia trwa po wyjściu jeszcze tyle s po zatrzymaniu rampy (trzymanie celu przy przylocie: ślizg z pędem ~5 s
+ * + worldLens arrivalHoldMax 8 s + puszczenie) — rampa gry znika wcześniej (cameraRig: settle), wiek nie może.
+ */
+export const WARP_LENS_EXIT_SPAN = 14;
+
+/**
+ * Rekord osi β (strona gry: stepWarpLensPhase, worker: lustro migawki — warpWorldMirror.js WARP_LENS_FIELDS). Pola
+ * osi (warpLensBeta) i kadru soczewki z gry: `arriving` (ślizg z pędem / hamowanie grawitacyjne trwa — worldLens:
+ * zatrzymanie), `zoomRef` / `zoomJump` (zoom odniesienia skoku i kadr skoku [px CSS / j.] — kamera gry),
+ * `arrivalFill` (cameraRigTune.warpArrivalFill), `beta` (wynik tej klatki — diagnostyka; worker liczy β sam).
+ */
+export function createWarpLensPhase() {
+  return {
+    state: 'idle', charge: 0, kickAge: NaN, exitAge: -1, exitSlow: NaN, exitHalt: 0, exitBeta: NaN,
+    abortAge: -1, abortBeta: 0, hyper: false, arriving: false, zoomRef: NaN, zoomJump: NaN, arrivalFill: NaN, beta: 0
+  };
+}
+
+/**
+ * DOLOT gracza po wyjściu (jedno źródło dla soczewki — `arriving` rekordu osi — i kamery gry — kadr przylotu K1,
+ * index.html: updateCameraWarpKick): ślizg z pędem po rampie albo hamowanie grawitacyjne (wyjście bez rampy).
+ */
+export function warpPlayerArriving(w) {
+  return !!(w && ((w.exitSlide && w.exitSlide.active) || (w.gravityBrake && w.gravityBrake.active)));
+}
+
+/**
+ * STRONA GRY, raz na klatkę renderu: oś β gracza z obiektu warpa gry (GameState.warp: state, charge / chargeTime,
+ * kickSim, exitRamp { t0, tSlowEnd, tHalt }, exitSlide.active, gravityBrake.active) i ZEGARA GRY `clock` (SimClock.render
+ * — w pauzie stoi; kickSim i ramp.t0 to SimClock.sim). Wypełnia `s` (createWarpLensPhase) w miejscu i krokuje
+ * stepWarpLensTrack; zwraca β.
+ *   • wiek wyjścia: od chwili wyjścia (ramp.t0; wyjście bez rampy — exitWarp({ abrupt }), teleport — klatka przejścia
+ *     lot → bezczynność) do zatrzymania rampy + WARP_LENS_EXIT_SPAN s — ciągły także po zdjęciu rampy (rampa żyje tylko
+ *     do cameraRig settle), nowe ładowanie go kończy;
+ *   • hyperOn — efekt prowadzi hipercruise (β = 0).
+ * Gra publikuje `s` w migawce (worker liczy warpLensBeta z tych samych pól).
+ */
+export function stepWarpLensPhase(tr, s, warp, clock, hyperOn = false, P = WARP_LENS_PHASE) {
+  const t = num(clock, 0);
+  const w = warp || null;
+  const st = w && (w.state === 'charging' || w.state === 'active') ? w.state : 'idle';
+  s.state = st;
+  const ct = w ? Number(w.chargeTime) : 0;
+  s.charge = w && ct > 0 ? clamp01((Number(w.charge) || 0) / ct) : 0;
+  const ks = w ? Number(w.kickSim) : NaN;
+  s.kickAge = Number.isFinite(ks) ? Math.max(0, t - ks) : NaN;
+  s.hyper = !!hyperOn && st === 'idle';
+  const ramp = w ? w.exitRamp : null;
+  if (st !== 'idle') {
+    // nowy skok kończy wiek wyjścia; t0 rampy zostaje w pamięci — rampa poprzedniego skoku (nieaktywna, cameraRig zdejmuje
+    // ją dopiero po settle) przy przerwanym ładowaniu nie udaje nowego wyjścia
+    tr.exitT0 = NaN;
+  } else {
+    const r0 = ramp ? Number(ramp.t0) : NaN;
+    if (Number.isFinite(r0) && r0 !== tr.exitRampT0) {
+      // nowa rampa wyjścia (exitWarp): wiek od jej startu
+      tr.exitRampT0 = r0;
+      tr.exitT0 = r0;
+      tr.exitSlowAt = Number(ramp.tSlowEnd) > 0 ? Number(ramp.tSlowEnd) : P.exitSlow;
+      tr.exitHaltAt = Math.max(0, Number(ramp.tHalt) || 0);
+    } else if (!Number.isFinite(tr.exitT0) && tr.prevState === 'active' && !s.hyper) {
+      // lot → bezczynność bez rampy (hamowanie grawitacyjne, teleport): wirtualna rampa od tej klatki
+      tr.exitT0 = t;
+      tr.exitSlowAt = P.exitSlow;
+      tr.exitHaltAt = 0;
+    }
+  }
+  s.exitAge = -1;
+  s.exitSlow = NaN;
+  s.exitHalt = 0;
+  if (Number.isFinite(tr.exitT0)) {
+    const a = Math.max(0, t - tr.exitT0);
+    if (a <= tr.exitHaltAt + WARP_LENS_EXIT_SPAN) {
+      s.exitAge = a;
+      s.exitSlow = tr.exitSlowAt;
+      s.exitHalt = tr.exitHaltAt;
+    } else {
+      tr.exitT0 = NaN;
+    }
+  }
+  s.arriving = warpPlayerArriving(w);
+  s.exitBeta = NaN;
+  s.abortAge = -1;
+  s.abortBeta = 0;
+  const b = stepWarpLensTrack(tr, s, t, P);
+  s.beta = b;
+  return b;
 }
 
 /**

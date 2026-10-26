@@ -345,11 +345,28 @@ test('wpięcie: sterownik warpa pisze stan, planety rozstawia soczewka, gra plan
   const nurt = read('src/3d/warp/warpNurt.js');
   assert.match(nurt, /this\._commitWorldLens\(o, t, dt, camX, camY, zoom, view, hasPlayer\);/);
   assert.match(nurt, /if \(!this\.initialized \|\| !this\.enabled\) \{ resetWarpWorldLens\(\); return; \}/);
-  assert.match(nurt, /const lensOk = hasPlayer && o\.lensAllowed !== false;\s*const beta = lensOk \? p\.lensBeta\(t\) : 0;/);
+  // Oś β z zegara gry (etap integracji): rekord osi strony gry (o.lensPhase / worker — migawka) → warpLensBeta.
+  assert.match(nurt, /const lensOk = hasPlayer && o\.lensAllowed !== false && !p\.hyper;\s*const ph = lensOk \? p\.lensPhase\(t\) : null;\s*const beta = ph \? warpLensBeta\(ph\) : 0;/);
   // Przylot: soczewka żyje po wyjściu, póki trzyma cel przy krawędzi (targetHold), choć β już opadło.
   assert.match(nurt, /if \(!\(beta > 0\.0005\) && !\(arriving && L\.targetHold > 0\.0005\)\) \{ resetWarpWorldLens\(\); return; \}/);
-  assert.match(nurt, /L\.exitAge = arriving \? exitAge : -1;/);
+  assert.match(nurt, /L\.exitAge = exitAge;/);
+  // Nowe pola stanu klatki z gry (API etapu 1): front wyjścia z rampy, zatrzymanie, dolot, kadr przylotu i kadr skoku
+  // (px CSS → px bufora × Core3D.pxScale), kotwica (px CSS → px bufora), ciało startu
+  assert.match(nurt, /L\.exitSlow = Number\(ph\.exitSlow\) > 0 \? Number\(ph\.exitSlow\) : 0;/);
+  assert.match(nurt, /L\.exitHalt = Math\.max\(0, Number\(ph\.exitHalt\) \|\| 0\);/);
+  assert.match(nurt, /L\.arriving = ph\.arriving === true \|\| ph\.arriving === false \? ph\.arriving : null;/);
+  assert.match(nurt, /L\.zoomRef = Number\(ph\.zoomRef\) > 0 \? Number\(ph\.zoomRef\) \* pxs : NaN;/);
+  assert.match(nurt, /L\.zoomJump = Number\(ph\.zoomJump\) > 0 \? Number\(ph\.zoomJump\) \* pxs : NaN;/);
+  assert.match(nurt, /setWarpLensAnchor\(L, o\.anchorSX, o\.anchorSY, pxs\);/);
+  assert.match(nurt, /L\.originBody = o\.warp\?\.originBody \|\| null;/);
   const planets = read('src/3d/planet3d.assets.js');
+  // Rekordy ciał z rodzajem (kropki, sunBoost — M5), słońce w soczewce, ciało startu mapowane jak cel, ring / pierścień — rExt
+  assert.match(planets, /newLensBody\(this\.name, 'planet'\)/);
+  assert.match(planets, /newLensBody\(this\.tune\?\.id \|\| 'moon', 'moon'\)/);
+  assert.match(planets, /newLensBody\(this\.id, 'small'\)/);
+  assert.match(planets, /newLensBody\('sun', 'sun'\)/);
+  assert.match(planets, /if \(L\.originBody && ent\.data === L\.originBody\) origin = b;[\s\S]*?L\.origin = origin;/);
+  assert.match(planets, /b\.rExt = this\.isRingAnchored \? Math\.max\(scale, this\._ringOuter \|\| 0\)/);
   assert.match(planets, /const lensOn = WARP_WORLD_LENS\.active === true;[\s\S]*ent\.update\(dt, cam, lensOn\)[\s\S]*if \(lensOn\) applyWarpWorldLens\(\);/);
   // Bramka ringu raz otwarta w skoku zostaje otwarta (2026-10-19: przelot obok ringu i dolot do celu wyrywały planetę).
   assert.match(planets, /if \(b\.gateOpenSession === _warpLens\.session\) gate = 1;[\s\S]*?if \(b\.gate >= 0\.999\) \{ b\.gate = 1; b\.gateOpenSession = _warpLens\.session; \}/);

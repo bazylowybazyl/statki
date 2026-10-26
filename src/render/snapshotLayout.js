@@ -31,7 +31,8 @@ import { HALL_DUST_IN } from '../3d/gasField/hallDustLayout.js';
 
 // 2 (2026-10-25): WORLD — warp gracza w pełnym kształcie (warpWorldMirror.js: rampa, ślizg, kurs x / y, ciała, zegary,
 // kotwica kadru); dawne WARP_DIR (obiekt pakowany jako liczba — zawsze NaN) zniknęło.
-export const SNAPSHOT_LAYOUT_VERSION = 2;
+// 3 (2026-10-26): WORLD — oś β soczewki świata (WARP_LENS_*: rekord stepWarpLensPhase strony gry).
+export const SNAPSHOT_LAYOUT_VERSION = 3;
 
 function fields(names) {
   const o = {};
@@ -253,6 +254,13 @@ export const WORLD = fields([
   // wysunięcia przy wyjściu (cameraRig.nominalX / Y), px ekranu CSS od środka kadru, osie ekranu (po obrocie), y w dół;
   // NaN — kamera nie prowadzi statku (RTS, fokus)
   'WARP_ANCHOR_SX', 'WARP_ANCHOR_SY',
+  // oś β soczewki świata (układ 3, etap integracji — src/render/warpLensPhase.js: stepWarpLensPhase strony gry; worker
+  // liczy warpLensBeta z tych samych pól): stan (słownik; −1 — brak rekordu), ładowanie, wieki kopu / wyjścia /
+  // przerwania z zegara gry, rampa (koniec zwolnienia, zatrzymanie), β wyjścia i przerwania, hipercruise, dolot (ślizg),
+  // kadr soczewki z kamery gry (zoom odniesienia i kadr skoku [px CSS / j.], ułamek kadru przylotu), β klatki strony
+  'WARP_LENS_STATE', 'WARP_LENS_CHARGE', 'WARP_LENS_KICK_AGE', 'WARP_LENS_EXIT_AGE', 'WARP_LENS_EXIT_SLOW',
+  'WARP_LENS_EXIT_HALT', 'WARP_LENS_EXIT_BETA', 'WARP_LENS_ABORT_AGE', 'WARP_LENS_ABORT_BETA', 'WARP_LENS_HYPER',
+  'WARP_LENS_ARRIVING', 'WARP_LENS_ZOOM_REF', 'WARP_LENS_ZOOM_JUMP', 'WARP_LENS_ARRIVAL_FILL', 'WARP_LENS_BETA',
   'BOOST_STATE',
   // hipercruise gracza w kształcie warpa (GameState.hyper — efekt „silnika warp” w hipercruisie, E5 2026-10-22)
   'HYPER_STATE', 'HYPER_CHARGE', 'HYPER_CHARGE_TIME', 'HYPER_SPEED', 'HYPER_VMAX', 'HYPER_DIR',

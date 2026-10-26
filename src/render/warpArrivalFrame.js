@@ -19,19 +19,31 @@
 // Odległość przylotu (arrivalDist) = |cel − statek| − promień ciała celu w soczewce (index.html: warpBodyRadius —
 // ring „Halo”: promień planety z ringiem, reszta r × 4,5; soczewka: rekord ciała `r`).
 //
-// ETAP INTEGRACJI (cameraRig.js — AGENT: zmiana do zrobienia przy wpięciu soczewki): w stepCameraRigWarp zamiast
-// lokalnych `edgeAheadPx` / `ARRIVAL_SOFT` i wzoru `edge · fill / arrDist`:
+// WPIĘCIE (etap integracji, 2026-10-26): cameraRig.js (stepCameraRigWarp) liczy kadr przylotu tymi funkcjami —
 //   const edge = warpViewEdgePx(dirX, dirY, vw / 2, vh / 2, −offsetX, −offsetY);
 //   const ce = warpViewEdgePx(dirX, dirY, vw / 2, vh / 2, 0, 0);
 //   target = Math.log(warpArrivalZoom(edge, arrDist, fill, input.arrivalDepthK, ce));  arrive = warpArrivalSoftMin(d);
-// (input.arrivalDepthK = głębokość celu / ogniskowa w px CSS kamery, 0 dla płaszczyzny gry; fill z tune jak dziś).
+// (input.arrivalDepthK = warpArrivalDepthK(viewH) dla celu na tle, 0 dla płaszczyzny gry — index.html:
+// updateCameraWarpKick; fill z tune).
 
 export const WARP_ARRIVAL_FRAME = Object.freeze({
   fill: 0.75,   // bliski brzeg celu na tym ułamku drogi statek → krawędź kadru przed dziobem (= CAMERA_RIG_DEFAULTS.warpArrivalFill)
-  soft: 0.1,    // [log zoomu] miękkie minimum kadru przylotu z kadrem skoku (cameraRig.js — dziś stała ARRIVAL_SOFT)
+  soft: 0.1,    // [log zoomu] miękkie minimum kadru przylotu z kadrem skoku (cameraRig.js — stepCameraRigWarp)
   zoomMin: 1e-5,
-  zoomMax: 1e3
+  zoomMax: 1e3,
+  backDepth: 50000,   // [j.] głębokość planet tła pod płaszczyzną gry (planet3d.assets.js: DirectPlanet bez ringu z = −50 000)
+  perspFovDeg: 35     // [°] kąt widzenia kamery perspektywy passa planet (Core3D: FLAT_PERSP_FOV)
 });
+
+/**
+ * depthK celu na tle dla kamery gry [j. / px CSS]: głębokość / ogniskowa kamery perspektywy, ogniskowa = (viewH / 2) /
+ * tan(fov / 2) w px CSS (index.html: input.arrivalDepthK kadru przylotu — planety bez ringu; z ringiem i małe ciała 0).
+ */
+export function warpArrivalDepthK(viewH, depth = WARP_ARRIVAL_FRAME.backDepth, fovDeg = WARP_ARRIVAL_FRAME.perspFovDeg) {
+  const h = Math.max(1, fin(viewH, 1));
+  const focal = (h * 0.5) / Math.tan(Math.max(1e-3, fin(fovDeg, 35)) * Math.PI / 360);
+  return Math.max(0, fin(depth, 0)) / focal;
+}
 
 const fin = (v, d) => {
   const n = Number(v);

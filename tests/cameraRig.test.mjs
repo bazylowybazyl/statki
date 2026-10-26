@@ -20,8 +20,10 @@ import {
   normalizeCameraWarpKickMode
 } from '../src/game/cameraRig.js';
 import { warpRulonEnabled } from '../src/game/warpDrive.js';
-import { stepCameraZoom, cameraZoomBase } from '../src/game/cameraZoom.js';
+import { stepCameraZoom, cameraZoomBase, cameraZoomFloor, syncCameraZoomLimits } from '../src/game/cameraZoom.js';
+import { warpArrivalDepthK, warpArrivalZoom, warpViewEdgePx, WARP_ARRIVAL_FRAME } from '../src/render/warpArrivalFrame.js';
 import { createCameraDirector, resetCameraDirector } from '../src/game/cameraDirector.js';
+import { warpPlayerArriving } from '../src/render/warpLensPhase.js';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
 
 const W = 1920;
@@ -558,6 +560,8 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     cameraDirector: createCameraDirector(),
     resetCameraDirector,
     warpRulonEnabled,
+    haloRingKey: () => null,
+    warpArrivalDepthK,
     // ujednolicony kadr skoku (port „Pęd”): zoom gracza = zoom odniesienia — człon ujednolicenia 0 (osobny test niżej)
     W: 1600, H: 900,
     defaultShipZoom: () => 0.5,
@@ -570,6 +574,7 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     // obrót kadru tej klatki (hipercruise — cameraFrameRoll): w warpie 0
     cameraFrameRoll: () => 0
   };
+  scope.playerWarpArrivalLive = loadIndexFunction(html, 'function playerWarpArrivalLive() {', 'playerWarpArrivalLive', scope);
   const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
   for (let i = 0; i < 60; i++) update(1 / 60);
   assert.equal(scope._cameraWarpInput.charge, 0.5);
@@ -633,10 +638,14 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
     W: 1600, H: 900,
     defaultShipZoom, cameraZoomBase,
     warpBodyRadius: (p) => p.r,
+    haloRingKey: (p) => (p && p.ring ? 'earth' : null),
+    warpArrivalDepthK,
+    warpPlayerArriving,
     WARP_EXIT: { settle: 1.3 },
     location: { search: '' },
     cameraFrameRoll: () => 0
   };
+  scope.playerWarpArrivalLive = loadIndexFunction(html, 'function playerWarpArrivalLive() {', 'playerWarpArrivalLive', scope);
   const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
   const zRef = defaultShipZoom(1600, 1800, tune, 0.035, 3.2);
   for (let i = 0; i < 48; i++) { scope.warp.charge = Math.min(0.8, (i + 1) / 60); update(1 / 60); }
@@ -657,10 +666,26 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
   assert.equal(w.arriving, true);
   assert.equal(w.arrivalDist, 42000);
   assert.ok(rig.warpUnifyW > 0.99 && rig.warpArrOn, 'ślizg trzyma ujednolicony kadr i kadr przylotu');
-  // hipercruise: zoom gracza × kop, bez zoomu odniesienia i celu
+  // cel NA TLE (planeta bez ringu): kadr przylotu z perspektywą (głębokość / ogniskowa w px CSS); ring / małe ciało — 0
+  assert.ok(Math.abs(w.arrivalDepthK - warpArrivalDepthK(900)) < 1e-15 && w.arrivalDepthK > 0);
+  // podłoga zoomu kadru przylotu (K1) idzie do kamery — wyjątek od limitu kadłuba tylko przy zatrzaśniętym kadrze
+  assert.ok(Math.abs(camera.zoomImpulseMin - zRef * tune.warpArrivalFloor) < 1e-12, `podłoga ${camera.zoomImpulseMin}`);
+  scope.warp.targetBody = { x: 50000, y: 0, r: 8000, ring: true };
+  update(1 / 60);
+  assert.equal(w.arrivalDepthK, 0, 'planeta z ringiem — płaszczyzna gry');
+  scope.warp.targetBody = { x: 50000, y: 0, r: 8000, smallBody: true };
+  update(1 / 60);
+  assert.equal(w.arrivalDepthK, 0, 'małe ciało — płaszczyzna gry');
+  // hipercruise odcinka TRAVEL TO tuż po ślizgu: kadr przylotu warpa (K1) trzyma się warpArrivalHold s i wraca smoothstep
+  // — dopiero potem kamera hipercruise'u (zoom gracza × kop, bez zoomu odniesienia i celu)
   scope.warp.exitSlide.active = false;
   scope.warp.targetBody = null;
   scope.hyperLook.state = 'active';
+  update(1 / 60);
+  assert.ok(w.zoomRef > 0 && rig.warpArrOn, 'kadr przylotu warpa trzyma kamerę po ślizgu');
+  let n = 0;
+  while (rig.warpArrOn && n < 600) { update(1 / 60); n++; }
+  assert.ok(n > 60 * (tune.warpArrivalHold + tune.warpArrivalReturn) * 0.9, `trzymanie + powrót (${n} klatek)`);
   update(1 / 60);
   assert.equal(w.zoomRef, 0);
   assert.equal(w.arriving, false);
@@ -746,7 +771,7 @@ function loadTransition(camera) {
   const smoothstep01 = (t) => { const x = Math.max(0, Math.min(1, t)); return x * x * (3 - 2 * x); };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   return loadIndexFunction(html, 'function stepCameraTransition(dt) {', 'stepCameraTransition',
-    { camera, lerp, smoothstep01, clamp });
+    { camera, lerp, smoothstep01, clamp, cameraZoomFloor });
 }
 
 test('przejście do statku: goni ruchomy cel, kończy dokładnie na nim, zoomu nie rusza', () => {
@@ -905,7 +930,10 @@ test('kadr przylotu (2026-10-19): przy wyjściu kamera odsuwa się do celu — b
   let minZ = Infinity;
   let z = 0;
   let zStop = 0;
-  for (let a = 0; a < 9; a += dt) {
+  // K1: kadr przylotu do końca ślizgu (6,35 s) + warpArrivalHold, potem powrót smoothstep warpArrivalReturn
+  const aEnd = 6.35 + tune.warpArrivalHold + tune.warpArrivalReturn + 0.2;
+  let holdOk = true;
+  for (let a = 0; a < aEnd; a += dt) {
     w.exitAge = a;
     w.arriving = a > 1.35 && a < 6.35;
     w.arrivalDist = dist(a);
@@ -918,7 +946,10 @@ test('kadr przylotu (2026-10-19): przy wyjściu kamera odsuwa się do celu — b
     // Od połowy wlotu do końca ślizgu bliski brzeg tarczy w kadrze (soczewka oddaje cel w trakcie hamowania).
     if (a >= 0.9 && a <= 6.3) assert.ok(dist(a) * z < 450, `wiek ${a.toFixed(2)} s: brzeg ${(dist(a) * z).toFixed(0)} px poza kadrem`);
     if (a <= 6.3) zStop = z;
+    // trzymanie kadru przylotu po zatrzymaniu (K1): do 6,35 + 1 s waga ujednolicenia pełna, kadr przylotu zatrzaśnięty
+    if (a > 6.4 && a < 6.35 + tune.warpArrivalHold - 0.02 && !(rig.warpUnifyW > 0.999 && rig.warpArrOn)) holdOk = false;
   }
+  assert.ok(holdOk, 'kadr przylotu trzymany do końca ślizgu + warpArrivalHold');
   assert.ok(minZ < zRef * 0.55 * 0.5, `kamera odsunęła się (najmniejszy zoom ${minZ.toFixed(4)})`);
   // Przy zatrzymaniu (2,6 tys. j.): kadr odniesienia albo kadr przylotu — który dalszy (miękkie minimum i pogoń
   // sprężyny za dolotem — do ~15%).
@@ -934,4 +965,277 @@ test('kadr przylotu (2026-10-19): przy wyjściu kamera odsuwa się do celu — b
   r2.warpUnifyW = 1;
   stepCameraRigWarp(r2, w2, tune);
   assert.equal(r2.warpArrOn, false);
+});
+
+test('K1 (DECYZJE, etap integracji soczewki): wyjście z celem bez wysunięcia statku, wyprzedzenie zostaje; swobodny skok jak dawniej', () => {
+  const dt = 1 / 60;
+  const run = (arrivalDist) => {
+    const rig = createCameraRig();
+    const w = { dt, state: 'active', charge: 0, dirX: 0, dirY: -1, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: false,
+      zoomRef: 0.2, zoomBase: 0.2, viewW: 1920, viewH: 1080, arrivalDist };
+    for (let i = 0; i < 120; i++) stepCameraRigWarp(rig, w, tune);
+    w.state = 'idle';
+    let maxAhead = 0;
+    let minLead = 1;
+    for (let a = 0; a < 2.5; a += dt) {
+      w.exitAge = a;
+      stepCameraRigWarp(rig, w, tune);
+      maxAhead = Math.max(maxAhead, rig.warpAheadK);
+      minLead = Math.min(minLead, rig.warpLeadScale);
+    }
+    return { maxAhead, minLead };
+  };
+  const withTarget = run(60000);
+  assert.equal(withTarget.maxAhead, 0, 'z celem — statek się nie wysuwa');
+  assert.equal(withTarget.minLead, 1, 'z celem — wyprzedzenie zostaje');
+  const free = run(-1);
+  assert.ok(free.maxAhead > 0.3, `swobodny skok — wysunięcie jak dawniej (${free.maxAhead})`);
+  assert.equal(free.minLead, 0, 'swobodny skok — wyprzedzenie wraca po zatrzymaniu');
+});
+
+test('K1: kadr przylotu = warpArrivalFrame.js (cel na tle z perspektywą), podłoga zoomu tylko przy zatrzaśniętym kadrze, powrót smoothstep', () => {
+  const dt = 1 / 60;
+  const zRef = 0.2133;
+  const rig = createCameraRig();
+  const k = warpArrivalDepthK(1080);
+  const w = { dt, state: 'active', charge: 0, dirX: 0, dirY: -1, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: false,
+    zoomRef: zRef, zoomBase: zRef, viewW: 1920, viewH: 1080, arrivalDist: 900000, arrivalDepthK: k };
+  for (let i = 0; i < 120; i++) stepCameraRigWarp(rig, w, tune);
+  assert.ok(Number.isNaN(rig.warpZoomFloor), 'w skoku — limit kadłuba');
+  w.state = 'idle';
+  // statek staje 20 tys. j. przed brzegiem celu na tle: sprężyna zbiega do warpArrivalZoom z depthK (paralaksa)
+  w.arrivalDist = 20000;
+  for (let a = 0; a < 1.3; a += dt) { w.exitAge = a; stepCameraRigWarp(rig, w, tune); }
+  w.arriving = true;
+  for (let i = 0; i < 300; i++) { w.exitAge += dt; stepCameraRigWarp(rig, w, tune); }
+  const edge = warpViewEdgePx(0, -1, 960, 540, -rig.offsetX, -rig.offsetY);
+  const ce = warpViewEdgePx(0, -1, 960, 540, 0, 0);
+  const want = warpArrivalZoom(edge, 20000, tune.warpArrivalFill, k, ce);
+  assert.ok(Math.abs(rig.warpArrLog - Math.log(want)) < 1e-3, `sprężyna kadru przylotu ${Math.exp(rig.warpArrLog)} vs ${want}`);
+  assert.ok(want > warpArrivalZoom(edge, 20000, tune.warpArrivalFill, 0, ce), 'tło: obraz w głębi mniejszy (perspektywa) — kadr bliższy niż dla płaszczyzny gry');
+  assert.ok(rig.warpArrOn && Math.abs(rig.warpZoomFloor - zRef * tune.warpArrivalFloor) < 1e-12, 'podłoga przy kadrze przylotu');
+  // koniec ślizgu: trzymanie warpArrivalHold s, potem powrót smoothstep (pierwszy krok mały — bez największego nachylenia)
+  w.arriving = false;
+  w.exitAge = -1;
+  const logs = [];
+  for (let i = 0; i < 260; i++) { stepCameraRigWarp(rig, w, tune); logs.push(rig.warpZoomLog); }
+  const holdN = Math.round(tune.warpArrivalHold / dt);
+  assert.ok(Math.abs(logs[holdN - 5] - logs[0]) < 1e-3, 'trzymanie kadru po zatrzymaniu');
+  const steps = logs.slice(1).map((v, i) => Math.abs(v - logs[i]));
+  const first = steps[holdN + 1];
+  const peak = Math.max(...steps);
+  assert.ok(first < peak * 0.1, `powrót smoothstep: start łagodny (${first.toFixed(5)} vs szczyt ${peak.toFixed(5)})`);
+  assert.equal(logs[logs.length - 1], 0, 'po powrocie dokładnie zoom gracza');
+  assert.equal(rig.warpArrOn, false);
+  assert.ok(Number.isNaN(rig.warpZoomFloor), 'po powrocie — limit kadłuba');
+});
+
+test('K1: podłoga zoomu na ekranie (cameraZoom.js) — wyjątek od limitu kadłuba tylko przy członie < 0 i podłodze kadru przylotu', () => {
+  const cam = { zoom: 0.2, targetZoom: 0.2, zoomBase: 0.2, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: Math.log(0.015 / 0.2), zoomImpulseMin: 0.0149 };
+  cam._zoomSpringOut = cam.zoom;
+  assert.equal(cameraZoomFloor(cam), 0.0149);
+  stepCameraZoom(cam, 1 / 60);
+  assert.ok(Math.abs(cam.zoom - 0.015) < 1e-9, `zoom na ekranie ${cam.zoom} (limit kadłuba 0,035 nie przycina kadru przylotu)`);
+  assert.equal(cam.zoomBase, 0.2, 'zoom gracza bez zmian');
+  syncCameraZoomLimits(cam, null);
+  assert.ok(Math.abs(cam.zoom - 0.015) < 1e-9, 'syncCameraZoomLimits respektuje podłogę');
+  cam.zoomImpulseMin = NaN;
+  assert.equal(cameraZoomFloor(cam), cam.minZoom, 'bez podłogi — limit kadłuba');
+  stepCameraZoom(cam, 1 / 60);
+  assert.equal(cam.zoom, cam.minZoom, 'bez podłogi — zoom na ekranie w limicie kadłuba');
+  cam.zoomImpulseMin = 0.0149;
+  cam.zoomImpulseLog = 0.2;
+  assert.equal(cameraZoomFloor(cam), cam.minZoom, 'człon ≥ 0 — limit kadłuba');
+});
+
+test('K1 w grze: render() przelicza offset riga przez podłogę zoomu na ekranie (cameraZoomFloor), nie limit kadłuba', () => {
+  const html = readIndexHtml();
+  const render = sliceFunction(html, 'function render(alpha, frameDt) {');
+  assert.match(render, /const zoomSafe = Math\.max\(cameraZoomFloor\(camera\) \|\| 1e-4, camera\.zoom \|\| 1\);/);
+  const kick = sliceFunction(html, 'function updateCameraWarpKick(gameDt) {');
+  assert.match(kick, /camera\.zoomImpulseMin = cameraRig\.warpZoomFloor;/);
+  assert.match(kick, /w\.arrivalDepthK = !haloRingKey\(tgt\) && !tgt\.smallBody \? warpArrivalDepthK\(H\) : 0;/);
+  assert.equal(WARP_ARRIVAL_FRAME.soft, 0.1);
+});
+
+// Kamera gry w kolejności klatki (index.html: updateCameraWarpKick → updateCameraZoom: syncCameraZoomLimits, stepCameraZoom).
+function k1CameraFrame(rig, cam, w) {
+  w.zoomBase = cameraZoomBase(cam);
+  stepCameraRigWarp(rig, w, tune);
+  cam.zoomImpulseMin = rig.warpZoomFloor;
+  cam.zoomImpulseLog = rig.warpZoomLog;
+  syncCameraZoomLimits(cam, { activeHullId: 'atlas' });
+  stepCameraZoom(cam, w.dt);
+}
+// Przylot z celem przy brzegu tarczy (kadr przylotu ~0,015 — poniżej limitu kadłuba), potem trzymanie po ślizgu.
+function k1ArrivalHeld(arrivalDist = 30000) {
+  const dt = 1 / 60;
+  const rig = createCameraRig();
+  const cam = { mode: 'ship', zoom: 0.2, targetZoom: 0.2, zoomBase: 0.2, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: 0, zoomImpulseMin: NaN };
+  cam._zoomSpringOut = cam.zoom;
+  const w = { dt, state: 'active', charge: 0, dirX: 0, dirY: -1, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: false,
+    zoomRef: 0.2133, zoomBase: 0.2, viewW: 1920, viewH: 1080, arrivalDist: 900000, arrivalDepthK: 0, arriving: false };
+  for (let i = 0; i < 120; i++) k1CameraFrame(rig, cam, w);
+  w.state = 'idle';
+  w.arrivalDist = arrivalDist;
+  for (let a = 0; a < 1.35; a += dt) { w.exitAge = a; k1CameraFrame(rig, cam, w); }
+  w.arriving = true;
+  for (let i = 0; i < 240; i++) { w.exitAge = Math.min(w.exitAge + dt, 2.9); k1CameraFrame(rig, cam, w); }
+  w.exitAge = -1;
+  w.arriving = false;
+  for (let i = 0; i < 70; i++) k1CameraFrame(rig, cam, w);   // trzymanie + początek powrotu
+  return { rig, cam, w, dt };
+}
+
+test('K1 (recenzja etapu 2): nowe ładowanie w trakcie kadru przylotu — zejście do kadru skoku bez skoku zoomu, zoom gracza nietknięty', () => {
+  const { rig, cam, w } = k1ArrivalHeld();
+  assert.ok(rig.warpArrOn && cam.zoom < cam.minZoom, `kadr przylotu poniżej limitu kadłuba (${cam.zoom})`);
+  w.state = 'charging';
+  let prev = Math.log(cam.zoom);
+  let maxStep = 0;
+  let floorKept = true;
+  for (let i = 0; i < 48; i++) {
+    w.charge = (i + 1) / 48;
+    k1CameraFrame(rig, cam, w);
+    const l = Math.log(cam.zoom);
+    maxStep = Math.max(maxStep, Math.abs(l - prev));
+    prev = l;
+    if (rig.warpArrOn && !(rig.warpZoomFloor > 0)) floorKept = false;
+    assert.equal(cam.zoomBase, 0.2, `klatka ładowania ${i}: zoom gracza bez zmian`);
+  }
+  w.state = 'active';
+  for (let i = 0; i < 60; i++) {
+    k1CameraFrame(rig, cam, w);
+    const l = Math.log(cam.zoom);
+    maxStep = Math.max(maxStep, Math.abs(l - prev));
+    prev = l;
+  }
+  assert.ok(floorKept, 'podłoga zoomu trzyma do końca zejścia');
+  assert.ok(maxStep < 0.1, `|Δln zoom| na klatkę ${maxStep.toFixed(4)} (dawniej ~1,8 — ×15 w 2 klatkach)`);
+  assert.equal(rig.warpArrOn, false, 'po zejściu kadr przylotu zdjęty');
+  assert.ok(Number.isNaN(rig.warpZoomFloor), 'po zejściu — limit kadłuba');
+  assert.equal(cam.zoomBase, 0.2);
+  assert.equal(cam.targetZoom, 0.2);
+  // w skoku — kadr skoku (zoom odniesienia × warpZoomOut), jak bez kadru przylotu
+  assert.ok(Math.abs(cam.zoom - 0.2133 * tune.warpZoomOut) < 1e-3, `kadr skoku ${cam.zoom}`);
+});
+
+test('K1: przerwane ładowanie w trakcie zejścia — zejście biegnie do końca, bez skoku zoomu', () => {
+  const { rig, cam, w } = k1ArrivalHeld();
+  w.state = 'charging';
+  for (let i = 0; i < 20; i++) { w.charge = (i + 1) / 48; k1CameraFrame(rig, cam, w); }
+  let prev = Math.log(cam.zoom);
+  let maxStep = 0;
+  w.state = 'idle';
+  w.charge = 0;
+  for (let i = 0; i < 400; i++) {
+    k1CameraFrame(rig, cam, w);
+    const l = Math.log(cam.zoom);
+    maxStep = Math.max(maxStep, Math.abs(l - prev));
+    prev = l;
+  }
+  assert.ok(maxStep < 0.1, `|Δln zoom| ${maxStep.toFixed(4)}`);
+  assert.equal(rig.warpArrOn, false);
+  assert.ok(Math.abs(cam.zoom - 0.2) < 1e-6, `po wszystkim zoom gracza (${cam.zoom})`);
+  assert.equal(cam.zoomBase, 0.2);
+});
+
+test('K1: syncCameraZoomLimits przycina zoom GRACZA, nie zoom na ekranie (podłoga zdjęta w tej klatce nie nadpisuje zoomu gracza)', () => {
+  const cam = { mode: 'ship', zoom: 0.0149, targetZoom: 0.2, zoomBase: 0.2, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: Math.log(0.0149 / 0.2), zoomImpulseMin: NaN };
+  cam._zoomSpringOut = cam.zoom;
+  syncCameraZoomLimits(cam, { activeHullId: 'atlas' });
+  assert.equal(cam.zoomBase, 0.2, 'zoom gracza w limicie — bez zmian');
+  assert.equal(cam.zoom, 0.0149, 'zoom na ekranie liczy dopiero stepCameraZoom');
+  stepCameraZoom(cam, 1 / 60);
+  assert.equal(cam.zoom, cam.minZoom, 'bez podłogi — zoom na ekranie w limicie kadłuba');
+  assert.equal(cam.zoomBase, 0.2);
+  // zmiana kadłuba / zapis z zewnątrz poniżej limitu — przycięty jak dawniej
+  const ext = { mode: 'ship', zoom: 0.02, targetZoom: 0.02, zoomBase: 0.2, minZoom: 0.035, maxZoom: 3.2, zoomVel: 1, zoomImpulseLog: 0, zoomImpulseMin: NaN };
+  ext._zoomSpringOut = 0.5;
+  syncCameraZoomLimits(ext, { activeHullId: 'atlas' });
+  assert.equal(ext.zoom, ext.minZoom);
+  assert.equal(ext.zoomBase, ext.minZoom);
+  assert.equal(ext.zoomVel, 0);
+});
+
+test('K1: limit członu ±3 jak dawniej (swobodny skok przy dużym zoomie gracza), do ±6 tylko przy podłodze kadru przylotu — przejście bez skoku', () => {
+  const dt = 1 / 60;
+  const cam = { mode: 'ship', zoom: 3.2, targetZoom: 3.2, zoomBase: 3.2, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: -3.31, zoomImpulseMin: NaN };
+  cam._zoomSpringOut = cam.zoom;
+  for (let i = 0; i < 30; i++) stepCameraZoom(cam, dt);
+  assert.ok(Math.abs(cam.zoom - 3.2 * Math.exp(-3)) < 1e-9, `swobodny skok: człon przycięty do −3 (${cam.zoom})`);
+  // zatrzask kadru przylotu (podłoga) — limit rośnie z tempem impulseCapRate
+  cam.zoomImpulseMin = 0.0149;
+  cam.zoomImpulseLog = -5.4;
+  let prev = Math.log(cam.zoom);
+  let maxStep = 0;
+  for (let i = 0; i < 90; i++) {
+    stepCameraZoom(cam, dt);
+    const l = Math.log(cam.zoom);
+    maxStep = Math.max(maxStep, Math.abs(l - prev));
+    prev = l;
+  }
+  assert.ok(Math.abs(cam.zoom - Math.max(0.0149, 3.2 * Math.exp(-5.4))) < 1e-9, `kadr przylotu osiągnięty (${cam.zoom})`);
+  assert.ok(maxStep < 0.06, `bez skoku przy zatrzasku (${maxStep.toFixed(4)})`);
+  // koniec zejścia kadru przylotu (rig: człon przylotu → 0, zostaje kadr skoku −3,31), potem zdjęcie podłogi — limit
+  // wraca płynnie
+  cam.zoomImpulseLog = -3.31;
+  for (let i = 0; i < 5; i++) stepCameraZoom(cam, dt);
+  cam.zoomImpulseMin = NaN;
+  prev = Math.log(cam.zoom);
+  maxStep = 0;
+  for (let i = 0; i < 90; i++) {
+    stepCameraZoom(cam, dt);
+    const l = Math.log(cam.zoom);
+    maxStep = Math.max(maxStep, Math.abs(l - prev));
+    prev = l;
+  }
+  assert.ok(Math.abs(cam.zoom - 3.2 * Math.exp(-3)) < 1e-9);
+  assert.ok(maxStep < 0.06, `bez skoku przy zdjęciu (${maxStep.toFixed(4)})`);
+});
+
+test('K1: hamowanie grawitacyjne z celem — dolot kamery = warpPlayerArriving jak soczewka; reżyser kadru gaśnie przy kadrze przylotu', () => {
+  const html = readIndexHtml();
+  const kick = sliceFunction(html, 'function updateCameraWarpKick(gameDt) {');
+  assert.match(kick, /if \(tgt\) \{[\s\S]*?w\.arriving = warpPlayerArriving\(warp\);/);
+  assert.match(html, /import \{[^}]*warpPlayerArriving[^}]*\} from "\.\/src\/render\/warpLensPhase\.js";/);
+  const dir = sliceFunction(html, 'function stepCameraDirectorFrame(frameDt, shipX, shipY) {');
+  assert.match(dir, /const warpBusy = playerWarpCameraBusy\(\) \|\| playerWarpArrivalLive\(\) \|\|/);
+  const live = sliceFunction(html, 'function playerWarpArrivalLive() {');
+  assert.match(live, /warp\.state === 'idle' && !!cameraRig\.warpArrOn && cameraRig\.warpUnifyW > 0/);
+});
+
+test('K1: hamowanie grawitacyjne z celem w updateCameraWarpKick — kadr przylotu zatrzaśnięty; bez celu — jak dawniej', () => {
+  const html = readIndexHtml();
+  const run = (targetBody) => {
+    const rig = createCameraRig();
+    const camera = { mode: 'ship', zoomImpulseLog: 0, minZoom: 0.035, maxZoom: 3.2, zoom: 0.2, targetZoom: 0.2 };
+    const scope = {
+      _cameraWarpInput: { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true },
+      warp: { state: 'active', charge: 0, chargeTime: 0.8, dir: { x: 1, y: 0 }, exitRamp: null, exitSlide: null, targetBody,
+        gravityBrake: { active: false } },
+      ship: { angle: 0, destroyed: false, pos: { x: 0, y: 0 }, w: 1800, h: 600 },
+      hyperLook: { state: 'idle', charge: 0, dir: 0 },
+      OPTIONS: { cameraWarpKick: 'on' },
+      camera, cameraRig: rig, cameraRigTune: tune, stepCameraRigWarp, normalizeCameraWarpKickMode,
+      cameraDirector: createCameraDirector(), resetCameraDirector, warpRulonEnabled, W: 1600, H: 900,
+      defaultShipZoom, cameraZoomBase, warpBodyRadius: (p) => p.r, haloRingKey: () => null, warpArrivalDepthK,
+      warpPlayerArriving, WARP_EXIT: { settle: 1.3 }, location: { search: '' }, cameraFrameRoll: () => 0,
+      playerWarpArrivalLive: () => false
+    };
+    scope.playerWarpArrivalLive = loadIndexFunction(html, 'function playerWarpArrivalLive() {', 'playerWarpArrivalLive', scope);
+    const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
+    for (let i = 0; i < 120; i++) update(1 / 60);
+    // triggerGravityWarpBrake: warp → idle bez rampy, hamowanie aktywne
+    scope.warp.state = 'idle';
+    scope.warp.gravityBrake.active = true;
+    update(1 / 60);
+    return { rig, w: scope._cameraWarpInput };
+  };
+  const withT = run({ x: 60000, y: 0, r: 8000, smallBody: true });
+  assert.equal(withT.w.arriving, true);
+  assert.ok(withT.rig.warpArrOn, 'z celem — kadr przylotu zatrzaśnięty');
+  const free = run(null);
+  assert.equal(free.w.arriving, false, 'swobodny skok — hamowanie nie trzyma kadru (jak dawniej)');
+  assert.equal(free.rig.warpArrOn, false);
 });

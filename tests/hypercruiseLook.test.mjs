@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { WarpPlumeFX, WARP_PLUME_HYPER } from '../src/3d/warpPlume3D.js';
-import { WarpPlayerFx, hyperMediumOn } from '../src/3d/warp/player.js';
+import { WarpPlayerFx, hyperMediumOn, warpMediumOn, setWarpMedium } from '../src/3d/warp/player.js';
 import { WarpFrame, newWarpSlot } from '../src/3d/warp/frame.js';
 import { createCameraRig, cameraRigTune, stepCameraRigRoll, normalizeCameraHyperRollMode } from '../src/game/cameraRig.js';
 import { cameraRoll, rollToScreen, rollToWorld, rolledHalfExtents } from '../src/render/viewRoll.js';
@@ -143,7 +143,7 @@ function playerRig() {
   return { fx, frame, game, step };
 }
 
-test('hipercruise bez ośrodka: bez przegródek i poświaty drobin; soczewka bańki, gwiazdy i fale zostają; warp z ośrodkiem', () => {
+test('hipercruise bez ośrodka: bez przegródek i poświaty drobin; soczewka bańki, gwiazdy i fale zostają; warp — ośrodek tylko w A/B', () => {
   assert.equal(hyperMediumOn(''), false);
   assert.equal(hyperMediumOn('?dev=1&hcOsrodek=1'), true);
   assert.equal(hyperMediumOn('?hcOsrodek=10'), false);
@@ -163,14 +163,111 @@ test('hipercruise bez ośrodka: bez przegródek i poświaty drobin; soczewka ba�
   assert.ok(waves > 0, 'fala kopu zostaje');
   r.game.state = 'idle';
   for (let i = 0; i < 120; i++) { t += DT; r.step(t, DT); assert.equal(r.frame.bubbles.length, 0, 'wyjście bez iskier ośrodka'); }
-  // warp (hyper: false) — bańka w ośrodku jak dawniej
-  const w = playerRig();
-  w.game.hyper = false;
-  w.game.chargeTime = 0.8;
-  w.game.state = 'charging';
-  t = 0;
-  for (let i = 1; i <= 48; i++) { t += DT; w.game.charge = i / 48; w.step(t, DT); }
-  assert.equal(w.frame.bubbles.length, 1);
+  // warp gracza (hyper: false): ośrodek i soczewka bańki domyślnie wyłączone (DECYZJE O1), A/B ?warpOsrodek=1 — jak dawniej
+  assert.equal(warpMediumOn(''), false);
+  assert.equal(warpMediumOn('?dev=1&warpOsrodek=1'), true);
+  assert.equal(warpMediumOn('?warpOsrodek=10'), false);
+  for (const ab of [false, true]) {
+    setWarpMedium(ab);
+    try {
+      const w = playerRig();
+      w.game.hyper = false;
+      w.game.chargeTime = 0.8;
+      w.game.state = 'charging';
+      t = 0;
+      for (let i = 1; i <= 48; i++) { t += DT; w.game.charge = i / 48; w.step(t, DT); }
+      assert.equal(w.frame.bubbles.length, ab ? 1 : 0, `warp: bańka w ośrodku tylko w A/B (${ab})`);
+      assert.equal(w.frame.lens.count, ab ? 1 : 0, `warp: soczewka bańki na mgławicy tylko w A/B (${ab})`);
+    } finally {
+      setWarpMedium(null);
+    }
+  }
+});
+
+// ── O3 (DECYZJE): hipercruise bez zmian — player.js jest wspólny z nowym warpem ─────────────────────────────
+
+// Odcisk wyjść efektu hipercruise'u (WarpPlayerFx z game.hyper) na stałym skrypcie: rozruch 4 s, lot 200 klatek z rosnącą
+// prędkością prowadzoną, wyjście 5 s. Wartości zmierzone na player.js sprzed etapu integracji soczewki (2026-10-26,
+// ebc4e00d) — ten sam skrypt, te same liczby co do 12 cyfr znaczących.
+const HYPER_FINGERPRINT_BASE = Object.freeze({
+  n: 760, stretch: 237.556356052, tint: 269.7, front: -3276000, waves: 163, waveAmp: 577.844078144, flashes: 43, glares: 21,
+  lens: 527, lensAmp: 11029.8927334, bubbles: 0, heat: 87.4313033151, warpVis: 0, fade: 384, beta: 0, rulon: 0,
+  flow: 5027953.03384, A: 424.226643593
+});
+
+function hyperFingerprint() {
+  const fx = new WarpPlayerFx();
+  fx.bubble = newWarpSlot();
+  fx.push = newWarpSlot();
+  const frame = new WarpFrame();
+  const game = { state: 'idle', charge: 0, chargeTime: 4, gear: 1, speed: 0, angle: 0.3, x: 1000, y: 2000, length: 1800, width: 800,
+    palette: 'magenta', vRelX: 0, vRelY: 0, exitRamp: null, hyper: true, cruise: 20000, flyby: 1 };
+  const map = { camX: 900, camY: 1900 };
+  const med = { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 };
+  const fp = { n: 0, stretch: 0, tint: 0, front: 0, waves: 0, waveAmp: 0, flashes: 0, glares: 0, lens: 0, lensAmp: 0, bubbles: 0,
+    heat: 0, warpVis: 0, fade: 0, beta: 0, rulon: 0, flow: 0, A: 0 };
+  let t = 0;
+  const step = () => {
+    t += DT;
+    frame.reset();
+    fx.advance(t, DT, game, map, med);
+    const v = fx.visibleFlow(t);
+    med.flow = v === null ? 0 : v;
+    med.flowX = Math.cos(fx.angle) * med.flow;
+    med.flowY = Math.sin(fx.angle) * med.flow;
+    med.camMX += med.flowX * DT;
+    med.camMY += med.flowY * DT;
+    fx.fill(t, game, frame, map, med);
+    const st = frame.stars;
+    fp.n++;
+    fp.stretch += st.stretch;
+    fp.tint += st.warpTint;
+    fp.front += st.frontOn ? st.frontS : 0;
+    fp.waves += frame.waves.count;
+    for (let i = 0; i < frame.waves.count; i++) fp.waveAmp += frame.waves.items[i].amp || 0;
+    fp.flashes += frame.flashes.count;
+    fp.glares += frame.glares.count;
+    fp.lens += frame.lens.count;
+    for (let i = 0; i < frame.lens.count; i++) fp.lensAmp += frame.lens.items[i].amp || 0;
+    fp.bubbles += frame.bubbles.length;
+    fp.heat += fx.hull.on ? fx.hull.heat : 0;
+    fp.warpVis += frame.warpVis;
+    fp.fade += frame.mediumFade;
+    fp.beta += fx.lensBeta(t);
+    fp.rulon += fx.rulonBend;
+    fp.flow += med.flow;
+    fp.A += fx.bubble.on ? fx.bubble.A : 0;
+  };
+  for (let i = 0; i < 20; i++) step();
+  game.state = 'charging';
+  for (let i = 1; i <= 240; i++) { game.charge = Math.min(1, i / 240); step(); }
+  game.state = 'active';
+  for (let i = 0; i < 200; i++) { game.cruise = 20000 + 100 * i; step(); }
+  game.state = 'idle';
+  for (let i = 0; i < 300; i++) step();
+  for (const k of Object.keys(fp)) fp[k] = Number(fp[k].toPrecision(12));
+  return fp;
+}
+
+test('O3: efekt hipercruise\'u bez zmian (bańka, smugi gwiazd, front, fale, błyski, żar, soczewka bańki, β = 0) — odcisk jak przed etapem integracji', () => {
+  // ośrodek warpa w A/B i rekord osi β gry nie ruszają hipercruise'u
+  for (const ab of [null, true]) {
+    setWarpMedium(ab);
+    try {
+      assert.deepEqual(hyperFingerprint(), HYPER_FINGERPRINT_BASE, `odcisk hipercruise'u (warpOsrodek ${ab})`);
+    } finally {
+      setWarpMedium(null);
+    }
+  }
+  // β soczewki w hipercruisie = 0 także z rekordem osi β gry (stan „lot” warpa) — hipercruise nie ma soczewki świata
+  const fx = new WarpPlayerFx();
+  fx.bubble = newWarpSlot();
+  fx.push = newWarpSlot();
+  const game = { state: 'active', charge: 1, chargeTime: 4, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 1800, width: 800,
+    palette: 'magenta', vRelX: 0, vRelY: 0, exitRamp: null, hyper: true, cruise: 30000, flyby: 1,
+    lens: { state: 'active', charge: 1, kickAge: 2, exitAge: -1, exitSlow: NaN, exitHalt: 0, exitBeta: NaN, abortAge: -1, abortBeta: 0, hyper: false, arriving: false } };
+  fx.advance(1, DT, game, { camX: 0, camY: 0 }, { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 });
+  assert.equal(fx.lensBeta(1), 0);
 });
 
 // ── obrót kadru ─────────────────────────────────────────────────────────────────────────────────────────

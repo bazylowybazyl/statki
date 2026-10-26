@@ -183,7 +183,7 @@ if (isWorker) {
     st.warpFxClock = { prev: NaN };
     // hipercruise gracza w kształcie warpa (skalary HYPER_* — RenderWorld.hyper, WarpNurt, struga, lakier)
     st.hyperObj = { state: 'idle', charge: 0, chargeTime: 0, speed: 0, vmax: 0, dir: 0 };
-    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: st.hyperObj, trafficTime: 0, lensAllowed: false, anchorSX: NaN, anchorSY: NaN };
+    st.warpFrame = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, hyper: st.hyperObj, trafficTime: 0, lensAllowed: false, anchorSX: NaN, anchorSY: NaN, lensPhase: null };
     st.ringMirror = ringBlockMod.createRingMirror();
     st.rockets = rktBlock.createRocketMirror();
     st.weaponDefs = new Map();
@@ -825,6 +825,8 @@ if (isWorker) {
       wf.cam = cns; wf.camShake = cam; wf.camFollow = mir.frame.camFollow;
       // kotwica kadru skoku (DECYZJE M3) — jak `o.anchorSX / SY` klatki „Nurtu” strony
       wf.anchorSX = st.warpMir.anchorSX; wf.anchorSY = st.warpMir.anchorSY;
+      // oś β soczewki świata (warpLensPhase.js) — rekord strony gry z migawki (jak `o.lensPhase` klatki „Nurtu” w off)
+      wf.lensPhase = st.warpMir.hasLens ? st.warpMir.lens : null;
       wf.ship = rm.player; wf.trafficTime = mir.frame.trafficTime; wf.lensAllowed = mir.frame.lensAllowed;
       warpMod.WarpNurt.update(wf);
     } } catch (e) { modFail('warp', e); }

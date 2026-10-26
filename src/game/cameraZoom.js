@@ -21,10 +21,22 @@ import { shipMinZoom } from '../data/shipRanges.js';
 
 // Limit kadłuba obowiązuje także RTS, kop warpa i reżysera kadru (wszyscy czytają cam.minZoom).
 // Fokus stacji ma osobny kadr. Zmiana kadłuba przycina także bieżący stan sprężyny.
+// WYJĄTEK — kadr przylotu warpa z celem (DECYZJE K1, cameraRig.js: rig.warpZoomFloor → cam.zoomImpulseMin): zoom NA
+// EKRANIE (zoom gracza × człon przejściowy < 0) może zejść do tej podłogi poniżej limitu kadłuba; zoom gracza
+// (zoomBase, targetZoom) dalej w limicie. Bez podłogi (NaN) — jak dawniej.
+export function cameraZoomFloor(cam) {
+  const zMin = cam.minZoom > 0 ? cam.minZoom : 1e-4;
+  const f = Number(cam.zoomImpulseMin);
+  return f > 0 && f < zMin && impulseLog(cam) < 0 ? f : zMin;
+}
+
+// Przycina zoom GRACZA (stan sprężyny — cameraZoomBase: zoomBase albo zapis z zewnątrz), nie zoom na ekranie: ten liczy
+// stepCameraZoom (showZoom — limit kadłuba albo podłoga kadru przylotu). Porównanie zoomu na ekranie z limitem w klatce,
+// w której podłoga K1 znika (nowe ładowanie, przejście kamery), nadpisywało zoom gracza limitem kadłuba (recenzja etapu 2).
 export function syncCameraZoomLimits(cam, entity) {
   cam.minZoom = shipMinZoom(cam.mode === 'focus' || cam.mode === 'infrastructure' ? null : entity);
   cam.targetZoom = Math.min(cam.maxZoom, Math.max(cam.minZoom, cam.targetZoom));
-  if (cam.zoom < cam.minZoom) {
+  if (cameraZoomBase(cam) < cam.minZoom) {
     cam.zoom = cam.zoomBase = cam._zoomSpringOut = cam.minZoom;
     cam.zoomVel = 0;
   }
@@ -36,8 +48,14 @@ export const CAMERA_ZOOM_SMOOTH = Object.freeze({
   // Poniżej obu progów (|log(zoom/cel)| i |prędkość| w log/s) zoom staje na celu.
   settleLog: 1e-4,
   settleVel: 1e-3,
-  // Najwyżej tyle w log(zoom) może dodać człon przejściowy (×/÷ 20).
-  impulseLogMax: 3
+  // Najwyżej tyle w log(zoom) może dodać człon przejściowy (×/÷ 20): kop i ujednolicony kadr swobodnego skoku, hipercruise,
+  // reżyser kadru — jak dawniej (przy zoomie gracza > ~2,35 kadr skoku przycięty).
+  impulseLogMax: 3,
+  // Przy podłodze kadru przylotu (K1 — cam.zoomImpulseMin) do ×/÷ 400: kadr przylotu liczy się od zoomu gracza — przy
+  // zoomie 3,2 kadr przylotu Atlasa (~0,015) to ln ≈ −5,4. Limit przechodzi między wartościami z tempem impulseCapRate
+  // [log/s] (cam.zoomImpulseCap, krok w stepCameraZoom) — zatrzask i zdjęcie podłogi bez skoku zoomu.
+  impulseLogMaxFloor: 6,
+  impulseCapRate: 3
 });
 
 // WheelEvent.deltaMode 1 (linie, Firefox): 3 linie na ząbek = 100 px jak w Chrome.
@@ -50,10 +68,25 @@ export function wheelDeltaPx(deltaY, deltaMode = 0, pagePx = 800) {
   return d;
 }
 
+function impulseCap(cam) {
+  const S = CAMERA_ZOOM_SMOOTH;
+  const c = Number(cam.zoomImpulseCap);
+  return Number.isFinite(c) ? Math.min(S.impulseLogMaxFloor, Math.max(S.impulseLogMax, c)) : S.impulseLogMax;
+}
+
+// Limit członu o dt s w stronę impulseLogMaxFloor (podłoga kadru przylotu — cam.zoomImpulseMin > 0) albo impulseLogMax.
+function stepImpulseCap(cam, dt) {
+  const S = CAMERA_ZOOM_SMOOTH;
+  const goal = Number(cam.zoomImpulseMin) > 0 ? S.impulseLogMaxFloor : S.impulseLogMax;
+  const c = impulseCap(cam);
+  const d = S.impulseCapRate * (dt > 0 ? dt : 0);
+  cam.zoomImpulseCap = c < goal ? Math.min(goal, c + d) : Math.max(goal, c - d);
+}
+
 function impulseLog(cam) {
   const v = Number(cam.zoomImpulseLog);
   if (!Number.isFinite(v) || v === 0) return 0;
-  const m = CAMERA_ZOOM_SMOOTH.impulseLogMax;
+  const m = impulseCap(cam);
   return v < -m ? -m : (v > m ? m : v);
 }
 
@@ -66,7 +99,9 @@ export function cameraZoomBase(cam) {
 }
 
 function showZoom(cam, base, term, zMin, zMax) {
-  const shown = term === 0 ? base : Math.min(zMax, Math.max(zMin, base * Math.exp(term)));
+  // człon < 0 (oddalenie kopu / kadru przylotu): podłoga kadru przylotu (cameraZoomFloor), inaczej limit kadłuba
+  const lo = term < 0 ? Math.min(zMin, cameraZoomFloor(cam)) : zMin;
+  const shown = term === 0 ? base : Math.min(zMax, Math.max(lo, base * Math.exp(term)));
   cam.zoom = shown;
   cam._zoomSpringOut = shown;
 }
@@ -83,6 +118,7 @@ function settleZoom(cam, target, term, zMin, zMax) {
 // z zewnątrz (przejście kamery, teleport, dev) rusza sprężynę od spoczynku. Zwraca true, dopóki
 // zoom jest w ruchu (sprężyna albo niezerowy człon przejściowy).
 export function stepCameraZoom(cam, dt, omega = CAMERA_ZOOM_SMOOTH.omega) {
+  stepImpulseCap(cam, dt);
   const zMin = cam.minZoom > 0 ? cam.minZoom : 1e-4;
   const zMax = cam.maxZoom > zMin ? cam.maxZoom : zMin;
   const rawTarget = Number(cam.targetZoom);

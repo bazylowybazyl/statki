@@ -109,7 +109,8 @@ export function createSnapshotFrame() {
     // warp gracza (warpWorldMirror.js): listy ciał (indeks celu / startu skoku — ta sama kolejność, którą strona wysyła
     // workerowi), zegar efektu warpa strony (suma dt klatek „Nurtu”), kotwica kadru skoku (px ekranu od środka kadru)
     planets: null, smallBodies: null, warpFxClock: NaN, warpAnchorSX: NaN, warpAnchorSY: NaN,
-    hyper: null,                // hipercruise gracza w kształcie warpa (GameState.hyper)
+    warpLens: null,             // oś β soczewki świata (warpLensPhase.js: rekord stepWarpLensPhase strony gry) albo null
+    hyper: null,               // hipercruise gracza w kształcie warpa (GameState.hyper)
     turretsOf: null,            // faza finish: (encja) → rekordy wież tej klatki (Turret2D.recordsFor) albo null
     turretFrame: null,          // faza finish (RW-26): rekordy klatki { frameCount, recordAt(i) } (Turret2D po syncFrame)
                                 // — pierwszeństwo przed turretsOf

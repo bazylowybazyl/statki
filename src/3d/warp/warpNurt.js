@@ -32,7 +32,8 @@ import { WarpPlayerFx, WARP_BUBBLE } from './player.js';
 import { warpArrivalFxState, warpDepartureFxState, dressWarpArrival, dressWarpDeparture } from './arrivals.js';
 import { entityWarpHullLength as entityHullLength, entityWarpHullWidth as entityHullWidth } from '../../game/warpTraffic.js';
 import { setRulon, resetRulon, RULON_STATE } from './rulon.js';
-import { WARP_WORLD_LENS, resetWarpWorldLens } from './worldLens.js';
+import { WARP_WORLD_LENS, resetWarpWorldLens, setWarpLensAnchor } from './worldLens.js';
+import { warpLensBeta } from '../../render/warpLensPhase.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
@@ -116,7 +117,7 @@ export const WarpNurt = {
   _lensPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, a: 1, b: 1, amp: 0, front: 3 })),
   _seamPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, halfLen: 1, band: 1, amp: 0 })),
   _col: [0, 0, 0],
-  _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0, hyper: false },
+  _playerGame: { state: 'idle', charge: 0, gear: 1, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0, hyper: false, lens: null },
   _map: { camX: 0, camY: 0 },
   _view: { bufW: 1, bufH: 1, focal: 1, camZ: 1 },
   // Obrót kadru kamery (cam.roll — src/3d/viewRoll.js) tej klatki i pudło osi świata obróconego kadru [px].
@@ -204,7 +205,8 @@ export const WarpNurt = {
    * camShake (kamera renderu, ze wstrząsem), camFollow (kamera statku bez przejścia — kamera =
    * statek + offset riga), ship, warp (GameState.warp), hyper (GameState.hyper — hipercruise gracza w kształcie
    * warpa: rozruch = ładowanie, lot = skok; E5 2026-10-22), trafficTime (zegar rejestru ruchu warpa gry — osie
-   * przylotów i odlotów NPC), zoneWarpMul }.
+   * przylotów i odlotów NPC), zoneWarpMul, lensPhase (oś β soczewki świata z gry — src/render/warpLensPhase.js),
+   * anchorSX / anchorSY (kotwica kadru skoku, px CSS — DECYZJE M3), lensAllowed }.
    */
   update(o) {
     if (!this.initialized || !this.enabled) { resetWarpWorldLens(); return; }
@@ -260,6 +262,7 @@ export const WarpNurt = {
       g.flyby = 1;
       g.cruise = Number(hyper.speed) || 0;
       g.hyper = true;
+      g.lens = null;
       player.advance(t, dt, g, map, med);
     } else if (hasPlayer) {
       const pose = entityPose(ship, this._pose);
@@ -279,6 +282,8 @@ export const WarpNurt = {
       g.flyby = Number.isFinite(warp.flybyFactor) ? warp.flybyFactor : 1;
       g.cruise = Number(warp.cruise) || Number(warp.speed) || 0;
       g.hyper = false;
+      // oś β soczewki świata z gry (warpLensPhase.js: rekord strony gry — off: index.html, worker: migawka)
+      g.lens = o.lensPhase || null;
       player.advance(t, dt, g, map, med);
     } else {
       player.reset();
@@ -564,21 +569,37 @@ export const WarpNurt = {
   // planet3d.assets.js (updatePlanets3D, po tym kroku) rozstawia na scenie. Kamera bez wstrząsu (tę
   // samą dostają planety), statek w pozie renderu; cel — planeta przy końcu odcinka (index.html:
   // planPlayerWarp). Bez skoku albo poza kamerą z góry jednego gracza (`lensAllowed`) — wyłączona.
+  // Oś β i wyjście z ZEGARA GRY (src/render/warpLensPhase.js — rekord strony gry `o.lensPhase`, w workerze z migawki;
+  // bez niego — rekord własny WarpPlayerFx z zegara efektu, demo): β = warpLensBeta(rekord), wiek wyjścia, koniec
+  // zwolnienia i zatrzymanie rampy, dolot (ślizg), kadr soczewki z kamery gry (zoom odniesienia, kadr skoku, ułamek kadru
+  // przylotu — px CSS → px bufora × Core3D.pxScale), kotwica kadru (o.anchorSX / SY — px CSS), ciało startu.
   _commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer) {
     const p = this.player;
-    const lensOk = hasPlayer && o.lensAllowed !== false;
-    const beta = lensOk ? p.lensBeta(t) : 0;
+    const lensOk = hasPlayer && o.lensAllowed !== false && !p.hyper;
+    const ph = lensOk ? p.lensPhase(t) : null;
+    const beta = ph ? warpLensBeta(ph) : 0;
     const L = WARP_WORLD_LENS;
     // Przylot (worldLens.js: WarpWorldLens._arrivalHold): po wyjściu soczewka żyje, póki trzyma cel przy krawędzi
     // (targetHold z poprzedniej klatki), choć β wyjścia już opadło — reszta ciał stoi wtedy na prawdziwych miejscach.
-    const exitAge = lensOk && (p.mode === 'exit' || p.mode === 'idle') ? p.exitAge(t) : -1;
-    const arriving = exitAge >= 0 && exitAge < p.ramp.tHalt + 12;
+    // Wiek wyjścia z gry jest ciągły do zatrzymania + WARP_LENS_EXIT_SPAN (warpLensPhase.js) — rampa gry znika wcześniej.
+    const ea = ph ? Number(ph.exitAge) : -1;
+    const exitAge = ea >= 0 ? ea : -1;
+    const arriving = exitAge >= 0;
     if (!(beta > 0.0005) && !(arriving && L.targetHold > 0.0005)) { resetWarpWorldLens(); return; }
     const g = this._playerGame;
     L.active = true;
     L.beta = beta;
-    L.exitAge = arriving ? exitAge : -1;
-    L.exitHalt = p.ramp.tHalt;
+    L.exitAge = exitAge;
+    L.exitSlow = Number(ph.exitSlow) > 0 ? Number(ph.exitSlow) : 0;
+    L.exitHalt = Math.max(0, Number(ph.exitHalt) || 0);
+    L.arriving = ph.arriving === true || ph.arriving === false ? ph.arriving : null;
+    // px CSS → px bufora (kamera gry i kotwica riga są w px CSS)
+    const pxs = Number(Core3D.pxScale) > 0 ? Number(Core3D.pxScale) : 1;
+    L.arrivalFill = Number(ph.arrivalFill) > 0 ? Number(ph.arrivalFill) : NaN;
+    L.zoomRef = Number(ph.zoomRef) > 0 ? Number(ph.zoomRef) * pxs : NaN;
+    L.zoomJump = Number(ph.zoomJump) > 0 ? Number(ph.zoomJump) * pxs : NaN;
+    setWarpLensAnchor(L, o.anchorSX, o.anchorSY, pxs);
+    L.originBody = o.warp?.originBody || null;
     L.speed = Math.max(1, Number(g.cruise) || 0);
     L.velAngle = p.angle;
     L.zoom = zoom;

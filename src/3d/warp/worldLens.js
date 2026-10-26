@@ -347,6 +347,8 @@ export const WARP_WORLD_LENS = {
   dt: 0,              // [s] czas gry klatki (zegar efektu; w pauzie 0)
   target: null,       // ciało celu (dane planety z gry) albo null
   origin: null,       // (nowe, P2) ciało startu (planet3d: rekord ciała) — A/B `originMove`; null — reguła ogólna
+  originBody: null,   // ciało startu (dane planety z gry — warp.originBody; sterownik) — planet3d.assets.js mapuje je na
+                      // rekord (`origin`) jak cel
   exitAge: -1,        // [s] wiek wyjścia gracza (rampa albo wirtualna rampa wyjścia bez rampy — warpLensPhase.js:
                       // stepWarpLensTrack) z ZEGARA GRY, ciągły aż do targetHold = 0; < 0: skok albo brak
   exitSlow: 0,        // (nowe, P3) [s] koniec zwolnienia rampy (ramp.tSlowEnd) — czas frontu; 0 — WARP_LENS_PHASE.exitSlow
@@ -369,6 +371,7 @@ export function resetWarpWorldLens() {
   L.beta = 0;
   L.target = null;
   L.origin = null;
+  L.originBody = null;
   L.exitAge = -1;
   L.exitSlow = 0;
   L.exitHalt = 0;
@@ -379,6 +382,27 @@ export function resetWarpWorldLens() {
   L.anchorSx = NaN;
   L.anchorSy = NaN;
   L.targetHold = 0;
+}
+
+/**
+ * ROZSTAWIENIE OBRAZU W ŚWIECIE (planet3d.assets.js: _lensPlace planet, księżyców, małych ciał i słońca — jedna funkcja):
+ * obraz ciała z soczewki (b.out: px bufora od środka kadru, osie ekranu) → punkt świata w głębokości ciała. j. świata na px:
+ * płaszczyzna gry (`plane` — ring, małe ciała, księżyce przy ringu) 1 / zoom, tło (z < 0: planety −50 000, słońce −60 000)
+ * perspektywa kamery passa (camZ − z) / focal; świat = kamera + R(roll)·(o · k) (obrót kadru — viewRoll.js). Przy β = 0
+ * (obraz = prawdziwy) — prawdziwe miejsce ciała. Wynik w `out` { x, y, k } (bez alokacji).
+ */
+export function lensImageToWorld(L, ox, oy, z, plane, out) {
+  const k = plane ? 1 / Math.max(1e-9, L.zoom) : Math.max(1, L.camZ - z) / Math.max(1e-6, L.focal);
+  const u = ox * k;
+  const v = oy * k;
+  const roll = Number(L.roll) || 0;
+  out.k = k;
+  if (!roll) { out.x = L.camX + u; out.y = L.camY + v; return out; }
+  const c = Math.cos(roll);
+  const sn = Math.sin(roll);
+  out.x = L.camX + c * u - sn * v;
+  out.y = L.camY + sn * u + c * v;
+  return out;
 }
 
 /**
