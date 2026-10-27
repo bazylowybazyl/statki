@@ -62,8 +62,9 @@ export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0
   worker: SKIN_BAKE_STATS, batch: SKIN_BATCH_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
 // A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27); batch = false — odłamy własnymi
-// siatkami (rysunek na egzemplarz, zestaw i połówkę — jak przed partiami skór)
-export const WORLD_SKIN_OPTIONS = { planeHalfCull: true, batch: true };
+// siatkami (rysunek na egzemplarz, zestaw i połówkę — jak przed partiami skór); batchDiag (pomiar kosztu GPU partii,
+// obraz inny): 1 — strony rysowane, flagi zerowe (same wierzchołki pominięte), 2 — strony schowane (bez skór odłamów)
+export const WORLD_SKIN_OPTIONS = { planeHalfCull: true, batch: true, batchDiag: 0 };
 if (typeof window !== 'undefined') window.__worldSkinOptions = WORLD_SKIN_OPTIONS;
 
 function providerOf(hull) {
@@ -630,6 +631,7 @@ export function commitWorldSkinStore(camera) {
         if (ef) { ef.page.vis[0] += f2; ef.page.vis[1] += f3; }
       }
       const of = o + WS.FLAGS * 4;
+      if (WORLD_SKIN_OPTIONS.batchDiag === 1) f0 = f1 = f2 = f3 = 0;
       A[of] = f0; A[of + 1] = f1; A[of + 2] = f2; A[of + 3] = f3;
       if (inst.slot < lo) lo = inst.slot;
       if (inst.slot > hi) hi = inst.slot;
@@ -640,7 +642,7 @@ export function commitWorldSkinStore(camera) {
     for (const b of m.values()) {
       for (const p of b.pages) {
         for (let h = 0; h < p.meshes.length; h++) {
-          const vis = on && p.vis[h] > 0;
+          const vis = on && p.vis[h] > 0 && WORLD_SKIN_OPTIONS.batchDiag !== 2;
           if (p.meshes[h].visible !== vis) p.meshes[h].visible = vis;
           if (vis) n++;
         }

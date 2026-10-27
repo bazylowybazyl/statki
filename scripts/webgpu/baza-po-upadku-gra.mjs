@@ -3,7 +3,7 @@
 // Vite + headless Chrome z WebGPU, skok dev ?story=shipyard, Atlas nieśmiertelny.
 //
 //   node scripts/webgpu/baza-po-upadku-gra.mjs [--out .tmp/baza-po-upadku] [--query renderWorker=0] [--daleko 1]
-//        [--progi 0] [--czasPo 12] [--profil 1] [--ab 1 | --ab partia]
+//        [--progi 0] [--czasPo 12] [--profil 1] [--ab 1 | partia | sortowanie | partia,sortowanie]
 //
 // Okna: „przed” (habitat cały), „progi” (cztery progi punktów habitatu — płaskie odłamy), HP 0 → upadek do osiadania,
 // „po” (kamera fabuły), „nad-gruzem” (Atlas nad środkiem bazy). Co 0,5 s: złożenia obrazu workera, wiek, klatki workera
@@ -19,6 +19,7 @@
 // Raport: <out>/raport.json.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 
 const args = parseArgs();
@@ -30,6 +31,12 @@ const CZAS_PO = Number(args.czasPo || 12);
 const PROGI = args.progi !== '0';
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 9 min — koniec'); finish(2); }, 9 * 60 * 1000);
+// Obciążenie GPU i zajęta pamięć GPU (cała maszyna — inne procesy też): przy ciasnej pamięci czasy GPU A/B nie są porównywalne
+const gpuState = () => {
+  try { return execFileSync('nvidia-smi', ['--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader'], { encoding: 'utf8', timeout: 5000 }).trim(); }
+  catch { return 'brak nvidia-smi'; }
+};
+console.log('GPU na starcie:', gpuState());
 
 const { server, base } = await startVite(Number(args.port || 5391));
 const chrome = await startChrome({ width: 1600, height: 900, renderMode: 'worker' });
@@ -366,29 +373,66 @@ try {
   await screenshotPng(cdp, join(out, '04-nad-gruzem.png'));
   // --ab 1: ten sam kadr w pauzie — połówki brył przycinane (A1), rysowane zawsze (B), znów przycinane (A2): obraz
   // A1↔B ma się różnić nie bardziej niż szum A1↔A2 (efekty biegną w pauzie), rysunków ubywa; --ab partia — to samo
-  // dla partii skór (A — odłamy partiami, B — własnymi siatkami)
-  if (args.ab === '1' || args.ab === 'partia') {
+  // dla partii skór (A — odłamy partiami, B — własnymi siatkami); --ab sortowanie — odłamy własnymi siatkami, A — three
+  // sortuje nieprzezroczyste od najbliższych (renderer.sortObjects), B — w kolejności sceny (jak trójkąty w stronie
+  // partii): koszt GPU kolejności rysowania (nadmiarowe cieniowanie) przy tym samym obrazie. Kilka naraz po przecinku
+  // (--ab partia,sortowanie) — po kolei w tej samej pauzie, katalogi ab-<rodzaj>. --ab diag — rozkład kosztu partii
+  // (obraz inny): partia | własne siatki | partia z flagami zerowymi (same pominięte wierzchołki) | bez skór odłamów,
+  // dwa obiegi; liczy się kolumna gpuMs.
+  const AB = { 1: 'planeHalfCull', partia: 'batch', sortowanie: 'sortObjects', diag: 'batchDiag' };
+  const abKinds = String(args.ab || '').split(',').filter((k) => AB[k]);
+  if (abKinds.length) console.log('GPU przed A/B:', gpuState());
+  if (abKinds.includes('diag')) {
+    await ev('(window.__setGamePaused(true), true)');
+    await sleep(800);
+    for (let i = 0; i < 40; i++) {
+      const q = await wkEval('(globalThis.__worldSkinStats ? globalThis.__worldSkinStats.batchQueue : 0)').catch(() => 0);
+      if (!q) break;
+      await sleep(250);
+    }
+    const V = [['partia', true, 0], ['wlasne', false, 0], ['flagi0', true, 1], ['bezSkor', true, 2]];
+    for (let pass = 1; pass <= 2; pass++) {
+      for (const [name, batch, diag] of V) {
+        await wkEval(`(globalThis.__worldSkinOptions.batch = ${batch}, globalThis.__worldSkinOptions.batchDiag = ${diag}, true)`);
+        await sleep(600);
+        await drawProbe(`diag-${name}${pass}`, 3000);
+      }
+    }
+    await wkEval('(globalThis.__worldSkinOptions.batch = true, globalThis.__worldSkinOptions.batchDiag = 0, true)');
+    await ev('(window.__setGamePaused(false), true)');
+  }
+  abKinds.splice(0, abKinds.length, ...abKinds.filter((k) => k !== 'diag'));
+  if (abKinds.length) {
     const { compareDirs } = await import('./porownaj.mjs');
     await ev('(window.__setGamePaused(true), true)');
     await sleep(800);
-    const opt = args.ab === 'partia' ? 'batch' : 'planeHalfCull';
     // kopie odłamów w partie kończą się w pauzie (worker rysuje dalej) — A/B dopiero bez kolejki
     for (let i = 0; i < 40; i++) {
       const q = await wkEval('(globalThis.__worldSkinStats ? globalThis.__worldSkinStats.batchQueue : 0)').catch(() => 0);
       if (!q) break;
       await sleep(250);
     }
-    const setCull = (on) => wkEval(`(() => { const o = globalThis.__worldSkinOptions; if (!o || !('${opt}' in o)) return null; o.${opt} = ${on}; return o.${opt}; })()`);
-    for (const [dir, on] of [['a1', true], ['b', false], ['a2', true], ['b2', false], ['a3', true], ['b3', false]]) {
-      const r = await setCull(on);
-      if (r === null) { console.log(`A/B: brak __worldSkinOptions.${opt} w workerze (stary kod?)`); break; }
-      await sleep(500);
-      await screenshotPng(cdp, join(out, 'ab', dir, 'nad-gruzem.png'));
-      await drawProbe(`ab-${dir}`, 3000);
-    }
-    for (const [x, y] of [['a1', 'b'], ['a1', 'a2']]) {
-      const c = compareDirs(join(out, 'ab', x), join(out, 'ab', y), join(out, 'ab', `${x}-${y}`));
-      for (const row of c.rows) console.log(`A/B ${x}↔${y}`, JSON.stringify(row));
+    for (const kind of abKinds) {
+      const opt = AB[kind];
+      const sortAb = kind === 'sortowanie';
+      const dirAb = abKinds.length > 1 ? `ab-${kind}` : 'ab';
+      if (sortAb) await wkEval('(globalThis.__worldSkinOptions.batch = false, true)');
+      const setCull = (on) => (sortAb
+        ? wkEval(`(globalThis.__C3.renderer.sortObjects = ${on}, true)`)
+        : wkEval(`(() => { const o = globalThis.__worldSkinOptions; if (!o || !('${opt}' in o)) return null; o.${opt} = ${on}; return o.${opt}; })()`));
+      for (const [dir, on] of [['a1', true], ['b', false], ['a2', true], ['b2', false], ['a3', true], ['b3', false]]) {
+        const r = await setCull(on);
+        if (r === null) { console.log(`A/B: brak __worldSkinOptions.${opt} w workerze (stary kod?)`); break; }
+        await sleep(500);
+        await screenshotPng(cdp, join(out, dirAb, dir, 'nad-gruzem.png'));
+        await drawProbe(`${kind}-${dir}`, 3000);
+      }
+      for (const [x, y] of [['a1', 'b'], ['a1', 'a2']]) {
+        const c = compareDirs(join(out, dirAb, x), join(out, dirAb, y), join(out, dirAb, `${x}-${y}`));
+        for (const row of c.rows) console.log(`A/B ${kind} ${x}↔${y}`, JSON.stringify(row));
+      }
+      await setCull(true);
+      if (sortAb) await wkEval('(globalThis.__worldSkinOptions.batch = true, true)');
     }
     await ev('(window.__setGamePaused(false), true)');
   }
