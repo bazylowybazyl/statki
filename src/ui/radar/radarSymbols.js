@@ -35,6 +35,7 @@ export function radarColor(rgb, alpha = 1) {
 export function radarAffRgb(aff, kind = 'ship') {
   if (kind === 'missile') return aff === 'hostile' ? RADAR_RGB.missileHostile : RADAR_RGB.missileFriendly;
   if (kind === 'wreck') return RADAR_RGB.wreck;
+  if (kind === 'loot') return RADAR_RGB.loot;
   switch (aff) {
     case 'hostile': return RADAR_RGB.hostile;
     case 'friendly': return RADAR_RGB.friendly;
@@ -49,6 +50,7 @@ export function radarSymbolSize(kind, cls, capital) {
   if (kind === 'fighter') return 2.6;
   if (kind === 'drone') return 2.4;
   if (kind === 'wreck') return 2.6;
+  if (kind === 'loot') return 1.7;
   if (kind === 'body') return 3.6;
   if (kind === 'station') return 5.4;
   switch (cls) {

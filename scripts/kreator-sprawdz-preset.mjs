@@ -10,11 +10,14 @@
 //
 // --plik: preset frachtowca prosto z pliku (`export default { key, label, cls, make }`) — bez rejestru presetów, więc
 // błąd w pliku innego frachtowca go nie zatrzyma. Kod wyjścia 1, gdy któryś preset nie spełnia warunków.
+// PODKŁAD (sylwetka do odwzorowania, np. szkic użytkownika): --maska <png> (biały = wnętrze) --skala <j./px>[,<j./px
+// w poprzek>] (dwie wartości — podkład rozciągnięty wzdłuż) --x0 <px> --y0 <px> (piksel maski w punkcie 0, 0 projektu;
+// oś okrętu = wiersz y0) — IoU sylwetki projektu z maską, a na podglądzie --png czerwony obrys maski.
 
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { writePng } from './webgpu/png.mjs';
+import { readPng, writePng } from './webgpu/png.mjs';
 import { normalizeHullDesign } from '../src/game/hullDesign/hullDesignSchema.js';
 import { HD_PRESET_OUTSIDE_LADDER, applySystemSlots } from '../src/game/hullDesign/hullDesignSystemSlots.js';
 import { buildHullField, sampleHullField, hullCells, hullFrameIntegrity } from '../src/game/hullDesign/hullDesignGeometry.js';
@@ -46,6 +49,25 @@ if (opt.plik) {
     if (!HD_PRESET_KEYS.includes(key)) { console.error(`✗ ${key}: nie ma takiego presetu`); process.exit(1); }
     items.push({ key, design: () => hullDesignPreset(key) });
   }
+}
+
+/** Podkład: maska sylwetki w układzie projektu (null — bez podkładu). */
+let mask = null;
+if (opt.maska) {
+  const m = readPng(resolve(repo, String(opt.maska)));
+  const [sx, sy = sx] = String(opt.skala || 1).split(',').map(Number);
+  const px0 = Number(opt.x0 || 0), py0 = Number(opt.y0 || 0);
+  const at = (x, y) => {
+    const ix = Math.round(x / sx + px0), iy = Math.round(y / sy + py0);
+    return ix >= 0 && iy >= 0 && ix < m.width && iy < m.height && m.data[(iy * m.width + ix) * 4] > 127;
+  };
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, n = 0;
+  for (let iy = 0; iy < m.height; iy++) for (let ix = 0; ix < m.width; ix++) if (m.data[(iy * m.width + ix) * 4] > 127) {
+    const x = (ix - px0) * sx, y = (iy - py0) * sy;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    n++;
+  }
+  mask = { at, box: { minX: x0, maxX: x1, minY: y0, maxY: y1 }, area: n * sx * sy };
 }
 
 let failed = 0;
@@ -93,21 +115,40 @@ for (const { key, design } of items) {
     `ładunek ${r.cargo.containers} kont. + ${r.cargo.tankTonnes} t w zbiornikach = ${r.cargo.tonnes} t, zapas mocy ${Math.round(cls.power.spareFrac * 100)}%, ` +
     `brył ${d.shapes.length}, modułów ${mods}, naklejek ${decals}, ${ms} ms`);
   console.log(`   moduły: ${Object.entries(byType).map(([k, n]) => `${k} ${n}`).join(', ')}`);
+  if (mask) {
+    // IoU sylwetki (rama projektu) z maską podkładu na siatce ~1500 próbek wzdłuż
+    const b = f.bounds, mb = mask.box;
+    const X0 = Math.min(b.minX, mb.minX), X1 = Math.max(b.maxX, mb.maxX), Y0 = Math.min(b.minY, mb.minY), Y1 = Math.max(b.maxY, mb.maxY);
+    const st = Math.max(0.5, (X1 - X0) / 1500);
+    let inter = 0, uni = 0, onlyD = 0, onlyM = 0;
+    for (let y = Y0; y <= Y1; y += st) for (let x = X0; x <= X1; x += st) {
+      const a = sampleHullField(f, 0, x, y) < 0, m = mask.at(x, y);
+      if (a && m) inter++; if (a || m) uni++; if (a && !m) onlyD++; if (m && !a) onlyM++;
+    }
+    console.log(`   podkład: IoU ${(inter / Math.max(1, uni)).toFixed(3)} (tylko projekt ${(onlyD / Math.max(1, uni) * 100).toFixed(1)}%, tylko podkład ${(onlyM / Math.max(1, uni) * 100).toFixed(1)}%), podkład ${mb.minX.toFixed(0)}…${mb.maxX.toFixed(0)} × ${mb.minY.toFixed(0)}…${mb.maxY.toFixed(0)} j., pow. ${Math.round(mask.area)} j²`);
+  }
   for (const e of errs) console.log(`   ✗ ${e}`);
   if (errs.length) failed++;
   if (opt.png) {
     const dir = resolve(repo, String(opt.png));
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `${key}.png`);
-    planPng(f, file, { px: opt.px ? Number(opt.px) : 0, width: Number(opt.szer || 1600) });
+    planPng(f, file, { px: opt.px ? Number(opt.px) : 0, width: Number(opt.szer || 1600), mask });
     console.log(`   podgląd: ${file}`);
   }
 }
 process.exit(failed ? 1 : 0);
 
-/** Podgląd CPU: poziomy (rama / płyty / nadbudówka / mostek), moduły (obrysy w barwie typu, siatka kontenerów), trasy sieci. */
-function planPng(f, file, { px = 0, width = 1600 }) {
-  const b = f.bounds, pad = 12;
+/**
+ * Podgląd CPU: poziomy (rama / płyty / nadbudówka / mostek), moduły (obrysy w barwie typu, siatka kontenerów), trasy sieci;
+ * z podkładem — czerwony obrys maski (kadr obejmuje i projekt, i podkład).
+ */
+function planPng(f, file, { px = 0, width = 1600, mask = null }) {
+  const b0 = f.bounds, pad = 12;
+  const b = mask ? {
+    minX: Math.min(b0.minX, mask.box.minX), maxX: Math.max(b0.maxX, mask.box.maxX),
+    minY: Math.min(b0.minY, mask.box.minY), maxY: Math.max(b0.maxY, mask.box.maxY)
+  } : b0;
   const L = b.maxX - b.minX, Wd = b.maxY - b.minY;
   const s = px > 0 ? px : Math.max(0.25, Math.min(24, (width - 2 * pad) / L));
   const W = Math.ceil(L * s + 2 * pad), H = Math.ceil(Wd * s + 2 * pad);
@@ -136,6 +177,18 @@ function planPng(f, file, { px = 0, width = 1600 }) {
     for (let i = 0; i <= n; i++) put(a[0] + (c2[0] - a[0]) * i / n, a[1] + (c2[1] - a[1]) * i / n, c);
   };
   const poly = (pts, c, close = true) => { for (let i = 0; i < pts.length - (close ? 0 : 1); i++) line(pts[i], pts[(i + 1) % pts.length], c); };
+  // podkład: obrys maski (piksel w masce z sąsiadem poza nią) — czerwony
+  if (mask) {
+    const red = hex('#ff3a3a');
+    for (let iy = 1; iy < H - 1; iy++) {
+      for (let ix = 1; ix < W - 1; ix++) {
+        const [x, y] = toW(ix, iy);
+        if (!mask.at(x, y)) continue;
+        const e = 1 / s;
+        if (!mask.at(x + e, y) || !mask.at(x - e, y) || !mask.at(x, y + e) || !mask.at(x, y - e)) put(ix, iy, red);
+      }
+    }
+  }
   // trasy sieci: kable — złote, paliwo — pomarańczowe
   for (const run of f.pipeNet?.runs || []) {
     const c = hex(run.net === 'power' ? '#d8c060' : (run.net === 'manual' ? '#9a9a9a' : '#ff7a3c'));

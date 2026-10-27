@@ -112,6 +112,8 @@ export class TrafficBridge {
      * numer kursu → { id, berthId, stationId, mode, cargo, t0, dur, hull, unitClass }. Worker przysyła zmiany.
      */
     this.actorDocks = new Map();
+    /** Ładunek encji bańki (kontenery-łup K1): numer kursu → { id, cargo, mass, value }. Worker przysyła zmiany. */
+    this.actorManifests = new Map();
     this.hulls = [];
     this.stats = null;
     this.recentWrecks = [];
@@ -591,8 +593,11 @@ export class TrafficBridge {
     actors.seq++;
     if (Array.isArray(message.undocked)) for (const id of message.undocked) this.actorDocks.delete(id);
     if (Array.isArray(message.docks)) for (const rec of message.docks) this.actorDocks.set(rec.id, rec);
-    // Pusta bańka (wyjście z zasięgu portów) — postoje znikają razem z encjami.
+    if (Array.isArray(message.unmanifested)) for (const id of message.unmanifested) this.actorManifests.delete(id);
+    if (Array.isArray(message.manifests)) for (const rec of message.manifests) this.actorManifests.set(rec.id, rec);
+    // Pusta bańka (wyjście z zasięgu portów) — postoje i manifesty znikają razem z encjami.
     if (!actors.count && this.actorDocks.size) this.actorDocks.clear();
+    if (!actors.count && this.actorManifests.size) this.actorManifests.clear();
   }
 
   _applyBubble(bubble) {

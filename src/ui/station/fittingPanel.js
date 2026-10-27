@@ -118,6 +118,8 @@ export function createFittingPanel(root, api) {
             <div class="fit-opts" data-ref="optModule"></div>
             <div class="fit-m-sub">SYSTEM F</div>
             <div class="fit-opts" data-ref="optSystem"></div>
+            <div class="fit-m-sub">ZBIÓRKA</div>
+            <div class="fit-opts" data-ref="optLoot"></div>
             <div class="fit-m-sub">CHIPY</div>
             <div class="fit-opts" data-ref="optChips"></div>
           </div>
@@ -342,6 +344,7 @@ export function createFittingPanel(root, api) {
       <span class="fit-kv">gniazda <b>${filled}/${hull.hardpoints.length}</b></span>
       <span class="fit-kv">moduł <b>${moduleDef ? esc(moduleDef.label) : (api.moduleSlots() > 0 ? 'wolny' : 'brak gniazda')}</b></span>
       <span class="fit-kv">F <b>${esc(api.currentSystemLabel())}</b></span>
+      <span class="fit-kv">zbiórka <b>${esc(api.currentLootGearLabel ? api.currentLootGearLabel() : '—')}</b></span>
       <span class="fit-kv">tarcza <b>${fmt(s.shieldMax)}</b></span>
       <span class="fit-kv" data-ref-ammo>amunicja <b>${ammo.max > 0 ? `${ammo.have}/${ammo.max}` : '—'}</b></span>
       <span class="fit-grow"></span>
@@ -708,6 +711,24 @@ export function createFittingPanel(root, api) {
       b.disabled = !s.builtin && !s.installed && !s.owned && s.price > api.credits();
       b.onclick = () => { const r = api.setSystem(s.id); if (r?.message) toast(r.message); render(); };
       ref.optSystem.appendChild(b);
+    }
+    // Gniazdo ZBIÓRKA (kontenery-łup, src/data/lootGear.js): wiązka albo drony — jeden wybór, część jak moduł.
+    if (ref.optLoot && api.lootGear) {
+      ref.optLoot.innerHTML = '';
+      const gear = api.lootGear();
+      const cur = gear.find((g) => g.installed)?.id || null;
+      const none = el('button', `fit-opt${!cur ? ' on' : ''}`, 'PUSTE<small>bez sprzętu kontenerów nie da się zebrać</small>');
+      none.type = 'button';
+      none.onclick = () => { const r = api.setLootGear(null); if (r?.message) toast(r.message); render(); };
+      ref.optLoot.appendChild(none);
+      for (const g of gear) {
+        const tag = !g.ready ? 'wkrótce' : (g.installed ? 'założony' : (g.owned ? 'w hangarze' : cr(g.price)));
+        const b = el('button', `fit-opt${g.installed ? ' on' : ''}`, `${esc(g.label)} <span class="tag">${tag}</span><small>${esc(g.desc || '')}</small>`);
+        b.type = 'button';
+        b.disabled = !g.ready || (!g.installed && !g.owned && g.price > api.credits());
+        b.onclick = () => { const r = api.setLootGear(g.id); if (r?.message) toast(r.message); render(); };
+        ref.optLoot.appendChild(b);
+      }
     }
     ref.optChips.innerHTML = '';
     const chips = api.chips();

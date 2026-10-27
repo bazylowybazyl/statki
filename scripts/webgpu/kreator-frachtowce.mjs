@@ -4,10 +4,11 @@
 // pokład — `cargoLoad`, ścieżka wyglądu bez workera). Raport: klasa, ładowność z receptury, pipeline'y synchroniczne.
 //
 //   node scripts/webgpu/kreator-frachtowce.mjs [--out .tmp/kreator/frachtowce] [--tylko klucz1,klucz2] [--projekt plik.json]
-//        [--rozmiar 1600x900] [--bez-zaladunku]
+//        [--rozmiar 1600x900] [--bez-zaladunku] [--kadry "x,y,zoom;x,y,zoom…"]
 //
 // Bez --tylko i --projekt: wszystkie presety cywilne (hullDesignPreset(k).role === 'civil'). Plik --projekt: jeden
-// projekt JSON albo tablica projektów.
+// projekt JSON albo tablica projektów (każdy projekt, także wojskowy). --kadry: dodatkowe zbliżenia każdego okrętu
+// (środek kadru w j. projektu, zoom = px ekranu na j.), np. rufa z mostkiem i rdzeniem.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -74,6 +75,11 @@ try {
     report.frachtowce[t.key] = info;
     console.log(t.key, JSON.stringify(info));
     await shot(`${t.key}-okret`, `${info.name}: cały okręt (${info.length} × ${info.width} j., klasa ${info.klasa?.mostek} ${info.klasa?.nazwa || ''})`);
+    const kadry = args.kadry ? String(args.kadry).split(';').map((s) => s.split(',').map(Number)) : [];
+    for (const [i, [x, y, z]] of kadry.entries()) {
+      await ev(`window.__kreator.setCamera(${x}, ${y}, ${z})`);
+      await shot(`${t.key}-kadr${i + 1}`, `${info.name}: kadr ${x}, ${y}, zoom ${z}`);
+    }
     if (info.big) {
       const z = Math.min(16, W * 0.5 / (2 * Math.max(info.big.w, info.big.h * 1.8)));
       await ev(`window.__kreator.setCamera(${info.big.x}, ${info.big.y}, ${z})`);

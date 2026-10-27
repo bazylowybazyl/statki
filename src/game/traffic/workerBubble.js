@@ -51,6 +51,7 @@ import {
 import { convoyOf } from './convoy.js';
 import { VAN_CLASSES } from './shipmentOrders.js';
 import { ACTOR_CARGO_STRIDE, writeBubbleCargo } from './bubbleCargo.js';
+import { RESOURCES, RESOURCE_KEYS } from '../../data/resources.js';
 
 /** Przyspieszenie w buforze najwyżej tyle [j./s²] — skok prędkości (przechwyt, zmiana etapu) to nie rozpęd. */
 const ACCEL_LIMIT = 200_000;
@@ -742,6 +743,94 @@ export function collectDockChanges(state, time, hullOf) {
   }
   return docks || undocked ? { docks, undocked } : null;
 }
+
+/**
+ * Zmiany manifestów ładunku encji (kontenery-łup K1, `docs/PROPOZYCJA-kontenery-lup.md` § 3.1): gra musi wiedzieć,
+ * co wiezie encja, ZANIM ta zginie — rekord wraku (`tick.wrecks`) przychodzi dopiero po kroku świata (do 5 s).
+ * Encja z kursem w locie z ładunkiem → `manifests: [{ id, cargo, mass, value }]` (nowa albo zmieniona); encja,
+ * która zniknęła z bańki albo nie wiezie już nic (rozładunek, odlot) → `unmanifested: [id]`. Promy z ludźmi,
+ * puste przeloty i wyprawa górnicza przed urobkiem manifestu nie mają. Zwraca `null`, gdy nic się nie zmieniło.
+ */
+export function collectManifestChanges(state) {
+  const sent = state.manifestsSent || (state.manifestsSent = new Map());
+  const list = state.bubble.list;
+  const seen = state._manifestSeen || (state._manifestSeen = new Set());
+  seen.clear();
+  let manifests = null;
+  for (let k = 0; k < list.length; k++) {
+    const a = list[k];
+    if (a.departed || !a.courseId) continue;
+    const course = getCourse(state.world.registry, a.courseId);
+    if (!course || course.status !== COURSE_STATUS.ACTIVE) continue;
+    const p = course.payload;
+    if (!p || p.passengers || p.deadhead) continue;
+    // Wyprawa górnicza: urobek dopisuje się po etapie wydobycia (`extract.booked`) — wcześniej ładownia jest pusta.
+    if (p.harvest && p.extract && !p.extract.booked) continue;
+    // Masa z kursu, a bez niej (przemytnik — `piracy.js`) z towarów; sygnatura liczbowa bez budowy obiektów.
+    const mass = payloadMass(p);
+    if (!(mass > 0)) continue;
+    const sig = payloadSignature(p, mass);
+    if (sig === 0) continue;
+    // Numer kursu na encji (napis → liczba tylko przy zmianie kursu).
+    if (a._manifestOf !== a.courseId) { a._manifestOf = a.courseId; a._manifestNum = courseNumber(a.courseId); }
+    const num = a._manifestNum;
+    if (!Number.isFinite(num)) continue;
+    seen.add(num);
+    if (sent.get(num) === sig) continue;
+    sent.set(num, sig);
+    // Ładunek (obiekt) dopiero przy zmianie.
+    (manifests || (manifests = [])).push({ id: num, cargo: cargoOf(course), mass, value: Number(p.value) || 0 });
+  }
+  let unmanifested = null;
+  for (const num of sent.keys()) {
+    if (seen.has(num)) continue;
+    sent.delete(num);
+    (unmanifested || (unmanifested = [])).push(num);
+  }
+  return manifests || unmanifested ? { manifests, unmanifested } : null;
+}
+
+const RES_ORDER = new Map(RESOURCE_KEYS.map((id, i) => [id, i + 1]));
+
+/** Masa ładunku kursu [t]: `payload.mass`, a gdy jej brak — sztuki × masa sztuki towaru (bez alokacji). */
+function payloadMass(p) {
+  const m = Number(p.mass);
+  if (m > 0) return m;
+  let sum = 0;
+  if (p.harvest && typeof p.harvest === 'object') {
+    for (const id in p.harvest) {
+      const n = Number(p.harvest[id]);
+      if (n > 0) sum += n * (Number(RESOURCES[id]?.mass) || 1);
+    }
+    return sum;
+  }
+  const n = Number(p.units);
+  return p.resourceId && n > 0 ? n * (Number(RESOURCES[p.resourceId]?.mass) || 1) : 0;
+}
+
+/** Krok sygnatury: towar i sztuki (setne) wmieszane w `h`. */
+function sigMix(h, id, n) {
+  return (Math.imul(h ^ (RES_ORDER.get(id) || 0), 0x9e3779b1) + Math.round(n * 100)) | 0;
+}
+
+/** Liczbowa sygnatura ładunku kursu (towary, sztuki, masa) — 0, gdy pusty. Bez alokacji. */
+function payloadSignature(p, mass) {
+  let h = 0;
+  let any = false;
+  if (p.harvest && typeof p.harvest === 'object') {
+    for (const id in p.harvest) {
+      const n = Number(p.harvest[id]);
+      if (n > 0) { h = sigMix(h, id, n); any = true; }
+    }
+  } else if (p.resourceId) {
+    const n = Number(p.units);
+    if (n > 0) { h = sigMix(h, p.resourceId, n); any = true; }
+  }
+  if (!any) return 0;
+  // Bez zera (zero = „brak ładunku”); masa w setnych tony.
+  return ((Math.imul(h, 31) + Math.round(mass * 100)) | 0) || 1;
+}
+
 
 /** Ładunek kursu w jednostkach świata ruchu: przewóz / kupiec / przemyt — jeden towar, wyprawa — worek urobku. */
 function cargoOf(course) {

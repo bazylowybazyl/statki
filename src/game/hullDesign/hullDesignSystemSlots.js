@@ -191,9 +191,10 @@ export const HD_PRESET_MOUNTS = Object.freeze({
  * z powierzchni i gniazd (classForHull, 2026-10-21: Hasta-D 63 tys. j² → III, fregata / krążownik z części 149 / 124 tys.
  * → IV, Orbis 231 tys. i Szakal 256 tys. → V). `empty` — gracz wybiera (0 — z powierzchni). Frachtowce mają klasę
  * w pliku presetu (`cls`, src/game/hullDesign/freighters/) — hullDesignPreset() podaje ją w `opts.cls` applySystemSlots.
+ * Hyperion (src/game/hullDesign/warships/hyperion.js) — superkapitał linii Atlasa, klasa VI (decyzja użytkownika 2026-10-27).
  */
 export const HD_PRESET_CLASS = Object.freeze({
-  custos: [1, 1], hasta: [2, 2], bellator: [4, 4], citadella: [5, 5], colossus: [6, 6], klocki: [1, 1],
+  custos: [1, 1], hasta: [2, 2], bellator: [4, 4], citadella: [5, 5], colossus: [6, 6], hyperion: [6, 6], klocki: [1, 1],
   destroyer: [3, 3], tnparts: [4, 4], tnparts2: [4, 4], orbis: [5, 5], pirate: [5, 5], atlas2: [6, 6]
 });
 /** Presety poza drabiną klas (jak Atlas — unikat fabularny): Atlas II ma 1,05 mln j², więcej niż limit klasy VI. */

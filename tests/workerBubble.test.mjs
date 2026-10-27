@@ -458,3 +458,40 @@ test('nietykalnych nie ma: zapas floty, postój i odlot przejęte przez grę (en
   core.handle({ type: TRAFFIC_MSG.ENTITY_LOST, id: parked.id, reason: 'player' });
   assert.equal(getShip(world.companies, shipId), null, 'firma straciła statek');
 });
+
+test('manifesty ładunku encji (kontenery-łup K1): tylko zmiany, ładunek kursu, bez promów i pustych przelotów', () => {
+  const earthNode = world.network.nodes.get('earth');
+  core.handle({ type: TRAFFIC_MSG.FOCUS, x: earthNode.x + 50_000, y: earthNode.y, r: 60_000 });
+  const live = new Map();
+  let records = 0;
+  let removed = 0;
+  let repeated = 0;
+  const idOf = new Map([...world.registry.byId.keys()].map((id) => [courseNumber(id), id]));
+  for (let f = 0; f < 30 * 60; f++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
+    for (const id of got.actors.unmanifested || []) { if (live.delete(id)) removed++; }
+    for (const rec of got.actors.manifests || []) {
+      if (live.has(rec.id) && JSON.stringify(live.get(rec.id)) === JSON.stringify(rec)) repeated++;
+      live.set(rec.id, rec);
+      records++;
+      assert.ok(rec.mass > 0, 'masa ładunku');
+      const keys = Object.keys(rec.cargo);
+      assert.ok(keys.length > 0, 'ładunek niepusty');
+      for (const n of Object.values(rec.cargo)) assert.ok(n > 0);
+      if (!idOf.has(rec.id)) for (const id of world.registry.byId.keys()) idOf.set(courseNumber(id), id);
+      const course = getCourse(world.registry, idOf.get(rec.id));
+      assert.ok(course, 'kurs manifestu');
+      assert.ok(!course.payload.passengers && !course.payload.deadhead, 'bez promów z ludźmi i pustych przelotów');
+      if (course.payload.resourceId && !course.payload.harvest) {
+        assert.deepEqual(keys, [course.payload.resourceId]);
+        assert.equal(rec.cargo[course.payload.resourceId], course.payload.units);
+      }
+    }
+    // Każdy manifest w moście należy do encji w bańce.
+    const present = new Set(decode(got.actors).map((a) => a.id));
+    for (const id of live.keys()) assert.ok(present.has(id), `manifest ${id} bez encji`);
+  }
+  assert.ok(records > 0, 'manifesty wysłane');
+  assert.equal(repeated, 0, 'ten sam manifest nie idzie drugi raz');
+  assert.ok(live.size > 0 || removed > 0, 'stan manifestów');
+});

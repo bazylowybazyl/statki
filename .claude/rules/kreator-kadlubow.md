@@ -27,7 +27,8 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   `hullDesignBuild.js` (budowa etapami z pamięcią — § „Budowa: worker i pamięć etapów”) z workerem
   `hullDesignBuild.worker.js` i klientem strony `hullDesignBuildClient.js`, `hullDesignHalf.js` (float16 bez three),
   `hullDesignPaint.js` (pędzel — § „Warstwa barw”), `hullDesignCargo.js` (ładunek statków cywilnych — § „Statki
-  cywilne”), `freighters/` (presety frachtowców: zestaw `freighterKit.js`, rejestr `index.js`, plik na frachtowiec).
+  cywilne”), `freighters/` (presety frachtowców: zestaw `freighterKit.js`, rejestr `index.js`, plik na frachtowiec),
+  `warships/` (okręty z plików w tym samym formacie — superkapitał Hyperion, § „Superkapitał linii Atlasa”).
 - `src/3d/hullDesign/hullComposer.js` — kompozytor TSL (pakiet z pól; mapy i passy barw), `hullDecalAtlas.js`.
 - Demo `dema/kreator-kadluba-webgpu.html` / `.js` (edytor na Core3D, A/B ze sprite'ami) z dwoma interfejsami: STOCZNIA
   (domyślny, przyjazny: `dema/kreator-kadluba-stocznia.js` — § „Stocznia”) i WARSZTAT (pełny panel narzędzi,
@@ -61,6 +62,9 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   frachtowce o RÓŻNYCH KSZTAŁTACH — „średnio mi się podobają te frachtowce z gry” (sprite'y ruchu mają jedną anatomię),
   więc presety ich nie odwzorowują; paleta „Frachtowiec”; ładunek jako warianty ładowni (stelaż kontenerów, zasobniki)
   i zbiorniki ładunku (walce, kule); zakres — demo kreatora (wpięcie do ruchu v2 to osobny etap).
+- Superkapitał linii Atlasa (2026-10-27): „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa
+  (czerń / szary)”; szkic Atlasa to „bardziej battleship — za krótki na superkapitała” — preset bierze ze szkicu UKŁAD
+  sekcji, nie proporcje (dłuższy, smukły kadłub w limicie klasy VI).
 
 ## Budowa: worker i pamięć etapów
 
@@ -95,7 +99,7 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
 - Nowa barwa używana w passach map → przenieś ją do passu barw (jak okna: siła w mapie, barwa w ALB / EOUT), inaczej
   zmiana palety nie odświeży obrazu ścieżką barw.
 - Palety (`HD_PALETTES`): Terra Nova, frakcje gry (`HD_FACTION_PALETTE`: mars, inner, belt, outer, pirate), Atlas,
-  Cywilny. Żadna barwa poza oknami nie może zapalać `hullGlowMask` (test `hullDesignPaint`); `glowSafeLinear` ścisza
+  Atlas — czerń (`atlasDark`: grafit i szarość sprite'a Atlasa, emblemat `wing`), Cywilny, Frachtowiec. Żadna barwa poza oknami nie może zapalać `hullGlowMask` (test `hullDesignPaint`); `glowSafeLinear` ścisza
   niebieski do 0,38 przy czerwonym < 0,25 (zgodnie z maską). Emblemat nacji `HD_PALETTE_EMBLEM` (piraci — `raider`,
   bez czaszek), barwa `HD_PALETTE_EMBLEM_COLOR`; emblemat z wyboru palety ma `nation: true`.
 - Pędzel: `paint` na klocku (nie wycięciu) albo kasztelu — slot `HD_PAINT_SLOTS` albo '#rrggbb' (`normalizeHullPaint`);
@@ -326,15 +330,32 @@ pakiet co sprite (alfa → belki, albedo, mapa powierzchni HullSurface, emisja, 
   `node scripts/kreator-sprawdz-preset.mjs --plik src/game/hullDesign/freighters/<klucz>.js --png .tmp/kreator/plan`
   (bez rejestru — błąd innego pliku go nie zatrzyma; podgląd CPU: poziomy, moduły, siatka kontenerów, trasy sieci).
 
+## Superkapitał linii Atlasa (Hyperion)
+
+- `src/game/hullDesign/warships/hyperion.js` (klucz `hyperion`, grupa 'tn', klasa VI w `HD_PRESET_CLASS`): 2428 × 488 j.
+  (~5 : 1), ~873 tys. j² (w drabinie — limit VI 900 tys.), paleta `atlasDark`. Od rufy, jak szkic Atlasa
+  (`scripts/blender/atlas/szkic-uzytkownika-v2.jpg`): 5 gondol MAIN, szeroki blok rufowy z nadbudówką (mostek v 2 VI,
+  4 specjalne 2 × 2, 6 głównych), rdzeń v 2 przed nadbudówką, DŁUGA szyja z wcięciami (wrota `hangar` + pola siłowe —
+  paski bez niebieskiego ponad maskę), sekcja dziobowa z luku (`cargo` v 0), widły z zaokrąglonymi końcami; 44 gniazda
+  (20 głównych, 4 specjalne, 2 rakietowe, 18 obrony punktowej), ciężkich 28 z 32.
+- Dodatkowa długość idzie w szyję i sekcję dziobową; okrągłe rzeczy (gondole, wieże, rdzeń, końce wideł) zostają
+  okrągłe. Pliki z `warships/` używają zestawu klocków frachtowców (`freighterKit.js`), ale same budują obiekt projektu
+  (rola wojskowa, wygląd TN: `windows` 0, `bevel` 1,9).
+- Podkład do odwzorowania sylwetki: maska szkicu `scripts/blender/atlas/szkic-maska.png` (biały = wnętrze; skala Atlasa
+  1,19 j./px, oś = wiersz 493, x 0 = kolumna 946,5), rozciągana wzdłuż / w poprzek (`--skala sx,sy` w
+  `kreator-sprawdz-preset.mjs` — IoU i czerwony obrys na podglądzie). Hyperion: `--skala 1.580,0.790`, IoU ~0,83.
+
 ## Jak sprawdzić
 
 - `node --test tests/hullDesign.test.mjs tests/hullDesignBlocks.test.mjs tests/hullDesignNetwork.test.mjs
   tests/hullDesignClass.test.mjs tests/shipClasses.test.mjs` (WGSL kompozytora buduje się w Node).
 - Testy budowy i barw: `node --test tests/hullDesignBuild.test.mjs tests/hullDesignPaint.test.mjs`; statki cywilne
   i ładunek: `node --test tests/hullDesignCargo.test.mjs`.
-- Frachtowce: jeden preset — `node scripts/kreator-sprawdz-preset.mjs <klucz> --png .tmp/kreator/plan` (bez przeglądarki);
-  zrzuty z kompozytora — `node scripts/webgpu/kreator-frachtowce.mjs --out .tmp/kreator/frachtowce [--tylko k1,k2]
-  [--projekt plik.json]` (cały okręt, zbliżenie ładunku, załadunek 0,5 i 0).
+- Frachtowce: jeden preset — `node scripts/kreator-sprawdz-preset.mjs <klucz> --png .tmp/kreator/plan` (bez przeglądarki;
+  z podkładem: `--maska <png> --skala sx[,sy] --x0 <px> --y0 <px>`); zrzuty z kompozytora —
+  `node scripts/webgpu/kreator-frachtowce.mjs --out .tmp/kreator/frachtowce [--tylko k1,k2] [--projekt plik.json]
+  [--kadry "x,y,zoom;…"]` (cały okręt, dodatkowe kadry, zbliżenie ładunku, załadunek 0,5 i 0; `--projekt` — każdy
+  projekt, także wojskowy, np. `--tylko hyperion --kadry "-860,0,1.5;900,0,1.5"`).
 - Płynność: `node scripts/webgpu/kreator-plynnosc.mjs --out .tmp/kreator-plynnosc/<katalog> [--tylko custos,bellator,colossus]
   [--profil suwak]` (długie zadania strony — 0, przerwa klatek, czas do obrazu, hash albedo; A/B — ten sam skrypt
   w worktree drugiej wersji, przebiegi na przemian); barwy nacji i pędzel:

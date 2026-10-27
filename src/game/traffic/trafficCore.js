@@ -50,7 +50,7 @@ import { isDerelict } from '../../data/factions.js';
 import {
   createWorldBubble, stepWorldBubble, setBubbleCandidates, packWorldBubble, courseCanLeaveBerth,
   releaseWorldBubbleCourse, refreshFleetStock, refreshWorldBubblePorts, bubblePortIds, collectDockChanges,
-  packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity
+  collectManifestChanges, packBubbleCargo, refreshParkedShips, bubbleFocusRadius, handoffDepartures, holdBubbleEntity, loseBubbleEntity
 } from './workerBubble.js';
 import { resolveTrafficHullId } from '../../data/trafficHulls.js';
 
@@ -413,6 +413,12 @@ export function createTrafficCore(post, options = {}) {
     if (docks) {
       if (docks.docks) message.docks = docks.docks;
       if (docks.undocked) message.undocked = docks.undocked;
+    }
+    // Manifesty ładunku encji (kontenery-łup K1) — tylko zmiany; zrzut przy zniszczeniu bez czekania na krok świata.
+    const manifests = collectManifestChanges(state);
+    if (manifests) {
+      if (manifests.manifests) message.manifests = manifests.manifests;
+      if (manifests.unmanifested) message.unmanifested = manifests.unmanifested;
     }
     if (core.hulls.length !== core.actorHullsSent) {
       message.hulls = [...core.hulls];
