@@ -12,7 +12,7 @@
   zrzut przy obu ścieżkach śmierci, kara reputacji za zestrzelenie bez awansu, podgląd na kanwie 2D, narzędzie
   `scripts/webgpu/kontenery-gra.mjs`. Opis obszaru: reguła `kontenery-lup`. Decyzje orkiestratora: D2, D3, D5–D17
   jak w § 5 (domyślne), D4 i D1 — użytkownik.
-- **D1 (osobny commit):** ładowność Atlasa 400 t (`ATLAS_CARGO_CAP`, `src/data/playerHullCatalog.js`) — skutki w § 7.
+- **D1 (osobny commit):** ładowność Atlasa 400 t (`ATLAS_CARGO_CAP`, `src/data/playerHullCatalog.js`) — skutki w § 6.
 - Dalej: K2 (obraz 3D), K3 (drony), K4 (księga, wyrwa w ładowni), K5.
 
 ## 1. Stan przed K1: co się działo z ładunkiem zniszczonego frachtowca
@@ -28,7 +28,7 @@ jeśli zestrzelił go gracz.
 - Hak gry robi tylko wybuch: `onTrafficActorDestroyed` → `triggerReactorBlow3D` (`index.html:16322`). W grze nie ma
   wraku ani ładunku (potwierdza `docs/E6-banka-w-grze.md:102`).
 - Reputacja nie spada: `registerFactionKill` (`index.html:19834`) woła tylko śmierć NPC (`applyDamageToNPC`), a ta
-  ścieżka go omija. To luka niezależna od kontenerów, § 6.
+  ścieżka go omija. To luka niezależna od kontenerów, § 7 (naprawiona w K1 — D13).
 
 ### 1.2 Awansowany NPC (trafiony frachtowiec, `src/game/trafficPromotion.js`)
 
@@ -221,7 +221,7 @@ dostaje jedno gniazdo ZBIÓRKA z wyborem: pusto, wiązka albo drony.
 - **Atlas fabrycznie z wiązką** (w komplecie startowym `FIT_KIT_PARTS`, jak domyślny system F), drony do kupienia
   w porcie. Tak gracz od razu może zbierać, a drony są wyborem: wolniej, dalej, bez zwalniania.
 - **Wiązka kopalni** (tryb N, klawisz T) zostaje osobno. Scalenie w jeden projektor „skały i kontenery” to osobna
-  decyzja na później (§ 6).
+  decyzja na później (§ 7).
 - **Logika dronów:** lot w układzie nosiciela jak drony naprawcze (`repairRig.js`: start i powrót do doku na
   grzbiecie). Cel to kontener, nie komórka kadłuba. Trafienia dronów tą samą drogą co drony naprawcze
   (`RepairSwarm` — pociski, wiązki, flak, wybuchy).
@@ -342,7 +342,7 @@ Pytanie, a po strzałce rekomendacja domyślna.
 17. **D17. Drony zabierają ładowność?** → **Tak**, zatoka −6 slotów luku Atlasa (≈ −96 t przy 2 t na kontener),
     jak przy fregacie i myśliwcach w luku („okręty zabierają miejsce ładunkowi”).
 
-## 7. D1 — ładowność Atlasa 400 t: skutki (pomiar 2026-10-27)
+## 6. D1 — ładowność Atlasa 400 t: skutki (pomiar 2026-10-27)
 
 Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) zamiast geometrii luku (~2,4 tys. t).
 
@@ -376,7 +376,7 @@ Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) 
 - **Testy:** `cargoBays`, `playerHullMarket` (ceny kadłubów nie czytają ładowności), `playerFitSave`, `repairRig`,
   `repairBlock`, `asteroidMining*`, `portCargo`, `scoutBay` — 134 / 134.
 
-## 6. Zauważone przy okazji (poza zakresem)
+## 7. Zauważone przy okazji (poza zakresem)
 
 - `_extraSalvage` / `_cargoManifest` w `salvage.js` to martwa ścieżka; `docs/SPEC-ekonomia-i-logistyka.md:19`, `:117`
   opisuje ją jako działającą.
