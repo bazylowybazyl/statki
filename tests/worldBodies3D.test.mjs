@@ -210,10 +210,10 @@ function useBeforeAssign(src) {
   return bad;
 }
 
-test('partia skór: wariant grafu w limitach WebGPU, slot z aPbN.w, flagi przed gałęzią, połówki jednym programem', async () => {
-  const { skinBatchWarmGeometry, WS } = await import('../src/3d/worldSkinBatch.js');
-  const geo = skinBatchWarmGeometry();
-  assert.equal(vertexBuffers(geo), 1, 'strona partii: jeden bufor wierzchołków z przeplotem');
+test('partia skór: wariant grafu w limitach WebGPU, slot z instance_index, flagi przed gałęzią, połówki jednym programem', async () => {
+  const { WS } = await import('../src/3d/worldSkinBatch.js');
+  // partia rysuje na atrybutach skóry kawałka (z indeksem) — ten sam układ co odłam bez partii
+  const geo = buildingSkinWarmGeometry(true);
   const storageBuffers = (wgsl) => (wgsl.match(/var<storage/g) || []).length;
   const flat = buildWGSL(dock.skinBatchMaterial('bg', false, 0), geo);
   const pod = buildWGSL(dock.skinBatchMaterial('bg', true, 0), geo);
@@ -221,8 +221,9 @@ test('partia skór: wariant grafu w limitach WebGPU, slot z aPbN.w, flagi przed 
   for (const w of [flat, pod, nad]) {
     assert.ok(uniformBuffers(w.vertex) <= 12 && uniformBuffers(w.fragment) <= 12, 'uniformy na etap');
     assert.ok(storageBuffers(w.vertex) <= 8 && storageBuffers(w.fragment) <= 8, 'bufory storage na etap');
+    assert.match(w.vertex, /@builtin\( instance_index \) instanceIndex/, 'slot z instance_index (firstInstance rekordu)');
     const v = mainOf(w.vertex);
-    assert.match(v, /= aPbN\.w;/, 'slot egzemplarza z aPbN.w');
+    assert.match(v, /= instanceIndex;/, 'slot egzemplarza z instance_index');
     // flagi widoczności (WS.FLAGS) czytane PRZED gałęzią widoczności, FFD w gałęzi
     const flags = v.search(new RegExp(`worldSkinStore\\.value\\[ \\( nodeVar\\d+ \\+ ${WS.FLAGS}u \\) \\]`));
     const branch = v.indexOf('if ( ( dot(');
@@ -234,10 +235,10 @@ test('partia skór: wariant grafu w limitach WebGPU, slot z aPbN.w, flagi przed 
   }
   assert.equal(pod.vertex, nad.vertex, 'połówki bryły i zestawy — jeden program wierzchołków');
   assert.equal(pod.fragment, nad.fragment, 'połówki bryły i zestawy — jeden program fragmentów');
-  // ścieżka bez partii (siatka egzemplarza) bez bufora partii
-  const own = buildWGSL(dock.skinMaterial('bg'), buildingSkinWarmGeometry(true));
-  assert.doesNotMatch(own.vertex + own.fragment, /worldSkinStore/);
-  assert.equal(dock.skinBatchMaterial('fg', true, 1), dock.skinBatchMaterial('fg', true, 1), 'materiał raz na stronę');
+  // ścieżka bez partii (siatka egzemplarza) bez bufora partii i bez instance_index
+  const own = buildWGSL(dock.skinMaterial('bg'), geo);
+  assert.doesNotMatch(own.vertex + own.fragment, /worldSkinStore|instance_index/);
+  assert.equal(dock.skinBatchMaterial('fg', true, 1), dock.skinBatchMaterial('fg', true, 1), 'materiał raz na połówkę');
   assert.deepEqual(dock.skinBatchMaterial('fg', true, 1).uniforms.uSkinFlag.value.toArray(), [0, 0, 0, 1]);
   assert.deepEqual(dock.skinBatchMaterial('bg', true, 0).uniforms.uSkinClip.value.toArray(), [-1, 0]);
   assert.deepEqual(dock.skinBatchMaterial('fg', false, 0).uniforms.uSkinClip.value.toArray(), [0, 0]);
@@ -258,58 +259,64 @@ function shatteredPiece(chunkId = 'H-W1') {
   return { r, e, hull, lat, skin, group, frags };
 }
 
-test('partia skór: kopia podzbioru odłamu — wierzchołki 1:1 ze skórą kawałka, slot w aPbN.w, miejsce po wpisie wraca', async () => {
-  const { WorldSkinBatch, SKIN_BATCH_STRIDE, SKIN_BATCH_SLOT, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
+test('partia skór: odłam = indeks podzbioru na atrybutach skóry kawałka + rekord rysunku pośredniego, miejsce po wpisie wraca', async () => {
+  const { WorldSkinBatch, SKIN_BATCH_RECORD, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
   const { fragmentSkinSubset } = await import('../src/3d/worldBodies3D.js');
   const { skin, lat, frags } = shatteredPiece();
   assert.ok(frags.length >= 3, `odłamy: ${frags.length}`);
   const tris = (g) => (g ? g.index.count / 3 : 0);
   const geo = tris(skin.fg) >= tris(skin.bg) ? skin.fg : skin.bg;
-  const batch = new WorldSkinBatch({ set: 'fg', solid: false, halves: [{ material: dock.skinBatchMaterial('fg'), layer: 2 }] });
-  const run = (it) => { let r = it.next(); while (!r.done) r = it.next(); return r.value; };
-  const P = geo.attributes.position.array, N = geo.attributes.normal.array, IB = geo.attributes.aLat.data;
-  const entries = [];
-  frags.forEach((w, i) => {
+  const halves = [{ material: dock.skinBatchMaterial('bg', true, 0), layer: 1 }, { material: dock.skinBatchMaterial('bg', true, 1), layer: 2 }];
+  const batch = new WorldSkinBatch({ source: geo, set: 'bg', solid: true, halves });
+  // siatki połówek na WSPÓLNYCH atrybutach skóry kawałka, wspólny indeks i rekordy, osobne listy rysunków
+  for (const p of batch.parts) {
+    assert.equal(p.geometry.attributes.aLat, geo.attributes.aLat, 'atrybuty skóry kawałka (bez kopii wierzchołków)');
+    assert.equal(p.geometry.index, batch.aIdx);
+    assert.equal(p.geometry.indirect, batch.aRec);
+    assert.equal(p.geometry.indirectOffset, p.offsets);
+  }
+  assert.notEqual(batch.parts[0].offsets, batch.parts[1].offsets, 'połówki — osobne listy rysunków');
+  const entries = frags.map((w, i) => {
     const sub = fragmentSkinSubset(geo, w.beamHull.body, lat);
-    const slot = 10 + i;
-    const entry = run(batch.addSteps(slot, sub));
+    const entry = batch.add(10 + i, sub);
     assert.ok(entry && entry.alive, 'wpis');
     assert.equal(entry.iCount, sub.index.count);
-    const page = entry.page, D = page.data;
-    for (let k = 0; k < sub.index.count; k++) {
-      const v = sub.index.array[k];
-      const b = page.idx[entry.iStart + k];
-      assert.ok(b >= entry.vStart && b < entry.vStart + entry.vCount, 'indeks w obrębie wpisu');
-      const o = b * SKIN_BATCH_STRIDE;
-      for (let c = 0; c < 3; c++) {
-        assert.equal(D[o + c], P[v * 3 + c], 'pozycja');
-        assert.equal(D[o + 3 + c], N[v * 3 + c], 'normalna');
-      }
-      for (let c = 0; c < 18; c++) {
-        if (6 + c === SKIN_BATCH_SLOT) continue;
-        assert.equal(D[o + 6 + c], IB.array[v * IB.stride + c], `atrybut skóry ${c}`);
-      }
-      assert.equal(D[o + SKIN_BATCH_SLOT], slot, 'slot w aPbN.w');
-    }
-    assert.ok(page.geometry.drawRange.count >= entry.iStart + entry.iCount, 'zakres rysowania obejmuje wpis');
-    entries.push(entry);
+    assert.deepEqual([...batch.idx.subarray(entry.iStart, entry.iStart + entry.iCount)], [...sub.index.array.subarray(0, sub.index.count)],
+      'indeks wpisu = indeks podzbioru (numery wierzchołków skóry kawałka)');
+    const o = entry.rec * SKIN_BATCH_RECORD;
+    assert.deepEqual([...batch.recs.subarray(o, o + SKIN_BATCH_RECORD)], [entry.iCount, 1, entry.iStart, 0, 10 + i],
+      'rekord: liczba indeksów, 1 instancja, początek, wierzchołek 0, firstInstance = slot');
+    assert.equal(entry.offset, o * 4, 'przesunięcie rekordu w bajtach');
+    return entry;
   });
-  assert.equal(batch.pages.length, 1, 'odłamy kawałka w jednej stronie');
-  const page = batch.pages[0];
-  // usunięty wpis: trójkąty zdegenerowane, miejsce wraca do następnego wpisu (pierwsze dopasowanie)
-  const gone = entries[1];
+  // rysunki klatki: połówka „pod” — dwa wpisy w podanej kolejności, „nad” — żaden (siatka schowana)
+  assert.equal(batch.setDraws(0, [entries[2], entries[0]], 2, null), 1);
+  assert.deepEqual(batch.parts[0].offsets, [entries[2].offset, entries[0].offset]);
+  assert.ok(batch.parts[0].mesh.visible);
+  assert.equal(batch.setDraws(1, [], 0, null), 0);
+  assert.ok(!batch.parts[1].mesh.visible);
+  // usunięty wpis: znika z list rysunków, miejsce w indeksie i rekord wracają
+  const gone = entries[0];
   batch.remove(gone);
-  assert.ok(page.idx.subarray(gone.iStart, gone.iStart + gone.iCount).every((x) => x === 0), 'indeks wpisu wyzerowany');
-  const again = run(batch.addSteps(99, fragmentSkinSubset(geo, frags[1].beamHull.body, lat)));
+  assert.deepEqual(batch.parts[0].offsets, [entries[2].offset], 'usunięty wpis bez rysunku');
+  const again = batch.add(99, fragmentSkinSubset(geo, frags[0].beamHull.body, lat));
   assert.equal(again.iStart, gone.iStart, 'indeks w zwolnionym miejscu');
-  assert.equal(again.vStart, gone.vStart, 'wierzchołki w zwolnionym miejscu');
-  for (const e of [...entries.filter((x) => x !== gone), again]) batch.remove(e);
-  assert.equal(batch.pages.length, 0, 'pusta strona zwolniona');
-  assert.equal(SKIN_BATCH_STATS.entries, 0);
+  assert.equal(again.rec, gone.rec, 'zwolniony rekord');
+  // wzrost indeksu: siatki połówek dostają nowy bufor indeksu
+  const icap0 = batch.icap;
+  const keep = [...batch.idx.subarray(entries[2].iStart, entries[2].iStart + entries[2].iCount)];
+  const big = { index: { count: icap0, array: new Uint32Array(icap0) }, drawRange: { count: Infinity } };
+  const e2 = batch.add(7, big);
+  assert.ok(e2 && batch.icap > icap0, `indeks partii urósł: ${icap0} → ${batch.icap}`);
+  for (const p of batch.parts) assert.equal(p.geometry.index, batch.aIdx, 'nowy indeks w siatkach połówek');
+  assert.deepEqual([...batch.idx.subarray(entries[2].iStart, entries[2].iStart + entries[2].iCount)], keep, 'wpisy przeniesione do większego indeksu');
+  const n0 = SKIN_BATCH_STATS.entries, k = batch.entries.length;
+  batch.dispose();
+  assert.equal(SKIN_BATCH_STATS.entries, n0 - k, 'statystyki wpisów po zwolnieniu partii');
   for (const w of frags) HullBodies.release(w);
 });
 
-test('partia skór w klatce: odłamy w partii, flagi i macierz model-widok z haka passa, A/B własnymi siatkami', async () => {
+test('partia skór w klatce: odłamy w partii, rysunki i macierz model-widok z haka passa, A/B własnymi siatkami', async () => {
   const W3 = await import('../src/3d/worldBodies3D.js');
   const { Core3D } = await import('../src/3d/core3d.js');
   const { WorldSkinStore, WORLD_SKIN_SLOT_VEC4, WS, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
@@ -327,6 +334,7 @@ test('partia skór w klatce: odłamy w partii, flagi i macierz model-widok z hak
   site.pieces.push(piece);
   for (const w of frags) w.beamHull.world = piece;
   W3.setWorldBodiesSource({ sites: [site], focus: [], renderEntities: () => frags });
+  const sets = ['bg', 'fg'].filter((s) => skin[s]);
   try {
     const S = W3.WORLD_SKIN_STATS;
     for (let i = 0; i < 400 && S.batchSlots < frags.length; i++) W3.syncWorldBodies3D();
@@ -334,58 +342,59 @@ test('partia skór w klatce: odłamy w partii, flagi i macierz model-widok z hak
     W3.syncWorldBodies3D();
     assert.equal(S.batched, frags.length, 'odłamy rysowane partią');
     assert.equal(S.shownFrag, frags.length);
-    // egzemplarze schowane (nośniki macierzy i sfer), strony w scenie
+    assert.equal(SKIN_BATCH_STATS.batches, sets.length, 'partia na zestaw skóry kawałka');
+    // egzemplarze schowane (nośniki macierzy i sfer), siatki partii w scenie — na atrybutach skóry kawałka
     const roots = Core3D.scene.children.filter((o) => o.name === 'ciało świata');
     assert.ok(roots.length >= frags.length && roots.every((o) => !o.visible), 'siatki egzemplarzy schowane');
-    const pages = Core3D.scene.children.filter((o) => /^ciało świata — partia/.test(o.name));
-    assert.ok(pages.length >= 1 && pages.length <= 2, `strony: ${pages.length}`);
-    // hak passa: kamera nad odłamami — wszystkie w kadrze, macierz model-widok jak three (double → float32)
+    const parts = Core3D.scene.children.filter((o) => /^ciało świata — partia/.test(o.name));
+    assert.equal(parts.length, sets.length, `siatki partii: ${parts.length}`);
+    for (const m of parts) assert.ok(m.geometry.indirect && m.geometry.attributes.aLat === skin[m.name.includes('(fg') ? 'fg' : 'bg'].attributes.aLat);
+    // hak passa: kamera nad odłamami — wszystkie w kadrze, rysunek na odłam, od najbliższych
     const cam = new THREE.PerspectiveCamera(50, 1.6, 10, 1e7);
     cam.position.set(0, 0, 60000);
     cam.lookAt(0, 0, 0);
     cam.updateMatrixWorld();
     const n = W3.commitWorldSkinStore(cam);
-    assert.ok(n >= 1, `widoczne strony: ${n}`);
-    assert.ok(pages.every((m) => m.visible === m.geometry.drawRange.count > 0), 'strona z wpisem widoczna');
+    assert.equal(n, sets.length, `obiekty renderu partii: ${n}`);
+    for (const m of parts) {
+      assert.ok(m.visible);
+      assert.equal(m.geometry.indirectOffset.length, frags.length, 'rysunek na odłam');
+    }
     const A = WorldSkinStore.array();
     const mv = new THREE.Matrix4();
-    let checked = 0;
-    // slot egzemplarza z wierzchołków jego wpisu (aPbN.w), dane slotu = wartości siatki egzemplarza (odłam ma wpis
-    // w stronie każdego swojego zestawu — slot ten sam)
-    const seen = new Set();
-    for (const p of pages) {
-      const D = p.geometry.attributes.aPbN.data.array;
-      const I = p.geometry.index.array;
-      for (let k = 0; k < p.geometry.drawRange.count; k += 3) {
-        const slot = D[I[k] * 24 + 13];
-        if (!slot || seen.has(slot)) continue;
-        seen.add(slot);
-        const o = slot * WORLD_SKIN_SLOT_VEC4 * 4;
-        assert.ok(A[o + WS.FLAGS * 4] + A[o + WS.FLAGS * 4 + 2] >= 1, `slot ${slot}: flaga zestawu`);
-        const owner = roots.find((root) => root.children.some((m) => m.userData.skin3D && A[o + WS.CMIN * 4 + 3] === m.userData.skin3D.offset));
-        assert.ok(owner, `slot ${slot}: egzemplarz o tym slocie pola`);
-        const m0 = owner.children[0];
-        mv.multiplyMatrices(cam.matrixWorldInverse, m0.matrixWorld);
-        for (let q = 0; q < 16; q++) assert.equal(A[o + q], Math.fround(mv.elements[q]), 'macierz model-widok');
-        for (let q = 0; q < 16; q++) assert.equal(A[o + WS.HUB * 4 + q], Math.fround(m0.userData.bodyToHub.elements[q]), 'ciało → budowla');
-        const st = m0.userData.skin3D;
-        assert.deepEqual([...A.subarray(o + WS.CDIM * 4, o + WS.CDIM * 4 + 4)], [st.cdim.x, st.cdim.y, st.cdim.z, 1]);
-        checked++;
-      }
+    // slot egzemplarza z rekordu (firstInstance), dane slotu = wartości siatki egzemplarza
+    const m0 = parts[0];
+    const R = m0.geometry.indirect.array;
+    let prevDepth = -Infinity;
+    for (const off of m0.geometry.indirectOffset) {
+      const slot = R[off / 4 + 4];
+      const o = slot * WORLD_SKIN_SLOT_VEC4 * 4;
+      assert.ok(A[o + WS.FLAGS * 4] + A[o + WS.FLAGS * 4 + 2] >= 1, `slot ${slot}: flaga zestawu`);
+      const owner = roots.find((root) => root.children.some((m) => m.userData.skin3D && A[o + WS.CMIN * 4 + 3] === m.userData.skin3D.offset));
+      assert.ok(owner, `slot ${slot}: egzemplarz o tym slocie pola`);
+      const me = owner.children[0];
+      mv.multiplyMatrices(cam.matrixWorldInverse, me.matrixWorld);
+      for (let q = 0; q < 16; q++) assert.equal(A[o + q], Math.fround(mv.elements[q]), 'macierz model-widok');
+      for (let q = 0; q < 16; q++) assert.equal(A[o + WS.HUB * 4 + q], Math.fround(me.userData.bodyToHub.elements[q]), 'ciało → budowla');
+      const st = me.userData.skin3D;
+      assert.deepEqual([...A.subarray(o + WS.CDIM * 4, o + WS.CDIM * 4 + 4)], [st.cdim.x, st.cdim.y, st.cdim.z, 1]);
+      // kolejność od najbliższych: głębokość środka sfery w kamerze rośnie
+      const c = new THREE.Vector3().copy(me.boundingSphere.center).applyMatrix4(me.matrixWorld).applyMatrix4(cam.matrixWorldInverse);
+      assert.ok(-c.z >= prevDepth - 1e-6, 'rysunki od najbliższych');
+      prevDepth = -c.z;
     }
-    assert.equal(checked, frags.length, 'każdy odłam ma slot w partii');
-    // poza kadrem: flagi zerowe, strony schowane
-    cam.position.set(0, 0, 60000);
+    // poza kadrem: bez rysunków partii
     cam.lookAt(1e7, 0, 60000);
     cam.updateMatrixWorld();
     W3.syncWorldBodies3D();
     assert.equal(W3.commitWorldSkinStore(cam), 0, 'kamera obok — bez rysunków partii');
-    // A/B: własne siatki egzemplarzy, strony schowane
+    assert.ok(parts.every((m) => !m.visible && m.geometry.indirectOffset.length === 0));
+    // A/B: własne siatki egzemplarzy, partie bez rysunków
     W3.WORLD_SKIN_OPTIONS.batch = false;
     W3.syncWorldBodies3D();
     W3.commitWorldSkinStore(cam);
     assert.ok(roots.every((o) => o.visible), 'A/B: siatki egzemplarzy widoczne');
-    assert.ok(pages.every((m) => !m.visible), 'A/B: strony schowane');
+    assert.ok(parts.every((m) => !m.visible), 'A/B: partie schowane');
     assert.equal(W3.WORLD_SKIN_STATS.batched, 0);
   } finally {
     W3.WORLD_SKIN_OPTIONS.batch = true;
@@ -394,5 +403,6 @@ test('partia skór w klatce: odłamy w partii, flagi i macierz model-widok z hak
     for (const w of frags) HullBodies.release(w);
   }
   assert.equal(SKIN_BATCH_STATS.entries, 0, 'reset: wpisy zwolnione');
-  assert.equal(SKIN_BATCH_STATS.pages, 0, 'reset: strony zwolnione');
+  assert.equal(SKIN_BATCH_STATS.batches, 0, 'reset: partie zwolnione');
+  assert.ok(!Core3D.scene.children.some((o) => /^ciało świata — partia/.test(o.name)), 'reset: siatki partii poza sceną');
 });

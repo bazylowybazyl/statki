@@ -1,22 +1,20 @@
 // src/3d/worldSkinBatch.js
 //
 // PARTIE skór ciał świata (2026-10-27, docs/AUDYT-baza-po-upadku-2026-10-27.md § 5). Odłam budowli (wyspa, wrak
-// kawałka — worldBodies3D.js) był osobną siatką na zestaw (bryła 3D — na zestaw i połówkę), a każdy rysunek kosztuje
-// ~15–25 µs CPU three r183: po upadku bazy piratów ~200 rysunków skór nad polem gruzu, klatka workera ~4,4 ms. Tu
-// odłamy jednej (budowla × zestaw × rodzaj skóry) rysują się JEDNYM rysunkiem na stronę partii (bryła 3D — dwoma:
-// połówka pod płaszczyzną w passie tła, nad nią w FG):
-//  - wierzchołki PODZBIORU odłamu (fragmentSkinSubset — trójkąty kawałka, które odłam widzi) skopiowane do bufora strony
-//    z przeplotem: pozycja, normalna i atrybuty wariantu „skin” tak jak w skórze kawałka, slot egzemplarza w aPbN.w
-//    (kolumna, której graf nie czyta); indeks przesunięty na początek wpisu. Odłamy kawałka dzielą wierzchołki skóry
-//    kawałka (podzbiory to indeksy), a dane egzemplarza są w wierzchołku — stąd kopia, nie wspólne atrybuty;
+// kawałka — worldBodies3D.js) to osobny egzemplarz skóry: dawniej osobna siatka na zestaw (bryła 3D — na zestaw
+// i połówkę), a każdy rysunek kosztuje ~15–25 µs CPU three r183 — po upadku bazy piratów ~200 rysunków skór nad polem
+// gruzu, klatka workera ~4,4 ms. Tu odłamy jednego kawałka (ta sama skóra — geometria zestawu) rysują się JEDNYM
+// obiektem renderu na połówkę: siatka na WSPÓLNYCH atrybutach skóry kawałka (bez kopii wierzchołków), indeks partii =
+// podzbiory odłamów (fragmentSkinSubset — trójkąty kawałka, które odłam widzi) ułożone w jednym buforze, a każdy odłam
+// to rysunek pośredni (drawIndexedIndirect) z rekordu: liczba indeksów, 1 instancja, początek wpisu w indeksie,
+// firstInstance = slot egzemplarza (cecha `indirect-first-instance`) — wierzchołek bierze slot z instance_index.
 //  - dane egzemplarza (macierze, slot pola skóry, mapa ran, rany brył, flagi widoczności) w buforze storage ze slotem
-//    (WorldSkinStore, układ WS) — wierzchołek czyta je po slocie z atrybutu, fragment po slocie z varyingu;
-//  - przycinanie do kadru i połówek: flaga na (zestaw × połówka) egzemplarza (WS.FLAGS), liczona w haku passa tą samą
-//    sferą i tym samym testem co three (worldBodies3D.commitWorldSkinStore) — wierzchołek niewidocznego egzemplarza
-//    wypada poza bryłę obcinania bez liczenia FFD, a strona bez widocznego wpisu nie idzie do rysowania.
-// Strony o stałej pojemności, wolne miejsca po usuniętych wpisach biorą nowe (pierwsze dopasowanie) — bez przepisywania
-// partii (pełna wysyłka partii przy kompaktowaniu to dziesiątki MB w jednej klatce); wpis większy od strony dostaje
-// stronę na miarę. Kolejność w stronie = kolejność miejsc (materiał nieprzezroczysty z testem głębi — obraz ten sam).
+//    (WorldSkinStore, układ WS) — wierzchołek czyta je po slocie, fragment po slocie z varyingu;
+//  - widoczność i kolejność: lista przesunięć rekordów (geometry.indirectOffset) układana co klatkę w haku passa
+//    (worldBodies3D.commitWorldSkinStore — ten sam test kadru co three) od najbliższych; odłam poza kadrem albo połówka
+//    bez fragmentu nie ma rysunku (zero pracy GPU), rekordy na GPU zmieniają się tylko przy dodaniu odłamu.
+// Wersja z KOPIĄ wierzchołków podzbiorów do wspólnych stron (2026-10-27, pierwsze podejście) dawała ~1,5 mln kopii
+// wierzchołków (~200 MB) po upadku bazy i przy zajętej pamięci GPU strony czytane wolno (GPU 3 → 11 ms) — odrzucona.
 import * as THREE from 'three/webgpu';
 import { storage } from 'three/tsl';
 import { zbierzZakres, zbierzZakresy } from './zakresyWysylki.js';
@@ -102,21 +100,11 @@ export const WorldSkinStore = {
   }
 };
 
-// ── Strony partii ───────────────────────────────────────────────────────────────────────────────────────────────
-// Wierzchołek partii (float32, przeplot): pozycja 0, normalna 3, aPbA 6, aPbN 10 (w = slot egzemplarza), aPbFx 14,
-// aLat 18, aOwn 21 — jeden bufor wierzchołków (limit 8 na pipeline), 96 B jak skóra kawałka.
-export const SKIN_BATCH_STRIDE = 24;
-export const SKIN_BATCH_SLOT = 13;
-const LAYOUT = [['position', 3, 0], ['normal', 3, 3], ['aPbA', 4, 6], ['aPbN', 4, 10], ['aPbFx', 4, 14], ['aLat', 3, 18], ['aOwn', 3, 21]];
-// Pierwsza strona partii mała (kilka odłamów przed upadkiem budowli — 6 MB), kolejne duże (pole gruzu po upadku bazy
-// piratów: ~1,5 mln wierzchołków w partiach — mniej stron = mniej rysunków); nowa strona wysyła przy tworzeniu bufor
-// w całości (three: mappedAtCreation), więc nie większe niż ~25 MB naraz.
-const PAGE_VERTS_FIRST = 1 << 16;   // 65 536 wierzchołków (6,3 MB)
-const PAGE_VERTS = 1 << 18;         // 262 144 wierzchołki (25 MB)
-const PAGE_INDEX_PER_VERT = 4;      // indeksów na wierzchołek pojemności (skóry: ~2,6 indeksu na wierzchołek)
-const COPY_STEP = 16384;            // wierzchołków / indeksów na krok generatora kopii
-
-export const SKIN_BATCH_STATS = { pages: 0, entries: 0, verts: 0, indices: 0, bytes: 0, copies: 0, copyVerts: 0 };
+// ── Partia odłamów jednej skóry kawałka ─────────────────────────────────────────────────────────────────────────
+// Rekord rysunku pośredniego (uint32): liczba indeksów, liczba instancji (1), pierwszy indeks, bazowy wierzchołek (0),
+// pierwsza instancja = slot egzemplarza.
+export const SKIN_BATCH_RECORD = 5;
+export const SKIN_BATCH_STATS = { batches: 0, entries: 0, indices: 0, bytes: 0 };
 
 function pow2AtLeast(n, min) {
   let c = min;
@@ -147,207 +135,145 @@ function freeRange(free, start, n) {
     else i++;
   }
 }
-// koniec zajętej części (wolny przedział sięgający pojemności się nie liczy)
-function highWater(free, cap) {
-  const last = free[free.length - 1];
-  return last && last[1] >= cap ? last[0] : cap;
-}
-
-class SkinBatchPage {
-  constructor(batch, vcap, icap) {
-    this.batch = batch;
-    this.vcap = vcap;
-    this.icap = icap;
-    this.data = new Float32Array(vcap * SKIN_BATCH_STRIDE);
-    this.idx = new Uint32Array(icap);
-    this.vFree = [[0, vcap]];
-    this.iFree = [[0, icap]];
-    this.entries = 0;
-    this.vis = [0, 0];        // wpisy z widoczną połówką (klatka — commit)
-    this.ib = new THREE.InterleavedBuffer(this.data, SKIN_BATCH_STRIDE);
-    this.aIdx = new THREE.BufferAttribute(this.idx, 1);
-    const g = this.geometry = new THREE.BufferGeometry();
-    for (const [name, size, off] of LAYOUT) g.setAttribute(name, new THREE.InterleavedBufferAttribute(this.ib, size, off));
-    g.setIndex(this.aIdx);
-    g.setDrawRange(0, 0);
-    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e12);
-    this.meshes = batch.halves.map((h, i) => {
-      const m = new THREE.Mesh(g, h.material);
-      m.name = `ciało świata — partia (${batch.set}${batch.solid ? (i ? ' nad' : ' pod') : ''})`;
-      m.frustumCulled = false;
-      m.layers.set(h.layer);
-      m.visible = false;
-      m.matrixAutoUpdate = false;
-      return m;
-    });
-    for (const m of this.meshes) batch.scene?.add(m);
-    SKIN_BATCH_STATS.pages++;
-    SKIN_BATCH_STATS.bytes += this.data.byteLength + this.idx.byteLength;
-  }
-
-  _drawRange() {
-    this.geometry.setDrawRange(0, highWater(this.iFree, this.icap));
-  }
-
-  dispose() {
-    for (const m of this.meshes) m.removeFromParent();
-    this.geometry.dispose();
-    SKIN_BATCH_STATS.pages--;
-    SKIN_BATCH_STATS.bytes -= this.data.byteLength + this.idx.byteLength;
-  }
-}
-
-// Kopia wierzchołków podzbioru: numer wierzchołka kawałka → miejsce we wpisie (znacznik pokolenia zamiast czyszczenia
-// tablicy), kolejność pierwszego wystąpienia w indeksie. Wspólne dla wszystkich partii (kopie idą po kolei).
-let _stamp = new Uint32Array(0);
-let _map = new Uint32Array(0);
-let _order = new Uint32Array(0);
-let _gen = 0;
 
 /**
- * Partia skór (budowla × zestaw × rodzaj skóry): strony z siatką na połówkę (`halves`: [{ material, layer }] — skóra
- * płaska jedna, bryła 3D dwie: pod płaszczyzną, nad nią), siatki stron w `scene`. Wpis = odłam: `addSteps` kopiuje
- * podzbiór w krokach, `remove` zwalnia miejsce.
+ * Partia odłamów jednej skóry kawałka (geometria zestawu `source` z indeksem — wspólne atrybuty): siatka na połówkę
+ * (`halves`: [{ material, layer }] — skóra płaska jedna, bryła 3D dwie: pod płaszczyzną, nad nią), siatki w `scene`.
+ * Wpis = odłam: `add` kopiuje indeks podzbioru i zapisuje rekord rysunku, `remove` zwalnia miejsce. Rysowane wpisy
+ * i ich kolejność ustala co klatkę `setDraws(połówka, wpisy)`.
  */
 export class WorldSkinBatch {
-  constructor({ set, solid, halves, scene = null }) {
+  constructor({ source, set, solid, halves, scene = null }) {
+    this.source = source;
     this.set = set;
     this.solid = !!solid;
     this.halves = halves;
     this.scene = scene;
-    this.pages = [];
+    this.entries = [];
+    this._idxAlloc(pow2AtLeast(source.index ? source.index.count : 3, 4096), null);
+    this._recAlloc(16, null);
+    this.parts = halves.map((h, i) => {
+      const g = new THREE.BufferGeometry();
+      for (const name of Object.keys(source.attributes)) g.setAttribute(name, source.attributes[name]);
+      g.setIndex(this.aIdx);
+      const offsets = [];
+      g.setIndirect(this.aRec, offsets);
+      g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e12);
+      const m = new THREE.Mesh(g, h.material);
+      m.name = `ciało świata — partia (${set}${this.solid ? (i ? ' nad' : ' pod') : ''})`;
+      m.frustumCulled = false;
+      m.layers.set(h.layer);
+      m.visible = false;
+      scene?.add(m);
+      return { geometry: g, mesh: m, offsets };
+    });
+    SKIN_BATCH_STATS.batches++;
   }
 
+  _idxAlloc(cap, old) {
+    const idx = new Uint32Array(cap);
+    if (old) idx.set(old.subarray(0, Math.min(old.length, cap)));
+    SKIN_BATCH_STATS.bytes += idx.byteLength - (old ? old.byteLength : 0);
+    if (old) {
+      // przedział wolny dopisany na końcu (nowa pojemność)
+      freeRange(this.iFree, this.icap, cap - this.icap);
+    } else {
+      this.iFree = [[0, cap]];
+    }
+    this.icap = cap;
+    this.idx = idx;
+    this.aIdx = new THREE.BufferAttribute(idx, 1);
+    if (this.parts) for (const p of this.parts) p.geometry.setIndex(this.aIdx);
+  }
+
+  _recAlloc(cap, old) {
+    const recs = new Uint32Array(cap * SKIN_BATCH_RECORD);
+    if (old) recs.set(old);
+    SKIN_BATCH_STATS.bytes += recs.byteLength - (old ? old.byteLength : 0);
+    if (!old) { this.freeRecs = []; this.nextRec = 0; }
+    this.rcap = cap;
+    this.recs = recs;
+    this.aRec = new THREE.IndirectStorageBufferAttribute(recs, 1);
+    if (this.parts) for (const p of this.parts) p.geometry.setIndirect(this.aRec, p.offsets);
+  }
+
+  get empty() { return this.entries.length === 0; }
+
   /**
-   * Generator: kopia trójkątów `geometry` (indeks na atrybutach skóry kawałka — podzbiór odłamu albo cała skóra) do
-   * strony partii, slot egzemplarza w aPbN.w. `owner.entry` dostaje wpis od chwili przydziału miejsca (porzucenie
-   * kopii — remove(owner.entry)); wynik: wpis albo null (pusty indeks).
+   * Odłam do partii: indeks podzbioru (absolutne numery wierzchołków skóry kawałka — ta sama przestrzeń co `source`)
+   * w wolnym miejscu indeksu partii, rekord rysunku z `slot`. Zwraca wpis albo null (pusty podzbiór).
    */
-  *addSteps(slot, geometry, owner = {}) {
+  add(slot, geometry) {
     const index = geometry.index;
     const count = index ? Math.min(index.count, geometry.drawRange.count) : 0;
     if (!(count >= 3)) return null;
-    const I = index.array;
-    const nSrc = geometry.attributes.position.count;
-    if (_stamp.length < nSrc) {
-      const n = pow2AtLeast(nSrc, 65536);
-      _stamp = new Uint32Array(n);
-      _map = new Uint32Array(n);
-      _order = new Uint32Array(n);
-      _gen = 0;
+    let iStart = allocRange(this.iFree, count);
+    if (iStart < 0) {
+      this._idxAlloc(pow2AtLeast(this.icap + count, this.icap * 2), this.idx);
+      iStart = allocRange(this.iFree, count);
     }
-    if (++_gen >= 0xffffffff) { _stamp.fill(0); _gen = 1; }
-    const gen = _gen;
-    // Tablice pokolenia są wspólne: kopie idą po kolei (kolejka worldBodies3D); kopia wznowiona po cudzej — porzucona.
-    // 1. wierzchołki wpisu w kolejności pierwszego wystąpienia
-    let nv = 0;
-    for (let k = 0; k < count; k++) {
-      if (k > 0 && (k % (4 * COPY_STEP)) === 0) {
-        yield;
-        if (_gen !== gen) return null;
-      }
-      const v = I[k];
-      if (_stamp[v] !== gen) { _stamp[v] = gen; _map[v] = nv; _order[nv++] = v; }
+    this.idx.set(index.array.subarray(0, count), iStart);
+    zbierzZakresy(this.aIdx, iStart, count);
+    let rec;
+    if (this.freeRecs.length) rec = this.freeRecs.pop();
+    else {
+      if (this.nextRec >= this.rcap) this._recAlloc(this.rcap * 2, this.recs);
+      rec = this.nextRec++;
     }
-    // 2. miejsce w stronie (wolne miejsca istniejących stron, inaczej nowa strona)
-    let page = null, vStart = -1, iStart = -1;
-    for (const p of this.pages) {
-      vStart = allocRange(p.vFree, nv);
-      if (vStart < 0) continue;
-      iStart = allocRange(p.iFree, count);
-      if (iStart >= 0) { page = p; break; }
-      freeRange(p.vFree, vStart, nv);
-    }
-    if (!page) {
-      const vcap = pow2AtLeast(nv, this.pages.length ? PAGE_VERTS : PAGE_VERTS_FIRST);
-      page = new SkinBatchPage(this, vcap, pow2AtLeast(count, vcap * PAGE_INDEX_PER_VERT));
-      this.pages.push(page);
-      vStart = allocRange(page.vFree, nv);
-      iStart = allocRange(page.iFree, count);
-    }
-    page.entries++;
-    const entry = { batch: this, page, slot, vStart, vCount: nv, iStart, iCount: count, alive: true };
-    owner.entry = entry;
+    const o = rec * SKIN_BATCH_RECORD;
+    const R = this.recs;
+    R[o] = count; R[o + 1] = 1; R[o + 2] = iStart; R[o + 3] = 0; R[o + 4] = slot;
+    zbierzZakresy(this.aRec, o, SKIN_BATCH_RECORD);
+    const entry = { batch: this, slot, iStart, iCount: count, rec, offset: rec * SKIN_BATCH_RECORD * 4, alive: true, depth: 0 };
+    this.entries.push(entry);
     SKIN_BATCH_STATS.entries++;
-    SKIN_BATCH_STATS.verts += nv;
     SKIN_BATCH_STATS.indices += count;
-    // 3. wierzchołki (atrybuty skóry: zwykłe albo z przeplotem — tablica, krok, przesunięcie)
-    const src = LAYOUT.map(([name, size, off]) => {
-      const a = geometry.attributes[name];
-      if (!a) throw new Error(`worldSkinBatch: skóra bez atrybutu ${name}`);
-      return a.isInterleavedBufferAttribute
-        ? { arr: a.data.array, stride: a.data.stride, offset: a.offset, size, off }
-        : { arr: a.array, stride: a.itemSize, offset: 0, size, off };
-    });
-    const D = page.data;
-    for (let j = 0; j < nv; j++) {
-      if (j > 0 && (j % COPY_STEP) === 0) {
-        yield;
-        if (!entry.alive) return null;
-        if (_gen !== gen) { this.remove(entry); return null; }
-      }
-      const v = _order[j];
-      const o = (vStart + j) * SKIN_BATCH_STRIDE;
-      for (let a = 0; a < src.length; a++) {
-        const s = src[a];
-        const so = v * s.stride + s.offset;
-        for (let c = 0; c < s.size; c++) D[o + s.off + c] = s.arr[so + c];
-      }
-      D[o + SKIN_BATCH_SLOT] = slot;
-    }
-    zbierzZakres(page.ib, vStart * SKIN_BATCH_STRIDE, nv * SKIN_BATCH_STRIDE);
-    // 4. indeks (na końcu — do tej pory zera: trójkąty zdegenerowane)
-    const P = page.idx;
-    for (let k = 0; k < count; k++) P[iStart + k] = vStart + _map[I[k]];
-    zbierzZakresy(page.aIdx, iStart, count);
-    page._drawRange();
-    SKIN_BATCH_STATS.copies++;
-    SKIN_BATCH_STATS.copyVerts += nv;
     return entry;
   }
 
-  /** Wpis znika: indeks zerowany (zdegenerowane), miejsce wolne; pusta strona zwolniona. */
+  /** Wpis znika: miejsce w indeksie i rekord wolne (rysowane są tylko rekordy z listy klatki). */
   remove(entry) {
     if (!entry || !entry.alive) return;
     entry.alive = false;
-    const page = entry.page;
-    page.idx.fill(0, entry.iStart, entry.iStart + entry.iCount);
-    zbierzZakresy(page.aIdx, entry.iStart, entry.iCount);
-    freeRange(page.vFree, entry.vStart, entry.vCount);
-    freeRange(page.iFree, entry.iStart, entry.iCount);
-    page.entries--;
-    SKIN_BATCH_STATS.entries--;
-    SKIN_BATCH_STATS.verts -= entry.vCount;
-    SKIN_BATCH_STATS.indices -= entry.iCount;
-    if (page.entries <= 0) {
-      page.dispose();
-      const i = this.pages.indexOf(page);
-      if (i >= 0) this.pages.splice(i, 1);
-    } else {
-      page._drawRange();
+    freeRange(this.iFree, entry.iStart, entry.iCount);
+    this.freeRecs.push(entry.rec);
+    const i = this.entries.indexOf(entry);
+    if (i >= 0) { this.entries[i] = this.entries[this.entries.length - 1]; this.entries.pop(); }
+    for (const p of this.parts) {
+      const k = p.offsets.indexOf(entry.offset);
+      if (k >= 0) p.offsets.splice(k, 1);
+      if (!p.offsets.length) p.mesh.visible = false;
     }
+    SKIN_BATCH_STATS.entries--;
+    SKIN_BATCH_STATS.indices -= entry.iCount;
+  }
+
+  /**
+   * Rysunki połówki `h` w tej klatce: przesunięcia rekordów `list` (wpisy, kolejność rysowania — od najbliższych),
+   * `n` pierwszych. Siatka bez rysunków nie idzie do rysowania; położenie siatki = punkt najbliższego wpisu (`at` —
+   * three sortuje obiekty nieprzezroczyste od najbliższych; graf partii nie czyta macierzy siatki).
+   */
+  setDraws(h, list, n, at = null) {
+    const p = this.parts[h];
+    if (!p) return 0;
+    const off = p.offsets;
+    off.length = n;
+    for (let k = 0; k < n; k++) off[k] = list[k].offset;
+    const vis = n > 0;
+    if (p.mesh.visible !== vis) p.mesh.visible = vis;
+    if (vis && at) p.mesh.position.copy(at);
+    return vis ? 1 : 0;
   }
 
   dispose() {
-    for (const p of this.pages) p.dispose();
-    this.pages.length = 0;
+    for (const p of this.parts) {
+      p.mesh.removeFromParent();
+      p.offsets.length = 0;
+    }
+    SKIN_BATCH_STATS.batches--;
+    SKIN_BATCH_STATS.bytes -= this.idx.byteLength + this.recs.byteLength;
+    SKIN_BATCH_STATS.entries -= this.entries.length;
+    for (const e of this.entries) { e.alive = false; SKIN_BATCH_STATS.indices -= e.iCount; }
+    this.entries.length = 0;
   }
-}
-
-let _warmGeo = null;
-/** Geometria rozgrzewki: jeden trójkąt z układem atrybutów strony partii (klucz pipeline'u), indeks Uint32. */
-export function skinBatchWarmGeometry() {
-  if (_warmGeo) return _warmGeo;
-  const ib = new THREE.InterleavedBuffer(new Float32Array(3 * SKIN_BATCH_STRIDE), SKIN_BATCH_STRIDE);
-  ib.array[0 * SKIN_BATCH_STRIDE + 3 + 2] = 1;
-  ib.array[1 * SKIN_BATCH_STRIDE + 3 + 2] = 1;
-  ib.array[2 * SKIN_BATCH_STRIDE + 3 + 2] = 1;
-  ib.array[1 * SKIN_BATCH_STRIDE] = 1;
-  ib.array[2 * SKIN_BATCH_STRIDE + 1] = 1;
-  const g = new THREE.BufferGeometry();
-  for (const [name, size, off] of LAYOUT) g.setAttribute(name, new THREE.InterleavedBufferAttribute(ib, size, off));
-  g.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2]), 1));
-  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
-  _warmGeo = g;
-  return g;
 }

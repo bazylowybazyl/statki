@@ -17,7 +17,7 @@ import { NodeMaterial } from 'three/webgpu';
 import {
   Fn, If, Loop, Discard,
   float, int, uint, vec2, vec3, vec4, mat3, mat4,
-  attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry,
+  attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry, instanceIndex,
   modelViewMatrix, modelWorldMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraWorldMatrix, texture,
   abs, clamp, cross, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, round, smoothstep, step
 } from 'three/tsl';
@@ -527,15 +527,16 @@ function buildGraphs(haloU) {
     on: sOn, offset: sOffset, cmin: sCmin, cdim: sCdim, offV: sOffV, toHub: sToHub, toHub3: null,
     mv: modelViewMatrix, mw: modelWorldMatrix, dmgSlot: sDmgSlot, dmgUv: sDmgUv, dmgWorld: sDmgWorld, clip: sClip
   };
-  // PARTIA (src/3d/worldSkinBatch.js — jeden rysunek na stronę partii): wartości egzemplarza z bufora storage po
-  // slocie (wierzchołek — aPbN.w, fragment — varying; zaokrąglenie znosi interpolację stałej), flaga widoczności
-  // (zestaw × połówka egzemplarza, wybór — uSkinFlag strony) i cięcie płaszczyzną (uSkinClip: znak, z) z materiału.
+  // PARTIA (src/3d/worldSkinBatch.js — odłamy kawałka jednym obiektem renderu, odłam = rysunek pośredni): wartości
+  // egzemplarza z bufora storage po slocie (wierzchołek — instance_index = firstInstance rekordu, fragment — varying;
+  // zaokrąglenie znosi interpolację stałej), flaga widoczności (zestaw × połówka egzemplarza, wybór — uSkinFlag
+  // siatki partii) i cięcie płaszczyzną (uSkinClip: znak, z) z materiału.
   const sFlag = pbPerObject(new THREE.Vector4(), 'uSkinFlag');
   const sClipB = pbPerObject(new THREE.Vector2(), 'uSkinClip');
   // kolumna slotu do zmiennej przypisanej w miejscu (pułapki 29, 39, 40: odczyt raz, przed gałęziami, które go czytają)
-  const slotColumns = (slotF) => {
+  const slotColumns = (slotU) => {
     const S = WorldSkinStore.getNode();
-    const base = uint(round(slotF)).mul(uint(WORLD_SKIN_SLOT_VEC4)).toVar();
+    const base = slotU.mul(uint(WORLD_SKIN_SLOT_VEC4)).toVar();
     return (k) => {
       const v = vec4(0.0).toVar();
       v.assign(S.element(base.add(uint(k))));
@@ -600,11 +601,11 @@ function buildGraphs(haloU) {
     return cameraProjectionMatrix.mul(V.mv.mul(vec4(pB, 1.0)));
   };
   const skinVertex = batched ? Fn(() => {
-    // slot egzemplarza w aPbN.w (kolumna bez znaczenia dla cieniowania — worldSkinBatch.js)
-    const slotF = float(0.0).toVar();
-    slotF.assign(attribute('aPbN', 'vec4').w);
-    vSlot.assign(slotF);
-    const col = slotColumns(slotF);
+    // slot egzemplarza = instance_index (firstInstance rekordu rysunku pośredniego — worldSkinBatch.js)
+    const slot = uint(0).toVar();
+    slot.assign(instanceIndex);
+    vSlot.assign(float(slot));
+    const col = slotColumns(slot);
     const flags = col(WS.FLAGS);
     // egzemplarz poza kadrem / połówka bez fragmentu — wierzchołek poza bryłą obcinania, bez FFD (pułapka 16)
     const clip = vec4(2.0, 2.0, 2.0, 1.0).toVar();
@@ -716,7 +717,7 @@ function buildGraphs(haloU) {
   };
   const skinFragment = batched ? Fn(() => {
     // wartości egzemplarza z slotu partii — zmienne na początku (przed pochodnymi i gałęziami)
-    const col = slotColumns(vSlot);
+    const col = slotColumns(uint(round(vSlot)));
     const cminOff = col(WS.CMIN), cdimOn = col(WS.CDIM), dmgSlot = col(WS.DMG_SLOT), dmgUv = col(WS.DMG_UV), dmgW = col(WS.DMG_WORLD);
     return skinFragmentBody({
       on: cdimOn.w, offset: cminOff.w, cmin: cminOff.xyz, cdim: cdimOn.xyz, dmgSlot, dmgUv, dmgWorld: dmgW.xy, clip: sClipB,
