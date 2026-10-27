@@ -1042,9 +1042,11 @@ export function getResourceMass(id, amount = 1) {
 
 /** Łączne obciążenie ładowni dla worka { klucz: ilość }. */
 export function getBagMass(bag) {
+  // for…in bez tablic (woła go krok wiązki łupu, kopalni i cięcia wraków) — ta sama kolejność co Object.entries.
   let total = 0;
-  for (const [id, amount] of Object.entries(bag || {})) {
-    total += getResourceMass(id, amount);
+  if (!bag) return total;
+  for (const id in bag) {
+    if (Object.prototype.hasOwnProperty.call(bag, id)) total += getResourceMass(id, bag[id]);
   }
   return total;
 }
@@ -1052,8 +1054,9 @@ export function getBagMass(bag) {
 /** Łączna wartość worka w CR. */
 export function getBagValue(bag) {
   let total = 0;
-  for (const [id, amount] of Object.entries(bag || {})) {
-    total += getResourceValue(id, amount);
+  if (!bag) return total;
+  for (const id in bag) {
+    if (Object.prototype.hasOwnProperty.call(bag, id)) total += getResourceValue(id, bag[id]);
   }
   return total;
 }
