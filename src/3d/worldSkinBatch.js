@@ -108,9 +108,13 @@ export const WorldSkinStore = {
 export const SKIN_BATCH_STRIDE = 24;
 export const SKIN_BATCH_SLOT = 13;
 const LAYOUT = [['position', 3, 0], ['normal', 3, 3], ['aPbA', 4, 6], ['aPbN', 4, 10], ['aPbFx', 4, 14], ['aLat', 3, 18], ['aOwn', 3, 21]];
-const PAGE_VERTS = 1 << 17;     // 131 072 wierzchołki (12,6 MB) na stronę
-const PAGE_INDEX = 1 << 19;     // 524 288 indeksów (2 MB)
-const COPY_STEP = 16384;        // wierzchołków / indeksów na krok generatora kopii
+// Pierwsza strona partii mała (kilka odłamów przed upadkiem budowli — 6 MB), kolejne duże (pole gruzu po upadku bazy
+// piratów: ~1,5 mln wierzchołków w partiach — mniej stron = mniej rysunków); nowa strona wysyła przy tworzeniu bufor
+// w całości (three: mappedAtCreation), więc nie większe niż ~25 MB naraz.
+const PAGE_VERTS_FIRST = 1 << 16;   // 65 536 wierzchołków (6,3 MB)
+const PAGE_VERTS = 1 << 18;         // 262 144 wierzchołki (25 MB)
+const PAGE_INDEX_PER_VERT = 4;      // indeksów na wierzchołek pojemności (skóry: ~2,6 indeksu na wierzchołek)
+const COPY_STEP = 16384;            // wierzchołków / indeksów na krok generatora kopii
 
 export const SKIN_BATCH_STATS = { pages: 0, entries: 0, verts: 0, indices: 0, bytes: 0, copies: 0, copyVerts: 0 };
 
@@ -255,7 +259,8 @@ export class WorldSkinBatch {
       freeRange(p.vFree, vStart, nv);
     }
     if (!page) {
-      page = new SkinBatchPage(this, pow2AtLeast(nv, PAGE_VERTS), pow2AtLeast(count, PAGE_INDEX));
+      const vcap = pow2AtLeast(nv, this.pages.length ? PAGE_VERTS : PAGE_VERTS_FIRST);
+      page = new SkinBatchPage(this, vcap, pow2AtLeast(count, vcap * PAGE_INDEX_PER_VERT));
       this.pages.push(page);
       vStart = allocRange(page.vFree, nv);
       iStart = allocRange(page.iFree, count);

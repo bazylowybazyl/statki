@@ -208,7 +208,8 @@ const DRAW_READ = `(() => {
   return { klatki: f, rysunkiNaKlatke: +total.toFixed(1), gpuMs, by, pass, partie: { batches, batchQuads: Math.round(batchQuads), nullBatches, nullQuads: Math.round(nullQuads) },
     cialaSwiata: { egz: ws, widoczne: wsVis }, worldSkin: S ? { shown: S.shown, main: S.shownMain, odlamy: S.shownFrag, instances: S.instances,
       triangles: S.triangles, halfCulled: S.halfCulled, wPartii: S.batched, slotyPartii: S.batchSlots, kolejka: S.batchQueue, rysunkiPartii: S.batchDraws,
-      kopiaSzczytMs: +(S.batchCopyPeakMs || 0).toFixed(2), strony: B ? B.pages : 0, wierzcholki: B ? B.verts : 0, MB: B ? +(B.bytes / 1048576).toFixed(1) : 0 } : null };
+      kopiaSzczytMs: +(S.batchCopyPeakMs || 0).toFixed(2), strony: B ? B.pages : 0, wierzcholki: B ? B.verts : 0, MB: B ? +(B.bytes / 1048576).toFixed(1) : 0,
+      stany: S.batchStates ? S.batchStates.slice() : null, wypadly: S.batchOut || null } : null };
 })()`;
 
 // Pipeline'y renderu tworzone w workerze od chwili instalacji (sync = bez obietnicy — w klatce gry, ma być 0).

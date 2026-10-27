@@ -56,6 +56,9 @@ export function setWorldBodiesSource(src) { _wb = src || worldBodies; }
 export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0, bakePeakId: '',
   syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, halfCulled: 0,
   shownMain: 0, shownFrag: 0, batched: 0, batchSlots: 0, batchQueue: 0, batchDraws: 0, batchCopyPeakMs: 0,
+  // pokazane egzemplarze wg stanu partii [−1 własne siatki, 0 jeszcze nie, 1 kopie w toku, 2 w partii] i przyczyny
+  // powrotu do własnych siatek (narastająco)
+  batchStates: [0, 0, 0, 0], batchOut: { noSubset: 0, skinChanged: 0, gone: 0, noSlot: 0, noMaterial: 0, empty: 0 },
   worker: SKIN_BAKE_STATS, batch: SKIN_BATCH_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
 // A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27); batch = false — odłamy własnymi
@@ -418,7 +421,7 @@ function runSubsets(t0) {
       _subsetQueue.shift();
       inst.subsetQueued = false;
       inst.subsetWork = null;
-      abandonSkinBatch(inst);
+      abandonSkinBatch(inst, skin && skin !== inst.assetsKey ? 'skinChanged' : 'gone');
       continue;
     }
     if (!inst.subsetWork) {
@@ -455,7 +458,7 @@ function runSubsets(t0) {
       queueSkinBatchCopy(inst, w.geo === skin.fg ? 'fg' : 'bg', sub);
     } else {
       // odłam bez komórek w kratownicy kawałka — zostaje przy własnych siatkach (pełna geometria, jak dotąd)
-      abandonSkinBatch(inst);
+      abandonSkinBatch(inst, 'noSubset');
     }
   }
 }
@@ -490,10 +493,10 @@ function skinBatchFor(prov, set, solid) {
 function queueSkinBatchCopy(inst, set, geo) {
   if (inst.batchState < 0) return;
   const B = inst.prov?.building;
-  if (!B || typeof B.skinBatchMaterial !== 'function') { abandonSkinBatch(inst); return; }
+  if (!B || typeof B.skinBatchMaterial !== 'function') { abandonSkinBatch(inst, 'noMaterial'); return; }
   if (!inst.slot) {
     inst.slot = WorldSkinStore.acquire();
-    if (!inst.slot) { abandonSkinBatch(inst); return; }
+    if (!inst.slot) { abandonSkinBatch(inst, 'noSlot'); return; }
   }
   const batch = skinBatchFor(inst.prov, set, inst.solid);
   const job = { inst, set, batch, entry: null, it: null };
@@ -505,10 +508,11 @@ function queueSkinBatchCopy(inst, set, geo) {
 function checkSkinBatchReady(inst) {
   if (inst.batchState !== 1 || inst.batchPending > 0 || !inst.subsetsDone) return;
   if (inst.entries.bg || inst.entries.fg) { inst.batchState = 2; _batched.add(inst); }
-  else abandonSkinBatch(inst);
+  else abandonSkinBatch(inst, 'empty');
 }
 // Egzemplarz wraca na stałe do własnych siatek (albo znika): wpisy partii i slot zwolnione.
-function abandonSkinBatch(inst) {
+function abandonSkinBatch(inst, why) {
+  if (inst.batchState >= 0 && why) WORLD_SKIN_STATS.batchOut[why]++;
   inst.batchState = -1;
   releaseSkinBatch(inst);
 }
@@ -774,6 +778,8 @@ export function halfReachesPlane(mesh) {
 export function syncWorldBodies3D() {
   _frame++;
   let shown = 0, triangles = 0, halfCulled = 0, shownMain = 0, shownFrag = 0, batched = 0;
+  const states = WORLD_SKIN_STATS.batchStates;
+  states[0] = states[1] = states[2] = states[3] = 0;
   const list = collect();
   // kawałki ruszone w tej klatce (statyka schowana) — dostawca dostaje stan raz na kawałek
   for (const site of _wb.sites) {
@@ -883,6 +889,7 @@ export function syncWorldBodies3D() {
       inst.root.visible = true;
     }
     if (isMain) shownMain++; else shownFrag++;
+    states[inst.batchState + 1]++;
     piece.__skinShown = true;
     shown++;
     for (const mesh of inst.meshes) {
