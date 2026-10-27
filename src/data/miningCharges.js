@@ -8,9 +8,10 @@
 // (src/game/asteroidMaterials.js).
 //
 // CENY TYMCZASOWE (do decyzji użytkownika — docs/webgpu/POSTEP.md, zadanie 21b): ~∝ E^0,8,
-// skalibrowane pod dawną ładownię Atlasa 20 t (20 t rudy miedzi = 160 CR, tytanu 280, uranu 440).
+// skalibrowane pod dawną ładownię Atlasa 20 t (20 t rudy miedzi = 160 CR, tytanu 280, uranu ≈ 350 — ruda uranu
+// waży 1,2 t na sztukę: 16 szt. × 22 CR).
 // Od 2026-10-27 Atlas ma ATLAS_CARGO_CAP = 400 t (src/data/playerHullCatalog.js; kontenery-łup D1):
-// pełna ładownia rudy miedzi to 3200 CR, tytanu 5600, uranu 8800 — przy tych samych cenach ładunek
+// pełna ładownia rudy miedzi to 3200 CR, tytanu 5600, uranu ≈ 7300 (333 szt.) — przy tych samych cenach ładunek
 // zwraca się ~7× lepiej na skałę. Cen nie zmieniono (do decyzji: docs/PROPOZYCJA-kontenery-lup.md § 6).
 // Mały ładunek na kruchą skałę (lód, kryształ) ma się zwracać, ciężki tylko przy bogatym rdzeniu.
 // Ładunki nie liczą się do masy ładowni (osobny magazynek).
