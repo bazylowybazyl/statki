@@ -213,6 +213,12 @@ export const HD_PALETTES = Object.freeze({
     label: 'Cywilny', hull: '#a99d82', upper: '#cfc8b8', trim: '#45525a', accent: '#d8b83a', metal: '#343a3e',
     hazard: '#d8b83a', window: '#d8f4ff', pipe: '#7a6040', engine: '#4a4d50', door: '#3e464c', grime: '#5a5040', steel: '#8e8d87'
   }),
+  // Atlas — czerń (superkapitał w kształcie Atlasa, 2026-10-27): grafitowe, prawie czarne płyty, jasnoszare panele
+  // nadbudówek, szare akcenty — barwy obecnego Atlasa gry (assets/capital_ship_rect_v1.png), bez pomarańczu palety Atlas
+  atlasDark: Object.freeze({
+    label: 'Atlas — czerń', hull: '#3d4146', upper: '#878d93', trim: '#1c1f22', accent: '#a7adb3', metal: '#222528',
+    hazard: '#d8a02a', window: '#c8f2ff', pipe: '#5e554b', engine: '#2e3235', door: '#33373b', grime: '#2a2826', steel: '#7d838a'
+  }),
   // Frachtowce (domyślna paleta statków cywilnych): grafitowe płyty, jasne panele nadbudówek, bursztynowe oznaczenia
   // i ciepłe okna — w duchu sprite'ów frachtowców ruchu (assets/long_haul_freighter.png), bez emblematu nacji
   freight: Object.freeze({
@@ -250,12 +256,12 @@ export const HD_FACTION_PALETTE = Object.freeze({
  * własny znak bez czaszek (decyzja użytkownika). Paleta bez emblematu (cywilna) zdejmuje emblematy nacji.
  */
 export const HD_PALETTE_EMBLEM = Object.freeze({
-  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null, freight: null
+  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null, freight: null, atlasDark: 'wing'
 });
 /** Barwa emblematu nacji (kontrast z płytą jej palety: ciemny na jasnej, jasny na ciemnej pirackiej). */
 export const HD_PALETTE_EMBLEM_COLOR = Object.freeze({
   terra: '#34332f', atlas: '#d06a22', pirate: '#cdbb9a', mars: '#4a2b27', inner: '#4b3e2a', belt: '#2f2d28', outer: '#2c2838', civil: '#45525a',
-  freight: '#d8902a'
+  freight: '#d8902a', atlasDark: '#a7adb3'
 });
 /** Kolejność barw palety w kompozytorze (wiersze tablicy uniformów). */
 export const HD_PALETTE_ROWS = Object.freeze(['hull', 'upper', 'trim', 'accent', 'metal', 'hazard', 'window', 'pipe', 'engine', 'door', 'grime', 'steel']);

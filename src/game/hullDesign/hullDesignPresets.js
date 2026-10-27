@@ -12,10 +12,14 @@
 //
 // FRACHTOWCE (statki cywilne, `role: 'civil'`) — każdy w osobnym pliku src/game/hullDesign/freighters/ (rejestr
 // ./freighters/index.js, zestaw ./freighters/freighterKit.js); tu dokładane na koniec listy (grupa 'civil').
+//
+// OKRĘTY Z PLIKÓW (src/game/hullDesign/warships/, ten sam format `{ key, label, cls, make }` i zestaw klocków co
+// frachtowce): superkapitał Hyperion — linia Atlasa (klasa w HD_PRESET_CLASS, grupa 'tn').
 
 import { normalizeHullDesign } from './hullDesignSchema.js';
 import { applySystemSlots } from './hullDesignSystemSlots.js';
 import { HD_FREIGHTER_CLASS, HD_FREIGHTER_PRESETS } from './freighters/index.js';
+import hyperion from './warships/hyperion.js';
 
 /** Bloki prostokąta bx0..bx1 × by0..by1 (włącznie) na poziomie `level`. */
 function fill(out, bx0, bx1, by0, by1, level) {
@@ -630,6 +634,7 @@ export const HD_PRESETS = Object.freeze({
   bellator: { label: 'TN · pancernik Bellator', make: bellator, group: 'tn' },
   citadella: { label: 'TN · lotniskowiec Citadella', make: citadella, group: 'tn' },
   colossus: { label: 'TN · superkapitał Colossus', make: colossus, group: 'tn' },
+  hyperion: { label: hyperion.label, make: hyperion.make, group: 'tn' },
   klocki: { label: 'Fregata z klocków (TN)', make: blocksFrigate, group: 'tn' },
   tnparts: { label: 'Fregata z gotowych części (TN)', make: tnParts, group: 'tn' },
   tnparts2: { label: 'Krążownik z gotowych części (TN)', make: tnParts2, group: 'tn' },

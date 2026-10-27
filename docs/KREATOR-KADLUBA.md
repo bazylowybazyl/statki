@@ -646,6 +646,31 @@ Sprite'y frachtowców gry (dla porównania; skala profilu, pole alfy → klasa):
 299 × 89 II, dalekiego zasięgu 509 × 143 III, tankowiec 509 × 144 III, ciężki 1733 × 590 VI (783 tys. j²),
 megafrachtowiec 2712 × 898 (1,93 mln j²); mirror-IoU 0,99+ (ciężki 0,93), oś alfy 13–20 px nad środkiem płótna.
 
+## Superkapitał Hyperion — linia Atlasa (2026-10-27)
+
+Prośba użytkownika: „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa (czerń / szary)”; w trakcie
+dopowiedział, że jego szkic Atlasa to „bardziej battleship — za krótki na superkapitała”. Preset bierze więc ze szkicu
+(`scripts/blender/atlas/szkic-uzytkownika-v2.jpg`) układ sekcji i elementów, a nie proporcje: Atlas ze szkicu ma
+~1817 × 726 j. (2,6 : 1, ~952 tys. j² — ponad limit klasy VI), superkapitał jest dłuższy i smuklejszy, w drabinie klas.
+Stan i zasady: reguła `kreator-kadlubow` § „Superkapitał linii Atlasa”.
+
+**Podkład.** Maska sylwetki szkicu (`scripts/blender/atlas/szkic-maska.png`: każda linia szkicu = brzeg, domknięcie
+morfologiczne R 6 px, wypełnienie wnętrza; 1817 × 726 j. przy 1,19 j./px, symetria lustrzana IoU 0,985) rozciągana
+osobno wzdłuż i w poprzek — `scripts/kreator-sprawdz-preset.mjs --maska … --skala sx,sy` liczy IoU sylwetki projektu
+z podkładem i rysuje jego czerwony obrys na podglądzie CPU.
+
+**Dwa warianty wydłużenia** (projektanci równolegle, każdy w swoim pliku; obaj spełnili wszystkie warunki sprawdzarki):
+
+| wariant | wymiary [j.] | pow. [j²] | IoU z podkładem | gniazda | uwagi |
+|---|---|---|---|---|---|
+| A, ~4 : 1 (podkład × 1,187 / 0,743) | 2161 × 535 | 829 249 | 0,967 | 42 | wierny rozciągniętemu szkicowi, krótka szyja, bez naklejek i detali |
+| **B, ~5 : 1 — Hyperion** (podkład × 1,328 / 0,664) | 2428 × 488 | 872 943 | 0,828 | 44 | długa szyja i sekcja dziobowa, okrągłe kształty bez rozciągania, detale TN |
+
+Wpięty jest B (`src/game/hullDesign/warships/hyperion.js`, klucz `hyperion`, grupa Terra Nova, klasa VI / R6, zapas mocy
+48%): 20 głównych, 4 specjalne, 2 rakietowe, 18 obrony punktowej, 4 wrota hangarowe w wcięciach szyi (pola siłowe — drony
+i myśliwce wylatują bokiem), luk dziobowy na fregatę zwiadu, 5 gondol MAIN, 4 dysze SIDE, mostek v 2 VI na nadbudówce,
+rdzeń v 2 przed nią. Zrzuty z kompozytora: 0 pipeline'ów synchronicznych, 0 błędów strony.
+
 ## Demo — narzędzia
 
 **Stocznia** (domyślny interfejs, `dema/kreator-kadluba-stocznia.js`; prośba użytkownika 2026-10-21: „jak generator
