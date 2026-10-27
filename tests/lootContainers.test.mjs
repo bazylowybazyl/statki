@@ -188,7 +188,7 @@ test('wiązka: prędkość względna — przelot obok nie łapie, dopasowany pę
   assert.equal(flagged, env.gear.targets);
 });
 
-test('pełna ładownia: chwyt częściowy, reszta wisi przy luku; paczki, z której nic nie wejdzie, wiązka nie bierze', () => {
+test('pełna ładownia: chwyt częściowy, reszta czeka przy luku; nowej paczki, z której nic nie wejdzie, wiązka nie bierze', () => {
   const st = createLootContainers();
   spillLootCargo(st, spec({ vx: 0, cargo: { steel: 100 }, mass: 100 }));
   const { env, hold } = tractorEnv(st, { hold: { free: 20 } });
@@ -196,10 +196,10 @@ test('pełna ładownia: chwyt częściowy, reszta wisi przy luku; paczki, z któ
   assert.equal(hold.cargo.steel, 20, 'weszło tyle, ile ładowni (cargoCap 20 t)');
   assert.ok(st.count > 0, 'reszta dryfuje');
   assert.equal(sumUnits(st), Math.floor(100 * LOOT_TUNE.survive) - 20);
-  let tractored = 0;
+  let fresh = 0;
   stepLootContainers(st, DT, env);
-  for (let i = 0; i < st.count; i++) if (st.flags[i] & LOOT_FLAG.TRACTOR) tractored++;
-  assert.equal(tractored, 0, 'pełna ładownia — wiązka nie trzyma nowych');
+  for (let i = 0; i < st.count; i++) if ((st.flags[i] & LOOT_FLAG.TRACTOR) && !(st.flags[i] & LOOT_FLAG.HELD)) fresh++;
+  assert.equal(fresh, 0, 'pełna ładownia — wiązka trzyma tylko paczki czekające przy luku, nowych nie bierze');
 });
 
 test('krok bez alokacji: 10 tys. kroków z pełną pulą i wiązką nie rośnie sterta', () => {
@@ -233,4 +233,75 @@ test('gniazdo ZBIÓRKA: opcje kadłuba, domyślna wiązka Atlasa, drony czekają
   assert.ok(lootGearParams('frigate', 'loot_tractor').range < p.range);
   assert.equal(lootGearParams('atlas', 'loot_drones'), null);
   assert.equal(cargoResourceKey(-1), null);
+});
+
+// Odtworzenia z przeglądu K1 (2026-10-27): paczka rozpędzona wiązką ponad próg chwytu wypadała z celów i odlatywała.
+function tractorAt(free = 1e9) {
+  const hold = { free, got: 0 };
+  return {
+    hold,
+    env: {
+      px: 0, py: 0, cx: 0, cy: 0, pvx: 0, pvy: 0, shipSpeed: 0, gear: lootGearParams('atlas', 'loot_tractor'), visible: null,
+      free: () => hold.free,
+      take: (key, u) => { const f = Math.min(u, Math.floor(hold.free / RESOURCES[key].mass)); hold.free -= f * RESOURCES[key].mass; hold.got += f; return f; }
+    }
+  };
+}
+
+test('przegląd K1: pełna ładownia — paczka, która się nie mieści, czeka przy luku (HELD), komunikat raz', () => {
+  const st = createLootContainers();
+  spillLootCargo(st, { x: 2000, y: 0, vx: 0, vy: 0, angle: 0, length: 100, width: 40, cargo: { steel: 40 }, mass: 40, seed: 1 });
+  assert.equal(st.count, 2);
+  const { env, hold } = tractorAt(st.units[0] * RESOURCES.steel.mass);
+  let maxD = 0;
+  for (let s = 0; s < 60 * 60; s++) {
+    stepLootContainers(st, 1 / 60, env);
+    if (s > 60 * 20) for (let i = 0; i < st.count; i++) maxD = Math.max(maxD, Math.hypot(st.x[i], st.y[i]));
+  }
+  assert.equal(st.count, 1, 'druga paczka nie przepadła');
+  assert.ok(st.flags[0] & LOOT_FLAG.HELD, 'czeka przy luku');
+  assert.ok(maxD < env.gear.capture * 2, `paczka przy luku (${Math.round(maxD)} j.)`);
+  assert.equal(st.stats.full, 1, 'komunikat „ładownia pełna” raz');
+  assert.equal(st.stats.held, 1);
+  // Miejsce się zwolniło — paczka wchodzi.
+  hold.free = 1e9;
+  for (let s = 0; s < 60; s++) stepLootContainers(st, 1 / 60, env);
+  assert.equal(st.count, 0);
+});
+
+test('przegląd K1: drugi wrak bliżej nie odbiera wiązce trzymanych paczek; wiązka nie rozpędza ponad próg chwytu', () => {
+  const st = createLootContainers();
+  spillLootCargo(st, { x: 3300, y: 0, vx: 0, vy: 0, angle: 0, length: 300, width: 100, cargo: { steel: 120 }, mass: 120, seed: 3 });
+  const first = st.count;
+  const { env, hold } = tractorAt();
+  let second = 0;
+  let maxRel = 0;
+  for (let s = 0; s < 60 * 60; s++) {
+    if (s === 60 * 4) {
+      const before = st.count;
+      spillLootCargo(st, { x: -800, y: 600, vx: 0, vy: 0, angle: 0, length: 300, width: 100, cargo: { ice: 120 }, mass: 120, seed: 4 });
+      second = st.count - before;
+    }
+    stepLootContainers(st, 1 / 60, env);
+    for (let i = 0; i < st.count; i++) maxRel = Math.max(maxRel, Math.hypot(st.vx[i], st.vy[i]));
+  }
+  assert.equal(st.count, 0, `zostało ${st.count} paczek`);
+  assert.equal(st.stats.collected, first + second);
+  assert.equal(st.stats.expired, 0);
+  assert.ok(hold.got > 0);
+  assert.ok(maxRel <= env.gear.maxRelSpeed, `prędkość z wiązki ${Math.round(maxRel)} j./s`);
+});
+
+test('przegląd K1: blokada — paczka chwilowo poza celami (mgła, > maxShipSpeed) wraca do wiązki', () => {
+  const st = createLootContainers();
+  spillLootCargo(st, { x: 1500, y: 0, vx: 0, vy: 0, angle: 0, length: 100, width: 40, cargo: { steel: 30 }, mass: 30, seed: 5 });
+  const { env } = tractorAt();
+  for (let s = 0; s < 60; s++) stepLootContainers(st, 1 / 60, env);
+  // Mgła zakrywa paczki, a statek na chwilę przyspiesza ponad wyłącznik wiązki — paczki trzymane zostają.
+  env.visible = () => false;
+  env.shipSpeed = 5000;
+  for (let s = 0; s < 30; s++) stepLootContainers(st, 1 / 60, env);
+  env.shipSpeed = 0;
+  for (let s = 0; s < 60 * 30 && st.count; s++) stepLootContainers(st, 1 / 60, env);
+  assert.equal(st.count, 0, 'zebrane mimo mgły (blokada)');
 });

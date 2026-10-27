@@ -41,9 +41,12 @@ export const LOOT_TRACTOR_TUNE = Object.freeze({
   // 1137 j./s) — wiązka gaśnie.
   maxRelSpeed: 400,
   maxShipSpeed: 1200,
-  // Przyspieszenie kontenera ku punktowi chwytu i sufit prędkości względnej [j./s², j./s].
+  // Przyspieszenie kontenera ku punktowi chwytu i sufit prędkości względnej [j./s², j./s] — poniżej `maxRelSpeed`
+  // (wiązka nie rozpędza paczki ponad próg, przy którym sama by ją puściła).
   accel: 260,
-  maxSpeed: 520,
+  maxSpeed: 380,
+  // Blokada [s]: paczka, która wypadła z celów (limit celów, mgła, chwila > maxShipSpeed), zostaje przy wiązce tyle.
+  lockHold: 3,
   // Kontener bliżej punktu chwytu niż tyle [j.] wchodzi do ładowni.
   capture: 240
 });
@@ -115,6 +118,7 @@ export function lootGearParams(hullId, gearId, out = {}) {
     out.maxShipSpeed = LOOT_TRACTOR_TUNE.maxShipSpeed;
     out.maxRelSpeed = LOOT_TRACTOR_TUNE.maxRelSpeed;
     out.accel = LOOT_TRACTOR_TUNE.accel;
+    out.lockHold = LOOT_TRACTOR_TUNE.lockHold;
     out.maxSpeed = LOOT_TRACTOR_TUNE.maxSpeed;
     out.capture = LOOT_TRACTOR_TUNE.capture;
     return out;

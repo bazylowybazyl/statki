@@ -47,8 +47,9 @@ export const LOOT_TUNE = Object.freeze({
   maxTargets: 8
 });
 
-// TRACTOR — w wiązce w tym kroku (obraz); HELD — wisi przy luku (pełna ładownia); LOCK — był w wiązce w poprzednim
-// kroku: wiązka go trzyma mimo prędkości względnej (sama go rozpędza ponad `maxRelSpeed`).
+// TRACTOR — w wiązce w tym kroku (obraz); HELD — wisi przy luku (pełna ładownia); LOCK — był w wiązce niedawno
+// (`lock` > 0, `lockHold` s od ostatniego kroku w wiązce): wiązka go nie puszcza — ma pierwszeństwo przed nowymi
+// celami i nie odpada przez prędkość względną, mgłę ani brak miejsca (czeka przy luku jako HELD).
 export const LOOT_FLAG = Object.freeze({ TRACTOR: 1, HELD: 2, LOCK: 4 });
 
 /** Pula paczek. `cap` — pojemność tablic. */
@@ -68,6 +69,8 @@ export function createLootContainers(cap = LOOT_TUNE.cap) {
     mpu: new Float32Array(n),
     age: new Float32Array(n),
     ttl: new Float32Array(n),
+    // Blokada wiązki [s] — odliczana od ostatniego kroku w wiązce (flaga LOCK, póki > 0).
+    lock: new Float32Array(n),
     // Indeks towaru (`cargoResourceIndex`), ziarno wyglądu (`containerLook`: kurs, numer paczki), stały numer paczki.
     res: new Int16Array(n),
     seed: new Int32Array(n),
@@ -81,7 +84,7 @@ export function createLootContainers(cap = LOOT_TUNE.cap) {
     targetCount: 0,
     stats: {
       spawned: 0, spawnedUnits: 0, collected: 0, collectedUnits: 0, expired: 0, lostUnits: 0,
-      merged: 0, evicted: 0, held: 0
+      merged: 0, evicted: 0, held: 0, full: 0
     }
   };
 }
@@ -96,7 +99,7 @@ function copySlot(st, from, to) {
   st.vx[to] = st.vx[from]; st.vy[to] = st.vy[from];
   st.ang[to] = st.ang[from]; st.spin[to] = st.spin[from];
   st.units[to] = st.units[from]; st.mpu[to] = st.mpu[from];
-  st.age[to] = st.age[from]; st.ttl[to] = st.ttl[from];
+  st.age[to] = st.age[from]; st.ttl[to] = st.ttl[from]; st.lock[to] = st.lock[from];
   st.res[to] = st.res[from]; st.seed[to] = st.seed[from]; st.unit[to] = st.unit[from];
   st.uid[to] = st.uid[from]; st.flags[to] = st.flags[from];
 }
@@ -158,7 +161,7 @@ function insert(st, res, units, mpu, x, y, vx, vy, ang, spin, ttl, seed, unit) {
   st.vx[i] = vx; st.vy[i] = vy;
   st.ang[i] = ang; st.spin[i] = spin;
   st.units[i] = units; st.mpu[i] = mpu;
-  st.age[i] = 0; st.ttl[i] = ttl;
+  st.age[i] = 0; st.ttl[i] = ttl; st.lock[i] = 0;
   st.res[i] = res; st.seed[i] = seed | 0; st.unit[i] = unit;
   st.uid[i] = st.nextUid++;
   st.flags[i] = 0;
@@ -289,10 +292,11 @@ function considerTarget(st, i, d2, max) {
 export function stepLootContainers(st, dt, env, tune = LOOT_TUNE) {
   st.targetCount = 0;
   if (!(dt > 0) || st.count === 0) return;
-  // HELD przeżywa krok, TRACTOR poprzedniego kroku staje się LOCK (wiązka nie puszcza paczki, którą trzyma).
+  // Blokada wiązki: LOCK (i HELD) trwa `lockHold` s od ostatniego kroku w wiązce; potem paczka jest znów wolna.
   for (let i = 0; i < st.count; i++) {
-    const f = st.flags[i];
-    st.flags[i] = (f & LOOT_FLAG.HELD) | (f & LOOT_FLAG.TRACTOR ? LOOT_FLAG.LOCK : 0);
+    const left = st.lock[i] - dt;
+    st.lock[i] = left > 0 ? left : 0;
+    st.flags[i] = left > 0 ? (st.flags[i] & LOOT_FLAG.HELD) | LOOT_FLAG.LOCK : 0;
   }
   const px = Number(env?.px) || 0;
   const py = Number(env?.py) || 0;
@@ -341,34 +345,46 @@ function stepTractor(st, dt, env, gear) {
   const pvy = Number(env.pvy) || 0;
   const rel = Number(gear.maxRelSpeed) > 0 ? gear.maxRelSpeed : Infinity;
   const rel2 = rel * rel;
+  // Sufit prędkości względnej z wiązki: poniżej progu chwytu (wiązka nie rozpędza paczki tak, by sama ją zgubiła).
+  const pullMax = Math.min(gear.maxSpeed, rel * 0.95);
+  const lockHold = Number(gear.lockHold) > 0 ? gear.lockHold : 0;
   for (let i = 0; i < st.count; i++) {
-    // Wiązka nie łapie paczki, z której nie wejdzie choć jedna sztuka,
-    if (st.mpu[i] > free) continue;
-    // ani takiej, która mija okręt szybciej niż `maxRelSpeed` (najpierw dopasuj prędkość; trzymanej nie puszcza).
-    if (!(st.flags[i] & (LOOT_FLAG.HELD | LOOT_FLAG.LOCK))) {
-      const rvx = st.vx[i] - pvx;
-      const rvy = st.vy[i] - pvy;
-      if (rvx * rvx + rvy * rvy > rel2) continue;
-    }
+    const locked = (st.flags[i] & (LOOT_FLAG.HELD | LOOT_FLAG.LOCK)) !== 0;
     const dx = st.x[i] - cx;
     const dy = st.y[i] - cy;
     const d2 = dx * dx + dy * dy;
     if (d2 > range2) continue;
-    if (visible && !visible(st.x[i], st.y[i])) continue;
-    considerTarget(st, i, d2, max);
+    if (!locked) {
+      // Nowy cel: wejdzie z niego choć sztuka, nie mija okrętu szybciej niż `maxRelSpeed` (najpierw dopasuj
+      // prędkość) i widać go (mgła wojny).
+      if (st.mpu[i] > free) continue;
+      const rvx = st.vx[i] - pvx;
+      const rvy = st.vy[i] - pvy;
+      if (rvx * rvx + rvy * rvy > rel2) continue;
+      if (visible && !visible(st.x[i], st.y[i])) continue;
+    }
+    // Trzymane mają pierwszeństwo przed nowymi (drugi wrak bliżej nie odbiera wiązce jej paczek).
+    considerTarget(st, i, locked ? d2 - 1e15 : d2, max);
   }
   const n = st.targetCount;
   if (!n) return;
   const capture2 = gear.capture * gear.capture;
   const dvMax = gear.accel * dt;
-  // Ściąganie: prędkość względna ku punktowi chwytu z hamowaniem (v = √(2 a d), sufit maxSpeed).
+  // Ściąganie: prędkość względna ku punktowi chwytu z hamowaniem (v = √(2 a d), sufit `pullMax`); paczka przy luku
+  // przy pełnej ładowni (HELD) leci z okrętem.
   for (let k = 0; k < n; k++) {
     const i = st.targets[k];
-    st.flags[i] |= LOOT_FLAG.TRACTOR;
+    st.flags[i] |= LOOT_FLAG.TRACTOR | LOOT_FLAG.LOCK;
+    st.lock[i] = lockHold;
+    if (st.flags[i] & LOOT_FLAG.HELD) {
+      st.vx[i] = pvx;
+      st.vy[i] = pvy;
+      continue;
+    }
     const dx = cx - st.x[i];
     const dy = cy - st.y[i];
     const d = Math.sqrt(dx * dx + dy * dy);
-    const want = d > 1e-6 ? Math.min(gear.maxSpeed, Math.sqrt(2 * gear.accel * d)) / d : 0;
+    const want = d > 1e-6 ? Math.min(pullMax, Math.sqrt(2 * gear.accel * d)) / d : 0;
     let ex = dx * want - (st.vx[i] - pvx);
     let ey = dy * want - (st.vy[i] - pvy);
     const e = Math.sqrt(ex * ex + ey * ey);
@@ -384,7 +400,7 @@ function stepTractor(st, dt, env, gear) {
     const dy = st.y[i] - cy;
     if (dx * dx + dy * dy > capture2) continue;
     const key = cargoResourceKey(st.res[i]);
-    const fits = Math.min(st.units[i], Math.floor(free / st.mpu[i]));
+    const fits = Math.max(0, Math.min(st.units[i], Math.floor(free / st.mpu[i])));
     const taken = fits > 0 && key && typeof env.take === 'function' ? Math.max(0, Math.floor(env.take(key, fits)) || 0) : 0;
     if (taken > 0) {
       free -= taken * st.mpu[i];
@@ -397,11 +413,14 @@ function stepTractor(st, dt, env, gear) {
       removeLootContainer(st, i);
       continue;
     }
-    // Reszta nie weszła (pełna ładownia): paczka wisi przy luku z prędkością statku.
-    st.flags[i] |= LOOT_FLAG.HELD;
+    // Reszta nie weszła (pełna ładownia): paczka czeka przy luku z prędkością okrętu (raz liczona — komunikat gry).
+    if (!(st.flags[i] & LOOT_FLAG.HELD)) {
+      st.flags[i] |= LOOT_FLAG.HELD;
+      st.stats.held++;
+      st.stats.full++;
+    }
     st.vx[i] = pvx;
     st.vy[i] = pvy;
-    st.stats.held++;
   }
   // Po chwycie indeksy celów są nieaktualne — lista wiązki do obrazu to flaga TRACTOR na paczce.
   st.targetCount = 0;

@@ -16828,7 +16828,7 @@
     let _lootMsgBag = null;
     let _lootMsgAt = -Infinity;
     let _lootHintAt = -Infinity;
-    let _lootHeldSeen = 0;
+    let _lootFullSeen = 0;
     let _lootClock = 0;
 
     /** Sprzęt gniazda ZBIÓRKA aktywnego kadłuba gracza (parametry `lootGearParams`, wspólny obiekt) albo null. */
@@ -16884,9 +16884,9 @@
         _lootMsgBag = null;
         _lootMsgAt = _lootClock;
       }
-      // Pełna ładownia: paczka wisi przy luku.
-      if (lootContainers.stats.held !== _lootHeldSeen) {
-        _lootHeldSeen = lootContainers.stats.held;
+      // Pełna ładownia: paczka czeka przy luku (licznik `full` rośnie raz na paczkę).
+      if (lootContainers.stats.full !== _lootFullSeen) {
+        _lootFullSeen = lootContainers.stats.full;
         if (_lootClock - _lootHintAt > 6) {
           _lootHintAt = _lootClock;
           pushZoneMessage('ŁADOWNIA PEŁNA — kontener czeka przy luku', 2.2);
