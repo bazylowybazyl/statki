@@ -75,6 +75,10 @@
  *              `docks` — postoje przy stanowisku, które się zaczęły albo zmieniły
  *              (`DockRecord` niżej), `undocked` — numery kursów, których postój się skończył
  *              (odłączenie, zniknięcie z bańki). Tylko zmiany — stan trzyma most (`actorDocks`).
+ *              `manifests?` / `unmanifested?` (kontenery-łup K1): ładunek encji z kursem w locie
+ *              `{ id, cargo: { towar: sztuki }, mass, value }` (jednostki świata) — nowy albo zmieniony;
+ *              `unmanifested` — numery encji bez ładunku albo poza bańką. Tylko zmiany — stan
+ *              trzyma most (`actorManifests`); gra rzuca z niego kontenery przy zniszczeniu.
  *   snapshot-result { requestId, snapshot }
  *   economy-save-result  { requestId, state }     (E7)
  *   trade-summary-result { requestId, summary }   (E7)

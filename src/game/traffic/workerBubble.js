@@ -743,6 +743,51 @@ export function collectDockChanges(state, time, hullOf) {
   return docks || undocked ? { docks, undocked } : null;
 }
 
+/**
+ * Zmiany manifestów ładunku encji (kontenery-łup K1, `docs/PROPOZYCJA-kontenery-lup.md` § 3.1): gra musi wiedzieć,
+ * co wiezie encja, ZANIM ta zginie — rekord wraku (`tick.wrecks`) przychodzi dopiero po kroku świata (do 5 s).
+ * Encja z kursem w locie z ładunkiem → `manifests: [{ id, cargo, mass, value }]` (nowa albo zmieniona); encja,
+ * która zniknęła z bańki albo nie wiezie już nic (rozładunek, odlot) → `unmanifested: [id]`. Promy z ludźmi,
+ * puste przeloty i wyprawa górnicza przed urobkiem manifestu nie mają. Zwraca `null`, gdy nic się nie zmieniło.
+ */
+export function collectManifestChanges(state) {
+  const sent = state.manifestsSent || (state.manifestsSent = new Map());
+  const list = state.bubble.list;
+  const seen = state._manifestSeen || (state._manifestSeen = new Set());
+  seen.clear();
+  let manifests = null;
+  for (let k = 0; k < list.length; k++) {
+    const a = list[k];
+    if (a.departed || !a.courseId) continue;
+    const course = getCourse(state.world.registry, a.courseId);
+    if (!course || course.status !== COURSE_STATUS.ACTIVE) continue;
+    const p = course.payload;
+    if (!p || p.passengers || p.deadhead) continue;
+    // Wyprawa górnicza: urobek dopisuje się po etapie wydobycia (`extract.booked`) — wcześniej ładownia jest pusta.
+    if (p.harvest && p.extract && !p.extract.booked) continue;
+    const mass = Number(p.mass) || 0;
+    if (!(mass > 0)) continue;
+    const cargo = cargoOf(course);
+    let sig = '';
+    for (const id in cargo) sig += `${id}:${Math.round(cargo[id] * 100)};`;
+    if (!sig) continue;
+    const num = courseNumber(a.courseId);
+    if (!Number.isFinite(num)) continue;
+    seen.add(num);
+    sig += Math.round(mass * 100);
+    if (sent.get(num) === sig) continue;
+    sent.set(num, sig);
+    (manifests || (manifests = [])).push({ id: num, cargo, mass, value: Number(p.value) || 0 });
+  }
+  let unmanifested = null;
+  for (const num of sent.keys()) {
+    if (seen.has(num)) continue;
+    sent.delete(num);
+    (unmanifested || (unmanifested = [])).push(num);
+  }
+  return manifests || unmanifested ? { manifests, unmanifested } : null;
+}
+
 /** Ładunek kursu w jednostkach świata ruchu: przewóz / kupiec / przemyt — jeden towar, wyprawa — worek urobku. */
 function cargoOf(course) {
   const p = course?.payload;
