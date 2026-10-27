@@ -14,7 +14,7 @@ import { Core3D as CoreRef } from '../core3d.js';
 import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 import { sceneOriginNearCamera } from '../sceneOrigin.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
-import { CargoContainers, containerLookLinear } from './containers.tsl.js';
+import { CargoContainers, containerLookLinear, setLootCargoSun } from './containers.tsl.js';
 import { CARGO_LIGHT, setCargoSun } from './cargoLight.tsl.js';
 import { CARGO_LIGHT_VIEW, CargoLights } from './drones.tsl.js';
 import { CARGO_CONTAINER, cargoModuleContainer, cargoModuleSize } from '../../data/cargoBays.js';
@@ -27,6 +27,8 @@ export const LOOT_3D_TUNE = {
   /** Masa paczki [t] → moduł: do `single` jeden kontener, do `quad` 2 × 2, wyżej 2 × 2 × 2. */
   single: 16,
   quad: 64,
+  /** Wysokość słońca paczek [°] (wariant łupu materiału kontenerów — barwa rodziny czytelna z bliska). */
+  sunElevation: 50,
   /** Podstawa paczki nad płaszczyzną gry [j.] (nad poszyciem wraku, pod statkami w locie nic nie zakrywa). */
   baseZ: 2,
   /** Lampka-boja: okres błysku [s] (końcówka życia — `fadePeriod`), długość błysku (ułamek okresu), moc HDR. */
@@ -73,7 +75,8 @@ export function createLootContainers3D(Core3D) {
 
   function ensure() {
     if (ready || !Core3D.scene) return ready;
-    containers = new CargoContainers(Core3D.scene, T.containers);
+    // Wariant łupu (słońce wyżej, wypełnienie) — graf raz; kontenery E12 bez zmian.
+    containers = new CargoContainers(Core3D.scene, T.containers, { loot: true });
     containers.mesh.name = 'Łup:kontenery';
     lights = new CargoLights(Core3D.scene, T.lights);
     lights.mesh.name = 'Łup:światła';
@@ -109,7 +112,11 @@ export function createLootContainers3D(Core3D) {
       const camY = Number(cam?.y) || 0;
       // Światło kontenerów (wspólne z przeładunkiem E12 — te same wartości tej klatki).
       CARGO_LIGHT.time.value = time || 0;
-      if (sun) setCargoSun(Math.atan2(-(sun.y - camY), sun.x - camX));
+      if (sun) {
+        const az = Math.atan2(-(sun.y - camY), sun.x - camX);
+        setCargoSun(az);
+        setLootCargoSun(az, T.sunElevation);
+      }
       CARGO_LIGHT_VIEW.right.value.set(1, 0, 0);
       CARGO_LIGHT_VIEW.up.value.set(0, 1, 0);
       const pxPerUnit = Core3D.viewZoom ? Core3D.viewZoom(Core3D.activeCam1) : zoom;

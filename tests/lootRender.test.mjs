@@ -156,3 +156,20 @@ test('WGSL partii łupu buduje się w Node (kontenery, światła), najwyżej 8 b
     assert.ok(set.size <= 8, `${m.name}: ${set.size} buforów`);
   }
 });
+
+test('wariant oświetlenia łupu: osobny materiał (graf raz), kontenery E12 bez zmian', async () => {
+  const { CargoContainers } = await import('../src/3d/cargo/containers.tsl.js');
+  const scene = new THREE.Scene();
+  const e12 = new CargoContainers(scene, 16);
+  const loot = new CargoContainers(scene, 16, { loot: true });
+  assert.equal(e12.material.name, 'Cargo:kontenery');
+  assert.equal(loot.material.name, 'Cargo:kontenery-łup');
+  const a = buildWGSL(e12.mesh);
+  const a2 = buildWGSL(new CargoContainers(scene, 16).mesh);
+  const b = buildWGSL(loot.mesh);
+  assert.equal(a.fragment, a2.fragment, 'E12: ten sam kod przy każdej budowie');
+  assert.notEqual(a.fragment, b.fragment, 'łup: inne światło poza ładownią');
+  // Moduł łupu rysuje wariantem łupu (rozgrzewka 'kontenery-łup' obejmuje ten materiał).
+  const mod = createLootContainers3D(fakeCore());
+  assert.equal(mod.warmupMeshes()[0].material.name, 'Cargo:kontenery-łup');
+});
