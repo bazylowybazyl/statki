@@ -1590,6 +1590,7 @@
     // Holownik serwisowy (2026-10-08): naprawa rojem, „paka” i lot do K-7 — logika src/game/serviceTug.js, klej serviceTugGame.js.
     import { ServiceTugGame, TUG_PHASE } from "./src/game/serviceTugGame.js";
     import { createScoutBay, SCOUT_TUNE, SCOUT_PHASE } from "./src/game/scoutBay.js";
+    import { SMALL_SCALE, smallScaleFromSearch, smallScaleZoom, smallScaleMaxZoom, smallScaleGunModifiers, turnToward, angleGap, turretHitRadius, damageTurret, turretHpLeft } from "./src/game/smallScale.js";
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
@@ -9755,6 +9756,7 @@
     // Co klatkę (przed krokami fizyki): malowanie T trzymanym.
     let scoutCtlPrev = false;
     function scoutFrameInput() {
+      smallScaleCameraSync();
       // Zmiana sterów (H, powrót, utrata fregaty): przelicz wejście lotu od razu — klawisze idą zdarzeniami.
       if (ScoutBay.controlling !== scoutCtlPrev) {
         scoutCtlPrev = ScoutBay.controlling;
@@ -9796,6 +9798,233 @@
       get x() { return scoutCamLast.x; },
       get y() { return scoutCamLast.y; },
       get v() { const n = ScoutBay.npc; return ScoutBay.controlling && n && !n.dead ? Math.sqrt((Number(n.vx) || 0) ** 2 + (Number(n.vy) || 0) ** 2) : 0; }
+    };
+
+    // MAŁA SKALA (prototyp pod flagą ?malaSkala=1, 2026-10-27 — src/game/smallScale.js, docs/PROTOTYP-mala-skala.md):
+    // fregata zwiadu przy sterach gracza w skali, w której kontener 16 × 8 j. jest czytelny — kadr 650 j. (kółko do 320 j.),
+    // stery do ~600 j./s, działa główne fregaty na kursor (LPM) z zasięgiem ~300 j.; jej pociski zestrzeliwują wieże NPC
+    // (punkty życia wieży zamiast wyrwy pod gniazdem). Cel ćwiczebny z konsoli: MalaSkala.cel(). Bez flagi nic się nie zmienia.
+    const SMALL_SCALE_ON = smallScaleFromSearch(location.search);
+    if (SMALL_SCALE_ON) {
+      SCOUT_TUNE.ctlSpeed = SMALL_SCALE.speed;
+      SCOUT_TUNE.accel = SMALL_SCALE.accel;
+      SCOUT_TUNE.turnRate = SMALL_SCALE.turnRate;
+      ScoutBay.grant();
+      ScoutBay.on('deployed', () => pushZoneMessage(`MAŁA SKALA: LPM — działa ${SMALL_SCALE.gunRange} j. · kółko — kadr · konsola: MalaSkala.cel()`, 4, { label: 'ZWIAD' }));
+    }
+    // Kadr: po przejęciu sterów fregaty zoom gracza na kadr `frameW` i limit przybliżenia do `frameMinW`; po oddaniu
+    // sterów zoom i limit wracają (co klatkę — scoutFrameInput, limit idzie za szerokością okna).
+    const _ssCam = { active: false, zoom: 1, max: 3.2 };
+    function smallScaleCameraSync() {
+      const want = SMALL_SCALE_ON && ScoutBay.controlling;
+      if (want === _ssCam.active) {
+        if (want) camera.maxZoom = smallScaleMaxZoom(W, _ssCam.max);
+        return;
+      }
+      _ssCam.active = want;
+      if (want) {
+        _ssCam.zoom = camera.targetZoom;
+        _ssCam.max = camera.maxZoom;
+        camera.maxZoom = smallScaleMaxZoom(W, _ssCam.max);
+        camera.targetZoom = clamp(smallScaleZoom(W, SMALL_SCALE.frameW), camera.minZoom, camera.maxZoom);
+      } else {
+        camera.maxZoom = _ssCam.max;
+        camera.targetZoom = clamp(_ssCam.zoom, camera.minZoom, camera.maxZoom);
+      }
+      camera.manualZoom = true;
+    }
+    // Działa fregaty: wpisy `autoWeapons` broni głównej (z nich Turret2D rysuje wieże NPC; fregata zwiadu nie ma mózgu,
+    // więc dotąd ich nie miała) prowadzone na kursor w krokach fizyki, strzał przez fireWeaponCore z czopu gniazda
+    // (rachunek wylotu jak spawnBulletAdapter), zasięg i prędkość pocisku — źródło modyfikatorów 'malaSkala'.
+    const scoutGunTrigger = { mouse: false };
+    // Liczniki próby (konsola: MalaSkala.stats): strzały fregaty, trafienia wież, zniszczone wieże.
+    const _ssStats = { shots: 0, deckShots: 0, deckReached: 0, turretHits: 0, turretsDown: 0 };
+    const _ssMods = { range: 1, projectileSpeed: 1 };
+    const _ssPos = { x: 0, y: 0 };
+    const _ssMuzzle = { pos: { x: 0, y: 0 }, dir: { x: 1, y: 0 }, baseVel: { x: 0, y: 0 }, emitterUid: null, pdTarget: null };
+    function smallScaleMountPos(e, hp, out) {
+      const a = (e.angle || 0) + (Number(e.capitalProfile?.spriteRotation) || 0);
+      const c = Math.cos(a), s = Math.sin(a);
+      const hx = hp.x * getEntityHardpointScaleX(e), hy = hp.y * getEntityHardpointScaleY(e);
+      out.x = e.x + hx * c - hy * s;
+      out.y = e.y + hx * s + hy * c;
+      return out;
+    }
+    function ensureScoutGuns(n) {
+      if (n.__ssGuns) return;
+      n.__ssGuns = true;
+      const list = [];
+      const main = n.weapons?.main || [];
+      for (let i = 0; i < main.length; i++) {
+        const lo = main[i];
+        if (!lo?.hp || !lo.weapon || lo.hp.x == null) continue;
+        list.push({ id: lo.weapon.id, def: lo.weapon, type: lo.weapon.category, cd: 0, ammo: null, hpOffset: lo.hp,
+          mountAngle: 0, group: 'main', visualAngle: n.angle || 0 });
+      }
+      n.autoWeapons = list;
+      if (list.length) setModifierSource(n, 'malaSkala', smallScaleGunModifiers(n, list[0].def, SMALL_SCALE, _ssMods));
+    }
+    function stepScoutGuns(dt) {
+      if (!SMALL_SCALE_ON) return;
+      const n = ScoutBay.npc;
+      if (!ScoutBay.controlling) scoutGunTrigger.mouse = false;
+      if (!n || n.dead || ScoutBay.phase !== SCOUT_PHASE.FLIGHT) return;
+      ensureScoutGuns(n);
+      const aim = ScoutBay.controlling ? screenToWorld(mouse.x, mouse.y) : null;
+      const fire = !!aim && scoutGunTrigger.mouse && !StoryGame.blocksInput && !ScoutBay.cloakHidden();
+      let deck;   // wieża pod kursorem (cel strzału nad pokładem) — szukana raz na krok, przy pierwszym strzale
+      const list = n.autoWeapons;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const w = list[i];
+        const hp = w.hpOffset;
+        if (hp.destroyed || !hp.mount) { list.splice(i, 1); continue; }   // gniazdo padło (wyrwa pod wieżą)
+        w.cd -= dt;
+        const p = smallScaleMountPos(n, hp, _ssPos);
+        const want = aim ? Math.atan2(aim.y - p.y, aim.x - p.x) : (n.angle || 0);
+        w.visualAngle = turnToward(w.visualAngle, want, SMALL_SCALE.turretTurn, dt);
+        if (!fire || w.cd > 0 || Math.abs(angleGap(want, w.visualAngle)) > SMALL_SCALE.aimTol) continue;
+        const m = _ssMuzzle;
+        m.pos.x = p.x; m.pos.y = p.y;
+        m.dir.x = Math.cos(w.visualAngle); m.dir.y = Math.sin(w.visualAngle);
+        writePointVelocity(n, p.x, p.y, m.baseVel);
+        m.emitterUid = hp.id != null ? getNpcEmitterUid(n, hp) : null;
+        if (deck === undefined) deck = scoutTurretUnder(aim.x, aim.y, n);
+        const before = bullets.length;
+        const cd = Number(window.fireWeaponCore(n, null, w.def.id, m));
+        if (deck) for (let k = before; k < bullets.length; k++) if (bullets[k].source === n) { bullets[k].__ssDeck = deck; _ssStats.deckShots++; }
+        w.cd = cd > 0 ? cd : (w.def.cooldown || 1);
+        _ssStats.shots++;
+      }
+    }
+    // STRZAŁ NAD POKŁADEM: wieże stoją na pokładzie, a w 2D pocisk zatrzymuje pierwsza burta — z boku dosięga się tylko
+    // wież przy krawędzi (pomiar w grze: CIWS pancernika piratów ~110 j. za burtą). Strzał wycelowany w wieżę (kursor
+    // w jej korpusie w chwili strzału) mija kadłub TEGO okrętu, aż dojdzie do wieży, i dopiero wtedy trafia pokład przy
+    // niej (krater, iskry, punkty życia wieży — scoutTurretHit). Pudło obok wieży leci dalej nad pokładem.
+    const _ssDeckPos = { x: 0, y: 0 };
+    function scoutTurretUnder(x, y, n) {
+      const reach = SMALL_SCALE.gunRange + 400;
+      let best = null, bestD = Infinity;
+      for (let j = 0; j < npcs.length; j++) {
+        const e = npcs[j];
+        if (!e || e.dead || e === n || !e.weapons || !isHostileNpc(e)) continue;
+        const er = (Number(e.radius) || 0) + reach;
+        if ((e.x - n.x) * (e.x - n.x) + (e.y - n.y) * (e.y - n.y) > er * er) continue;
+        for (const key in e.weapons) {
+          const arr = e.weapons[key];
+          if (!Array.isArray(arr)) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const hp = arr[i]?.hp, def = arr[i]?.weapon;
+            if (!hp || !def || hp.destroyed || hp.x == null) continue;
+            const p = smallScaleMountPos(e, hp, _ssDeckPos);
+            // Wieża poza zasięgiem dział: zwykły strzał (trafi burtę albo nic) — znak, że trzeba podlecieć.
+            const fx = p.x - n.x, fy = p.y - n.y, reachR = SMALL_SCALE.gunRange + 20;
+            if (fx * fx + fy * fy > reachR * reachR) continue;
+            const d = Math.sqrt((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y));
+            if (d < bestD && d <= turretHitRadius(def, e) - SMALL_SCALE.turretHitPad + SMALL_SCALE.deckAimPad) {
+              bestD = d;
+              best = { e, hp, def };
+            }
+          }
+        }
+      }
+      return best;
+    }
+    /** Pocisk ze znacznikiem strzału nad pokładem mija kadłub `b.__ssDeck.e` na odcinku (x0, y0) → (b.x, b.y)? */
+    function scoutDeckPasses(b, x0, y0) {
+      const d = b.__ssDeck;
+      if (!d.hp || d.hp.destroyed || d.e.dead) { b.__ssDeck = null; return false; }
+      const p = smallScaleMountPos(d.e, d.hp, _ssDeckPos);
+      const sx = b.x - x0, sy = b.y - y0;
+      const l2 = sx * sx + sy * sy;
+      let t = l2 > 0 ? ((p.x - x0) * sx + (p.y - y0) * sy) / l2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const cx = x0 + sx * t - p.x, cy = y0 + sy * t - p.y;
+      const r = turretHitRadius(d.def, d.e) - SMALL_SCALE.turretHitPad;
+      // przy wieży albo już za nią (minął ją w tym kroku) — dalej zwykła kolizja
+      const reached = cx * cx + cy * cy <= r * r || (p.x - b.x) * sx + (p.y - b.y) * sy < 0;
+      // Doszedł: trafienie pokładu w tym kroku idzie do TEJ wieży (krater bywa do kroku pocisku ~30 j. przed nią).
+      if (reached) { b.__ssDeck = null; b.__ssDeckHit = d; _ssStats.deckReached++; }
+      return !reached;
+    }
+    /** Pocisk fregaty gracza (mała skala) — znacznik trafienia i punkty życia wież NPC. */
+    function scoutPlayerShot(b) {
+      return SMALL_SCALE_ON && !!b.source && b.source === ScoutBay.npc && ScoutBay.controlling;
+    }
+    // Trafienie kadłuba NPC w (x, y) pociskiem fregaty: wieża, w której strefie leży punkt, traci punkty życia; przy zerze —
+    // utrata gniazda jak przy wyrwie pod wieżą (markHardpointDestroyed: broń przepada, AI przebudowuje działa).
+    function scoutTurretHit(e, x, y, dmg, b) {
+      const groups = e?.weapons;
+      if (!groups || e.dead || !(dmg > 0)) return;
+      let best = null, bestDef = null, bestD = Infinity;
+      const deckHit = b ? b.__ssDeckHit : null;
+      if (deckHit && deckHit.e === e && !deckHit.hp.destroyed) { best = deckHit.hp; bestDef = deckHit.def; }
+      else for (const key in groups) {
+        const arr = groups[key];
+        if (!Array.isArray(arr)) continue;
+        for (let i = 0; i < arr.length; i++) {
+          const hp = arr[i]?.hp, def = arr[i]?.weapon;
+          if (!hp || !def || hp.destroyed || hp.x == null) continue;
+          const p = smallScaleMountPos(e, hp, _ssPos);
+          const d = Math.sqrt((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y));
+          if (d < bestD && d <= turretHitRadius(def, e)) { bestD = d; best = hp; bestDef = def; }
+        }
+      }
+      if (!best) return;
+      _ssStats.turretHits++;
+      if (!damageTurret(best, bestDef, dmg)) return;
+      const p = smallScaleMountPos(e, best, _ssPos);
+      const r = turretHitRadius(bestDef, e);
+      if (!markHardpointDestroyed(e, best, getEntityHardpoints(e)?.length || 1)) return;
+      _ssStats.turretsDown++;
+      if (Array.isArray(e.autoWeapons)) e.autoWeapons = e.autoWeapons.filter((w) => w.hpOffset !== best);
+      GameBlasts.blast({ x: p.x, y: p.y, size: r * 2, profile: 'fighter', vx: Number(e.vx) || 0, vy: Number(e.vy) || 0 }, true);
+      pushZoneMessage(`WIEŻA ZNISZCZONA · ${String(bestDef.name || bestDef.id)}`, 1.2, { label: 'MAŁA SKALA' });
+    }
+    window.MalaSkala = {
+      get on() { return SMALL_SCALE_ON; },
+      tune: SMALL_SCALE,
+      stats: _ssStats,
+      // Wieża wrogiego okrętu pod punktem świata (cel strzału nad pokładem) w zasięgu fregaty: { okret, bron } albo null.
+      wiezaPod(x, y) {
+        const f = ScoutBay.npc && !ScoutBay.npc.dead ? ScoutBay.npc : null;
+        const t = f ? scoutTurretUnder(x, y, f) : null;
+        return t ? { okret: t.e.displayName || t.e.type, bron: t.def.id } : null;
+      },
+      // Żywe wieże okrętu: [{ x, y, bron, r (strefa trafienia), hp (punkty życia) }] — konsola i narzędzia.
+      wieze(e) {
+        const out = [];
+        const groups = e?.weapons;
+        if (!groups || e.dead) return out;
+        for (const key in groups) {
+          const arr = groups[key];
+          if (!Array.isArray(arr)) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const hp = arr[i]?.hp, def = arr[i]?.weapon;
+            if (!hp || !def || hp.destroyed || hp.x == null) continue;
+            const p = smallScaleMountPos(e, hp, { x: 0, y: 0 });
+            out.push({ x: p.x, y: p.y, bron: def.id, r: turretHitRadius(def, e), hp: turretHpLeft(hp, def) });
+          }
+        }
+        return out;
+      },
+      // Cel ćwiczebny (pancernik piratów) przed fregatą — bez niej przed Atlasem. walka: false (domyślnie) — uśpiony
+      // (stoi, wieże milczą, Atlas na auto go pomija), true — z mózgiem i bronią; tarcza: false (domyślnie) — pole
+      // wyłączone (mała broń go nie przebije, a próba dotyczy wież); typ: klucz przywołania, odl: [j.].
+      cel(opts = {}) {
+        const f = ScoutBay.npc && !ScoutBay.npc.dead ? ScoutBay.npc : null;
+        const ox = f ? f.x : ship.pos.x, oy = f ? f.y : ship.pos.y, a = f ? (f.angle || 0) : (ship.angle || 0);
+        const dist = Number(opts.odl) > 0 ? Number(opts.odl) : SMALL_SCALE.targetDist;
+        const x = ox + Math.cos(a) * dist, y = oy + Math.sin(a) * dist;
+        const res = spawnCallInShip(opts.typ || 'battleship', { mode: 'pirate', spawnPos: { x, y }, pos: { x, y }, spawnAngle: a + Math.PI / 2 });
+        const npc = Array.isArray(res) ? res[0] : res;
+        if (!npc) return null;
+        if (!opts.tarcza) setEntityShieldForcedOff(npc, true);
+        if (!opts.walka) {
+          processAutonomousWeapons(npc, 0);   // wpisy wież (rysunek, trafienia) — przeładowanie startowe > 0, bez strzału
+          storySleepNpc(npc);
+        }
+        return npc;
+      }
     };
 
 
@@ -22169,6 +22398,8 @@
           // (panel stacji) i nie przy otwartym kole trybów.
           if (!shipModes.wheel.open && !ScoutBay.controlling && !(scan.target && scan.targetType === 'station' && !isHostileNpc(scan.target))) {
             fcTrigger.mouse = true;
+          } else if (SMALL_SCALE_ON && ScoutBay.controlling && !shipModes.wheel.open) {
+            scoutGunTrigger.mouse = true;   // mała skala: LPM — działa fregaty zwiadu
           }
         }
       }
@@ -22204,6 +22435,7 @@
       if (e.button === 0) {
         pointerState.confirmArmed = false;
         fcTrigger.mouse = false;
+        scoutGunTrigger.mouse = false;
       }
       // Split-screen: route releases to the correct player's mouse
       if (splitScreenMode) {
@@ -24995,6 +25227,8 @@
           if (projectilePassesAlly(b, npc)) continue;
           // Kadłub, w którym pocisk jest albo z którego w tym kroku wyszedł (przebicie).
           if (b.pen && skipsHull(b, realNpc)) continue;
+          // Mała skala (?malaSkala=1): strzał fregaty nad pokładem — mija kadłub do wieży, w którą celował.
+          if (b.__ssDeck && b.__ssDeck.e === realNpc && scoutDeckPasses(b, candX0, candY0)) continue;
           // Filtr drużynowy USUNIĘTY żeby aktywować Friendly Fire.
           // const isPlayerBullet = b.owner === 'player' || b.owner === 'player2';
           // if (npc._isPlayerShip && isPlayerBullet) continue;
@@ -25185,6 +25419,8 @@
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
               noteBridgeHit(realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
             }
+            // Mała skala (?malaSkala=1): pocisk fregaty gracza odbiera punkty życia wieży przy punkcie trafienia.
+            if (entryK.hp > 0 && scoutPlayerShot(b)) scoutTurretHit(realHit, hitX, hitY, npcDamage * entryK.hp, b);
 
             // Routing obrażeń: gracz vs NPC. Ponowne wejście pocisku w ten sam kadłub (wklęsła
             // sylwetka) — krater tak, HP drugi raz nie (entryK.hp = 0, decyzja 18-A).
@@ -25199,7 +25435,7 @@
               } else {
                 if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
                 applyDamageToNPC(hitNPC, npcDamage * entryK.hp, b.type, hitBreach ? SHIELD_BREACH_DAMAGE_OPTS : undefined,
-                  b.source === ship && b.type !== 'ciws');   // znacznik trafienia: ogień gracza 1 bez obrony punktowej
+                  (b.source === ship || scoutPlayerShot(b)) && b.type !== 'ciws');   // znacznik trafienia: ogień gracza 1 (i fregaty — mała skala) bez obrony punktowej
               }
             }
 
@@ -27635,6 +27871,7 @@
       // (albo holownik pod graczem w skoku) po nim — w tym samym podkroku, bez opóźnienia o krok.
       ServiceTugGame.step(dt);
       ScoutBay.step(dt);
+      stepScoutGuns(dt);
       _inlineBrainMs = npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runAiLogic && !aiMaintDone, aiLogicDt, aiBrainPhase, aiBrainPhaseCount, brainTick);
       // Bomby lotnicze: spadanie z celem (poza po ruchu NPC tego kroku) i wybuchy na pancerzu.
       FighterBombs.step(dt);
@@ -28248,6 +28485,18 @@
         renderCtx.moveTo(_scoutE.x, _scoutE.y - r - k); renderCtx.lineTo(_scoutE.x, _scoutE.y - r + k);
         renderCtx.moveTo(_scoutE.x, _scoutE.y + r - k); renderCtx.lineTo(_scoutE.x, _scoutE.y + r + k);
         renderCtx.stroke();
+      }
+      // Mała skala (?malaSkala=1): zasięg dział fregaty przy sterach — wokół pozy renderu (bez drżenia przy ~600 j./s).
+      if (live && SMALL_SCALE_ON && SB.controlling) {
+        const rp = bridgeRenderPose(n);
+        worldToScreenInto(rp ? rp.x : fx, rp ? rp.y : fy, cam, _scoutS);
+        renderCtx.strokeStyle = 'rgba(255,190,120,0.45)';
+        renderCtx.lineWidth = 1.5;
+        renderCtx.setLineDash([6, 8]);
+        renderCtx.beginPath();
+        renderCtx.arc(_scoutS.x, _scoutS.y, SMALL_SCALE.gunRange * zoom, 0, Math.PI * 2);
+        renderCtx.stroke();
+        renderCtx.setLineDash([]);
       }
       // Daleki skan: klin z czołem fali.
       const L = SB.long;
