@@ -393,7 +393,8 @@ export class PortBuilding3D {
   }
 
   /**
-   * Materiał STRONY PARTII skór ciał świata (src/3d/worldSkinBatch.js — odłamy jednym rysunkiem; wariant „skinBatch” /
+   * Materiał PARTII skór ciał świata (src/3d/worldSkinBatch.js — odłamy skóry kawałka jednym obiektem renderu, odłam =
+   * rysunek pośredni ze slotem w firstInstance; wariant „skinBatch” /
    * „skin3Batch” grafu): uniformy budowli jak `skinMaterial`, a do tego wybór flagi widoczności egzemplarza (uSkinFlag:
    * zestaw bg / fg × połówka) i cięcie płaszczyzną gry (uSkinClip: bryła 3D — pod −1 / nad +1, z = 0; płaska — bez).
    * half: 0 — skóra płaska albo połówka pod płaszczyzną (pass tła), 1 — połówka bryły nad płaszczyzną (FG).

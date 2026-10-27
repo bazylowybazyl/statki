@@ -64,7 +64,7 @@ export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
 // A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27); batch = false — odłamy własnymi
 // siatkami (rysunek na egzemplarz, zestaw i połówkę — jak przed partiami skór); batchDiag (pomiar kosztu GPU partii,
-// obraz inny): 1 — strony rysowane, flagi zerowe (same wierzchołki pominięte), 2 — strony schowane (bez skór odłamów)
+// obraz inny): 1 — partie rysowane, flagi zerowe (same wierzchołki pominięte), 2 — partie schowane (bez skór odłamów)
 export const WORLD_SKIN_OPTIONS = { planeHalfCull: true, batch: true, batchDiag: 0 };
 if (typeof window !== 'undefined') window.__worldSkinOptions = WORLD_SKIN_OPTIONS;
 
@@ -484,12 +484,12 @@ function batchSupported() {
   try { return typeof r.hasFeature === 'function' && r.hasFeature('indirect-first-instance') === true; }
   catch { return false; }
 }
-// Partia skóry kawałka dla zestawu (zasoby `piece.__skin` egzemplarza — partia ginie razem z nimi).
+// Partia skóry kawałka dla geometrii zestawu (zasoby `piece.__skin` egzemplarza — partia ginie razem z nimi).
 function skinBatchFor(inst, set, source) {
   const skin = inst.assetsKey;
-  const all = skin.batches || (skin.batches = {});
-  let b = all[set];
-  if (b && b.source === source) return b;
+  const all = skin.batches || (skin.batches = new Map());
+  let b = all.get(source);
+  if (b) return b;
   const prov = inst.prov, B = prov.building, solid = inst.solid;
   const bgLayer = prov.layers?.bg ?? 1, fgLayer = prov.layers?.fg ?? 2;
   // bryła 3D: dwie siatki — połówka pod płaszczyzną w passie tła, nad nią w FG (jak siatki egzemplarza)
@@ -497,7 +497,7 @@ function skinBatchFor(inst, set, source) {
     ? [{ material: B.skinBatchMaterial(set, true, 0), layer: bgLayer }, { material: B.skinBatchMaterial(set, true, 1), layer: fgLayer }]
     : [{ material: B.skinBatchMaterial(set, false, 0), layer: set === 'bg' ? bgLayer : fgLayer }];
   b = new WorldSkinBatch({ source, set, solid, halves, scene: Core3D.scene });
-  all[set] = b;
+  all.set(source, b);
   _batchList.push(b);
   ensureSkinStoreHooks();
   return b;
@@ -508,9 +508,7 @@ function disposeSkinBatches(skin) {
   const all = skin?.batches;
   if (!all) return;
   skin.batches = null;
-  for (const set of ['bg', 'fg']) {
-    const b = all[set];
-    if (!b) continue;
+  for (const b of all.values()) {
     for (const e of [...b.entries]) if (e.owner) abandonSkinBatch(e.owner, 'skinChanged');
     b.dispose();
     const i = _batchList.indexOf(b);
@@ -892,8 +890,8 @@ export function syncWorldBodies3D() {
       if (mesh.visible !== half) mesh.visible = half;
       if (!half) halfCulled++;
     }
-    // w partii rysuje egzemplarz strona partii (dane w slocie; flagi i macierz model-widok — hak passa,
-    // commitWorldSkinStore); siatki egzemplarza zostają nośnikiem macierzy świata, sfery kadru i połówek
+    // w partii egzemplarz to rysunek pośredni partii (dane w slocie; lista rysunków, flagi i macierz model-widok —
+    // hak passa, commitWorldSkinStore); siatki egzemplarza zostają nośnikiem macierzy świata, sfery kadru i połówek
     if (WORLD_SKIN_OPTIONS.batch && inst.batchState === 2) {
       writeSkinSlot(inst, st, du);
       inst.batchShown = _frame;

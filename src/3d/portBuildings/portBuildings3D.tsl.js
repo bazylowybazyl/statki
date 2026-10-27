@@ -733,7 +733,7 @@ function buildGraphs(haloU) {
     label: { vertexNode: labelVertex, fragmentNode: labelFragment },
     skin: makeSkin(false),
     skin3: makeSkin(true),
-    // partie skór (worldSkinBatch.js): odłamy ciał świata jednym rysunkiem na stronę
+    // partie skór (worldSkinBatch.js): odłamy skóry kawałka jednym obiektem renderu, odłam = rysunek pośredni
     skinBatch: makeSkin(false, true),
     skin3Batch: makeSkin(true, true),
     nodes: { pbTime, groups, surf, atlas }
