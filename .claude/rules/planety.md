@@ -117,7 +117,10 @@ paths:
   (bok gl_PointSize obcięty do ≥ 1 px, gl_PointCoord z rogów, t w dół). Nie wracaj do `THREE.Points` z rozmiarem.
   Skok (zadanie 22): smugi PŁASKIE wzdłuż kursu i front wyjścia od dziobu z `WARP_STARS` (`src/3d/warp/stars.js`, pisze
   tylko sterownik warpa — nie prędkość lotu); dawne rozciąganie i „bicz” przy wyjściu usunięte. Bez warpa gałąź punktu
-  jak przed zadaniem 22.
+  jak przed zadaniem 22. W trybie nieba-sfery warstwa deep jest zwinięta (`hideDeep`), a warstwa mid jedzie DROGĄ NIEBA
+  (`midSphere`, `cameraOffsetMid`, `starCamMid` — `advanceStarCameraMid`, paralaksa `STAR_MID_SPHERE`; W0 i liczby:
+  reguła `niebo`, § „Niebo-sfera”); speed zostaje na kamerze gwiazd (`starCam`, sufit `WARP_STAR_CAMERA.speedCap` × czas kroku z przyrostu
+  `RenderWorld.frameClock` — `starClockDt`: worker pomija strony, a sufit z dt jednej strony zwalniał speed N razy).
 
 - Poświata limbu: blend ONE/ONE przez `CustomBlending` — `NodeMaterial` z `premultipliedAlpha = true` mnożyłby kolor
   przez alfę w shaderze (ShaderMaterial z tą flagą zmieniał tylko blend).

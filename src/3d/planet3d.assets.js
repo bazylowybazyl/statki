@@ -10,7 +10,9 @@ import {
     computeStarParallaxFactor,
     pickStarParallaxLayer,
     starZoomCompensation,
-    advanceStarCamera
+    advanceStarCamera,
+    advanceStarCameraMid,
+    starClockDt
 } from './starParallax.js';
 import { resolveRingPlanetWorldRadius } from './ringScale.js';
 import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
@@ -499,6 +501,10 @@ const NebulaSystem = {
 const StarSystem = {
     mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250,
     starCam: { x: 0, y: 0, lx: NaN, ly: NaN },
+    // Niebo-sfera z nowym prawem tempa (SkySphere.midSphere): kamera warstwy mid na drodze nieba (advanceStarCameraMid)
+    starCamMid: { x: 0, y: 0, lx: NaN, ly: NaN },
+    _skyUpdatesSeen: -1,
+    _clock: { clockLast: 0, clockHas: false },   // zegar stron do sufitu kroku kamery gwiazd (starClockDt)
     init: function () {
         if (!Core3D.isInitialized) return;
         const positions = new Float32Array(this.count * 3); const sizes = new Float32Array(this.count);
@@ -536,6 +542,10 @@ const StarSystem = {
             thinningStrength: uniform(38.0), baseSizeMul: uniform(1.65),
             // Niebo-sfera (sky3D.js) zastępuje warstwę deep: jej gwiazdy zwinięte w wierzchołku (DECYZJE-2 N3)
             hideDeep: uniform(SkySphere.active ? 1.0 : 0.0),
+            // Nowe prawo tempa nieba (skyScroll.js, `?nieboTempo` ≠ stare): warstwa mid na drodze nieba z paralaksą
+            // STAR_MID_SPHERE (W0: niebo < mid) — przesunięcie wzoru `cameraOffsetMid` (advanceStarCameraMid)
+            midSphere: uniform(SkySphere.midSphere ? 1.0 : 0.0),
+            cameraOffsetMid: uniform(new THREE.Vector2(0, 0)),
             planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)), 'vec4')
         });
         const mat = createStarMaterial(this.uniforms);
@@ -562,8 +572,22 @@ const StarSystem = {
         const zoomComp = starZoomCompensation(gameCamera.zoom);
         this.uniforms.zoomComp.value = zoomComp;
         const speedCap = Number(WARP_STAR_CAMERA.speedCap) || 0;
-        advanceStarCamera(this.starCam, cx, cy, zoomComp, speedCap > 0 ? speedCap * Math.max(0, dt) : 0);
+        // sufit kroku z przyrostu zegara stron (worker pomija strony — dt jednej strony zwalniał warstwę speed N razy)
+        const stepDt = starClockDt(this._clock, RenderWorld.frameClock, dt);
+        const maxStep = speedCap > 0 ? speedCap * stepDt : 0;
+        advanceStarCamera(this.starCam, cx, cy, zoomComp, maxStep);
         this.uniforms.cameraOffset.value.set(this.starCam.x, -this.starCam.y);
+        if (SkySphere.midSphere) {
+            // Warstwa mid na drodze nieba (W0): ruch kamery względem okrętu prowadzącego + droga nieba tej klatki
+            // (SkySphere.update liczy ją wcześniej w tej samej klatce — NebulaSystem.update przed StarSystem.update).
+            // Droga nieba liczona raz na klatkę nieba — bez nowej klatki nieba (licznik `updates`) nie dokładamy jej drugi raz.
+            const sk = SkySphere.scroll;
+            const fresh = SkySphere.updates !== this._skyUpdatesSeen;
+            this._skyUpdatesSeen = SkySphere.updates;
+            advanceStarCameraMid(this.starCamMid, cx, cy, zoomComp, maxStep,
+                fresh ? sk.dispX : 0, fresh ? sk.dispY : 0, fresh ? sk.driveX : 0, fresh ? sk.driveY : 0, SkySphere.midMul);
+            this.uniforms.cameraOffsetMid.value.set(this.starCamMid.x, -this.starCamMid.y);
+        }
         this.uniforms.viewportSize.value.set(Core3D.width || RenderWorld.viewWidth || 1, Core3D.height || RenderWorld.viewHeight || 1);
         const planetMasks = this.uniforms.planetMasks?.value;
         if (Array.isArray(planetMasks) && planetMasks.length && RenderWorld.planets) {

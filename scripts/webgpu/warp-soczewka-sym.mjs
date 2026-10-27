@@ -44,6 +44,8 @@
 // informacyjnie — księżyc na tarczy z ringiem rodzica. Mignięcie: zniknięcie / pojawienie w jednej klatce — bez końca
 // ciągłego kurczenia / rośnięcia (ostatni krok ≤ 2 × poprzedni). Kod wyjścia ≠ 0, gdy kontrola nie przejdzie. W0
 // (informacyjnie): tempo obrazu ciał soczewki w locie [px/s] — mediana, p90, max, daleko (≥ 1,5 mln j. przed dziobem).
+// NIEBO-SFERA (skyScroll.js, prawo tempa 2026-10-27): obrót nieba w przebiegu (nowe i dawne prawo), najszybsze °/s,
+// kontrola W0-niebo (niebo < mid na drodze nieba < speed na kamerze, w każdej klatce) — tabela „Niebo-sfera” w raporcie.
 // Kamera bez K1 (dawny wariant „dziś”) nie istnieje już w kodzie gry — --k1 przyjmuje tylko „tak” (inne: ostrzeżenie).
 // Pas zwolnienia przy ciałach — warpDrive.js (WARP_FLYBY_DEFAULTS, reach = układ księżyców planety: warpMoonReach), A/B
 // `--zasieg <reachWidth>` (0 — bez układu księżyców).
@@ -73,6 +75,8 @@ const WAF = await imp('src/render/warpArrivalFrame.js');
 const MO = await imp('src/3d/moonOrbit.js');
 const CZ = await imp('src/game/cameraZoom.js');
 const TN = await imp('src/game/travelNav.js');
+const SKY = await imp('src/3d/skyScroll.js');
+const SP = await imp('src/3d/starParallax.js');
 
 // ------------------------------------------------------------------------------------------------ argumenty
 const argv = process.argv.slice(2);
@@ -742,7 +746,100 @@ const VP_PX = 30;     // [px przy 1080p] C3: ciało przy punkcie zbiegu (kierune
 // (warpNurt.js, starParallax.js): najwolniejsza gwiazda warstwy speed (paralaksa 1,02) i najszybsza mid (0,18)
 const STAR_SPEED_CAP = 14000;
 const STAR_SPEED_MIN = 1.02;
-const STAR_MID_MAX = 0.18;
+// warstwa mid w trybie nieba-sfery (domyślne) jedzie DROGĄ NIEBA z paralaksą STAR_MID_SPHERE (skyScroll.js — prawo tempa
+// 2026-10-27), nie kamerą z sufitem 14 tys.: mid ≤ vN_wygł · 0,26 · zoom
+const STAR_MID_MAX = SP.STAR_MID_SPHERE.parallaxMax;
+const MID_CAM = SP.STAR_PARALLAX_LAYERS.find((l) => l.name === 'mid');   // dawna mid na kamerze gwiazd (0,055–0,18)
+const SKY_VIS_PX = 5;   // [px/s przy 1080p] W0 z ruchem kamery liczone tylko przy widocznym ruchu wolniejszej warstwy
+
+// NIEBO-SFERA (skyScroll.js — prawo tempa 2026-10-27; dawne: ?nieboTempo=stare): obrót nieba w przebiegu z drogi statku
+// (v · DT) przy zoomie kadru tej klatki (z sufitem głębi — f z wysokości kadru) — kąt całego przebiegu, tempo [°/s, px/s
+// przy 1080p] i W0 klatka po klatce: niebo < mid (droga nieba) < speed (kamera, sufit 14 tys. j/s), warstwy GameStars ze
+// skalą ekranową camZ / (camZ + 250). Kontrola `W0-niebo` liczy mid samą drogą nieba (niebo / mid = p_ef / 0,13 / skala —
+// z konstrukcji ≤ 0,8); `W0-niebo-kamera` (informacyjnie) dokłada ruch kamery względem statku (rig: wyprzedzenie, kop,
+// kadr przylotu — kamera = statek − poza statku w kadrze / zoom), który mid dostaje, a niebo nie: przy przybliżaniu kadru
+// przylotu kamera cofa się względem statku i mid zwalnia poniżej nieba (wyjątek W0 — decyzja użytkownika). Wynik
+// w raporcie (tabela „Niebo”) i w JSON (`sky`, klatki: `sky` [°/s]).
+function skySim(res, tune) {
+  const F = res.frames;
+  const s = SKY.createSkyScroll();
+  const f = SKY.skyFocalPx(res.H);
+  const vD = new Float64Array(F.length);
+  const om = new Float64Array(F.length);
+  let y = 0;
+  let maxDeg = 0;
+  let maxDegAt = '';
+  let flight = 0;
+  let w0Sky = 0;
+  let w0Mid = 0;
+  // z ruchem kamery względem statku (informacyjnie)
+  let camSky = 0;
+  let camSkyAt = '';
+  let camSkyT = 0;
+  let camMid = 0;
+  let camMidAt = '';
+  let pcx = NaN;
+  let pcy = NaN;
+  for (let i = 0; i < F.length; i++) {
+    const fr = F[i];
+    const y0 = y;
+    y -= fr.v * DT;
+    SKY.stepSkyScroll(s, 0, y, fr.v, DT, fr.zoom, f, 1, tune);
+    vD[i] = s.vDrive;
+    om[i] = s.omega / (Math.PI / 180);
+    if (om[i] > maxDeg) { maxDeg = om[i]; maxDegAt = `@${fmt(fr.t, 2)} ${fr.phaseName}`; }
+    if (fr.state === 'active' && fr.t >= 0) flight += s.omega * DT;
+    const camZ = f / fr.zoom;
+    const ks = camZ / (camZ + SKY.SKY_SCROLL.starDepth);
+    if (tune.midLayer && s.vDrive > 0 && fr.v > 0) {
+      const sky = s.speedPx;
+      const midMin = s.vDrive * tune.midLayer.parallaxMin * fr.zoom * ks;
+      const midMax = s.vDrive * tune.midLayer.parallaxMax * fr.zoom * ks;
+      const spMin = Math.min(fr.v, STAR_SPEED_CAP) * STAR_SPEED_MIN * fr.zoom * ks;
+      w0Sky = Math.max(w0Sky, sky / midMin);
+      w0Mid = Math.max(w0Mid, midMax / spMin);
+    }
+    // kamera w osiach przebiegu (kurs w górę ekranu = −y): statek + przesunięcie riga / zoom (statek w kadrze: −offset)
+    const cx = -fr.shipSx / fr.zoom;
+    const cy = y - fr.shipSy / fr.zoom;
+    if (Number.isFinite(pcx)) {
+      let rx = cx - pcx;
+      let ry = (cy - pcy) - (y - y0);
+      let ccx = cx - pcx;
+      let ccy = cy - pcy;
+      // sufit kroku kamery gwiazd (warpNurt.js: w skoku i po wyjściu, póki statek > 14 tys. j/s) — ruch względny mid
+      // i ruch warstwy speed
+      if (fr.state === 'active' || fr.state === 'exit' || fr.v > STAR_SPEED_CAP) {
+        const cap = STAR_SPEED_CAP * DT;
+        const r = Math.hypot(rx, ry);
+        if (r > cap) { rx *= cap / r; ry *= cap / r; }
+        const c = Math.hypot(ccx, ccy);
+        if (c > cap) { ccx *= cap / c; ccy *= cap / c; }
+      }
+      // mid: tryb sfery — droga nieba + ruch kamery względem statku; dawne prawo — kamera gwiazd (0,055–0,18)
+      const m = tune.midLayer ? Math.hypot(s.driveX + rx, s.driveY + ry) / DT : Math.hypot(ccx, ccy) / DT;
+      const ML = tune.midLayer || MID_CAM;
+      const sky = s.speedPx;
+      const midMin = m * ML.parallaxMin * fr.zoom * ks;
+      const midMax = m * ML.parallaxMax * fr.zoom * ks;
+      const spMin = Math.hypot(ccx, ccy) / DT * STAR_SPEED_MIN * fr.zoom * ks;
+      // tylko klatki, w których wolniejsza z porównywanych warstw jedzie widocznie (≥ SKY_VIS_PX px/s przy 1080p) —
+      // odwrócenie przy 2–3 px/s (kadr przylotu oddalony × 0,12) i przejście kamery przez postój nie są w obrazie
+      const vis = SKY_VIS_PX * res.sPx;
+      if (sky >= vis) {
+        const r = midMin > 1e-9 ? sky / midMin : 99;
+        if (r > camSky) { camSky = r; camSkyAt = `@${fmt(fr.t, 2)} ${fr.phaseName}, niebo ${fmt(sky / res.sPx, 1)} px/s`; }
+        if (r > 1) camSkyT += DT;
+      }
+      if (spMin >= vis && midMax / spMin > camMid) { camMid = midMax / spMin; camMidAt = `@${fmt(fr.t, 2)} ${fr.phaseName}, speed ${fmt(spMin / res.sPx, 1)} px/s`; }
+    }
+    pcx = cx;
+    pcy = cy;
+  }
+  return { turned: s.turned / (Math.PI / 180), flight: flight / (Math.PI / 180), maxDeg, maxDegAt,
+    maxPx1080: maxDeg * (Math.PI / 180) * SKY.skyFocalPx(1080), w0Sky, w0Mid, camSky: Math.min(99, camSky), camSkyAt, camSkyT,
+    camMid, camMidAt, vD, om };
+}
 
 // Środek tarczy w kadrze (obu klatek) — P4 mierzy środek i promień; poza kadrem (duża tarcza: przelot nad ciałem, wylot)
 // — ruch WIDOCZNEJ części: punkty powierzchni (siatka kadru wewnątrz tarczy z ringiem) i brzeg (kula, ring) w kadrze.
@@ -800,6 +897,8 @@ function bodyStep(p, q, W, H) {
 function analyze(res) {
   const F = res.frames;
   const sPx = res.sPx;
+  const sky = skySim(res, SKY.SKY_SCROLL);
+  const skyOld = skySim(res, SKY.SKY_SCROLL_STARE);
   const W = res.W;
   const H = res.H;
   const ids = Object.keys(F[0].bodies);
@@ -865,13 +964,19 @@ function analyze(res) {
     add('P4-' + ph, `skok w klatce: ${ph}${info ? ' (kamera, informacyjnie)' : ''}`, ok, `${fmt(J.move, 1)} px (${J.moveId} @${fmt(J.moveT, 2)}) / Δr ${fmt(J.size, 1)} px (${J.sizeId}) / Δ² ${fmt(J.d2, 1)} (${J.d2Id})`,
       info ? 'zoom gracza po końcu ślizgu' : `≤ ${fmt(P4_MOVE * sPx)} / ${fmt(P4_SIZE * sPx)} px (id* — duża tarcza ze środkiem poza kadrem: ruch widocznej części / brzegu)`);
   }
+  // W0 nieba-sfery (prawo tempa 2026-10-27): klatka po klatce niebo < mid (droga nieba) < speed (kamera, sufit 14 tys.)
+  add('W0-niebo', 'niebo < mid < speed GameStars w każdej klatce (niebo-sfera, kamera = statek)', sky.w0Sky < 1 && sky.w0Mid < 1,
+    `niebo / mid ≤ ${fmt(sky.w0Sky, 3)}, mid / speed ≤ ${fmt(sky.w0Mid, 3)}; obrót ${fmt(sky.turned, 1)}° (dawne prawo ${fmt(skyOld.turned, 1)}°)`, '< 1 / < 1');
+  add('W0-niebo-kamera', 'to samo z ruchem kamery względem statku (rig, kadr przylotu)', sky.camSky < 1 && sky.camMid < 1,
+    `niebo / mid ≤ ${fmt(sky.camSky, 2)} ${sky.camSkyAt} (> 1 przez ${fmt(sky.camSkyT, 2)} s), mid / speed ≤ ${fmt(sky.camMid, 2)} ${sky.camMidAt}; dawne prawo: ${fmt(skyOld.camSky, 2)} ${skyOld.camSkyAt} (${fmt(skyOld.camSkyT, 2)} s)`,
+    'informacyjnie — wyjątek W0 do decyzji użytkownika (mid dostaje ruch kamery względem statku, niebo nie)', true);
   add('P4-mig', 'mignięcia w głębi kadru', pops.length === 0, pops.length ? pops.slice(0, 4).map((p) => `${p.id} ${p.kind} ${fmt(p.size, 1)} px @${fmt(p.t, 2)} (${p.ph})`).join('; ') : '0');
   if (res.sc.abortAt > 0) {
     // Przerwane ładowanie: tylko ciągłość (P4, mignięcia) i powrót do prawdziwego widoku.
     const last = F[F.length - 1];
     const realEnd = Object.keys(last.bodies).every((id) => last.bodies[id].bb === 0);
     add('C7-przerwanie', 'po przerwaniu ładowania — prawdziwy widok (β = 0) w 1,5 s', realEnd && last.beta === 0, `β ${fmt(last.beta, 3)}`);
-    return { checks, jumps, pops, counts: { min: 0, max: 0, avg: 0 }, w0: w0Stats(res) };
+    return { checks, jumps, pops, counts: { min: 0, max: 0, avg: 0 }, w0: w0Stats(res), sky, skyOld };
   }
   // C1 — ciała w kadrze w locie (INFORMACYJNIE — DECYZJE-2 O1-3: mapa O1 chowa ciała za płaszczyzną kamery)
   const flight = F.filter((f) => f.state === 'active' && f.t >= 0.6);
@@ -1047,7 +1152,7 @@ function analyze(res) {
         const vs = Math.min(f.v, STAR_SPEED_CAP) * f.zoom / sPx;
         if (tp > tempo) { tempo = tp; tempoAt = `@${fmt(f.t, 2)}`; }
         starMin = Math.min(starMin, vs * STAR_SPEED_MIN);
-        midMax = Math.max(midMax, vs * STAR_MID_MAX);
+        midMax = Math.max(midMax, sky.vD[i] * STAR_MID_MAX * f.zoom / sPx);
       }
       // za trawersem (a < 0), ring w kadrze: promień nie maleje (zwijanie w pasie ukrycia = mignięcie)
       if (b.a < 0 && b.extIn && b.bb >= 0.999) {
@@ -1160,7 +1265,7 @@ function analyze(res) {
       last ? `ostatnio w kadrze @${fmt(F[lastI].t, 2)} s (${fmt(last.x)}, ${fmt(last.y)}) r ${fmt(last.size)} px; wylot ${bottom ? 'dołem' : 'NIE dołem'}; powroty ${back}; koniec lotu: promień ${fmt(flightEnd ? flightEnd.bodies[oid].size : NaN, 3)} px`
         : 'nie było w kadrze', 'w kadrze od ładowania, wylot dolną krawędzią, 0 powrotów, za płaszczyzną kamery promień 0');
   }
-  return { checks, jumps, pops, counts: { min: cMin, max: cMax, avg: cAvg }, w0: w0Stats(res), c9 };
+  return { checks, jumps, pops, counts: { min: cMin, max: cMax, avg: cAvg }, w0: w0Stats(res), c9, sky, skyOld };
 }
 
 // W0 (DECYZJE-2, informacyjnie): tempo obrazu ciał soczewki w locie (kop + lot, β = 1, ciało rysowane w obu klatkach)
@@ -1280,6 +1385,8 @@ for (const name of SCENS) {
       for (const c of an.checks) out.push(`| ${c.name} | ${c.pass ? 'OK' : (strict && !c.info ? '**BŁĄD**' : 'nie (info)')} | ${c.value} | ${c.note} |`);
       out.push('');
       const w = an.w0;
+      const sk = an.sky;
+      out.push(`Niebo-sfera (prawo tempa 2026-10-27): obrót w przebiegu ${fmt(sk.turned, 1)}° (lot ${fmt(sk.flight, 1)}°; dawne prawo ${fmt(an.skyOld.turned, 1)}°), najszybciej ${fmt(sk.maxDeg, 2)} °/s ${sk.maxDegAt} (${fmt(sk.maxPx1080)} px/s przy 1080p 16:9), W0 niebo / mid ≤ ${fmt(sk.w0Sky, 3)}, mid / speed ≤ ${fmt(sk.w0Mid, 3)}.`, '');
       if (w && w.n) out.push(`W0 (informacyjnie): tempo obrazu ciał w locie [px/s przy 1080p] — p10 ${fmt(w.p10)}, mediana ${fmt(w.med)}, p90 ${fmt(w.p90)}, max ${fmt(w.max)} (${w.maxId}); daleko (≥ ${FAR_A / 1e6} mln j. przed dziobem) max ${fmt(w.far)}${w.farId ? ` (${w.farId})` : ''}.`, '');
       if (TORY === 'wszystkie' || (TORY === 'gl' && k1 && H === RESS[0])) {
         out.push(`### Tory ${sc.name} ${res.W}×${H} (co 0,5 s; x, y od środka kadru [px, y w dół], r [px], px/s, β ciała)`);
@@ -1312,6 +1419,16 @@ for (const r of runs) {
   out.push(`| ${r.res.sc.name} ${r.res.H}p | ${fmt(w.p10)} | ${fmt(w.med)} | ${fmt(w.p90)} | ${fmt(w.max)} (${w.maxId}) | ${fmt(w.far)}${w.farId ? ` (${w.farId})` : ''} |`);
 }
 out.push('');
+out.push(`Niebo-sfera — obrót w przebiegu, napęd ${DRIVE_NAME} (prawo tempa 2026-10-27; „dawne” — ?nieboTempo=stare; °/s przy 16:9 — 32:9 × 2; W0 klatka po klatce: niebo < mid < speed, wartości < 1):`);
+out.push('');
+out.push('| przebieg | obrót [°] (lot) | dawne [°] | max °/s | max px/s (1080p) | niebo / mid | mid / speed | z kamerą: niebo / mid (czas > 1) | z kamerą: mid / speed | dawne z kamerą: niebo / mid (czas > 1) |');
+out.push('|---|---|---|---|---|---|---|---|---|---|');
+for (const r of runs) {
+  const k = r.an.sky;
+  if (!k) continue;
+  out.push(`| ${r.res.sc.name} ${r.res.H}p | ${fmt(k.turned, 1)} (${fmt(k.flight, 1)}) | ${fmt(r.an.skyOld.turned, 1)} | ${fmt(k.maxDeg, 2)} | ${fmt(k.maxPx1080)} | ${fmt(k.w0Sky, 3)} | ${fmt(k.w0Mid, 3)} | ${fmt(k.camSky, 2)} ${k.camSkyAt} (${fmt(k.camSkyT, 2)} s) | ${fmt(k.camMid, 2)} ${k.camMidAt} | ${fmt(r.an.skyOld.camSky, 2)} ${r.an.skyOld.camSkyAt} (${fmt(r.an.skyOld.camSkyT, 2)} s) |`);
+}
+out.push('');
 out.push(failed ? `**${failed} kontroli nie przeszło (wariant K1${STRICT_OFF ? ' i dziś' : ''}).**` : 'Wszystkie kontrole wariantu K1 przeszły.');
 const text = out.join('\n');
 if (MD) writeFileSync(MD, text);
@@ -1319,7 +1436,9 @@ else console.log(text);
 if (JSON_OUT) {
   writeFileSync(JSON_OUT, JSON.stringify(runs.map((r) => ({
     scen: r.res.sc.name, H: r.res.H, W: r.res.W, aspect: ASPECT_ARG, k1: r.res.k1, ev: r.res.ev, checks: r.an.checks, w0: r.an.w0, naped: DRIVE_ID, kv: KV,
-    frames: r.res.frames.map((f) => ({ t: +f.t.toFixed(4), ph: f.phaseName, v: Math.round(f.v), beta: +f.beta.toFixed(4), zoom: +f.zoom.toFixed(5),
+    sky: r.an.sky ? { turned: r.an.sky.turned, flight: r.an.sky.flight, maxDeg: r.an.sky.maxDeg, w0Sky: r.an.sky.w0Sky, w0Mid: r.an.sky.w0Mid,
+      camSky: r.an.sky.camSky, camSkyT: r.an.sky.camSkyT, camMid: r.an.sky.camMid, oldTurned: r.an.skyOld.turned } : null,
+    frames: r.res.frames.map((f, fi) => ({ t: +f.t.toFixed(4), ph: f.phaseName, sky: r.an.sky ? +r.an.sky.om[fi].toFixed(3) : 0, v: Math.round(f.v), beta: +f.beta.toFixed(4), zoom: +f.zoom.toFixed(5),
       ship: [+f.shipSx.toFixed(1), +f.shipSy.toFixed(1)], hold: +f.hold.toFixed(4),
       s: Math.round(f.s), anchor: [+f.anchorSx.toFixed(1), +f.anchorSy.toFixed(1)], hullL: +f.hullL.toFixed(1), hullW: +f.hullW.toFixed(1),
       // ciało: [x, y, r, β, kąt przelotu, a, l, w kadrze, rysowane] (ciało mijane scenariusza i start — także poza kadrem)

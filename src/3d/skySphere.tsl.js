@@ -16,8 +16,9 @@
 //     materiał passa czyta go teksel w teksel (`cacheMode` 2), póki obraz nie obróci się o ≥ 0,25 px (sky3D.js).
 //   • JASNE GWIAZDY (siatki 3–4 z halo) — kwady instancjonowane na sferze (≤ ~15 tys., katalog z haszu — te same
 //     gwiazdy co siatki 3–4 liczone na piksel w kamerach 3D): gęstość i odcień z tekstury w miejscu gwiazdy (próbka w
-//     wierzchołku), w skoku smuga wzdłuż KURSU na ekranie (WARP_STARS.heading — jeden wektor, nie wachlarz; długość
-//     warstwy deep GameStars) i front wyjścia od dziobu (WARP_STARS.frontPx), światło dokładane tak, jak na pikselu
+//     wierzchołku), w skoku smuga wzdłuż KURSU na ekranie (WARP_STARS.heading — jeden wektor, nie wachlarz; długość =
+//     ruch obrazu nieba w czasie ekspozycji 0,05 s, uniform `streakLen` — skyScroll.js: skyStarStreakPx) i front wyjścia
+//     od dziobu (WARP_STARS.frontPx), światło dokładane tak, jak na pikselu
 //     płaszczyzny: acesGryInv((gładkie + gwiazda) · jasność) − acesGryInv(gładkie · jasność).
 //   • KAMERY 3D — sfera wokół oka (sky3D.js: Sky3D) z tą samą treścią, kierunek ze sceny macierzą `worldMat`; siatki
 //     3–4 na piksel (3 × 3), bo kwadów tam nie ma.
@@ -73,7 +74,10 @@ export function createSkySphereUniforms(equirectTexture, cacheTexture) {
     fineGain: uniform(1.0),
     brightness: uniform(1.0),
     cacheMode: uniform(0.0),
-    starGain: uniform(1.0)
+    starGain: uniform(1.0),
+    // smuga jasnych gwiazd przy WARP_STARS.stretch = 1 [px bufora] — ruch obrazu nieba w czasie ekspozycji
+    // (skyScroll.js: skyStarStreakPx; dawne prawo — 0,22 · stretchPx), pisze sky3D.js co klatkę
+    streakLen: uniform(74 * SKY_STAR_STREAK_MUL)
   };
 }
 
@@ -225,7 +229,10 @@ export function createSkyStarGeometry(catalog) {
   return geometry;
 }
 
-/** Smuga jasnej gwiazdy nieba przy WARP_STARS.stretch = 1 [× stretchPx] (warstwa deep GameStars). */
+/**
+ * Dawna smuga jasnej gwiazdy nieba przy WARP_STARS.stretch = 1 [× stretchPx] (warstwa deep GameStars) — wartość
+ * startowa uniformu `streakLen`; w biegu długość pisze sky3D.js (skyStarStreakPx — ruch nieba w czasie ekspozycji).
+ */
 export const SKY_STAR_STREAK_MUL = 0.22;
 
 /** Materiał kwadów jasnych gwiazd (kamera z góry, rzut równoodległy jak czworokąt nieba). */
@@ -271,7 +278,7 @@ export function createSkyStarQuadsMaterial(U, tune = SKY_STARS_TUNE, sph = SKY_S
     const sAlong = dot(c.sub(W.shipPx), W.heading);
     const real = W.frontOn.mul(smoothstep(W.frontPx.sub(60.0), W.frontPx.add(60.0), sAlong));
     const st = W.stretch.mul(float(1.0).sub(real)).toVar();
-    const L = st.mul(W.stretchPx).mul(SKY_STAR_STREAK_MUL).toVar();
+    const L = st.mul(U.streakLen).toVar();
     const dirT = W.heading.negate().toVar();   // ogon wstecz kursu
     const perp = vec2(dirT.y.negate(), dirT.x);
     const gq = positionGeometry.xy;
