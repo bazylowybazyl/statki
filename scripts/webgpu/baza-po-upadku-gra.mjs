@@ -15,7 +15,8 @@
 // nad gruzem A/B przycinania połówek brył (__worldSkinOptions.planeHalfCull) naprzemiennie ABABAB: klatki workera,
 // rysunki, zrzuty i porównanie (scripts/webgpu/porownaj.mjs); --ab partia — to samo dla partii skór
 // (__worldSkinOptions.batch: A — odłamy partiami, B — własnymi siatkami; worldSkinBatch.js). Czas GPU z
-// Core3D.gpuFrameMs (średnia z klatek okna). Tryb off: --query renderWorker=0 (bez części workera).
+// Core3D.gpuFrameMs (średnia z klatek okna). Tryb off: --query renderWorker=0 (sondy rysunków, A/B i pipeline'y na
+// stronie; bez konsoli i pierścienia klatek workera).
 // Raport: <out>/raport.json.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -53,6 +54,8 @@ const wkSend = (method, params = {}, timeoutMs = 60000) => new Promise((ok, reje
   cdp.pending.set(id, { ok: (r) => { clearTimeout(timer); ok(r); }, reject: (e) => { clearTimeout(timer); reject(e); } });
   cdp.ws.send(JSON.stringify({ id, method, params, sessionId: wk.sid }));
 });
+// Wątek renderu (Core3D, worldBodies3D): worker w trybie gracza, strona w trybie off (?renderWorker=0)
+const rEval = (expression) => (wk.sid ? wkEval(expression) : ev(expression));
 const wkEval = async (expression) => {
   const r = await wkSend('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
   if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
@@ -236,14 +239,13 @@ const PIPE_READ = `(() => { const R = globalThis.__pipeRec; if (!R) return null;
   return { nowe: R.pipes.length, sync: s.length, syncLista: s.slice(0, 12).map((p) => p.nazwa) }; })()`;
 
 async function drawProbe(label, ms = 1500) {
-  if (!wk.sid) return null;
   try {
-    if (!await wkEval(DRAW_INSTALL)) return null;
-    await wkEval(WK_STATE);   // początek okna klatek workera
-    await wkEval('(globalThis.__drawProbe.on = true, true)');
+    if (!await rEval(DRAW_INSTALL)) return null;
+    await rEval(WK_STATE);   // początek okna klatek workera (tryb off: bez pierścienia klatek)
+    await rEval('(globalThis.__drawProbe.on = true, true)');
     await sleep(ms);
-    const r = await wkEval(DRAW_READ);
-    const k = await wkEval(WK_STATE);
+    const r = await rEval(DRAW_READ);
+    const k = await rEval(WK_STATE);
     r.klatkiWorkera = { n: k.klatki, srMs: k.klatki ? +(k.sumMs / k.klatki).toFixed(2) : 0, p95: k.p95, max: k.max, gpuMs: r.gpuMs };
     console.log(label.padEnd(10), 'klatki workera', JSON.stringify(r.klatkiWorkera));
     report.rysunki = report.rysunki || {};
@@ -275,8 +277,8 @@ async function okno(label, sekundy, { profil = false } = {}) {
     const { profile } = await wkSend('Profiler.stop', {}, 120000);
     writeFileSync(join(out, `worker-${label}.cpuprofile`), JSON.stringify(profile));
   }
-  if (wk.sid) {
-    const pipe = await wkEval(PIPE_READ).catch(() => null);
+  {
+    const pipe = await rEval(PIPE_READ).catch(() => null);
     if (pipe) { (report.pipeline = report.pipeline || {})[label] = pipe; console.log(label.padEnd(10), 'pipeline\'y workera', JSON.stringify(pipe)); }
   }
   const wkRows = rows.map((r) => r.wk).filter((w) => w && !w.err);
@@ -309,7 +311,8 @@ try {
   // Core3D i stan workera na globalu workera (operacja dev strony — kod w workerze z dostępem do Core3D, st)
   if (trybWorker) await ev(`(window.RenderWorkerHost.dev({ eval: 'globalThis.__C3 = Core3D; globalThis.__ST = st;' }), true)`);
   await sleep(1500);
-  if (wk.sid) console.log('licznik pipeline\'ów workera:', await wkEval(PIPE_INSTALL).catch((e) => e.message));
+  if (!trybWorker) await ev('(globalThis.__C3 = window.Core3D, true)');
+  console.log('licznik pipeline\'ów (wątek renderu):', await rEval(PIPE_INSTALL).catch((e) => e.message));
   await ev(GUARD);
   // Atlas po drugiej stronie habitatu niż skała (bańka ciał świata 7 km obejmuje habitat), mgła wojny wyłączona
   await ev(`(() => {
@@ -386,19 +389,19 @@ try {
     await ev('(window.__setGamePaused(true), true)');
     await sleep(800);
     for (let i = 0; i < 40; i++) {
-      const q = await wkEval('(globalThis.__worldSkinStats ? globalThis.__worldSkinStats.batchQueue : 0)').catch(() => 0);
+      const q = await rEval('(globalThis.__worldSkinStats ? globalThis.__worldSkinStats.batchQueue : 0)').catch(() => 0);
       if (!q) break;
       await sleep(250);
     }
     const V = [['partia', true, 0], ['wlasne', false, 0], ['flagi0', true, 1], ['bezSkor', true, 2]];
     for (let pass = 1; pass <= 2; pass++) {
       for (const [name, batch, diag] of V) {
-        await wkEval(`(globalThis.__worldSkinOptions.batch = ${batch}, globalThis.__worldSkinOptions.batchDiag = ${diag}, true)`);
+        await rEval(`(globalThis.__worldSkinOptions.batch = ${batch}, globalThis.__worldSkinOptions.batchDiag = ${diag}, true)`);
         await sleep(600);
         await drawProbe(`diag-${name}${pass}`, 3000);
       }
     }
-    await wkEval('(globalThis.__worldSkinOptions.batch = true, globalThis.__worldSkinOptions.batchDiag = 0, true)');
+    await rEval('(globalThis.__worldSkinOptions.batch = true, globalThis.__worldSkinOptions.batchDiag = 0, true)');
     await ev('(window.__setGamePaused(false), true)');
   }
   abKinds.splice(0, abKinds.length, ...abKinds.filter((k) => k !== 'diag'));
@@ -408,7 +411,7 @@ try {
     await sleep(800);
     // kopie odłamów w partie kończą się w pauzie (worker rysuje dalej) — A/B dopiero bez kolejki
     for (let i = 0; i < 40; i++) {
-      const q = await wkEval('(globalThis.__worldSkinStats ? globalThis.__worldSkinStats.batchQueue : 0)').catch(() => 0);
+      const q = await rEval('(globalThis.__worldSkinStats ? globalThis.__worldSkinStats.batchQueue : 0)').catch(() => 0);
       if (!q) break;
       await sleep(250);
     }
@@ -416,10 +419,10 @@ try {
       const opt = AB[kind];
       const sortAb = kind === 'sortowanie';
       const dirAb = abKinds.length > 1 ? `ab-${kind}` : 'ab';
-      if (sortAb) await wkEval('(globalThis.__worldSkinOptions.batch = false, true)');
+      if (sortAb) await rEval('(globalThis.__worldSkinOptions.batch = false, true)');
       const setCull = (on) => (sortAb
-        ? wkEval(`(globalThis.__C3.renderer.sortObjects = ${on}, true)`)
-        : wkEval(`(() => { const o = globalThis.__worldSkinOptions; if (!o || !('${opt}' in o)) return null; o.${opt} = ${on}; return o.${opt}; })()`));
+        ? rEval(`(globalThis.__C3.renderer.sortObjects = ${on}, true)`)
+        : rEval(`(() => { const o = globalThis.__worldSkinOptions; if (!o || !('${opt}' in o)) return null; o.${opt} = ${on}; return o.${opt}; })()`));
       for (const [dir, on] of [['a1', true], ['b', false], ['a2', true], ['b2', false], ['a3', true], ['b3', false]]) {
         const r = await setCull(on);
         if (r === null) { console.log(`A/B: brak __worldSkinOptions.${opt} w workerze (stary kod?)`); break; }
@@ -432,12 +435,12 @@ try {
         for (const row of c.rows) console.log(`A/B ${kind} ${x}↔${y}`, JSON.stringify(row));
       }
       await setCull(true);
-      if (sortAb) await wkEval('(globalThis.__worldSkinOptions.batch = true, true)');
+      if (sortAb) await rEval('(globalThis.__worldSkinOptions.batch = true, true)');
     }
     await ev('(window.__setGamePaused(false), true)');
   }
-  if (wk.sid) {
-    const pipe = await wkEval(PIPE_READ).catch(() => null);
+  {
+    const pipe = await rEval(PIPE_READ).catch(() => null);
     if (pipe) { (report.pipeline = report.pipeline || {}).koniec = pipe; console.log('pipeline\'y workera (koniec)', JSON.stringify(pipe)); }
   }
 } catch (err) {
