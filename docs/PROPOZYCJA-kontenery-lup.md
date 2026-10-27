@@ -128,7 +128,7 @@ frachtowca najwyżej jedną paczkę. Łup byłby symboliczny, a dzisiejsze 20 t 
   dla gracza i AI), reszta spłonęła. Paczek tyle, ile w tabeli § 2 (2 / 4 / 6 / 10 / 16 na klasę), po równo masy;
   ostatnia zabiera resztę zaokrągleń. Podział jest deterministyczny z numeru kursu (`cargoHash01(kurs, i)`), bez
   `Math.random`.
-- **Przy rozpadzie i wyrwie w ładowni (etap 3, osobno):** wrak awansowanego frachtowca traci sloty ładowni nad
+- **Przy rozpadzie i wyrwie w ładowni (etap K4, osobno):** wrak awansowanego frachtowca traci sloty ładowni nad
   martwymi komórkami (`cargoDeckMask` / mocowania na komórkach). Wtedy paczki wypadają, zanim statek zginie. To
   zmienia ładunek ŻYWEGO kursu, więc potrzebna jest wiadomość `cargo-spill { course, units }` i przejście księgi
   „część partii → wrak”. Odkładam to, żeby MVP nie ruszał symulacji.
@@ -165,18 +165,58 @@ frachtowca najwyżej jedną paczkę. Łup byłby symboliczny, a dzisiejsze 20 t 
 
 | Wariant | Jak działa | Plusy | Minusy | Koszt | Ocena |
 |---|---|---|---|---|---|
-| **A. Przelot nad kontenerem** | kontener w promieniu chwytu przy luku Atlasa (~300 j.) i prędkość względna < 300 j./s → do ładowni | najprostszy, czytelny, zero nowych klawiszy | Atlas (1800 j.) musi trafić w 16-j. kontener; gonienie dryfujących męczy | mały | dobry jako koniec innych wariantów |
-| **B. Wiązka ściągająca** (wzór kopalni) | kontenery w 3,6 km przyciągane do luku, chwyt jak w A; najwyżej 12 naraz; nie łapie, czego ładownia nie zmieści | gotowy wzór (`_stepTractor`), satysfakcjonujący obraz, działa w walce | kolizja klawisza T (`tgt.paint` / `tgt.priority`, `src/input/inputActions.js:167`) | mały–średni | **rekomendacja**: włączona sama, gdy kontener jest w zasięgu, gracz leci < 400 j./s i ładownia ma miejsce; bez klawisza |
-| **C. Drony ładunkowe z luku Atlasa** | drony E12 (klasa L) wylatują, chwytają paczkę, wracają do otwartego luku | najładniejsze, spójne z portami E12 | nowy lot dronów w układzie nosiciela (wzór `repairRig`), obraz roju poza portem, otwarty luk w walce | duży | etap 4 jako ulepszenie B |
+| **A. Przelot nad kontenerem** | kontener w promieniu chwytu przy luku Atlasa (~300 j.) i prędkość względna < 300 j./s → do ładowni | najprostszy, czytelny, zero nowych klawiszy | Atlas (1800 j.) musi trafić w 16-j. kontener; gonienie dryfujących męczy | mały | tylko jako koniec pracy wiązki i drona |
+| **B. Wiązka ściągająca** (wzór kopalni) | kontenery w 3,6 km przyciągane do luku, chwyt jak w A; najwyżej 12 naraz; nie łapie, czego ładownia nie zmieści | gotowy wzór (`_stepTractor`), satysfakcjonujący obraz, działa w walce | kolizja klawisza T (`tgt.paint` / `tgt.priority`, `src/input/inputActions.js:167`) | mały–średni | **wybrana** (sprzęt do montażu, § 3.5): włączona sama, gdy kontener jest w zasięgu, gracz leci < 400 j./s i ładownia ma miejsce; bez klawisza |
+| **C. Drony ładunkowe z luku Atlasa** | drony E12 (klasa L) wylatują, chwytają paczkę, wracają do otwartego luku | najładniejsze, spójne z portami E12 | nowy lot dronów w układzie nosiciela (wzór `repairRig`), obraz roju poza portem, otwarty luk w walce | duży | **wybrana** (sprzęt do montażu zamiast wiązki, § 3.5) |
 | **D. Holownik / hol** | lina do kontenera i do doku (jak wrak) | jest `TowSystem` | hol do wraków setek ton; na 16-j. kontener to ceremonia; holownik serwisowy to okręt wsparcia, nie zbieracz | średni | **nie**. Hol zostaje do kadłuba wraku |
-| **E. Fregata zwiadu** | gracz prowadzi fregatę, przelot (A) jej małą ładownią (6 kontenerów), rozładunek po lądowaniu w luku | zbieranie pod maskowaniem (I), w mgle, z dala od Atlasa | mała ładownia, druga ładownia w logice, przełączanie sterów | średni | etap 4 (dobre dla pirata: „cichy zbieracz”) |
+| **E. Fregata zwiadu** | gracz prowadzi fregatę, przelot (A) jej małą ładownią (6 kontenerów), rozładunek po lądowaniu w luku | zbieranie pod maskowaniem (I), w mgle, z dala od Atlasa | mała ładownia, druga ładownia w logice, przełączanie sterów | średni | K5 (dobre dla pirata: „cichy zbieracz”) |
 
-**Rekomendacja MVP:** B + A. Wiązka działa sama (nic do wciskania). Kontener dociągnięty do luku wchodzi
-w chwycie. Paczka większa niż wolne miejsce oddaje tyle, ile wejdzie, a reszta dalej dryfuje z mniejszą masą
-(jak `maxOre` w kopalni). Luk Atlasa otwiera się, gdy wiązka coś ciągnie (`_playerCargoDoor`), więc paczkę
-widać, jak wjeżdża.
+**Decyzja użytkownika (2026-10-27):** „wiązka lub drony. dodaj opcje montowania dronów, wiązki do zbierania
+lootu”. Zbieranie robi sprzęt zamontowany na okręcie: wiązka ściągająca ALBO drony zbierające (§ 3.5). Chwyt
+przelotem (A) nie jest osobnym sposobem, tylko końcem pracy wiązki i drona (paczka przy luku wchodzi do
+ładowni). Hol (D) odpada, fregata (E) zostaje na później.
 
-### 3.5 Gdzie ląduje łup
+W obu wariantach paczka większa niż wolne miejsce oddaje tyle, ile wejdzie, a reszta dalej dryfuje z mniejszą
+masą (jak `maxOre` w kopalni). Luk otwiera się, gdy paczka dolatuje (`_playerCargoDoor`), więc widać, jak
+wjeżdża.
+
+### 3.5 Montaż: gniazdo ZBIÓRKA
+
+Wzór: system F (`HULL_SHIP_SYSTEMS`, wybór jednego z listy kadłuba, część w hangarze). Każdy kadłub gracza
+dostaje jedno gniazdo ZBIÓRKA z wyborem: pusto, wiązka albo drony.
+
+- **Dane:** `src/data/lootGear.js` (nowy, czyste dane): `LOOT_GEAR` (definicje i liczby na klasę),
+  `HULL_LOOT_GEAR` (kadłub → dostępne opcje), `LOOT_GEAR_PART_PRICES`. Część leży w `PLAYER.partStock`
+  (jak moduły i silniki manewrowe), wybór w `PLAYER.hullLootGear[kadłub]`.
+- **Zapis:** pole `hullLootGear` obok `hullModules` / `hullSystems` w `serializePlayerFitState` /
+  `restorePlayerFitState` (`index.html:13849`, walidacja po id jak `hullSystems`). Test w
+  `tests/playerFitSave.test.mjs`.
+- **UI:** czwarta sekcja „ZBIÓRKA” w refit ręcznym WYPOSAŻENIA obok MODUŁ / SYSTEM F / CHIPY
+  (`src/ui/station/fittingPanel.js:117–121`), z ceną brakującej części; pasek stanu i pasek ZMIAN pokazują
+  wybór. Karty automatu (UNIWERSALNA itd.) gniazda nie ruszają — zostaje, co zamontowane.
+- **Bez sprzętu** kontenery widać (radar, lampka), ale zebrać ich się nie da. HUD przy kontenerze w 4 km:
+  „BRAK SPRZĘTU ZBIÓRKI — wiązka albo drony (WYPOSAŻENIE)”.
+
+| | **Wiązka ściągająca** (`loot_tractor`) | **Drony zbierające** (`loot_drones`) |
+|---|---|---|
+| Jak działa | projektor przy luku; sama łapie najbliższe widoczne kontenery w zasięgu i ciągnie je do luku | drony wylatują z luku same, każdy bierze jedną paczkę i wraca; luk otwiera się na powrót |
+| Zasięg | Atlas 3,6 km (jak wiązka kopalni), krążownik / lotniskowiec 3 km, niszczyciel 2 km, fregata 1,5 km | Atlas 8 km od statku, pozostałe kadłuby z zatoką 6 km |
+| Naraz | 4 paczki (Atlas), 2 (reszta) | liczba dronów: Atlas 6, Citadella 6, Colossus 4, Bellator 3, Iron Skull 2 |
+| Warunek | statek wolniej niż 400 j./s (tryb BOJOWY, bez dopalacza); dalej wiązka puszcza | statek w trybie BOJOWYM (hipercruise i warp → drony wracają i porzucają paczki); drony 900 j./s puste, 450 j./s z paczką |
+| Słabość | trzeba zwolnić i podlecieć, jedna wiązka na raz kilka paczek | drony da się zestrzelić (jak drony naprawcze; paczka spada z powrotem w przestrzeń), uzupełnia je dok; zatoka zabiera miejsce w ładowni |
+| Koszt | część 8000 CR | część 14 000 CR + dron 900 CR; zatoka −6 slotów luku (Atlas: 6 × moduł 2 × 2 × 2 = 48 kontenerów, przy 2 t ≈ −96 t ładowności) |
+| Dostępność | każdy kadłub gracza | kadłuby z ładownią na zatokę: Atlas, Bellator, Citadella, Colossus, Iron Skull (fregaty, Hasta i Reaver — tylko wiązka) |
+| Obraz | promień z projektora do paczek (jak wiązka kopalni) | drony E12 (klasa L, chwyt 2 × 2) z paczką pod spodem, światła pozycyjne |
+
+- **Atlas fabrycznie z wiązką** (w komplecie startowym `FIT_KIT_PARTS`, jak domyślny system F), drony do kupienia
+  w porcie. Tak gracz od razu może zbierać, a drony są wyborem: wolniej, dalej, bez zwalniania.
+- **Wiązka kopalni** (tryb N, klawisz T) zostaje osobno. Scalenie w jeden projektor „skały i kontenery” to osobna
+  decyzja na później (§ 6).
+- **Logika dronów:** lot w układzie nosiciela jak drony naprawcze (`repairRig.js`: start i powrót do doku na
+  grzbiecie). Cel to kontener, nie komórka kadłuba. Trafienia dronów tą samą drogą co drony naprawcze
+  (`RepairSwarm` — pociski, wiązki, flak, wybuchy).
+
+### 3.6 Gdzie ląduje łup
 
 - **Ładownia gracza:** `addToPlayerCargo({ [towar]: sztuki })`, w jednostkach świata, jak cięcie wraku.
   Komunikat HUD `+ stal 35 t` (`pushZoneMessage`, z ogranicznikiem jak przy cięciu).
@@ -191,7 +231,7 @@ widać, jak wjeżdża.
   w localStorage”), kontenery w przestrzeni nie przeżywają F5 (jak wraki), a kursy i zlecenia startują od nowa
   po wczytaniu ekonomii (reguła `ruch-v2`, „Zapis ekonomii”). `economySave.js` bez zmian.
 
-### 3.6 Wpływ na ekonomię i piractwo
+### 3.7 Wpływ na ekonomię i piractwo
 
 - **Gracz jako pirat już działa po stronie świata:** zestrzelony kurs to strata przewoźnika
   (`closeCourseResources … lost`), wpis `recordLaneLoss`, więc frakcja wzmacnia patrol na tym szlaku. Kontenery
@@ -202,12 +242,12 @@ widać, jak wjeżdża.
   w MVP nie ma — decyzja D6.
 - **Mgła wojny:** kontener ukryty poza czujnikami (`SensorSystem.pointVisible`). Wiązka łapie tylko widoczne
   kontenery. Radar i lampka gasną w mgle.
-- **Piraci AI:** w MVP nie zbierają. W etapie 4 awansowany pirat albo rajder w bańce może podlatywać do
+- **Piraci AI:** w MVP nie zbierają. W K5 awansowany pirat albo rajder w bańce może podlatywać do
   kontenerów w 5 km (konkurencja o łup, „kradną sprzed nosa”). Przechwyty w rekordach dalej dają 55% do kryjówki.
 - **Bramka bilansu:** bez zmian. W symulacji nie ma gracza, a `cargo-recovered` to tylko statystyka. Weryfikacja:
   `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` przed i po, wynik identyczny.
 
-### 3.7 Wydajność i szew renderu (`AGENTS.md`)
+### 3.8 Wydajność i szew renderu (`AGENTS.md`)
 
 - **Logika** `src/game/lootContainers.js` (czysta, bez three i DOM): pula SoA (`Float64Array` x / y,
   `Float32Array` vx / vy / kąt / spin / masa / sztuki / wiek, `Int16Array` towar, `Int32Array` kurs i ziarno, flagi).
@@ -219,10 +259,15 @@ widać, jak wjeżdża.
   3D), kod wyglądu, siła wiązki, zanik. Moduł `src/3d/cargo/lootContainers3D.js` w workerze renderu (tryb `off` —
   ta sama ramka na stronie). Rozgrzewka `Core3D.warmup.add({ name: 'kontenery-łup', phase: 'after' })`. Promień wiązki
   w tym samym bloku, tym samym wzorem co wiązka kopalni (do sprawdzenia, czy `miningView` da się użyć bez kopalni).
+- **Drony zbierające:** stan w `lootContainers.js` (najwyżej 8 dronów gracza, tablice typowane: poza w układzie
+  nosiciela, faza, cel, punkty życia). Krok w `physicsStep` przed kolizjami pocisków, trafienia przez obwiednię
+  dronów jak `RepairSwarm.out` (0 dronów w powietrzu = nic do sprawdzania). Obraz: drony w tym samym bloku `loot`
+  (poza, kurs, niesiona paczka), siatka drona E12 klasy L — do sprawdzenia w K3, czy materiał roju działa bez ramy
+  slotów (inaczej wariant bez ramy, graf raz).
 - **Zdarzenia** (błysk przy chwycie) jako rekord strumienia rozkazów, nie wywołanie modułu renderu.
 - Szew gra ↔ render nie rośnie: moduł renderu czyta tylko blok. Strażnik `tests/szewRenderu.test.mjs`.
 
-### 3.8 Testy
+### 3.9 Testy
 
 - `tests/lootContainers.test.mjs`: podział partii (suma ≤ 55% masy, determinizm z kursu, ostatnia paczka bierze
   resztę), dryf i tłumienie, czas życia, pełna pula (doklejanie tego samego towaru), wiązka (zasięg, 12 celów,
@@ -232,6 +277,11 @@ widać, jak wjeżdża.
   manifestu.
 - Księga: `recoverShipmentOrder` (część, całość, podwójny odzysk odrzucony, `validateShipmentOrder` czysty)
   w `scripts/tests/shipmentOrders.test.mjs`. Symulacja ruchu liczba w liczbę bez zmian.
+- Gniazdo ZBIÓRKA (`tests/lootGear.test.mjs`, `tests/playerFitSave.test.mjs`): opcje per kadłub (drony tylko z
+  zatoką), cena brakującej części, zapis → F5 → wczytanie, nieznane id odrzucone, ładowność minus zatoka dronów,
+  bez sprzętu brak zbiórki.
+- Drony: wylot, chwyt, powrót z paczką, porzucenie przy hipercruisie, zestrzelony dron gubi paczkę w przestrzeń,
+  uzupełnienie w doku.
 - Blok `loot`: koduj / dekoduj, WGSL wariantu „luzem” buduje się w Node, wpis w rozgrzewce, strażniki
   `graBezGlsl` i `szewRenderu`.
 - Gra: `scripts/webgpu/kontenery-gra.mjs` (harness CDP, `__harness.step`): bańka przy Ziemi → ostrzał frachtowca
@@ -242,10 +292,11 @@ widać, jak wjeżdża.
 
 | Etap | Zakres | Pliki | Zależności |
 |---|---|---|---|
-| **K1 — logika i łup (MVP)** | manifest encji z workera; `lootContainers.js` (pula, zrzut, dryf, czas życia, wiązka, chwyt); klej w bloku „BAŃKA RUCHU v2 W GRZE” (obie ścieżki śmierci); `addToPlayerCargo` i komunikaty; reputacja przy zniszczeniu bez awansu; podgląd na kanwie 2D (kółko z kolorem rodziny) do czasu K2; testy jednostkowe | `src/game/lootContainers.js` (nowy), `src/game/traffic/workerBubble.js`, `trafficProtocol.js`, `src/game/trafficBubble.js`, `index.html` | decyzje D1–D5, D10 |
-| **K2 — obraz** | blok `loot`, wariant „luzem” materiału kontenerów, `lootContainers3D.js`, rozgrzewka, lampka HDR, promień wiązki, otwieranie luku Atlasa przy wiązce, radar, mgła; harness `kontenery-gra.mjs` | `src/render/blocks/lootBlock.js`, `src/3d/cargo/containers.tsl.js` (wariant), `src/3d/cargo/lootContainers3D.js`, `src/ui/radar/radarFeed.js` | K1, D8 |
-| **K3 — księga i wyrwa w ładowni** | `cargo-recovered` → `recoverShipmentOrder` (statystyka); wysyp z luku przy wyrwie w ładowni awansowanego frachtowca (`cargoDeckMask`, `cargo-spill`, przejście części partii do wraku); bramka bilansu na 3 ziarnach | `shipmentOrders.js`, `trafficDirector.js`, `trafficCore.js`, `index.html` | K1, D9 |
-| **K4 — ulepszenia (osobne decyzje)** | drony ładunkowe z luku Atlasa; fregata zwiadu jako zbieracz; piraci AI zbierający kontenery; gorący towar i paser; zestrzeliwanie kontenerów (hazmat i amunicja wybuchają) | — | K2 |
+| **K1 — logika, łup i wiązka (MVP)** | manifest encji z workera; `lootContainers.js` (pula, zrzut, dryf, czas życia, wiązka, chwyt); gniazdo ZBIÓRKA (`src/data/lootGear.js`, `hullLootGear` w zapisie, sekcja w refit ręcznym, część w komplecie startowym Atlasa); klej w bloku „BAŃKA RUCHU v2 W GRZE” (obie ścieżki śmierci); `addToPlayerCargo` i komunikaty; reputacja przy zniszczeniu bez awansu; podgląd na kanwie 2D (kółko z kolorem rodziny, linia wiązki) do czasu K2; testy jednostkowe | `src/game/lootContainers.js`, `src/data/lootGear.js` (nowe), `src/game/traffic/workerBubble.js`, `trafficProtocol.js`, `src/game/trafficBubble.js`, `src/ui/station/fittingPanel.js`, `index.html` | D1–D5, D10, D14–D17 |
+| **K2 — obraz** | blok `loot`, wariant „luzem” materiału kontenerów, `lootContainers3D.js`, rozgrzewka, lampka HDR, promień wiązki, otwieranie luku przy chwycie, radar, mgła; harness `kontenery-gra.mjs` | `src/render/blocks/lootBlock.js`, `src/3d/cargo/containers.tsl.js` (wariant), `src/3d/cargo/lootContainers3D.js`, `src/ui/radar/radarFeed.js` | K1, D8 |
+| **K3 — drony zbierające** | opcja `loot_drones` w gnieździe ZBIÓRKA: lot dronów w układzie nosiciela, chwyt i powrót z paczką, porzucenie w hipercruisie / warpie, trafienia dronów, uzupełnianie w doku, zatoka odejmuje ładowność; obraz dronów w bloku `loot` | `src/game/lootContainers.js` (drony), `src/data/lootGear.js`, `src/3d/cargo/lootContainers3D.js`, `index.html` | K2 |
+| **K4 — księga i wyrwa w ładowni** | `cargo-recovered` → `recoverShipmentOrder` (statystyka); wysyp z luku przy wyrwie w ładowni awansowanego frachtowca (`cargoDeckMask`, `cargo-spill`, przejście części partii do wraku); bramka bilansu na 3 ziarnach | `shipmentOrders.js`, `trafficDirector.js`, `trafficCore.js`, `index.html` | K1, D9 |
+| **K5 — ulepszenia (osobne decyzje)** | fregata zwiadu jako zbieracz; piraci AI zbierający kontenery (ten sam sprzęt z `lootGear.js`); gorący towar i paser; zestrzeliwanie kontenerów (hazmat i amunicja wybuchają) | — | K2 |
 
 ## 5. Decyzje „na strzała”
 
@@ -258,23 +309,28 @@ Pytanie, a po strzałce rekomendacja domyślna.
    handel (gracz wozi jak ciężki frachtowiec, ogranicza go oferta portu i kredyty) i kopalnię (rzadziej „ładownia
    pełna”). Bezpieczniejsza alternatywa to 400 t.
 2. **D2. Ile ładunku przetrwa?** → **55% masy** (ta sama stała co łup piratów), reszta spłonęła. Nic nie zostaje
-   we wraku kadłuba (martwe `_cargoManifest` sprzątnąć osobno albo wpiąć w K4).
+   we wraku kadłuba (martwe `_cargoManifest` sprzątnąć osobno albo wpiąć w K5).
 3. **D3. Kiedy wypada?** → **MVP tylko przy zniszczeniu** (obie ścieżki: bez awansu i awansowany NPC). Wysyp przy
-   wyrwie w ładowni żywego statku — K3.
-4. **D4. Jak zbierać?** → **Wiązka bez klawisza** (sama, gdy kontener w 3,6 km, gracz < 400 j./s, ładownia ma
-   miejsce) **+ chwyt przelotem** przy luku. Drony i fregata — K4. Hol nie.
+   wyrwie w ładowni żywego statku — K4.
+4. **D4. Jak zbierać? — ROZSTRZYGNIĘTE przez użytkownika (2026-10-27):** „wiązka lub drony. dodaj opcje montowania
+   dronów, wiązki do zbierania lootu”. Sprzęt do montażu w gnieździe ZBIÓRKA (§ 3.5); hol nie, fregata w K5.
 5. **D5. Czas życia i limit?** → **5 min gry, pula 256**, przy przepełnieniu doklejanie do kontenera tego samego
    towaru; znika dalej niż 50 km od gracza.
 6. **D6. Gorący towar?** (sprzedaż łupu właścicielowi = kara, paser u piratów) → **Nie w MVP.** Kara jest przy
-   zestrzeleniu; znakowanie w K4.
-7. **D7. Czy piraci AI zbierają kontenery w bańce?** → **Nie w MVP**, K4.
+   zestrzeleniu; znakowanie w K5.
+7. **D7. Czy piraci AI zbierają kontenery w bańce?** → **Nie w MVP**, K5.
 8. **D8. Widoczność?** → **Radar (punkt w zasięgu czujników) + mrugająca lampka HDR + mgła wojny chowa.** Bez CIC.
-9. **D9. Zgłaszać odzysk do księgi?** → **Tak, w K3**, tylko jako statystyka i status `recovered`; symulacja bez zmian.
+9. **D9. Zgłaszać odzysk do księgi?** → **Tak, w K4**, tylko jako statystyka i status `recovered`; symulacja bez zmian.
 10. **D10. Manifest encji w bańce** (gra wie, co wiezie frachtowiec, zanim go zestrzeli; HUD celu „stal 380 t”)?
     → **Tak.** Bez niego zrzut w chwili wybuchu jest niemożliwy (rekord wraku przychodzi do 5 s później).
-11. **D11. Kolizje kontenerów?** → **Duchy w MVP** (bez zderzeń z kadłubami, bez trafień); zestrzeliwanie w K4.
+11. **D11. Kolizje kontenerów?** → **Duchy w MVP** (bez zderzeń z kadłubami, bez trafień); zestrzeliwanie w K5.
 12. **D12. Zapis?** → **Bez zmian** (ładownia bez zapisu jak dziś, kontenery nie przeżywają F5).
 13. **D13. Reputacja przy zniszczeniu encji bez awansu** (dziś zero)? → **Tak, jak `registerFactionKill`**, w K1.
+14. **D14. Wiązka albo drony, czy oba naraz?** → **Jedno gniazdo, jeden wybór** (jak system F): wiązka albo drony.
+15. **D15. Bez sprzętu da się zbierać?** → **Nie.** Kontenery widać, HUD podpowiada WYPOSAŻENIE.
+16. **D16. Co ma Atlas na start?** → **Wiązkę w komplecie startowym**; drony za część 14 000 CR + 900 CR za drona.
+17. **D17. Drony zabierają ładowność?** → **Tak**, zatoka −6 slotów luku Atlasa (≈ −96 t przy 2 t na kontener),
+    jak przy fregacie i myśliwcach w luku („okręty zabierają miejsce ładunkowi”).
 
 ## 6. Zauważone przy okazji (poza zakresem)
 
@@ -284,3 +340,5 @@ Pytanie, a po strzałce rekomendacja domyślna.
 - Rekord wraku wyprawy górniczej ma `units` 0, bo urobek jest w `payload.harvest`
   (`trafficCore.js:1010–1011`).
 - Zniszczenie encji ruchu bez awansu nie zbija reputacji (§ 1.1, D13).
+- Wiązka kopalni (tryb N, klawisz T) jest dziś zawsze na Atlasie, poza wyposażeniem. Po gnieździe ZBIÓRKA może
+  przejść do tego samego sprzętu (jeden projektor na skały i kontenery) — osobna decyzja.
