@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 const planetSource = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
 // strojenie księżyców (okresy obrotu, orbity) — src/3d/moonOrbit.js (etap W nowego warpa, 2026-10-25)
-const moonOrbitSource = readFileSync(new URL('../src/3d/moonOrbit.js', import.meta.url), 'utf8');
+// (dane strojenia — src/data/moonBodies.js, re-eksport w moonOrbit.js; zwolnienie skoku gracza przy księżycu czyta je w grze)
+const moonOrbitSource = readFileSync(new URL('../src/data/moonBodies.js', import.meta.url), 'utf8');
 const planetTslSource = readFileSync(new URL('../src/3d/planet3d.assets.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const gameSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
@@ -71,7 +72,12 @@ test('Earth moon shares the anchored scale and render pass', () => {
   assert.match(planetSource, /this\.isRingAnchored\s*=\s*RING_PLANET_NAMES\.has\(parentKey\)/);
   assert.match(planetSource, /const\s+parentR\s*=\s*this\.isRingAnchored[\s\S]*?resolveRingPlanetWorldRadius\(this\.parentData\)/);
   assert.match(planetSource, /if\s*\(this\.isRingAnchored\)\s*enableRingPlanetLayer\(this\.group\)/);
-  assert.match(planetSource, /moonR\s*\*\s*\(this\.isRingAnchored\s*\?\s*1\s*:\s*PLANET_SIZE_MULTIPLIER\)/);
+  // promień bryły z danych (src/data/moonBodies.js — ten sam liczy gra do zwolnienia skoku): planeta z ringiem × 1,
+  // planeta tła × PLANET_SIZE_MULTIPLIER
+  assert.match(planetSource, /const scale = moonBodyRadius\(this\.tune, parentR, this\.isRingAnchored\);/);
+  assert.match(moonOrbitSource, /\(ringAnchored \? 1 : MOON_BACKDROP_MUL\)/);
+  assert.match(moonOrbitSource, /export const MOON_BACKDROP_MUL = 4\.5;/);
+  assert.match(planetSource, /const PLANET_SIZE_MULTIPLIER = 4\.5;/);
 });
 
 test('moons rotate visibly and receive a correctly layered halo', () => {

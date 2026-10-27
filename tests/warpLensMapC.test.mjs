@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   WORLD_LENS_DEFAULTS, WORLD_LENS_MODE, warpLensFrame, newWarpLensFrame, warpLensQ, warpLensInverse, mapWorldLens,
-  WarpWorldLens, newLensBody, softMaxLog, softMaxCompact, viewEdgeDistance, lensDiscInFrame, lensImageToWorld
+  WarpWorldLens, newLensBody, softMaxLog, softMaxCompact, viewEdgeDistance, lensDiscInFrame, lensImageToWorld,
+  warpLensChordAlong
 } from '../src/3d/warp/worldLens.js';
 import { WARP_ARRIVAL_FRAME, warpViewEdgePx, warpArrivalZoom, warpArrivalSoftMin } from '../src/render/warpArrivalFrame.js';
 import {
@@ -212,10 +213,19 @@ test('planeta dokładnie na kursie (O1-4, l = 0, nie cel): tor po osi kursu od p
   const dyda = (a) => yAt(a + 1) - yAt(a);
   assert.ok(dyda(1e9) > 0 && dyda(1e9) < 1e-9 && dyda(1e5) < dyda(1e4), 'tempo maleje ku punktowi zbiegu (bez osobliwości)');
   // za statkiem na osi (l = 0, a < 0): dalej po osi w dół, za płaszczyzną kamery — skala kMax · s i promień 0
-  for (const a of [-1e4, -0.5 * F.A, -0.97 * F.A, -2 * F.A]) {
-    const m = mapWorldLens(0, -a, 16650, { zoom: 0.1173, beta: 1, velAngle: -Math.PI / 2, viewHalfW: 960, viewHalfH: 540, shipSx: 0, shipSy: 189 }, {});
-    assert.ok(m.x === 0 && m.y > 0 && Number.isFinite(m.y) && Number.isFinite(m.size), `za rufą na osi (a ${a})`);
-    if (a <= -0.96 * F.A) assert.equal(m.size, 0, 'za płaszczyzną kamery — niewidoczne');
+  // (oś kursu przechodzi przez ciało — przelot nad nim, BRIEF-studnie pkt 5: głębia w punkcie WYJŚCIA osi kursu z ciała,
+  // a + r — gaśnie dopiero, gdy cała cięciwa jest za płaszczyzną kamery; `chord: 0` — skala środka, jak statek nad ciałem
+  // już przy wejściu: za płaszczyzną kamery niewidoczne)
+  for (const a of [-1e4, -0.5 * F.A, -0.97 * F.A, -(0.97 * F.A + 16650), -2 * F.A]) {
+    const o = { zoom: 0.1173, beta: 1, velAngle: -Math.PI / 2, viewHalfW: 960, viewHalfH: 540, shipSx: 0, shipSy: 189 };
+    const c = mapWorldLens(0, -a, 16650, o, {});
+    assert.ok(c.x === 0 && c.y > 0 && Number.isFinite(c.y) && Number.isFinite(c.size), `za rufą na osi (a ${a})`);
+    assert.ok(near(c.ae, a + 16650, 1e-6) || a + 16650 > -0.25 * 16650, `głębia w punkcie wyjścia osi kursu (a ${a})`);
+    if (a + 16650 <= -0.96 * F.A) assert.equal(c.size, 0, 'cięciwa za płaszczyzną kamery — niewidoczne');
+    else if (a > -0.96 * F.A) assert.ok(c.size > 0, 'przed płaszczyzną kamery — widoczne');
+    const m = mapWorldLens(0, -a, 16650, { ...o, chord: 0 }, {});
+    assert.ok(m.x === 0 && m.y > 0 && Number.isFinite(m.size), `skala środka: za rufą na osi (a ${a})`);
+    if (a <= -0.96 * F.A) assert.equal(m.size, 0, 'skala środka: za płaszczyzną kamery — niewidoczne');
   }
 });
 
@@ -432,17 +442,105 @@ test('kotwica P0 (M3): przy β = 1 obraz nie zależy od chwilowego miejsca statk
   assert.ok(near(mars.out.x, m.x, 1e-6) && near(mars.out.y, ctx.shipSy + m.y, 1e-6));
 });
 
-test('kieszeń kadłuba: bliski przelot nie zachodzi na kadłub (z ringiem); zwykły przelot — mapa bez zmian', () => {
+// PRZELOT NAD CIAŁEM — CIĘCIWA KURSU (BRIEF-studnie pkt 5): głębia ciała, przez które przechodzi oś kursu, w punkcie osi
+// kursu w ciele najbliższym statkowi — przed nim punkt wejścia a − h, nad nim statek (0: skala s), za nim punkt wyjścia a + h.
+test('cięciwa kursu (warpLensChordAlong): oś kursu obok ciała — środek (mapa O1 bez zmian); przez ciało — wejście / statek / wyjście, końce C¹, nieparzysta i niemalejąca w a, ciągła w l, półcięciwa ≤ chordMax · A; chord 0 — środek', () => {
+  const F = frame();
+  const P = WORLD_LENS_DEFAULTS;
+  const rc = 54750;
+  // obok osi kursu (|l| ≥ rc) i bez promienia — dokładnie środek
+  for (const a of [-2e5, -1, 0, 3e4, 1e6]) {
+    for (const l of [rc, -rc, 1.5 * rc, 3e5]) assert.equal(warpLensChordAlong(a, l, rc, F), a);
+    assert.equal(warpLensChordAlong(a, 0, 0, F), a);
+  }
+  // przez ciało: półcięciwa h = √(rc² − l²) (najwyżej chordMax · A), końce wygładzone na ± chordSoft · h
+  for (const l of [0, 20000, -40000, 54000]) {
+    const h = Math.min(Math.sqrt(rc * rc - l * l), P.chordMax * F.A);
+    const k = P.chordSoft * h;
+    assert.equal(warpLensChordAlong(0, l, rc, F), 0, 'statek nad ciałem — skala s');
+    assert.ok(near(warpLensChordAlong(h - k, l, rc, F), 0, 1e-9));
+    assert.ok(near(warpLensChordAlong(3e5, l, rc, F), 3e5 - h, 1e-6), 'przed — punkt wejścia osi kursu');
+    assert.ok(near(warpLensChordAlong(-3e5, l, rc, F), -3e5 + h, 1e-6), 'za — punkt wyjścia osi kursu');
+    let prev = -Infinity;
+    let prevD = NaN;
+    let worstKink = 0;
+    const da = 25;
+    for (let a = -3e5; a <= 3e5; a += da) {
+      const e = warpLensChordAlong(a, l, rc, F);
+      assert.ok(near(e, -warpLensChordAlong(-a, l, rc, F), 1e-9), 'nieparzysta');
+      assert.ok(e >= prev - 1e-9, `niemalejąca (l ${l}, a ${a})`);
+      if (prev > -Infinity) {
+        const dd = (e - prev) / da;
+        assert.ok(dd >= -1e-9 && dd <= 1 + 1e-9, 'pochodna w [0, 1]');
+        if (prevD === prevD) worstKink = Math.max(worstKink, Math.abs(dd - prevD));
+        prevD = dd;
+      }
+      prev = e;
+    }
+    // C¹: zmiana pochodnej na krok da ≤ da / (2k) (kwadratowe przejście) — bez załamania przy wejściu nad tarczę
+    assert.ok(worstKink <= da / (2 * k) + 1e-9, `l ${l}: skok pochodnej ${worstKink.toExponential(2)} (≤ ${(da / (2 * k)).toExponential(2)})`);
+  }
+  // ciągłość w l przy brzegu (|l| → rc): |ae − a| ≤ h → 0
+  for (const a of [-9e4, 2e4, 4e5]) {
+    const e = warpLensChordAlong(a, rc - 1, rc, F);
+    assert.ok(Math.abs(e - a) <= Math.sqrt(rc * rc - (rc - 1) ** 2) + 1e-9, 'ciągła przy |l| → rc');
+  }
+  // ogromne ciało: półcięciwa ≤ chordMax · A (środek obrazu poniżej punktu zbiegu)
+  assert.ok(near(warpLensChordAlong(1e6, 0, 5e6, F), 1e6 - P.chordMax * F.A, 1e-6));
+  // A/B: chord 0 — skala środka
+  const F0 = frame(0, 189, { ...WORLD_LENS_DEFAULTS, chord: 0 });
+  assert.equal(warpLensChordAlong(-3e4, 0, rc, F0), -3e4);
+  // warpLensQ: głębia w punkcie cięciwy (rc), bez rc — w środku
+  const q = warpLensQ(0, 30000, 1, 0.1173, F, {}, rc);
+  assert.ok(near(q.ae, warpLensChordAlong(-30000, 0, rc, F), 1e-9) && near(q.q, F.s / (1 + q.ae / F.A), 1e-15), 'q z głębi cięciwy');
+  assert.equal(warpLensQ(0, 30000, 1, 0.1173, F, {}).ae, -30000);
+});
+
+// KIESZEŃ KADŁUBA (od etapu „studnie” — BRIEF-studnie pkt 5): tylko ciało BLISKO STATKU NA STARCIE (prawdziwy obraz w kadrze
+// przy decyzji wejścia, cięciwa kursu nie przed statkiem — dok Luny, Hidalgo, olbrzym pasa obok statku); decyzja raz na skok.
+// Ciało mijane w locie (także o włos od ringu) i ciało, nad którym statek przeleci — bez kieszeni: tarcza pod statkiem.
+test('kieszeń kadłuba: ciało blisko statku na starcie (z ringiem) nie zachodzi na kadłub; ciało mijane w locie i ciało z cięciwą kursu przed statkiem — dokładnie mapa (bez kieszeni)', () => {
+  const ctx = { beta: 0.01, velAngle: -Math.PI / 2, zoom: 0.1173, W: 1920, H: 1080, shipX: 0, shipY: 0, shipSx: 0, shipSy: 189, anchorSx: 0, anchorSy: 189, hullHalfLen: 105, hullHalfWid: 47, dt: 1 / 60, exitAge: -1 };
+  const map = (b, chord = 1) => mapWorldLens(b.x, b.y, b.r, { zoom: 0.1173, beta: 1, velAngle: -Math.PI / 2, viewHalfW: 960, viewHalfH: 540, shipSx: 0, shipSy: 189, rExt: b.rExt, chord }, {});
+  // (a) na starcie przy doku ciała za rufą (dok w kadrze — attachR; cięciwa kursu za statkiem) — kieszeń
   const lens = new WarpWorldLens();
-  const ctx = { beta: 1, velAngle: -Math.PI / 2, zoom: 0.1173, W: 1920, H: 1080, shipX: 0, shipY: 0, shipSx: 0, shipSy: 189, anchorSx: 0, anchorSy: 189, hullHalfLen: 105, hullHalfWid: 47, dt: 1 / 60, exitAge: -1 };
-  const close = Object.assign(newLensBody('blisko', 'planet'), { x: 48000, y: 0, r: 37800, rExt: 46250, flat: 0.1173, ready: true });
+  const close = Object.assign(newLensBody('dok', 'small'), { x: 0, y: 8019, r: 4717, attachR: 11019, flat: 0.1173, ready: true });
   const usual = Object.assign(newLensBody('zwykle', 'planet'), { x: -75000, y: -200000, r: 30000, flat: 0.1173, ready: true });
+  lens.update([close, usual], 2, ctx, null);       // decyzja wejścia przy małym udziale soczewki (jak w ładowaniu)
+  ctx.beta = 1;
   lens.update([close, usual], 2, ctx, null);
+  assert.ok(close.pocketOn && !usual.pocketOn, 'kieszeń tylko dla ciała z prawdziwym obrazem (dokiem) w kadrze na starcie');
   const o = close.out;
-  const gap = Math.hypot(o.x, o.y - 189) - o.size * (46250 / 37800);
-  assert.ok(gap >= 47 + WORLD_LENS_DEFAULTS.edgeGap - 1e-6, `ring od kadłuba ${gap.toFixed(1)} px`);
-  const m = mapWorldLens(usual.x, usual.y, usual.r, { zoom: 0.1173, beta: 1, velAngle: -Math.PI / 2, viewHalfW: 960, viewHalfH: 540, shipSx: 0, shipSy: 189 }, {});
-  assert.ok(near(usual.out.size, m.size, 1e-9), 'zwykły przelot — dokładnie mapa');
+  const gap = Math.hypot(o.x, o.y - 189) - o.size;
+  assert.ok(gap >= 105 + WORLD_LENS_DEFAULTS.edgeGap - 1e-6, `tarcza od kadłuba ${gap.toFixed(1)} px`);
+  assert.ok(o.size > map(close).size * 2, 'kieszeń powiększa obraz względem mapy');
+  assert.ok(near(usual.out.size, map(usual).size, 1e-9), 'zwykły przelot — dokładnie mapa');
+  // (b) to samo ciało mijane w locie (nie było w kadrze przy wejściu) — bez kieszeni: dokładnie mapa (tarcza pod statkiem)
+  const lens2 = new WarpWorldLens();
+  const passed = Object.assign(newLensBody('mijane', 'planet'), { x: 48000, y: -3e6, r: 37800, rExt: 46250, flat: 0.1173, ready: true });
+  ctx.beta = 0.01;
+  lens2.update([passed], 1, ctx, null);
+  ctx.beta = 1;
+  for (const y of [-3e6, -2e5, -2e4, 0, 1e4]) {
+    passed.y = y;
+    lens2.update([passed], 1, ctx, null);
+    assert.ok(!passed.pocketOn && near(passed.out.size, map(passed).size, 1e-9), `mijane w locie (y ${y}) — mapa bez kieszeni`);
+  }
+  // (c) na starcie w kadrze, ale oś kursu przechodzi przez ciało PRZED statkiem (przelot nad nim) — bez kieszeni
+  const lens3 = new WarpWorldLens();
+  const ahead = Object.assign(newLensBody('przed', 'small'), { x: 0, y: -5000, r: 3000, flat: 0.1173, ready: true });
+  ctx.beta = 0.01;
+  lens3.update([ahead], 1, ctx, null);
+  ctx.beta = 1;
+  lens3.update([ahead], 1, ctx, null);
+  assert.ok(ahead.chordOn && !ahead.pocketOn && near(ahead.out.size, map(ahead).size, 1e-9), 'cięciwa kursu przed statkiem — przelot nad ciałem, bez kieszeni');
+  // A/B `pocket: 0` — nigdzie
+  const lens4 = new WarpWorldLens({ pocket: 0 });
+  ctx.beta = 0.01;
+  lens4.update([close], 1, ctx, null);
+  ctx.beta = 1;
+  lens4.update([close], 1, ctx, null);
+  assert.ok(near(close.out.size, map(close).size, 1e-9), 'pocket 0 — mapa');
 });
 
 test('kropki i słońce (M5): planeta i słońce nie mniejsze niż minDot, słońce × sunBoost; obraz < minPx gaśnie; stożek za celem (M4) zanurza ciała ±30°', () => {

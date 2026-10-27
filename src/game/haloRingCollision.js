@@ -17,12 +17,13 @@
 // Zero alokacji na krok: bufory wielokątów i wyniki w obiekcie kolidera.
 import { HALO_TRANSIT, haloPortComplexAngles, haloTransitAngles } from '../3d/haloRing/haloRingConfig.js';
 import { haloAngleDiff, haloGapIndexAt } from '../3d/haloRing/haloRingConstruction.js';
-import { K7_HEIGHTS, createK7Layout, k7Frame } from '../3d/haloRing/haloPortK7Layout.js';
+import { K7_HEIGHTS, createK7Layout, k7Frame, k7HubToWorld, k7WorldToHub } from '../3d/haloRing/haloPortK7Layout.js';
 import { haloBayLayouts } from '../3d/haloRing/haloPortBays.js';
 import { buildPortCollision, createPortRegistry } from '../3d/haloRing/haloPortDocking.js';
 import {
   createHaloRingPlacement,
   haloGameToLocal,
+  haloLocalToGame,
   haloLocalToGameVec,
   haloRingLayoutFor
 } from './haloRingPlanets.js';
@@ -465,5 +466,49 @@ export class HaloRingCollider {
       v.y -= vn * uy;
       if (-vn > this.result.impactSpeed) this.result.impactSpeed = -vn;
     }
+  }
+
+  // WYLOT Z DOKU PORTU (BRIEF-studnie — wyjście ze studni startu napędem przed skokiem; recenzja rozgrywki ust. 1: styczna
+  // do strefy orbit z bramy K-7 wchodziła w halę): statek o środku (x, y) w świecie gry i zasięgu kadłuba `reach` stoi
+  // w hali K-7 albo w zatoce któregoś kompleksu tego ringu (obrys doku od ściany tylnej po płytę przed bramą / wylot +
+  // zasięg) — `out.x / y` = punkt WYLOTU (brama G-01 hali, wylot zatoki) na osi x huba statku przyciętej do prześwitu bramy
+  // minus zasięg kadłuba (pas stanowiska capital C-01…C-04 — prosto, jak pas LANE hali), `out.ax / ay` = oś doku (+z huba,
+  // promieniowo na zewnątrz od planety), `out.inside` — statek przed płaszczyzną wylotu (w doku); wynik true. Poza dokami —
+  // false. Kolejne punkty odcinka pos → wylot leżą w wypukłym obrysie doku (hala: prostokąt + skos bramy), więc odcinek nie
+  // przecina ścian. Statek pod halą (między płytą ringu a ścianą tylną, pylony) — poza tym zapytaniem.
+  dockExit(x, y, reach, out) {
+    const owners = this.registry && this.registry.owners;
+    if (!owners || !out) return false;
+    const loc = haloGameToLocal(this.place, x, y, this._c);
+    const lx = loc.x;
+    const ly = loc.y;
+    const h = this._v;
+    const pad = Math.max(0, Number(reach) || 0);
+    for (let i = 0; i < owners.length; i++) {
+      const o = owners[i];
+      const L = o.layout;
+      const f = o.frame;
+      if (!L || !f) continue;
+      const hall = o.kind === 'k7';
+      const back = hall ? L.backZ : L.baseZ;
+      const mouth = hall ? L.frontZ : L.openZ;
+      const half = L.halfWidth;
+      const gate = hall ? L.frontHalfWidth - ((L.gates && L.gates[0] && L.gates[0].jamb) || 110) : L.halfWidth;
+      const apron = hall ? L.apronDepth : 1200;
+      k7WorldToHub(f, lx, ly, h);
+      const hx = h.x;
+      const hz = h.z;
+      if (hz < back - pad || hz > mouth + apron + pad || Math.abs(hx) > half + pad + 200) continue;
+      const lim = Math.max(0, gate - pad - 60);
+      const mx = hx < -lim ? -lim : (hx > lim ? lim : hx);
+      const w = k7HubToWorld(f, mx, mouth, h);
+      haloLocalToGame(this.place, w.x, w.y, out);
+      const a = haloLocalToGameVec(this.place, f.rx, f.ry, h);
+      out.ax = a.x;
+      out.ay = a.y;
+      out.inside = hz < mouth;
+      return true;
+    }
+    return false;
   }
 }

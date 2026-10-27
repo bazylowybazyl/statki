@@ -1,7 +1,8 @@
 // HUD kursu warpa. Kąty ekranowe dostaje po rzucie worldToScreen (także kamery 3D).
 // Warp zawsze do celu (DECYZJE-2 T1): każdy skok ma punkt wyjścia — kurs TRAVEL TO (±5°), cel w stożku ±20° albo skok
 // awaryjny (s.jumpKind: 'course' | 'cone' | 'emergency'); podpis s.label = cel skoku. Kurs w stożku ±20° (s.inCone) też
-// daje skok kursem (komputer dociąga dziób w ładowaniu) — zielone pasmo ±5° zostaje jako „kurs OK”.
+// daje skok kursem (komputer dociąga dziób w ładowaniu) — zielone pasmo ±5° zostaje jako „kurs OK”. Odcinek napędem ze
+// studni startu do jej brzegu (s.wellExit — BRIEF-studnie: start skoku w studni planety zablokowany) — „WYLEĆ NAPĘDEM”.
 const GREEN = '#75efb0', AMBER = '#ffc978', RED = '#ff897e';
 const units = (n) => `${Math.round(Math.max(0, n)).toLocaleString('pl-PL')} j.`;
 
@@ -72,7 +73,9 @@ export function drawWarpCourseHud(ctx, s) {
   else if (s.state === 'active') {
     if (s.autoExit) status = `WYJŚCIE AUTO ZA ${Math.max(0, s.exitIn).toFixed(1)} s`;
     else status = s.along <= 0 ? 'CEL ZA STATKIEM' : (s.exitIn < -0.15 ? 'ZA PÓŹNO' : (s.exitIn <= 0.15 ? 'WYJDŹ TERAZ [CAPS / 9]' : `WYJŚCIE ZA ${s.exitIn.toFixed(1)} s`));
-  } else if (!s.canWarp) status = s.detour ? 'OBJAZD STUDNI · LEĆ NAPĘDEM' : 'BLISKO CELU · DOLEĆ NAPĘDEM';
+  } else if (!s.canWarp) {
+    status = s.wellExit ? 'STUDNIA GRAWITACJI · WYLEĆ NAPĘDEM' : (s.detour ? 'OBJAZD STUDNI · LEĆ NAPĘDEM' : 'BLISKO CELU · DOLEĆ NAPĘDEM');
+  }
   else if (s.aligned) status = 'KURS OK · ±5° · [CAPS / 9]';
   else status = `${s.err < 0 ? '← A · W LEWO' : 'D · W PRAWO →'} ${Math.abs(s.err * 180 / Math.PI).toFixed(1)}°`;
   ctx.fillText(status, x, y + 46, width - 24);
@@ -83,6 +86,7 @@ export function drawWarpCourseHud(ctx, s) {
     : (good ? (busy ? (s.jumpKind === 'emergency' ? 'Skok awaryjny · komputer zakończy go przy punkcie'
       : 'Komputer zakończy skok przy punkcie') : 'Komputer doprecyzuje kurs i zakończy skok')
       : (busy ? 'Bez automatu · wyjście: CapsLock lub 9'
+        : s.wellExit ? 'Skok dopiero za brzegiem studni · TRAVEL TO wyprowadzi'
         : (s.inCone ? 'CAPS / 9: skok kursem · komputer obróci dziób'
           : 'Poza ±20° od kursu CAPS: cel przed dziobem / skok awaryjny'))), x, y + 90, width - 24);
   ctx.restore();

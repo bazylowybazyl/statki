@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { TRAVEL_TUNE, planTravelLeg, segmentCircleEntry, wellAt } from '../src/game/travelNav.js';
 import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue, chooseWarpJump } from '../src/game/warpCourse.js';
 import { warpExitRampDistance, WARP_EMERGENCY, planWarpEmergency } from '../src/game/warpDrive.js';
+import { RADAR_PLANET_NAMES } from '../src/ui/radar/radarConfig.js';
 import vm from 'node:vm';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -44,8 +45,9 @@ test('ręczny warp: namiar ze znakiem przez ±π i tolerancja dokładnie ±5°',
 function manualWarpHarness() {
   const html = read('index.html');
   // + wybór skoku klawiszem warpa (DECYZJE-2 T1): kurs → cel w stożku → skok awaryjny
+  // + odmowa skoku w studni (BRIEF-studnie pkt 1): refusePlayerWarpInWell na zaślepionej studni gracza (state.inWell)
   const names = ['cancelTravel', 'takeManualWarpCourse', 'startManualWarpCharge', 'stepWarpCourse', 'attemptWarp', 'handleWarpKeyDown', 'handleWarpKeyUp',
-    'chooseManualWarpJump', 'planPlayerWarpEmergency', 'formatWarpJumpKm'];
+    'chooseManualWarpJump', 'planPlayerWarpEmergency', 'formatWarpJumpKm', 'refusePlayerWarpInWell', 'playerWellBodyName'];
   const funcs = names.map(name => {
     const start = html.indexOf(`    function ${name}(`);
     assert.ok(start >= 0, name);
@@ -63,7 +65,9 @@ function manualWarpHarness() {
     chooseWarpJump, planWarpEmergency, WARP_EMERGENCY, WORLD: null, _warpEmergencyPlan: {},   // statek w (0, 0) — bez brzegu świata
     collectTravelTargets: () => state.coneTargets, coneTargets: [],
     travelLegToTarget: (c) => ({ x: c.tx ?? c.x, y: c.ty ?? c.y, kind: 'warp' }),
-    getTravelWells: () => [], warpEmergencyWells: () => state.wells, wells: [], travelMinWarpDist: () => 40000,
+    getTravelWells: () => [], warpEmergencyWells: () => state.wells, warpJumpWells: () => state.wells, wells: [], travelMinWarpDist: () => 40000,
+    inWell: null, playerWarpStartWell: () => state.inWell, SUN: { x: 0, y: 0, r: 823 }, formatPlanetOrbitLabel: (p) => p.label,
+    RADAR_PLANET_NAMES,
     _tugWarp: { active: false },
     messages: [],
     pushZoneMessage(m) { state.messages.push(m); }, travelRestoreStance() {}, clearPlayerAttackState() {},
@@ -299,19 +303,27 @@ test('K-7: bliski cel z dalekim objazdem oraz podróż wewnątrz studni — dolo
     'odlot na nowy daleki cel zachowuje warp');
 });
 
-test('planista objazdów omija inne studnie, ale nie odsyła od brzegu studni celu K-7', () => {
+test('planista objazdów (BRIEF-studnie pkt 3): studnie planet nie są przeszkodą, słońce i baza piratów — tak; start i cel w nich bez objazdu', () => {
   const html = read('index.html');
   const start = html.indexOf('    function getCruiseGravityObstacles(');
   const fn = html.slice(start, html.indexOf('\n    }', start) + 6);
   const earth = { x: 0, y: 0 }, mars = { x: 400000, y: 0 };
   const h = { planets: [earth, mars], travelNav: { obstacleMargin: 1100 },
     planetOrbitRadii: () => ({ gravityWell: 100000 }),
+    SUN: { x: 2e6, y: 0, r: 823 }, mercMission: null, pirateOrbitRadii: () => ({ inner: 20000, outer: 40000, gravityWell: 60000 }),
     // doki portów bez ringu (E14, src/game/portDockWorld.js): bez budowli — bez ich dysków
     portDocks: { pushCruiseObstacles: (out) => out } };
   vm.createContext(h); vm.runInContext(fn, h);
-  const obstacles = h.getCruiseGravityObstacles({ x: 95000, y: 0 }, { x: 250000, y: 0 });
-  assert.equal(obstacles.length, 1);
-  assert.equal(obstacles[0].x, mars.x, 'studnia Ziemi przy porcie nie wymusza objazdu');
+  let obstacles = h.getCruiseGravityObstacles({ x: 95000, y: 0 }, { x: 250000, y: 0 });
+  assert.equal(obstacles.length, 1, 'planety (Ziemia, Mars) — przelot, bez objazdu');
+  assert.equal(obstacles[0].x, h.SUN.x, 'słońce zostaje przeszkodą');
+  assert.equal(obstacles[0].r, 823 * 2 + 1100, 'strefa słońca + zapas');
+  h.mercMission = { station: { x: 1e6, y: 5e5 } };
+  obstacles = h.getCruiseGravityObstacles({ x: 95000, y: 0 }, { x: 250000, y: 0 });
+  assert.deepEqual(Array.from(obstacles, (o) => o.x), [h.SUN.x, 1e6], 'baza piratów — przeszkoda');
+  assert.equal(obstacles[1].r, 60000 + 1100);
+  // cel w studni bazy (misja) i start w strefie słońca — bez objazdu ich studni
+  assert.equal(h.getCruiseGravityObstacles({ x: 1e6 + 1000, y: 5e5 }, { x: 2e6 + 500, y: 0 }).length, 0);
 });
 
 test('gra: TRAVEL TO zamiast CRUISE / SKOK / PRZELOT w mapie i menu; kurs warpa stoi od ładowania', () => {

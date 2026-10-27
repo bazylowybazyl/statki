@@ -31,7 +31,7 @@ import { createEarthBiteMesh, earthBiteUniforms, earthBiteVector, earthBiteCente
 import { EARTH_SPIN, earthSpinAxis, earthSpinBase, earthSpinQuaternion } from './earthSpin.js';
 import { EarthBitePlant } from './earthBitePlant.js';
 import { PLANET_MAPS, MOON_MAPS, SMALL_BODY_MAPS } from './planetMaps.js';
-import { MOON_TUNE, JUPITER_MOONS_TUNE, moonGameNode, moonStartAngle, moonOrbitRadius, moonOrbits, moonOrbitSpeed, moonPlaceInto } from './moonOrbit.js';
+import { MOON_TUNE, JUPITER_MOONS_TUNE, moonGameNode, moonStartAngle, moonOrbitRadius, moonBodyRadius, moonOrbits, moonOrbitSpeed, moonPlaceInto } from './moonOrbit.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
 import {
@@ -1086,8 +1086,9 @@ class DirectPlanet {
         b.x = Number(this.data.x) || 0;
         b.y = Number(this.data.y) || 0;
         b.r = scale;
-        // Promień z ringiem „Halo” (obwiednia ringu) albo z pierścieniem Saturna — kieszeń kadłuba soczewki (ring jedzie
-        // w slocie skalą obrazu planety, więc tarcza z ringiem nie może zajść na statek).
+        // Promień z ringiem „Halo” (obwiednia ringu) albo z pierścieniem Saturna (ring jedzie w kotwicy skalą obrazu planety):
+        // cięciwa kursu przy przelocie nad ciałem (worldLens.js: warpLensChordAlong — tarcza z ringiem pod statkiem) i kieszeń
+        // kadłuba ciała blisko statku na starcie (worldLens.js: pocket).
         b.rExt = this.isRingAnchored ? Math.max(scale, this._ringOuter || 0)
             : (this.saturnRing ? scale * SATURN_VISUAL_RING.outerRadius : 0);
         b.z = visualZ;
@@ -1330,9 +1331,8 @@ class DirectMoon {
             // Słońce księżyca w płaszczyźnie gry, jak planet (moonSurface.tsl.js: dzień i zmrok świateł nocnych
             // z kierunku Słońce − środek, z = 0) — ciemna połowa przechodzi prosto w smugę cienia za ciałem.
             if (RenderWorld.sun) setMoonSunDirection(this.mesh.material, RenderWorld.sun.x - mx, -(RenderWorld.sun.y - my), 0);
-            const sizeRatio = Math.max(0.01, Number(this.tune?.sizeRatioToParent) || MOON_TUNE.sizeRatioToParent);
-            const moonR = parentR * sizeRatio;
-            const scale = Math.max(900, moonR * (this.isRingAnchored ? 1 : PLANET_SIZE_MULTIPLIER));
+            // promień bryły (src/data/moonBodies.js — ten sam liczy gra: zwolnienie skoku przy mijanym księżycu)
+            const scale = moonBodyRadius(this.tune, parentR, this.isRingAnchored);
             this.mesh.scale.set(scale, scale, scale);
             // Z głębokością (księżyc tła — tam, gdzie go widać); w soczewce tarczę zgłasza _lensPlace.
             if (!lensOn && typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(mx, my, scale, 1, z);

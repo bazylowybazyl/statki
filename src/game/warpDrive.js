@@ -510,7 +510,9 @@ export function warpExitRampTime(v0, hullLength, vEnd = 0) {
  * SKOK AWARYJNY (DECYZJE-2 T1, krok 3 — CapsLock / 9 bez kursu w ±5° i bez celu w stożku ±20°): stała długość w dziób,
  * bez dodatkowej ceny. Planista skraca skok przed brzegiem studni grawitacji (z zapasem `wellMargin` jak TRAVEL TO —
  * travelNav.js: TRAVEL_TUNE.wellMargin) i przed brzegiem świata (`edgeMargin`), więc skok zawsze kończy się rampą
- * wyjścia (nigdy hamowaniem grawitacyjnym bez rampy ani na ścianie świata). Studnia, w której statek stoi (port),
+ * wyjścia (nigdy hamowaniem grawitacyjnym bez rampy ani na ścianie świata). `wells` = studnie, które HAMUJĄ skok w locie
+ * (gra: słońce i baza piratów — index.html: warpEmergencyWells); studnie planet i małych ciał skok przelatuje (BRIEF-studnie
+ * pkt 2–3), więc gra ich nie podaje — planeta na kursie jest celem w stożku. Studnia, w której statek stoi (port),
  * nie skraca (wylot z niej) — chyba że dziób celuje w jej jądro (`rIn`: strefy orbit ciała — ring, planeta): wtedy
  * koniec przed jądrem, a ze środka jądra w głąb — odmowa. Skok krótszy niż `minDist` (TRAVEL_TUNE.minWarp) — odmowa
  * (out.ok false, out.cut — 'well' | 'edge'): studnia albo brzeg tuż przed dziobem.
@@ -549,9 +551,10 @@ export function planWarpEmergency(pos, dirX, dirY, wells, bounds, tune = WARP_EM
     const c = fx * fx + fy * fy - R * R;
     const b = fx * ux + fy * uy;
     if (c <= 0) {
-      // Start w tej studni — wylot jej nie skraca, ale JĄDRO studni (`rIn` — strefy orbit ciała: ring, planeta; recenzja
-      // T, ust. 8) przed dziobem tak: skok w głąb przechodziłby przez ring i planetę i hamował grawitacyjnie (bez rampy)
-      // po drugiej stronie (index.html: warpLeavingWell — tylko skok oddalający się od ciała nie hamuje na jego pasie).
+      // Start w tej studni — wylot jej nie skraca, ale JĄDRO studni (`rIn` — strefy orbit źródła; recenzja T, ust. 8)
+      // przed dziobem tak: skok w głąb przechodziłby przez źródło i hamował grawitacyjnie (bez rampy) po drugiej stronie
+      // (index.html: warpLeavingWell — tylko skok oddalający się od źródła nie hamuje na jego pasie). W grze dotyczy to już
+      // tylko studni hamujących (baza piratów; słońce — start w jego strefie zablokowany, zostaje dla narzędzi).
       const Ri = (Number(w.rIn) || 0) > 0 ? Number(w.rIn) + margin : 0;
       if (!(Ri > 0) || !(b < 0)) continue;
       const ci = fx * fx + fy * fy - Ri * Ri;
@@ -683,7 +686,14 @@ export const WARP_FLYBY_DEFAULTS = Object.freeze({
   minSize: 0.05,    // ciało widziane z kursu mniejsze niż to — bez zwolnienia
   fullSize: 0.42,   // … większe niż to — pełne zwolnienie
   width: 2.2,       // półszerokość pasa zwolnienia × (odległość środka ciała od kursu + promień)
-  minWidth: 60000   // … nie węższa niż ta [j.]
+  minWidth: 60000,  // … nie węższa niż ta [j.]
+  // … i nie węższa niż UKŁAD KSIĘŻYCÓW ciała × tyle (`reach` ciała — najdalsza orbita księżyca + 12 tys. j.; BRIEF-studnie,
+  // zespół B 2026-10-27): przelot centralny ma pas 2,2 · r (Jowisz 106 tys. j.), a księżyce sięgają 250 tys. j. — mijane
+  // tuż za studnią w pełnej prędkości wylatywały z kadru soczewki ponad P4 (symulator S10, Mk II: Europa 65 px/kl.); przy
+  // brzegu układu zwolnienie ~0,7. Przelot bokiem (2,2 · (l + r) ≥ 0,9 · zasięg — Jowisz od ~59 tys. j. z boku) bez zmian.
+  // 0,9, nie 1: przy 1 pas obejmował jeszcze przelot S8 (Jowisz 69 tys. j. z boku) i przesuwał chwile wyjścia (Mk III:
+  // mignięcie 4 px przy zanurzeniu — docs/webgpu/WARP-SOCZEWKA.md § „Studnie grawitacyjne”). 0 — bez (A/B)
+  reachWidth: 0.9
 });
 
 /**
@@ -697,23 +707,50 @@ export const WARP_FLYBY_DEFAULTS = Object.freeze({
  * gracza (index.html) i w planie prędkości (planWarpCruise); widok — soczewka świata
  * (src/3d/warp/worldLens.js, skala z NOMINALNEJ prędkości — nie przybliża się przy zwolnieniu).
  * along — ciało przed statkiem wzdłuż kursu (ujemne: za rufą), lateral —
- * odległość środka ciała od kursu, radius — promień ciała (jednostki świata).
+ * odległość środka ciała od kursu, radius — promień ciała (jednostki świata), reach — zasięg układu księżyców ciała
+ * [j.] (pas nie węższy niż reachWidth · reach; 0 — bez).
  */
-export function warpFlybySlowdown(along, lateral, radius, p = WARP_FLYBY_DEFAULTS) {
+export function warpFlybySlowdown(along, lateral, radius, p = WARP_FLYBY_DEFAULTS, reach = 0) {
   const r = Math.max(1, Number(radius) || 0);
   const lat = Math.abs(Number(lateral) || 0);
   const clear = Math.max(0, lat - r);
   const size = r / (r + clear);
   const depth = clamp01(p.depth) * smooth((size - p.minSize) / Math.max(1e-6, p.fullSize - p.minSize));
   if (!(depth > 0)) return 1;
-  const w = Math.max(Number(p.minWidth) || 1, (Number(p.width) || 0) * (lat + r));
+  const rw = Number(p.reachWidth);
+  const rr = Number(reach);
+  const w = Math.max(Number(p.minWidth) || 1, (Number(p.width) || 0) * (lat + r), rw > 0 && rr > 0 ? rw * rr : 0);
   const g = (Number(along) || 0) / w;
   return 1 - depth * Math.exp(-g * g);
 }
 
 /**
+ * PODŁOGA ŁĄCZNEGO ZWOLNIENIA SKOKU (BRIEF-studnie pkt 4, decyzja użytkownika 2026-10-26: „samo przelatywanie w warpie [nad
+ * planetą] powinno jak najbardziej być”): skok przelatuje przez studnię planety (strefa × 0,3) nad samą tarczą (przelot
+ * × 0,15) — bez podłogi łącznie × 0,045 (Mk II w skoku awaryjnym 2,7 tys. j/s: tarcza wisi pod statkiem kilkanaście
+ * sekund, a plan prędkości nadrabia to szybszym lotem gdzie indziej). Podłoga = najgłębszy sam przelot (1 − depth): nad
+ * planetą statek leci tak, jak przy najbliższym bocznym przelocie (tempo W0 tej warstwy jest zmierzone), a przy osi kursu
+ * obraz soczewki zostaje w P4 nawet przy suficie prędkości przelotowej (granica P4 ~0,39 — docs/webgpu/WARP-SOCZEWKA.md
+ * § „Studnie grawitacyjne — przelot nad planetą”). Strefa sama (bez ciała) i strefa pasa zostają jak były.
+ */
+export const WARP_SLOW_FLOOR = 0.15;
+
+/**
+ * Mnożnik prędkości skoku: strefa (`zoneMul` — pas × 0,8, studnie × 0,3) × zwolnienie przy ciałach (`flyby` —
+ * warpFlybyFactor), nie niżej niż `floor` (WARP_SLOW_FLOOR) i nie wyżej z podłogi niż sama strefa (strefa wolniejsza niż
+ * podłoga zostaje sobą). JEDNA funkcja dla fizyki skoku gracza (index.html, physicsStep), planu prędkości
+ * (planWarpCruise / warpLegTimeline) i symulatora soczewki (scripts/webgpu/warp-soczewka-sym.mjs).
+ */
+export function warpSpeedFactor(zoneMul, flyby, floor = WARP_SLOW_FLOOR) {
+  const z = Number.isFinite(zoneMul) && zoneMul >= 0 ? zoneMul : 1;
+  const f = Number.isFinite(flyby) && flyby >= 0 ? flyby : 1;
+  const fl = Math.max(0, Number(floor) || 0);
+  return Math.max(Math.min(fl, z), z * f);
+}
+
+/**
  * Zwolnienie skoku od wszystkich ciał w punkcie (x, y) przy kursie (dirX, dirY) — iloczyn
- * warpFlybySlowdown. bodies: [{ x, y, r }] (świat gry), n — ile pierwszych brać.
+ * warpFlybySlowdown. bodies: [{ x, y, r, reach? }] (świat gry; reach — zasięg układu księżyców), n — ile pierwszych brać.
  */
 export function warpFlybyFactor(x, y, dirX, dirY, bodies, n = bodies ? bodies.length : 0, p = WARP_FLYBY_DEFAULTS) {
   let f = 1;
@@ -722,9 +759,23 @@ export function warpFlybyFactor(x, y, dirX, dirY, bodies, n = bodies ? bodies.le
     if (!b) continue;
     const ox = b.x - x;
     const oy = b.y - y;
-    f *= warpFlybySlowdown(ox * dirX + oy * dirY, oy * dirX - ox * dirY, b.r, p);
+    f *= warpFlybySlowdown(ox * dirX + oy * dirY, oy * dirX - ox * dirY, b.r, p, b.reach);
   }
   return f;
+}
+
+/**
+ * Zasięg układu księżyców ciała [j.] dla pasa zwolnienia skoku (warpFlybySlowdown: reach): najdalsza orbita księżyca
+ * (`moons` — lista { orbitRadius }, np. systemMap.js: moonsOf(id)) + `margin`; bez księżyców — 0.
+ */
+export function warpMoonReach(moons, margin = 12000) {
+  let reach = 0;
+  if (!Array.isArray(moons)) return 0;
+  for (let i = 0; i < moons.length; i++) {
+    const o = Number(moons[i] && moons[i].orbitRadius) || 0;
+    if (o > 0 && o + margin > reach) reach = o + margin;
+  }
+  return reach;
 }
 
 /**
@@ -801,6 +852,7 @@ function _simulateWarpLeg(vc, o, limit, marks, markT, res) {
   const bodies = Array.isArray(o.bodies) ? o.bodies : [];
   const zone = o.zone || null;
   const flyP = o.flyby || WARP_FLYBY_DEFAULTS;
+  const floor = Number.isFinite(o.floor) ? o.floor : WARP_SLOW_FLOOR;   // podłoga łącznego zwolnienia (warpSpeedFactor)
   const v0 = Math.max(0, Number(o.v0) || 0);
   let s = 0;
   let v = v0;
@@ -811,12 +863,13 @@ function _simulateWarpLeg(vc, o, limit, marks, markT, res) {
     if (dist - s <= warpExitRampDistance(v, L)) return done(t, v, s);
     prog = Math.min(1, prog + dt / entry);
     const ease = prog * prog * (3 - 2 * prog);
-    let f = zone ? zone(s) : 1;
+    let fb = 1;
     for (let i = 0; i < bodies.length; i++) {
       const b = bodies[i];
-      f *= warpFlybySlowdown(b.along - s, b.lateral, b.r, flyP);
+      fb *= warpFlybySlowdown(b.along - s, b.lateral, b.r, flyP, b.reach);
     }
-    const vmax = vc * f;
+    // strefa × przelot z podłogą — ta sama funkcja co fizyka skoku w grze (index.html)
+    const vmax = vc * warpSpeedFactor(zone ? zone(s) : 1, fb, floor);
     const vs = Math.min(v0, vmax);
     const target = vs + (vmax - vs) * ease;
     v += (target - v) * k;
@@ -834,8 +887,9 @@ function _simulateWarpLeg(vc, o, limit, marks, markT, res) {
 /**
  * Prędkość przelotowa skoku z celem: od skoku do początku wyjścia mija warpTripTime(dist) − decel.
  * o = { dist (wzdłuż kursu do końca odcinka), v0 (prędkość przy skoku), hullLength,
- *   bodies: [{ along, lateral, r }] (ciała względem punktu skoku — zwolnienie), zone: (s) → mnożnik
- *   strefy w odległości s od punktu skoku (opcjonalnie), entry, lag, dt }.
+ *   bodies: [{ along, lateral, r, reach? }] (ciała względem punktu skoku — zwolnienie; reach — zasięg księżyców), zone: (s) → mnożnik
+ *   strefy w odległości s od punktu skoku (opcjonalnie), floor (podłoga łącznego zwolnienia — warpSpeedFactor, domyślnie
+ *   WARP_SLOW_FLOOR), entry, lag, dt }.
  * Zwraca { speed, time (plan od skoku do wyjścia), target (czas docelowy) }.
  */
 export function planWarpCruise(o, tune = WARP_TRIP) {

@@ -97,6 +97,42 @@ test('rejestr kotwic: rzecz przypięta do ciała jedzie jego obrazem; β → 0 =
   }
 });
 
+// PRZELOT CENTRALNY (BRIEF-studnie pkt 5): rzeczy przypięte (ring „Halo”, stacja, dok) jadą z ogromną tarczą POD statkiem —
+// ta sama skala co ciało (cięciwa kursu), punkt na brzegu ciała leży na brzegu obrazu, położenie ciągłe, gdy statek mija środek.
+test('rejestr kotwic przy przelocie centralnym: ring i stacja jadą z tarczą pod statkiem (skala cięciwy kursu, brzeg na brzegu obrazu, ciągle przez środek)', () => {
+  const ctx = makeCtx(1, { velAngle: -1.2, roll: 0.3 });
+  const lens = new WarpWorldLens();
+  const cu = Math.cos(ctx.velAngle);
+  const cv = Math.sin(ctx.velAngle);
+  // Jowisz z ringiem na osi kursu; statek przelatuje nad środkiem (a: +60 tys. → −60 tys. j.)
+  const jup = body('jupiter', 'planet', 0, 0, 48000, 0, ctx);
+  jup.rExt = 54750;
+  const placeAt = (a) => { jup.x = ctx.shipX + cu * a; jup.y = ctx.shipY + cv * a; };
+  placeAt(2e6);
+  lens.update([jup], 1, { ...ctx, beta: 0.01 });
+  let prev = null;
+  let worst = 0;
+  for (let a = 60000; a >= -60000; a -= 500) {
+    placeAt(a);
+    lens.update([jup], 1, ctx);
+    const slot = writeLensAnchor({ on: false }, ctx, jup, jup.out.size, true);
+    near(slot.k, jup.out.size / (jup.flat * jup.r), 1e-12, 'skala rzeczy przypiętej = skala tarczy');
+    // punkt ringu (54,75 tys. j. od środka, w bok od kursu) i stacja na brzegu kuli — na ekranie na brzegu obrazu ringu / kuli
+    for (const [R, label] of [[54750, 'ring'], [48000, 'stacja na brzegu kuli']]) {
+      const px = jup.x - cv * R;
+      const py = jup.y + cu * R;
+      const p = lensAnchorPoint(slot, px, py, {});
+      const c = lensImageToWorld(ctx, jup.out.x, jup.out.y, 0, true, {});
+      near(Math.hypot(p.x - c.x, p.y - c.y) * ctx.zoom, jup.out.size * R / jup.r, 1e-6 * jup.out.size, `${label} na brzegu obrazu (a ${a})`);
+    }
+    // ring pod statkiem, gdy statek nad ringiem (|a| < 54,75 tys.): obraz statku (kotwica) w obrazie ringu
+    if (Math.abs(a) < 54000) assert.ok(Math.hypot(jup.out.x - ctx.anchorSx, jup.out.y - ctx.anchorSy) < jup.out.size * 54750 / 48000, `statek nad ringiem w obrazie (a ${a})`);
+    if (prev) worst = Math.max(worst, Math.hypot(slot.x - prev.x, slot.y - prev.y) * ctx.zoom);
+    prev = { x: slot.x, y: slot.y };
+  }
+  assert.ok(worst < 10, `kotwica jedzie ciągle przez środek tarczy (${worst.toFixed(2)} px na 500 j.)`);
+});
+
 test('rejestr kotwic: klucz = id ciała, ten sam rekord, on gaśnie poza soczewką; zasięg rzeczy przypiętych w decyzji wejścia', () => {
   const s = warpLensAnchorSlot('test-anchor');
   assert.equal(warpLensAnchorSlot('test-anchor'), s);

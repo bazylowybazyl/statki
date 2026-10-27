@@ -20,7 +20,8 @@
 // statku, promień 263 px przy 1080p — jak mapa C), za trawersem ciało rośnie i wylatuje z kadru (bokiem albo dołem).
 // Płaszczyzna kamery: skala stoi na kMax · s (bez osobliwości — obraz daleko za kadrem), a promień gaśnie przed nią:
 // ukrycie(w) = smoothstep(hideW0, hideW1, w) (hideW0 ≥ 1 / kMax) — planeta startu wylatuje dołem kadru i znika.
-// Namiar prawdziwy (obraz na kierunku ciała od kotwicy), tarcza nigdy nie zachodzi na statek (q · (d − r) > 0).
+// Namiar prawdziwy (obraz na kierunku ciała od kotwicy), tarcza zachodzi pod statek tylko przy prawdziwym przelocie nad
+// ciałem (q · (d − r) > 0 dla d > r; przelot nad ciałem — niżej).
 // Odwrotność dla HUD-u w postaci zamkniętej (warpLensInverse). Dawna mapa C (pas W / √(l² + B²), dwa punkty zbiegu —
 // zawijanie toru wokół statku): docs/webgpu/WARP-SOCZEWKA.md § „Mapa O1” i „Historia”.
 //
@@ -53,10 +54,16 @@
 // (planet3d.assets.js: lensFaceQuat).
 //
 // STOŻEK ZA CELEM (M4): ciało dalej wzdłuż kursu niż bliski brzeg celu, w stożku ±coneDeg wokół kursu — zanurza się
-// (promień → 0 płynnie z kątem; wynurzanie / zanurzanie w miejscu — pełne od emerge0), poza stożkiem widoczne. KIESZEŃ
-// KADŁUBA (poza celem): q · (d − rExt) ≥ elipsa kadłuba + edgeGap (miękkie maksimum z nośnikiem zwartym — przy zwykłych
-// przelotach nieaktywna; najwyżej do skali prawdziwego obrazu — statek w promieniu pierścienia). KROPKI (M5): rekord
-// z `minDot` nie mniejszy niż tyle px (planety, słońce), słońce × sunBoost; obraz < minPx gaśnie.
+// (promień → 0 płynnie z kątem; wynurzanie / zanurzanie w miejscu — pełne od emerge0), poza stożkiem widoczne.
+// PRZELOT NAD CIAŁEM (BRIEF-studnie pkt 5, 2026-10-27): ciało, przez które przechodzi OŚ KURSU (|l| < rExt — z ringiem),
+// ma głębię mapy w punkcie osi kursu w ciele najbliższym statkowi (cięciwa — warpLensChordAlong): przed nim punkt wejścia,
+// nad nim statek (skala s: ogromna tarcza POD statkiem, stała, powierzchnia jedzie s · v), za nim punkt wyjścia (wylot
+// dołem w tempie homografii, ukrycie dopiero za całą cięciwą). Statek nad ciałem w obrazie ⟺ nad ciałem naprawdę (obraz
+// podobny wokół kotwicy). Decyzja wejścia (b.chordOn, raz na skok): statek nad ciałem już przy wejściu — skala środka.
+// KIESZEŃ KADŁUBA (poza celem, tylko ciało blisko statku na starcie — b.pocketOn: ruch, bo prawdziwy obraz / dok w kadrze,
+// cięciwa kursu nie przed statkiem): q · (d − rExt) ≥ elipsa kadłuba + edgeGap (miękkie maksimum z nośnikiem zwartym;
+// najwyżej do skali prawdziwego obrazu). Ciała mijane w locie (także o włos od ringu) — bez kieszeni: tarcza pod statkiem.
+// KROPKI (M5): rekord z `minDot` nie mniejszy niż tyle px (planety, słońce), słońce × sunBoost; obraz < minPx gaśnie.
 //
 // RESZTA ŚWIATA (DECYZJE E1–E3, etap 3A): REJESTR KOTWIC (WARP_LENS_ANCHORS — obraz każdego ciała dla rzeczy przypiętych:
 // ring, stacje, doki; writeLensAnchor / lensAnchorPoint), REKORDY DODATKOWE (WARP_LENS_EXTRA — komety, olbrzymy pasa,
@@ -69,7 +76,8 @@
 // WARP_WORLD_LENS), ciała rozstawia planet3d.assets.js (applyWarpWorldLens), β liczy src/render/warpLensPhase.js.
 // Weryfikacja: tests/warpWorldLens.test.mjs, tests/warpLensMapC.test.mjs (matematyka mapy O1 — nazwa pliku z czasów
 // mapy C), tests/warpLensPrzejscia.test.mjs, tests/warpLensAnchors.test.mjs, `node scripts/webgpu/warp-soczewka-sym.mjs`
-// (S1–S8, 1080p / 1440p, `--naped mk1|mk2|mk3`, `--aspect 21:9|32:9`, `--param klucz=liczba`).
+// (S1–S12 — S10 / S11 przelot nad tarczą i ringiem, S12 odlot nad planetą startu; S13 wyjście nad tarczą — otwarte;
+// 1080p / 1440p, `--naped mk1|mk2|mk3`, `--aspect 21:9|32:9`, `--param klucz=liczba`).
 
 import { WARP_ARRIVAL_FRAME, warpViewEdgePx, warpArrivalScale } from '../../render/warpArrivalFrame.js';
 import { WARP_LENS_PHASE, warpExitFrontS, warpBodySubmerge, warpLensExitSlow, warpExitFrontCross } from '../../render/warpLensPhase.js';
@@ -104,7 +112,30 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   emerge0: 0.1,         // promień wynurzenia × smoothstep(emerge0, emerge1, β)
   emerge1: 0.8,
   emergeLift: 0.06,     // położenie wynurzenia × (1 + emergeLift · (1 − β))
-  // Kieszeń kadłuba (siatka bezpieczeństwa)
+  // PRZELOT NAD CIAŁEM (BRIEF-studnie pkt 5, 2026-10-27; decyzja użytkownika 2026-10-26: „masz wtedy ogromną planetę,
+  // nad którą możesz przelecieć i nie wymuszasz przelotu bokiem”): ciało, przez które przechodzi OŚ KURSU (|l| < promień
+  // z ringiem — rExt), rysuje się skalą mapy w punkcie osi kursu w tym ciele najbliższym statkowi (CIĘCIWA kursu,
+  // warpLensChordAlong): nad tarczą skala s (stała „wysokość” — ogromna tarcza POD statkiem nie rośnie i nie ucieka,
+  // powierzchnia jedzie s · v), przed nią i za nią punkt wejścia / wyjścia osi kursu leży dokładnie w homografii O1 (wylot
+  // dołem kadru w tempie mapy, ukrycie za płaszczyzną kamery dopiero, gdy cała cięciwa jest za nią). Ciała obok osi kursu
+  // (|l| ≥ rExt) i cel — skala środka (mapa O1 bez zmian). Skala środka dużej tarczy pod statkiem rosła × 3,6 (Jowisz,
+  // tarcza 245 → 1520 px) i ring wpadał w pas ukrycia jeszcze w kadrze. 0 — skala środka (A/B)
+  chord: 1,
+  chordSoft: 0.25,      // wygładzenie końców cięciwy (× półcięciwa): skala bez załamania przy wejściu nad tarczę i zejściu
+  chordMax: 0.9,        // półcięciwa najwyżej × płaszczyzna kamery A (środek obrazu ciała poniżej punktu zbiegu)
+  // KIESZEŃ KADŁUBA — tylko ciało BLISKO STATKU NA STARCIE: tryb ustalony przy wejściu ruchem, bo prawdziwy obraz (albo dok
+  // — attachR) był w kadrze, a cięciwa kursu nie leży przed statkiem (dok Luny, Hidalgo, dok bez ciała, olbrzym pasa obok
+  // statku): obraz w soczewce nie mniejszy, niż trzeba, żeby tarcza (z ringiem) stała ≥ edgeGap od elipsy kadłuba —
+  // mniejszy kontrast prawdziwy ↔ soczewka, więc przejście ruchem w ładowaniu mieści się w P4 (symulator S7). Ciała mijane
+  // w locie (także o włos od ringu) i ciała, nad którymi statek przeleci, kieszeni nie mają (BRIEF-studnie pkt 5: tarcza
+  // pod statkiem; dawna kieszeń przy przelocie nad tarczą rozdmuchiwała ją do prawdziwej skali — Jowisz 421 → 5600 px).
+  // Decyzja raz na skok (b.pocketOn, b.pocketSession). 0 — bez kieszeni (A/B)
+  pocket: 1,
+  // KSIĘŻYCE RODZICA Z CIĘCIWĄ KURSU PRZED STATKIEM (recenzja obrazu W2: księżyc za ringiem lądował w obrazie kuli
+  // rodzica) — skala obrazu rodzica, póki punkt cięciwy rodzica jest przed statkiem albo pod nim; za nim płynnie własna mapa
+  // na drodze moonRigidFade · A punktu cięciwy (WarpWorldLens.update). 0 — własna mapa zawsze (A/B)
+  moonRigid: 1,
+  moonRigidFade: 0.35,
   edgeGap: 24,          // [px] najmniejszy odstęp tarczy (z ringiem — rExt) od elipsy kadłuba
   pocketSoft: 20,       // [px] miękkość kieszeni
   // Kropki (M5)
@@ -224,7 +255,8 @@ export function flybyTurn(ox, oy, h, out = { ax: 1, ay: 0, angle: 0 }) {
 
 /** Nowy kadr soczewki (rekord do warpLensFrame — raz, bez alokacji w klatce). */
 export function newWarpLensFrame() {
-  return { cu: 0, cv: -1, ef: 1, eb: 1, esR: 1, esL: 1, ec: 1, Ef: 1, W: 1, s: 1, A: 1, kv: 1, kMax: 20, wMin: 0.05, h0: 0.05, h1: 0.1 };
+  return { cu: 0, cv: -1, ef: 1, eb: 1, esR: 1, esL: 1, ec: 1, Ef: 1, W: 1, s: 1, A: 1, kv: 1, kMax: 20, wMin: 0.05, h0: 0.05, h1: 0.1,
+    chord: 1, chordSoft: 0.25, chordMax: 0.9 };
 }
 
 /**
@@ -270,27 +302,59 @@ export function warpLensFrame(cu, cv, hw, hh, p0x, p0y, p = WORLD_LENS_DEFAULTS,
   out.h0 = Math.max(out.wMin, num(p.hideW0, P.hideW0));
   // h1 ≤ 1: statek i wszystko przed nim (w ≥ 1) nigdy nie gaśnie — β → 0 (w = 1) zostaje dokładnie prawdziwym obrazem
   out.h1 = Math.min(1, Math.max(out.h0 + 1e-6, num(p.hideW1, P.hideW1)));
+  // Przelot nad ciałem (cięciwa kursu — warpLensChordAlong)
+  out.chord = num(p.chord, P.chord) > 0 ? 1 : 0;
+  out.chordSoft = clamp(num(p.chordSoft, P.chordSoft), 0, 1);
+  out.chordMax = clamp(num(p.chordMax, P.chordMax), 0, 0.99);
   return out;
 }
 
 /**
- * Mapa O1 dla punktu / ciała: (dx, dy) — przesunięcie od statku w osiach ekranu [j.], β, flat — skala prawdziwego
- * widoku [px/j.], F — kadr (warpLensFrame). Wynik: out.q — skala [px/j.] (obraz = kotwica + q · (dx, dy)), a, l, d,
- * sb (s — skala w trawersie), A, kappa (1 / max(w, 1 / kMax)), w (głębia 1 + β · a / A, bez ograniczenia), hide (mnożnik
- * promienia: 1, a za płaszczyzną kamery → 0). Bez alokacji.
+ * PRZELOT NAD CIAŁEM — CIĘCIWA KURSU (BRIEF-studnie pkt 5): `a` (wzdłuż kursu, + przed dziobem) punktu, którego głębią
+ * mapa O1 skaluje ciało o środku (a, l) i promieniu `rc` (z ringiem). Oś kursu przechodzi przez ciało (|l| < rc) na odcinku
+ * a ± h, h = √(rc² − l²) (najwyżej chordMax · A): przed nim — punkt wejścia (a − h), nad nim — statek (0: skala s), za nim —
+ * punkt wyjścia (a + h); końce wygładzone kwadratowo na ± chordSoft · h (C¹). Oś kursu poza ciałem (|l| ≥ rc), rc ≤ 0 albo
+ * F.chord = 0 — środek (a), czyli mapa O1 bez zmian; przy |l| → rc cięciwa → 0 (ciągle w l). Funkcja nieparzysta
+ * i niemalejąca w a — obraz punktu wejścia / wyjścia jedzie po osi kursu jak w homografii. Bez alokacji.
  */
-export function warpLensQ(dx, dy, beta, flat, F, out) {
+export function warpLensChordAlong(a, l, rc, F) {
+  if (!(F.chord > 0) || !(rc > 0)) return a;
+  const d2 = rc * rc - l * l;
+  if (!(d2 > 0)) return a;
+  let h = Math.sqrt(d2);
+  const cap = F.chordMax * F.A;
+  if (h > cap) h = cap;
+  const k = F.chordSoft * h;
+  const x = (a < 0 ? -a : a) - h;
+  let e;
+  if (!(k > 0)) e = x > 0 ? x : 0;
+  else if (x >= k) e = x;
+  else if (x <= -k) e = 0;
+  else e = (x + k) * (x + k) / (4 * k);
+  return a < 0 ? -e : e;
+}
+
+/**
+ * Mapa O1 dla punktu / ciała: (dx, dy) — przesunięcie od statku w osiach ekranu [j.], β, flat — skala prawdziwego
+ * widoku [px/j.], F — kadr (warpLensFrame); rc (opcjonalnie) — promień ciała z ringiem: głębia w punkcie cięciwy kursu
+ * (warpLensChordAlong — przelot nad ciałem), 0 — w środku (punkt, cel). Wynik: out.q — skala [px/j.] (obraz = kotwica +
+ * q · (dx, dy)), a, l, d, ae (a punktu głębi — cięciwa), sb (s — skala w trawersie), A, kappa (1 / max(w, 1 / kMax)),
+ * w (głębia 1 + β · ae / A, bez ograniczenia), hide (mnożnik promienia: 1, a za płaszczyzną kamery → 0). Bez alokacji.
+ */
+export function warpLensQ(dx, dy, beta, flat, F, out, rc = 0) {
   const a = dx * F.cu + dy * F.cv;
   const l = -dx * F.cv + dy * F.cu;
+  const ae = rc > 0 ? warpLensChordAlong(a, l, rc, F) : a;
   const sb = F.s;
   const b = beta > 1 ? 1 : (beta > 0 ? beta : 0);
-  const w = 1 + b * a / F.A;
+  const w = 1 + b * ae / F.A;
   const kb = 1 / (w > F.wMin ? w : F.wMin);
   const fl = flat > 0 ? flat : sb;
   const qs = b >= 1 ? sb : (b <= 0 ? fl : Math.exp((1 - b) * Math.log(fl) + b * Math.log(sb)));
   out.q = qs * kb;
   out.a = a;
   out.l = l;
+  out.ae = ae;
   out.d = Math.sqrt(dx * dx + dy * dy);
   out.sb = sb;
   out.A = F.A;
@@ -332,17 +396,20 @@ export function warpLensInverse(X, Y, F, out) {
 }
 
 // Parametry i kadr mapWorldLens (bez alokacji).
-const _mP = { hf: 0, ws: 0, B1: 0, kMax: 0, hideW0: 0, hideW1: 0, aspectMax: 0, aspectFlow: 0, speedRef: 0 };
+const _mP = { hf: 0, ws: 0, B1: 0, kMax: 0, hideW0: 0, hideW1: 0, aspectMax: 0, aspectFlow: 0, speedRef: 0, chord: 1, chordSoft: 0, chordMax: 0 };
 const _mF = newWarpLensFrame();
-const _mQ = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
+const _mQ = { q: 0, a: 0, l: 0, ae: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
 
 /**
  * Mapa O1 jednego ciała (bez stanu): (dx, dy) — świat względem statku w OSIACH EKRANU [j.], y w dół; r — promień.
  * o: { zoom, flatScale (domyślnie zoom), beta, velAngle (kurs w osiach ekranu), viewHalfW/H, shipSx/Sy (KOTWICA —
  * px od środka kadru), opcjonalnie hf, ws, B1, kMax, hideW0, hideW1, aspectMax, aspectFlow, speedRef, driveSpeed (prędkość napędu
- * warp [j/s]) }. Wynik (przesunięcie od kotwicy): out.x, out.y,
+ * warp [j/s]), rExt (promień z ringiem — cięciwa kursu przy przelocie nad ciałem; domyślnie r), chord (domyślnie
+ * WORLD_LENS_DEFAULTS.chord — skala cięciwy jak w WarpWorldLens; 0 — skala środka, np. statek nad ciałem już przy wejściu),
+ * chordSoft, chordMax }.
+ * Wynik (przesunięcie od kotwicy): out.x, out.y,
  * out.size (× ukrycie za płaszczyzną kamery), out.q, out.gap (q · (d − r)), out.d, out.theta, out.edge (droga do krawędzi
- * przed dziobem), out.a, out.l, out.w, out.hide.
+ * przed dziobem), out.a, out.l, out.ae (a punktu głębi — cięciwa), out.w, out.hide.
  */
 export function mapWorldLens(dx, dy, r, o, out = {}) {
   const P = WORLD_LENS_DEFAULTS;
@@ -358,10 +425,13 @@ export function mapWorldLens(dx, dy, r, o, out = {}) {
   _mP.aspectMax = num(o.aspectMax, P.aspectMax);
   _mP.aspectFlow = num(o.aspectFlow, P.aspectFlow);
   _mP.speedRef = num(o.speedRef, P.speedRef);
+  _mP.chord = num(o.chord, P.chord);
+  _mP.chordSoft = num(o.chordSoft, P.chordSoft);
+  _mP.chordMax = num(o.chordMax, P.chordMax);
   const F = warpLensFrame(Math.cos(va), Math.sin(va), num(o.viewHalfW, 0), num(o.viewHalfH, 0), num(o.shipSx, 0), num(o.shipSy, 0), _mP, _mF,
     num(o.driveSpeed, NaN));
-  const Q = warpLensQ(dx, dy, num(o.beta, 0), flat, F, _mQ);
   const rr = Math.max(0, num(r, 0));
+  const Q = warpLensQ(dx, dy, num(o.beta, 0), flat, F, _mQ, Math.max(rr, num(o.rExt, 0)));
   out.q = Q.q;
   out.x = Q.q * dx;
   out.y = Q.q * dy;
@@ -372,6 +442,7 @@ export function mapWorldLens(dx, dy, r, o, out = {}) {
   out.edge = F.ef;
   out.a = Q.a;
   out.l = Q.l;
+  out.ae = Q.ae;
   out.w = Q.w;
   out.hide = Q.hide;
   return out;
@@ -697,8 +768,20 @@ export function newLensBody(id, kind = '') {
     cross: -1,       // [s] wiek wyjścia, w którym front dotknął obrazu (< 0 — jeszcze nie)
     plunge: 0.3,     // [s] czas zanurzenia / powrotu w tym wyjściu (z tempa obrazu — exitMovePx / exitSizePx)
     plungeEpoch: -1, // przejście (WarpWorldLens._epoch), w którym policzono plunge
+    // obraz tej klatki dla księżyców (rodzic z cięciwą kursu — księżyce jadą jego skalą, jak księżyce celu): środek,
+    // skala położeń, mnożnik promienia, udział soczewki, prawdziwy środek, a punktu głębi (cięciwa), klatka soczewki
+    lp: { x: 0, y: 0, qp: 0, sf: 1, bb: 0, flat: 1, realX: 0, realY: 0, ae: 0, frame: -1 },
     seenFrame: -1,   // ostatnia klatka soczewki (WarpWorldLens._frame), w której rekord był gotowy
     lateAge: -1,     // [s] wynurzenie ciała, które pojawiło się w trakcie skoku (< 0 — brak)
+    pocketOn: false, // kieszeń kadłuba w tym skoku (decyzja wejścia — WORLD_LENS_DEFAULTS.pocket)
+    pocketSession: -1, // skok (WarpWorldLens.session), w którym ustalono pocketOn
+    chordOn: false,  // skala cięciwy kursu w tym skoku (decyzja wejścia — WORLD_LENS_DEFAULTS.chord; statek nad ciałem już
+                     // przy wejściu — false)
+    chordSession: -1, // skok, w którym ustalono chordOn
+    chordAheadOn: false, // przy decyzji cięciwy cała przed statkiem (przelot nad ciałem dopiero będzie — księżyce jadą jego skalą)
+    rigidOn: false,  // księżyc jedzie skalą rodzica z cięciwą kursu przed statkiem (decyzja raz na skok — rigidSession;
+                     // za cięciwą płynnie własna mapa — WORLD_LENS_DEFAULTS.moonRigidFade)
+    rigidSession: -1,
     // realW — udział prawdziwego obrazu w położeniu (ruch: 1 − β ciała; wynurzenie: 1 przy β ≤ emerge0, potem 0) —
     // kotwica rzeczy przypiętych do ciała tła (writeLensAnchor: paralaksa płaszczyzna ↔ tło)
     out: { x: 0, y: 0, size: 0, beta: 0, ax: 1, ay: 0, angle: 0, isTarget: false, q: 0, realW: 1 }
@@ -735,7 +818,7 @@ export class WarpWorldLens {
     this._exitOn = false;
     this._betaAtExit = 1;
     this._F = newWarpLensFrame();
-    this._q = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
+    this._q = { q: 0, a: 0, l: 0, ae: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
     this._turn = { ax: 1, ay: 0, angle: 0 };
     // Przylot: czas zbieżności kamery [s], czas puszczania [s] (< 0 — trzyma, Infinity — cięcie), poprzednia odległość
     // celu, wiek wyjścia przy zatrzymaniu.
@@ -748,6 +831,10 @@ export class WarpWorldLens {
     this._hideFull = 1;   // ukrycie za płaszczyzną kamery przy β = 1 (wynurzenie / zanurzenie w miejscu, decyzja wejścia)
     this._fa = 0;         // a i d ciała z ostatniego _full (stożek za celem)
     this._fd = 0;
+    this._chordAheadNow = false; // ostatni _full: cięciwa kursu cała przed statkiem (decyzja wejścia: bez kieszeni)
+    this._chordUseNow = false; // ostatni _full: cięciwa przed albo za statkiem (decyzja wejścia: skala cięciwy)
+    this._chordR = 0;     // ostatni _full: promień cięciwy kursu w użyciu (0 — skala środka) — ten sam w _place
+    this._realIn = false; // ostatni _decide: prawdziwy obraz (z rzeczami przypiętymi) w kadrze
     this._sf = 1;         // mnożnik promienia ostatniego _place (księżyce celu)
     // Wejścia klatki (bez alokacji w update).
     this._L = {
@@ -757,7 +844,7 @@ export class WarpWorldLens {
     // Punkty (mapPoint — floty, NPC, wraki): stan ostatniego update (statek, obrót kadru, β, koniec zwolnienia).
     this.live = false;
     this._pt = { shipX: 0, shipY: 0, rc: 1, rs: 0, beta: 0, exitSlow: 0 };
-    this._qp = { q: 0, a: 0, l: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
+    this._qp = { q: 0, a: 0, l: 0, ae: 0, d: 0, sb: 0, A: 0, kappa: 1, w: 1, hide: 1 };
   }
 
   /** Koniec skoku (soczewka wyłączona): tryby ciał i trzymanie celu od nowa. */
@@ -839,25 +926,39 @@ export class WarpWorldLens {
   }
 
   /**
-   * Pełna skala ciała (β = 1) [px/j.]: mapa O1 × kieszeń kadłuba; cel — miękkie maksimum z podglądem kadru przylotu
-   * (skala OBRAZU celu przy zoomie kadru przylotu kamery: planety tła z perspektywą i paralaksą, miękkie minimum z kadrem
-   * skoku — warpArrivalScale), po zatrzymaniu rampy — nie mniej niż prawdziwy obraz (podłoga L.floorW).
+   * Pełna skala ciała (β = 1) [px/j.]: mapa O1 w punkcie cięciwy kursu (przelot nad ciałem — warpLensChordAlong; ciało obok
+   * osi kursu — środek); cel — skala środka i miękkie maksimum z podglądem kadru przylotu (skala OBRAZU celu przy zoomie
+   * kadru przylotu kamery: planety tła z perspektywą i paralaksą, miękkie minimum z kadrem skoku — warpArrivalScale), po
+   * zatrzymaniu rampy — nie mniej niż prawdziwy obraz (podłoga L.floorW). Kieszeń kadłuba — tylko ciało blisko statku
+   * na starcie (b.pocketOn — decyzja wejścia w _mode).
    * Ustawia this._Qfull, this._gfac (Q / q mapy) i this._hideFull (ukrycie za płaszczyzną kamery przy β = 1; cel —
-   * zawsze 1); this._q — wielkości mapy (a, l, A, κ, w).
+   * zawsze 1); this._q — wielkości mapy (a, l, ae, A, κ, w).
    */
   _full(b, dx, dy, isTarget, F, L) {
     const p = this.params;
-    const m = warpLensQ(dx, dy, 1, b.flat, F, this._q);
+    const rExt = Math.max(b.r, num(b.rExt, 0));
+    // Cięciwa kursu (oś kursu przechodzi przez ciało z ringiem): decyzja wejścia (_mode, raz na skok — b.chordOn). Cięciwa
+    // przed statkiem (przelot nad ciałem dopiero będzie) albo za nim (przeleciał / planeta startu na osi kursu za rufą —
+    // wylot dołem jak po przelocie) — skala cięciwy; statek NAD ciałem już przy wejściu (start w doku bez ciała — rekord
+    // dodatkowy z promieniem doku) — skala środka i kieszeń jak dotąd (prawdziwy obraz pod statkiem, bez kurczenia
+    // w ładowaniu). Kieszeń wyłącza tylko cięciwa przed statkiem.
+    const ca = dx * F.cu + dy * F.cv;
+    const cl = -dx * F.cv + dy * F.cu;
+    const h2 = rExt * rExt - cl * cl;
+    const hh = h2 > 0 ? Math.sqrt(h2) : 0;
+    this._chordAheadNow = !isTarget && h2 > 0 && ca - hh > 0;
+    this._chordUseNow = !isTarget && h2 > 0 && (ca - hh > 0 || ca + hh < 0);
+    const chordOn = !isTarget && (b.chordSession === this.session ? b.chordOn : this._chordUseNow);
+    this._chordR = chordOn ? rExt : 0;
+    const m = warpLensQ(dx, dy, 1, b.flat, F, this._q, this._chordR);
     let Q = m.q;
     const d = m.d;
-    // Kieszeń kadłuba: odstęp tarczy (z ringiem) od statku ≥ elipsa kadłuba + edgeGap (statek względem kotwicy wliczony).
-    // Najwyżej do skali prawdziwego obrazu: bliżej brzegu ringu (d → rExt) żadna skala nie odsunie tarczy, a statek wewnątrz
-    // promienia z ringiem (pierścień Saturna sięga 1,77 r — dalej niż studnia, statek staje w nim) — wtedy obraz w soczewce
-    // nie mniejszy niż prawdziwy (ciągle przy d = rExt; bez granicy skala rosła tu w nieskończoność). Cel — bez kieszeni:
-    // jego bliski brzeg trzyma kadr przylotu (z_v: fill drogi do krawędzi), a gdzie kamera go nie dosięga (tło w pierścieniu),
-    // soczewka ma oddać prawdziwy obraz — kieszeń zawyżałaby skalę i kamera nie zbiegałaby z celem.
-    const rExt = Math.max(b.r, num(b.rExt, 0));
-    if (!isTarget && d > 1e-9) {
+    // Kieszeń kadłuba (tylko ciało blisko statku na starcie — WORLD_LENS_DEFAULTS.pocket, b.pocketOn): odstęp tarczy
+    // (z ringiem) od statku ≥ elipsa kadłuba + edgeGap (statek względem kotwicy wliczony). Najwyżej do skali prawdziwego
+    // obrazu: bliżej brzegu ringu (d → rExt) żadna skala nie odsunie tarczy, a statek wewnątrz promienia z ringiem — wtedy
+    // obraz w soczewce nie mniejszy niż prawdziwy (ciągle przy d = rExt). Cel — nigdy: jego bliski brzeg trzyma kadr
+    // przylotu (z_v), kieszeń zawyżałaby skalę i kamera nie zbiegałaby z celem.
+    if (p.pocket > 0 && !isTarget && b.pocketOn && b.pocketSession === this.session && d > 1e-9) {
       const ux = dx / d;
       const uy = dy / d;
       const ua = (ux * F.cu + uy * F.cv) / L.pa;
@@ -908,6 +1009,7 @@ export class WarpWorldLens {
     // ciała zbiega z prawdziwym przy β → 0 (wynurzenie przestawiłoby dok pod statkiem w klatce emerge0).
     const R = Math.max(b.r, num(b.attachR, 0)) * fl;
     let realIn = lensDiscInFrame(X, Y, R, L.W, L.H);
+    this._realIn = realIn;
     if (L.exiting) return isTarget || realIn ? MOVE : FAR;
     // Ładowanie oddala kamerę do kadru skoku (zoomJump): prawdziwy obraz, który wejdzie w kadr po oddaleniu, też „w kadrze”
     // (inaczej wynurzenie pokazałoby go prawdziwego przy β ≤ emerge0 i zgasiło przy emerge0). Kamera stoi — obraz
@@ -916,6 +1018,7 @@ export class WarpWorldLens {
       const k = b.z !== 0 ? Math.max(0, 1 / fl - 1 / L.zoom) : 0;
       const s = L.zoomJump / (1 + k * L.zoomJump) / fl;
       realIn = lensDiscInFrame(X * s, Y * s, R * s, L.W, L.H);
+      this._realIn = realIn;
     }
     // Bramka ringu zamknięta (prawdziwy ring z portem w kadrze) — ruch: przy β · bramka → 0 dokładnie prawdziwy obraz
     // (ring jedzie w slocie za obrazem planety). Pierwsza klatka otwarcia ustala tryb od nowa (ring jest już za kadrem).
@@ -947,11 +1050,26 @@ export class WarpWorldLens {
       b.cross = -1;
       b.entry = FAR;
       b.lateAge = 0;
+      b.pocketOn = false;
+      b.chordOn = this._chordUseNow;
+      b.chordAheadOn = this._chordAheadNow;
+      b.pocketSession = b.chordSession = this.session;
     } else if (fresh || (!exiting && (bb < ENTRY_DECIDE_BB || open))) {
       b.entrySession = this._epoch;
       b.cross = -1;
       const keep = exiting && fresh && this._betaAtExit < 1 - 1e-6 && b.entry !== 0;
+      this._realIn = false;
       if (!keep) b.entry = this._decide(b, isTarget, isOrigin, Q, dx, dy, L);
+      if (!exiting || b.chordSession !== this.session) {
+        // Decyzje wejścia (zostają na wyjście): cięciwa kursu przed albo za statkiem — skala cięciwy (przelot nad ciałem);
+        // kieszeń kadłuba — ciało ruchem z prawdziwym obrazem w kadrze na starcie, bez cięciwy przed statkiem
+        // (WORLD_LENS_DEFAULTS.pocket). Zmiana przy udziale soczewki < ENTRY_DECIDE_BB (obraz ≈ prawdziwy) — niewidoczna;
+        // tę samą cięciwę _full tej klatki już wziął (b.chordSession ≠ skok → _chordUseNow).
+        b.chordOn = this._chordUseNow;
+        b.chordAheadOn = this._chordAheadNow;
+        b.pocketOn = !exiting && !isTarget && b.entry === MOVE && this._realIn && !this._chordAheadNow;
+        b.pocketSession = b.chordSession = this.session;
+      }
       if (!exiting && this._sessionFrames === 0) b.lateAge = -1;
     }
     b.seenFrame = this._frame;
@@ -997,11 +1115,12 @@ export class WarpWorldLens {
       qp = k * Q;
       sf = b.r > 0 ? size / (b.r * qp) : 1;
     } else {
-      // Ruch: rodzina q_β (cel — log-lerp skali celu), kotwica P0(β), planety tła × (flat / zoom)^(1−β).
+      // Ruch: rodzina q_β (cel — log-lerp skali celu), kotwica P0(β), planety tła × (flat / zoom)^(1−β); głębia w punkcie
+      // cięciwy kursu jak w _full (przelot nad ciałem).
       let q;
       if (isTarget) q = bb >= 1 ? Q : (bb <= 0 ? fl : Math.exp((1 - bb) * Math.log(fl) + bb * Math.log(Q)));
       else {
-        warpLensQ(dx, dy, bb, fl, F, this._q);
+        warpLensQ(dx, dy, bb, fl, F, this._q, this._chordR);
         q = this._q.q * (this._gfac === 1 || bb <= 0 ? 1 : Math.pow(this._gfac, bb));
       }
       const ax = L.sx + (L.ax - L.sx) * bb;
@@ -1249,6 +1368,46 @@ export class WarpWorldLens {
         this._fadeTiny(out, T.bb);
         continue;
       }
+      const P = b.parent;
+      // KSIĘŻYC CIAŁA Z CIĘCIWĄ KURSU PRZED STATKIEM (przelot nad rodzicem — recenzja obrazu W2): rodzic rysuje się skalą
+      // punktu cięciwy, nie środka, a księżyc swoją (mapa O1 w jego głębi) — księżyc za ringiem lądował w obrazie kuli
+      // rodzica (Europa, Io, Luna; w 3D znika w tarczy i wynurza się z limbu). Póki punkt cięciwy rodzica jest przed statkiem
+      // albo pod nim (podejście i przelot nad tarczą — tam skala rodzica to skala s wokół kotwicy), księżyc jedzie skalą
+      // obrazu rodzica (układ planeta–księżyc podobny, jak księżyce celu); za cięciwą przechodzi płynnie (moonRigidFade · A
+      // drogi punktu cięciwy) na własną mapę — tuż za cięciwą obie są blisko skali s, a dalej skala rodzica rośnie (wylot
+      // dołem kadru) i księżyc w niej przeleciałby kadr ponad P4 (symulator S12). Decyzja raz na skok, w pierwszej klatce
+      // księżyca w skoku (udział soczewki ~0); planeta startu za rufą — nie (S2, S4).
+      if (b.rigidSession !== this.session) {
+        b.rigidSession = this.session;
+        b.rigidOn = !!(p.moonRigid > 0 && P && P !== origin && P.lp && P.lp.frame === this._frame
+          && P.chordSession === this.session && P.chordOn && P.chordAheadOn);
+      }
+      let wr = 0;
+      let rX = 0;
+      let rY = 0;
+      let rS = 0;
+      let rQ = 0;
+      let rB = 0;
+      if (b.rigidOn && P && P.lp && P.lp.frame === this._frame) {
+        const R = P.lp;
+        const fade = Math.max(1, p.moonRigidFade * F.A);
+        wr = R.ae >= 0 ? 1 : smoothstep(-fade, 0, R.ae);
+        if (wr > 0) {
+          // obraz w skali rodzica; przy β → 0 dokładnie prawdziwy obraz (poprawka różnicy skal — jak księżyce celu)
+          const mwx = b.x - P.x;
+          const mwy = b.y - P.y;
+          const rx = rc * mwx + rs * mwy;
+          const ry = -rs * mwx + rc * mwy;
+          const fl = b.flat;
+          const mM = fl / L.zoom;
+          const w = 1 - R.bb;
+          rX = R.x + rx * R.qp + ((L.sx * mM + dx * fl) - (R.realX + rx * R.flat)) * w;
+          rY = R.y + ry * R.qp + ((L.sy * mM + dy * fl) - (R.realY + ry * R.flat)) * w;
+          rS = b.r * R.qp * R.sf * (fl === R.flat || w <= 0 ? 1 : Math.pow(fl / R.flat, w));
+          rQ = R.qp;
+          rB = R.bb;
+        }
+      }
       const Q = this._full(b, dx, dy, false, F, L);
       let bb = beta * clamp(num(b.gate, 1), 0, 1);
       const open = b.gatePrev <= GATE_CLOSED && b.gate > GATE_CLOSED;
@@ -1279,6 +1438,31 @@ export class WarpWorldLens {
       }
       this._fadeTiny(out, bb);
       out.beta = bb;
+      // obraz tej klatki dla księżyców ciała z cięciwą kursu (wyżej: P.lp)
+      const lp = b.lp;
+      if (lp) {
+        const mB = b.flat / L.zoom;
+        lp.x = out.x;
+        lp.y = out.y;
+        lp.qp = out.q;
+        lp.sf = b.r > 0 && out.q > 0 ? out.size / (b.r * out.q) : 1;
+        lp.bb = bb;
+        lp.flat = b.flat;
+        lp.realX = L.sx * mB + dx * b.flat;
+        lp.realY = L.sy * mB + dy * b.flat;
+        lp.ae = this._q.ae;
+        lp.frame = this._frame;
+      }
+      if (wr > 0) {
+        // księżyc rodzica z cięciwą (wyżej): skala obrazu rodzica, za cięciwą płynnie własna mapa
+        out.x += (rX - out.x) * wr;
+        out.y += (rY - out.y) * wr;
+        out.size += (rS - out.size) * wr;
+        out.q += (rQ - out.q) * wr;
+        out.beta += (rB - out.beta) * wr;
+        out.realW = 1 - out.beta;
+        this._fadeTiny(out, out.beta);
+      }
       // Obrót przelotu (w soczewce): wirtualna kamera nad statkiem patrzy na ciało pod kątem.
       if (tilt > 0 && bb > 0.002) {
         flybyTurn(wdx, -wdy, hCam, this._turn);

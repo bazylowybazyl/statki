@@ -22,23 +22,39 @@
 // Scenariusze: S1 Ziemia → Jowisz z Marsem w trawersie, S2 Ziemia → Mars krótki, S3 punkt w próżni obok Jowisza
 // (kadr przylotu K1 punktu, DECYZJE-2 T2; dawniej swobodny skok bez przylotu),
 // S4 Jowisz → Saturn (cel NA TLE, z = −50 000), S5 przerwane ładowanie (S1 do 60% ładowania), S6 Ziemia → Mars z Jowiszem
-// w stożku za celem, S7 start z portu Ceres (ciało startu z dokiem w kadrze za rufą — O1-2: wylatuje dołem i znika),
-// S8 przylot do Io tuż po minięciu Jowisza (duża tarcza pod statkiem w chwili wyjścia — tempo zanurzenia, P4 wyjścia),
-// S9 skok awaryjny 400 tys. j. w dziób (najczęstszy skok z klawisza).
+// w stożku za celem, S7 start z portu bez studni — dok Luny (ciało startu z dokiem w kadrze za rufą — O1-2: wylatuje dołem
+// i znika; `--s7 ceres` — dawny dok Ceres, dziś w jej studni), S8 przylot do Io tuż po minięciu Jowisza (duża tarcza pod
+// statkiem w chwili wyjścia — tempo zanurzenia, P4 wyjścia), S9 skok awaryjny 400 tys. j. w dziób (najczęstszy skok
+// z klawisza); etap „studnie” (BRIEF-studnie pkt 5–6 — trasy prosto przez studnie planet, bez objazdów): S10 PRZELOT
+// CENTRALNY Wenus → Saturn nad Ziemią (ring „Halo”) i Jowiszem (ring) na osi kursu (`--s10-kurs <°>`), S11 przelot nad
+// ringiem Jowisza obok tarczy (Mars → Saturn, 51 tys. j. od środka — przykład zespołu A, ziarno 63352). S1 — Mars 75 tys. j.
+// z boku leży poza swoją studnią (47 tys.): trasa i dawniej szła prosto; „prosto zamiast objazdu” pokazują S10 i S11.
+// Po recenzji (2026-10-27): S12 odlot z portu nad Ziemią z końca odcinka wyjścia ze studni (bramka ringu — K1, Luna — W4;
+// `--s12-za`, `--s12-kurs`, `--s12-bok`), S13 wyjście nad tarczą Jowisza albo tuż za nią (W1 — otwarte, poza domyślną listą;
+// `--s13-za`, `--s13-bok`).
 //
 // Wynik: tory ciał co 0,5 s (środek na ekranie od środka kadru [px, y w dół], promień [px], prędkość [px/s]) i KONTROLE
-// (DECYZJE P4 + BRIEF C1–C5 + stożek M4 + start O1-2). C1 (widać świat) jest INFORMACYJNA (DECYZJE-2 O1-3: mapa O1
-// świadomie chowa ciała za płaszczyzną kamery — decyzja użytkownika) — nie liczy się do kodu wyjścia. Kod wyjścia ≠ 0,
-// gdy kontrola nie przejdzie. W0 (informacyjnie): tempo obrazu ciał soczewki w locie [px/s] — mediana, p90, max, daleko
-// (≥ 1,5 mln j. przed dziobem). Kamera bez K1 (dawny wariant „dziś”) nie istnieje już w kodzie gry — --k1 przyjmuje tylko
-// „tak” (inne wartości: ostrzeżenie).
+// (DECYZJE P4 + BRIEF C1–C5 + stożek M4 + start O1-2 + przelot nad ciałem C9). C1 (widać świat) jest INFORMACYJNA
+// (DECYZJE-2 O1-3: mapa O1 świadomie chowa ciała za płaszczyzną kamery — decyzja użytkownika) — nie liczy się do kodu
+// wyjścia; C4 (odstęp tarczy od kadłuba) też — od etapu „studnie” tarcza przelotu leży pod statkiem. P4 dużej tarczy ze
+// środkiem poza kadrem (przelot nad ciałem, wylot) — ruch WIDOCZNEJ części (punkty powierzchni i brzeg kuli / ringu
+// w kadrze; id* w raporcie). C3 nie liczy ciał przy punkcie zbiegu (wyjątek W0). C9 (sc.over): statek nad tarczą w obrazie
+// ⟺ naprawdę, nad ciałem tylko w pełnej soczewce (bramka ringu otwarta — K1), księżyc nie w obrazie kuli rodzica (W2),
+// promień nad tarczą stały, za trawersem bez zwijania, powierzchnia pod statkiem wolniejsza niż gwiazdy speed (W0);
+// informacyjnie — księżyc na tarczy z ringiem rodzica. Mignięcie: zniknięcie / pojawienie w jednej klatce — bez końca
+// ciągłego kurczenia / rośnięcia (ostatni krok ≤ 2 × poprzedni). Kod wyjścia ≠ 0, gdy kontrola nie przejdzie. W0
+// (informacyjnie): tempo obrazu ciał soczewki w locie [px/s] — mediana, p90, max, daleko (≥ 1,5 mln j. przed dziobem).
+// Kamera bez K1 (dawny wariant „dziś”) nie istnieje już w kodzie gry — --k1 przyjmuje tylko „tak” (inne: ostrzeżenie).
+// Pas zwolnienia przy ciałach — warpDrive.js (WARP_FLYBY_DEFAULTS, reach = układ księżyców planety: warpMoonReach), A/B
+// `--zasieg <reachWidth>` (0 — bez układu księżyców).
 //
 // Użycie:
-//   node scripts/webgpu/warp-soczewka-sym.mjs [--scen S1,S2,S3,S4,S5,S6,S7,S8,S9] [--res 1080,1440] [--k1 tak] [--B1 87464]
+//   node scripts/webgpu/warp-soczewka-sym.mjs [--scen S1,…,S13] [--res 1080,1440] [--k1 tak] [--B1 87464]
 //     [--naped mk1|mk2|mk3] [--aspect 16:9|21:9|32:9|W:H] [--param klucz=liczba,…] [--tory gl|wszystkie|nie] [--md plik.md] [--json plik.json]
-//     [--scisle-dzis] [--origin-ruch]
+//     [--scisle-dzis] [--origin-ruch] [--s7 luna|ceres] [--s10-kurs 114] [--zasieg 0.9]
+//     [--s12-za 3080] [--s12-kurs 0] [--s12-bok 0] [--s13-za 5000] [--s13-bok 0]
 //     [--wpiecie nowe|dzis]
-// Domyślnie: wszystkie scenariusze, obie rozdzielczości, kadr 16:9, napęd Mk II (Atlas), tory dla 1080p, raport na stdout.
+// Domyślnie: S1–S12, obie rozdzielczości, kadr 16:9, napęd Mk II (Atlas), tory dla 1080p, raport na stdout.
 
 import { writeFileSync } from 'node:fs';
 
@@ -56,6 +72,7 @@ const PH = await imp('src/render/warpLensPhase.js');
 const WAF = await imp('src/render/warpArrivalFrame.js');
 const MO = await imp('src/3d/moonOrbit.js');
 const CZ = await imp('src/game/cameraZoom.js');
+const TN = await imp('src/game/travelNav.js');
 
 // ------------------------------------------------------------------------------------------------ argumenty
 const argv = process.argv.slice(2);
@@ -64,7 +81,25 @@ const arg = (name, def) => {
   return i >= 0 && i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[i + 1] : def;
 };
 const flag = (name) => argv.includes('--' + name);
-const SCENS = String(arg('scen', 'S1,S2,S3,S4,S5,S6,S7,S8,S9')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+// S13 (wyjście nad tarczą / tuż za nią — recenzja obrazu W1) poza domyślną listą: otwarta sprawa (docs/webgpu/WARP-SOCZEWKA.md
+// § „Studnie grawitacyjne — soczewka”), `--scen S13`
+const SCENS = String(arg('scen', 'S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12')).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+// S7: ciało startu przy doku — 'luna' (domyślnie: księżyc bez studni) albo 'ceres' (dawny wariant — dziś w studni Ceres)
+const S7_BODY = String(arg('s7', 'luna')).toLowerCase();
+// S10: kierunek kursu [°, świat] — 114 (domyślnie: Luna mijana w trawersie Ziemi) albo np. 0 (Luna za Ziemią)
+const S10_COURSE = Number(arg('s10-kurs', '114'));
+// S12 (odlot z portu nad planetą startu): koniec odcinka wyjścia ze studni Ziemi `--s12-za` j. za jej brzegiem (domyślnie
+// najbliżej, jak może stanąć TRAVEL TO: TRAVEL_TUNE.wellExit − tolerancja dolotu 0,6 · arriveRadius), kurs `--s12-kurs` [°],
+// przesunięcie kursu w bok od środka Ziemi `--s12-bok` [j.]
+const S12_PAST = arg('s12-za', '') !== '' ? Number(arg('s12-za', '')) : NaN;
+const S12_COURSE = Number(arg('s12-kurs', '0'));
+const S12_LAT = Number(arg('s12-bok', '0'));
+// S13 (wyjście nad tarczą albo tuż za nią): punkt końca `--s13-za` j. za brzegiem studni Jowisza (ujemne — nad studnią /
+// tarczą), przesunięcie kursu w bok `--s13-bok` [j.]
+const S13_PAST = Number(arg('s13-za', '5000'));
+const S13_LAT = Number(arg('s13-bok', '0'));
+// Pas zwolnienia przy ciałach (warpDrive.js: WARP_FLYBY_DEFAULTS) — A/B `--zasieg <reachWidth>` (0 — pas bez układu księżyców)
+const FLYBY = arg('zasieg', '') !== '' ? { ...WD.WARP_FLYBY_DEFAULTS, reachWidth: Number(arg('zasieg', '')) } : WD.WARP_FLYBY_DEFAULTS;
 const RESS = String(arg('res', '1080,1440')).split(',').map((s) => Number(s.trim())).filter((h) => h > 0);
 const K1MODE = String(arg('k1', 'tak'));
 if (K1MODE !== 'tak') console.warn('[sym] --k1 ' + K1MODE + ': kamera bez K1 nie istnieje już w kodzie gry (cameraRig.js) — liczę K1');
@@ -154,9 +189,10 @@ function moonBody(tune, parent, parentId) {
   const rad = MO.moonOrbitRadius(tune, node, parentR);
   const ang = MO.moonStartAngle(tune, node);
   const ringAnchored = !!RING_R[parentId];
-  const r = Math.max(900, parentR * tune.sizeRatioToParent * (ringAnchored ? 1 : PLANET_MUL));
+  const r = MO.moonBodyRadius(tune, parentR, ringAnchored);
+  // fly — ciało zwolnienia skoku (index.html: księżyce z bryłą jak planety, bez księżyców celu — src/data/moonBodies.js)
   return { id: tune.id || 'moon', kind: 'moon', parentId, x: parent.x + Math.cos(ang) * rad, y: parent.y + Math.sin(ang) * rad,
-    r, z: ringAnchored ? 0 : (tune.z ?? MO.MOON_TUNE.z), ringAnchored, rExt: 0, fly: 0 };
+    r, z: ringAnchored ? 0 : (tune.z ?? MO.MOON_TUNE.z), ringAnchored, rExt: 0, fly: r };
 }
 
 function buildWorld(angles, smallPos = {}) {
@@ -166,9 +202,11 @@ function buildWorld(angles, smallPos = {}) {
   for (const p of map.planets) {
     const ring = RING_R[p.id];
     const r = ring || p.r * PLANET_MUL;
+    // rExt jak planet3d.assets.js (_lensPrepare): ring „Halo” — obwiednia ringu (layout.outerRadius), Saturn — pierścień
+    // 1,77 r (SATURN_VISUAL_RING); cięciwa kursu przy przelocie nad ciałem (worldLens.js: warpLensChordAlong) i kieszeń
     const b = {
       id: p.id, kind: 'planet', x: Math.cos(p.angle) * p.orbitRadius, y: Math.sin(p.angle) * p.orbitRadius,
-      r, z: ring ? 0 : -50000, ring: !!ring, rExt: ring ? RING_OUT[p.id] + 2500 : (p.id === 'saturn' ? r * 1.77 : r), fly: r
+      r, z: ring ? 0 : -50000, ring: !!ring, rExt: ring ? Math.max(r, RING_OUT[p.id]) : (p.id === 'saturn' ? r * 1.77 : r), fly: r
     };
     bodies.push(b);
     P[p.id] = b;
@@ -304,19 +342,66 @@ function scenarioS6() {
   const sc = scenarioS2({ jupiter: Math.atan2(jup.y, jup.x) });
   return { ...sc, name: 'S6', title: `Ziemia → Mars, Jowisz w stożku za celem (${bearingNote(sc.world, 'jupiter', sc.S0, sc.u)})`, coneBody: 'jupiter' };
 }
-// S7 — start z portu Ceres (port bez ringu, DECYZJE-2 O1-2): statek przy stacji (1,7 promienia od środka), kurs prosto od
-// Ceres, ręczny skok bez celu. Dok w kadrze (zasięg rzeczy przypiętych — attachR, jak portDocks3D) wymusza RUCH ciała startu:
-// Ceres w kadrze od ładowania, w locie ma wylecieć DOLNĄ krawędzią kadru i zniknąć (za płaszczyzną kamery — promień 0).
+// S7 — start z portu BEZ STUDNI (DECYZJE-2 O1-2): statek przy doku księżyca (1,7 promienia od środka), kurs prosto od niego,
+// ręczny skok bez celu. Dok w kadrze (zasięg rzeczy przypiętych — attachR, jak portDocks3D) wymusza RUCH ciała startu:
+// w kadrze od ładowania, w locie ma wylecieć DOLNĄ krawędzią kadru i zniknąć (za płaszczyzną kamery — promień 0); kieszeń
+// kadłuba (ciało blisko statku na starcie — worldLens.js: pocket) trzyma przejście w P4. Od etapu „studnie” (BRIEF-studnie
+// pkt 1) start w studni planety i małego ciała jest zablokowany — dawny S7 (dok Ceres, 1,7 r) jest dziś w studni Ceres
+// (16,5 tys. j.); księżyce (Luna, Ganimedes, Kallisto…) studni nie mają. `--s7 ceres` — dawny wariant (mechanizm kieszeni).
 function scenarioS7() {
   const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 150 * deg, mars: 250 * deg, jupiter: 20 * deg, saturn: 75 * deg, uranus: 110 * deg, neptune: 300 * deg };
   const world = buildWorld(angles);
-  const ce = world.bodies.find((b) => b.id === 'ceres');
-  const dist = ce.r * SB.SMALL_BODY_BY_ID.ceres.station.orbitMul;   // stacja Ceres (smallBodies.js: orbitMul)
+  const id = S7_BODY;
+  const ce = world.bodies.find((b) => b.id === id);
+  const mul = id === 'ceres' ? SB.SMALL_BODY_BY_ID.ceres.station.orbitMul : 1.7;   // stacja Ceres (smallBodies.js: orbitMul)
+  const dist = ce.r * mul;
   const rad = hyp(ce.x, ce.y);
-  const u = { x: -ce.y / rad, y: ce.x / rad };                      // stycznie do orbity (wzdłuż pasa)
+  const u = { x: -ce.y / rad, y: ce.x / rad };                      // stycznie do orbity
   const S0 = { x: ce.x + u.x * dist, y: ce.y + u.y * dist };
-  return { name: 'S7', title: `Start z portu Ceres: statek przy stacji ${Math.round(dist)} j. od środka Ceres (r ${ce.r}), kurs prosto od niej, dok w kadrze (ruch), swobodny skok 600 tys. j. wzdłuż pasa`,
-    world, S0, u, leg: 600000, target: null, origin: 'ceres', free: true, originAttach: dist + 3000, startCheck: true };
+  return { name: 'S7', title: `Start z portu ${id === 'ceres' ? 'Ceres (dawny wariant — dziś w studni Ceres, mechanizm kieszeni)' : 'Luny (księżyc bez studni)'}: statek przy doku ${Math.round(dist)} j. od środka (r ${ce.r}), kurs prosto od ciała, dok w kadrze (ruch), swobodny skok 600 tys. j.`,
+    world, S0, u, leg: 600000, target: null, origin: id, free: true, originAttach: dist + 3000, startCheck: true };
+}
+// S10 — PRZELOT CENTRALNY (BRIEF-studnie pkt 5–6; decyzja użytkownika 2026-10-26: „masz wtedy ogromną planetę, nad którą
+// możesz przelecieć”): Wenus → Saturn, Ziemia (ring „Halo”) i Jowisz (ring w budowie) DOKŁADNIE na kursie (l = 0) — dawny
+// planista TRAVEL TO objeżdżał ich studnie (3 skoki), dziś skok prosto przez studnie nad tarczami (podłoga zwolnienia
+// warpSpeedFactor), bez hamowania. Ogromna tarcza POD statkiem (soczewka: cięciwa kursu — skala s nad tarczą), wejście nad
+// tarczę i zejście z niej bez przeskoku, wylot dołem kadru w P4, ring pod statkiem (kontrole C9, P4 widocznej tarczy).
+// Kierunek kursu `--s10-kurs` [°, świat] (domyślnie 114°: Luna — węzeł gry 24° od Ziemi — leży 96 tys. j. z boku Ziemi
+// w jej trawersie, mijana razem z nią w zwolnieniu; 0° — Luna 39 tys. j. z boku 88 tys. j. ZA Ziemią, mijana po wyjściu ze
+// studni w pełnej prędkości: księżyce nie zwalniają skoku — sprawa otwarta, docs/webgpu/WARP-SOCZEWKA.md).
+function scenarioS10() {
+  const th = S10_COURSE * deg;
+  const u0 = { x: Math.cos(th), y: Math.sin(th) };
+  const ER = ORB('earth');
+  const phE = th - 20 * deg;                                   // kurs przecina orbitę Ziemi pod 20° (Wenus na kursie)
+  const E = { x: Math.cos(phE) * ER, y: Math.sin(phE) * ER };
+  const along = (P, R) => { const b = P.x * u0.x + P.y * u0.y; return -b + Math.sqrt(b * b - (P.x * P.x + P.y * P.y - R * R)); };
+  const tJ = along(E, ORB('jupiter'));
+  const J = { x: E.x + u0.x * tJ, y: E.y + u0.y * tJ };
+  const tS = along(J, ORB('saturn'));
+  const Sa = { x: J.x + u0.x * tS, y: J.y + u0.y * tS };
+  const bE = E.x * u0.x + E.y * u0.y;                          // Wenus: pierwsze przecięcie orbity Wenus za Ziemią (w tył kursu)
+  const VR = ORB('venus');
+  const tV = bE - Math.sqrt(bE * bE - (ER * ER - VR * VR));
+  const V = { x: E.x - u0.x * tV, y: E.y - u0.y * tV };
+  const angles = { mercury: th + 150 * deg, venus: Math.atan2(V.y, V.x), earth: phE, mars: th + 180 * deg, jupiter: Math.atan2(J.y, J.x),
+    saturn: Math.atan2(Sa.y, Sa.x), uranus: th + 110 * deg, neptune: th - 60 * deg };
+  const { u, S0, leg } = legBetween(angles, 'venus', 'saturn');
+  const world = buildWorld(angles);
+  return { name: 'S10', title: `Przelot CENTRALNY: Wenus → Saturn (TRAVEL TO, kurs ${S10_COURSE}°, odcinek ${Math.round(leg / 1000)} tys. j.), Ziemia z ringiem „Halo” i Jowisz z ringiem dokładnie na kursie (l = 0); Luna ${bearingNote(world, 'luna', S0, u)}, Kallisto ${bearingNote(world, 'callisto', S0, u)}`,
+    world, S0, u, leg, target: 'saturn', origin: 'venus', free: false, over: ['earth', 'jupiter'] };
+}
+// S11 — przelot NAD RINGIEM obok tarczy (przykład zespołu A, ziarno 63352: Mars → Saturn przelatuje 51 tys. j. od środka
+// Jowisza — nad ringiem 52,2–54,75 tys., obok tarczy 48 tys.; dawniej objazd studni Jowisza): cięciwa kursu przez ring,
+// tarcza obok statku.
+function scenarioS11() {
+  const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 150 * deg, mars: 0, jupiter: 0, saturn: 0, uranus: 110 * deg, neptune: 300 * deg };
+  const lat = 51000;
+  angles.jupiter = Math.asin(lat / ORB('jupiter'));
+  const { u, S0, leg } = legBetween(angles, 'mars', 'saturn');
+  const world = buildWorld(angles);
+  return { name: 'S11', title: `Przelot nad RINGIEM Jowisza: Mars → Saturn (TRAVEL TO, odcinek ${Math.round(leg / 1000)} tys. j.), Jowisz ${bearingNote(world, 'jupiter', S0, u)} (≈ ${lat / 1000} tys. j. od kursu — nad ringiem, obok tarczy)`,
+    world, S0, u, leg, target: 'saturn', origin: 'mars', free: false, over: ['jupiter'] };
 }
 // S8 — przylot do księżyca tuż za brzegiem studni planety z ringiem (recenzja O1 ust. 3): TRAVEL TO do Io (obraz 86 tys. j.
 // od Jowisza), kurs mija Jowisza 2 tys. j. za brzegiem jego studni — wyjście tuż po bliskim przelocie: duża tarcza Jowisza
@@ -340,7 +425,39 @@ function scenarioS8() {
   return { name: 'S8', title: `Przylot do Io tuż po minięciu Jowisza (${Math.round(lat / 1000)} tys. j. z boku — 2 tys. j. za brzegiem studni; Io ${Math.round(D / 1000)} tys. j. od Jowisza), odcinek ${Math.round(leg / 1000)} tys. j.`,
     world, S0, u, leg, target: 'io', origin: null, free: false, exitBody: 'jupiter' };
 }
-const SCEN_FN = { S1: scenarioS1, S2: scenarioS2, S3: scenarioS3, S4: scenarioS4, S5: scenarioS5, S6: scenarioS6, S7: scenarioS7, S8: scenarioS8, S9: scenarioS9 };
+// S12 — ODLOT Z PORTU NAD PLANETĄ STARTU (recenzja obrazu K1, W4): TRAVEL TO z K-7 do celu za Ziemią wyprowadza statek
+// napędem PROMIENIOWO za brzeg studni (index.html: playerWellExitPoint — z doku osią hali), a skok do celu przelatuje nad
+// Ziemią (warpCourseCrossesWell → ciało startu null, Ziemia = mijane ciało). Start `--s12-za` j. za brzegiem studni
+// (domyślnie najbliżej, jak może stanąć odcinek wyjścia: wellExit − 0,6 · arriveRadius), kurs `--s12-kurs` [°], kurs
+// `--s12-bok` j. obok środka Ziemi; punkt 1,2 mln j. (kadr przylotu punktu). Prawdziwy ring z portem w kadrze skoku (bramka)
+// i Luna w kadrze.
+function scenarioS12() {
+  const th = S12_COURSE * deg;
+  const lat = S12_LAT;
+  const past = Number.isFinite(S12_PAST) ? S12_PAST : TN.TRAVEL_TUNE.wellExit - 0.6 * TN.TRAVEL_TUNE.arriveRadius;
+  const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 0, mars: 140 * deg, jupiter: 40 * deg, saturn: 75 * deg, uranus: 110 * deg, neptune: 300 * deg };
+  const world = buildWorld(angles);
+  const E = world.P.earth;
+  const u = { x: Math.cos(th), y: Math.sin(th) };
+  const n = { x: -u.y, y: u.x };
+  const back = Math.sqrt(Math.max(0, (WELL.earth + past) ** 2 - lat * lat));
+  const S0 = { x: E.x - u.x * back + n.x * lat, y: E.y - u.y * back + n.y * lat };
+  return { name: 'S12', title: `Odlot z portu nad Ziemią: start ${Math.round(past)} j. za brzegiem studni, kurs ${S12_COURSE}° nad Ziemią (${lat} j. od środka), punkt 1,2 mln j., Luna ${bearingNote(world, 'luna', S0, u)}`,
+    world, S0, u, leg: 1200000, target: null, origin: null, point: true, over: Math.abs(lat) < E.rExt ? ['earth'] : [] };
+}
+// S13 — WYJŚCIE NAD TARCZĄ albo TUŻ ZA NIĄ (recenzja obrazu W1): punkt `--s13-za` j. za brzegiem studni Jowisza (ujemne —
+// nad studnią, np. −30 000 nad tarczą, −66 000 nad środkiem; ręczne wyjście w locie i TRAVEL TO do punktu tuż za planetą),
+// przelot centralny (`--s13-bok`).
+function scenarioS13() {
+  const angles = { mercury: 330 * deg, venus: 200 * deg, earth: 200 * deg, mars: 120 * deg, jupiter: 0, saturn: 75 * deg, uranus: 110 * deg, neptune: 300 * deg };
+  const world = buildWorld(angles);
+  const J = world.P.jupiter;
+  const u = { x: 0, y: 1 };
+  const S0 = { x: J.x + S13_LAT, y: J.y - 900000 };
+  return { name: 'S13', title: `Wyjście ${S13_PAST >= 0 ? S13_PAST + ' j. za studnią' : -S13_PAST + ' j. przed brzegiem studni (nad nią)'} Jowisza po przelocie centralnym (${S13_LAT} j. od środka)`,
+    world, S0, u, leg: 900000 + WELL.jupiter + S13_PAST, target: null, origin: null, point: true, over: ['jupiter'] };
+}
+const SCEN_FN = { S1: scenarioS1, S2: scenarioS2, S3: scenarioS3, S4: scenarioS4, S5: scenarioS5, S6: scenarioS6, S7: scenarioS7, S8: scenarioS8, S9: scenarioS9, S10: scenarioS10, S11: scenarioS11, S12: scenarioS12, S13: scenarioS13 };
 
 function zoneAt(x, y, sc) {
   const r = hyp(x, y);
@@ -369,12 +486,15 @@ function simulate(sc, H, k1) {
   const world = sc.world;
   const tgtW = bodyOf(world, sc.target);
   const orgW = bodyOf(world, sc.origin);
-  const fly = world.bodies.filter((b) => b.fly > 0 && b !== tgtW && b !== orgW).map((b) => ({ x: b.x, y: b.y, r: b.fly }));
+  // ciała zwolnienia (index.html: _warpFlybyBodies — planety i małe ciała bez startu i celu, księżyce z bryłą bez księżyców
+  // celu; reach — zasięg układu księżyców planety, warpMoonReach(moonsOf(id)): pas zwolnienia przelotu centralnego)
+  const fly = world.bodies.filter((b) => b.fly > 0 && b !== tgtW && b !== orgW && !(tgtW && b.parentId === tgtW.id)).map((b) => ({ x: b.x, y: b.y, r: b.fly,
+    reach: b.kind === 'planet' ? WD.warpMoonReach(SM.moonsOf(b.id)) : 0 }));
   let cruise = DRIVE;
   let plan = null;
   if (!sc.free) {
-    const bl = fly.map((b) => { const ox = b.x - sc.S0.x; const oy = b.y - sc.S0.y; return { along: ox * u.x + oy * u.y, lateral: oy * u.x - ox * u.y, r: b.r }; });
-    plan = WD.planWarpCruise({ dist: sc.leg, v0: 0, hullLength: L_HULL, bodies: bl, zone: (s) => zoneAt(sc.S0.x + u.x * s, sc.S0.y + u.y * s, sc), entry: ENTRY_T, lag: 6, dt: 1 / 30 }, WD.warpTripTuneFor(DRIVE));
+    const bl = fly.map((b) => { const ox = b.x - sc.S0.x; const oy = b.y - sc.S0.y; return { along: ox * u.x + oy * u.y, lateral: oy * u.x - ox * u.y, r: b.r, reach: b.reach }; });
+    plan = WD.planWarpCruise({ dist: sc.leg, v0: 0, hullLength: L_HULL, bodies: bl, flyby: FLYBY, zone: (s) => zoneAt(sc.S0.x + u.x * s, sc.S0.y + u.y * s, sc), entry: ENTRY_T, lag: 6, dt: 1 / 30 }, WD.warpTripTuneFor(DRIVE));
     cruise = plan.speed;
   }
   // Rekordy soczewki (jak planet3d.assets.js).
@@ -436,7 +556,8 @@ function simulate(sc, H, k1) {
       const ease = prog * prog * (3 - 2 * prog);
       const x = sc.S0.x + u.x * s;
       const y = sc.S0.y + u.y * s;
-      const vmax = cruise * zoneAt(x, y, sc) * WD.warpFlybyFactor(x, y, u.x, u.y, fly);
+      // strefa × przelot z podłogą (BRIEF-studnie pkt 4) — ta sama funkcja co fizyka gry i plan prędkości (warpDrive.js)
+      const vmax = cruise * WD.warpSpeedFactor(zoneAt(x, y, sc), WD.warpFlybyFactor(x, y, u.x, u.y, fly, fly.length, FLYBY));
       const vs = Math.min(0, vmax);
       v += (vs + (vmax - vs) * ease - v) * kA;
       s += v * DT;
@@ -576,13 +697,16 @@ function simulate(sc, H, k1) {
         y = shipSy * m + dy * r.flat;
         size = b.r * r.flat;
       }
+      const ext = Math.max(1, (b.rExt || b.r) / b.r);   // tarcza z ringiem / pierścieniem (× promień obrazu kuli)
       const inF = WL.lensDiscInFrame(x, y, size, W, H);
       const drawn = size >= 1.5 && inF;
       const owx = b.x - shipX;
       const owy = b.y - shipY;
-      // a, l — prawdziwe położenie względem statku wzdłuż kursu / w bok [j.]; ang — kąt obrotu przelotu (rysunek torów)
+      // a, l — prawdziwe położenie względem statku wzdłuż kursu / w bok [j.]; ang — kąt obrotu przelotu (rysunek torów);
+      // ext, extIn — ring w kadrze (tarcza z ringiem); dT — prawdziwa odległość statku od środka [j.], rT — promień [j.]
       fb[b.id] = { x, y, size, bb, inF, drawn, entry: r.entry, ang: on && r.ready ? r.out.angle : 0,
-        a: owx * u.x + owy * u.y, l: owy * u.x - owx * u.y };
+        a: owx * u.x + owy * u.y, l: owy * u.x - owx * u.y, ext, extIn: size * ext >= 1.5 && WL.lensDiscInFrame(x, y, size * ext, W, H),
+        dT: hyp(owx, owy), rT: b.r };
     }
     const [tdx, tdy] = tgtW ? toScreen(tgtW.x - shipX, tgtW.y - shipY) : [0, 0];
     frames.push({
@@ -613,6 +737,65 @@ const STALL_S = 2;    // [s] najdłuższy postój
 const C2_MARS = 250;  // [px przy 1080p] Mars w trawersie (S1)
 const FAR_PX = 25;    // [px przy 1080p] ciało ≥ FAR_A przed dziobem — małe (BRIEF C2: dalekie ≤ ~20 px)
 const FAR_A = 1.5e6;  // [j.] (Jowisz 48 tys. przy 1 mln ma w samej mapie r·E/a ≈ 28 px — za blisko na „daleko”)
+const VP_PX = 30;     // [px przy 1080p] C3: ciało przy punkcie zbiegu (kierunek lotu — wyjątek W0) nie „parkuje”
+// W0 tarczy pod statkiem (BRIEF-studnie pkt 5): tempo gwiazd w warpie = min(v, STAR_SPEED_CAP) · paralaksa · zoom
+// (warpNurt.js, starParallax.js): najwolniejsza gwiazda warstwy speed (paralaksa 1,02) i najszybsza mid (0,18)
+const STAR_SPEED_CAP = 14000;
+const STAR_SPEED_MIN = 1.02;
+const STAR_MID_MAX = 0.18;
+
+// Środek tarczy w kadrze (obu klatek) — P4 mierzy środek i promień; poza kadrem (duża tarcza: przelot nad ciałem, wylot)
+// — ruch WIDOCZNEJ części: punkty powierzchni (siatka kadru wewnątrz tarczy z ringiem) i brzeg (kula, ring) w kadrze.
+const centerIn = (o, W, H) => Math.abs(o.x) <= W * 0.5 && Math.abs(o.y) <= H * 0.5;
+function discMotion(p, q, W, H) {
+  const hw = W * 0.5;
+  const hh = H * 0.5;
+  let move = 0;
+  let edge = 0;
+  const inFr = (x, y) => Math.abs(x) <= hw && Math.abs(y) <= hh;
+  const ext = Math.max(1, q.ext || 1);
+  // powierzchnia: punkt kadru X w tarczy (z ringiem) klatki q → ten sam punkt ciała w klatce p (u = (X − c_q) / R_q)
+  if (q.size > 1e-9) {
+    const NX = 24;
+    const NY = 14;
+    for (let i = 0; i <= NX; i++) {
+      for (let j = 0; j <= NY; j++) {
+        const X = -hw + W * i / NX;
+        const Y = -hh + H * j / NY;
+        const ux = (X - q.x) / q.size;
+        const uy = (Y - q.y) / q.size;
+        if (ux * ux + uy * uy > ext * ext) continue;
+        const px = p.x + p.size * ux;
+        const py = p.y + p.size * uy;
+        if (!inFr(px, py)) continue;
+        const m = hyp(X - px, Y - py);
+        if (m > move) move = m;
+      }
+    }
+  }
+  // brzeg kuli i ringu w kadrze: przesunięcie w normalnej (Δc · n + ΔR · ρ)
+  const N = 720;
+  for (const rho of ext > 1 ? [1, ext] : [1]) {
+    for (let k = 0; k < N; k++) {
+      const th = k / N * 2 * Math.PI;
+      const nx = Math.cos(th);
+      const ny = Math.sin(th);
+      if (!inFr(q.x + q.size * rho * nx, q.y + q.size * rho * ny)) continue;
+      const e = Math.abs((q.x - p.x) * nx + (q.y - p.y) * ny + (q.size - p.size) * rho);
+      if (e > edge) edge = e;
+      if (e > move) move = e;
+    }
+  }
+  return { move, edge };
+}
+// Ruch obrazu ciała między klatkami [px]: środek w kadrze — środek i promień (P4 jak dotąd), inaczej widoczna część
+// (ruch punktów powierzchni i brzegu w kadrze — próg ruchu; zmiana promienia dużej tarczy poza kadrem nie jest widoczna
+// sama, jej skutek to ruch brzegu, więc próg promienia się nie stosuje: size 0).
+function bodyStep(p, q, W, H) {
+  if (centerIn(p, W, H) && centerIn(q, W, H)) return { move: hyp(q.x - p.x, q.y - p.y), size: Math.abs(q.size - p.size), vis: false };
+  const m = discMotion(p, q, W, H);
+  return { move: m.move, size: 0, vis: true, edge: m.edge };
+}
 
 function analyze(res) {
   const F = res.frames;
@@ -634,12 +817,15 @@ function analyze(res) {
     for (const id of ids) {
       const p = a.bodies[id];
       const q = b.bodies[id];
-      if (p.drawn && q.drawn) {
-        const mv = hyp(q.x - p.x, q.y - p.y);
-        const ds = Math.abs(q.size - p.size);
-        if (mv > J.move) { J.move = mv; J.moveId = id; J.moveT = b.t; }
-        if (ds > J.size) { J.size = ds; J.sizeId = id; J.sizeT = b.t; }
-        if (i >= 2) {
+      if ((p.drawn && q.drawn) || (p.ext > 1 && p.extIn && q.extIn)) {
+        // (duża tarcza ze środkiem poza kadrem — ruch widocznej części; znacznik „*” przy id)
+        const st = bodyStep(p, q, W, H);
+        const mv = st.move;
+        const ds = st.size;
+        const tag = st.vis ? id + '*' : id;
+        if (mv > J.move) { J.move = mv; J.moveId = tag; J.moveT = b.t; }
+        if (ds > J.size) { J.size = ds; J.sizeId = tag; J.sizeT = b.t; }
+        if (i >= 2 && !st.vis && p.drawn && q.drawn) {
           const o = F[i - 2].bodies[id];
           if (o.drawn) {
             const d2 = hyp(q.x - 2 * p.x + o.x, q.y - 2 * p.y + o.y);
@@ -656,10 +842,17 @@ function analyze(res) {
       // (mała szybka tarcza, która w jednej klatce przejeżdża przez krawędź kadru ruchem ciągłym — krok ≤ progu P4, promień
       // bez skoku — to wyjazd / wjazd, nie mignięcie: krok większy niż jej średnica przy krawędzi; skok ponad P4 łapie P4)
       const byMotion = (o, n) => hyp(n.x - o.x, n.y - o.y) <= P4_MOVE * sPx && Math.abs(n.size - o.size) <= P4_SIZE * sPx;
+      // (ciągłe zanurzanie / wynurzanie: ostatni krok promienia nie większy niż 2 × poprzedni / następny w tę samą stronę —
+      // tarcza kurczy się płynnie do zera, a dyskretna klatka zostawia przy progu kilka px; wcześniej łapane jako mignięcie:
+      // S5 / S8 przy Mk III — 12,7 → 4,1 → 0,3 px)
+      const o0 = i >= 2 ? F[i - 2].bodies[id] : null;
+      const r0 = i + 1 < F.length ? F[i + 1].bodies[id] : null;
+      const shrinking = !!o0 && o0.size > p.size && p.size - q.size <= 2 * (o0.size - p.size);
+      const growing = !!r0 && r0.size > q.size && q.size - p.size <= 2 * (r0.size - q.size);
       const popOut = p.drawn && !q.drawn && p.size >= POP_PX && deep(p) && (q.size >= 1.5 || q.size < POP_RATIO * p.size)
-        && !(!q.inF && byMotion(p, q));
+        && !(!q.inF && byMotion(p, q)) && !(q.size < 1.5 && shrinking);
       const popIn = !p.drawn && q.drawn && q.size >= POP_PX && deep(q) && (p.size >= 1.5 || p.size < POP_RATIO * q.size)
-        && !(!p.inF && byMotion(p, q));
+        && !(!p.inF && byMotion(p, q)) && !(p.size < 1.5 && growing);
       if (popOut) pops.push({ t: b.t, id, kind: 'zniknięcie', size: p.size, ph });
       if (popIn) pops.push({ t: b.t, id, kind: 'pojawienie', size: q.size, ph });
     }
@@ -670,7 +863,7 @@ function analyze(res) {
     const info = ph === 'powrót';   // kamera wraca do zoomu gracza po przylocie — prawdziwy świat, poza soczewką (K1)
     const ok = info || (J.move <= P4_MOVE * sPx && J.size <= P4_SIZE * sPx);
     add('P4-' + ph, `skok w klatce: ${ph}${info ? ' (kamera, informacyjnie)' : ''}`, ok, `${fmt(J.move, 1)} px (${J.moveId} @${fmt(J.moveT, 2)}) / Δr ${fmt(J.size, 1)} px (${J.sizeId}) / Δ² ${fmt(J.d2, 1)} (${J.d2Id})`,
-      info ? 'zoom gracza po końcu ślizgu' : `≤ ${fmt(P4_MOVE * sPx)} / ${fmt(P4_SIZE * sPx)} px`);
+      info ? 'zoom gracza po końcu ślizgu' : `≤ ${fmt(P4_MOVE * sPx)} / ${fmt(P4_SIZE * sPx)} px (id* — duża tarcza ze środkiem poza kadrem: ruch widocznej części / brzegu)`);
   }
   add('P4-mig', 'mignięcia w głębi kadru', pops.length === 0, pops.length ? pops.slice(0, 4).map((p) => `${p.id} ${p.kind} ${fmt(p.size, 1)} px @${fmt(p.t, 2)} (${p.ph})`).join('; ') : '0');
   if (res.sc.abortAt > 0) {
@@ -753,7 +946,13 @@ function analyze(res) {
     }
   }
   add('C2-daleko', `ciało ≥ ${FAR_A / 1e6} mln j. przed dziobem — małe`, farWorst <= FAR_PX * sPx, `max ${fmt(farWorst, 1)} px (${farId})`, `≤ ${fmt(FAR_PX * sPx)} px`);
-  // C3 — postój (ciało w kadrze, β = 1, ≥ 3 px: < 2 px/s i |d ln r / dt| < 0,02/s)
+  // C3 — postój (ciało w kadrze, β = 1, ≥ 3 px: < 2 px/s i |d ln r / dt| < 0,02/s); ciało przy PUNKCIE ZBIEGU (kierunek
+  // lotu — wyjątek W0: cel podróży stoi w nim jak w kamerze) się nie liczy — przy wolnym przelocie nad tarczą (S10: Saturn
+  // 4 px w punkcie zbiegu przez ~2,5 s nad Ziemią) to nie „parkowanie”
+  const vpFar = (f, b) => {
+    const vy = f.anchorSy - WL.WORLD_LENS_DEFAULTS.hf * (H * 0.5 + f.anchorSy);
+    return hyp(b.x - f.anchorSx, b.y - vy) < Math.max(VP_PX * sPx, 3 * b.size);
+  };
   let stallWorst = 0;
   let stallId = '';
   for (const id of ids) {
@@ -762,14 +961,17 @@ function analyze(res) {
       const f = F[i];
       const b = f.bodies[id];
       const a = F[i - 1].bodies[id];
-      if (f.state !== 'active' || !b.drawn || !a.drawn || b.size < 3 || b.bb < 0.999) { run = 0; continue; }
+      if (f.state !== 'active' || !b.drawn || !a.drawn || b.size < 3 || b.bb < 0.999 || vpFar(f, b)) { run = 0; continue; }
       const sp = hyp(b.x - a.x, b.y - a.y) / DT;
       const gr = Math.abs(Math.log(b.size / a.size)) / DT;
       if (sp < 2 && gr < 0.02) { run += DT; if (run > stallWorst) { stallWorst = run; stallId = id + ' @' + fmt(f.t, 1); } } else run = 0;
     }
   }
-  add('C3-postój', 'najdłuższy postój ciała w kadrze', stallWorst <= STALL_S, `${fmt(stallWorst, 2)} s ${stallId}`, `≤ ${STALL_S} s`);
-  // C4 — tarcza (z ringiem) nie zachodzi na kadłub (elipsa kadłuba na ekranie)
+  add('C3-postój', 'najdłuższy postój ciała w kadrze (poza punktem zbiegu)', stallWorst <= STALL_S, `${fmt(stallWorst, 2)} s ${stallId}`, `≤ ${STALL_S} s`);
+  // C4 — odstęp tarczy (z ringiem) od kadłuba (elipsa kadłuba na ekranie). INFORMACYJNIE od etapu „studnie” (BRIEF-studnie
+  // pkt 5): tarcza ciała, nad którym (albo tuż obok którego) statek przelatuje, leży POD statkiem — wszystko z soczewki
+  // rysuje się pod nim (E3); kieszeń kadłuba zostaje tylko dla ciała blisko statku na starcie (worldLens.js: pocket).
+  // Spójność „statek nad tarczą w obrazie ⟺ statek nad ciałem naprawdę” — kontrola C9.
   let gapMin = Infinity;
   let gapId = '';
   for (const f of F) {
@@ -792,7 +994,102 @@ function analyze(res) {
       if (g < gapMin) { gapMin = g; gapId = `${id} @${fmt(f.t, 2)} (${f.phaseName})`; }
     }
   }
-  add('C4-kadłub', 'najmniejszy odstęp tarczy (z ringiem) od kadłuba', gapMin >= C4_PX, `${fmt(gapMin)} px (${gapId})`, `≥ ${C4_PX} px (edgeGap ${WL.WORLD_LENS_DEFAULTS.edgeGap} px — kieszeń)`);
+  add('C4-kadłub', 'najmniejszy odstęp tarczy (z ringiem) od kadłuba', gapMin >= C4_PX, `${fmt(gapMin)} px (${gapId})`,
+    `≥ ${C4_PX} px — informacyjnie (tarcza przelotu pod statkiem, BRIEF-studnie pkt 5)`, true);
+  // C9 — PRZELOT NAD CIAŁEM (BRIEF-studnie pkt 5): ciało z listy sc.over — (a) statek nad tarczą w obrazie ⟺ nad ciałem
+  // naprawdę (soczewka β = 1; bez kieszeni kadłuba — tarcza POD statkiem), (b) nad tarczą promień obrazu stały (cięciwa
+  // kursu: skala s — tarcza nie rośnie pod statkiem), (c) za trawersem tarcza z ringiem w kadrze tylko rośnie i wylatuje
+  // (bez zwijania w pasie ukrycia za płaszczyzną kamery — mignięcie), (d) W0: powierzchnia pod statkiem jedzie wolniej niż
+  // najwolniejsze gwiazdy warstwy speed.
+  const c9 = [];
+  for (const oid of res.sc.over || []) {
+    // kurs nad tarczą (najmniejszy prawdziwy odstęp < r) albo tylko nad ringiem (< rExt) — tarcza z ringiem
+    let dMin = Infinity;
+    for (const f of F) if (f.state === 'active') dMin = Math.min(dMin, f.bodies[oid].dT);
+    const b0 = F[0].bodies[oid];
+    const rho = dMin < b0.rT ? 1 : b0.ext;
+    const what = rho > 1 ? 'ringiem' : 'tarczą';
+    let overT = 0;
+    let mism = 0;
+    let rMin = Infinity;
+    let rMax = 0;
+    let tempo = 0;
+    let tempoAt = '';
+    let starMin = Infinity;
+    let midMax = 0;
+    let shrink = 0;
+    let shrinkAt = '';
+    let tIn = NaN;
+    let tOut = NaN;
+    let prev = null;
+    let bare = 0;
+    for (let i = 0; i < F.length; i++) {
+      const f = F[i];
+      if (f.state !== 'active' || f.t < 0.6) { prev = null; continue; }
+      const b = f.bodies[oid];
+      const truly = b.dT < b.rT * rho;
+      const near = Math.abs(b.dT - b.rT * rho) < 0.01 * b.rT * rho;
+      // nad ciałem naprawdę, a obraz nie w pełnej soczewce (bramka ringu zamknięta — prawdziwy obraz jedzie pod statkiem
+      // z prędkością skoku; recenzja obrazu K1, D2: sama spójność „nad tarczą” jest przy β = 1 prawdziwa z konstrukcji)
+      if (truly && !near && !(b.bb >= 0.999)) bare += DT;
+      if (b.bb >= 0.999 && !near) {
+        const img = hyp(b.x - f.anchorSx, b.y - f.anchorSy) < b.size * rho;
+        if (img !== truly) mism++;
+      }
+      if (truly && b.bb >= 0.999) {
+        overT += DT;
+        if (!Number.isFinite(tIn)) tIn = f.t;
+        tOut = f.t;
+        rMin = Math.min(rMin, b.size);
+        rMax = Math.max(rMax, b.size);
+        // powierzchnia pod statkiem: q · v (q = promień obrazu / prawdziwy) [px/s przy 1080p]
+        const tp = b.size / b.rT * f.v / sPx;
+        const vs = Math.min(f.v, STAR_SPEED_CAP) * f.zoom / sPx;
+        if (tp > tempo) { tempo = tp; tempoAt = `@${fmt(f.t, 2)}`; }
+        starMin = Math.min(starMin, vs * STAR_SPEED_MIN);
+        midMax = Math.max(midMax, vs * STAR_MID_MAX);
+      }
+      // za trawersem (a < 0), ring w kadrze: promień nie maleje (zwijanie w pasie ukrycia = mignięcie)
+      if (b.a < 0 && b.extIn && b.bb >= 0.999) {
+        if (prev && prev.extIn && b.size < prev.size - 1e-6) {
+          const d = prev.size - b.size;
+          if (d > shrink) { shrink = d; shrinkAt = `@${fmt(f.t, 2)}`; }
+        }
+        prev = b;
+      } else prev = null;
+    }
+    // (informacyjnie) księżyc ciała narysowany NA jego tarczy z ringiem, choć naprawdę leży poza nią — każde ciało ma
+    // własną skalę mapy (obraz podobny wokół punktu głębi), więc układ planeta–księżyc jest w soczewce tylko przybliżony
+    const moonIds = res.recs.filter((r) => r.src.parentId === oid).map((r) => r.id);
+    let moonOn = 0;
+    let moonOnId = '';
+    // księżyc CAŁY w obrazie KULI rodzica, choć naprawdę leży poza kulą (recenzja obrazu W2: w 3D znika w tarczy i wynurza
+    // się z limbu) — kontrola, nie informacja
+    let moonIn = 0;
+    let moonInId = '';
+    for (const f of F) {
+      if (f.state !== 'active' || f.t < 0.6) continue;
+      const pb = f.bodies[oid];
+      if (!(pb.bb >= 0.999)) continue;
+      for (const mid of moonIds) {
+        const m = f.bodies[mid];
+        if (!m.drawn || !(m.bb >= 0.999)) continue;
+        const inImg = hyp(m.x - pb.x, m.y - pb.y) < pb.size * pb.ext;
+        const outTrue = hyp(m.a - pb.a, m.l - pb.l) > pb.rT * pb.ext;
+        if (inImg && outTrue) { moonOn += DT; moonOnId = mid; }
+        if (hyp(m.x - pb.x, m.y - pb.y) + m.size < pb.size && hyp(m.a - pb.a, m.l - pb.l) > pb.rT) { moonIn += DT; moonInId = mid; }
+      }
+    }
+    const steady = rMax / Math.max(1e-9, rMin);
+    const ok = overT > 0 && mism === 0 && bare === 0 && moonIn === 0 && steady <= 1.1 && shrink <= 0.5 && tempo < starMin;
+    c9.push({ id: oid, what, overT, rMin, rMax, tempo, starMin, midMax, tIn, tOut });
+    add('C9-' + oid, `${oid}: przelot nad ${what} (pod statkiem, skala stała, wylot bez zwijania, W0)`, ok,
+      `nad ${what} ${fmt(overT, 2)} s (${fmt(tIn, 2)}–${fmt(tOut, 2)} s), bez soczewki nad ciałem ${fmt(bare, 2)} s, promień kuli ${fmt(rMin)}–${fmt(rMax)} px (× ${fmt(steady, 3)}), niespójnych klatek ${mism}; `
+      + `księżyc w kuli rodzica ${fmt(moonIn, 2)} s${moonInId ? ' (' + moonInId + ')' : ''}; `
+      + `powierzchnia pod statkiem ≤ ${fmt(tempo)} px/s ${tempoAt} (gwiazdy speed ≥ ${fmt(starMin)}, mid ≤ ${fmt(midMax)}); zwijanie za trawersem ${fmt(shrink, 2)} px ${shrinkAt}; `
+      + `księżyc na tarczy z ringiem w obrazie (naprawdę poza nią — info) ${fmt(moonOn, 2)} s${moonOnId ? ' (' + moonOnId + ')' : ''}`,
+      'nad tarczą w obrazie ⟺ naprawdę, nad ciałem tylko w soczewce (bramka otwarta), księżyc nie w kuli rodzica, × ≤ 1,1, zwijanie ≤ 0,5 px, powierzchnia < gwiazdy speed');
+  }
   // C6 — ciało w stożku za celem (M4): nie siedzi na tle tarczy celu (zanurzone przez cały czas soczewki, bez mignięć)
   if (res.sc.coneBody) {
     const cid = res.sc.coneBody;
@@ -863,7 +1160,7 @@ function analyze(res) {
       last ? `ostatnio w kadrze @${fmt(F[lastI].t, 2)} s (${fmt(last.x)}, ${fmt(last.y)}) r ${fmt(last.size)} px; wylot ${bottom ? 'dołem' : 'NIE dołem'}; powroty ${back}; koniec lotu: promień ${fmt(flightEnd ? flightEnd.bodies[oid].size : NaN, 3)} px`
         : 'nie było w kadrze', 'w kadrze od ładowania, wylot dolną krawędzią, 0 powrotów, za płaszczyzną kamery promień 0');
   }
-  return { checks, jumps, pops, counts: { min: cMin, max: cMax, avg: cAvg }, w0: w0Stats(res) };
+  return { checks, jumps, pops, counts: { min: cMin, max: cMax, avg: cAvg }, w0: w0Stats(res), c9 };
 }
 
 // W0 (DECYZJE-2, informacyjnie): tempo obrazu ciał soczewki w locie (kop + lot, β = 1, ciało rysowane w obu klatkach)
@@ -883,7 +1180,8 @@ function w0Stats(res) {
       const b = f.bodies[id];
       const a = g.bodies[id];
       if (!b.drawn || !a.drawn || !(b.bb >= 0.999)) continue;
-      const v = hyp(b.x - a.x, b.y - a.y) / DT / res.sPx;
+      // (duża tarcza ze środkiem poza kadrem — ruch widocznej części, jak P4)
+      const v = bodyStep(a, b, res.W, res.H).move / DT / res.sPx;
       sp.push(v);
       if (v > max) { max = v; maxId = id; }
       if (b.a >= FAR_A && v > far) { far = v; farId = id; }

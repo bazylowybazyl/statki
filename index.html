@@ -1429,7 +1429,7 @@
     // Radar taktyczny kokpitu (2026-10-07): zbieracz wejścia i skan X w świecie — src/ui/radar/.
     import { createRadarFeed } from "./src/ui/radar/radarFeed.js";
     import { createScanOverlay } from "./src/ui/radar/scanOverlay.js";
-    import { radarStationLabel, scanPulseRadius, scanPulseTime } from "./src/ui/radar/radarConfig.js";
+    import { radarStationLabel, scanPulseRadius, scanPulseTime, RADAR_PLANET_NAMES } from "./src/ui/radar/radarConfig.js";
     import {
       COMMAND_MENU_FOOT_H,
       COMMAND_MENU_HEAD_H,
@@ -1585,8 +1585,10 @@
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
-    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpTripTuneFor, warpFlybyFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival, WARP_EMERGENCY, planWarpEmergency, warpExitRampTime, warpLegTimeline } from "./src/game/warpDrive.js";
-    import { TRAVEL_TUNE, planTravelLeg, travelHypercruiseLegOk, travelApproachPoint, snapTravelTarget } from "./src/game/travelNav.js";
+    import { createWarpExitRamp, sampleWarpExitRamp, warpExitRampDistance, WARP_EXIT, planWarpCruise, warpTripTuneFor, warpFlybyFactor, warpMoonReach, warpSpeedFactor, warpRulonEnabled, WARP_EXIT_MOMENTUM, warpExitMomentum, planWarpFleetArrival, WARP_EMERGENCY, planWarpEmergency, warpExitRampTime, warpLegTimeline } from "./src/game/warpDrive.js";
+    import { TRAVEL_TUNE, planTravelLeg, travelHypercruiseLegOk, travelApproachPoint, snapTravelTarget, wellExitPoint, segmentCrossesCircle } from "./src/game/travelNav.js";
+    // Księżyce z bryłą (Luna, księżyce Jowisza): miejsce i promień jak w obrazie — zwolnienie skoku przy mijanym księżycu.
+    import { MOON_BODY_TUNES, moonGameNode, moonStartAngle, moonOrbitRadius, moonBodyRadius } from "./src/data/moonBodies.js";
     import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue, chooseWarpJump, warpCourseInCone, warpChargeTurn } from "./src/game/warpCourse.js";
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
@@ -1676,9 +1678,18 @@
 
     let warpBrakeTimer = 0;
     const GRAVITY_WELL_IDS = ['planet_gravity', 'pirate_gravity', 'sun'];
+    // STUDNIE, KTÓRE HAMUJĄ SKOK GRACZA W LOCIE (BRIEF-studnie, decyzja użytkownika 2026-10-26: „nie można odpalić warpa PRZY
+    // planecie … ale samo przelatywanie w warpie? powinno jak najbardziej być”): słońce i baza piratów. Studnię planety
+    // i małego ciała (planet_gravity) skok PRZELATUJE (nad tarczą — zwolnienie z podłogą, warpDrive.js: warpSpeedFactor),
+    // a start w niej jest zablokowany (playerWarpStartWell). Przechwyt fabularny (storyInterdictWarp) — bez zmian.
+    const WARP_BRAKE_WELL_IDS = ['pirate_gravity', 'sun'];
 
     function isGravityWellZoneId(id) {
       return GRAVITY_WELL_IDS.includes(id);
+    }
+
+    function isWarpBrakeWellZoneId(id) {
+      return WARP_BRAKE_WELL_IDS.includes(id);
     }
 
     function resolveGravityWellSource(zoneId) {
@@ -7674,6 +7685,16 @@
       window.hudSystem?.pushAlert?.(text.trim(), { label, tone, duration });
     }
 
+    // Przelot nad planetą skokiem albo hipercruise'em (BRIEF-studnie: planista nie objeżdża studni planet, skok ich nie
+    // hamuje) — pas studni, strefy orbit i z powrotem w 2–5 s: bez komunikatów strefy i zbliżenia ani wpisów dziennika stref
+    // planet i małych ciał (recenzja rozgrywki ust. 5: trzy „APPROACH VECTOR” i do 5 wpisów na przelot). Słońce, pasy,
+    // baza piratów — jak dawniej.
+    function zoneMessageQuiet(z) {
+      if (!z || typeof z.id !== 'string' || z.id.indexOf('planet_') !== 0) return false;
+      const hc = window.hypercruise;
+      return warp.state === 'active' || !!(hc && hypercruiseDriving(hc));
+    }
+
     function updateZoneState(dt) {
       const prevZoneKey = zoneState.current?.key || zoneState.lastZoneKey;
       const prevZoneId = zoneState.current?.id || zoneState.lastZoneId;
@@ -7690,7 +7711,7 @@
           window.hudSystem?.logZone?.(zoneState.current.label, zoneState.current.id);
         }
       } else if (zoneState.current && zoneState.current.key !== zoneState.lastZoneKey) {
-        if (zoneState.current.label) {
+        if (zoneState.current.label && !zoneMessageQuiet(zoneState.current)) {
           pushZoneMessage(zoneState.current.label, 2.8, { label: 'CURRENT SECTOR', tone: 'sector' });
           window.hudSystem?.logZone?.(zoneState.current.label, zoneState.current.id);
         }
@@ -7708,7 +7729,7 @@
         approachKey !== zoneState.current?.key &&
         approachKey !== prevZoneKey
       ) {
-        if (zoneState.approaching?.enteringLabel) {
+        if (zoneState.approaching?.enteringLabel && !zoneMessageQuiet(zoneState.approaching)) {
           pushZoneMessage(zoneState.approaching.enteringLabel, 2.4, { label: 'APPROACH VECTOR', tone: 'status' });
         }
       }
@@ -7748,10 +7769,11 @@
     window.__beltFamilyZone = _beltFamilyZone;
 
     // WYLOT ZE STUDNI W SKOKU (DECYZJE-2 T1 „zawsze rampa, nigdy hamowanie bez rampy”; recenzja T, ust. 8): skok, który od
-    // kopu oddala się od ciała studni (prosta od punktu skoku `warp.route` w kierunku `warp.dir` — odległość od ciała tylko
-    // rośnie, więc przejście w pas studni to wylot z jego stref orbit, np. z portu K-7 przy ringu), nie hamuje
-    // grawitacyjnie na tym pasie; dawniej hamował bez rampy kilka km po kopie (planet_outer → planet_gravity). Skok w głąb
-    // studni (przez ciało) hamuje jak dawniej — skok awaryjny w jądro studni startu planista odrzuca (planWarpEmergency).
+    // kopu oddala się od źródła studni hamującej (prosta od punktu skoku `warp.route` w kierunku `warp.dir` — odległość od
+    // źródła tylko rośnie, więc przejście w pas studni to wylot z jej stref orbit), nie hamuje grawitacyjnie na tym pasie.
+    // Dotyczy już tylko studni, które hamują skok (WARP_BRAKE_WELL_IDS): bazy piratów (start w jej studni dozwolony jak
+    // dawniej) i słońca (start w jego strefie zablokowany — zostaje dla narzędzi, które ustawiają ładowanie wprost).
+    // Studnia planety / małego ciała nie hamuje w ogóle (BRIEF-studnie pkt 2) — gałąź planet usunięta.
     function warpLeavingWell(zoneId) {
       if (warp.state !== 'active') return false;
       const rt = warp.route;
@@ -7764,26 +7786,12 @@
         const st = mercMission?.station;
         return !!st && away(st.x, st.y);
       }
-      if (zoneId !== 'planet_gravity') return false;
-      // ciała, w których studni statek jest teraz (planety i małe ciała) — od każdego skok musi się oddalać
-      let found = false;
-      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];
-      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
-        const b = i < planets.length ? planets[i] : bodies[i - planets.length];
-        if (!b) continue;
-        const radii = planetOrbitRadii(b);
-        const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
-        const ox = ship.pos.x - b.x;
-        const oy = ship.pos.y - b.y;
-        if (!(r > 0) || ox * ox + oy * oy > r * r) continue;
-        if (!away(b.x, b.y)) return false;
-        found = true;
-      }
-      return found;
+      return false;
     }
 
     function handleZoneTransition(prevZoneId, currentZoneId) {
-      if (isGravityWellZoneId(currentZoneId) && currentZoneId !== prevZoneId && !warpLeavingWell(currentZoneId)) {
+      // Skok w locie hamuje tylko studnia słońca i bazy piratów (BRIEF-studnie pkt 2) — studnię planety przelatuje.
+      if (isWarpBrakeWellZoneId(currentZoneId) && currentZoneId !== prevZoneId && !warpLeavingWell(currentZoneId)) {
         triggerGravityWarpBrake(currentZoneId);
       }
       if (currentZoneId === 'pirate_inner' && prevZoneId !== 'pirate_inner') {
@@ -17499,35 +17507,25 @@
       return shifted;
     }
 
+    // PRZESZKODY PLANISTY TRAVEL TO (planCruiseRoute): studnie, które HAMUJĄ skok w locie — słońce (strefa 'sun') i baza
+    // piratów (pirate_gravity) — oraz budowle doków portów bez ringu. Studnie planet i małych ciał NIE są przeszkodą
+    // (BRIEF-studnie pkt 3, decyzja użytkownika 2026-10-26: „nie wymuszasz przelotu bokiem”) — skok przelatuje nad nimi,
+    // a cel w studni kończy skok na jej brzegu (planTravelLeg). Studnia startu albo celu — bez objazdu (wylot / dolot).
     function getCruiseGravityObstacles(target, start = null) {
       const out = [];
-      // planety i małe ciała (blok „MAŁE CIAŁA” — studnie Ceres, Westy… jak planet)
-      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];
-      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
-        const planet = i < planets.length ? planets[i] : bodies[i - planets.length];
-        if (!planet) continue;
-        const radii = planetOrbitRadii(planet);
-        let radius = Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer;
-        radius = (Number(radius) || 0) + travelNav.obstacleMargin;
-        if (radius <= 0) continue;
-        if (target) {
-          const tx = target.x - planet.x;
-          const ty = target.y - planet.y;
-          // Studnię CELU obsługuje planTravelLeg (wyjście przed brzegiem, dalej
-          // napędem). Objazd jej brzegu odsyłał powracającego do K-7 na zewnątrz.
-          if ((tx * tx + ty * ty) <= radius * radius) continue;
-        }
-        if (start) {
-          // Statek startuje ze studni (port Ziemi) — wylatuje z niej, nie objeżdża jej.
-          const sx = start.x - planet.x;
-          const sy = start.y - planet.y;
-          if ((sx * sx + sy * sy) <= radius * radius) continue;
-        }
-        out.push({
-          x: Number(planet.x) || 0,
-          y: Number(planet.y) || 0,
-          r: radius
-        });
+      const push = (x, y, r) => {
+        const radius = (Number(r) || 0) + travelNav.obstacleMargin;
+        if (!(radius > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+        // Studnię CELU obsługuje planTravelLeg (wyjście przed brzegiem, dalej napędem); studnię startu statek opuszcza.
+        if (target && (target.x - x) ** 2 + (target.y - y) ** 2 <= radius * radius) return;
+        if (start && (start.x - x) ** 2 + (start.y - y) ** 2 <= radius * radius) return;
+        out.push({ x, y, r: radius });
+      };
+      if (SUN) push(SUN.x, SUN.y, Math.max(10, (Number(SUN.r) || 0) * 2));   // strefa 'sun' (detectZones)
+      const pst = mercMission?.station;
+      if (pst) {
+        const pr = pirateOrbitRadii();
+        if (Number.isFinite(pr?.gravityWell) && pr.gravityWell > 0) push(Number(pst.x), Number(pst.y), pr.gravityWell);
       }
       // Budowle doków portów bez ringu (E14) — dysk zapasu (bryły i statki na stanowiskach), chyba że start albo cel w nim.
       portDocks.pushCruiseObstacles(out, start, target);
@@ -17695,9 +17693,10 @@
     // Warp „Nurt” ma kurs ustawiany PRZED skokiem (rulon — oś stoi od ładowania, w locie bez
     // skrętu), więc podróż idzie odcinkami po prostej: autopilot obraca dziób na kurs odcinka
     // (rozkaz 'hold' z faceAngle), ładuje skok, a wyjście (rampa przylotu — warpDrive.js:
-    // WARP_EXIT) zaczyna się tak, żeby statek stanął w końcu odcinka. Objazdy studni grawitacji
-    // z planisty (planCruiseRoute); cel w studni — warp do jej brzegu, resztę napędem (approach).
-    // AGENT: hipercruise przejmie odcinki „drive” (ten sam cel, inny napęd — travelNav.js).
+    // WARP_EXIT) zaczyna się tak, żeby statek stanął w końcu odcinka. Objazdy studni hamujących skok
+    // (słońce, baza piratów) z planisty (planCruiseRoute); studnie planet skok przelatuje (BRIEF-studnie); start w studni
+    // planety / małego ciała / słońca — odcinek napędem do jej brzegu (wellExit); cel w studni — warp do jej brzegu,
+    // resztę napędem (approach). Odcinki „drive” leci hipercruise (travelTryHypercruise), krótkie — autopilot bojowy.
     // ========================================================================
     function playerWarpHullLength() {
       const h = ship?.beamHull;
@@ -17714,7 +17713,7 @@
     const WARP_BODY_RADIUS_MUL = 4.5;   // = PLANET_SIZE_MULTIPLIER (planet3d.assets.js)
     const WARP_ORIGIN_REACH = 100000;   // [j.] planeta startu: skok zaczyna się bliżej jej studni niż to
     const WARP_TARGET_REACH = 25000;    // [j.] cel soczewki: koniec odcinka warpem przy studni planety
-    const _warpFlybyBodies = [];        // { planet, x, y, r } — lista skoku (bez startu i celu)
+    const _warpFlybyBodies = [];        // { planet, x, y, r, reach, ox, oy, moon } — lista skoku (bez startu i celu)
     let _warpFlybyCount = 0;
 
     function warpBodyRadius(planet) {
@@ -17726,6 +17725,18 @@
       const radii = planetOrbitRadii(planet);
       const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
       return Math.hypot(x - planet.x, y - planet.y) - r;
+    }
+
+    // Kurs z (x, y) w kierunku (dirX, dirY) przecina przed dziobem studnię ciała (środek przed statkiem, odstęp kursu od
+    // środka mniejszy niż promień studni) — skok przelatuje nad ciałem.
+    function warpCourseCrossesWell(planet, x, y, dirX, dirY) {
+      const radii = planetOrbitRadii(planet);
+      const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
+      const ox = planet.x - x;
+      const oy = planet.y - y;
+      const along = ox * dirX + oy * dirY;
+      const lat = oy * dirX - ox * dirY;
+      return along > 0 && lat * lat < r * r;
     }
 
     // Planeta, przy której studni leży punkt (najbliższa w zasięgu `reach` od brzegu studni) albo null.
@@ -17774,7 +17785,10 @@
         warpCourse.label = 'SKOK AWARYJNY';
         end = warpCourse.aim;
       }
-      const origin = warpPlanetNear(px, py, WARP_ORIGIN_REACH);
+      let origin = warpPlanetNear(px, py, WARP_ORIGIN_REACH);
+      // Kurs NAD planetą startu (BRIEF-studnie: TRAVEL TO wyprowadza ze studni hipercruise'em, a skok do celu za planetą
+      // przelatuje nad nią) — to mijane ciało (zwolnienie przelotu, w soczewce przelot), nie ciało startu za rufą.
+      if (origin && warpCourseCrossesWell(origin, px, py, dirX, dirY)) origin = null;
       const target = end ? warpPlanetNear(end.x, end.y, WARP_TARGET_REACH) : null;
       warp.originBody = origin;
       warp.targetBody = target && target !== origin ? target : null;
@@ -17784,12 +17798,46 @@
         const planet = i < planets.length ? planets[i] : flyBodies[i - planets.length];
         if (!planet || planet === origin || planet === warp.targetBody) continue;
         let b = _warpFlybyBodies[_warpFlybyCount];
-        if (!b) { b = { planet: null, x: 0, y: 0, r: 1 }; _warpFlybyBodies[_warpFlybyCount] = b; }
+        if (!b) { b = { planet: null, x: 0, y: 0, r: 1, reach: 0 }; _warpFlybyBodies[_warpFlybyCount] = b; }
         b.planet = planet;
         b.x = planet.x;
         b.y = planet.y;
         b.r = warpBodyRadius(planet);
+        // pas zwolnienia nie węższy niż układ księżyców (warpDrive.js: WARP_FLYBY_DEFAULTS.reachWidth — przelot centralny
+        // nad planetą mijał jej księżyce w pełnej prędkości ponad P4 soczewki; BRIEF-studnie, symulator S10 / S11)
+        b.reach = planet.smallBody ? 0 : warpMoonReach(moonsOf(planet.id));
+        b.ox = 0;
+        b.oy = 0;
+        b.moon = false;
         _warpFlybyCount++;
+      }
+      // KSIĘŻYCE Z BRYŁĄ (recenzja obrazu W4, W3): ciała zwolnienia jak planety — miejsce i promień bryły z tych samych danych
+      // co obraz (src/data/moonBodies.js: węzeł gry, Io odsunięte spod ringu, ułamek promienia planety). Odlot z K-7 mijał
+      // Lunę, a przelot nad Jowiszem — Kallisto w pełnej prędkości (wylot z kadru soczewki ponad P4, symulator S11 / S12).
+      // Księżyce celu jadą w soczewce jego skalą (kadr przylotu) — bez zwolnienia, jak cel.
+      for (let i = 0; i < planets.length; i++) {
+        const planet = planets[i];
+        const tunes = planet && MOON_BODY_TUNES[String(planet.id || '').toLowerCase()];
+        if (!tunes || planet === warp.targetBody) continue;
+        const ring = !!haloRingKey(planet);
+        const parentR = ring ? warpBodyRadius(planet) : Math.max(100, Number(planet.r) || 2800);   // promień świata planety z ringiem (jak DirectMoon)
+        for (let k = 0; k < tunes.length; k++) {
+          const tune = tunes[k];
+          const node = moonGameNode(tune);
+          const ang = moonStartAngle(tune, node);
+          const orb = moonOrbitRadius(tune, node, parentR);
+          let b = _warpFlybyBodies[_warpFlybyCount];
+          if (!b) { b = { planet: null, x: 0, y: 0, r: 1, reach: 0, ox: 0, oy: 0, moon: false }; _warpFlybyBodies[_warpFlybyCount] = b; }
+          b.planet = planet;
+          b.ox = Math.cos(ang) * orb;
+          b.oy = Math.sin(ang) * orb;
+          b.x = planet.x + b.ox;
+          b.y = planet.y + b.oy;
+          b.r = moonBodyRadius(tune, parentR, ring);
+          b.reach = 0;
+          b.moon = true;
+          _warpFlybyCount++;
+        }
       }
       warp.cruise = warp.speed;
       warp.tripPlan = null;
@@ -17817,9 +17865,10 @@
         const oy = b.y - py;
         const along = ox * dirX + oy * dirY;
         const lateral = oy * dirX - ox * dirY;
-        bodies.push({ along, lateral, r: b.r });
-        // najbardziej widoczne mijane ciało: r / (r + odstęp tarczy od kursu) — ta sama miara co zwolnienie (warpDrive.js)
-        if (along > 0 && along < dist) {
+        bodies.push({ along, lateral, r: b.r, reach: b.reach });
+        // najbardziej widoczne mijane ciało: r / (r + odstęp tarczy od kursu) — ta sama miara co zwolnienie (warpDrive.js);
+        // księżyce tylko zwalniają (route.flyBody — planeta albo małe ciało)
+        if (!b.moon && along > 0 && along < dist) {
           const size = b.r / (b.r + Math.max(0, Math.abs(lateral) - b.r));
           if (size > flySize) { flySize = size; rt.flyBody = b.planet; rt.flyAlong = along; rt.flyLateral = lateral; }
         }
@@ -17875,12 +17924,14 @@
     function playerWarpFlybyFactor() {
       for (let i = 0; i < _warpFlybyCount; i++) {
         const b = _warpFlybyBodies[i];
-        b.x = b.planet.x;
-        b.y = b.planet.y;
+        b.x = b.planet.x + (b.ox || 0);
+        b.y = b.planet.y + (b.oy || 0);
       }
       return warpFlybyFactor(ship.pos.x, ship.pos.y, warp.dir.x, warp.dir.y, _warpFlybyBodies, _warpFlybyCount);
     }
 
+    // Studnie planisty TRAVEL TO holownika (serviceTug.js — zestaw skacze automatem gracza, ale fazy prowadzi holownik:
+    // start skoku w studni jak dawniej) — planety i małe ciała.
     function getTravelWells() {
       const out = [];
       const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];   // planety i małe ciała (blok „MAŁE CIAŁA”)
@@ -17890,6 +17941,152 @@
         const radii = planetOrbitRadii(planet);
         const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
         if (r > 0) out.push({ x: Number(planet.x) || 0, y: Number(planet.y) || 0, r });
+      }
+      return out;
+    }
+
+    // STUDNIE GRACZA (BRIEF-studnie pkt 1, decyzja użytkownika 2026-10-26: „nie można odpalić warpa PRZY planecie i trzeba
+    // od niej kawałek odlecieć”): planety i małe ciała (pas studni — planetOrbitRadii(b).gravityWell, granica strefy
+    // planet_gravity) i słońce (strefa 'sun') — START SKOKU W NICH ZABLOKOWANY (`noWarpStart`; planista TRAVEL TO wyprowadza
+    // statek napędem za brzeg — travelNav.js: planTravelLeg, `wellExit`), cel w nich kończy skok na brzegu. rIn — jądro
+    // studni (strefa orbit; planeta z ringiem „Halo” — PAS BUDOWLI PORTU: ściany hal K-7 i zatok, płyta przed bramą, zasięg
+    // kadłuba — recenzja rozgrywki ust. 1: hale stoją poza strefą orbit; słońce — tarcza): prosta ku celowi przez jądro →
+    // wyjście promieniowe. rFree — WNĘTRZE RINGU (bliżej planety niż płyta habitatu): start wolno — napęd wyjdzie stamtąd
+    // tylko tranzytem albo przerwą budowy, a skok jest duchem (recenzja rozgrywki ust. 2; dawniej TRAVEL TO pchał statek
+    // w płytę — do decyzji użytkownika: odcinek do tranzytu). Baza piratów — poza listą (start w jej studni jak dawniej).
+    // Pula w miejscu (krok TRAVEL TO, guard ładowania) — wynik ważny do następnego wywołania.
+    const _playerTravelWells = [];
+    function putPlayerTravelWell(n, x, y, r, rIn, body, rFree = 0) {
+      let w = _playerTravelWells[n];
+      if (!w) { w = { x: 0, y: 0, r: 0, rIn: 0, rFree: 0, noWarpStart: true, body: null, out: 0 }; _playerTravelWells[n] = w; }
+      w.x = x; w.y = y; w.r = r; w.rIn = rIn; w.rFree = rFree; w.noWarpStart = true; w.body = body; w.out = 0;
+    }
+    // Zasięg kadłuba gracza (pół przekątnej obrysu albo promień) — wyjście ze studni i doku portu.
+    function playerHullReach() {
+      return Math.max(Number(ship?.radius) || 0, Math.sqrt((Number(ship?.w) || 0) ** 2 + (Number(ship?.h) || 0) ** 2) * 0.5);
+    }
+    function playerTravelWells() {
+      let n = 0;
+      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];
+      const reach = playerHullReach();
+      for (let i = 0, m = planets.length + bodies.length; i < m; i++) {
+        const b = i < planets.length ? planets[i] : bodies[i - planets.length];
+        if (!b) continue;
+        const radii = planetOrbitRadii(b);
+        const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
+        if (!(r > 0)) continue;
+        let rIn = Math.min(r, Number(radii.outer) || 0);
+        let rFree = 0;
+        // ring „Halo”: jądro = pas budowli portu (wallsOuter — płyta przed G-01: + 600), wnętrze ringu = start wolno
+        const col = haloWorld && !b.smallBody ? haloWorld.entry(haloRingKey(b))?.collider : null;
+        if (col) {
+          rIn = Math.min(r, Math.max(rIn, (Number(col.wallsOuter) || 0) + 600 + reach));
+          rFree = Math.max(0, (Number(col.back) || 0) - reach);
+        }
+        putPlayerTravelWell(n++, Number(b.x) || 0, Number(b.y) || 0, r, rIn, b, rFree);
+      }
+      if (SUN) putPlayerTravelWell(n++, SUN.x, SUN.y, Math.max(10, (Number(SUN.r) || 0) * 2), Math.max(0, Number(SUN.r) || 0), SUN);
+      _playerTravelWells.length = n;
+      return _playerTravelWells;
+    }
+
+    // Studnia gracza, w której stoi punkt `pos` (najgłębiej — największa droga do brzegu), albo null; wnętrze ringu (rFree)
+    // się nie liczy (start wolno). Wynik — studnia z puli playerTravelWells + `out` = droga do brzegu [j.].
+    function playerWarpStartWell(pos = ship?.pos) {
+      if (!pos) return null;
+      const wells = playerTravelWells();
+      let best = null;
+      let bestOut = 0;
+      for (let i = 0; i < wells.length; i++) {
+        const w = wells[i];
+        const d = Math.sqrt((pos.x - w.x) ** 2 + (pos.y - w.y) ** 2);
+        if (w.rFree > 0 && d < w.rFree) continue;
+        const out = w.r - d;
+        if (out > bestOut) { bestOut = out; best = w; }
+      }
+      if (best) best.out = bestOut;
+      return best;
+    }
+
+    // Nazwa ciała studni w komunikacie (po polsku — RADAR_PLANET_NAMES, recenzja rozgrywki ust. 4: planety mają w grze
+    // `name` angielskie, „EARTH”), wielkimi literami.
+    function playerWellBodyName(b) {
+      if (b === SUN) return 'SŁOŃCE';
+      const id = String(b?.id || b?.name || '').toLowerCase();
+      const pl = RADAR_PLANET_NAMES[id];
+      return String(pl || (b?.smallBody ? b.label : formatPlanetOrbitLabel(b)) || b?.name || b?.id || 'CIAŁO').toUpperCase();
+    }
+
+    // Odmowa skoku w studni (klawisz warpa, pad, UI — BRIEF-studnie pkt 1): komunikat z nazwą ciała i drogą do brzegu, bez
+    // ładowania i BEZ przejęcia sterów (TRAVEL TO leci dalej — hipercruise za brzeg studni, potem skok). true — odmowa.
+    function refusePlayerWarpInWell() {
+      const w = playerWarpStartWell();
+      if (!w) return false;
+      const km = Math.max(1, Math.ceil((Number(w.out) || 0) / 1000));
+      pushZoneMessage(`WARP: STUDNIA GRAWITACJI — ODLEĆ OD: ${playerWellBodyName(w.body)} · ${km} KM DO BRZEGU`, 2.4, { tone: 'warn', label: 'WARP' });
+      return true;
+    }
+
+    // PUNKT WYJŚCIA ZE STUDNI STARTU dla planisty TRAVEL TO (travelNav.js: planTravelLeg — exitPoint; recenzja rozgrywki
+    // ust. 1 i 3): (1) statek w hali K-7 / zatoce portu z ringiem — osią doku przez bramę (HaloRingWorld.dockExit; pas
+    // stanowiska capital — prosto), (2) w dysku budowli doku portu bez ringu (E14) — promieniowo od środka budowli, (3) inaczej
+    // wellExitPoint (prosto ku celowi; przez jądro studni — promieniowo). Odcinek nie krótszy niż próg hipercruise'u
+    // (minLeg + droga hamowania — travelHypercruiseLegOk, DECYZJE-2 T4; z K-7 dawniej ~4 km autopilotem bojowym), gdy kadłub ma
+    // silnik hipercruise. Prosta przez dysk budowli doku bez ringu (statek obok doku) — najpierw promieniowo od ciała, potem
+    // prosto ku celowi. `out.guided` — wylot z doku (planTravelLeg: cel w zapasie wyjścia i tak przez wylot).
+    const _wellExitDock = { x: 0, y: 0, ax: 1, ay: 0, inside: false };
+    const _wellExitOpts = { dir: { x: 1, y: 0 }, minLen: 0 };
+    function playerWellExitMinLen() {
+      if (!syncPlayerHypercruise()) return 0;
+      return HYPERCRUISE_TUNE.minLeg + playerHypercruiseStopMargin() + 200;
+    }
+    function wellExitDockBlocked(a, b, reach) {
+      if (!portDocks || !portDocks.count) return false;
+      for (const d of portDocks.docks) {
+        const r = (Number(d.keepR) || 0) + reach;
+        if ((a.x - d.x) ** 2 + (a.y - d.y) ** 2 < r * r) continue;   // start w dysku — wylot obsłużony wyżej
+        if (segmentCrossesCircle(a, b, d.x, d.y, r)) return true;
+      }
+      return false;
+    }
+    function playerWellExitPoint(pos, end, well, margin, out) {
+      const reach = playerHullReach();
+      const o = _wellExitOpts;
+      o.minLen = playerWellExitMinLen();
+      out.guided = false;
+      // (1) hala K-7 / zatoka portu z ringiem: przez wylot doku (przed bramą — osią doku)
+      if (haloWorld && haloWorld.dockExit(pos.x, pos.y, reach, _wellExitDock)) {
+        const D = _wellExitDock;
+        const mx = D.x - pos.x;
+        const my = D.y - pos.y;
+        const ml = Math.sqrt(mx * mx + my * my);
+        if (D.inside && ml > 1) { o.dir.x = mx / ml; o.dir.y = my / ml; } else { o.dir.x = D.ax; o.dir.y = D.ay; }
+        wellExitPoint(pos, end, well, margin, out, o);
+        out.guided = true;
+        return out;
+      }
+      // (2) dysk budowli doku portu bez ringu: promieniowo od środka budowli (jak wypchnięcie z głębi — PortDockWorld)
+      const dock = portDocks && portDocks.count ? portDocks.dockAt(pos.x, pos.y, reach) : null;
+      if (dock) {
+        const dx = pos.x - dock.x;
+        const dy = pos.y - dock.y;
+        const dl = Math.sqrt(dx * dx + dy * dy);
+        o.dir.x = dl > 1 ? dx / dl : Math.cos(dock.angle);
+        o.dir.y = dl > 1 ? dy / dl : Math.sin(dock.angle);
+        wellExitPoint(pos, end, well, margin, out, o);
+        out.guided = true;
+        return out;
+      }
+      // (3) prosto ku celowi albo promieniowo (jądro); dysk budowli doku na drodze — druga z tych dróg
+      const minLen = o.minLen;
+      wellExitPoint(pos, end, well, margin, out, minLen > 0 ? { minLen } : null);
+      if (wellExitDockBlocked(pos, out, reach)) {
+        const px = pos.x - well.x;
+        const py = pos.y - well.y;
+        const pl = Math.sqrt(px * px + py * py);
+        if (out.radial) { o.dir.x = end.x - pos.x; o.dir.y = end.y - pos.y; } else if (pl > 1) { o.dir.x = px / pl; o.dir.y = py / pl; }
+        const alt = wellExitPoint(pos, end, well, margin, {}, o);
+        if (!wellExitDockBlocked(pos, alt, reach)) { out.x = alt.x; out.y = alt.y; out.radial = alt.radial; }
       }
       return out;
     }
@@ -18119,9 +18316,15 @@
 
     function nextTravelLeg() {
       const route = refreshTravelRoute();
-      const leg = planTravelLeg(ship.pos, travelNav.target, route, getTravelWells(), {
+      // Studnie gracza: start skoku w studni planety / małego ciała / słońca zablokowany — odcinek napędem za brzeg (wellExit,
+      // punkt — playerWellExitPoint: z doku portu jego osią, przez jądro studni promieniowo, nie krótszy niż próg
+      // hipercruise'u). Studni bazy piratów tu NIE ma (recenzja rozgrywki ust. 7 — odrzucone): ma 7 AU promienia, skok do
+      // celu w niej hamuje grawitacyjnie na jej brzegu, a następny odcinek skacze już ze środka studni (start w niej
+      // dozwolony) — jak w main; koniec skoku przed jej brzegiem z rampą zamieniłby dolot w ~300 tys. j. napędem.
+      const leg = planTravelLeg(ship.pos, travelNav.target, route, playerTravelWells(), {
         minWarp: travelMinWarpDist(),
-        warpOk: !!(DevFlags.unlimitedWarp || warp.fuelMax > 0)
+        warpOk: !!(DevFlags.unlimitedWarp || warp.fuelMax > 0),
+        exitPoint: playerWellExitPoint
       });
       travelNav.leg = leg;
       // Koniec odcinka przed brzegiem studni — na mapie jako pierwszy punkt trasy.
@@ -18192,7 +18395,8 @@
     // Diagnostyka (konsola, scripts/webgpu/travel-gra.mjs): odcinek, próg warpa, studnie, strefa.
     window.__travelDebug = () => ({
       leg: travelNav.leg, phase: travelNav.phase, minWarp: travelMinWarpDist(), zone: zoneState.current?.id || null,
-      wells: getTravelWells().map((w) => ({ ...w, d: Math.round(Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y)) }))
+      wells: playerTravelWells().map((w) => ({ x: w.x, y: w.y, r: w.r, rIn: w.rIn, rFree: w.rFree, id: w.body?.id || (w.body === SUN ? 'sun' : null),
+        d: Math.round(Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y)) }))
     });
 
     // Krok automatu podróży (physicsStep, przed autopilotem gracza — 120 Hz).
@@ -18245,6 +18449,9 @@
         }
         if (err <= TRAVEL_TUNE.alignTolerance && Math.abs(ship.angVel) <= TRAVEL_TUNE.alignSpin
           && fuelOk && warp.state === 'idle' && !warp.exitRamp?.active) {
+          // Statek w studni (dryf po odcinku napędem) — skok nie rusza (BRIEF-studnie pkt 1): nowy odcinek z planisty
+          // (napędem do brzegu studni).
+          if (playerWarpStartWell()) { ship.command = null; nav.cmd = null; nav.phase = 'leg'; return; }
           ship.command = null;
           nav.cmd = null;
           warp.state = 'charging';
@@ -18352,34 +18559,38 @@
     // i małe ciała, stacje i porty, punkty i cele misji, olbrzymy i pola pasa, wraki, wrogie kontakty), pierwszy odcinek
     // planisty TRAVEL TO do niego musi być skokiem w stożku; ciało ze studnią — punkt na brzegu studni tam, gdzie wchodzi
     // w nią promień dzioba (warpCourse.js: warpConeAimPoint — namiar ≤ stożek od dzioba); (3) SKOK AWARYJNY 400 tys. j.
-    // w dziób (warpDrive.js: planWarpEmergency — skrócony przed brzegiem studni planet, małych ciał, słońca, bazy piratów
-    // i świata, przed jądrem studni startu; zawsze z rampą), bez dodatkowej ceny. Każdy wybór: dokładny namiar przy starcie
-    // ładowania (dziób dociąga się w ładowaniu — warpChargeTurn), wyjście automatyczne przy punkcie (stepWarpCourse),
-    // komunikat HUD. Swobodnego skoku bez końca nie ma; ręczne wyjście w locie (CapsLock / 9) zostaje — koniec trasy
-    // przechodzi wtedy na miejsce zatrzymania (exitWarp).
+    // w dziób (warpDrive.js: planWarpEmergency — skrócony przed brzegiem studni, które hamują skok: słońca i bazy piratów,
+    // i przed brzegiem świata; studnie planet i małych ciał przelatuje — BRIEF-studnie pkt 3; zawsze z rampą), bez dodatkowej
+    // ceny. W studni planety, małego ciała i słońca klawisz odmawia (refusePlayerWarpInWell — BRIEF-studnie pkt 1). Każdy
+    // wybór: dokładny namiar przy starcie ładowania (dziób dociąga się w ładowaniu — warpChargeTurn), wyjście automatyczne przy
+    // punkcie (stepWarpCourse), komunikat HUD. Swobodnego skoku bez końca nie ma; ręczne wyjście w locie (CapsLock / 9)
+    // zostaje — koniec trasy przechodzi wtedy na miejsce zatrzymania (exitWarp).
     const _warpEmergencyPlan = { ok: false, x: 0, y: 0, dist: 0, cut: 'none', well: null };
-    // Studnie skoku z klawisza (skok awaryjny i odcinki do celów ze stożka — jedna lista, recenzja T ust. 7): planety
-    // i małe ciała (studnie TRAVEL TO) + słońce i baza piratów (strefy hamowania grawitacyjnego — GRAVITY_WELL_IDS).
-    // rIn — jądro studni (strefa orbit ciała: ring, planeta; słońce — tarcza): skok ze studni startu nie celuje w nie
-    // (planWarpEmergency).
+    // Studnia bazy piratów (strefa pirate_gravity — hamuje skok; start w niej dozwolony) albo null.
+    function pirateWarpWell() {
+      const pst = mercMission?.station;
+      if (!pst) return null;
+      const pr = pirateOrbitRadii();
+      if (!(Number.isFinite(pr?.gravityWell) && pr.gravityWell > 0)) return null;
+      return { x: pst.x, y: pst.y, r: pr.gravityWell, rIn: Math.min(pr.gravityWell, Number(pr.outer) || 0), label: 'BAZA PIRATÓW' };
+    }
+    // Studnie SKOKU AWARYJNEGO (BRIEF-studnie pkt 3): tylko te, które hamują skok w locie (WARP_BRAKE_WELL_IDS) — słońce
+    // i baza piratów; skok kończy się przed ich brzegiem z rampą. rIn — jądro studni (słońce — tarcza; baza — strefa orbit):
+    // skok ze studni startu nie celuje w nie (planWarpEmergency). Studnie planet i małych ciał skok przelatuje (planeta
+    // na kursie jest celem w stożku — pickWarpConeTarget).
     function warpEmergencyWells() {
       const wells = [];
-      const bodies = (typeof window !== 'undefined' && window.smallBodies) || [];   // planety i małe ciała jak getTravelWells
-      for (let i = 0, n = planets.length + bodies.length; i < n; i++) {
-        const planet = i < planets.length ? planets[i] : bodies[i - planets.length];
-        if (!planet) continue;
-        const radii = planetOrbitRadii(planet);
-        const r = Number(Number.isFinite(radii.gravityWell) ? radii.gravityWell : radii.outer) || 0;
-        if (r > 0) wells.push({ x: Number(planet.x) || 0, y: Number(planet.y) || 0, r, rIn: Math.min(r, Number(radii.outer) || 0) });
-      }
-      if (SUN) wells.push({ x: SUN.x, y: SUN.y, r: Math.max(10, (Number(SUN.r) || 0) * 2), rIn: Math.max(0, Number(SUN.r) || 0) });
-      const pst = mercMission?.station;
-      if (pst) {
-        const pr = pirateOrbitRadii();
-        if (Number.isFinite(pr?.gravityWell) && pr.gravityWell > 0) {
-          wells.push({ x: pst.x, y: pst.y, r: pr.gravityWell, rIn: Math.min(pr.gravityWell, Number(pr.outer) || 0) });
-        }
-      }
+      if (SUN) wells.push({ x: SUN.x, y: SUN.y, r: Math.max(10, (Number(SUN.r) || 0) * 2), rIn: Math.max(0, Number(SUN.r) || 0), label: 'SŁOŃCE' });
+      const pw = pirateWarpWell();
+      if (pw) wells.push(pw);
+      return wells;
+    }
+    // Studnie ODCINKÓW DO CELÓW ZE STOŻKA (planTravelLeg — recenzja T ust. 7): studnie gracza (planety, małe ciała, słońce —
+    // cel w studni kończy skok na jej brzegu z rampą) + baza piratów.
+    function warpJumpWells() {
+      const wells = playerTravelWells().slice();
+      const pw = pirateWarpWell();
+      if (pw) wells.push(pw);
       return wells;
     }
     function planPlayerWarpEmergency(dirX, dirY) {
@@ -18485,8 +18696,8 @@
     }
     function chooseManualWarpJump() {
       const leg = travelNav.target ? nextTravelLeg() : null;
-      // te same studnie co skok awaryjny (ze słońcem i bazą piratów) — odcinek do celu kończy się przed nimi z rampą
-      const wells = warpEmergencyWells();
+      // studnie gracza + baza piratów — odcinek do celu w studni kończy się przed jej brzegiem z rampą
+      const wells = warpJumpWells();
       return chooseWarpJump({
         pos: ship.pos,
         heading: ship.angle,
@@ -18503,6 +18714,9 @@
     }
 
     function startManualWarpCharge() {
+      // Studnia planety / małego ciała / słońca (BRIEF-studnie pkt 1): odmowa PRZED przejęciem sterów — kurs TRAVEL TO
+      // prowadzi dalej (hipercruise do brzegu studni, potem skok).
+      if (warp.state === 'idle' && !warp.exitRamp?.active && refusePlayerWarpInWell()) return;
       takeManualWarpCourse();
       if (warp.state !== 'idle' || warp.exitRamp?.active || !(DevFlags.unlimitedWarp || warp.fuel > 0)) return;
       // Plazma skoku idzie z dysz MAIN (engineDamage.js): bez żadnej sprawnej — skoku nie ma.
@@ -18515,8 +18729,10 @@
       // Wybór skoku: kurs → cel w stożku ±20° → skok awaryjny (warpCourse.js: chooseWarpJump).
       const pick = chooseManualWarpJump();
       if (!pick || !pick.kind) {
+        // studnia przed dziobem = tylko studnia hamująca skok (słońce, baza piratów) — planety skok przelatuje
+        const wl = pick?.plan?.well?.label ? ` (${pick.plan.well.label})` : '';
         pushZoneMessage(pick?.reason === 'edge' ? 'WARP: BRZEG UKŁADU PRZED DZIOBEM — OBRÓĆ DZIÓB'
-          : 'WARP: STUDNIA GRAWITACJI PRZED DZIOBEM — OBRÓĆ DZIÓB', 2.2, { tone: 'warn', label: 'WARP' });
+          : `WARP: STUDNIA GRAWITACJI${wl} PRZED DZIOBEM — OBRÓĆ DZIÓB`, 2.2, { tone: 'warn', label: 'WARP' });
         return;
       }
       ship.command = null;
@@ -25772,6 +25988,8 @@
     }
 
     function attemptWarp() {
+      // Studnia planety / małego ciała / słońca (BRIEF-studnie pkt 1): odmowa bez przejęcia sterów (TRAVEL TO leci dalej).
+      if (warp.state === 'idle' && !warp.exitRamp?.active && refusePlayerWarpInWell()) return;
       // 9, pad i UI: przejęcie sterów zachowuje wyznaczony cel.
       takeManualWarpCourse();
       if (warp.exitRamp?.active) return;
@@ -26638,9 +26856,10 @@
         const entryEase = smoothstep01(warp.entryProgress);
         const zoneWarpMul = zoneState.current?.warpMultiplier ?? 1;
         // Przy mijanej planecie statek zwalnia (demo „Nurt”: „grawitacja” — soczewka świata pokazuje
-        // przelot); skok z celem leci prędkością z planu (czas podróży jak w demie).
+        // przelot); skok z celem leci prędkością z planu (czas podróży jak w demie). Strefa × przelot z PODŁOGĄ
+        // (BRIEF-studnie pkt 4: nad planetą w jej studni nie wolniej niż × 0,15) — ta sama funkcja co plan prędkości.
         warp.flybyFactor = playerWarpFlybyFactor();
-        const maxWarpSpeed = (warp.cruise || warp.speed) * zoneWarpMul * warp.flybyFactor;
+        const maxWarpSpeed = (warp.cruise || warp.speed) * warpSpeedFactor(zoneWarpMul, warp.flybyFactor);
         const entryStartSpeed = Math.min(warp.entryBaseSpeed, maxWarpSpeed);
         const targetSpeed = entryStartSpeed + (maxWarpSpeed - entryStartSpeed) * entryEase;
         const targetV = { x: warp.dir.x * targetSpeed, y: warp.dir.y * targetSpeed };
@@ -30557,7 +30776,10 @@
         dt: (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt,
         camX: cam.x, camY: cam.y,
         viewHalf: Math.hypot(W, H) * 0.5 / Math.max(1e-4, Number(cam.zoom) || 1),
-        rings: haloWorld ? haloWorld.entries : null,
+        // W skoku z soczewką świata (przelot nad Ziemią — studnie planet nie hamują) hala przy kamerze stoi w prawdziwym miejscu,
+        // a ring jedzie z obrazem planety: pył, reflektory i pola siłowe hali wisiały w kadrze jak duch hali (próba w grze 10-27).
+        // Pył gaśnie od β > 0,02 (także w ładowaniu obok hali) i wraca z resetem po wyjściu.
+        rings: haloWorld && warpLensHudWorld() ? haloWorld.entries : null,
         ship, ship2: splitScreenMode ? player2Ship : null,
         npcs: fogSeenInto(npcs, _npcSeenList), sun: SUN,
         // zegar migania świateł hal K-7 (ten sam dostaje shader hali) — światła hali w siatce oświetlają pył i parę
@@ -31721,6 +31943,8 @@
         // kurs w stożku ±20° — CapsLock da skok kursem, dziób dociągnie komputer w ładowaniu (warpCourse.js: chooseWarpJump)
         s.inCone = warpCourseInCone(b.err);
         s.detour = leg.kind === 'drive' && leg.final === false;
+        // odcinek napędem ze studni startu do jej brzegu (BRIEF-studnie pkt 1 — skok rusza dopiero za brzegiem)
+        s.wellExit = !!leg.wellExit;
         s.err = b.err; s.dist = b.dist; s.along = pass.along; s.miss = pass.miss;
         s.exitIn = (pass.along - rampDist) / Math.max(1, getPlayerSpeed());
         s.label = (warpCourse.aim && warpCourse.label) || travelNav.label;

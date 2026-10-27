@@ -238,6 +238,17 @@ export class HaloRingWorld {
     return best;
   }
 
+  // Wylot z hali K-7 / zatoki któregoś ringu (HaloRingCollider.dockExit — wyjście ze studni startu napędem): true, punkt
+  // wylotu i oś doku w `out`; statek poza dokami — false.
+  dockExit(x, y, reach, out) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      e.collider.setPlanet(e.planet);
+      if (e.collider.dockExit(x, y, reach, out)) return true;
+    }
+    return false;
+  }
+
   // Środek statku przeszedł w kroku przez płytę któregoś ringu (HaloRingCollider.blockTunnel) — cofnięty; wynik albo null.
   blockTunnel(ship, prevX, prevY) {
     for (let i = 0; i < this.entries.length; i++) {

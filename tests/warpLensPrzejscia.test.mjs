@@ -310,25 +310,182 @@ test('zbieżność kamery w czasie gry (recenzja ust. 8): to samo puszczenie prz
   assert.ok(Math.abs(a - b) <= 1 / 60 + 1e-9, `60 Hz ${a.toFixed(3)} s, 240 Hz ${b.toFixed(3)} s`);
 });
 
-test('kieszeń przy pierścieniu (statek wchodzi w promień z ringiem): skala ograniczona prawdziwym obrazem, ciągła przy d = rExt', () => {
+test('przelot nad pierścieniem Saturna (statek wchodzi w promień z pierścieniem w locie): bez kieszeni — skala cięciwy kursu (≤ prawdziwej), ciągła przy d = rExt', () => {
   const lens = new WarpWorldLens();
   const ctx = baseCtx({ zoom: 0.1 });
-  const sat = Object.assign(newLensBody('saturn', 'planet'), { x: 0, y: 0, r: 16650, z: -50000, rExt: 16650 * 1.77, ready: true });
+  const sat = Object.assign(newLensBody('saturn', 'planet'), { x: 0, y: -3e6, r: 16650, z: -50000, rExt: 16650 * 1.77, ready: true });
   sat.flat = perspFlat(0.1, 50000);
+  lens.update([sat], 1, { ...ctx, beta: 0.01 }, null);   // wejście w soczewkę daleko (mijane w locie)
+  const F = warpLensFrame(0, -1, 960, 540, 0, 189, WORLD_LENS_DEFAULTS, newWarpLensFrame());
   let prev = 0;
   let worst = 0;
   for (let d = 1.3 * sat.rExt; d > 0.9 * sat.rExt; d -= 20) {
     sat.y = -d;
     lens.update([sat], 1, ctx, null);
     const q = sat.out.q;
-    assert.ok(Number.isFinite(q) && q <= sat.flat * 1.1, `skala ${q} ≤ prawdziwa (d ${d})`);
+    assert.ok(!sat.pocketOn && Number.isFinite(q) && q <= sat.flat * 1.1, `skala ${q} ≤ prawdziwa (d ${d})`);
+    assert.ok(near(q, warpLensQ(0, -d, 1, sat.flat, F, {}, sat.rExt).q, 1e-12), 'skala cięciwy kursu (mapa)');
     if (prev) worst = Math.max(worst, Math.abs(Math.log(q / prev)));
     prev = q;
   }
   assert.ok(worst < 0.02, `ciągle (max skok skali ${(worst * 100).toFixed(2)}% na 20 j.)`);
-  // Zwykły przelot — kieszeń dalej działa (test kieszeni w warpLensMapC.test.mjs).
+});
+
+// PRZELOT CENTRALNY (BRIEF-studnie pkt 5; decyzja użytkownika 2026-10-26: „masz wtedy ogromną planetę, nad którą możesz
+// przelecieć”): ciało mijane w locie przechodzi pod statkiem — Jowisz (r 48 tys., ring 54,75 tys.) i Ziemia (37,8 / 43,75 tys.)
+// na osi kursu (l = 0), obok osi nad tarczą (l = 30 tys.) i nad samym ringiem Jowisza (l = 51 tys.). Krok drogi = klatka 60 Hz
+// przy prędkości nad tarczą z podłogi zwolnienia (Mk III ~36 tys. j/s — najszybszy), w studni (|a| ≤ studnia) — P4.
+function visibleStep(p, q, W, H, ext) {
+  // środek w kadrze — ruch środka i promienia; poza kadrem — przesunięcie brzegu (kula i ring) w kadrze w normalnej
+  const inF = (o) => Math.abs(o.x) <= W / 2 && Math.abs(o.y) <= H / 2;
+  if (inF(p) && inF(q)) return { move: Math.hypot(q.x - p.x, q.y - p.y), size: Math.abs(q.size - p.size) };
+  let move = 0;
+  for (const rho of ext > 1 ? [1, ext] : [1]) {
+    for (let k = 0; k < 720; k++) {
+      const th = k / 720 * 2 * Math.PI;
+      const nx = Math.cos(th);
+      const ny = Math.sin(th);
+      if (Math.abs(q.x + q.size * rho * nx) > W / 2 || Math.abs(q.y + q.size * rho * ny) > H / 2) continue;
+      move = Math.max(move, Math.abs((q.x - p.x) * nx + (q.y - p.y) * ny + (q.size - p.size) * rho));
+    }
+  }
+  return { move, size: 0 };
+}
+test('przelot centralny nad Jowiszem i Ziemią (z ringiem): tarcza POD statkiem (statek nad tarczą w obrazie ⟺ naprawdę), nad tarczą skala stała s, bez kieszeni, wejście i zejście bez przeskoku (P4 w studni), za trawersem bez zwijania, obrót przelotu ciągły, W0 — powierzchnia pod statkiem wolniejsza niż gwiazdy speed', () => {
+  const ctx = baseCtx();
   const F = warpLensFrame(0, -1, 960, 540, 0, 189, WORLD_LENS_DEFAULTS, newWarpLensFrame());
-  assert.ok(warpLensQ(0, -2e5, 1, 0.1, F, {}).q > 0);
+  const P = WORLD_LENS_DEFAULTS;
+  const vOver = 36000;                       // [j/s] Mk III nad Jowiszem (podłoga 0,15 · prędkość przelotowa planu)
+  const step = vOver / 60;
+  const zoomJump = 0.2133 * CAMERA_RIG_DEFAULTS.warpZoomOut;
+  const starSpeedMin = 14000 * 1.02 * zoomJump;   // najwolniejsza gwiazda warstwy speed [px/s] (warpNurt STAR_SPEED_CAP)
+  const cases = [
+    { id: 'jupiter', r: 48000, rExt: 54750, well: 66750, l: 0 },
+    { id: 'jupiter', r: 48000, rExt: 54750, well: 66750, l: 30000 },
+    { id: 'jupiter', r: 48000, rExt: 54750, well: 66750, l: 51000 },   // nad ringiem, obok tarczy
+    { id: 'earth', r: 37800, rExt: 43752, well: 55752, l: 0 }
+  ];
+  for (const c of cases) {
+    const lens = new WarpWorldLens();
+    const b = Object.assign(newLensBody(c.id, 'planet'), { x: c.l, y: -2e6, r: c.r, rExt: c.rExt, flat: 0.1173, ready: true });
+    lens.update([b], 1, { ...ctx, beta: 0.01 }, null);   // wejście w soczewkę daleko przed dziobem
+    const ext = c.rExt / c.r;
+    const rho = Math.abs(c.l) < c.r ? 1 : ext;          // nad tarczą albo tylko nad ringiem
+    const h = Math.min(Math.sqrt(c.rExt * c.rExt - c.l * c.l), P.chordMax * F.A);
+    let prev = null;
+    let over = 0;
+    let worstMove = 0;
+    let worstSize = 0;
+    let shrink = 0;
+    let tempo = 0;
+    let turnStep = 0;
+    for (let a = 6e5; a >= -1.2 * F.A - c.rExt; a -= step) {
+      b.y = -a;
+      lens.update([b], 1, ctx, null);
+      const o = b.out;
+      const cur = { x: o.x, y: o.y - 189, size: o.size, ax: o.angle * o.ax, ay: o.angle * o.ay };   // od kotwicy
+      assert.ok(!b.pocketOn && Number.isFinite(o.x) && Number.isFinite(o.y) && Number.isFinite(o.size), `${c.id} l ${c.l}: skończone, bez kieszeni (a ${a})`);
+      const d = Math.hypot(c.l, a);
+      const truly = d < c.r * rho;
+      const img = Math.hypot(cur.x, cur.y) < o.size * rho;
+      if (Math.abs(d - c.r * rho) > 0.01 * c.r) assert.equal(img, truly, `${c.id} l ${c.l}: nad tarczą w obrazie ⟺ naprawdę (a ${a.toFixed(0)})`);
+      if (Math.abs(a) <= h * (1 - P.chordSoft)) {
+        over++;
+        assert.ok(near(o.size, F.s * c.r, 1e-9), `${c.id} l ${c.l}: nad tarczą skala s (a ${a.toFixed(0)})`);
+        tempo = Math.max(tempo, o.size / c.r * vOver);
+      }
+      const vis = o.size * ext >= 1.5 && lensDiscInFrame(o.x, o.y, o.size * ext, 1920, 1080);
+      if (prev && vis && prev.vis) {
+        if (Math.abs(a) <= c.well) {
+          const st = visibleStep({ ...prev, y: prev.y + 189 }, o, 1920, 1080, ext);
+          worstMove = Math.max(worstMove, st.move);
+          worstSize = Math.max(worstSize, st.size);
+        }
+        if (a < 0 && o.size < prev.size - 1e-9) shrink = Math.max(shrink, prev.size - o.size);
+      }
+      if (prev) turnStep = Math.max(turnStep, Math.hypot(cur.ax - prev.ax, cur.ay - prev.ay));
+      prev = { ...cur, vis };
+    }
+    assert.ok(over > 0, `${c.id} l ${c.l}: statek nad ${rho > 1 ? 'ringiem' : 'tarczą'}`);
+    assert.ok(worstMove <= 60 && worstSize <= 50, `${c.id} l ${c.l}: w studni krok ${worstMove.toFixed(1)} / Δr ${worstSize.toFixed(1)} px na klatkę (P4 60 / 50)`);
+    assert.equal(shrink, 0, `${c.id} l ${c.l}: za trawersem tarcza w kadrze nie maleje (bez zwijania w pasie ukrycia)`);
+    assert.ok(turnStep < 0.01, `${c.id} l ${c.l}: obrót przelotu ciągły (${turnStep.toFixed(4)} rad na klatkę)`);
+    assert.ok(tempo < starSpeedMin, `${c.id} l ${c.l}: powierzchnia pod statkiem ${tempo.toFixed(0)} px/s < gwiazdy speed ${starSpeedMin.toFixed(0)} px/s (W0)`);
+  }
+});
+
+// KSIĘŻYC RODZICA Z CIĘCIWĄ KURSU (recenzja obrazu W2): przy przelocie nad Jowiszem Europa (105 tys. j., naprawdę za
+// ringiem) lądowała własną mapą w obrazie kuli rodzica (rodzic — skala punktu cięciwy). Póki punkt cięciwy rodzica jest przed
+// statkiem albo pod nim, księżyc jedzie skalą obrazu rodzica (układ podobny), za cięciwą płynnie własna mapa (moonRigidFade);
+// planeta startu za rufą i moonRigid = 0 — własna mapa.
+test('księżyc rodzica z cięciwą kursu przed statkiem: skala obrazu rodzica (nie w kuli rodzica), za cięciwą płynnie własna mapa; planeta startu — własna', () => {
+  const ctx = baseCtx();
+  const mk = (params = {}) => {
+    const lens = new WarpWorldLens(params);
+    const J = Object.assign(newLensBody('jupiter', 'planet'), { x: 0, y: -2e6, r: 48000, rExt: 54750, flat: 0.1173, ready: true });
+    // Europa 105 tys. j. od środka, za Jowiszem wzdłuż kursu i 30 tys. j. w bok (naprawdę poza kulą i ringiem)
+    const E = Object.assign(newLensBody('europa', 'moon'), { x: 30000, y: -2e6 - 100600, r: 2016, flat: 0.1173, ready: true, parent: J });
+    lens.update([J, E], 2, { ...ctx, beta: 0.01 }, null);   // wejście w soczewkę daleko przed dziobem — decyzje
+    return { lens, J, E };
+  };
+  const place = (w, a) => {
+    w.J.y = -a;
+    w.E.y = -a - 100600;
+    w.lens.update([w.J, w.E], 2, ctx, null);
+  };
+  const w = mk();
+  const ref = mk({ moonRigid: 0 });   // własna mapa (dawniej) — tempo odniesienia przy przejściu
+  assert.ok(w.J.chordOn && w.J.chordAheadOn && w.E.rigidOn, 'decyzja przy wejściu: rodzic z cięciwą przed statkiem');
+  const fade = WORLD_LENS_DEFAULTS.moonRigidFade * warpLensFrame(0, -1, 960, 540, 0, 189, WORLD_LENS_DEFAULTS, newWarpLensFrame()).A;
+  let inSphere = 0;
+  let worst = 0;
+  let worstRef = 0;
+  let prev = null;
+  let prevRef = null;
+  let blend = 0;
+  for (let a = 3e5; a >= -1.5e5; a -= 500) {
+    place(w, a);
+    place(ref, a);
+    const J = w.J.out;
+    const E = w.E.out;
+    // obraz księżyca nigdy w kuli rodzica (naprawdę jest poza nią)
+    if (Math.hypot(E.x - J.x, E.y - J.y) + E.size < J.size) inSphere++;
+    const ae = w.J.lp.ae;
+    if (ae >= 0) {
+      // skala obrazu rodzica: księżyc = obraz rodzica + odstęp · skala położeń rodzica
+      assert.ok(near(E.x, J.x + 30000 * w.J.lp.qp, 1e-6) && near(E.y, J.y - 100600 * w.J.lp.qp, 1e-6), `skala rodzica (a ${a})`);
+    }
+    // przejście na własną mapę (punkt cięciwy rodzica za statkiem, w pasie moonRigidFade): krok jak na własnej mapie
+    if (prev && ae < 0 && ae > -fade) {
+      blend++;
+      worst = Math.max(worst, Math.hypot(E.x - prev.x, E.y - prev.y));
+      worstRef = Math.max(worstRef, Math.hypot(ref.E.out.x - prevRef.x, ref.E.out.y - prevRef.y));
+    }
+    prev = { x: E.x, y: E.y };
+    prevRef = { x: ref.E.out.x, y: ref.E.out.y };
+  }
+  assert.equal(inSphere, 0, 'księżyc ani razu w obrazie kuli rodzica');
+  // (krok na 500 j. drogi: przy 36 tys. j/s nad Jowiszem — Mk III, podłoga — 72 kroki na s; 10 px → 12 px na klatkę 60 Hz)
+  assert.ok(blend > 0 && worst < 10, `przejście bez przeskoku: krok ${worst.toFixed(1)} px (własna mapa ${worstRef.toFixed(1)} px) na 500 j.`);
+  // daleko za cięciwą — własna mapa (ta sama co bez skali rodzica)
+  const off = mk({ moonRigid: 0 });
+  place(w, -1.5e5);
+  place(off, -1.5e5);
+  assert.ok(!off.E.rigidOn && near(w.E.out.x, off.E.out.x, 1e-6) && near(w.E.out.y, off.E.out.y, 1e-6), 'za cięciwą — własna mapa');
+  // A/B moonRigid = 0: przed cięciwą Europa ląduje w obrazie kuli rodzica (dawny błąd)
+  let inOff = 0;
+  const off2 = mk({ moonRigid: 0 });
+  for (let a = 3e5; a >= 0; a -= 500) {
+    place(off2, a);
+    if (Math.hypot(off2.E.out.x - off2.J.out.x, off2.E.out.y - off2.J.out.y) + off2.E.out.size < off2.J.out.size) inOff++;
+  }
+  assert.ok(inOff > 0, 'A/B: bez skali rodzica księżyc w kuli rodzica');
+  // planeta startu (za rufą) — księżyc własną mapą
+  const o = new WarpWorldLens();
+  const J0 = Object.assign(newLensBody('jupiter', 'planet'), { x: 0, y: 6e4, r: 48000, rExt: 54750, flat: 0.1173, ready: true });
+  const E0 = Object.assign(newLensBody('europa', 'moon'), { x: 30000, y: 6e4 + 100600, r: 2016, flat: 0.1173, ready: true, parent: J0 });
+  o.update([J0, E0], 2, { ...ctx, beta: 0.01, origin: J0 }, null);
+  assert.ok(!E0.rigidOn, 'planeta startu za rufą — bez skali rodzica');
 });
 
 test('stan klatki: reset zeruje wszystkie pola sterownika; kotwica z px CSS × skala bufora (recenzja ust. 6, 9); demo „Nurt” ma lensScaleLag', () => {

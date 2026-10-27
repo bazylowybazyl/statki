@@ -275,7 +275,9 @@ test('wejście (DECYZJE P2, reguła 10-08): dalekie i duże bliskie ciała wynur
     beta: 1, velAngle: -Math.PI / 2, zoom: 0.2, W: 1920, H: 1080, roll: 0, shipX: 0, shipY: 0, shipSx: 0, shipSy: 0,
     hullHalfLen: 180, hullHalfWid: 80, dt: 1 / 60, exitAge: -1
   };
-  // Planeta startu z ringiem tuż za rufą (prawdziwy obraz daleko za kadrem; w soczewce O1 za płaszczyzną kamery — ukryta).
+  // Planeta startu z ringiem tuż za rufą NA OSI KURSU (prawdziwy obraz daleko za kadrem). Od etapu „studnie” (BRIEF-studnie
+  // pkt 5 — cięciwa kursu) skala w punkcie wyjścia osi kursu z ringu (a + rExt — przed płaszczyzną kamery): tarcza u dołu
+  // kadru za rufą, jak ciało, nad którym statek przeleciał (dawniej skala środka — za płaszczyzną kamery, ukryta).
   const earth = newLensBody('earth', 'planet');
   Object.assign(earth, { x: 0, y: 57750, r: 37800, rExt: 46250, flat: 0.2, ready: true });
   // Mars daleko przed dziobem; Luna z boku blisko, tuż za trawersem (obraz soczewki bliski prawdziwemu — O1 powiększa za
@@ -293,7 +295,11 @@ test('wejście (DECYZJE P2, reguła 10-08): dalekie i duże bliskie ciała wynur
   ctx.beta = 0.05;
   lens.update(list, 4, ctx, null);
   assert.equal(earth.entry, WORLD_LENS_MODE.FAR, 'planeta startu wynurza się w miejscu (nie wjeżdża pod statek)');
-  assert.equal(full[0].size, 0, 'planeta startu za płaszczyzną kamery — w soczewce niewidoczna (O1-2)');
+  assert.ok(earth.chordOn, 'cięciwa kursu za statkiem — skala cięciwy');
+  const em0 = mapWorldLens(earth.x, earth.y, earth.r, { zoom: 0.2, flatScale: earth.flat, beta: 1, velAngle: -Math.PI / 2, viewHalfW: 960, viewHalfH: 540, shipSx: 0, shipSy: 0, rExt: earth.rExt }, {});
+  assert.ok(em0.ae > -57750 + 0.5 * earth.rExt && em0.ae < -1000, `głębia w punkcie wyjścia osi kursu z ringu (${em0.ae.toFixed(0)} j.)`);
+  assert.ok(near(full[0].size, em0.size, 1e-9) && full[0].size > 300, `planeta startu na osi za rufą — tarcza u dołu kadru (${full[0].size.toFixed(0)} px)`);
+  assert.ok(full[0].y - full[0].size * (46250 / 37800) > 0, 'ring nie zachodzi na statek (za rufą)');
   assert.equal(mars.entry, WORLD_LENS_MODE.FAR);
   assert.equal(luna.entry, WORLD_LENS_MODE.MOVE, 'bliski obraz — ruchem');
   assert.equal(venus.entry, WORLD_LENS_MODE.MOVE, 'prawdziwy obraz w kadrze — ruchem');
@@ -386,7 +392,8 @@ test('wpięcie: sterownik warpa pisze stan, planety rozstawia soczewka, gra plan
   assert.match(planets, /size \*= rulonBoostCpu\(vx, vy\);[\s\S]*rulonForwardCpu\(vx, vy, _lensRul\);/);
   const html = read('index.html');
   assert.match(html, /planPlayerWarp\(dirX, dirY\);/);
-  assert.match(html, /warp\.flybyFactor = playerWarpFlybyFactor\(\);\s*const maxWarpSpeed = \(warp\.cruise \|\| warp\.speed\) \* zoneWarpMul \* warp\.flybyFactor;/);
+  // strefa × przelot z podłogą (BRIEF-studnie pkt 4) — warpDrive.js: warpSpeedFactor, ta sama funkcja co plan prędkości
+  assert.match(html, /warp\.flybyFactor = playerWarpFlybyFactor\(\);\s*const maxWarpSpeed = \(warp\.cruise \|\| warp\.speed\) \* warpSpeedFactor\(zoneWarpMul, warp\.flybyFactor\);/);
   assert.match(html, /o\.lensAllowed = !splitScreenMode && !View3D\.active;/);
   // Cel: ustawienie tarczy przy przylocie zamrożone, po skoku własna orientacja planety (bez obrotu przy końcu soczewki).
   assert.match(planets, /if \(!\(L\.exitAge >= 0\) \|\| !this\._lensWasTarget\) \{/);

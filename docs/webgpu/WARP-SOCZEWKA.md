@@ -74,7 +74,10 @@ Rysunek słowny (kadr 1920 × 1080, kurs w górę, statek ~⅓ wysokości pod ś
   DOLNĄ krawędzią kadru w ~0,6 s od kopu i znika.
 - Planeta dokładnie na kursie (O1-4, l = 0): tor po osi kursu od punktu zbiegu, tempo dY/da = s · A² / (A + a)² → 0
   przy punkcie zbiegu — bez osobliwości.
-- Tarcza nigdy nie zachodzi na kadłub (`q · (d − r) > 0` i kieszeń kadłuba z ringiem `rExt`, odstęp `edgeGap` 24 px).
+- Tarcza zachodzi pod statek tylko przy prawdziwym przelocie nad ciałem (`q · (d − r) > 0` dla d > r; obraz podobny wokół
+  kotwicy — statek nad tarczą w obrazie ⟺ nad ciałem naprawdę). Od etapu „studnie” ciało, przez które przechodzi oś kursu,
+  ma skalę cięciwy kursu (ogromna tarcza POD statkiem — § „Studnie grawitacyjne — soczewka”); kieszeń kadłuba (odstęp
+  `edgeGap` 24 px od tarczy z ringiem `rExt`) zostaje tylko dla ciała blisko statku na starcie.
 - Ciała za celem w stożku ±30° wokół kursu zanurzają się (promień → 0 płynnie), żeby nie siedziały na tarczy celu.
 - Obrót przelotu (O1-3): wirtualna kamera 100 tys. j. nad statkiem × `flybyTilt` 0,5 (Mars 41° → 18° w trawersie,
   Jowisz w S3 36° zamiast 72°); prośba o obrót z 2026-09-26 zostaje, spłaszczony ring był częścią „zawijania”.
@@ -256,12 +259,13 @@ rampy, 94,6% bez ręcznego wyjścia doleciałoby do brzegu świata).
   w środek, wygrywa najmniejsza odchyłka, potem najbliższy; skok do ciała idzie tam, gdzie promień dzioba — obrócony
   najmniej, ile trzeba — wchodzi w brzeg studni, więc namiar odchodzi od dzioba najwyżej o stożek; inne cele — do brzegu
   budowli po pierwszym odcinku planisty TRAVEL TO ze studniami skoku); (3) skok awaryjny 400 tys. j. w dziób, skrócony
-  przed brzegiem studni (planety, małe ciała, słońce, baza piratów), przed jądrem studni startu (strefa orbit — ring,
-  planeta; z portu w głąb — odmowa) i przed brzegiem świata, bez dodatkowej ceny. Kurs = dokładny namiar przy starcie
+  przed brzegiem studni HAMUJĄCEJ skok (słońce, baza piratów; od etapu „studnie” planety i małe ciała skok przelatuje —
+  § „Studnie grawitacyjne — przelot nad planetą”), przed jądrem studni startu (z portu bazy w głąb — odmowa) i przed
+  brzegiem świata, bez dodatkowej ceny. Kurs = dokładny namiar przy starcie
   ładowania; dziób dociąga się do niego w ładowaniu (`warpChargeTurn`, 24° w ~0,55 s z 0,8 s), w skoku bez skrętu.
-  Wyjście automatyczne przy punkcie, komunikat HUD. Ręczne wyjście w locie zostaje. Skok oddalający się od ciała nie
-  hamuje grawitacyjnie przy wylocie z jego stref orbit (`warpLeavingWell`) — dawniej skok z portu K-7 hamował bez rampy
-  kilka km po kopie.
+  Wyjście automatyczne przy punkcie, komunikat HUD. Ręczne wyjście w locie zostaje. Skok oddalający się od źródła studni
+  hamującej nie hamuje grawitacyjnie przy wylocie z jej stref orbit (`warpLeavingWell`). W studni planety, małego ciała
+  i słońca skok nie startuje (etap „studnie”).
 - **Czasy skoku awaryjnego** (bez ciał na kursie, Atlas): Mk I / II / III — prędkość przelotowa 52,0 / 60,1 / 60,1 tys.
   j/s, do wyjścia 7,67 / 6,67 / 6,63 s, zatrzymanie (rampa 1,33 s + ślizg 5,07 s) po 14,1 / 13,1 / 13,0 s od kopu.
 - **CIC**: TRAVEL TO przyciąga do najbliższego celu w 28 px mapy (menu PPM pokazuje jego nazwę), w próżni — „PUNKT”.
@@ -282,8 +286,205 @@ rampy, 94,6% bez ręcznego wyjścia doleciałoby do brzegu świata).
   `STAR_SPEED_CAP`), więc kolejność deep < mid < speed nie zależy od skoku. Poza mijanym ciałem skok awaryjny leci
   ≥ 52 tys. j/s, × 0,3 przy planetach ≥ 15,6 tys. j/s — ponad limitem, gwiazdy mają tempo zwykłego skoku (deep 16–46,
   mid 90–296, speed 2217 px/s). Przy mijanym ciele (zwolnienie do 0,15) schodzi pod limit — Mk II 9,0 tys. j/s (64%
-  tempa gwiazd), w strefie planety 2,7 tys. j/s (19%); wszystkie warstwy zwalniają w tej samej proporcji, jak w każdym
-  skoku obok planety.
+  tempa gwiazd), nad planetą w jej strefie też 9,0 tys. j/s (podłoga łącznego zwolnienia od etapu „studnie”; dawniej
+  2,7 tys. j/s — 19%); wszystkie warstwy zwalniają w tej samej proporcji, jak w każdym skoku obok planety.
+
+## Studnie grawitacyjne — przelot nad planetą (BRIEF-studnie, 2026-10-27)
+
+Decyzja użytkownika (2026-10-26): „studnia grawitacyjna — trzeba to zmienić … jak przelatujemy centralnie nad planetą
+efekt będzie najlepszy prawda? (…) nie można odpalić warpa PRZY planecie i trzeba od niej kawałek odlecieć, ale samo
+przelatywanie w warpie? powinno jak najbardziej być. i masz wtedy ogromną planetę, nad którą możesz przelecieć i nie
+wymuszasz przelotu bokiem”. Zasady w skrócie — reguła `warp`, „STUDNIE GRAWITACYJNE”.
+
+LOGIKA GRY (zespół A):
+
+- **Start zablokowany** w studni planety, małego ciała (`planetOrbitRadii(b).gravityWell` — granica strefy
+  `planet_gravity`) i słońca (strefa `sun`, 2 · `SUN.r`): CapsLock / 9 / pad / UI → „WARP: STUDNIA GRAWITACJI — ODLEĆ OD:
+  ZIEMIA · 3 KM DO BRZEGU” (nazwa po polsku — `RADAR_PLANET_NAMES`; planety mają w grze `name` angielskie), bez ładowania
+  i bez przejęcia sterów (`refusePlayerWarpInWell` przed `takeManualWarpCourse`). Wnętrze ringu „Halo” (bliżej planety niż
+  płyta habitatu) — start wolno (§ „Studnie grawitacyjne — poprawki po recenzji”). Baza piratów, NPC, ruch v2, wezwania
+  wsparcia, holownik — jak dawniej.
+- **TRAVEL TO ze studni**: odcinek 'drive' `wellExit` do punktu 5000 j. za brzegiem (`playerWellExitPoint`: z hali K-7 /
+  zatoki — przez wylot doku osią hali; z dysku doku bez ringu — promieniowo od budowli; inaczej `wellExitPoint` — prosto
+  w stronę celu, a przez jądro studni promieniowo), nie krótszy niż próg hipercruise'u (~10,3 km); potem skok.
+- **W locie** studnia planety nie hamuje; słońce i baza piratów — `triggerGravityWarpBrake` jak dawniej (wylot z nich —
+  `warpLeavingWell`); przechwyt fabularny misji 2 bez zmian.
+- **Planista** bez objazdów planet i małych ciał (`getCruiseGravityObstacles` = strefa słońca + studnia bazy piratów +
+  doki portów); cel kończy skok na brzegu swojej studni. Skok awaryjny skraca się tylko przed słońcem i bazą piratów;
+  planeta na kursie jest celem ze stożka (odcinek do niej kończy się na brzegu jej studni).
+- **Planeta startu na kursie** (wyjście promieniowe, cel za planetą): skok nad nią — mijane ciało
+  (`route.flyBody`, zwolnienie przelotu), nie ciało startu (`warp.originBody` null).
+
+PODŁOGA ZWOLNIENIA (`warpSpeedFactor(strefa, przelot)`, `WARP_SLOW_FLOOR` 0,15 — jedna funkcja w fizyce, planie
+prędkości i symulatorze): nad planetą w jej studni strefa 0,3 × przelot 0,15 dawało 0,045. Odcinek z planetą dokładnie
+na kursie w połowie (pomiar 2026-10-27 tą samą symulacją co `planWarpCruise`, krok 60 Hz; s, A — mapa O1 przy 1080p),
+podłoga 0 (dawniej) / 0,15:
+
+| napęd, planeta (odcinek) | prędkość przelotowa planu [tys. j/s] | nad tarczą [tys. j/s] | czas nad tarczą [s] | środek ciała w trawersie / przy dolnej krawędzi [px/kl.] |
+|---|---|---|---|---|
+| Mk I, Jowisz (1,5 mln j.) | 181 / 125 | 8,2 / 18,8 | 8,95 / 5,1 | 1,2 / 2,7 — 3,1 / 7,1 |
+| Mk II, Jowisz (1,5 mln j.) | 271 / 190 | 12,2 / 28,5 | 5,7 / 3,3 | 1,8 / 4,2 — 4,6 / 10,7 |
+| Mk III, Jowisz (1,5 mln j.) | 334 / 239 | 15,1 / 35,9 | 4,3 / 2,5 | 1,5 / 3,7 — 4,0 / 9,5 |
+| Mk II, Mars (0,8 mln j.) | 231 / 163 | 10,5 / 24,4 | 3,8 / 2,4 | 1,5 / 3,6 — 3,9 / 9,2 |
+| Mk II, Ziemia (1,2 mln j.) | 248 / 177 | 11,2 / 26,6 | 4,7 / 2,8 | 1,6 / 3,9 — 4,2 / 10,0 |
+
+- Bez podłogi tarcza wisi pod statkiem do połowy podróży (Mk I nad Jowiszem 9 s z 18,6 s), a plan nadrabia to prędkością
+  przelotową +39–45% — szybciej jedzie wszystko inne w kadrze (gwiazdy, mijane ciała, P4 w innych miejscach).
+- Podłoga 0,15 = najgłębszy SAM przelot (1 − `depth`): nad planetą statek leci tak jak przy najbliższym bocznym przelocie,
+  którego tempo W0 jest zmierzone (trawers 75 tys. j. przy 15%: Mk II 350 px/s).
+- Górna granica z P4: środek ciała na osi kursu jedzie s · v w trawersie i 2,57 · s · v przy dolnej krawędzi kadru (25 tys. j.
+  za statkiem); przy suficie prędkości przelotowej planu (`vMax` Mk I / II / III: 231 / 404 / 577 tys. j/s) P4 60 px/kl.
+  przekracza dopiero podłoga ≥ 0,39 (Mk II, III; Mk I — 0,69). Przy 0,15 i suficie: 13 / 22,8 / 22,8 px/kl. Promień tarczy
+  Jowisza w trawersie (a = 0) rośnie 2–3 px/kl. (P4 50).
+- Liczby tarczy i jej przejścia w soczewce przy przelocie centralnym (d ≈ 0, tarcza pod statkiem) — § „Studnie
+  grawitacyjne — soczewka” niżej (zespół B, scenariusze S10 / S11). Zespół B dołożył do zwolnienia PAS UKŁADU KSIĘŻYCÓW
+  (tamże) — prędkości przelotowe planu przy przelocie centralnym w tabeli wyżej są sprzed tej zmiany.
+
+Trasy TRAVEL TO (400 ziaren × 6 par: Ziemia–Jowisz, Ziemia–Saturn, Mars–Saturn, Wenus–Jowisz, Ziemia–Neptun,
+Merkury–Mars; brzeg studni do brzegu): dawny planista objeżdżał studnię planety na 3,8% tras — 3 skoki zamiast 1 (droga
+dłuższa o ≤ 0,8%, ale każdy skok to ładowanie, obrót i co najmniej ~8 s podróży). Przykłady (Mk II, suma czasów skoku
++ 0,8 s ładowania, bez obrotów): Mars → Saturn (ziarno 63352) 25,9 → 15,9 s, Ziemia → Neptun (253408) 42,7 → 26,1 s,
+Wenus → Jowisz (182137) 24,1 → 14,3 s. Mars → Saturn 63352 po prostej przelatuje nad Jowiszem (51 tys. j. od środka):
+prędkość przelotowa Mk I / II / III 136 / 214 / 276 tys. j/s (bez podłogi 187 / 290 / 373), nad Jowiszem
+20 / 32 / 41 tys. j/s (bez podłogi 8 / 13 / 17).
+
+DLA SOCZEWKI (zespół B, pkt 5–6 BRIEF-u): `warp.originBody` może być null przy statku tuż przy studni (skok nad planetą
+startu); ciało mijane centralnie (d < r, także d ≈ 0) to zwykłe ciało przelotu w `_warpFlybyBodies` / `route.flyBody`;
+`warp.flybyFactor` w migawce to sam przelot (bez strefy i podłogi). Symulator liczy prędkość tą samą funkcją
+(`WD.warpSpeedFactor(zoneAt(…), WD.warpFlybyFactor(…))`) — S1–S9 bez zmian wyniku (podłoga nie wiąże: żadna trasa nie
+przechodzi przez strefę planety).
+
+### Studnie grawitacyjne — soczewka (zespół B, BRIEF-studnie pkt 5–6, 2026-10-27)
+
+STAN WYJŚCIOWY (mapa O1, skala środka ciała, kieszeń kadłuba zawsze): przelot centralny nad Jowiszem dawał — (1) kieszeń
+rozdmuchiwała tarczę przy brzegu ringu do prawdziwej skali (q → zoom kamery: Jowisz 421 → ~5600 px), (2) bez kieszeni
+tarcza pod statkiem rosła × 3,6 (skala środka: 245 px przy wejściu nad tarczę, 1520 px przy zejściu — statek „opadał” ku
+planecie), wylot dołem 82 px/kl. (S10, Mk II, P4 60), a ring wpadał w pas ukrycia za płaszczyzną kamery jeszcze w kadrze
+(zwijanie — C9), (3) księżyce Jowisza mijane tuż za studnią w pełnej prędkości wylatywały z kadru ponad P4 (Europa 65,
+Luna 81 px/kl. przy Mk II).
+
+CIĘCIWA KURSU (`worldLens.js: warpLensChordAlong`, `WORLD_LENS_DEFAULTS.chord / chordSoft 0,25 / chordMax 0,9`): ciało,
+przez które przechodzi OŚ KURSU (|l| < `rExt` — promień z ringiem „Halo” albo pierścieniem Saturna, `_lensPrepare`), ma
+głębię mapy w punkcie osi kursu w ciele najbliższym statkowi: przed nim punkt wejścia (a − h), nad nim statek (0 — skala s),
+za nim punkt wyjścia (a + h), h = √(rExt² − l²) ≤ 0,9 · A, końce wygładzone kwadratowo (C¹). Skutki:
+- nad tarczą skala s — „stała wysokość”: tarcza POD statkiem nie rośnie i nie ucieka, powierzchnia jedzie s · v;
+- punkt wejścia i wyjścia osi kursu leży dokładnie w homografii O1 — wylot dołem kadru w tempie mapy, ciało gaśnie za
+  płaszczyzną kamery dopiero, gdy cała cięciwa jest za nią (bez zwijania ringu w kadrze);
+- statek nad tarczą w obrazie ⟺ nad ciałem naprawdę (obraz podobny wokół kotwicy; tarcza z ringiem — to samo dla ringu);
+- przed przelotem ciało na osi kursu jest większe niż w skali środka (skala punktu wejścia: Jowisz 100 tys. j. przed
+  dziobem × 1,5, 1 mln j. × 1,05), ciała obok osi kursu i cel — bez zmian (skala środka, kadr przylotu);
+- planeta startu NA OSI KURSU ZA RUFĄ też ma cięciwę: zamiast ukrycia za płaszczyzną kamery tarcza u dołu kadru (start
+  z brzegu studni Ziemi: ring ~160 px pod statkiem, promień kuli ~420 px przy 1080p), wylot dołem w kopie — jak ciało,
+  nad którym statek przeleciał (S1 kop 43 px/kl.; skala środka dawała przy Wenus w S10 61 px/kl. w kopie);
+- decyzja raz na skok (`b.chordOn`): statek NAD ciałem już przy wejściu (dok bez ciała z promieniem doku) — skala środka
+  i kieszeń jak dotąd (prawdziwy obraz pod statkiem, bez kurczenia w ładowaniu).
+Kieszeń kadłuba (`pocket`, `b.pocketOn`) — tylko ciało blisko statku na starcie: ruch, bo prawdziwy obraz albo dok w kadrze
+(attachR), cięciwa nie przed statkiem (dok Luny — S7, Hidalgo, dok bez ciała, olbrzym pasa); ciała mijane w locie, także
+o włos od ringu, kieszeni nie mają. Bez nowego pola migawki: cięciwa i kieszeń liczą się z kursu, statku i rekordów ciał —
+te same dane w trybie off i w workerze. A/B: `chord: 0`, `pocket: 0`; symulator `--param chord=0,pocket=0`.
+
+PAS ZWOLNIENIA Z UKŁADEM KSIĘŻYCÓW (`warpDrive.js: warpFlybySlowdown(…, reach)`, `WARP_FLYBY_DEFAULTS.reachWidth` 0,9,
+`warpMoonReach(moonsOf(id))` — najdalsza orbita + 12 tys. j.; Ziemia 108, Mars 104, Jowisz 262 tys. j.): pas nie węższy
+niż 0,9 × zasięg — przelot centralny ma dziś pas 2,2 · r (Jowisz 106 tys. j.), przy brzegu układu zwolnienie ~0,7.
+Przelot bokiem bez zmian (2,2 · (l + r) ≥ 0,9 · zasięg — Jowisz od ~59 tys. j. z boku). Ta sama funkcja w fizyce
+(`_warpFlybyBodies[i].reach`), planie prędkości i symulatorze. 0,9, nie 1: przy 1 pas obejmował przelot S8 (Jowisz 69 tys.
+j. z boku) i przesuwał chwile jego wyjścia — Mk III dawało mignięcie 4 px przy zanurzeniu (kruchość opisana w otwartych
+sprawach). Koszt: wolniej przy planecie, więc plan nadrabia prędkością przelotową gdzie indziej.
+
+Przelot centralny w połowie odcinka (krok 60 Hz, ta sama symulacja co plan; 1080p, mapa O1 — s 0,00878 px/j., Mk III × 0,7;
+„wylot” — punkt wyjścia osi kursu z ringu na dolnej krawędzi kadru), pas bez układu księżyców / z nim (0,9):
+
+| napęd, planeta (odcinek) | prędkość przelotowa planu [tys. j/s] | nad tarczą (najwięcej) [tys. j/s] | czas nad tarczą [s] | promień tarczy pod statkiem [px] | powierzchnia pod statkiem [px/kl.] | wylot dołem [px/kl.] |
+|---|---|---|---|---|---|---|
+| Mk I, Jowisz (1,5 mln j.) | 125 / 153 | 20 / 23 | 5,1 / 4,2 | 421 | 2,9 / 3,4 | 20,5 / 13,1 |
+| Mk II, Jowisz (1,5 mln j.) | 190 / 235 | 40 / 37 | 3,3 / 2,7 | 421 | 5,9 / 5,3 | 28,8 / 19,4 |
+| Mk III, Jowisz (1,5 mln j.) | 239 / 299 | 69 / 48 | 2,5 / 2,1 | 295 | 7,1 / 4,9 | 29,4 / 18,7 |
+| Mk II, Ziemia (1,2 mln j.) | 177 / 182 | 42 / 36 | 2,8 / 2,7 | 332 | 6,1 / 5,3 | 28,8 / 26,2 |
+| Mk II, Mars (0,8 mln j.) | 163 / 175 | 40 / 32 | 2,4 / 2,3 | 263 | 5,9 / 4,6 | 28,6 / 23,1 |
+
+W0 (tarcza pod statkiem a gwiazdy): gwiazdy w warpie jadą min(v, 14 tys. j/s) · paralaksa · zoom skoku — przy 1080p
+warstwa speed 1676–2923 px/s (28–49 px/kl.), mid ≤ 296 px/s. Powierzchnia pod statkiem: w środku odcinka ≤ 7 px/kl.
+(tabela), w symulatorze S10 najwięcej 625 px/s (Mk II) i 777 px/s (Mk III) przy wejściu nad Ziemię (prędkość jeszcze goni
+strefę) — WOLNIEJ niż każda gwiazda warstwy speed, zwykle szybciej niż mid (tarcza „między” warstwami: bliżej niż mgławica
+i daleka mgiełka gwiazd, dalej niż drobiny speed). Kontrola C9 symulatora.
+
+Symulator (S10 Wenus → Saturn, kurs 114°, Ziemia i Jowisz na osi kursu; S11 Mars → Saturn, Jowisz 51 tys. j. od kursu —
+nad ringiem; promień kuli nad tarczą, czas nad tarczą, najgorszy krok P4 w locie — 1080p; 1440p: promień × 1,333,
+P4 względem progów × 1,333):
+
+| przebieg | Ziemia nad tarczą: promień / czas | Jowisz nad tarczą: promień / czas | P4 kop / lot / wyjście [px/kl.] | mignięcia |
+|---|---|---|---|---|
+| S10 Mk I | 329–335 px / 3,2 s | 416–427 px / 4,1 s | 37 / 46 / 18 | 0 |
+| S10 Mk II | 330–335 px / 1,9 s | 416–427 px / 2,5 s | 56 / 37 / 25 | 0 |
+| S10 Mk III | 232–233 px / 1,3 s | 293–297 px / 1,9 s | 57 / 40 / 24 | 0 |
+| S11 Mk I / II / III (nad ringiem) | — | 414–429 / 414–428 / 292–298 px; 1,8 / 1,2 / 0,9 s | 34 / 33 / 18 · 43 / 49 / 20 · 47 / **62** / 24 | 0 |
+
+Kop S10 = planeta startu (Wenus, na osi kursu za rufą) wylatująca dołem przy rozpędzie (najbliżej progu: Mk II 1440p 74 / 80).
+Lot = księżyce (Europa, Kallisto) i wylot tarcz; S11 Mk III — Kallisto 62 px/kl. (otwarte sprawy). Spójność „nad tarczą
+w obrazie ⟺ naprawdę” — 0 niespójnych klatek; promień nad tarczą stały (× ≤ 1,04 — końce cięciwy); zwijanie za trawersem 0.
+
+### Studnie grawitacyjne — poprawki po recenzji (2026-10-27)
+
+Recenzje „rozgrywka” i „obraz” etapu znalazły błędy w miejscach, których S1–S11 i testy nie sprawdzały. Stan po poprawkach
+(liczby — symulator `warp-soczewka-sym.mjs` i testy `tests/warpStudnie.test.mjs`, `tests/warpLensPrzejscia.test.mjs`):
+
+WYJŚCIE ZE STUDNI Z PORTU (rozgrywka ust. 1–3; `index.html: playerWellExitPoint`, `travelNav.js: wellExitPoint`,
+`haloRingCollision.js: dockExit`):
+- Dawny wylot styczny do strefy orbit (jądro = ring + 3000 j.) prowadził z bramy K-7 do celu „za Ziemią” (±58° od kierunku
+  na środek — ~1/3 kierunków) przez front hali (z ≈ 7,4 tys., 2,6–3,5 tys. j. od osi), ze stanowisk C-01…C-04 (47,9 tys. j.,
+  poza strefą orbit) — w ścianę boczną; hale Ziemi 46,25–53,4 tys. j., płyta przed bramą do 54,6 tys., `wallsOuter` 54 tys.
+  (Mars 37,75–44,9 / 38,25, Jowisz 57,25–64,4 / 57,75 tys. j.). Skok z końca stycznej mijał też Ziemię 53–57 tys. j. od
+  środka — bez przelotu nad tarczą.
+- Dziś: jądro planety z ringiem = pas budowli portu (`wallsOuter` + 600 + zasięg kadłuba: Ziemia 55 588, Mars 47 086,
+  Jowisz 66 586 j. przy studniach 55 752 / 47 250 / 66 750), prosta przez jądro → wylot promieniowy; statek w hali / zatoce
+  — prosta przez bramę (x huba przycięte do prześwitu bramy − zasięg; pas stanowiska capital — osią hali); dysk doku bez
+  ringu — promieniowo od budowli. Test na prawdziwej geometrii (`HaloRingWorld`, Ziemia / Mars / Jowisz; stanowiska
+  C-01…C-04, statek po odcumowaniu przed bramą ×3, bok hali; cele co 10°; kadłub Atlasa 1800 × 806 wzdłuż odcinka co 60 j.):
+  0 styków ze ścianami i płytą. Odcinki: ze stanowiska 12,8 km (Ziemia), sprzed bramy 10,3 km (wydłużony do progu
+  hipercruise'u — dawniej ~3,8 km autopilotem bojowym), koniec 60,75–65,3 tys. j. od środka Ziemi.
+- Cel w zapasie wyjścia po drugiej stronie planety — dawniej napęd prosto przez ring i planetę; dziś najpierw wylot.
+- Statek pod halą (między płytą a ścianą tylną, pylony) — poza `dockExit` (wylot promieniowy w ścianę tylną; rzadkie).
+
+WNĘTRZE RINGU (rozgrywka ust. 2): statek bliżej planety niż płyta habitatu (Ziemia: < 40,8 tys. j. — ponad połowa pola
+studni i cała tarcza; tam ląduje ręczne wyjście w przelocie centralnym) — start skoku WOLNO (`rFree`). Dawniej planista
+wyprowadzał promieniowo w płytę (hipercruise — „PŁYTA RINGU NA KURSIE”, autopilot pchał w płytę). Odcinek do tranzytu
+wymaga precyzji ~0,1 km (tranzyt 570 j. pół prześwitu, Atlas 403), a dolot odcinka ma tolerancję 1,9 km — do decyzji
+użytkownika (wyjątek startu albo prowadzenie do tranzytu).
+
+BRAMKA RINGU A ODLOT NAD PLANETĄ STARTU (obraz K1; symulator S12 — start `--s12-za` j. za brzegiem studni Ziemi, kurs nad
+Ziemią): przy starcie bliżej niż ~2000 j. za brzegiem prawdziwy ring z portem jest w kadrze skoku przez cały przelot —
+bramka zostaje zamknięta, Ziemia nie wchodzi w soczewkę (C9: 2,4 s nad tarczą bez soczewki; prawdziwa tarcza 4400 px jedzie
+pod statkiem z prędkością podłogi, Mk II 55–59, Mk III 69–74 px/kl.). Próg 2000 j. ten sam przy 16:9, 21:9 i 32:9 (1440p)
+i Mk I–III. `TRAVEL_TUNE.wellExit` 5000 j. → odcinek wyjścia kończy się ≥ 3080 j. za brzegiem (tolerancja dolotu 1920 j.).
+Odlot ręczny bliżej brzegu (gracz sam podleci i zawróci nad planetę) zostaje — bramka soczewki bez zmian.
+
+PYŁ HALI K-7 W SOCZEWCE (próba w grze 10-27, oba tryby): przy przelocie nad Ziemią pył, stożki reflektorów i pola siłowe
+hali przy kamerze zostawały w prawdziwym miejscu, a ring jechał z obrazem planety — „duch hali” nad soczewką (w main studnia
+hamowała, przelotu nie było). Dziś `packHallDustFrame` dostaje ringi tylko przy `warpLensHudWorld()` — pył gaśnie od
+β > 0,02 (także w ładowaniu obok hali) i wraca z resetem po wyjściu (test w `tests/warpStudnie.test.mjs`).
+
+KSIĘŻYCE (obraz W2, W4; `worldLens.js: moonRigid`, `src/data/moonBodies.js`):
+- W2 — księżyc w obrazie kuli rodzica: rodzic z cięciwą kursu rysuje się skalą punktu cięciwy, księżyc swoją mapą — Europa
+  4,8 s (S10), Luna 1,4 s (S12) w obrazie kuli Jowisza / Ziemi, choć naprawdę za ringiem (w 3D znika w tarczy). Dziś
+  księżyc rodzica z cięciwą PRZED statkiem jedzie skalą obrazu rodzica, za cięciwą płynnie własną mapą (`moonRigidFade`
+  0,35 · A): 0 s w S10 / S12 (kontrola C9). Planeta startu za rufą — bez tego (księżyc w jej skali przelatywał kadr ponad
+  P4: S2 Luna 120, S4 Io 96 px/kl.).
+- W4 — księżyce mijane w pełnej prędkości: Luna i księżyce Jowisza są ciałami zwolnienia skoku (miejsce i promień bryły
+  z danych obrazu — `src/data/moonBodies.js`, re-eksport w `src/3d/moonOrbit.js`), bez księżyców celu. S12 (start 3080 j.
+  za brzegiem, kurs 0°): Luna Mk I / II / III 32 / 45 / 37 px/kl.; S10 z kursem 0° (`--s10-kurs 0`, Luna 88 tys. j. za
+  Ziemią): Luna z 80 → poniżej progu, ale w tym wariancie Kallisto 66 px/kl. przy Mk II (otwarte).
+
+SYMULATOR (2026-10-27): S12 w domyślnej liście; S13 (`--scen S13 --s13-za <j.>` — wyjście nad tarczą albo tuż za nią)
+poza nią — otwarta sprawa W1 (niżej). Kontrola mignięć nie liczy końca CIĄGŁEGO kurczenia / rośnięcia (ostatni krok ≤
+2 × poprzedni / następny w tę samą stronę): wynurzenie / zanurzenie w miejscu próbkowane klatkami zostawiało na końcu
+3–5 px (S5 przy Mk III — Ziemia 12,8 → 3,5 → 0,1 px przy przerwanym ładowaniu; S8 przy Mk III — Jowisz 12,7 → 4,1 → 0,3 px
+przy wyjściu), co dawniej szło jako mignięcie. C9 sprawdza też, że nad ciałem obraz jest w pełnej soczewce (bramka — K1;
+dawna spójność „nad tarczą w obrazie ⟺ naprawdę” przy β = 1 była prawdziwa z konstrukcji — D2) i że księżyc nie leży
+w obrazie kuli rodzica (W2).
+
+Wyniki (S1–S12, 1080p / 1440p, 16:9): Mk I i Mk II — kod wyjścia 0; Mk III — tylko S11 (Kallisto 61,8 / 82,4 px/kl. przy
+progach 60 / 80 — otwarte). S10 (Mk II): Ziemia 330–334 px / 1,83 s, Jowisz 417–427 px / 2,52 s nad tarczą, powierzchnia
+pod statkiem ≤ 610 px/s (Mk III 794 px/s; gwiazdy speed ≥ 1676 px/s — W0); kop 56 / lot 36 / wyjście 25 px/kl.
 
 ## Ośrodek wyłączony (DECYZJE O1)
 
@@ -387,7 +588,18 @@ w Node (fizyka skoku, rampa, ślizg, kamera gry z K1, oś β jak w grze, `WarpWo
 S3 punkt w próżni obok Jowisza (TRAVEL TO do punktu, kadr przylotu K1 punktu — dawniej swobodny skok bez przylotu), S4 Jowisz → Saturn (cel na tle), S5 przerwane ładowanie, S6 Ziemia → Mars z Jowiszem
 w stożku za celem, S7 start z portu Ceres (ciało startu z dokiem w kadrze — mapa O1: wylot dołem i znika, kontrola C8),
 S8 przylot do Io tuż po minięciu Jowisza (duża tarcza pod statkiem w chwili wyjścia — czas zanurzenia, P4 wyjścia),
-S9 skok awaryjny 400 tys. j. z Jowiszem w połowie (najczęstszy skok z klawisza; u zespołu T — S7).
+S9 skok awaryjny 400 tys. j. z Jowiszem w połowie (najczęstszy skok z klawisza; u zespołu T — S7), S10 przelot centralny
+Wenus → Saturn nad Ziemią i Jowiszem (`--s10-kurs <°>`, domyślnie 114°), S11 przelot nad ringiem Jowisza obok tarczy
+(etap „studnie” — § „Studnie grawitacyjne — soczewka”). S7 od etapu „studnie” startuje z doku LUNY (księżyc bez studni);
+dawny dok Ceres (1,7 r) leży dziś w studni Ceres (16,5 tys. j.), start tam jest zablokowany — `--s7 ceres` (mechanizm
+kieszeni). S1: Mars 75 tys. j. z boku jest poza swoją studnią (47 tys.) — trasa i dawniej szła prosto; „prosto zamiast
+objazdu” pokazują S10 i S11. Kontrole od etapu „studnie”: P4 dużej tarczy ze środkiem poza kadrem — ruch WIDOCZNEJ części
+(punkty powierzchni i brzeg kuli / ringu w kadrze; „id*” w raporcie), C3 bez ciał przy punkcie zbiegu (wyjątek W0), C4
+informacyjnie (tarcza przelotu pod statkiem), C9 — przelot nad ciałem (S10 / S11 / S12: nad ciałem tylko w pełnej
+soczewce, księżyc nie w kuli rodzica), mignięcie bez końca ciągłego kurczenia / rośnięcia, `--zasieg` (A/B pasa
+zwolnienia). Po recenzji etapu „studnie”: S12 — odlot z portu nad Ziemią z końca odcinka wyjścia (`--s12-za` j. za brzegiem
+studni, domyślnie wellExit − 0,6 · arriveRadius = 3080; `--s12-kurs`, `--s12-bok`), w domyślnej liście; S13 — wyjście nad
+tarczą Jowisza albo tuż za nią (`--scen S13 --s13-za`, `--s13-bok`) — otwarte (W1), poza domyślną listą.
 Opcje: `--scen S1,S4`, `--res 1080,1440`, `--B1 87464`, `--naped mk1|mk2|mk3` (skala mapy z napędu — k_v),
 `--aspect 16:9|21:9|32:9|W:H` (W = H · proporcje; P4 i W0 względem wysokości kadru), `--param klucz=liczba,…` (A/B
 `WORLD_LENS_DEFAULTS`, np. `aspectFlow=1`, `aspectMax=0`, `speedRef=0`), `--tory gl|wszystkie|nie`, `--md plik.md`,
@@ -491,8 +703,66 @@ Tryb domyślny (worker); wybrane trasy powtórzyć z `?renderWorker=0`.
     i wracają po wyjściu; znaczniki kontaktów gasną płynnie.
 16. **Wydajność** (PerfHUD `P`): liczba rysunków w skoku z dokiem startu i stacją Ceres w kadrze, brak przycięć przy
     przejściu stacji i doków na pass tła (pipeline'y synchroniczne — narzędzie `warp-ped-gra` niżej).
+17. **Studnie — start** (etap „studnie”): CapsLock przed bramą K-7 — odmowa „ODLEĆ OD: ZIEMIA · n KM DO BRZEGU”, kurs
+    TRAVEL TO nie znika; TRAVEL TO z bramy (misja 1) — wylot hipercruise'em ~10 km osią hali (HUD „STUDNIA GRAWITACJI ·
+    WYLEĆ NAPĘDEM”), potem jeden skok. TRAVEL TO ze stanowiska w hali (gra swobodna) — obrót w hali i wylot pasem
+    stanowiska przez bramę (bez ścian). Cel za Ziemią — wylot promieniowy, skok nad Ziemią (tarcza pod statkiem od początku
+    — ring poza kadrem skoku).
+18. **Studnie — przelot**: skok przez studnię Marsa / Jowisza (TRAVEL TO, cel za planetą): bez hamowania, zwolnienie nad
+    tarczą (× 0,15 — Mk II ~28 tys. j/s nad Jowiszem), na brzegu studni Ziemi / Marsa / Jowisza skok przyhamowuje
+    (strefa × 0,3 wchodzi skokowo: przelot ~0,46 → 0,15, wygładzone gonieniem prędkości 6/s) — oceń, czy szarpie.
+    Słońce i baza piratów (misja z najemnikami) — hamowanie jak dawniej; zasadzka misji 2 — przechwyt jak dawniej.
+19. **Ręczne wyjście nad planetą** (ucieczka w skoku nad Ziemią / Jowiszem): rampa i ślizg kończą się nad tarczą albo
+    przy ringu (ślizg staje przed płytą — `playerWarpObstacleAhead`; rampa jest duchem) — oceń, czy statek nie zostaje
+    w płycie ringu. Obraz: tarcza przechodzi z soczewki w prawdziwą (×13–19) w oknie wyjścia ~1 s — szybciej niż P4
+    (otwarte, W1); oceń. Wnętrze ringu: CapsLock / TRAVEL TO skaczą od razu (wyjątek startu).
+20. **Studnie — tarcza pod statkiem** (TRAVEL TO przez Jowisza / Ziemię, cel za planetą — np. Mars → Saturn): planeta
+    z punktu zbiegu rośnie, wjeżdża POD statek (ogromna tarcza — Jowisz ~420 px promienia przy 1080p, Mk III ~300 px),
+    nad nią nie rośnie i jedzie wolno pod kadłubem (wolniej niż gwiazdy), ring pod statkiem razem z nią, potem wylatuje
+    dołem kadru. Bez rozdmuchania tarczy na cały ekran, bez zwijania ringu u dołu kadru, kadłub zawsze nad tarczą (pass
+    planet przed passem gry). Obrót przelotu przechodzi przez zero nad środkiem — tarcza „toczy się” pod statkiem; oceń.
+    Księżyce Jowisza / Luna przy podejściu jadą skalą obrazu planety (poza jej kulą, układ jak w rzeczywistości), za
+    planetą płynnie przechodzą na własną mapę — oceń przejście. Ten sam przelot w workerze i `?renderWorker=0` (bez nowego
+    pola migawki).
+21. **Start z planety na osi kursu za rufą** (TRAVEL TO z K-7 w stronę od Ziemi): po wylocie ze studni Ziemia z ringiem
+    widoczna u dołu kadru (dawniej za płaszczyzną kamery — niewidoczna), w ładowaniu wynurza się w miejscu, w kopie wylatuje
+    dołem. Oceń, czy to lepsze niż dawne zniknięcie.
+22. **Przelot przez układ księżyców** (cel za Jowiszem albo Ziemią): pas zwolnienia sięga układu księżyców, a księżyce
+    z bryłą same zwalniają skok — księżyce mijane bez „świstu” przez kadr; oceń, czy przelot nie dłuży się (plan nadrabia
+    prędkością gdzie indziej). Odlot z K-7 obok Luny — Luna nie przelatuje kadru.
+23. **Przelot nad planetą bez komunikatów stref** (skok i hipercruise): bez „APPROACH VECTOR” i wpisów stref planety
+    w dzienniku; słońce i pas — jak dawniej.
 
 ## Otwarte sprawy
+
+- **Studnie — do decyzji / oceny w grze (2026-10-27, po recenzji):**
+  - W1 — WYJŚCIE NAD TARCZĄ albo tuż za nią (S13: `--scen S13 --s13-za 5000 | 0 | -30000 | -66000`): tarcza pod statkiem
+    przechodzi z soczewki w prawdziwy obraz (Jowisz 421 → 5600–8000 px — kamera w wyjściu już wraca do zoomu gracza)
+    w oknie wyjścia osi β (~1 s): widoczna część jedzie 71–85 px/kl. przy Mk II 1080p (P4 60; 1440p 95–113 / 80), przy
+    stopie nad środkiem promień 120 px/kl. Od ~20 tys. j. za studnią w P4. To przeskalowanie wokół kotwicy (×13–19), nie
+    przesunięcie; dolna granica czasu przy stałym tempie skali to ~0,9 s (narożnik kadru · ln skali / P4), a krzywa
+    zanurzenia i zoom kamery w wyjściu dokładają swoje — prawie liniowe zanurzenie dało tylko 72,7 → 71,1. Do decyzji:
+    dłuższe okno wyjścia soczewki dla dużej tarczy pod statkiem (oś β gry — `warpLensPhase.js`, zmiana frontu smug),
+    wstrzymanie powrotu zoomu kamery do końca zanurzenia, albo zasada rozgrywki „wyjście nad planetą odroczone za jej
+    studnię” (jak blokada startu).
+  - Mk III: S11 — Kallisto 61,8 / 82,4 px/kl. (P4 60 / 80; mała, 86,7 tys. j. z boku, mijana przy wylocie z pasa
+    zwolnienia Jowisza 188 tys. j/s) — tarcza za małą na zwolnienie księżyca (r / odstęp 0,03 < `minSize` 0,05); szerszy
+    pas układu księżyców (zapas 30 tys. j.) — 61,0. Ta sama klasa co „Mk III: P4 > 60” mapy O1. Warianty spoza domyślnej
+    listy: S10 `--s10-kurs 0` przy Mk II — Kallisto 66 px/kl.; S12 `--s12-kurs 60` — Luna 63 px/kl. (księżyc z boku,
+    statek już przyspiesza).
+  - Wnętrze ringu — start skoku wolno (wyjątek) zamiast odcinka do tranzytu (rozgrywka ust. 2) — do decyzji użytkownika.
+  - Planeta startu na osi kursu za rufą z cięciwą (widoczna u dołu kadru — D1, zmiana O1-2 zespołu B) — do zatwierdzenia.
+  - Doki portu planety startu w soczewce (D4): gdy kurs przelatuje nad planetą startu (`originBody` null),
+    `addWarpLensPortDocks` nie dokłada jej doków — mijane porty dochodzą dopiero w 90 tys. j. od kamery; do obejrzenia.
+  - Punkty a cięciwa (D6): NPC i wraki (`mapPoint`) liczą się skalą środka, przelatywana planeta i jej ring — skalą
+    cięciwy; kropki przy ringu / porcie przelatywanej planety nie leżą na obrazie ringu.
+  - Mk III: S5 (przerwane ładowanie) i S8 (wyjście) — koniec ciągłego zanurzenia w miejscu (12,8 → 3,5 → 0,1 px) kontrola
+    mignięć liczy dziś jako ciągły (§ „Studnie grawitacyjne — poprawki po recenzji”); oceń w grze, czy ostatni krok razi.
+  - Zapas P4 przy Mk II: S8 wyjście — brzeg tarczy Jowisza z ringiem 59,9 px/kl. (miara widocznej części; dawna miara
+    środka i promienia — 14,8 / 39,9), S10 kop przy 1440p — 74 / 80 (planeta startu Wenus wylatuje dołem przy rozpędzie;
+    plan przelotowy wyższy przez pas układu księżyców).
+  - Księżyc na tarczy z RINGIEM rodzica w obrazie (informacyjnie w C9; w kuli rodzica — kontrola, 0 s): przy skali obrazu
+    rodzica księżyc leży tam, gdzie naprawdę względem planety.
 
 - **Ręczne wyjście daleko od celu**: kamera kadruje punkt zatrzymania (`warp.route.arrive` 'point'), a soczewka trzyma
   cel przy krawędzi do zatrzymania + `arrivalStopGrace` i puszcza w 0,6 s (`_arrivalHold` czyta `warp.targetBody`).
@@ -589,3 +859,7 @@ projekty panelu („projekt A–D § …”). Tych plików nie ma w repo — co 
   skala × 175 tys. / v przy napędzie szybszym niż Mk II, czas zanurzenia przy wyjściu z tempa obrazu (duża tarcza pod
   statkiem); symulator: S8, `--aspect`, `--param`, C2 przy a = 0; test W0 między warstwami
   (§ „Mapa O1 — proporcje kadru i napęd”).
+- 2026-10-27 (etap „studnie”, zespół B): przelot nad ciałem w soczewce — cięciwa kursu (tarcza pod statkiem w skali s,
+  wylot dołem w tempie homografii punktu wyjścia), kieszeń kadłuba tylko dla ciała blisko statku na starcie, pas zwolnienia
+  z układem księżyców (0,9 × zasięg); symulator: S7 z doku Luny, S10, S11, P4 widocznej części dużej tarczy, C3 bez punktu
+  zbiegu, C4 informacyjnie, C9 (§ „Studnie grawitacyjne — soczewka”).

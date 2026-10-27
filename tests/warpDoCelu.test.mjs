@@ -11,17 +11,20 @@ import {
 } from '../src/game/warpCourse.js';
 import {
   WARP_EMERGENCY, WARP_EXIT, planWarpEmergency, warpExitRampTime, createWarpExitRamp, warpLegTimeline, simulateWarpLeg,
-  planWarpCruise, warpTripTuneFor, warpExitRampDistance, WARP_FLYBY_DEFAULTS
+  planWarpCruise, warpTripTuneFor, warpExitRampDistance, WARP_FLYBY_DEFAULTS, warpMoonReach
 } from '../src/game/warpDrive.js';
 import {
   TRAVEL_TUNE, travelHypercruiseLegOk, travelApproachPoint, snapTravelTarget, planTravelLeg
 } from '../src/game/travelNav.js';
 import { loadIndexFunction } from './helpers/indexSource.mjs';
 import {
-  buildSystemMap, normalizeWorldSeed, planetAngleFromSeed, systemMapAngleForSeed, resolveWorldSeed, SYSTEM_MAP_PLANETS
+  buildSystemMap, normalizeWorldSeed, planetAngleFromSeed, systemMapAngleForSeed, resolveWorldSeed, SYSTEM_MAP_PLANETS, moonsOf
 } from '../src/data/systemMap.js';
 import { ECONOMY_SAVE_VERSION } from '../src/game/traffic/economySave.js';
 import { HYPERCRUISE_TUNE, WARP_DRIVES } from '../src/data/driveModes.js';
+import { MOON_BODY_TUNES, moonGameNode, moonStartAngle, moonOrbitRadius, moonBodyRadius } from '../src/data/moonBodies.js';
+import { haloRingKey } from '../src/game/haloRingPlanets.js';
+import { resolveRingPlanetWorldRadius } from '../src/3d/ringScale.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -136,8 +139,9 @@ test('T1 skok awaryjny: czasy Mk I / II / III i tempo warstw (W0) — prędkoś�
   // AGENT: STAR_SPEED_CAP w warpNurt.js — gwiazdy w warpie liczą tempo z min(v, 14 000), wszystkie warstwy (deep / mid /
   // speed) z TEJ SAMEJ prędkości kamery, więc kolejność W0 (DECYZJE-2) nie zależy od prędkości skoku. Poza mijanym ciałem
   // skok awaryjny leci ponad limitem także w strefie planety (× 0,3) — gwiazdy mają wtedy dokładnie tempo zwykłego skoku.
-  // Przy mijanym ciele (zwolnienie do 1 − depth = 0,15) skok awaryjny schodzi pod limit (Mk II: 9,0 tys. j/s, w strefie
-  // planety 2,7 tys.) — wszystkie warstwy gwiazd zwalniają w tej samej proporcji (recenzja T ust. 12).
+  // Przy mijanym ciele (zwolnienie do 1 − depth = 0,15) skok awaryjny schodzi pod limit (Mk II: 9,0 tys. j/s; w strefie
+  // planety nad tarczą też 9,0 tys. — podłoga łącznego zwolnienia WARP_SLOW_FLOOR, BRIEF-studnie pkt 4; dawniej × 0,045 =
+  // 2,7 tys.) — wszystkie warstwy gwiazd zwalniają w tej samej proporcji (recenzja T ust. 12).
   const cap = Number(/const STAR_SPEED_CAP = (\d+);/.exec(read('src/3d/warp/warpNurt.js'))?.[1]);
   assert.equal(cap, 14000);
   const out = {};
@@ -224,10 +228,13 @@ test('T1 cele znane grze: ciała, stacje (mgła wojny), misja, pas (olbrzymy, po
   assert.match(start, /const pick = chooseManualWarpJump\(\);/);
   assert.match(start, /warp\.chargeAngle = pick\.bearing;/);
   assert.doesNotMatch(start, /ship\.angle;\s*warp\.state = 'charging'/, 'bez swobodnego skoku w dziób bez końca');
-  // skok awaryjny kończy się przed studniami stref hamowania grawitacyjnego (słońce, baza piratów)
+  // skok awaryjny kończy się przed studniami stref hamowania grawitacyjnego (słońce, baza piratów) — planety przelatuje
+  // (BRIEF-studnie pkt 3)
   const wells = sliceFunction(html, '    function warpEmergencyWells() {');
   assert.match(wells, /SUN\.r/);
-  assert.match(wells, /pirateOrbitRadii\(\)/);
+  assert.match(wells, /pirateWarpWell\(\)/);
+  assert.doesNotMatch(wells, /planets|smallBodies|planetOrbitRadii/);
+  assert.match(sliceFunction(html, '    function pirateWarpWell() {'), /pirateOrbitRadii\(\)/);
 });
 
 // ── T3: stałe kąty planet ───────────────────────────────────────────────────────────────────────────────────────
@@ -438,9 +445,11 @@ function jumpWorld(extra = {}) {
     DevFlags: { unlimitedWarp: false }, warp: { fuelMax: 60 },
     travelMinWarpDist: () => TRAVEL_TUNE.minWarp,
     cands: [], collectTravelTargets: () => sc.cands,
+    _playerTravelWells: [], haloWorld: null, haloRingKey: () => '',
     ...extra
   };
-  return indexFns(sc, ['warpEmergencyWells', 'planPlayerWarpEmergency', 'travelLegToTarget', 'chooseManualWarpJump']);
+  return indexFns(sc, ['putPlayerTravelWell', 'playerHullReach', 'playerTravelWells', 'pirateWarpWell', 'warpEmergencyWells', 'warpJumpWells',
+    'planPlayerWarpEmergency', 'travelLegToTarget', 'chooseManualWarpJump']);
 }
 
 test('recenzja T ust. 1/5/7/8: klawisz warpa (prawdziwe chooseManualWarpJump → planista TRAVEL TO, studnie skoku)', () => {
@@ -458,10 +467,32 @@ test('recenzja T ust. 1/5/7/8: klawisz warpa (prawdziwe chooseManualWarpJump →
     assert.ok(near(j.bearing, 30 * deg - Math.atan2(150000, dist), 1e-9), `namiar ${(j.bearing / deg).toFixed(2)}°`);
     assert.ok(near(Math.hypot(j.aim.x - body.x, j.aim.y - body.y), 150000 + WARP_COURSE_TUNE.coneWellMargin, 1e-6));
   }
-  // port w jądrze studni (ring): dziób na zewnątrz — skok awaryjny 400 tys. j.; w głąb — odmowa „studnia”
+  // BRIEF-studnie pkt 3: studnia planety nie skraca skoku awaryjnego (przelot nad planetą) — z jej wnętrza (narzędzia;
+  // klawisz odmawia wcześniej — refusePlayerWarpInWell) i przed dziobem (planeta za blisko na cel ze stożka)
   {
     const sc = jumpWorld();
     sc.planets.push({ id: 'home', x: 1e6 - 5000, y: 1e6, zr: 8000, well: 20000 });
+    let j = sc.chooseManualWarpJump();
+    assert.equal(j.kind, 'emergency');
+    assert.ok(near(j.plan.dist, WARP_EMERGENCY.dist) && j.plan.cut === 'none');
+    sc.ship.angle = Math.PI;
+    j = sc.chooseManualWarpJump();
+    assert.equal(j.kind, 'emergency', 'w głąb przez planetę — bez odmowy');
+    assert.ok(near(j.plan.dist, WARP_EMERGENCY.dist) && j.plan.cut === 'none');
+    // planeta 30 tys. j. przed dziobem (punkt skoku do niej bliżej niż minWarp — nie jest celem): skok przelatuje nad nią
+    const near1 = jumpWorld();
+    const p = { id: 'p', x: 1e6 + 30000, y: 1e6, zr: 8000, well: 12000 };
+    near1.planets.push(p);
+    near1.cands = [{ x: p.x, y: p.y, r: p.well, label: 'P', kind: 'body' }];
+    j = near1.chooseManualWarpJump();
+    assert.equal(j.kind, 'emergency');
+    assert.ok(near(j.plan.dist, WARP_EMERGENCY.dist) && j.plan.cut === 'none', `${j.plan.cut} ${j.plan.dist}`);
+  }
+  // studnia hamująca (baza piratów) zostaje: port w jej jądrze — dziób na zewnątrz 400 tys. j., w głąb — odmowa z nazwą;
+  // pas jej studni, dziób na bazę — koniec przed jądrem (z rampą)
+  {
+    const st = { x: 1e6 - 5000, y: 1e6 };
+    const sc = jumpWorld({ mercMission: { station: st } });
     let j = sc.chooseManualWarpJump();
     assert.equal(j.kind, 'emergency');
     assert.ok(near(j.plan.dist, WARP_EMERGENCY.dist));
@@ -469,15 +500,12 @@ test('recenzja T ust. 1/5/7/8: klawisz warpa (prawdziwe chooseManualWarpJump →
     j = sc.chooseManualWarpJump();
     assert.equal(j.kind, null);
     assert.equal(j.reason, 'well');
-  }
-  // pas studni startu, dziób na planetę — skok kończy się przed jej strefą orbit (z rampą), nie przez planetę
-  {
-    const sc = jumpWorld();
-    sc.planets.push({ id: 'home', x: 1e6 - 150000, y: 1e6, zr: 50000, well: 200000 });
-    sc.ship.angle = Math.PI;
-    const j = sc.chooseManualWarpJump();
+    assert.equal(j.plan.well.label, 'BAZA PIRATÓW');
+    const band = jumpWorld({ mercMission: { station: { x: 1e6 - 95000, y: 1e6 } } });
+    band.ship.angle = Math.PI;
+    j = band.chooseManualWarpJump();
     assert.equal(j.kind, 'emergency');
-    assert.ok(near(j.plan.dist, 150000 - 50000 - WARP_EMERGENCY.wellMargin, 1e-6) && j.plan.cut === 'well');
+    assert.ok(near(j.plan.dist, 95000 - 40000 - WARP_EMERGENCY.wellMargin, 1e-6) && j.plan.cut === 'well');
   }
   // cel misji w studni bazy piratów (ust. 7): odcinek do celu kończy się na brzegu studni bazy (rampa), nie w niej
   {
@@ -488,9 +516,27 @@ test('recenzja T ust. 1/5/7/8: klawisz warpa (prawdziwe chooseManualWarpJump →
     const j = sc.chooseManualWarpJump();
     assert.equal(j.kind, 'cone');
     assert.ok(near(Math.hypot(j.aim.x - st.x, j.aim.y - st.y), 100000 + TRAVEL_TUNE.wellMargin, 1e-6), 'brzeg studni bazy + zapas');
+    sc.planets.push({ id: 'pl', x: 3e6, y: 3e6, zr: 8000, well: 20000 });
     const wells = sc.warpEmergencyWells();
     assert.ok(wells.some((w) => w.x === sc.SUN.x && w.rIn === sc.SUN.r), 'słońce z tarczą jako jądrem');
     assert.ok(wells.some((w) => w.x === st.x && w.r === 100000 && w.rIn === 40000), 'baza piratów z jądrem orbit');
+    assert.equal(wells.length, 2, 'skok awaryjny: bez studni planet (BRIEF-studnie pkt 3)');
+    // odcinki do celów ze stożka: studnie gracza (planety, słońce — cel w studni kończy skok na brzegu) + baza piratów
+    const jw = sc.warpJumpWells();
+    assert.deepEqual(jw.map((w) => w.x), [3e6, sc.SUN.x, st.x]);
+    assert.ok(jw[0].noWarpStart && jw[1].noWarpStart && !jw[2].noWarpStart, 'start w studni bazy piratów — jak dawniej');
+  }
+  // cel w stożku = stacja w studni planety: skok kończy się na brzegu studni planety (rampa — „cel kończy skok na brzegu
+  // SWOJEJ studni”), nie przy stacji
+  {
+    const sc = jumpWorld();
+    const pl = { id: 'mars', x: 1e6 + 600000, y: 1e6, zr: 30000, well: 50000 };
+    sc.planets.push(pl);
+    sc.cands = [{ x: pl.x - 20000, y: pl.y, r: 0, tx: pl.x - 21500, ty: pl.y, label: 'PORT MARSA', kind: 'station' }];
+    const j = sc.chooseManualWarpJump();
+    assert.equal(j.kind, 'cone');
+    assert.equal(j.label, 'PORT MARSA');
+    assert.ok(near(Math.hypot(j.aim.x - pl.x, j.aim.y - pl.y), 50000 + TRAVEL_TUNE.wellMargin, 1e-6), 'brzeg studni Marsa + zapas');
   }
 });
 
@@ -507,11 +553,12 @@ test('recenzja T ust. 5: plan trasy przy kopie (prawdziwe planPlayerWarp) — sk
     warp: { speed: 175000, entryDuration: 0.9, cruise: 0, tripPlan: null, originBody: null, targetBody: null, route: route() },
     detectZones: (p) => ({ current: (p.x - 2e6 >= 100000 && p.x - 2e6 < 200000) ? { id: 'asteroid_belt', warpMultiplier: 0.8 }
       : { id: 'interplanetary', warpMultiplier: 1 } }),
-    planWarpCruise, warpTripTuneFor, warpLegTimeline, warpExitRampTime, warpExitRampDistance,
+    planWarpCruise, warpTripTuneFor, warpLegTimeline, warpExitRampTime, warpExitRampDistance, warpMoonReach, moonsOf,
+    MOON_BODY_TUNES, moonGameNode, moonStartAngle, moonOrbitRadius, moonBodyRadius, haloRingKey, resolveRingPlanetWorldRadius,
     getPlayerSpeed: () => 0, playerWarpHullLength: () => 1800,
     driveState: { flightSpec: { maxSpeed: 500 }, brakeAccel: 200 }, PLAYER_WARP_MOMENTUM: { k: 3 }, _playerWarpExit: {},
     _warpRouteMarks: new Float64Array(3), _warpRouteMarkT: new Float64Array(3), _warpRouteTimeline: { exitT: NaN, exitV: 0, exitS: 0 }
-  }, ['playerWarpLegEnd', 'warpWellEdgeDist', 'warpPlanetNear', 'playerWarpExitPlan', 'planPlayerWarp']);
+  }, ['playerWarpLegEnd', 'warpWellEdgeDist', 'warpPlanetNear', 'warpCourseCrossesWell', 'playerWarpExitPlan', 'planPlayerWarp']);
   // skok bez punktu (narzędzia ustawiają ładowanie wprost) — koniec z planu awaryjnego, wyjście automatyczne
   const sc = mk();
   sc.planPlayerWarp(1, 0);
@@ -571,7 +618,7 @@ test('recenzja T ust. 5: wyjście przed końcem planu (prawdziwe exitWarp) przen
   assert.equal(brake.warp.exitRamp, null);
 });
 
-test('recenzja T ust. 8: wylot ze studni w skoku nie hamuje (prawdziwe handleZoneTransition), wejście i przelot przez ciało — jak dawniej', () => {
+test('recenzja T ust. 8 + BRIEF-studnie pkt 2: studnia planety w skoku nie hamuje (prawdziwe handleZoneTransition); baza piratów — wylot bez hamowania, wejście hamuje', () => {
   const brakes = [];
   const sc = indexFns({
     warp: { state: 'active', dir: { x: 1, y: 0 }, route: { x0: 0, y0: 0 } },
@@ -579,29 +626,35 @@ test('recenzja T ust. 8: wylot ze studni w skoku nie hamuje (prawdziwe handleZon
     planets: [{ x: -5000, y: 0, zr: 8000, well: 17000 }], window: { smallBodies: [] },
     planetOrbitRadii: (p) => ({ inner: p.zr / 2, outer: p.zr, gravityWell: p.well }),
     SUN: { x: 9e6, y: 9e6 }, mercMission: { station: { x: -3e6, y: 0 } },
-    GRAVITY_WELL_IDS: ['planet_gravity', 'pirate_gravity', 'sun'],
+    GRAVITY_WELL_IDS: ['planet_gravity', 'pirate_gravity', 'sun'], WARP_BRAKE_WELL_IDS: ['pirate_gravity', 'sun'],
     triggerGravityWarpBrake: (id) => brakes.push(id), MISSIONS: { active: [] }, enterPirateInnerOrbit() {}
-  }, ['isGravityWellZoneId', 'warpLeavingWell', 'handleZoneTransition']);
-  // wylot z portu (5 tys. j. od środka, w strefie orbit) — pas studni 4 tys. j. dalej: bez hamowania
+  }, ['isGravityWellZoneId', 'isWarpBrakeWellZoneId', 'warpLeavingWell', 'handleZoneTransition']);
+  // wylot z portu, wejście z zewnątrz i przelot w głąb przez ciało — studnia planety nigdy nie hamuje (przelot nad planetą)
   sc.ship.pos.x = 4000;
   sc.handleZoneTransition('planet_outer', 'planet_gravity');
-  assert.deepEqual(brakes, []);
-  // wejście z zewnątrz — hamowanie
   sc.warp.route.x0 = -100000;
   sc.ship.pos.x = -21000;
   sc.handleZoneTransition('interplanetary', 'planet_gravity');
-  assert.deepEqual(brakes, ['planet_gravity']);
-  // skok z pasa studni w głąb — po drugiej stronie ciała hamuje jak dawniej (siatka bezpieczeństwa)
   sc.warp.route.x0 = -15000;
   sc.ship.pos.x = 4000;
   sc.handleZoneTransition('planet_outer', 'planet_gravity');
-  assert.deepEqual(brakes, ['planet_gravity', 'planet_gravity']);
+  assert.deepEqual(brakes, []);
+  assert.equal(sc.warpLeavingWell('planet_gravity'), false, 'gałąź planet usunięta');
   // baza piratów: oddalanie się od źródła
   sc.warp.route.x0 = -2.9e6;
   assert.equal(sc.warpLeavingWell('pirate_gravity'), true);
   sc.warp.dir.x = -1;
   assert.equal(sc.warpLeavingWell('pirate_gravity'), false);
   sc.warp.dir.x = 1;
+  // wylot ze studni bazy — bez hamowania; wejście z zewnątrz (skok ku bazie) — hamowanie jak dawniej; słońce — hamuje
+  sc.handleZoneTransition('pirate_outer', 'pirate_gravity');
+  assert.deepEqual(brakes, []);
+  sc.warp.dir.x = -1;
+  sc.handleZoneTransition('interplanetary', 'pirate_gravity');
+  assert.deepEqual(brakes, ['pirate_gravity']);
+  sc.warp.dir.x = 1;   // ku słońcu (9e6, 9e6) od punktu skoku
+  sc.handleZoneTransition('interplanetary', 'sun');
+  assert.deepEqual(brakes, ['pirate_gravity', 'sun']);
   sc.warp.state = 'idle';
   assert.equal(sc.warpLeavingWell('pirate_gravity'), false, 'poza skokiem — bez wyjątku');
 });
