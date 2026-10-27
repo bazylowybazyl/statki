@@ -259,6 +259,23 @@ function shatteredPiece(chunkId = 'H-W1') {
   return { r, e, hull, lat, skin, group, frags };
 }
 
+// Miejsce z kawałkiem straconym (gotowa skóra) na sztucznym źródle ciał świata; odłamy-wraki dziedziczą rekord kawałka
+// (hull.world) — testy partii w klatce.
+function lostPieceSource(W3, chunkId) {
+  const { r, lat, skin, group, frags } = shatteredPiece(chunkId);
+  const prov = {
+    building: dock, root: dock.root, layers: { bg: 1, fg: 2 }, hidden: () => false,
+    setSkinned() {}, setHold() {}, groupOf: () => group, rasterCenter: () => ({ x: r.cx, z: r.cz })
+  };
+  const site = { render: prov, pieces: [] };
+  const piece = { id: chunkId, site, state: 'lost', touched: true, entity: null, solid3D: false,
+    __skin: { key: r.image, lat, bg: skin.bg, fg: skin.fg, triangles: skin.triangles, solid: false } };
+  site.pieces.push(piece);
+  for (const w of frags) w.beamHull.world = piece;
+  W3.setWorldBodiesSource({ sites: [site], focus: [], renderEntities: () => frags });
+  return { skin, frags };
+}
+
 test('partia skór: odłam = indeks podzbioru na atrybutach skóry kawałka + rekord rysunku pośredniego, miejsce po wpisie wraca', async () => {
   const { WorldSkinBatch, SKIN_BATCH_RECORD, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
   const { fragmentSkinSubset } = await import('../src/3d/worldBodies3D.js');
@@ -321,19 +338,8 @@ test('partia skór w klatce: odłamy w partii, rysunki i macierz model-widok z h
   const { Core3D } = await import('../src/3d/core3d.js');
   const { WorldSkinStore, WORLD_SKIN_SLOT_VEC4, WS, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
-  const { r, lat, skin, group, frags } = shatteredPiece('Q-W');
+  const { skin, frags } = lostPieceSource(W3, 'Q-W');
   assert.ok(frags.length >= 2, `odłamy: ${frags.length}`);
-  // miejsce i kawałek stracony z gotową skórą; odłamy-wraki dziedziczą rekord kawałka (hull.world)
-  const prov = {
-    building: dock, root: dock.root, layers: { bg: 1, fg: 2 }, hidden: () => false,
-    setSkinned() {}, setHold() {}, groupOf: () => group, rasterCenter: () => ({ x: r.cx, z: r.cz })
-  };
-  const site = { render: prov, pieces: [] };
-  const piece = { id: 'Q-W', site, state: 'lost', touched: true, entity: null, solid3D: false,
-    __skin: { key: r.image, lat, bg: skin.bg, fg: skin.fg, triangles: skin.triangles, solid: false } };
-  site.pieces.push(piece);
-  for (const w of frags) w.beamHull.world = piece;
-  W3.setWorldBodiesSource({ sites: [site], focus: [], renderEntities: () => frags });
   const sets = ['bg', 'fg'].filter((s) => skin[s]);
   try {
     const S = W3.WORLD_SKIN_STATS;
@@ -405,4 +411,51 @@ test('partia skór w klatce: odłamy w partii, rysunki i macierz model-widok z h
   assert.equal(SKIN_BATCH_STATS.entries, 0, 'reset: wpisy zwolnione');
   assert.equal(SKIN_BATCH_STATS.batches, 0, 'reset: partie zwolnione');
   assert.ok(!Core3D.scene.children.some((o) => /^ciało świata — partia/.test(o.name)), 'reset: siatki partii poza sceną');
+});
+
+test('partia skór w workerze: odłam bez stanu węzłów lustra czeka na węzły i wchodzi do partii (nie zostaje przy pełnej skórze)', async () => {
+  const W3 = await import('../src/3d/worldBodies3D.js');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
+  if (!Core3D.scene) Core3D.scene = new THREE.Scene();
+  const { frags } = lostPieceSource(W3, 'Q-W');
+  assert.ok(frags.length >= 3, `odłamy: ${frags.length}`);
+  // frags[0] — lustro w workerze, którego węzły jeszcze nie doszły (ciało spoza pudła rozgrzania: topologia i
+  // `activeNodes`, `active` puste); frags[1] — ciało gry bez komórek w kratownicy (bez flagi lustra): własne siatki jak dotąd
+  const late = frags[0].beamHull.body, empty = frags[1].beamHull.body;
+  const lateActive = late.nodeStore.active.slice(), emptyActive = empty.nodeStore.active.slice();
+  late.nodeStore.active.fill(0);
+  late.nodesReceived = false;
+  empty.nodeStore.active.fill(0);
+  const S = W3.WORLD_SKIN_STATS;
+  const waits0 = S.subsetWaits, noSub0 = S.batchOut.noSubset;
+  try {
+    for (let i = 0; i < 400 && (S.batchSlots < frags.length - 2 || S.subsetWait < 1 || S.batchOut.noSubset === noSub0); i++) W3.syncWorldBodies3D();
+    W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 1, 'odłam bez węzłów lustra czeka');
+    assert.equal(S.subsetWaits - waits0, 1);
+    assert.equal(S.batchOut.noSubset - noSub0, 1, 'ciało gry bez komórek — własne siatki (jak dotąd)');
+    assert.equal(S.batched, frags.length - 2, 'reszta w partii');
+    // kolejne klatki bez węzłów: odłam dalej czeka, podzbiór nie liczy się od nowa
+    for (let i = 0; i < 5; i++) W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 1);
+    assert.equal(S.subsetWaits - waits0, 1, 'bez prób przed dojściem węzłów');
+    // węzły doszły (strona migawki z węzłami ciała): podzbiór od nowa i wpis w partii
+    late.nodeStore.active.set(lateActive);
+    late.nodesReceived = true;
+    for (let i = 0; i < 400 && S.batchSlots < frags.length - 1; i++) W3.syncWorldBodies3D();
+    W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 0, 'nikt nie czeka');
+    assert.equal(S.batched, frags.length - 1, 'odłam z węzłami w partii');
+    assert.equal(S.batchOut.noSubset - noSub0, 1, 'bez nowych powrotów do pełnej skóry');
+  } finally {
+    late.nodeStore.active.set(lateActive);
+    empty.nodeStore.active.set(emptyActive);
+    delete late.nodesReceived;
+    W3.resetWorldBodies3D();
+    W3.setWorldBodiesSource(null);
+    for (const w of frags) HullBodies.release(w);
+  }
+  assert.equal(S.subsetWait, 0);
+  assert.equal(SKIN_BATCH_STATS.entries, 0, 'reset: wpisy zwolnione');
 });

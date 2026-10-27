@@ -79,6 +79,9 @@ export class MirrorBody {
     this.gen = gen;
     this.storeVer = -1;
     this.hpReceived = false;    // HP węzłów repliki doszło (mostki: obecność komórek liczona z HP przy adopcji)
+    // stan węzłów (pozycje, `active`) doszedł — pakujący wysyła węzły tylko ciałom w pudle rozgrzania, a `activeNodes`
+    // zawsze: ciało spoza pudła ma topologię bez stanu węzłów (podzbiór skóry odłamu — worldBodies3D — czeka)
+    this.nodesReceived = false;
     this.nodeStore = null;
     this.beamStore = null;
     this._region = null;
@@ -108,6 +111,7 @@ export class MirrorBody {
     this._region = new MirrorRegion(s);
     this.storeVer = storeVer;
     this.hpReceived = false;
+    this.nodesReceived = false;
   }
 }
 
@@ -155,6 +159,7 @@ export function applyBodyPage(mb, v, bs) {
     s.heatStamp.set(F.subarray(p, p + n));
     s.active.set(U.subarray(u, u + n));
     s.patch.set(U.subarray(u + n, u + 2 * n));
+    mb.nodesReceived = true;
     const m = i32[bi + BI.BEAM_N];
     if (m > 0) {
       const bo = i32[bi + BI.BEAM_F64_OFF], bu = i32[bi + BI.BEAM_U8_OFF];

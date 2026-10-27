@@ -56,6 +56,8 @@ export function setWorldBodiesSource(src) { _wb = src || worldBodies; }
 export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0, bakePeakId: '',
   syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, halfCulled: 0,
   shownMain: 0, shownFrag: 0, batched: 0, batchSlots: 0, batchQueue: 0, batchDraws: 0,
+  // odłamy czekające na stan węzłów lustra (worker — ciało spoza pudła rozgrzania), narastająco: odłożone podzbiory
+  subsetWait: 0, subsetWaits: 0,
   // pokazane egzemplarze wg stanu partii [−1 własne siatki, 0 jeszcze nie, 1 część zestawów, 2 w partii] i przyczyny
   // powrotu do własnych siatek (narastająco)
   batchStates: [0, 0, 0, 0],
@@ -273,6 +275,7 @@ function disposeSkinAssets(p) {
 const SUBSET_MS = 3;
 const SUBSET_TRIS_PER_STEP = 8192;
 const _subsetQueue = [];
+const _subsetWait = [];      // odłamy, których lustro (worker) nie ma jeszcze stanu węzłów — requeueSubsetWaits
 export function fragmentSkinSubset(geo, body, lat) {
   const it = fragmentSkinSubsetSteps(geo, body, lat);
   let r = it.next();
@@ -460,10 +463,32 @@ function runSubsets(t0) {
       WORLD_SKIN_STATS.subsets++;
       for (const mesh of inst.meshes) if (mesh.userData.fullGeometry === w.geo && mesh.geometry === w.geo) mesh.geometry = sub;
       addToSkinBatch(inst, w.geo === skin.fg ? 'fg' : 'bg', w.geo, sub);
+    } else if (hull.body.nodesReceived === false) {
+      // Lustro odłamu w workerze bez stanu węzłów: pakujący migawki wysyła węzły tylko ciałom w pudle rozgrzania
+      // (`activeNodes` zawsze), więc odłam urodzony poza nim ma topologię bez `active` — podzbiór od nowa, gdy węzły
+      // dojdą (dawniej zostawał na stałe przy własnych siatkach z PEŁNĄ skórą kawałka, poza partią).
+      _subsetQueue.shift();
+      inst.subsetQueued = false;
+      inst.subsetWork = null;
+      _subsetWait.push(inst);
+      WORLD_SKIN_STATS.subsetWaits++;
     } else {
       // odłam bez komórek w kratownicy kawałka — zostaje przy własnych siatkach (pełna geometria, jak dotąd)
       abandonSkinBatch(inst, 'noSubset');
     }
+  }
+}
+// Odłamy czekające na stan węzłów lustra (worker) — wracają do kolejki podzbiorów, gdy węzły doszły.
+function requeueSubsetWaits() {
+  for (let k = _subsetWait.length - 1; k >= 0; k--) {
+    const inst = _subsetWait[k];
+    const body = inst.entity?.beamHull?.body;
+    if (!inst.disposed && body && body.nodesReceived === false) continue;
+    _subsetWait[k] = _subsetWait[_subsetWait.length - 1];
+    _subsetWait.pop();
+    if (inst.disposed || !body || !_inst.has(inst.entity)) continue;
+    inst.subsetQueued = true;
+    _subsetQueue.push(inst);
   }
 }
 
@@ -958,8 +983,10 @@ export function syncWorldBodies3D() {
   SolidWounds.flush();
   if ((_frame & 15) === 0) queueBakes();
   // podzbiory odłamów (gotowy podzbiór — od razu wpis w partii skóry kawałka)
+  if (_subsetWait.length) requeueSubsetWaits();
   if (_subsetQueue.length) runSubsets(performance.now());
   WORLD_SKIN_STATS.batchQueue = _subsetQueue.length;
+  WORLD_SKIN_STATS.subsetWait = _subsetWait.length;
   return shown;
 }
 
@@ -974,6 +1001,7 @@ export function resetWorldBodies3D() {
   for (const p of _bakeQueue) p.__skinQueued = false;
   _bakeQueue.length = 0;
   _subsetQueue.length = 0;
+  _subsetWait.length = 0;
   // partie zwalnia disposeSkinAssets (razem ze skórami kawałków); egzemplarze zwolnione wyżej, reszta partii (skóra
   // spoza rejestru wypieków) — tutaj
   for (const b of _batchList) b.dispose();

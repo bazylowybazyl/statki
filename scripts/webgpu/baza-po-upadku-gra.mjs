@@ -217,7 +217,7 @@ const DRAW_READ = `(() => {
   const B = S && S.batch;
   return { klatki: f, rysunkiNaKlatke: +total.toFixed(1), gpuMs, by, pass, partie: { batches, batchQuads: Math.round(batchQuads), nullBatches, nullQuads: Math.round(nullQuads) },
     cialaSwiata: { egz: ws, widoczne: wsVis }, worldSkin: S ? { shown: S.shown, main: S.shownMain, odlamy: S.shownFrag, instances: S.instances,
-      triangles: S.triangles, halfCulled: S.halfCulled, wPartii: S.batched, slotyPartii: S.batchSlots, kolejka: S.batchQueue, rysunkiPartii: S.batchDraws,
+      triangles: S.triangles, halfCulled: S.halfCulled, wPartii: S.batched, slotyPartii: S.batchSlots, kolejka: S.batchQueue, czekaNaWezly: S.subsetWait, czekalo: S.subsetWaits, rysunkiPartii: S.batchDraws,
       partie: B ? B.batches : 0, wpisy: B ? B.entries : 0, indeksy: B ? B.indices : 0, MB: B ? +(B.bytes / 1048576).toFixed(1) : 0,
       stany: S.batchStates ? S.batchStates.slice() : null, wypadly: S.batchOut || null } : null };
 })()`;
