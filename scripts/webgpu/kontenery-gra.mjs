@@ -256,7 +256,11 @@ try {
   }
   if (args.tylko === 'bezAwansu' || args.tylko === 'bezAwansuX') { console.log('probki', JSON.stringify(report.etapy.bezAwansu.probki)); throw new Error('koniec (--tylko bezAwansu)'); }
 
-  // 2) Wiązka Atlasa (fabrycznie): gracz 1,5 km od paczek, 24 s gry.
+  // 2) Wiązka Atlasa (fabrycznie): gracz 1,5 km od paczek, 24 s gry. Strzał chybił (pusta pula) — paczki z devSpill
+  //    (z pędem gracza), żeby wiązka zawsze miała co ciągnąć.
+  if (!(await ev('window.LootContainers.count'))) {
+    report.etapy.wiazkaDevSpill = await ev(`window.LootContainers.devSpill({ steel: 380, chips: 40 }, 2500)`);
+  }
   report.etapy.wiazka = await tractorRun('02', 24);
   if (args.tylko === 'wiazka') { console.log('przebieg', JSON.stringify((report.etapy.wiazka.przebieg || []).map((r) => [r.t, r.paczek, r.wWiazce, r.diag, r.ladownia.free]))); }
   console.log('wiązka:', JSON.stringify({ przed: report.etapy.wiazka.przed?.ladownia, po: report.etapy.wiazka.po?.ladownia,
