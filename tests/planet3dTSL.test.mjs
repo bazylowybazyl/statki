@@ -11,7 +11,7 @@ import {
   PLANET_TSL_STATS, PLANET_GRAPH_KEYS, PLANET_MATERIAL_NAMES, STAR_PLANET_MASK_CAP, STAR_INSTANCE_STRIDE, STAR_INSTANCE_LAYOUT,
   createPlanetSurfaceMaterial, createPlanetCloudMaterial, createPlanetAtmosphereMaterial, createRingAtmosphereMaterial,
   createSunMaterial, createNebulaMaterial, createStarMaterial, createStarGeometry, packStarInstances, getPlanetGraph,
-  SUN_BLOOM_NADMIAR
+  SUN_BLOOM_NADMIAR, SUN_SURFACE, SUN_CORONA, createSunCoronaMaterial
 } from '../src/3d/planet3d.assets.tsl.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -55,6 +55,9 @@ const atmosphereUniforms = () => ({
   coef: { value: 0.6 }, power: { value: 9 }, glowColor: { value: V3(0.3, 0.6, 1) }, sunsetTint: { value: V3(1.2, 0.4, 0.1) },
   uSunIntensity: { value: 1.1 }, sunPosition: { value: V3(0, 0, -50000) }, uSunShadowRecv: { value: 0 }
 });
+// Ten sam kształt co DirectSun (planet3d.assets.js): kula i korona dzielą zegar.
+const sunUniforms = (time = 0) => ({ uTime: { value: time }, uIsOcclusion: { value: 0 }, uSunLook: { value: new THREE.Vector4(1, 1, 1, 1) } });
+const sunCoronaUniforms = () => ({ uTime: { value: 1.5 }, uCoronaLook: { value: new THREE.Vector4(1, 1.6, 1, 1) } });
 const ringAtmosphereUniforms = () => ({
   uSunDir: { value: V3(1, 0, 0) }, uRa: { value: 1.033 }, uHs: { value: 0.0073 }, uDayColor: { value: V3(0.26, 0.5, 1) },
   uSunsetColor: { value: V3(1, 0.38, 0.12) }, uGain: { value: V3(1, 1, 1) }, uSunShadowRecv: { value: 1 },
@@ -169,30 +172,59 @@ test('chmury, poświaty, słońce: stan renderu jak dawny ShaderMaterial', () =>
   const ringWgsl = buildWGSL(ring, new THREE.CircleGeometry(1.033, 16), new THREE.OrthographicCamera());
   assert.doesNotMatch(ringWgsl.fragment, /\.w \)|\* vec3<f32>\( nodeVar\d+\.w \)/, 'kolor nie mnożony przez alfę');
 
-  const sun = createSunMaterial({ uTime: { value: 0 }, uIsOcclusion: { value: 0 } });
+  const sun = createSunMaterial(sunUniforms());
   assert.equal(sun.transparent, false);
   assert.equal(sun.depthWrite, true);
   assert.equal(sun.name, PLANET_MATERIAL_NAMES.sun);
+
+  // Korona słońca: ONE/ONE jak poświata limbu, bez zapisu głębi, kolor bez mnożenia przez alfę.
+  const corona = createSunCoronaMaterial(sunCoronaUniforms());
+  assert.equal(corona.name, PLANET_MATERIAL_NAMES.sunCorona);
+  assert.equal(corona.blending, THREE.CustomBlending);
+  assert.equal(corona.premultipliedAlpha, false);
+  assert.equal(corona.depthWrite, false);
+  for (const k of ['blendSrc', 'blendDst', 'blendSrcAlpha', 'blendDstAlpha']) assert.equal(corona[k], THREE.OneFactor, k);
 });
 
 // Zadanie 25b (bloom gry jak w demach, bez ×3 dawnego passu WebGL): korona słońca to sama poświata bloomu kuli HDR i przy
 // ×1 znikała — nadmiar luminancji ponad próg bloomu × SUN_BLOOM_NADMIAR (L' = p + 3·(L − p)), pod progiem bez zmian.
 test('słońce: nadmiar ponad próg bloomu × SUN_BLOOM_NADMIAR (korona po zdjęciu ×3), pod progiem bez zmian', () => {
   assert.equal(SUN_BLOOM_NADMIAR, 3);
-  const sun = buildWGSL(createSunMaterial({ uTime: { value: 1.5 }, uIsOcclusion: { value: 0 } })).fragment;
+  const sun = buildWGSL(createSunMaterial(sunUniforms(1.5))).fragment;
   assert.match(sun, /(nodeVar\d+) = dot\( (nodeVar\d+), vec3<f32>\( 0\.2126, 0\.7152, 0\.0722 \) \);\s*\2 = \( \2 \* vec3<f32>\( \( \( \1 \+ \( max\( \( \1 - 0\.9 \), 0\.0 \) \* 2\.0 \) \) \/ max\( \1, 0\.0001 \) \) \) \);/);
 });
 
+// Gigantyczne słońce (2026-10-27): ziarnistość wielu skal — liczba oktaw z rozmiaru piksela na kuli (fwidth PRZED pętlą,
+// pętla o długości zależnej od piksela bez pochodnych w środku — WGSL odrzuca pochodne w niejednolitym przepływie).
+test('słońce: oktawy ziarnistości z rozmiaru piksela (pochodne przed pętlą), szum na haszu całkowitym, korona z LOD', () => {
+  const sun = buildWGSL(createSunMaterial(sunUniforms(1.5)), new THREE.SphereGeometry(1, 16, 8), new THREE.OrthographicCamera()).fragment;
+  const main = sun.slice(sun.indexOf('fn main'));
+  const fw = main.search(/fwidth\(/);
+  const loop = main.search(/log2\(/);
+  assert.ok(fw >= 0 && loop > fw, 'rozmiar piksela (fwidth) przed liczbą oktaw (log2)');
+  const loops = [...main.matchAll(/for \( var (\w+) : i32 = 0; \1 < (\w+); \1 \+\+ \)/g)];
+  assert.ok(loops.some((m) => !/^\d+$/.test(m[2])), 'pętla oktaw z liczbą z piksela, nie stała');
+  const tail = main.slice(main.indexOf(loops.find((m) => !/^\d+$/.test(m[2]))[0]));
+  assert.doesNotMatch(tail.slice(0, tail.indexOf('\n\t}')), /fwidth|dpdx|dpdy/, 'bez pochodnych w pętli oktaw');
+  // granulacja: komórka grainPx px także przy największym zoomie gry (3,2 px/j.) przy tarczy 200 tys. j.
+  assert.ok(SUN_SURFACE.grainF0 * 2 ** (SUN_SURFACE.grainOctaves - 2) >= 200000 * 3.2 / SUN_SURFACE.grainPx,
+    'najdrobniejsza oktawa granulacji wystarcza do zoomu 3,2');
+  assert.match(main, /sunCells\(/, 'komórki granulacji (Worley)');
+  const corona = buildWGSL(createSunCoronaMaterial(sunCoronaUniforms()),
+    new THREE.RingGeometry(SUN_CORONA.inner, SUN_CORONA.outer, 32, 2), new THREE.OrthographicCamera()).fragment;
+  assert.match(corona.slice(corona.indexOf('fn main')), /fwidth\(/, 'korona: LOD płomieni z rozmiaru piksela');
+  assert.doesNotMatch(corona, /pow\(/);
+});
+
 test('słońce i hasze: funkcje z layoutem są czyste, bez pow z ujemną podstawą', () => {
-  const sun = buildWGSL(createSunMaterial({ uTime: { value: 1.5 }, uIsOcclusion: { value: 0 } })).fragment;
-  for (const name of ['sunHash', 'sunNoise', 'sunFbm']) {
+  const sun = buildWGSL(createSunMaterial(sunUniforms(1.5))).fragment;
+  for (const name of ['sunGNoise']) {
     const body = fnBody(sun, name);
     assert.ok(body, `brak fn ${name}`);
     assert.doesNotMatch(body, /object\.|render\.|nodeUniform/, `${name} czyta uniform`);
   }
-  // fresnel pow(1 − max(viewDot, 0), 3) mnożeniem (baza WebGL: potęga całkowita rozwinięta przez FXC)
   assert.doesNotMatch(sun, /pow\(/);
-  assert.match(fnBody(sun, 'sunFbm'), /for \(/, 'oktawy fbm w pętli, nie cztery kopie');
+  assert.match(sun.slice(sun.indexOf('fn main')), /for \(/, 'oktawy plazmy i ziarnistości w pętlach, nie kopie');
   const surface = buildWGSL(createPlanetSurfaceMaterial(surfaceUniforms())).fragment;
   assert.doesNotMatch(fnBody(surface, 'planetHash12'), /object\.|render\.|nodeUniform/);
   // pow tylko z nieujemną podstawą: max(0, N·H) (połysk) — miasta nocą pow(x, 2) mnożeniem.

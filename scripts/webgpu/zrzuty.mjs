@@ -267,9 +267,9 @@ const SCENES = {
     js: `const r = window.__harnessKalibracja; if (r) { r.parent?.remove(r); r.traverse((o) => { o.geometry?.dispose?.(); o.material?.map?.dispose?.(); o.material?.dispose?.(); }); window.__harnessKalibracja = null; }`
   },
   slonce: {
-    opis: 'Słońce (kula, korona, bloom HDR), zoom 0,035',
+    opis: 'Brzeg słońca (tarcza 200 tys. j. w płaszczyźnie gry: plazma, korona, płomienie, bloom HDR), zoom 0,035',
     hud: false, warm: 45,
-    js: `S.cam(SUN.x, SUN.y, 0.035);`
+    js: `S.cam(SUN.x + SUN.r + 9000, SUN.y, 0.035);`
   },
   bitwa: {
     opis: 'Bitwa w próżni: 3 piratów vs 2 Terra Nova, 180 klatek walki (pociski, wiązki, tarcze, dysze, bloom)',

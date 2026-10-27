@@ -31,7 +31,7 @@ import {
 } from '../src/game/cameraRig.js';
 import { rolledHalfExtents } from '../src/3d/viewRoll.js';
 import { createWarpShakeState, stepWarpShakes } from '../src/game/warpShakes.js';
-import { buildSystemMap } from '../src/data/systemMap.js';
+import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from '../src/data/systemMap.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../src/data/asteroidTypes.js';
 import { DEFAULT_PLANET_SCALE } from '../src/config/constants.js';
 import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
@@ -138,9 +138,9 @@ const flyBodies = [];      // { planet, x, y, r } — ciała zwolnienia (bez sta
 let nFly = 0;
 const _rampSample = { speed: 0, phase: 'done', tb: 0 };
 
-// Słońce jak w grze (index.html: SUN — środek świata 12 mln j.).
+// Słońce jak w grze (index.html: SUN — środek świata 12 mln j., tarcza SYSTEM_MAP_CONSTANTS.sunRadius).
 const SUN = {
-  x: 6_000_000, y: 6_000_000, r: 823, r3D: 399,
+  x: 6_000_000, y: 6_000_000, r: SYSTEM_MAP_CONSTANTS.sunRadius,
   color: { core: '#ffe88a', mid: '#ffbe3b', rim: '#ff8c1a' },
   corona: { rays: 72, jitter: 0.35, length: 0.85, pulse: 0.22, haze: 2.8 },
   seed: 93731

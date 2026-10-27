@@ -8,6 +8,7 @@ import { TRAVEL_TUNE, planTravelLeg, segmentCircleEntry, wellAt } from '../src/g
 import { WARP_COURSE_TUNE, warpCourseBearing, warpCourseAligned, warpCourseHudVisible, warpCoursePass, warpCourseExitDue, chooseWarpJump } from '../src/game/warpCourse.js';
 import { warpExitRampDistance, WARP_EMERGENCY, planWarpEmergency } from '../src/game/warpDrive.js';
 import { RADAR_PLANET_NAMES } from '../src/ui/radar/radarConfig.js';
+import { sunWellRadius } from '../src/data/systemMap.js';
 import vm from 'node:vm';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -310,14 +311,14 @@ test('planista objazdów (BRIEF-studnie pkt 3): studnie planet nie są przeszkod
   const earth = { x: 0, y: 0 }, mars = { x: 400000, y: 0 };
   const h = { planets: [earth, mars], travelNav: { obstacleMargin: 1100 },
     planetOrbitRadii: () => ({ gravityWell: 100000 }),
-    SUN: { x: 2e6, y: 0, r: 823 }, mercMission: null, pirateOrbitRadii: () => ({ inner: 20000, outer: 40000, gravityWell: 60000 }),
+    SUN: { x: 2e6, y: 0, r: 823 }, sunWellRadius, mercMission: null, pirateOrbitRadii: () => ({ inner: 20000, outer: 40000, gravityWell: 60000 }),
     // doki portów bez ringu (E14, src/game/portDockWorld.js): bez budowli — bez ich dysków
     portDocks: { pushCruiseObstacles: (out) => out } };
   vm.createContext(h); vm.runInContext(fn, h);
   let obstacles = h.getCruiseGravityObstacles({ x: 95000, y: 0 }, { x: 250000, y: 0 });
   assert.equal(obstacles.length, 1, 'planety (Ziemia, Mars) — przelot, bez objazdu');
   assert.equal(obstacles[0].x, h.SUN.x, 'słońce zostaje przeszkodą');
-  assert.equal(obstacles[0].r, 823 * 2 + 1100, 'strefa słońca + zapas');
+  assert.equal(obstacles[0].r, sunWellRadius(h.SUN) + 1100, 'strefa słońca + zapas');
   h.mercMission = { station: { x: 1e6, y: 5e5 } };
   obstacles = h.getCruiseGravityObstacles({ x: 95000, y: 0 }, { x: 250000, y: 0 });
   assert.deepEqual(Array.from(obstacles, (o) => o.x), [h.SUN.x, 1e6], 'baza piratów — przeszkoda');

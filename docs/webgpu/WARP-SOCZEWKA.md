@@ -60,7 +60,7 @@ Wszystko w px skaluje się z wysokością kadru (1440p × 1,333); kadr szerszy n
 Rysunek słowny (kadr 1920 × 1080, kurs w górę, statek ~⅓ wysokości pod środkiem):
 
 - Daleki cel i ciała przed dziobem siedzą przy PUNKCIE ZBIEGU — 0,8 drogi od statku do górnej krawędzi — jako kropki
-  (≥ 2 px planety i słońce; słońce × 5). Zbliżając się, schodzą z punktu zbiegu po PROSTYCH i rosną (wielkość z daleka
+  (≥ 2 px planety i słońce; słońce × 1 — od 2026-10-27 tarcza 200 tys. j.). Zbliżając się, schodzą z punktu zbiegu po PROSTYCH i rosną (wielkość z daleka
   ≈ r · E / a). Tor ciała to prosta przez punkt zbiegu — bez zakrętu w trawersie.
 - W TRAWERSIE skala s (Mars 75 tys. j. z boku: 263 px promienia przy 1080p). Za trawersem ciało dalej rośnie
   i WYLATUJE z kadru — bokiem albo dołem (Mars w S1: do 565 px, wylot bokiem po ~1 s). Nie wraca pod statek i nie
@@ -299,7 +299,7 @@ wymuszasz przelotu bokiem”. Zasady w skrócie — reguła `warp`, „STUDNIE G
 LOGIKA GRY (zespół A):
 
 - **Start zablokowany** w studni planety, małego ciała (`planetOrbitRadii(b).gravityWell` — granica strefy
-  `planet_gravity`) i słońca (strefa `sun`, 2 · `SUN.r`): CapsLock / 9 / pad / UI → „WARP: STUDNIA GRAWITACJI — ODLEĆ OD:
+  `planet_gravity`) i słońca (strefa `sun`, `sunWellRadius` = 1,1 · `SUN.r`; od 2026-10-27, dawniej 2 · `SUN.r` przy tarczy 823 j.): CapsLock / 9 / pad / UI → „WARP: STUDNIA GRAWITACJI — ODLEĆ OD:
   ZIEMIA · 3 KM DO BRZEGU” (nazwa po polsku — `RADAR_PLANET_NAMES`; planety mają w grze `name` angielskie), bez ładowania
   i bez przejęcia sterów (`refusePlayerWarpInWell` przed `takeManualWarpCourse`). Wnętrze ringu „Halo” (bliżej planety niż
   płyta habitatu) — start wolno (§ „Studnie grawitacyjne — poprawki po recenzji”). Baza piratów, NPC, ruch v2, wezwania
@@ -817,7 +817,7 @@ projekty panelu („projekt A–D § …”). Tych plików nie ma w repo — co 
 | DECYZJE-2 O1-1…O1-4 | mapa O1 „kamera pochylona” (homografia, kMax, ukrycie za płaszczyzną kamery, obrót przelotu 0,5, odwrotność HUD, planeta na kursie) — § „Mapa O1”; INNE niż O1 / O2 / O3 niżej (ośrodek, obraz, hipercruise) |
 | M3 | kotwica P0 = nominalne miejsce statku w kadrze (sprężyna riga bez kopu i wysunięcia), tło × (flat / zoom)^(1−β); do workera skalarami migawki |
 | M4 | ciała za celem w stożku ±30° zanurzają się (nie są wycinane na stałe) |
-| M5 | każde ciało w soczewce: planety, księżyce, małe ciała, słońce (`sunBoost` 5, kropki ≥ 2 px, poniżej 1,5 px nie rysować) |
+| M5 | każde ciało w soczewce: planety, księżyce, małe ciała, słońce (`sunBoost` 5 → 1 od 2026-10-27 — gigantyczne słońce, kropki ≥ 2 px, poniżej 1,5 px nie rysować) |
 | M6 | planeta startu w soczewce („świat wstaje”); bramka ringu „Halo” zostaje |
 | P1 | oś β z zegara gry: ładowanie 0,9 · smoothstep, kop 0,9 → 1, lot 1 — czysta funkcja, ta sama w off i w workerze |
 | P2 | tryb przejścia ciała ustalany raz na przejście: RUCH albo WYNURZENIE / ZANURZENIE w miejscu |
