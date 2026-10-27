@@ -75,7 +75,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Broń i obrażenia myśliwców → filtr IFF z `src/game/friendlyFire.js`; jednostka gracza poza frakcjami → `playerOwned = true`.
 - Obrażenia od broni gracza → `applyDamageToNPC(…, byPlayer)` (znacznik trafienia); obrażenia gracza od pocisku NPC → stempel `__fcHitPlayerAt` strzelca; obrażenia zatrzymywane przez tarczę → test przebicia `isShieldBreachedAt`; obrażenia obszarowe → też `RepairSwarm.blast` (drony naprawcze).
 - Zestrzelenie rakiety lub torpedy → tylko `killRocketThreat`.
-- Nowa ścieżka obrażeń od gracza (wiązka, rakieta, wybuch) → też statki ruchu v2 w bańce (`damageTrafficActor`, `src/game/trafficBubble.js`); zniszczenie tylko tak — kurs i wrak z ładunkiem rozlicza worker ruchu (reguła `ruch-banka`).
+- Nowa ścieżka obrażeń od gracza (wiązka, rakieta, wybuch) → też statki ruchu v2 w bańce (`damageTrafficActor`, `src/game/trafficBubble.js`); zniszczenie tylko tak — kurs i wrak z ładunkiem rozlicza worker ruchu (reguła `ruch-banka`), a ładunek z manifestu encji wypada w przestrzeń (`spillTrafficCargo`, reguła `kontenery-lup`).
 - Przylot, odlot, wezwanie NPC tunelem warpa → rejestr `warpTraffic` (nie `WarpNurt`); wyjście z warpa → `exitWarp`; przylot wroga spoza kolejki wezwań → `noteCameraDirectorCue`; sterowanie skrzydłem pomija jednostki z `__warpReturn`. Nowa ścieżka wyjścia NPC z warpa → pęd z `warpExitMomentum` (punkt przylotu = koniec ślizgu) i flaga `__warpExitSlide` (model lotu trzyma limit bojowy do końca ślizgu), nie zerowanie prędkości.
 - Kamera: wejście ustawia `camera.targetZoom` (sprężyna raz na klatkę renderu, nie w `physicsStep`); offsety kamery tylko w rigu (`src/game/cameraRig.js`); wstrząs z modułu renderu → hak `onShake` (żądanie do gry), nie `window.camera`.
 - Ciąg, skok, szarża, hipercruise → `mainEngineFraction` / `engineThrustScale` / `engineBlocksDrive` (uszkodzenie i stan silników).
@@ -159,6 +159,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
+| `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `mgla-wojny` | Mgła wojny |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
