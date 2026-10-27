@@ -377,23 +377,44 @@ Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) 
 - **Łup:** zrzut pełnego dalekiego frachtowca (209 t) mieści się w całości, ciężkiego (495 t) — w 80%.
 - **D17 przy 400 t:** −96 t za zatokę dronów to 24% ładowności — za dużo. Propozycja: odliczenie proporcjonalne
   do miejsca w luku — zatoka zajmuje 6 ze 150 slotów luku (4%), czyli **−16 t** (albo okrągłe −20 t = 5%).
-- **(a) Rynek kadłubów — Atlas wyprzedził ładownością prawie wszystko** (przegląd K1, do decyzji użytkownika).
-  Dziś `cargoCap` gracza: fregaty 12–24 t (Marauder 12, Custos 16, Corvus 24), niszczyciele 22–30, Bellator 40,
-  Iron Skull 32, Citadella 80, Colossus 120, **Atlas 400**, Megafreighter 600. Dwie propozycje przeskalowania (ceny
-  kadłubów ładowności nie czytają — `playerHullMarket` bez zmian):
+- **(a) Tabela przeskalowania ładowności kadłubów gracza — PROPOZYCJA do zatwierdzenia przez użytkownika (danych
+  nie zmieniono).** Ramy użytkownika (2026-10-27): „Megafrachtowiec jak klasa mega 2400 t, kapitałowe 300–600 t”,
+  Atlas 400 t jako punkt odniesienia, reszta wg rozmiaru i roli (fregaty — mało). Kadłuby i rozmiar (dłuższy bok
+  rysunku, `getHullRenderSize`) z `src/data/playerHullCatalog.js`; luk = kontenery ładowni z geometrii
+  (`cargoCapacityTable`, obraz).
 
-  | Kadłub | Dziś [t] | Luk [kontenery] | A: proporcja luku (Atlas 400 t / 1200 = 0,33 t na kontener), nie mniej niż dziś | B: role (ładownia okrętu wojennego, frachtowiec = klasa ruchu) |
-  |---|---|---|---|---|
-  | Custos / Marauder / Corvus | 16 / 12 / 24 | 6 / 1 / — | bez zmian | bez zmian |
-  | Hasta / Reaver | 30 / 22 | 9 / 8 | bez zmian | 40 / 30 |
-  | Bellator / Iron Skull | 40 / 32 | 136 / 84 | 45 / 32 | 150 / 120 |
-  | Citadella | 80 | 528 | 176 | 300 |
-  | Colossus | 120 | 560 | 187 | 450 |
-  | Atlas | 400 | 1200 | 400 | 400 |
-  | Megafreighter | 600 | 6 wagonów | 2400 (klasa mega ruchu) | 2400 |
+  | id | Nazwa | Klasa / rola | Długość [j.] | Luk [kont.] | cargoCap dziś [t] | Proponowany [t] | Uzasadnienie |
+  |---|---|---|---|---|---|---|---|
+  | `pirate_frigate` | Marauder | fregata (piracka, zdobyczna) | 192 | 1 | 12 | 15 | Najmniejszy kadłub z jednym kontenerem w luku — tylko łup z jednej paczki. |
+  | `frigate` | Custos | fregata Terra Nova | 192 | 6 | 16 | 20 | Fregata eskortowa: ładownia na części i amunicję, nie na handel. |
+  | `corvus` | Corvus | fregata rakietowa (niezależna) | 216 | — | 24 | 25 | Nieco większa od Custosa; magazyny rakiet zjadają resztę kadłuba. |
+  | `pirate_destroyer` | Reaver | niszczyciel (piracki) | 360 | 8 | 22 | 40 | Piracki rajder: większy od Hasty i żyje z łupu — ładownia większa niż dziś. |
+  | `destroyer` | Hasta | niszczyciel Terra Nova | 288 | 9 | 30 | 40 | Niszczyciel — dwa razy fregata; nadal nie frachtowiec. |
+  | `battleship` | Bellator | pancernik Terra Nova | 624 | 136 | 40 | 150 | Pancernik (rynek: klasa `battleship`, poniżej kapitałowych) — luk na 136 kontenerów; pierwszy kadłub, którym da się sensownie zbierać łup. |
+  | `pirate_battleship` | Iron Skull | pancernik piracki | 720 | 84 | 32 | 180 | Większy od Bellatora i piracki — ładownia na łup, choć luk mniejszy. |
+  | `carrier` | Citadella | lotniskowiec floty (kapitałowy) | 1080 | 528 | 80 | 300 | Dolna granica kapitałowych — hangary myśliwców zabierają miejsce ładunkowi. |
+  | `atlas` | Atlas | niezależny superkapitał (start) | 1800 | 1200 | 400 | 400 | Punkt odniesienia (D1). |
+  | `supercapital` | Colossus | superkapitał Terra Nova | 1560 | 560 | 120 | 500 | Największy okręt wojenny; ponad Atlasem, poniżej górnej granicy 600 t (okręt liniowy, nie transportowiec). |
+  | `megafreighter` | Megafreighter | pociąg towarowy (przemysłowy) | 2760 × 8 modułów | 6 wagonów | 600 | 2400 | Klasa `mega` ruchu (`VAN_CLASSES`: 2400 t) — ten sam frachtowiec co w ruchu v2. |
 
-  Rekomendacja: Megafreighter 2400 t w obu wariantach (to frachtowiec — klasa `mega` ruchu); okręty — A (spójne
-  z obrazem luku: luk wypełnia się masa / ładowność), Atlas zostaje okrętem z największą ładownią wśród wojennych.
+  Skutki (pomiar 2026-10-27; ceny, handel, kopalnia, cięcie, naprawa):
+  - **Ceny** (`src/data/playerHullMarket.js`, `tests/playerHullMarket.test.mjs` „ceny rosną z możliwościami”): ceny
+    to stałe, ładowność do nich NIE wchodzi; test sprawdza tylko kolejność cen (fregata < niszczyciel < pancernik <
+    lotniskowiec < megafrachtowiec < superkapitał, pirackie taniej) — tabela go nie łamie. Megafrachtowiec za 36 tys.
+    dostaje 6× ładowność Atlasa (sens dla frachtowca); Iron Skull ma większą ładownię niż droższy Bellator — celowa
+    nisza piracka.
+  - **Handel** (świat ruchu po 1 h, ziarna 7 / 11 / 23, najlepszy kurs z księgi rynku): 150–500 t daje TEN SAM
+    najlepszy kurs co 400 t (13,5–23,6 tys. CR zysku — kurs ogranicza głębokość rynku, nie ładownia), 20 t —
+    10,8–13,5 tys. Ładownia 2400 t: 48,9–71,1 tys. CR zysku na kurs, ale wymaga 92–98 tys. CR kapitału. Czyli dla
+    okrętów 150–500 t zmiana handlu jest mała; megafrachtowiec staje się prawdziwym transportowcem dla bogatego gracza.
+  - **Kopalnia** (`asteroidMiningRig.js`, limit `getPlayerCargoFree` każdego kadłuba): skała miedzi ~140 t rudy →
+    „ładownia pełna” po ~1 skale (Bellator 150 t), ~2 (Citadella), ~3,6 (Colossus), ~17 skałach (megafrachtowiec).
+  - **Cięcie wraku w polu** (~5 t/s): pełna ładownia po ~30 s (Bellator), ~60 s (Citadella), ~100 s (Colossus),
+    ~8 min (megafrachtowiec) — hamulec „ładownia pełna” praktycznie znika dla kapitałowych.
+  - **Naprawa w polu** (drony R biorą stal z ładowni): ładownia przestaje ograniczać naprawę także na kapitałowych
+    (jak przy Atlasie, § 6 wyżej); skład naprawczy — do decyzji po grze.
+  - **Przesiadka** z ładunkiem ponad ładowność nowego kadłuba — odmowa w hangarze (przegląd K1 #7), więc zmniejszenie
+    ładowności przy przesiadce nie gubi towaru.
 - **(b) Cięcie wraku w polu** (`updateFieldSalvage`, `FIELD_CUT_SHARDS_PER_SECOND` 34 heksów/s, ~0,15 t złomu i stali
   na heks): ~5 t/s, więc „ładownia pełna” przy 20 t przychodziła po ~4 s, przy 400 t — po ~80 s cięcia. Hamulec
   ładowni praktycznie znika; zostaje czas stania przy wraku (cięcie w zasięgu 900 j., w polu bitwy). Opcje: bez zmian
