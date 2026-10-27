@@ -21,7 +21,10 @@ import pirateFrigateImg from '../assets/ships/piratefrigate.png';
 import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 
-/** Ładowność Atlasa [t] (kontenery-łup D1, 2026-10-27; wcześniej 20 t z BASE_PLAYER_PROFILE). */
+/**
+ * Ładowność Atlasa [t] (kontenery-łup D1, 2026-10-27; wcześniej 20 t z BASE_PLAYER_PROFILE). Ładowności pozostałych
+ * kadłubów (`cargoCap` niżej) — tabela zatwierdzona przez użytkownika 2026-10-27 (docs/PROPOZYCJA-kontenery-lup.md § 6 a).
+ */
 export const ATLAS_CARGO_CAP = 400;
 
 export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
@@ -81,7 +84,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: terranFrigateImg,
       size: { w: frigateSize.w, h: frigateSize.h },
       spriteScale: 1.0,
-      cargoCap: 16,
+      cargoCap: 20,
       hullMax: Math.max(2200, Number(frigate?.stats?.hp) || 2200),
       shield: {
         max: Math.max(900, Number(frigate?.shield?.max) || 900),
@@ -111,7 +114,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: terranFrigateImg,
       size: { w: corvusSize.w, h: corvusSize.h },
       spriteScale: 1.0,
-      cargoCap: 24,
+      cargoCap: 25,
       hullMax: 3000,
       shield: { max: 1600, regenRate: 145, regenDelay: 3.0 },
       mass: 12000,
@@ -137,7 +140,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: pirateFrigateImg,
       size: { w: frigateSize.w, h: frigateSize.h },
       spriteScale: 1.0,
-      cargoCap: 12,
+      cargoCap: 15,
       hullMax: 2600,
       shield: { max: 700, regenRate: 95, regenDelay: 3.4 },
       mass: 9500,
@@ -163,7 +166,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: terranDestroyerImg,
       size: { w: destroyerSize.w, h: destroyerSize.h },
       spriteScale: 1.0,
-      cargoCap: 30,
+      cargoCap: 40,
       hullMax: Math.max(6200, Number(destroyer?.stats?.hp) || 6200),
       shield: {
         max: Math.max(2200, Number(destroyer?.shield?.max) || 2200),
@@ -193,7 +196,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: pirateDestroyerImg,
       size: { w: destroyerSize.w, h: destroyerSize.h },
       spriteScale: 1.0,
-      cargoCap: 22,
+      cargoCap: 40,
       hullMax: 6500,
       shield: { max: 1600, regenRate: 150, regenDelay: 4.0 },
       mass: 23000,
@@ -219,7 +222,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: terranBattleshipImg,
       size: { w: battleshipSize.w, h: battleshipSize.h },
       spriteScale: 1.0,
-      cargoCap: 40,
+      cargoCap: 150,
       hullMax: Math.max(14000, Number(battleship?.stats?.hp) || 14000),
       shield: {
         max: Math.max(7200, Number(battleship?.shield?.max) || 7200),
@@ -249,7 +252,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: pirateBattleshipImg,
       size: { w: battleshipSize.w, h: battleshipSize.h },
       spriteScale: 1.0,
-      cargoCap: 32,
+      cargoCap: 180,
       hullMax: 15000,
       shield: { max: 5200, regenRate: 230, regenDelay: 4.8 },
       mass: 48000,
@@ -275,7 +278,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: terranCarrierImg,
       size: { w: carrierSize.w, h: carrierSize.h },
       spriteScale: 1.0,
-      cargoCap: 80,
+      cargoCap: 300,
       hullMax: Math.max(42000, Number(carrier?.hull) || 42000),
       shield: {
         max: Math.max(28000, Number(carrier?.shield) || 28000),
@@ -305,7 +308,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: terranSupercapitalImg,
       size: { w: supercapitalSize.w, h: supercapitalSize.h },
       spriteScale: 1.0,
-      cargoCap: 120,
+      cargoCap: 500,
       hullMax: Math.max(85000, Number(supercapital?.hull) || 85000),
       shield: {
         max: Math.max(52000, Number(supercapital?.shield) || 52000),
@@ -335,7 +338,7 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: MEGAFREIGHTER_TRAIN_MODULES[0]?.spriteSrc || megafreighter?.profile?.spriteSrc,
       size: { w: megafreighterSize.w, h: megafreighterSize.h },
       spriteScale: 1.0,
-      cargoCap: 600,
+      cargoCap: 2400,
       hullMax: Math.max(160000, Number(megafreighter?.hull) || 160000),
       shield: { max: 0, regenRate: 0, regenDelay: 1 },
       mass: Math.max(900000, Number(megafreighter?.mass) || 900000),

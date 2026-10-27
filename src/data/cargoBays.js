@@ -123,27 +123,27 @@ export const CARGO_BAY_HULLS = Object.freeze({
   terran_frigate: hull({
     label: 'Custos', family: 'terra', sprite: 'src/assets/ships/terranfrigate.png', png: { w: 2400, h: 1792 },
     renderLength: 192, profile: 'terran_frigate', editorKey: 'frigate', bridgeKey: 'frigate',
-    cargoToday: 16, todayNote: 'cargoCap gracza',
+    cargoToday: 20, todayNote: 'cargoCap gracza',
     // Grzbiet między blokiem dowodzenia a widłami dziobu (kratka wentylacji).
     bays: [bay({ id: 'grzbiet', label: 'Luk grzbietowy', x: 82, y: 0, w: 680, h: 264, door: 'over', leaves: 2 })]
   }),
   terran_destroyer: hull({
     label: 'Hasta', family: 'terra', sprite: 'src/assets/ships/terrandestroyer.png', png: { w: 768, h: 573 },
     renderLength: 288, profile: 'terran_destroyer', editorKey: 'destroyer', bridgeKey: 'destroyer',
-    cargoToday: 30, todayNote: 'cargoCap gracza',
+    cargoToday: 40, todayNote: 'cargoCap gracza',
     bays: [bay({ id: 'grzbiet', label: 'Luk grzbietowy', x: -4, y: 0, w: 146, h: 92, door: 'over', leaves: 2 })]
   }),
   terran_battleship: hull({
     label: 'Bellator', family: 'terra', sprite: 'src/assets/ships/terranbattleship.png', png: { w: 1158, h: 714 },
     renderLength: 624, profile: 'terran_battleship', editorKey: 'battleship', bridgeKey: 'battleship',
-    cargoToday: 40, todayNote: 'cargoCap gracza',
+    cargoToday: 150, todayNote: 'cargoCap gracza',
     // Rynna grzbietowa przed mostkiem — skrzydła chowają się pod pancerz skrzydeł kadłuba.
     bays: [bay({ id: 'rynna', label: 'Rynna grzbietowa', x: 140, y: 0, w: 560, h: 72, door: 'pocket', module: { ny: 2, nz: 2 } })]
   }),
   terran_carrier: hull({
     label: 'Citadella', family: 'terra', sprite: 'src/assets/ships/terrancarrier.png', png: { w: 1672, h: 941 },
     renderLength: 1080, profile: 'terran_carrier', editorKey: 'terran_carrier', bridgeKey: 'terran_carrier',
-    cargoToday: 80, todayNote: 'cargoCap gracza',
+    cargoToday: 300, todayNote: 'cargoCap gracza',
     // Dwa pokłady windowe lotniskowca (ciemne płyty z okręgami) — luki na obu burtach.
     bays: [
       bay({ id: 'lewa', label: 'Pokład lewy', x: 38, y: -158, w: 592, h: 107, door: 'pocket', module: { nx: 2, ny: 2, nz: 2 } }),
@@ -153,7 +153,7 @@ export const CARGO_BAY_HULLS = Object.freeze({
   terran_supercapital: hull({
     label: 'Colossus', family: 'terra', sprite: 'src/assets/ships/terransupercapital.png', png: { w: 1672, h: 941 },
     renderLength: 1560, profile: 'terran_supercapital', editorKey: 'terran_supercapital', bridgeKey: 'terran_supercapital',
-    cargoToday: 120, todayNote: 'cargoCap gracza',
+    cargoToday: 500, todayNote: 'cargoCap gracza',
     // Rufowy grzbiet za nadbudówką TERRA NOVA, przed dyszami.
     bays: [bay({ id: 'rufa', label: 'Hangar rufowy', x: -528, y: 0, w: 504, h: 112, door: 'over', leaves: 2, module: { nx: 2, ny: 2, nz: 2 } })]
   }),
@@ -161,19 +161,19 @@ export const CARGO_BAY_HULLS = Object.freeze({
   pirate_frigate: hull({
     label: 'Marauder', family: 'piraci', sprite: 'src/assets/ships/piratefrigate.png', png: { w: 1942, h: 809 },
     renderLength: 192, profile: 'pirate_frigate', editorKey: 'pirate_frigate', bridgeKey: 'pirate_frigate',
-    cargoToday: 12, todayNote: 'cargoCap gracza',
+    cargoToday: 15, todayNote: 'cargoCap gracza',
     bays: [bay({ id: 'luk', label: 'Luk IRON SKULL', x: 128, y: 13, w: 318, h: 102, door: 'pocket' })]
   }),
   pirate_destroyer: hull({
     label: 'Reaver', family: 'piraci', sprite: 'src/assets/ships/piratedestroyer.png', png: { w: 1840, h: 854 },
     renderLength: 360, profile: 'pirate_destroyer', editorKey: 'pirate_destroyer', bridgeKey: 'pirate_destroyer',
-    cargoToday: 22, todayNote: 'cargoCap gracza',
+    cargoToday: 40, todayNote: 'cargoCap gracza',
     bays: [bay({ id: 'luk', label: 'Luk IRON SKULL', x: 104, y: -9, w: 356, h: 132, door: 'pocket' })]
   }),
   pirate_battleship: hull({
     label: 'Iron Skull', family: 'piraci', sprite: 'src/assets/ships/piratebattleship.png', png: { w: 1727, h: 911 },
     renderLength: 720, profile: 'pirate_battleship', editorKey: 'pirate_battleship', bridgeKey: 'pirate_battleship',
-    cargoToday: 32, todayNote: 'cargoCap gracza',
+    cargoToday: 180, todayNote: 'cargoCap gracza',
     bays: [bay({ id: 'luk', label: 'Luk IRON SKULL', x: 168, y: -8, w: 318, h: 140, door: 'pocket', module: { ny: 2, nz: 2 } })]
   }),
   // --- Frachtowce (Z11, puste pokłady): pokrywy luków to namalowane zatoki ---
@@ -218,7 +218,7 @@ export const CARGO_BAY_HULLS = Object.freeze({
   megafreighter_wagon: hull({
     label: 'Wagon megafrachtowca', family: 'frachtowce', sprite: 'assets/ships/megafreighterwagon_empty.png', png: { w: 1672, h: 941 },
     renderLength: 2760, profile: null, editorKey: null, bridgeKey: null,
-    cargoToday: 100, todayNote: 'cargoCap składu gracza 600 / 6 wagonów (klasa ruchu mega 2400)',
+    cargoToday: 400, todayNote: 'cargoCap składu gracza 2400 / 6 wagonów (= klasa ruchu mega)',
     bays: [
       bay({ id: 'lewa', label: 'Luki lewe', x: -6, y: -101, w: 908, h: 144, door: 'pocket', module: { nx: 4, ny: 4, nz: 2 } }),
       bay({ id: 'prawa', label: 'Luki prawe', x: -6, y: 105, w: 908, h: 144, door: 'pocket', module: { nx: 4, ny: 4, nz: 2 } })

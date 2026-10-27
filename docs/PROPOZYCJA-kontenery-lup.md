@@ -377,8 +377,9 @@ Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) 
 - **Łup:** zrzut pełnego dalekiego frachtowca (209 t) mieści się w całości, ciężkiego (495 t) — w 80%.
 - **D17 przy 400 t:** −96 t za zatokę dronów to 24% ładowności — za dużo. Propozycja: odliczenie proporcjonalne
   do miejsca w luku — zatoka zajmuje 6 ze 150 slotów luku (4%), czyli **−16 t** (albo okrągłe −20 t = 5%).
-- **(a) Tabela przeskalowania ładowności kadłubów gracza — PROPOZYCJA do zatwierdzenia przez użytkownika (danych
-  nie zmieniono).** Ramy użytkownika (2026-10-27): „Megafrachtowiec jak klasa mega 2400 t, kapitałowe 300–600 t”,
+- **(a) Tabela ładowności kadłubów gracza — ZATWIERDZONA przez użytkownika 2026-10-27 („Zatwierdzam tabelę
+  ładowności kadłubów gracza w tej postaci (Bellator 150 t, Iron Skull 180 t).”), w danych:
+  `src/data/playerHullCatalog.js` (`cargoCap`) i lustro `cargoToday` w `src/data/cargoBays.js`.** Ramy użytkownika (2026-10-27): „Megafrachtowiec jak klasa mega 2400 t, kapitałowe 300–600 t”,
   Atlas 400 t jako punkt odniesienia, reszta wg rozmiaru i roli (fregaty — mało). Kadłuby i rozmiar (dłuższy bok
   rysunku, `getHullRenderSize`) z `src/data/playerHullCatalog.js`; luk = kontenery ładowni z geometrii
   (`cargoCapacityTable`, obraz).

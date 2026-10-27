@@ -35,7 +35,7 @@ paths:
 
 - Nowa ścieżka zniszczenia statku ruchu z ładunkiem w grze → `spillTrafficCargo(manifest, kurs, poza, ruch, obrys, środek wybuchu)` (inaczej ładunek przepada bez śladu).
 - Krok puli tylko w `physicsStep` (`stepLoot` po `stepTrafficRam` — pauza i sceny stoją); bez alokacji w kroku (cele wiązki w tablicach typowanych).
-- Limit chwytu i przepełnienie liczą się z prawdziwego `cargoCap` kadłuba (`getPlayerCargoFree`). Atlas: 400 t (`ATLAS_CARGO_CAP`, D1 — decyzja użytkownika 2026-10-27); luk pokazuje wypełnienie masa / 400 t. Skutki dla handlu, kopalni i naprawy: `docs/PROPOZYCJA-kontenery-lup.md` § 6.
+- Limit chwytu i przepełnienie liczą się z prawdziwego `cargoCap` kadłuba (`getPlayerCargoFree`). Atlas: 400 t (`ATLAS_CARGO_CAP`, D1 — decyzja użytkownika 2026-10-27); luk pokazuje wypełnienie masa / 400 t. Pozostałe kadłuby gracza — tabela zatwierdzona 2026-10-27 (Marauder 15, Custos 20, Corvus 25, Reaver i Hasta 40, Bellator 150, Iron Skull 180, Citadella 300, Colossus 500, Megafreighter 2400 t — klasa mega ruchu). Skutki dla handlu, kopalni i naprawy: `docs/PROPOZYCJA-kontenery-lup.md` § 6.
 
 ## Jak sprawdzać
 
