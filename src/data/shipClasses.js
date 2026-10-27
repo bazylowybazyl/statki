@@ -50,14 +50,33 @@ export const MOUNT_SIZES = WEAPON_SIZES;
  * propozycji (wzór TN mieści się w limicie z zapasem na rozbudowę).
  */
 export const SHIP_CLASSES = Object.freeze([
-  Object.freeze({ level: 1, roman: 'I', id: 'frigate', label: 'Fregata', areaMax: 10000, mountsMax: 12, heavyMax: 7, weaponSize: 'S', example: 'Custos' }),
-  Object.freeze({ level: 2, roman: 'II', id: 'destroyer', label: 'Niszczyciel', areaMax: 32000, mountsMax: 22, heavyMax: 13, weaponSize: 'M', example: 'Hasta' }),
-  Object.freeze({ level: 3, roman: 'III', id: 'cruiser', label: 'Krążownik', areaMax: 90000, mountsMax: 26, heavyMax: 15, weaponSize: 'M', example: '' }),
-  Object.freeze({ level: 4, roman: 'IV', id: 'battleship', label: 'Pancernik', areaMax: 200000, mountsMax: 38, heavyMax: 22, weaponSize: 'L', example: 'Bellator' }),
-  Object.freeze({ level: 5, roman: 'V', id: 'capital', label: 'Kapitał', areaMax: 420000, mountsMax: 44, heavyMax: 26, weaponSize: 'L', example: 'Citadella' }),
-  Object.freeze({ level: 6, roman: 'VI', id: 'supercapital', label: 'Superkapitał', areaMax: 900000, mountsMax: 60, heavyMax: 32, weaponSize: 'Capital', example: 'Colossus' })
+  Object.freeze({ level: 1, roman: 'I', id: 'frigate', label: 'Fregata', civil: 'Prom', areaMax: 10000, mountsMax: 12, heavyMax: 7, weaponSize: 'S', example: 'Custos' }),
+  Object.freeze({ level: 2, roman: 'II', id: 'destroyer', label: 'Niszczyciel', civil: 'Frachtowiec lekki', areaMax: 32000, mountsMax: 22, heavyMax: 13, weaponSize: 'M', example: 'Hasta' }),
+  Object.freeze({ level: 3, roman: 'III', id: 'cruiser', label: 'Krążownik', civil: 'Frachtowiec', areaMax: 90000, mountsMax: 26, heavyMax: 15, weaponSize: 'M', example: '' }),
+  Object.freeze({ level: 4, roman: 'IV', id: 'battleship', label: 'Pancernik', civil: 'Frachtowiec ciężki', areaMax: 200000, mountsMax: 38, heavyMax: 22, weaponSize: 'L', example: 'Bellator' }),
+  Object.freeze({ level: 5, roman: 'V', id: 'capital', label: 'Kapitał', civil: 'Transportowiec', areaMax: 420000, mountsMax: 44, heavyMax: 26, weaponSize: 'L', example: 'Citadella' }),
+  Object.freeze({ level: 6, roman: 'VI', id: 'supercapital', label: 'Superkapitał', civil: 'Megafrachtowiec', areaMax: 900000, mountsMax: 60, heavyMax: 32, weaponSize: 'Capital', example: 'Colossus' })
 ]);
 export const SHIP_CLASS_MAX = SHIP_CLASSES.length;
+
+/**
+ * ROLA okrętu (decyzja użytkownika 2026-10-27): 'military' — okręt wojenny (drabina wyżej), 'civil' — statek cywilny
+ * (frachtowce): te same progi powierzchni I–VI (gra daje frachtowcom ruchu mostek z tych progów), nazwy cywilne (`civil`),
+ * bez tarczy w bilansie mocy (frachtowce bez tarczy i pancerza — FREIGHTER_BUILD), bez wymogu broni, a klasa VI
+ * (megafrachtowiec) bez górnego limitu powierzchni.
+ */
+export const SHIP_ROLES = Object.freeze(['military', 'civil']);
+export const isCivilRole = (role) => role === 'civil';
+/** Nazwa klasy dla roli (cywilna — `civil`). */
+export function shipClassLabel(level, role) {
+  const c = shipClass(level);
+  return isCivilRole(role) ? c.civil : c.label;
+}
+/** Limit powierzchni klasy dla roli: cywilna klasa VI bez górnego limitu (megafrachtowce). */
+export function shipClassAreaMax(level, role) {
+  const c = shipClass(level);
+  return isCivilRole(role) && c.level === SHIP_CLASS_MAX ? Infinity : c.areaMax;
+}
 
 /**
  * POZIOMY RDZENIA (R1–R6): moc [MW] po kalibracji na domyślnych uzbrojeniach NPC (wzór — preset TN klasy, ~20% zapasu).
@@ -196,9 +215,10 @@ export function weaponsForMount(slot, size, { npc = false } = {}) {
  * { mounts, heavy, bySlot, oversize (gniazda ponad rozmiar klasy), badWeapon (broń ponad rozmiar klasy) }, issues:
  * [{ code: 'area' | 'mounts' | 'heavy' | 'size' | 'weapon' | 'core', text }] }.
  */
-export function shipClassCheck({ bridgeLevel, coreLevel: coreLv, area, mounts = [] }) {
+export function shipClassCheck({ bridgeLevel, coreLevel: coreLv, area, mounts = [], role = 'military' }) {
   const cls = shipClass(bridgeLevel);
   const core = coreLevel(coreLv);
+  const areaMax = shipClassAreaMax(cls.level, role);
   const bySlot = {};
   let heavy = 0, oversize = 0, badWeapon = 0;
   for (const m of mounts) {
@@ -209,19 +229,19 @@ export function shipClassCheck({ bridgeLevel, coreLevel: coreLv, area, mounts = 
   }
   const issues = [];
   const fmt = (v) => Math.round(v).toLocaleString('pl-PL');
-  if (area > cls.areaMax) issues.push({ code: 'area', text: `Powierzchnia ${fmt(area)} j² ponad limit mostka ${cls.roman} (${fmt(cls.areaMax)} j²).` });
+  if (area > areaMax) issues.push({ code: 'area', text: `Powierzchnia ${fmt(area)} j² ponad limit mostka ${cls.roman} (${fmt(areaMax)} j²).` });
   if (mounts.length > cls.mountsMax) issues.push({ code: 'mounts', text: `Gniazd ${mounts.length} ponad limit mostka ${cls.roman} (${cls.mountsMax}).` });
   if (heavy > cls.heavyMax) issues.push({ code: 'heavy', text: `Gniazd ciężkich ${heavy} ponad limit mostka ${cls.roman} (${cls.heavyMax}).` });
   if (oversize) issues.push({ code: 'size', text: `${oversize} gniazd większych niż ${cls.weaponSize} (mostek ${cls.roman}).` });
   if (badWeapon) issues.push({ code: 'weapon', text: `${badWeapon} broni większych niż ${cls.weaponSize} (mostek ${cls.roman}).` });
   if (core.level > coreLevelMax(cls.level)) issues.push({ code: 'core', text: `Rdzeń R${core.level} nie mieści się w kadłubie z mostkiem ${cls.roman} (najwyżej R${coreLevelMax(cls.level)}).` });
-  return { cls, core, area, counts: { mounts: mounts.length, heavy, bySlot, oversize, badWeapon }, issues };
+  return { cls, core, area, areaMax, counts: { mounts: mounts.length, heavy, bySlot, oversize, badWeapon }, issues };
 }
 
 /** Najniższa klasa, w której mieści się powierzchnia, gniazda i ich rozmiar (poza drabiną → SHIP_CLASS_MAX). */
-export function classForHull(area, mounts = []) {
+export function classForHull(area, mounts = [], role = 'military') {
   for (const c of SHIP_CLASSES) {
-    if (!shipClassCheck({ bridgeLevel: c.level, coreLevel: c.level, area, mounts }).issues.length) return c.level;
+    if (!shipClassCheck({ bridgeLevel: c.level, coreLevel: c.level, area, mounts, role }).issues.length) return c.level;
   }
   return SHIP_CLASS_MAX;
 }

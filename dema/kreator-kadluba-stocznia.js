@@ -2,7 +2,7 @@
 //
 // STOCZNIA — przyjazny edytor kadłuba: domyślny interfejs dema kreatora (dema/kreator-kadluba-webgpu.html; pełny panel
 // narzędzi to „Warsztat”, `?ui=warsztat`). Wzór: edytory statków i pojazdów ze Spore'a. Z lewej paleta kart
-// z miniaturami (Kształty, Systemy, Uzbrojenie, Detale, Malowanie): kartę przeciąga się na okręt, przy włączonej
+// z miniaturami (Kształty, Systemy, Ładunek, Uzbrojenie, Detale, Malowanie): kartę przeciąga się na okręt, przy włączonej
 // symetrii kopia staje sama po drugiej burcie. Na okręcie element pod kursorem świeci, przeciągnięcie przesuwa
 // (Shift przy chwytaniu — kopia), upuszczenie z powrotem na paletę usuwa, kółko nad zaznaczonym zmienia rozmiar, pasek
 // nad zaznaczeniem: obrót, odbicie, warstwa, wycięcie, rozmiar, powielenie, usunięcie. Bez siatki i kolorowych obrysów —
@@ -14,6 +14,9 @@
 // własny znak bez czaszek), PĘDZEL — karta slotu barwy (płyta, nadbudówka, linia, akcent, …), własnej barwy (kolor
 // naklejek) albo gumki: klik albo przeciągnięcie po klockach i kasztelach maluje ich płyty (`paint`), jedno pociągnięcie
 // = jeden wpis cofania. Zmiany barw idą ścieżką barw dema (runColors: same passy barw kompozytora).
+// STATKI CYWILNE: „Od zera” ma drugi wiersz klas (prom … megafrachtowiec — długi wąski kil, barwy frachtowca), karta okrętu
+// przełącza rolę (Wojskowy / Cywilny: nazwy klas, ładowność z receptury, ładownia na liście kontrolnej), karta „Ładunek”
+// — ładownie, stelaże, zasobniki i zbiorniki ładunku oraz suwak załadunku (wygląd: ścieżka wyglądu dema, bez przebudowy).
 // Miniatury kart piecze kompozytor okrętu w barwach i stylu projektu (api.composerExclusive — między wypiekami
 // projektu), do czasu wypieku karta ma rysunek wektorowy.
 // Z dema bierze tylko `api` (shipyardApi w dema/kreator-kadluba-webgpu.js). Zakończona zmiana projektu → requestBuild(false)
@@ -28,14 +31,16 @@ import {
 } from '../src/game/hullDesign/hullDesignSchema.js';
 import { HD_PARTS, HD_PART_IDS } from '../src/game/hullDesign/hullDesignParts.js';
 import { HD_EMBLEMS, HD_EMBLEM_KEYS } from '../src/game/hullDesign/hullEmblems.js';
-import { HD_PRESETS, HD_PRESET_KEYS } from '../src/game/hullDesign/hullDesignPresets.js';
+import { HD_PRESETS, HD_PRESET_GROUPS, HD_PRESET_KEYS } from '../src/game/hullDesign/hullDesignPresets.js';
+import { hullCargoBox, hullCargoFit } from '../src/game/hullDesign/hullDesignCargo.js';
 import { buildHullField, hullFrameIntegrity, loopDistance, sampleHullField } from '../src/game/hullDesign/hullDesignGeometry.js';
 import { buildHullDecalAtlas } from '../src/3d/hullDesign/hullDecalAtlas.js';
 import { bridgeLevel } from '../src/data/bridgeLevels.js';
 import {
-  CORE_LEVELS, MOUNT_SIZES, MOUNT_SLOT_LABELS, SHIP_CLASSES, coreLevelMax, mountPowerMW, shipClass, sizeRank, weaponPowerMW,
-  weaponsForMount
+  CORE_LEVELS, MOUNT_SIZES, MOUNT_SLOT_LABELS, SHIP_CLASSES, coreLevelMax, isCivilRole, mountPowerMW, shipClass, shipClassLabel,
+  shipClassCheck, sizeRank, weaponPowerMW, weaponsForMount
 } from '../src/data/shipClasses.js';
+import { hullDesignLimitBreach } from '../src/game/hullDesign/hullDesignClass.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 
 const ACCENT = '#ffb54a';
@@ -49,6 +54,12 @@ const LEVELS = [
 ];
 /** Wielkości okrętu od zera: detal floty TN danej klasy (Custos, Hasta, —, Bellator, Citadella, Colossus). */
 const NEW_SHIP_DETAIL = [0.09, 0.145, 0.23, 0.366, 0.63, 0.906];
+/**
+ * Statki cywilne od zera: typowa długość klasy I–VI [j.] (prom … megafrachtowiec); detal = długość / 1700 (jak sprite'y:
+ * ~1700 px na okręt), kil — długi i wąski (frachtowce są smuklejsze niż okręty).
+ */
+const NEW_CIVIL_LENGTH = [80, 250, 500, 850, 1250, 2500];
+const civilDetail = (lv) => Math.max(HD_DETAIL.min, Math.min(HD_DETAIL.max, NEW_CIVIL_LENGTH[lv - 1] / 1700));
 const DECAL_COLORS = ['#d06a22', '#b8342a', '#d8b83a', '#e9e5dc', '#3b3a37', '#6b7a3a'];
 /** Pędzel: sloty barw palety po ludzku (HD_PAINT_SLOTS). */
 const BRUSH_LABELS = {
@@ -64,8 +75,16 @@ const SYSTEMS = [
   ['engine', 'Silnik główny', 'Gondola MAIN — ciąg naprzód (na rufie)'],
   ['thruster_side', 'Dysza manewrowa', 'SIDE — obrót i manewry (przy burcie)'],
   ['fuel_tank', 'Zbiornik paliwa', 'Paliwo dla reaktora i silników'],
-  ['cargo', 'Ładownia', 'Miejsce na ładunek'],
   ['hangar', 'Wrota hangaru', 'Start i lądowanie myśliwców']
+];
+/** Ładunek (statki cywilne): [typ, wariant v, n, etykieta, podpowiedź] — src/game/hullDesign/hullDesignCargo.js. */
+const CARGO = [
+  ['cargo', 0, 0, 'Ładownia — wrota', 'Kontenery pod rozsuwanymi wrotami'],
+  ['cargo', 1, 0, 'Ładownia — klapa', 'Kontenery pod klapą'],
+  ['cargo', 2, 0, 'Stelaż kontenerów', 'Otwarty pokład: kontenery na wierzchu (widać załadunek)'],
+  ['cargo', 3, 2, 'Zasobniki', 'Pudła 2 × 2 kontenery na wierzchu'],
+  ['cargo_tank', 0, 1, 'Zbiornik ładunku — walce', 'Ciecz i gaz w walcach (tankowiec)'],
+  ['cargo_tank', 1, 1, 'Zbiornik ładunku — kule', 'Gaz w kulach (gazowiec)']
 ];
 const WEAPONS = [
   ['turret_s', null, 'Wieża S', 'Lekka wieża (gniazdo główne S)'],
@@ -85,10 +104,38 @@ const DETAILS = [
 const CATS = [
   { id: 'ksztalty', label: 'Kształty', icon: '<path d="M7 3h7l4 6-4 6H7L3 9z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><rect x="11" y="12" width="9" height="7" rx="1" fill="currentColor" opacity=".55"/>' },
   { id: 'systemy', label: 'Systemy', icon: '<circle cx="11" cy="11" r="7.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M11 5.5l1.6 4h-3.2zM6.2 14l3.2-2.5.9 1.6zM15.8 14l-4.1-.9.9-1.6z" fill="currentColor"/><circle cx="11" cy="11" r="1.6" fill="currentColor"/>' },
+  { id: 'ladunek', label: 'Ładunek', icon: '<rect x="3" y="11" width="7" height="7" rx="1" fill="currentColor" opacity=".55"/><rect x="11" y="11" width="8" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="7" y="4" width="8" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/>' },
   { id: 'bron', label: 'Uzbrojenie', icon: '<circle cx="9" cy="13" r="5.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M11 10.5l8-6M12.6 12.4l7-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' },
   { id: 'detale', label: 'Detale', icon: '<rect x="3" y="4" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6 8h10M6 11h10M6 14h10" stroke="currentColor" stroke-width="1.4"/>' },
   { id: 'farba', label: 'Malowanie', icon: '<path d="M4 17c0-3 2-4 4-4s2.5 1 2.5 2.5S9 19 6.5 19 4 18 4 17z" fill="currentColor"/><path d="M9.5 12.5L18 4l1.5 1.5-8.5 8.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>' }
 ];
+
+/** Pół-wymiary modułu ładunku mieszczące `nx` × `ny` komórek siatki (hullCargoBox — wspólne z Warsztatem). */
+const cargoBox = (m, detail, nx, ny) => hullCargoBox(m, detail, nx, ny);
+/** Ładunek z karty większy niż domyślny moduł (na frachtowcu ładownia to większość kadłuba; kółko — mniejsza). */
+const CARGO_CARD_SCALE = 1.6;
+/**
+ * Moduł ładunku z karty: wymiary domyślne × CARGO_CARD_SCALE, co najmniej jedna komórka siatki (mały okręt — inaczej
+ * ładownia bez miejsca na kontener; hullCargoFit).
+ */
+function cargoFit(o, detail) {
+  if (o.type !== 'cargo' && o.type !== 'cargo_tank') return;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  o.w = r1((o.w || 0) * CARGO_CARD_SCALE); o.h = r1((o.h || 0) * CARGO_CARD_SCALE);
+  hullCargoFit(o, detail);
+}
+
+/**
+ * Opcje listy presetów `keys` pogrupowane <optgroup> wg HD_PRESET_GROUPS (Terra Nova, Statki cywilne, Inne — kolejność
+ * grup); preset bez grupy albo z nieznaną — w „Inne”, puste grupy pomijane. Wspólne ze Stocznią i Warsztatem.
+ */
+export function presetOptionsHtml(keys) {
+  const groupOf = (k) => (HD_PRESET_GROUPS[HD_PRESETS[k]?.group] ? HD_PRESETS[k].group : 'other');
+  return Object.keys(HD_PRESET_GROUPS).map((g) => {
+    const ks = keys.filter((k) => groupOf(k) === g);
+    return ks.length ? `<optgroup label="${esc(HD_PRESET_GROUPS[g])}">${ks.map((k) => `<option value="${k}">${esc(HD_PRESETS[k].label)}</option>`).join('')}</optgroup>` : '';
+  }).join('');
+}
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -100,11 +147,16 @@ function buildCatalog() {
   const items = [];
   for (const p of HD_BLOCK_PALETTE) items.push({ key: `blk:${p.id}`, cat: 'ksztalty', group: HD_BLOCK_PALETTE_GROUPS[p.group], kind: 'block', id: p.id, label: p.label, hint: 'Klocek kadłuba' });
   for (const [type, label, hint] of SYSTEMS) items.push({ key: `mod:${type}`, cat: 'systemy', group: 'Systemy okrętu', kind: 'module', type, label, hint, onHull: true });
+  for (const [type, v, n, label, hint] of CARGO) items.push({ key: `mod:${type}:v${v}`, cat: 'ladunek', group: type === 'cargo' ? 'Ładownie' : 'Zbiorniki ładunku', kind: 'module', type, v, n, label, hint, onHull: true });
   for (const [type, slot, label, hint] of WEAPONS) items.push({ key: `mod:${type}${slot ? `:${slot}` : ''}`, cat: 'bron', group: slot ? 'Gniazda broni' : 'Wieże', kind: 'module', type, slot, label, hint, onHull: true });
   for (const [type, label, hint] of DETAILS) items.push({ key: `mod:${type}`, cat: 'detale', group: 'Detale pancerza', kind: 'module', type, label, hint, onHull: true });
   items.push({ key: 'castle', cat: 'detale', group: 'Nadbudówki', kind: 'castle', label: 'Kasztel', hint: 'Schodkowa nadbudówka z fazami', onHull: true });
   for (const id of HD_PART_IDS) items.push({ key: `part:${id}`, cat: 'detale', group: 'Gotowe części Terra Novy', kind: 'part', id, label: HD_PARTS[id].label.replace(/ TN\b/, ''), hint: 'Gotowy fragment okrętu' });
-  for (const k of HD_PALETTE_KEYS) items.push({ key: `pal:${k}`, cat: 'farba', group: 'Barwy nacji', kind: 'paint', id: k, label: HD_PALETTES[k].label, hint: 'Kliknij: barwy i emblemat nacji' });
+  // palety z emblematem nacji osobno od barw cywilnych (bez emblematu: Cywilny, Frachtowiec)
+  for (const k of HD_PALETTE_KEYS) {
+    const nation = !!HD_PALETTE_EMBLEM[k];
+    items.push({ key: `pal:${k}`, cat: 'farba', group: nation ? 'Barwy nacji' : 'Barwy cywilne', kind: 'paint', id: k, label: HD_PALETTES[k].label, hint: nation ? 'Kliknij: barwy i emblemat nacji' : 'Kliknij: barwy cywilne (bez emblematu)' });
+  }
   for (const s of HD_PAINT_SLOTS) items.push({ key: `brush:${s}`, cat: 'farba', group: 'Pędzel', kind: 'brush', paint: s, label: BRUSH_LABELS[s], hint: 'Kliknij, potem maluj klocki i kasztele' });
   items.push({ key: 'brush:own', cat: 'farba', group: 'Pędzel', kind: 'brush', paint: 'own', label: 'Własna barwa', hint: 'Barwa z pola „Kolor” — maluj klocki i kasztele' });
   items.push({ key: 'brush:erase', cat: 'farba', group: 'Pędzel', kind: 'brush', paint: null, label: 'Gumka', hint: 'Zdejmij farbę pędzla z klocka' });
@@ -241,6 +293,7 @@ export function installShipyard(api) {
     if (item.kind === 'module') {
       if (item.type === 'mount') { S.mountSlot = item.slot; S.mountSize = U.mountSize; }
       const o = api.newModule(item.type, wx, wy, place);
+      if (o && item.v !== undefined) { o.v = item.v; if (item.n) o.n = item.n; cargoFit(o, d.detail || 0.6); }
       return o ? { kind: 'module', obj: o } : null;
     }
     if (item.kind === 'castle') return { kind: 'castle', obj: api.newCastle(wx, wy) };
@@ -1156,6 +1209,8 @@ export function installShipyard(api) {
       U.designRef = d;
       U.sel = []; U.hover = null; U.dupMemo = null;
       if (U.drag && U.drag.mode !== 'palette' && U.drag.mode !== 'pan') { U.drag = null; if (S.drag?.kind?.startsWith('stocznia')) S.drag = null; }
+      // nowy obiekt projektu (cofanie, ponowienie, straż limitów): suwaki opcji (załadunek) z nowych wartości
+      if (S.ui === 'stocznia' && U.cat === 'ladunek' && !S.drag) renderOpts();
       syncTop();
       return;
     }
@@ -1244,7 +1299,7 @@ export function installShipyard(api) {
     if (isBlock(r)) return cap(api.blockLabel(o));
     if (r.kind === 'module') {
       if (hullDesignMountOf(o) && o.type === 'mount') return `Gniazdo ${api.classModuleLabel(o, false)}`;
-      const it = items.find((i) => i.kind === 'module' && i.type === o.type);
+      const it = items.find((i) => i.kind === 'module' && i.type === o.type && (i.v === undefined || i.v === (o.v || 0)));
       return it ? it.label : (HD_MODULES[o.type]?.label || o.type);
     }
     if (r.kind === 'part') return HD_PARTS[o.id]?.label || 'Część';
@@ -1261,10 +1316,12 @@ export function installShipyard(api) {
     if (!c || !d || !S.field) return;
     if (document.activeElement?.classList?.contains('yname')) return;   // nie przerywać pisania nazwy
     const mountSel = U.sel.length === 1 && U.sel[0].kind === 'module' && hullDesignMountOf(U.sel[0].obj) ? U.sel[0].obj : null;
-    const key = `${S.builtRev}|${S.checksRev || 0}|${d.name}|${mountSel ? JSON.stringify(mountSel) : ''}|${U.sel.length}`;
+    const civil = isCivilRole(d.role);
+    const key = `${S.builtRev}|${S.checksRev || 0}|${d.name}|${d.role}|${mountSel ? JSON.stringify(mountSel) : ''}|${U.sel.length}`;
     if (key === U.statsKey) return;
     U.statsKey = key;
     const cls = c.check.cls, p = c.power, r = S.recipe;
+    const cargo = r?.cargo || null;
     const meter = (label, v, max, unit, fmt = fmtInt) => {
       const k = max > 0 ? v / max : 0;
       const tone = k > 1 ? 'bad' : (k > 0.9 ? 'warn' : '');
@@ -1280,23 +1337,36 @@ export function installShipyard(api) {
     const bridges = S.field.expanded.modules.filter((m) => m.type === 'bridge').length;
     const powerOk = !(c.deadMounts || p.deficit > 0) && !p.upkeepOver;
     const netOk = !nc || (!nc.freeEnds && !nc.unpowered.length && !nc.unfueled.length);
+    // nazwy klas wg roli (cywilne: prom … megafrachtowiec); wzór z floty TN tylko dla okrętów wojennych
     const brOpts = [`<option value="0">${c.levels.auto ? '✓ ' : ''}z rozmiaru (auto)</option>`]
-      .concat(SHIP_CLASSES.map((q) => `<option value="${q.level}">${q.roman} · ${q.label}</option>`)).join('');
+      .concat(SHIP_CLASSES.map((q) => `<option value="${q.level}">${q.roman} · ${shipClassLabel(q.level, d.role)}</option>`)).join('');
     const brMax = c.levels.bridge;
     const coreOpts = CORE_LEVELS.map((q) => `<option value="${q.level}" ${q.level > coreLevelMax(brMax) ? 'disabled' : ''}>R${q.level} · ${fmtInt(q.mw)} MW</option>`).join('');
+    const areaMax = c.check.areaMax ?? cls.areaMax;
+    const holds = S.field.expanded.modules.some((m) => m.type === 'cargo' || m.type === 'cargo_tank');
+    // ładowność (statki cywilne): miejsca na kontenery i tony (zbiorniki ładunku — tony bez kontenerów)
+    const cargoRow = () => {
+      const n = cargo?.containers || 0, t = cargo?.tonnes || 0;
+      const parts = [`${fmtInt(n)} ${n === 1 ? 'kontener' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'kontenery' : 'kontenerów')}`];
+      if (cargo?.tanks) parts.push(`${cargo.tanks} zb.`);
+      return `<div class="ymeter"><div class="ymh"><span>Ładowność</span><b>${parts.join(' · ')} <i>· ${fmtInt(t)} t</i></b></div></div>`;
+    };
     el.card.innerHTML = `
       <input class="yname" value="${esc(d.name || '')}" maxlength="40" spellcheck="false" title="Nazwa okrętu">
-      <div class="yclass"><div class="yroman">${cls.roman}</div><div><b>${cls.label}</b><small>${c.levels.auto ? 'klasa z rozmiaru kadłuba' : 'klasa z mostka'}${cls.example ? ` · wzór: ${cls.example}` : ''}</small></div></div>
+      <div class="yrole" role="radiogroup" title="Rola: nazwy klas, wymogi (broń, tarcza) i limity"><button data-role="military" class="${civil ? '' : 'on'}">Wojskowy</button><button data-role="civil" class="${civil ? 'on' : ''}">Cywilny</button></div>
+      <div class="yclass"><div class="yroman">${cls.roman}</div><div><b>${shipClassLabel(cls.level, d.role)}</b><small>${c.levels.auto ? 'klasa z rozmiaru kadłuba' : 'klasa z mostka'}${cls.example && !civil ? ` · wzór: ${cls.example}` : ''}</small></div></div>
       <div class="yrow2"><label>Mostek<select data-k="bridge">${brOpts}</select></label><label>Rdzeń<select data-k="core">${coreOpts}</select></label></div>
-      ${meter('Rozmiar kadłuba', c.area, cls.areaMax, 'j²')}
-      ${meter('Gniazda broni', c.check.counts.mounts, cls.mountsMax, '', (v) => String(Math.round(v)))}
+      ${Number.isFinite(areaMax) ? meter('Rozmiar kadłuba', c.area, areaMax, 'j²') : `<div class="ymeter"><div class="ymh"><span>Rozmiar kadłuba</span><b>${fmtInt(c.area)} <i>j² · bez limitu</i></b></div><div class="ybar"><i style="width:100%"></i></div></div>`}
+      ${civil ? cargoRow() : ''}
+      ${!civil || c.check.counts.mounts ? meter('Gniazda broni', c.check.counts.mounts, cls.mountsMax, '', (v) => String(Math.round(v))) : ''}
       ${meter('Pobór mocy', p.upkeep + p.demand, p.capacity, 'MW', fmtMW)}
-      <div class="ystat"><span>Napęd</span><b class="${p.drive < 0.85 ? 'warn' : ''}">×${p.drive.toFixed(2)}</b><span>Wartość</span><b>${r ? fmtInt(r.value) : '—'} CR</b><span>Masa</span><b>${r ? fmtInt(r.massT) : '—'} t</b></div>
+      <div class="ystat"><span>Napęd</span><b class="${p.drive < 0.85 ? 'warn' : ''}">×${p.drive.toFixed(2)}</b><span>Wartość</span><b>${r ? fmtInt(r.value) : '—'} CR</b><span>Masa</span><b>${r ? fmtInt(r.massT) : '—'} t</b>${civil ? `<span>Ładunek</span><b>${cargo ? fmtInt(cargo.tonnes) : '—'} t</b>` : ''}</div>
       <ul class="ycheck">
         ${check(sys?.cores.length > 0, 'Reaktor', 'przeciągnij z kart Systemy')}
         ${check(bridges > 0, 'Mostek', 'karta Systemy → Mostek')}
         ${check(sys?.mains.length > 0, 'Silnik główny', 'na rufie, karta Systemy')}
         ${check(sys?.tanks.length > 0, 'Zbiornik paliwa', 'karta Systemy')}
+        ${civil ? check(holds, 'Ładownia', 'karta Ładunek — ładownia, stelaż albo zbiornik') : ''}
         ${check(it.pieces.length === 1 && !it.holes.length, 'Kadłub w jednym kawałku', it.pieces.length > 1 ? `${it.pieces.length} kawałki — połącz klockami` : `${it.holes.length} szpar na wylot`)}
         ${check(powerOk, 'Wszystko zasilone', p.upkeepOver ? 'kadłub ponad moc rdzenia' : `niedobór ${fmtMW(p.deficit)} MW — większy rdzeń`)}
         ${check(netOk, 'Kable i rury podłączone', nc ? `wolne końce: ${nc.freeEnds}` : '')}
@@ -1318,7 +1388,28 @@ export function installShipyard(api) {
     return `<div class="ymount"><b>Gniazdo ${MOUNT_SLOT_LABELS[g.slot]} ${g.size}</b><small>pobór ${fmtMW(mountPowerMW(g.slot, g.size, g.weapon))} MW</small>
       <div class="yrow2"><label>Rozmiar<select data-k="msize">${sizes}</select></label><label>Broń<select data-k="weapon">${weapons}</select></label></div></div>`;
   }
+  /** Rola projektu: 'military' | 'civil' (nazwy klas, wymogi broni i tarczy, limit klasy VI) — jeden wpis cofania. */
+  function setRole(role) {
+    const d = design();
+    if (!d || (d.role || 'military') === role) return false;
+    // straż limitów przed zmianą (cywilna klasa VI nie ma limitu powierzchni — okręt wojenny go ma): odmowa zamiast
+    // komunikatu o sukcesie, który classGuard i tak by cofnął
+    const c = S.cls;
+    if (c) {
+      const why = hullDesignLimitBreach(c.check, shipClassCheck({ bridgeLevel: c.levels.bridge, coreLevel: c.levels.core, area: c.area, mounts: c.mounts, role }));
+      if (why) { toast(why, 'warn'); return false; }
+    }
+    d.role = role;
+    U.statsKey = '';
+    commit();
+    toast(role === 'civil' ? 'Statek cywilny: klasy cywilne, bez wymogu broni i tarczy, ładowność na karcie' : 'Okręt wojenny: klasy wojenne, tarcza w bilansie mocy');
+    return true;
+  }
   function bindCard() {
+    el.card.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-role]');
+      if (b) setRole(b.dataset.role);
+    });
     el.card.addEventListener('change', (e) => {
       const k = e.target.dataset.k;
       const d = design();
@@ -1369,6 +1460,11 @@ export function installShipyard(api) {
         <label class="yslider"><span>Detal płyt</span><input type="range" data-k="detail" min="${HD_DETAIL.min}" max="${HD_DETAIL.max}" step="0.005" value="${d?.detail ?? 0.6}"></label>
         <label class="yslider"><span>Rury i kable</span><input type="range" data-k="pipes" min="0" max="2" step="0.05" value="${d?.pipeNet?.density ?? 0}"></label>
         <div class="ychips"><button class="ychip${(d?.windows ?? 1) > 0.5 ? ' on' : ''}" data-k="windows">Okna tarasów</button><button class="ychip${(d?.round ?? 0) > 0.5 ? ' on' : ''}" data-k="round">Łuk na fazach płyt</button></div>`;
+    } else if (U.cat === 'ladunek') {
+      // załadunek — WYGLĄD (ścieżka wyglądu dema, bez przebudowy kadłuba): ile komórek stelaży i zasobników ma kontenery
+      const load = Math.round((design()?.cargoLoad ?? 1) * 100);
+      h = `<div class="yoptl">Ładownie, stelaże i zbiorniki stawia się na kadłubie; kontener ma stały rozmiar 16 × 8 j.</div>
+        <label class="yslider"><span>Załadunek <b class="yload">${load}%</b></span><input type="range" data-k="load" min="0" max="100" step="1" value="${load}"></label>`;
     } else if (U.cat === 'systemy') h = '<div class="yoptl">Systemy presetów (🔒) stoją na stałych miejscach klasy; w projekcie od zera stawiasz je sam.</div>';
     else h = '<div class="yoptl">Detale stawia się na pancerzu; gotowe części dokładają kawałek okrętu.</div>';
     el.opts.innerHTML = h;
@@ -1392,9 +1488,24 @@ export function installShipyard(api) {
       if (t.classList.contains('ytext')) { U.text = t.value; return; }
       if (t.dataset.k === 'detail') { design().detail = Number(t.value); S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true); }
       if (t.dataset.k === 'pipes') { design().pipeNet = { ...(design().pipeNet || {}), density: Number(t.value) }; S.drag = { kind: 'stocznia-suwak' }; api.requestBuild(true); }
+      if (t.dataset.k === 'load') {
+        design().cargoLoad = Number(t.value) / 100;
+        const lb = el.opts.querySelector('.yload');
+        if (lb) lb.textContent = `${t.value}%`;
+        S.drag = { kind: 'stocznia-zaladunek' }; api.requestBuild(true);
+      }
     });
     el.opts.addEventListener('change', (e) => {
-      if (e.target.dataset.k === 'detail' || e.target.dataset.k === 'pipes') { S.drag = null; commit(); }
+      const k = e.target.dataset.k;
+      // koniec przeciągania (myszą zamyka je już pointerup niżej — wtedy bez drugiej budowy)
+      if ((k === 'detail' || k === 'pipes' || k === 'load') && S.drag) { S.drag = null; commit(); }
+    });
+    // suwak puszczony na wartości początkowej nie wysyła `change` — przeciąganie suwaka kończy też puszczenie wskaźnika
+    el.opts.addEventListener('pointerup', (e) => {
+      const k = e.target.dataset?.k;
+      if ((k === 'detail' || k === 'pipes' || k === 'load') && (S.drag?.kind === 'stocznia-suwak' || S.drag?.kind === 'stocznia-zaladunek')) {
+        S.drag = null; commit();
+      }
     });
   }
   function setColor(c, rerender = true) {
@@ -1574,6 +1685,9 @@ export function installShipyard(api) {
       if (def.r) m.r = def.r;
       if (def.w) { m.w = def.w; m.h = def.h; }
       if (def.v !== undefined) m.v = def.v;
+      if (it.v !== undefined) { m.v = it.v; if (it.n) m.n = it.n; }
+      // ładunek: obrys na kilka komórek siatki — w miniaturze widać kontenery (stelaż 3 × 2, zasobniki 2 × 1, zbiornik 3 × 2)
+      if (it.type === 'cargo' || it.type === 'cargo_tank') Object.assign(m, cargoBox(m, D, it.v === 3 ? 2 : 3, it.v === 3 ? 1 : 2));
       if (it.type === 'mount') { m.slot = it.slot; m.size = 'M'; m.r = HD_MOUNT_RADIUS_DU[it.slot] * D; }
       if (it.type === 'bridge' && m.v === 2) { const lv = bridgeLevel(2); m.lv = lv.level; m.w = lv.w / 2; m.h = lv.h / 2; }
       if (it.type === 'thruster_side') m.rot = -Math.PI / 2;
@@ -1640,8 +1754,7 @@ export function installShipyard(api) {
   // Pasek górny i nowy okręt
   function bindTop() {
     const sel = $('yard-preset');
-    sel.innerHTML = '<option value="" hidden>✎ Własny projekt</option>'
-      + HD_PRESET_KEYS.filter((k) => k !== 'empty').map((k) => `<option value="${k}">${esc(HD_PRESETS[k].label)}</option>`).join('');
+    sel.innerHTML = '<option value="" hidden>✎ Własny projekt</option>' + presetOptionsHtml(HD_PRESET_KEYS.filter((k) => k !== 'empty'));
     sel.addEventListener('change', () => { api.loadPreset(sel.value).then(() => { scheduleThumbs(); syncTop(); }); });
     $('yard-new').addEventListener('click', () => { el.dlg.hidden = false; });
     $('yard-undo').addEventListener('click', () => api.histGo(-1));
@@ -1650,13 +1763,17 @@ export function installShipyard(api) {
     $('yard-outline').addEventListener('click', () => { U.outlines = !U.outlines; syncTop(); });
     $('yard-fit').addEventListener('click', () => api.fit());
     $('yard-pro').addEventListener('click', () => api.setUi('warsztat'));
+    // dwa wiersze klas: okręty wojenne (detal floty TN) i statki cywilne (detal z typowej długości klasy cywilnej)
     el.dlg.innerHTML = `<div class="ydlg"><h2>Nowy kadłub</h2><p>Wybierz wielkość okrętu — od niej zależy skala klocków i detal płyt. Klasa liczy się potem z rozmiaru kadłuba i mostka.</p>
-      <div class="ydlg-grid">${SHIP_CLASSES.map((c, i) => `<button data-lv="${c.level}"><b>${c.roman}</b><span>${c.label}</span><small>${c.example ? `jak ${c.example}` : '&nbsp;'}</small><i>klocek ${fmtInt(hullBlockPaletteUnit(gridFor(NEW_SHIP_DETAIL[i]), NEW_SHIP_DETAIL[i]) * 4)} j.</i></button>`).join('')}</div>
+      <h3>Okręty wojenne</h3>
+      <div class="ydlg-grid">${SHIP_CLASSES.map((c, i) => `<button data-lv="${c.level}" data-role="military"><b>${c.roman}</b><span>${c.label}</span><small>${c.example ? `jak ${c.example}` : '&nbsp;'}</small><i>klocek ${fmtInt(hullBlockPaletteUnit(gridFor(NEW_SHIP_DETAIL[i]), NEW_SHIP_DETAIL[i]) * 4)} j.</i></button>`).join('')}</div>
+      <h3>Statki cywilne</h3>
+      <div class="ydlg-grid civil">${SHIP_CLASSES.map((c, i) => `<button data-lv="${c.level}" data-role="civil"><b>${c.roman}</b><span>${c.civil}</span><small>~${fmtInt(NEW_CIVIL_LENGTH[i])} j. długości</small><i>klocek ${fmtInt(hullBlockPaletteUnit(gridFor(civilDetail(c.level)), civilDetail(c.level)) * 4)} j.</i></button>`).join('')}</div>
       <div class="ydlg-foot"><button data-close="1">Anuluj</button></div></div>`;
     el.dlg.addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (e.target === el.dlg || b?.dataset.close) { el.dlg.hidden = true; return; }
-      if (b?.dataset.lv) { el.dlg.hidden = true; newShip(Number(b.dataset.lv)); }
+      if (b?.dataset.lv) { el.dlg.hidden = true; newShip(Number(b.dataset.lv), b.dataset.role); }
     });
   }
   function gridFor(detail) { return 2 ** Math.round(Math.log2(4 * detail)); }
@@ -1665,20 +1782,39 @@ export function installShipyard(api) {
    * który ma ~80 jednostek palety; prostokąt, bo mały kadłub i tak schodkuje się na komórkach belek 15 j.), symetria,
    * barwy Terra Novy — reszta z palety.
    */
-  async function newShip(lv) {
-    const D = NEW_SHIP_DETAIL[lv - 1];
+  /**
+   * Statek cywilny (`role` 'civil'): barwy frachtowca, detal z typowej długości klasy cywilnej (NEW_CIVIL_LENGTH), kil
+   * długi i wąski (~55% × 10% długości statku, ścięte rogi), wygląd jak presety frachtowców (okna, łagodniejsza faza).
+   */
+  async function newShip(lv, role = 'military') {
+    const civil = isCivilRole(role);
+    const D = civil ? civilDetail(lv) : NEW_SHIP_DETAIL[lv - 1];
     const g = gridFor(D), u = hullBlockPaletteUnit(g, D);
-    const cls = shipClass(lv);
+    const cls = shipClass(lv), label = shipClassLabel(lv, role);
+    let keel;
+    if (civil) {
+      const L = NEW_CIVIL_LENGTH[lv - 1], g2 = 2 * g;
+      // kil co najmniej na najmniejszy moduł z karty Ładunek (zasobnik 2 × 2 — stały rozmiar kontenera) z brzegiem;
+      // mały prom inaczej wychodzi węższy niż ładownia
+      const podH = hullCargoBox({ type: 'cargo', v: 3, n: 2 }, D, 1, 1).h;
+      const w = Math.max(g2, Math.round(L * 0.55 / g2) * g2);
+      const h = Math.max(g2, Math.round(L * 0.1 / g2) * g2, Math.ceil((2 * podH + 2 * g2) / g2) * g2);
+      const c = Math.max(g, Math.round(h * 0.22 / g) * g);
+      keel = { kind: 'block', shape: 'rect', x: 0, y: 0, w, h, c: [c, c, c, c], rot: 0, level: 1 };
+    } else keel = { kind: 'block', shape: 'rect', x: 0, y: 0, w: 36 * u, h: 12 * u, c: [2 * u, 2 * u, 2 * u, 2 * u], rot: 0, level: 1 };
     const d = normalizeHullDesign({
-      v: 2, name: `Nowy okręt — ${cls.label.toLowerCase()}`, style: 'chamfer', mirror: true, palette: 'terra', seed: 17 + lv, detail: D, grid: g,
-      bridgeLevel: lv, windows: 0, bevel: 1.9, round: 1, panels: 0.4, pipeNet: { density: 1 }, blocks: [],
-      shapes: [{ kind: 'block', shape: 'rect', x: 0, y: 0, w: 36 * u, h: 12 * u, c: [2 * u, 2 * u, 2 * u, 2 * u], rot: 0, level: 1 }], modules: [], decals: []
+      v: 2, name: civil ? `Nowy ${label.toLowerCase()}` : `Nowy okręt — ${label.toLowerCase()}`, style: 'chamfer', mirror: true,
+      palette: civil ? 'freight' : 'terra', role: civil ? 'civil' : 'military', seed: (civil ? 41 : 17) + lv, detail: D, grid: g,
+      bridgeLevel: lv, windows: civil ? 0.7 : 0, bevel: civil ? 1.5 : 1.9, round: 1, panels: civil ? 0.7 : 0.4, pipeNet: { density: 1 }, blocks: [],
+      shapes: [keel], modules: [], decals: []
     });
     await api.loadPreset('empty', d);
     $('yard-preset').value = '';
     U.level = 1; U.cut = false;
     setCat('ksztalty');
-    toast(`Nowy kadłub (${cls.roman} · ${cls.label}): przeciągaj kształty z palety — symetria stawia drugą burtę`);
+    toast(civil
+      ? `Nowy frachtowiec (${cls.roman} · ${label}): dołóż kształty, a z karty Ładunek — ładownie, stelaże i zbiorniki`
+      : `Nowy kadłub (${cls.roman} · ${label}): przeciągaj kształty z palety — symetria stawia drugą burtę`);
   }
   function syncTop() {
     const d = design();
@@ -1775,19 +1911,31 @@ export function installShipyard(api) {
       for (let k = 0; k <= 2000; k++) { const y = y0 + (y1 - y0) * k / 2000; if (sampleHullField(F, 0, x, y) <= 0) return y; }
       return null;
     },
-    newShip(lv) { return newShip(lv).then(() => true); },
+    /** Nowy kadłub klasy `lv`; `role` 'civil' — frachtowiec (barwy frachtowca, długi wąski kil). */
+    newShip(lv, role = 'military') { return newShip(lv, role).then(() => true); },
+    /** Rola projektu jak przełącznikiem na karcie okrętu. */
+    role(r) { return setRole(r); },
+    /** Załadunek 0–1 jak suwakiem karty Ładunek: w trakcie — ścieżka wyglądu (S.drag), na koniec jeden wpis cofania. */
+    load(v, final = true) {
+      design().cargoLoad = Math.max(0, Math.min(1, v));
+      if (final) { S.drag = null; commit(); } else { S.drag = { kind: 'stocznia-zaladunek' }; api.requestBuild(true); }
+      if (U.cat === 'ladunek') renderOpts();
+      return true;
+    },
+    /** Karta okrętu (tekst) — raport zrzutów. */
+    card: () => el.card.innerText,
     thumbsDone(timeoutMs = 90000) {
       if (!thumbs.running && !thumbs.queue.length) return Promise.resolve(thumbs.cache.size);
       return new Promise((ok) => { const t = setTimeout(() => ok(-thumbs.cache.size), timeoutMs); thumbs.waiters.push(() => { clearTimeout(t); ok(thumbs.cache.size); }); });
     },
     state: () => ({
-      cat: U.cat, armed: U.armed?.key || null, sel: U.sel.map((r) => refName(r)), level: U.level, cut: U.cut, thumbs: thumbs.cache.size, queue: thumbs.queue.length,
+      cat: U.cat, role: design()?.role || null, load: design()?.cargoLoad ?? null, armed: U.armed?.key || null, sel: U.sel.map((r) => refName(r)), level: U.level, cut: U.cut, thumbs: thumbs.cache.size, queue: thumbs.queue.length,
       drag: U.drag ? { mode: U.drag.mode, trash: !!U.drag.trash, dx: U.drag.dx ?? null, dy: U.drag.dy ?? null } : null
     })
   };
   return {
     draw, insets, onUi, harness,
     /** Po wczytaniu projektu (preset): karta okrętu od nowa, miniatury w jego barwach. */
-    refresh() { U.statsKey = ''; U.lastPalette = design()?.palette; if (S.ui === 'stocznia') scheduleThumbs(); syncTop(); }
+    refresh() { U.statsKey = ''; U.lastPalette = design()?.palette; if (S.ui === 'stocznia') { scheduleThumbs(); if (U.cat === 'ladunek') renderOpts(); } syncTop(); }
   };
 }
