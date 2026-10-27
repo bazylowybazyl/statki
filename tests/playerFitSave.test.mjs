@@ -30,6 +30,7 @@ import { shipSystemFor, shipSystemDefFor } from '../src/data/shipSystems.js';
 import { planFit, presetFromHardpoints } from '../src/game/fitPlanner.js';
 import { setModifierSourceWithClasses, clearModifierSource, weaponRangeFor } from '../src/game/shipModifiers.js';
 import { weaponPriceAt, weaponBuildCost } from '../src/game/weaponEconomy.js';
+import * as LootGear from '../src/data/lootGear.js';
 
 const html = readIndexHtml();
 
@@ -164,6 +165,8 @@ const INDEX_FUNCTIONS = [
   ['function fitUiMountSlots(ids, weaponId) {', 'fitUiMountSlots'],
   ['function fitUiSetModule(id) {', 'fitUiSetModule'],
   ['function fitUiSetSystem(id) {', 'fitUiSetSystem'],
+  ['function playerLootGearId(hullId = PLAYER.activeHullId) {', 'playerLootGearId'],
+  ['function fitUiSetLootGear(id) {', 'fitUiSetLootGear'],
   ['function fitUiCustoms() {', 'fitUiCustoms'],
   ['function fitUiSaveCustom() {', 'fitUiSaveCustom']
 ];
@@ -193,6 +196,7 @@ function bootPage(storage, { credits = 0 } = {}) {
     CAMPAIGN_MISSILE_AMMO_MUL, FIT_MAX_CUSTOMS_PER_HULL,
     FIT_PRESETS, FIT_PRESET_IDS, FIT_KIT_STOCK, FIT_KIT_PARTS, FIT_START_PRESET,
     ...ShipModules,
+    ...LootGear,
     shipSystemFor, shipSystemDefFor,
     planFit, presetFromHardpoints,
     setModifierSourceWithClasses, clearModifierSource,
@@ -649,6 +653,36 @@ test('refit ręczny: moduł i system F — z hangaru za darmo, brakująca częś
   res = scope.fitUiSetSystem('ram_burn');
   assert.equal(scope.playerShipSystem().id, 'ram_burn');
   assert.equal(scope.PLAYER.partStock.maneuver, 1, 'silniki manewrowe wróciły do hangaru');
+});
+
+test('gniazdo ZBIÓRKA (kontenery-łup): Atlas fabrycznie z wiązką, zdjęcie do hangaru, drony niedostępne, F5', () => {
+  const storage = memoryStorage();
+  let page = bootPage(storage, { credits: 0 });
+  assert.equal(page.scope.playerLootGearId(), 'loot_tractor', 'D16: wiązka fabrycznie');
+  let res = page.scope.fitUiSetLootGear('loot_drones');
+  assert.match(res.message, /niedostępne/);
+  assert.equal(page.scope.playerLootGearId(), 'loot_tractor');
+  res = page.scope.fitUiSetLootGear(null);
+  assert.match(res.message, /zdjęty/);
+  assert.equal(page.scope.playerLootGearId(), null);
+  assert.equal(page.scope.PLAYER.partStock.loot_tractor, 1, 'wiązka w hangarze');
+  page = reloadPage(page, storage);
+  assert.equal(page.scope.playerLootGearId(), null, 'puste gniazdo po F5');
+  assert.equal(page.scope.PLAYER.partStock.loot_tractor, 1);
+  res = page.scope.fitUiSetLootGear('loot_tractor');
+  assert.match(res.message, /Zbiórka: WIĄZKA/);
+  assert.equal(page.scope.PLAYER.partStock.loot_tractor || 0, 0, 'z hangaru, bez zakupu');
+  page = reloadPage(page, storage);
+  assert.equal(page.scope.playerLootGearId(), 'loot_tractor');
+  // Bez części i kredytów — odmowa; z kredytami — zakup.
+  page.scope.fitUiSetLootGear(null);
+  delete page.scope.PLAYER.partStock.loot_tractor;
+  res = page.scope.fitUiSetLootGear('loot_tractor');
+  assert.equal(res.message, 'Za mało kredytów');
+  page.scope.PLAYER.credits = LootGear.LOOT_GEAR.loot_tractor.price;
+  res = page.scope.fitUiSetLootGear('loot_tractor');
+  assert.match(res.message, /^Kupiono: WIĄZKA ŚCIĄGAJĄCA/);
+  assert.equal(page.scope.PLAYER.credits, 0);
 });
 
 test('własna konfiguracja: zapis z bieżących gniazd, odtworzenie po zmianie karty i F5, najwyżej dwie na kadłub', () => {

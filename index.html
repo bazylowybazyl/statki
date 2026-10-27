@@ -1160,6 +1160,13 @@
       trafficFleePoint, trafficActorPromotable, trafficPromotionOrder, trafficCombatRole, trafficWeaponFaction,
       trafficGrudgeTarget, trafficActorHasCourse, trafficRamLead
     } from "./src/game/trafficPromotion.js";
+    import {
+      createLootContainers, spillLootCargo, stepLootContainers, nearestLootD2, LOOT_FLAG, LOOT_TUNE
+    } from "./src/game/lootContainers.js";
+    import { containerLook, cargoResourceKey } from "./src/data/cargoContainers.js";
+    import {
+      LOOT_GEAR, lootGearById, lootGearOptionsFor, lootGearFits, mountedLootGear, lootGearParams
+    } from "./src/data/lootGear.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
     import { PortDockWorld } from "./src/game/portDockWorld.js";
@@ -13712,7 +13719,7 @@
       return Math.max(1, Math.round(quote.sell));
     }
     function fitPartPrice(id) {
-      return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? 0) || 0;
+      return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? LOOT_GEAR[id]?.price ?? 0) || 0;
     }
     // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — most do workera ruchu),
     // wycena weaponPriceAt. false — port jej tu nie złoży.
@@ -13850,6 +13857,8 @@
       return {
         hullModules: { ...(PLAYER.hullModules || {}) },
         hullSystems: { ...(PLAYER.hullSystems || {}) },
+        // Gniazdo ZBIÓRKA (kontenery-łup): kadłub → id sprzętu albo null (puste); brak klucza = domyślny kadłuba.
+        hullLootGear: { ...(PLAYER.hullLootGear || {}) },
         partStock: counts,
         hullPresets: { ...(PLAYER.hullPresets || {}) },
         fitCustoms: Array.isArray(PLAYER.fitCustoms) ? PLAYER.fitCustoms : [],
@@ -13862,7 +13871,7 @@
       PLAYER.hullModules = modules;
       const parts = {};
       for (const [id, n] of Object.entries(data?.partStock || {})) {
-        if ((SHIP_MODULES[id] || SHIP_SYSTEM_PART_PRICES[id] != null) && Number(n) > 0) parts[id] = Math.floor(Number(n));
+        if ((SHIP_MODULES[id] || SHIP_SYSTEM_PART_PRICES[id] != null || LOOT_GEAR[id]) && Number(n) > 0) parts[id] = Math.floor(Number(n));
       }
       PLAYER.partStock = parts;
       const presets = {};
@@ -13876,6 +13885,11 @@
       for (const [hull, id] of Object.entries(data?.hullSystems || {})) {
         if (typeof id === 'string' && shipSystemDefFor(hull, id)) PLAYER.hullSystems[hull] = id;
       }
+      const lootGear = {};
+      for (const [hull, id] of Object.entries(data?.hullLootGear || {})) {
+        if (PLAYER_HULL_CATALOG[hull] && (id === null || LOOT_GEAR[id])) lootGear[hull] = id;
+      }
+      PLAYER.hullLootGear = lootGear;
     }
 
     // ---- Refit ręczny (ekran) ----------------------------------------------------------------------------------
@@ -13988,6 +14002,39 @@
       return { message: [bought, `System F: ${def.label}`].filter(Boolean).join(' · ') };
     }
 
+    // Gniazdo ZBIÓRKA (kontenery-łup, src/data/lootGear.js): wiązka albo drony — część jak moduł (hangar ↔ gniazdo).
+    // Kadłub bez wpisu w `PLAYER.hullLootGear` ma sprzęt domyślny (Atlas — wiązka, D16); zdjęty wraca do hangaru.
+    function playerLootGearId(hullId = PLAYER.activeHullId) {
+      return mountedLootGear(hullId, PLAYER.hullLootGear?.[hullId]);
+    }
+    function fitUiSetLootGear(id) {
+      const hullId = PLAYER.activeHullId;
+      const next = id || null;
+      const cur = playerLootGearId(hullId);
+      if (next === cur) return null;
+      if (next && !lootGearFits(hullId, next)) {
+        const def = lootGearById(next);
+        return { message: def && !def.ready ? `${def.label} — jeszcze niedostępne` : 'Ten kadłub nie ma tego sprzętu' };
+      }
+      let bought = '';
+      if (next && !((Number(PLAYER.partStock?.[next]) || 0) > 0)) {
+        const price = fitPartPrice(next);
+        if (PLAYER.credits < price) return { message: 'Za mało kredytów' };
+        PLAYER.credits -= price;
+        PLAYER.partStock[next] = (Number(PLAYER.partStock[next]) || 0) + 1;
+        bought = `Kupiono: ${LOOT_GEAR[next].label} · ${price} CR`;
+      }
+      if (cur) PLAYER.partStock[cur] = (Number(PLAYER.partStock[cur]) || 0) + 1;
+      if (next) PLAYER.partStock[next] = Math.max(0, (Number(PLAYER.partStock[next]) || 0) - 1);
+      if (!PLAYER.hullLootGear) PLAYER.hullLootGear = {};
+      PLAYER.hullLootGear[hullId] = next;
+      finishPlayerFitChange(null);
+      return {
+        message: [bought, next ? `Zbiórka: ${LOOT_GEAR[next].label}` : 'Sprzęt zbiórki zdjęty — wrócił do hangaru']
+          .filter(Boolean).join(' · ')
+      };
+    }
+
     function fitUiCustoms() {
       const hullId = PLAYER.activeHullId;
       return (PLAYER.fitCustoms || []).filter((c) => (c.hull || 'atlas') === hullId);
@@ -14090,7 +14137,17 @@
         currentSystemLabel: () => playerShipSystem()?.label || '—',
         systemLabel: (id) => (id ? (shipSystemDefFor(PLAYER.activeHullId, id)?.label || id) : '—'),
         setSystem: fitUiSetSystem,
-        partLabel: (id) => SHIP_MODULES[id]?.label || shipSystemDefFor(PLAYER.activeHullId, id)?.label || id,
+        lootGear: () => lootGearOptionsFor(PLAYER.activeHullId).map((id) => {
+          const d = LOOT_GEAR[id];
+          return {
+            id: d.id, label: d.label, desc: d.desc, price: fitPartPrice(d.id), ready: d.ready,
+            installed: playerLootGearId() === d.id,
+            owned: (Number(PLAYER.partStock?.[d.id]) || 0) > 0
+          };
+        }),
+        currentLootGearLabel: () => LOOT_GEAR[playerLootGearId()]?.short || '—',
+        setLootGear: fitUiSetLootGear,
+        partLabel: (id) => SHIP_MODULES[id]?.label || LOOT_GEAR[id]?.label || shipSystemDefFor(PLAYER.activeHullId, id)?.label || id,
         partPrice: fitPartPrice,
         weaponPrice: (id) => fitWeaponPrice(id),
         fits: (id, slot) => playerFitFits(WEAPONS[id], slot),
@@ -14122,6 +14179,8 @@
       apply: (plan, opts) => applyPlayerFitPlan(plan, opts),
       weaponPrice: (id, station = stationUI.station) => fitWeaponPrice(id, station),
       module: () => playerFitModule(),
+      lootGear: () => playerLootGearId(),
+      setLootGear: (id) => fitUiSetLootGear(id),
       range: (weaponId) => getPlayerWeaponRange(WEAPONS[weaponId]),
       state: () => serializePlayerFitState()
     };
@@ -14212,6 +14271,8 @@
       // { moduł / system F: sztuk }, aktywna karta per kadłub ('custom' — po refit ręcznym), własne konfiguracje,
       // komplety misji startowej wydane. Zapis w 'loadout' (serializePlayerFitState / restorePlayerFitState).
       hullModules: {},
+      // Gniazdo ZBIÓRKA (kontenery-łup): kadłub → sprzęt (`src/data/lootGear.js`) albo null; brak klucza = domyślny.
+      hullLootGear: {},
       partStock: {},
       hullPresets: {},
       fitCustoms: [],
@@ -16321,8 +16382,11 @@
     }
 
     /** Zniszczony statek ruchu: wybuch w miejscu kadłuba (kurs i wrak z ładunkiem rozlicza worker). */
-    function onTrafficActorDestroyed(a, x, y) {
+    function onTrafficActorDestroyed(a, x, y, cause) {
       triggerReactorBlow3D(x, y, Math.max(120, a.length * 0.45), { vx: a.vx, vy: a.vy });
+      // Kontenery-łup: 55% ładunku z manifestu encji w przestrzeń (wybuch w miejscu trafienia).
+      spillTrafficCargo(trafficV2?.actorManifests?.get(a.id), a.id, a.cx, a.cy, a.vx, a.vy, a.ca, a.length, a.width, x, y);
+      if (cause === 'player') registerTrafficKill(a);
     }
 
     /** Krok fizyki: nowy bufor z workera i pozy encji w czasie tego kroku (przed pociskami i taranem). */
@@ -16600,6 +16664,8 @@
         npc.ai = (dt) => runCallInCombatAI(npc, role.type, dt);
       }
       npc.trafficCourse = a.id;
+      // Ładunek kursu (kontenery-łup): po `attach` worker zdejmuje manifest z bańki — NPC niesie kopię do śmierci.
+      npc.__trafficCargo = trafficV2?.actorManifests?.get(a.id) || null;
       // Obrys encji — kontakt miękki, dopóki kadłub na belkach się nie zbuduje (stepTrafficSoftContact).
       npc.__trafficLen = a.length;
       npc.__trafficWid = a.width;
@@ -16716,6 +16782,12 @@
           releaseTrafficPromotion(tb, id, true);
           if (npc?.trafficFree) trafficV2.entityLost(id, { x: npc.x, y: npc.y, reason: 'player' });
           else trafficV2.destroyCourse(id, { x: npc.x, y: npc.y, reason: 'player', byPirates: false });
+          // Kontenery-łup: ładunek kursu z wraku awansowanego NPC (ruch wraku, obrys encji).
+          if (npc?.__trafficCargo) {
+            spillTrafficCargo(npc.__trafficCargo, id, npc.x, npc.y, npc.vx, npc.vy, npc.angle,
+              npc.__trafficLen, npc.__trafficWid, npc.x, npc.y);
+            npc.__trafficCargo = null;
+          }
           st.stats.destroyed++;
         } else if (verdict === 'demote') {
           st.alive.delete(id);
@@ -16732,6 +16804,169 @@
         }
       }
     }
+
+    // ============================================================
+    // KONTENERY-ŁUP (K1, docs/PROPOZYCJA-kontenery-lup.md) — src/game/lootContainers.js. Zniszczony statek ruchu
+    // (encja bańki bez awansu albo awansowany NPC) gubi 55% ładunku jako paczki dryfujące w przestrzeni; ładunek
+    // encji zna gra z manifestu workera (`TrafficV2.actorManifests`, tylko zmiany). Zbiera je sprzęt z gniazda
+    // ZBIÓRKA (src/data/lootGear.js: wiązka; drony — K3) do ładowni gracza (`addToPlayerCargo`, limit `cargoCap`);
+    // bez sprzętu nic (HUD podpowiada WYPOSAŻENIE). Sprzedaż — terminal. Obraz K1: podgląd na kanwie 2D
+    // (`drawLootContainers2D`); 3D z bloku migawki — K2. Konsola: `LootContainers` (`stats`, `count`).
+    // ============================================================
+    const lootContainers = createLootContainers();
+    const _lootEnv = {
+      px: 0, py: 0, pvx: 0, pvy: 0, shipSpeed: 0, cx: 0, cy: 0, gear: null,
+      visible: (x, y) => SensorSystem.pointVisible(x, y, 0),
+      free: () => getPlayerCargoFree(),
+      take: (key, units) => Number(addToPlayerCargo({ [key]: units })[key]) || 0,
+      onCollect: (key, units) => noteLootCollected(key, units)
+    };
+    const _lootGearParams = {};
+    let _lootGearKey = '';
+    let _lootGear = null;
+    let _lootMsgBag = null;
+    let _lootMsgAt = -Infinity;
+    let _lootHintAt = -Infinity;
+    let _lootHeldSeen = 0;
+    let _lootClock = 0;
+
+    /** Sprzęt gniazda ZBIÓRKA aktywnego kadłuba gracza (parametry `lootGearParams`, wspólny obiekt) albo null. */
+    function playerLootGear() {
+      const hull = PLAYER.activeHullId;
+      const id = playerLootGearId(hull);
+      const key = `${hull}|${id}`;
+      if (key !== _lootGearKey) {
+        _lootGearKey = key;
+        _lootGear = id ? lootGearParams(hull, id, _lootGearParams) : null;
+      }
+      return _lootGear;
+    }
+
+    /** Zrzut ładunku ze statku ruchu: `manifest` z mostu ({ cargo, mass }), poza i ruch wraku, środek wybuchu. */
+    function spillTrafficCargo(manifest, courseId, x, y, vx, vy, angle, length, width, blastX, blastY) {
+      if (!manifest?.cargo) return 0;
+      return spillLootCargo(lootContainers, {
+        x, y, vx, vy, angle, length, width, cargo: manifest.cargo, mass: manifest.mass, seed: courseId, blastX, blastY
+      });
+    }
+
+    /** Zebrana paczka → jeden komunikat na ~1,2 s (zbiórka idzie seriami). */
+    function noteLootCollected(key, units) {
+      if (!_lootMsgBag) _lootMsgBag = {};
+      _lootMsgBag[key] = (_lootMsgBag[key] || 0) + units;
+    }
+
+    /** Krok fizyki: dryf, czas życia, wiązka i chwyt do ładowni (pauza stoi — krok tylko w `physicsStep`). */
+    function stepLoot(dt) {
+      _lootClock += dt;
+      if (lootContainers.count === 0) return;
+      const env = _lootEnv;
+      const alive = !!ship && !ship.destroyed;
+      env.px = alive ? ship.pos.x : 0;
+      env.py = alive ? ship.pos.y : 0;
+      env.pvx = alive ? ship.vel.x : 0;
+      env.pvy = alive ? ship.vel.y : 0;
+      env.shipSpeed = Math.sqrt(env.pvx * env.pvx + env.pvy * env.pvy);
+      env.cx = env.px;
+      env.cy = env.py;
+      env.gear = alive ? playerLootGear() : null;
+      stepLootContainers(lootContainers, dt, env);
+      if (!alive) return;
+      if (_lootMsgBag && _lootClock - _lootMsgAt > 1.2) {
+        pushZoneMessage(`ŁUP + ${formatCargoBag(_lootMsgBag)}`, 1.6);
+        _lootMsgBag = null;
+        _lootMsgAt = _lootClock;
+      }
+      // Pełna ładownia: paczka wisi przy luku.
+      if (lootContainers.stats.held !== _lootHeldSeen) {
+        _lootHeldSeen = lootContainers.stats.held;
+        if (_lootClock - _lootHintAt > 6) {
+          _lootHintAt = _lootClock;
+          pushZoneMessage('ŁADOWNIA PEŁNA — kontener czeka przy luku', 2.2);
+        }
+      }
+      // D15: bez sprzętu zbiórki — podpowiedź, gdy widoczna paczka jest bliżej niż 4 km.
+      if (!env.gear && _lootClock - _lootHintAt > 8
+        && nearestLootD2(lootContainers, env.px, env.py, env.visible) < 4000 * 4000) {
+        _lootHintAt = _lootClock;
+        pushZoneMessage('BRAK SPRZĘTU ZBIÓRKI — wiązka albo drony (WYPOSAŻENIE)', 2.5);
+      }
+    }
+
+    // Podgląd K1 na kanwie 2D: paczki w farbie rodziny (containerLook — jak przeładunek E12), lampka-boja, wiązka.
+    const _lootScr = { x: 0, y: 0 };
+    const _lootShipScr = { x: 0, y: 0 };
+    const _lootLook = {};
+    function drawLootContainers2D(ctx, cam) {
+      const st = lootContainers;
+      if (!st.count) return;
+      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const L = Math.max(4, 16 * zoom);
+      const Wd = Math.max(2.5, 8 * zoom);
+      const pose = window.__interpShipPose || (ship ? { x: ship.pos.x, y: ship.pos.y } : null);
+      const shipScr = pose ? worldToScreenInto(pose.x, pose.y, cam, _lootShipScr) : null;
+      const vw = W;
+      const vh = H;
+      ctx.save();
+      for (let i = 0; i < st.count; i++) {
+        const x = st.x[i];
+        const y = st.y[i];
+        if (!SensorSystem.pointVisible(x, y, 0)) continue;
+        const s = worldToScreenInto(x, y, cam, _lootScr);
+        if (s.x < -40 || s.y < -40 || s.x > vw + 40 || s.y > vh + 40) continue;
+        if (shipScr && (st.flags[i] & LOOT_FLAG.TRACTOR)) {
+          ctx.strokeStyle = 'rgba(120, 220, 255, 0.55)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(shipScr.x, shipScr.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+        }
+        containerLook(cargoResourceKey(st.res[i]), st.seed[i], st.unit[i], _lootLook);
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(screenAngleFor(st.ang[i], cam));
+        ctx.fillStyle = _lootLook.paint;
+        ctx.fillRect(-L / 2, -Wd / 2, L, Wd);
+        ctx.fillStyle = _lootLook.accent;
+        ctx.fillRect(-L / 2, -Wd * 0.15, L, Wd * 0.3);
+        ctx.restore();
+        // Lampka-boja: mruga co 1,5 s, na końcu życia szybciej.
+        const left = st.ttl[i] - st.age[i];
+        const period = left < LOOT_TUNE.fadeSec ? 0.3 : 1.5;
+        const phase = ((st.age[i] + (st.uid[i] % 7) * 0.21) % period) / period;
+        if (phase < 0.25) {
+          ctx.fillStyle = 'rgba(255, 196, 64, 0.95)';
+          ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(2, 3 * Math.min(1, zoom * 4)), 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    /** Kara reputacji za statek ruchu zniszczony bez awansu (D13) — jak `registerFactionKill` przy śmierci NPC. */
+    const _trafficKillProbe = { factionId: null, type: '', shipFrame: '', _lastPlayerHit: 0 };
+    function registerTrafficKill(a) {
+      _trafficKillProbe.factionId = a.factionId;
+      _trafficKillProbe.type = trafficCombatRole(a.hullId)?.type || a.hullId || '';
+      _trafficKillProbe.shipFrame = a.hullId || '';
+      _trafficKillProbe._lastPlayerHit = gameTime;
+      registerFactionKill(_trafficKillProbe);
+    }
+
+    window.LootContainers = {
+      get count() { return lootContainers.count; },
+      get stats() { return { ...lootContainers.stats }; },
+      get gear() { return playerLootGear(); },
+      pool: lootContainers,
+      // Narzędzia (?dev): zrzut paczek przy graczu — `LootContainers.devSpill({ steel: 380 }, 3000)`.
+      devSpill(cargo = { steel: 380 }, dist = 3000) {
+        if (!_portCargoQuery.has('dev') || !ship) return 0;
+        const a = ship.angle || 0;
+        let mass = 0;
+        for (const k in cargo) mass += (Number(cargo[k]) || 0) * (Number(RESOURCES[k]?.mass) || 1);
+        return spillLootCargo(lootContainers, {
+          x: ship.pos.x + Math.cos(a) * dist, y: ship.pos.y + Math.sin(a) * dist, vx: ship.vel.x, vy: ship.vel.y,
+          angle: a, length: 540, width: 200, cargo, mass, seed: (gameTime * 1000) | 0
+        });
+      }
+    };
 
 
     // ============================================================
@@ -27494,6 +27729,8 @@
       stepShipDockCollisions(dt);
       // Statki ruchu v2 (E6): taran gracza — obrys kadłuba proxy.
       stepTrafficRam();
+      // Kontenery-łup (K1): dryf paczek, wiązka gniazda ZBIÓRKA, chwyt do ładowni.
+      stepLoot(dt);
       // Suchy dok piratów (misja 1): taran bram i ogrodzenia parkingu.
       // Wydobycie skał (zadanie 21b): drony, piła, ładunki, wiązka i fizyka skał w czasie gry.
       stepAsteroidMining(dt);
@@ -31113,6 +31350,7 @@
           // lina wskazuje holowany wrak — w soczewce jest on już kropką
           if (hudLensWorld) drawTowRopes(ctx, cam);
           drawPlayerStations2D(ctx, cam);
+          if (hudLensWorld) drawLootContainers2D(ctx, cam);
           ctx.restore();
         }
 
