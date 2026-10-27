@@ -339,8 +339,9 @@ Pytanie, a po strzałce rekomendacja domyślna.
 14. **D14. Wiązka albo drony, czy oba naraz?** → **Jedno gniazdo, jeden wybór** (jak system F): wiązka albo drony.
 15. **D15. Bez sprzętu da się zbierać?** → **Nie.** Kontenery widać, HUD podpowiada WYPOSAŻENIE.
 16. **D16. Co ma Atlas na start?** → **Wiązkę w komplecie startowym**; drony za część 14 000 CR + 900 CR za drona.
-17. **D17. Drony zabierają ładowność?** → **Tak**, zatoka −6 slotów luku Atlasa (≈ −96 t przy 2 t na kontener),
-    jak przy fregacie i myśliwcach w luku („okręty zabierają miejsce ładunkowi”).
+17. **D17. Drony zabierają ładowność? — ROZSTRZYGNIĘTE przez użytkownika (2026-10-27):** „D17: zatoka dronów zabiera
+    16 t (proporcjonalnie do miejsca w luku).” W K3: odliczenie = ładowność × (sloty zatoki / sloty luku) — Atlas
+    400 t × 6 / 150 = 16 t; liczba z proporcji slotów (nie na sztywno), z testem. Skład naprawczy na razie bez zmian.
 
 ## 6. D1 — ładowność Atlasa 400 t: skutki (pomiar 2026-10-27)
 
