@@ -15,7 +15,7 @@ export const LOOT_GEAR = Object.freeze({
     kind: 'tractor',
     label: 'WIĄZKA ŚCIĄGAJĄCA',
     short: 'WIĄZKA',
-    desc: 'ściąga kontenery w zasięgu do luku · działa przy prędkości < 400 j./s',
+    desc: 'ściąga kontenery w zasięgu do luku · dopasuj prędkość do paczek (< 400 j./s względem nich)',
     price: 8000,
     ready: true
   }),
@@ -36,8 +36,11 @@ export const LOOT_GEAR_IDS = Object.freeze(Object.keys(LOOT_GEAR));
 
 /** Wspólne strojenie wiązki (liczby na sekundę; zasięg i liczba celów — z kadłuba). */
 export const LOOT_TRACTOR_TUNE = Object.freeze({
-  // Wiązka puszcza, gdy okręt leci szybciej (tryb BOJOWY bez dopalacza; Atlas: limit bojowy 507 j./s).
-  maxShipSpeed: 400,
+  // Wiązka łapie paczkę, która porusza się względem okrętu wolniej niż tyle [j./s] — paczki mają pęd wraku, więc
+  // liczy się dopasowanie prędkości, nie postój. Okręt szybszy niż `maxShipSpeed` (hipercruise, warp; dopalacz Atlasa
+  // 1137 j./s) — wiązka gaśnie.
+  maxRelSpeed: 400,
+  maxShipSpeed: 1200,
   // Przyspieszenie kontenera ku punktowi chwytu i sufit prędkości względnej [j./s², j./s].
   accel: 260,
   maxSpeed: 520,
@@ -110,6 +113,7 @@ export function lootGearParams(hullId, gearId, out = {}) {
     out.range = t.range;
     out.targets = t.targets;
     out.maxShipSpeed = LOOT_TRACTOR_TUNE.maxShipSpeed;
+    out.maxRelSpeed = LOOT_TRACTOR_TUNE.maxRelSpeed;
     out.accel = LOOT_TRACTOR_TUNE.accel;
     out.maxSpeed = LOOT_TRACTOR_TUNE.maxSpeed;
     out.capture = LOOT_TRACTOR_TUNE.capture;

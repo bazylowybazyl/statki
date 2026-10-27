@@ -47,7 +47,9 @@ export const LOOT_TUNE = Object.freeze({
   maxTargets: 8
 });
 
-export const LOOT_FLAG = Object.freeze({ TRACTOR: 1, HELD: 2 });
+// TRACTOR — w wiązce w tym kroku (obraz); HELD — wisi przy luku (pełna ładownia); LOCK — był w wiązce w poprzednim
+// kroku: wiązka go trzyma mimo prędkości względnej (sama go rozpędza ponad `maxRelSpeed`).
+export const LOOT_FLAG = Object.freeze({ TRACTOR: 1, HELD: 2, LOCK: 4 });
 
 /** Pula paczek. `cap` — pojemność tablic. */
 export function createLootContainers(cap = LOOT_TUNE.cap) {
@@ -287,13 +289,17 @@ function considerTarget(st, i, d2, max) {
 export function stepLootContainers(st, dt, env, tune = LOOT_TUNE) {
   st.targetCount = 0;
   if (!(dt > 0) || st.count === 0) return;
+  // HELD przeżywa krok, TRACTOR poprzedniego kroku staje się LOCK (wiązka nie puszcza paczki, którą trzyma).
+  for (let i = 0; i < st.count; i++) {
+    const f = st.flags[i];
+    st.flags[i] = (f & LOOT_FLAG.HELD) | (f & LOOT_FLAG.TRACTOR ? LOOT_FLAG.LOCK : 0);
+  }
   const px = Number(env?.px) || 0;
   const py = Number(env?.py) || 0;
   const despawn2 = tune.despawnDist * tune.despawnDist;
   const damp = Math.exp(-tune.dampRate * dt);
   // Ruch, wiek, zanik — od końca (usuwanie zamianą z ostatnią nie przeskakuje paczek).
   for (let i = st.count - 1; i >= 0; i--) {
-    st.flags[i] = 0;
     const age = st.age[i] + dt;
     st.age[i] = age;
     const dx = st.x[i] - px;
@@ -331,9 +337,19 @@ function stepTractor(st, dt, env, gear) {
   const range2 = gear.range * gear.range;
   const max = Math.min(st.targets.length, Math.max(1, gear.targets | 0));
   const visible = typeof env.visible === 'function' ? env.visible : null;
+  const pvx = Number(env.pvx) || 0;
+  const pvy = Number(env.pvy) || 0;
+  const rel = Number(gear.maxRelSpeed) > 0 ? gear.maxRelSpeed : Infinity;
+  const rel2 = rel * rel;
   for (let i = 0; i < st.count; i++) {
-    // Wiązka nie łapie paczki, z której nie wejdzie choć jedna sztuka.
+    // Wiązka nie łapie paczki, z której nie wejdzie choć jedna sztuka,
     if (st.mpu[i] > free) continue;
+    // ani takiej, która mija okręt szybciej niż `maxRelSpeed` (najpierw dopasuj prędkość; trzymanej nie puszcza).
+    if (!(st.flags[i] & (LOOT_FLAG.HELD | LOOT_FLAG.LOCK))) {
+      const rvx = st.vx[i] - pvx;
+      const rvy = st.vy[i] - pvy;
+      if (rvx * rvx + rvy * rvy > rel2) continue;
+    }
     const dx = st.x[i] - cx;
     const dy = st.y[i] - cy;
     const d2 = dx * dx + dy * dy;
@@ -343,8 +359,6 @@ function stepTractor(st, dt, env, gear) {
   }
   const n = st.targetCount;
   if (!n) return;
-  const pvx = Number(env.pvx) || 0;
-  const pvy = Number(env.pvy) || 0;
   const capture2 = gear.capture * gear.capture;
   const dvMax = gear.accel * dt;
   // Ściąganie: prędkość względna ku punktowi chwytu z hamowaniem (v = √(2 a d), sufit maxSpeed).

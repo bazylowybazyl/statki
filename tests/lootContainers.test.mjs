@@ -151,11 +151,29 @@ test('wiązka: ściąga paczki w zasięgu do luku i wkłada je do ładowni; bez 
   assert.ok(env.collected > 0);
 });
 
-test('wiązka puszcza przy szybkim locie, nie widzi paczek w mgle, łapie najwyżej `targets` naraz', () => {
+test('wiązka: prędkość względna — przelot obok nie łapie, dopasowany pęd łapie; hipercruise gasi; mgła; `targets` naraz', () => {
+  // Gracz mija paczki z prędkością 600 j./s względem nich — za szybko.
   const st = createLootContainers();
   spillLootCargo(st, spec({ vx: 0 }));
-  const fast = tractorEnv(st, { env: { shipSpeed: 450 } });
-  for (let t = 0; t < 20; t += DT) stepLootContainers(st, DT, fast.env);
+  const pass = tractorEnv(st, { env: { pvx: 600, shipSpeed: 600 } });
+  stepLootContainers(st, DT, pass.env);
+  let flaggedPass = 0;
+  for (let i = 0; i < st.count; i++) if (st.flags[i] & LOOT_FLAG.TRACTOR) flaggedPass++;
+  assert.equal(flaggedPass, 0, 'przelot obok: prędkość względna > 400 j./s');
+  // Paczki z pędem wraku 600 j./s, gracz leci z nimi — wiązka działa mimo prędkości bezwzględnej > 400.
+  const moving = createLootContainers();
+  spillLootCargo(moving, spec({ vx: 600 }));
+  const match = tractorEnv(moving, { env: { pvx: 600, shipSpeed: 600 } });
+  for (let t = 0; t < 60 && moving.count; t += DT) {
+    match.env.px += 600 * DT; match.env.cx = match.env.px;
+    stepLootContainers(moving, DT, match.env);
+  }
+  assert.ok(match.env.collected > 0, 'dopasowany pęd — zbiera');
+  // Hipercruise / warp (> maxShipSpeed) — wiązka gaśnie.
+  const hyper = createLootContainers();
+  spillLootCargo(hyper, spec({ vx: 0 }));
+  const fast = tractorEnv(hyper, { env: { shipSpeed: 20000 } });
+  for (let t = 0; t < 20; t += DT) stepLootContainers(hyper, DT, fast.env);
   assert.equal(fast.env.collected, 0);
   const fog = tractorEnv(st, { env: { visible: () => false } });
   for (let t = 0; t < 20; t += DT) stepLootContainers(st, DT, fog.env);

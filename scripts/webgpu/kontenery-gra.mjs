@@ -68,12 +68,19 @@ const lootState = () => ev(`(() => {
 // Cel: statek z manifestem, wolny (postój albo < 250 j./s), najbliżej gracza, poza megafrachtowcem.
 const PICK = (minHp, maxHp = 1e9) => `(() => {
   const tb = window.TrafficBubble, br = window.TrafficV2, s = window.ship;
-  const list = tb.list.filter((a) => a.alive && br.actorManifests.has(a.id) && !(a.flags & (64 | 256))
-    && a.hullId !== 'megafreighter' && a.maxHp >= ${minHp} && a.maxHp <= ${maxHp} && Math.hypot(a.vx, a.vy) < 250);
-  list.sort((a, b) => Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
+  const earth = br.getStation('earth');
+  // Statek w locie z dala od ringu i doków (> 62 tys. j. od Ziemi — teleport do płyty ringu odsuwa gracza), wolniejszy
+  // niż limit wiązki (gracz leci z jego prędkością).
+  const ok = (a) => a.alive && br.actorManifests.has(a.id) && !(a.flags & (64 | 256)) && a.hullId !== 'megafreighter'
+    && a.maxHp >= ${minHp} && a.maxHp <= ${maxHp} && Math.hypot(a.vx, a.vy) < 350;
+  const far = (a) => Math.hypot(a.cx - earth.x, a.cy - earth.y) > 62000;
+  // W locie (nie w hali / przy stanowisku — ściany doku łapią pociski).
+  let list = tb.list.filter((a) => ok(a) && far(a) && a.phase === 'fly');
+  if (!list.length) list = tb.list.filter((a) => ok(a) && far(a));
+  if (!list.length) list = tb.list.filter(ok);
+  list.sort((a, b) => Math.hypot(a.vx, a.vy) - Math.hypot(b.vx, b.vy));
   const a = list[0];
   if (!a) return null;
-  const earth = br.getStation('earth');
   const ox = a.cx - earth.x, oy = a.cy - earth.y, od = Math.hypot(ox, oy) || 1;
   window.devTeleportTo(a.cx + ox / od * 2500, a.cy + oy / od * 2500, { angle: Math.atan2(-oy, -ox), quiet: true });
   window.ship.vel.x = a.vx; window.ship.vel.y = a.vy;
@@ -135,7 +142,10 @@ async function tractorRun(name, seconds) {
   for (let t = 0; t < seconds; t += 2) {
     await waitGame(2);
     const s = await lootState();
-    rows.push({ t: t + 2, paczek: s.paczek, wWiazce: s.wWiazce, ladownia: s.ladownia });
+    const d = await ev(`(() => { const p = window.LootContainers.pool, sh = window.ship; if (!p.count) return null;
+      return { v: Math.round(Math.hypot(sh.vel.x, sh.vel.y)), d0: Math.round(Math.hypot(p.x[0] - sh.pos.x, p.y[0] - sh.pos.y)),
+        widac: window.SensorSystem.pointVisible(p.x[0], p.y[0], 0), zywy: !sh.destroyed, sprzet: !!window.LootContainers.env.gear }; })()`);
+    rows.push({ t: t + 2, paczek: s.paczek, wWiazce: s.wWiazce, ladownia: s.ladownia, diag: d });
     if (t === 2) await screenshotPng(cdp, join(out, `${name}-wiazka.png`));
   }
   const t1 = await lootState();
@@ -166,10 +176,19 @@ try {
   // 0) Diagnostyka: zrzut przy graczu (?dev), 1 s gry — paczki, wejście kroku.
   report.etapy.dev = await ev(`(() => { const n = window.LootContainers.devSpill({ steel: 120 }, 2000);
     const p = window.LootContainers.pool; return { n, count: p.count, x: p.x[0], y: p.y[0], ttl: p.ttl[0], age: p.age[0],
-      ship: { x: window.ship.pos.x, y: window.ship.pos.y, destroyed: !!window.ship.destroyed } }; })()`);
+      ship: { x: window.ship.pos.x, y: window.ship.pos.y, destroyed: !!window.ship.destroyed },
+      mgla: { on: window.SensorSystem.fogEnabled, widacPaczke: window.SensorSystem.pointVisible(p.x[0], p.y[0], 0),
+        widacGracza: window.SensorSystem.pointVisible(window.ship.pos.x, window.ship.pos.y, 0),
+        zrodel: window.SensorSystem.fogState?.sourceCount ?? null } }; })()`);
   await waitGame(1);
   report.etapy.dev.po = await ev(`(() => { const p = window.LootContainers.pool; return { count: p.count, age: p.age[0],
     stats: window.LootContainers.stats, env: window.LootContainers.env }; })()`);
+  report.etapy.dev.mglaPo = await ev(`(() => { const p = window.LootContainers.pool; return { on: window.SensorSystem.fogEnabled,
+    widacPaczke: p.count ? window.SensorSystem.pointVisible(p.x[0], p.y[0], 0) : null,
+    widacGracza: window.SensorSystem.pointVisible(window.ship.pos.x, window.ship.pos.y, 0), wWiazce: (() => { let n = 0; for (let i = 0; i < p.count; i++) if (p.flags[i] & 1) n++; return n; })() }; })()`);
+  await ev(ZOOM(0.3));
+  await waitGame(0.5);
+  await screenshotPng(cdp, join(out, '00-dev.png'));
   console.log('dev:', JSON.stringify(report.etapy.dev));
   if (args.tylko === 'dev') throw new Error('koniec (--tylko dev)');
 
@@ -199,13 +218,15 @@ try {
   report.etapy.bezAwansu.graczZyje = await ev('!window.ship.destroyed');
   console.log('bez awansu:', JSON.stringify({ cel: report.etapy.bezAwansu.cel?.hull, manifest: report.etapy.bezAwansu.cel?.manifest,
     paczek: report.etapy.bezAwansu.po?.paczek, sztuk: report.etapy.bezAwansu.po?.sztuk }));
-  if (args.tylko === 'bezAwansu') { console.log('probki', JSON.stringify(report.etapy.bezAwansu.probki)); throw new Error('koniec (--tylko bezAwansu)'); }
+  if (args.tylko === 'bezAwansu' || args.tylko === 'bezAwansuX') { console.log('probki', JSON.stringify(report.etapy.bezAwansu.probki)); throw new Error('koniec (--tylko bezAwansu)'); }
 
   // 2) Wiązka Atlasa (fabrycznie): gracz 1,5 km od paczek, 24 s gry.
   report.etapy.wiazka = await tractorRun('02', 24);
+  if (args.tylko === 'wiazka') { console.log('przebieg', JSON.stringify((report.etapy.wiazka.przebieg || []).map((r) => [r.t, r.paczek, r.wWiazce, r.diag, r.ladownia.free]))); }
   console.log('wiązka:', JSON.stringify({ przed: report.etapy.wiazka.przed?.ladownia, po: report.etapy.wiazka.po?.ladownia,
     paczek: report.etapy.wiazka.po?.paczek, stats: report.etapy.wiazka.po?.stats, komunikaty: report.etapy.wiazka.po?.komunikaty }));
 
+  if (args.tylko === 'wiazka') throw new Error('koniec (--tylko wiazka)');
   // 3) Puste gniazdo ZBIÓRKA: nic nie wchodzi, HUD podpowiada WYPOSAŻENIE.
   await ev(`(() => { window.LootContainers.devSpill({ chips: 60, steel: 200 }, 2500); return window.PlayerFit.setLootGear(null); })()`);
   report.etapy.pusteGniazdo = await tractorRun('03-puste', 12);
