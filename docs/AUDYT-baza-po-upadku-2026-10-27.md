@@ -130,13 +130,33 @@ partiami wobec 276 własnymi siatkami (262 odłamy w 40 partiach, 24 obiekty ren
 wariantach, obraz A1↔B > 8/255 — 0%, maks. 7 (szum A1↔A2 — 0,0001%, maks. 9), pipeline'y: 31 nowych, 0
 synchronicznych.
 
+**Odłamy brył bez podzbioru w workerze — poprawione** (przebieg #6). Pakujący migawki wysyła stan węzłów ciała
+(pozycje, `active`) tylko w pudle rozgrzania (`inCullBox` w `snapshotPack._packBody`; `activeNodes` zawsze), więc
+odłam urodzony poza pudłem (`--daleko 1`: progi i upadek 16 km od Atlasa) miał w workerze lustro z topologią i pustym
+`active` — podzbiór skóry wychodził pusty, a odłam zostawał NA STAŁE przy własnych siatkach z pełną skórą kawałka
+(#5: 7 pokazanych, `noSubset` 13). Teraz `MirrorBody.nodesReceived` mówi, czy strona z węzłami ciała doszła; pusty
+podzbiór przy lustrze bez węzłów odkłada odłam (`_subsetWait`), a ten wraca do kolejki podzbiorów, gdy węzły dojdą
+(ciała gry tej flagi nie mają — bez zmian). Przebieg #6 (`--daleko 1 --ab partia`, worker; GPU na starcie 10%,
+2,4 GB, przed A/B 41%, 9,6 GB z harnessem; klient LoL otwarty, bez meczu): po progach 19 odłamów, wszystkie w
+partii, 6 czekało na węzły; po upadku 234 odłamy, 233 w partii, 13 czekało (tyle, ile w #5 wypadało), `noSubset` 0,
+jeden `empty` (podzbiór bez trójkątów — żaden trójkąt skóry nie pokrywa komórek odłamu). Nad gruzem skóry rysują się
+19 rysunkami (18 obiektów renderu partii + własna siatka odłamu `empty`) wobec 24 w #5. A/B w pauzie nad gruzem:
+
+| | A1 | B | A2 | B2 | A3 | B3 |
+|---|---:|---:|---:|---:|---:|---:|
+| klatka workera [ms] | 2,59 | 4,03 | 2,44 | 3,76 | 2,57 | 4,50 |
+| GPU [ms] | 0,66 | 0,77 | 0,65 | 0,68 | 0,65 | 0,95 |
+| rysunki / klatkę | 64 | 213 | 64 | 213 | 64 | 213 |
+
+Obraz A1↔B: piksele różne o > 8/255 — 0%, maks. 7/255 (szum A1↔A2 — 0%, maks. 8); pipeline'y synchroniczne 0,
+ostrzeżeń HullSurface 0. Maszyna spokojniejsza niż w #5, więc liczby bezwzględne między przebiegami nie do porównania
+(inny też zbiór odłamów — upadek w prawdziwym czasie); w tej samej pauzie partie dają −1,2…−1,9 ms klatki workera.
+
 ## 6. Co zostaje
 
-- W workerze 7–8 pokazanych odłamów brył (13–17 narastająco) nie ma podzbioru (`fragmentSkinSubset3D` → null: żaden
-  aktywny węzeł ciała nie wpada w kratownicę skóry kawałka) i rysuje się dalej własnymi siatkami z PEŁNĄ skórą kawałka
-  (4–6 rysunków, cała geometria bryły maskowana w shaderze) — jak przed partiami. W trybie off takich odłamów nie było
-  (tylko 2 z pustym podzbiorem), więc trop: podzbiór liczony na replice workera, zanim lustro ma węzły odłamu — wtedy
-  liczyć podzbiór ponownie, gdy węzły dojdą.
+- Odłamy brył bez podzbioru w workerze (7–8 pokazanych z PEŁNĄ skórą kawałka) — poprawione, § 5 (przebieg #6).
+- Odłam z podzbiorem bez trójkątów (`batchOut.empty`, 1 w #6, w trybie off 2) zostaje przy własnej siatce: rysunek
+  bez trójkątów, ale obiekt renderu (~20 µs CPU) — do schowania przy okazji.
 - Pozostałe rysunki nad gruzem to nie skóry (~45: bryły bazy i osady, skała, pył uderzeń, domeny gazu, wyrwy,
   wieże 3D) — próg „≤ ~40 rysunków” dotyczy skór; razem ~65 przy 36 przed upadkiem.
 - Pomiary GPU na maszynie użytkownika zależą od zajętości pamięci karty przez inne programy — porównywać tylko A/B
