@@ -13,7 +13,10 @@
   `scripts/webgpu/kontenery-gra.mjs`. Opis obszaru: reguła `kontenery-lup`. Decyzje orkiestratora: D2, D3, D5–D17
   jak w § 5 (domyślne), D4 i D1 — użytkownik.
 - **D1 (osobny commit):** ładowność Atlasa 400 t (`ATLAS_CARGO_CAP`, `src/data/playerHullCatalog.js`) — skutki w § 6.
-- Dalej: K2 (obraz 3D), K3 (drony), K4 (księga, wyrwa w ładowni), K5.
+- **K2 (2026-10-27):** obraz 3D — blok migawki `loot` (worker = off), paczki jako moduły kontenerów E12 wg masy,
+  lampka-boja HDR (najmniej 3,5 px), wiązka jako strumień świecących punktów, rozgrzewka (faza `'after'`), mgła wojny
+  i soczewka skoku liczone przez grę. Dwa rysunki na wszystkie paczki. Opis: reguła `kontenery-lup`, § „Obraz (K2)”.
+- Dalej: K3 (drony, D17 — 16 t), K4 (księga, wyrwa w ładowni), K5.
 
 ## 1. Stan przed K1: co się działo z ładunkiem zniszczonego frachtowca
 
@@ -385,6 +388,10 @@ Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) 
 - Rekord wraku wyprawy górniczej ma `units` 0, bo urobek jest w `payload.harvest`
   (`trafficCore.js:1010–1011`).
 - Zniszczenie encji ruchu bez awansu nie zbija reputacji (§ 1.1, D13).
+- Paczki w otwartej przestrzeni są ciemne: materiał kontenerów E12 (wspólny z przeładunkiem) świeci słońcem prawie
+  poziomym (`setCargoSun`, z = 0,02 — jak kadłuby), a poza ładownią nie ma lamp wnętrza; farba rodziny słabo widać,
+  paczkę zdradza lampka-boja. Poprawka (do decyzji): wariant materiału kontenerów z wyższym słońcem dla łupu (graf raz,
+  zmiana w `containers.tsl.js`) albo jaśniejsze farby łupu.
 - Automatyczne wieże Atlasa (tryb AUTO) same ostrzeliwują statki ruchu, które mają urazę do gracza po jego ostrzale
   (awans do NPC, `playerGrudge`): w przebiegu `kontenery-gra.mjs` po kilku strzałach gracza wokół toczyła się bitwa
   z kolejnymi frachtowcami i ich zniszczeniami (wiele zrzutów naraz). Zachowanie istniejące przed K1 — do oceny,
