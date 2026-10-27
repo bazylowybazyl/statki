@@ -131,6 +131,20 @@ WYJĄTEK W0 (do wpisania w DECYZJE): ciała przy punkcie zbiegu (≤ 18 px/s) s�
 to kierunek lotu (cel podróży stoi w nim jak w kamerze), a warstwy gwiazd przesuwają się równolegle do kursu; tak samo
 w mapie C. Test pilnuje obu stron.
 
+Liczby wyżej to warstwy GameStars na kamerze gwiazd (tryb `?niebo=plaska` / `?nieboTempo=stare`). W trybie NIEBA-SFERY
+(domyślny) z prawem tempa 2026-10-27 (`docs/webgpu/WYPIEK-NIEBA.md` § „Niebo-sfera — prawo tempa 2026-10-27”) deep jest
+schowana, niebo jedzie drogą nieba vN (logarytm prędkości) — warp Mk II 267 px/s (8,9 °/s), Mk III 288 px/s — a mid tą
+samą drogą z paralaksą 0,13–0,26: Mk II 347–695 px/s, przy przelocie (× 0,15) 222–444 px/s; speed bez zmian (1676–2924).
+Kolejność wobec ciał NIE zostaje w całości: trawers bez zwolnienia (≥ 1359 px/s) jest szybszy niż mid, przy zwolnieniu
+15% w paśmie mid, ale niebo (267–282 px/s, dawniej 49) płynie szybciej niż WIĘKSZOŚĆ ciał soczewki — S1 Mk II 1080p:
+tempo ciał w locie mediana 22 px/s, p90 205 px/s, ciała dalekie (≥ 1,5 mln j. przed dziobem) najwyżej 99 px/s; ciała
+wolniejsze od nieba w 69–98% klatek (dawniej 32–95%). Wyjątek W0 „ciała przy punkcie zbiegu” obejmuje więc teraz prawie
+całą soczewkę. Ciała płyną od punktu zbiegu, niebo — wzdłuż kursu, więc to inne kierunki ruchu; decyzja użytkownika:
+zostawić albo tłumić tempo nieba wagą β soczewki (niebo w skoku wolniej). Skok obraca niebo o ~90–170° (S1 / S4 / S11,
+Mk III–Mk I; dawniej 18–41°) — symulator: tabela „Niebo-sfera”, kontrola `W0-niebo` (niebo < mid < speed w każdej klatce
+przy kamerze równej statkowi) i informacyjna `W0-niebo-kamera` (z ruchem kamery względem statku — wyjątek W0 opisany
+w `WYPIEK-NIEBA.md` § „Niebo-sfera — prawo tempa 2026-10-27”).
+
 ### Mapa O1 — proporcje kadru i napęd (recenzja O1, 2026-10-26)
 
 PROPORCJE (`aspectMax` 16/9, `aspectFlow` 0): ē_s liczone najwyżej z kadru 16:9 tej wysokości (e16). Dawniej s rosło
@@ -406,7 +420,9 @@ W0 (tarcza pod statkiem a gwiazdy): gwiazdy w warpie jadą min(v, 14 tys. j/s) �
 warstwa speed 1676–2923 px/s (28–49 px/kl.), mid ≤ 296 px/s. Powierzchnia pod statkiem: w środku odcinka ≤ 7 px/kl.
 (tabela), w symulatorze S10 najwięcej 625 px/s (Mk II) i 777 px/s (Mk III) przy wejściu nad Ziemię (prędkość jeszcze goni
 strefę) — WOLNIEJ niż każda gwiazda warstwy speed, zwykle szybciej niż mid (tarcza „między” warstwami: bliżej niż mgławica
-i daleka mgiełka gwiazd, dalej niż drobiny speed). Kontrola C9 symulatora.
+i daleka mgiełka gwiazd, dalej niż drobiny speed). Kontrola C9 symulatora. W trybie nieba-sfery (prawo tempa 2026-10-27)
+mid jedzie drogą nieba — nad planetą (podłoga 0,15, ~34 tys. j/s) 222–444 px/s, więc powierzchnia pod statkiem (do
+625–777 px/s) leży między mid a speed jak wyżej; C9 podaje mid z drogi nieba (vN · 0,26 · zoom).
 
 Symulator (S10 Wenus → Saturn, kurs 114°, Ziemia i Jowisz na osi kursu; S11 Mars → Saturn, Jowisz 51 tys. j. od kursu —
 nad ringiem; promień kuli nad tarczą, czas nad tarczą, najgorszy krok P4 w locie — 1080p; 1440p: promień × 1,333,
@@ -609,7 +625,13 @@ Opcje: `--scen S1,S4`, `--res 1080,1440`, `--B1 87464`, `--naped mk1|mk2|mk3` (s
 P4 liczy tylko klatki z ciałem w kadrze w obu, więc krok przez krawędź sprawdza ta heurystyka; kryteria C2–C5 — C2 mierzy
 promień przy a = 0, próg × k_v; stożek C6; start C8). C1 (widać świat) —
 informacyjnie (mapa O1 świadomie chowa ciała za płaszczyzną kamery). Wiersz W0 — tempo obrazu ciał w locie (p10 /
-mediana / p90 / max, daleko ≥ 1,5 mln j.).
+mediana / p90 / max, daleko ≥ 1,5 mln j.). NIEBO-SFERA (od 2026-10-27): przebieg liczy obrót nieba z drogi statku
+i zoomu kadru (`src/3d/skyScroll.js` — nowe prawo i dawne `SKY_SCROLL_STARE`): kontrola `W0-niebo` (niebo < mid < speed
+GameStars w każdej klatce — mid na drodze nieba, speed na kamerze z sufitem 14 tys., obie ze skalą ekranową z = −250,
+niebo z sufitem głębi), informacyjna `W0-niebo-kamera` (to samo z ruchem kamery względem statku: kamera = statek − poza
+statku w kadrze / zoom; liczone tylko przy wolniejszej warstwie ≥ 5 px/s przy 1080p; obok wartość dawnego prawa), zdanie
+„Niebo-sfera” przy przebiegu i tabela zbiorcza (obrót w przebiegu i w locie, dawne prawo, najszybciej °/s i px/s przy
+1080p, W0 z kamerą); w JSON pole `sky` przebiegu (z `camSky`, `camSkyT`, `camMid`) i `sky` [°/s] klatki.
 
 Wyniki etapu 2 (1080p): Mars w trawersie 263 px, cel rośnie przy wyjściu × 3,97, puszczenie celu przez zbieżność kamery
 (1,0 px/klatkę), Saturn jako cel na tle × 3,82, największy skok w wyjściu 38,9 px/klatkę, najmniejszy odstęp tarczy od

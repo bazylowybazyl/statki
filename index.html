@@ -9783,7 +9783,9 @@
       get w() { return camera.mode === 'ship' ? scoutCamW : 0; },
       get x() { return scoutCamLast.x; },
       get y() { return scoutCamLast.y; },
-      get v() { const n = ScoutBay.npc; return ScoutBay.controlling && n && !n.dead ? Math.sqrt((Number(n.vx) || 0) ** 2 + (Number(n.vy) || 0) ** 2) : 0; }
+      // prędkość fregaty, póki kamera ją prowadzi (także w przejeździe powrotnym po oddaniu sterów — straż W0 nieba
+      // mnoży ją wagą w; 0 przy w > 0 zatrzymywało niebo w pierwszej klatce powrotu przy stojącym Atlasie)
+      get v() { const n = ScoutBay.npc; return scoutCamW > 0 && n && !n.dead ? Math.sqrt((Number(n.vx) || 0) ** 2 + (Number(n.vy) || 0) ** 2) : 0; }
     };
 
 

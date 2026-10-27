@@ -164,7 +164,7 @@ async function makeSky(core) {
 test('determinizm (podstawa parzystości off ≡ worker): obrót tylko z wejść klatki — dwa egzemplarze, te same macierze = lustro CPU', async () => {
   // Wejścia off (__interpShipPose, ship.vel) i workera (HEAD.INTERP_*, lustro EF.VEL) to te same liczby strony — ścieżki
   // ich przekazania sprawdzają workerPlayerPose.test.mjs i snapshotPack.test.mjs; tu: ten sam stan z tych samych wejść.
-  const { createSkyScroll, stepSkyScroll, skyViewMatrix, skyFocalPx } = await import('../src/3d/skyScroll.js');
+  const { createSkyScroll, stepSkyScroll, skyViewMatrix, skyFocalPx, skyScreenSpeed } = await import('../src/3d/skyScroll.js');
   const core = { pxScale: 1.25, composerTarget: { height: 1350 }, viewZoom: (c) => c.zoom * 1.25 };
   const run = async () => {
     const S = await makeSky(core);
@@ -191,8 +191,9 @@ test('determinizm (podstawa parzystości off ≡ worker): obrót tylko z wejść
   const m = skyViewMatrix(sc, 1.1, new Float64Array(9));
   const e = a.U.viewMat.value.elements;   // kolumnami
   for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) assert.ok(Math.abs(e[c * 3 + r] - m[r * 3 + c]) < 1e-6);
-  // tempo w skoku: sufit 14 tys. j/s → ~49 px CSS/s przy kadrze skoku (zoom × pxScale / pxScale)
-  assert.ok(Math.abs(a.speedCss - 14000 * 0.03 * 0.12) < 1e-6, String(a.speedCss));
+  // tempo w skoku (stan ustalony po 3,3 s ≫ wygładzenie 0,15 s): droga nieba vN(150 tys.) · p · zoom skoku (px CSS)
+  const want = skyScreenSpeed(150000, 0.12);
+  assert.ok(Math.abs(a.speedCss - want) / want < 1e-6, `${a.speedCss} vs ${want}`);
 });
 
 test('worker pomija strony: czas kroku z zegara klatek (HEAD.T_FRAME) — ten sam obrót co off, bez fałszywych cięć', async () => {
@@ -216,9 +217,11 @@ test('worker pomija strony: czas kroku z zegara klatek (HEAD.T_FRAME) — ten sa
   }
   assert.equal(off.scroll.cuts, 0);
   assert.equal(wrk.scroll.cuts, 0, 'pominięte strony to nie teleport');
-  assert.ok(Math.abs(wrk.scroll.turned - off.scroll.turned) / off.scroll.turned < 1e-4, `${wrk.scroll.turned} vs ${off.scroll.turned}`);
-  assert.ok(Math.abs(wrk.speedCss - off.speedCss) < 1e-6);
-  assert.ok(old.scroll.cuts > 100 || old.scroll.turned < off.scroll.turned * 0.5, 'bez zegara: cięcia albo przycięty obrót');
+  // wygładzenie drogi nieba liczone z czasu stron: worker (co 4. strona) = off z dokładnością do próbkowania rampy
+  assert.ok(Math.abs(wrk.scroll.turned - off.scroll.turned) / off.scroll.turned < 2e-3, `${wrk.scroll.turned} vs ${off.scroll.turned}`);
+  assert.ok(Math.abs(wrk.speedCss - off.speedCss) / off.speedCss < 1e-6, `${wrk.speedCss} vs ${off.speedCss}`);
+  assert.ok(old.scroll.cuts > 100 || old.scroll.turned < off.scroll.turned * 0.6,
+    `bez zegara: cięcia albo przycięty obrót (${old.scroll.turned / off.scroll.turned})`);
 });
 
 test('fregata zwiadu przy sterach: niebo z drogi prowadzonego okrętu (RenderWorld.cameraLead), przejazd kamery bez skoku', async () => {
@@ -240,11 +243,13 @@ test('fregata zwiadu przy sterach: niebo z drogi prowadzonego okrętu (RenderWor
   }
   assert.equal(S.scroll.cuts, 0, 'przejazd kamery nie jest cięciem');
   // pełna waga: tempo jak dla okrętu 900 j/s; skoki między klatkami ≤ krok pełnej wagi (bez szarpnięcia)
+  // (droga nieba wygładzona 0,15 s — dochodzi do kroku pełnej wagi od dołu)
   const step = 900 * dt * SKY_SCROLL.p * 0.2133 / skyFocalPx(1080);
-  assert.ok(Math.abs((turnedAt[239] - turnedAt[238]) - step) / step < 1e-6);
+  assert.ok(Math.abs((turnedAt[239] - turnedAt[238]) - step) / step < 1e-3);
   for (let i = 1; i < turnedAt.length; i++) assert.ok(turnedAt[i] - turnedAt[i - 1] <= step * (1 + 1e-9));
-  assert.ok(Math.abs(S.speedCss - 900 * 0.03 * 0.2133) < 1e-6);
-  // powrót kamery na Atlasa (w = 0): niebo stoi razem z Atlasem
+  const want = 900 * SKY_SCROLL.p * 0.2133;
+  assert.ok(Math.abs(S.speedCss - want) / want < 1e-3, String(S.speedCss));
+  // powrót kamery na Atlasa (w = 0): niebo stoi razem z Atlasem (straż W0 — prędkość prowadzonego okrętu 0)
   const t0 = S.scroll.turned;
   for (let i = 0; i < 30; i++) { lead.x += 900 * dt; S.update(dt, cam, atlas, 0, 1, true, null); }
   assert.equal(S.scroll.turned, t0);
@@ -303,6 +308,7 @@ test('pamięć nieba: niebo płynące ≥ progu na klatkę (warp, obrót kadru) 
     const cam = { zoom, roll: 0 };
     let x = 0;
     S.scroll.track.has = false;
+    S.scroll.vDrive = 0;   // każdy przebieg od postoju (bez dobiegu drogi nieba z poprzedniego)
     for (let i = 0; i < n; i++) {
       cam.roll = roll(i);
       x += v * dt;
@@ -313,13 +319,14 @@ test('pamięć nieba: niebo płynące ≥ progu na klatkę (warp, obrót kadru) 
     for (const k of Object.keys(st0)) d[k] = S.cacheStats[k] - st0[k];
     return d;
   };
-  // warp (sufit 14 tys. j/s, kadr skoku 0,1173) przy 144 Hz: 49 px/s → 0,34 px/kl. na środku ≥ 0,25 — wprost
+  // warp Mk II (kadr skoku 0,1173) przy 144 Hz: 267 px/s → 1,9 px/kl. na środku ≥ 0,25 — wprost (bez pierwszych klatek
+  // rozpędu drogi nieba z postoju)
   const warp = fly(175000, 0.1173, 200);
-  assert.ok(warp.fast >= 198 && warp.renders <= 2, JSON.stringify(warp));
-  // walka (507 j/s, zoom 0,2133): 3,2 px/s → pamięć, przeliczenie co ~kilkanaście klatek
+  assert.ok(warp.fast >= 195 && warp.renders <= 3, JSON.stringify(warp));
+  // walka (507 j/s, zoom 0,2133): 10,8 px/s → 0,075 px/kl. przy 144 Hz — pamięć, przeliczenie co ~4 klatki
   const walka = fly(507, 0.2133, 200);
   assert.equal(walka.fast, 0);
-  assert.ok(walka.reused > walka.renders * 5, JSON.stringify(walka));
+  assert.ok(walka.reused > walka.renders * 2, JSON.stringify(walka));
   // obrót kadru w postoju (hipercruise: obrót do kursu) — wprost
   const roll = fly(0.001, 0.2133, 60, (i) => i * 0.01);
   assert.ok(roll.fast >= 58, JSON.stringify(roll));
@@ -347,4 +354,137 @@ test('gwiazdy GameStars: tryb sfery zwija warstwę deep (paralaksa < 0,04) w wie
   const { vs } = build(createStarMaterial(u), geo);
   assert.match(vs, /0\.04/, 'próg paralaksy deep / mid');
   assert.match(vs, /vec4<f32>\( 2\.0, 2\.0, 2\.0, 1\.0 \)/, 'wierzchołek poza bryłą obcinania');
+});
+
+test('prawo tempa z adresu (?nieboTempo) — off ≡ worker: te same wejścia i ten sam adres dają te same macierze; stare = dawne liczby', async () => {
+  const { skyScreenSpeed, skyStarStreakPx, SKY_SCROLL, SKY_SCROLL_STARE, SKY_SCROLL_BEZ_SUFITU } = await import('../src/3d/skyScroll.js');
+  const { WARP_STARS } = await import('../src/3d/warp/stars.js');
+  const core = { pxScale: 1, composerTarget: { height: 1080 }, viewZoom: (c) => c.zoom };
+  const run = async (search, clockStep = 1) => {
+    const S = await makeSky(core);
+    S.applyTempo(search);
+    const cam = { x: 0, y: 0, zoom: 0.1173, roll: 0 };
+    const dt = 1 / 240;
+    let clock = 0;
+    const pose = { x: 0, y: 0 };
+    for (let k = 0; k <= 1440; k++) {
+      const v = k < 240 ? 507 : Math.min(175000, 507 + (k - 240) * 600);
+      pose.y -= v * dt;
+      clock += dt;
+      // clockStep 1 — tryb off (każda strona), 3 — worker rysuje co 3. stronę z zegara stron
+      if (k % clockStep === 0) S.update(dt, cam, pose, v, 1, true, null, null, clockStep > 1 ? clock : null);
+    }
+    return S;
+  };
+  for (const search of ['', '?nieboTempo=stare', '?nieboTempo=2', '?nieboTempo=0.5']) {
+    const a = await run(search);
+    const b = await run(search);
+    assert.deepEqual(Array.from(a.U.viewMat.value.elements), Array.from(b.U.viewMat.value.elements), search);
+    const w = await run(search, 3);
+    assert.ok(Math.abs(w.scroll.turned - a.scroll.turned) / a.scroll.turned < 2e-3, `${search}: worker ${w.scroll.turned} vs off ${a.scroll.turned}`);
+  }
+  const nowe = await run('');
+  const stare = await run('?nieboTempo=stare');
+  const x2 = await run('?nieboTempo=2');
+  assert.equal(nowe.tune, SKY_SCROLL);
+  assert.equal(stare.tune, SKY_SCROLL_STARE);
+  assert.equal(nowe.midSphere, true);
+  assert.equal(stare.midSphere, false, 'dawne prawo — dawna warstwa mid na kamerze gwiazd');
+  assert.equal(x2.midMul, 2);
+  // stan ustalony w warpie Mk II: stare = sufit 14 tys. · 0,03 · zoom (49,3 px/s), nowe = vN · 0,1 · zoom, ×2 — dwa razy
+  assert.ok(Math.abs(stare.speedCss - 14000 * 0.03 * 0.1173) < 1e-6, String(stare.speedCss));
+  const want = skyScreenSpeed(175000, 0.1173);
+  assert.ok(Math.abs(nowe.speedCss - want) / want < 1e-6, `${nowe.speedCss} vs ${want}`);
+  assert.ok(Math.abs(x2.speedCss / nowe.speedCss - 2) < 1e-9);
+  assert.ok(nowe.scroll.turned > 4 * stare.scroll.turned);
+  // smuga jasnych gwiazd w uniformie: ruch nieba w ekspozycji, najmniej dawna 0,22 · stretchPx (1080p warp Mk II: ruch
+  // 13,4 px < 16,3 — dawna; ×2 — 26,7 px), stare — 0,22 · stretchPx
+  assert.ok(Math.abs(nowe.U.streakLen.value - skyStarStreakPx(nowe.scroll.speedPx, 1)) < 1e-9);
+  assert.ok(Math.abs(nowe.U.streakLen.value - WARP_STARS.stretchPx.value * 0.22) < 1e-9, String(nowe.U.streakLen.value));
+  assert.ok(Math.abs(x2.U.streakLen.value - 26.7) < 0.1, String(x2.U.streakLen.value));
+  assert.ok(Math.abs(stare.U.streakLen.value - WARP_STARS.stretchPx.value * 0.22) < 1e-9);
+  // ?nieboSufit=0 — nowe prawo bez sufitu głębi (tu kadr skoku 16:9 — sufit i tak nie działa: to samo tempo)
+  const bez = await run('?nieboSufit=0');
+  assert.equal(bez.tune, SKY_SCROLL_BEZ_SUFITU);
+  assert.ok(Math.abs(bez.speedCss - nowe.speedCss) < 1e-9);
+  // tryb płaski: tempo z adresu bez warstwy mid na drodze nieba
+  const { SkySphere } = await import('../src/3d/sky3D.js');
+  const P = Object.create(SkySphere);
+  P.active = false;
+  P.applyTempo('?niebo=plaska&nieboTempo=2');
+  assert.equal(P.midSphere, false);
+});
+
+test('kwady jasnych gwiazd: długość smugi z uniformu streakLen (bez nowego pipeline’u przy zmianie tempa)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/3d/skySphere.tsl.js', import.meta.url), 'utf8');
+  const quads = src.slice(src.indexOf('export function createSkyStarQuadsMaterial'));
+  assert.match(quads, /const L = st\.mul\(U\.streakLen\)\.toVar\(\);/);
+  const U = createSkySphereUniforms(tex(), cacheTex());
+  assert.ok(U.streakLen && Math.abs(U.streakLen.value - 74 * 0.22) < 1e-9);
+});
+
+test('gwiazdy GameStars: tryb sfery z nowym prawem — warstwa mid na drodze nieba (cameraOffsetMid, paralaksa 0,13–0,26) maską, bez gałęzi', async () => {
+  const { createStarMaterial, createStarGeometry, STAR_PLANET_MASK_CAP } = await import('../src/3d/planet3d.assets.tsl.js');
+  const { uniformsAdapter } = await import('../src/3d/tsl/uniformy.js');
+  const { texture, uniform, uniformArray, vec2 } = await import('three/tsl');
+  const mk = (extra) => uniformsAdapter({
+    pointTexture: texture(tex(), vec2(0.0)), time: uniform(0), cameraOffset: uniform(new THREE.Vector2()), containerSize: uniform(220000),
+    perspectiveScale: uniform(800), globalBrightness: uniform(1), warpFactor: uniform(0), moveDir: uniform(new THREE.Vector2(0, 1)),
+    stretchStrength: uniform(20), zoomComp: uniform(1), exitWhipFactor: uniform(0), exitWhipStrength: uniform(1.75),
+    viewportSize: uniform(new THREE.Vector2(1, 1)), thinningStrength: uniform(38), baseSizeMul: uniform(1.65),
+    hideDeep: uniform(1.0), ...extra,
+    planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4()), 'vec4')
+  });
+  const n = 4;
+  const geo = () => createStarGeometry({
+    starPos: new Float32Array(n * 3), size: new Float32Array(n).fill(1), brightness: new Float32Array(n).fill(1), color: new Float32Array(n * 3).fill(1),
+    parallaxFactor: new Float32Array([0.01, 0.06, 0.15, 1.2]), layerSizeMul: new Float32Array(n).fill(1), layerBrightnessMul: new Float32Array(n).fill(1),
+    layerStretchMul: new Float32Array(n).fill(1)
+  }, n);
+  const plain = build(createStarMaterial(mk({})), geo()).vs;
+  const sphere = build(createStarMaterial(mk({ midSphere: uniform(1.0), cameraOffsetMid: uniform(new THREE.Vector2()) })), geo()).vs;
+  assert.doesNotMatch(plain, /1\.04/, 'bez uniformów sfery — dawny graf');
+  assert.match(sphere, /1\.04/, 'nachylenie przesunięcia paralaksy mid (0,13 / 0,125)');
+  assert.match(sphere, /\bstep\(/, 'maska 0 / 1 (bez gałęzi)');
+  assert.ok(ubo(sphere) <= ubo(plain) + 0, 'uniformy w tym samym buforze');
+});
+
+test('pauza i worldFrozen: gra woła render z dt > 0 przy stojącej pozie — niebo i droga mid stoją (off i worker), sufit głębi na 32:9', async () => {
+  const core = { pxScale: 1, composerTarget: { height: 1440 }, viewZoom: (c) => c.zoom };
+  for (const worker of [false, true]) {
+    const S = await makeSky(core);
+    S.applyTempo('');
+    const cam = { x: 0, y: 0, zoom: 0.1173 * 1440 / 1080, roll: 0 };
+    const dt = 1 / 144;
+    let clock = 0;
+    const pose = { x: 0, y: 0 };
+    for (let k = 0; k < 432; k++) { pose.y -= 175000 * dt; clock += dt; S.update(dt, cam, pose, 175000, 1, true, null, null, worker ? clock : null); }
+    const t0 = S.scroll.turned;
+    const vd = S.scroll.vDrive;
+    const up0 = S.updates;
+    // pauza 2 s: poza stoi, prędkość w stanie 175 tys., zegar stron rośnie (HEAD.T_FRAME), dt klatki > 0
+    for (let k = 0; k < 288; k++) {
+      clock += dt;
+      S.update(dt, cam, pose, 175000, 1, true, null, null, worker ? clock : null);
+      assert.ok(S.scroll.driveX === 0 && S.scroll.driveY === 0, 'mid bez drogi nieba w pauzie');
+    }
+    assert.equal(S.scroll.turned, t0, worker ? 'worker' : 'off');
+    assert.equal(S.scroll.vDrive, vd);
+    assert.equal(S.speedCss, 0);
+    assert.equal(S.updates, up0 + 288, 'klatki nieba liczone (StarSystem bierze drogę tylko z nowej)');
+  }
+  // 32:9 1440p w walce (zoom 0,569): sufit głębi — niebo 0,0557 zamiast 0,1 (kątowo jak 16:9)
+  const S = await makeSky(core);
+  S.applyTempo('');
+  const cam = { x: 0, y: 0, zoom: 0.2 * 5120 / 1800, roll: 0 };
+  const pose = { x: 0, y: 0 };
+  for (let k = 0; k < 600; k++) { pose.x += 507 / 144; S.update(1 / 144, cam, pose, 507, 1, true, null, null, null); }
+  assert.ok(Math.abs(S.scroll.pEff - 0.0557) < 1e-3, String(S.scroll.pEff));
+  const B = await makeSky(core);
+  B.applyTempo('?nieboSufit=0');
+  const pb = { x: 0, y: 0 };
+  for (let k = 0; k < 600; k++) { pb.x += 507 / 144; B.update(1 / 144, cam, pb, 507, 1, true, null, null, null); }
+  assert.equal(B.scroll.pEff, 0.1);
+  assert.ok(B.speedCss > 1.7 * S.speedCss, `${B.speedCss} vs ${S.speedCss}`);
 });

@@ -46,6 +46,7 @@ import {
 import { uniformNode } from './tsl/uniformy.js';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { WARP_STARS } from './warp/stars.js';
+import { STAR_PARALLAX_LAYERS, STAR_MID_SPHERE } from './starParallax.js';
 import { WARP_SKY_BEND, warpSkyBendOffset } from './warp/skyBend.js';
 import { RULON, rulonInverse } from './warp/rulon.js';
 import { acesGry } from './tsl/kolorGry.js';
@@ -883,8 +884,20 @@ export function createStarMaterial(u) {
   // (starZoomCompensation w starParallax.js).
   const halfSize = u.containerSize.div(2.0);
   const layeredOffset = u.cameraOffset.mul(aParallax);
-  const posX = mod(aPos.x.sub(layeredOffset.x).add(halfSize), u.containerSize).sub(halfSize);
-  const posY = mod(aPos.y.sub(layeredOffset.y).add(halfSize), u.containerSize).sub(halfSize);
+  // Niebo-sfera z nowym prawem tempa (skyScroll.js, 2026-10-27): gwiazdy mid (paralaksa 0,04–0,5) jadą DROGĄ NIEBA
+  // (`cameraOffsetMid` — StarSystem: ruch kamery względem statku + droga nieba) z paralaksą przesuniętą na STAR_MID_SPHERE
+  // (0,055–0,18 → 0,13–0,26; lustro CPU starMidSphereParallax) — W0: niebo < mid. Wybór maską 0 / 1 z uniformu
+  // `midSphere` (iloczyny przez 0 / 1 i suma z zerem — dokładnie, bez gałęzi; pułapka 39), bez nowego pipeline'u.
+  let starOffset = layeredOffset;
+  if (u.midSphere && u.cameraOffsetMid) {
+    const MID = STAR_PARALLAX_LAYERS[1];
+    const k = (STAR_MID_SPHERE.parallaxMax - STAR_MID_SPHERE.parallaxMin) / (MID.parallaxMax - MID.parallaxMin);
+    const pMid = aParallax.sub(MID.parallaxMin).mul(k).add(STAR_MID_SPHERE.parallaxMin);
+    const mMid = step(0.5, u.midSphere).mul(step(0.04, aParallax)).mul(float(1.0).sub(step(0.5, aParallax)));
+    starOffset = layeredOffset.mul(float(1.0).sub(mMid)).add(u.cameraOffsetMid.mul(pMid).mul(mMid));
+  }
+  const posX = mod(aPos.x.sub(starOffset.x).add(halfSize), u.containerSize).sub(halfSize);
+  const posY = mod(aPos.y.sub(starOffset.y).add(halfSize), u.containerSize).sub(halfSize);
   const pos = vec3(vec2(posX, posY).mul(u.zoomComp), aPos.z);
 
   // Maska planet: gwiazda za tarczą planety znika (odległość w świecie, xy).
