@@ -10,7 +10,7 @@
 // META_REFRESH zebrań, rozłożone w czasie; w dużej bitwie dawniej liczone dla każdego okrętu co 100 ms.
 
 import { RADAR_TUNE, radarClassCode } from './radarConfig.js';
-import { RADAR_SRC } from './radarTracker.js';
+import { RADAR_KIND, RADAR_SRC } from './radarTracker.js';
 
 const FIGHTER_RE = /fighter|interceptor|bomber/;
 // Co tyle zebrań (~1,6 s przy 10 Hz) dane bytu liczone od nowa (nazwa, wymiary kadłuba po budowie ciała).
@@ -310,6 +310,24 @@ export function createRadarFeed(tune = RADAR_TUNE) {
             r.length = meta.length; r.width = meta.width;
             r.sprite = meta.sprite; r.spriteRot = meta.spriteRot;
           }
+        }
+      }
+
+      // ---- kontenery-łup (paczki po zniszczonych statkach ruchu; bez strony, bursztyn jak lampka-boja) — env.loot:
+      //      ramka obrazu łupu (src/render/blocks/lootBlock.js — createLootFrame), już bez paczek ukrytych przez mgłę;
+      //      klucz śladu = stały numer paczki (uid), pozycja z rekordu (STATIC) ----
+      const loot = env.loot;
+      if (loot && loot.count > 0) {
+        let m = 0;
+        for (let i = 0; i < loot.count && n < tune.maxTracks && m < 32; i++) {
+          const dx = loot.x[i] - ox;
+          const dy = loot.y[i] - oy;
+          if (dx * dx + dy * dy > prSq) continue;
+          const r = rec(n++);
+          m++;
+          r.key = loot.uid[i]; r.src = RADAR_SRC.STATIC; r.kind = RADAR_KIND.LOOT; r.aff = 'neutral';
+          r.x = loot.x[i]; r.y = loot.y[i]; r.vx = 0; r.vy = 0; r.angle = loot.ang[i];
+          r.cls = 'LT'; r.name = 'KONTENER'; r.idKnown = true; r.length = 16; r.width = 8;
         }
       }
 

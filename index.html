@@ -5681,6 +5681,8 @@
       env.stations = stations;
       env.wrecks = wrecks;
       env.coldWrecks = coldWrecks;
+      // Kontenery-łup: ramka obrazu (tylko paczki widoczne przez mgłę wojny — D8).
+      env.loot = _lootRender;
       env.rockets = window.rocketSystem3D?.rockets || null;
       env.drones = SpotterDroneSystem.getDrones?.() || null;
       env.player2 = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;

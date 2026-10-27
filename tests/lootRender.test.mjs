@@ -173,3 +173,23 @@ test('wariant oświetlenia łupu: osobny materiał (graf raz), kontenery E12 bez
   const mod = createLootContainers3D(fakeCore());
   assert.equal(mod.warmupMeshes()[0].material.name, 'Cargo:kontenery-łup');
 });
+
+test('radar: paczki łupu z ramki obrazu jako ślady „kontener” (bez strony, bursztyn), poza zasięgiem malowania — nie', async () => {
+  const { createRadarFeed } = await import('../src/ui/radar/radarFeed.js');
+  const { RADAR_TUNE, RADAR_RGB } = await import('../src/ui/radar/radarConfig.js');
+  const { RADAR_KIND, RADAR_SRC } = await import('../src/ui/radar/radarTracker.js');
+  const { radarAffRgb, radarSymbolSize } = await import('../src/ui/radar/radarSymbols.js');
+  const loot = createLootFrame();
+  loot.count = 2;
+  loot.x[0] = 3000; loot.y[0] = 0; loot.uid[0] = 11;
+  loot.x[1] = 900000; loot.y[1] = 0; loot.uid[1] = 12;
+  const fb = createRadarFeed(RADAR_TUNE);
+  const feed = fb.collect({ ship: { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, angle: 0 }, range: 20000, npcs: [], loot });
+  const recs = feed.targets.slice(0, feed.count).filter((r) => r.kind === RADAR_KIND.LOOT);
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].key, 11);
+  assert.equal(recs[0].src, RADAR_SRC.STATIC);
+  assert.equal(recs[0].aff, 'neutral');
+  assert.equal(radarAffRgb('neutral', 'loot'), RADAR_RGB.loot);
+  assert.ok(radarSymbolSize('loot') < radarSymbolSize('wreck'));
+});
