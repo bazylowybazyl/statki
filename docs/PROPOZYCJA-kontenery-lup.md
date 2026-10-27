@@ -5,7 +5,16 @@
 > (fakty z plik:linia), gotowe klocki, propozycję, plan etapów i decyzje „na strzała”. Budowa (etap 2) rusza
 > po decyzjach.
 
-## 1. Stan dziś: co się dzieje z ładunkiem zniszczonego frachtowca
+## Stan budowy
+
+- **K1 (2026-10-27, gałąź `claude/kontenery-lup-7ab0cf`):** manifest ładunku encji z workera (`actors.manifests`),
+  pula paczek z wiązką (`src/game/lootContainers.js`), gniazdo ZBIÓRKA (`src/data/lootGear.js`, WYPOSAŻENIE, zapis),
+  zrzut przy obu ścieżkach śmierci, kara reputacji za zestrzelenie bez awansu, podgląd na kanwie 2D, narzędzie
+  `scripts/webgpu/kontenery-gra.mjs`. Ładowność Atlasa bez zmian (20 t — D1 czeka na użytkownika). Opis obszaru:
+  reguła `kontenery-lup`. Decyzje orkiestratora: D2, D3, D5–D17 jak w § 5 (domyślne), D4 — użytkownik.
+- Dalej: K2 (obraz 3D), K3 (drony), K4 (księga, wyrwa w ładowni), K5.
+
+## 1. Stan przed K1: co się działo z ładunkiem zniszczonego frachtowca
 
 **Krótko: nic nie wyrzuca kontenerów do przestrzeni.** Ładunek zniszczonego frachtowca zostaje w rekordzie
 zlecenia w świecie ruchu jako „wrak” i nikt go stamtąd nie zabiera, ani gra, ani złomiarze. Piraci też nie,
