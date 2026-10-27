@@ -25,7 +25,7 @@ paths:
 
 - Nowa ścieżka zniszczenia statku ruchu z ładunkiem w grze → `spillTrafficCargo(manifest, kurs, poza, ruch, obrys, środek wybuchu)` (inaczej ładunek przepada bez śladu).
 - Krok puli tylko w `physicsStep` (`stepLoot` po `stepTrafficRam` — pauza i sceny stoją); bez alokacji w kroku (cele wiązki w tablicach typowanych).
-- Ładowność gracza się tu nie zmienia — limit chwytu i przepełnienie liczą się z prawdziwego `cargoCap` (D1 czeka na użytkownika).
+- Limit chwytu i przepełnienie liczą się z prawdziwego `cargoCap` kadłuba (`getPlayerCargoFree`). Atlas: 400 t (`ATLAS_CARGO_CAP`, D1 — decyzja użytkownika 2026-10-27); luk pokazuje wypełnienie masa / 400 t. Skutki dla handlu, kopalni i naprawy: `docs/PROPOZYCJA-kontenery-lup.md` § 7.
 
 ## Jak sprawdzać
 

@@ -10,8 +10,9 @@
 - **K1 (2026-10-27, gałąź `claude/kontenery-lup-7ab0cf`):** manifest ładunku encji z workera (`actors.manifests`),
   pula paczek z wiązką (`src/game/lootContainers.js`), gniazdo ZBIÓRKA (`src/data/lootGear.js`, WYPOSAŻENIE, zapis),
   zrzut przy obu ścieżkach śmierci, kara reputacji za zestrzelenie bez awansu, podgląd na kanwie 2D, narzędzie
-  `scripts/webgpu/kontenery-gra.mjs`. Ładowność Atlasa bez zmian (20 t — D1 czeka na użytkownika). Opis obszaru:
-  reguła `kontenery-lup`. Decyzje orkiestratora: D2, D3, D5–D17 jak w § 5 (domyślne), D4 — użytkownik.
+  `scripts/webgpu/kontenery-gra.mjs`. Opis obszaru: reguła `kontenery-lup`. Decyzje orkiestratora: D2, D3, D5–D17
+  jak w § 5 (domyślne), D4 i D1 — użytkownik.
+- **D1 (osobny commit):** ładowność Atlasa 400 t (`ATLAS_CARGO_CAP`, `src/data/playerHullCatalog.js`) — skutki w § 7.
 - Dalej: K2 (obraz 3D), K3 (drony), K4 (księga, wyrwa w ładowni), K5.
 
 ## 1. Stan przed K1: co się działo z ładunkiem zniszczonego frachtowca
@@ -340,6 +341,40 @@ Pytanie, a po strzałce rekomendacja domyślna.
 16. **D16. Co ma Atlas na start?** → **Wiązkę w komplecie startowym**; drony za część 14 000 CR + 900 CR za drona.
 17. **D17. Drony zabierają ładowność?** → **Tak**, zatoka −6 slotów luku Atlasa (≈ −96 t przy 2 t na kontener),
     jak przy fregacie i myśliwcach w luku („okręty zabierają miejsce ładunkowi”).
+
+## 7. D1 — ładowność Atlasa 400 t: skutki (pomiar 2026-10-27)
+
+Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) zamiast geometrii luku (~2,4 tys. t).
+
+- **Obraz luku:** bez zmian w kodzie. Wypełnienie luku = masa ładunku / `cargoCap` (`playerCargoRecord`), więc
+  pełne 400 t to pełny luk (1200 kontenerów obrazu ≈ 0,33 t na kontener). Kontener w obrazie jest widokiem liczby
+  (jak w E12), nie jednostką ekonomii.
+- **Handel** (świat ruchu po 1 h, ziarna 7 / 11 / 23, okazje z księgi rynku `findTradeOpportunities`, ten sam
+  rachunek co kupcy):
+
+  | Ziarno | 20 t: najlepszy kurs | 400 t: najlepszy kurs | Zmiana zysku | Przy 1200 CR startu |
+  |---|---|---|---|---|
+  | 7 | weapon_mount 4 szt. (20 t), koszt 5,9 tys., zysk 13,5 tys. CR | weapon_mount 7 szt. (35 t), koszt 10,4 tys., zysk 23,6 tys. | +75% | bez zmian (3,2 tys.) |
+  | 11 | avionics 10 szt. (20 t), zysk 10,8 tys. | avionics 13 szt. (26 t), zysk 14,0 tys. | +30% | bez zmian (2,3 tys.) |
+  | 23 | weapon_mount 4 szt., zysk 13,5 tys. | reactor_core 8 szt. (48 t), zysk 16,5 tys. | +22% | bez zmian (3,2 tys.) |
+
+  Najlepsze kursy ogranicza głębokość rynku (ile port sprzeda i ile przyjmie), nie ładownia: przy 400 t okazji
+  wypełniających ≥ 95% ładowni jest 36–49 z 200 (przy 20 t — 84–94). Zysk na kurs rośnie o 20–75% i wymaga
+  6–10 tys. CR kapitału; na starcie (1200 CR) nic się nie zmienia. Komputer handlowy CIC już liczy okazje dla
+  ładowni 380 t (`tradeSummary.js`), więc teraz zgadza się z Atlasem. Strojenia nie proponuję.
+- **Kopalnia** (`asteroidMiningRig.js`, limit `cargoFree`): skała miedzi r ≈ 650 j. daje ~140 t rudy. Przy 20 t
+  „ładownia pełna” przychodziło po ~1/7 pierwszej skały; przy 400 t — po ~2,9 skały. Udźwig wiązki kopalni
+  (najcięższy odłam 450 t) bez zmian. Strojenia nie proponuję.
+- **Naprawa w polu** (drony R, materiał z ładowni): 20 t stali = 800 komórek ≈ ¼ kadłuba Atlasa; 400 t stali =
+  16 000 komórek ≈ 5 kadłubów. Ładownia przestaje ograniczać naprawę — zostają kredyty (stal ~16 CR/t: 400 t ≈
+  6,4 tys. CR), czas pracy dronów i słabsze łaty (`patchHpMul`). Tu może się rozjechać: jeśli naprawa w polu okaże
+  się za mocna, propozycja — osobny „skład naprawczy” (np. 40 t materiału dla dronów) albo droższy odrost
+  (`cellsPerUnit`). Nie zmieniam bez decyzji.
+- **Łup:** zrzut pełnego dalekiego frachtowca (209 t) mieści się w całości, ciężkiego (495 t) — w 80%.
+- **D17 przy 400 t:** −96 t za zatokę dronów to 24% ładowności — za dużo. Propozycja: odliczenie proporcjonalne
+  do miejsca w luku — zatoka zajmuje 6 ze 150 slotów luku (4%), czyli **−16 t** (albo okrągłe −20 t = 5%).
+- **Testy:** `cargoBays`, `playerHullMarket` (ceny kadłubów nie czytają ładowności), `playerFitSave`, `repairRig`,
+  `repairBlock`, `asteroidMining*`, `portCargo`, `scoutBay` — 134 / 134.
 
 ## 6. Zauważone przy okazji (poza zakresem)
 
