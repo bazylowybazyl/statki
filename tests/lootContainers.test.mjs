@@ -316,3 +316,52 @@ test('przegląd K1: blokada — paczka chwilowo poza celami (mgła, > maxShipSpe
   for (let s = 0; s < 60 * 30 && st.count; s++) stepLootContainers(st, 1 / 60, env);
   assert.equal(st.count, 0, 'zebrane mimo mgły (blokada)');
 });
+
+// Przegląd K1 + K2 (2026-10-27): paczka czekająca przy luku (pełna ładownia) odpływała, gdy okręt leciał; trzymane
+// paczki bez miejsca zajmowały wszystkie sloty wiązki.
+for (const hz of [60, 120]) {
+  for (const speed of [200, 1100]) {
+    test(`przegląd K1 + K2: pełna ładownia przy ${speed} j./s (${hz} Hz) — paczki przy luku ~250 s, po zwolnieniu miejsca w ładowni`, () => {
+      const st = createLootContainers();
+      spillLootCargo(st, { x: -1500, y: 0, vx: speed, vy: 0, angle: 0, length: 120, width: 40, cargo: { steel: 40 }, mass: 40, seed: 7 });
+      const total = sumUnits(st);
+      const hold = { free: 5, got: 0 };
+      const env = {
+        px: 0, py: 0, cx: 0, cy: 0, pvx: speed, pvy: 0, shipSpeed: speed, gear: lootGearParams('atlas', 'loot_tractor'), visible: null,
+        free: () => hold.free,
+        take: (k, u) => { const f = Math.min(u, Math.floor(hold.free / RESOURCES[k].mass)); hold.free -= f * RESOURCES[k].mass; hold.got += f; return f; }
+      };
+      const dt = 1 / hz;
+      let maxD = 0;
+      for (let s = 0; s < hz * 250; s++) {
+        env.px += speed * dt; env.cx = env.px;
+        stepLootContainers(st, dt, env);
+        if (s > hz * 20) for (let i = 0; i < st.count; i++) maxD = Math.max(maxD, Math.hypot(st.x[i] - env.px, st.y[i] - env.py));
+      }
+      assert.ok(st.count > 0, 'czekają');
+      assert.ok(maxD <= env.gear.capture, `przy luku (${maxD.toFixed(1)} j.)`);
+      hold.free = 1e9;
+      for (let s = 0; s < hz * 10; s++) { env.px += speed * dt; env.cx = env.px; stepLootContainers(st, dt, env); }
+      assert.equal(st.count, 0, 'wszystko w ładowni');
+      assert.equal(hold.got, total);
+    });
+  }
+}
+
+test('przegląd K1 + K2: paczki, które się nie mieszczą, nie zajmują slotów wiązki — lekka paczka wchodzi', () => {
+  const st = createLootContainers(64);
+  spillLootCargo(st, { x: 800, y: 0, vx: 0, vy: 0, angle: 0, length: 300, width: 100, cargo: { reactor_core: 200 }, mass: 1200, seed: 5 });
+  const hold = { free: 9, got: {} };
+  const env = {
+    px: 0, py: 0, cx: 0, cy: 0, pvx: 0, pvy: 0, shipSpeed: 0, gear: lootGearParams('atlas', 'loot_tractor'), visible: null,
+    free: () => hold.free,
+    take: (k, u) => { const m = RESOURCES[k].mass; const f = Math.min(u, Math.floor(hold.free / m)); hold.free -= f * m; hold.got[k] = (hold.got[k] || 0) + f; return f; }
+  };
+  for (let s = 0; s < 60 * 30; s++) stepLootContainers(st, 1 / 60, env);
+  let held = 0;
+  for (let i = 0; i < st.count; i++) if (st.flags[i] & LOOT_FLAG.HELD) held++;
+  assert.ok(held >= 1, 'ciężkie czekają przy luku');
+  spillLootCargo(st, { x: -1500, y: 0, vx: 0, vy: 0, angle: 0, length: 100, width: 40, cargo: { chips: 20 }, mass: 8, seed: 9 });
+  for (let s = 0; s < 60 * 60; s++) stepLootContainers(st, 1 / 60, env);
+  assert.ok((hold.got.chips || 0) >= 7, `chipy w ładowni: ${hold.got.chips || 0}`);
+});

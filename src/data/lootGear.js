@@ -47,6 +47,8 @@ export const LOOT_TRACTOR_TUNE = Object.freeze({
   maxSpeed: 380,
   // Blokada [s]: paczka, która wypadła z celów (limit celów, mgła, chwila > maxShipSpeed), zostaje przy wiązce tyle.
   lockHold: 3,
+  // Sprężyna paczki czekającej przy luku (pełna ładownia) [1/s]: prędkość okrętu + k · odległość od punktu chwytu.
+  holdSpring: 1.5,
   // Kontener bliżej punktu chwytu niż tyle [j.] wchodzi do ładowni.
   capture: 240
 });
@@ -122,6 +124,7 @@ export function lootGearParams(hullId, gearId, out = {}) {
     out.maxRelSpeed = LOOT_TRACTOR_TUNE.maxRelSpeed;
     out.accel = LOOT_TRACTOR_TUNE.accel;
     out.lockHold = LOOT_TRACTOR_TUNE.lockHold;
+    out.holdSpring = LOOT_TRACTOR_TUNE.holdSpring;
     out.maxSpeed = LOOT_TRACTOR_TUNE.maxSpeed;
     out.capture = LOOT_TRACTOR_TUNE.capture;
     return out;

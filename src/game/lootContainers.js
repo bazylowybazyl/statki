@@ -314,7 +314,8 @@ export function stepLootContainers(st, dt, env, tune = LOOT_TUNE) {
       removeLootContainer(st, i);
       continue;
     }
-    if (age > tune.dampAfter) {
+    // Tłumienie dryfu — tylko paczki poza wiązką (trzymane jadą z okrętem).
+    if (age > tune.dampAfter && !(st.flags[i] & (LOOT_FLAG.HELD | LOOT_FLAG.LOCK))) {
       const vx = st.vx[i];
       const vy = st.vy[i];
       const v = Math.sqrt(vx * vx + vy * vy);
@@ -348,12 +349,21 @@ function stepTractor(st, dt, env, gear) {
   // Sufit prędkości względnej z wiązki: poniżej progu chwytu (wiązka nie rozpędza paczki tak, by sama ją zgubiła).
   const pullMax = Math.min(gear.maxSpeed, rel * 0.95);
   const lockHold = Number(gear.lockHold) > 0 ? gear.lockHold : 0;
+  const capture2 = gear.capture * gear.capture;
   for (let i = 0; i < st.count; i++) {
     const locked = (st.flags[i] & (LOOT_FLAG.HELD | LOOT_FLAG.LOCK)) !== 0;
     const dx = st.x[i] - cx;
     const dy = st.y[i] - cy;
     const d2 = dx * dx + dy * dy;
     if (d2 > range2) continue;
+    // Czeka przy luku, a nadal się nie mieści: trzymana sprężyną przy punkcie chwytu, BEZ slotu wiązki (sloty dla
+    // paczek, które wejdą).
+    if ((st.flags[i] & LOOT_FLAG.HELD) && st.mpu[i] > free) {
+      holdAtBay(st, i, cx, cy, pvx, pvy, pullMax, gear.holdSpring);
+      st.flags[i] |= LOOT_FLAG.TRACTOR | LOOT_FLAG.LOCK;
+      st.lock[i] = lockHold;
+      continue;
+    }
     if (!locked) {
       // Nowy cel: wejdzie z niego choć sztuka, nie mija okrętu szybciej niż `maxRelSpeed` (najpierw dopasuj
       // prędkość) i widać go (mgła wojny).
@@ -368,19 +378,13 @@ function stepTractor(st, dt, env, gear) {
   }
   const n = st.targetCount;
   if (!n) return;
-  const capture2 = gear.capture * gear.capture;
   const dvMax = gear.accel * dt;
-  // Ściąganie: prędkość względna ku punktowi chwytu z hamowaniem (v = √(2 a d), sufit `pullMax`); paczka przy luku
-  // przy pełnej ładowni (HELD) leci z okrętem.
+  // Ściąganie: prędkość względna ku punktowi chwytu z hamowaniem (v = √(2 a d), sufit `pullMax`) — także paczki,
+  // które czekały przy luku, a teraz się zmieszczą.
   for (let k = 0; k < n; k++) {
     const i = st.targets[k];
     st.flags[i] |= LOOT_FLAG.TRACTOR | LOOT_FLAG.LOCK;
     st.lock[i] = lockHold;
-    if (st.flags[i] & LOOT_FLAG.HELD) {
-      st.vx[i] = pvx;
-      st.vy[i] = pvy;
-      continue;
-    }
     const dx = cx - st.x[i];
     const dy = cy - st.y[i];
     const d = Math.sqrt(dx * dx + dy * dy);
@@ -413,17 +417,30 @@ function stepTractor(st, dt, env, gear) {
       removeLootContainer(st, i);
       continue;
     }
-    // Reszta nie weszła (pełna ładownia): paczka czeka przy luku z prędkością okrętu (raz liczona — komunikat gry).
+    // Reszta nie weszła (pełna ładownia): paczka czeka przy luku (raz liczona — komunikat gry), trzymana sprężyną.
     if (!(st.flags[i] & LOOT_FLAG.HELD)) {
       st.flags[i] |= LOOT_FLAG.HELD;
       st.stats.held++;
       st.stats.full++;
     }
-    st.vx[i] = pvx;
-    st.vy[i] = pvy;
+    holdAtBay(st, i, cx, cy, pvx, pvy, pullMax, gear.holdSpring);
   }
   // Po chwycie indeksy celów są nieaktualne — lista wiązki do obrazu to flaga TRACTOR na paczce.
   st.targetCount = 0;
+}
+
+/**
+ * Paczka czekająca przy luku: prędkość okrętu + sprężyna ku punktowi chwytu (k [1/s], sufit `pullMax` względem
+ * okrętu) — nadąża za okrętem w ruchu i przy przyspieszaniu, nie odpływa poza chwyt.
+ */
+function holdAtBay(st, i, cx, cy, pvx, pvy, pullMax, k) {
+  const spring = Number(k) > 0 ? k : 1.5;
+  let ex = (cx - st.x[i]) * spring;
+  let ey = (cy - st.y[i]) * spring;
+  const e = Math.sqrt(ex * ex + ey * ey);
+  if (e > pullMax) { ex *= pullMax / e; ey *= pullMax / e; }
+  st.vx[i] = pvx + ex;
+  st.vy[i] = pvy + ey;
 }
 
 function sortTargetsByIndexDesc(st) {
