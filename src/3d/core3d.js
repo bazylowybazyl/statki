@@ -354,11 +354,12 @@ function shadowShaftsMaskNode(u) {
         // Kanał B = mrok pola (1 − T): w nim gaśnie też otoczenie (sunFill),
         // bo w rdzeniu pola nie ma już pyłu oświetlonego słońcem. Tekstura
         // = DataTexture (v = 0 w pierwszym wierszu danych, y świata rośnie z v).
+        // uFieldOccOn = SIŁA pola 0..1 (zanik pola przy skoku gracza — asteroidBelt.js WARP_FADE): T → 1 − (1 − T) · siła.
         const fieldDark = float(0.0).toVar();
-        If(uFieldOccOn.greaterThan(0.5), () => {
+        If(uFieldOccOn.greaterThan(0.001), () => {
           const fuv = worldP.sub(uFieldOccRect.xy).mul(uFieldOccRect.zw).toVar();
           If(fuv.x.greaterThanEqual(0.0).and(fuv.y.greaterThanEqual(0.0)).and(fuv.x.lessThanEqual(1.0)).and(fuv.y.lessThanEqual(1.0)), () => {
-            const fieldT = texture(uFieldOcc, fuv, float(0)).r.toVar();
+            const fieldT = float(1.0).sub(float(1.0).sub(texture(uFieldOcc, fuv, float(0)).r).mul(uFieldOccOn)).toVar();
             shadow.assign(float(1.0).sub(float(1.0).sub(shadow).mul(fieldT)));
             backdropShadow.assign(float(1.0).sub(float(1.0).sub(backdropShadow).mul(fieldT)));
             fieldDark.assign(float(1.0).sub(fieldT));
@@ -1918,7 +1919,8 @@ export const Core3D = {
     // jakości: maska liczy się też przy wyłączonych smugach — wtedy bez tarcz,
     // kadłubów i ringów, sam term pola.
     const field = this.sunOcclusionField;
-    const fieldOn = !!(field && field.texture && sun) && !this.isFreePerspectiveCamera();
+    const fieldK = field ? Math.min(1, field.strength ?? 1) : 0;
+    const fieldOn = !!(field && field.texture && sun && fieldK > 0.001) && !this.isFreePerspectiveCamera();
     const raysOn = !!active && !!pass && pass.enabled !== false;
     if (!pass || !target || (!raysOn && !fieldOn)) {
       sunShadowUniforms.uSunShadowOn.value = 0;
@@ -1926,7 +1928,7 @@ export const Core3D = {
       return false;
     }
     const uShafts = pass.material.uniforms;
-    uShafts.uFieldOccOn.value = fieldOn ? 1 : 0;
+    uShafts.uFieldOccOn.value = fieldOn ? fieldK : 0;
     // Węzeł tekstury nie przyjmuje null — bez pola zastępcza (i tak nieczytana).
     uShafts.uFieldOcc.value = fieldOn ? field.texture : pass.fieldOccPlaceholder;
     if (fieldOn) {
@@ -2692,9 +2694,11 @@ export const Core3D = {
         Math.max(1, Number(cfg.discLenMul) || 5), viewed ? this.shaftDiscViewAxis : null)
       : 1;
     // Pole przesłaniające (pas asteroid): maska liczy 1 − (1 − cień) · T, czyli widoczność × T.
-    if (this.sunOcclusionField && typeof this.sunFieldCpu === 'function') {
+    const occ = this.sunOcclusionField;
+    const occK = occ ? Math.min(1, occ.strength ?? 1) : 0;
+    if (occK > 0.001 && typeof this.sunFieldCpu === 'function') {
       const T = this.sunFieldCpu(worldX, worldY);
-      if (T >= 0 && T < 1) vis *= T;
+      if (T >= 0 && T < 1) vis *= 1 - (1 - T) * occK;
     }
     return vis;
   },
@@ -2702,11 +2706,14 @@ export const Core3D = {
   // (R, 1 = pełne słońce) na prostokącie w układzie sceny (x, −y świata).
   // Maska cienia mnoży nią widoczność słońca — wszystko, co czyta
   // sunVisibility()/sunShaftBackdrop(), ciemnieje w głębi pola. Właściciel
-  // (pas asteroid, src/3d/asteroids/asteroidBelt.js) ustawia co klatkę.
-  setSunOcclusionField(texture, x0, y0, w, h) {
+  // (pas asteroid, src/3d/asteroids/asteroidBelt.js) ustawia co klatkę. strength 0..1 (domyślnie 1) — siła pola:
+  // T → 1 − (1 − T) · siła (pas: zanik pola przy skoku gracza; 0 — jak bez pola).
+  setSunOcclusionField(texture, x0, y0, w, h, strength = 1) {
     if (!texture) { this.sunOcclusionField = null; return; }
-    const f = this.sunOcclusionField || (this.sunOcclusionField = { texture: null, x0: 0, y0: 0, w: 1, h: 1 });
+    const f = this.sunOcclusionField || (this.sunOcclusionField = { texture: null, x0: 0, y0: 0, w: 1, h: 1, strength: 1 });
     f.texture = texture; f.x0 = x0; f.y0 = y0; f.w = w; f.h = h;
+    const k = Number(strength);
+    f.strength = Number.isFinite(k) ? (k > 0 ? (k < 1 ? k : 1) : 0) : 1;
   },
   clearSunOcclusionField() { this.sunOcclusionField = null; },
 

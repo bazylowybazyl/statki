@@ -350,9 +350,10 @@ export class VolumeLight {
 
   /**
    * Siatka kolumn nad kadrem gry. camX, camY — środek kadru LOKALNIE (scena −
-   * początek pola), originX/Y — początek pola w świecie gry (faza szumu w double).
+   * początek pola), originX/Y — początek pola w świecie gry (faza szumu w double), fade — zanik pola przy skoku
+   * gracza 0..1 (× gęstość ośrodka; brak — 1).
    */
-  update({ camX, camY, zoom, viewW, viewH, time, originX, originY }) {
+  update({ camX, camY, zoom, viewW, viewH, time, originX, originY, fade = 1 }) {
     const U = this.U;
     const M = this.medium.U;
     const cfg = this.cfg;
@@ -373,7 +374,7 @@ export class VolumeLight {
     U.count.value = nx * ny;
     this._count = nx * ny;
     M.invTex.value.set(1 / (cell * this.NX), 1 / (cell * this.NY), 1 / (this.NZ * this.dz));
-    U.density.value = cfg.density;
+    U.density.value = cfg.density * (fade >= 0 && fade < 1 ? fade : 1);
     // Włókna (najdrobniej ~160 j.) gasną, gdy kolumna ma > 40 j. (mocne oddalenie).
     U.fine.value = Math.max(0, Math.min(1, (60 - cell) / 30));
     U.gain.value = cfg.gain;

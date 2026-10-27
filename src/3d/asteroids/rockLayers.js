@@ -101,6 +101,19 @@ class LodBuckets {
   }
 }
 
+/**
+ * Próg WCZYTANIA skał warstwy [px] przy zaniku pola (fadeMinPx — próg rysowania z asteroidBelt.js; baseMinPx — próg
+ * warstwy): połowa progu zaniku zaokrąglona W DÓŁ do potęgi 2, nie mniej niż próg warstwy. Zawsze ≤ progu rysowania, więc
+ * każda widoczna skała jest wczytana; oktawa jest w pamięci, zanim jej skały przekroczą próg rysowania (przy powrocie
+ * pola próg maleje ~18% na klatkę — ≥ 3 klatki zapasu), a próg zmienia się skokami (przebudowa koszyków co krok).
+ */
+export function fadeLoadPx(fadeMinPx, baseMinPx) {
+  const fm = Number(fadeMinPx);
+  if (!(fm > baseMinPx * 2)) return baseMinPx;
+  const q = Math.pow(2, Math.floor(Math.log2(fm * 0.5)));
+  return q > baseMinPx ? q : baseMinPx;
+}
+
 export class RockLayer {
   /**
    * @param {object} o
@@ -222,7 +235,8 @@ export class RockLayer {
   }
 
   /**
-   * @param {object} f cam {x,y,zoom} (świat gry), viewW, viewH [px], focalPx, time, budgetMs
+   * @param {object} f cam {x,y,zoom} (świat gry), viewW, viewH [px], focalPx, time, budgetMs, fadeMinPx (zanik pola
+   *   przy skoku gracza — asteroidBelt.js WARP_FADE: próg pikseli całego pola; 0 — bez)
    */
   update(f) {
     if (!this.enabled) return;
@@ -234,11 +248,18 @@ export class RockLayer {
       const t = Math.min(1, Math.max(0, (full - zoom) / Math.max(1e-6, full - gone)));
       minPx += t * t * (3 - 2 * t) * 60;
     }
-    this.effectiveMinPx = minPx;
+    // Zanik pola (asteroidBelt.js WARP_FADE): shader dostaje próg zaniku co klatkę (skała poniżej maleje do zera,
+    // smoothstep(minPx, 2 · minPx)), a wczytywanie oktaw i koszyki — próg WCZYTANIA (fadeLoadPx: o połowę niżej,
+    // w krokach × 2): oktawa wczytuje się, zanim jej największe skały zaczną rosnąć, a koszyki przebudowują się
+    // przy zmianie kroku, nie w każdej klatce zaniku.
+    const drawPx = f.fadeMinPx > minPx ? f.fadeMinPx : minPx;
+    const loadPx = fadeLoadPx(f.fadeMinPx, minPx);
+    minPx = loadPx;
+    this.effectiveMinPx = drawPx;
     const L = this.material.L;
     L.pxScale.value = this.perspective ? f.focalPx : zoom;
     L.camZ.value = this.perspective ? camZ : 0;
-    L.minPx.value = minPx;
+    L.minPx.value = drawPx;
 
     const band = this.band;
     const spreadFar = this.perspective ? (camZ + band.zFar) / camZ : 1;
@@ -600,9 +621,6 @@ export class RockSet {
     this.maxLod = maxLod;
     this.origin = { x: 0, y: 0 };
     this.rocks = [];
-    // LOD z rozmiaru BRYŁY (skały w skoku — warpDebris.js): promień + `lodExtra` [j.] (połowa rozmycia ruchu), nie sama
-    // głowa — rozmyta skała dostaje gęstszą siatkę. 0 — dawny wybór z promienia.
-    this.lodExtra = 0;
     this.buckets = new LodBuckets({ bank, material, renderOrder, name, capacities: [512, 512, 256, 128, 64, 32], maxLod, layer });
     this.group = this.buckets.group;
     this.scene.add(this.group);
@@ -639,12 +657,11 @@ export class RockSet {
     B.begin();
     const M = this.minerals;
     M?.begin();
-    const lodExtra = this.lodExtra > 0 ? this.lodExtra : 0;
     for (const rock of this.rocks) {
       if (rock.alive === false) continue;
       const pxPerUnit = this.perspective ? f.focalPx / (camZ + (rock.z || 0)) : zoom;
       const rPx = rock.r * pxPerUnit;
-      const lod = pickRockLod(lodExtra > 0 ? (rock.r + lodExtra) * pxPerUnit : rPx, this.maxLod);
+      const lod = pickRockLod(rPx, this.maxLod);
       const b = B.slot(lod);
       if (b < 0) continue;
       const d = B.lods[lod].data;

@@ -23,6 +23,8 @@ import { BeltGasScene, createRingGasLook } from './spaceGasBelt.js';
 import { SPACE_GAS_IN, SPACE_GAS_SCENE } from './spaceGasLayout.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
 import { SpaceGasCover } from './spaceGasState.js';
+import { WARP_WORLD_LENS } from '../warp/worldLens.js';
+import { warpFieldVisibility, stepWarpFieldFade } from '../../render/warpLensPhase.js';
 
 const I = SPACE_GAS_IN;
 
@@ -86,7 +88,13 @@ class SpaceGasSystem {
     this._serial = -1;
     this._scene = SPACE_GAS_SCENE.none;
     this._rect = { cx: 0, cy: 0, w: 1, h: 1 };
-    this.stats = { active: false, cpuMs: 0, sources: 0, vents: 0, blasts: 0, bolts: 0, hulls: 0, raster: false, substeps: 0, dispatches: 0 };
+    // ZANIK PRZY SKOKU GRACZA (2026-10-27, jak pole pasa — src/render/warpLensPhase.js warpFieldVisibility): obraz gazu
+    // i jego pyłu × udział prawdziwego widoku (1 − β / chargeBeta soczewki świata) — w ładowaniu gaśnie razem z polem
+    // i jest pusty przed kopem (gra wyłącza gaz w skoku: `enabled` w index.html); po włączeniu (wyjście, wejście
+    // w obszar gazu) wraca od zera w WARP_FIELD_FADE.reveal s. Pokrycie pasa dla płytkiej mgły (SpaceGasCover.belt)
+    // zostaje przestrzenne — płaty i gaz gasną razem, płaty nie wracają w miejsce gazu.
+    this._warpFade = 0;
+    this.stats = { active: false, cpuMs: 0, sources: 0, vents: 0, blasts: 0, bolts: 0, hulls: 0, raster: false, substeps: 0, dispatches: 0, fade: 0 };
   }
 
   _ensure() {
@@ -157,6 +165,8 @@ class SpaceGasSystem {
       if (this.dust) this.dust.setVisible(false);
       st.substeps = 0;
       st.dispatches = 0;
+      this._warpFade = 0;
+      st.fade = 0;
       // po wyjściu z obszaru pole startuje od nowa (pole dalekie) przy powrocie
       if (this._scene !== SPACE_GAS_SCENE.none) { this._scene = SPACE_GAS_SCENE.none; this.sim.requestReset(T.warmStart); }
       return;
@@ -201,12 +211,16 @@ class SpaceGasSystem {
 
     const half = Math.max(IN[I.halfW], IN[I.halfH]);
     const f = T.fadeView;
-    const fade = 1 - Math.min(1, Math.max(0, (half - f[0]) / (f[1] - f[0])));
+    const viewFade = 1 - Math.min(1, Math.max(0, (half - f[0]) / (f[1] - f[0])));
+    // zanik przy skoku gracza (soczewka świata — ten sam stan w trybie off i w workerze; dt gry — pauza trzyma)
+    const warpFade = this._warpFade = stepWarpFieldFade(this._warpFade, warpFieldVisibility(WARP_WORLD_LENS.active, WARP_WORLD_LENS.beta), dt);
+    st.fade = warpFade;
+    const fade = viewFade * warpFade;
     this.layer.L.fade.value = fade;
     this.layer.place(ax + r.cx, ay + r.cy, r.w, r.h);
     this.layer.setVisible(fade > 0.004);
-    // płytkie płaty mgły pasa gasną pod gazem (jedna mgła — fog.js)
-    SpaceGasCover.belt = T.fogReplace && scene === SPACE_GAS_SCENE.belt ? fade : 0;
+    // płytkie płaty mgły pasa gasną pod gazem (jedna mgła — fog.js); pokrycie przestrzenne (bez zaniku skoku)
+    SpaceGasCover.belt = T.fogReplace && scene === SPACE_GAS_SCENE.belt ? viewFade : 0;
     // pył gazu: po polu (czyta jego prędkość i gęstość) i mapach (światło); tylko z ruchem gazu
     const dustOn = !!(this.dust && T.dust && T.sim && fade > 0.004);
     if (this.dust) {
