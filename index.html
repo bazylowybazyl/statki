@@ -16862,10 +16862,16 @@
       if (lootContainers.count === 0) return;
       const env = _lootEnv;
       const alive = !!ship && !ship.destroyed;
-      env.px = alive ? ship.pos.x : 0;
-      env.py = alive ? ship.pos.y : 0;
-      env.pvx = alive ? ship.vel.x : 0;
-      env.pvy = alive ? ship.vel.y : 0;
+      // Gracz zginął: paczki zostają (odległość do despawnu od ostatniej pozycji gracza), wiązka gaśnie.
+      if (alive) {
+        env.px = ship.pos.x;
+        env.py = ship.pos.y;
+        env.pvx = ship.vel.x;
+        env.pvy = ship.vel.y;
+      } else {
+        env.pvx = 0;
+        env.pvy = 0;
+      }
       env.shipSpeed = Math.sqrt(env.pvx * env.pvx + env.pvy * env.pvy);
       env.cx = env.px;
       env.cy = env.py;
@@ -16957,6 +16963,8 @@
       /** Ładownia gracza (narzędzia): kopia ładunku i wolna masa [t]. */
       get hold() { return { cargo: { ...PLAYER.cargo }, free: getPlayerCargoFree() }; },
       pool: lootContainers,
+      /** Wejście ostatniego kroku (narzędzia): gracz, punkt chwytu, sprzęt. */
+      get env() { const e = _lootEnv; return { px: e.px, py: e.py, pvx: e.pvx, pvy: e.pvy, shipSpeed: e.shipSpeed, gear: e.gear ? { ...e.gear } : null }; },
       // Narzędzia (?dev): zrzut paczek przy graczu — `LootContainers.devSpill({ steel: 380 }, 3000)`.
       devSpill(cargo = { steel: 380 }, dist = 3000) {
         if (!_portCargoQuery.has('dev') || !ship) return 0;

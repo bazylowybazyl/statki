@@ -66,10 +66,10 @@ const lootState = () => ev(`(() => {
     stats: L.stats, ladownia: L.hold, sprzet: L.gear ? { ...L.gear } : null, komunikaty: (window.__lootAlerts || []).slice(-8) };
 })()`);
 // Cel: statek z manifestem, wolny (postój albo < 250 j./s), najbliżej gracza, poza megafrachtowcem.
-const PICK = (minHp) => `(() => {
+const PICK = (minHp, maxHp = 1e9) => `(() => {
   const tb = window.TrafficBubble, br = window.TrafficV2, s = window.ship;
   const list = tb.list.filter((a) => a.alive && br.actorManifests.has(a.id) && !(a.flags & (64 | 256))
-    && a.hullId !== 'megafreighter' && a.maxHp >= ${minHp} && Math.hypot(a.vx, a.vy) < 250);
+    && a.hullId !== 'megafreighter' && a.maxHp >= ${minHp} && a.maxHp <= ${maxHp} && Math.hypot(a.vx, a.vy) < 250);
   list.sort((a, b) => Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
   const a = list[0];
   if (!a) return null;
@@ -101,23 +101,29 @@ const NEAR_LOOT = (dist) => `(() => {
   return { x: cx, y: cy, v: Math.hypot(vx, vy) };
 })()`;
 
-async function shootDown(name, weapon, minHp, shots) {
-  const target = await ev(PICK(minHp));
+// Próbka puli: pierwsza paczka, wejście kroku, statystyki.
+const SAMPLE = `(() => { const L = window.LootContainers, p = L.pool;
+  return { count: p.count, x: p.x[0], y: p.y[0], vx: p.vx[0], vy: p.vy[0], age: p.age[0], ttl: p.ttl[0], env: L.env, stats: L.stats }; })()`;
+async function shootDown(name, weapon, minHp, shots, maxHp = 1e9) {
+  const target = await ev(PICK(minHp, maxHp));
   if (!target) return { cel: null };
   await ev(ZOOM(0.25));
   await waitGame(0.5);
   const before = await lootState();
   const kinds = [];
+  const samples = [];
   for (let k = 0; k < shots; k++) {
     const kind = await ev(FIRE_AT(target.id, weapon));
     if (!kind) break;
     kinds.push(kind);
     await waitGame(0.25);
+    samples.push(await ev(SAMPLE));
   }
   await waitGame(1.5);
   const after = await lootState();
   await screenshotPng(cdp, join(out, `${name}-zrzut.png`));
-  return { cel: target, bron: weapon, strzaly: kinds.length, wNpc: kinds.filter((k) => k === 'npc').length, przed: before, po: after };
+  for (let k = 0; k < 6; k++) { await waitGame(0.1); samples.push(await ev(SAMPLE)); }
+  return { probki: samples.filter((x) => x.count || x.stats.spawned).slice(0, 12), cel: target, bron: weapon, strzaly: kinds.length, wNpc: kinds.filter((k) => k === 'npc').length, przed: before, po: after };
 }
 
 async function tractorRun(name, seconds) {
@@ -157,6 +163,16 @@ try {
   await ev('window.__harness.hold(true)');
   console.log('tryb', report.tryb);
 
+  // 0) Diagnostyka: zrzut przy graczu (?dev), 1 s gry — paczki, wejście kroku.
+  report.etapy.dev = await ev(`(() => { const n = window.LootContainers.devSpill({ steel: 120 }, 2000);
+    const p = window.LootContainers.pool; return { n, count: p.count, x: p.x[0], y: p.y[0], ttl: p.ttl[0], age: p.age[0],
+      ship: { x: window.ship.pos.x, y: window.ship.pos.y, destroyed: !!window.ship.destroyed } }; })()`);
+  await waitGame(1);
+  report.etapy.dev.po = await ev(`(() => { const p = window.LootContainers.pool; return { count: p.count, age: p.age[0],
+    stats: window.LootContainers.stats, env: window.LootContainers.env }; })()`);
+  console.log('dev:', JSON.stringify(report.etapy.dev));
+  if (args.tylko === 'dev') throw new Error('koniec (--tylko dev)');
+
   const tw0 = Date.now();
   await ev(`(async () => { for (let i = 0; i < ${Math.ceil(WARM / 5)}; i++) { window.TrafficV2.advance(5); if (i % 40 === 39) await new Promise((r) => setTimeout(r, 0)); } return true; })()`, 600000);
   if (!await waitFor(cdp, `(window.TrafficV2.clock || 0) >= ${WARM - 30}`, 600000, 500)) throw new Error('worker ruchu nie nadrobił rozgrzewki');
@@ -177,13 +193,13 @@ try {
     return { encji: window.TrafficBubble.list.length, zManifestem: m.length, przyklad: m.slice(0, 3) }; })()`);
   console.log('manifesty', JSON.stringify(report.manifesty));
 
-  // 1) Jeden strzał superbroni: encja bez awansu → wybuch, paczki z manifestu, kara reputacji.
-  const superWeapon = await ev(`(() => { const W = window.MASTER_WEAPONS || {};
-    const ids = Object.keys(W).filter((k) => !W[k].npcOnly && (W[k].baseDamage || 0) >= 5000);
-    return ids.sort((a, b) => (W[b].baseDamage || 0) - (W[a].baseDamage || 0))[0] || null; })()`);
-  report.etapy.bezAwansu = await shootDown('01-bez-awansu', superWeapon, 0, 3);
+  // 1) Jeden strzał (działo oblężnicze 2500 w statek o mniejszym obrysie): encja bez awansu → wybuch, paczki
+  //    z manifestu, kara reputacji. Superbroń (Hexlance) niszczy też Atlasa gracza przy 2,5 km.
+  report.etapy.bezAwansu = await shootDown('01-bez-awansu', 'siege_railgun', 0, 3, 2400);
+  report.etapy.bezAwansu.graczZyje = await ev('!window.ship.destroyed');
   console.log('bez awansu:', JSON.stringify({ cel: report.etapy.bezAwansu.cel?.hull, manifest: report.etapy.bezAwansu.cel?.manifest,
     paczek: report.etapy.bezAwansu.po?.paczek, sztuk: report.etapy.bezAwansu.po?.sztuk }));
+  if (args.tylko === 'bezAwansu') { console.log('probki', JSON.stringify(report.etapy.bezAwansu.probki)); throw new Error('koniec (--tylko bezAwansu)'); }
 
   // 2) Wiązka Atlasa (fabrycznie): gracz 1,5 km od paczek, 24 s gry.
   report.etapy.wiazka = await tractorRun('02', 24);
