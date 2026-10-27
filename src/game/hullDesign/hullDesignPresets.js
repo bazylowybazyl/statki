@@ -9,9 +9,13 @@
 // hullDesignBlocks.js) według podkładu sprite'ów (scripts/kreator-tn-ab.mjs: siatka j. świata, IoU alfy ≥ 0,9), styl
 // TN, nie kopia 1:1; gondole, pierścienie, wieże, hangary, kratki, kasztele, napisy i orły ręcznie — w j. świata gry,
 // w skali sprite'ów (getHullRenderSize).
+//
+// FRACHTOWCE (statki cywilne, `role: 'civil'`) — każdy w osobnym pliku src/game/hullDesign/freighters/ (rejestr
+// ./freighters/index.js, zestaw ./freighters/freighterKit.js); tu dokładane na koniec listy (grupa 'civil').
 
 import { normalizeHullDesign } from './hullDesignSchema.js';
 import { applySystemSlots } from './hullDesignSystemSlots.js';
+import { HD_FREIGHTER_CLASS, HD_FREIGHTER_PRESETS } from './freighters/index.js';
 
 /** Bloki prostokąta bx0..bx1 × by0..by1 (włącznie) na poziomie `level`. */
 function fill(out, bx0, bx1, by0, by1, level) {
@@ -619,25 +623,29 @@ function tnParts2() {
   };
 }
 
+/** Gotowe projekty: { label, make, group } — grupa listy w interfejsie: 'tn' (flota Terra Novy), 'other', 'civil'. */
 export const HD_PRESETS = Object.freeze({
-  custos: { label: 'TN · fregata Custos', make: custos },
-  hasta: { label: 'TN · niszczyciel Hasta', make: hasta },
-  bellator: { label: 'TN · pancernik Bellator', make: bellator },
-  citadella: { label: 'TN · lotniskowiec Citadella', make: citadella },
-  colossus: { label: 'TN · superkapitał Colossus', make: colossus },
-  klocki: { label: 'Fregata z klocków (TN)', make: blocksFrigate },
-  tnparts: { label: 'Fregata z gotowych części (TN)', make: tnParts },
-  tnparts2: { label: 'Krążownik z gotowych części (TN)', make: tnParts2 },
-  orbis: { label: 'Krążownik Orbis (koło w środku)', make: orbis },
-  atlas2: { label: 'Atlas II (w stylu Atlasa)', make: atlasLike },
-  destroyer: { label: 'Niszczyciel Hasta-D', make: destroyer },
-  pirate: { label: 'Szakal — asymetryczny pirat', make: pirate },
-  empty: { label: 'Pusty (od zera)', make: empty }
+  custos: { label: 'TN · fregata Custos', make: custos, group: 'tn' },
+  hasta: { label: 'TN · niszczyciel Hasta', make: hasta, group: 'tn' },
+  bellator: { label: 'TN · pancernik Bellator', make: bellator, group: 'tn' },
+  citadella: { label: 'TN · lotniskowiec Citadella', make: citadella, group: 'tn' },
+  colossus: { label: 'TN · superkapitał Colossus', make: colossus, group: 'tn' },
+  klocki: { label: 'Fregata z klocków (TN)', make: blocksFrigate, group: 'tn' },
+  tnparts: { label: 'Fregata z gotowych części (TN)', make: tnParts, group: 'tn' },
+  tnparts2: { label: 'Krążownik z gotowych części (TN)', make: tnParts2, group: 'tn' },
+  orbis: { label: 'Krążownik Orbis (koło w środku)', make: orbis, group: 'other' },
+  atlas2: { label: 'Atlas II (w stylu Atlasa)', make: atlasLike, group: 'other' },
+  destroyer: { label: 'Niszczyciel Hasta-D', make: destroyer, group: 'other' },
+  pirate: { label: 'Szakal — asymetryczny pirat', make: pirate, group: 'other' },
+  ...HD_FREIGHTER_PRESETS,
+  empty: { label: 'Pusty (od zera)', make: empty, group: 'other' }
 });
 export const HD_PRESET_KEYS = Object.freeze(Object.keys(HD_PRESETS));
+/** Grupy listy presetów (kolejność w interfejsie). */
+export const HD_PRESET_GROUPS = Object.freeze({ tn: 'Terra Nova', civil: 'Statki cywilne', other: 'Inne' });
 
 /** Świeża kopia gotowego projektu (znormalizowana) ze slotami systemów (hullDesignSystemSlots.js). */
 export function hullDesignPreset(key) {
   const k = HD_PRESETS[key] ? key : 'orbis';
-  return normalizeHullDesign(applySystemSlots(k, HD_PRESETS[k].make()));
+  return normalizeHullDesign(applySystemSlots(k, HD_PRESETS[k].make(), { cls: HD_FREIGHTER_CLASS[k] }));
 }

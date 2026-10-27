@@ -10,7 +10,8 @@
 // gniazdo mostka v 2 floty TN z modelem 3D gry poziomu (Bridge3D) i bez niego, okręt w kadrze, galeria poziomów I–VI
 // (sześć gniazd na jednym kadłubie, z modelami i bez). Etap `stocznia` (poza domyślnymi): przyjazny edytor prawdziwą
 // myszą — paleta z miniaturami, przeciągnij i upuść, stempel z rzędem, Ctrl+D, Shift+przeciągnij, usunięcie na paletę,
-// moduł poza kadłubem odrzucony, kadłub od zera (`--etapy stocznia --tylko stocznia`). Pozostałe etapy — w interfejsie
+// moduł poza kadłubem odrzucony, kadłub od zera, statki cywilne (grupy presetów, frachtowiec od zera, stelaż kontenerów
+// z karty Ładunek, suwak załadunku, przełącznik roli, barwy cywilne) (`--etapy stocznia --tylko stocznia`). Pozostałe etapy — w interfejsie
 // warsztatu (`?ui=warsztat`).
 //
 //   node scripts/webgpu/kreator-kadluba-demo.mjs [--out .tmp/kreator/demo] [--rozmiar 1600x900] [--tylko citadella,orbis]
@@ -426,6 +427,67 @@ try {
     await ev(`${k}.built(); ${k}.fit()`);
     await shot('stocznia-10-od-zera-zbudowany', 'Od zera: grot na dziobie, trapez na rufie, płyta nad burtą (lustro), reaktor, mostek, silniki, zbiornik — lista kontrolna');
     st.klasa = await ev(`${k}.klasa.state()`);
+    // STATKI CYWILNE: lista presetów w grupach, okno „Od zera” z wierszem klas cywilnych, frachtowiec III od zera,
+    // karta „Ładunek” (stelaż kontenerów upuszczony prawdziwą myszą), suwak załadunku 50% / 0% (ścieżka wyglądu, jeden
+    // wpis cofania), przełącznik roli na karcie okrętu, barwy cywilne w malowaniu
+    const cyw = {};
+    cyw.presety = await ev(`[...document.querySelectorAll('#yard-preset optgroup')].map((g) => ({ grupa: g.label, n: g.children.length, pierwszy: g.children[0]?.textContent || null }))`);
+    cyw.presetyWarsztat = await ev(`[...document.querySelectorAll('#sel-preset optgroup')].map((g) => ({ grupa: g.label, n: g.children.length }))`);
+    a = await ev(`(() => { const r = document.getElementById('yard-new').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    await mouse('mouseMoved', a.x, a.y, 'none', 0); await mouse('mousePressed', a.x, a.y); await mouse('mouseReleased', a.x, a.y, 'left', 0);
+    await shot('stocznia-11-nowy-dialog', 'Okno „Nowy kadłub”: wiersz okrętów wojennych i wiersz statków cywilnych (prom … megafrachtowiec)');
+    b = await ev(`(() => { const e = document.querySelector('#yard-new-dlg button[data-role="civil"][data-lv="3"]'); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    cyw.dialogCywilne = await ev(`document.querySelectorAll('#yard-new-dlg button[data-role="civil"]').length`);
+    if (b) { await mouse('mouseMoved', b.x, b.y, 'none', 0); await mouse('mousePressed', b.x, b.y); await mouse('mouseReleased', b.x, b.y, 'left', 0); }
+    await waitFor(cdp, `${k}.design.role === 'civil' && ${k}.design.shapes.length === 1`, 60000, 200);
+    await ev(`${k}.built()`);
+    cyw.frachtowiec = await ev(`(() => { const d = ${k}.design, b0 = d.shapes[0]; return { name: d.name, role: d.role, palette: d.palette, detail: d.detail, grid: d.grid, bridgeLevel: d.bridgeLevel, kil: [b0.w, b0.h] }; })()`);
+    await shot('stocznia-12-frachtowiec-od-zera', 'Od zera: frachtowiec (III · cywilny) — długi wąski kil, barwy frachtowca, karta okrętu z rolą Cywilny i ładownością');
+    cyw.kartaPrzed = await ev(`${y}.card()`);
+    await ev(`${y}.cat('ladunek')`);
+    cyw.miniatury = await ev(`${y}.thumbsDone()`);
+    cyw.karty = await ev(`[...document.querySelectorAll('#yard-cards .ycard')].map((c) => c.dataset.key)`);
+    // stelaż kontenerów prawdziwą myszą: karta → środek kilu (za śródokręciem)
+    const kil = await ev(`(() => { const b0 = ${k}.design.shapes[0]; return { x: b0.x - b0.w * 0.12, y: 0 }; })()`);
+    a = await card('mod:cargo:v2');
+    b = await scr(kil.x, kil.y);
+    cyw.przedStelazem = await count();
+    await drag(a, b, 12);
+    cyw.stelaz = await count();
+    cyw.stelazModul = await ev(`(() => { const m = ${k}.design.modules.at(-1); return m ? { type: m.type, v: m.v, n: m.n ?? null, w: m.w, h: m.h } : null; })()`);
+    await ev(`${k}.built()`);
+    cyw.ladunek = await ev(`${k}.S.recipe?.cargo || null`);
+    await ev(`${k}.fit()`);
+    await shot('stocznia-13-stelaz', 'Karta „Ładunek”: miniatury (wrota, klapa, stelaż, zasobniki, zbiorniki), stelaż kontenerów na kilu frachtowca, ładowność na karcie okrętu');
+    // suwak Załadunek: input w trakcie (ścieżka wyglądu, S.drag), change na końcu — jeden wpis cofania
+    const suwak = (v) => ev(`(async () => {
+      const r = document.querySelector('#yard-opts input[data-k="load"]'); if (!r) return null;
+      const h0 = ${k}.blk.hist().idx, b0 = ${k}.S.builtRev;
+      for (const q of [Math.round((Number(r.value) + ${v}) / 2), ${v}]) { r.value = String(q); r.dispatchEvent(new Event('input', { bubbles: true })); }
+      r.dispatchEvent(new Event('change', { bubbles: true }));
+      await ${k}.built();
+      return { load: ${k}.design.cargoLoad, wpisyCofania: ${k}.blk.hist().idx - h0, rewizjeObrazu: ${k}.S.builtRev - b0, czasBudowy: ${k}.stats().timing?.total ?? null, etykieta: document.querySelector('#yard-opts .yload')?.textContent || null };
+    })()`);
+    cyw.zaladunek50 = await suwak(50);
+    await shot('stocznia-14-zaladunek-50', 'Suwak Załadunek 50%: część komórek stelaża pusta (wygląd, bez przebudowy kadłuba)');
+    cyw.zaladunek0 = await suwak(0);
+    await shot('stocznia-15-zaladunek-0', 'Suwak Załadunek 0%: pusty stelaż (rama i pokład)');
+    await suwak(100);
+    // przełącznik roli prawdziwą myszą: Wojskowy (nazwy klas wojenne, gniazda broni), potem z powrotem Cywilny
+    const rola = async (r) => {
+      const p = await ev(`(() => { const e = document.querySelector('#yard-card button[data-role="${r}"]'); if (!e) return null; const q = e.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
+      if (p) { await mouse('mouseMoved', p.x, p.y, 'none', 0); await mouse('mousePressed', p.x, p.y); await mouse('mouseReleased', p.x, p.y, 'left', 0); }
+      await ev(`${k}.built()`); await ev(`${k}.runFrames(2, 60)`);
+      return { role: await ev(`${k}.design.role`), klasa: await ev(`document.querySelector('#yard-card .yclass b')?.textContent || null`), mostek: await ev(`[...document.querySelectorAll('#yard-card select[data-k="bridge"] option')].map((o) => o.textContent).slice(1, 4)`) };
+    };
+    cyw.rolaWojskowy = await rola('military');
+    await shot('stocznia-16-rola-wojskowy', 'Ten sam kadłub przełączony na rolę Wojskowy: klasy wojenne, gniazda broni zamiast ładowności');
+    cyw.rolaCywilny = await rola('civil');
+    cyw.kartaPo = await ev(`${y}.card()`);
+    await ev(`${y}.cat('farba')`);
+    cyw.malowanieGrupy = await ev(`[...document.querySelectorAll('#yard-cards .ygroup')].map((g) => g.textContent)`);
+    await shot('stocznia-17-barwy-cywilne', 'Malowanie: grupa „Barwy cywilne” (Cywilny, Frachtowiec — bez emblematu) obok barw nacji');
+    st.cywilne = cyw;
     report.stocznia = st;
     console.log('stocznia', JSON.stringify(st));
   }
