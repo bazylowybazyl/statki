@@ -35,6 +35,9 @@ export const LOOT_3D_TUNE = {
   blinkOn: 0.22,
   lampPower: 5.0,
   lampRadius: 5,
+  /** Najmniejszy promień lampki i punktów wiązki [px] — paczka (16 j.) przy zoomie walki to kilka pikseli, boja nie. */
+  lampMinPx: 3.5,
+  beamMinPx: 1.8,
   /** Wiązka: punkty na odcinek, promień, moc, tempo przepływu [okresy / s]. */
   beamPoints: 14,
   beamRadius: 4.5,
@@ -115,6 +118,9 @@ export function createLootContainers3D(Core3D) {
       const ox = origin.x;
       const oy = origin.y;
       const tm = time || 0;
+      const ppu = Math.max(1e-4, pxPerUnit);
+      const lampR = Math.max(T.lampRadius, T.lampMinPx / ppu);
+      const beamR = Math.max(T.beamRadius, T.beamMinPx / ppu);
       for (let i = 0; i < n; i++) {
         const gx = frame.x[i];
         const gy = frame.y[i];
@@ -142,7 +148,7 @@ export function createLootContainers3D(Core3D) {
           const ph = ((frame.age[i] + (frame.uid[i] % 7) * 0.21) % period) / period;
           if (ph < T.blinkOn) {
             const k = T.lampPower * (1 - ph / T.blinkOn * 0.5);
-            if (lights.push(sx, sy, T.baseZ + mod.H + 3, T.lampRadius, LAMP[0] * k, LAMP[1] * k, LAMP[2] * k, 0)) stats.lights++;
+            if (lights.push(sx, sy, T.baseZ + mod.H + 3, lampR, LAMP[0] * k, LAMP[1] * k, LAMP[2] * k, 0)) stats.lights++;
           }
         }
         // Wiązka: punkty płynące od paczki do statku (jaśniejsze w środku odcinka).
@@ -156,7 +162,7 @@ export function createLootContainers3D(Core3D) {
             const u = (k + flow) / np;
             const w = Math.sin(Math.PI * u);
             const p = T.beamPower * (0.35 + 0.65 * w);
-            if (lights.push(sx + (ex - sx) * u, sy + (ey - sy) * u, T.baseZ + 6, T.beamRadius, BEAM[0] * p, BEAM[1] * p, BEAM[2] * p, 1)) stats.lights++;
+            if (lights.push(sx + (ex - sx) * u, sy + (ey - sy) * u, T.baseZ + 6, beamR, BEAM[0] * p, BEAM[1] * p, BEAM[2] * p, 1)) stats.lights++;
           }
         }
       }

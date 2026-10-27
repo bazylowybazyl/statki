@@ -227,6 +227,15 @@ try {
     await screenshotPng(cdp, join(out, '01b-paczki-zblizenie.png'));
     await waitGame(0.75);
     await screenshotPng(cdp, join(out, '01c-paczki-lampki.png'));
+    // Kadr nad pierwszą paczką (ujęcie fabuły z ?dev — PortCargo.look): wysokość kadru 260 j. — bryła kontenera.
+    const at = await ev(`(() => { const p = window.LootContainers.pool; if (!p.count) return null;
+      window.PortCargo.look(p.x[0], p.y[0], 260); return { x: p.x[0], y: p.y[0] }; })()`);
+    if (at) {
+      await waitGame(0.3);
+      await screenshotPng(cdp, join(out, '01d-paczka-z-bliska.png'));
+      await ev('window.PortCargo.lookEnd()');
+      await waitGame(0.3);
+    }
   }
   if (args.tylko === 'bezAwansu' || args.tylko === 'bezAwansuX') { console.log('probki', JSON.stringify(report.etapy.bezAwansu.probki)); throw new Error('koniec (--tylko bezAwansu)'); }
 
