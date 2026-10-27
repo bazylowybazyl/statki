@@ -16823,7 +16823,8 @@
       onCollect: (key, units) => noteLootCollected(key, units)
     };
     const _lootGearParams = {};
-    let _lootGearKey = '';
+    let _lootGearHull = null;
+    let _lootGearId = undefined;
     let _lootGear = null;
     let _lootMsgBag = null;
     let _lootMsgAt = -Infinity;
@@ -16835,9 +16836,10 @@
     function playerLootGear() {
       const hull = PLAYER.activeHullId;
       const id = playerLootGearId(hull);
-      const key = `${hull}|${id}`;
-      if (key !== _lootGearKey) {
-        _lootGearKey = key;
+      // Porównanie pól (krok gry — bez sklejania napisów).
+      if (hull !== _lootGearHull || id !== _lootGearId) {
+        _lootGearHull = hull;
+        _lootGearId = id;
         _lootGear = id ? lootGearParams(hull, id, _lootGearParams) : null;
       }
       return _lootGear;

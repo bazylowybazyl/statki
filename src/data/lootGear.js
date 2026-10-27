@@ -84,10 +84,13 @@ export function lootGearOptionsFor(hullId) {
   return out;
 }
 
-/** Czy sprzęt da się zamontować na kadłubie (jest w opcjach i gotowy). */
+/** Czy sprzęt da się zamontować na kadłubie (jest w opcjach i gotowy). Bez alokacji (woła go krok gry). */
 export function lootGearFits(hullId, gearId) {
-  const def = lootGearById(gearId);
-  return !!def && def.ready && lootGearOptionsFor(hullId).includes(def.id);
+  const def = LOOT_GEAR[gearId];
+  if (!def || !def.ready) return false;
+  const h = HULL_LOOT_GEAR[hullId];
+  if (!h) return def.kind === 'tractor';
+  return def.kind === 'tractor' ? !!h.tractor : (def.kind === 'drones' ? !!h.drones : false);
 }
 
 /**
