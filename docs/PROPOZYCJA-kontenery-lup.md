@@ -384,5 +384,9 @@ Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) 
 - Rekord wraku wyprawy górniczej ma `units` 0, bo urobek jest w `payload.harvest`
   (`trafficCore.js:1010–1011`).
 - Zniszczenie encji ruchu bez awansu nie zbija reputacji (§ 1.1, D13).
+- Automatyczne wieże Atlasa (tryb AUTO) same ostrzeliwują statki ruchu, które mają urazę do gracza po jego ostrzale
+  (awans do NPC, `playerGrudge`): w przebiegu `kontenery-gra.mjs` po kilku strzałach gracza wokół toczyła się bitwa
+  z kolejnymi frachtowcami i ich zniszczeniami (wiele zrzutów naraz). Zachowanie istniejące przed K1 — do oceny,
+  czy wieże AUTO powinny strzelać do cywilów z urazą.
 - Wiązka kopalni (tryb N, klawisz T) jest dziś zawsze na Atlasie, poza wyposażeniem. Po gnieździe ZBIÓRKA może
   przejść do tego samego sprzętu (jeden projektor na skały i kontenery) — osobna decyzja.
