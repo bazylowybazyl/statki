@@ -377,6 +377,30 @@ Decyzja użytkownika: „nienei bezpieczniejsza opcja” — 400 t (klasa bulk) 
 - **Łup:** zrzut pełnego dalekiego frachtowca (209 t) mieści się w całości, ciężkiego (495 t) — w 80%.
 - **D17 przy 400 t:** −96 t za zatokę dronów to 24% ładowności — za dużo. Propozycja: odliczenie proporcjonalne
   do miejsca w luku — zatoka zajmuje 6 ze 150 slotów luku (4%), czyli **−16 t** (albo okrągłe −20 t = 5%).
+- **(a) Rynek kadłubów — Atlas wyprzedził ładownością prawie wszystko** (przegląd K1, do decyzji użytkownika).
+  Dziś `cargoCap` gracza: fregaty 12–24 t (Marauder 12, Custos 16, Corvus 24), niszczyciele 22–30, Bellator 40,
+  Iron Skull 32, Citadella 80, Colossus 120, **Atlas 400**, Megafreighter 600. Dwie propozycje przeskalowania (ceny
+  kadłubów ładowności nie czytają — `playerHullMarket` bez zmian):
+
+  | Kadłub | Dziś [t] | Luk [kontenery] | A: proporcja luku (Atlas 400 t / 1200 = 0,33 t na kontener), nie mniej niż dziś | B: role (ładownia okrętu wojennego, frachtowiec = klasa ruchu) |
+  |---|---|---|---|---|
+  | Custos / Marauder / Corvus | 16 / 12 / 24 | 6 / 1 / — | bez zmian | bez zmian |
+  | Hasta / Reaver | 30 / 22 | 9 / 8 | bez zmian | 40 / 30 |
+  | Bellator / Iron Skull | 40 / 32 | 136 / 84 | 45 / 32 | 150 / 120 |
+  | Citadella | 80 | 528 | 176 | 300 |
+  | Colossus | 120 | 560 | 187 | 450 |
+  | Atlas | 400 | 1200 | 400 | 400 |
+  | Megafreighter | 600 | 6 wagonów | 2400 (klasa mega ruchu) | 2400 |
+
+  Rekomendacja: Megafreighter 2400 t w obu wariantach (to frachtowiec — klasa `mega` ruchu); okręty — A (spójne
+  z obrazem luku: luk wypełnia się masa / ładowność), Atlas zostaje okrętem z największą ładownią wśród wojennych.
+- **(b) Cięcie wraku w polu** (`updateFieldSalvage`, `FIELD_CUT_SHARDS_PER_SECOND` 34 heksów/s, ~0,15 t złomu i stali
+  na heks): ~5 t/s, więc „ładownia pełna” przy 20 t przychodziła po ~4 s, przy 400 t — po ~80 s cięcia. Hamulec
+  ładowni praktycznie znika; zostaje czas stania przy wraku (cięcie w zasięgu 900 j., w polu bitwy). Opcje: bez zmian
+  (rekomendacja — sprawdzić w grze) albo wolniejsze cięcie (np. × 0,5).
+- **(c) Ceny ładunków górniczych** (`src/data/miningCharges.js`) liczone pod 20 t: pełna ładownia rudy miedzi to dziś
+  3200 CR zamiast 160, więc ten sam ładunek zwraca się ~7× lepiej na skałę. Opcje: bez zmian (rekomendacja do testu
+  w grze) albo ceny × 4 (S 32, M 100, L 320, XL 1000 CR). Komentarz w pliku opisuje kalibrację; cen nie ruszałem.
 - **Testy:** `cargoBays`, `playerHullMarket` (ceny kadłubów nie czytają ładowności), `playerFitSave`, `repairRig`,
   `repairBlock`, `asteroidMining*`, `portCargo`, `scoutBay` — 134 / 134.
 
