@@ -3,7 +3,7 @@
 // Vite + headless Chrome z WebGPU, skok dev ?story=shipyard, Atlas nieśmiertelny.
 //
 //   node scripts/webgpu/baza-po-upadku-gra.mjs [--out .tmp/baza-po-upadku] [--query renderWorker=0] [--daleko 1]
-//        [--progi 0] [--czasPo 12] [--profil 1] [--ab 1]
+//        [--progi 0] [--czasPo 12] [--profil 1] [--ab 1 | --ab partia]
 //
 // Okna: „przed” (habitat cały), „progi” (cztery progi punktów habitatu — płaskie odłamy), HP 0 → upadek do osiadania,
 // „po” (kamera fabuły), „nad-gruzem” (Atlas nad środkiem bazy). Co 0,5 s: złożenia obrazu workera, wiek, klatki workera
@@ -13,7 +13,9 @@
 // konsoli workera (Target.setAutoAttach, sesje płaskie). --daleko 1 — progi i upadek przy Atlasie 16 km dalej (odłamy
 // rodzą się poza pudłem rozgrzania kadłubów). --profil 1 — profil CPU workera (Profiler CDP) w oknach. --ab 1 — w pauzie
 // nad gruzem A/B przycinania połówek brył (__worldSkinOptions.planeHalfCull) naprzemiennie ABABAB: klatki workera,
-// rysunki, zrzuty i porównanie (scripts/webgpu/porownaj.mjs). Tryb off: --query renderWorker=0 (bez części workera).
+// rysunki, zrzuty i porównanie (scripts/webgpu/porownaj.mjs); --ab partia — to samo dla partii skór
+// (__worldSkinOptions.batch: A — odłamy partiami, B — własnymi siatkami; worldSkinBatch.js). Czas GPU z
+// Core3D.gpuFrameMs (średnia z klatek okna). Tryb off: --query renderWorker=0 (bez części workera).
 // Raport: <out>/raport.json.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -162,7 +164,7 @@ async function tick(label, s) {
 const DRAW_INSTALL = `(() => {
   const C = globalThis.__C3;
   if (!C || !C.renderer || globalThis.__drawProbe) return !!globalThis.__drawProbe;
-  const D = globalThis.__drawProbe = { on: false, frames: 0, by: new Map(), pass: new Map() };
+  const D = globalThis.__drawProbe = { on: false, frames: 0, by: new Map(), pass: new Map(), gpu: 0, gpuN: 0 };
   const r = C.renderer, orig = r._renderObjectDirect;
   r._renderObjectDirect = function (object, material, scene, camera) {
     if (D.on) {
@@ -176,6 +178,7 @@ const DRAW_INSTALL = `(() => {
     const out = rs.apply(this, arguments);
     if (D.on) {
       D.frames++;
+      if (C.gpuFrameMs > 0) { D.gpu += C.gpuFrameMs; D.gpuN++; }
       const info = C.lastFrameRenderInfo;
       if (info) for (const k of Object.keys(info)) { const b = info[k]; const p = D.pass.get(k) || { calls: 0, ms: 0 }; p.calls += b.calls; p.ms += b.ms; D.pass.set(k, p); }
     }
@@ -199,10 +202,30 @@ const DRAW_READ = `(() => {
     }
     if (o.name === 'ciało świata') { ws++; if (o.visible) wsVis++; }
   });
-  D.on = false; D.frames = 0; D.by.clear(); D.pass.clear();
-  return { klatki: f, rysunkiNaKlatke: +total.toFixed(1), by, pass, partie: { batches, batchQuads: Math.round(batchQuads), nullBatches, nullQuads: Math.round(nullQuads) },
-    cialaSwiata: { egz: ws, widoczne: wsVis }, worldSkin: S ? { shown: S.shown, instances: S.instances, triangles: S.triangles, halfCulled: S.halfCulled } : null };
+  const gpuMs = D.gpuN ? +(D.gpu / D.gpuN).toFixed(2) : null;
+  D.on = false; D.frames = 0; D.by.clear(); D.pass.clear(); D.gpu = 0; D.gpuN = 0;
+  const B = S && S.batch;
+  return { klatki: f, rysunkiNaKlatke: +total.toFixed(1), gpuMs, by, pass, partie: { batches, batchQuads: Math.round(batchQuads), nullBatches, nullQuads: Math.round(nullQuads) },
+    cialaSwiata: { egz: ws, widoczne: wsVis }, worldSkin: S ? { shown: S.shown, main: S.shownMain, odlamy: S.shownFrag, instances: S.instances,
+      triangles: S.triangles, halfCulled: S.halfCulled, wPartii: S.batched, slotyPartii: S.batchSlots, kolejka: S.batchQueue, rysunkiPartii: S.batchDraws,
+      kopiaSzczytMs: +(S.batchCopyPeakMs || 0).toFixed(2), strony: B ? B.pages : 0, wierzcholki: B ? B.verts : 0, MB: B ? +(B.bytes / 1048576).toFixed(1) : 0 } : null };
 })()`;
+
+// Pipeline'y renderu tworzone w workerze od chwili instalacji (sync = bez obietnicy — w klatce gry, ma być 0).
+const PIPE_INSTALL = `(() => {
+  const C = globalThis.__C3, pu = C && C.renderer && C.renderer.backend && C.renderer.backend.pipelineUtils;
+  if (!pu || globalThis.__pipeRec) return !!globalThis.__pipeRec;
+  const R = globalThis.__pipeRec = { pipes: [] };
+  const name = (m, o) => ((m && m.name) || (m && m.type) || '?') + ' @ ' + ((o && o.name) || (o && o.type) || '?');
+  const render = pu.createRenderPipeline;
+  pu.createRenderPipeline = function (ro, promises) {
+    if (R.pipes.length < 16384) R.pipes.push({ sync: !promises, nazwa: name(ro && ro.material, ro && ro.object) });
+    return render.call(this, ro, promises);
+  };
+  return true;
+})()`;
+const PIPE_READ = `(() => { const R = globalThis.__pipeRec; if (!R) return null; const s = R.pipes.filter((p) => p.sync);
+  return { nowe: R.pipes.length, sync: s.length, syncLista: s.slice(0, 12).map((p) => p.nazwa) }; })()`;
 
 async function drawProbe(label, ms = 1500) {
   if (!wk.sid) return null;
@@ -213,7 +236,7 @@ async function drawProbe(label, ms = 1500) {
     await sleep(ms);
     const r = await wkEval(DRAW_READ);
     const k = await wkEval(WK_STATE);
-    r.klatkiWorkera = { n: k.klatki, srMs: k.klatki ? +(k.sumMs / k.klatki).toFixed(2) : 0, p95: k.p95, max: k.max };
+    r.klatkiWorkera = { n: k.klatki, srMs: k.klatki ? +(k.sumMs / k.klatki).toFixed(2) : 0, p95: k.p95, max: k.max, gpuMs: r.gpuMs };
     console.log(label.padEnd(10), 'klatki workera', JSON.stringify(r.klatkiWorkera));
     report.rysunki = report.rysunki || {};
     report.rysunki[label] = r;
@@ -243,6 +266,10 @@ async function okno(label, sekundy, { profil = false } = {}) {
   if (profil && wk.sid) {
     const { profile } = await wkSend('Profiler.stop', {}, 120000);
     writeFileSync(join(out, `worker-${label}.cpuprofile`), JSON.stringify(profile));
+  }
+  if (wk.sid) {
+    const pipe = await wkEval(PIPE_READ).catch(() => null);
+    if (pipe) { (report.pipeline = report.pipeline || {})[label] = pipe; console.log(label.padEnd(10), 'pipeline\'y workera', JSON.stringify(pipe)); }
   }
   const wkRows = rows.map((r) => r.wk).filter((w) => w && !w.err);
   const frames = wkRows.reduce((a, w) => a + w.klatki, 0);
@@ -274,6 +301,7 @@ try {
   // Core3D i stan workera na globalu workera (operacja dev strony — kod w workerze z dostępem do Core3D, st)
   if (trybWorker) await ev(`(window.RenderWorkerHost.dev({ eval: 'globalThis.__C3 = Core3D; globalThis.__ST = st;' }), true)`);
   await sleep(1500);
+  if (wk.sid) console.log('licznik pipeline\'ów workera:', await wkEval(PIPE_INSTALL).catch((e) => e.message));
   await ev(GUARD);
   // Atlas po drugiej stronie habitatu niż skała (bańka ciał świata 7 km obejmuje habitat), mgła wojny wyłączona
   await ev(`(() => {
@@ -336,15 +364,23 @@ try {
   await okno('nad-gruzem', 8, { profil: PROFIL });
   await screenshotPng(cdp, join(out, '04-nad-gruzem.png'));
   // --ab 1: ten sam kadr w pauzie — połówki brył przycinane (A1), rysowane zawsze (B), znów przycinane (A2): obraz
-  // A1↔B ma się różnić nie bardziej niż szum A1↔A2 (efekty biegną w pauzie), rysunków ubywa
-  if (args.ab === '1') {
+  // A1↔B ma się różnić nie bardziej niż szum A1↔A2 (efekty biegną w pauzie), rysunków ubywa; --ab partia — to samo
+  // dla partii skór (A — odłamy partiami, B — własnymi siatkami)
+  if (args.ab === '1' || args.ab === 'partia') {
     const { compareDirs } = await import('./porownaj.mjs');
     await ev('(window.__setGamePaused(true), true)');
     await sleep(800);
-    const setCull = (on) => wkEval(`(() => { const o = globalThis.__worldSkinOptions; if (!o) return null; o.planeHalfCull = ${on}; return o.planeHalfCull; })()`);
+    const opt = args.ab === 'partia' ? 'batch' : 'planeHalfCull';
+    // kopie odłamów w partie kończą się w pauzie (worker rysuje dalej) — A/B dopiero bez kolejki
+    for (let i = 0; i < 40; i++) {
+      const q = await wkEval('(globalThis.__worldSkinStats ? globalThis.__worldSkinStats.batchQueue : 0)').catch(() => 0);
+      if (!q) break;
+      await sleep(250);
+    }
+    const setCull = (on) => wkEval(`(() => { const o = globalThis.__worldSkinOptions; if (!o || !('${opt}' in o)) return null; o.${opt} = ${on}; return o.${opt}; })()`);
     for (const [dir, on] of [['a1', true], ['b', false], ['a2', true], ['b2', false], ['a3', true], ['b3', false]]) {
       const r = await setCull(on);
-      if (r === null) { console.log('A/B: brak __worldSkinOptions w workerze (stary kod?)'); break; }
+      if (r === null) { console.log(`A/B: brak __worldSkinOptions.${opt} w workerze (stary kod?)`); break; }
       await sleep(500);
       await screenshotPng(cdp, join(out, 'ab', dir, 'nad-gruzem.png'));
       await drawProbe(`ab-${dir}`, 3000);
@@ -354,6 +390,10 @@ try {
       for (const row of c.rows) console.log(`A/B ${x}↔${y}`, JSON.stringify(row));
     }
     await ev('(window.__setGamePaused(false), true)');
+  }
+  if (wk.sid) {
+    const pipe = await wkEval(PIPE_READ).catch(() => null);
+    if (pipe) { (report.pipeline = report.pipeline || {}).koniec = pipe; console.log('pipeline\'y workera (koniec)', JSON.stringify(pipe)); }
   }
 } catch (err) {
   console.error(err);

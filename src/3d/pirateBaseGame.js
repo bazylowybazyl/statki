@@ -22,6 +22,7 @@ import { PirateBase3D } from './portBuildings/pirateBase3D.js';
 import { createPirateBaseLayout } from './portBuildings/pirateBaseLayout.js';
 import { portModuleFrame } from './portBuildings/portModuleTraffic.js';
 import { buildingSkinWarmGeometry } from './portBuildings/portBuildingSkin3D.js';
+import { skinBatchWarmGeometry } from './worldSkinBatch.js';
 import { resetWorldBodies3D } from './worldBodies3D.js';
 import { PirateRock3D } from './pirateRock3D.js';
 import { PirateRockSite3D } from './portBuildings/pirateRockSite3D.js';
@@ -177,6 +178,18 @@ function skinWarmHolders() {
         m.userData.clipZ = new THREE.Vector2(layer === LAYER_BG ? -1 : 1, 0);
         root.add(m);
       }
+    }
+  }
+  // Strony PARTII skór (odłamy jednym rysunkiem — worldSkinBatch.js): skóra płaska w warstwie zestawu, bryła 3D —
+  // połówka pod płaszczyzną w tle, nad nią w FG; układ wierzchołka strony (jeden bufor z przeplotem, indeks Uint32).
+  for (const set of ['bg', 'fg']) {
+    const halves = [[d.skinBatchMaterial(set, false, 0), set === 'bg' ? LAYER_BG : LAYER_FG],
+      [d.skinBatchMaterial(set, true, 0), LAYER_BG], [d.skinBatchMaterial(set, true, 1), LAYER_FG]];
+    for (const [mat, layer] of halves) {
+      const m = new THREE.Mesh(skinBatchWarmGeometry(), mat);
+      m.frustumCulled = false;
+      m.layers.set(layer);
+      root.add(m);
     }
   }
   _skinHolders = { base: d, root };

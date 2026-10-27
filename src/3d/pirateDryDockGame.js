@@ -23,6 +23,7 @@ import { PirateDryDock3D } from './portBuildings/pirateDryDock3D.js';
 import { createPirateDryDockLayout } from './portBuildings/pirateDryDockLayout.js';
 import { portModuleFrame } from './portBuildings/portModuleTraffic.js';
 import { buildingSkinWarmGeometry } from './portBuildings/portBuildingSkin3D.js';
+import { skinBatchWarmGeometry } from './worldSkinBatch.js';
 import { worldBodies } from '../game/worldBodies.js';
 import { createPirateDryDockSite, prebuildPirateDryDockBodies } from '../game/story/pirateDryDockBodies.js';
 import { resetWorldBodies3D } from './worldBodies3D.js';
@@ -77,6 +78,11 @@ function skinWarmHolders() {
       m.layers.set(layer);
       root.add(m);
     }
+    // strona partii skór (odłamy jednym rysunkiem — worldSkinBatch.js)
+    const b = new THREE.Mesh(skinBatchWarmGeometry(), d.skinBatchMaterial(set));
+    b.frustumCulled = false;
+    b.layers.set(layer);
+    root.add(b);
   }
   _skinHolders = { dock: d, root };
   return root;

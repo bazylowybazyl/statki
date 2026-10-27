@@ -16,10 +16,10 @@ import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
 import {
   Fn, If, Loop, Discard,
-  float, int, vec2, vec3, vec4, mat3, mat4,
+  float, int, uint, vec2, vec3, vec4, mat3, mat4,
   attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry,
   modelViewMatrix, modelWorldMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraWorldMatrix, texture,
-  abs, clamp, cross, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, smoothstep, step
+  abs, clamp, cross, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, round, smoothstep, step
 } from 'three/tsl';
 import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
 import { HALO_PI, haloHash12, haloPureFn, haloRingTSL } from '../haloRing/haloRingTSL.js';
@@ -28,6 +28,7 @@ import { PB_CHANNELS, PB_MAX_GROUPS, PB_MAX_LAMPS } from './portBuildingScene.js
 import { hullSkinField } from '../ships3d/hullSkin3D.js';
 import { hullDamagePool, sampleHullDamage, damageCoolHeat } from '../hullDamageMap.tsl.js';
 import { SolidWounds } from '../solidWounds.js';
+import { WorldSkinStore, WORLD_SKIN_SLOT_VEC4, WS } from '../worldSkinBatch.js';
 import { getBeltMedium } from '../asteroids/beltMedium.js';
 import { fxNoise } from '../fx/noise.js';
 
@@ -504,11 +505,12 @@ function buildGraphs(haloU) {
   const sDmgSlot = uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.dmgSlot || SKIN_SLOT_OFF);
   const sDmgUv = uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.dmgUv || SKIN_UV_ONE);
   const sDmgWorld = uniform(new THREE.Vector2()).onObjectUpdate(({ object }) => object?.userData?.dmgWorld || SKIN_WORLD_ONE);
-  const skinCell = (c) => {
-    const l = c.sub(sCmin);
+  // V — wartości egzemplarza (uniformy siatki egzemplarza albo slot partii — niżej): { on, offset, cmin, cdim }
+  const skinCell = (c, V) => {
+    const l = c.sub(V.cmin);
     const inside = l.x.greaterThanEqual(0).and(l.y.greaterThanEqual(0)).and(l.z.greaterThanEqual(0))
-      .and(l.x.lessThan(sCdim.x)).and(l.y.lessThan(sCdim.y)).and(l.z.lessThan(sCdim.z));
-    const idx = sOffset.add(l.x).add(l.y.mul(sCdim.x)).add(l.z.mul(sCdim.x).mul(sCdim.y));
+      .and(l.x.lessThan(V.cdim.x)).and(l.y.lessThan(V.cdim.y)).and(l.z.lessThan(V.cdim.z));
+    const idx = V.offset.add(l.x).add(l.y.mul(V.cdim.x)).add(l.z.mul(V.cdim.x).mul(V.cdim.y));
     const v = F.element(int(inside.select(idx, float(0))));
     // poza slotem pola (ciało ± 1 komórka) = NIGDY (0,5), nie ZNIKŁA (0): kolce, balustrady i lampy wystające
     // dalej niż komórkę poza raster liczyły się jako dziura i znikały
@@ -520,13 +522,35 @@ function buildGraphs(haloU) {
   // nią): skóra bryły rysuje się dwiema siatkami — w passie tła część pod płaszczyzną, w FG część nad nią
   // (userData.clipZ = (znak, z): fragment zostaje, gdy znak · (z świata − z) ≥ 0; (0, 0) — bez cięcia).
   const sClip = uniform(new THREE.Vector2()).onObjectUpdate(({ object }) => object?.userData?.clipZ || SKIN_NO_CLIP);
-  const makeSkin = (solid) => {
+  // Wartości egzemplarza z uniformów SIATKI EGZEMPLARZA (worldBodies3D.js — siatka na zestaw i połówkę).
+  const OBJECT_SKIN = {
+    on: sOn, offset: sOffset, cmin: sCmin, cdim: sCdim, offV: sOffV, toHub: sToHub, toHub3: null,
+    mv: modelViewMatrix, mw: modelWorldMatrix, dmgSlot: sDmgSlot, dmgUv: sDmgUv, dmgWorld: sDmgWorld, clip: sClip
+  };
+  // PARTIA (src/3d/worldSkinBatch.js — jeden rysunek na stronę partii): wartości egzemplarza z bufora storage po
+  // slocie (wierzchołek — aPbN.w, fragment — varying; zaokrąglenie znosi interpolację stałej), flaga widoczności
+  // (zestaw × połówka egzemplarza, wybór — uSkinFlag strony) i cięcie płaszczyzną (uSkinClip: znak, z) z materiału.
+  const sFlag = pbPerObject(new THREE.Vector4(), 'uSkinFlag');
+  const sClipB = pbPerObject(new THREE.Vector2(), 'uSkinClip');
+  // kolumna slotu do zmiennej przypisanej w miejscu (pułapki 29, 39, 40: odczyt raz, przed gałęziami, które go czytają)
+  const slotColumns = (slotF) => {
+    const S = WorldSkinStore.getNode();
+    const base = uint(round(slotF)).mul(uint(WORLD_SKIN_SLOT_VEC4)).toVar();
+    return (k) => {
+      const v = vec4(0.0).toVar();
+      v.assign(S.element(base.add(uint(k))));
+      return v;
+    };
+  };
+  const slotMat4 = (col, k) => mat4(col(k), col(k + 1), col(k + 2), col(k + 3)).toVar();
+  const makeSkin = (solid, batched = false) => {
   const corners = solid ? 8 : 4;
   const vk = varyings();
   const vLat = varyingProperty('vec3', 'vPbSkinLat');
   const vVis = varyingProperty('float', 'vPbSkinVis');
   const vWz = solid ? varyingProperty('float', 'vPbSkinWz') : null;
-  const skinVertex = Fn(() => {
+  const vSlot = batched ? varyingProperty('float', 'vPbSkinSlot') : null;
+  const skinVertexBody = (V) => {
     const f = attribute('aLat', 'vec3');
     const own = attribute('aOwn', 'vec3');
     const base = floor(f).toVar();
@@ -536,7 +560,7 @@ function buildGraphs(haloU) {
     // ciało płaskie: kratownica ma jedną warstwę (z = 0) — wystarczą 4 rogi komórki; bryła 3D — 8 rogów
     for (let k = 0; k < corners; k++) {
       const ox = k & 1, oy = (k >> 1) & 1, oz = (k >> 2) & 1;
-      const t = skinCell(base.add(vec3(ox, oy, oz)));
+      const t = skinCell(base.add(vec3(ox, oy, oz)), V);
       const wx = ox ? fr.x : fr.x.oneMinus();
       const wy = oy ? fr.y : fr.y.oneMinus();
       const wxy = wx.mul(wy);
@@ -544,26 +568,27 @@ function buildGraphs(haloU) {
       disp.addAssign(t.xyz.mul(w));
       wsum.addAssign(w);
     }
-    const ownT = skinCell(own).toVar();
+    const ownT = skinCell(own, V).toVar();
     const d = wsum.greaterThan(1e-4).select(disp.div(max(wsum, 1e-4)), ownT.xyz);
-    const on = sOn.greaterThan(0.5);
+    const on = V.on.greaterThan(0.5);
     vVis.assign(on.select(ownT.w.greaterThan(0.75).select(float(1.0), float(0.0)), float(1.0)));
     vLat.assign(f);
-    const rest = sOffV.add(positionGeometry);
+    const rest = V.offV.add(positionGeometry);
     const pB = on.select(rest.add(d), rest).toVar();
     // z świata (macierz ciała: przesunięcie w x, y duże, w z małe — z liczy się dokładnie w float32)
-    if (solid) vWz.assign(modelWorldMatrix.mul(vec4(pB, 1.0)).z);
-    const gp = sToHub.mul(vec4(pB, 1.0)).toVar();
-    const gn = normalize(mat3(sToHub).mul(normalGeometry)).toVar();
+    if (solid) vWz.assign(V.mw.mul(vec4(pB, 1.0)).z);
+    const gp = V.toHub.mul(vec4(pB, 1.0)).toVar();
+    const gn = normalize((V.toHub3 || mat3(V.toHub)).mul(normalGeometry)).toVar();
     vk.hub.assign(gp.xyz);
     vk.hubN.assign(gn);
     if (Lm.halo) {
       vk.lit.assign(Lm.pointToLit(gp));
       vk.litN.assign(normalize(Lm.dirToLit(gn)));
     } else {
-      // three składa modelViewMatrix na CPU w double (siatka w układzie ciała, offset w macierzy)
-      vk.lit.assign(modelViewMatrix.mul(vec4(pB, 1.0)).xyz);
-      vk.litN.assign(normalize(modelViewMatrix.mul(vec4(normalGeometry, 0.0)).xyz));
+      // three składa modelViewMatrix na CPU w double (siatka w układzie ciała, offset w macierzy); partia — ta sama
+      // macierz z bufora slotu (double na CPU, float32 w buforze)
+      vk.lit.assign(V.mv.mul(vec4(pB, 1.0)).xyz);
+      vk.litN.assign(normalize(V.mv.mul(vec4(normalGeometry, 0.0)).xyz));
     }
     vk.sunL.assign(Lm.sunLit());
     const A = attribute('aPbA', 'vec4');   // położenie w bryle (płyty) xyz, materiał
@@ -572,28 +597,48 @@ function buildGraphs(haloU) {
     vk.localN.assign(N4.xyz);
     vk.mat.assign(A.w);
     vk.fx.assign(attribute('aPbFx', 'vec4'));
-    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(pB, 1.0)));
-  })();
+    return cameraProjectionMatrix.mul(V.mv.mul(vec4(pB, 1.0)));
+  };
+  const skinVertex = batched ? Fn(() => {
+    // slot egzemplarza w aPbN.w (kolumna bez znaczenia dla cieniowania — worldSkinBatch.js)
+    const slotF = float(0.0).toVar();
+    slotF.assign(attribute('aPbN', 'vec4').w);
+    vSlot.assign(slotF);
+    const col = slotColumns(slotF);
+    const flags = col(WS.FLAGS);
+    // egzemplarz poza kadrem / połówka bez fragmentu — wierzchołek poza bryłą obcinania, bez FFD (pułapka 16)
+    const clip = vec4(2.0, 2.0, 2.0, 1.0).toVar();
+    If(dot(flags, sFlag).greaterThan(0.5), () => {
+      const cminOff = col(WS.CMIN), cdimOn = col(WS.CDIM), offV = col(WS.OFFV);
+      const hub = [col(WS.HUB), col(WS.HUB + 1), col(WS.HUB + 2), col(WS.HUB + 3)];
+      clip.assign(skinVertexBody({
+        on: cdimOn.w, offset: cminOff.w, cmin: cminOff.xyz, cdim: cdimOn.xyz, offV: offV.xyz,
+        toHub: mat4(hub[0], hub[1], hub[2], hub[3]).toVar(), toHub3: mat3(hub[0].xyz, hub[1].xyz, hub[2].xyz),
+        mv: slotMat4(col, WS.MV), mw: solid ? slotMat4(col, WS.WORLD) : null
+      }));
+    });
+    return clip;
+  })() : Fn(() => skinVertexBody(OBJECT_SKIN))();
   const skinNoise = fxNoise.tile2D();
   const skinPool = solid ? null : hullDamagePool().ro;
   // Bryła 3D: rany w komórkach kratownicy szablonu (src/3d/solidWounds.js) — slot (offset, bloki x, bloki y, wł.),
   // wymiary kratownicy, czas pola (stygnięcie wzorem zamkniętym jak mapa ran sprite'a).
   const woundF = solid ? SolidWounds.field() : null;
   const woundNow = solid ? SolidWounds.timeNode() : null;
-  const sWound = solid ? uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.woundSlot || SKIN_WOUND_OFF) : null;
-  const sWoundDim = solid ? uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.woundDim || SKIN_WOUND_DIM) : null;
+  const sWound = solid && !batched ? uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.woundSlot || SKIN_WOUND_OFF) : null;
+  const sWoundDim = solid && !batched ? uniform(new THREE.Vector4()).onObjectUpdate(({ object }) => object?.userData?.woundDim || SKIN_WOUND_DIM) : null;
   // Komórka pola (lustro CPU: solidWounds.woundCellIndex — bloki 4×4×4 ciągiem); poza kratownicą — zero.
-  const woundCell = (c) => {
+  const woundCell = (c, V) => {
     const inside = c.x.greaterThanEqual(0).and(c.y.greaterThanEqual(0)).and(c.z.greaterThanEqual(0))
-      .and(c.x.lessThan(sWoundDim.x)).and(c.y.lessThan(sWoundDim.y)).and(c.z.lessThan(sWoundDim.z));
+      .and(c.x.lessThan(V.woundDim.x)).and(c.y.lessThan(V.woundDim.y)).and(c.z.lessThan(V.woundDim.z));
     const x = int(max(c.x, 0.0)).toVar(), y = int(max(c.y, 0.0)).toVar(), z = int(max(c.z, 0.0)).toVar();
     const bx = x.div(4), by = y.div(4), bz = z.div(4);
-    const nbx = int(sWound.y), nby = int(sWound.z);
+    const nbx = int(V.wound.y), nby = int(V.wound.z);
     const brick = bx.add(by.mul(nbx)).add(bz.mul(nbx).mul(nby));
-    const idx = int(sWound.x).add(brick.mul(64)).add(x.sub(bx.mul(4))).add(y.sub(by.mul(4)).mul(4)).add(z.sub(bz.mul(4)).mul(16));
+    const idx = int(V.wound.x).add(brick.mul(64)).add(x.sub(bx.mul(4))).add(y.sub(by.mul(4)).mul(4)).add(z.sub(bz.mul(4)).mul(16));
     return inside.select(woundF.element(inside.select(idx, int(0))), vec4(0.0));
   };
-  const skinFragment = Fn(() => {
+  const skinFragmentBody = (V) => {
     const m = floor(vk.mat.add(0.5)).toVar();
     const localN = vec3(vk.localN).toVar();
     const local = vec3(vk.local).toVar();
@@ -602,13 +647,13 @@ function buildGraphs(haloU) {
     // pochodne i próbki z pochodnymi PRZED gałęzią maski (pułapka 15)
     const fw = float(0.0).toVar();
     fw.assign(fwidth(fuv.x).add(fwidth(fuv.y)));
-    if (solid) If(sClip.x.mul(vWz.sub(sClip.y)).lessThan(0.0), () => { Discard(); });
+    if (solid) If(V.clip.x.mul(vWz.sub(V.clip.y)).lessThan(0.0), () => { Discard(); });
     const f = vec3(vLat).toVar();
-    const woundUv = vec2(f.x.add(0.5).mul(sDmgUv.x), sDmgUv.z.sub(f.y.add(0.5)).mul(sDmgUv.y)).toVar();
+    const woundUv = vec2(f.x.add(0.5).mul(V.dmgUv.x), V.dmgUv.z.sub(f.y.add(0.5)).mul(V.dmgUv.y)).toVar();
     // szum brzegu: ciało płaskie — w uv rany (j. świata kadłuba), bryła 3D — w płaszczyźnie płyt bryły (fuv, j. świata;
     // uv rany bryły nie ma skali świata)
-    const nUv170 = solid ? fuv.div(170.0) : woundUv.mul(sDmgWorld.div(170.0));
-    const nUv22 = solid ? fuv.div(22.0) : woundUv.mul(sDmgWorld.div(22.0));
+    const nUv170 = solid ? fuv.div(170.0) : woundUv.mul(V.dmgWorld.div(170.0));
+    const nUv22 = solid ? fuv.div(22.0) : woundUv.mul(V.dmgWorld.div(22.0));
     const n1 = texture(skinNoise, nUv170).r.toVar();
     const n3 = texture(skinNoise, nUv22).g.toVar();
     // maska: żywe kontra martwe rogi komórki punktu (komórki spoza pierwotnej konstrukcji się nie liczą),
@@ -619,7 +664,7 @@ function buildGraphs(haloU) {
     const gone = float(0.0).toVar();
     for (let k = 0; k < corners; k++) {
       const ox = k & 1, oy = (k >> 1) & 1, oz = (k >> 2) & 1;
-      const t = skinCell(base.add(vec3(ox, oy, oz)));
+      const t = skinCell(base.add(vec3(ox, oy, oz)), V);
       const wx = ox ? fr.x : fr.x.oneMinus();
       const wy = oy ? fr.y : fr.y.oneMinus();
       const wxy = wx.mul(wy);
@@ -633,7 +678,7 @@ function buildGraphs(haloU) {
     // budowli wystają nad komórki spoza konstrukcji — surowe alive − gone ciął je szumem przy brzegu rastra)
     const edge = alive.sub(gone).div(max(alive.add(gone), 1e-4)).add(nz.mul(2.0)).toVar();
     const vis = any.select(edge.greaterThanEqual(0.0), vVis.greaterThan(0.5));
-    If(sOn.greaterThan(0.5).and(vis.not()), () => { Discard(); });
+    If(V.on.greaterThan(0.5).and(vis.not()), () => { Discard(); });
     const c = vec3(pbShade(vk, pbPalette(m), m, normalize(vk.hubN), fuv, fw, vec4(vk.fx))).toVar();
     // rany: osmalenie i żar z mapy ran rodu, ciemny pas przy brzegu dziury (jak hullTearFray skóry sprite'a)
     let D, woundOn;
@@ -641,12 +686,12 @@ function buildGraphs(haloU) {
       // bryła 3D: pole ran w komórkach kratownicy (solidWounds.js), trójliniowo w aLat; żar stygnie od chwili stempla
       const wHeat = float(0.0).toVar();
       const wScorch = float(0.0).toVar();
-      If(sWound.w.greaterThan(0.5), () => {
+      If(V.wound.w.greaterThan(0.5), () => {
         const wb = floor(f).toVar();
         const wf = f.sub(wb).toVar();
         for (let k = 0; k < 8; k++) {
           const ox = k & 1, oy = (k >> 1) & 1, oz = (k >> 2) & 1;
-          const v = woundCell(wb.add(vec3(ox, oy, oz))).toVar();
+          const v = woundCell(wb.add(vec3(ox, oy, oz)), V).toVar();
           const w = (ox ? wf.x : wf.x.oneMinus()).mul(oy ? wf.y : wf.y.oneMinus()).mul(oz ? wf.z : wf.z.oneMinus());
           const h = v.x.greaterThan(0.0).select(damageCoolHeat(v.x, max(woundNow.sub(v.y), 0.0)), float(0.0));
           wHeat.addAssign(h.mul(w));
@@ -654,13 +699,13 @@ function buildGraphs(haloU) {
         }
       });
       D = { heat: wHeat, scorch: wScorch };
-      woundOn = sWound.w;
+      woundOn = V.wound.w;
     } else {
-      D = sampleHullDamage(skinPool, sDmgSlot, woundUv);
-      woundOn = sDmgSlot.w;
+      D = sampleHullDamage(skinPool, V.dmgSlot, woundUv);
+      woundOn = V.dmgSlot.w;
     }
     const scorch = clamp(D.scorch.add(n1.sub(0.5).mul(0.35)), 0.0, 1.0).mul(woundOn).toVar();
-    const tear = any.and(sOn.greaterThan(0.5)).select(smoothstep(0.75, 0.0, edge), float(0.0));
+    const tear = any.and(V.on.greaterThan(0.5)).select(smoothstep(0.75, 0.0, edge), float(0.0));
     c.mulAssign(mix(vec3(1.0), vec3(0.10, 0.085, 0.075), max(scorch, tear.mul(0.9))));
     const th = D.heat.mul(scorch.mul(0.6).add(0.25)).toVar();
     const heatCol = vec3(1.0, 0.18, 0.02).mul(smoothstep(0.02, 0.5, th).mul(1.3))
@@ -668,7 +713,16 @@ function buildGraphs(haloU) {
       .add(vec3(1.0, 0.92, 0.78).mul(smoothstep(1.2, 3.2, th).mul(7.0)));
     c.addAssign(heatCol.mul(woundOn));
     return vec4(max(c, vec3(0.0)), pbTime.y);
-  })();
+  };
+  const skinFragment = batched ? Fn(() => {
+    // wartości egzemplarza z slotu partii — zmienne na początku (przed pochodnymi i gałęziami)
+    const col = slotColumns(vSlot);
+    const cminOff = col(WS.CMIN), cdimOn = col(WS.CDIM), dmgSlot = col(WS.DMG_SLOT), dmgUv = col(WS.DMG_UV), dmgW = col(WS.DMG_WORLD);
+    return skinFragmentBody({
+      on: cdimOn.w, offset: cminOff.w, cmin: cminOff.xyz, cdim: cdimOn.xyz, dmgSlot, dmgUv, dmgWorld: dmgW.xy, clip: sClipB,
+      wound: solid ? col(WS.WOUND) : null, woundDim: solid ? col(WS.WOUND_DIM) : null
+    });
+  })() : Fn(() => skinFragmentBody({ ...OBJECT_SKIN, wound: sWound, woundDim: sWoundDim }))();
   return { vertexNode: skinVertex, fragmentNode: skinFragment };
   };
 
@@ -678,6 +732,9 @@ function buildGraphs(haloU) {
     label: { vertexNode: labelVertex, fragmentNode: labelFragment },
     skin: makeSkin(false),
     skin3: makeSkin(true),
+    // partie skór (worldSkinBatch.js): odłamy ciał świata jednym rysunkiem na stronę
+    skinBatch: makeSkin(false, true),
+    skin3Batch: makeSkin(true, true),
     nodes: { pbTime, groups, surf, atlas }
   };
 }

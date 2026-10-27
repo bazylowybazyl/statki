@@ -33,6 +33,7 @@ import { hullSkinLattice, hullSkinLattice3D, ensureHullSkinSlot, writeHullSkinFi
 import { HullDamageMap } from './hullDamageMap.js';
 import { SolidWounds } from './solidWounds.js';
 import { bakeBuildingChunkSkinSteps, requestBuildingSkinBake, buildingSkinGeometries, SKIN_BAKE_STATS } from './portBuildings/portBuildingSkin3D.js';
+import { WorldSkinStore, WorldSkinBatch, WORLD_SKIN_SLOT_VEC4, WS, SKIN_BATCH_STATS } from './worldSkinBatch.js';
 
 const _inst = new Map();     // encja → egzemplarz
 const _list = [];
@@ -47,12 +48,19 @@ let _invRoot = null, _invFrame = -1;   // _inv = odwrotność macierzy świata k
 let _wb = worldBodies;
 export function setWorldBodiesSource(src) { _wb = src || worldBodies; }
 
-// halfCulled — połówki brył 3D w tej klatce bez rysunku (cała sfera po drugiej stronie płaszczyzny gry — halfReachesPlane)
+// halfCulled — połówki brył 3D w tej klatce bez rysunku (cała sfera po drugiej stronie płaszczyzny gry — halfReachesPlane).
+// Partie (worldSkinBatch.js): shownMain / shownFrag — pokazane kawałki (statyka zastąpiona skórą) i odłamy, batched —
+// egzemplarze rysowane partią, batchSlots — egzemplarze gotowe w partii, batchQueue — kopie w kolejce, batchDraws —
+// widoczne strony (rysunki partii w ostatnim haku passa), batchCopyPeakMs — najdłuższy krok kopii, batch — strony,
+// wpisy, wierzchołki, bajty.
 export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0, bakePeakId: '',
-  syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, halfCulled: 0, worker: SKIN_BAKE_STATS };
+  syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, halfCulled: 0,
+  shownMain: 0, shownFrag: 0, batched: 0, batchSlots: 0, batchQueue: 0, batchDraws: 0, batchCopyPeakMs: 0,
+  worker: SKIN_BAKE_STATS, batch: SKIN_BATCH_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
-// A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27)
-export const WORLD_SKIN_OPTIONS = { planeHalfCull: true };
+// A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27); batch = false — odłamy własnymi
+// siatkami (rysunek na egzemplarz, zestaw i połówkę — jak przed partiami skór)
+export const WORLD_SKIN_OPTIONS = { planeHalfCull: true, batch: true };
 if (typeof window !== 'undefined') window.__worldSkinOptions = WORLD_SKIN_OPTIONS;
 
 function providerOf(hull) {
@@ -400,9 +408,8 @@ export function* fragmentSkinSubset3DSteps(geo, body, lat) {
 
 // Podzbiory odłamów w budżecie klatki: egzemplarz z kolejki dostaje generator na każdą DOSTĘPNĄ geometrię (bryła 3D
 // ma dwie siatki na zestaw — pod / nad płaszczyzną gry — podzbiór liczony raz na geometrię); krok po kroku, aż do
-// końca budżetu, następna klatka kontynuuje.
-function runSubsets() {
-  const t0 = performance.now();
+// końca budżetu, następna klatka kontynuuje. Gotowy podzbiór idzie do kopii w partię (runBatchCopies — ten sam budżet).
+function runSubsets(t0) {
   while (_subsetQueue.length && performance.now() - t0 < SUBSET_MS) {
     const inst = _subsetQueue[0];
     const hull = inst.entity?.beamHull;
@@ -411,6 +418,7 @@ function runSubsets() {
       _subsetQueue.shift();
       inst.subsetQueued = false;
       inst.subsetWork = null;
+      abandonSkinBatch(inst);
       continue;
     }
     if (!inst.subsetWork) {
@@ -424,7 +432,14 @@ function runSubsets() {
       }
     }
     const w = inst.subsetWork[0];
-    if (!w) { _subsetQueue.shift(); inst.subsetQueued = false; inst.subsetWork = null; continue; }
+    if (!w) {
+      _subsetQueue.shift();
+      inst.subsetQueued = false;
+      inst.subsetWork = null;
+      inst.subsetsDone = true;
+      checkSkinBatchReady(inst);
+      continue;
+    }
     const s0 = performance.now();
     let r = w.it.next();
     while (!r.done && performance.now() - t0 < SUBSET_MS) r = w.it.next();
@@ -437,8 +452,199 @@ function runSubsets() {
       (skin.subsets || (skin.subsets = [])).push(sub);
       WORLD_SKIN_STATS.subsets++;
       for (const mesh of inst.meshes) if (mesh.userData.fullGeometry === w.geo && mesh.geometry === w.geo) mesh.geometry = sub;
+      queueSkinBatchCopy(inst, w.geo === skin.fg ? 'fg' : 'bg', sub);
+    } else {
+      // odłam bez komórek w kratownicy kawałka — zostaje przy własnych siatkach (pełna geometria, jak dotąd)
+      abandonSkinBatch(inst);
     }
   }
+}
+
+// ── PARTIE skór (worldSkinBatch.js) ──────────────────────────────────────────────────────────────────────────────
+// Odłam z gotowymi podzbiorami trafia do partii swojej (budowla × zestaw × rodzaj skóry): kopia wierzchołków podzbioru
+// w krokach (ten sam budżet klatki co podzbiory), slot egzemplarza w WorldSkinStore. Do końca kopii — i przy
+// WORLD_SKIN_OPTIONS.batch = false — egzemplarz rysuje się własnymi siatkami. Stan egzemplarza `batchState`:
+// 0 — jeszcze nie, 1 — kopie w toku, 2 — w partii, −1 — przy własnych siatkach (kawałek na miejscu: pełna skóra
+// kawałka bez podzbioru; odłam bez podzbioru; pula slotów pełna; budowla bez materiału partii).
+const _batches = new Map();     // budowla → Map(klucz zestawu → WorldSkinBatch)
+const _batched = new Set();     // egzemplarze w partii (batchState 2)
+const _batchQueue = [];         // kopie: { inst, set, batch, entry, it }
+function skinBatchFor(prov, set, solid) {
+  let m = _batches.get(prov.building);
+  if (!m) _batches.set(prov.building, (m = new Map()));
+  const key = solid ? `${set}3` : set;
+  let b = m.get(key);
+  if (!b) {
+    const bgLayer = prov.layers?.bg ?? 1, fgLayer = prov.layers?.fg ?? 2;
+    const B = prov.building;
+    // bryła 3D: strona dwiema siatkami — połówka pod płaszczyzną w passie tła, nad nią w FG (jak siatki egzemplarza)
+    const halves = solid
+      ? [{ material: B.skinBatchMaterial(set, true, 0), layer: bgLayer }, { material: B.skinBatchMaterial(set, true, 1), layer: fgLayer }]
+      : [{ material: B.skinBatchMaterial(set, false, 0), layer: set === 'bg' ? bgLayer : fgLayer }];
+    b = new WorldSkinBatch({ set, solid, halves, scene: Core3D.scene });
+    m.set(key, b);
+    ensureSkinStoreHooks();
+  }
+  return b;
+}
+function queueSkinBatchCopy(inst, set, geo) {
+  if (inst.batchState < 0) return;
+  const B = inst.prov?.building;
+  if (!B || typeof B.skinBatchMaterial !== 'function') { abandonSkinBatch(inst); return; }
+  if (!inst.slot) {
+    inst.slot = WorldSkinStore.acquire();
+    if (!inst.slot) { abandonSkinBatch(inst); return; }
+  }
+  const batch = skinBatchFor(inst.prov, set, inst.solid);
+  const job = { inst, set, batch, entry: null, it: null };
+  job.it = batch.addSteps(inst.slot, geo, job);
+  inst.batchState = 1;
+  inst.batchPending++;
+  _batchQueue.push(job);
+}
+function checkSkinBatchReady(inst) {
+  if (inst.batchState !== 1 || inst.batchPending > 0 || !inst.subsetsDone) return;
+  if (inst.entries.bg || inst.entries.fg) { inst.batchState = 2; _batched.add(inst); }
+  else abandonSkinBatch(inst);
+}
+// Egzemplarz wraca na stałe do własnych siatek (albo znika): wpisy partii i slot zwolnione.
+function abandonSkinBatch(inst) {
+  inst.batchState = -1;
+  releaseSkinBatch(inst);
+}
+function releaseSkinBatch(inst) {
+  _batched.delete(inst);
+  for (const set of ['bg', 'fg']) {
+    const e = inst.entries[set];
+    if (e) { e.batch.remove(e); inst.entries[set] = null; }
+  }
+  if (inst.slot) { WorldSkinStore.release(inst.slot); inst.slot = 0; }
+}
+function runBatchCopies(t0) {
+  while (_batchQueue.length && performance.now() - t0 < SUBSET_MS) {
+    const job = _batchQueue[0];
+    const inst = job.inst;
+    if (inst.disposed || inst.batchState < 0) {
+      _batchQueue.shift();
+      if (job.entry) job.batch.remove(job.entry);
+      continue;
+    }
+    const s0 = performance.now();
+    let r = job.it.next();
+    while (!r.done && performance.now() - t0 < SUBSET_MS) r = job.it.next();
+    const ms = performance.now() - s0;
+    if (ms > WORLD_SKIN_STATS.batchCopyPeakMs) WORLD_SKIN_STATS.batchCopyPeakMs = ms;
+    if (!r.done) break;
+    _batchQueue.shift();
+    inst.entries[job.set] = r.value;
+    inst.batchPending--;
+    checkSkinBatchReady(inst);
+  }
+}
+
+// Dane egzemplarza w partii (bez kamery — macierz model-widok i flagi liczy hak passa): macierz świata, ciało → układ
+// budowli, slot pola skóry, mapa ran, rany brył — te same wartości, które siatka egzemplarza daje uniformom obiektu.
+function writeSkinSlot(inst, st, du) {
+  const A = WorldSkinStore.array();
+  const o = inst.slot * WORLD_SKIN_SLOT_VEC4 * 4;
+  const mesh = inst.meshes[0];
+  const w = mesh.matrixWorld.elements, h = mesh.userData.bodyToHub.elements;
+  const ow = o + WS.WORLD * 4, oh = o + WS.HUB * 4;
+  for (let k = 0; k < 16; k++) { A[ow + k] = w[k]; A[oh + k] = h[k]; }
+  let q = o + WS.CMIN * 4;
+  A[q] = st.cmin.x; A[q + 1] = st.cmin.y; A[q + 2] = st.cmin.z; A[q + 3] = st.offset || 0;
+  q = o + WS.CDIM * 4;
+  A[q] = st.cdim.x; A[q + 1] = st.cdim.y; A[q + 2] = st.cdim.z; A[q + 3] = st.on ? 1 : 0;
+  q = o + WS.OFFV * 4;
+  A[q] = st.off.x; A[q + 1] = st.off.y; A[q + 2] = st.off.z; A[q + 3] = 0;
+  const ds = du.uDmgSlot.value, uv = du.uv, dw = du.uDmgWorld.value, ws = du.woundSlot, wd = du.woundDim;
+  q = o + WS.DMG_SLOT * 4;
+  A[q] = ds.x; A[q + 1] = ds.y; A[q + 2] = ds.z; A[q + 3] = ds.w;
+  q = o + WS.DMG_UV * 4;
+  A[q] = uv.x; A[q + 1] = uv.y; A[q + 2] = uv.z; A[q + 3] = uv.w;
+  q = o + WS.DMG_WORLD * 4;
+  A[q] = dw.x; A[q + 1] = dw.y; A[q + 2] = 0; A[q + 3] = 0;
+  q = o + WS.WOUND * 4;
+  A[q] = ws.x; A[q + 1] = ws.y; A[q + 2] = ws.z; A[q + 3] = ws.w;
+  q = o + WS.WOUND_DIM * 4;
+  A[q] = wd.x; A[q + 1] = wd.y; A[q + 2] = wd.z; A[q + 3] = wd.w;
+}
+
+// Hak passów tła i FG (kamera TEGO passa — podzielony ekran: raz na widok): flagi widoczności (zestaw × połówka)
+// każdego egzemplarza w partii — połówka bez fragmentu (mesh.visible, halfReachesPlane) i przycinanie do kadru TYM
+// SAMYM testem co three (Frustum z rzutu kamery, intersectsObject siatki egzemplarza: sfera egzemplarza w macierzy
+// świata) — oraz macierz model-widok (double na CPU, jak highpModelViewMatrix). Strona bez widocznego wpisu nie idzie
+// do rysowania. Raz na klatkę i kamerę (pass FG po tle — bez pracy).
+const _frustum = new THREE.Frustum();
+const _projScreen = new THREE.Matrix4();
+const _mvTmp = new THREE.Matrix4();
+const _commitProj = new Float64Array(16);
+let _commitFrame = -1, _commitCam = null, _hooks = false;
+function ensureSkinStoreHooks() {
+  if (_hooks || typeof Core3D.addPassHook !== 'function') return;
+  _hooks = true;
+  Core3D.addPassHook('bg', commitWorldSkinStore);
+  Core3D.addPassHook('fg', commitWorldSkinStore);
+}
+export function commitWorldSkinStore(camera) {
+  if (!camera || SKIN_BATCH_STATS.pages <= 0) return 0;
+  if (camera.parent === null && camera.matrixWorldAutoUpdate === true) camera.updateMatrixWorld();
+  _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const pe = _projScreen.elements;
+  if (_commitFrame === _frame && _commitCam === camera) {
+    let same = true;
+    for (let k = 0; k < 16; k++) if (_commitProj[k] !== pe[k]) { same = false; break; }
+    if (same) return 0;
+  }
+  _commitFrame = _frame;
+  _commitCam = camera;
+  for (let k = 0; k < 16; k++) _commitProj[k] = pe[k];
+  for (const m of _batches.values()) for (const b of m.values()) for (const p of b.pages) { p.vis[0] = 0; p.vis[1] = 0; }
+  const on = WORLD_SKIN_OPTIONS.batch;
+  let n = 0;
+  if (on && _batched.size) {
+    _frustum.setFromProjectionMatrix(_projScreen, camera.coordinateSystem, camera.reversedDepth);
+    const A = WorldSkinStore.array();
+    const S4 = WORLD_SKIN_SLOT_VEC4 * 4;
+    const inv = camera.matrixWorldInverse;
+    let lo = Infinity, hi = -1;
+    for (const inst of _batched) {
+      const o = inst.slot * S4;
+      let f0 = 0, f1 = 0, f2 = 0, f3 = 0;
+      if (inst.batchShown === _frame) {
+        for (const mesh of inst.meshes) {
+          if (!mesh.visible) continue;
+          if (mesh.frustumCulled && !_frustum.intersectsObject(mesh)) continue;
+          const fi = mesh.userData.flagIndex;
+          if (fi === 0) f0 = 1; else if (fi === 1) f1 = 1; else if (fi === 2) f2 = 1; else f3 = 1;
+        }
+        _mvTmp.multiplyMatrices(inv, inst.meshes[0].matrixWorld);
+        const m = _mvTmp.elements;
+        for (let k = 0; k < 16; k++) A[o + k] = m[k];
+        const eb = inst.entries.bg, ef = inst.entries.fg;
+        if (eb) { eb.page.vis[0] += f0; eb.page.vis[1] += f1; }
+        if (ef) { ef.page.vis[0] += f2; ef.page.vis[1] += f3; }
+      }
+      const of = o + WS.FLAGS * 4;
+      A[of] = f0; A[of + 1] = f1; A[of + 2] = f2; A[of + 3] = f3;
+      if (inst.slot < lo) lo = inst.slot;
+      if (inst.slot > hi) hi = inst.slot;
+    }
+    WorldSkinStore.upload(lo, hi);
+  }
+  for (const m of _batches.values()) {
+    for (const b of m.values()) {
+      for (const p of b.pages) {
+        for (let h = 0; h < p.meshes.length; h++) {
+          const vis = on && p.vis[h] > 0;
+          if (p.meshes[h].visible !== vis) p.meshes[h].visible = vis;
+          if (vis) n++;
+        }
+      }
+    }
+  }
+  WORLD_SKIN_STATS.batchDraws = n;
+  return n;
 }
 function queueBakes() {
   const focus = _wb.focus || [];
@@ -484,7 +690,10 @@ function createInstance(entity, assets, prov, piece) {
   const root = new THREE.Group();
   root.name = 'ciało świata';
   root.matrixAutoUpdate = true;
-  const inst = { entity, root, meshes: [], frame: 0, assetsKey: assets, dmgU: null, piece, subsetQueued: false, subsetWork: null };
+  const inst = { entity, root, meshes: [], frame: 0, assetsKey: assets, dmgU: null, piece, subsetQueued: false, subsetWork: null,
+    // partia skór (worldSkinBatch.js): stan, slot w WorldSkinStore, wpisy na zestaw, kopie w toku
+    prov, solid: !!assets.solid, batchState: 0, slot: 0, entries: { bg: null, fg: null }, batchPending: 0, subsetsDone: false,
+    batchShown: -1, disposed: false };
   piece.__skinUsers = (piece.__skinUsers || 0) + 1;
   const bgLayer = prov.layers?.bg ?? 1, fgLayer = prov.layers?.fg ?? 2;
   for (const set of ['bg', 'fg']) {
@@ -504,6 +713,8 @@ function createInstance(entity, assets, prov, piece) {
       mesh.layers.set(layer);
       mesh.userData.bodyToHub = new THREE.Matrix4();
       mesh.userData.fullGeometry = geo;
+      // flaga widoczności w slocie partii (WS.FLAGS): zestaw bg — 0 / 1, fg — 2 / 3; płaska albo pod — 0, nad — 1
+      mesh.userData.flagIndex = (set === 'fg' ? 2 : 0) + (clip > 0 ? 1 : 0);
       if (clip !== 0) mesh.userData.clipZ = new THREE.Vector2(clip, 0);
       root.add(mesh);
       inst.meshes.push(mesh);
@@ -512,8 +723,10 @@ function createInstance(entity, assets, prov, piece) {
   root.visible = false;
   Core3D.scene.add(root);
   _inst.set(entity, inst);
-  // odłam (wyspa albo wrak kawałka) — podzbiór trójkątów w budżecie klatki
+  // odłam (wyspa albo wrak kawałka) — podzbiór trójkątów w budżecie klatki, potem kopia w partię; kawałek na miejscu
+  // (pełna skóra kawałka) zostaje przy własnych siatkach
   if (piece.entity !== entity) { inst.subsetQueued = true; _subsetQueue.push(inst); }
+  else inst.batchState = -1;
   return inst;
 }
 
@@ -521,6 +734,8 @@ function disposeInstance(inst) {
   if (inst.root.parent) inst.root.parent.remove(inst.root);
   _inst.delete(inst.entity);
   if (inst.piece) inst.piece.__skinUsers = Math.max(0, (inst.piece.__skinUsers || 0) - 1);
+  inst.disposed = true;
+  releaseSkinBatch(inst);
 }
 
 function collect() {
@@ -558,7 +773,7 @@ export function halfReachesPlane(mesh) {
  */
 export function syncWorldBodies3D() {
   _frame++;
-  let shown = 0, triangles = 0, halfCulled = 0;
+  let shown = 0, triangles = 0, halfCulled = 0, shownMain = 0, shownFrag = 0, batched = 0;
   const list = collect();
   // kawałki ruszone w tej klatce (statyka schowana) — dostawca dostaje stan raz na kawałek
   for (const site of _wb.sites) {
@@ -657,7 +872,17 @@ export function syncWorldBodies3D() {
       if (mesh.visible !== half) mesh.visible = half;
       if (!half) halfCulled++;
     }
-    inst.root.visible = true;
+    // w partii rysuje egzemplarz strona partii (dane w slocie; flagi i macierz model-widok — hak passa,
+    // commitWorldSkinStore); siatki egzemplarza zostają nośnikiem macierzy świata, sfery kadru i połówek
+    if (WORLD_SKIN_OPTIONS.batch && inst.batchState === 2) {
+      writeSkinSlot(inst, st, du);
+      inst.batchShown = _frame;
+      if (inst.root.visible) inst.root.visible = false;
+      batched++;
+    } else {
+      inst.root.visible = true;
+    }
+    if (isMain) shownMain++; else shownFrag++;
     piece.__skinShown = true;
     shown++;
     for (const mesh of inst.meshes) {
@@ -706,10 +931,20 @@ export function syncWorldBodies3D() {
   WORLD_SKIN_STATS.instances = _inst.size;
   WORLD_SKIN_STATS.triangles = triangles;
   WORLD_SKIN_STATS.halfCulled = halfCulled;
+  WORLD_SKIN_STATS.shownMain = shownMain;
+  WORLD_SKIN_STATS.shownFrag = shownFrag;
+  WORLD_SKIN_STATS.batched = batched;
+  WORLD_SKIN_STATS.batchSlots = _batched.size;
   // rany brył 3D: czas pola (stygnięcie w shaderze) i wysyłka zmienionych bloków komórek
   SolidWounds.flush();
   if ((_frame & 15) === 0) queueBakes();
-  if (_subsetQueue.length) runSubsets();
+  // podzbiory odłamów, potem kopie w partie — wspólny budżet klatki
+  if (_subsetQueue.length || _batchQueue.length) {
+    const t0 = performance.now();
+    if (_subsetQueue.length) runSubsets(t0);
+    if (_batchQueue.length) runBatchCopies(t0);
+  }
+  WORLD_SKIN_STATS.batchQueue = _batchQueue.length;
   return shown;
 }
 
@@ -724,6 +959,10 @@ export function resetWorldBodies3D() {
   for (const p of _bakeQueue) p.__skinQueued = false;
   _bakeQueue.length = 0;
   _subsetQueue.length = 0;
+  // kopie w partie przerwane (miejsce wpisu zwolnione); strony bez wpisów zwalniają się same
+  for (const job of _batchQueue) if (job.entry) job.batch.remove(job.entry);
+  _batchQueue.length = 0;
+  _batched.clear();
   for (const job of [..._jobs]) cancelSkinJob(job);
   for (const site of _wb.sites) for (const p of site.pieces) { p.__holdSince = 0; p.__holdTimedOut = false; }
 }
