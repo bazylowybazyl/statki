@@ -15833,6 +15833,16 @@
       const hullDef = getPlayerHullDef(shipBP.id);
       if (!hullDef) return;
       const shouldActivate = opts.activate !== false;
+      // Przesiadka z ładunkiem ponad ładowność nowego kadłuba — odmowa (towar nie wyparowuje; Atlas ma 400 t).
+      if (shouldActivate && hullDef.id !== PLAYER.activeHullId) {
+        const held = getBagMass(PLAYER.cargo);
+        const cap = Number(hullDef.cargoCap) || 0;
+        if (held > cap + 1e-6) {
+          toast(`Rozładuj ładownię (${Math.ceil(held)} t > ${Math.floor(cap)} t)`);
+          updateStationOverlay(stationUI.tab, stationUI.station);
+          return false;
+        }
+      }
 
       let changed = false;
       if (!playerOwnsHull(hullDef.id)) {
