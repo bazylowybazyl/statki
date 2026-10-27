@@ -16954,6 +16954,8 @@
       get count() { return lootContainers.count; },
       get stats() { return { ...lootContainers.stats }; },
       get gear() { return playerLootGear(); },
+      /** Ładownia gracza (narzędzia): kopia ładunku i wolna masa [t]. */
+      get hold() { return { cargo: { ...PLAYER.cargo }, free: getPlayerCargoFree() }; },
       pool: lootContainers,
       // Narzędzia (?dev): zrzut paczek przy graczu — `LootContainers.devSpill({ steel: 380 }, 3000)`.
       devSpill(cargo = { steel: 380 }, dist = 3000) {
