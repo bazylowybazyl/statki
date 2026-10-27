@@ -16869,10 +16869,21 @@
       _lootMsgBag[key] = (_lootMsgBag[key] || 0) + units;
     }
 
+    /** Zbiorczy komunikat zebranego łupu (najwyżej co ~1,2 s; ostatni — także po zebraniu ostatniej paczki). */
+    function flushLootMessage() {
+      if (!_lootMsgBag || _lootClock - _lootMsgAt <= 1.2) return;
+      pushZoneMessage(`ŁUP + ${formatCargoBag(_lootMsgBag)}`, 1.6);
+      _lootMsgBag = null;
+      _lootMsgAt = _lootClock;
+    }
+
     /** Krok fizyki: dryf, czas życia, wiązka i chwyt do ładowni (pauza stoi — krok tylko w `physicsStep`). */
     function stepLoot(dt) {
       _lootClock += dt;
-      if (lootContainers.count === 0) return;
+      if (lootContainers.count === 0) {
+        flushLootMessage();
+        return;
+      }
       const env = _lootEnv;
       const alive = !!ship && !ship.destroyed;
       // Gracz zginął: paczki zostają (odległość do despawnu od ostatniej pozycji gracza), wiązka gaśnie.
@@ -16891,11 +16902,7 @@
       env.gear = alive ? playerLootGear() : null;
       stepLootContainers(lootContainers, dt, env);
       if (!alive) return;
-      if (_lootMsgBag && _lootClock - _lootMsgAt > 1.2) {
-        pushZoneMessage(`ŁUP + ${formatCargoBag(_lootMsgBag)}`, 1.6);
-        _lootMsgBag = null;
-        _lootMsgAt = _lootClock;
-      }
+      flushLootMessage();
       // Pełna ładownia: paczka czeka przy luku (licznik `full` rośnie raz na paczkę).
       if (lootContainers.stats.full !== _lootFullSeen) {
         _lootFullSeen = lootContainers.stats.full;
@@ -16921,7 +16928,9 @@
     function lootRenderFrame(alpha) {
       const pose = ship && !ship.destroyed ? (window.__interpShipPose || ship.pos) : null;
       if (pose) { _lootShipPose.x = pose.x; _lootShipPose.y = pose.y; }
-      return fillLootRenderFrame(lootContainers, _lootRender, (1 - alpha) * PHYS_DT, _lootVisible,
+      // Pauza i zamrożony świat fabuły: stan fizyki stoi — poza bez cofania o krok (jak renderPoses).
+      const lag = (PAUSED || StoryGame.worldFrozen) ? 0 : (1 - alpha) * PHYS_DT;
+      return fillLootRenderFrame(lootContainers, _lootRender, lag, _lootVisible,
         _lensDotsActive ? _lootLensHidden : null, pose ? _lootShipPose : null);
     }
 
