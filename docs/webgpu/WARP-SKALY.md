@@ -1,7 +1,15 @@
 # Skały pasa w skoku: bryły, ślad światła, deflektor (DECYZJE-2 S1–S4, 2026-10-26)
 
-Stan i zasady są w regule `pas-asteroid` (punkt „Pas w skoku: skały w przestrzeni widocznej”). Tu: skąd to się wzięło,
-liczby i co sprawdzić w grze.
+> **USUNIĘTE 2026-10-27** (decyzja użytkownika po teście nowego warpa: „asteroidy dalej mi się nie podobają — myślę żeby
+> całkowicie wywalić”). Skały pasa w skoku zniknęły razem z kodem: `src/3d/asteroids/warpDebris.js`, `warpTrails.js`,
+> `warpDeflector.js`, wariant `smear` materiału skał (`AsteroidBelt:rocksSmear`), `RockSet.lodExtra`, przełączniki
+> `?smugi=` / `?deflektor=`, klawisze B / G dema `warp-ped`, testy `warpDebris*`, `warpDeflector`, `warpTrails`. W skoku
+> pas NIE jest rysowany — stan w regule `pas-asteroid` (punkt „Pas w skoku gracza nie jest rysowany”), zanik pola
+> i gazu przy skoku oraz pomiar kosztu pola przy hipercruisie niżej (§ „Usunięcie”). Reszta dokumentu to historia — nazwy plików, testów i stałych w niej nie
+> istnieją.
+
+Stan i zasady skał skoku stały w regule `pas-asteroid` (dawny punkt „Pas w skoku: skały w przestrzeni widocznej”, dziś
+„Pas w skoku gracza nie jest rysowany”). Tu: skąd to się wzięło, liczby i pomiar po usunięciu.
 
 ## Zgłoszenia i decyzje
 
@@ -123,3 +131,68 @@ Px/s w hipercruisie liczone przy zoomie skoku — przy innym zoomie wszystkie wa
 
 - Gra: `?smugi=swiatlo|bryla|slad|klin` (wygląd), `?deflektor=0` (bez pola) — adres strony, działa też w workerze.
 - Demo `warp-ped`: klawisz B (wyglądy), G (deflektor).
+
+## Usunięcie (2026-10-27)
+
+- Tryb skoku pasa (`asteroidBelt.js: _lightsStep`) tylko wyłącza pole (`_deactivate`). Włącza go: smugi gwiazd i kamera
+  > 60 tys. j/s (gaśnie < 45 tys.; dawniej 30 / 20 tys.) albo soczewka świata skoku gracza zasłaniająca prawdziwy widok
+  (udział < 0,02 — także przy zwolnieniu do ~15% przy mijanym ciele, gdy kamera jest wolna).
+- Skały skoku niczego nie maskowały w przejściach: przy kopie pole znikało w jednej klatce (prędkość kadru > 30 tys. j/s
+  po 2–3 klatkach od kopu), a skały skoku dopiero wyrastały (0,25–0,35 s); po skoku chowały się w jednej klatce, a pole
+  doczytywało komórki od najbliższych przez kilka klatek.
+- ZANIK pola (wersja po recenzji): udział prawdziwego widoku = `warpFieldVisibility` (`src/render/warpLensPhase.js`) =
+  1 − β / chargeBeta soczewki — w ładowaniu (β 0 → 0,9) pole gaśnie razem ze „wstawaniem” świata i jest PUSTE na końcu
+  ładowania (pierwsza wersja: 1 − β — na końcu ładowania udział 0,1, a gaz przestrzeni, który gra wyłącza w kopie,
+  znikał wtedy w jednej klatce). Gaśnie:
+  - skały — próg pikseli rysowania (`L.minPx`, log od 0,7 px do 2200 j. × zoom; przy udziale 0,5 ~10 px, przy 0,1
+    ~140 px w kadrze skoku 0,117) — maleją do zera od najmniejszych;
+  - mgła, zasłona, gęstość ośrodka × udział;
+  - światła pola: reflektory statków (`opts.strength`), świecące skały (z bryłą — ten sam smoothstep co shader), burza
+    (`storm.fade`: pioruny, łuki, światła, duszki, rozbłyski skał, błyski w chmurach);
+  - maska słońca pola — siła pola w Core3D (`setSunOcclusionField(…, siła)`, `uFieldOccOn` = siła): kadłub nie
+    ciemnieje przed skałami po powrocie pola ani nie jaśnieje skokiem w kopie;
+  - gaz przestrzeni z pyłem (`spaceGas.js`) — ta sama funkcja udziału, pokrycie płytkiej mgły zostaje przestrzenne.
+  Po skoku pole i gaz wracają od zera w 0,5 s (`stepWarpFieldFade`). Wczytywanie oktaw i koszyki idą za progiem
+  WCZYTANIA (`fadeLoadPx`: połowa progu rysowania zaokrąglona w dół do potęgi 2): oktawa jest w pamięci ≥ 3 klatki
+  zanim jej największe skały zaczną rosnąć (próg maleje w powrocie ~18% na klatkę), a koszyki przebudowują się co krok
+  progu (kilka razy na zanik), nie w każdej klatce. Bez nowych pipeline'ów — istniejące uniformy (maska słońca: zmiana
+  grafu passa maski, ten sam jeden pipeline). Nie gasną: skała w wydobyciu (wnętrze to raymarching pudła ciała bez
+  progu pikseli — zmniejszone zewnętrze odsłoniłoby woksele w pełnym rozmiarze; potrzebny nowy uniform w grafie
+  wnętrza), drony i wiązki platformy, iskry (cząstki GPU dożywają) — znikają z trybem skoku jak w main.
+- HIPERCRUISE Mk III (40 tys. j/s, w strefie pasa × 0,8 = 32 tys.) dawniej włączał tryb skoku (skały w smugach bez
+  deflektora); teraz leci przez prawdziwe pole. Narzędzie: `node scripts/pas-koszt-pola.mjs [prędkości] [zoomy]
+  [budżet] [koszt] [powtórzenia]` — logika `RockLayer.update` odtworzona na polu gry (okno komórek, oktawy z progu px,
+  kolejka wg odległości, budżet klatki), przelot stycznie przez szczyt najgęstszego pola rodziny, 6 s, 1080p.
+  „Dziura” = klatka z komórką czekającą w kolejce, której skały leżą w widocznym kadrze warstwy (pop-in).
+  - Pierwsza wersja raportu (zegar ścienny, budżet 3 ms dzielony po równo — ¼ na warstwę) podała 0% dziur przy Mk III
+    w kadrze 0,117; recenzja odtworzyła 18–51%. Miara z zegara zależy od obciążenia CPU, więc skrypt liczy domyślnie
+    DETERMINISTYCZNY koszt komórki z modelu (regresja zegara w Node: ~7 µs na komórkę + ~2,2 µs na skałę; wariant
+    „przeglądarka” × 2 — 14 + 4,4 µs).
+  - Przyczyna: przy równym podziale warstwa z dużą zaległością (MID przy 0,117, RUBBLE przy 0,2133) dostaje 0,75 ms,
+    choć średnie zapotrzebowanie całego pola to 0,5–2,5 ms z 3 ms. Teraz (`asteroidBelt.js`, `BELT_LOAD_BOOST`):
+    wspólny koniec klatki, warstwa dostaje resztę × (1 + jej zaległość) / suma wag do końca, a budżet rośnie z prędkością
+    kamery od 20 tys. j/s do × 1,5 przy 32 tys. (4,5 ms — hipercruise Mk III w strefie pasa; walka i przelot bez zmian).
+
+  Klatki z dziurą w kadrze (model; zegar — 5 przebiegów):
+
+  | kadr (zoom) | prędkość | równy podział, model ×1 | równy, ×2 | równy, zegar | nowy, model ×1 | nowy, ×2 | nowy, zegar |
+  |---|---|---|---|---|---|---|---|
+  | 0,117 (domyślny hipercruise'u: 0,2133 × 0,55) | 24 tys. (Mk II w pasie) | 0% | 62% (MID) | 0% ×5 | 0% | 0% | 0% ×5 |
+  | 0,117 | 32 tys. (Mk III w pasie) | 0% | 64% (MID) | 0% ×5 | 0% | 0% | 0% ×5 |
+  | 0,117 | 40 tys. (Mk III poza strefą) | 3% | 60% (MID) | 0% ×5 | 0% | 0% | 0% ×5 |
+  | 0,2133 (gracz przybliżony ~1,8×) | 24 tys. | 1% | 83% (RUBBLE) | 0–26% | 0% | 0% | 0% ×5 |
+  | 0,2133 | 32 tys. | 51% (RUBBLE) | 73% | 14–50% | 0% | 0% | 0% ×5 |
+  | 0,2133 | 40 tys. | 47% (RUBBLE) | 67% | 41–43% | 0% | 3% | 0% ×5 |
+
+  Generowanie (model ×1, bez budżetu, średnio / p95): 0,117 — 0,51 / 1,56 ms (24 tys.), 0,59 / 1,77 (32 tys.),
+  0,66 / 1,83 (40 tys.); 0,2133 — 1,02 / 2,99, 1,15 / 3,19, 1,25 / 3,55. Z nowym budżetem p95 klatki przy 0,2133 i
+  32 tys. 2,70 ms (model ×1), 4,38 ms (×2) — budżet to sufit, nie koszt stały. Przebudowa koszyków 0,3–0,5 ms śr.,
+  mapa pola (48 × 48 próbek) 0,3–1,7 przebudowy / s po 1,4–2,4 ms. Pomiar nie obejmuje wysyłki do GPU, mgły, ośrodka
+  ani świateł. Wniosek: z równym podziałem pasma MID / RUBBLE nie nadążały już przy Mk II (przy droższej komórce
+  w przeglądarce); z podziałem wagą i większym budżetem przy prędkości hipercruise'u pole nadąża do Mk III w strefie
+  pasa przy domyślnym i przybliżonym kadrze, z zapasem na 2× droższą komórkę. Do potwierdzenia w grze
+  (`__asteroidBelt.stats.pending`, `stats.cpuMs`).
+- Do sprawdzenia w grze: skok z wnętrza pola rodziny (ładowanie — pole, gaz, światła i cień pola gasną; kop bez
+  znikania czegokolwiek w jednej klatce), przylot w pas (pole i gaz wracają w ~0,5 s bez wyskakujących komórek),
+  przerwane ładowanie (pole wraca), hipercruise Mk II i Mk III przez pole (domyślny i przybliżony zoom: `stats.pending`,
+  `stats.cpuMs`).

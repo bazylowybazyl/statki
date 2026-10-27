@@ -25,9 +25,9 @@ paths:
   tła menu (menu bez zmian — przejście na equirect to osobna decyzja).
 - PRAWO TEMPA = prawo warstw GameStars: obraz nieba płynie na ekranie z tempem min(v, 14 tys.) · p · zoom (p = 0,03,
   `SKY_SCROLL`), czyli niebo to warstwa deep na sferze — tryb sfery ZWIJA warstwę deep GameStars (uniform `hideDeep`
-  materiału gwiazd), mid (0,055+) i speed zostają. HIERARCHIA WARSTW (DECYZJE-2 W0): niebo < mid < skały w warpie < speed
-  we wszystkich trybach lotu — niebo < mid < speed pilnuje `tests/skyScroll.test.mjs` (skały: tabela pasa w warpie,
-  reguła `pas-asteroid`); zmiana p, sufitu albo warstw GameStars = przegląd
+  materiału gwiazd), mid (0,055+) i speed zostają. HIERARCHIA WARSTW (DECYZJE-2 W0): niebo < mid < speed we wszystkich
+  trybach lotu — pilnuje `tests/skyScroll.test.mjs` (skał pasa w skoku nie ma — usunięte 2026-10-27, reguła
+  `pas-asteroid`); zmiana p, sufitu albo warstw GameStars = przegląd
   tej tabeli (`skyLayerSpeeds`) i tabeli w `WYPIEK-NIEBA.md`. Liczby: walka 3–7 px/s, hipercruise i warp ~49 px/s.
 - Obrót: kwaternion świat ← niebo z drogi OKRĘTU PROWADZONEGO PRZEZ KAMERĘ — statek gracza (`RenderWorld.playerPose`,
   bez niej encja), przy sterach fregaty zwiadu fregata (`RenderWorld.cameraLead` { x, y, v, w }: strona —

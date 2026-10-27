@@ -29989,7 +29989,8 @@
       o.sunX = SUN ? SUN.x : 0; o.sunY = SUN ? SUN.y : 0;
       o.windowCells = SPACE_GAS_TUNE.windowCells;
       o.time = SimClock.sim;
-      // warp gracza (smugi skał pasa) i sceny bez pasa — bez gazu
+      // warp gracza (pas w skoku nie jest rysowany; obraz gazu gaśnie z soczewką przed kopem — spaceGas.js) i sceny bez
+      // pasa — bez gazu
       o.enabled = warp.state !== 'active';
       packSpaceGasFrame(spaceGasIn, spaceGasState, o);
     }

@@ -53,6 +53,7 @@ Port dema `dema/gazy-transport-webgpu.html` (wygląd zaakceptowany 2026-10-16) w
 - JEDNA MGŁA w pasie: `SpaceGasCover.belt` (`spaceGasState.js`) = zanik gazu w tej klatce (tylko scena pasa). Płytkie płaty `fog.js` (pass gry) mają alfę × (1 − pokrycie). Głębokie płaty tła zostają.
   - Gaz wyłączony (opcja, preset Niska) albo oddalenie — stara mgła wraca.
   - A/B: `SpaceGas.tune.fogReplace`.
+- SKOK GRACZA (2026-10-27, jak pole pasa — reguła `pas-asteroid`, „Pas w skoku gracza nie jest rysowany”): gra wyłącza gaz na czas skoku (`o.enabled = warp.state !== 'active'` w `packSpaceGas`), a obraz gazu i jego pyłu gaśnie wcześniej, w ładowaniu — × `warpFieldVisibility` (`src/render/warpLensPhase.js`: 1 − β / chargeBeta soczewki `WARP_WORLD_LENS`, 0 na końcu ładowania), więc w kopie nic nie znika w jednej klatce. Po włączeniu (wyjście ze skoku, wejście w obszar gazu) obraz wraca od zera w `WARP_FIELD_FADE.reveal` s (`stepWarpFieldFade`, dt gry — pauza trzyma; `SpaceGas.stats.fade`). `SpaceGasCover.belt` zostaje PRZESTRZENNY (bez zaniku skoku): płaty i gaz gasną razem, płaty nie wracają w miejsce gazu. Test na funkcji `_update`: `tests/warpBezSkal.test.mjs`.
 - Tryb off woła `SpaceGas.submit` w `render()`. Worker bierze bloki `spaceGas` i `gasObst`.
 - UKŁAD POLA: świat gry WZGLĘDEM KOTWICY.
   - Bufory GPU trzymają tylko stan komórek, więc kernel przesunięcia początku pul nie jest potrzebny.

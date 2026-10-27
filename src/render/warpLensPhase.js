@@ -177,6 +177,35 @@ export function warpLensFrontBeta(b0, exitAge, exitSlow, alongPx = NaN, zoom = N
 export const WARP_LENS_DOT_SWAP = 0.02;
 
 /**
+ * POLA PRZY KADRZE w skoku gracza (2026-10-27, pas w skoku nie jest rysowany): pole pasa asteroid (asteroidBelt.js —
+ * skały, mgła, ośrodek, zasłona, światła pola, maska słońca, burza) i gaz przestrzeni z pyłem (spaceGas.js). Udział
+ * prawdziwego widoku = 1 − β / chargeBeta: pola gasną razem ze „wstawaniem” świata w ładowaniu i są puste już na
+ * końcu ładowania (β = chargeBeta), więc w kopie (gra wyłącza gaz, pas przechodzi w tryb skoku) nic nie znika w jednej
+ * klatce. Bez soczewki (podzielony ekran, kamera 3D, hipercruise) — 1. Po skoku pola wracają najwyżej 1 / reveal na s
+ * (stepWarpFieldFade).
+ */
+export const WARP_FIELD_FADE = Object.freeze({ reveal: 0.5 });
+
+/** Udział prawdziwego widoku pól przy kadrze (active, beta — WARP_WORLD_LENS tej klatki). */
+export function warpFieldVisibility(active, beta, P = WARP_LENS_PHASE) {
+  if (!active) return 1;
+  const b = Number(beta);
+  if (!(b > 0)) return 1;
+  return clamp01(1 - b / Math.max(1e-3, P.chargeBeta));
+}
+
+/**
+ * Krok zaniku pola (prev, target 0..1): w dół od razu do celu (β soczewki jest gładka), w górę najwyżej dt / reveal
+ * (powrót po skoku, przerwane ładowanie). Pauza (dt = 0) trzyma stan.
+ */
+export function stepWarpFieldFade(prev, target, dt, reveal = WARP_FIELD_FADE.reveal) {
+  const t = target > 0 ? (target < 1 ? target : 1) : 0;
+  const f = prev > 0 ? (prev < 1 ? prev : 1) : 0;
+  if (t <= f) return t;
+  return Math.min(t, f + (dt > 0 ? dt : 0) / Math.max(1e-3, reveal));
+}
+
+/**
  * Wiek wyjścia [s], w którym FRONT smug gwiazd mija punkt `along` [j. świata wzdłuż kursu od statku, + przed dziobem]
  * — odwrotność warpExitFrontS (front monotoniczny: frontFrom → frontTo w exitSlow s po smoothstepie, więc bez stanu).
  * Punkt przed startem frontu — 0 (wraca od początku wyjścia), za jego końcem — exitSlow.

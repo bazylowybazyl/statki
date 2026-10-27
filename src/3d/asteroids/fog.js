@@ -300,10 +300,11 @@ export class BeltFog {
 
   /**
    * @param {object} f cam {x,y,zoom} (świat gry), viewW, viewH, focalPx, time,
-   *   sunX, sunY, originX, originY, sunOcc
+   *   sunX, sunY, originX, originY, sunOcc, fade (zanik pola przy skoku gracza 0..1 — krycie płatów; brak — 1)
    */
   update(f) {
     if (!this.enabled) return;
+    const fade = f.fade >= 0 && f.fade < 1 ? f.fade : 1;
     const zoom = Math.max(1e-5, f.cam.zoom || 1);
     const camZ = f.focalPx / zoom;
     const sdx = f.sunX - f.cam.x;
@@ -372,8 +373,8 @@ export class BeltFog {
       s.S.drift.value.set(f.time * 0.0009 * def.drift, f.time * 0.0004 * def.drift);
       // płytkie płaty pod gazem przestrzeni: alfa × (1 − pokrycie) — jedna mgła w paśmie gry
       const cover = def.fg ? SpaceGasCover.belt : 0;
-      s.S.alpha.value = def.alpha * (1 - cover);
-      s.mesh.visible = s.maxFog > 0.002 && cover < 0.999;
+      s.S.alpha.value = def.alpha * (1 - cover) * fade;
+      s.mesh.visible = s.maxFog > 0.002 && cover < 0.999 && fade > 0.002;
     }
   }
 }

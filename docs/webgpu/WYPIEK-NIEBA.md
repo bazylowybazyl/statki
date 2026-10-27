@@ -269,8 +269,8 @@ raport skybox i krytyk (katalog opcji sesji 2026-10-26); tu stan i pomiary.
 | warp Mk I / II / III (100 / 175 / 250 tys.) | 49,3 | 1,65 | 16,4–46,0 | 90–296 | 1675–2923 |
 
 Px CSS przy 1080p (kadr skoku i hipercruise'u: zoom 0,2133 · 0,55; sufit kamery gwiazd 14 tys. j/s). Skok o medianie
-21 s obraca niebo o ~35°. Smugi gwiazd nieba ≤ 16 px (jak warstwa deep). Skały w warpie (zespół S): 621–1402 px/s —
-między mid a speed. Pomiar w grze (`niebo-gra.mjs --klip 1`): 5,9 px CSS/s przy ~430 j/s i zoomie 0,45 — zgodnie z prawem.
+21 s obraca niebo o ~35°. Smugi gwiazd nieba ≤ 16 px (jak warstwa deep). Skały w warpie (zespół S: 621–1402 px/s —
+między mid a speed) usunięte 2026-10-27. Pomiar w grze (`niebo-gra.mjs --klip 1`): 5,9 px CSS/s przy ~430 j/s i zoomie 0,45 — zgodnie z prawem.
 
 ### Obraz (`src/3d/sky3D.js`: `SkySphere`, materiały `src/3d/skySphere.tsl.js`)
 

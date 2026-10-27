@@ -18,7 +18,7 @@ materiale. Propozycja: „Pęd” — prędkość jako rdzeń, soczewka najwyże
 
 Start: `npm run dev` → `/dema/warp-ped.html`. Adres: `?styl=rulon|ped|akcent|soczewka`, `?trasa=jowisz|mars`,
 `?ped=0` (wyjście do zatrzymania) albo `?ped=1..6` (k), `?kamera=up|right|off`, `?zoomSkoku=gracz` (dawny zoom skoku),
-`?smugi=slad|klin` (wygląd smug skał pasa), `?naped=mk1|mk2|mk3` (napęd warp jak w grze — domyślnie Mk I, 100 tys. j/s),
+`?naped=mk1|mk2|mk3` (napęd warp jak w grze — domyślnie Mk I, 100 tys. j/s),
 `?clean=1` (bez paneli), `?test=1` (klatki tylko z `__warpPed.runFrames` / `until` — harness).
 
 ## Co pokazuje
@@ -36,12 +36,12 @@ zwolnienie, wlot, hamowanie) → ślizg → od nowa.
 | 4 | `soczewka` — soczewka bańki | pierścień refrakcji na elipsie bańki przez cały skok (przód najmocniej, boki słabiej, tył prawie wcale); kadłub w elipsie bez zmian |
 
 Inne: **K** — kamera w skoku (obrót kursem w górę / w prawo / bez obrotu — niżej), **Z** — zoom skoku stały / × zoom
-gracza (niżej, „Skaczące planety”), **B** — wygląd skał pasa w skoku (ślad światła = bryła + osobny ślad / bryła /
-dawne ślad i klin — `docs/webgpu/WARP-SKALY.md`), **G** — deflektor skoku (opływ skał wokół dziobu, `?deflektor=0`),
-**P** — wyjście z pędem / do zatrzymania (suwak k: rampa hamuje do k × 500 j/s, potem zwykły lot zbiera
+gracza (niżej, „Skaczące planety”), **P** — wyjście z pędem / do zatrzymania (suwak k: rampa hamuje do k × 500 j/s, potem zwykły lot zbiera
 nadmiar hamowaniem 200 j/s² — przy k = 3 ślizg ~5 km / 5 s), **J / M** — trasa, **F** — lot swobodny (W/S ciąg,
 A/D obrót, Shift dopalacz, CapsLock / 9 warp, drugi raz — wyjście), **spacja** — skok od nowa, **Esc** — pauza,
-**T** — ×0,25, **H** — bez paneli, kółko — zoom gracza (kop i oddalenie warpa działają względem niego).
+**T** — ×0,25, **H** — bez paneli, kółko — zoom gracza (kop i oddalenie warpa działają względem niego). Dawne
+**B** (wygląd skał pasa w skoku) i **G** (deflektor) usunięte 2026-10-27 razem ze skałami skoku — w skoku pas nie jest
+rysowany (`docs/webgpu/WARP-SKALY.md`).
 
 ## Kamera w skoku — obrót kadru kursem w górę (2026-10-19)
 
@@ -131,7 +131,8 @@ przecina NEA, Hungarie i pas główny.
   (pozycja, skala, obrót przelotu przed kątem portu). LOD i odcinanie części ring liczy z macierzy grupy — bez zmian
   w ringu. Cień ringu w masce słońca gaśnie w soczewce jak tarcza planety (siła okluderu = udział prawdziwego widoku).
   Kolizje i port zostają na prawdziwym miejscu.
-- **Pas jako smugi skał**: prawdziwe pole przy prędkości warpa nie nadążało — 7,8–9 ms CPU pasa na klatkę (komórki
+- **Pas jako smugi skał** (*usunięte 2026-10-27 — w skoku pas nie jest rysowany, `docs/webgpu/WARP-SKALY.md` § „Usunięcie”;
+  niżej historia*): prawdziwe pole przy prędkości warpa nie nadążało — 7,8–9 ms CPU pasa na klatkę (komórki
   doczytywane wokół kamery), w kadrze kilka migających skał, a maska zacienienia pola ze starego okna czerniła kadłub.
   W skoku (gwiazdy w smugach i kamera naprawdę leci) pas wyłącza pole i rysuje pulę 360 skał banku w przestrzeni
   widocznej warpa (`src/3d/asteroids/warpDebris.js`): pod płaszczyzną gry z paralaksą, płyną z prędkością kamery
@@ -163,7 +164,7 @@ pikseli kanwy, wycinki wokół statku).
    po soczewce zwykłe warstwy (FG nad statkiem w hali). Ta sama kamera perspektywy — 0 nowych pipeline'ów. Po
    poprawce pass FG zmienia w kadrze przelotu tylko lampy samego kadłuba (było ~9 tys. px ringu, w tym moduł na
    burcie).
-2. **Smugi skał** — dawniej kapsuła: tylna półkula przesunięta o krótki wektor (długość × 1), tekstura tyłu
+2. **Smugi skał** (*usunięte 2026-10-27 razem ze skałami skoku — historia*) — dawniej kapsuła: tylna półkula przesunięta o krótki wektor (długość × 1), tekstura tyłu
    rozciągnięta, ogon kryjący 1 → 0,3 — „rozmazany kamyk”. Teraz wariant `smear` materiału skał: tylna półkula
    ściągnięta do `taper` promienia (klin), głowa pełna, ogon od krycia `tail` gaśnie do zera, w ogonie tekstury
    kształtu z wyższego mipa (rozmycie wzdłuż ruchu), normalna ogona ku słońcu, jaśniejsza skała; skały do 800 j.

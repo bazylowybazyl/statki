@@ -16,7 +16,7 @@
 // (`skyTrackStep` — cięcie per okręt), obrót — `skyScrollMove`; wołający może zmieszać drogi kilku okrętów (sky3D.js:
 // statek gracza i fregata zwiadu przy sterach, z wagą przejazdu kamery).
 //
-// HIERARCHIA WARSTW (DECYZJE-2 W0): na ekranie tempo rośnie z bliskością — niebo ≤ deep < mid < skały w warpie < speed / pył.
+// HIERARCHIA WARSTW (DECYZJE-2 W0): na ekranie tempo rośnie z bliskością — niebo ≤ deep < mid < speed / pył.
 // W trybie sfery niebo ZASTĘPUJE warstwę deep GameStars (gwiazdy deep chowa materiał gwiazd, niebo niesie własne gwiazdy),
 // więc p nieba (0,03) leży tuż nad dawnym zakresem deep (0,010–0,028) i wyraźnie pod mid (0,055–0,18). Tabela tempa:
 // `skyLayerSpeeds`, test kolejności: tests/skyScroll.test.mjs.

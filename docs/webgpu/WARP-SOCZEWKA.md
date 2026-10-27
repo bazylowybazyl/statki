@@ -272,7 +272,8 @@ rampy, 94,6% bez ręcznego wyjścia doleciałoby do brzegu świata).
 - **Plan trasy przy kopie** (`warp.route`, WORLD `WARP_ROUTE_*` — układ migawki 4): rodzaj skoku, przylot (ciało /
   punkt), punkt skoku i zatrzymania, droga, czas do wyjścia i do zatrzymania, prędkość przelotowa, najbardziej widoczne
   mijane ciało z chwilą trawersu, pierwszy przelot przez strefę pasa (drogi i chwile). Stała długość, ten sam obiekt
-  w trybie off i w workerze — dla akcentów, dźwięku i pasa jako zdarzenia trasy (zespół skał — opcja D).
+  w trybie off i w workerze — dla akcentów i dźwięku (pas jako zdarzenie trasy dla skał skoku — nieaktualne: skały
+  w skoku usunięte 2026-10-27).
 - **Kamera**: kadr przylotu K1 przy każdym wyjściu (ciało — z brzegu tarczy; punkt — bez odsuwania), bez wysunięcia
   statku (§ „Kamera K1”).
 - **Stałe kąty planet** (T3): kąty z ziarna świata zapisanego w zapisie gry (`worldSeed`, wersja zapisu 2); ziarno
@@ -694,7 +695,10 @@ Tryb domyślny (worker); wybrane trasy powtórzyć z `?renderWorker=0`.
 12. **Pole wraków / zimne wraki** (po bitwie, skok z pola): wraki jako smugi w soczewce, po skoku skóra i mostki
     wracają bez mignięcia.
 13. **Przelot obok Ceres i pasa** (TRAVEL TO przez pas): stolica Unii przy Ceres (~14 px) jedzie z obrazem Ceres;
-    olbrzymy pasa jako elipsy, bez podwójnego obrazu w ładowaniu; komety (arkusz i jądro razem, w soczewce mniejsze
+    olbrzymy pasa jako elipsy, bez podwójnego obrazu w ładowaniu; POLE PASA W SKOKU NIE JEST RYSOWANE (decyzja
+    2026-10-27 — skały skoku usunięte): skok z wnętrza pola — skały maleją i znikają w ładowaniu, kop bez znikania pola
+    w jednej klatce; przylot w pas — pole wraca w ~0,5 s bez wyskakujących komórek; hipercruise Mk III przez pole —
+    prawdziwe skały (`docs/webgpu/WARP-SKALY.md` § „Usunięcie”); komety (arkusz i jądro razem, w soczewce mniejsze
     i ciemniejsze); misja 1 / Hidalgo — skała, osada i baza jadą razem (kawałki bazy w bańce i światła masztów gasną na
     czas skoku).
 14. **Port K-7 z ringiem** (Ziemia / Mars): ring zostaje prawdziwy, póki jest w kadrze, a NPC przy nim robią się
@@ -827,7 +831,7 @@ projekty panelu („projekt A–D § …”). Tych plików nie ma w repo — co 
 | T2 | trzymanie celu przy wyjściu do zbieżności kamery (albo zatrzymania + zapas), potem puszczenie 0,6 s; cięcie od razu |
 | K1 | kadr przylotu: podłoga zoomu 0,07 · zoomRef tylko przy `warpArrOn`, bez wysunięcia statku przy wyjściu z celem, trzymanie do końca ślizgu + 1 s, powrót 2 s |
 | O1 | ośrodek drobin i soczewka bańki w warpie gracza wyłączone, A/B `?warpOsrodek=1` |
-| O2 | co zostaje z obrazu: smugi gwiazd (bez ząbka w klatce kopu), fale, błysk kopu, przylot jako jedno zdarzenie, wstrząsy z gry, żar, obrót kadru, kop kamery, smugi skał pasa |
+| O2 | co zostaje z obrazu: smugi gwiazd (bez ząbka w klatce kopu), fale, błysk kopu, przylot jako jedno zdarzenie, wstrząsy z gry, żar, obrót kadru, kop kamery, smugi skał pasa (usunięte 2026-10-27 — decyzja użytkownika) |
 | O3 | hipercruise bez zmian — odcisk w `tests/hypercruiseLook.test.mjs` |
 | W1 | warp gracza w workerze: pełna rampa, ślizg, kurs, cel i start w migawce, wstrząsy z gry, plazma w workerze, test parzystości off ≡ worker |
 | W2 | księżyce deterministyczne, w węzłach gry (bez `Math.random` w module renderu) |

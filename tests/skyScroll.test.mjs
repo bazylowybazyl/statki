@@ -33,8 +33,8 @@ test('f kamery z góry: 1080p ≈ 1712,7 px/rad (FOV 35°)', () => {
 });
 
 test('W0: niebo = warstwa deep na sferze — tempo nieba < mid < speed GameStars we wszystkich trybach lotu (stałe paralaksy)', () => {
-  // Pilnuje warstw GameStars (starParallax.js). Skały w warpie (zespół S, warpDebris.js: 621–1402 px/s przy 1080p) leżą
-  // między mid i speed — ich tabela jest u zespołu S, tu tylko niebo względem gwiazd.
+  // Pilnuje warstw GameStars (starParallax.js): niebo względem gwiazd. Skał pasa w skoku nie ma (usunięte 2026-10-27,
+  // decyzja użytkownika) — hierarchia W0 to niebo < mid < speed.
   const deep = STAR_PARALLAX_LAYERS.find((l) => l.name === 'deep');
   const mid = STAR_PARALLAX_LAYERS.find((l) => l.name === 'mid');
   // niebo zastępuje warstwę deep: p nieba nad jej zakresem (gwiazdy deep chowa tryb sfery), wyraźnie pod mid
