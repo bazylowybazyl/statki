@@ -228,16 +228,18 @@ function cicGlowStamp(color) {
   return c;
 }
 
-// Słońce: 0 — korona (dawny gradient poświaty), 1 — tarcza.
+// Słońce: 0 — korona (dawny gradient poświaty), 1 — tarcza. Tarcza 256 px z marginesem CIC_SUN_DISC_PAD (przy
+// gigantycznym słońcu tarcza ma na mapie setki px — bez marginesu skraj stempla ścinał górę i dół koła).
 const CIC_SUN_STAMPS = [null, null];
+const CIC_SUN_DISC_PAD = 3;
 function cicSunStamp(kind) {
   if (CIC_SUN_STAMPS[kind]) return CIC_SUN_STAMPS[kind];
-  const S = kind ? 64 : 128;
+  const S = kind ? 256 : 128;
   const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(S, S) : document.createElement('canvas');
   c.width = S; c.height = S;
   const g = c.getContext('2d');
   const h = S / 2;
-  const grad = g.createRadialGradient(h, h, kind ? 0 : h * 0.06, h, h, h);
+  const grad = g.createRadialGradient(h, h, kind ? 0 : h * 0.06, h, h, kind ? h - CIC_SUN_DISC_PAD : h);
   if (kind) {
     grad.addColorStop(0, '#fff8e0');
     grad.addColorStop(0.5, '#ffe080');
@@ -1653,12 +1655,15 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const blend = cicSystemBlend;
   const sunMinR = 3 + blend * 9;
   const sunScreenR = Math.max(sunMinR, SUN.r * zoom);
-  // Sun glow + body — stemple (gradienty pieczone raz); poza kadrem nic
+  // Sun glow + body — stemple (gradienty pieczone raz); poza kadrem nic. Poświata ×4–6 tylko przy kropce słońca
+  // (widok układu); tarcza w skali mapy (SUN.r 200 tys. j.) — korona ~1,6 promienia jak w 3D (DirectSun).
   ctx.save();
-  const glowR = sunScreenR * (4 + blend * 2);
+  const dotK = Math.max(0, Math.min(1, (40 - sunScreenR) / 30));
+  const glowR = sunScreenR * (1.6 + (2.4 + blend * 2) * dotK);
   if (sunScr.x > -glowR && sunScr.x < W + glowR && sunScr.y > -glowR && sunScr.y < H + glowR) {
     ctx.drawImage(cicSunStamp(0), sunScr.x - glowR, sunScr.y - glowR, glowR * 2, glowR * 2);
-    ctx.drawImage(cicSunStamp(1), sunScr.x - sunScreenR, sunScr.y - sunScreenR, sunScreenR * 2, sunScreenR * 2);
+    const discR = sunScreenR * 128 / (128 - CIC_SUN_DISC_PAD);
+    ctx.drawImage(cicSunStamp(1), sunScr.x - discR, sunScr.y - discR, discR * 2, discR * 2);
   }
 
   // Sun label

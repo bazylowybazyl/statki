@@ -869,7 +869,7 @@
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { formatLocalDistance, formatVelocity, resolveWorldUnitsPerAu } from './src/config/units.js';
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
-    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, resolveWorldSeed, systemMapAngleForSeed } from './src/data/systemMap.js';
+    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, resolveWorldSeed, systemMapAngleForSeed, sunWellRadius } from './src/data/systemMap.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -7101,8 +7101,10 @@
 
 
     // =============== Słońce, planety i stacje ===============
+    // r — promień tarczy (SYSTEM_MAP_CONSTANTS.sunRadius, 200 tys. j.): ten sam dla obrazu (DirectSun — kula w płaszczyźnie
+    // gry), radaru, CIC i studni (sunWellRadius — strefa 'sun', studnie skoku, przeszkoda tras).
     const SUN = {
-      x: WORLD.w / 2, y: WORLD.h / 2, r: 823, r3D: 399,
+      x: WORLD.w / 2, y: WORLD.h / 2, r: SYSTEM_MAP_CONSTANTS.sunRadius,
       color: {
         core: '#ffe88a',   // jasno-żółty rdzeń
         mid: '#ffbe3b',   // pomarańcz-żółć
@@ -7285,8 +7287,9 @@
           type: 'sun',
           label: 'SOL',
           entity: sun,
-          radius: Math.max(100, Number(sun.r) || 0) * 6,
-          outerRadius: Math.max(100, Number(sun.r) || 0) * 6,
+          // tarcza słońca (DirectSun rysuje kulę o promieniu SUN.r w płaszczyźnie gry)
+          radius: Math.max(100, Number(sun.r) || 0),
+          outerRadius: Math.max(100, Number(sun.r) || 0),
           color: '#ffb347'
         });
       }
@@ -7592,9 +7595,8 @@
         }
       }
 
-      const sunRadius = Math.max(10, (SUN.r || 0) * 2);
       const sunDist = Math.hypot(pos.x - SUN.x, pos.y - SUN.y);
-      const sunEdge = sunDist - sunRadius;
+      const sunEdge = sunDist - sunWellRadius(SUN);
       zones.push({
         key: 'sun',
         id: 'sun',
@@ -17521,7 +17523,7 @@
         if (start && (start.x - x) ** 2 + (start.y - y) ** 2 <= radius * radius) return;
         out.push({ x, y, r: radius });
       };
-      if (SUN) push(SUN.x, SUN.y, Math.max(10, (Number(SUN.r) || 0) * 2));   // strefa 'sun' (detectZones)
+      if (SUN) push(SUN.x, SUN.y, sunWellRadius(SUN));   // strefa 'sun' (detectZones)
       const pst = mercMission?.station;
       if (pst) {
         const pr = pirateOrbitRadii();
@@ -17985,7 +17987,7 @@
         }
         putPlayerTravelWell(n++, Number(b.x) || 0, Number(b.y) || 0, r, rIn, b, rFree);
       }
-      if (SUN) putPlayerTravelWell(n++, SUN.x, SUN.y, Math.max(10, (Number(SUN.r) || 0) * 2), Math.max(0, Number(SUN.r) || 0), SUN);
+      if (SUN) putPlayerTravelWell(n++, SUN.x, SUN.y, sunWellRadius(SUN), Math.max(0, Number(SUN.r) || 0), SUN);
       _playerTravelWells.length = n;
       return _playerTravelWells;
     }
@@ -18580,7 +18582,7 @@
     // na kursie jest celem w stożku — pickWarpConeTarget).
     function warpEmergencyWells() {
       const wells = [];
-      if (SUN) wells.push({ x: SUN.x, y: SUN.y, r: Math.max(10, (Number(SUN.r) || 0) * 2), rIn: Math.max(0, Number(SUN.r) || 0), label: 'SŁOŃCE' });
+      if (SUN) wells.push({ x: SUN.x, y: SUN.y, r: sunWellRadius(SUN), rIn: Math.max(0, Number(SUN.r) || 0), label: 'SŁOŃCE' });
       const pw = pirateWarpWell();
       if (pw) wells.push(pw);
       return wells;

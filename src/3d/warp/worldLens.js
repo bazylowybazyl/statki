@@ -141,7 +141,7 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   // Kropki (M5)
   minDot: 2,            // [px] planety i słońce (newLensBody(…, 'planet' | 'sun')) nie mniejsze
   minPx: 1.5,           // [px] obraz mniejszy gaśnie
-  sunBoost: 5,          // słońce w soczewce × tyle
+  sunBoost: 1,          // słońce w soczewce × tyle (od 2026-10-27 tarcza 200 tys. j. — dawne ×5 było dla kuli 2,4 tys.)
   // Stożek za celem (M4)
   coneDeg: 30,          // [°] półkąt stożka wokół kursu
   coneSoftDeg: 3,       // [°] przejście (pełne zanurzenie od coneDeg − coneSoftDeg)

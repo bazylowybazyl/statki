@@ -29,8 +29,30 @@ export const SYSTEM_MAP_CONSTANTS = Object.freeze({
   baseAu: 3000,
   minSunGap: 600,
   minPlanetGap: 800,
-  sunRadius: 823
+  /**
+   * Promień tarczy Słońca [j.] — jeden dla obrazu (DirectSun: kula w płaszczyźnie gry), radaru, CIC i rozgrywki
+   * (jądro studni). GIGANTYCZNE SŁOŃCE (prośba użytkownika 2026-10-27: „proporcjonalnie jest za małe”): ≈ 5 × Ziemia
+   * z ringiem (37,8 tys.), ≈ 4 × Jowisz (48 tys.); dawniej 823 (obraz 2,4–4,9 tys. — mniejszy od Merkurego). Górna
+   * granica: Merkury na 338 tys. ze studnią 23 tys. i studnia słońca (sunWellMul) przed nim; kamera ortho widzi
+   * z ≥ −250 tys. (sylwetka kuli = jej środek pod płaszczyzną).
+   */
+  sunRadius: 200_000,
+  /**
+   * Studnia Słońca (strefa 'sun': hamuje skok w locie, blokuje start skoku, przeszkoda tras) = tarcza × tyle. 1,1 — skok
+   * kończy się ~21 tys. j. od brzegu tarczy (studnia 220 tys. + zapas 1,1 tys.), więc brzeg słońca jest w kadrze także
+   * przy najmniejszym zoomie gry (pół kadru ~27 tys. j.); Merkury (338 tys., studnia 23 tys.) zostaje 95 tys. dalej.
+   */
+  sunWellMul: 1.1
 });
+
+/**
+ * Promień studni Słońca [j.] — strefa 'sun' w detectZones, studnie skoku gracza (playerTravelWells,
+ * warpEmergencyWells) i przeszkoda planisty TRAVEL TO. `sun` — obiekt z `r` (tarcza).
+ */
+export function sunWellRadius(sun) {
+  const r = Number(sun?.r) || 0;
+  return Math.max(10, r * SYSTEM_MAP_CONSTANTS.sunWellMul);
+}
 
 /**
  * Orbity rozgrywkowe. `orbitAU` to jednostka MAPY, nie astronomiczna:

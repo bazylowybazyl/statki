@@ -757,7 +757,8 @@ function lensScene1080() {
     mk('saturnFar', 'planet', 400000, -900000, 16650, -50000), // tło daleko — wynurzenie
     mk('mars', 'planet', 120000, -300000, 9000, 0),            // płaszczyzna gry daleko — wynurzenie
     mk('luna', 'moon', -6000, 4000, 1700, 0),                  // księżyc przy statku — ruch
-    Object.assign(mk('sun', 'sun', -2e6, -3e6, 60000, -60000), { sizeBoost: 5, minDot: 2 })   // przed dziobem (za rufą — ukryte, O1-2)
+    // słońce: tarcza 200 tys. j. w płaszczyźnie gry (DirectSun od 2026-10-27), przed dziobem (za rufą — ukryte, O1-2)
+    Object.assign(mk('sun', 'sun', -2e6, -3e6, 200000, 0), { sizeBoost: 1, minDot: 2 })
   ];
   const ctx = { beta: 0, velAngle: -Math.PI / 2, zoom, W: 1920, H: 1080, shipX: 0, shipY: 0, shipSx: 0, shipSy: 189,
     anchorSx: 0, anchorSy: 93, hullHalfLen: 105, hullHalfWid: 47, dt: 1 / 60, exitAge: -1, focal, camZ, zoomJump: zoom * 0.55 };
@@ -821,12 +822,16 @@ test('rozstawienie obrazu w świecie (lensImageToWorld — planet3d.assets.js, t
     assert.ok(near(out.x, b.x, 1e-6 * Math.max(1, Math.abs(b.x))) && near(out.y, b.y, 1e-6 * Math.max(1, Math.abs(b.y))),
       `${b.id}: β = 0 — prawdziwe miejsce (${out.x}, ${out.y}) vs (${b.x}, ${b.y})`);
   }
-  // słońce w soczewce (z = −60 000): j. świata na px = (camZ − z) / focal; obraz = (świat − kamera) / k
+  // tło perspektywy (z = −60 000): j. świata na px = (camZ − z) / focal; obraz = (świat − kamera) / k
   ctx.beta = 1;
   for (let i = 0; i < 3; i++) lens.update(bodies, bodies.length, ctx, null);
-  lensImageToWorld(L, sun.out.x, sun.out.y, sun.z, false, out);
+  lensImageToWorld(L, sun.out.x, sun.out.y, -60000, false, out);
   assert.ok(near(out.k, (camZ + 60000) / focal, 1e-12));
   assert.ok(near((out.x - camX) / out.k, sun.out.x, 1e-9) && near((out.y - camY) / out.k, sun.out.y, 1e-9));
+  // słońce w soczewce (płaszczyzna gry — jak małe ciała): j. świata na px = 1 / zoom
+  lensImageToWorld(L, sun.out.x, sun.out.y, sun.z, true, out);
+  assert.ok(near(out.k, 1 / zoom, 1e-12));
+  assert.ok(near((out.x - camX) * zoom, sun.out.x, 1e-9) && near((out.y - camY) * zoom, sun.out.y, 1e-9));
   assert.ok(sun.out.size >= 2, `słońce w soczewce widoczne (minDot): ${sun.out.size}`);
   // płaszczyzna gry: 1 / zoom
   lensImageToWorld(L, 100, -50, 0, true, out);
@@ -837,13 +842,15 @@ test('rozstawienie obrazu w świecie (lensImageToWorld — planet3d.assets.js, t
   const u = 100 / zoom;
   const v = -50 / zoom;
   assert.ok(near(out.x, camX + Math.cos(0.7) * u - Math.sin(0.7) * v, 1e-9) && near(out.y, camY + Math.sin(0.7) * u + Math.cos(0.7) * v, 1e-9));
-  // planet3d.assets.js: wszystkie rozstawienia przez tę funkcję; słońce w głębokości SUN_Z, powrót widoczności po soczewce
-  const src = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  // planet3d.assets.js: wszystkie rozstawienia przez tę funkcję; słońce w płaszczyźnie gry (z = 0, flat = zoom), powrót
+  // widoczności po soczewce
+  const src = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const sunCls = src.slice(src.indexOf('class DirectSun {'), src.indexOf('const _entities = [];'));
   assert.match(sunCls, /this\.lensBody = newLensBody\('sun', 'sun'\);/);
-  assert.match(sunCls, /const lw = lensImageToWorld\(L, o\.x, o\.y, b\.z, false, _lensWorld\);[\s\S]*?this\.group\.position\.set\(lw\.x, -lw\.y, b\.z\);/);
+  assert.match(sunCls, /b\.z = 0;\s*b\.flat = L\.zoom;/);
+  assert.match(sunCls, /const lw = lensImageToWorld\(L, o\.x, o\.y, 0, true, _lensWorld\);[\s\S]*?this\._place\(lw\.x, lw\.y, /);
   assert.match(sunCls, /_lensRestore\(\) \{\s*this\._lensed = false;\s*if \(!this\.group\.visible\) this\.group\.visible = true;/);
-  assert.match(sunCls, /if \(lensOn\) this\._lensPrepare\(scale\);\s*else if \(this\._lensed\) this\._lensRestore\(\);/);
+  assert.match(sunCls, /if \(lensOn\) \{\s*this\._lensPrepare\(gx, gy, R\);\s*\} else \{\s*if \(this\._lensed\) this\._lensRestore\(\);/);
   assert.doesNotMatch(src, /function lensToWorld\(/, 'jedna funkcja rozstawienia (worldLens.js)');
   assert.equal((src.match(/lensImageToWorld\(L, o\.x, o\.y,/g) || []).length, 4, 'planety, księżyce, małe ciała, słońce');
 });

@@ -173,7 +173,7 @@ const LENS_RING_EXTENT = 8000;  // planet3d.assets.js — bramka ringu
 const LENS_GATE_RAMP = 0.3;
 const LENS_GATE_OPEN = 0.15;
 const PLANET_MUL = 4.5;         // PLANET_SIZE_MULTIPLIER
-const SUN_R = 399 * 6;          // r3D × SUN_SIZE_MULTIPLIER
+const SUN_R = SM.SYSTEM_MAP_CONSTANTS.sunRadius;   // DirectSun: kula w płaszczyźnie gry, promień = SUN.r
 const FOV = 35;                 // Core3D.cameraPersp.fov
 
 const clamp = (v, a, b) => (v < a ? a : (v > b ? b : v));
@@ -211,7 +211,7 @@ function buildWorld(angles, smallPos = {}) {
     bodies.push(b);
     P[p.id] = b;
   }
-  bodies.push({ id: 'sun', kind: 'sun', x: 0, y: 0, r: SUN_R, z: -60000, ring: false, rExt: SUN_R, fly: 0 });
+  bodies.push({ id: 'sun', kind: 'sun', x: 0, y: 0, r: SUN_R, z: 0, ring: false, rExt: SUN_R, fly: 0 });
   bodies.push({ ...moonBody(MO.MOON_TUNE, P.earth, 'earth'), id: 'luna' });
   for (const t of MO.JUPITER_MOONS_TUNE) bodies.push(moonBody(t, P.jupiter, 'jupiter'));
   for (const s of SB.SMALL_BODIES) {
