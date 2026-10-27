@@ -220,6 +220,14 @@ try {
   report.etapy.bezAwansu.graczZyje = await ev('!window.ship.destroyed');
   console.log('bez awansu:', JSON.stringify({ cel: report.etapy.bezAwansu.cel?.hull, manifest: report.etapy.bezAwansu.cel?.manifest,
     paczek: report.etapy.bezAwansu.po?.paczek, sztuk: report.etapy.bezAwansu.po?.sztuk }));
+  // Zbliżenie paczek (obraz K2: kontenery w farbie rodziny, lampki-boje): gracz 700 j. od chmury paczek.
+  if (await ev(NEAR_LOOT(700))) {
+    await ev(ZOOM(0.75));
+    await waitGame(0.6);
+    await screenshotPng(cdp, join(out, '01b-paczki-zblizenie.png'));
+    await waitGame(0.75);
+    await screenshotPng(cdp, join(out, '01c-paczki-lampki.png'));
+  }
   if (args.tylko === 'bezAwansu' || args.tylko === 'bezAwansuX') { console.log('probki', JSON.stringify(report.etapy.bezAwansu.probki)); throw new Error('koniec (--tylko bezAwansu)'); }
 
   // 2) Wiązka Atlasa (fabrycznie): gracz 1,5 km od paczek, 24 s gry.

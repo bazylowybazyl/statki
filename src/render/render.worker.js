@@ -165,6 +165,9 @@ if (isWorker) {
     try { cargoOn = !m.pageBase || new URL(m.pageBase).searchParams.get('przeladunek') !== '0'; } catch (_) { /* adres bez składni URL */ }
     st.cargoMods = cargoOn ? { blk: await import('./blocks/cargoOpsBlock.js'), shared: (await import('../3d/cargo/portCargo3D.js')).sharedPortCargo3D } : null;
     st.cargoFrame = {};
+    // kontenery-łup (K2): blok `loot` → paczki, lampki i wiązka (import rejestruje rozgrzewkę)
+    st.lootMods = { blk: await import('./blocks/lootBlock.js'), shared: (await import('../3d/cargo/lootContainers3D.js')).sharedLootContainers3D };
+    st.lootFrame = st.lootMods.blk.createLootFrame();
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -948,6 +951,14 @@ if (isWorker) {
         if (st.portCargo) st.portCargo.update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
       }
     } catch (e) { modFail('przeładunek', e); }
+    // kontenery-łup (K2): paczki dryfujące po zniszczeniu statków ruchu, lampki-boje, wiązka ściągająca
+    try {
+      const lblk = v.blocks.loot;
+      if (lblk && lblk.f64 && st.lootMods) {
+        const fr = st.lootMods.blk.applyLootBlock(lblk, st.lootFrame);
+        st.lootMods.shared().update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
+      }
+    } catch (e) { modFail('kontenery-łup', e); }
     // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
     let hexList = rm.lists[L.RENDER];
     try {

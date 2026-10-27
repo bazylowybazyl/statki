@@ -1161,9 +1161,8 @@
       trafficGrudgeTarget, trafficActorHasCourse, trafficRamLead
     } from "./src/game/trafficPromotion.js";
     import {
-      createLootContainers, spillLootCargo, stepLootContainers, nearestLootD2, LOOT_FLAG, LOOT_TUNE
+      createLootContainers, spillLootCargo, stepLootContainers, nearestLootD2, fillLootRenderFrame
     } from "./src/game/lootContainers.js";
-    import { containerLook, cargoResourceKey } from "./src/data/cargoContainers.js";
     import {
       LOOT_GEAR, lootGearById, lootGearOptionsFor, lootGearFits, mountedLootGear, lootGearParams
     } from "./src/data/lootGear.js";
@@ -1175,6 +1174,8 @@
     import { createCargoOpsBlock } from "./src/render/blocks/cargoOpsBlock.js";
     import { createPortCargoFrame, buildPortCargoFrame, syncPortCargoContract } from "./src/game/portCargoFrame.js";
     import { sharedPortCargo3D } from "./src/3d/cargo/portCargo3D.js";
+    import { createLootBlock, createLootFrame } from "./src/render/blocks/lootBlock.js";
+    import { sharedLootContainers3D } from "./src/3d/cargo/lootContainers3D.js";
     import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
@@ -16810,8 +16811,8 @@
     // (encja bańki bez awansu albo awansowany NPC) gubi 55% ładunku jako paczki dryfujące w przestrzeni; ładunek
     // encji zna gra z manifestu workera (`TrafficV2.actorManifests`, tylko zmiany). Zbiera je sprzęt z gniazda
     // ZBIÓRKA (src/data/lootGear.js: wiązka; drony — K3) do ładowni gracza (`addToPlayerCargo`, limit `cargoCap`);
-    // bez sprzętu nic (HUD podpowiada WYPOSAŻENIE). Sprzedaż — terminal. Obraz K1: podgląd na kanwie 2D
-    // (`drawLootContainers2D`); 3D z bloku migawki — K2. Konsola: `LootContainers` (`stats`, `count`).
+    // bez sprzętu nic (HUD podpowiada WYPOSAŻENIE). Sprzedaż — terminal. Obraz (K2): ramka `lootRenderFrame` → blok
+    // `loot` (worker) albo src/3d/cargo/lootContainers3D.js na stronie (off). Konsola: `LootContainers` (`stats`, `count`).
     // ============================================================
     const lootContainers = createLootContainers();
     const _lootEnv = {
@@ -16899,51 +16900,17 @@
       }
     }
 
-    // Podgląd K1 na kanwie 2D: paczki w farbie rodziny (containerLook — jak przeładunek E12), lampka-boja, wiązka.
-    const _lootScr = { x: 0, y: 0 };
-    const _lootShipScr = { x: 0, y: 0 };
-    const _lootLook = {};
-    function drawLootContainers2D(ctx, cam) {
-      const st = lootContainers;
-      if (!st.count) return;
-      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
-      const L = Math.max(4, 16 * zoom);
-      const Wd = Math.max(2.5, 8 * zoom);
-      const pose = window.__interpShipPose || (ship ? { x: ship.pos.x, y: ship.pos.y } : null);
-      const shipScr = pose ? worldToScreenInto(pose.x, pose.y, cam, _lootShipScr) : null;
-      const vw = W;
-      const vh = H;
-      ctx.save();
-      for (let i = 0; i < st.count; i++) {
-        const x = st.x[i];
-        const y = st.y[i];
-        if (!SensorSystem.pointVisible(x, y, 0)) continue;
-        const s = worldToScreenInto(x, y, cam, _lootScr);
-        if (s.x < -40 || s.y < -40 || s.x > vw + 40 || s.y > vh + 40) continue;
-        if (shipScr && (st.flags[i] & LOOT_FLAG.TRACTOR)) {
-          ctx.strokeStyle = 'rgba(120, 220, 255, 0.55)';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.moveTo(shipScr.x, shipScr.y); ctx.lineTo(s.x, s.y); ctx.stroke();
-        }
-        containerLook(cargoResourceKey(st.res[i]), st.seed[i], st.unit[i], _lootLook);
-        ctx.save();
-        ctx.translate(s.x, s.y);
-        ctx.rotate(screenAngleFor(st.ang[i], cam));
-        ctx.fillStyle = _lootLook.paint;
-        ctx.fillRect(-L / 2, -Wd / 2, L, Wd);
-        ctx.fillStyle = _lootLook.accent;
-        ctx.fillRect(-L / 2, -Wd * 0.15, L, Wd * 0.3);
-        ctx.restore();
-        // Lampka-boja: mruga co 1,5 s, na końcu życia szybciej.
-        const left = st.ttl[i] - st.age[i];
-        const period = left < LOOT_TUNE.fadeSec ? 0.3 : 1.5;
-        const phase = ((st.age[i] + (st.uid[i] % 7) * 0.21) % period) / period;
-        if (phase < 0.25) {
-          ctx.fillStyle = 'rgba(255, 196, 64, 0.95)';
-          ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(2, 3 * Math.min(1, zoom * 4)), 0, Math.PI * 2); ctx.fill();
-        }
-      }
-      ctx.restore();
+    // Obraz (K2): ramka klatki dla bloku `loot` (worker) albo rysunku na stronie (off) — pozy w chwili klatki renderu,
+    // tylko paczki widoczne (mgła wojny) i poza kropkami soczewki skoku, wiązka od statku gracza.
+    const _lootRender = createLootFrame();
+    const _lootShipPose = { x: 0, y: 0 };
+    const _lootVisible = (x, y) => SensorSystem.pointVisible(x, y, 0);
+    const _lootLensHidden = (x, y) => lensDotAt(x, y);
+    function lootRenderFrame(alpha) {
+      const pose = ship && !ship.destroyed ? (window.__interpShipPose || ship.pos) : null;
+      if (pose) { _lootShipPose.x = pose.x; _lootShipPose.y = pose.y; }
+      return fillLootRenderFrame(lootContainers, _lootRender, (1 - alpha) * PHYS_DT, _lootVisible,
+        _lensDotsActive ? _lootLensHidden : null, pose ? _lootShipPose : null);
     }
 
     /** Kara reputacji za statek ruchu zniszczony bez awansu (D13) — jak `registerFactionKill` przy śmierci NPC. */
@@ -29732,6 +29699,8 @@
       // E14: budowle doków portów bez ringu w zasięgu kadru — rysuje worker (updatePortDocks3D)
       if (RW_WORKER) renderSnapshot.addBlock(createPortDockBlock());
       if (RW_WORKER) renderSnapshot.addBlock(createCargoOpsBlock());
+      // kontenery-łup (K2): paczki, lampki i wiązka (src/3d/cargo/lootContainers3D.js w workerze)
+      if (RW_WORKER) renderSnapshot.addBlock(createLootBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -29921,6 +29890,7 @@
       f.traffic = RW_WORKER ? _trafficRender : null;
       f.portDocks = RW_WORKER ? _portDockRender : null;
       f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
+      f.loot = RW_WORKER ? _lootRender : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -31065,6 +31035,8 @@
       portDockRenderFrame(cam);
       // Przeładunek (E12): ramka klatki — pola zatok, statki przy stanowiskach, luk Atlasa (blok `cargoOps` / off niżej).
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
+      // Kontenery-łup (K2): paczki w chwili klatki — blok `loot` (worker) albo rysunek tutaj (off).
+      lootRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -31155,6 +31127,8 @@
           // Statki ruchu v2 (E6): proxy kadłubów i ich dysze MAIN (widoki encji w liście kadłubów).
           // Przeładunek (E12): obraz przed proxy — dziury w lukach otwartych ładowni (moduł podpina resolver proxy sam).
           if (portCargoFrame) sharedPortCargo3D().update(portCargoFrame, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
+          // Kontenery-łup (K2): paczki, lampki i wiązka (worker — z bloku `loot`).
+          sharedLootContainers3D().update(_lootRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           // Doki portów bez ringu (E14): budowle krzyż / okrąg / koło (worker — z bloku `portDocks`).
           updatePortDocks3D(_portDockRender.list, _portDockRender.count, PAUSED ? 0 : frameDt);
@@ -31360,7 +31334,6 @@
           // lina wskazuje holowany wrak — w soczewce jest on już kropką
           if (hudLensWorld) drawTowRopes(ctx, cam);
           drawPlayerStations2D(ctx, cam);
-          if (hudLensWorld) drawLootContainers2D(ctx, cam);
           ctx.restore();
         }
 

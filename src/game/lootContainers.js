@@ -417,6 +417,42 @@ function sortTargetsByIndexDesc(st) {
   }
 }
 
+/** Flagi paczki w ramce obrazu — te same liczby co `LOOT_BLOCK.TRACTOR` / `FADE` (src/render/blocks/lootBlock.js). */
+export const LOOT_RENDER_FLAG = Object.freeze({ TRACTOR: 1, FADE: 2 });
+
+/**
+ * Ramka obrazu paczek (K2 — blok `loot`, ramka z `createLootFrame` w src/render/blocks/lootBlock.js): pozy w chwili
+ * klatki renderu (`lag` s przed stanem fizyki: x − vx · lag), tylko paczki widoczne (`visible(x, y)` — mgła wojny)
+ * i poza kropkami soczewki skoku (`hidden(x, y)`), flagi wiązki i końcówki życia, poza statku gracza `ship` ({ x, y }
+ * albo null — źródło wiązki). Bez alokacji. Zwraca `out`.
+ */
+export function fillLootRenderFrame(st, out, lag = 0, visible = null, hidden = null, ship = null, tune = LOOT_TUNE) {
+  const cap = out.cap | 0;
+  let n = 0;
+  for (let i = 0; i < st.count && n < cap; i++) {
+    const x = st.x[i] - st.vx[i] * lag;
+    const y = st.y[i] - st.vy[i] * lag;
+    if (visible && !visible(x, y)) continue;
+    if (hidden && hidden(x, y)) continue;
+    out.x[n] = x;
+    out.y[n] = y;
+    out.ang[n] = st.ang[i] - st.spin[i] * lag;
+    out.res[n] = st.res[i];
+    out.seed[n] = st.seed[i];
+    out.unit[n] = st.unit[i];
+    out.mass[n] = st.units[i] * st.mpu[i];
+    out.age[n] = st.age[i];
+    out.flags[n] = (st.flags[i] & LOOT_FLAG.TRACTOR ? LOOT_RENDER_FLAG.TRACTOR : 0)
+      | (st.ttl[i] - st.age[i] < tune.fadeSec ? LOOT_RENDER_FLAG.FADE : 0);
+    out.uid[n] = st.uid[i];
+    n++;
+  }
+  out.count = n;
+  out.hasShip = !!ship;
+  if (ship) { out.shipX = ship.x; out.shipY = ship.y; }
+  return out;
+}
+
 /** Odległość² do najbliższej widocznej paczki od (x, y) (Infinity — brak). Do podpowiedzi HUD. */
 export function nearestLootD2(st, x, y, visible = null) {
   let best = Infinity;
