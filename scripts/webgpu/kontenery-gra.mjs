@@ -191,6 +191,21 @@ try {
   await ev(ZOOM(0.3));
   await waitGame(0.5);
   await screenshotPng(cdp, join(out, '00-dev.png'));
+  // Bryła paczek z bliska (zrzut przy graczu z ?dev: stal 120 t → moduły 2 × 2 × 2 i 2 × 2): kadr nad paczką, zoom 3.
+  await ev(`window.LootContainers.devSpill({ steel: 120, chips: 30, fuel_rods: 12 }, 2000)`);
+  await waitGame(1.5);
+  const near = await ev(`(() => { const p = window.LootContainers.pool; if (!p.count) return null;
+    const i = p.count - 1; window.PortCargo.look(p.x[i], p.y[i], 260); return { x: p.x[i], y: p.y[i] }; })()`);
+  if (near) {
+    await ev(ZOOM(3));
+    await waitGame(0.4);
+    await screenshotPng(cdp, join(out, '00b-paczka-z-bliska.png'));
+    await ev(ZOOM(1.2));
+    await waitGame(0.2);
+    await screenshotPng(cdp, join(out, '00c-paczki-kadr.png'));
+    await ev('window.PortCargo.lookEnd()');
+    await ev(ZOOM(0.3));
+  }
   console.log('dev:', JSON.stringify(report.etapy.dev));
   if (args.tylko === 'dev') throw new Error('koniec (--tylko dev)');
 
@@ -231,9 +246,11 @@ try {
     const at = await ev(`(() => { const p = window.LootContainers.pool; if (!p.count) return null;
       window.PortCargo.look(p.x[0], p.y[0], 260); return { x: p.x[0], y: p.y[0] }; })()`);
     if (at) {
+      await ev(ZOOM(3));
       await waitGame(0.3);
       await screenshotPng(cdp, join(out, '01d-paczka-z-bliska.png'));
       await ev('window.PortCargo.lookEnd()');
+      await ev(ZOOM(0.3));
       await waitGame(0.3);
     }
   }
