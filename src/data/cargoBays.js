@@ -116,7 +116,7 @@ export const CARGO_BAY_HULLS = Object.freeze({
   atlas: hull({
     label: 'Atlas', family: 'gracz', sprite: 'assets/capital_ship_rect_v1.png', png: { w: 3747, h: 1677 },
     renderLength: 1800, profile: 'atlas', editorKey: 'atlas', bridgeKey: 'atlas',
-    cargoToday: 20, todayNote: 'cargoCap gracza',
+    cargoToday: 400, todayNote: 'cargoCap gracza (D1 kontenerów-łupu, 2026-10-27)',
     bays: [bay({ id: 'grzbiet', label: 'Hangar grzbietowy', x: 70.5, y: 0, w: 721, h: 572, door: 'pocket', leaves: 3, minDepth: 40, fighterField: { a: 60, b: 60 }, module: { nx: 2, ny: 2, nz: 2 } })]
   }),
   // --- Terra Nova ---

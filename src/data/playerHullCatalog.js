@@ -21,6 +21,9 @@ import pirateFrigateImg from '../assets/ships/piratefrigate.png';
 import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 
+/** Ładowność Atlasa [t] (kontenery-łup D1, 2026-10-27; wcześniej 20 t z BASE_PLAYER_PROFILE). */
+export const ATLAS_CARGO_CAP = 400;
+
 export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
   const SHIPS = ships;
   const BASE_PLAYER_PHYSICS = basePhysics;
@@ -51,7 +54,9 @@ export function createPlayerHullCatalog({ ships, basePhysics, baseProfile }) {
       spriteSrc: "assets/capital_ship_rect_v1.png",
       size: { w: atlasSize.w, h: atlasSize.h },
       spriteScale: 1.0,
-      cargoCap: BASE_PLAYER_PROFILE.cargoCap,
+      // Ładowność 400 t (klasa bulk) — decyzja użytkownika 2026-10-27 (kontenery-łup D1, wariant bezpieczniejszy
+      // od geometrii luku ~2,4 tys. t). Luk pokazuje kontenery proporcjonalnie: wypełnienie = masa / 400 t.
+      cargoCap: ATLAS_CARGO_CAP,
       hullMax: BASE_PLAYER_PROFILE.hullMax,
       shield: {
         max: BASE_PLAYER_PROFILE.shieldMax,
