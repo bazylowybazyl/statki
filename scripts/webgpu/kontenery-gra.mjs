@@ -92,6 +92,8 @@ const FIRE_AT = (id, w) => `(() => {
   if (!(a && a.alive) && !(npc && !npc.dead)) return null;
   const x = npc ? npc.x : a.cx, y = npc ? npc.y : a.cy;
   const s = window.ship;
+  // Gracz leci z celem (pocisk dziedziczy pęd strzelca) — strzał w nieruchomy względem nas punkt.
+  s.vel.x = npc ? npc.vx : a.vx; s.vel.y = npc ? npc.vy : a.vy;
   const dx = x - s.pos.x, dy = y - s.pos.y, d = Math.hypot(dx, dy) || 1;
   window.fireWeaponCore(s, null, ${JSON.stringify(w)},
     { pos: { x: s.pos.x, y: s.pos.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: s.vel.x, y: s.vel.y } });
@@ -214,7 +216,7 @@ try {
 
   // 1) Jeden strzał (działo oblężnicze 2500 w statek o mniejszym obrysie): encja bez awansu → wybuch, paczki
   //    z manifestu, kara reputacji. Superbroń (Hexlance) niszczy też Atlasa gracza przy 2,5 km.
-  report.etapy.bezAwansu = await shootDown('01-bez-awansu', 'siege_railgun', 0, 3, 2400);
+  report.etapy.bezAwansu = await shootDown('01-bez-awansu', 'siege_railgun', 0, 12, 2400);
   report.etapy.bezAwansu.graczZyje = await ev('!window.ship.destroyed');
   console.log('bez awansu:', JSON.stringify({ cel: report.etapy.bezAwansu.cel?.hull, manifest: report.etapy.bezAwansu.cel?.manifest,
     paczek: report.etapy.bezAwansu.po?.paczek, sztuk: report.etapy.bezAwansu.po?.sztuk }));
