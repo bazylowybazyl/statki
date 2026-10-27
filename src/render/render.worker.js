@@ -963,6 +963,10 @@ if (isWorker) {
         hexList = out;
       }
     } catch (e) { modFail('statki ruchu', e); }
+    // ciała świata: stan repliki i kawałek luster (hull.world, raster) PRZED kadłubami — skóra sprite'a pomija ciało
+    // świata od pierwszej klatki lustra (dawniej odłam bazy dostawał w niej skórę sprite'a: pusty rysunek, partia, slot)
+    let worldBodiesOn = false;
+    try { worldBodiesOn = syncWorldBodiesReplica(v, rm, L); } catch (e) { modFail('ciała świata', e); }
     try { hex.updateHexShips3D(cam, hexList, c, rm.lists[L.COLD], st.cloak.frame); } catch (e) { modFail('kadłuby', e); }
     // wyrwy bazy piratów (po kadłubach — bank Fx3D ma początek układu tej klatki)
     try { if (st.vents && v.blocks.pirateVents && v.blocks.pirateVents.f64) {
@@ -972,7 +976,7 @@ if (isWorker) {
     try { if (st.warBd && v.blocks.warBackdrop && v.blocks.warBackdrop.f64) {
       st.warBd.update(st.warBdBlk.applyWarBackdropBlock(v.blocks.warBackdrop, st.warBdMirror), cam);
     } } catch (e) { modFail('bitwa w głębi', e); }
-    try { if (syncWorldBodiesReplica(v, rm, L)) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
+    try { if (worldBodiesOn) st.wbMods.w3d.syncWorldBodies3D(); } catch (e) { modFail('ciała świata', e); }
     if (!st.turrets) st.turrets = { recordsFor: (e) => { const a = st.turByEnt.get(e); return a && a.length ? a : null; } };
     try { models.syncShipModels3D({ entities: rm.lists[L.SEEN_COLD], poseOf: st.playerPoseOf, turrets: st.turrets, inView: null, zoom: cam.zoom, zoomAt: null, dt }); } catch (e) { modFail('modele 3D', e); }
     try { const rs = st.repairSync; rs.dt = dt; rs.zoom = cam.zoom; rs.time = h[H.SIM_RENDER]; st.repairMods.drones.syncRepairDrones3D(rs); } catch (e) { modFail('drony 3D', e); }

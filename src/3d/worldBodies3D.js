@@ -47,9 +47,13 @@ let _invRoot = null, _invFrame = -1;   // _inv = odwrotność macierzy świata k
 let _wb = worldBodies;
 export function setWorldBodiesSource(src) { _wb = src || worldBodies; }
 
+// halfCulled — połówki brył 3D w tej klatce bez rysunku (cała sfera po drugiej stronie płaszczyzny gry — halfReachesPlane)
 export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0, bakePeakId: '',
-  syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, worker: SKIN_BAKE_STATS };
+  syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, halfCulled: 0, worker: SKIN_BAKE_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
+// A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27)
+export const WORLD_SKIN_OPTIONS = { planeHalfCull: true };
+if (typeof window !== 'undefined') window.__worldSkinOptions = WORLD_SKIN_OPTIONS;
 
 function providerOf(hull) {
   return hull?.world?.site?.render || null;
@@ -536,13 +540,25 @@ function collect() {
 // rzeczywistego]; potem znika (odłamy bez skóry do końca wypieku).
 const HOLD_MAX_MS = 1500;
 
+// Połówka bryły 3D (pod / nad płaszczyzną gry — cięcie po z świata w shaderze: fragment zostaje, gdy
+// znak · (z − z0) ≥ 0, userData.clipZ = (znak, z0)) rysuje coś tylko wtedy, gdy sfera egzemplarza — ta sama, którą
+// three przycina do kadru — sięga jej strony płaszczyzny. Odłamy bazy leżące na planetoidzie (24 km pod płaszczyzną)
+// miały w FG połówkę „nad” bez jednego fragmentu: ~140 pustych rysunków na klatkę nad polem gruzu (2026-10-27).
+const _halfC = new THREE.Vector3();
+export function halfReachesPlane(mesh) {
+  const clip = mesh.userData.clipZ;
+  _halfC.copy(mesh.boundingSphere.center).applyMatrix4(mesh.matrixWorld);
+  const r = mesh.boundingSphere.radius * mesh.matrixWorld.getMaxScaleOnAxis();
+  return clip.x > 0 ? _halfC.z + r >= clip.y : _halfC.z - r <= clip.y;
+}
+
 /**
  * Klatka renderu (po updateHexShips3D, przed Core3D.render): skóry ciał świata — poza z ciała, pole przesunięć,
  * mapa ran, przełączenie statyka ↔ skóra. Zwraca liczbę pokazanych skór.
  */
 export function syncWorldBodies3D() {
   _frame++;
-  let shown = 0, triangles = 0;
+  let shown = 0, triangles = 0, halfCulled = 0;
   const list = collect();
   // kawałki ruszone w tej klatce (statyka schowana) — dostawca dostaje stan raz na kawałek
   for (const site of _wb.sites) {
@@ -637,11 +653,15 @@ export function syncWorldBodies3D() {
       } else {
         mesh.frustumCulled = false;
       }
+      const half = !gs || !mesh.userData.clipZ || !WORLD_SKIN_OPTIONS.planeHalfCull || halfReachesPlane(mesh);
+      if (mesh.visible !== half) mesh.visible = half;
+      if (!half) halfCulled++;
     }
     inst.root.visible = true;
     piece.__skinShown = true;
     shown++;
     for (const mesh of inst.meshes) {
+      if (!mesh.visible) continue;
       const g = mesh.geometry;
       triangles += (g.index ? g.index.count : g.attributes.position.count) / 3;
     }
@@ -685,6 +705,7 @@ export function syncWorldBodies3D() {
   WORLD_SKIN_STATS.shown = shown;
   WORLD_SKIN_STATS.instances = _inst.size;
   WORLD_SKIN_STATS.triangles = triangles;
+  WORLD_SKIN_STATS.halfCulled = halfCulled;
   // rany brył 3D: czas pola (stygnięcie w shaderze) i wysyłka zmienionych bloków komórek
   SolidWounds.flush();
   if ((_frame & 15) === 0) queueBakes();

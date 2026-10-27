@@ -856,6 +856,11 @@ function beamShadowGrid(hull) {
 function createBeamSkinMesh(entity) {
   if (!isBeamHullEntity(entity)) return null;
   const hull = entity.beamHull;
+  // Ciało świata (budowla, jej wyspa i odłam — worldBodies.js) skóry sprite'a nie ma nigdy, także na zapas w pudle
+  // rozgrzania: rysuje je worldBodies3D, a `hull.image` to raster kawałka ({ width, height, data }) — tekstura, partia
+  // i wypiek mapy powierzchni (HullSurface: createImageBitmap / drawImage rastra) szły na marne, z ostrzeżeniem
+  // w konsoli na każdy kawałek bazy piratów (zgłoszenie 2026-10-27).
+  if (hull.world) return null;
   const visualImage = hull.visualImage || null;
   const texture = visualImage ? acquireSharedVisualTexture(visualImage) : createManagedTexture(hull.image);
   const normalTexture = hull.normalMapImage ? createManagedTexture(hull.normalMapImage, true) : null;

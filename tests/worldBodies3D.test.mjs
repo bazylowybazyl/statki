@@ -4,6 +4,7 @@
 // stożki i lampy) w układzie ciała. Obraz (statyka ↔ skóra bez różnicy) sprawdza scripts/webgpu/zniszczenia-gra.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three/webgpu';
 
 globalThis.window = globalThis.window || {};
@@ -148,4 +149,46 @@ test('odłam rysuje PODZBIÓR trójkątów skóry kawałka (indeks na wspólnych
   }
   assert.ok(sum < full * 1.8, `suma podzbiorów ${sum} przy ${full} trójkątach kawałka (${frags.length} odłamów)`);
   for (const w of frags) HullBodies.release(w);
+});
+
+test('połówka bryły 3D bez rysunku, gdy sfera egzemplarza leży cała po drugiej stronie płaszczyzny gry', async () => {
+  const { halfReachesPlane } = await import('../src/3d/worldBodies3D.js');
+  const root = new THREE.Group();
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry());
+  root.add(mesh);
+  mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(30, -20, 40), 100);
+  // poza ciała jak w syncWorldBodies3D (korzeń egzemplarza: pozycja w świecie, kwaternion) → [rysuje „nad”, rysuje „pod”]
+  const at = (z, quat = null) => {
+    root.position.set(5.2e6, -3.1e6, z);
+    if (quat) root.quaternion.copy(quat); else root.quaternion.identity();
+    root.updateMatrixWorld(true);
+    mesh.userData.clipZ = new THREE.Vector2(1, 0);
+    const nad = halfReachesPlane(mesh);
+    mesh.userData.clipZ = new THREE.Vector2(-1, 0);
+    return [nad, halfReachesPlane(mesh)];
+  };
+  assert.deepEqual(at(-24000), [false, true], 'odłam na planetoidzie: połówka FG bez fragmentu');
+  assert.deepEqual(at(5000), [true, false], 'nad płaszczyzną: połówka BG bez fragmentu');
+  assert.deepEqual(at(-100), [true, true], 'sfera przecina płaszczyznę');
+  // styk (z środka + r = 0): fragment przy z = 0 przechodzi cięcie (≥), więc połówka zostaje
+  assert.deepEqual(at(-140), [true, true]);
+  assert.deepEqual(at(-140.5), [false, true]);
+  // obrót ciała przenosi środek sfery: (30, −20, 40) po 180° wokół x → z −40
+  const flip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+  assert.deepEqual(at(-61, flip), [false, true]);
+  assert.deepEqual(at(-59, flip), [true, true]);
+});
+
+test('skóra sprite\'a kadłubów pomija ciała świata, a worker zna kawałek lustra przed kadłubami', () => {
+  // Odłamy bazy piratów dostawały w pudle rozgrzania skórę sprite'a z rastrem kawałka zamiast obrazu: tekstura,
+  // partia, slot i wypiek mapy powierzchni (HullSurface — createImageBitmap / drawImage rastra) — ostrzeżenie na każdy
+  // kawałek; w workerze dodatkowo w pierwszej klatce lustra (hull.world dopisywała replika dopiero po kadłubach).
+  const hex = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
+  const create = hex.slice(hex.indexOf('function createBeamSkinMesh('), hex.indexOf('function rebuildBeamSkinGeometry('));
+  assert.match(create, /if \(hull\.world\) return null;/, 'createBeamSkinMesh: ciało świata bez skóry sprite\'a');
+  const wk = readFileSync(new URL('../src/render/render.worker.js', import.meta.url), 'utf8');
+  const page = wk.indexOf('function renderPage(');
+  const sync = wk.indexOf('syncWorldBodiesReplica(v, rm, L)', page);
+  const hulls = wk.indexOf('hex.updateHexShips3D(', page);
+  assert.ok(page > 0 && sync > 0 && hulls > 0 && sync < hulls, 'renderPage: replika ciał świata (hull.world luster) przed updateHexShips3D');
 });
