@@ -4,19 +4,23 @@
 // lekki render kadłubów POZA npcs[] — bez kadłuba belkowego, fizyki i AI.
 //
 //  - Jedna siatka (Mesh + InstancedBufferGeometry) na teksturę kadłuba (sprite z src/data/trafficHulls.js),
-//    warstwa 0, pass ortho jak kadłuby (renderOrder 10). Tekstura to TEN SAM obiekt,
-//    co kadłub pełnego NPC z tego obrazka (acquireHullVisualTexture, hexShips3D) —
-//    awans proxy → NPC nie ładuje niczego drugi raz. Pusty rodzaj: visible = false
+//    warstwa 0, pass ortho jak kadłuby (renderOrder 10). Z resolverem obrazków gry tekstura i mapy to
+//    TE SAME obiekty, co kadłub pełnego NPC z tego obrazka (licznik referencji, hexShips3D); bez resolvera
+//    (gra go dziś nie podaje, worker renderu) moduł ładuje obrazki sam. Pusty rodzaj: visible = false
 //    (zero draw calli), dłużej nieużywany odpina się od sceny (obchód grafu).
 //  - Precyzja float32 (AGENTS.md): początek przy kamerze w mesh.position
 //    (sceneOriginNearCamera, wzór Bridge3D._setOrigin), instancje względem niego
 //    liczone w double, węzeł modelViewMatrix three (highPrecision).
 //  - Materiał w TSL (shipProxyBatch3D.tsl.js): graf raz na moduł, rodzaj = lekki
-//    ShipProxyNodeMaterial z teksturą w `uniforms.uSprite.value`.
-//  - Światło jak kadłuby (lustro rdzenia hullFragmentNode z hexShips3D.tsl.js): poduszkowa normalna,
-//    słońce z RenderWorld.sun (z = 600), strojenie świateł kadłubów (getHullLightTuning), maska cieni
-//    Core3D (sunVisibility / sunFill), mrok pola i glow niebieskich elementów.
-//    Bez lakieru, świateł statku, żaru i cienia SDF — proxy jest małe i daleko.
+//    ShipProxyNodeMaterial z teksturami w `uniforms` (sprite, mapa powierzchni, kształt lakieru).
+//  - WYGLĄD PEŁNEGO KADŁUBA (E17, zgłoszenie „statki w doku szare, jakby nieżywe; dopiero z bliska się
+//    wybudzają” — to był awans do NPC): fragment skóry belek (hullProxyFragmentNode z hexShips3D.tsl.js) —
+//    oświetlenie v2 z mapą powierzchni (normalne paneli, AO, samocień, niebo), lakier (odbicie kosmosu,
+//    odblask słońca, strefy dysz), glow, maska słońca i mrok pola, ośrodek pasa; WŁASNE LAMPY statku na
+//    blasze (slot HullLightStore rodzaju) i billboardy lamp pozycyjnych (ShipLights3D — widoki lamp
+//    do updateHexShips3D). Wygląd rodzaju: acquireProxyHullLook (hexShips3D.js) — mapy mniejsze niż NPC.
+//    Bez mapy ran, świateł efektów, maskowania, warpa, żaru, cienia SDF, mostka, rdzenia, wież i modeli
+//    dysz SIDE — to ma dopiero NPC po awansie (docs/E17-grafika-ruchu.md).
 //  - Poza interpolowana między krokami bańki: prev + (bieżąca − prev) · alpha
 //    (jak actorRenderPose w materializedFlight.js).
 //  - Dysze MAIN: widok encji na proxy (`engineEntities`) z `visual.mainThrusters`
@@ -28,16 +32,19 @@
 //   encjeHex.push(...ShipProxyBatch3D.engineEntities);   // → updateHexShips3D
 // Obrazki: setImageResolver((hullId, url) => loadHullSprite(url)?.image) — wspólny
 // cache obrazków z index.html. Klik na proxy: pickAt(x, y) → awans do NPC.
-// Instancja = 16 liczb w buforze z przeplotem (`kind.buffer`, układ dawnej instanceMatrix):
-// [0..1] oś x × szerokość, [4..5] oś y × wysokość, [8..10] (cos, sin, krycie),
-// [12..13] środek względem początku.
+// Instancja = PROXY_INSTANCE_STRIDE (20) liczb w buforze z przeplotem (`kind.buffer`, układ w shipProxyBatch3D.tsl.js):
+// [0..1] oś x × szerokość, [4..5] oś y × wysokość, [8..11] (cos, sin, krycie, skóra luku),
+// [12..13] środek względem początku, [14] lampy w shaderze, [15] odblask lakieru, [16..18] slot lamp, strefy, lakier.
 
 import * as THREE from 'three/webgpu';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { zbierzZakres } from './zakresyWysylki.js';
 import { PROXY_SHARED, PROXY_INSTANCE_STRIDE, ShipProxyNodeMaterial, createProxyGeometry } from './shipProxyBatch3D.tsl.js';
-import { acquireHullVisualTexture, releaseHullVisualTexture, getHullLightTuning } from './hexShips3D.js';
+import {
+  acquireProxyHullLook, refreshProxyHullLook, releaseProxyHullLook, hullLacquerGlintAt, setProxyLightViews,
+  PROXY_LIGHT_SHADER_MIN_PX
+} from './hexShips3D.js';
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
 import { buildEntityEngineFx } from '../data/engineFx.js';
@@ -45,6 +52,7 @@ import { RenderWorld } from '../render/renderWorld.js';
 import { loadImageBitmap, createCanvas2D } from './canvas2d.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 import { cameraRoll, rolledHalfExtents } from './viewRoll.js';
+import { RoofCover } from './roofCover.js';
 
 const _rollHalf = { hw: 0, hh: 0 };
 
@@ -67,6 +75,10 @@ const ENGINE_MIN_SPEED = 0.5;
 // Warp bańki (DRIVE_MODES) — powyżej przelotu konwencjonalnego dysze na dopalaczu.
 const WARP_BOOST_SPEED = 1200;
 
+// Billboardy lamp pozycyjnych (ShipLights3D) od tego promienia kadłuba na ekranie — jak
+// buildPositionLightWorldSprites (poniżej i tak pomija); widoków nie budujemy na zapas.
+const LIGHT_VIEW_MIN_PX = 2.5;
+
 // Wspólne węzły uniformów (grupa renderu) — jeden zapis na klatkę dla wszystkich rodzajów.
 const lightUniforms = PROXY_SHARED;
 
@@ -76,6 +88,10 @@ const kindList = [];
 const hullInfos = new Map();      // unitClass / hullId → dane kadłuba
 const ownImages = new Map();      // url → ImageBitmap | null (w drodze) — gdy gra nie podała resolvera
 const engineRecords = new Map();  // klucz proxy → { view, frame }
+// Widoki lamp pozycyjnych tej klatki (pula obiektów wielokrotnego użytku) — billboardy w updateHexShips3D.
+const lightViewPool = [];
+const lightViews = [];
+setProxyLightViews(lightViews, (view) => view.__proxyGrid);
 let imageResolver = null;
 let engineLayoutResolver = null;
 /** (ref encji) → { x: u0, y: v0, z: u1, w: v1 } otwartego luku w uv sprite'a albo null (E12, przeładunek). */
@@ -94,6 +110,7 @@ const frame = {
   halfH: 0,
   margin: 0,
   engines: true,
+  zoomPx: 1,
   t0: 0
 };
 
@@ -119,6 +136,7 @@ const stats = {
   drawCalls: 0,
   engines: 0,
   nozzles: 0,
+  lights: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -126,12 +144,6 @@ const stats = {
 function wrapPi(a) {
   if (a > Math.PI || a < -Math.PI) a -= Math.PI * 2 * Math.round(a / (Math.PI * 2));
   return a;
-}
-
-function clampNum(v, min, max, fallback) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return fallback;
-  return n < min ? min : n > max ? max : n;
 }
 
 function imageReady(img) {
@@ -166,6 +178,10 @@ function hullInfoFor(key) {
     w: size.w,
     h: size.h,
     radius: Math.hypot(size.w, size.h) * 0.5,
+    // Siatka kadłuba NPC z tego sprite'a (getNpcHexInitSource: obraz fizyki w j. świata, 1 px = 1 j.) — lampy
+    // i strefy dysz w jej pikselach.
+    grid: { srcWidth: size.w, srcHeight: size.h, pivot: { x: 0, y: 0 } },
+    lights: undefined,
     kind: null,
     engine: undefined
   } : null;
@@ -179,7 +195,7 @@ function resolveKind(info) {
   if (!kind) {
     const img = imageResolver ? imageResolver(info.hullId, info.url) : defaultImage(info.url);
     if (!imageReady(img)) return null;
-    kind = createKind(info.url, img);
+    kind = createKind(info.url, img, info);
     if (!kind) return null;
   }
   info.kind = kind;
@@ -247,6 +263,64 @@ function engineLayoutFor(info) {
   return info.engine;
 }
 
+// Wpis edytora kadłuba (klucz = rama kadłuba ruchu albo `editorKey`) — jak getEditorShipIdForNpc u NPC po awansie.
+function editorEntryFor(info) {
+  return SHIP_EDITOR_DEFAULTS?.ships?.[info.def.editorKey || info.hullId] || null;
+}
+
+// Blok lamp kadłuba jako widok encji (shipLightRuntime: `editorLights` + skala hardpointu px PNG → j. świata) —
+// to samo, co NPC po awansie dostaje z applyLayoutToNpc: okręt (wpis pełny) ma lampy, cywil (`sideOnly`) — nie.
+// Raz na kadłub; obiekt `editorLights` wspólny dla wszystkich widoków (pamięć normalizacji lamp po źródle).
+function lightBlockFor(info) {
+  if (info.lights !== undefined) return info.lights;
+  const cfg = editorEntryFor(info);
+  const L = cfg && cfg.sideOnly !== true ? cfg.lights : null;
+  const any = L && ((L.position?.length || 0) + (L.road?.length || 0) + (L.flood?.length || 0)) > 0;
+  info.lights = any ? {
+    editorLights: {
+      position: Array.isArray(L.position) ? L.position : [],
+      road: Array.isArray(L.road) ? L.road : [],
+      flood: Array.isArray(L.flood) ? L.flood : []
+    },
+    sx: info.w / info.def.png[0],
+    sy: info.h / info.def.png[1]
+  } : null;
+  return info.lights;
+}
+
+// Dysze SIDE z edytora (strefy lakieru gasną przy wylotach jak u NPC) — pozycje w px PNG × skala, od środka sprite'a.
+function sideMarkersFor(info) {
+  const raw = editorEntryFor(info)?.engines?.side;
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const sx = info.w / info.def.png[0];
+  const sy = info.h / info.def.png[1];
+  const out = [];
+  for (const m of raw) {
+    const x = Number(m?.x);
+    const y = Number(m?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    out.push({ offset: { x: (x + (Number(m.offsetX) || 0)) * sx, y: (y + (Number(m.offsetY) || 0)) * sy }, forward: { x: 0, y: 0 } });
+  }
+  return out.length ? out : null;
+}
+
+// Wygląd rodzaju (acquireProxyHullLook): widok lamp (szablon — także dla billboardów), siatka, dysze stref lakieru.
+function lookSpecFor(info) {
+  const block = lightBlockFor(info);
+  return {
+    // id kadłuba = `shipFrame` NPC po awansie: jego skóra czyta mapy proxy, póki własne się pieką (hexShips3D.js)
+    hullId: info.hullId,
+    lightView: block ? {
+      x: 0, y: 0, angle: 0, radius: info.radius, dead: false, isTrafficProxy: true,
+      editorLights: block.editorLights, __hardpointScaleX: block.sx, __hardpointScaleY: block.sy,
+      __proxyGrid: info.grid
+    } : null,
+    grid: info.grid,
+    main: engineLayoutFor(info)?.mainThrusters || null,
+    side: sideMarkersFor(info)
+  };
+}
+
 // ---------------------------------------------------------------- rodzaje
 
 function ensureQuad() {
@@ -270,15 +344,14 @@ function makeMesh(kind, capacity) {
   return mesh;
 }
 
-function createKind(url, image) {
+function createKind(url, image, info) {
   if (!Core3D.isInitialized || !Core3D.scene) return null;
-  const texture = acquireHullVisualTexture(image);
-  if (!texture) return null;
-  const material = new ShipProxyNodeMaterial(texture);
+  const look = acquireProxyHullLook(image, lookSpecFor(info));
+  const material = new ShipProxyNodeMaterial(look.uniforms);
   const kind = {
     url,
     image,
-    texture,
+    look,
     material,
     mesh: null,
     buffer: null,
@@ -319,9 +392,8 @@ function warmupMeshes() {
     const canvas = createCanvas2D(4, 4);
     const ctx = canvas.getContext('2d');
     if (ctx) { ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, 4, 4); }
-    const texture = acquireHullVisualTexture(canvas);
-    if (!texture) return null;
-    warmKind = { url: 'rozgrzewka', image: canvas, texture, material: new ShipProxyNodeMaterial(texture), mesh: null, buffer: null };
+    const look = acquireProxyHullLook(canvas, null);
+    warmKind = { url: 'rozgrzewka', image: canvas, look, material: new ShipProxyNodeMaterial(look.uniforms), mesh: null, buffer: null };
     warmKind.mesh = makeMesh(warmKind, 2);
   }
   return [warmKind.mesh];
@@ -504,10 +576,9 @@ export const ShipProxyBatch3D = {
     } else {
       lightUniforms.uHasSun.value = 0;
     }
-    const tune = getHullLightTuning();
-    lightUniforms.uDayAmbient.value = clampNum(tune?.dayAmbient, 0, 1, 0.24);
-    lightUniforms.uDayDiffuseMul.value = clampNum(tune?.dayDiffuseMul, 0, 3, 1.18);
-    lightUniforms.uSpecularMul.value = clampNum(tune?.specularMul, 0, 1.5, 0.30);
+    // Strojenie światła i lakieru — wspólne węzły kadłubów (HULL_SHARED, HullLighting, HullLacquer: updateHexShips3D).
+    frame.zoomPx = frame.zoom * (Core3D.pixelRatio || 1);
+    lightViews.length = 0;
   },
 
   /**
@@ -592,10 +663,33 @@ export const ShipProxyBatch3D = {
     const o = n * PROXY_INSTANCE_STRIDE;
     // Luk ładowni otwarty (E12): prostokąt uv otworu z resolvera przeładunku (portCargo3D) — albo pusty.
     const cut = bayCutResolver ? bayCutResolver(ref) : null;
+    // Promień kadłuba na ekranie (px bufora): lampy na blasze od PROXY_LIGHT_SHADER_MIN_PX i odblask lakieru — jak
+    // kadłub NPC (syncEntityLightUniforms, syncEntityLacquer).
+    const bodyPx = Math.max(w, h) * 0.5 * frame.zoomPx;
+    const look = kind.look;
     M[o] = c * w; M[o + 1] = s * w; M[o + 2] = cut ? cut.x : 0; M[o + 3] = cut ? cut.y : 0;
     M[o + 4] = -s * h; M[o + 5] = c * h; M[o + 6] = cut ? cut.z : 0; M[o + 7] = cut ? cut.w : 0;
     M[o + 8] = c; M[o + 9] = s; M[o + 10] = opacity; M[o + 11] = cut ? (cut.skin || 0) : 0;
-    M[o + 12] = x - origin.x; M[o + 13] = -y - origin.y; M[o + 14] = 0; M[o + 15] = 1;
+    M[o + 12] = x - origin.x; M[o + 13] = -y - origin.y;
+    M[o + 14] = bodyPx >= PROXY_LIGHT_SHADER_MIN_PX ? look.lightCount : 0;
+    M[o + 15] = hullLacquerGlintAt(bodyPx);
+    M[o + 16] = look.lightBase; M[o + 17] = look.zoneCount; M[o + 18] = 1; M[o + 19] = 0;
+
+    // Lampy pozycyjne (billboardy FG): widok z pozą instancji — okręty z blokiem lamp (cywile go nie mają). Pod
+    // zamkniętym dachem hali K-7 / zatoki (zapas floty na padach) kadłub zasłania dach, billboardów FG — nie: bez nich.
+    if (look.lightView && info.radius * frame.zoom >= LIGHT_VIEW_MIN_PX && opacity > 0.01 && !RoofCover.covers(x, y)) {
+      let view = lightViewPool[lightViews.length];
+      if (!view) {
+        view = { ...look.lightView };
+        lightViewPool[lightViews.length] = view;
+      } else if (view.editorLights !== look.lightView.editorLights) {
+        Object.assign(view, look.lightView);
+      }
+      view.x = x;
+      view.y = y;
+      view.angle = angle;
+      lightViews.push(view);
+    }
 
     if (pickCount < MAX_PICK) {
       pickX[pickCount] = x;
@@ -618,6 +712,7 @@ export const ShipProxyBatch3D = {
       const kind = kindList[k];
       const mesh = kind.mesh;
       if (kind.count > 0) {
+        refreshProxyHullLook(kind.look);
         if (!kind.attached) {
           Core3D.scene.add(mesh);
           kind.attached = true;
@@ -639,6 +734,7 @@ export const ShipProxyBatch3D = {
     }
     for (let i = pickCount; i < MAX_PICK && pickRef[i] !== null; i++) pickRef[i] = null;
     flushEngines(this.engineEntities);
+    stats.lights = lightViews.length;
     stats.kinds = live;
     stats.drawCalls = drawCalls;
     const ms = performance.now() - frame.t0;
@@ -653,6 +749,7 @@ export const ShipProxyBatch3D = {
   update(actors, alpha = 1, camera = Core3D.activeCam1, options = {}) {
     if (!Core3D.isInitialized) {
       this.engineEntities.length = 0;
+      lightViews.length = 0;
       return;
     }
     this.begin(camera, options);
@@ -670,6 +767,7 @@ export const ShipProxyBatch3D = {
   drawList(camera, list, count, entities = null) {
     if (!Core3D.isInitialized || (!(count > 0) && !stats.drawn)) {
       this.engineEntities.length = 0;
+      lightViews.length = 0;
       return;
     }
     this.begin(camera);
@@ -716,8 +814,10 @@ export const ShipProxyBatch3D = {
       if (kind.mesh.parent) kind.mesh.parent.remove(kind.mesh);
       kind.mesh.geometry.dispose();
       kind.material.dispose();
-      releaseHullVisualTexture(kind.image);
+      releaseProxyHullLook(kind.look);
     }
+    lightViews.length = 0;
+    lightViewPool.length = 0;
     kindList.length = 0;
     kinds.clear();
     hullInfos.clear();

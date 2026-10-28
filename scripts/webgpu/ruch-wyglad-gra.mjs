@@ -71,6 +71,8 @@ const FOCUS_JS = (x, y, z) => `const c = window.camera; c.mode = 'focus'; c.focu
   c.minZoom = 0.003; c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${z};
   c.x = c.targetX = ${x}; c.y = c.targetY = ${y}; window.DevScene?.syncCamera?.();`;
 const FOCUS = (x, y, z) => `(() => { ${FOCUS_JS(x, y, z)} return true; })()`;
+// Kamera po krokach (kontrola kadru w raporcie): zoom, granice zoomu gry, środek.
+const CAM = '(() => { const c = window.camera; return { zoom: c.zoom, min: c.minZoom, max: c.maxZoom, mode: c.mode, x: Math.round(c.x), y: Math.round(c.y) }; })()';
 // Gracz poza kadrem: `d` j. od punktu, prostopadle do osi `ang` (kadłub gracza nie zasłania celu, bańka zostaje przy porcie).
 const PLAYER_AWAY = (x, y, d) => `(() => { window.devTeleportTo(${x} + ${d}, ${y} + ${d} * 0.35, { angle: 0, quiet: true });
   window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`;
@@ -147,9 +149,11 @@ try {
       await ev(FOCUS(t.x, t.y, 0.12));
       await step(60);
       await screenshotPng(cdp, join(out, '02-hala.png'));
+      t.kamera = await ev(CAM);
       await ev(FOCUS(t.x, t.y, Math.min(1.2, TARGET_PX / Math.max(t.len, t.wid))));
       await step(30);
       await screenshotPng(cdp, join(out, '02-hala-blisko.png'));
+      t.kameraBlisko = await ev(CAM);
     }
     report.sceny.hala = t;
   }
@@ -179,6 +183,8 @@ try {
         await step(1);
       }
       await screenshotPng(cdp, join(out, '04-lot.png'));
+      t.kamera = await ev(CAM);
+      t.zoomChciany = z;
     }
     report.sceny.lot = t;
   }

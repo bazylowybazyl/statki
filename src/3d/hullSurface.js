@@ -65,12 +65,16 @@ export const HullSurface = {
   _waiters: [],
   stats: { baked: 0, failed: 0, lastMs: 0, maxMs: 0, worker: 0, mainThread: 0 },
 
-  /** Obiekt `{ value: tekstura }` wspólny dla kadłubów z tym obrazem (licznik referencji). */
-  acquireUniform(image) {
+  /**
+   * Obiekt `{ value: tekstura }` wspólny dla kadłubów z tym obrazem (licznik referencji). `maxSide` — dłuższy bok
+   * mapy, gdy mniejszy niż domyślny (proxy statków ruchu — E17: daleko i małe, pamięć); decyduje pierwszy wołający.
+   */
+  acquireUniform(image, maxSide = 0) {
     if (!image) return this.flatUniform;
     let entry = this._entries.get(image);
     if (!entry) {
-      entry = { image, refs: 0, texture: null, state: 'pending', uniform: { value: HULL_SURFACE_FLAT } };
+      entry = { image, refs: 0, texture: null, state: 'pending', uniform: { value: HULL_SURFACE_FLAT },
+        maxSide: maxSide > 0 ? Math.min(maxSide, this.maxSide) : 0 };
       this._entries.set(image, entry);
       this._live.push(entry);
       this._pending.push(entry);
@@ -203,7 +207,7 @@ export const HullSurface = {
 
   _start(entry) {
     const { w: iw, h: ih } = imageSize(entry.image);
-    const size = hullSurfaceSize(iw, ih, this.maxSide);
+    const size = hullSurfaceSize(iw, ih, entry.maxSide || this.maxSide);
     const job = { id: ++this._seq, entry, t0: performance.now(), w: size.w, h: size.h, pxPerTexel: iw / size.w };
     entry.state = 'baking';
     this._job = job;
@@ -242,7 +246,7 @@ export const HullSurface = {
     const t0 = performance.now();
     try {
       const { w: iw, h: ih } = imageSize(entry.image);
-      const size = hullSurfaceSize(iw, ih, this.maxSide);
+      const size = hullSurfaceSize(iw, ih, entry.maxSide || this.maxSide);
       const canvas = makeCanvas(size.w, size.h);
       const ctx = canvas?.getContext('2d', { willReadFrequently: true });
       if (!ctx) throw new Error('brak kanwy 2D');
