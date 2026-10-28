@@ -10,7 +10,12 @@ paths:
   - "src/game/traffic/bubbleCargo.js"
   - "src/render/blocks/trafficBlock.js"
   - "src/3d/shipProxyBatch3D.js"
+  - "src/3d/shipProxyBatch3D.tsl.js"
+  - "src/3d/roofCover.js"
   - "scripts/webgpu/ruch-banka-gra.mjs"
+  - "scripts/webgpu/ruch-wyglad-gra.mjs"
+  - "tests/shipProxyBatch3D.test.mjs"
+  - "tests/shipProxyLook.test.mjs"
   - "tests/workerBubble.test.mjs"
   - "tests/trafficBubble.test.mjs"
   - "tests/trafficPromotion.test.mjs"
@@ -74,15 +79,20 @@ paths:
 ## Obraz
 
 - Proxy kadłubów `ShipProxyBatch3D` (bez `window` i `new Image()` — `RenderWorld.sun`, `loadImageBitmap`; rozgrzewka `proxy statków ruchu` w `Core3D.warmup`, faza `loading`): w trybie worker z bloku migawki `traffic` (`src/render/blocks/trafficBlock.js`, poza w chwili klatki, kadłub = indeks `TRAFFIC_HULL_IDS`), w `off` — `ShipProxyBatch3D.drawList` przed `updateHexShips3D`; dysze MAIN proxy jako widoki encji w liście kadłubów.
+- WYGLĄD PEŁNEGO KADŁUBA (E17, zgłoszenie „w doku szare, nieżywe; z bliska się wybudzają” — to był awans do NPC): proxy rysuje się fragmentem skóry belek (`hullProxyFragmentNode` w `hexShips3D.tsl.js` — oświetlenie v2 z mapą powierzchni, lakier, glow, lampy statku i strefy dysz z `HullLightStore`, maska słońca, ośrodek pasa; bez mapy ran, świateł efektów, maskowania, warpa i żaru). Partia: rysunek na rodzaj, instancja = `PROXY_INSTANCE_STRIDE` (20) liczb w jednym buforze z przeplotem, do fragmentu w kilku vec4. Wygląd rodzaju — `acquireProxyHullLook` (`hexShips3D.js`): tekstura, mapa powierzchni (768 px) i kształtu lakieru (192 px — mniejsze niż NPC: ~27 kadłubów przy porcie), slot lamp i stref rodzaju; lampy z wpisu edytora kadłuba jak NPC po awansie (okręt — tak, cywil `sideOnly` — nie). Zmiana fragmentu kadłuba zmienia proxy (jeden graf, test WGSL `tests/shipProxyLook.test.mjs`).
+- Lampy pozycyjne proxy = billboardy `ShipLights3D` (widoki `setProxyLightViews`, po kadłubach — ta sama pula 512), od 2,5 px promienia; pod ZAMKNIĘTYM DACHEM hali K-7 / zatoki (gracza w niej nie ma) bez nich — `RoofCover.covers(x, y)` (`src/3d/roofCover.js`, źródło `HaloRingGame.roofCovers`): dach zasłania kadłub, billboardów FG nie. Nowy emiter FG przy rzeczy stojącej w hali — ten sam test.
+- PRZEJŚCIA: skóra NPC po awansie czyta mapy proxy tego samego kadłuba ruchu (`shipFrame`), póki własne się pieką (`mapWithFallback`). Powrót NPC do bańki: proxy w ostatniej pozie NPC (`noteTrafficReturn` / `trafficReturnPose`, `returnHold` 1,5 s) do pierwszego bufora z encją — inaczej 1–2 klatki bez statku. Przy awansie dochodzą modele 3D (dysze SIDE, mostek, rdzeń, wieże) i cień SDF — proxy ich nie ma (§ „Braki”). Opis, pomiary: `docs/E17-grafika-ruchu.md`.
 - Gabaryty: `hullFootprint` (`dockLayout.js`) przechodzi przez rejestr kadłubów ruchu (`trafficHullProfile`) — ten sam obrys mieści statek na stanowisku, rysuje proxy i dostaje trafienia.
 - W skoku gracza proxy od progu kropki soczewki świata wypadają z listy obrazu (`lensHideTrafficProxies` w `index.html`, po `trafficRenderFrame`; kropek nie mają — reguły `warp` i `kadluby-belki`).
 
 ## Braki (do zrobienia)
 
 - Lot NPC po ścieżce kursu (awansowany cywil ucieka albo stoi, okręt walczy — kurs stoi, dopóki NPC żyje); radar dla statków ruchu (`radarFeed.collect`); obsługa K-7 (ramiona) dla statków ruchu; lot z orbity do portu załadunku dla kursu, który firma zaczyna w innym porcie; dryf postoju (statki stoją); obrażenia od wiązek, rakiet i wybuchów obszarowych. Stan kadłubów ruchu — `docs/E6-banka-w-grze.md` § „Braki kadłubów ruchu”.
+- Obraz proxy (E17, `docs/E17-grafika-ruchu.md` § 5): modele 3D (dysze SIDE, mostek, obudowa rdzenia, wieże), cień SDF, światła efektów, rozlew lamp proxy na sąsiednie kadłuby, lampy cywilów (brak też u NPC), lampy z edytora użytkownika (proxy — domyślne). Powrót do bańki: statek z redy wraca na dowolny wolny slot (bywa daleko albo poza slotami z obrazem), kurs w podejściu po `detach` nie zawsze wraca do kandydatów — znika (tylko > 20 tys. j. od gracza).
 
 ## Jak sprawdzać
 
 - Testy: `node --test tests/workerBubble.test.mjs tests/trafficBubble.test.mjs tests/trafficPromotion.test.mjs` (worker: encje przy Ziemi i pomostach, `berth-hold`, `destroyed`, postoje, oddanie pozy po awansie; gra: bufor, trafienia, taran, stanowiska, blok migawki, awans), `node --test tests/widocznyRuch.test.mjs` (rozgrzewka, reda, przejście reda → kurs, orbita przy budowlach, pierwszeństwo gracza, promień fokusu, limit encji); suity `materializedFlight`, `ringRouter`, `portPaths` (dokowanie z krokiem 0,2 s — regresja drgań), `portParking` w `npm test`.
+- Wygląd proxy kontra NPC: `node scripts/webgpu/ruch-wyglad-gra.mjs [--query renderWorker=0|1] [--out .tmp/e17/<katalog>] [--sceny port,hala,reda,lot,awans,koszt]` — ten sam statek jako proxy, wymuszony awans, klatki przejścia, NPC, powrót do bańki (zapas K-7, dok, reda, lot); koszt workera renderu z proxy i bez (A/B wersji: `HULLFALL_AB_DIR`, przebiegi po kolei).
 - W grze: `node scripts/webgpu/ruch-banka-gra.mjs [--query renderWorker=1]` (zegar krokowy harnessu; rozgrzewka, obserwacja portu, ostrzał z awansem do NPC i wrakiem, etap „odpowiedź ogniem”, taran `--taran 1|tylko [--taranV 450,1137] [--taranCele megafrachtowiec,…]`, powrót do bańki, postój gracza, koszt z proxy i bez — `TrafficBubble.hideRender`, przegląd portów `--porty`; `--rozgrzewka 0` + etap `zimny` — encje przy Ziemi po 30 s / 2 / 5 min gry, `--dok ceres` — port z budowlą).
 - Konsola: `TrafficBubble` (encje, `stats`), `TrafficPromotion` (`alive`, `stats`, `tune`), `TrafficV2Stats().actors / actorMs`.
