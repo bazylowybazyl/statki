@@ -48,8 +48,29 @@ Koszt: graf (60–66 węzłów, 266–299 krawędzi) z pierwszą trasą 0,5–0,
 czasu gry; 9 okrętów z załogą wystartowało. Licznik `wBryle` (środek okrętu w bryle stojącego kawałka bazy, próbki co
 100 ms, poza trasą wylotu z doku): herszt 0, załoga 0 na 1507 próbkach. W ucieczce herszt obszedł bazę od strony zatoki
 (1,5 km od stanowiska w 70 s, potem 6,3 km i skok) — kadr z 70 s: obok pomostów przy zatoce, nie w habitacie. Bez
-błędów konsoli. Czasów klatek nie brano: w trakcie przebiegu na komputerze trwał mecz League of Legends (procesy sesji
+błędów konsoli. Czasów z tego przebiegu nie brano: na komputerze trwał wtedy mecz League of Legends (procesy sesji
 ograniczone do rdzeni 4–7, priorytet Idle).
+
+### Koszt w grze
+
+`node scripts/webgpu/wodowanie-gra.mjs --czas 150 --profil 20` przy cichej maszynie (22:00, żaden inny harness, GPU 1%;
+tryb `off`, klatki bez limitu ~293 kl/s), profil CPU 20,5 s od ucieczki herszta. Herszt znów uciekł (90,5 s), `wBryle`
+0 / 0 na 1496 próbkach. Trasy liczyły okręty Terra Novy w szyku (`goToSlot`) i herszt w ucieczce. Graf zbudował się
+3 razy w całym przebiegu — po jednym na kubełek luzu (280, 360, 480 j.; 60–65 węzłów, 271–301 krawędzi, 17 kapsuł) —
+i nie przebudowywał się (wersja zestawu 1).
+
+| Funkcja (łącznie, bez rekursji) | ms w oknie 20,5 s | ms na s gry | ms na klatkę przy 60 kl/s |
+|---|---|---|---|
+| `staticRouteAim` (cała trasa) | 14,8 | 0,72 | 0,012 |
+| — w tym `buildGraph` (2 budowy w oknie) | 2,8 | — | — |
+| — w tym `markContaining` | 8,4 | 0,41 | 0,007 |
+| `capitalArriveControls` (pilot z trasą) | 20,4 | 1,0 | 0,017 |
+| `npcStep` (cały krok NPC) | 173 | 8,4 | 0,14 |
+| `loop` (cała praca wątku gry) | 17 266 | 842 | — |
+
+Trasy to 0,09% pracy wątku gry; budowa grafu w grze ~1,4 ms (z narzutem profilera, raz na kubełek i zestaw budowli).
+Najwięcej w stanie ustalonym bierze `markContaining` (start i cel w kapsułach: 2 × 17 testów na wywołanie) w ucieczce
+herszta — jego `npc.ai` liczy się w każdej klatce, więc ta część rośnie z liczbą klatek (tu ~293 kl/s).
 
 ## Czego nie sprawdzono
 
