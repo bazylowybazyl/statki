@@ -484,6 +484,16 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   }
 
   host.readStats = () => retReadStats(ret, host.stats);
+  // Ustawienia obrazu z opcji grafiki (gfxRenderRecord, src/game/graphicsQuality.js) — worker stosuje je na SWOIM Core3D
+  // i modułach efektów (dawniej dochodziły tylko skala i MSAA przy starcie). Tylko przy zmianie treści.
+  host._gfxKey = '';
+  host.setGfx = (rec) => {
+    if (!rec) return;
+    const key = JSON.stringify(rec);
+    if (key === host._gfxKey) return;
+    host._gfxKey = key;
+    worker.postMessage({ type: 'gfx', gfx: rec });
+  };
   host.stop = () => {
     dropQueue();
     worker.terminate();

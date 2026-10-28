@@ -127,6 +127,28 @@ export const GFX_EFFECTS = Object.freeze({
 // Skala bloomu (Core3D.bloomResolutionScale) i włącznik (perfToggles.bloom).
 export function gfxBloomScale(level) { return level === 'half' ? 0.5 : 1; }
 
+/**
+ * Ustawienia OBRAZU dla renderu w workerze (2026-10-28): worker ma własne Core3D i moduły efektów, a
+ * `applyGraphicsSettings` strony ustawia tylko moduły strony — do workera szły jedynie skala i MSAA przy starcie, więc
+ * w trybie domyślnym worker zawsze liczył bloom pełny, gaz wybuchów i efekty „Wysokie”, smugi cieni domyślne Core3D.
+ * Zwykły obiekt (structured clone): Core3D (skala renderu — z rozdzielczością dynamiczną, bloom, gorące powietrze,
+ * smugi cieni), lakier, oświetlenie kadłubów, `GFX_EXPLOSIONS` (→ `EXPLOSION_TUNE`) i pola `GFX_EFFECTS` czytane przez
+ * moduły renderu. Stosuje `render.worker.js` (wiadomość `gfx`).
+ */
+export function gfxRenderRecord(settings, renderScale) {
+  const s = normalizeGfx(settings);
+  const ex = GFX_EXPLOSIONS[s.explosions] || GFX_EXPLOSIONS.high;
+  const fx = GFX_EFFECTS[s.effects] || GFX_EFFECTS.high;
+  return {
+    renderScale: Number.isFinite(renderScale) && renderScale > 0 ? renderScale : s.renderScale,
+    bloom: s.bloom !== 'off', bloomScale: gfxBloomScale(s.bloom), heatHaze: s.heatHaze !== 'off',
+    shadowShafts: s.shadowShafts, lacquer: s.lacquer !== 'off', hullLight: s.hullLight,
+    explosions: { ...ex },
+    effects: { sideJetLights: fx.sideJetLights, sideJetGasPx: fx.sideJetGasPx, weaponMuzzles: fx.weaponMuzzles,
+      weaponImpacts: fx.weaponImpacts, beltLitShips: fx.beltLitShips, beltShadowShips: fx.beltShadowShips, warpParticles: fx.warpParticles }
+  };
+}
+
 /** Wartość dozwolona dla ustawienia `key` (liczby — najbliższa z listy), inaczej domyślna. */
 export function normalizeGfxValue(key, value) {
   const spec = GFX_SETTINGS[key];

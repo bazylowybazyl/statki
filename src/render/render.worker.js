@@ -560,8 +560,46 @@ if (isWorker) {
       await belt.initGpu();
       console.log(`[render.worker] pas: initGpu ${Math.round(performance.now() - tB)} ms`);
       st.belt = belt;
+      applyBeltGfx();
       postMessage({ type: 'beltReady', t: [tB - st.t0, performance.now() - st.t0] });
     } catch (e) { report(e, 'pas'); }
+  }
+
+  // Opcje grafiki strony (wiadomość `gfx` — gfxRenderRecord, src/game/graphicsQuality.js): to samo, co
+  // applyGraphicsSettings strony robi na SWOICH modułach. Dawniej worker dostawał tylko skalę i MSAA przy starcie, więc
+  // w trybie domyślnym liczył zawsze bloom pełny, gaz wybuchów i efekty „Wysokie” (atlas fine gazu także przy Średniej
+  // i Niskiej) i smugi cieni domyślne Core3D. Pas (reflektory, mapy cienia) — także po jego utworzeniu (setBelt).
+  async function applyGfx(g) {
+    if (!g) return;
+    st.gfx = g;
+    try {
+      const C = st.Core3D;
+      if (C) {
+        if (Number.isFinite(g.renderScale) && g.renderScale > 0 && C.renderScale !== g.renderScale) C.setRenderScale(g.renderScale);
+        C.bloomQualityScale = g.bloomScale;
+        C.setPerfToggles({ bloom: g.bloom, heatHaze: g.heatHaze });
+        if (g.shadowShafts) C.setShadowShaftsQuality(g.shadowShafts);
+      }
+      const [ex, wf, wn, sj, lq, hl] = await Promise.all([import('../3d/explosions/explosionFx.js'), import('../3d/weapons/weaponFx.js'),
+        import('../3d/warp/warpNurt.js'), import('../3d/sideJets3D.js'), import('../3d/hullLacquer.js'), import('../3d/hullLighting.js')]);
+      if (st.gfx !== g) return;   // nowsza wiadomość przyszła w trakcie importów
+      if (g.explosions) Object.assign(ex.EXPLOSION_TUNE, g.explosions);
+      const fx = g.effects || {};
+      if (Number.isFinite(fx.sideJetLights)) sj.SIDE_JET_TUNE.maxLights = fx.sideJetLights;
+      if (Number.isFinite(fx.sideJetGasPx)) sj.SIDE_JET_TUNE.minGasPx = fx.sideJetGasPx;
+      if (Number.isFinite(fx.weaponMuzzles)) wf.WeaponFx.muzzlePerFrame = fx.weaponMuzzles;
+      if (Number.isFinite(fx.weaponImpacts)) wf.WeaponFx.impactPerFrame = fx.weaponImpacts;
+      if (Number.isFinite(fx.warpParticles)) wn.WarpNurt.setMediumCount?.(fx.warpParticles);   // czeka, aż ośrodek uśnie
+      lq.HullLacquer.setEnabled(g.lacquer !== false);
+      if (g.hullLight) hl.HullLighting.setModel(g.hullLight);
+      applyBeltGfx();
+    } catch (e) { report(e, 'gfx'); }
+  }
+  function applyBeltGfx() {
+    const fx = st.gfx && st.gfx.effects, cfg = st.belt && st.belt.cfg;
+    if (!fx || !cfg) return;
+    if (Number.isFinite(fx.beltLitShips)) cfg.maxLitShips = fx.beltLitShips;
+    if (Number.isFinite(fx.beltShadowShips)) cfg.maxShadowShips = fx.beltShadowShips;
   }
   function addGiant(m) {
     if (!st.beltWorld || !st.GiantRock) { (st.pendingGiants || (st.pendingGiants = [])).push(m); return; }
@@ -1054,6 +1092,10 @@ if (isWorker) {
     f[R.CPU_FRAME_MS] = performance.now() - t0;
     if (Number.isFinite(Core3D.gpuFrameMs)) f[R.GPU_FRAME_MS] = Core3D.gpuFrameMs;
     if (Number.isFinite(Core3D.gpuComputeMs)) f[R.GPU_COMPUTE_MS] = Core3D.gpuComputeMs;
+    // liczniki wyników znaczników (nowa próbka = zmiana) i skala renderu — rozdzielczość dynamiczna strony
+    f[R.GPU_FRAME_SAMPLES] = Core3D.gpuFrameSamples | 0;
+    f[R.GPU_COMPUTE_SAMPLES] = Core3D.gpuComputeSamples | 0;
+    f[R.PIXEL_RATIO] = Number(Core3D.renderScale) || 0;
     // Opóźnienie kolejki GPU (PerfHUD „kolejka”): od końca zgłoszeń tej klatki do wykonania wszystkiego na GPU — co 8.
     // klatkę, jedno zapytanie w locie. Znaczniki czasu widzą tylko passy i listy compute; ta liczba łapie każdą pracę GPU
     // (wysyłki, kopie, kompilacje, presentację) — przy zapchanej karcie rośnie ponad okres klatki.
@@ -1224,6 +1266,7 @@ if (isWorker) {
       else if (m.type === 'pbase') st.pbChain = (st.pbChain || Promise.resolve()).then(() => pirateBaseEvent(m));
       else if (m.type === 'menu') st.menuChain = (st.menuChain || Promise.resolve()).then(() => menuOp(m)).catch((err) => report(err, 'menu'));
       else if (m.type === 'prepare') runPrepare(m).then((ok) => postMessage({ type: 'prepared', id: m.id, ok }), (err) => { report(err, 'prepare'); postMessage({ type: 'prepared', id: m.id, ok: false }); });
+      else if (m.type === 'gfx') st.gfxChain = (st.gfxChain || Promise.resolve()).then(() => applyGfx(m.gfx));
     } catch (err) {
       report(err, m && m.type);
     }

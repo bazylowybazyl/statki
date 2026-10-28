@@ -1346,7 +1346,7 @@
     // Opcje grafiki (presety jakości, zapis sc_gfx) — blok „OPCJE GRAFIKI” przy opcjach menu.
     import {
       normalizeGfx, normalizeGfxValue, matchGfxPreset, saveGfxSettings, gfxWithPreset, gfxBloomScale, hasSavedGfx,
-      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY
+      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord
     } from "./src/game/graphicsQuality.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
@@ -35172,15 +35172,20 @@
     }
     function stepDynamicResolution(nowMs) {
       const t = (Number(nowMs) || 0) / 1000;
+      // tryb worker: próbki czasu GPU z kanału zwrotnego workera (Core3D strony nie ma urządzenia — dawniej sterownik
+      // nie dostawał próbek, a nowa skala nie docierała do workera)
+      let fS = Core3D.gpuFrameSamples, cS = Core3D.gpuComputeSamples, fMs = Core3D.gpuFrameMs, cMs = Core3D.gpuComputeMs;
+      if (rwHost) { rwHost.readStats(); const st = rwHost.stats; fMs = st[0]; cMs = st[1]; fS = st[2]; cS = st[3]; }
       let sample = null;
-      if (Core3D.gpuComputeSamples !== dynResComputeSeen) { dynResComputeSeen = Core3D.gpuComputeSamples; dynResComputeAt = t; }
-      if (Core3D.gpuFrameSamples !== dynResRenderSeen) {
-        dynResRenderSeen = Core3D.gpuFrameSamples;
-        sample = Core3D.gpuFrameMs + (t - dynResComputeAt < 0.5 ? Core3D.gpuComputeMs : 0);
+      if (cS !== dynResComputeSeen) { dynResComputeSeen = cS; dynResComputeAt = t; }
+      if (fS !== dynResRenderSeen) {
+        dynResRenderSeen = fS;
+        sample = fMs + (t - dynResComputeAt < 0.5 ? cMs : 0);
       }
       const scale = stepDynRes(dynRes, t, gfxSettings.renderScale, gfxDynamicTargetFps(gfxSettings.dynamicRes), sample);
       if (dynRes.changed && Core3D.renderScale !== scale) {
         Core3D.setRenderScale(scale);
+        if (rwHost) rwHost.setGfx(gfxRenderRecord(gfxSettings, scale));
         updateDynResUI();
       }
     }
@@ -35236,6 +35241,8 @@
       Core3D.bloomQualityScale = gfxBloomScale(s.bloom);
       Core3D.setPerfToggles({ bloom: s.bloom !== 'off', heatHaze: s.heatHaze !== 'off' });
       applyGraphicsEffects();
+      // render w workerze: te same ustawienia na Core3D i modułach efektów workera (powyższe dotyczą modułów strony)
+      if (rwHost) rwHost.setGfx(gfxRenderRecord(s, scale));
     }
 
     function updateGraphicsUI() {

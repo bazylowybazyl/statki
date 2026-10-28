@@ -200,3 +200,37 @@ test('VSync w index.html: chipy, wybór z mostu Electrona przed startem, restart
   assert.match(html, /pacing: !\(window\.hullfallApp && window\.hullfallApp\.vsync === false\)/);
   assert.match(src('src/render/renderWorkerHost.js'), /pacing: pacingDefault = true \}\)/);
 });
+
+test('render w workerze: rekord obrazu z presetu (gfxRenderRecord) dochodzi do workera i jest tam stosowany (2026-10-28)', () => {
+  // Dawniej do workera szły tylko skala i MSAA przy starcie — w trybie domyślnym worker liczył zawsze gaz wybuchów
+  // i efekty „Wysokie” (atlas fine także przy Średniej), bloom pełny i smugi cieni domyślne Core3D.
+  for (const id of G.GFX_PRESET_IDS) {
+    const s = G.gfxWithPreset(null, id);
+    const r = G.gfxRenderRecord(s);
+    assert.deepEqual(structuredClone(r), r, `${id}: zwykły obiekt (postMessage)`);
+    assert.equal(r.renderScale, s.renderScale);
+    assert.deepEqual(r.explosions, { ...G.GFX_EXPLOSIONS[s.explosions] });
+    for (const k of ['sideJetLights', 'sideJetGasPx', 'weaponMuzzles', 'weaponImpacts', 'beltLitShips', 'beltShadowShips', 'warpParticles']) {
+      assert.equal(r.effects[k], G.GFX_EFFECTS[s.effects][k], `${id}: ${k}`);
+    }
+    assert.equal(r.shadowShafts, s.shadowShafts);
+    assert.equal(r.bloom, s.bloom !== 'off');
+    assert.equal(r.bloomScale, G.gfxBloomScale(s.bloom));
+  }
+  assert.equal(G.gfxRenderRecord(G.gfxWithPreset(null, 'high'), 0.75).renderScale, 0.75, 'skala z rozdzielczości dynamicznej');
+  assert.equal(G.gfxRenderRecord(G.gfxWithPreset(null, 'medium')).explosions.fineGas, false, 'Średnia: bez atlasu fine');
+  // strona: opcje i rozdzielczość dynamiczna wysyłają rekord do workera; worker stosuje go na swoim Core3D i modułach
+  const html = src('index.html').replace(/\r\n/g, '\n');
+  const apply = html.slice(html.indexOf('function applyGraphicsSettings()'), html.indexOf('function updateGraphicsUI()'));
+  assert.match(apply, /rwHost\.setGfx\(gfxRenderRecord\(s, scale\)\)/);
+  const dyn = html.slice(html.indexOf('function stepDynamicResolution('), html.indexOf('function updateDynResUI()'));
+  assert.match(dyn, /rwHost\.readStats\(\)/, 'próbki GPU z kanału zwrotnego workera');
+  assert.match(dyn, /rwHost\.setGfx\(gfxRenderRecord\(gfxSettings, scale\)\)/);
+  const wk = src('src/render/render.worker.js').replace(/\r\n/g, '\n');
+  assert.match(wk, /m\.type === 'gfx'\) st\.gfxChain/);
+  const fn = wk.slice(wk.indexOf('async function applyGfx('), wk.indexOf('function applyBeltGfx('));
+  for (const re of [/setRenderScale/, /bloomQualityScale/, /setPerfToggles/, /setShadowShaftsQuality/, /EXPLOSION_TUNE/, /muzzlePerFrame/,
+    /impactPerFrame/, /setMediumCount/, /SIDE_JET_TUNE\.maxLights/, /HullLacquer\.setEnabled/, /HullLighting\.setModel/]) assert.match(fn, re);
+  assert.match(wk, /f\[R\.GPU_FRAME_SAMPLES\] = /, 'worker pisze liczniki próbek GPU (rozdzielczość dynamiczna strony)');
+  assert.match(wk, /f\[R\.GPU_COMPUTE_SAMPLES\] = /);
+});
