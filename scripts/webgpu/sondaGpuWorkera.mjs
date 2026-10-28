@@ -22,7 +22,7 @@ export const SONDA_INSTALUJ = `(() => {
   const fresh = () => ({ wbN: 0, wbB: 0, wtN: 0, wtB: 0, ceN: 0, ceB: 0, sub: 0, disp: 0, wg: 0, draws: 0, rp: 0, cp: 0,
     nbN: 0, nbB: 0, ntN: 0, ntB: 0, dbB: 0, dtB: 0, psync: 0, psyncMs: 0, pasync: 0, csync: 0, csyncMs: 0, casync: 0, sm: 0,
     cpuRender: 0, lat: -1, t: 0 });
-  const P = globalThis.__gpuProbe = { cur: fresh(), frames: [], live: { buf: 0, tex: 0, bufN: 0, texN: 0 },
+  const P = globalThis.__gpuProbe = { cur: fresh(), frames: [], live: { buf: 0, tex: 0, bufN: 0, texN: 0 }, wbBy: new Map(), wtBy: new Map(),
     gpu: { render: new Map(), compute: new Map() }, tsFrames: { render: new Set(), compute: new Set() },
     labels: new Map(), curLabel: '', err: null, latPending: 0, latMax: 0 };
   const sizes = new WeakMap();
@@ -31,12 +31,18 @@ export const SONDA_INSTALUJ = `(() => {
   // --- kolejka (instancja — prototyp owija już zbieracz zgłoszeń) ---
   wrapI(q, 'writeBuffer', (f) => function (buf, off, data, dOff, size) {
     const c = P.cur, e = bpe(data); c.wbN++;
-    c.wbB += size !== undefined ? size * e : Math.max(0, (data && data.byteLength || 0) - (dOff || 0) * e);
+    const nb = size !== undefined ? size * e : Math.max(0, (data && data.byteLength || 0) - (dOff || 0) * e);
+    c.wbB += nb;
+    const L = (buf && buf.label) || '?';
+    const w = P.wbBy.get(L); if (w) { w[0] += nb; w[1]++; } else P.wbBy.set(L, [nb, 1]);
     return f.apply(this, arguments);
   });
   wrapI(q, 'writeTexture', (f) => function (dst, data, layout, size) {
     const c = P.cur; c.wtN++;
-    c.wtB += Math.max(0, (data && data.byteLength || 0) - ((layout && layout.offset) || 0));
+    const nb = Math.max(0, (data && data.byteLength || 0) - ((layout && layout.offset) || 0));
+    c.wtB += nb;
+    const L = (dst && dst.texture && dst.texture.label) || '?';
+    const w = P.wtBy.get(L); if (w) { w[0] += nb; w[1]++; } else P.wtBy.set(L, [nb, 1]);
     return f.apply(this, arguments);
   });
   wrapI(q, 'copyExternalImageToTexture', (f) => function (src, dst, size) {
@@ -203,7 +209,10 @@ export const SONDA_CZYTAJ = `(() => {
     g.clear(); fs.clear();
     return { klatek: n, msNaKlatke: +tot.toFixed(2), wiersze: rows.slice(0, 25) };
   };
+  const nF = Math.max(1, fr.length);
+  const topBy = (m) => { const rows = [...m.entries()].map(([k, v]) => [k, Math.round(v[0] / nF), +(v[1] / nF).toFixed(1)]).sort((a, b) => b[1] - a[1]).slice(0, 12); m.clear(); return rows; };
   const out = { klatki: fr.length, s: +span.toFixed(2), naS: span > 0 ? +(fr.length / span).toFixed(1) : 0, sr, p95, suma: sum,
+    wysylkiBuforow: topBy(P.wbBy), wysylkiTekstur: topBy(P.wtBy),
     latMax: +P.latMax.toFixed(1), latOczekuje: P.latPending,
     pamiecMB: { bufory: +(P.live.buf / 1048576).toFixed(1), tekstury: +(P.live.tex / 1048576).toFixed(1), buforyN: P.live.bufN, teksturyN: P.live.texN },
     gpuRender: gpuOf(P.gpu.render, P.tsFrames.render), gpuCompute: gpuOf(P.gpu.compute, P.tsFrames.compute),

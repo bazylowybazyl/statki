@@ -3,7 +3,7 @@
 // katastrofa; PerfHUD: strona 12 kl/s, Obraz 3D (worker) 10 kl/s · CPU 5,5 · GPU 9,0 ms; karta się poci”.
 // Vite + headless Chrome z WebGPU, skok dev ?story=shipyard, Atlas nieśmiertelny.
 //
-//   node scripts/webgpu/gpu-baza-gra.mjs [--rozmiar 5120x1440] [--out .tmp/gpu-baza] [--zoom 0.14] [--bron special_yamato_cannon]
+//   node scripts/webgpu/gpu-baza-gra.mjs [--okno 1] [--rozmiar 5120x1440] [--out .tmp/gpu-baza] [--zoom 0.14] [--bron special_yamato_cannon]
 //        [--strzalyMaks 400] [--prog 30] [--slad 3] [--czasPo 8] [--abWorker 'nazwa@kod|…'] [--abPowt 2] [--query …]
 //
 // Okna (każde: złożenia obrazu / s, klatki workera / s, CPU workera p50 / p95, sonda GPU workera — wysyłki, zasoby,
@@ -18,11 +18,14 @@
 // --abWorker 'nazwa@kod|…': w PAUZIE nad gruzem warianty — kod w workerze (globalThis.__C3 = Core3D, __ST = stan
 //   workera) przed oknem wariantu, baza (bez kodu, 'baza') między nimi; każdy wariant ma też kod przywrócenia po '##'
 //   ('nazwa@kod##przywróć'). Okna 3 s, --abPowt powtórzeń.
+// --balastGb N: po oknie „przed” osobny Chrome zajmuje N GB pamięci karty i stale jej używa (balastVram.mjs — jak inne
+//   programy u gracza); okna ostrzału, upadku i gruzu pod presją VRAM.
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 import { SONDA_INSTALUJ, SONDA_CZYTAJ, startNvidiaSmi, stanMaszyny, sladWatkow } from './sondaGpuWorkera.mjs';
+import { startVramBallast } from './balastVram.mjs';
 
 const args = parseArgs();
 const [W, H] = String(args.rozmiar || '5120x1440').split('x').map(Number);
@@ -43,6 +46,8 @@ const AB = String(args.abWorker || '').split('|').filter(Boolean).map((v) => {
   return { nazwa, kod, przywroc: przywroc || '' };
 });
 const AB_POWT = Number(args.abPowt || 2);
+const BALAST_GB = Number(args.balastGb || 0);
+let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
 
@@ -50,7 +55,10 @@ const report = { args, rozmiar: [W, H], maszynaStart: await stanMaszyny(), okna:
 console.log('maszyna:', JSON.stringify(report.maszynaStart));
 const smi = startNvidiaSmi(500);
 const { server, base } = await startVite(Number(args.port || 5393));
-const chrome = await startChrome({ width: W, height: H, renderMode: 'worker' });
+// --okno 1: widoczne okno na cały ekran, z vsync jak u gracza (headless biegnie bez limitu klatek)
+const OKNO = args.okno === '1';
+const chrome = await startChrome({ width: W, height: H, renderMode: 'worker', headless: OKNO ? false : undefined,
+  extraArgs: OKNO ? ['--window-position=0,0', '--start-fullscreen'] : [] });
 const { cdp } = chrome;
 const ev = (e, t = 120000) => evaluate(cdp, e, t);
 
@@ -175,6 +183,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
     + `  pamięć ${so ? so.pamiecMB.bufory + '+' + so.pamiecMB.tekstury + ' MB' : '-'}  disp ${so ? so.sr.disp : '-'}  rys ${so ? so.sr.draws : '-'}`
     + `  pipe s/a ${so ? so.suma.psync + '/' + so.suma.pasync : '-'}  domeny ${row.domeny}  hp ${row.hp}  GPU% ${row.nvidia ? row.nvidia.zajetosc : '-'} ${row.nvidia ? row.nvidia.pamiecMB + ' MB' : ''}`);
   if (so) {
+    if (so.wysylkiBuforow && so.wysylkiBuforow.length) console.log('   wysyłki:', so.wysylkiBuforow.slice(0, 6).map((w) => `${w[0]} ${(w[1] / 1024).toFixed(0)}KB×${w[2]}`).join(' | '));
     console.log('   render:', so.gpuRender.wiersze.slice(0, 6).map((w) => `${w[0]} ${w[1]}`).join(' | '));
     console.log('   compute:', so.gpuCompute.wiersze.slice(0, 6).map((w) => `${w[0]} ${w[1]}`).join(' | '));
   }
@@ -222,6 +231,7 @@ const camHub = (zoom) => ev(`(() => {
 
 function finish(code = 0) {
   try { smi.stop(); report.nvidia = smi.samples.length; writeJson(join(out, 'raport.json'), report); } catch (e) { console.error(e); }
+  if (balast) { const b = balast; balast = null; b.stop().catch(() => {}); }
   Promise.resolve(chrome.close?.()).finally(() => Promise.resolve(server.close?.()).finally(() => process.exit(code)));
 }
 
@@ -253,6 +263,13 @@ try {
   await sleep(4000);
   await okno('przed', 6, { slad: true });
   await screenshotPng(cdp, join(out, '01-przed.png'));
+  if (BALAST_GB > 0) {
+    balast = await startVramBallast({ gb: BALAST_GB });
+    report.balast = { info: balast.info, gb: BALAST_GB };
+    console.log('balast VRAM:', JSON.stringify(balast.info), 'nvidia:', JSON.stringify(await stanMaszyny()));
+    await sleep(3000);
+    await okno('przed-balast', 6, { slad: true });
+  }
 
   // ostrzał seriami do HP ≤ PROG %
   let strzaly = 0, n = 0, sladSrodek = false;
@@ -270,6 +287,12 @@ try {
   console.log('strzały:', strzaly);
   report.strzaly = strzaly;
 
+  // --profil 1: profil CPU workera (Profiler CDP, 250 µs) od HP 0 przez upadek (najwyżej 40 s)
+  if (args.profil === '1') {
+    await wkSend('Profiler.enable');
+    await wkSend('Profiler.setSamplingInterval', { interval: 250 });
+    await wkSend('Profiler.start');
+  }
   // HP 0 habitatu — finał misji (storyGame._chainExplosion → upadek), okna co 2 s do osiadania
   await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat; S.deps.damageStation(st, st.hp + 10); return st.hp; })()`);
   const tFall = Date.now();
@@ -279,6 +302,12 @@ try {
     const r = await okno(`upadek-${i}`, 2, { slad: i === 2 });
     if (i === 3) await screenshotPng(cdp, join(out, '04-upadek.png'));
     if (r.upadek === 'settled') break;
+    if (args.profil === '1' && Date.now() - tFall > 40000) break;
+  }
+  if (args.profil === '1') {
+    const { profile } = await wkSend('Profiler.stop', {}, 120000);
+    writeFileSync(join(out, 'worker-upadek.cpuprofile'), JSON.stringify(profile));
+    console.log('profil workera:', join(out, 'worker-upadek.cpuprofile'));
   }
   await screenshotPng(cdp, join(out, '05-po-upadku.png'));
   await okno('po', CZAS_PO);
@@ -308,6 +337,7 @@ try {
   report.bledy.push(String(err?.stack || err));
 } finally {
   clearTimeout(watchdog);
+  if (balast) { report.balastKoniec = await balast.stan().catch(() => null); }
   const other = report.wkLogi.filter((l) => /warn|error|exception|pipeline sync|kompilacja w grze/.test(l.type + ' ' + l.text));
   for (const l of other.slice(0, 20)) console.log('  wk', l.type, l.s, l.text.slice(0, 220));
   console.log('raport:', join(out, 'raport.json'));
