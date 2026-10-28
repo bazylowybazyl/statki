@@ -102,9 +102,6 @@ Start w workerze (`start-sync-gra.mjs --query renderWorker=1`): 0 pipeline'ów s
 
 ## 5. Zostaje
 
-- Światła efektów z siatki świateł na proxy — w tym LAMPY HALI K-7 (`hallDust.js` → `grid.addWorld`): fragment proxy
-  czyta je tylko w wariancie z mapą ran (`hullEffectLights`), więc zapas floty na padach jest ciemnogranatowy, a po
-  awansie lotniskowiec robi się biały (największy skok przy awansie w hali; § 6.3).
 - Rozlew lamp proxy na sąsiednie kadłuby (`buildNavLightClusters`, reflektory jako emitery drogowe).
 - Lampy i gniazda edytora użytkownika (`hpEditor.v1` w localStorage) — proxy bierze domyślne `SHIP_EDITOR_DEFAULTS`.
 - Wieże proxy stoją w spoczynku (bez celowania i odrzutu); po awansie okręt z urazą obraca je na gracza — ruch, nie skok.
@@ -151,10 +148,17 @@ okrętów zapasu), w kadrze portu bez mierzalnej różnicy (modele poniżej prog
 próbek (±0,3 ms; ten sam kod w kolejnych przebiegach różni się bardziej niż A od B). Cień: w porcie proxy wypełniają limit
 passa shadow shafts (32 okludery) — GPU maski słońca w szumie powyżej. 0 pipeline'ów synchronicznych (worker i strona).
 
-### 6.3 Czego awans dalej nie wyrównuje
+### 6.3 Światła siatki na proxy (lampy hali K-7)
 
-- Światła hali K-7 i efektów (§ 5) — lotniskowiec zapasu: proxy ciemnogranatowe, NPC biały; to oświetlenie, nie
-  element, ale skok jest największy ze wszystkich.
+Lampy hali K-7 (`hallDust.js` → `grid.addWorld`) i światła efektów idą przez siatkę świateł; fragment kadłuba czytał je
+tylko w wariancie z mapą ran, więc zapas floty na padach był ciemnogranatowy, a po awansie lotniskowiec robił się biały
+(największy skok przy awansie w hali). Teraz `hullProxyFragmentNode` ma `effectLights: true` (flaga kontekstu
+`ctx.effectLights`, właściciel 0 w `perObject` proxy) — zrzut `.tmp/e17b/swiatla-w/ab-zapas.png` (proxy przed, proxy po,
+NPC). Koszt A/B/A/B (tylko shader): GPU klatki z proxy port 0,58 / 0,80, hala 1,41 / 1,10, hala z bliska 2,05 / 1,88 ms —
+rozrzut przebiegów ±0,4 ms, bez mierzalnej różnicy; CPU bez zmian.
+
+### 6.4 Czego awans dalej nie wyrównuje
+
 - Mostek proxy rysuje się na wszystkich komórkach pod modelem (u NPC część modelu nad brzegiem kadłuba bez węzła
   znika) — strefy leżą na kadłubie (strażnik `trafficHullData`), różnica tylko na krawędzi.
 - Wieże i lampy z edytora użytkownika (`hpEditor.v1`) — proxy domyślne.

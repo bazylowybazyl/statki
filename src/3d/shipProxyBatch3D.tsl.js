@@ -84,7 +84,9 @@ function buildGraph() {
     uShipLightCount: round(vB.z),
     uEngineZoneCount: round(vD.w),
     uLightBase: round(vD.z),
-    uLacquerGlint: vB.w
+    uLacquerGlint: vB.w,
+    // światła efektów z siatki: proxy nie ma własnych świateł w siatce (właściciel 0 — nic nie pomija)
+    uGridOwner: float(0.0)
   };
 
   const cutDiscard = (spriteUV) => {

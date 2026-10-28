@@ -584,7 +584,7 @@ function hullDamageLacquer(ctx, weight) {
 // wiązki) jako DODATKOWE światła poszycia (× albedo z osmaleniem, normalna ctx.worldNormal,
 // punkt z pozycji widoku — dokładny przy 5–10 mln j.). Lampy statku (payload) zostają w pętli wyżej.
 function hullEffectLights(ctx) {
-  if (!ctx.damage) return vec3(0.0);
+  if (!ctx.effectLights) return vec3(0.0);
   // Oświetlenie v2: ten sam BRDF co słońce i zanik skupiony do jądra (błysk lufy nie bieli całego
   // kadłuba); klasyczny — model dema broni (Lambert z zawinięciem, Blinn–Phong). Jednolity warunek.
   const out = vec3(0.0).toVar();
@@ -714,6 +714,8 @@ function hullFragmentNode(opts) {
     }
 
     const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true, P, patchK };
+    // Światła efektów z siatki (błyski, trafienia, światła pola i LAMPY HALI K-7): skóra z mapą ran i proxy statków ruchu.
+    ctx.effectLights = opts.effectLights === undefined ? ctx.damage : opts.effectLights === true;
     hullDamageSurface(ctx);
 
     const out = vec3(0.0).toVar();
@@ -1013,12 +1015,13 @@ function hullFragmentNode(opts) {
 /**
  * Fragment pełnego kadłuba dla PROXY statków ruchu v2 (E17, shipProxyBatch3D.tsl.js): ten sam graf co skóra belek
  * (oświetlenie v2 z mapą powierzchni, lakier, glow, lampy statku i strefy dysz z HullLightStore, maska słońca, ośrodek
- * pasa) — bez mapy ran, świateł efektów z siatki, maskowania, warpa i żaru (to ma dopiero NPC po awansie).
+ * pasa, światła efektów z siatki — błyski, światła pola i lampy hali K-7, E17b) — bez mapy ran, maskowania, warpa
+ * i żaru (to ma dopiero NPC po awansie).
  * `perObject` — węzły wartości z instancji (klucze jak objectStoreNodesFor + uRotCS), tekstury per obiekt z
  * `material.uniforms` (uSprite, uSurfaceMap, uShapeMap, uNormalMap). Zmieniając fragment kadłuba, zmieniasz i proxy.
  */
 export function hullProxyFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard = null }) {
-  return hullFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false });
+  return hullFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false, effectLights: true });
 }
 
 // Fragment warstwy DIST maskowania: RG — przesunięcie tła w px bufora (osie sceny), B / A — maska ekranu
