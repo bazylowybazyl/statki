@@ -424,8 +424,11 @@ export function* fragmentSkinSubset3DSteps(geo, body, lat) {
 // Podzbiory odłamów w budżecie klatki: egzemplarz z kolejki dostaje generator na każdą DOSTĘPNĄ geometrię (bryła 3D
 // ma dwie siatki na zestaw — pod / nad płaszczyzną gry — podzbiór liczony raz na geometrię); krok po kroku, aż do
 // końca budżetu, następna klatka kontynuuje. Gotowy podzbiór idzie od razu do partii skóry kawałka (addToSkinBatch).
+// Co najmniej jeden krok na klatkę (jak budowa ciał w worldBodies.js): budżet sprawdzany PRZED pierwszym krokiem przy
+// zagłodzonym wątku (wywłaszczenie ≥ SUBSET_MS między odczytami zegara) nie dawał postępu w żadnej klatce.
 function runSubsets(t0) {
-  while (_subsetQueue.length && performance.now() - t0 < SUBSET_MS) {
+  let stepped = false;
+  while (_subsetQueue.length && (!stepped || performance.now() - t0 < SUBSET_MS)) {
     const inst = _subsetQueue[0];
     const hull = inst.entity?.beamHull;
     const skin = inst.piece?.__skin;
@@ -457,6 +460,7 @@ function runSubsets(t0) {
     }
     const s0 = performance.now();
     let r = w.it.next();
+    stepped = true;
     while (!r.done && performance.now() - t0 < SUBSET_MS) r = w.it.next();
     const ms = performance.now() - s0;
     if (ms > WORLD_SKIN_STATS.subsetPeakMs) WORLD_SKIN_STATS.subsetPeakMs = ms;
