@@ -1338,8 +1338,11 @@ export const PerfHUD = {
         const fps3d = dt > 0.2 ? Math.round((c - prev.c) / dt) : (this._w3dLast || 0);
         if (dt > 0.2) { prev.t = now; prev.c = c; this._w3dLast = fps3d; }
         const st = h.stats, age = h.pacing && h.pacer ? `wiek ${h.pacer.age}` : 'bez kolejki';
-        e.worker3D.textContent = `${fps3d} kl/s · ${age} · CPU ${(st[6] || 0).toFixed(1)} · GPU ${(st[0] || 0).toFixed(1)} ms`;
-        e.worker3D.style.color = (d.fpsReal > 0 && fps3d < d.fpsReal * 0.9) ? '#fd4' : '';
+        // GPU = passy render + listy compute (bloom, gaz, efekty) ze znaczników; kolejka = koniec zgłoszeń klatki →
+        // wykonanie na GPU (każda praca karty, także bez znaczników) — ponad ~2 klatki: karta nie nadąża
+        const queueMs = st[20] || 0;
+        e.worker3D.textContent = `${fps3d} kl/s · ${age} · CPU ${(st[6] || 0).toFixed(1)} · GPU ${(st[0] || 0).toFixed(1)}+${(st[1] || 0).toFixed(1)} · kolejka ${queueMs.toFixed(0)} ms`;
+        e.worker3D.style.color = queueMs > 50 ? '#f44' : (d.fpsReal > 0 && fps3d < d.fpsReal * 0.9) ? '#fd4' : '';
       } else e.worker3D.textContent = 'wyłączony';
     }
     if (e.framePercentiles) e.framePercentiles.textContent = `${d.frameP50.toFixed(1)} / ${d.frameP95.toFixed(1)} ms`;

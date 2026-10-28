@@ -1053,6 +1053,16 @@ if (isWorker) {
     f[R.CPU_RENDER_MS] = t2 - t1;
     f[R.CPU_FRAME_MS] = performance.now() - t0;
     if (Number.isFinite(Core3D.gpuFrameMs)) f[R.GPU_FRAME_MS] = Core3D.gpuFrameMs;
+    if (Number.isFinite(Core3D.gpuComputeMs)) f[R.GPU_COMPUTE_MS] = Core3D.gpuComputeMs;
+    // Opóźnienie kolejki GPU (PerfHUD „kolejka”): od końca zgłoszeń tej klatki do wykonania wszystkiego na GPU — co 8.
+    // klatkę, jedno zapytanie w locie. Znaczniki czasu widzą tylko passy i listy compute; ta liczba łapie każdą pracę GPU
+    // (wysyłki, kopie, kompilacje, presentację) — przy zapchanej karcie rośnie ponad okres klatki.
+    const dev = st.qLatBusy ? null : Core3D.renderer?.backend?.device;
+    if (dev && (st.frames & 7) === 0) {
+      st.qLatBusy = true;
+      const tq = performance.now();
+      dev.queue.onSubmittedWorkDone().then(() => { st.qLatBusy = false; f[R.GPU_QUEUE_MS] = performance.now() - tq; }, () => { st.qLatBusy = false; });
+    }
     // pierścień czasów CAŁEJ klatki workera (lustra → bitmapa) dla narzędzi (A/B w bitwie — profil-bitwy-flot --wkAb)
     const ft = frameTimes;
     ft.ms[ft.n & 8191] = t2 - tPage; ft.n++;

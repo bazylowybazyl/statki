@@ -71,6 +71,9 @@ export const RET_F64 = Object.freeze({
   W_MSG_RENDERS: 17,
   W_MSG_LAG_SUM: 18,      // suma opóźnień wiadomości `frame` (wysyłka strony → odbiór w workerze, ms epoki) i ich liczba
   W_MSG_N: 19,
+  // opóźnienie kolejki GPU (2026-10-28): od końca zgłoszeń klatki workera do onSubmittedWorkDone — próbka co kilka klatek,
+  // jedno zapytanie w locie. Rośnie ponad okres klatki, gdy GPU nie nadąża (compute, wysyłki, praca spoza znaczników)
+  GPU_QUEUE_MS: 20,
   COUNT: 32
 });
 
