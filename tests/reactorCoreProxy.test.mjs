@@ -116,3 +116,19 @@ test('moduł proxy nie importuje src/game (szew renderu) — rdzenie z src/data'
   assert.doesNotMatch(src, /from '\.\.\/game\//);
   assert.match(src, /trafficCoreMarker/);
 });
+
+test('cień SDF proxy: kandydat okludera w zasięgu kadru + 30 tys. j. (także tuż poza kadrem), bez drobnicy', () => {
+  const cam = { x: 0, y: 0, zoom: 0.5 };
+  // pierwsza klatka tworzy rodzaj (obraz z resolvera), druga ma już kandydata cienia
+  ShipProxyBatch3D.update([{ courseId: 41, hullId: 'container_ship', x: 0, y: 0, angle: 0 }], 1, cam);
+  ShipProxyBatch3D.update([{ courseId: 41, hullId: 'container_ship', x: 0, y: 0, angle: 0 }], 1, cam);
+  assert.equal(ShipProxyBatch3D.stats.shadows, 1);
+  // poza kadrem (bez rysunku), ale w zasięgu cienia
+  ShipProxyBatch3D.update([{ courseId: 41, hullId: 'container_ship', x: 9000, y: 0, angle: 0 }], 1, cam);
+  assert.equal(ShipProxyBatch3D.stats.drawn, 0);
+  assert.equal(ShipProxyBatch3D.stats.shadows, 1);
+  ShipProxyBatch3D.update([{ courseId: 41, hullId: 'container_ship', x: 200000, y: 0, angle: 0 }], 1, cam);
+  assert.equal(ShipProxyBatch3D.stats.shadows, 0);
+  const src = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
+  assert.match(src, /packHullShaftOccluder\(shaftOccluderScratch, 0, c\.ex, c\.ey, -c\.proxy\.angle, 1, 1, occ\.layout, occ\.layer, strength\)/);
+});

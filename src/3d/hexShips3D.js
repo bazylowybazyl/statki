@@ -777,6 +777,10 @@ export function setProxyLightViews(list, getGrid) {
 
 // Modele dysz SIDE proxy (E17b): `fn()` dopisuje rekordy klatki do SideNozzleFrame — po EngineVfxSystem.update.
 let _proxyNozzleSource = null;
+// Okludery cieni proxy statków ruchu (E17b): `() → { list, count }` widoków { x, y, angle, grid, size } tej klatki
+// (shipProxyBatch3D.js) — dochodzą do kolejki okluderów shadow shafts obok kadłubów (od największych, ten sam limit).
+let _proxyShadowSource = null;
+export function setProxyShadowSource(fn) { _proxyShadowSource = typeof fn === 'function' ? fn : null; }
 export function setProxyNozzleSource(fn) {
   _proxyNozzleSource = typeof fn === 'function' ? fn : null;
 }
@@ -1606,6 +1610,15 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       if (Math.abs(ex - camX) > occluderReach || Math.abs(ey - camY) > occluderReach) continue;
       cands.push({ entity, grid, size, ex, ey, scaleX, scaleY });
     }
+    // Proxy statków ruchu: sylwetka z siatki komórek rodzaju ∩ alfa sprite'a (jak kadłub NPC po awansie), poza z proxy.
+    if (_proxyShadowSource !== null) {
+      const ps = _proxyShadowSource();
+      for (let i = 0; i < ps.count; i++) {
+        const v = ps.list[i];
+        if (Math.abs(v.x - camX) > occluderReach || Math.abs(v.y - camY) > occluderReach) continue;
+        cands.push({ entity: null, proxy: v, grid: v.grid, size: v.size, ex: v.x, ey: v.y, scaleX: 1, scaleY: 1 });
+      }
+    }
     lodFrameStats.shaftCands = cands.length;
     if (cands.length > 1) cands.sort((a, b) => b.size - a.size);
     let pushed = 0;
@@ -1617,6 +1630,12 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       // null = sylwetka czeka na pieczenie (budżet klatki) — cień od następnej.
       const occ = HullShadowSdf.acquire(c.grid, now);
       if (!occ) continue;
+      if (c.entity === null) {
+        packHullShaftOccluder(shaftOccluderScratch, 0, c.ex, c.ey, -c.proxy.angle, 1, 1, occ.layout, occ.layer, strength);
+        if (!Core3D.pushShaftHullSdf(shaftOccluderScratch, 0)) break;
+        pushed++;
+        continue;
+      }
       const interpPose = getInterpolatedRenderPose(c.entity);
       const px = interpPose ? interpPose.x : c.ex;
       const py = interpPose ? interpPose.y : c.ey;

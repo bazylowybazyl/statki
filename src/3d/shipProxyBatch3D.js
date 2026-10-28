@@ -43,7 +43,7 @@ import { zbierzZakres } from './zakresyWysylki.js';
 import { PROXY_SHARED, PROXY_INSTANCE_STRIDE, ShipProxyNodeMaterial, createProxyGeometry } from './shipProxyBatch3D.tsl.js';
 import {
   acquireProxyHullLook, refreshProxyHullLook, releaseProxyHullLook, hullLacquerGlintAt, setProxyLightViews, setProxyNozzleSource,
-  PROXY_LIGHT_SHADER_MIN_PX
+  setProxyShadowSource, PROXY_LIGHT_SHADER_MIN_PX
 } from './hexShips3D.js';
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
@@ -329,6 +329,61 @@ function considerTurrets(key, info, x, y, angle, opacity, pirate) {
   F.list[F.count++] = g;
 }
 
+// Cień SDF proxy (E17b): siatka komórek rodzaju (bok jak siatka belek NPC, 15 j.) pokrywa cały sprite, sylwetkę tnie
+// alfa sprite'a (HullShadowSdf: komórki ∩ alfa ≥ 0,5 — jak kadłub NPC, którego węzły powstały z tej alfy). Jedna
+// warstwa na rodzaj (wpis szablonu HullShadowSdf), widoki tej klatki → kolejka okluderów updateHexShips3D (od
+// największych, w zasięgu kadru + 30 tys. j. jak kadłuby — także proxy tuż poza kadrem).
+const SHADOW_CELL = 15;
+const SHADOW_MIN_SIZE = 40;
+const shadowViews = [];
+const shadowFrame = { list: shadowViews, count: 0 };
+setProxyShadowSource(() => shadowFrame);
+
+function shadowGridFor(info, kind) {
+  if (info.shadowGrid !== undefined && info.shadowGrid?.armorImage === kind.image) return info.shadowGrid;
+  const nx = Math.max(1, Math.ceil(info.w / SHADOW_CELL));
+  const ny = Math.max(1, Math.ceil(info.h / SHADOW_CELL));
+  const n = nx * ny;
+  const cellX = new Float32Array(n);
+  const cellY = new Float32Array(n);
+  const sx = info.w / nx;
+  const sy = info.h / ny;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      cellX[i + j * nx] = (i + 0.5) * sx;
+      cellY[i + j * nx] = (j + 0.5) * sy;
+    }
+  }
+  info.shadowGrid = {
+    cellX, cellY, cellActive: new Uint8Array(n).fill(1), cellCount: n,
+    cellRadius: Math.max(sx, sy) * 0.72,
+    srcWidth: info.w, srcHeight: info.h, pivot: { x: 0, y: 0 },
+    armorImage: kind.image, visualImage: kind.image, isFragment: false, activeStructuralCount: n
+  };
+  return info.shadowGrid;
+}
+
+function considerShadow(info, x, y, angle, opacity) {
+  if (!(opacity > 0.5) || frame.free) return;
+  const size = Math.max(info.w, info.h);
+  if (size < SHADOW_MIN_SIZE) return;
+  const kind = info.kind;
+  if (!kind) return;
+  const reach = Math.max(frame.halfW, frame.halfH) + 30000;
+  if (Math.abs(x - frame.camX) > reach || Math.abs(y - frame.camY) > reach) return;
+  let v = shadowViews[shadowFrame.count];
+  if (!v) {
+    v = { x: 0, y: 0, angle: 0, grid: null, size: 0 };
+    shadowViews[shadowFrame.count] = v;
+  }
+  shadowFrame.count++;
+  v.x = x;
+  v.y = y;
+  v.angle = angle;
+  v.grid = shadowGridFor(info, kind);
+  v.size = size;
+}
+
 function pruneProxyCores() {
   for (const [key, core] of proxyCores) if (frameNo - core.__seen > IDLE_DETACH_FRAMES) proxyCores.delete(key);
   for (const [key, g] of turretGroups) if (frameNo - g.seen > IDLE_DETACH_FRAMES) turretGroups.delete(key);
@@ -384,6 +439,7 @@ const stats = {
   cores: 0,
   bridges: 0,
   turretProxies: 0,
+  shadows: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -862,6 +918,7 @@ export const ShipProxyBatch3D = {
     proxyCoreList.length = 0;
     bridgeViewCount = 0;
     ProxyTurretFrame.count = 0;
+    shadowFrame.count = 0;
   },
 
   /**
@@ -885,6 +942,8 @@ export const ShipProxyBatch3D = {
       const pa = actor.prevAngle;
       if (Number.isFinite(pa)) angle = pa + wrapPi(angle - pa) * t;
     }
+    // cień SDF — także proxy tuż poza kadrem (cień wpada w kadr), przed przycięciem rysunku
+    if (frame.active && Number.isFinite(x) && Number.isFinite(y)) considerShadow(info, x, y, angle, actor.proxyOpacity ?? 1);
     if (!this._draw(info, x, y, angle, actor.proxyOpacity ?? 1, actor)) return false;
     considerCore(actor.courseId ?? actor, info, x, y, angle, actor.proxyOpacity ?? 1, actor.pirate === true);
     considerTurrets(actor.courseId ?? actor, info, x, y, angle, actor.proxyOpacity ?? 1, actor.pirate === true);
@@ -904,6 +963,7 @@ export const ShipProxyBatch3D = {
   push(key, hullOrClass, x, y, angle, opts = null) {
     const info = hullInfoFor(hullOrClass);
     if (!info) return false;
+    if (frame.active && Number.isFinite(x) && Number.isFinite(y)) considerShadow(info, x, y, angle || 0, opts?.opacity ?? 1);
     if (!this._draw(info, x, y, angle || 0, opts?.opacity ?? 1, opts?.ref ?? key)) return false;
     considerCore(key, info, x, y, angle || 0, opts?.opacity ?? 1, opts?.pirate === true);
     considerTurrets(key, info, x, y, angle || 0, opts?.opacity ?? 1, opts?.pirate === true);
@@ -1037,6 +1097,7 @@ export const ShipProxyBatch3D = {
     stats.cores = proxyCoreList.length;
     stats.bridges = bridgeViewCount;
     stats.turretProxies = ProxyTurretFrame.count;
+    stats.shadows = shadowFrame.count;
     stats.kinds = live;
     stats.drawCalls = drawCalls;
     const ms = performance.now() - frame.t0;
@@ -1055,6 +1116,7 @@ export const ShipProxyBatch3D = {
       nzCount = 0;
       proxyCoreList.length = 0;
       ProxyTurretFrame.count = 0;
+      shadowFrame.count = 0;
       return;
     }
     this.begin(camera, options);
@@ -1076,6 +1138,7 @@ export const ShipProxyBatch3D = {
       nzCount = 0;
       proxyCoreList.length = 0;
       ProxyTurretFrame.count = 0;
+      shadowFrame.count = 0;
       return;
     }
     this.begin(camera);
@@ -1130,6 +1193,7 @@ export const ShipProxyBatch3D = {
     proxyCores.clear();
     turretGroups.clear();
     ProxyTurretFrame.count = 0;
+    shadowFrame.count = 0;
     kindList.length = 0;
     kinds.clear();
     hullInfos.clear();
