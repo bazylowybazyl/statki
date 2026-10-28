@@ -78,6 +78,9 @@ const WARP_BOOST_SPEED = 1200;
 // Billboardy lamp pozycyjnych (ShipLights3D) od tego promienia kadłuba na ekranie — jak
 // buildPositionLightWorldSprites (poniżej i tak pomija); widoków nie budujemy na zapas.
 const LIGHT_VIEW_MIN_PX = 2.5;
+// Lampy proxy w puli billboardów ShipLights3D (MAX_NAV_LIGHT_SPRITES 512, wspólna z NPC — pełne kadłuby idą pierwsze):
+// setki cywilów przy porcie × 6 lamp to kilka razy więcej — przy nadmiarze zostają kadłuby największe na ekranie.
+const PROXY_LIGHT_SPRITE_BUDGET = 384;
 
 // Wspólne węzły uniformów (grupa renderu) — jeden zapis na klatkę dla wszystkich rodzajów.
 const lightUniforms = PROXY_SHARED;
@@ -91,6 +94,10 @@ const engineRecords = new Map();  // klucz proxy → { view, frame }
 // Widoki lamp pozycyjnych tej klatki (pula obiektów wielokrotnego użytku) — billboardy w updateHexShips3D.
 const lightViewPool = [];
 const lightViews = [];
+// Promień kadłuba widoku na ekranie [px], klucze sortu i znaczniki budżetu lamp (trimLightViews) — bez alokacji.
+const lightViewPx = new Float32Array(MAX_PICK);
+const lightViewKeys = new Float64Array(MAX_PICK);
+const lightViewKeep = new Uint8Array(MAX_PICK);
 setProxyLightViews(lightViews, (view) => view.__proxyGrid);
 let imageResolver = null;
 let engineLayoutResolver = null;
@@ -137,6 +144,7 @@ const stats = {
   engines: 0,
   nozzles: 0,
   lights: 0,
+  lightsDropped: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -269,18 +277,20 @@ function editorEntryFor(info) {
 }
 
 // Blok lamp kadłuba jako widok encji (shipLightRuntime: `editorLights` + skala hardpointu px PNG → j. świata) —
-// to samo, co NPC po awansie dostaje z applyLayoutToNpc: okręt (wpis pełny) ma lampy, cywil (`sideOnly`) — nie.
+// to samo, co NPC po awansie dostaje z edytora: okręt — lampy wpisu pełnego z reflektorami otoczenia, cywil (`sideOnly`)
+// — lampy pozycyjne z src/data/trafficHullLights.js bez reflektorów (`autoFlood: false`, applySideOnlyLayout).
 // Raz na kadłub; obiekt `editorLights` wspólny dla wszystkich widoków (pamięć normalizacji lamp po źródle).
 function lightBlockFor(info) {
   if (info.lights !== undefined) return info.lights;
   const cfg = editorEntryFor(info);
-  const L = cfg && cfg.sideOnly !== true ? cfg.lights : null;
+  const L = cfg ? cfg.lights : null;
   const any = L && ((L.position?.length || 0) + (L.road?.length || 0) + (L.flood?.length || 0)) > 0;
   info.lights = any ? {
     editorLights: {
       position: Array.isArray(L.position) ? L.position : [],
       road: Array.isArray(L.road) ? L.road : [],
-      flood: Array.isArray(L.flood) ? L.flood : []
+      flood: Array.isArray(L.flood) ? L.flood : [],
+      autoFlood: L.autoFlood !== false
     },
     sx: info.w / info.def.png[0],
     sy: info.h / info.def.png[1]
@@ -313,7 +323,7 @@ function lookSpecFor(info) {
     lightView: block ? {
       x: 0, y: 0, angle: 0, radius: info.radius, dead: false, isTrafficProxy: true,
       editorLights: block.editorLights, __hardpointScaleX: block.sx, __hardpointScaleY: block.sy,
-      __proxyGrid: info.grid
+      __proxyGrid: info.grid, __lightN: block.editorLights.position.length
     } : null,
     grid: info.grid,
     main: engineLayoutFor(info)?.mainThrusters || null,
@@ -468,6 +478,31 @@ function considerEngines(key, info, x, y, angle, vx, vy, throttle, speed, warp) 
   engineCand[engineCandCount] = view;
   engineCandPx[engineCandCount] = frame.free ? 1 : nozzlePx;
   engineCandCount++;
+}
+
+// Budżet lamp proxy (PROXY_LIGHT_SPRITE_BUDGET lamp): przy nadmiarze zostają widoki kadłubów największych na ekranie —
+// klucz (−px) · 4096 + indeks w tablicy typowanej (sort bez komparatora i alokacji), kolejność widoków zachowana.
+function trimLightViews() {
+  const n = lightViews.length;
+  let total = 0;
+  for (let i = 0; i < n; i++) total += lightViews[i].__lightN;
+  stats.lightsDropped = 0;
+  if (total <= PROXY_LIGHT_SPRITE_BUDGET) return;
+  const keys = lightViewKeys.subarray(0, n);
+  for (let i = 0; i < n; i++) keys[i] = -Math.round(lightViewPx[i] * 16) * 4096 + i;
+  keys.sort();
+  lightViewKeep.fill(0, 0, n);
+  let sum = 0;
+  for (let k = 0; k < n; k++) {
+    const i = ((keys[k] % 4096) + 4096) % 4096;
+    sum += lightViews[i].__lightN;
+    if (sum > PROXY_LIGHT_SPRITE_BUDGET) break;
+    lightViewKeep[i] = 1;
+  }
+  let w = 0;
+  for (let i = 0; i < n; i++) if (lightViewKeep[i]) lightViews[w++] = lightViews[i];
+  stats.lightsDropped = n - w;
+  lightViews.length = w;
 }
 
 // Budżet dysz: przy nadmiarze zostają największe na ekranie (próg z sortu typowanej
@@ -675,9 +710,11 @@ export const ShipProxyBatch3D = {
     M[o + 15] = hullLacquerGlintAt(bodyPx);
     M[o + 16] = look.lightBase; M[o + 17] = look.zoneCount; M[o + 18] = 1; M[o + 19] = 0;
 
-    // Lampy pozycyjne (billboardy FG): widok z pozą instancji — okręty z blokiem lamp (cywile go nie mają). Pod
+    // Lampy pozycyjne (billboardy FG): widok z pozą instancji — kadłuby z blokiem lamp (okręty, cywile — E17). Pod
     // zamkniętym dachem hali K-7 / zatoki (zapas floty na padach) kadłub zasłania dach, billboardów FG — nie: bez nich.
-    if (look.lightView && info.radius * frame.zoom >= LIGHT_VIEW_MIN_PX && opacity > 0.01 && !RoofCover.covers(x, y)) {
+    const lightPx = info.radius * frame.zoom;
+    if (look.lightView && lightPx >= LIGHT_VIEW_MIN_PX && opacity > 0.01 && lightViews.length < MAX_PICK && !RoofCover.covers(x, y)) {
+      lightViewPx[lightViews.length] = lightPx;
       let view = lightViewPool[lightViews.length];
       if (!view) {
         view = { ...look.lightView };
@@ -734,6 +771,7 @@ export const ShipProxyBatch3D = {
     }
     for (let i = pickCount; i < MAX_PICK && pickRef[i] !== null; i++) pickRef[i] = null;
     flushEngines(this.engineEntities);
+    trimLightViews();
     stats.lights = lightViews.length;
     stats.kinds = live;
     stats.drawCalls = drawCalls;

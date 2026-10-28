@@ -116,7 +116,7 @@ test('rodzaj rośnie ponad pojemność początkową bez gubienia instancji', () 
   assert.ok(Math.abs(dataOf(meshes[0])[69 * PROXY_INSTANCE_STRIDE + 12] - 690) < 1e-6);
 });
 
-test('wygląd rodzaju (E17): lampy okrętu w slocie HullLightStore z bramką promienia, cywil bez lamp, strefy dysz, odblask', () => {
+test('wygląd rodzaju (E17): lampy w slocie HullLightStore z bramką promienia, lampy cywila, strefy dysz, odblask', () => {
   const near = { x: cam.x, y: cam.y, zoom: 0.5 };
   const destroyer = actor({ id: 'haul-00050', hull: 'terran_destroyer', x: near.x, y: near.y });
   const freighter = actor({ id: 'haul-00051', hull: 'container_ship', x: near.x + 1200, y: near.y });
@@ -131,9 +131,9 @@ test('wygląd rodzaju (E17): lampy okrętu w slocie HullLightStore z bramką pro
   assert.equal(D[18], 1, 'waga lakieru');
   assert.ok(D[15] > 0.99, 'duży na ekranie — pełny odblask lakieru');
   const F = dataOf(meshOf('container_ship.png'));
-  assert.equal(F[14], 0, 'cywil (wpis edytora sideOnly) bez lamp — jak NPC po awansie');
+  assert.equal(F[14], 6, 'cywil: 6 lamp pozycyjnych z src/data/trafficHullLights.js, bez reflektorów otoczenia');
   assert.ok(F[17] > 0, 'cywil ma strefy dysz MAIN / SIDE');
-  assert.equal(ShipProxyBatch3D.stats.lights, 1, 'jeden widok lamp pozycyjnych (billboardy) — niszczyciel');
+  assert.equal(ShipProxyBatch3D.stats.lights, 2, 'widoki lamp pozycyjnych (billboardy) — niszczyciel i frachtowiec');
 
   // Daleko: bez lamp na blasze (promień < 4 px) i bez billboardów (< 2,5 px), odblask zgaszony.
   ShipProxyBatch3D.update([destroyer], 1, { ...near, zoom: 0.003 });
@@ -141,6 +141,18 @@ test('wygląd rodzaju (E17): lampy okrętu w slocie HullLightStore z bramką pro
   assert.equal(Far[14], 0);
   assert.equal(Far[15], 0);
   assert.equal(ShipProxyBatch3D.stats.lights, 0);
+});
+
+test('budżet lamp proxy w puli billboardów: przy nadmiarze zostają kadłuby największe na ekranie', () => {
+  const near = { x: cam.x, y: cam.y, zoom: 0.5 };
+  // 100 frachtowców × 6 lamp > budżet; jeden duży (ciężki frachtowiec) musi zostać.
+  const list = [];
+  for (let i = 0; i < 100; i++) list.push(actor({ id: `haul-3${i}`, hull: 'inter_station_shuttle', x: near.x + (i % 10) * 130 - 600, y: near.y + Math.floor(i / 10) * 70 - 350 }));
+  list.push(actor({ id: 'haul-39999', hull: 'heavy_freighter', x: near.x, y: near.y }));
+  ShipProxyBatch3D.update(list, 1, near);
+  const kept = ShipProxyBatch3D.stats.lights;
+  assert.ok(kept * 6 <= 384 && kept > 0, `widoków lamp ${kept}`);
+  assert.equal(ShipProxyBatch3D.stats.lightsDropped, 101 - kept);
 });
 
 test('dysze: widok encji z układem MAIN kadłuba, postój bez dysz, budżet na flotę', () => {

@@ -12,10 +12,13 @@ paths:
   - "src/3d/shipProxyBatch3D.js"
   - "src/3d/shipProxyBatch3D.tsl.js"
   - "src/3d/roofCover.js"
+  - "src/data/trafficHullLights.js"
+  - "scripts/lampy-cywilow.mjs"
   - "scripts/webgpu/ruch-banka-gra.mjs"
   - "scripts/webgpu/ruch-wyglad-gra.mjs"
   - "tests/shipProxyBatch3D.test.mjs"
   - "tests/shipProxyLook.test.mjs"
+  - "tests/trafficHullLights.test.mjs"
   - "tests/workerBubble.test.mjs"
   - "tests/trafficBubble.test.mjs"
   - "tests/trafficPromotion.test.mjs"
@@ -79,8 +82,9 @@ paths:
 ## Obraz
 
 - Proxy kadłubów `ShipProxyBatch3D` (bez `window` i `new Image()` — `RenderWorld.sun`, `loadImageBitmap`; rozgrzewka `proxy statków ruchu` w `Core3D.warmup`, faza `loading`): w trybie worker z bloku migawki `traffic` (`src/render/blocks/trafficBlock.js`, poza w chwili klatki, kadłub = indeks `TRAFFIC_HULL_IDS`), w `off` — `ShipProxyBatch3D.drawList` przed `updateHexShips3D`; dysze MAIN proxy jako widoki encji w liście kadłubów.
-- WYGLĄD PEŁNEGO KADŁUBA (E17, zgłoszenie „w doku szare, nieżywe; z bliska się wybudzają” — to był awans do NPC): proxy rysuje się fragmentem skóry belek (`hullProxyFragmentNode` w `hexShips3D.tsl.js` — oświetlenie v2 z mapą powierzchni, lakier, glow, lampy statku i strefy dysz z `HullLightStore`, maska słońca, ośrodek pasa; bez mapy ran, świateł efektów, maskowania, warpa i żaru). Partia: rysunek na rodzaj, instancja = `PROXY_INSTANCE_STRIDE` (20) liczb w jednym buforze z przeplotem, do fragmentu w kilku vec4. Wygląd rodzaju — `acquireProxyHullLook` (`hexShips3D.js`): tekstura, mapa powierzchni (768 px) i kształtu lakieru (192 px — mniejsze niż NPC: ~27 kadłubów przy porcie), slot lamp i stref rodzaju; lampy z wpisu edytora kadłuba jak NPC po awansie (okręt — tak, cywil `sideOnly` — nie). Zmiana fragmentu kadłuba zmienia proxy (jeden graf, test WGSL `tests/shipProxyLook.test.mjs`).
-- Lampy pozycyjne proxy = billboardy `ShipLights3D` (widoki `setProxyLightViews`, po kadłubach — ta sama pula 512), od 2,5 px promienia; pod ZAMKNIĘTYM DACHEM hali K-7 / zatoki (gracza w niej nie ma) bez nich — `RoofCover.covers(x, y)` (`src/3d/roofCover.js`, źródło `HaloRingGame.roofCovers`): dach zasłania kadłub, billboardów FG nie. Nowy emiter FG przy rzeczy stojącej w hali — ten sam test.
+- WYGLĄD PEŁNEGO KADŁUBA (E17, zgłoszenie „w doku szare, nieżywe; z bliska się wybudzają” — to był awans do NPC): proxy rysuje się fragmentem skóry belek (`hullProxyFragmentNode` w `hexShips3D.tsl.js` — oświetlenie v2 z mapą powierzchni, lakier, glow, lampy statku i strefy dysz z `HullLightStore`, maska słońca, ośrodek pasa; bez mapy ran, świateł efektów, maskowania, warpa i żaru). Partia: rysunek na rodzaj, instancja = `PROXY_INSTANCE_STRIDE` (20) liczb w jednym buforze z przeplotem, do fragmentu w kilku vec4. Wygląd rodzaju — `acquireProxyHullLook` (`hexShips3D.js`): tekstura, mapa powierzchni (768 px) i kształtu lakieru (192 px — mniejsze niż NPC: ~27 kadłubów przy porcie), slot lamp i stref rodzaju; lampy z wpisu edytora kadłuba jak NPC po awansie (okręt — z reflektorami otoczenia, cywil `sideOnly` — same pozycyjne z `src/data/trafficHullLights.js`, punkt „LAMPY CYWILÓW” niżej). Zmiana fragmentu kadłuba zmienia proxy (jeden graf, test WGSL `tests/shipProxyLook.test.mjs`).
+- LAMPY CYWILÓW (E17, decyzja orkiestratora 2026-10-28): każdy cywilny kadłub ruchu (wpis edytora `sideOnly`) ma lampy pozycyjne z tabeli `src/data/trafficHullLights.js` — biała dziobowa i rufowa, czerwona lewa (−y), zielona prawa (+y), frachtowce druga para burtowa, robocze pomarańczowe sygnalizatory; bez reflektorów otoczenia (`autoFlood: false`). Wpis edytora niesie je (`hardpointEditorDefaults.js`), NPC po awansie dostaje je w `applySideOnlyLayout` (gasną z komórką kadłuba — `liveLightsBlock`, i z maskowaniem), proxy — z bloku lamp rodzaju. Pozycje liczy ze sprite'a (krzyż ±6 px na kadłubie) `node scripts/lampy-cywilow.mjs`; nowy cywil albo nowy sprite → przeliczyć i wkleić (strażnik `tests/trafficHullLights.test.mjs`).
+- Lampy pozycyjne proxy = billboardy `ShipLights3D` (widoki `setProxyLightViews`, po kadłubach — ta sama pula 512; proxy najwyżej `PROXY_LIGHT_SPRITE_BUDGET` 384 lamp — przy nadmiarze zostają kadłuby największe na ekranie), od 2,5 px promienia; pod ZAMKNIĘTYM DACHEM hali K-7 / zatoki (gracza w niej nie ma) bez nich — `RoofCover.covers(x, y)` (`src/3d/roofCover.js`, źródło `HaloRingGame.roofCovers`): dach zasłania kadłub, billboardów FG nie. Nowy emiter FG przy rzeczy stojącej w hali — ten sam test.
 - PRZEJŚCIA: skóra NPC po awansie czyta mapy proxy tego samego kadłuba ruchu (`shipFrame`), póki własne się pieką (`mapWithFallback`). Powrót NPC do bańki: proxy w ostatniej pozie NPC (`noteTrafficReturn` / `trafficReturnPose`, `returnHold` 1,5 s) do pierwszego bufora z encją — inaczej 1–2 klatki bez statku. Przy awansie dochodzą modele 3D (dysze SIDE, mostek, rdzeń, wieże) i cień SDF — proxy ich nie ma (§ „Braki”). Opis, pomiary: `docs/E17-grafika-ruchu.md`.
 - Gabaryty: `hullFootprint` (`dockLayout.js`) przechodzi przez rejestr kadłubów ruchu (`trafficHullProfile`) — ten sam obrys mieści statek na stanowisku, rysuje proxy i dostaje trafienia.
 - W skoku gracza proxy od progu kropki soczewki świata wypadają z listy obrazu (`lensHideTrafficProxies` w `index.html`, po `trafficRenderFrame`; kropek nie mają — reguły `warp` i `kadluby-belki`).
@@ -88,7 +92,7 @@ paths:
 ## Braki (do zrobienia)
 
 - Lot NPC po ścieżce kursu (awansowany cywil ucieka albo stoi, okręt walczy — kurs stoi, dopóki NPC żyje); radar dla statków ruchu (`radarFeed.collect`); obsługa K-7 (ramiona) dla statków ruchu; lot z orbity do portu załadunku dla kursu, który firma zaczyna w innym porcie; dryf postoju (statki stoją); obrażenia od wiązek, rakiet i wybuchów obszarowych. Stan kadłubów ruchu — `docs/E6-banka-w-grze.md` § „Braki kadłubów ruchu”.
-- Obraz proxy (E17, `docs/E17-grafika-ruchu.md` § 5): modele 3D (dysze SIDE, mostek, obudowa rdzenia, wieże), cień SDF, światła efektów, rozlew lamp proxy na sąsiednie kadłuby, lampy cywilów (brak też u NPC), lampy z edytora użytkownika (proxy — domyślne). Powrót do bańki: statek z redy wraca na dowolny wolny slot (bywa daleko albo poza slotami z obrazem), kurs w podejściu po `detach` nie zawsze wraca do kandydatów — znika (tylko > 20 tys. j. od gracza).
+- Obraz proxy (E17, `docs/E17-grafika-ruchu.md` § 5): modele 3D (dysze SIDE, mostek, obudowa rdzenia, wieże), cień SDF, światła efektów, rozlew lamp proxy na sąsiednie kadłuby, lampy z edytora użytkownika (proxy — domyślne); megafrachtowiec bez lamp. Powrót do bańki: statek z redy wraca na dowolny wolny slot (bywa daleko albo poza slotami z obrazem), kurs w podejściu po `detach` nie zawsze wraca do kandydatów — znika (tylko > 20 tys. j. od gracza).
 
 ## Jak sprawdzać
 

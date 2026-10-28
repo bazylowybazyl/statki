@@ -31,7 +31,7 @@ Czego proxy brakowało względem pełnego NPC:
 
 Cywile (wpisy edytora `sideOnly`: frachtowce, górnicy, tankowiec…) lamp nie mają — także jako NPC po awansie.
 
-## 2. Poprawka (zrobione: 1–5)
+## 2. Poprawka (zrobione: 1–5 i lampy cywilów)
 
 - Proxy rysuje się FRAGMENTEM PEŁNEGO KADŁUBA: `hullProxyFragmentNode` (`hexShips3D.tsl.js`) = fragment skóry
   belek bez mapy ran, świateł efektów, maskowania, warpa i żaru. Haki fragmentu: `perObject.uRotCS` (obrót z
@@ -50,6 +50,15 @@ Cywile (wpisy edytora `sideOnly`: frachtowce, górnicy, tankowiec…) lamp nie m
   (gracza w niej nie ma) bez nich: dach zasłania kadłub (kolejność passów), billboardów FG — nie
   (`RoofCover.covers(x, y)`, `src/3d/roofCover.js`; źródło `HaloRingGame.roofCovers` — obrys hali w hubie, jak
   obrys gracza). Przed tym: czerwone lampy zapasu floty prześwitywały przez dach hali.
+- LAMPY CYWILÓW (decyzja orkiestratora 2026-10-28: „jakby nieżywe” — światła są tu ważne): `src/data/trafficHullLights.js` —
+  biała dziobowa i rufowa na osi, czerwona lewa i zielona prawa burta przy 60% długości, frachtowce druga para przy
+  20%, kadłuby robocze (górnicy, holowniki, złomiarz, tankowiec, ratownik, dron) pomarańczowe sygnalizatory; bez
+  reflektorów otoczenia. Pozycje ze sprite'ów (`scripts/lampy-cywilow.mjs`: alfa > 0,5, wcięcie od krawędzi, krzyż
+  ±6 px na kadłubie — lampa wiąże się z komórką siatki belek). Wpisy edytora `sideOnly` je niosą; NPC po awansie
+  (`applySideOnlyLayout` → `editorLights`, gasną z komórką kadłuba i z maskowaniem), proxy z bloku lamp rodzaju.
+  BUDŻET: pula billboardów `ShipLights3D` ma 512 lamp na wszystko — przy porcie ~150 cywilów w kadrze × 6 lamp; proxy
+  biorą najwyżej 384 (`PROXY_LIGHT_SPRITE_BUDGET`, po pełnych NPC), przy nadmiarze zostają kadłuby największe na
+  ekranie (sort klucza w tablicy typowanej, bez alokacji). Z daleka (promień < 2,5 px) bez billboardów.
 - PAMIĘĆ: mapy proxy mniejsze niż NPC — powierzchnia 768 px (1,6 MB zamiast ~6 MB na kadłub), kształt lakieru
   192 px (wypiek na wątku renderu ~3 ms zamiast ~10); obraz proxy to osobny obiekt (gra nie podaje resolvera
   obrazków; worker — własne ImageBitmap), mapy się nie mieszają. Wypieki są niezależne od rozdzielczości (ułamki
@@ -79,7 +88,6 @@ Ziemi 0,045, zatok 0,12, hali K-7 0,2; „przed” przez `HULLFALL_AB_DIR` ze st
 
 - Modele 3D na proxy: dysze SIDE, mostek, obudowa rdzenia, wieże okrętów (partie instancji na rodzaj modelu; dane
   edytora po stronie renderu — dziś liczy je `npcHardpointRuntime.js` w grze).
-- Lampy pozycyjne cywilów (nie mają ich także NPC — dane edytora).
 - Cień SDF proxy w masce słońca, światła efektów (błyski) na proxy, rozlew lamp proxy na sąsiednie kadłuby
   (`buildNavLightClusters`, reflektory jako emitery drogowe).
 - Lampy edytora użytkownika (`hpEditor.v1` w localStorage) — proxy bierze domyślne `SHIP_EDITOR_DEFAULTS`.
