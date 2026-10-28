@@ -177,4 +177,11 @@ Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, straż
   wysokości bufora, sufit podkroków pod obciążeniem); pole skóry odłamów (wyżej; profil CPU workera w upadku B2:
   `writeHullSkinField` 9,8% pracy workera — pierwsza pozycja po partii skór, `renderObject` three 34% pracy wobec 53% w A2,
   worker zajęty 55% czasu wobec 65%); nierówny takt poniżej odświeżania.
-- Zasadzka (wyrwanie z warpa): pomiar `gpu-zasadzka-gra.mjs` przy wolnej maszynie.
+- Zasadzka (wyrwanie z warpa): pierwszy pomiar (`gpu-zasadzka-gra.mjs --okno 1 --zoom 0.035`, `.tmp/gpu-zasadzka-B`)
+  NIE trafił w zasadzkę — skok dev `?story=ambush` zostawia Atlasa w hali K-7 (użytkownik widział go tam przez ~60 s),
+  faza `ambush` kończy się od razu jako „w domu” (`api.dock.nearHall`), misja przechodzi do `return` i dokuje
+  (`dockReturn`). Zmierzone wyjście z warpa PRZY ZIEMI (powrót): ~143 kl/s obrazu przez kurs, skok i ~2 s po wyjściu
+  (CPU workera 6–7 ms, wysyłki 1–1,4 MB na klatkę, `pass:bg` do 9 ms, ring planety 2,2 ms — świat w soczewce skoku),
+  potem 230–240. Do zrobienia: naprawić skok dev (teleport fazy `ambush` nie wynosi Atlasa na kurs przez pas) i zmierzyć
+  prawdziwe wyrwanie; u gracza w kampanii w świecie jest też gruz bazy z misji 1 (skóry odłamów przy soczewce — § 3,
+  `HIDDEN_KEEP_MS`).
