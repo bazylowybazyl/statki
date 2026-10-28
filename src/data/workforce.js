@@ -61,8 +61,14 @@ export const WORKFORCE_SOURCE_SEED_FILL = 0.75;
 export const WORKFORCE_MIN_SHIPMENT = 192;
 export const WORKFORCE_MIN_SHIPMENT_SHARE = 0.05;
 export const WORKFORCE_URGENT_RATIO = 0.9;
-/** Poniżej tej obsady (zapas / N) zakład stoi (D3) — skutek wchodzi w kroku W3. */
+/** Poniżej tej obsady (zapas / N) zakład stoi (D3). */
 export const WORKFORCE_MIN_RATIO = 0.2;
+/**
+ * Od tej obsady zakład pracuje pełną mocą — drobne braki (rotacja kursów, partie promów)
+ * nadrabia nadgodzinami. Bez tego obsada 0,97–0,99 przez większość biegu dławiła produkcję
+ * o 1–3% i rozjeżdżała przebieg świata bez widocznego powodu (bramka W3, kolejka Wenus).
+ */
+export const WORKFORCE_FULL_RATIO = 0.95;
 
 /**
  * OŚRODKI LUDNOŚCI — podaż kontraktów na cykl (20 s) w skali 1, po źródłach.
