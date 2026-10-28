@@ -115,7 +115,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       // stały wiek obrazu: do kolejki, gdy pętla gry taktuje (`present` w ostatnich 100 ms czasu rzeczywistego) — inaczej
       // (tło menu, klatka zero spod kurtyny, harness narzędzi, karta w tle) złożenie od razu, jak dawniej
       if (pacingLive()) {
-        pacer.arrived(m.k);
+        pacer.arrived(m.k, realNow());
         host._qK.push(m.k);
         host._qB.push(m.bmp);
         armIdleFlush();

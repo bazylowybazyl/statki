@@ -26,13 +26,18 @@ export class FramePacer {
   // Strojenie z pomiaru w oknie 240 Hz (bitwa 166 okrętów): przy oknach 48 / 480 wiek skakał 3 ↔ 5 kilkanaście razy na
   // minutę (każda zmiana to jedna klatka powtórzona albo przeskoczona) — podniesienie przy > 3 spóźnieniach na 64
   // przyjścia (~5%), obniżenie po ~5 s (1200 przyjść), gdy niższy wiek spóźniłby się najwyżej 6 razy (0,5%).
-  constructor({ minAge = 2, maxAge = 5, raiseWindow = 64, raiseLate = 3, lowerWindow = 1200, lowerLate = 6 } = {}) {
+  // lowerWindowMs (2026-10-28): okno obniżania także w CZASIE — przy niskim tempie obrazu (10–12 kl/s w złej chwili)
+  // 1200 przyjść to ~100 s, a wiek 5 przy 12 kl/s to ~415 ms opóźnienia obrazu trzymane długo po spadku. Po
+  // lowerWindowMs od ostatniej zmiany (i ≥ 16 przyjściach) obniżenie, gdy niższy wiek spóźniłby się nie częściej niż
+  // dopuszcza lowerLate / lowerWindow (proporcjonalnie do liczby przyjść). Czas podaje wołający (`arrived(k, ms)`).
+  constructor({ minAge = 2, maxAge = 5, raiseWindow = 64, raiseLate = 3, lowerWindow = 1200, lowerLate = 6, lowerWindowMs = 5000 } = {}) {
     this.minAge = minAge;
     this.maxAge = maxAge;
     this.raiseWindow = raiseWindow;
     this.raiseLate = raiseLate;
     this.lowerWindow = lowerWindow;
     this.lowerLate = lowerLate;
+    this.lowerWindowMs = lowerWindowMs;
     this.age = minAge;
     this.frame = 0;
     this._postK = new Float64Array(RING).fill(-1);
@@ -41,6 +46,7 @@ export class FramePacer {
     this._need = new Uint8Array(NEED);
     this._needN = 0;
     this._sinceChange = 0;
+    this._changeAt = NaN;   // czas ostatniej zmiany wieku [ms] (albo pierwszego przyjścia)
     this.stats = { arrived: 0, late: 0, raised: 0, lowered: 0, ageHist: new Int32Array(16) };
   }
 
@@ -62,10 +68,12 @@ export class FramePacer {
     return this._postK[i] === k ? this._postF[i] : -1;
   }
 
-  /** Bitmapa strony k przyszła (między taktami): potrzebny wiek i dobór `age`. */
-  arrived(k) {
+  /** Bitmapa strony k przyszła (między taktami): potrzebny wiek i dobór `age`; `nowMs` — czas przyjścia (okno w czasie). */
+  arrived(k, nowMs = NaN) {
     const pf = this.postedFrame(k);
     if (pf < 0) return;
+    const timed = Number.isFinite(nowMs);
+    if (timed && !Number.isFinite(this._changeAt)) this._changeAt = nowMs;
     // najwcześniej złożona na początku następnej klatki (frame + 1), na ekranie od frame + 2
     const need = Math.min(15, this.frame + 2 - pf);
     const st = this.stats;
@@ -78,14 +86,20 @@ export class FramePacer {
     if (this.age < this.maxAge && this._countAbove(this.age, this.raiseWindow) > this.raiseLate) {
       this.age++;
       this._sinceChange = 0;
+      if (timed) this._changeAt = nowMs;
       st.raised++;
       return;
     }
-    // obniż: przez długie okno niższy wiek prawie zawsze by wystarczył
-    if (this.age > this.minAge && this._sinceChange >= this.lowerWindow &&
-        this._countAbove(this.age - 1, this.lowerWindow) <= this.lowerLate) {
+    // obniż: przez długie okno (przyjść albo czasu) niższy wiek prawie zawsze by wystarczył
+    if (this.age <= this.minAge) return;
+    const span = this._sinceChange;
+    const byTime = timed && span >= 16 && nowMs - this._changeAt >= this.lowerWindowMs;
+    if (span < this.lowerWindow && !byTime) return;
+    const w = Math.min(span, this.lowerWindow);
+    if (this._countAbove(this.age - 1, w) <= Math.floor(this.lowerLate * w / this.lowerWindow)) {
       this.age--;
       this._sinceChange = 0;
+      if (timed) this._changeAt = nowMs;
       st.lowered++;
     }
   }

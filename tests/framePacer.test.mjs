@@ -98,3 +98,24 @@ test('eligible / posted: strona nieznana (stara) wolno złożyć; wiek w statyst
   assert.equal(p.stats.ageHist[2], 1);
   assert.equal(p.eligible(999), true);
 });
+
+test('pacer: przy niskim tempie obrazu wiek schodzi po czasie (lowerWindowMs), nie po 1200 przyjściach (2026-10-28)', () => {
+  // 12 kl/s strony (spadek przy upadku bazy): wiek 5 = ~415 ms opóźnienia obrazu; 1200 przyjść to ~100 s
+  const run = (timed) => {
+    const p = new FramePacer();
+    p.age = 5;
+    let t = 0, f = 0;
+    for (let k = 0; k < 120; k++) {
+      p.beginFrame(); f++;
+      p.posted(k);
+      t += 1000 / 12;
+      p.arrived(k, timed ? t : undefined);   // bitmapa w tej samej klatce — potrzebny wiek 2
+    }
+    return p;
+  };
+  const timed = run(true);
+  assert.ok(timed.age < 5, `po 10 s przy 12 kl/s wiek ${timed.age}`);
+  assert.ok(timed.stats.lowered >= 1);
+  const old = run(false);
+  assert.equal(old.age, 5, 'bez czasu przyjść — dawne okno 1200 przyjść');
+});
