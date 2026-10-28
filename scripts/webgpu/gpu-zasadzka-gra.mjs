@@ -3,7 +3,7 @@
 // poci się karta graficzna”. Scenariusz jak zasadzka-gra.mjs (skok dev ?story=ambush, TRAVEL TO prowadzi skok, zakłócacz
 // wyrywa z warpa w pasie), pomiar jak gpu-baza-gra.mjs (sonda GPU workera, nvidia-smi, ślad Chrome).
 //
-//   node scripts/webgpu/gpu-zasadzka-gra.mjs [--rozmiar 5120x1440] [--out .tmp/gpu-zasadzka] [--zoom 0.11] [--walka 20]
+//   node scripts/webgpu/gpu-zasadzka-gra.mjs [--okno 1] [--rozmiar 5120x1440] [--out .tmp/gpu-zasadzka] [--zoom 0.11] [--walka 20]
 //        [--slad 3] [--abWorker 'nazwa@kod##przywróć|…'] [--abPowt 2] [--query …]
 //
 // Okna: kurs (przed skokiem), warp (co 2 s w skoku), wyrwanie-N (co 2 s od wyrwania przez ~20 s: hamowanie, przylot
@@ -36,7 +36,10 @@ const report = { args, rozmiar: [W, H], maszynaStart: await stanMaszyny(), okna:
 console.log('maszyna:', JSON.stringify(report.maszynaStart));
 const smi = startNvidiaSmi(500);
 const { server, base } = await startVite(Number(args.port || 5394));
-const chrome = await startChrome({ width: W, height: H, renderMode: 'worker' });
+// --okno 1: widoczne okno na cały ekran, z vsync jak u gracza (headless biegnie bez limitu klatek)
+const OKNO = args.okno === '1';
+const chrome = await startChrome({ width: W, height: H, renderMode: 'worker', headless: OKNO ? false : undefined,
+  extraArgs: OKNO ? ['--window-position=0,0', '--start-fullscreen'] : [] });
 const { cdp } = chrome;
 const ev = (e, t = 120000) => evaluate(cdp, e, t);
 const note = (co, extra = {}) => { const z = { s: +((Date.now() - tStart) / 1000).toFixed(1), co, ...extra }; report.zdarzenia.push(z); console.log(JSON.stringify(z)); };
