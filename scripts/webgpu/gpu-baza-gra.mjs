@@ -18,6 +18,7 @@
 // --abWorker 'nazwa@kod|…': w PAUZIE nad gruzem warianty — kod w workerze (globalThis.__C3 = Core3D, __ST = stan
 //   workera) przed oknem wariantu, baza (bez kodu, 'baza') między nimi; każdy wariant ma też kod przywrócenia po '##'
 //   ('nazwa@kod##przywróć'). Okna 3 s, --abPowt powtórzeń.
+// --walka S: po gruzie walka z grupą piratów (Atlas strzela sam), okna walka-N po 3 s — obraz workera wobec klatek strony.
 // --balastGb N: po oknie „przed” osobny Chrome zajmuje N GB pamięci karty i stale jej używa (balastVram.mjs — jak inne
 //   programy u gracza); okna ostrzału, upadku i gruzu pod presją VRAM.
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
@@ -47,6 +48,8 @@ const AB = String(args.abWorker || '').split('|').filter(Boolean).map((v) => {
 });
 const AB_POWT = Number(args.abPowt || 2);
 const BALAST_GB = Number(args.balastGb || 0);
+// --walka S: po upadku walka nad gruzem — grupa piratów obok Atlasa, Atlas strzela sam (postawa „free”), okna 3 s
+const WALKA = Number(args.walka || 0);
 let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
@@ -119,7 +122,7 @@ const GUARD = `(() => {
     if (!s) return;
     if (s.hull) s.hull.val = s.hull.max;
     if (s.shield) s.shield.val = s.shield.max;
-    if (window.fireControl) window.fireControl.posture = 'hold';
+    if (window.fireControl) window.fireControl.posture = window.__guardPosture || 'hold';
   }, 100);
   return true;
 })()`;
@@ -317,6 +320,33 @@ try {
   await sleep(2500);
   await okno('nad-gruzem', 8, { slad: true });
   await screenshotPng(cdp, join(out, '06-nad-gruzem.png'));
+
+  if (WALKA > 0) {
+    // jednostki jak w misji po upadku: piraci przy polu gruzu, Atlas (nieśmiertelny) walczy sam
+    const sp = await ev(`(() => {
+      window.__guardPosture = 'free';
+      const s = window.ship, a = Number(s.angle) || 0, c = Math.cos(a), n = Math.sin(a);
+      const at = (fwd, side) => ({ x: s.pos.x + c * fwd - n * side, y: s.pos.y + n * fwd + c * side });
+      const out = { piraci: 0, przed: (window.npcs || []).filter((q) => q && !q.dead && q.hp > 0).length };
+      const put = (key, pos) => { const r = window.spawnCallInShip(key, { mode: 'pirate', spawnPos: pos, pos, spawnAngle: a + Math.PI });
+        out.piraci += Array.isArray(r) ? r.length : (r ? 1 : 0); };
+      for (let i = 0; i < 8; i++) put('frigate_pd', at(6500 + (i >> 2) * 700, ((i & 3) - 1.5) * 800));
+      for (let i = 0; i < 4; i++) put('destroyer', at(8200, (i - 1.5) * 1100));
+      for (let i = 0; i < 2; i++) put('pirate_battleship', at(9800, (i - 0.5) * 2000));
+      return out;
+    })()`).catch((e) => ({ blad: e.message }));
+    console.log('walka: jednostki', JSON.stringify(sp));
+    report.walka = { jednostki: sp };
+    const nW = Math.max(1, Math.round(WALKA / 3));
+    for (let i = 1; i <= nW; i++) {
+      const r = await okno(`walka-${i}`, 3, { slad: i === 2 });
+      const st = await ev(`(() => ({ npc: (window.npcs || []).filter((q) => q && !q.dead && q.hp > 0).length, pociski: (window.bullets || []).length }))()`).catch(() => null);
+      r.walka = st;
+      console.log(`   walka-${i}: strona ${r.klatkiStronyS}/s, obraz ${r.zlozeniaS}/s, worker ${r.workerKlatkiS}/s`, JSON.stringify(st));
+      if (i === 2) await screenshotPng(cdp, join(out, '07-walka.png'));
+    }
+    await ev(`(window.__guardPosture = 'hold', true)`).catch(() => {});
+  }
 
   if (AB.length) {
     await ev('(window.__setGamePaused(true), true)');
