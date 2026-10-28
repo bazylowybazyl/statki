@@ -1234,7 +1234,8 @@ export function setHexShipWorldLights(lights) {
 export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, coldWrecks = null, cloakFrame = null) {
   if (!Core3D.isInitialized) return;
 
-  const now = performance.now();
+  // zegar klatki efektów (znacznik rAF strony — Core3D.frameNowMs): odłamki, światła pozycyjne, czas materiałów kadłubów
+  const now = Core3D.frameNowMs();
   state.lastTime = now;
   state.frameId++;
 

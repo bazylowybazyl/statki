@@ -2314,9 +2314,18 @@ export const Core3D = {
     const split = !!RenderWorld.splitScreenMode;
     const cam2 = split && !freePerspective ? (RenderWorld.camera2 || null) : null;
     // Kadr siatki świateł w j. świata: kanwa (px CSS) / zoom.
-    // fxNowMs: zegar klatki z zewnątrz (render w workerze — performance.now strony z migawki; pod harnessem wirtualny)
-    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective,
-      Number.isFinite(this.fxNowMs) ? this.fxNowMs : performance.now());
+    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective, this.frameNowMs());
+  },
+
+  // Zegar klatki efektów [ms] (Core3D.fx, WeaponFx z bankiem Fx3D, kadłuby, odłamki): `fxNowMs` z zewnątrz (worker —
+  // znacznik rAF strony z migawki, HEAD.WALL), inaczej znacznik rAF pętli gry strony (RenderWorld.frameNowMs), poza
+  // pętlą — performance.now() (pod harnessem wszystkie trzy to ten sam czas wirtualny). Odczyt performance.now() w
+  // chwili rysowania szedł po fizyce strony: przy 240 Hz klatka z krokiem 60 Hz „trwała” dla efektów o czas kroku
+  // dłużej, następna krócej — cząstki, błyski i dym szarpały co 4. klatkę, a kadłuby (czas z rAF) jechały płynnie.
+  frameNowMs() {
+    if (Number.isFinite(this.fxNowMs)) return this.fxNowMs;
+    const t = RenderWorld.frameNowMs;
+    return Number.isFinite(t) ? t : performance.now();
   },
 
   // Na każdy render: źródła zniekształceń rzutowane na kamerę tego renderu (blok „uber”) i warstwa

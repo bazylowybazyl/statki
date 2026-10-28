@@ -507,7 +507,7 @@ export class PirateBaseVents3D {
     const c = DEBRIS_RGB[(fxRandom.next() * DEBRIS_RGB.length) | 0];
     const vx = _d.x * speed, vyScene = _d.y * speed, vz = _d.z * speed;
     HullDebris3D.spawn(X, -Y, vx + cvx, -vyScene + cvy, c[0], c[1], c[2], clamp(r * 0.11, 5, 36) * (0.6 + 0.8 * fxRandom.next()),
-      structural, performance.now() * 0.001, z, vz + cvz);
+      structural, (this.core.frameNowMs ? this.core.frameNowMs() : performance.now()) * 0.001, z, vz + cvz);
   }
 
   // ------------------------------------------------------------------ gaz (domena wylotu)

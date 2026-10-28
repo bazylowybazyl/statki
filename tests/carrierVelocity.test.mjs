@@ -12,7 +12,9 @@ import {
   writeCarrier,
   writeCarrierVelocity,
   writePointVelocity,
-  isInterpolatedEntity
+  isInterpolatedEntity,
+  isRenderClockEntity,
+  setRenderPosedEntity
 } from '../src/game/carrierVelocity.js';
 import { stepProjectileKinematics } from '../src/game/projectileTrajectory.js';
 
@@ -221,6 +223,86 @@ test('WeaponFx: wylot armaty z pędzącego okrętu — paczki dymu i błysku nio
     const b = WeaponFx.gpu.add.bursts;
     assert.deepEqual([b[BURST_CARRIER] + 0, b[BURST_CARRIER + 1] + 0], [0, 0]);
   } finally {
+    WeaponFx.reset();
+    Core3D.isInitialized = false;
+    Core3D.scene = null;
+    SimClock.reset();
+  }
+});
+
+// --- Zegar obrazu NPC w pozie renderu (2026-10-28, „240 kl/s, a pociski, trafienia i strzały klatkują”) ---
+// Kadłuby NPC i wraków stoją w obrazie w pozie interpolowanej (src/game/renderPoses.js, czas SimClock.render), więc ich
+// wyloty, trafienia i pociski idą tym samym zegarem — na zegarze kroku (60 Hz) stały 3 klatki przy 240 Hz i skakały.
+
+test('NPC w pozie renderu: nośnik na zegarze renderu (isRenderClockEntity), rozgrywka pyta dalej o gracza', () => {
+  const prevWindow = globalThis.window;
+  const player = { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 } };
+  const npc = { x: 0, y: 0, vx: 0, vy: 500 };
+  const wreck = { x: 0, y: 0, vx: 50, vy: 0 };
+  globalThis.window = { ship: player, player2Ship: null };
+  try {
+    SimClock.reset();
+    SimClock.advance(1);
+    SimClock.beginRender(0.5, 0.2);            // render = 0.9
+    SimClock.advance(0.2);                      // krok po renderze: sim = 1.2
+    const c = createCarrier();
+    setRenderPosedEntity(null);                 // off, ?npcLerp=0 — jak dawniej
+    assert.equal(isRenderClockEntity(npc), false);
+    writeCarrier(npc, 0, 0, true, c);
+    assert.equal(c.clock, CLOCK_SIM);
+    close(c.t0, 1, 1e-12, 'bez pozy renderu: rekord Turret2D NPC = sim z ostatniego renderu');
+
+    setRenderPosedEntity((e) => e === npc);     // hak gry: poza renderu „żywa” (wrak — np. przeskok bez interpolacji)
+    assert.equal(isRenderClockEntity(npc), true);
+    assert.equal(isRenderClockEntity({ _realEntity: npc }), true, 'proxy trafień');
+    assert.equal(isRenderClockEntity(wreck), false);
+    assert.equal(isRenderClockEntity(player), true, 'gracz zawsze');
+    assert.equal(isInterpolatedEntity(npc), false, 'rozgrywka (zapalnik rakiet) — tylko gracz i P2');
+    writeCarrier(npc, 0, 0, true, c);
+    assert.equal(c.clock, CLOCK_RENDER);
+    close(c.t0, 0.9, 1e-12, 'rekord Turret2D z pozy renderu = czas ostatniego renderu');
+    writeCarrier(npc, 0, 0, false, c);
+    close(c.t0, 1.2, 1e-12, 'poza fizyczna = bieżący sim');
+    writeCarrier(wreck, 0, 0, false, c);
+    assert.equal(c.clock, CLOCK_SIM);
+  } finally {
+    setRenderPosedEntity(null);
+    globalThis.window = prevWindow;
+    SimClock.reset();
+  }
+});
+
+test('WeaponFx.sync: pocisk na zegarze renderu w czasie kadłuba, przed chwilą wystrzału jedzie z lufą; zegar klatki z Core3D', async () => {
+  stubCanvasDom();
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { FxFrame } = await import('../src/3d/fx/fxFrame.js');
+  const { WeaponFx } = await import('../src/3d/weapons/weaponFx.js');
+  Core3D.isInitialized = true;
+  Core3D.scene = new (await import('three/webgpu')).Scene();
+  Core3D.fx = Core3D.fx || new FxFrame();
+  const prevNow = Core3D.fxNowMs;
+  try {
+    assert.ok(WeaponFx.ensure(), 'WeaponFx powstał');
+    SimClock.reset();
+    SimClock.advance(1);                        // krok N: sim = 1
+    SimClock.beginRender(0.25, 1 / 60);         // render = sim − 0,75 kroku
+    const lag = 0.75 / 60;
+    const mk = (clock, bornSim) => ({ x: 1000, y: 2000, vx: 6000, vy: -300, ivx: 600, ivy: -300, life: 1, age: 0,
+      clock, bornSim, vfxKey: 'armata_mk1', type: 'kinetic', weaponSize: 'M' });
+    const fresh = mk(CLOCK_RENDER, 1);           // wystrzał NPC w pozie PO kroku: bornSim = sim
+    const half = mk(CLOCK_RENDER, 1 - 0.5 / 60); // pół kroku lotu
+    const old = mk(CLOCK_RENDER, 1 - 1 / 60);    // krok lotu (gracz: strzał z pozy sprzed kroku)
+    const step = mk(CLOCK_SIM, 1);               // zegar kroku (off, ?npcLerp=0)
+    Core3D.fxNowMs = 5000;
+    WeaponFx.sync([fresh, half, old, step]);
+    close(fresh.__fx.lastX, 1000 - 600 * lag, 1e-9, 'świeży: tylko z lufą — nie za wylotem');
+    close(fresh.__fx.lastY, 2000 + 300 * lag, 1e-9);
+    close(half.__fx.lastX, 1000 - 600 * lag - 5400 * (0.5 / 60), 1e-9, 'ruch własny cofnięty tylko do chwili wystrzału');
+    close(old.__fx.lastX, 1000 - 6000 * lag, 1e-9, 'cały ruch cofnięty do czasu renderu (jak dawniej gracz)');
+    close(step.__fx.lastX, 1000, 1e-9, 'zegar kroku: poza fizyczna');
+    assert.equal(WeaponFx._lastSyncMs, 5000, 'krok banku Fx3D i migawka pocisków z zegara klatki (Core3D.frameNowMs)');
+  } finally {
+    Core3D.fxNowMs = prevNow;
     WeaponFx.reset();
     Core3D.isInitialized = false;
     Core3D.scene = null;

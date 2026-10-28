@@ -88,7 +88,12 @@ paths:
   `Core3D.addFxStep({ name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) })` → początek pul przy kamerze i zegary
   (`ctx.origin` = `FxPoolOrigin`; **pula GPU MUSI się w nim zarejestrować** z kernelem `createShiftKernel`, inaczej początek
   przestawia się pod jej danymi) → siatka świateł → update. Zegar efektów `ctx.time` / `Core3D.fx.time` biegnie z klatką
-  rAF (krok ≤ 0,1 s, także w pauzie). `warm` idzie przez rejestr rozgrzewki (puste dispatche kerneli + `prewarmPass`).
+  rAF (krok ≤ 0,1 s, także w pauzie) — czas klatki z `Core3D.frameNowMs()` (worker: `fxNowMs` = `HEAD.WALL`, znacznik rAF
+  klatki strony; off / inline: `RenderWorld.frameNowMs` = `window.__frameNowMs` pętli gry; poza pętlą `performance.now()`).
+  Moduł renderu animujący coś czasem klatki (bank `Fx3D` w `WeaponFx.sync`, odłamki `HullDebris3D`, światła pozycyjne i
+  czas materiałów kadłubów) bierze ten zegar, nie `performance.now()` w chwili rysowania: ten szedł po fizyce strony, więc
+  przy 240 Hz klatka z krokiem 60 Hz „trwała” dla efektów o czas kroku dłużej — efekty szarpały co 4. klatkę względem
+  kadłubów (2026-10-28, `docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md` § 6, strażnik `tests/zegarKlatkiEfektow.test.mjs`). `warm` idzie przez rejestr rozgrzewki (puste dispatche kerneli + `prewarmPass`).
   **Siatka świateł** (`Core3D.fx.grid`): `renderer.lighting = GridLighting` w trybie „optIn”, ustawiony PRZED
   `renderer.init()` (three r183 łapie `lighting` w init — podmiana później nic nie zmienia); czytają ją tylko materiały z
   `gridLights = true` (`enableGridLights(mat, owner)`) — reszta ma WGSL i obraz bez zmian. Światła efektów:

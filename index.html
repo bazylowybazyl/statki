@@ -1102,7 +1102,9 @@
       writeCarrierVelocity,
       writePointVelocity,
       writeEntityVelocity,
-      isInterpolatedEntity
+      isInterpolatedEntity,
+      isRenderClockEntity,
+      setRenderPosedEntity
     } from "./src/game/carrierVelocity.js";
     import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
@@ -2836,7 +2838,7 @@
         vy: Math.sin(a) * speed + ivy,
         ivx,
         ivy,
-        clock: CLOCK_SIM,
+        clock: isRenderClockEntity(from) ? CLOCK_RENDER : CLOCK_SIM,
         bornSim: SimClock.sim,
         life: (weapon.range || 1000) / speed,
         r: (bType === 'rail') ? 4 : 3,
@@ -5095,6 +5097,14 @@
       const p = window.__interpShipPose;
       return p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.angle) ? p : null;
     }
+    // Zegar obrazu efektów i pocisków NPC (carrierVelocity.js — isRenderClockEntity): byt w pozie renderu (ten sam warunek
+    // co bridgeRenderPose) stoi w obrazie w czasie SimClock.render — jego wyloty, trafienia i pociski też.
+    function npcRenderPosed(entity) {
+      if (!npcRenderLerpOn || entity === player2Ship) return false;
+      const r = renderPoses.poseOf(entity);
+      return r !== null && r.live;
+    }
+    setRenderPosedEntity(npcRenderPosed);
 
     // Widoczność modelu 3D mostka i okien (0..1): okręt rysowany modelem 3D statku (opcja
     // „Statki 3D”) ma nadbudówkę w modelu — bez drugiego mostka; maskowanie gasi mostek razem
@@ -11405,7 +11415,7 @@
       // strzał z pędzącego okrętu leci względem niego jak z nieruchomego.
       const inheritVx = Number(muzzleData.baseVel?.x) || 0;
       const inheritVy = Number(muzzleData.baseVel?.y) || 0;
-      const shotClock = isInterpolatedEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
+      const shotClock = isRenderClockEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
 
       // 3. Wystrzał (obsługa salwy / burst)
       let beamEventData = null;
@@ -25662,10 +25672,11 @@
           // Pełna prędkość strzelca była tu od zawsze — znaczniki jak w fireWeaponCore.
           const svx = Number(shooter.vx) || 0;
           const svy = Number(shooter.vy) || 0;
+          const shotClockNpc = isRenderClockEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
           if (shooter.weapon === 'railgun') {
-            window.bullets.push({ x: bx, y: by, vx: dirX * 600 + svx, vy: dirY * 600 + svy, ivx: svx, ivy: svy, clock: CLOCK_SIM, bornSim: SimClock.sim, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 600 + svx, vy: dirY * 600 + svy, ivx: svx, ivy: svy, clock: shotClockNpc, bornSim: SimClock.sim, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
           } else {
-            window.bullets.push({ x: bx, y: by, vx: dirX * 220 + svx, vy: dirY * 220 + svy, ivx: svx, ivy: svy, clock: CLOCK_SIM, bornSim: SimClock.sim, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 220 + svx, vy: dirY * 220 + svy, ivx: svx, ivy: svy, clock: shotClockNpc, bornSim: SimClock.sim, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
           }
           npcFireSpawnMs = performance.now() - tNpcFireSpawn0;
         }
@@ -29567,6 +29578,10 @@
       const frameStartMs = performance.now();
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
+      // Zegar klatki efektów (RenderWorld.frameNowMs → Core3D.frameNowMs; worker — HEAD.WALL migawki): znacznik rAF, nie
+      // performance.now() w chwili rysowania — ten szedł po fizyce, więc klatka z krokiem 60 Hz „trwała” dla efektów
+      // o czas kroku dłużej, następna krócej (cząstki, błyski, dym szarpały co 4. klatkę przy 240 Hz).
+      window.__frameNowMs = now;
       // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
       // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki.
       if (rwHost) rwHost.present();
@@ -30085,7 +30100,8 @@
       f.simRenderSim = SimClock.renderSim;
       f.vfxTime = vfxTime;
       f.bridgeTime = bridgeSimTime;
-      f.wall = performance.now();
+      // znacznik rAF tej klatki (loop: lastTime = now) — zegar efektów workera (Core3D.fxNowMs), równy co vsync
+      f.wall = lastTime;
       f.wallOrigin = performance.timeOrigin;
       f.W = W;
       f.H = H;
