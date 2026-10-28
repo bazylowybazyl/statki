@@ -1103,7 +1103,7 @@
       writePointVelocity,
       writeEntityVelocity,
       isInterpolatedEntity,
-      isRenderClockEntity,
+      projectileClockOf,
       setRenderPosedEntity
     } from "./src/game/carrierVelocity.js";
     import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
@@ -2838,7 +2838,7 @@
         vy: Math.sin(a) * speed + ivy,
         ivx,
         ivy,
-        clock: isRenderClockEntity(from) ? CLOCK_RENDER : CLOCK_SIM,
+        clock: projectileClockOf(from),
         bornSim: SimClock.sim,
         life: (weapon.range || 1000) / speed,
         r: (bType === 'rail') ? 4 : 3,
@@ -5104,7 +5104,6 @@
       const r = renderPoses.poseOf(entity);
       return r !== null && r.live;
     }
-    setRenderPosedEntity(npcRenderPosed);
 
     // Widoczność modelu 3D mostka i okien (0..1): okręt rysowany modelem 3D statku (opcja
     // „Statki 3D”) ma nadbudówkę w modelu — bez drugiego mostka; maskowanie gasi mostek razem
@@ -11415,7 +11414,7 @@
       // strzał z pędzącego okrętu leci względem niego jak z nieruchomego.
       const inheritVx = Number(muzzleData.baseVel?.x) || 0;
       const inheritVy = Number(muzzleData.baseVel?.y) || 0;
-      const shotClock = isRenderClockEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
+      const shotClock = projectileClockOf(shooter);
 
       // 3. Wystrzał (obsługa salwy / burst)
       let beamEventData = null;
@@ -25672,7 +25671,7 @@
           // Pełna prędkość strzelca była tu od zawsze — znaczniki jak w fireWeaponCore.
           const svx = Number(shooter.vx) || 0;
           const svy = Number(shooter.vy) || 0;
-          const shotClockNpc = isRenderClockEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
+          const shotClockNpc = projectileClockOf(shooter);
           if (shooter.weapon === 'railgun') {
             window.bullets.push({ x: bx, y: by, vx: dirX * 600 + svx, vy: dirY * 600 + svy, ivx: svx, ivy: svy, clock: shotClockNpc, bornSim: SimClock.sim, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
           } else {
@@ -25986,7 +25985,7 @@
           window.bullets.push({
             x: muzzle.x, y: muzzle.y,
             vx: dir.x * (RAIL_SPEED * 0.9) + tangentialVel.x, vy: dir.y * (RAIL_SPEED * 0.9) + tangentialVel.y,
-            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: CLOCK_SIM, bornSim: SimClock.sim,
+            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: projectileClockOf(platform), bornSim: SimClock.sim,
             life: 2.0, r: 4, owner: 'npc', damage: platform.rail.damage, type: 'rail', penetration: 2,
             source: platform, spawnGrace: 0.08
           });
@@ -26002,7 +26001,7 @@
           window.bullets.push({
             x: muzzleR.x, y: muzzleR.y, px: muzzleR.x, py: muzzleR.y,
             vx: dir.x * SIDE_BULLET_SPEED + tangentialVel.x, vy: dir.y * SIDE_BULLET_SPEED + tangentialVel.y,
-            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: CLOCK_SIM, bornSim: SimClock.sim,
+            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: projectileClockOf(platform), bornSim: SimClock.sim,
             life: 2.6, r: 5, owner: 'npc', damage: platform.missile.damage,
             type: 'rocket', explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS,
             homingDelay: SIDE_ROCKET_HOMING_DELAY,
@@ -28304,7 +28303,7 @@
       hp.missileCd = Math.max(0.01, (weapon.cooldown || 10) * (mods.fireRate || 1.0));
       const aim = getMountedWeaponAim(ship, lo);
       const n = writeTorpedoFan(aim.angle, torpedoTubesOf(weapon), torpedoSpreadRad(weapon, torpedoAim.wide), _torpFan);
-      const clock = isInterpolatedEntity(ship) ? CLOCK_RENDER : CLOCK_SIM;
+      const clock = projectileClockOf(ship);
       for (let k = 0; k < n; k++) {
         const m = p1WeaponCtrl.computeMountedMuzzle(lo, k);
         const a = _torpFan[k];
@@ -29923,6 +29922,8 @@
     const SZEW_LATE = SZEW_MIRRORS || RW_WORKER;
     // pozy renderu NPC i wraków (renderPoses — przy bridgeRenderPose): tylko z migawką, która niesie je do modułów 3D
     npcRenderLerpOn = SZEW_LATE && !/[?&]npcLerp=0(?:&|$)/.test(location.search);
+    // zegar obrazu efektów i pocisków bytów w pozie renderu (carrierVelocity.js; npcRenderPosed — przy bridgeRenderPose)
+    setRenderPosedEntity(npcRenderPosed, npcRenderLerpOn);
     const renderSnapshot = (SZEW_MODE === 'inline' || SZEW_MODE === 'pakuj' || RW_WORKER)
       ? new SnapshotPacker({ ids: RenderSlots, describe: SZEW_LATE }) : null;
     let rwHost = null;

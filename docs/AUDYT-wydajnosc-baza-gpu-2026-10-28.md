@@ -146,8 +146,9 @@ Poprawka:
   czas wirtualny — zrzuty narzędzi bez zmian;
 - zegar obrazu bytu: `isRenderClockEntity` (`src/game/carrierVelocity.js`) — gracz, P2 i NPC / wraki w pozie renderu (hak
   `setRenderPosedEntity` ← `npcRenderPosed` w `index.html`, ten sam warunek co `bridgeRenderPose`; off i `?npcLerp=0` —
-  jak dawniej); używa go `writeCarrier` (wyloty, trafienia) i zegar pocisków NPC (`fireWeaponCore`, `aiSpawnBullet`,
-  zapasowy strzał NPC). Rozgrywka pyta dalej `isInterpolatedEntity` (zapalnik rakiet: gracz rusza się w kroku przed nimi);
+  jak dawniej); używa go `writeCarrier` (wyloty, trafienia). Zegar pocisku `projectileClockOf`: przy pozach renderu KAŻDY
+  pocisk na zegarze renderu (`fireWeaponCore`, `aiSpawnBullet`, zapasowy strzał NPC, platformy, torpedy) — także z
+  nieruchomego strzelca (okręt piratów w stanowisku, platforma), którego poza renderu nie jest „żywa”. Rozgrywka pyta dalej `isInterpolatedEntity` (zapalnik rakiet: gracz rusza się w kroku przed nimi);
 - `WeaponFx.sync`: pocisk na zegarze renderu przed chwilą wystrzału (`bornSim` > czas renderu — NPC strzela z pozy PO
   kroku) jedzie tylko z lufą (`ivx / ivy`); bez tego cofał się za wylot o prędkość pocisku × opóźnienie renderu.
 
@@ -173,5 +174,7 @@ Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, straż
   CLOCK_SIM`). Nośnik to wolny kadłub (100–600 j/s → ≤ 10 j. na krok): przy zoomie 0,035 poniżej piksela, przy 0,3 do ~3 px.
   Poprawka: flaga „NPC w pozie renderu” w HEAD migawki → `RenderWorld` → wybór zegara w tych modułach.
 - Upadek przy 5120 × 1440: karta w najcięższych sekundach (gaz 14–16 domen) — kandydaci z § 3 (próg „fine” względem
-  wysokości bufora, sufit podkroków pod obciążeniem); pole skóry odłamów (wyżej); nierówny takt poniżej odświeżania.
+  wysokości bufora, sufit podkroków pod obciążeniem); pole skóry odłamów (wyżej; profil CPU workera w upadku B2:
+  `writeHullSkinField` 9,8% pracy workera — pierwsza pozycja po partii skór, `renderObject` three 34% pracy wobec 53% w A2,
+  worker zajęty 55% czasu wobec 65%); nierówny takt poniżej odświeżania.
 - Zasadzka (wyrwanie z warpa): pomiar `gpu-zasadzka-gra.mjs` przy wolnej maszynie.

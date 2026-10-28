@@ -45,7 +45,7 @@ paths:
 
 ## Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
 
-- Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (`isRenderClockEntity(strzelec)` — gracz, P2 i NPC / wraki w pozie renderu: `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
+- Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (`projectileClockOf(strzelec)` — przy pozach renderu, tryby z migawką: każdy pocisk `CLOCK_RENDER`, także z nieruchomego strzelca; bez nich zegar strzelca: gracz i P2 `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
 
 - Efekt rodzi się z nośnikiem: `ActiveCarrier.set(writeCarrier(encja, x, y, zRekorduRenderu, scratch))` → spawn → `ActiveCarrier.clear()`, bez wołania w środku innych emiterów. Czytają go Fx3D, CanvasVFX, SparkSystem3D i pule broni `WeaponFx` (paczka niesie nośnik — `writeCarrierPacket`, rysunek `fxCarrierOffset`). Wylot = kadłub strzelca, trafienie = trafiony kadłub, pęknięcie i odłamki pocisku = jego `ivx/ivy`. Dysze MAIN celowo bez nośnika (smuga ma zostawać za statkiem).
 

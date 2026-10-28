@@ -14,6 +14,7 @@ import {
   writePointVelocity,
   isInterpolatedEntity,
   isRenderClockEntity,
+  projectileClockOf,
   setRenderPosedEntity
 } from '../src/game/carrierVelocity.js';
 import { stepProjectileKinematics } from '../src/game/projectileTrajectory.js';
@@ -265,6 +266,15 @@ test('NPC w pozie renderu: nośnik na zegarze renderu (isRenderClockEntity), roz
     close(c.t0, 1.2, 1e-12, 'poza fizyczna = bieżący sim');
     writeCarrier(wreck, 0, 0, false, c);
     assert.equal(c.clock, CLOCK_SIM);
+    // zegar pocisku: bez świata w pozie renderu — zegar strzelca; z nim — każdy pocisk na zegarze renderu (nieruchomy
+    // strzelec w stanowisku nie ma „żywej” pozy, a jego pocisk szedłby krokiem 60 Hz)
+    assert.equal(projectileClockOf(npc), CLOCK_RENDER);
+    assert.equal(projectileClockOf(wreck), CLOCK_SIM, 'bez świata w pozie renderu: zegar strzelca');
+    setRenderPosedEntity((e) => e === npc, true);
+    assert.equal(projectileClockOf(wreck), CLOCK_RENDER, 'świat w pozie renderu: każdy pocisk');
+    assert.equal(isRenderClockEntity(wreck), false, 'nośnik efektów nieruchomego bytu — dalej zegar kroku');
+    setRenderPosedEntity(null, true);
+    assert.equal(projectileClockOf(wreck), CLOCK_SIM, 'bez haka — tryb off');
   } finally {
     setRenderPosedEntity(null);
     globalThis.window = prevWindow;

@@ -12,7 +12,8 @@ import {
   writeCarrierVelocity,
   writePointVelocity,
   isInterpolatedEntity,
-  isRenderClockEntity
+  isRenderClockEntity,
+  projectileClockOf
 } from '../../src/game/carrierVelocity.js';
 import { weaponRangeFor, weaponSpeedMul } from '../../src/game/shipModifiers.js';
 
@@ -29,6 +30,7 @@ export const CARRIER_SCOPE = Object.freeze({
   writePointVelocity,
   isInterpolatedEntity,
   isRenderClockEntity,
+  projectileClockOf,
   // Modyfikatory okrętu (src/game/shipModifiers.js): zasięg i prędkość pocisku ze źródeł i klas broni (fitowanie).
   weaponRangeFor,
   weaponSpeedMul,

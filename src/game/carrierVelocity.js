@@ -31,7 +31,12 @@ export function isInterpolatedEntity(entity) {
 // Pozy renderu NPC i wraków (src/game/renderPoses.js — tryby z migawką): byt w pozie interpolowanej między krokami
 // stoi w obrazie w czasie SimClock.render, jak gracz. Hak gry (index.html `npcRenderPosed`) albo null (off, ?npcLerp=0).
 let _renderPosed = null;
-export function setRenderPosedEntity(fn) { _renderPosed = typeof fn === 'function' ? fn : null; }
+let _renderPosedWorld = false;
+/** `fn(byt)` — byt w pozie renderu; `world` — pozy renderu włączone (świat w obrazie w czasie SimClock.render). */
+export function setRenderPosedEntity(fn, world = false) {
+  _renderPosed = typeof fn === 'function' ? fn : null;
+  _renderPosedWorld = _renderPosed !== null && !!world;
+}
 
 /**
  * Zegar OBRAZU efektu i pocisku encji (2026-10-28, zgłoszenie „240 kl/s, a pociski, trafienia i strzały klatkują”):
@@ -43,6 +48,15 @@ export function isRenderClockEntity(entity) {
   if (isInterpolatedEntity(entity)) return true;
   const e = unwrap(entity);
   return !!(e && _renderPosed !== null && _renderPosed(e));
+}
+
+/**
+ * Zegar OBRAZU pocisku: przy pozach renderu (`setRenderPosedEntity(fn, true)`) każdy pocisk na zegarze renderu — jego lot
+ * nie zależy od ruchu strzelca, a nieruchomy strzelec (okręt w stanowisku, platforma) nie ma „żywej” pozy renderu i jego
+ * pocisk szedłby krokiem 60 Hz; do chwili wystrzału pocisk jedzie z lufą (WeaponFx.sync). Bez póz renderu — zegar strzelca.
+ */
+export function projectileClockOf(shooter) {
+  return _renderPosedWorld || isRenderClockEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
 }
 
 /** Prędkość środka encji (świat gry). */
