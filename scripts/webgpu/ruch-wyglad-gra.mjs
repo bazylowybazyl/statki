@@ -86,7 +86,7 @@ const PICK = {
   dok: `(a) => a.alive && a.id >= 0 && !(a.flags & (1 | 64 | 128 | 256)) && a.phase === 'docked'`,
   reda: `(a) => a.alive && (a.flags & 256) && !(a.flags & 64)`,
   lot: `(a) => a.alive && a.id >= 0 && !(a.flags & (1 | 64 | 256)) && a.phase !== 'docked' && a.phase !== 'hold'
-    && Math.hypot(a.vx, a.vy) > 60 && Math.hypot(a.vx, a.vy) < 1500`
+    && Math.hypot(a.vx, a.vy) > 60 && Math.hypot(a.vx, a.vy) < 1500 && a.length >= 250`
 };
 // Cel najbliżej punktu (domyślnie: hala K-7 nr 0 Ziemi), największy w kadrze przy remisie.
 const usedIds = new Set();
@@ -114,6 +114,8 @@ try {
   report.syncStart = syncWorker();
   report.syncStronaStart = await syncPage();
   await ev('window.__harness.hold(true)');
+  // Broń gracza bez AUTO: wieże same biją wrogów w zasięgu (okręt po awansie ma urazę) — psuły kadry A/B i awans.
+  await ev('(() => { const fc = window.fireControl; if (fc && fc.auto) for (const k of Object.keys(fc.auto)) fc.auto[k] = false; return true; })()');
   if (WARM > 0) {
     await ev(`(async () => { for (let i = 0; i < ${Math.ceil(WARM / 5)}; i++) { window.TrafficV2.advance(5); if (i % 40 === 39) await new Promise((r) => setTimeout(r, 0)); } return true; })()`, 600000);
     if (!await waitFor(cdp, `(window.TrafficV2.clock || 0) >= ${WARM - 30}`, 600000, 500)) throw new Error('worker ruchu nie nadrobił rozgrzewki');
