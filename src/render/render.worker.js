@@ -580,8 +580,9 @@ if (isWorker) {
         C.setPerfToggles({ bloom: g.bloom, heatHaze: g.heatHaze });
         if (g.shadowShafts) C.setShadowShaftsQuality(g.shadowShafts);
       }
-      const [ex, wf, wn, sj, lq, hl] = await Promise.all([import('../3d/explosions/explosionFx.js'), import('../3d/weapons/weaponFx.js'),
-        import('../3d/warp/warpNurt.js'), import('../3d/sideJets3D.js'), import('../3d/hullLacquer.js'), import('../3d/hullLighting.js')]);
+      const [ex, wf, wn, sj, lq, hl, hd] = await Promise.all([import('../3d/explosions/explosionFx.js'), import('../3d/weapons/weaponFx.js'),
+        import('../3d/warp/warpNurt.js'), import('../3d/sideJets3D.js'), import('../3d/hullLacquer.js'), import('../3d/hullLighting.js'),
+        import('../3d/gasField/hallDust.js')]);
       if (st.gfx !== g) return;   // nowsza wiadomość przyszła w trakcie importów
       if (g.explosions) Object.assign(ex.EXPLOSION_TUNE, g.explosions);
       const fx = g.effects || {};
@@ -592,6 +593,8 @@ if (isWorker) {
       if (Number.isFinite(fx.warpParticles)) wn.WarpNurt.setMediumCount?.(fx.warpParticles);   // czeka, aż ośrodek uśnie
       lq.HullLacquer.setEnabled(g.lacquer !== false);
       if (g.hullLight) hl.HullLighting.setModel(g.hullLight);
+      // pył i para hal K-7: symulację i obraz liczy worker (strona tylko pakuje wejście — packHallDustFrame)
+      if (typeof g.hallDust === 'boolean') hd.HALL_DUST_TUNE.enabled = g.hallDust;
       applyBeltGfx();
     } catch (e) { report(e, 'gfx'); }
   }

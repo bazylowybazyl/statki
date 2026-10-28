@@ -132,8 +132,8 @@ export function gfxBloomScale(level) { return level === 'half' ? 0.5 : 1; }
  * `applyGraphicsSettings` strony ustawia tylko moduły strony — do workera szły jedynie skala i MSAA przy starcie, więc
  * w trybie domyślnym worker zawsze liczył bloom pełny, gaz wybuchów i efekty „Wysokie”, smugi cieni domyślne Core3D.
  * Zwykły obiekt (structured clone): Core3D (skala renderu — z rozdzielczością dynamiczną, bloom, gorące powietrze,
- * smugi cieni), lakier, oświetlenie kadłubów, `GFX_EXPLOSIONS` (→ `EXPLOSION_TUNE`) i pola `GFX_EFFECTS` czytane przez
- * moduły renderu. Stosuje `render.worker.js` (wiadomość `gfx`).
+ * smugi cieni), lakier, oświetlenie kadłubów, pył hal K-7 (`HALL_DUST_TUNE.enabled` — symulację liczy worker),
+ * `GFX_EXPLOSIONS` (→ `EXPLOSION_TUNE`) i pola `GFX_EFFECTS` czytane przez moduły renderu. Stosuje `render.worker.js` (wiadomość `gfx`).
  */
 export function gfxRenderRecord(settings, renderScale) {
   const s = normalizeGfx(settings);
@@ -142,7 +142,7 @@ export function gfxRenderRecord(settings, renderScale) {
   return {
     renderScale: Number.isFinite(renderScale) && renderScale > 0 ? renderScale : s.renderScale,
     bloom: s.bloom !== 'off', bloomScale: gfxBloomScale(s.bloom), heatHaze: s.heatHaze !== 'off',
-    shadowShafts: s.shadowShafts, lacquer: s.lacquer !== 'off', hullLight: s.hullLight,
+    shadowShafts: s.shadowShafts, lacquer: s.lacquer !== 'off', hullLight: s.hullLight, hallDust: s.hallDust !== 'off',
     explosions: { ...ex },
     effects: { sideJetLights: fx.sideJetLights, sideJetGasPx: fx.sideJetGasPx, weaponMuzzles: fx.weaponMuzzles,
       weaponImpacts: fx.weaponImpacts, beltLitShips: fx.beltLitShips, beltShadowShips: fx.beltShadowShips, warpParticles: fx.warpParticles }

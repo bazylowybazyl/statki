@@ -230,7 +230,8 @@ test('render w workerze: rekord obrazu z presetu (gfxRenderRecord) dochodzi do w
   assert.match(wk, /m\.type === 'gfx'\) st\.gfxChain/);
   const fn = wk.slice(wk.indexOf('async function applyGfx('), wk.indexOf('function applyBeltGfx('));
   for (const re of [/setRenderScale/, /bloomQualityScale/, /setPerfToggles/, /setShadowShaftsQuality/, /EXPLOSION_TUNE/, /muzzlePerFrame/,
-    /impactPerFrame/, /setMediumCount/, /SIDE_JET_TUNE\.maxLights/, /HullLacquer\.setEnabled/, /HullLighting\.setModel/]) assert.match(fn, re);
+    /impactPerFrame/, /setMediumCount/, /SIDE_JET_TUNE\.maxLights/, /HullLacquer\.setEnabled/, /HullLighting\.setModel/, /HALL_DUST_TUNE\.enabled/]) assert.match(fn, re);
+  assert.equal(G.gfxRenderRecord(G.gfxWithPreset(null, 'low')).hallDust, false, 'Niska: pył hal wył. (symulacja w workerze)');
   assert.match(wk, /f\[R\.GPU_FRAME_SAMPLES\] = /, 'worker pisze liczniki próbek GPU (rozdzielczość dynamiczna strony)');
   assert.match(wk, /f\[R\.GPU_COMPUTE_SAMPLES\] = /);
 });

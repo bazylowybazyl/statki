@@ -119,3 +119,24 @@ test('pacer: przy niskim tempie obrazu wiek schodzi po czasie (lowerWindowMs), n
   const old = run(false);
   assert.equal(old.age, 5, 'bez czasu przyjść — dawne okno 1200 przyjść');
 });
+
+test('pacer: obniżenie po czasie bez natychmiastowego powrotu — seria spóźnień siedzi jeszcze w oknie podnoszenia', () => {
+  // przegląd 2026-10-28: przy ~10 przyjściach/s okno podnoszenia (64 przyjścia) sięga przed ostatnią zmianę wieku
+  const p = new FramePacer();
+  p.age = 4;
+  let t = 0, k = 0;
+  const arrive = (need) => {
+    p.beginFrame(); p.posted(k);
+    for (let i = 0; i < need - 2; i++) p.beginFrame();
+    t += 100;
+    p.arrived(k, t);
+    k++;
+  };
+  for (let i = 0; i < 20; i++) arrive(2);
+  for (let i = 0; i < 4; i++) arrive(5);   // seria spóźnień przy wieku 4 → 5
+  assert.equal(p.age, 5);
+  assert.equal(p.stats.raised, 1);
+  for (let i = 0; i < 150; i++) arrive(2);   // 15 s czystych przyjść
+  assert.ok(p.age < 5, `wiek ${p.age}`);
+  assert.equal(p.stats.raised, 1, 'bez powrotu w górę po obniżeniu');
+});

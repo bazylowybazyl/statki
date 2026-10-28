@@ -96,6 +96,9 @@ export class FramePacer {
     const byTime = timed && span >= 16 && nowMs - this._changeAt >= this.lowerWindowMs;
     if (span < this.lowerWindow && !byTime) return;
     const w = Math.min(span, this.lowerWindow);
+    // niższy wiek nie może od razu przekroczyć progu podnoszenia (okno 64 przyjść sięga przed ostatnią zmianę — przy
+    // ~10 przyjściach/s seria spóźnień, która podniosła wiek, siedzi w nim jeszcze po 5 s: obniżenie i od razu powrót)
+    if (this._countAbove(this.age - 1, this.raiseWindow) > this.raiseLate) return;
     if (this._countAbove(this.age - 1, w) <= Math.floor(this.lowerLate * w / this.lowerWindow)) {
       this.age--;
       this._sinceChange = 0;
