@@ -193,7 +193,58 @@ test('skóra sprite\'a kadłubów pomija ciała świata, a worker zna kawałek l
   assert.ok(page > 0 && sync > 0 && hulls > 0 && sync < hulls, 'renderPage: replika ciał świata (hull.world luster) przed updateHexShips3D');
 });
 
-// ── Odłamy w workerze i ukryty dostawca (2026-10-28, zgłoszenie „upadek bazy i wyjście z warpa dławią GPU”) ─────────
+// ── PARTIE skór ciał świata (src/3d/worldSkinBatch.js, 2026-10-27) ──────────────────────────────────────────────
+const mainOf = (src) => src.slice(src.indexOf('fn main('));
+// zmienna WGSL czytana, zanim cokolwiek ją przypisało (pułapki 36, 39 — wzór tests/hullCloakTSL.test.mjs)
+function useBeforeAssign(src) {
+  const main = mainOf(src);
+  const body = main.slice(main.indexOf('// code'));
+  const assigned = new Set();
+  const bad = [];
+  for (const line of body.split('\n')) {
+    const lhs = line.match(/^\s*(nodeVar\d+) = /);
+    const rhs = lhs ? line.slice(line.indexOf('=') + 1) : line;
+    for (const m of rhs.matchAll(/\bnodeVar\d+\b/g)) if (!assigned.has(m[0])) bad.push(`${m[0]}: ${line.trim().slice(0, 90)}`);
+    if (lhs) assigned.add(lhs[1]);
+  }
+  return bad;
+}
+
+test('partia skór: wariant grafu w limitach WebGPU, slot z instance_index, flagi przed gałęzią, połówki jednym programem', async () => {
+  const { WS } = await import('../src/3d/worldSkinBatch.js');
+  // partia rysuje na atrybutach skóry kawałka (z indeksem) — ten sam układ co odłam bez partii
+  const geo = buildingSkinWarmGeometry(true);
+  const storageBuffers = (wgsl) => (wgsl.match(/var<storage/g) || []).length;
+  const flat = buildWGSL(dock.skinBatchMaterial('bg', false, 0), geo);
+  const pod = buildWGSL(dock.skinBatchMaterial('bg', true, 0), geo);
+  const nad = buildWGSL(dock.skinBatchMaterial('fg', true, 1), geo);
+  for (const w of [flat, pod, nad]) {
+    assert.ok(uniformBuffers(w.vertex) <= 12 && uniformBuffers(w.fragment) <= 12, 'uniformy na etap');
+    assert.ok(storageBuffers(w.vertex) <= 8 && storageBuffers(w.fragment) <= 8, 'bufory storage na etap');
+    assert.match(w.vertex, /@builtin\( instance_index \) instanceIndex/, 'slot z instance_index (firstInstance rekordu)');
+    const v = mainOf(w.vertex);
+    assert.match(v, /= instanceIndex;/, 'slot egzemplarza z instance_index');
+    // flagi widoczności (WS.FLAGS) czytane PRZED gałęzią widoczności, FFD w gałęzi
+    const flags = v.search(new RegExp(`worldSkinStore\\.value\\[ \\( nodeVar\\d+ \\+ ${WS.FLAGS}u \\) \\]`));
+    const branch = v.indexOf('if ( ( dot(');
+    assert.ok(flags > 0 && branch > flags, 'flagi przed gałęzią');
+    assert.ok(v.indexOf('hullSkin3DField', branch) > branch && v.lastIndexOf('hullSkin3DField', branch) < 0, 'FFD tylko w gałęzi');
+    assert.deepEqual(useBeforeAssign(w.vertex), [], 'wierzchołki: zmienne przypisane przed użyciem');
+    assert.deepEqual(useBeforeAssign(w.fragment), [], 'fragmenty: zmienne przypisane przed użyciem');
+    assert.match(mainOf(w.fragment), /round\( vPbSkinSlot \)/, 'fragment: slot z varyingu');
+  }
+  assert.equal(pod.vertex, nad.vertex, 'połówki bryły i zestawy — jeden program wierzchołków');
+  assert.equal(pod.fragment, nad.fragment, 'połówki bryły i zestawy — jeden program fragmentów');
+  // ścieżka bez partii (siatka egzemplarza) bez bufora partii i bez instance_index
+  const own = buildWGSL(dock.skinMaterial('bg'), geo);
+  assert.doesNotMatch(own.vertex + own.fragment, /worldSkinStore|instance_index/);
+  assert.equal(dock.skinBatchMaterial('fg', true, 1), dock.skinBatchMaterial('fg', true, 1), 'materiał raz na połówkę');
+  assert.deepEqual(dock.skinBatchMaterial('fg', true, 1).uniforms.uSkinFlag.value.toArray(), [0, 0, 0, 1]);
+  assert.deepEqual(dock.skinBatchMaterial('bg', true, 0).uniforms.uSkinClip.value.toArray(), [-1, 0]);
+  assert.deepEqual(dock.skinBatchMaterial('fg', false, 0).uniforms.uSkinClip.value.toArray(), [0, 0]);
+});
+
+// Kawałek doku po rozpadzie: skóra (wypiek w wątku testu), odłamy shatter — wspólne dla testów partii.
 function shatteredPiece(chunkId = 'H-W1') {
   const r = dryDockChunkRaster(layout, dock.scene, chunkId);
   const e = { x: 0, y: 0, vx: 0, vy: 0, angle: 0.3, angVel: 0, radius: 0, mass: 0, visual: { spriteScale: r.upp, spriteScaleX: r.upp, spriteScaleY: r.upp, spriteRotation: 0 } };
@@ -205,11 +256,11 @@ function shatteredPiece(chunkId = 'H-W1') {
   window.wrecks.length = 0;
   const res = HullBodies.shatter(e, 0, 0, 0.5, { cells: 6, crackDebris: 0.3, debrisFrac: 0.05, debrisSpeed: [60, 120], cuts: 0, chords: 0, minFragmentNodes: 20 });
   const frags = [res.wreck, ...window.wrecks.filter((w) => w !== res.wreck)].filter((w) => w?.beamHull?.body?.activeNodes > 0);
-  return { r, lat, skin, group, frags };
+  return { r, e, hull, lat, skin, group, frags };
 }
 
 // Miejsce z kawałkiem straconym (gotowa skóra) na sztucznym źródle ciał świata; odłamy-wraki dziedziczą rekord kawałka
-// (hull.world). `state.hidden` — ukrycie dostawcy (soczewka skoku gracza, mgła wojny).
+// (hull.world) — testy partii w klatce.
 function lostPieceSource(W3, chunkId, state = { hidden: false }) {
   const { r, lat, skin, group, frags } = shatteredPiece(chunkId);
   const prov = {
@@ -225,6 +276,191 @@ function lostPieceSource(W3, chunkId, state = { hidden: false }) {
   return { skin, frags };
 }
 
+test('partia skór: odłam = indeks podzbioru na atrybutach skóry kawałka + rekord rysunku pośredniego, miejsce po wpisie wraca', async () => {
+  const { WorldSkinBatch, SKIN_BATCH_RECORD, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
+  const { fragmentSkinSubset } = await import('../src/3d/worldBodies3D.js');
+  const { skin, lat, frags } = shatteredPiece();
+  assert.ok(frags.length >= 3, `odłamy: ${frags.length}`);
+  const tris = (g) => (g ? g.index.count / 3 : 0);
+  const geo = tris(skin.fg) >= tris(skin.bg) ? skin.fg : skin.bg;
+  const halves = [{ material: dock.skinBatchMaterial('bg', true, 0), layer: 1 }, { material: dock.skinBatchMaterial('bg', true, 1), layer: 2 }];
+  const batch = new WorldSkinBatch({ source: geo, set: 'bg', solid: true, halves });
+  // siatki połówek na WSPÓLNYCH atrybutach skóry kawałka, wspólny indeks i rekordy, osobne listy rysunków
+  for (const p of batch.parts) {
+    assert.equal(p.geometry.attributes.aLat, geo.attributes.aLat, 'atrybuty skóry kawałka (bez kopii wierzchołków)');
+    assert.equal(p.geometry.index, batch.aIdx);
+    assert.equal(p.geometry.indirect, batch.aRec);
+    assert.equal(p.geometry.indirectOffset, p.offsets);
+  }
+  assert.notEqual(batch.parts[0].offsets, batch.parts[1].offsets, 'połówki — osobne listy rysunków');
+  const entries = frags.map((w, i) => {
+    const sub = fragmentSkinSubset(geo, w.beamHull.body, lat);
+    const entry = batch.add(10 + i, sub);
+    assert.ok(entry && entry.alive, 'wpis');
+    assert.equal(entry.iCount, sub.index.count);
+    assert.deepEqual([...batch.idx.subarray(entry.iStart, entry.iStart + entry.iCount)], [...sub.index.array.subarray(0, sub.index.count)],
+      'indeks wpisu = indeks podzbioru (numery wierzchołków skóry kawałka)');
+    const o = entry.rec * SKIN_BATCH_RECORD;
+    assert.deepEqual([...batch.recs.subarray(o, o + SKIN_BATCH_RECORD)], [entry.iCount, 1, entry.iStart, 0, 10 + i],
+      'rekord: liczba indeksów, 1 instancja, początek, wierzchołek 0, firstInstance = slot');
+    assert.equal(entry.offset, o * 4, 'przesunięcie rekordu w bajtach');
+    return entry;
+  });
+  // rysunki klatki: połówka „pod” — dwa wpisy w podanej kolejności, „nad” — żaden (siatka schowana)
+  assert.equal(batch.setDraws(0, [entries[2], entries[0]], 2, null), 1);
+  assert.deepEqual(batch.parts[0].offsets, [entries[2].offset, entries[0].offset]);
+  assert.ok(batch.parts[0].mesh.visible);
+  assert.equal(batch.setDraws(1, [], 0, null), 0);
+  assert.ok(!batch.parts[1].mesh.visible);
+  // usunięty wpis: znika z list rysunków, miejsce w indeksie i rekord wracają
+  const gone = entries[0];
+  batch.remove(gone);
+  assert.deepEqual(batch.parts[0].offsets, [entries[2].offset], 'usunięty wpis bez rysunku');
+  const again = batch.add(99, fragmentSkinSubset(geo, frags[0].beamHull.body, lat));
+  assert.equal(again.iStart, gone.iStart, 'indeks w zwolnionym miejscu');
+  assert.equal(again.rec, gone.rec, 'zwolniony rekord');
+  // wzrost indeksu: siatki połówek dostają nowy bufor indeksu
+  const icap0 = batch.icap;
+  const keep = [...batch.idx.subarray(entries[2].iStart, entries[2].iStart + entries[2].iCount)];
+  const big = { index: { count: icap0, array: new Uint32Array(icap0) }, drawRange: { count: Infinity } };
+  const e2 = batch.add(7, big);
+  assert.ok(e2 && batch.icap > icap0, `indeks partii urósł: ${icap0} → ${batch.icap}`);
+  for (const p of batch.parts) assert.equal(p.geometry.index, batch.aIdx, 'nowy indeks w siatkach połówek');
+  assert.deepEqual([...batch.idx.subarray(entries[2].iStart, entries[2].iStart + entries[2].iCount)], keep, 'wpisy przeniesione do większego indeksu');
+  const n0 = SKIN_BATCH_STATS.entries, k = batch.entries.length;
+  batch.dispose();
+  assert.equal(SKIN_BATCH_STATS.entries, n0 - k, 'statystyki wpisów po zwolnieniu partii');
+  for (const w of frags) HullBodies.release(w);
+});
+
+test('partia skór w klatce: odłamy w partii, rysunki i macierz model-widok z haka passa, A/B własnymi siatkami', async () => {
+  const W3 = await import('../src/3d/worldBodies3D.js');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { WorldSkinStore, WORLD_SKIN_SLOT_VEC4, WS, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
+  if (!Core3D.scene) Core3D.scene = new THREE.Scene();
+  const { skin, frags } = lostPieceSource(W3, 'Q-W');
+  assert.ok(frags.length >= 2, `odłamy: ${frags.length}`);
+  const sets = ['bg', 'fg'].filter((s) => skin[s]);
+  try {
+    const S = W3.WORLD_SKIN_STATS;
+    for (let i = 0; i < 400 && S.batchSlots < frags.length; i++) W3.syncWorldBodies3D();
+    assert.equal(S.batchSlots, frags.length, 'wszystkie odłamy w partii');
+    W3.syncWorldBodies3D();
+    assert.equal(S.batched, frags.length, 'odłamy rysowane partią');
+    assert.equal(S.shownFrag, frags.length);
+    assert.equal(SKIN_BATCH_STATS.batches, sets.length, 'partia na zestaw skóry kawałka');
+    // egzemplarze schowane (nośniki macierzy i sfer), siatki partii w scenie — na atrybutach skóry kawałka
+    const roots = Core3D.scene.children.filter((o) => o.name === 'ciało świata');
+    assert.ok(roots.length >= frags.length && roots.every((o) => !o.visible), 'siatki egzemplarzy schowane');
+    const parts = Core3D.scene.children.filter((o) => /^ciało świata — partia/.test(o.name));
+    assert.equal(parts.length, sets.length, `siatki partii: ${parts.length}`);
+    for (const m of parts) assert.ok(m.geometry.indirect && m.geometry.attributes.aLat === skin[m.name.includes('(fg') ? 'fg' : 'bg'].attributes.aLat);
+    // hak passa: kamera nad odłamami — wszystkie w kadrze, rysunek na odłam, od najbliższych
+    const cam = new THREE.PerspectiveCamera(50, 1.6, 10, 1e7);
+    cam.position.set(0, 0, 60000);
+    cam.lookAt(0, 0, 0);
+    cam.updateMatrixWorld();
+    const n = W3.commitWorldSkinStore(cam);
+    assert.equal(n, sets.length, `obiekty renderu partii: ${n}`);
+    for (const m of parts) {
+      assert.ok(m.visible);
+      assert.equal(m.geometry.indirectOffset.length, frags.length, 'rysunek na odłam');
+    }
+    const A = WorldSkinStore.array();
+    const mv = new THREE.Matrix4();
+    // slot egzemplarza z rekordu (firstInstance), dane slotu = wartości siatki egzemplarza
+    const m0 = parts[0];
+    const R = m0.geometry.indirect.array;
+    let prevDepth = -Infinity;
+    for (const off of m0.geometry.indirectOffset) {
+      const slot = R[off / 4 + 4];
+      const o = slot * WORLD_SKIN_SLOT_VEC4 * 4;
+      assert.ok(A[o + WS.FLAGS * 4] + A[o + WS.FLAGS * 4 + 2] >= 1, `slot ${slot}: flaga zestawu`);
+      const owner = roots.find((root) => root.children.some((m) => m.userData.skin3D && A[o + WS.CMIN * 4 + 3] === m.userData.skin3D.offset));
+      assert.ok(owner, `slot ${slot}: egzemplarz o tym slocie pola`);
+      const me = owner.children[0];
+      mv.multiplyMatrices(cam.matrixWorldInverse, me.matrixWorld);
+      for (let q = 0; q < 16; q++) assert.equal(A[o + q], Math.fround(mv.elements[q]), 'macierz model-widok');
+      for (let q = 0; q < 16; q++) assert.equal(A[o + WS.HUB * 4 + q], Math.fround(me.userData.bodyToHub.elements[q]), 'ciało → budowla');
+      const st = me.userData.skin3D;
+      assert.deepEqual([...A.subarray(o + WS.CDIM * 4, o + WS.CDIM * 4 + 4)], [st.cdim.x, st.cdim.y, st.cdim.z, 1]);
+      // kolejność od najbliższych: głębokość środka sfery w kamerze rośnie
+      const c = new THREE.Vector3().copy(me.boundingSphere.center).applyMatrix4(me.matrixWorld).applyMatrix4(cam.matrixWorldInverse);
+      assert.ok(-c.z >= prevDepth - 1e-6, 'rysunki od najbliższych');
+      prevDepth = -c.z;
+    }
+    // poza kadrem: bez rysunków partii
+    cam.lookAt(1e7, 0, 60000);
+    cam.updateMatrixWorld();
+    W3.syncWorldBodies3D();
+    assert.equal(W3.commitWorldSkinStore(cam), 0, 'kamera obok — bez rysunków partii');
+    assert.ok(parts.every((m) => !m.visible && m.geometry.indirectOffset.length === 0));
+    // A/B: własne siatki egzemplarzy, partie bez rysunków
+    W3.WORLD_SKIN_OPTIONS.batch = false;
+    W3.syncWorldBodies3D();
+    W3.commitWorldSkinStore(cam);
+    assert.ok(roots.every((o) => o.visible), 'A/B: siatki egzemplarzy widoczne');
+    assert.ok(parts.every((m) => !m.visible), 'A/B: partie schowane');
+    assert.equal(W3.WORLD_SKIN_STATS.batched, 0);
+  } finally {
+    W3.WORLD_SKIN_OPTIONS.batch = true;
+    W3.resetWorldBodies3D();
+    W3.setWorldBodiesSource(null);
+    for (const w of frags) HullBodies.release(w);
+  }
+  assert.equal(SKIN_BATCH_STATS.entries, 0, 'reset: wpisy zwolnione');
+  assert.equal(SKIN_BATCH_STATS.batches, 0, 'reset: partie zwolnione');
+  assert.ok(!Core3D.scene.children.some((o) => /^ciało świata — partia/.test(o.name)), 'reset: siatki partii poza sceną');
+});
+
+test('partia skór w workerze: odłam bez stanu węzłów lustra czeka na węzły i wchodzi do partii (nie zostaje przy pełnej skórze)', async () => {
+  const W3 = await import('../src/3d/worldBodies3D.js');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
+  if (!Core3D.scene) Core3D.scene = new THREE.Scene();
+  const { frags } = lostPieceSource(W3, 'Q-W');
+  assert.ok(frags.length >= 3, `odłamy: ${frags.length}`);
+  // frags[0] — lustro w workerze, którego węzły jeszcze nie doszły (ciało spoza pudła rozgrzania: topologia i
+  // `activeNodes`, `active` puste); frags[1] — ciało gry bez komórek w kratownicy (bez flagi lustra): własne siatki jak dotąd
+  const late = frags[0].beamHull.body, empty = frags[1].beamHull.body;
+  const lateActive = late.nodeStore.active.slice(), emptyActive = empty.nodeStore.active.slice();
+  late.nodeStore.active.fill(0);
+  late.nodesReceived = false;
+  empty.nodeStore.active.fill(0);
+  const S = W3.WORLD_SKIN_STATS;
+  const waits0 = S.subsetWaits, noSub0 = S.batchOut.noSubset;
+  try {
+    for (let i = 0; i < 400 && (S.batchSlots < frags.length - 2 || S.subsetWait < 1 || S.batchOut.noSubset === noSub0); i++) W3.syncWorldBodies3D();
+    W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 1, 'odłam bez węzłów lustra czeka');
+    assert.equal(S.subsetWaits - waits0, 1);
+    assert.equal(S.batchOut.noSubset - noSub0, 1, 'ciało gry bez komórek — własne siatki (jak dotąd)');
+    assert.equal(S.batched, frags.length - 2, 'reszta w partii');
+    // kolejne klatki bez węzłów: odłam dalej czeka, podzbiór nie liczy się od nowa
+    for (let i = 0; i < 5; i++) W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 1);
+    assert.equal(S.subsetWaits - waits0, 1, 'bez prób przed dojściem węzłów');
+    // węzły doszły (strona migawki z węzłami ciała): podzbiór od nowa i wpis w partii
+    late.nodeStore.active.set(lateActive);
+    late.nodesReceived = true;
+    for (let i = 0; i < 400 && S.batchSlots < frags.length - 1; i++) W3.syncWorldBodies3D();
+    W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 0, 'nikt nie czeka');
+    assert.equal(S.batched, frags.length - 1, 'odłam z węzłami w partii');
+    assert.equal(S.batchOut.noSubset - noSub0, 1, 'bez nowych powrotów do pełnej skóry');
+  } finally {
+    late.nodeStore.active.set(lateActive);
+    empty.nodeStore.active.set(emptyActive);
+    delete late.nodesReceived;
+    W3.resetWorldBodies3D();
+    W3.setWorldBodiesSource(null);
+    for (const w of frags) HullBodies.release(w);
+  }
+  assert.equal(S.subsetWait, 0);
+  assert.equal(SKIN_BATCH_STATS.entries, 0, 'reset: wpisy zwolnione');
+});
+
+// ── Odłamy bez węzłów lustra i ukryty dostawca (2026-10-28, zgłoszenie „upadek bazy i wyjście z warpa dławią GPU”) ──
 test('worker: odłam bez stanu węzłów lustra jest schowany i czeka na węzły (nie rysuje pełnej skóry kawałka na stałe)', async () => {
   const W3 = await import('../src/3d/worldBodies3D.js');
   const { Core3D } = await import('../src/3d/core3d.js');

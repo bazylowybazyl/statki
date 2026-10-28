@@ -80,7 +80,7 @@ export class MirrorBody {
     this.storeVer = -1;
     this.hpReceived = false;    // HP węzłów repliki doszło (mostki: obecność komórek liczona z HP przy adopcji)
     // stan węzłów (pozycje, `active`) doszedł — pakujący wysyła węzły tylko ciałom w pudle rozgrzania, a `activeNodes`
-    // zawsze: ciało spoza pudła ma topologię bez stanu węzłów (skóra odłamu ciała świata — worldBodies3D — czeka)
+    // zawsze: ciało spoza pudła ma topologię bez stanu węzłów (podzbiór skóry odłamu — worldBodies3D — czeka)
     this.nodesReceived = false;
     this.nodeStore = null;
     this.beamStore = null;
