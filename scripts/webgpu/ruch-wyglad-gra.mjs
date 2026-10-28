@@ -12,6 +12,9 @@
 // (`1N-<cel>-b-npc.png`), powrót do bańki (strojenie werdyktu: `calmSeconds` / `releaseRadius` 0 — `1N-<cel>-c-powrot.png`).
 // `--rozgrzewka 0` (domyślnie) — zimny start jak u gracza: świat liczy tylko własną rozgrzewkę gry (E15, ~300 encji
 // przy Ziemi); `N` — dodatkowo `TrafficV2.advance` N s przed scenami.
+// KOSZT (`--sceny koszt`, tryb worker): worker renderu — GPU klatki, CPU aktualizacji modułów i całej klatki — z proxy
+// i bez (`TrafficBubble.hideRender`) w kadrach `--kadry port,zatoki,hala` (`--probki 24` po 0,25 s gry). A/B wersji
+// kodu — dwa przebiegi PO KOLEI, „przed” z `HULLFALL_AB_DIR=<katalog ze starymi plikami>` (vite.config.js).
 // Wynik: <out>/raport.json (cele, pozy proxy / NPC, liczniki), zrzuty, pipeline'y synchroniczne, błędy konsoli.
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -265,6 +268,52 @@ try {
       await screenshotPng(cdp, join(out, `${tag}-c-powrot.png`));
       report.cele[name] = { cel: t, zoom: z, poseProxy, poseNpc, poseBack, kadlubPoKlatkach: built, powrotPoKlatkach: back, npc: npcInfo, klatki: frames };
       console.log('awans', name, JSON.stringify({ hull: t.hull, id: t.id, built, back, npc: npcInfo }));
+    }
+  }
+
+  if (SCENES.has('koszt')) {
+    // Kadry: port z daleka (gracz nad zatoką, jak 01-port), zatoki z bliska (gracz w porcie), hala K-7 z zapasem floty
+    // (gracz w hali — dach otwarty, lampy okrętów widać).
+    const KADRY = String(args.kadry || 'port,zatoki,hala').split(',');
+    const PROBKI = Number(args.probki || 24);
+    const where = {
+      port: { ...spot, zoom: 0.045 },
+      zatoki: { x: spot.x, y: spot.y, zoom: 0.12 },
+      hala: { x: spot.k7.x, y: spot.k7.y, zoom: 0.2 }
+    };
+    const sample = () => ev(`(() => { const h = window.RenderWorkerHost; if (!h) return null; if (h.readStats) h.readStats(); const s = h.stats;
+      return { gpu: s[0], gpuN: s[2], upd: s[4], render: s[5], frame: s[6] }; })()`);
+    const run = async (hide) => {
+      await ev(`(() => { window.TrafficBubble.hideRender = ${hide}; return true; })()`);
+      await step(90);
+      const rows = [];
+      let n0 = -1;
+      for (let i = 0; i < PROBKI; i++) {
+        await step(15);
+        const r = await sample();
+        if (!r) break;
+        // GPU: tylko nowe próbki znaczników czasu (licznik)
+        if (r.gpuN !== n0) { r.gpuNew = true; n0 = r.gpuN; }
+        rows.push(r);
+      }
+      const avg = (k, f = () => true) => { const xs = rows.filter(f).map((r) => Number(r[k]) || 0); return xs.length ? +(xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(3) : null; };
+      const med = (k) => { const xs = rows.map((r) => Number(r[k]) || 0).sort((a, b) => a - b); return xs.length ? +xs[xs.length >> 1].toFixed(3) : null; };
+      return { gpuMs: avg('gpu', (r) => r.gpuNew), cpuUpdMs: avg('upd'), cpuRenderMs: avg('render'), cpuKlatkaMs: avg('frame'), cpuKlatkaMed: med('frame'), probek: rows.length };
+    };
+    report.koszt = {};
+    for (const k of KADRY) {
+      const w = where[k];
+      if (!w) continue;
+      await ev(`(() => { window.devTeleportTo(${w.x}, ${w.y}, { angle: 0, quiet: true }); window.ship.vel.x = 0; window.ship.vel.y = 0; return true; })()`);
+      await ev(FOCUS(w.x, w.y, w.zoom));
+      await step(120);
+      const widac = await ev(`window.TrafficBubble.list.length`);
+      const z = await run(false);
+      await screenshotPng(cdp, join(out, `20-koszt-${k}.png`));
+      const bez = await run(true);
+      await ev('(() => { window.TrafficBubble.hideRender = false; return true; })()');
+      report.koszt[k] = { encji: widac, zProxy: z, bezProxy: bez, kamera: await ev(CAM) };
+      console.log('koszt', k, JSON.stringify(report.koszt[k]));
     }
   }
 
