@@ -42,7 +42,7 @@ import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { zbierzZakres } from './zakresyWysylki.js';
 import { PROXY_SHARED, PROXY_INSTANCE_STRIDE, ShipProxyNodeMaterial, createProxyGeometry } from './shipProxyBatch3D.tsl.js';
 import {
-  acquireProxyHullLook, refreshProxyHullLook, releaseProxyHullLook, hullLacquerGlintAt, setProxyLightViews,
+  acquireProxyHullLook, refreshProxyHullLook, releaseProxyHullLook, hullLacquerGlintAt, setProxyLightViews, setProxyNozzleSource,
   PROXY_LIGHT_SHADER_MIN_PX
 } from './hexShips3D.js';
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
@@ -53,6 +53,9 @@ import { loadImageBitmap, createCanvas2D } from './canvas2d.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 import { cameraRoll, rolledHalfExtents } from './viewRoll.js';
 import { RoofCover } from './roofCover.js';
+import { buildSideThrusters } from '../data/editorEngines.js';
+import { SideNozzleFrame, SIDE_NOZZLE_RADIUS } from './sideNozzleFrame.js';
+import { getEngineVfxScaleForHullId } from './engineVfxScale.js';
 
 const _rollHalf = { hw: 0, hh: 0 };
 
@@ -98,6 +101,87 @@ const lightViews = [];
 const lightViewPx = new Float32Array(MAX_PICK);
 const lightViewKeys = new Float64Array(MAX_PICK);
 const lightViewKeep = new Uint8Array(MAX_PICK);
+
+// MODELE DYSZ SIDE na proxy (E17b): rekordy klatki jak SideNozzleFrame (poza dyszy w scenie, podstawa i kierunek
+// wydechu, promień wylotu; ciąg i żar 0 — dysze w spoczynku), dopisywane do listy klatki przez hexShips3D zaraz po
+// EngineVfxSystem.update (`setProxyNozzleSource`). Próg = próg rysownika (`SideNozzleFrame.modelMinPx`) — ten sam co
+// u NPC, więc awans w kadrze dysz nie dokłada. Encja rekordu = widok proxy z puli (paleta z `shipFrame`, kadr).
+const NOZZLE_CAP = 2048;
+const nzX = new Float64Array(NOZZLE_CAP);
+const nzY = new Float64Array(NOZZLE_CAP);
+const nzOX = new Float32Array(NOZZLE_CAP);
+const nzOY = new Float32Array(NOZZLE_CAP);
+const nzBX = new Float32Array(NOZZLE_CAP);
+const nzBY = new Float32Array(NOZZLE_CAP);
+const nzDX = new Float32Array(NOZZLE_CAP);
+const nzDY = new Float32Array(NOZZLE_CAP);
+const nzR = new Float32Array(NOZZLE_CAP);
+const nzEntity = new Array(NOZZLE_CAP).fill(null);
+const nzSource = new Array(NOZZLE_CAP).fill(null);
+let nzCount = 0;
+let nzOwners = 0;
+const nozzleViewPool = [];
+
+function pushProxyNozzles() {
+  const F = SideNozzleFrame;
+  if (!F.enabled) return;
+  let lastE = null;
+  let from = F.count;
+  for (let i = 0; i < nzCount; i++) {
+    const e = nzEntity[i];
+    if (e !== lastE) { lastE = e; from = F.count; }
+    // zdublowane markery jednego kadłuba — jedna bryła (jak EngineVfxSystem)
+    if (F.near(from, nzX[i], nzY[i], nzR[i] * 0.5)) continue;
+    F.push(e, nzSource[i], nzX[i], nzY[i], nzOX[i], nzOY[i], nzBX[i], nzBY[i], nzDX[i], nzDY[i], nzR[i], 0, 0);
+  }
+}
+setProxyNozzleSource(pushProxyNozzles);
+
+// Dysze SIDE proxy w tej klatce: widok z puli (indeks właściciela) i rekordy dysz — bez alokacji.
+function considerNozzles(info, x, y, angle) {
+  const side = sideThrustersFor(info);
+  if (!side || !SideNozzleFrame.enabled) return;
+  const R = info.sideR * frame.sideWidthMul;
+  if (!frame.free && R * frame.zoom < (Number(SideNozzleFrame.modelMinPx) || 0)) return;
+  if (nzCount + side.length > NOZZLE_CAP) return;
+  let view = nozzleViewPool[nzOwners];
+  if (!view) {
+    view = { x: 0, y: 0, angle: 0, radius: 0, shipFrame: '', dead: false, isTrafficProxy: true };
+    nozzleViewPool[nzOwners] = view;
+  }
+  nzOwners++;
+  view.x = x;
+  view.y = y;
+  view.angle = angle;
+  view.radius = info.radius;
+  view.shipFrame = info.hullId;
+  const cA = Math.cos(-angle);
+  const sA = Math.sin(-angle);
+  const sy = -y;
+  for (let n = 0; n < side.length; n++) {
+    const t = side[n];
+    const lx = t.offset.x;
+    const ly = -t.offset.y;
+    const k = nzCount++;
+    nzX[k] = x + lx * cA - ly * sA;
+    nzY[k] = sy + lx * sA + ly * cA;
+    nzOX[k] = t.offset.x;
+    nzOY[k] = t.offset.y;
+    // wydech (−forward.x, forward.y) i podstawa (baseDeg — na zewnątrz burty) obrócone do sceny
+    const dlx = -t.forward.x;
+    const dly = t.forward.y;
+    nzDX[k] = dlx * cA - dly * sA;
+    nzDY[k] = dlx * sA + dly * cA;
+    const bRad = (Number(t.baseDeg) || 0) * Math.PI / 180;
+    const blx = -Math.sin(bRad);
+    const bly = -Math.cos(bRad);
+    nzBX[k] = blx * cA - bly * sA;
+    nzBY[k] = blx * sA + bly * cA;
+    nzR[k] = R;
+    nzEntity[k] = view;
+    nzSource[k] = t;
+  }
+}
 setProxyLightViews(lightViews, (view) => view.__proxyGrid);
 let imageResolver = null;
 let engineLayoutResolver = null;
@@ -118,6 +202,7 @@ const frame = {
   margin: 0,
   engines: true,
   zoomPx: 1,
+  sideWidthMul: 1,
   t0: 0
 };
 
@@ -145,6 +230,7 @@ const stats = {
   nozzles: 0,
   lights: 0,
   lightsDropped: 0,
+  nozzles3D: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -298,20 +384,20 @@ function lightBlockFor(info) {
   return info.lights;
 }
 
-// Dysze SIDE z edytora (strefy lakieru gasną przy wylotach jak u NPC) — pozycje w px PNG × skala, od środka sprite'a.
-function sideMarkersFor(info) {
+// Dysze SIDE z edytora — te same co u NPC po awansie (buildSideThrusters: offset w j. świata od środka sprite'a,
+// kąt bazy i dyszy z gimbalem): strefy lakieru gasną przy wylotach, modele dysz (E17b) stoją w tych samych miejscach.
+// Raz na kadłub; obiekty dysz to klucze pamięci mocowań rysownika (SideNozzleFrame.source).
+function sideThrustersFor(info) {
+  if (info.side !== undefined) return info.side;
   const raw = editorEntryFor(info)?.engines?.side;
-  if (!Array.isArray(raw) || !raw.length) return null;
-  const sx = info.w / info.def.png[0];
-  const sy = info.h / info.def.png[1];
-  const out = [];
-  for (const m of raw) {
-    const x = Number(m?.x);
-    const y = Number(m?.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    out.push({ offset: { x: (x + (Number(m.offsetX) || 0)) * sx, y: (y + (Number(m.offsetY) || 0)) * sy }, forward: { x: 0, y: 0 } });
-  }
-  return out.length ? out : null;
+  const list = Array.isArray(raw) && raw.length ? buildSideThrusters(raw, info.w / info.def.png[0], info.h / info.def.png[1]) : [];
+  info.side = list.length ? list : null;
+  // Promień wylotu dyszy przy skali sprite'a 1 (bez mnożnika szerokości z tunera) — jak engineVfxSystem.js.
+  info.sideR = SIDE_NOZZLE_RADIUS * getEngineVfxScaleForHullId(info.hullId);
+  return info.side;
+}
+function sideMarkersFor(info) {
+  return sideThrustersFor(info);
 }
 
 // Wygląd rodzaju (acquireProxyHullLook): widok lamp (szablon — także dla billboardów), siatka, dysze stref lakieru.
@@ -613,7 +699,11 @@ export const ShipProxyBatch3D = {
     }
     // Strojenie światła i lakieru — wspólne węzły kadłubów (HULL_SHARED, HullLighting, HullLacquer: updateHexShips3D).
     frame.zoomPx = frame.zoom * (Core3D.pixelRatio || 1);
+    // szerokość dysz SIDE z tunera efektów (jak EngineVfxSystem: VFX_TUNE.sideW)
+    frame.sideWidthMul = Math.max(0.05, Number(RenderWorld.vfxTune?.sideW) || 1);
     lightViews.length = 0;
+    nzCount = 0;
+    nzOwners = 0;
   },
 
   /**
@@ -710,6 +800,9 @@ export const ShipProxyBatch3D = {
     M[o + 15] = hullLacquerGlintAt(bodyPx);
     M[o + 16] = look.lightBase; M[o + 17] = look.zoneCount; M[o + 18] = 1; M[o + 19] = 0;
 
+    // Modele dysz SIDE (E17b) — od progu rysownika jak u NPC.
+    if (opacity > 0.01) considerNozzles(info, x, y, angle);
+
     // Lampy pozycyjne (billboardy FG): widok z pozą instancji — kadłuby z blokiem lamp (okręty, cywile — E17). Pod
     // zamkniętym dachem hali K-7 / zatoki (zapas floty na padach) kadłub zasłania dach, billboardów FG — nie: bez nich.
     const lightPx = info.radius * frame.zoom;
@@ -773,6 +866,7 @@ export const ShipProxyBatch3D = {
     flushEngines(this.engineEntities);
     trimLightViews();
     stats.lights = lightViews.length;
+    stats.nozzles3D = nzCount;
     stats.kinds = live;
     stats.drawCalls = drawCalls;
     const ms = performance.now() - frame.t0;
@@ -788,6 +882,7 @@ export const ShipProxyBatch3D = {
     if (!Core3D.isInitialized) {
       this.engineEntities.length = 0;
       lightViews.length = 0;
+      nzCount = 0;
       return;
     }
     this.begin(camera, options);
@@ -806,6 +901,7 @@ export const ShipProxyBatch3D = {
     if (!Core3D.isInitialized || (!(count > 0) && !stats.drawn)) {
       this.engineEntities.length = 0;
       lightViews.length = 0;
+      nzCount = 0;
       return;
     }
     this.begin(camera);

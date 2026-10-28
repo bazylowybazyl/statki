@@ -775,6 +775,12 @@ export function setProxyLightViews(list, getGrid) {
   _proxyLightGrid = typeof getGrid === 'function' ? getGrid : null;
 }
 
+// Modele dysz SIDE proxy (E17b): `fn()` dopisuje rekordy klatki do SideNozzleFrame — po EngineVfxSystem.update.
+let _proxyNozzleSource = null;
+export function setProxyNozzleSource(fn) {
+  _proxyNozzleSource = typeof fn === 'function' ? fn : null;
+}
+
 function disposeMeshData(data) {
   if (!data) return;
   if (Core3D.scene && data.mesh) {
@@ -1670,6 +1676,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // margines pudła rysowania [j. świata] — okręt spoza pudła ma kadłub co najmniej tyle za kadrem (LOD dysz SIDE);
   // kadr (środek i połowy boków) — LOD dysz MAIN za kadrem
   EngineVfxSystem.update(visibleVfx, cullInfo ? DRAW_BOX_MARGIN_PX / cameraZoom : Infinity, cullInfo);
+  // Modele dysz SIDE proxy statków ruchu (E17b): po liście dysz klatki NPC (EngineVfxSystem zaczyna ją od nowa).
+  if (_proxyNozzleSource !== null) _proxyNozzleSource();
   pushEngineHullLights();
 
   state.hadRenderableLastFrame = hasRenderable || visibleHex.length > 0;

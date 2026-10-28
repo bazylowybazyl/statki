@@ -99,6 +99,8 @@ function liveHull(e) {
 /** Id modelu, którym encja rysuje się w tej klatce (opcja „Statki 3D”), albo null (skóra sprite'a). */
 export function shipModel3DIdFor(e) {
   if (!shipsOn() || !e || e.dead) return null;
+  // Widok proxy statku ruchu (E17b, dysze SIDE na sprite'cie proxy) — proxy nie ma modelu 3D.
+  if (e.isTrafficProxy === true) return null;
   // Maskowanie (src/game/cloakLook.js): na czas efektu okręt rysuje skóra sprite'a z shaderem maskowania
   // (mozaika heksów, refrakcja w warstwie DIST). AGENT: rozpuszczanie samej bryły 3D tym samym wzorem.
   if (e.__cloakLook && e.__cloakLook.active) return null;
