@@ -14,7 +14,7 @@ import { FACTION } from '../../src/data/factions.js';
 import { RESOURCE_KEYS, RESOURCES } from '../../src/data/resources.js';
 import {
   PIRACY_MODEL, createPiracyState, registerNest, depositLoot, nestLootValue,
-  laneThreat, tickPiracy, recordPirateLoss, summarizePiracy
+  laneThreat, tickPiracy, recordPirateLoss, summarizePiracy, seizeHostages
 } from '../../src/game/traffic/piracy.js';
 import { COURSE_KIND, createCourseRegistry } from '../../src/game/traffic/courseRegistry.js';
 
@@ -202,6 +202,42 @@ export function run() {
   t.check('raport zna kryjówki', raport.nests.length === 1);
   t.check('i ich stan kasy', Number.isFinite(raport.nests[0].credits));
   t.check('i wartość łupu', Number.isFinite(raport.nests[0].lootValue));
+
+  t.section('Porwania promów z ludźmi (workforce, E16 W4)');
+  {
+    const piracy = createPiracyState();
+    registerNest(piracy, { stationId: 'gniazdo', x: 0, y: 0 });
+    registerNest(piracy, { stationId: 'zlom', x: 1e6, y: 0 });
+    const econs = { gniazdo: { resources: { workforce: 0 }, capacity: { workforce: 0 } },
+      zlom: { resources: { workforce: 0 }, capacity: { workforce: 0 } },
+      earth: { resources: { workforce: 0 }, capacity: { workforce: 0 } } };
+    const registry = createCourseRegistry();
+    let paid = [];
+    const options = { registry, getEconomy: id => econs[id], rng: () => 0.99,
+      payRansom: (companyId, amount) => { if (companyId !== 'bogata') return false; paid.push(amount); return true; } };
+    t.check('prom ma o połowę mniejszą szansę przechwytu (D8)', piracy.config.passengerExposure === 0.5);
+    const h1 = seizeHostages(piracy, { count: 400, homeId: 'earth', companyId: 'bogata', x: 10, y: 0, now: 0 });
+    const h2 = seizeHostages(piracy, { count: 300, homeId: 'earth', companyId: 'biedna', x: 9e5, y: 0, now: 0 });
+    t.check('zakładnicy w najbliższej kryjówce', h1.nestId === 'gniazdo' && h2.nestId === 'zlom');
+    t.close('okup = 1,5 × wartość ludzi', h1.ransom, 400 * RESOURCES.workforce.value * 1.5, 1e-9);
+    tickPiracy(piracy, 5, options);
+    t.check('bogaty przewoźnik płaci od razu, kryjówka ma kredyty',
+      paid.length === 1 && piracy.nests.get('gniazdo').credits === h1.ransom);
+    registry.clock = 599;
+    tickPiracy(piracy, 5, options);
+    t.check('przed upływem 10 min ludzie jeszcze w kryjówce', econs.earth.resources.workforce === 0);
+    registry.clock = 601;
+    tickPiracy(piracy, 5, options);
+    t.check('po okupie wracają do źródła', econs.earth.resources.workforce === 400);
+    t.check('bez okupu przed 30 min — dalej zakładnicy', econs.zlom.resources.workforce === 0 && piracy.hostages.length === 1);
+    registry.clock = 1801;
+    tickPiracy(piracy, 5, options);
+    t.check('bez okupu po 30 min zostają obsadą kryjówki (D9)',
+      econs.zlom.resources.workforce === 300 && piracy.hostages.length === 0);
+    const sum = summarizePiracy(piracy);
+    t.check('statystyki porwań', sum.stats.kidnapped === 2 && sum.stats.ransomsPaid === 1
+      && sum.stats.released === 400 && sum.stats.keptPeople === 300);
+  }
 
   return t.results;
 }
