@@ -81,8 +81,24 @@ Cywile (wpisy edytora `sideOnly`: frachtowce, górnicy, tankowiec…) lamp nie m
 
 ## 4. Koszt
 
-Pomiar A/B (worker renderu: GPU klatki, CPU aktualizacji i całej klatki, z proxy i bez — `hideRender`, kadry portu
-Ziemi 0,045, zatok 0,12, hali K-7 0,2; „przed” przez `HULLFALL_AB_DIR` ze starymi plikami) — wyniki niżej.
+Pomiar A/B (2026-10-28; worker renderu: GPU klatki, CPU aktualizacji modułów i mediana całej klatki, z proxy i bez —
+`hideRender` w tym samym kadrze; A = stary kod przez `HULLFALL_AB_DIR`, B = drzewo; przebiegi przeplatane A/B/A/B,
+headless Chrome 1600 × 900, ~300 encji przy Ziemi po zimnym starcie; `ruch-wyglad-gra.mjs --sceny koszt`):
+
+| kadr | Δ CPU aktualizacji (proxy) A → B | Δ mediany klatki workera A → B | GPU klatki z proxy A / B |
+|---|---|---|---|
+| port Ziemi 0,045 (seria 2, 40 próbek, bez obcych procesów) | 0,30 → 0,41 ms | 0,33 → 0,65 ms | 0,48 / 0,44 ms (jedna próbka B 1,31 — szum) |
+| zatoki 0,12 (seria 1) | 0,05 → −0,10 ms | ≈ 0 | 0,30 / 0,26 ms |
+| hala K-7 0,2 (seria 1) | 0,06 → 0,06 ms | 0,09 → 0,10 ms | 0,78 / 0,78 ms |
+| hala z bliska 0,5 (seria 2, najgorszy przypadek GPU) | 0,04 → ≈ 0 ms | 0,05 → 0,06 ms | 1,15 / 0,97 ms (szum ±0,3) |
+
+Wnioski: GPU — bez mierzalnej różnicy (fragment pełnego kadłuba na małych proxy to mało pikseli; szum próbek
+większy niż efekt). CPU workera renderu — w kadrze portu ~+0,1 ms aktualizacji i ~+0,3 ms mediany klatki (widoki
+i billboardy lamp proxy, odblask na instancję, przegląd dachów hal); w kadrach zatok i hali bez różnicy.
+`ruch-banka-gra.mjs --query renderWorker=1`: CPU workera 1,52 ms z proxy, 1,42 bez. Seria 1 szła częściowo obok
+obcego harnessu (przebiegi 3–4) — rozrzut tego samego kodu w kadrze portu 0,07–0,89 ms; seria 2 bez obcych.
+Start w workerze (`start-sync-gra.mjs --query renderWorker=1`): 0 pipeline'ów synchronicznych na starcie i po
+120 krokach.
 
 ## 5. Zostaje (decyzja orkiestratora, osobne zadanie)
 

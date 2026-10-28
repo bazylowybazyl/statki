@@ -281,7 +281,9 @@ try {
     const where = {
       port: { ...spot, zoom: 0.045 },
       zatoki: { x: spot.x, y: spot.y, zoom: 0.12 },
-      hala: { x: spot.k7.x, y: spot.k7.y, zoom: 0.2 }
+      hala: { x: spot.k7.x, y: spot.k7.y, zoom: 0.2 },
+      // najgorszy przypadek GPU: duże okręty zapasu floty na pół ekranu (fragment pełnego kadłuba na wielu pikselach)
+      halaBlisko: { x: spot.k7.x, y: spot.k7.y, zoom: 0.5 }
     };
     const sample = () => ev(`(() => { const h = window.RenderWorkerHost; if (!h) return null; if (h.readStats) h.readStats(); const s = h.stats;
       return { gpu: s[0], gpuN: s[2], upd: s[4], render: s[5], frame: s[6] }; })()`);
