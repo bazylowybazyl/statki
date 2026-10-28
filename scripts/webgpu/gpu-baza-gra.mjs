@@ -232,8 +232,9 @@ try {
   console.log('tryb worker:', trybWorker, 'sesja workera:', !!wk.sid);
   if (!trybWorker || !wk.sid) throw new Error('bez workera renderu — narzędzie mierzy tryb gracza');
   await ev(`(window.RenderWorkerHost.dev({ eval: 'globalThis.__C3 = Core3D; globalThis.__ST = st;' }), true)`);
-  await sleep(1500);
-  const inst = await wkEval(SONDA_INSTALUJ);
+  // operacja dev idzie z najbliższą stroną (import three w workerze) — sonda, gdy Core3D workera jest już w globalu
+  let inst = '';
+  for (let i = 0; i < 20 && inst !== 'ok' && inst !== 'już'; i++) { await sleep(500); inst = await wkEval(SONDA_INSTALUJ).catch((e) => e.message); }
   console.log('sonda:', inst);
   await ev(GUARD);
   // Atlas 3,5 km na południe od habitatu (jak ostrzał w baza-zniszczenie-gra.mjs), mgła wojny wyłączona

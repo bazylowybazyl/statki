@@ -139,8 +139,9 @@ try {
   for (let i = 0; i < 40 && !wk.sid; i++) await sleep(250);
   if (!wk.sid) throw new Error('bez workera renderu — narzędzie mierzy tryb gracza');
   await ev(`(window.RenderWorkerHost.dev({ eval: 'globalThis.__C3 = Core3D; globalThis.__ST = st;' }), true)`);
-  await sleep(1000);
-  console.log('sonda:', await wkEval(SONDA_INSTALUJ));
+  let inst = '';
+  for (let i = 0; i < 20 && inst !== 'ok' && inst !== 'już'; i++) { await sleep(500); inst = await wkEval(SONDA_INSTALUJ).catch((e) => e.message); }
+  console.log('sonda:', inst);
   await ev(`(() => { setInterval(() => { const s = window.ship; if (s?.shield) s.shield.val = s.shield.max; if (s && s.maxHp) s.hp = s.maxHp; }, 250); return true; })()`);
   await okno('kurs', 3);
   await screenshotPng(cdp, join(out, '10-kurs.png'));
