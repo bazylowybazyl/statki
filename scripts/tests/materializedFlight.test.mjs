@@ -12,7 +12,7 @@
  */
 
 import { createSuite, runIfMain } from './harness.mjs';
-import { DRIVE_MODES } from '../../src/game/traffic/travelNetwork.js';
+import { DRIVE_MODES, getNode } from '../../src/game/traffic/travelNetwork.js';
 import { hypercruiseSpec, TRAFFIC_CLASS_DRIVE } from '../../src/data/driveModes.js';
 import {
   COURSE_KIND, COURSE_STATUS, DWELL_REASON,
@@ -238,6 +238,7 @@ export function run() {
   t.close('interpolacja renderu w połowie kroku', pose.x, (drobnyActor.prevX + drobnyActor.x) / 2, 1e-9);
 
   driveTableSection(t);
+  raidPastRingSection(t);
   integrationSection(t);
   costSection(t);
 
@@ -372,6 +373,73 @@ function integrationSection(t) {
   t.equal('żadne stanowisko z dwoma statkami', doubleBerth, 0);
   t.equal('bez wymuszonych przechwytów i etapów', s.forcedCaptures + s.forcedStages, 0);
   t.check('zwolnienie całej bańki oddaje zegary', attachedLeft === 0 && cleared >= 0);
+}
+
+/**
+ * Regresja (2026-10-28, znalezione przy E16 — inny przebieg świata): rajder piratów, kurs `raid`, lot konwencjonalny
+ * z Gniazda Hildy na Mimasa. Prosta między portami mija środek Ziemi o ~30 tys. j. — przez płytę ringu. Ścieżka
+ * bańki objeżdża dyski budowli przy OBU końcach (kryjówka, port Saturna), a router ringu dostawał tylko ostatni
+ * odcinek (od objazdu przy celu) — odcinek między objazdami szedł prostą przez płytę. Każdy wolny odcinek idzie
+ * teraz przez router ringu (`pushDiscDetour`).
+ */
+function raidPastRingSection(t) {
+  t.section('Przelot między portami bez ringu obok planety z ringiem: tylko tranzytami i objazdem, nie przez płytę');
+
+  const world = buildTrafficWorld({ economyScale: 60, capacityMultiplier: 4, seed: 7 });
+  const net = world.network;
+  const earth = getNode(net, 'earth');
+  const from = getNode(net, 'gniazdo-hildy');
+  const to = getNode(net, 'mimas');
+  const rings = createRingObstaclesForNetwork(net, world.docks);
+  const ring = rings.find(r => Math.hypot(r.x - earth.x, r.y - earth.y) < 1);
+  t.check('świat: kryjówka Hildy, Mimas i ring Ziemi', !!(from && to && ring));
+  if (!from || !to || !ring) return;
+  // Prosta rekordu: jak blisko środka Ziemi i w którym miejscu odcinka.
+  const vx = to.x - from.x;
+  const vy = to.y - from.y;
+  const len = Math.hypot(vx, vy);
+  const u = ((earth.x - from.x) * vx + (earth.y - from.y) * vy) / (len * len);
+  const miss = Math.abs((earth.x - from.x) * vy - (earth.y - from.y) * vx) / len;
+  // Mija środek bliżej niż wierzch płyty — przecina ją (31 tys. j.: korytarz wewnętrzny, płyta dwa razy).
+  t.check(`prosta Hilda → Mimas tnie płytę ringu (mija środek Ziemi o ${(miss / 1000).toFixed(0)} tys. j.)`, miss < ring.terrainTop);
+
+  const registry = createCourseRegistry();
+  const seconds = len / 1200;
+  const course = launchCourse(registry, {
+    kind: COURSE_KIND.RAID,
+    unitClass: 'raider',
+    stages: [travelStage('gniazdo-hildy', 'mimas', { distance: len, seconds, mode: 'conventional' })]
+  });
+  // Rekord ~120 tys. j. przed Ziemią; bańka przy Ziemi.
+  advanceCourses(registry, seconds * u - 120_000 / 1200);
+  const bubble = createBubble({ rings, docks: world.docks });
+  const focus = { x: earth.x, y: earth.y };
+  const active = () => new Map(getActiveCourses(registry).map(c => [c.id, c]));
+  updateBubble(bubble, net, registry, active(), focus, 160_000, 0);
+  const actor = bubble.actors.get(course.id);
+  t.check('rajder materializuje się przy Ziemi', !!actor);
+  if (!actor) return;
+  // Ścieżka (cała, od startu etapu) nie ma punktu w płycie — próbki co 200 j. wzdłuż odcinków.
+  let pathSlab = 0;
+  const path = actor.path;
+  for (let i = 1; i < path.count; i++) {
+    const x0 = path.data[(i - 1) * 5], y0 = path.data[(i - 1) * 5 + 1];
+    const x1 = path.data[i * 5], y1 = path.data[i * 5 + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 200));
+    for (let k = 0; k <= n; k++) if (pointInRingSlab(ring, x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n)) pathSlab++;
+  }
+  t.equal('ścieżka rajdera nie przecina płyty ringu', pathSlab, 0);
+  let slab = 0;
+  let minR = Infinity;
+  for (let time = 0; time < 300; time += 0.2) {
+    updateBubble(bubble, net, registry, active(), focus, 160_000, 0.2);
+    const a = bubble.actors.get(course.id);
+    if (!a) break;
+    if (pointInRingSlab(ring, a.x, a.y)) slab++;
+    minR = Math.min(minR, Math.hypot(a.x - earth.x, a.y - earth.y));
+  }
+  t.equal('rajder ani razu w płycie ringu', slab, 0);
+  t.check(`rajder mija Ziemię za ringiem (najbliżej ${(minR / 1000).toFixed(1)} tys. j. od środka)`, minR >= ring.keepR - 1600);
 }
 
 /**
