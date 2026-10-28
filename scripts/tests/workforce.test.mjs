@@ -97,7 +97,8 @@ export function run() {
   t.check('obsada przycięta do 1', workforceRatio(500, 100) === 1 && workforceRatio(50, 100) === 0.5);
   t.check('rynek bez potrzeby ma pełną obsadę', workforceRatio(0, 0) === 1);
   t.check('wydajność proporcjonalna od progu 0,2 (D3)',
-    workforceEfficiency(0.19) === 0 && workforceEfficiency(0.2) === 0.2 && workforceEfficiency(0.8) === 0.8);
+    workforceEfficiency(0.19) === 0 && workforceEfficiency(0.2) === 0.2 && workforceEfficiency(0.8) === 0.8
+    && workforceEfficiency(0.95) === 1);
 
   t.section('6. Gospodarka stacji: podaż źródła i rotacja (W1)');
   const source = { id: 'zrodlo', factionId: 'terra_nova', workforce: { need: 0, rate: 10, capacity: 1800 } };
@@ -161,6 +162,33 @@ export function run() {
   }
   t.check('prom wraca do źródła z ludźmi po kontrakcie', !!inbound
     && Number.isFinite(inbound.payload.returning) && !inbound.payload.orderId && inbound.payload.value === 0);
+
+  t.section('9. Skutek niedoboru (W3, D3)');
+  const huta = { id: 'huta-test', factionId: 'terra_nova', industry: composeFromBuildings(['foundry'], 0.3),
+    workforce: { need: 100, rate: 0, capacity: 200 } };
+  const produce = stock => {
+    const econ = { resources: { workforce: stock, iron_ore: 1e6, titanium_ore: 1e6, aluminum_ore: 1e6, copper_ore: 1e6,
+      carbon_ore: 1e6, aluminum: 1e6 }, capacity: {} };
+    runStationEconomy(huta, econ, 1, () => 0.5);
+    // Stal netto zjada też byt osady (STATION_UPKEEP) — wytop mierzymy zużytą rudą.
+    return { steel: 1e6 - econ.resources.iron_ore, e: econ.workforceEfficiency };
+  };
+  const full = produce(100);
+  const half = produce(50);
+  const low = produce(19);
+  t.check('pełna obsada: wydajność 1', full.e === 1 && full.steel > 0);
+  t.close('połowa obsady: połowa wytopu', half.steel / full.steel, 0.5, 1e-9);
+  t.check('poniżej progu 0,2 huta stoi', low.e === 0 && low.steel === 0);
+  t.check('nadmiar ponad N nie podnosi wydajności', produce(180).e === 1);
+  const mine = { id: 'luna', factionId: 'terra_nova', workforce: { need: 100, rate: 0, capacity: 200 } };
+  const ore = stock => {
+    const econ = { resources: { workforce: stock }, capacity: {} };
+    runStationEconomy(mine, econ, 1, () => 0.5);
+    let sum = 0;
+    for (const [id, value] of Object.entries(econ.resources)) if (id !== 'workforce') sum += value;
+    return sum;
+  };
+  t.close('kopalnia przy obsadzie 0,6: 60% urobku', ore(60) / ore(100), 0.6, 1e-9);
 
   return t.results;
 }

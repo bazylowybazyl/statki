@@ -36,7 +36,7 @@ import {
   travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage,
   getCourse
 } from './courseRegistry.js';
-import { laneThreat, depositLoot, recordPirateLoss, pirateInterest } from './piracy.js';
+import { laneThreat, depositLoot, recordPirateLoss, pirateInterest, seizeHostages } from './piracy.js';
 import {
   createMarketBook, openMarket, reserveInbound, inboundUnits, buyOrderUnits, hasSellOffer,
   takeSellOffer, requote, putStock, moveStock, sellOfferTo
@@ -329,7 +329,7 @@ function launchPassengerReturn(director, delivered) {
     destinationId: homeId,
     // Bez zlecenia i bez wartości: ludzie wracają do domu, magazynu to nie rusza.
     payload: {
-      passengers: true, returning, vanClassId, shipId: ship.id, mode: route.id,
+      passengers: true, returning, vanClassId, shipId: ship.id, mode: route.id, ransomCompanyId: company.id,
       mass: returning * perPerson, value: 0
     },
     now: registry.clock
@@ -1563,8 +1563,10 @@ function rollPiracy(director, dt) {
     // patrolu. Dzięki temu szlak da się realnie oczyścić, zabijając rejdera,
     // zamiast tylko przeczekać złą passę losowania.
     const zagrozenie = director.piracy ? laneThreat(director.piracy, stage.fromId, stage.toId) : 1;
+    // Prom z ludźmi (workforce, E16 W4, D8): eskorta i policja na liniach pasażerskich.
+    const pasazerowie = course.payload?.passengers ? (director.piracy?.config.passengerExposure ?? 1) : 1;
     const ryzyko = interceptChance(exposure, director.network.config, config.piracyPressure)
-      * oslona * zagrozenie;
+      * oslona * zagrozenie * pasazerowie;
 
     const konwoj = convoyOf(director.convoys, course.id);
     if (konwoj) {
@@ -1655,7 +1657,17 @@ function strikeCourse(director, course, options = {}) {
   }
   // Ładunek nie wyparowuje — ląduje w najbliższej kryjówce. Bez tego piractwo
   // jest podatkiem od transportu, a nie stroną, która ma z czego żyć.
-  if (byPirates && director.piracy) {
+  if (byPirates && director.piracy && course.payload?.passengers) {
+    // Prom z ludźmi: porwanie z okupem, nie łup (E16 W4, D8) — zakładnicy w kryjówce.
+    const p = course.payload;
+    seizeHostages(director.piracy, {
+      count: p.orderId ? p.units : p.returning,
+      homeId: p.orderId ? course.originId : course.destinationId,
+      companyId: p.companyId || p.ransomCompanyId || null,
+      x: spot?.x, y: spot?.y, now: registry.clock
+    });
+    recordPirateLoss(director.piracy, course.factionId, Number(p.value) || 0);
+  } else if (byPirates && director.piracy) {
     depositLoot(director.piracy, course, spot?.x, spot?.y);
     recordPirateLoss(director.piracy, course.factionId, Number(course.payload?.value) || 0);
   }

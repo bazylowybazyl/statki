@@ -18,7 +18,7 @@ import {
   RECIPES, RESOURCES, RESOURCE_KEYS, PLANET_YIELD, rollPlanetYield, getResourceMass
 } from '../data/resources.js';
 import { normalizeFaction, isDerelict, getFaction, getFactionPriceMultiplier } from '../data/factions.js';
-import { WORKFORCE_CONTRACT_SECONDS } from '../data/workforce.js';
+import { WORKFORCE_CONTRACT_SECONDS, WORKFORCE_MIN_RATIO, WORKFORCE_FULL_RATIO } from '../data/workforce.js';
 
 // ============================================================
 // Profile przemysłowe
@@ -914,19 +914,21 @@ function takeResource(econ, id, amount) {
 // ============================================================
 
 /** Wydobycie z planety, na której orbicie stoi stacja. */
-function runExtraction(station, econ, cycles, rng) {
+function runExtraction(station, econ, cycles, rng, crew = 1) {
   const planetId = String(station?.planet?.id || station?.id || '').toLowerCase();
   const entry = PLANET_YIELD[planetId];
   if (!entry || !(entry.rate > 0)) return;
 
-  const total = EXTRACTION_PER_CYCLE * entry.rate * cycles;
+  // Losowanie typu idzie także przy stojącej kopalni (`crew` 0) — ta sama sekwencja `rng`
+  // co przy pełnej obsadzie, więc wynik świata zmienia tylko ilość urobku.
+  const total = EXTRACTION_PER_CYCLE * entry.rate * cycles * crew;
   // Losujemy typ na każdy cykl osobno, żeby rozkład wag miał znaczenie —
   // jeden los na całą porcję dawałby skokowe, nierealistyczne dostawy.
   const draws = Math.max(1, Math.round(cycles));
   const perDraw = total / draws;
   for (let i = 0; i < draws; i++) {
     const id = rollPlanetYield(planetId, rng);
-    if (id) addResource(econ, id, perDraw);
+    if (id && perDraw > 0) addResource(econ, id, perDraw);
   }
 }
 
@@ -940,10 +942,26 @@ function runPopulation(station, econ, cycles) {
 }
 
 /**
+ * Wydajność zakładów przy obecnej obsadzie (E16 W3, decyzja D3): `e = r = zapas / N`
+ * (przycięte do 1), poniżej `WORKFORCE_MIN_RATIO` (0,2) zakład stoi, od `WORKFORCE_FULL_RATIO`
+ * (0,95) pracuje pełną mocą (nadgodziny). Liczona na początku
+ * cyklu, przed rotacją — tą obsadą pracuje się w tym cyklu. Dławi receptury, wydobycie
+ * i tempo stoczni (`econ.workforceEfficiency` czyta `tickShipyards`); port i byt — nie (D6).
+ * Rynek bez potrzeby obsady (opuszczony, kryjówka) — 1.
+ */
+function workforceEfficiencyOf(station, econ, cycles) {
+  const need = (Number(station?.workforce?.need) || 0) * Math.max(0, cycles);
+  if (!(need > 0)) return 1;
+  const ratio = Math.min(1, amountOf(econ, 'workforce') / need);
+  if (ratio >= WORKFORCE_FULL_RATIO) return 1;
+  return ratio < WORKFORCE_MIN_RATIO ? 0 : ratio;
+}
+
+/**
  * Rotacja kontraktów (E16): z pracującej obsady (najwyżej potrzeba N) co cykl odchodzi
  * `obsada × cykl / T` — ludzie wracają do domu, a dowóz musi ich zastąpić. Nadmiar ponad
- * N czeka w kwaterach i nie rotuje. Zapisuje obsadę `r` w magazynie (`econ.workforceRatio`)
- * — od kroku W3 dławi produkcję, dziś tylko się ją liczy.
+ * N czeka w kwaterach i nie rotuje. Zapisuje obsadę `r` po rotacji (`econ.workforceRatio` —
+ * licznik); produkcję dławi `workforceEfficiencyOf` z obsady na początku cyklu.
  */
 function runWorkforceRotation(station, econ, cycles) {
   const need = (Number(station?.workforce?.need) || 0) * Math.max(0, cycles);
@@ -960,9 +978,9 @@ function runWorkforceRotation(station, econ, cycles) {
  * Uruchamia receptury zakładu. Każda idzie tylko wtedy, gdy starcza wejść
  * I jest miejsce na wyjście — inaczej zakład zjadałby surowiec w próżnię.
  */
-function runRecipes(station, econ, cycles) {
+function runRecipes(station, econ, cycles, crew = 1) {
   const industry = getStationIndustry(station);
-  if (!industry || !industry.recipes.length) return;
+  if (!industry || !industry.recipes.length || !(crew > 0)) return;
 
   // Profil z archetypów zna moc każdej linii osobno. Profil dopisany ręcznie
   // (np. przez mod albo test) podaje samo `weight` — wtedy wszystkie linie
@@ -971,7 +989,7 @@ function runRecipes(station, econ, cycles) {
     const recipe = RECIPES[recipeId];
     if (!recipe) continue;
 
-    const throughput = lineWeight(industry, recipeId) * cycles;
+    const throughput = lineWeight(industry, recipeId) * cycles * crew;
     if (throughput <= 0) continue;
 
     // Ile pełnych partii da się odpalić w tym oknie czasu.
@@ -1046,9 +1064,11 @@ export function runStationEconomy(station, econ, cycles = 1, rng = Math.random, 
   const runs = Math.max(0, Number(cycles) || 0);
   if (runs <= 0) return false;
 
-  runExtraction(station, econ, runs, rng);
+  const crew = workforceEfficiencyOf(station, econ, runs);
+  econ.workforceEfficiency = crew;
+  runExtraction(station, econ, runs, rng, crew);
   runPopulation(station, econ, runs);
-  runRecipes(station, econ, runs);
+  runRecipes(station, econ, runs, crew);
   runLifeSupport(station, econ, runs);
   runWorkforceRotation(station, econ, runs);
   // Po produkcji i zużyciu, czyli na stanie, który naprawdę zostaje w magazynie.

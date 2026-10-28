@@ -332,6 +332,9 @@ function syncOwnerParts(world, station, def) {
 // Workforce (E16)
 // ============================================================
 
+/** Profil obsady kryjówki: bez linii przemysłu, osada jak węzeł księżycowy (port + magazyny). */
+const HIDEOUT_CREW_PROFILE = Object.freeze({ capacity: 0, size: 0.3, lines: Object.freeze({}) });
+
 /** Stanowiska cywilne portu rynku — hale wojskowe K-7 obsadza garnizon, nie workforce. */
 function civilBerthCount(layout) {
   let count = 0;
@@ -353,7 +356,12 @@ function syncStationWorkforce(world, station, def) {
   const scale = world.config.economyScale;
   const owned = Boolean(station.factionId);
   const hasYard = world.shipyards.yards.some(yard => yard.stationId === station.id);
-  const need = owned ? stationWorkforceNeed(getStationIndustry(station), {
+  // Kryjówka piratów (D9) nie ma przemysłu, ale ma port i magazyny do obsadzenia — jak węzeł
+  // księżycowy. Workforce bierze WYŁĄCZNIE z porwań (`seizeHostages`): bez popytu na rynku,
+  // bo kryjówka nie jest uczestnikiem rynku (`postOffers` pomija piratów).
+  const hideout = Boolean(def?.hideout);
+  const industry = hideout ? HIDEOUT_CREW_PROFILE : getStationIndustry(station);
+  const need = owned ? stationWorkforceNeed(industry, {
     mineRate: PLANET_YIELD[station.id]?.rate || 0,
     civilBerths: civilBerthCount(world.docks.get(station.id)),
     stores: world.config.capacityMultiplier,
@@ -365,7 +373,7 @@ function syncStationWorkforce(world, station, def) {
   const econ = world.economies.get(station.id);
   if (!econ) return;
   if (station.workforce.capacity > 0) econ.capacity.workforce = station.workforce.capacity * scale;
-  if (need > 0) declareDemand(station, 'workforce', { floor: WORKFORCE_RESTOCK_FLOOR * need * scale });
+  if (need > 0 && !hideout) declareDemand(station, 'workforce', { floor: WORKFORCE_RESTOCK_FLOOR * need * scale });
   // Zapas startowy — dopiero przy pierwszym wyliczeniu (nowy budynek nie drukuje ludzi):
   // rynek pracy na podłodze skupu (1,3 N, ponad zapasem roboczym), źródło ponad progiem
   // nadwyżki planisty (70%). Źródło na 45% przez pierwsze ~30 min nic nie wystawiało,

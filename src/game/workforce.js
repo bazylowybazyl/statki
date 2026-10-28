@@ -16,7 +16,7 @@ import { INDUSTRY_ARCHETYPES, ECONOMY_CYCLE_SECONDS } from './stationEconomy.js'
 import {
   WORKFORCE_PER_BUILDING, WORKFORCE_PER_MINE_RATE, WORKFORCE_PER_CIVIL_BERTH,
   WORKFORCE_PER_STORE, WORKFORCE_PER_YARD_WEIGHT, WORKFORCE_CONTRACT_SECONDS,
-  WORKFORCE_QUARTERS, WORKFORCE_SOURCE_HOURS, WORKFORCE_MIN_RATIO,
+  WORKFORCE_QUARTERS, WORKFORCE_SOURCE_HOURS, WORKFORCE_MIN_RATIO, WORKFORCE_FULL_RATIO,
   WORKFORCE_MIN_SHIPMENT, WORKFORCE_MIN_SHIPMENT_SHARE, WORKFORCE_URGENT_RATIO
 } from '../data/workforce.js';
 
@@ -107,6 +107,7 @@ export function workforceRatio(stored, need) {
 /** Wydajność zakładu przy obsadzie `r` (D3): proporcjonalnie, poniżej progu stop. */
 export function workforceEfficiency(ratio) {
   const r = Math.max(0, Math.min(1, Number(ratio) || 0));
+  if (r >= WORKFORCE_FULL_RATIO) return 1;
   return r < WORKFORCE_MIN_RATIO ? 0 : r;
 }
 

@@ -381,3 +381,44 @@ Każdy krok to osobny commit z bramką na 3 ziarnach (7 / 11 / 23), jak w E10. K
 | D12 | Nowy próg bramki? | **obsada ≥ 0,95 średnio, żaden rynek < 0,8 dłużej niż 30 min** |
 | D13 | Tabela X i podaż źródeł (§ 1.2, § 2.2)? | **przyjąć jak w dokumencie**, stroić w W1–W3 przez bramkę |
 | D14 | Nowe sprite'y promów? | **tak (W7)**; do tego czasu obecne kadłuby frachtowców |
+
+## 10. Wdrożenie W0–W4 (2026-10-23 – 2026-10-28)
+
+Decyzje D1–D14 przyjęte 2026-10-23. Kroki W0–W4 są w kodzie, każdy przeszedł bramkę na ziarnach 7 / 11 / 23. Stan i zasady są w regule `ruch-v2` (§ „Workforce”).
+
+| krok | commit | bramka |
+|---|---|---|
+| W0: dane bez skutku | `219d0b38` | symulacja identyczna z bazą liczba w liczbę |
+| W1: źródła i popyt (`e = 1`) | `9f37cb09` | obsada ≥ 0,997, przechwyty 15,7–15,8% |
+| W2: promy `crew-*`, powroty | `0a56a71a` | obsada ≥ 0,996; ok. 470 kursów z ludźmi na godzinę (projekt: 420) |
+| W3: skutek niedoboru | `103364d2` | obsada ≥ 0,996, kolejki ≤ 1,6 |
+| W4: porwania z okupem | `2d41f58a` | przechwyty 13,7–14,1%, obsada 1,0, ok. 420 porwań na bieg |
+
+### 10.1 Odstępstwa od projektu
+
+- **Krzywa niedoboru (D3).** Wdrożona: `e = r` dla 0,2 ≤ r < 0,95, poniżej 0,2 zakład stoi, a od **0,95 pracuje pełną mocą** — drobne braki nadrabiają nadgodziny.
+  - Powód: przy samym `e = r` obsada wahała się 0,97–0,99 i dławiła produkcję o 1–3%. To rozjeżdżało przebieg świata: kolejka na redzie Wenus wyszła 2,01 na ziarnie 7 przy progu 2. Kolejka Wenus była blisko progu już przed workforce (W0: 1,72 / 1,87).
+  - Alternatywę — Wenus ×4 w `MARKET_DOCK_OVERRIDES` — odrzucił orkiestrator: zmienia budowlę doku Wenus z okręgu w koło.
+  - Zgoda orkiestratora 2026-10-28; do wiadomości użytkownika.
+- **Rotacja w planie rynku.** Rotacja i podaż weszły do `stationNetRates` / `stationConsumptionRates`, nie do `systemDemandFor`, więc tonaż przeładunku i rozmiar portów zostały bez zmian (§ 3.3, pułapka 4).
+- **Zapas startowy.** Rynek pracy startuje z 1,3 N, a źródło z 75% magazynu, czyli ponad progiem nadwyżki planisty.
+  - Przy 45% źródła przez ~30 min nic nie wystawiały i obsada odbiorców spadała do 0,33–0,5.
+- **Partia ludzi.** Kurs wiezie co najmniej 192 osoby albo 5% obsady odbiorcy (co większe), chyba że obsada spadła poniżej 0,9.
+  - Bez tej podłogi planista dolewał zapas co tick i puszczał ~2000 kursów po ~96 osób na godzinę.
+- **Powrót promu.** Statek wraca do portu nadania od razu po dostawie, z ludźmi po kontrakcie (`returning`), a nie przy następnym przelocie.
+- **Kupcy.** Agenci nie handlują ludźmi — wozi ich tylko przewoźnik frakcji.
+
+### 10.2 Liczby z biegu
+
+- **Blokada dowozu ludzi na Wenus przez 60 min** (ziarno 7, skrypt w `.tmp`):
+  - przez ~12 min obsadę trzymają kwatery;
+  - potem obsada spada do 0,72 po 30 min i 0,50 po 55 min;
+  - po zniesieniu blokady pełna obsada wraca w 5–10 min.
+
+  Wolniej niż w § 3.2, bo tam blokada startowała od obsady 1,0 bez zapasu w kwaterach.
+- **Porwania:** przewoźnicy płacili wszystkie okupy, więc kryjówki pustoszeją (obsada ~0,01). Dziś obsada kryjówki niczego nie dławi.
+
+### 10.3 Otwarte
+
+- Prom zestrzelony przez gracza w bańce zostawia ludzi w manifeście wraku jak towar — do rozstrzygnięcia przy kartach gracza (W5–W6).
+- W5 (karta „Kadry”, CIC), W6 (gracz, habitat, baza w asteroidzie), W7 (sprite'y promów).
