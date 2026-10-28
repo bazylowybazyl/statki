@@ -192,3 +192,115 @@ test('skóra sprite\'a kadłubów pomija ciała świata, a worker zna kawałek l
   const hulls = wk.indexOf('hex.updateHexShips3D(', page);
   assert.ok(page > 0 && sync > 0 && hulls > 0 && sync < hulls, 'renderPage: replika ciał świata (hull.world luster) przed updateHexShips3D');
 });
+
+// ── Odłamy w workerze i ukryty dostawca (2026-10-28, zgłoszenie „upadek bazy i wyjście z warpa dławią GPU”) ─────────
+function shatteredPiece(chunkId = 'H-W1') {
+  const r = dryDockChunkRaster(layout, dock.scene, chunkId);
+  const e = { x: 0, y: 0, vx: 0, vy: 0, angle: 0.3, angVel: 0, radius: 0, mass: 0, visual: { spriteScale: r.upp, spriteScaleX: r.upp, spriteScaleY: r.upp, spriteRotation: 0 } };
+  const hull = HullBodies.createHull(e, r.image, { cellPx: WORLD_BODY_TUNE.cellSize / r.upp });
+  const structure = HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
+  const lat = hullSkinLattice(structure, hull.anchorDX, hull.anchorDY);
+  const group = layout.chunkById.get(chunkId).group;
+  const skin = bakeBuildingChunkSkin(dock, group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 4 });
+  window.wrecks.length = 0;
+  const res = HullBodies.shatter(e, 0, 0, 0.5, { cells: 6, crackDebris: 0.3, debrisFrac: 0.05, debrisSpeed: [60, 120], cuts: 0, chords: 0, minFragmentNodes: 20 });
+  const frags = [res.wreck, ...window.wrecks.filter((w) => w !== res.wreck)].filter((w) => w?.beamHull?.body?.activeNodes > 0);
+  return { r, lat, skin, group, frags };
+}
+
+// Miejsce z kawałkiem straconym (gotowa skóra) na sztucznym źródle ciał świata; odłamy-wraki dziedziczą rekord kawałka
+// (hull.world). `state.hidden` — ukrycie dostawcy (soczewka skoku gracza, mgła wojny).
+function lostPieceSource(W3, chunkId, state = { hidden: false }) {
+  const { r, lat, skin, group, frags } = shatteredPiece(chunkId);
+  const prov = {
+    building: dock, root: dock.root, layers: { bg: 1, fg: 2 }, hidden: () => state.hidden,
+    setSkinned() {}, setHold() {}, groupOf: () => group, rasterCenter: () => ({ x: r.cx, z: r.cz })
+  };
+  const site = { render: prov, pieces: [] };
+  const piece = { id: chunkId, site, state: 'lost', touched: true, entity: null, solid3D: false,
+    __skin: { key: r.image, lat, bg: skin.bg, fg: skin.fg, triangles: skin.triangles, solid: false } };
+  site.pieces.push(piece);
+  for (const w of frags) w.beamHull.world = piece;
+  W3.setWorldBodiesSource({ sites: [site], focus: [], renderEntities: () => frags });
+  return { skin, frags };
+}
+
+test('worker: odłam bez stanu węzłów lustra jest schowany i czeka na węzły (nie rysuje pełnej skóry kawałka na stałe)', async () => {
+  const W3 = await import('../src/3d/worldBodies3D.js');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  if (!Core3D.scene) Core3D.scene = new THREE.Scene();
+  const { frags } = lostPieceSource(W3, 'Q-W');
+  assert.ok(frags.length >= 3, `odłamy: ${frags.length}`);
+  // frags[0] — lustro w workerze, którego węzły jeszcze nie doszły (ciało spoza pudła rozgrzania: topologia
+  // i `activeNodes`, `active` puste)
+  const late = frags[0].beamHull.body;
+  const lateActive = late.nodeStore.active.slice();
+  late.nodeStore.active.fill(0);
+  late.nodesReceived = false;
+  const S = W3.WORLD_SKIN_STATS;
+  const waits0 = S.subsetWaits;
+  try {
+    for (let i = 0; i < 400 && S.subsetWait < 1; i++) W3.syncWorldBodies3D();
+    W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 1, 'odłam bez węzłów lustra czeka');
+    assert.equal(S.subsetWaits - waits0, 1);
+    assert.equal(S.noNodes, 1, 'schowany (pole skóry miałoby wszystkie komórki martwe)');
+    assert.equal(S.shown, frags.length - 1, 'reszta odłamów rysowana');
+    const subs0 = S.subsets;
+    for (let i = 0; i < 5; i++) W3.syncWorldBodies3D();
+    assert.equal(S.subsetWaits - waits0, 1, 'bez prób przed dojściem węzłów');
+    assert.equal(S.subsets, subs0, 'podzbiór nie liczy się od nowa w każdej klatce');
+    // węzły doszły (strona migawki z węzłami ciała): podzbiór od nowa, odłam rysowany
+    late.nodeStore.active.set(lateActive);
+    late.nodesReceived = true;
+    for (let i = 0; i < 400 && (S.subsetWait > 0 || S.subsets === subs0); i++) W3.syncWorldBodies3D();
+    W3.syncWorldBodies3D();
+    assert.equal(S.subsetWait, 0, 'nikt nie czeka');
+    assert.ok(S.subsets > subs0, 'podzbiór odłamu policzony po dojściu węzłów');
+    assert.equal(S.noNodes, 0);
+    assert.equal(S.shown, frags.length, 'odłam z węzłami rysowany');
+  } finally {
+    late.nodeStore.active.set(lateActive);
+    delete late.nodesReceived;
+    W3.resetWorldBodies3D();
+    W3.setWorldBodiesSource(null);
+    for (const w of frags) HullBodies.release(w);
+  }
+  assert.equal(S.subsetWait, 0);
+});
+
+test('ukryty dostawca (soczewka skoku, mgła) utrzymuje egzemplarze dłużej niż 600 klatek — po skoku bez ponownych podzbiorów', async () => {
+  const W3 = await import('../src/3d/worldBodies3D.js');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  if (!Core3D.scene) Core3D.scene = new THREE.Scene();
+  const state = { hidden: false };
+  const { frags } = lostPieceSource(W3, 'Q-W', state);
+  const S = W3.WORLD_SKIN_STATS, O = W3.WORLD_SKIN_OPTIONS;
+  try {
+    for (let i = 0; i < 400 && (S.shown < frags.length || S.subsets === 0); i++) W3.syncWorldBodies3D();
+    for (let i = 0; i < 200; i++) W3.syncWorldBodies3D();   // kolejka podzbiorów do końca
+    assert.equal(S.shown, frags.length);
+    const subs0 = S.subsets;
+    // skok gracza: 700 klatek workera (2,9 s przy 240 Hz) ukrycia — egzemplarze zostają, schowane
+    state.hidden = true;
+    for (let i = 0; i < 700; i++) W3.syncWorldBodies3D();
+    assert.equal(S.shown, 0, 'nic nie rysuje się w ukryciu');
+    assert.equal(S.hiddenKept, frags.length, 'egzemplarze utrzymane');
+    assert.equal(S.instances, frags.length);
+    // wyjście ze skoku: od razu rysowane, bez ponownych podzbiorów (dawniej: egzemplarze, wypieki i podzbiory od nowa)
+    state.hidden = false;
+    W3.syncWorldBodies3D();
+    assert.equal(S.shown, frags.length, 'od razu po wyjściu');
+    assert.equal(S.subsets, subs0, 'bez ponownych podzbiorów');
+    // A/B dawnego zachowania: hiddenKeep = false — po 600 klatkach ukrycia egzemplarze zwolnione
+    O.hiddenKeep = false;
+    state.hidden = true;
+    for (let i = 0; i < 700; i++) W3.syncWorldBodies3D();
+    assert.equal(S.instances, 0, 'dawniej: zwolnione w skoku');
+  } finally {
+    O.hiddenKeep = true;
+    W3.resetWorldBodies3D();
+    W3.setWorldBodiesSource(null);
+    for (const w of frags) HullBodies.release(w);
+  }
+});

@@ -112,3 +112,27 @@ test('replika ciała: ten sam brud i te same dane co ciało gry w każdej rysowa
   assert.ok(drawn > 800);
   assert.equal(mismatches, 0);
 });
+
+test('nodesReceived: stan węzłów lustra doszedł (strona z węzłami ciała); nowa topologia zeruje (2026-10-28)', () => {
+  // pakujący wysyła węzły tylko ciałom w pudle rozgrzania (`activeNodes` zawsze) — skóra odłamu ciała świata
+  // (worldBodies3D) czeka na pierwszą stronę z węzłami zamiast rysować pełną skórę kawałka bez żywych komórek
+  const B = makeBody(60);
+  const entB = { x: 0, y: 0, angle: 0, beamHull: { body: B, srcWidth: 100, srcHeight: 100, scale: 1, pivot: { x: 0, y: 0 } } };
+  const packer = new SnapshotPacker({ shared: false });
+  const frame = createSnapshotFrame();
+  Object.assign(frame, { ship: entB, npcs: [], wrecks: [], cam: { x: 0, y: 0, zoom: 1 }, consumeDirty: true });
+  const mirror = new MirrorBody(0, 1);
+  assert.equal(mirror.nodesReceived, false, 'nowe lustro bez stanu węzłów');
+  frame.lastConsumed = packer.k;
+  packer.begin(frame);
+  const v = packer.view;
+  const bs = packer.ids.bodies.peek(B);
+  const storeVer = v.bodyI32[bs * BODY.stride.i32 + BODY.I32.STORE_VER];
+  mirror.setTopology(describeBodyTopology(B), storeVer);
+  assert.equal(mirror.nodesReceived, false, 'sama topologia — bez stanu węzłów');
+  assert.ok(applyBodyPage(mirror, v, bs));
+  packer.finish(frame);
+  assert.equal(mirror.nodesReceived, true, 'strona z węzłami ciała (ciało gracza w pudle)');
+  mirror.setTopology(describeBodyTopology(B), storeVer + 1);
+  assert.equal(mirror.nodesReceived, false, 'nowy magazyn — znów czeka na węzły');
+});

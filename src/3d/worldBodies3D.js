@@ -48,11 +48,17 @@ let _wb = worldBodies;
 export function setWorldBodiesSource(src) { _wb = src || worldBodies; }
 
 // halfCulled — połówki brył 3D w tej klatce bez rysunku (cała sfera po drugiej stronie płaszczyzny gry — halfReachesPlane)
+// subsetWait — odłamy czekające na stan węzłów lustra (worker — ciało spoza pudła rozgrzania), subsetWaits — odłożenia
+// narastająco; noNodes — egzemplarze schowane w tej klatce bez stanu węzłów; hiddenKept — egzemplarze utrzymane przez
+// ukrycie dostawcy (soczewka skoku, mgła wojny) w tej klatce
 export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0, prebaked: 0, bakeMs: 0, bakePeakMs: 0, bakePeakId: '',
-  syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, halfCulled: 0, worker: SKIN_BAKE_STATS };
+  syncBakes: 0, subsets: 0, subsetPeakMs: 0, urgent: 0, held: 0, holdTimeouts: 0, halfCulled: 0, subsetWait: 0, subsetWaits: 0,
+  noNodes: 0, hiddenKept: 0, worker: SKIN_BAKE_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
-// A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27)
-export const WORLD_SKIN_OPTIONS = { planeHalfCull: true };
+// A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27); hiddenKeep = false — ukryty dostawca
+// (skok gracza, mgła) nie utrzymuje egzemplarzy (po 600 klatkach zwolnione, jak przed 2026-10-28); noNodesHide = false —
+// odłam bez stanu węzłów lustra rysowany (pełna geometria kawałka, każdy fragment odrzucony — jak przed 2026-10-28)
+export const WORLD_SKIN_OPTIONS = { planeHalfCull: true, hiddenKeep: true, noNodesHide: true };
 if (typeof window !== 'undefined') window.__worldSkinOptions = WORLD_SKIN_OPTIONS;
 
 function providerOf(hull) {
@@ -258,6 +264,7 @@ function disposeSkinAssets(p) {
 const SUBSET_MS = 3;
 const SUBSET_TRIS_PER_STEP = 8192;
 const _subsetQueue = [];
+const _subsetWait = [];      // odłamy, których lustro (worker) nie ma jeszcze stanu węzłów — requeueSubsetWaits
 export function fragmentSkinSubset(geo, body, lat) {
   const it = fragmentSkinSubsetSteps(geo, body, lat);
   let r = it.next();
@@ -437,7 +444,29 @@ function runSubsets() {
       (skin.subsets || (skin.subsets = [])).push(sub);
       WORLD_SKIN_STATS.subsets++;
       for (const mesh of inst.meshes) if (mesh.userData.fullGeometry === w.geo && mesh.geometry === w.geo) mesh.geometry = sub;
+    } else if (hull.body.nodesReceived === false) {
+      // Lustro odłamu w workerze bez stanu węzłów: pakujący migawki wysyła węzły tylko ciałom w pudle rozgrzania
+      // (`activeNodes` zawsze), więc odłam urodzony poza nim ma topologię bez `active` — podzbiór od nowa, gdy węzły
+      // dojdą (dawniej wypadał z kolejki i NA STAŁE rysował pełną skórę kawałka; wzór: gałąź partii skór, 055eee4e).
+      _subsetQueue.shift();
+      inst.subsetQueued = false;
+      inst.subsetWork = null;
+      _subsetWait.push(inst);
+      WORLD_SKIN_STATS.subsetWaits++;
     }
+  }
+}
+// Odłamy czekające na stan węzłów lustra (worker) — wracają do kolejki podzbiorów, gdy węzły doszły.
+function requeueSubsetWaits() {
+  for (let k = _subsetWait.length - 1; k >= 0; k--) {
+    const inst = _subsetWait[k];
+    const body = inst.entity?.beamHull?.body;
+    if (_inst.get(inst.entity) === inst && body && !body.dead && body.nodesReceived === false) continue;
+    _subsetWait[k] = _subsetWait[_subsetWait.length - 1];
+    _subsetWait.pop();
+    if (_inst.get(inst.entity) !== inst || !body || body.dead || inst.subsetQueued) continue;
+    inst.subsetQueued = true;
+    _subsetQueue.push(inst);
   }
 }
 function queueBakes() {
@@ -539,6 +568,9 @@ function collect() {
 // Statyka kawałka STRACONEGO trzymana na ekranie, dopóki skóra jego odłamów się piecze — najwyżej tyle [ms czasu
 // rzeczywistego]; potem znika (odłamy bez skóry do końca wypieku).
 const HOLD_MAX_MS = 1500;
+// Egzemplarz ukrytego dostawcy (soczewka skoku, mgła wojny) utrzymany najwyżej tyle [ms czasu rzeczywistego] — skok
+// gracza mieści się w tym z zapasem; dłużej ukryty zwalnia się jak egzemplarz bez ciała (600 klatek później).
+const HIDDEN_KEEP_MS = 60000;
 
 // Połówka bryły 3D (pod / nad płaszczyzną gry — cięcie po z świata w shaderze: fragment zostaje, gdy
 // znak · (z − z0) ≥ 0, userData.clipZ = (znak, z0)) rysuje coś tylko wtedy, gdy sfera egzemplarza — ta sama, którą
@@ -558,7 +590,7 @@ export function halfReachesPlane(mesh) {
  */
 export function syncWorldBodies3D() {
   _frame++;
-  let shown = 0, triangles = 0, halfCulled = 0;
+  let shown = 0, triangles = 0, halfCulled = 0, noNodes = 0, hiddenKept = 0;
   const list = collect();
   // kawałki ruszone w tej klatce (statyka schowana) — dostawca dostaje stan raz na kawałek
   for (const site of _wb.sites) {
@@ -571,7 +603,21 @@ export function syncWorldBodies3D() {
     const piece = hull.world;
     const prov = providerOf(hull);
     if (!piece || !prov || !prov.building || !prov.root) continue;
-    if (prov.hidden && prov.hidden()) continue;
+    if (prov.hidden && prov.hidden()) {
+      // Ukryty dostawca (soczewka skoku gracza — rekord bazy ma kotwicę w KAŻDYM skoku; mgła wojny): egzemplarz zostaje
+      // schowany przez HIDDEN_KEEP_MS czasu rzeczywistego, nie 600 klatek (2,5 s przy 240 Hz). Dawniej skok dłuższy niż
+      // 600 klatek workera zwalniał egzemplarze i skóry straconych kawałków bazy, a po wyjściu z warpa przy bazie wszystkie
+      // odłamy naraz piekły skóry, powstawały, wysyłały geometrię na GPU i liczyły podzbiory (do tego czasu pełna skóra
+      // kawałka) — skok kosztu przy wyjściu (2026-10-28). Dłużej ukryte (gracz odleciał) — zwalniane jak dawniej.
+      const kept = WORLD_SKIN_OPTIONS.hiddenKeep ? _inst.get(e) : null;
+      if (kept) {
+        const now = performance.now();
+        if (!(kept.hiddenSince > 0)) kept.hiddenSince = now;
+        if (now - kept.hiddenSince <= HIDDEN_KEEP_MS) { kept.frame = _frame; hiddenKept++; }
+        if (kept.root.visible) kept.root.visible = false;
+      }
+      continue;
+    }
     const isMain = piece.entity === e;
     // nietknięty kawałek — statyka (bez kosztu skóry)
     if (isMain && !piece.touched) continue;
@@ -582,6 +628,17 @@ export function syncWorldBodies3D() {
     let inst = _inst.get(e);
     if (!inst) inst = createInstance(e, assets, prov, piece);
     inst.frame = _frame;
+    inst.hiddenSince = 0;
+    // Lustro ciała w workerze bez stanu węzłów (ciało spoza pudła rozgrzania — pakujący wysyła węzły tylko tam): pole
+    // skóry miałoby WSZYSTKIE komórki martwe, więc pełna geometria kawałka rasteryzowałaby się co klatkę i każdy fragment
+    // wypadałby w shaderze (koszt bez obrazu, rosnący z pikselami). Schowany do pierwszej strony z węzłami; statyka
+    // kawałka głównego schowana jak przy rysowanej skórze (obraz bez zmian).
+    if (hull.body.nodesReceived === false && WORLD_SKIN_OPTIONS.noNodesHide) {
+      if (inst.root.visible) inst.root.visible = false;
+      if (isMain) piece.__skinShown = true;
+      noNodes++;
+      continue;
+    }
     if (hull.solid3D) {
       // BRYŁA 3D: poza ciała silnika wprost (świat silnika = scena: x gry, −y gry, z; kwaternion — pełny obrót)
       const b = hull.body;
@@ -706,10 +763,14 @@ export function syncWorldBodies3D() {
   WORLD_SKIN_STATS.instances = _inst.size;
   WORLD_SKIN_STATS.triangles = triangles;
   WORLD_SKIN_STATS.halfCulled = halfCulled;
+  WORLD_SKIN_STATS.noNodes = noNodes;
+  WORLD_SKIN_STATS.hiddenKept = hiddenKept;
   // rany brył 3D: czas pola (stygnięcie w shaderze) i wysyłka zmienionych bloków komórek
   SolidWounds.flush();
   if ((_frame & 15) === 0) queueBakes();
+  if (_subsetWait.length) requeueSubsetWaits();
   if (_subsetQueue.length) runSubsets();
+  WORLD_SKIN_STATS.subsetWait = _subsetWait.length;
   return shown;
 }
 
@@ -724,6 +785,7 @@ export function resetWorldBodies3D() {
   for (const p of _bakeQueue) p.__skinQueued = false;
   _bakeQueue.length = 0;
   _subsetQueue.length = 0;
+  _subsetWait.length = 0;
   for (const job of [..._jobs]) cancelSkinJob(job);
   for (const site of _wb.sites) for (const p of site.pieces) { p.__holdSince = 0; p.__holdTimedOut = false; }
 }
