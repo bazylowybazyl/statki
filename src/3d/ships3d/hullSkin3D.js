@@ -137,6 +137,10 @@ function scatterFlush(renderer) {
 
 /** Diagnostyka i testy: stan listy rozrzutu ({ idxArr, valArr, uCount, kernel, n, live }) albo null. */
 export function hullSkinScatterState() { return _sc; }
+// Narzędzia (gpu-baza-gra.mjs — w workerze): atrybut pola (odczyt bufora GPU i porównanie z kopią CPU), lista rozrzutu.
+if (typeof window !== 'undefined') {
+  window.__hullSkinFieldDiag = { attribute: () => _attr, scatter: () => _sc, stats: HULL_SKIN_FIELD_STATS, options: HULL_SKIN_FIELD_OPTIONS };
+}
 
 let _fxStep = null;
 /**
