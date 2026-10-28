@@ -57,6 +57,7 @@ import { buildSideThrusters } from '../data/editorEngines.js';
 import { SideNozzleFrame, SIDE_NOZZLE_RADIUS } from './sideNozzleFrame.js';
 import { getEngineVfxScaleForHullId } from './engineVfxScale.js';
 import { createFramedReactorCore, setFramedReactorCoreSource } from './reactor3D.js';
+import { Bridge3D } from './bridge3D.js';
 import { REACTOR_CORE_COLORS, reactorModelParams, trafficCoreMarker } from '../data/reactorCores.js';
 
 const _rollHalf = { hw: 0, hh: 0 };
@@ -244,6 +245,28 @@ function considerCore(key, info, x, y, angle, opacity, pirate) {
   proxyCoreList.push(core);
 }
 
+// Mostki proxy (E17b): widoki tej klatki dla Bridge3D.drawProxyBridges (na końcu klatki proxy — Bridge3D.update idzie
+// wcześniej); model w strefie kadłuba ruchu jak u NPC po awansie, rekord na kadłub w bridge3D.js.
+const bridgeViews = [];
+let bridgeViewCount = 0;
+
+function considerBridge(info, x, y, angle) {
+  let v = bridgeViews[bridgeViewCount];
+  if (!v) {
+    v = { hullId: '', x: 0, y: 0, angle: 0, w: 0, h: 0, pngW: 0, pngH: 0, isTrafficProxy: true };
+    bridgeViews[bridgeViewCount] = v;
+  }
+  bridgeViewCount++;
+  v.hullId = info.hullId;
+  v.x = x;
+  v.y = y;
+  v.angle = angle;
+  v.w = info.w;
+  v.h = info.h;
+  v.pngW = info.def.png[0];
+  v.pngH = info.def.png[1];
+}
+
 function pruneProxyCores() {
   for (const [key, core] of proxyCores) if (frameNo - core.__seen > IDLE_DETACH_FRAMES) proxyCores.delete(key);
 }
@@ -296,6 +319,7 @@ const stats = {
   lightsDropped: 0,
   nozzles3D: 0,
   cores: 0,
+  bridges: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -772,6 +796,7 @@ export const ShipProxyBatch3D = {
     nzCount = 0;
     nzOwners = 0;
     proxyCoreList.length = 0;
+    bridgeViewCount = 0;
   },
 
   /**
@@ -870,8 +895,11 @@ export const ShipProxyBatch3D = {
     M[o + 15] = hullLacquerGlintAt(bodyPx);
     M[o + 16] = look.lightBase; M[o + 17] = look.zoneCount; M[o + 18] = 1; M[o + 19] = 0;
 
-    // Modele dysz SIDE (E17b) — od progu rysownika jak u NPC.
-    if (opacity > 0.01) considerNozzles(info, x, y, angle);
+    // Modele dysz SIDE i mostek (E17b) — od progów rysowników jak u NPC.
+    if (opacity > 0.01) {
+      considerNozzles(info, x, y, angle);
+      considerBridge(info, x, y, angle);
+    }
 
     // Lampy pozycyjne (billboardy FG): widok z pozą instancji — kadłuby z blokiem lamp (okręty, cywile — E17). Pod
     // zamkniętym dachem hali K-7 / zatoki (zapas floty na padach) kadłub zasłania dach, billboardów FG — nie: bez nich.
@@ -935,10 +963,12 @@ export const ShipProxyBatch3D = {
     for (let i = pickCount; i < MAX_PICK && pickRef[i] !== null; i++) pickRef[i] = null;
     flushEngines(this.engineEntities);
     trimLightViews();
+    if (bridgeViewCount > 0) Bridge3D.drawProxyBridges(bridgeViews, bridgeViewCount);
     if ((frameNo & 255) === 0) pruneProxyCores();
     stats.lights = lightViews.length;
     stats.nozzles3D = nzCount;
     stats.cores = proxyCoreList.length;
+    stats.bridges = bridgeViewCount;
     stats.kinds = live;
     stats.drawCalls = drawCalls;
     const ms = performance.now() - frame.t0;
