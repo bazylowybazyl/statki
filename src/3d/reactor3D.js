@@ -155,6 +155,29 @@ export function reactorModelScale(core, kind, chamberR) {
   return Number.isFinite(chamberR) && chamberR > 0 ? chamberR : 1;
 }
 
+// RDZENIE Z WŁASNĄ RAMĄ spoza list gry (E17b, 2026-10-28): proxy statków ruchu v2 (shipProxyBatch3D.js) nie mają
+// kadłuba na belkach ani encji gry — rdzeń niesie ramę (`core.frame` — { x, y, axX, axY, ayX, ayY, R, cs } jak
+// frameOf) i parametry modelu z markera, a moduł proxy podaje listę tej klatki przez źródło (wołane w każdym sync,
+// po rdzeniach gry). Taki rdzeń nie pyta hostReady ani visibility (proxy nie ma maskowania), stan zawsze NOMINALNY —
+// po awansie do NPC jego rdzeń gry stoi w tym samym miejscu, w tej samej skali i barwie.
+let _framedCoreSource = null;
+/** `() → tablica rdzeni z ramą tej klatki` (createFramedReactorCore) albo null. */
+export function setFramedReactorCoreSource(fn) {
+  _framedCoreSource = typeof fn === 'function' ? fn : null;
+}
+/**
+ * Rdzeń z własną ramą: `uid` (ziarno rekordu), `model` ({ housingR, housing, kind, tier } — jak reactorModelParams),
+ * `color` (liniowe RGB ciała plazmy). Ramę (`core.frame`) wypełnia właściciel co klatkę.
+ */
+export function createFramedReactorCore({ uid = 0, model = null, color = null, gridR = 1 } = {}) {
+  return {
+    uid, model, color, gridR,
+    host: null, invalid: null, state: CORE_STATE.NOMINAL, integrity: 1,
+    aliveCount: 0, deadCount: 0, elsewhereCount: 0, cellState: null, cellX: null, cellY: null, gx: 0, gy: 0,
+    frame: { x: 0, y: 0, axX: gridR, axY: 0, ayX: 0, ayY: gridR, R: gridR, cs: 0 }
+  };
+}
+
 // Ziarno z uid rdzenia: liczba albo napis (dawne rdzenie `core_<base36>`) — dawniej `uid | 0`
 // z napisu dawało 0 i wszystkie reaktory pękały w tych samych cewkach.
 function uidHash(uid) {
@@ -467,8 +490,12 @@ export function createReactor3D(options = {}) {
    */
   function writeInstance(kd, rec, core) {
     if (kd.n >= REACTOR3D_CAPACITY) return false;
-    // Rdzeń na kadłubie belkowym: rama z logiki rdzenia (środek + promień komory w osiach sprite'a).
-    frameOf(core, _fr);
+    // Rdzeń na kadłubie belkowym: rama z logiki rdzenia (środek + promień komory w osiach sprite'a); rdzeń proxy — własna.
+    const own = core.frame;
+    if (own) {
+      _fr.x = own.x; _fr.y = own.y; _fr.axX = own.axX; _fr.axY = own.axY; _fr.ayX = own.ayX; _fr.ayY = own.ayY;
+      _fr.R = own.R; _fr.cs = own.cs;
+    } else frameOf(core, _fr);
     const ax = Math.sqrt(_fr.axX * _fr.axX + _fr.axY * _fr.axY) || 1;
     const ay = Math.sqrt(_fr.ayX * _fr.ayX + _fr.ayY * _fr.ayY) || 1;
     const scale = reactorModelScale(core, rec.kind, Number.isFinite(_fr.R) ? _fr.R : Math.sqrt(ax * ay));
@@ -480,7 +507,7 @@ export function createReactor3D(options = {}) {
       return false;
     }
     if (frame.pxPerUnit > 0 && !debug.xray && scale * H.outer * frame.pxPerUnit < T.minPx) { stats.culled++; return false; }
-    if (visibility && !debug.xray && !(visibility(core, _fr.x, _fr.y) >= T.visMin)) { stats.hidden++; return false; }
+    if (visibility && !own && !debug.xray && !(visibility(core, _fr.x, _fr.y) >= T.visMin)) { stats.hidden++; return false; }
     const b = kd.n * STRIDE;
     const A = kd.data;
     const uxX = _fr.axX / ax, uxY = _fr.axY / ax, uyX = _fr.ayX / ay, uyY = _fr.ayY / ay;
@@ -517,6 +544,32 @@ export function createReactor3D(options = {}) {
     mesh.position.set(origin.x, origin.y, 0);
     mesh.updateMatrix();
     mesh.updateMatrixWorld();
+  }
+
+  // Żywy rdzeń (gry albo z własną ramą): rekord, fazy plazmy i instancja. true — narysowany.
+  function liveCore(core, dt) {
+    if (!core || core.invalid || core.state === CORE_STATE.DETONATED) return false;
+    const host = core.host;
+    if (!core.frame && !hostReady(host)) return false;
+    const rec = recordFor(core);
+    rec.lastSeen = clock;
+    rec.host = host;
+    const kd = kinds.get(rec.kind);
+    coreStateBand(core, band);
+    rec.flowPhase += flowRevPerSec(core, band) * dt;
+    rec.pulsePhase += Math.PI * 2 * band.pulseHz * dt;
+    const pulse = 0.5 + 0.5 * Math.sin(rec.pulsePhase);
+    const b = writeInstance(kd, rec, core);
+    if (b === false) return false;
+    const A = kd.data;
+    const heat = coilHeat(core, band);
+    A[b + L.iState] = band.bodyL; A[b + L.iState + 1] = band.coreL * (0.92 + 0.08 * pulse);
+    A[b + L.iState + 2] = rec.flowPhase; A[b + L.iState + 3] = instability(core, band);
+    A[b + L.iState2] = heat; A[b + L.iState2 + 1] = brokenFrac(core);
+    A[b + L.iState2 + 2] = pulse; A[b + L.iState2 + 3] = 1;
+    A[b + L.iBreak] = 0; A[b + L.iBreak + 1] = 0; A[b + L.iBreak + 2] = 0; A[b + L.iBreak + 3] = -1;
+    A[b + L.iHouse2] = band.rim; A[b + L.iHouse2 + 1] = heat;
+    return true;
   }
 
   /**
@@ -561,30 +614,10 @@ export function createReactor3D(options = {}) {
     let burntN = 0;
     if (debug.enabled) {
       const list = Array.isArray(cores) ? cores : [];
-      for (const core of list) {
-        if (!core || core.invalid || core.state === CORE_STATE.DETONATED) continue;
-        const host = core.host;
-        if (!hostReady(host)) continue;
-        const rec = recordFor(core);
-        rec.lastSeen = clock;
-        rec.host = host;
-        const kd = kinds.get(rec.kind);
-        coreStateBand(core, band);
-        rec.flowPhase += flowRevPerSec(core, band) * dt;
-        rec.pulsePhase += Math.PI * 2 * band.pulseHz * dt;
-        const pulse = 0.5 + 0.5 * Math.sin(rec.pulsePhase);
-        const b = writeInstance(kd, rec, core);
-        if (b === false) continue;
-        const A = kd.data;
-        const heat = coilHeat(core, band);
-        A[b + L.iState] = band.bodyL; A[b + L.iState + 1] = band.coreL * (0.92 + 0.08 * pulse);
-        A[b + L.iState + 2] = rec.flowPhase; A[b + L.iState + 3] = instability(core, band);
-        A[b + L.iState2] = heat; A[b + L.iState2 + 1] = brokenFrac(core);
-        A[b + L.iState2 + 2] = pulse; A[b + L.iState2 + 3] = 1;
-        A[b + L.iBreak] = 0; A[b + L.iBreak + 1] = 0; A[b + L.iBreak + 2] = 0; A[b + L.iBreak + 3] = -1;
-        A[b + L.iHouse2] = band.rim; A[b + L.iHouse2 + 1] = heat;
-        visible++;
-      }
+      for (const core of list) if (liveCore(core, dt)) visible++;
+      // rdzenie z własną ramą (proxy statków ruchu) — po rdzeniach gry
+      const framed = _framedCoreSource ? _framedCoreSource() : null;
+      if (framed) for (let i = 0; i < framed.length; i++) if (liveCore(framed[i], dt)) visible++;
       // wraki reaktorów (po wyrzucie i kuli); zimny wrak (bez ciała) nie
       // rysuje, ale rekord czeka na odmrożenie
       for (const rec of records.values()) {

@@ -56,6 +56,8 @@ import { RoofCover } from './roofCover.js';
 import { buildSideThrusters } from '../data/editorEngines.js';
 import { SideNozzleFrame, SIDE_NOZZLE_RADIUS } from './sideNozzleFrame.js';
 import { getEngineVfxScaleForHullId } from './engineVfxScale.js';
+import { createFramedReactorCore, setFramedReactorCoreSource } from './reactor3D.js';
+import { REACTOR_CORE_COLORS, reactorModelParams, trafficCoreMarker } from '../data/reactorCores.js';
 
 const _rollHalf = { hw: 0, hh: 0 };
 
@@ -183,6 +185,68 @@ function considerNozzles(info, x, y, angle) {
   }
 }
 setProxyLightViews(lightViews, (view) => view.__proxyGrid);
+
+// Obudowy rdzeni reaktora proxy (E17b): rdzeń z własną ramą na encję (klucz = numer kursu — stały między klatkami:
+// ziarno i fazy plazmy w rekordzie reactor3D), lista tej klatki dla modelu reaktora (setFramedReactorCoreSource —
+// sync rysuje je po rdzeniach gry, z tym samym cullingiem kadru i progiem minPx co u NPC). Barwa i rodzaj modelu
+// jak u NPC po awansie (reactorColorFor: piraci po frakcji albo kadłubie; rodzaj z markera, bez niego z kadłuba).
+const proxyCores = new Map();
+const proxyCoreList = [];
+setFramedReactorCoreSource(() => proxyCoreList);
+
+// Marker rdzenia kadłuba w j. świata od środka sprite'a (y w dół, jak NPC: reactorCoreFrame z pozą renderu).
+function coreMarkerFor(info) {
+  if (info.core !== undefined) return info.core;
+  const m = trafficCoreMarker(info.hullId);
+  const sx = info.w / info.def.png[0];
+  const sy = info.h / info.def.png[1];
+  const uniform = (sx + sy) * 0.5;
+  info.core = m ? {
+    ox: (Number(m.x) || 0) * sx,
+    oy: (Number(m.y) || 0) * sy,
+    R: (Number(m.r) || 0) * uniform,
+    // siatka belek NPC: 15 j. na komórkę (HULL_BODY_CONFIG.cellPx przy 1 px = 1 j.) — tylko maska sektorów
+    cs: 15,
+    params: reactorModelParams(m, uniform)
+  } : null;
+  if (info.core && !(info.core.R > 0)) info.core = null;
+  return info.core;
+}
+
+function considerCore(key, info, x, y, angle, opacity, pirate) {
+  if (!(opacity > 0.01)) return;
+  const cm = coreMarkerFor(info);
+  if (!cm) return;
+  let core = proxyCores.get(key);
+  if (!core || core.__hullId !== info.hullId) {
+    const p = cm.params;
+    // rodzaj modelu: z markera; rdzeń z automatu — jak resolveReactorKind u NPC (piraci po kadłubie albo frakcji)
+    const kind = p?.kind || (pirate || info.hullId.includes('pirate') ? 'pirate' : 'terran');
+    core = createFramedReactorCore({
+      uid: `proxy:${key}`,
+      model: { housingR: p?.housingR || 0, housing: p ? p.housing : true, kind, tier: p?.tier || null },
+      color: pirate ? REACTOR_CORE_COLORS.pirate : REACTOR_CORE_COLORS.terran,
+      gridR: cm.R
+    });
+    core.__hullId = info.hullId;
+    proxyCores.set(key, core);
+  }
+  core.__seen = frameNo;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const f = core.frame;
+  f.x = x + c * cm.ox - s * cm.oy;
+  f.y = y + s * cm.ox + c * cm.oy;
+  f.axX = c * cm.R; f.axY = s * cm.R;
+  f.ayX = -s * cm.R; f.ayY = c * cm.R;
+  f.R = cm.R;
+  f.cs = cm.cs;
+  proxyCoreList.push(core);
+}
+
+function pruneProxyCores() {
+  for (const [key, core] of proxyCores) if (frameNo - core.__seen > IDLE_DETACH_FRAMES) proxyCores.delete(key);
+}
 let imageResolver = null;
 let engineLayoutResolver = null;
 /** (ref encji) → { x: u0, y: v0, z: u1, w: v1 } otwartego luku w uv sprite'a albo null (E12, przeładunek). */
@@ -231,6 +295,7 @@ const stats = {
   lights: 0,
   lightsDropped: 0,
   nozzles3D: 0,
+  cores: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -625,6 +690,8 @@ function flushEngines(out) {
 export const ShipProxyBatch3D = {
   /** Widoki encji z dyszami MAIN tej klatki — do listy encji updateHexShips3D. */
   engineEntities: [],
+  /** Rdzenie reaktora proxy tej klatki (rdzenie z własną ramą — reactor3D czyta je przez źródło; testy, narzędzia). */
+  reactorCores: proxyCoreList,
   stats,
 
   /**
@@ -704,6 +771,7 @@ export const ShipProxyBatch3D = {
     lightViews.length = 0;
     nzCount = 0;
     nzOwners = 0;
+    proxyCoreList.length = 0;
   },
 
   /**
@@ -728,6 +796,7 @@ export const ShipProxyBatch3D = {
       if (Number.isFinite(pa)) angle = pa + wrapPi(angle - pa) * t;
     }
     if (!this._draw(info, x, y, angle, actor.proxyOpacity ?? 1, actor)) return false;
+    considerCore(actor.courseId ?? actor, info, x, y, angle, actor.proxyOpacity ?? 1, actor.pirate === true);
     const vx = Number(actor.vx) || 0;
     const vy = Number(actor.vy) || 0;
     const speed = Math.abs(Number.isFinite(actor.speed) ? actor.speed : Math.hypot(vx, vy));
@@ -745,6 +814,7 @@ export const ShipProxyBatch3D = {
     const info = hullInfoFor(hullOrClass);
     if (!info) return false;
     if (!this._draw(info, x, y, angle || 0, opts?.opacity ?? 1, opts?.ref ?? key)) return false;
+    considerCore(key, info, x, y, angle || 0, opts?.opacity ?? 1, opts?.pirate === true);
     if (opts && (opts.vx || opts.vy || opts.throttle)) {
       const vx = Number(opts.vx) || 0;
       const vy = Number(opts.vy) || 0;
@@ -865,8 +935,10 @@ export const ShipProxyBatch3D = {
     for (let i = pickCount; i < MAX_PICK && pickRef[i] !== null; i++) pickRef[i] = null;
     flushEngines(this.engineEntities);
     trimLightViews();
+    if ((frameNo & 255) === 0) pruneProxyCores();
     stats.lights = lightViews.length;
     stats.nozzles3D = nzCount;
+    stats.cores = proxyCoreList.length;
     stats.kinds = live;
     stats.drawCalls = drawCalls;
     const ms = performance.now() - frame.t0;
@@ -883,6 +955,7 @@ export const ShipProxyBatch3D = {
       this.engineEntities.length = 0;
       lightViews.length = 0;
       nzCount = 0;
+      proxyCoreList.length = 0;
       return;
     }
     this.begin(camera, options);
@@ -902,6 +975,7 @@ export const ShipProxyBatch3D = {
       this.engineEntities.length = 0;
       lightViews.length = 0;
       nzCount = 0;
+      proxyCoreList.length = 0;
       return;
     }
     this.begin(camera);
@@ -952,6 +1026,8 @@ export const ShipProxyBatch3D = {
     }
     lightViews.length = 0;
     lightViewPool.length = 0;
+    proxyCoreList.length = 0;
+    proxyCores.clear();
     kindList.length = 0;
     kinds.clear();
     hullInfos.clear();

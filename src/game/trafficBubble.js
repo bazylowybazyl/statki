@@ -421,13 +421,13 @@ export function releaseTrafficPromotion(tb, id, destroyed = false) {
  * czasu (najwyżej `returnHold` s od `now` — czas mostu) obraz rysuje proxy kadłuba `hullId` w pozie NPC
  * (`trafficReturnPose`).
  */
-export function noteTrafficReturn(tb, id, hullId, x, y, angle, now) {
+export function noteTrafficReturn(tb, id, hullId, x, y, angle, now, pirate = false) {
   if (!tb || !Number.isFinite(id) || !hullId) return;
-  tb.returning.set(id, { hullId, x, y, angle, until: now + tb.tune.returnHold });
+  tb.returning.set(id, { hullId, x, y, angle, pirate: pirate === true, until: now + tb.tune.returnHold });
 }
 
 /**
- * Proxy wracającego NPC do obrazu (`now` — czas mostu klatki): rekord `{ hullId, x, y, angle }` albo null — encja już
+ * Proxy wracającego NPC do obrazu (`now` — czas mostu klatki): rekord `{ hullId, x, y, angle, pirate }` albo null — encja już
  * jest w buforze (wtedy rysuje się sama) albo minął `returnHold` (encja nie wróciła do bańki: postój na innym slocie,
  * kurs poza kandydatami). Wpisy zakończone usuwa.
  */

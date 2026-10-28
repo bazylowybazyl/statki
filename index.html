@@ -16772,7 +16772,7 @@
         let r = out.list[out.count];
         if (!r) {
           r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
-            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null, pirate: false };
           out.list[out.count] = r;
         }
         trafficActorPoseAt(a, t, r);
@@ -16784,6 +16784,8 @@
         r.speed = Math.abs(a.speed);
         r.throttle = a.throttle;
         r.mode = a.mode;
+        // jak `isPirate` NPC po awansie (spawnTrafficNpc) — barwa plazmy rdzenia proxy (E17b)
+        r.pirate = a.factionId === FACTION.PIRATES || !!trafficNpcDef(a.hullId)?.pirate;
         out.count++;
       }
       // Awansowany NPC, którego kadłub na belkach jeszcze się nie zbudował (sprite, budżet budowy w klatce) — proxy
@@ -16794,7 +16796,7 @@
           let r = out.list[out.count];
           if (!r) {
             r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
-              vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+              vx: 0, vy: 0, speed: 0, throttle: 0, mode: null, pirate: false };
             out.list[out.count] = r;
           }
           r.courseId = id;
@@ -16809,6 +16811,7 @@
           r.speed = Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy);
           r.throttle = 0;
           r.mode = null;
+          r.pirate = npc.isPirate === true;
           out.count++;
         }
       }
@@ -16820,7 +16823,7 @@
         let r = out.list[out.count];
         if (!r) {
           r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
-            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null, pirate: false };
           out.list[out.count] = r;
         }
         r.courseId = id;
@@ -16835,6 +16838,7 @@
         r.speed = 0;
         r.throttle = 0;
         r.mode = null;
+        r.pirate = g.pirate === true;
         out.count++;
       }
       _trafficGameMs += performance.now() - t0;
@@ -17074,7 +17078,7 @@
           dismissTrafficNpc(npc);
           releaseTrafficPromotion(tb, id, false);
           // Encja przyjdzie z kolejnym buforem workera ruchu — do tego czasu proxy w pozie NPC (trafficRenderFrame).
-          noteTrafficReturn(tb, id, npc.shipFrame, npc.x, npc.y, npc.angle, trafficV2.time);
+          noteTrafficReturn(tb, id, npc.shipFrame, npc.x, npc.y, npc.angle, trafficV2.time, npc.isPirate === true);
           st.stats.demoted++;
         } else if (!npc.command && npc.combatDisabled) {
           // Dotarł do punktu ucieczki: dalej, póki gracz blisko, potem stoi.
