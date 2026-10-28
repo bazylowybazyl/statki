@@ -100,10 +100,61 @@ obcego harnessu (przebiegi 3–4) — rozrzut tego samego kodu w kadrze portu 0,
 Start w workerze (`start-sync-gra.mjs --query renderWorker=1`): 0 pipeline'ów synchronicznych na starcie i po
 120 krokach.
 
-## 5. Zostaje (decyzja orkiestratora, osobne zadanie)
+## 5. Zostaje
 
-- Modele 3D na proxy: dysze SIDE, mostek, obudowa rdzenia, wieże okrętów (partie instancji na rodzaj modelu; dane
-  edytora po stronie renderu — dziś liczy je `npcHardpointRuntime.js` w grze).
-- Cień SDF proxy w masce słońca, światła efektów (błyski) na proxy, rozlew lamp proxy na sąsiednie kadłuby
-  (`buildNavLightClusters`, reflektory jako emitery drogowe).
-- Lampy edytora użytkownika (`hpEditor.v1` w localStorage) — proxy bierze domyślne `SHIP_EDITOR_DEFAULTS`.
+- Światła efektów z siatki świateł na proxy — w tym LAMPY HALI K-7 (`hallDust.js` → `grid.addWorld`): fragment proxy
+  czyta je tylko w wariancie z mapą ran (`hullEffectLights`), więc zapas floty na padach jest ciemnogranatowy, a po
+  awansie lotniskowiec robi się biały (największy skok przy awansie w hali; § 6.3).
+- Rozlew lamp proxy na sąsiednie kadłuby (`buildNavLightClusters`, reflektory jako emitery drogowe).
+- Lampy i gniazda edytora użytkownika (`hpEditor.v1` w localStorage) — proxy bierze domyślne `SHIP_EDITOR_DEFAULTS`.
+- Wieże proxy stoją w spoczynku (bez celowania i odrzutu); po awansie okręt z urazą obraca je na gracza — ruch, nie skok.
+
+## 6. E17b — modele 3D i cień na proxy (2026-10-28)
+
+Decyzja orkiestratora: „partie modeli na proxy bliżej kamery (dysze SIDE, mostek, obudowa rdzenia, wieże, cień SDF);
+dane w `src/data` albo w migawce, bez importu `src/game` w `src/3d`; awans w kadrze bez dokładania widocznych
+elementów”. Każdy element proxy stoi tam, gdzie u NPC po awansie, i pojawia się od tego samego progu rozmiaru
+(ten sam moduł rysuje oba). Kolejność w klatce (strona `off` i worker): `Bridge3D.update` → proxy
+(`ShipProxyBatch3D.drawList`) → `updateHexShips3D` → modele 3D i wieże → reaktor — każdy element proxy wchodzi tam,
+gdzie ta kolejność daje pozę tej klatki.
+
+### 6.1 Elementy
+
+| Element | Jak | Dane | Strażnik |
+|---|---|---|---|
+| Dysze SIDE (sponson + dzwon) | `setProxyNozzleSource` (hexShips3D) → `SideNozzleFrame` po `EngineVfxSystem.update`, próg `modelMinPx` | markery edytora — czyste funkcje przeniesione do `src/data/editorEngines.js` (`buildSideThrusters`; runtime NPC importuje je stamtąd) | `sideThrusters3D`, `freighterSideThrusters` |
+| Obudowa rdzenia reaktora | rdzeń Z WŁASNĄ RAMĄ (`createFramedReactorCore`, źródło `setFramedReactorCoreSource` w `reactor3D.js`), stały obiekt na kurs (ziarno i fazy plazmy), rama jak `reactorCoreFrame` NPC z pozą renderu | `trafficCoreMarker`: `REACTOR_CORE_MARKERS` albo `TRAFFIC_AUTO_CORE_MARKERS` (megafrachtowiec, holownik serwisowy, fregata i niszczyciel piratów — automat liczony na prawdziwym kadłubie: `scripts/rdzenie-auto-ruchu.mjs`); barwa plazmy po fladze piratów (`FLAG_PIRATE` w polu FLAGS bloku `traffic` — bez zmiany układu) | `reactorCoreProxy` |
+| Mostek | `Bridge3D.drawProxyBridges` z `ShipProxyBatch3D.end` — dopisuje instancje do partii tej klatki (raz na update); rekord z `host = null` (`pristine`: komórki pod modelem nietknięte, stały blok bufora obrażeń na kadłub), baza `proxyBridgeBasis`; okna gasną pod zamkniętym dachem (`RoofCover`) | strefa i wariant jak `attachEntityBridges` NPC (`proxyBridgeState`: fałszywa encja `{ type: id, shipFrame: id }` — megafrachtowiec dostaje wariant `sklad`) | `bridgeProxy` (punkty modelu i emitery proxy = NPC na prawdziwym kadłubie, 6 kadłubów) |
+| Wieże okrętów (11 kadłubów `TRAFFIC_COMBAT_HULLS`) | grupy w `ProxyTurretFrame` (`src/3d/proxyTurretFrame.js`) → `syncTurrets` w `syncShipModels3D` (te same partie, LOD 2 px, rodziny, warstwa głębi), uchwyt stanu wież na kurs | `src/data/trafficProxyTurrets.js` — broń, pozycja, kąt spoczynku, skala i promień rekordu Turret2D, zestaw terran / pirate; liczone PRAWDZIWYM kodem gry `scripts/wieze-proxy-ruchu.mjs` (gniazda edytora, `equipNpcWeapons` ze źródła index.html, `initAutonomousWeapons` — teraz eksport `capitalAI.js`, `Turret2D.sync`) | `turretProxy` (tabela = gra, pozy rekordów jak Turret2D) |
+| Cień SDF | `setProxyShadowSource` (hexShips3D) → kandydaci okluderów obok kadłubów (od największych, limit passa, kadr + 30 tys. j. — także proxy tuż poza kadrem) | siatka komórek rodzaju 15 j. ∩ alfa sprite'a (`HullShadowSdf` — jak NPC: komórki z tej alfy), warstwa szablonu na rodzaj | `reactorCoreProxy` (kandydaci), w grze `ruch-wyglad-gra.mjs` scena `port` (tryb off): 32 okludery z proxy, 1 bez |
+
+Zrzuty proxy i NPC w tym samym przebiegu (worker, `ruch-wyglad-gra.mjs --sceny awans`): `.tmp/e17b/` — `rdzen-w`,
+`mostek-w`, `wieze-w`, `cien-w` (`11-zapas` lotniskowiec na padzie K-7, `12-dok` wahadłowiec w zatoce, `13-lot`
+kontenerowiec), cienie na tle redy: `cien-off/03-reda.png`. 0 pipeline'ów synchronicznych w grze (worker i strona),
+jedyny błąd konsoli — brak `favicon.ico`.
+
+### 6.2 Koszt
+
+Pomiar A/B (2026-10-28; A = drzewo sprzed E17b przez `HULLFALL_AB_DIR` — 12 plików z 2130e523, B = drzewo; przebiegi
+po kolei A/B/A/B; worker renderu, headless 1600 × 900, ~290–350 encji przy Ziemi; `ruch-wyglad-gra.mjs --sceny koszt
+--kadry port,hala,halaBlisko`, 24 próbki na wariant). Δ = z proxy − bez proxy (`hideRender`) w tym samym kadrze,
+średnia z dwóch przebiegów:
+
+| kadr | Δ CPU aktualizacji A / B | Δ mediany klatki workera A / B | GPU klatki z proxy A / B |
+|---|---|---|---|
+| port Ziemi 0,045 | 0,38 / 0,29 ms | 0,53 / 0,50 ms | 0,69 / 0,68 ms |
+| hala K-7 0,2 | 0,06 / 0,08 ms | 0,11 / 0,23 ms | 1,23 / 1,33 ms |
+| hala z bliska 0,5 (zapas floty na pół ekranu) | −0,01 / 0,08 ms | −0,25 / 0,18 ms | 1,75 / 1,47 ms |
+
+Wnioski: modele i cień proxy kosztują ~0,03–0,09 ms CPU workera w kadrach hali (mostki, wieże, rdzenie, dysze widocznych
+okrętów zapasu), w kadrze portu bez mierzalnej różnicy (modele poniżej progów rozmiaru); mediana klatki i GPU — w szumie
+próbek (±0,3 ms; ten sam kod w kolejnych przebiegach różni się bardziej niż A od B). Cień: w porcie proxy wypełniają limit
+passa shadow shafts (32 okludery) — GPU maski słońca w szumie powyżej. 0 pipeline'ów synchronicznych (worker i strona).
+
+### 6.3 Czego awans dalej nie wyrównuje
+
+- Światła hali K-7 i efektów (§ 5) — lotniskowiec zapasu: proxy ciemnogranatowe, NPC biały; to oświetlenie, nie
+  element, ale skok jest największy ze wszystkich.
+- Mostek proxy rysuje się na wszystkich komórkach pod modelem (u NPC część modelu nad brzegiem kadłuba bez węzła
+  znika) — strefy leżą na kadłubie (strażnik `trafficHullData`), różnica tylko na krawędzi.
+- Wieże i lampy z edytora użytkownika (`hpEditor.v1`) — proxy domyślne.
