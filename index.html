@@ -1220,7 +1220,7 @@
     import { pirateBase3D, pirateBase3DEvent, pirateRockSite, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
     // Baza piratów po stronie gry (RW-24): stan kawałków, `_dockGone`, ciała świata, decyzje break / ram, środek planetoidy;
     // obraz dostaje zdarzenia (onPirateBaseEvent → pirateBase3DEvent).
-    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
+    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseObstacles, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
     // Ciała ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F1/F2): budowle jako płaskie, zakotwiczone ciała silnika belek
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
@@ -25691,8 +25691,9 @@
       const tAiGrid0 = performance.now();
       if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
       // Duże wraki jako przeszkody lotu NPC (src/ai/aiWreckIndex.js) — osobny indeks, nie siatka AI.
-      // Zimne wraki (tło, bez kolizji) też — okręty nie przelatują przez skórę wraku w kadrze.
-      if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks, coldWrecks);
+      // Zimne wraki (tło, bez kolizji) też — okręty nie przelatują przez skórę wraku w kadrze. Stojące budowle
+      // bazy piratów — przeszkody statyczne (kapsuły brył): okręty, także piraci, objeżdżają habitat i pomosty.
+      if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks, coldWrecks, pirateBaseObstacles());
       window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
       // Koordynator bitewny: sloty linii walki + flankowania dla capitali
       // (throttling wewnątrz — pełny rebuild co ~0.45s).

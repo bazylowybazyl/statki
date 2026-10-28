@@ -12,8 +12,10 @@
 // haki skóry), 'break' / 'ram' (kawałek odpada: dryf, obrót, zniknięcie — sam obraz), 'hide' (kawałek zabrało ciało
 // świata), 'rockCollapse', 'detach'. Decyzja (czy kawałek pęka) zapada tu, z tego samego stanu co dawniej w obrazie:
 // kawałek pęknięty albo schowany nie pęka drugi raz. Dryf odpadłego kawałka i jego zniknięcie po `life` s to obraz
-// (kawałek pęknięty jest nieobecny od chwili pęknięcia).
+// (kawałek pęknięty jest nieobecny od chwili pęknięcia). Stojące budowle to też PRZESZKODY LOTU NPC
+// (`pirateBaseObstacles` → indeks przeszkód AI, src/ai/aiWreckIndex.js).
 
+import { capsuleFromPolygon } from '../../ai/aiWreckIndex.js';
 import { createPirateBaseLayout } from '../../3d/portBuildings/pirateBaseLayout.js';
 import { buildPirateBaseScene } from '../../3d/portBuildings/pirateBaseScene.js';
 import { resolvePortBuildingStyle } from '../../3d/portBuildings/portBuildingStyle.js';
@@ -57,6 +59,8 @@ let structures = null;
 let place = null;
 let sites = null;
 const listeners = [];
+// Rośnie przy każdej zmianie stanu kawałków (pęknięty, schowany, nowe miejsce) — lista przeszkód lotu przelicza się po niej.
+let stateVersion = 0;
 
 function ensureChunks() {
   if (chunkState.length) return;
@@ -98,6 +102,8 @@ export function attachPirateBaseWorld(owners, basePlace) {
   for (const s of chunkState) { s.broken = false; s.hidden = false; }
   gone.clear();
   live.clear();
+  obstaclePlace = null;
+  stateVersion++;
   for (const st of Object.values(owners || {})) if (st) st._dockGone = gone;
   emit('attach', owners, basePlace);
   return baseModel;
@@ -139,6 +145,8 @@ export function detachPirateBaseWorld() {
   structures = null;
   place = null;
   gone.clear();
+  obstaclePlace = null;
+  stateVersion++;
   emit('detach');
 }
 
@@ -167,6 +175,7 @@ export function breakPirateBaseChunk(id, opts) {
   if (!s || s.broken || s.hidden) return false;
   s.broken = true;
   gone.add(id);
+  stateVersion++;
   emit('break', id, opts);
   return true;
 }
@@ -179,6 +188,7 @@ export function ramPirateBaseChunk(id, dirX, dirY, speed) {
   place.dirToHub(dirX, dirY, _dh);
   s.broken = true;
   gone.add(id);
+  stateVersion++;
   emit('ram', id, _dh, speed);
   return true;
 }
@@ -189,6 +199,7 @@ export function hidePirateBaseChunk(id) {
   if (!s) return false;
   s.hidden = true;
   if (place) gone.add(id);
+  stateVersion++;
   emit('hide', id);
   return true;
 }
@@ -205,6 +216,69 @@ export function pirateBaseBrokenChunks() {
   const out = [];
   for (const s of chunkState) if (s.broken || s.hidden) out.push(s.id);
   return out;
+}
+
+// ---- przeszkody lotu NPC (src/ai/aiWreckIndex.js — budowle jako kapsuły statyczne)
+
+const obstacleDefs = [];   // [{ rec, chunks }] — z brył trafień miejsca bazy
+const obstacleList = [];
+let obstaclePlace = null;  // miejsce, z którego policzono obstacleDefs
+let obstacleStamp = -1;    // stateVersion ostatniego przeliczenia listy
+
+function obstacleRec(owner, chunk) {
+  return { x: 0, y: 0, ux: 1, uy: 0, h: 0, w: 0, vx: 0, vy: 0, obstacleOwner: owner || null, chunk };
+}
+
+function buildObstacleDefs() {
+  obstacleDefs.length = 0;
+  obstaclePlace = place;
+  const habitatChunks = [];
+  for (const sh of place.hitShapes || []) {
+    if (sh.structure === 'habitat') {
+      if (!habitatChunks.includes(sh.chunk)) habitatChunks.push(sh.chunk);
+      continue;
+    }
+    obstacleDefs.push({ rec: capsuleFromPolygon(sh.pts, obstacleRec(structures?.[sh.structure], sh.chunk)), chunks: [sh.chunk] });
+  }
+  // Habitat: bęben jako jedno koło — ćwiartki ściany i szyb osobno zostawiały między kapsułami szczeliny, w które objazd
+  // jednej z nich wciągał okręt. Stoi, póki stoi którykolwiek jego kawałek w płaszczyźnie.
+  const drumR = Number(place.layout?.habitat?.drumR) || 0;
+  if (habitatChunks.length && drumR > 0 && place.habitat) {
+    const rec = obstacleRec(structures?.habitat, 'habitat');
+    rec.x = place.habitat.x;
+    rec.y = place.habitat.y;
+    rec.w = drumR;
+    obstacleDefs.push({ rec, chunks: habitatChunks });
+  }
+}
+
+/**
+ * Stojące budowle bazy jako przeszkody lotu NPC — `statics` indeksu przeszkód AI (index.html: rebuildWreckIndex w takcie
+ * AI): habitat — koło bębna (drumR), reszta brył trafień — kapsuły z wielokątów (capsuleFromPolygon), `obstacleOwner` —
+ * byt budowli. Kawałek pęknięty albo schowany (pirateBaseChunkGone) nie jest przeszkodą — jego odłamy to wraki; kawałek
+ * będący ciałem w bańce gracza stoi. Piraci też je omijają (przez ciała bazy tylko przelatują — `site.passes`). Bez bazy
+ * pusta lista; ta sama tablica, przeliczana tylko po zmianie stanu kawałków.
+ */
+export function pirateBaseObstacles() {
+  if (!place) {
+    obstacleList.length = 0;
+    return obstacleList;
+  }
+  if (obstaclePlace !== place) {
+    buildObstacleDefs();
+    obstacleStamp = -1;
+  }
+  if (obstacleStamp !== stateVersion) {
+    obstacleStamp = stateVersion;
+    obstacleList.length = 0;
+    for (let i = 0; i < obstacleDefs.length; i++) {
+      const d = obstacleDefs[i];
+      for (let k = 0; k < d.chunks.length; k++) {
+        if (!pirateBaseChunkGone(d.chunks[k])) { obstacleList.push(d.rec); break; }
+      }
+    }
+  }
+  return obstacleList;
 }
 
 // ---- planetoida pod bazą (Hidalgo)
