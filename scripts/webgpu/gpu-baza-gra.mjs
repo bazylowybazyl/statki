@@ -21,6 +21,10 @@
 // --walka S: po gruzie walka z grupą piratów (Atlas strzela sam), okna walka-N po 3 s — obraz workera wobec klatek strony.
 // --balastGb N: po oknie „przed” osobny Chrome zajmuje N GB pamięci karty i stale jej używa (balastVram.mjs — jak inne
 //   programy u gracza); okna ostrzału, upadku i gruzu pod presją VRAM.
+// --rytm 1 (2026-10-28, „240 kl/s, a efekty klatkują — jakby rozsynchronizowane”): w każdym oknie — o ile przesuwa się
+//   treść obrazu między kolejnymi złożeniami (vsync) wobec odstępu złożeń, osobno dla zegarów: kadłuby (SimClock.render),
+//   efekty — stary zegar (performance.now() strony po fizyce) i nowy (znacznik rAF strony), pociski NPC na zegarze kroku
+//   (SimClock.sim); powtórzone i przeskoczone strony. Liczy się po stronie gry, niezależnie od wersji kodu.
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -50,6 +54,7 @@ const AB_POWT = Number(args.abPowt || 2);
 const BALAST_GB = Number(args.balastGb || 0);
 // --walka S: po upadku walka nad gruzem — grupa piratów obok Atlasa, Atlas strzela sam (postawa „free”), okna 3 s
 const WALKA = Number(args.walka || 0);
+const RYTM = String(args.rytm || '0') === '1';
 let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
@@ -155,11 +160,77 @@ const WK_FRAMES = `(() => {
   return { n: a.length, p50: q(0.5), p95: q(0.95), max: a.length ? +a[a.length - 1].toFixed(1) : 0 };
 })()`;
 
+// --rytm 1: dziennik zegarów strony (rAF opakowany — znacznik klatki; SimClock.beginRender — zegary tuż po fizyce;
+// postFrame — numer strony; ring.compose — która strona w tej klatce ekranu)
+const RYTM_INSTALL = `(() => {
+  if (window.__rytmZ) return 'już';
+  const H = window.RenderWorkerHost, P = window.RenderSnapshot && window.RenderSnapshot.packer, SC = window.SimClock;
+  if (!H || !P || !SC || !H.ring) return 'brak';
+  const N = 16384, M = N - 1;
+  const R = window.__rytmZ = { n: 0, rn: 0, k: new Int32Array(N), ts: new Float64Array(N), pk: new Float64Array(N),
+    sim: new Float64Array(N), rend: new Float64Array(N), cn: 0, rcn: 0, cK: new Int32Array(N), cTs: new Float64Array(N), cur: -1 };
+  const raf0 = window.requestAnimationFrame.bind(window);
+  window.requestAnimationFrame = (cb) => raf0((ts) => { window.__rytmTs = ts; cb(ts); });
+  const br0 = SC.beginRender;
+  SC.beginRender = function (a, d, p) { br0.call(SC, a, d, p); const i = R.n & M; R.k[i] = -1; R.ts[i] = window.__rytmTs;
+    R.pk[i] = performance.now(); R.sim[i] = SC.sim; R.rend[i] = SC.render; R.cur = i; R.n++; };
+  const pf0 = H.postFrame;
+  H.postFrame = function () { if (R.cur >= 0) R.k[R.cur] = P.k; return pf0.apply(this, arguments); };
+  const rc0 = H.ring.compose;
+  H.ring.compose = function (k) { const i = R.cn & M; R.cK[i] = k; R.cTs[i] = window.__rytmTs; R.cn++; return rc0.call(this, k); };
+  return 'ok';
+})()`;
+const RYTM_CZYTAJ = `(() => {
+  const R = window.__rytmZ; if (!R) return null;
+  const M = R.k.length - 1, o = { k: [], ts: [], pk: [], sim: [], rend: [], cK: [], cTs: [] };
+  for (let i = Math.max(R.rn, R.n - M); i < R.n; i++) { const j = i & M; o.k.push(R.k[j]); o.ts.push(R.ts[j]); o.pk.push(R.pk[j]); o.sim.push(R.sim[j]); o.rend.push(R.rend[j]); }
+  for (let i = Math.max(R.rcn, R.cn - M); i < R.cn; i++) { const j = i & M; o.cK.push(R.cK[j]); o.cTs.push(R.cTs[j]); }
+  R.rn = R.n; R.rcn = R.cn;
+  return o;
+})()`;
+// błąd przesunięcia treści na złożenie (vsync): przyrost zegara treści między złożonymi stronami − odstęp złożeń [ms]
+function rytmStat(d) {
+  if (!d || !d.cK || d.cK.length < 3) return null;
+  const byK = new Map();
+  for (let i = 0; i < d.k.length; i++) if (d.k[i] >= 0) byK.set(d.k[i], i);
+  const e = { kadluby: [], efektyStary: [], efektyNowy: [], pociskiNpcKrok: [], efektyStaryWzgKadlubow: [], pociskiNpcWzgKadlubow: [] };
+  let zlozen = 0, powt = 0, przesk = 0;
+  for (let j = 1; j < d.cK.length; j++) {
+    const dv = d.cTs[j] - d.cTs[j - 1];
+    if (!(dv > 0) || dv > 50) continue;
+    zlozen++;
+    const k0 = d.cK[j - 1], k1 = d.cK[j];
+    if (k1 === k0) powt++;
+    else if (k1 - k0 >= 2) przesk++;
+    const a = byK.get(k0), b = byK.get(k1);
+    if (a === undefined || b === undefined) continue;
+    const kad = (d.rend[b] - d.rend[a]) * 1000;
+    e.kadluby.push(kad - dv);
+    e.efektyStary.push(d.pk[b] - d.pk[a] - dv);
+    e.efektyNowy.push(d.ts[b] - d.ts[a] - dv);
+    e.pociskiNpcKrok.push((d.sim[b] - d.sim[a]) * 1000 - dv);
+    e.efektyStaryWzgKadlubow.push(d.pk[b] - d.pk[a] - kad);
+    e.pociskiNpcWzgKadlubow.push((d.sim[b] - d.sim[a]) * 1000 - kad);
+  }
+  const st = (arr) => {
+    const a = arr.map(Math.abs).sort((x, y) => x - y);
+    if (!a.length) return null;
+    const sr = a.reduce((s, v) => s + v, 0) / a.length;
+    return { sr: +sr.toFixed(2), p95: +a[Math.min(a.length - 1, Math.floor(0.95 * a.length))].toFixed(2),
+      ponad1ms: +(100 * a.filter((v) => v > 1).length / a.length).toFixed(1) };
+  };
+  const out = { zlozen, powtorzone: powt, przeskoczone: przesk };
+  for (const [k, v] of Object.entries(e)) out[k] = st(v);
+  return out;
+}
+
 async function okno(label, sekundy, { slad = false } = {}) {
   const p0 = await ev(PAGE_STATE);
   if (wk.sid) { await wkEval(WK_FRAMES).catch(() => null); await wkEval(SONDA_CZYTAJ).catch(() => null); }
+  if (RYTM) await ev(RYTM_CZYTAJ).catch(() => null);
   const t0 = Date.now();
   await sleep(sekundy * 1000);
+  const rytm = RYTM ? rytmStat(await ev(RYTM_CZYTAJ, 60000).catch(() => null)) : null;
   const p1 = await ev(PAGE_STATE);
   const wf = wk.sid ? await wkEval(WK_FRAMES).catch((e) => ({ err: e.message })) : null;
   const sonda = wk.sid ? await wkEval(SONDA_CZYTAJ).catch((e) => ({ err: e.message })) : null;
@@ -176,7 +247,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
     zlozeniaS: +((p1.composed - p0.composed) / dt).toFixed(1), klatkiStronyS: +((p1.f - p0.f) / dt).toFixed(1),
     workerKlatkiS: wf && !wf.err ? +(wf.n / dt).toFixed(1) : null, workerMs: wf, wiek: p1.age,
     hudWorker: { cpu: p1.cpu, gpuRender: p1.gpu, gpuCompute: p1.gpuC, fxMs: p1.fxMs }, domeny: p1.domeny,
-    wraki: { gorace: p1.hot, spiace: p1.sleep, odlamy: p1.wd }, raf: p1.raf, nvidia: smi.okno(t0), sonda, slad: sl ? true : undefined
+    wraki: { gorace: p1.hot, spiace: p1.sleep, odlamy: p1.wd }, raf: p1.raf, nvidia: smi.okno(t0), sonda, rytm, slad: sl ? true : undefined
   };
   report.okna.push(row);
   const so = sonda && !sonda.err ? sonda : null;
@@ -189,6 +260,12 @@ async function okno(label, sekundy, { slad = false } = {}) {
     if (so.wysylkiBuforow && so.wysylkiBuforow.length) console.log('   wysyłki:', so.wysylkiBuforow.slice(0, 6).map((w) => `${w[0]} ${(w[1] / 1024).toFixed(0)}KB×${w[2]}`).join(' | '));
     console.log('   render:', so.gpuRender.wiersze.slice(0, 6).map((w) => `${w[0]} ${w[1]}`).join(' | '));
     console.log('   compute:', so.gpuCompute.wiersze.slice(0, 6).map((w) => `${w[0]} ${w[1]}`).join(' | '));
+  }
+  if (rytm) {
+    const f = (o) => (o ? `${o.sr}/${o.p95}/${o.ponad1ms}%` : '-');
+    console.log(`   rytm: złożeń ${rytm.zlozen}, powt. ${rytm.powtorzone}, przesk. ${rytm.przeskoczone} | błąd treści na vsync śr/p95/>1ms [ms]:`
+      + ` kadłuby ${f(rytm.kadluby)}, efekty stary ${f(rytm.efektyStary)}, efekty nowy ${f(rytm.efektyNowy)}, pociski NPC (krok) ${f(rytm.pociskiNpcKrok)}`
+      + ` | wzgl. kadłubów: efekty stary ${f(rytm.efektyStaryWzgKadlubow)}, pociski NPC (krok) ${f(rytm.pociskiNpcWzgKadlubow)}`);
   }
   if (sl && !sl.blad) console.log('   ślad: zajętość', JSON.stringify(sl.zajetosc), 'top GPU:', sl.topGpuMain.slice(0, 5).map((r) => `${r[0]} ${r[1]}ms/${r[2]}`).join(' | '));
   return row;
@@ -250,6 +327,7 @@ try {
   for (let i = 0; i < 20 && inst !== 'ok' && inst !== 'już'; i++) { await sleep(500); inst = await wkEval(SONDA_INSTALUJ).catch((e) => e.message); }
   console.log('sonda:', inst);
   await ev(GUARD);
+  if (RYTM) console.log('rytm:', await ev(RYTM_INSTALL));
   // Atlas 3,5 km na południe od habitatu (jak ostrzał w baza-zniszczenie-gra.mjs), mgła wojny wyłączona
   await ev(`(() => {
     const S = window.StoryGame, d = S.site.dock, l = d.layout;

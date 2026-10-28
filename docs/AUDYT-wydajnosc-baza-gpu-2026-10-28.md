@@ -6,8 +6,9 @@ Potrafi się „ogarnąć” po chwili i zależy od zoomu. Potem przy wyrwaniu z
 mocno spaść, a „karta się poci”. Sprzęt: Ryzen 7800X3D, RTX 5080 16 GB, monitor 5120 × 1440 @ 240 Hz (7,4 Mpx — 5× więcej
 pikseli niż harness 1600 × 900, którym mierzono dotąd bazę i wybuchy).
 
-Gałąź: `claude/perf-baza-gpu` (od main 00a42543). Stan tego dokumentu: analiza kodu i poprawki zrobione BEZ GPU
-(użytkownik grał w tym czasie na komputerze); pomiar w § 5 czeka na wolną maszynę.
+Gałąź: `claude/perf-baza-gpu` (od main 00a42543). Analiza kodu i poprawki § 3 zrobione bez GPU (użytkownik grał w tym
+czasie na komputerze); pomiar main ↔ gałąź w widocznym oknie — § 5; drugie zgłoszenie z oglądania pomiaru (efekty
+klatkują przy 240 kl/s) i jego poprawka — § 6; co zostaje — § 7.
 
 ## 1. Co mówi zrzut PerfHUD
 
@@ -94,17 +95,83 @@ tests/renderBuffers.test.mjs tests/szewRenderu.test.mjs tests/dynamicResolution.
 czeka i jest schowany, 700 klatek ukrycia bez zwolnienia i bez ponownych podzbiorów + A/B dawnego zwolnienia, `nodesReceived`,
 rekord obrazu z każdego presetu i klej strony / workera, okno wieku w czasie).
 
-## 5. Pomiar (do zrobienia przy wolnej maszynie)
+## 5. Pomiar — wyniki (5120 × 1440, widoczne okno z vsync 240 Hz, `--query grafika=wysoka`)
 
-Po kolei, nie równolegle; przed każdym przebiegiem `nvidia-smi` (zajętość ≤ ~10%, pamięć innych procesów) — raport zapisuje
-stan maszyny i próbki co 0,5 s.
+Przebiegi PO KOLEI, przy ciszy innych sesji: A2 — main 00a42543 z narzędziami z gałęzi (`.tmp/gpu-baza-A2-walka`), B2 —
+gałąź z partią skór, poprawkami z § 3 i zegarami z § 6 (`.tmp/gpu-baza-B2-walka`). Polecenie (oba):
+`node scripts/webgpu/gpu-baza-gra.mjs --okno 1 --rozmiar 5120x1440 --zoom 0.035 --zoomGruz 0.035 --slad 3 --walka 30
+--profil 1 [--rytm 1] --query grafika=wysoka` — oddalony kadr (cały gruz), ostrzał habitatu, upadek do osiadania, walka
+z 14 piratami nad gruzem (Atlas strzela sam). Liczby: obraz = złożenia bitmap workera / s, strona = klatki pętli gry / s.
 
-1. Main (eksport 00a42543 + narzędzia z gałęzi) i gałąź, oba z `--query grafika=wysoka` (jak gracz z presetem Wysoka —
-   na main worker i tak liczył „Wysoką”): `node scripts/webgpu/gpu-baza-gra.mjs --rozmiar 5120x1440 --slad 3 --abWorker …`
-   — okna: przed, ostrzał (pierwsze trafienia), upadek, nad gruzem; w każdym obrazy / s, CPU workera, GPU render / compute
-   wg etykiet, kolejka GPU, wysyłki, nowe zasoby, pamięć, zajętość CrGpuMain.
-2. Gałąź bez `grafika=` (dobór automatyczny przy 7,4 Mpx → Średnia, teraz działa w workerze).
-3. A/B w pauzie nad gruzem: `drawGas`, skala 0,85, bloom, smugi cieni (koszt renderu), a compute gazu z etykiet sondy
-   w oknach upadku (w pauzie gaz stoi).
-4. Zasadzka: `node scripts/webgpu/gpu-zasadzka-gra.mjs --rozmiar 5120x1440 --slad 3` na main i gałęzi.
-5. Jeśli kolejka GPU ≫ suma znaczników: przebieg z obciążoną pamięcią karty (balast) — rozstrzyga pkt 2.3.
+| Okno | A2 obraz / strona | B2 obraz / strona | CPU workera p50 A2 → B2 | GPU render + compute A2 → B2 | rysunki A2 → B2 |
+|---|---|---|---|---|---|
+| ostrzał, pierwsze trafienia | 115 / 134 | 200 / 203 | 2,7 → 2,2 ms | 5,0 + 3,7 → 2,6 + 1,7 ms (domeny gazu 10 → 3) | 112 → 103 |
+| upadek (najgorsze okno) | 49 / 55 | 114 / 125 | 7,1 → 3,7 ms | — | 338 → 281 |
+| upadek (średnio, 8–9 okien) | 136 / 156 | 179 / 188 | 4,6 → 3,0 ms | 3,4 + 2,4 → 2,7 + 2,0 ms | 253 → 224 |
+| nad gruzem | 219 / 195 | 236 / 239 | 4,0 → 2,5 ms | 2,2 + 0,4 → 1,4 + 0,6 ms | 346 → 293 |
+| walka (10 okien) | 210 / 238 | 235 / 237 | 4,4 → 2,7 ms | 12,1 + 2,2 → 1,5 + 0,7 ms | 332 → 110 |
+
+- Upadek: w A2 hamował worker (rysunki skór odłamów, ~330 na klatkę; profil CPU workera: `renderObject` three 34% czasu
+  przebiegu, 53% czasu pracy), w B2 — w najcięższych sekundach karta (GPU 98–99%, 14–16 domen gazu, kolejka GPU ~38 ms),
+  przy lądowaniu gruzu strona (upadek-6: CPU workera 3,7 ms, GPU 54%, strona 114 kl/s; w A2 strona 55).
+- Wysyłki bez etykiety w upadku A2 (1–1,9 MB na klatkę, ~62 wywołania) to pole skóry odłamów (`writeHullSkinField`,
+  `hullSkin3D.js`): obracający się odłam zmienia przesunięcia WSZYSTKICH węzłów względem siatki spoczynkowej (próg 0,02 j.),
+  więc ~31 KB na odłam co klatkę, do osiadania. Zostaje (koszt przejściowy) — kandydat: ruch sztywny odłamu w macierzy
+  egzemplarza, w polu tylko odkształcenie.
+- Walka: B2 była lżejsza niż A2 (1–13 pocisków w powietrzu wobec 2–307), więc różnica obrazu i GPU w walce to tylko
+  częściowo poprawki (rysunki 332 → 110 — partia skór, odłamy bez węzłów lustra schowane zamiast rysowania pełnej skóry
+  kawałka); w A2 GPU walki szło w `pass:bg` 2,2–6,9 ms, `maskaSlonca` 1,2–3,7 ms, `pass:ortho` 0,8–3,4 ms.
+- Ocena użytkownika B2 (oglądał przebieg): „nie było już tego skakania” (§ 6).
+
+## 6. Klatkowanie efektów przy 240 kl/s — zegary (zgłoszenie po A2)
+
+Zgłoszenie (oglądając walkę A2): „niby płynnie — poruszanie statkiem, 240 kl/s w PerfHUD — ale wszystko, co związane
+z efektami cząsteczkowymi, uderzenia w tarcze, pociski, strzały, klatkowało; jakby rozsynchronizowane albo pokazywało się
+co kawałek”. Przyczyna — obraz jednej klatki workera składał się z rzeczy na RÓŻNYCH zegarach:
+
+1. **Zegar efektów** (`Core3D.fx` — cząstki, błyski, dym, iskry; bank `Fx3D` i migawka pocisków w `WeaponFx.sync`; odłamki
+   `HullDebris3D`): w workerze `fxNowMs` = `performance.now()` strony w chwili pakowania migawki — PO fizyce, a
+   `WeaponFx.sync` / kadłuby brały `performance.now()` workera w chwili rysowania. Przy 240 Hz krok fizyki 60 Hz trafia co 4.
+   klatkę: ta klatka „trwała” dla efektów o czas kroku (2–4 ms w walce) dłużej, następna krócej. Kadłuby idą zegarem gry
+   z interpolacją (`SimClock.render`, z `dt` z rAF) — równo.
+2. **Pociski i efekty NPC** (`CLOCK_SIM`): od 2026-10-17 kadłuby NPC i wraków stoją w obrazie w pozie interpolowanej między
+   krokami (`renderPoses`, czas `SimClock.render`), a ich pociski (rysowane w pozie kroku) i efekty niesione kadłubem
+   (`pos + v · (sim − t0)`) — na zegarze kroku: 3 klatki stały, w czwartej skok o v/60, przed kadłubem.
+
+Poprawka:
+- zegar klatki efektów = znacznik rAF klatki strony: `index.html` — `window.__frameNowMs = now` w `loop`, `HEAD.WALL` migawki
+  = ten znacznik (`f.wall = lastTime`); `Core3D.frameNowMs()` (`fxNowMs` z migawki → `RenderWorld.frameNowMs` → poza pętlą
+  `performance.now()`) czytają `Core3D.fx`, `WeaponFx.sync`, `updateHexShips3D` (odłamki, światła pozycyjne, czas materiałów
+  kadłubów) i wyrzut odłamków (`spawnHullDebris`, wyrwy bazy). Pod harnessem znacznik rAF i `performance.now()` to ten sam
+  czas wirtualny — zrzuty narzędzi bez zmian;
+- zegar obrazu bytu: `isRenderClockEntity` (`src/game/carrierVelocity.js`) — gracz, P2 i NPC / wraki w pozie renderu (hak
+  `setRenderPosedEntity` ← `npcRenderPosed` w `index.html`, ten sam warunek co `bridgeRenderPose`; off i `?npcLerp=0` —
+  jak dawniej); używa go `writeCarrier` (wyloty, trafienia) i zegar pocisków NPC (`fireWeaponCore`, `aiSpawnBullet`,
+  zapasowy strzał NPC). Rozgrywka pyta dalej `isInterpolatedEntity` (zapalnik rakiet: gracz rusza się w kroku przed nimi);
+- `WeaponFx.sync`: pocisk na zegarze renderu przed chwilą wystrzału (`bornSim` > czas renderu — NPC strzela z pozy PO
+  kroku) jedzie tylko z lufą (`ivx / ivy`); bez tego cofał się za wylot o prędkość pocisku × opóźnienie renderu.
+
+Pomiar w tym samym przebiegu B2 (sonda `--rytm 1`: przyrost zegara treści między złożonymi stronami wobec odstępu złożeń;
+odsetek złożeń z rozjazdem > 1 ms; stary zegar efektów = `performance.now()` strony tuż po fizyce):
+
+| Okna B2 | kadłuby = nowy zegar efektów | stary zegar efektów wobec kadłubów | pociski NPC na zegarze kroku |
+|---|---|---|---|
+| spokój przed ostrzałem | 5% | 13% (śr. 1,0 ms, p95 6,2 ms) | 99,9% |
+| ostrzał habitatu | 21–26% | 72–75% (śr. 3,2–4,4 ms, p95 do 17 ms) | 99% |
+| upadek | 0,4–56% | do 87% (śr. do 6,6 ms) | 88–100% |
+| walka nad gruzem | 0–7% | 3–34% | 100% |
+
+Rozjazd kadłubów (i nowego zegara efektów) to przeskoki stron i nierówny takt klatek strony przy stałym wieku obrazu
+(upadek: ~150 kl/s na monitorze 240 Hz — klatki po 1 i 2 odświeżenia); efekty i pociski nie odjeżdżają już od kadłubów.
+Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, strażnik `index.html` i modułów),
+`tests/carrierVelocity.test.mjs` (nośnik NPC w pozie renderu, pozycje pocisków w `WeaponFx.sync`).
+
+## 7. Co zostaje
+
+- Efekty po stronie renderu z zegarem kroku na sztywno przy nośniku NPC: gaz i żar wybuchów (`explosionFx.js`), wybuch
+  reaktora, iskry mostków, iskry trafień rakiet w NPC (`rockets/effects.js` — `isPlayerEntity(hit) ? CLOCK_RENDER :
+  CLOCK_SIM`). Nośnik to wolny kadłub (100–600 j/s → ≤ 10 j. na krok): przy zoomie 0,035 poniżej piksela, przy 0,3 do ~3 px.
+  Poprawka: flaga „NPC w pozie renderu” w HEAD migawki → `RenderWorld` → wybór zegara w tych modułach.
+- Upadek przy 5120 × 1440: karta w najcięższych sekundach (gaz 14–16 domen) — kandydaci z § 3 (próg „fine” względem
+  wysokości bufora, sufit podkroków pod obciążeniem); pole skóry odłamów (wyżej); nierówny takt poniżej odświeżania.
+- Zasadzka (wyrwanie z warpa): pomiar `gpu-zasadzka-gra.mjs` przy wolnej maszynie.
