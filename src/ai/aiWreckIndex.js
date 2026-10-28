@@ -13,6 +13,11 @@
 // POSORTOWANE PO x, przebudowa raz na takt AI (20 Hz; wraki dryfują wolno). Zapytanie:
 // wyszukiwanie binarne pasa [x − zasięg, x + zasięg] i odrzut po y — przy horyzoncie
 // przeszkody 1,5–5 km okręt ogląda kilka wraków, nie wszystkie.
+//
+// BUDOWLE (2026-10-28, zgłoszenie użytkownika: „supercapital wbija się w habitat zamiast okrążyć budowlę”): stojące
+// budowle w płaszczyźnie gry (baza piratów misji 1 — pirateBaseObstacles) wchodzą do tego samego indeksu jako
+// przeszkody STATYCZNE — kapsuły z jawną geometrią (`statics` w rebuildWreckIndex; wielokąt bryły → capsuleFromPolygon),
+// więc ogranicznik, objazd z drugą stroną i rozkazy RTS omijają je tą samą drogą co wraki.
 
 export const WRECK_OBSTACLE_MIN_RADIUS = 80;
 // Bryła 3D (wrak `solid3D` — odłam budowli, gruz upadku habitatu) jest przeszkodą tylko, gdy jej sfera (z ± promień
@@ -26,6 +31,9 @@ export const WRECK_OBSTACLE_BAND = 120;
 // długiego wraku leżącego w poprzek kursu albo, szersze, zasłaniało pół pola wraków.
 export const WRECK_HALF_WIDTH_K = 0.33;
 const WRECK_HALF_WIDTH_MIN = 50;
+// Przeszkoda STATYCZNA (budowla — `statics` w rebuildWreckIndex): { x, y, ux, uy, h, w } — środek, oś jednostkowa,
+// pół-długość odcinka osi, pół-szerokość — i `obstacleOwner`: byt budowli (stacja); rozkaz RTS wycelowany w nią
+// (taran, orbita, podejście — `ignore` pilota rozkazów) jej kapsuł nie omija.
 
 const index = {
   count: 0,
@@ -38,11 +46,18 @@ const index = {
   uy: new Float64Array(64),
   h: new Float64Array(64),
   w: new Float64Array(64),
-  refs: []
+  refs: [],
+  // byt budowli przeszkody statycznej (null — wrak)
+  owner: [],
+  // same przeszkody statyczne (trasy wokół budowli — staticRoutes.js) i wersja ich zestawu (rośnie przy zmianie)
+  statics: [],
+  staticsVer: 0
 };
-// Robocze: kandydaci (byty i ich x) i kolejność po x — bez alokacji w stanie ustalonym.
+// Robocze: kandydaci (byty i ich x), rodzaj (1 — przeszkoda statyczna) i kolejność po x — bez alokacji w stanie
+// ustalonym.
 const _cand = [];
 const _candX = [];
+const _candStatic = [];
 const _order = [];
 
 function grow(arr, need) {
@@ -70,21 +85,111 @@ function addCandidates(list) {
     const w = list[i];
     if (!isObstacleWreck(w)) continue;
     _candX[_cand.length] = w.x;
+    _candStatic[_cand.length] = 0;
     _order.push(_cand.length);
     _cand.push(w);
   }
 }
 
-/** `coldWrecks` — zimne wraki (tło); przeszkody lotu jak wraki z `wrecks`. */
-export function rebuildWreckIndex(wrecks, coldWrecks = null) {
+function addStatics(list) {
+  const S = index.statics;
+  const n0 = Array.isArray(list) ? list.length : 0;
+  let k = 0;
+  let changed = false;
+  for (let i = 0; i < n0; i++) {
+    const o = list[i];
+    if (!o || !(o.w > 0) || !Number.isFinite(o.x) || !Number.isFinite(o.y) || !Number.isFinite(o.ux) || !Number.isFinite(o.uy)) continue;
+    _candX[_cand.length] = o.x;
+    _candStatic[_cand.length] = 1;
+    _order.push(_cand.length);
+    _cand.push(o);
+    if (S[k] !== o) { S[k] = o; changed = true; }
+    k++;
+  }
+  if (S.length !== k) { S.length = k; changed = true; }
+  if (changed) index.staticsVer++;
+}
+
+/**
+ * Kapsuła { x, y, ux, uy, h, w } zawierająca wielokąt `pts` ([{ x, y }]) — z osi boków i osi głównej wierzchołków ta
+ * o najmniejszym polu: prostokąt — oś wzdłuż dłuższego boku, pół-szerokość = pół krótszego, pół-długość = pół
+ * dłuższego (końce kapsuły wystają poza krótsze boki o pół-szerokość; rogi leżą na łukach); wielokąt foremny — prawie
+ * koło (h ≈ 0, w = promień). Zapis do `out`.
+ */
+export function capsuleFromPolygon(pts, out = {}) {
+  const n = Array.isArray(pts) ? pts.length : 0;
+  out.x = 0; out.y = 0; out.ux = 1; out.uy = 0; out.h = 0; out.w = 0;
+  if (n === 0) return out;
+  let mx = 0;
+  let my = 0;
+  for (let i = 0; i < n; i++) { mx += pts[i].x; my += pts[i].y; }
+  mx /= n;
+  my /= n;
+  let sxx = 0;
+  let sxy = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = pts[i].x - mx;
+    const dy = pts[i].y - my;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+  }
+  let best = Infinity;
+  const tryAxis = (ax, ay) => {
+    let s0 = Infinity; let s1 = -Infinity; let t0 = Infinity; let t1 = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const s = pts[i].x * ax + pts[i].y * ay;
+      const t = pts[i].y * ax - pts[i].x * ay;
+      if (s < s0) s0 = s; if (s > s1) s1 = s;
+      if (t < t0) t0 = t; if (t > t1) t1 = t;
+    }
+    const cs = (s0 + s1) / 2;
+    const ct = (t0 + t1) / 2;
+    const w = (t1 - t0) / 2;
+    // pół-długość: wierzchołek za końcem odcinka osi leży najdalej `w` od tego końca
+    let h = 0;
+    for (let i = 0; i < n; i++) {
+      const s = pts[i].x * ax + pts[i].y * ay - cs;
+      const t = pts[i].y * ax - pts[i].x * ay - ct;
+      const need = Math.abs(s) - Math.sqrt(Math.max(0, w * w - t * t));
+      if (need > h) h = need;
+    }
+    const area = 4 * h * w + Math.PI * w * w;
+    if (area < best) {
+      best = area;
+      out.x = ax * cs - ay * ct;
+      out.y = ay * cs + ax * ct;
+      out.ux = ax;
+      out.uy = ay;
+      out.h = h;
+      out.w = w;
+    }
+  };
+  const pa = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  tryAxis(Math.cos(pa), Math.sin(pa));
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const ex = pts[i].x - pts[j].x;
+    const ey = pts[i].y - pts[j].y;
+    const L = Math.sqrt(ex * ex + ey * ey);
+    if (L > 1e-6) tryAxis(ex / L, ey / L);
+  }
+  return out;
+}
+
+/**
+ * `coldWrecks` — zimne wraki (tło); przeszkody lotu jak wraki z `wrecks`. `statics` — budowle (przeszkody statyczne
+ * z jawną kapsułą, opis przy WRECK_HALF_WIDTH_MIN).
+ */
+export function rebuildWreckIndex(wrecks, coldWrecks = null, statics = null) {
   _cand.length = 0;
   _order.length = 0;
   addCandidates(wrecks);
   addCandidates(coldWrecks);
+  addStatics(statics);
   const n = _cand.length;
   index.count = n;
   index.rMax = 0;
   index.refs.length = n;
+  index.owner.length = n;
   if (n > 0) {
     _order.sort(byX);
     index.x = grow(index.x, n);
@@ -95,7 +200,22 @@ export function rebuildWreckIndex(wrecks, coldWrecks = null) {
     index.h = grow(index.h, n);
     index.w = grow(index.w, n);
     for (let s = 0; s < n; s++) {
-      const w = _cand[_order[s]];
+      const c = _order[s];
+      const w = _cand[c];
+      if (_candStatic[c] === 1) {
+        const h = w.h > 0 ? w.h : 0;
+        index.x[s] = w.x;
+        index.y[s] = w.y;
+        index.r[s] = h + w.w;
+        index.ux[s] = w.ux;
+        index.uy[s] = w.uy;
+        index.h[s] = h;
+        index.w[s] = w.w;
+        index.refs[s] = w;
+        index.owner[s] = w.obstacleOwner || null;
+        if (h + w.w > index.rMax) index.rMax = h + w.w;
+        continue;
+      }
       const r = Number(w.radius) || 0;
       const a = Number(w.angle) || 0;
       const hw = Math.max(WRECK_HALF_WIDTH_MIN, r * WRECK_HALF_WIDTH_K);
@@ -107,6 +227,7 @@ export function rebuildWreckIndex(wrecks, coldWrecks = null) {
       index.h[s] = Math.max(0, r - hw);
       index.w[s] = hw;
       index.refs[s] = w;
+      index.owner[s] = null;
       if (r > index.rMax) index.rMax = r;
     }
   }
@@ -135,6 +256,11 @@ export function resetWreckIndex() {
   index.count = 0;
   index.rMax = 0;
   index.refs.length = 0;
+  index.owner.length = 0;
+  if (index.statics.length) {
+    index.statics.length = 0;
+    index.staticsVer++;
+  }
 }
 
 if (typeof window !== 'undefined') {
