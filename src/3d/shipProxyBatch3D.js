@@ -58,6 +58,8 @@ import { SideNozzleFrame, SIDE_NOZZLE_RADIUS } from './sideNozzleFrame.js';
 import { getEngineVfxScaleForHullId } from './engineVfxScale.js';
 import { createFramedReactorCore, setFramedReactorCoreSource } from './reactor3D.js';
 import { Bridge3D } from './bridge3D.js';
+import { ProxyTurretFrame } from './proxyTurretFrame.js';
+import { TRAFFIC_PROXY_TURRETS } from '../data/trafficProxyTurrets.js';
 import { REACTOR_CORE_COLORS, reactorModelParams, trafficCoreMarker } from '../data/reactorCores.js';
 
 const _rollHalf = { hw: 0, hh: 0 };
@@ -267,8 +269,69 @@ function considerBridge(info, x, y, angle) {
   v.pngH = info.def.png[1];
 }
 
+// Wieże okrętów ruchu (E17b): te same wieże co NPC po awansie w spoczynku (tabela src/data/trafficProxyTurrets.js —
+// liczona kodem gry), grupa na proxy (stały klucz kursu: stan wież w uchwycie), lista klatki w ProxyTurretFrame dla
+// partii wież (shipModels3DGame.js). Poniżej progu sylwetki wieży (2 px) całe proxy bez grupy.
+const turretGroups = new Map();
+const TURRET_HIDE_PX = 2.0;
+
+function turretTableFor(info, pirate) {
+  const t = info.turrets !== undefined ? info.turrets : (info.turrets = TRAFFIC_PROXY_TURRETS[info.hullId] || null);
+  if (!t) return null;
+  const rows = pirate ? t.pirate : t.terran;
+  if (!rows || !rows.length) return null;
+  return rows;
+}
+
+// Największy promień sylwetki zestawu (r × skala) — wstępny próg LOD całego proxy (tabela zamrożona: pamięć obok).
+const turretMaxR = new WeakMap();
+function turretRowsMaxR(rows) {
+  let m = turretMaxR.get(rows);
+  if (m === undefined) {
+    m = 0;
+    for (let i = 0; i < rows.length; i++) m = Math.max(m, rows[i][5] * rows[i][4]);
+    turretMaxR.set(rows, m);
+  }
+  return m;
+}
+
+function considerTurrets(key, info, x, y, angle, opacity, pirate) {
+  if (!(opacity > 0.01)) return;
+  const rows = turretTableFor(info, pirate);
+  if (!rows) return;
+  if (!frame.free && turretRowsMaxR(rows) * frame.zoom < TURRET_HIDE_PX) return;
+  let g = turretGroups.get(key);
+  if (!g || g.rows !== rows) {
+    const recs = new Array(rows.length);
+    const view = { x: 0, y: 0, angle: 0, isTrafficProxy: true };
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      recs[i] = { key: `proxy:${key}:${i}`, weaponId: r[0], spec: { r: r[5] }, scale: r[4], wx: 0, wy: 0, ang: 0,
+        recoil: 0, state: null, entity: view };
+    }
+    g = { rows, recs, view, holder: { turrets: new Map(), assets: null }, seen: 0 };
+    turretGroups.set(key, g);
+  }
+  g.seen = frameNo;
+  g.view.x = x;
+  g.view.y = y;
+  g.view.angle = angle;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rec = g.recs[i];
+    rec.wx = x + r[1] * c - r[2] * s;
+    rec.wy = y + r[1] * s + r[2] * c;
+    rec.ang = angle + r[3];
+  }
+  const F = ProxyTurretFrame;
+  F.list[F.count++] = g;
+}
+
 function pruneProxyCores() {
   for (const [key, core] of proxyCores) if (frameNo - core.__seen > IDLE_DETACH_FRAMES) proxyCores.delete(key);
+  for (const [key, g] of turretGroups) if (frameNo - g.seen > IDLE_DETACH_FRAMES) turretGroups.delete(key);
 }
 let imageResolver = null;
 let engineLayoutResolver = null;
@@ -320,6 +383,7 @@ const stats = {
   nozzles3D: 0,
   cores: 0,
   bridges: 0,
+  turretProxies: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -797,6 +861,7 @@ export const ShipProxyBatch3D = {
     nzOwners = 0;
     proxyCoreList.length = 0;
     bridgeViewCount = 0;
+    ProxyTurretFrame.count = 0;
   },
 
   /**
@@ -822,6 +887,7 @@ export const ShipProxyBatch3D = {
     }
     if (!this._draw(info, x, y, angle, actor.proxyOpacity ?? 1, actor)) return false;
     considerCore(actor.courseId ?? actor, info, x, y, angle, actor.proxyOpacity ?? 1, actor.pirate === true);
+    considerTurrets(actor.courseId ?? actor, info, x, y, angle, actor.proxyOpacity ?? 1, actor.pirate === true);
     const vx = Number(actor.vx) || 0;
     const vy = Number(actor.vy) || 0;
     const speed = Math.abs(Number.isFinite(actor.speed) ? actor.speed : Math.hypot(vx, vy));
@@ -840,6 +906,7 @@ export const ShipProxyBatch3D = {
     if (!info) return false;
     if (!this._draw(info, x, y, angle || 0, opts?.opacity ?? 1, opts?.ref ?? key)) return false;
     considerCore(key, info, x, y, angle || 0, opts?.opacity ?? 1, opts?.pirate === true);
+    considerTurrets(key, info, x, y, angle || 0, opts?.opacity ?? 1, opts?.pirate === true);
     if (opts && (opts.vx || opts.vy || opts.throttle)) {
       const vx = Number(opts.vx) || 0;
       const vy = Number(opts.vy) || 0;
@@ -969,6 +1036,7 @@ export const ShipProxyBatch3D = {
     stats.nozzles3D = nzCount;
     stats.cores = proxyCoreList.length;
     stats.bridges = bridgeViewCount;
+    stats.turretProxies = ProxyTurretFrame.count;
     stats.kinds = live;
     stats.drawCalls = drawCalls;
     const ms = performance.now() - frame.t0;
@@ -986,6 +1054,7 @@ export const ShipProxyBatch3D = {
       lightViews.length = 0;
       nzCount = 0;
       proxyCoreList.length = 0;
+      ProxyTurretFrame.count = 0;
       return;
     }
     this.begin(camera, options);
@@ -1006,6 +1075,7 @@ export const ShipProxyBatch3D = {
       lightViews.length = 0;
       nzCount = 0;
       proxyCoreList.length = 0;
+      ProxyTurretFrame.count = 0;
       return;
     }
     this.begin(camera);
@@ -1058,6 +1128,8 @@ export const ShipProxyBatch3D = {
     lightViewPool.length = 0;
     proxyCoreList.length = 0;
     proxyCores.clear();
+    turretGroups.clear();
+    ProxyTurretFrame.count = 0;
     kindList.length = 0;
     kinds.clear();
     hullInfos.clear();

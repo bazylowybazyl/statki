@@ -51,6 +51,7 @@ import {
 } from './turretBatch3D.js';
 // Dysze SIDE 3D (wszystkie tryby wyglądu): lista klatki od EngineVfxSystem, jedna partia, farba frakcji kadłuba.
 import { SideNozzleFrame } from '../sideNozzleFrame.js';
+import { ProxyTurretFrame } from '../proxyTurretFrame.js';
 import { ThrusterBatch, createThrusterBatchMaterial, sideThrusterInstanceScratch, thrusterBatchWarmHolder } from './thrusterBatch3D.js';
 import {
   buildSideThrusterArrays, sideThrusterPaletteFor, SIDE_THRUSTER_AXIS_Z, SIDE_THRUSTER_HALF_WIDTH
@@ -795,6 +796,17 @@ export function syncShipModels3D(p) {
       if (inst.root.visible !== showRoot) inst.root.visible = showRoot;
       if (showRoot) inst.root.updateMatrixWorld(true);
       shown++;
+    }
+  }
+  // Wieże proxy statków ruchu v2 (E17b): rekordy w spoczynku z klatki proxy (src/3d/proxyTurretFrame.js — proxy
+  // rysuje się wcześniej w tej klatce), ten sam LOD, rodziny i warstwa głębi co wieże na sprite'cie NPC.
+  if (batches && ProxyTurretFrame.count > 0) {
+    const dt = Math.max(0, Number(p.dt) || 0);
+    const zoom = Number(p.zoom) || 1;
+    const list = ProxyTurretFrame.list;
+    for (let i = 0; i < ProxyTurretFrame.count; i++) {
+      const g = list[i];
+      syncTurrets(g.holder, g.view, g.recs, 0, 0, 1, 0, 0, 0, 1, dt, false, zoom, p.zoomAt || null);
     }
   }
   if (batches) batches.end();
