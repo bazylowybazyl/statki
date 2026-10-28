@@ -228,9 +228,11 @@ test('index.html: ring „Halo” zamiast starego ringu (render, kolizje, stacje
   // initStations3D, updateStations3D i prepareStations3D (zadanie 25a — szablony na ekranie ładowania)
   // prepareStations3D, warmStationTemplates3D (szablony w workerze), initStations3D, updateStations3D
   assert.equal((st3d.match(/station\.ringPort\) continue;/g) || []).length, 4, 'stacja-port bez bryły 3D');
-  // domyślna infrastruktura stacji Ziemi / Marsa nie leży ikonami 2D na dachu hali K-7
+  // budynki siatki infrastruktury stacji nie rysują się w świecie (ani na dachu hali K-7, ani przy stacjach bez ringu) —
+  // ikony 2D tylko w edytorze stacji
   const infra = readFileSync(new URL('../src/ui/infrastructureUI.js', import.meta.url), 'utf8');
-  assert.match(infra, /if \(inst\.stationRef\?\.ringPort\) continue;/);
+  assert.doesNotMatch(infra, /drawInstances|drawInfrastructureInstances/);
+  assert.doesNotMatch(html, /InfrastructureUI\.drawInstances/);
 });
 
 test('port: 4 kompleksy co 90° od kąta stacji — każdy z halą i dwiema zatokami w ścianach portu', () => {

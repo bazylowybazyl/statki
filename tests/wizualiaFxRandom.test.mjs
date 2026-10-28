@@ -30,7 +30,6 @@ const WIZUALIA = [
   'src/vfx/canvasParticleSystem.js',
   'src/vfx/destruction3D.js',
   'src/vfx/shatterShaderBake.js',
-  'src/buildings/shipyardVisuals.js',
   'src/game/superweapon.js',
   // efekty z dem (zadania 12, 17–22) — od początku na fxRandom
   'src/3d/sparkSystem3D.js',
@@ -62,7 +61,7 @@ test('wizualia gry nie wołają Math.random gry (fxRandom — warstwa efektów)'
   for (const p of WIZUALIA) assert.doesNotMatch(code(p), /Math\.random/, `${p}: Math.random w module wizualnym`);
   // Przeniesione moduły naprawdę losują — z fxRandom (strumień renderu) albo, liczone na wątku głównym, z fxRandomGame
   // (strumień gry, RW-20: collisionSparks, canvasParticleSystem, superweapon).
-  for (const p of WIZUALIA.slice(0, 15)) assert.match(code(p), /fxRandom(?:Game)?\.next\(\)/, `${p}: brak fxRandom`);
+  for (const p of WIZUALIA.slice(0, 14)) assert.match(code(p), /fxRandom(?:Game)?\.next\(\)/, `${p}: brak fxRandom`);
   for (const p of ['src/vfx/collisionSparks.js', 'src/vfx/canvasParticleSystem.js', 'src/game/superweapon.js']) {
     assert.match(code(p), /fxRandomGame\.next\(\)/, `${p}: wątek główny — strumień gry`);
     assert.doesNotMatch(code(p), /\bfxRandom\.next\(/, `${p}: bez strumienia renderu`);

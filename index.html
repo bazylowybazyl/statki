@@ -762,7 +762,7 @@
     import { Core3D } from "./src/3d/core3d.js";
     import { HullLacquer } from "./src/3d/hullLacquer.js";
     import { Destruction3D } from "./src/vfx/destruction3D.js";
-    import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
+    import { drawInfrastructureIcon } from './src/buildings/infrastructureView.js';
     import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx } from './src/game/graphicsQuality.js';
     import { describeGpuAdapter, pickGfxPresetAuto, gfxAutoFromQuery } from './src/game/graphicsAutoPreset.js';
     import { resolveRenderMode as resolveRenderModeBoot, renderWorkerCaps as renderWorkerCapsBoot } from './src/render/renderBridge.js';
@@ -825,7 +825,6 @@
     window.drawStations3D = drawStations3D;
     window.Destruction3D = Destruction3D;
     window.drawInfrastructureIcon = drawInfrastructureIcon;
-    window.updateInfrastructureAnimations = updateInfrastructureAnimations;
 
     // --- konsolowe API do strojenia rendera (devtools) ---
     window.Core3DPerfStatus = () => (window.Core3D?.getPerfStatus ? window.Core3D.getPerfStatus() : null);
@@ -27041,9 +27040,6 @@
       // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
       if (trafficV2) syncTrafficV2Capacities(dt);
       updateSalvage(dt);
-      if (window.updateInfrastructureAnimations) {
-        window.updateInfrastructureAnimations(dt);
-      }
       // czas gry
       gameTime = (gameTime + dt * TIME_SCALE) % (24 * 3600);
       publishGameState({ gameTime });
@@ -31590,14 +31586,13 @@
           const infraState = InfrastructureUI.ensureState(stationUI.station);
           if (infraState) InfrastructureUI.drawGrid(ctx, cam, stationUI.station, infraState);
         }
-        // Znaczniki świata gasną w skoku z β soczewki (E4 — _hudLensAlpha; świat stoi w soczewce gdzie indziej). Ikony
-        // infrastruktury, liny i zaznaczenie rysują z absolutną alfą (globalAlpha = stała) — chowane od progu kropki.
+        // Znaczniki świata gasną w skoku z β soczewki (E4 — _hudLensAlpha; świat stoi w soczewce gdzie indziej). Liny
+        // i zaznaczenie rysują z absolutną alfą (globalAlpha = stała) — chowane od progu kropki.
         const hudLensA = _hudLensAlpha;
         const hudLensWorld = warpLensHudWorld();
         if (hudLensA > 0.01) {
           ctx.save();
           if (hudLensA < 0.999) ctx.globalAlpha *= hudLensA;
-          if (hudLensWorld) InfrastructureUI.drawInstances(ctx, cam);
           drawPlanetLabels(ctx, cam);
           ctx.restore();
         }

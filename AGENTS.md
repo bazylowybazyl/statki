@@ -166,7 +166,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `pyl-kosmiczny` | Pył kosmiczny |
 | `menu` | Menu główne i jego tło 3D |
 | `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync |
-| `stacje` | Stacje i obiekty świata 3D, rozpad stacji |
+| `stacje` | Stacje i obiekty świata 3D, rozpad stacji, siatka infrastruktury stacji (edytor) |
 | `modele-3d` | Modele 3D statków i broni, bronie z Blendera, kamery 3D |
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |
 | `wejscie` | Warstwa wejścia, pad, skróty klawiszowe |
