@@ -561,7 +561,10 @@ function resolveCore(bubble, x, y, tx, ty, out) {
  * Trasa A → B: objazd dysków budowli doków (styczna → łuk → styczna, krótszą
  * stroną — jak `pushDetour` ringu), potem router ringu. Dysk, w którym leży koniec
  * odcinka, nie jest objeżdżany (punkty portu — wejście lejkiem, wyjście za dysk —
- * są poza nim; reszta przeszła przez `resolveCore`).
+ * są poza nim; reszta przeszła przez `resolveCore`). KAŻDY wolny odcinek — także do
+ * zejścia na objazd dysku — idzie przez router ringu (`pushDiscDetour`): przelot między
+ * portami bez ringu (rajd z kryjówki Hildy na Mimasa) objeżdża dyski przy obu końcach,
+ * a prosta między nimi potrafi przeciąć płytę ringu planety po drodze.
  */
 function routeAround(bubble, path, ax, ay, bx, by, vmax, flags) {
   const discs = bubble.dockDiscs;
@@ -588,7 +591,7 @@ function routeAround(bubble, path, ax, ay, bx, by, vmax, flags) {
       if (t < bestT) { bestT = t; best = i; }
     }
     if (best < 0) break;
-    pushDiscDetour(path, discs, best, cx, cy, bx, by);
+    pushDiscDetour(path, bubble.rings, discs, best, cx, cy, bx, by);
     const o = (path.count - 1) * S;
     cx = path.data[o];
     cy = path.data[o + 1];
@@ -601,8 +604,11 @@ function wrap2Pi(a) {
   return v < 0 ? v + TAU : v;
 }
 
-/** Objazd dysku `i` z P do Q (oba poza dyskiem): punkty na łuku promienia objazdu. */
-function pushDiscDetour(path, discs, i, px, py, qx, qy) {
+/**
+ * Objazd dysku `i` z P do Q (oba poza dyskiem): punkty na łuku promienia objazdu. Odcinek
+ * z P do zejścia na łuk idzie przez router ringu (bez ringu po drodze — ten sam punkt).
+ */
+function pushDiscDetour(path, rings, discs, i, px, py, qx, qy) {
   const ox = discs[i];
   const oy = discs[i + 1];
   const R = discs[i + 3];
@@ -617,7 +623,8 @@ function pushDiscDetour(path, discs, i, px, py, qx, qy) {
   const a0 = ccw <= cw ? fp + ap : fp - ap;
   const delta = ccw <= cw ? ccw : -cw;
   const n = Math.max(1, Math.ceil(Math.abs(delta) / DOCK_ARC_STEP));
-  for (let k = 0; k <= n; k++) {
+  routeRing(path, rings, px, py, ox + Math.cos(a0) * R, oy + Math.sin(a0) * R, Infinity, 0);
+  for (let k = 1; k <= n; k++) {
     const a = a0 + delta * (k / n);
     pathPush(path, ox + Math.cos(a) * R, oy + Math.sin(a) * R, Infinity, 0);
   }
