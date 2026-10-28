@@ -1154,7 +1154,8 @@
     import {
       createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
       damageTrafficActor, trafficRamContact, trafficRamFallbackDamage, trafficRectContact, trafficBerthStates,
-      createPortBerthIndex, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion, trafficContactTime
+      createPortBerthIndex, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion, trafficContactTime,
+      noteTrafficReturn, trafficReturnPose
     } from "./src/game/trafficBubble.js";
     import {
       createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion, trafficPromotionVerdict,
@@ -16763,7 +16764,7 @@
       out.count = 0;
       const tb = trafficBubble;
       // `TrafficBubble.hideRender` — A/B kosztu obrazu (narzędzie ruch-banka-gra.mjs): rozgrywka bez zmian, bez proxy.
-      if (!tb || !trafficV2 || tb.hideRender || (!tb.list.length && !trafficPromotion?.alive.size)) return out;
+      if (!tb || !trafficV2 || tb.hideRender || (!tb.list.length && !trafficPromotion?.alive.size && !tb.returning.size)) return out;
       const t0 = performance.now();
       const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
       for (let i = 0; i < tb.list.length; i++) {
@@ -16810,6 +16811,31 @@
           r.mode = null;
           out.count++;
         }
+      }
+      // NPC wrócił do bańki, a encja jeszcze nie przyszła z workera ruchu (kilka klatek) — proxy w ostatniej pozie NPC,
+      // żeby statek nie znikał między kadłubem NPC a encją (E17).
+      for (const id of tb.returning.keys()) {
+        const g = trafficReturnPose(tb, id, trafficV2.time);
+        if (!g) continue;
+        let r = out.list[out.count];
+        if (!r) {
+          r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
+            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+          out.list[out.count] = r;
+        }
+        r.courseId = id;
+        r.hullId = g.hullId;
+        r.unitClass = g.hullId;
+        r.x = g.x;
+        r.y = g.y;
+        r.angle = g.angle;
+        r.prevX = NaN;
+        r.vx = 0;
+        r.vy = 0;
+        r.speed = 0;
+        r.throttle = 0;
+        r.mode = null;
+        out.count++;
       }
       _trafficGameMs += performance.now() - t0;
       return out;
@@ -17047,6 +17073,8 @@
           else trafficV2.detach(id, null, { x: npc.x, y: npc.y, angle: npc.angle, speed: Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy) });
           dismissTrafficNpc(npc);
           releaseTrafficPromotion(tb, id, false);
+          // Encja przyjdzie z kolejnym buforem workera ruchu — do tego czasu proxy w pozie NPC (trafficRenderFrame).
+          noteTrafficReturn(tb, id, npc.shipFrame, npc.x, npc.y, npc.angle, trafficV2.time);
           st.stats.demoted++;
         } else if (!npc.command && npc.combatDisabled) {
           // Dotarł do punktu ucieczki: dalej, póki gracz blisko, potem stoi.

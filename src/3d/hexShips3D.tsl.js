@@ -530,6 +530,8 @@ export const HULL_WARP_OFF = Object.freeze({
 // Sprite kadłuba: dziób w stronę +u (spriteRotation = 0 dla wszystkich profili).
 function hullWarp(ctx, out, alpha) {
   const P = ctx.P;
+  // Proxy statków ruchu (E17) nie ma danych warpa — gałąź pominięta przy budowie.
+  if (!P.uWarpC) return;
   If(P.uWarpC.w.greaterThan(0.5), () => {
     const A = P.uWarpA;
     const B = P.uWarpB;
@@ -649,6 +651,8 @@ function hullTearFray(tear, uvNode, P) {
 // opts.perObject  węzły per kadłub — bufor storage slotu (hullObjectStoreNodes / hullBatchStoreNodes, zadanie 23)
 // opts.tear       float|null — rozdarcie narożnika (partie skór belek): poszarpany brzeg dziur, hullTearFray
 // opts.patchCode  bool — `shade` niesie kod łaty polowej (decodeHullPatchShade; skóra belek)
+// opts.cutDiscard (uv) => void — własne wycięcie skóry zamiast uBayCut (proxy statków ruchu: luk z przenikaniem wrót)
+// perObject.uRotCS vec2 (cos, sin) obrotu — zamiast cos / sin z uRotation (proxy: z atrybutu instancji)
 function hullFragmentNode(opts) {
   const P = opts.perObject;
   if (!P) throw new Error('hexShips3D.tsl: hullFragmentNode bez węzłów per kadłub (opts.perObject)');
@@ -662,6 +666,7 @@ function hullFragmentNode(opts) {
       Discard();
     });
 
+    if (opts.cutDiscard) opts.cutDiscard(spriteUV);
     // Otwarty luk ładowni (fregata zwiadu Atlasa, src/3d/cargo/scoutBay3D.js): w prostokącie otworu skóra znika —
     // wnętrze luku stoi pod nią, wrota (wierzch z wycinka sprite'a) rysuje osobna bryła.
     if (P.uBayCut) {
@@ -738,8 +743,8 @@ function hullFragmentNode(opts) {
       // Łata: nowa płyta jest płaska (relief paneli sprite'a jej nie dotyczy).
       if (patchK) localNormal.assign(normalize(mix(localNormal, vec3(0.0, 0.0, 1.0), patchK.mul(HULL_PATCH_LOOK.flatten))));
 
-      const c = cos(P.uRotation).toVar();
-      const s = sin(P.uRotation).toVar();
+      const c = (P.uRotCS ? P.uRotCS.x : cos(P.uRotation)).toVar();
+      const s = (P.uRotCS ? P.uRotCS.y : sin(P.uRotation)).toVar();
       const worldNormal = normalize(vec3(
         localNormal.x.mul(c).sub(localNormal.y.mul(s)),
         localNormal.x.mul(s).add(localNormal.y.mul(c)),
@@ -1003,6 +1008,17 @@ function hullFragmentNode(opts) {
 
     return vec4(out, alpha);
   })();
+}
+
+/**
+ * Fragment pełnego kadłuba dla PROXY statków ruchu v2 (E17, shipProxyBatch3D.tsl.js): ten sam graf co skóra belek
+ * (oświetlenie v2 z mapą powierzchni, lakier, glow, lampy statku i strefy dysz z HullLightStore, maska słońca, ośrodek
+ * pasa) — bez mapy ran, świateł efektów z siatki, maskowania, warpa i żaru (to ma dopiero NPC po awansie).
+ * `perObject` — węzły wartości z instancji (klucze jak objectStoreNodesFor + uRotCS), tekstury per obiekt z
+ * `material.uniforms` (uSprite, uSurfaceMap, uShapeMap, uNormalMap). Zmieniając fragment kadłuba, zmieniasz i proxy.
+ */
+export function hullProxyFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard = null }) {
+  return hullFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false });
 }
 
 // Fragment warstwy DIST maskowania: RG — przesunięcie tła w px bufora (osie sceny), B / A — maska ekranu

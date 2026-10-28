@@ -34,6 +34,7 @@ import { resolveRingPlanetWorldRadius } from '../ringScale.js';
 import { HALO_RING_PLANETS, haloGameToLocal } from '../../game/haloRingPlanets.js';
 import { WARP_RING_LENS } from '../warp/worldLens.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
+import { RoofCover } from '../roofCover.js';
 
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const _qRot = new THREE.Quaternion();
@@ -73,6 +74,34 @@ function footprintHub(owner) {
   });
 }
 
+// Punkt huba (hx, hz) w obrysie hali / zatoki z zamkniętym dachem (zanik < 0,5); pudło obrysu liczone raz.
+function roofFadesCover(fades, hx, hz) {
+  for (let i = 0; i < fades.length; i++) {
+    const f = fades[i];
+    if (f.fade >= 0.5) continue;
+    const poly = f.footprint;
+    let bb = f._bb;
+    if (!bb) {
+      bb = f._bb = { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity };
+      for (const p of poly) {
+        if (p.x < bb.x0) bb.x0 = p.x;
+        if (p.x > bb.x1) bb.x1 = p.x;
+        if (p.z < bb.z0) bb.z0 = p.z;
+        if (p.z > bb.z1) bb.z1 = p.z;
+      }
+    }
+    if (hx < bb.x0 || hx > bb.x1 || hz < bb.z0 || hz > bb.z1) continue;
+    let inside = false;
+    for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+      const pa = poly[a];
+      const pb = poly[b];
+      if ((pa.z > hz) !== (pb.z > hz) && hx < (pb.x - pa.x) * (hz - pa.z) / (pb.z - pa.z) + pa.x) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
 export class HaloRingGame {
   /**
    * @param {object} o
@@ -99,7 +128,9 @@ export class HaloRingGame {
     this.hallRoofOverride = null;
     this.stats = { rings: 0, visible: 0, updateMs: 0 };
     this._rollHalf = { hw: 0, hh: 0 };
+    this._roofP = { x: 0, y: 0 };
     this.syncEntries();
+    RoofCover.add(this);
   }
 
   /** Zegar migania świateł hal K-7 (świat ringów gry — ten sam dostaje wejście pyłu hal). */
@@ -571,7 +602,29 @@ export class HaloRingGame {
     return out;
   }
 
+  /**
+   * Zamknięty dach hali K-7 albo zatoki (zanik < 0,5 — gracza w niej nie ma) nad punktem świata gry (E17,
+   * src/3d/roofCover.js): dach zasłania kadłuby pod sobą, ale nie emitery warstwy FG — billboardy lamp proxy statków
+   * ruchu na padach hal pytają tutaj. Ring w kadrze (`visible`); punkt → hub jak obrys gracza (`collider.hubOutline`).
+   */
+  roofCovers(x, y) {
+    for (let k = 0; k < this.entries.length; k++) {
+      const e = this.entries[k];
+      if (!e.visible) continue;
+      const col = e.collider;
+      const f = col.frame;
+      const p = haloGameToLocal(col.place, x, y, this._roofP);
+      const dx = p.x - f.origin.x;
+      const dy = p.y - f.origin.y;
+      const hx = dx * f.tx + dy * f.ty;
+      const hz = dx * f.rx + dy * f.ry;
+      if (roofFadesCover(e.hallFades, hx, hz) || roofFadesCover(e.bayFades, hx, hz)) return true;
+    }
+    return false;
+  }
+
   dispose() {
+    RoofCover.remove(this);
     for (const e of this.entries) {
       Core3D.removeShaftRingOccluder?.(e.occluderKey);
       e.shadowReady = false;

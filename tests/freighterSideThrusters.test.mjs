@@ -98,7 +98,10 @@ test('dane edytora: wpisy sideOnly — 4 narożniki, wydech na zewnątrz burty, 
     // lokomotywa bez (układ edytora wyłączony, dysze MAIN składu ma model 3D z tabeli autoHulls3D).
     const proxyMain = npc.disableEditorLayout ? [] : TRAFFIC_HULLS[npc.shipFrame].main.map(([x, y]) => [x, y]);
     assert.deepEqual(cfg.engines.main.map((m) => [m.x, m.y]), proxyMain, `${key}: dysze MAIN`);
-    for (const field of ['hardpoints', 'cores', 'lights']) assert.equal(cfg[field], undefined, `${key}: bez ${field}`);
+    for (const field of ['hardpoints', 'cores']) assert.equal(cfg[field], undefined, `${key}: bez ${field}`);
+    // Lampy pozycyjne cywilów ruchu (E17) — z tabeli src/data/trafficHullLights.js; lokomotywa bez.
+    if (npc.disableEditorLayout) assert.equal(cfg.lights, undefined, `${key}: bez lamp`);
+    else assert.ok(cfg.lights?.position?.length >= 6 && cfg.lights.autoFlood === false, `${key}: lampy cywila`);
     const side = cfg.engines.side;
     assert.equal(side.length, 4, `${key}: 4 dysze SIDE`);
     assert.deepEqual(side.map((m) => m.mount).sort(), ['lower_left', 'lower_right', 'upper_left', 'upper_right'], `${key}: narożniki`);
@@ -213,7 +216,12 @@ test('NPC frachtowców: 4 dysze SIDE z kadłubem, wydech na zewnątrz burt, lot,
     assert.equal(npcHasPhysicalThrusters(npc), false);
     assert.equal(npc.editorHardpoints, before.hardpoints);
     assert.equal(npc.editorCores, before.cores);
-    assert.equal(npc.editorLights, before.lights);
+    if (h.npc.disableEditorLayout) assert.equal(npc.editorLights, before.lights, 'lokomotywa: lampy bez zmian');
+    else {
+      // Cywil (E17): lampy pozycyjne z src/data/trafficHullLights.js, bez reflektorów otoczenia.
+      assert.deepEqual(npc.editorLights.position, SHIPS[h.key].lights.position, `${h.key}: lampy pozycyjne`);
+      assert.equal(npc.editorLights.autoFlood, false);
+    }
     assert.equal(npc.engines, before.engines);
     // Ten sam układ i skala — bez przebudowy (lista dysz to klucz pamięci podręcznej modeli i mocowań).
     assert.equal(rt.applyLayoutToNpc(npc), true);

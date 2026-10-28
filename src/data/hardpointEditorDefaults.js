@@ -1,5 +1,6 @@
 import { ATLAS_EDITOR_DEFAULTS } from './atlasHardpointDefaults.js';
 import { PIRATE_SUPERCAPITAL_EDITOR_DEFAULTS } from './pirateSupercapitalDefaults.js';
+import { TRAFFIC_HULL_LIGHT_POINTS, trafficCivilLights } from './trafficHullLights.js';
 
 export const PLAYER_EDITOR_DEFAULTS = ATLAS_EDITOR_DEFAULTS;
 
@@ -2367,4 +2368,11 @@ export const SHIP_EDITOR_DEFAULTS = {
 },
   }
 };
+
+// Lampy pozycyjne cywilnych kadłubów ruchu (E17, src/data/trafficHullLights.js): wpis `sideOnly` niesie je obok dysz —
+// NPC po awansie (applySideOnlyLayout) i proxy statków ruchu (shipProxyBatch3D.js) świecą tak samo.
+for (const id of Object.keys(TRAFFIC_HULL_LIGHT_POINTS)) {
+  const cfg = SHIP_EDITOR_DEFAULTS.ships[id];
+  if (cfg && cfg.sideOnly === true) cfg.lights = trafficCivilLights(id);
+}
 

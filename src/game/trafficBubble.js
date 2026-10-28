@@ -53,6 +53,11 @@ export const TRAFFIC_BUBBLE_TUNE = {
   ramGhostSpeed: 2500,
   /** Zniszczona encja znika z obrazu na tyle sekund (worker usuwa ją krok później). */
   deadHold: 6,
+  /**
+   * NPC wrócił do bańki (`detach` / `entity-hold`): encja przychodzi dopiero z kolejnym buforem workera ruchu (kilka
+   * klatek) — do tego czasu, najwyżej tyle sekund, obraz rysuje proxy w ostatniej pozie NPC (E17: bez klatek bez statku).
+   */
+  returnHold: 1.5,
   /** Postój gracza na stanowisku: prędkość poniżej i zapas pola [j.]. */
   holdSpeed: 160,
   holdMargin: 120,
@@ -87,6 +92,8 @@ export function createTrafficBubble(bridge, options = {}) {
     dead: new Map(),
     /** Numery kursów awansowanych do pełnego NPC gry (`trafficPromotion.js`) — nie wracają jako encje. */
     promoted: new Set(),
+    /** numer kursu → { hullId, x, y, angle, until } — NPC wrócił do bańki, encja jeszcze nie (`noteTrafficReturn`). */
+    returning: new Map(),
     /** numer kursu → czas gry ostatnich obrażeń taranu awaryjnego (`trafficRamFallbackDamage`). */
     ramAt: new Map(),
     seq: -1,
@@ -407,6 +414,31 @@ export function markTrafficActorPromoted(tb, a) {
 export function releaseTrafficPromotion(tb, id, destroyed = false) {
   tb.promoted.delete(id);
   if (destroyed) tb.dead.set(id, tb.time + tb.tune.deadHold);
+}
+
+/**
+ * NPC wrócił do bańki: kadłub NPC znika w tej klatce, a encja przychodzi z kolejnym buforem workera ruchu — do tego
+ * czasu (najwyżej `returnHold` s od `now` — czas mostu) obraz rysuje proxy kadłuba `hullId` w pozie NPC
+ * (`trafficReturnPose`).
+ */
+export function noteTrafficReturn(tb, id, hullId, x, y, angle, now) {
+  if (!tb || !Number.isFinite(id) || !hullId) return;
+  tb.returning.set(id, { hullId, x, y, angle, until: now + tb.tune.returnHold });
+}
+
+/**
+ * Proxy wracającego NPC do obrazu (`now` — czas mostu klatki): rekord `{ hullId, x, y, angle }` albo null — encja już
+ * jest w buforze (wtedy rysuje się sama) albo minął `returnHold` (encja nie wróciła do bańki: postój na innym slocie,
+ * kurs poza kandydatami). Wpisy zakończone usuwa.
+ */
+export function trafficReturnPose(tb, id, now) {
+  const g = tb.returning.get(id);
+  if (!g) return null;
+  if (tb.byId.has(id) || now > g.until) {
+    tb.returning.delete(id);
+    return null;
+  }
+  return g;
 }
 
 const _ram = { actor: null, nx: 0, ny: 0, depth: 0, speed: 0 };
