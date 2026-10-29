@@ -139,8 +139,8 @@ export const WarpEdgeFxTune = {
   hazeTan: 0.35,        // udział przesunięcia w poprzek promienia
   hazeFine: 0.3,        // udział drobnych zmarszczek (kanał B — okres 16; więcej — smugi gwiazd „robaczkami”)
   // W2 drobiny
-  dustCount: 2048,      // instancji (stała — liczba w potoku ≥ 2; mniej rysuje się jako zwinięte kwady)
-  dustBright: 0.34,     // jasność smugi (liniowo, HDR pod progiem bloomu ~0,9; rzadkie jaśniejsze × dustBrightRare)
+  dustCount: 1600,      // instancji (≥ 2 — liczba instancji 1 ↔ > 1 przebudowuje potok; zmiana na żywo bez przebudowy)
+  dustBright: 0.28,     // jasność smugi (liniowo, HDR pod progiem bloomu ~0,9; rzadkie jaśniejsze × dustBrightRare)
   dustBrightRare: 2.4,  // mnożnik co ~25. drobiny (lekki blask)
   dustLogSpeed: 1.7,    // [ln r / s] przy prędkości 1 (ciała soczewki w trawersie: v / A ≈ 1,9 / s)
   dustShutter: 0.06,    // [s] migawka smugi (długość = tempo × migawka, w log r)
@@ -550,7 +550,6 @@ export class WarpEdgeFx {
     this._env = newWarpEdgeEnvelope();
     this._envIn = { mode: 'idle', charge: 0, kickAge: 0, exitAge: 0, exitSlow: 0, flowRatio: 1, hyper: false };
     this._vp = { x: 0, y: 0, ok: false };
-    this._front = { on: 0, px: 0 };
     this._hazeClock = 0;
     this._dustClock = 0;
     this._updated = false;
@@ -690,7 +689,7 @@ export class WarpEdgeFx {
     U.hazeFine.value = num(T.hazeFine, 0.3);
     // --- W2 ---
     const streak = Math.max(0.005, logSpeed * Math.max(0.15, speed) * num(T.dustShutter, 0.06));
-    U.dust.value.set(this._dustClock, num(T.dustBright, 0.34) * Math.min(1.35, s), streak, num(T.dustWidthPx, 2.4) * Math.max(0.75, scale));
+    U.dust.value.set(this._dustClock, num(T.dustBright, 0.28) * Math.min(1.35, s), streak, num(T.dustWidthPx, 2.4) * Math.max(0.75, scale));
     U.dustLife.value.set(ln0, ln1, num(T.dustAng0, 0.16), num(T.dustAng1, 1.85));
     U.dustRare.value = num(T.dustBrightRare, 2.4);
     const pal = warpPalette(c.palette);
@@ -698,7 +697,7 @@ export class WarpEdgeFx {
     const g = pal.glow;
     const gl = Math.max(1e-3, Math.max(g[0], g[1], g[2]));
     U.dustTint.value.set(0.72 * (1 - tk) + tk * g[0] / gl, 0.86 * (1 - tk) + tk * g[1] / gl, 1.0 * (1 - tk) + tk * g[2] / gl);
-    const want = Math.max(2, Math.floor(num(T.dustCount, 2048)));
+    const want = Math.max(2, Math.floor(num(T.dustCount, 1600)));
     const geo = this.dustMesh.geometry;
     if (geo.instanceCount !== want) geo.instanceCount = want;
     // --- W3 ---

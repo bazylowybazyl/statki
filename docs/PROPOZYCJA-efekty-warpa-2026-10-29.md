@@ -24,7 +24,7 @@ Dotyczy SKOKU WARPA GRACZA (nie hipercruise'u — ten dostaje efekty osobno). Tr
 | Faza | Siła (mnożnik amplitud) | Przepływ (tempo szumu i drobin) |
 |---|---|---|
 | ładowanie | 0 → 0,35 z ładowaniem (od 25%) — słabo, świat dopiero „wstaje” | 0 → 0,3 |
-| kop | impuls × 2 w 0,06 s, wraca do lotu w 0,6 s | × 2 → 1 |
+| kop | impuls × 2 w 0,06 s, wraca do lotu w 0,6 s (haze najwyżej × 1,4, jasność drobin × 1,35) | × 2 → 1 |
 | lot | 1 × (0,5 + 0,5 · przepływ widoczny / 21 tys.) — przy mijanym ciele statek zwalnia, haze słabnie do połowy | przepływ widoczny / 21 tys. (przy ciele ~0,3) |
 | wyjście | gaśnie od 0,6 zwolnienia do zwolnienia + 0,25 s; FRONT smug gwiazd (ten sam co gwiazd i soczewki — `warpExitFrontS`) czyści kadr od dziobu ku rufie | maleje do 30% |
 | bezczynność, hipercruise | 0 (siatki schowane, zero rysunków) | — |
@@ -35,27 +35,29 @@ Tylko warp gracza (`WarpPlayerFx.hyper` = false), tylko kamera z góry jednego g
 
 ### W1 „Boczny haze pędu” — ZBUDOWANE (domyślnie włączone)
 
-- **Co widać:** po bokach kadru przestrzeń „faluje” — smugi gwiazd, mgławica, brzegi mijanych planet i ringów wyginają się falami biegnącymi od punktu zbiegu na zewnątrz, z lekkim rozszczepieniem barw (R / B) na gwiazdach. Na kopie impuls (dwa razy mocniej i szybciej), w locie stały, przy mijanym ciele spokojniejszy, przy wyjściu zwija się frontem. Statek i oś kursu ostre.
-- **Jak zrobione:** pełnoekranowy quad w warstwie DIST (`FX_DISTORT_LAYER`, cel `Core3D.distortionTarget`) pisze przesunięcie w px (RG, osie ekranu; B = A = 0 — B / A należą do maskowania), mieszanie One / One. Szum `fxNoise.tile2D()` (ta sama tekstura co broń) we współrzędnych biegunowych wokół VP: kąt × 7 kafelków na obrót, ln(r) × 0,55 − zegar (anizotropia: komórki wydłużone promieniście — smugi „ciśnienia”), drugi próbnik drobniejszych zmarszczek (kanał B); przesunięcie głównie radialne, 35% w poprzek; × maska boków × siła × 16 px (przy 1080 wierszach). Próbki z poziomem 0 (`textureSampleLevel` — gałąź per piksel, szew `atan` bez linii: całkowita liczba kafelków na obrót). Post (`postGry.js`) dokłada aberrację R / B sam (≤ 2,5 px). Warstwę DIST zgłasza krok `Core3D.fx` „warp: boki kadru” (zgłoszenie z `WarpNurt.update` przepadałoby — flagę kasuje klatka efektów).
+- **Co widać:** po bokach kadru przestrzeń „faluje” — smugi gwiazd, mgławica, brzegi mijanych planet i ringów wyginają się falami biegnącymi od punktu zbiegu na zewnątrz, z lekkim rozszczepieniem barw (R / B) na gwiazdach. Na kopie impuls (mocniej i szybciej), w locie stały, przy mijanym ciele spokojniejszy, przy wyjściu zwija się frontem. Statek i oś kursu ostre. Na stopklatce widać wygięte smugi gwiazd; pełny efekt (falowanie tła) — w ruchu.
+- **Jak zrobione:** pełnoekranowy quad w warstwie DIST (`FX_DISTORT_LAYER`, cel `Core3D.distortionTarget`) pisze przesunięcie w px (RG, osie ekranu; B = A = 0 — B / A należą do maskowania), mieszanie One / One. Szum `fxNoise.tile2D()` (ta sama tekstura co broń) we współrzędnych biegunowych wokół VP: kąt × 7 kafelków na obrót, ln(r) × 0,55 − zegar (anizotropia: komórki wydłużone promieniście — smugi „ciśnienia”), drugi próbnik drobniejszych zmarszczek (kanał B, udział 0,3); przesunięcie głównie radialne, 35% w poprzek; × maska boków × siła × 13 px (przy 1080 wierszach; kop najwyżej × 1,4). Próbki z poziomem 0 (`textureSampleLevel` — gałąź per piksel, szew `atan` bez linii: całkowita liczba kafelków na obrót). Post (`postGry.js`) dokłada aberrację R / B sam (≤ 2,5 px). Warstwę DIST zgłasza krok `Core3D.fx` „warp: boki kadru” (zgłoszenie z `WarpNurt.update` przepadałoby — flagę kasuje klatka efektów).
+- **Strojenie po zrzutach:** pierwsza wersja (16 px, zmarszczki 0,6, kop × 2) „topiła” małe planety z boku przy kopie (Ziemia z wgryzem — kształt rozmyty o ~20 px) i robiła ze smug gwiazd „robaczki” — stąd 13 px, 0,3 i sufit kopu × 1,4.
 - **Koszt (szacunek, bez pomiaru):** 1 rysunek (quad) + przebieg warstwy DIST (jedno `renderer.render`, ~40 µs CPU, gdy nie ma innych źródeł DIST); GPU: kolumna osi wychodzi wcześnie, boki — 2 próbki tekstury + ~40 ALU / piksel: ~0,05–0,15 ms przy 1080p, ~0,2–0,4 ms przy 5120 × 1440; w poście warstwa DIST włącza ścieżkę z trzema próbkami sceny zamiast jednej (cały kadr): ~0,1–0,3 ms przy 5K. Tylko w skoku.
-- **Przełącznik:** `?warpFx=haze` (sam), w zestawie domyślnym; `WarpNurt.edge.tune.hazeAmpPx` (16), `hazeFlow` (0,85), `hazeAngN` (7), `hazeRadK` (0,55), `hazeTan` (0,35), `hazeFine` (0,6).
+- **Przełącznik:** `?warpFx=haze` (sam), w zestawie domyślnym; `WarpNurt.edge.tune.hazeAmpPx` (13), `hazeKickMax` (1,4), `hazeFlow` (0,85), `hazeAngN` (7), `hazeRadK` (0,55), `hazeTan` (0,35), `hazeFine` (0,3).
 - **Ryzyka:** na stopklatce efekt widać słabo (gwiazdy lekko pofalowane) — żyje w ruchu; za mocny (> ~25 px) zaczyna „rozmazywać” gwiazdy jak brudna szyba. Duża planeta mijana bokiem też faluje (świadomie — leży po boku). Maskowanie gracza w skoku (rzadkie) dzieli ten sam cel DIST — sumy się dodają, bez konfliktu kanałów.
 
 ### W2 „Drobiny pędu” — ZBUDOWANE (domyślnie włączone)
 
 - **Co widać:** cienkie biało-błękitne smugi (z nutą barwy palety warpa) wylatujące promieniście z punktu zbiegu ku bokom i rogom kadru, przyspieszające z odległością (jak mijane ciała w soczewce), dłuższe przy większej prędkości; na kopie gęstszy, szybszy „wystrzał”; co ~25. trochę jaśniejsza (lekki blask). Pod planetami, ringiem, stacjami i kadłubem.
-- **Jak zrobione:** jedna siatka `Mesh` z `InstancedBufferGeometry` (2048 instancji, sam kwad — bez atrybutów instancji), pozycje ANALITYCZNE w shaderze wierzchołków z haszu `instanceIndex` (kąt od kierunku „za rufę” 0,16–1,85 rad w obie strony, faza, tempo 0,75–1,3, szerokość, jasność) i zegara życia: ln r liniowo od 0,05 H do za róg kadru (promień rośnie wykładniczo, tempo 1,7 ln r / s przy prędkości 1 — ciała soczewki w trawersie ~1,9 / s), smuga = tempo × migawka 0,06 s. Pass tła (warstwa 1), głębia przy dalekiej płaszczyźnie z testem głębi, mieszanie `blendAddytywnePremul`, alfa wyjścia 0. HDR pod progiem bloomu (0,34 liniowo, rzadkie × 2,4). Zero zapisu CPU per klatka poza uniformami, bez compute.
-- **Koszt:** 1 rysunek, 2048 instancji × 2 trójkąty; fill ~0,3–0,6 Mpx addytywnie przy 1080p, hasz w wierzchołkach — poniżej ~0,05 ms GPU.
-- **Przełącznik:** `?warpFx=czastki`, w zestawie domyślnym; `tune.dustCount` (2048), `dustBright` (0,34), `dustLogSpeed` (1,7), `dustShutter` (0,06), `dustWidthPx` (2,4), `dustAng0` / `dustAng1`, `dustTint` (0,22).
-- **Ryzyka:** łatwo przesadzić z gęstością („deszcz”) — dziś celowo słabe; drobiny rysowane POD planetami (pass tła) — gdyby miały być „bliżej kamery” niż mijane planety, trzeba je przenieść do passa gry (warstwa 0, nad planetami — patrz decyzja D3).
+- **Jak zrobione:** jedna siatka `Mesh` z `InstancedBufferGeometry` (1600 instancji, sam kwad — bez atrybutów instancji), pozycje ANALITYCZNE w shaderze wierzchołków z haszu `instanceIndex` (kąt od kierunku „za rufę” 0,16–1,85 rad w obie strony, faza, tempo 0,75–1,3, długość smugi 0,55–1,6, szerokość, jasność) i zegara życia: ln r liniowo od 0,05 H do za róg kadru (promień rośnie wykładniczo, tempo 1,7 ln r / s przy prędkości 1 — ciała soczewki w trawersie ~1,9 / s), smuga = tempo × migawka 0,06 s. Pass tła (warstwa 1, renderOrder 0,3 — okno (−0,5; 0) należy do pasa), głębia przy dalekiej płaszczyźnie z testem głębi, mieszanie `blendAddytywnePremul`, alfa wyjścia 0. HDR pod progiem bloomu (0,28 liniowo, w kopie najwyżej × 1,35, co ~25. × 2,4). Zero zapisu CPU per klatka poza uniformami, bez compute.
+- **Koszt:** 1 rysunek, 1600 instancji × 2 trójkąty; fill ~0,3–0,5 Mpx addytywnie przy 1080p, hasz w wierzchołkach — poniżej ~0,05 ms GPU.
+- **Przełącznik:** `?warpFx=czastki`, w zestawie domyślnym; `tune.dustCount` (1600, na żywo bez przebudowy — byle ≥ 2), `dustBright` (0,28), `dustLogSpeed` (1,7), `dustShutter` (0,06), `dustWidthPx` (2,4), `dustAng0` / `dustAng1`, `dustTint` (0,22).
+- **Strojenie po zrzutach:** na ciemniejszym niebie skoku z `main` (niebo-sfera) 2048 drobin o jasności 0,34 dawało „śnieżycę” — 1600 i 0,28 zostawia wyraźny pęd bez zasłaniania gwiazd.
+- **Ryzyka:** łatwo przesadzić z gęstością („deszcz”); drobiny rysowane POD planetami (pass tła) — gdyby miały być „bliżej kamery” niż mijane planety, trzeba je przenieść do passa gry (warstwa 0, nad planetami — decyzja D3).
 
 ### W3 „Zorza krawędzi” — ZBUDOWANE (tylko z adresu)
 
 - **Co widać:** bardzo słaba, przygaszona poświata w barwach palety warpa okrętu (otoczka i poświata plazmy WARP, przesunięte ku szaroniebieskiej mgiełce) w pasach przy lewej i prawej krawędzi, z pasmami płynącymi od punktu zbiegu na zewnątrz; za rufą słabiej, przy wyjściu zwija się frontem.
 - **Jak zrobione:** dwa kwady przy krawędziach (geometria tylko przy krawędziach — pas 0,34 wysokości, najwyżej 0,3 szerokości), w passie tła; ten sam szum (kanały R / A / G) i zegar co W1, spadek ku środkowi gładki.
 - **Koszt:** 1 rysunek, 4 trójkąty, ~0,7 Mpx przy 1080p, 1 próbka tekstury — pomijalny.
-- **Przełącznik:** `?warpFx=zorza`, `?warpFx=wszystko`; `tune.auroraStrength` (0,1), `auroraStrip` (0,34), `auroraSat` (0,55).
-- **Ryzyka:** to w praktyce barwna winieta — przy mocniejszym ustawieniu zaczyna wyglądać jak mgławica przyklejona do ekranu (pierwsza wersja 0,22 przy pełnym nasyceniu: fioletowe pasy). Gryzie się z mgławicą tła w innych barwach.
+- **Przełącznik:** `?warpFx=zorza`, `?warpFx=wszystko`; `tune.auroraStrength` (0,1), `auroraStrip` (0,34), `auroraSat` (0,45).
+- **Ryzyka:** to w praktyce barwna winieta — przy mocniejszym ustawieniu zaczyna wyglądać jak mgławica przyklejona do ekranu (pierwsza wersja 0,22 przy pełnym nasyceniu: fioletowe pasy). Gryzie się z mgławicą tła w innych barwach. Na ciemnym niebie skoku (niebo-sfera z `main`) przy 0,1 czyta się jako niebieskofioletowa mgiełka pola warpa — to najbliższe „haze” w sensie mgły (W1 to „haze” w sensie gorącego powietrza / refrakcji).
 
 ### W4 „Rozmycie promieniste tła przy krawędziach” — OPIS (wymaga zmiany `postGry.js`)
 
@@ -102,11 +104,12 @@ Tylko warp gracza (`WarpPlayerFx.hyper` = false), tylko kamera z góry jednego g
 | Warstwa / pass | DIST (10) → `distortionTarget` | tło (1), pod planetami | tło (1) |
 | Rysunki | 1 quad (+ przebieg DIST) | 1 (2048 instancji) | 1 (2 pasy) |
 | Głębia | bez testu | test, z = 0,99999 (NDC), bez zapisu | jak W2 |
+| Kolejka passa tła | — | renderOrder 0,3 | 0,29 |
 | Mieszanie | One / One (kolor i alfa) | One / One, alfa wyjścia 0 | jak W2 |
 | Rozgrzewka | `warp: haze boków (DIST)` | `warp: drobiny i zorza boków` (`WARIANT_INSTANCJI`) | — |
 | Bufory uniformów | 1 / etap | 1 / etap | 1 / etap |
 
-- Poza skokiem wszystkie trzy siatki są schowane: 0 rysunków, 0 przebiegów DIST (gdy nic innego nie zgłasza warstwy). W skoku: +3 rysunki i ewentualnie +1 `renderer.render` (DIST).
+- Poza skokiem wszystkie trzy siatki są schowane: 0 rysunków, 0 przebiegów DIST (gdy nic innego nie zgłasza warstwy). W skoku z zestawem domyślnym: +2 rysunki (+1 z W3) i +1 `renderer.render` (przebieg DIST, gdy nic innego go nie zgłasza). Pipeline'y synchroniczne w grze: 0 (wszystkie przebiegi zrzutów, oba tryby renderu — § 4).
 - Graf każdego materiału budowany RAZ (wartości klatki — uniformy), bez `defines`, bez alokacji w `update` (rekordy wejścia i wyniku w miejscu).
 - Szew renderu bez zmian: moduł nie importuje `src/game`, nie czyta `window` / DOM; przełącznik z `RenderWorld.pageSearch` (strona i worker).
 - Stan klatki: `WarpNurt.edge.stats` (`on`, `strength`, `speed`, `kick`, `vpX` / `vpY` — px bufora od środka, y w dół, `haze` / `czastki` / `zorza`, `src` — „domyślnie” / „adres”).
@@ -114,12 +117,36 @@ Tylko warp gracza (`WarpPlayerFx.hyper` = false), tylko kamera z góry jednego g
 
 ## 4. Zrzuty
 
-(uzupełnione po przebiegach — § 4 niżej)
+Narzędzie: `node scripts/webgpu/warp-ped-gra.mjs --out .tmp/<katalog> --query "warpFx=…&ziarno=7"` (TRAVEL TO Ziemia → Mars z przelotem obok Merkurego, stałe ziarno układu planet — ta sama trasa w każdym przebiegu; fazy 00–10: ładowanie, kop, przelot, dolot, zwolnienie, hamowanie, ślizg, po). Wszystkie na `main` 31f20c7a + ta gałąź (niebo-sfera w skoku, bez skał), 1600 × 900, tryb `off` (poza jednym przebiegiem w workerze). Katalogi w `.tmp/` worktree (nie w repo):
 
-## 5. Domyślny zestaw
+| Katalog | Zestaw | Uwagi |
+|---|---|---|
+| `nb-baza` | `?warpFx=0` | obraz przed zmianą (baza porównań) |
+| `nb-dom2` | domyślny (W1 + W2) | wartości końcowe |
+| `nb-haze` | W1 | |
+| `nb-czastki` | W2 | |
+| `nb-zorza` | W3 | |
+| `nb-wszystko` | W1 + W2 + W3 | |
+| `nb-dom-329` | domyślny, 2560 × 720 (32:9) | boki szerokiego kadru (wartości końcowe): drobiny i haze sięgają krawędzi, środek czysty |
+| `nb-dom-worker` | domyślny, `renderWorker=1` | tryb gracza: obraz jak w `off`, 0 błędów konsoli strony i workera, 0 pipeline'ów sync w workerze przed i po starcie |
+| `nb-baza-worker` | `?warpFx=0`, `renderWorker=1` | kontrola workera (skok β soczewki o 1 w jednej klatce przy końcu trzymania celu jest też tutaj — zastany, nie od tej zmiany) |
+| `nb-porownania` | zestawienia | `0x-…_przed-po.png` (baza │ domyślny, fazy 01–06), `04-dolot_bok_warianty-1/2.png` (prawy bok w locie, 1:1: baza, W1, W2 / W3, domyślny, wszystko), `02-kop_planeta_z_boku.png` (mała planeta z boku w kopie), `04-dolot_off-worker.png`, `04-dolot_32-9.png` |
 
-(uzupełnione po przebiegach)
+Co widać na zrzutach: środek kadru (statek, punkt zbiegu z celem, oś kursu) bez zmian w każdym wariancie; W2 daje wyraźne smugi pędu po bokach od kopu do wyjścia (pod planetami — mijany Merkury i ogromna tarcza Słońca je zasłaniają); W1 wygina smugi gwiazd i brzegi ciał z boku (na stopklatce subtelnie — efekt żyje w ruchu); W3 kładzie niebieskofioletową mgiełkę przy krawędziach; w zwolnieniu (05) wszystko znika frontem od dziobu ku rufie razem ze smugami gwiazd, w hamowaniu (06) i ślizgu kadr jest jak przed zmianą. Ładowanie (01) — prawie niewidoczne (siła 0,35 dopiero pod koniec).
+
+## 5. Domyślny zestaw: W1 + W2
+
+- **W1** jest wprost tym, o co chodziło („haze mocniejszy po bokach, nie na statku”) — w słowniku gry „haze” to refrakcja (gorące powietrze, fale), a ta siedzi tylko po bokach i nie tknie statku. Sam W1 na stopklatce jest subtelny, w ruchu tło faluje.
+- **W2** daje to, czego najbardziej brakowało: czytelne poczucie pędu po bokach, spójne z soczewką (te same promienie z punktu zbiegu co mijane planety), pod planetami — nic nie rysuje się po ciałach (dawna skarga na drobiny ośrodka przed dziobem), bez świecących okręgów.
+- **W3 poza domyślnym:** to barwna winieta — ładnie wygląda na ciemnym niebie skoku, ale to najbardziej „ozdobny” element, a wcześniejsze decyzje (ośrodek przed dziobem, świecące pierścienie) szły w stronę mniej ozdób na rzecz soczewki. Jest pod `?warpFx=wszystko` / `?warpFx=haze,czastki,zorza` do oceny.
 
 ## 6. Decyzje dla użytkownika
 
-(uzupełnione po przebiegach)
+- **D1 — zestaw domyślny:** W1 + W2 (dziś) / + W3 (zorza krawędzi jako „mgiełka” pola warpa) / inny. Ocena w grze: `?warpFx=wszystko` vs bez parametru.
+- **D2 — siła haze (W1):** dziś 13 px przy 1080 wierszach (≈ 17 px przy 1440), kop × 1,4. Mocniej = wyraźniejsze falowanie, ale małe planety z boku zaczynają się „topić”; na żywo `WarpNurt.edge.tune.hazeAmpPx` (tryb `?renderWorker=0`).
+- **D3 — drobiny pod planetami czy nad nimi:** dziś pod (pass tła — planeta z boku je zasłania, „daleki pył”); nad planetami (pass gry, pod kadłubami) czytają się jak pył tuż przy kamerze, ale wtedy rysują się po tarczach mijanych ciał.
+- **D4 — gęstość i jasność drobin:** dziś 1600 / 0,28; `tune.dustCount`, `tune.dustBright` na żywo.
+- **D5 — które opisy budować dalej:** W5 (przebicie przy kopie), rozszerzenie W6 (przypływ na froncie wyjścia), W7 (tempo napędu Mk I–III w obrazie), W8 (opływ mijanej planety), W9 (pył przy przejściu przez pas), W4 (zoom blur — tylko jeśli W1 + W2 za słabe; zmiana `postGry.js`).
+- **D6 — preset grafiki:** efekty nie są dziś w presetach (`src/game/graphicsQuality.js`); propozycja: preset Niska bez W1 (oszczędza przebieg DIST i trzy próbki sceny w poście), drobiny × 0,5.
+
+Nie mierzyłem wydajności (FPS, `gpuFrameMs`) — szacunki w § 2; pomiar zostaje dla sesji wydajności.
