@@ -30,6 +30,7 @@ import { WarpMedium, BUBBLE_CAP, MEDIUM_COUNT_DEFAULT } from './medium.js';
 import { GlowSprites, GLOW_ROUND, GLOW_LINE } from './sprites.js';
 import { WarpFrame, newWarpSlot, cullWarpFrameToView } from './frame.js';
 import { WarpPlayerFx } from './player.js';
+import { HyperFlow, hyperFlowEnvelope } from './hyperFlow.js';
 import { warpArrivalFxState, warpDepartureFxState, dressWarpArrival, dressWarpDeparture } from './arrivals.js';
 import { entityWarpHullLength as entityHullLength, entityWarpHullWidth as entityHullWidth } from '../../game/warpTraffic.js';
 import { WARP_WORLD_LENS, resetWarpWorldLens, setWarpLensAnchor } from './worldLens.js';
@@ -247,6 +248,14 @@ export const WarpNurt = {
       g.hyper = true;
       g.lens = null;
       player.advance(t, dt, g, map, med);
+      // OPŁYW hipercruise'u (hyperFlow.js, 2026-10-29): otoczka wzdłuż burt i strugi dysz na warstwie DIST — siła z fazy
+      // efektu i prędkości prowadzonej; tylko kamera z góry jednego gracza (jak soczewka świata).
+      const env = hyperFlowEnvelope(player.mode, t, player.kickT, player.exitT, player.charge, g.cruise,
+        Number(hyper.vmax) || 0, this._hyperFlowHold || (this._hyperFlowHold = { sheath: 0, wake: 0 }),
+        this._hyperFlowEnv || (this._hyperFlowEnv = { sheath: 0, wake: 0 }));
+      if (o.lensAllowed !== false) {
+        HyperFlow.setShip(pose.x, pose.y, pose.angle, g.length, g.width, env.sheath, env.wake, g.cruise, t, zoom);
+      }
     } else if (hasPlayer) {
       const pose = entityPose(ship, this._pose);
       g.state = warp.state;

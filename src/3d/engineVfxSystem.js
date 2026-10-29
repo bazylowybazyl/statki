@@ -23,6 +23,8 @@ import {
   releaseMainExhaustState
 } from './mainExhaust3D.js';
 import { WarpPlume3D } from './warpPlume3D.js';
+import { HYPER_LOOK, hyperLegacyLookOn } from './warp/hyperLook.js';
+import { HyperFlow } from './warp/hyperFlow.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 // Dysze MAIN tej klatki per okręt — dla poświaty dysz na pyle kosmicznym (src/3d/dust/).
 import { EngineFrame } from './engineFrame.js';
@@ -574,7 +576,7 @@ function resolveMainBoost(entity) {
  * 'none' — normalna praca, 'on' — plazma pali (struga gaśnie),
  * 'fallback' — skok bez wolnej instancji (struga na dopalaczu).
  */
-function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx) {
+function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx, hyper = false) {
   let plume = item.warp;
   if (!plume) {
     // dogasanie bez palącej się plazmy — nie ma czego gasić; rozgrzewanie bez wolnej instancji — sama struga MAIN
@@ -583,6 +585,8 @@ function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx) {
     if (!plume) return mode === 'preheat' ? 'none' : 'fallback';
     item.warp = plume;
   }
+  // hipercruise (v2, 2026-10-29 — hyperLook.js): spokojny, długi strumień w locie; warp i przyloty NPC jak dawniej
+  plume.setHyper(hyper);
   if (mode === 'off') {
     plume.shutdown();
   } else if (mode === 'preheat') {
@@ -755,6 +759,10 @@ function updateEffects(entity, fxData, dt) {
   // Lot hipercruise'u (zgłoszenie użytkownika 2026-10-23: „żeby się nie wyginało tak mocno”): wychylenie dysz MAIN
   // przy A/D × nozzleGimbal — sam obraz (kurs prowadzi automat gry, gimbal −26° × moment obracał plazmę na boki).
   const hyperGimbalK = (entity.__hyperMode === 'active' || entity.__hyperMode === 'drop') ? HYPERCRUISE_TUNE.nozzleGimbal : 1;
+  // Hipercruise (rozruch, lot, wyjście): spokojna plazma, większe gorące powietrze, strugi opływu z dysz gracza
+  // (hyperLook.js, hyperFlow.js); `?hcStary=1` — dawny wygląd.
+  const hyperDrive = entity.__hyperMode === 'charging' || entity.__hyperMode === 'active' || entity.__hyperMode === 'drop';
+  const hyperHaze = hyperDrive && !hyperLegacyLookOn();
   // Silniki MAIN wyłączone / zapłon / gaszenie (src/game/engineIgnition.js — etap E2): moc strugi MAIN (z płomykiem
   // jałowym) × mnożnik stanu; rampa mocy strugi (mainExhaust3D) wygładza resztę. Encja bez stanu — 1.
   const plumeK = entity.engineIgn ? enginePlumeScale(entity) : 1;
@@ -894,7 +902,7 @@ function updateEffects(entity, fxData, dt) {
     if (slot.kind !== 'side') {
       const nozzleR = Math.max(0, Number(engineFx.nozzleRadius) || 0) * scale * slotScale;
       const warpUse = driveWarpPlume(item, isHulk ? 'off' : warpMode, frameCtx,
-        nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR, engineFx);
+        nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR, engineFx, hyperDrive);
       const warpOn = warpUse === 'on';
       const warpFallback = warpUse === 'fallback';
 
@@ -938,9 +946,20 @@ function updateEffects(entity, fxData, dt) {
         const hazeBoost = plume ? plume.ch.boost : (item.main.boosting ? 1 : 0);
         const hazeK = smoothstep(0.08, 0.45, hazePower) * (1 + 0.5 * hazeBoost) * (0.55 + 0.45 * cloakVis);
         if (hazeK > 0.01) {
-          Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, nozzleR * (plume ? 1 : p.widthMul), hazeK, dirX, dirY);
+          if (plume && hyperHaze) {
+            // hipercruise v2 (user: „dać go [haze] większego z silników”): stożek × radius (dłuższy i szerszy, wzór
+            // płynie szybciej), źródło cofnięte pod prąd — bez dziury za wylotem (stożek zaczyna się ~0,4 R za źródłem)
+            const H = HYPER_LOOK.haze;
+            const back = H.shift * (H.radius - 1) * nozzleR;
+            Core3D.pushHeatHazeWorld(nozzleWorldX - dirX * back, nozzleWorldY - dirY * back, -4, nozzleR * H.radius,
+              hazeK * H.strength, dirX, dirY);
+          } else {
+            Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, nozzleR * (plume ? 1 : p.widthMul), hazeK, dirX, dirY);
+          }
         }
       }
+      // opływ hipercruise'u (hyperFlow.js): struga gorącego powietrza z każdej dyszy MAIN gracza — ta sama poza renderu
+      if (hyperHaze && isPlayerEntity && nozzleR > 0) HyperFlow.nozzle(nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR * cloakVis);
       continue;
     }
 

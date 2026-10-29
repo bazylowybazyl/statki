@@ -29406,7 +29406,7 @@
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
     const _cameraWarpInput = {
       dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35,
-      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0
+      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0, hyper: false
     };
     // OBRÓT KADRU W HIPERCRUISIE (2026-10-23, zgłoszenie użytkownika: „kamera jak w warp — odpalenie hipercruise =
     // przestawienie kamery za statkiem”; port obrotu z dema „Pęd” — cameraRig.js: stepCameraRigRoll, konwencja
@@ -29511,6 +29511,8 @@
       // obrót kadru tej klatki (cameraFrameRoll): kurs kopu w osiach ekranu
       const roll = cameraFrameRoll();
       w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
+      // hipercruise v2 (2026-10-29, „za mocno drga”): rig daje lekkie pchnięcie zamiast kopu warpa (cameraRig.js: hyper*)
+      w.hyper = hyperCam;
       w.state = hyperCam ? hyperLook.state : warp.state;
       w.charge = hyperCam ? hyperLook.charge : (warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0);
       const dir = warp.dir;

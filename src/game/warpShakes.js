@@ -10,12 +10,19 @@
 
 import { WARP_EXIT } from './warpDrive.js';
 
-/** Wstrząsy skoku gracza [siła, czas s] (wartości z dema — dawniej player.js); hipercruise: kop × hyperKickMul. */
+/**
+ * Wstrząsy skoku gracza [siła, czas s] (wartości z dema — dawniej player.js). Hipercruise (v2, 2026-10-29 — user: „za
+ * mocno drga”; hipercruise to spokojny przelot, nie wyrzut z tunelu): kop × hyperKickMul (lekkie pchnięcie), wyjście
+ * × hyperExitMul i hamowanie × hyperBrakeMul (0 — bez wstrząsu; hamowanie 22 dawało najsilniejsze szarpnięcie, 11 px,
+ * bez żadnego hamowania w obrazie).
+ */
 export const WARP_SHAKE = Object.freeze({
   kick: Object.freeze([18, 0.3]),
   exit: Object.freeze([8, 0.4]),
   brake: Object.freeze([22, 0.3]),
-  hyperKickMul: 0.5,
+  hyperKickMul: 0.15,
+  hyperExitMul: 0,
+  hyperBrakeMul: 0,
   // wyrzut okrętu NPC z tunelu (dawniej WarpNurt._burstShake): siła 12 · (0,4 + 0,8 · skala) · bliskość, 0,35 s
   burstMag: 12, burstBase: 0.4, burstSize: 0.8, burstDur: 0.35, burstReachMin: 4000, burstReachHull: 6
 });
@@ -71,8 +78,8 @@ export function stepWarpShakes(s, input, dt, emit) {
       s.exitAge = 0;
       s.tBrake = WARP_EXIT.slow + WARP_EXIT.coast;
     }
-    emit(WARP_SHAKE.exit[0], WARP_SHAKE.exit[1]);
-    n++;
+    const exitMag = WARP_SHAKE.exit[0] * (s.hyper ? WARP_SHAKE.hyperExitMul : 1);
+    if (exitMag > 0) { emit(exitMag, WARP_SHAKE.exit[1]); n++; }
   } else if (s.exitAge >= 0) {
     s.exitAge += Math.max(0, Number(dt) || 0);
   }
@@ -80,8 +87,8 @@ export function stepWarpShakes(s, input, dt, emit) {
     if (input.charging) s.exitAge = -1;
     else if (s.exitAge >= s.tBrake) {
       s.exitAge = -1;
-      emit(WARP_SHAKE.brake[0], WARP_SHAKE.brake[1]);
-      n++;
+      const brakeMag = WARP_SHAKE.brake[0] * (s.hyper ? WARP_SHAKE.hyperBrakeMul : 1);
+      if (brakeMag > 0) { emit(brakeMag, WARP_SHAKE.brake[1]); n++; }
     }
   }
   return n;
