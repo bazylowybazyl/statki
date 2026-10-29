@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import v8 from 'node:v8';
+import { untilSteady } from './helpers/alokacje.mjs';
 import { readFileSync } from 'node:fs';
 
 globalThis.window = globalThis.window || {};
@@ -140,18 +141,22 @@ test('atlas: bloki wg wymiaru siatki, wysyłka z budżetem, zwolnienie po znikni
   const ns = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
   // Rozgrzewka i przerwa: kompilator optymalizujący pracuje w osobnym wątku — pod obciążeniem
   // (równoległe pliki testów) kod zoptymalizowany wchodzi później, a do tego czasu interpreter
-  // pakuje liczby (fałszywe alokacje). Najmniejsza z kilku prób.
+  // pakuje liczby (fałszywe alokacje). Najmniejsza z kilku prób, w rundach do stanu ustalonego
+  // (tests/helpers/alokacje.mjs).
   for (let round = 0; round < 3; round++) {
     for (let i = 0; i < 2000; i++) mined.update(f);
     await new Promise((r) => setTimeout(r, 60));
   }
-  let best = Infinity;
-  for (let t = 0; t < 8; t++) {
-    const s = ns();
-    for (let i = 0; i < 500; i++) mined.update(f);
-    const e = ns();
-    if (e >= s) best = Math.min(best, (e - s) / 500);
-  }
+  const best = await untilSteady(() => {
+    let b = Infinity;
+    for (let t = 0; t < 8; t++) {
+      const s = ns();
+      for (let i = 0; i < 500; i++) mined.update(f);
+      const e = ns();
+      if (e >= s) b = Math.min(b, (e - s) / 500);
+    }
+    return b;
+  }, (b) => b < 64);
   assert.equal(computes.length, 0);
   assert.ok(best < 64, `klatka bez zmian: ${best.toFixed(1)} B`);
   // Ciało znika → blok wraca.
