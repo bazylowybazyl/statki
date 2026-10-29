@@ -1363,10 +1363,13 @@
     // Opcje grafiki (presety jakości, zapis sc_gfx) — blok „OPCJE GRAFIKI” przy opcjach menu.
     import {
       normalizeGfx, normalizeGfxValue, matchGfxPreset, saveGfxSettings, gfxWithPreset, gfxBloomScale, hasSavedGfx,
-      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord, gfxFrameLimitFps
+      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord, gfxFrameLimitFps,
+      gfxDynamicBudgetFps
     } from "./src/game/graphicsQuality.js";
-    // Limit klatek (Opcje → Grafika): które wywołania rAF pętli gry rysują klatkę — blok „OPCJE GRAFIKI”, loop().
+    // Limit klatek (Opcje → Grafika): które wywołania rAF pętli gry rysują klatkę, budzik bez VSync — blok
+    // „OPCJE GRAFIKI”, loop().
     import { FrameLimiter } from "./src/render/frameLimiter.js";
+    import { createFrameWake, frameWakeStrategyFromQuery } from "./src/render/frameWake.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
     import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
@@ -6711,6 +6714,8 @@
       }
       if (resizeHexShips3D) resizeHexShips3D(W, H);
       resizeShieldSystem(innerWidth, innerHeight);
+      // limit klatek (blok „OPCJE GRAFIKI”): kanwy wyczyszczone — najbliższa klatka gry i tła menu bez limitu
+      frameLimitResized();
       if (camera.mode === 'focus' && camera.focusStation) {
         const target = computeStationFocusTarget(camera.focusStation);
         camera.focusZoom = target.zoom;
@@ -35258,7 +35263,8 @@
         dynResRenderSeen = fS;
         sample = fMs + (t - dynResComputeAt < 0.5 ? cMs : 0);
       }
-      const scale = stepDynRes(dynRes, t, gfxSettings.renderScale, gfxDynamicTargetFps(gfxSettings.dynamicRes), sample);
+      // budżet czasu GPU z docelowych FPS, a przy niższym limicie klatek — z limitu (gra rysuje tyle klatek, ile limit)
+      const scale = stepDynRes(dynRes, t, gfxSettings.renderScale, gfxDynamicBudgetFps(gfxSettings.dynamicRes, gfxSettings.frameLimit), sample);
       if (dynRes.changed && Core3D.renderScale !== scale) {
         Core3D.setRenderScale(scale);
         if (rwHost) rwHost.setGfx(gfxRenderRecord(gfxSettings, scale));
@@ -35266,13 +35272,16 @@
       }
     }
     function updateDynResUI() {
-      const on = dynRes.target > 0 || gfxDynamicTargetFps(gfxSettings.dynamicRes) > 0;
+      const target = gfxDynamicTargetFps(gfxSettings.dynamicRes);
+      const budget = gfxDynamicBudgetFps(gfxSettings.dynamicRes, gfxSettings.frameLimit);
+      const on = dynRes.target > 0 || target > 0;
       const noTimer = Core3D.gpuReady && !Core3D.gpuTimerSupported;
       document.querySelectorAll('[data-gfx-dyn-now]').forEach(el => {
         el.hidden = !on;
         el.textContent = noTimer
           ? 'Karta nie podaje czasu pracy GPU — rozdzielczość zostaje stała.'
-          : `Teraz: ${Math.round(dynResScale() * 100)}%.`;
+          : `Teraz: ${Math.round(dynResScale() * 100)}%.`
+            + (budget > 0 && budget < target ? ` Limit klatek ${budget} — budżet karty jak dla ${budget} FPS.` : '');
       });
     }
 
@@ -35280,63 +35289,41 @@
     // loop() woła frameLimitTick na początku każdego wywołania (po złożeniu bitmapy workera): false — klatka pominięta,
     // następną zamawia frameLimitTick; koniec klatki narysowanej — nextLoopFrame. Z VSync: rAF w takcie ekranu, rysuje
     // co N-ta klatka, gdy częstotliwość ekranu jest wielokrotnością limitu, inaczej akumulator czasu. Bez VSync (Electron)
-    // limit czasem i pętla BEZ rAF: budzik woła loop() wprost — setTimeout śpi do chwili należnej minus margines
-    // (~90. percentyl spóźnień budzika z ostatnich 32 snów + 0,5 ms, 1–6 ms), resztę czekania dopina kolejka
-    // MessageChannel (zadania bez opóźnienia; wejście i wiadomości workera idą między nimi). Spóźnienie budzika ponad
-    // margines = klatka później; czekanie krótsze niż margines (limity 120–240) idzie w całości kolejką — rdzeń CPU
-    // zajęty jak bez limitu, karta odciążona. rAF bez taktu (flagi Chromium) po klatce bez zmiany obrazu przychodzi
-    // dopiero po ~30 ms, a po klatce narysowanej spoza rAF też z opóźnieniem — pomiar 2026-10-29 (headless bez taktu,
-    // atrapa Electrona): sen → rAF ~32 kl/s przy każdym limicie, budzik + rAF na końcu klatki ~64 kl/s, sam setTimeout
-    // w stronie gry spóźniał się o kilka ms (limit 120 → 67 kl/s). Karta w tle — rAF (gra stoi jak dawniej). Harness
-    // narzędzi z zegarem wirtualnym (window.__harness, tryb inny niż 'real') — bez limitu. Tło menu: setFrameLimit
-    // (strona w trybie off, pełnomocnik → worker w trybie worker). Okres ekranu w menu zbiera pętla wejścia (observe).
-    // Konsola: FrameLimiter (tryb, okres ekranu, stats.hist — odstępy w okresach ekranu), FrameLimiter.wake (budzik bez
-    // VSync: margines, sny, dopięcia kolejką).
+    // limit czasem i pętla BEZ rAF: budzik (src/render/frameWake.js) woła loop() w chwili należnej — rAF bez taktu (flagi
+    // Chromium) po klatce bez zmiany obrazu przychodzi dopiero po ~30 ms (docs/AUDYT-limit-klatek-2026-10-29.md). Karta
+    // w tle — rAF (gra stoi jak dawniej). Harness narzędzi z zegarem wirtualnym (window.__harness, tryb inny niż 'real')
+    // — bez limitu (FrameLimiter.bypass; tło menu strony tak samo). Tło menu: setFrameLimit (strona w trybie off,
+    // pełnomocnik → worker w trybie worker). Okres ekranu w menu zbiera pętla wejścia (observe). Konsola: FrameLimiter
+    // (tryb, okres ekranu, stats.hist — odstępy w okresach ekranu), FrameLimiter.wake (budzik bez VSync: strategia,
+    // spóźnienia budzeń, sny, dopięcia; `?budzik=worker|sen|kolejka` — A/B).
     const frameLimiter = new FrameLimiter();
     window.FrameLimiter = frameLimiter;
-    const _limitWake = new MessageChannel();
-    const limitWake = frameLimiter.wake = { dueAt: 0, timerAt: 0, marginMs: 2, late: new Float64Array(32), sorted: new Float64Array(32), lateN: 0, sleeps: 0, spins: 0 };
-    function limitWakeStep() {
-      if (limitWake.dueAt > performance.now()) { limitWake.spins++; _limitWake.port2.postMessage(0); return; }
-      loop(performance.now());
-    }
-    function limitWakeTimer() {
-      const w = limitWake, late = performance.now() - w.timerAt;
-      w.late[w.lateN++ & 31] = late > 0 ? late : 0;
-      const n = Math.min(w.lateN, 32), s = w.sorted;
-      for (let i = 0; i < n; i++) {
-        const v = w.late[i];
-        let j = i - 1;
-        while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
-        s[j + 1] = v;
-      }
-      w.marginMs = Math.min(6, Math.max(1, s[Math.floor(0.9 * (n - 1))] + 0.5));
-      limitWakeStep();
-    }
-    _limitWake.port1.onmessage = limitWakeStep;
-    const limitTimeMode = () => frameLimiter.mode === 'time' && !document.hidden && !(window.__harness && window.__harness.clock?.mode !== 'real');
-    function scheduleLimitedLoop(waitMs) {
-      const t = performance.now(), w = limitWake;
-      w.dueAt = t + waitMs;
-      const sleep = Math.floor(waitMs - w.marginMs);
-      if (sleep >= 1) {
-        w.timerAt = t + sleep;
-        w.sleeps++;
-        setTimeout(limitWakeTimer, sleep);
-      } else _limitWake.port2.postMessage(0);
-    }
+    const harnessClockVirtual = () => { const h = window.__harness; return !!h && h.clock?.mode !== 'real'; };
+    frameLimiter.bypass = harnessClockVirtual;
+    const limitWake = frameLimiter.wake = createFrameWake({
+      onWake: () => loop(performance.now()), strategy: frameWakeStrategyFromQuery(location.search) || 'worker'
+    });
+    const limitTimeMode = () => frameLimiter.mode === 'time' && !document.hidden && !harnessClockVirtual();
     function frameLimitTick(now) {
-      const h = window.__harness;
-      if (h && h.clock?.mode !== 'real') return true;
       if (frameLimiter.tick(now)) return true;
-      if (limitTimeMode()) scheduleLimitedLoop(frameLimiter.waitMs(now));
+      if (limitTimeMode()) limitWake.schedule(frameLimiter.waitMs(now));
       else requestAnimationFrame(loop);
       return false;
     }
     // koniec klatki narysowanej (loop, także gałąź pauzy)
     function nextLoopFrame() {
-      if (limitTimeMode()) scheduleLimitedLoop(frameLimiter.waitMs(performance.now()));
+      if (limitTimeMode()) limitWake.schedule(frameLimiter.waitMs(performance.now()));
       else requestAnimationFrame(loop);
+    }
+    // Handler resize (tryb off): kanwa #c (obraz 3D i HUD) i kanwa Core3D (tło menu strony) wyczyszczone — najbliższa
+    // klatka bez limitu (resize idzie w tej samej aktualizacji obrazu co wywołania rAF, przed nimi), inaczej kanwa stoi
+    // pusta do klatki w takcie limitu (miganie przy przeciąganiu okna). Bez VSync pętla czeka na budziku — zamówienie
+    // przepada, klatka w rAF tej aktualizacji. Tryb worker: kanw obrazu i nakładek resize nie czyści — bez wymuszenia.
+    function frameLimitResized() {
+      if (rwHost) return;
+      frameLimiter.forceNext();
+      menuBackdrop?.forceNextFrame?.();
+      if (limitWake.cancel()) requestAnimationFrame(loop);
     }
     // VSync tego uruchomienia (Electron: flagi procesu); w przeglądarce klatki taktuje ekran
     const frameLimitVsync = () => !(hullfallApp && hullfallApp.vsync === false);
@@ -35344,7 +35331,7 @@
       const fps = gfxFrameLimitFps(gfxSettings.frameLimit);
       frameLimiter.setFps(fps);
       frameLimiter.setVsync(frameLimitVsync());
-      menuBackdrop?.setFrameLimit?.(fps, frameLimitVsync());
+      menuBackdrop?.setFrameLimit?.(fps, frameLimitVsync(), harnessClockVirtual);
     }
     // Notka w opcjach: czy częstotliwość monitora pasuje do limitu (równy takt) — z okresu rAF.
     function updateFrameLimitUI() {
@@ -35512,7 +35499,7 @@
       get frameLimit() {
         const l = frameLimiter;
         return { fps: l.fps, mode: l.mode, every: l.every, hz: +l.hz.toFixed(2), vsync: l.vsync, opis: l.describe(),
-          klatki: l.stats.ticks, narysowane: l.stats.drawn, odstepyVsync: [...l.stats.hist] };
+          klatki: l.stats.ticks, narysowane: l.stats.drawn, odstepyVsync: [...l.stats.hist], budzik: limitWake.strategy };
       },
       get dynamic() {
         return { scale: dynResScale(), level: dynRes.level, levels: [...dynRes.levels], target: dynRes.target,

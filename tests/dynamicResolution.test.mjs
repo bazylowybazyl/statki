@@ -146,3 +146,26 @@ test('klej: krok w pętli gry, resize tylko przy zmianie stopnia, opcja w panelu
   const core = src('src/3d/core3d.js');
   assert.match(core, /if \(type === 'render'\) \{ this\.gpuFrameMs = ms; this\.gpuFrameSamples\+\+; \}/);
 });
+
+test('limit klatek niższy niż cel (2026-10-30): budżet z limitu — cel 120 przy limicie 60 trzyma skalę jak cel 60', () => {
+  assert.equal(G.gfxDynamicBudgetFps('120', '60'), 60);
+  assert.equal(G.gfxDynamicBudgetFps('120', 'off'), 120);
+  assert.equal(G.gfxDynamicBudgetFps('60', '120'), 60, 'limit wyższy niż cel — cel');
+  assert.equal(G.gfxDynamicBudgetFps('60', '144'), 60);
+  assert.equal(G.gfxDynamicBudgetFps('off', '60'), 0, 'wyłączona zostaje wyłączona');
+  assert.equal(G.gfxDynamicBudgetFps('120', 'x'), 120, 'limit spoza listy — bez limitu');
+  // ten sam koszt GPU (9 ms przy 100%): cel 120 bez limitu schodzi, z limitem 60 — budżet 16,7 ms, skala zostaje
+  const free = run({ ms: cost(1, 9), fps: G.gfxDynamicBudgetFps('120', 'off'), seconds: 30 });
+  const capped = run({ ms: cost(1, 9), fps: G.gfxDynamicBudgetFps('120', '60'), seconds: 30 });
+  assert.ok(free.scale < 1);
+  assert.equal(capped.scale, 1);
+  assert.equal(capped.changes.length, 0);
+  // klej: krok sterownika i notka w opcjach biorą budżet z limitu
+  const html = src('index.html').replace(/\r\n/g, '\n');
+  const step = html.slice(html.indexOf('function stepDynamicResolution(nowMs) {'), html.indexOf('function updateDynResUI() {'));
+  assert.match(step, /stepDynRes\(dynRes, t, gfxSettings\.renderScale, gfxDynamicBudgetFps\(gfxSettings\.dynamicRes, gfxSettings\.frameLimit\), sample\)/);
+  assert.doesNotMatch(step, /gfxDynamicTargetFps\(/);
+  const ui = html.slice(html.indexOf('function updateDynResUI() {'), html.indexOf('// --- Limit klatek'));
+  assert.match(ui, /gfxDynamicBudgetFps\(gfxSettings\.dynamicRes, gfxSettings\.frameLimit\)/);
+  assert.match(ui, /budżet karty jak dla \$\{budget\} FPS/);
+});

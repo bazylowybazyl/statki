@@ -81,6 +81,16 @@ export function gfxFrameLimitFps(value) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/**
+ * Docelowe FPS sterownika rozdzielczości dynamicznej z limitem klatek: cel 120 przy limicie 60 to budżet limitu
+ * (16,7 ms) — gra rysuje 60 kl/s, więc skala nie spada do budżetu 8,3 ms. Wyłączona (0) zostaje wyłączona.
+ */
+export function gfxDynamicBudgetFps(dynamicRes, frameLimit) {
+  const target = gfxDynamicTargetFps(dynamicRes);
+  const limit = gfxFrameLimitFps(frameLimit);
+  return target > 0 && limit > 0 ? Math.min(target, limit) : target;
+}
+
 /** Nadpisanie limitu klatek z adresu (?limitKlatek=120|0|off) — na tę sesję bez zapisu (narzędzia, pomiary); null — brak. */
 export function gfxFrameLimitFromQuery(search) {
   let q = null;

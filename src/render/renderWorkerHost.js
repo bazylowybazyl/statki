@@ -224,7 +224,9 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       setActive(on) { on = !!on; if (on === bd._active) return; bd._active = on; post({ op: 'active', on }); },
       setPointer(x, y) { post({ op: 'pointer', x, y }); },
       setFocus(k) { post({ op: 'focus', k }); },
-      // limit klatek z opcji grafiki — pętla tła w workerze (MenuBackdrop3D.setFrameLimit)
+      // limit klatek z opcji grafiki — pętla tła w workerze (MenuBackdrop3D.setFrameLimit); bez ominięcia zegara
+      // harnessu (trzeci argument strony): rAF i zegar workera są prawdziwe. Zmiana rozmiaru okna nie czyści obrazu
+      // tła (kanwa obrazu 3D dostaje tylko rozmiar CSS — host.resize) — bez forceNextFrame.
       setFrameLimit(fps, vsync = true) { post({ op: 'frameLimit', fps: Number(fps) || 0, vsync: vsync !== false }); },
       launch(o = {}) { post({ op: 'launch', dolly: o.dolly !== false }); },
       cameraPose() { return bd._pose; },

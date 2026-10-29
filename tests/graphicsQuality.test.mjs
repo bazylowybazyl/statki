@@ -281,20 +281,30 @@ test('limit klatek w index.html: chipy, pętla gry (złożenie przed limitem, we
   assert.ok(at('if (rwHost) rwHost.present();') < at('if (!frameLimitTick(now)) return;'));
   assert.ok(at('if (!frameLimitTick(now)) return;') < at('lastTime = now;'), 'lastTime tylko w klatce narysowanej (frame obejmuje pominięte)');
   assert.ok(at('if (!frameLimitTick(now)) return;') < at('pumpInput(now);'));
-  // limiter: harness z zegarem wirtualnym bez limitu; bez VSync — pętla na budziku bez rAF (rAF bez taktu po klatce
-  // bez zmiany obrazu przychodzi po ~30 ms), z VSync — następne wywołanie rAF; koniec klatki — nextLoopFrame
+  // limiter: harness z zegarem wirtualnym bez limitu (FrameLimiter.bypass — pętla gry i tło menu strony); bez VSync —
+  // pętla na budziku bez rAF (rAF bez taktu po klatce bez zmiany obrazu przychodzi po ~30 ms), z VSync — następne
+  // wywołanie rAF; koniec klatki — nextLoopFrame
+  assert.match(html, /const harnessClockVirtual = \(\) => \{ const h = window\.__harness; return !!h && h\.clock\?\.mode !== 'real'; \};/);
+  assert.match(html, /frameLimiter\.bypass = harnessClockVirtual;/);
+  assert.match(html, /const limitWake = frameLimiter\.wake = createFrameWake\(\{\n\s+onWake: \(\) => loop\(performance\.now\(\)\), strategy: frameWakeStrategyFromQuery\(location\.search\) \|\| '\w+'/);
   const tick = html.slice(html.indexOf('function frameLimitTick(now) {'), html.indexOf('function applyFrameLimit() {'));
-  assert.match(tick, /h\.clock\?\.mode !== 'real'/);
-  assert.match(tick, /if \(limitTimeMode\(\)\) scheduleLimitedLoop\(frameLimiter\.waitMs\(now\)\);\n\s+else requestAnimationFrame\(loop\);/);
-  assert.match(tick, /function nextLoopFrame\(\) \{\n\s+if \(limitTimeMode\(\)\) scheduleLimitedLoop\(frameLimiter\.waitMs\(performance\.now\(\)\)\);\n\s+else requestAnimationFrame\(loop\);/);
-  assert.match(html, /const limitTimeMode = \(\) => frameLimiter\.mode === 'time' && !document\.hidden/);
+  assert.match(tick, /function frameLimitTick\(now\) \{\n\s+if \(frameLimiter\.tick\(now\)\) return true;/);
+  assert.match(tick, /if \(limitTimeMode\(\)\) limitWake\.schedule\(frameLimiter\.waitMs\(now\)\);\n\s+else requestAnimationFrame\(loop\);/);
+  assert.match(tick, /function nextLoopFrame\(\) \{\n\s+if \(limitTimeMode\(\)\) limitWake\.schedule\(frameLimiter\.waitMs\(performance\.now\(\)\)\);\n\s+else requestAnimationFrame\(loop\);/);
+  assert.match(html, /const limitTimeMode = \(\) => frameLimiter\.mode === 'time' && !document\.hidden && !harnessClockVirtual\(\);/);
+  // zmiana rozmiaru okna (tryb off): kanwy wyczyszczone — najbliższa klatka gry i tła menu bez limitu; bez VSync
+  // zamówienie budzika przepada, klatka w rAF tej aktualizacji obrazu; tryb worker bez wymuszenia
+  const resized = tick.slice(tick.indexOf('function frameLimitResized() {'));
+  assert.match(resized, /^function frameLimitResized\(\) \{\n\s+if \(rwHost\) return;\n\s+frameLimiter\.forceNext\(\);\n\s+menuBackdrop\?\.forceNextFrame\?\.\(\);\n\s+if \(limitWake\.cancel\(\)\) requestAnimationFrame\(loop\);/);
+  const onResize = html.slice(html.indexOf("window.addEventListener('resize', () => {"), html.indexOf("if (camera.mode === 'focus' && camera.focusStation) {", html.indexOf("window.addEventListener('resize', () => {")));
+  assert.ok(onResize.indexOf('W = canvas.width = innerWidth;') >= 0 && onResize.indexOf('frameLimitResized();') > onResize.indexOf('W = canvas.width = innerWidth;'));
   const loopAll = html.slice(html.indexOf('function loop(now) {'), html.indexOf('// =============== Render ==============='));
   assert.equal((loopAll.match(/nextLoopFrame\(\);/g) || []).length, 2, 'koniec klatki: gałąź pauzy i zwykła');
   assert.doesNotMatch(loopAll, /requestAnimationFrame\(loop\)/, 'loop() zamawia następną klatkę przez nextLoopFrame / frameLimitTick');
   const apply = html.slice(html.indexOf('function applyFrameLimit() {'), html.indexOf('function updateFrameLimitUI() {'));
   assert.match(apply, /frameLimiter\.setFps\(fps\);/);
   assert.match(apply, /frameLimiter\.setVsync\(frameLimitVsync\(\)\);/);
-  assert.match(apply, /menuBackdrop\?\.setFrameLimit\?\.\(fps, frameLimitVsync\(\)\);/);
+  assert.match(apply, /menuBackdrop\?\.setFrameLimit\?\.\(fps, frameLimitVsync\(\), harnessClockVirtual\);/);
   assert.match(html, /const frameLimitVsync = \(\) => !\(hullfallApp && hullfallApp\.vsync === false\);/);
   const applyGfx = html.slice(html.indexOf('function applyGraphicsSettings()'), html.indexOf('function updateGraphicsUI()'));
   assert.match(applyGfx, /applyFrameLimit\(\);/);

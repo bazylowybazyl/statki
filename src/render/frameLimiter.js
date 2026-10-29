@@ -20,9 +20,12 @@
 //   'acc'   — inna częstotliwość (144 Hz przy limicie 60, 240 Hz przy 144): akumulator czasu, klatka na vsyncu
 //             najbliższym chwili należnej (próg: interwał − pół okresu) — średnio dokładnie limit, odstępy 2–3 okresy;
 //   'time'  — bez VSync (Electron, opcja grafiki: rAF bez taktu ekranu) — akumulator z progiem 0,5 ms; `waitMs` mówi,
-//             ile czekać do następnej klatki (pętla gry bez rAF — budzik w index.html, blok „OPCJE GRAFIKI”); odstęp 0
+//             ile czekać do następnej klatki (pętla gry bez rAF — budzik src/render/frameWake.js); odstęp 0
 //             (wywołania szybciej niż rozdzielczość zegara) = czas nie płynie, bez klatki.
 // `stats.hist[k]` — odstępy kolejnych narysowanych klatek w okresach ekranu (narzędzia: równy takt = jeden kubełek).
+// `bypass` (funkcja → true) — wywołanie bez limitu i bez zmiany stanu: harness narzędzi z zegarem wirtualnym (znaczniki
+// rAF stoją albo skaczą o krok — co N-ta klatka zatrzymałaby obraz); podaje go strona (moduły renderu nie czytają okna).
+// `forceNext()` — najbliższe wywołanie rysuje i liczy od siebie (zmiana rozmiaru okna wyczyściła kanwę).
 // Czysty moduł (bez DOM, three i window) — strona i worker. Bez alokacji w `tick`.
 
 export const FRAME_LIMIT_TUNE = {
@@ -50,6 +53,8 @@ export class FrameLimiter {
     this._last = NaN;      // poprzednie wywołanie (znacznik rAF)
     this._lastDraw = NaN;  // ostatnia narysowana klatka
     this._acc = 0;         // tryby 'acc' / 'time': czas od chwili należnej poprzedniej klatki
+    this._force = false;   // forceNext
+    this.bypass = null;    // () => boolean — true: wywołanie bez limitu (zegar wirtualny harnessu)
     this.stats = { ticks: 0, drawn: 0, hist: new Int32Array(HIST) };
     this.setFps(fps);
     this.setVsync(vsync);
@@ -81,6 +86,7 @@ export class FrameLimiter {
 
   /** Każde wywołanie rAF (`now` — znacznik rAF): true — rysuj tę klatkę. */
   tick(now) {
+    if (this.bypass !== null && this.bypass()) return true;
     const st = this.stats;
     st.ticks++;
     const gap = now - this._last;
@@ -88,10 +94,12 @@ export class FrameLimiter {
     if (gap > 0 && gap <= this.tune.maxGapMs) this._addGap(gap);
     const mode = this.mode;
     const since = now - this._lastDraw;   // NaN — jeszcze bez narysowanej klatki
+    const force = this._force;
+    this._force = false;
     let draw;
     if (mode === 'off' || mode === 'every') draw = true;
-    else if (!(gap >= 0) || gap > this.tune.maxGapMs || !(since >= 0)) {
-      // pierwsze wywołanie, przerwa (karta w tle) albo zegar cofnięty — rysuj i licz od tej klatki
+    else if (force || !(gap >= 0) || gap > this.tune.maxGapMs || !(since >= 0)) {
+      // pierwsze wywołanie, przerwa (karta w tle), zegar cofnięty albo forceNext — rysuj i licz od tej klatki
       draw = true;
       this._acc = 0;
     } else if (mode === 'nth') {
@@ -115,6 +123,9 @@ export class FrameLimiter {
     }
     return draw;
   }
+
+  /** Najbliższe wywołanie `tick` rysuje bez limitu i liczy takt od siebie (kanwa wyczyszczona zmianą rozmiaru okna). */
+  forceNext() { this._force = true; }
 
   /** Wywołanie rAF bez decyzji (pętla wejścia w menu): sam okres ekranu — notka w opcjach jeszcze przed grą. */
   observe(now) {

@@ -20,6 +20,12 @@
 // zmienia się w czasie, więc limity na przemian (np. --limity off,120,off,120).
 // Strażnik ciszy (--cisza 30, --ciszaMaks 900): start dopiero, gdy przez 30 s nie działa żaden inny harness
 // (`node scripts/….mjs`, Chrome / Electron z --remote-debugging-port); cudzy harness w trakcie — okno oznaczone `obce`.
+// --budziki worker,sen,kolejka,worker:0 (z --takt 0 --bezVsync 1): każde okno gry dla każdej strategii budzika bez VSync
+// (src/render/frameWake.js — FrameLimiter.wake.setStrategy; „:ms” — końcówka czekania pętlą wątku / kolejką, strojenie
+// FrameLimiter.wake.tune) — A/B w jednym przebiegu: kl/s, odstępy klatek [ms]
+// (p1 / p50 / p90 / p99 / maks., udział > interwał + 2 ms), CPU wątku strony i procesu renderera (CDP
+// Performance.getMetrics: ThreadTime, ProcessTime, TaskDuration — % rdzenia), zadania kolejki i dopięcia na klatkę,
+// pętla wątku budzika [ms / klatkę], spóźnienia budzeń.
 import { mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -36,6 +42,7 @@ const MENU_LIMITY = String(args.menuLimity ?? 'off,120,off').split(',').filter((
 const OKRES = Number(args.okres || 6);
 const TRYB = args.tryb === 'off' ? 'off' : 'worker';
 const BITWA = args.bitwa ? String(args.bitwa).split(',').map((v) => Math.max(0, Number(v) || 0)) : null;
+const BUDZIKI = args.budziki ? String(args.budziki).split(',').filter(Boolean) : [null];
 const ZOOM = Number(args.zoom || 0.45);
 const out = resolve(repo, args.out || '.tmp/limit-klatek');
 mkdirSync(out, { recursive: true });
@@ -126,6 +133,14 @@ await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   const raf0 = window.requestAnimationFrame.bind(window);
   window.requestAnimationFrame = (cb) => raf0((ts) => { window.__lkTs = ts; cb(ts); });
 })();` });
+// CPU wątku strony i procesu renderera (ThreadTime / ProcessTime — czas CPU, TaskDuration — czas zadań wątku strony; s)
+await cdp.send('Performance.enable');
+const cpuMetrics = async () => {
+  const { metrics } = await cdp.send('Performance.getMetrics');
+  const m = {};
+  for (const { name, value } of metrics) if (/^(ThreadTime|ProcessTime|TaskDuration|ScriptDuration|Timestamp)$/.test(name)) m[name] = value;
+  return m;
+};
 // --bezVsync 1: atrapa mostu Electrona (electron/preload.js) z VSync wył. tego uruchomienia
 if (BEZ_VSYNC) {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.hullfallApp = { vsync: false, vsyncSaved: false,
@@ -141,17 +156,40 @@ const COMPOSE_INSTALL = `(() => {
   H.ring.compose = function (k) { C.ts[C.n & 65535] = window.__lkTs; C.n++; return c0.call(this, k); };
   return true;
 })()`;
+// Klatki narysowane (znacznik decyzji limitera) — odstępy w ms (tryb 'time': bez siatki vsync)
+const DRAWN_INSTALL = `(() => {
+  const L = window.FrameLimiter;
+  if (!L || window.__lkD) return !!L;
+  const D = window.__lkD = { ts: new Float64Array(65536), n: 0 };
+  const tick0 = L.tick;
+  L.tick = function (now) { const d = tick0.call(this, now); if (d) { D.ts[D.n & 65535] = now; D.n++; } return d; };
+  return true;
+})()`;
 const STATE = `(() => {
-  const L = window.FrameLimiter, H = window.RenderWorkerHost, C = window.__lkC, B = window.__menuBackdrop;
+  const L = window.FrameLimiter, H = window.RenderWorkerHost, C = window.__lkC, B = window.__menuBackdrop, D = window.__lkD;
   if (H && typeof H.readStats === 'function') H.readStats();
+  const w = L && L.wake;
   return { t: performance.now(), f: window.__frameId | 0, ticks: L ? L.stats.ticks : 0, drawn: L ? L.stats.drawn : 0,
     hist: L ? [...L.stats.hist] : [], mode: L ? L.mode : '', every: L ? L.every : 0, hz: L ? +L.hz.toFixed(2) : 0,
     opis: L ? L.describe() : '', composed: H ? H.composed : -1, age: H && H.pacer ? H.pacer.age : -1, cn: C ? C.n : 0,
-    menuFrames: B && B.stats ? B.stats.frames : -1,
-    wake: L && L.wake ? { marginMs: +L.wake.marginMs.toFixed(2), sleeps: L.wake.sleeps, spins: L.wake.spins,
-      late: Array.from(L.wake.late.subarray(0, Math.min(32, L.wake.lateN))).sort((x, y) => x - y) } : null,
+    dn: D ? D.n : 0, menuFrames: B && B.stats ? B.stats.frames : -1,
+    wake: w ? { strategy: w.strategy, marginMs: +w.marginMs.toFixed(2), sleeps: w.sleeps, hops: w.hops, spins: w.spins,
+      wakes: w.wakes, workerMsgs: w.workerMsgs, workerBusyMs: w.workerBusyMs, watchdogs: w.watchdogs, workerError: w.workerError,
+      late: Array.from(w.late.subarray(0, Math.min(w.late.length, w.lateN))).sort((x, y) => x - y) } : null,
     gpu: H ? +(H.stats[0] || 0).toFixed(2) : null, gpuC: H ? +(H.stats[1] || 0).toFixed(2) : null };
 })()`;
+const drawnTs = (from, to) => ev(`(() => { const D = window.__lkD; if (!D) return []; const o = [];
+  for (let i = Math.max(${from}, D.n - 65535); i < ${to}; i++) o.push(D.ts[i & 65535]); return o; })()`);
+function gapStats(ts, fps) {
+  const g = [];
+  for (let i = 1; i < ts.length; i++) { const d = ts[i] - ts[i - 1]; if (d > 0 && d < 200) g.push(d); }
+  if (!g.length) return null;
+  g.sort((x, y) => x - y);
+  const q = (p) => +g[Math.min(g.length - 1, Math.floor(p * (g.length - 1)))].toFixed(2);
+  const I = fps > 0 ? 1000 / fps : 0;
+  return { p1: q(0.01), p50: q(0.5), p90: q(0.9), p99: q(0.99), maks: +g[g.length - 1].toFixed(2),
+    ...(I ? { ponadI2: +(g.filter((d) => d > I + 2).length / g.length).toFixed(4) } : {}) };
+}
 const composeTs = (from, to) => ev(`(() => { const C = window.__lkC; if (!C) return []; const o = [];
   for (let i = Math.max(${from}, C.n - 65535); i < ${to}; i++) o.push(C.ts[i & 65535]); return o; })()`);
 
@@ -208,36 +246,55 @@ function battleExpr([NF = 0, ND = 0, NB = 0, NS = 0]) {
   })()`;
 }
 
-async function measure(limit, kind) {
-  await ev(`(() => { GraphicsQuality.apply({ frameLimit: '${limit}' }); return true; })()`);
+async function measure(limit, kind, budzik = null) {
+  // budzik: 'nazwa' albo 'nazwa:ms' — końcówka czekania pętlą wątku ('worker') / kolejką ('sen'); strojenie domyślne
+  // przywracane przed każdym oknem
+  const [bzName, bzSpin] = String(budzik || '').split(':');
+  await ev(`(() => { GraphicsQuality.apply({ frameLimit: '${limit}' });
+    const w = FrameLimiter.wake; if (w && w.tune) { window.__lkTune0 = window.__lkTune0 || { ...w.tune }; Object.assign(w.tune, window.__lkTune0); }
+    ${bzName ? `w.setStrategy('${bzName}');` : ''}
+    ${bzSpin !== undefined && bzSpin !== '' ? `w.tune[w.strategy === 'worker' ? 'workerSpinMs' : 'senSpinMs'] = ${Number(bzSpin)};` : ''}
+    return true; })()`);
   await sleep(2000);
   const a = await ev(STATE);
+  const ca = await cpuMetrics();
   const t0 = Date.now();
   await sleep(OKRES * 1000);
   const b = await ev(STATE);
+  const cb = await cpuMetrics();
   const t1 = Date.now();
   const s = (b.t - a.t) / 1000;
   const g = smi.okno(t0, t1);
   const obce = await obceProcesy();
   const row = {
-    limit, kind, s: +s.toFixed(2), ...(obce.length ? { obce: obce.length } : {}),
+    limit, kind, ...(budzik ? { budzik } : {}), s: +s.toFixed(2), ...(obce.length ? { obce: obce.length } : {}),
     gpuZajetosc: g ? g.zajetosc : null, gpuMocW: g ? g.mocW : null, gpuZegarMHz: g ? g.zegarMHz : null,
     tryb: b.mode, coN: b.every, hz: b.hz, opis: b.opis
   };
+  // CPU [% rdzenia]: wątek strony (czas CPU, czas zadań), cały proces renderera (wątek strony, worker renderu, budzik)
+  const cs = cb.Timestamp > ca.Timestamp ? cb.Timestamp - ca.Timestamp : s;
+  const pc = (k) => (Number.isFinite(cb[k]) && Number.isFinite(ca[k]) ? +((cb[k] - ca[k]) / cs * 100).toFixed(1) : null);
+  row.cpu = { watekStronyPct: pc('ThreadTime'), zadaniaStronyPct: pc('TaskDuration'), skryptStronyPct: pc('ScriptDuration'), procesPct: pc('ProcessTime') };
   if (kind === 'gra') {
     const cts = await composeTs(a.cn, b.cn);
     Object.assign(row, {
       klatekS: +((b.f - a.f) / s).toFixed(1), rafS: +((b.ticks - a.ticks) / s).toFixed(1),
       zlozenS: b.composed >= 0 ? +((b.composed - a.composed) / s).toFixed(1) : null,
       odstepyKlatek: diffHist(a.hist, b.hist), odstepyZlozen: histVsync(cts, b.hz), wiek: b.age,
+      odstepyMs: gapStats(await drawnTs(a.dn, b.dn), Number(limit) || 0),
       gpuMsWorkera: b.gpu, gpuComputeMsWorkera: b.gpuC
     });
-    // budzik bez VSync (tryb 'time'): margines snu, spóźnienia setTimeout (p50 / p90 / maks. z 32 ostatnich), sny / s,
-    // dopięcia kolejką MessageChannel / s
+    // budzik bez VSync (tryb 'time'): strategia, spóźnienia budzeń względem chwili należnej (p50 / p90 / maks. z 64
+    // ostatnich), sny setTimeout strony / s, zadania kolejki MessageChannel / s i dopięcia na klatkę, pętla wątku budzika
     if (b.mode === 'time' && b.wake && a.wake) {
       const l = b.wake.late, q = (p) => (l.length ? +l[Math.min(l.length - 1, Math.floor(p * (l.length - 1)))].toFixed(2) : null);
-      row.budzik = { marginesMs: b.wake.marginMs, spoznienieMs: [q(0.5), q(0.9), q(1)], snyS: +((b.wake.sleeps - a.wake.sleeps) / s).toFixed(1),
-        dopieciaS: Math.round((b.wake.spins - a.wake.spins) / s) };
+      const dw = (k) => b.wake[k] - a.wake[k];
+      const frames = b.drawn - a.drawn;
+      row.budzikStat = { strategia: b.wake.strategy, marginesMs: b.wake.marginMs, spoznienieMs: [q(0.5), q(0.9), q(1)],
+        snyS: +(dw('sleeps') / s).toFixed(1), kolejkaS: Math.round((dw('hops') + dw('spins')) / s),
+        dopieciaNaKlatke: frames > 0 ? +(dw('spins') / frames).toFixed(1) : null, budzeniaS: +(dw('wakes') / s).toFixed(1),
+        watekMsNaKlatke: dw('wakes') > 0 ? +(dw('workerBusyMs') / dw('wakes')).toFixed(2) : 0,
+        ...(dw('watchdogs') ? { straznik: dw('watchdogs') } : {}), ...(b.wake.workerError ? { blad: b.wake.workerError } : {}) };
     }
   } else {
     row.klatekTlaS = b.menuFrames >= 0 ? +((b.menuFrames - a.menuFrames) / s).toFixed(1) : null;
@@ -259,7 +316,8 @@ try {
   if (BITWA) report.bitwa = await ev(battleExpr(BITWA));
   if (BITWA) { console.log('bitwa:', JSON.stringify(report.bitwa)); await sleep(6000); }
   if (TRYB === 'worker' && !await ev(COMPOSE_INSTALL)) throw new Error('brak RenderWorkerHost.ring');
-  for (const l of LIMITY) report.gra.push(await measure(l, 'gra'));
+  if (!await ev(DRAWN_INSTALL)) throw new Error('brak FrameLimiter');
+  for (const l of LIMITY) for (const bz of (l === 'off' ? [null] : BUDZIKI)) report.gra.push(await measure(l, 'gra', bz));
   await ev(`(() => { GraphicsQuality.apply({ frameLimit: 'off' }); return true; })()`);
   report.koniec = await ev(STATE);
 } catch (err) {

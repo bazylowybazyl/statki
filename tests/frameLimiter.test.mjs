@@ -62,7 +62,7 @@ test('239,76 Hz, limit 60: co 4. klatka (59,94 kl/s) — sam akumulator czasu co
   assert.ok((ra.gaps.get(3) || 0) >= 10, `odstępy po 3 vsynce: ${ra.gaps.get(3) || 0}`);
 });
 
-test('chybione vsynce: klatka narysowana dłuższa niż okres — takt zostaje równy (okres z minimum odstępów)', () => {
+test('chybione vsynce: klatka narysowana dłuższa niż okres — takt zostaje równy (okres = mediana skupiska najkrótszych odstępów)', () => {
   // 4,5 ms > 4,17 ms — każda narysowana chybia następnego vsynca: rAF co 8,33 ms, każde wywołanie rysuje
   const heavy = new FrameLimiter({ fps: 120 });
   const r = runVsync(heavy, { hz: 240, cost: () => 4.5 });
@@ -223,4 +223,67 @@ test('pojedynczy fałszywie krótki odstęp nie wyznacza okresu', () => {
   for (let i = 0; i < 40; i++, t += V) lim.tick(t);
   assert.ok(Math.abs(lim.hz - 240) < 1, `oszacowanie ${lim.hz.toFixed(1)} Hz`);
   assert.equal(lim.mode, 'nth');
+});
+
+test('bypass: zegar wirtualny harnessu (znaczniki stoją albo skaczą o krok) — każde wywołanie rysuje, stan limitu bez zmian', () => {
+  let virtual = false;
+  const lim = new FrameLimiter({ fps: 120 });
+  lim.bypass = () => virtual;
+  const V = 1000 / 240;
+  let t = 1000;
+  for (let i = 0; i < 100; i++, t += V) lim.tick(t);
+  assert.equal(lim.mode, 'nth');
+  const st = { ticks: lim.stats.ticks, drawn: lim.stats.drawn };
+  // zegar 'frozen': ten sam znacznik — bez ominięcia limit po klatce narysowanej nie rysowałby już nic (since = 0)
+  virtual = true;
+  let drawn = 0;
+  for (let i = 0; i < 20; i++) drawn += lim.tick(t) ? 1 : 0;
+  // zegar 'step': krok 16,67 ms na klatkę
+  for (let i = 0; i < 20; i++) drawn += lim.tick(t += 1000 / 60) ? 1 : 0;
+  assert.equal(drawn, 40);
+  assert.deepEqual({ ticks: lim.stats.ticks, drawn: lim.stats.drawn }, st, 'statystyki bez wywołań harnessu');
+  assert.ok(Math.abs(lim.hz - 240) < 0.5, 'okres ekranu z prawdziwych odstępów');
+  // zegar wraca do 'real': przerwa > 100 ms — klatka od razu, potem co 2. klatka ekranu
+  virtual = false;
+  const after = [];
+  for (let i = 0; i < 8; i++) after.push(lim.tick(t += V) ? 1 : 0);
+  assert.deepEqual(after, [1, 0, 1, 0, 1, 0, 1, 0]);
+  // bez ominięcia (stan sprzed poprawki): ten sam znacznik po klatce narysowanej — tło stoi
+  const raw = new FrameLimiter({ fps: 120 });
+  let r = 1000;
+  for (let i = 0; i < 100; i++, r += V) raw.tick(r);
+  while (!raw.tick(r)) r += V;
+  let frozen = 0;
+  for (let i = 0; i < 20; i++) frozen += raw.tick(r) ? 1 : 0;
+  assert.equal(frozen, 0);
+});
+
+test('forceNext: najbliższe wywołanie rysuje (zmiana rozmiaru okna wyczyściła kanwę), takt liczy się od niego', () => {
+  const V = 1000 / 240;
+  for (const [fps, vsync] of [[120, true], [60, true], [144, true], [120, false]]) {
+    const name = `${fps} ${vsync ? 'z VSync' : 'bez VSync'}`;
+    const a = new FrameLimiter({ fps, vsync }), b = new FrameLimiter({ fps, vsync });
+    let t = 1000;
+    for (let i = 0; i < 200; i++, t += V) { a.tick(t); b.tick(t); }
+    while (!(a.tick(t) & b.tick(t))) t += V;   // klatka narysowana w obu
+    t += V;
+    b.forceNext();
+    assert.equal(a.tick(t), false, `${name}: bez wymuszenia wywołanie po klatce narysowanej pominięte`);
+    assert.equal(b.tick(t), true, `${name}: po forceNext — klatka`);
+    // następna narysowana po wymuszonej — po pełnym interwale limitu (w okresach ekranu: N albo najbliższy vsync)
+    let k = 0;
+    do { t += V; k++; } while (!b.tick(t));
+    if (b.mode === 'nth') assert.equal(k, b.every, `${name}: co ${b.every}. od wymuszonej`);
+    else assert.ok(k * V >= 1000 / fps - Math.max(0.5 * b.periodMs, 0.5) - 1e-9, `${name}: ${(k * V).toFixed(2)} ms po wymuszonej`);
+  }
+  // wymuszenie zużywa się raz; bez limitu — bez zmian
+  const lim = new FrameLimiter({ fps: 120 });
+  let t = 1000;
+  for (let i = 0; i < 100; i++, t += V) lim.tick(t);
+  while (!lim.tick(t)) t += V;
+  lim.forceNext();
+  assert.deepEqual([lim.tick(t + V), lim.tick(t + 2 * V)], [true, false]);
+  const off = new FrameLimiter();
+  off.forceNext();
+  assert.equal(off.tick(1000), true);
 });

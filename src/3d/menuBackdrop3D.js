@@ -195,15 +195,23 @@ export class MenuBackdrop3D {
   }
 
   // Limit klatek z opcji grafiki (src/render/frameLimiter.js): pętla tła rysuje najwyżej `fps` klatek na sekundę
-  // (0 — bez limitu); `vsync` — VSync tego uruchomienia (false: limit czasem). Strona: blok „OPCJE GRAFIKI”
-  // (tryb worker — przez pełnomocnika, op `frameLimit`).
-  setFrameLimit(fps, vsync = true) {
+  // (0 — bez limitu); `vsync` — VSync tego uruchomienia (false: limit czasem); `bypass` — () => true: klatka bez limitu
+  // (strona w trybie off: harness narzędzi z zegarem wirtualnym, jak pętla gry). Strona: blok „OPCJE GRAFIKI”
+  // (tryb worker — przez pełnomocnika, op `frameLimit`, bez `bypass`: rAF i zegar workera są prawdziwe).
+  setFrameLimit(fps, vsync = true, bypass = null) {
     if (!this._limiter) {
       if (!(Number(fps) > 0)) return;
       this._limiter = new FrameLimiter();
     }
     this._limiter.setFps(fps);
     this._limiter.setVsync(vsync);
+    this._limiter.bypass = typeof bypass === 'function' ? bypass : null;
+  }
+
+  // Najbliższa klatka pętli tła bez limitu (strona w trybie off: zmiana rozmiaru okna wyczyściła kanwę Core3D —
+  // pominięta klatka zostawiłaby ją pustą do następnej w takcie limitu).
+  forceNextFrame() {
+    if (this._limiter) this._limiter.forceNext();
   }
 
   // Start gry: najazd kamery na ring, trwa do stop(). dolly: false — kamera stoi, tylko planeta wraca na środek kadru

@@ -20,7 +20,7 @@ import { HALO_QUALITY } from '../src/3d/haloRing/haloRingConfig.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
 import { HALO_RING_PLANETS } from '../src/game/haloRingPlanets.js';
 import { Core3D, MENU_BACKDROP_LAYER } from '../src/3d/core3d.js';
-import { MENU_SHOT } from '../src/3d/menuBackdrop3D.js';
+import { MENU_SHOT, MenuBackdrop3D } from '../src/3d/menuBackdrop3D.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from '../src/3d/menuBackdrop3D.tsl.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -347,4 +347,46 @@ test('halo Ziemi i Marsa w grze: poświata limbu z modelu atmosfery menu, gaśni
   assert.match(src, /if \(this\.isRingAnchored\) \{[^}]*createRingAtmosphere\(name, resolveRingPlanetWorldRadius\(this\.data\)\)/);
   assert.match(src, /RING_ATMOSPHERE_TUNE = Object\.freeze\(\{\s*earth: Object\.freeze\(\{ height: 1250/, 'wysokość powłoki jak w tle menu (R + 1250)');
   assert.match(src, /atmU\.uSunDir\.value\.set\(dx \/ len, dy \/ len, 0\)/, 'słońce w płaszczyźnie gry');
+});
+
+test('limit klatek tła menu (2026-10-30): zegar wirtualny harnessu omija limit jak pętla gry, po zmianie rozmiaru okna klatka od razu', () => {
+  const prevRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = () => 1;   // _frame zamawia następną klatkę — w teście woła ją pętla niżej
+  try {
+    const bd = new MenuBackdrop3D();
+    bd.running = true;
+    bd.active = true;
+    const dts = [];
+    bd.renderFrame = (dt) => { dts.push(dt); };
+    let virtual = false;
+    bd.setFrameLimit(120, true, () => virtual);
+    const V = 1000 / 240;
+    let t = 1000;
+    for (let i = 0; i < 200; i++, t += V) bd._frame(t);
+    assert.ok(dts.length >= 100 && dts.length <= 106, `co 2. klatka ekranu po rozbiegu: ${dts.length}`);
+    assert.ok(Math.abs(dts[dts.length - 1] - 2 * V / 1000) < 1e-9, 'dt klatki obejmuje pominiętą');
+    // zegar wirtualny harnessu ('frozen' — znaczniki stoją): każda klatka tła, jak pętla gry (FrameLimiter.bypass)
+    virtual = true;
+    dts.length = 0;
+    for (let i = 0; i < 10; i++) bd._frame(t);
+    assert.equal(dts.length, 10);
+    // zegar 'real': limit wraca; zmiana rozmiaru okna (strona, tryb off) — klatka zaraz po narysowanej
+    virtual = false;
+    dts.length = 0;
+    while (!dts.length) bd._frame(t += V);
+    bd._frame(t += V);
+    assert.equal(dts.length, 1, 'bez wymuszenia — w takcie limitu');
+    bd._frame(t += V);
+    assert.equal(dts.length, 2);
+    bd.forceNextFrame();
+    bd._frame(t += V);
+    assert.equal(dts.length, 3, 'forceNextFrame — klatka od razu');
+    bd._frame(t += V);
+    assert.equal(dts.length, 3, 'następna znów w takcie limitu');
+    // pełnomocnik trybu worker nie podaje ominięcia — limiter bez bypass
+    bd.setFrameLimit(120, true);
+    assert.equal(bd._limiter.bypass, null);
+  } finally {
+    globalThis.requestAnimationFrame = prevRaf;
+  }
 });

@@ -53,7 +53,10 @@ Limit 120 przy 240 Hz: zajętość karty ~55–65% wartości bez limitu, moc −
 pracy nie zależy od liczby klatek (składanie obrazu w Chrome, spoczynek karty ~6%), a czas GPU klatki workera przy
 mniejszej liczbie klatek lekko rośnie (efekty z dłuższym krokiem).
 
-## Wyniki: bez VSync (atrapa Electrona)
+## Wyniki: bez VSync (atrapa Electrona, dawny budzik — kolejka)
+
+Budzik z 2026-10-29 (sen setTimeout do chwili należnej − margines z 90. percentyla spóźnień, reszta kolejką
+MessageChannel); od 2026-10-30 domyślnie wątek budzika — § „Budzik bez VSync”.
 
 | Limit | kl/s | GPU | Moc | Budzik |
 |---|---|---|---|---|
@@ -85,3 +88,68 @@ Menu (rAF workera): 120 → 115–117 kl/s.
    120 — 3 vsynce zamiast 4, limit 60 — 3 zamiast 4–8 i jedna przeskoczona strona).
 5. Przebiegi z 12:39–12:50 (dwa) nakładały się na cudze pomiary GPU (`gpu-pas-gra.mjs`, `gaz-kosmos-gra.mjs` innych
    sesji) — odrzucone; narzędzie ma od tego strażnika ciszy i oznacza okna, w których ruszył cudzy harness (`obce`).
+
+## Budzik bez VSync — kolejka, sen strony, wątek budzika (2026-10-30)
+
+Przegląd: dawny budzik przy limitach 120–240 dopinał czekanie kolejką MessageChannel — rdzeń CPU zajęty i
+~170–240 tys. MessageEvent/s (alokacje w gorącej pętli, praca GC), a opcja ma dawać ciszę i mniej prądu. Budzik
+przeszedł do `src/render/frameWake.js` z trzema strategiami (A/B: `?budzik=`, `FrameLimiter.wake.setStrategy`):
+`kolejka` (dawna), `sen` (setTimeout strony do chwili należnej, w górę do pełnej ms, bez dopinania) i `worker` (wątek
+budzika: sen setTimeout do chwili należnej − 1 ms, końcówka pętlą na wątku budzika, jeden komunikat na klatkę).
+Klatka zawsze z zadania wiadomości — setTimeout wołany w klatce nie jest zagnieżdżony (próg 4 ms).
+
+Pomiar: `node scripts/webgpu/limit-klatek-gra.mjs --takt 0 --bezVsync 1 --menuLimity brak --limity 120,240,60
+--budziki kolejka,sen,worker,worker:0 --okres 6` — atrapa Electrona bez VSync, tryb worker, 5120 × 1440, gra swobodna,
+okna 6 s po kolei w jednym przebiegu (bez cudzych harnessów). CPU z CDP `Performance.getMetrics` (% rdzenia): wątek
+strony (ThreadTime) i cały proces renderera (ProcessTime — z workerem renderu i wątkiem budzika). `worker:0` — wątek
+budzika bez końcówki pętlą (sen do chwili należnej w dół do pełnej ms, reszta < 1 ms pętlą).
+
+| Limit | Budzik | kl/s | Odstępy klatek p1 / p50 / p90 / p99 / maks. [ms] | Wątek strony | Proces | Zadania kolejki/s | Dopięcia na klatkę | Pętla wątku budzika [ms/klatkę] |
+|---|---|---|---|---|---|---|---|---|
+| 120 | kolejka | 120,0 | 8,23 / 8,33 / 8,36 / 8,44 / 8,63 | 27,7% | 187% | 33 910 | 282 | — |
+| 120 | sen | 120,0 | 6,99 / 8,49 / 9,03 / 9,96 / 10,5 | 12,8% | 90% | 120 | 0 | — |
+| 120 | **worker** | 120,0 | 8,13 / 8,33 / 8,35 / 8,55 / 9,93 | 12,0% | 94% | 0 | 0 | 0,97 |
+| 120 | worker:0 | 119,5 | 7,11 / 8,34 / 8,88 / 9,14 / 35,4 | 12,1% | 83% | 0 | 0 | 0,18 |
+| 240 | kolejka | 238,9 | 3,99 / 4,17 / 4,18 / 4,26 / 16,9 | 89,5% | 172% | 171 878 | 718 | — |
+| 240 | sen | 238,4 | 2,50 / 4,01 / 5,01 / 5,80 / 30,1 | 21,8% | 104% | 238 | 0 | — |
+| 240 | **worker** | 239,8 | 3,52 / 4,17 / 4,25 / 4,81 / 9,33 | 22,5% | 124% | 0 | 0 | 0,97 |
+| 240 | worker:0 | 239,4 | 2,95 / 4,17 / 4,78 / 5,21 / 18,8 | 21,5% | 110% | 0 | 0 | 0,18 |
+| 60 | kolejka | 60,0 | 16,60 / 16,67 / 16,70 / 16,73 / 16,77 | 15,1% | 81% | 22 017 | 366 | — |
+| 60 | sen | 60,1 | 14,54 / 16,57 / 17,54 / 18,46 / 33,5 | 8,3% | 75% | 60 | 0 | — |
+| 60 | **worker** | 59,9 | 13,37 / 16,67 / 16,77 / 19,92 / 48,2 | 9,2% | 84% | 0 | 0 | 0,79 |
+| 60 | worker:0 | 59,9 | 15,25 / 16,60 / 17,51 / 18,03 / 30,7 | 7,5% | 78% | 0 | 0 | 0,11 |
+
+Karta bez różnic między strategiami (120: 32–37%, 240: 54–55%, 60: 20–21%). Spóźnienia budzeń względem chwili
+należnej (p50 / p90): kolejka 0,01 / 0,07 ms, worker 0,04–0,05 / 0,08–0,1 ms, sen 1,0 / 1,5–1,8 ms (pełne ms budzika
+w górę + spóźnienie setTimeout strony), worker:0 0,1–0,4 / 0,8–1,1 ms (spóźnienie setTimeout wątku budzika).
+
+Wnioski:
+
+1. Wybór: `worker` (domyślny). Takt jak przy dopinaniu kolejką (mediana = interwał limitu, 90. percentyl +0,02–0,1
+   ms), wątek strony bez kręcenia: 27,7 → 12,0% rdzenia przy 120, 89,5 → 22,5% przy 240, zadania kolejki 34–172 tys./s
+   → 0, proces renderera −93 p.p. przy 120 i −47 p.p. przy 240. Koszt: pętla wątku budzika ~1 ms na klatkę (12% rdzenia
+   przy 120, 23% przy 240, 5% przy 60) — na osobnym wątku, bez zadań i alokacji.
+2. `sen` jest najtańszy (proces 90% przy 120), ale odstępy klatek rozrzucone o ±1–1,5 ms (p1–p99 7,0–10,0 ms przy
+   120, 2,5–5,8 ms przy 240) — budzik strony chodzi pełnymi ms i spóźnia się o ułamek ms. Zostaje zapasem: błąd wątku
+   budzika albo trzy strażniki z rzędu (brak odpowiedzi w 100 ms po chwili należnej) — `sen` do końca sesji.
+3. `worker:0` (bez końcówki pętlą): pętla 0,18 ms na klatkę, takt jak `sen` — końcówka 1 ms jest tym, co daje równy
+   takt; spóźnienia setTimeout wątku budzika (p90 ~1 ms) mieszczą się w niej.
+4. Pojedyncze długie odstępy (20–48 ms przy 60, do 30 ms przy 240) we wszystkich strategiach poza kolejką: komunikat
+   budzika i budzik strony czekają, gdy wątek strony robi coś innego. Kolejka trzyma wątek zajęty i w tym przebiegu
+   ogona nie miała — przyczyna nie sprawdzona (podejrzenie: praca w czasie bezczynności wątku, np. GC). Okna 6 s —
+   ogony to pojedyncze klatki; sprawdzić w prawdziwym Electronie bez VSync.
+5. Dawny budzik w tym przebiegu miał przy 120 margines 1 ms (spóźnienia setTimeout strony małe: p90 0,07 ms), więc
+   kolejka dopinała ~1 ms na klatkę; 2026-10-29 spóźnienia budzika strony miały p90 5,6–6,9 ms i margines 6 ms — wtedy
+   kolejką szło całe czekanie. Koszt dawnego budzika zależał od chwili; wątek budzika — nie.
+
+## Poprawki po przeglądzie (2026-10-30)
+
+- Tło menu na stronie (tryb off) omija limit przy zegarze wirtualnym harnessu jak pętla gry: `FrameLimiter.bypass` —
+  funkcję podaje strona (`harnessClockVirtual`, trzeci argument `setFrameLimit`); przy zegarze `frozen` co N-ta klatka
+  zatrzymywała obraz tła (znacznik stoi, odstęp od ostatniej narysowanej 0).
+- Zmiana rozmiaru okna w trybie off: handler `resize` czyści kanwę `#c` i kanwę Core3D, a klatka pominięta przez limit
+  ich nie odrysowywała (miganie do N−1 vsynców przy przeciąganiu okna) — `frameLimitResized`: najbliższa klatka gry
+  i tła menu bez limitu (`forceNext`), bez VSync zamówienie budzika przepada i klatka idzie w rAF tej aktualizacji
+  obrazu. Tryb worker bez zmian (resize nie czyści kanw obrazu i nakładek).
+- Rozdzielczość dynamiczna: budżet z celu, a przy niższym limicie — z limitu (`gfxDynamicBudgetFps`); cel 120 przy
+  limicie 60 obniżał skalę do budżetu 8,3 ms, choć gra rysowała 60 kl/s.
