@@ -565,10 +565,11 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     haloRingKey: () => null,
     warpArrivalDepthK,
     warpPlayerArriving,
-    // ujednolicony kadr skoku (port „Pęd”): zoom gracza = zoom odniesienia — człon ujednolicenia 0 (osobny test niżej)
+    // ujednolicony kadr skoku (port „Pęd”): zoom gracza = zoom odniesienia (domyślny × warpJumpFrame) — człon
+    // ujednolicenia 0 (osobny test niżej)
     W: 1600, H: 900,
     defaultShipZoom: () => 0.5,
-    cameraZoomBase: () => 0.5,
+    cameraZoomBase: () => 0.5 * tune.warpJumpFrame,
     warpBodyRadius: () => 1000,
     location: { search: '?warp=rulon&rulon=1' },
     // Hipercruise (E5): poza nim człon oddalenia 0.
@@ -652,12 +653,14 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
   };
   scope.playerWarpArrivalLive = loadIndexFunction(html, 'function playerWarpArrivalLive() {', 'playerWarpArrivalLive', scope);
   const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
-  const zRef = defaultShipZoom(1600, 1800, tune, 0.035, 3.2);
+  // kadr skoku warpa gracza dalej niż domyślny zoom statku (2026-10-29: × warpJumpFrame)
+  const zRef = defaultShipZoom(1600, 1800, tune, 0.035, 3.2) * tune.warpJumpFrame;
+  assert.ok(tune.warpJumpFrame > 0.2 && tune.warpJumpFrame < 0.8, 'skok — kamera dalej niż domyślny zoom statku');
   for (let i = 0; i < 48; i++) { scope.warp.charge = Math.min(0.8, (i + 1) / 60); update(1 / 60); }
   scope.warp.state = 'active';
   for (let i = 0; i < 120; i++) update(1 / 60);
   const w = scope._cameraWarpInput;
-  assert.equal(w.zoomRef, zRef);
+  assert.ok(Math.abs(w.zoomRef - zRef) < 1e-15, `${w.zoomRef} vs ${zRef}`);
   assert.equal(w.zoomBase, 0.2);
   // każdy skok ma cel albo punkt końca (DECYZJE-2 T2): bez ciała celu — punkt (kadr przylotu K1 bez odsuwania)
   assert.equal(w.arrivalDist, 0, 'skok bez ciała celu — punkt');
@@ -730,7 +733,8 @@ test('stery fregaty zwiadu: kamera prowadzi fregatę — wyprzedzenie z jej prę
   assert.match(render, /const vwx = scouting \? \(Number\(scoutSn\.vx\) \|\| 0\) : ship\.vel\.x;[\s\S]{0,200}?rollToScreen\(vwx, vwy, rigRoll, _rollTmp\);\s*rigIn\.velX = vScr\.x;/);
   assert.match(render, /rigIn\.maxSpeed = scouting \? Math\.max\(100, Number\(scoutSn\.maxSpeed\) \|\| 400\) : hullVmax;/);
   assert.match(render, /rigIn\.mode = scouting \? 'never' : OPTIONS\.cameraLook;/);
-  assert.match(render, /rigIn\.leadGain = scouting \? cameraRigTune\.scoutLead : NaN;/);
+  // skok warpa gracza: mniejsze wyprzedzenie (warpJumpLead — statek bliżej środka kadru, 2026-10-29)
+  assert.match(render, /rigIn\.leadGain = scouting \? cameraRigTune\.scoutLead : \(playerWarpCameraBusy\(\) \? cameraRigTune\.warpJumpLead : NaN\);/);
   // kadr = prowadzony okręt + offset riga (dawniej offset zerowany — fregata zawsze na środku)
   assert.match(render, /const offW = rollToWorld\(cameraRig\.offsetX \/ zoomSafe, cameraRig\.offsetY \/ zoomSafe, rigRoll, _rollTmp\);\s*let rigX = followX \+ offW\.x;/);
   assert.doesNotMatch(render, /rigX \+= \(scoutCamLast\.x - rigX\) \* scoutCamW;/);

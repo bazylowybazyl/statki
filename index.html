@@ -29561,7 +29561,9 @@
         w.arrivalDist = -1;
         w.arrivalDepthK = 0;
       } else {
-        w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
+        // kadr skoku dalej niż domyślny zoom statku (2026-10-29, user: „kamera jest za blisko na statek” — warpJumpFrame)
+        w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom)
+          * (Number(cameraRigTune.warpJumpFrame) || 1);
         // Dolot jak soczewka świata (warpLensPhase.js: warpPlayerArriving — ślizg albo hamowanie grawitacyjne): wyjście
         // bez rampy też zatrzaskuje kadr przylotu.
         w.arriving = warpPlayerArriving(warp);
@@ -31110,7 +31112,8 @@
         rigIn.velY = vScr.y;
         rigIn.maxSpeed = scouting ? Math.max(100, Number(scoutSn.maxSpeed) || 400) : hullVmax;
         rigIn.mode = scouting ? 'never' : OPTIONS.cameraLook;
-        rigIn.leadGain = scouting ? cameraRigTune.scoutLead : NaN;
+        // skok warpa gracza (ładowanie, lot, rampa, ślizg): mniejsze wyprzedzenie — statek bliżej środka kadru (warpJumpLead)
+        rigIn.leadGain = scouting ? cameraRigTune.scoutLead : (playerWarpCameraBusy() ? cameraRigTune.warpJumpLead : NaN);
         // Hipercruise (kadr za statkiem, wyprzedzenie na maksimum): nad pasami HUD zostaje CAŁY kadłub z dyszami, nie sam
         // środek — do pasów półwymiar kadłuba w pionie ekranu; waga gładka (zacisk kadru w rigu skakałby przy zmianie).
         const hcInsetW = stepHyperInsetWeight(frameDt);

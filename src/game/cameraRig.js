@@ -122,7 +122,14 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   // (±10% → ±3%), drżenie rozruchu hyperChargeShakePx (zamiast warpChargeShakePx: 4 px przy 12 Hz przez 1–2 s).
   hyperKickScale: 0.3,
   hyperZoomPulse: 0.3,
-  hyperChargeShakePx: 0
+  hyperChargeShakePx: 0,
+  // KADR SKOKU WARPA GRACZA (2026-10-29, user: „kamera jest za blisko na statek, trzeba ją oddalić”): zoom odniesienia skoku
+  // (input.zoomRef — index.html: updateCameraWarpKick) = domyślny zoom statku × warpJumpFrame, w skoku × warpZoomOut —
+  // statek ~10% wysokości kadru zamiast ~20%; hipercruise bez zmian (bez zoomRef — zoom gracza × warpZoomOut).
+  warpJumpFrame: 0.5,
+  // wyprzedzenie w skoku warpa gracza (ułamek pół ekranu, zamiast mieszanki postaw navLead / combatLead) — statek bliżej
+  // środka kadru, świat płynie wokół niego (index.html: rigIn.leadGain przy playerWarpCameraBusy)
+  warpJumpLead: 0.22
 });
 
 // Zakresy strojenia (sanityzacja wartości z konsoli i testów).
@@ -175,7 +182,9 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   warpJumpRollOmega: [0.5, 12],
   hyperKickScale: [0, 1],
   hyperZoomPulse: [0, 1],
-  hyperChargeShakePx: [0, 16]
+  hyperChargeShakePx: [0, 16],
+  warpJumpFrame: [0.2, 1],
+  warpJumpLead: [0, 0.8]
 });
 
 // Impulsy kopu warpa (s): narastanie i zanik — stałe dema (dema/warp-webgpu/scenes.js).
