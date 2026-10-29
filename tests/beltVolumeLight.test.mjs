@@ -122,3 +122,41 @@ test('compute(): kernel z przełącznika, liczba wątków z liczby kolumn; rozgr
   v.compute();
   assert.equal(calls.length, 0);
 });
+
+test('drabina kolumny ośrodka: przy ruchu zoomu siatka froxeli stoi w świecie (przeskok tylko na stopniu, histereza)', () => {
+  const v = makeVolume();
+  const at = (zoom, camX = 15000.3, camY = -9000.7) => {
+    v.update({ camX, camY, zoom, viewW: 5120, viewH: 1440, time: 0, originX: 0, originY: 0 });
+    return { cell: v.U.cell.value.x, x0: v.medium.U.origin.value.x, y0: v.medium.U.origin.value.y, fine: v.U.fine.value };
+  };
+  const keep = VOLUME_LIGHT_TUNE.cellLadder;
+  try {
+    VOLUME_LIGHT_TUNE.cellLadder = true;
+    const a = at(0.341);
+    const needAt = (z) => Math.max(v.cfg.cellPx / z, 2 * (2560 / z) * 1.08 / (v.NX - 3), 2 * (720 / z) * 1.08 / (v.NY - 3));
+    const need = needAt(0.341);
+    assert.ok(a.cell >= need - 1e-9 && a.cell < need * 1.1, `kolumna ${a.cell} pokrywa kadr (potrzebna ${need})`);
+    assert.ok(Math.abs(Math.log2(a.cell) * 8 - Math.round(Math.log2(a.cell) * 8)) < 1e-9, 'stopień 2^(j/8)');
+    // sprężyna zoomu po ząbku kółka: kilka klatek po < 1% — kolumna i róg siatki bez zmian (dawniej przesunięcie fazy)
+    for (const z of [0.3405, 0.3401, 0.3398, 0.3402]) {
+      const b = at(z);
+      assert.equal(b.cell, a.cell);
+      // róg siatki to wielokrotność kolumny (początek kadru może przejść o całą kolumnę) — kolumny w tych samych miejscach
+      const ph = (x) => Math.abs(x / a.cell - Math.round(x / a.cell));
+      assert.ok(ph(b.x0) < 1e-9 && ph(b.y0) < 1e-9 && Math.abs(b.x0 - a.x0) <= a.cell + 1e-9);
+      assert.ok(b.fine >= 0 && b.fine <= 1);
+    }
+    // oddalenie: stopień w górę od razu (pokrycie kadru), powrót w dół dopiero z histerezą
+    const far = at(0.341 / 1.2);
+    assert.ok(far.cell > a.cell);
+    assert.equal(at(0.341 / 1.2 * 1.02).cell, far.cell, 'histereza');
+    assert.equal(at(0.341).cell, a.cell);
+    // A/B: bez drabiny — kolumna wprost z kadru (dawniej)
+    VOLUME_LIGHT_TUNE.cellLadder = false;
+    assert.ok(Math.abs(at(0.341).cell - need) < 1e-9);
+    assert.notEqual(at(0.3405).cell, at(0.341).cell);
+  } finally {
+    VOLUME_LIGHT_TUNE.cellLadder = keep;
+  }
+  assert.equal(VOLUME_LIGHT_TUNE.cellLadder, true, 'domyślnie drabina');
+});

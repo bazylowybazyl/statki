@@ -17,12 +17,14 @@ export const SPACE_GAS_MAX_BLASTS = 8;
 export const SPACE_GAS_MAX_BOLTS = 24;
 const BLAST = 5;  // x, y (względem kotwicy), rozmiar (size fabryki wybuchów), wiek [s], życie [s]
 const BOLT = 5;   // x, y (względem kotwicy), kierunek lotu xy (jednostkowy), prędkość [j/s]
+/** Mapy obrazu obejmują kadr × ten zapas (co najmniej — drabina teksla dokłada do 12%, spaceGasMaps.js `place`). */
+export const SPACE_GAS_MAP_MARGIN = 1.08;
 /** Raster przekroju olbrzymów pasa (z = 0) na okno pola: bok [teksle], słowa 32-bitowe. */
 export const SPACE_GAS_RASTER = 128;
 const RASTER_WORDS = SPACE_GAS_RASTER * SPACE_GAS_RASTER / 32;
 
 const G = SPACE_GAS_ENV_RES;
-const HEADER = 32;
+const HEADER = 40;
 const ENV = HEADER;
 const JETS = ENV + G * G * 2;
 const BLASTS = JETS + SPACE_GAS_MAX_JETS * JET;
@@ -60,6 +62,15 @@ export const SPACE_GAS_IN = Object.freeze({
   rasterY0: 26,
   rasterTexel: 27,  // bok teksla [j.]
   rasterVer: 28,    // wersja rastra (zmiana = wysyłka tekstury)
+  // ZEGAR GRY (2026-10-29, zgłoszenie „gazy i mgła w polu asteroid mocno drżą”): krok pola = krok fizyki, obraz w chwili
+  // renderu kadłubów; render liczy przyrosty od ostatniej NARYSOWANEJ strony (worker pomija strony — dt jednej strony
+  // gubił ich czas). NaN — brak zegara (dt klatki jak dawniej).
+  simTime: 29,      // SimClock.sim — czas pozy fizycznej [s]
+  renderTime: 30,   // SimClock.render — czas pokazywany w tej klatce [s]
+  // OKNO POLA (2026-10-29, „przy oddaleniu nie widać wypychania, ogon szybko znika”): środek okna względem kotwicy —
+  // przy prowadzonym okręcie, przesunięty pod ślad, przycięty do kadru (src/game/spaceGasInput.js `placeGasWindow`)
+  winX: 31,
+  winY: 32,
   header: HEADER,
   envBase: ENV,                 // G·G par (obwiednia gazu, udział lodu)
   jetBase: JETS,

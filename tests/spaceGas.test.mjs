@@ -396,3 +396,283 @@ test('GK-5b: wybuchy (pierścień GameBlasts), pociski i raster olbrzyma w wejś
   assert.match(wgsl(sim.kAdvect), /spaceGasRaster|texture/);
   assert.equal((wgsl(sim.kAdvect).match(/var<storage/g) || []).length, 7, 'raster jako tekstura — bufory storage bez zmian');
 });
+
+// --- 2026-10-29: drżenie i oddalenie (zgłoszenie 5120 × 1440 @ 240 Hz: „gazy i mgła w polu asteroid mocno drżą”, „przy
+// oddaleniu nie widać wypychania, ogon szybko znika”) — zegar gry, ciśnienie przy przesunięciu okna, drabina teksla map,
+// okno przy okręcie, siatka obwiedni pod mapą, zanik niezależny od proporcji kadru ----------------------------------------
+
+const { SPACE_GAS_MAX_SUB } = await import('../src/3d/spaceGas/spaceGasSim.js');
+const { placeGasWindow, SPACE_GAS_INPUT_TUNE } = await import('../src/game/spaceGasInput.js');
+const { spaceGasTexelLevel, SPACE_GAS_TEXEL_STEPS } = await import('../src/3d/spaceGas/spaceGasMaps.js');
+const { SPACE_GAS_MAP_MARGIN, SPACE_GAS_SCENE } = await import('../src/3d/spaceGas/spaceGasLayout.js');
+
+test('zegar gry w polu: krok pola = krok fizyki (pominięte strony dochodzą), obraz w chwili renderu, pauza i cofnięty zegar bez kroków', () => {
+  const sim = makeSim();
+  let steps = 0;
+  const r = { compute(L) { steps += L.filter((k) => k.name.startsWith('spaceGasProject')).length; } };
+  const S = SPACE_GAS_SUB;
+  const w = () => (sim.image.cur === 1 ? sim.image.w1 : 1 - sim.image.w1);   // waga bieżącego kroku w obrazie
+  const clk = { sim: 600 * S, render: 600 * S - 0.5 * S };
+  sim.frame(r, 0.004, 0, 0, 0, 0, clk);
+  assert.equal(steps, 1, 'start okna: init + krok');
+  // 240 Hz: klatki bez kroku fizyki — bez kroków pola, obraz w chwili renderu kadłubów (alfa)
+  for (const a of [0.25, 0.5, 0.75]) {
+    clk.render = clk.sim - (1 - a) * S;
+    sim.frame(r, S / 4, 0, 0, 0, 0, clk);
+    assert.ok(Math.abs(w() - a) < 1e-9, `obraz ${w()} ≠ alfa ${a}`);
+    assert.ok(Math.abs(sim.acc - a * S) < 1e-12, 'acc = alfa · krok (faza wobec fizyki stała)');
+  }
+  assert.equal(steps, 1);
+  clk.sim += S; clk.render = clk.sim - S;
+  sim.frame(r, S / 4, 0, 0, 0, 0, clk);
+  assert.equal(steps, 2, 'krok fizyki → krok pola');
+  assert.ok(Math.abs(w()) < 1e-9, 'alfa 0 — obraz w poprzednim kroku');
+  // worker pominął strony: fizyka o 2 kroki dalej → 2 kroki pola (dawniej dt jednej strony — czas przepadał)
+  clk.sim += 2 * S; clk.render = clk.sim - 0.4 * S;
+  sim.frame(r, 0.004, 0, 0, 0, 0, clk);
+  assert.equal(steps, 4);
+  // sufit kroków na klatkę (przestój)
+  clk.sim += 10 * S; clk.render = clk.sim - 0.5 * S;
+  sim.frame(r, 0.1, 0, 0, 0, 0, clk);
+  assert.equal(steps, 4 + SPACE_GAS_MAX_SUB);
+  // pauza: sim stoi, render = sim — bez kroków, obraz w bieżącym kroku
+  clk.render = clk.sim;
+  sim.frame(r, 0, 0, 0, 0, 0, clk);
+  assert.equal(steps, 4 + SPACE_GAS_MAX_SUB);
+  assert.equal(w(), 1);
+  // zegar cofnięty (nowa sesja gry) — bez kroku, dalej od nowego miejsca
+  clk.sim = 3 * S; clk.render = 3 * S;
+  sim.frame(r, 0.004, 0, 0, 0, 0, clk);
+  assert.equal(steps, 4 + SPACE_GAS_MAX_SUB);
+  clk.sim += S; clk.render = clk.sim - 0.5 * S;
+  sim.frame(r, 0.004, 0, 0, 0, 0, clk);
+  assert.equal(steps, 5 + SPACE_GAS_MAX_SUB);
+  // rozgrzanie sceny: × 4 kroków na krok fizyki
+  sim.requestReset(1);
+  sim.frame(r, 0.004, 0, 0, 0, 0, clk);
+  const s0 = steps;
+  clk.sim += S; clk.render = clk.sim - 0.5 * S;
+  sim.frame(r, S, 0, 0, 0, 0, clk);
+  assert.equal(steps - s0, 4);
+});
+
+test('przesunięcie okna przenosi ciśnienie: kShift → velB.z → kShiftCopy → prsB (po 7 buforów storage), A/B shiftPrs', () => {
+  const sim = makeSim();
+  const shift = wgsl(sim.kShift), copy = wgsl(sim.kShiftCopy);
+  assert.equal((shift.match(/var<storage/g) || []).length, 7);
+  assert.equal((copy.match(/var<storage/g) || []).length, 7);
+  assert.match(shift, /spaceGasPrsB/, 'kShift czyta ciśnienie komórki źródłowej');
+  assert.match(copy, /spaceGasPrsB/, 'kShiftCopy pisze ciśnienie');
+  assert.equal(sim.tune.shiftPrs, 1);
+  assert.equal(sim.ST.shiftPrs.value, 1);
+  sim.tune.shiftPrs = 0;
+  sim.syncTune();
+  assert.equal(sim.ST.shiftPrs.value, 0, 'A/B: od zera jak dawniej');
+});
+
+test('okno pola przy okręcie: przy oddaleniu okręt i ślad w oknie (okno w mapie), domyślny kadr — okno obejmuje kadr, ciągłe', () => {
+  const T = SPACE_GAS_INPUT_TUNE;
+  const halfWin = 256 * 64 / 2;
+  const W = 5120, H = 1440, v = 507;
+  const b = Math.min(T.wakeFrac * halfWin, v * T.wakeSec);
+  const st = { wakeX: 0, wakeY: 0 };
+  // kamera wyprzedza okręt o ~880 px (rig, nawigacja); sprężyna ustalona
+  const place = (zoom) => {
+    const hw = W / 2 / zoom, hh = H / 2 / zoom, camX = 0.344 * W / 2 / zoom;
+    const ship = { on: true, x: 0, y: 0, vx: v, vy: 0 };
+    st.wakeX = 0; st.wakeY = 0;
+    for (let i = 0; i < 1200; i++) placeGasWindow(st, ship, camX, 0, hw, hh, halfWin, 1 / 60, {});
+    return { ...placeGasWindow(st, ship, camX, 0, hw, hh, halfWin, 1 / 60, {}), hw, hh, camX };
+  };
+  // domyślny kadr Atlasa (0,341): okno obejmuje mapę kadru (× 1,08) — jak dawniej (statek 2,6 km za środkiem)
+  {
+    const p = place(0.341);
+    const m = p.hw * SPACE_GAS_MAP_MARGIN, mh = p.hh * SPACE_GAS_MAP_MARGIN;
+    assert.ok(p.x - halfWin <= p.camX - m + 1e-6 && p.x + halfWin >= p.camX + m - 1e-6, 'kadr w oknie (x)');
+    assert.ok(p.y - halfWin <= -mh + 1e-6 && p.y + halfWin >= mh - 1e-6, 'kadr w oknie (y)');
+  }
+  // oddalenie: dawniej statek wypadał z okna od ~0,107, ślad w oknie: 3,8 km (0,2), 2,3 km (0,15), 0,9 km (0,12)
+  for (const zoom of [0.2, 0.15, 0.12, 0.0667, 0.035]) {
+    const p = place(zoom);
+    assert.ok(p.lead, `zoom ${zoom}: okręt prowadzi okno`);
+    assert.ok(Math.abs(p.x) < halfWin - 600, `zoom ${zoom}: okręt w oknie (środek ${Math.round(p.x)})`);
+    const rear = halfWin - p.x;              // ślad w oknie za rufą (okręt w 0, lot w +x)
+    const frameRear = p.hw - p.camX;         // do tylnej krawędzi kadru
+    assert.ok(rear >= Math.min(frameRear, halfWin + b) - 1, `zoom ${zoom}: ślad w oknie ${Math.round(rear)} j. (kadr ${Math.round(frameRear)})`);
+    const m = p.hw * SPACE_GAS_MAP_MARGIN;
+    assert.ok(m <= halfWin || (p.x - halfWin >= p.camX - m - 1e-6 && p.x + halfWin <= p.camX + m + 1e-6), `zoom ${zoom}: okno w mapie`);
+  }
+  // ciągłe w przejściu okno = mapa (luz 0)
+  const atHw = (hw) => placeGasWindow({ wakeX: -b, wakeY: 0 }, { on: true, x: 0, y: 0, vx: v, vy: 0 }, 2000, 0, hw, 800, halfWin, 0, {}).x;
+  const h0 = halfWin / SPACE_GAS_MAP_MARGIN;
+  assert.ok(Math.abs(atHw(h0 * 0.999) - atHw(h0 * 1.001)) < 20);
+  assert.equal(atHw(h0), 2000, 'okno = mapa: środek na kamerze');
+  // bez okrętu (RTS, kamera fabuły), okręt poza kadrem, A/B followShip — kamera (bez wstrząsu)
+  assert.equal(placeGasWindow({ wakeX: 0, wakeY: 0 }, null, 3000, -500, 40000, 11000, halfWin, 1 / 60, {}).x, 3000);
+  assert.equal(placeGasWindow({ wakeX: 0, wakeY: 0 }, { on: true, x: 90000, y: 0, vx: v, vy: 0 }, 3000, -500, 40000, 11000, halfWin, 1 / 60, {}).lead, false);
+  try {
+    T.followShip = false;
+    assert.equal(placeGasWindow({ wakeX: 0, wakeY: 0 }, { on: true, x: 0, y: 0, vx: v, vy: 0 }, 3000, -500, 40000, 11000, halfWin, 1 / 60, {}).x, 3000);
+  } finally { T.followShip = true; }
+  // sprężyna: narasta szybko, gaśnie wolno (postój — ślad zostaje w oknie), pauza trzyma
+  const s2 = { wakeX: 0, wakeY: 0 };
+  const ship = { on: true, x: 0, y: 0, vx: v, vy: 0 };
+  for (let i = 0; i < 60; i++) placeGasWindow(s2, ship, 0, 0, 40000, 11000, halfWin, 1 / 60, {});
+  assert.ok(-s2.wakeX > b * 0.6 && -s2.wakeX < b, `po 1 s: ${s2.wakeX}`);
+  const held = s2.wakeX;
+  placeGasWindow(s2, ship, 0, 0, 40000, 11000, halfWin, 0, {});
+  assert.equal(s2.wakeX, held, 'pauza');
+  ship.vx = 0;
+  for (let i = 0; i < 60; i++) placeGasWindow(s2, ship, 0, 0, 40000, 11000, halfWin, 1 / 60, {});
+  assert.ok(-s2.wakeX > -held * 0.8, `postój 1 s: przesunięcie gaśnie wolno (${s2.wakeX})`);
+});
+
+test('wejście: zegar gry i środek okna w nagłówku; siatka obwiedni obejmuje okno i mapę kadru przy oddaleniu (krok × 2^k, histereza)', () => {
+  const I = SPACE_GAS_IN, G = SPACE_GAS_ENV_RES;
+  const out = new Float64Array(I.size);
+  const st = createSpaceGasInputState();
+  const field = fakeField();
+  const base = { dt: 1 / 60, camX: 100000, camY: 0, halfW: 7507, halfH: 2111, field, sunX: 0, sunY: 0, windowCells: 256, cell: 64, simTime: 12.5, renderTime: 12.49 };
+  packSpaceGasFrame(out, st, base);
+  assert.equal(out[I.simTime], 12.5);
+  assert.equal(out[I.renderTime], 12.49);
+  assert.equal(out[I.envCell], 704, 'domyślny kadr: krok siatki okna jak dawniej');
+  assert.equal(out[I.winX], 100000, 'bez okrętu: okno przy kamerze');
+  assert.ok(I.winY < I.header && I.renderTime < I.header, 'zegar i okno w nagłówku (blok kopiuje go także bez gazu)');
+  packSpaceGasFrame(out, st, { ...base, simTime: undefined, renderTime: undefined });
+  assert.ok(Number.isNaN(out[I.simTime]) && Number.isNaN(out[I.renderTime]), 'bez zegara — NaN (render liczy z dt)');
+  // kamera bez wstrząsu: wstrząs nie rusza okna
+  packSpaceGasFrame(out, st, { ...base, camX: 100090, camNsX: 100000, camNsY: 0 });
+  assert.equal(out[I.winX], 100000);
+  // oddalenie 5120 × 1440 przy zoomie 0,0667 z okrętem: siatka obejmuje okno (z zapasem) i mapę kadru
+  const z = 0.0667, hw = 2560 / z, hh = 720 / z;
+  const o = { ...base, halfW: hw, halfH: hh, camNsX: 100000, camNsY: 0, focusOn: true, focusX: 100000 - 13200, focusY: 0, focusVX: 507, focusVY: 0 };
+  for (let i = 0; i < 240; i++) packSpaceGasFrame(out, st, o);
+  const c = out[I.envCell];
+  const inGrid = (x, y) => x >= out[I.envX0] && x <= out[I.envX0] + (G - 1) * c && y >= out[I.envY0] && y <= out[I.envY0] + (G - 1) * c;
+  const wx = out[I.winX], wy = out[I.winY], h = 128 * 64;
+  assert.ok(c > 704 && Math.log2(c / 704) % 1 === 0, `krok × 2^k (${c})`);
+  for (const [x, y] of [[wx - h * 1.1, wy - h * 1.1], [wx + h * 1.1, wy + h * 1.1],
+    [100000 - hw * 1.2, -hh * 1.2], [100000 + hw * 1.2, hh * 1.2]]) assert.ok(inGrid(x, y), `punkt ${Math.round(x)}, ${Math.round(y)} w siatce`);
+  assert.ok(Math.abs(wx - (100000 - 13200)) < h, 'okręt w oknie');
+  // przybliżenie: krok wraca do kroku okna (histereza: dopiero wyraźnie mniejsza rozpiętość)
+  packSpaceGasFrame(out, st, { ...o, halfW: hw * 0.95, halfH: hh * 0.95 });
+  assert.equal(out[I.envCell], c, 'histereza');
+  packSpaceGasFrame(out, st, { ...base });
+  assert.equal(out[I.envCell], 704);
+  // A/B: dawna siatka okna
+  try {
+    SPACE_GAS_INPUT_TUNE.envCover = false;
+    packSpaceGasFrame(out, st, o);
+    assert.equal(out[I.envCell], 704);
+  } finally { SPACE_GAS_INPUT_TUNE.envCover = true; }
+});
+
+test('drabina teksla map: przy ruchu zoomu siatka tekseli stoi w świecie (przeskok tylko na stopniu), mapa pokrywa kadr, zanik faktury ciągły', () => {
+  // stopień: najmniejszy 2^(j/8) ≥ potrzebny; w dół dopiero z histerezą
+  for (const need of [3.7, 21.09, 10.55, 64, 205.7]) {
+    const j = spaceGasTexelLevel(NaN, need);
+    assert.ok(2 ** (j / SPACE_GAS_TEXEL_STEPS) >= need - 1e-9 && 2 ** ((j - 1) / SPACE_GAS_TEXEL_STEPS) < need);
+    assert.equal(spaceGasTexelLevel(j, need * 0.99), j, 'histereza');
+    assert.equal(spaceGasTexelLevel(j, need * 1.2), spaceGasTexelLevel(NaN, need * 1.2), 'w górę od razu');
+  }
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = new SpaceGasMaps(sim, scene, { w: 768, h: 432 });
+  const camX = 1.6e6 + 0.37, camY = -2.3e5 + 0.11;   // pas: kotwica = Słońce, ~76 tys. tekseli od kamery
+  const at = (zoom) => {
+    const r = maps.place(camX, camY, 2560 / zoom, 720 / zoom, {});
+    return { tx: maps.U.texel.value.x, ty: maps.U.texel.value.y, mx: maps.U.min.value.x, my: maps.U.min.value.y, r, lod: maps.U.lodTexel.value };
+  };
+  const a = at(0.341);
+  assert.ok(a.r.w / 2 >= 2560 / 0.341 * SPACE_GAS_MAP_MARGIN - 1e-6 && a.r.w / 2 <= 2560 / 0.341 * SPACE_GAS_MAP_MARGIN * 1.13, 'mapa pokrywa kadr');
+  assert.ok(a.r.h / 2 >= 720 / 0.341 * SPACE_GAS_MAP_MARGIN - 1e-6);
+  // sprężyna zoomu po ząbku kółka: kolejne klatki o < 1% — ten sam teksel i ta sama siatka tekseli (dawniej 100% klatek
+  // z ruchem zoomu przesuwało próbkowanie o > ¼ teksla)
+  let lod = a.lod;
+  for (const zz of [0.3405, 0.3401, 0.3398, 0.3402, 0.3409]) {
+    const b = at(zz);
+    assert.equal(b.tx, a.tx);
+    assert.equal(b.ty, a.ty);
+    assert.equal(b.mx, a.mx);
+    assert.equal(b.my, a.my);
+    assert.notEqual(b.lod, lod, 'teksel zaniku faktury idzie za kadrem (ciągły)');
+    lod = b.lod;
+  }
+  assert.ok(Math.abs(at(0.2).lod - 2560 / 0.2 * SPACE_GAS_MAP_MARGIN * 2 / 768) < 1e-9);
+  // A/B: teksel wprost z kadru (dawniej)
+  maps.ladder = false;
+  const o1 = at(0.341), o2 = at(0.3405);
+  assert.ok(Math.abs(o1.tx - 2560 / 0.341 * SPACE_GAS_MAP_MARGIN * 2 / 768) < 1e-9);
+  assert.notEqual(o1.tx, o2.tx);
+});
+
+test('SpaceGas._update: dt z zegara renderu przez pominięte strony, środek okna z wejścia, dysze spoza okna pominięte; zanik 32:9', async () => {
+  const { SpaceGas, SPACE_GAS_TUNE, spaceGasViewFade } = await import('../src/3d/spaceGas/spaceGas.js');
+  const { EngineFrame } = await import('../src/3d/engineFrame.js');
+  const I = SPACE_GAS_IN;
+  const calls = [];
+  const g = Object.create(Object.getPrototypeOf(SpaceGas));
+  const sim = {
+    N: 256, cell: 64, srcN: 0, hullN: 0, image: { valid: true }, stats: { resets: 0, substeps: 0, dispatches: 0 }, src: [],
+    beginInputs() { this.srcN = 0; this.src.length = 0; }, addSource(...a) { this.src.push(a); this.srcN++; return true; },
+    setRaster() {}, requestReset() {},
+    frame(r, dt, cx, cy, wx, wy, clock) { calls.push({ dt, cx, cy, clock: clock ? { ...clock } : null }); }
+  };
+  Object.assign(g, {
+    input: new Float64Array(I.size), obstacles: null, tune: { ...SPACE_GAS_TUNE },
+    _serial: -1, _scene: SPACE_GAS_SCENE.belt, _rect: { cx: 0, cy: 0, w: 1, h: 1 }, _warpFade: 1, _renderTime: NaN, _clk: { sim: 0, render: 0 },
+    stats: { ...SpaceGas.stats }, dust: null, looks: {}, scene: { look: null, setEnvelope() {} }, sim,
+    layer: { L: { fade: { value: 1 } }, setVisible() {}, place() {} },
+    maps: { U: { sunDir: { value: { set() {} } }, simOn: { value: 0 }, amount: { value: 1 } }, place(cx, cy, hw, hh, out) { return out; }, kernels() { return []; } }
+  });
+  const IN = g.input;
+  IN[I.active] = 1; IN[I.scene] = SPACE_GAS_SCENE.belt; IN[I.halfW] = 2560 / 0.035; IN[I.halfH] = 720 / 0.035;
+  IN[I.camX] = 9000; IN[I.camY] = 0; IN[I.winX] = 5000; IN[I.winY] = -300;
+  const page = (k, skipped = false) => {
+    IN[I.serial] = k; IN[I.renderTime] = k / 240; IN[I.simTime] = Math.floor(k / 4) / 60; IN[I.dt] = 1 / 240;
+    if (!skipped) g._update({ renderer: { compute() {} } });
+  };
+  page(1); page(2); page(3, true); page(4, true); page(5);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].dt, 0, 'pierwsza strona — bez poprzedniej');
+  assert.ok(Math.abs(calls[1].dt - 1 / 240) < 1e-12);
+  assert.ok(Math.abs(calls[2].dt - 3 / 240) < 1e-12, 'pominięte strony workera nie gubią czasu (dawniej 1/240)');
+  assert.deepEqual(calls[2].clock, { sim: 1 / 60, render: 5 / 240 }, 'krok pola z zegara fizyki');
+  assert.equal(calls[2].cx, 5000, 'środek okna z wejścia, nie kamera');
+  assert.equal(calls[2].cy, -300);
+  assert.equal(g.stats.viewFade, 1, 'minZoom na 32:9 — gaz pełny');
+  assert.equal(g.stats.viewFade, spaceGasViewFade(IN[I.halfW], IN[I.halfH], SPACE_GAS_TUNE.fadeView));
+  // A/B: bez zegara — dt tej strony (dawniej)
+  g.tune.clock = false;
+  page(6); page(7, true); page(8);
+  assert.ok(Math.abs(calls.at(-1).dt - 1 / 240) < 1e-12 && calls.at(-1).clock === null);
+  g.tune.clock = true;
+  // dysze: stożek w oknie — źródło; stożek daleko poza oknem — pominięty (nie zabiera budżetu 64)
+  try {
+    EngineFrame.count = 2;
+    for (let k = 0; k < 2; k++) { EngineFrame.power[k] = 1; EngineFrame.spread[k] = 80; EngineFrame.dirX[k] = 1; EngineFrame.dirY[k] = 0; }
+    EngineFrame.x[0] = 5000; EngineFrame.y[0] = 300;            // scena: y = −y gry; kotwica 0
+    EngineFrame.x[1] = 5000 + 60000; EngineFrame.y[1] = 300;
+    page(9);
+    assert.equal(sim.src.length, 1);
+    assert.equal(g.stats.jetsSkipped, 1);
+  } finally { EngineFrame.count = 0; }
+  // A/B drabiny teksla z SpaceGas.tune (mapy biorą przełącznik co klatkę)
+  assert.equal(g.maps.ladder, true);
+  g.tune.texelLadder = false;
+  page(10);
+  assert.equal(g.maps.ladder, false);
+});
+
+test('zanik obrazu przy oddaleniu niezależny od proporcji kadru: ≤ 16:9 jak dawniej, 32:9 jak 16:9 tej samej wysokości', async () => {
+  const { spaceGasViewFade } = await import('../src/3d/spaceGas/spaceGas.js');
+  const f = [40000, 80000];
+  const old = (hw, hh) => 1 - Math.min(1, Math.max(0, (Math.max(hw, hh) - f[0]) / (f[1] - f[0])));
+  for (const [W, H] of [[1920, 1080], [2560, 1440], [1024, 768], [1080, 1920]]) {
+    for (const z of [0.5, 0.1, 0.035, 0.02, 0.012]) assert.equal(spaceGasViewFade(W / 2 / z, H / 2 / z, f), old(W / 2 / z, H / 2 / z));
+  }
+  for (const z of [0.1, 0.064, 0.05, 0.035, 0.02]) assert.equal(spaceGasViewFade(2560 / z, 720 / z, f), old(1280 / z, 720 / z), `5120 × 1440 = 2560 × 1440 (zoom ${z})`);
+  assert.equal(spaceGasViewFade(2560 / 0.035, 720 / 0.035, f), 1, 'minZoom na 32:9 — gaz pełny');
+  assert.ok(Math.abs(spaceGasViewFade(2560 / 0.035, 720 / 0.035, f, 0) - 0.171) < 0.01, 'A/B: dawny wzór (0,17)');
+});

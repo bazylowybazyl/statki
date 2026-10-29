@@ -5,11 +5,18 @@
 // dema wchodzi tylko to, co należy do pola: zasłona pyłu gęstego pola (kłęby, łuna od
 // strony słońca), NOC W POLU (łuna ~√T przesiana przez pole, ciemność z głębią) i błyski
 // burzy w chmurach (do 4 — pozycje ekranu z storm.js). Pełnoekranowy kwad w passie tła
-// Core3D PO mgławicy i gwiazdach gry (renderOrder −0,5, kolejka przezroczysta — gwiazdy
-// mają −1), przed skałami tła; mieszanie premultiplied „over”: niebo gry × (1 − a) +
+// Core3D PO mgławicy i gwiazdach gry; mieszanie premultiplied „over”: niebo gry × (1 − a) +
 // zasłona × a — jak `mix(space, veilCol, a)` dema, gdzie `space` było niebem dema.
 // Prześwity dema (pojedyncze gwiazdy w najrzadszych miejscach zasłony, gasnące w rdzeniu
 // pola) = mniejsze krycie w prześwicie: przebijają się gwiazdy gry.
+//
+// ZASŁONA PO SKAŁACH Z TESTEM GŁĘBI (2026-10-29, pole asteroid przy 5120 × 1440): kwad tuż przed daleką płaszczyzną
+// (VEIL_CLIP_Z) z testem głębi, w kolejce PO skałach tła (VEIL_RENDER_ORDER — skały 2–2,3, głębokie płaty
+// mgły 10+). Dawniej (−0,5, bez testu głębi) zasłona liczyła 5 szumów fraktalnych na KAŻDY piksel, a skały tła (bez
+// mieszania) i tak nadpisywały ją tam, gdzie leżą. Teraz próbki pod skałami tła i pod znaczkiem głębi skał gry
+// (asteroidBelt.js _createPlayStamp) odpadają w teście głębi; na pozostałych zasłona kładzie się na to samo niebo co
+// dawniej (gwiazdy i mgławica nie piszą głębi) — obraz bit w bit ten sam. A/B: belt.veil.setDepthCull(false) (dawny
+// kwad — nowy pipeline przy przełączeniu).
 
 import * as THREE from 'three/webgpu';
 import {
@@ -18,7 +25,13 @@ import {
 } from 'three/tsl';
 
 export const VEIL_FLASH_CAP = 4;
-export const VEIL_RENDER_ORDER = -0.5;
+// Po skałach tła (rockLayers.js: baza 2 + pasmo · 0,1 + koszyk · 0,01), przed głębokimi płatami mgły (fog.js: 10+).
+export const VEIL_RENDER_ORDER = 5;
+// Dawna kolejka (A/B setDepthCull(false)): po gwiazdach (−1), przed skałami, bez testu głębi.
+export const VEIL_RENDER_ORDER_OLD = -0.5;
+// Głębia kwadu zasłony: tuż przed daleką płaszczyzną (wyczyszczona głębia 1 przechodzi test LessEqual, każda skała tła
+// i znaczek skał gry — nie).
+export const VEIL_CLIP_Z = 0.99999;
 
 export class BeltVeil {
   constructor({ parent, layer = 1 }) {
@@ -34,7 +47,10 @@ export class BeltVeil {
       ice: uniform(0),                            // udział lodu (Kuiper: zasłona chłodniejsza)
       // Błyski burzy: xy = piksel ekranu (y w dół), z = promień [px], w = jasność.
       flashes: uniformArray(Array.from({ length: VEIL_FLASH_CAP }, () => new THREE.Vector4(0, 0, 1, 0)), 'vec4'),
-      flashColor: uniform(new THREE.Vector3(0.5, 0.42, 1.0))
+      flashColor: uniform(new THREE.Vector3(0.5, 0.42, 1.0)),
+      // z kwadu w przestrzeni obcięcia (w = 1): VEIL_CLIP_Z — tuż przed daleką płaszczyzną (test głębi ze skałami; skały
+      // tła mają głębię ≤ ~0,999 przy bliskiej płaszczyźnie 100 j.), 0,5 — dawny kwad (A/B)
+      clipZ: uniform(VEIL_CLIP_Z)
     };
     const U = this.u;
     const mat = new THREE.NodeMaterial();
@@ -42,7 +58,8 @@ export class BeltVeil {
     // Zasłona pełnoekranowa (4 wierzchołki) — rulon warpa (src/3d/warp/rulon.js) jej nie zgina.
     mat.rulonBend = false;
     mat.transparent = true;
-    mat.depthTest = false;
+    // Test głębi (LessEqual): wyczyszczona głębia 1 przechodzi, skała tła i znaczek skał gry (< 1) — nie.
+    mat.depthTest = true;
     mat.depthWrite = false;
     mat.lights = false;
     mat.fog = false;
@@ -54,7 +71,7 @@ export class BeltVeil {
     mat.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
     mat.vertexNode = Fn(() => {
       const p = attribute('position', 'vec3');
-      return vec4(p.xy, 0.5, 1.0);
+      return vec4(p.xy, U.clipZ, 1.0);
     })();
     mat.fragmentNode = Fn(() => {
       const px = screenCoordinate.xy.add(U.offset).toVar();
@@ -92,7 +109,23 @@ export class BeltVeil {
     this.mesh.name = 'AsteroidBelt:veil';
     this.mesh.layers.set(layer);
     this.mesh.visible = false;
+    this.material = mat;
+    this.depthCull = true;
     parent.add(this.mesh);
+  }
+
+  /**
+   * A/B (narzędzia): true — kwad na dalekiej płaszczyźnie z testem głębi po skałach tła (domyślnie), false — dawny kwad
+   * (przed skałami, bez testu głębi). Zmiana stanu głębi = nowy pipeline przy pierwszym rysunku (tylko do pomiarów).
+   */
+  setDepthCull(on = true) {
+    const v = on !== false;
+    if (v === this.depthCull) return;
+    this.depthCull = v;
+    this.material.depthTest = v;
+    this.material.needsUpdate = true;
+    this.mesh.renderOrder = v ? VEIL_RENDER_ORDER : VEIL_RENDER_ORDER_OLD;
+    this.u.clipZ.value = v ? VEIL_CLIP_Z : 0.5;
   }
 
   /** Błyski burzy: lista { sx, sy [px ekranu], r [px], e } (najwyżej VEIL_FLASH_CAP). */

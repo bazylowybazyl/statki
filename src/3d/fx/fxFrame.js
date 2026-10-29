@@ -56,6 +56,10 @@ export class FxFrame {
     this.time = 0;
     this.dt = 0;
     this.frameId = -1;
+    // klucz klatki z zewnątrz (worker renderu: numer strony gry — Core3D.fxFrameKey): klatka efektów raz na STRONĘ, nie
+    // raz na takt rAF workera; _keyed — ostatnia klatka szła po kluczu
+    this.frameKey = NaN;
+    this._keyed = false;
     this._clockMs = -1;
     this._gridLit = false;
     this._distortConsumed = false;
@@ -191,12 +195,19 @@ export class FxFrame {
    * Klatka efektów (raz na klatkę rAF — kolejne wywołania z tym samym renderer.info.frame
    * nic nie robią). cam — kamera gry gracza 1 (x, y, zoom albo wolna: position), cam2 — gracza 2
    * w podzielonym ekranie albo null, bufW / bufH — kadr w px kanwy gry (Core3D: pół kadru = bufW / 2 / zoom),
-   * nowMs — performance.now().
+   * nowMs — zegar klatki efektów (Core3D.frameNowMs). key — klucz klatki z zewnątrz (liczba; worker: numer strony gry):
+   * klatka raz na klucz zamiast raz na renderer.info.frame. W workerze info.frame liczy TAKTY rAF pętli three, a worker
+   * rysuje z wiadomości strony — drugi render w tym samym takcie (11–16% renderów przy 240 Hz) nie miał klatki efektów:
+   * gaz, pas i efekty Core3D.fx stały w nim, a czas strony przepadał (2026-10-29). Drugi renderSingle tej samej strony
+   * (podzielony ekran) dalej nic tu nie robi.
    * Zwraca true, gdy klatka się wykonała.
    */
-  frame(renderer, cam, cam2, bufW, bufH, freeCam, nowMs) {
+  frame(renderer, cam, cam2, bufW, bufH, freeCam, nowMs, key) {
     const frameId = renderer?.info?.frame ?? 0;
-    if (frameId === this.frameId) return false;
+    const keyed = Number.isFinite(key);
+    if (keyed ? (this._keyed && key === this.frameKey) : (!this._keyed && frameId === this.frameId)) return false;
+    this._keyed = keyed;
+    this.frameKey = keyed ? key : NaN;
     this.frameId = frameId;
     const t0 = nowMs;
     const info = renderer?.info?.compute;

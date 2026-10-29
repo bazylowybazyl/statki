@@ -50,8 +50,8 @@ import { addShipLights, CAVE_SHIP_LIGHTS, FIELD_SHIP_LIGHTS } from '../fx/lightG
 import { createShiftKernel } from '../fx/gpuPoolOrigin.js';
 import { RockShapeBankGPU } from './rockBank.js';
 import { createRockNoiseVolume } from './rockNoise.js';
-import { createRockShared, RockNodeMaterial, ROCK_LIGHT_DEFAULTS } from './rockMaterial.js';
-import { RockLayer } from './rockLayers.js';
+import { createRockShared, RockNodeMaterial, RockDepthStampMaterial, ROCK_LIGHT_DEFAULTS } from './rockMaterial.js';
+import { RockLayer, ROCK_LOD_ORDER } from './rockLayers.js';
 import { MineralTemplates, MineralLayer, MineralMaterial } from './minerals.js';
 import { ShadowAtlas } from './spotShadows.js';
 import { FieldMap } from './fieldMap.js';
@@ -85,7 +85,14 @@ export const BELT_LAYER_BACK = 1;
 // ośrodka (−50) → [efekty gry ≥ 0: dysze, Fx3D, kadłuby 9–10, odłamki 11] → pioruny (14)
 // → duszki (20) → iskry (24). W demie: minerały 2, mgła 8–9, dno 12, pioruny 14, duszki
 // 20, iskry 24 — względna kolejność pola ta sama, efekty gry nad pyłem.
-const RENDER_ORDER = Object.freeze({ rocks: 1, minerals: -70, backRocks: 2 });
+// Pass tła: niebo i gwiazdy (< 0) → skały tła RUBBLE / MID / DEEP (bliższe pasmo pierwsze: baza + indeks · backBandStep;
+// w warstwie koszyki od największych na ekranie — rockLayers.js ROCK_LOD_ORDER) → zasłona pola (beltVeil.js, test głębi)
+// → głębokie płaty mgły (10+).
+const RENDER_ORDER = Object.freeze({ rocks: 1, minerals: -70, backRocks: 2, backBandStep: 0.1 });
+// Znaczek głębi skał gry (_createPlayStamp): skała pomniejszona o 3% względem środka — znaczek ściśle wewnątrz pokrycia
+// skały w passie gry (zapas na zaokrąglenia wierzchołka i reguły pokrycia próbek MSAA); brzeg 3% promienia tło liczy jak
+// dawniej.
+export const PLAY_STAMP_SHRINK = 0.97;
 
 // Wygaszanie pasm tła przy oddaleniu (demo): gruz znika przed mapą taktyczną, środek
 // przy samym dole zakresu zoomu, głębia zostaje.
@@ -314,12 +321,15 @@ export class AsteroidBelt {
       perspective: false, renderOrder: RENDER_ORDER.rocks, zOf: this.playZ, minPx: 0.7, maxLod: 5, sunT: this.sunT, minerals: this.playMinerals
     });
     this.layers.push(this.playLayer);
-    for (const band of [BELT_BAND.RUBBLE, BELT_BAND.MID, BELT_BAND.DEEP]) {
+    [BELT_BAND.RUBBLE, BELT_BAND.MID, BELT_BAND.DEEP].forEach((band, i) => {
       this.layers.push(new RockLayer({
         parent: root, layer: BELT_LAYER_BACK, bank: this.bank, material: new RockNodeMaterial({ shared, backdrop: true }), field: this.field,
-        bandIndex: band, perspective: true, renderOrder: RENDER_ORDER.backRocks, minPx: 0.8, fadeZoom: BACK_FADE[band], maxLod: 3, sunT: this.sunT
+        bandIndex: band, perspective: true, renderOrder: RENDER_ORDER.backRocks + i * RENDER_ORDER.backBandStep, minPx: 0.8,
+        fadeZoom: BACK_FADE[band], maxLod: 3, sunT: this.sunT
       }));
-    }
+    });
+    // Znaczek głębi skał gry przed passem tła (Core3D.addPassDepthStamp — rejestracja po dodaniu pola do sceny).
+    this._stamp = this._createPlayStamp(playMaterial);
     this.veil = new BeltVeil({ parent: root, layer: BELT_LAYER_BACK });
     this.glow = new GlowSprites({ parent: root, capacity: 4096, layer: BELT_LAYER_PLAY });
     this.sparks = new Sparks({ renderer, parent: root, layer: BELT_LAYER_PLAY });
@@ -339,6 +349,7 @@ export class AsteroidBelt {
     this.miningView = new MiningView({ parent: root, layer: BELT_LAYER_PLAY, shared, grid: this.grid, sparks: this.sparks });
     this.miningView.attach(this.rig);
     Core3D.scene.add(root);
+    if (typeof Core3D.addPassDepthStamp === 'function') Core3D.addPassDepthStamp('bg', this._stamp);
     // Początek pul: pole trzyma go, dopóki coś jest wczytane; żywe iskry przesuwa kernel.
     const origin = fx.origin;
     this._originEntry = origin.register({ isLive: () => this.active });
@@ -392,6 +403,18 @@ export class AsteroidBelt {
         for (const mesh of mining) list.push(Core3D.prewarmPass(mesh, BELT_LAYER_PLAY));
         return Promise.all(list);
       })));
+    }
+    // Znaczek głębi skał gry (własna scena bez świateł, kamera passa gry, cel sceny — jak rysunek przed passem tła).
+    if (this._stamp) {
+      promises.push(run('pas asteroid: znaczek głębi skał gry (przed passem tła)', () => {
+        const meshes = this._stamp.pairs.map((p) => p[1]);
+        for (const m of meshes) m.visible = true;
+        try {
+          return Core3D.prewarmPass(this._stamp.scene, 0, { ortho: true });
+        } finally {
+          for (const m of meshes) m.visible = false;
+        }
+      }));
     }
     promises.push(run('pas asteroid: atlas cieni reflektorów (wszystkie mapy, cień skał w wydobyciu)', () => this._prewarmShadowAtlas()));
     run('pas asteroid: kernele compute (ośrodek, iskry, atlas wydobycia)', () => this._prewarmCompute());
@@ -478,6 +501,66 @@ export class AsteroidBelt {
 
   setEnabled(v) {
     this.enabled = !!v;
+  }
+
+  /**
+   * ZNACZEK GŁĘBI SKAŁ GRY przed passem tła (2026-10-29, pole asteroid przy 5120 × 1440 — Core3D.addPassDepthStamp):
+   * skały pasma PLAY (koszyki skał i księżyców — te same geometrie i instancje) rysowane kamerą passa gry tylko do głębi
+   * celu sceny z głębią 0, pomniejszone względem środka (RockDepthStampMaterial — ściśle wewnątrz pokrycia skały).
+   * Skały tła, głębokie płaty mgły i zasłona (test głębi) nie liczą fragmentów pod skałami gry, które pass gry i tak
+   * zasłania w całości (skała gry nieprzezroczysta, bez odrzucania pikseli). Obraz ten sam. A/B: belt.stampEnabled =
+   * false (pas), Core3D.depthStamps = false (wszystkie znaczki).
+   */
+  _createPlayStamp(playMaterial) {
+    const material = new RockDepthStampMaterial(playMaterial, PLAY_STAMP_SHRINK);
+    const scene = new THREE.Scene();
+    scene.name = 'AsteroidBelt:znaczekGlebiGry';
+    const group = new THREE.Group();
+    group.name = 'AsteroidBelt:znaczekGlebiGry:pole';
+    group.matrixAutoUpdate = false;
+    scene.add(group);
+    const pairs = [];
+    for (const bk of [this.playLayer.buckets, this.playLayer.moonBuckets]) {
+      for (const L of bk.lods) {
+        const mesh = new THREE.Mesh(L.geo, material);
+        mesh.name = `AsteroidBelt:znaczek_${L.mesh.name}`;
+        mesh.frustumCulled = false;
+        mesh.matrixAutoUpdate = false;
+        mesh.visible = false;
+        group.add(mesh);
+        pairs.push([L.mesh, mesh]);
+      }
+    }
+    this.stampEnabled = true;
+    this.stampStats = { renders: 0 };
+    return { name: 'pas asteroid: skały gry', scene, group, pairs, material, active: () => this._stampActive() };
+  }
+
+  // Wołane przez Core3D przed passem tła tego renderu: widoczność koszyków PLAY (po kompaktowaniu i księżycach z kroku
+  // pola) i położenie grupy pola; false — bez znaczka (pole nieaktywne, warstwa PLAY ukryta, puste koszyki).
+  _stampActive() {
+    const st = this._stamp;
+    if (!st || this.stampEnabled === false || !this.ready || !this.active || !this._frameActive || !this.playLayer.enabled) return false;
+    let any = false;
+    for (let i = 0; i < st.pairs.length; i++) {
+      const v = st.pairs[i][0].visible === true;
+      st.pairs[i][1].visible = v;
+      if (v) any = true;
+    }
+    if (!any) return false;
+    st.group.matrix.copy(this.root.matrixWorld);
+    st.group.matrixWorldNeedsUpdate = true;
+    this.stampStats.renders++;
+    return true;
+  }
+
+  /**
+   * Kolejka koszyków LOD skał (rockLayers.js ROCK_LOD_ORDER): bigFirst — koszyki największych na ekranie pierwsze
+   * (domyślnie), false — dawna kolejka (LOD 0 pierwszy). A/B w biegu, bez nowych pipeline'ów.
+   */
+  setRockOrder(bigFirst = true) {
+    ROCK_LOD_ORDER.bigFirst = bigFirst !== false;
+    for (const layer of this.layers) layer.applyOrder();
   }
 
   // Kadr pola: kamera gracza 1 (Core3D.activeCam1), w podzielonym ekranie suma kadrów

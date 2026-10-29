@@ -13,6 +13,28 @@
 
 import * as THREE from 'three/webgpu';
 import { Fn, If, Return, float, int, ivec2, vec2, vec4, uniform, instanceIndex, textureStore, texture, mix, smoothstep, min, max, floor, exp } from 'three/tsl';
+import { SPACE_GAS_MAP_MARGIN } from './spaceGasLayout.js';
+
+/**
+ * DRABINA TEKSLA map (2026-10-29, „gazy i mgła mocno drżą”): bok teksla = 2^(j / STEPS) [j.], stopień j z histerezą.
+ * Teksel liczony wprost z kadru zmieniał się przy KAŻDEJ zmianie zoomu (kółko, sprężyna zoomu, reżyser kadru, kop
+ * hipercruise'u, obrót kadru), a siatka tekseli jest liczona od kotwicy (pas: Słońce, ~76 tys. tekseli od kamery) —
+ * |Δzoom / zoom| ≈ 7·10⁻⁶ na klatkę przesuwało próbkowanie o pół teksla (100% klatek z ruchem zoomu), gaz „gotował się”
+ * o ±½ teksla (±3,6 px na 5120 px). Na drabinie siatka stoi w świecie przez cały stopień (~9% zoomu), przeskok tylko
+ * na stopniu; mapa pokrywa kadr × 1,08…1,21 (teksel najwyżej ~12% grubszy niż wprost z kadru).
+ */
+export const SPACE_GAS_TEXEL_STEPS = 8;
+/** Histereza zejścia stopień niżej (mniejszy teksel dopiero, gdy potrzebny jest o tyle mniejszy). */
+export const SPACE_GAS_TEXEL_HYST = 1.03;
+
+/** Stopień drabiny dla potrzebnego teksla `need` przy obecnym `j` (NaN — start): w górę od razu, w dół z histerezą. */
+export function spaceGasTexelLevel(j, need) {
+  const S = SPACE_GAS_TEXEL_STEPS;
+  const up = Math.ceil(Math.log2(need) * S - 1e-9);
+  if (!(j >= up)) return up;
+  if (need * SPACE_GAS_TEXEL_HYST < 2 ** ((j - 1) / S)) return Math.ceil(Math.log2(need * SPACE_GAS_TEXEL_HYST) * S - 1e-9);
+  return j;
+}
 
 /** Odcinki marszu ku Słońcu [j.] (dema: SHADOW_STEPS). */
 const SHADOW_STEPS = [60, 140, 250, 400, 600, 860, 1200, 1650, 2200];
@@ -65,6 +87,9 @@ export class SpaceGasMaps {
     this.h = h;
     this.gasTex = mapTexture(w, h, `${name}Gas`);
     this.lightTex = mapTexture(w, h, `${name}Light`);
+    // A/B: ladder = false — teksel wprost z kadru (dawniej: przepróbkowanie przy każdej zmianie zoomu)
+    this.ladder = true;
+    this._lvl = [NaN, NaN];
     this.U = {
       live: uniform(1),
       min: uniform(new THREE.Vector2()),       // róg mapy [j., względem kotwicy]
@@ -77,6 +102,7 @@ export class SpaceGasMaps {
       sunDir: uniform(new THREE.Vector2(1, 0)),// ku Słońcu (świat gry)
       lodLo: uniform(60),                      // teksel mapy [j.], od którego faktura gaśnie …
       lodHi: uniform(260),                     // … do zera
+      lodTexel: uniform(1),                    // teksel do zaniku faktury: wprost z kadru (ciągły — bez skoku na stopniu drabiny)
       alb1: uniform(new THREE.Vector3(1, 1, 1)),
       alb2: uniform(new THREE.Vector3(1, 1, 1)),
       alb3: uniform(new THREE.Vector3(1, 1, 1)),
@@ -129,7 +155,7 @@ export class SpaceGasMaps {
       const den = mix(A.dn, B.dn, U.w1).mul(kw).toVar();
       const off = mix(A.off, B.off, U.w1).mul(kw).mul(C).toVar();
       If(kw.lessThan(0.999), () => { den.addAssign(scene.farEnv(p, SU).mul(kw.oneMinus())); });
-      const lod = smoothstep(U.lodLo, U.lodHi, max(U.texel.x, U.texel.y));
+      const lod = smoothstep(U.lodLo, U.lodHi, U.lodTexel);
       const s = den.mul(scene.detail(p.add(off).sub(SU.windOff), lod)).mul(U.amount).toVar();
       const rgb = U.alb1.mul(s.x).add(U.alb2.mul(s.y)).add(U.alb3.mul(s.z)).add(U.ejecta.mul(s.w));
       textureStore(this.gasTex, ivec2(t.i, t.j), vec4(rgb, sum4(s)));
@@ -173,15 +199,24 @@ export class SpaceGasMaps {
   }
 
   /**
-   * Prostokąt mapy wokół kamery (względem kotwicy): pół kadru × zapas, środek na siatce tekseli (wzór nie „pływa”
-   * przy ruchu kamery). Zwraca środek mapy i jej bok w świecie przez `out` (cx, cy, w, h).
+   * Prostokąt mapy wokół kamery (względem kotwicy): pół kadru × zapas, teksel z drabiny (`ladder`), środek na siatce
+   * tekseli (wzór nie „pływa” przy ruchu kamery). Zwraca środek mapy i jej bok w świecie przez `out` (cx, cy, w, h).
    */
   place(camX, camY, halfW, halfH, out) {
-    const hw = halfW * 1.08, hh = halfH * 1.08;
-    const tx = hw * 2 / this.w, ty = hh * 2 / this.h;
+    const needX = halfW * SPACE_GAS_MAP_MARGIN * 2 / this.w, needY = halfH * SPACE_GAS_MAP_MARGIN * 2 / this.h;
+    let tx = needX, ty = needY;
+    if (this.ladder && needX > 0 && needY > 0) {
+      const L = this._lvl;
+      L[0] = spaceGasTexelLevel(L[0], needX);
+      L[1] = spaceGasTexelLevel(L[1], needY);
+      tx = 2 ** (L[0] / SPACE_GAS_TEXEL_STEPS);
+      ty = 2 ** (L[1] / SPACE_GAS_TEXEL_STEPS);
+    }
+    const hw = tx * this.w * 0.5, hh = ty * this.h * 0.5;
     const mx = Math.round(camX / tx) * tx, my = Math.round(camY / ty) * ty;
     this.U.min.value.set(mx - hw, my - hh);
     this.U.texel.value.set(tx, ty);
+    this.U.lodTexel.value = Math.max(needX, needY);
     const img = this.sim.image;
     this.U.imgO0.value.copy(img.origin[0]);
     this.U.imgO1.value.copy(img.origin[1]);

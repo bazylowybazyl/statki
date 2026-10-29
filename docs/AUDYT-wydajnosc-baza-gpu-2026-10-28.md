@@ -8,7 +8,8 @@ pikseli niż harness 1600 × 900, którym mierzono dotąd bazę i wybuchy).
 
 Gałąź: `claude/perf-baza-gpu` (od main 00a42543). Analiza kodu i poprawki § 3 zrobione bez GPU (użytkownik grał w tym
 czasie na komputerze); pomiar main ↔ gałąź w widocznym oknie — § 5; drugie zgłoszenie z oglądania pomiaru (efekty
-klatkują przy 240 kl/s) i jego poprawka — § 6; co zostaje — § 7.
+klatkują przy 240 kl/s) i jego poprawka — § 6; co zostaje — § 7; pole asteroid (zgłoszenie 2026-10-29: kolejka GPU, ~100 kl/s)
+— § 8.
 
 ## 1. Co mówi zrzut PerfHUD
 
@@ -185,3 +186,141 @@ Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, straż
   potem 230–240. Do zrobienia: naprawić skok dev (teleport fazy `ambush` nie wynosi Atlasa na kurs przez pas) i zmierzyć
   prawdziwe wyrwanie; u gracza w kampanii w świecie jest też gruz bazy z misji 1 (skóry odłamów przy soczewce — § 3,
   `HIDDEN_KEEP_MS`).
+
+## 8. Pole asteroid 2026-10-29
+
+Zgłoszenie (5120 × 1440 @ 240 Hz, RTX 5080, tryb worker): „pole asteroid — dropi do 100 fps” (PerfHUD: strona i obraz
+96 kl/s, „GPU 0,5+1,5 · kolejka 86 ms” na czerwono, wiek 5), „gazy i mgła mocno drżą”, „na oddalonej kamerze nie widać
+wypychania gazu, ogon szybko znika”, „optymalizuj dalej”. Drżenie i oddalenie gazu poprawione osobno
+(`docs/PLAN-gazy-kosmos.md` § 6, reguła `gaz-przestrzeni`); tu — wydajność pola. Narzędzie:
+`scripts/webgpu/gpu-pas-gra.mjs` (Atlas trzymany w gęstym polu — miejsce „pole” dema asteroid; sonda GPU workera,
+nvidia-smi, liczniki Windows, ślad Chrome, A/B w biegu, obraz A/B w pauzie). Wszystkie przebiegi HEADLESS (użytkownik
+pracował na komputerze): bez sufitu vsync, przy karcie w ~90–100% ms na obraz ≈ czas karty na klatkę razem z pracą bez
+znaczników; czasy passów ze znaczników (`pass:bg`, `pass:ortho`) są stabilniejsze niż ms na obraz (±0,1 ms między
+sąsiednimi oknami bazy wobec ±0,3–0,5 ms).
+
+### 8.1 Diagnoza (przebieg bazowy: `.tmp/gpu-pas-baza`, `-ultra`, `-gracz`)
+
+- „Kolejka 86 ms” to ZALEGŁOŚĆ karty zajętej w 94–100%, nie praca ukryta poza passami: kolejka ≈ (wiek pacera 5 + 1–3
+  klatki kompozytora) × czas klatki GPU, znaczniki pokrywają 87–100% czasu na obraz. Preset Ultra (renderScale 1,25 →
+  cel 6400 × 1800 MSAA 4, `graphicsQuality.js`) odtwarza zgłoszenie 1:1: 96,9 obrazu/s, kolejka śr. 51,7 / p95 73,5 /
+  maks. 88,9 ms, wiek 5, `pass:bg` 5,3 ms; Wysoka: 135–143 obrazów/s, kolejka 26–33 ms, `pass:bg` 3,4–3,6 ms. Chrome
+  gracza (bez flag harnessu i bez znaczników dev) — ten sam wynik. HUD „GPU 0,5+1,5” to jedna próbka ostatniej klatki
+  paczki znaczników (niemiarodajna).
+- Kartę zjada pas: bez pasa (B0) −3,6…−4,5 ms R (Ultra K0: −7,1), skały z minerałami (B1) −2,5…−3,9, skały tła w passie
+  tła (B1t) −2,1…−2,4, skały gry (B1p) −0,7…−1,6, płaty mgły −0,35…−0,6, zasłona −0,5, atlas cieni −0,5; gaz netto ~0;
+  VRAM i stronicowanie odrzucone (balast 5 GB — bez zmiany). Skala renderu 0,5 (C4) −3,3…−3,8 ms: koszt rośnie z pikselami.
+- Praca bez znaczników: 3 passy czyszczenia three na klatkę (`renderer.clear` przed tłem, ortho i FG — osobny pass ze
+  zgłoszeniem i rozwiązaniem MSAA całego celu) + rozwiązanie MSAA w KAŻDYM passie sceny — 6 rozwiązań RGBA16F × 4 próbki
+  na klatkę, a `composerTarget.texture` czyta dopiero post.
+
+### 8.2 Sondy kosztu skał (`.tmp/gpu-pas-sondy`, Wysoka; Δ czasu passa ze znaczników wobec sąsiednich okien bazy)
+
+| sonda | zoom 0,0667 (okręt ~200 px) | zoom 0,341 (kadr Atlasa) |
+|---|---|---|
+| FLATB — skały tła z trywialnym fragmentem (te same wierzchołki, kolejka i stan głębi) | `pass:bg` −1,78 ms | −1,84 ms |
+| B1t — skały tła niewidoczne | −2,14 | −2,42 |
+| FLATP — skały gry z trywialnym fragmentem | `pass:ortho` −0,81 | −0,32 |
+| B1p — skały gry z minerałami niewidoczne | −1,04 | — |
+| LODREV — koszyki LOD od największych na ekranie | `pass:bg` −0,30 | −0,29 |
+| SORT — instancje w koszyku od najbliższych | −0,18 | −0,04 |
+
+Wniosek: ~85% kosztu skał to FRAGMENTY (program powierzchni typu: 7 próbek szumu 3D, 2 próbki banku, gałąź typu,
+relief z pochodnych, pętla świateł siatki z PCF reflektorów); wierzchołki i raster skał tła ~0,3 ms. Rozkład skał w
+kadrze (`STAT_SKAL` narzędzia): zoom 0,0667 — PLAY 4578 skał (suma pól rzutów 0,23 ekranu), MID 12 768 (0,15; 8377 z
+promieniem < 4 px — siatka LOD 0 to 72 trójkąty), DEEP 1500 (0,30); zoom 0,341 — PLAY 277 (0,67, w tym 7 skał LOD 5 =
+2,9 Mpx), RUBBLE 6713 (0,11), MID 4384 (0,32), DEEP 596 (0,55). Pass tła liczy też skały, płaty mgły i zasłonę POD
+skałami gry, które pass gry i tak zasłania w całości.
+
+### 8.3 Poprawki (bez zmiany obrazu; każda z przełącznikiem A/B w biegu)
+
+1. **Czyszczenie w passie sceny** (`core3d.js` `_runScenePass` → `_renderPassScene`): loadOp „clear” pierwszego renderu
+   passa (autoClear na czas jednego `render()`) zamiast `renderer.clear`. A/B `Core3D.clearInPass = false` (wariant
+   `C5off`). Passy GPU na klatkę 16 → 13, passy czyszczenia 4 → 1 (zostaje atlas cieni).
+2. **Rozwiązanie MSAA raz na render** (`_lastScenePass`, łatka `_getRenderPassDescriptor` — `_skipIntermediateResolves`):
+   passy sceny przed ostatnim bez resolveTarget, rozwiązuje ostatni pass (FG). A/B `Core3D.msaaResolveOnce = false`
+   (`R1off`). Rozwiązania MSAA na klatkę 6 → 1.
+3. **Kolejka koszyków LOD** (`rockLayers.js` `ROCK_LOD_ORDER`): koszyk największych skał na ekranie pierwszy, pasma tła
+   bliższe pierwsze. A/B `belt.setRockOrder(false)` (`L0`).
+4. **Znaczek głębi skał gry przed passem tła** (`Core3D.addPassDepthStamp`, `asteroidBelt._createPlayStamp`,
+   `RockDepthStampMaterial`): koszyki PLAY (te same geometrie i instancje) kamerą passa gry tylko do głębi celu sceny z z = 0,
+   skała × 0,97 względem środka (ściśle wewnątrz pokrycia skały — rzut skały gwiaździstej). Skały tła, głębokie płaty mgły
+   i zasłona nie liczą fragmentów pod skałami gry. Jeden pass GPU więcej (13 → 14), CPU workera +0,03…+0,13 ms (render
+   sceny znaczka; Δ CPU w A/B `Z0`). A/B `belt.stampEnabled = false` (`Z0`), `Core3D.depthStamps = false`.
+5. **Zasłona pola po skałach tła z testem głębi** (`beltVeil.js`): kwad tuż przed daleką płaszczyzną (`VEIL_CLIP_Z`),
+   renderOrder 5 (po skałach, przed głębokimi płatami mgły) — 5 szumów fraktalnych na piksel tylko tam, gdzie zasłonę
+   widać. A/B `belt.veil.setDepthCull(false)` (`V0`; nowy pipeline przy przełączeniu — tylko do pomiarów).
+
+Wynik (`.tmp/gpu-pas-po3`, Wysoka, 2 powtórzenia każdego wariantu z oknami bazy przed i po; wariant = DAWNE zachowanie,
+liczby = ile dawne zachowanie kosztuje więcej):
+
+| wariant (dawne) | Δ `pass:bg` zoom 0,0667 | Δ ms/obraz zoom 0,0667 | Δ `pass:bg` zoom 0,341 |
+|---|---|---|---|
+| STARE — wszystkie pięć | +0,63 ms (0,60 / 0,65) | +0,65 (0,68 / 0,61) | +0,88 (0,83 / 0,94) |
+| CRoff — czyszczenia i rozwiązania (1 + 2) | +0,27 (praca bez znaczników: ms/obraz +0,46…+0,89) | +0,68 | — |
+| Z0 — bez znaczka (4) | +0,35 (0,41 / 0,29) | +0,21 | +0,26 |
+| V0 — dawna zasłona (5) | +0,06 | +0,05 | +0,46 |
+| L0 — dawna kolejka koszyków (3) | +0,08 | +0,04 | −0,02 (szum) |
+
+Kolejka koszyków w sondzie przed znaczkiem i zasłoną dawała −0,3 ms `pass:bg`; razem z nimi — w granicach szumu
+(±0,1 ms); zostaje (bez kosztu CPU ani GPU). Okna główne przebiegu wobec bazy z
+rana (inny przebieg — porównanie orientacyjne): zoom 0,341 — `pass:bg` 3,42 → 2,55 ms, kolejka śr. 26,2 → 21,2 ms;
+zoom 0,0667 — `pass:bg` 3,45 → 2,48 ms, R 5,76 → 4,36 ms, kolejka śr. 31,5 → 23,3 ms (p95 44,9 → 33,4), obraz/s
+135,5 → 154,2. Pipeline'y synchroniczne 0 (poza przełączaniem `V0` w A/B).
+
+### 8.4 Obraz — bufor sceny w pauzie (`--obrazAB`)
+
+Bufor sceny (`composerTarget`, HDR przed postem) odczytany w workerze w pauzie: A, A2 (kontrola — w pauzie biegnie zegar
+efektów: światła nawigacyjne, dysze) i B z wariantem, odstępy A → A2 i A2 → B równe; liczone piksele różne w RGB
+(porównanie bitów półfloatu) i ich położenie (siatka 16 × 4, maski różnic i ich nakładanie).
+
+- Bez MSAA (preset Niska, `.tmp/gpu-pas-obraz-niska`): wszystkie warianty na poziomie kontroli — STARE 943 wobec 1416,
+  Z0 1819 / 2354, V0 1229 / 1115, L0 1430 / 1408, CRoff 1413 / 1427 pikseli; maska różnic Z0 w 74% pokrywa się z maską
+  kontroli (te same animowane piksele). Obraz bit w bit ten sam.
+- Z MSAA 4 (Wysoka, `.tmp/gpu-pas-po3`, `-obraz`, `-obraz2`): L0, V0, C5off, R1off, CRoff — na poziomie kontroli. Znaczek
+  (Z0, także STARE) zmienia dodatkowo ~4–7 tys. pikseli (0,05–0,1% kadru) o 1–2 ULP półfloatu (≤ 2·10⁻⁴; żadna próbka
+  > 10⁻³), w 87% w pokryciu skał gry (maska wariantu B1p — skały gry ukryte). Pod skałą gry jej kolor nadpisuje próbki
+  i bez znaczka, a bez MSAA różnic nie ma — to rozwiązanie MSAA karty (najpewniej stan bezstratnej kompresji próbek
+  zależny od tego, co pass tła zapisał pod skałą → inna kolejność sumowania próbek w FP16), nie cieniowanie; po ACES i
+  sRGB poniżej kroku 8 bitów.
+
+### 8.5 Ultra — preset, który odtwarza zgłoszenie (`.tmp/gpu-pas-po-ultra`, cel 6400 × 1800 MSAA 4)
+
+Karta zajęta w 96–99%, więc ms na obraz = czas karty na klatkę (z pracą bez znaczników). A/B w tym samym przebiegu
+(wariant = dawne zachowanie, 2 powtórzenia, Δ wobec sąsiednich okien bazy):
+
+| okno | STARE: Δ ms/obraz | STARE: obraz/s (baza → dawne) | STARE: Δ kolejka śr. | CRoff Δ ms/obraz | Z0 Δ ms/obraz | V0 Δ ms/obraz |
+|---|---|---|---|---|---|---|
+| postój, zoom 0,0667 | +1,51 (1,07 / 1,94) | ~115 → 101,8 / 95,5 | +8,1 / +9,5 ms | +0,83 (0,80 / 0,86) | +0,48 | +0,12 |
+| postój, zoom 0,341 | +1,76 (1,56 / 1,96) | ~133 → 112,1 / 104,6 | +12,6 / +12,3 ms | — | +0,57 (`pass:bg` +0,54) | +0,40 (`pass:bg` +0,48) |
+| przelot 507 j/s, zoom 0,0667 | +1,45 (1,38 / 1,52) | ~110 → 95,1 / 94,8 | +10,1 / +10,5 ms | — | — | — |
+
+Przy 11,5 Mpx czyszczenia i rozwiązania MSAA kosztują więcej niż przy 7,4 Mpx (CRoff +0,83 ms wobec +0,46…+0,89 na
+Wysokiej, w większości poza znacznikami — Δ `pass:bg` CRoff ~0). Okna główne wobec przebiegu bazowego Ultra z rana
+(`.tmp/gpu-pas-ultra`; inny przebieg — porównanie orientacyjne, w międzyczasie także poprawki gazu): postój 0,0667 —
+96,9 → 117,9 obrazu/s, kolejka śr. / p95 / maks. 51,7 / 73,5 / 88,9 → 38,0 / 52,8 / 62,0 ms, `pass:bg` 5,29 → 4,32 ms;
+postój 0,341 — 102,2 → 136,3/s, kolejka 48,0 / 70,5 / 85,8 → 28,6 / 43,0 / 58,2 ms; przelot — 94,3 → 115,0/s, kolejka
+52,9 / 72,5 / 86,3 → 40,9 / 57,6 / 67,6 ms. Pipeline'y synchroniczne 0 (ostrzeżenia „kompilacja w grze” — te same co
+w bazie: modele floty, rozpad stacji).
+
+### 8.6 Co zostaje
+
+- Kartę w polu dalej zjadają FRAGMENTY skał (sondy przed poprawkami — Wysoka, zoom 0,0667: tło ~1,8 ms, gra ~0,8 ms;
+  znaczek i zasłona zdjęły z tła 0,3–0,9 ms; Ultra × ~1,5). Bez zmiany obrazu nic dużego już nie zostało; ze zmianą
+  obrazu (decyzja użytkownika, domyślnie wygląd jak dziś):
+  - siatka LOD poniżej n = 3 dla skał o promieniu < 3–4 px — dziś 72 trójkąty na skałę 2–4 px (zoom 0,0667: 8377 skał MID
+    i 2085 skał gry), czyli kilka razy nadmiarowe kwady 2 × 2 przy drogim programie; zmienia sylwetki drobnych skał
+    o ułamek piksela;
+  - tańszy program powierzchni drobnych skał (szczegóły i tak gasną — `featureFade`, `detailAmt`): mniej próbek szumu;
+  - pętla świateł siatki bez PCF w skałach tła;
+  - zasłona i płaty mgły w niższej rozdzielczości.
+- Preset Ultra przy 5120 × 1440 to 11,5 Mpx (renderScale 1,25) — dobór automatyczny daje ekranom > 5,2 MP Średnią;
+  użytkownik ma najpewniej Ultra wybraną ręcznie. Do decyzji: Wysoka albo rozdzielczość dynamiczna przy dużym ekranie.
+- Wiek obrazu 5 (pacer) trzyma kolejkę ~4–7 klatek GPU — bez zmian (reguła `render-worker`).
+- Pre-pass halo planet (`_renderPlanetHaloPrepass`) ma ten sam wzór: `renderer.clear` + 2 rendery do celu MSAA 413 MB
+  (3 rozwiązania, pierwszy render bez koloru) — poza pasem; ta sama poprawka (czyszczenie w pierwszym renderze,
+  rozwiązanie tylko w ostatnim) przy planetach.
+- Sortowanie instancji w koszyku od najbliższych (sonda SORT): −0,04…−0,18 ms, niestałe, koszt CPU przy przebudowie
+  koszyków — nie wdrożone. Znaczek kadłubów (nieprzezroczysta skóra nad skałami gry i tłem) — możliwy, ale skóra ma
+  dziury, maskowanie i przezroczystość — wymaga osobnego warunku „ściśle wewnątrz”.
+- Nie sprawdzone w oknie z vsync 240 Hz ani okiem użytkownika (pomiary headless — prośba użytkownika).

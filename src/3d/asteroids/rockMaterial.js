@@ -233,7 +233,9 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     this._surf = null;
   }
 
-  _buildVertex(withVaryings = true, shadowCarve = null) {
+  // shrink (węzeł float albo null): skała pomniejszona względem środka (znaczek głębi — RockDepthStampMaterial); null —
+  // dokładnie dawny wierzchołek (ten sam WGSL materiałów skał i map cienia).
+  _buildVertex(withVaryings = true, shadowCarve = null, shrink = null) {
     const S = this.S;
     const L = this.L;
     const V = this.V;
@@ -258,7 +260,7 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       // strumień D planu pasa, 2026-10-12). Pasmo gry: dokładnie dawne wyrażenie (ten sam WGSL).
       const q = rockSpinQuat(iRot, iSpin, iShape, S.time, this.backdrop);
       const pObj = dir.mul(r).mul(iStretch.xyz).toVar();
-      const local = quatRotate(q, pObj).mul(iPos.w.mul(fadeScale));
+      const local = shrink ? quatRotate(q, pObj).mul(iPos.w.mul(fadeScale)).mul(shrink) : quatRotate(q, pObj).mul(iPos.w.mul(fadeScale));
       if (shadowCarve) {
         // Mapa cienia skały w wydobyciu: punkt w układzie skały i dane ciała (atlas).
         shadowCarve.objP.assign(pObj.mul(iPos.w));
@@ -809,5 +811,49 @@ export class RockShadowMaterial extends THREE.NodeMaterial {
       const d = positionWorld.sub(this.lightPos).length();
       return vec4(float(100.0).div(max(d, 1.0)), 0.0, 0.0, 1.0);
     })();
+  }
+}
+
+/**
+ * ZNACZEK GŁĘBI SKAŁ GRY (2026-10-29, pole asteroid przy 5120 × 1440): skały pasma PLAY rysowane PRZED passem tła
+ * (Core3D.addPassDepthStamp('bg', …)) kamerą passa gry, tylko do głębi celu sceny (bez koloru), z głębią 0 (najbliżej).
+ * Skały tła i głębokie płaty mgły (test głębi) nie liczą fragmentów pod skałami gry — te w passie gry i tak zasłaniają
+ * je w całości (skała gry jest nieprzezroczysta, bez mieszania i bez odrzucania pikseli). Skała pomniejszona względem
+ * środka (`shrink` < 1): rzut skały gwiaździstej względem środka przy kamerze z góry jest gwiaździsty względem rzutu
+ * środka, więc pomniejszony znaczek leży ŚCIŚLE wewnątrz pokrycia skały (każda próbka MSAA pod znaczkiem jest potem
+ * zasłonięta) — próbki bit w bit te same (bez MSAA cały obraz; z MSAA rozwiązanie karty pod skałą bywa inne o 1–2 ULP
+ * półfloatu — docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 8.4), a różnice zaokrągleń wierzchołka nie mają znaczenia.
+ * Ten sam wierzchołek co materiał skał (kształt z banku, obrót w czasie, próg pikseli i zanik pola — uniformy warstwy).
+ */
+export class RockDepthStampMaterial extends THREE.NodeMaterial {
+  static get type() { return 'RockDepthStampMaterial'; }
+
+  /**
+   * @param {RockNodeMaterial} source materiał skał gry (wierzchołki, uniformy warstwy)
+   * @param {number} [shrink] skala skały względem środka (< 1 — znaczek wewnątrz pokrycia)
+   */
+  constructor(source, shrink = 0.97) {
+    super();
+    this.name = 'AsteroidBelt:rockDepthStamp';
+    this.lights = false;
+    this.fog = false;
+    this.colorWrite = false;
+    this.depthWrite = true;
+    this.depthTest = true;
+    this.S = source.S;
+    this.L = source.L;
+    this.V = source.V;
+    this.backdrop = source.backdrop;
+    this.carve = null;
+    this.shrink = uniform(shrink).setName('rockStampShrink');
+    this.positionNode = RockNodeMaterial.prototype._buildVertex.call(this, false, null, this.shrink);
+    this.fragmentNode = vec4(0.0, 0.0, 0.0, 1.0);
+  }
+
+  // Głębia 0 (przestrzeń obcięcia: z = 0 przy w rzutu): pass tła z kamerą perspektywy odrzuca pod znaczkiem wszystko
+  // z testem głębi; xy — rzut kamery passa gry (ta sama droga co materiał skał).
+  setupModelViewProjection(builder) {
+    const p = super.setupModelViewProjection(builder);
+    return vec4(p.x, p.y, 0.0, p.w);
   }
 }

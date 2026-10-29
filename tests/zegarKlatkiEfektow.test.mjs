@@ -46,5 +46,6 @@ test('moduły efektów biorą czas klatki z Core3D.frameNowMs (WeaponFx.sync, ka
   assert.doesNotMatch(sync[0], /performance\.now\(\)/);
   assert.match(src('hexShips3D.js'), /const now = Core3D\.frameNowMs\(\);\n  state\.lastTime = now;/);
   assert.match(src('hullDebris3D.js'), /structural, Core3D\.frameNowMs\(\) \* 0\.001/);
-  assert.match(src('core3d.js'), /!!freePerspective, this\.frameNowMs\(\)\);/);
+  // klatka efektów: zegar klatki i klucz strony (worker — raz na stronę gry, nie raz na takt rAF workera)
+  assert.match(src('core3d.js'), /!!freePerspective, this\.frameNowMs\(\), this\.fxFrameKey\);/);
 });
