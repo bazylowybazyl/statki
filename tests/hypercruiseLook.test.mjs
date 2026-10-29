@@ -391,8 +391,10 @@ test('po hipercruisie zwykły lot ma insety riga i obrót jak przed (okno po wyj
   assert.equal(scope._hyperInsetW, 0, "waga insetów dokładnie 0 — zwykły lot jak przed hipercruise'em");
   assert.equal(rig.roll, 0, 'kadr północą');
   // render: insety = pasy HUD + półwymiar kadłuba × waga (0 → dawne pasy), wyliczenie tylko przy wadze > 0
-  assert.match(html, /const hcInsetW = stepHyperInsetWeight\(frameDt\);\s*let hcHullV = 0;\s*if \(hcInsetW > 1e-3 && !scouting\) \{/);
-  assert.match(html, /rigIn\.insetTop = _camDirInsets\.top \+ hcHullV;\s*rigIn\.insetBottom = _camDirInsets\.bottom \+ hcHullV;/);
+  assert.match(html, /const hcInsetW = stepHyperInsetWeight\(frameDt\);\s*let hcHullV = 0;\s*let hcWakeTop = 0;\s*let hcWakeBottom = 0;\s*if \(hcInsetW > 1e-3 && !scouting\) \{/);
+  // v2 (2026-10-29): nad kokpitem także kawałek kilwateru za rufą (opływ — hyperFlow.js), po stronie rufy na ekranie
+  assert.match(html, /rigIn\.insetTop = _camDirInsets\.top \+ hcHullV \+ hcWakeTop;\s*rigIn\.insetBottom = _camDirInsets\.bottom \+ hcHullV \+ hcWakeBottom;/);
+  assert.match(html, /hcWakeBottom = Math\.max\(0, -Math\.sin\(sa\)\) \* wake;\s*hcWakeTop = Math\.max\(0, Math\.sin\(sa\)\) \* wake;/);
   // obrót kamery tej klatki: 0 od razu w RTS / podzielonym ekranie / kamerze 3D (rig dogania zero w tle)
   set('spool', 'charging'); frame(240);
   assert.ok(Math.abs(scope.cameraFrameRoll()) > 0.1);

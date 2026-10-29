@@ -41,8 +41,10 @@ const STRIDE = 12;
  * ale bez aliasingu (cecha wzoru ≥ kilkadziesiąt px na kilka px przesuwu na klatkę).
  */
 export const HYPER_FLOW_TUNE = {
-  sheathK: 0.16, sheathLo: 1.6, sheathHi: 8,
-  wakeK: 0.75, wakeLo: 1.8, wakeHi: 10,
+  // szerokość kadłuba z pudła sprite'a (entityWarpHullWidth) × hullWidth — sprite ma margines (Atlas: kadłub ~0,63 pudła)
+  hullWidth: 0.8,
+  sheathK: 0.2, sheathLo: 2, sheathHi: 9,
+  wakeK: 1.1, wakeLo: 2, wakeHi: 10,
   flowK: 0.2, flowMin: 1.2, flowMax: 3.5, wakeFlow: 1.6,
   wakeLenR: 30, wakeLenL: 0.5,
   // obwiednia: rozbieg otoczki z prędkością (ułamek vmax), narost po kopie [s], dogasanie po wyjściu [s], żar dysz
@@ -130,24 +132,25 @@ function makeFlowMaterial(noiseTex) {
     const flow = float(0.0).toVar();   // przepływ wzoru [j/s]
     const amp = float(0.0).toVar();    // amplituda [px]
     If(vP.z.lessThan(0.5), () => {
-      // OTOCZKA: kadłub = stadion (odcinek ±hl wzdłuż osi, promień r); d > 0 na zewnątrz
-      const hl = vQ.x;
+      // OTOCZKA: kadłub = klin z zaokrąglonym przodem — pół szerokości r · (0,3 → 1) na pierwszych 45% długości od
+      // dzioba, dalej r do rufy (kapitały mają ostre dzioby; stadion zostawiał „jajo” czystego tła przed dziobem);
+      // d > 0 na zewnątrz (pas przy burtach, przed dziobem i za rufą)
+      const half = vQ.x;
       const r = p2;
       const ay = abs(y);
-      const dx = max(abs(x).sub(hl), 0.0);
-      const d = sqrt(dx.mul(dx).add(ay.mul(ay))).sub(r).toVar();
-      const half = hl.add(r);
       const s = clamp(x.add(half).div(half.mul(2.0)), 0.0, 1.0);          // 0 — dziób, 1 — rufa
-      const th = r.mul(s.mul(0.75).add(0.25));                            // grubość warstwy rośnie ku rufie
-      const layer = smoothstep(0.0, r.mul(0.16), d).mul(exp(d.div(max(th, 1.0)).negate()));
-      const onHull = float(1.0).sub(smoothstep(hl.add(r.mul(0.2)), hl.add(r.mul(1.4)), x));
+      const hw = r.mul(smoothstep(0.0, 0.45, s).mul(0.7).add(0.3));
+      const d = max(max(ay.sub(hw), x.add(half).negate()), x.sub(half)).toVar();
+      const th = r.mul(s.mul(0.8).add(0.3));                              // grubość warstwy rośnie ku rufie
+      const layer = smoothstep(0.0, r.mul(0.3), d).mul(exp(d.div(max(th, 1.0)).negate()));
+      const onHull = float(1.0).sub(smoothstep(half.sub(r.mul(0.2)), half.add(r.mul(1.0)), x));
       // kilwater: za rufą pas szerzeje i gaśnie
-      const xw = x.sub(hl.add(r.mul(0.5)));
+      const xw = x.sub(half.sub(r.mul(0.3)));
       const xwp = max(xw, 0.0);
-      const ww = r.mul(xwp.div(r.mul(4.0)).mul(0.45).add(0.75));
+      const ww = r.mul(xwp.div(r.mul(4.0)).mul(0.45).add(0.8));
       const yy = ay.div(max(ww, 1.0));
       const wake = smoothstep(0.0, r.mul(0.8), xw).mul(exp(xwp.div(half.mul(1.1)).negate())).mul(exp(yy.mul(yy).negate()));
-      const inside = smoothstep(r.mul(-0.05), r.mul(0.1), d);             // 0 w kadłubie — kadłub ostry
+      const inside = smoothstep(r.mul(-0.05), r.mul(0.12), d);            // 0 w kadłubie — kadłub ostry
       mask.assign(max(layer.mul(onHull), wake.mul(0.85)).mul(inside));
       lenA.assign(r.mul(3.2));
       lenC.assign(r.mul(0.55));
@@ -173,7 +176,8 @@ function makeFlowMaterial(noiseTex) {
     const u1 = y.div(lenC).add(seed.mul(7.31));
     const n1 = texture(noiseTex, vec2(u1.mul(0.25), x.sub(t.mul(flow)).div(lenA).mul(0.25))).rg;
     const n2 = texture(noiseTex, vec2(u1.mul(0.55).add(0.37), x.sub(t.mul(flow.mul(1.7))).div(lenA).mul(0.6))).rg;
-    const n = n1.sub(0.5).mul(1.3).add(n2.sub(0.5).mul(0.7));
+    // fbm tekstury (0..1) jest skupione przy 0,5 (typowo ±0,15) — wzmocnienie do ~±0,5, szczyty ±1
+    const n = n1.sub(0.5).mul(3.2).add(n2.sub(0.5).mul(1.8));
     const ax = vAx;
     const pr = vec2(ax.y.negate(), ax.x);
     const off = pr.mul(n.x).add(ax.mul(n.y.mul(0.35))).mul(amp.mul(mask).mul(k));
@@ -330,16 +334,15 @@ export const HyperFlow = {
     const axY = sa;
     let n = 0;
     if (ship.sheath > 0.002) {
-      const r = W * 0.5 * 1.02;
-      const hl = Math.max(0, L * 0.5 - r) * 0.98;
-      const half = hl + r;
-      const x0 = -half - 0.6 * r;                  // przed dziobem
+      const r = W * 0.5 * T.hullWidth;
+      const half = L * 0.5;
+      const x0 = -half - 1.2 * r;                   // przed dziobem
       const tailX = half + 2.6 * half;              // koniec kilwateru
       const halfLen = (tailX - x0) * 0.5;
       const mid = (tailX + x0) * 0.5;               // środek kwadu wzdłuż osi (od środka kadłuba)
-      const wakeEnd = r * (0.75 + 0.45 * (2.6 * half) / (4 * r));
-      const halfWid = Math.max(r * 3.6, wakeEnd * 2.2);
-      writeInstance(n++, axX * mid, axY * mid, axX, axY, halfLen, halfWid, mid, ship.sheath, 0, hl, r);
+      const wakeEnd = r * (0.8 + 0.45 * (2.6 * half) / (4 * r));
+      const halfWid = Math.max(r * 3.8, wakeEnd * 2.2);
+      writeInstance(n++, axX * mid, axY * mid, axX, axY, halfLen, halfWid, mid, ship.sheath, 0, half, r);
     }
     if (ship.wake > 0.002) {
       const lenL = T.wakeLenL * L;
