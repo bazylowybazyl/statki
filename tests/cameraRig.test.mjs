@@ -797,7 +797,7 @@ test('stery fregaty zwiadu: kamera prowadzi fregatę — wyprzedzenie z jej prę
   assert.match(render, /const vwx = scouting \? \(Number\(scoutSn\.vx\) \|\| 0\) : ship\.vel\.x;[\s\S]{0,200}?rollToScreen\(vwx, vwy, rigRoll, _rollTmp\);\s*rigIn\.velX = vScr\.x;/);
   assert.match(render, /rigIn\.maxSpeed = scouting \? Math\.max\(100, Number\(scoutSn\.maxSpeed\) \|\| 400\) : hullVmax;/);
   assert.match(render, /rigIn\.mode = scouting \? 'never' : OPTIONS\.cameraLook;/);
-  // skok warpa gracza: mniejsze wyprzedzenie (warpJumpLead — statek bliżej środka kadru, 2026-10-29)
+  // skok warpa gracza: stałe wyprzedzenie warpJumpLead (= navLead) przy każdej postawie — kotwica soczewki P0 (2026-10-29)
   assert.match(render, /rigIn\.leadGain = scouting \? cameraRigTune\.scoutLead : \(playerWarpCameraBusy\(\) \? cameraRigTune\.warpJumpLead : NaN\);/);
   // kadr = prowadzony okręt + offset riga (dawniej offset zerowany — fregata zawsze na środku)
   assert.match(render, /const offW = rollToWorld\(cameraRig\.offsetX \/ zoomSafe, cameraRig\.offsetY \/ zoomSafe, rigRoll, _rollTmp\);\s*let rigX = followX \+ offW\.x;/);
@@ -1142,10 +1142,57 @@ function k1CameraFrame(rig, cam, w) {
   w.zoomBase = cameraZoomBase(cam);
   stepCameraRigWarp(rig, w, tune);
   cam.zoomImpulseMin = rig.warpZoomFloor;
+  cam.zoomImpulseWide = rig.warpUnifyW > 0 && Number.isFinite(rig.warpZoomRef);
   cam.zoomImpulseLog = rig.warpZoomLog;
   syncCameraZoomLimits(cam, { activeHullId: 'atlas' });
   stepCameraZoom(cam, w.dt);
 }
+
+test('kadr lotu w mniejszym oknie (1280 × 720 px CSS): nie dalej niż limit kadłuba, zatrzask K1 przy wyjściu bez skoku zoomu', () => {
+  const dt = 1 / 60;
+  const zRef = defaultShipZoom(1280, 1800, tune, 0.035, 3.2);
+  const zFar = warpJumpZoomRef(1280, 720, 1800, tune, 0.035, 3.2);
+  // bez dolnej granicy: 0,4 · 0,142 · 0,55 = 0,031 < 0,035 — w locie przycięcie, przy zatrzasku K1 skok −11%
+  assert.ok(Math.abs(zFar * tune.warpZoomOut - 0.035) < 1e-12, `kadr lotu na limicie kadłuba (${zFar * tune.warpZoomOut})`);
+  assert.ok(zFar < zRef, 'kadr lotu dalej niż kadr ładowania');
+  const rig = createCameraRig();
+  const cam = { mode: 'ship', zoom: zRef, targetZoom: zRef, zoomBase: zRef, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: 0,
+    zoomImpulseMin: NaN };
+  cam._zoomSpringOut = cam.zoom;
+  const w = { dt, state: 'charging', charge: 0, dirX: 0, dirY: -1, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: false,
+    zoomRef: zRef, zoomRefFar: zFar, zoomBase: zRef, viewW: 1280, viewH: 720, arrivalDist: 900000, arrivalDepthK: 0, arriving: false };
+  for (let i = 0; i < 48; i++) { w.charge = (i + 1) / 48; k1CameraFrame(rig, cam, w); }
+  w.state = 'active';
+  for (let i = 0; i < 180; i++) k1CameraFrame(rig, cam, w);
+  assert.ok(Math.abs(cam.zoom - zFar * tune.warpZoomOut) < 1e-6, `lot: kadr lotu bez przycięcia (${cam.zoom})`);
+  // wyjście z celem: klatka zatrzasku kadru przylotu (podłoga K1 zdejmuje limit kadłuba) bez skoku zoomu
+  w.state = 'idle';
+  w.arrivalDist = 30000;
+  let latchStep = NaN;
+  for (let a = 0; a < 1.35 && !Number.isFinite(latchStep); a += dt) {
+    w.exitAge = a;
+    const before = Math.log(cam.zoom);
+    const was = rig.warpArrOn;
+    k1CameraFrame(rig, cam, w);
+    if (!was && rig.warpArrOn) latchStep = Math.abs(Math.log(cam.zoom) - before);
+  }
+  assert.ok(latchStep < 0.03, `zatrzask K1 bez skoku zoomu (${latchStep})`);
+});
+
+test('kadr lotu przy dużym zoomie gracza: limit członu jak przy podłodze K1 (zoomImpulseWide), poza skokiem ±3', () => {
+  const dt = 1 / 60;
+  const cam = { mode: 'ship', zoom: 3.2, targetZoom: 3.2, zoomBase: 3.2, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: -4.4,
+    zoomImpulseMin: NaN, zoomImpulseWide: true };
+  cam._zoomSpringOut = cam.zoom;
+  for (let i = 0; i < 120; i++) stepCameraZoom(cam, dt);
+  assert.ok(Math.abs(cam.zoom - 3.2 * Math.exp(-4.4)) < 1e-9, `kadr lotu bez przycięcia do −3 (${cam.zoom})`);
+  cam.zoomImpulseWide = false;
+  cam.zoomImpulseLog = -3.31;
+  for (let i = 0; i < 120; i++) stepCameraZoom(cam, dt);
+  assert.ok(Math.abs(cam.zoom - 3.2 * Math.exp(-3)) < 1e-9, `poza skokiem limit ±3 (${cam.zoom})`);
+  const kick = sliceFunction(readIndexHtml(), 'function updateCameraWarpKick(gameDt) {');
+  assert.match(kick, /camera\.zoomImpulseWide = cameraRig\.warpUnifyW > 0 && Number\.isFinite\(cameraRig\.warpZoomRef\);/);
+});
 // Przylot z celem przy brzegu tarczy (kadr przylotu ~0,015 — poniżej limitu kadłuba), potem trzymanie po ślizgu.
 function k1ArrivalHeld(arrivalDist = 30000) {
   const dt = 1 / 60;

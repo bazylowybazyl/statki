@@ -618,6 +618,7 @@ function simulate(sc, H, k1) {
     }, tune);
     // cameraZoom.js: zoom na ekranie = zoom gracza × e^człon w [podłoga, max] (podłoga kadru przylotu — cameraZoomFloor)
     cz.zoomImpulseMin = rig.warpZoomFloor;
+    cz.zoomImpulseWide = rig.warpUnifyW > 0 && Number.isFinite(rig.warpZoomRef);   // index.html: updateCameraWarpKick
     cz.zoomImpulseLog = rig.warpZoomLog;
     CZ.stepCameraZoom(cz, DT);
     const zoom = cz.zoom;

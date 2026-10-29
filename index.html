@@ -6057,6 +6057,9 @@
       // Podłoga zoomu NA EKRANIE przy członie < 0 (kadr przylotu warpa z celem — cameraZoom.js: cameraZoomFloor); NaN — limit
       // kadłuba (minZoom).
       zoomImpulseMin: NaN,
+      // Ujednolicony kadr skoku warpa gracza (kadr lotu): limit członu przejściowego jak przy podłodze K1 (cameraZoom.js:
+      // stepImpulseCap) — kadr lotu nie zależy od zoomu gracza.
+      zoomImpulseWide: false,
       zoomAnchor: { active: false, dx: 0, dy: 0 },
       manualZoom: false,
       shakeMag: 0,
@@ -29602,6 +29605,9 @@
       // Podłoga zoomu kadru przylotu z celem (K1 — cameraRig.js: warpZoomFloor; cameraZoom.js: cameraZoomFloor) — zoom na
       // ekranie może zejść poniżej limitu kadłuba tylko przy zatrzaśniętym kadrze przylotu.
       camera.zoomImpulseMin = cameraRig.warpZoomFloor;
+      // Ujednolicony kadr skoku (kadr lotu przy dużym zoomie gracza: ln ≈ −4,2 … −4,6) — szerszy limit członu (cameraZoom.js);
+      // hipercruise (bez zoomRef — warpZoomRef NaN) zostaje przy ±3.
+      camera.zoomImpulseWide = cameraRig.warpUnifyW > 0 && Number.isFinite(cameraRig.warpZoomRef);
       // Reżyser kadru (cameraDirector.js): jego oddalenie to drugi człon log(zoom) — tylko kamera statku; przejście
       // prowadzące zoom i inne tryby zerują go od razu (wejście w RTS przenosi je wcześniej na zoom gracza).
       if (camera.mode !== 'ship' || w.suspend) resetCameraDirector(cameraDirector);
@@ -31118,7 +31124,8 @@
         rigIn.velY = vScr.y;
         rigIn.maxSpeed = scouting ? Math.max(100, Number(scoutSn.maxSpeed) || 400) : hullVmax;
         rigIn.mode = scouting ? 'never' : OPTIONS.cameraLook;
-        // skok warpa gracza (ładowanie, lot, rampa, ślizg): mniejsze wyprzedzenie — statek bliżej środka kadru (warpJumpLead)
+        // skok warpa gracza (ładowanie, lot, rampa, ślizg): stałe wyprzedzenie warpJumpLead (0,35 = navLead) przy każdej
+        // postawie — kotwica soczewki P0 niezależna od walki (cameraRig.js; 0,22 psuło kop S10 i wyjście S8 ponad P4)
         rigIn.leadGain = scouting ? cameraRigTune.scoutLead : (playerWarpCameraBusy() ? cameraRigTune.warpJumpLead : NaN);
         // Hipercruise (kadr za statkiem, wyprzedzenie na maksimum): nad pasami HUD zostaje CAŁY kadłub z dyszami, nie sam
         // środek — do pasów półwymiar kadłuba w pionie ekranu; waga gładka (zacisk kadru w rigu skakałby przy zmianie).

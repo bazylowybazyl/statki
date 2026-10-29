@@ -820,15 +820,19 @@ export function defaultShipZoom(viewW, hullLength, tune = CAMERA_RIG_DEFAULTS, m
   return clamp(zoom, minZoom, maxZoom);
 }
 
-// Zoom odniesienia skoku warpa gracza [px CSS / j.] (input.zoomRef stepCameraRigWarp — gra, symulator soczewki, demo
-// „Pęd”): domyślny zoom statku z szerokości kadru najwyżej warpJumpAspect × wysokość, × warpJumpFrame.
+// Zoom odniesienia KADRU LOTU warpa gracza [px CSS / j.] (input.zoomRefFar stepCameraRigWarp — gra, symulator soczewki,
+// demo „Pęd”): domyślny zoom statku z szerokości kadru najwyżej warpJumpAspect × wysokość, × warpJumpFrame. Kadr lotu na
+// ekranie (× warpZoomOut) nie dalej niż limit kadłuba (inaczej w locie przycina go cameraZoom.js, a zatrzask podłogi K1
+// przy wyjściu zdejmuje przycięcie skokiem w jednej klatce — okno 1280 × 720: −11%) i nie bliżej niż kadr ładowania.
 export function warpJumpZoomRef(viewW, viewH, hullLength, tune = CAMERA_RIG_DEFAULTS, minZoom = 0.035, maxZoom = 3.2) {
   const w = Math.max(1, finite(viewW, 1));
   const h = Math.max(0, finite(viewH, 0));
   const am = Math.max(0, finite(tune.warpJumpAspect, CAMERA_RIG_DEFAULTS.warpJumpAspect));
   const wEff = am > 0 && h > 0 ? Math.min(w, am * h) : w;
   const k = clamp(finite(tune.warpJumpFrame, CAMERA_RIG_DEFAULTS.warpJumpFrame), 0.05, 1);
-  return defaultShipZoom(wEff, hullLength, tune, minZoom, maxZoom) * k;
+  const zOut = clamp(finite(tune.warpZoomOut, 1), 0.05, 1);
+  const far = defaultShipZoom(wEff, hullLength, tune, minZoom, maxZoom) * k;
+  return Math.min(defaultShipZoom(w, hullLength, tune, minZoom, maxZoom), Math.max(far, finite(minZoom, 0.035) / zOut));
 }
 
 // Amplituda wstrząsu w px: camera.addShake (bieżące mag po wygaszaniu)

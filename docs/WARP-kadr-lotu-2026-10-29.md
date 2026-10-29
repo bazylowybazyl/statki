@@ -54,6 +54,26 @@ Liczba kontroli z BŁĘDEM (oba rozmiary razem); opcja `--kamera klucz=liczba` (
 - Dawne błędy 21:9 / 32:9 (S1, S7, S11 — ciała w bocznych pasach szerokiego kadru) są niezależne od kamery: decyzja
   `aspectFlow` czeka w `docs/webgpu/WARP-SOCZEWKA.md` § „Mapa O1 — proporcje kadru”.
 
+### Niezależny przegląd (2026-10-29, przepływ: 3 wymiary + weryfikacja każdego zgłoszenia, tylko czytanie)
+
+Potwierdzone i poprawione:
+
+1. Kadr lotu w mniejszym oknie (1280 × 720 px CSS — laptop 1080p ze skalą 150%) schodził poniżej limitu kadłuba
+   (0,4 · 0,142 · 0,55 = 0,031 < 0,035): w locie zoom stał na limicie, a w klatce zatrzasku K1 (podłoga zdejmuje limit)
+   skakał −11% (1366 × 768 w przeglądarce — −19%); w drugą stronę na końcu zejścia K1 przy kolejnym odcinku. Teraz
+   `warpJumpZoomRef` trzyma kadr lotu na ekranie ≥ `minZoom` i nie bliżej niż kadr ładowania; test zatrzasku przy 1280 × 720.
+2. Limit członu przejściowego ±3 przycinał kadr lotu od zoomu gracza ~0,94 (1080p) / ~1,26 (5120 × 1440) — dawny kadr
+   skoku dopiero od ~2,35; na początku wyjścia zoom zjeżdżał 3 log/s. Teraz w ujednoliconym kadrze skoku limit jak przy
+   podłodze K1 (`camera.zoomImpulseWide`).
+3. Fazy efektów boków kadru w px bufora — zmiana skali renderu w locie (rozdzielczość dynamiczna, DPR, okno) przestawiała
+   smugi i haze w jednej klatce; teraz fazy przeskalowane przy zmianie bufora.
+4. Kamera „Północ” przy kursie wschód–zachód: kolumna i zakres smug z szerokości ekranu zamiast rzutu kadru w poprzek
+   kursu (na 32:9 ~2% smug); teraz z rzutu.
+5. Komentarze o wyprzedzeniu „statek bliżej środka” przy wartości 0,35 = `navLead`.
+
+Odrzucone: ładowanie rozpoczęte w oknie kadru przylotu idzie w kadrze lotu (bramka S12) — zamierzone (bez pompowania
+zoomu między odcinkami TRAVEL TO; kolejny odcinek startuje w próżni, nie przy porcie planety z ringiem).
+
 ## Pochylenie soczewki (3a)
 
 `?warpSoczewka=plaska` — `hf` 2,5 zamiast 0,8 (`worldLens.js`: `parseWarpLensTilt`, stosuje `warpNurt.js:

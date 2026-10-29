@@ -48,12 +48,12 @@ export const CAMERA_ZOOM_SMOOTH = Object.freeze({
   // Poniżej obu progów (|log(zoom/cel)| i |prędkość| w log/s) zoom staje na celu.
   settleLog: 1e-4,
   settleVel: 1e-3,
-  // Najwyżej tyle w log(zoom) może dodać człon przejściowy (×/÷ 20): kop i ujednolicony kadr swobodnego skoku, hipercruise,
-  // reżyser kadru — jak dawniej (przy zoomie gracza > ~2,35 kadr skoku przycięty).
+  // Najwyżej tyle w log(zoom) może dodać człon przejściowy (×/÷ 20): kop, hipercruise, reżyser kadru — jak dawniej.
   impulseLogMax: 3,
-  // Przy podłodze kadru przylotu (K1 — cam.zoomImpulseMin) do ×/÷ 400: kadr przylotu liczy się od zoomu gracza — przy
-  // zoomie 3,2 kadr przylotu Atlasa (~0,015) to ln ≈ −5,4. Limit przechodzi między wartościami z tempem impulseCapRate
-  // [log/s] (cam.zoomImpulseCap, krok w stepCameraZoom) — zatrzask i zdjęcie podłogi bez skoku zoomu.
+  // Przy podłodze kadru przylotu (K1 — cam.zoomImpulseMin) i w ujednoliconym kadrze skoku warpa gracza
+  // (cam.zoomImpulseWide — kadr lotu przy zoomie gracza 3,2 to ln ≈ −4,2 … −4,6) do ×/÷ 400: kadr przylotu liczy się od
+  // zoomu gracza — przy zoomie 3,2 kadr przylotu Atlasa (~0,015) to ln ≈ −5,4. Limit przechodzi między wartościami
+  // z tempem impulseCapRate [log/s] (cam.zoomImpulseCap, krok w stepCameraZoom) — zatrzask i zdjęcie bez skoku zoomu.
   impulseLogMaxFloor: 6,
   impulseCapRate: 3
 });
@@ -74,10 +74,11 @@ function impulseCap(cam) {
   return Number.isFinite(c) ? Math.min(S.impulseLogMaxFloor, Math.max(S.impulseLogMax, c)) : S.impulseLogMax;
 }
 
-// Limit członu o dt s w stronę impulseLogMaxFloor (podłoga kadru przylotu — cam.zoomImpulseMin > 0) albo impulseLogMax.
+// Limit członu o dt s w stronę impulseLogMaxFloor (podłoga kadru przylotu — cam.zoomImpulseMin > 0 — albo ujednolicony
+// kadr skoku — cam.zoomImpulseWide) albo impulseLogMax.
 function stepImpulseCap(cam, dt) {
   const S = CAMERA_ZOOM_SMOOTH;
-  const goal = Number(cam.zoomImpulseMin) > 0 ? S.impulseLogMaxFloor : S.impulseLogMax;
+  const goal = Number(cam.zoomImpulseMin) > 0 || cam.zoomImpulseWide === true ? S.impulseLogMaxFloor : S.impulseLogMax;
   const c = impulseCap(cam);
   const d = S.impulseCapRate * (dt > 0 ? dt : 0);
   cam.zoomImpulseCap = c < goal ? Math.min(goal, c + d) : Math.max(goal, c - d);
