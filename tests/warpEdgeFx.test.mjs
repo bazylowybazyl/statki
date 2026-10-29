@@ -3,7 +3,8 @@
 // smug gwiazd, hipercruise = 0), przełącznik z adresu (`?warpFx=`), układ kadru i maska czystej kolumny (lustra CPU),
 // całkowanie fazy z limitem aliasingu i długość smug bez stroboskopu, WGSL trzech materiałów zbudowany w Node (bez GPU,
 // bez biegunowych i bez NaN-owych operacji), uniformy skończone przy skrajnych wejściach, kolumna z zoomu bieżącej klatki,
-// lustro CPU fragmentu W1 na teksturze tile2D z mipmapami (gładko — bez fałd obrazu), strażnik szwu (bez Math.random,
+// kamera „Północ” (kolumna i zasięg drobin z rozpiętości kadru w poprzek kursu), fazy przeskalowane przy zmianie skali
+// renderu, lustro CPU fragmentu W1 na teksturze tile2D z mipmapami (gładko — bez fałd obrazu), strażnik szwu (bez Math.random,
 // window, DOM, importów src/game i bez zależności od soczewki O1) i wpięcie w sterownik WarpNurt (fazy skoku z automatu
 // gry, hipercruise, kamera bez soczewki, warstwa DIST zgłaszana z kroku efektów, siatki chowane bez klatki sterownika).
 // node --test tests/warpEdgeFx.test.mjs
@@ -334,6 +335,79 @@ test('kolumna z BIEŻĄCEGO zoomu: kamera odsuwa się po kopie (kadr lotu) — k
   assert.ok(near(clearAt(1), Math.min(T.colMaxW * W, T.colHullK * half(1))), 'bliski kadr — kolumna z kadłuba');
   assert.ok(near(clearAt(0.6), T.colHullK * half(0.6)), 'kadr odsuwa się — kolumna maleje z zoomem tej klatki');
   assert.ok(near(clearAt(0.1), T.colMinW * W), 'daleki kadr — dolna granica 8% szerokości');
+});
+
+test('kamera „Północ” (bez obrotu kadru), kurs wschód–zachód na 32:9: kolumna i zasięg drobin z rozpiętości kadru W POPRZEK kursu', () => {
+  const T = WarpEdgeFxTune;
+  // kurs w prawo ekranu: w poprzek kursu leży wysokość kadru (1440), nie szerokość (5120)
+  const L = warpEdgeLayout(0, 0, 0, 5120, 1440, 20);
+  assert.ok(near(L.lExt, 720, 1e-9) && near(L.aExt, 2560, 1e-9));
+  assert.ok(L.clear <= 0.3 * L.lExt, `kolumna ${L.clear} przy pół-zasięgu w poprzek ${L.lExt}`);
+  assert.ok(near(L.clear, T.colMinW * 1440, 1e-9), 'dolna granica kolumny z rozpiętości w poprzek kursu');
+  assert.ok(L.reach > L.clear && L.reach <= L.lExt + Math.abs(L.lAxis) + 1e-9, `drobiny w poprzek do ${L.reach} px`);
+  assert.ok(near(L.reach, 720, 1e-9), 'drobiny do krawędzi kadru w poprzek kursu, nie do R (2560) — poza kadrem');
+  // statek 200 px nad środkiem (y w górę): zasięg do DALSZEJ krawędzi w poprzek
+  assert.ok(near(warpEdgeLayout(0, 0, 200, 5120, 1440, 20).reach, 920, 1e-9));
+  // kurs w górę (domyślny kadr skoku) — jak dotąd: szerokość ekranu
+  const Up = warpEdgeLayout(UP, 0, 0, 5120, 1440, 20);
+  assert.ok(near(Up.clear, T.colMinW * 5120, 1e-9));
+  assert.ok(near(Up.reach, 2560, 1e-9));
+  // ciągłość w kącie kursu (obrót kadru w ładowaniu): kolumna i zasięg bez skoków (ograniczenie Lipschitza rzutu kadru)
+  const step = Math.PI / 180;
+  const lip = (5120 + 1440) * 0.5 * step;
+  let prev = null;
+  for (let a = UP; a <= step * 0.5; a += step) {
+    const X = warpEdgeLayout(a, 0, 0, 5120, 1440, 20);
+    if (prev) {
+      assert.ok(Math.abs(X.reach - prev.reach) <= lip + 1e-9, `zasięg skacze przy ${a}`);
+      assert.ok(Math.abs(X.clear - prev.clear) <= 2 * T.colMaxW * lip + 1e-9, `kolumna skacze przy ${a}`);
+    }
+    prev = { reach: X.reach, clear: X.clear };
+  }
+  // sterownik efektu: uniformy kolumny i zasięgu drobin z tego układu
+  const fx = new WarpEdgeFx();
+  const player = { mode: 'warp', charge: 1, kickT: 0, exitT: -1e9, ramp: { slow: 0.7 }, flowGear: 21000, hyper: false, angle: 0 };
+  fx.update({ on: true, t: 5, dt: 1 / 60, player, roll: 0, palette: '', W: 5120, H: 1440, zoom: 0.05, shipX: 0, shipY: 0, hullWidth: 800 });
+  assert.ok(near(fx.U.column.value.x, T.colMinW * 1440, 1e-9), `kolumna ${fx.U.column.value.x}`);
+  assert.ok(near(fx.U.dustReach.value, 720, 1e-9), `zasięg drobin ${fx.U.dustReach.value}`);
+  assert.ok(near(fx.U.frame.value.x, 720, 1e-9), 'pół-zasięg w poprzek dla maski');
+  assert.ok(near(fx.U.dustPh.value.w, 2 * (2560 + 0.4 * 1440), 1e-9), 'zawijanie wzdłuż kursu z R (bez zależności od kąta)');
+});
+
+test('skala renderu w locie (rozdzielczość dynamiczna, DPR, okno): fazy przeskalowane — faza / kafelek i faza / rozpiętość bez skoku', () => {
+  const fx = new WarpEdgeFx();
+  const player = { mode: 'warp', charge: 1, kickT: 0, exitT: -1e9, ramp: { slow: 0.7 }, flowGear: 21000, hyper: false, angle: UP };
+  const frame = (W, H, dt, t) => fx.update({ on: true, t, dt, player, roll: 0, palette: '', W, H, zoom: 0.05, shipX: 0, shipY: 0, hullWidth: 800 });
+  for (let i = 0; i < 40; i++) frame(1600, 900, 1 / 60, 5 + i / 60);
+  const U = fx.U;
+  const ratios = () => ({
+    haze1: U.haze1.value.z / U.haze1.value.y,
+    haze2: U.haze2.value.z / U.haze2.value.y,
+    zorza: U.auroraPh.value / U.aurora.value.w,
+    daleka: U.dustPh.value.x / U.dustPh.value.w,
+    srednia: U.dustPh.value.y / U.dustPh.value.w,
+    bliska: U.dustPh.value.z / U.dustPh.value.w
+  });
+  const a = ratios();
+  for (const [k, v] of Object.entries(a)) assert.ok(v > 0 && v < 1, `${k}: faza ruszyła i bez zawinięcia (${v})`);
+  // skala renderu 0,85 (1600 × 900 → 1360 × 765), klatka bez przyrostu czasu — wzór stoi
+  frame(1360, 765, 0, 5 + 40 / 60);
+  const b = ratios();
+  for (const k of Object.keys(a)) assert.ok(near(a[k], b[k], 1e-9), `${k}: ${a[k]} → ${b[k]} (skok wzoru przy zmianie skali)`);
+  assert.ok(near(U.dustPh.value.w, 2 * (1360 / 2 + 0.4 * 765), 1e-9), 'rozpiętość zawijania z nowego kadru');
+  // dalej wzór płynie w nowych px: bliska warstwa + 3 H/s · dt
+  const p0 = U.dustPh.value.z;
+  frame(1360, 765, 1 / 60, 5 + 41 / 60);
+  assert.ok(near(U.dustPh.value.z - p0, WarpEdgeFxTune.dustSpeedNear * 765 / 60, 1e-6));
+  // sama szerokość (okno węższe, ta sama wysokość): haze bez zmian, drobiny z rozpiętością
+  const c0 = ratios();
+  frame(1200, 765, 0, 5 + 41 / 60);
+  const c1 = ratios();
+  for (const k of Object.keys(c0)) assert.ok(near(c0[k], c1[k], 1e-9), `${k}: zmiana szerokości okna`);
+  // wyłączenie zapomina skalę (nowy skok — fazy od zera)
+  fx.off();
+  assert.equal(fx._phH, 0);
+  assert.equal(fx._phSpan, 0);
 });
 
 // ── W1: lustro CPU pola przesunięcia (fałdy obrazu) ────────────────────────────────────────────────────────────────

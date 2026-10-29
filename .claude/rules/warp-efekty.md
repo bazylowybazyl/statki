@@ -26,6 +26,15 @@ paths:
   całkowane na CPU (`warpEdgePhaseStep`, limit aliasingu — nie czas × prędkość w shaderze), obwiednia `warpEdgeEnvelope`
   (hipercruise, podzielony ekran i kamery bez soczewki — 0). Pozycje liczy shader z uniformów ekranu — siatki nie zmieniają
   `position` w kroku efektów (macierze sceny Core3D synchronizuje PRZED krokami `Core3D.fx`).
+- KADR W POPRZEK KURSU: kolumna (`clear`) i zasięg drobin w poprzek (`reach` = lExt + |lAxis| → `U.dustReach`) liczą się
+  z rzutu kadru na poprzeczną kursu (2 · lExt), nie z szerokości ekranu — w trybie kamery „Północ” (bez obrotu kadru) przy
+  kursie wschód–zachód w poprzek leży wysokość ekranu (na 32:9 z szerokości widać było ~2% smug, a haze tylko w pasach
+  ~300 px). R (pół większego boku) służy TYLKO zawijaniu drobin wzdłuż kursu (nie zależy od kąta kursu). Gęstość smug
+  w kadrze zależy od proporcji i kierunku kursu (32:9 przy kursie w górę — ~¼ smug w kadrze) — strojenie, nie wyrównana.
+- FAZY W PX BUFORA: zmiana skali renderu w locie (rozdzielczość dynamiczna `Core3D.setRenderScale`, DPR, okno) przeskalowuje
+  fazy przed krokiem — haze i zorza z wysokością kadru (kafelki ∝ H), drobiny z rozpiętością zawijania 2 · (R + 0,4 H)
+  (`_phH`, `_phSpan`, zerowane w `off()`); inaczej wzór skacze w jednej klatce (5120 × 1440, skala 1 → 0,85: ~0,6–0,7
+  okresu). Nowa faza efektu w px — to samo.
 - Warstwę DIST zgłasza krok `Core3D.fx` „warp: boki kadru” (nie `WarpNurt.update` — flagę kasuje klatka efektów).
   Przełącznik `?warpFx=0|haze|czastki|zorza|wszystko` (domyślnie W1 + W2), strojenie `WarpNurt.edge.tune` (tryb
   `?renderWorker=0`). Decyzje D1–D7 (zestaw, siła haze, smugi pod / nad planetami, gęstość, kolumna, W4–W9, presety grafiki)
