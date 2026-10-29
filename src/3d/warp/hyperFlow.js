@@ -3,9 +3,10 @@
 // OPŁYW HIPERCRUISE'U (2026-10-29, zgłoszenie użytkownika: „dać [haze] większy z silników i efekt à la opływowy,
 // aerodynamiczny haze wzdłuż statku w dół — żeby oddać prędkość”; całość wyglądu — hyperLook.js). Przezroczyste
 // zniekształcenie (warstwa DIST — sama refrakcja, bez świecenia i bez okręgów) przypięte do statku gracza w hipercruisie:
-//   • OTOCZKA — warstwa przyścienna wzdłuż burt: pas tuż za obrysem kadłuba (stadion L × W), grubiejący od dzioba ku
-//     rufie, z pasmami szumu wydłużonymi wzdłuż kursu i płynącymi ku rufie; wnętrze kadłuba bez przesunięcia (kadłub
-//     ostry); za rufą burty schodzą się w KILWATER (pas szerzeje i gaśnie wykładniczo);
+//   • OTOCZKA — warstwa przyścienna wzdłuż burt: pas tuż za obrysem kadłuba (L × W z pudła sprite'a × hullWidth, dziób
+//     zbieżny — pół szerokości 0,3 → 1 na pierwszych 45% długości), grubiejący od dzioba ku rufie, z pasmami szumu
+//     wydłużonymi wzdłuż kursu i płynącymi ku rufie; wnętrze kadłuba bez przesunięcia (kadłub ostry); za rufą burty
+//     schodzą się w KILWATER (pas szerzeje i gaśnie wykładniczo);
 //   • STRUGI DYSZ — długie smugi gorącego powietrza z każdej dyszy MAIN (dłuższe niż stożek „uber”, wzór szybszy).
 // Jeden rysunek: kwady na instancjach (0 — otoczka, 1..N — dysze), dane względem statku (duży offset w mesh.position —
 // pozycja świata nie idzie do shadera we float32). Kierunek przesunięcia w osiach EKRANU z modelViewMatrix (obrót kadru
