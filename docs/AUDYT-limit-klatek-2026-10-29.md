@@ -138,7 +138,8 @@ Wnioski:
 4. Pojedyncze długie odstępy (20–48 ms przy 60, do 30 ms przy 240) we wszystkich strategiach poza kolejką: komunikat
    budzika i budzik strony czekają, gdy wątek strony robi coś innego. Kolejka trzyma wątek zajęty i w tym przebiegu
    ogona nie miała — przyczyna nie sprawdzona (podejrzenie: praca w czasie bezczynności wątku, np. GC). Okna 6 s —
-   ogony to pojedyncze klatki; sprawdzić w prawdziwym Electronie bez VSync.
+   ogony to pojedyncze klatki; sprawdzić w prawdziwym Electronie bez VSync. W powtórce przy 60 (A/B bariery,
+   § „Ogon przy limicie 60 — A/B bariery bezczynności”) ogona nie było w żadnej strategii.
 5. Dawny budzik w tym przebiegu miał przy 120 margines 1 ms (spóźnienia setTimeout strony małe: p90 0,07 ms), więc
    kolejka dopinała ~1 ms na klatkę; w pierwszym pomiarze (wyżej) spóźnienia budzika strony miały p90 5,6–6,9 ms
    i margines 6 ms — wtedy kolejką szło całe czekanie. Koszt dawnego budzika zależał od chwili; wątek budzika — nie.
@@ -171,3 +172,44 @@ Wnioski:
 - Narzędzia: `FrameLimiter.wake.lateMax` / `lateOver` (budzenia spóźnione > 2 ms) i `frameMax` (najdłuższa klatka strony
   — od budzenia do następnego zamówienia); `limit-klatek-gra.mjs --budziki …+bariera` — strażnik dwustopniowy
   (`tune.workerFence`): pierwszy stopień budzika strony w chwili należnej (pełne ms w górę), drugi 100 ms dalej.
+
+## Ogon przy limicie 60 — A/B bariery bezczynności (2026-10-29)
+
+Hipoteza recenzenta: między klatkami wątek strony jest bezczynny, a przy strategii `worker` najbliższy budzik strony to
+strażnik 100 ms po chwili należnej — Blink daje wtedy długi okres bezczynności (do 50 ms), w którym zadania
+requestIdleCallback i GC w bezczynności opóźniają komunikat wątku budzika. `sen` ma budzik strony w chwili należnej,
+`kolejka` nie zostawia bezczynności wcale. A/B: `tune.workerFence` — strażnik dwustopniowy, pierwszy stopień budzika
+strony w chwili należnej (pełne ms w górę; odpowiedź wątku zwykle go kasuje), drugi 100 ms dalej.
+
+Pomiar: `node scripts/webgpu/limit-klatek-gra.mjs --takt 0 --bezVsync 1 --menuLimity brak --limity 60,60 --budziki
+worker,worker+bariera,sen,kolejka --okres 12 --cisza 10` — atrapa Electrona bez VSync, tryb worker, 5120 × 1440, gra
+swobodna od startu, dwie rundy po 4 okna 12 s, bez cudzych harnessów. „Spóźnione” — budzenia później niż 2 ms po
+chwili należnej (`FrameLimiter.wake.lateOver`, w nawiasie `lateMax`); „klatka” — najdłuższa klatka strony
+(`frameMax`: od budzenia do następnego zamówienia).
+
+| Budzik | Runda | Odstępy p1 / p50 / p90 / p99 / maks. [ms] | > I + 2 ms | Spóźnione (maks. ms) | Klatka [ms] | Wątek strony | Proces |
+|---|---|---|---|---|---|---|---|
+| worker | 1 | 16,20 / 16,67 / 16,83 / 17,11 / 18,06 | 0 | 1 (2,12) | 2,81 | 9,1% | 139%¹ |
+| worker + bariera | 1 | 16,19 / 16,67 / 16,88 / 17,13 / 23,07 | 2 | 4 (6,44) | 2,17 | 7,9% | 80% |
+| sen | 1 | 15,02 / 16,52 / 17,52 / 18,04 / 19,01 | 1 | 44 (2,91) | 2,20 | 7,1% | 73% |
+| kolejka | 1 | 16,65 / 16,67 / 16,67 / 16,68 / 20,16 | 2 | 2 (3,47) | 2,05 | 15,5% | 82% |
+| worker | 2 | 16,20 / 16,66 / 16,89 / 17,13 / 20,64 | 1 | 2 (4,38) | 2,14 | 7,1% | 75% |
+| worker + bariera | 2 | 16,17 / 16,67 / 16,87 / 17,12 / 20,65 | 2 | 2 (4,03) | 1,86 | 7,3% | 76% |
+| sen | 2 | 15,00 / 16,53 / 17,53 / 18,05 / 19,00 | 1 | 39 (2,63) | 2,23 | 7,2% | 75% |
+| kolejka | 2 | 16,63 / 16,67 / 16,67 / 16,70 / 18,13 | 0 | 0 (1,47) | 2,04 | 15,6% | 82% |
+
+¹ pierwsze okno tuż po starcie gry — worker renderu jeszcze się rozgrzewał (karta 34,5%, 117 W wobec ~20%, 84 W
+w pozostałych oknach).
+
+Wnioski:
+
+1. Ogona z pierwszego pomiaru (worker przy 60: p99 19,92 ms, maks. 48,2 ms w jednym oknie 6 s, ~3 min po starcie gry,
+   po oknach 120 i 240) tu nie było w żadnej strategii: worker p99 17,1 ms, maks. ≤ 20,6 ms, najdłuższa klatka strony
+   ≤ 2,8 ms. Pojedyncze budzenia spóźnione o 2–6 ms (1–4 na 12 s) zdarzały się też przy kolejce, która nie zostawia
+   bezczynności — to nie jest cecha strategii. `sen` spóźnia się z natury (pełne ms budzika strony + spóźnienie
+   setTimeout: p50 1,2 / p90 1,8 ms), stąd ~40 spóźnionych na 12 s przy maks. < 3 ms.
+2. Bariera bez zysku: spóźnione 6 wobec 3 w dwóch rundach, maks. 6,4 wobec 4,4 ms — w granicach szumu. Zostaje
+   wyłączona (`workerFence: false`), jako A/B w narzędziu (`--budziki worker+bariera`).
+3. Hipoteza ani potwierdzona, ani obalona — długi ogon w tym przebiegu nie wystąpił. Otwarte: prawdziwy Electron bez
+   VSync i dłuższa gra (ogony z pierwszego pomiaru przyszły kilka minut po starcie), w konsoli
+   `FrameLimiter.wake.lateMax` / `lateOver` / `frameMax` — spóźnione budzenie odróżnia od długiej klatki.

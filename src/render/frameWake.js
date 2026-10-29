@@ -12,9 +12,9 @@
 //               reszta czekania kolejką MessageChannel — przy limitach 120–240 całe czekanie (rdzeń CPU zajęty).
 // Domyślna 'worker' (pomiar 2026-10-29, atrapa Electrona, docs/AUDYT-limit-klatek-2026-10-29.md § „Budzik bez VSync”):
 // wątek strony 12% rdzenia przy limicie 120 i 22% przy 240 zamiast 28% / 90%, zero zadań kolejki zamiast 34–172 tys./s;
-// mediana i 90. percentyl odstępów klatek jak przy dopinaniu kolejką, ogon gorszy (przy limicie 60 99. percentyl
-// 19,9 ms i maks. 48,2 ms wobec 16,7 / 16,8 ms); pętla wątku budzika ~1 ms na klatkę. 'sen' — najtańszy, odstępy
-// ±1–1,5 ms.
+// mediana i 90. percentyl odstępów klatek jak przy dopinaniu kolejką, ogon gorszy w jednym przebiegu (przy limicie 60
+// 99. percentyl 19,9 ms i maks. 48,2 ms wobec 16,7 / 16,8 ms; w powtórce A/B — p99 17,1 ms, maks. ≤ 20,6 ms jak kolejka);
+// pętla wątku budzika ~1 ms na klatkę. 'sen' — najtańszy, odstępy ±1–1,5 ms.
 // Wątek budzika powstaje z góry (`prepare` — limit bez VSync w opcjach) albo przy pierwszym zamówieniu i budzi klatki
 // dopiero po sygnale gotowości (komunikat 0 po starcie modułu; do tej chwili budzik strony — start nie opóźnia klatek
 // i nie liczy się strażnikowi); `release` (bez limitu albo z VSync) zamyka go, zamówienie w toku przechodzi na budzik
@@ -26,7 +26,8 @@
 // strażnika: budzik strony `watchdogMs` po chwili należnej (odpowiedź nie przyszła) woła klatkę; trzy z rzędu, błąd
 // workera albo brak gotowości przez `workerStartWakes` zamówień — budzik strony ('sen') do końca sesji. `workerFence`
 // (A/B ogona) — strażnik dwustopniowy: pierwszy stopień w chwili należnej (pełne ms w górę) zamyka okres bezczynności
-// Blinka (zadania requestIdleCallback i GC w bezczynności dostają termin najdalej do niego), drugi — `watchdogMs` dalej.
+// Blinka (zadania requestIdleCallback i GC w bezczynności dostają termin najdalej do niego), drugi — `watchdogMs` dalej;
+// w pomiarze 2026-10-29 bez zysku (ogon się nie powtórzył w żadnej strategii) — wyłączony.
 // Zależności wstrzykiwane (testy bez czasu ściany): now, setTimer, clearTimer, channel, createWorker, warn.
 
 export const FRAME_WAKE_TUNE = {
@@ -38,7 +39,7 @@ export const FRAME_WAKE_TUNE = {
   watchdogMs: 100,        // 'worker': strażnik odpowiedzi
   watchdogFail: 3,        // tyle strażników z rzędu — worker uznany za martwy
   workerStartWakes: 240,  // tyle zamówień bez sygnału gotowości wątku — worker uznany za martwy
-  workerFence: false,     // 'worker': pierwszy stopień strażnika w chwili należnej (A/B ogona — bezczynność Blinka)
+  workerFence: false,     // 'worker': pierwszy stopień strażnika w chwili należnej (A/B ogona — bezczynność Blinka; bez zysku)
   lateOverMs: 2           // narzędzia: budzenia spóźnione ponad tyle ms (`lateOver`)
 };
 
