@@ -38,8 +38,8 @@ function decode(msg) {
   return out;
 }
 
-/** Rdzeń z ręcznym harmonogramem rozgrzewki (`queue` — kawałki do przerobienia). */
-function startCore(extra = {}) {
+/** Rdzeń z ręcznym harmonogramem rozgrzewki (`queue` — kawałki do przerobienia); `options` — np. zegar `now`. */
+function startCore(extra = {}, options = {}) {
   const got = { actors: null, actorMsgs: 0, ready: null, tick: null, ticks: [], errors: [], restoreResults: [], saves: [] };
   const queue = [];
   const core = createTrafficCore((m) => {
@@ -49,7 +49,7 @@ function startCore(extra = {}) {
     else if (m.type === TRAFFIC_MSG.ERROR) got.errors.push(m);
     else if (m.type === TRAFFIC_MSG.ECONOMY_RESTORE_RESULT) got.restoreResults.push(m);
     else if (m.type === TRAFFIC_MSG.ECONOMY_SAVE_RESULT) got.saves.push(m.state);
-  }, { schedule: (fn) => queue.push(fn) });
+  }, { schedule: (fn) => queue.push(fn), ...options });
   core.handle({ ...INIT, ...extra });
   return { core, got, queue };
 }
@@ -71,12 +71,15 @@ test('rozgrzewka: stała protokołu, `warmup: true` = godzina, brak = start od z
 });
 
 test('rozgrzewka liczy się kawałkami: wiadomości gry przechodzą między nimi, bańka stoi do końca, zegar świata przesunięty', () => {
-  const { core, got, queue } = startCore({ warmup: 600 });
+  // Zegar rdzenia: każdy odczyt = 1 ms — kawałek (12 ms) to stała liczba kroków świata niezależnie od szybkości
+  // maszyny (czasem ściany szybka maszyna liczyła 600 s w jednym kawałku, wolna — w dziesiątkach).
+  let t = 0;
+  const { core, got, queue } = startCore({ warmup: 600 }, { now: () => ++t });
   const earth = getNode(core.world.network, 'earth');
   core.handle({ type: TRAFFIC_MSG.FOCUS, x: earth.x + 50_000, y: earth.y, r: 60_000 });
   let slices = 0;
   let game = 0;
-  while (queue.length) {
+  while (queue.length && slices < 10_000) {
     queue.shift()();
     slices++;
     // Gra w tym czasie gra (klatki, handel): świat dostaje jej czas normalnie, bańka milczy.
@@ -84,7 +87,8 @@ test('rozgrzewka liczy się kawałkami: wiadomości gry przechodzą między nimi
     game += 1 / 30;
     if (queue.length) assert.equal(got.actorMsgs, 0, 'w trakcie rozgrzewki bez `actors`');
   }
-  assert.ok(slices > 1, `kawałków: ${slices}`);
+  const steps = Math.round(600 / core.world.config.step);
+  assert.ok(slices > 1 && slices < steps, `kawałków: ${slices} na ${steps} kroków`);
   assert.equal(got.errors.length, 0, JSON.stringify(got.errors[0] || null));
   const last = got.tick.warmup;
   assert.equal(last.active, false);
@@ -93,6 +97,20 @@ test('rozgrzewka liczy się kawałkami: wiadomości gry przechodzą między nimi
   assert.ok(Math.abs(world.registry.clock + world.pending - (600 + game)) < 1e-6, 'zegar świata = rozgrzewka + czas gry');
   core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 1 / 30 });
   assert.ok(got.actorMsgs > 0, 'po rozgrzewce bańka rusza');
+});
+
+test('rozgrzewka przy zagłodzonym wątku: kawałek = dokładnie jeden krok świata, rozgrzewka kończy się', () => {
+  // Każdy odczyt zegara „trwa” 100 ms (wywłaszczenie): budżet kawałka minął przed pierwszym krokiem — gwarancja kroku
+  // daje postęp, budżet tnie resztę.
+  let t = 0;
+  const { core, got, queue } = startCore({ warmup: 600 }, { now: () => (t += 100) });
+  const steps = Math.round(600 / core.world.config.step);
+  let slices = 0;
+  while (queue.length && slices < steps + 10) { queue.shift()(); slices++; }
+  assert.equal(slices, steps, 'kawałek na krok');
+  assert.equal(got.tick.warmup.active, false);
+  assert.equal(got.tick.warmup.seconds, 600);
+  assert.equal(got.errors.length, 0, JSON.stringify(got.errors[0] || null));
 });
 
 test('rozgrzewka deterministyczna: kawałki z przeplecionym czasem gry = zwykłe advance (osobne procesy, ziarno 7)', () => {
@@ -168,7 +186,8 @@ test('zapis ekonomii w trakcie rozgrzewki nakłada się na jej koniec: magazyny 
   source.core.handle({ type: TRAFFIC_MSG.ECONOMY_SAVE, requestId: 1 });
   const state = source.got.saves[0];
   assert.ok(state?.stations?.earth, 'zapis świeżego świata');
-  const { core, got, queue } = startCore({ warmup: 600 });
+  let t = 0; // zegar 1 ms na odczyt: pierwszy kawałek nie kończy rozgrzewki na żadnej maszynie
+  const { core, got, queue } = startCore({ warmup: 600 }, { now: () => ++t });
   queue.shift()();
   core.handle({ type: TRAFFIC_MSG.ECONOMY_RESTORE, requestId: 7, state });
   assert.equal(got.restoreResults.length, 0, 'odpowiedź czeka na koniec rozgrzewki');
