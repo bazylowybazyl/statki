@@ -29,7 +29,7 @@
 // Warianty S0–S5 (2026-10-29): DAWNE zachowanie gazu i mgły na żywo (S0 zegar, S1 okno przy kamerze, S2 bez drabiny map
 //   i ośrodka, S3 ciśnienie od zera, S4 klatka Core3D.fx po taktach rAF workera, S5 dawny zanik) — baza = nowy kod;
 //   --kolkoAb S2 powtarza okno ząbków kółka z wariantem.
-// Warianty poprawek wydajności pola (2026-10-29, docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 8) — DAWNE zachowanie:
+// Warianty poprawek wydajności pola (2026-10-29, docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 9) — DAWNE zachowanie:
 //   C5off (passy czyszczenia three), R1off (rozwiązanie MSAA w każdym passie), CRoff (oba), L0 (kolejka koszyków LOD),
 //   Z0 (bez znaczka głębi skał gry), V0 (dawna zasłona), STARE (wszystkie). Sondy kosztu skał: LODREV, SORT, FLATB, FLATP
 //   (trywialny fragment skał tła / gry — koszt fragmentów). Po oknach postoju: rozkład skał w kadrze (STAT_SKAL — koszyki

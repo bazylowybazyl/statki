@@ -34,7 +34,7 @@ export const ROCK_INSTANCE_FLOATS = FLOATS;
 // Skały są nieprzezroczyste z zapisem głębi (tło: kolejka przezroczysta bez mieszania), a koszt to fragmenty: duże skały
 // najpierw wypełniają głębię i test głębi odrzuca zasłonięte fragmenty mniejszych (dawniej LOD 0 — najmniejsze — szły
 // pierwsze i duże przykrywały już policzone). Obraz ten sam (kolejność nieprzezroczystych z testem głębi). Zysk zależy
-// od nakładania się skał (pomiar: docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 8). step < 0,1 — odstęp baz warstw tła
+// od nakładania się skał (pomiar: docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 9). step < 0,1 — odstęp baz warstw tła
 // (asteroidBelt.js). A/B: ROCK_LOD_ORDER.bigFirst = false + RockLayer.applyOrder() (asteroidBelt.setRockOrder).
 export const ROCK_LOD_ORDER = { bigFirst: true, step: 0.01 };
 

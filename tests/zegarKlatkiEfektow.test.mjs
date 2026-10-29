@@ -33,7 +33,10 @@ test('Core3D.frameNowMs: zegar z zewnątrz (worker), inaczej znacznik rAF strony
 
 test('index.html: zegar efektów migawki i strony = znacznik rAF pętli, nie performance.now() po fizyce', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /function loop\(now\) \{[\s\S]{0,700}?window\.__frameNowMs = now;/, 'pętla gry wystawia znacznik rAF');
+  // na początku klatki narysowanej: po decyzji limitu klatek (2026-10-29), przed wejściem i fizyką
+  const loop = html.slice(html.indexOf('function loop(now) {'), html.indexOf('pumpInput(now);', html.indexOf('function loop(now) {')));
+  assert.ok(loop.length > 0 && loop.length < 2500, 'początek loop()');
+  assert.match(loop, /if \(!frameLimitTick\(now\)\) return;[\s\S]*window\.__frameNowMs = now;/, 'pętla gry wystawia znacznik rAF');
   assert.match(html, /f\.wall = lastTime;/, 'HEAD.WALL migawki = znacznik rAF klatki');
   assert.doesNotMatch(html, /f\.wall = performance\.now\(\)/);
 });

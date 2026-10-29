@@ -822,7 +822,7 @@ export class RockShadowMaterial extends THREE.NodeMaterial {
  * środka (`shrink` < 1): rzut skały gwiaździstej względem środka przy kamerze z góry jest gwiaździsty względem rzutu
  * środka, więc pomniejszony znaczek leży ŚCIŚLE wewnątrz pokrycia skały (każda próbka MSAA pod znaczkiem jest potem
  * zasłonięta) — próbki bit w bit te same (bez MSAA cały obraz; z MSAA rozwiązanie karty pod skałą bywa inne o 1–2 ULP
- * półfloatu — docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 8.4), a różnice zaokrągleń wierzchołka nie mają znaczenia.
+ * półfloatu — docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 9.4), a różnice zaokrągleń wierzchołka nie mają znaczenia.
  * Ten sam wierzchołek co materiał skał (kształt z banku, obrót w czasie, próg pikseli i zanik pola — uniformy warstwy).
  */
 export class RockDepthStampMaterial extends THREE.NodeMaterial {

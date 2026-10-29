@@ -1,5 +1,10 @@
 // Wątki testu tests/renderBuffers.test.mjs (RW-04): pisarz i czytelnik potrójnego bufora, pierścienia rozkazów
 // i kanału zwrotnego na SharedArrayBuffer. Rola w workerData.role.
+//
+// Koniec pracy wyznacza PRACA, nie okno czasu ściany: na obciążonej maszynie (równoległe sesje, harnessy) worker
+// wstaje z opóźnieniem i bywa wywłaszczany, więc „900 ms” nie mówiło, ile przeplotu się wydarzyło (czytelnik
+// startujący 50 ms przed pisarzem kończył przed jego ostatnią stroną). Obie strony ruszają razem (`startTogether`),
+// pisarz robi swoją liczbę klatek i czeka na porcję czytelnika, czytelnik kończy na znak pisarza (`sync`).
 import { parentPort, workerData, receiveMessageOnPort } from 'node:worker_threads';
 import { TripleBufferWriter, TripleBufferReader } from '../../src/render/tripleBuffer.js';
 import { EventRingWriter, EventRingReader } from '../../src/render/eventRing.js';
@@ -10,6 +15,15 @@ function sleep(ms) {
   if (ms > 0) Atomics.wait(sleepCell, 0, 0, ms);
 }
 const now = () => performance.now();
+
+// Komórki `workerData.sync` (Int32Array na SharedArrayBuffer, wspólna dla pary wątków).
+const SYNC = { START: 0, DONE: 1, PROGRESS: 2 };
+function startTogether(sync) {
+  Atomics.add(sync, SYNC.START, 1);
+  Atomics.notify(sync, SYNC.START);
+  for (let v; (v = Atomics.load(sync, SYNC.START)) < 2;) Atomics.wait(sync, SYNC.START, v, 50);
+}
+const writerDone = (sync) => Atomics.load(sync, SYNC.DONE) === 1;
 
 // Deterministyczne losowanie (mulberry32) — przebiegi powtarzalne co do ciągu decyzji.
 function rng(seed) {
@@ -26,14 +40,18 @@ function rng(seed) {
 // Wartość słowa i strony k — strona rozdarta = słowa z różnych k.
 const pageWord = (k, i) => k * 8192 + (i * 2654435761 % 8191);
 
-function tripleWriter({ buffer, pageBytes, durationMs, hz }) {
+// Pisarz: `durationMs · hz` stron w tempie hz (zaległość po wywłaszczeniu nadrabia bez snu), potem dalej, aż
+// czytelnik odbierze `minAcquired` stron (sufit — 20 × tyle stron: czytelnik, który nic nie odbiera, kończy test).
+function tripleWriter({ buffer, pageBytes, durationMs, hz, sync, minAcquired }) {
   const w = new TripleBufferWriter(buffer, { pageBytes });
   const n = pageBytes >> 3;
   const period = 1000 / hz;
+  const frames = Math.round(durationMs * hz / 1000);
+  startTogether(sync);
   const t0 = now();
   let k = 0;
   let next = t0;
-  while (now() - t0 < durationMs) {
+  while (k < frames || (Atomics.load(sync, SYNC.PROGRESS) < minAcquired && k < frames * 20)) {
     k++;
     const page = w.page;
     page[0] = k;
@@ -48,18 +66,22 @@ function tripleWriter({ buffer, pageBytes, durationMs, hz }) {
     next += period;
     sleep(Math.max(0, next - now()));
   }
+  Atomics.store(sync, SYNC.DONE, 1);
   return { published: k, overwritten: w.overwritten };
 }
 
-function tripleReader({ buffer, pageBytes, durationMs, seed }) {
+// Czytelnik: do znaku końca pisarza; po nim jeszcze jeden odbiór — ostatnia publikacja.
+function tripleReader({ buffer, pageBytes, seed, sync }) {
   const r = new TripleBufferReader(buffer, { pageBytes });
   const rnd = rng(seed);
   const n = pageBytes >> 3;
-  const t0 = now();
+  startTogether(sync);
   let torn = 0, sumBad = 0, backwards = 0, acquired = 0, lastK = 0, gaps = 0;
-  while (now() - t0 < durationMs + 50) {
+  for (;;) {
+    const done = writerDone(sync);
     if (r.acquire()) {
       acquired++;
+      Atomics.store(sync, SYNC.PROGRESS, acquired);
       const page = r.page;
       const k = page[0];
       if (k <= lastK) backwards++;
@@ -82,6 +104,7 @@ function tripleReader({ buffer, pageBytes, durationMs, seed }) {
       if (sum !== page[1]) sumBad++;
       if (page[0] !== k) torn++;
     }
+    if (done) break;
     sleep(Math.floor(rnd() * 12));
   }
   return { torn, sumBad, backwards, acquired, lastK, gaps, consumed: r.consumed };
@@ -97,13 +120,16 @@ function recordShape(seq) {
 }
 const payloadWord = (seq, i) => seq * 4096 + i + 0.25;
 
-function ringWriter({ buffer, durationMs, hz, port, seed }) {
+// Pisarz: `durationMs · hz` klatek w tempie hz (zaległość nadrabia bez snu).
+function ringWriter({ buffer, durationMs, hz, port, seed, sync }) {
   const rnd = rng(seed);
   const w = new EventRingWriter(buffer, { onGrow: (next) => port.postMessage(next) });
   const period = 1000 / hz;
+  const frames = Math.round(durationMs * hz / 1000);
+  startTogether(sync);
   const t0 = now();
   let frame = 0, seq = 0, next = t0;
-  while (now() - t0 < durationMs) {
+  while (frame < frames) {
     frame++;
     // Klatka: 0–60 rekordów (szczyt bitwy ~70–170 rekordów — tu pojemność startowa mała, więc pierścień rośnie).
     const count = Math.floor(rnd() * 61);
@@ -125,10 +151,14 @@ function ringWriter({ buffer, durationMs, hz, port, seed }) {
   return { frames: frame, records: seq, grows: w.grows, capacity: w.capacity };
 }
 
-function ringReader({ buffer, port, seed }) {
+// Czytelnik: pierwsza partia dopiero po `lagFrames` klatkach pisarza — mały pierścień rośnie kilka razy w locie
+// niezależnie od tego, ile czasu system dał któremu wątkowi; dalej wolny i nieregularny, do znaku końca pisarza.
+function ringReader({ buffer, port, seed, sync, lagFrames }) {
   const rnd = rng(seed);
   const r = new EventRingReader(buffer);
   let expect = 0, lastFrame = 0, bad = 0, order = 0, overFrame = 0, maxLag = 0, batches = 0, doneAt = 0;
+  startTogether(sync);
+  while (Atomics.load(workerData.frameCell, 0) < lagFrames && Atomics.load(workerData.frameCell, 1) !== 1) sleep(1);
   for (;;) {
     for (let m; (m = receiveMessageOnPort(port));) r.adopt(m.message);
     const done = Atomics.load(workerData.frameCell, 1) === 1;
@@ -164,31 +194,36 @@ function ringReader({ buffer, port, seed }) {
   return { records: expect, bad, order, overFrame, switches: r.switches, maxLag, batches };
 }
 
-function breachWriter({ buffer, layout, durationMs }) {
+// Pisarz: co najmniej `durationMs` i `minEpochs` epok, potem dalej, aż czytelnik zrobi `minReads` udanych odczytów
+// w trakcie zapisów (sufit epok: czytelnik, który nic nie odczytuje, kończy test).
+function breachWriter({ buffer, layout, durationMs, sync, minEpochs, minReads }) {
   const v = createReturnViews(buffer, layout);
   const bits = new Uint32Array(layout.breachWords);
+  startTogether(sync);
   const t0 = now();
   let epoch = 0;
-  while (now() - t0 < durationMs) {
+  while (epoch < minEpochs || now() - t0 < durationMs || (Atomics.load(sync, SYNC.PROGRESS) < minReads && epoch < 1e7)) {
     epoch++;
     for (let s = 0; s < layout.breachSlots; s++) {
       bits.fill((epoch * 31 + s) >>> 0);
       retWriteBreach(v, s, s * 3, epoch, 7 + s, epoch, bits);
     }
   }
+  Atomics.store(sync, SYNC.DONE, 1);
   return { epochs: epoch };
 }
 
-function breachReader({ buffer, layout, durationMs }) {
+function breachReader({ buffer, layout, sync }) {
   const v = createReturnViews(buffer, layout);
   const head = new Int32Array(RET_BREACH.HEADER_WORDS);
   const bits = new Uint32Array(layout.breachWords);
-  const t0 = now();
+  startTogether(sync);
   let reads = 0, busy = 0, torn = 0;
-  while (now() - t0 < durationMs) {
+  while (!writerDone(sync)) {
     for (let s = 0; s < layout.breachSlots; s++) {
       if (!retReadBreach(v, s, head, bits)) { busy++; continue; }
       reads++;
+      Atomics.store(sync, SYNC.PROGRESS, reads);
       const epoch = head[RET_BREACH.EPOCH];
       if (epoch === 0) continue;
       const want = (epoch * 31 + s) >>> 0;

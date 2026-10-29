@@ -61,6 +61,7 @@ import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
 import { HullSkinBatch } from './hullSkinBatch.js';
 import { HullDamageMap } from './hullDamageMap.js';
+import { hullSkinFieldFxStep } from './ships3d/hullSkin3D.js';
 import { cloakHidesShadow, cloakHullHolder, syncCloakDist, renderCloakLooks } from './cloak/hullCloak.js';
 
 // Materiały kadłubów (skóra belek, partia skór, maskowanie) są w TSL:
@@ -1309,6 +1310,8 @@ export function prewarmHexShips3D({ canvas = null } = {}) {
   prewarmFx3D();
   // Mapa ran: krok klatki efektów (kernel kompiluje się na ekranie ładowania, pula powstaje na GPU).
   HullDamageMap.ensureStep();
+  // Pole skóry 3D (ciała świata, modele okrętów): wysyłka zmienionych komórek rozrzutem — kernel na ekranie ładowania.
+  Core3D.addFxStep(hullSkinFieldFxStep());
   return true;
 }
 

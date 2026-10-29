@@ -64,11 +64,13 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Animacja w module renderu (efekt, odłamki, migotanie, czas materiału) → czas klatki `Core3D.frameNowMs()` (znacznik rAF klatki strony; w workerze z migawki), nie `performance.now()` w chwili rysowania — ten idzie po fizyce i efekty szarpią co krok względem kadłubów.
 - Moduł renderu z CZASEM GRY od strony (krok symulacji, ruch cząstek, zanik) → przyrost zegara strony od ostatniej PRZETWORZONEJ strony (`SimClock` / zegar w wejściu — wzór `warpFxDt`, gaz: `SPACE_GAS_IN.renderTime`), nie dt jednej strony: worker pomija strony i ich czas przepadał; symulacja w krokach fizyki — kroki z `SimClock.sim`, obraz w chwili `SimClock.render` (reguła `gaz-przestrzeni`).
 - Emiter ma świecić → luminancja > 1 (HDR, próg bloomu ~0,9), zwykłe powierzchnie pod progiem; efekty z dem wchodzą 1:1, bez kolan i mnożników bloomu. W shaderach efektów bez `pow()` z ujemną podstawą, varyingi z clampem — NaN w buforze HalfFloat rozlewa bloom na cały ekran.
+- Pętla w budżecie czasu klatki (wypiek, rozbieg, budowa porcjami — render i gra) → co najmniej jeden krok na klatkę, zegar sprawdzany PO kroku (`n === 0 || now() - t0 < budżet`; wzór `src/game/worldBodies.js`), zegar budżetu wstrzykiwany do testów — przy zagłodzonym wątku budżet minie przed pierwszym krokiem i praca stoi w każdej klatce.
 - Wiele obiektów jednego rodzaju → partia (jeden rysunek, dane per obiekt w buforze storage ze slotem): każdy rysunek to ~15–25 µs CPU w three r183. Bufor zmieniany częściowo → zakresy przez `src/3d/zakresyWysylki.js`, nie `DynamicDrawUsage` (w WebGPU = pełna wysyłka przy każdym renderze).
 - Przezroczysty `DoubleSide` → `forceSinglePass: true` (inaczej dwa rysunki i inna kolejność mieszania).
 - Pole symulacji zmieniane drobnymi przyrostami w teksturze połówkowej → zapis przez `sroundF16` (`src/3d/tsl/zapisF16.js`; zapis f32 → f16 obcina ku zeru).
 - HUD rzutuje przez `View3D` (`worldToScreen` / `screenToWorld`), nie przez `camera.zoom`; px bufora na j. świata = zoom · `Core3D.pxScale` (`Core3D.viewZoom(cam)`).
 - Nowa kanwa w panelu UI → przebij globalną regułę `main.css` `canvas:not(#c)` (absolutne, bez myszy).
+- Limit klatek (opcje grafiki, `src/render/frameLimiter.js`): `loop()` zamawia następną klatkę tylko przez `frameLimitTick` / `nextLoopFrame` (nie `requestAnimationFrame(loop)` — bez VSync pętla idzie na budziku), a nowa pętla rAF, która RYSUJE obraz poza `loop()` i tłem menu, pyta `FrameLimiter.tick` — inaczej limit jej nie obejmie (reguła `opcje-grafiki`).
 
 **Rozgrywka**
 - Ścieżka, która pokazuje albo celuje we wroga → `SensorSystem.hides(byt)` (mgła wojny); celowanie w gracza i wybór celów AI → `isCloakHidden` (maskowanie).
@@ -105,6 +107,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 ## Testy i weryfikacja
 
 - Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — samo `tests/` na Node 22 nie działa); `npm test` to osobny zestaw (`scripts/test.mjs`). WGSL buduje się w Node bez GPU (`renderer.backend.createNodeBuilder`) — testy materiałów czytają wygenerowany kod.
+- Testy nie mierzą czasu ściany (pełny zestaw idzie przy równoległych sesjach i grze użytkownika): budżet czasu — wstrzyknięty zegar albo liczba kroków, czekanie — na stan (limit awaryjny w sekundach), wątki — koniec z liczby kroków; próg wydajności — osobny test z opcją `WYDAJNOSC` (`tests/helpers/wydajnosc.mjs`, uruchamia `HULLFALL_TESTY_WYDAJNOSC=1`). Sprawdzenie: `WOLNY_ZEGAR_MS=5 node --import ./scripts/wolny-zegar.mjs --test …` — test przechodzi przy 0 / 2 / 5 / 10 ms na odczyt zegara. Test „bez alokacji” mierzy do stanu ustalonego JIT (`untilSteady` z `tests/helpers/alokacje.mjs`; sprawdzenie: `node --concurrent-recompilation-delay=200 --test …`).
 - Prawdziwa gra: narzędzia `scripts/webgpu/*-gra.mjs` (Chrome przez CDP) — zrzuty, czasy klatek, pipeline'y synchroniczne (ma być 0). Domyślnie tryb `off` (render na wątku gry — `window.__RENDER_MODE_DEFAULT`), tryb gracza: `--query renderWorker=1` albo `HULLFALL_RENDER_DEFAULT=worker`. Haki `?dev`: `window.DevScene.*`. Kroki tylko przez `__harness.step()` — czekanie na `requestAnimationFrame` przy wstrzymanym zegarze harnessu nigdy nie wraca.
 - Zrzuty i porównanie z bazą: `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/<katalog> --baza <katalog bazy>`, `scripts/webgpu/porownaj.mjs` (szczegóły: reguła `webgpu-tsl`, „Weryfikacja”). A/B dwóch wersji — przebiegi PO KOLEI, nie dwa harnessy naraz.
 - Wydajność: PerfHUD (`P`), `Core3D.gpuFrameMs` (+ `gpuComputeMs`), `scripts/profil-bitwy.mjs`, `scripts/profil-bitwy-flot.mjs`, `scripts/webgpu/koszt-klatki.mjs` (reguła `core3d`). Porównuj czasy funkcji A/B na tej samej klatce, nie sam FPS.
@@ -170,7 +173,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |
 | `menu` | Menu główne i jego tło 3D |
-| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync |
+| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync, limit klatek |
 | `stacje` | Stacje i obiekty świata 3D, rozpad stacji, siatka infrastruktury stacji (edytor) |
 | `modele-3d` | Modele 3D statków i broni, bronie z Blendera, kamery 3D |
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |

@@ -147,17 +147,7 @@ test('światła efektów: błysk z tej klatki świeci od wieku 0 (starzenie po z
 // nieinlinowanych (uniform.value = liczba, argumenty addWorld) — kilkanaście B na światło, ~150 B
 // stałe na klatkę; próg łapie alokację obiektu na światło (≥ 40 B × 18 świateł na klatkę).
 test('klatka efektów ze światłami i źródłami: bez obiektów na klatkę (zakresy wysyłki siatki na stałe)', async () => {
-  const v8 = await import('node:v8');
-  const newSpaceUsed = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
-  const allocatedBytes = (fn, n) => {
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const before = newSpaceUsed();
-      for (let i = 0; i < n; i++) fn(i);
-      const delta = newSpaceUsed() - before;
-      if (delta >= 0) return delta;
-    }
-    return Infinity;
-  };
+  const { allocatedBytes, untilSteady } = await import('./helpers/alokacje.mjs');
   const fx = new FxFrame();
   const r = fakeRenderer(1);
   fx.attach(r);
@@ -175,9 +165,11 @@ test('klatka efektów ze światłami i źródłami: bez obiektów na klatkę (za
   };
   for (let i = 0; i < 20000; i++) frame(i);
   assert.ok(fx.stats.gridBuilt && fx.stats.lights >= 17);
-  const base = allocatedBytes(() => {}, 3000);
-  const used = allocatedBytes(frame, 3000);
-  assert.ok((used - base) / 3000 < 700, `klatka efektów: ${((used - base) / 3000).toFixed(0)} B na klatkę (18 świateł, 1 źródło)`);
+  // pomiar w rundach do stanu ustalonego JIT (tests/helpers/alokacje.mjs)
+  let i0 = 20000;
+  const perFrame = await untilSteady(() => (allocatedBytes((i) => frame(i0 + i), 3000) - allocatedBytes(() => {}, 3000)) / 3000,
+    (b) => b < 700, { warm: () => { for (let i = 0; i < 3000; i++) frame(i0++); } });
+  assert.ok(perFrame < 700, `klatka efektów: ${perFrame.toFixed(0)} B na klatkę (18 świateł, 1 źródło)`);
   assert.deepEqual(fx.grid.lightNode.value.updateRanges, [{ start: 0, count: fx.stats.lights * 16 }]);
 });
 

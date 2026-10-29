@@ -177,7 +177,7 @@ Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, straż
 - Upadek przy 5120 × 1440: karta w najcięższych sekundach (gaz 14–16 domen) — kandydaci z § 3 (próg „fine” względem
   wysokości bufora, sufit podkroków pod obciążeniem); pole skóry odłamów (wyżej; profil CPU workera w upadku B2:
   `writeHullSkinField` 9,8% pracy workera — pierwsza pozycja po partii skór, `renderObject` three 34% pracy wobec 53% w A2,
-  worker zajęty 55% czasu wobec 65%); nierówny takt poniżej odświeżania.
+  worker zajęty 55% czasu wobec 65%; ZROBIONE 2026-10-29 — § 8); nierówny takt poniżej odświeżania.
 - Zasadzka (wyrwanie z warpa): pierwszy pomiar (`gpu-zasadzka-gra.mjs --okno 1 --zoom 0.035`, `.tmp/gpu-zasadzka-B`)
   NIE trafił w zasadzkę — skok dev `?story=ambush` zostawia Atlasa w hali K-7 (użytkownik widział go tam przez ~60 s),
   faza `ambush` kończy się od razu jako „w domu” (`api.dock.nearHall`), misja przechodzi do `return` i dokuje
@@ -187,7 +187,69 @@ Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, straż
   prawdziwe wyrwanie; u gracza w kampanii w świecie jest też gruz bazy z misji 1 (skóry odłamów przy soczewce — § 3,
   `HIDDEN_KEEP_MS`).
 
-## 8. Pole asteroid 2026-10-29
+## 8. Pole skóry odłamów (2026-10-29, gałąź `claude/pole-skory-sztywne-622ed0`)
+
+Kandydat z § 5 / § 7: `writeHullSkinField` (`src/3d/ships3d/hullSkin3D.js`) — pierwsza pozycja CPU workera w upadku po
+partii skór i wysyłki bez etykiety 1–1,9 MB na klatkę.
+
+**Hipoteza z § 5 („obracający się odłam zmienia przesunięcia wszystkich węzłów”) nie trzyma się pomiaru.** Sonda w Node na
+prawdziwej sekwencji upadku — `node scripts/pole-skory-upadek-sym.mjs --tryb upadek --warianty stoi --dt 60 --hp0 2
+--czas 25` (`destrukcja-taran-sym.mjs` z opakowanym `HullBodies.step`): po każdym kroku, dla każdego ciała świata, komórki zmienione o > 0,02 j. (próg
+`writeHullSkinField`), zakres lo..hi slotu i to samo po odjęciu ruchu sztywnego dopasowanego metodą Horna (środki komórek →
+węzły). Węzły są w UKŁADZIE CIAŁA, a ruch sztywny odłamu (obrót, dryf, spadanie) żyje w pozie ciała (`pos` / `quat`, kąt
+encji). Dopasowany obrót węzłów w układzie ciała to 0,04–0,1° w locie (5–30° dopiero w zgniocie po lądowaniu), a po jego
+odjęciu zmienionych komórek jest 2–4× WIĘCEJ — dopasowanie rozkłada zgniot na wszystkie węzły. Kierunek odrzucony.
+
+| okno sondy (s po HP 0) | budzone ciała / węzły | zmienione komórki na krok | zakres lo..hi na krok |
+|---|---|---|---|
+| lot (3–8) | 4–13 / 13–30 tys. | 500–1400 | 19–49 tys. (0,3–0,8 MB) |
+| lądowanie (17–21) | 7–42 / 13–35 tys. | 5–10 tys. | 62–155 tys. (1–2,4 MB) |
+| osiadanie (22–24) | 6–30 / 9–26 tys. | 0,5–3 tys. | 23–97 tys. (0,4–1,5 MB) |
+
+Prawdziwy koszt: (1) zmienia się 2–4% komórek budzonych ciał, rozrzuconych po całym slocie — zakres lo..hi wysyła 10–40×
+więcej niż trzeba, a rozbicie na zakresy nie pomaga (model 2,5 µs na `writeBuffer` — `docs/webgpu/WYDAJNOSC.md` — i 0,1 µs/KB:
+przy scalaniu przerw ≤ 256 komórek 2–3× mniej bajtów, ale 4–5× więcej wywołań, ten sam czas); (2) przegląd węzłów idzie
+w KAŻDEJ klatce workera (do 240 kl/s), a węzły zmienia krok gry (60 Hz).
+
+**Poprawka** (c7210dcb, bez zmiany obrazu): (1) lustro ciała dostaje numer stanu węzłów (`MirrorBody.nodesSeq` — strona
+z węzłami, nowa topologia); bez nowej strony, przy tym samym magazynie, `latticeMin` i komórce przegląd nic by nie zapisał
+— `writeHullSkinField` go pomija (ciała gry w trybie `off` — przegląd zawsze); (2) wysyłka ROZRZUTEM — indeksy zmienionych
+komórek na liście (bez powtórzeń), krok `Core3D.fx` „pole skóry 3D (rozrzut)” raz na klatkę kopiuje ich bieżące wartości
+z kopii CPU do małego bufora (indeks 4 B + wartość 16 B) i kernel compute przepisuje je do pola; bez kroku i przy
+przepełnieniu (65 536 komórek na klatkę) — zakres jak dawniej. A/B: `__worldSkinOptions.fieldScatter / fieldSkip`, adres
+`?poleRozrzut=0&polePomin=0` (dawna ścieżka w tym samym kodzie). Testy: `tests/hullSkinField.test.mjs`.
+
+**Pomiar w grze** — `node scripts/webgpu/gpu-baza-gra.mjs --okno 1 --rozmiar 5120x1440 --zoom 0.035 --zoomGruz 0.035
+--profil 1 --query "grafika=wysoka[&poleRozrzut=0&polePomin=0]"`, przebiegi PO KOLEI (A = dawna ścieżka przełącznikami,
+B = nowa; `.tmp/gpu-baza-pole-A`, `-B`; pierwsze podejście A nie wystartowało fazy `shipyard` — jednorazowo, sonda tego nie
+odtworzyła). Upadek (10 okien po 2 s, ~3260 klatek workera w każdym przebiegu):
+
+| miara (cały upadek) | A (zakres, przegląd co klatkę) | B (rozrzut, pominięcie) |
+|---|---|---|
+| wysyłki pola skóry | 706,7 MB | 37,1 MB (−95%) |
+| wszystkie wysyłki workera | 1323,7 MB | 716,7 MB (−46%) |
+| przeglądy ciał (pominięte) | 26 096 (0) | 5 601 (16 770) |
+| zapisane komórki | 2,04 mln | 2,01 mln |
+| profil CPU workera: `writeHullSkinField` (+ `scatterFlush`) | 954 ms — 6,2% pracy | 393 + 60 ms — 3,2% pracy |
+| profil CPU workera: `writeBuffer` / praca workera | 927 ms / 15,5 s | 726 ms / 14,2 s |
+
+| okno (A → B; fazy się przesuwają — najcięższe lądowanie: A upadek-5…7, B upadek-4…5) | pole KB / klatkę | CPU workera p50 | obraz / strona kl/s |
+|---|---|---|---|
+| ostrzał 1–3 | 4–9 → 0–1 | 2,3–2,5 → 1,8–1,9 ms | 179–181 → 180–181 |
+| upadek-2 (wybuchy) | 244 → 0 | 3,39 → 2,64 ms | 158 / 173 → 149 / 162 (B: 16 domen gazu, GPU 95%) |
+| lądowanie, najcięższe | 470–815 → 46–48 | 3,1–4,3 → 2,95–3,1 ms | 110–146 / 123–155 → 109–117 / 116–127 |
+| osiadanie (A upadek-8, B upadek-6…8) | 189 → 5–10 | 2,75 → 2,5–2,7 ms | 181 / 182 → 179–181 / 180–183 |
+
+- Ślad Chrome w upadku-2: worker zajęty 70% → 47% czasu (proces GPU 57% w obu — w B gaz 16 domen, karta 95%).
+- Najcięższe okna lądowania w obu przebiegach ogranicza STRONA (fizyka lądowania gruzu: strona 116–155 kl/s, obraz idzie
+  za nią) — pole skóry zdjęło koszt z workera i z procesu GPU, ale kl/s w tych oknach zależy od kroku gry.
+- Obraz bez zmian: bufor pola odczytany z GPU w pauzie (w locie — po upadek-3, i po osiadaniu) = kopia CPU bit w bit
+  w OBU przebiegach (8,39 mln liczb, 0 różnic; A = dawne zakresy, więc kopia CPU to stan dawnej ścieżki); test w Node —
+  1500 klatek: pole lustra z pominięciem = pole ciała gry przeglądanego w każdej klatce, emulacja GPU (zakresy jak three +
+  kernel) = CPU, mutacje kodu łapane.
+- Zostaje: koszt kroku gry przy lądowaniu gruzu (strona), gaz wybuchów (karta, § 7).
+
+## 9. Pole asteroid 2026-10-29
 
 Zgłoszenie (5120 × 1440 @ 240 Hz, RTX 5080, tryb worker): „pole asteroid — dropi do 100 fps” (PerfHUD: strona i obraz
 96 kl/s, „GPU 0,5+1,5 · kolejka 86 ms” na czerwono, wiek 5), „gazy i mgła mocno drżą”, „na oddalonej kamerze nie widać
@@ -199,7 +261,7 @@ pracował na komputerze): bez sufitu vsync, przy karcie w ~90–100% ms na obraz
 znaczników; czasy passów ze znaczników (`pass:bg`, `pass:ortho`) są stabilniejsze niż ms na obraz (±0,1 ms między
 sąsiednimi oknami bazy wobec ±0,3–0,5 ms).
 
-### 8.1 Diagnoza (przebieg bazowy: `.tmp/gpu-pas-baza`, `-ultra`, `-gracz`)
+### 9.1 Diagnoza (przebieg bazowy: `.tmp/gpu-pas-baza`, `-ultra`, `-gracz`)
 
 - „Kolejka 86 ms” to ZALEGŁOŚĆ karty zajętej w 94–100%, nie praca ukryta poza passami: kolejka ≈ (wiek pacera 5 + 1–3
   klatki kompozytora) × czas klatki GPU, znaczniki pokrywają 87–100% czasu na obraz. Preset Ultra (renderScale 1,25 →
@@ -214,7 +276,7 @@ sąsiednimi oknami bazy wobec ±0,3–0,5 ms).
   zgłoszeniem i rozwiązaniem MSAA całego celu) + rozwiązanie MSAA w KAŻDYM passie sceny — 6 rozwiązań RGBA16F × 4 próbki
   na klatkę, a `composerTarget.texture` czyta dopiero post.
 
-### 8.2 Sondy kosztu skał (`.tmp/gpu-pas-sondy`, Wysoka; Δ czasu passa ze znaczników wobec sąsiednich okien bazy)
+### 9.2 Sondy kosztu skał (`.tmp/gpu-pas-sondy`, Wysoka; Δ czasu passa ze znaczników wobec sąsiednich okien bazy)
 
 | sonda | zoom 0,0667 (okręt ~200 px) | zoom 0,341 (kadr Atlasa) |
 |---|---|---|
@@ -232,7 +294,7 @@ promieniem < 4 px — siatka LOD 0 to 72 trójkąty), DEEP 1500 (0,30); zoom 0,3
 2,9 Mpx), RUBBLE 6713 (0,11), MID 4384 (0,32), DEEP 596 (0,55). Pass tła liczy też skały, płaty mgły i zasłonę POD
 skałami gry, które pass gry i tak zasłania w całości.
 
-### 8.3 Poprawki (bez zmiany obrazu; każda z przełącznikiem A/B w biegu)
+### 9.3 Poprawki (bez zmiany obrazu; każda z przełącznikiem A/B w biegu)
 
 1. **Czyszczenie w passie sceny** (`core3d.js` `_runScenePass` → `_renderPassScene`): loadOp „clear” pierwszego renderu
    passa (autoClear na czas jednego `render()`) zamiast `renderer.clear`. A/B `Core3D.clearInPass = false` (wariant
@@ -268,7 +330,7 @@ rana (inny przebieg — porównanie orientacyjne): zoom 0,341 — `pass:bg` 3,42
 zoom 0,0667 — `pass:bg` 3,45 → 2,48 ms, R 5,76 → 4,36 ms, kolejka śr. 31,5 → 23,3 ms (p95 44,9 → 33,4), obraz/s
 135,5 → 154,2. Pipeline'y synchroniczne 0 (poza przełączaniem `V0` w A/B).
 
-### 8.4 Obraz — bufor sceny w pauzie (`--obrazAB`)
+### 9.4 Obraz — bufor sceny w pauzie (`--obrazAB`)
 
 Bufor sceny (`composerTarget`, HDR przed postem) odczytany w workerze w pauzie: A, A2 (kontrola — w pauzie biegnie zegar
 efektów: światła nawigacyjne, dysze) i B z wariantem, odstępy A → A2 i A2 → B równe; liczone piksele różne w RGB
@@ -284,7 +346,7 @@ efektów: światła nawigacyjne, dysze) i B z wariantem, odstępy A → A2 i A2 
   zależny od tego, co pass tła zapisał pod skałą → inna kolejność sumowania próbek w FP16), nie cieniowanie; po ACES i
   sRGB poniżej kroku 8 bitów.
 
-### 8.5 Ultra — preset, który odtwarza zgłoszenie (`.tmp/gpu-pas-po-ultra`, cel 6400 × 1800 MSAA 4)
+### 9.5 Ultra — preset, który odtwarza zgłoszenie (`.tmp/gpu-pas-po-ultra`, cel 6400 × 1800 MSAA 4)
 
 Karta zajęta w 96–99%, więc ms na obraz = czas karty na klatkę (z pracą bez znaczników). A/B w tym samym przebiegu
 (wariant = dawne zachowanie, 2 powtórzenia, Δ wobec sąsiednich okien bazy):
@@ -303,7 +365,7 @@ postój 0,341 — 102,2 → 136,3/s, kolejka 48,0 / 70,5 / 85,8 → 28,6 / 43,0 
 52,9 / 72,5 / 86,3 → 40,9 / 57,6 / 67,6 ms. Pipeline'y synchroniczne 0 (ostrzeżenia „kompilacja w grze” — te same co
 w bazie: modele floty, rozpad stacji).
 
-### 8.6 Co zostaje
+### 9.6 Co zostaje
 
 - Kartę w polu dalej zjadają FRAGMENTY skał (sondy przed poprawkami — Wysoka, zoom 0,0667: tło ~1,8 ms, gra ~0,8 ms;
   znaczek i zasłona zdjęły z tła 0,3–0,9 ms; Ultra × ~1,5). Bez zmiany obrazu nic dużego już nie zostało; ze zmianą

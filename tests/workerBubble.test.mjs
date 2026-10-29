@@ -11,6 +11,7 @@ import { getCourse, COURSE_STATUS } from '../src/game/traffic/courseRegistry.js'
 import { PLAYER_BERTH_HOLDER } from '../src/game/traffic/trafficDirector.js';
 import { BUBBLE_PORT_RANGE } from '../src/game/traffic/workerBubble.js';
 import { ACTOR_CARGO_STRIDE, ACTOR_CARGO_FIELD, ACTOR_CARGO_MODE } from '../src/game/traffic/bubbleCargo.js';
+import { WYDAJNOSC } from './helpers/wydajnosc.mjs';
 
 const F = ACTOR_FIELD;
 
@@ -74,8 +75,11 @@ test('statki ruchu przy Ziemi: encje po każdym advance, fazy i stanowiska z tab
       assert.ok(got.ready.berths[stationId]?.[a.berth], 'stanowisko z tabeli `berths`');
     }
   }
-  const s = core.stats;
-  assert.ok(s.actorMs < 50, `krok bańki ${s.actorMs} ms`);
+  assert.ok(core.stats.actorMs >= 0, 'czas kroku bańki w statystykach');
+});
+
+test('koszt: krok bańki przy porcie Ziemi < 50 ms', WYDAJNOSC, () => {
+  assert.ok(core.stats.actorMs < 50, `krok bańki ${core.stats.actorMs} ms`);
 });
 
 test('poza portem bańka gaśnie: jedna pusta wiadomość, rekordy bez przypiętych encji', () => {
