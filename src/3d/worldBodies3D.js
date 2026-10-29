@@ -29,7 +29,10 @@ import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
 import { HullBodies } from '../game/hullBodies.js';
 import { worldBodies } from '../game/worldBodies.js';
-import { hullSkinLattice, hullSkinLattice3D, ensureHullSkinSlot, writeHullSkinField, releaseHullSkinSlot } from './ships3d/hullSkin3D.js';
+import {
+  hullSkinLattice, hullSkinLattice3D, ensureHullSkinSlot, writeHullSkinField, releaseHullSkinSlot,
+  HULL_SKIN_FIELD_OPTIONS, HULL_SKIN_FIELD_STATS
+} from './ships3d/hullSkin3D.js';
 import { HullDamageMap } from './hullDamageMap.js';
 import { SolidWounds } from './solidWounds.js';
 import { bakeBuildingChunkSkinSteps, requestBuildingSkinBake, buildingSkinGeometries, SKIN_BAKE_STATS } from './portBuildings/portBuildingSkin3D.js';
@@ -64,16 +67,31 @@ export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0
   // powrotu do własnych siatek (narastająco)
   batchStates: [0, 0, 0, 0],
   batchOut: { noSubset: 0, skinChanged: 0, gone: 0, noSlot: 0, noMaterial: 0, noFeature: 0, empty: 0 },
-  worker: SKIN_BAKE_STATS, batch: SKIN_BATCH_STATS };
+  // pole skóry (hullSkin3D, wspólne z modelami okrętów): przeglądy i pominięcia, komórki, rozrzut / zakresy — narastająco
+  worker: SKIN_BAKE_STATS, batch: SKIN_BATCH_STATS, field: HULL_SKIN_FIELD_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
 // A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27); batch = false — odłamy własnymi
 // siatkami (rysunek na egzemplarz, zestaw i połówkę — jak przed partiami skór); batchDiag (pomiar kosztu GPU partii,
 // obraz inny): 1 — partie rysowane, flagi zerowe (same wierzchołki pominięte), 2 — partie schowane (bez skór odłamów);
 // hiddenKeep = false — ukryty dostawca (skok gracza, mgła) nie utrzymuje egzemplarzy (po 600 klatkach zwolnione, jak przed
 // 2026-10-28); noNodesHide = false — odłam bez stanu węzłów lustra rysowany (pełna geometria kawałka, każdy fragment
-// odrzucony — jak przed 2026-10-28)
+// odrzucony — jak przed 2026-10-28); pole skóry (hullSkin3D — HULL_SKIN_FIELD_OPTIONS, wspólne z modelami okrętów):
+// fieldScatter = false — wysyłka zakresem lo..hi slotu, fieldSkip = false — lustro przeglądane w każdej klatce (jak przed
+// 2026-10-29; też z adresu strony: ?poleRozrzut=0, ?polePomin=0)
 export const WORLD_SKIN_OPTIONS = { planeHalfCull: true, batch: true, batchDiag: 0, hiddenKeep: true, noNodesHide: true };
+Object.defineProperties(WORLD_SKIN_OPTIONS, {
+  fieldScatter: { enumerable: true, get: () => HULL_SKIN_FIELD_OPTIONS.scatter, set: (v) => { HULL_SKIN_FIELD_OPTIONS.scatter = !!v; } },
+  fieldSkip: { enumerable: true, get: () => HULL_SKIN_FIELD_OPTIONS.skip, set: (v) => { HULL_SKIN_FIELD_OPTIONS.skip = !!v; } }
+});
 if (typeof window !== 'undefined') window.__worldSkinOptions = WORLD_SKIN_OPTIONS;
+// przełączniki pola z adresu strony (worker: adres strony z wiadomości init) — raz, przy pierwszej klatce
+let _fieldOptsFromPage = false;
+function fieldOptionsFromPage() {
+  _fieldOptsFromPage = true;
+  const q = String(RenderWorld.pageSearch || '');
+  if (/[?&]poleRozrzut=0(?:&|$)/.test(q)) HULL_SKIN_FIELD_OPTIONS.scatter = false;
+  if (/[?&]polePomin=0(?:&|$)/.test(q)) HULL_SKIN_FIELD_OPTIONS.skip = false;
+}
 
 function providerOf(hull) {
   return hull?.world?.site?.render || null;
@@ -826,6 +844,7 @@ export function halfReachesPlane(mesh) {
  */
 export function syncWorldBodies3D() {
   _frame++;
+  if (!_fieldOptsFromPage) fieldOptionsFromPage();
   let shown = 0, triangles = 0, halfCulled = 0, shownMain = 0, shownFrag = 0, batched = 0, noNodes = 0, hiddenKept = 0;
   const states = WORLD_SKIN_STATS.batchStates;
   states[0] = states[1] = states[2] = states[3] = 0;

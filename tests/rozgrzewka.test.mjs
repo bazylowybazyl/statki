@@ -124,7 +124,10 @@ test('przegląd sceny: visible:false = tylko widoczny łańcuch, filtr warstwy; 
   let made = null;
   const loading = w.add({ name: 'pula', objects: () => (made = made || mesh('pula', 0)), phase: 'loading' });
   w.start();
-  await new Promise((r) => setTimeout(r, 60));
+  // czekamy na STAN — kolejka w tle pusta (wpis „loading” jej nie zajmuje), nie stały czas: pod obciążeniem wolna
+  // chwila przychodzi później niż po 60 ms
+  for (let i = 0; i < 2000 && w.busy; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(w.busy, false, 'kolejka w tle przerobiona');
   assert.deepEqual(calls.map((c) => c.obj.name), ['widoczna'], 'bez ukrytych i spoza warstwy; pula jeszcze nie');
   assert.equal(made, null, 'obiekty wpisu „loading” powstają dopiero na ekranie ładowania');
   await w.flush();
@@ -183,7 +186,10 @@ test('cały obiekt jednym wywołaniem: materiał zastępczy sceny i culling podd
   w2.add({ name: 'wisi', objects: [mesh('x')] });
   const t0 = Date.now();
   await w2.flush({ timeoutMs: 150 });
-  assert.ok(Date.now() - t0 < 2000);
+  // wraca po SWOIM limicie: nie czeka na pipeline (wisi) ani domyślnych 8 s — próg to połowa domyślnego limitu,
+  // z zapasem na obciążoną maszynę (timer 150 ms spóźniony o sekundy)
+  assert.ok(Date.now() - t0 < 4000, `flush ${Date.now() - t0} ms`);
+  assert.equal(w2.stats.flush.wLocie, 1, 'limit minął przed pipeline’em');
   assert.equal(w2.busy, true, 'kompilacja dalej w tle');
 });
 

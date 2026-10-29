@@ -140,8 +140,10 @@ test('bryły ringu Ziemi: hak prewarm dostaje te obiekty, które potem trafiają
       return gate;
     }
   });
-  // do chwili, gdy host skończy rozgrzewkę: ring niegotowy, bryły poza grupą
-  for (let i = 0; i < 200 && warmCalls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+  // do chwili, gdy host skończy rozgrzewkę: ring niegotowy, bryły poza grupą. Czekamy na hak (oba wywołania idą
+  // w jednym zadaniu — prewarmParts); limit ~30 s tylko na wypadek, gdy nie przyjdzie wcale — budowa ringu na
+  // obciążonej maszynie trwa dłużej niż dawne 200 × 5 ms
+  for (let i = 0; i < 6000 && warmCalls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
   assert.ok(warmCalls.length >= 2, 'bryły + drugi stan dachu K-7');
   const main = warmCalls[0];
   assert.equal(main.attachedAtCall, 0, 'rozgrzewka PRZED podpięciem brył');

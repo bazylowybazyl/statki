@@ -348,13 +348,17 @@ export class WarBackdrop3D {
     this._camera(cam, frame);
     this._addHeroes(frame);
     if (this.prewarmLeft > 0) {
-      // rozbieg w porcjach (bitwa „trwa” od początku sceny; do końca rozbiegu obraz schowany)
+      // rozbieg w porcjach (bitwa „trwa” od początku sceny; do końca rozbiegu obraz schowany). Co najmniej jeden
+      // krok na klatkę (jak budowa ciał w worldBodies.js): budżet sprawdzany PRZED pierwszym krokiem przy
+      // zagłodzonym wątku (wywłaszczenie ≥ prewarmBudgetMs między odczytami zegara) nie dawał postępu w żadnej klatce.
       const t0 = performance.now();
       const sink = sim.sink;
       sim.sink = WB_NOOP_SINK;
-      while (this.prewarmLeft > 0 && performance.now() - t0 < WB_LOOK.prewarmBudgetMs) {
+      let n = 0;
+      while (this.prewarmLeft > 0 && (n === 0 || performance.now() - t0 < WB_LOOK.prewarmBudgetMs)) {
         sim.step(WB_STEP, 1);
         this.prewarmLeft -= WB_STEP;
+        n++;
       }
       sim.sink = sink;
       this.stats.prewarmMs += performance.now() - t0;

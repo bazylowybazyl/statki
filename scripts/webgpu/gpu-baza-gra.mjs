@@ -25,6 +25,9 @@
 //   treść obrazu między kolejnymi złożeniami (vsync) wobec odstępu złożeń, osobno dla zegarów: kadłuby (SimClock.render),
 //   efekty — stary zegar (performance.now() strony po fizyce) i nowy (znacznik rAF strony), pociski NPC na zegarze kroku
 //   (SimClock.sim); powtórzone i przeskoczone strony. Liczy się po stronie gry, niezależnie od wersji kodu.
+// Pole skóry 3D (2026-10-29): w każdym oknie liczniki pola z workera (przeglądy, pominięcia, komórki, rozrzut /
+//   zakresy), a w pauzie po upadek-3 i po nad-gruzem — bufor pola z GPU porównany z kopią CPU (`poleGpu` w raporcie).
+//   A/B wysyłki: --query "…&poleRozrzut=0&polePomin=0" (zakres slotu i przegląd w każdej klatce — jak przed).
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -160,6 +163,31 @@ const WK_FRAMES = `(() => {
   return { n: a.length, p50: q(0.5), p95: q(0.95), max: a.length ? +a[a.length - 1].toFixed(1) : 0 };
 })()`;
 
+// Pole skóry 3D w workerze (hullSkin3D, 2026-10-29): przyrost liczników od poprzedniego odczytu — przeglądy ciał
+// i pominięte (lustro bez nowej strony węzłów), zapisane komórki, rozrzut / zakresy, dispatche i komórki rozrzutu.
+const WK_POLE = `(() => {
+  const S = globalThis.__hullSkinFieldDiag && globalThis.__hullSkinFieldDiag.stats;
+  if (!S) return null;
+  const prev = globalThis.__wkPolePrev || {}, d = {};
+  for (const k of Object.keys(S)) if (k !== 'dispatch') d[k] = S[k] - (prev[k] || 0);
+  globalThis.__wkPolePrev = { ...S };
+  return d;
+})()`;
+// Bufor pola na GPU = kopia CPU (wysyłka zakresami i rozrzutem niesie te same liczby — obraz jak przed 2026-10-29);
+// w pauzie, po klatkach z dispatchem listy.
+const WK_POLE_GPU = `(async () => {
+  const D = globalThis.__hullSkinFieldDiag, C = globalThis.__C3;
+  const attr = D && D.attribute();
+  if (!attr || !C || !C.renderer) return { blad: 'brak pola albo renderera' };
+  const buf = await C.renderer.getArrayBufferAsync(attr);
+  const g = new Uint32Array(buf), c = new Uint32Array(attr.array.buffer, attr.array.byteOffset, attr.array.length);
+  const n = Math.min(g.length, c.length);
+  let rozne = 0, pierwsza = -1, niezerowe = 0;
+  for (let i = 0; i < n; i++) { if (c[i] !== 0) niezerowe++; if (g[i] !== c[i]) { if (pierwsza < 0) pierwsza = i; rozne++; } }
+  const sc = D.scatter();
+  return { liczby: n, niezerowe, rozne, pierwsza, listaCzeka: sc ? sc.n : null, rozrzut: D.options.scatter, pomin: D.options.skip };
+})()`;
+
 // --rytm 1: dziennik zegarów strony (rAF opakowany — znacznik klatki; SimClock.beginRender — zegary tuż po fizyce;
 // postFrame — numer strony; ring.compose — która strona w tej klatce ekranu)
 const RYTM_INSTALL = `(() => {
@@ -224,9 +252,21 @@ function rytmStat(d) {
   return out;
 }
 
+// Pauza, ~1,2 s klatek (lista rozrzutu wysłana), odczyt bufora pola z GPU i porównanie z kopią CPU, wznowienie.
+async function poleGpu(label) {
+  if (!wk.sid) return null;
+  await ev('(window.__setGamePaused(true), true)').catch(() => {});
+  await sleep(1200);
+  const r = await wkEval(WK_POLE_GPU).catch((e) => ({ blad: e.message }));
+  await ev('(window.__setGamePaused(false), true)').catch(() => {});
+  (report.poleGpu || (report.poleGpu = [])).push({ okno: label, ...r });
+  console.log(`   pole GPU = CPU (${label}):`, JSON.stringify(r));
+  return r;
+}
+
 async function okno(label, sekundy, { slad = false } = {}) {
   const p0 = await ev(PAGE_STATE);
-  if (wk.sid) { await wkEval(WK_FRAMES).catch(() => null); await wkEval(SONDA_CZYTAJ).catch(() => null); }
+  if (wk.sid) { await wkEval(WK_FRAMES).catch(() => null); await wkEval(SONDA_CZYTAJ).catch(() => null); await wkEval(WK_POLE).catch(() => null); }
   if (RYTM) await ev(RYTM_CZYTAJ).catch(() => null);
   const t0 = Date.now();
   await sleep(sekundy * 1000);
@@ -234,6 +274,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
   const p1 = await ev(PAGE_STATE);
   const wf = wk.sid ? await wkEval(WK_FRAMES).catch((e) => ({ err: e.message })) : null;
   const sonda = wk.sid ? await wkEval(SONDA_CZYTAJ).catch((e) => ({ err: e.message })) : null;
+  const pole = wk.sid ? await wkEval(WK_POLE).catch((e) => ({ err: e.message })) : null;
   // ślad Chrome PO oknie (narzut śladu nie psuje liczb okna)
   let sl = null;
   if (slad && SLAD > 0) {
@@ -247,9 +288,14 @@ async function okno(label, sekundy, { slad = false } = {}) {
     zlozeniaS: +((p1.composed - p0.composed) / dt).toFixed(1), klatkiStronyS: +((p1.f - p0.f) / dt).toFixed(1),
     workerKlatkiS: wf && !wf.err ? +(wf.n / dt).toFixed(1) : null, workerMs: wf, wiek: p1.age,
     hudWorker: { cpu: p1.cpu, gpuRender: p1.gpu, gpuCompute: p1.gpuC, fxMs: p1.fxMs }, domeny: p1.domeny,
-    wraki: { gorace: p1.hot, spiace: p1.sleep, odlamy: p1.wd }, raf: p1.raf, nvidia: smi.okno(t0), sonda, rytm, slad: sl ? true : undefined
+    wraki: { gorace: p1.hot, spiace: p1.sleep, odlamy: p1.wd }, raf: p1.raf, nvidia: smi.okno(t0), sonda, rytm, pole, slad: sl ? true : undefined
   };
   report.okna.push(row);
+  if (pole && !pole.err) {
+    const ps = (k) => (pole[k] / dt).toFixed(0);
+    console.log(`   pole skóry /s: przeglądy ${ps('scans')}, pominięte ${ps('skips')}, komórki ${ps('cells')} (rozrzut ${ps('scattered')}, zakresy ${ps('rangeCells')}),`
+      + ` dispatche ${ps('flushes')} × ${pole.flushes ? (pole.flushCells / pole.flushes).toFixed(0) : 0} kom., przepełnienia ${pole.overflow}`);
+  }
   const so = sonda && !sonda.err ? sonda : null;
   console.log(`${label.padEnd(12)} obraz ${String(row.zlozeniaS).padStart(6)}/s  wk ${String(row.workerKlatkiS).padStart(6)}/s  cpuWk p50 ${wf?.p50 ?? '-'}`
     + `  gpuR ${so ? so.gpuRender.msNaKlatke : '-'}  gpuC ${so ? so.gpuCompute.msNaKlatke : '-'}  kolejka śr ${so ? so.sr.lat : '-'} p95 ${so ? so.p95.lat : '-'} maks ${so ? so.latMax : '-'}`
@@ -381,7 +427,7 @@ try {
   while (Date.now() - tFall < 60000) {
     i++;
     const r = await okno(`upadek-${i}`, 2, { slad: i === 2 });
-    if (i === 3) await screenshotPng(cdp, join(out, '04-upadek.png'));
+    if (i === 3) { await screenshotPng(cdp, join(out, '04-upadek.png')); await poleGpu('upadek-3'); }
     if (r.upadek === 'settled') break;
     if (args.profil === '1' && Date.now() - tFall > 40000) break;
   }
@@ -398,6 +444,7 @@ try {
   await sleep(2500);
   await okno('nad-gruzem', 8, { slad: true });
   await screenshotPng(cdp, join(out, '06-nad-gruzem.png'));
+  await poleGpu('nad-gruzem');
 
   if (WALKA > 0) {
     // jednostki jak w misji po upadku: piraci przy polu gruzu, Atlas (nieśmiertelny) walczy sam

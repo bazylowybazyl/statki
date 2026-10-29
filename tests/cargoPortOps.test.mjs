@@ -44,6 +44,7 @@ import {
 import { createBayLayout, haloBayLayouts } from '../src/3d/haloRing/haloPortBays.js';
 import { createK7Layout, k7Frame, k7HeadingToWorld, k7HubToWorld } from '../src/3d/haloRing/haloPortK7Layout.js';
 import { createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
+import { WYDAJNOSC } from './helpers/wydajnosc.mjs';
 
 const bay = createBayLayout({ index: 1 });
 const berthOf = (size, side = 1) => bay.berths.find((b) => b.size === size && (b.side ?? 1) === side);
@@ -365,7 +366,7 @@ test('maska pokładu z uszkodzeń: sloty nad wyrwą w kadłubie znikają, reszta
   assert.ok([...cargoDeckMask('long_haul_freighter', pose, () => false)].every((v) => v === 0));
 });
 
-test('koszt: plan w milisekundach, odczyt stanu w mikrosekundach', () => {
+test('koszt: plan w milisekundach, odczyt stanu w mikrosekundach', WYDAJNOSC, () => {
   const ctxs = ['inter_station_shuttle', 'container_ship', 'long_haul_freighter', 'heavy_freighter', 'megafreighter']
     .flatMap((id) => [ctxFor(id, CARGO_MODE.UNLOAD, { seed: 3 }), ctxFor(id, CARGO_MODE.LOAD, { seed: 4 })]);
   for (const c of ctxs) planCargoTransfer(c);
