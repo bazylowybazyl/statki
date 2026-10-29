@@ -28,6 +28,7 @@ import { warpPalette, heatColor } from './palette.js';
 import { WARP_EXIT, warpArrivalSpeed, warpBrakeTime, warpBrakeBubbleFront, warpSizeScale } from '../../game/warpDrive.js';
 import { RenderWorld } from '../../render/renderWorld.js';
 import { WARP_LENS_PHASE, WARP_LENS_EXIT_SPAN, warpLensBeta, warpLensChargeBeta, warpLensKickBeta } from '../../render/warpLensPhase.js';
+import { hyperLegacyLookOn } from './hyperLook.js';
 
 /** Kształt bańki względem kadłuba (demo: BUBBLE_SHAPE). */
 export const WARP_BUBBLE = Object.freeze({ radiusK: 0.62, asp: 1.35 });
@@ -39,10 +40,10 @@ export const WARP_FLOW = Object.freeze({ gear2: 21000, travel: 21000, exitRest: 
 /**
  * Hipercruise (E5, 2026-10-22 — ten sam efekt co skok warpa): przepływ ośrodka × (prędkość / ref), w [min, max] —
  * Mk I (20 tys.) ~14 tys., Mk III (40 tys.) ~28 tys. j/s widocznie; wstrząs kopu × shake (zgłasza gra — warpShakes.js:
- * WARP_SHAKE.hyperKickMul, ta sama wartość). Soczewka świata
+ * WARP_SHAKE.hyperKickMul, ta sama wartość; od 2026-10-29 0,15 — hyperLook.js). Soczewka świata
  * (kompozycja skoku z celem) w hipercruisie wyłączona — gra obok statku zostaje czytelna (hipercruise da się przerwać).
  */
-export const HYPER_FLOW = Object.freeze({ ref: 30000, min: 0.2, max: 1.4, shake: 0.5 });
+export const HYPER_FLOW = Object.freeze({ ref: 30000, min: 0.2, max: 1.4, shake: 0.15 });
 /**
  * Hipercruise BEZ OŚRODKA (zgłoszenie użytkownika 2026-10-23: „usunięcie efektu cząsteczkowego”; zrzuty faz —
  * dominowały drobiny ośrodka: turkusowy front i pomarańczowy warkocz wokół statku od rozruchu do wyjścia): bańka
@@ -369,7 +370,11 @@ export class WarpPlayerFx {
     // Hipercruise bez ośrodka (HYPER_FLOW wyżej: hyperMediumOn) — bez przegródek i poświaty drobin; warp gracza też
     // (DECYZJE O1 — warpMediumOn, `?warpOsrodek=1`), w warpie dodatkowo bez soczewki bańki na mgławicy.
     const medOn = this.hyper ? hyperMediumOn() : warpMediumOn();
-    const bubbleLensOn = this.hyper || medOn;
+    // HIPERCRUISE v2 (2026-10-29, user: „za mocno drga i robi kołowe haze” — hyperLook.js): bez soczewki bańki na tle
+    // (elipsa wokół statku przez cały lot), fali kopu, błysku za rufą i akcentów wyjścia (błysk, blask, fala, żar) —
+    // efektem lotu jest opływ (hyperFlow.js) i silniki. Dawny wygląd: `?hcStary=1`.
+    const hyperCalm = this.hyper && !hyperLegacyLookOn();
+    const bubbleLensOn = this.hyper ? !hyperCalm || medOn : medOn;
 
     // --- bańka gracza w ośrodku ---
     const bub = this.bubble;
@@ -433,7 +438,7 @@ export class WarpPlayerFx {
 
     // --- kop: fala w punkcie skoku (przestrzeń widoczna), błysk za rufą ---
     const age = t - this.kickT;
-    if (age >= 0 && age < 1.4) {
+    if (!hyperCalm && age >= 0 && age < 1.4) {
       const kx = this.kickMX - medium.camMX;
       const ky = this.kickMY - medium.camMY;
       frame.addWave(kx, ky, 9000 * age * sizeK, 320 * sizeK, 8 * (1 - age / 1.4) ** 2);
@@ -461,6 +466,8 @@ export class WarpPlayerFx {
           frame.pushBubble(p);
         }
       }
+      // hipercruise v2: wyjście bez błysku, blasku, fali i żaru (spokojne zdjęcie ciągu — plazma dogasa, opływ gaśnie)
+      if (hyperCalm) return;
       if (tb >= 0 && tb < 0.35) {
         const k = Math.pow(1 - tb / 0.35, 2);
         const bx = sx + c * L * 0.52;

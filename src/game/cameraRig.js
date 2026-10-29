@@ -116,7 +116,13 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   warpRollHold: 0.5,
   // Obrót kadru w skoku WARPA gracza (gra, port dema „Pęd” 2026-10-23 — input.omega): szybciej niż hipercruise, żeby kadr
   // stał już przy kopie (przy 3,2/s i kursie ~150° obrót trwał jeszcze sekundę lotu).
-  warpJumpRollOmega: 5
+  warpJumpRollOmega: 5,
+  // HIPERCRUISE v2 (2026-10-29, user: „za mocno drga” — input.hyper): kop kamery hipercruise'u jako lekkie pchnięcie,
+  // nie wyrzut z tunelu — cofnięcie × hyperKickScale (140 → ~42 px), impulsy zoomu startu i wyjścia × hyperZoomPulse
+  // (±10% → ±3%), drżenie rozruchu hyperChargeShakePx (zamiast warpChargeShakePx: 4 px przy 12 Hz przez 1–2 s).
+  hyperKickScale: 0.3,
+  hyperZoomPulse: 0.3,
+  hyperChargeShakePx: 0
 });
 
 // Zakresy strojenia (sanityzacja wartości z konsoli i testów).
@@ -166,7 +172,10 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   warpChargeShakePx: [0, 16],
   warpRollOmega: [0.5, 12],
   warpRollHold: [0, 3],
-  warpJumpRollOmega: [0.5, 12]
+  warpJumpRollOmega: [0.5, 12],
+  hyperKickScale: [0, 1],
+  hyperZoomPulse: [0, 1],
+  hyperChargeShakePx: [0, 16]
 });
 
 // Impulsy kopu warpa (s): narastanie i zanik — stałe dema (dema/warp-webgpu/scenes.js).
@@ -263,6 +272,11 @@ export function createCameraRig() {
     warpExitPending: false,
     warpKickAge: -1,
     warpExitAge: -1,
+    // hipercruise v2 (input.hyper): zatrzask stanu (cofnięcie, drżenie rozruchu) i skala zapamiętana PER IMPULS w chwili
+    // przyjęcia zdarzenia — kop / wyjście hipercruise'u przerwanego ładowaniem warpa nie bierze skali warpa
+    warpHyper: false,
+    warpKickHyper: false,
+    warpExitHyper: false,
     warpHold: 1,
     warpRelFrom: 1,
     warpRelAge: -1,
@@ -528,6 +542,8 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     rig.warpExitPending = false;
     rig.warpKickAge = -1;
     rig.warpExitAge = -1;
+    rig.warpKickHyper = false;
+    rig.warpExitHyper = false;
     rig.warpHold = 1;
     rig.warpRelAge = -1;
     rig.warpUnifyW = 0;
@@ -547,8 +563,15 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // pierwszy raz pokazał skok / wyjście), więc kamera i efekt idą w tym samym czasie.
   if (rig.warpKickAge >= 0) { rig.warpKickAge += dt; if (rig.warpKickAge > WARP_PULSE_END) rig.warpKickAge = -1; }
   if (rig.warpExitAge >= 0) { rig.warpExitAge += dt; if (rig.warpExitAge > WARP_PULSE_END) rig.warpExitAge = -1; }
-  if (rig.warpKickPending) { rig.warpKickPending = false; if (on) rig.warpKickAge = 0; }
-  if (rig.warpExitPending) { rig.warpExitPending = false; if (on) rig.warpExitAge = 0; }
+  if (rig.warpKickPending) {
+    rig.warpKickPending = false;
+    if (on) { rig.warpKickAge = 0; rig.warpKickHyper = input.hyper === true; }
+  }
+  if (rig.warpExitPending) {
+    rig.warpExitPending = false;
+    // wyjście: zatrzask z poprzedniej klatki (lot hipercruise'u) — ta klatka mogła już przejść w ładowanie warpa
+    if (on) { rig.warpExitAge = 0; rig.warpExitHyper = rig.warpHyper === true; }
+  }
 
   // Kurs (cofnięcie kamery idzie wzdłuż niego).
   const dx = finite(input.dirX, 0);
@@ -590,12 +613,17 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     if (u >= 1) { rig.warpHold = target; rig.warpRelAge = -1; }
   }
 
-  // Impulsy: zoom −10% przy skoku, +10% przy wyjściu; cofnięcie kamery przy skoku.
+  // Impulsy: zoom −10% przy skoku, +10% przy wyjściu; cofnięcie kamery przy skoku. Hipercruise v2 (input.hyper, zatrzask
+  // z ładowania i lotu): lekkie pchnięcie — impulsy × hyperZoomPulse, cofnięcie × hyperKickScale, drżenie rozruchu
+  // hyperChargeShakePx.
+  if (state === 'charging' || state === 'active' || input.hyper === true) rig.warpHyper = input.hyper === true;
+  const hyperK = rig.warpHyper === true;
+  const hyperPulse = clamp(finite(tune.hyperZoomPulse, 1), 0, 1);
   const kickZoom = rig.warpKickAge >= 0 ? cameraWarpPulse(rig.warpKickAge, P.kickZoomRise, P.kickZoomFall) : 0;
   const exitZoom = rig.warpExitAge >= 0 ? cameraWarpPulse(rig.warpExitAge, P.exitZoomRise, P.exitZoomFall) : 0;
   const f = rig.warpHold
-    * (1 - finite(tune.warpZoomKick, 0) * kickZoom)
-    * (1 + finite(tune.warpZoomExit, 0) * exitZoom);
+    * (1 - finite(tune.warpZoomKick, 0) * (rig.warpKickHyper ? hyperPulse : 1) * kickZoom)
+    * (1 + finite(tune.warpZoomExit, 0) * (rig.warpExitHyper ? hyperPulse : 1) * exitZoom);
   rig.warpZoomLog = f > 0 && f !== 1 ? Math.log(Math.max(1e-3, f)) : 0;
   // Ujednolicony kadr: waga wchodzi z oddaleniem (postęp warpHold 1 → warpZoomOut), trzyma przez skok i przylot do
   // zatrzymania + warpZoomUnifyHold s (zoom wraca od wlotu do zoomRef — przylot jak przy zoomie domyślnym), potem
@@ -679,11 +707,12 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // przy 1080p kadr przylotu do Marsa ~0,019); wyjątek tylko przy zatrzaśniętym kadrze przylotu (cameraZoom.js).
   rig.warpZoomFloor = rig.warpArrOn && zRef > 0 ? zRef * clamp(finite(tune.warpArrivalFloor, 0.07), 0.001, 1) : NaN;
   rig.warpLagPx = rig.warpKickAge >= 0
-    ? Math.max(0, finite(tune.warpKickPx, 0)) * cameraWarpPulse(rig.warpKickAge, P.lagRise, P.lagFall)
+    ? Math.max(0, finite(tune.warpKickPx, 0)) * (rig.warpKickHyper ? clamp(finite(tune.hyperKickScale, 1), 0, 1) : 1)
+      * cameraWarpPulse(rig.warpKickAge, P.lagRise, P.lagFall)
     : 0;
   // Drżenie w drugiej połowie ładowania (wstrząs kopu i wyjścia to camera.addShake — warp „Nurt”).
   rig.warpShakePx = on && state === 'charging'
-    ? Math.max(0, finite(tune.warpChargeShakePx, 0)) * smoothstep01((charge - 0.5) / 0.5)
+    ? Math.max(0, finite(hyperK ? tune.hyperChargeShakePx : tune.warpChargeShakePx, 0)) * smoothstep01((charge - 0.5) / 0.5)
     : 0;
   return rig;
 }

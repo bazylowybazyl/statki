@@ -4,10 +4,15 @@
 // warunku (rAF), CDP robi zdjęcie i wznawia (odpytywanie przez CDP przegapiłoby krótkie fazy).
 //
 //   node scripts/webgpu/hipercruise-efekt-gra.mjs [--out .tmp/hipercruise-efekt] [--query renderWorker=1] [--rozmiar 1600x900]
+//     [--zoom 0.3] [--koszt 1] [--sonda 1]
 //
-// --query — doklejane do adresu (tryb gracza: renderWorker=1). Wynik: <out>/*.png i <out>/raport.json
+// --query — doklejane do adresu (tryb gracza: renderWorker=1; dawny wygląd hipercruise'u: hcStary=1), --zoom — zoom gracza
+// przed startem (zbliżenie opływu i dysz; w hipercruisie rig oddala × warpZoomOut), --koszt 1 — przy pełnej prędkości
+// 4 s próbek czasu GPU klatki (Core3D.gpuFrameMs, tryb off) i stanu warstwy DIST — A/B z `--query hcStary=1`; --sonda 1 —
+// w fazach lotu odczyt celu warstwy DIST (opływ hipercruise'u: hyperFlow.js) → <faza>-dist.png (jasność = |przesunięcie|,
+// 8 px = biel) i statystyki (max, średnia, piksele > 0,5 px), tylko tryb off. Wynik: <out>/*.png i <out>/raport.json
 // (fazy, prędkość, pipeline'y synchroniczne w trybie off — w workerze renderer jest poza stroną).
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 
@@ -16,6 +21,9 @@ const [W, H] = String(args.rozmiar || '1600x900').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/hipercruise-efekt');
 mkdirSync(out, { recursive: true });
 const query = args.query ? `&${args.query}` : '';
+const zoom = Number(args.zoom || 0);
+const koszt = String(args.koszt || '') === '1';
+const sonda = String(args.sonda || '') === '1';
 
 const { server, base } = await startVite(Number(args.port || 5395));
 const chrome = await startChrome({ width: W, height: H });
@@ -48,8 +56,43 @@ const state = () => ev(`(() => { const s = window.ship, h = window.hypercruise;
 async function shot(name) {
   await screenshotPng(cdp, join(out, `${name}.png`));
   const s = await state();
+  if (sonda && /kop|lot|pelna|wyjscie/.test(name)) s.dist = await distProbe(name);
   report.zdjecia.push({ name, ...s });
   console.log(('[' + name + ']').padEnd(24), JSON.stringify(s));
+}
+
+// Odczyt celu warstwy DIST (RGBA16F, px bufora): |przesunięcie RG| → PNG w odcieniach szarości + statystyki.
+async function distProbe(name) {
+  const r = await ev(`(async () => {
+    const C = window.Core3D, R = C && C.renderer, T = C && C.distortionTarget;
+    if (!R || !T) return { blad: 'brak celu' };
+    const hf = await import('/src/3d/warp/hyperFlow.js');
+    const w = T.width, h = T.height;
+    const buf = await R.readRenderTargetPixelsAsync(T, 0, 0, w, h);
+    const half = (u) => { const e = (u >> 10) & 31, m = u & 1023, sg = u >> 15 ? -1 : 1;
+      return e === 0 ? sg * m * 5.960464477539063e-8 : e === 31 ? NaN : sg * (1 + m / 1024) * Math.pow(2, e - 15); };
+    const rowW = buf.length / h;
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const cx = cv.getContext('2d'); const img = cx.createImageData(w, h);
+    let max = 0, sum = 0, n05 = 0, nan = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * rowW + x * 4;
+      const ox = half(buf[i]), oy = half(buf[i + 1]);
+      const m = Math.sqrt(ox * ox + oy * oy);
+      if (!(m === m)) { nan++; continue; }
+      if (m > max) max = m; sum += m; if (m > 0.5) n05++;
+      const v = Math.min(255, Math.round(m / 8 * 255)), o = (y * w + x) * 4;
+      img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = v; img.data[o + 3] = 255;
+    }
+    cx.putImageData(img, 0, 0);
+    return { w, h, max: +max.toFixed(2), srednia: +(sum / (w * h)).toFixed(4), ponad05: n05, nan,
+      warstwa: !!(C.fxStats && C.fxStats.distortLayer), opływ: hf.HyperFlow.stats, png: cv.toDataURL('image/png') };
+  })()`, 60000);
+  if (r && r.png) {
+    writeFileSync(join(out, `${name}-dist.png`), Buffer.from(r.png.split(',')[1], 'base64'));
+    delete r.png;
+  }
+  return r;
 }
 
 try {
@@ -68,6 +111,7 @@ try {
     const a = best ? Math.atan2(s.pos.y - best.y, s.pos.x - best.x) : s.angle;
     window.devTeleportTo(s.pos.x, s.pos.y, { angle: a, quiet: true });
     s.vel.x = 0; s.vel.y = 0; s.angVel = 0; return true; })()`);
+  if (zoom > 0) await ev(`(() => { const c = window.camera; c.targetZoom = ${zoom}; c.manualZoom = true; return true; })()`);
   await sleep(1500);
   await shot('00-przed');
   const stops = [
@@ -113,6 +157,21 @@ try {
       await shot(at);
       taken++;
       await ev('(() => { window.__stopAt = null; window.__setGamePaused(false); return true; })()');
+      if (at === '04-pelna' && koszt) {
+        // czas GPU klatki przy pełnej prędkości (tryb off: Core3D strony; w workerze — brak)
+        report.koszt = await ev(`new Promise((res) => {
+          const C = window.Core3D; const out = []; let dist = 0, n = 0, last = -1;
+          const id = setInterval(() => {
+            if (!C) return;
+            if (C.gpuFrameSamples !== last) { last = C.gpuFrameSamples; if (C.gpuFrameMs > 0) out.push(C.gpuFrameMs); }
+            n++; if (C.fxStats && C.fxStats.distortLayer) dist++;
+          }, 50);
+          setTimeout(() => { clearInterval(id); out.sort((a, b) => a - b);
+            const q = (f) => out.length ? +out[Math.min(out.length - 1, Math.floor(f * out.length))].toFixed(3) : null;
+            res({ probek: out.length, gpuMsMediana: q(0.5), gpuMsP90: q(0.9), warstwaDist: n ? +(dist / n).toFixed(2) : null }); }, 4000);
+        })`, 20000);
+        console.log('koszt', JSON.stringify(report.koszt));
+      }
       if (at === '04-pelna') await pressO();   // wyjście ręczne
     }
     await sleep(40);

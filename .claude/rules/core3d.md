@@ -113,7 +113,10 @@ paths:
   `Core3D.fxDistortion().shock / implode / heat / bubble(...)` (świat gry, co klatkę przed renderem; dysze i tarcze zostają przy
   `pushHeatHazeWorld`); warstwa DIST — siatki na `FX_DISTORT_LAYER` (10) piszą przesunięcie w px (osie sceny, RG) do
   `Core3D.distortionTarget` (RGBA16F: B / A — heksy-ekrany maskowania, B < 0 — refrakcja kadłuba bez aberracji;
-  inne źródła piszą B = A = 0), właściciel co klatkę `Core3D.setDistortLayerActive(bool)`. Pomiar: `Core3D.fxStats` (PerfHUD
+  inne źródła piszą B = A = 0), właściciel co klatkę `Core3D.setDistortLayerActive(bool)` — Z KROKU `Core3D.fx`
+  (flagę kasuje start klatki efektów, który biegnie wewnątrz `Core3D.render`; zgłoszenie z modułu wołanego w `render()`
+  gry przepada). Piszą: maskowanie, tarcze, pula broni, opływ hipercruise'u (`src/3d/warp/hyperFlow.js`). Czas passa
+  DIST idzie do kubełka `ortho`. Pomiar: `Core3D.fxStats` (PerfHUD
   „Efekty GPU”), kontrola na GPU: `scripts/webgpu/efekty-kontrola.mjs`. Bank `Fx3D` (`fxParticles3D.js`): cztery grafy
   (BB, PLUME, CROSS, WASH) wspólne dla systemów, tekstura per obiekt (`FxMapNode`).
 

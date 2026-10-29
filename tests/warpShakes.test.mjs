@@ -49,25 +49,30 @@ test('skok z rampą: kop 18 / 0,3 raz, wyjście 8 / 0,4 raz, hamowanie 22 / 0,3 
   assert.deepEqual(WARP_SHAKE.brake, [22, 0.3]);
 });
 
-test('hamowanie grawitacyjne (bez rampy) i hipercruise: hamowanie po WARP_EXIT.slow + coast od wyjścia; kop hipercruise’u × 0,5', () => {
+test('hamowanie grawitacyjne (bez rampy): hamowanie po WARP_EXIT.slow + coast od wyjścia; hipercruise v2 — lekki kop, wyjście i hamowanie bez wstrząsu', () => {
+  // Hipercruise v2 (2026-10-29, user: „za mocno drga”): kop × hyperKickMul (0,15 — lekkie pchnięcie), wyjście
+  // × hyperExitMul i hamowanie × hyperBrakeMul (0). Dawniej [9, 8, 22] — hamowanie 22 (11 px) bez hamowania w obrazie.
   const r = runner();
   r.input.jumping = true; r.input.hyper = true;
   r.step();
   assert.deepEqual([r.out[0].m, r.out[0].d], [18 * HYPER_FLOW.shake, 0.3]);
   assert.equal(WARP_SHAKE.hyperKickMul, HYPER_FLOW.shake);
+  assert.ok(WARP_SHAKE.hyperKickMul <= 0.2, 'kop hipercruise’u najwyżej 0,2 kopu warpa');
+  assert.equal(WARP_SHAKE.hyperExitMul, 0);
+  assert.equal(WARP_SHAKE.hyperBrakeMul, 0);
   r.input.jumping = false; r.input.hyper = false;
   r.step();
-  const tExit = r.now();
   for (let i = 0; i < 120; i++) r.step();
-  assert.deepEqual(r.out.map((e) => e.m), [9, 8, 22]);
-  const dt = r.out[2].t - tExit;
-  assert.ok(dt >= WARP_EXIT.slow + WARP_EXIT.coast - 1e-9 && dt < WARP_EXIT.slow + WARP_EXIT.coast + DT + 1e-9, `hamowanie po ${dt} s`);
-  // warp bez rampy (exitWarp({ abrupt })) — ta sama oś
+  assert.deepEqual(r.out.map((e) => e.m), [18 * HYPER_FLOW.shake], 'hipercruise: tylko lekki kop');
+  // warp bez rampy (exitWarp({ abrupt })) — ta sama oś co dawniej: wyjście i hamowanie po slow + coast
   const q = runner();
   q.input.jumping = true; q.step();
   q.input.jumping = false; q.input.ramp = null; q.step();
+  const tExit = q.now();
   for (let i = 0; i < 80; i++) q.step();
   assert.deepEqual(q.out.map((e) => e.m), [18, 8, 22]);
+  const dt = q.out[2].t - tExit;
+  assert.ok(dt >= WARP_EXIT.slow + WARP_EXIT.coast - 1e-9 && dt < WARP_EXIT.slow + WARP_EXIT.coast + DT + 1e-9, `hamowanie po ${dt} s`);
 });
 
 test('nowe ładowanie przed hamowaniem kasuje czekające hamowanie; śmierć statku zeruje automat; lot trwający — jeden kop', () => {
@@ -92,11 +97,13 @@ test('lot prosto w ładowanie (hipercruise active → spool w jednym kroku): bez
   r.input.jumping = true; r.input.hyper = true; r.step(); r.step();
   r.input.jumping = false; r.input.charging = true; r.step();
   for (let i = 0; i < 60; i++) r.step();
-  assert.deepEqual(r.out.map((e) => e.m), [9], 'lot → ładowanie: sam kop');
+  const k = 18 * HYPER_FLOW.shake;
+  assert.deepEqual(r.out.map((e) => e.m), [k], 'lot → ładowanie: sam kop');
   r.input.charging = false; r.input.jumping = true; r.step();
   r.input.jumping = false; r.input.hyper = false; r.step();
   for (let i = 0; i < 120; i++) r.step();
-  assert.deepEqual(r.out.map((e) => e.m), [9, 9, 8, 22], 'następny lot: kop, potem zwykłe wyjście i hamowanie');
+  // hipercruise v2 (zatrzask `hyper` z kopu): wyjście i hamowanie bez wstrząsu
+  assert.deepEqual(r.out.map((e) => e.m), [k, k], 'następny lot: kop, wyjście hipercruise’u bez wstrząsu');
 });
 
 test('wyrzut NPC z tunelu: raz na oś po chwili hamowania, siła 12 · (0,4 + 0,8 · skala) · bliskość', () => {
