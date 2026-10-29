@@ -115,6 +115,8 @@ Tylko warp gracza (`WarpPlayerFx.hyper` = false), tylko kamera z góry jednego g
 - Stan klatki: `WarpNurt.edge.stats` (`on`, `strength`, `speed`, `kick`, `vpX` / `vpY` — px bufora od środka, y w dół, `haze` / `czastki` / `zorza`, `src` — „domyślnie” / „adres”).
 - Testy: `tests/warpEdgeFx.test.mjs` — obwiednia (fazy, kop, przelot, wyjście, hipercruise = 0), przełącznik, maska i VP (lustra CPU), WGSL trzech materiałów z Node (≤ 12 buforów uniformów, ≤ 8 wejść, bez `pow`, B = A = 0 w DIST, próbki z poziomem), strażnik szwu, wpięcie w sterownik (fazy z automatu gry, hipercruise, kamera bez soczewki, DIST z kroku, chowanie bez klatki sterownika).
 
+**Pomiar (orkiestrator, 2026-10-29):** `warp-ped-gra.mjs --koszt 1` (2,5 s próbek `Core3D.gpuFrameMs` od kopu w locie skoku, tryb off, headless 1600 × 900, ziarno 7, ABAB przy ciszy innych harnessów): zestaw domyślny 0,577 / 0,580 ms, `?warpFx=0` 0,603 / 0,567 ms (mediany) — różnica w szumie pomiaru przy tej rozdzielczości; pipeline'y synchroniczne po starcie 0 we wszystkich przebiegach. Przy 5120 × 1440 (~5 × pikseli) koszt W1 rośnie z pikselami — do sprawdzenia w grze (PerfHUD, `P`) przed decyzją D6.
+
 ## 4. Zrzuty
 
 Narzędzie: `node scripts/webgpu/warp-ped-gra.mjs --out .tmp/<katalog> --query "warpFx=…&ziarno=7"` (TRAVEL TO Ziemia → Mars z przelotem obok Merkurego, stałe ziarno układu planet — ta sama trasa w każdym przebiegu; fazy 00–10: ładowanie, kop, przelot, dolot, zwolnienie, hamowanie, ślizg, po). Wszystkie na `main` 31f20c7a + ta gałąź (niebo-sfera w skoku, bez skał), 1600 × 900, tryb `off` (poza jednym przebiegiem w workerze). Katalogi w `.tmp/` worktree (nie w repo):
