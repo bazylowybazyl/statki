@@ -77,7 +77,27 @@ gracza; przy 5120 × 1440 (~5 × pikseli) szacunkowo ~+0,15 ms. Pipeline'y synch
   (otoczka + 5 dysz Atlasa), 0 NaN. Kształt: zbieżny dziób, czyste wnętrze kadłuba, pas przy burtach grubiejący ku rufie,
   kilwater z pięcioma strugami.
 
-## 5. Do decyzji użytkownika
+## 5. Niezależny przegląd (2026-10-29)
+
+Przegląd trzema soczewkami (render/TSL, cykl życia, gra i kamera) z weryfikacją każdego zgłoszenia — 9 potwierdzonych, wszystkie
+poprawione (commit „poprawki niezależnego przeglądu”):
+
+1. Faza wzoru opływu = czas × przepływ w shaderze → w rozpędzie i hamowaniu wzór przewijał się o t · Δprzepływ (przy
+   t ≈ 256 s ~25× za szybko — refrakcja „gotowała się” klatka w klatkę, czyli dokładnie zgłoszone „drga”), a przy zgaśnięciu
+   prowadzenia przeskakiwał. Teraz faza całkowana na CPU (jak przepływ plazmy w `warpPlume3D.js`).
+2. Aliasing czasowy strug: przesuw drugiej oktawy na klatkę ≈ okres szumu → migotanie zamiast płynięcia. Przepływ ≤ 4 długości
+   wzoru / s, druga oktawa × 1,15, wzór strugi z jej długości (0,35 Lz).
+3. Koniec kwadów strugi i kilwateru na ~9% szczytu — szew. Zanik do zera przy brzegu kwadu.
+4. Otoczka nie gasła z maskowaniem gracza — gaśnie (widoczność dysz).
+5. Plazma przeskakiwała z wyglądu hipercruise'u na zwykły w trakcie gaszenia po przylocie — wygląd trzyma się instancji.
+6. Kop kamery hipercruise'u w oknie kadru przylotu warpa (TRAVEL TO: warp → hipercruise) dostawał pełną skalę warpa — flaga
+   ze stanu hipercruise'u.
+7. Wyjście hipercruise'u przerwanego ładowaniem warpa brało skalę warpa — skala zapamiętana per impuls.
+8. Kilwater nad kokpitem działał też w skoku warpa (zmieniał kadr skoku i przylotu K1) — własna waga tylko dla hipercruise'u.
+
+Po poprawkach sonda DIST przy pełnej prędkości (zoom 0,165): do 8 px, wnętrze kadłuba czyste, zanik na brzegach.
+
+## 6. Do decyzji użytkownika
 
 - Siła opływu (dziś do ~6 px przy zoomie 0,1–0,16; `HYPER_FLOW_TUNE.sheathK / wakeK`) — w ruchu widać drżenie gwiazd
   i mgławicy płynące ku rufie; w stopklatce na ciemnym tle słabo.

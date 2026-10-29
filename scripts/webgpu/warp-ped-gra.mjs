@@ -33,6 +33,8 @@ const przelot = String(args.przelot || 'auto');
 const bok = Number(args.bok || 75000);
 const dystans = Number(args.dystans || 350000);
 const zoom = Number(args.zoom || 0);
+// --koszt 1 — po zdjęciu kopu 2,5 s próbek czasu GPU klatki w locie skoku (Core3D.gpuFrameMs, tryb off) — A/B z `--query warpFx=0`
+const koszt = String(args.koszt || '') === '1';
 
 const { server, base } = await startVite(Number(args.port || 5397));
 const chrome = await startChrome({ width: W, height: H });
@@ -319,6 +321,19 @@ try {
       await shot(at);
       taken++;
       await ev('(() => { window.__stopAt = null; window.__setGamePaused(false); return true; })()');
+      if (koszt && at === '02-kop') {
+        report.koszt = await ev(`new Promise((res) => {
+          const C = window.Core3D; const out = []; let last = -1;
+          const id = setInterval(() => {
+            if (!C) return;
+            if (C.gpuFrameSamples !== last) { last = C.gpuFrameSamples; if (C.gpuFrameMs > 0) out.push(C.gpuFrameMs); }
+          }, 40);
+          setTimeout(() => { clearInterval(id); out.sort((a, b) => a - b);
+            const q = (f) => out.length ? +out[Math.min(out.length - 1, Math.floor(f * out.length))].toFixed(3) : null;
+            res({ probek: out.length, gpuMsMediana: q(0.5), gpuMsP90: q(0.9) }); }, 2500);
+        })`, 20000);
+        console.log('koszt', JSON.stringify(report.koszt));
+      }
     }
     await sleep(40);
   }
