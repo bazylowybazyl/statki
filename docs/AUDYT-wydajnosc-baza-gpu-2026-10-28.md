@@ -176,7 +176,7 @@ Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, straż
 - Upadek przy 5120 × 1440: karta w najcięższych sekundach (gaz 14–16 domen) — kandydaci z § 3 (próg „fine” względem
   wysokości bufora, sufit podkroków pod obciążeniem); pole skóry odłamów (wyżej; profil CPU workera w upadku B2:
   `writeHullSkinField` 9,8% pracy workera — pierwsza pozycja po partii skór, `renderObject` three 34% pracy wobec 53% w A2,
-  worker zajęty 55% czasu wobec 65%); nierówny takt poniżej odświeżania.
+  worker zajęty 55% czasu wobec 65%; ZROBIONE 2026-10-29 — § 8); nierówny takt poniżej odświeżania.
 - Zasadzka (wyrwanie z warpa): pierwszy pomiar (`gpu-zasadzka-gra.mjs --okno 1 --zoom 0.035`, `.tmp/gpu-zasadzka-B`)
   NIE trafił w zasadzkę — skok dev `?story=ambush` zostawia Atlasa w hali K-7 (użytkownik widział go tam przez ~60 s),
   faza `ambush` kończy się od razu jako „w domu” (`api.dock.nearHall`), misja przechodzi do `return` i dokuje
@@ -185,3 +185,65 @@ Testy: `tests/zegarKlatkiEfektow.test.mjs` (kolejność źródeł zegara, straż
   potem 230–240. Do zrobienia: naprawić skok dev (teleport fazy `ambush` nie wynosi Atlasa na kurs przez pas) i zmierzyć
   prawdziwe wyrwanie; u gracza w kampanii w świecie jest też gruz bazy z misji 1 (skóry odłamów przy soczewce — § 3,
   `HIDDEN_KEEP_MS`).
+
+## 8. Pole skóry odłamów (2026-10-29, gałąź `claude/pole-skory-sztywne-622ed0`)
+
+Kandydat z § 5 / § 7: `writeHullSkinField` (`src/3d/ships3d/hullSkin3D.js`) — pierwsza pozycja CPU workera w upadku po
+partii skór i wysyłki bez etykiety 1–1,9 MB na klatkę.
+
+**Hipoteza z § 5 („obracający się odłam zmienia przesunięcia wszystkich węzłów”) nie trzyma się pomiaru.** Sonda w Node na
+prawdziwej sekwencji upadku — `node scripts/pole-skory-upadek-sym.mjs --tryb upadek --warianty stoi --dt 60 --hp0 2
+--czas 25` (`destrukcja-taran-sym.mjs` z opakowanym `HullBodies.step`): po każdym kroku, dla każdego ciała świata, komórki zmienione o > 0,02 j. (próg
+`writeHullSkinField`), zakres lo..hi slotu i to samo po odjęciu ruchu sztywnego dopasowanego metodą Horna (środki komórek →
+węzły). Węzły są w UKŁADZIE CIAŁA, a ruch sztywny odłamu (obrót, dryf, spadanie) żyje w pozie ciała (`pos` / `quat`, kąt
+encji). Dopasowany obrót węzłów w układzie ciała to 0,04–0,1° w locie (5–30° dopiero w zgniocie po lądowaniu), a po jego
+odjęciu zmienionych komórek jest 2–4× WIĘCEJ — dopasowanie rozkłada zgniot na wszystkie węzły. Kierunek odrzucony.
+
+| okno sondy (s po HP 0) | budzone ciała / węzły | zmienione komórki na krok | zakres lo..hi na krok |
+|---|---|---|---|
+| lot (3–8) | 4–13 / 13–30 tys. | 500–1400 | 19–49 tys. (0,3–0,8 MB) |
+| lądowanie (17–21) | 7–42 / 13–35 tys. | 5–10 tys. | 62–155 tys. (1–2,4 MB) |
+| osiadanie (22–24) | 6–30 / 9–26 tys. | 0,5–3 tys. | 23–97 tys. (0,4–1,5 MB) |
+
+Prawdziwy koszt: (1) zmienia się 2–4% komórek budzonych ciał, rozrzuconych po całym slocie — zakres lo..hi wysyła 10–40×
+więcej niż trzeba, a rozbicie na zakresy nie pomaga (model 2,5 µs na `writeBuffer` — `docs/webgpu/WYDAJNOSC.md` — i 0,1 µs/KB:
+przy scalaniu przerw ≤ 256 komórek 2–3× mniej bajtów, ale 4–5× więcej wywołań, ten sam czas); (2) przegląd węzłów idzie
+w KAŻDEJ klatce workera (do 240 kl/s), a węzły zmienia krok gry (60 Hz).
+
+**Poprawka** (c7210dcb, bez zmiany obrazu): (1) lustro ciała dostaje numer stanu węzłów (`MirrorBody.nodesSeq` — strona
+z węzłami, nowa topologia); bez nowej strony, przy tym samym magazynie, `latticeMin` i komórce przegląd nic by nie zapisał
+— `writeHullSkinField` go pomija (ciała gry w trybie `off` — przegląd zawsze); (2) wysyłka ROZRZUTEM — indeksy zmienionych
+komórek na liście (bez powtórzeń), krok `Core3D.fx` „pole skóry 3D (rozrzut)” raz na klatkę kopiuje ich bieżące wartości
+z kopii CPU do małego bufora (indeks 4 B + wartość 16 B) i kernel compute przepisuje je do pola; bez kroku i przy
+przepełnieniu (65 536 komórek na klatkę) — zakres jak dawniej. A/B: `__worldSkinOptions.fieldScatter / fieldSkip`, adres
+`?poleRozrzut=0&polePomin=0` (dawna ścieżka w tym samym kodzie). Testy: `tests/hullSkinField.test.mjs`.
+
+**Pomiar w grze** — `node scripts/webgpu/gpu-baza-gra.mjs --okno 1 --rozmiar 5120x1440 --zoom 0.035 --zoomGruz 0.035
+--profil 1 --query "grafika=wysoka[&poleRozrzut=0&polePomin=0]"`, przebiegi PO KOLEI (A = dawna ścieżka przełącznikami,
+B = nowa; `.tmp/gpu-baza-pole-A`, `-B`; pierwsze podejście A nie wystartowało fazy `shipyard` — jednorazowo, sonda tego nie
+odtworzyła). Upadek (10 okien po 2 s, ~3260 klatek workera w każdym przebiegu):
+
+| miara (cały upadek) | A (zakres, przegląd co klatkę) | B (rozrzut, pominięcie) |
+|---|---|---|
+| wysyłki pola skóry | 706,7 MB | 37,1 MB (−95%) |
+| wszystkie wysyłki workera | 1323,7 MB | 716,7 MB (−46%) |
+| przeglądy ciał (pominięte) | 26 096 (0) | 5 601 (16 770) |
+| zapisane komórki | 2,04 mln | 2,01 mln |
+| profil CPU workera: `writeHullSkinField` (+ `scatterFlush`) | 954 ms — 6,2% pracy | 393 + 60 ms — 3,2% pracy |
+| profil CPU workera: `writeBuffer` / praca workera | 927 ms / 15,5 s | 726 ms / 14,2 s |
+
+| okno (A → B; fazy się przesuwają — najcięższe lądowanie: A upadek-5…7, B upadek-4…5) | pole KB / klatkę | CPU workera p50 | obraz / strona kl/s |
+|---|---|---|---|
+| ostrzał 1–3 | 4–9 → 0–1 | 2,3–2,5 → 1,8–1,9 ms | 179–181 → 180–181 |
+| upadek-2 (wybuchy) | 244 → 0 | 3,39 → 2,64 ms | 158 / 173 → 149 / 162 (B: 16 domen gazu, GPU 95%) |
+| lądowanie, najcięższe | 470–815 → 46–48 | 3,1–4,3 → 2,95–3,1 ms | 110–146 / 123–155 → 109–117 / 116–127 |
+| osiadanie (A upadek-8, B upadek-6…8) | 189 → 5–10 | 2,75 → 2,5–2,7 ms | 181 / 182 → 179–181 / 180–183 |
+
+- Ślad Chrome w upadku-2: worker zajęty 70% → 47% czasu (proces GPU 57% w obu — w B gaz 16 domen, karta 95%).
+- Najcięższe okna lądowania w obu przebiegach ogranicza STRONA (fizyka lądowania gruzu: strona 116–155 kl/s, obraz idzie
+  za nią) — pole skóry zdjęło koszt z workera i z procesu GPU, ale kl/s w tych oknach zależy od kroku gry.
+- Obraz bez zmian: bufor pola odczytany z GPU w pauzie (w locie — po upadek-3, i po osiadaniu) = kopia CPU bit w bit
+  w OBU przebiegach (8,39 mln liczb, 0 różnic; A = dawne zakresy, więc kopia CPU to stan dawnej ścieżki); test w Node —
+  1500 klatek: pole lustra z pominięciem = pole ciała gry przeglądanego w każdej klatce, emulacja GPU (zakresy jak three +
+  kernel) = CPU, mutacje kodu łapane.
+- Zostaje: koszt kroku gry przy lądowaniu gruzu (strona), gaz wybuchów (karta, § 7).
