@@ -284,6 +284,17 @@
                 <p class="mm-note mm-note-warn" data-gfx-vsync-pending hidden><span data-gfx-vsync-pending-text></span> <button class="menu-chip" data-gfx-reload>Uruchom ponownie</button></p>
               </div>
               <div class="mm-field">
+                <div class="mm-field-label">Limit klatek</div>
+                <div class="menu-chip-group" role="group" aria-label="Limit klatek">
+                  <button class="menu-chip" data-gfx-frame-limit="off">Bez limitu</button>
+                  <button class="menu-chip" data-gfx-frame-limit="240">240</button>
+                  <button class="menu-chip" data-gfx-frame-limit="144">144</button>
+                  <button class="menu-chip" data-gfx-frame-limit="120">120</button>
+                  <button class="menu-chip" data-gfx-frame-limit="60">60</button>
+                </div>
+                <p class="mm-note">Najwyżej tyle klatek na sekundę w grze i w menu. Mniej klatek to mniej pracy karty graficznej — ciszej i mniej prądu: przy monitorze 240 Hz limit 120 to około połowy pracy karty, a różnicę w płynności trudno zauważyć. Fizyka i szybkość gry bez zmian. Najrówniej, gdy częstotliwość monitora jest wielokrotnością limitu (240 Hz — 120 albo 60, 144 Hz — 144). Działa od razu. <span data-gfx-frame-limit-now hidden></span></p>
+              </div>
+              <div class="mm-field">
                 <div class="mm-field-label">Wygładzanie krawędzi (MSAA)</div>
                 <div class="menu-chip-group" role="group" aria-label="Wygładzanie krawędzi">
                   <button class="menu-chip" data-gfx-msaa="0">Wył.</button>
@@ -763,7 +774,7 @@
     import { HullLacquer } from "./src/3d/hullLacquer.js";
     import { Destruction3D } from "./src/vfx/destruction3D.js";
     import { drawInfrastructureIcon } from './src/buildings/infrastructureView.js';
-    import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx } from './src/game/graphicsQuality.js';
+    import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx, gfxFrameLimitFromQuery } from './src/game/graphicsQuality.js';
     import { describeGpuAdapter, pickGfxPresetAuto, gfxAutoFromQuery } from './src/game/graphicsAutoPreset.js';
     import { resolveRenderMode as resolveRenderModeBoot, renderWorkerCaps as renderWorkerCapsBoot } from './src/render/renderBridge.js';
 
@@ -785,10 +796,13 @@
     // window.__GFX_AUTO_FAKE = { vendor, architecture, … } przed wczytaniem — atrapa opisu adaptera (narzędzia).
     // VSync (gra w Electronie — electron/preload.js, window.hullfallApp): wybór z pliku ustawień startu
     // (Dokumenty\HULLFALL\uruchomienie.json — z niego main.js ustawia flagi Chromium), nie z localStorage.
+    // ?limitKlatek=240|144|120|60|0 — limit klatek tej sesji bez zapisu (narzędzia, pomiary).
     {
       const urlPreset = gfxPresetFromQuery(location.search);
       let gfx = loadGfxSettings(localStorage);
       if (urlPreset) gfx = gfxWithPreset(gfx, urlPreset);
+      const urlFrameLimit = gfxFrameLimitFromQuery(location.search);
+      if (urlFrameLimit) gfx = { ...gfx, frameLimit: urlFrameLimit };
       if (window.hullfallApp) gfx = { ...gfx, vsync: window.hullfallApp.vsyncSaved === false ? 'off' : 'on' };
       window.__gfxBoot = Object.freeze({ ...gfx, urlPreset });
       Core3D.configureQuality({ renderScale: gfx.renderScale, msaa: gfx.msaa });
@@ -1349,8 +1363,10 @@
     // Opcje grafiki (presety jakości, zapis sc_gfx) — blok „OPCJE GRAFIKI” przy opcjach menu.
     import {
       normalizeGfx, normalizeGfxValue, matchGfxPreset, saveGfxSettings, gfxWithPreset, gfxBloomScale, hasSavedGfx,
-      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord
+      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord, gfxFrameLimitFps
     } from "./src/game/graphicsQuality.js";
+    // Limit klatek (Opcje → Grafika): które wywołania rAF pętli gry rysują klatkę — blok „OPCJE GRAFIKI”, loop().
+    import { FrameLimiter } from "./src/render/frameLimiter.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
     import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
@@ -2442,12 +2458,17 @@
 
     // Warstwa wejścia (docs/PLAN-pad.md, etap 1): JEDEN odczyt urządzeń na klatkę rAF — pumpInput woła ta pętla
     // (menu, podzielony ekran, przed startem gry) i loop() przed krokami fizyki; strażnik znacznika rAF sprawia,
-    // że pracuje tylko pierwsze wywołanie w klatce.
+    // że pracuje tylko pierwsze wywołanie w klatce. Od pierwszej klatki pętli gry (gameLoopLive) ta pętla kończy się:
+    // wejście pompuje loop() raz na RYSOWANĄ klatkę (limit klatek — blok „OPCJE GRAFIKI”), a bez VSync pętla gry śpi
+    // między klatkami bez pustych wywołań rAF.
     const Input = createInput({ read: () => (navigator.getGamepads ? navigator.getGamepads() : null) });
     window.Input = Input;
+    let gameLoopLive = false;
     function inputFrameLoop(now) {
+      if (gameLoopLive) return;
       pumpInput(now);
       requestAnimationFrame(inputFrameLoop);
+      frameLimiter.observe(now);   // okres ekranu dla notki limitu klatek w opcjach (blok „OPCJE GRAFIKI”)
     }
     requestAnimationFrame(inputFrameLoop);
 
@@ -2535,6 +2556,7 @@
       }
       menuBackdrop = backdrop;
       window.__menuBackdrop = backdrop;
+      applyFrameLimit();   // limit klatek z opcji grafiki — pętla tła (blok „OPCJE GRAFIKI”)
       backdrop.onReady(() => mainMenuEl?.classList.add('bd-ready'));
       backdrop.setFocus(MENU_WIDE_VIEWS.has(menuView) ? 1 : 0);
       syncMenuBackdrop();
@@ -29604,16 +29626,23 @@
     }
     function loop(now) {
       const frameStartMs = performance.now();
+      gameLoopLive = true;
+      // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
+      // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki. W KAŻDYM wywołaniu rAF, także pominiętym
+      // przez limit klatek: wiek liczony w klatkach ekranu, złożenie w vsyncu gotowości bitmapy (nie dopiero w
+      // następnej narysowanej klatce — przy limicie 60 to 1–5 vsynców mniej opóźnienia, takt ten sam).
+      if (rwHost) rwHost.present();
+      // Limit klatek (blok „OPCJE GRAFIKI”, src/render/frameLimiter.js): wywołanie poza taktem limitu — bez wejścia,
+      // fizyki, migawki i rysunku (worker renderuje tylko nowe strony); `lastTime` zostaje, więc `frame` następnej
+      // narysowanej obejmuje pominięte, a akumulator fizyki 60 Hz liczy ten sam czas.
+      if (!frameLimitTick(now)) return;
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
       // Zegar klatki efektów (RenderWorld.frameNowMs → Core3D.frameNowMs; worker — HEAD.WALL migawki): znacznik rAF, nie
       // performance.now() w chwili rysowania — ten szedł po fizyce, więc klatka z krokiem 60 Hz „trwała” dla efektów
       // o czas kroku dłużej, następna krócej (cząstki, błyski, dym szarpały co 4. klatkę przy 240 Hz).
       window.__frameNowMs = now;
-      // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
-      // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki.
-      if (rwHost) rwHost.present();
-      // Wejście: pady i kontekst raz na klatkę (strażnik znacznika rAF — pętla wejścia mogła to już zrobić).
+      // Wejście: pady i kontekst raz na RYSOWANĄ klatkę (pętla wejścia kończy się z pierwszą klatką tej pętli).
       pumpInput(now);
       scoutFrameInput();
       // Rozdzielczość dynamiczna (blok „OPCJE GRAFIKI”): skala renderu z czasu GPU — także w pauzie (render trwa).
@@ -29659,7 +29688,7 @@
         const frameEndMs = performance.now();
         PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
         PerfHUD.flush(frameEndMs);
-        requestAnimationFrame(loop);
+        nextLoopFrame();   // rAF; bez VSync z limitem — budzik (blok „OPCJE GRAFIKI”)
         return;
       }
       acc += frame;
@@ -29845,7 +29874,7 @@
       PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
       if (steps === 0) aiOffStepNoteRest(frameEndMs - frameStartMs);
       PerfHUD.flush(frameEndMs);
-      requestAnimationFrame(loop);
+      nextLoopFrame();   // rAF; bez VSync z limitem — budzik (blok „OPCJE GRAFIKI”)
     }
 
     // =============== Render ===============
@@ -35154,7 +35183,8 @@
     const GFX_CHIP_ATTR = Object.freeze({
       renderScale: 'gfxScale', msaa: 'gfxMsaa', bloom: 'gfxBloom', heatHaze: 'gfxHeat', explosions: 'gfxExplosions',
       effects: 'gfxEffects', hallDust: 'gfxHallDust', spaceGas: 'gfxSpaceGas', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
-      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync'
+      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync',
+      frameLimit: 'gfxFrameLimit'
     });
     const gfxChipSelector = (attr) => `[data-${attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]`;
     let gfxSettings = normalizeGfx(window.__gfxBoot || null);
@@ -35246,6 +35276,93 @@
       });
     }
 
+    // --- Limit klatek (src/render/frameLimiter.js) ---
+    // loop() woła frameLimitTick na początku każdego wywołania (po złożeniu bitmapy workera): false — klatka pominięta,
+    // następną zamawia frameLimitTick; koniec klatki narysowanej — nextLoopFrame. Z VSync: rAF w takcie ekranu, rysuje
+    // co N-ta klatka, gdy częstotliwość ekranu jest wielokrotnością limitu, inaczej akumulator czasu. Bez VSync (Electron)
+    // limit czasem i pętla BEZ rAF: budzik woła loop() wprost — setTimeout śpi do chwili należnej minus margines
+    // (~90. percentyl spóźnień budzika z ostatnich 32 snów + 0,5 ms, 1–6 ms), resztę czekania dopina kolejka
+    // MessageChannel (zadania bez opóźnienia; wejście i wiadomości workera idą między nimi). Spóźnienie budzika ponad
+    // margines = klatka później; czekanie krótsze niż margines (limity 120–240) idzie w całości kolejką — rdzeń CPU
+    // zajęty jak bez limitu, karta odciążona. rAF bez taktu (flagi Chromium) po klatce bez zmiany obrazu przychodzi
+    // dopiero po ~30 ms, a po klatce narysowanej spoza rAF też z opóźnieniem — pomiar 2026-10-29 (headless bez taktu,
+    // atrapa Electrona): sen → rAF ~32 kl/s przy każdym limicie, budzik + rAF na końcu klatki ~64 kl/s, sam setTimeout
+    // w stronie gry spóźniał się o kilka ms (limit 120 → 67 kl/s). Karta w tle — rAF (gra stoi jak dawniej). Harness
+    // narzędzi z zegarem wirtualnym (window.__harness, tryb inny niż 'real') — bez limitu. Tło menu: setFrameLimit
+    // (strona w trybie off, pełnomocnik → worker w trybie worker). Okres ekranu w menu zbiera pętla wejścia (observe).
+    // Konsola: FrameLimiter (tryb, okres ekranu, stats.hist — odstępy w okresach ekranu), FrameLimiter.wake (budzik bez
+    // VSync: margines, sny, dopięcia kolejką).
+    const frameLimiter = new FrameLimiter();
+    window.FrameLimiter = frameLimiter;
+    const _limitWake = new MessageChannel();
+    const limitWake = frameLimiter.wake = { dueAt: 0, timerAt: 0, marginMs: 2, late: new Float64Array(32), sorted: new Float64Array(32), lateN: 0, sleeps: 0, spins: 0 };
+    function limitWakeStep() {
+      if (limitWake.dueAt > performance.now()) { limitWake.spins++; _limitWake.port2.postMessage(0); return; }
+      loop(performance.now());
+    }
+    function limitWakeTimer() {
+      const w = limitWake, late = performance.now() - w.timerAt;
+      w.late[w.lateN++ & 31] = late > 0 ? late : 0;
+      const n = Math.min(w.lateN, 32), s = w.sorted;
+      for (let i = 0; i < n; i++) {
+        const v = w.late[i];
+        let j = i - 1;
+        while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
+        s[j + 1] = v;
+      }
+      w.marginMs = Math.min(6, Math.max(1, s[Math.floor(0.9 * (n - 1))] + 0.5));
+      limitWakeStep();
+    }
+    _limitWake.port1.onmessage = limitWakeStep;
+    const limitTimeMode = () => frameLimiter.mode === 'time' && !document.hidden && !(window.__harness && window.__harness.clock?.mode !== 'real');
+    function scheduleLimitedLoop(waitMs) {
+      const t = performance.now(), w = limitWake;
+      w.dueAt = t + waitMs;
+      const sleep = Math.floor(waitMs - w.marginMs);
+      if (sleep >= 1) {
+        w.timerAt = t + sleep;
+        w.sleeps++;
+        setTimeout(limitWakeTimer, sleep);
+      } else _limitWake.port2.postMessage(0);
+    }
+    function frameLimitTick(now) {
+      const h = window.__harness;
+      if (h && h.clock?.mode !== 'real') return true;
+      if (frameLimiter.tick(now)) return true;
+      if (limitTimeMode()) scheduleLimitedLoop(frameLimiter.waitMs(now));
+      else requestAnimationFrame(loop);
+      return false;
+    }
+    // koniec klatki narysowanej (loop, także gałąź pauzy)
+    function nextLoopFrame() {
+      if (limitTimeMode()) scheduleLimitedLoop(frameLimiter.waitMs(performance.now()));
+      else requestAnimationFrame(loop);
+    }
+    // VSync tego uruchomienia (Electron: flagi procesu); w przeglądarce klatki taktuje ekran
+    const frameLimitVsync = () => !(hullfallApp && hullfallApp.vsync === false);
+    function applyFrameLimit() {
+      const fps = gfxFrameLimitFps(gfxSettings.frameLimit);
+      frameLimiter.setFps(fps);
+      frameLimiter.setVsync(frameLimitVsync());
+      menuBackdrop?.setFrameLimit?.(fps, frameLimitVsync());
+    }
+    // Notka w opcjach: czy częstotliwość monitora pasuje do limitu (równy takt) — z okresu rAF.
+    function updateFrameLimitUI() {
+      const lim = frameLimiter, hz = Math.round(lim.hz);
+      let text = '';
+      if (lim.fps > 0 && !frameLimitVsync()) text = 'Bez VSync limit odmierza zegar.';
+      else if (lim.fps > 0 && hz > 0) {
+        if (lim.mode === 'nth') text = `Monitor ${hz} Hz: gra rysuje co ${lim.every}. odświeżenie — równy takt.`;
+        else if (lim.mode === 'every') text = `Monitor ${hz} Hz nie jest szybszy niż limit — gra rysuje każdą klatkę.`;
+        else {
+          const even = [240, 144, 120, 60].filter((f) => f < hz * 1.03 && Math.abs(hz / f - Math.round(hz / f)) <= 0.03 * Math.round(hz / f));
+          text = `Monitor ${hz} Hz nie jest wielokrotnością ${Math.round(lim.fps)} — odstępy klatek nierówne (raz krótszy, raz dłuższy)`
+            + (even.length ? `; równy takt: ${even.join(' / ')}.` : '.');
+        }
+      }
+      document.querySelectorAll('[data-gfx-frame-limit-now]').forEach(el => { el.hidden = !text; el.textContent = text; });
+    }
+
     // Gaz wybuchów i budżety efektów (na żywo). Pas asteroid powstaje na ekranie ładowania i woła to po starcie sam.
     function applyGraphicsEffects() {
       const ex = GFX_EXPLOSIONS[gfxSettings.explosions] || GFX_EXPLOSIONS.high;
@@ -35289,6 +35406,8 @@
       applyGraphicsEffects();
       // render w workerze: te same ustawienia na Core3D i modułach efektów workera (powyższe dotyczą modułów strony)
       if (rwHost) rwHost.setGfx(gfxRenderRecord(s, scale));
+      // limit klatek: pętla gry strony i tło menu (strona albo worker)
+      applyFrameLimit();
     }
 
     function updateGraphicsUI() {
@@ -35338,6 +35457,7 @@
           + (auto.label ? ` (${auto.label}).` : '.');
       });
       updateDynResUI();
+      updateFrameLimitUI();
     }
 
     function setGraphicsSettings(next, save = true) {
@@ -35383,12 +35503,17 @@
     // Konsola / narzędzia: GraphicsQuality.set('low') albo .set({ renderScale: 0.67 }) — z zapisem;
     // .apply(…) — bez zapisu (pomiary A/B); .settings, .preset ('low' … 'ultra' | 'custom'); .auto — dobór przy
     // pierwszym uruchomieniu (co i dlaczego); .dynamic — stan rozdzielczości dynamicznej; .vsync — VSync tego
-    // uruchomienia i zapisany (Electron; w przeglądarce null).
+    // uruchomienia i zapisany (Electron; w przeglądarce null); .frameLimit — limit klatek (cel, tryb, okres ekranu).
     window.GraphicsQuality = {
       get settings() { return { ...gfxSettings }; },
       get preset() { return matchGfxPreset(gfxSettings); },
       get auto() { return gfxAutoInfo ? { ...gfxAutoInfo } : null; },
       get vsync() { return hullfallApp ? { running: hullfallApp.vsync, saved: gfxVsyncSaved, pending: gfxRestartNow().includes('vsync') } : null; },
+      get frameLimit() {
+        const l = frameLimiter;
+        return { fps: l.fps, mode: l.mode, every: l.every, hz: +l.hz.toFixed(2), vsync: l.vsync, opis: l.describe(),
+          klatki: l.stats.ticks, narysowane: l.stats.drawn, odstepyVsync: [...l.stats.hist] };
+      },
       get dynamic() {
         return { scale: dynResScale(), level: dynRes.level, levels: [...dynRes.levels], target: dynRes.target,
           emaMs: dynRes.ema > 0 ? +dynRes.ema.toFixed(2) : null, changes: dynRes.changes };

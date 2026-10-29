@@ -48,7 +48,11 @@ export const GFX_SETTINGS = Object.freeze({
   // VSync: 'on' — klatki w takcie odświeżania ekranu, 'off' — bez limitu klatek. Tylko gra w Electronie (flagi
   // Chromium przy starcie procesu — electron/main.js, plik Dokumenty\HULLFALL\uruchomienie.json przez preload;
   // tam też źródło wyboru); w przeglądarce VSync ustawia przeglądarka. Preferencja poza presetami.
-  vsync: { values: ['on', 'off'], def: 'on', preset: false, restart: true }
+  vsync: { values: ['on', 'off'], def: 'on', preset: false, restart: true },
+  // Limit klatek (src/render/frameLimiter.js): pętla gry i tło menu rysują najwyżej tyle klatek na sekundę — przy
+  // ekranie 240 Hz limit 120 to ~połowa pracy karty (ciszej, mniej prądu). 'off' — tyle, ile ekran (z VSync) albo
+  // karta (bez VSync). Na żywo, preferencja poza presetami.
+  frameLimit: { values: ['off', '240', '144', '120', '60'], def: 'off', preset: false }
 });
 
 /**
@@ -69,6 +73,21 @@ export function gfxRestartPending(settings, running) {
 export function gfxDynamicTargetFps(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+// Limit klatek [kl/s] (0 = bez limitu) — FrameLimiter.setFps.
+export function gfxFrameLimitFps(value) {
+  const n = Number(normalizeGfxValue('frameLimit', value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Nadpisanie limitu klatek z adresu (?limitKlatek=120|0|off) — na tę sesję bez zapisu (narzędzia, pomiary); null — brak. */
+export function gfxFrameLimitFromQuery(search) {
+  let q = null;
+  try { q = new URLSearchParams(String(search || '')).get('limitKlatek'); } catch { q = null; }
+  if (q == null || q === '') return null;
+  const s = String(q).toLowerCase();
+  return s === '0' || s === 'off' || s === 'brak' ? 'off' : normalizeGfxValue('frameLimit', s);
 }
 
 // Dobór presetu przy pierwszym uruchomieniu (src/game/graphicsAutoPreset.js): co wybrano i dlaczego — informacja

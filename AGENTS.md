@@ -67,6 +67,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Pole symulacji zmieniane drobnymi przyrostami w teksturze połówkowej → zapis przez `sroundF16` (`src/3d/tsl/zapisF16.js`; zapis f32 → f16 obcina ku zeru).
 - HUD rzutuje przez `View3D` (`worldToScreen` / `screenToWorld`), nie przez `camera.zoom`; px bufora na j. świata = zoom · `Core3D.pxScale` (`Core3D.viewZoom(cam)`).
 - Nowa kanwa w panelu UI → przebij globalną regułę `main.css` `canvas:not(#c)` (absolutne, bez myszy).
+- Limit klatek (opcje grafiki, `src/render/frameLimiter.js`): `loop()` zamawia następną klatkę tylko przez `frameLimitTick` / `nextLoopFrame` (nie `requestAnimationFrame(loop)` — bez VSync pętla idzie na budziku), a nowa pętla rAF, która RYSUJE obraz poza `loop()` i tłem menu, pyta `FrameLimiter.tick` — inaczej limit jej nie obejmie (reguła `opcje-grafiki`).
 
 **Rozgrywka**
 - Ścieżka, która pokazuje albo celuje we wroga → `SensorSystem.hides(byt)` (mgła wojny); celowanie w gracza i wybór celów AI → `isCloakHidden` (maskowanie).
@@ -168,7 +169,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |
 | `menu` | Menu główne i jego tło 3D |
-| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync |
+| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync, limit klatek |
 | `stacje` | Stacje i obiekty świata 3D, rozpad stacji, siatka infrastruktury stacji (edytor) |
 | `modele-3d` | Modele 3D statków i broni, bronie z Blendera, kamery 3D |
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |

@@ -1145,6 +1145,12 @@ if (isWorker) {
   // start / active / pointer / focus / launch / fly (plan lotu jako dane — introCamera.menuIntroFlight) / stop.
   async function menuOp(m) {
     const op = m.op;
+    // limit klatek z opcji grafiki (src/render/frameLimiter.js) — pamiętany także przed startem tła (start czeka na planety)
+    if (op === 'frameLimit') {
+      st.menuFrameLimit = { fps: m.fps, vsync: m.vsync !== false };
+      if (st.menu) st.menu.setFrameLimit(m.fps, m.vsync !== false);
+      return;
+    }
     if (op === 'start') {
       if (st.tMenuMsg === undefined) st.tMenuMsg = performance.now() - st.t0;
       if (st.menu) return;
@@ -1152,6 +1158,7 @@ if (isWorker) {
       const mod = st.menuMod || (st.menuMod = await import('../3d/menuBackdrop3D.js'));
       const bd = new mod.MenuBackdrop3D({ haloRings: st.haloRings });
       st.menu = bd;
+      if (st.menuFrameLimit) bd.setFrameLimit(st.menuFrameLimit.fps, st.menuFrameLimit.vsync);
       bd.onRendered = () => {
         if (st.menu !== bd) return;
         const bmp = st.canvas.transferToImageBitmap();

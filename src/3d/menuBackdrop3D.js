@@ -18,6 +18,7 @@ import * as THREE from 'three';
 import { loadTexture } from './canvas2d.js';
 import { requestFrame, cancelFrame } from './harmonogram.js';
 import { RenderWorld } from '../render/renderWorld.js';
+import { FrameLimiter } from '../render/frameLimiter.js';
 import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
 import { HALO_HDR, HALO_STATION_ANGLE } from './haloRing/haloRingConfig.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from './menuBackdrop3D.tsl.js';
@@ -113,6 +114,7 @@ export class MenuBackdrop3D {
     this._tick = (now) => this._frame(now);
     this._onVisibility = () => this._sync();
     this.onRendered = null;
+    this._limiter = null;     // limit klatek (setFrameLimit)
   }
 
   // Start w tle (menu zostaje responsywne, pod kurtyną .mm-curtain): ring gry
@@ -190,6 +192,18 @@ export class MenuBackdrop3D {
   // 0 = ekran główny menu, 1 = otwarty panel podmenu (planeta ustępuje w prawo).
   setFocus(k) {
     this.focusTarget = Math.max(0, Math.min(1, Number(k) || 0));
+  }
+
+  // Limit klatek z opcji grafiki (src/render/frameLimiter.js): pętla tła rysuje najwyżej `fps` klatek na sekundę
+  // (0 — bez limitu); `vsync` — VSync tego uruchomienia (false: limit czasem). Strona: blok „OPCJE GRAFIKI”
+  // (tryb worker — przez pełnomocnika, op `frameLimit`).
+  setFrameLimit(fps, vsync = true) {
+    if (!this._limiter) {
+      if (!(Number(fps) > 0)) return;
+      this._limiter = new FrameLimiter();
+    }
+    this._limiter.setFps(fps);
+    this._limiter.setVsync(vsync);
   }
 
   // Start gry: najazd kamery na ring, trwa do stop(). dolly: false — kamera stoi, tylko planeta wraca na środek kadru
@@ -373,6 +387,8 @@ export class MenuBackdrop3D {
     this._raf = 0;
     if (!this.running || !this.active) return;
     this._raf = requestFrame(this._tick);
+    // limit klatek: klatka poza taktem bez rysunku — dt następnej narysowanej obejmuje pominięte (_last zostaje)
+    if (this._limiter && !this._limiter.tick(now)) return;
     const t0 = performance.now();
     const dt = this.frozen ? 0 : Math.min(0.1, Math.max(0, (now - this._last) / 1000));
     this._last = now;
