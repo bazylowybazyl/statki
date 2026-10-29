@@ -50,8 +50,38 @@ A/B całego dawnego obrazu: `?hcStary=1` (koła, plazma, haze dysz, bez opływu)
 
 Opływ: jeden rysunek (otoczka + do 12 strug dysz — instancje), pass DIST tylko w hipercruisie gracza (poza nim pomijany
 — zero kosztu). Gorące powietrze dysz: te same 5 źródeł „uber”, większy stożek = więcej kafli 32 × 32 z bitem źródła.
-Pomiar w grze — § 4.
+
+Pomiar (2026-10-29, `hipercruise-efekt-gra.mjs --koszt 1`, tryb off, headless 1600 × 900, Atlas przy pełnej prędkości
+20 km/s, 4 s próbek `Core3D.gpuFrameMs`, przebiegi ABAB przy ciszy innych harnessów):
+
+| Przebieg | mediana GPU [ms] | p90 [ms] | warstwa DIST |
+|---|---|---|---|
+| v2 | 0,546 | 0,574 | tak |
+| dawny (`?hcStary=1`) | 0,513 | 0,550 | nie |
+| v2 | 0,533 | 0,559 | tak |
+| dawny | 0,505 | 0,541 | nie |
+
+Różnica ~+0,03 ms GPU na klatkę (pass DIST z czyszczeniem celu, gałąź `fxOn` postu, większe stożki) — tylko w hipercruisie
+gracza; przy 5120 × 1440 (~5 × pikseli) szacunkowo ~+0,15 ms. Pipeline'y synchroniczne po starcie: 0.
 
 ## 4. Weryfikacja
 
-(uzupełniane po przebiegach w grze)
+- Testy: `node --test tests/hyperFlow.test.mjs tests/hypercruiseLook.test.mjs tests/warpShakes.test.mjs tests/cameraRig.test.mjs`
+  oraz strażnicy (`szewRenderu`, `graBezGlsl`, `wizualiaFxRandom`, `rozgrzewka`, `warpNurt`, `warpWorkerMirror`, `silnikiTSL`,
+  `heatHazeTiles`, `warpPlume3D`) — zielone.
+- Zrzuty faz (`node scripts/webgpu/hipercruise-efekt-gra.mjs [--zoom 0.3] [--query hcStary=1]`): kop i lot bez pierścieni
+  (dawniej pierścień fali kopu na pół kadru), wyjście bez błysku, fali i żaru; plazma smukła, długa, w smugach (dawniej
+  szerokie, kłębiaste płomienie z dużą fioletową poświatą); statek wyżej nad kokpitem — strugi dysz i kilwater widać.
+- Sonda warstwy DIST (`--sonda 1`, mapa |przesunięcia|): rozruch — nic, kop — tylko struga dysz (≤ 0,2–0,8 px), lot
+  5 km/s — do 3–6 px, pełna prędkość — do 5–6 px przy burtach i za rufą, wyjście — gaśnie; 1 rysunek, 1 + 5 instancji
+  (otoczka + 5 dysz Atlasa), 0 NaN. Kształt: zbieżny dziób, czyste wnętrze kadłuba, pas przy burtach grubiejący ku rufie,
+  kilwater z pięcioma strugami.
+
+## 5. Do decyzji użytkownika
+
+- Siła opływu (dziś do ~6 px przy zoomie 0,1–0,16; `HYPER_FLOW_TUNE.sheathK / wakeK`) — w ruchu widać drżenie gwiazd
+  i mgławicy płynące ku rufie; w stopklatce na ciemnym tle słabo.
+- Obrys kadłuba: dziś z pudła sprite'a × 0,8 i zbieżny dziób (przybliżenie) — dokładny obrys dałoby pole odległości
+  sylwetki z cienia SDF (`hullShadowSdf.js`), gdyby opływ miał przylegać do każdego kształtu (także po trafieniach).
+- Wysokość statku nad kokpitem w hipercruisie (`HYPER_WAKE_INSET` 0,35 długości kadłuba) — więcej kilwateru kosztem
+  widoku przed dziobem.
