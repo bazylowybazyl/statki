@@ -15,9 +15,11 @@
 
 import { RESOURCES } from '../../data/resources.js';
 import { REPAIR_TUNE } from '../../data/repairDrones.js';
+import { isCivilRole } from '../../data/shipClasses.js';
 import { HD_MODULES, hullDesignMountOf } from './hullDesignSchema.js';
 import { cellComponents, hullCells, sampleHullField } from './hullDesignGeometry.js';
 import { systemIssues } from './hullDesignSystems.js';
+import { hullCargoGrid, hullDesignCargo } from './hullDesignCargo.js';
 
 export const HD_RECIPE_TUNE = Object.freeze({
   upperPlateShare: 0.5,     // płyty na komórkę nadbudówki / mostka (ponad ramę i pancerz)
@@ -30,10 +32,11 @@ const add = (bag, k, n) => { if (n > 0) bag[k] = (bag[k] || 0) + n; };
 
 /**
  * Receptura i ostrzeżenia. `field` — buildHullField(projekt). Zwraca { parts: { id: n }, cells: { hull, upper,
- * bridge }, plates, length, width, massT, value, warnings: [{ level: 'bad' | 'warn', text }] }.
+ * bridge }, plates, length, width, massT, value, cargo (ładowność — hullDesignCargo), warnings: [{ level: 'bad' |
+ * 'warn', text }] }. Statek cywilny (`role: 'civil'`) nie potrzebuje gniazd uzbrojenia.
  */
 export function hullDesignRecipe(field, tune = HD_RECIPE_TUNE) {
-  const { modules } = field.expanded;
+  const { modules, design } = field.expanded;
   const c0 = hullCells(field, 0), c1 = hullCells(field, 1), c2 = hullCells(field, 2), c3 = hullCells(field, 3);
   const parts = {};
   const perPlate = Number(REPAIR_TUNE.cellsPerUnit?.hull_plate) || 200;
@@ -73,29 +76,33 @@ export function hullDesignRecipe(field, tune = HD_RECIPE_TUNE) {
       if (sampleHullField(field, 0, bx, by) < 0) warnings.push({ level: 'warn', text: `${label} (${Math.round(m.x)}, ${Math.round(m.y)}): dysze zasłonięte kadłubem.` });
     }
   }
-  if (!modules.some((m) => { const g = hullDesignMountOf(m); return g && g.slot !== 'hangar'; })) warnings.push({ level: 'warn', text: 'Brak gniazd uzbrojenia.' });
+  if (!isCivilRole(design?.role) && !modules.some((m) => { const g = hullDesignMountOf(m); return g && g.slot !== 'hangar'; })) {
+    warnings.push({ level: 'warn', text: 'Brak gniazd uzbrojenia.' });
+  }
   return {
     parts, counts, plates,
     cells: { hull: c0.count, armor: c1.count, upper: c2.count, bridge: c3.count },
     length, width,
     massT: Math.round(c0.count * tune.massPerCell + (c2.count + c3.count) * tune.massPerCell * 0.5),
-    value, warnings
+    value, cargo: hullDesignCargo(modules, design?.detail || 0.6), warnings
   };
 }
 
 /**
  * Mocowania względem środka obrazu (field.image.cx/cy): { hardpoints, mainThrusters, sideThrusters, cores, fuelTanks,
- * cargoBays, lights: { position } }. Dysze SIDE jak `engines.side` edytora gniazd (deg 0 — wydech na prawą burtę +y,
- * 180 — na lewą, 90 — ku rufie), rdzenie, zbiorniki i ładownie jak markery gry (src/data/reactorCores.js,
- * src/data/fuelTanks.js, src/data/cargoBays.js — środek, r / pół-wymiary). Lampy na krawędzi kadłuba z pola (6 j. w głąb):
- * dziób, rufa, burty w połowie długości.
+ * cargoBays, cargoTanks, lights: { position } }. Dysze SIDE jak `engines.side` edytora gniazd (deg 0 — wydech na prawą
+ * burtę +y, 180 — na lewą, 90 — ku rufie), rdzenie, zbiorniki i ładownie jak markery gry (src/data/reactorCores.js,
+ * src/data/fuelTanks.js, src/data/cargoBays.js — środek, r / pół-wymiary; ładownia: wariant i miejsca na kontenery —
+ * hullCargoGrid), zbiorniki ładunku tankowców osobno. Lampy na krawędzi kadłuba z pola (6 j. w głąb): dziób, rufa,
+ * burty w połowie długości.
  */
 export function hullDesignMounts(field) {
   const { cx, cy } = field.image;
   const { modules } = field.expanded;
+  const detail = field.expanded.design.detail || 0.6;
   const hardpoints = [];
   const mainThrusters = [];
-  const sideThrusters = [], cores = [], fuelTanks = [], cargoBays = [];
+  const sideThrusters = [], cores = [], fuelTanks = [], cargoBays = [], cargoTanks = [];
   for (const m of modules) {
     if (m.type === 'thruster_side') {
       // dysza na końcu +x gniazda (burta), kierunek wydechu (cos rot, sin rot) → deg edytora: dir = (−sin deg, cos deg)
@@ -104,7 +111,14 @@ export function hullDesignMounts(field) {
       sideThrusters.push({ id: `hd_side_${sideThrusters.length}`, x: m.x + c * m.w - cx, y: m.y + s * m.w - cy, deg: deg < 0 ? deg + 360 : deg });
     } else if (m.type === 'reactor') cores.push({ id: `hd_core_${cores.length}`, x: m.x - cx, y: m.y - cy, r: m.r });
     else if (m.type === 'fuel_tank') fuelTanks.push({ id: `hd_fuel_${fuelTanks.length}`, x: m.x - cx, y: m.y - cy, r: Math.max(m.w, m.h) });
-    else if (m.type === 'cargo') cargoBays.push({ id: `hd_cargo_${cargoBays.length}`, x: m.x - cx, y: m.y - cy, w: 2 * m.w, h: 2 * m.h, rot: m.rot || 0 });
+    else if (m.type === 'cargo') {
+      cargoBays.push({
+        id: `hd_cargo_${cargoBays.length}`, x: m.x - cx, y: m.y - cy, w: 2 * m.w, h: 2 * m.h, rot: m.rot || 0,
+        v: m.v || 0, containers: hullCargoGrid(m, detail).containers
+      });
+    } else if (m.type === 'cargo_tank') {
+      cargoTanks.push({ id: `hd_tank_${cargoTanks.length}`, x: m.x - cx, y: m.y - cy, w: 2 * m.w, h: 2 * m.h, rot: m.rot || 0, v: m.v || 0, n: m.n || 1 });
+    }
     const g = hullDesignMountOf(m);
     if (g) {
       // gniazda jak markery edytora gniazd gry: typ, rozmiar; wbudowane — obrót (90 = dziób), broń przypisana w projekcie
@@ -153,5 +167,5 @@ export function hullDesignMounts(field) {
     { id: 'hd_stbd', x: mid - cx, y: edgeY(1, mid) - cy, color: '#2bff6a', power: 0.8, radius: lr(1), sequenceGroup: 'edge' },
     { id: 'hd_stern', x: edgeX(-1) - cx, y: -cy, color: '#ffffff', power: 0.6, radius: lr(0.9), sequenceGroup: 'edge' }
   ];
-  return { hardpoints, mainThrusters, sideThrusters, cores, fuelTanks, cargoBays, lights: { position, road: [], flood: [] } };
+  return { hardpoints, mainThrusters, sideThrusters, cores, fuelTanks, cargoBays, cargoTanks, lights: { position, road: [], flood: [] } };
 }

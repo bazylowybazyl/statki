@@ -189,10 +189,12 @@ export const HD_PRESET_MOUNTS = Object.freeze({
 /**
  * Klasa presetu: [poziom mostka, poziom rdzenia]. TN i fregata z klocków — decyzja użytkownika; reszta — najniższa klasa
  * z powierzchni i gniazd (classForHull, 2026-10-21: Hasta-D 63 tys. j² → III, fregata / krążownik z części 149 / 124 tys.
- * → IV, Orbis 231 tys. i Szakal 256 tys. → V). `empty` — gracz wybiera (0 — z powierzchni).
+ * → IV, Orbis 231 tys. i Szakal 256 tys. → V). `empty` — gracz wybiera (0 — z powierzchni). Frachtowce mają klasę
+ * w pliku presetu (`cls`, src/game/hullDesign/freighters/) — hullDesignPreset() podaje ją w `opts.cls` applySystemSlots.
+ * Hyperion (src/game/hullDesign/warships/hyperion.js) — superkapitał linii Atlasa, klasa VI (decyzja użytkownika 2026-10-27).
  */
 export const HD_PRESET_CLASS = Object.freeze({
-  custos: [1, 1], hasta: [2, 2], bellator: [4, 4], citadella: [5, 5], colossus: [6, 6], klocki: [1, 1],
+  custos: [1, 1], hasta: [2, 2], bellator: [4, 4], citadella: [5, 5], colossus: [6, 6], hyperion: [6, 6], klocki: [1, 1],
   destroyer: [3, 3], tnparts: [4, 4], tnparts2: [4, 4], orbis: [5, 5], pirate: [5, 5], atlas2: [6, 6]
 });
 /** Presety poza drabiną klas (jak Atlas — unikat fabularny): Atlas II ma 1,05 mln j², więcej niż limit klasy VI. */
@@ -221,7 +223,8 @@ const dropped = (key, m) => m.type === 'well' && (HD_PRESET_MOUNTS[key]?.drop ||
  * Sloty systemów presetu `key` w surowym projekcie (przed normalizacją): rdzeń / mostek przeniesione w miejsce z tabel
  * gry, moduły systemów dołożone, wszystkie moduły systemów zablokowane (`lock`), gniazda broni z gry (`mounts` —
  * wieże presetu i ramy w miejscu gniazd znikają), klasa (`bridgeLevel` / `coreLevel`). Projekt od zera (`empty`) —
- * bez zmian. `opts.mounts === false` — bez gniazd (narzędzie scripts/kreator-gniazda-tn.mjs liczy je na tym projekcie).
+ * bez zmian. `opts.mounts === false` — bez gniazd (narzędzie scripts/kreator-gniazda-tn.mjs liczy je na tym projekcie);
+ * `opts.cls` — klasa [mostek, rdzeń] spoza HD_PRESET_CLASS (frachtowce: `cls` pliku presetu).
  */
 export function applySystemSlots(key, design, opts = {}) {
   if (key === 'empty' || !design) return design;
@@ -239,7 +242,7 @@ export function applySystemSlots(key, design, opts = {}) {
     modules = modules.filter((m) => !MOUNT_REPLACE(m) && !dropped(key, m));
     modules.push(...presetMountModules(key, design.detail));
   }
-  const cls = HD_PRESET_CLASS[key];
+  const cls = opts.cls || HD_PRESET_CLASS[key];
   if (!cls) return { ...design, modules };
   // gniazda presetu nie większe niż broń klasy (fregata z klocków: wieża M w klasie I → gniazdo S)
   const maxSize = shipClass(cls[0]).weaponSize;

@@ -20,8 +20,9 @@ import {
 } from 'three/tsl';
 import {
   SKY_SCROLL, createSkyScroll, createSkyTrack, skyTrackStep, skyScrollMove, stepSkyScroll, stepSkyFineGain, skyFocalPx,
-  skyViewMatrix, skyWorldMatrix, mat3AngleBetween
+  skyViewMatrix, skyWorldMatrix, mat3AngleBetween, skyTempoFrom, skyTempoTune, skyMidDriveMul, skyStarStreakPx
 } from './skyScroll.js';
+import { WARP_STARS } from './warp/stars.js';
 import {
   createSkySphereUniforms, createSkySphereFlatMaterial, createSkySphereMeshMaterial, createSkyStarQuadsMaterial,
   createSkyStarGeometry, buildSkyStarCatalog
@@ -144,9 +145,13 @@ export function syncSky3D(active, eye, far) {
 
 // ============================================================
 // NIEBO-SFERA w kamerze z góry (DECYZJE-2 N1–N3, 2026-10-26): sfera nieba w nieskończoności zamiast płaszczyzny mgławicy
-// z paralaksą 0,02 i zamiast warstwy deep GameStars, obracana z DROGI STATKU (src/3d/skyScroll.js — prawo warstw:
-// ekran = min(v, 14 tys.) · p · zoom, p 0,03). Materiały: src/3d/skySphere.tsl.js. Tryb z adresu strony (działa też w
-// workerze renderu — RenderWorld.pageSearch): `?niebo=sfera` / `?niebo=plaska`; domyślny — SKY_SPHERE_DEFAULT_MODE.
+// z paralaksą 0,02 i zamiast warstwy deep GameStars, obracana z DROGI STATKU (src/3d/skyScroll.js — PRAWO TEMPA
+// 2026-10-27: ekran = vN(v) · p_ef · zoom, vN liniowe do 5 tys. j/s i logarytmiczne wyżej, wygładzone 0,15 s, p 0,1 z sufitem
+// głębi — niebo wolniej niż planety tła; warstwa mid GameStars jedzie tą samą drogą nieba — `scroll.driveX / driveY`,
+// StarSystem w planet3d.assets.js). Materiały: src/3d/skySphere.tsl.js. Tryb z adresu strony (działa też w workerze
+// renderu — RenderWorld.pageSearch): `?niebo=sfera` / `?niebo=plaska`; domyślny — SKY_SPHERE_DEFAULT_MODE. Prawo tempa:
+// `?nieboTempo=stare` (dawne: min(v, 14 tys.) · 0,03 · zoom), `?nieboTempo=<liczba>` (mnożnik nowego), `?nieboSufit=0`
+// (nowe bez sufitu głębi) — skyTempoFrom, ta sama ścieżka adresu.
 // Stan obrotu liczy moduł renderu z RenderWorld (poza statku, prędkość, kamera) — tryb off i worker liczą to samo.
 // Droga: okręt PROWADZONY PRZEZ KAMERĘ — statek gracza, a przy sterach fregaty zwiadu fregata (RenderWorld.cameraLead,
 // z wagą przejazdu kamery: drogi obu tropicieli mieszane, bez skoku przy przełączeniu). Podzielony ekran: gracz 2 ma
@@ -212,6 +217,17 @@ export const SkySphere = {
   _clockLast: 0,
   /** Tempo obrazu nieba ostatniej klatki [px CSS/s] (narzędzia, raport W0). */
   speedCss: 0,
+  // Prawo tempa (skyScroll.js, `?nieboTempo`): strojenie, mnożnik tempa nieba, warstwa mid GameStars na drodze nieba
+  // (midSphere — tylko sfera z nowym prawem) z mnożnikiem drogi midMul; smuga jasnych gwiazd [px bufora] graczy 1 i 2.
+  tempo: { stare: false, mul: 1 },
+  tune: SKY_SCROLL,
+  tempoMul: 1,
+  midSphere: false,
+  midMul: 1,
+  streakPx: 0,
+  streakPx2: 0,
+  /** Licznik klatek nieba (update) — StarSystem bierze drogę nieba (scroll.driveX / dispX) tylko z nowej klatki. */
+  updates: 0,
 
   /** Raz, przy NebulaSystem.init: tryb z adresu; w trybie sfery — tekstura, materiały, siatki, wpisy rozgrzewki. */
   init(core, search) {
@@ -219,6 +235,7 @@ export const SkySphere = {
     this.core = core;
     this.mode = skySphereModeFrom(search);
     this.active = this.mode === 'sfera';
+    this.applyTempo(search);
     if (!this.active) return this;
     // 6144 × 3072 RGBA8 = ~75 MB GPU: wgranie w wolnej chwili z kolejki Core3D (jak tekstury planet), nie przy pierwszym
     // rysunku — gdyby dekodowanie skończyło się po starcie gry, wgranie trafiłoby w klatkę gry.
@@ -274,6 +291,20 @@ export const SkySphere = {
   },
 
   /**
+   * Prawo tempa z adresu strony (`?nieboTempo=stare|<liczba>`, `?nieboSufit=0` — skyTempoFrom; strona i worker czytają
+   * ten sam RenderWorld.pageSearch): strojenie, mnożnik tempa, warstwa mid GameStars na drodze nieba (tylko sfera z nowym
+   * prawem).
+   */
+  applyTempo(search) {
+    this.tempo = skyTempoFrom(search);
+    this.tune = skyTempoTune(this.tempo);
+    this.tempoMul = this.tempo.stare ? 1 : this.tempo.mul;
+    this.midSphere = this.active && !this.tempo.stare;
+    this.midMul = skyMidDriveMul(this.tempoMul);
+    return this;
+  },
+
+  /**
    * Klatka (NebulaSystem.update, raz na klatkę renderu): obrót z drogi okrętu prowadzonego przez kamerę, macierze,
    * jasność strefy, widoczność (kamera z góry — czworokąt i kwady; kamery 3D rysują Sky3D).
    *   pose — { x, y } statku gracza (RenderWorld.playerPose albo encja), v — jego prędkość [j/s], flat — kamera z góry;
@@ -305,24 +336,32 @@ export const SkySphere = {
     // droga: statek gracza i okręt prowadzony przez kamerę (fregata zwiadu) — każdy ze swoim tropicielem i cięciem,
     // zmieszane wagą przejazdu kamery (przejazd nad fregatę nie obraca nieba o drogę kamery między okrętami)
     const a = this._dA, b = this._dB;
-    if (pose) skyTrackStep(s.track, pose.x, pose.y, v, dt, a);
+    const tune = this.tune;
+    const cuts0 = s.track.cuts + this.leadTrack.cuts;
+    if (pose) skyTrackStep(s.track, pose.x, pose.y, v, dt, a, tune);
     else { s.track.has = false; a[0] = 0; a[1] = 0; }
     let w = 0;
     if (lead && lead.w > 0 && Number.isFinite(lead.x) && Number.isFinite(lead.y)) w = Math.min(1, lead.w);
-    if (w > 0) skyTrackStep(this.leadTrack, lead.x, lead.y, lead.v, dt, b);
+    if (w > 0) skyTrackStep(this.leadTrack, lead.x, lead.y, lead.v, dt, b, tune);
     else { this.leadTrack.has = false; b[0] = 0; b[1] = 0; }
     this.leadW = w;
-    skyScrollMove(s, a[0] * (1 - w) + b[0] * w, a[1] * (1 - w) + b[1] * w, dt, zoom, f, pxScale);
     s.cuts = s.track.cuts + this.leadTrack.cuts;
-    stepSkyFineGain(s, dt);
+    // cięcie w tej klatce (teleport) — droga nieba trzyma wygładzoną prędkość (bez obrotu o skok położenia)
+    // straż W0 przy hamowaniu: prędkość prowadzonego okrętu ze stanu (mieszana tą samą wagą co drogi)
+    const vNow = (pose ? Math.max(0, Number(v) || 0) : 0) * (1 - w) + (w > 0 ? Math.max(0, Number(lead.v) || 0) * w : 0);
+    skyScrollMove(s, a[0] * (1 - w) + b[0] * w, a[1] * (1 - w) + b[1] * w, dt, zoom, f, pxScale, tune, this.tempoMul,
+      s.cuts !== cuts0, vNow);
+    stepSkyFineGain(s, dt, tune);
+    this.updates++;
     this.speedCss = s.speedCss;
+    this.streakPx = skyStarStreakPx(s.speedPx, pxScale, WARP_STARS.stretchPx.value, tune);
     U.focal.value = f;
     skyViewMatrix(s, cameraRoll(cam), this.viewM);
     // obrót widoku w tej klatce (droga + obrót kadru): ≥ progu pamięci na brzegu kadru — cacheHook rysuje wprost
     this.frameAngle = this.hasPrevView ? mat3AngleBetween(this.viewM, this.prevViewM) : 0;
     this.prevViewM.set(this.viewM);
     this.hasPrevView = true;
-    this._applyView(this.viewM, s.fine);
+    this._applyView(this.viewM, s.fine, this.streakPx);
     const wm = skyWorldMatrix(s, _wm);
     U.worldMat.value.set(wm[0], wm[1], wm[2], wm[3], wm[4], wm[5], wm[6], wm[7], wm[8]);
     // podzielony ekran: gracz 2 — własna droga, zoom i obrót kadru (widok ustawia hak passa tła przed jego renderSingle)
@@ -330,8 +369,9 @@ export const SkySphere = {
     if (p2 && p2.cam && Number.isFinite(p2.x) && Number.isFinite(p2.y)) {
       this.split = true;
       this.cam2 = p2.cam;
-      stepSkyScroll(s2, p2.x, p2.y, p2.v, dt, core.viewZoom(p2.cam), f, pxScale);
-      stepSkyFineGain(s2, dt);
+      stepSkyScroll(s2, p2.x, p2.y, p2.v, dt, core.viewZoom(p2.cam), f, pxScale, tune, this.tempoMul);
+      stepSkyFineGain(s2, dt, tune);
+      this.streakPx2 = skyStarStreakPx(s2.speedPx, pxScale, WARP_STARS.stretchPx.value, tune);
       skyViewMatrix(s2, cameraRoll(p2.cam), this.viewM2);
     } else {
       this.split = false;
@@ -340,12 +380,16 @@ export const SkySphere = {
     }
   },
 
-  /** Widok nieba (macierz widok → niebo, udział drobnych gwiazd) w uniformach — wspólnych dla czworokąta i kwadów. */
-  _applyView(m, fine) {
+  /**
+   * Widok nieba (macierz widok → niebo, udział drobnych gwiazd, smuga jasnych gwiazd [px bufora przy stretch 1]) w
+   * uniformach — wspólnych dla czworokąta i kwadów.
+   */
+  _applyView(m, fine, streak) {
     const U = this.U;
     U.viewMat.value.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     U.skyToView.value.set(m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]);
     U.fineGain.value = fine;
+    if (U.streakLen) U.streakLen.value = Number.isFinite(streak) ? streak : 0;
   },
 
   // Pamięć nieba (jak NebulaSystem.skyCacheHook): niebo z gwiazdami drobnymi liczone do celu w rozmiarze bufora sceny,
@@ -360,7 +404,7 @@ export const SkySphere = {
     if (this.split) {
       // renderSingle gracza 2 ma kamerę RenderWorld.camera2 jako Core3D.activeCam1 (hexShips3D / render.worker: split)
       const p2 = !!this.cam2 && core.activeCam1 === this.cam2;
-      this._applyView(p2 ? this.viewM2 : this.viewM, p2 ? this.scroll2.fine : this.scroll.fine);
+      this._applyView(p2 ? this.viewM2 : this.viewM, p2 ? this.scroll2.fine : this.scroll.fine, p2 ? this.streakPx2 : this.streakPx);
       U.cacheMode.value = 0; this.cacheValid = false; st.direct++; st.split++; return;
     }
     if (core.skyCacheEnabled === false || !this.cacheWriteReady || !this.flat.visible || warpSkyBendCount() > 0) {

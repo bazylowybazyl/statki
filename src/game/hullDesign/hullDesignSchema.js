@@ -62,6 +62,10 @@
 //   bridgeLevel / coreLevel  KLASA okrętu (etap 2, src/data/shipClasses.js): poziom mostka I–VI (twarde limity:
 //           powierzchnia, gniazda, rozmiar broni) i rdzenia R1–R6 (moc); 0 — z powierzchni i gniazd (stare projekty).
 //   powerPriority  kolejność kategorii urządzeń w kolejce mocy (POWER_CATEGORIES; brak — POWER_PRIORITY_DEFAULT).
+//   role    'military' (domyślna) | 'civil' — statek cywilny (frachtowiec): nazwy klas cywilne, bez wymogu broni
+//           i tarczy, klasa VI bez limitu powierzchni (src/data/shipClasses.js — SHIP_ROLES).
+//   cargoLoad  załadunek 0–1 (domyślnie 1): ile komórek stelaży i zasobników ma kontenery — WYGLĄD (hullDesignLookKey
+//           go pomija; src/game/hullDesign/hullDesignCargo.js).
 //
 // GNIAZDA BRONI (etap 2): moduł `mount` { slot: main | aux | missile | special | builtin, size: S | M | L | Capital,
 // weapon?: id z MASTER_WEAPONS | '' (puste) — brak pola = typowa broń gniazda }; wieże turret_s / m / l to gniazda
@@ -138,13 +142,17 @@ export const HD_MODULES = Object.freeze({
   well: Object.freeze({ code: 10, label: 'Pierścień', r: 20, parts: { hull_plate: 0.5 } }),
   // SYSTEMY (sieć systemów: src/game/hullDesign/hullDesignSystems.js): zbiornik paliwa (v 0 — walec poziomy we wnęce
   // maszynowni, wzdłuż osi modułu; 1 — kula), dysza boczna SIDE (gniazdo w poszyciu przy burcie: wydech wzdłuż +x
-  // modułu, dzwon rysuje gra w 3D), ładownia (v 0 — wrota rozsuwane wzdłuż osi modułu, 1 — klapa)
+  // modułu, dzwon rysuje gra w 3D), ładownia (v 0 — wrota rozsuwane wzdłuż osi modułu, 1 — klapa, 2 — stelaż
+  // kontenerów, 3 — zasobniki n × n kontenerów; src/game/hullDesign/hullDesignCargo.js)
   fuel_tank: Object.freeze({ code: 11, label: 'Zbiornik paliwa', w: 26, h: 11, parts: { hull_plate: 1 } }),
   thruster_side: Object.freeze({ code: 12, label: 'Dysza SIDE', w: 9, h: 7, parts: { thruster: 1 } }),
   cargo: Object.freeze({ code: 13, label: 'Ładownia', w: 44, h: 22, parts: { hull_plate: 1 } }),
   // GNIAZDO BRONI (etap 2): podstawa w stylu TN pod wieżę gry (wieżę rysuje gra) — kompozytor rysuje ją jak kapsułę
   // wieży (główne, specjalne, wbudowane), okrągłą płytę (pomocnicze) albo pokrywę wyrzutni (rakietowe)
-  mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } })
+  mount: Object.freeze({ code: 14, label: 'Gniazdo broni', r: 14, parts: { weapon_mount: 1 } }),
+  // ZBIORNIK ŁADUNKU (statki cywilne — tankowce): v 0 — walce wzdłuż osi modułu, 1 — kule; n — rzędów w poprzek.
+  // Ładunek, nie paliwo okrętu: w sieci tylko kabel pompy (bez rur do reaktora — to robi `fuel_tank`)
+  cargo_tank: Object.freeze({ code: 15, label: 'Zbiornik ładunku', w: 44, h: 16, parts: { hull_plate: 1 } })
 });
 export const HD_MODULE_TYPES = Object.freeze(Object.keys(HD_MODULES));
 
@@ -205,6 +213,18 @@ export const HD_PALETTES = Object.freeze({
     label: 'Cywilny', hull: '#a99d82', upper: '#cfc8b8', trim: '#45525a', accent: '#d8b83a', metal: '#343a3e',
     hazard: '#d8b83a', window: '#d8f4ff', pipe: '#7a6040', engine: '#4a4d50', door: '#3e464c', grime: '#5a5040', steel: '#8e8d87'
   }),
+  // Atlas — czerń (superkapitał w kształcie Atlasa, 2026-10-27): grafitowe, prawie czarne płyty, jasnoszare panele
+  // nadbudówek, szare akcenty — barwy obecnego Atlasa gry (assets/capital_ship_rect_v1.png), bez pomarańczu palety Atlas
+  atlasDark: Object.freeze({
+    label: 'Atlas — czerń', hull: '#3d4146', upper: '#878d93', trim: '#1c1f22', accent: '#a7adb3', metal: '#222528',
+    hazard: '#d8a02a', window: '#c8f2ff', pipe: '#5e554b', engine: '#2e3235', door: '#33373b', grime: '#2a2826', steel: '#7d838a'
+  }),
+  // Frachtowce (domyślna paleta statków cywilnych): grafitowe płyty, jasne panele nadbudówek, bursztynowe oznaczenia
+  // i ciepłe okna — w duchu sprite'ów frachtowców ruchu (assets/long_haul_freighter.png), bez emblematu nacji
+  freight: Object.freeze({
+    label: 'Frachtowiec', hull: '#6c7074', upper: '#b3b7ba', trim: '#24272a', accent: '#d8902a', metal: '#26292c',
+    hazard: '#e2a32c', window: '#ffe0b0', pipe: '#7a6448', engine: '#3a3d40', door: '#4a4e52', grime: '#3e3a32', steel: '#8f9396'
+  }),
   // Stocznie Marsjańskie (róż / karmazyn frakcji): rdzawoczerwone płyty, karmazynowy akcent, ciepłe okna
   mars: Object.freeze({
     label: 'Stocznie Marsjańskie', hull: '#b58a76', upper: '#c49c88', trim: '#4a2b27', accent: '#a3242c', metal: '#2e2422',
@@ -236,11 +256,12 @@ export const HD_FACTION_PALETTE = Object.freeze({
  * własny znak bez czaszek (decyzja użytkownika). Paleta bez emblematu (cywilna) zdejmuje emblematy nacji.
  */
 export const HD_PALETTE_EMBLEM = Object.freeze({
-  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null
+  terra: 'eagle', atlas: 'wing', pirate: 'raider', mars: 'gear', inner: 'sun', belt: 'rock', outer: 'ring', civil: null, freight: null, atlasDark: 'wing'
 });
 /** Barwa emblematu nacji (kontrast z płytą jej palety: ciemny na jasnej, jasny na ciemnej pirackiej). */
 export const HD_PALETTE_EMBLEM_COLOR = Object.freeze({
-  terra: '#34332f', atlas: '#d06a22', pirate: '#cdbb9a', mars: '#4a2b27', inner: '#4b3e2a', belt: '#2f2d28', outer: '#2c2838', civil: '#45525a'
+  terra: '#34332f', atlas: '#d06a22', pirate: '#cdbb9a', mars: '#4a2b27', inner: '#4b3e2a', belt: '#2f2d28', outer: '#2c2838', civil: '#45525a',
+  freight: '#d8902a', atlasDark: '#a7adb3'
 });
 /** Kolejność barw palety w kompozytorze (wiersze tablicy uniformów). */
 export const HD_PALETTE_ROWS = Object.freeze(['hull', 'upper', 'trim', 'accent', 'metal', 'hazard', 'window', 'pipe', 'engine', 'door', 'grime', 'steel']);
@@ -430,6 +451,8 @@ export function normalizeHullDesign(design = {}) {
   return {
     v: HD_VERSION,
     name: String(design.name || 'Projekt'),
+    // rola: okręt wojenny albo statek cywilny (frachtowiec) — klasa, bilans mocy i receptura (src/data/shipClasses.js)
+    role: design.role === 'civil' ? 'civil' : 'military',
     style,
     mirror: design.mirror !== false,
     palette: HD_PALETTES[design.palette] ? design.palette : 'terra',
@@ -443,6 +466,8 @@ export function normalizeHullDesign(design = {}) {
     round: Math.max(0, Math.min(1, num(design.round, style === 'rounded' ? 1 : 0))),
     // Okna tarasów (rząd świateł za krawędzią nadbudówki): 0 — brak (Terra Nova), 1 — pełne.
     windows: Math.max(0, Math.min(1, num(design.windows, 1))),
+    // załadunek stelaży kontenerów i zasobników (0 — puste, 1 — pełne) — wygląd
+    cargoLoad: Math.max(0, Math.min(1, num(design.cargoLoad, 1))),
     // klasa okrętu (src/data/shipClasses.js): mostek I–VI, rdzeń R1–R6; 0 — z powierzchni i gniazd
     bridgeLevel: bridgeLv,
     coreLevel: clampInt(num(design.coreLevel, 0), 0, SHIP_CLASS_MAX),
@@ -606,11 +631,11 @@ export function hullDesignShapeKey(design) {
 
 /**
  * Klucz projektu bez warstwy barw i bez WYGLĄDU kompozytora (`bevel` — faza płyt, `round` — profil fazy, `panels` —
- * widoczność paneli, `windows` — okna tarasów): ten sam klucz = to samo pole, sieć i ciało gry (alfa), inne mogą być
- * tylko mapy kompozytora (relief, normalne, emisja) — wszystkie passy, bez workera.
+ * widoczność paneli, `windows` — okna tarasów, `cargoLoad` — załadunek stelaży): ten sam klucz = to samo pole, sieć
+ * i ciało gry (alfa), inne mogą być tylko mapy kompozytora (relief, normalne, emisja) — wszystkie passy, bez workera.
  */
 export function hullDesignLookKey(design) {
-  return hullDesignShapeKey({ ...design, bevel: undefined, round: undefined, panels: undefined, windows: undefined });
+  return hullDesignShapeKey({ ...design, bevel: undefined, round: undefined, panels: undefined, windows: undefined, cargoLoad: undefined });
 }
 
 /** Bloki z poziomem ≥ L (zbiór kluczy 'bx,by'). */

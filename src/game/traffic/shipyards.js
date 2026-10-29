@@ -462,10 +462,11 @@ export function tickShipyards(registry, dt, options = {}) {
     const econ = getEconomy(yard.stationId);
     if (!econ) continue;
 
-    // 1. Postęp na pochylniach.
+    // 1. Postęp na pochylniach — w tempie obsady (workforce, E16 W3: `econ.workforceEfficiency`).
+    const crew = Number.isFinite(econ.workforceEfficiency) ? econ.workforceEfficiency : 1;
     for (let i = yard.building.length - 1; i >= 0; i--) {
       const slip = yard.building[i];
-      slip.remaining -= step * yard.weight;
+      slip.remaining -= step * yard.weight * crew;
       if (slip.remaining > 0) continue;
       yard.building.splice(i, 1);
       addShips(registry, yard.factionId, slip.classId, 1);

@@ -160,8 +160,9 @@ async function jedenBieg(args) {
   }
   const stocznie = shipyards.yards.map(yard => ({ yard, od: -1, max: 0, sumaPusto: 0 }));
   // Obsada rynków (workforce, E16): rynki z potrzebą, bez źródeł opuszczonych.
+  // Kryjówki piratów (D9) obsadza tylko porwanie — liczone osobno, poza progiem.
   const obsady = stations
-    .filter(station => station.factionId && station.workforce?.need > 0)
+    .filter(station => station.factionId && station.factionId !== 'pirates' && station.workforce?.need > 0)
     .map(station => ({ station, econ: economies.get(station.id), suma: 0, min: 1, od: -1, max: 0 }));
   const bezLadunku = course => !!(course?.payload?.deadhead || (course?.payload?.passengers && !course.payload.orderId));
   const kolejki = new Map();
@@ -289,6 +290,14 @@ async function jedenBieg(args) {
       niskaMaxMin: Math.round(o.max / 60 * 10) / 10
     })).sort((a, b) => a.srednia - b.srednia),
     powrotyPromow: snap.stats.passengerReturns || 0,
+    porwania: {
+      kursy: pir.stats.kidnapped, ludzie: pir.stats.kidnappedPeople, okupy: pir.stats.ransomsPaid,
+      okupCR: Math.round(pir.stats.ransomValue), zostaliWKryjowkach: pir.stats.keptPeople,
+      kryjowki: stations.filter(station => station.factionId === 'pirates' && station.workforce?.need > 0)
+        .map(station => ({ stacja: station.id,
+          obsada: Math.round(Math.min(1, (economies.get(station.id)?.resources?.workforce || 0)
+            / (station.workforce.need * args.skala)) * 100) / 100 }))
+    },
     tick: {
       sredniMs: tickMs.reduce((a, b) => a + b, 0) / Math.max(1, kroki),
       przySzczycieMs: nSzczyt ? sumaSzczyt / nSzczyt : 0
@@ -335,7 +344,10 @@ function ocen(bieg) {
     wyniki.push({ prog: 'obsada', wartosc: Math.max(0, PROGI.obsadaSredniaMin - najnizsza.srednia), limit: 0,
       opis: `średnia najniżej ${najnizsza.srednia} (${najnizsza.stacja}, min ${najnizsza.min}); `
         + `poniżej ${PROGI.obsadaNiska} najdłużej ${niska.niskaMaxMin} min (${niska.stacja}); `
-        + `powroty promów ${bieg.powrotyPromow}` });
+        + `powroty promów ${bieg.powrotyPromow}; porwania ${bieg.porwania?.kursy ?? 0} kursów / `
+        + `${bieg.porwania?.ludzie ?? 0} osób, okupy ${bieg.porwania?.okupy ?? 0}, `
+        + `w kryjówkach zostało ${bieg.porwania?.zostaliWKryjowkach ?? 0} (obsada `
+        + `${(bieg.porwania?.kryjowki || []).map(k => `${k.stacja} ${k.obsada}`).join(', ')})` });
     wyniki.push({ prog: 'obsada < 0,8', wartosc: niska.niskaMaxMin, limit: PROGI.obsadaNiskaMinMax,
       opis: `${niska.niskaMaxMin} min (${niska.stacja})` });
   }

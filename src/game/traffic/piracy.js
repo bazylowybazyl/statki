@@ -101,7 +101,20 @@ export const PIRACY_MODEL = Object.freeze({
   // Decyzja użytkownika 2026-10-22: „za mało piractwa” — przy 25 000 / 0,15
   // ginęło ~6% kursów z ładunkiem, cel ~15% (pasmo 12–20%).
   lootReference: 3_000,
-  minInterest: 0.7
+  minInterest: 0.7,
+
+  // ---------- PORWANIA (workforce, E16 W4 — decyzje D8, D9) ----------
+  //
+  // Promu z ludźmi pirat nie niszczy: ludzie są zakładnikami w najbliższej kryjówce.
+  // Okup płaci przewoźnik (firma statku); po zapłacie zakładnicy wracają do źródła
+  // po `hostageReleaseSeconds`, bez zapłaty w `hostageHoldSeconds` zostają obsadą
+  // kryjówki — to jej jedyne źródło workforce.
+  /** Szansa przechwytu promu względem frachtowca (eskorta, policja na liniach pasażerskich). */
+  passengerExposure: 0.5,
+  /** Okup = tyle × wartość ludzi (`RESOURCES.workforce.value`). */
+  ransomFactor: 1.5,
+  hostageReleaseSeconds: 600,
+  hostageHoldSeconds: 1800
 });
 
 /**
@@ -127,11 +140,17 @@ export function createPiracyState(options = {}) {
     smuggles: [],
     /** Pula nagród frakcji: frakcja → kredyty. */
     bounties: new Map(),
+    /**
+     * Zakładnicy z porwanych promów (E16 W4): { nestId, count, homeId, companyId, ransom,
+     * takenAt, releaseAt } — `releaseAt` ustawia zapłacony okup.
+     */
+    hostages: [],
     sinceDecision: 0,
     stats: {
       looted: 0, lootValue: 0, fenced: 0, fencedValue: 0,
       raidsLaunched: 0, raidsKilled: 0, huntsLaunched: 0,
-      smugglesRun: 0, smugglesCaught: 0, smuggleProfit: 0
+      smugglesRun: 0, smugglesCaught: 0, smuggleProfit: 0,
+      kidnapped: 0, kidnappedPeople: 0, ransomsPaid: 0, ransomValue: 0, released: 0, keptPeople: 0
     }
   };
 }
@@ -187,6 +206,65 @@ export function depositLoot(piracy, course, x, y) {
   piracy.stats.looted += zdobyte;
   piracy.stats.lootValue += wartosc;
   return { nestId: nest.id, resourceId, units: zdobyte, value: wartosc };
+}
+
+/**
+ * PORWANIE promu (workforce, E16 W4): `count` ludzi trafia jako zakładnicy do najbliższej
+ * kryjówki. `homeId` — dokąd wracają po okupie (źródło: port nadania kursu z ludźmi, port
+ * docelowy powrotu po kontrakcie), `companyId` — przewoźnik, który płaci okup. Wołane
+ * z `strikeCourse` zamiast `depositLoot` — ludzie nie są łupem do opylenia.
+ */
+export function seizeHostages(piracy, spec = {}) {
+  const count = Math.max(0, Math.floor(Number(spec.count) || 0));
+  const nest = nearestNest(piracy, spec.x, spec.y);
+  if (!nest || count <= 0) return null;
+  const ransom = count * (RESOURCES.workforce?.value || 0) * piracy.config.ransomFactor;
+  const entry = {
+    nestId: nest.id, count, homeId: String(spec.homeId || ''), companyId: spec.companyId || null,
+    ransom, takenAt: Number(spec.now) || 0, releaseAt: -1
+  };
+  piracy.hostages.push(entry);
+  piracy.stats.kidnapped++;
+  piracy.stats.kidnappedPeople += count;
+  return entry;
+}
+
+/**
+ * Okup i los zakładników — raz na krok piractwa. Przewoźnik płaci, gdy go stać
+ * (`options.payRansom(companyId, kwota)` → true), kryjówka dostaje kredyty, a ludzie
+ * wracają do źródła po `hostageReleaseSeconds`. Bez zapłaty przez `hostageHoldSeconds`
+ * zostają obsadą kryjówki (magazyn workforce kryjówki).
+ */
+function settleHostages(piracy, options, events) {
+  const list = piracy.hostages;
+  if (!list.length) return;
+  const now = Number(options.registry?.clock) || 0;
+  const config = piracy.config;
+  const getEconomy = options.getEconomy;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const h = list[i];
+    if (h.releaseAt < 0 && h.companyId && typeof options.payRansom === 'function'
+      && options.payRansom(h.companyId, h.ransom)) {
+      h.releaseAt = now + config.hostageReleaseSeconds;
+      const nest = piracy.nests.get(h.nestId);
+      if (nest) nest.credits += h.ransom;
+      piracy.stats.ransomsPaid++;
+      piracy.stats.ransomValue += h.ransom;
+      events.push({ type: 'ransom', nestId: h.nestId, value: h.ransom, people: h.count });
+    }
+    if (h.releaseAt >= 0) {
+      if (now < h.releaseAt) continue;
+      putStock(typeof getEconomy === 'function' ? getEconomy(h.homeId) : null, 'workforce', h.count);
+      piracy.stats.released += h.count;
+      list.splice(i, 1);
+      continue;
+    }
+    if (now - h.takenAt < config.hostageHoldSeconds) continue;
+    putStock(typeof getEconomy === 'function' ? getEconomy(h.nestId) : null, 'workforce', h.count);
+    piracy.stats.keptPeople += h.count;
+    events.push({ type: 'hostages-kept', nestId: h.nestId, people: h.count });
+    list.splice(i, 1);
+  }
 }
 
 /** Ile wart jest cały łup kryjówki po cenie pasera. */
@@ -384,6 +462,9 @@ export function tickPiracy(piracy, dt, options = {}) {
   const events = [];
   const config = piracy.config;
 
+  // 0. Zakładnicy: okup albo obsada kryjówki (workforce, E16 W4).
+  settleHostages(piracy, options, events);
+
   // 1. Polowania — rozstrzygnięcie przed rejdami, żeby ubity rejder nie zdążył
   //    wrócić i od razu wypłynąć jeszcze raz.
   for (let i = piracy.hunts.length - 1; i >= 0; i--) {
@@ -467,6 +548,7 @@ export function summarizePiracy(piracy) {
     raids: piracy.raids.length,
     hunts: piracy.hunts.length,
     smuggles: piracy.smuggles.length,
+    hostages: piracy.hostages.reduce((sum, h) => sum + h.count, 0),
     bounties: Math.round([...piracy.bounties.values()].reduce((a, b) => a + b, 0)),
     stats: { ...piracy.stats }
   };

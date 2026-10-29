@@ -66,6 +66,7 @@ export const SCOUT_TUNE = {
   landRelSpeed: 120,      // względna prędkość, od której lądowanie
   returnTimeout: 90,      // zabezpieczenie: po tylu sekundach powrotu — lądowanie od razu
   accel: 220,             // zadawanie prędkości W / S [j/s²]
+  ctlSpeed: 0,            // sufit prędkości sterów [j/s]; 0 — prędkość maks. fregaty (mała skala: src/game/smallScale.js)
   turnRate: 0.9,          // A / D [rad/s]
   strafeFrac: 0.35,       // Q / E — ułamek prędkości maks.
   reverseFrac: 0.3,
@@ -616,7 +617,7 @@ export function createScoutBay(env, tune = SCOUT_TUNE) {
     _stepControl(dt) {
       const n = this.npc;
       if (!n) return;
-      const vmax = Math.max(100, Number(n.maxSpeed) || 400);
+      const vmax = tune.ctlSpeed > 0 ? tune.ctlSpeed : Math.max(100, Number(n.maxSpeed) || 400);
       const ctl = this.controlling ? this.ctl : _zero;
       this.cmdSpeed = Math.max(-vmax * tune.reverseFrac, Math.min(vmax, this.cmdSpeed + ctl.thrust * tune.accel * dt));
       this.cmdFace = wrap(this.cmdFace + ctl.turn * tune.turnRate * dt);

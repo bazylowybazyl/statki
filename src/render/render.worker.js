@@ -165,6 +165,9 @@ if (isWorker) {
     try { cargoOn = !m.pageBase || new URL(m.pageBase).searchParams.get('przeladunek') !== '0'; } catch (_) { /* adres bez składni URL */ }
     st.cargoMods = cargoOn ? { blk: await import('./blocks/cargoOpsBlock.js'), shared: (await import('../3d/cargo/portCargo3D.js')).sharedPortCargo3D } : null;
     st.cargoFrame = {};
+    // kontenery-łup (K2): blok `loot` → paczki, lampki i wiązka (import rejestruje rozgrzewkę)
+    st.lootMods = { blk: await import('./blocks/lootBlock.js'), shared: (await import('../3d/cargo/lootContainers3D.js')).sharedLootContainers3D };
+    st.lootFrame = st.lootMods.blk.createLootFrame();
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -557,8 +560,49 @@ if (isWorker) {
       await belt.initGpu();
       console.log(`[render.worker] pas: initGpu ${Math.round(performance.now() - tB)} ms`);
       st.belt = belt;
+      applyBeltGfx();
       postMessage({ type: 'beltReady', t: [tB - st.t0, performance.now() - st.t0] });
     } catch (e) { report(e, 'pas'); }
+  }
+
+  // Opcje grafiki strony (wiadomość `gfx` — gfxRenderRecord, src/game/graphicsQuality.js): to samo, co
+  // applyGraphicsSettings strony robi na SWOICH modułach. Dawniej worker dostawał tylko skalę i MSAA przy starcie, więc
+  // w trybie domyślnym liczył zawsze bloom pełny, gaz wybuchów i efekty „Wysokie” (atlas fine gazu także przy Średniej
+  // i Niskiej) i smugi cieni domyślne Core3D. Pas (reflektory, mapy cienia) — także po jego utworzeniu (setBelt).
+  async function applyGfx(g) {
+    if (!g) return;
+    st.gfx = g;
+    try {
+      const C = st.Core3D;
+      if (C) {
+        if (Number.isFinite(g.renderScale) && g.renderScale > 0 && C.renderScale !== g.renderScale) C.setRenderScale(g.renderScale);
+        C.bloomQualityScale = g.bloomScale;
+        C.setPerfToggles({ bloom: g.bloom, heatHaze: g.heatHaze });
+        if (g.shadowShafts) C.setShadowShaftsQuality(g.shadowShafts);
+      }
+      const [ex, wf, wn, sj, lq, hl, hd] = await Promise.all([import('../3d/explosions/explosionFx.js'), import('../3d/weapons/weaponFx.js'),
+        import('../3d/warp/warpNurt.js'), import('../3d/sideJets3D.js'), import('../3d/hullLacquer.js'), import('../3d/hullLighting.js'),
+        import('../3d/gasField/hallDust.js')]);
+      if (st.gfx !== g) return;   // nowsza wiadomość przyszła w trakcie importów
+      if (g.explosions) Object.assign(ex.EXPLOSION_TUNE, g.explosions);
+      const fx = g.effects || {};
+      if (Number.isFinite(fx.sideJetLights)) sj.SIDE_JET_TUNE.maxLights = fx.sideJetLights;
+      if (Number.isFinite(fx.sideJetGasPx)) sj.SIDE_JET_TUNE.minGasPx = fx.sideJetGasPx;
+      if (Number.isFinite(fx.weaponMuzzles)) wf.WeaponFx.muzzlePerFrame = fx.weaponMuzzles;
+      if (Number.isFinite(fx.weaponImpacts)) wf.WeaponFx.impactPerFrame = fx.weaponImpacts;
+      if (Number.isFinite(fx.warpParticles)) wn.WarpNurt.setMediumCount?.(fx.warpParticles);   // czeka, aż ośrodek uśnie
+      lq.HullLacquer.setEnabled(g.lacquer !== false);
+      if (g.hullLight) hl.HullLighting.setModel(g.hullLight);
+      // pył i para hal K-7: symulację i obraz liczy worker (strona tylko pakuje wejście — packHallDustFrame)
+      if (typeof g.hallDust === 'boolean') hd.HALL_DUST_TUNE.enabled = g.hallDust;
+      applyBeltGfx();
+    } catch (e) { report(e, 'gfx'); }
+  }
+  function applyBeltGfx() {
+    const fx = st.gfx && st.gfx.effects, cfg = st.belt && st.belt.cfg;
+    if (!fx || !cfg) return;
+    if (Number.isFinite(fx.beltLitShips)) cfg.maxLitShips = fx.beltLitShips;
+    if (Number.isFinite(fx.beltShadowShips)) cfg.maxShadowShips = fx.beltShadowShips;
   }
   function addGiant(m) {
     if (!st.beltWorld || !st.GiantRock) { (st.pendingGiants || (st.pendingGiants = [])).push(m); return; }
@@ -782,6 +826,10 @@ if (isWorker) {
     st.curFrame = h[H.FRAME_ID];
     // zegar efektów Core3D.fx = czas strony tej klatki (strona pod harnessem: czas wirtualny — te same fazy efektów)
     if (Number.isFinite(h[H.WALL])) st.Core3D.fxNowMs = h[H.WALL];
+    // klatka efektów Core3D.fx raz na STRONĘ (2026-10-29): worker rysuje z wiadomości strony, a renderer.info.frame liczy
+    // takty rAF pętli three — drugi render w tym samym takcie (11–16% renderów przy 240 Hz) był bez klatki efektów (gaz,
+    // pas i efekty stały, czas strony przepadał). A/B: st.fxPerPage = false (RenderWorkerHost.dev) — po taktach rAF.
+    st.Core3D.fxFrameKey = st.fxPerPage === false ? NaN : k;
     try {
       if (v.blocks.view && v.blocks.view.f64) st.mods.viewBlock.applyViewBlock(v.blocks.view, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.curFrame);
     } catch (e) { modFail('widok', e); }
@@ -948,6 +996,14 @@ if (isWorker) {
         if (st.portCargo) st.portCargo.update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
       }
     } catch (e) { modFail('przeładunek', e); }
+    // kontenery-łup (K2): paczki dryfujące po zniszczeniu statków ruchu, lampki-boje, wiązka ściągająca
+    try {
+      const lblk = v.blocks.loot;
+      if (lblk && lblk.f64 && st.lootMods) {
+        const fr = st.lootMods.blk.applyLootBlock(lblk, st.lootFrame);
+        st.lootMods.shared().update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
+      }
+    } catch (e) { modFail('kontenery-łup', e); }
     // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
     let hexList = rm.lists[L.RENDER];
     try {
@@ -1042,6 +1098,20 @@ if (isWorker) {
     f[R.CPU_RENDER_MS] = t2 - t1;
     f[R.CPU_FRAME_MS] = performance.now() - t0;
     if (Number.isFinite(Core3D.gpuFrameMs)) f[R.GPU_FRAME_MS] = Core3D.gpuFrameMs;
+    if (Number.isFinite(Core3D.gpuComputeMs)) f[R.GPU_COMPUTE_MS] = Core3D.gpuComputeMs;
+    // liczniki wyników znaczników (nowa próbka = zmiana) i skala renderu — rozdzielczość dynamiczna strony
+    f[R.GPU_FRAME_SAMPLES] = Core3D.gpuFrameSamples | 0;
+    f[R.GPU_COMPUTE_SAMPLES] = Core3D.gpuComputeSamples | 0;
+    f[R.PIXEL_RATIO] = Number(Core3D.renderScale) || 0;
+    // Opóźnienie kolejki GPU (PerfHUD „kolejka”): od końca zgłoszeń tej klatki do wykonania wszystkiego na GPU — co 8.
+    // klatkę, jedno zapytanie w locie. Znaczniki czasu widzą tylko passy i listy compute; ta liczba łapie każdą pracę GPU
+    // (wysyłki, kopie, kompilacje, presentację) — przy zapchanej karcie rośnie ponad okres klatki.
+    const dev = st.qLatBusy ? null : Core3D.renderer?.backend?.device;
+    if (dev && (st.frames & 7) === 0) {
+      st.qLatBusy = true;
+      const tq = performance.now();
+      dev.queue.onSubmittedWorkDone().then(() => { st.qLatBusy = false; f[R.GPU_QUEUE_MS] = performance.now() - tq; }, () => { st.qLatBusy = false; });
+    }
     // pierścień czasów CAŁEJ klatki workera (lustra → bitmapa) dla narzędzi (A/B w bitwie — profil-bitwy-flot --wkAb)
     const ft = frameTimes;
     ft.ms[ft.n & 8191] = t2 - tPage; ft.n++;
@@ -1079,6 +1149,12 @@ if (isWorker) {
   // start / active / pointer / focus / launch / fly (plan lotu jako dane — introCamera.menuIntroFlight) / stop.
   async function menuOp(m) {
     const op = m.op;
+    // limit klatek z opcji grafiki (src/render/frameLimiter.js) — pamiętany także przed startem tła (start czeka na planety)
+    if (op === 'frameLimit') {
+      st.menuFrameLimit = { fps: m.fps, vsync: m.vsync !== false };
+      if (st.menu) st.menu.setFrameLimit(m.fps, m.vsync !== false);
+      return;
+    }
     if (op === 'start') {
       if (st.tMenuMsg === undefined) st.tMenuMsg = performance.now() - st.t0;
       if (st.menu) return;
@@ -1086,6 +1162,7 @@ if (isWorker) {
       const mod = st.menuMod || (st.menuMod = await import('../3d/menuBackdrop3D.js'));
       const bd = new mod.MenuBackdrop3D({ haloRings: st.haloRings });
       st.menu = bd;
+      if (st.menuFrameLimit) bd.setFrameLimit(st.menuFrameLimit.fps, st.menuFrameLimit.vsync);
       bd.onRendered = () => {
         if (st.menu !== bd) return;
         const bmp = st.canvas.transferToImageBitmap();
@@ -1203,6 +1280,7 @@ if (isWorker) {
       else if (m.type === 'pbase') st.pbChain = (st.pbChain || Promise.resolve()).then(() => pirateBaseEvent(m));
       else if (m.type === 'menu') st.menuChain = (st.menuChain || Promise.resolve()).then(() => menuOp(m)).catch((err) => report(err, 'menu'));
       else if (m.type === 'prepare') runPrepare(m).then((ok) => postMessage({ type: 'prepared', id: m.id, ok }), (err) => { report(err, 'prepare'); postMessage({ type: 'prepared', id: m.id, ok: false }); });
+      else if (m.type === 'gfx') st.gfxChain = (st.gfxChain || Promise.resolve()).then(() => applyGfx(m.gfx));
     } catch (err) {
       report(err, m && m.type);
     }

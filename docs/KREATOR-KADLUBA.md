@@ -605,6 +605,72 @@ alfa fizyki wspólna), potem dla każdej barwy tylko passy barw i odczyt albedo 
 4. Bez kompozytora w grze (np. worker renderu) — albedo barw pieczone w demie / przy budowie paczki i zapisane jak
    sprite'y; mapa powierzchni wspólna.
 
+## Statki cywilne — frachtowce (2026-10-27)
+
+Decyzje użytkownika: rola cywilna na tych samych progach powierzchni I–VI z cywilnymi nazwami klas; frachtowce o RÓŻNYCH
+kształtach („średnio mi się podobają te frachtowce z gry”), bez odwzorowania sprite'ów ruchu; paleta „Frachtowiec”;
+ładunek jako warianty ładowni i zbiorniki ładunku; zakres — demo kreatora. Stan i zasady: reguła `kreator-kadlubow`
+§ „Statki cywilne i ładunek”.
+
+**Rola i klasy.** `role: 'civil'` — nazwy I Prom, II Frachtowiec lekki, III Frachtowiec, IV Frachtowiec ciężki,
+V Transportowiec, VI Megafrachtowiec; bez tarczy w bilansie (frachtowce gry bez tarczy i pancerza), bez wymogu broni,
+klasa VI bez górnego limitu powierzchni (megafrachtowiec 2542 × 437 j. ma 771 tys. j², a sprite składu w grze 1,93 mln j²).
+
+**Ładunek.** Kontener = kontener gry 16 × 8 j. (`CARGO_CONTAINER`), więc ładowność z kreatora zgadza się z przeładunkiem
+w porcie (E12): stelaż kontenerów (`cargo` v 2), zasobniki n × n (v 3), zbiorniki ładunku (`cargo_tank`: walce / kule —
+tylko kabel pompy, bez rur do reaktora). Załadunek `cargoLoad` to wygląd: zmiana suwaka ~0,3 ms strony, bez workera.
+
+**Presety (sprawdzarka ✓, testy na wszystkich presetach zielone):**
+
+| preset | wymiary [j.] | pow. [j²] | klasa | ładunek | sylwetka |
+|---|---|---|---|---|---|
+| Prom | 94 × 64 | 3 633 | I | 4 kontenery (klapa) | „H”: kadłub z przeszkloną sterówką, gondole na wspornikach |
+| Kurier | 279 × 128 | 20 282 | II | 40 kont. (zasobniki) | strzała z deltą, zasobniki na skrzydłach, ostry nos |
+| Kontenerowiec | 511 × 161 | 62 803 | III | 192 kont. (8 stelaży) | kręgosłup, 4 sekcje stelaży między bramownicami, mostek na rufie |
+| Tankowiec | 657 × 117 | 62 332 | III | 208 t (4 kule) | „paciorki na sznurku”: kule w ośmiokątnych kołyskach |
+| Masowiec | 841 × 222 | 176 846 | IV | 294 kont. (7 klap) | masywny prostokąt, zaokrąglony dziób, rząd pokryw ładowni |
+| Katamaran | 1103 × 494 | 380 734 | V | 616 kont. | dwa kadłuby, pokład ładunkowy między nimi, otwarta zatoka |
+| Megafrachtowiec | 2542 × 437 | 771 364 | VI | 1488 kont. + 379 t | „pociąg” sekcji ładunkowych na kręgosłupie, 7 gondol |
+
+Narzędzia: `scripts/kreator-sprawdz-preset.mjs` (warunki testów na jednym presecie + podgląd CPU — 7 projektantów
+pracowało równolegle, każdy w swoim pliku, bez przeglądarki), `scripts/webgpu/kreator-frachtowce.mjs` (zrzuty
+z kompozytora: okręt, zbliżenie ładunku, załadunek 0,5 i 0; 0 pipeline'ów synchronicznych, 0 błędów strony).
+
+Przegląd niezależny (4 obszary + weryfikacja obalająca): bez błędów wysokiej wagi; poprawione — mostek Kontenerowca na
+ramie obudowy reaktora (teraz test na wszystkich frachtowcach), napis Tankowca na kratce, zbyt wąski kil Promu „Od zera”,
+nazwy klas wg roli w komunikatach i panelu Warsztatu, odcień kontenerów zależny od hasza załadunku, odwrócone granice
+osi krótkiego walca, barwy modułów ładunku ściszane jak `glowSafeLinear`, suwak załadunku (cofanie, puszczenie bez zmiany),
+straż limitu przy przełączeniu roli, dopasowanie modułu ładunku do siatki kontenerów w Warsztacie (`hullCargoFit`).
+
+Sprite'y frachtowców gry (dla porównania; skala profilu, pole alfy → klasa): wahadłowiec 64 × 29 j. I, kontenerowiec
+299 × 89 II, dalekiego zasięgu 509 × 143 III, tankowiec 509 × 144 III, ciężki 1733 × 590 VI (783 tys. j²),
+megafrachtowiec 2712 × 898 (1,93 mln j²); mirror-IoU 0,99+ (ciężki 0,93), oś alfy 13–20 px nad środkiem płótna.
+
+## Superkapitał Hyperion — linia Atlasa (2026-10-27)
+
+Prośba użytkownika: „statek supercapital w kształcie Atlasa o kolorach podobnych do Atlasa (czerń / szary)”; w trakcie
+dopowiedział, że jego szkic Atlasa to „bardziej battleship — za krótki na superkapitała”. Preset bierze więc ze szkicu
+(`scripts/blender/atlas/szkic-uzytkownika-v2.jpg`) układ sekcji i elementów, a nie proporcje: Atlas ze szkicu ma
+~1817 × 726 j. (2,6 : 1, ~952 tys. j² — ponad limit klasy VI), superkapitał jest dłuższy i smuklejszy, w drabinie klas.
+Stan i zasady: reguła `kreator-kadlubow` § „Superkapitał linii Atlasa”.
+
+**Podkład.** Maska sylwetki szkicu (`scripts/blender/atlas/szkic-maska.png`: każda linia szkicu = brzeg, domknięcie
+morfologiczne R 6 px, wypełnienie wnętrza; 1817 × 726 j. przy 1,19 j./px, symetria lustrzana IoU 0,985) rozciągana
+osobno wzdłuż i w poprzek — `scripts/kreator-sprawdz-preset.mjs --maska … --skala sx,sy` liczy IoU sylwetki projektu
+z podkładem i rysuje jego czerwony obrys na podglądzie CPU.
+
+**Dwa warianty wydłużenia** (projektanci równolegle, każdy w swoim pliku; obaj spełnili wszystkie warunki sprawdzarki):
+
+| wariant | wymiary [j.] | pow. [j²] | IoU z podkładem | gniazda | uwagi |
+|---|---|---|---|---|---|
+| A, ~4 : 1 (podkład × 1,187 / 0,743) | 2161 × 535 | 829 249 | 0,967 | 42 | wierny rozciągniętemu szkicowi, krótka szyja, bez naklejek i detali |
+| **B, ~5 : 1 — Hyperion** (podkład × 1,328 / 0,664) | 2428 × 488 | 872 943 | 0,828 | 44 | długa szyja i sekcja dziobowa, okrągłe kształty bez rozciągania, detale TN |
+
+Wpięty jest B (`src/game/hullDesign/warships/hyperion.js`, klucz `hyperion`, grupa Terra Nova, klasa VI / R6, zapas mocy
+48%): 20 głównych, 4 specjalne, 2 rakietowe, 18 obrony punktowej, 4 wrota hangarowe w wcięciach szyi (pola siłowe — drony
+i myśliwce wylatują bokiem), luk dziobowy na fregatę zwiadu, 5 gondol MAIN, 4 dysze SIDE, mostek v 2 VI na nadbudówce,
+rdzeń v 2 przed nią. Zrzuty z kompozytora: 0 pipeline'ów synchronicznych, 0 błędów strony.
+
 ## Demo — narzędzia
 
 **Stocznia** (domyślny interfejs, `dema/kreator-kadluba-stocznia.js`; prośba użytkownika 2026-10-21: „jak generator

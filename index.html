@@ -284,6 +284,17 @@
                 <p class="mm-note mm-note-warn" data-gfx-vsync-pending hidden><span data-gfx-vsync-pending-text></span> <button class="menu-chip" data-gfx-reload>Uruchom ponownie</button></p>
               </div>
               <div class="mm-field">
+                <div class="mm-field-label">Limit klatek</div>
+                <div class="menu-chip-group" role="group" aria-label="Limit klatek">
+                  <button class="menu-chip" data-gfx-frame-limit="off">Bez limitu</button>
+                  <button class="menu-chip" data-gfx-frame-limit="240">240</button>
+                  <button class="menu-chip" data-gfx-frame-limit="144">144</button>
+                  <button class="menu-chip" data-gfx-frame-limit="120">120</button>
+                  <button class="menu-chip" data-gfx-frame-limit="60">60</button>
+                </div>
+                <p class="mm-note">Najwyżej tyle klatek na sekundę w grze i w menu. Mniej klatek to mniej pracy karty graficznej — ciszej i mniej prądu: przy monitorze 240 Hz limit 120 to około połowy pracy karty, a różnicę w płynności trudno zauważyć. Fizyka i szybkość gry bez zmian. Najrówniej, gdy częstotliwość monitora jest wielokrotnością limitu (240 Hz — 120 albo 60, 144 Hz — 144). Działa od razu. <span data-gfx-frame-limit-now hidden></span></p>
+              </div>
+              <div class="mm-field">
                 <div class="mm-field-label">Wygładzanie krawędzi (MSAA)</div>
                 <div class="menu-chip-group" role="group" aria-label="Wygładzanie krawędzi">
                   <button class="menu-chip" data-gfx-msaa="0">Wył.</button>
@@ -762,8 +773,8 @@
     import { Core3D } from "./src/3d/core3d.js";
     import { HullLacquer } from "./src/3d/hullLacquer.js";
     import { Destruction3D } from "./src/vfx/destruction3D.js";
-    import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
-    import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx } from './src/game/graphicsQuality.js';
+    import { drawInfrastructureIcon } from './src/buildings/infrastructureView.js';
+    import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx, gfxFrameLimitFromQuery } from './src/game/graphicsQuality.js';
     import { describeGpuAdapter, pickGfxPresetAuto, gfxAutoFromQuery } from './src/game/graphicsAutoPreset.js';
     import { resolveRenderMode as resolveRenderModeBoot, renderWorkerCaps as renderWorkerCapsBoot } from './src/render/renderBridge.js';
 
@@ -785,10 +796,13 @@
     // window.__GFX_AUTO_FAKE = { vendor, architecture, … } przed wczytaniem — atrapa opisu adaptera (narzędzia).
     // VSync (gra w Electronie — electron/preload.js, window.hullfallApp): wybór z pliku ustawień startu
     // (Dokumenty\HULLFALL\uruchomienie.json — z niego main.js ustawia flagi Chromium), nie z localStorage.
+    // ?limitKlatek=240|144|120|60|0 — limit klatek tej sesji bez zapisu (narzędzia, pomiary).
     {
       const urlPreset = gfxPresetFromQuery(location.search);
       let gfx = loadGfxSettings(localStorage);
       if (urlPreset) gfx = gfxWithPreset(gfx, urlPreset);
+      const urlFrameLimit = gfxFrameLimitFromQuery(location.search);
+      if (urlFrameLimit) gfx = { ...gfx, frameLimit: urlFrameLimit };
       if (window.hullfallApp) gfx = { ...gfx, vsync: window.hullfallApp.vsyncSaved === false ? 'off' : 'on' };
       window.__gfxBoot = Object.freeze({ ...gfx, urlPreset });
       Core3D.configureQuality({ renderScale: gfx.renderScale, msaa: gfx.msaa });
@@ -825,7 +839,6 @@
     window.drawStations3D = drawStations3D;
     window.Destruction3D = Destruction3D;
     window.drawInfrastructureIcon = drawInfrastructureIcon;
-    window.updateInfrastructureAnimations = updateInfrastructureAnimations;
 
     // --- konsolowe API do strojenia rendera (devtools) ---
     window.Core3DPerfStatus = () => (window.Core3D?.getPerfStatus ? window.Core3D.getPerfStatus() : null);
@@ -869,7 +882,7 @@
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { formatLocalDistance, formatVelocity, resolveWorldUnitsPerAu } from './src/config/units.js';
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
-    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, resolveWorldSeed, systemMapAngleForSeed } from './src/data/systemMap.js';
+    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, resolveWorldSeed, systemMapAngleForSeed, sunWellRadius } from './src/data/systemMap.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -1103,7 +1116,9 @@
       writeCarrierVelocity,
       writePointVelocity,
       writeEntityVelocity,
-      isInterpolatedEntity
+      isInterpolatedEntity,
+      projectileClockOf,
+      setRenderPosedEntity
     } from "./src/game/carrierVelocity.js";
     import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
@@ -1153,13 +1168,20 @@
     import {
       createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
       damageTrafficActor, trafficRamContact, trafficRamFallbackDamage, trafficRectContact, trafficBerthStates,
-      createPortBerthIndex, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion, trafficContactTime
+      createPortBerthIndex, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion, trafficContactTime,
+      noteTrafficReturn, trafficReturnPose
     } from "./src/game/trafficBubble.js";
     import {
       createTrafficPromotion, requestTrafficPromotion, takeTrafficPromotion, trafficPromotionVerdict,
       trafficFleePoint, trafficActorPromotable, trafficPromotionOrder, trafficCombatRole, trafficWeaponFaction,
       trafficGrudgeTarget, trafficActorHasCourse, trafficRamLead
     } from "./src/game/trafficPromotion.js";
+    import {
+      createLootContainers, spillLootCargo, stepLootContainers, nearestLootD2, fillLootRenderFrame
+    } from "./src/game/lootContainers.js";
+    import {
+      LOOT_GEAR, lootGearById, lootGearOptionsFor, lootGearFits, mountedLootGear, lootGearParams
+    } from "./src/data/lootGear.js";
     import { ShipProxyBatch3D } from "./src/3d/shipProxyBatch3D.js";
     import { createTrafficBlock } from "./src/render/blocks/trafficBlock.js";
     import { PortDockWorld } from "./src/game/portDockWorld.js";
@@ -1168,6 +1190,8 @@
     import { createCargoOpsBlock } from "./src/render/blocks/cargoOpsBlock.js";
     import { createPortCargoFrame, buildPortCargoFrame, syncPortCargoContract } from "./src/game/portCargoFrame.js";
     import { sharedPortCargo3D } from "./src/3d/cargo/portCargo3D.js";
+    import { createLootBlock, createLootFrame } from "./src/render/blocks/lootBlock.js";
+    import { sharedLootContainers3D } from "./src/3d/cargo/lootContainers3D.js";
     import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
@@ -1213,7 +1237,7 @@
     import { pirateBase3D, pirateBase3DEvent, pirateRockSite, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
     // Baza piratów po stronie gry (RW-24): stan kawałków, `_dockGone`, ciała świata, decyzje break / ram, środek planetoidy;
     // obraz dostaje zdarzenia (onPirateBaseEvent → pirateBase3DEvent).
-    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
+    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseObstacles, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
     // Ciała ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F1/F2): budowle jako płaskie, zakotwiczone ciała silnika belek
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
@@ -1339,8 +1363,10 @@
     // Opcje grafiki (presety jakości, zapis sc_gfx) — blok „OPCJE GRAFIKI” przy opcjach menu.
     import {
       normalizeGfx, normalizeGfxValue, matchGfxPreset, saveGfxSettings, gfxWithPreset, gfxBloomScale, hasSavedGfx,
-      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY
+      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord, gfxFrameLimitFps
     } from "./src/game/graphicsQuality.js";
+    // Limit klatek (Opcje → Grafika): które wywołania rAF pętli gry rysują klatkę — blok „OPCJE GRAFIKI”, loop().
+    import { FrameLimiter } from "./src/render/frameLimiter.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
     import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
     import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
@@ -1582,6 +1608,7 @@
     // Holownik serwisowy (2026-10-08): naprawa rojem, „paka” i lot do K-7 — logika src/game/serviceTug.js, klej serviceTugGame.js.
     import { ServiceTugGame, TUG_PHASE } from "./src/game/serviceTugGame.js";
     import { createScoutBay, SCOUT_TUNE, SCOUT_PHASE } from "./src/game/scoutBay.js";
+    import { SMALL_SCALE, smallScaleFromSearch, smallScaleZoom, smallScaleMaxZoom, smallScaleGunModifiers, turnToward, angleGap, turretHitRadius, damageTurret, turretHpLeft } from "./src/game/smallScale.js";
     import { cargoBayHull, cargoHullBays } from "./src/data/cargoBays.js";
     import { createScoutBay3D, scoutFrigateRenderPose } from "./src/3d/cargo/scoutBay3D.js";
     import { excludeBodyCollisions as scoutExcludeCollisions, restoreBodyCollisions as scoutRestoreCollisions } from "./src/game/towSystem.js";
@@ -2431,12 +2458,17 @@
 
     // Warstwa wejścia (docs/PLAN-pad.md, etap 1): JEDEN odczyt urządzeń na klatkę rAF — pumpInput woła ta pętla
     // (menu, podzielony ekran, przed startem gry) i loop() przed krokami fizyki; strażnik znacznika rAF sprawia,
-    // że pracuje tylko pierwsze wywołanie w klatce.
+    // że pracuje tylko pierwsze wywołanie w klatce. Od pierwszej klatki pętli gry (gameLoopLive) ta pętla kończy się:
+    // wejście pompuje loop() raz na RYSOWANĄ klatkę (limit klatek — blok „OPCJE GRAFIKI”), a bez VSync pętla gry śpi
+    // między klatkami bez pustych wywołań rAF.
     const Input = createInput({ read: () => (navigator.getGamepads ? navigator.getGamepads() : null) });
     window.Input = Input;
+    let gameLoopLive = false;
     function inputFrameLoop(now) {
+      if (gameLoopLive) return;
       pumpInput(now);
       requestAnimationFrame(inputFrameLoop);
+      frameLimiter.observe(now);   // okres ekranu dla notki limitu klatek w opcjach (blok „OPCJE GRAFIKI”)
     }
     requestAnimationFrame(inputFrameLoop);
 
@@ -2524,6 +2556,7 @@
       }
       menuBackdrop = backdrop;
       window.__menuBackdrop = backdrop;
+      applyFrameLimit();   // limit klatek z opcji grafiki — pętla tła (blok „OPCJE GRAFIKI”)
       backdrop.onReady(() => mainMenuEl?.classList.add('bd-ready'));
       backdrop.setFocus(MENU_WIDE_VIEWS.has(menuView) ? 1 : 0);
       syncMenuBackdrop();
@@ -2828,7 +2861,7 @@
         vy: Math.sin(a) * speed + ivy,
         ivx,
         ivy,
-        clock: CLOCK_SIM,
+        clock: projectileClockOf(from),
         bornSim: SimClock.sim,
         life: (weapon.range || 1000) / speed,
         r: (bType === 'rail') ? 4 : 3,
@@ -5087,6 +5120,13 @@
       const p = window.__interpShipPose;
       return p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.angle) ? p : null;
     }
+    // Zegar obrazu efektów i pocisków NPC (carrierVelocity.js — isRenderClockEntity): byt w pozie renderu (ten sam warunek
+    // co bridgeRenderPose) stoi w obrazie w czasie SimClock.render — jego wyloty, trafienia i pociski też.
+    function npcRenderPosed(entity) {
+      if (!npcRenderLerpOn || entity === player2Ship) return false;
+      const r = renderPoses.poseOf(entity);
+      return r !== null && r.live;
+    }
 
     // Widoczność modelu 3D mostka i okien (0..1): okręt rysowany modelem 3D statku (opcja
     // „Statki 3D”) ma nadbudówkę w modelu — bez drugiego mostka; maskowanie gasi mostek razem
@@ -5673,6 +5713,8 @@
       env.stations = stations;
       env.wrecks = wrecks;
       env.coldWrecks = coldWrecks;
+      // Kontenery-łup: ramka obrazu (tylko paczki widoczne przez mgłę wojny — D8).
+      env.loot = _lootRender;
       env.rockets = window.rocketSystem3D?.rockets || null;
       env.drones = SpotterDroneSystem.getDrones?.() || null;
       env.player2 = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
@@ -7101,8 +7143,10 @@
 
 
     // =============== Słońce, planety i stacje ===============
+    // r — promień tarczy (SYSTEM_MAP_CONSTANTS.sunRadius, 200 tys. j.): ten sam dla obrazu (DirectSun — kula w płaszczyźnie
+    // gry), radaru, CIC i studni (sunWellRadius — strefa 'sun', studnie skoku, przeszkoda tras).
     const SUN = {
-      x: WORLD.w / 2, y: WORLD.h / 2, r: 823, r3D: 399,
+      x: WORLD.w / 2, y: WORLD.h / 2, r: SYSTEM_MAP_CONSTANTS.sunRadius,
       color: {
         core: '#ffe88a',   // jasno-żółty rdzeń
         mid: '#ffbe3b',   // pomarańcz-żółć
@@ -7285,8 +7329,9 @@
           type: 'sun',
           label: 'SOL',
           entity: sun,
-          radius: Math.max(100, Number(sun.r) || 0) * 6,
-          outerRadius: Math.max(100, Number(sun.r) || 0) * 6,
+          // tarcza słońca (DirectSun rysuje kulę o promieniu SUN.r w płaszczyźnie gry)
+          radius: Math.max(100, Number(sun.r) || 0),
+          outerRadius: Math.max(100, Number(sun.r) || 0),
           color: '#ffb347'
         });
       }
@@ -7592,9 +7637,8 @@
         }
       }
 
-      const sunRadius = Math.max(10, (SUN.r || 0) * 2);
       const sunDist = Math.hypot(pos.x - SUN.x, pos.y - SUN.y);
-      const sunEdge = sunDist - sunRadius;
+      const sunEdge = sunDist - sunWellRadius(SUN);
       zones.push({
         key: 'sun',
         id: 'sun',
@@ -9743,6 +9787,7 @@
     // Co klatkę (przed krokami fizyki): malowanie T trzymanym.
     let scoutCtlPrev = false;
     function scoutFrameInput() {
+      smallScaleCameraSync();
       // Zmiana sterów (H, powrót, utrata fregaty): przelicz wejście lotu od razu — klawisze idą zdarzeniami.
       if (ScoutBay.controlling !== scoutCtlPrev) {
         scoutCtlPrev = ScoutBay.controlling;
@@ -9783,7 +9828,236 @@
       get w() { return camera.mode === 'ship' ? scoutCamW : 0; },
       get x() { return scoutCamLast.x; },
       get y() { return scoutCamLast.y; },
-      get v() { const n = ScoutBay.npc; return ScoutBay.controlling && n && !n.dead ? Math.sqrt((Number(n.vx) || 0) ** 2 + (Number(n.vy) || 0) ** 2) : 0; }
+      // prędkość fregaty, póki kamera ją prowadzi (także w przejeździe powrotnym po oddaniu sterów — straż W0 nieba
+      // mnoży ją wagą w; 0 przy w > 0 zatrzymywało niebo w pierwszej klatce powrotu przy stojącym Atlasie)
+      get v() { const n = ScoutBay.npc; return scoutCamW > 0 && n && !n.dead ? Math.sqrt((Number(n.vx) || 0) ** 2 + (Number(n.vy) || 0) ** 2) : 0; }
+    };
+
+    // MAŁA SKALA (prototyp pod flagą ?malaSkala=1, 2026-10-27 — src/game/smallScale.js, docs/PROTOTYP-mala-skala.md):
+    // fregata zwiadu przy sterach gracza w skali, w której kontener 16 × 8 j. jest czytelny — kadr 650 j. (kółko do 320 j.),
+    // stery do ~600 j./s, działa główne fregaty na kursor (LPM) z zasięgiem ~300 j.; jej pociski zestrzeliwują wieże NPC
+    // (punkty życia wieży zamiast wyrwy pod gniazdem). Cel ćwiczebny z konsoli: MalaSkala.cel(). Bez flagi nic się nie zmienia.
+    const SMALL_SCALE_ON = smallScaleFromSearch(location.search);
+    if (SMALL_SCALE_ON) {
+      SCOUT_TUNE.ctlSpeed = SMALL_SCALE.speed;
+      SCOUT_TUNE.accel = SMALL_SCALE.accel;
+      SCOUT_TUNE.turnRate = SMALL_SCALE.turnRate;
+      ScoutBay.grant();
+      ScoutBay.on('deployed', () => pushZoneMessage(`MAŁA SKALA: LPM — działa ${SMALL_SCALE.gunRange} j. · kółko — kadr · konsola: MalaSkala.cel()`, 4, { label: 'ZWIAD' }));
+    }
+    // Kadr: po przejęciu sterów fregaty zoom gracza na kadr `frameW` i limit przybliżenia do `frameMinW`; po oddaniu
+    // sterów zoom i limit wracają (co klatkę — scoutFrameInput, limit idzie za szerokością okna).
+    const _ssCam = { active: false, zoom: 1, max: 3.2 };
+    function smallScaleCameraSync() {
+      const want = SMALL_SCALE_ON && ScoutBay.controlling;
+      if (want === _ssCam.active) {
+        if (want) camera.maxZoom = smallScaleMaxZoom(W, _ssCam.max);
+        return;
+      }
+      _ssCam.active = want;
+      if (want) {
+        _ssCam.zoom = camera.targetZoom;
+        _ssCam.max = camera.maxZoom;
+        camera.maxZoom = smallScaleMaxZoom(W, _ssCam.max);
+        camera.targetZoom = clamp(smallScaleZoom(W, SMALL_SCALE.frameW), camera.minZoom, camera.maxZoom);
+      } else {
+        camera.maxZoom = _ssCam.max;
+        camera.targetZoom = clamp(_ssCam.zoom, camera.minZoom, camera.maxZoom);
+      }
+      camera.manualZoom = true;
+    }
+    // Działa fregaty: wpisy `autoWeapons` broni głównej (z nich Turret2D rysuje wieże NPC; fregata zwiadu nie ma mózgu,
+    // więc dotąd ich nie miała) prowadzone na kursor w krokach fizyki, strzał przez fireWeaponCore z czopu gniazda
+    // (rachunek wylotu jak spawnBulletAdapter), zasięg i prędkość pocisku — źródło modyfikatorów 'malaSkala'.
+    const scoutGunTrigger = { mouse: false };
+    // Liczniki próby (konsola: MalaSkala.stats): strzały fregaty, trafienia wież, zniszczone wieże.
+    const _ssStats = { shots: 0, deckShots: 0, deckReached: 0, turretHits: 0, turretsDown: 0 };
+    const _ssMods = { range: 1, projectileSpeed: 1 };
+    const _ssPos = { x: 0, y: 0 };
+    const _ssMuzzle = { pos: { x: 0, y: 0 }, dir: { x: 1, y: 0 }, baseVel: { x: 0, y: 0 }, emitterUid: null, pdTarget: null };
+    function smallScaleMountPos(e, hp, out) {
+      const a = (e.angle || 0) + (Number(e.capitalProfile?.spriteRotation) || 0);
+      const c = Math.cos(a), s = Math.sin(a);
+      const hx = hp.x * getEntityHardpointScaleX(e), hy = hp.y * getEntityHardpointScaleY(e);
+      out.x = e.x + hx * c - hy * s;
+      out.y = e.y + hx * s + hy * c;
+      return out;
+    }
+    function ensureScoutGuns(n) {
+      if (n.__ssGuns) return;
+      n.__ssGuns = true;
+      const list = [];
+      const main = n.weapons?.main || [];
+      for (let i = 0; i < main.length; i++) {
+        const lo = main[i];
+        if (!lo?.hp || !lo.weapon || lo.hp.x == null) continue;
+        list.push({ id: lo.weapon.id, def: lo.weapon, type: lo.weapon.category, cd: 0, ammo: null, hpOffset: lo.hp,
+          mountAngle: 0, group: 'main', visualAngle: n.angle || 0 });
+      }
+      n.autoWeapons = list;
+      if (list.length) setModifierSource(n, 'malaSkala', smallScaleGunModifiers(n, list[0].def, SMALL_SCALE, _ssMods));
+    }
+    function stepScoutGuns(dt) {
+      if (!SMALL_SCALE_ON) return;
+      const n = ScoutBay.npc;
+      if (!ScoutBay.controlling) scoutGunTrigger.mouse = false;
+      if (!n || n.dead || ScoutBay.phase !== SCOUT_PHASE.FLIGHT) return;
+      ensureScoutGuns(n);
+      const aim = ScoutBay.controlling ? screenToWorld(mouse.x, mouse.y) : null;
+      const fire = !!aim && scoutGunTrigger.mouse && !StoryGame.blocksInput && !ScoutBay.cloakHidden();
+      let deck;   // wieża pod kursorem (cel strzału nad pokładem) — szukana raz na krok, przy pierwszym strzale
+      const list = n.autoWeapons;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const w = list[i];
+        const hp = w.hpOffset;
+        if (hp.destroyed || !hp.mount) { list.splice(i, 1); continue; }   // gniazdo padło (wyrwa pod wieżą)
+        w.cd -= dt;
+        const p = smallScaleMountPos(n, hp, _ssPos);
+        const want = aim ? Math.atan2(aim.y - p.y, aim.x - p.x) : (n.angle || 0);
+        w.visualAngle = turnToward(w.visualAngle, want, SMALL_SCALE.turretTurn, dt);
+        if (!fire || w.cd > 0 || Math.abs(angleGap(want, w.visualAngle)) > SMALL_SCALE.aimTol) continue;
+        const m = _ssMuzzle;
+        m.pos.x = p.x; m.pos.y = p.y;
+        m.dir.x = Math.cos(w.visualAngle); m.dir.y = Math.sin(w.visualAngle);
+        writePointVelocity(n, p.x, p.y, m.baseVel);
+        m.emitterUid = hp.id != null ? getNpcEmitterUid(n, hp) : null;
+        if (deck === undefined) deck = scoutTurretUnder(aim.x, aim.y, n);
+        const before = bullets.length;
+        const cd = Number(window.fireWeaponCore(n, null, w.def.id, m));
+        if (deck) for (let k = before; k < bullets.length; k++) if (bullets[k].source === n) { bullets[k].__ssDeck = deck; _ssStats.deckShots++; }
+        w.cd = cd > 0 ? cd : (w.def.cooldown || 1);
+        _ssStats.shots++;
+      }
+    }
+    // STRZAŁ NAD POKŁADEM: wieże stoją na pokładzie, a w 2D pocisk zatrzymuje pierwsza burta — z boku dosięga się tylko
+    // wież przy krawędzi (pomiar w grze: CIWS pancernika piratów ~110 j. za burtą). Strzał wycelowany w wieżę (kursor
+    // w jej korpusie w chwili strzału) mija kadłub TEGO okrętu, aż dojdzie do wieży, i dopiero wtedy trafia pokład przy
+    // niej (krater, iskry, punkty życia wieży — scoutTurretHit). Pudło obok wieży leci dalej nad pokładem.
+    const _ssDeckPos = { x: 0, y: 0 };
+    function scoutTurretUnder(x, y, n) {
+      const reach = SMALL_SCALE.gunRange + 400;
+      let best = null, bestD = Infinity;
+      for (let j = 0; j < npcs.length; j++) {
+        const e = npcs[j];
+        if (!e || e.dead || e === n || !e.weapons || !isHostileNpc(e)) continue;
+        const er = (Number(e.radius) || 0) + reach;
+        if ((e.x - n.x) * (e.x - n.x) + (e.y - n.y) * (e.y - n.y) > er * er) continue;
+        for (const key in e.weapons) {
+          const arr = e.weapons[key];
+          if (!Array.isArray(arr)) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const hp = arr[i]?.hp, def = arr[i]?.weapon;
+            if (!hp || !def || hp.destroyed || hp.x == null) continue;
+            const p = smallScaleMountPos(e, hp, _ssDeckPos);
+            // Wieża poza zasięgiem dział: zwykły strzał (trafi burtę albo nic) — znak, że trzeba podlecieć.
+            const fx = p.x - n.x, fy = p.y - n.y, reachR = SMALL_SCALE.gunRange + 20;
+            if (fx * fx + fy * fy > reachR * reachR) continue;
+            const d = Math.sqrt((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y));
+            if (d < bestD && d <= turretHitRadius(def, e) - SMALL_SCALE.turretHitPad + SMALL_SCALE.deckAimPad) {
+              bestD = d;
+              best = { e, hp, def };
+            }
+          }
+        }
+      }
+      return best;
+    }
+    /** Pocisk ze znacznikiem strzału nad pokładem mija kadłub `b.__ssDeck.e` na odcinku (x0, y0) → (b.x, b.y)? */
+    function scoutDeckPasses(b, x0, y0) {
+      const d = b.__ssDeck;
+      if (!d.hp || d.hp.destroyed || d.e.dead) { b.__ssDeck = null; return false; }
+      const p = smallScaleMountPos(d.e, d.hp, _ssDeckPos);
+      const sx = b.x - x0, sy = b.y - y0;
+      const l2 = sx * sx + sy * sy;
+      let t = l2 > 0 ? ((p.x - x0) * sx + (p.y - y0) * sy) / l2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const cx = x0 + sx * t - p.x, cy = y0 + sy * t - p.y;
+      const r = turretHitRadius(d.def, d.e) - SMALL_SCALE.turretHitPad;
+      // przy wieży albo już za nią (minął ją w tym kroku) — dalej zwykła kolizja
+      const reached = cx * cx + cy * cy <= r * r || (p.x - b.x) * sx + (p.y - b.y) * sy < 0;
+      // Doszedł: trafienie pokładu w tym kroku idzie do TEJ wieży (krater bywa do kroku pocisku ~30 j. przed nią).
+      if (reached) { b.__ssDeck = null; b.__ssDeckHit = d; _ssStats.deckReached++; }
+      return !reached;
+    }
+    /** Pocisk fregaty gracza (mała skala) — znacznik trafienia i punkty życia wież NPC. */
+    function scoutPlayerShot(b) {
+      return SMALL_SCALE_ON && !!b.source && b.source === ScoutBay.npc && ScoutBay.controlling;
+    }
+    // Trafienie kadłuba NPC w (x, y) pociskiem fregaty: wieża, w której strefie leży punkt, traci punkty życia; przy zerze —
+    // utrata gniazda jak przy wyrwie pod wieżą (markHardpointDestroyed: broń przepada, AI przebudowuje działa).
+    function scoutTurretHit(e, x, y, dmg, b) {
+      const groups = e?.weapons;
+      if (!groups || e.dead || !(dmg > 0)) return;
+      let best = null, bestDef = null, bestD = Infinity;
+      const deckHit = b ? b.__ssDeckHit : null;
+      if (deckHit && deckHit.e === e && !deckHit.hp.destroyed) { best = deckHit.hp; bestDef = deckHit.def; }
+      else for (const key in groups) {
+        const arr = groups[key];
+        if (!Array.isArray(arr)) continue;
+        for (let i = 0; i < arr.length; i++) {
+          const hp = arr[i]?.hp, def = arr[i]?.weapon;
+          if (!hp || !def || hp.destroyed || hp.x == null) continue;
+          const p = smallScaleMountPos(e, hp, _ssPos);
+          const d = Math.sqrt((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y));
+          if (d < bestD && d <= turretHitRadius(def, e)) { bestD = d; best = hp; bestDef = def; }
+        }
+      }
+      if (!best) return;
+      _ssStats.turretHits++;
+      if (!damageTurret(best, bestDef, dmg)) return;
+      const p = smallScaleMountPos(e, best, _ssPos);
+      const r = turretHitRadius(bestDef, e);
+      if (!markHardpointDestroyed(e, best, getEntityHardpoints(e)?.length || 1)) return;
+      _ssStats.turretsDown++;
+      if (Array.isArray(e.autoWeapons)) e.autoWeapons = e.autoWeapons.filter((w) => w.hpOffset !== best);
+      GameBlasts.blast({ x: p.x, y: p.y, size: r * 2, profile: 'fighter', vx: Number(e.vx) || 0, vy: Number(e.vy) || 0 }, true);
+      pushZoneMessage(`WIEŻA ZNISZCZONA · ${String(bestDef.name || bestDef.id)}`, 1.2, { label: 'MAŁA SKALA' });
+    }
+    window.MalaSkala = {
+      get on() { return SMALL_SCALE_ON; },
+      tune: SMALL_SCALE,
+      stats: _ssStats,
+      // Wieża wrogiego okrętu pod punktem świata (cel strzału nad pokładem) w zasięgu fregaty: { okret, bron } albo null.
+      wiezaPod(x, y) {
+        const f = ScoutBay.npc && !ScoutBay.npc.dead ? ScoutBay.npc : null;
+        const t = f ? scoutTurretUnder(x, y, f) : null;
+        return t ? { okret: t.e.displayName || t.e.type, bron: t.def.id } : null;
+      },
+      // Żywe wieże okrętu: [{ x, y, bron, r (strefa trafienia), hp (punkty życia) }] — konsola i narzędzia.
+      wieze(e) {
+        const out = [];
+        const groups = e?.weapons;
+        if (!groups || e.dead) return out;
+        for (const key in groups) {
+          const arr = groups[key];
+          if (!Array.isArray(arr)) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const hp = arr[i]?.hp, def = arr[i]?.weapon;
+            if (!hp || !def || hp.destroyed || hp.x == null) continue;
+            const p = smallScaleMountPos(e, hp, { x: 0, y: 0 });
+            out.push({ x: p.x, y: p.y, bron: def.id, r: turretHitRadius(def, e), hp: turretHpLeft(hp, def) });
+          }
+        }
+        return out;
+      },
+      // Cel ćwiczebny (pancernik piratów) przed fregatą — bez niej przed Atlasem. walka: false (domyślnie) — uśpiony
+      // (stoi, wieże milczą, Atlas na auto go pomija), true — z mózgiem i bronią; tarcza: false (domyślnie) — pole
+      // wyłączone (mała broń go nie przebije, a próba dotyczy wież); typ: klucz przywołania, odl: [j.].
+      cel(opts = {}) {
+        const f = ScoutBay.npc && !ScoutBay.npc.dead ? ScoutBay.npc : null;
+        const ox = f ? f.x : ship.pos.x, oy = f ? f.y : ship.pos.y, a = f ? (f.angle || 0) : (ship.angle || 0);
+        const dist = Number(opts.odl) > 0 ? Number(opts.odl) : SMALL_SCALE.targetDist;
+        const x = ox + Math.cos(a) * dist, y = oy + Math.sin(a) * dist;
+        const res = spawnCallInShip(opts.typ || 'battleship', { mode: 'pirate', spawnPos: { x, y }, pos: { x, y }, spawnAngle: a + Math.PI / 2 });
+        const npc = Array.isArray(res) ? res[0] : res;
+        if (!npc) return null;
+        if (!opts.tarcza) setEntityShieldForcedOff(npc, true);
+        if (!opts.walka) {
+          processAutonomousWeapons(npc, 0);   // wpisy wież (rysunek, trafienia) — przeładowanie startowe > 0, bez strzału
+          storySleepNpc(npc);
+        }
+        return npc;
+      }
     };
 
 
@@ -11163,7 +11437,7 @@
       // strzał z pędzącego okrętu leci względem niego jak z nieruchomego.
       const inheritVx = Number(muzzleData.baseVel?.x) || 0;
       const inheritVy = Number(muzzleData.baseVel?.y) || 0;
-      const shotClock = isInterpolatedEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
+      const shotClock = projectileClockOf(shooter);
 
       // 3. Wystrzał (obsługa salwy / burst)
       let beamEventData = null;
@@ -13710,7 +13984,7 @@
       return Math.max(1, Math.round(quote.sell));
     }
     function fitPartPrice(id) {
-      return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? 0) || 0;
+      return Number(SHIP_MODULES[id]?.price ?? SHIP_SYSTEM_PART_PRICES[id] ?? LOOT_GEAR[id]?.price ?? 0) || 0;
     }
     // Zakup sztuki broni w porcie: składniki z magazynu portu jak handel (adjustStationStock — most do workera ruchu),
     // wycena weaponPriceAt. false — port jej tu nie złoży.
@@ -13848,6 +14122,8 @@
       return {
         hullModules: { ...(PLAYER.hullModules || {}) },
         hullSystems: { ...(PLAYER.hullSystems || {}) },
+        // Gniazdo ZBIÓRKA (kontenery-łup): kadłub → id sprzętu albo null (puste); brak klucza = domyślny kadłuba.
+        hullLootGear: { ...(PLAYER.hullLootGear || {}) },
         partStock: counts,
         hullPresets: { ...(PLAYER.hullPresets || {}) },
         fitCustoms: Array.isArray(PLAYER.fitCustoms) ? PLAYER.fitCustoms : [],
@@ -13860,7 +14136,7 @@
       PLAYER.hullModules = modules;
       const parts = {};
       for (const [id, n] of Object.entries(data?.partStock || {})) {
-        if ((SHIP_MODULES[id] || SHIP_SYSTEM_PART_PRICES[id] != null) && Number(n) > 0) parts[id] = Math.floor(Number(n));
+        if ((SHIP_MODULES[id] || SHIP_SYSTEM_PART_PRICES[id] != null || LOOT_GEAR[id]) && Number(n) > 0) parts[id] = Math.floor(Number(n));
       }
       PLAYER.partStock = parts;
       const presets = {};
@@ -13874,6 +14150,11 @@
       for (const [hull, id] of Object.entries(data?.hullSystems || {})) {
         if (typeof id === 'string' && shipSystemDefFor(hull, id)) PLAYER.hullSystems[hull] = id;
       }
+      const lootGear = {};
+      for (const [hull, id] of Object.entries(data?.hullLootGear || {})) {
+        if (PLAYER_HULL_CATALOG[hull] && (id === null || LOOT_GEAR[id])) lootGear[hull] = id;
+      }
+      PLAYER.hullLootGear = lootGear;
     }
 
     // ---- Refit ręczny (ekran) ----------------------------------------------------------------------------------
@@ -13986,6 +14267,39 @@
       return { message: [bought, `System F: ${def.label}`].filter(Boolean).join(' · ') };
     }
 
+    // Gniazdo ZBIÓRKA (kontenery-łup, src/data/lootGear.js): wiązka albo drony — część jak moduł (hangar ↔ gniazdo).
+    // Kadłub bez wpisu w `PLAYER.hullLootGear` ma sprzęt domyślny (Atlas — wiązka, D16); zdjęty wraca do hangaru.
+    function playerLootGearId(hullId = PLAYER.activeHullId) {
+      return mountedLootGear(hullId, PLAYER.hullLootGear?.[hullId]);
+    }
+    function fitUiSetLootGear(id) {
+      const hullId = PLAYER.activeHullId;
+      const next = id || null;
+      const cur = playerLootGearId(hullId);
+      if (next === cur) return null;
+      if (next && !lootGearFits(hullId, next)) {
+        const def = lootGearById(next);
+        return { message: def && !def.ready ? `${def.label} — jeszcze niedostępne` : 'Ten kadłub nie ma tego sprzętu' };
+      }
+      let bought = '';
+      if (next && !((Number(PLAYER.partStock?.[next]) || 0) > 0)) {
+        const price = fitPartPrice(next);
+        if (PLAYER.credits < price) return { message: 'Za mało kredytów' };
+        PLAYER.credits -= price;
+        PLAYER.partStock[next] = (Number(PLAYER.partStock[next]) || 0) + 1;
+        bought = `Kupiono: ${LOOT_GEAR[next].label} · ${price} CR`;
+      }
+      if (cur) PLAYER.partStock[cur] = (Number(PLAYER.partStock[cur]) || 0) + 1;
+      if (next) PLAYER.partStock[next] = Math.max(0, (Number(PLAYER.partStock[next]) || 0) - 1);
+      if (!PLAYER.hullLootGear) PLAYER.hullLootGear = {};
+      PLAYER.hullLootGear[hullId] = next;
+      finishPlayerFitChange(null);
+      return {
+        message: [bought, next ? `Zbiórka: ${LOOT_GEAR[next].label}` : 'Sprzęt zbiórki zdjęty — wrócił do hangaru']
+          .filter(Boolean).join(' · ')
+      };
+    }
+
     function fitUiCustoms() {
       const hullId = PLAYER.activeHullId;
       return (PLAYER.fitCustoms || []).filter((c) => (c.hull || 'atlas') === hullId);
@@ -14088,7 +14402,17 @@
         currentSystemLabel: () => playerShipSystem()?.label || '—',
         systemLabel: (id) => (id ? (shipSystemDefFor(PLAYER.activeHullId, id)?.label || id) : '—'),
         setSystem: fitUiSetSystem,
-        partLabel: (id) => SHIP_MODULES[id]?.label || shipSystemDefFor(PLAYER.activeHullId, id)?.label || id,
+        lootGear: () => lootGearOptionsFor(PLAYER.activeHullId).map((id) => {
+          const d = LOOT_GEAR[id];
+          return {
+            id: d.id, label: d.label, desc: d.desc, price: fitPartPrice(d.id), ready: d.ready,
+            installed: playerLootGearId() === d.id,
+            owned: (Number(PLAYER.partStock?.[d.id]) || 0) > 0
+          };
+        }),
+        currentLootGearLabel: () => LOOT_GEAR[playerLootGearId()]?.short || '—',
+        setLootGear: fitUiSetLootGear,
+        partLabel: (id) => SHIP_MODULES[id]?.label || LOOT_GEAR[id]?.label || shipSystemDefFor(PLAYER.activeHullId, id)?.label || id,
         partPrice: fitPartPrice,
         weaponPrice: (id) => fitWeaponPrice(id),
         fits: (id, slot) => playerFitFits(WEAPONS[id], slot),
@@ -14120,6 +14444,8 @@
       apply: (plan, opts) => applyPlayerFitPlan(plan, opts),
       weaponPrice: (id, station = stationUI.station) => fitWeaponPrice(id, station),
       module: () => playerFitModule(),
+      lootGear: () => playerLootGearId(),
+      setLootGear: (id) => fitUiSetLootGear(id),
       range: (weaponId) => getPlayerWeaponRange(WEAPONS[weaponId]),
       state: () => serializePlayerFitState()
     };
@@ -14210,6 +14536,8 @@
       // { moduł / system F: sztuk }, aktywna karta per kadłub ('custom' — po refit ręcznym), własne konfiguracje,
       // komplety misji startowej wydane. Zapis w 'loadout' (serializePlayerFitState / restorePlayerFitState).
       hullModules: {},
+      // Gniazdo ZBIÓRKA (kontenery-łup): kadłub → sprzęt (`src/data/lootGear.js`) albo null; brak klucza = domyślny.
+      hullLootGear: {},
       partStock: {},
       hullPresets: {},
       fitCustoms: [],
@@ -15769,6 +16097,16 @@
       const hullDef = getPlayerHullDef(shipBP.id);
       if (!hullDef) return;
       const shouldActivate = opts.activate !== false;
+      // Przesiadka z ładunkiem ponad ładowność nowego kadłuba — odmowa (towar nie wyparowuje; Atlas ma 400 t).
+      if (shouldActivate && hullDef.id !== PLAYER.activeHullId) {
+        const held = getBagMass(PLAYER.cargo);
+        const cap = Number(hullDef.cargoCap) || 0;
+        if (held > cap + 1e-6) {
+          toast(`Rozładuj ładownię (${Math.ceil(held)} t > ${Math.floor(cap)} t)`);
+          updateStationOverlay(stationUI.tab, stationUI.station);
+          return false;
+        }
+      }
 
       let changed = false;
       if (!playerOwnsHull(hullDef.id)) {
@@ -16319,8 +16657,11 @@
     }
 
     /** Zniszczony statek ruchu: wybuch w miejscu kadłuba (kurs i wrak z ładunkiem rozlicza worker). */
-    function onTrafficActorDestroyed(a, x, y) {
+    function onTrafficActorDestroyed(a, x, y, cause) {
       triggerReactorBlow3D(x, y, Math.max(120, a.length * 0.45), { vx: a.vx, vy: a.vy });
+      // Kontenery-łup: 55% ładunku z manifestu encji w przestrzeń (wybuch w miejscu trafienia).
+      spillTrafficCargo(trafficV2?.actorManifests?.get(a.id), a.id, a.cx, a.cy, a.vx, a.vy, a.ca, a.length, a.width, x, y);
+      if (cause === 'player') registerTrafficKill(a);
     }
 
     /** Krok fizyki: nowy bufor z workera i pozy encji w czasie tego kroku (przed pociskami i taranem). */
@@ -16445,7 +16786,7 @@
       out.count = 0;
       const tb = trafficBubble;
       // `TrafficBubble.hideRender` — A/B kosztu obrazu (narzędzie ruch-banka-gra.mjs): rozgrywka bez zmian, bez proxy.
-      if (!tb || !trafficV2 || tb.hideRender || (!tb.list.length && !trafficPromotion?.alive.size)) return out;
+      if (!tb || !trafficV2 || tb.hideRender || (!tb.list.length && !trafficPromotion?.alive.size && !tb.returning.size)) return out;
       const t0 = performance.now();
       const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
       for (let i = 0; i < tb.list.length; i++) {
@@ -16492,6 +16833,31 @@
           r.mode = null;
           out.count++;
         }
+      }
+      // NPC wrócił do bańki, a encja jeszcze nie przyszła z workera ruchu (kilka klatek) — proxy w ostatniej pozie NPC,
+      // żeby statek nie znikał między kadłubem NPC a encją (E17).
+      for (const id of tb.returning.keys()) {
+        const g = trafficReturnPose(tb, id, trafficV2.time);
+        if (!g) continue;
+        let r = out.list[out.count];
+        if (!r) {
+          r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
+            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+          out.list[out.count] = r;
+        }
+        r.courseId = id;
+        r.hullId = g.hullId;
+        r.unitClass = g.hullId;
+        r.x = g.x;
+        r.y = g.y;
+        r.angle = g.angle;
+        r.prevX = NaN;
+        r.vx = 0;
+        r.vy = 0;
+        r.speed = 0;
+        r.throttle = 0;
+        r.mode = null;
+        out.count++;
       }
       _trafficGameMs += performance.now() - t0;
       return out;
@@ -16598,6 +16964,8 @@
         npc.ai = (dt) => runCallInCombatAI(npc, role.type, dt);
       }
       npc.trafficCourse = a.id;
+      // Ładunek kursu (kontenery-łup): po `attach` worker zdejmuje manifest z bańki — NPC niesie kopię do śmierci.
+      npc.__trafficCargo = trafficV2?.actorManifests?.get(a.id) || null;
       // Obrys encji — kontakt miękki, dopóki kadłub na belkach się nie zbuduje (stepTrafficSoftContact).
       npc.__trafficLen = a.length;
       npc.__trafficWid = a.width;
@@ -16714,6 +17082,12 @@
           releaseTrafficPromotion(tb, id, true);
           if (npc?.trafficFree) trafficV2.entityLost(id, { x: npc.x, y: npc.y, reason: 'player' });
           else trafficV2.destroyCourse(id, { x: npc.x, y: npc.y, reason: 'player', byPirates: false });
+          // Kontenery-łup: ładunek kursu z wraku awansowanego NPC (ruch wraku, obrys encji).
+          if (npc?.__trafficCargo) {
+            spillTrafficCargo(npc.__trafficCargo, id, npc.x, npc.y, npc.vx, npc.vy, npc.angle,
+              npc.__trafficLen, npc.__trafficWid, npc.x, npc.y);
+            npc.__trafficCargo = null;
+          }
           st.stats.destroyed++;
         } else if (verdict === 'demote') {
           st.alive.delete(id);
@@ -16721,6 +17095,8 @@
           else trafficV2.detach(id, null, { x: npc.x, y: npc.y, angle: npc.angle, speed: Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy) });
           dismissTrafficNpc(npc);
           releaseTrafficPromotion(tb, id, false);
+          // Encja przyjdzie z kolejnym buforem workera ruchu — do tego czasu proxy w pozie NPC (trafficRenderFrame).
+          noteTrafficReturn(tb, id, npc.shipFrame, npc.x, npc.y, npc.angle, trafficV2.time);
           st.stats.demoted++;
         } else if (!npc.command && npc.combatDisabled) {
           // Dotarł do punktu ucieczki: dalej, póki gracz blisko, potem stoi.
@@ -16730,6 +17106,156 @@
         }
       }
     }
+
+    // ============================================================
+    // KONTENERY-ŁUP (K1, docs/PROPOZYCJA-kontenery-lup.md) — src/game/lootContainers.js. Zniszczony statek ruchu
+    // (encja bańki bez awansu albo awansowany NPC) gubi 55% ładunku jako paczki dryfujące w przestrzeni; ładunek
+    // encji zna gra z manifestu workera (`TrafficV2.actorManifests`, tylko zmiany). Zbiera je sprzęt z gniazda
+    // ZBIÓRKA (src/data/lootGear.js: wiązka; drony — K3) do ładowni gracza (`addToPlayerCargo`, limit `cargoCap`);
+    // bez sprzętu nic (HUD podpowiada WYPOSAŻENIE). Sprzedaż — terminal. Obraz (K2): ramka `lootRenderFrame` → blok
+    // `loot` (worker) albo src/3d/cargo/lootContainers3D.js na stronie (off). Konsola: `LootContainers` (`stats`, `count`).
+    // ============================================================
+    const lootContainers = createLootContainers();
+    const _lootEnv = {
+      px: 0, py: 0, pvx: 0, pvy: 0, shipSpeed: 0, cx: 0, cy: 0, gear: null,
+      visible: (x, y) => SensorSystem.pointVisible(x, y, 0),
+      free: () => getPlayerCargoFree(),
+      take: (key, units) => Number(addToPlayerCargo({ [key]: units })[key]) || 0,
+      onCollect: (key, units) => noteLootCollected(key, units)
+    };
+    const _lootGearParams = {};
+    let _lootGearHull = null;
+    let _lootGearId = undefined;
+    let _lootGear = null;
+    let _lootMsgBag = null;
+    let _lootMsgAt = -Infinity;
+    let _lootHintAt = -Infinity;
+    let _lootFullSeen = 0;
+    let _lootClock = 0;
+
+    /** Sprzęt gniazda ZBIÓRKA aktywnego kadłuba gracza (parametry `lootGearParams`, wspólny obiekt) albo null. */
+    function playerLootGear() {
+      const hull = PLAYER.activeHullId;
+      const id = playerLootGearId(hull);
+      // Porównanie pól (krok gry — bez sklejania napisów).
+      if (hull !== _lootGearHull || id !== _lootGearId) {
+        _lootGearHull = hull;
+        _lootGearId = id;
+        _lootGear = id ? lootGearParams(hull, id, _lootGearParams) : null;
+      }
+      return _lootGear;
+    }
+
+    /** Zrzut ładunku ze statku ruchu: `manifest` z mostu ({ cargo, mass }), poza i ruch wraku, środek wybuchu. */
+    function spillTrafficCargo(manifest, courseId, x, y, vx, vy, angle, length, width, blastX, blastY) {
+      if (!manifest?.cargo) return 0;
+      return spillLootCargo(lootContainers, {
+        x, y, vx, vy, angle, length, width, cargo: manifest.cargo, mass: manifest.mass, seed: courseId, blastX, blastY
+      });
+    }
+
+    /** Zebrana paczka → jeden komunikat na ~1,2 s (zbiórka idzie seriami). */
+    function noteLootCollected(key, units) {
+      if (!_lootMsgBag) _lootMsgBag = {};
+      _lootMsgBag[key] = (_lootMsgBag[key] || 0) + units;
+    }
+
+    /** Zbiorczy komunikat zebranego łupu (najwyżej co ~1,2 s; ostatni — także po zebraniu ostatniej paczki). */
+    function flushLootMessage() {
+      if (!_lootMsgBag || _lootClock - _lootMsgAt <= 1.2) return;
+      pushZoneMessage(`ŁUP + ${formatCargoBag(_lootMsgBag)}`, 1.6);
+      _lootMsgBag = null;
+      _lootMsgAt = _lootClock;
+    }
+
+    /** Krok fizyki: dryf, czas życia, wiązka i chwyt do ładowni (pauza stoi — krok tylko w `physicsStep`). */
+    function stepLoot(dt) {
+      _lootClock += dt;
+      if (lootContainers.count === 0) {
+        flushLootMessage();
+        return;
+      }
+      const env = _lootEnv;
+      const alive = !!ship && !ship.destroyed;
+      // Gracz zginął: paczki zostają (odległość do despawnu od ostatniej pozycji gracza), wiązka gaśnie.
+      if (alive) {
+        env.px = ship.pos.x;
+        env.py = ship.pos.y;
+        env.pvx = ship.vel.x;
+        env.pvy = ship.vel.y;
+      } else {
+        env.pvx = 0;
+        env.pvy = 0;
+      }
+      env.shipSpeed = Math.sqrt(env.pvx * env.pvx + env.pvy * env.pvy);
+      env.cx = env.px;
+      env.cy = env.py;
+      env.gear = alive ? playerLootGear() : null;
+      stepLootContainers(lootContainers, dt, env);
+      if (!alive) return;
+      flushLootMessage();
+      // Pełna ładownia: paczka czeka przy luku (licznik `full` rośnie raz na paczkę).
+      if (lootContainers.stats.full !== _lootFullSeen) {
+        _lootFullSeen = lootContainers.stats.full;
+        if (_lootClock - _lootHintAt > 6) {
+          _lootHintAt = _lootClock;
+          pushZoneMessage('ŁADOWNIA PEŁNA — kontener czeka przy luku', 2.2);
+        }
+      }
+      // D15: bez sprzętu zbiórki — podpowiedź, gdy widoczna paczka jest bliżej niż 4 km.
+      if (!env.gear && _lootClock - _lootHintAt > 8
+        && nearestLootD2(lootContainers, env.px, env.py, env.visible) < 4000 * 4000) {
+        _lootHintAt = _lootClock;
+        pushZoneMessage('BRAK SPRZĘTU ZBIÓRKI — wiązka albo drony (WYPOSAŻENIE)', 2.5);
+      }
+    }
+
+    // Obraz (K2): ramka klatki dla bloku `loot` (worker) albo rysunku na stronie (off) — pozy w chwili klatki renderu,
+    // tylko paczki widoczne (mgła wojny) i poza kropkami soczewki skoku, wiązka od statku gracza.
+    const _lootRender = createLootFrame();
+    const _lootShipPose = { x: 0, y: 0 };
+    const _lootVisible = (x, y) => SensorSystem.pointVisible(x, y, 0);
+    const _lootLensHidden = (x, y) => lensDotAt(x, y);
+    function lootRenderFrame(alpha) {
+      const pose = ship && !ship.destroyed ? (window.__interpShipPose || ship.pos) : null;
+      if (pose) { _lootShipPose.x = pose.x; _lootShipPose.y = pose.y; }
+      // Pauza i zamrożony świat fabuły: stan fizyki stoi — poza bez cofania o krok (jak renderPoses).
+      const lag = (PAUSED || StoryGame.worldFrozen) ? 0 : (1 - alpha) * PHYS_DT;
+      return fillLootRenderFrame(lootContainers, _lootRender, lag, _lootVisible,
+        _lensDotsActive ? _lootLensHidden : null, pose ? _lootShipPose : null);
+    }
+
+    /** Kara reputacji za statek ruchu zniszczony bez awansu (D13) — jak `registerFactionKill` przy śmierci NPC. */
+    const _trafficKillProbe = { factionId: null, type: '', shipFrame: '', _lastPlayerHit: 0 };
+    function registerTrafficKill(a) {
+      _trafficKillProbe.factionId = a.factionId;
+      _trafficKillProbe.type = trafficCombatRole(a.hullId)?.type || a.hullId || '';
+      _trafficKillProbe.shipFrame = a.hullId || '';
+      _trafficKillProbe._lastPlayerHit = gameTime;
+      registerFactionKill(_trafficKillProbe);
+    }
+
+    window.LootContainers = {
+      get count() { return lootContainers.count; },
+      get stats() { return { ...lootContainers.stats }; },
+      get gear() { return playerLootGear(); },
+      /** Ładownia gracza (narzędzia): kopia ładunku i wolna masa [t]. */
+      get hold() { return { cargo: { ...PLAYER.cargo }, free: getPlayerCargoFree() }; },
+      pool: lootContainers,
+      /** Wejście ostatniego kroku (narzędzia): gracz, punkt chwytu, sprzęt. */
+      get env() { const e = _lootEnv; return { px: e.px, py: e.py, pvx: e.pvx, pvy: e.pvy, shipSpeed: e.shipSpeed, gear: e.gear ? { ...e.gear } : null }; },
+      // Narzędzia (?dev): zrzut paczek przy graczu — `LootContainers.devSpill({ steel: 380 }, 3000)`.
+      devSpill(cargo = { steel: 380 }, dist = 3000) {
+        if (!_portCargoQuery.has('dev') || !ship) return 0;
+        const a = ship.angle || 0;
+        let mass = 0;
+        for (const k in cargo) mass += (Number(cargo[k]) || 0) * (Number(RESOURCES[k]?.mass) || 1);
+        return spillLootCargo(lootContainers, {
+          x: ship.pos.x + Math.cos(a) * dist, y: ship.pos.y + Math.sin(a) * dist, vx: ship.vel.x, vy: ship.vel.y,
+          angle: a, length: 540, width: 200, cargo, mass, seed: (gameTime * 1000) | 0
+        });
+      }
+    };
 
 
     // ============================================================
@@ -17521,7 +18047,7 @@
         if (start && (start.x - x) ** 2 + (start.y - y) ** 2 <= radius * radius) return;
         out.push({ x, y, r: radius });
       };
-      if (SUN) push(SUN.x, SUN.y, Math.max(10, (Number(SUN.r) || 0) * 2));   // strefa 'sun' (detectZones)
+      if (SUN) push(SUN.x, SUN.y, sunWellRadius(SUN));   // strefa 'sun' (detectZones)
       const pst = mercMission?.station;
       if (pst) {
         const pr = pirateOrbitRadii();
@@ -17985,7 +18511,7 @@
         }
         putPlayerTravelWell(n++, Number(b.x) || 0, Number(b.y) || 0, r, rIn, b, rFree);
       }
-      if (SUN) putPlayerTravelWell(n++, SUN.x, SUN.y, Math.max(10, (Number(SUN.r) || 0) * 2), Math.max(0, Number(SUN.r) || 0), SUN);
+      if (SUN) putPlayerTravelWell(n++, SUN.x, SUN.y, sunWellRadius(SUN), Math.max(0, Number(SUN.r) || 0), SUN);
       _playerTravelWells.length = n;
       return _playerTravelWells;
     }
@@ -18580,7 +19106,7 @@
     // na kursie jest celem w stożku — pickWarpConeTarget).
     function warpEmergencyWells() {
       const wells = [];
-      if (SUN) wells.push({ x: SUN.x, y: SUN.y, r: Math.max(10, (Number(SUN.r) || 0) * 2), rIn: Math.max(0, Number(SUN.r) || 0), label: 'SŁOŃCE' });
+      if (SUN) wells.push({ x: SUN.x, y: SUN.y, r: sunWellRadius(SUN), rIn: Math.max(0, Number(SUN.r) || 0), label: 'SŁOŃCE' });
       const pw = pirateWarpWell();
       if (pw) wells.push(pw);
       return wells;
@@ -21932,6 +22458,8 @@
           // (panel stacji) i nie przy otwartym kole trybów.
           if (!shipModes.wheel.open && !ScoutBay.controlling && !(scan.target && scan.targetType === 'station' && !isHostileNpc(scan.target))) {
             fcTrigger.mouse = true;
+          } else if (SMALL_SCALE_ON && ScoutBay.controlling && !shipModes.wheel.open) {
+            scoutGunTrigger.mouse = true;   // mała skala: LPM — działa fregaty zwiadu
           }
         }
       }
@@ -21967,6 +22495,7 @@
       if (e.button === 0) {
         pointerState.confirmArmed = false;
         fcTrigger.mouse = false;
+        scoutGunTrigger.mouse = false;
       }
       // Split-screen: route releases to the correct player's mouse
       if (splitScreenMode) {
@@ -24758,6 +25287,8 @@
           if (projectilePassesAlly(b, npc)) continue;
           // Kadłub, w którym pocisk jest albo z którego w tym kroku wyszedł (przebicie).
           if (b.pen && skipsHull(b, realNpc)) continue;
+          // Mała skala (?malaSkala=1): strzał fregaty nad pokładem — mija kadłub do wieży, w którą celował.
+          if (b.__ssDeck && b.__ssDeck.e === realNpc && scoutDeckPasses(b, candX0, candY0)) continue;
           // Filtr drużynowy USUNIĘTY żeby aktywować Friendly Fire.
           // const isPlayerBullet = b.owner === 'player' || b.owner === 'player2';
           // if (npc._isPlayerShip && isPlayerBullet) continue;
@@ -24948,6 +25479,8 @@
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
               noteBridgeHit(realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
             }
+            // Mała skala (?malaSkala=1): pocisk fregaty gracza odbiera punkty życia wieży przy punkcie trafienia.
+            if (entryK.hp > 0 && scoutPlayerShot(b)) scoutTurretHit(realHit, hitX, hitY, npcDamage * entryK.hp, b);
 
             // Routing obrażeń: gracz vs NPC. Ponowne wejście pocisku w ten sam kadłub (wklęsła
             // sylwetka) — krater tak, HP drugi raz nie (entryK.hp = 0, decyzja 18-A).
@@ -24962,7 +25495,7 @@
               } else {
                 if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
                 applyDamageToNPC(hitNPC, npcDamage * entryK.hp, b.type, hitBreach ? SHIELD_BREACH_DAMAGE_OPTS : undefined,
-                  b.source === ship && b.type !== 'ciws');   // znacznik trafienia: ogień gracza 1 bez obrony punktowej
+                  (b.source === ship || scoutPlayerShot(b)) && b.type !== 'ciws');   // znacznik trafienia: ogień gracza 1 (i fregaty — mała skala) bez obrony punktowej
               }
             }
 
@@ -25188,10 +25721,11 @@
           // Pełna prędkość strzelca była tu od zawsze — znaczniki jak w fireWeaponCore.
           const svx = Number(shooter.vx) || 0;
           const svy = Number(shooter.vy) || 0;
+          const shotClockNpc = projectileClockOf(shooter);
           if (shooter.weapon === 'railgun') {
-            window.bullets.push({ x: bx, y: by, vx: dirX * 600 + svx, vy: dirY * 600 + svy, ivx: svx, ivy: svy, clock: CLOCK_SIM, bornSim: SimClock.sim, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 600 + svx, vy: dirY * 600 + svy, ivx: svx, ivy: svy, clock: shotClockNpc, bornSim: SimClock.sim, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
           } else {
-            window.bullets.push({ x: bx, y: by, vx: dirX * 220 + svx, vy: dirY * 220 + svy, ivx: svx, ivy: svy, clock: CLOCK_SIM, bornSim: SimClock.sim, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 220 + svx, vy: dirY * 220 + svy, ivx: svx, ivy: svy, clock: shotClockNpc, bornSim: SimClock.sim, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
           }
           npcFireSpawnMs = performance.now() - tNpcFireSpawn0;
         }
@@ -25217,8 +25751,9 @@
       const tAiGrid0 = performance.now();
       if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
       // Duże wraki jako przeszkody lotu NPC (src/ai/aiWreckIndex.js) — osobny indeks, nie siatka AI.
-      // Zimne wraki (tło, bez kolizji) też — okręty nie przelatują przez skórę wraku w kadrze.
-      if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks, coldWrecks);
+      // Zimne wraki (tło, bez kolizji) też — okręty nie przelatują przez skórę wraku w kadrze. Stojące budowle
+      // bazy piratów — przeszkody statyczne (kapsuły brył): okręty, także piraci, objeżdżają habitat i pomosty.
+      if (window.rebuildWreckIndex) window.rebuildWreckIndex(wrecks, coldWrecks, pirateBaseObstacles());
       window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
       // Koordynator bitewny: sloty linii walki + flankowania dla capitali
       // (throttling wewnątrz — pełny rebuild co ~0.45s).
@@ -25501,7 +26036,7 @@
           window.bullets.push({
             x: muzzle.x, y: muzzle.y,
             vx: dir.x * (RAIL_SPEED * 0.9) + tangentialVel.x, vy: dir.y * (RAIL_SPEED * 0.9) + tangentialVel.y,
-            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: CLOCK_SIM, bornSim: SimClock.sim,
+            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: projectileClockOf(platform), bornSim: SimClock.sim,
             life: 2.0, r: 4, owner: 'npc', damage: platform.rail.damage, type: 'rail', penetration: 2,
             source: platform, spawnGrace: 0.08
           });
@@ -25517,7 +26052,7 @@
           window.bullets.push({
             x: muzzleR.x, y: muzzleR.y, px: muzzleR.x, py: muzzleR.y,
             vx: dir.x * SIDE_BULLET_SPEED + tangentialVel.x, vy: dir.y * SIDE_BULLET_SPEED + tangentialVel.y,
-            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: CLOCK_SIM, bornSim: SimClock.sim,
+            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: projectileClockOf(platform), bornSim: SimClock.sim,
             life: 2.6, r: 5, owner: 'npc', damage: platform.missile.damage,
             type: 'rocket', explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS,
             homingDelay: SIDE_ROCKET_HOMING_DELAY,
@@ -26566,9 +27101,6 @@
       // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
       if (trafficV2) syncTrafficV2Capacities(dt);
       updateSalvage(dt);
-      if (window.updateInfrastructureAnimations) {
-        window.updateInfrastructureAnimations(dt);
-      }
       // czas gry
       gameTime = (gameTime + dt * TIME_SCALE) % (24 * 3600);
       publishGameState({ gameTime });
@@ -27398,6 +27930,7 @@
       // (albo holownik pod graczem w skoku) po nim — w tym samym podkroku, bez opóźnienia o krok.
       ServiceTugGame.step(dt);
       ScoutBay.step(dt);
+      stepScoutGuns(dt);
       _inlineBrainMs = npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runAiLogic && !aiMaintDone, aiLogicDt, aiBrainPhase, aiBrainPhaseCount, brainTick);
       // Bomby lotnicze: spadanie z celem (poza po ruchu NPC tego kroku) i wybuchy na pancerzu.
       FighterBombs.step(dt);
@@ -27492,6 +28025,8 @@
       stepShipDockCollisions(dt);
       // Statki ruchu v2 (E6): taran gracza — obrys kadłuba proxy.
       stepTrafficRam();
+      // Kontenery-łup (K1): dryf paczek, wiązka gniazda ZBIÓRKA, chwyt do ładowni.
+      stepLoot(dt);
       // Suchy dok piratów (misja 1): taran bram i ogrodzenia parkingu.
       // Wydobycie skał (zadanie 21b): drony, piła, ładunki, wiązka i fizyka skał w czasie gry.
       stepAsteroidMining(dt);
@@ -27819,7 +28354,7 @@
       hp.missileCd = Math.max(0.01, (weapon.cooldown || 10) * (mods.fireRate || 1.0));
       const aim = getMountedWeaponAim(ship, lo);
       const n = writeTorpedoFan(aim.angle, torpedoTubesOf(weapon), torpedoSpreadRad(weapon, torpedoAim.wide), _torpFan);
-      const clock = isInterpolatedEntity(ship) ? CLOCK_RENDER : CLOCK_SIM;
+      const clock = projectileClockOf(ship);
       for (let k = 0; k < n; k++) {
         const m = p1WeaponCtrl.computeMountedMuzzle(lo, k);
         const a = _torpFan[k];
@@ -28009,6 +28544,18 @@
         renderCtx.moveTo(_scoutE.x, _scoutE.y - r - k); renderCtx.lineTo(_scoutE.x, _scoutE.y - r + k);
         renderCtx.moveTo(_scoutE.x, _scoutE.y + r - k); renderCtx.lineTo(_scoutE.x, _scoutE.y + r + k);
         renderCtx.stroke();
+      }
+      // Mała skala (?malaSkala=1): zasięg dział fregaty przy sterach — wokół pozy renderu (bez drżenia przy ~600 j./s).
+      if (live && SMALL_SCALE_ON && SB.controlling) {
+        const rp = bridgeRenderPose(n);
+        worldToScreenInto(rp ? rp.x : fx, rp ? rp.y : fy, cam, _scoutS);
+        renderCtx.strokeStyle = 'rgba(255,190,120,0.45)';
+        renderCtx.lineWidth = 1.5;
+        renderCtx.setLineDash([6, 8]);
+        renderCtx.beginPath();
+        renderCtx.arc(_scoutS.x, _scoutS.y, SMALL_SCALE.gunRange * zoom, 0, Math.PI * 2);
+        renderCtx.stroke();
+        renderCtx.setLineDash([]);
       }
       // Daleki skan: klin z czołem fali.
       const L = SB.long;
@@ -29079,12 +29626,23 @@
     }
     function loop(now) {
       const frameStartMs = performance.now();
+      gameLoopLive = true;
+      // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
+      // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki. W KAŻDYM wywołaniu rAF, także pominiętym
+      // przez limit klatek: wiek liczony w klatkach ekranu, złożenie w vsyncu gotowości bitmapy (nie dopiero w
+      // następnej narysowanej klatce — przy limicie 60 to 1–5 vsynców mniej opóźnienia, takt ten sam).
+      if (rwHost) rwHost.present();
+      // Limit klatek (blok „OPCJE GRAFIKI”, src/render/frameLimiter.js): wywołanie poza taktem limitu — bez wejścia,
+      // fizyki, migawki i rysunku (worker renderuje tylko nowe strony); `lastTime` zostaje, więc `frame` następnej
+      // narysowanej obejmuje pominięte, a akumulator fizyki 60 Hz liczy ten sam czas.
+      if (!frameLimitTick(now)) return;
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
-      // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
-      // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki.
-      if (rwHost) rwHost.present();
-      // Wejście: pady i kontekst raz na klatkę (strażnik znacznika rAF — pętla wejścia mogła to już zrobić).
+      // Zegar klatki efektów (RenderWorld.frameNowMs → Core3D.frameNowMs; worker — HEAD.WALL migawki): znacznik rAF, nie
+      // performance.now() w chwili rysowania — ten szedł po fizyce, więc klatka z krokiem 60 Hz „trwała” dla efektów
+      // o czas kroku dłużej, następna krócej (cząstki, błyski, dym szarpały co 4. klatkę przy 240 Hz).
+      window.__frameNowMs = now;
+      // Wejście: pady i kontekst raz na RYSOWANĄ klatkę (pętla wejścia kończy się z pierwszą klatką tej pętli).
       pumpInput(now);
       scoutFrameInput();
       // Rozdzielczość dynamiczna (blok „OPCJE GRAFIKI”): skala renderu z czasu GPU — także w pauzie (render trwa).
@@ -29130,7 +29688,7 @@
         const frameEndMs = performance.now();
         PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
         PerfHUD.flush(frameEndMs);
-        requestAnimationFrame(loop);
+        nextLoopFrame();   // rAF; bez VSync z limitem — budzik (blok „OPCJE GRAFIKI”)
         return;
       }
       acc += frame;
@@ -29316,7 +29874,7 @@
       PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
       if (steps === 0) aiOffStepNoteRest(frameEndMs - frameStartMs);
       PerfHUD.flush(frameEndMs);
-      requestAnimationFrame(loop);
+      nextLoopFrame();   // rAF; bez VSync z limitem — budzik (blok „OPCJE GRAFIKI”)
     }
 
     // =============== Render ===============
@@ -29422,6 +29980,8 @@
     const SZEW_LATE = SZEW_MIRRORS || RW_WORKER;
     // pozy renderu NPC i wraków (renderPoses — przy bridgeRenderPose): tylko z migawką, która niesie je do modułów 3D
     npcRenderLerpOn = SZEW_LATE && !/[?&]npcLerp=0(?:&|$)/.test(location.search);
+    // zegar obrazu efektów i pocisków bytów w pozie renderu (carrierVelocity.js; npcRenderPosed — przy bridgeRenderPose)
+    setRenderPosedEntity(npcRenderPosed, npcRenderLerpOn);
     const renderSnapshot = (SZEW_MODE === 'inline' || SZEW_MODE === 'pakuj' || RW_WORKER)
       ? new SnapshotPacker({ ids: RenderSlots, describe: SZEW_LATE }) : null;
     let rwHost = null;
@@ -29483,6 +30043,8 @@
       // E14: budowle doków portów bez ringu w zasięgu kadru — rysuje worker (updatePortDocks3D)
       if (RW_WORKER) renderSnapshot.addBlock(createPortDockBlock());
       if (RW_WORKER) renderSnapshot.addBlock(createCargoOpsBlock());
+      // kontenery-łup (K2): paczki, lampki i wiązka (src/3d/cargo/lootContainers3D.js w workerze)
+      if (RW_WORKER) renderSnapshot.addBlock(createLootBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -29597,7 +30159,8 @@
       f.simRenderSim = SimClock.renderSim;
       f.vfxTime = vfxTime;
       f.bridgeTime = bridgeSimTime;
-      f.wall = performance.now();
+      // znacznik rAF tej klatki (loop: lastTime = now) — zegar efektów workera (Core3D.fxNowMs), równy co vsync
+      f.wall = lastTime;
       f.wallOrigin = performance.timeOrigin;
       f.W = W;
       f.H = H;
@@ -29672,6 +30235,7 @@
       f.traffic = RW_WORKER ? _trafficRender : null;
       f.portDocks = RW_WORKER ? _portDockRender : null;
       f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
+      f.loot = RW_WORKER ? _lootRender : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -29953,8 +30517,14 @@
     const spaceGasIn = new Float64Array(SPACE_GAS_IN.size);
     const spaceGasState = createSpaceGasInputState();
     const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
-    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
+    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, camNsX: NaN, camNsY: NaN, halfW: 0, halfH: 0, simTime: NaN, renderTime: NaN,
+      physTick: NaN, physHz: 60, focusOn: false, focusX: 0, focusY: 0, focusVX: 0, focusVY: 0,
+      field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
     const _spaceGasRollHalf = { hw: 0, hh: 0 };
+    // Prowadzony okręt kamery statku (render(): Atlas albo fregata zwiadu przy sterach — poza renderu i prędkość) — okno
+    // pola gazu leży przy nim, pod śladem (spaceGasInput.js placeGasWindow); poza kamerą statku (RTS, fokus stacji,
+    // kamera fabuły, kamery 3D) — `on` false, okno przy kamerze.
+    const _spaceGasFocus = { on: false, x: 0, y: 0, vx: 0, vy: 0 };
     // Ring w budowie (Jowisz, GK-6): pole gazu ringu (src/game/ringGasField.js) — kotwica w środku planety, pas pyłu
     // i oparów budowy wokół obręczy, odgazowanie frontów. Gdy kadr nie dotyka pasa asteroid.
     let _ringGasFields = null;
@@ -29967,10 +30537,18 @@
       for (const f of _ringGasFields) if (f.rectTouchesBelt(cx - r, cy - r, cx + r, cy + r)) return f;
       return null;
     }
-    function packSpaceGas(cam, dt) {
+    function packSpaceGas(cam, camNs, dt) {
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
       o.dt = dt; o.camX = cam.x; o.camY = cam.y;
+      // okno pola bez wstrząsu i kopu kadru (dawniej skakało ±1 komórkę w walce); prowadzony okręt kamery statku
+      o.camNsX = camNs ? camNs.x : NaN; o.camNsY = camNs ? camNs.y : NaN;
+      const fc = _spaceGasFocus;
+      o.focusOn = fc.on; o.focusX = fc.x; o.focusY = fc.y; o.focusVX = fc.vx; o.focusVY = fc.vy;
+      // zegar gry (src/game/simClock.js): obraz w chwili renderu kadłubów; krok pola = krok fizyki z CAŁKOWITEGO licznika
+      // (nie ⌊SimClock.sim · 60⌋ — suma 1/60 dryfuje: po ~1 h 55 min krok o jeden za mały, gaz skakał co krok)
+      o.simTime = SimClock.sim; o.renderTime = SimClock.render;
+      o.physTick = physicsTickId; o.physHz = PHYS_HZ;
       // obrót kadru: pudło osi świata wokół obróconego kadru
       const rh = rolledHalfExtents(W * 0.5 / zoom, H * 0.5 / zoom, cameraRoll(cam), _spaceGasRollHalf);
       o.halfW = rh.hw; o.halfH = rh.hh;
@@ -29987,7 +30565,8 @@
       o.sunX = SUN ? SUN.x : 0; o.sunY = SUN ? SUN.y : 0;
       o.windowCells = SPACE_GAS_TUNE.windowCells;
       o.time = SimClock.sim;
-      // warp gracza (smugi skał pasa) i sceny bez pasa — bez gazu
+      // warp gracza (pas w skoku nie jest rysowany; obraz gazu gaśnie z soczewką przed kopem — spaceGas.js) i sceny bez
+      // pasa — bez gazu
       o.enabled = warp.state !== 'active';
       packSpaceGasFrame(spaceGasIn, spaceGasState, o);
     }
@@ -30058,8 +30637,8 @@
       // okno pola gazu przestrzeni: kadłuby w nim są przeszkodami gazu (maski obrysu jak dla domen wybuchów)
       if (spaceGasIn[SPACE_GAS_IN.active] > 0.5 && o.nDomains < 16) {
         const h = spaceGasIn[SPACE_GAS_IN.windowCells] * spaceGasIn[SPACE_GAS_IN.cell] * 0.5;
-        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.camX];
-        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.camY];
+        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.winX];
+        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.winY];
         const k = o.nDomains * 4;
         _gasDomRects[k] = sx - h; _gasDomRects[k + 1] = sy - h; _gasDomRects[k + 2] = sx + h; _gasDomRects[k + 3] = sy + h;
         o.nDomains++;
@@ -30459,6 +31038,7 @@
       // + offset riga w px ekranu: w nawigacji wyprzedza lot, w walce zagląda za
       // kursorem. Rig kroczy także w trakcie przejścia (wyjście z RTS, powrót
       // z edytora stacji) — przejście goni żywy cel, więc jego koniec nie skacze.
+      _spaceGasFocus.on = false;
       if (camera.mode === 'ship') {
         // podłoga: limit kadłuba albo — przy kadrze przylotu warpa z celem — niższa podłoga zoomu na ekranie (cameraZoomFloor)
         const zoomSafe = Math.max(cameraZoomFloor(camera) || 1e-4, camera.zoom || 1);
@@ -30533,6 +31113,10 @@
         // prowadzony okręt: Atlas, przy sterach fregaty — fregata (przejazd wagą scoutCamW)
         const followX = scoutCamW > 0 ? interpPos.x + (scoutCamLast.x - interpPos.x) * scoutCamW : interpPos.x;
         const followY = scoutCamW > 0 ? interpPos.y + (scoutCamLast.y - interpPos.y) * scoutCamW : interpPos.y;
+        // okno pola gazu przestrzeni przy prowadzonym okręcie (pod śladem) — blok „GAZ PRZESTRZENI”
+        _spaceGasFocus.on = true;
+        _spaceGasFocus.x = followX; _spaceGasFocus.y = followY;
+        _spaceGasFocus.vx = vwx; _spaceGasFocus.vy = vwy;
         const offW = rollToWorld(cameraRig.offsetX / zoomSafe, cameraRig.offsetY / zoomSafe, rigRoll, _rollTmp);
         let rigX = followX + offW.x;
         let rigY = followY + offW.y;
@@ -30652,6 +31236,8 @@
       const storyCam = splitScreenMode ? null : StoryGame.cameraFrame({
         dt: frameDt || 0, W, H, camX: camBaseX, camY: camBaseY, zoom: camBaseZoom, gameCam3d: cam3d, View3D
       });
+      // kamera fabuły i kamery 3D: okno gazu przy kamerze (kadr nie jest kadrem z góry wokół okrętu)
+      if (storyCam || cam3d) _spaceGasFocus.on = false;
       if (storyCam) {
         cam = storyCam;
         camNoShake = storyCam;
@@ -30788,7 +31374,7 @@
       if (!RW_WORKER) HallDust.submit(HallDust.input);
       // Gaz w otwartej przestrzeni (blok „GAZ PRZESTRZENI” niżej): pas przy kamerze — obwiednia z pola, odgazowanie
       // lodowych skał, okno pola; przed przeszkodami (okno idzie do prostokątów domen — kadłuby w polu gazu).
-      packSpaceGas(cam, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      packSpaceGas(cam, camNoShake, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
       // (statyka — przy zmianie), kadłuby przy domenach gazu (reżyser podaje ich prostokąty; bez domen — nic). Krok
       // efektów „wybuchy” czyta tylko tę tablicę.
@@ -30816,6 +31402,8 @@
       portDockRenderFrame(cam);
       // Przeładunek (E12): ramka klatki — pola zatok, statki przy stanowiskach, luk Atlasa (blok `cargoOps` / off niżej).
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
+      // Kontenery-łup (K2): paczki w chwili klatki — blok `loot` (worker) albo rysunek tutaj (off).
+      lootRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -30906,6 +31494,8 @@
           // Statki ruchu v2 (E6): proxy kadłubów i ich dysze MAIN (widoki encji w liście kadłubów).
           // Przeładunek (E12): obraz przed proxy — dziury w lukach otwartych ładowni (moduł podpina resolver proxy sam).
           if (portCargoFrame) sharedPortCargo3D().update(portCargoFrame, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
+          // Kontenery-łup (K2): paczki, lampki i wiązka (worker — z bloku `loot`).
+          sharedLootContainers3D().update(_lootRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           // Doki portów bez ringu (E14): budowle krzyż / okrąg / koło (worker — z bloku `portDocks`).
           updatePortDocks3D(_portDockRender.list, _portDockRender.count, PAUSED ? 0 : frameDt);
@@ -31092,14 +31682,13 @@
           const infraState = InfrastructureUI.ensureState(stationUI.station);
           if (infraState) InfrastructureUI.drawGrid(ctx, cam, stationUI.station, infraState);
         }
-        // Znaczniki świata gasną w skoku z β soczewki (E4 — _hudLensAlpha; świat stoi w soczewce gdzie indziej). Ikony
-        // infrastruktury, liny i zaznaczenie rysują z absolutną alfą (globalAlpha = stała) — chowane od progu kropki.
+        // Znaczniki świata gasną w skoku z β soczewki (E4 — _hudLensAlpha; świat stoi w soczewce gdzie indziej). Liny
+        // i zaznaczenie rysują z absolutną alfą (globalAlpha = stała) — chowane od progu kropki.
         const hudLensA = _hudLensAlpha;
         const hudLensWorld = warpLensHudWorld();
         if (hudLensA > 0.01) {
           ctx.save();
           if (hudLensA < 0.999) ctx.globalAlpha *= hudLensA;
-          if (hudLensWorld) InfrastructureUI.drawInstances(ctx, cam);
           drawPlanetLabels(ctx, cam);
           ctx.restore();
         }
@@ -34615,7 +35204,8 @@
     const GFX_CHIP_ATTR = Object.freeze({
       renderScale: 'gfxScale', msaa: 'gfxMsaa', bloom: 'gfxBloom', heatHaze: 'gfxHeat', explosions: 'gfxExplosions',
       effects: 'gfxEffects', hallDust: 'gfxHallDust', spaceGas: 'gfxSpaceGas', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
-      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync'
+      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync',
+      frameLimit: 'gfxFrameLimit'
     });
     const gfxChipSelector = (attr) => `[data-${attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]`;
     let gfxSettings = normalizeGfx(window.__gfxBoot || null);
@@ -34679,15 +35269,20 @@
     }
     function stepDynamicResolution(nowMs) {
       const t = (Number(nowMs) || 0) / 1000;
+      // tryb worker: próbki czasu GPU z kanału zwrotnego workera (Core3D strony nie ma urządzenia — dawniej sterownik
+      // nie dostawał próbek, a nowa skala nie docierała do workera)
+      let fS = Core3D.gpuFrameSamples, cS = Core3D.gpuComputeSamples, fMs = Core3D.gpuFrameMs, cMs = Core3D.gpuComputeMs;
+      if (rwHost) { rwHost.readStats(); const st = rwHost.stats; fMs = st[0]; cMs = st[1]; fS = st[2]; cS = st[3]; }
       let sample = null;
-      if (Core3D.gpuComputeSamples !== dynResComputeSeen) { dynResComputeSeen = Core3D.gpuComputeSamples; dynResComputeAt = t; }
-      if (Core3D.gpuFrameSamples !== dynResRenderSeen) {
-        dynResRenderSeen = Core3D.gpuFrameSamples;
-        sample = Core3D.gpuFrameMs + (t - dynResComputeAt < 0.5 ? Core3D.gpuComputeMs : 0);
+      if (cS !== dynResComputeSeen) { dynResComputeSeen = cS; dynResComputeAt = t; }
+      if (fS !== dynResRenderSeen) {
+        dynResRenderSeen = fS;
+        sample = fMs + (t - dynResComputeAt < 0.5 ? cMs : 0);
       }
       const scale = stepDynRes(dynRes, t, gfxSettings.renderScale, gfxDynamicTargetFps(gfxSettings.dynamicRes), sample);
       if (dynRes.changed && Core3D.renderScale !== scale) {
         Core3D.setRenderScale(scale);
+        if (rwHost) rwHost.setGfx(gfxRenderRecord(gfxSettings, scale));
         updateDynResUI();
       }
     }
@@ -34700,6 +35295,93 @@
           ? 'Karta nie podaje czasu pracy GPU — rozdzielczość zostaje stała.'
           : `Teraz: ${Math.round(dynResScale() * 100)}%.`;
       });
+    }
+
+    // --- Limit klatek (src/render/frameLimiter.js) ---
+    // loop() woła frameLimitTick na początku każdego wywołania (po złożeniu bitmapy workera): false — klatka pominięta,
+    // następną zamawia frameLimitTick; koniec klatki narysowanej — nextLoopFrame. Z VSync: rAF w takcie ekranu, rysuje
+    // co N-ta klatka, gdy częstotliwość ekranu jest wielokrotnością limitu, inaczej akumulator czasu. Bez VSync (Electron)
+    // limit czasem i pętla BEZ rAF: budzik woła loop() wprost — setTimeout śpi do chwili należnej minus margines
+    // (~90. percentyl spóźnień budzika z ostatnich 32 snów + 0,5 ms, 1–6 ms), resztę czekania dopina kolejka
+    // MessageChannel (zadania bez opóźnienia; wejście i wiadomości workera idą między nimi). Spóźnienie budzika ponad
+    // margines = klatka później; czekanie krótsze niż margines (limity 120–240) idzie w całości kolejką — rdzeń CPU
+    // zajęty jak bez limitu, karta odciążona. rAF bez taktu (flagi Chromium) po klatce bez zmiany obrazu przychodzi
+    // dopiero po ~30 ms, a po klatce narysowanej spoza rAF też z opóźnieniem — pomiar 2026-10-29 (headless bez taktu,
+    // atrapa Electrona): sen → rAF ~32 kl/s przy każdym limicie, budzik + rAF na końcu klatki ~64 kl/s, sam setTimeout
+    // w stronie gry spóźniał się o kilka ms (limit 120 → 67 kl/s). Karta w tle — rAF (gra stoi jak dawniej). Harness
+    // narzędzi z zegarem wirtualnym (window.__harness, tryb inny niż 'real') — bez limitu. Tło menu: setFrameLimit
+    // (strona w trybie off, pełnomocnik → worker w trybie worker). Okres ekranu w menu zbiera pętla wejścia (observe).
+    // Konsola: FrameLimiter (tryb, okres ekranu, stats.hist — odstępy w okresach ekranu), FrameLimiter.wake (budzik bez
+    // VSync: margines, sny, dopięcia kolejką).
+    const frameLimiter = new FrameLimiter();
+    window.FrameLimiter = frameLimiter;
+    const _limitWake = new MessageChannel();
+    const limitWake = frameLimiter.wake = { dueAt: 0, timerAt: 0, marginMs: 2, late: new Float64Array(32), sorted: new Float64Array(32), lateN: 0, sleeps: 0, spins: 0 };
+    function limitWakeStep() {
+      if (limitWake.dueAt > performance.now()) { limitWake.spins++; _limitWake.port2.postMessage(0); return; }
+      loop(performance.now());
+    }
+    function limitWakeTimer() {
+      const w = limitWake, late = performance.now() - w.timerAt;
+      w.late[w.lateN++ & 31] = late > 0 ? late : 0;
+      const n = Math.min(w.lateN, 32), s = w.sorted;
+      for (let i = 0; i < n; i++) {
+        const v = w.late[i];
+        let j = i - 1;
+        while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
+        s[j + 1] = v;
+      }
+      w.marginMs = Math.min(6, Math.max(1, s[Math.floor(0.9 * (n - 1))] + 0.5));
+      limitWakeStep();
+    }
+    _limitWake.port1.onmessage = limitWakeStep;
+    const limitTimeMode = () => frameLimiter.mode === 'time' && !document.hidden && !(window.__harness && window.__harness.clock?.mode !== 'real');
+    function scheduleLimitedLoop(waitMs) {
+      const t = performance.now(), w = limitWake;
+      w.dueAt = t + waitMs;
+      const sleep = Math.floor(waitMs - w.marginMs);
+      if (sleep >= 1) {
+        w.timerAt = t + sleep;
+        w.sleeps++;
+        setTimeout(limitWakeTimer, sleep);
+      } else _limitWake.port2.postMessage(0);
+    }
+    function frameLimitTick(now) {
+      const h = window.__harness;
+      if (h && h.clock?.mode !== 'real') return true;
+      if (frameLimiter.tick(now)) return true;
+      if (limitTimeMode()) scheduleLimitedLoop(frameLimiter.waitMs(now));
+      else requestAnimationFrame(loop);
+      return false;
+    }
+    // koniec klatki narysowanej (loop, także gałąź pauzy)
+    function nextLoopFrame() {
+      if (limitTimeMode()) scheduleLimitedLoop(frameLimiter.waitMs(performance.now()));
+      else requestAnimationFrame(loop);
+    }
+    // VSync tego uruchomienia (Electron: flagi procesu); w przeglądarce klatki taktuje ekran
+    const frameLimitVsync = () => !(hullfallApp && hullfallApp.vsync === false);
+    function applyFrameLimit() {
+      const fps = gfxFrameLimitFps(gfxSettings.frameLimit);
+      frameLimiter.setFps(fps);
+      frameLimiter.setVsync(frameLimitVsync());
+      menuBackdrop?.setFrameLimit?.(fps, frameLimitVsync());
+    }
+    // Notka w opcjach: czy częstotliwość monitora pasuje do limitu (równy takt) — z okresu rAF.
+    function updateFrameLimitUI() {
+      const lim = frameLimiter, hz = Math.round(lim.hz);
+      let text = '';
+      if (lim.fps > 0 && !frameLimitVsync()) text = 'Bez VSync limit odmierza zegar.';
+      else if (lim.fps > 0 && hz > 0) {
+        if (lim.mode === 'nth') text = `Monitor ${hz} Hz: gra rysuje co ${lim.every}. odświeżenie — równy takt.`;
+        else if (lim.mode === 'every') text = `Monitor ${hz} Hz nie jest szybszy niż limit — gra rysuje każdą klatkę.`;
+        else {
+          const even = [240, 144, 120, 60].filter((f) => f < hz * 1.03 && Math.abs(hz / f - Math.round(hz / f)) <= 0.03 * Math.round(hz / f));
+          text = `Monitor ${hz} Hz nie jest wielokrotnością ${Math.round(lim.fps)} — odstępy klatek nierówne (raz krótszy, raz dłuższy)`
+            + (even.length ? `; równy takt: ${even.join(' / ')}.` : '.');
+        }
+      }
+      document.querySelectorAll('[data-gfx-frame-limit-now]').forEach(el => { el.hidden = !text; el.textContent = text; });
     }
 
     // Gaz wybuchów i budżety efektów (na żywo). Pas asteroid powstaje na ekranie ładowania i woła to po starcie sam.
@@ -34743,6 +35425,10 @@
       Core3D.bloomQualityScale = gfxBloomScale(s.bloom);
       Core3D.setPerfToggles({ bloom: s.bloom !== 'off', heatHaze: s.heatHaze !== 'off' });
       applyGraphicsEffects();
+      // render w workerze: te same ustawienia na Core3D i modułach efektów workera (powyższe dotyczą modułów strony)
+      if (rwHost) rwHost.setGfx(gfxRenderRecord(s, scale));
+      // limit klatek: pętla gry strony i tło menu (strona albo worker)
+      applyFrameLimit();
     }
 
     function updateGraphicsUI() {
@@ -34792,6 +35478,7 @@
           + (auto.label ? ` (${auto.label}).` : '.');
       });
       updateDynResUI();
+      updateFrameLimitUI();
     }
 
     function setGraphicsSettings(next, save = true) {
@@ -34837,12 +35524,17 @@
     // Konsola / narzędzia: GraphicsQuality.set('low') albo .set({ renderScale: 0.67 }) — z zapisem;
     // .apply(…) — bez zapisu (pomiary A/B); .settings, .preset ('low' … 'ultra' | 'custom'); .auto — dobór przy
     // pierwszym uruchomieniu (co i dlaczego); .dynamic — stan rozdzielczości dynamicznej; .vsync — VSync tego
-    // uruchomienia i zapisany (Electron; w przeglądarce null).
+    // uruchomienia i zapisany (Electron; w przeglądarce null); .frameLimit — limit klatek (cel, tryb, okres ekranu).
     window.GraphicsQuality = {
       get settings() { return { ...gfxSettings }; },
       get preset() { return matchGfxPreset(gfxSettings); },
       get auto() { return gfxAutoInfo ? { ...gfxAutoInfo } : null; },
       get vsync() { return hullfallApp ? { running: hullfallApp.vsync, saved: gfxVsyncSaved, pending: gfxRestartNow().includes('vsync') } : null; },
+      get frameLimit() {
+        const l = frameLimiter;
+        return { fps: l.fps, mode: l.mode, every: l.every, hz: +l.hz.toFixed(2), vsync: l.vsync, opis: l.describe(),
+          klatki: l.stats.ticks, narysowane: l.stats.drawn, odstepyVsync: [...l.stats.hist] };
+      },
       get dynamic() {
         return { scale: dynResScale(), level: dynRes.level, levels: [...dynRes.levels], target: dynRes.target,
           emaMs: dynRes.ema > 0 ? +dynRes.ema.toFixed(2) : null, changes: dynRes.changes };

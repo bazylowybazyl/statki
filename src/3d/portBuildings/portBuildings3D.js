@@ -392,6 +392,27 @@ export class PortBuilding3D {
     return this._skinMats[key];
   }
 
+  /**
+   * Materiał PARTII skór ciał świata (src/3d/worldSkinBatch.js — odłamy skóry kawałka jednym obiektem renderu, odłam =
+   * rysunek pośredni ze slotem w firstInstance; wariant „skinBatch” /
+   * „skin3Batch” grafu): uniformy budowli jak `skinMaterial`, a do tego wybór flagi widoczności egzemplarza (uSkinFlag:
+   * zestaw bg / fg × połówka) i cięcie płaszczyzną gry (uSkinClip: bryła 3D — pod −1 / nad +1, z = 0; płaska — bez).
+   * half: 0 — skóra płaska albo połówka pod płaszczyzną (pass tła), 1 — połówka bryły nad płaszczyzną (FG).
+   */
+  skinBatchMaterial(set = 'bg', solid = false, half = 0) {
+    if (!this._skinBatchMats) this._skinBatchMats = {};
+    const h = solid && half ? 1 : 0;
+    const key = `${set}${solid ? '3' : ''}${h ? 'n' : ''}`;
+    if (!this._skinBatchMats[key]) {
+      const flag = (set === 'fg' ? 2 : 0) + h;
+      const mask = new THREE.Vector4(flag === 0 ? 1 : 0, flag === 1 ? 1 : 0, flag === 2 ? 1 : 0, flag === 3 ? 1 : 0);
+      const clip = new THREE.Vector2(solid ? (h ? 1 : -1) : 0, 0);
+      this._skinBatchMats[key] = this._material(`${solid ? 'PortBuildingSkin3Batch' : 'PortBuildingSkinBatch'}_${set}${solid ? (h ? '_nad' : '_pod') : ''}`,
+        solid ? this.graphs.skin3Batch : this.graphs.skinBatch, { ...this._common, uSkinFlag: { value: mask }, uSkinClip: { value: clip } });
+    }
+    return this._skinBatchMats[key];
+  }
+
   /** Warstwy gospodarza: BG pod statkami, FG nad nimi (dach też w FG). */
   setLayers(bgLayer = 1, fgLayer = 2) {
     for (const m of this.meshes.bg) m.layers.set(bgLayer);

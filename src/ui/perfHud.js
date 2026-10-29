@@ -11,6 +11,7 @@ const PERF_PANEL_HTML = `
   <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
   <div class="perf-row"><span class="perf-label">Frame p50 / p95</span><span class="perf-val" id="perfFramePercentiles">--</span></div>
   <div class="perf-row"><span class="perf-label">Obraz 3D (worker)</span><span class="perf-val" id="perfWorker3D">--</span></div>
+  <div class="perf-row" title="Opcje → Grafika → Limit klatek (src/render/frameLimiter.js): cel i takt — co N-ta klatka ekranu, akumulator przy innej częstotliwości, zegar bez VSync"><span class="perf-label">Limit klatek</span><span class="perf-val" id="perfFrameLimit">--</span></div>
   <div class="perf-row"><span class="perf-label">LOD kadłubów pełne/smugi</span><span class="perf-val" id="perfHexLod">--</span></div>
   <div class="perf-row"><span class="perf-label">Culling rys./odrzuc. (cienie)</span><span class="perf-val" id="perfCulling">--</span></div>
   <div class="perf-row"><span class="perf-label">AI cadence actual/target</span><span class="perf-val" id="perfAiCadence">--</span></div>
@@ -696,6 +697,7 @@ export const PerfHUD = {
       frameMs: document.getElementById('perfFrameTime'),
       framePercentiles: document.getElementById('perfFramePercentiles'),
       worker3D: document.getElementById('perfWorker3D'),
+      frameLimit: document.getElementById('perfFrameLimit'),
       hexLod: document.getElementById('perfHexLod'),
       culling: document.getElementById('perfCulling'),
       aiCadence: document.getElementById('perfAiCadence'),
@@ -1338,9 +1340,17 @@ export const PerfHUD = {
         const fps3d = dt > 0.2 ? Math.round((c - prev.c) / dt) : (this._w3dLast || 0);
         if (dt > 0.2) { prev.t = now; prev.c = c; this._w3dLast = fps3d; }
         const st = h.stats, age = h.pacing && h.pacer ? `wiek ${h.pacer.age}` : 'bez kolejki';
-        e.worker3D.textContent = `${fps3d} kl/s · ${age} · CPU ${(st[6] || 0).toFixed(1)} · GPU ${(st[0] || 0).toFixed(1)} ms`;
-        e.worker3D.style.color = (d.fpsReal > 0 && fps3d < d.fpsReal * 0.9) ? '#fd4' : '';
+        // GPU = passy render + listy compute (bloom, gaz, efekty) ze znaczników; kolejka = koniec zgłoszeń klatki →
+        // wykonanie na GPU (każda praca karty, także bez znaczników) — ponad ~2 klatki: karta nie nadąża
+        const queueMs = st[20] || 0;
+        e.worker3D.textContent = `${fps3d} kl/s · ${age} · CPU ${(st[6] || 0).toFixed(1)} · GPU ${(st[0] || 0).toFixed(1)}+${(st[1] || 0).toFixed(1)} · kolejka ${queueMs.toFixed(0)} ms`;
+        e.worker3D.style.color = queueMs > 50 ? '#f44' : (d.fpsReal > 0 && fps3d < d.fpsReal * 0.9) ? '#fd4' : '';
       } else e.worker3D.textContent = 'wyłączony';
+    }
+    if (e.frameLimit) {
+      // limit klatek (Opcje → Grafika, src/render/frameLimiter.js): cel i takt; nagłówek wyżej — klatki narysowane
+      const lim = window.FrameLimiter;
+      e.frameLimit.textContent = lim && typeof lim.describe === 'function' ? lim.describe() : '--';
     }
     if (e.framePercentiles) e.framePercentiles.textContent = `${d.frameP50.toFixed(1)} / ${d.frameP95.toFixed(1)} ms`;
     if (e.hexLod) {

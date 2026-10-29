@@ -10,7 +10,9 @@ import {
     computeStarParallaxFactor,
     pickStarParallaxLayer,
     starZoomCompensation,
-    advanceStarCamera
+    advanceStarCamera,
+    advanceStarCameraMid,
+    starClockDt
 } from './starParallax.js';
 import { resolveRingPlanetWorldRadius } from './ringScale.js';
 import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
@@ -44,6 +46,8 @@ import {
     createPlanetAtmosphereMaterial,
     createRingAtmosphereMaterial,
     createSunMaterial,
+    createSunCoronaMaterial,
+    SUN_CORONA,
     createJupiterSurfaceMaterial,
     createSaturnSurfaceMaterial
 } from './planet3d.assets.tsl.js';
@@ -80,7 +84,6 @@ function isSphereInFreeCamera(x, y, z, r) {
 // ortho przy ringu, w promieniu świata z ringScale.js. Jowisz od Z6 (2026-09-26).
 const RING_PLANET_NAMES = new Set(['earth', 'mars', 'jupiter']);
 const RING_PLANET_VISUAL_Z = 0;
-const SUN_SIZE_MULTIPLIER = 6.0;
 // The old tuning expanded the atmosphere shell to 121% of the planet radius.
 // At ring scale its transparent sphere edge became a visible dotted arc.
 const HALO_DEFAULTS = Object.freeze({ sizeMul: 0.985, coefMul: 1.08, coefAdd: 0.12, powerMul: 1.0, powerAdd: 1.5, sunMul: 1.0 });
@@ -498,6 +501,10 @@ const NebulaSystem = {
 const StarSystem = {
     mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250,
     starCam: { x: 0, y: 0, lx: NaN, ly: NaN },
+    // Niebo-sfera z nowym prawem tempa (SkySphere.midSphere): kamera warstwy mid na drodze nieba (advanceStarCameraMid)
+    starCamMid: { x: 0, y: 0, lx: NaN, ly: NaN },
+    _skyUpdatesSeen: -1,
+    _clock: { clockLast: 0, clockHas: false },   // zegar stron do sufitu kroku kamery gwiazd (starClockDt)
     init: function () {
         if (!Core3D.isInitialized) return;
         const positions = new Float32Array(this.count * 3); const sizes = new Float32Array(this.count);
@@ -535,6 +542,10 @@ const StarSystem = {
             thinningStrength: uniform(38.0), baseSizeMul: uniform(1.65),
             // Niebo-sfera (sky3D.js) zastępuje warstwę deep: jej gwiazdy zwinięte w wierzchołku (DECYZJE-2 N3)
             hideDeep: uniform(SkySphere.active ? 1.0 : 0.0),
+            // Nowe prawo tempa nieba (skyScroll.js, `?nieboTempo` ≠ stare): warstwa mid na drodze nieba z paralaksą
+            // STAR_MID_SPHERE (W0: niebo < mid) — przesunięcie wzoru `cameraOffsetMid` (advanceStarCameraMid)
+            midSphere: uniform(SkySphere.midSphere ? 1.0 : 0.0),
+            cameraOffsetMid: uniform(new THREE.Vector2(0, 0)),
             planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)), 'vec4')
         });
         const mat = createStarMaterial(this.uniforms);
@@ -561,8 +572,22 @@ const StarSystem = {
         const zoomComp = starZoomCompensation(gameCamera.zoom);
         this.uniforms.zoomComp.value = zoomComp;
         const speedCap = Number(WARP_STAR_CAMERA.speedCap) || 0;
-        advanceStarCamera(this.starCam, cx, cy, zoomComp, speedCap > 0 ? speedCap * Math.max(0, dt) : 0);
+        // sufit kroku z przyrostu zegara stron (worker pomija strony — dt jednej strony zwalniał warstwę speed N razy)
+        const stepDt = starClockDt(this._clock, RenderWorld.frameClock, dt);
+        const maxStep = speedCap > 0 ? speedCap * stepDt : 0;
+        advanceStarCamera(this.starCam, cx, cy, zoomComp, maxStep);
         this.uniforms.cameraOffset.value.set(this.starCam.x, -this.starCam.y);
+        if (SkySphere.midSphere) {
+            // Warstwa mid na drodze nieba (W0): ruch kamery względem okrętu prowadzącego + droga nieba tej klatki
+            // (SkySphere.update liczy ją wcześniej w tej samej klatce — NebulaSystem.update przed StarSystem.update).
+            // Droga nieba liczona raz na klatkę nieba — bez nowej klatki nieba (licznik `updates`) nie dokładamy jej drugi raz.
+            const sk = SkySphere.scroll;
+            const fresh = SkySphere.updates !== this._skyUpdatesSeen;
+            this._skyUpdatesSeen = SkySphere.updates;
+            advanceStarCameraMid(this.starCamMid, cx, cy, zoomComp, maxStep,
+                fresh ? sk.dispX : 0, fresh ? sk.dispY : 0, fresh ? sk.driveX : 0, fresh ? sk.driveY : 0, SkySphere.midMul);
+            this.uniforms.cameraOffsetMid.value.set(this.starCamMid.x, -this.starCamMid.y);
+        }
         this.uniforms.viewportSize.value.set(Core3D.width || RenderWorld.viewWidth || 1, Core3D.height || RenderWorld.viewHeight || 1);
         const planetMasks = this.uniforms.planetMasks?.value;
         if (Array.isArray(planetMasks) && planetMasks.length && RenderWorld.planets) {
@@ -1625,30 +1650,57 @@ function registerSmallBodiesWarmup() {
     });
 }
 
-// SŁOŃCE W SOCZEWCE ŚWIATA (DECYZJE M5, etap integracji 2026-10-26): rekord rodzaju 'sun' (worldLens.js: sizeBoost
-// `sunBoost` i kropka `minDot` — obsługuje mapa), rozstawienie jak planety tła (perspektywa passa planet, z = −60 000):
-// kula przesuwa się i skaluje w kadrze skoku, blask = bloom kuli HDR (skaluje się z nią). Światło, maska słońca i smugi
-// zostają z PRAWDZIWEGO słońca (kierunek oświetlenia gry).
-const SUN_Z = -60000;
+// SŁOŃCE. GIGANTYCZNE (2026-10-27, prośba użytkownika: „proporcjonalnie jest za małe”): kula w PŁASZCZYŹNIE GRY jak ciała
+// przy ringu i małe ciała — pass ring-planet (warstwa 6, ortho, bez paralaksy), promień tarczy = SUN.r
+// (SYSTEM_MAP_CONSTANTS.sunRadius: 200 tys. j. ≈ 5 × Ziemia z ringiem, 4 × Jowisz; dawniej kula r3D 399 × 6 w tle
+// z = −60 000 — mniejsza od Merkurego), szczyt pod płaszczyzną gry (SUN_TOP_Z), bieguny siatki na osi kamery — sylwetka z
+// góry = równik siatki (SUN_SEGMENTS.w odcinków: przy zoomie 1 strzałka łuku < 4 px, kąt załamania 0,7°). Korona
+// i płomienie — płaski pierścień nad kulą (graf 'sunCorona', ONE/ONE). Rozgrywka: studnia = tarcza × sunWellMul
+// (index.html: sunWellRadius); kolizji z tarczą nie ma (jak planety). Światło, maska słońca i smugi — z PRAWDZIWEGO
+// środka (kierunek oświetlenia gry), jak dawniej.
+// SOCZEWKA ŚWIATA (DECYZJE M5): rekord rodzaju 'sun' w płaszczyźnie gry (z = 0, skala prawdziwego widoku = zoom — jak małe
+// ciała), sizeBoost 1 (worldLens.js: sunBoost — słońce jest już ogromne).
+const SUN_TOP_Z = -400;            // [j.] szczyt kuli pod płaszczyzną gry (jak małe ciała)
+const SUN_MIN_CENTER_Z = -245000;  // [j.] kamera ortho (z = 150 000, far 400 000) widzi z ≥ −250 000 — równik kuli przed tym
+const SUN_SEGMENTS = Object.freeze({ w: 512, h: 160 });
+const SUN_SPIN = 3e-5;             // [rad/s] obrót tarczy wokół osi kamery (brzeg 200 tys. j. → 6 j./s)
+// Nastawy obrazu (uniformy materiałów — DevTools / harness w biegu): powierzchnia (SUN_SURFACE w grafie) i korona.
+const SUN_LOOK = Object.freeze({ brightness: 1.0, detail: 1.0, lanes: 1.0, limb: 1.0 });
+const SUN_CORONA_LOOK = Object.freeze({ brightness: 1.0, flames: 1.0, streamers: 1.0 });
+
+function sunDiscRadius(data) {
+    return Math.max(1000, Number(data?.r) || 0);
+}
+
 class DirectSun {
     constructor(data) {
-        this.data = data; this.group = new THREE.Group(); this.group.position.z = SUN_Z;
-        this.ambientLight = null; this.uniforms = { uTime: { value: 0.0 }, uIsOcclusion: { value: 0 } };
+        this.data = data; this.group = new THREE.Group();
+        this.ambientLight = null;
+        const L = SUN_LOOK;
+        const C = SUN_CORONA_LOOK;
+        this.uniforms = { uTime: { value: 0.0 }, uIsOcclusion: { value: 0 },
+            uSunLook: { value: new THREE.Vector4(L.brightness, L.detail, L.lanes, L.limb) } };
+        // ten sam zegar co kula (obiekt { value } wspólny)
+        this.coronaUniforms = { uTime: this.uniforms.uTime,
+            uCoronaLook: { value: new THREE.Vector4(C.brightness, SUN_CORONA.outer, C.flames, C.streamers) } };
+        this.mesh = null;
+        this.corona = null;
         this.lensBody = newLensBody('sun', 'sun');
         this._lensed = false;
         this.init();
     }
     init() {
         if (!Core3D.isInitialized) return;
-        // Kula z szumem fbm (HDR do 4,0 — bloom), graf w planet3d.assets.tsl.js.
-        const material = createSunMaterial(this.uniforms);
-        this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), material);
-        this.mesh.name = 'SunMesh'; // <---
-
-        // Dawny sprite blasku (assets/effects/glow.png — pliku nigdy nie było, 404: addytywny sprite
-        // bez tekstury nic nie dokładał) usunięty w zadaniu 24 portu; blask słońca = bloom kuli HDR.
-        this.group.add(this.mesh);
-        Core3D.scene.add(this.group); enablePlanetLayer(this.group);
+        // Kula: plazma wielu skal (HDR — bloom), graf w planet3d.assets.tsl.js. Bieguny na osi kamery (±Z).
+        const geometry = new THREE.SphereGeometry(1, SUN_SEGMENTS.w, SUN_SEGMENTS.h);
+        geometry.rotateX(Math.PI / 2);
+        this.mesh = new THREE.Mesh(geometry, createSunMaterial(this.uniforms));
+        this.mesh.name = 'SunMesh';
+        this.corona = new THREE.Mesh(new THREE.RingGeometry(SUN_CORONA.inner, SUN_CORONA.outer, SUN_SEGMENTS.w, 6),
+            createSunCoronaMaterial(this.coronaUniforms));
+        this.corona.name = 'SunCorona';
+        this.group.add(this.mesh, this.corona);
+        Core3D.scene.add(this.group); enableRingPlanetLayer(this.group);
 
         this.sunLight = new THREE.DirectionalLight(SUN_SHADOW_TUNE.color, SUN_SHADOW_TUNE.intensity);
         this.sunLight.castShadow = true; this.sunLight.shadow.camera.layers.enableAll(); this.sunLight.layers.enableAll();
@@ -1662,29 +1714,30 @@ class DirectSun {
         this.ambientLight = new THREE.AmbientLight(0xffffff, 0.02); this.ambientLight.layers.enableAll(); Core3D.scene.add(this.ambientLight);
     }
     update(dt, cam, lensOn = false) {
-        if (!cam) return;
-        if (this.uniforms) this.uniforms.uTime.value += dt;
-        const x = this.data.x; const y = -this.data.y;
-        this.group.position.set(x, y, SUN_Z);
+        if (!cam || !this.mesh) return;
+        this.uniforms.uTime.value += dt;
+        const gx = Number(this.data.x) || 0;
+        const gy = Number(this.data.y) || 0;
+        const x = gx; const y = -gy;
         if (this.sunLight) {
             const targetX = (typeof cam.x === 'number') ? cam.x : x; const targetY = (typeof cam.y === 'number') ? -cam.y : y;
             const dirX = x - targetX; const dirY = y - targetY; const len = Math.hypot(dirX, dirY) || 1;
             this.sunLight.position.set(targetX + (dirX / len) * 2600, targetY + (dirY / len) * 2600, 3000);
             if (this.sunTarget) { this.sunTarget.position.set(targetX, targetY, 0); this.sunTarget.updateMatrixWorld(); }
         }
-        const scale = (this.data.r3D || this.data.r || 200) * SUN_SIZE_MULTIPLIER;
-        if (lensOn) this._lensPrepare(scale);
-        else if (this._lensed) this._lensRestore();
-        this.mesh.scale.set(scale, scale, scale);
-        // Słońce nie ma cullingu w grze; flaga warstwy planet z promieniem poświaty bloomu
-        // (1,3× promienia — margines dawnego sprite'a blasku 2,6× skali), bez halo. W soczewce — _lensPlace.
-        if (!lensOn && typeof Core3D.markPlanetLayersActive === 'function'
-            && isBodyLikelyOnScreen(this.data.x, this.data.y, SUN_Z, scale * 1.3, false, cam)) {
-            Core3D.markPlanetLayersActive(false, false);
+        const R = sunDiscRadius(this.data);
+        this.mesh.rotation.z -= SUN_SPIN * dt;
+        if (lensOn) {
+            this._lensPrepare(gx, gy, R);
+        } else {
+            if (this._lensed) this._lensRestore();
+            this._place(gx, gy, R);
+            // Pass ring-planet ma pracę, gdy tarcza albo korona jest w kadrze. W soczewce — _lensPlace.
+            if (typeof Core3D.markPlanetLayersActive === 'function'
+                && isBodyLikelyOnScreen(gx, gy, 0, R * SUN_CORONA.outer, true, cam)) {
+                Core3D.markPlanetLayersActive(true, true);
+            }
         }
-        
-        // Zamiast pushGodRayWorld używamy uIsOcclusion, pushGodRayWorld wywoływane w core3d.js
-        this.mesh.rotation.z -= 0.002 * dt;
 
         if (this.sunLight && this.sunLight.castShadow) {
             const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
@@ -1704,37 +1757,45 @@ class DirectSun {
             shadowCam.updateProjectionMatrix(); this.sunLight.shadow.needsUpdate = true;
         }
     }
-    // Soczewka: rekord słońca (prawdziwy środek, promień kuli, skala prawdziwego widoku w głębokości SUN_Z).
-    _lensPrepare(scale) {
+    // Kula o promieniu s ze środkiem (x, y) gry: szczyt pod płaszczyzną (SUN_TOP_Z), równik przed dalekim brzegiem kamery
+    // ortho (SUN_MIN_CENTER_Z — obraz w soczewce większy od ~245 tys. j. wystaje szczytem ponad płaszczyznę: pass
+    // ring-planet rysuje się pod passem gry, więc niczego nie zasłania), korona tuż nad szczytem kuli.
+    _place(x, y, s) {
+        const zc = Math.max(SUN_TOP_Z - s, SUN_MIN_CENTER_Z);
+        this.group.position.set(x, -y, zc);
+        this.mesh.scale.set(s, s, s);
+        this.corona.scale.set(s, s, 1);
+        this.corona.position.z = s + 100;
+    }
+    // Soczewka: rekord słońca (prawdziwy środek, promień tarczy, płaszczyzna gry — skala prawdziwego widoku = zoom).
+    _lensPrepare(x, y, R) {
         const L = WARP_WORLD_LENS;
         const b = this.lensBody;
-        b.x = Number(this.data.x) || 0;
-        b.y = Number(this.data.y) || 0;
-        b.r = scale;
-        b.z = SUN_Z;
-        b.flat = L.focal / Math.max(1, L.camZ - SUN_Z);
+        b.x = x;
+        b.y = y;
+        b.r = R;
+        b.z = 0;
+        b.flat = L.zoom;
         b.gate = 1;
         b.ready = !!this.mesh;
     }
-    // Soczewka: kula w kadrze skoku (jak planety tła — j. świata na px w głębokości ciała), blask = bloom kuli.
+    // Soczewka: kula w kadrze skoku (jak małe ciała — j. świata na px w płaszczyźnie gry), z koroną.
     _lensPlace() {
         const L = WARP_WORLD_LENS;
         const b = this.lensBody;
         const o = b.out;
-        const fit = lensFitView(o, 1.3);
+        const fit = lensFitView(o, SUN_CORONA.outer);
         this._lensed = true;
         if (!this.mesh) return;
-        const lw = lensImageToWorld(L, o.x, o.y, b.z, false, _lensWorld);
-        const k = lw.k;
         if (fit.off) {
             if (this.group.visible) this.group.visible = false;
             return;
         }
         if (!this.group.visible) this.group.visible = true;
-        if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(false, false);
-        this.group.position.set(lw.x, -lw.y, b.z);
-        const s = Math.max(1e-3, fit.size * k);
-        this.mesh.scale.set(s, s, s);
+        if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(true, true);
+        const lw = lensImageToWorld(L, o.x, o.y, 0, true, _lensWorld);
+        const k = lw.k;
+        this._place(lw.x, lw.y, Math.max(1e-3, fit.size * k));
     }
     _lensRestore() {
         this._lensed = false;

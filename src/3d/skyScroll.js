@@ -4,50 +4,147 @@
 // stan obrotu trzyma wołający (NebulaSystem w planet3d.assets.js — tryb `off` na stronie, worker renderu u siebie;
 // te same wejścia z RenderWorld → ten sam obrót, parzystość off ≡ worker).
 //
-// Niebo to sfera w nieskończoności — warstwa „deep” gwiazd na sferze (krytyk § 1): obraz nieba przesuwa się na ekranie
-// z tym samym prawem co warstwy GameStars (src/3d/starParallax.js), tylko z paralaksą p nieba:
-//     tempo [px bufora/s] = min(v, vCap) · p · zoom      (zoom = px bufora na j. świata, Core3D.viewZoom)
+// PRAWO TEMPA (2026-10-27; użytkownik: „za słabo płynie tło, zbyt delikatnie”). Niebo to sfera w nieskończoności,
+// najwolniejsza warstwa głębi; jego obraz płynie na ekranie z prędkością DROGI NIEBA vN — prędkości statku ściśniętej
+// logarytmicznie powyżej kolana (walka liniowo, hipercruise i warp rozdzielone, bez sufitu):
+//     vN(v)  = v                          dla v ≤ knee (5000 j/s — cała walka i dopalacz)
+//            = knee · (1 + ln(v / knee))  powyżej (ciągła i gładka w kolanie): hipercruise 20 / 40 tys. → 11,9 / 15,4 tys.,
+//                                         warp 100 / 175 / 250 tys. → 20,0 / 22,8 / 24,6 tys.
+//     tempo [px bufora/s] = vN_wygł · p_ef · zoom           (zoom = px bufora na j. świata, Core3D.viewZoom)
+//     p_ef                = min(p, bgCap · camZ / (camZ + bgDepth)) · mnożnik   (p 0,1; mnożnik — `?nieboTempo=<liczba>`;
+//                           camZ = f / zoom — wysokość kamery perspektywy nad płaszczyzną gry, core3d.js syncCamera)
 //     ω [rad/s]           = tempo / f                      (f = px bufora na radian w środku kadru, FOV 35°)
-// v = droga STATKU w tej klatce / dt (nie kamery: kop warpa i wysunięcie riga nie szarpią nieba), vCap = limit kamery
-// gwiazd w warpie (warpNurt.js, STAR_SPEED_CAP 14 000 j/s — przy prędkości warpa paralaksa to szum). Oś obrotu =
-// z × kierunek ruchu w osiach SCENY (X = x gry, Y = −y gry), więc obraz nieba płynie przeciw ruchowi statku (jak
-// paralaksa), a obrót kadru (cam.roll — kurs w górę w skoku) obraca niebo razem ze światem. Skok położenia większy niż
-// cutMul · v · dt + cutPad (teleport, cięcie, odrodzenie) nie obraca nieba. Drogę okrętu liczy tropiciel
-// (`skyTrackStep` — cięcie per okręt), obrót — `skyScrollMove`; wołający może zmieszać drogi kilku okrętów (sky3D.js:
-// statek gracza i fregata zwiadu przy sterach, z wagą przejazdu kamery).
+// v = droga STATKU w tej klatce / dt (nie kamery: kop warpa i wysunięcie riga nie szarpią nieba); vN_wygł — vN
+// wygładzone w czasie klatek (stała `smoothTau` 0,15 s, czas z RenderWorld.frameClock): zryw prędkości (koniec rampy
+// wyjścia, zderzenie) zwalnia niebo w ~0,3 s zamiast w klatce. Klatka BEZ DROGI (pauza, `worldFrozen` — gra woła render
+// z dt > 0, a poza stoi) nie obraca nieba i nie rusza vN_wygł: niebo staje razem ze światem.
+// SUFIT GŁĘBI (W0 wobec ciał tła): niebo leży za planetami bez ringu (z = −50 000, planet3d.assets.js) — jego paralaksa
+// nie przekracza bgCap (0,75) × paralaksy tarczy planety camZ / (camZ + 50 000). Przy 16:9 w zoomie bojowym i w kadrze
+// skoku sufit nie działa (0,104 / 0,17 > 0,1); działa przy 32:9 w walce (p_ef 0,056 — kątowo tyle co 16:9) i po
+// przybliżeniu (16:9 od ×1,04 zoomu domyślnego): tempo nieba w px przestaje wtedy rosnąć z zoomem, jak tarcza planety
+// (dopalacz 1137 j/s: ~0,9–1 °/s przy każdym zbliżeniu; A/B bez sufitu — `?nieboSufit=0`).
+// Przy 1080p 16:9: walka 507 j/s — 10,8 px/s (0,36 °/s, 3,3× dawniej), hipercruise Mk I 140 px/s (4,7 °/s), warp Mk II
+// 267 px/s (8,9 °/s); skok Ziemia → Jowisz Mk II obraca niebo o ~110° (dawniej 23°). 32:9 1440p: walka 16 px/s
+// (0,40 °/s — sufit głębi), skok i warp ~1,9× 16:9 kątowo (zoom ∝ szerokość kadru).
+// Dawne prawo (min(v, 14 000) · 0,03 · zoom, bez wygładzenia) — SKY_SCROLL_STARE, A/B `?nieboTempo=stare`.
 //
-// HIERARCHIA WARSTW (DECYZJE-2 W0): na ekranie tempo rośnie z bliskością — niebo ≤ deep < mid < skały w warpie < speed / pył.
-// W trybie sfery niebo ZASTĘPUJE warstwę deep GameStars (gwiazdy deep chowa materiał gwiazd, niebo niesie własne gwiazdy),
-// więc p nieba (0,03) leży tuż nad dawnym zakresem deep (0,010–0,028) i wyraźnie pod mid (0,055–0,18). Tabela tempa:
-// `skyLayerSpeeds`, test kolejności: tests/skyScroll.test.mjs.
+// Oś obrotu = z × kierunek ruchu w osiach SCENY (X = x gry, Y = −y gry), więc obraz nieba płynie przeciw ruchowi
+// statku (jak paralaksa), a obrót kadru (cam.roll — kurs w górę w skoku) obraca niebo razem ze światem. Skok położenia
+// większy niż cutMul · v · dt + cutPad (teleport, cięcie, odrodzenie) nie obraca nieba (droga tej klatki = 0, niebo
+// biegnie wygładzoną prędkością). Drogę okrętu liczy tropiciel (`skyTrackStep` — cięcie per okręt), obrót —
+// `skyScrollMove`; wołający może zmieszać drogi kilku okrętów (sky3D.js: statek gracza i fregata zwiadu przy sterach,
+// z wagą przejazdu kamery).
+//
+// HIERARCHIA WARSTW (DECYZJE-2 W0): na ekranie tempo rośnie z bliskością — niebo < planety tła (sufit głębi); niebo <
+// mid < speed / pył (skał pasa w skoku nie ma — usunięte 2026-10-27, reguła `pas-asteroid`).
+// W trybie sfery niebo ZASTĘPUJE warstwę deep GameStars (gwiazdy deep chowa materiał gwiazd, niebo niesie własne
+// gwiazdy), a warstwa mid jedzie DROGĄ NIEBA (to samo vN_wygł, wejścia `driveX / driveY` stanu) z paralaksą
+// STAR_MID_SPHERE 0,13–0,26 (starParallax.js) — niebo < mid z zapasem ≥ 1,26× (1,3 × skala z = −250) w każdym trybie
+// i przejściu, o ile kamera nie cofa się względem statku (wtedy mid dostaje ten ruch, niebo nie — wyjątek W0
+// w WYPIEK-NIEBA.md § „Niebo-sfera — prawo tempa 2026-10-27”). Warstwa speed
+// zostaje na kamerze (sufit 14 tys. j/s w skoku — warpNurt.js): mid < speed, bo vN ≤ v, a w skoku 0,26 · vN ≤ 7,5 tys.
+// < 1,02 · 14 tys. Tabela tempa: `skyLayerSpeeds`, test kolejności: tests/skyScroll.test.mjs.
 //
 // Rzut w kamerze z góry: RÓWNOODLEGŁY (azymutalny) wokół środka kadru — piksel w odległości r od środka patrzy pod
 // kątem r / f od osi widoku. Przy 32:9 brzegi nie płyną 2,3× szybciej niż środek (rzut gnomoniczny), smugi i tempo są
 // równe w całym kadrze. Kamery 3D (free3d) rysują sferę zwykłą perspektywą.
-import { STAR_PARALLAX_LAYERS } from './starParallax.js';
+import { STAR_PARALLAX_LAYERS, STAR_MID_SPHERE } from './starParallax.js';
 
 const DEG = Math.PI / 180;
 
 export const SKY_SCROLL = Object.freeze({
-  p: 0.03,              // paralaksa nieba (warstwa deep na sferze; krytyk § 1)
-  vCap: 14000,          // [j/s] limit drogi na sekundę (jak kamera gwiazd w warpie — warpNurt.js STAR_SPEED_CAP)
+  p: 0.1,               // paralaksa nieba (× droga nieba vN)
+  knee: 5000,           // [j/s] kolano drogi nieba: do niego vN = v, wyżej logarytm (0 — dawny sufit vCap)
+  vCap: 0,              // [j/s] sufit drogi (tylko przy knee = 0 — dawne prawo)
+  smoothTau: 0.15,      // [s] wygładzenie vN (0 — bez: dawne prawo, kąt z drogi tej klatki)
+  // Straż W0 przy hamowaniu: vN_wygł ≤ w0Guard · min(v, starCap) / mnożnik mid (v — prędkość okrętu ze STANU, nie z drogi
+  // klatki). Warstwa speed jedzie z kamerą bez wygładzenia — przy twardym hamowaniu (koniec rampy wyjścia: 16,2 → 1,5 tys.
+  // j/s w 0,17 s) wygładzone niebo i mid (0,26 · vN) wyprzedzałyby najwolniejszą gwiazdę speed (1,02 · v); 3,5 =
+  // 1,02 / (0,26 · 1,1) — mid ≤ 0,89 × speed. Granica jest ciągła w v, więc tempo nieba zostaje ciągłe.
+  w0Guard: 3.5,
+  starCap: 14000,       // [j/s] sufit kamery gwiazd w skoku (warpNurt.js STAR_SPEED_CAP) — warstwa speed w tabeli W0
+  midLayer: STAR_MID_SPHERE,   // warstwa mid jedzie drogą nieba z tą paralaksą (null — dawna mid na kamerze gwiazd)
+  // Sufit głębi (W0 wobec ciał tła): paralaksa nieba ≤ bgCap · camZ / (camZ + bgDepth) — niebo wolniej niż tarcza
+  // planety bez ringu (planet3d.assets.js: visualZ −50 000; słońce −60 000 też wolniej: 0,75 · (camZ + 60 tys.) <
+  // camZ + 50 tys.). bgCap 0 — bez sufitu (dawne prawo: p 0,03 trzymało kolejność do zoomu ×5 przy 16:9).
+  bgCap: 0.75,
+  bgDepth: 50000,       // [j.] głębokość planet bez ringu pod płaszczyzną gry
+  starDepth: 250,       // [j.] głębokość warstw GameStars (StarSystem.layerZ) — skala ekranowa camZ / (camZ + 250)
   cutMul: 4,            // cięcie: przesunięcie > cutMul · max(v, v poprzedniej klatki) · dt + cutPad
   cutPad: 50,           // [j.]
   fovDeg: 35,           // FOV kamery z góry (core3d.js FLAT_PERSP_FOV) — f = (H/2) / tg(FOV/2)
-  // Drobne gwiazdy liczone na piksel gasną, gdy niebo płynie szybciej: pełne do fadeFromDeg, zero od fadeToDeg —
-  // PRĘDKOŚĆ KĄTOWA nieba [°/s], nie px/s: tempo w px rośnie z wysokością okna (zoom kamery ∝ wysokość CSS, f też), a
-  // kąt nie — próg jest ten sam przy 1080p, 1440p i 4K. 2 → 4 °/s = 60 → 120 px CSS/s przy 1080p (DECYZJE-2 N3).
-  // Hipercruise i warp: 1,65 °/s na każdym ekranie — drobne gwiazdy zostają.
-  fadeFromDeg: 2,
+  // Drobne gwiazdy liczone na piksel (σ_eff ≈ 0,58 px bufora) gasną, gdy obraz nieba przesuwa się o więcej niż
+  // fadeFromPx → fadeToPx PIKSELI BUFORA NA KLATKĘ (`fade: 'px'`). Drobnica NIESIE ruch tła (mgławica jest gładka), więc
+  // gaśnie dopiero przy skokach ≥ 6 px/kl. (~10 σ — rzadkie punkty skaczące co klatkę): 144 i 240 Hz — pełna w każdym
+  // trybie i kadrze (sufit planu Mk III przy 32:9 1440p i 144 Hz: 6,0 px/kl.); 60 Hz — pełna przy 16:9 1080p, przy 4K
+  // w warpie Mk II 0,52, przy 32:9 1440p w warpie Mk I / II 0,27 / 0,03. Próg 1,5 → 3,5 px/kl. (pierwsza wersja prawa)
+  // gasił ją w warpie przy 60 i 144 Hz, a przy 32:9 nawet przy 240 Hz — tam, gdzie tło ma płynąć. Dawny próg kątowy
+  // (2 → 4 °/s, `fade: 'deg'`) — tylko SKY_SCROLL_STARE.
+  fade: 'px',
+  fadeFromPx: 6,
+  fadeToPx: 12,
+  frameAlpha: 1 / 32,   // waga klatki w średniej okresu (po klatkach, nie po czasie — długa klatka nie przeważa)
+  frameMin: 1 / 480,    // [s] granice próbki okresu klatki (zacięcie nie gasi gwiazd jedną klatką)
+  frameMax: 1 / 15,
+  fadeFromDeg: 2,       // [°/s] dawny próg kątowy (fade: 'deg')
   fadeToDeg: 4,
-  // Wygładzenie udziału drobnych gwiazd [s] (stała czasu): krótki zryw tempa (koniec ślizgu wyjścia z warpa — statek
-  // ≥ 14 tys. j/s, a zoom wraca do bojowego: ~3 °/s przez ~0,4 s) przygasza je łagodnie, bez skoku.
+  // Wygładzenie udziału drobnych gwiazd [s] (stała czasu): krótki zryw tempa przygasza je łagodnie, bez skoku.
   fadeTau: 0.35,
-  // Smuga jasnych gwiazd nieba w skoku = smuga warstwy deep GameStars (stretchMul 0,22 × WARP_STARS.stretchPx 74 ≈ 16 px).
+  // Smuga jasnych gwiazd nieba w skoku i hipercruisie (× WARP_STARS.stretch): ruch obrazu nieba w czasie „ekspozycji”
+  // streakExposure [s] (vN_wygł · p_ef · zoom · T), najwyżej streakMaxCss px CSS, NAJMNIEJ dawna smuga warstwy deep
+  // (streakMul · stretchPx ≈ 16 px bufora) — w ładowaniu skoku statek stoi, a smuga rośnie z WARP_STARS.stretch
+  // („zapowiedź” skoku, BRIEF-warp). 1080p 16:9: hipercruise i warp 16 px (ruch 7 / 13 px), 1440p warp Mk II 18 px,
+  // 32:9 1440p 19 / 36 px. streakExposure 0 — sama dawna smuga.
+  streakExposure: 0.05,
+  streakMaxCss: 48,
   streakMul: 0.22,
   // Pamięć nieba: przelicz, gdy obraz przesunął się o ≥ tyle px bufora (jak NebulaSystem — SKY_CACHE_PX).
   cacheTolPx: 0.25
 });
+
+/**
+ * DAWNE PRAWO (2026-10-26, A/B `?nieboTempo=stare`): tempo = min(v, 14 000) · 0,03 · zoom, kąt z drogi tej klatki (bez
+ * wygładzenia), drobne gwiazdy gasną przy 2 → 4 °/s, smuga jasnych gwiazd 0,22 · stretchPx, warstwa mid GameStars na
+ * kamerze gwiazd (0,055–0,18).
+ */
+export const SKY_SCROLL_STARE = Object.freeze({
+  ...SKY_SCROLL, p: 0.03, knee: 0, vCap: 14000, smoothTau: 0, midLayer: null, fade: 'deg', streakExposure: 0, bgCap: 0
+});
+
+/** Nowe prawo bez sufitu głębi (A/B `?nieboSufit=0`): p 0,1 przy każdym zoomie i kadrze (32:9 — 2× 16:9 kątowo). */
+export const SKY_SCROLL_BEZ_SUFITU = Object.freeze({ ...SKY_SCROLL, bgCap: 0 });
+
+/**
+ * Prawo tempa z adresu strony (działa też w workerze — RenderWorld.pageSearch, jak `?niebo=plaska`):
+ * `?nieboTempo=stare` → { stare: true, mul: 1 } (SKY_SCROLL_STARE); `?nieboTempo=<liczba>` → mnożnik nowego tempa
+ * (0,05–10, np. 0.5, 2); brak / zła wartość → mul 1. `?nieboSufit=0` → sufit: false (nowe prawo bez sufitu głębi).
+ */
+export function skyTempoFrom(search) {
+  const str = String(search || '');
+  const m = /[?&]nieboTempo=([^&#]*)/i.exec(str);
+  let raw = m ? m[1] : '';
+  try { raw = decodeURIComponent(raw); } catch { /* zły zapis % — wartość jak jest */ }
+  raw = raw.trim().toLowerCase();
+  const sufit = !/[?&]nieboSufit=(0|nie|off|false)(?:[&#]|$)/i.test(str);
+  if (raw === 'stare') return { stare: true, mul: 1, sufit };
+  const n = raw ? Number(raw.replace(',', '.')) : NaN;
+  if (Number.isFinite(n) && n > 0) return { stare: false, mul: Math.min(10, Math.max(0.05, n)), sufit };
+  return { stare: false, mul: 1, sufit };
+}
+
+/** Strojenie prawa z wyniku skyTempoFrom. */
+export function skyTempoTune(tempo) {
+  if (tempo && tempo.stare) return SKY_SCROLL_STARE;
+  return tempo && tempo.sufit === false ? SKY_SCROLL_BEZ_SUFITU : SKY_SCROLL;
+}
+
+/**
+ * Mnożnik drogi warstwy mid (tryb sfery, nowe prawo): przy `?nieboTempo` > 1 mid przyspiesza z niebem (W0: niebo < mid),
+ * przy < 1 zostaje (niebo i tak wolniejsze).
+ */
+export function skyMidDriveMul(mul) {
+  return Math.max(1, Number(mul) || 1);
+}
 
 /** Px bufora na radian w środku kadru kamery z góry (wysokość bufora H). */
 export function skyFocalPx(bufferHeight, fovDeg = SKY_SCROLL.fovDeg) {
@@ -55,15 +152,39 @@ export function skyFocalPx(bufferHeight, fovDeg = SKY_SCROLL.fovDeg) {
   return (h * 0.5) / Math.tan(fovDeg * 0.5 * DEG);
 }
 
-/** Tempo obrazu nieba [px/s] dla prędkości v [j/s] przy zoomie [px/j.] (te same px co zoom). */
-export function skyScreenSpeed(v, zoom, tune = SKY_SCROLL) {
-  const vv = Math.min(Math.max(0, Number(v) || 0), tune.vCap);
-  return vv * tune.p * Math.max(0, Number(zoom) || 0);
+/** Droga nieba vN [j/s] dla prędkości v [j/s]: kolano z logarytmem (knee > 0) albo dawny sufit vCap. */
+export function skyDriveSpeed(v, tune = SKY_SCROLL) {
+  const vv = Math.max(0, Number(v) || 0);
+  const k = Number(tune.knee) || 0;
+  if (k > 0) return vv <= k ? vv : k * (1 + Math.log(vv / k));
+  return tune.vCap > 0 ? Math.min(vv, tune.vCap) : vv;
 }
 
 /**
- * Udział drobnych gwiazd liczonych na piksel przy prędkości kątowej nieba ω [rad/s] (1 → 0 między fadeFromDeg i
- * fadeToDeg °/s). ω = tempo [px] / f [px/rad] — to samo przy każdej rozdzielczości.
+ * Paralaksa nieba p_ef przy zoomie [px bufora/j.] i ogniskowej f [px bufora/rad]: p obcięte sufitem głębi
+ * bgCap · camZ / (camZ + bgDepth), camZ = f / zoom (niebo wolniej niż tarcza planety tła), razy mnożnik `?nieboTempo`
+ * (A/B mnoży całe prawo — przy mul > 1 niebo może wyprzedzić planety tła). Bez f (NaN) albo przy bgCap 0 — p · mul.
+ */
+export function skyParallax(zoom, f, tune = SKY_SCROLL, mul = 1) {
+  const m = Math.max(0, Number(mul) || 0);
+  const z = Number(zoom) || 0;
+  const ff = Number(f) || 0;
+  if (!(tune.bgCap > 0) || !(z > 0) || !(ff > 0)) return tune.p * m;
+  const camZ = ff / z;
+  return Math.min(tune.p, tune.bgCap * camZ / (camZ + tune.bgDepth)) * m;
+}
+
+/**
+ * Tempo obrazu nieba [px/s] w stanie ustalonym dla prędkości v [j/s] przy zoomie [px/j.] (te same px co zoom); f — px
+ * bufora na radian (skyFocalPx; bez niego bez sufitu głębi).
+ */
+export function skyScreenSpeed(v, zoom, tune = SKY_SCROLL, mul = 1, f = NaN) {
+  return skyDriveSpeed(v, tune) * skyParallax(zoom, f, tune, mul) * Math.max(0, Number(zoom) || 0);
+}
+
+/**
+ * Udział drobnych gwiazd przy prędkości kątowej nieba ω [rad/s] (1 → 0 między fadeFromDeg i fadeToDeg °/s) — dawny
+ * próg (`fade: 'deg'`, SKY_SCROLL_STARE).
  */
 export function skyFineStarsGain(omega, tune = SKY_SCROLL) {
   const s = (Number(omega) || 0) / DEG;
@@ -73,18 +194,44 @@ export function skyFineStarsGain(omega, tune = SKY_SCROLL) {
   return 1 - t * t * (3 - 2 * t);
 }
 
+/** Udział drobnych gwiazd przy przesuwie obrazu nieba pxFrame [px bufora / klatkę] (1 → 0 między fadeFromPx i fadeToPx). */
+export function skyFineStarsGainPx(pxFrame, tune = SKY_SCROLL) {
+  const s = Number(pxFrame) || 0;
+  if (s <= tune.fadeFromPx) return 1;
+  if (s >= tune.fadeToPx) return 0;
+  const t = (s - tune.fadeFromPx) / (tune.fadeToPx - tune.fadeFromPx);
+  return 1 - t * t * (3 - 2 * t);
+}
+
 /**
- * Krok wygładzonego udziału drobnych gwiazd (`s.fine`) ku `skyFineStarsGain(s.omega)` ze stałą czasu fadeTau; pauza
- * (dt = 0) — bez zmian. Zwraca s.fine.
+ * Krok wygładzonego udziału drobnych gwiazd (`s.fine`) ku progowi strojenia (`fade: 'px'` — przesuw na klatkę
+ * s.speedPx · wygładzony okres klatki, `'deg'` — prędkość kątowa s.omega) ze stałą czasu fadeTau; pauza (dt = 0) — bez
+ * zmian. Zwraca s.fine.
  */
 export function stepSkyFineGain(s, dt, tune = SKY_SCROLL) {
   const t = Number(dt) || 0;
   if (!(t > 0)) return s.fine;
-  const target = skyFineStarsGain(s.omega, tune);
+  const tc = Math.min(tune.frameMax, Math.max(tune.frameMin, t));
+  s.framePeriod += (tc - s.framePeriod) * tune.frameAlpha;
+  s.pxFrame = s.speedPx * s.framePeriod;
+  const target = tune.fade === 'px' ? skyFineStarsGainPx(s.pxFrame, tune) : skyFineStarsGain(s.omega, tune);
   const k = 1 - Math.exp(-t / Math.max(1e-6, tune.fadeTau));
   s.fine += (target - s.fine) * k;
   if (Math.abs(target - s.fine) < 1e-3) s.fine = target;
   return s.fine;
+}
+
+/**
+ * Długość smugi jasnych gwiazd nieba przy WARP_STARS.stretch = 1 [px bufora]: ruch obrazu nieba w czasie ekspozycji
+ * (speedPx · streakExposure, najwyżej streakMaxCss · pxScale), nie mniej niż dawna smuga warstwy deep GameStars
+ * streakMul · stretchPx (ładowanie skoku — statek stoi, smuga rośnie z WARP_STARS.stretch); przy streakExposure 0
+ * (dawne prawo) — sama dawna smuga.
+ */
+export function skyStarStreakPx(speedPx, pxScale = 1, stretchPx = 74, tune = SKY_SCROLL) {
+  const base = (Number(stretchPx) || 0) * tune.streakMul;
+  if (!(tune.streakExposure > 0)) return base;
+  const L = Math.max(0, Number(speedPx) || 0) * tune.streakExposure;
+  return Math.max(base, Math.min(L, tune.streakMaxCss * Math.max(1e-6, Number(pxScale) || 1)));
 }
 
 // ── kwaterniony (x, y, z, w) w tablicy, bez alokacji ───────────────────────────────────────────────────────
@@ -214,14 +361,24 @@ export function skyTrackStep(tr, x, y, v, dt, out, tune = SKY_SCROLL) {
   return d;
 }
 
-/** Nowy stan: q (świat ← niebo, x y z w), tropiciel drogi statku, tempo i udział drobnych gwiazd ostatniej klatki. */
+/** Nowy stan: q (świat ← niebo, x y z w), tropiciel drogi statku, droga nieba, tempo i udział drobnych gwiazd. */
 export function createSkyScroll(start = SKY_START) {
   const s = {
     q: new Float64Array(4),
     track: createSkyTrack(),   // droga statku (stepSkyScroll; sky3D.js — statek gracza)
+    vDrive: 0,        // wygładzona droga nieba vN [j/s] (skyDriveSpeed + smoothTau)
+    dirX: 0,          // kierunek ostatniej drogi (osie gry, y w dół) — niebo dobiega w nim przy postoju / cięciu
+    dirY: 0,
+    driveX: 0,        // droga nieba tej klatki [j., osie gry] = kierunek · vN_wygł · dt — warstwa mid GameStars (W0)
+    driveY: 0,
+    dispX: 0,         // surowa droga tej klatki [j.] (po cięciu i mieszaniu dróg) — mid odejmuje ją od ruchu kamery
+    dispY: 0,
     speedPx: 0,       // tempo obrazu nieba w tej klatce [px bufora/s]
     speedCss: 0,      // to samo w px CSS (narzędzia, raport W0)
-    omega: 0,         // prędkość kątowa nieba [rad/s] (gaśnięcie drobnych gwiazd — niezależne od rozdzielczości)
+    pEff: SKY_SCROLL.p,   // paralaksa nieba ostatniej klatki z ruchem (skyParallax — p · mnożnik z sufitem głębi)
+    omega: 0,         // prędkość kątowa nieba [rad/s]
+    framePeriod: 1 / 60,   // wygładzony okres rysowanej klatki [s] (stepSkyFineGain)
+    pxFrame: 0,       // przesuw obrazu nieba na klatkę [px bufora] (gaśnięcie drobnych gwiazd)
     fine: 1,          // wygładzony udział drobnych gwiazd (stepSkyFineGain)
     cuts: 0,          // licznik cięć (teleport)
     turned: 0         // suma kątów obrotu [rad] (narzędzia)
@@ -237,28 +394,66 @@ export function createSkyScroll(start = SKY_START) {
 export function resetSkyScroll(s, start = SKY_START) {
   skyStartQuat(s.q, start);
   s.track.has = false; s.track.lv = 0;
-  s.speedPx = 0; s.speedCss = 0; s.omega = 0; s.fine = 1; s.turned = 0;
+  s.vDrive = 0; s.dirX = 0; s.dirY = 0; s.driveX = 0; s.driveY = 0; s.dispX = 0; s.dispY = 0;
+  s.speedPx = 0; s.speedCss = 0; s.pEff = SKY_SCROLL.p; s.omega = 0; s.framePeriod = 1 / 60; s.pxFrame = 0; s.fine = 1;
+  s.turned = 0;
   return s;
 }
 
 /**
  * Obrót nieba o drogę (dx, dy) [j., osie gry] w czasie dt [s]: zoom — px bufora na j. świata (Core3D.viewZoom), f — px
- * bufora na radian (skyFocalPx), pxScale — px bufora na px CSS. Sufit drogi vCap · dt. Zwraca kąt obrotu [rad].
+ * bufora na radian (skyFocalPx), pxScale — px bufora na px CSS, mul — mnożnik tempa (`?nieboTempo`), hold — w tej klatce
+ * było cięcie (teleport): droga nieba trzyma wygładzoną prędkość zamiast spaść do zera; vNow — prędkość okrętu ze stanu
+ * [j/s] dla straży W0 (w0Guard; NaN — bez straży).
+ * Nowe prawo (smoothTau > 0): vN_wygł ← vN(d / dt) ze stałą smoothTau, kąt = vN_wygł · dt · p_ef · zoom / f w kierunku
+ * drogi (p_ef — skyParallax: p · mul z sufitem głębi; cięcie — w ostatnim kierunku). Dawne (smoothTau 0): kąt z drogi tej
+ * klatki, sufit vCap · dt.
+ * Pauza (dt = 0) i klatka BEZ DROGI bez cięcia (pauza i `worldFrozen` gry — render z dt > 0 przy stojącej pozie,
+ * pierwsza klatka tropiciela) — bez obrotu, vN_wygł bez zmian: niebo i mid stoją razem ze światem, a po ruszeniu
+ * wygładzenie idzie dalej od tej samej prędkości. Zwraca kąt obrotu [rad].
  */
-export function skyScrollMove(s, dx, dy, dt, zoom, f, pxScale = 1, tune = SKY_SCROLL) {
+export function skyScrollMove(s, dx, dy, dt, zoom, f, pxScale = 1, tune = SKY_SCROLL, mul = 1, hold = false, vNow = NaN) {
   const t = Number(dt) || 0;
+  s.dispX = 0; s.dispY = 0; s.driveX = 0; s.driveY = 0;
+  if (!(t > 0)) { s.speedPx = s.speedCss = s.omega = 0; return 0; }
   const d = Math.sqrt(dx * dx + dy * dy);
-  if (!(t > 0) || !(d > 0)) { s.speedPx = s.speedCss = s.omega = 0; return 0; }
-  const dc = Math.min(d, tune.vCap * t);
+  if (!(d > 0) && !hold) {
+    if (!(tune.smoothTau > 0)) s.vDrive = 0;
+    s.speedPx = s.speedCss = s.omega = 0;
+    return 0;
+  }
+  if (d > 0) { s.dispX = dx; s.dispY = dy; s.dirX = dx / d; s.dirY = dy / d; }
+  let dc;
+  if (tune.smoothTau > 0) {
+    const target = d > 0 ? skyDriveSpeed(d / t, tune) : (hold ? s.vDrive : 0);
+    s.vDrive += (target - s.vDrive) * (1 - Math.exp(-t / tune.smoothTau));
+    const vg = Number(vNow);
+    if (tune.w0Guard > 0 && Number.isFinite(vg)) {
+      const cap = tune.w0Guard * Math.min(Math.max(0, vg), tune.starCap) / (tune.midLayer ? skyMidDriveMul(mul) : 1);
+      if (s.vDrive > cap) s.vDrive = cap;
+    }
+    if (s.vDrive < 1e-3) s.vDrive = 0;
+    dc = s.vDrive * t;
+  } else {
+    if (!(d > 0)) dc = 0;
+    else if (tune.knee > 0) dc = skyDriveSpeed(d / t, tune) * t;
+    else dc = tune.vCap > 0 ? Math.min(d, tune.vCap * t) : d;
+    s.vDrive = dc / t;
+  }
+  if (!(dc > 0)) { s.speedPx = s.speedCss = s.omega = 0; return 0; }
+  s.driveX = s.dirX * dc;
+  s.driveY = s.dirY * dc;
   const z = Math.max(0, Number(zoom) || 0);
   const ff = Math.max(1e-6, Number(f) || 1);
-  const angle = dc * tune.p * z / ff;
-  s.speedPx = dc / t * tune.p * z;
+  const pe = skyParallax(z, ff, tune, mul);
+  s.pEff = pe;
+  const angle = dc * pe * z / ff;
+  s.speedPx = s.vDrive * pe * z;
   s.speedCss = s.speedPx / Math.max(1e-6, Number(pxScale) || 1);
   s.omega = angle / t;
   if (angle > 0) {
-    // oś = Z × m, m = kierunek ruchu w osiach sceny (dx, −dy) / d
-    qPremulAxisAngle(s.q, dy / d, dx / d, 0, angle);
+    // oś = Z × m, m = kierunek ruchu w osiach sceny (dirX, −dirY)
+    qPremulAxisAngle(s.q, s.dirY, s.dirX, 0, angle);
     qNormalize(s.q);
     s.turned += angle;
   }
@@ -269,12 +464,14 @@ const _dStep = new Float64Array(2);
 
 /**
  * Krok obrotu z drogi statku (tropiciel `s.track` + `skyScrollMove`). (x, y) — poza statku w świecie gry (y w dół),
- * v — prędkość statku [j/s], dt — czas klatki renderu [s], zoom, f, pxScale — jak w skyScrollMove. Zwraca kąt [rad].
+ * v — prędkość statku [j/s], dt — czas klatki renderu [s], zoom, f, pxScale, tune, mul — jak w skyScrollMove. Cięcie
+ * tropiciela w tej klatce → hold. Zwraca kąt [rad].
  */
-export function stepSkyScroll(s, x, y, v, dt, zoom, f, pxScale = 1, tune = SKY_SCROLL) {
+export function stepSkyScroll(s, x, y, v, dt, zoom, f, pxScale = 1, tune = SKY_SCROLL, mul = 1) {
+  const c0 = s.track.cuts;
   skyTrackStep(s.track, x, y, v, dt, _dStep, tune);
   s.cuts = s.track.cuts;
-  return skyScrollMove(s, _dStep[0], _dStep[1], dt, zoom, f, pxScale, tune);
+  return skyScrollMove(s, _dStep[0], _dStep[1], dt, zoom, f, pxScale, tune, mul, s.track.cuts !== c0, v);
 }
 
 const _qm = new Float64Array(9);
@@ -341,13 +538,26 @@ export function skyEquidistantPx(d, f, out) {
 // ── hierarchia warstw (W0) ─────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Tempo warstw na ekranie [px/s] przy prędkości v [j/s] i zoomie [px/j.] (kamera gwiazd z limitem vCap jak w warpie i
- * hipercruisie): niebo i zakresy warstw GameStars (deep / mid / speed — min, max). Warstwy GameStars leżą na z = −250
- * w kamerze perspektywy; skala ekranowa ≈ zoom (≤ 6 % mniej przy zoomie 0,45 — pomijalne w kolejności).
+ * Tempo warstw na ekranie [px/s] w STANIE USTALONYM przy prędkości v [j/s] i zoomie [px/j.]: niebo i zakresy warstw
+ * GameStars (deep / mid / speed — min, max). Warstwy na kamerze gwiazd jadą min(v, starCap) (w walce v < starCap, w skoku
+ * i hipercruisie sufit kamery gwiazd — warpNurt.js); w trybie sfery z nowym prawem (tune.midLayer) mid jedzie drogą nieba
+ * vN z paralaksą midLayer × skyMidDriveMul(mul), deep jest schowana (zostaje w tabeli dla porównania). f — px bufora na
+ * radian (skyFocalPx): z nim niebo ma sufit głębi (skyParallax), a warstwy GameStars (z = −250 w kamerze perspektywy)
+ * skalę ekranową camZ / (camZ + 250) (0,97 w zoomie bojowym 16:9, 0,94 przy 32:9 i zoomie 0,45); bez f — bez obu.
+ * Przejścia (wygładzenie vN) — tests/skyScroll.test.mjs liczy klatka po klatce na stanie skyScrollMove.
  */
-export function skyLayerSpeeds(v, zoom, tune = SKY_SCROLL) {
-  const vv = Math.min(Math.max(0, Number(v) || 0), tune.vCap);
-  const out = { sky: skyScreenSpeed(v, zoom, tune) };
-  for (const L of STAR_PARALLAX_LAYERS) out[L.name] = [vv * L.parallaxMin * zoom, vv * L.parallaxMax * zoom];
+export function skyLayerSpeeds(v, zoom, tune = SKY_SCROLL, mul = 1, f = NaN) {
+  const z = Math.max(0, Number(zoom) || 0);
+  const ff = Number(f) || 0;
+  const camZ = ff > 0 && z > 0 ? ff / z : Infinity;
+  const ks = Number.isFinite(camZ) ? camZ / (camZ + tune.starDepth) : 1;
+  const vv = Math.min(Math.max(0, Number(v) || 0), tune.starCap);
+  const drive = skyDriveSpeed(v, tune);
+  const out = { sky: drive * skyParallax(z, f, tune, mul) * z };
+  for (const L of STAR_PARALLAX_LAYERS) out[L.name] = [vv * L.parallaxMin * z * ks, vv * L.parallaxMax * z * ks];
+  if (tune.midLayer) {
+    const m = skyMidDriveMul(mul);
+    out.mid = [drive * tune.midLayer.parallaxMin * z * m * ks, drive * tune.midLayer.parallaxMax * z * m * ks];
+  }
   return out;
 }

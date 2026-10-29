@@ -384,3 +384,17 @@ Pomiary (ziarno 7, godzina rozgrzewki: zapas TN 24 fregaty / 10 niszczycieli / 5
 - Prawdziwa gra (kampania od menu, tryb `off`): hala pełna (27 encji, żadna na C-01) od odsłonięcia dachu w intro, przez
   odprawę (świat stoi) do odcumowania; Atlas bez ruchu po odmrożeniu świata; `PortCargo.playerDoor` = 0 przy
   `berth-hold` C-01; 0 błędów konsoli.
+
+## Rajder przez płytę ringu Ziemi (2026-10-28)
+
+Znalezione przy E16 (inny przebieg świata: ziarno 7, Wenus ×4 w `MARKET_DOCK_OVERRIDES` — tylko do odtworzenia):
+test `materializedFlight` „żadna encja w płycie ringu” — 11 klatek. Rajder piratów (kurs `raid`, lot konwencjonalny
+Gniazdo Hildy → Mimas) leciał w bańce przez płytę ringu Ziemi ~43 tys. j. od środka. Przyczyna: `routeAround`
+objeżdżał dyski budowli doków przy obu końcach (kryjówka, port Saturna), a router ringu dostawał tylko ostatni
+odcinek (od objazdu przy celu) — odcinek między objazdami (4,3 mln j.) szedł prostą mijającą środek Ziemi o ~30 tys. j.
+
+Poprawka: `pushDiscDetour` dopisuje zejście na łuk objazdu przez `routeRing` z punktu bieżącego — każdy wolny odcinek
+ścieżki omija ringi (bez ringu po drodze ten sam punkt, ścieżki bit w bit). Test regresji `raidPastRingSection`
+(prawdziwa geometria świata, ten kurs materializowany przy Ziemi): bez poprawki 21 klatek w płycie, najbliżej 29 tys. j.
+od środka; z poprawką 0, rajder mija Ziemię 64,3 tys. j. od środka (za dyskiem objazdu). Odtworzenie ze zgłoszenia:
+11 → 0 klatek. Symulacja ziarna 7 identyczna.

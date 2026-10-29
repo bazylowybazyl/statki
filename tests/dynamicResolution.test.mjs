@@ -137,8 +137,10 @@ test('klej: krok w pętli gry, resize tylko przy zmianie stopnia, opcja w panelu
   const html = src('index.html');
   const loop = html.indexOf('function loop(now) {');
   const call = html.indexOf('stepDynamicResolution(now);', loop);
-  const firstReturn = html.indexOf('return;', loop);
-  assert.ok(loop > 0 && call > loop && call < firstReturn, 'krok przed gałęzią pauzy (render trwa też w pauzie)');
+  // pierwszy `return;` pętli to klatka pominięta przez limit klatek (bez rysunku — bez nowej próbki GPU)
+  const limit = html.indexOf('if (!frameLimitTick(now)) return;', loop);
+  const pause = html.indexOf('if (PAUSED || StoryGame.worldFrozen) {', loop);
+  assert.ok(loop > 0 && limit > loop && call > limit && call < pause, 'krok po limicie klatek, przed gałęzią pauzy (render trwa też w pauzie)');
   assert.match(html, /if \(dynRes\.changed && Core3D\.renderScale !== scale\) \{\s*Core3D\.setRenderScale\(scale\);/);
   for (const v of ['off', '60', '120']) assert.ok(html.includes(`data-gfx-dyn-res="${v}"`), `chip ${v}`);
   const core = src('src/3d/core3d.js');

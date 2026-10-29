@@ -307,8 +307,8 @@ test('HUD (E4) i kropki (E2): ta sama oś — warpLensHudBeta / warpLensFrontBet
   const html = read('index.html');
   assert.match(html, /_hudLensAlpha = warpLensOverlayAllowed\(\) \? 1 - warpLensHudBeta\(s\) : 1;/);
   assert.match(html, /if \(_hudLensAlpha < 0\.999\) ctx\.globalAlpha \*= _hudLensAlpha;\s*ContactMarkers\.draw\(/);
-  assert.match(html, /if \(hudLensA < 0\.999\) ctx\.globalAlpha \*= hudLensA;\s*if \(hudLensWorld\) InfrastructureUI\.drawInstances\(ctx, cam\);\s*drawPlanetLabels\(ctx, cam\);/);
-  // absolutna alfa w rysunku (liny, zaznaczenie, ikony infrastruktury) — chowane od progu kropki (D1)
+  assert.match(html, /if \(hudLensA < 0\.999\) ctx\.globalAlpha \*= hudLensA;\s*drawPlanetLabels\(ctx, cam\);/);
+  // absolutna alfa w rysunku (liny, zaznaczenie) — chowane od progu kropki (D1)
   assert.match(html, /function warpLensHudWorld\(\) \{ return _hudLensAlpha > 1 - WARP_LENS_DOT_SWAP; \}/);
   assert.match(html, /if \(hudLensWorld\) drawTowRopes\(ctx, cam\);/);
   assert.match(html, /if \(hudLensWorld\) \{\s*ctx\.save\(\);\s*if \(hudLensA < 0\.999\) ctx\.globalAlpha \*= hudLensA;\s*drawSelectionOverlay\(/);

@@ -7,7 +7,7 @@ import {
   createTrafficBubble, syncTrafficBubble, setTrafficBubbleTime, trafficActorPoseAt, trafficBulletHit,
   segmentHitsActor, damageTrafficActor, trafficRamContact, trafficRamDamage, trafficBerthStates,
   createPortBerthIndex, playerBerthHolds, stepPlayerBerthHolds, markTrafficActorPromoted, releaseTrafficPromotion,
-  trafficContactTime, destroyTrafficActor, trafficRamFallbackDamage, trafficRectContact
+  trafficContactTime, destroyTrafficActor, trafficRamFallbackDamage, trafficRectContact, noteTrafficReturn, trafficReturnPose
 } from '../src/game/trafficBubble.js';
 import {
   ACTOR_STRIDE, ACTOR_FIELD, ACTOR_PHASES, ACTOR_FLAG
@@ -252,6 +252,28 @@ test('awans do NPC: trafienie gracza zgłasza encję (hak onHit), awansowana nie
   br.actors.seq++;
   syncTrafficBubble(tb, 10.3);
   assert.ok(tb.byId.has(21), 'po powrocie do bańki encja znów jest');
+});
+
+test('powrót NPC do bańki (E17): proxy w pozie NPC do pierwszego bufora z encją, najwyżej returnHold', () => {
+  const br = fakeBridge([{ id: 31, x: 0, y: 0, phase: 'docked' }], 10);
+  const tb = createTrafficBubble(br);
+  syncTrafficBubble(tb, 10);
+  const a = tb.byId.get(31);
+  markTrafficActorPromoted(tb, a);
+  releaseTrafficPromotion(tb, 31, false);
+  noteTrafficReturn(tb, 31, 'container_ship', 120, -40, 0.5, 10);
+  // Encji jeszcze nie ma (worker odpowie kolejnym buforem) — obraz bierze pozę NPC.
+  assert.deepEqual(trafficReturnPose(tb, 31, 10.2), tb.returning.get(31));
+  assert.equal(trafficReturnPose(tb, 31, 10.2).x, 120);
+  br.actors.seq++;
+  syncTrafficBubble(tb, 10.3);
+  assert.ok(tb.byId.has(31));
+  assert.equal(trafficReturnPose(tb, 31, 10.3), null, 'encja wróciła — rysuje się sama');
+  assert.equal(tb.returning.size, 0);
+  // Encja nie wraca (postój na innym slocie, kurs poza bańką) — proxy znika po returnHold.
+  noteTrafficReturn(tb, 77, 'tanker', 0, 0, 0, 10);
+  assert.ok(trafficReturnPose(tb, 77, 10 + tb.tune.returnHold - 0.01));
+  assert.equal(trafficReturnPose(tb, 77, 10 + tb.tune.returnHold + 0.01), null);
 });
 
 test('czas do kontaktu kadłuba gracza z obrysem encji (awans przed taranem)', () => {

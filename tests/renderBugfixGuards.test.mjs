@@ -20,7 +20,8 @@ test('drawNPCPretty: rekurencja tylko gdy powstał kadłub, porażka = ponowna p
 });
 
 test('pauza: rakiety nie są aktualizowane (lot, trafienia, obrażenia)', () => {
-  const paused = indexHtml.match(/if \(PAUSED(?: \|\| StoryGame\.worldFrozen)?\) \{[\s\S]*?requestAnimationFrame\(loop\);\s*return;\s*\}/)?.[0] || '';
+  // koniec gałęzi pauzy: następna klatka przez nextLoopFrame (limit klatek, 2026-10-29) albo dawne rAF
+  const paused = indexHtml.match(/if \(PAUSED(?: \|\| StoryGame\.worldFrozen)?\) \{[\s\S]*?(?:requestAnimationFrame\(loop\)|nextLoopFrame\(\));[^\n]*\s*return;\s*\}/)?.[0] || '';
   assert.ok(paused.length > 0);
   assert.doesNotMatch(paused, /rocketSystem3D\.update\(/);
 });

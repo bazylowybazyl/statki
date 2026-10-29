@@ -17,7 +17,7 @@ import {
   WARP_SLOW_FLOOR, warpSpeedFactor, WARP_FLYBY_DEFAULTS, warpFlybySlowdown, planWarpCruise, simulateWarpLeg, warpTripTuneFor,
   warpLegTimeline, warpExitRampTime, warpExitRampDistance, planWarpEmergency, WARP_EMERGENCY, warpMoonReach, warpFlybyFactor
 } from '../src/game/warpDrive.js';
-import { moonsOf } from '../src/data/systemMap.js';
+import { moonsOf, sunWellRadius } from '../src/data/systemMap.js';
 import { TRAVEL_TUNE, planTravelLeg, wellExitPoint, travelApproachPoint, segmentCrossesCircle } from '../src/game/travelNav.js';
 import { WARP_DRIVES, HYPERCRUISE_TUNE } from '../src/data/driveModes.js';
 import { RADAR_PLANET_NAMES } from '../src/ui/radar/radarConfig.js';
@@ -52,7 +52,7 @@ function world(extra = {}) {
   const sc = {
     planets: [EARTH, MARS, JUPITER], window: { smallBodies: [CERES] },
     planetOrbitRadii: (p) => p.zone, formatPlanetOrbitLabel: (p) => p.label,
-    SUN, mercMission: null, pirateOrbitRadii: () => ({ inner: 4 * 42253, outer: 6 * 42253, gravityWell: 7 * 42253 }),
+    SUN, sunWellRadius, mercMission: null, pirateOrbitRadii: () => ({ inner: 4 * 42253, outer: 6 * 42253, gravityWell: 7 * 42253 }),
     _playerTravelWells: [], haloWorld: null, haloRingKey: () => '', RADAR_PLANET_NAMES,
     ship: { pos: { x: 0, y: 0 }, w: 1800, h: 806, radius: 0 },
     ...extra
@@ -138,7 +138,8 @@ test('pkt 1: studnie gracza — planety, małe ciała, słońce (noWarpStart, j�
   assert.ok(a.every((x) => x.rFree === 0), 'bez świata ringów — wnętrza ringu nie ma');
   assert.equal(a[0].r, 55752);
   assert.equal(a[0].rIn, 46752, 'jądro = strefa orbit (ring + 3000)');
-  assert.equal(a[4].r, 823 * 2, 'słońce: strefa sun');
+  assert.equal(a[4].r, sunWellRadius(SUN), 'słońce: strefa sun (tarcza × sunWellMul)');
+  assert.equal(a[4].rIn, SUN.r, 'słońce: jądro = tarcza');
   assert.equal(w.playerTravelWells(), a, 'ta sama tablica (bez alokacji w kroku TRAVEL TO)');
   // studnia, w której stoi punkt — najgłębsza, z drogą do brzegu
   const s = w.playerWarpStartWell(at(EARTH, 53402));
@@ -146,7 +147,7 @@ test('pkt 1: studnie gracza — planety, małe ciała, słońce (noWarpStart, j�
   assert.ok(near(s.out, 55752 - 53402, 1e-6));
   assert.equal(w.playerWarpStartWell(at(EARTH, 55800)), null, 'za brzegiem — wolno');
   assert.equal(w.playerWarpStartWell(at(CERES, 15000)).body, CERES);
-  assert.equal(w.playerWarpStartWell({ x: SUN.x + 1000, y: SUN.y }).body, SUN);
+  assert.equal(w.playerWarpStartWell({ x: SUN.x + (SUN.r + sunWellRadius(SUN)) / 2, y: SUN.y }).body, SUN);
   assert.equal(w.playerWarpStartWell({ x: 1e6 + 1000, y: 1e6 }), null, 'studnia bazy piratów — start jak dawniej');
 });
 
@@ -184,7 +185,8 @@ test('pkt 1: CapsLock / 9 / pad / UI w studni — odmowa z nazwą ciała i drog�
   const ce = keyWorld(at(CERES, 5000));
   ce.attemptWarp();
   assert.match(ce.messages[0], /ODLEĆ OD: CERES · 15 KM DO BRZEGU/);
-  const sun = keyWorld({ x: SUN.x, y: SUN.y + 1200 });
+  // w pasie studni słońca (między tarczą — jądrem — a brzegiem studni sunWellRadius)
+  const sun = keyWorld({ x: SUN.x, y: SUN.y + (SUN.r + sunWellRadius(SUN)) / 2 });
   sun.attemptWarp();
   assert.match(sun.messages[0], /ODLEĆ OD: SŁOŃCE · 1 KM DO BRZEGU/, 'słońce — ta sama zasada (przyjęte w BRIEF-ie)');
   // poza studnią — zwykły wybór skoku i ładowanie
@@ -283,7 +285,7 @@ test('pkt 3: TRAVEL TO Ziemia → Jowisz z Marsem na kursie — prosto nad Marse
   const b = { x: SUN.x + 5e5, y: SUN.y - 200 };
   const det = r.planCruiseRoute(a, b);
   assert.ok(det.length > 1, 'objazd słońca');
-  for (const p of det) assert.ok(Math.hypot(p.x - SUN.x, p.y - SUN.y) > 823 * 2 + 1100);
+  for (const p of det) assert.ok(Math.hypot(p.x - SUN.x, p.y - SUN.y) > sunWellRadius(SUN) + 1100);
 });
 
 test('pkt 3: wyjście ze studni startu (wellExitPoint) — prosto ku celowi; przez jądro albo z jądra promieniowo; wymuszony kierunek; próg odcinka', () => {
@@ -495,7 +497,7 @@ test('pkt 3 (recenzja obrazu D3): skok awaryjny — prawdziwe warpEmergencyWells
   const em = planWarpEmergency(pos, 1, 0, wells, null);
   assert.equal(em.cut, 'well');
   assert.equal(em.well.label, 'SŁOŃCE');
-  assert.ok(near(em.dist, 3e5 - 1646 - WARP_EMERGENCY.wellMargin, 1e-6), 'słońce skraca skok (koniec z rampą przed strefą)');
+  assert.ok(near(em.dist, 3e5 - sunWellRadius(sc.SUN) - WARP_EMERGENCY.wellMargin, 1e-6), 'słońce skraca skok (koniec z rampą przed strefą)');
   assert.ok(em.dist > PLANET.x + PLANET.zone.gravityWell, 'skok przelatuje nad Marsem (jego studnia nie skraca)');
   // z bazą piratów (misja 1) — też studnia hamująca
   sc.mercMission = { station: { x: 2e6, y: 0 } };

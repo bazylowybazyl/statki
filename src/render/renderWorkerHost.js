@@ -115,7 +115,7 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       // stały wiek obrazu: do kolejki, gdy pętla gry taktuje (`present` w ostatnich 100 ms czasu rzeczywistego) — inaczej
       // (tło menu, klatka zero spod kurtyny, harness narzędzi, karta w tle) złożenie od razu, jak dawniej
       if (pacingLive()) {
-        pacer.arrived(m.k);
+        pacer.arrived(m.k, realNow());
         host._qK.push(m.k);
         host._qB.push(m.bmp);
         armIdleFlush();
@@ -224,6 +224,8 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       setActive(on) { on = !!on; if (on === bd._active) return; bd._active = on; post({ op: 'active', on }); },
       setPointer(x, y) { post({ op: 'pointer', x, y }); },
       setFocus(k) { post({ op: 'focus', k }); },
+      // limit klatek z opcji grafiki — pętla tła w workerze (MenuBackdrop3D.setFrameLimit)
+      setFrameLimit(fps, vsync = true) { post({ op: 'frameLimit', fps: Number(fps) || 0, vsync: vsync !== false }); },
       launch(o = {}) { post({ op: 'launch', dolly: o.dolly !== false }); },
       cameraPose() { return bd._pose; },
       onReady(fn) { if (typeof fn !== 'function') return; if (bd.ready) fn(); else bd._cbs.push(fn); },
@@ -484,6 +486,16 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   }
 
   host.readStats = () => retReadStats(ret, host.stats);
+  // Ustawienia obrazu z opcji grafiki (gfxRenderRecord, src/game/graphicsQuality.js) — worker stosuje je na SWOIM Core3D
+  // i modułach efektów (dawniej dochodziły tylko skala i MSAA przy starcie). Tylko przy zmianie treści.
+  host._gfxKey = '';
+  host.setGfx = (rec) => {
+    if (!rec) return;
+    const key = JSON.stringify(rec);
+    if (key === host._gfxKey) return;
+    host._gfxKey = key;
+    worker.postMessage({ type: 'gfx', gfx: rec });
+  };
   host.stop = () => {
     dropQueue();
     worker.terminate();

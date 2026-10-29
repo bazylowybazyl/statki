@@ -86,9 +86,10 @@
   #yard-preset option { background: #101b24; }
   /* paleta */
   #yard-pal { position: absolute; left: 12px; top: 12px; bottom: 12px; width: 318px; display: flex; flex-direction: column; overflow: hidden; }
-  #yard-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 8px 8px 0; }
+  #yard-tabs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; padding: 8px 6px 0; }
   .ytab { background: none; border: 0; border-radius: 12px 12px 4px 4px; padding: 8px 2px 7px; color: var(--y-muted) !important; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px !important; position: relative; transition: color .15s, background .15s; }
   .ytab svg { width: 22px; height: 22px; }
+  .ytab span { font-size: 10.5px; letter-spacing: -.01em; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .ytab:hover { color: var(--y-ink) !important; background: #ffffff08; }
   .ytab.on { color: var(--y-acc) !important; background: #ffb54a12; }
   .ytab.on::after { content: ""; position: absolute; left: 22%; right: 22%; bottom: 0; height: 3px; border-radius: 3px; background: var(--y-acc); box-shadow: 0 0 10px var(--y-acc); }
@@ -104,7 +105,7 @@
   .yswatch.on { border-color: #fff; box-shadow: 0 0 0 2px var(--y-acc); }
   .ycolor { width: 28px; height: 26px; padding: 0; border: 0; background: none; cursor: pointer; }
   .ytext { width: 100%; margin-bottom: 6px; background: #ffffff0b; color: var(--y-ink); border: 1px solid var(--y-line); border-radius: 8px; padding: 5px 8px; font: inherit; }
-  .yslider { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 6px; font-size: 12px; color: var(--y-muted); margin-bottom: 4px; }
+  .yslider { display: grid; grid-template-columns: 104px 1fr; align-items: center; gap: 6px; font-size: 12px; color: var(--y-muted); margin-bottom: 4px; }
   .yslider input { width: 100%; accent-color: var(--y-acc); }
   #yard-cards { flex: 1; overflow-y: auto; padding: 4px 10px 14px; scrollbar-width: thin; scrollbar-color: #ffffff22 transparent; }
   .ygroup { color: var(--y-muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; margin: 12px 2px 7px; display: flex; align-items: center; gap: 8px; }
@@ -127,6 +128,11 @@
   .yname { width: 100%; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--y-ink); font: 600 15px "Segoe UI", system-ui, sans-serif; padding: 3px 6px; margin: -3px -6px 6px; }
   .yname:hover, .yname:focus { border-color: var(--y-line); background: #ffffff08; outline: none; }
   .yclass { display: flex; align-items: center; gap: 11px; margin-bottom: 8px; }
+  /* rola okrętu: wojskowy / cywilny */
+  .yrole { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; margin: 0 0 9px; border-radius: 999px; background: #ffffff0b; border: 1px solid var(--y-line); }
+  .yrole button { border: 0; border-radius: 999px; background: none; padding: 3px 8px; font-size: 12px !important; color: var(--y-muted) !important; transition: background .15s, color .15s; }
+  .yrole button:hover:not(.on) { color: var(--y-ink) !important; }
+  .yrole button.on { background: #ffb54a26; color: #ffe2b8 !important; box-shadow: inset 0 0 0 1px var(--y-acc); }
   .yclass b { display: block; font-size: 14px; }
   .yclass small { display: block; color: var(--y-muted); font-size: 11px; }
   .yroman { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; font: 700 16px "Segoe UI", system-ui, sans-serif; color: #1c1205;
@@ -179,14 +185,17 @@
   /* nowy kadłub */
   #yard-new-dlg { position: absolute; inset: 0; display: grid; place-items: center; background: #02060acc; border: 0; border-radius: 0; box-shadow: none; z-index: 5; }
   #yard-new-dlg[hidden] { display: none; }
-  .ydlg { width: min(720px, calc(100vw - 40px)); padding: 22px 24px; border-radius: 20px; background: linear-gradient(180deg, #13212c, #0c151d); border: 1px solid var(--y-line); box-shadow: 0 30px 80px #000c; }
+  .ydlg { width: min(900px, calc(100vw - 40px)); padding: 22px 24px; border-radius: 20px; background: linear-gradient(180deg, #13212c, #0c151d); border: 1px solid var(--y-line); box-shadow: 0 30px 80px #000c; }
   .ydlg h2 { margin: 0 0 4px; font-size: 19px; letter-spacing: .06em; }
   .ydlg p { margin: 0 0 16px; color: var(--y-muted); }
-  .ydlg-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .ydlg-grid button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 14px; border-radius: 14px; background: radial-gradient(120% 120% at 20% 0%, #24384a, #121d27); border: 1px solid #ffffff14; text-align: left; transition: transform .12s, border-color .12s; }
+  .ydlg h3 { margin: 12px 0 7px; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--y-muted); }
+  .ydlg-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .ydlg-grid button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 11px; border-radius: 14px; background: radial-gradient(120% 120% at 20% 0%, #24384a, #121d27); border: 1px solid #ffffff14; text-align: left; transition: transform .12s, border-color .12s; }
   .ydlg-grid button:hover { transform: translateY(-2px); border-color: var(--y-acc); }
   .ydlg-grid b { font-size: 22px; color: var(--y-acc); }
-  .ydlg-grid span { font-size: 14px; font-weight: 600; }
+  .ydlg-grid span { font-size: 13px; font-weight: 600; line-height: 1.2; }
+  .ydlg-grid.civil button { background: radial-gradient(120% 120% at 20% 0%, #2c3a33, #121d1c); }
+  .ydlg-grid.civil b { color: #e9c26a; }
   .ydlg-grid small, .ydlg-grid i { color: var(--y-muted); font-size: 11.5px; font-style: normal; }
   .ydlg-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
   .ydlg-foot button { background: #ffffff0d; border: 1px solid var(--y-line); border-radius: 999px; padding: 6px 16px; }
@@ -311,6 +320,7 @@
     <button id="lvl-3">mostek<kbd>4</kbd></button>
   </div>
   <div class="row"><select id="sel-module"></select></div>
+  <div class="row" id="modvar-row" style="display:none" title="Wariant ładowni i zbiornika ładunku (zaznaczony moduł albo nowe z narzędzia M)"><select id="sel-modv"></select><select id="sel-modn"></select></div>
   <div class="row"><select id="sel-part"></select></div>
   <div class="row"><select id="sel-emblem"></select><input id="inp-color" type="color" value="#d06a22"></div>
   <div class="row"><input id="inp-text" type="text" value="HF-07" maxlength="16"></div>

@@ -31,20 +31,19 @@ import {
 } from '../src/game/cameraRig.js';
 import { rolledHalfExtents } from '../src/3d/viewRoll.js';
 import { createWarpShakeState, stepWarpShakes } from '../src/game/warpShakes.js';
-import { buildSystemMap } from '../src/data/systemMap.js';
+import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from '../src/data/systemMap.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../src/data/asteroidTypes.js';
 import { DEFAULT_PLANET_SCALE } from '../src/config/constants.js';
 import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
 import { World, loadHullAssets } from './mostki-webgpu/swiat.js';
 // Reszta świata jak w grze (2026-10-19, user: „a co z resztą świata? asteroidy, ringi”): ringi „Halo” Ziemi, Marsa
-// i Jowisza (świat ringów gry + obraz HaloRingGame) i pas asteroid (świat pasa gry + obraz AsteroidBelt).
+// i Jowisza (świat ringów gry + obraz HaloRingGame) i pas asteroid (świat pasa gry + obraz AsteroidBelt; w skoku pas
+// nie jest rysowany — skały skoku usunięte 2026-10-27, jak w grze).
 import { HaloRingWorld } from '../src/game/haloRingWorld.js';
 import { HaloRingGame } from '../src/3d/haloRing/haloRingGame.js';
 import { computeHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
 import { createBeltWorld } from '../src/game/beltWorld.js';
 import { createAsteroidBelt } from '../src/3d/asteroids/asteroidBelt.js';
-import { WARP_DEBRIS_LOOKS, WARP_DEBRIS_LOOK_DEFAULT } from '../src/3d/asteroids/warpDebris.js';
-import { setWarpDeflector } from '../src/3d/asteroids/warpDeflector.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
@@ -109,17 +108,11 @@ const S = {
   // Zoom w skoku (Z): stały — kadr skoku liczony od domyślnego zoomu statku, nie od zoomu gracza (stepCameraRigWarp:
   // zoomRef); 'gracz' — oddalenie × zoom gracza (dawniej).
   warpZoom: params.get('zoomSkoku') === 'gracz' ? 'gracz' : 'staly',
-  // Skały pasa w skoku (B): wygląd WARP_DEBRIS_LOOKS (warpDebris.js) — „ślad światła” (bryła + osobny ślad, domyślny),
-  // „bryła” (bez śladu), dawne „ślad” / „klin” do A/B; uniformy materiału skał i partii śladów (jak `?smugi=` gry).
-  debrisLook: WARP_DEBRIS_LOOKS[params.get('smugi')] ? params.get('smugi') : WARP_DEBRIS_LOOK_DEFAULT,
-  // Deflektor skoku (G): pole przed dziobem rozpycha skały (warpDeflector.js; w grze `?deflektor=0` wyłącza).
-  deflector: params.get('deflektor') !== '0',
   // Lot swobodny (F): W/S ciąg, A/D obrót, Shift dopalacz, CapsLock / 9 — warp (jak w grze: przełącznik).
   free: false,
   keys: { w: false, s: false, a: false, d: false, shift: false }
 };
 setWarpMedium(S.medium);
-setWarpDeflector(S.deflector);
 
 // Automat warpa — pola jak `warp` gry (index.html): czytają je WarpNurt, dysze (engineVfxSystem) i rig kamery.
 const warp = {
@@ -138,9 +131,9 @@ const flyBodies = [];      // { planet, x, y, r } — ciała zwolnienia (bez sta
 let nFly = 0;
 const _rampSample = { speed: 0, phase: 'done', tb: 0 };
 
-// Słońce jak w grze (index.html: SUN — środek świata 12 mln j.).
+// Słońce jak w grze (index.html: SUN — środek świata 12 mln j., tarcza SYSTEM_MAP_CONSTANTS.sunRadius).
 const SUN = {
-  x: 6_000_000, y: 6_000_000, r: 823, r3D: 399,
+  x: 6_000_000, y: 6_000_000, r: SYSTEM_MAP_CONSTANTS.sunRadius,
   color: { core: '#ffe88a', mid: '#ffbe3b', rim: '#ff8c1a' },
   corona: { rays: 72, jitter: 0.35, length: 0.85, pulse: 0.22, haze: 2.8 },
   seed: 93731
@@ -780,10 +773,10 @@ function updateHud() {
   lines.push(`wyjście    ${S.momentum ? `<span class="good">z pędem ${S.dropK}× (${(S.dropK * ATLAS.maxSpeed).toFixed(0)} j/s)</span>` : 'do zatrzymania'}`);
   lines.push(`kamera     ${CAM_ROLL_LABELS[S.camRoll]} · obrót ${Math.round(rig.roll * 180 / Math.PI)}° · zoom ${cam.zoom.toFixed(3)} (${S.warpZoom === 'staly' ? 'w skoku stały' : 'w skoku × zoom gracza'})`);
   lines.push(`ośrodek    ${S.medium ? 'A/B włączony' : 'wyłączony (jak w grze)'} · ${st.awake ? 'aktywny' : 'śpi'} · fale ${st.waves ?? 0} · bańki ${st.bubbles ?? 0}`);
-  const ds = asteroidBelt?.warpDebris?.stats;
-  if (ds && ds.rocks > 0) {
-    lines.push(`skały      ${S.debrisLook} · ${ds.rocks} (pasma ${ds.bands.join(' / ')}) · przepływ ${(ds.speed / 1000).toFixed(1)} tys. j/s (q ${ds.q.toFixed(2)}) · ślady ${ds.trails}`);
-    lines.push(`deflektor  ${S.deflector ? `siła ${(asteroidBelt.warpDebris.deflector.strength).toFixed(2)} · odepchnięte ${ds.pushed} · łuki ${ds.glints} · fale ${ds.ripples}` : 'wyłączony (G)'}`);
+  // Pas asteroid: w skoku nie jest rysowany (decyzja użytkownika 2026-10-27) — pole gaśnie z β soczewki i wraca po skoku.
+  const bs = asteroidBelt?.stats;
+  if (bs && (bs.active || bs.warpMode || bs.fade < 1)) {
+    lines.push(`pas        ${bs.warpMode ? 'w skoku — nie rysowany' : `pole · udział ${bs.fade.toFixed(2)} · skał ${bs.rocks.reduce((a, n) => a + n, 0)}`}`);
   }
   $('hud').innerHTML = lines.join('\n');
 }
@@ -796,8 +789,6 @@ function syncPanel() {
   $('btn-stop').classList.toggle('on', !S.momentum);
   for (const b of document.querySelectorAll('#camroll button')) b.classList.toggle('on', b.dataset.roll === S.camRoll);
   for (const b of document.querySelectorAll('#warpzoom button')) b.classList.toggle('on', b.dataset.zoom === S.warpZoom);
-  for (const b of document.querySelectorAll('#debris button')) b.classList.toggle('on', b.dataset.look === S.debrisLook);
-  $('btn-deflektor')?.classList.toggle('on', S.deflector);
   $('btn-pause').classList.toggle('on', S.paused);
   $('btn-slow').classList.toggle('on', S.timeScale !== 1);
   $('pedK').value = String(S.dropK);
@@ -828,19 +819,6 @@ function setWarpZoom(mode) {
   syncPanel();
   return true;
 }
-function setDeflector(on) {
-  S.deflector = !!on;
-  setWarpDeflector(S.deflector);
-  syncPanel();
-  return S.deflector;
-}
-function setDebrisLook(name) {
-  if (!WARP_DEBRIS_LOOKS[name]) return false;
-  S.debrisLook = name;
-  asteroidBelt?.warpDebris?.setLook(name);
-  syncPanel();
-  return true;
-}
 function setRoute(key) {
   if (!ROUTES[key]) return false;
   S.route = key;
@@ -855,8 +833,6 @@ const ACTIONS = {
   momentum: () => setMomentum(!S.momentum),
   camRoll: () => setCamRoll(CAMERA_WARP_ROLL_MODES[(CAMERA_WARP_ROLL_MODES.indexOf(S.camRoll) + 1) % CAMERA_WARP_ROLL_MODES.length]),
   warpZoom: () => setWarpZoom(S.warpZoom === 'staly' ? 'gracz' : 'staly'),
-  debrisLook: () => { const keys = Object.keys(WARP_DEBRIS_LOOKS); setDebrisLook(keys[(keys.indexOf(S.debrisLook) + 1) % keys.length]); },
-  deflector: () => setDeflector(!S.deflector),
   jowisz: () => setRoute('jowisz'), mars: () => setRoute('mars'),
   free: () => setFree(!S.free),
   warp: () => toggleFreeWarp(),
@@ -871,8 +847,6 @@ function bindPanel() {
   for (const b of document.querySelectorAll('#routes button')) b.addEventListener('click', () => setRoute(b.dataset.trasa));
   for (const b of document.querySelectorAll('#camroll button')) b.addEventListener('click', () => setCamRoll(b.dataset.roll));
   for (const b of document.querySelectorAll('#warpzoom button')) b.addEventListener('click', () => setWarpZoom(b.dataset.zoom));
-  for (const b of document.querySelectorAll('#debris button')) b.addEventListener('click', () => setDebrisLook(b.dataset.look));
-  $('btn-deflektor')?.addEventListener('click', ACTIONS.deflector);
   $('btn-ped').addEventListener('click', () => setMomentum(true));
   $('btn-stop').addEventListener('click', () => setMomentum(false));
   $('pedK').addEventListener('input', (e) => { S.dropK = Number(e.target.value) || 3; S.momentum = true; syncPanel(); });
@@ -897,7 +871,7 @@ function bindInput() {
     if (e.repeat) return;
     const k = e.key.toLowerCase();
     const map = {
-      o: 'medium', p: 'momentum', k: 'camRoll', z: 'warpZoom', b: 'debrisLook', g: 'deflector', j: 'jowisz', m: 'mars', f: 'free',
+      o: 'medium', p: 'momentum', k: 'camRoll', z: 'warpZoom', j: 'jowisz', m: 'mars', f: 'free',
       capslock: 'warp', 9: 'warp', ' ': 'jump', escape: 'pause', t: 'slow', h: 'clean'
     };
     const a = map[k];
@@ -932,7 +906,7 @@ function loop(now) {
 window.__warpPed = {
   ready: false, S, warp, trip,
   get atlas() { return atlas; },
-  setMedium, setMomentum, setRoute, setFree, setCamRoll, setWarpZoom, setDebrisLook, setDeflector, toggleFreeWarp, restart: () => restartTrip(), act: (k) => ACTIONS[k]?.(),
+  setMedium, setMomentum, setRoute, setFree, setCamRoll, setWarpZoom, toggleFreeWarp, restart: () => restartTrip(), act: (k) => ACTIONS[k]?.(),
   get roll() { return rig.roll; },
   /** Lot swobodny z harnessu: klawisze trzymane (w, s, a, d, shift). */
   keys(state) { Object.assign(S.keys, state || {}); return { ...S.keys }; },
@@ -996,7 +970,6 @@ window.__warpPed = {
     window.__asteroidBelt = asteroidBelt;
     await beltWorld.precompute(() => {});
     await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
-    asteroidBelt.warpDebris?.setLook(S.debrisLook);
     const rings = ['earth', 'mars', 'jupiter'].map((k) => haloRings.showcaseRing(k)).filter(Boolean);
     let ringsReady = false;
     Promise.all(rings.map((r) => Promise.resolve(r.ready))).then(() => { ringsReady = true; }, () => { ringsReady = true; });

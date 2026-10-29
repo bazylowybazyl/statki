@@ -48,7 +48,11 @@ export const GFX_SETTINGS = Object.freeze({
   // VSync: 'on' — klatki w takcie odświeżania ekranu, 'off' — bez limitu klatek. Tylko gra w Electronie (flagi
   // Chromium przy starcie procesu — electron/main.js, plik Dokumenty\HULLFALL\uruchomienie.json przez preload;
   // tam też źródło wyboru); w przeglądarce VSync ustawia przeglądarka. Preferencja poza presetami.
-  vsync: { values: ['on', 'off'], def: 'on', preset: false, restart: true }
+  vsync: { values: ['on', 'off'], def: 'on', preset: false, restart: true },
+  // Limit klatek (src/render/frameLimiter.js): pętla gry i tło menu rysują najwyżej tyle klatek na sekundę — przy
+  // ekranie 240 Hz limit 120 to ~połowa pracy karty (ciszej, mniej prądu). 'off' — tyle, ile ekran (z VSync) albo
+  // karta (bez VSync). Na żywo, preferencja poza presetami.
+  frameLimit: { values: ['off', '240', '144', '120', '60'], def: 'off', preset: false }
 });
 
 /**
@@ -69,6 +73,21 @@ export function gfxRestartPending(settings, running) {
 export function gfxDynamicTargetFps(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+// Limit klatek [kl/s] (0 = bez limitu) — FrameLimiter.setFps.
+export function gfxFrameLimitFps(value) {
+  const n = Number(normalizeGfxValue('frameLimit', value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Nadpisanie limitu klatek z adresu (?limitKlatek=120|0|off) — na tę sesję bez zapisu (narzędzia, pomiary); null — brak. */
+export function gfxFrameLimitFromQuery(search) {
+  let q = null;
+  try { q = new URLSearchParams(String(search || '')).get('limitKlatek'); } catch { q = null; }
+  if (q == null || q === '') return null;
+  const s = String(q).toLowerCase();
+  return s === '0' || s === 'off' || s === 'brak' ? 'off' : normalizeGfxValue('frameLimit', s);
 }
 
 // Dobór presetu przy pierwszym uruchomieniu (src/game/graphicsAutoPreset.js): co wybrano i dlaczego — informacja
@@ -126,6 +145,28 @@ export const GFX_EFFECTS = Object.freeze({
 
 // Skala bloomu (Core3D.bloomResolutionScale) i włącznik (perfToggles.bloom).
 export function gfxBloomScale(level) { return level === 'half' ? 0.5 : 1; }
+
+/**
+ * Ustawienia OBRAZU dla renderu w workerze (2026-10-28): worker ma własne Core3D i moduły efektów, a
+ * `applyGraphicsSettings` strony ustawia tylko moduły strony — do workera szły jedynie skala i MSAA przy starcie, więc
+ * w trybie domyślnym worker zawsze liczył bloom pełny, gaz wybuchów i efekty „Wysokie”, smugi cieni domyślne Core3D.
+ * Zwykły obiekt (structured clone): Core3D (skala renderu — z rozdzielczością dynamiczną, bloom, gorące powietrze,
+ * smugi cieni), lakier, oświetlenie kadłubów, pył hal K-7 (`HALL_DUST_TUNE.enabled` — symulację liczy worker),
+ * `GFX_EXPLOSIONS` (→ `EXPLOSION_TUNE`) i pola `GFX_EFFECTS` czytane przez moduły renderu. Stosuje `render.worker.js` (wiadomość `gfx`).
+ */
+export function gfxRenderRecord(settings, renderScale) {
+  const s = normalizeGfx(settings);
+  const ex = GFX_EXPLOSIONS[s.explosions] || GFX_EXPLOSIONS.high;
+  const fx = GFX_EFFECTS[s.effects] || GFX_EFFECTS.high;
+  return {
+    renderScale: Number.isFinite(renderScale) && renderScale > 0 ? renderScale : s.renderScale,
+    bloom: s.bloom !== 'off', bloomScale: gfxBloomScale(s.bloom), heatHaze: s.heatHaze !== 'off',
+    shadowShafts: s.shadowShafts, lacquer: s.lacquer !== 'off', hullLight: s.hullLight, hallDust: s.hallDust !== 'off',
+    explosions: { ...ex },
+    effects: { sideJetLights: fx.sideJetLights, sideJetGasPx: fx.sideJetGasPx, weaponMuzzles: fx.weaponMuzzles,
+      weaponImpacts: fx.weaponImpacts, beltLitShips: fx.beltLitShips, beltShadowShips: fx.beltShadowShips, warpParticles: fx.warpParticles }
+  };
+}
 
 /** Wartość dozwolona dla ustawienia `key` (liczby — najbliższa z listy), inaczej domyślna. */
 export function normalizeGfxValue(key, value) {

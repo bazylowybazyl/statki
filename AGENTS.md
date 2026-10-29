@@ -54,28 +54,34 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Moduł renderu potrzebuje stanu gry → getter w `RenderWorld` (`src/render/renderWorld.js`), nie `window.<zmienna>`; kanwy i obrazy przez `src/3d/canvas2d.js`, praca w tle i klatka przez `src/3d/harmonogram.js`.
 - Rzecz rysowana przy obcym okręcie po stronie gry → poza z `bridgeRenderPose` (interpolowana), nie `npc.x / y`.
 - Obiekt na warstwach planet (3), halo (5), ring-planet (6) albo tarcz (7) → zgłaszaj co klatkę (`Core3D.markPlanetLayersActive` / `setShieldLayerActive`), inaczej pass się pominie.
+- Rysunek do celu sceny (`composerTarget`) w haku passa albo odczyt jego tekstury przed postem → reguła `core3d` („Czyszczenie w passie”): cel czyści pierwszy render passa, a MSAA rozwiązuje tylko ostatni pass sceny renderu.
 - Pozycje świata (5–10 mln j.) nie trafiają do shadera we float32: duży offset w `mesh.position` (three składa `modelViewMatrix` w double), dane względem niego (`sceneOriginNearCamera`), w grafie `modelViewMatrix` — nie `positionWorld` ani ręczne `cameraViewMatrix.mul(modelWorldMatrix)`; pozycje w pulach CPU — `Float64Array`.
 - Układ gra → scena / silnik belek: `X = x`, `Y = −y`, `θ = −(kąt + obrót sprite'a)`; kotwica statku = środek sprite'a.
 - Materiał oświetlany słońcem w płaszczyźnie gry → człon słońca × `sunVisibility()`, otoczenie × `sunFill(vis)` (`src/3d/sunShadowMask.js`); powierzchnia w passie gry z zapisem głębi → hak ośrodka pasa `hullVolume`.
-- Rzecz rysowana przy kadłubie (efekt, światło, model) gaśnie z maskowaniem (`cloakVisAtWorld` / `entityCloakVisAt`); rzecz przypięta do sprite'a okrętu (lampa, emiter) → zestaw mocowań `createHullMountSet` / `bindHullMount` / `refreshHullMountSet` (gaśnie z komórką kadłuba pod sobą).
+- Rzecz rysowana przy kadłubie (efekt, światło, model) gaśnie z maskowaniem (`cloakVisAtWorld` / `entityCloakVisAt`); rzecz przypięta do sprite'a okrętu (lampa, emiter) → zestaw mocowań `createHullMountSet` / `bindHullMount` / `refreshHullMountSet` (gaśnie z komórką kadłuba pod sobą). Emiter warstwy FG przy rzeczy stojącej w hali K-7 / zatoce → `RoofCover.covers(x, y)` (`src/3d/roofCover.js`: zamknięty dach zasłania kadłub, billboardów FG nie).
+- Zmiana fragmentu skóry kadłuba (`hullFragmentNode`, `hexShips3D.tsl.js`) zmienia też proxy statków ruchu (`hullProxyFragmentNode`) — nowe pole per kadłub = też pole instancji proxy (reguła `ruch-banka`, „Obraz”).
 - Nowa rzecz świata w 3D (budowla, obiekt przy ciele, encja z własnym obrazem) → w skoku gracza przez rejestr kotwic soczewki (`WARP_LENS_ANCHORS` — przypięta do ciała, `warpLensExtraBody` — z własnym miejscem; reguła `warp`, „REJESTR KOTWIC SOCZEWKI”), rysowana pod statkiem (z ≤ −400 albo tło), ukryta mgłą wojny; inaczej w skoku zostaje na prawdziwym miejscu i mija kadr w jednej klatce.
+- Animacja w module renderu (efekt, odłamki, migotanie, czas materiału) → czas klatki `Core3D.frameNowMs()` (znacznik rAF klatki strony; w workerze z migawki), nie `performance.now()` w chwili rysowania — ten idzie po fizyce i efekty szarpią co krok względem kadłubów.
+- Moduł renderu z CZASEM GRY od strony (krok symulacji, ruch cząstek, zanik) → przyrost zegara strony od ostatniej PRZETWORZONEJ strony (`SimClock` / zegar w wejściu — wzór `warpFxDt`, gaz: `SPACE_GAS_IN.renderTime`), nie dt jednej strony: worker pomija strony i ich czas przepadał; symulacja w krokach fizyki — numer kroku z całkowitego licznika (`physicsTickId` + `PHYS_HZ`, gaz: `SPACE_GAS_IN.physTick`), nie `floor` z sumy `SimClock.sim` (suma 1/60 dryfuje — po ~2 h krok o jeden za mało), obraz w chwili `SimClock.render` (reguła `gaz-przestrzeni`).
 - Emiter ma świecić → luminancja > 1 (HDR, próg bloomu ~0,9), zwykłe powierzchnie pod progiem; efekty z dem wchodzą 1:1, bez kolan i mnożników bloomu. W shaderach efektów bez `pow()` z ujemną podstawą, varyingi z clampem — NaN w buforze HalfFloat rozlewa bloom na cały ekran.
+- Pętla w budżecie czasu klatki (wypiek, rozbieg, budowa porcjami — render i gra) → co najmniej jeden krok na klatkę, zegar sprawdzany PO kroku (`n === 0 || now() - t0 < budżet`; wzór `src/game/worldBodies.js`), zegar budżetu wstrzykiwany do testów — przy zagłodzonym wątku budżet minie przed pierwszym krokiem i praca stoi w każdej klatce.
 - Wiele obiektów jednego rodzaju → partia (jeden rysunek, dane per obiekt w buforze storage ze slotem): każdy rysunek to ~15–25 µs CPU w three r183. Bufor zmieniany częściowo → zakresy przez `src/3d/zakresyWysylki.js`, nie `DynamicDrawUsage` (w WebGPU = pełna wysyłka przy każdym renderze).
 - Przezroczysty `DoubleSide` → `forceSinglePass: true` (inaczej dwa rysunki i inna kolejność mieszania).
 - Pole symulacji zmieniane drobnymi przyrostami w teksturze połówkowej → zapis przez `sroundF16` (`src/3d/tsl/zapisF16.js`; zapis f32 → f16 obcina ku zeru).
 - HUD rzutuje przez `View3D` (`worldToScreen` / `screenToWorld`), nie przez `camera.zoom`; px bufora na j. świata = zoom · `Core3D.pxScale` (`Core3D.viewZoom(cam)`).
 - Nowa kanwa w panelu UI → przebij globalną regułę `main.css` `canvas:not(#c)` (absolutne, bez myszy).
+- Limit klatek (opcje grafiki, `src/render/frameLimiter.js`): `loop()` zamawia następną klatkę tylko przez `frameLimitTick` / `nextLoopFrame` (nie `requestAnimationFrame(loop)` — bez VSync pętla idzie na budziku), a nowa pętla rAF, która RYSUJE obraz poza `loop()` i tłem menu, pyta `FrameLimiter.tick` — inaczej limit jej nie obejmie (reguła `opcje-grafiki`).
 
 **Rozgrywka**
 - Ścieżka, która pokazuje albo celuje we wroga → `SensorSystem.hides(byt)` (mgła wojny); celowanie w gracza i wybór celów AI → `isCloakHidden` (maskowanie).
 - Obrażenia i zapytania kadłubów tylko przez `HullBodies` (`sweep`, `impact`, `probe`, `cutSegment`), budowli przez `worldBodies`; gra rusza encję, nie węzły ani `body.pos`. Kod piszący węzły wprost w magazynie → `body._hashTick = -1`.
 - Nowy wrak → `convertToWreck` / `shatter` / hak `onWreck`; usuwanie → `recycleWreckEntity` i `coldWrecks` (`coldWreckSystem.forget`); nowe odwołanie do wraku (cel, lina, rozkaz) → `markColdWreckReferences`; nowe pole stanu węzła albo belki → do migawki zimnych wraków (`src/game/hullColdSnapshot.js`).
 - Śmierć okrętu → wybuch z miejsca zbiornika paliwa (`fuelTankBlast`), nie ze środka; hulki mostka (`isBridgeHulk`) — nowe ścieżki śmierci, AI i celowania je respektują.
-- Nowe źródło pocisków w `bullets` → `serial: nextProjectileSerial()`, `mech` (`hasHullMechanics`), `pen: null`, znaczniki nośnika (`ivx / ivy`, `clock`, `bornSim`) — wzór `fireWeaponCore`. Efekt z nośnikiem → `ActiveCarrier.set(writeCarrier(…))` … `clear()`. Test pocisku przeciw celowi w pętli kandydatów → odcinek w ruchu względnym (`segX0`).
+- Nowe źródło pocisków w `bullets` → `serial: nextProjectileSerial()`, `mech` (`hasHullMechanics`), `pen: null`, znaczniki nośnika (`ivx / ivy`, `clock` z `projectileClockOf(strzelec)`, `bornSim`) — wzór `fireWeaponCore`. Efekt z nośnikiem → `ActiveCarrier.set(writeCarrier(…))` … `clear()`. Test pocisku przeciw celowi w pętli kandydatów → odcinek w ruchu względnym (`segX0`).
 - Broń i obrażenia myśliwców → filtr IFF z `src/game/friendlyFire.js`; jednostka gracza poza frakcjami → `playerOwned = true`.
 - Obrażenia od broni gracza → `applyDamageToNPC(…, byPlayer)` (znacznik trafienia); obrażenia gracza od pocisku NPC → stempel `__fcHitPlayerAt` strzelca; obrażenia zatrzymywane przez tarczę → test przebicia `isShieldBreachedAt`; obrażenia obszarowe → też `RepairSwarm.blast` (drony naprawcze).
 - Zestrzelenie rakiety lub torpedy → tylko `killRocketThreat`.
-- Nowa ścieżka obrażeń od gracza (wiązka, rakieta, wybuch) → też statki ruchu v2 w bańce (`damageTrafficActor`, `src/game/trafficBubble.js`); zniszczenie tylko tak — kurs i wrak z ładunkiem rozlicza worker ruchu (reguła `ruch-banka`).
+- Nowa ścieżka obrażeń od gracza (wiązka, rakieta, wybuch) → też statki ruchu v2 w bańce (`damageTrafficActor`, `src/game/trafficBubble.js`); zniszczenie tylko tak — kurs i wrak z ładunkiem rozlicza worker ruchu (reguła `ruch-banka`), a ładunek z manifestu encji wypada w przestrzeń (`spillTrafficCargo`, reguła `kontenery-lup`).
 - Przylot, odlot, wezwanie NPC tunelem warpa → rejestr `warpTraffic` (nie `WarpNurt`); wyjście z warpa → `exitWarp`; przylot wroga spoza kolejki wezwań → `noteCameraDirectorCue`; sterowanie skrzydłem pomija jednostki z `__warpReturn`. Nowa ścieżka wyjścia NPC z warpa → pęd z `warpExitMomentum` (punkt przylotu = koniec ślizgu) i flaga `__warpExitSlide` (model lotu trzyma limit bojowy do końca ślizgu), nie zerowanie prędkości.
 - Kamera: wejście ustawia `camera.targetZoom` (sprężyna raz na klatkę renderu, nie w `physicsStep`); offsety kamery tylko w rigu (`src/game/cameraRig.js`); wstrząs z modułu renderu → hak `onShake` (żądanie do gry), nie `window.camera`.
 - Ciąg, skok, szarża, hipercruise → `mainEngineFraction` / `engineThrustScale` / `engineBlocksDrive` (uszkodzenie i stan silników).
@@ -87,6 +93,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Nowy rodzaj obiektu na radarze → rekord w `radarFeed.collect` (nie rysunek w kokpicie).
 - Ruch statku przy Ziemi, Marsie i Jowiszu (spawn, teleport, autopilot) omija płytę ringu — przelot tylko tranzytami, a na Jowiszu (ring w budowie) także przerwami; kod zakładający pełny pierścień albo 4 tranzyty doliczy przerwy z `layout.construction` (reguła `ring-halo`); przy porcie bez ringu — bryły budowli doku (`PortDocks.constrainShip` / `freeSpot` / `pushCruiseObstacles`, reguła `doki-portow`).
 - Kawałek bazy piratów łamie się przez `storyBaseBreak` / `pirateBaseWorld`; konfiguracja pola pasa idzie przez `beltWorld`, nie `asteroidBelt.field`.
+- Nowa budowla w płaszczyźnie gry, w którą mogą wlecieć okręty → przeszkody lotu AI: kapsuły w `statics` indeksu (`rebuildWreckIndex` w takcie AI, `capsuleFromPolygon`; wzór `pirateBaseObstacles`) — mózgi i rozkazy RTS objeżdżają je trasą (`src/ai/staticRoutes.js`); nowy lot NPC sterowany wprost `setFlightArrive` nikogo nie omija — przez `capitalArriveTo` (reguła `flota-ai`).
 - Stała efektu objęta presetem grafiki → zmiana tabeli w `src/game/graphicsQuality.js`.
 - Ekonomia jest jedna — ruch v2 w workerze (reguła `ruch-v2`); gra nie trzyma magazynów stacji. Zmiana zapasu stacji z gry (handel, rozbiórka, zakup w porcie, łup) → `adjustStationStock` (most `trafficV2.stockDelta`); odczyt magazynu, ceny i oferty → `getTradeEconomy` / `getTradeOffer` (kopia rynku z mostu); w świecie ruchu zapas tylko przez `takeStock` / `putStock`, popyt konsumenta spoza receptur → `declareDemand` (API rynku, `marketBook.js`); nowy rynek → `addMarket` / `TrafficBridge.addMarket`; stan ekonomii, który ma przeżyć F5 → `economySave.js` (eksport, wczytanie, `ECONOMY_SAVE_VERSION`).
 
@@ -100,6 +107,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 ## Testy i weryfikacja
 
 - Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — samo `tests/` na Node 22 nie działa); `npm test` to osobny zestaw (`scripts/test.mjs`). WGSL buduje się w Node bez GPU (`renderer.backend.createNodeBuilder`) — testy materiałów czytają wygenerowany kod.
+- Testy nie mierzą czasu ściany (pełny zestaw idzie przy równoległych sesjach i grze użytkownika): budżet czasu — wstrzyknięty zegar albo liczba kroków, czekanie — na stan (limit awaryjny w sekundach), wątki — koniec z liczby kroków; próg wydajności — osobny test z opcją `WYDAJNOSC` (`tests/helpers/wydajnosc.mjs`, uruchamia `HULLFALL_TESTY_WYDAJNOSC=1`). Sprawdzenie: `WOLNY_ZEGAR_MS=5 node --import ./scripts/wolny-zegar.mjs --test …` — test przechodzi przy 0 / 2 / 5 / 10 ms na odczyt zegara. Test „bez alokacji” mierzy do stanu ustalonego JIT (`untilSteady` z `tests/helpers/alokacje.mjs`; sprawdzenie: `node --concurrent-recompilation-delay=200 --test …`).
 - Prawdziwa gra: narzędzia `scripts/webgpu/*-gra.mjs` (Chrome przez CDP) — zrzuty, czasy klatek, pipeline'y synchroniczne (ma być 0). Domyślnie tryb `off` (render na wątku gry — `window.__RENDER_MODE_DEFAULT`), tryb gracza: `--query renderWorker=1` albo `HULLFALL_RENDER_DEFAULT=worker`. Haki `?dev`: `window.DevScene.*`. Kroki tylko przez `__harness.step()` — czekanie na `requestAnimationFrame` przy wstrzymanym zegarze harnessu nigdy nie wraca.
 - Zrzuty i porównanie z bazą: `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/<katalog> --baza <katalog bazy>`, `scripts/webgpu/porownaj.mjs` (szczegóły: reguła `webgpu-tsl`, „Weryfikacja”). A/B dwóch wersji — przebiegi PO KOLEI, nie dwa harnessy naraz.
 - Wydajność: PerfHUD (`P`), `Core3D.gpuFrameMs` (+ `gpuComputeMs`), `scripts/profil-bitwy.mjs`, `scripts/profil-bitwy-flot.mjs`, `scripts/webgpu/koszt-klatki.mjs` (reguła `core3d`). Porównuj czasy funkcji A/B na tej samej klatce, nie sam FPS.
@@ -136,7 +144,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, upadek, powietrze, uderzenia |
 | `fabula` | Fabuła: reżyser misji, intro w K-7, kampania |
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |
-| `kreator-kadlubow` | Kreator kadłubów (demo, niewpięty): format projektu, klocki i strażnik „bez czitowania”, kompozytor TSL, sieć systemów (kable i rury), przyjazny edytor „Stocznia” (przeciągnij i upuść), budowa w workerze z pamięcią etapów, warstwa barw (palety nacji, pędzel) |
+| `kreator-kadlubow` | Kreator kadłubów (demo, niewpięty): format projektu, klocki i strażnik „bez czitowania”, kompozytor TSL, sieć systemów (kable i rury), przyjazny edytor „Stocznia” (przeciągnij i upuść), budowa w workerze z pamięcią etapów, warstwa barw (palety nacji, pędzel), statki cywilne (rola, ładunek, presety frachtowców) |
 | `ciala-swiata` | Budowle na silniku belek: kawałki, kotwice, broń, rozpad, skóry |
 | `wybuchy-gaz` | Wybuchy WebGPU i gaz 3D: domeny, przeszkody, zbiorniki paliwa, dym zgniotu |
 | `flota-ai` | Szyk floty, formacje, omijanie przeszkód, rozkazy RTS, AI poza krokiem fizyki |
@@ -159,13 +167,14 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
+| `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `mgla-wojny` | Mgła wojny |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |
 | `menu` | Menu główne i jego tło 3D |
-| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync |
-| `stacje` | Stacje i obiekty świata 3D, rozpad stacji |
+| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync, limit klatek |
+| `stacje` | Stacje i obiekty świata 3D, rozpad stacji, siatka infrastruktury stacji (edytor) |
 | `modele-3d` | Modele 3D statków i broni, bronie z Blendera, kamery 3D |
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |
 | `wejscie` | Warstwa wejścia, pad, skróty klawiszowe |

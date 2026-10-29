@@ -11,8 +11,8 @@ import { hullDesignMountOf } from './hullDesignSchema.js';
 import { powerLoad } from './hullDesignSystems.js';
 import { markPipeNetPower, rasterPipeNetwork } from './hullDesignPipes.js';
 import {
-  shipClassCheck, shipPowerBalance, classForHull, coreLevelMax, shipClass, sizeRank, isHeavySlot, weaponMountIssue,
-  POWER_PRIORITY_DEFAULT
+  shipClassCheck, shipPowerBalance, classForHull, coreLevelMax, shipClass, shipClassLabel, sizeRank, isHeavySlot,
+  weaponMountIssue, isCivilRole, POWER_PRIORITY_DEFAULT
 } from '../../data/shipClasses.js';
 
 /** Gniazda modułów (rozwiniętych — lustro osobno): [{ i (indeks modułu), slot, size, weapon }]. */
@@ -28,7 +28,7 @@ export function hullDesignMountList(modules) {
 /** Poziomy projektu: mostek (0 — najniższa klasa z powierzchni i gniazd), rdzeń (0 — jak mostek; najwyżej mostek + 1). */
 export function hullDesignLevels(design, area, mounts) {
   const auto = !(design.bridgeLevel > 0);
-  const bridge = auto ? classForHull(area, mounts) : design.bridgeLevel;
+  const bridge = auto ? classForHull(area, mounts, design.role) : design.bridgeLevel;
   const core = Math.min(design.coreLevel > 0 ? design.coreLevel : bridge, coreLevelMax(bridge));
   return { bridge, core, auto, autoCore: !(design.coreLevel > 0) };
 }
@@ -36,19 +36,26 @@ export function hullDesignLevels(design, area, mounts) {
 /**
  * Klasa i bilans mocy projektu. `field` — buildHullField (powierzchnia `area`, moduły rozwinięte). Zwraca { area, levels,
  * mounts, check (shipClassCheck), power (shipPowerBalance), dead: Set (indeksy modułów bez prądu), deadMounts (liczba) }.
- * Utrzymanie ponad moc rdzenia — bez prądu wszystkie urządzenia sieci zasilania.
+ * Utrzymanie ponad moc rdzenia — bez prądu wszystkie urządzenia sieci zasilania. Statek cywilny (`role: 'civil'`): nazwy
+ * klas cywilne, bez tarczy w bilansie, klasa VI bez limitu powierzchni (src/data/shipClasses.js — SHIP_ROLES).
  */
 export function hullDesignClass(field) {
   const { design, modules } = field.expanded;
   const area = field.area;
+  const role = design.role;
   const mounts = hullDesignMountList(modules);
   const levels = hullDesignLevels(design, area, mounts);
-  const check = shipClassCheck({ bridgeLevel: levels.bridge, coreLevel: levels.core, area, mounts });
-  const power = shipPowerBalance({ area, coreLevel: levels.core, mounts, priority: design.powerPriority || POWER_PRIORITY_DEFAULT });
+  const check = shipClassCheck({ bridgeLevel: levels.bridge, coreLevel: levels.core, area, mounts, role });
+  const power = shipPowerBalance({
+    area, coreLevel: levels.core, mounts, shield: !isCivilRole(role), priority: design.powerPriority || POWER_PRIORITY_DEFAULT
+  });
   const dead = new Set();
   if (power.upkeepOver) modules.forEach((m, i) => { if (powerLoad(m) > 0) dead.add(i); });
   else mounts.forEach((g, k) => { if (!power.on[k] && power.devices.find((d) => d.i === k).mw > 0) dead.add(g.i); });
-  return { area, levels, mounts, check, power, dead, deadMounts: mounts.filter((g) => dead.has(g.i)).length };
+  return {
+    area, role: isCivilRole(role) ? 'civil' : 'military', label: shipClassLabel(levels.bridge, role),
+    levels, mounts, check, power, dead, deadMounts: mounts.filter((g) => dead.has(g.i)).length
+  };
 }
 
 /**
@@ -73,7 +80,7 @@ export function applyHullDesignPower(field, cls) {
  */
 export function hullDesignLimitBreach(before, after) {
   const over = (c) => ({
-    area: Math.max(0, (c.area ?? 0) - c.cls.areaMax),
+    area: Math.max(0, (c.area ?? 0) - (c.areaMax ?? c.cls.areaMax)),
     mounts: Math.max(0, c.counts.mounts - c.cls.mountsMax),
     heavy: Math.max(0, c.counts.heavy - c.cls.heavyMax),
     size: c.counts.oversize || 0,
@@ -90,20 +97,21 @@ export function hullDesignLimitBreach(before, after) {
 export function hullDesignCheck(design, area, modules) {
   const mounts = hullDesignMountList(modules);
   const levels = hullDesignLevels(design, area, mounts);
-  return { ...shipClassCheck({ bridgeLevel: levels.bridge, coreLevel: levels.core, area, mounts }), levels };
+  return { ...shipClassCheck({ bridgeLevel: levels.bridge, coreLevel: levels.core, area, mounts, role: design.role }), levels };
 }
 
 /**
  * Czy gniazdo `type` (moduł edytora) wolno dołożyć do projektu klasy `bridgeLevel` przy obecnych gniazdach `mounts`:
- * null albo komunikat (limit gniazd, gniazd ciężkich, rozmiar ponad klasę).
+ * null albo komunikat (limit gniazd, gniazd ciężkich, rozmiar ponad klasę). `role` — nazwa klasy w komunikacie.
  */
-export function hullDesignMountAddIssue(bridgeLevel, mounts, gm, copies = 1) {
+export function hullDesignMountAddIssue(bridgeLevel, mounts, gm, copies = 1, role = 'military') {
   const cls = shipClass(bridgeLevel);
-  if (mounts.length + copies > cls.mountsMax) return `Mostek ${cls.roman} (${cls.label}): najwyżej ${cls.mountsMax} gniazd — jest ${mounts.length}.`;
+  const name = shipClassLabel(bridgeLevel, role);
+  if (mounts.length + copies > cls.mountsMax) return `Mostek ${cls.roman} (${name}): najwyżej ${cls.mountsMax} gniazd — jest ${mounts.length}.`;
   if (isHeavySlot(gm.slot) && mounts.filter((g) => isHeavySlot(g.slot)).length + copies > cls.heavyMax) {
-    return `Mostek ${cls.roman} (${cls.label}): najwyżej ${cls.heavyMax} gniazd ciężkich.`;
+    return `Mostek ${cls.roman} (${name}): najwyżej ${cls.heavyMax} gniazd ciężkich.`;
   }
-  if (sizeRank(gm.size) > sizeRank(cls.weaponSize)) return `Mostek ${cls.roman} (${cls.label}): gniazda najwyżej ${cls.weaponSize}.`;
+  if (sizeRank(gm.size) > sizeRank(cls.weaponSize)) return `Mostek ${cls.roman} (${name}): gniazda najwyżej ${cls.weaponSize}.`;
   if (typeof gm.weapon === 'string' && gm.weapon) {
     const why = weaponMountIssue(gm.weapon, gm.slot, gm.size, { npc: true });
     if (why) return `Broń: ${why}.`;

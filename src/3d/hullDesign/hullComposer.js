@@ -40,6 +40,7 @@ import {
 import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { srgbEncode } from '../skybake/skyGameColor.js';
 import { HD_BRIDGE_SOCKET, HD_MODULES, HD_PALETTE_ROWS, hullDesignPalette } from '../../game/hullDesign/hullDesignSchema.js';
+import { HD_CARGO } from '../../game/hullDesign/hullDesignCargo.js';
 import { HD_PAINT_MAX } from '../../game/hullDesign/hullDesignPaint.js';
 import { bridgeLevel } from '../../data/bridgeLevels.js';
 import { HD_SERVICE_CHANNEL } from '../../game/hullDesign/hullDesignSystems.js';
@@ -202,6 +203,11 @@ const segDist = (p, a, b) => {
   return length(pa.sub(ba.mul(t)));
 };
 const lum = (c) => dot(c, vec3(0.2126, 0.7152, 0.0722));
+/**
+ * glowSafeLinear w grafie: niebieski ściszony do 0,38 przy czerwonym < 0,25 (maska hullGlowMask gry jest wtedy 0) — dla
+ * barw modułu złożonych z wierszy palety pomnożonych ponad 1 (nadpisanie gracza `paint` może być na granicy maski).
+ */
+const glowSafeNode = (c) => vec3(c.x, c.y, min(c.z, mix(float(0.38), float(64.0), step(0.25, c.x))));
 
 /**
  * Podział 1D na odcinki o losowych granicach: granica k w (k + (hash − ½)·J)·S. Zwraca { k, lo, hi } odcinka
@@ -232,6 +238,7 @@ export class HullComposer {
       style: uniform(new THREE.Vector4(0, 1, 1, 1)),     // profil fazy (0 prosty … 1 zaokrąglony), emisja → albedo, brud, otarcia
       bev: uniform(1.0),                                 // skala fazy krawędzi płyt (design.bevel)
       grv: uniform(new THREE.Vector4(1, 0, 0, 0)),       // widoczność losowych paneli (design.panels)
+      cargo: uniform(new THREE.Vector4(1, 0, 0, 0)),     // x — załadunek stelaży i zasobników (design.cargoLoad, 0–1)
       dome: uniform(new THREE.Vector4(0, 0, 0, 0)),      // skala kopuły [j. na 1 rozmytej sylwetki]
       // paleta: wiersze HD_PALETTE_ROWS (0–11), potem tabela pędzla (12 + indeks − 1; hullPaintLayer)
       pal: uniformArray(Array.from({ length: 12 + HD_PAINT_MAX + 1 }, () => new THREE.Vector4()), 'vec4').setName('hullDesignPalette'),
@@ -1223,39 +1230,150 @@ export class HullComposer {
           modCol.assign(col);
           emis.addAssign(vec3(1.0, 0.45, 0.14).mul(throat).mul(float(1.0).sub(smoothstep(0.0, R0.mul(0.4), rc))).mul(0.35));
         });
-      }).Else(() => {
+      }).ElseIf(type.lessThan(13.5), () => {
         // ŁADOWNIA (v 0 — wrota: dwa skrzydła ze szwem na osi x modułu i zazębieniem, żebra w poprzek, szyny wzdłuż
-        // dłuższych boków; v 1 — klapa z krzyżem wzmocnień): rama z pasem ostrzegawczym, bursztynowe lampy w rogach
+        // dłuższych boków; v 1 — klapa z krzyżem wzmocnień): rama z pasem ostrzegawczym, bursztynowe lampy w rogach;
+        // v 2 — stelaż kontenerów, v 3 — zasobniki (gałąź niżej)
         const hb = B.xy.mul(iD).toVar();
         const sd = sdBox(lu, hb).toVar();
         If(sd.lessThan(1.0), () => {
-          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0);
-          const fw = clamp(min(hb.x, hb.y).mul(0.12), 1.2, 3.0).toVar();
-          const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
-          const frame = inside.mul(step(0.0, inner)).toVar();
-          const leaf = clamp(inner.negate().div(0.35), 0.0, 1.0).toVar();
-          const hz = step(inner.negate(), 0.8).mul(leaf);
-          const hzS = step(0.5, fract(lu.x.add(lu.y).div(2.2)));
-          const klapa = step(0.5, B.w);
-          const tooth = step(0.5, fract(lu.x.div(3.0))).sub(0.5).mul(0.8);
-          const seam = lineN(lu.y.add(tooth), float(0.35)).mul(leaf).mul(float(1.0).sub(klapa));
-          const ribP = clamp(hb.x.mul(0.25), 4.0, 8.0);
-          const rib = step(abs(fract(lu.x.div(ribP)).sub(0.5)), 0.08).mul(leaf).mul(float(1.0).sub(hz));
-          const xr = lineN(abs(lu.x.div(max(hb.x, 1.0))).sub(abs(lu.y.div(max(hb.y, 1.0)))).mul(min(hb.x, hb.y)), float(0.5)).mul(leaf).mul(klapa);
-          const rail = step(abs(abs(lu.y).sub(hb.y.sub(fw.mul(0.5)))), 0.35).mul(frame);
-          const lampD = length(abs(lu).sub(hb.sub(vec2(fw.mul(0.5)))));
-          const lamp = float(1.0).sub(smoothstep(0.35, 0.6, lampD)).mul(inside).toVar();
-          modH.addAssign(frame.mul(0.9).sub(leaf.mul(0.7)).add(rib.mul(0.28)).add(xr.mul(0.3)).sub(seam.mul(0.5)).add(rail.mul(0.15)).add(lamp.mul(0.25)));
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          If(B.w.lessThan(1.5), () => {
+            const fw = clamp(min(hb.x, hb.y).mul(0.12), 1.2, 3.0).toVar();
+            const inner = sdBox(lu, hb.sub(vec2(fw))).toVar();
+            const frame = inside.mul(step(0.0, inner)).toVar();
+            const leaf = clamp(inner.negate().div(0.35), 0.0, 1.0).toVar();
+            const hz = step(inner.negate(), 0.8).mul(leaf);
+            const hzS = step(0.5, fract(lu.x.add(lu.y).div(2.2)));
+            const klapa = step(0.5, B.w);
+            const tooth = step(0.5, fract(lu.x.div(3.0))).sub(0.5).mul(0.8);
+            const seam = lineN(lu.y.add(tooth), float(0.35)).mul(leaf).mul(float(1.0).sub(klapa));
+            const ribP = clamp(hb.x.mul(0.25), 4.0, 8.0);
+            const rib = step(abs(fract(lu.x.div(ribP)).sub(0.5)), 0.08).mul(leaf).mul(float(1.0).sub(hz));
+            const xr = lineN(abs(lu.x.div(max(hb.x, 1.0))).sub(abs(lu.y.div(max(hb.y, 1.0)))).mul(min(hb.x, hb.y)), float(0.5)).mul(leaf).mul(klapa);
+            const rail = step(abs(abs(lu.y).sub(hb.y.sub(fw.mul(0.5)))), 0.35).mul(frame);
+            const lampD = length(abs(lu).sub(hb.sub(vec2(fw.mul(0.5)))));
+            const lamp = float(1.0).sub(smoothstep(0.35, 0.6, lampD)).mul(inside).toVar();
+            modH.addAssign(frame.mul(0.9).sub(leaf.mul(0.7)).add(rib.mul(0.28)).add(xr.mul(0.3)).sub(seam.mul(0.5)).add(rail.mul(0.15)).add(lamp.mul(0.25)));
+            modK.assign(max(modK, inside));
+            modSeam.assign(max(modSeam, max(max(lineN(inner, float(0.35)), lineN(sd, float(0.35))).mul(0.7), seam)));
+            const leafC = doorC.mul(float(1.08).add(rib.mul(0.15)).add(xr.mul(0.12)));
+            const col = mix(plateC.mul(0.94), leafC, leaf).toVar();
+            col.assign(mix(col, mix(hazard.mul(0.9), vec3(0.03), hzS), hz));
+            col.assign(mix(col, engC.mul(0.7), rail));
+            col.assign(mix(col, vec3(0.025), seam));
+            col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
+            modCol.assign(col);
+            emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+          }).Else(() => {
+            // v 2 — STELAŻ KONTENERÓW (otwarty pokład: kontenery 16 × 8 j. — CARGO_CONTAINER gry — w siatce), v 3 —
+            // ZASOBNIKI (zaokrąglone pudła n × n kontenerów: jasne panele, szew, bursztynowe światła w rogach). Siatka
+            // w j. świata jak hullCargoGrid (src/game/hullDesign/hullDesignCargo.js); komórka pusta (gniazdo z zaczepami
+            // w rogach), gdy jej hash ≥ załadunek (U.cargo.x). Rama stelaża z poprzeczkami, w rogach modułu lampy.
+            const pods = step(2.5, B.w).toVar();
+            const nC = max(B.z, 1.0).toVar();
+            const cell = vec2(nC.mul(HD_CARGO.L).add(nC.sub(1.0).mul(HD_CARGO.podGap)), nC.mul(HD_CARGO.W).add(nC.sub(1.0).mul(HD_CARGO.podGap))).toVar();
+            const pitch = cell.add(vec2(HD_CARGO.gap)).toVar();
+            const fr = D.mul(HD_CARGO.frameDu).toVar();                         // rama [j.]
+            const cnt = max(floor(B.xy.sub(vec2(fr)).mul(2.0).add(vec2(HD_CARGO.gap)).div(pitch)), vec2(0.0)).toVar();
+            const tot = max(cnt.mul(pitch).sub(vec2(HD_CARGO.gap)), vec2(0.0)).toVar();
+            const gq = lq.add(tot.mul(0.5)).add(vec2(HD_CARGO.gap * 0.5)).toVar();
+            const ci = floor(gq.div(pitch)).toVar();
+            const inGrid = step(0.0, ci.x).mul(step(0.0, ci.y)).mul(step(ci.x, cnt.x.sub(1.0))).mul(step(ci.y, cnt.y.sub(1.0))).toVar();
+            const cq = gq.sub(ci.add(0.5).mul(pitch)).toVar();                  // od środka komórki [j.]
+            const rC = min(cell.y.mul(0.16), 2.5).mul(pods).toVar();
+            const bd = sdRoundBox(cq, cell.mul(0.5), rC).mul(iD).toVar();        // [jd] < 0 — kontener / zasobnik
+            const inC = clamp(bd.negate().mul(2.0), 0.0, 1.0).mul(inGrid).toVar();
+            const hc = hash12(ci.add(vec2(float(mi).mul(7.31).add(1.7), U.tex.w.mul(0.173)))).toVar();
+            const full = step(hc, U.cargo.x.sub(0.0001)).toVar();
+            const box = inC.mul(full).toVar();
+            const slot = inC.mul(float(1.0).sub(full)).toVar();
+            const innerR = sdBox(lq, B.xy.sub(vec2(fr))).toVar();                // [j.] < 0 — wnętrze stelaża
+            const frameK = inside.mul(step(0.0, innerR)).toVar();
+            const lc = cq.mul(iD).toVar();                                        // [jd]
+            const half = cell.mul(iD).mul(0.5).toVar();
+            const corr = step(0.5, fract(lc.x.div(1.1))).mul(float(1.0).sub(pods)).toVar();   // karbowanie kontenera
+            const endB = step(half.x.sub(1.0), abs(lc.x)).mul(float(1.0).sub(pods)).mul(box).toVar(); // ramy czołowe
+            const top = smoothstep(0.0, 0.7, bd.negate()).mul(float(1.0).sub(pods)).add(smoothstep(0.0, 2.4, bd.negate()).mul(pods)).toVar();
+            const seamP = lineN(lc.y, float(0.3)).mul(pods).mul(box).toVar();
+            const panelP = lineN(bd.add(1.5), float(0.3)).mul(pods).mul(box).toVar();
+            const lampP = float(1.0).sub(smoothstep(0.3, 0.55, length(abs(lc).sub(half.sub(vec2(1.4)))))).mul(pods).mul(box).toVar();
+            // puste gniazdo: szyna przy krawędzi i narożniki „L” zaczepów (jak pusty pokład kontenerowca)
+            const edgeB = step(bd.negate(), 0.75).mul(slot).toVar();
+            const pad = edgeB.mul(step(half.x.sub(2.6), abs(lc.x))).mul(step(half.y.sub(2.6), abs(lc.y))).toVar();
+            const railE = edgeB.mul(float(1.0).sub(pad)).toVar();
+            const ribF = step(abs(fract(lq.x.div(max(fr.mul(3.0), 2.0))).sub(0.5)), 0.12).mul(frameK).toVar();
+            const lampM = float(1.0).sub(smoothstep(0.35, 0.6, length(abs(lu).sub(hb.sub(vec2(HD_CARGO.frameDu * 0.5)))))).mul(inside).toVar();
+            modH.addAssign(box.mul(top.mul(mix(float(2.4), float(2.8), pods))).add(corr.mul(box).mul(0.12)).sub(endB.mul(0.15))
+              .sub(seamP.mul(0.35)).sub(panelP.mul(0.2)).add(lampP.mul(0.15))
+              .add(frameK.mul(1.3)).add(ribF.mul(0.35)).add(pad.mul(0.35)).add(railE.mul(0.25)).sub(slot.mul(0.3)).add(lampM.mul(0.25)));
+            modK.assign(max(modK, inside));
+            modSeam.assign(max(modSeam, max(lineN(bd, float(0.3)).mul(inGrid).mul(0.75), lineN(innerR.mul(iD), float(0.35)).mul(inside).mul(0.7))));
+            // barwy kontenerów (liniowo, bez niebieskiego ponad maskę hullGlowMask): stal, czerwień, szarość, biel, ochra, zieleń
+            const k6 = floor(hash12(ci.add(vec2(float(mi).mul(3.17).add(11.0), U.tex.w.mul(0.41)))).mul(6.0)).toVar();
+            const boxC = select(k6.lessThan(0.5), vec3(0.045, 0.1, 0.23), select(k6.lessThan(1.5), vec3(0.3, 0.045, 0.03),
+              select(k6.lessThan(2.5), vec3(0.26, 0.27, 0.28), select(k6.lessThan(3.5), vec3(0.52, 0.54, 0.52),
+                select(k6.lessThan(4.5), vec3(0.48, 0.23, 0.035), vec3(0.07, 0.12, 0.055)))))).toVar();
+            // odcień z osobnego hasza (hash załadunku wybierałby przy częściowym załadunku same ciemne kontenery)
+            const tint = float(0.88).add(hash12(ci.add(vec2(float(mi).mul(5.13).add(23.0), U.tex.w.mul(0.29)))).mul(0.2)).toVar();
+            const contC = mix(boxC.mul(tint).mul(float(0.92).add(corr.mul(0.12))), upperC.mul(tint.mul(0.5).add(0.5)), pods).toVar();
+            const col = mix(metal.mul(0.85), engC.mul(1.2), frameK).toVar();       // pokład stelaża / rama
+            col.assign(mix(col, trimC.mul(0.7), ribF));
+            col.assign(mix(col, contC, box));
+            col.assign(mix(col, contC.mul(0.72), endB));
+            col.assign(mix(col, trimC.mul(0.55), clamp(seamP.add(panelP), 0.0, 1.0)));
+            col.assign(mix(col, engC.mul(1.6), railE));
+            col.assign(mix(col, hazard.mul(0.9), pad));
+            col.assign(mix(col, vec3(0.9, 0.5, 0.09), max(lampP, lampM)));
+            modCol.assign(glowSafeNode(col));
+            emis.addAssign(vec3(1.0, 0.55, 0.12).mul(max(lampP.mul(0.8), lampM)).mul(1.1));
+          });
+        });
+      }).ElseIf(type.lessThan(15.5), () => {
+        // ZBIORNIK ŁADUNKU (tankowce; nie paliwo okrętu): v 0 — walce (kapsuły) wzdłuż osi modułu w n rzędach, v 1 —
+        // kule w siatce n rzędów; obręcze, pas ostrzegawczy przy dennicach, kołyski i rama pod spodem, kolektor
+        // w poprzek na rufowym końcu (−x). Wysokość — profil kuli / walca, ścięty do kilku jd (relief, nie bryła).
+        const hb = B.xy.mul(iD).toVar();
+        const sd = sdBox(lu, hb).toVar();
+        If(sd.lessThan(1.0), () => {
+          const inside = clamp(sd.negate().mul(2.0), 0.0, 1.0).toVar();
+          const ih = max(hb.sub(vec2(HD_CARGO.frameDu)), vec2(0.5)).toVar();       // wnętrze [jd] (pół)
+          const nR = max(B.z, 1.0).toVar();
+          const dia = ih.y.mul(2.0).div(nR).toVar();                                 // średnica [jd]
+          const rad = dia.mul(0.46).toVar();
+          const row = clamp(floor(lu.y.add(ih.y).div(dia)), 0.0, nR.sub(1.0)).toVar();
+          const cy = row.add(0.5).mul(dia).sub(ih.y).toVar();
+          const sph = step(0.5, B.w).toVar();
+          // walec: oś od −(ih.x − rad) do +(ih.x − rad); kule: środki co średnicę wzdłuż x, wyśrodkowane
+          // krótki moduł (ih.x < rad): oś zwija się do środka (granice clamp nie mogą się odwrócić — w WGSL to nieokreślone)
+          const axHi = max(ih.x.sub(rad), 0.0).toVar();
+          const axX = clamp(lu.x, axHi.negate(), axHi).toVar();
+          const kk = max(floor(ih.x.mul(2.0).div(dia)), 1.0).toVar();
+          const totX = kk.mul(dia).toVar();
+          const sc = clamp(floor(lu.x.add(totX.mul(0.5)).div(dia)), 0.0, kk.sub(1.0)).toVar();
+          const cxx = mix(axX, sc.add(0.5).mul(dia).sub(totX.mul(0.5)), sph).toVar();
+          const dd = length(vec2(lu.x.sub(cxx), lu.y.sub(cy))).toVar();
+          const inT = clamp(rad.sub(dd).mul(2.0), 0.0, 1.0).mul(step(sd, 0.0)).toVar();
+          const q = clamp(dd.div(max(rad, 0.5)), 0.0, 1.0).toVar();
+          const prof = sqrt(max(float(1.0).sub(q.mul(q)), 0.0)).toVar();
+          const hoopP = max(dia.mul(1.6), 6.0).toVar();
+          const hoop = lineN(fract(lu.x.div(hoopP).add(0.5)).sub(0.5).mul(hoopP), float(0.45)).mul(float(1.0).sub(sph))
+            .add(lineN(dd.sub(rad.mul(0.72)), float(0.4)).mul(sph)).mul(inT).toVar();
+          const capBand = step(abs(ih.x.sub(rad).sub(abs(lu.x)).add(rad.mul(0.15))), rad.mul(0.12)).mul(float(1.0).sub(sph)).mul(inT).toVar();
+          const frameK = inside.mul(float(1.0).sub(inT)).toVar();
+          const cradle = step(abs(fract(lu.x.div(hoopP)).sub(0.5)), 0.08).mul(frameK).toVar();
+          const man = lineN(lu.x.add(hb.x.sub(HD_CARGO.frameDu * 0.5)), float(1.1)).mul(inside).toVar();
+          modH.addAssign(inT.mul(min(rad.mul(0.55), 7.0).mul(prof).add(0.6)).add(hoop.mul(0.35)).sub(capBand.mul(0.1))
+            .add(cradle.mul(0.5)).add(man.mul(1.2)).add(frameK.mul(0.2)));
           modK.assign(max(modK, inside));
-          modSeam.assign(max(modSeam, max(max(lineN(inner, float(0.35)), lineN(sd, float(0.35))).mul(0.7), seam)));
-          const leafC = doorC.mul(float(1.08).add(rib.mul(0.15)).add(xr.mul(0.12)));
-          const col = mix(plateC.mul(0.94), leafC, leaf).toVar();
-          col.assign(mix(col, mix(hazard.mul(0.9), vec3(0.03), hzS), hz));
-          col.assign(mix(col, engC.mul(0.7), rail));
-          col.assign(mix(col, vec3(0.025), seam));
-          col.assign(mix(col, vec3(0.9, 0.5, 0.09), lamp));
-          modCol.assign(col);
-          emis.addAssign(vec3(1.0, 0.55, 0.12).mul(lamp).mul(1.1));
+          modSeam.assign(max(modSeam, max(lineN(rad.sub(dd), float(0.35)).mul(step(sd, 0.0)).mul(0.6), lineN(sd, float(0.35)).mul(0.6))));
+          const tankC = mix(this._pal(11), upperC, 0.45).mul(float(0.82).add(prof.mul(0.22))).toVar();
+          const col = mix(metal.mul(1.3), tankC, inT).toVar();
+          col.assign(mix(col, trimC.mul(0.8), hoop));
+          col.assign(mix(col, hazard.mul(0.95), capBand));
+          col.assign(mix(col, engC.mul(1.2), cradle));
+          col.assign(mix(col, pipeC.mul(1.3), man));
+          modCol.assign(glowSafeNode(col));
         });
       });
     });
@@ -1768,6 +1886,7 @@ export class HullComposer {
     U.style.value.set(design.round ?? (design.style === 'rounded' ? 1 : 0), opts.glowToAlbedo === false ? 0 : 1, opts.grime ?? 1, opts.wear ?? 1);
     U.bev.value = design.bevel ?? 1;
     U.grv.value.set(design.panels ?? 1, 0, 0, 0);
+    U.cargo.value.set(design.cargoLoad ?? 1, 0, 0, 0);
     this.setColors(design, opts.paint !== undefined ? opts.paint : (field.packed?.paint || null));
     // moduły
     let mi = 0;
@@ -1779,8 +1898,12 @@ export class HullComposer {
       const look = m.type === 'mount' ? _mountLook(m) : null;
       A.set(m.x, m.y, look ? look[0] : TYPE_CODE[m.type] + (chanMods.has(m) ? 0.25 : 0), m.rot || 0);
       const extra = look ? look[1] : (m.type === 'hangar' ? (m.doors || 1) : (m.v || 0));
-      // gniazdo mostka (v 2): z = poziom + faza pokładu / 100 [j.] (kompozytor: floor / fract)
-      const z = m.type === 'bridge' && m.v === 2 ? (m.lv || 1) + bridgeLevel(m.lv).ch / 100 : (m.r || 0);
+      // gniazdo mostka (v 2): z = poziom + faza pokładu / 100 [j.] (kompozytor: floor / fract); ładownia — kontenerów na bok
+      // komórki (zasobniki v 3: n, domyślnie HD_CARGO.podN; stelaż: 1), zbiornik ładunku — rzędów w poprzek
+      let z = m.r || 0;
+      if (m.type === 'bridge' && m.v === 2) z = (m.lv || 1) + bridgeLevel(m.lv).ch / 100;
+      else if (m.type === 'cargo') z = (m.v || 0) === 3 ? (m.n || HD_CARGO.podN) : 1;
+      else if (m.type === 'cargo_tank') z = m.n || 1;
       B.set(m.w || 0, m.h || 0, z, extra);
       mi++;
     }

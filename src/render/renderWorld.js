@@ -110,6 +110,11 @@ class RenderWorldFacade {
    * bierze dt klatki.
    */
   get frameClock() { const s = this._src; return s ? s.frameClock : null; }
+  /**
+   * Znacznik klatki strony [ms] — znacznik rAF pętli gry (vsync), zegar efektów (Core3D.frameNowMs). Off / inline:
+   * `window.__frameNowMs` strony (źródło luster go nie ma — wtedy też globale), poza pętlą gry — undefined.
+   */
+  get frameNowMs() { const s = this._src; const v = s ? s.frameNowMs : undefined; return Number.isFinite(v) ? v : W().__frameNowMs; }
   get driveState() { const s = this._src; return s ? s.driveState : W().shipDriveState; }
   get warp() { const s = this._src; return s ? s.warp : W().warp; }
   get boost() { const s = this._src; return s ? s.boost : GameState.boost; }

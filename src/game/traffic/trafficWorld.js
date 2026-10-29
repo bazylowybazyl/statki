@@ -30,7 +30,7 @@ import { patrolMultiplier } from './patrols.js';
 import { createWarState, tickWar } from './warDispatcher.js';
 import { createScrapperState, tickScrappers } from './scrapperFleets.js';
 import { createPiracyState, tickPiracy } from './piracy.js';
-import { createFleetRegistry } from './transportCompanies.js';
+import { createFleetRegistry, getCompany, billCost } from './transportCompanies.js';
 import { buildCarriers, TONS_PER_SHIP_HOUR } from './carrierRoster.js';
 import { createShipyardRegistry, tickShipyards } from './shipyards.js';
 import { createAgentRegistry, buildMerchants } from './agentFleets.js';
@@ -274,6 +274,13 @@ function buildTickOptions(world) {
       // danina frakcji chroni własne konwoje I dusi przemyt.
       patrolStrength: (fromId, toId) =>
         Math.max(0, (1 / Math.max(0.05, patrolMultiplier(director.patrols, fromId, toId))) - 1),
+      // Okup za porwanych ludzi (workforce, E16 W4): płaci przewoźnik, gdy go stać.
+      payRansom: (companyId, amount) => {
+        const company = director.companies ? getCompany(director.companies, companyId) : null;
+        if (!company || !(company.capital >= amount)) return false;
+        billCost(company, amount, 'fees');
+        return true;
+      },
       priceAt: (station, resourceId) => {
         const econ = getEconomy(station.id);
         return econ ? (resourcePrice(station, econ, resourceId)?.bid || 0) : 0;

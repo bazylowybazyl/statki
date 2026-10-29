@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FramePacer } from '../src/render/framePacer.js';
+import { FrameLimiter } from '../src/render/frameLimiter.js';
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -97,4 +98,122 @@ test('eligible / posted: strona nieznana (stara) wolno złożyć; wiek w statyst
   p.composed(10);
   assert.equal(p.stats.ageHist[2], 1);
   assert.equal(p.eligible(999), true);
+});
+
+test('pacer: przy niskim tempie obrazu wiek schodzi po czasie (lowerWindowMs), nie po 1200 przyjściach (2026-10-28)', () => {
+  // 12 kl/s strony (spadek przy upadku bazy): wiek 5 = ~415 ms opóźnienia obrazu; 1200 przyjść to ~100 s
+  const run = (timed) => {
+    const p = new FramePacer();
+    p.age = 5;
+    let t = 0, f = 0;
+    for (let k = 0; k < 120; k++) {
+      p.beginFrame(); f++;
+      p.posted(k);
+      t += 1000 / 12;
+      p.arrived(k, timed ? t : undefined);   // bitmapa w tej samej klatce — potrzebny wiek 2
+    }
+    return p;
+  };
+  const timed = run(true);
+  assert.ok(timed.age < 5, `po 10 s przy 12 kl/s wiek ${timed.age}`);
+  assert.ok(timed.stats.lowered >= 1);
+  const old = run(false);
+  assert.equal(old.age, 5, 'bez czasu przyjść — dawne okno 1200 przyjść');
+});
+
+test('pacer: obniżenie po czasie bez natychmiastowego powrotu — seria spóźnień siedzi jeszcze w oknie podnoszenia', () => {
+  // przegląd 2026-10-28: przy ~10 przyjściach/s okno podnoszenia (64 przyjścia) sięga przed ostatnią zmianę wieku
+  const p = new FramePacer();
+  p.age = 4;
+  let t = 0, k = 0;
+  const arrive = (need) => {
+    p.beginFrame(); p.posted(k);
+    for (let i = 0; i < need - 2; i++) p.beginFrame();
+    t += 100;
+    p.arrived(k, t);
+    k++;
+  };
+  for (let i = 0; i < 20; i++) arrive(2);
+  for (let i = 0; i < 4; i++) arrive(5);   // seria spóźnień przy wieku 4 → 5
+  assert.equal(p.age, 5);
+  assert.equal(p.stats.raised, 1);
+  for (let i = 0; i < 150; i++) arrive(2);   // 15 s czystych przyjść
+  assert.ok(p.age < 5, `wiek ${p.age}`);
+  assert.equal(p.stats.raised, 1, 'bez powrotu w górę po obniżeniu');
+});
+
+// LIMIT KLATEK (src/render/frameLimiter.js, 2026-10-29): strona rysuje i wysyła stronę migawki tylko w klatkach
+// wybranych przez limit, a złożenie (`rwHost.present()` — pierwsza linia loop(), PRZED limitem) idzie w KAŻDYM
+// wywołaniu rAF — wiek w klatkach ekranu jak bez limitu. Fizyka 60 Hz: krok w klatce, w której minęła granica 1/60 s.
+// `presentEveryTick: false` — złożenie tylko w klatkach narysowanych (wariant odrzucony: ten sam takt, większe opóźnienie).
+function simulateLimited({ vsyncs = 12000, hz = 240, fps = 120, post0 = 0.8, post1 = 1.6, phys0 = 3.5, phys1 = 5.0, w0 = 2.4, w1 = 4.0, seed = 1, presentEveryTick = true }) {
+  const rnd = rng(seed);
+  const V = 1000 / hz;
+  const lim = new FrameLimiter({ fps });
+  const pacer = new FramePacer();
+  const arrivals = [], pending = [], shownAt = [], postV = [];
+  let ai = 0, workerFree = 0, shown = -1, k = 0, physTick = -1;
+  for (let i = 0; i < vsyncs; i++) {
+    const t = 1000 + i * V;
+    while (ai < arrivals.length && arrivals[ai].at <= t) { const a = arrivals[ai++]; pacer.arrived(a.k, a.at); pending.push(a.k); }
+    const draw = lim.tick(t);
+    if (draw || presentEveryTick) {
+      pacer.beginFrame();
+      let pick = -1, j = 0;
+      for (; j < pending.length; j++) { if (pacer.eligible(pending[j])) pick = pending[j]; else break; }
+      if (pick >= 0) { pending.splice(0, j); shown = pick; pacer.composed(pick); }
+    }
+    shownAt.push(shown);
+    if (!draw) continue;
+    const pt = Math.floor(t / (1000 / 60));
+    const phys = pt !== physTick;
+    physTick = pt;
+    pacer.posted(k);
+    postV[k] = i;
+    const tPost = t + (phys ? phys0 + (phys1 - phys0) * rnd() : post0 + (post1 - post0) * rnd());
+    const start = Math.max(tPost, workerFree);
+    workerFree = start + w0 + (w1 - w0) * rnd();
+    arrivals.push({ k, at: workerFree });
+    k++;
+  }
+  // po rozbiegu: ile vsynców wisi każda strona, kroki treści (1 = strony po kolei), opóźnienie wysyłka → ekran [vsynce]
+  const holds = new Map(), lat = [];
+  let steps = 0, skips = 0, runStart = -1;
+  for (let i = 401; i < shownAt.length; i++) {
+    if (shownAt[i] === shownAt[i - 1]) continue;
+    if (runStart > 0) holds.set(i - runStart, (holds.get(i - runStart) || 0) + 1);
+    if (shownAt[i] - shownAt[i - 1] === 1) steps++; else skips++;
+    lat.push(i - postV[shownAt[i]]);
+    runStart = i;
+  }
+  lat.sort((a, b) => a - b);
+  return { holds, steps, skips, lat50: lat[lat.length >> 1], lat95: lat[Math.floor(lat.length * 0.95)], age: pacer.age, lim };
+}
+
+test('limit klatek 120 / 60 przy 240 Hz: każda strona na ekranie dokładnie 2 / 4 vsynce, strony po kolei (bitwa i spokój)', () => {
+  for (const fps of [120, 60]) {
+    const N = 240 / fps;
+    for (const [nazwa, o] of [['bitwa', {}], ['spokój', { post0: 0.2, post1: 0.5, phys0: 0.2, phys1: 0.5, w0: 0.8, w1: 1.3 }]]) {
+      const r = simulateLimited({ fps, ...o });
+      assert.equal(r.lim.mode, 'nth', `${fps} ${nazwa}`);
+      assert.deepEqual([...r.holds.keys()], [N], `${fps} ${nazwa}: strona wisi ${[...r.holds.keys()]} vsynców`);
+      assert.equal(r.skips, 0, `${fps} ${nazwa}: przeskoczone strony`);
+      assert.ok(r.age >= 2 && r.age <= 5, `${fps} ${nazwa}: wiek ${r.age}`);
+    }
+  }
+});
+
+test('limit klatek: złożenie w każdym wywołaniu rAF — opóźnienie obrazu nie rośnie z limitem (wariant „tylko w narysowanych” — większe)', () => {
+  for (const fps of [120, 60]) {
+    const every = simulateLimited({ fps });
+    const drawnOnly = simulateLimited({ fps, presentEveryTick: false });
+    assert.deepEqual([...drawnOnly.holds.keys()], [240 / fps], 'ten sam równy takt');
+    assert.ok(every.lat95 <= 3, `${fps}: opóźnienie p95 ${every.lat95} vsynców`);
+    assert.ok(drawnOnly.lat50 > every.lat50, `${fps}: ${drawnOnly.lat50} ↔ ${every.lat50} vsynców`);
+  }
+  // 144 Hz, limit 60 (akumulator): strony po kolei, odstępy 2 / 3 vsynce jak klatki strony
+  const acc = simulateLimited({ hz: 144, fps: 60 });
+  assert.equal(acc.lim.mode, 'acc');
+  assert.deepEqual([...acc.holds.keys()].sort(), [2, 3]);
+  assert.equal(acc.skips, 0);
 });

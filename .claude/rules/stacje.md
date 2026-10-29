@@ -4,6 +4,8 @@ paths:
   - "src/3d/world3d.js"
   - "src/vfx/shatterMaterial.js"
   - "src/vfx/destruction*.js"
+  - "src/ui/infrastructureUI.js"
+  - "src/buildings/**"
 ---
 
 # Stacje i obiekty świata 3D: rozpad stacji, rozgrzewka
@@ -62,6 +64,10 @@ paths:
   sylwetkach vs wnętrza: `scripts/webgpu/krawedzie.mjs`.
 
 - `updateWorld3D(dt, t)` — aktualizacja obiektów świata 3D.
+
+## Siatka infrastruktury stacji (`src/ui/infrastructureUI.js`, ikony `src/buildings/infrastructureView.js`)
+
+- Zakładka INFRASTRUCTURE tabletu stacji: siatka budynków wokół stacji (doki, stocznie, magazyny, kopalnie i rafinerie, stacja sensorowa; domyślne zestawy Merkurego, Ziemi, Marsa i Jowisza — `InfrastructureUI.autopopulate`). Skutki w grze: magazyny podnoszą pojemności (`InfrastructureUI.getCapacity` → ruch v2), stacja sensorowa jest źródłem wzroku (`SensorSystem`). Budynki NIE rysują się w świecie — ikony 2D (`drawInfrastructureIcon`) są tylko na liście i siatce edytora; obraz portów dają archetypy (hala K-7 ringu, doki bez ringu — reguła `doki-portow`). Strażnik: `tests/haloRingGame.test.mjs`.
 
 ## Stacje w soczewce skoku gracza (etap 3A nowego warpa, 2026-10-26)
 

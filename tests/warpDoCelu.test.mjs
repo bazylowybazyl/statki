@@ -18,7 +18,8 @@ import {
 } from '../src/game/travelNav.js';
 import { loadIndexFunction } from './helpers/indexSource.mjs';
 import {
-  buildSystemMap, normalizeWorldSeed, planetAngleFromSeed, systemMapAngleForSeed, resolveWorldSeed, SYSTEM_MAP_PLANETS, moonsOf
+  buildSystemMap, normalizeWorldSeed, planetAngleFromSeed, systemMapAngleForSeed, resolveWorldSeed, SYSTEM_MAP_PLANETS, moonsOf,
+  sunWellRadius
 } from '../src/data/systemMap.js';
 import { ECONOMY_SAVE_VERSION } from '../src/game/traffic/economySave.js';
 import { HYPERCRUISE_TUNE, WARP_DRIVES } from '../src/data/driveModes.js';
@@ -438,7 +439,7 @@ function jumpWorld(extra = {}) {
     travelNav: { target: null, label: '' }, nextTravelLeg: () => null,
     planets: [], window: { smallBodies: [] },
     planetOrbitRadii: (p) => ({ inner: p.zr * 0.5, outer: p.zr, gravityWell: p.well }),
-    SUN: { x: 9e6, y: 9e6, r: 30000 }, mercMission: null,
+    SUN: { x: 9e6, y: 9e6, r: 30000 }, sunWellRadius, mercMission: null,
     pirateOrbitRadii: () => ({ inner: 20000, outer: 40000, gravityWell: 100000 }),
     WORLD: { w: 1e7, h: 1e7 }, WARP_EMERGENCY, planWarpEmergency, _warpEmergencyPlan: {},
     chooseWarpJump, planTravelLeg, planCruiseRoute: (a, b) => [b], clamp: clampFn,
@@ -518,7 +519,8 @@ test('recenzja T ust. 1/5/7/8: klawisz warpa (prawdziwe chooseManualWarpJump →
     assert.ok(near(Math.hypot(j.aim.x - st.x, j.aim.y - st.y), 100000 + TRAVEL_TUNE.wellMargin, 1e-6), 'brzeg studni bazy + zapas');
     sc.planets.push({ id: 'pl', x: 3e6, y: 3e6, zr: 8000, well: 20000 });
     const wells = sc.warpEmergencyWells();
-    assert.ok(wells.some((w) => w.x === sc.SUN.x && w.rIn === sc.SUN.r), 'słońce z tarczą jako jądrem');
+    assert.ok(wells.some((w) => w.x === sc.SUN.x && w.rIn === sc.SUN.r && w.r === sunWellRadius(sc.SUN)),
+      'słońce z tarczą jako jądrem, studnia = tarcza × sunWellMul');
     assert.ok(wells.some((w) => w.x === st.x && w.r === 100000 && w.rIn === 40000), 'baza piratów z jądrem orbit');
     assert.equal(wells.length, 2, 'skok awaryjny: bez studni planet (BRIEF-studnie pkt 3)');
     // odcinki do celów ze stożka: studnie gracza (planety, słońce — cel w studni kończy skok na brzegu) + baza piratów

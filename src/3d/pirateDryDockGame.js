@@ -77,6 +77,11 @@ function skinWarmHolders() {
       m.layers.set(layer);
       root.add(m);
     }
+    // siatka partii skór (odłamy kawałka jednym obiektem renderu — worldSkinBatch.js), układ skóry z indeksem
+    const b = new THREE.Mesh(buildingSkinWarmGeometry(true), d.skinBatchMaterial(set));
+    b.frustumCulled = false;
+    b.layers.set(layer);
+    root.add(b);
   }
   _skinHolders = { dock: d, root };
   return root;

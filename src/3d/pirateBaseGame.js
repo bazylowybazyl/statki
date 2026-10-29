@@ -179,6 +179,18 @@ function skinWarmHolders() {
       }
     }
   }
+  // Siatki PARTII skór (odłamy kawałka jednym obiektem renderu — worldSkinBatch.js): skóra płaska w warstwie zestawu,
+  // bryła 3D — połówka pod płaszczyzną w tle, nad nią w FG; układ skóry kawałka z indeksem (wspólne atrybuty).
+  for (const set of ['bg', 'fg']) {
+    const halves = [[d.skinBatchMaterial(set, false, 0), set === 'bg' ? LAYER_BG : LAYER_FG],
+      [d.skinBatchMaterial(set, true, 0), LAYER_BG], [d.skinBatchMaterial(set, true, 1), LAYER_FG]];
+    for (const [mat, layer] of halves) {
+      const m = new THREE.Mesh(buildingSkinWarmGeometry(true), mat);
+      m.frustumCulled = false;
+      m.layers.set(layer);
+      root.add(m);
+    }
+  }
   _skinHolders = { base: d, root };
   return root;
 }

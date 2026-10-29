@@ -109,6 +109,8 @@ const game = {
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false, projectilePassesAlly,
   HullBodies, HullDamageEvents, stampFamilyFor, craterOptsFor, hasTrench, trenchCraters, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
+  // mała skala (?malaSkala=1, src/game/smallScale.js): bez flagi pocisk nie jest strzałem fregaty gracza
+  scoutPlayerShot: () => false, scoutTurretHit() {}, scoutDeckPasses: () => false,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },
   shouldRemoveProjectileAfterImpact, haloWorld: null,

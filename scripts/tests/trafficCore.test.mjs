@@ -281,8 +281,10 @@ export function run() {
   const pw = piraci.core.world;
   const naSzlaku = getActiveCourses(pw.registry).find(course => {
     const stage = currentStage(course);
+    // Kostka dyspozytora pomija patrole, a prom z ludźmi ma połowę ekspozycji (workforce, E16 W4)
+    // — test na kursie towarowym.
     return stage?.kind === STAGE_KIND.TRAVEL && stage.mode === 'conventional' && stage.risk > 0
-      && !course.convoyId;
+      && !course.convoyId && !course.payload?.passengers && course.kind !== 'patrol';
   });
   t.check('jest kurs na odsłoniętym szlaku', !!naSzlaku);
   piraci.core.handle({ type: TRAFFIC_MSG.ATTACH, course: courseNumber(naSzlaku.id) });

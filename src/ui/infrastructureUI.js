@@ -6,7 +6,6 @@ import {
 } from '../data/resources.js';
 
 const INFRASTRUCTURE_BUILDINGS = [
-  { id: 'solar_array', name: 'Orbitalna Elektrownia Słoneczna', buildTime: 75, icon: 'solar', footprint: { w: 4, h: 4 } },
   { id: 'dock_s', name: 'Dok Orbitalny (S)', buildTime: 55, icon: 'dock', footprint: { w: 1, h: 1 } },
   { id: 'dock_m', name: 'Dok Orbitalny (M)', buildTime: 75, icon: 'dock', footprint: { w: 2, h: 1 }, rotatable: true },
   { id: 'dock_l', name: 'Dok Orbitalny (L)', buildTime: 105, icon: 'dock', footprint: { w: 2, h: 2 } },
@@ -782,7 +781,7 @@ function drawBuildingPreview(canvas, building) {
   ctx.shadowBlur = 12;
   if (window.drawInfrastructureIcon) {
     const size = Math.min(w, h) * 0.6;
-    window.drawInfrastructureIcon(ctx, building, { x: 0, y: 0 }, size, 1, null);
+    window.drawInfrastructureIcon(ctx, building, { x: 0, y: 0 }, size, 1);
   }
   ctx.restore();
 }
@@ -1049,7 +1048,7 @@ function drawInfrastructureGrid(ctx, cam, station, state) {
       const iconSize = cellSize * 0.72 * footprintScale;
       ctx.globalAlpha = done ? alpha * 0.92 : alpha * 0.85;
       if (window.drawInfrastructureIcon) {
-        window.drawInfrastructureIcon(ctx, building, centerScreen, iconSize, alpha, null);
+        window.drawInfrastructureIcon(ctx, building, centerScreen, iconSize, alpha);
       }
       if (!done) {
         ctx.beginPath();
@@ -1082,38 +1081,13 @@ function drawInfrastructureGrid(ctx, cam, station, state) {
           const centerScreen = window.worldToScreen(centerWorld.x, centerWorld.y, cam);
           const footprintScale = Math.max(placement.footprint.width, placement.footprint.height);
           if (window.drawInfrastructureIcon) {
-            window.drawInfrastructureIcon(ctx, building, centerScreen, cellSize * 0.72 * footprintScale, ghostAlpha, null);
+            window.drawInfrastructureIcon(ctx, building, centerScreen, cellSize * 0.72 * footprintScale, ghostAlpha);
           }
         }
         ctx.globalAlpha = alpha * 0.85;
       }
     }
   }
-  ctx.restore();
-}
-
-function drawInfrastructureInstances(ctx, cam) {
-  if (!ctx || !cam || !window.Game.infrastructure) return;
-  const activeKey = (window.stationUI.editorMode && window.stationUI.station) ? getInfrastructureStationKey(window.stationUI.station) : null;
-  ctx.save();
-  window.Game.infrastructure.forEach((list, key) => {
-    if (activeKey && key === activeKey) return;
-    for (const inst of list) {
-      if (!inst || !inst.worldPos || !inst.buildingId) continue;
-      // Stacja-port ringu „Halo” stoi w hali K-7: jej budynki są częścią
-      // ringu, ikony 2D leżałyby na dachu hali (widać je tylko w edytorze).
-      if (inst.stationRef?.ringPort) continue;
-      const building = INFRA_BUILDING_MAP.get(inst.buildingId);
-      if (!building) continue;
-      const screen = window.worldToScreen(inst.worldPos.x, inst.worldPos.y, cam);
-      const footprintScale = inst.footprint ? Math.max(inst.footprint.w || 1, inst.footprint.h || 1) : 1;
-      const size = INFRA_CELL_WORLD_SIZE * cam.zoom * 0.6 * footprintScale;
-      ctx.globalAlpha = 0.9;
-      if (window.drawInfrastructureIcon) {
-        window.drawInfrastructureIcon(ctx, building, screen, size, 0.95, inst);
-      }
-    }
-  });
   ctx.restore();
 }
 
@@ -1484,8 +1458,6 @@ function populateStationInfrastructureDefaults(station, preset) {
       { id: 'metal_harvester', offset: { col: midBand, row: 0 }, rotation: 0 },
       { id: 'metal_refinery', offset: { col: 0, row: -midBand }, rotation: 0 },
       { id: 'metal_refinery', offset: { col: 0, row: midBand }, rotation: 0 },
-      { id: 'solar_array', offset: { col: -midBand + 1, row: midBand - 1 }, rotation: 0 },
-      { id: 'solar_array', offset: { col: midBand - 1, row: midBand - 1 }, rotation: 0 },
     ],
     earth: [
       { id: 'shipyard_capital', offset: { col: midBand + 2, row: 0 }, rotation: 0 },
@@ -1493,9 +1465,6 @@ function populateStationInfrastructureDefaults(station, preset) {
       { id: 'shipyard_m', offset: { col: 0, row: -midBand }, rotation: 0 },
       { id: 'shipyard_s', offset: { col: -2, row: midBand - 1 }, rotation: 0 },
       { id: 'shipyard_s', offset: { col: 2, row: midBand - 1 }, rotation: 0 },
-      { id: 'solar_array', offset: { col: -midBand + 1, row: -(midBand + 1) }, rotation: 0 },
-      { id: 'solar_array', offset: { col: midBand - 1, row: -(midBand + 1) }, rotation: 0 },
-      { id: 'solar_array', offset: { col: 0, row: midBand }, rotation: 0 },
       { id: 'storage_metal', offset: { col: -farBand, row: -farBand }, rotation: 0 },
       { id: 'storage_metal', offset: { col: -farBand, row: farBand }, rotation: 0 },
       { id: 'storage_fuel', offset: { col: farBand, row: -farBand }, rotation: 0 },
@@ -1507,8 +1476,6 @@ function populateStationInfrastructureDefaults(station, preset) {
     ],
     mars: [
       { id: 'shipyard_l', offset: { col: midBand, row: 0 }, rotation: 0 },
-      { id: 'solar_array', offset: { col: -midBand + 1, row: -(midBand + 1) }, rotation: 0 },
-      { id: 'solar_array', offset: { col: midBand - 1, row: midBand - 1 }, rotation: 0 },
       { id: 'metal_harvester', offset: { col: -farBand, row: -farBand }, rotation: 0 },
       { id: 'metal_refinery', offset: { col: farBand, row: farBand }, rotation: 0 },
       { id: 'storage_metal', offset: { col: -farBand, row: 0 }, rotation: 0 },
@@ -1574,7 +1541,6 @@ export const InfrastructureUI = {
   syncWorldPositions: syncInfrastructureWorldPositions,
   autopopulate: autopopulateDefaultInfrastructure,
   drawGrid: drawInfrastructureGrid,
-  drawInstances: drawInfrastructureInstances,
   ensureState: ensureInfrastructureState,
   getLayout: getInfrastructureLayout,
   setActiveStation: setInfrastructureActiveStation,
