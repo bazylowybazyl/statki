@@ -131,12 +131,13 @@ export function warpEdgeFxSwitch(search = RenderWorld.pageSearch) {
 export const WarpEdgeFxTune = {
   haze: null, czastki: null, zorza: null,
   // W1 haze
-  hazeAmpPx: 16,        // [px przy 1080] przesunięcie przy krawędzi przy sile 1 (kop × 2)
+  hazeAmpPx: 13,        // [px przy 1080] przesunięcie przy krawędzi przy sile 1 (kop najwyżej × hazeKickMax)
+  hazeKickMax: 1.4,     // sufit siły haze w kopie (drobiny dostają pełny impuls; × 2 w haze „topiło” małe planety z boku)
   hazeAngN: 7,          // kafelki szumu na pełny obrót wokół VP (całkowite — szew atan bez skoku)
   hazeRadK: 0.55,       // kafelki szumu na jednostkę ln(r) (wydłużenie radialne: kąt 7 / 2π vs promień 0,55)
   hazeFlow: 0.85,       // [kafelki/s] przepływ szumu na zewnątrz przy prędkości 1 (ln r: 0,85 / 0,55 ≈ 1,5/s)
   hazeTan: 0.35,        // udział przesunięcia w poprzek promienia
-  hazeFine: 0.6,        // udział drobnych zmarszczek (kanał B — okres 16)
+  hazeFine: 0.3,        // udział drobnych zmarszczek (kanał B — okres 16; więcej — smugi gwiazd „robaczkami”)
   // W2 drobiny
   dustCount: 2048,      // instancji (stała — liczba w potoku ≥ 2; mniej rysuje się jako zwinięte kwady)
   dustBright: 0.34,     // jasność smugi (liniowo, HDR pod progiem bloomu ~0,9; rzadkie jaśniejsze × dustBrightRare)
@@ -151,7 +152,7 @@ export const WarpEdgeFxTune = {
   // W3 zorza
   auroraStrength: 0.1,  // jasność pasa przy krawędzi (liniowo)
   auroraStrip: 0.34,    // szerokość pasa × wysokość kadru (najwyżej 0,3 szerokości)
-  auroraSat: 0.55,      // nasycenie barw palety (0 — szaroniebieska poświata, 1 — czysta barwa palety)
+  auroraSat: 0.45,      // nasycenie barw palety (0 — szaroniebieska poświata, 1 — czysta barwa palety)
   // maska boków (WARP_EDGE_MASK — kopia do strojenia)
   maskClear: 0.15,
   maskFull: 0.8,
@@ -299,8 +300,11 @@ export function warpEdgeVanishPoint(cu, cv, hw, hh, ax, ay, hf = WORLD_LENS_DEFA
 
 /** Głębia NDC drobin i zorzy: przy dalekiej płaszczyźnie — wszystko z zapisem głębi w passie tła je zasłania. */
 export const WARP_EDGE_FAR_DEPTH = 0.99999;
-/** Kolejka passa tła: po niebie (−1000 / −998) i gwiazdach (−1), po zasłonie pasa (−0,5). */
-export const WARP_EDGE_RENDER_ORDER = -0.45;
+/**
+ * Kolejka passa tła: po niebie, gwiazdach i zasłonie pola (< 0) — okno renderOrder (−0,5; 0) należy do pasa (skały tła,
+ * zasłona; reguła `pas-asteroid`), każda inna rzecz tła ma ≥ 0. W skoku pas i tak nie jest rysowany.
+ */
+export const WARP_EDGE_RENDER_ORDER = 0.3;
 
 function newUniforms() {
   return {
@@ -424,7 +428,9 @@ function buildDustMaterial(U) {
     const f = fract(h2.add(U.dust.x.mul(rate))).toVar();
     const lnR = mix(U.dustLife.x, U.dustLife.y, f);
     const rHead = exp(lnR).mul(H).toVar();
-    const rTail = rHead.mul(exp(U.dust.z.mul(rate).negate())).toVar();
+    // smuga: tempo × migawka (U.dust.z, ln r) × tempo instancji × rozrzut długości 0,55–1,6
+    const lenK = mix(0.55, 1.6, fract(h4.mul(13.0)));
+    const rTail = rHead.mul(exp(U.dust.z.mul(rate).mul(lenK).negate())).toVar();
     const along = mix(rTail, rHead, corner.x.add(0.5));
     const wPx = U.dust.w.mul(mix(0.8, 1.35, h4));
     const P = U.vp.add(dirR.mul(along)).add(vec2(dirR.y.negate(), dirR.x).mul(corner.y.mul(wPx))).toVar();
@@ -473,7 +479,8 @@ function buildAuroraMaterial(U, tile) {
     const fall = e.mul(e).mul(float(3.0).sub(e.mul(2.0)));
     const d = P.sub(U.vp).toVar();
     const r = max(length(d), 1.0);
-    const ua = atan(d.y, d.x).mul(U.haze.y).mul(0.5);
+    // kąt × (całkowite kafelki / 2π — aurora.z): na szwie atan skok o całkowitą liczbę kafelków, bez linii
+    const ua = atan(d.y, d.x).mul(U.aurora.z);
     const ur = log(r.div(H)).mul(U.haze.z.mul(0.6)).sub(U.hazeClock.mul(0.8));
     const n = texture(tile, vec2(ua.add(0.21), ur)).level(0);
     const wisps = smoothstep(0.3, 0.85, n.r).mul(n.a.mul(0.5).add(0.5));
@@ -677,10 +684,10 @@ export class WarpEdgeFx {
     const s = env.strength;
     const scale = H / 1080;
     // --- W1 ---
-    U.haze.value.set(num(T.hazeAmpPx, 11) * scale * s, Math.round(num(T.hazeAngN, 7)) / (2 * Math.PI),
+    U.haze.value.set(num(T.hazeAmpPx, 13) * scale * Math.min(s, num(T.hazeKickMax, 1.4)), Math.round(num(T.hazeAngN, 7)) / (2 * Math.PI),
       num(T.hazeRadK, 0.55), num(T.hazeTan, 0.35));
     U.hazeClock.value = this._hazeClock;
-    U.hazeFine.value = num(T.hazeFine, 0.45);
+    U.hazeFine.value = num(T.hazeFine, 0.3);
     // --- W2 ---
     const streak = Math.max(0.005, logSpeed * Math.max(0.15, speed) * num(T.dustShutter, 0.06));
     U.dust.value.set(this._dustClock, num(T.dustBright, 0.34) * Math.min(1.35, s), streak, num(T.dustWidthPx, 2.4) * Math.max(0.75, scale));
@@ -696,9 +703,9 @@ export class WarpEdgeFx {
     if (geo.instanceCount !== want) geo.instanceCount = want;
     // --- W3 ---
     const strip = Math.min(0.3 * W, num(T.auroraStrip, 0.34) * H);
-    U.aurora.value.set(num(T.auroraStrength, 0.1) * s, strip, 0, 0);
+    U.aurora.value.set(num(T.auroraStrength, 0.1) * s, strip, Math.max(1, Math.round(0.5 * num(T.hazeAngN, 7))) / (2 * Math.PI), 0);
     // barwy palety (otoczka, poświata) znormalizowane i przygaszone ku szaroniebieskiej mgiełce (auroraSat)
-    const sat = clamp01(num(T.auroraSat, 0.55));
+    const sat = clamp01(num(T.auroraSat, 0.45));
     const o = pal.outer;
     const ol = Math.max(1e-3, Math.max(o[0], o[1], o[2]));
     U.auroraA.value.set(0.55 + sat * (o[0] / ol - 0.55), 0.62 + sat * (o[1] / ol - 0.62), 0.8 + sat * (o[2] / ol - 0.8));
