@@ -14,7 +14,8 @@
 //   • GWIAZDY (stars.js: WARP_STARS) i ZGIĘCIE TŁA (skyBend.js — materiał mgławicy: soczewka bańki);
 //   • FALE — przezroczysta refrakcja, źródła zniekształceń „uber” (Core3D.fxDistortion().shock);
 //   • KADŁUB — odsłanianie, szew, żar brzegu (entity.__warpHullU → materiał kadłuba, 04) i plazma
-//     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13).
+//     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13);
+//   • BOKI KADRU w skoku gracza (warpEdgeFx.js, 2026-10-29 — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`).
 // Rozgrywka bez zmian: efekt tylko słucha stanu gry (automat warpa, pozycje encji, osie rekordów ruchu warpa — harmonogram,
 // prowadzenie okrętów w tunelu, duch i onGone liczy gra w czasie gry).
 //
@@ -38,6 +39,7 @@ import { warpLensBeta } from '../../render/warpLensPhase.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
+import { WarpEdgeFx } from './warpEdgeFx.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import * as THREE from 'three/webgpu';
 
@@ -121,6 +123,9 @@ export const WarpNurt = {
   _rollHalf: { hw: 0, hh: 0 },
   _medCtx: { camMX: 0, camMY: 0, flow: 0, flowX: 0, flowY: 0 },
   _fxStep: null,
+  // Boki kadru w skoku gracza (warpEdgeFx.js): moduł i rekord wejścia klatki (bez alokacji).
+  edge: null,
+  _edgeCtx: { on: false, t: 0, dt: 0, player: null, zoom: 1, roll: 0, W: 1, H: 1, shipX: 0, shipY: 0, anchorSX: NaN, anchorSY: NaN, pxScale: 1, palette: '' },
   // Wstrząsy skoku gracza i wyrzutów NPC zgłasza GRA (src/game/warpShakes.js — te same chwile i wartości, także
   // w workerze renderu); dawny hak `onShake` sterownika zniknął (etap W nowego warpa, 2026-10-25).
   stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, glows: 0, waves: 0, arrivals: 0, flow: 0, lens: 0 },
@@ -163,6 +168,8 @@ export const WarpNurt = {
       update: (ctx) => this._runSteps(ctx)
     };
     Core3D.addFxStep(this._fxStep);
+    // Boki kadru w skoku gracza: siatki (DIST, pass tła), wpisy rozgrzewki i krok zgłaszający warstwę DIST.
+    this.edge = new WarpEdgeFx().attach(Core3D.scene);
     this.initialized = true;
     if (typeof window !== 'undefined') window.WarpNurt = this;
     return this;
@@ -378,6 +385,7 @@ export const WarpNurt = {
     this._commitSky(o, camX, camY, zoom);
     this._commitStars(o, camX, camY, zoom, ship);
     this._finishHulls();
+    this._commitEdge(o, t, dt, camX, camY, zoom, hasPlayer);
 
     const s = this.stats;
     s.awake = drawMedium;
@@ -724,6 +732,31 @@ export const WarpNurt = {
     if (p.active || p.mode === 'exit') cap = STAR_SPEED_CAP;
     else if (ship && ship.vel && ship.vel.x * ship.vel.x + ship.vel.y * ship.vel.y > STAR_SPEED_CAP * STAR_SPEED_CAP) cap = STAR_SPEED_CAP;
     WARP_STAR_CAMERA.speedCap = cap;
+  },
+
+  // Boki kadru w skoku gracza (warpEdgeFx.js — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`): stan skoku
+  // z WarpPlayerFx (fazy, kop, wyjście, przepływ — hipercruise daje 0), kadr i kotwica jak soczewka świata (px bufora,
+  // kotwica z px CSS × Core3D.pxScale, obrót kadru), tylko kamera z góry jednego gracza (`lensAllowed`).
+  _commitEdge(o, t, dt, camX, camY, zoom, hasPlayer) {
+    const e = this.edge;
+    if (!e) return;
+    const c = this._edgeCtx;
+    const g = this._playerGame;
+    c.on = hasPlayer && o.lensAllowed !== false;
+    c.t = t;
+    c.dt = dt;
+    c.player = this.player;
+    c.zoom = zoom;
+    c.roll = this._roll;
+    c.W = this._view.bufW;
+    c.H = this._view.bufH;
+    c.shipX = g.x - camX;
+    c.shipY = g.y - camY;
+    c.anchorSX = o.anchorSX;
+    c.anchorSY = o.anchorSY;
+    c.pxScale = Number(Core3D.pxScale) > 0 ? Number(Core3D.pxScale) : 1;
+    c.palette = g.palette;
+    e.update(c);
   },
 
   /** Kadłub encji: odsłanianie / szew / żar (fx w j. świata) → Vector4 materiału (px sprite'a). */
