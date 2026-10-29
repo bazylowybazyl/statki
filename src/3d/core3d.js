@@ -619,6 +619,13 @@ export const Core3D = {
   uniformUploadStats: { merged: 0, savedWrites: 0, skippedFull: 0, skippedBytes: 0 },
   // wysyłki bufora z przeplotem pominięte jako powtórka tej samej wersji (_dedupeInterleavedUploads)
   attributeUploadStats: { skipped: 0 },
+  // Czyszczenie celu sceny w passie sceny (loadOp clear, _runScenePass) zamiast osobnych passów renderer.clear three
+  // i rozwiązanie MSAA celu sceny tylko w ostatnim passie renderu (_skipIntermediateResolves) — 2026-10-29, pole asteroid
+  // przy 5120 × 1440. A/B w biegu: Core3D.clearInPass / msaaResolveOnce = false (dawna ścieżka three).
+  clearInPass: true,
+  msaaResolveOnce: true,
+  _resolveSkipTarget: null,
+  resolveStats: { skipped: 0 },
   // Zgłoszenia kolejki GPU (src/3d/zbieraczZgloszen.js, 2026-10-17): three r183 robi queue.submit przy każdym
   // render / compute / clear (~20 na klatkę), a każde zgłoszenie w Chrome to osobne zadanie procesu GPU. Zbieracz
   // wysyła je razem na końcu klatki (wcześniej tylko przy konflikcie zapisu z odłożonymi poleceniami). Instalacja przy
@@ -658,8 +665,8 @@ export const Core3D = {
   shaftHullTexture: null,
   shaftRings: new Map(),
   // Czy na warstwach planet / halo / ring-planet / tarcz jest w tej klatce coś
-  // widocznego. Pusty pass to i tak pełny obchód grafu sceny, a do celu MSAA
-  // także resolve + invalidate (three robi je na końcu KAŻDEGO render()).
+  // widocznego. Pusty pass to i tak pełny obchód grafu sceny i osobny pass GPU
+  // (rozwiązanie MSAA — tylko w ostatnim passie sceny, _skipIntermediateResolves).
   // Flagi ustawiają właściciele: planet3d.assets.js (tym samym cullingiem, którym
   // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true. Ośrodek
   // warpa (warstwa 8) — odwrotnie: tylko gdy sterownik warpa zgłosi go w tej klatce.
@@ -730,8 +737,9 @@ export const Core3D = {
   // compute raz na klatkę przed passami (addFxStep), początek pul i zegar efektów (fx.origin, fx.time),
   // siatka świateł (fx.grid; renderer.lighting = GridLighting „optIn”), światła efektów (fx.lights),
   // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget).
-  // fxStats — pomiar klatki (PerfHUD, harness).
-  fx: null, fxStats: null, fxNowMs: NaN, distortionTarget: null,
+  // fxStats — pomiar klatki (PerfHUD, harness). fxFrameKey — klucz klatki efektów z zewnątrz (worker: numer strony gry —
+  // klatka efektów raz na stronę, nie raz na takt rAF workera; NaN — renderer.info.frame, tryb off / inline).
+  fx: null, fxStats: null, fxNowMs: NaN, fxFrameKey: NaN, distortionTarget: null,
 
   _getBloomConfig() {
     const bloom = RenderWorld.devVFX?.bloom || null;
@@ -937,7 +945,8 @@ export const Core3D = {
 
     // Bufor sceny: HalfFloat (HDR-first, próg bloomu ~0,9) + MSAA 4. Wszystkie
     // passy sceny piszą do niego; backend WebGPU trzyma MSAA między render()
-    // (storeOp store) i rozwiązuje go do .texture na końcu każdego passa.
+    // (storeOp store), a rozwiązanie do .texture robi ostatni pass sceny renderu
+    // (_skipIntermediateResolves).
     const rt = new THREE.RenderTarget(w0, h0, {
       format: THREE.RGBAFormat, type: THREE.HalfFloatType,
       depthBuffer: true, stencilBuffer: false, samples: this.msaaBoot > 0 ? 4 : 0
@@ -1232,6 +1241,7 @@ export const Core3D = {
     this._coalesceUniformUploads(renderer);
     this._dedupeInterleavedUploads(renderer);
     this._uniqueComputeListTimestamps(renderer);
+    this._skipIntermediateResolves(renderer);
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
   },
@@ -1299,6 +1309,37 @@ export const Core3D = {
         }
       }
       return orig.call(this, attribute);
+    };
+  },
+
+  // ROZWIĄZANIE MSAA RAZ NA RENDER (2026-10-29, pole asteroid przy 5120 × 1440): three r183 kończy KAŻDY pass do celu
+  // MSAA (render() i clear()) rozwiązaniem do .texture (resolveTarget w deskryptorze passa — _getRenderPassDescriptor),
+  // a composerTarget.texture czyta dopiero post. Przy 5120 × 1440 RGBA16F × 4 próbki to do ~236 MB odczytu i 59 MB zapisu
+  // na pass, bez znaczników czasu. Gdy render() ustawi `_resolveSkipTarget` (passy sceny przed ostatnim), deskryptor
+  // passa do tego celu idzie bez resolveTarget: próbki zostają w celu MSAA (storeOp store), następny pass ładuje je
+  // (loadOp load), rozwiązuje ostatni pass — obraz bit w bit ten sam. Inne cele i tryby (tło menu, pre-pass halo,
+  // DIST, maska) bez zmian. Deskryptor three składa co pass na nowo (pamięć ma tylko widoki), więc zmiana nie zostaje
+  // w pamięci three. A/B: Core3D.msaaResolveOnce = false. Liczniki: Core3D.resolveStats.skipped.
+  _skipIntermediateResolves(renderer) {
+    const backend = renderer?.backend;
+    if (!backend || typeof backend._getRenderPassDescriptor !== 'function' || backend.__core3dResolveSkip) return;
+    const orig = backend._getRenderPassDescriptor;
+    const core = this;
+    const stats = this.resolveStats;
+    backend.__core3dResolveSkip = true;
+    backend._getRenderPassDescriptor = function (renderContext, colorAttachmentsConfig) {
+      const descriptor = orig.call(this, renderContext, colorAttachmentsConfig);
+      const skip = core._resolveSkipTarget;
+      if (skip !== null && renderContext && renderContext.renderTarget === skip && descriptor && descriptor.colorAttachments) {
+        const list = descriptor.colorAttachments;
+        for (let i = 0; i < list.length; i++) {
+          if (list[i] && list[i].resolveTarget !== undefined) {
+            list[i].resolveTarget = undefined;
+            stats.skipped++;
+          }
+        }
+      }
+      return descriptor;
     };
   },
 
@@ -2119,12 +2160,15 @@ export const Core3D = {
 
     const tComposer0 = performance.now();
 
-    // Scena → composerTarget (MSAA; backend rozwiązuje je do .texture na końcu
-    // każdego passa), potem post bez MSAA na kanwę.
+    // Scena → composerTarget (MSAA; rozwiązanie do .texture w ostatnim passie sceny),
+    // potem post bez MSAA na kanwę.
     // Kadr = kanwa gry (px CSS) / zoom — jak nakładki 2D; bufor ma pxScale px na px kanwy (opcje grafiki).
     this.syncCamera(this.activeCam1, this._viewCssW(), this._viewCssH());
     this._updateFogUniforms(freePerspective);
     renderer.setRenderTarget(this.composerTarget);
+    // MSAA rozwiązuje tylko OSTATNI pass sceny tego renderu (_skipIntermediateResolves): composerTarget.texture czyta
+    // dopiero post, a wcześniejsze passy trzymają próbki (storeOp store) dla następnych.
+    const resolvePass = this._lastScenePass(layerActivity);
     for (const pass of this._scenePasses) {
       if (!pass || pass.enabled === false) continue;
       // Pusty pass (planety poza kadrem, zero widocznych tarcz) = zero pracy.
@@ -2139,8 +2183,10 @@ export const Core3D = {
         if (pass === this.renderPassOrtho) this._requestSunShadowUpdate(t, 1 | (1 << 2) | (1 << SHADOW_WARM_LAYER));
       } else if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);
       else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);
+      this._resolveSkipTarget = resolvePass !== null && pass !== resolvePass ? this.composerTarget : null;
       this._runScenePass(pass, freePerspective);
     }
+    this._resolveSkipTarget = null;
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
     this._renderFxDistortion(freePerspective || t.fxDistortion === false);
     renderer.setRenderTarget(null);
@@ -2174,25 +2220,100 @@ export const Core3D = {
     if (pass.quad) {
       pass.quad.render(renderer);
     } else {
-      if (pass.clearColor) {
-        renderer.setClearColor(0x000000, 0.0);
-        renderer.clear(true, true, true);
-      } else if (pass.clearDepth && !sharedDepth) {
-        // Kamera z góry: każdy pass rysuje się na poprzednich (tło → planety → świat → FG).
-        // Kamery 3D (sharedDepth): jedna kamera perspektywy dla wszystkich passów, więc wspólna
-        // głębia daje prawdziwe przesłanianie (statek za planetą / ringiem, ring przed statkiem).
-        renderer.clear(false, true, false);
-      }
+      // Czyszczenie przed passem: kolor i głębia (tło) albo sama głębia — kamera z góry: każdy pass rysuje się na
+      // poprzednich (tło → planety → świat → FG). Kamery 3D (sharedDepth): jedna kamera perspektywy dla wszystkich
+      // passów, więc wspólna głębia daje prawdziwe przesłanianie (statek za planetą / ringiem, ring przed statkiem).
+      const clearColor = pass.clearColor === true;
+      const clearDepth = clearColor || (pass.clearDepth === true && !sharedDepth);
+      if (clearColor) renderer.setClearColor(0x000000, 0.0);
+      // CZYSZCZENIE W PASSIE SCENY (2026-10-29, pole asteroid przy 5120 × 1440): loadOp „clear” passa sceny (autoClear na
+      // czas jednego render()) zamiast renderer.clear — three r183 robi z clear() OSOBNY pass z własnym zgłoszeniem
+      // i rozwiązaniem MSAA całego celu, bez znaczników czasu (3 na klatkę: tło, ortho, FG). Ten sam obraz: ten sam kolor
+      // czyszczenia i głębia 1, haki passa niżej nie rysują do celu sceny (piszą bufory albo własne cele). A/B:
+      // Core3D.clearInPass = false (dawne passy czyszczenia).
+      const inPass = clearDepth && this.clearInPass !== false;
+      if (!inPass && clearColor) renderer.clear(true, true, true);
+      else if (!inPass && clearDepth) renderer.clear(false, true, false);
       const camera = this.getPassCamera(pass.ortho);
       camera.layers.set(pass.layer);
       const hooks = this._passHooks ? this._passHooks[pass.name] : null;
       if (hooks) for (let i = 0; i < hooks.length; i++) hooks[i](camera, pass);
       // Rulon warpa: pass świata gnie się (hak w materiałach — rulon.js); post i cienie nie.
       RULON.pass.value = 1;
-      renderer.render(this.scene, camera);
+      // Czyszczenie w passie idzie z PIERWSZYM renderem do celu sceny: znaczkiem głębi (addPassDepthStamp) albo sceną.
+      let clearNext = inPass;
+      const stamps = !sharedDepth && this.depthStamps !== false && this._passStamps && this._stampCoverRuns() ? this._passStamps[pass.name] : null;
+      if (stamps && stamps.length) {
+        const ortho = this.getPassCamera(true);
+        const mask = ortho.layers.mask;
+        for (let i = 0; i < stamps.length; i++) {
+          const s = stamps[i];
+          if (!s || !s.scene || (typeof s.active === 'function' && s.active() !== true)) continue;
+          ortho.layers.set(0);
+          this._renderPassScene(renderer, s.scene, ortho, clearNext, clearColor);
+          clearNext = false;
+          this.stampStats.renders++;
+        }
+        ortho.layers.mask = mask;
+      }
+      this._renderPassScene(renderer, this.scene, camera, clearNext, clearColor);
       RULON.pass.value = 0;
     }
     this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
+  },
+
+  // Render sceny passa do celu sceny; clear — z czyszczeniem w tym samym passie GPU (loadOp clear: kolor przy clearColor,
+  // głębia zawsze) przez autoClear na czas jednego render() — stan renderera wraca także przy błędzie.
+  _renderPassScene(renderer, scene, camera, clear, clearColor) {
+    if (!clear) {
+      renderer.render(scene, camera);
+      return;
+    }
+    const a0 = renderer.autoClear, ac = renderer.autoClearColor, ad = renderer.autoClearDepth, as = renderer.autoClearStencil;
+    renderer.autoClear = true;
+    renderer.autoClearColor = clearColor;
+    renderer.autoClearDepth = true;
+    renderer.autoClearStencil = clearColor;
+    try {
+      renderer.render(scene, camera);
+    } finally {
+      renderer.autoClear = a0;
+      renderer.autoClearColor = ac;
+      renderer.autoClearDepth = ad;
+      renderer.autoClearStencil = as;
+    }
+  },
+
+  // ZNACZEK GŁĘBI PRZED PASSEM SCENY (2026-10-29, pole asteroid przy 5120 × 1440): obiekty rysowane tylko do GŁĘBI celu
+  // sceny przed renderem passa `passName` (w tym samym celu, kamerą passa gry — ortho, warstwa 0 sceny znaczka), np.
+  // skały pasa gry z głębią 0 przed passem tła (asteroidBelt.js _createPlayStamp): rzeczy passa z testem głębi (skały tła,
+  // płaty mgły, zasłona) nie liczą fragmentów pod nimi. WARUNEK WŁAŚCICIELA: znaczek leży ŚCIŚLE wewnątrz pokrycia czegoś
+  // nieprzezroczystego, co pass gry rysuje później z zapisem koloru (inaczej obraz się zmienia). stamp = { scene (własna
+  // scena bez świateł, materiały colorWrite = false), active() → true, gdy rysować w tym renderze }; rozgrzewka:
+  // Core3D.prewarmPass(scene, 0, { ortho: true }). Bez znaczków w kamerach 3D (wspólna głębia passów) i gdy pass gry nie
+  // rysuje w tym renderze (_stampCoverRuns). Czyszczenie celu w passie idzie ze znaczkiem (pierwszy render passa). A/B:
+  // Core3D.depthStamps = false. Licznik: Core3D.stampStats.
+  _passStamps: null,
+  depthStamps: true,
+  stampStats: { renders: 0 },
+  // Znaczek zasłania pass GRY (ortho — skała gry rysowana później z zapisem koloru). Pass gry wyłączony w tym renderze
+  // (perfToggles.orthoPass = false → renderPassOrtho.enabled = false, _applyPassToggles na starcie render()) — bez
+  // znaczków: inaczej pod niewidocznymi skałami gry w tle zostają czarne dziury (przegląd 2026-10-29).
+  _stampCoverRuns() {
+    const p = this.renderPassOrtho;
+    return !!p && p.enabled !== false && this.perfToggles?.orthoPass !== false;
+  },
+  addPassDepthStamp(passName, stamp) {
+    if (!stamp || !stamp.scene) return;
+    const map = this._passStamps || (this._passStamps = {});
+    const list = map[passName] || (map[passName] = []);
+    if (!list.includes(stamp)) list.push(stamp);
+  },
+  removePassDepthStamp(passName, stamp) {
+    const list = this._passStamps?.[passName];
+    if (!list) return;
+    const i = list.indexOf(stamp);
+    if (i >= 0) list.splice(i, 1);
   },
 
   // Uniformy „uber” przed postem: źródła gorącego powietrza (≤ 24, dane z
@@ -2314,7 +2435,7 @@ export const Core3D = {
     const split = !!RenderWorld.splitScreenMode;
     const cam2 = split && !freePerspective ? (RenderWorld.camera2 || null) : null;
     // Kadr siatki świateł w j. świata: kanwa (px CSS) / zoom.
-    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective, this.frameNowMs());
+    fx.frame(this.renderer, this.activeCam1, cam2, this._viewCssW(), this._viewCssH(), !!freePerspective, this.frameNowMs(), this.fxFrameKey);
   },
 
   // Zegar klatki efektów [ms] (Core3D.fx, WeaponFx z bankiem Fx3D, kadłuby, odłamki): `fxNowMs` z zewnątrz (worker —
@@ -2443,6 +2564,8 @@ export const Core3D = {
     const prevMask = camera.layers.mask;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.autoClear = false;
+    // tło menu: zwykłe rozwiązanie MSAA w każdym passie (pominięcie dotyczy tylko passów sceny render())
+    this._resolveSkipTarget = null;
     renderer.setRenderTarget(this.composerTarget);
     renderer.setClearColor(0x000000, 1);
     renderer.clear(true, true, true);
@@ -2789,6 +2912,20 @@ export const Core3D = {
     if (pass === this.renderPassShields) return activity.shields !== false;
     if (pass === this.renderPassWarp) return activity.warp === true;
     return true;
+  },
+
+  // Ostatni pass sceny, który ten render wykona (ten jeden rozwiązuje MSAA celu sceny — _skipIntermediateResolves),
+  // albo null: rozwiązanie w każdym passie (cel bez MSAA, A/B Core3D.msaaResolveOnce = false).
+  _lastScenePass(activity) {
+    const target = this.composerTarget;
+    if (this.msaaResolveOnce === false || !target || !(Number(target.samples) > 1)) return null;
+    const list = this._scenePasses;
+    if (!list) return null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const pass = list[i];
+      if (pass && pass.enabled !== false && this._scenePassHasContent(pass, activity)) return pass;
+    }
+    return null;
   },
 
   // Dawne API soczewki warpa (setWarpLensWorld, clearWarpLens, setWarpViewWorld, clearWarpView,

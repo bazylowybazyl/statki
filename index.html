@@ -30521,8 +30521,14 @@
     const spaceGasIn = new Float64Array(SPACE_GAS_IN.size);
     const spaceGasState = createSpaceGasInputState();
     const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
-    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
+    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, camNsX: NaN, camNsY: NaN, halfW: 0, halfH: 0, simTime: NaN, renderTime: NaN,
+      physTick: NaN, physHz: 60, focusOn: false, focusX: 0, focusY: 0, focusVX: 0, focusVY: 0,
+      field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
     const _spaceGasRollHalf = { hw: 0, hh: 0 };
+    // Prowadzony okręt kamery statku (render(): Atlas albo fregata zwiadu przy sterach — poza renderu i prędkość) — okno
+    // pola gazu leży przy nim, pod śladem (spaceGasInput.js placeGasWindow); poza kamerą statku (RTS, fokus stacji,
+    // kamera fabuły, kamery 3D) — `on` false, okno przy kamerze.
+    const _spaceGasFocus = { on: false, x: 0, y: 0, vx: 0, vy: 0 };
     // Ring w budowie (Jowisz, GK-6): pole gazu ringu (src/game/ringGasField.js) — kotwica w środku planety, pas pyłu
     // i oparów budowy wokół obręczy, odgazowanie frontów. Gdy kadr nie dotyka pasa asteroid.
     let _ringGasFields = null;
@@ -30535,10 +30541,18 @@
       for (const f of _ringGasFields) if (f.rectTouchesBelt(cx - r, cy - r, cx + r, cy + r)) return f;
       return null;
     }
-    function packSpaceGas(cam, dt) {
+    function packSpaceGas(cam, camNs, dt) {
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
       o.dt = dt; o.camX = cam.x; o.camY = cam.y;
+      // okno pola bez wstrząsu i kopu kadru (dawniej skakało ±1 komórkę w walce); prowadzony okręt kamery statku
+      o.camNsX = camNs ? camNs.x : NaN; o.camNsY = camNs ? camNs.y : NaN;
+      const fc = _spaceGasFocus;
+      o.focusOn = fc.on; o.focusX = fc.x; o.focusY = fc.y; o.focusVX = fc.vx; o.focusVY = fc.vy;
+      // zegar gry (src/game/simClock.js): obraz w chwili renderu kadłubów; krok pola = krok fizyki z CAŁKOWITEGO licznika
+      // (nie ⌊SimClock.sim · 60⌋ — suma 1/60 dryfuje: po ~1 h 55 min krok o jeden za mały, gaz skakał co krok)
+      o.simTime = SimClock.sim; o.renderTime = SimClock.render;
+      o.physTick = physicsTickId; o.physHz = PHYS_HZ;
       // obrót kadru: pudło osi świata wokół obróconego kadru
       const rh = rolledHalfExtents(W * 0.5 / zoom, H * 0.5 / zoom, cameraRoll(cam), _spaceGasRollHalf);
       o.halfW = rh.hw; o.halfH = rh.hh;
@@ -30627,8 +30641,8 @@
       // okno pola gazu przestrzeni: kadłuby w nim są przeszkodami gazu (maski obrysu jak dla domen wybuchów)
       if (spaceGasIn[SPACE_GAS_IN.active] > 0.5 && o.nDomains < 16) {
         const h = spaceGasIn[SPACE_GAS_IN.windowCells] * spaceGasIn[SPACE_GAS_IN.cell] * 0.5;
-        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.camX];
-        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.camY];
+        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.winX];
+        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.winY];
         const k = o.nDomains * 4;
         _gasDomRects[k] = sx - h; _gasDomRects[k + 1] = sy - h; _gasDomRects[k + 2] = sx + h; _gasDomRects[k + 3] = sy + h;
         o.nDomains++;
@@ -31028,6 +31042,7 @@
       // + offset riga w px ekranu: w nawigacji wyprzedza lot, w walce zagląda za
       // kursorem. Rig kroczy także w trakcie przejścia (wyjście z RTS, powrót
       // z edytora stacji) — przejście goni żywy cel, więc jego koniec nie skacze.
+      _spaceGasFocus.on = false;
       if (camera.mode === 'ship') {
         // podłoga: limit kadłuba albo — przy kadrze przylotu warpa z celem — niższa podłoga zoomu na ekranie (cameraZoomFloor)
         const zoomSafe = Math.max(cameraZoomFloor(camera) || 1e-4, camera.zoom || 1);
@@ -31109,6 +31124,10 @@
         // prowadzony okręt: Atlas, przy sterach fregaty — fregata (przejazd wagą scoutCamW)
         const followX = scoutCamW > 0 ? interpPos.x + (scoutCamLast.x - interpPos.x) * scoutCamW : interpPos.x;
         const followY = scoutCamW > 0 ? interpPos.y + (scoutCamLast.y - interpPos.y) * scoutCamW : interpPos.y;
+        // okno pola gazu przestrzeni przy prowadzonym okręcie (pod śladem) — blok „GAZ PRZESTRZENI”
+        _spaceGasFocus.on = true;
+        _spaceGasFocus.x = followX; _spaceGasFocus.y = followY;
+        _spaceGasFocus.vx = vwx; _spaceGasFocus.vy = vwy;
         const offW = rollToWorld(cameraRig.offsetX / zoomSafe, cameraRig.offsetY / zoomSafe, rigRoll, _rollTmp);
         let rigX = followX + offW.x;
         let rigY = followY + offW.y;
@@ -31228,6 +31247,8 @@
       const storyCam = splitScreenMode ? null : StoryGame.cameraFrame({
         dt: frameDt || 0, W, H, camX: camBaseX, camY: camBaseY, zoom: camBaseZoom, gameCam3d: cam3d, View3D
       });
+      // kamera fabuły i kamery 3D: okno gazu przy kamerze (kadr nie jest kadrem z góry wokół okrętu)
+      if (storyCam || cam3d) _spaceGasFocus.on = false;
       if (storyCam) {
         cam = storyCam;
         camNoShake = storyCam;
@@ -31364,7 +31385,7 @@
       if (!RW_WORKER) HallDust.submit(HallDust.input);
       // Gaz w otwartej przestrzeni (blok „GAZ PRZESTRZENI” niżej): pas przy kamerze — obwiednia z pola, odgazowanie
       // lodowych skał, okno pola; przed przeszkodami (okno idzie do prostokątów domen — kadłuby w polu gazu).
-      packSpaceGas(cam, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      packSpaceGas(cam, camNoShake, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
       // (statyka — przy zmianie), kadłuby przy domenach gazu (reżyser podaje ich prostokąty; bez domen — nic). Krok
       // efektów „wybuchy” czyta tylko tę tablicę.

@@ -253,9 +253,10 @@ test('rozgrzewka pasa: wszystkie mapy atlasu cienia, krok iskier (dt = 0), wydob
   // Krok iskier z dt = 0 (burza: jeden compute na zimno), potem dt wraca.
   const comp = src.slice(src.indexOf('_prewarmCompute() {'));
   assert.match(comp, /S\.dt\.value = 0;\s*renderer\.compute\(this\.sparks\.stepNode\);\s*S\.dt\.value = dt;/);
-  // Wpisy rejestru (Core3D.warmup.run) — pas, wydobycie, atlas, compute.
+  // Wpisy rejestru (Core3D.warmup.run) — pas, wydobycie, znaczek głębi skał gry (2026-10-29), atlas, compute.
   const pre = src.slice(src.indexOf('async _prewarm() {'), src.indexOf('_prewarmShadowAtlas() {'));
-  assert.equal((pre.match(/run\('pas asteroid: /g) || []).length, 4);
+  assert.equal((pre.match(/run\('pas asteroid: /g) || []).length, 5);
+  assert.match(pre, /run\('pas asteroid: znaczek głębi skał gry/);
   assert.match(pre, /this\.mined\.warmupMeshes\(\)/);
   assert.match(pre, /this\.miningView\.warmupMeshes\(\)/);
   // Siatki wydobycia: zewnętrze (LOD), wnętrze, minerały, okruchy, drony, wiązki — wszystkie z warstwą passa gry.

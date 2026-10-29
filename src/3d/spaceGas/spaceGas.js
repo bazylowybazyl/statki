@@ -15,12 +15,12 @@
 
 import { Core3D } from '../core3d.js';
 import { EngineFrame } from '../engineFrame.js';
-import { SpaceGasSim, SPACE_GAS_CELL, SPACE_GAS_SRC } from './spaceGasSim.js';
+import { SpaceGasSim, SPACE_GAS_CELL, SPACE_GAS_SRC, SPACE_GAS_CONE_REACH } from './spaceGasSim.js';
 import { SpaceGasMaps } from './spaceGasMaps.js';
 import { SpaceGasLayer } from './spaceGasLayer.js';
 import { SpaceGasDust } from './spaceGasDust.js';
 import { BeltGasScene, createRingGasLook } from './spaceGasBelt.js';
-import { SPACE_GAS_IN, SPACE_GAS_SCENE } from './spaceGasLayout.js';
+import { SPACE_GAS_IN, SPACE_GAS_SCENE, SPACE_GAS_VIEW_ASPECT, spaceGasViewHalf } from './spaceGasLayout.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
 import { SpaceGasCover } from './spaceGasState.js';
 import { WARP_WORLD_LENS } from '../warp/worldLens.js';
@@ -38,8 +38,19 @@ export const SPACE_GAS_TUNE = {
   dust: true,             // A/B: pył gazu wł. / wył. (na żywo)
   fogReplace: true,       // gaz zamiast płytkich płatów mgły pasa (fog.js) — jedna mgła; false — obie (A/B)
   sim: true,              // A/B: false — samo pole dalekie (G dema)
+  // A/B: false — dt tej strony i własny akumulator kroku (dawniej: pominięte strony workera gubiły czas — utrata 14–48%,
+  // faza kroku pola wobec fizyki losowa); true — zegar gry z wejścia (SPACE_GAS_IN.simTime / renderTime)
+  clock: true,
   amount: 1.0,            // gęstość gazu w obrazie
-  fadeView: [40000, 80000], // zanik obrazu przy oddaleniu: pół kadru [j.]
+  // zanik obrazu przy oddaleniu: pół kadru [j.] (koniec ≤ SPACE_GAS_INPUT_TUNE.maxViewHalf gry — obraz znika, zanim gra
+  // wyłączy gaz; strażnik w teście)
+  fadeView: [40000, 80000],
+  // pół kadru do zaniku (spaceGasViewHalf — to samo wyliczenie co wyłączenie gazu w grze): kadr szerszy niż te proporcje
+  // liczy się jak kadr o tej samej wysokości (32:9 gaśnie jak 16:9 — dawniej max(pół szer., pół wys.): na 5120 × 1440 gaz
+  // gasł od zoomu 0,064, wracały statyczne płaty mgły); 0 — dawny wzór (A/B)
+  fadeAspect: SPACE_GAS_VIEW_ASPECT,
+  dustEdge: true,         // A/B: pył gaśnie miękko przy brzegu okna pola (jak mapa), false — ginie na brzegu (prostokąt)
+  texelLadder: true,      // A/B: teksel map z drabiny 2^(j/8) (spaceGasMaps.js); false — wprost z kadru (gaz „gotował się” przy zoomie)
   warmStart: 3,           // rozgrzanie pola po starcie okna [s] (× 4 czasu pola — odgazowanie i dryf rozwinięte od razu)
   // dysze MAIN: narzucona prędkość w stożku (dema: ciąg ponad jałowy, długość 300 + 1700·ciąg, prędkość 2600·ciąg)
   jetMinPower: 0.12,
@@ -74,6 +85,17 @@ export const SPACE_GAS_TUNE = {
   maxHullObstacles: 32
 };
 
+/**
+ * Zanik obrazu gazu przy oddaleniu (1 — pełny, 0 — zgaszony; wtedy wracają płytkie płaty mgły pasa). Pół kadru do progu
+ * `fadeView` [od, do] z `spaceGasViewHalf` (spaceGasLayout.js — tego samego używa gra do wyłączenia gazu): kadr szerszy
+ * niż `aspect` (szer. / wys.) liczy się jak kadr o tej samej wysokości — 21:9 i 32:9 gasną jak 16:9, kadry ≤ 16:9 (i
+ * pionowe) bit w bit jak dawny max(pół szer., pół wys.); aspect ≤ 0 — dawny wzór.
+ */
+export function spaceGasViewFade(halfW, halfH, fadeView, aspect = SPACE_GAS_VIEW_ASPECT) {
+  const half = spaceGasViewHalf(halfW, halfH, aspect);
+  return 1 - Math.min(1, Math.max(0, (half - fadeView[0]) / (fadeView[1] - fadeView[0])));
+}
+
 class SpaceGasSystem {
   constructor() {
     this.input = new Float64Array(I.size);
@@ -94,7 +116,12 @@ class SpaceGasSystem {
     // w obszar gazu) wraca od zera w WARP_FIELD_FADE.reveal s. Pokrycie pasa dla płytkiej mgły (SpaceGasCover.belt)
     // zostaje przestrzenne — płaty i gaz gasną razem, płaty nie wracają w miejsce gazu.
     this._warpFade = 0;
-    this.stats = { active: false, cpuMs: 0, sources: 0, vents: 0, blasts: 0, bolts: 0, hulls: 0, raster: false, substeps: 0, dispatches: 0, fade: 0 };
+    // zegar gry: czas renderu ostatniej przetworzonej strony (przyrost = dt pyłu, wiatru, zaniku); krok pola z numeru
+    // kroku fizyki (`tick`, `hz`), chwila obrazu z różnicy SimClock.sim − .render (sim.frame)
+    this._renderTime = NaN;
+    this._clk = { tick: NaN, hz: 60, sim: 0, render: 0 };
+    this.stats = { active: false, cpuMs: 0, sources: 0, vents: 0, blasts: 0, bolts: 0, hulls: 0, raster: false, substeps: 0, dispatches: 0, fade: 0,
+      dt: 0, clock: false, viewFade: 0, jetsSkipped: 0 };
   }
 
   _ensure() {
@@ -160,6 +187,31 @@ class SpaceGasSystem {
     const on = !!(T.enabled && IN[I.active] > 0.5 && (scene === SPACE_GAS_SCENE.belt || scene === SPACE_GAS_SCENE.ring));
     st.active = on;
     SpaceGasCover.belt = 0;
+    // ZEGAR (2026-10-29, „gazy i mgła w polu asteroid mocno drżą”): dt = przyrost czasu renderu gry od ostatniej
+    // PRZETWORZONEJ strony — worker pomija strony (i klatki efektów), a dt jednej strony gubił czas pominiętych (pole,
+    // pył i wiatr szły w 52–86% tempa, ruch na narysowaną klatkę skakał); krok pola z NUMERU kroku fizyki (liczba
+    // całkowita z wejścia — sim.frame; bez numeru: akumulator). Bez zegara w wejściu albo A/B `tune.clock = false` — dt
+    // tej strony jak dawniej.
+    const fresh = IN[I.serial] !== this._serial;
+    this._serial = IN[I.serial];
+    const tr = IN[I.renderTime], ts = IN[I.simTime];
+    const clockOn = !!(T.clock && Number.isFinite(tr) && Number.isFinite(ts));
+    let dt;
+    if (clockOn) {
+      const prev = this._renderTime;
+      dt = fresh && Number.isFinite(prev) ? Math.min(0.1, Math.max(0, tr - prev)) : 0;
+      this._renderTime = tr;
+      const ck = this._clk;
+      ck.tick = IN[I.physTick];
+      ck.hz = IN[I.physHz] > 0 ? IN[I.physHz] : 60;
+      ck.sim = ts;
+      ck.render = tr;
+    } else {
+      dt = fresh ? IN[I.dt] : 0;
+      this._renderTime = NaN;
+    }
+    st.dt = dt;
+    st.clock = clockOn;
     if (!on) {
       this.layer.setVisible(false);
       if (this.dust) this.dust.setVisible(false);
@@ -177,31 +229,32 @@ class SpaceGasSystem {
       if (this.looks[scene] && this.scene.look !== this.looks[scene]) { this.scene.look = this.looks[scene]; this.syncLook(); }
       this.sim.requestReset(T.warmStart);
     }
-    const fresh = IN[I.serial] !== this._serial;
-    this._serial = IN[I.serial];
-    const dt = fresh ? IN[I.dt] : 0;
     const ax = IN[I.anchorX], ay = IN[I.anchorY];
+    // środek okna pola (gra: przy prowadzonym okręcie pod śladem, przycięty do kadru — spaceGasInput.js); bez pola — kamera
+    const wx = Number.isFinite(IN[I.winX]) ? IN[I.winX] : IN[I.camX];
+    const wy = Number.isFinite(IN[I.winY]) ? IN[I.winY] : IN[I.camY];
     this.scene.setEnvelope(IN, I);
 
     const sim = this.sim;
     sim.beginInputs();
     // budżet źródeł (64): wybuchy pierwsze, potem dysze, odgazowanie, pociski (plan § 2 pkt 2)
     this._blasts(IN);
-    this._engines(ax, ay);
+    this._engines(ax, ay, wx, wy);
     this._vents(IN);
     this._bolts(IN);
     sim.setRaster(IN, I);
-    this._hulls(ax, ay);
+    this._hulls(ax, ay, wx, wy);
     st.sources = sim.srcN;
     st.hulls = sim.hullN;
     st.raster = IN[I.rasterOn] > 0.5;
     const resets = sim.stats.resets;
-    sim.frame(T.sim ? ctx.renderer : null, T.sim ? dt : 0, IN[I.camX], IN[I.camY], IN[I.windX], IN[I.windY]);
+    sim.frame(T.sim ? ctx.renderer : null, T.sim ? dt : 0, wx, wy, IN[I.windX], IN[I.windY], T.sim && clockOn ? this._clk : null);
     if (this.dust && sim.stats.resets !== resets) this.dust.requestReset();
     st.substeps = sim.stats.substeps;
 
-    // mapy wokół kadru
+    // mapy wokół kadru (teksel z drabiny — siatka tekseli stoi w świecie przy ruchu zoomu)
     const maps = this.maps;
+    maps.ladder = T.texelLadder !== false;
     const r = maps.place(IN[I.camX], IN[I.camY], IN[I.halfW], IN[I.halfH], this._rect);
     maps.U.sunDir.value.set(IN[I.sunX], IN[I.sunY]);
     maps.U.simOn.value = T.sim && sim.image.valid ? 1 : 0;
@@ -209,9 +262,8 @@ class SpaceGasSystem {
     ctx.renderer.compute(maps.kernels());
     st.dispatches = sim.stats.dispatches + 2;
 
-    const half = Math.max(IN[I.halfW], IN[I.halfH]);
-    const f = T.fadeView;
-    const viewFade = 1 - Math.min(1, Math.max(0, (half - f[0]) / (f[1] - f[0])));
+    const viewFade = spaceGasViewFade(IN[I.halfW], IN[I.halfH], T.fadeView, T.fadeAspect);
+    st.viewFade = viewFade;
     // zanik przy skoku gracza (soczewka świata — ten sam stan w trybie off i w workerze; dt gry — pauza trzyma)
     const warpFade = this._warpFade = stepWarpFieldFade(this._warpFade, warpFieldVisibility(WARP_WORLD_LENS.active, WARP_WORLD_LENS.beta), dt);
     st.fade = warpFade;
@@ -224,23 +276,38 @@ class SpaceGasSystem {
     // pył gazu: po polu (czyta jego prędkość i gęstość) i mapach (światło); tylko z ruchem gazu
     const dustOn = !!(this.dust && T.dust && T.sim && fade > 0.004);
     if (this.dust) {
+      this.dust.U.edge.value = T.dustEdge ? 1 : 0;
       if (dustOn) st.dispatches += this.dust.frame(ctx.renderer, dt, ctx, ax, ay, r, fade);
       this.dust.setVisible(dustOn);
     }
     st.cpuMs = performance.now() - t0;
   }
 
-  // Dysze MAIN tej klatki (EngineFrame: scena, y w górę = −y gry) → stożki w polu (świat gry względem kotwicy).
-  _engines(ax, ay) {
+  // Dysze MAIN tej klatki (EngineFrame: scena, y w górę = −y gry) → stożki w polu (świat gry względem kotwicy). Stożek,
+  // którego pudło nie dotyka okna pola (wx, wy ± pół okna), nie zabiera budżetu źródeł (przy oddaleniu w bitwie dysze
+  // okrętów spoza okna wypychały z budżetu dysze w oknie, odgazowanie i pociski) ani pętli kerneli. Pudło = odcinek osi
+  // stożka ± SPACE_GAS_CONE_REACH × szerokość końca stożka: tak daleko w poprzek działa kernel (`srcShape`, |x| < 2,6;
+  // strefa ściśliwa exp(−x²/2) — 0,14 przy x = 2), więc dysza obok okna (do ~1,6 szerokości dalej niż sam stożek) dalej
+  // pcha komórki przy jego brzegu.
+  _engines(ax, ay, wx, wy) {
     const T = this.tune, sim = this.sim;
+    const half = sim.N * sim.cell * 0.5 + sim.cell;
+    let skipped = 0;
     for (let k = 0; k < EngineFrame.count; k++) {
       const th = Math.max(0, (Math.min(EngineFrame.power[k], 1.5) - T.jetMinPower) / (1 - T.jetMinPower));
       if (!(th > 0.01)) continue;
       const x = EngineFrame.x[k] - ax, y = -EngineFrame.y[k] - ay;
+      const dx = EngineFrame.dirX[k], dy = -EngineFrame.dirY[k];
+      const len = T.jetLen[0] + T.jetLen[1] * th;
       const w0 = Math.max(T.jetWidthMin, EngineFrame.spread[k] * T.jetWidth);
-      if (!sim.addSource(x, y, EngineFrame.dirX[k], -EngineFrame.dirY[k], T.jetLen[0] + T.jetLen[1] * th, w0, T.jetWiden,
-        T.jetSpeed * th, T.jetRate, 0, SPACE_GAS_SRC.cone, T.jetReach)) break;
+      const we = w0 + len * T.jetWiden;
+      const m = we * SPACE_GAS_CONE_REACH;
+      const ex = x + dx * len, ey = y + dy * len;
+      if (Math.min(x, ex) - m > wx + half || Math.max(x, ex) + m < wx - half ||
+        Math.min(y, ey) - m > wy + half || Math.max(y, ey) + m < wy - half) { skipped++; continue; }
+      if (!sim.addSource(x, y, dx, dy, len, w0, T.jetWiden, T.jetSpeed * th, T.jetRate, 0, SPACE_GAS_SRC.cone, T.jetReach)) break;
     }
+    this.stats.jetsSkipped = skipped;
   }
 
   // Odgazowanie lodowych skał (wejście gry): struga od Słońca z wylotu po stronie dziennej, wstrzykuje lód (kanał z).
@@ -297,15 +364,15 @@ class SpaceGasSystem {
     this.stats.bolts = m;
   }
 
-  // Kadłuby z wejścia przeszkód (GAS_OBST_IN) w oknie pola.
-  _hulls(ax, ay) {
+  // Kadłuby z wejścia przeszkód (GAS_OBST_IN) w oknie pola (wx, wy — środek okna względem kotwicy).
+  _hulls(ax, ay, wx, wy) {
     const F = this.obstacles;
     if (!F || !(F[GAS_OBST_IN.serial] >= 0)) return;
     const sim = this.sim;
     const R = GAS_HULL_REC;
     const n = Math.max(0, Math.min(GAS_OBST_IN.maxHulls, F[GAS_OBST_IN.hulls] | 0));
     const half = sim.N * sim.cell * 0.5;
-    const cx = this.input[I.camX] + ax, cy = this.input[I.camY] + ay;
+    const cx = wx + ax, cy = wy + ay;
     for (let h = 0; h < n; h++) {
       const o = GAS_OBST_IN.hullBase + h * R.stride;
       const reach = F[o + R.reach];

@@ -826,6 +826,10 @@ if (isWorker) {
     st.curFrame = h[H.FRAME_ID];
     // zegar efektów Core3D.fx = czas strony tej klatki (strona pod harnessem: czas wirtualny — te same fazy efektów)
     if (Number.isFinite(h[H.WALL])) st.Core3D.fxNowMs = h[H.WALL];
+    // klatka efektów Core3D.fx raz na STRONĘ (2026-10-29): worker rysuje z wiadomości strony, a renderer.info.frame liczy
+    // takty rAF pętli three — drugi render w tym samym takcie (11–16% renderów przy 240 Hz) był bez klatki efektów (gaz,
+    // pas i efekty stały, czas strony przepadał). A/B: st.fxPerPage = false (RenderWorkerHost.dev) — po taktach rAF.
+    st.Core3D.fxFrameKey = st.fxPerPage === false ? NaN : k;
     try {
       if (v.blocks.view && v.blocks.view.f64) st.mods.viewBlock.applyViewBlock(v.blocks.view, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.curFrame);
     } catch (e) { modFail('widok', e); }

@@ -21,6 +21,7 @@ import {
 import { billboardOffset } from '../tsl/billboard3D.js';
 import { blendAddytywnePremul } from '../tsl/mieszanie.js';
 import { sunVisibility } from '../sunShadowMask.js';
+import { SPACE_GAS_WINDOW_EDGE } from './spaceGasLayout.js';
 
 /** Kolejka passa ortho: po dolnej połowie gazu (−45), przed efektami gry (≥ 0). */
 export const SPACE_GAS_DUST_ORDER = -40;
@@ -51,6 +52,7 @@ export class SpaceGasDust {
       ambient: uniform(0.22),
       gridGain: uniform(0.12),
       fade: uniform(1),
+      edge: uniform(1),                         // 1 — drobiny gasną miękko przy brzegu okna (jak mapa), 0 — twardy brzeg
       mapO: uniform(new THREE.Vector2()),       // róg okna − róg mapy [j.] (pozycja drobiny → mapa światła)
       mapInv: uniform(new THREE.Vector2(1, 1)), // 1 / bok mapy [1/j.]
       gridOff: uniform(new THREE.Vector3())     // róg okna w scenie − początek siatki świateł (double na CPU)
@@ -148,7 +150,12 @@ export class SpaceGasDust {
       const seed = P.w;
       const age = V.w;
       const lf = this._life(instanceIndex);
-      const fade = smoothstep(0.0, 0.6, age).mul(float(1.0).sub(smoothstep(lf.sub(0.9), lf, age))).mul(U.fade).toVar();
+      // brzeg okna pola: drobiny giną na brzegu (krok), więc gasną przed nim w pasie SPACE_GAS_WINDOW_EDGE (4%) okna — jak
+      // waga okna mapy (kw); przy oddaleniu okno jest mniejsze od kadru, a twardy brzeg pyłu rysował prostokąt
+      const NW = this.sim.N * this.sim.cell;
+      const de = min(min(P.x, float(NW).sub(P.x)), min(P.y, float(NW).sub(P.y)));
+      const edgeK = mix(float(1.0), smoothstep(0.0, NW * SPACE_GAS_WINDOW_EDGE, de), U.edge);
+      const fade = smoothstep(0.0, 0.6, age).mul(float(1.0).sub(smoothstep(lf.sub(0.9), lf, age))).mul(U.fade).mul(edgeK).toVar();
       const puff = select(seed.lessThan(0.1), float(1.0), float(0.0)).toVar();
       const size = mix(seed.mul(8.0).add(5.0), seed.mul(260.0).add(40.0), puff).mul(select(age.lessThan(0.0), float(0.0), float(1.0)));
       // scena: x gry, −y gry (siatka w rogu okna, bez odbicia)
