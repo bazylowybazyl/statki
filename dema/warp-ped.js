@@ -27,7 +27,7 @@ import {
 import { WARP_DRIVES, WARP_DRIVE } from '../src/data/driveModes.js';
 import {
   createCameraRig, createCameraRigTune, stepCameraRig, stepCameraRigWarp, stepCameraRigRoll, noteCameraRigWarp,
-  defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, CAMERA_WARP_ROLL_MODES
+  defaultShipZoom, warpJumpZoomRef, cameraShakeAmplitudePx, sampleCameraShakePx, CAMERA_WARP_ROLL_MODES
 } from '../src/game/cameraRig.js';
 import { rolledHalfExtents } from '../src/3d/viewRoll.js';
 import { createWarpShakeState, stepWarpShakes } from '../src/game/warpShakes.js';
@@ -627,8 +627,10 @@ function stepCamera(realDt, gameDt) {
   w.exitAge = exitAge;
   w.exitSlow = exitSlow;
   w.exitHalt = exitHalt;
-  // Ujednolicony kadr skoku: oddalenie od domyślnego zoomu statku (ten sam kadr przy każdym zoomie gracza).
+  // Ujednolicony kadr skoku: oddalenie od domyślnego zoomu statku (ten sam kadr przy każdym zoomie gracza), w locie kadr
+  // lotu gry (warpJumpZoomRef — index.html: updateCameraWarpKick).
   w.zoomRef = S.warpZoom === 'staly' ? defaultShipZoom(W, hullLength(), camTune) : 0;
+  w.zoomRefFar = S.warpZoom === 'staly' ? warpJumpZoomRef(W, H, hullLength(), camTune) : 0;
   w.zoomBase = zoomBase;
   w.arriving = arriving;
   // Kadr przylotu: odległość statku od bliskiego brzegu tarczy celu (bodyRadius — jak gra: tarcza ringu albo r × 4,5);
@@ -646,6 +648,8 @@ function stepCamera(realDt, gameDt) {
   ri.mouseX = W * 0.5; ri.mouseY = H * 0.5;
   ri.velX = rc * atlas.vx + rs * atlas.vy;
   ri.velY = -rs * atlas.vx + rc * atlas.vy;
+  // skok (ładowanie, lot, rampa): wyprzedzenie skoku gry (index.html: rigIn.leadGain przy playerWarpCameraBusy)
+  ri.leadGain = warp.isBusy() ? camTune.warpJumpLead : NaN;
   stepCameraRig(rig, ri, camTune);
   pose.x = atlas.x; pose.y = atlas.y; pose.angle = atlas.angle;
   window.__interpShipPose = pose;
@@ -712,7 +716,7 @@ function render(realDt, gameDt) {
   // Kadr soczewki jak w grze (index.html: stepPlayerWarpLensPhase): zoom odniesienia i kadr skoku [px CSS / j.], ułamek
   // kadru przylotu i dolot (ślizg z pędem) — bez nich podgląd kadru przylotu celu nie ma miękkiego minimum z kadrem
   // skoku i cel przy dolocie rośnie ponad prawdziwy obraz (smoke w Node: 136 tys. px zamiast 10 tys.).
-  const zr = warpCamIn.zoomRef;
+  const zr = Number.isFinite(rig.warpZoomRef) ? rig.warpZoomRef : warpCamIn.zoomRef;   // kadr ładowania → kadr lotu
   WarpNurt.player?.setLensFrame(zr, zr * camTune.warpZoomOut, camTune.warpArrivalFill, warpCamIn.arriving);
   WarpNurt.update(nurtFrame);
   window.updatePlanets3D(gameDt, cam);

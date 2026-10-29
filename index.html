@@ -1151,7 +1151,7 @@
     import { stepCameraZoom, cameraZoomBase, wheelDeltaPx, syncCameraZoomLimits, cameraZoomFloor } from "./src/game/cameraZoom.js";
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
-      defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
+      defaultShipZoom, warpJumpZoomRef, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
       normalizeCameraWarpKickMode, createCameraKick, addCameraKick, stepCameraKick, stepCameraRigRoll,
       normalizeCameraHyperRollMode
     } from "./src/game/cameraRig.js";
@@ -29411,7 +29411,8 @@
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
     const _cameraWarpInput = {
       dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35,
-      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0, hyper: false
+      rulon: true, zoomRef: 0, zoomRefFar: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0,
+      hyper: false
     };
     // OBRÓT KADRU W HIPERCRUISIE (2026-10-23, zgłoszenie użytkownika: „kamera jak w warp — odpalenie hipercruise =
     // przestawienie kamery za statkiem”; port obrotu z dema „Pęd” — cameraRig.js: stepCameraRigRoll, konwencja
@@ -29557,13 +29558,17 @@
       // (`warp.targetBody`, warpBodyRadius jak soczewka). Hipercruise — zoom gracza × kop (bez zoomRef, decyzja 2026-10-23).
       if (hyperCam || !ship) {
         w.zoomRef = 0;
+        w.zoomRefFar = 0;
         w.arriving = false;
         w.arrivalDist = -1;
         w.arrivalDepthK = 0;
       } else {
-        // kadr skoku dalej niż domyślny zoom statku (2026-10-29, user: „kamera jest za blisko na statek” — warpJumpFrame)
-        w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom)
-          * (Number(cameraRigTune.warpJumpFrame) || 1);
+        // Kadr ładowania — domyślny zoom statku; KADR LOTU (2026-10-29, user: „kamera jest za blisko na statek”) dalej i ten
+        // sam ułamek wysokości kadru przy każdej proporcji — rig przechodzi do niego po kopie (cameraRig.js: warpJumpZoomRef,
+        // warpJumpFrame / warpJumpAspect / warpJumpFrameRise; rig.warpZoomRef — odniesienie tej klatki dla soczewki).
+        const hullLen = Math.max(Number(ship.w) || 0, Number(ship.h) || 0);
+        w.zoomRef = defaultShipZoom(W, hullLen, cameraRigTune, camera.minZoom, camera.maxZoom);
+        w.zoomRefFar = warpJumpZoomRef(W, H, hullLen, cameraRigTune, camera.minZoom, camera.maxZoom);
         // Dolot jak soczewka świata (warpLensPhase.js: warpPlayerArriving — ślizg albo hamowanie grawitacyjne): wyjście
         // bez rampy też zatrzaskuje kadr przylotu.
         w.arriving = warpPlayerArriving(warp);
@@ -29614,7 +29619,8 @@
       const s = _warpLensPhase;
       const hyperOn = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
       stepWarpLensPhase(_warpLensTrack, s, warp, SimClock.render, hyperOn);
-      const zr = Number(_cameraWarpInput.zoomRef);
+      // odniesienie tej klatki z riga (kadr ładowania → kadr lotu po kopie — cameraRig.js: warpZoomRef)
+      const zr = Number.isFinite(cameraRig.warpZoomRef) ? cameraRig.warpZoomRef : Number(_cameraWarpInput.zoomRef);
       s.zoomRef = zr > 0 ? zr : NaN;
       s.zoomJump = zr > 0 ? zr * (Number(cameraRigTune.warpZoomOut) || 1) : NaN;
       s.arrivalFill = Number(cameraRigTune.warpArrivalFill) > 0 ? Number(cameraRigTune.warpArrivalFill) : NaN;

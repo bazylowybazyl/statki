@@ -55,7 +55,7 @@
 //     [--naped mk1|mk2|mk3] [--aspect 16:9|21:9|32:9|W:H] [--param klucz=liczba,…] [--tory gl|wszystkie|nie] [--md plik.md] [--json plik.json]
 //     [--scisle-dzis] [--origin-ruch] [--s7 luna|ceres] [--s10-kurs 114] [--zasieg 0.9]
 //     [--s12-za 3080] [--s12-kurs 0] [--s12-bok 0] [--s13-za 5000] [--s13-bok 0]
-//     [--wpiecie nowe|dzis]
+//     [--wpiecie nowe|dzis] [--kamera warpJumpFrame=1,warpJumpLead=0.4,…]
 // Domyślnie: S1–S12, obie rozdzielczości, kadr 16:9, napęd Mk II (Atlas), tory dla 1080p, raport na stdout.
 
 import { writeFileSync } from 'node:fs';
@@ -117,6 +117,14 @@ const LENS_PARAMS = Object.fromEntries(String(arg('param', '')).split(',').map((
   if (!(k in WL.WORLD_LENS_DEFAULTS) || !Number.isFinite(Number(v))) throw new Error('[sym] --param ' + kv);
   return [k, Number(v)];
 }));
+// A/B strojenia kamery gry: --kamera klucz=liczba[,klucz=liczba] (CAMERA_RIG_DEFAULTS, np. warpJumpFrame=1 — kadr skoku
+// z domyślnego zoomu statku, warpJumpAspect=0 — z pełnej szerokości kadru, warpJumpLead=0.4)
+const CAM_TUNE = CR.createCameraRigTune(Object.fromEntries(String(arg('kamera', '')).split(',').map((kv) => kv.trim()).filter(Boolean)
+  .map((kv) => {
+    const [k, v] = kv.split('=');
+    if (!(k in CR.CAMERA_RIG_DEFAULTS) || !Number.isFinite(Number(v))) throw new Error('[sym] --kamera ' + kv);
+    return [k, Number(v)];
+  })));
 const DRIVE_ID = 'warp_' + String(arg('naped', 'mk2')).toLowerCase().replace(/^warp_/, '');
 // Proporcje kadru (recenzja O1 ust. 1): '16:9' (domyślnie), '21:9' (3440 × 1440), '32:9' (5120 × 1440), 'W:H' albo liczba —
 // W = H · proporcje; progi P4 i W0 liczone względem WYSOKOŚCI kadru (× H / 1080)
@@ -484,9 +492,11 @@ function simulate(sc, H, k1) {
   const rs = Math.sin(roll);
   const toScreen = (wx, wy) => [rc * wx + rs * wy, -rs * wx + rc * wy];
   const toWorld = (sx, sy) => [rc * sx - rs * sy, rs * sx + rc * sy];
-  const zoomRef = CR.defaultShipZoom(W, L_HULL);
+  const tune = CAM_TUNE;
+  // kadr ładowania (domyślny zoom statku) i kadr lotu gry (warpJumpZoomRef) — index.html: updateCameraWarpKick
+  const zoomRef = CR.defaultShipZoom(W, L_HULL, tune);
+  const zoomRefFar = CR.warpJumpZoomRef(W, H, L_HULL, tune);
   const focal = (H * 0.5) / Math.tan(FOV * 0.5 * deg);
-  const tune = CR.CAMERA_RIG_DEFAULTS;
   const world = sc.world;
   const tgtW = bodyOf(world, sc.target);
   const orgW = bodyOf(world, sc.origin);
@@ -519,7 +529,7 @@ function simulate(sc, H, k1) {
   const ctx = { ...WL.WARP_WORLD_LENS, targetHold: 0 };
   const rig = CR.createCameraRig();
   const track = PH.createWarpLensTrack();   // stan minimalny osi β (strona gry)
-  const fill = CR.CAMERA_RIG_DEFAULTS.warpArrivalFill;
+  const fill = tune.warpArrivalFill;
   const tgtDepthK = tgtW && tgtW.z !== 0 ? -tgtW.z / focal : 0;   // cel na tle: głębokość / ogniskowa [j./px]
   // Stan skoku
   let t = -CHARGE_T;
@@ -604,14 +614,15 @@ function simulate(sc, H, k1) {
     CR.stepCameraRigWarp(rig, {
       dt: DT, enabled: true, state: rigState, charge: state === 'charging' ? (t + CHARGE_T) / CHARGE_T : 1,
       dirX: 0, dirY: -1, exitAge: camExitAge, exitSlow: ramp ? ramp.tSlowEnd : WD.WARP_EXIT.slow, exitHalt: ramp ? ramp.tHalt : 1.15,
-      rulon: false, zoomRef, zoomBase: zoomRef, arriving: slideOn, arrivalDist, arrivalDepthK: tgtDepthK, viewW: W, viewH: H
+      rulon: false, zoomRef, zoomRefFar, zoomBase: zoomRef, arriving: slideOn, arrivalDist, arrivalDepthK: tgtDepthK, viewW: W, viewH: H
     }, tune);
     // cameraZoom.js: zoom na ekranie = zoom gracza × e^człon w [podłoga, max] (podłoga kadru przylotu — cameraZoomFloor)
     cz.zoomImpulseMin = rig.warpZoomFloor;
     cz.zoomImpulseLog = rig.warpZoomLog;
     CZ.stepCameraZoom(cz, DT);
     const zoom = cz.zoom;
-    CR.stepCameraRig(rig, { dt: DT, viewW: W, viewH: H, mode: 'never', lookEnabled: false, velX: 0, velY: -v, maxSpeed: V_MAX }, tune);
+    CR.stepCameraRig(rig, { dt: DT, viewW: W, viewH: H, mode: 'never', lookEnabled: false, velX: 0, velY: -v, maxSpeed: V_MAX,
+      leadGain: tune.warpJumpLead }, tune);   // wyprzedzenie skoku gry (index.html: rigIn.leadGain przy playerWarpCameraBusy)
     const shipSx = -rig.offsetX;
     const shipSy = -rig.offsetY;
     // Kotwica P0_nom: nominalny offset riga bez kopu i wysunięcia (rig.nominalX/Y — etap W; dawniej sama sprężyna).
@@ -656,13 +667,15 @@ function simulate(sc, H, k1) {
       } else r.gate = 1;
     }
     const on = beta > 0.0005 || (arriving && ctx.targetHold > 0.0005);
+    const zRefNow = Number.isFinite(rig.warpZoomRef) ? rig.warpZoomRef : zoomRef;
     if (on) {
       Object.assign(ctx, {
         active: true, beta, speed: cruise, driveSpeed: DRIVE, velAngle: course, zoom, W, H, focal, camZ, camX, camY, roll, shipX, shipY,
         shipSx, shipSy, anchorSx, anchorSy, hullHalfLen: L_HULL * zoom * 0.5, hullHalfWid: W_HULL * zoom * 0.5, dt: DT,
         target, origin, exitAge: arriving ? lensExitAge : -1, exitSlow: phase.exitSlow > 0 ? phase.exitSlow : 0, exitHalt: phase.exitHalt,
         arriving: phase.arriving,       // warpLensPhase: ślizg z pędem (warp.exitSlide.active) / hamowanie grawitacyjne
-        arrivalFill: fill, zoomRef, zoomJump: zoomRef * tune.warpZoomOut
+        // odniesienie tej klatki z riga (kadr ładowania → kadr lotu — index.html: stepPlayerWarpLensPhase)
+        arrivalFill: fill, zoomRef: zRefNow, zoomJump: zRefNow * tune.warpZoomOut
       });
       if (today) Object.assign(ctx, { anchorSx: NaN, anchorSy: NaN, driveSpeed: NaN, origin: null, exitSlow: 0, arriving: null, arrivalFill: NaN, zoomRef: NaN, zoomJump: NaN });
       lens.update(recs, recs.length, ctx, target);
