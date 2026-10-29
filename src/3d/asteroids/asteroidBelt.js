@@ -85,10 +85,15 @@ export const BELT_LAYER_BACK = 1;
 // ośrodka (−50) → [efekty gry ≥ 0: dysze, Fx3D, kadłuby 9–10, odłamki 11] → pioruny (14)
 // → duszki (20) → iskry (24). W demie: minerały 2, mgła 8–9, dno 12, pioruny 14, duszki
 // 20, iskry 24 — względna kolejność pola ta sama, efekty gry nad pyłem.
-// Pass tła: niebo i gwiazdy (< 0) → skały tła RUBBLE / MID / DEEP (bliższe pasmo pierwsze: baza + indeks · backBandStep;
-// w warstwie koszyki od największych na ekranie — rockLayers.js ROCK_LOD_ORDER) → zasłona pola (beltVeil.js, test głębi)
-// → głębokie płaty mgły (10+).
-const RENDER_ORDER = Object.freeze({ rocks: 1, minerals: -70, backRocks: 2, backBandStep: 0.1 });
+// Pass tła (kolejka przezroczysta; OKNO renderOrder (−0,5; 0) NALEŻY DO PASA — beltVeil.js VEIL_RENDER_ORDER): niebo
+// i gwiazdy (< −0,5, bez zapisu głębi) → skały tła RUBBLE / MID / DEEP (backRocks + indeks · backBandStep, bliższe
+// pasmo pierwsze; w warstwie koszyki od największych na ekranie — rockLayers.js ROCK_LOD_ORDER; −0,45 … −0,20) → zasłona
+// pola (−0,1, test głębi — pod skałami tła odpada) → każda inna rzecz passa tła (≥ 0: obiekty bez renderOrder, napisy
+// budowli 5, gaz wybuchów w głębi 10, głębokie płaty mgły 10+, …) — zasłona leży tam, gdzie dawniej (−0,5: po niebie,
+// przed każdą inną przezroczystą rzeczą tła). DAWNA KOLEJKA (A/B setRockOrder(false) — rockLayers.js renderOrderOld):
+// skały tła backRocksOld (2, wszystkie pasma — za zasłoną −0,5 i za rzeczami tła 0…2), skały gry rocks (1), bez odstępów.
+export const BELT_RENDER_ORDER = Object.freeze({ rocks: 1, minerals: -70, backRocks: -0.45, backBandStep: 0.1, backRocksOld: 2 });
+const RENDER_ORDER = BELT_RENDER_ORDER;
 // Znaczek głębi skał gry (_createPlayStamp): skała pomniejszona o 3% względem środka — znaczek ściśle wewnątrz pokrycia
 // skały w passie gry (zapas na zaokrąglenia wierzchołka i reguły pokrycia próbek MSAA); brzeg 3% promienia tło liczy jak
 // dawniej.
@@ -324,8 +329,8 @@ export class AsteroidBelt {
     [BELT_BAND.RUBBLE, BELT_BAND.MID, BELT_BAND.DEEP].forEach((band, i) => {
       this.layers.push(new RockLayer({
         parent: root, layer: BELT_LAYER_BACK, bank: this.bank, material: new RockNodeMaterial({ shared, backdrop: true }), field: this.field,
-        bandIndex: band, perspective: true, renderOrder: RENDER_ORDER.backRocks + i * RENDER_ORDER.backBandStep, minPx: 0.8,
-        fadeZoom: BACK_FADE[band], maxLod: 3, sunT: this.sunT
+        bandIndex: band, perspective: true, renderOrder: RENDER_ORDER.backRocks + i * RENDER_ORDER.backBandStep,
+        renderOrderOld: RENDER_ORDER.backRocksOld, minPx: 0.8, fadeZoom: BACK_FADE[band], maxLod: 3, sunT: this.sunT
       }));
     });
     // Znaczek głębi skał gry przed passem tła (Core3D.addPassDepthStamp — rejestracja po dodaniu pola do sceny).
@@ -555,8 +560,12 @@ export class AsteroidBelt {
   }
 
   /**
-   * Kolejka koszyków LOD skał (rockLayers.js ROCK_LOD_ORDER): bigFirst — koszyki największych na ekranie pierwsze
-   * (domyślnie), false — dawna kolejka (LOD 0 pierwszy). A/B w biegu, bez nowych pipeline'ów.
+   * Kolejka skał (rockLayers.js ROCK_LOD_ORDER): bigFirst — koszyki największych na ekranie pierwsze, pasma tła bliższe
+   * pierwsze, skały tła w oknie przed zasłoną (BELT_RENDER_ORDER, domyślnie); false — DOKŁADNIE dawna kolejka sprzed
+   * 2026-10-29: renderOrder warstw backRocksOld (tło, 2) / rocks (gra, 1) w każdym koszyku skał i księżyców. A/B w biegu,
+   * bez nowych pipeline'ów (renderOrder nie wchodzi do klucza). Sama dawna kolejka stawia skały tła ZA nową zasłoną (−0,1)
+   * — zasłona liczy się też pod nimi (obraz ten sam: skała tła bez mieszania nadpisuje ją); dawny obraz passa tła
+   * w całości: razem z veil.setDepthCull(false).
    */
   setRockOrder(bigFirst = true) {
     ROCK_LOD_ORDER.bigFirst = bigFirst !== false;

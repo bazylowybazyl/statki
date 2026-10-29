@@ -2242,7 +2242,7 @@ export const Core3D = {
       RULON.pass.value = 1;
       // Czyszczenie w passie idzie z PIERWSZYM renderem do celu sceny: znaczkiem głębi (addPassDepthStamp) albo sceną.
       let clearNext = inPass;
-      const stamps = !sharedDepth && this.depthStamps !== false && this._passStamps ? this._passStamps[pass.name] : null;
+      const stamps = !sharedDepth && this.depthStamps !== false && this._passStamps && this._stampCoverRuns() ? this._passStamps[pass.name] : null;
       if (stamps && stamps.length) {
         const ortho = this.getPassCamera(true);
         const mask = ortho.layers.mask;
@@ -2290,11 +2290,19 @@ export const Core3D = {
   // płaty mgły, zasłona) nie liczą fragmentów pod nimi. WARUNEK WŁAŚCICIELA: znaczek leży ŚCIŚLE wewnątrz pokrycia czegoś
   // nieprzezroczystego, co pass gry rysuje później z zapisem koloru (inaczej obraz się zmienia). stamp = { scene (własna
   // scena bez świateł, materiały colorWrite = false), active() → true, gdy rysować w tym renderze }; rozgrzewka:
-  // Core3D.prewarmPass(scene, 0, { ortho: true }). Bez znaczków w kamerach 3D (wspólna głębia passów). Czyszczenie celu
-  // w passie idzie ze znaczkiem (pierwszy render passa). A/B: Core3D.depthStamps = false. Licznik: Core3D.stampStats.
+  // Core3D.prewarmPass(scene, 0, { ortho: true }). Bez znaczków w kamerach 3D (wspólna głębia passów) i gdy pass gry nie
+  // rysuje w tym renderze (_stampCoverRuns). Czyszczenie celu w passie idzie ze znaczkiem (pierwszy render passa). A/B:
+  // Core3D.depthStamps = false. Licznik: Core3D.stampStats.
   _passStamps: null,
   depthStamps: true,
   stampStats: { renders: 0 },
+  // Znaczek zasłania pass GRY (ortho — skała gry rysowana później z zapisem koloru). Pass gry wyłączony w tym renderze
+  // (perfToggles.orthoPass = false → renderPassOrtho.enabled = false, _applyPassToggles na starcie render()) — bez
+  // znaczków: inaczej pod niewidocznymi skałami gry w tle zostają czarne dziury (przegląd 2026-10-29).
+  _stampCoverRuns() {
+    const p = this.renderPassOrtho;
+    return !!p && p.enabled !== false && this.perfToggles?.orthoPass !== false;
+  },
   addPassDepthStamp(passName, stamp) {
     if (!stamp || !stamp.scene) return;
     const map = this._passStamps || (this._passStamps = {});

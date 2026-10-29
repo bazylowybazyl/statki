@@ -13,7 +13,7 @@
 
 import * as THREE from 'three/webgpu';
 import { Fn, If, Return, float, int, ivec2, vec2, vec4, uniform, instanceIndex, textureStore, texture, mix, smoothstep, min, max, floor, exp } from 'three/tsl';
-import { SPACE_GAS_MAP_MARGIN } from './spaceGasLayout.js';
+import { SPACE_GAS_MAP_MARGIN, SPACE_GAS_WINDOW_EDGE } from './spaceGasLayout.js';
 
 /**
  * DRABINA TEKSLA map (2026-10-29, „gazy i mgła mocno drżą”): bok teksla = 2^(j / STEPS) [j.], stopień j z histerezą.
@@ -124,11 +124,12 @@ export class SpaceGasMaps {
       const p = U.min.add(vec2(float(i).add(0.5), float(j).add(0.5)).mul(U.texel)).toVar();
       return { i, j, p };
     };
-    // pole w punkcie p z tekstury kroku k: gęstość (dwusześciennie), faktura / stała, waga okna (brzeg łagodnie)
+    // pole w punkcie p z tekstury kroku k: gęstość (dwusześciennie), faktura / stała, waga okna (brzeg łagodnie — pas
+    // SPACE_GAS_WINDOW_EDGE boku okna; gra trzyma go poza mapą kadru, gdy wnętrze okna ją obejmuje: placeGasWindow)
     const fieldAt = (k, p) => {
       const suv = p.sub(k ? U.imgO1 : U.imgO0).div(SW).toVar();
       const edge = min(min(suv.x, suv.y), min(suv.x.oneMinus(), suv.y.oneMinus()));
-      const kw = smoothstep(0.0, 0.04, edge).toVar();
+      const kw = smoothstep(0.0, SPACE_GAS_WINDOW_EDGE, edge).toVar();
       const rt = texture(sim.restTex[k], suv).level(0).toVar();
       const dn = cubicTex(sim.denTex[k], suv, N).toVar();
       // kolumna nad bryłą: gaz otoczenia (średnia 8 próbek na promieniu 5 komórek, tylko z komórek gazu)

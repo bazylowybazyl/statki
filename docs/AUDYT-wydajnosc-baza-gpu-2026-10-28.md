@@ -303,15 +303,17 @@ skałami gry, które pass gry i tak zasłania w całości.
    passy sceny przed ostatnim bez resolveTarget, rozwiązuje ostatni pass (FG). A/B `Core3D.msaaResolveOnce = false`
    (`R1off`). Rozwiązania MSAA na klatkę 6 → 1.
 3. **Kolejka koszyków LOD** (`rockLayers.js` `ROCK_LOD_ORDER`): koszyk największych skał na ekranie pierwszy, pasma tła
-   bliższe pierwsze. A/B `belt.setRockOrder(false)` (`L0`).
+   bliższe pierwsze. A/B `belt.setRockOrder(false)` (`L0`; w tym przebiegu pasma tła zostawały przy 2 / 2,1 / 2,2 — od
+   poprawek przeglądu dokładnie dawna kolejka, § 9.7).
 4. **Znaczek głębi skał gry przed passem tła** (`Core3D.addPassDepthStamp`, `asteroidBelt._createPlayStamp`,
    `RockDepthStampMaterial`): koszyki PLAY (te same geometrie i instancje) kamerą passa gry tylko do głębi celu sceny z z = 0,
    skała × 0,97 względem środka (ściśle wewnątrz pokrycia skały — rzut skały gwiaździstej). Skały tła, głębokie płaty mgły
    i zasłona nie liczą fragmentów pod skałami gry. Jeden pass GPU więcej (13 → 14), CPU workera +0,03…+0,13 ms (render
    sceny znaczka; Δ CPU w A/B `Z0`). A/B `belt.stampEnabled = false` (`Z0`), `Core3D.depthStamps = false`.
 5. **Zasłona pola po skałach tła z testem głębi** (`beltVeil.js`): kwad tuż przed daleką płaszczyzną (`VEIL_CLIP_Z`),
-   renderOrder 5 (po skałach, przed głębokimi płatami mgły) — 5 szumów fraktalnych na piksel tylko tam, gdzie zasłonę
-   widać. A/B `belt.veil.setDepthCull(false)` (`V0`; nowy pipeline przy przełączeniu — tylko do pomiarów).
+   renderOrder 5 (po skałach, przed głębokimi płatami mgły; po przeglądzie −0,1 ze skałami tła w oknie (−0,5; 0) —
+   § 9.7) — 5 szumów fraktalnych na piksel tylko tam, gdzie zasłonę widać. A/B `belt.veil.setDepthCull(false)` (`V0`;
+   nowy pipeline przy przełączeniu — tylko do pomiarów).
 
 Wynik (`.tmp/gpu-pas-po3`, Wysoka, 2 powtórzenia każdego wariantu z oknami bazy przed i po; wariant = DAWNE zachowanie,
 liczby = ile dawne zachowanie kosztuje więcej):
@@ -341,10 +343,10 @@ efektów: światła nawigacyjne, dysze) i B z wariantem, odstępy A → A2 i A2 
   kontroli (te same animowane piksele). Obraz bit w bit ten sam.
 - Z MSAA 4 (Wysoka, `.tmp/gpu-pas-po3`, `-obraz`, `-obraz2`): L0, V0, C5off, R1off, CRoff — na poziomie kontroli. Znaczek
   (Z0, także STARE) zmienia dodatkowo ~4–7 tys. pikseli (0,05–0,1% kadru) o 1–2 ULP półfloatu (≤ 2·10⁻⁴; żadna próbka
-  > 10⁻³), w 87% w pokryciu skał gry (maska wariantu B1p — skały gry ukryte). Pod skałą gry jej kolor nadpisuje próbki
-  i bez znaczka, a bez MSAA różnic nie ma — to rozwiązanie MSAA karty (najpewniej stan bezstratnej kompresji próbek
-  zależny od tego, co pass tła zapisał pod skałą → inna kolejność sumowania próbek w FP16), nie cieniowanie; po ACES i
-  sRGB poniżej kroku 8 bitów.
+  > 10⁻³): 87% z nich leży w pokryciu skał gry (maska wariantu B1p — skały gry ukryte), 13% POZA nim, gdzie znaczek nic
+  nie zmienia (tam pass tła liczy się jak bez znaczka). Bez MSAA (preset Niska) obraz bit w bit ten sam. Przyczyna
+  różnic z MSAA NIEUSTALONA (dawne wyjaśnienie „rozwiązanie MSAA karty / bezstratna kompresja próbek” nie tłumaczy
+  13% poza skałami — niesprawdzone); po ACES i sRGB poniżej kroku 8 bitów.
 
 ### 9.5 Ultra — preset, który odtwarza zgłoszenie (`.tmp/gpu-pas-po-ultra`, cel 6400 × 1800 MSAA 4)
 
@@ -386,3 +388,95 @@ w bazie: modele floty, rozpad stacji).
   koszyków — nie wdrożone. Znaczek kadłubów (nieprzezroczysta skóra nad skałami gry i tłem) — możliwy, ale skóra ma
   dziury, maskowanie i przezroczystość — wymaga osobnego warunku „ściśle wewnątrz”.
 - Nie sprawdzone w oknie z vsync 240 Hz ani okiem użytkownika (pomiary headless — prośba użytkownika).
+
+### 9.7 Poprawki przeglądu: zasłona a obiekty passa tła, przełączniki A/B
+
+Przegląd 2064497e: zasłona przeszła z renderOrder −0,5 bez testu głębi na 5 z testem głębi tuż przed daleką płaszczyzną,
+a obraz sprawdzono tylko w samym polu. Uwagi: (1) remis z napisami budowli (5) i atmosferą bitwy w głębi (5) —
+kolejność z odległości; (2) przezroczyste rzeczy tła z renderOrder w (−0,5; 5) zeszły POD zasłonę; (3) rzeczy tła
+z zapisem głębi przestały być nią zasłonięte.
+
+**Co bywa w passie tła (warstwa 1) razem z zasłoną.** Zasłona jest widoczna tylko w gęstym polu pasa (cel
+`waga · smoothstep(gęstość) · wyrwa + gaz` > 0,002 — `_updateVeil`). Spis z kodu (`layers.set` / `setLayers` /
+`enableBackground3D`, renderOrder, kolejka, głębia) i z gry (spis siatek passa tła w `--tloAB`):
+
+| rzecz passa tła | renderOrder, kolejka, głębia | razem z widoczną zasłoną | dawny kwad (−0,5, bez testu) | 2064497e (5, test) | po poprawce (−0,1, test) |
+|---|---|---|---|---|---|
+| niebo-sfera (czworokąt −1000, jasne gwiazdy −998, sfera kamer 3D −100000), mgławica `?niebo=plaska` (−999) | bez zapisu głębi | zawsze | zasłona na niebie | to samo | to samo |
+| gwiazdy gry (`GameStars`) | −1, przezr., bez zapisu | zawsze | zasłona na nich | to samo | to samo |
+| skały tła RUBBLE / MID / DEEP | 2 → 2–2,25 → −0,45…−0,20; przezr. bez mieszania, zapis głębi | zawsze | skała na zasłonie | zasłona odrzucona pod skałą (te same piksele) | to samo |
+| głębokie płaty mgły pasa, gaz wybuchów w głębi | 10+, 10; przezr. | zawsze / bitwa w pasie | na zasłonie | to samo | to samo |
+| doki portów w soczewce skoku (`portDocks3D`, `setLayers(1, 1)`) | bryły 0 nieprzezr. z zapisem, dach 20 | tylko w soczewce skoku przy porcie w gęstym polu | ZASŁONIĘTE od pierwszej klatki soczewki (poza nią dok jest w passie gry) | nie | nie |
+| stacje portów w soczewce (`stations3D`, warstwa 1) | modele 0 (Ceres: 31 siatek nieprzezr. z zapisem) | jw. | bryły zasłonięte; części przezroczyste nad zasłoną, ale skały tła (2) rysowane po nich je nadpisywały | bryły nie; przezr. 0…5 POD zasłoną | bryły nie; przezr. nad zasłoną, skały tła przed nimi |
+| baza piratów, skała Hidalgo, osada, wyrwy, kurz uderzeń, skóry ciał świata (napisy 5, efekty 9–13, dachy 20–21) | mieszane | nie — 57 AU, `_shipyardCenter`: za pasem + 8 AU; w grze makro pola w środku bazy 0 | — | remis napisów | — |
+| bitwa w głębi (`warBackdrop3D`: planeta 0, kadłuby 2, atmosfera 5, poświaty 8, efekty 9) | mieszane | nie — tło `deep` 2,76 mln j. od Słońca (~65 AU), `jupiter` / `mars` przy planecie | — | remis atmosfery | — |
+| ringi „Halo” (warstwa 1), hale K-7, ringi-archetypy | mieszane | nie — Ziemia, Mars, Jowisz | — | — | — |
+
+**Decyzja.** Zasłona to człon NIEBA dema (`sky.js`: `mix(space, veilCol, a)`, space = niebo), nie mgiełka nad
+budowlami (mgiełkę głębi mają skały tła i płaty mgły). Dawny kwad malował się po nieprzezroczystych rzeczach tła tylko
+dlatego, że kolejka nieprzezroczysta idzie przed przezroczystą — PRZYPADEK, a w grze dotyczy wyłącznie doków i stacji
+w soczewce skoku przy porcie pasa: poza soczewką dok jest w passie gry (warstwa 0), stacja w FG (2) i zasłona ich nie
+sięga, więc dawny kwad zaciemniał je skokowo w pierwszej klatce soczewki. Zostaje nowe zachowanie (3): rzecz tła
+z zapisem głębi zasłania zasłonę jak skała. Na (1) i (2): zasłona wraca na miejsce dawnego kwadu — po niebie i gwiazdach,
+PRZED każdą inną przezroczystą rzeczą tła — a skały tła idą przed nią: OKNO renderOrder (−0,5; 0) należy do pasa (skały
+tła −0,45 + pasmo · 0,1 + koszyk · 0,01 → do −0,20, zasłona −0,1 — jedyna z tym renderOrder; `BELT_RENDER_ORDER`,
+`VEIL_RENDER_ORDER`). Zysk zostaje (zasłona odrzucana pod skałami tła i pod znaczkiem). Jedyna zmiana kolejki względem
+dawnej poza samą zasłoną: skały tła przed przezroczystymi rzeczami tła 0…2 (dawniej skała tła rysowana później
+nadpisywała przezroczystą część stacji w soczewce, choć ta leży przy płaszczyźnie gry, nad skałą). Strażnik źródeł:
+`tests/pasZnaczekGlebi.test.mjs` (liczbowe renderOrder z (−0,5; 0) tylko w module pasa).
+
+**A/B w grze** (`node scripts/webgpu/gpu-pas-gra.mjs --tloAB <katalog> --okna brak --kolko 0 --ab 0 --rytm 0 --slad 0`,
+HEADLESS, 5120 × 1440, Wysoka — MSAA 4, render w workerze). W pauzie, odstępy po 2,5 s: N0 → N1 (kontrola) → STARA
+(dokładnie dawna kolejka: zasłona −0,5 bez testu + skały tła 2 — `veil.setDepthCull(false)` + `setRockOrder(false)`)
+→ N2 → K5 (kolejka z 2064497e) → N3 (druga kontrola); odsetek pikseli PNG strony różnych o > 8/255 wobec poprzedniej
+klatki nowej kolejki (> 2/255 w nawiasie) i piksele bufora sceny różne w bitach półfloatu.
+
+| miejsce (zrzuty, mapy różnic `*-mapa-<wariant>.png`) | zasłona | kontrola | STARA | K5 | kontrola 2 |
+|---|---|---|---|---|---|
+| pole, zoom 0,341 (`.tmp/gpu-pas-tlo/zrzuty/pole-blisko-*`) | 0,96 | 0,0652% (0,098) · 14 818 | 0,0635% (0,110) · 12 100 | 0,0611% (0,090) · 14 383 | 0,0645% (0,105) · 17 015 |
+| pole, zoom 0,0667 (`.tmp/gpu-pas-tlo/zrzuty/pole-daleko-*`) | 0,96 | 0,0031% (0,005) · 1 495 | 0,0026% (0,004) · 1 858 | 0,0031% (0,005) · 1 578 | 0,0033% (0,005) · 1 574 |
+| dok Ceres i stacja, zoom 0,041 (`.tmp/gpu-pas-tlo2/zrzuty/port-*`) | 0,069 | 0,413% (0,69) · 336 664¹ | 0,416% (0,69) · 131 922² | 0,427% (0,71) · 114 976 | 0,385% (0,67) · 114 509 |
+| ten kadr, dok i stacja w passie tła jak w 1. klatce soczewki (`.tmp/gpu-pas-tlo2/zrzuty/port-soczewka-*`) | 0,069 | 0,405% (0,68) · 111 436 | 0,394% (**1,01**) · **333 901** | 0,419% (0,69) · 112 693 | 0,407% (0,68) · 113 372 |
+| to samo z zasłoną gęstego pola wymuszoną (u.veil = 0,8; `.tmp/gpu-pas-tlo2/zrzuty/port-soczewka-gesto-*`) | 0,8 | 0,369% (0,65) · 112 190 | **1,525%** (**3,08**) · **334 002** | 0,383% (0,66) · 112 593 | 0,363% (0,66) · 112 333 |
+| PRAWDZIWY skok (TRAVEL TO) od doku kryjówki Gniazdo Hildy (51,7 AU), pauza w ładowaniu: dok w passie tła, zanik pola 0,65 (`.tmp/gpu-pas-tlo3/zrzuty/skok-*`) | 0,002 | 0,123% (0,25) · 1,59 mln³ | 0,038% (0,10) · **255 381** | 0,044% (0,10) · 6 776 | 0,071% (0,15) · 6 988 |
+
+Pierwszy przebieg (`.tmp/gpu-pas-tlo/zrzuty/`, 8 s po teleporcie do portu) — te same wnioski: port 0,527 / 0,506 /
+0,442 / 0,425%, soczewka 0,384 / 0,386 (> 2/255: 1,02 wobec 0,66–0,68) / 0,397 / 0,392%.
+¹ pierwsza para po teleporcie jeszcze się ustala w bitach bufora (przy 8 s: 4,9 mln pikseli) — miarą jest kontrola 2.
+² STARA liczy zasłonę bez testu głębi także pod znaczkiem skał gry: +17 tys. pikseli w bitach bufora, w PNG na poziomie
+kontroli (także > 2/255) — rząd różnic jak przy Z0 (§ 9.4), nie badane dalej.
+³ kamera ładowania skoku (obrót kadru) jeszcze dojeżdżała w pierwszej parze; miarą jest kontrola 2.
+
+Wnioski: w polu i przy porcie poza soczewką wszystkie trzy kolejki dają ten sam obraz (na poziomie kontroli). Kiedy dok
+i stacja są w passie tła (soczewka skoku), dawny kwad zasłania je: przy dzisiejszej zasłonie w kadrze Ceres (0,07) o
+2–8/255 (ślad obręczy i piasty doku, +220 tys. pikseli w buforze), przy zasłonie gęstego pola (0,8) dok prawie znika
+(+1,16% kadru > 8/255 ponad kontrolę — obręcz i piasta koła); nowa kolejka i K5 — na poziomie kontroli (w Ceres doki
+i stacja nie mają przezroczystych części z renderOrder 0…5: 4 + 31 siatek nieprzezroczystych z zapisem głębi). Sytuacja
+z soczewki zachodzi w grze: w prawdziwym skoku od doku Gniazda Hildy, po obrocie (4,3 s) od początku ładowania (4,7 s,
+warp `charging`) dok jest w passie tła przy widocznej zasłonie (próbki co ~0,1 s: 5 z dokiem w tle, wszystkie z widoczną
+zasłoną 0,002–0,003) — dawny kwad przyciemniał go o < 1/255 (+248 tys. pikseli w bitach bufora), nowa kolejka = K5 =
+kontrola. Porty w tym świecie (ziarno profilu) leżą poza gęstymi polami: cel zasłony w miejscu doku Ceres 0,003 (0,07
+w kadrze przy stacji), Westa 0, Gniazdo Hildy 0–0,005 (położenia małych ciał i kryjówek zmieniają się z czasem gry), baza
+piratów 0 (57 AU, wszystkie trzy przebiegi). Jeden z przebiegów skoku (`.tmp/gpu-pas-tlo`, po innych miejscach) poszedł
+najpierw przelotem (`drive`) — pas w trybie skoku zgasł (zanik 0,04, zasłona schowana), zanim dok wszedł do passa tła.
+Pipeline'y synchroniczne workera: 0 przed A/B i w prawdziwym skoku z dokiem w passie tła; w A/B tylko zasłona przy
+przełączniku `setDepthCull` (`AsteroidBelt:veil`, raz na miejsce — znany koszt przełącznika V0, tylko do pomiarów).
+
+**[5a] Dawna kolejka skał.** `belt.setRockOrder(false)` (`L0`) przywraca DOKŁADNIE renderOrder sprzed 2026-10-29 w każdym
+koszyku skał i księżyców (`renderOrderOld`: tło 2 — wszystkie pasma, gra 1) — w tym przebiegu pasma tła zostawały przy
+2 / 2,1 / 2,2, więc wariant „dawny” (L0, STARE) nie był czysty. Sama `L0` stawia teraz skały tła za nową zasłoną (−0,1):
+zasłona liczy się też pod nimi (obraz ten sam); dawny pass tła w całości — `L0` + `V0` (STARE, STARA). Test
+`tests/pasZnaczekGlebi.test.mjs` (warstwa gry i trzy pasma tła jak w `_initGpu`).
+
+**[5b] Znaczek a wyłączony pass gry.** `Core3D._stampCoverRuns()`: znaczki głębi tylko, gdy pass gry rysuje w tym
+renderze (`renderPassOrtho.enabled`, `perfToggles.orthoPass`) — przy `orthoPass = false` znaczek skał gry ciął tło pod
+niewidocznymi skałami (czarne łaty; tylko przełącznik pomiarowy). Test jw.
+
+**[5f] Różnice 1–2 ULP pod znaczkiem z MSAA** — opis w § 9.4 poprawiony do faktów z pomiaru (przyczyna nieustalona).
+
+**Kontrola wydajności po poprawkach przeglądu** (`.tmp/gpu-pas-po-poprawki`, headless 5120 × 1440, tryb worker; ms na
+obraz wobec przebiegu `.tmp/gpu-pas-po`): Wysoka — postój 0,341: 6,36 → 6,51 (`pass:bg` 2,52 → 2,91, w rozrzucie okien
+przy tym zoomie 2,45–3,32), przelot 0,0667: 6,77 → 6,77; Ultra — postój 0,0667: 8,91 → 8,91, przelot 0,0667: 8,69 →
+9,11–9,15 w dwóch przebiegach, ale A/B STARE ↔ NOWE w jednym przebiegu daje zysk poprawek pola +1,40 ms (wcześniej
++1,11) — dryf między przebiegami, nie regresja. Pipeline'y synchroniczne 0 / 0. Okna nałożone na cudze harnessy
+(sesja efektów hipercruise'u i warpa, pełne `node --test` innej sesji) oznaczone `obce` i powtórzone przy ciszy.

@@ -11,12 +11,25 @@
 // pola) = mniejsze krycie w prześwicie: przebijają się gwiazdy gry.
 //
 // ZASŁONA PO SKAŁACH Z TESTEM GŁĘBI (2026-10-29, pole asteroid przy 5120 × 1440): kwad tuż przed daleką płaszczyzną
-// (VEIL_CLIP_Z) z testem głębi, w kolejce PO skałach tła (VEIL_RENDER_ORDER — skały 2–2,3, głębokie płaty
-// mgły 10+). Dawniej (−0,5, bez testu głębi) zasłona liczyła 5 szumów fraktalnych na KAŻDY piksel, a skały tła (bez
-// mieszania) i tak nadpisywały ją tam, gdzie leżą. Teraz próbki pod skałami tła i pod znaczkiem głębi skał gry
-// (asteroidBelt.js _createPlayStamp) odpadają w teście głębi; na pozostałych zasłona kładzie się na to samo niebo co
-// dawniej (gwiazdy i mgławica nie piszą głębi) — obraz bit w bit ten sam. A/B: belt.veil.setDepthCull(false) (dawny
-// kwad — nowy pipeline przy przełączeniu).
+// (VEIL_CLIP_Z) z testem głębi, w kolejce PO skałach tła. Dawniej (−0,5, bez testu głębi) zasłona liczyła 5 szumów
+// fraktalnych na KAŻDY piksel, a skały tła (bez mieszania) i tak nadpisywały ją tam, gdzie leżą. Teraz próbki pod skałami
+// tła i pod znaczkiem głębi skał gry (asteroidBelt.js _createPlayStamp) odpadają w teście głębi; na pozostałych zasłona
+// kładzie się na to samo niebo co dawniej (sfera / czworokąt nieba, mgławica i gwiazdy nie piszą głębi) — obraz pola bit
+// w bit ten sam. A/B: belt.veil.setDepthCull(false) (dawny kwad — nowy pipeline przy przełączeniu).
+// MIEJSCE W KOLEJCE PASSA TŁA (poprawka przeglądu 2026-10-29): OKNO renderOrder (−0,5; 0) należy do pasa — niebo
+// i gwiazdy (< −0,5) → skały tła (asteroidBelt.js BELT_RENDER_ORDER: −0,45 … −0,20) → ZASŁONA (VEIL_RENDER_ORDER −0,1,
+// jedyna rzecz z tym renderOrder) → każda inna rzecz passa tła (≥ 0). Zasłona jest więc tam, gdzie dawny kwad (−0,5): po
+// niebie, PRZED każdą inną przezroczystą rzeczą tła — napisy budowli (5), gaz wybuchów w głębi (10), głębokie płaty
+// mgły (10+), przezroczyste części stacji i doków w soczewce skoku (0) rysują się na zasłonie jak dawniej (przy
+// renderOrder 5 części tła z renderOrder 0…5 schodziły POD zasłonę, a napisy i atmosfera bitwy w głębi stały w remisie).
+// Zasłona to człon NIEBA dema (`mix(space, veilCol, a)`, space = niebo), nie mgiełka nad budowlami: rzecz tła z ZAPISEM
+// głębi (budowla, bryła) zasłania ją jak skała — dawny kwad bez testu głębi malował się po wszystkich nieprzezroczystych
+// rzeczach passa tła (kolejka nieprzezroczysta idzie przed przezroczystą), czego nikt nie zamierzał: z widoczną zasłoną
+// (pole pasa) pass tła dzieli w grze tylko gaz wybuchów w głębi (10 — nad zasłoną jak dawniej) oraz doki i stacje
+// w soczewce skoku przy porcie w polu (Ceres, Westa, kryjówki — położenia z ziarna świata i czasu gry) — poza soczewką
+// dok jest w passie gry (warstwa 0), stacja w FG (2), więc dawny kwad zaciemniał je dopiero od początku ładowania skoku
+// (skok obrazu). Baza piratów (57 AU — za pasem), bitwa w głębi (~65 AU, tła Jowisz / Mars), ringi i hale K-7 leżą poza
+// pasem. Przegląd i A/B: docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 9.7.
 
 import * as THREE from 'three/webgpu';
 import {
@@ -25,8 +38,9 @@ import {
 } from 'three/tsl';
 
 export const VEIL_FLASH_CAP = 4;
-// Po skałach tła (rockLayers.js: baza 2 + pasmo · 0,1 + koszyk · 0,01), przed głębokimi płatami mgły (fog.js: 10+).
-export const VEIL_RENDER_ORDER = 5;
+// Po skałach tła (asteroidBelt.js BELT_RENDER_ORDER: −0,45 + pasmo · 0,1 + koszyk · 0,01, do −0,20), przed każdą inną
+// rzeczą passa tła (≥ 0; głębokie płaty mgły — fog.js 10+). Jedyna rzecz z tym renderOrder (bez remisów).
+export const VEIL_RENDER_ORDER = -0.1;
 // Dawna kolejka (A/B setDepthCull(false)): po gwiazdach (−1), przed skałami, bez testu głębi.
 export const VEIL_RENDER_ORDER_OLD = -0.5;
 // Głębia kwadu zasłony: tuż przed daleką płaszczyzną (wyczyszczona głębia 1 przechodzi test LessEqual, każda skała tła
@@ -116,7 +130,8 @@ export class BeltVeil {
 
   /**
    * A/B (narzędzia): true — kwad na dalekiej płaszczyźnie z testem głębi po skałach tła (domyślnie), false — dawny kwad
-   * (przed skałami, bez testu głębi). Zmiana stanu głębi = nowy pipeline przy pierwszym rysunku (tylko do pomiarów).
+   * (−0,5: przed skałami, bez testu głębi). Zmiana stanu głębi = nowy pipeline przy pierwszym rysunku (tylko do pomiarów).
+   * Dawny obraz passa tła w całości: razem z dawną kolejką skał (AsteroidBelt.setRockOrder(false)).
    */
   setDepthCull(on = true) {
     const v = on !== false;

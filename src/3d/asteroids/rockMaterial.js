@@ -194,8 +194,10 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     this.backdrop = backdrop;
     if (backdrop) {
       // Pass tła Core3D: gwiazdy gry są przezroczyste (z = −250, bliżej kamery niż
-      // skały) — skała tła w kolejce przezroczystej (renderOrder po gwiazdach i
-      // zasłonie pola) rysuje się PO nich i je zasłania. Bez mieszania, z głębią.
+      // skały) — skała tła w kolejce przezroczystej (renderOrder po gwiazdach, przed
+      // zasłoną pola — asteroidBelt.js BELT_RENDER_ORDER) rysuje się PO nich i je
+      // zasłania; jej głębia odrzuca zasłonę pod nią (test głębi zasłony). Bez
+      // mieszania, z głębią.
       this.transparent = true;
       this.blending = THREE.NoBlending;
       this.depthWrite = true;
@@ -821,8 +823,10 @@ export class RockShadowMaterial extends THREE.NodeMaterial {
  * je w całości (skała gry jest nieprzezroczysta, bez mieszania i bez odrzucania pikseli). Skała pomniejszona względem
  * środka (`shrink` < 1): rzut skały gwiaździstej względem środka przy kamerze z góry jest gwiaździsty względem rzutu
  * środka, więc pomniejszony znaczek leży ŚCIŚLE wewnątrz pokrycia skały (każda próbka MSAA pod znaczkiem jest potem
- * zasłonięta) — próbki bit w bit te same (bez MSAA cały obraz; z MSAA rozwiązanie karty pod skałą bywa inne o 1–2 ULP
- * półfloatu — docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 9.4), a różnice zaokrągleń wierzchołka nie mają znaczenia.
+ * zasłonięta), a różnice zaokrągleń wierzchołka nie mają znaczenia. Pomiar (bufor sceny w pauzie wobec kontroli,
+ * docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 9.4): bez MSAA obraz bit w bit ten sam; z MSAA 4 ~0,05–0,1% pikseli
+ * kadru różni się o 1–2 ULP półfloatu, 87% z nich w pokryciu skał gry, 13% poza nim (tam znaczek nic nie zmienia) —
+ * przyczyna nieustalona; po ACES i sRGB poniżej kroku 8 bitów.
  * Ten sam wierzchołek co materiał skał (kształt z banku, obrót w czasie, próg pikseli i zanik pola — uniformy warstwy).
  */
 export class RockDepthStampMaterial extends THREE.NodeMaterial {

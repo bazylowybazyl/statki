@@ -11,7 +11,8 @@
 //        [--ab 1|0|G0,B1,…] [--abBlisko G0,B0,…] [--abLot G0,B0,…] [--abS 3.5] [--abPowt 1] [--balastGb N]
 //        [--chrome harness|gracz] [--devFeatures 1] [--cisza 30] [--ciszaMaks 1200] [--okna postoj-blisko,…] [--kolkoAb S2]
 //        [--rzedniecie 60] [--zoomRz 0.1] [--obrazAB CRoff,…] [--zrzutyAB .tmp/gpu-pas-ab] [--zoomyAB blisko,srednio,daleko,max]
-//        [--lotAB 4] [--rampaAB 1]
+//        [--lotAB 4] [--rampaAB 1] [--tloAB .tmp/gpu-pas-tlo] [--tloMiejsca pole-blisko,pole-daleko,port,port-soczewka,
+//        port-soczewka-gesto,skok] [--tloHdr 1] [--tloUstal 2.5] [--tloZaslona 0.8] [--tloCzekaj 15]
 //
 // Okna główne (każde: złożenia obrazu / s, klatki strony / s, klatki workera / s, CPU workera p50 / p95, sonda GPU
 // workera — GPU render / compute wg passów, kroków Core3D.fx i modułów, opóźnienie kolejki GPU śr / p95 / maks, wysyłki
@@ -39,6 +40,31 @@
 // --zrzutyAB <katalog>: zrzuty PNG A/B przełączników zmian wyglądu (stara wartość ↔ nowa) w tym samym kadrze — opis przy
 //   ZAB_PAUZA niżej (w pauzie: zanik S5, obwiednia, brzeg pyłu, drabina S2, poprawki pola STARE; w locie: okno pola S1,
 //   ciśnienie S3; --rampaAB 1 — rampa zoomu w pauzie dla drabiny teksla). Bez okien: --okna brak --kolko 0 --ab 0.
+// --tloAB <katalog> (przegląd 2026-10-29, zasłona pola a inne obiekty passa tła): w pauzie zrzuty PNG nowej kolejki passa
+//   tła wobec dokładnie dawnej (STARA) i kolejki z 2064497e (K5), z parą kontrolną, w miejscach --tloMiejsca — opis przy
+//   TLO_WARIANTY niżej. Bez okien: --okna brak --kolko 0 --ab 0 --rytm 0 --slad 0.
+// --brzeg <katalog> (sprawdzenie poprawek 2026-10-29: miękki brzeg okna pola poza kadrem): przeloty ze STAŁĄ prędkością
+//   (pętla rAF strony pisze ship.vel / angle i zoom co klatkę, bez W) od miejsca „pole” przy zoomach --brzegZoomy
+//   (domyślnie zoom bliski,0.512,0.682,0.77), prędkościach --brzegV (1400,507) i kierunkach --brzegKier (px,mx,py,my —
+//   osie świata gry); po --brzegUstal s (sprężyna śladu okna) dziennik workera przez --brzegS s: odstęp wewnętrznej
+//   krawędzi pasa SPACE_GAS_WINDOW_EDGE od brzegu kadru na każdym boku (obrazy obu kroków z wagą > 1% — mapy przenikają
+//   dwa okna; pył — bieżące okno), najmniejsza waga okna kw na bokach kadru (jak w mapach), przesunięcie okna wobec
+//   kamery, wstrząs; ≥ 0 = pas poza kadrem. Zrzuty PNG brzegu kadru od strony lotu (pierwsza prędkość) i kadru w skali
+//   1/4 (kierunek pierwszy). Bez okien: --okna brak --kolko 0 --ab 0.
+// --rampaZoom 1 (poprawki 2026-10-29: zanik obrazu a wyłączenie gazu przy oddaleniu): okręt trzymany w polu, zoom
+//   strony co klatkę po rampie geometrycznej --rampaZoomOd (0.035) → --rampaZoomDo (0.012) w --rampaZoomS s (6), postój
+//   --rampaZoomTrzymaj s (1,5) i z powrotem; dziennik workera klatka po klatce: gaz w grze (IN.active), zanik obrazu
+//   (viewFade z wejścia, fade i widoczność warstwy, zanik skoku), resety pola, płytkie płaty mgły (alfa, widoczność) —
+//   przełączenia, skoki na klatkę, resety. Zoom kamery nie schodzi poniżej limitu kadłuba (Atlas 0,035 —
+//   syncCameraZoomLimits co klatkę; niżej tylko kadr przylotu warpa), więc --rampaSkala s skaluje RAZEM próg zaniku
+//   obrazu (SpaceGas.tune.fadeView) i próg wyłączenia gazu w grze (SpaceGasInputTune.maxViewHalf) — ta sama geometria
+//   przejścia przy zoomie / s (np. --rampaSkala 0.3 --rampaZoomOd 0.12 --rampaZoomDo 0.035).
+// --takt 1: headless Z TAKTEM MONITORA (bez --disable-frame-rate-limit / --disable-gpu-vsync — rAF ~240 Hz jak u gracza
+//   z VSync, bez okna na pulpicie); bez taktu headless nie ma sufitu klatek (pomiar kosztu — okna główne).
+// Obce obciążenie (2026-10-29): przed i po każdym oknie pomiaru cudze harnessy (node scripts/….mjs, Chrome z
+//   --remote-debugging-port) i `node --test`; obce przed oknem — czekanie na ciszę do 60 s; okno z obcymi = `obce` w
+//   raporcie, okna główne (postój, przeloty) powtarzane raz (`<okno>-powt`). Mecz League of Legends
+//   (`League of Legends.exe`, sprawdzany co 5 s) — koniec przebiegu (kod 4) z raportem tego, co jest.
 // --okno 0 (domyślnie, 2026-10-29: „testy rób headless, bo pracuję”) — Chrome headless: bez okna na ekranie i bez vsync,
 //   więc obraz / s nie ma sufitu 240 i przy karcie zajętej w 100% ms na obraz (1000 / obraz) = czas karty na klatkę razem
 //   z pracą bez znaczników (porównuj czasy GPU / CPU, kolejkę, wysyłki i A/B, nie kl/s z monitorem 240 Hz).
@@ -49,12 +75,15 @@
 // --cisza S: przed startem czeka, aż przez S s nie działa żaden inny harness (`node scripts/….mjs`, Chrome z
 //   --remote-debugging-port), sprawdzając co 5 s; zajęta maszyna — czeka najwyżej --ciszaMaks s (co 30 s).
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi i procesy w raporcie).
-import { mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 import { SONDA_INSTALUJ, SONDA_CZYTAJ, stanMaszyny, analizaSladu } from './sondaGpuWorkera.mjs';
 import { startVramBallast } from './balastVram.mjs';
+import { readPng, writePng } from './png.mjs';
+import { SPACE_GAS_WINDOW_EDGE, SPACE_GAS_MAP_MARGIN, spaceGasViewHalf } from '../../src/3d/spaceGas/spaceGasLayout.js';
+import { SPACE_GAS_INPUT_TUNE } from '../../src/game/spaceGasInput.js';
 
 const args = parseArgs();
 const [W, H] = String(args.rozmiar || '5120x1440').split('x').map(Number);
@@ -78,6 +107,7 @@ const DEV_FEATURES = String(args.devFeatures ?? '1') === '1';
 const CISZA = Number(args.cisza ?? 30);
 const CISZA_MAKS = Number(args.ciszaMaks ?? 1200);
 const BALAST_GB = Number(args.balastGb || 0);
+const TAKT = String(args.takt ?? '0') === '1';
 const listaArg = (v, def) => (v === undefined || v === '1' ? def : v === '0' ? [] : String(v).split(',').map((s) => s.trim()).filter(Boolean));
 const tStart = Date.now();
 let balast = null;
@@ -137,7 +167,9 @@ const WARIANTY = {
   C5off: { opis: 'dawne passy czyszczenia three (renderer.clear przed passem sceny)', wk: 'C.clearInPass = false', wkPrzywroc: 'C.clearInPass = true' },
   R1off: { opis: 'dawne rozwiązanie MSAA celu sceny w KAŻDYM passie', wk: 'C.msaaResolveOnce = false', wkPrzywroc: 'C.msaaResolveOnce = true' },
   CRoff: { opis: 'dawne czyszczenie i rozwiązania MSAA (C5off + R1off)', wk: 'C.clearInPass = false; C.msaaResolveOnce = false', wkPrzywroc: 'C.clearInPass = true; C.msaaResolveOnce = true' },
-  L0: { opis: 'dawna kolejka koszyków LOD skał (najmniejsze pierwsze)', wk: 'S.belt.setRockOrder(false)', wkPrzywroc: 'S.belt.setRockOrder(true)' },
+  // L0: DOKŁADNIE dawna kolejka skał (renderOrder sprzed 2026-10-29: tło 2, gra 1, bez odstępów pasm i koszyków) — skały
+  //   tła wtedy ZA nową zasłoną (−0,1): zasłona liczy się też pod nimi (obraz ten sam); dawny pass tła w całości — STARE
+  L0: { opis: 'dawna kolejka skał (renderOrder 2 / 1, najmniejsze koszyki pierwsze; zasłona przed skałami tła)', wk: 'S.belt.setRockOrder(false)', wkPrzywroc: 'S.belt.setRockOrder(true)' },
   Z0: { opis: 'bez znaczka głębi skał gry przed passem tła', wk: 'S.belt.stampEnabled = false', wkPrzywroc: 'S.belt.stampEnabled = true' },
   V0: { opis: 'dawna zasłona pola (przed skałami, bez testu głębi)', wk: 'S.belt.veil.setDepthCull(false)', wkPrzywroc: 'S.belt.veil.setDepthCull(true)', ustal: 2.5, po: 2 },
   STARE: { opis: 'wszystkie poprawki pola wył. (CRoff + L0 + Z0 + V0)', ustal: 2.5, po: 2,
@@ -158,10 +190,11 @@ const WARIANTY = {
   // pseudo-wariant bez przełączeń — okna nowego kodu w sekwencji --oknaWariant (np. WSZYSTKO,NOWE,WSZYSTKO)
   NOWE: { opis: 'nowy kod (bez przełączeń)' },
   // ── SONDY KOSZTU SKAŁ (2026-10-29, poprawki wydajności pola): kolejka rysowania skał i koszt fragmentów ──
-  // LODREV: koszyki LOD każdej warstwy od NAJWIĘKSZYCH na ekranie (renderOrder) — dziś lod0 (najmniejsze) idą pierwsze,
-  //   więc duże skały przykrywają już cieniowane małe (early-z nie odrzuca).
+  // LODREV: koszyki LOD każdej warstwy od NAJWIĘKSZYCH na ekranie (renderOrder) — sonda sprzed poprawki (wtedy lod0 —
+  //   najmniejsze — szły pierwsze, więc duże skały przykrywały już cieniowane małe; early-z nie odrzuca). Dziś to kolejka
+  //   domyślna (ROCK_LOD_ORDER), sonda liczy od bazy warstwy (bez zmiany względem nowej kolejki).
   LODREV: { opis: 'sonda: koszyki LOD skał od największych na ekranie (renderOrder)',
-    wk: 'const B = S.belt; B.__ro = []; B.layers.forEach((L, li) => { const base = li === 0 ? 1 : 2 + (li - 1) * 0.1; for (const bk of [L.buckets, L.moonBuckets]) for (const d of bk.lods) { B.__ro.push([d.mesh, d.mesh.renderOrder]); d.mesh.renderOrder = base + (5 - d.index) * 0.01; } })',
+    wk: 'const B = S.belt; B.__ro = []; B.layers.forEach((L) => { for (const bk of [L.buckets, L.moonBuckets]) for (const d of bk.lods) { B.__ro.push([d.mesh, d.mesh.renderOrder]); d.mesh.renderOrder = bk.renderOrder + (bk.lods.length - 1 - d.index) * 0.01; } })',
     wkPrzywroc: 'for (const [m, r] of S.belt.__ro) m.renderOrder = r; S.belt.__ro = []' },
   // SORT: instancje w każdym koszyku od najbliższych kamerze (z + r malejąco) — przebudowa koszyków wymuszona
   SORT: { opis: 'sonda: instancje w koszykach skał od najbliższych (z + r)', ustal: 1.5, po: 1.5,
@@ -265,7 +298,7 @@ const AB_SLAD = new Set(String(args.abSlad || 'baza,G0,B0,K0,C5').split(','));
 for (const n of [...AB_DALEKO, ...AB_BLISKO, ...AB_LOT]) if (!WARIANTY[n]) { console.error('nieznany wariant', n); process.exit(1); }
 
 const report = {
-  args, tryb: OKNO ? 'okno z vsync' : 'headless (bez vsync)', rozmiar: [W, H], zoomy: { blisko: ZB, srednio: ZS, daleko: ZD, maks: ZM }, chrome: CHROME_TRYB, devFeatures: DEV_FEATURES,
+  args, tryb: OKNO ? 'okno z vsync' : TAKT ? 'headless z taktem monitora (rAF ~240 Hz)' : 'headless (bez vsync)', rozmiar: [W, H], zoomy: { blisko: ZB, srednio: ZS, daleko: ZD, maks: ZM }, chrome: CHROME_TRYB, devFeatures: DEV_FEATURES,
   cisza: null, maszynaStart: null, okna: [], slady: {}, ab: [], abPodsumowanie: [], gaz: {}, oddalenie: {}, slad: {}, skaly: {}, obrazAB: [], zrzuty: [],
   obceWTrakcie: [], wkLogi: [], strona: [], bledy: []
 };
@@ -288,6 +321,7 @@ async function obceProcesy() {
     if (!cmd || pid === process.pid) continue;
     if (name === 'node.exe' && /scripts[\\/][^"'\s]*\.mjs/i.test(cmd) && !/scripts[\\/]webgpu[\\/]gpu-pas-gra\.mjs/i.test(cmd)) rows.push({ pid, cmd: cmd.slice(0, 220) });
     else if (name === 'node.exe' && /scripts[\\/]webgpu[\\/]gpu-pas-gra\.mjs/i.test(cmd)) rows.push({ pid, cmd: cmd.slice(0, 220) });   // drugi egzemplarz tego narzędzia
+    else if (name === 'node.exe' && /(^|\s)--test(\s|=|$)/.test(cmd)) rows.push({ pid, cmd: cmd.slice(0, 220) });   // node --test (zestaw testów — CPU)
     else if (name !== 'node.exe') {
       const m = /--remote-debugging-port=(\d+)/.exec(cmd);
       if (m && (mojPort === null || Number(m[1]) !== mojPort)) rows.push({ pid, cmd: cmd.slice(0, 220) });
@@ -315,6 +349,16 @@ async function czekajNaCisze() {
     await sleep(5000);
   }
 }
+// League of Legends: mecz (`League of Legends.exe`) = user gra → koniec pomiarów GPU; klient (`LeagueClient*`) — notatka
+function ligaProcesy() {
+  return new Promise((ok) => {
+    execFile('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, maxBuffer: 16 << 20, timeout: 15000 }, (err, stdout) => {
+      const s = String(stdout || '');
+      ok({ mecz: /"League of Legends\.exe"/i.test(s), klient: /"LeagueClient(Ux)?(Render)?\.exe"/i.test(s) });
+    });
+  });
+}
+let ligaStraz = null;
 async function topCpu() {
   const txt = await psRun(`Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 | ForEach-Object { "$($_.Name)|$([math]::Round($_.CPU,0))|$([int]($_.WorkingSet64/1MB))" }`);
   return txt.split(/\r?\n/).filter(Boolean).map((l) => l.split('|'));
@@ -475,6 +519,13 @@ async function znajdzProcesGpu(port) {
 }
 
 // ── Vite, Chrome, CDP ───────────────────────────────────────────────────────────────────────────────────────────
+report.ligaStart = await ligaProcesy();
+if (report.ligaStart.mecz) {
+  console.error('League of Legends: mecz trwa — bez pomiarów GPU');
+  report.bledy.push('LoL: mecz przed startem — bez pomiaru');
+  writeJson(join(out, 'raport.json'), report);
+  process.exit(4);
+}
 report.cisza = await czekajNaCisze();
 console.log('cisza:', JSON.stringify(report.cisza));
 if (report.cisza.zajete) { console.error('maszyna zajęta przez inne pomiary — przerywam bez pomiaru'); writeJson(join(out, 'raport.json'), report); process.exit(3); }
@@ -488,9 +539,22 @@ const extraArgs = ['--no-first-run', '--no-default-browser-check'];
 if (OKNO) extraArgs.push('--window-position=0,0', '--start-fullscreen', '--disable-backgrounding-occluded-windows');
 if (DEV_FEATURES) extraArgs.push('--enable-webgpu-developer-features');
 if (args.chromeArgs) extraArgs.push(...String(args.chromeArgs).split(' ').filter(Boolean));
-const chrome = await startChrome({ width: W, height: H, renderMode: 'worker', headless: OKNO ? false : undefined,
+// --takt 1: headless bez flag „bez limitu klatek” startChrome (headless: false + własne --headless=new) — rAF z taktem
+// monitora (~240 Hz), jak u gracza z VSync, bez okna na pulpicie
+if (TAKT && !OKNO) extraArgs.push('--headless=new');
+const chrome = await startChrome({ width: W, height: H, renderMode: 'worker', headless: OKNO || TAKT ? false : undefined,
   webgpu: CHROME_TRYB === 'gracz' ? false : undefined, extraArgs });
 const { cdp } = chrome;
+// mecz League of Legends w trakcie — koniec pomiarów GPU (raport z tym, co jest)
+ligaStraz = setInterval(() => {
+  ligaProcesy().then((l) => {
+    if (!l.mecz || report.ligaStop) return;
+    report.ligaStop = { s: Math.round((Date.now() - tStart) / 1000) };
+    console.error('League of Legends: mecz wystartował — koniec pomiarów GPU');
+    report.bledy.push(`LoL: mecz w ${report.ligaStop.s} s — przebieg przerwany`);
+    finish(4);
+  }).catch(() => {});
+}, 5000);
 try { mojPort = Number(/:(\d+)\//.exec(cdp.ws.url)[1]); } catch (_) { mojPort = null; }
 const ev = (e, t = 120000) => evaluate(cdp, e, t);
 let liczniki = null;
@@ -842,6 +906,26 @@ function rytmStat(d) {
   return out;
 }
 
+// Ułamek przenikania kroków pola (sim.acc · 60 = waga bieżącego kroku w mapach) wobec alfy renderu strony (ALPHA
+// nagłówka): przy fizyce 60 Hz zegar gry daje ułamek = alfa; przy rAF 240 Hz alfy (i ułamki) to 0 / 0,25 / 0,5 / 0,75
+// (± drganie rAF). hist8 — kosze co 1/8 (0, 2, 4, 6 = ćwiartki), sekwencja — [numer strony K, ułamek] kolejnych klatek.
+function przenikanieStat(rows) {
+  const d = [], h8 = new Array(9).fill(0);
+  let n = 0, przy4 = 0;
+  for (const r of rows) {
+    if (!(r[GL.ACT] > 0.5) || r[GL.WARM] > 0) continue;
+    const u = r[GL.ACC] * 60;
+    n++;
+    d.push(Math.abs(u - r[GL.ALPHA]));
+    h8[Math.max(0, Math.min(8, Math.round(u * 8)))]++;
+    if (Math.abs(u * 4 - Math.round(u * 4)) < 0.08) przy4++;
+  }
+  if (!n) return null;
+  const seq = [];
+  for (let i = 0; i < Math.min(rows.length, 40); i++) seq.push([rows[i][GL.K], +(rows[i][GL.ACC] * 60).toFixed(3)]);
+  return { n, hist8: h8, przyCwiartkach: +(przy4 / n).toFixed(3), odchylkaOdAlfy: kwantyle(d), sekwencjaKUlamek: seq };
+}
+
 // Statystyki dziennika gazu (+ złączenie ze złożeniami strony po K: zegar treści gazu wobec odstępu złożeń)
 function gazStat(rows, rr) {
   const n = rows.length;
@@ -935,6 +1019,7 @@ function gazStat(rows, rr) {
     przeprobkowanieOsrodka: { klatkiZoomRuch: rephVMoveN, zlychZoomRuch: rephVMove, klatkiStale: rephVStatN, zlychStale: rephVStat },
     zoomZmianaNaKlatke: kwantyle(zoomRuch),
     fazaGazWzglFizyki_R: R === null ? null : +R.toFixed(3),
+    przenikanie: przenikanieStat(rows),
     cpuGazuMs: kwantyle(cpu), dispatcheNaKlatke: kwantyle(disp), fadeWarstwy: kwantyle(fade), teksel: [kwantyle(tekselX), kwantyle(tekselY)],
     zlozenia
   };
@@ -991,6 +1076,22 @@ async function slad(s, kategorie = ['viz', 'gpu.service']) {
 // ── okno pomiaru ────────────────────────────────────────────────────────────────────────────────────────────────
 const dtW = (p0, p1) => Math.max(1e-3, (p1.t - p0.t) / 1000);
 async function okno(label, sekundy, { sladS = 0, gaz = false, oddalenie = false } = {}) {
+  // obce obciążenie przed oknem (cudze harnessy, node --test): czekanie na 20 s ciszy (karta po cudzym Chrome: zegary,
+  // pamięć wyrzucona do współdzielonej — przebieg 2026-10-29: okno tuż po końcu cudzego harnessu +2,2 ms/obraz), najwyżej
+  // 180 s; okno po obcych przed nim albo z obcymi w trakcie = `obce` (okna główne — powtórka)
+  let obPrzed = await obceProcesy().catch(() => []);
+  const obWidziane = [...obPrzed];
+  let cisza0 = obPrzed.length ? 0 : Date.now();
+  for (const tw = Date.now(); obWidziane.length && Date.now() - tw < 180000;) {
+    if (obPrzed.length) {
+      console.log(`okno ${label}: obce przed oknem (${obPrzed.length}) — ${obPrzed.slice(0, 2).map((o) => o.cmd.slice(0, 80)).join(' | ')} — czekam`);
+      cisza0 = 0;
+    } else if (!cisza0) cisza0 = Date.now();
+    else if (Date.now() - cisza0 >= 20000) break;
+    await sleep(5000);
+    obPrzed = await obceProcesy().catch(() => []);
+    for (const o of obPrzed) if (!obWidziane.some((q) => q.pid === o.pid)) obWidziane.push(o);
+  }
   const p0 = await ev(PAGE_STATE);
   if (wk.sid) {
     await wkEval(WK_FRAMES).catch(() => null);
@@ -1009,6 +1110,9 @@ async function okno(label, sekundy, { sladS = 0, gaz = false, oddalenie = false 
   const ext = wk.sid ? await wkEval(SONDA_EXT_CZYTAJ).catch((e) => ({ err: e.message })) : null;
   const glog = wk.sid ? await wkEval(GAZ_LOG_CZYTAJ(gaz), 60000).catch((e) => ({ err: e.message })) : null;
   const odd = wk.sid && (gaz || oddalenie) ? await wkEval(ODDALENIE).catch((e) => ({ err: e.message })) : null;
+  const obPo = await obceProcesy().catch(() => []);
+  const obce = [...obWidziane, ...obPo.filter((o) => !obWidziane.some((q) => q.pid === o.pid))];
+  if (obce.length) console.log(`   OBCE przy oknie ${label} (${obce.length}; przed oknem ${obWidziane.length}, w trakcie / po ${obPo.length}): ${obce.slice(0, 3).map((o) => o.cmd.slice(0, 90)).join(' | ')}`);
   const rytm = rr ? rytmStat(rr) : null;
   const g = gaz && glog && glog.wiersze ? gazStat(glog.wiersze, rr) : null;
   let sl = null;
@@ -1030,6 +1134,7 @@ async function okno(label, sekundy, { sladS = 0, gaz = false, oddalenie = false 
   const znacznikiMs = so ? +((so.gpuRender.msNaKlatke || 0) + (so.gpuCompute.msNaKlatke || 0)).toFixed(3) : null;
   const row = {
     okno: label, s: +((Date.now() - tStart) / 1000).toFixed(1), dt: +dt.toFixed(2),
+    obceN: obce.length, obce: obce.length ? obce.slice(0, 6) : undefined,
     zlozeniaS, klatkiStronyS: +((p1.f - p0.f) / dt).toFixed(1),
     msNaObraz, znacznikiMs, pozaZnacznikamiMs: msNaObraz !== null && znacznikiMs !== null ? +(msNaObraz - znacznikiMs).toFixed(3) : null,
     workerKlatkiS: wf && !wf.err ? +(wf.n / dt).toFixed(1) : null, workerMs: wf, wiek: p1.age, pacer: pac, workerLiczniki: wkLicz, hud: p1.hud, raf: p1.raf,
@@ -1066,7 +1171,8 @@ async function okno(label, sekundy, { sladS = 0, gaz = false, oddalenie = false 
     const f = (o) => (o ? `${o.sr}/${o.p95}/${o.ponad1ms}%` : '-');
     console.log(`   rytm: złożeń ${rytm.zlozen}, powt. ${rytm.powtorzone}, przesk. ${rytm.przeskoczone}, odstępy [vsync] ${JSON.stringify(rytm.odstepZlozenWOdswiezeniach)} | kadłuby ${f(rytm.kadluby)}, efekty ${f(rytm.efektyNowy)}`);
   }
-  if (g) console.log(`   gaz: ΔK ${JSON.stringify(g.deltaK)} utrata ${g.utrataCzasuGazu} kroki/s ${g.kroki?.naS} okno ${JSON.stringify(g.oknoPola)} wstrząs ${g.wstrzasPx?.sr}px faza R ${g.fazaGazWzglFizyki_R} | złożenia gaz ${g.zlozenia?.gaz ? g.zlozenia.gaz.sr + '/' + g.zlozenia.gaz.p95 + '/' + g.zlozenia.gaz.ponad1ms + '%' : '-'} wzgl. kadłubów ${g.zlozenia?.gazWzglKadlubow ? g.zlozenia.gazWzglKadlubow.sr + '/' + g.zlozenia.gazWzglKadlubow.ponad1ms + '%' : '-'} | przepróbk. map ruch ${g.przeprobkowanieMap.udzialZoomRuch} stałe ${g.przeprobkowanieMap.udzialStale}`);
+  if (g) console.log(`   gaz: ΔK ${JSON.stringify(g.deltaK)} utrata ${g.utrataCzasuGazu} kroki/s ${g.kroki?.naS} okno ${JSON.stringify(g.oknoPola)} wstrząs ${g.wstrzasPx?.sr}px faza R ${g.fazaGazWzglFizyki_R} | złożenia gaz ${g.zlozenia?.gaz ? g.zlozenia.gaz.sr + '/' + g.zlozenia.gaz.p95 + '/' + g.zlozenia.gaz.ponad1ms + '%' : '-'} wzgl. kadłubów ${g.zlozenia?.gazWzglKadlubow ? g.zlozenia.gazWzglKadlubow.sr + '/' + g.zlozenia.gazWzglKadlubow.ponad1ms + '%' : '-'} | przepróbk. map ruch ${g.przeprobkowanieMap.udzialZoomRuch} stałe ${g.przeprobkowanieMap.udzialStale}`
+    + (g.przenikanie ? ` | przenikanie: kosze 1/8 ${JSON.stringify(g.przenikanie.hist8)} przy ćwiartkach ${g.przenikanie.przyCwiartkach} |ułamek−alfa| maks ${g.przenikanie.odchylkaOdAlfy?.maks}` : ''));
   if (odd && !odd.err) console.log(`   oddalenie: viewFade ${odd.viewFade} pokrycie ${odd.pokrycie} (x ${odd.pokrycieX}, y ${odd.pokrycieY}) teksel ${odd.teksel} lod ${odd.lodFaktury} mgła ${JSON.stringify(odd.mgla)} źródła ${odd.zrodla} kadłuby ${odd.kadluby} | pas ${odd.pas ? JSON.stringify({ sw: odd.pas.swiatla, mc: odd.pas.mapyCienia, rz: odd.pas.rzucajacy, kol: odd.pas.kolumny, sk: odd.pas.skaly, mi: odd.pas.mineraly, ocz: odd.pas.oczekujace }) : '-'}`);
   if (sl && !sl.blad) console.log('   ślad: zajętość', JSON.stringify(sl.zajetosc), 'wątki', JSON.stringify(sl.watki?.slice(0, 6)), '\n   top GPU:', sl.topGpuMain.slice(0, 6).map((r) => `${r[0]} ${r[1]}ms/${r[2]}`).join(' | '), '\n   wzorce:', JSON.stringify(sl.wzorce));
   // raport cząstkowy po każdym oknie (przerwany przebieg zostawia liczby, nie same zrzuty)
@@ -1290,7 +1396,620 @@ async function zrzutyAB() {
   writeJson(join(out, 'raport.json'), report);
 }
 
+// ── ZASŁONA A OBIEKTY PASSA TŁA (--tloAB <katalog>; przegląd 2026-10-29 — uwaga [4]) ──────────────────────────────
+// Kolejka passa tła po poprawce: niebo i gwiazdy (< −0,5) → skały tła (−0,45 … −0,20) → zasłona (−0,1, test głębi) →
+// każda inna rzecz tła (≥ 0). W PAUZIE w każdym miejscu, w równych odstępach --tloUstal s (zegar efektów biegnie też
+// w pauzie — każde porównanie ma ten sam odstęp co para kontrolna): N0 → N1 (kontrola) → STARA (wobec N1) → N2 → K5
+// (wobec N2) → N3 (druga kontrola). Wynik: odsetek pikseli PNG strony różnych o > 8/255 (i > 2 / > 32) + mapa różnic,
+// bufor sceny (HDR, bity półfloatu — --tloHdr 1), spis siatek passa tła (warstwa 1: kolejka, renderOrder, zapis / test
+// głębi), stan zasłony, pipeline'y synchroniczne workera. Nakładki HUD na kanwie schowane (StoryGame.hudHidden), kokpit
+// DOM zostaje (w pauzie stoi — wchodzi do pary kontrolnej).
+// Miejsca (--tloMiejsca): pole-blisko / pole-daleko — gęste pole dema; port — port pasa (dok portu bez ringu) z NAJWIĘKSZĄ
+// zasłoną w miejscu doku, dok i stacja w kadrze; port-soczewka — ten sam kadr z dokiem i stacją w passie TŁA (warstwa 1),
+// jak w pierwszej klatce soczewki skoku gracza (applyDockLens / setStationLensLayers — β ≈ 0, macierz ≈ ramka; dawny
+// kwad zasłony malował się po nich); port-soczewka-gesto — to samo z zasłoną gęstego pola wymuszoną w kadrze (u.veil =
+// --tloZaslona, domyślnie 0,8: porty pasa leżą dziś poza gęstymi polami — zasłona przy doku Ceres ~0,003 — a położenia
+// małych ciał zależą od ziarna świata); skok — prawdziwy skok z tego portu (TRAVEL TO), pauza w ładowaniu, gdy zanik pola
+// (belt._fade) jest w 0,25–0,75 i dok jest w passie tła (albo gdy pole zgaśnie sekundę po starcie soczewki; bez soczewki —
+// po 45 s); próbki co ~0,1 s (faza, β, zanik, zasłona, siatki doku w tle) w tlo.json: skokPrzebieg, skokProby. Zawsze:
+// stan pola w miejscu bazy piratów (StoryGame._shipyardCenter).
+const TLO_DIR = args.tloAB && args.tloAB !== '0' ? resolve(repo, String(args.tloAB)) : null;
+const TLO_USTAL = Number(args.tloUstal || 2.5);
+const TLO_WARIANTY = {
+  STARA: { opis: 'DOKŁADNIE dawna kolejka passa tła: zasłona −0,5 bez testu głębi (V0) + skały tła 2 (L0)',
+    wk: 'S.belt.veil.setDepthCull(false); S.belt.setRockOrder(false)', wkP: 'S.belt.veil.setDepthCull(true); S.belt.setRockOrder(true)' },
+  K5: { opis: 'kolejka z 2064497e: zasłona 5 z testem głębi, skały tła 2 + pasmo · 0,1 + koszyk · 0,01',
+    wk: 'const B = S.belt; B.veil.mesh.__r0 = B.veil.mesh.renderOrder; B.veil.mesh.renderOrder = 5; B.layers.slice(1).forEach((L, i) => { for (const bk of [L.buckets, L.moonBuckets]) { bk.__r0 = bk.renderOrder; bk.renderOrder = 2 + i * 0.1; bk.applyOrder(); } })',
+    wkP: 'const B = S.belt; B.veil.mesh.renderOrder = B.veil.mesh.__r0; B.layers.slice(1).forEach((L) => { for (const bk of [L.buckets, L.moonBuckets]) { bk.renderOrder = bk.__r0; bk.applyOrder(); } })' }
+};
+// Spis siatek passa tła (warstwa 1, widoczne z przodkami, niepuste) wg obiektu najwyższego poziomu + stan zasłony
+const TLO_SPIS = `(() => {
+  const C = globalThis.__C3, S = globalThis.__ST, B = S.belt, bit = 2;
+  const out = { zaslona: B && B.veil ? { widoczna: !!B.veil.mesh.visible, veil: +B.veil.u.veil.value.toFixed(4), renderOrder: B.veil.mesh.renderOrder,
+    testGlebi: B.veil.material.depthTest, zanik: B._fade, poleAktywne: !!B.active } : null, pipeSync: S.pipeSync | 0, obiekty: {} };
+  const widoczny = (o) => { for (let p = o; p; p = p.parent) if (p.visible === false) return false; return true; };
+  C.scene.traverse((o) => {
+    if (!(o.isMesh || o.isPoints || o.isLine) || !(o.layers.mask & bit) || !widoczny(o)) return;
+    const g = o.geometry;
+    if (g && g.isInstancedBufferGeometry && g.instanceCount === 0) return;
+    let top = o; while (top.parent && top.parent !== C.scene) top = top.parent;
+    const k = top.name || top.type;
+    const m = Array.isArray(o.material) ? o.material[0] : (o.material || {});
+    const e = out.obiekty[k] || (out.obiekty[k] = { siatki: 0, rodzaje: {} });
+    e.siatki++;
+    const r = (m.transparent ? 'przezr' : 'nieprzezr') + ' rO ' + o.renderOrder + ' zapis ' + (m.depthWrite ? 1 : 0) + ' test ' + (m.depthTest ? 1 : 0);
+    e.rodzaje[r] = (e.rodzaje[r] || 0) + 1;
+  });
+  return out;
+})()`;
+// Miejsca: doki portów bez ringu z celem zasłony pola w miejscu doku (jak _updateVeil: waga · smoothstep(gęstość) · wyrwa
+// + gaz), stacja portu, baza piratów
+const TLO_MIEJSCA = `(() => {
+  const F = window.__beltWorld && window.__beltWorld.field, SUN = window.SUN || { x: 0, y: 0 }, AU = 42253.52;
+  const zasl = (x, y) => { if (!F || typeof F.sampleMacro !== 'function') return null; const m = F.sampleMacro(x, y);
+    const t = Math.min(1, Math.max(0, (m.cluster - 0.06) / (0.42 - 0.06))); return +(m.weight * t * t * (3 - 2 * t) * m.hole + m.gas).toFixed(4); };
+  const au = (x, y) => +(Math.hypot(x - SUN.x, y - SUN.y) / AU).toFixed(2);
+  const st = window.stations || [];
+  const docks = ((window.PortDocks && window.PortDocks.docks) || []).map((d) => {
+    let s = st.find((q) => q && (q.id === d.stationId || q.marketId === d.stationId)) || null;
+    if (!s) { let best = 4e4; for (const q of st) { const dd = q ? Math.hypot(q.x - d.x, q.y - d.y) : Infinity; if (dd < best) { best = dd; s = q; } } }
+    return { id: d.stationId, kind: d.kind, x: d.x, y: d.y, keepR: d.keepR, au: au(d.x, d.y), zaslona: zasl(d.x, d.y),
+      stacja: s ? { id: s.id, name: s.name, x: s.x, y: s.y, r: s.r || s.baseR || 0 } : null };
+  });
+  let baza = null;
+  try { const c = window.StoryGame && typeof window.StoryGame._shipyardCenter === 'function' ? window.StoryGame._shipyardCenter() : null;
+    if (c) baza = { x: Math.round(c.x), y: Math.round(c.y), au: au(c.x, c.y), zaslona: zasl(c.x, c.y), makro: F ? (({ weight, cluster, hole, gas }) => ({ weight, cluster, hole, gas }))(F.sampleMacro(c.x, c.y)) : null }; }
+  catch (e) { baza = { blad: String(e) }; }
+  return { docks, baza };
+})()`;
+// Statek w miejscu (x, y) trzymany pętlą rAF (__hold), kamera statku z zoomem z
+const TLO_STAW = (x, y, h, z) => `(() => {
+  window.__hold = Object.assign(window.__hold || {}, { x: ${x}, y: ${y}, heading: ${h}, on: true });
+  window.DevScene.teleport(${x}, ${y}, ${h});
+  window.DevScene.syncCamera();
+  const c = window.camera;
+  if (c.mode === 'rts' && c.exitRtsMode) c.exitRtsMode();
+  c.minZoom = Math.min(c.minZoom, ${z}); c.maxZoom = Math.max(c.maxZoom, ${z}); c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${z};
+  return { x: Math.round(window.ship.pos.x), y: Math.round(window.ship.pos.y) };
+})()`;
+// Dok i stacja portu w passie tła (warstwa 1) jak w soczewce skoku: wszystkie siatki obiektów najwyższego poziomu
+// z userData.fgCategory 'stations' (budowle doków — portDocks3D setupDock, grupy stacji — stations3D) bliżej niż `r`
+// od punktu sceny (x, −y); maski warstw zapamiętane do przywrócenia
+const TLO_SOCZEWKA = (x, y, r, on) => on ? `(() => {
+  const C = globalThis.__C3, list = globalThis.__tloWarstwy = [], v = { x: 0, y: 0, z: 0 }, nazwy = [];
+  for (const top of C.scene.children) {
+    if (!top.userData || top.userData.fgCategory !== 'stations' || top.visible === false) continue;
+    top.updateMatrixWorld(true);
+    const e = top.matrixWorld.elements, dx = e[12] - (${x}), dy = e[13] + (${y});
+    if (dx * dx + dy * dy > ${r} * ${r}) continue;
+    nazwy.push(top.name || top.type);
+    top.traverse((o) => { list.push([o, o.layers.mask]); o.layers.set(1); });
+  }
+  return { obiekty: nazwy, siatki: list.length };
+})()` : `(() => { const list = globalThis.__tloWarstwy || []; for (const [o, m] of list) o.layers.mask = m; globalThis.__tloWarstwy = null; return list.length; })()`;
+
+function roznicaPng(fa, fb, mapa = null) {
+  let a, b;
+  try { a = readPng(fa); b = readPng(fb); } catch (e) { return { blad: e.message }; }
+  if (a.width !== b.width || a.height !== b.height) return { blad: 'rozmiar' };
+  const n = a.width * a.height, siatka = new Array(16 * 4).fill(0), map = mapa ? new Uint8Array(n * 4) : null;
+  let d2 = 0, d8 = 0, d32 = 0, max = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const m = Math.max(Math.abs(a.data[o] - b.data[o]), Math.abs(a.data[o + 1] - b.data[o + 1]), Math.abs(a.data[o + 2] - b.data[o + 2]));
+    if (m > max) max = m;
+    if (m > 2) d2++;
+    if (m > 8) { d8++; siatka[Math.min(3, ((((i / a.width) | 0) * 4) / a.height) | 0) * 16 + Math.min(15, (((i % a.width) * 16) / a.width) | 0)]++; }
+    if (m > 32) d32++;
+    if (map) { const g = Math.min(255, m * 8); map[o] = m > 8 ? 255 : g; map[o + 1] = m > 8 ? 40 : g; map[o + 2] = m > 8 ? 40 : g; map[o + 3] = 255; }
+  }
+  if (map && d2 > 0) writePng(mapa, { width: a.width, height: a.height, data: map });
+  const pct = (k) => +(100 * k / n).toFixed(4);
+  return { pikseli: n, ponad2: pct(d2), ponad8: pct(d8), ponad32: pct(d32), ponad8N: d8, maks: max, siatka16x4ponad8: siatka };
+}
+
+async function tloAB() {
+  mkdirSync(TLO_DIR, { recursive: true });
+  const HDR = String(args.tloHdr ?? '1') === '1';
+  const miejscaArg = listaArg(args.tloMiejsca, ['pole-blisko', 'pole-daleko', 'port', 'port-soczewka', 'port-soczewka-gesto', 'skok']);
+  const T = report.tlo = { ustalS: TLO_USTAL, warianty: Object.fromEntries(Object.entries(TLO_WARIANTY).map(([k, v]) => [k, v.opis])), miejsca: [], hdr: HDR };
+  T.wejscie = await ev(TLO_MIEJSCA).catch((e) => ({ blad: e.message }));
+  console.log('tło A/B — baza piratów:', JSON.stringify(T.wejscie.baza));
+  console.log('tło A/B — doki portów:', JSON.stringify((T.wejscie.docks || []).map((d) => [d.id, d.kind, d.au, d.zaslona, d.stacja && d.stacja.name])));
+  const pasowe = (T.wejscie.docks || []).filter((d) => d.zaslona !== null).sort((p, q) => q.zaslona - p.zaslona);
+  const port = pasowe[0] || null;
+  T.port = port;
+  await stronaKod('window.StoryGame.hudHidden = true').catch(() => {});
+  const plik = (m, n) => join(TLO_DIR, `${m}-${n}.png`);
+  const czytaj = async (slot) => { if (HDR) await wkEval(OBRAZ_CZYTAJ(slot), 120000).catch((e) => console.log('hdr', slot, e.message)); };
+  const hdr = async (s1, s2) => (HDR ? wkEval(OBRAZ_ROZNICA(s1, s2), 120000).then((r) => (r && r.siatka16x4 ? { ...r, siatka16x4: undefined, probki: undefined } : r)).catch((e) => ({ blad: e.message })) : null);
+  const zrzucTlo = async (m, n) => { await screenshotPng(cdp, plik(m, n)); };
+  const przelaczTlo = (w, on) => wkKod(on ? TLO_WARIANTY[w].wk : TLO_WARIANTY[w].wkP);
+  async function seria(m, extra = {}) {
+    const u = TLO_USTAL * 1000;
+    const row = { miejsce: m, ...extra, kamera: await ev(KAMERA).catch(() => null), spis: await wkEval(TLO_SPIS).catch((e) => ({ blad: e.message })) };
+    console.log(`tło A/B ${m}: zasłona ${JSON.stringify(row.spis && row.spis.zaslona)}`);
+    for (const [k, v] of Object.entries((row.spis && row.spis.obiekty) || {})) console.log(`   pass tła: ${k} — ${v.siatki} siatek ${JSON.stringify(v.rodzaje)}`);
+    await zrzucTlo(m, 'N0'); await czytaj('N0');
+    await sleep(u);
+    await zrzucTlo(m, 'N1'); await czytaj('N1');
+    await przelaczTlo('STARA', true);
+    await sleep(u);
+    await zrzucTlo(m, 'STARA'); await czytaj('S');
+    await przelaczTlo('STARA', false);
+    await sleep(u);
+    await zrzucTlo(m, 'N2'); await czytaj('N2');
+    await przelaczTlo('K5', true);
+    await sleep(u);
+    await zrzucTlo(m, 'K5'); await czytaj('K');
+    await przelaczTlo('K5', false);
+    await sleep(u);
+    await zrzucTlo(m, 'N3'); await czytaj('N3');
+    row.png = {
+      kontrola: roznicaPng(plik(m, 'N0'), plik(m, 'N1'), plik(m, 'mapa-kontrola')),
+      STARA: roznicaPng(plik(m, 'N1'), plik(m, 'STARA'), plik(m, 'mapa-STARA')),
+      K5: roznicaPng(plik(m, 'N2'), plik(m, 'K5'), plik(m, 'mapa-K5')),
+      kontrola2: roznicaPng(plik(m, 'N2'), plik(m, 'N3'), plik(m, 'mapa-kontrola2'))
+    };
+    if (HDR) row.hdr = { kontrola: await hdr('N0', 'N1'), STARA: await hdr('N1', 'S'), K5: await hdr('N2', 'K'), kontrola2: await hdr('N2', 'N3') };
+    row.pipeSyncPo = await wkEval('(globalThis.__ST.pipeSync | 0)').catch(() => null);
+    T.miejsca.push(row);
+    const p = row.png;
+    console.log(`tło A/B ${m}: PNG > 8/255 — kontrola ${p.kontrola.ponad8}% · STARA ${p.STARA.ponad8}% · K5 ${p.K5.ponad8}% · kontrola2 ${p.kontrola2.ponad8}% (> 2/255: ${p.kontrola.ponad2} · ${p.STARA.ponad2} · ${p.K5.ponad2} · ${p.kontrola2.ponad2}; maks ${p.kontrola.maks} · ${p.STARA.maks} · ${p.K5.maks} · ${p.kontrola2.maks})`);
+    if (row.hdr) console.log(`   HDR (piksele różne w bitach): kontrola ${row.hdr.kontrola && row.hdr.kontrola.rozne} · STARA ${row.hdr.STARA && row.hdr.STARA.rozne} · K5 ${row.hdr.K5 && row.hdr.K5.rozne} · kontrola2 ${row.hdr.kontrola2 && row.hdr.kontrola2.rozne}`);
+    await wkEval('(() => { globalThis.__obraz = null; return true; })()').catch(() => {});
+    return row;
+  }
+  T.pipeSyncStart = await wkEval('(globalThis.__ST.pipeSync | 0)').catch(() => null);
+  for (const m of miejscaArg) {
+    try {
+      if (m === 'pole-blisko' || m === 'pole-daleko') {
+        await ev(NA_MIEJSCE(m === 'pole-blisko' ? ZB : ZD));
+        await sleep(6000);
+        await pauza(true);
+        await sleep(1500);
+        await seria(m, { zoom: m === 'pole-blisko' ? ZB : ZD });
+        await pauza(false);
+      } else if ((m === 'port' || m === 'port-soczewka' || m === 'port-soczewka-gesto') && port) {
+        // statek między dokiem a stacją portu (poza dyskiem zapasu doku), dziobem ku stacji; kadr: dok i stacja
+        const s = port.stacja || { x: port.x, y: port.y };
+        let ux = s.x - port.x, uy = s.y - port.y; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
+        const off = Math.min(L * 0.5, port.keepR + 2000);
+        const x = port.x + ux * Math.max(off, port.keepR + 1500), y = port.y + uy * Math.max(off, port.keepR + 1500);
+        const span = Math.max(L + port.keepR * 2, port.keepR * 3);
+        const z = Math.min(ZB, (W * 0.5) / (0.75 * span), (H * 0.5) / (1.3 * port.keepR));
+        T.portKadr = { x: Math.round(x), y: Math.round(y), zoom: +z.toFixed(4), odlStacji: Math.round(L) };
+        await ev(TLO_STAW(x, y, Math.atan2(uy, ux), z));
+        // komórki pola, gaz i pamięć nieba po teleporcie — pierwsza para kontrolna przy 8 s jeszcze się ustalała
+        await sleep(Number(args.tloCzekaj || 15) * 1000);
+        await pauza(true);
+        await sleep(1500);
+        if (m === 'port') await seria(m, { zoom: z, port: port.id });
+        else {
+          const sc = await wkEval(TLO_SOCZEWKA(port.x, port.y, Math.max(L, port.keepR) + 30000, true)).catch((e) => ({ blad: e.message }));
+          console.log(`tło A/B ${m}: w passie tła`, JSON.stringify(sc));
+          // port-soczewka-gesto: zasłona gęstego pola w tym kadrze (u.veil = --tloZaslona, domyślnie 0,8 — pole z rdzenia
+          // gęstego pola; porty pasa leżą dziś poza gęstymi polami, a położenia małych ciał zależą od ziarna świata)
+          if (m === 'port-soczewka-gesto') {
+            const vv = Number(args.tloZaslona || 0.8);
+            await wkKod(`const B = S.belt; if (!B.__uv) { B.__uv = true; B._updateVeil = function () { Object.getPrototypeOf(this)._updateVeil.call(this); this.veil.u.veil.value = ${vv}; this.veil.setVisible(true); }; }`);
+          }
+          await sleep(TLO_USTAL * 1000);
+          try { await seria(m, { zoom: z, port: port.id, soczewka: sc, zaslonaWymuszona: m === 'port-soczewka-gesto' ? Number(args.tloZaslona || 0.8) : null }); } finally {
+            await wkEval(TLO_SOCZEWKA(0, 0, 0, false)).catch(() => {});
+            if (m === 'port-soczewka-gesto') await wkKod('const B = S.belt; if (B.__uv) { delete B._updateVeil; delete B.__uv; }').catch(() => {});
+          }
+        }
+        await pauza(false);
+      } else if (m === 'skok' && port) {
+        // prawdziwy skok z portu: TRAVEL TO daleko od Słońca, pauza w ładowaniu (zanik pola 0,25–0,75, dok w passie tła)
+        const s = port.stacja || { x: port.x, y: port.y };
+        let ux = s.x - port.x, uy = s.y - port.y; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
+        const x = port.x + ux * (port.keepR + 1500), y = port.y + uy * (port.keepR + 1500);
+        const z = Math.min(ZB, (W * 0.5) / (0.75 * Math.max(L + port.keepR * 2, port.keepR * 3)), (H * 0.5) / (1.3 * port.keepR));
+        await ev(TLO_STAW(x, y, Math.atan2(uy, ux), z));
+        await sleep(6000);
+        const cel = await ev(`(() => { window.__hold.on = false; window.DevFlags && (window.DevFlags.unlimitedWarp = true);
+          const S0 = window.SUN || { x: 0, y: 0 }, s = window.ship; let dx = s.pos.x - S0.x, dy = s.pos.y - S0.y; const l = Math.hypot(dx, dy) || 1;
+          const tx = s.pos.x + dx / l * 900000, ty = s.pos.y + dy / l * 900000; window.setTravelTarget(tx, ty, 'tło A/B');
+          return { tx: Math.round(tx), ty: Math.round(ty) }; })()`);
+        let stan = null;
+        const t0 = Date.now();
+        // przebieg: każda próbka (co ~0,1 s) — faza podróży, β soczewki, zanik pola, zasłona, siatki doku / stacji w passie tła
+        const przebieg = [];
+        const proby = { n: 0, dokWTle: 0, dokWTleZaslona: 0, maksZaslonaPrzyDoku: 0, pierwszaDokWTle: null };
+        for (let i = 0; Date.now() - t0 < 90000; i++) {
+          stan = await wkEval(`(() => { const B = globalThis.__ST.belt, C = globalThis.__C3; let lens = 0;
+            for (const top of C.scene.children) if (top.userData && top.userData.fgCategory === 'stations' && top.visible !== false) top.traverse((o) => { if (o.isMesh && (o.layers.mask & 2)) lens++; });
+            return { zanik: B ? B._fade : null, veil: B && B.veil ? B.veil.u.veil.value : null, widoczna: B && B.veil ? B.veil.mesh.visible : null, siatkiWTle: lens,
+              trybSkoku: B ? !!B._warpMode : null }; })()`).catch((e) => ({ blad: e.message }));
+          const nv = await ev('(() => ({ faza: window.travelNav && window.travelNav.phase, warp: window.warp && window.warp.state, beta: window.__warpWorldLens ? +window.__warpWorldLens.state.beta.toFixed(3) : null }))()').catch(() => null);
+          const s = { t: +((Date.now() - t0) / 1000).toFixed(2), ...stan, ...(nv || {}) };
+          przebieg.push(s);
+          proby.n++;
+          if (stan && stan.siatkiWTle > 0) {
+            proby.dokWTle++;
+            if (proby.pierwszaDokWTle === null) proby.pierwszaDokWTle = s;
+            if (stan.widoczna) { proby.dokWTleZaslona++; if (stan.veil > proby.maksZaslonaPrzyDoku) proby.maksZaslonaPrzyDoku = +stan.veil.toFixed(4); }
+          }
+          if (nv && nv.beta > 0.02) proby.betaOd = proby.betaOd ?? s.t;
+          // okno, o które chodzi (dok w passie tła, pole w połowie zaniku) — albo soczewka ruszyła i pole zgasło, albo
+          // soczewki brak przez 45 s
+          if (stan && stan.zanik !== null && stan.zanik < 0.75 && stan.zanik > 0.25 && stan.siatkiWTle > 0) break;
+          if (proby.betaOd !== undefined && stan && stan.zanik !== null && stan.zanik <= 0.25 && s.t > proby.betaOd + 1) break;
+          if (proby.betaOd === undefined && s.t > 45) break;
+          await sleep(50);
+        }
+        T.skokPrzebieg = przebieg;
+        T.skokProby = proby;
+        console.log('tło A/B skok — próbki:', JSON.stringify(proby), '| przebieg (co 10.):', JSON.stringify(przebieg.filter((_, k) => k % 10 === 0 || k === przebieg.length - 1)));
+        await pauza(true);
+        const nav = await ev('(() => ({ faza: window.travelNav && window.travelNav.phase, warp: window.warp && window.warp.state, beta: window.__warpWorldLens ? +window.__warpWorldLens.state.beta.toFixed(3) : null }))()').catch(() => null);
+        console.log('tło A/B skok: cel', JSON.stringify(cel), 'stan w pauzie', JSON.stringify(stan), JSON.stringify(nav), 'po', ((Date.now() - t0) / 1000).toFixed(1), 's');
+        await sleep(1500);
+        await seria(m, { zoom: z, port: port.id, skok: { cel, stan, nav } });
+        await pauza(false);
+        await ev('(() => { window.cancelTravel && window.cancelTravel(""); return true; })()').catch(() => {});
+        await sleep(1500);
+      } else console.log('tło A/B: miejsce pominięte', m, port ? '' : '(brak portu pasa z dokiem)');
+    } catch (e) {
+      console.log('tło A/B', m, e.message);
+      report.bledy.push(`tło A/B ${m}: ${e.message}`);
+      await pauza(false).catch(() => {});
+    }
+  }
+  T.pipeSyncKoniec = await wkEval('(globalThis.__ST.pipeSync | 0)').catch(() => null);
+  T.pipeSyncLog = report.wkLogi.filter((l) => /pipeline sync/.test(l.text)).map((l) => l.text.slice(0, 200));
+  await stronaKod('window.StoryGame.hudHidden = false').catch(() => {});
+  writeJson(join(TLO_DIR, 'tlo.json'), T);
+  writeJson(join(out, 'raport.json'), report);
+}
+
+// ── BRZEG OKNA POLA A KADR (--brzeg <katalog>; sprawdzenie poprawek 2026-10-29) ─────────────────────────────────────
+// Dziennik workera klatka po klatce (opakowanie SpaceGas._update; stan po aktualizacji — wejście TEJ klatki, oba obrazy
+// kroków z rogami okna, waga przenikania, bieżące okno): odstęp wewnętrznej krawędzi miękkiego pasa okna
+// (SPACE_GAS_WINDOW_EDGE boku) od brzegu kadru; kadr = kamera klatki ze wstrząsem ± pół kadru z wejścia (IN 6–9, świat
+// gry względem kotwicy, y w dół); > 0 — pas poza kadrem. Mapy przenikają dwa obrazy (A: róg imgO0, B: imgO1, waga B =
+// w1), więc odstęp dla każdego obrazu z wagą > 1% (najmniejszy), a waga okna kw (smoothstep(0, krawędź, odległość od
+// brzegu okna / bok), ważona przenikaniem — jak w mapach) — najmniejsza z 33 punktów na boku kadru. Pył gaśnie w pasie
+// BIEŻĄCEGO okna (sim.ox / oy).
+const BZ = { K: 0, ACT: 1, CX: 2, CY: 3, HW: 4, HH: 5, WX: 6, WY: 7, O0X: 8, O0Y: 9, O1X: 10, O1Y: 11, W1: 12, OCX: 13, OCY: 14,
+  XP: 15, XM: 16, YP: 17, YM: 18, XP0: 19, XP1: 20, XM0: 21, XM1: 22, YP0: 23, YP1: 24, YM0: 25, YM1: 26,
+  KXP: 27, KXM: 28, KYP: 29, KYM: 30, DXP: 31, DXM: 32, DYP: 33, DYM: 34, SHX: 35, SHY: 36, ZOOM: 37, NOW: 38, ON: 39, VALID: 40, F: 41 };
+const BZ_STRONY = { XP: [BZ.XP, BZ.KXP, BZ.DXP], XM: [BZ.XM, BZ.KXM, BZ.DXM], YP: [BZ.YP, BZ.KYP, BZ.DYP], YM: [BZ.YM, BZ.KYM, BZ.DYM] };
+const BRZEG_LOG_INSTALUJ = `(() => {
+  const S = globalThis.__ST;
+  if (!S || !S.spaceGas) return 'brak spaceGas';
+  if (globalThis.__bzLog) return 'już';
+  const SG = S.spaceGas, H = S.mods.layoutMod.HEAD, F = ${BZ.F}, N = 16384, E = ${SPACE_GAS_WINDOW_EDGE}, P = 33;
+  const L = globalThis.__bzLog = { n: 0, rn: 0, F, N, a: new Float64Array(N * F), err: null };
+  const sm = (e) => { if (!(e > 0)) return 0; const t = Math.min(1, e / E); return t * t * (3 - 2 * t); };
+  const ox = [0, 0], oy = [0, 0], wt = [0, 0];
+  const kwAt = (px, py, SW) => { let s = 0; for (let k = 0; k < 2; k++) { if (!(wt[k] > 0)) continue; const u = (px - ox[k]) / SW, v = (py - oy[k]) / SW; s += wt[k] * sm(Math.min(u, v, 1 - u, 1 - v)); } return s; };
+  const up0 = SG._update;
+  SG._update = function (ctx) {
+    const res = up0.call(this, ctx);
+    try {
+      const sim = this.sim, IN = this.input, page = S.reader && S.reader.page;
+      if (!sim || !page) return res;
+      const h = page.head, img = sim.image, C = sim.cell, SW = sim.N * C, B = E * SW;
+      const cx = IN[6], cy = IN[7], hw = IN[8], hh = IN[9], w1 = img.w1;
+      ox[0] = img.origin[0].x; oy[0] = img.origin[0].y; ox[1] = img.origin[1].x; oy[1] = img.origin[1].y; wt[0] = 1 - w1; wt[1] = w1;
+      const a = L.a, o = (L.n % N) * F;
+      a[o] = h[H.K]; a[o + 1] = IN[1]; a[o + 2] = cx; a[o + 3] = cy; a[o + 4] = hw; a[o + 5] = hh; a[o + 6] = IN[31]; a[o + 7] = IN[32];
+      a[o + 8] = ox[0]; a[o + 9] = oy[0]; a[o + 10] = ox[1]; a[o + 11] = oy[1]; a[o + 12] = w1; a[o + 13] = sim.ox * C; a[o + 14] = sim.oy * C;
+      let xp = Infinity, xm = Infinity, yp = Infinity, ym = Infinity;
+      for (let k = 0; k < 2; k++) {
+        const dxp = (ox[k] + SW - B) - (cx + hw), dxm = (cx - hw) - (ox[k] + B), dyp = (oy[k] + SW - B) - (cy + hh), dym = (cy - hh) - (oy[k] + B);
+        a[o + 19 + k] = dxp; a[o + 21 + k] = dxm; a[o + 23 + k] = dyp; a[o + 25 + k] = dym;
+        if (wt[k] > 0.01) { if (dxp < xp) xp = dxp; if (dxm < xm) xm = dxm; if (dyp < yp) yp = dyp; if (dym < ym) ym = dym; }
+      }
+      a[o + 15] = xp; a[o + 16] = xm; a[o + 17] = yp; a[o + 18] = ym;
+      let kxp = 1, kxm = 1, kyp = 1, kym = 1;
+      for (let i = 0; i < P; i++) {
+        const t = -1 + 2 * i / (P - 1);
+        kxp = Math.min(kxp, kwAt(cx + hw, cy + t * hh, SW)); kxm = Math.min(kxm, kwAt(cx - hw, cy + t * hh, SW));
+        kyp = Math.min(kyp, kwAt(cx + t * hw, cy + hh, SW)); kym = Math.min(kym, kwAt(cx + t * hw, cy - hh, SW));
+      }
+      a[o + 27] = kxp; a[o + 28] = kxm; a[o + 29] = kyp; a[o + 30] = kym;
+      const qx = sim.ox * C, qy = sim.oy * C;
+      a[o + 31] = (qx + SW - B) - (cx + hw); a[o + 32] = (cx - hw) - (qx + B); a[o + 33] = (qy + SW - B) - (cy + hh); a[o + 34] = (cy - hh) - (qy + B);
+      a[o + 35] = h[H.CAM_X] - h[H.CAMNS_X]; a[o + 36] = h[H.CAM_Y] - h[H.CAMNS_Y]; a[o + 37] = h[H.CAM_ZOOM]; a[o + 38] = performance.now();
+      a[o + 39] = this.stats.active ? 1 : 0; a[o + 40] = img.valid ? 1 : 0;
+      L.n++;
+    } catch (e) { L.err = String(e); }
+    return res;
+  };
+  return 'ok';
+})()`;
+// odczyt pierścienia dziennika workera (globalThis[nazwa]: n, rn, N, F, a) — wiersze od ostatniego odczytu
+const LOG_CZYTAJ = (nazwa, wiersze) => `(() => {
+  const L = globalThis.${nazwa};
+  if (!L) return null;
+  const from = Math.max(L.rn, L.n - L.N + 1), r = [];
+  if (${wiersze ? 'true' : 'false'}) for (let i = from; i < L.n; i++) { const o = (i % L.N) * L.F; r.push(Array.from(L.a.subarray(o, o + L.F))); }
+  const n = L.n - from;
+  L.rn = L.n;
+  return { n, wiersze: r, blad: L.err };
+})()`;
+// Stała prędkość okrętu: pętla rAF strony pisze ship.vel, kąt (dziób wzdłuż lotu) i zoom kamery co klatkę (fizyka gracza
+// między klatkami: regulator i tłumiki ujmują kilka j/s na krok — prędkość rzeczywista z przesunięcia w raporcie)
+const LOT_STALY = (vx, vy, a, z) => `(() => {
+  window.__cruise = { on: true, vx: ${vx}, vy: ${vy}, a: ${a}, z: ${z} };
+  if (!window.__cruiseLoop) {
+    window.__cruiseLoop = true;
+    const tick = () => {
+      const C = window.__cruise, p = window.ship, c = window.camera;
+      if (C && C.on && p) {
+        p.vel.x = C.vx; p.vel.y = C.vy; p.angle = C.a; if (p.angVel !== undefined) p.angVel = 0;
+        if (c && C.z > 0) { c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = C.z; }
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+  if (window.__hold) window.__hold.on = false;
+  return true;
+})()`;
+const LOT_STOP = '(() => { if (window.__cruise) window.__cruise.on = false; return true; })()';
+const STATEK_TERAZ = '(() => { const s = window.ship, c = window.camera; return { t: performance.now(), x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, zoom: c.zoom }; })()';
+async function zrzutKlip(file, clip) {
+  const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false,
+    clip: { x: clip.x, y: clip.y, width: clip.width, height: clip.height, scale: clip.scale || 1 } });
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, Buffer.from(data, 'base64'));
+  return file;
+}
+// Odstęp brzegu z geometrii (bez opóźnienia kroku i wstrząsu): luz przycięcia środka okna jak placeGasWindow, okno
+// przesunięte najdalej pod ślad; przód = strona lotu (kwantyzacja okna do komórki w −x / −y zabiera do komórki na
+// stronie +x / +y), tył — bez straty
+function brzegTeoria(h, N, C) {
+  const halfWin = N * C / 2, band = SPACE_GAS_WINDOW_EDGE * N * C, m = h * SPACE_GAS_MAP_MARGIN;
+  const a = halfWin - band - C - m, b = m - halfWin, s = Math.max(0, a, b);
+  return { rezim: a > 0 ? 'przycięcie (okno pod śladem)' : b > 0 ? 'okno mniejsze od mapy (brzeg w kadrze z założenia)' : 'martwa strefa (okno przy kamerze)',
+    luz: Math.round(s), przodPlusMin: +(halfWin - band - C - s - h).toFixed(1), przodMinusMin: +(halfWin - band - s - h).toFixed(1) };
+}
+const minStat = (arr) => {
+  const a = arr.filter(Number.isFinite).sort((x, y) => x - y);
+  if (!a.length) return null;
+  return { n: a.length, min: +a[0].toFixed(1), p5: +a[Math.floor(0.05 * a.length)].toFixed(1), p50: +a[Math.floor(0.5 * a.length)].toFixed(1), maks: +a[a.length - 1].toFixed(1) };
+};
+function brzegStat(rows, dx, dy) {
+  const ok = rows.filter((r) => r[BZ.ON] > 0.5 && r[BZ.VALID] > 0.5 && r[BZ.ACT] > 0.5);
+  if (ok.length < 3) return { klatek: ok.length };
+  const strony = [];
+  if (dx > 0.3) strony.push('XP');
+  if (dx < -0.3) strony.push('XM');
+  if (dy > 0.3) strony.push('YP');
+  if (dy < -0.3) strony.push('YM');
+  const out = { klatek: ok.length, stronyLotu: strony, boki: {} };
+  for (const s of ['XP', 'XM', 'YP', 'YM']) {
+    const [iD, iK, iP] = BZ_STRONY[s];
+    const d = ok.map((r) => r[iD]);
+    out.boki[s] = { odstep: minStat(d), ujemnych: +(d.filter((v) => v < 0).length / d.length).toFixed(3),
+      kwMin: +Math.min(...ok.map((r) => r[iK])).toFixed(4), pylOdstepMin: +Math.min(...ok.map((r) => r[iP])).toFixed(1) };
+  }
+  out.lotOdstepMin = Math.min(...strony.map((s) => out.boki[s].odstep.min));
+  out.lotKwMin = Math.min(...strony.map((s) => out.boki[s].kwMin));
+  out.wszystkieOdstepMin = Math.min(...Object.values(out.boki).map((b) => b.odstep.min));
+  out.wszystkieKwMin = Math.min(...Object.values(out.boki).map((b) => b.kwMin));
+  // środek okna wobec kamery wzdłuż lotu (< 0 — okno przesunięte pod ślad, za kamerę)
+  out.oknoWzdluzLotu = minStat(ok.map((r) => (r[BZ.WX] - r[BZ.CX]) * dx + (r[BZ.WY] - r[BZ.CY]) * dy));
+  out.wstrzasJMaks = +Math.max(...ok.map((r) => Math.hypot(r[BZ.SHX], r[BZ.SHY]))).toFixed(2);
+  out.zoomZmierzony = +(ok.reduce((s, r) => s + r[BZ.ZOOM], 0) / ok.length).toFixed(4);
+  out.polKadru = [Math.round(ok[0][BZ.HW]), Math.round(ok[0][BZ.HH])];
+  return out;
+}
+const BRZEG_DIR = args.brzeg && args.brzeg !== '0' ? resolve(repo, String(args.brzeg)) : null;
+async function brzegOkna() {
+  mkdirSync(BRZEG_DIR, { recursive: true });
+  const zoomy = listaArg(args.brzegZoomy, [String(ZB), '0.512', '0.682', '0.77']).map(Number).filter((z) => z > 0);
+  const predkosci = listaArg(args.brzegV, ['1400', '507']).map(Number).filter((v) => v > 0);
+  const KIER = { px: [1, 0], mx: [-1, 0], py: [0, 1], my: [0, -1] };
+  const kier = listaArg(args.brzegKier, ['px', 'mx', 'py', 'my']).filter((k) => KIER[k]);
+  const USTAL = Number(args.brzegUstal || 3.5), LOG_S = Number(args.brzegS || 2);
+  const inst = await wkEval(BRZEG_LOG_INSTALUJ).catch((e) => e.message);
+  const oknoPola = await wkEval('(() => { const s = globalThis.__ST.spaceGas.sim; return { N: s.N, cell: s.cell }; })()').catch(() => null);
+  const B = report.brzeg = { rozmiar: [W, H], zoomy, predkosci, kierunki: kier, ustalS: USTAL, logS: LOG_S, okno: oknoPola, pasUlamek: SPACE_GAS_WINDOW_EDGE,
+    instalacja: inst, loty: [], zrzuty: [], podsumowanie: [] };
+  console.log('brzeg okna:', inst, JSON.stringify(oknoPola), 'zoomy', JSON.stringify(zoomy), 'v', JSON.stringify(predkosci), 'kierunki', kier.join(','));
+  await obceTeraz('brzeg okna: start');
+  for (const z of zoomy) {
+    for (const v of predkosci) {
+      for (const k of kier) {
+        const [dx, dy] = KIER[k], a = Math.atan2(dy, dx);
+        await ev(LOT_STOP);
+        await up('w').catch(() => {});
+        await ev(NA_MIEJSCE(z));
+        await ev(`(() => { window.__hold.heading = ${a}; return true; })()`);
+        await sleep(1200);
+        await ev(LOT_STALY(v * dx, v * dy, a, z));
+        await sleep(USTAL * 1000);
+        await wkEval(LOG_CZYTAJ('__bzLog', false)).catch(() => null);
+        const s0 = await ev(STATEK_TERAZ);
+        await sleep(LOG_S * 1000);
+        const s1 = await ev(STATEK_TERAZ);
+        const log = await wkEval(LOG_CZYTAJ('__bzLog', true), 60000).catch((e) => ({ blad: e.message }));
+        const st = log && log.wiersze ? brzegStat(log.wiersze, dx, dy) : { klatek: 0 };
+        const vRz = Math.hypot(s1.x - s0.x, s1.y - s0.y) / Math.max(1e-3, (s1.t - s0.t) / 1000);
+        const h = st.polKadru ? (Math.abs(dx) > 0.5 ? st.polKadru[0] : st.polKadru[1]) : (Math.abs(dx) > 0.5 ? W / 2 / z : H / 2 / z);
+        const teoria = oknoPola ? brzegTeoria(h, oknoPola.N, oknoPola.cell) : null;
+        const row = { zoom: z, v, kier: k, vRzecz: Math.round(vRz), teoria, ...st, bladLogu: log && log.blad ? log.blad : undefined };
+        if (v === predkosci[0]) {
+          // brzeg kadru od strony lotu (pas 12% szerokości / 20% wysokości) i kadr w skali 1/4 (pierwszy kierunek)
+          const tag = `z${z.toFixed(4)}-v${v}-${k}`;
+          const pw = Math.round(W * 0.12), ph = Math.round(H * 0.2);
+          const clip = dx > 0.5 ? { x: W - pw, y: 0, width: pw, height: H } : dx < -0.5 ? { x: 0, y: 0, width: pw, height: H }
+            : dy > 0.5 ? { x: 0, y: H - ph, width: W, height: ph } : { x: 0, y: 0, width: W, height: ph };
+          try {
+            row.zrzutBrzegu = await zrzutKlip(join(BRZEG_DIR, `brzeg-${tag}.png`), clip);
+            if (k === kier[0]) row.zrzutKadru = await zrzutKlip(join(BRZEG_DIR, `kadr-${tag}.png`), { x: 0, y: 0, width: W, height: H, scale: 0.25 });
+          } catch (e) { row.zrzutBlad = e.message; }
+        }
+        B.loty.push(row);
+        const f = (x) => (x === undefined || x === null ? '-' : x);
+        console.log(`brzeg z ${z.toFixed(4)} v ${v} (rzecz. ${row.vRzecz}) ${k}: klatek ${st.klatek} | lot ${f(st.stronyLotu && st.stronyLotu.join('+'))} odstęp min ${f(st.lotOdstepMin)} (p5 ${f(st.stronyLotu && st.boki[st.stronyLotu[0]].odstep.p5)}, ujemnych ${f(st.stronyLotu && st.boki[st.stronyLotu[0]].ujemnych)}) kw min ${f(st.lotKwMin)}`
+          + ` | wszystkie boki odstęp min ${f(st.wszystkieOdstepMin)} kw min ${f(st.wszystkieKwMin)} | okno wzdłuż lotu ${f(st.oknoWzdluzLotu && st.oknoWzdluzLotu.p50)} | wstrząs ${f(st.wstrzasJMaks)} j.`
+          + ` | teoria: ${teoria ? `${teoria.rezim}, luz ${teoria.luz}, przód +/− ≥ ${teoria.przodPlusMin}/${teoria.przodMinusMin}` : '-'}`);
+      }
+    }
+    const zl = B.loty.filter((r) => r.zoom === z && Number.isFinite(r.lotOdstepMin));
+    if (zl.length) {
+      const w = zl.reduce((m, r) => (r.lotOdstepMin < m.lotOdstepMin ? r : m));
+      const p = { zoom: z, lotow: zl.length, lotOdstepMin: w.lotOdstepMin, gdzie: `${w.kier} v ${w.v}`, lotKwMin: Math.min(...zl.map((r) => r.lotKwMin)),
+        wszystkieOdstepMin: Math.min(...zl.map((r) => r.wszystkieOdstepMin)), wszystkieKwMin: Math.min(...zl.map((r) => r.wszystkieKwMin)),
+        ujemnychLotow: zl.filter((r) => r.lotOdstepMin < 0).length };
+      B.podsumowanie.push(p);
+      console.log(`brzeg z ${z.toFixed(4)} — PODSUMOWANIE: odstęp od strony lotu min ${p.lotOdstepMin} j. (${p.gdzie}), kw min ${p.lotKwMin}, loty z odstępem < 0: ${p.ujemnychLotow}/${p.lotow} | wszystkie boki min ${p.wszystkieOdstepMin}, kw ${p.wszystkieKwMin}`);
+    }
+  }
+  await ev(LOT_STOP);
+  await obceTeraz('brzeg okna: koniec');
+  writeJson(join(out, 'raport.json'), report);
+}
+
+// ── RAMPA ZOOMU A WYŁĄCZENIE GAZU (--rampaZoom 1; sprawdzenie poprawek 2026-10-29) ───────────────────────────────────
+// Dziennik workera klatka po klatce: zoom nagłówka, pół kadru, gaz w grze (IN.active), gaz w renderze (stats.active),
+// zanik z wejścia (spaceGasViewFade z tune — liczony też przy gazie wyłączonym), fade i widoczność warstwy (obraz =
+// widoczność · fade), zanik skoku, widoczność pyłu, resety pola (licznik), rozgrzanie, płytkie płaty mgły (alfa,
+// widoczność, krok siatki płatu), pokrycie z alfy płatu (1 − alfa / alfa płatu).
+const RZ = { K: 0, NOW: 1, ZOOM: 2, HW: 3, HH: 4, ACT: 5, ON: 6, VF: 7, LF: 8, LV: 9, WF: 10, DV: 11, RES: 12, WARM: 13,
+  FA0: 14, FV0: 15, FA1: 16, FV1: 17, FST0: 18, VALID: 19, COVER: 20, F: 21 };
+const RAMPA_LOG_INSTALUJ = `(() => {
+  const S = globalThis.__ST;
+  if (!S || !S.spaceGas) return 'brak spaceGas';
+  if (globalThis.__rzLog) return 'już';
+  const SG = S.spaceGas, H = S.mods.layoutMod.HEAD, F = ${RZ.F}, N = 16384;
+  const L = globalThis.__rzLog = { n: 0, rn: 0, F, N, a: new Float64Array(N * F), err: null, fg: null };
+  const up0 = SG._update;
+  SG._update = function (ctx) {
+    const res = up0.call(this, ctx);
+    try {
+      const page = S.reader && S.reader.page;
+      if (!page) return res;
+      const h = page.head, IN = this.input, st = this.stats, sim = this.sim, T = this.tune, b = S.belt;
+      if (!L.fg && b && b.fog) L.fg = b.fog.slices.filter((s) => s.def.fg);
+      const fg = L.fg || [];
+      const hw = IN[8], hh = IN[9], asp = T.fadeAspect, fv = T.fadeView;
+      const half = asp > 0 ? Math.max(Math.min(hw, hh * asp), hh) : Math.max(hw, hh);
+      const vf = 1 - Math.min(1, Math.max(0, (half - fv[0]) / (fv[1] - fv[0])));
+      const a = L.a, o = (L.n % N) * F;
+      a[o] = h[H.K]; a[o + 1] = performance.now(); a[o + 2] = h[H.CAM_ZOOM]; a[o + 3] = hw; a[o + 4] = hh;
+      a[o + 5] = IN[1]; a[o + 6] = st.active ? 1 : 0; a[o + 7] = vf; a[o + 8] = this.layer.L.fade.value; a[o + 9] = this.layer.lower.visible ? 1 : 0;
+      a[o + 10] = st.fade; a[o + 11] = this.dust && this.dust.mesh.visible ? 1 : 0; a[o + 12] = sim.stats.resets; a[o + 13] = sim.warmLeft;
+      a[o + 14] = fg[0] ? fg[0].S.alpha.value : NaN; a[o + 15] = fg[0] && fg[0].mesh.visible ? 1 : 0;
+      a[o + 16] = fg[1] ? fg[1].S.alpha.value : NaN; a[o + 17] = fg[1] && fg[1].mesh.visible ? 1 : 0;
+      a[o + 18] = fg[0] ? fg[0].step : NaN; a[o + 19] = sim.image.valid ? 1 : 0;
+      a[o + 20] = fg[0] && fg[0].def.alpha > 0 ? 1 - fg[0].S.alpha.value / fg[0].def.alpha : NaN;
+      L.n++;
+    } catch (e) { L.err = String(e); }
+    return res;
+  };
+  return 'ok';
+})()`;
+// rampa geometryczna zoomu strony: z0 → z1 w D s, postój HOLD s, z1 → z0 w D s (co klatkę rAF: zoom, cel, baza)
+const RAMPA_START = (z0, z1, D, HOLD) => `(() => {
+  const c = window.camera, t0 = performance.now(), L = Math.log(${z1} / ${z0});
+  c.minZoom = Math.min(c.minZoom, ${Math.min(z0, z1)}); c.maxZoom = Math.max(c.maxZoom, ${Math.max(z0, z1)}); c.manualZoom = true;
+  const R = window.__rampaZoom = { on: true, n: 0, z: ${z0} };
+  const tick = () => {
+    if (!R.on) return;
+    const t = (performance.now() - t0) / 1000;
+    let f;
+    if (t < ${D}) f = t / ${D}; else if (t < ${D + HOLD}) f = 1; else if (t < ${2 * D + HOLD}) f = 1 - (t - ${D + HOLD}) / ${D}; else { f = 0; R.on = false; }
+    const z = ${z0} * Math.exp(L * f);
+    c.zoom = c.targetZoom = c.zoomBase = z; R.n++; R.z = z;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  return true;
+})()`;
+function rampaStat(rows) {
+  const n = rows.length;
+  if (n < 5) return { klatek: n };
+  const vis = (r) => (r[RZ.LV] > 0.5 ? r[RZ.LF] : 0);   // obraz gazu: widoczność warstwy · fade
+  const r4 = (x) => (Number.isFinite(x) ? +x.toFixed(4) : null);
+  const kr = (r) => ({ K: r[RZ.K], zoom: +r[RZ.ZOOM].toFixed(5), gra: r[RZ.ACT], render: r[RZ.ON], viewFade: r4(r[RZ.VF]), obraz: r4(vis(r)), skok: r4(r[RZ.WF]), pyl: r[RZ.DV],
+    resety: r[RZ.RES], mgla: [r4(r[RZ.FA0]), r4(r[RZ.FA1])], mglaWid: [r[RZ.FV0], r[RZ.FV1]], pokrycie: r4(r[RZ.COVER]) });
+  const przel = [], resety = [], krokMgly = [];
+  let maxDF = 0, iDF = -1, maxDA = 0, iDA = -1, maxDK = 0;
+  for (let i = 1; i < n; i++) {
+    const r = rows[i], p = rows[i - 1];
+    if (r[RZ.ACT] !== p[RZ.ACT]) przel.push({ i, gaz: r[RZ.ACT] > 0.5 ? 'wł.' : 'wył.', zoom: +r[RZ.ZOOM].toFixed(5), polKadru: Math.round(spaceGasViewHalf(r[RZ.HW], r[RZ.HH])),
+      obrazPrzed: r4(vis(p)), obrazPo: r4(vis(r)), viewFadePrzed: r4(p[RZ.VF]), viewFadePo: r4(r[RZ.VF]), mglaPrzed: [r4(p[RZ.FA0]), r4(p[RZ.FA1])], mglaPo: [r4(r[RZ.FA0]), r4(r[RZ.FA1])],
+      okolica: rows.slice(Math.max(0, i - 2), Math.min(n, i + 4)).map(kr) });
+    if (r[RZ.RES] > p[RZ.RES]) resety.push({ i, zoom: +r[RZ.ZOOM].toFixed(5), gra: r[RZ.ACT], viewFade: r4(r[RZ.VF]), obraz: r4(vis(r)), skok: r4(r[RZ.WF]), mgla: [r4(r[RZ.FA0]), r4(r[RZ.FA1])] });
+    if (r[RZ.FST0] !== p[RZ.FST0] && Number.isFinite(r[RZ.FST0])) krokMgly.push({ i, zoom: +r[RZ.ZOOM].toFixed(5), krok: r[RZ.FST0], gaz: r[RZ.ACT] });
+    const dF = Math.abs(vis(r) - vis(p));
+    if (dF > maxDF) { maxDF = dF; iDF = i; }
+    const dA = Math.max(Math.abs(r[RZ.FA0] - p[RZ.FA0]) || 0, Math.abs(r[RZ.FA1] - p[RZ.FA1]) || 0);
+    if (dA > maxDA) { maxDA = dA; iDA = i; }
+    maxDK = Math.max(maxDK, r[RZ.K] - p[RZ.K]);
+  }
+  // pierwsza klatka bez obrazu gazu w drodze w dół (widoczność warstwy gaśnie przy fade ≤ 0,004) i pierwsza z obrazem w drodze w górę
+  let iMin = 0;
+  for (let i = 1; i < n; i++) if (rows[i][RZ.ZOOM] < rows[iMin][RZ.ZOOM]) iMin = i;
+  let iZgas = -1, iWraca = -1;
+  for (let i = 1; i <= iMin; i++) if (vis(rows[i]) <= 0.004 && vis(rows[i - 1]) > 0.004) iZgas = i;
+  for (let i = iMin + 1; i < n; i++) if (vis(rows[i]) > 0.004 && vis(rows[i - 1]) <= 0.004) { iWraca = i; break; }
+  return {
+    klatek: n, s: +((rows[n - 1][RZ.NOW] - rows[0][RZ.NOW]) / 1000).toFixed(2), zoomMin: +rows[iMin][RZ.ZOOM].toFixed(5), maksSkokStron: maxDK,
+    przelaczeniaGazuWGrze: przel, resetyPola: resety,
+    obrazZgasl: iZgas >= 0 ? kr(rows[iZgas]) : null, obrazWraca: iWraca >= 0 ? kr(rows[iWraca]) : null,
+    maksSkokObrazuNaKlatke: { d: r4(maxDF), przy: iDF >= 0 ? kr(rows[iDF]) : null, przed: iDF > 0 ? kr(rows[iDF - 1]) : null },
+    maksSkokAlfyMglyNaKlatke: { d: r4(maxDA), przy: iDA >= 0 ? kr(rows[iDA]) : null, przed: iDA > 0 ? kr(rows[iDA - 1]) : null },
+    krokSiatkiPlatu: krokMgly.slice(0, 12)
+  };
+}
+// --rampaSkala s (≠ 1): zoom poniżej limitu kadłuba (Atlas 0,035 — syncCameraZoomLimits co klatkę) jest tylko w kadrze
+// przylotu warpa, więc próg zaniku obrazu (SpaceGas.tune.fadeView, worker) i próg wyłączenia gazu w grze
+// (SpaceGasInputTune.maxViewHalf, strona) skalowane RAZEM o s na czas rampy — to samo pół kadru (spaceGasViewHalf) przy
+// zoomie / s, cała droga zanik → wyłączenie → powrót w zakresie zoomu kamery (np. s 0,3: rampa 0,12 → 0,035)
+async function rampaZoom() {
+  const z0 = Number(args.rampaZoomOd || 0.035), z1 = Number(args.rampaZoomDo || 0.012), D = Number(args.rampaZoomS || 6), HOLD = Number(args.rampaZoomTrzymaj || 1.5);
+  const SK = Number(args.rampaSkala || 1);
+  await ev(LOT_STOP).catch(() => {});
+  await up('w').catch(() => {});
+  await ev(NA_MIEJSCE(z0));
+  await sleep(4000);
+  const inst = await wkEval(RAMPA_LOG_INSTALUJ).catch((e) => e.message);
+  if (SK !== 1) {
+    await wkKod(`const T = S.spaceGas.tune; T.__fv0 = T.fadeView; T.fadeView = [T.fadeView[0] * ${SK}, T.fadeView[1] * ${SK}]`);
+    await stronaKod(`const T = window.SpaceGasInputTune; T.__mvh0 = T.maxViewHalf; T.maxViewHalf = T.maxViewHalf * ${SK}`);
+    await sleep(500);
+  }
+  const tune = await wkEval('(() => { const T = globalThis.__ST.spaceGas.tune; return { fadeView: [...T.fadeView], fadeAspect: T.fadeAspect, fogReplace: T.fogReplace }; })()').catch(() => null);
+  const mvh = await ev('(window.SpaceGasInputTune.maxViewHalf)').catch(() => SPACE_GAS_INPUT_TUNE.maxViewHalf * SK);
+  // oczekiwane progi z kadru tego przebiegu: pół kadru = spaceGasViewHalf(W/2, H/2) / zoom
+  const k = spaceGasViewHalf(W / 2, H / 2);
+  const oczek = tune ? { skala: SK, zoomObrazPelny: +(k / tune.fadeView[0]).toFixed(5), zoomObrazZero: +(k / tune.fadeView[1]).toFixed(5),
+    zoomGraWylacza: +(k / mvh).toFixed(5), maxViewHalf: mvh,
+    dawnyWzorGry: { zoomGraWylacza: +(Math.max(W / 2, H / 2) / mvh).toFixed(5), zanikPrzyCieciu: +(1 - Math.min(1, Math.max(0, (k * mvh / Math.max(W / 2, H / 2) - tune.fadeView[0]) / (tune.fadeView[1] - tune.fadeView[0])))).toFixed(3) } } : null;
+  console.log('rampa zoomu:', inst, 'tune', JSON.stringify(tune), 'oczekiwane', JSON.stringify(oczek));
+  await obceTeraz('rampa zoomu: start');
+  await wkEval(LOG_CZYTAJ('__rzLog', false)).catch(() => null);
+  await ev(RAMPA_START(z0, z1, D, HOLD));
+  await sleep((2 * D + HOLD + 1.5) * 1000);
+  const log = await wkEval(LOG_CZYTAJ('__rzLog', true), 60000).catch((e) => ({ blad: e.message }));
+  const st = log && log.wiersze ? rampaStat(log.wiersze) : { klatek: 0 };
+  if (SK !== 1) {
+    await wkKod('const T = S.spaceGas.tune; if (T.__fv0) { T.fadeView = T.__fv0; delete T.__fv0; }').catch(() => {});
+    await stronaKod('const T = window.SpaceGasInputTune; if (T.__mvh0) { T.maxViewHalf = T.__mvh0; delete T.__mvh0; }').catch(() => {});
+  }
+  report.rampaZoom = { z0, z1, D, HOLD, skala: SK, tune, oczek, instalacja: inst, bladLogu: log && log.blad ? log.blad : undefined, ...st };
+  console.log(`rampa zoomu ${z0} → ${z1} → ${z0}: klatek ${st.klatek}, ${st.s} s, zoom min ${st.zoomMin}, maks skok stron ${st.maksSkokStron}`);
+  for (const p of st.przelaczeniaGazuWGrze || []) console.log(`   gaz w grze ${p.gaz} przy zoomie ${p.zoom} (pół kadru ${p.polKadru}): obraz ${p.obrazPrzed} → ${p.obrazPo}, viewFade ${p.viewFadePrzed} → ${p.viewFadePo}, mgła ${JSON.stringify(p.mglaPrzed)} → ${JSON.stringify(p.mglaPo)}`);
+  for (const r of st.resetyPola || []) console.log(`   reset pola przy zoomie ${r.zoom}: gaz ${r.gra}, viewFade ${r.viewFade}, obraz ${r.obraz}, zanik skoku ${r.skok}, mgła ${JSON.stringify(r.mgla)}`);
+  console.log(`   obraz zgasł: ${JSON.stringify(st.obrazZgasl)} | wraca: ${JSON.stringify(st.obrazWraca)}`);
+  console.log(`   maks skok obrazu na klatkę ${st.maksSkokObrazuNaKlatke && st.maksSkokObrazuNaKlatke.d} (${JSON.stringify(st.maksSkokObrazuNaKlatke && st.maksSkokObrazuNaKlatke.przy)}) | maks skok alfy mgły ${st.maksSkokAlfyMglyNaKlatke && st.maksSkokAlfyMglyNaKlatke.d} (${JSON.stringify(st.maksSkokAlfyMglyNaKlatke && st.maksSkokAlfyMglyNaKlatke.przy)})`);
+  await obceTeraz('rampa zoomu: koniec');
+  writeJson(join(out, 'raport.json'), report);
+}
+
 function finish(code = 0) {
+  if (finish.done) return;
+  finish.done = true;
+  clearInterval(ligaStraz);
   try { smi.stop(); liczniki?.stop(); ekran?.stop(); report.nvidiaProbki = smi.samples.length; report.czasS = Math.round((Date.now() - tStart) / 1000); writeJson(join(out, 'raport.json'), report); } catch (e) { console.error(e); }
   if (balast) { const b = balast; balast = null; b.stop().catch(() => {}); }
   Promise.resolve(chrome.close?.()).finally(() => Promise.resolve(server.close?.()).finally(() => process.exit(code)));
@@ -1379,15 +2098,26 @@ try {
     if (r && r.warstwy) console.log(`   skały (${label}): ekran ${r.ekranPx} px, zoom ${r.zoom}`, r.warstwy.map((w) => `${w.pasmo}: n ${w.n} lod ${JSON.stringify(w.lod)} pole/ekran ${w.udzialEkranu} (<2px ${w.ponizej2px}, <4px ${w.ponizej4px}, <9px ${w.ponizej9px}) pole lod ${JSON.stringify(w.poleLod)}`).join(' | '));
     else console.log(`   skały (${label}):`, JSON.stringify(r));
   };
+  // okno główne z jedną powtórką, gdy w trakcie było obce obciążenie (przygotuj — od nowa przed powtórką, np. przelot)
+  const oknoGlowne = async (label, s, opts, przygotuj = null) => {
+    if (przygotuj) await przygotuj();
+    const row = await okno(label, s, opts);
+    if (!row.obceN) return row;
+    console.log(`UWAGA: okno ${label} przy obcym obciążeniu — powtórka (${label}-powt)`);
+    if (przygotuj) await przygotuj();
+    const r2 = await okno(`${label}-powt`, s, opts);
+    r2.powtorkaZ = label;
+    return r2;
+  };
   if (okn('postoj-blisko')) {
-    await okno('postoj-blisko', OKNO_S, { sladS: SLAD, gaz: true });
+    await oknoGlowne('postoj-blisko', OKNO_S, { sladS: SLAD, gaz: true });
     await statSkal('postoj-blisko');
     await zrzut('01-postoj-blisko');
   }
   if (okn('postoj-daleko')) {
     await ev(NA_MIEJSCE(ZD));
     await sleep(3000);
-    await okno('postoj-daleko', OKNO_S, { sladS: SLAD, gaz: true });
+    await oknoGlowne('postoj-daleko', OKNO_S, { sladS: SLAD, gaz: true });
     await statSkal('postoj-daleko');
   }
   // obraz A/B w pauzie (--obrazAB lista wariantów) przy bieżącym kadrze
@@ -1428,8 +2158,7 @@ try {
   }
   const PRZELOTY = [['blisko', ZB, '02'], ['srednio', ZS, '03'], ['daleko', ZD, '04'], ['max', ZM, '05']].filter((p) => okn(`ciag-${p[0]}`));
   for (const [nazwa, z, nr] of PRZELOTY) {
-    await przelotStart(z);
-    await okno(`ciag-${nazwa}`, OKNO_S, { gaz: true });
+    await oknoGlowne(`ciag-${nazwa}`, OKNO_S, { gaz: true }, () => przelotStart(z));
     await zrzut(`${nr}-ciag-${nazwa}`);
     await sladZaRufa(`ciag-${nazwa}`);
     if (nazwa === 'daleko' && SLAD > 0) {
@@ -1486,6 +2215,13 @@ try {
     await zrzutyAB();
     await obceTeraz('po zrzutach A/B');
   }
+  if (TLO_DIR) {
+    await tloAB();
+    await obceTeraz('po zasłonie a obiektach passa tła');
+  }
+  // miękki brzeg okna pola a kadr (--brzeg) i rampa zoomu przy oddaleniu (--rampaZoom) — sprawdzenie poprawek 2026-10-29
+  if (BRZEG_DIR) await brzegOkna();
+  if (String(args.rampaZoom ?? '0') === '1') await rampaZoom();
 
   // ── A/B ──
   if (AB_DALEKO.length) {

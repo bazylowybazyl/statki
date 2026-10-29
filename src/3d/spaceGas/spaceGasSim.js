@@ -25,10 +25,12 @@
 //   • POLE DALEKIE wstrzykiwane przez scenę (`farEnv(q, U)` → vec4 gęstości kanałów; q — punkt względem kotwicy).
 //   • OBRAZ 60 Hz → dwie pary tekstur (krok na zmianę): obraz przenika poprzedni i bieżący krok wg ułamka kroku (plan
 //     § 2 pkt 5), każda tekstura z własnym rogiem okna (przesunięcie okna nie przestawia już zapisanej tekstury).
-//   • ZEGAR GRY (2026-10-29): z zegarem w wejściu (`frame(…, clock)`) krok k pola = krok k fizyki (czas symulacji
-//     SimClock.sim, 1/60 s — kadłuby w polu są w pozie tego kroku), a ułamek przenikania = chwila renderu kadłubów
-//     (SimClock.render) — obraz gazu w tej samej chwili co kadłuby. Bez zegara — własny akumulator z dt klatki (faza
-//     wobec fizyki losowa, worker gubił czas pominiętych stron).
+//   • ZEGAR GRY (2026-10-29): z zegarem w wejściu (`frame(…, clock)`) krok k pola = krok k fizyki z CAŁKOWITEGO
+//     licznika kroków (index.html `physicsTickId`; ?physHz=120 — co drugi krok fizyki; kadłuby w polu są w pozie tego
+//     kroku), a ułamek przenikania = chwila renderu kadłubów (alfa interpolacji z różnicy SimClock.sim − .render) — obraz
+//     gazu w tej samej chwili co kadłuby. Nie ⌊SimClock.sim · 60⌋: suma 1/60 dryfuje (poniżej −1e-6 od ~1 h 55 min,
+//     −1,4e-5 po 6 h) i krok wychodził o jeden za mały na stałe. Bez zegara — własny akumulator z dt klatki (faza wobec
+//     fizyki losowa, worker gubił czas pominiętych stron).
 //   • okno przesuwane TYLKO w klatce z krokiem (lekcja drżenia dema 2026-10-13).
 //
 // Zero `window`, DOM i referencji do encji (szew gra ↔ render): wejście klatki pakuje właściciel (spaceGas.js).
@@ -40,13 +42,19 @@ import {
 } from 'three/tsl';
 import { gnoise } from './spaceGasNoise.js';
 import { GAS_HULL_MASK } from '../gas/gasObstacleLayout.js';
-import { SPACE_GAS_RASTER } from './spaceGasLayout.js';
+import { SPACE_GAS_RASTER, SPACE_GAS_HZ } from './spaceGasLayout.js';
 
 /** Bok komórki pola [j.] — strojenie jest w jednostkach komórek (D5: stała). */
 export const SPACE_GAS_CELL = 64;
-/** Krok symulacji [s] i najwięcej kroków na klatkę (× 4 w rozgrzaniu sceny). */
-export const SPACE_GAS_SUB = 1 / 60;
+/** Tempo kroku pola [Hz] (stała w spaceGasLayout.js — czyta ją też gra), krok symulacji [s] i najwięcej kroków na klatkę (× 4 w rozgrzaniu sceny). */
+export { SPACE_GAS_HZ };
+export const SPACE_GAS_SUB = 1 / SPACE_GAS_HZ;
 export const SPACE_GAS_MAX_SUB = 2;
+/**
+ * Zasięg stożka w poprzek osi [× szerokość stożka w tym miejscu]: kernel (`srcShape`), lustro CPU (`srcShapeCpu`)
+ * i pudło dyszy w budżecie źródeł (spaceGas.js `_engines` — margines 2,6 × szerokość końca stożka).
+ */
+export const SPACE_GAS_CONE_REACH = 2.6;
 
 /** Strojenie pola (= SIMT dema; po zmianie `sim.syncTune()`). */
 export function createSpaceGasTune() {
@@ -125,7 +133,7 @@ export function srcShapeCpu(px, py, A, B, C, out = {}) {
       const x = across / width;
       const ss = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
       const fade = (1 - ss(B[0] * 0.5, B[0], along)) * ss(-B[1], 0, along);
-      if (Math.abs(x) < 2.6 && fade > 1e-3) {
+      if (Math.abs(x) < SPACE_GAS_CONE_REACH && fade > 1e-3) {
         const x2 = x * x;
         out.prof = Math.exp(-2.2 * x2) * fade;
         out.near = out.prof * (1 - ss(C[3] * 0.5, C[3], along));
@@ -383,7 +391,7 @@ export class SpaceGasSim {
           const width = Bs.y.add(max(along, 0.0).mul(Bs.z)).toVar();
           const x = across.div(width).toVar();
           const fade = float(1.0).sub(smoothstep(Bs.x.mul(0.5), Bs.x, along)).mul(smoothstep(Bs.y.negate(), 0.0, along)).toVar();
-          If(abs(x).lessThan(2.6).and(fade.greaterThan(1e-3)), () => {
+          If(abs(x).lessThan(SPACE_GAS_CONE_REACH).and(fade.greaterThan(1e-3)), () => {
             fade.mulAssign(visible(pw, A.xy));
             const x2 = x.mul(x);
             prof.assign(exp(x2.mul(-2.2)).mul(fade));
@@ -746,8 +754,10 @@ export class SpaceGasSim {
    * @param {number} camY
    * @param {number} windX wiatr [j/s]
    * @param {number} windY
-   * @param {{sim: number, render: number}|null} clock zegar gry (SimClock.sim / .render [s]): krok pola k = krok fizyki k
-   *   (⌊sim · 60⌋ — kroki od ostatniej klatki), ułamek przenikania = chwila renderu; null — akumulator z dt (dawniej)
+   * @param {{tick: number, hz: number, sim: number, render: number}|null} clock zegar gry: `tick` — numer kroku fizyki
+   *   (liczba całkowita, index.html `physicsTickId`), `hz` — tempo fizyki (PHYS_HZ), `sim` / `render` — SimClock.sim /
+   *   .render [s] (liczy się tylko ich RÓŻNICA: alfa interpolacji renderu). Krok pola k = ⌊tick · 60 / hz⌋ (kroki od
+   *   ostatniej klatki), ułamek przenikania = chwila renderu; null albo brak `tick` — akumulator z dt (dawniej)
    * @returns {number} liczba kroków
    */
   frame(renderer, dt, camX, camY, windX = 0, windY = 0, clock = null) {
@@ -767,17 +777,24 @@ export class SpaceGasSim {
     if (this.warmLeft > 0) this.warmLeft = Math.max(0, this.warmLeft - dt);
     let n = 0;
     let frac;
-    if (clock && Number.isFinite(clock.sim) && Number.isFinite(clock.render)) {
-      // krok pola k = krok fizyki k (60 Hz; przy ?physHz=120 co drugi), kroki od ostatniej klatki — pominięte strony
-      // workera dochodzą tu same; zegar cofnięty (nowa sesja) — bez kroku, od nowa
-      const tick = Math.floor(clock.sim / SPACE_GAS_SUB + 1e-6);
+    if (clock && Number.isFinite(clock.tick) && clock.hz > 0) {
+      // krok pola k = krok fizyki z CAŁKOWITEGO licznika (60 Hz: ten sam; ?physHz=120: co drugi), kroki od ostatniej
+      // klatki — pominięte strony workera dochodzą tu same (≤ SPACE_GAS_MAX_SUB); licznik cofnięty — bez kroku, od nowa.
+      // Iloczyn liczb całkowitych i jedno dzielenie: wynik dokładny albo ≥ 1/hz od liczby całkowitej (bez dryfu sumy).
+      const per = clock.hz / SPACE_GAS_HZ;           // kroki fizyki na krok pola (60 Hz: 1, 120 Hz: 2)
+      const tick = Math.floor(clock.tick * SPACE_GAS_HZ / clock.hz);
       if (reset) { n = 1; this._tick = tick; } else if (!(this._tick <= tick)) this._tick = tick;
       else {
         n = Math.min(tick - this._tick, SPACE_GAS_MAX_SUB) * speed;
         this._tick = tick;
       }
-      // obraz w chwili renderu: krok `tick` = czas tick / 60, poprzedni o krok wcześniej (w pauzie render = sim → 1)
-      frac = Math.min(1, Math.max(0, (clock.render - (tick - 1) * SPACE_GAS_SUB) / SPACE_GAS_SUB));
+      // obraz w chwili renderu kadłubów: alfa interpolacji z RÓŻNICY zegarów (render = sim − (1 − alfa) · krok fizyki;
+      // pauza: render = sim → alfa 1), czas obrazu = render − (per − 1) kroków fizyki. Przy 60 Hz bez opóźnienia: ułamek
+      // = alfa, w pauzie 1 (ostatni krok). Przy 120 Hz najnowszy krok pola bywa o krok fizyki starszy od pozy, więc obraz
+      // idzie stale o krok fizyki (1/120 s) za kadłubami — dawny wzór dawał tu pół kroku pola postoju i skok o pół kroku.
+      const d = clock.sim - clock.render;
+      const alpha = Number.isFinite(d) ? Math.min(1, Math.max(0, 1 - d * clock.hz)) : 1;
+      frac = Math.min(1, Math.max(0, (clock.tick - tick * per + alpha) / per));
       this.acc = frac * SPACE_GAS_SUB;
     } else {
       this._tick = NaN;

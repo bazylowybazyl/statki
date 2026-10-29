@@ -7,13 +7,15 @@
 //
 // Zawartość:
 //   • KOTWICA sceny (pas — Słońce) w double: wszystko inne względem niej — render liczy pole w małych liczbach;
-//   • ZEGAR GRY (SimClock.sim / .render): krok pola = krok fizyki, obraz w chwili renderu kadłubów (render liczy
-//     przyrosty od ostatniej narysowanej strony — pominięte strony workera nie gubią czasu);
+//   • ZEGAR GRY (SimClock.sim / .render i NUMER kroku fizyki — liczba całkowita z index.html `physicsTickId` + PHYS_HZ):
+//     krok pola = krok fizyki (z licznika, nie z sumy SimClock.sim — ta dryfuje), obraz w chwili renderu kadłubów
+//     (render liczy przyrosty od ostatniej narysowanej strony — pominięte strony workera nie gubią czasu);
 //   • OKNO POLA (N komórek — preset grafiki) i kadr. Środek okna (`placeGasWindow`, 2026-10-29 — „przy oddaleniu nie
 //     widać wypychania, ogon szybko znika”): przy prowadzonym okręcie, przesunięty pod ślad, przycięty tak, że okno
-//     większe od kadru obejmuje cały kadr, a mniejsze leży w kadrze; bez okrętu — kamera BEZ wstrząsu (wstrząs i kop
-//     przesuwały okno o ±1 komórkę tam i z powrotem). Dawniej środek = kamera, która wyprzedza statek o stałe piksele —
-//     przy oddaleniu statek dojeżdżał do tylnej krawędzi okna (zoom 0,15: ślad ~2 km) i z niego wypadał (≤ 0,107);
+//     większe od kadru trzyma swój miękki brzeg poza mapą kadru, a mniejsze leży w kadrze; bez okrętu — kamera BEZ
+//     wstrząsu (wstrząs i kop przesuwały okno o ±1 komórkę tam i z powrotem). Dawniej środek = kamera, która wyprzedza
+//     statek o stałe piksele — przy oddaleniu statek dojeżdżał do tylnej krawędzi okna (zoom 0,15: ślad ~2 km) i z niego
+//     wypadał (≤ 0,107);
 //   • OBWIEDNIA gazu pasa: siatka G × G obejmująca okno (z zapasem na dopływ przez brzeg) i prostokąt mapy obrazu
 //     (pole dalekie poza oknem — przy oddaleniu mapa sięgała poza siatkę i czytała jej rozmazany brzeg) z
 //     `field.sampleMacro` — ten sam wzór co płaty mgły pasa (src/3d/asteroids/fog.js), więc gaz leży tam, gdzie mgła,
@@ -26,7 +28,7 @@
 
 import {
   SPACE_GAS_SCENE, SPACE_GAS_ENV_RES, SPACE_GAS_MAX_JETS, SPACE_GAS_MAX_BLASTS, SPACE_GAS_MAX_BOLTS, SPACE_GAS_RASTER, SPACE_GAS_IN,
-  SPACE_GAS_MAP_MARGIN
+  SPACE_GAS_MAP_MARGIN, SPACE_GAS_WINDOW_EDGE, SPACE_GAS_HZ, spaceGasViewHalf
 } from '../3d/spaceGas/spaceGasLayout.js';
 
 export { SPACE_GAS_SCENE, SPACE_GAS_ENV_RES, SPACE_GAS_MAX_JETS, SPACE_GAS_MAX_BLASTS, SPACE_GAS_MAX_BOLTS, SPACE_GAS_RASTER, SPACE_GAS_IN };
@@ -40,7 +42,9 @@ export const SPACE_GAS_INPUT_TUNE = {
   enabled: true,
   envMargin: 1.3,     // siatka obwiedni = okno × margines (dopływ przez brzeg)
   minEnv: 0.004,      // obwiednia poniżej — gazu nie ma (krok nie liczy)
-  maxViewHalf: 90000, // dalej (oddalenie) — gaz się nie liczy (obraz gaśnie w renderze wcześniej)
+  // dalej (oddalenie; pół kadru z spaceGasViewHalf — jak zanik w renderze) gaz się nie liczy; ≥ końca zaniku obrazu
+  // (SPACE_GAS_TUNE.fadeView 80 tys.), więc obraz znika, zanim gra wyłączy gaz (strażnik w teście)
+  maxViewHalf: 90000,
   wind: 30,           // wiatr wzdłuż orbity [j/s] (pas: w kierunku ruchu orbitalnego, prostopadle do Słońca)
   windOut: -8,        // składowa od Słońca [j/s] (odgazowanie płynie na zewnątrz)
   jets: true,
@@ -64,17 +68,35 @@ export const SPACE_GAS_INPUT_TUNE = {
 /**
  * Środek okna pola (świat gry względem kotwicy) — ZAPIS w `out` (x, y, lead). `f` — prowadzony okręt względem kotwicy
  * (on, x, y, vx, vy [j/s]) albo null; cam — kamera BEZ wstrząsu; halfW / halfH — pół kadru [j.]; halfWin — pół okna;
- * dt — czas gry klatki (sprężyna przesunięcia; 0 — pauza trzyma). Okręt w kadrze: cel = okręt − v̂ · min(ułamek pół
- * okna, |v| · s) (wygładzone: narasta w `wakeTauUp`, gaśnie w `wakeTauDown`); środek = kamera + (cel − kamera) przycięte
- * do |pół okna − pół mapy| na oś: okno większe od mapy obejmuje całą mapę (domyślny kadr: jak dawniej), mniejsze leży
- * w mapie (oddalenie: okręt i ślad za nim w oknie); ciągłe w przejściu (luz 0, gdy okno = mapa).
+ * dt — czas gry klatki (sprężyna przesunięcia; 0 — pauza trzyma); cell — bok komórki pola (okno stoi na siatce komórek:
+ * render kładzie je do komórki w −x / −y — zapas brzegu). Okręt w kadrze: cel = okręt − v̂ · min(ułamek pół okna, |v| · s)
+ * (wygładzone: narasta w `wakeTauUp`, gaśnie w `wakeTauDown`); środek = kamera + (cel − kamera) przycięte na oś do luzu
+ * max(0, pół okna − brzeg − pół mapy, pół mapy − pół okna), brzeg = SPACE_GAS_WINDOW_EDGE boku okna (pas, w którym obraz
+ * przechodzi w pole dalekie, a pył gaśnie) + komórka + droga okrętu w dwóch krokach pola (2 · |v| / 60: render przesuwa
+ * okno tylko w kroku pola, a obraz przenika poprzedni krok — w hipercruisie Mk III to ~1 km za kadrem):
+ *   • wnętrze okna (bez brzegu) większe od mapy kadru (pół kadru × 1,08) — okno schodzi pod ślad najwyżej o nadmiar,
+ *     brzeg zostaje POZA mapą (dawniej luz |pół okna − pół mapy| kładł czoło okna na brzegu mapy: pas brzegu wchodził
+ *     w kadr od strony lotu — 55–383 j. przy zoomie 0,34–0,77 na 5120 × 1440, właśnie przy zbliżeniu);
+ *   • okno w granicach brzegu wokół mapy — przy kamerze (domyślny kadr 5120 × 1440: jak przed oknem przy okręcie);
+ *   • okno mniejsze od mapy — leży w mapie (oddalenie: okręt i ślad za nim w oknie, brzeg z założenia w kadrze).
+ * Ciągłe (luz 0 na obu progach). Skok okrętu dalej niż pół okna między klatkami z okrętem — także po przerwie bez niego
+ * (kamera fabuły przy zamrożonym świecie, RTS) — (teleport, przesiadka, zmiana kotwicy) zeruje przesunięcie pod ślad
+ * (wskazywało kierunek lotu sprzed skoku). AGENT: próg jest bezwzględny — przy mniejszych oknach z presetu (GK-8, 128
+ * komórek) porównuj z drogą v · dt, inaczej przestój klatki w hipercruisie wyzeruje przesunięcie.
  */
-export function placeGasWindow(st, f, camX, camY, halfW, halfH, halfWin, dt, out = {}) {
+export function placeGasWindow(st, f, camX, camY, halfW, halfH, halfWin, dt, out = {}, cell = 0) {
   const T = SPACE_GAS_INPUT_TUNE;
   let bx = 0, by = 0;
-  const lead = !!(T.followShip && f && f.on && Math.abs(f.x - camX) < halfW && Math.abs(f.y - camY) < halfH);
+  const on = !!(f && f.on);
+  if (on && Number.isFinite(st.lastX)) {
+    const jx = f.x - st.lastX, jy = f.y - st.lastY;
+    if (jx * jx + jy * jy > halfWin * halfWin) { st.wakeX = 0; st.wakeY = 0; }
+  }
+  if (on) { st.lastX = f.x; st.lastY = f.y; }
+  const lead = !!(T.followShip && on && Math.abs(f.x - camX) < halfW && Math.abs(f.y - camY) < halfH);
+  let v = 0;
   if (lead) {
-    const v = Math.sqrt(f.vx * f.vx + f.vy * f.vy);
+    v = Math.sqrt(f.vx * f.vx + f.vy * f.vy);
     if (v > 1) {
       const b = Math.min(T.wakeFrac * halfWin, v * T.wakeSec) / v;
       bx = -f.vx * b; by = -f.vy * b;
@@ -87,11 +109,19 @@ export function placeGasWindow(st, f, camX, camY, halfW, halfH, halfWin, dt, out
     st.wakeY += (by - st.wakeY) * k;
   }
   const tx = lead ? f.x + st.wakeX : camX, ty = lead ? f.y + st.wakeY : camY;
-  const sx = Math.abs(halfWin - halfW * SPACE_GAS_MAP_MARGIN), sy = Math.abs(halfWin - halfH * SPACE_GAS_MAP_MARGIN);
+  const edge = 2 * halfWin * SPACE_GAS_WINDOW_EDGE + (cell > 0 ? cell : 0) + 2 * v / SPACE_GAS_HZ;
+  const mx = halfW * SPACE_GAS_MAP_MARGIN, my = halfH * SPACE_GAS_MAP_MARGIN;
+  const sx = Math.max(0, halfWin - edge - mx, mx - halfWin), sy = Math.max(0, halfWin - edge - my, my - halfWin);
   out.x = camX + Math.max(-sx, Math.min(sx, tx - camX));
   out.y = camY + Math.max(-sy, Math.min(sy, ty - camY));
   out.lead = lead;
   return out;
+}
+
+/** Przesunięcie okna pod ślad od zera (gaz wyłączony: skok warpa, opcja, oddalenie, poza obszarem gazu). */
+export function resetGasWindowWake(st) {
+  st.wakeX = 0; st.wakeY = 0;
+  st.lastX = NaN; st.lastY = NaN;
 }
 
 // Typy skał z lodem (asteroidRockKinds.js — nazwy; indeksy podaje wołający przez `iceTypes`).
@@ -106,8 +136,9 @@ export function createSpaceGasInputState() {
     envK: 0,      // krok siatki = krok okna × 2^envK (siatka obejmuje mapę obrazu przy oddaleniu)
     samples: 0,   // próbek pola w ostatniej klatce (koszt CPU)
     jetSeen: 0,
-    // okno pola: przesunięcie pod ślad (sprężyna, świat gry [j.]), ostatni środek (względem kotwicy), okręt prowadzony
-    wakeX: 0, wakeY: 0,
+    // okno pola: przesunięcie pod ślad (sprężyna, świat gry [j.]), okręt z poprzedniej klatki (skok → przesunięcie od
+    // zera), ostatni środek (względem kotwicy), okręt prowadzony
+    wakeX: 0, wakeY: 0, lastX: NaN, lastY: NaN,
     win: { x: 0, y: 0, lead: false },
     focus: { on: false, x: 0, y: 0, vx: 0, vy: 0 },
     // wybuchy w polu: x, y (świat gry), rozmiar, wiek, życie; `blastSeen` — ile wybuchów z pierścienia gry już przyjęto
@@ -138,6 +169,8 @@ function sampleEnv(field, wx, wy, out, o) {
  * @param {object} st createSpaceGasInputState()
  * @param {object} o dt, camX, camY (kamera klatki — ze wstrząsem), camNsX / camNsY (bez wstrząsu; brak — camX / camY),
  *   halfW, halfH (pół kadru [j.]), simTime / renderTime (SimClock.sim / .render; brak — NaN: render liczy z dt),
+ *   physTick / physHz (numer kroku fizyki — liczba całkowita, index.html `physicsTickId` — i PHYS_HZ: krok pola; brak
+ *   numeru — NaN: render liczy kroki akumulatorem),
  *   focusOn, focusX, focusY, focusVX, focusVY (prowadzony okręt — świat gry, j/s; okno pola przy nim), field (pole pasa
  *   gry: sampleMacro, rectTouchesBelt, holeVersion, forEachRockInRect), sunX, sunY (Słońce — kotwica), windowCells,
  *   cell, iceTypes (zbiór indeksów typów skał z lodem), time (zegar wydajności strug), enabled, blasts (wybuchy gry —
@@ -149,9 +182,11 @@ export function packSpaceGasFrame(out, st, o) {
   const T = SPACE_GAS_INPUT_TUNE;
   out[I.serial] = (out[I.serial] + 1) % 1e9;
   out[I.dt] = o.dt > 0 ? o.dt : 0;
-  // zegar gry (nagłówek — idzie do renderu także bez gazu w kadrze)
+  // zegar gry (nagłówek — idzie do renderu także bez gazu w kadrze): czasy SimClock i numer kroku fizyki
   out[I.simTime] = Number.isFinite(o.simTime) ? o.simTime : NaN;
   out[I.renderTime] = Number.isFinite(o.renderTime) ? o.renderTime : NaN;
+  out[I.physTick] = Number.isFinite(o.physTick) ? o.physTick : NaN;
+  out[I.physHz] = o.physHz > 0 ? o.physHz : 60;
   out[I.jets] = 0;
   st.samples = 0;
   const field = o.field;
@@ -159,7 +194,9 @@ export function packSpaceGasFrame(out, st, o) {
   const cell = o.cell || 64;
   const halfWin = cells * cell * 0.5;
   const viewHalf = Math.max(o.halfW || 0, o.halfH || 0);
-  let on = !!(T.enabled && o.enabled !== false && field && viewHalf < T.maxViewHalf);
+  // oddalenie: pół kadru jak do zaniku obrazu w renderze (spaceGasViewHalf — 32:9 jak 16:9 tej samej wysokości), więc
+  // obraz gaśnie do zera, zanim gra wyłączy gaz (dawniej max(pół szer., pół wys.) — na 32:9 cięcie z zaniku ~0,875)
+  let on = !!(T.enabled && o.enabled !== false && field && spaceGasViewHalf(o.halfW || 0, o.halfH || 0) < T.maxViewHalf);
   if (on) {
     const r = Math.max(halfWin, viewHalf) * T.envMargin;
     on = field.rectTouchesBelt(o.camX - r, o.camY - r, o.camX + r, o.camY + r);
@@ -171,7 +208,9 @@ export function packSpaceGasFrame(out, st, o) {
   out[I.blasts] = 0;
   out[I.bolts] = 0;
   out[I.rasterOn] = 0;
-  if (!on) { out[I.active] = 0; return out; }
+  // gaz wyłączony (skok warpa, opcja, oddalenie, poza obszarem) — przesunięcie okna pod ślad od zera: po skoku okno
+  // stało do 4 km za okrętem w kierunku lotu sprzed skoku przez ~6 s (zanik sprężyny)
+  if (!on) { resetGasWindowWake(st); out[I.active] = 0; return out; }
 
   // kotwica: pas — Słońce, ring — środek planety (o.anchorX / o.anchorY); zmiana sceny = nowa siatka obwiedni
   const ax = Number.isFinite(o.anchorX) ? o.anchorX : (o.sunX || 0);
@@ -203,7 +242,7 @@ export function packSpaceGasFrame(out, st, o) {
   F.on = !!o.focusOn;
   F.x = o.focusX - ax; F.y = o.focusY - ay;
   F.vx = Number(o.focusVX) || 0; F.vy = Number(o.focusVY) || 0;
-  const win = placeGasWindow(st, F.on ? F : null, cnx, cny, o.halfW || 0, o.halfH || 0, halfWin, out[I.dt], st.win);
+  const win = placeGasWindow(st, F.on ? F : null, cnx, cny, o.halfW || 0, o.halfH || 0, halfWin, out[I.dt], st.win, cell);
   const wx = win.x, wy = win.y;
   out[I.winX] = wx; out[I.winY] = wy;
 
