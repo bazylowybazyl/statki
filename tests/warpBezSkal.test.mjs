@@ -278,10 +278,10 @@ test('światła i maska słońca pola gasną z zanikiem (statki, świecące ska�
 function fakeGas() {
   const g = Object.create(Object.getPrototypeOf(SpaceGas));
   const layer = { L: { fade: { value: 1 } }, visible: true, setVisible(v) { this.visible = v; }, place() {} };
-  const dust = { visible: true, fade: -1, setVisible(v) { this.visible = v; }, frame(r, dt, ctx, ax, ay, rect, fade) { this.fade = fade; return 0; }, requestReset() {} };
+  const dust = { visible: true, fade: -1, U: { edge: { value: 1 } }, setVisible(v) { this.visible = v; }, frame(r, dt, ctx, ax, ay, rect, fade) { this.fade = fade; return 0; }, requestReset() {} };
   Object.assign(g, {
     input: new Float64Array(SPACE_GAS_IN.size), obstacles: null, tune: { ...SPACE_GAS_TUNE, enabled: true, dust: true, sim: true },
-    _serial: -1, _scene: SPACE_GAS_SCENE.belt, _rect: { cx: 0, cy: 0, w: 1, h: 1 }, _warpFade: 1,
+    _serial: -1, _scene: SPACE_GAS_SCENE.belt, _rect: { cx: 0, cy: 0, w: 1, h: 1 }, _warpFade: 1, _renderTime: NaN, _clk: { sim: 0, render: 0 },
     stats: { active: false, cpuMs: 0, fade: 1 }, layer, dust, looks: {}, scene: { look: null, setEnvelope() {} },
     sim: {
       N: 256, cell: 32, srcN: 0, hullN: 0, image: { valid: true }, stats: { resets: 0, substeps: 0, dispatches: 0 },
@@ -300,7 +300,8 @@ function gasFrame(g, { on = true, beta = null, dt = 1 / 60, fresh = true } = {})
   IN[I.scene] = SPACE_GAS_SCENE.belt;
   IN[I.halfW] = 8000; IN[I.halfH] = 4500;
   IN[I.dt] = dt;
-  if (fresh) IN[I.serial] = (IN[I.serial] || 0) + 1;
+  // zegar gry wejścia (SimClock.sim / .render — render liczy przyrost od ostatniej przetworzonej strony)
+  if (fresh) { IN[I.serial] = (IN[I.serial] || 0) + 1; IN[I.renderTime] = (IN[I.renderTime] || 0) + dt; IN[I.simTime] = IN[I.renderTime]; }
   WARP_WORLD_LENS.active = beta !== null;
   WARP_WORLD_LENS.beta = beta ?? 0;
   g.dust.fade = -1;
