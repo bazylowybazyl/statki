@@ -127,7 +127,7 @@ test("'kolejka' (dawne, A/B): spóźnienia budzika 5–7 ms w 15% — margines r
   assert.ok(sen.wake.lateOver > 0.05 * sen.wake.wakes && sen.wake.lateMax >= 5, `sen: spóźnione ${sen.wake.lateOver}, maks. ${sen.wake.lateMax.toFixed(2)}`);
 });
 
-test("'worker': sen i pętla na wątku budzika — takt jak przy dopinaniu, strona bez snów i kolejki, jeden komunikat na klatkę", () => {
+test("'worker': sen i pętla na wątku budzika — w symulacji równy takt (rozrzut < 0,6 ms), strona bez snów i kolejki, jeden komunikat na klatkę", () => {
   for (const fps of [240, 144, 120, 60]) {
     const r = sim({ strategy: 'worker', fps, timerLate: noisy(rng(fps)), workerLate: quiet(rng(fps + 1)) });
     assert.ok(Math.abs(r.rate - fps) / fps < 0.01, `${fps}: ${r.rate.toFixed(2)} kl/s`);
@@ -146,6 +146,28 @@ test("'worker': sen i pętla na wątku budzika — takt jak przy dopinaniu, stro
     const I = 1000 / fps;
     assert.ok(pct(r.gaps, 0.99) - pct(r.gaps, 0.01) < 0.6, `${fps}: rozrzut odstępów ${(pct(r.gaps, 0.99) - pct(r.gaps, 0.01)).toFixed(2)} ms`);
     assert.ok(Math.abs(pct(r.gaps, 0.5) - I) < 0.6, `${fps}: mediana ${pct(r.gaps, 0.5).toFixed(2)}`);
+  }
+});
+
+test('frameMax: klatka, po której pętla poszła w rAF (karta w tle, bez limitu), nie zawyża najdłuższej klatki po powrocie na budzik', () => {
+  for (const strategy of ['sen', 'worker']) {
+    const e = env({});
+    let toRaf = false;
+    let wake = null;
+    const onWake = () => { e.T += 2; if (!toRaf) wake.schedule(5); };
+    wake = createFrameWake({ onWake, strategy, ...e.deps });
+    wake.prepare();
+    e.run(e.T + 1);
+    wake.schedule(5);
+    e.run(e.T + 60);
+    assert.ok(wake.wakes > 3 && Math.abs(wake.frameMax - 2) < 1e-6, `${strategy}: ${wake.wakes} klatek, frameMax ${wake.frameMax}`);
+    toRaf = true;                  // następna klatka bez zamówienia — pętla w rAF
+    e.run(e.T + 20);
+    e.T += 30000;                  // 30 s w tle
+    toRaf = false;
+    wake.schedule(5);              // powrót na budzik
+    e.run(e.T + 60);
+    assert.ok(Math.abs(wake.frameMax - 2) < 1e-6, `${strategy}: frameMax po przerwie ${wake.frameMax}`);
   }
 });
 

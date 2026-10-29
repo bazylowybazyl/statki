@@ -13,7 +13,8 @@
 // Domyślna 'worker' (pomiar 2026-10-29, atrapa Electrona, docs/AUDYT-limit-klatek-2026-10-29.md § „Budzik bez VSync”):
 // wątek strony 12% rdzenia przy limicie 120 i 22% przy 240 zamiast 28% / 90%, zero zadań kolejki zamiast 34–172 tys./s;
 // mediana i 90. percentyl odstępów klatek jak przy dopinaniu kolejką, ogon gorszy w jednym przebiegu (przy limicie 60
-// 99. percentyl 19,9 ms i maks. 48,2 ms wobec 16,7 / 16,8 ms; w powtórce A/B — p99 17,1 ms, maks. ≤ 20,6 ms jak kolejka);
+// 99. percentyl 19,9 ms i maks. 48,2 ms wobec 16,7 / 16,8 ms); w powtórce A/B ogona nie było (p99 17,1 wobec 16,7 ms
+// przy kolejce, maks. ≤ 20,6 ms w obu) — przyczyna pierwszego otwarta;
 // pętla wątku budzika ~1 ms na klatkę. 'sen' — najtańszy, odstępy ±1–1,5 ms.
 // Wątek budzika powstaje z góry (`prepare` — limit bez VSync w opcjach) albo przy pierwszym zamówieniu i budzi klatki
 // dopiero po sygnale gotowości (komunikat 0 po starcie modułu; do tej chwili budzik strony — start nie opóźnia klatek
@@ -116,7 +117,9 @@ export function createFrameWake({
     w.pending = false;
     w.wakes++;
     wokeAt = t;
-    onWake();
+    // `frameMax` liczy klatkę do zamówienia z TEJ klatki; klatka, po której pętla poszła w rAF (karta w tle, bez limitu,
+    // zegar harnessu), nie zostawia znacznika — następne zamówienie po przerwie liczyłoby całą przerwę
+    try { onWake(); } finally { wokeAt = -1; }
   }
 
   // dopinanie kolejką: 'kolejka' (margines) albo 'sen' z senSpinMs
