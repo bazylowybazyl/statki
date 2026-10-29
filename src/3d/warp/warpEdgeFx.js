@@ -380,10 +380,12 @@ function buildHazeMaterial(U, tile) {
       const dir = d.div(r).toVar();
       // kąt × N/2π (N całkowite: na szwie atan skok o N kafelków — ten sam teksel), ln(r / H) × k − zegar (na zewnątrz)
       const ua = atan(dir.y, dir.x).mul(U.haze.y).toVar();
-      const ur = log(r.div(H)).mul(U.haze.z).sub(U.hazeClock).toVar();
-      // próbka z poziomem (gałąź per piksel — bez pochodnych; boki: < 1 teksel na px)
+      const lr = log(r.div(H)).mul(U.haze.z).toVar();
+      const ur = lr.sub(U.hazeClock).toVar();
+      // próbka z poziomem (gałąź per piksel — bez pochodnych; boki: < 1 teksel na px); drobne zmarszczki z WŁASNYM
+      // przesuwem 0,7 × zegar (bez podwójnego zegara z `ur` — dawało 2,7 × i migotanie klatka w klatkę, przegląd 2026-10-29)
       const n = texture(tile, vec2(ua, ur)).level(0);
-      const nf = texture(tile, vec2(ua.mul(3.0).add(0.37), ur.mul(2.0).sub(U.hazeClock.mul(0.7)))).level(0);
+      const nf = texture(tile, vec2(ua.mul(3.0).add(0.37), lr.mul(2.0).sub(U.hazeClock.mul(0.7)))).level(0);
       const rad = n.r.sub(0.5).mul(2.0).add(nf.b.sub(0.5).mul(2.0).mul(U.hazeFine));
       const tan = n.g.sub(0.5).mul(2.0).mul(U.haze.w);
       off.assign(dir.mul(rad).add(vec2(dir.y.negate(), dir.x).mul(tan)).mul(m));
