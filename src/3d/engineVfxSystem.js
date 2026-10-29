@@ -585,8 +585,10 @@ function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx, hyper =
     if (!plume) return mode === 'preheat' ? 'none' : 'fallback';
     item.warp = plume;
   }
-  // hipercruise (v2, 2026-10-29 — hyperLook.js): spokojny, długi strumień w locie; warp i przyloty NPC jak dawniej
-  plume.setHyper(hyper);
+  // hipercruise (v2, 2026-10-29 — hyperLook.js): spokojny, długi strumień w locie; warp i przyloty NPC jak dawniej. Wygląd
+  // hipercruise'u trzyma się instancji do zgaśnięcia (wyjście przez przylot / hamowanie: active → idle bez 'drop' — gasnąca
+  // plazma nie przeskakuje na zwykły wygląd); reset() w puli go kasuje, ponowny zapłon warpa — zdejmuje
+  if (hyper || mode !== 'off') plume.setHyper(hyper);
   if (mode === 'off') {
     plume.shutdown();
   } else if (mode === 'preheat') {
@@ -959,7 +961,7 @@ function updateEffects(entity, fxData, dt) {
         }
       }
       // opływ hipercruise'u (hyperFlow.js): struga gorącego powietrza z każdej dyszy MAIN gracza — ta sama poza renderu
-      if (hyperHaze && isPlayerEntity && nozzleR > 0) HyperFlow.nozzle(nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR * cloakVis);
+      if (hyperHaze && isPlayerEntity && nozzleR > 0) HyperFlow.nozzle(nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR * cloakVis, cloakVis);
       continue;
     }
 

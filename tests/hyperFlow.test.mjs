@@ -190,3 +190,59 @@ test('kamera hipercruise\'u v2: cofnięcie × hyperKickScale, impulsy zoomu × h
   assert.ok(exitW > 0.05, `warp: impuls wyjścia ${exitW}`);
   assert.ok(Math.abs(exitH - exitW * cameraRigTune.hyperZoomPulse) < 3e-3, `impuls wyjścia hipercruise'u ${exitH} vs ${exitW}`);
 });
+
+test('kamera hipercruise\'u v2: skala impulsu zapamiętana w chwili zdarzenia — wyjście hipercruise\'u przerwanego ładowaniem warpa i kop w oknie przylotu warpa', () => {
+  const tune = cameraRigTune;
+  const mk = () => ({ dt: 1 / 120, state: 'idle', charge: 0, dirX: 0, dirY: -1, enabled: true, suspend: false, exitAge: -1,
+    exitSlow: 0.7, exitHalt: 1.35, rulon: false, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1,
+    arrivalDepthK: 0, viewW: 1920, viewH: 1080, hyper: false });
+  // (1) hipercruise 'active' → w tej samej klatce ładowanie warpa (hyper: false): wyjście hipercruise'u w skali pchnięcia
+  const rig = createCameraRig();
+  const w = mk();
+  w.state = 'active'; w.hyper = true;
+  for (let i = 0; i < 120; i++) stepCameraRigWarp(rig, w, tune);
+  noteCameraRigWarp(rig, 'exit');
+  w.state = 'charging'; w.hyper = false; w.charge = 0;
+  stepCameraRigWarp(rig, w, tune);
+  assert.equal(rig.warpExitHyper, true, 'wyjście zapamiętało skalę hipercruise\'u');
+  assert.equal(rig.warpHyper, false, 'stan riga przeszedł na warp');
+  // (2) kop hipercruise'u przy stanie 'idle' riga (okno kadru przylotu warpa: hyperCam = false, w.hyper ze stanu automatu)
+  const rig2 = createCameraRig();
+  const w2 = mk();
+  w2.hyper = true;
+  stepCameraRigWarp(rig2, w2, tune);
+  noteCameraRigWarp(rig2, 'kick');
+  let lag = 0;
+  for (let i = 0; i < 120; i++) { stepCameraRigWarp(rig2, w2, tune); lag = Math.max(lag, rig2.warpLagPx); }
+  assert.equal(rig2.warpKickHyper, true);
+  assert.ok(lag < tune.warpKickPx * 0.7 * tune.hyperKickScale + 1, `pchnięcie, nie kop warpa (${lag})`);
+  // (3) warp gracza: pełny kop
+  const rig3 = createCameraRig();
+  const w3 = mk();
+  w3.state = 'charging';
+  stepCameraRigWarp(rig3, w3, tune);
+  w3.state = 'active';
+  noteCameraRigWarp(rig3, 'kick');
+  let lag3 = 0;
+  for (let i = 0; i < 120; i++) { stepCameraRigWarp(rig3, w3, tune); lag3 = Math.max(lag3, rig3.warpLagPx); }
+  assert.equal(rig3.warpKickHyper, false);
+  assert.ok(lag3 > tune.warpKickPx * 0.6, `warp: pełny kop (${lag3})`);
+});
+
+test('opływ: faza wzoru całkowana na CPU (zmiana prędkości nie przewija wzoru), przepływ ograniczony długością wzoru, zanik na brzegu kwadu', () => {
+  const src = read('src/3d/warp/hyperFlow.js');
+  assert.ok(!/U\.time/.test(src), 'bez czas × przepływ w shaderze');
+  assert.match(src, /flowPh\.sheath = \(flowPh\.sheath \+ vS \* step\) % PHASE_WRAP;/);
+  assert.match(src, /const vS = Math\.min\(v, T\.aliasK \* 3\.2 \* r\);/);
+  assert.match(src, /x\.sub\(phase\)\.div\(lenA\)/);
+  assert.match(src, /mul\(edge\)/, 'zanik do zera na brzegu kwadu');
+  const T = HYPER_FLOW_TUNE;
+  // druga oktawa (× 0,6 / 0,25 gęściej, faza × 1,15) przesuwa się ≤ ~¼ komórki szumu na klatkę przy 60 kl/s
+  const perFrame = (T.aliasK * 1.15 / 60) * 0.6 * 4;
+  assert.ok(perFrame <= 0.3, `${perFrame}`);
+  // otoczka gaśnie z maskowaniem (najniższa widoczność dysz tej klatki)
+  assert.match(src, /const sheathK = ship\.sheath \* ship\.cloakVis;/);
+  const vfx = read('src/3d/engineVfxSystem.js');
+  assert.match(vfx, /HyperFlow\.nozzle\(nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR \* cloakVis, cloakVis\)/);
+  assert.match(vfx, /if \(hyper \|\| mode !== 'off'\) plume\.setHyper\(hyper\);/);
+});

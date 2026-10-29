@@ -29426,8 +29426,16 @@
     // Po oknie `_hyperRollAfter` wraca do −1 — zwykły lot bez śladu hipercruise'u.
     const HYPER_ROLL_AFTER = 3;
     let _hyperInsetW = 0;       // waga „cały kadłub nad HUD-em” riga w hipercruisie (render)
-    // hipercruise v2: ułamek długości kadłuba za rufą (opływ i strugi dysz), który rig trzyma nad kokpitem
+    // hipercruise v2: ułamek długości kadłuba za rufą (opływ i strugi dysz), który rig trzyma nad kokpitem — własna waga,
+    // tylko hipercruise i okno po nim (w skoku warpa za rufą nie ma opływu, a inset zmieniałby kadr skoku i przylotu K1)
     const HYPER_WAKE_INSET = 0.35;
+    let _hyperWakeW = 0;
+    function stepHyperWakeWeight(frameDt) {
+      const on = (hypercruise.state !== 'idle' || _hyperRollAfter >= 0) && !playerWarpCameraBusy();
+      _hyperWakeW += ((on ? 1 : 0) - _hyperWakeW) * (1 - Math.exp(-(Number(frameDt) || 0) * 2.5));
+      if (!on && _hyperWakeW < 1e-3) _hyperWakeW = 0;
+      return _hyperWakeW;
+    }
     const _hyperRollUrl = (() => { const m = /[?&]hcKamera=(up|right|off)(?:&|$)/.exec(location.search); return m ? m[1] : null; })();
     function cameraHyperRollMode() {
       return _hyperRollUrl || normalizeCameraHyperRollMode(OPTIONS.cameraHyperRoll);
@@ -29513,8 +29521,10 @@
       // obrót kadru tej klatki (cameraFrameRoll): kurs kopu w osiach ekranu
       const roll = cameraFrameRoll();
       w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
-      // hipercruise v2 (2026-10-29, „za mocno drga”): rig daje lekkie pchnięcie zamiast kopu warpa (cameraRig.js: hyper*)
-      w.hyper = hyperCam;
+      // hipercruise v2 (2026-10-29, „za mocno drga”): rig daje lekkie pchnięcie zamiast kopu warpa (cameraRig.js: hyper*) —
+      // flaga ze STANU hipercruise'u, nie z hyperCam (w oknie kadru przylotu warpa hyperCam = false, a kop hipercruise'u
+      // odcinka TRAVEL TO zaraz po warpie dostawał pełną skalę warpa)
+      w.hyper = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
       w.state = hyperCam ? hyperLook.state : warp.state;
       w.charge = hyperCam ? hyperLook.charge : (warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0);
       const dir = warp.dir;
@@ -31099,6 +31109,7 @@
         // Hipercruise (kadr za statkiem, wyprzedzenie na maksimum): nad pasami HUD zostaje CAŁY kadłub z dyszami, nie sam
         // środek — do pasów półwymiar kadłuba w pionie ekranu; waga gładka (zacisk kadru w rigu skakałby przy zmianie).
         const hcInsetW = stepHyperInsetWeight(frameDt);
+        const hcWakeW = stepHyperWakeWeight(frameDt);
         let hcHullV = 0;
         let hcWakeTop = 0;
         let hcWakeBottom = 0;
@@ -31108,7 +31119,7 @@
           hcHullV = (Math.abs(Math.sin(sa)) * (Number(ship.w) || 0) + Math.abs(Math.cos(sa)) * (Number(ship.h) || 0)) * sk * hcInsetW;
           // hipercruise v2 (2026-10-29, opływ — src/3d/warp/hyperFlow.js): nad kokpitem zostaje też kawałek kilwateru
           // i strug dysz za rufą (HYPER_WAKE_INSET długości kadłuba; dziób w górę ekranu — rufa na dole)
-          const wake = (Number(ship.w) || 0) * sk * 2 * HYPER_WAKE_INSET * hcInsetW;
+          const wake = (Number(ship.w) || 0) * sk * 2 * HYPER_WAKE_INSET * hcWakeW;
           hcWakeBottom = Math.max(0, -Math.sin(sa)) * wake;
           hcWakeTop = Math.max(0, Math.sin(sa)) * wake;
         }

@@ -391,7 +391,10 @@ test('po hipercruisie zwykły lot ma insety riga i obrót jak przed (okno po wyj
   assert.equal(scope._hyperInsetW, 0, "waga insetów dokładnie 0 — zwykły lot jak przed hipercruise'em");
   assert.equal(rig.roll, 0, 'kadr północą');
   // render: insety = pasy HUD + półwymiar kadłuba × waga (0 → dawne pasy), wyliczenie tylko przy wadze > 0
-  assert.match(html, /const hcInsetW = stepHyperInsetWeight\(frameDt\);\s*let hcHullV = 0;\s*let hcWakeTop = 0;\s*let hcWakeBottom = 0;\s*if \(hcInsetW > 1e-3 && !scouting\) \{/);
+  assert.match(html, /const hcInsetW = stepHyperInsetWeight\(frameDt\);\s*const hcWakeW = stepHyperWakeWeight\(frameDt\);\s*let hcHullV = 0;\s*let hcWakeTop = 0;\s*let hcWakeBottom = 0;\s*if \(hcInsetW > 1e-3 && !scouting\) \{/);
+  // kilwater tylko w hipercruisie i oknie po nim (w skoku warpa za rufą nie ma opływu — kadr skoku i przylotu K1 bez zmian)
+  assert.match(html, /const on = \(hypercruise\.state !== 'idle' \|\| _hyperRollAfter >= 0\) && !playerWarpCameraBusy\(\);/);
+  assert.match(html, /const wake = \(Number\(ship\.w\) \|\| 0\) \* sk \* 2 \* HYPER_WAKE_INSET \* hcWakeW;/);
   // v2 (2026-10-29): nad kokpitem także kawałek kilwateru za rufą (opływ — hyperFlow.js), po stronie rufy na ekranie
   assert.match(html, /rigIn\.insetTop = _camDirInsets\.top \+ hcHullV \+ hcWakeTop;\s*rigIn\.insetBottom = _camDirInsets\.bottom \+ hcHullV \+ hcWakeBottom;/);
   assert.match(html, /hcWakeBottom = Math\.max\(0, -Math\.sin\(sa\)\) \* wake;\s*hcWakeTop = Math\.max\(0, Math\.sin\(sa\)\) \* wake;/);
