@@ -13,17 +13,21 @@
 //                      przy lewej i prawej krawędzi — szum tile2D (fxNoise — ta sama tekstura co broń) wydłużony wzdłuż kursu
 //                      (× 7), płynący w dół; przesunięcie głównie w poprzek kursu (drżenie boczne), mniejsze wzdłuż;
 //                      dwie oktawy, każda z własną fazą i limitem aliasingu (przesuw ≤ ¼ komórki na klatkę przy 60 kl/s).
-//                      GŁADKO: duże komórki w poprzek (0,2 / 0,08 H) i poziom mip o 3 ponad 1 texel / px gaszą drobne oktawy
+//                      GŁADKO: duże komórki w poprzek (0,4 / 0,16 H) i poziom mip o 3 ponad 1 texel / px gaszą drobne oktawy
 //                      fbm tekstury — stromy gradient przesunięcia w poprzek (≥ 1 = fałda obrazu) rozmazywał gwiazdy w poziome
-//                      kreski i podwajał je („deszcz na szybie”); lustro CPU w teście pilnuje braku fałd.
-//                      Aberracja R / B dochodzi w poście sama (≤ 2,5 px — postGry.js: LAYER_ABER_MAX_PX).
+//                      kreski i podwajał je („deszcz na szybie”); lustro CPU w teście pilnuje braku fałd. Siła 28 px przy
+//                      krawędzi (user 2026-10-29: „haze wciąż zbyt subtelny” — dawniej 8 px), mnożnik `?warpHaze=` skaluje
+//                      amplitudę razem z komórkami. Aberracja R / B dochodzi w poście sama (≤ 2,5 px — postGry.js:
+//                      LAYER_ABER_MAX_PX).
 //   W2 DROBINY PĘDU  — jedna siatka (InstancedBufferGeometry, ~1800 instancji, sam kwad), pozycje ANALITYCZNE z haszu
 //                      instancji i faz warstw: smugi równoległe do kursu w TRZECH warstwach paralaksy (daleka — krótkie,
 //                      wolne, ciemne; średnia; bliska — długie, szybkie, jaśniejsze), gęściej przy bokach, zawijane wzdłuż
 //                      kursu poza kadrem; smuga nie krótsza niż przesuw na klatkę (bez stroboskopu). Pass tła (warstwa 1),
 //                      głębia przy dalekiej płaszczyźnie — pod planetami, ringiem, stacjami i kadłubami.
-//   W3 ZORZA KRAWĘDZI — dwa pasy przy lewej i prawej krawędzi kadru (geometria tylko przy krawędziach): słaba addytywna
-//                      poświata w barwie palety warpa, długie pasma dryfujące w dół; pass tła.
+//   W3 ZORZA KRAWĘDZI — dwa pasy przy lewej i prawej krawędzi kadru (geometria tylko przy krawędziach): addytywna MGŁA
+//                      boków — blada (mało nasycona barwa palety warpa), długie pasma dryfujące w dół; pass tła. Domyślnie
+//                      włączona (2026-10-29): sama refrakcja na czarnym tle prawie nie widać — mgła daje jej materię, a W1
+//                      ją faluje. Siła × `?warpHaze=`.
 // MASKA BOKÓW (wspólna, lustro CPU warpEdgeSideMask): 0 w kolumnie wzdłuż osi kursu przez statek (pół szerokości z szerokości
 // kadłuba na ekranie i rozpiętości kadru W POPRZEK kursu — warpEdgeLayout; w trybie kamery „Północ” przy kursie wschód–zachód
 // to wysokość ekranu), rośnie ku krawędzi kadru po tej stronie osi; przy wyjściu FRONT
@@ -61,10 +65,13 @@ import { WARP_FLOW } from './player.js';
 // ── przełącznik z adresu ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Zestaw DOMYŚLNY (bez `?warpFx=` w adresie) — wybór po zrzutach (docs/PROPOZYCJA-efekty-warpa-2026-10-29.md): haze boków
- * i drobiny pędu; zorza krawędzi tylko z adresu (`?warpFx=zorza` / `wszystko`).
+ * Zestaw DOMYŚLNY (bez `?warpFx=` w adresie): haze boków, drobiny pędu i zorza krawędzi jako blada MGŁA boków (user
+ * 2026-10-29 po grze: „haze wciąż zbyt subtelny, musimy podkręcić efekt warp” — sama refrakcja na czarnym tle prawie nie
+ * widać; mgła daje jej materię, a refrakcja ją faluje). Siła haze i mgły z adresu: `?warpHaze=<mnożnik>` (parseWarpEdgeFx).
  */
-export const WARP_EDGE_FX_DEFAULT = Object.freeze({ haze: true, czastki: true, zorza: false });
+export const WARP_EDGE_FX_DEFAULT = Object.freeze({ haze: true, czastki: true, zorza: true });
+/** `?warpHaze=` — mnożnik siły haze (W1) i mgły (W3): 0 … WARP_EDGE_GAIN_MAX (komórki W1 rosną z nim — bez fałd). */
+export const WARP_EDGE_GAIN_MAX = 4;
 
 const OFF_WORDS = new Set(['0', 'off', 'nie', 'brak', 'false', 'wyl', 'wył']);
 const ALL_WORDS = new Set(['1', 'on', 'tak', 'true', 'wszystko', 'all']);
@@ -74,15 +81,26 @@ const TOKENS = {
   zorza: 'zorza', w3: 'zorza'
 };
 
-/** Nowy rekord przełącznika: { haze, czastki, zorza, src: 'domyślnie' | 'adres' }. */
+/** Nowy rekord przełącznika: { haze, czastki, zorza, src: 'domyślnie' | 'adres', gain — mnożnik `?warpHaze=` }. */
 export function newWarpEdgeFxSwitch() {
-  return { haze: WARP_EDGE_FX_DEFAULT.haze, czastki: WARP_EDGE_FX_DEFAULT.czastki, zorza: WARP_EDGE_FX_DEFAULT.zorza, src: 'domyślnie' };
+  return { haze: WARP_EDGE_FX_DEFAULT.haze, czastki: WARP_EDGE_FX_DEFAULT.czastki, zorza: WARP_EDGE_FX_DEFAULT.zorza, src: 'domyślnie', gain: 1 };
+}
+
+/** `?warpHaze=<liczba>` (kropka albo przecinek) → mnożnik 0 … WARP_EDGE_GAIN_MAX; brak albo nie-liczba — 1. */
+function parseWarpHazeGain(s) {
+  const m = /[?&]warpHaze=([^&#]*)/.exec(s);
+  if (!m) return 1;
+  const v = m[1].trim().replace(',', '.');
+  if (!/^\d+(?:\.\d+)?$/.test(v)) return 1;
+  const g = Number(v);
+  return g < 0 ? 0 : (g > WARP_EDGE_GAIN_MAX ? WARP_EDGE_GAIN_MAX : g);
 }
 
 /**
  * `?warpFx=` w adresie strony: `0` (wyłączone — obraz jak przed efektami), `haze` (tylko W1), `czastki` (tylko W2), `zorza`
  * (tylko W3), `wszystko`; kilka naraz po przecinku albo plusie (`haze,zorza`). Brak parametru albo same nieznane słowa —
- * zestaw domyślny (WARP_EDGE_FX_DEFAULT). Czysta funkcja (bez alokacji przy podanym `out`).
+ * zestaw domyślny (WARP_EDGE_FX_DEFAULT). Do tego `?warpHaze=<mnożnik>` — siła haze i mgły (`out.gain`, niezależnie od
+ * `warpFx`). Czysta funkcja (bez alokacji przy podanym `out`).
  */
 export function parseWarpEdgeFx(search, out = newWarpEdgeFxSwitch()) {
   out.haze = WARP_EDGE_FX_DEFAULT.haze;
@@ -90,6 +108,7 @@ export function parseWarpEdgeFx(search, out = newWarpEdgeFxSwitch()) {
   out.zorza = WARP_EDGE_FX_DEFAULT.zorza;
   out.src = 'domyślnie';
   const s = typeof search === 'string' ? search : '';
+  out.gain = parseWarpHazeGain(s);
   const m = /[?&]warpFx=([^&#]*)/.exec(s);
   if (!m) return out;
   let v = m[1];
@@ -141,6 +160,7 @@ export function warpEdgeFxSwitch(search = RenderWorld.pageSearch) {
  */
 export const WarpEdgeFxTune = {
   haze: null, czastki: null, zorza: null,
+  gain: null,           // mnożnik siły haze i mgły: null — z adresu (`?warpHaze=`), liczba — wymuszenie
   // czysta kolumna osi kursu: pół szerokości = max(colHullK × pół szerokości kadłuba na ekranie, colMinW × rozpiętość kadru
   // W POPRZEK kursu), najwyżej colMaxW × ta rozpiętość (przy kursie w górę — szerokość kadru, przy kursie wschód–zachód bez
   // obrotu kadru — wysokość); pełna siła na fullK drogi od osi do krawędzi kadru po tej stronie
@@ -151,14 +171,17 @@ export const WarpEdgeFxTune = {
   hullWidth: 0.8,       // szerokość kadłuba z pudła sprite'a (entityWarpHullWidth) × tyle — sprite ma margines
   frontBand: 0.06,      // pół szerokości przejścia frontu wyjścia × H
   aliasK: 15,           // faza wzoru haze ≤ aliasK komórek szumu na sekundę (przy 60 kl/s ¼ komórki na klatkę)
-  // W1 haze — dwie oktawy pasm wydłużonych wzdłuż kursu (gładko: gradient przesunięcia w poprzek < 1 — bez fałd obrazu)
-  hazeAmpPx: 8,         // [px przy 1080] przesunięcie w poprzek kursu przy krawędzi przy sile 1 (kop najwyżej × hazeKickMax)
-  hazeKickMax: 1.4,
+  // W1 haze — dwie oktawy pasm wydłużonych wzdłuż kursu (gładko: gradient przesunięcia w poprzek < 1 — bez fałd obrazu).
+  // Siła 28 px (user 2026-10-29: „haze wciąż zbyt subtelny”; dawniej 8 px — mediana ~3 px przesunięcia): komórki rosną
+  // razem z amplitudą, druga oktawa słabsza, kop × 1,1 — lustro CPU w teście: w locie mediana ~10 px, det(I − J) ≥ 0,2
+  // także w kopie × 1,1 (30 px przy komórkach 0,42 / 0,17 — już fałdy). Mnożnik `?warpHaze=` skaluje amplitudę I komórki.
+  hazeAmpPx: 28,        // [px przy 1080] przesunięcie w poprzek kursu przy krawędzi przy sile 1 (kop najwyżej × hazeKickMax)
+  hazeKickMax: 1.1,
   hazeAlong: 0.35,      // udział przesunięcia wzdłuż kursu
-  hazeFine: 0.4,        // udział drugiej (drobniejszej) oktawy
-  hazeCell1: 0.2,       // komórka bazowa szumu w poprzek kursu × H (oktawa 1; kafelek = 4 komórki)
+  hazeFine: 0.3,        // udział drugiej (drobniejszej) oktawy
+  hazeCell1: 0.4,       // komórka bazowa szumu w poprzek kursu × H (oktawa 1; kafelek = 4 komórki)
   hazeStretch1: 7,      // wydłużenie wzdłuż kursu (oktawa 1)
-  hazeCell2: 0.08,      // oktawa 2
+  hazeCell2: 0.16,      // oktawa 2
   hazeStretch2: 7,
   hazeLod1: 3,          // poziom mip ponad 1 texel / px w poprzek (+3 = 8 px na texel — gasi drobne oktawy fbm tekstury)
   hazeLod2: 3,
@@ -172,10 +195,11 @@ export const WarpEdgeFxTune = {
   dustWidthFar: 1.4, dustWidthMid: 1.8, dustWidthNear: 2.4,   // [px przy 1080] kwadu (profil gaussa)
   dustBrightRare: 2.2,  // co ~33. bliska trochę jaśniejsza (lekki blask)
   dustTint: 0.22,       // udział barwy palety warpa w bieli smug
-  // W3 zorza
-  auroraStrength: 0.1,  // jasność pasa przy krawędzi (liniowo)
-  auroraStrip: 0.34,    // szerokość pasa × H (najwyżej 0,3 szerokości)
-  auroraSat: 0.45,      // nasycenie barw palety (0 — szaroniebieska poświata, 1 — czysta barwa palety)
+  // W3 zorza — od 2026-10-29 domyślnie jako blada MGŁA boków (mało nasycona, jaśniejsza i szersza; dawniej tylko z adresu,
+  // 0,1 / 0,34 H / 0,45)
+  auroraStrength: 0.22, // jasność pasa przy krawędzi (liniowo; kop × siła obwiedni)
+  auroraStrip: 0.38,    // szerokość pasa × H (najwyżej 0,3 szerokości)
+  auroraSat: 0.25,      // nasycenie barw palety (0 — szaroniebieska poświata, 1 — czysta barwa palety)
   auroraFlow: 0.8,      // [H/s] dryf pasm
   auroraCell: 0.25,     // kafelek szumu w poprzek × H
   auroraStretch: 12     // wydłużenie wzdłuż kursu
@@ -680,6 +704,7 @@ export class WarpEdgeFx {
     sw.czastki = T.czastki === true || T.czastki === false ? T.czastki : a.czastki;
     sw.zorza = T.zorza === true || T.zorza === false ? T.zorza : a.zorza;
     sw.src = a.src;
+    sw.gain = Number.isFinite(T.gain) ? Math.max(0, Math.min(WARP_EDGE_GAIN_MAX, T.gain)) : a.gain;
     return sw;
   }
 
@@ -753,19 +778,24 @@ export class WarpEdgeFx {
     }
     this._phSpan = span;
     // W1: kafelki szumu [px] (4 komórki bazowe fbm na kafelek), faza zawijana co kafelek wzdłuż — wzór bez skoku; limit
-    // aliasingu z komórki TRZECIEJ oktawy fbm tekstury wzdłuż (kafelek / 16 — najdrobniejsza, którą zostawia poziom mip)
-    const t1x = Math.max(1, 4 * num(T.hazeCell1, 0.2) * H);
+    // aliasingu z komórki TRZECIEJ oktawy fbm tekstury wzdłuż (kafelek / 16 — najdrobniejsza, którą zostawia poziom mip).
+    // Mnożnik siły `?warpHaze=` (sw.gain) skaluje amplitudę I komórki — gradient przesunięcia (fałdy) bez zmian.
+    const gain = sw.gain;
+    const gainCell = Math.max(0.25, gain);
+    const t1x = Math.max(1, 4 * num(T.hazeCell1, 0.4) * gainCell * H);
     const t1y = t1x * Math.max(1, num(T.hazeStretch1, 7));
-    const t2x = Math.max(1, 4 * num(T.hazeCell2, 0.08) * H);
+    const t2x = Math.max(1, 4 * num(T.hazeCell2, 0.16) * gainCell * H);
     const t2y = t2x * Math.max(1, num(T.hazeStretch2, 7));
     const v1 = speed * num(T.hazeFlow, 1.6) * H;
     ph.h1 = warpEdgePhaseStep(ph.h1, v1, dt, t1y / 16, aliasK, t1y);
     ph.h2 = warpEdgePhaseStep(ph.h2, v1 * num(T.hazeFlow2, 1.3), dt, t2y / 16, aliasK, t2y);
-    // poziom mip: 1 texel kafelka na px w poprzek (wzdłuż — powiększenie) + przesunięcie (gładkość)
-    const lod1 = Math.max(0, Math.log2(TILE_TEXELS / t1x) + num(T.hazeLod1, 3));
-    const lod2 = Math.max(0, Math.log2(TILE_TEXELS / t2x) + num(T.hazeLod2, 3));
+    // poziom mip: 1 texel kafelka na px w poprzek (wzdłuż — powiększenie) + przesunięcie (gładkość); mnożnik siły nie
+    // zmienia poziomu (wzór skalowany razem z komórkami — inaczej drobne oktawy wracają i gradient rośnie z mnożnikiem)
+    const lodGain = Math.log2(gainCell);
+    const lod1 = Math.max(0, Math.log2(TILE_TEXELS / t1x) + num(T.hazeLod1, 3) + lodGain);
+    const lod2 = Math.max(0, Math.log2(TILE_TEXELS / t2x) + num(T.hazeLod2, 3) + lodGain);
     const scale = H / 1080;
-    U.haze.value.set(num(T.hazeAmpPx, 8) * scale * Math.min(s, num(T.hazeKickMax, 1.4)), num(T.hazeAlong, 0.35), num(T.hazeFine, 0.4), lod1);
+    U.haze.value.set(num(T.hazeAmpPx, 28) * gain * scale * Math.min(s, num(T.hazeKickMax, 1.1)), num(T.hazeAlong, 0.35), num(T.hazeFine, 0.3), lod1);
     U.haze1.value.set(t1x, t1y, ph.h1, lod2);
     U.haze2.value.set(t2x, t2y, ph.h2, 0);
     // W2: trzy warstwy — prędkość [px/s], długość smugi (bez stroboskopu, najwyżej zapas zawijania), rozpiętość zawijania
@@ -802,11 +832,11 @@ export class WarpEdgeFx {
     const ax = Math.max(1, num(T.auroraCell, 0.25) * H);
     const ay = ax * Math.max(1, num(T.auroraStretch, 12));
     ph.aurora = warpEdgePhaseStep(ph.aurora, speed * num(T.auroraFlow, 0.8) * H, dt, ay * 0.25, aliasK, ay);
-    const strip = Math.min(0.3 * W, num(T.auroraStrip, 0.34) * H);
-    U.aurora.value.set(num(T.auroraStrength, 0.1) * s, strip, ax, ay);
+    const strip = Math.min(0.3 * W, num(T.auroraStrip, 0.38) * H);
+    U.aurora.value.set(num(T.auroraStrength, 0.22) * gain * s, strip, ax, ay);
     U.auroraPh.value = ph.aurora;
     // barwy palety (otoczka, poświata) znormalizowane i przygaszone ku szaroniebieskiej mgiełce (auroraSat)
-    const sat = clamp01(num(T.auroraSat, 0.45));
+    const sat = clamp01(num(T.auroraSat, 0.25));
     const o = pal.outer;
     const ol = Math.max(1e-3, Math.max(o[0], o[1], o[2]));
     U.auroraA.value.set(0.55 + sat * (o[0] / ol - 0.55), 0.62 + sat * (o[1] / ol - 0.62), 0.8 + sat * (o[2] / ol - 0.8));

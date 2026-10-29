@@ -118,7 +118,17 @@ test('przełącznik ?warpFx=: 0, haze, czastki, zorza, wszystko, listy; brak alb
   assert.deepEqual(p('?warpFx=haze+czastki'), [true, true, false, 'adres']);
   assert.deepEqual(p('?warpFx=coś'), [D.haze, D.czastki, D.zorza, 'domyślnie']);
   assert.deepEqual(p('?warpFx=%E0%A4%A'), [D.haze, D.czastki, D.zorza, 'domyślnie'], 'zepsute kodowanie — bez wyjątku');
-  assert.deepEqual([D.haze, D.czastki, D.zorza], [true, true, false], 'domyślnie W1 + W2');
+  // 2026-10-29 (user po grze: „haze wciąż zbyt subtelny”): domyślnie także mgła boków (W3)
+  assert.deepEqual([D.haze, D.czastki, D.zorza], [true, true, true], 'domyślnie W1 + W2 + W3');
+  // ?warpHaze= — mnożnik siły haze i mgły, niezależnie od warpFx
+  const g = (s) => parseWarpEdgeFx(s, newWarpEdgeFxSwitch()).gain;
+  assert.equal(g(''), 1);
+  assert.equal(g('?warpHaze=2'), 2);
+  assert.equal(g('?warpFx=haze&warpHaze=1,5'), 1.5);
+  assert.equal(g('?warpHaze=0'), 0);
+  assert.equal(g('?warpHaze=99'), EdgeModule.WARP_EDGE_GAIN_MAX);
+  assert.equal(g('?warpHaze=duzo'), 1);
+  assert.equal(g('?warpHaze=-2'), 1, 'liczba ujemna — nie liczba w adresie (zostaje 1)');
 });
 
 // ── układ kadru i maska kolumny ────────────────────────────────────────────────────────────────────────────────────
@@ -540,14 +550,25 @@ test('W1 gładko (lustro CPU fragmentu z uniformów klatki): bez fałd obrazu w 
       assert.equal(st.colMax, 0, `${label}: kolumna osi kursu czysta`);
       assert.equal(st.outside, 0, `${label}: próbka spoza kadru (powielony brzeg przy krawędzi)`);
       assert.ok(st.detMin > 0.2, `${label}: fałda obrazu — det(I − J) = ${st.detMin.toFixed(3)}`);
-      assert.ok(st.gl99 < 0.5, `${label}: gradient w poprzek p99 ${st.gl99.toFixed(3)}`);
-      assert.ok(st.mag50 > 2 && st.magMax < 32, `${label}: przesunięcie p50 ${st.mag50.toFixed(1)} px, max ${st.magMax.toFixed(1)} px`);
+      // mocniejszy haze (2026-10-29: 28 px zamiast 8 — „wciąż zbyt subtelny”): obraz ściska się w bok wyraźnie, bez fałd
+      assert.ok(st.gl99 < 0.75, `${label}: gradient w poprzek p99 ${st.gl99.toFixed(3)}`);
+      assert.ok(st.mag50 > 6 && st.magMax < 72, `${label}: przesunięcie p50 ${st.mag50.toFixed(1)} px, max ${st.magMax.toFixed(1)} px`);
     }
     return worst;
   };
   run('lot', 5, 3);
   // kop: obwiednia liczy wiek kopu z t − kickT; jedna klatka na szczycie
   run('kop', kickPeakT, 1);
+  // ?warpHaze=2 (WarpEdgeFxTune.gain — mnożnik): amplituda i komórki × 2 — przesunięcie ~× 2, gradient bez zmian (bez fałd)
+  WarpEdgeFxTune.gain = 2;
+  try {
+    fx.update({ on: true, t: 5, dt: 0, player, roll: 0, palette: '', W, H, zoom: 0.1, shipX: 0, shipY: 120, hullWidth: 1800 });
+    const st2 = hazeFieldStats(fx.U, W, H);
+    assert.ok(st2.detMin > 0.2 && st2.gl99 < 0.75 && st2.mag50 > 12 && st2.outside === 0 && st2.colMax === 0,
+      `×2: det ${st2.detMin.toFixed(2)}, gl99 ${st2.gl99.toFixed(2)}, p50 ${st2.mag50.toFixed(1)} px, poza ${st2.outside}`);
+  } finally {
+    WarpEdgeFxTune.gain = null;
+  }
   // kontrola lustra: dawne nastawy pierwszej wersji v2 (drobne komórki, mip 1:1) dawały fałdy — lustro je widzi
   const T = WarpEdgeFxTune;
   const keep = { ...T };
