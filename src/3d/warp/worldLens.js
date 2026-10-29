@@ -180,6 +180,28 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   sizeDepth: 30000
 });
 
+// POCHYLENIE SOCZEWKI Z ADRESU (3a, 2026-10-29; user: „statek leci do góry, a wszystkie efekty są stworzone tak, jakby
+// leciał w głąb ekranu”): `?warpSoczewka=plaska` — punkt zbiegu O1 nad górną krawędzią kadru (hf = WARP_LENS_FLAT_HF:
+// płaszczyzna kamery A ~3 × dalej, mniej perspektywy — ciała wjeżdżają z góry kadru, w trawersie ta sama skala s),
+// `?warpSoczewka=<liczba>` — hf wprost (w WARP_LENS_HF_RANGE), brak parametru albo nieznane słowo — hf domyślne.
+// Ustawia je sterownik (warpNurt.js: _commitWorldLens → WARP_LENS_SHARED.params.hf przy zmianie adresu — także w workerze).
+export const WARP_LENS_FLAT_HF = 2.5;
+export const WARP_LENS_HF_RANGE = Object.freeze([0.3, 10]);
+const LENS_FLAT_WORDS = new Set(['plaska', 'płaska', 'flat']);
+
+/** `?warpSoczewka=` z adresu strony → hf mapy O1; NaN — bez przełącznika (hf domyślne). Czysta funkcja. */
+export function parseWarpLensTilt(search) {
+  const s = typeof search === 'string' ? search : '';
+  const m = /[?&]warpSoczewka=([^&#]*)/.exec(s);
+  if (!m) return NaN;
+  let v = m[1];
+  try { v = decodeURIComponent(v.replace(/\+/g, ' ')); } catch { /* zostaje surowy napis */ }
+  v = v.trim().toLowerCase();
+  if (LENS_FLAT_WORDS.has(v)) return WARP_LENS_FLAT_HF;
+  if (!/^\d+(?:[.,]\d+)?$/.test(v)) return NaN;
+  return clamp(Number(v.replace(',', '.')), WARP_LENS_HF_RANGE[0], WARP_LENS_HF_RANGE[1]);
+}
+
 /** Tryby przejścia ciała. */
 export const WORLD_LENS_MODE = Object.freeze({ NONE: 0, MOVE: 1, FAR: 2 });
 const MOVE = 1;
