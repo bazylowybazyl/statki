@@ -125,7 +125,7 @@ export const WarpNurt = {
   _fxStep: null,
   // Boki kadru w skoku gracza (warpEdgeFx.js): moduł i rekord wejścia klatki (bez alokacji).
   edge: null,
-  _edgeCtx: { on: false, t: 0, dt: 0, player: null, zoom: 1, roll: 0, W: 1, H: 1, shipX: 0, shipY: 0, anchorSX: NaN, anchorSY: NaN, pxScale: 1, palette: '' },
+  _edgeCtx: { on: false, t: 0, dt: 0, player: null, zoom: 1, roll: 0, W: 1, H: 1, shipX: 0, shipY: 0, hullWidth: 0, palette: '' },
   // Wstrząsy skoku gracza i wyrzutów NPC zgłasza GRA (src/game/warpShakes.js — te same chwile i wartości, także
   // w workerze renderu); dawny hak `onShake` sterownika zniknął (etap W nowego warpa, 2026-10-25).
   stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, glows: 0, waves: 0, arrivals: 0, flow: 0, lens: 0 },
@@ -742,9 +742,10 @@ export const WarpNurt = {
     WARP_STAR_CAMERA.speedCap = cap;
   },
 
-  // Boki kadru w skoku gracza (warpEdgeFx.js — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`): stan skoku
-  // z WarpPlayerFx (fazy, kop, wyjście, przepływ — hipercruise daje 0), kadr i kotwica jak soczewka świata (px bufora,
-  // kotwica z px CSS × Core3D.pxScale, obrót kadru), tylko kamera z góry jednego gracza (`lensAllowed`).
+  // Boki kadru w skoku gracza (warpEdgeFx.js — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`): przepływ równoległy
+  // do kursu (bez punktu zbiegu soczewki); stan skoku z WarpPlayerFx (fazy, kop, wyjście, przepływ — hipercruise daje 0),
+  // kadr (px bufora, obrót kadru), statek i szerokość kadłuba (czysta kolumna osi kursu), tylko kamera z góry jednego
+  // gracza (`lensAllowed`).
   _commitEdge(o, t, dt, camX, camY, zoom, hasPlayer) {
     const e = this.edge;
     if (!e) return;
@@ -760,9 +761,7 @@ export const WarpNurt = {
     c.H = this._view.bufH;
     c.shipX = g.x - camX;
     c.shipY = g.y - camY;
-    c.anchorSX = o.anchorSX;
-    c.anchorSY = o.anchorSY;
-    c.pxScale = Number(Core3D.pxScale) > 0 ? Number(Core3D.pxScale) : 1;
+    c.hullWidth = Number(g.width) || 0;
     c.palette = g.palette;
     e.update(c);
   },

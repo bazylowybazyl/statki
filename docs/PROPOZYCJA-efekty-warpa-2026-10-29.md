@@ -2,6 +2,104 @@
 
 Prośba użytkownika: „Warp: dodanie efektów haze lub cząsteczkowych do warpa. Jest już w miarę fajny warp pokazujący planety, ale brak mu innych efektów. Myślę też o haze, ale mocniejszym po bokach ekranu, a nie na statku. Przygotuj propozycje nowych efektów.”
 
+**Obowiązuje WERSJA 2 — przepływ równoległy do kursu (§ A–F).** Wersja 1 (efekty od punktu zbiegu soczewki, promieniście) została zastąpiona po ocenie użytkownika; jej opis (§ 0–6 pod linią „Wersja 1”) zostaje jako historia.
+
+## A. Ocena wersji 1 i wybór użytkownika
+
+Użytkownik po wersji 1: „hipercruise lepiej, warp gorzej, bo mamy 2D statek, który leci do góry, i wszystkie próby efektów zrobiły 3D. To się nie klei, nie pasuje. Statek leci do góry, a wszystkie efekty są stworzone tak, jakby leciał w głąb ekranu. Kamera jest za blisko na statek, trzeba ją oddalić, dopasować to tak, żeby było spójne”. Wybrane „1 + 2 i 3a” (opis kamery i soczewki — `docs/WARP-kadr-lotu-2026-10-29.md`):
+
+1. **Efekty równoległe do kursu** (widok z góry, bez punktu zbiegu) — ta zmiana, `src/3d/warp/warpEdgeFx.js`.
+2. **Kamera dalej** (gałąź orkiestratora `claude/hipercruise-warp-fx`, ea2b60a6): ładowanie w dawnym kadrze, po kopie kamera w 1,5 s odsuwa się do kadru lotu (`warpJumpFrame` 0,4 × domyślny zoom, szerokość najwyżej 16:9 × wysokość) — statek ~8% wysokości kadru przy każdej proporcji, wyprzedzenie 0,35.
+3. **(3a) Przełącznik pochylenia soczewki** `?warpSoczewka=plaska` (`hf` 2,5) — efekty boków od niego nie zależą.
+
+## B. Zasady wersji 2
+
+- **Kierunek:** przeciw kursowi w osiach ekranu — kurs gry obrócony o obrót kadru (`cam.roll`, `viewRoll.js`). W kadrze „kurs w górę” efekty płyną pionowo w dół; w kadrze „Północ” skośnie, wzdłuż kursu. Świat przelatuje pod statkiem z góry na dół kadru — tak, jak widzi go kamera z góry.
+- **Bez współrzędnych biegunowych, punktu zbiegu i zbiegania do punktu.** `warpEdgeVanishPoint` usunięty razem z testami; moduł nie czyta soczewki O1 (`worldLens`, `WARP_LENS_SHARED`, `hf`) — test zmienia `params.hf` na 2,5 i porównuje uniformy klatki.
+- **Czysta kolumna osi kursu przez statek** (`warpEdgeLayout`): pół szerokości = max(2,5 × pół szerokości kadłuba na ekranie przy zoomie TEJ klatki, 8% szerokości kadru), najwyżej 30%; efekty rosną ku krawędzi po tej stronie osi (pełne na 0,85 drogi). Kamera odsuwa się po kopie, więc kolumna maleje razem z kadłubem; w kadrze lotu trzyma ją dolna granica 8% (przy 1600 × 900 — 128 px).
+- **Fazy całkowane na CPU** (`warpEdgePhaseStep`: faza += prędkość · dt czasu efektu, zawijana) → uniformy; nie czas × prędkość w shaderze (lekcja z hipercruise'u — „gotowanie się” wzoru przy zmianie prędkości). Limit aliasingu: przesuw wzoru ≤ ¼ komórki na klatkę przy 60 kl/s.
+- **Obwiednia** (`warpEdgeEnvelope`, bez zmian względem v1, ale przepływ ma teraz znaczenie wprost): ładowanie — rozruch od 0 (siła ≤ 0,35, przepływ ≤ 0,3); kop — impuls × 2 przez ~0,6 s (siła i przepływ, bez pierścieni); lot — stała × przepływ widoczny (przy mijanej planecie statek zwalnia: efekty płyną wolniej i słabną najwyżej do połowy); wyjście — FRONT prostopadły do kursu (ten sam co smug gwiazd, `warpExitFrontS`) jedzie w dół kadru, za nim efekty gasną; hipercruise, podzielony ekran i kamery 3D — 0.
+
+## C. Co zbudowane (wersja 2)
+
+### W1 „Pasma pędu” (haze, warstwa DIST) — domyślnie
+
+- **Co widać:** przy lewej i prawej krawędzi tło (smugi gwiazd, mgławica, brzegi mijanych ciał) drga na boki w długich pasmach płynących w dół kadru — jak gorące powietrze w strudze opływającej statek. Kolumna statku ostra. Na stopklatce subtelnie (smugi gwiazd lekko faliste, mapa przesunięć to gładkie pionowe „kurtyny”), w ruchu — falowanie płynące w dół.
+- **Jak:** pełnoekranowy quad w warstwie DIST (RG w px w osiach ekranu; B = A = 0), szum `tile2D` w osiach (wzdłuż kursu, w poprzek): dwie oktawy — komórka 0,2 H i 0,08 H w poprzek, × 7 wzdłuż kursu, poziom mip +3 (8 px na texel — gasi drobne oktawy fbm tekstury), fazy wzdłuż kursu 1,6 H/s (druga × 1,3); przesunięcie w poprzek kursu + 35% wzdłuż; 8 px przy 1080 wierszach (kop najwyżej × 1,4). Przy samej krawędzi kadru przesunięcie gaśnie w pasie 4 × amplituda — post próbkuje p − o, a próbka spoza kadru to powielony brzeg (pierwszy przebieg pokazał przy lewej krawędzi pasek „kodu kreskowego”).
+- **Wygładzenie po pierwszym zrzucie v2:** komórki 0,05 / 0,02 H z mip 1:1 i 10 px dawały „deszcz na szybie” — gwiazdy rozmazane w poziome kreski z tęczą aberracji. Lustro CPU fragmentu (tekstura `tile2D` z mipmapami jak na GPU, pole przesunięć z uniformów prawdziwej klatki): gradient przesunięcia w poprzek kursu p99 1,4 (w kopie 2,0), fałdy obrazu (det(I − J) ≤ 0 — obraz zawija się, gwiazdy się podwajają) na 3% boków (w kopie 8%). Po: p99 ~0,28 (kop ~0,39), bez fałd (det(I − J) ≥ ~0,55), przesunięcie ~6 px w pasie pełnej siły (p50), najwyżej ~15 px (kop ~20 px) przy 1080 wierszach. Test `W1 gładko` w `tests/warpEdgeFx.test.mjs` liczy to z uniformów klatki (także: 0 w kolumnie, próbka nie wychodzi poza kadr, a dawne nastawy dają fałdy — kontrola czułości lustra).
+- **Strojenie** (`WarpNurt.edge.tune`): `hazeAmpPx` 8, `hazeKickMax` 1,4, `hazeCell1` 0,2, `hazeCell2` 0,08, `hazeStretch1` / `hazeStretch2` 7, `hazeLod1` / `hazeLod2` 3, `hazeFine` 0,4, `hazeAlong` 0,35, `hazeFlow` 1,6, `hazeFlow2` 1,3. Mniejsze komórki albo mip bez przesunięcia wracają do „deszczu na szybie”.
+
+### W2 „Smugi pędu” (drobiny) — domyślnie
+
+- **Co widać:** cienkie chłodne, biało-błękitne smugi równoległe do kursu, płynące w dół kadru w trzech warstwach paralaksy; gęściej przy bokach, w kolumnie statku żadnych; w kopie szybsze i dłuższe, przy mijanej planecie zwalniają, przy wyjściu znikają frontem. Pod planetami, ringiem, stacjami i kadłubem (pass tła — D3 bez zmian).
+
+| Warstwa | Smug | Tempo [H/s] | Długość [px przy 1080] | Jasność (liniowo) | Szerokość [px] |
+|---|---|---|---|---|---|
+| daleka | 1000 | 0,5 | 30 | 0,09 | 1,4 |
+| średnia | 550 | 1,4 | 90 | 0,16 | 1,8 |
+| bliska | 250 | 3,0 | 200 | 0,26 (co ~33. × 2,2) | 2,4 |
+
+- **Jak:** jedna siatka (`InstancedBufferGeometry`, 1800 instancji, sam kwad — bez atrybutów instancji), pozycje analityczne z haszu `instanceIndex`: warstwa z indeksu, odległość od osi kursu od brzegu kolumny do krawędzi kadru (rozkład √ — gęściej przy bokach), pozycja wzdłuż kursu = faza warstwy (CPU) × tempo drobiny (0,88–1,12), zawijanie poza kadrem (zapas 0,4 H na długość smugi); smuga nie krótsza niż 1,3 × przesuw na klatkę (bez stroboskopu przy każdym tempie klatek); maska kolumny i frontu w wierzchołkach; gauss w poprzek, zanik ku ogonowi. Pass tła (warstwa 1, `renderOrder` 0,3 — okno (−0,5; 0) należy do pasa), głębia przy dalekiej płaszczyźnie. Barwa: biel (0,72; 0,86; 1) z 22% barwy palety warpa okrętu. Jasność w kopie najwyżej × 1,35.
+- **Strojenie:** `dustFar` / `dustMid` / `dustNear` (liczby, na żywo bez przebudowy), `dustSpeed*`, `dustLen*`, `dustBright*`, `dustWidth*`, `dustBrightRare`, `dustTint`.
+
+### W3 „Pasma krawędzi” (zorza) — tylko z adresu
+
+- Długie barwne pasma przy lewej i prawej krawędzi (pas 0,34 H, najwyżej 0,3 szerokości), szum × 12 wzdłuż kursu dryfujący w dół 0,8 H/s, siła 0,1, nasycenie palety 0,45; pass tła, za frontem wyjścia gaśnie. `?warpFx=zorza` / `wszystko`.
+
+## D. Zrzuty i sonda DIST (wersja 2)
+
+Narzędzie: kopia robocza `warp-ped-gra.mjs` z sondą warstwy DIST (`.tmp/warp-ped-sonda.mjs` w worktree — nie w repo): po każdej fazie odczyt `Core3D.distortionTarget` (`readRenderTargetPixelsAsync`, połówki), mapa `<faza>-dist.png` (|przesunięcie|, czerwień = NaN) i statystyki kolumny osi kursu oraz pasów 15% szerokości przy lewej i prawej krawędzi w `raport.json` → `sondaDist`. TRAVEL TO Ziemia → Mars z przelotem obok Merkurego, `ziarno=7` (ta sama trasa w każdym przebiegu), 1600 × 900, tryb `off` (poza przebiegiem w workerze), gałąź na `claude/hipercruise-warp-fx` 2cbed460 (kadr lotu ea2b60a6 — kamera odsuwa się po kopie: zoom w locie 0,039 zamiast ~0,047). Katalogi w `.tmp/` worktree:
+
+| Katalog | Zestaw | Uwagi |
+|---|---|---|
+| `rk2-baza` | `?warpFx=0` | obraz bez efektów boków (baza porównań); warstwa DIST pusta |
+| `rk3-dom` | domyślny (W1 + W2) | wartości końcowe |
+| `rk3-wszystko` | W1 + W2 + W3 | sonda DIST jak w `rk3-dom` (W3 nie pisze do DIST); zorza — słaba szaroniebieska mgiełka przy krawędziach, pod planetami |
+| `rk2-worker` | domyślny, `renderWorker=1` | tryb gracza na kodzie sprzed wygaszenia W1 przy krawędzi kadru: 0 błędów konsoli strony i workera, 0 pipeline'ów sync w workerze przed i po starcie, 0 klatek z NaN; przebieg `rk3-worker` (kod końcowy) przerwany na prośbę użytkownika — do powtórzenia |
+| `rk-dom` | domyślny, pierwsze nastawy v2 (przed wygładzeniem W1, kamera sprzed ea2b60a6) | „deszcz na szybie” — do porównania |
+| `rk2-dom` | domyślny, przed wygaszeniem W1 przy krawędzi kadru | pasek powielonego brzegu przy lewej krawędzi |
+| `rk3-porownania` | zestawienia | `0x-…_baza-dom.png` (fazy 01–06, baza │ domyślny), `04-dolot_prawy-bok_baza-dom.png`, `02-kop_lewy-bok_baza-dom.png` (boki 1:1), `02-kop_prawy-bok_v2-pierwsza_vs_gladka.png`, `03-przelot_dist_v2-pierwsza_vs_gladka.png` (mapa przesunięć: drobna sieczka → gładkie pionowe „kurtyny”), `02-kop_lewa-krawedz_x3_przed-po-wygaszeniu.png`, `04-dolot_baza-wszystko.png` |
+
+Sonda DIST (`rk3-dom`, przesunięcie w px bufora przy 900 wierszach — amplituda 8 px × 900 / 1080 = 6,7 px):
+
+| Faza | Siła / przepływ | Pas lewy: średnia / max | Pas prawy: średnia / max | Kolumna osi | NaN, B / A |
+|---|---|---|---|---|---|
+| 01 ładowanie | 0,16 / 0,14 | 0,91 / 1,9 | 0,87 / 1,9 | 0 | 0, 0 |
+| 02 kop | 1,44 / 1,43 | 5,1 / 12,7 | 5,9 / 12,7 | 0 | 0, 0 |
+| 03 przelot (Merkury, Słońce z boku) | 0,97 / 0,95 | 5,4 / 11,3 | 6,2 / 11,3 | 0 | 0, 0 |
+| 04 dolot | 1 / 1 | 4,3 / 10,3 | 4,6 / 10,3 | 0 | 0, 0 |
+| 05 zwolnienie (front wyjścia) | 1 / 0,63 | 1,7 / 11,5 | 1,7 / 11,5 | 0 | 0, 0 |
+| 06–10 hamowanie, ślizg, po | 0 | 0 | 0 | 0 | 0, 0 (warstwa nie idzie) |
+
+Czysta kolumna w każdej fazie skoku: 128 px pół szerokości (8% z 1600 — kadłub w kadrze lotu jest mniejszy). Pipeline'y synchroniczne po starcie: 0 we wszystkich przebiegach.
+
+Co widać: środek kadru (statek, cel, oś kursu) bez zmian; W2 daje po bokach pionowe smugi pędu w trzech warstwach — w locie wyraźne, w kopie gęste (krótko), pod planetami (Merkury, tarcza Słońca je zasłaniają); W1 na stopklatce tylko lekko faluje gwiazdy i brzegi ciał po bokach (gwiazdy zostają punktami — bez kresek i tęczy pierwszej wersji), w ruchu płynie w dół; w zwolnieniu (05) efekty znikają frontem od góry kadru, w hamowaniu (06) i dalej kadr jest jak bez efektów. Uwaga do porównań: ring Marsa w fazie 05 bywa w kadrze albo nie zależnie od przebiegu (także w bazie: `rk-baza` z ringiem, `rk2-baza` bez) — chwila zatrzymania zrzutu względem zegara soczewki, nie efekt boków.
+
+**Nie sprawdzone dla wersji 2** (przerwane — użytkownik gra): przebieg w workerze na kodzie końcowym (`--query "renderWorker=1&ziarno=7"`), kadr 32:9 (`--rozmiar 2560x720`), koszt GPU (ABAB `scripts/webgpu/warp-ped-gra.mjs --koszt 1` z `--query "ziarno=7"` i `"warpFx=0&ziarno=7"`; pomiar wersji 1 — różnica w szumie, § 3 niżej). Koszt wersji 2 powinien być podobny: W1 — te same dwie próbki tekstury na piksel boków, ale z wyższego poziomu mip; W2 — dalej jeden rysunek, 1800 zamiast 1600 instancji.
+
+## E. Dalsze propozycje w wersji równoległej (opisy)
+
+- **W4 „Rozmycie wzdłuż kursu przy krawędziach”** — w „uber” (`postGry.js`) N próbek sceny wzdłuż kursu (nie ku punktowi) × maska boków: tło po bokach rozciąga się w pionowe smugi. Najdroższe (N próbek na piksel boków, przy 5K ~0,5–1 ms), zmiana postu (sesja wydajności). Tylko, jeśli W1 + W2 za słabe.
+- **W5 „Szarpnięcie” przy kopie** — zamiast pierścienia: pas refrakcji prostopadły do kursu przelatuje raz z góry na dół kadru w ~0,3 s (fala uderzeniowa „przelotu”), drobiny na moment rozciągają się × 2. Kilka instrukcji w W1 / W2, uniform impulsu z obwiedni.
+- **W6 „Zapadnięcie” przy wyjściu** — front jest (W1–W3 gasną za frontem smug gwiazd); rozszerzenie: krótki przypływ haze w pasie frontu i smugi drobin skracane do punktów za frontem.
+- **W7 „Tempo napędu w obrazie”** — mnożnik przepływu i długości smug z prędkości napędu (Mk I–III; dziś przepływ widoczny jest jeden — 21 tys. j/s). Zero kosztu; decyzja projektowa (Mk I „biedniej”).
+- **W8 „Opływ mijanej planety”** — smugi i pasma haze rozchodzą się wokół tarczy mijanego ciała jak struga wokół walca (składnik w poprzek kursu przy brzegu tarczy, smugi drobin omijają tarczę). Obraz ciała z soczewki jako uniform; uważać na „jajko” wokół tarczy.
+- **W9 „Pył przy przejściu przez pas”** — na czas przelotu przez strefę pasa (plan trasy zna chwile) smugi gęstnieją i szarzeją, haze krótko drga mocniej; tylko subtelnie (pas w skoku nie jest rysowany — decyzja 2026-10-27).
+
+## F. Decyzje dla użytkownika (wersja 2)
+
+- **D1 — zestaw domyślny:** W1 + W2 (dziś) / + W3 / sam W2 / sam W1. Ocena w grze: bez parametru, `?warpFx=wszystko`, `?warpFx=czastki`, `?warpFx=haze`.
+- **D2 — siła i ziarno haze (W1):** dziś 8 px przy 1080 wierszach, gładkie pasma (komórki 0,2 / 0,08 H). Mocniej (`tune.hazeAmpPx`) — wyraźniejsze falowanie, ale rośnie aberracja na gwiazdach; drobniej (`hazeCell*`, `hazeLod*`) — szybko wraca „deszcz na szybie”.
+- **D3 — smugi pod planetami czy nad nimi:** dziś pod (pass tła — mijana tarcza je zasłania, „daleki pył”); nad (pass gry, pod kadłubami) czytają się jak pył tuż przy kamerze, ale rysują się po tarczach.
+- **D4 — gęstość, długość i jasność warstw W2:** tabela w § C; w kopie po bokach bywa gęsto („deszcz” — świadomie krótko, 0,6 s).
+- **D5 — szerokość czystej kolumny:** dziś max(2,5 × kadłub, 8% kadru); w kadrze lotu decyduje 8% (`tune.colMinW`, `colHullK`).
+- **D6 — które opisy z § E budować dalej** (W5 szarpnięcie przy kopie, W6 przypływ na froncie, W7 tempo napędu, W8 opływ planety, W9 pył pasa, W4 rozmycie wzdłuż kursu).
+- **D7 — preset grafiki:** efekty nie są w presetach (`src/game/graphicsQuality.js`); propozycja: preset Niska bez W1 (bez przebiegu DIST i trzech próbek sceny w poście), smugi × 0,5.
+
+---
+
+# Wersja 1 — punkt zbiegu (historia, zastąpiona 2026-10-29)
+
 Dotyczy SKOKU WARPA GRACZA (nie hipercruise'u — ten dostaje efekty osobno). Trzy propozycje są zbudowane jako działające prototypy za przełącznikiem z adresu (W1–W3), reszta (W4–W9) to opisy do decyzji. Kod: `src/3d/warp/warpEdgeFx.js` (nowy moduł), wpięcie w `src/3d/warp/warpNurt.js` (init + koniec klatki), test `tests/warpEdgeFx.test.mjs`.
 
 ## 0. W skrócie
