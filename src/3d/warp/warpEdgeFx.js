@@ -25,11 +25,13 @@
 //   W3 ZORZA KRAWĘDZI — dwa pasy przy lewej i prawej krawędzi kadru (geometria tylko przy krawędziach): słaba addytywna
 //                      poświata w barwie palety warpa, długie pasma dryfujące w dół; pass tła.
 // MASKA BOKÓW (wspólna, lustro CPU warpEdgeSideMask): 0 w kolumnie wzdłuż osi kursu przez statek (pół szerokości z szerokości
-// kadłuba na ekranie i szerokości kadru — warpEdgeLayout), rośnie ku krawędzi kadru po tej stronie osi; przy wyjściu FRONT
+// kadłuba na ekranie i rozpiętości kadru W POPRZEK kursu — warpEdgeLayout; w trybie kamery „Północ” przy kursie wschód–zachód
+// to wysokość ekranu), rośnie ku krawędzi kadru po tej stronie osi; przy wyjściu FRONT
 // prostopadły do kursu (ten sam co smug gwiazd i soczewki — warpLensPhase.js: warpExitFrontS) jedzie od dziobu ku rufie,
 // za nim efekty gasną.
 // FAZY CAŁKOWANE NA CPU (warpEdgePhaseStep: faza += prędkość · dt czasu efektu, zawijana) — do shadera jako uniformy, NIE
-// czas × prędkość w shaderze (przy zmianie prędkości wzór „gotował się” klatka w klatkę — lekcja z hipercruise'u).
+// czas × prędkość w shaderze (przy zmianie prędkości wzór „gotował się” klatka w klatkę — lekcja z hipercruise'u). Fazy są
+// w px bufora: zmiana skali renderu w locie (rozdzielczość dynamiczna, DPR, okno) przeskalowuje je (update: _phH, _phSpan).
 // OBWIEDNIA (czysta funkcja warpEdgeEnvelope): ładowanie — rozruch od 0, słabo; KOP — krótki impuls × 2 (siła i przepływ, bez
 // pierścieni); LOT — stała × prędkość widoczna (przy mijanym ciele statek zwalnia — przepływ i siła z nim); WYJŚCIE — front;
 // po zatrzymaniu 0. Tylko warp gracza (hipercruise — 0), tylko kamera z góry jednego gracza (sterownik: `o.lensAllowed`), czas —
@@ -139,8 +141,9 @@ export function warpEdgeFxSwitch(search = RenderWorld.pageSearch) {
  */
 export const WarpEdgeFxTune = {
   haze: null, czastki: null, zorza: null,
-  // czysta kolumna osi kursu: pół szerokości = max(colHullK × pół szerokości kadłuba na ekranie, colMinW × szerokość kadru),
-  // najwyżej colMaxW × szerokość; pełna siła na fullK drogi od osi do krawędzi kadru po tej stronie
+  // czysta kolumna osi kursu: pół szerokości = max(colHullK × pół szerokości kadłuba na ekranie, colMinW × rozpiętość kadru
+  // W POPRZEK kursu), najwyżej colMaxW × ta rozpiętość (przy kursie w górę — szerokość kadru, przy kursie wschód–zachód bez
+  // obrotu kadru — wysokość); pełna siła na fullK drogi od osi do krawędzi kadru po tej stronie
   colHullK: 2.5,
   colMinW: 0.08,
   colMaxW: 0.3,
@@ -193,16 +196,18 @@ const num = (v, d) => {
 
 /** Nowy rekord układu kadru (wynik warpEdgeLayout). */
 export function newWarpEdgeLayout() {
-  return { cx: 0, cy: 1, nx: 1, ny: 0, lAxis: 0, aShip: 0, aExt: 1, lExt: 1, R: 1, clear: 1 };
+  return { cx: 0, cy: 1, nx: 1, ny: 0, lAxis: 0, aShip: 0, aExt: 1, lExt: 1, R: 1, clear: 1, reach: 2 };
 }
 
 /**
  * Układ efektów w osiach ekranu (px bufora od środka kadru, y w GÓRĘ): `course` — kąt kursu na ekranie (osie ekranu y w dół:
  * kurs gry − obrót kadru), statek (sx, sy — y w górę), kadr W × H, pół szerokości kadłuba na ekranie [px]. Wynik: kurs c
  * i poprzeczna n = (c.y, −c.x) (w prawo przy kursie w górę), oś kursu przez statek (lAxis = S · n), statek wzdłuż kursu
- * (aShip = S · c), pół-zasięgi kadru wzdłuż kursu i w poprzek (rzut prostokąta kadru), R — pół większego boku (zakres
- * rozstawienia drobin — nie zależy od kąta kursu: obrót kadru nie przetasowuje drobin), clear — pół szerokości czystej
- * kolumny. Bez alokacji.
+ * (aShip = S · c), pół-zasięgi kadru wzdłuż kursu (aExt) i w poprzek (lExt) — rzut prostokąta kadru, R — pół większego boku
+ * (TYLKO zawijanie drobin wzdłuż kursu: nie zależy od kąta kursu, więc obrót kadru nie przetasowuje drobin wzdłuż), clear —
+ * pół szerokości czystej kolumny (z rozpiętości kadru W POPRZEK kursu, 2 · lExt: w trybie kamery „Północ” przy kursie
+ * wschód–zachód to wysokość ekranu, nie szerokość), reach — zasięg drobin w poprzek od osi kursu (do dalszej krawędzi kadru:
+ * lExt + |lAxis|; ciągły w kącie kursu — obrót kadru w ładowaniu przesuwa drobiny płynnie). Bez alokacji.
  */
 export function warpEdgeLayout(course, sx, sy, W, H, hullHalfPx, T = WarpEdgeFxTune, out = newWarpEdgeLayout()) {
   const a = num(course, Math.PI * -0.5);
@@ -219,9 +224,11 @@ export function warpEdgeLayout(course, sx, sy, W, H, hullHalfPx, T = WarpEdgeFxT
   out.aExt = Math.abs(cx) * w * 0.5 + Math.abs(cy) * h * 0.5;
   out.lExt = Math.abs(out.nx) * w * 0.5 + Math.abs(out.ny) * h * 0.5;
   out.R = Math.max(w, h) * 0.5;
+  const across = 2 * out.lExt;
   const hull = Math.max(0, num(hullHalfPx, 0));
-  const lo = Math.max(num(T.colHullK, 2.5) * hull, num(T.colMinW, 0.08) * w);
-  out.clear = Math.max(1, Math.min(lo, num(T.colMaxW, 0.3) * w));
+  const lo = Math.max(num(T.colHullK, 2.5) * hull, num(T.colMinW, 0.08) * across);
+  out.clear = Math.max(1, Math.min(lo, num(T.colMaxW, 0.3) * across));
+  out.reach = Math.max(out.lExt + Math.abs(out.lAxis), out.clear + 1);
   return out;
 }
 
@@ -353,7 +360,7 @@ function newUniforms() {
   return {
     view: uniform(new THREE.Vector2(1, 1)),                 // bufor [px] — wierzchołki W2 / W3 (fragmenty: screenSize)
     axes: uniform(new THREE.Vector4(0, 1, 1, 0)),           // kurs c (xy), poprzeczna n (zw) — osie ekranu, y w górę
-    frame: uniform(new THREE.Vector4(1, 1, 0, 0)),          // pół-zasięg kadru w poprzek (lExt), R, oś kursu (lAxis), statek wzdłuż (aShip)
+    frame: uniform(new THREE.Vector4(1, 1, 0, 0)),          // pół-zasięg kadru w poprzek (lExt), R (zawijanie drobin wzdłuż kursu), oś kursu (lAxis), statek wzdłuż (aShip)
     column: uniform(new THREE.Vector4(1, 0.85, 0, 0)),      // pół szerokości kolumny, fullK, front: on, px od statku
     band: uniform(50),                                      // pół szerokości przejścia frontu [px]
     haze: uniform(new THREE.Vector4(0, 0.35, 0.5, 0)),      // amp [px] (× siła), udział wzdłuż, udział oktawy 2, poziom mip 1
@@ -364,6 +371,7 @@ function newUniforms() {
     dustBr: uniform(new THREE.Vector4(0, 0, 0, 2)),         // jasności warstw, rzadkie jaśniejsze (bliska)
     dustW: uniform(new THREE.Vector4(1, 1, 1, 0)),          // szerokości kwadów [px]
     dustN: uniform(new THREE.Vector4(1, 2, 3, 0)),          // granice warstw (indeks instancji): daleka < x ≤ średnia < y ≤ bliska
+    dustReach: uniform(2),                                  // zasięg drobin w poprzek od osi kursu [px] (warpEdgeLayout: reach)
     dustTint: uniform(new THREE.Vector3(0.75, 0.88, 1)),
     aurora: uniform(new THREE.Vector4(0, 200, 1, 1)),       // siła, pas [px], kafelek w poprzek, wzdłuż [px]
     auroraPh: uniform(0),                                   // faza dryfu [px]
@@ -475,14 +483,16 @@ function buildDustMaterial(U) {
     const phase = pick(U.dustPh).toVar();
     const len0 = pick(U.dustLen).toVar();
     const wPx = pick(U.dustW).mul(mix(0.85, 1.2, h4)).toVar();
-    // w poprzek: strona osi kursu i odległość od niej — od brzegu czystej kolumny do krawędzi kadru po tej stronie (z zapasem
-    // R — kąt kursu nie przestawia drobin), gęściej przy bokach (gęstość ∝ odległość)
+    // w poprzek: strona osi kursu i odległość od niej — od brzegu czystej kolumny do dalszej krawędzi kadru (rzut kadru
+    // w poprzek kursu, lExt + |lAxis| — w trybie kamery „Północ” przy kursie wschód–zachód to wysokość ekranu, nie R),
+    // gęściej przy bokach (gęstość ∝ odległość)
     const side = step(0.5, h1).mul(2.0).sub(1.0);
     const dMin = U.column.x;
-    const dMax = max(U.frame.y.add(abs(U.frame.z)), dMin.add(1.0));
+    const dMax = max(U.dustReach, dMin.add(1.0));
     const d = mix(dMin, dMax, sqrt(fract(h1.mul(2.0)))).toVar();
     const l = U.frame.z.add(side.mul(d)).toVar();
-    // wzdłuż: zawijanie w [−R − zapas, R + zapas], głowa jedzie w dół (przeciw kursowi), ogon za nią (ku dziobowi)
+    // wzdłuż: zawijanie w [−R − zapas, R + zapas] (R — pół większego boku: kąt kursu nie przestawia drobin wzdłuż), głowa
+    // jedzie w dół (przeciw kursowi), ogon za nią (ku dziobowi)
     const span = max(U.dustPh.w, 1.0);
     const rate = mix(0.88, 1.12, h3);
     const s = fract(h2.add(phase.mul(rate).div(span)));
@@ -604,8 +614,11 @@ export class WarpEdgeFx {
     this._env = newWarpEdgeEnvelope();
     this._envIn = { mode: 'idle', charge: 0, kickAge: 0, exitAge: 0, exitSlow: 0, flowRatio: 1, hyper: false };
     this._lay = newWarpEdgeLayout();
-    // fazy [px] (całkowane na CPU): haze — dwie oktawy, drobiny — trzy warstwy, zorza
+    // fazy [px] (całkowane na CPU): haze — dwie oktawy, drobiny — trzy warstwy, zorza; wysokość kadru i rozpiętość zawijania
+    // drobin, przy których je liczono (zmiana skali renderu w locie przeskalowuje fazy — update)
     this._ph = { h1: 0, h2: 0, far: 0, mid: 0, near: 0, aurora: 0 };
+    this._phH = 0;
+    this._phSpan = 0;
     this._updated = false;
     this._fxStep = null;
     this.stats = { on: false, strength: 0, speed: 0, kick: 0, clear: 0, haze: false, czastki: false, zorza: false, src: '' };
@@ -649,6 +662,8 @@ export class WarpEdgeFx {
     this.distLive = false;
     const ph = this._ph;
     ph.h1 = 0; ph.h2 = 0; ph.far = 0; ph.mid = 0; ph.near = 0; ph.aurora = 0;
+    this._phH = 0;
+    this._phSpan = 0;
     const s = this.stats;
     s.on = false;
     s.strength = 0;
@@ -710,12 +725,33 @@ export class WarpEdgeFx {
     U.axes.value.set(L.cx, L.cy, L.nx, L.ny);
     U.frame.value.set(L.lExt, L.R, L.lAxis, L.aShip);
     U.column.value.set(L.clear, num(T.fullK, 0.85), env.frontOn, env.frontS * zoom);
+    U.dustReach.value = L.reach;
     U.band.value = Math.max(1, num(T.frontBand, 0.06) * H);
     // --- fazy (całkowane czasem efektu; pauza: dt = 0) ---
     const s = env.strength;
     const speed = env.speed;
     const ph = this._ph;
     const aliasK = num(T.aliasK, 15);
+    // Fazy są w px bufora: zmiana skali renderu w locie (rozdzielczość dynamiczna — Core3D.setRenderScale, zmiana DPR,
+    // okna) przestawiałaby wzór w jednej klatce (5120 × 1440, skala 1 → 0,85 po ~5 s lotu: skok o ~0,6–0,7 okresu).
+    // Przeskalowane PRZED krokiem: haze i zorza z wysokością kadru (kafelki ∝ H), drobiny z rozpiętością zawijania
+    // (pozycja drobiny = faza / rozpiętość).
+    const margin = 0.4 * H;
+    const span = 2 * (L.R + margin);
+    if (this._phH > 0 && H !== this._phH) {
+      const k = H / this._phH;
+      ph.h1 *= k;
+      ph.h2 *= k;
+      ph.aurora *= k;
+    }
+    this._phH = H;
+    if (this._phSpan > 0 && span !== this._phSpan) {
+      const k = span / this._phSpan;
+      ph.far *= k;
+      ph.mid *= k;
+      ph.near *= k;
+    }
+    this._phSpan = span;
     // W1: kafelki szumu [px] (4 komórki bazowe fbm na kafelek), faza zawijana co kafelek wzdłuż — wzór bez skoku; limit
     // aliasingu z komórki TRZECIEJ oktawy fbm tekstury wzdłuż (kafelek / 16 — najdrobniejsza, którą zostawia poziom mip)
     const t1x = Math.max(1, 4 * num(T.hazeCell1, 0.2) * H);
@@ -732,16 +768,15 @@ export class WarpEdgeFx {
     U.haze.value.set(num(T.hazeAmpPx, 8) * scale * Math.min(s, num(T.hazeKickMax, 1.4)), num(T.hazeAlong, 0.35), num(T.hazeFine, 0.4), lod1);
     U.haze1.value.set(t1x, t1y, ph.h1, lod2);
     U.haze2.value.set(t2x, t2y, ph.h2, 0);
-    // W2: trzy warstwy — prędkość [px/s], długość smugi (bez stroboskopu, najwyżej zapas zawijania), rozpiętość zawijania stała
-    // na klatkę kadru (R + zapas — kąt kursu i prędkość jej nie zmieniają)
-    const margin = 0.4 * H;
+    // W2: trzy warstwy — prędkość [px/s], długość smugi (bez stroboskopu, najwyżej zapas zawijania), rozpiętość zawijania
+    // `span` stała na klatkę kadru (2 · (R + zapas) — kąt kursu i prędkość jej nie zmieniają)
     const vF = speed * num(T.dustSpeedFar, 0.5) * H;
     const vM = speed * num(T.dustSpeedMid, 1.4) * H;
     const vN = speed * num(T.dustSpeedNear, 3) * H;
     ph.far = warpEdgePhaseStep(ph.far, vF, dt);
     ph.mid = warpEdgePhaseStep(ph.mid, vM, dt);
     ph.near = warpEdgePhaseStep(ph.near, vN, dt);
-    U.dustPh.value.set(ph.far, ph.mid, ph.near, 2 * (L.R + margin));
+    U.dustPh.value.set(ph.far, ph.mid, ph.near, span);
     // smuga ≥ przesuw na klatkę × 1,3 — przy najszybszej drobinie warstwy (tempo × 1,12) i najkrótszej (× 0,7)
     U.dustLen.value.set(
       warpEdgeStreakLen(num(T.dustLenFar, 30) * scale, speed, vF * 1.12 / 0.7, dt, margin),
