@@ -291,7 +291,9 @@ export const HyperFlow = {
     const T = this.tune;
     const L = ship.length;
     const v = Math.max(T.flowMin * L, Math.min(T.flowMax * L, Math.abs(Number(speed) || 0) * T.flowK));
-    U.time.value = (Number(time) || 0) % 4096;
+    // czas × przepływ idzie do współrzędnych szumu we float32: zawinięcie co 512 s trzyma precyzję (skok wzoru raz
+    // na ~8,5 min lotu — w szumie niewidoczny)
+    U.time.value = (Number(time) || 0) % 512;
     U.zoomPx.value = zoomPx > 0 ? zoomPx : 0.1;
     U.sheath.value.set(T.sheathK, T.sheathLo, T.sheathHi, v);
     U.wake.value.set(T.wakeK, T.wakeLo, T.wakeHi, v * T.wakeFlow);

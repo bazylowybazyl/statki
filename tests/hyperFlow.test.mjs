@@ -136,3 +136,57 @@ test('partia: bez statku nic nie rysuje; setShip bez siły nie uzbraja (dysze z 
   HyperFlow.nozzle(0, 0, 0, -1, 30);
   assert.equal(HyperFlow._commit(), false);
 });
+
+// ── kamera: lekkie pchnięcie zamiast kopu warpa (cameraRig.js — input.hyper) ─────────────────────────────
+
+import { createCameraRig, cameraRigTune, stepCameraRigWarp, noteCameraRigWarp, CAMERA_WARP_PULSES, cameraWarpPulse } from '../src/game/cameraRig.js';
+
+function rigRun(hyper) {
+  const rig = createCameraRig();
+  const tune = cameraRigTune;
+  const w = { dt: 1 / 120, state: 'idle', charge: 0, dirX: 0, dirY: -1, enabled: true, suspend: false, exitAge: -1,
+    exitSlow: 0.7, exitHalt: 1.35, rulon: false, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1,
+    arrivalDepthK: 0, viewW: 1920, viewH: 1080, hyper };
+  const out = { maxShake: 0, maxLag: 0, minF: Infinity, maxF: 0 };
+  // rozruch 3 s
+  w.state = 'charging';
+  for (let i = 0; i <= 360; i++) {
+    w.charge = Math.min(1, i / 360);
+    stepCameraRigWarp(rig, w, tune);
+    out.maxShake = Math.max(out.maxShake, rig.warpShakePx);
+  }
+  w.state = 'active';
+  noteCameraRigWarp(rig, 'kick');
+  const holdLog = Math.log(tune.warpZoomOut);
+  for (let i = 0; i < 360; i++) {
+    stepCameraRigWarp(rig, w, tune);
+    out.maxLag = Math.max(out.maxLag, rig.warpLagPx);
+    out.minF = Math.min(out.minF, Math.exp(rig.warpZoomLog - holdLog));
+  }
+  // wyjście: stan schodzi do 'idle' (impuls wyjścia liczy zatrzask z lotu)
+  w.state = 'idle';
+  noteCameraRigWarp(rig, 'exit');
+  for (let i = 0; i < 30; i++) {
+    stepCameraRigWarp(rig, w, tune);
+    out.maxF = Math.max(out.maxF, Math.exp(rig.warpZoomLog) / rig.warpHold);
+  }
+  return out;
+}
+
+test('kamera hipercruise\'u v2: cofnięcie × hyperKickScale, impulsy zoomu × hyperZoomPulse (także wyjście po zejściu do idle), bez drżenia rozruchu; warp bez zmian', () => {
+  const warp = rigRun(false);
+  const hyper = rigRun(true);
+  const peak = cameraWarpPulse(0.112, CAMERA_WARP_PULSES.lagRise, CAMERA_WARP_PULSES.lagFall);
+  assert.ok(Math.abs(warp.maxLag - cameraRigTune.warpKickPx * peak) < 2, `warp: ${warp.maxLag}`);
+  assert.ok(Math.abs(hyper.maxLag - warp.maxLag * cameraRigTune.hyperKickScale) < 1e-6, `hipercruise: ${hyper.maxLag}`);
+  assert.ok(hyper.maxLag < 50, 'pchnięcie, nie wyrzut');
+  assert.ok(warp.maxShake > 3.9, 'warp: drżenie ładowania 4 px');
+  assert.equal(hyper.maxShake, cameraRigTune.hyperChargeShakePx, 'hipercruise: bez drżenia rozruchu');
+  const kickW = 1 - warp.minF;
+  const kickH = 1 - hyper.minF;
+  assert.ok(Math.abs(kickH - kickW * cameraRigTune.hyperZoomPulse) < 2e-3, `impuls zoomu przy starcie ${kickH} vs ${kickW}`);
+  const exitW = warp.maxF - 1;
+  const exitH = hyper.maxF - 1;
+  assert.ok(exitW > 0.05, `warp: impuls wyjścia ${exitW}`);
+  assert.ok(Math.abs(exitH - exitW * cameraRigTune.hyperZoomPulse) < 3e-3, `impuls wyjścia hipercruise'u ${exitH} vs ${exitW}`);
+});

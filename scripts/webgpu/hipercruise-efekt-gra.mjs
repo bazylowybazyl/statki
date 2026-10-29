@@ -4,8 +4,10 @@
 // warunku (rAF), CDP robi zdjęcie i wznawia (odpytywanie przez CDP przegapiłoby krótkie fazy).
 //
 //   node scripts/webgpu/hipercruise-efekt-gra.mjs [--out .tmp/hipercruise-efekt] [--query renderWorker=1] [--rozmiar 1600x900]
+//     [--zoom 0.3]
 //
-// --query — doklejane do adresu (tryb gracza: renderWorker=1). Wynik: <out>/*.png i <out>/raport.json
+// --query — doklejane do adresu (tryb gracza: renderWorker=1; dawny wygląd hipercruise'u: hcStary=1), --zoom — zoom gracza
+// przed startem (zbliżenie opływu i dysz; w hipercruisie rig oddala × warpZoomOut). Wynik: <out>/*.png i <out>/raport.json
 // (fazy, prędkość, pipeline'y synchroniczne w trybie off — w workerze renderer jest poza stroną).
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -16,6 +18,7 @@ const [W, H] = String(args.rozmiar || '1600x900').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/hipercruise-efekt');
 mkdirSync(out, { recursive: true });
 const query = args.query ? `&${args.query}` : '';
+const zoom = Number(args.zoom || 0);
 
 const { server, base } = await startVite(Number(args.port || 5395));
 const chrome = await startChrome({ width: W, height: H });
@@ -68,6 +71,7 @@ try {
     const a = best ? Math.atan2(s.pos.y - best.y, s.pos.x - best.x) : s.angle;
     window.devTeleportTo(s.pos.x, s.pos.y, { angle: a, quiet: true });
     s.vel.x = 0; s.vel.y = 0; s.angVel = 0; return true; })()`);
+  if (zoom > 0) await ev(`(() => { const c = window.camera; c.targetZoom = ${zoom}; c.manualZoom = true; return true; })()`);
   await sleep(1500);
   await shot('00-przed');
   const stops = [
