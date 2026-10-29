@@ -349,7 +349,7 @@ test('halo Ziemi i Marsa w grze: poświata limbu z modelu atmosfery menu, gaśni
   assert.match(src, /atmU\.uSunDir\.value\.set\(dx \/ len, dy \/ len, 0\)/, 'słońce w płaszczyźnie gry');
 });
 
-test('limit klatek tła menu (2026-10-30): zegar wirtualny harnessu omija limit jak pętla gry, po zmianie rozmiaru okna klatka od razu', () => {
+test('limit klatek tła menu (2026-10-29): zegar wirtualny harnessu omija limit jak pętla gry, po zmianie rozmiaru okna klatka od razu', () => {
   const prevRaf = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = () => 1;   // _frame zamawia następną klatkę — w teście woła ją pętla niżej
   try {

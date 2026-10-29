@@ -55,8 +55,8 @@ mniejszej liczbie klatek lekko rośnie (efekty z dłuższym krokiem).
 
 ## Wyniki: bez VSync (atrapa Electrona, dawny budzik — kolejka)
 
-Budzik z 2026-10-29 (sen setTimeout do chwili należnej − margines z 90. percentyla spóźnień, reszta kolejką
-MessageChannel); od 2026-10-30 domyślnie wątek budzika — § „Budzik bez VSync”.
+Pierwszy budzik (sen setTimeout do chwili należnej − margines z 90. percentyla spóźnień, reszta kolejką
+MessageChannel); po przeglądzie (też 2026-10-29) domyślnie wątek budzika — § „Budzik bez VSync”.
 
 | Limit | kl/s | GPU | Moc | Budzik |
 |---|---|---|---|---|
@@ -89,7 +89,7 @@ Menu (rAF workera): 120 → 115–117 kl/s.
 5. Przebiegi z 12:39–12:50 (dwa) nakładały się na cudze pomiary GPU (`gpu-pas-gra.mjs`, `gaz-kosmos-gra.mjs` innych
    sesji) — odrzucone; narzędzie ma od tego strażnika ciszy i oznacza okna, w których ruszył cudzy harness (`obce`).
 
-## Budzik bez VSync — kolejka, sen strony, wątek budzika (2026-10-30)
+## Budzik bez VSync — kolejka, sen strony, wątek budzika (2026-10-29)
 
 Przegląd: dawny budzik przy limitach 120–240 dopinał czekanie kolejką MessageChannel — rdzeń CPU zajęty i
 ~170–240 tys. MessageEvent/s (alokacje w gorącej pętli, praca GC), a opcja ma dawać ciszę i mniej prądu. Budzik
@@ -125,8 +125,9 @@ w górę + spóźnienie setTimeout strony), worker:0 0,1–0,4 / 0,8–1,1 ms (s
 
 Wnioski:
 
-1. Wybór: `worker` (domyślny). Takt jak przy dopinaniu kolejką (mediana = interwał limitu, 90. percentyl +0,02–0,1
-   ms), wątek strony bez kręcenia: 27,7 → 12,0% rdzenia przy 120, 89,5 → 22,5% przy 240, zadania kolejki 34–172 tys./s
+1. Wybór: `worker` (domyślny). Mediana i 90. percentyl odstępów jak przy dopinaniu kolejką (mediana = interwał
+   limitu, 90. percentyl +0,02–0,1 ms), ale ogon gorszy: 99. percentyl przy 120 / 240 / 60 — 8,55 / 4,81 / 19,92 ms
+   wobec 8,44 / 4,26 / 16,73 ms kolejki, maks. przy 60 — 48,2 wobec 16,77 ms (pkt 4). Wątek strony bez kręcenia: 27,7 → 12,0% rdzenia przy 120, 89,5 → 22,5% przy 240, zadania kolejki 34–172 tys./s
    → 0, proces renderera −93 p.p. przy 120 i −47 p.p. przy 240. Koszt: pętla wątku budzika ~1 ms na klatkę (12% rdzenia
    przy 120, 23% przy 240, 5% przy 60) — na osobnym wątku, bez zadań i alokacji.
 2. `sen` jest najtańszy (proces 90% przy 120), ale odstępy klatek rozrzucone o ±1–1,5 ms (p1–p99 7,0–10,0 ms przy
@@ -139,10 +140,10 @@ Wnioski:
    ogona nie miała — przyczyna nie sprawdzona (podejrzenie: praca w czasie bezczynności wątku, np. GC). Okna 6 s —
    ogony to pojedyncze klatki; sprawdzić w prawdziwym Electronie bez VSync.
 5. Dawny budzik w tym przebiegu miał przy 120 margines 1 ms (spóźnienia setTimeout strony małe: p90 0,07 ms), więc
-   kolejka dopinała ~1 ms na klatkę; 2026-10-29 spóźnienia budzika strony miały p90 5,6–6,9 ms i margines 6 ms — wtedy
-   kolejką szło całe czekanie. Koszt dawnego budzika zależał od chwili; wątek budzika — nie.
+   kolejka dopinała ~1 ms na klatkę; w pierwszym pomiarze (wyżej) spóźnienia budzika strony miały p90 5,6–6,9 ms
+   i margines 6 ms — wtedy kolejką szło całe czekanie. Koszt dawnego budzika zależał od chwili; wątek budzika — nie.
 
-## Poprawki po przeglądzie (2026-10-30)
+## Poprawki po przeglądzie (2026-10-29)
 
 - Tło menu na stronie (tryb off) omija limit przy zegarze wirtualnym harnessu jak pętla gry: `FrameLimiter.bypass` —
   funkcję podaje strona (`harnessClockVirtual`, trzeci argument `setFrameLimit`); przy zegarze `frozen` co N-ta klatka
@@ -153,3 +154,20 @@ Wnioski:
   obrazu. Tryb worker bez zmian (resize nie czyści kanw obrazu i nakładek).
 - Rozdzielczość dynamiczna: budżet z celu, a przy niższym limicie — z limitu (`gfxDynamicBudgetFps`); cel 120 przy
   limicie 60 obniżał skalę do budżetu 8,3 ms, choć gra rysowała 60 kl/s.
+
+## Poprawki po drugim przeglądzie (2026-10-29)
+
+- Start wątku budzika: wątek powstawał przy pierwszym zamówieniu, więc pierwsza klatka z limitem czekała na start
+  modułu (symulacja recenzenta: start 60 ms → odstęp 68 ms), a start dłuższy niż ~330 ms dawał trzy strażniki z rzędu
+  i `sen` do końca sesji. Teraz `applyFrameLimit` tworzy wątek z góry przy limicie bez VSync (`prepare`), a wątek budzi
+  klatki dopiero po sygnale gotowości (komunikat 0 na końcu modułu) — do niego budzik strony, bez strażników; brak
+  gotowości przez 240 zamówień → `sen` z ostrzeżeniem (`tests/frameWake.test.mjs`: start 400 ms bez dziury w takcie).
+- Czekanie ≈ 0 (klatka dłuższa niż interwał): każda klatka robiła rundę przez wątek budzika (przesył w obie strony
+  ~0,1 ms). Czekanie krótsze niż `hopMs` (0,1 ms) idzie jednym skokiem kolejką strony. Próg 0,1 ms, nie 0,5 ms:
+  limiter rysuje dopiero w chwili należnej (`waitMs` już odlicza jego próg 0,5 ms), więc skok przed nią musiałby dopinać
+  kolejką strony do chwili należnej — dłuższe czekanie dopina wątek budzika, wątek gry zostaje wolny.
+- Bez limitu albo z VSync wątek budzika jest zamykany (`release`); zamówienie u wątku przechodzi na budzik strony
+  (pętla na nie czeka), handlery zamkniętego wątku są zdjęte (spóźniony komunikat starego wątku nie udaje gotowości).
+- Narzędzia: `FrameLimiter.wake.lateMax` / `lateOver` (budzenia spóźnione > 2 ms) i `frameMax` (najdłuższa klatka strony
+  — od budzenia do następnego zamówienia); `limit-klatek-gra.mjs --budziki …+bariera` — strażnik dwustopniowy
+  (`tune.workerFence`): pierwszy stopień budzika strony w chwili należnej (pełne ms w górę), drugi 100 ms dalej.

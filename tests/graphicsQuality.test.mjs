@@ -305,6 +305,9 @@ test('limit klatek w index.html: chipy, pętla gry (złożenie przed limitem, we
   assert.match(apply, /frameLimiter\.setFps\(fps\);/);
   assert.match(apply, /frameLimiter\.setVsync\(frameLimitVsync\(\)\);/);
   assert.match(apply, /menuBackdrop\?\.setFrameLimit\?\.\(fps, frameLimitVsync\(\), harnessClockVirtual\);/);
+  // wątek budzika bez VSync z góry przy limicie (pierwsze klatki nie czekają na start modułu), bez limitu — zamknięty
+  assert.match(apply, /if \(frameLimiter\.mode === 'time'\) limitWake\.prepare\(\);\n\s+else limitWake\.release\(\);/);
+  assert.ok(apply.indexOf('frameLimiter.setVsync(frameLimitVsync());') < apply.indexOf('limitWake.prepare()'), 'tryb limitera przed decyzją');
   assert.match(html, /const frameLimitVsync = \(\) => !\(hullfallApp && hullfallApp\.vsync === false\);/);
   const applyGfx = html.slice(html.indexOf('function applyGraphicsSettings()'), html.indexOf('function updateGraphicsUI()'));
   assert.match(applyGfx, /applyFrameLimit\(\);/);

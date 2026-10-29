@@ -4,7 +4,8 @@
 // zadań i alokacji — wątek strony nie dopina czekania kolejką), potem jeden komunikat [seq, ms pętli] do strony. Zegar
 // workera ma inny początek niż zegar strony — czas względny (przesył zamówienia, ~0,05 ms, dochodzi do spóźnienia).
 // Wiadomość bez zamówienia (0) — anuluje sen. Zamówienie przychodzi zadaniem wiadomości, więc setTimeout nie jest
-// zagnieżdżony (bez progu 4 ms).
+// zagnieżdżony (bez progu 4 ms). Po starcie modułu komunikat 0 — gotowość: do niego klatki budzi strona (start modułu
+// nie opóźnia klatek ani nie liczy się strażnikowi).
 
 let timer = 0;
 let seq = 0;
@@ -28,3 +29,5 @@ self.onmessage = (e) => {
   if (sleep >= 1) timer = setTimeout(fire, sleep);
   else fire();
 };
+
+self.postMessage(0);

@@ -21,11 +21,12 @@
 // Strażnik ciszy (--cisza 30, --ciszaMaks 900): start dopiero, gdy przez 30 s nie działa żaden inny harness
 // (`node scripts/….mjs`, Chrome / Electron z --remote-debugging-port); cudzy harness w trakcie — okno oznaczone `obce`.
 // --budziki worker,sen,kolejka,worker:0 (z --takt 0 --bezVsync 1): każde okno gry dla każdej strategii budzika bez VSync
-// (src/render/frameWake.js — FrameLimiter.wake.setStrategy; „:ms” — końcówka czekania pętlą wątku / kolejką, strojenie
-// FrameLimiter.wake.tune) — A/B w jednym przebiegu: kl/s, odstępy klatek [ms]
-// (p1 / p50 / p90 / p99 / maks., udział > interwał + 2 ms), CPU wątku strony i procesu renderera (CDP
-// Performance.getMetrics: ThreadTime, ProcessTime, TaskDuration — % rdzenia), zadania kolejki i dopięcia na klatkę,
-// pętla wątku budzika [ms / klatkę], spóźnienia budzeń.
+// (src/render/frameWake.js — FrameLimiter.wake.setStrategy; „:ms” — końcówka czekania pętlą wątku / kolejką, „+bariera”
+// — strażnik dwustopniowy z pierwszym stopniem w chwili należnej, tune.workerFence; strojenie FrameLimiter.wake.tune)
+// — A/B w jednym przebiegu: kl/s, odstępy klatek [ms] (p1 / p50 / p90 / p99 / maks., udział i liczba > interwał + 2 ms),
+// CPU wątku strony i procesu renderera (CDP Performance.getMetrics: ThreadTime, ProcessTime, TaskDuration — % rdzenia),
+// zadania kolejki i dopięcia na klatkę, pętla wątku budzika [ms / klatkę], spóźnienia budzeń (z 64 ostatnich; w całym
+// oknie: maks. i liczba > 2 ms) i najdłuższa klatka strony — długi odstęp od spóźnionego budzenia albo od długiej klatki.
 import { mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -175,6 +176,7 @@ const STATE = `(() => {
     dn: D ? D.n : 0, menuFrames: B && B.stats ? B.stats.frames : -1,
     wake: w ? { strategy: w.strategy, marginMs: +w.marginMs.toFixed(2), sleeps: w.sleeps, hops: w.hops, spins: w.spins,
       wakes: w.wakes, workerMsgs: w.workerMsgs, workerBusyMs: w.workerBusyMs, watchdogs: w.watchdogs, workerError: w.workerError,
+      lateMax: w.lateMax, lateOver: w.lateOver, frameMax: w.frameMax, ready: w.workerReady, fence: !!(w.tune && w.tune.workerFence),
       late: Array.from(w.late.subarray(0, Math.min(w.late.length, w.lateN))).sort((x, y) => x - y) } : null,
     gpu: H ? +(H.stats[0] || 0).toFixed(2) : null, gpuC: H ? +(H.stats[1] || 0).toFixed(2) : null };
 })()`;
@@ -188,7 +190,7 @@ function gapStats(ts, fps) {
   const q = (p) => +g[Math.min(g.length - 1, Math.floor(p * (g.length - 1)))].toFixed(2);
   const I = fps > 0 ? 1000 / fps : 0;
   return { p1: q(0.01), p50: q(0.5), p90: q(0.9), p99: q(0.99), maks: +g[g.length - 1].toFixed(2),
-    ...(I ? { ponadI2: +(g.filter((d) => d > I + 2).length / g.length).toFixed(4) } : {}) };
+    ...(I ? { ponadI2: +(g.filter((d) => d > I + 2).length / g.length).toFixed(4), ponadI2N: g.filter((d) => d > I + 2).length } : {}) };
 }
 const composeTs = (from, to) => ev(`(() => { const C = window.__lkC; if (!C) return []; const o = [];
   for (let i = Math.max(${from}, C.n - 65535); i < ${to}; i++) o.push(C.ts[i & 65535]); return o; })()`);
@@ -247,15 +249,18 @@ function battleExpr([NF = 0, ND = 0, NB = 0, NS = 0]) {
 }
 
 async function measure(limit, kind, budzik = null) {
-  // budzik: 'nazwa' albo 'nazwa:ms' — końcówka czekania pętlą wątku ('worker') / kolejką ('sen'); strojenie domyślne
-  // przywracane przed każdym oknem
-  const [bzName, bzSpin] = String(budzik || '').split(':');
+  // budzik: 'nazwa', 'nazwa:ms' — końcówka czekania pętlą wątku ('worker') / kolejką ('sen'), '+bariera' — strażnik
+  // dwustopniowy (tune.workerFence); strojenie domyślne przywracane przed każdym oknem
+  const [bzSpec, ...bzFlags] = String(budzik || '').split('+');
+  const [bzName, bzSpin] = bzSpec.split(':');
   await ev(`(() => { GraphicsQuality.apply({ frameLimit: '${limit}' });
     const w = FrameLimiter.wake; if (w && w.tune) { window.__lkTune0 = window.__lkTune0 || { ...w.tune }; Object.assign(w.tune, window.__lkTune0); }
     ${bzName ? `w.setStrategy('${bzName}');` : ''}
     ${bzSpin !== undefined && bzSpin !== '' ? `w.tune[w.strategy === 'worker' ? 'workerSpinMs' : 'senSpinMs'] = ${Number(bzSpin)};` : ''}
+    ${bzFlags.includes('bariera') ? 'w.tune.workerFence = true;' : ''}
     return true; })()`);
   await sleep(2000);
+  await ev(`(() => { const w = FrameLimiter.wake; if (w) { w.lateMax = 0; w.frameMax = 0; } return true; })()`);
   const a = await ev(STATE);
   const ca = await cpuMetrics();
   const t0 = Date.now();
@@ -294,6 +299,8 @@ async function measure(limit, kind, budzik = null) {
         snyS: +(dw('sleeps') / s).toFixed(1), kolejkaS: Math.round((dw('hops') + dw('spins')) / s),
         dopieciaNaKlatke: frames > 0 ? +(dw('spins') / frames).toFixed(1) : null, budzeniaS: +(dw('wakes') / s).toFixed(1),
         watekMsNaKlatke: dw('wakes') > 0 ? +(dw('workerBusyMs') / dw('wakes')).toFixed(2) : 0,
+        spoznioneOkno: dw('lateOver'), spoznienieMaksMs: +b.wake.lateMax.toFixed(2), klatkaMaksMs: +b.wake.frameMax.toFixed(2),
+        ...(b.wake.fence ? { bariera: true } : {}), ...(b.wake.strategy === 'worker' && !b.wake.ready ? { niegotowy: true } : {}),
         ...(dw('watchdogs') ? { straznik: dw('watchdogs') } : {}), ...(b.wake.workerError ? { blad: b.wake.workerError } : {}) };
     }
   } else {

@@ -147,7 +147,7 @@ test('klej: krok w pętli gry, resize tylko przy zmianie stopnia, opcja w panelu
   assert.match(core, /if \(type === 'render'\) \{ this\.gpuFrameMs = ms; this\.gpuFrameSamples\+\+; \}/);
 });
 
-test('limit klatek niższy niż cel (2026-10-30): budżet z limitu — cel 120 przy limicie 60 trzyma skalę jak cel 60', () => {
+test('limit klatek niższy niż cel (2026-10-29): budżet z limitu — cel 120 przy limicie 60 trzyma skalę jak cel 60', () => {
   assert.equal(G.gfxDynamicBudgetFps('120', '60'), 60);
   assert.equal(G.gfxDynamicBudgetFps('120', 'off'), 120);
   assert.equal(G.gfxDynamicBudgetFps('60', '120'), 60, 'limit wyższy niż cel — cel');

@@ -35331,6 +35331,9 @@
       const fps = gfxFrameLimitFps(gfxSettings.frameLimit);
       frameLimiter.setFps(fps);
       frameLimiter.setVsync(frameLimitVsync());
+      // wątek budzika bez VSync z góry (pierwsze klatki z limitem nie czekają na start modułu); bez limitu — zamknięty
+      if (frameLimiter.mode === 'time') limitWake.prepare();
+      else limitWake.release();
       menuBackdrop?.setFrameLimit?.(fps, frameLimitVsync(), harnessClockVirtual);
     }
     // Notka w opcjach: czy częstotliwość monitora pasuje do limitu (równy takt) — z okresu rAF.
