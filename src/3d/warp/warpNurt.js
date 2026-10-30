@@ -34,7 +34,7 @@ import { WarpPlayerFx } from './player.js';
 import { HyperFlow, hyperFlowEnvelope } from './hyperFlow.js';
 import { warpArrivalFxState, warpDepartureFxState, dressWarpArrival, dressWarpDeparture } from './arrivals.js';
 import { entityWarpHullLength as entityHullLength, entityWarpHullWidth as entityHullWidth } from '../../game/warpTraffic.js';
-import { WARP_WORLD_LENS, WARP_LENS_SHARED, WORLD_LENS_DEFAULTS, resetWarpWorldLens, setWarpLensAnchor, parseWarpLensTilt } from './worldLens.js';
+import { WARP_WORLD_LENS, WARP_LENS_SHARED, WARP_LENS_GAME_HF, resetWarpWorldLens, setWarpLensAnchor, parseWarpLensTilt } from './worldLens.js';
 import { warpLensBeta } from '../../render/warpLensPhase.js';
 import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
@@ -553,13 +553,13 @@ export const WarpNurt = {
   // zwolnienia i zatrzymanie rampy, dolot (ślizg), kadr soczewki z kamery gry (zoom odniesienia, kadr skoku, ułamek kadru
   // przylotu — px CSS → px bufora × Core3D.pxScale), kotwica kadru (o.anchorSX / SY — px CSS), ciało startu.
   _commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer) {
-    // Pochylenie mapy O1 z adresu (`?warpSoczewka=` — worldLens.js: parseWarpLensTilt): przy zmianie adresu, więc wpis
-    // z konsoli (WARP_LENS_SHARED.params.hf) zostaje do następnej zmiany.
+    // Pochylenie mapy O1: w grze płaskie (WARP_LENS_GAME_HF), z adresu `?warpSoczewka=` (worldLens.js: parseWarpLensTilt);
+    // ustawiane przy zmianie adresu, więc wpis z konsoli (WARP_LENS_SHARED.params.hf) zostaje do następnej zmiany.
     const search = typeof RenderWorld.pageSearch === 'string' ? RenderWorld.pageSearch : '';
     if (search !== this._lensTiltSearch) {
       this._lensTiltSearch = search;
       const hf = parseWarpLensTilt(search);
-      WARP_LENS_SHARED.params.hf = hf > 0 ? hf : WORLD_LENS_DEFAULTS.hf;
+      WARP_LENS_SHARED.params.hf = hf > 0 ? hf : WARP_LENS_GAME_HF;
     }
     const p = this.player;
     const lensOk = hasPlayer && o.lensAllowed !== false && !p.hyper;

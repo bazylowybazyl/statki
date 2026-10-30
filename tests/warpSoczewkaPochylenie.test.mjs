@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  parseWarpLensTilt, WARP_LENS_FLAT_HF, WARP_LENS_HF_RANGE, WORLD_LENS_DEFAULTS, mapWorldLens, warpLensFrame,
+  parseWarpLensTilt, WARP_LENS_FLAT_HF, WARP_LENS_GAME_HF, WARP_LENS_HF_RANGE, WORLD_LENS_DEFAULTS, mapWorldLens, warpLensFrame,
   newWarpLensFrame
 } from '../src/3d/warp/worldLens.js';
 
@@ -23,7 +23,12 @@ test('parseWarpLensTilt: słowo, liczba, zakres, brak', () => {
   assert.equal(parseWarpLensTilt('?warpSoczewka=99'), WARP_LENS_HF_RANGE[1]);
   assert.equal(parseWarpLensTilt('?warpSoczewka=0.1'), WARP_LENS_HF_RANGE[0]);
   assert.ok(WARP_LENS_FLAT_HF > 1, 'płaska: punkt zbiegu nad górną krawędzią kadru');
-  assert.equal(WORLD_LENS_DEFAULTS.hf, 0.8, 'domyślne pochylenie bez zmian');
+  assert.equal(WORLD_LENS_DEFAULTS.hf, 0.8, 'mapa: dawna „kamera pochylona”');
+  // w grze płaska domyślnie (user 2026-10-30: „nowy płaski punkt zbiegu od góry jest OK, a nie przywrócenie 3D”)
+  assert.equal(WARP_LENS_GAME_HF, WARP_LENS_FLAT_HF);
+  assert.equal(parseWarpLensTilt('?warpSoczewka=gleboka'), WORLD_LENS_DEFAULTS.hf);
+  assert.equal(parseWarpLensTilt('?warpSoczewka=g%C5%82%C4%99boka'), WORLD_LENS_DEFAULTS.hf);
+  assert.equal(parseWarpLensTilt('?warpSoczewka=3d'), WORLD_LENS_DEFAULTS.hf);
 });
 
 test('pochylenie płaskie: dalekie ciało za górną krawędzią, skala w trawersie bez zmian', () => {
@@ -48,7 +53,7 @@ test('pochylenie płaskie: dalekie ciało za górną krawędzią, skala w trawer
   assert.ok(Ef0 < F1.ef && F1.Ef > F1.ef, 'punkt zbiegu: domyślnie w kadrze, płaska — nad krawędzią');
 });
 
-test('sterownik: przełącznik z adresu strony stosowany przy zmianie adresu (także w workerze — RenderWorld.pageSearch)', () => {
+test('sterownik: w grze płaska soczewka, przełącznik z adresu przy zmianie adresu (także w workerze — RenderWorld.pageSearch)', () => {
   const src = readFileSync(new URL('../src/3d/warp/warpNurt.js', import.meta.url), 'utf8');
   const i = src.indexOf('_commitWorldLens(o, t, dt, camX, camY, zoom, view, hasPlayer) {');
   assert.ok(i > 0);
@@ -56,5 +61,5 @@ test('sterownik: przełącznik z adresu strony stosowany przy zmianie adresu (ta
   assert.match(body, /RenderWorld\.pageSearch/);
   assert.match(body, /if \(search !== this\._lensTiltSearch\)/);
   assert.match(body, /const hf = parseWarpLensTilt\(search\);/);
-  assert.match(body, /WARP_LENS_SHARED\.params\.hf = hf > 0 \? hf : WORLD_LENS_DEFAULTS\.hf;/);
+  assert.match(body, /WARP_LENS_SHARED\.params\.hf = hf > 0 \? hf : WARP_LENS_GAME_HF;/);
 });

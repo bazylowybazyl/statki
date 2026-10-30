@@ -180,16 +180,21 @@ export const WORLD_LENS_DEFAULTS = Object.freeze({
   sizeDepth: 30000
 });
 
-// POCHYLENIE SOCZEWKI Z ADRESU (3a, 2026-10-29; user: „statek leci do góry, a wszystkie efekty są stworzone tak, jakby
-// leciał w głąb ekranu”): `?warpSoczewka=plaska` — punkt zbiegu O1 nad górną krawędzią kadru (hf = WARP_LENS_FLAT_HF:
-// płaszczyzna kamery A ~3 × dalej, mniej perspektywy — ciała wjeżdżają z góry kadru, w trawersie ta sama skala s),
-// `?warpSoczewka=<liczba>` — hf wprost (w WARP_LENS_HF_RANGE), brak parametru albo nieznane słowo — hf domyślne.
-// Ustawia je sterownik (warpNurt.js: _commitWorldLens → WARP_LENS_SHARED.params.hf przy zmianie adresu — także w workerze).
+// POCHYLENIE SOCZEWKI (3a, 2026-10-29; user: „statek leci do góry, a wszystkie efekty są stworzone tak, jakby leciał
+// w głąb ekranu”): płaska soczewka — punkt zbiegu O1 nad górną krawędzią kadru (hf = WARP_LENS_FLAT_HF: płaszczyzna
+// kamery A ~3 × dalej, mniej perspektywy — ciała wjeżdżają z góry kadru, w trawersie ta sama skala s; cel w kadrze dopiero
+// z bliska). W GRZE DOMYŚLNA (WARP_LENS_GAME_HF — user 2026-10-30 po grze: „nowy płaski punkt zbiegu od góry jest OK,
+// a nie przywrócenie 3D”); WORLD_LENS_DEFAULTS.hf (0,8 — „kamera pochylona”, punkt zbiegu w kadrze) zostaje wartością
+// mapy (testy, symulator `--param hf=0.8`). Adres: `?warpSoczewka=gleboka` — 0,8, `?warpSoczewka=plaska` — 2,5,
+// `?warpSoczewka=<liczba>` — hf wprost (w WARP_LENS_HF_RANGE). Ustawia je sterownik (warpNurt.js: _commitWorldLens →
+// WARP_LENS_SHARED.params.hf przy zmianie adresu — także w workerze).
 export const WARP_LENS_FLAT_HF = 2.5;
+export const WARP_LENS_GAME_HF = WARP_LENS_FLAT_HF;
 export const WARP_LENS_HF_RANGE = Object.freeze([0.3, 10]);
 const LENS_FLAT_WORDS = new Set(['plaska', 'płaska', 'flat']);
+const LENS_DEEP_WORDS = new Set(['gleboka', 'głęboka', '3d', 'stara']);
 
-/** `?warpSoczewka=` z adresu strony → hf mapy O1; NaN — bez przełącznika (hf domyślne). Czysta funkcja. */
+/** `?warpSoczewka=` z adresu strony → hf mapy O1; NaN — bez przełącznika (hf gry — WARP_LENS_GAME_HF). Czysta funkcja. */
 export function parseWarpLensTilt(search) {
   const s = typeof search === 'string' ? search : '';
   const m = /[?&]warpSoczewka=([^&#]*)/.exec(s);
@@ -198,6 +203,7 @@ export function parseWarpLensTilt(search) {
   try { v = decodeURIComponent(v.replace(/\+/g, ' ')); } catch { /* zostaje surowy napis */ }
   v = v.trim().toLowerCase();
   if (LENS_FLAT_WORDS.has(v)) return WARP_LENS_FLAT_HF;
+  if (LENS_DEEP_WORDS.has(v)) return WORLD_LENS_DEFAULTS.hf;
   if (!/^\d+(?:[.,]\d+)?$/.test(v)) return NaN;
   return clamp(Number(v.replace(',', '.')), WARP_LENS_HF_RANGE[0], WARP_LENS_HF_RANGE[1]);
 }

@@ -125,6 +125,9 @@ const CAM_TUNE = CR.createCameraRigTune(Object.fromEntries(String(arg('kamera', 
     if (!(k in CR.CAMERA_RIG_DEFAULTS) || !Number.isFinite(Number(v))) throw new Error('[sym] --kamera ' + kv);
     return [k, Number(v)];
   })));
+// pochylenie mapy O1 jak w grze (worldLens.js: WARP_LENS_GAME_HF — płaska soczewka, punkt zbiegu nad górną krawędzią),
+// chyba że --param hf=… (0,8 — dawna „kamera pochylona”)
+const LENS_HF = Number.isFinite(LENS_PARAMS.hf) ? LENS_PARAMS.hf : WL.WARP_LENS_GAME_HF;
 const DRIVE_ID = 'warp_' + String(arg('naped', 'mk2')).toLowerCase().replace(/^warp_/, '');
 // Proporcje kadru (recenzja O1 ust. 1): '16:9' (domyślnie), '21:9' (3440 × 1440), '32:9' (5120 × 1440), 'W:H' albo liczba —
 // W = H · proporcje; progi P4 i W0 liczone względem WYSOKOŚCI kadru (× H / 1080)
@@ -512,7 +515,7 @@ function simulate(sc, H, k1) {
     cruise = plan.speed;
   }
   // Rekordy soczewki (jak planet3d.assets.js).
-  const lens = new WL.WarpWorldLens({ ...LENS_PARAMS, B1: B1_LENS, originMove: ORIGIN_MOVE });
+  const lens = new WL.WarpWorldLens({ ...LENS_PARAMS, hf: LENS_HF, B1: B1_LENS, originMove: ORIGIN_MOVE });
   const today = WIRING === 'dzis';
   const recs = world.bodies.map((b) => {
     const r = WL.newLensBody(b.id, today ? '' : b.kind);
@@ -1069,7 +1072,7 @@ function analyze(res) {
   // lotu — wyjątek W0: cel podróży stoi w nim jak w kamerze) się nie liczy — przy wolnym przelocie nad tarczą (S10: Saturn
   // 4 px w punkcie zbiegu przez ~2,5 s nad Ziemią) to nie „parkowanie”
   const vpFar = (f, b) => {
-    const vy = f.anchorSy - WL.WORLD_LENS_DEFAULTS.hf * (H * 0.5 + f.anchorSy);
+    const vy = f.anchorSy - LENS_HF * (H * 0.5 + f.anchorSy);
     return hyp(b.x - f.anchorSx, b.y - vy) < Math.max(VP_PX * sPx, 3 * b.size);
   };
   let stallWorst = 0;
@@ -1240,7 +1243,10 @@ function analyze(res) {
     let outT = 0;
     const tLast = Number.isFinite(ev.stop) ? ev.stop + 1 : Infinity;
     for (const f of F) if (f.t >= 0.6 && f.t <= tLast && !f.bodies[tid].inF) outT += DT;
-    add('C5-cel-kadr', 'cel w kadrze od kopu do końca ślizgu + 1 s (poza kadrem łącznie)', outT <= 0.05, `${fmt(outT, 2)} s`, '0 s');
+    // płaska soczewka (h_f > 1 — punkt zbiegu nad kadrem): cel z daleka leży nad górną krawędzią i wjeżdża z bliska —
+    // informacyjnie (decyzja użytkownika 2026-10-30)
+    add('C5-cel-kadr', 'cel w kadrze od kopu do końca ślizgu + 1 s (poza kadrem łącznie)', outT <= 0.05, `${fmt(outT, 2)} s`,
+      LENS_HF > 1 ? 'płaska soczewka — cel wjeżdża z góry z bliska (informacyjnie)' : '0 s', LENS_HF > 1);
     // puszczenie: okno [release − 0,1; release + 0,8]
     if (Number.isFinite(ev.release)) {
       let mv = 0;
@@ -1375,7 +1381,7 @@ out.push(`# Symulator soczewki świata „podniesiony świat” — ${new Date()
 out.push('');
 const WLD = WL.WORLD_LENS_DEFAULTS;
 const DRIVE_NAME = { warp_mk1: 'Mk I', warp_mk2: 'Mk II', warp_mk3: 'Mk III' }[DRIVE_ID] || DRIVE_ID;
-out.push(`Wpięcie: ${WIRING === 'dzis' ? 'DZIŚ (sterownik przed integracją — informacyjnie)' : 'nowe (etap integracji)'}${ORIGIN_MOVE ? ', planeta startu ruchem (A/B)' : ''}. Mapa O1 (kamera pochylona): h_f ${WLD.hf}, w_s ${WLD.ws}, B1 ${B1_LENS} j., kMax ${WLD.kMax}, ukrycie w ${WLD.hideW0}–${WLD.hideW1}, obrót przelotu ${WLD.flybyTilt}, ē_s ≤ ${fmt(WLD.aspectMax, 3)} · H/2, napęd odniesienia ${WLD.speedRef / 1000} tys. j/s; oś β: ładowanie ${PH.WARP_LENS_PHASE.chargeBeta}·smoothstep, kop ${PH.WARP_LENS_PHASE.kickTime} s easeOut³, front smug gwiazd w ramp.slow, zanurzenie ≥ ${PH.WARP_LENS_PHASE.submerge} s (z tempa obrazu: ${WLD.exitMovePx} / ${WLD.exitSizePx} px/kl.). Kadr ${ASPECT_ARG} (${fmt(ASPECT, 3)}).${Object.keys(LENS_PARAMS).length ? ' A/B: ' + JSON.stringify(LENS_PARAMS) + '.' : ''} Napęd ${DRIVE_NAME} ${DRIVE / 1000} tys. j/s (skala mapy × ${fmt(KV, 3)}), Atlas L ${L_HULL}, ślizg ${Math.round(SLIDE)} j. Kontrole C1 — informacyjnie (O1-3).`);
+out.push(`Wpięcie: ${WIRING === 'dzis' ? 'DZIŚ (sterownik przed integracją — informacyjnie)' : 'nowe (etap integracji)'}${ORIGIN_MOVE ? ', planeta startu ruchem (A/B)' : ''}. Mapa O1: h_f ${LENS_HF}${LENS_HF > 1 ? ' (płaska — punkt zbiegu nad kadrem)' : ' (kamera pochylona)'}, w_s ${WLD.ws}, B1 ${B1_LENS} j., kMax ${WLD.kMax}, ukrycie w ${WLD.hideW0}–${WLD.hideW1}, obrót przelotu ${WLD.flybyTilt}, ē_s ≤ ${fmt(WLD.aspectMax, 3)} · H/2, napęd odniesienia ${WLD.speedRef / 1000} tys. j/s; oś β: ładowanie ${PH.WARP_LENS_PHASE.chargeBeta}·smoothstep, kop ${PH.WARP_LENS_PHASE.kickTime} s easeOut³, front smug gwiazd w ramp.slow, zanurzenie ≥ ${PH.WARP_LENS_PHASE.submerge} s (z tempa obrazu: ${WLD.exitMovePx} / ${WLD.exitSizePx} px/kl.). Kadr ${ASPECT_ARG} (${fmt(ASPECT, 3)}).${Object.keys(LENS_PARAMS).length ? ' A/B: ' + JSON.stringify(LENS_PARAMS) + '.' : ''} Napęd ${DRIVE_NAME} ${DRIVE / 1000} tys. j/s (skala mapy × ${fmt(KV, 3)}), Atlas L ${L_HULL}, ślizg ${Math.round(SLIDE)} j. Kontrole C1 — informacyjnie (O1-3).`);
 out.push('');
 for (const name of SCENS) {
   const fn = SCEN_FN[name];
