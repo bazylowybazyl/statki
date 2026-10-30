@@ -8,7 +8,9 @@
 //                  w ≤ 0,2 s), błysk jak dziś; kadłub ze światła gaśnie ~0,25 s po hamowaniu.
 //   ODLOT NPC    — od nurkowania (tDive) kadłub ze światła narasta (0,1 s), smuga-ślad za rufą rośnie z prędkością;
 //                  w punkcie skoku (tIn) smuga wystrzeliwuje do przodu na ~8 L i gaśnie w 0,35 s, błysk 1 L, kadłub
-//                  znika w smudze.
+//                  wchodzi w nią, znikając od dziobu jak domyślnie (linia punktu skoku, szew, żar). Wieże, lampy i plazma
+//                  dysz zostają do zniknięcia encji (tGone) — kadłub schowany cały od tIn zostawiał je bez kadłuba
+//                  (tGone − tIn = 1,1 L / vEnd ≈ 0,06 s — ~15 klatek przy 240 Hz).
 //   GRACZ        — przy kopie smuga za rufą (~6 L, 0,35 s) i mocniejszy szczyt smug gwiazd (1,4 → 2,2); przy hamowaniu
 //                  przylotu krótka smuga za rufą zatrzaskująca się w kadłub — w tej samej chwili co reszta akcentów
 //                  (PRZYLOT = JEDNO ZDARZENIE, reguła `warp`). Tylko warp (nie hipercruise), tylko kamera z góry jednego
@@ -132,8 +134,9 @@ export function warpSWArrival(a, t, along, out) {
 /**
  * ODLOT NPC w chwili t (oś `d`: tDive, tIn, hullLength), `s` — próbka osi (sampleWarpDeparture: dist, speed).
  * Wynik: przed punktem skoku — len = smuga-ślad za rufą [j.] (prędkość × departTrailTime, ≤ przebyta droga), k, light
- * (narasta od nurkowania w departRise); od punktu skoku (gone = true — kadłub znika w smudze) — smuga wystrzeliwuje do
- * przodu: head = głowa przed punktem skoku [j.], len = długość od głowy wstecz [j.], k gaśnie w departShootTime.
+ * (narasta od nurkowania w departRise); od punktu skoku (gone = true — bez światła kadłuba: kadłub znika od dziobu
+ * domyślnym odsłanianiem) — smuga wystrzeliwuje do przodu: head = głowa przed punktem skoku [j.], len = długość od głowy
+ * wstecz [j.], k gaśnie w departShootTime.
  */
 export function warpSWDeparture(d, t, s, out) {
   const T = WARP_SW;
@@ -215,19 +218,6 @@ export function warpSWHullLight(hull, L, k) {
   hull.seamRGB[0] = c[0] * T.hullHdr;
   hull.seamRGB[1] = c[1] * T.hullHdr;
   hull.seamRGB[2] = c[2] * T.hullHdr;
-  return hull;
-}
-
-/** Kadłub schowany w rekordzie kadłuba (odlot: zniknięcie w smudze) — tryb −1 z linią za rufą, bez szwu i żaru. */
-export function warpSWHullGone(hull, L) {
-  const len = Math.max(40, Number(L) || 0);
-  hull.on = true;
-  hull.revealMode = -1;
-  hull.revealLine = -len * 1000;
-  hull.seamLine = -len * 1000;
-  hull.seam = 0;
-  hull.heat = 0;
-  hull.heatRGB[0] = 0; hull.heatRGB[1] = 0; hull.heatRGB[2] = 0;
   return hull;
 }
 

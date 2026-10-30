@@ -53,14 +53,20 @@ paths:
   wygląd z decyzji 2026-10-03 („BEZ portalu i BEZ smugi, normalnie widoczny statek” — `arrivals.js`). Z przełącznikiem:
   PRZYLOT NPC — w wlocie kadłub ze światła i smuga za rufą (~7 L, ≤ droga od pojawienia się), przy hamowaniu ogon zatrzaskuje
   się w kadłub (≤ 0,2 s), światło gaśnie 0,25 s po hamowaniu; ODLOT NPC — od nurkowania kadłub ze światła i ślad rosnący
-  z prędkością, w punkcie skoku smuga wystrzeliwuje do przodu (8 L, gaśnie w 0,35 s), błysk 1 L, kadłub znika w smudze;
+  z prędkością, w punkcie skoku smuga wystrzeliwuje do przodu (8 L, gaśnie w 0,35 s), błysk 1 L, kadłub wchodzi w nią,
+  znikając od dziobu jak domyślnie (odsłanianie linią punktu skoku, szew, żar — nie chowaj całego kadłuba od punktu
+  skoku: wieże, lampy i plazma dysz zostają do zniknięcia encji w tGone, ~0,06 s);
   GRACZ — smuga przy kopie (6 L, 0,35 s), szczyt smug gwiazd × 2,2 / 1,4, przy hamowaniu przylotu smuga zatrzaskuje się
   w tej samej chwili co błysk (PRZYLOT = JEDNO ZDARZENIE, reguła `warp`); tylko warp i kamera z góry jednego gracza.
 - BEZ NOWYCH PIPELINE'ÓW I PÓL MIGAWKI: smugi = kształt `GLOW_STREAK` duszków „Nurtu” (`frame.addStreak`, pula 64, odcinanie
   do kadru przy zgłoszeniu — pudło ustawia sterownik po `frame.reset()`), kadłub ze światła = szew `hullWarp` szerszy niż
   kadłub w trybie −1 z linią przed dziobem (`warpSWHullLight`, bez zmiany WGSL), osie z rejestru gry (blok migawki `warp`).
-  Smuga i światło encji ukrytej się nie rysują — mgła wojny i soczewka skoku (`isEntityHiddenForRender`, ten sam predykat
-  co skóra kadłuba), maskowanie (`__cloakLook.vis`). Rozgrywka bez zmian; nowych faz nie wiąż z `__warpNurtMode`.
+  WIDOCZNOŚĆ ENCJI (`WarpNurt._swVis` → `v.dress.swVis`, liczona dla KAŻDEGO wyglądu przy żywej encji, w odlocie po
+  zniknięciu — ostatnia): mgła wojny i soczewka skoku (`isEntityHiddenForRender`, ten sam predykat co skóra kadłuba),
+  maskowanie (`__cloakLook.vis`). Ukryta encja — bez smug, światła, przegródek ośrodka, błysków, blasku i fal także
+  w domyślnym wyglądzie (zasada mgły wojny); częściowa — błyski i fale × widoczność; zwiastun planu przed `attach` jak był.
+  Smugi odcinane do kadru tylko w kamerze z góry jednego gracza (`o.lensAllowed`) — duszki warstwy 0 rysuje każdy widok.
+  Rozgrywka bez zmian; nowych faz nie wiąż z `__warpNurtMode`.
 - Strojenie `WARP_SW`, test `tests/warpSW.test.mjs`; zrzuty `node scripts/webgpu/zrzuty.mjs --backend webgpu --sceny
   warp-zwiastun,warp-przylot,warp-odlot-ladowanie,warp-odlot [--query warpSW=1]`, gracz — `warp-ped-gra.mjs` (faza
   `02a-kop-szczyt`), floty — `wojna-gra.mjs`.

@@ -221,10 +221,13 @@ export const WarpNurt = {
     const frame = this.frame;
     frame.reset();
     // Smugi (`?warpSW=1`) odcinane do kadru przy zgłoszeniu: pudło osi świata obróconego kadru wokół kamery [j.] (+10% —
-    // wstrząs kamery renderu).
-    const sv = this._viewParams(zoom);
-    const svh = rolledHalfExtents(sv.bufW * 0.5, sv.bufH * 0.5, this._roll, this._rollHalf);
-    frame.setStreakView(svh.hw * 1.1 / zoom, svh.hh * 1.1 / zoom);
+    // wstrząs kamery renderu). Tylko kamera z góry jednego gracza: duszki warstwy 0 rysuje KAŻDY widok (drugi gracz
+    // podzielonego ekranu, kamery 3D) — tam smugi idą bez odcinania.
+    if (o.lensAllowed !== false) {
+      const sv = this._viewParams(zoom);
+      const svh = rolledHalfExtents(sv.bufW * 0.5, sv.bufH * 0.5, this._roll, this._rollHalf);
+      frame.setStreakView(svh.hw * 1.1 / zoom, svh.hh * 1.1 / zoom);
+    }
 
     const player = this.player;
     const map = this._map;
@@ -855,8 +858,9 @@ export const WarpNurt = {
     return null;
   },
 
-  // `?warpSW=1`: widoczność encji dla smug i kadłuba ze światła — mgła wojny i soczewka skoku (ten sam predykat co skóra
-  // kadłuba: hexShips3D.isEntityHiddenForRender) i maskowanie (widoczność całego okrętu z wyglądu maskowania).
+  // Widoczność encji dla wyglądu przylotu / odlotu (domyślnego i `?warpSW=1`) — mgła wojny i soczewka skoku (ten sam
+  // predykat co skóra kadłuba: hexShips3D.isEntityHiddenForRender) i maskowanie (widoczność całego okrętu z wyglądu
+  // maskowania): ukryty wróg nie zdradza się zwiastunem, błyskiem, falą ani przegródką ośrodka (arrivals.js).
   _swVis(e) {
     if (isEntityHiddenForRender(e)) return 0;
     const cl = e.__cloakLook;
@@ -879,7 +883,8 @@ export const WarpNurt = {
         if (v.entity && v.entity.dead) v.entity = null;
         const en = v.entity;
         const pose = en ? entityPose(en, this._pose) : null;
-        if (sw && en) v.dress.swVis = this._swVis(en);
+        // widoczność encji (mgła wojny, soczewka, maskowanie) — każdy wygląd; przed attach zostaje 1 (zwiastun planu)
+        if (en) v.dress.swVis = this._swVis(en);
         warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress, sw);
         if (en) {
           if (t < fx.tAppear) this._hideHull(en);
@@ -890,7 +895,8 @@ export const WarpNurt = {
         const e = v.entity;
         const alive = !!(e && !e.dead);
         const pose = alive ? entityPose(e, this._pose) : null;
-        if (sw && alive) v.dress.swVis = this._swVis(e);
+        // widoczność encji — każdy wygląd; po zniknięciu encji zostaje ostatnia (błysk i fala w punkcie skoku)
+        if (alive) v.dress.swVis = this._swVis(e);
         warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress, sw);
         if (alive) {
           this._applyHull(e, v.dress.hull);
