@@ -523,8 +523,9 @@ if (isWorker) {
   async function setBelt(m) {
     await st.menuReadyP;   // RW-41c: najpierw tło menu (ring Ziemi), potem bank skał
     try {
-      const [{ AsteroidBeltField }, { GiantRock }, { createAsteroidBelt }, r2, sync] = await st.beltModsP;
+      const [{ AsteroidBeltField }, { GiantRock, giantEntryFields }, { createAsteroidBelt }, r2, sync] = await st.beltModsP;
       st.GiantRock = GiantRock;
+      st.giantEntryFields = giantEntryFields;
       const mm = { RockBody: r2.RockBody, sync };
       st.mineMods = mm;
       const ops = st.beltOps || (st.beltOps = []);
@@ -606,7 +607,11 @@ if (isWorker) {
   }
   function addGiant(m) {
     if (!st.beltWorld || !st.GiantRock) { (st.pendingGiants || (st.pendingGiants = [])).push(m); return; }
-    st.beltWorld.giants.entries.push({ id: m.id, giant: new st.GiantRock(m.plan, m.x, m.y, m.grid) });
+    // Wpis jak na stronie (giantEntryFields): pas liczy widoczność i soczewkę skoku z x, y, halfX, halfY —
+    // samo { id, giant } dawało NaN i olbrzymy w trybie worker nigdy się nie rysowały (kolizje strony działały).
+    st.beltWorld.giants.entries.push({
+      id: m.id, ...st.giantEntryFields(m.plan, m.x, m.y), giant: new st.GiantRock(m.plan, m.x, m.y, m.grid), view: null
+    });
   }
 
   function setCmdRing(m) {

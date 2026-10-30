@@ -70,4 +70,6 @@ paths:
 
 ## Olbrzymy w soczewce skoku gracza (etap 3A nowego warpa, 2026-10-26)
 
+- WPIS OLBRZYMA w `giants.entries` (strona: `BeltGiants`, worker renderu: `addGiant` w `render.worker.js`) buduje JEDNA funkcja `giantEntryFields(plan, x, y)` (`src/game/asteroidGiants.js`: x, y, plan, halfX, halfY, radius) — obraz pasa liczy z nich widoczność (`_updateGiants`) i rekord soczewki (`_lensGiants`); worker z samym `{ id, giant }` dawał NaN i w trybie worker olbrzymy się nie rysowały, a kolizje strony działały (do 2026-10-30). Nowe pole wpisu czytane przez obraz — do tej funkcji (strażnik `tests/pasOlbrzymWorker.test.mjs`).
+
 - Olbrzym ma rekord dodatkowy soczewki `giant:<id>` (`asteroidBelt._lensGiants` w `prepareFrame` — co klatkę, także poza skokiem; promień = większa półoś) w przebiegu ciał (`planet3d.assets.js`). Obraz w skoku to IMPOSTOR bez SDF: elipsa półosi × skala obrazu w barwie skały (`rec.smudge`) w partii kropek soczewki (`hexShips3D.js` — `HexBodyLensBatch`, pod kadłubami), od progu `WARP_LENS_DOT_SWAP` (udział soczewki 0,02); od tego samego progu prawdziwy widok olbrzyma (`GiantView`) jest schowany (`_giantLensed`) — bez podwójnego obrazu w ładowaniu. Pole pasa w skoku nie jest rysowane (punkt „Pas w skoku gracza” wyżej) — olbrzym to jedyny obraz pasa w soczewce.

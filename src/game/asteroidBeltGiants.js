@@ -28,7 +28,7 @@
 // Ruch encji: gracz / P2 przez pos / vel, NPC przez widok kinematyki
 // (npcCollisionBody.js) — kadłub belkowy dostaje pozycję w HullBodies.step.
 
-import { GIANT_PRESETS, buildGiantPlan } from './asteroidGiants.js';
+import { GIANT_PRESETS, buildGiantPlan, giantEntryFields } from './asteroidGiants.js';
 
 export const BELT_GIANTS_CONFIG = Object.freeze({
   // Skan rdzeni pasa głównego [AU] — jak findSpot(37,5, 45,5, 'core') dema.
@@ -153,11 +153,9 @@ export class BeltGiants {
     const sites = o.sites || planBeltGiantSites(o.field, { sunX: o.sunX, sunY: o.sunY, au: o.au, cfg: this.cfg });
     this.entries = sites.map((s) => {
       const plan = buildGiantPlan(s.id, s.seed);
-      const [hx, hy] = plan.half;
       return {
-        site: s, id: s.id, seed: s.seed, x: s.x, y: s.y, plan,
-        halfX: hx, halfY: hy,
-        radius: Math.hypot(hx, hy),
+        // x, y, plan, halfX / halfY, radius — wspólne z wpisem workera renderu (giantEntryFields)
+        site: s, id: s.id, seed: s.seed, ...giantEntryFields(plan, s.x, s.y),
         giant: null, promise: null, progress: 0, error: null,
         // Widok GPU (asteroidBelt.js) i inne dane renderu.
         view: null
