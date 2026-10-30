@@ -392,6 +392,10 @@ export const HyperFlow = {
       return false;
     }
     mesh.position.set(ox, oy, 0);
+    // Core3D liczy macierze sceny RAZ na klatkę, PRZED krokami Core3D.fx (`_syncSceneMatrices`) — bez odświeżenia opływ
+    // rysował się z macierzą poprzedniej klatki, v / fps za statkiem (83–167 j. przy 20–40 tys. j/s i 240 Hz), a przy
+    // nierównych odstępach stron drgał
+    mesh.updateMatrixWorld();
     if (geo.instanceCount !== n) geo.instanceCount = n;
     zbierzZakres(buffer, 0, n * STRIDE);
     if (!mesh.visible) mesh.visible = true;

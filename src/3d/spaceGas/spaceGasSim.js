@@ -42,7 +42,7 @@ import {
 } from 'three/tsl';
 import { gnoise } from './spaceGasNoise.js';
 import { GAS_HULL_MASK } from '../gas/gasObstacleLayout.js';
-import { SPACE_GAS_RASTER, SPACE_GAS_HZ } from './spaceGasLayout.js';
+import { SPACE_GAS_RASTER, SPACE_GAS_HZ, spaceGasWindowCells } from './spaceGasLayout.js';
 
 /** Bok komórki pola [j.] — strojenie jest w jednostkach komórek (D5: stała). */
 export const SPACE_GAS_CELL = 64;
@@ -161,6 +161,9 @@ export class SpaceGasSim {
    */
   constructor({ farEnv, N = 256, cell = SPACE_GAS_CELL, maxSources = 64, maxRocks = 64, maxHulls = 32, name = 'spaceGas' } = {}) {
     if (typeof farEnv !== 'function') throw new Error('SpaceGasSim: brak farEnv');
+    // Kernele pola liczą N² wątków BEZ strażnika `instanceIndex < N²` (three r183: ceil(N² / 64) grup po 64) — N w górę do
+    // wielokrotności 8 (N² % 64 = 0), z ostrzeżeniem; gra liczy okno tą samą funkcją (spaceGasLayout.js spaceGasWindowCells).
+    N = spaceGasWindowCells(N, `${name}: okno pola N`);
     this.N = N;
     this.cell = cell;
     this.maxSources = maxSources;

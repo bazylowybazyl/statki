@@ -14,12 +14,13 @@
 // dispatchy i 0 rysunków. Pył gazu (spaceGasDust.js, GK-4) rodzi się z gęstości pola i płynie z gazem. Rozgrzewka: `warm` kroku (puste dispatche) + wpis rejestru (siatki warstw).
 
 import { Core3D } from '../core3d.js';
+import { RenderWorld } from '../../render/renderWorld.js';
 import { EngineFrame } from '../engineFrame.js';
 import { SpaceGasSim, SPACE_GAS_CELL, SPACE_GAS_SRC, SPACE_GAS_CONE_REACH } from './spaceGasSim.js';
 import { SpaceGasMaps } from './spaceGasMaps.js';
 import { SpaceGasLayer } from './spaceGasLayer.js';
-import { SpaceGasDust } from './spaceGasDust.js';
-import { BeltGasScene, createRingGasLook } from './spaceGasBelt.js';
+import { SpaceGasDust, spaceGasDustFadeFor } from './spaceGasDust.js';
+import { BeltGasScene, createRingGasLook, SPACE_GAS_DETAIL_LOD_MEAN, SPACE_GAS_DETAIL_LOD_OLD } from './spaceGasBelt.js';
 import { SPACE_GAS_IN, SPACE_GAS_SCENE, SPACE_GAS_VIEW_ASPECT, spaceGasViewHalf } from './spaceGasLayout.js';
 import { GAS_HULL_REC, GAS_OBST_IN } from '../gas/gasObstacleLayout.js';
 import { SpaceGasCover } from './spaceGasState.js';
@@ -32,8 +33,16 @@ const I = SPACE_GAS_IN;
 export const SPACE_GAS_TUNE = {
   enabled: true,
   windowCells: 256,       // okno pola (D5: 128 / 256 / 384 — preset grafiki)
-  mapW: 768,              // mapy gazu i światła [teksle]
-  mapH: 432,
+  mapW: 768,              // mapy gazu i światła [teksle] (mapa bazowa — także teksel zaniku faktury przy każdym
+  mapH: 432,              // rozmiarze mapy: SpaceGasMaps lodW / lodH)
+  // rozmiar map przy budowie (spaceGasMapSpec): false — mapa bazowa mapW × mapH przy każdym kadrze (DOMYŚLNIE — pomiar
+  // w grze 2026-10-30: poprawki drżenia nie zależą od rozmiaru mapy, mapa bazowa ma przy domyślnym zoomie teksel pionowy
+  // 11,3 j. zamiast 16 j. i ~40% mniej stopni drabiny (53 wobec 87 na 24 ząbki) na ząbek kółka; na 5120 × 1440 teksel 9,6 × 4,8 px).
+  // A/B przy budowie: `?gazMapa=proporcje` w adresie (albo true) — ta sama liczba tekseli w proporcjach kadru (16:9…32:9;
+  // na 5120 × 1440 1086 × 306, teksel kwadratowy 6,8 px, koszt ten sam); `?gazMapa=szeroka` (albo 'szeroka') — proporcje
+  // kadru przy wysokości mapH (na 5120 × 1440 1536 × 432: teksel kwadratowy 4,8 px, 2 × tekseli — compute map +0,07–0,15 ms);
+  // `?gazMapa=stara` — mapa bazowa (adres wygrywa z tune)
+  mapAspect: false,
   dustCount: 80000,       // drobiny pyłu gazu (D2: 80 tys. na Wysokiej; 0 — bez pyłu) — przy budowie
   dust: true,             // A/B: pył gazu wł. / wył. (na żywo)
   fogReplace: true,       // gaz zamiast płytkich płatów mgły pasa (fog.js) — jedna mgła; false — obie (A/B)
@@ -51,6 +60,43 @@ export const SPACE_GAS_TUNE = {
   fadeAspect: SPACE_GAS_VIEW_ASPECT,
   dustEdge: true,         // A/B: pył gaśnie miękko przy brzegu okna pola (jak mapa), false — ginie na brzegu (prostokąt)
   texelLadder: true,      // A/B: teksel map z drabiny 2^(j/8) (spaceGasMaps.js); false — wprost z kadru (gaz „gotował się” przy zoomie)
+  // DRŻENIE PRZY ZOOMIE I ODDALENIU (2026-10-29 wieczór, 5120 × 1440, worker, Ultra) — przełączniki A/B na żywo:
+  // macierze warstw i pyłu odświeżane w kroku (Core3D liczy macierze sceny RAZ na klatkę, PRZED krokami Core3D.fx —
+  // przestawienie prostokąta mapy / rogu okna rysowało się klatkę ze starą macierzą: na stopniu drabiny obraz gazu
+  // w skali o 9% innej, przy przesunięciu środka mapy o teksel, pył przy przesunięciu okna o komórkę); false — dawniej
+  matrixSync: true,
+  // najmniejszy bok drobiny pyłu [px bufora] z zachowaniem energii (spaceGasDust.js spaceGasDustScreenCpu) i zanik
+  // drobin mniejszych [px od, do] — drobiny < 2,5 px migotały przy każdym ruchu kamery i gazu (raster MSAA 4 z cieniowaniem
+  // w środku piksela: energia drobiny w obrazie zmieniała się o 85–100% na klatkę przy zoomie 0,1–0,0667; bok 2 px — wciąż
+  // 14–18%, 2,5 px — 1–3%). Zanik [0,3; 1,2] px oddaje ŚREDNIĄ jasność drobin dawnego rastra (z MSAA gubił energię drobin
+  // < 1 px) — nieruchomy kadr statystycznie bez zmian (kalibracja w grze 2026-10-30, energia pyłu w buforze HDR wobec
+  // dawnego wzoru: ±~6% na Ultra i Wysokiej przy zoomie 0,0667 / 0,05 z interpolacji progów [0,4; 1,2] — na Wysokiej
+  // 17–36% ciemniej — i [0,25; 1,2] — 5–23% jaśniej; docs/AUDYT-drzenie-swiatel-2026-10-29.md § 6.6);
+  // tylko z MSAA celu sceny (spaceGasDustFadeFor — bez MSAA dawny raster trafiał drobinę środkiem piksela i średnio nie
+  // gubił energii, zanik tylko by ściemniał pył); 0 — dawniej
+  dustMinPx: 2.5,
+  dustFadePx: [0.3, 1.2],
+  // próbki na teksel mapy gazu (spaceGasMaps.js spaceGasMapTaps): najwięcej mapTaps, progi boku teksla [j.] — 2 próbki
+  // od 64 (zoom < ~0,11 na 5120 px przy mapie 768 × 432), 4 od 150 (< ~0,05). DOMYŚLNIE 1 (pomiar w grze 2026-10-30:
+  // drżenie przy zoomie i oddaleniu bez zmian — usuwa je odświeżanie macierzy w kroku; 4 próbki kosztowały compute map
+  // +0,48 ms przy największym oddaleniu, 2 — +0,2 ms przy 0,0667); 2 / 4 — A/B na żywo (mniej aliasingu w nieruchomym kadrze)
+  mapTaps: 1,
+  mapTapsAt: [64, 150],
+  // warstwa czyta mapę gazu odczytem B-spline (spaceGasLayer.js bsplineMap; 4 odczyty zamiast 1) — skok obrazu na stopniu
+  // drabiny przy oddaleniu najmniejszy; false — dwuliniowo (dawniej). Tylko przy tekslu z drabiny > layerCubicAt [j.]
+  // (na 5120 × 1440 z mapą 768 × 432 zoom < ~0,19): przy zbliżeniu treść ≫ teksla — bez zysku, a pass ortho tańszy o
+  // 0,1–0,2 ms; przełączenie wypada na stopniu drabiny (teksel zmienia się tylko tam). DO DECYZJI UŻYTKOWNIKA (zostaje wł.):
+  // B-spline to filtr przybliżający — przy oddaleniu gaz miękkszy o ~½ teksla (na 5120 × 1440 z mapą 768 × 432 ~5 px bufora w poziomie, ~2,5 px w pionie), koszt pass ortho
+  // +0,06–0,15 ms przy zoomie 0,035 (tylko przy oddaleniu)
+  layerCubic: true,
+  layerCubicAt: 40,
+  // przenikanie kroku siatki obwiedni [s zegara efektów] (spaceGasBelt.js setEnvelope); 0 — dawniej (skok w klatce)
+  envBlend: 0.35,
+  // wygaszona faktura → średnie kanałów (SPACE_GAS_DETAIL_LOD_MEAN) zamiast dawnych celów (barwa „oddycha” przy zoomie
+  // w zakresie zaniku). DOMYŚLNIE WYŁ. (przegląd 2026-10-29): przy oddaleniu (lod = 1) zmienia barwę gazu — siarka −13%,
+  // lód +25%, wyrzut −30% — a gasi tylko powolny dryf barwy, nie drżenie klatka po klatce; czeka na decyzję użytkownika.
+  // true — średnie (A/B na żywo)
+  lodMean: false,
   warmStart: 3,           // rozgrzanie pola po starcie okna [s] (× 4 czasu pola — odgazowanie i dryf rozwinięte od razu)
   // dysze MAIN: narzucona prędkość w stożku (dema: ciąg ponad jałowy, długość 300 + 1700·ciąg, prędkość 2600·ciąg)
   jetMinPower: 0.12,
@@ -96,6 +142,47 @@ export function spaceGasViewFade(halfW, halfH, fadeView, aspect = SPACE_GAS_VIEW
   return 1 - Math.min(1, Math.max(0, (half - fadeView[0]) / (fadeView[1] - fadeView[0])));
 }
 
+/**
+ * Rozmiar map gazu i światła [teksle] dla kadru o proporcjach `aspect` (szer. / wys.): ta sama liczba tekseli co
+ * mapW × mapH (proporcje bazowe — 16:9), w proporcjach kadru przyciętych do [bazowe, 2 × bazowe] (16:9…32:9) — teksel
+ * kwadratowy w kadrze (drabina teksla działa na osiach osobno). aspect ≤ 0 albo NaN — mapW × mapH bez zmian.
+ * `wide` (A/B `?gazMapa=szeroka`): wysokość mapH bez zmian, szerokość w tych samych proporcjach — teksel kwadratowy
+ * i żadna oś nie grubsza niż w mapie bazowej (32:9: 1536 × 432 — 2 × tekseli i pracy kerneli map przy tej samej liczbie
+ * próbek na teksel).
+ */
+export function spaceGasMapSize(mapW, mapH, aspect, wide = false) {
+  const base = mapW / mapH;
+  if (!(aspect > 0)) return [mapW, mapH];
+  const a = Math.min(2 * base, Math.max(base, aspect));
+  if (wide) return [Math.round(mapH * a), mapH];
+  const n = mapW * mapH;
+  const w = Math.round(Math.sqrt(n * a));
+  return [w, Math.round(n / w)];
+}
+
+/**
+ * Tryb rozmiaru map przy budowie: 'stara' (mapa bazowa mapW × mapH — domyślnie), 'proporcje' (ta sama liczba tekseli
+ * w proporcjach kadru), 'szeroka' (proporcje kadru przy wysokości mapH). Adres strony (`?gazMapa=stara|proporcje|szeroka`,
+ * RenderWorld.pageSearch) wygrywa z `mapAspect` (false / true / 'szeroka').
+ */
+export function spaceGasMapMode(mapAspect, search) {
+  const m = /[?&]gazMapa=(stara|proporcje|szeroka)(?=&|$)/.exec(String(search || ''));
+  if (m) return m[1];
+  if (mapAspect === 'szeroka') return 'szeroka';
+  return mapAspect === true || mapAspect === 'proporcje' ? 'proporcje' : 'stara';
+}
+
+/**
+ * Mapy gazu i światła przy budowie (stały rozmiar tekstur storage — zmiana okna go nie zmienia): rozmiar z trybu
+ * (`spaceGasMapMode`) i proporcji kadru `aspect`, a mapa do ZANIKU FAKTURY zawsze bazowa (lodW × lodH = mapW × mapH) —
+ * każdy rozmiar mapy i połowa podzielonego ekranu dają ten sam zanik przy tym samym kadrze. → { mode, w, h, lodW, lodH }.
+ */
+export function spaceGasMapSpec(tune, aspect, search) {
+  const mode = spaceGasMapMode(tune.mapAspect, search);
+  const [w, h] = mode === 'stara' ? [tune.mapW, tune.mapH] : spaceGasMapSize(tune.mapW, tune.mapH, aspect, mode === 'szeroka');
+  return { mode, w, h, lodW: tune.mapW, lodH: tune.mapH };
+}
+
 class SpaceGasSystem {
   constructor() {
     this.input = new Float64Array(I.size);
@@ -133,7 +220,9 @@ class SpaceGasSystem {
     // wygląd per scena (pole dalekie i kernele te same — przełączane barwy i strojenie w uniformach)
     this.looks = { [SPACE_GAS_SCENE.belt]: sc.look, [SPACE_GAS_SCENE.ring]: createRingGasLook() };
     this.sim = new SpaceGasSim({ farEnv: (q, U) => sc.farEnv(q, U), N: T.windowCells, cell: SPACE_GAS_CELL, maxHulls: T.maxHullObstacles });
-    this.maps = new SpaceGasMaps(this.sim, sc, { w: T.mapW, h: T.mapH });
+    // mapy: rozmiar z chwili budowy (domyślnie bazowy; A/B w proporcjach kadru — `?gazMapa=`), zanik faktury z mapy bazowej
+    const spec = spaceGasMapSpec(T, Core3D._viewCssW() / Core3D._viewCssH(), RenderWorld.pageSearch);
+    this.maps = new SpaceGasMaps(this.sim, sc, { w: spec.w, h: spec.h, lodW: spec.lodW, lodH: spec.lodH });
     this.layer = new SpaceGasLayer(this.maps, { grid: Core3D.fx.grid, layer: 0 });
     if (T.dustCount > 0) {
       this.dust = new SpaceGasDust(this.sim, this.maps, { count: T.dustCount, grid: Core3D.fx.grid, layer: 0 });
@@ -221,6 +310,7 @@ class SpaceGasSystem {
       st.fade = 0;
       // po wyjściu z obszaru pole startuje od nowa (pole dalekie) przy powrocie
       if (this._scene !== SPACE_GAS_SCENE.none) { this._scene = SPACE_GAS_SCENE.none; this.sim.requestReset(T.warmStart); }
+      if (this.scene && this.scene.resetEnvelopeBlend) this.scene.resetEnvelopeBlend();
       return;
     }
     if (this._scene !== scene) {
@@ -233,7 +323,8 @@ class SpaceGasSystem {
     // środek okna pola (gra: przy prowadzonym okręcie pod śladem, przycięty do kadru — spaceGasInput.js); bez pola — kamera
     const wx = Number.isFinite(IN[I.winX]) ? IN[I.winX] : IN[I.camX];
     const wy = Number.isFinite(IN[I.winY]) ? IN[I.winY] : IN[I.camY];
-    this.scene.setEnvelope(IN, I);
+    // siatka obwiedni; przenikanie kroku siatki na zegarze efektów (biegnie też w pauzie — zoom w pauzie)
+    this.scene.setEnvelope(IN, I, ctx && ctx.dt > 0 ? ctx.dt : 0, T.envBlend > 0 ? T.envBlend : 0);
 
     const sim = this.sim;
     sim.beginInputs();
@@ -255,6 +346,9 @@ class SpaceGasSystem {
     // mapy wokół kadru (teksel z drabiny — siatka tekseli stoi w świecie przy ruchu zoomu)
     const maps = this.maps;
     maps.ladder = T.texelLadder !== false;
+    maps.taps = T.mapTaps > 1 ? T.mapTaps : 1;
+    if (T.mapTapsAt) maps.tapsAt = T.mapTapsAt;
+    if (maps.U.lodTarget) maps.U.lodTarget.value.fromArray(T.lodMean ? SPACE_GAS_DETAIL_LOD_MEAN : SPACE_GAS_DETAIL_LOD_OLD);
     const r = maps.place(IN[I.camX], IN[I.camY], IN[I.halfW], IN[I.halfH], this._rect);
     maps.U.sunDir.value.set(IN[I.sunX], IN[I.sunY]);
     maps.U.simOn.value = T.sim && sim.image.valid ? 1 : 0;
@@ -269,6 +363,10 @@ class SpaceGasSystem {
     st.fade = warpFade;
     const fade = viewFade * warpFade;
     this.layer.L.fade.value = fade;
+    if (this.layer.L.cubic) {
+      const tex = maps.U.texel.value, big = Math.max(tex.x, tex.y) > (T.layerCubicAt > 0 ? T.layerCubicAt : 0);
+      this.layer.L.cubic.value = T.layerCubic !== false && big ? 1 : 0;
+    }
     this.layer.place(ax + r.cx, ay + r.cy, r.w, r.h);
     this.layer.setVisible(fade > 0.004);
     // płytkie płaty mgły pasa gasną pod gazem (jedna mgła — fog.js); pokrycie przestrzenne (bez zaniku skoku)
@@ -277,9 +375,22 @@ class SpaceGasSystem {
     const dustOn = !!(this.dust && T.dust && T.sim && fade > 0.004);
     if (this.dust) {
       this.dust.U.edge.value = T.dustEdge ? 1 : 0;
+      // najmniejszy bok drobiny w px bufora: kamera z góry — px bufora na j. = zoom · pxScale; kamera 3D — wyłączone;
+      // zanik drobin < ~1 px tylko z MSAA celu sceny (Core3D.msaaSamples — opcja grafiki; bez MSAA bez zaniku)
+      if (this.dust.setScreen) {
+        const cam = Core3D.activeCam1;
+        const ppu = cam && !Core3D.isFreePerspectiveCamera(cam) ? Core3D.viewZoom(cam) : 0;
+        this.dust.setScreen(ppu, T.dustMinPx > 0 ? T.dustMinPx : 0, spaceGasDustFadeFor(Core3D.msaaSamples, T.dustFadePx));
+      }
       if (dustOn) st.dispatches += this.dust.frame(ctx.renderer, dt, ctx, ax, ay, r, fade);
       this.dust.setVisible(dustOn);
     }
+    // MACIERZE: Core3D liczy macierze sceny RAZ na klatkę, PRZED krokami Core3D.fx (core3d.js `_syncSceneMatrices`) —
+    // krok, który przestawia siatki, odświeża je sam (jak pas, mgła, olbrzymy, bronie). Bez tego warstwy i pył rysowały się
+    // klatkę ze starą macierzą przy nowej treści map / pozycjach drobin: na stopniu drabiny teksla obraz gazu w skali o 9%
+    // innej (błysk całego kadru), przy przesunięciu środka mapy o teksel — gaz o teksel obok, pył przy przesunięciu okna —
+    // o komórkę. A/B: tune.matrixSync = false.
+    if (T.matrixSync !== false && this.layer.group) this.layer.group.updateMatrixWorld(true);
     st.cpuMs = performance.now() - t0;
   }
 

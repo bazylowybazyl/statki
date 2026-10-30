@@ -160,3 +160,66 @@ test('drabina kolumny ośrodka: przy ruchu zoomu siatka froxeli stoi w świecie 
   }
   assert.equal(VOLUME_LIGHT_TUNE.cellLadder, true, 'domyślnie drabina');
 });
+
+// SIATKA KOLUMN W UKŁADZIE SCENY (2026-10-29, zgłoszenie „snopy front i pomocnicze drżą”): początek pola (Core3D.fx.origin,
+// FxPoolOrigin) jest lepki — przy żywym pasie przeskakuje po 20 tys. j. drogi kamery o całkowitą liczbę jednostek, a kolumna
+// 2^(j/8) j. go nie dzieli. Siatka kolumn względem początku przeskakiwała wtedy w świecie o (przeskok mod kolumna) — ~pół
+// kolumny (5,3 px przy zoomie 0,45) jednym szarpnięciem smug reflektorów, cieni skał w smudze i włókien.
+test('siatka kolumn ośrodka stoi w świecie przy przeskokach początku pola (A/B VOLUME_LIGHT_TUNE.worldAnchor)', async (t) => {
+  const { FxPoolOrigin } = await import('../src/3d/fx/gpuPoolOrigin.js');
+  const run = (v, frames) => {
+    const vol = makeVolume();
+    const origin = new FxPoolOrigin();
+    origin.register({ isLive: () => true });            // pas aktywny (asteroidBelt: isLive: () => this.active)
+    const zoom = 0.45;
+    let camX = 1.6e6 + 1234.567;
+    const camY = 345.678;
+    let prev = NaN;
+    let jumps = 0;
+    let maxJump = 0;
+    let maxDrift = 0;
+    let cell = 0;
+    for (let f = 0; f < frames; f++) {
+      camX += v / 240;
+      origin.update(camX, -camY, f / 240, f / 240, f / 240);
+      const ox = origin.x;
+      const oy = -origin.y;                              // jak asteroidBelt: ox = origin.x, oy = −origin.y (świat gry)
+      // kadr 1920 × 1080 przy teksturze ośrodka atrapy (kanwa 640 px: 196 × 112 kolumn) daje kolumnę jak w grze przy
+      // 5120 × 1440 (508 × 146) — 24,7 j. przy zoomie 0,45
+      vol.update({ camX: camX - ox, camY: -(camY - oy), zoom, viewW: 1920, viewH: 1080, time: f / 240, originX: ox, originY: oy, fade: 1 });
+      cell = vol.U.cell.value.x;
+      // róg siatki w świecie: lokalny róg (float32 uniformu) + początek; faza = reszta z kolumny
+      const xs = ox + vol.medium.U.origin.value.x;
+      const ys = -oy + vol.medium.U.origin.value.y;
+      const phase = ((xs % cell) + cell) % cell;
+      const phaseY = ((ys % cell) + cell) % cell;
+      if (prev === prev) {
+        let d = Math.abs(phase - prev);
+        d = Math.min(d, cell - d);
+        if (d > 1e-3) { jumps++; maxJump = Math.max(maxJump, d); } else maxDrift = Math.max(maxDrift, d);
+      }
+      prev = phase;
+      // y sceny: ta sama zasada (kamera stoi w y — faza stała w obu wariantach poza przeskokami)
+      if (VOLUME_LIGHT_TUNE.worldAnchor) assert.ok(Math.min(phaseY, cell - phaseY) < 2e-3, `faza y ${phaseY}`);
+    }
+    return { jumps, maxJump, maxDrift, cell, rebases: origin.rebases };
+  };
+  const keep = VOLUME_LIGHT_TUNE.worldAnchor;
+  try {
+    assert.equal(keep, true, 'domyślnie siatka w układzie sceny');
+    // PRZELOT 3000 j/s przez 30 s (4 przeskoki) i hipercruise w pasie 24 tys. j/s przez 4 s
+    for (const [v, frames] of [[3000, 240 * 30], [24000, 240 * 4]]) {
+      const r = run(v, frames);
+      assert.ok(r.rebases >= 4, `przeskoki początku: ${r.rebases}`);
+      assert.equal(r.jumps, 0, `v ${v}: siatka kolumn bez przeskoków w świecie (największy ${r.maxJump})`);
+      VOLUME_LIGHT_TUNE.worldAnchor = false;
+      const old = run(v, frames);
+      VOLUME_LIGHT_TUNE.worldAnchor = true;
+      assert.equal(old.jumps, old.rebases, `v ${v}: dawniej przeskok siatki na każdym przeskoku początku`);
+      if (v === 3000) assert.ok(old.maxJump > 0.3 * old.cell, `dawniej ${old.maxJump.toFixed(2)} j. z kolumny ${old.cell.toFixed(2)}`);
+      t.diagnostic(`v ${v} j/s: ${r.rebases} przeskoków początku — siatka kolumn bez skoku (dawniej ${old.maxJump.toFixed(2)} j. = ${(old.maxJump * 0.45).toFixed(2)} px na przeskok)`);
+    }
+  } finally {
+    VOLUME_LIGHT_TUNE.worldAnchor = keep;
+  }
+});

@@ -42,6 +42,39 @@ export const SPACE_GAS_HZ = 60;
 export function spaceGasViewHalf(halfW, halfH, aspect = SPACE_GAS_VIEW_ASPECT) {
   return aspect > 0 ? Math.max(Math.min(halfW, halfH * aspect), halfH) : Math.max(halfW, halfH);
 }
+
+/**
+ * WĄTKI KERNELI BEZ STRAŻNIKA LICZBY (przegląd 2026-10-29): three r183 puszcza ceil(n / 64) grup po 64 wątki
+ * (`ComputeNode`, workgroupSize [64]), a WGSL nie sprawdza `instanceIndex < n` — wątki ponad n czytałyby i pisały poza
+ * buforami storage (WebGPU przycina dostęp do bufora: cudze elementy, wyścig z ich właściwym wątkiem). Kernele pola
+ * (`spaceGasSim.js`: N² wątków) i pyłu (`spaceGasDust.js`: liczba drobin) strażnika nie mają, więc ich liczby wątków są
+ * wielokrotnością 64 z urzędu: `spaceGasKernelCount` zaokrągla liczbę w górę do 64, `spaceGasWindowCells` — bok okna
+ * pola N w górę do 8 (N² = 64 · (N / 8)²); z ostrzeżeniem raz na wartość. Gra liczy okno tą samą funkcją
+ * (`packSpaceGasFrame`) — okno pola gry = okno renderu. Kernele map mają strażnik (`texel()` w spaceGasMaps.js — W · H
+ * mapy w proporcjach kadru nie musi być wielokrotnością 64).
+ */
+export const SPACE_GAS_WORKGROUP = 64;
+const _countWarned = new Set();
+function warnCount(what, n, m) {
+  const key = `${what}:${n}`;
+  if (_countWarned.has(key)) return;
+  _countWarned.add(key);
+  console.warn(`[gaz przestrzeni] ${what}: ${n} → ${m} (kernel bez strażnika liczby wątków — grupy po ${SPACE_GAS_WORKGROUP})`);
+}
+/** Liczba wątków kernela bez strażnika (np. drobin pyłu) → w górę do wielokrotności 64 (ostrzeżenie przy zmianie). */
+export function spaceGasKernelCount(n, what = 'liczba wątków') {
+  if (!(n > 0)) return n;
+  const m = Math.ceil(n / SPACE_GAS_WORKGROUP) * SPACE_GAS_WORKGROUP;
+  if (m !== n) warnCount(what, n, m);
+  return m;
+}
+/** Bok okna pola [komórki] → w górę do wielokrotności 8 (N² wątków kerneli pola — wielokrotność 64). */
+export function spaceGasWindowCells(n, what = 'okno pola [komórki]') {
+  if (!(n > 0)) return n;
+  const m = Math.ceil(n / 8) * 8;
+  if (m !== n) warnCount(what, n, m);
+  return m;
+}
 /** Raster przekroju olbrzymów pasa (z = 0) na okno pola: bok [teksle], słowa 32-bitowe. */
 export const SPACE_GAS_RASTER = 128;
 const RASTER_WORDS = SPACE_GAS_RASTER * SPACE_GAS_RASTER / 32;

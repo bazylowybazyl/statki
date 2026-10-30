@@ -45,7 +45,7 @@ import { View3D } from '../../game/view3D.js';
 import { BELT_BAND } from '../../game/asteroidBeltField.js';
 import { FieldSunOcclusion, NIGHT_KNEE, nightKnee } from '../../game/asteroidFieldLight.js';
 import { beltPlayZ } from '../../game/beltPlayZ.js';
-import { getEntityHullLengthWorld } from '../../game/shipLightRuntime.js';
+import { getEntityHullLengthWorld, SHIP_LIGHT_DIR_TUNE } from '../../game/shipLightRuntime.js';
 import { addShipLights, CAVE_SHIP_LIGHTS, FIELD_SHIP_LIGHTS } from '../fx/lightGrid.js';
 import { createShiftKernel } from '../fx/gpuPoolOrigin.js';
 import { RockShapeBankGPU } from './rockBank.js';
@@ -59,7 +59,7 @@ import { VolumeLight } from './volumetrics.js';
 import { getBeltMedium } from './beltMedium.js';
 import { Sparks, SPARK_CAP } from './sparks.js';
 import { StormSystem } from './storm.js';
-import { GiantView } from './giants.js';
+import { GiantView, GiantBakeKernel } from './giants.js';
 import { BeltFog } from './fog.js';
 import { GlowSprites } from './glowSprites.js';
 import { BeltVeil } from './beltVeil.js';
@@ -172,6 +172,17 @@ export function warpFadeMinPx(fade, zoom, cfg = WARP_FADE) {
   return cfg.lo * Math.pow(hi / cfg.lo, 1 - (f > 0 ? f : 0));
 }
 
+/**
+ * Poza świateł pola statku (2026-10-29): gracz — poza renderu (RenderWorld.playerPose: interpolacja między krokami
+ * fizyki, ta sama co kadłuba w hexShips3D.getInterpolatedRenderPose), gdy pełna; inny statek albo brak pozy — null
+ * (światła w pozie encji). Gracz 2 zostaje w pozie kroku jak jego kadłub.
+ */
+export function beltShipRenderPose(e) {
+  if (!e || e !== RenderWorld.ship) return null;
+  const p = RenderWorld.playerPose;
+  return p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.angle) ? p : null;
+}
+
 export class AsteroidBelt {
   /**
    * Część CPU (natychmiast, bez GPU): własna instancja pola i cienia pól na danych świata pasa gry.
@@ -190,6 +201,8 @@ export class AsteroidBelt {
     world.onOcclusion((sectors) => this.occlusion.adoptSectors(sectors));
     // Widoki olbrzymów (GiantView) po id wpisu świata — stan obrazu poza obiektami gry.
     this._giantViews = new Map();
+    // Wspólny kernel pieczenia światła olbrzymów (giants.js GiantBakeKernel) — z initGpu, rozgrzany w _prewarmCompute.
+    this.giantBake = null;
     this.medium = getBeltMedium();
     // Atlas map cienia reflektorów = mapy cienia SIATKI ŚWIATEŁ GRY: ustawiany przed
     // budową materiałów czytających siatkę (lightGrid.js: `loop` sprawdza `shadows`).
@@ -224,7 +237,15 @@ export class AsteroidBelt {
     this._litDist = [];
     this._owners = new WeakMap();
     this._nextOwner = 1;
-    this._shipLightOpts = { time: 0, owner: 0, shadows: null, spotShadows: true, floods: true, nav: true, profile: FIELD_SHIP_LIGHTS, strength: 1 };
+    this._shipLightOpts = { time: 0, owner: 0, shadows: null, spotShadows: true, floods: true, nav: true, profile: FIELD_SHIP_LIGHTS, strength: 1, pose: null };
+    // ŚWIATŁA STATKÓW BEZ DRŻENIA (2026-10-29, zgłoszenie „snopy front i pomocnicze drżą” — _addShipLights):
+    // lightsRenderPose — światła gracza w pozie renderu (tej, w której rysuje się kadłub; false = dawna poza fizyki);
+    // navClock — faza poświaty lamp pozycyjnych z zegara klatki efektów jak billboardy i lampy kadłuba ('frame'; 'belt' =
+    // dawny zegar skał, stoi w pauzie); lightDirTune — uchwyt A/B osi reflektorów bez zaokrąglenia (SHIP_LIGHT_DIR_TUNE,
+    // shipLightRuntime.js — wszystkie statki, nie tylko pas).
+    this.lightsRenderPose = true;
+    this.navClock = 'frame';
+    this.lightDirTune = SHIP_LIGHT_DIR_TUNE;
     this._flashes = [];
     this._flashPool = [];
     this._rockLightBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -353,6 +374,9 @@ export class AsteroidBelt {
     });
     this.miningView = new MiningView({ parent: root, layer: BELT_LAYER_PLAY, shared, grid: this.grid, sparks: this.sparks });
     this.miningView.attach(this.rig);
+    // Pieczenie światła olbrzymów: JEDEN kernel compute dla wszystkich widoków (pipeline compute powstaje synchronicznie —
+    // rozgrzewka pustym dispatchem w _prewarmCompute; dawniej kernel na olbrzyma kompilował się w klatce jego pierwszego widoku).
+    this.giantBake = new GiantBakeKernel();
     Core3D.scene.add(root);
     if (typeof Core3D.addPassDepthStamp === 'function') Core3D.addPassDepthStamp('bg', this._stamp);
     // Początek pul: pole trzyma go, dopóki coś jest wczytane; żywe iskry przesuwa kernel.
@@ -422,7 +446,7 @@ export class AsteroidBelt {
       }));
     }
     promises.push(run('pas asteroid: atlas cieni reflektorów (wszystkie mapy, cień skał w wydobyciu)', () => this._prewarmShadowAtlas()));
-    run('pas asteroid: kernele compute (ośrodek, iskry, atlas wydobycia)', () => this._prewarmCompute());
+    run('pas asteroid: kernele compute (ośrodek, iskry, atlas wydobycia, pieczenie światła olbrzymów)', () => this._prewarmCompute());
     await Promise.all(promises);
   }
 
@@ -477,6 +501,13 @@ export class AsteroidBelt {
       this.mined?.warm();
     } catch (err) {
       console.warn('[AsteroidBelt] rozgrzewka compute nie wyszła:', err?.message || err);
+    }
+    // Pieczenie światła olbrzymów (licznik wątków 0 — sam pipeline; olbrzymy powstają w grze, przy punktach uwagi) —
+    // osobno: błąd rozgrzewki ośrodka czy iskier nie może jej pominąć (kompilacja wróciłaby do klatki pierwszego widoku).
+    try {
+      this.giantBake?.warm(renderer);
+    } catch (err) {
+      console.warn('[AsteroidBelt] rozgrzewka pieczenia olbrzymów nie wyszła:', err?.message || err);
     }
   }
 
@@ -837,7 +868,7 @@ export class AsteroidBelt {
       const mv = this._miningFrame;
       const ship = this._in.ship;
       mv.dt = this._dt; mv.time = this.time; mv.originX = ox; mv.originY = oy; mv.zoom = v.zoom;
-      if (ship && ship.pos) { this._miningShip.x = ship.pos.x; this._miningShip.y = ship.pos.y; mv.ship = this._miningShip; } else mv.ship = null;
+      mv.ship = ship && ship.pos ? this._shipRenderPoint(ship, this._miningShip) : null;
       mv.sunT = this.sunT;
       this.miningView.update(mv);
     }
@@ -964,7 +995,7 @@ export class AsteroidBelt {
         if (created) continue;
         view = new GiantView({
           renderer: this.renderer, parent: this.root, layer: BELT_LAYER_PLAY, giant, noise: this.shared.noise,
-          shared: this.shared, grid: this.grid, sun: this.sun, sunElevDeg: ROCK_LIGHT_DEFAULTS.sunElevDeg
+          shared: this.shared, grid: this.grid, sun: this.sun, sunElevDeg: ROCK_LIGHT_DEFAULTS.sunElevDeg, bake: this.giantBake
         });
         this._giantViews.set(e.id, view);
         created = true;
@@ -983,6 +1014,11 @@ export class AsteroidBelt {
   // Światła pola statków: reflektory dalekie (z mapą cienia), otoczenia (mapa na każdy),
   // światło dookoła, lampy pozycyjne — najbliższe środka kadru (budżet), w kadrze świateł.
   // Pod stropem olbrzyma profil jaskini (reflektory w dół, szersze światło dookoła).
+  // POZA: światła stoją tam, gdzie rysuje się kadłub — gracz w pozie renderu (RenderWorld.playerPose: interpolacja między
+  // krokami fizyki; kadłub, model, lampy kadłuba, billboardy i dysze gracza biorą tę samą). Dawniej poza końca kroku
+  // fizyki z encji: przy 240 Hz obrazu i 60 Hz fizyki smugi, rozlewy reflektorów otoczenia i poświata lamp wyprzedzały
+  // kadłub o (1 − α) · v / 60 i wracały co krok (piła 2,5 px przy 600 j/s, 12,9 px przy 3000 — zoom 0,34). NPC w workerze
+  // mają już pozę renderu w lustrze, gracz 2 i NPC w trybie off — pozę kroku jak ich kadłuby (bez zmian).
   _addShipLights(grid) {
     const input = this._in;
     const v = this._view;
@@ -1002,7 +1038,9 @@ export class AsteroidBelt {
     if (npcs) for (let i = 0; i < npcs.length; i++) this._considerShip(npcs[i]);
     const n = this._litN;
     const opts = this._shipLightOpts;
-    opts.time = this.time;
+    // Faza poświaty lamp pozycyjnych w pyle: zegar klatki efektów (Core3D.frameNowMs — ten sam co billboardy lamp
+    // i pętla lamp kadłuba, biegnie też w pauzie); 'belt' — dawny zegar skał (suma dt, w pauzie stoi).
+    opts.time = this.navClock === 'belt' ? this.time : Core3D.frameNowMs() * 0.001;
     opts.shadows = this.atlas;
     // zanik pola przy skoku gracza (WARP_FADE): światła pola gasną razem z pyłem, który oświetlają
     opts.strength = this._fade;
@@ -1010,14 +1048,26 @@ export class AsteroidBelt {
       const e = list[i];
       const len = getEntityHullLengthWorld(e) || Number(e.w) || (Number(e.radius) || 300) * 2;
       opts.owner = this._ownerOf(e);
-      const x = Number(e.pos?.x ?? e.x);
-      const y = Number(e.pos?.y ?? e.y);
+      const pose = this.lightsRenderPose === false ? null : beltShipRenderPose(e);
+      opts.pose = pose;
+      const x = pose !== null ? pose.x : Number(e.pos?.x ?? e.x);
+      const y = pose !== null ? pose.y : Number(e.pos?.y ?? e.y);
       opts.profile = this.world.roofAbove(x, y) ? CAVE_SHIP_LIGHTS : FIELD_SHIP_LIGHTS;
       opts.spotShadows = i < this.cfg.maxShadowShips;
       addShipLights(grid, e, len, opts);
       list[i] = null;
     }
+    opts.pose = null;
     return n;
+  }
+
+  // Punkt statku dla obrazu przy kadłubie (wiązka ściągająca platformy wydobywczej): gracz w pozie renderu jak jego
+  // światła (lightsRenderPose), reszta — poza encji. `out` — obiekt wołającego (bez alokacji).
+  _shipRenderPoint(ship, out) {
+    const pose = this.lightsRenderPose === false ? null : beltShipRenderPose(ship);
+    out.x = pose !== null ? pose.x : ship.pos.x;
+    out.y = pose !== null ? pose.y : ship.pos.y;
+    return out;
   }
 
   // Wstawienie statku do posortowanej listy najbliższych środka kadru (bez alokacji).

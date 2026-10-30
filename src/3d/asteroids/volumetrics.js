@@ -62,7 +62,13 @@ export const FLOOR_RENDER_ORDER = -50;
 // (cellPx / zoom) zmieniała się przy KAŻDEJ zmianie zoomu, a siatka jest zakotwiczona w wielokrotnościach kolumny względem
 // początku pola (do 20 tys. j. od kamery) — sprężyna zoomu po ząbku kółka przesuwała fazę kolumn o pół kolumny w ~1/3
 // klatek (smugi reflektorów, cienie skał w smudze i włókna pyłu migotały do ±5 px na 5120 px). A/B: false — wprost.
-export const VOLUME_LIGHT_TUNE = { slices: true, cols: 8, per: 2, cellLadder: true };
+// worldAnchor — SIATKA KOLUMN W UKŁADZIE SCENY (2026-10-29, zgłoszenie „snopy front i pomocnicze drżą”): róg siatki to
+// wielokrotność kolumny w układzie sceny (double), nie względem początku pola. Początek jest lepki (Core3D.fx.origin,
+// przeskok co 20 tys. j. drogi kamery o całkowitą liczbę jednostek), a kolumna 2^(j/8) j. nie dzieli przeskoku — siatka
+// względem początku przeskakiwała w świecie o (przeskok mod kolumna): ~pół kolumny (5,3 px przy zoomie 0,45) na KAŻDYM
+// przeskoku, w hipercruisie w pasie 1–1,6 razy na sekundę (smugi reflektorów, cienie skał w smudze i włókna jednym
+// szarpnięciem). Między przeskokami bez różnicy. A/B: false — siatka względem początku pola (dawniej).
+export const VOLUME_LIGHT_TUNE = { slices: true, cols: 8, per: 2, cellLadder: true, worldAnchor: true };
 const CELL_STEPS = 8;
 const CELL_HYST = 1.03;
 // 8 kolumn × 20 wątków (po 2 plastry) = grupa 160 — najszybszy z układów 4×1, 8×2, 16×4, 32×8 w ciężkiej i lekkiej
@@ -382,8 +388,18 @@ export class VolumeLight {
       this._cellLevel = j;
       cell = 2 ** (j / CELL_STEPS);
     } else this._cellLevel = NaN;
-    const x0 = Math.floor((camX - halfW) / cell) * cell;
-    const y0 = Math.floor((camY - halfH) / cell) * cell;
+    let x0;
+    let y0;
+    if (VOLUME_LIGHT_TUNE.worldAnchor) {
+      // róg siatki w układzie sceny (double): x sceny początku = originX, y sceny = −originY (lokalne = scena − początek)
+      const sox = Number(originX) || 0;
+      const soy = -(Number(originY) || 0);
+      x0 = Math.floor((camX + sox - halfW) / cell) * cell - sox;
+      y0 = Math.floor((camY + soy - halfH) / cell) * cell - soy;
+    } else {
+      x0 = Math.floor((camX - halfW) / cell) * cell;
+      y0 = Math.floor((camY - halfH) / cell) * cell;
+    }
     const nx = Math.min(this.NX, Math.ceil((camX + halfW - x0) / cell) + 1);
     const ny = Math.min(this.NY, Math.ceil((camY + halfH - y0) / cell) + 1);
     M.origin.value.set(x0, y0);

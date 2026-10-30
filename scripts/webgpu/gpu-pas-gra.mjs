@@ -61,6 +61,10 @@
 //   przejścia przy zoomie / s (np. --rampaSkala 0.3 --rampaZoomOd 0.12 --rampaZoomDo 0.035).
 // --takt 1: headless Z TAKTEM MONITORA (bez --disable-frame-rate-limit / --disable-gpu-vsync — rAF ~240 Hz jak u gracza
 //   z VSync, bez okna na pulpicie); bez taktu headless nie ma sufitu klatek (pomiar kosztu — okna główne).
+// --drzenie <katalog> (2026-10-29 wieczór — „snopy świateł drżą”, „gazy drżą przy zoomie i przy oddaleniu”): sondy klatka
+//   po klatce w workerze (scripts/webgpu/drzenieSondy.mjs) — światła gracza wobec pozy renderu, drabiny map / kolumn /
+//   obwiedni przy rampach zoomu, zrzuty wycinków kanwy kolejnych stron z różnicami po kompensacji kamery; opis przy
+//   drzenieSeria niżej. Baza: --takt 1 --query "grafika=ultra&renderWorker=1" --okna brak --kolko 0 --ab 0 --rytm 0 --slad 0.
 // Obce obciążenie (2026-10-29): przed i po każdym oknie pomiaru cudze harnessy (node scripts/….mjs, Chrome z
 //   --remote-debugging-port) i `node --test`; obce przed oknem — czekanie na ciszę do 60 s; okno z obcymi = `obce` w
 //   raporcie, okna główne (postój, przeloty) powtarzane raz (`<okno>-powt`). Mecz League of Legends
@@ -82,8 +86,9 @@ import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sl
 import { SONDA_INSTALUJ, SONDA_CZYTAJ, stanMaszyny, analizaSladu } from './sondaGpuWorkera.mjs';
 import { startVramBallast } from './balastVram.mjs';
 import { readPng, writePng } from './png.mjs';
-import { SPACE_GAS_WINDOW_EDGE, SPACE_GAS_MAP_MARGIN, spaceGasViewHalf } from '../../src/3d/spaceGas/spaceGasLayout.js';
+import { SPACE_GAS_WINDOW_EDGE, SPACE_GAS_MAP_MARGIN, SPACE_GAS_IN, spaceGasViewHalf } from '../../src/3d/spaceGas/spaceGasLayout.js';
 import { SPACE_GAS_INPUT_TUNE } from '../../src/game/spaceGasInput.js';
+import { DRZ_LOG, DRZ_Z, drzInstaluj, drzRoznice, drzMapaRoznicy, swiatlaStat, kolumnyStat, drabinaStat, oknoStat, podsumujRoznice } from './drzenieSondy.mjs';
 
 const args = parseArgs();
 const [W, H] = String(args.rozmiar || '5120x1440').split('x').map(Number);
@@ -122,6 +127,27 @@ const C5_KOD = `const r = C.renderer; if (!r.__c5) { const o = r.__c5 = { clear:
     this.autoClear = true; this.autoClearColor = p.c; this.autoClearDepth = true; this.autoClearStencil = p.s;
     try { return o.render.call(this, scene, camera); } finally { this.autoClear = a[0]; this.autoClearColor = a[1]; this.autoClearDepth = a[2]; this.autoClearStencil = a[3]; } }; }`;
 const C5_PRZYWROC = `const r = C.renderer, o = r.__c5; if (o) { r.clear = o.clear; r.render = o.render; delete r.__c5; }`;
+// poprawki drżenia gazu (2026-10-29 wieczór): dawne i nowe wartości przełączników (SPACE_GAS_TUNE, src/3d/spaceGas/spaceGas.js).
+// „nowe” = DOMYŚLNE od 2026-10-30 (pomiar w grze, docs/AUDYT-drzenie-swiatel-2026-10-29.md § 6): jedna próbka na teksel
+// (mapTaps 1 — jak dawniej), B-spline wł., zanik drobin pyłu [0,3; 1,2] px; lodMean (średnie kanałów wygaszonej faktury)
+// domyślnie WYŁ. (zmiana barwy przy oddaleniu czeka na decyzję użytkownika) — propozycja: wariant D5. Rozmiar map jest przy
+// budowie (domyślnie 768 × 432) — A/B osobnym przebiegiem z --query "…&gazMapa=proporcje" / "…&gazMapa=szeroka"
+const DRZ_GAZ_DAWNE = 'Object.assign(S.spaceGas.tune, { matrixSync: false, mapTaps: 1, layerCubic: false, envBlend: 0, lodMean: false, dustMinPx: 0 })';
+const DRZ_GAZ_NOWE = 'Object.assign(S.spaceGas.tune, { matrixSync: true, mapTaps: 1, layerCubic: true, envBlend: 0.35, lodMean: false, dustMinPx: 2.5, dustFadePx: [0.3, 1.2] })';
+// poprawki drżenia świateł statków (2026-10-29 wieczór, docs/AUDYT-drzenie-swiatel-2026-10-29.md): dawne i nowe wartości
+// przełączników (pas: poza renderu gracza, oś reflektorów bez zaokrąglenia — wszystkie statki, siatka kolumn ośrodka i mapy
+// pola w układzie sceny, zegar poświaty lamp pozycyjnych)
+const DRZ_SW_DAWNE = "S.belt.lightsRenderPose = false; S.belt.lightDirTune.exact = false; S.belt.volume.tune.worldAnchor = false; S.belt.fieldMap.tune.worldAnchor = false; S.belt.navClock = 'belt'";
+const DRZ_SW_NOWE = "S.belt.lightsRenderPose = true; S.belt.lightDirTune.exact = true; S.belt.volume.tune.worldAnchor = true; S.belt.fieldMap.tune.worldAnchor = true; S.belt.navClock = 'frame'";
+// próbki mapy gazu × odczyt B-spline warstwy (2026-10-30, wybór domyślnych — koszt przy oddaleniu): baza = domyślne
+// (mapTaps 1, layerCubic wł.), wariant T<najwięcej próbek>C<B-spline 1 / 0> (T4C1 — dawne domyślne z 2026-10-29; T1C1 =
+// domyślne — okno kontrolne, nazwa z przebiegów 2026-10-30); przy mapie 768 × 432 na 5120 × 1440 4 próbki biorą teksel
+// > 150 j. (zoom < ~0,05), 2 — teksel > 64 j. (zoom < ~0,11), B-spline — teksel > 40 j. (zoom < ~0,19); przy mapie
+// w proporcjach kadru (1086 × 306) — ~0,0365 / ~0,08 / ~0,134
+const DRZ_TC = { T4C1: [4, true], T2C1: [2, true], T1C1: [1, true], T4C0: [4, false], T2C0: [2, false], T1C0: [1, false] };
+const drzTcKod = (t, c) => `S.spaceGas.tune.mapTaps = ${t}; S.spaceGas.tune.layerCubic = ${c}`;
+const DRZ_TC_WAR = Object.fromEntries(Object.entries(DRZ_TC).map(([n, [t, c]]) => [n,
+  { opis: `gaz: mapTaps ${t}, layerCubic ${c ? 'wł.' : 'wył.'} (domyślnie 1, wł.)`, gaz: true, wk: drzTcKod(t, c), wkPrzywroc: drzTcKod(1, true) }]));
 const WARIANTY = {
   G0: { opis: 'gaz wył. (wejście gry; płytka mgła pasa wraca)', strona: 'window.SpaceGasInputTune.enabled = false', stronaPrzywroc: 'window.SpaceGasInputTune.enabled = true', po: 4 },
   G1: { opis: 'pył gazu wył.', wk: 'S.spaceGas.tune.dust = false', wkPrzywroc: 'S.spaceGas.tune.dust = true' },
@@ -148,6 +174,21 @@ const WARIANTY = {
   S3: { opis: 'gaz: przesunięcie okna zeruje ciśnienie', gaz: true, wk: 'S.spaceGas.sim.tune.shiftPrs = 0; S.spaceGas.sim.syncTune()', wkPrzywroc: 'S.spaceGas.sim.tune.shiftPrs = 1; S.spaceGas.sim.syncTune()' },
   S4: { opis: 'klatka Core3D.fx po taktach rAF workera (dawniej — bez klucza strony)', gaz: true, wk: 'S.fxPerPage = false', wkPrzywroc: 'S.fxPerPage = true' },
   S5: { opis: 'gaz: dawny zanik max(pół szer., pół wys.)', gaz: true, wk: 'S.spaceGas.tune.fadeAspect = 0', wkPrzywroc: 'S.spaceGas.tune.fadeAspect = 16 / 9' },
+  // poprawki drżenia gazu przy zoomie i oddaleniu 2026-10-29 wieczór — DAWNE zachowanie na żywo (wariant = stary kod).
+  // Rozmiar map jest przy budowie (domyślnie 768 × 432 — jak dawniej) — A/B osobnym przebiegiem z --query
+  // …&gazMapa=proporcje (1086 × 306 na 32:9) albo …&gazMapa=szeroka (1536 × 432)
+  D0: { opis: 'gaz: wszystkie poprawki drżenia wył. (macierze, B-spline, obwiednia, pył)', gaz: true, wk: DRZ_GAZ_DAWNE, wkPrzywroc: DRZ_GAZ_NOWE },
+  D1: { opis: 'gaz: warstwy i pył z macierzą poprzedniej klatki (dawniej)', gaz: true, wk: 'S.spaceGas.tune.matrixSync = false', wkPrzywroc: 'S.spaceGas.tune.matrixSync = true' },
+  // D2: próbki na teksel — domyślnie 1 jak dawniej (2026-10-30), więc wariant = sam odczyt dwuliniowy mapy w warstwie
+  D2: { opis: 'gaz: mapa w warstwie odczytem dwuliniowym (dawniej; jedna próbka na teksel — jak domyślnie)', gaz: true, wk: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = false', wkPrzywroc: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = true' },
+  D3: { opis: 'pył gazu: bok w j. świata bez najmniejszego boku w px (dawniej)', gaz: true, wk: 'S.spaceGas.tune.dustMinPx = 0', wkPrzywroc: 'S.spaceGas.tune.dustMinPx = 2.5' },
+  D4: { opis: 'gaz: krok siatki obwiedni bez przenikania (dawniej)', gaz: true, wk: 'S.spaceGas.tune.envBlend = 0', wkPrzywroc: 'S.spaceGas.tune.envBlend = 0.35' },
+  // D5 odwrotnie niż reszta: lodMean jest domyślnie wył. — wariant = propozycja (średnie kanałów), baza = dawne cele
+  D5: { opis: 'gaz: średnie kanałów wygaszonej faktury (lodMean wł. — propozycja, domyślnie wył.: barwa przy oddaleniu inna)', gaz: true, wk: 'S.spaceGas.tune.lodMean = true', wkPrzywroc: 'S.spaceGas.tune.lodMean = false' },
+  // poprawki drżenia świateł statków (2026-10-29 wieczór) — dawne zachowanie; DW — wszystkie poprawki drżenia (gaz i światła)
+  DL: { opis: 'światła statków: wszystkie poprawki drżenia wył. (poza fizyki, oś z zaokrągleniem, siatki względem początku pola, zegar skał)', wk: DRZ_SW_DAWNE, wkPrzywroc: DRZ_SW_NOWE },
+  DW: { opis: 'wszystkie poprawki drżenia wył. (gaz D0 + światła DL)', gaz: true, wk: `${DRZ_GAZ_DAWNE}; ${DRZ_SW_DAWNE}`, wkPrzywroc: `${DRZ_GAZ_NOWE}; ${DRZ_SW_NOWE}` },
+  ...DRZ_TC_WAR,
   B3: { opis: 'ośrodek objętościowy pasa wył.', wk: 'S.belt.volume.setVisible(false)', wkPrzywroc: 'S.belt.volume.setVisible(true)' },
   B4: { opis: 'zasłona pasa wył.', wk: 'S.belt._updateVeil = function () { this.veil.setVisible(false); }', wkPrzywroc: 'delete S.belt._updateVeil' },
   B6: { opis: 'atlas cieni reflektorów wył.', wk: 'S.belt.atlas.enabled = false', wkPrzywroc: 'S.belt.atlas.enabled = true' },
@@ -244,6 +285,42 @@ const OBRAZ_ROZNICA = (s1, s2, maska = '') => `(() => {
   return { pikseli: n, rozne: px, rozneProc: +(100 * px / n).toFixed(4), maks: +maks.toFixed(5), srednia: +(sum / n).toFixed(7), siatka16x4: siatka, probki };
 })()`;
 
+// Etykiety compute gazu w sondzie GPU (2026-10-30): w kroku „gaz przestrzeni” wywołanie map (kGas + kLight) jako
+// `fx:gaz mapy`, pył jako `fx:gaz pył` — reszta (pole) zostaje `fx:gaz przestrzeni`; czas GPU map wprost ze znacznika
+// (koszt próbek na teksel i rozmiaru map bez A/B okien). Owija renderer.compute NA sondzie (etykieta w chwili wywołania).
+const SONDA_GAZ_ETYKIETY = `(() => {
+  const C = globalThis.__C3, S = globalThis.__ST, P = globalThis.__gpuProbe, r = C && C.renderer;
+  if (!r || !P) return 'brak sondy';
+  if (r.__gazEtyk) return 'już';
+  // pipeline'y compute tworzone po starcie gry (three r183 tworzy je synchronicznie — każdy nowy w grze = przestój):
+  // licznik na całą sesję od instalacji (sonda liczy je tylko w oknach)
+  const dev = r.backend && r.backend.device;
+  if (dev && !globalThis.__cSync) {
+    const cs = globalThis.__cSync = { n: 0, lista: [] }, cp0 = dev.createComputePipeline;
+    dev.createComputePipeline = function (d) {
+      cs.n++;
+      if (cs.lista.length < 20) {
+        // skąd: etykieta deskryptora, krok Core3D.fx (etykieta sondy), klatka three i stos bez three / Vite
+        const st = String(new Error().stack || '').split('\\n').slice(2).filter((l) => !/node_modules|three|vite-deps|\\.vite\\/deps|<anonymous>|eval at/.test(l)).slice(0, 8).map((l) => l.trim().slice(0, 160));
+        cs.lista.push({ label: String((d && d.label) || '?'), fx: P.curLabel || '', klatka: r.info && r.info.frame, t: Math.round(performance.now()), stos: st });
+      }
+      return cp0.apply(this, arguments);
+    };
+  }
+  const c0 = r.__gazEtyk = r.compute;
+  r.compute = function (nodes) {
+    const SG = S && S.spaceGas, M = SG && SG.maps, D = SG && SG.dust;
+    let lab = null;
+    if (M && Array.isArray(nodes) && nodes[0] === M.kGas) lab = 'fx:gaz mapy';
+    else if (D && D.kStep && (nodes === D.kStep || (Array.isArray(nodes) && nodes.indexOf(D.kStep) >= 0))) lab = 'fx:gaz pył';
+    if (!lab || !P.curLabel || P.curLabel.indexOf('fx:gaz') !== 0) return c0.apply(this, arguments);
+    const prev = P.curLabel;
+    P.curLabel = lab;
+    try { return c0.apply(this, arguments); } finally { P.curLabel = prev; }
+  };
+  return 'ok';
+})()`;
+
 // Rozkład skał w kadrze (koniec okna): instancje na koszyk LOD, suma pól rzutów [px bufora] wobec ekranu (nadmiar
 // rysowania), liczba skał drobnych (promień < 2 / 4 / 9 px — trójkąty siatki LOD0 mniejsze od kwadu 2 × 2)
 const STAT_SKAL = `(() => {
@@ -287,6 +364,11 @@ const ZAB_PAUZA = [
   { n: 'ENV', opis: 'gaz: dawna siatka obwiedni (samo okno × 1,3 — przy oddaleniu mapa sięga poza siatkę, pole dalekie z rozmazanego brzegu)', strona: 'window.SpaceGasInputTune.envCover = false', stronaP: 'window.SpaceGasInputTune.envCover = true', ustal: 2.5 },
   { n: 'PYL', opis: 'pył gazu: dawny twardy brzeg okna pola', wk: 'S.spaceGas.tune.dustEdge = false', wkP: 'S.spaceGas.tune.dustEdge = true' },
   { n: 'S2', opis: 'gaz i ośrodek pasa: teksel map / kolumna ośrodka wprost z kadru (bez drabiny) — w pauzie tylko inny teksel; drganie widać w rampie', wk: 'S.spaceGas.tune.texelLadder = false; S.belt.volume.tune.cellLadder = false', wkP: 'S.spaceGas.tune.texelLadder = true; S.belt.volume.tune.cellLadder = true' },
+  // poprawki drżenia 2026-10-29 wieczór zmieniające nieruchomy kadr (tylko przy oddaleniu; przy zbliżeniu bez zmian)
+  { n: 'D2', opis: 'gaz: mapa w warstwie odczytem dwuliniowym (dawniej — schodki teksla przy oddaleniu; B-spline do decyzji użytkownika: miękkszy o ~½ teksla)', wk: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = false', wkP: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = true' },
+  { n: 'D3', opis: 'pył gazu: dawny bok w j. świata (drobiny < 2,5 px — w kadrze nieruchomym iskry 1 px albo brak)', wk: 'S.spaceGas.tune.dustMinPx = 0', wkP: 'S.spaceGas.tune.dustMinPx = 2.5' },
+  // D5 odwrotnie: kadr „D5-stare” = PROPOZYCJA lodMean wł. (domyślnie wył. — dawne cele); do decyzji użytkownika
+  { n: 'D5', opis: 'gaz: średnie kanałów wygaszonej faktury — propozycja lodMean wł. (siarka −13%, lód +25%, wyrzut −30% przy oddaleniu; domyślnie wył.)', wk: 'S.spaceGas.tune.lodMean = true', wkP: 'S.spaceGas.tune.lodMean = false' },
   { n: 'STARE', opis: 'poprawki wydajności pola wył. (CRoff + L0 + Z0 + V0) — obraz ma być ten sam', wk: 'C.clearInPass = false; C.msaaResolveOnce = false; S.belt.setRockOrder(false); S.belt.stampEnabled = false; S.belt.veil.setDepthCull(false)',
     wkP: 'C.clearInPass = true; C.msaaResolveOnce = true; S.belt.setRockOrder(true); S.belt.stampEnabled = true; S.belt.veil.setDepthCull(true)', ustal: 2.5 }
 ];
@@ -296,6 +378,7 @@ const AB_BLISKO = args.ab === '0' ? [] : listaArg(args.abBlisko, ['G0', 'B0', 'B
 const AB_LOT = args.ab === '0' ? [] : listaArg(args.abLot, ['G0', 'B0', 'K0', 'C5', 'FX']);
 const AB_SLAD = new Set(String(args.abSlad || 'baza,G0,B0,K0,C5').split(','));
 for (const n of [...AB_DALEKO, ...AB_BLISKO, ...AB_LOT]) if (!WARIANTY[n]) { console.error('nieznany wariant', n); process.exit(1); }
+for (const w of listaArg(args.abLotStaly, [])) for (const n of (w.split(':')[1] ? w.split(':')[1].split('+') : listaArg(args.abLotStalyWarianty, []))) if (!WARIANTY[n]) { console.error('nieznany wariant (abLotStaly)', n); process.exit(1); }
 
 const report = {
   args, tryb: OKNO ? 'okno z vsync' : TAKT ? 'headless z taktem monitora (rAF ~240 Hz)' : 'headless (bez vsync)', rozmiar: [W, H], zoomy: { blisko: ZB, srednio: ZS, daleko: ZD, maks: ZM }, chrome: CHROME_TRYB, devFeatures: DEV_FEATURES,
@@ -597,7 +680,7 @@ await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `try { localSt
   requestAnimationFrame(raf);
 })();` });
 
-const KEYS = { w: { key: 'w', code: 'KeyW', windowsVirtualKeyCode: 87 } };
+const KEYS = { w: { key: 'w', code: 'KeyW', windowsVirtualKeyCode: 87 }, d: { key: 'd', code: 'KeyD', windowsVirtualKeyCode: 68 } };
 const down = (k) => cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', ...KEYS[k] });
 const up = (k) => cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...KEYS[k] });
 
@@ -614,9 +697,9 @@ const GUARD = `(() => {
 })()`;
 
 // Atlas w gęstym polu (miejsce „pole” dema asteroid), trzymany pętlą rAF (__hold), kamera statku z zadanym zoomem
-const NA_MIEJSCE = (z) => `(async () => {
+const NA_MIEJSCE = (z, dx = 0, dy = 0) => `(async () => {
   const Wd = await import('/dema/asteroidy-webgpu/world.js');
-  const s = Wd.SPOTS.field;
+  const s0 = Wd.SPOTS.field, s = { x: s0.x + ${Number(dx) || 0}, y: s0.y + ${Number(dy) || 0} };
   window.__hold = { x: s.x, y: s.y, heading: -0.4, on: true };
   if (!window.__holdLoop) {
     window.__holdLoop = true;
@@ -657,11 +740,12 @@ const PAGE_STATE = `(() => {
 
 // Blokada wejścia użytkownika w oknie harnessu (przebieg bazowy 2026-10-29: kółko myszy na pełnoekranowym oknie
 // zmieniło zoom w połowie A/B — 0,0667 → 0,22 → 0,078 → 0,43 → 0,12). Faza przechwytywania na window, przed
-// obsługą gry; przepuszcza tylko W (ciąg wysyłany przez CDP). Licznik zablokowanych zdarzeń idzie do każdego okna.
+// obsługą gry; przepuszcza tylko W i D (ciąg i obrót wysyłane przez CDP — D: obrót w --drzenie). Licznik zablokowanych
+// zdarzeń idzie do każdego okna.
 const BLOKADA_WEJSCIA = `(() => {
   if (window.__blokadaWejscia) return 'już';
   const B = window.__blokadaWejscia = { n: 0 };
-  const stop = (e) => { if ((e.type === 'keydown' || e.type === 'keyup') && e.code === 'KeyW') return; B.n++; e.stopImmediatePropagation(); if (e.cancelable) e.preventDefault(); };
+  const stop = (e) => { if ((e.type === 'keydown' || e.type === 'keyup') && (e.code === 'KeyW' || e.code === 'KeyD')) return; B.n++; e.stopImmediatePropagation(); if (e.cancelable) e.preventDefault(); };
   for (const t of ['wheel', 'mousedown', 'mouseup', 'mousemove', 'pointerdown', 'pointerup', 'pointermove', 'click', 'dblclick', 'contextmenu', 'keydown', 'keyup'])
     window.addEventListener(t, stop, { capture: true, passive: false });
   return 'ok';
@@ -1337,7 +1421,9 @@ async function zrzutyAB() {
     report.zrzutyAB[report.zrzutyAB.length - 1].slad = sl;
     await sleep(1500);
     await zrzutAB(`${nazwa}-nowe-kontrola`, { zoom: z, strona: 'nowe', kontrola: true });
-    for (const p of ZAB_PAUZA) {
+    // --zabPauza D2,D3,…: tylko te przełączniki pauzy (domyślnie wszystkie ZAB_PAUZA)
+    const zabP = listaArg(args.zabPauza, ZAB_PAUZA.map((q) => q.n));
+    for (const p of ZAB_PAUZA.filter((q) => zabP.includes(q.n))) {
       const ustal = (p.ustal ?? 1.5) * 1000;
       await przelacz(p, true);
       await sleep(ustal);
@@ -1348,7 +1434,7 @@ async function zrzutyAB() {
     await zrzutAB(`${nazwa}-nowe-koniec`, { zoom: z, strona: 'nowe', kontrola: true });
     await wznowAB();
     // 2) przełączniki zależne od historii pola: przelot ze starą wartością, potem kontrola lot ↔ lot z nową
-    for (const v of ZAB_LOT[nazwa] || []) {
+    for (const v of String(args.zabLot ?? '1') === '0' ? [] : ZAB_LOT[nazwa] || []) {
       const W0 = WARIANTY[v];
       const p = { n: v, strona: W0.strona, stronaP: W0.stronaPrzywroc, wk: W0.wk, wkP: W0.wkPrzywroc };
       await przelacz(p, true);
@@ -1733,15 +1819,18 @@ const LOG_CZYTAJ = (nazwa, wiersze) => `(() => {
   return { n, wiersze: r, blad: L.err };
 })()`;
 // Stała prędkość okrętu: pętla rAF strony pisze ship.vel, kąt (dziób wzdłuż lotu) i zoom kamery co klatkę (fizyka gracza
-// między klatkami: regulator i tłumiki ujmują kilka j/s na krok — prędkość rzeczywista z przesunięcia w raporcie)
-const LOT_STALY = (vx, vy, a, z) => `(() => {
-  window.__cruise = { on: true, vx: ${vx}, vy: ${vy}, a: ${a}, z: ${z} };
+// między klatkami: regulator i tłumiki ujmują kilka j/s na krok — prędkość rzeczywista z przesunięcia w raporcie).
+// kurs = 1 (--drzenie, obrót klawiszem D): prędkość |v| wzdłuż BIEŻĄCEGO kursu, bez zapisu kąta — kąt całkuje fizyka
+// (poza fizyczna zmienia się tylko w krokach, jak w grze)
+const LOT_STALY = (vx, vy, a, z, kurs = 0) => `(() => {
+  window.__cruise = { on: true, vx: ${vx}, vy: ${vy}, a: ${a}, z: ${z}, kurs: ${kurs ? 1 : 0}, v: ${Math.hypot(vx, vy)} };
   if (!window.__cruiseLoop) {
     window.__cruiseLoop = true;
     const tick = () => {
       const C = window.__cruise, p = window.ship, c = window.camera;
       if (C && C.on && p) {
-        p.vel.x = C.vx; p.vel.y = C.vy; p.angle = C.a; if (p.angVel !== undefined) p.angVel = 0;
+        if (C.kurs) { p.vel.x = C.v * Math.cos(p.angle); p.vel.y = C.v * Math.sin(p.angle); }
+        else { p.vel.x = C.vx; p.vel.y = C.vy; p.angle = C.a; if (p.angVel !== undefined) p.angVel = 0; }
         if (c && C.z > 0) { c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = C.z; }
       }
       requestAnimationFrame(tick);
@@ -2006,6 +2095,731 @@ async function rampaZoom() {
   writeJson(join(out, 'raport.json'), report);
 }
 
+// ── DRŻENIE ŚWIATEŁ STATKÓW I GAZU (--drzenie <katalog>, 2026-10-29 wieczór) ─────────────────────────────────────────
+// Zgłoszenie (5120 × 1440 @ 240 Hz, worker, Ultra): (1) „snopy front i pomocnicze drżą”, (2) „gazy drżą przy zoom in /
+// out”, (3) „przybliżona kamera OK, oddalona — gazy drżą”. Sondy w workerze: scripts/webgpu/drzenieSondy.mjs (dziennik
+// klatka po klatce + zrzuty wycinków kanwy kolejnych stron do buforów GPU, analiza po serii). Części (--drzenieCzesci):
+//  swiatla — okręt w polu, zoom bliski (--swiatlaZoom, domyślnie domyślny kadr Atlasa), stała prędkość wzdłuż +x (--swiatlaV
+//    600,1400,3000 j/s, ciąg W) i obrót D przy 600 j/s (--swiatlaObrot 1): położenie świateł gracza z siatki Core3D.fx.grid
+//    (reflektory dalekie, otoczenia, dookólne, grupy lamp pozycyjnych) w układzie kadłuba POZY RENDERU na każdej stronie
+//    (--swiatlaS s dziennika po 3 s ustalenia), oś reflektora wobec kąta pozy, poza fizyczna − renderu, kosze alfy renderu,
+//    skoki na stronach z krokiem fizyki i bez, siatka świateł (zgubione), przeskoki początku Core3D.fx a faza siatki kolumn
+//    ośrodka; sekwencja PNG (--swiatlaPng klatek) wycinka przed dziobem (obrót — wokół kadłuba), cały obraz (bez ukrywania);
+//  zoom — „sam gaz” (skały, pass tła, burza, pył kosmiczny i reflektory gracza wył.; ośrodek pasa, gaz i pył gazu zostają),
+//    okręt trzymany: (a) na żywo ząbki kółka e^±0,2 co --zoomZabekMs ms od zoomu bliskiego do 0,035 i z powrotem oraz płynna
+//    rampa geometryczna (--zoomRampaS s w każdą stronę) — dziennik drabin (stopnie map gazu x / y, kolumny ośrodka, krok
+//    obwiedni: liczba, zoom, faza siatki tekseli na środku kadru); (b) PAUZA (gaz, pył i ośrodek stoją): pasma zoomu
+//    (--zoomPasma — zoom startu; --zoomKroki kroków × 1 / --zoomKrok — tempo sprężyny po ząbku), w każdym para kontrolna
+//    (ten sam zoom) i zrzut trzech wycinków (lewy, środek — okręt pominięty, prawy) po KAŻDYM kroku; różnica kolejnych
+//    klatek po usunięciu zmiany skali (punkt świata → piksel) liczona strumieniowo — luminancja i największy kanał RGB,
+//    pary ze zdarzeniem drabiny (mapa / kolumna / obwiednia) wobec par bez zdarzenia; warianty --zoomWarianty (pyl,
+//    osrodek, mapy — podsystem wył.) w pasmach --zoomWariantyPasma; PNG pasm --zoomPng (klatki środka + mapy różnic
+//    zdarzeń);
+//  daleko — „sam gaz”, zoomy --dalekoZoomy (bliski, 0.1, 0.0667, 0.035), tryby --dalekoTryby: lot (stała prędkość
+//    --dalekoV wzdłuż +x bez ciągu), lotW (to samo z ciągiem W — dysze pchają gaz), postoj (okręt trzymany — kamera stoi,
+//    gaz płynie): --dalekoKlatki kolejnych stron, trzy wycinki (A — środek okna pola, B — prawa góra kadru, C — tylny
+//    brzeg okna), pierwsza różnica (pary) i druga różnica w czasie (trójki) po kompensacji ruchu kamery, regiony: wnętrze
+//    okna / pas brzegu / pole dalekie, prostokąt okrętu (kadłub, poświata dysz) pominięty; pył gazu w kadrze wg rozmiaru
+//    w px; okno pola (przesunięcia / s, kroki obwiedni); warianty --dalekoWarianty (pyl, osrodek) z ciągiem przy
+//    --dalekoWariantyZoomy; PNG (--dalekoPng klatek wycinka A + mapy różnic, wycinek C).
+// Każda część: obce harnessy po części → `obce` i powtórka raz. --drzenieWk / --drzenieStrona: kod (worker: C, S; strona)
+// przed seriami — A/B poprawek bez zmiany narzędzia. Wynik: <katalog>/drzenie.json, PNG; raport.json (report.drzenie).
+// Poprawki drżenia gazu (2026-10-29 wieczór, reguła gaz-przestrzeni) — DAWNE zachowanie jako wariant w tym samym przebiegu:
+//   --zoomWarianty / --zoomZywoWarianty (rampy na żywo) / --dalekoWarianty: dawne (wszystkie przełączniki poza rozmiarem
+//   map), macierze (matrixSync), mapa (layerCubic — próbki na teksel domyślnie 1 jak dawniej), obwiednia (envBlend),
+//   pylMin (dustMinPx), T4C1 / T2C1 / T4C0 / T2C0 / T1C0 (próbki × B-spline; baza = domyślne, T1C1 — kontrola); w --ab i --zrzutyAB:
+//   D0–D5 (WARIANTY / ZAB_PAUZA); --zabPauza D2,D3,… — tylko te przełączniki pauzy, --zabLot 0 — bez przelotów ZAB_LOT.
+//   Rozmiar map (przy budowie; domyślnie 768 × 432) — osobny przebieg z --query "…&gazMapa=proporcje" albo "…&gazMapa=szeroka".
+//   Lustro CPU skoku na stopniu drabiny (bez GPU): scripts/gazZoomSonda.mjs.
+// Weryfikacja poprawek (2026-10-29 wieczór, przebieg PO z tymi samymi sondami co baza): --swiatlaWarianty dawne,poza,os,
+//   kotwica (wpis „os:obrot-v600+prosto-v600” — tylko te scenariusze; --swiatlaWariantyScen — podzbiór dla wpisów bez
+//   listy) — scenariusze świateł z poprawkami świateł w dawnym stanie (DRZ_SW_*);
+//   rampy na żywo raportują też krok siatki obwiedni (np. --zoomZywo 0.088:0.044,0.044:0.022 — rampy przez zoom kroku);
+//   --zoomPngWarianty dawne — PNG pasm pauzy także dla wariantu; w --ab: DL (światła dawne), DW (gaz D0 + światła DL),
+//   --abZoomDaleko / --abZoomLot — zoom serii A/B „daleko” i przelotu (np. 0.035).
+const DRZ_DIR = args.drzenie && args.drzenie !== '0' ? resolve(repo, String(args.drzenie)) : null;
+const DRZ_GAZ_SAM_WK = 'S.belt.layers.forEach((L) => L.setVisible(false)); S.belt.storm.setVisible(false); C.perfToggles.bgPass = false; C._passTogglesDirty = true; S.dustOn = false';
+const DRZ_GAZ_SAM_WK_P = 'S.belt.layers.forEach((L) => L.setVisible(true)); S.belt.storm.setVisible(true); C.perfToggles.bgPass = true; C._passTogglesDirty = true; S.dustOn = true';
+const drzLib = (name, arg, t = 180000) => wkEval(`globalThis.__drz.lib.${name}(${arg === undefined ? '' : JSON.stringify(arg)})`, t);
+const drzLogCzytaj = (wiersze) => wkEval(LOG_CZYTAJ('__drz.log', wiersze), 120000);
+const drzRect = (cx, cy, w, h, st) => ({ x: Math.max(0, Math.min(st.Wb - w, Math.round(cx - w / 2))), y: Math.max(0, Math.min(st.Hb - h, Math.round(cy - h / 2))), w, h });
+const drzEkran = (st, wx, wy) => [st.Wb / 2 + (wx - st.cam[0]) * st.cam[2] * st.ps, st.Hb / 2 + (wy - st.cam[1]) * st.cam[2] * st.ps];
+function drzPng(nazwa, b64) {
+  if (!b64) return null;
+  const f = join(DRZ_DIR, `${nazwa}.png`);
+  writeFileSync(f, Buffer.from(b64, 'base64'));
+  return f;
+}
+async function drzGazSam(on) {
+  if (on) { await wkKod(DRZ_GAZ_SAM_WK); await stronaKod('window.ship.roadLightsOff = true'); }
+  else { await wkKod(DRZ_GAZ_SAM_WK_P); await stronaKod('window.ship.roadLightsOff = false'); }
+  await sleep(600);
+}
+// ząbki kółka jak obsługa `wheel` w index.html (targetZoom × e^(∓100 · wheelSpeed), manualZoom) — od z0 w dół do z1, postój,
+// z powrotem do ≥ z0; window.__kolkoR.faza 'done' na końcu
+const DRZ_KOLKO = (z0, z1, odstepMs, trzymajMs) => `(() => {
+  const c = window.camera, f = Math.exp(-100 * (c.wheelSpeed || 0.002));
+  const R = window.__kolkoR = { n: 0, faza: 'out', t: [] };
+  c.manualZoom = true;
+  const krok = () => {
+    if (R.faza === 'out') {
+      c.targetZoom = Math.max(c.minZoom, c.targetZoom * f); R.n++; R.t.push(performance.now());
+      if (c.targetZoom <= ${z1} * 1.0001 || c.targetZoom <= c.minZoom * 1.0001) {
+        clearInterval(R.iv); R.faza = 'hold';
+        setTimeout(() => { R.faza = 'in'; R.iv = setInterval(krok, ${odstepMs}); }, ${trzymajMs});
+      }
+    } else if (R.faza === 'in') {
+      c.targetZoom = Math.min(c.maxZoom, c.targetZoom / f); R.n++; R.t.push(performance.now());
+      if (c.targetZoom >= ${z0} * 0.9999) { clearInterval(R.iv); R.faza = 'done'; }
+    }
+  };
+  R.iv = setInterval(krok, ${odstepMs});
+  return true;
+})()`;
+// okręt w miejscu „pole” z kursem 0 (+x świata gry), zoom z; ciąg i obrót puszczone; off = [dx, dy] — przesunięcie od
+// miejsca „pole” [j.] (--dalekoPrzesun: część `daleko` w gęstym gazie, gdy w miejscu „pole” jest wyrwa / olbrzym)
+async function drzStart(z, off = null) {
+  await ev(LOT_STOP).catch(() => {});
+  await up('w').catch(() => {});
+  await up('d').catch(() => {});
+  await ev(NA_MIEJSCE(z, off ? off[0] : 0, off ? off[1] : 0));
+  await ev('(() => { window.__hold.heading = 0; return true; })()');
+  await sleep(1200);
+}
+// część z jedną powtórką przy obcym obciążeniu (harnessy innych sesji po części)
+async function drzCzesc(nazwa, fn) {
+  const o0 = await obceProcesy().catch(() => []);
+  let wynik = await fn(nazwa);
+  const o1 = await obceProcesy().catch(() => []);
+  const obce = [...o0, ...o1];
+  if (!obce.length) return wynik;
+  console.log(`drżenie: część ${nazwa} przy obcym obciążeniu (${obce.length}) — powtórka`);
+  report.obceWTrakcie.push({ gdzie: `drżenie ${nazwa}`, s: Math.round((Date.now() - tStart) / 1000), obce: obce.slice(0, 5) });
+  const w2 = await fn(`${nazwa}-powt`);
+  const o2 = await obceProcesy().catch(() => []);
+  return { obce: true, pierwsza: wynik, powtorka: w2, obcePrzyPowtorce: o2.length };
+}
+
+async function drzSwiatla(tag) {
+  const z = Number(args.swiatlaZoom || ZB);
+  const Vs = listaArg(args.swiatlaV, ['600', '1400', '3000']).map(Number).filter((v) => v > 0);
+  const S_LOG = Number(args.swiatlaS || 5), NPNG = Number(args.swiatlaPng || 16);
+  const scen0 = [...Vs.map((v) => ({ nazwa: `prosto-v${v}`, v, obrot: false })),
+    ...(String(args.swiatlaObrot ?? '1') === '1' ? [{ nazwa: 'obrot-v600', v: 600, obrot: true }] : [])];
+  // --swiatlaWarianty dawne,poza,os,kotwica (weryfikacja poprawek 2026-10-29 wieczór): po scenariuszach nowego kodu te
+  // same scenariusze (--swiatlaWariantyScen — podzbiór nazw, domyślnie wszystkie) z poprawkami świateł w dawnym stanie —
+  // A/B w jednym przebiegu; nazwa scenariusza z przyrostkiem wariantu (dziennik, PNG)
+  const SWAR = { dawne: { wk: DRZ_SW_DAWNE, wkP: DRZ_SW_NOWE },
+    poza: { wk: 'S.belt.lightsRenderPose = false', wkP: 'S.belt.lightsRenderPose = true' },
+    os: { wk: 'S.belt.lightDirTune.exact = false', wkP: 'S.belt.lightDirTune.exact = true' },
+    kotwica: { wk: 'S.belt.volume.tune.worldAnchor = false; S.belt.fieldMap.tune.worldAnchor = false', wkP: 'S.belt.volume.tune.worldAnchor = true; S.belt.fieldMap.tune.worldAnchor = true' } };
+  // wpis wariantu: nazwa albo nazwa:scenariusz+scenariusz (np. os:obrot-v600 — tylko ten scenariusz)
+  const swWar = listaArg(args.swiatlaWarianty, []).map((s) => s.split(':')).filter((p) => SWAR[p[0]]);
+  const swScen = listaArg(args.swiatlaWariantyScen, scen0.map((s) => s.nazwa));
+  const scen = [...scen0.map((s) => ({ ...s, wariant: null })),
+    ...swWar.flatMap(([w, lista]) => scen0.filter((s) => (lista ? lista.split('+') : swScen).includes(s.nazwa)).map((s) => ({ ...s, nazwa: `${s.nazwa}-${w}`, wariant: w })))];
+  const out = [];
+  let wlaczony = null;
+  try { for (const sc of scen) {
+    if (sc.wariant !== wlaczony) {
+      if (wlaczony) await wkKod(SWAR[wlaczony].wkP);
+      if (sc.wariant) await wkKod(SWAR[sc.wariant].wk);
+      wlaczony = sc.wariant;
+      await sleep(600);
+    }
+    await drzStart(z);
+    await ev(LOT_STALY(sc.v, 0, 0, z, sc.obrot ? 1 : 0));
+    await down('w');
+    if (sc.obrot) await down('d');
+    await sleep(3000);
+    await drzLogCzytaj(false);
+    await sleep(S_LOG * 1000);
+    const log = await drzLogCzytaj(true);
+    const stat = log && log.wiersze ? swiatlaStat(log.wiersze, DRZ_LOG, { scenariusz: sc.nazwa, vZadana: sc.v, obrot: sc.obrot, wariant: sc.wariant }) : { blad: 'brak dziennika' };
+    if (log && log.wiersze) {
+      stat.kolumnyOsrodka = kolumnyStat(log.wiersze, DRZ_LOG);
+      // surowe wiersze dziennika (układ DRZ_LOG) do analizy poza narzędziem
+      stat.plikWierszy = join(DRZ_DIR, `${tag}-${sc.nazwa}-wiersze.json`);
+      writeJson(stat.plikWierszy, { uklad: DRZ_LOG, wiersze: log.wiersze });
+    }
+    stat.bladDziennika = log && log.blad ? log.blad : undefined;
+    // sekwencja PNG kolejnych stron: przed dziobem (prosto) albo wokół kadłuba (obrót); --swiatlaKadlub 1 (domyślnie,
+    // 2026-10-30 — dowód z obrazu): przy locie prosto drugi wycinek wokół kadłuba (plamy reflektorów otoczenia na własnym
+    // kadłubie, początek snopów), przy obrocie większy wycinek (kadłub + bliskie pole snopów); meta stron (kamera, poza
+    // renderu i fizyczna) w raporcie — analiza w układzie kadłuba poza narzędziem
+    try {
+      const st = await drzLib('state');
+      if (st.pose) {
+        const L2 = ATLAS_LEN / 2, KAD = String(args.swiatlaKadlub ?? '1') === '1';
+        const [sx, sy] = drzEkran(st, st.pose[0], st.pose[1]);
+        const rects = sc.obrot
+          ? [KAD ? drzRect(sx, sy, 1792, 896, st) : drzRect(sx, sy, 1280, 640, st)]
+          : [(() => { const [bx, by] = drzEkran(st, st.pose[0] + Math.cos(st.pose[2]) * L2, st.pose[1] + Math.sin(st.pose[2]) * L2); return drzRect(bx + 384, by, 1024, 512, st); })(),
+            ...(KAD ? [drzRect(sx, sy, 1536, 640, st)] : [])];
+        const arm = await drzLib('arm', { rects, max: NPNG, reset: true, timeoutMs: 6000 });
+        const rd = await drzLib('read', { rgb: true });
+        stat.png = { rect: rects[0], rects, klatek: rd.klatek, uzbrojenie: arm, kPierwsza: rd.meta[0]?.k, alfy: rd.meta.map((m) => +(m.alpha ?? NaN).toFixed(3)),
+          krokiFizyki: rd.meta.map((m, i) => (i && m.sim !== rd.meta[i - 1].sim ? 1 : 0)), pliki: [], plikiKadlub: [],
+          meta: rd.meta.map((m) => ({ k: m.k, alpha: m.alpha, sim: m.sim, cam: m.cam, pose: m.pose, phys: m.phys, ps: m.ps, Wb: m.Wb, Hb: m.Hb })) };
+        for (let i = 0; i < rd.klatek; i++) {
+          stat.png.pliki.push(drzPng(`${tag}-${sc.nazwa}-${String(i).padStart(2, '0')}`, await drzLib('png', { i, ri: 0 })));
+          if (rects.length > 1) stat.png.plikiKadlub.push(drzPng(`${tag}-${sc.nazwa}-kadlub-${String(i).padStart(2, '0')}`, await drzLib('png', { i, ri: 1 })));
+        }
+        await drzLib('free');
+      }
+    } catch (e) { stat.pngBlad = e.message; }
+    await up('d').catch(() => {});
+    await up('w').catch(() => {});
+    out.push(stat);
+    const f = (o) => (o ? `${o.rozp} (|Δ| śr ${o.dSr}, maks ${o.dMaks})` : '-');
+    const d0 = stat.swiatla?.daleki0, fl0 = stat.swiatla?.otoczenia0;
+    console.log(`drżenie / światła ${sc.nazwa}: stron ${stat.stron}, v ${stat.predkoscJs} j/s, ω ${stat.obrotRadS} rad/s, ΔK ${JSON.stringify(stat.deltaK)}, liczby ${JSON.stringify(stat.liczbySwiatel)}`
+      + ` | poza fiz − render wzdłuż [px] ${f(stat.fizykaMinusRender?.wzdluzPx)} | daleki0 wzdłuż [px] ${f(d0?.wzdluzPx)}, w poprzek ${f(d0?.wpoprzekPx)}, oś−kadłub [°] ${f(d0?.osWzglKadluba)}`
+      + ` | otoczenia0 wzdłuż [px] ${f(fl0?.wzdluzPx)} | korelacja z fiz−render ${stat.korelacjaDaleki0ZFizMinusRender} | siatka: zgubione maks ${stat.siatka?.zgubioneMaks}, najwięcej w komórce ${stat.siatka?.najwiecejWKomorce?.maks}`);
+    if (sc.obrot && d0?.osKroki) console.log(`   oś reflektora przy obrocie: ${JSON.stringify(d0.osKroki)}`);
+    if (stat.kolumnyOsrodka?.przeskokiPoczatku) console.log(`   przeskoki początku Core3D.fx: ${JSON.stringify(stat.kolumnyOsrodka.lista)}`);
+  } } finally { if (wlaczony) { await wkKod(SWAR[wlaczony].wkP).catch(() => {}); await sleep(600); } }
+  await ev(LOT_STOP).catch(() => {});
+  return out;
+}
+
+async function drzZoom(tag) {
+  const out = {};
+  const ZWAR = { pyl: { opis: 'pył gazu wył.', wk: 'S.spaceGas.tune.dust = false', wkP: 'S.spaceGas.tune.dust = true' },
+    osrodek: { opis: 'ośrodek objętościowy pasa wył.', wk: 'S.belt.volume.setVisible(false)', wkP: 'S.belt.volume.setVisible(true)' },
+    mapy: { opis: 'warstwy map gazu niewidoczne (pył i ośrodek zostają)', wk: 'S.spaceGas.layer.setVisible = function () { this.lower.visible = this.upper.visible = false; }', wkP: 'delete S.spaceGas.layer.setVisible' },
+    // poprawki drżenia 2026-10-29 wieczór: dawne zachowanie (baza = nowe)
+    dawne: { opis: 'gaz: wszystkie poprawki drżenia wył.', wk: DRZ_GAZ_DAWNE, wkP: DRZ_GAZ_NOWE },
+    macierze: { opis: 'gaz: macierze warstw i pyłu z poprzedniej klatki', wk: 'S.spaceGas.tune.matrixSync = false', wkP: 'S.spaceGas.tune.matrixSync = true' },
+    mapa: { opis: 'gaz: odczyt dwuliniowy mapy (jedna próbka na teksel — jak domyślnie)', wk: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = false', wkP: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = true' },
+    obwiednia: { opis: 'gaz: krok siatki obwiedni bez przenikania', wk: 'S.spaceGas.tune.envBlend = 0', wkP: 'S.spaceGas.tune.envBlend = 0.35' },
+    // próbki mapy × B-spline (DRZ_TC — wybór domyślnych 2026-10-30)
+    ...Object.fromEntries(Object.entries(DRZ_TC_WAR).map(([n, v]) => [n, { opis: v.opis, wk: v.wk, wkP: v.wkPrzywroc }])) };
+  await drzStart(ZB);
+  await drzGazSam(true);
+  await sleep(2500);
+  // (a) na żywo: ząbki kółka i płynna rampa (dziennik drabin); --zoomDrabiny 0 — bez nich
+  const ZAB_MS = Number(args.zoomZabekMs || 250), RS = Number(args.zoomRampaS || 4);
+  if (String(args.zoomDrabiny ?? '1') === '1') {
+  await drzLogCzytaj(false);
+  await ev(DRZ_KOLKO(ZB, 0.035, ZAB_MS, 1000));
+  for (let i = 0; i < 60; i++) { await sleep(500); if ((await ev('(window.__kolkoR && window.__kolkoR.faza)')) === 'done') break; }
+  await sleep(1200);
+  const kl = await drzLogCzytaj(true);
+  const zabki = await ev('(window.__kolkoR ? window.__kolkoR.n : null)');
+  out.kolko = kl && kl.wiersze ? { zabkow: zabki, odstepMs: ZAB_MS, ...drabinaStat(kl.wiersze, DRZ_LOG) } : { blad: 'brak dziennika' };
+  if (out.kolko.zmianyMap !== undefined) out.kolko.zmianyMapNaZabek = +(out.kolko.zmianyMap / Math.max(1, zabki)).toFixed(2);
+  await setZoom(ZB);
+  await sleep(1500);
+  await drzLogCzytaj(false);
+  await ev(RAMPA_START(ZB, 0.035, RS, 1));
+  await sleep((2 * RS + 1 + 1.2) * 1000);
+  const rl = await drzLogCzytaj(true);
+  out.rampa = rl && rl.wiersze ? { s: RS, ...drabinaStat(rl.wiersze, DRZ_LOG) } : { blad: 'brak dziennika' };
+  console.log(`drżenie / zoom na żywo: ząbki ${zabki} — mapy ${out.kolko.zmianyMap} (${out.kolko.zmianyMapNaZabek}/ząbek), kolumny ${out.kolko.zmianyKolumn}, obwiednia ${out.kolko.zmianyObwiedni}, faza środka ${JSON.stringify(out.kolko.fazaSrodkaPrzyStopniuMap)}`
+    + ` | rampa ${RS} s: mapy ${out.rampa.zmianyMap}, kolumny ${out.rampa.zmianyKolumn}, obwiednia ${out.rampa.zmianyObwiedni} (zoom ${JSON.stringify(out.rampa.obwiednia?.map((e) => e.zoom))})`);
+  }
+  // (c) na żywo (bez pauzy) — kolejne strony w czasie szybkiej rampy zoomu (--zoomZywo z0:z1 w --zoomZywoS s, tempo
+  // ~sprężyny po ząbku): pary kolejnych klatek po usunięciu skali (krok 1) i z pominięciem klatki (krok 2) — czy klatka tuż
+  // po stopniu drabiny map odstaje od obu sąsiadów (błysk jednej klatki) także w grze, nie tylko w pauzie
+  out.zywo = [];
+  const ZYWO = listaArg(args.zoomZywo, ['0.12:0.06', '0.06:0.035']).map((s) => s.split(':').map(Number)).filter((p) => p[0] > 0 && p[1] > 0);
+  const ZYS = Number(args.zoomZywoS || 1.5), NZ = Number(args.zoomZywoKlatki || 48);
+  const maskaZ = { przod: 0.7 * ATLAS_LEN, tyl: 0.8 * ATLAS_LEN, pol: 0.5 * ATLAS_LEN };
+  // --zoomZywoWarianty dawne,macierze,…: te same rampy na żywo z podsystemem w dawnym stanie (ZWAR) — A/B w jednym przebiegu
+  const ZYW_WAR = listaArg(args.zoomZywoWarianty, []).filter((n) => ZWAR[n]);
+  for (const zywoWar of [null, ...ZYW_WAR]) {
+  if (zywoWar) { await wkKod(ZWAR[zywoWar].wk); await sleep(600); }
+  for (const [z0, z1] of ZYWO) {
+    try {
+      await drzLib('free');
+      await setZoom(z0);
+      await sleep(1500);
+      const st = await drzLib('state');
+      const rects = [0.25, 0.5, 0.75].map((fx) => drzRect(st.Wb * fx, st.Hb * 0.5, 1024, 512, st));
+      await ev(RAMPA_START(z0, z1, ZYS, 0.5));
+      await sleep(120);
+      const arm = await drzLib('arm', { rects, max: NZ, reset: true, timeoutMs: 5000 });
+      const rd = await drzLib('read', {});
+      const M = rd.meta;
+      const zd = (a, b) => {
+        const r = [];
+        if (a.lvl && b.lvl && (a.lvl[0] !== b.lvl[0] || a.lvl[1] !== b.lvl[1])) r.push('mapa');
+        if (a.vcell !== b.vcell) r.push('kolumna');
+        if (a.env !== b.env) r.push('obwiednia');
+        if (a.shifts !== b.shifts) r.push('okno');
+        return r;
+      };
+      const wyc = [];
+      for (let ri = 0; ri < rects.length; ri++) {
+        const a1 = await drzLib('diff', { ri, pary: true, trojki: false, brzeg: 24, okno: false, statek: ri === 1 ? maskaZ : null });
+        const a2 = await drzLib('diff', { ri, pary: true, trojki: false, brzeg: 24, okno: false, statek: ri === 1 ? maskaZ : null, krok: 2 });
+        const p1 = new Map((a1.pary || []).map((p) => [p.t, p.luma.wszystko]));
+        const p2 = new Map((a2.pary || []).map((p) => [p.t, p.luma.wszystko]));
+        const kroki = [];
+        for (let t = 0; t + 1 < M.length; t++) {
+          const e = zd(M[t], M[t + 1]);
+          // stopień map gazu albo krok siatki obwiedni (weryfikacja 2026-10-29: przenikanie obwiedni widać tylko na żywo —
+          // rampy przez zoom kroku, np. --zoomZywo 0.088:0.044,0.044:0.022)
+          if (!e.includes('mapa') && !e.includes('obwiednia')) continue;
+          const f = (s) => (s ? [s.proc4, s.proc8, s.maks, s.rms] : null);
+          // para przez stopień (t → t+1), para po nim (t+1 → t+2), z pominięciem klatki po stopniu (t → t+2) — [>4 %, >8 %, maks, rms]
+          kroki.push({ t, zoom: +M[t].cam[2].toFixed(5), zdarzenia: e, przezStopien: f(p1.get(t)), poStopniu: f(p1.get(t + 1)), zPominieciem: f(p2.get(t)), przedStopniem: f(p1.get(t - 1)) });
+        }
+        const bez = (a1.pary || []).filter((p) => p.luma.wszystko && !zd(M[p.t], M[p.t + 1]).length && !(p.t > 0 && zd(M[p.t - 1], M[p.t]).includes('mapa')));
+        wyc.push({ wycinek: ['lewy', 'srodek', 'prawy'][ri], kroki, bezZdarzen: podsumujRoznice(bez, 'wszystko', 'luma') });
+      }
+      let dk = 0;
+      for (let i = 1; i < M.length; i++) if (M[i].k - M[i - 1].k !== 1) dk++;
+      const r = { z0, z1, s: ZYS, wariant: zywoWar, klatek: rd.klatek, przerwyK: dk, zoomZakres: M.length ? [+M[0].cam[2].toFixed(5), +M[M.length - 1].cam[2].toFixed(5)] : null, uzbrojenie: arm, wycinki: wyc };
+      out.zywo.push(r);
+      console.log(`drżenie / zoom na żywo${zywoWar ? ' [' + zywoWar + ']' : ''} ${z0} → ${z1} (${ZYS} s): klatek ${r.klatek} (przerwy K ${dk}), zoom ${JSON.stringify(r.zoomZakres)}`);
+      for (const w of wyc) console.log(`   ${w.wycinek.padEnd(6)} bez zdarzeń >4 med ${w.bezZdarzen?.proc4?.med}% | stopnie map / obwiedni: ${w.kroki.map((k) => `${k.zdarzenia.join('+')}@${k.zoom} przez ${JSON.stringify(k.przezStopien)} po ${JSON.stringify(k.poStopniu)} z pominięciem ${JSON.stringify(k.zPominieciem)}`).join(' ; ')}`);
+    } catch (e) { out.zywo.push({ z0, z1, wariant: zywoWar, blad: e.message }); console.log('drżenie / zoom na żywo — błąd', e.message); }
+    await drzLib('free').catch(() => {});
+  }
+  if (zywoWar) { await wkKod(ZWAR[zywoWar].wkP); await sleep(600); }
+  }
+  await setZoom(ZB);
+  await sleep(800);
+  // (b) pauza: pasma zoomu, zrzut po każdym kroku (trzy wycinki: lewy, środek — okręt pominięty, prawy), różnice par po
+  // usunięciu zmiany skali liczone od razu (strumieniowo — w workerze zostają dwie ostatnie klatki); --zoomWarianty
+  // pyl,osrodek,mapy — te same pasma (--zoomWariantyPasma) z podsystemem wył. (który składnik daje skok na stopniu)
+  const PASMA = listaArg(args.zoomPasma, ['0.345', '0.205', '0.105', '0.082', '0.0525', '0.0398']).map(Number).filter((z) => z > 0);
+  const KROKI = Number(args.zoomKroki || 28), KROK = Number(args.zoomKrok || 1.0037);
+  const ZPNG = listaArg(args.zoomPng, ['0.105', '0.0398']).map(Number);
+  // wpis wariantu: nazwa albo nazwa:pasmo+pasmo (np. T4C1:0.0525+0.0372 — tylko te pasma; bez listy — --zoomWariantyPasma)
+  const warianty = listaArg(args.zoomWarianty, ['pyl', 'osrodek', 'mapy']).map((s) => s.split(':')).filter((p) => ZWAR[p[0]]);
+  const WPASMA = listaArg(args.zoomWariantyPasma, ['0.205', '0.105']).map(Number);
+  const statekMaska = { przod: 0.7 * ATLAS_LEN, tyl: 0.8 * ATLAS_LEN, pol: 0.5 * ATLAS_LEN };
+  const WYC = ['lewy', 'srodek', 'prawy'];
+  const zdarzeniaPary = (a, b) => {
+    const zd = [];
+    if (a.lvl && b.lvl && (a.lvl[0] !== b.lvl[0] || a.lvl[1] !== b.lvl[1])) zd.push('mapa');
+    if (a.vcell !== b.vcell) zd.push('kolumna');
+    if (a.env !== b.env) zd.push('obwiednia');
+    if (a.shifts !== b.shifts) zd.push('okno');
+    return zd;
+  };
+  // inne zmiany pary (nie liczą się jako zdarzenie drabiny — „bez zdarzeń” jak dotąd): nowa wersja siatki obwiedni bez
+  // zmiany kroku (przesunięcie / doliczenie wierszy), przesunięcie siatki kolumn ośrodka o całe kolumny, róg mapy
+  const inneZmiany = (a, b) => {
+    const r = [];
+    if (a.env === b.env && a.envVer !== b.envVer) r.push('wersjaObwiedni');
+    if (a.vcell === b.vcell && a.vorg && b.vorg && (a.vorg[0] !== b.vorg[0] || a.vorg[1] !== b.vorg[1])) r.push('siatkaKolumn');
+    if (a.lvl && b.lvl && a.lvl[0] === b.lvl[0] && a.lvl[1] === b.lvl[1] && a.mapMin && b.mapMin && (a.mapMin[0] !== b.mapMin[0] || a.mapMin[1] !== b.mapMin[1])) r.push('rogMapy');
+    return r;
+  };
+  async function pasmo(z0, wariant) {
+    await drzLib('free');
+    await setZoom(z0);
+    await sleep(900);
+    const st = await drzLib('state');
+    const rects = [0.25, 0.5, 0.75].map((fx) => drzRect(st.Wb * fx, st.Hb * 0.5, 1024, 512, st));
+    const zs = [z0, z0];
+    for (let i = 1; i <= KROKI; i++) { const z = z0 / KROK ** i; if (z < 0.035) break; zs.push(z); }
+    // PNG pasm: nowy kod, a z --zoomPngWarianty dawne,… także te warianty (sekwencje przed / po w jednym przebiegu)
+    const png = (!wariant || listaArg(args.zoomPngWarianty, []).includes(wariant)) && ZPNG.some((z) => Math.abs(z - z0) < 1e-9);
+    const tag2 = `${tag}-pasmo-${z0}${wariant ? '-' + wariant : ''}`;
+    const pary = WYC.map(() => []);
+    const pliki = [];
+    let blad = null, M = [];
+    for (let i = 0; i < zs.length; i++) {
+      await setZoom(zs[i]);
+      const r = await drzLib('arm', { rects, max: 1, waitZoom: zs[i], reset: i === 0, timeoutMs: 3000 });
+      if (r.limit || r.blad) { blad = `krok ${i}: ${r.blad || 'limit czasu'}`; break; }
+      const rd = await drzLib('read', { rgb: true });
+      M = rd.meta;
+      if (png) pliki.push(drzPng(`${tag2}-srodek-${String(i).padStart(2, '0')}`, await drzLib('png', { i, ri: 1 })));
+      if (i >= 1) {
+        const zd = zdarzeniaPary(M[i - 1], M[i]);
+        for (let ri = 0; ri < rects.length; ri++) {
+          const an = await drzLib('diff', { ri, od: i - 1, do: i, pary: true, trojki: false, maxKanal: true, brzeg: 16, okno: false, statek: ri === 1 ? statekMaska : null });
+          const p = an.pary && an.pary[0];
+          // wycinek całkiem pod okrętem (środek przy zoomie bliskim) — bez pikseli do porównania
+          if (!p || !p.luma || !p.luma.wszystko) continue;
+          pary[ri].push({ t: i - 1, zoom: +M[i - 1].cam[2].toFixed(5), skala: p.skala, zdarzenia: zd, inne: inneZmiany(M[i - 1], M[i]),
+            fine: [M[i - 1].fine, M[i].fine], lod: [M[i - 1].lod, M[i].lod], luma: p.luma.wszystko, kanal: p.kanal ? p.kanal.wszystko : null });
+          if (png && zd.length) pliki.push(drzPng(`${tag2}-${WYC[ri]}-roznica-${String(i - 1).padStart(2, '0')}-${zd.join('+')}`, await drzLib('png', { i: i - 1, ri, rodzaj: 'roznica' })));
+        }
+      }
+      await drzLib('trim', 2);
+    }
+    const sumuj = (lista, pole) => podsumujRoznice(lista.map((p) => ({ [pole]: { wszystko: p[pole] } })), 'wszystko', pole);
+    const wyc = WYC.map((n, ri) => {
+      const L = pary[ri], bez = L.filter((p) => p.t > 0 && !p.zdarzenia.length), ze = L.filter((p) => p.zdarzenia.length);
+      // wszystkie pary w skrócie: [t, zoom, zdarzenia+inne, kanał > 4 %, > 8 %, maks, luma rms, ośrodek fine (po), LOD gazu (po)]
+      const lista = L.map((p) => [p.t, p.zoom, [...p.zdarzenia, ...p.inne.map((x) => '~' + x)].join('+'), p.kanal?.proc4 ?? null, p.kanal?.proc8 ?? null,
+        p.kanal?.maks ?? null, p.luma?.rms ?? null, p.fine[1] ?? null, p.lod[1] ?? null]);
+      return { wycinek: n, rect: rects[ri], kontrola: L[0] || null, bezZdarzen: { luma: sumuj(bez, 'luma'), kanal: sumuj(bez, 'kanal') }, zdarzenia: ze, pary: lista };
+    });
+    const M0 = M[0];
+    const res = { zoomStart: z0, wariant: wariant || null, opis: wariant ? ZWAR[wariant].opis : null, zoomKoniec: +zs[zs.length - 1].toFixed(5), krokow: zs.length - 1, blad,
+      tekselPx: M0 && M0.texel ? [+(M0.texel[0] * z0 * M0.ps).toFixed(2), +(M0.texel[1] * z0 * M0.ps).toFixed(2)] : null,
+      kolumnaPx: M0 ? +(M0.vcell * z0 * M0.ps).toFixed(2) : null, krokObwiedniJ: M0 ? M0.env : null, wycinki: wyc, png: pliki.length ? pliki : undefined };
+    console.log(`drżenie / pasmo ${z0}${wariant ? ' [' + wariant + ']' : ''} → ${res.zoomKoniec} (${res.krokow} kroków, teksel ${JSON.stringify(res.tekselPx)} px bufora, kolumna ${res.kolumnaPx} px)${blad ? ' BŁĄD ' + blad : ''}`);
+    for (const w of wyc) {
+      const b = w.bezZdarzen;
+      console.log(`   ${w.wycinek.padEnd(6)} kontrola >4 ${w.kontrola?.kanal?.proc4}% | bez zdarzeń kanał >4 med ${b.kanal?.proc4?.med}% maks ${b.kanal?.proc4?.maks}% (luma rms med ${b.luma?.rms?.med})`
+        + ` | ${w.zdarzenia.map((p) => `${p.zdarzenia.join('+')}@${p.zoom}: kanał >4 ${p.kanal?.proc4}% >8 ${p.kanal?.proc8}% maks ${p.kanal?.maks} (luma rms ${p.luma?.rms})`).join(' ; ')}`);
+    }
+    return res;
+  }
+  await setZoom(ZB);
+  await sleep(1000);
+  await pauza(true);
+  await sleep(1500);
+  out.pasma = [];
+  out.pasmaWarianty = [];
+  try {
+    for (const z0 of PASMA) out.pasma.push(await pasmo(z0, null));
+    for (const [n, lista] of warianty) {
+      const v = ZWAR[n];
+      const pasmaW = lista ? lista.split('+').map(Number).filter((z) => z > 0) : WPASMA;
+      await wkKod(v.wk);
+      await sleep(600);
+      try { for (const z0 of pasmaW) out.pasmaWarianty.push(await pasmo(z0, n)); } finally { await wkKod(v.wkP); await sleep(600); }
+    }
+  } finally {
+    await drzLib('free').catch(() => {});
+    await pauza(false);
+  }
+  await setZoom(ZB);
+  await drzGazSam(false);
+  return out;
+}
+
+async function drzDaleko(tag) {
+  const zoomy = listaArg(args.dalekoZoomy, [String(ZB), '0.1', '0.0667', '0.035']).map(Number).filter((z) => z > 0);
+  const tryby = listaArg(args.dalekoTryby, ['lot', 'lotW', 'postoj']);
+  const V = Number(args.dalekoV || 600), NK = Number(args.dalekoKlatki || 40), NPNG = Number(args.dalekoPng || 6), USTAL = Number(args.dalekoUstal || 4);
+  // warianty (podsystem wył. na czas przelotu z ciągiem) przy zoomach --dalekoWariantyZoomy — który składnik drga
+  const DWAR = { pyl: { opis: 'pył gazu wył.', wk: 'S.spaceGas.tune.dust = false', wkP: 'S.spaceGas.tune.dust = true' },
+    osrodek: { opis: 'ośrodek objętościowy pasa wył.', wk: 'S.belt.volume.setVisible(false)', wkP: 'S.belt.volume.setVisible(true)' },
+    // poprawki drżenia 2026-10-29 wieczór: dawne zachowanie (baza = nowe)
+    dawne: { opis: 'gaz: wszystkie poprawki drżenia wył.', wk: DRZ_GAZ_DAWNE, wkP: DRZ_GAZ_NOWE },
+    pylMin: { opis: 'pył gazu: bez najmniejszego boku w px', wk: 'S.spaceGas.tune.dustMinPx = 0', wkP: 'S.spaceGas.tune.dustMinPx = 2.5' },
+    macierze: { opis: 'gaz: macierze warstw i pyłu z poprzedniej klatki', wk: 'S.spaceGas.tune.matrixSync = false', wkP: 'S.spaceGas.tune.matrixSync = true' },
+    mapa: { opis: 'gaz: odczyt dwuliniowy mapy (jedna próbka na teksel — jak domyślnie)', wk: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = false', wkP: 'S.spaceGas.tune.mapTaps = 1; S.spaceGas.tune.layerCubic = true' },
+    // próbki mapy × B-spline (DRZ_TC — wybór domyślnych 2026-10-30)
+    ...Object.fromEntries(Object.entries(DRZ_TC_WAR).map(([n, v]) => [n, { opis: v.opis, wk: v.wk, wkP: v.wkPrzywroc }])) };
+  // wpis wariantu: nazwa albo nazwa:zoom+zoom (np. T4C1:0.0667+0.035 — tylko te zoomy; bez listy — --dalekoWariantyZoomy)
+  const warianty = listaArg(args.dalekoWarianty, ['pyl']).map((s) => s.split(':')).filter((p) => DWAR[p[0]]);
+  const WZ = listaArg(args.dalekoWariantyZoomy, ['0.1', '0.0667']).map(Number);
+  const WTRYB = String(args.dalekoWariantyTryb || 'lotW');
+  const out = [];
+  const OFF = args.dalekoPrzesun ? String(args.dalekoPrzesun).split(',').map(Number) : null;
+  async function scenariusz(z, tryb, wariant) {
+    await drzStart(z, OFF);
+    if (OFF) await sleep(Number(args.dalekoPrzesunUstal || 2) * 1000);   // pole gazu od nowa po skoku okna
+    if (tryb !== 'postoj') { await ev(LOT_STALY(V, 0, 0, z)); if (tryb === 'lotW') await down('w'); }
+    await sleep(USTAL * 1000);
+    await drzLogCzytaj(false);
+    const etyk = wariant ? `${tryb}-${wariant}` : tryb;
+    const row = { zoom: z, tryb, wariant: wariant || null, opis: wariant ? DWAR[wariant].opis : null, v: tryb === 'postoj' ? 0 : V };
+    try {
+      await drzLib('free');
+      const st = await drzLib('state');
+      // A — środek okna pola, B — prawa góra kadru (przed okrętem: przy oddaleniu pole dalekie), C — tylny brzeg okna
+      // (lot wzdłuż +x: lewy bok okna, na wysokości środka okna) — wnętrze, pas brzegu i pole dalekie
+      const wc = st.win ? drzEkran(st, (st.win[0] + st.win[2]) / 2, (st.win[1] + st.win[3]) / 2) : [st.Wb / 2, st.Hb / 2];
+      const we = st.win ? drzEkran(st, st.win[0], (st.win[1] + st.win[3]) / 2) : [st.Wb * 0.2, st.Hb / 2];
+      const rects = [drzRect(wc[0], wc[1], 1024, 512, st), drzRect(st.Wb * 0.8, st.Hb * 0.22, 1024, 512, st), drzRect(we[0], we[1], 1024, 512, st)];
+      const arm = await drzLib('arm', { rects, max: NK, reset: true, timeoutMs: 6000 });
+      const rd = await drzLib('read', { rgbKlatki: [...Array(NPNG).keys()] });
+      const M = rd.meta;
+      let dk = 0, kroki = 0;
+      for (let i = 1; i < M.length; i++) { if (M[i].k - M[i - 1].k !== 1) dk++; if (M[i].sim !== M[i - 1].sim) kroki++; }
+      // okręt pominięty: kadłub (± pół długości) z poświatą dysz MAIN za rufą (ciąg W — 1,3 długości)
+      const statek = { przod: 0.7 * ATLAS_LEN, tyl: (tryb === 'lotW' ? 1.3 : 0.8) * ATLAS_LEN, pol: 0.55 * ATLAS_LEN };
+      row.zrzut = { uzbrojenie: arm, klatek: rd.klatek, przerwyK: dk, krokiFizyki: kroki, rects, tekselPx: M[0]?.texel ? [+(M[0].texel[0] * z * M[0].ps).toFixed(2), +(M[0].texel[1] * z * M[0].ps).toFixed(2)] : null,
+        kolumnaPx: M[0] ? +(M[0].vcell * z * M[0].ps).toFixed(2) : null, oknoPx: M[0]?.win ? +((M[0].win[2] - M[0].win[0]) * z * M[0].ps).toFixed(0) : null, statekPominietyJ: statek };
+      row.wycinki = [];
+      for (let ri = 0; ri < rects.length; ri++) {
+        const an = await drzLib('diff', { ri, pary: true, trojki: true, brzeg: 12, statek, okno: true });
+        const w = { wycinek: ['A-okno', 'B-kadr', 'C-brzeg'][ri], regiony: an.regiony, pary: {}, trojki: {} };
+        for (const reg of ['wszystko', 'wnetrze', 'pas', 'dalekie']) {
+          w.pary[reg] = podsumujRoznice(an.pary || [], reg, 'luma');
+          w.trojki[reg] = podsumujRoznice(an.trojki || [], reg, 'luma');
+        }
+        row.wycinki.push(w);
+      }
+      row.pyl = await drzLib('dust').catch((e) => ({ blad: e.message }));
+      row.png = [];
+      for (let i = 0; i < Math.min(NPNG, rd.klatek); i++) row.png.push(drzPng(`${tag}-${etyk}-z${z.toFixed(4)}-A-${String(i).padStart(2, '0')}`, await drzLib('png', { i, ri: 0 })));
+      for (const i of [0, Math.min(NPNG, rd.klatek) - 2]) if (i >= 0) row.png.push(drzPng(`${tag}-${etyk}-z${z.toFixed(4)}-A-roznica-${String(i).padStart(2, '0')}`, await drzLib('png', { i, ri: 0, rodzaj: 'roznica' })));
+      row.png.push(drzPng(`${tag}-${etyk}-z${z.toFixed(4)}-C-00`, await drzLib('png', { i: 0, ri: 2 })));
+      row.png.push(drzPng(`${tag}-${etyk}-z${z.toFixed(4)}-C-roznica-00`, await drzLib('png', { i: 0, ri: 2, rodzaj: 'roznica' })));
+    } catch (e) { row.blad = e.message; }
+    await sleep(1500);
+    const log = await drzLogCzytaj(true);
+    row.okno = log && log.wiersze ? oknoStat(log.wiersze, DRZ_LOG) : null;
+    await drzLib('free').catch(() => {});
+    await up('w').catch(() => {});
+    out.push(row);
+    const p = (w, k, reg) => { const s = w && w[k] && w[k][reg]; return s ? `rms ${s.rms.sr} >4 ${s.proc4.sr}% >8 ${s.proc8.sr}% igły ${s.igliceNaMpx.sr}/Mpx` : '-'; };
+    const A = row.wycinki?.[0], B = row.wycinki?.[1], Cw = row.wycinki?.[2];
+    console.log(`drżenie / daleko z ${z} ${etyk}: klatek ${row.zrzut?.klatek} (przerwy K ${row.zrzut?.przerwyK}), teksel ${JSON.stringify(row.zrzut?.tekselPx)} px, okno ${row.zrzut?.oknoPx} px, regiony A ${JSON.stringify(A?.regiony)} C ${JSON.stringify(Cw?.regiony)}${row.blad ? ' BŁĄD ' + row.blad : ''}`);
+    console.log(`   A pary: wnętrze ${p(A, 'pary', 'wnetrze')} | trójki ${p(A, 'trojki', 'wnetrze')}`);
+    console.log(`   C pary: wnętrze ${p(Cw, 'pary', 'wnetrze')} | pas ${p(Cw, 'pary', 'pas')} | dalekie ${p(Cw, 'pary', 'dalekie')} || trójki pas ${p(Cw, 'trojki', 'pas')}`);
+    console.log(`   B pary: wszystko ${p(B, 'pary', 'wszystko')} | trójki ${p(B, 'trojki', 'wszystko')} (regiony ${JSON.stringify(B?.regiony)})`);
+    console.log(`   pył: ${JSON.stringify(row.pyl)} | okno: ${JSON.stringify(row.okno && { przesunieciaNaS: row.okno.przesunieciaNaS, zmianyKrokuObwiedni: row.okno.zmianyKrokuObwiedni, stopnieMap: row.okno.stopnieMap, tekselCiagly: row.okno.tekselCiagly, krokObwiedniJ: row.okno.krokObwiedniJ })}`);
+  }
+  await drzGazSam(true);
+  try {
+    for (const z of zoomy) for (const tryb of tryby) await scenariusz(z, tryb, null);
+    for (const [n, lista] of warianty) {
+      const zw = lista ? lista.split('+').map(Number).filter((z) => z > 0) : WZ;
+      await wkKod(DWAR[n].wk);
+      await sleep(600);
+      try { for (const z of zw) await scenariusz(z, WTRYB, n); } finally { await wkKod(DWAR[n].wkP); await sleep(600); }
+    }
+  } finally {
+    await ev(LOT_STOP).catch(() => {});
+    await up('w').catch(() => {});
+    await drzGazSam(false).catch(() => {});
+  }
+  return out;
+}
+
+// ── JASNOŚĆ PYŁU GAZU PRZY ODDALENIU (--drzenieCzesci jasnosc, 2026-10-30) ─────────────────────────────────────────────
+// Najmniejszy bok drobiny w px z zachowaniem energii (dustMinPx) i zanik drobin < ~1 px tylko z MSAA (spaceGasDustFadeFor):
+// czy ŚREDNIA jasność pyłu zgadza się z dawnym wzorem (dustMinPx = 0) przy presecie przebiegu (Ultra: MSAA 4, skala 1,25;
+// Wysoka: MSAA 4, 1,0) i bez MSAA (--jasnoscBezMsaa 1: Core3D.setMsaaEnabled(false) w biegu NA KOŃCU — pipeline'y
+// synchroniczne tylko w narzędziu; przywrócenie MSAA po pomiarze). Zoomy --jasnoscZoomy (0.0667,0.035), „sam gaz”, okręt
+// trzymany, --jasnoscUstal s (pył rodzi się tylko w kadrze × 1,25 — po oddaleniu musi wypełnić okno), PAUZA: bufor sceny
+// (composerTarget — HDR przed postem, po rozwiązaniu MSAA) A (nowy wzór), B (pył wył.), C (dawny wzór), A2 (kontrola);
+// energia pyłu = Σ luminancji liniowej (A − B) wobec (C − B), cały kadr i poza okrętem (prostokąt jak w drzRoznice).
+const JAS_KROK = (slot, refs) => `(async () => {
+  const C = globalThis.__C3, S = globalThis.__ST, R = C.renderer, rt = C.composerTarget;
+  const J = globalThis.__jas || (globalThis.__jas = { Y: {} });
+  if (!J.h2f) {
+    const t = J.h2f = new Float32Array(65536);
+    for (let h = 0; h < 65536; h++) { const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 31, m = h & 1023; t[h] = e === 0 ? s * m * 5.960464477539063e-8 : e === 31 ? 0 : s * Math.pow(2, e - 15) * (1 + m / 1024); }
+  }
+  const a = await R.readRenderTargetPixelsAsync(rt, 0, 0, rt.width, rt.height);
+  const W = rt.width, H = rt.height, n = W * H, Y = new Float32Array(n), t = J.h2f, half = a instanceof Uint16Array;
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
+    const r = half ? t[a[o]] : a[o], g = half ? t[a[o + 1]] : a[o + 1], b = half ? t[a[o + 2]] : a[o + 2];
+    Y[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+  J.Y['${slot}'] = Y;
+  const H0 = S.mods.layoutMod.HEAD, h = S.reader && S.reader.page && S.reader.page.head, pp = S.players && S.players.playerPose;
+  const z = h ? h[H0.CAM_ZOOM] * (C.pxScale || 1) : 0, cx = h ? h[H0.CAM_X] : 0, cy = h ? h[H0.CAM_Y] : 0;
+  const key = [W, H, z, cx, cy, pp ? pp.x : 0, pp ? pp.y : 0].join(',');
+  if (J.maskKey !== key) {
+    const M = J.mask = new Uint8Array(n), L = ${ATLAS_LEN};
+    if (pp && z > 0) {
+      const ca = Math.cos(pp.angle), sa = Math.sin(pp.angle);
+      for (let y = 0; y < H; y++) {
+        const wy = cy + (y + 0.5 - H / 2) / z;
+        for (let x = 0; x < W; x++) {
+          const wx = cx + (x + 0.5 - W / 2) / z, dx = wx - pp.x, dy = wy - pp.y;
+          const al = dx * ca + dy * sa, ac = -dx * sa + dy * ca;
+          if (al < 0.7 * L && al > -0.8 * L && Math.abs(ac) < 0.55 * L) M[y * W + x] = 1;
+        }
+      }
+    }
+    J.maskKey = key;
+  }
+  const M = J.mask;
+  let sum = 0, sumPoza = 0;
+  for (let i = 0; i < n; i++) { sum += Y[i]; if (!M[i]) sumPoza += Y[i]; }
+  const SG = S.spaceGas, U = SG && SG.dust && SG.dust.U;
+  const out = { slot: '${slot}', w: W, h: H, samples: rt.samples, msaa: C.msaaSamples, ps: C.pxScale, zoom: h ? h[H0.CAM_ZOOM] : null, sumaY: sum, sumaYPoza: sumPoza,
+    pyl: U ? { wl: !!(SG.tune.dust), minPx: U.minPx.value, fade: [U.fadeLo.value, U.fadeHi.value], pxNaJ: U.pxPerUnit.value, widoczny: !!(SG.dust.mesh && SG.dust.mesh.visible) } : null };
+  for (const ref of ${JSON.stringify(refs)}) {
+    const B = J.Y[ref];
+    if (!B) continue;
+    let s = 0, sa = 0, sp = 0, sap = 0, dod = 0, uje = 0;
+    for (let i = 0; i < n; i++) {
+      const d = Y[i] - B[i], ad = d < 0 ? -d : d;
+      s += d; sa += ad;
+      if (!M[i]) { sp += d; sap += ad; }
+      if (d > 1e-3) dod++; else if (d < -1e-3) uje++;
+    }
+    out['wzgl_' + ref] = { suma: s, sumaAbs: sa, sumaPoza: sp, sumaAbsPoza: sap, pikseliDodatnich: dod, pikseliUjemnych: uje };
+  }
+  return out;
+})()`;
+async function drzJasnosc(tag) {
+  const zoomy = listaArg(args.jasnoscZoomy, ['0.0667', '0.035']).map(Number).filter((z) => z > 0);
+  const USTAL = Number(args.jasnoscUstal || 5), PO = Number(args.jasnoscPo || 0.8) * 1000;
+  const etapy = ['msaa', ...(String(args.jasnoscBezMsaa ?? '1') === '1' ? ['bezMsaa'] : [])];
+  const out = { etapy: [] };
+  const pomiar = async (z) => {
+    await drzStart(z);
+    await drzGazSam(true);
+    await sleep(USTAL * 1000);
+    const pyl = await drzLib('dust').catch((e) => ({ blad: e.message }));
+    // poświata lamp pozycyjnych na zegarze pasa (stoi w pauzie) — z zegarem klatki pulsuje w pauzie i oświetla gaz i pył
+    // przy okręcie inaczej przy każdym odczycie (szum kontroli)
+    await wkKod("S.belt.navClock = 'belt'").catch(() => {});
+    await pauza(true);
+    await sleep(1200);
+    const r = { zoom: z, pyl };
+    try {
+      // dwie serie: A (nowy wzór), B (pył wył.), C (dawny wzór) — kontrola A2 / B2 / C2 (to, co zmienia się w pauzie)
+      for (const s of ['', '2']) {
+        r['A' + s] = await wkEval(JAS_KROK('A' + s, s ? ['A', 'B', 'C'] : []), 120000);
+        await wkKod('S.spaceGas.tune.dust = false'); await sleep(PO);
+        r['B' + s] = await wkEval(JAS_KROK('B' + s, s ? ['A' + s, 'B'] : ['A']), 120000);
+        await wkKod('S.spaceGas.tune.dust = true; S.spaceGas.tune.dustMinPx = 0'); await sleep(PO);
+        r['C' + s] = await wkEval(JAS_KROK('C' + s, s ? ['B' + s, 'C'] : ['B', 'A']), 120000);
+        await wkKod('S.spaceGas.tune.dustMinPx = 2.5'); await sleep(PO);
+      }
+      // energia pyłu: nowy wzór Σ(A − B) = −Σ(B − A), dawny Σ(C − B) — seria 1 i 2; kontrola: Σ(A2 − A), Σ(B2 − B), Σ(C2 − C)
+      const e = (s) => ({ nowa: -r['B' + s]['wzgl_A' + s].suma, dawna: r['C' + s]['wzgl_B' + s].suma,
+        nowaPoza: -r['B' + s]['wzgl_A' + s].sumaPoza, dawnaPoza: r['C' + s]['wzgl_B' + s].sumaPoza });
+      const e1 = e(''), e2 = e('2');
+      const q = (a, b) => (b ? +(a / b).toFixed(4) : null), f3 = (x) => +x.toFixed(3);
+      r.wynik = { energiaNowa: f3(e1.nowa), energiaNowa2: f3(e2.nowa), energiaDawna: f3(e1.dawna), energiaDawna2: f3(e2.dawna),
+        nowaDoDawnej: q(e1.nowa, e1.dawna), nowa2DoDawnej: q(e2.nowa, e2.dawna), sredniaNowaDoDawnej: q(e1.nowa + e2.nowa, e1.dawna + e2.dawna),
+        pozaOkretem: { nowa: f3(e1.nowaPoza + e2.nowaPoza), dawna: f3(e1.dawnaPoza + e2.dawnaPoza), nowaDoDawnej: q(e1.nowaPoza + e2.nowaPoza, e1.dawnaPoza + e2.dawnaPoza) },
+        kontrola: { A: f3(r.A2.wzgl_A.suma), B: f3(r.B2.wzgl_B.suma), C: f3(r.C2.wzgl_C.suma), Apoza: f3(r.A2.wzgl_A.sumaPoza), Bpoza: f3(r.B2.wzgl_B.sumaPoza), Cpoza: f3(r.C2.wzgl_C.sumaPoza), Aabs: f3(r.A2.wzgl_A.sumaAbs) },
+        kontrolaSuma: f3(r.A2.wzgl_A.suma), kontrolaAbs: f3(r.A2.wzgl_A.sumaAbs), pikseleNowa: r.B.wzgl_A.pikseliUjemnych, pikseleDawna: r.C.wzgl_B.pikseliDodatnich,
+        msaa: r.A.msaa, probki: r.A.samples, skala: r.A.ps, bufor: [r.A.w, r.A.h], pylNowy: r.A.pyl, pylDawny: r.C.pyl };
+      // --jasnoscFade "0.4,1.2;0.25,1.2": inne progi zaniku drobin < ~1 px (dustFadePx) wobec tego samego B i C (kalibracja
+      // średniej jasności dawnego rastra) — energia F − B wobec średniej dawnej (C − B, C2 − B2); po nich wraca domyślne
+      // [0,3; 1,2] (kalibracja 2026-10-30)
+      const fades = String(args.jasnoscFade || '').split(';').map((s) => s.split(',').map(Number)).filter((p) => p.length === 2 && p.every(Number.isFinite));
+      if (fades.length) {
+        const eDawna = (e1.dawna + e2.dawna) / 2, eDawnaP = (e1.dawnaPoza + e2.dawnaPoza) / 2;
+        r.wynik.zaniki = [];
+        for (let i = 0; i < fades.length; i++) {
+          await wkKod(`S.spaceGas.tune.dustFadePx = [${fades[i][0]}, ${fades[i][1]}]`); await sleep(PO);
+          const F = await wkEval(JAS_KROK('F' + i, ['B', 'B2']), 120000);
+          const eF = (F.wzgl_B.suma + F.wzgl_B2.suma) / 2, eFp = (F.wzgl_B.sumaPoza + F.wzgl_B2.sumaPoza) / 2;
+          r.wynik.zaniki.push({ fadePx: fades[i], energia: f3(eF), doDawnej: q(eF, eDawna), pozaOkretemDoDawnej: q(eFp, eDawnaP), pyl: F.pyl });
+        }
+        await wkKod('S.spaceGas.tune.dustFadePx = [0.3, 1.2]');
+      }
+    } catch (e) { r.blad = e.message; }
+    await wkKod("S.belt.navClock = 'frame'").catch(() => {});
+    await wkEval('(() => { globalThis.__jas = null; return true; })()').catch(() => {});
+    await wkKod('S.spaceGas.tune.dust = true; S.spaceGas.tune.dustMinPx = 2.5').catch(() => {});
+    await pauza(false);
+    await drzGazSam(false);
+    const w = r.wynik;
+    console.log(`drżenie / jasność pyłu [${tag}] zoom ${z}: MSAA ${w?.msaa} (próbki celu ${w?.probki}), skala ${w?.skala}, bufor ${JSON.stringify(w?.bufor)} — energia nowa ${w?.energiaNowa} (powt. ${w?.energiaNowa2}), dawna ${w?.energiaDawna}, nowa/dawna ${w?.nowaDoDawnej} (powt. ${w?.nowa2DoDawnej}; poza okrętem ${w?.pozaOkretem?.nowaDoDawnej}) | kontrola Σ ${w?.kontrolaSuma} Σ|·| ${w?.kontrolaAbs} | piksele z pyłem nowa ${w?.pikseleNowa} dawna ${w?.pikseleDawna} | pył ${JSON.stringify(w?.pylNowy)}${r.blad ? ' BŁĄD ' + r.blad : ''}`
+      + (w?.zaniki ? ` | zaniki: ${w.zaniki.map((x) => `${x.fadePx.join('–')} px → ${x.doDawnej} (poza okrętem ${x.pozaOkretemDoDawnej})`).join('; ')}` : ''));
+    return r;
+  };
+  // --jasnoscSkale 1.25,1: skala renderu w biegu (Core3D.setRenderScale — sam rozmiar celów) przed pomiarami — Wysoka
+  // (MSAA 4, skala 1,0) w przebiegu Ultra; pierwsza wartość = skala przebiegu
+  const skale = listaArg(args.jasnoscSkale, []).map(Number).filter((s) => s > 0);
+  try {
+    for (const etap of skale.length ? skale.flatMap((s) => etapy.map((e) => [e, s])) : etapy.map((e) => [e, 0])) {
+      const [etapN, skala] = etap;
+      if (skala > 0) {
+        out.skale = out.skale || [];
+        out.skale.push(await wkEval(`(() => { const C = globalThis.__C3; C.setRenderScale(${skala}); return { skala: C.renderScale, ps: C.pxScale, cel: [C.composerTarget.width, C.composerTarget.height] }; })()`).catch((err) => ({ blad: err.message })));
+        await sleep(2500);
+      }
+      const e = { etap: skala > 0 ? `${etapN}@${skala}` : etapN, pomiary: [] };
+      if (etapN === 'bezMsaa') {
+        e.pipeSyncPrzed = await wkEval('(globalThis.__ST && globalThis.__ST.pipeSync) | 0').catch(() => null);
+        e.przelaczenie = await wkEval('(() => { const C = globalThis.__C3; C.setMsaaEnabled(false); return { msaa: C.msaaSamples, probki: C.composerTarget.samples }; })()').catch((err) => ({ blad: err.message }));
+        await sleep(5000);
+      }
+      for (const z of zoomy) e.pomiary.push(await pomiar(z));
+      out.etapy.push(e);
+    }
+  } finally {
+    if (etapy.includes('bezMsaa')) {
+      out.przywrocenieMsaa = await wkEval('(() => { const C = globalThis.__C3; C.setMsaaEnabled(true, 4); return { msaa: C.msaaSamples, probki: C.composerTarget.samples }; })()').catch((err) => ({ blad: err.message }));
+      await sleep(4000);
+    }
+    if (skale.length) { await wkEval(`(() => { globalThis.__C3.setRenderScale(${skale[0]}); return true; })()`).catch(() => {}); await sleep(2000); }
+  }
+  return out;
+}
+
+// ── KADRY MAP GAZU (--drzenieCzesci mapa, 2026-10-30; porównanie rozmiaru map przebiegami: domyślny (768 × 432),
+// ?gazMapa=proporcje (1086 × 306 na 32:9), ?gazMapa=szeroka (1536 × 432)) ───────────────────────────────────────────
+// „Sam gaz”, okręt trzymany, PAUZA, zoomy --mapaZoomy (bliski, 0.0667, 0.035): trzy wycinki 1024 × 512 (¼, ½, ¾ szerokości)
+// w dwóch trybach: `pole` — pole gazu z chwili pauzy (różne między przebiegami) i `dalekie` — samo pole dalekie
+// (SpaceGas.tune.sim = false) z całką wiatru wyzerowaną (sim.U.windOff = 0): treść zależy tylko od miejsca, zoomu i siatki
+// obwiedni — TE SAME kadry w każdym przebiegu (mapy różnią się tylko rozdzielczością i próbkowaniem). PNG + meta (teksel).
+async function drzMapa(tag) {
+  const zoomy = listaArg(args.mapaZoomy, [String(ZB), '0.0667', '0.035']).map(Number).filter((z) => z > 0);
+  const out = [];
+  await drzStart(ZB);
+  await drzGazSam(true);
+  await sleep(Number(args.mapaUstal || 4) * 1000);
+  await pauza(true);
+  await sleep(1200);
+  const WYC = ['lewy', 'srodek', 'prawy'];
+  try {
+    for (const tryb of ['pole', 'dalekie']) {
+      if (tryb === 'dalekie') await wkKod('const s = S.spaceGas.sim; S.__windOff = s.U.windOff.value.clone(); s.U.windOff.value.set(0, 0); S.spaceGas.tune.sim = false');
+      for (const z of zoomy) {
+        try {
+          await drzLib('free');
+          await setZoom(z);
+          await sleep(900);
+          const st = await drzLib('state');
+          const rects = [0.25, 0.5, 0.75].map((fx) => drzRect(st.Wb * fx, st.Hb * 0.5, 1024, 512, st));
+          const arm = await drzLib('arm', { rects, max: 1, waitZoom: z, reset: true, timeoutMs: 3000 });
+          const rd = await drzLib('read', { rgb: true });
+          const m = rd.meta[0] || {};
+          const row = { tryb, zoom: z, uzbrojenie: arm, mapa: await wkEval('(() => { const M = globalThis.__ST.spaceGas.maps; return [M.w, M.h]; })()').catch(() => null),
+            teksel: m.texel, tekselPx: m.texel ? [+(m.texel[0] * z * m.ps).toFixed(2), +(m.texel[1] * z * m.ps).toFixed(2)] : null, lvl: m.lvl, lod: m.lod,
+            cam: m.cam, rects, pliki: [] };
+          for (let ri = 0; ri < rects.length; ri++) row.pliki.push(drzPng(`${tag}-${tryb}-z${z.toFixed(4)}-${WYC[ri]}`, await drzLib('png', { i: 0, ri })));
+          out.push(row);
+          console.log(`drżenie / kadry map [${tryb}] zoom ${z}: mapa ${JSON.stringify(row.mapa)}, teksel ${JSON.stringify(row.teksel)} j. = ${JSON.stringify(row.tekselPx)} px bufora, LOD ${row.lod}`);
+        } catch (e) { out.push({ tryb, zoom: z, blad: e.message }); }
+      }
+      if (tryb === 'dalekie') await wkKod('S.spaceGas.tune.sim = true; if (S.__windOff) S.spaceGas.sim.U.windOff.value.copy(S.__windOff)');
+    }
+  } finally {
+    await drzLib('free').catch(() => {});
+    await wkKod('S.spaceGas.tune.sim = true').catch(() => {});
+    await pauza(false);
+    await setZoom(ZB);
+    await drzGazSam(false);
+  }
+  return out;
+}
+
+async function drzenieSeria() {
+  mkdirSync(DRZ_DIR, { recursive: true });
+  const IN = {};
+  for (const k of ['anchorX', 'anchorY', 'winX', 'winY', 'envCell', 'envVer', 'envX0', 'envY0']) IN[k] = SPACE_GAS_IN[k];
+  const cfg = { LG: DRZ_LOG, N: 8192, IN, Z: DRZ_Z, edge: SPACE_GAS_WINDOW_EDGE };
+  const inst = await wkEval(`(${drzInstaluj.toString()})(${JSON.stringify(cfg)}, ${drzRoznice.toString()}, ${drzMapaRoznicy.toString()})`).catch((e) => e.message);
+  const R = report.drzenie = { instalacja: inst, rozmiar: [W, H], zoomBliski: ZB, atlas: ATLAS_LEN, czesci: [] };
+  console.log('drżenie: sondy w workerze —', inst);
+  if (inst !== 'ok' && inst !== 'już') { report.bledy.push(`drżenie: instalacja ${inst}`); return; }
+  if (args.drzenieWk) { await wkKod(String(args.drzenieWk)); R.kodWorkera = String(args.drzenieWk); }
+  if (args.drzenieStrona) { await stronaKod(String(args.drzenieStrona)); R.kodStrony = String(args.drzenieStrona); }
+  R.stan = await drzLib('state').catch((e) => ({ blad: e.message }));
+  console.log('drżenie: stan', JSON.stringify(R.stan));
+  const czesci = listaArg(args.drzenieCzesci, ['swiatla', 'zoom', 'daleko']);
+  const zapisz = () => { writeJson(join(DRZ_DIR, 'drzenie.json'), R); writeJson(join(out, 'raport.json'), report); };
+  for (const c of czesci) {
+    const t0 = Date.now();
+    try {
+      if (c === 'swiatla') R.swiatla = await drzCzesc('swiatla', drzSwiatla);
+      else if (c === 'zoom') R.zoom = await drzCzesc('zoom', drzZoom);
+      else if (c === 'daleko') R.daleko = await drzCzesc('daleko', drzDaleko);
+      else if (c === 'mapa') R.mapa = await drzCzesc('mapa', drzMapa);
+      else if (c === 'jasnosc') R.jasnosc = await drzCzesc('jasnosc', drzJasnosc);
+      else continue;
+    } catch (e) { console.log(`drżenie: część ${c} — błąd`, e.message); report.bledy.push(`drżenie ${c}: ${e.message}`); }
+    R.czesci.push({ czesc: c, s: Math.round((Date.now() - t0) / 1000) });
+    R.bladDziennika = await wkEval('(globalThis.__drz && (globalThis.__drz.log.err || globalThis.__drz.cap.err)) || null').catch(() => null);
+    zapisz();
+  }
+  // pipeline'y synchroniczne workera w czasie serii (zrzuty i analiza nie tworzą pipeline'ów renderu; część `jasnosc` bez
+  // MSAA tworzy je celowo — liczba sprzed przełączenia w R.jasnosc.etapy[1].pipeSyncPrzed)
+  R.pipeSync = await wkEval('(globalThis.__ST && globalThis.__ST.pipeSync) | 0').catch(() => null);
+  R.computeSync = await wkEval('(globalThis.__cSync ? { n: globalThis.__cSync.n, lista: globalThis.__cSync.lista } : null)').catch(() => null);
+  console.log('drżenie: pipeline\'y synchroniczne w klatkach workera (render, od startu):', R.pipeSync, '| compute od instalacji sondy:', JSON.stringify(R.computeSync));
+  zapisz();
+}
+
 function finish(code = 0) {
   if (finish.done) return;
   finish.done = true;
@@ -2055,7 +2869,7 @@ try {
   await ev(`(window.RenderWorkerHost.dev({ eval: 'globalThis.__C3 = Core3D; globalThis.__ST = st;' }), true)`);
   let inst = '';
   for (let i = 0; i < 20 && inst !== 'ok' && inst !== 'już'; i++) { await sleep(500); inst = await wkEval(SONDA_INSTALUJ).catch((e) => e.message); }
-  console.log('sonda:', inst, '| rozszerzenie:', await wkEval(SONDA_EXT).catch((e) => e.message));
+  console.log('sonda:', inst, '| rozszerzenie:', await wkEval(SONDA_EXT).catch((e) => e.message), '| etykiety compute gazu:', await wkEval(SONDA_GAZ_ETYKIETY).catch((e) => e.message));
   await ev(GUARD);
   // wejście użytkownika w oknie harnessu zablokowane (--blokada 0 — bez blokady)
   if (String(args.blokada ?? '1') === '1') { report.blokadaWejscia = await ev(BLOKADA_WEJSCIA).catch((e) => e.message); console.log('blokada wejścia:', report.blokadaWejscia); }
@@ -2222,14 +3036,23 @@ try {
   // miękki brzeg okna pola a kadr (--brzeg) i rampa zoomu przy oddaleniu (--rampaZoom) — sprawdzenie poprawek 2026-10-29
   if (BRZEG_DIR) await brzegOkna();
   if (String(args.rampaZoom ?? '0') === '1') await rampaZoom();
+  // drżenie świateł statków i gazu (--drzenie <katalog>, 2026-10-29 wieczór); --drzeniePoAB 1 — po seriach A/B (część
+  // `jasnosc` bez MSAA przebudowuje pipeline'y — koszt A/B przed nią)
+  const DRZ_PO_AB = String(args.drzeniePoAB ?? '0') === '1';
+  if (DRZ_DIR && !DRZ_PO_AB) {
+    await drzenieSeria();
+    await obceTeraz('po drżeniu');
+  }
 
-  // ── A/B ──
+  // ── A/B ── (--abZoomDaleko / --abZoomLot: zoom serii „daleko” i przelotu, domyślnie zoom daleki; np. 0.035 — oddalenie
+  // maksymalne, gdzie mapy gazu biorą najwięcej próbek)
+  const ZAB_D = Number(args.abZoomDaleko || ZD), ZAB_L = Number(args.abZoomLot || ZD);
   if (AB_DALEKO.length) {
     await up('w');
-    await ev(NA_MIEJSCE(ZD));
+    await ev(NA_MIEJSCE(ZAB_D));
     await down('w');   // ciąg w miejscu (dysze pchają gaz), kamera stoi
     await sleep(4000);
-    zoomAB = ZD;
+    zoomAB = ZAB_D;
     await seriaAB('daleko', AB_DALEKO);
     zoomAB = null;
     await up('w');
@@ -2247,10 +3070,38 @@ try {
   }
   if (AB_LOT.length) {
     // w przelocie: przed każdym oknem (baza i wariant) świeży przelot od miejsca „pole” przy zoomie dalekim
-    await seriaAB('lot', AB_LOT, () => przelotStart(ZD, { trzymaj: 2.5, rozped: 1.5 }));
+    await seriaAB('lot', AB_LOT, () => przelotStart(ZAB_L, { trzymaj: 2.5, rozped: 1.5 }));
     await up('w');
   }
+  // --abLotStaly "0.035:T4C1+T2C1,0.0667:T1C0" (2026-10-30): serie A/B w locie ze STAŁĄ prędkością (LOT_STALY — --abLotStalyV
+  // j/s wzdłuż +x z ciągiem W, jak część `daleko` drżenia) przy podanych zoomach; wpis bez listy — --abLotStalyWarianty;
+  // przed każdym oknem (baza i wariant) świeży start od miejsca „pole” i rozpęd --abLotStalyRozped s
+  for (const wpis of listaArg(args.abLotStaly, [])) {
+    const [zs, lista] = wpis.split(':');
+    const z = Number(zs);
+    const warLS = (lista ? lista.split('+') : listaArg(args.abLotStalyWarianty, [])).filter((n) => WARIANTY[n]);
+    if (!(z > 0) || !warLS.length) continue;
+    await seriaAB(`lotS${z}`, warLS, async () => {
+      await up('w').catch(() => {});
+      await ev(LOT_STOP).catch(() => {});
+      await ev(NA_MIEJSCE(z));
+      await ev('(() => { window.__hold.heading = 0; return true; })()');
+      await sleep(900);
+      await ev(LOT_STALY(Number(args.abLotStalyV || 600), 0, 0, z));
+      await down('w');
+      await sleep(Number(args.abLotStalyRozped || 2.5) * 1000);
+    });
+    await up('w').catch(() => {});
+    await ev(LOT_STOP).catch(() => {});
+    await obceTeraz(`po A/B lotS${z}`);
+  }
   if (report.ab.length) podsumujAB();
+  if (DRZ_DIR && DRZ_PO_AB) {
+    await up('w').catch(() => {});
+    await ev(LOT_STOP).catch(() => {});
+    await drzenieSeria();
+    await obceTeraz('po drżeniu');
+  }
   // ── balast VRAM po A/B (--balastPo N GB): te same okna postoju i przelotu przy zoomie dalekim pod presją pamięci
   // karty (u gracza: dwm ~3,8 GB + inne programy) — kolejka GPU rośnie przy małych znacznikach = stronicowanie ──
   // ── rzednięcie okna na długim postoju (--rzedniecie S, zoom --zoomRz 0.1) ──

@@ -19,6 +19,12 @@ import { stormIntensity } from '../../game/asteroidStorms.js';
 const RES = 48;
 const DEEP = 26000;
 
+// worldAnchor — siatka tekseli mapy w UKŁADZIE SCENY (2026-10-29, jak kolumny ośrodka — volumetrics.js
+// VOLUME_LIGHT_TUNE.worldAnchor): róg mapy to wielokrotność teksela w układzie sceny (double), więc przebudowa po
+// przeskoku początku pola (lepki Core3D.fx.origin, co 20 tys. j.) próbkuje te same punkty świata — pył ośrodka, mgła
+// i maska słońca pola nie przesuwają się o (przeskok mod teksel). A/B: false — siatka względem początku pola (dawniej).
+export const FIELD_MAP_TUNE = { worldAnchor: true };
+
 export class FieldMap {
   constructor() {
     const one = THREE.DataUtils.toHalfFloat(1);
@@ -45,6 +51,7 @@ export class FieldMap {
     this._map = { x0: 0, y0: 0, w: 1, h: 1, valid: false };
     this.builds = 0;
     this.buildMs = 0;
+    this.tune = FIELD_MAP_TUNE;   // uchwyt A/B (worker: st.belt.fieldMap.tune)
   }
 
   get valid() { return this._map.valid; }
@@ -76,8 +83,18 @@ export class FieldMap {
     const t0 = performance.now();
     const size = Math.pow(2, Math.ceil(Math.log2(need * 1.6)));
     const texel = size / RES;
-    const x0 = Math.floor((cx - size * 0.5) / texel) * texel;
-    const y0 = Math.floor((cy - size * 0.5) / texel) * texel;
+    let x0;
+    let y0;
+    if (FIELD_MAP_TUNE.worldAnchor) {
+      // róg w układzie sceny (double): x sceny początku = originX, y sceny = −originY
+      const sox = Number(f.originX) || 0;
+      const soy = -(Number(f.originY) || 0);
+      x0 = Math.floor((cx + sox - size * 0.5) / texel) * texel - sox;
+      y0 = Math.floor((cy + soy - size * 0.5) / texel) * texel - soy;
+    } else {
+      x0 = Math.floor((cx - size * 0.5) / texel) * texel;
+      y0 = Math.floor((cy - size * 0.5) / texel) * texel;
+    }
     const H = THREE.DataUtils.toHalfFloat;
     const field = f.field;
     for (let j = 0; j < RES; j++) {

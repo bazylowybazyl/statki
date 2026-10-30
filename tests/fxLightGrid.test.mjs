@@ -12,6 +12,8 @@ import {
   LIGHT_CAP, ITEM_CAP, GRID_NX, GRID_NY, GRID_CELLS, CELL_WORDS, LIGHT_FLOATS, OMNI,
   FIELD_SHIP_LIGHTS, CAVE_SHIP_LIGHTS
 } from '../src/3d/fx/lightGrid.js';
+import { getEntityHullLengthWorld } from '../src/game/shipLightRuntime.js';
+import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
 
 const close = (a, b, tol, msg = '') => assert.ok(Math.abs(a - b) <= tol, `${msg} ${a} != ${b} (±${tol})`);
 
@@ -277,6 +279,41 @@ test('addShipLights: lampy edytora — reflektory, reflektory otoczenia i grupy 
   assert.ok(spots >= 3, `reflektory: ${spots}`);
   assert.ok(omni >= 2, `dookólne (światło + lampy): ${omni}`);
   assert.equal(owned, g.count - 1, 'wszystko poza światłem dookoła ma właściciela');
+});
+
+// Poza świateł (2026-10-29, „snopy front i pomocnicze drżą”): pas podaje graczowi pozę renderu (kadłub), nie pozę kroku.
+test('addShipLights: opts.pose — światła jak encja przeniesiona do tej pozy (bit w bit); bez pozy / niepełna — poza encji', () => {
+  const HP = 0.833;
+  // Atlas z lampami edytora (2 reflektory dalekie, reflektory otoczenia z obrysu, grupy lamp) i kadłub bez lamp (para na dziobie)
+  const atlas = (x, y, angle) => ({
+    pos: { x, y }, angle, editorLights: ATLAS_EDITOR_DEFAULTS.lights,
+    __hardpointScale: HP, __hardpointScaleX: HP, __hardpointScaleY: HP,
+    visual: { spriteScale: 1 }, capitalProfile: { spriteRotation: 0.25 }
+  });
+  const bare = (x, y, angle) => ({ pos: { x, y }, angle });
+  const run = (e, opts) => {
+    const g = new LightGrid();
+    g.begin(1600000, -2000);
+    const len = getEntityHullLengthWorld(e) || 1000;
+    const far = addShipLights(g, e, len, { owner: 3, time: 0.7, ...opts });
+    return { lights: Array.from(g.lights.subarray(0, g.count * LIGHT_FLOATS)), count: g.count, far: { ...far } };
+  };
+  for (const make of [atlas, bare]) {
+    const phys = make(1601234.5, 2345.25, 0.4);
+    const pose = { x: 1601230.125, y: 2347.75, angle: 0.3875 };
+    const a = run(phys, { pose });
+    const b = run(make(pose.x, pose.y, pose.angle), {});
+    assert.ok(a.count >= (make === atlas ? 8 : 3), `światła: ${a.count}`);
+    assert.deepEqual(a.lights, b.lights, 'siatka jak dla encji w pozie');
+    assert.deepEqual(a.far, b.far, 'kamera mapy cienia reflektorów dalekich');
+    assert.equal(phys.pos.x, 1601234.5, 'encja bez zmian');
+    // bez pozy, null, niepełna — poza encji; poza nie zostaje na następne wywołanie
+    const c = run(phys, {});
+    assert.notDeepEqual(a.lights, c.lights);
+    for (const p of [null, { x: NaN, y: 0, angle: 0 }, { x: 1, y: 2 }]) assert.deepEqual(run(phys, { pose: p }).lights, c.lights);
+    run(phys, { pose });
+    assert.deepEqual(run(phys, {}).lights, c.lights);
+  }
 });
 
 // --- graf GridLighting (WGSL w Node) --------------------------------------------

@@ -104,11 +104,20 @@ paths:
   renderów przy 240 Hz) był bez klatki efektów — gaz, pas i efekty stały, a krokom z dt strony przepadał czas. Drugi
   `renderSingle` tej samej strony (podzielony ekran) dalej nic nie robi. A/B: `st.fxPerPage = false` w workerze
   (`RenderWorkerHost.dev`); test `tests/fxCore3D.test.mjs`.
+  MACIERZE PRZED KROKAMI: `render()` liczy macierze sceny RAZ (`_syncSceneMatrices` — `scene.matrixWorldAutoUpdate =
+  false`), PRZED klatką efektów — krok, który przestawia siatkę albo grupę (pozycja, skala, początek pul), woła na niej
+  `updateMatrixWorld()` sam, inaczej ta klatka rysuje ją z macierzą poprzedniej (robią to pas, mgła, olbrzymy, bronie,
+  opływ hipercruise'u, przelot NEA i gaz przestrzeni — reguła `gaz-przestrzeni`, „MACIERZE W KROKU”). Moduł, który
+  stawia siatki przed `Core3D.render` (np. pula roju przeładunkowego w `portCargo3D.update`), tego nie potrzebuje.
+  Strażnik: `tests/sceneMatrixSync.test.mjs` (nowy krok przestawiający siatki — dopisz go tam).
   **Siatka świateł** (`Core3D.fx.grid`): `renderer.lighting = GridLighting` w trybie „optIn”, ustawiony PRZED
   `renderer.init()` (three r183 łapie `lighting` w init — podmiana później nic nie zmienia); czytają ją tylko materiały z
   `gridLights = true` (`enableGridLights(mat, owner)`) — reszta ma WGSL i obraz bez zmian. Światła efektów:
   `Core3D.fx.lights.flash(...)` / `.point(...)` (świat gry, nośnik z `ActiveCarrier`), własne światła kroku przez
-  `ctx.grid.addWorld(...)`. **Zniekształcenia** (gałąź „uber” tylko przy źródłach): fala / implozja / gorące powietrze /
+  `ctx.grid.addWorld(...)`. Światło przypięte do okrętu (`addShipLights`, pas) stoi w pozie, w której rysuje się kadłub —
+  gracz: `opts.pose` = poza renderu (`RenderWorld.playerPose`), nie poza encji (koniec kroku fizyki: przy 240 Hz obrazu
+  piła (1 − α) · v / 60 wobec kadłuba w smugach, ośrodku, gazie i na kadłubach); osie reflektorów bez zaokrąglenia
+  (`SHIP_LIGHT_DIR_TUNE`, `shipLightRuntime.js`) — reguła `pas-asteroid`, POZA ŚWIATEŁ. **Zniekształcenia** (gałąź „uber” tylko przy źródłach): fala / implozja / gorące powietrze /
   soczewka bańki warpa (pierścień na elipsie, w środku 0 — kadłub ostry; 2026-10-19) —
   `Core3D.fxDistortion().shock / implode / heat / bubble(...)` (świat gry, co klatkę przed renderem; dysze i tarcze zostają przy
   `pushHeatHazeWorld`); warstwa DIST — siatki na `FX_DISTORT_LAYER` (10) piszą przesunięcie w px (osie sceny, RG) do

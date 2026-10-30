@@ -17,8 +17,38 @@
 // three składa modelViewMatrix na CPU): bez `positionWorld` przy 5–10 mln j.
 
 import * as THREE from 'three/webgpu';
-import { Fn, float, vec2, vec3, vec4, uniform, uv, texture, exp, max } from 'three/tsl';
+import { Fn, If, float, vec2, vec3, vec4, uniform, uv, texture, exp, max, floor, mix } from 'three/tsl';
 import { sunVisibility, sunFill } from '../sunShadowMask.js';
+
+/**
+ * Odczyt dwusześcienny B-spline mapy W × H z 4 odczytów dwuliniowych (Sigg i Hadwiger — jak `cubicTex` pola w
+ * spaceGasMaps.js), uv w [0, 1]. WARSTWA (2026-10-29, „przy zoomie i oddaleniu gazy drżą”): teksel mapy ma przy każdym
+ * zoomie stały rozmiar w px bufora (5120 × 1440, Ultra: mapa 768 × 432 — ~9,6 × 4,8 px, w proporcjach kadru — ~6,8 px);
+ * odczyt dwuliniowy zależy od położenia siatki tekseli, a ta przeskakuje na stopniu drabiny —
+ * przy oddaleniu (treść w skali teksla) każdy stopień przestawiał wzór. B-spline zbija skok na stopniu kilkukrotnie
+ * (lustro: scripts/gazZoomSonda.mjs), przy zbliżeniu (treść ≫ teksla) obraz bez widocznej zmiany (≤ 3/255). Filtr
+ * przybliżający: przy oddaleniu gaz miękkszy o ~½ teksla — do decyzji użytkownika (SpaceGas.tune.layerCubic).
+ */
+function bsplineMap(tex, m, W, H) {
+  const N = vec2(W, H);
+  const st = m.mul(N).sub(0.5).toVar();
+  const i = floor(st).toVar();
+  const f = st.sub(i).toVar();
+  const f2 = f.mul(f), f3 = f2.mul(f);
+  const w0 = f3.negate().add(f2.mul(3.0)).sub(f.mul(3.0)).add(1.0).div(6.0).toVar();
+  const w1 = f3.mul(3.0).sub(f2.mul(6.0)).add(4.0).div(6.0).toVar();
+  const w2 = f3.mul(-3.0).add(f2.mul(3.0)).add(f.mul(3.0)).add(1.0).div(6.0).toVar();
+  const w3 = f3.div(6.0).toVar();
+  const g0 = w0.add(w1).toVar();
+  const g1 = w2.add(w3).toVar();
+  const h0 = i.sub(0.5).add(w1.div(g0)).div(N).toVar();
+  const h1 = i.add(1.5).add(w3.div(g1)).div(N).toVar();
+  const a = texture(tex, vec2(h0.x, h0.y)).level(0);
+  const b = texture(tex, vec2(h1.x, h0.y)).level(0);
+  const c = texture(tex, vec2(h0.x, h1.y)).level(0);
+  const d = texture(tex, vec2(h1.x, h1.y)).level(0);
+  return mix(mix(a, b, g1.x), mix(c, d, g1.x), g1.y);
+}
 
 /** Wysokości połówek warstwy w scenie (kadłuby −10,4…−5,3; efekty gry z ≈ 14–15). */
 export const SPACE_GAS_Z = Object.freeze({ lower: -20, upper: 200, lights: 30 });
@@ -39,7 +69,8 @@ export class SpaceGasLayer {
       ambient: uniform(new THREE.Color(0.02, 0.02, 0.025)),
       grid: uniform(1),                             // światła siatki
       gridKnee: uniform(0.35),                      // L / (1 + kolano · ΣL) — gaz przy dyszy nie bieleje
-      lightZ: uniform(SPACE_GAS_Z.lights)
+      lightZ: uniform(SPACE_GAS_Z.lights),
+      cubic: uniform(0)                             // 1 — mapa gazu odczytem B-spline (bsplineMap), 0 — dwuliniowo
     };
     // Prostokąt 1 × 1 skalowany w obiekcie (scale = bok mapy w świecie); uv (0, 0) = lewy dół sceny = róg mapy
     // o największym y gry — wiersz mapy liczony od najmniejszego y gry (v mapy = 1 − uv.y).
@@ -64,7 +95,9 @@ export class SpaceGasLayer {
       mat.fragmentNode = Fn(() => {
         const u = uv();
         const m = vec2(u.x, u.y.oneMinus()).toVar();
-        const A = texture(maps.gasTex, m).level(0).toVar();
+        const A = vec4(0).toVar();
+        If(L.cubic.greaterThan(0.5), () => { A.assign(bsplineMap(maps.gasTex, m, maps.w, maps.h)); })
+          .Else(() => { A.assign(texture(maps.gasTex, m).level(0)); });
         const Ls = texture(maps.lightTex, m).level(0).x;
         // pół kolumny gazu na połowę warstwy
         const tau = A.a.mul(0.5).mul(L.on).mul(L.fade).toVar();

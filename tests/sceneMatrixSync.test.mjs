@@ -49,6 +49,10 @@ test('render() i renderBackdrop() robią jeden ręczny sync macierzy przed pierw
     assert.ok(at > 0, `render() woła ${pass}`);
     assert.ok(syncIdx < at, `sync przed ${pass}`);
   }
+  // Klatka efektów (kroki Core3D.fx) idzie PO syncu — krok, który przestawia siatki, odświeża je sam (test niżej;
+  // AGENTS.md, haki „Obraz i render”).
+  const fxIdx = renderBody.indexOf('this._runFxFrame(freePerspective)');
+  assert.ok(fxIdx > syncIdx, 'klatka efektów po syncu macierzy');
 
   const backdropBody = body('\n  renderBackdrop(camera) {');
   const bSync = backdropBody.indexOf('this._syncSceneMatrices()');
@@ -75,5 +79,14 @@ test('węzły ruszane W TRAKCIE render() odświeżają macierz same', () => {
     'dym rakiet na początku pul odświeża swój węzeł');
   assert.match(sparks, /m\.position\.set\(ox, oy, 0\);\s*m\.updateMatrix\(\);\s*m\.matrixWorld\.copy\(m\.matrix\);/,
     'iskry na początku pul odświeżają swój węzeł');
+  // Przegląd 2026-10-29: opływ hipercruise'u stawia siatkę przy statku w kroku „hipercruise: opływ” (bez odświeżenia
+  // rysował się klatkę za statkiem — 83–167 j. przy 20–40 tys. j/s), przelot NEA — grupę na początku pul (skała obok
+  // na klatce przeskoku początku). Gaz przestrzeni: tests/spaceGas.test.mjs (matrixSync).
+  const flow = readFileSync(new URL('../src/3d/warp/hyperFlow.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const nea = readFileSync(new URL('../src/3d/neaFlyby3D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(flow, /mesh\.position\.set\(ox, oy, 0\);\n(?:\s*\/\/[^\n]*\n)*\s*mesh\.updateMatrixWorld\(\);/,
+    'opływ hipercruise\'u przy statku odświeża swój węzeł');
+  assert.match(nea, /group\.position\.set\(origin\.x, origin\.y, 0\);\n(?:\s*\/\/[^\n]*\n)*\s*group\.updateMatrixWorld\(\);/,
+    'przelot NEA na początku pul odświeża swoją grupę');
   assert.doesNotMatch(core3d, /_updateShockwaves|Shockwave3DManager|refractionTarget/, 'fala z refrakcją usunięta (zadanie 19)');
 });
