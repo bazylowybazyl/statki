@@ -851,6 +851,10 @@ if (isWorker) {
         st.repairMods.blk.applyRepairBlock(v.blocks.repair, (slot, gen) => { const e = rm.entities[slot]; return e && e.gen === gen ? e : null; }, st.repairMirror);
       }
     } catch (e) { modFail('drony', e); }
+    // lustro rejestru ruchu warpa PRZED rozkazami: WARP_BEGIN tej strony szuka osi nowego rekordu w lustrze (recordAt) —
+    // stosowane po rozkazach (w sekcji warpa niżej) zwracało null i przylot / odlot NPC w workerze nie dostawał wyglądu
+    // (zwiastun, błyski, fale, kadłub; sonda wojna-gra 2026-10-30: WarpNurt.arrivals w workerze pusta)
+    try { if (v.blocks.warp && v.blocks.warp.f64) st.mods.warpBlock.applyWarpBlock(v.blocks.warp, st.dict, st.warpMirror); } catch (e) { modFail('warp: blok', e); }
     // rozkazy klatek ≤ tej strony (pominięte strony też — efekty się sumują)
     if (st.cmd) { try { const ev = st.pageEv[k & 63]; st.cmd.drain(ev >= 0 ? ev : st.evFrame); } catch (e) { modFail('rozkazy', e); } }
     // przeszkody gazu wybuchów tej strony (hale K-7, budowle misji, kadłuby przy domenach) — krok efektów czyta je
@@ -876,8 +880,8 @@ if (isWorker) {
     // moduły po kolei, każdy osobno osłonięty (modFail — moduł z błędem pominięty w tej klatce, obraz idzie dalej)
     // warp „Nurt” przed planetami (soczewka świata w skoku): stan warpa gracza z WORLD, ruch warpa NPC z bloku `warp`
     try { if (v.blocks.warp && v.blocks.warp.f64) {
-      const { warpMod, warpBlock } = st.mods;
-      const mir = warpBlock.applyWarpBlock(v.blocks.warp, st.dict, st.warpMirror);
+      const { warpMod } = st.mods;
+      const mir = st.warpMirror;   // lustro bloku tej strony — zastosowane przed rozkazami (wyżej)
       const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1 });
       cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM]; cns.roll = h[H.CAMNS_ROLL] || 0;
       const wf = st.warpFrame;
