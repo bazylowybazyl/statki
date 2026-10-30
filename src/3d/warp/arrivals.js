@@ -3,7 +3,7 @@
 // Przylot i odlot okrętu NPC — widok z zewnątrz (dema/warp-webgpu/arrivals.js, iteracja 3 —
 // 2026-10-03). User: „jak w Star Wars” — okręt wpada z dużą prędkością i nagle gwałtownie hamuje;
 // BEZ portalu (dawna szczelina / tunel usunięte — po wyjściu z niej okręt jeszcze kawałek leciał)
-// i BEZ smugi („normalnie widoczny statek”):
+// i — w dawnym wyglądzie (`?warpSW=0`) — BEZ smugi („normalnie widoczny statek”):
 //   ZWIASTUN  — prosta nić wzbudzonego ośrodka wzdłuż kursu do miejsca zatrzymania, ośrodek
 //               zbierany w punkt (lekki wir), mały rdzeń;
 //   WLOT      — okręt pojawia się daleko za celem (zwykle za brzegiem kadru), leci prosto z pełną
@@ -16,9 +16,9 @@
 // Osie i drogi: src/game/warpDrive.js (createWarpArrival + planWarpRush / sampleWarpRush,
 // createWarpDeparture / sampleWarpDeparture) — tu tylko wygląd w języku „Nurtu”.
 //
-// PROTOTYP `?warpSW=1` (2026-10-30, warpSW.js — A/B do oceny użytkownika): przylot i wylot „jak w Gwiezdnych Wojnach” —
-// kadłub ze światła i smuga za rufą w wlocie (zatrzask przy hamowaniu), w odlocie ślad za rufą i smuga wystrzelona w punkcie
-// skoku; parametr `sw` funkcji stanu (null — wygląd domyślny bez zmian).
+// WYGLĄD DOMYŚLNY od 2026-10-30 (warpSW.js; user po prototypie: „ustaw domyślne”): przylot i wylot „jak w Gwiezdnych
+// Wojnach” — kadłub ze światła i smuga za rufą w wlocie (zatrzask przy hamowaniu), w odlocie ślad za rufą i smuga wystrzelona
+// w punkcie skoku; parametr `sw` funkcji stanu (null — dawny wygląd, `?warpSW=0`). Komentarze „`?warpSW=1`” niżej = wygląd SW.
 //
 // W GRZE okręt jest encją rozgrywki, a OŚ przylotu / odlotu (czasy, droga, wymiary), prowadzenie okrętu w tunelu,
 // duch i `onGone` należą do gry (RW-28: src/game/warpTraffic.js — rejestr ruchu warpa w czasie gry):

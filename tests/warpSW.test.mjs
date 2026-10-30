@@ -1,4 +1,4 @@
-// Prototyp przylotu i wylotu warpa „jak w Gwiezdnych Wojnach” za przełącznikiem `?warpSW=1` (src/3d/warp/warpSW.js,
+// Przylot i wylot warpa „jak w Gwiezdnych Wojnach” — domyślnie od 2026-10-30, dawny wygląd `?warpSW=0` (src/3d/warp/warpSW.js,
 // 2026-10-30): przełącznik z adresu, czyste obwiednie smug i kadłuba ze światła (przylot NPC, odlot NPC, gracz — kop,
 // hamowanie, szczyt smug gwiazd), pula smug w klatce z odcinaniem do kadru (tylko kamera z góry jednego gracza), wpięcie
 // w arrivals.js / player.js / warpNurt.js (smuga kształtem GLOW_STREAK duszków, kadłub ze światła przez szew `hullWarp`),
@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three/webgpu';
 import {
-  WARP_SW, parseWarpSW, warpSWOn, setWarpSW, newWarpSWState, warpSWArrival, warpSWDeparture, warpSWKick, warpSWBrake,
+  WARP_SW, WARP_SW_DEFAULT, parseWarpSW, warpSWOn, setWarpSW, newWarpSWState, warpSWArrival, warpSWDeparture, warpSWKick, warpSWBrake,
   warpSWStarGain, warpSWWidth
 } from '../src/3d/warp/warpSW.js';
 import {
@@ -49,23 +49,25 @@ const hullKey = (h) => [h.on, h.revealMode, h.revealLine, h.seamLine, h.seam, h.
 
 // ── przełącznik ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-test('przełącznik ?warpSW=1 (adres strony — RenderWorld.pageSearch, także w workerze), wymuszenie testów', () => {
-  assert.equal(parseWarpSW(''), false);
-  assert.equal(parseWarpSW('?dev=1'), false);
+test('przełącznik: domyślnie „jak w Gwiezdnych Wojnach” (user 2026-10-30: „ustaw domyślne”), ?warpSW=0 — dawny wygląd; wymuszenie testów', () => {
+  assert.equal(WARP_SW_DEFAULT, true);
+  assert.equal(parseWarpSW(''), true);
+  assert.equal(parseWarpSW('?dev=1'), true);
   assert.equal(parseWarpSW('?warpSW=1'), true);
   assert.equal(parseWarpSW('?dev=1&warpSW=1&ziarno=7'), true);
   assert.equal(parseWarpSW('?warpSW=0'), false);
-  assert.equal(parseWarpSW('?warpSW=10'), false);
-  assert.equal(parseWarpSW(null), false);
-  assert.equal(warpSWOn('?warpSW=1'), true);
-  assert.equal(warpSWOn(''), false);
-  setWarpSW(true);
+  assert.equal(parseWarpSW('?dev=1&warpSW=0&renderWorker=1'), false);
+  assert.equal(parseWarpSW('?warpSW=10'), true, 'nieznana wartość — domyślnie');
+  assert.equal(parseWarpSW(null), true);
+  assert.equal(warpSWOn('?warpSW=0'), false);
   assert.equal(warpSWOn(''), true);
   setWarpSW(false);
-  assert.equal(warpSWOn('?warpSW=1'), false);
+  assert.equal(warpSWOn(''), false);
+  setWarpSW(true);
+  assert.equal(warpSWOn('?warpSW=0'), true);
   setWarpSW(null);
-  assert.equal(warpSWOn('?warpSW=1'), true);
-  assert.equal(warpSWOn('?x=1'), false);
+  assert.equal(warpSWOn('?warpSW=0'), false);
+  assert.equal(warpSWOn('?x=1'), true);
 });
 
 // ── obwiednie ──────────────────────────────────────────────────────────────────────────────────────────────────────

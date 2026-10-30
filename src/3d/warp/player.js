@@ -377,7 +377,8 @@ export class WarpPlayerFx {
     // efektem lotu jest opływ (hyperFlow.js) i silniki. Dawny wygląd: `?hcStary=1`.
     const hyperCalm = this.hyper && !hyperLegacyLookOn();
     const bubbleLensOn = this.hyper ? !hyperCalm || medOn : medOn;
-    // PROTOTYP `?warpSW=1` (warpSW.js): smuga za rufą przy kopie i przy hamowaniu przylotu, mocniejszy szczyt smug gwiazd —
+    // Wygląd „jak w Gwiezdnych Wojnach” (warpSW.js — domyślnie, `?warpSW=0` — bez): smuga za rufą przy kopie i przy hamowaniu
+    // przylotu, mocniejszy szczyt smug gwiazd —
     // tylko warp (nie hipercruise), tylko kamera z góry jednego gracza (game.topDown — sterownik: o.lensAllowed).
     const swOn = !this.hyper && game.topDown !== false && warpSWOn();
 

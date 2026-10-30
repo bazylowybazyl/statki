@@ -6,7 +6,7 @@ paths:
   - "tests/warpSW.test.mjs"
 ---
 
-# Warp: efekty boków kadru (W1–W3) i prototyp przylotu / wylotu „jak w Gwiezdnych Wojnach” (`?warpSW=1`)
+# Warp: efekty boków kadru (W1–W3) i przylot / wylot „jak w Gwiezdnych Wojnach”
 
 > Reguła obszaru (wydzielona z reguły `warp` 2026-10-29 — limit rozmiaru). Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Skok, soczewka świata i warp „Nurt” — reguła `warp`; kadr skoku i kadr lotu — `kamera`; warstwa DIST — `core3d`. Nową wiedzę o efektach skoku dopisuj tutaj: stan i zasady w czasie teraźniejszym, historię i pomiary — do `docs/` (`docs/PROPOZYCJA-efekty-warpa-2026-10-29.md`, `docs/WARP-kadr-lotu-2026-10-29.md`).
 
@@ -47,11 +47,11 @@ paths:
   — w propozycji. Test `tests/warpEdgeFx.test.mjs`; zrzuty `node scripts/webgpu/warp-ped-gra.mjs [--query warpFx=0]`, koszt
   `--koszt 1` (ABAB z `warpFx=0`).
 
-## Przylot i wylot „jak w Gwiezdnych Wojnach” — prototyp `?warpSW=1`
+## Przylot i wylot „jak w Gwiezdnych Wojnach” (domyślnie)
 
-- A/B DO OCENY (2026-10-30; user: „a przylot i wylot jak z gwiezdnych wojen? dasz radę?”; `src/3d/warp/warpSW.js`): domyślnie
-  wygląd z decyzji 2026-10-03 („BEZ portalu i BEZ smugi, normalnie widoczny statek” — `arrivals.js`). Z przełącznikiem:
-  PRZYLOT NPC — w wlocie kadłub ze światła i smuga za rufą (~7 L, ≤ droga od pojawienia się), przy hamowaniu ogon zatrzaskuje
+- WYGLĄD DOMYŚLNY (2026-10-30; user: „a przylot i wylot jak z gwiezdnych wojen? dasz radę?”, po obejrzeniu prototypu: „ustaw
+  domyślne”; `src/3d/warp/warpSW.js`, `WARP_SW_DEFAULT`) — zastępuje decyzję z 2026-10-03 („BEZ portalu i BEZ smugi, normalnie
+  widoczny statek”); dawny wygląd z adresu `?warpSW=0` (A/B). PRZYLOT NPC — w wlocie kadłub ze światła i smuga za rufą (~7 L, ≤ droga od pojawienia się), przy hamowaniu ogon zatrzaskuje
   się w kadłub (≤ 0,2 s), światło gaśnie 0,25 s po hamowaniu; ODLOT NPC — od nurkowania kadłub ze światła i ślad rosnący
   z prędkością, w punkcie skoku smuga wystrzeliwuje do przodu (8 L, gaśnie w 0,35 s), błysk 1 L, kadłub wchodzi w nią,
   znikając od dziobu jak domyślnie (odsłanianie linią punktu skoku, szew, żar — nie chowaj całego kadłuba od punktu
@@ -68,5 +68,5 @@ paths:
   Smugi odcinane do kadru tylko w kamerze z góry jednego gracza (`o.lensAllowed`) — duszki warstwy 0 rysuje każdy widok.
   Rozgrywka bez zmian; nowych faz nie wiąż z `__warpNurtMode`.
 - Strojenie `WARP_SW`, test `tests/warpSW.test.mjs`; zrzuty `node scripts/webgpu/zrzuty.mjs --backend webgpu --sceny
-  warp-zwiastun,warp-przylot,warp-odlot-ladowanie,warp-odlot [--query warpSW=1]`, gracz — `warp-ped-gra.mjs` (faza
+  warp-zwiastun,warp-przylot,warp-odlot-ladowanie,warp-odlot [--query warpSW=0]`, gracz — `warp-ped-gra.mjs` (faza
   `02a-kop-szczyt`), floty — `wojna-gra.mjs`.

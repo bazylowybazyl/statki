@@ -16,7 +16,7 @@
 //   • KADŁUB — odsłanianie, szew, żar brzegu (entity.__warpHullU → materiał kadłuba, 04) i plazma
 //     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13);
 //   • BOKI KADRU w skoku gracza (warpEdgeFx.js, 2026-10-29 — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`);
-//   • PROTOTYP `?warpSW=1` (warpSW.js, 2026-10-30): przylot i wylot „jak w Gwiezdnych Wojnach” — smugi za rufą
+//   • PRZYLOT I WYLOT „jak w Gwiezdnych Wojnach” (warpSW.js, 2026-10-30, domyślnie; dawny wygląd `?warpSW=0`) — smugi za rufą
 //     (kształt GLOW_STREAK duszków) i kadłub ze światła (szew `hullWarp`), bez nowych pipeline'ów i pól migawki.
 // Rozgrywka bez zmian: efekt tylko słucha stanu gry (automat warpa, pozycje encji, osie rekordów ruchu warpa — harmonogram,
 // prowadzenie okrętów w tunelu, duch i onGone liczy gra w czasie gry).

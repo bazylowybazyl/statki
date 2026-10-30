@@ -1,8 +1,8 @@
 // src/3d/warp/warpSW.js
 //
-// PRZYLOT I WYLOT „JAK W GWIEZDNYCH WOJNACH” — PROTOTYP ZA PRZEŁĄCZNIKIEM `?warpSW=1` (2026-10-30; user: „a przylot
-// i wylot jak z gwiezdnych wojen? dasz radę?”). Domyślny wygląd bez zmian: decyzja użytkownika z 2026-10-03 („jak
-// w Star Wars — BEZ portalu i BEZ smugi, normalnie widoczny statek”, arrivals.js) zostaje, to A/B do oceny.
+// PRZYLOT I WYLOT „JAK W GWIEZDNYCH WOJNACH” (2026-10-30; user: „a przylot i wylot jak z gwiezdnych wojen? dasz radę?”,
+// po obejrzeniu prototypu: „ustaw domyślne”). WYGLĄD DOMYŚLNY — zastępuje decyzję z 2026-10-03 („BEZ portalu i BEZ
+// smugi, normalnie widoczny statek”, arrivals.js); dawny wygląd z adresu: `?warpSW=0` (A/B).
 //   PRZYLOT NPC  — w wlocie (tAppear → tBrake) kadłub ze światła (biało-błękitny HDR) i smuga za rufą wzdłuż kursu
 //                  (~7 L, najwyżej do miejsca pojawienia się); przy hamowaniu ogon dojeżdża do kadłuba (zatrzask
 //                  w ≤ 0,2 s), błysk jak dziś; kadłub ze światła gaśnie ~0,25 s po hamowaniu.
@@ -60,14 +60,22 @@ const easeOut3 = (x) => { const u = 1 - clamp01(x); return 1 - u * u * u; };
 
 // ── przełącznik z adresu ────────────────────────────────────────────────────────────────────────────────────────────
 
-/** `?warpSW=1` w adresie strony (także w workerze renderu — RenderWorld.pageSearch); `0` / brak — domyślny wygląd. */
+/** Wygląd „jak w Gwiezdnych Wojnach” bez przełącznika w adresie (user 2026-10-30: „ustaw domyślne”). */
+export const WARP_SW_DEFAULT = true;
+
+/**
+ * Adres strony (także w workerze renderu — RenderWorld.pageSearch): `?warpSW=0` — dawny wygląd przylotu i wylotu,
+ * `?warpSW=1` — „jak w Gwiezdnych Wojnach”, brak — WARP_SW_DEFAULT.
+ */
 export function parseWarpSW(search) {
   const s = typeof search === 'string' ? search : '';
-  return /[?&]warpSW=1(?:&|$)/.test(s);
+  if (/[?&]warpSW=0(?:&|$)/.test(s)) return false;
+  if (/[?&]warpSW=1(?:&|$)/.test(s)) return true;
+  return WARP_SW_DEFAULT;
 }
 
 let _swSearch = null;
-let _swOn = false;
+let _swOn = WARP_SW_DEFAULT;
 let _swForce = null;
 
 /** Wymuszenie (testy, demo): true / false; null — wraca do adresu. */
