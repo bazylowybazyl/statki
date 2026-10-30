@@ -1151,7 +1151,7 @@
     import { stepCameraZoom, cameraZoomBase, wheelDeltaPx, syncCameraZoomLimits, cameraZoomFloor } from "./src/game/cameraZoom.js";
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
-      defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
+      defaultShipZoom, warpJumpZoomRef, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
       normalizeCameraWarpKickMode, createCameraKick, addCameraKick, stepCameraKick, stepCameraRigRoll,
       normalizeCameraHyperRollMode
     } from "./src/game/cameraRig.js";
@@ -4764,6 +4764,9 @@
         hp.maxAmmo = full;
         hp.ammo = full;
       }
+      // Nowa gra = pełne magazynki wszędzie (Supernova, torpedy): broń, która już wisi z zapisu, plan karty
+      // zostawia bez przemontowania — razem z amunicją zużytą w poprzedniej kampanii.
+      refillHardpointAmmo(Game.player.hardpoints, playerWeaponAmmo);
       syncWeaponSystems();
       saveLoadout();
     }
@@ -6057,6 +6060,9 @@
       // Podłoga zoomu NA EKRANIE przy członie < 0 (kadr przylotu warpa z celem — cameraZoom.js: cameraZoomFloor); NaN — limit
       // kadłuba (minZoom).
       zoomImpulseMin: NaN,
+      // Ujednolicony kadr skoku warpa gracza (kadr lotu): limit członu przejściowego jak przy podłodze K1 (cameraZoom.js:
+      // stepImpulseCap) — kadr lotu nie zależy od zoomu gracza.
+      zoomImpulseWide: false,
       zoomAnchor: { active: false, dx: 0, dy: 0 },
       manualZoom: false,
       shakeMag: 0,
@@ -29411,7 +29417,8 @@
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
     const _cameraWarpInput = {
       dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35,
-      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0, hyper: false
+      rulon: true, zoomRef: 0, zoomRefFar: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0,
+      hyper: false
     };
     // OBRÓT KADRU W HIPERCRUISIE (2026-10-23, zgłoszenie użytkownika: „kamera jak w warp — odpalenie hipercruise =
     // przestawienie kamery za statkiem”; port obrotu z dema „Pęd” — cameraRig.js: stepCameraRigRoll, konwencja
@@ -29557,11 +29564,17 @@
       // (`warp.targetBody`, warpBodyRadius jak soczewka). Hipercruise — zoom gracza × kop (bez zoomRef, decyzja 2026-10-23).
       if (hyperCam || !ship) {
         w.zoomRef = 0;
+        w.zoomRefFar = 0;
         w.arriving = false;
         w.arrivalDist = -1;
         w.arrivalDepthK = 0;
       } else {
-        w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
+        // Kadr ładowania — domyślny zoom statku; KADR LOTU (2026-10-29, user: „kamera jest za blisko na statek”) dalej i ten
+        // sam ułamek wysokości kadru przy każdej proporcji — rig przechodzi do niego po kopie (cameraRig.js: warpJumpZoomRef,
+        // warpJumpFrame / warpJumpAspect / warpJumpFrameRise; rig.warpZoomRef — odniesienie tej klatki dla soczewki).
+        const hullLen = Math.max(Number(ship.w) || 0, Number(ship.h) || 0);
+        w.zoomRef = defaultShipZoom(W, hullLen, cameraRigTune, camera.minZoom, camera.maxZoom);
+        w.zoomRefFar = warpJumpZoomRef(W, H, hullLen, cameraRigTune, camera.minZoom, camera.maxZoom);
         // Dolot jak soczewka świata (warpLensPhase.js: warpPlayerArriving — ślizg albo hamowanie grawitacyjne): wyjście
         // bez rampy też zatrzaskuje kadr przylotu.
         w.arriving = warpPlayerArriving(warp);
@@ -29595,6 +29608,9 @@
       // Podłoga zoomu kadru przylotu z celem (K1 — cameraRig.js: warpZoomFloor; cameraZoom.js: cameraZoomFloor) — zoom na
       // ekranie może zejść poniżej limitu kadłuba tylko przy zatrzaśniętym kadrze przylotu.
       camera.zoomImpulseMin = cameraRig.warpZoomFloor;
+      // Ujednolicony kadr skoku (kadr lotu przy dużym zoomie gracza: ln ≈ −4,2 … −4,6) — szerszy limit członu (cameraZoom.js);
+      // hipercruise (bez zoomRef — warpZoomRef NaN) zostaje przy ±3.
+      camera.zoomImpulseWide = cameraRig.warpUnifyW > 0 && Number.isFinite(cameraRig.warpZoomRef);
       // Reżyser kadru (cameraDirector.js): jego oddalenie to drugi człon log(zoom) — tylko kamera statku; przejście
       // prowadzące zoom i inne tryby zerują go od razu (wejście w RTS przenosi je wcześniej na zoom gracza).
       if (camera.mode !== 'ship' || w.suspend) resetCameraDirector(cameraDirector);
@@ -29612,7 +29628,8 @@
       const s = _warpLensPhase;
       const hyperOn = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
       stepWarpLensPhase(_warpLensTrack, s, warp, SimClock.render, hyperOn);
-      const zr = Number(_cameraWarpInput.zoomRef);
+      // odniesienie tej klatki z riga (kadr ładowania → kadr lotu po kopie — cameraRig.js: warpZoomRef)
+      const zr = Number.isFinite(cameraRig.warpZoomRef) ? cameraRig.warpZoomRef : Number(_cameraWarpInput.zoomRef);
       s.zoomRef = zr > 0 ? zr : NaN;
       s.zoomJump = zr > 0 ? zr * (Number(cameraRigTune.warpZoomOut) || 1) : NaN;
       s.arrivalFill = Number(cameraRigTune.warpArrivalFill) > 0 ? Number(cameraRigTune.warpArrivalFill) : NaN;
@@ -31110,7 +31127,9 @@
         rigIn.velY = vScr.y;
         rigIn.maxSpeed = scouting ? Math.max(100, Number(scoutSn.maxSpeed) || 400) : hullVmax;
         rigIn.mode = scouting ? 'never' : OPTIONS.cameraLook;
-        rigIn.leadGain = scouting ? cameraRigTune.scoutLead : NaN;
+        // skok warpa gracza (ładowanie, lot, rampa, ślizg): stałe wyprzedzenie warpJumpLead (0,35 = navLead) przy każdej
+        // postawie — kotwica soczewki P0 niezależna od walki (cameraRig.js; 0,22 psuło kop S10 i wyjście S8 ponad P4)
+        rigIn.leadGain = scouting ? cameraRigTune.scoutLead : (playerWarpCameraBusy() ? cameraRigTune.warpJumpLead : NaN);
         // Hipercruise (kadr za statkiem, wyprzedzenie na maksimum): nad pasami HUD zostaje CAŁY kadłub z dyszami, nie sam
         // środek — do pasów półwymiar kadłuba w pionie ekranu; waga gładka (zacisk kadru w rigu skakałby przy zmianie).
         const hcInsetW = stepHyperInsetWeight(frameDt);

@@ -11,6 +11,7 @@ import {
   noteCameraRigCombat,
   cameraLookMagnitude,
   defaultShipZoom,
+  warpJumpZoomRef,
   cameraShakeAmplitudePx,
   sampleCameraShakePx,
   normalizeCameraLookMode,
@@ -213,6 +214,15 @@ test('krzywa kursora, zoom startowy i strojenie w zakresach', () => {
   // Atlas: 1800 j. na 20% z 1920 px.
   assert.ok(Math.abs(defaultShipZoom(1920, 1800, tune) - 0.2133) < 1e-3);
   assert.equal(defaultShipZoom(1920, 10, tune), 3.2);
+  // kadr skoku warpa (2026-10-29): × warpJumpFrame, z szerokości najwyżej warpJumpAspect × wysokość — ten sam ułamek
+  // wysokości kadru przy 16:9 i 32:9 (dawniej zoom z szerokości: 32:9 — statek × 2 względem wysokości)
+  const hFrac = (vw, vh, t2 = tune) => warpJumpZoomRef(vw, vh, 1800, t2) * 1800 / vh;
+  assert.ok(Math.abs(warpJumpZoomRef(1920, 1080, 1800, tune) - defaultShipZoom(1920, 1800, tune) * tune.warpJumpFrame) < 1e-12);
+  assert.ok(Math.abs(hFrac(5120, 1440) - hFrac(1920, 1080)) < 1e-9, '32:9 jak 16:9');
+  assert.ok(Math.abs(hFrac(3440, 1440) - hFrac(1920, 1080)) < 1e-9, '21:9 jak 16:9');
+  assert.ok(hFrac(1440, 1080) < hFrac(1920, 1080), '4:3 — z szerokości (węższy kadr)');
+  const tw = createCameraRigTune({ warpJumpAspect: 0 });
+  assert.ok(Math.abs(hFrac(5120, 1440, tw) / hFrac(1920, 1080, tw) - 2) < 1e-9, 'warpJumpAspect 0 — z pełnej szerokości');
   const t = createCameraRigTune({ combatLook: 99, navOmega: 'x', nieznane: 1 });
   assert.equal(t.combatLook, CAMERA_RIG_RANGES.combatLook[1]);
   assert.equal(t.navOmega, CAMERA_RIG_DEFAULTS.navOmega);
@@ -565,9 +575,11 @@ test('kop warpa w grze: updateCameraWarpKick czyta automat, kurs i opcję; poza 
     haloRingKey: () => null,
     warpArrivalDepthK,
     warpPlayerArriving,
-    // ujednolicony kadr skoku (port „Pęd”): zoom gracza = zoom odniesienia — człon ujednolicenia 0 (osobny test niżej)
+    // ujednolicony kadr skoku (port „Pęd”): zoom gracza = zoom odniesienia ładowania — człon ujednolicenia w ładowaniu 0
+    // (osobny test niżej); kadr lotu (zoomRefFar) wchodzi dopiero w locie
     W: 1600, H: 900,
     defaultShipZoom: () => 0.5,
+    warpJumpZoomRef: () => 0.5 * tune.warpJumpFrame,
     cameraZoomBase: () => 0.5,
     warpBodyRadius: () => 1000,
     location: { search: '?warp=rulon&rulon=1' },
@@ -641,7 +653,7 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
     resetCameraDirector,
     warpRulonEnabled,
     W: 1600, H: 900,
-    defaultShipZoom, cameraZoomBase,
+    defaultShipZoom, warpJumpZoomRef, cameraZoomBase,
     warpBodyRadius: (p) => p.r,
     haloRingKey: (p) => (p && p.ring ? 'earth' : null),
     warpArrivalDepthK,
@@ -652,18 +664,27 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
   };
   scope.playerWarpArrivalLive = loadIndexFunction(html, 'function playerWarpArrivalLive() {', 'playerWarpArrivalLive', scope);
   const update = loadIndexFunction(html, 'function updateCameraWarpKick(gameDt) {', 'updateCameraWarpKick', scope);
+  // kadr ładowania = domyślny zoom statku; KADR LOTU (2026-10-29: warpJumpZoomRef — × warpJumpFrame, 16:9 wysokości)
+  // wchodzi w locie w warpJumpFrameRise s, odniesienie tej klatki (rig.warpZoomRef) czyta soczewka
   const zRef = defaultShipZoom(1600, 1800, tune, 0.035, 3.2);
+  const zFar = warpJumpZoomRef(1600, 900, 1800, tune, 0.035, 3.2);
+  assert.ok(zFar < zRef * 0.6, 'lot — kamera dalej niż kadr ładowania');
   for (let i = 0; i < 48; i++) { scope.warp.charge = Math.min(0.8, (i + 1) / 60); update(1 / 60); }
+  assert.ok(Math.abs(rig.warpZoomRef - zRef) < 1e-15, 'ładowanie w kadrze ładowania (bramka ringu, decyzje wejścia soczewki)');
   scope.warp.state = 'active';
-  for (let i = 0; i < 120; i++) update(1 / 60);
+  update(1 / 60);
+  assert.ok(rig.warpZoomRef < zRef && rig.warpZoomRef > zFar, 'kadr lotu wchodzi płynnie');
+  for (let i = 0; i < 119; i++) update(1 / 60);
   const w = scope._cameraWarpInput;
-  assert.equal(w.zoomRef, zRef);
+  assert.ok(Math.abs(w.zoomRef - zRef) < 1e-15, `${w.zoomRef} vs ${zRef}`);
+  assert.ok(Math.abs(w.zoomRefFar - zFar) < 1e-15, `${w.zoomRefFar} vs ${zFar}`);
+  assert.ok(2 > tune.warpJumpFrameRise && Math.abs(rig.warpZoomRef - zFar) < 1e-12, 'po warpJumpFrameRise — kadr lotu');
   assert.equal(w.zoomBase, 0.2);
   // każdy skok ma cel albo punkt końca (DECYZJE-2 T2): bez ciała celu — punkt (kadr przylotu K1 bez odsuwania)
   assert.equal(w.arrivalDist, 0, 'skok bez ciała celu — punkt');
-  // w skoku zoom = zoom odniesienia × warpZoomOut, niezależnie od zoomu gracza
+  // w locie zoom = kadr lotu × warpZoomOut, niezależnie od zoomu gracza
   const zoom = 0.2 * Math.exp(camera.zoomImpulseLog);
-  assert.ok(Math.abs(zoom - zRef * tune.warpZoomOut) < 1e-6, `${zoom} vs ${zRef * tune.warpZoomOut}`);
+  assert.ok(Math.abs(zoom - zFar * tune.warpZoomOut) < 1e-6, `${zoom} vs ${zFar * tune.warpZoomOut}`);
   // ślizg z pędem po rampie: `arriving`, kadr przylotu z odległości od brzegu tarczy celu
   scope.warp.state = 'idle';
   scope.warp.targetBody = { x: 50000, y: 0, r: 8000 };
@@ -674,8 +695,10 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
   assert.ok(rig.warpUnifyW > 0.99 && rig.warpArrOn, 'ślizg trzyma ujednolicony kadr i kadr przylotu');
   // cel NA TLE (planeta bez ringu): kadr przylotu z perspektywą (głębokość / ogniskowa w px CSS); ring / małe ciało — 0
   assert.ok(Math.abs(w.arrivalDepthK - warpArrivalDepthK(900)) < 1e-15 && w.arrivalDepthK > 0);
-  // podłoga zoomu kadru przylotu (K1) idzie do kamery — wyjątek od limitu kadłuba tylko przy zatrzaśniętym kadrze
+  // podłoga zoomu kadru przylotu (K1) idzie do kamery — wyjątek od limitu kadłuba tylko przy zatrzaśniętym kadrze; liczona
+  // z kadru ładowania (dalszy kadr lotu jej nie obniża), kadr lotu trzyma przez ślizg
   assert.ok(Math.abs(camera.zoomImpulseMin - zRef * tune.warpArrivalFloor) < 1e-12, `podłoga ${camera.zoomImpulseMin}`);
+  assert.ok(Math.abs(rig.warpZoomRef - zFar) < 1e-12, 'kadr lotu trzyma przez wyjście i kadr przylotu');
   scope.warp.targetBody = { x: 50000, y: 0, r: 8000, ring: true };
   update(1 / 60);
   assert.equal(w.arrivalDepthK, 0, 'planeta z ringiem — płaszczyzna gry');
@@ -696,6 +719,50 @@ test('warp gracza (port „Pęd”): zoom skoku od domyślnego zoomu statku, śl
   assert.equal(w.zoomRef, 0);
   assert.equal(w.arriving, false);
   assert.equal(w.arrivalDist, -1);
+});
+
+test('kadr lotu (zoomRefFar): ładowanie w kadrze ładowania, odsuwanie tylko w locie, trzymanie przez wyjście, bez pompowania', () => {
+  const rig = createCameraRig();
+  const zRef = 0.2133;
+  const zFar = zRef * tune.warpJumpFrame;
+  const inp = { dt: 1 / 60, state: 'charging', charge: 0, dirX: 0, dirY: -1, enabled: true, exitAge: -1, exitSlow: 0.7,
+    exitHalt: 1.35, zoomRef: zRef, zoomRefFar: zFar, zoomBase: zRef, arriving: false, arrivalDist: 0, viewW: 1920, viewH: 1080 };
+  const run = (n) => { for (let i = 0; i < n; i++) stepCameraRigWarp(rig, inp, tune); };
+  for (let i = 0; i < 48; i++) { inp.charge = (i + 1) / 48; run(1); }
+  assert.equal(rig.warpFarU, 0, 'ładowanie — bez odsuwania');
+  assert.ok(Math.abs(rig.warpZoomRef - zRef) < 1e-15);
+  inp.state = 'active';
+  const steps = Math.round(tune.warpJumpFrameRise * 60);
+  run(Math.floor(steps / 2));
+  assert.ok(Math.abs(rig.warpZoomRef - zRef * Math.sqrt(tune.warpJumpFrame)) / zRef < 0.02, 'połowa — środek w logarytmie (smoothstep)');
+  run(steps);
+  assert.equal(rig.warpFarU, 1);
+  assert.ok(Math.abs(rig.warpZoomRef - zFar) < 1e-15);
+  // wyjście (rampa) i kadr przylotu: kadr lotu zostaje, podłoga K1 z kadru ładowania
+  inp.state = 'idle';
+  inp.exitAge = 0;
+  for (let i = 0; i < 90; i++) { run(1); inp.exitAge += 1 / 60; }
+  assert.ok(Math.abs(rig.warpZoomRef - zFar) < 1e-15, 'wyjście trzyma kadr lotu');
+  assert.ok(rig.warpArrOn && Math.abs(rig.warpZoomFloor - zRef * tune.warpArrivalFloor) < 1e-15, 'podłoga K1 z kadru ładowania');
+  // nowe ładowanie w kadrze przylotu (kolejny odcinek TRAVEL TO): kadr lotu trzyma — bez zbliżania i ponownego odsuwania
+  inp.state = 'charging';
+  inp.exitAge = -1;
+  inp.charge = 0.5;
+  run(5);
+  assert.equal(rig.warpFarU, 1, 'bez pompowania zoomu między odcinkami');
+  // koniec skoku: waga ujednolicenia wraca do 0 — kadr lotu też (następny skok zaczyna w kadrze ładowania)
+  inp.state = 'idle';
+  inp.arrivalDist = -1;
+  let n = 0;
+  while (rig.warpUnifyW > 0 && n < 1200) { run(1); n++; }
+  run(1);
+  assert.ok(rig.warpUnifyW === 0 && rig.warpFarU === 0, `powrót (${n} klatek)`);
+  assert.ok(Math.abs(rig.warpZoomRef - zRef) < 1e-15);
+  // bez kadru lotu (hipercruise, demo bez zoomRefFar) — kadr skoku z zoomRef jak dawniej
+  const r2 = createCameraRig();
+  const in2 = { ...inp, state: 'active', zoomRefFar: 0, arrivalDist: -1 };
+  for (let i = 0; i < 200; i++) stepCameraRigWarp(r2, in2, tune);
+  assert.ok(r2.warpFarU === 0 && Math.abs(r2.warpZoomRef - zRef) < 1e-15);
 });
 
 test('render: kamera statku z riga, bez dawnego ×2,0 za kursorem', () => {
@@ -730,7 +797,8 @@ test('stery fregaty zwiadu: kamera prowadzi fregatę — wyprzedzenie z jej prę
   assert.match(render, /const vwx = scouting \? \(Number\(scoutSn\.vx\) \|\| 0\) : ship\.vel\.x;[\s\S]{0,200}?rollToScreen\(vwx, vwy, rigRoll, _rollTmp\);\s*rigIn\.velX = vScr\.x;/);
   assert.match(render, /rigIn\.maxSpeed = scouting \? Math\.max\(100, Number\(scoutSn\.maxSpeed\) \|\| 400\) : hullVmax;/);
   assert.match(render, /rigIn\.mode = scouting \? 'never' : OPTIONS\.cameraLook;/);
-  assert.match(render, /rigIn\.leadGain = scouting \? cameraRigTune\.scoutLead : NaN;/);
+  // skok warpa gracza: stałe wyprzedzenie warpJumpLead (= navLead) przy każdej postawie — kotwica soczewki P0 (2026-10-29)
+  assert.match(render, /rigIn\.leadGain = scouting \? cameraRigTune\.scoutLead : \(playerWarpCameraBusy\(\) \? cameraRigTune\.warpJumpLead : NaN\);/);
   // kadr = prowadzony okręt + offset riga (dawniej offset zerowany — fregata zawsze na środku)
   assert.match(render, /const offW = rollToWorld\(cameraRig\.offsetX \/ zoomSafe, cameraRig\.offsetY \/ zoomSafe, rigRoll, _rollTmp\);\s*let rigX = followX \+ offW\.x;/);
   assert.doesNotMatch(render, /rigX \+= \(scoutCamLast\.x - rigX\) \* scoutCamW;/);
@@ -1074,10 +1142,57 @@ function k1CameraFrame(rig, cam, w) {
   w.zoomBase = cameraZoomBase(cam);
   stepCameraRigWarp(rig, w, tune);
   cam.zoomImpulseMin = rig.warpZoomFloor;
+  cam.zoomImpulseWide = rig.warpUnifyW > 0 && Number.isFinite(rig.warpZoomRef);
   cam.zoomImpulseLog = rig.warpZoomLog;
   syncCameraZoomLimits(cam, { activeHullId: 'atlas' });
   stepCameraZoom(cam, w.dt);
 }
+
+test('kadr lotu w mniejszym oknie (1280 × 720 px CSS): nie dalej niż limit kadłuba, zatrzask K1 przy wyjściu bez skoku zoomu', () => {
+  const dt = 1 / 60;
+  const zRef = defaultShipZoom(1280, 1800, tune, 0.035, 3.2);
+  const zFar = warpJumpZoomRef(1280, 720, 1800, tune, 0.035, 3.2);
+  // bez dolnej granicy: 0,4 · 0,142 · 0,55 = 0,031 < 0,035 — w locie przycięcie, przy zatrzasku K1 skok −11%
+  assert.ok(Math.abs(zFar * tune.warpZoomOut - 0.035) < 1e-12, `kadr lotu na limicie kadłuba (${zFar * tune.warpZoomOut})`);
+  assert.ok(zFar < zRef, 'kadr lotu dalej niż kadr ładowania');
+  const rig = createCameraRig();
+  const cam = { mode: 'ship', zoom: zRef, targetZoom: zRef, zoomBase: zRef, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: 0,
+    zoomImpulseMin: NaN };
+  cam._zoomSpringOut = cam.zoom;
+  const w = { dt, state: 'charging', charge: 0, dirX: 0, dirY: -1, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35, rulon: false,
+    zoomRef: zRef, zoomRefFar: zFar, zoomBase: zRef, viewW: 1280, viewH: 720, arrivalDist: 900000, arrivalDepthK: 0, arriving: false };
+  for (let i = 0; i < 48; i++) { w.charge = (i + 1) / 48; k1CameraFrame(rig, cam, w); }
+  w.state = 'active';
+  for (let i = 0; i < 180; i++) k1CameraFrame(rig, cam, w);
+  assert.ok(Math.abs(cam.zoom - zFar * tune.warpZoomOut) < 1e-6, `lot: kadr lotu bez przycięcia (${cam.zoom})`);
+  // wyjście z celem: klatka zatrzasku kadru przylotu (podłoga K1 zdejmuje limit kadłuba) bez skoku zoomu
+  w.state = 'idle';
+  w.arrivalDist = 30000;
+  let latchStep = NaN;
+  for (let a = 0; a < 1.35 && !Number.isFinite(latchStep); a += dt) {
+    w.exitAge = a;
+    const before = Math.log(cam.zoom);
+    const was = rig.warpArrOn;
+    k1CameraFrame(rig, cam, w);
+    if (!was && rig.warpArrOn) latchStep = Math.abs(Math.log(cam.zoom) - before);
+  }
+  assert.ok(latchStep < 0.03, `zatrzask K1 bez skoku zoomu (${latchStep})`);
+});
+
+test('kadr lotu przy dużym zoomie gracza: limit członu jak przy podłodze K1 (zoomImpulseWide), poza skokiem ±3', () => {
+  const dt = 1 / 60;
+  const cam = { mode: 'ship', zoom: 3.2, targetZoom: 3.2, zoomBase: 3.2, minZoom: 0.035, maxZoom: 3.2, zoomVel: 0, zoomImpulseLog: -4.4,
+    zoomImpulseMin: NaN, zoomImpulseWide: true };
+  cam._zoomSpringOut = cam.zoom;
+  for (let i = 0; i < 120; i++) stepCameraZoom(cam, dt);
+  assert.ok(Math.abs(cam.zoom - 3.2 * Math.exp(-4.4)) < 1e-9, `kadr lotu bez przycięcia do −3 (${cam.zoom})`);
+  cam.zoomImpulseWide = false;
+  cam.zoomImpulseLog = -3.31;
+  for (let i = 0; i < 120; i++) stepCameraZoom(cam, dt);
+  assert.ok(Math.abs(cam.zoom - 3.2 * Math.exp(-3)) < 1e-9, `poza skokiem limit ±3 (${cam.zoom})`);
+  const kick = sliceFunction(readIndexHtml(), 'function updateCameraWarpKick(gameDt) {');
+  assert.match(kick, /camera\.zoomImpulseWide = cameraRig\.warpUnifyW > 0 && Number\.isFinite\(cameraRig\.warpZoomRef\);/);
+});
 // Przylot z celem przy brzegu tarczy (kadr przylotu ~0,015 — poniżej limitu kadłuba), potem trzymanie po ślizgu.
 function k1ArrivalHeld(arrivalDist = 30000) {
   const dt = 1 / 60;
@@ -1230,7 +1345,7 @@ test('K1: hamowanie grawitacyjne w updateCameraWarpKick — kadr przylotu zatrza
       OPTIONS: { cameraWarpKick: 'on' },
       camera, cameraRig: rig, cameraRigTune: tune, stepCameraRigWarp, normalizeCameraWarpKickMode,
       cameraDirector: createCameraDirector(), resetCameraDirector, warpRulonEnabled, W: 1600, H: 900,
-      defaultShipZoom, cameraZoomBase, warpBodyRadius: (p) => p.r, haloRingKey: () => null, warpArrivalDepthK,
+      defaultShipZoom, warpJumpZoomRef, cameraZoomBase, warpBodyRadius: (p) => p.r, haloRingKey: () => null, warpArrivalDepthK,
       warpPlayerArriving, WARP_EXIT: { settle: 1.3 }, location: { search: '' }, cameraFrameRoll: () => 0,
       playerWarpArrivalLive: () => false
     };
