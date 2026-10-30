@@ -585,11 +585,28 @@ export class GridLighting extends THREE.Lighting {
 // Światła pola statku (port FieldLights.addShip z dawnego fieldLights3D.js przez
 // dema/asteroidy-webgpu/lights.js) — bez alokacji na wywołanie po stronie siatki.
 
+// POZA ŚWIATEŁ (opts.pose — 2026-10-29, zgłoszenie „snopy front i pomocnicze drżą”): poza, w której rysuje się kadłub
+// (gracz: poza renderu z interpolacji — RenderWorld.playerPose, jak hexShips3D.getInterpolatedRenderPose), zamiast
+// pozy końca kroku fizyki z encji. Getterami w opcjach emiterów i grup lamp (shipLightRuntime: getPosition / getAngle —
+// brak pozy = null / NaN, czyli poza encji), bez alokacji na wywołanie.
+const _pose = { on: false, x: 0, y: 0, angle: 0 };
+const _poseXY = { x: 0, y: 0 };
+function poseGetPosition() {
+  if (!_pose.on) return null;
+  _poseXY.x = _pose.x;
+  _poseXY.y = _pose.y;
+  return _poseXY;
+}
+// Kąt sprite'a jak getEntityLightAngle kadłuba: kąt pozy + obrót sprite'a encji.
+function poseGetAngle(entity) {
+  return _pose.on ? _pose.angle + (Number(entity?.capitalProfile?.spriteRotation) || 0) : NaN;
+}
+
 const _one = [null];
 const _emitters = [];
 const _clusters = [];
-const _emitterOptions = { out: _emitters, maxEmitters: 12 };
-const _navOptions = { out: _clusters, time: 0 };
+const _emitterOptions = { out: _emitters, maxEmitters: 12, getPosition: poseGetPosition, getAngle: poseGetAngle };
+const _navOptions = { out: _clusters, time: 0, getPosition: poseGetPosition, getAngle: poseGetAngle };
 const _far = [];
 let _farCount = 0;
 const _farInfo = { n: 0, x: 0, y: 0, z: 0, ax: 0, ay: 0, az: 0, coneDeg: 36, range: 0, shadow: 0 };
@@ -646,7 +663,9 @@ function bowPairAlive(entity, along, side) {
  * początek w układzie ŚWIATA gry (`grid.worldOriginX/Y`); albo krócej
  * `addShipLights(grid, encja, długość, opts)` — początek siatki.
  * opts: { floods, nav, strength, time, owner, profile (FIELD_/CAVE_SHIP_LIGHTS),
- *         shadows (atlas z `request(...)`), spotShadows }.
+ *         shadows (atlas z `request(...)`), spotShadows, pose }.
+ * `pose` { x, y, angle } (świat gry; kąt jak `entity.angle`, bez obrotu sprite'a) — poza, w której rysuje się kadłub
+ * (gracz: poza renderu, RenderWorld.playerPose); brak / niepełna — poza encji (koniec kroku fizyki).
  * Reflektory dalekie dzielą jedną mapę cienia (średnia poza pary na dziobie), każdy
  * reflektor otoczenia ma własną. Zwraca wspólny obiekt `far` (średnia pozycja i oś
  * reflektorów dalekich — kamera mapy cienia), nadpisywany przy kolejnym wywołaniu.
@@ -671,12 +690,15 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
   if (!(k > 0.002)) return far;
   const L = Math.max(100, hullLength || 600);
   const range = Math.min(sp.maxRange, Math.max(sp.minRange, L * sp.rangeMul));
-  const angle = Number(entity.angle) || 0;
+  const pose = opts.pose;
+  _pose.on = !!pose && Number.isFinite(pose.x) && Number.isFinite(pose.y) && Number.isFinite(pose.angle);
+  if (_pose.on) { _pose.x = pose.x; _pose.y = pose.y; _pose.angle = pose.angle; }
+  const angle = _pose.on ? _pose.angle : (Number(entity.angle) || 0);
   const fx = Math.cos(angle);
   const fy = Math.sin(angle);
   // NPC w grze całkują x/y (pos to lustro) — jak FieldLights.addShip.
-  const ex = Number(entity.pos?.x ?? entity.x) || 0;
-  const ey = Number(entity.pos?.y ?? entity.y) || 0;
+  const ex = _pose.on ? _pose.x : (Number(entity.pos?.x ?? entity.x) || 0);
+  const ey = _pose.on ? _pose.y : (Number(entity.pos?.y ?? entity.y) || 0);
   _one[0] = entity;
   _emitters.length = 0;
   buildRoadLightWorldEmitters(_one, _emitterOptions);
@@ -767,5 +789,6 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
     }
   }
   _one[0] = null;
+  _pose.on = false;
   return far;
 }

@@ -28,7 +28,7 @@
 
 import {
   SPACE_GAS_SCENE, SPACE_GAS_ENV_RES, SPACE_GAS_MAX_JETS, SPACE_GAS_MAX_BLASTS, SPACE_GAS_MAX_BOLTS, SPACE_GAS_RASTER, SPACE_GAS_IN,
-  SPACE_GAS_MAP_MARGIN, SPACE_GAS_WINDOW_EDGE, SPACE_GAS_HZ, spaceGasViewHalf
+  SPACE_GAS_MAP_MARGIN, SPACE_GAS_WINDOW_EDGE, SPACE_GAS_HZ, spaceGasViewHalf, spaceGasWindowCells
 } from '../3d/spaceGas/spaceGasLayout.js';
 
 export { SPACE_GAS_SCENE, SPACE_GAS_ENV_RES, SPACE_GAS_MAX_JETS, SPACE_GAS_MAX_BLASTS, SPACE_GAS_MAX_BOLTS, SPACE_GAS_RASTER, SPACE_GAS_IN };
@@ -190,7 +190,8 @@ export function packSpaceGasFrame(out, st, o) {
   out[I.jets] = 0;
   st.samples = 0;
   const field = o.field;
-  const cells = o.windowCells | 0 || 256;
+  // bok okna jak w renderze (SpaceGasSim: N w górę do wielokrotności 8 — kernele pola bez strażnika liczby wątków)
+  const cells = spaceGasWindowCells(o.windowCells | 0 || 256);
   const cell = o.cell || 64;
   const halfWin = cells * cell * 0.5;
   const viewHalf = Math.max(o.halfW || 0, o.halfH || 0);

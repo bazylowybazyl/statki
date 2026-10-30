@@ -21,10 +21,45 @@ import {
 import { billboardOffset } from '../tsl/billboard3D.js';
 import { blendAddytywnePremul } from '../tsl/mieszanie.js';
 import { sunVisibility } from '../sunShadowMask.js';
-import { SPACE_GAS_WINDOW_EDGE } from './spaceGasLayout.js';
+import { SPACE_GAS_WINDOW_EDGE, spaceGasKernelCount } from './spaceGasLayout.js';
 
 /** Kolejka passa ortho: po dolnej połowie gazu (−45), przed efektami gry (≥ 0). */
 export const SPACE_GAS_DUST_ORDER = -40;
+
+/**
+ * NAJMNIEJSZY BOK DROBINY W PX (2026-10-29, „przy oddaleniu gazy drżą”): bok drobiny jest w j. świata (5,8–13 j.), więc
+ * przy oddaleniu ma 0,2–1,6 px bufora, a fragment liczy się w środku piksela (próbki MSAA) — drobina raz znika, raz
+ * oddaje cały szczyt maski jednemu pikselowi, przy każdym ruchu kamery i gazu inaczej (migotanie; przy wył. pyle drżenie
+ * znikało). Kwad rośnie do `minPx` px bufora, jasność × (bok / bok_min)² — ENERGIA drobiny w obrazie bez zmian, bez
+ * loterii pokrycia (2,5 px: zmiana energii 1–3% na klatkę; 2 px — wciąż 14–18%); z MSAA drobiny poniżej ~1 px dodatkowo
+ * gasną (`fade` [px] — smoothstep; `spaceGasDustFadeFor`) tak, jak dawny raster z MSAA gubił ich energię — średnia
+ * jasność pyłu przy każdym zoomie jak dawniej, przy największym oddaleniu okno nie robi się jaśniejszą plamą. Lustro
+ * wzoru shadera (testy).
+ * @param {number} spx bok drobiny na ekranie [px bufora]
+ * @param {number} minPx najmniejszy bok [px] (0 — wyłączone: dawny wzór)
+ * @param {number} fadeLo / fadeHi zanik drobin poniżej [px] (fadeHi ≤ fadeLo — bez zaniku)
+ * @returns {{ grow: number, keep: number }} mnożnik boku (≥ 1) i mnożnik jasności
+ */
+export function spaceGasDustScreenCpu(spx, minPx, fadeLo, fadeHi) {
+  const grow = Math.max(minPx / Math.max(spx, 1e-6), 1);
+  let t = fadeHi > fadeLo ? (spx - fadeLo) / (fadeHi - fadeLo) : 1;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return { grow, keep: (1 / (grow * grow)) * t * t * (3 - 2 * t) };
+}
+
+/**
+ * Zanik drobin < ~1 px (`fadePx` [od, do] px) przy `msaaSamples` próbkach celu sceny (Core3D.msaaSamples) — null: bez
+ * zaniku. Zanik oddaje średnią jasność DAWNEGO rastra, a ta zależy od MSAA: z MSAA 4 fragment liczy się w środku
+ * piksela, a pokrycie w próbkach przy jego rogach — drobina < 1 px zwykle nie trafiała w żadną albo dostawała maskę spoza
+ * kwadu (0,82 / 0,50 / 0,03 energii przy zoomie 0,1 / 0,0667 / 0,035); bez MSAA piksel liczy się, gdy jego środek leży
+ * w kwadzie, z maską w tym środku — średnio bez straty (≈ ideał), więc zanik tylko ściemniałby pył (przegląd 2026-10-29:
+ * 0,50 / 0,19 / 0,02 dawnej jasności przy zoomie 0,0667 / 0,05 / 0,035). Najmniejszy bok z zachowaniem energii zostaje
+ * w obu (migotanie). Wybór robi `SpaceGas._update` co klatkę z `Core3D.msaaSamples` (próbki celu sceny z opcji grafiki
+ * — ustalone przy starcie urządzenia; `Core3D.setMsaaEnabled` w narzędziach zmienia je w biegu).
+ */
+export function spaceGasDustFadeFor(msaaSamples, fadePx) {
+  return Number(msaaSamples) > 1 && fadePx && fadePx[1] > fadePx[0] ? fadePx : null;
+}
 
 export class SpaceGasDust {
   /**
@@ -35,7 +70,9 @@ export class SpaceGasDust {
   constructor(sim, maps, { count = 80000, grid = null, layer = 0, name = 'SpaceGasDust' } = {}) {
     this.sim = sim;
     this.maps = maps;
-    this.count = count;
+    // kInit / kStep liczą `count` wątków BEZ strażnika `instanceIndex < count` (three r183: ceil(count / 64) grup po 64) —
+    // liczba drobin w górę do wielokrotności 64, z ostrzeżeniem (spaceGasLayout.js spaceGasKernelCount)
+    this.count = count = spaceGasKernelCount(count, `${name}: drobiny`);
     const U = this.U = {
       live: uniform(1),
       dt: uniform(0),
@@ -55,7 +92,13 @@ export class SpaceGasDust {
       edge: uniform(1),                         // 1 — drobiny gasną miękko przy brzegu okna (jak mapa), 0 — twardy brzeg
       mapO: uniform(new THREE.Vector2()),       // róg okna − róg mapy [j.] (pozycja drobiny → mapa światła)
       mapInv: uniform(new THREE.Vector2(1, 1)), // 1 / bok mapy [1/j.]
-      gridOff: uniform(new THREE.Vector3())     // róg okna w scenie − początek siatki świateł (double na CPU)
+      gridOff: uniform(new THREE.Vector3()),    // róg okna w scenie − początek siatki świateł (double na CPU)
+      // najmniejszy bok w px (spaceGasDustScreenCpu): px bufora na j. świata (kamera z góry: zoom · pxScale), bok [px]
+      // i zanik drobin poniżej [px]; wyłączone (A/B, kamery 3D): minPx 0, zanik (−2, −1) — dawny wzór bit w bit
+      pxPerUnit: uniform(0),
+      minPx: uniform(0),
+      fadeLo: uniform(-2),
+      fadeHi: uniform(-1)
     };
     this.pos = instancedArray(count, 'vec4').setName(`${name}Pos`);   // x y (względem rogu okna), z, ziarno
     this.vel = instancedArray(count, 'vec4').setName(`${name}Vel`);   // vx vy vz, wiek (< 0 — czeka na narodziny)
@@ -157,7 +200,12 @@ export class SpaceGasDust {
       const edgeK = mix(float(1.0), smoothstep(0.0, NW * SPACE_GAS_WINDOW_EDGE, de), U.edge);
       const fade = smoothstep(0.0, 0.6, age).mul(float(1.0).sub(smoothstep(lf.sub(0.9), lf, age))).mul(U.fade).mul(edgeK).toVar();
       const puff = select(seed.lessThan(0.1), float(1.0), float(0.0)).toVar();
-      const size = mix(seed.mul(8.0).add(5.0), seed.mul(260.0).add(40.0), puff).mul(select(age.lessThan(0.0), float(0.0), float(1.0)));
+      const sizeW = mix(seed.mul(8.0).add(5.0), seed.mul(260.0).add(40.0), puff).mul(select(age.lessThan(0.0), float(0.0), float(1.0))).toVar();
+      // najmniejszy bok w px z zachowaniem energii (spaceGasDustScreenCpu — lustro): wyłączone → grow 1, keep 1
+      const spx = sizeW.mul(U.pxPerUnit).toVar();
+      const grow = max(U.minPx.div(max(spx, 1e-6)), 1.0).toVar();
+      const size = sizeW.mul(grow);
+      const keep = float(1.0).div(grow.mul(grow)).mul(smoothstep(U.fadeLo, U.fadeHi, spx)).toVar();
       // scena: x gry, −y gry (siatka w rogu okna, bez odbicia)
       const local = vec3(P.x, P.y.negate(), P.z).toVar();
       // Słońce z mapy światła (samocień gazu) — w fragmencie × maska słońca Core3D
@@ -172,7 +220,7 @@ export class SpaceGasDust {
       const sulfur = den.y.mul(U.dustW.y).div(max(dot(den, U.dustW), 1e-4));
       const dim = float(1.0).sub(U.sulfurDim.mul(saturate(sulfur)));
       const base = U.color.mul(seed.mul(0.8).add(0.5)).mul(mix(float(1.0), float(0.12), puff)).mul(U.gain).mul(dim).toVar();
-      const k = fade.mul(mix(float(1.0), float(0.3), puff)).toVar();
+      const k = fade.mul(mix(float(1.0), float(0.3), puff)).mul(keep).toVar();
       vSun.assign(base.mul(U.sun).mul(tsun.mul(0.75)).mul(k));
       const rest = vec3(U.ambient).toVar();
       if (grid) {
@@ -258,4 +306,20 @@ export class SpaceGasDust {
   }
 
   setVisible(on) { this.mesh.visible = on; }
+
+  /**
+   * Najmniejszy bok drobiny na ekranie (spaceGasDustScreenCpu): pxPerUnit — px bufora na j. świata w kamerze z góry
+   * (Core3D.viewZoom; 0 — kamera 3D: wyłączone), minPx — bok [px] (0 — wyłączone), fade = [od, do] — zanik drobin
+   * poniżej [px] (null — bez zaniku: cel sceny bez MSAA, spaceGasDustFadeFor). Wyłączone = dawny wzór bit w bit (bok
+   * i jasność × 1).
+   */
+  setScreen(pxPerUnit, minPx, fade) {
+    const U = this.U;
+    const on = pxPerUnit > 0 && minPx > 0 && Number.isFinite(pxPerUnit);
+    U.pxPerUnit.value = on ? pxPerUnit : 0;
+    U.minPx.value = on ? minPx : 0;
+    const f = on && fade && fade[1] > fade[0];
+    U.fadeLo.value = f ? fade[0] : -2;
+    U.fadeHi.value = f ? fade[1] : -1;
+  }
 }

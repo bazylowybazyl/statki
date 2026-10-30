@@ -18,7 +18,8 @@ import {
   getEntityLights,
   glslFloat,
   hexToRgb01,
-  roadEmittersMayReach
+  roadEmittersMayReach,
+  SHIP_LIGHT_DIR_TUNE
 } from '../src/game/shipLightRuntime.js';
 import { normalizeLightsBlock } from '../src/ui/shipLightEditorModel.js';
 import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
@@ -539,4 +540,97 @@ test('własne lampy: wynik z cache per encja, przeliczany po zmianie skali, siat
   const relit = buildShipLightShaderPayload(entity, grid);
   assert.notEqual(relit.signature, moved.signature, 'nowe źródło lamp');
   assert.deepEqual(relit, buildShipLightShaderPayload({ editorLights: entity.editorLights, __hardpointScale: 2 }, grid));
+});
+
+// KIERUNKI REFLEKTORÓW BEZ ZAOKRĄGLENIA (2026-10-29, zgłoszenie „snopy front i pomocnicze drżą”): oś emitera w świecie
+// i kierunek światła zewnętrznego w przestrzeni sprite'a celu szły przez round2 (0,01 na składową) — przy obrocie okrętu
+// oś stała, a potem skakała o 0,3–0,8° (12–38 skoków/s przy 0,1–0,3 rad/s).
+test('oś reflektora przy obrocie: co klatkę o ω·dt, bez stania i skoków (A/B SHIP_LIGHT_DIR_TUNE.exact)', () => {
+  const HP = 0.833;
+  // Atlas (reflektory dalekie i otoczenia z obrysu — osie lokalne co 90°) + lampa ukośna na kadłubie o niejednakowej skali
+  // sprite'a (normalizacja kierunku po skali sprite'a)
+  const lights = { ...ATLAS_EDITOR_DEFAULTS.lights, road: [...ATLAS_EDITOR_DEFAULTS.lights.road, { id: 'skos', x: 900, y: 120, deg: 63, range: 800, coneDeg: 40 }] };
+  const ship = {
+    pos: { x: 1.6e6, y: 0 }, angle: 0, editorLights: lights,
+    __hardpointScale: HP, __hardpointScaleX: HP, __hardpointScaleY: HP,
+    visual: { spriteScale: 1, spriteScaleX: 1.15, spriteScaleY: 0.9 }, capitalProfile: { spriteRotation: 0 }
+  };
+  const fps = 240;
+  const wrap = (d) => Math.atan2(Math.sin(d), Math.cos(d));
+  const sweep = (omega) => {
+    const step = omega / fps;
+    let prev = null;
+    let stand = 0; let jumps = 0; let maxJump = 0; let maxDev = 0; let maxErr = 0; let n = 0;
+    for (let f = 0; f <= fps * 2; f++) {
+      ship.angle = 0.2 + step * f;
+      const em = buildRoadLightWorldEmitters([ship]);
+      const ang = em.map((e) => Math.atan2(e.dir.y, e.dir.x));
+      for (const e of em) assert.ok(Math.abs(Math.hypot(e.dir.x, e.dir.y) - 1) < 0.02);
+      // reflektor daleki dziobu (deg 90) świeci dokładnie kursem
+      maxErr = Math.max(maxErr, Math.abs(wrap(ang[0] - ship.angle)));
+      if (prev) {
+        for (let i = 0; i < ang.length; i++) {
+          const d = wrap(ang[i] - prev[i]);
+          n++;
+          maxDev = Math.max(maxDev, Math.abs(d - step));
+          if (Math.abs(d) < step * 0.5) stand++;
+          if (Math.abs(d) > step * 1.5) { jumps++; maxJump = Math.max(maxJump, Math.abs(d)); }
+        }
+      }
+      prev = ang;
+    }
+    return { stand, jumps, maxJump, maxDev, maxErr, n, lamps: prev.length };
+  };
+  const deg = Math.PI / 180;
+  const keep = SHIP_LIGHT_DIR_TUNE.exact;
+  try {
+    assert.equal(keep, true, 'domyślnie osie bez zaokrąglenia');
+    for (const omega of [0.1, 0.3]) {
+      const r = sweep(omega);
+      assert.equal(r.lamps, 8, '3 reflektory dalekie + 5 otoczenia');
+      assert.equal(r.stand, 0, `ω ${omega}: oś nie stoi`);
+      assert.equal(r.jumps, 0, `ω ${omega}: oś nie skacze`);
+      assert.ok(r.maxDev < 1e-9, `ω ${omega}: zmiana osi = ω·dt (odchyłka ${r.maxDev})`);
+      assert.ok(r.maxErr < 1e-9, `oś = kurs (błąd ${r.maxErr})`);
+    }
+    // A/B: dawne round2 — oś stoi i skacze o 0,3–0,8°, błąd wobec kursu do ~0,37°
+    SHIP_LIGHT_DIR_TUNE.exact = false;
+    const old = sweep(0.3);
+    assert.ok(old.stand > old.n * 0.3, `dawniej oś stała: ${old.stand} / ${old.n}`);
+    assert.ok(old.jumps > 50 && old.maxJump > 0.3 * deg, `dawniej skoki ${old.jumps}, największy ${(old.maxJump / deg).toFixed(3)}°`);
+    assert.ok(old.maxErr > 0.2 * deg && old.maxErr < 0.4 * deg, `dawniej błąd osi ${(old.maxErr / deg).toFixed(3)}°`);
+  } finally {
+    SHIP_LIGHT_DIR_TUNE.exact = keep;
+  }
+});
+
+test('światło zewnętrzne w przestrzeni sprite\'a celu: kierunek bez zaokrąglenia przy obrocie źródła (A/B exact)', () => {
+  const source = { id: 'zrodlo', x: 0, y: 0, angle: 0, editorLights: { road: [{ id: 'road', x: 0, y: 0, deg: 90, range: 4000, coneDeg: 40 }] } };
+  const target = { id: 'cel', x: 1500, y: 0, angle: 0.7, radius: 60, editorLights: { position: [], road: [] } };
+  const grid = { srcWidth: 120, srcHeight: 80, pivot: { x: 0, y: 0 } };
+  const step = 0.3 / 240;
+  const sweep = () => {
+    const out = [];
+    for (let f = 0; f <= 60; f++) {
+      source.angle = -0.04 + step * f;
+      const payload = buildCombinedShipLightShaderPayload(target, grid, buildRoadLightWorldEmitters([source, target]));
+      const l = payload.lights.find((x) => x.external);
+      assert.ok(l, `klatka ${f}: cel w stożku`);
+      out.push(Math.atan2(l.dir.y, l.dir.x));
+    }
+    return out;
+  };
+  const keep = SHIP_LIGHT_DIR_TUNE.exact;
+  try {
+    const a = sweep();
+    // cel bez skali sprite'a: kierunek w sprite'cie = kurs źródła − kąt celu, co klatkę o ω·dt
+    for (let i = 0; i < a.length; i++) assert.ok(Math.abs(Math.atan2(Math.sin(a[i] - (-0.04 + step * i - 0.7)), Math.cos(a[i] - (-0.04 + step * i - 0.7)))) < 1e-9);
+    SHIP_LIGHT_DIR_TUNE.exact = false;
+    const b = sweep();
+    let stand = 0;
+    for (let i = 1; i < b.length; i++) if (Math.abs(b[i] - b[i - 1]) < step * 0.5) stand++;
+    assert.ok(stand > 10, `dawniej kierunek stał: ${stand} / ${b.length - 1}`);
+  } finally {
+    SHIP_LIGHT_DIR_TUNE.exact = keep;
+  }
 });

@@ -471,10 +471,31 @@ function getScaledLightLocal(marker, scale) {
   };
 }
 
+/**
+ * KIERUNKI REFLEKTORÓW bez zaokrąglenia (2026-10-29, zgłoszenie „snopy front i pomocnicze drżą”): `exact` — oś emitera
+ * w świecie (siatka świateł pasa, kamera mapy cienia, światła zewnętrzne kadłubów) i kierunek światła zewnętrznego
+ * w przestrzeni sprite'a celu to dokładne wektory jednostkowe. Dawniej składowe szły przez round2 (krok 0,01): przy
+ * obrocie okrętu oś stała, a potem skakała o 0,3–0,8° (12–38 skoków/s przy 0,1–0,3 rad/s; 30 px smugi 5 km od lampy przy
+ * zoomie 0,45). Pozycje zostają w round2 (0,01 j.). A/B: `exact = false` — dawne round2 (worker: `st.belt.lightDirTune`,
+ * strona: `window.__asteroidBelt.lightDirTune`).
+ */
+export const SHIP_LIGHT_DIR_TUNE = { exact: true };
+
+// Składowa wektora jednostkowego: szum rzędu 1e-16 (cos π/2) → 0, jak lightDirection — osie wychodzą dokładnie.
+function unitComponent(v) {
+  return Math.abs(v) < 1e-12 ? 0 : v;
+}
+
 function normalizeVec2(x, y, fallbackX = 1, fallbackY = 0) {
   const len = Math.hypot(Number(x) || 0, Number(y) || 0);
   if (!Number.isFinite(len) || len <= EPSILON) {
     return { x: fallbackX, y: fallbackY };
+  }
+  if (SHIP_LIGHT_DIR_TUNE.exact) {
+    return {
+      x: unitComponent(x / len),
+      y: unitComponent(y / len)
+    };
   }
   return {
     x: round2(x / len),
@@ -737,7 +758,9 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
       let sdx = dirLocal.x * spriteScale.x;
       let sdy = dirLocal.y * spriteScale.y;
       const sdLen = Math.hypot(Number(sdx) || 0, Number(sdy) || 0);
-      if (!Number.isFinite(sdLen) || sdLen <= EPSILON) { sdx = 1; sdy = 0; } else { sdx = round2(sdx / sdLen); sdy = round2(sdy / sdLen); }
+      if (!Number.isFinite(sdLen) || sdLen <= EPSILON) { sdx = 1; sdy = 0; }
+      else if (SHIP_LIGHT_DIR_TUNE.exact) { sdx = unitComponent(sdx / sdLen); sdy = unitComponent(sdy / sdLen); }
+      else { sdx = round2(sdx / sdLen); sdy = round2(sdy / sdLen); }
       const worldDir = normalizeVec2(
         sdx * c - sdy * s,
         sdx * s + sdy * c,

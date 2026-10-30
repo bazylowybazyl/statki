@@ -4,6 +4,7 @@
 // node --test tests/spaceGas.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 globalThis.window = globalThis.window || {};
 const THREE = await import('three/webgpu');
@@ -250,6 +251,11 @@ test('GK-3: mapy gazu i światła — WGSL w Node, storage ≤ 7, tekstury pisan
     }
     for (const t of w) assert.ok(!r.has(t), `${k.name}: ${t} pisana i próbkowana`);
   }
+  // koniec siatki wątków: three r183 puszcza ceil(W·H / 64) grup po 64, a WGSL nie sprawdza liczby — mapa w proporcjach
+  // 32:9 (1086 × 306 = 332 316 tekseli, nie wielokrotność 64) pisałaby 36 nadmiarowymi wątkami wiersz j = H (poza teksturą)
+  const wide = new SpaceGasMaps(sim, scene, { w: 1086, h: 306 });
+  assert.notEqual((1086 * 306) % 64, 0);
+  for (const k of wide.kernels()) assert.match(wgsl(k), />= 332316 \) \) \{/, `${k.name}: powrót wątku z instanceIndex ≥ W·H`);
   // pole dalekie pasa w kernelu startu okna
   assert.match(wgsl(sim.kInit), /spaceGasNoise/);
   // mapa: środek na siatce tekseli
@@ -965,4 +971,397 @@ test('zanik obrazu przy oddaleniu niezależny od proporcji kadru: ≤ 16:9 jak d
   for (const z of [0.1, 0.064, 0.05, 0.035, 0.02]) assert.equal(spaceGasViewFade(2560 / z, 720 / z, f), old(1280 / z, 720 / z), `5120 × 1440 = 2560 × 1440 (zoom ${z})`);
   assert.equal(spaceGasViewFade(2560 / 0.035, 720 / 0.035, f), 1, 'minZoom na 32:9 — gaz pełny');
   assert.ok(Math.abs(spaceGasViewFade(2560 / 0.035, 720 / 0.035, f, 0) - 0.171) < 0.01, 'A/B: dawny wzór (0,17)');
+});
+
+// ── DRŻENIE GAZU PRZY ZOOMIE I ODDALENIU (2026-10-29 wieczór: „gazy drżą przy zoom in / out”, „przybliżona kamera OK,
+// oddalona — gazy drżą”; 5120 × 1440 @ 240 Hz, worker, Ultra). Symbole poprawek importowane w testach — na dawnym kodzie
+// padają tylko te testy.
+
+// Atrapa SpaceGas z prawdziwym polem, mapami, warstwą i pyłem (render na niby: compute nic nie robi).
+async function gasZPrawdziwymObrazem() {
+  const { SpaceGas, SPACE_GAS_TUNE } = await import('../src/3d/spaceGas/spaceGas.js');
+  const { SpaceGasLayer } = await import('../src/3d/spaceGas/spaceGasLayer.js');
+  const { SpaceGasDust } = await import('../src/3d/spaceGas/spaceGasDust.js');
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = new SpaceGasMaps(sim, scene, { w: 64, h: 36 });
+  const layer = new SpaceGasLayer(maps, { grid: null });
+  const dust = new SpaceGasDust(sim, maps, { count: 64 });
+  layer.group.add(dust.mesh);
+  const root = new THREE.Scene();
+  root.add(layer.group);
+  const g = Object.create(Object.getPrototypeOf(SpaceGas));
+  Object.assign(g, {
+    input: new Float64Array(SPACE_GAS_IN.size), obstacles: null, tune: { ...SPACE_GAS_TUNE },
+    _serial: -1, _scene: SPACE_GAS_SCENE.belt, _rect: { cx: 0, cy: 0, w: 1, h: 1 }, _warpFade: 1, _renderTime: NaN,
+    _clk: { tick: NaN, hz: 60, sim: 0, render: 0 }, stats: { ...SpaceGas.stats }, looks: {}, scene, sim, maps, layer, dust
+  });
+  const I = SPACE_GAS_IN, IN = g.input;
+  IN[I.active] = 1; IN[I.scene] = SPACE_GAS_SCENE.belt; IN[I.anchorX] = 0; IN[I.anchorY] = 0;
+  IN[I.camX] = -1199329.3; IN[I.camY] = -1104752.7; IN[I.winX] = IN[I.camX]; IN[I.winY] = IN[I.camY];
+  IN[I.envCell] = 704; IN[I.envVer] = 1; IN[I.envX0] = IN[I.camX]; IN[I.envY0] = IN[I.camY];
+  let k = 0;
+  // klatka: Core3D liczy macierze sceny RAZ, przed krokami Core3D.fx (core3d.js render(): _syncSceneMatrices → _runFxFrame)
+  const frame = (zoom, dx = 0) => {
+    k++;
+    IN[I.serial] = k; IN[I.renderTime] = k / 240; IN[I.simTime] = k / 240; IN[I.dt] = 1 / 240;
+    IN[I.physTick] = Math.floor(k / 4); IN[I.physHz] = 60;
+    IN[I.halfW] = 2560 / zoom; IN[I.halfH] = 720 / zoom;
+    IN[I.camX] += dx; IN[I.winX] = IN[I.camX];
+    root.updateMatrixWorld();
+    g._update({ renderer: { compute() {} }, dt: 1 / 240 });
+  };
+  return { g, frame, layer, dust, maps, scene, IN, I };
+}
+
+test('drżenie: warstwy i pył gazu odświeżają macierze w kroku Core3D.fx — klatka ze stopniem drabiny, przesunięciem środka mapy i okna rysuje się z nową macierzą (dawniej klatkę ze starą: błysk skali 9%, gaz o teksel obok); A/B matrixSync', async () => {
+  const { g, frame, layer, dust } = await gasZPrawdziwymObrazem();
+  const zgodne = (m) => {
+    const e = m.matrixWorld.elements;
+    return Math.abs(e[12] - m.position.x) < 1e-6 && Math.abs(e[13] - m.position.y) < 1e-6 && Math.abs(e[0] - m.scale.x) < 1e-9 && Math.abs(e[5] - m.scale.y) < 1e-9;
+  };
+  frame(0.1);
+  for (const m of [layer.lower, layer.upper, dust.mesh]) assert.ok(zgodne(m), `${m.name}: macierz tej klatki`);
+  // stopień drabiny (zoom −12%) i ruch kamery o kilka tekseli: prostokąt mapy i róg okna inne — macierz z tej klatki
+  const sx0 = layer.lower.scale.x;
+  frame(0.088, 3000);
+  assert.notEqual(layer.lower.scale.x, sx0, 'stopień drabiny — inny bok mapy');
+  for (const m of [layer.lower, layer.upper, dust.mesh]) assert.ok(zgodne(m), `${m.name}: po stopniu drabiny`);
+  // A/B: dawniej — rysunek tej klatki ze starą macierzą (odświeżenie dopiero w następnej klatce Core3D)
+  g.tune.matrixSync = false;
+  frame(0.077, 3000);
+  assert.ok(!zgodne(layer.lower), 'A/B: stara macierz w klatce zmiany');
+});
+
+test('drżenie: pył gazu — najmniejszy bok 2,5 px bufora z zachowaniem energii i zanik drobin < 1 px tylko z MSAA: migotanie drobin przy ruchu zoomu i gazu przy oddaleniu ≤ 5% (dawniej 85–190%), średnia jasność jak w dawnym rastrze z MSAA 4 i bez MSAA, bez zmiany przy zbliżeniu; kamera z góry → px na j. z Core3D.viewZoom, próbki MSAA z Core3D.msaaSamples, kamera 3D i A/B 0 — dawny wzór', async () => {
+  const { spaceGasDustScreenCpu, spaceGasDustFadeFor } = await import('../src/3d/spaceGas/spaceGasDust.js');
+  const { SPACE_GAS_TUNE: TUNE } = await import('../src/3d/spaceGas/spaceGas.js');
+  const MIN = TUNE.dustMinPx, [FLO, FHI] = TUNE.dustFadePx;
+  // lustro: bok × grow ≥ minPx, energia (bok² · jasność) zachowana nad zanikiem, wyłączone — 1 / 1
+  for (const spx of [0.1, 0.4, 0.9, 1.5, 2, 3.7, 12]) {
+    const r = spaceGasDustScreenCpu(spx, 2, -2, -1);
+    assert.ok(r.grow >= 1 && spx * r.grow >= 2 - 1e-9);
+    assert.ok(Math.abs(r.keep * r.grow * r.grow - 1) < 1e-9, 'energia bez zmian');
+    assert.deepEqual(spaceGasDustScreenCpu(spx, 0, -2, -1), { grow: 1, keep: 1 });
+  }
+  assert.ok(spaceGasDustScreenCpu(0.2, 2, 0.25, 1).keep === 0 && spaceGasDustScreenCpu(1.2, 2, 0.25, 1).keep > 0, 'zanik drobin < ¼ px');
+  // migotanie (sonda C dochodzenia): energia drobiny w obrazie = Σ wkładów pikseli (maska fragmentu w środku piksela,
+  // MSAA 4 — wzór D3D), zoom −0,37% na klatkę (szczyt sprężyny po ząbku), drobiny 5,8–13 j. ~900 px od środka zoomu
+  const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const MS = [[-2 / 16, -6 / 16], [6 / 16, -2 / 16], [-6 / 16, 2 / 16], [2 / 16, 6 / 16]];
+  let maskInt = 0;
+  for (let j = 0; j < 200; j++) for (let i = 0; i < 200; i++) { const x = -1 + (i + 0.5) / 100, y = -1 + (j + 0.5) / 100, r2 = x * x + y * y; maskInt += Math.exp(-4 * r2) * (1 - ss(0.75, 1, r2)) / 10000; }
+  const energia = (sx, sy, spx, minPx, msaa, fade = [-2, -1]) => {
+    const { grow, keep } = spaceGasDustScreenCpu(spx, minPx, fade[0], fade[1]);
+    const h = spx * grow * 0.5;
+    let E = 0;
+    for (let py = Math.floor(sy - h - 1); py <= Math.ceil(sy + h + 1); py++) for (let px = Math.floor(sx - h - 1); px <= Math.ceil(sx + h + 1); px++) {
+      const qx = (px + 0.5 - sx) / h, qy = (py + 0.5 - sy) / h, r2 = qx * qx + qy * qy;
+      const mask = Math.exp(-4 * r2) * (1 - ss(0.75, 1, r2));
+      let cov = 0;
+      if (msaa) { for (const [ox, oy] of MS) if (Math.abs((px + 0.5 + ox - sx) / h) <= 1 && Math.abs((py + 0.5 + oy - sy) / h) <= 1) cov += 0.25; }
+      else cov = Math.abs(qx) <= 1 && Math.abs(qy) <= 1 ? 1 : 0;
+      E += mask * cov * keep;
+    }
+    return { E, ideal: maskInt * (spx * 0.5) ** 2 };
+  };
+  let seed = 99;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  // migotanie = |ΔE| / E_ideał na klatkę (ruch zoomu i gazu 300 j/s), jasność = średnia E / E_ideał (dawny raster z MSAA
+  // gubił energię drobin < 1 px — nowy zanik ma ją oddać, żeby nieruchomy kadr był statystycznie ten sam; bez MSAA dawny
+  // raster liczy piksel, gdy jego środek leży w kwadzie — średnio E_ideał, bez straty, więc i bez zaniku)
+  const migotanie = (ppu, minPx, msaa, fade) => {
+    seed = 99;
+    let sum = 0, big = 0, en = 0;
+    const N = 1200;
+    for (let i = 0; i < N; i++) {
+      const size = (0.1 + rnd() * 0.9) * 8 + 5, sx = 900 + rnd() * 64, sy = rnd() * 64;
+      const a = energia(sx, sy, size * ppu, minPx, msaa, fade), b = energia(sx * 0.9963, sy * 0.9963, size * ppu * 0.9963, minPx, msaa, fade);
+      const g300 = energia(sx + 300 / 240 * ppu * 0.8, sy + 300 / 240 * ppu * 0.6, size * ppu, minPx, msaa, fade);
+      const r = Math.max(Math.abs(b.E - a.E), Math.abs(g300.E - a.E)) / a.ideal;
+      sum += r; en += a.E / a.ideal; if (r > 0.5) big++;
+    }
+    return { sr: sum / N, big: big / N, E: en / N };
+  };
+  for (const [z, msaa] of [[0.2, true], [0.1, true], [0.0667, true], [0.035, true], [0.1, false], [0.05, false]]) {
+    const ppu = z * 1.25;                      // Ultra: skala renderu 1,25
+    // zanik drobin < 1 px jak w grze: tylko z MSAA celu sceny (spaceGasDustFadeFor; null — bez zaniku)
+    const fade = spaceGasDustFadeFor(msaa ? 4 : 0, TUNE.dustFadePx) || undefined;
+    const dzis = migotanie(ppu, 0, msaa), po = migotanie(ppu, MIN, msaa, fade), bezZaniku = migotanie(ppu, MIN, msaa);
+    // (zoom 0,035 z MSAA: dawniej większość drobin < ⅜ px nie trafia w żadną próbkę — „migotanie” małe, bo ich nie ma)
+    if (z >= 0.05 && z <= 0.1) assert.ok(dzis.sr > 0.6, `zoom ${z} MSAA ${msaa}: dawniej migotanie ${dzis.sr.toFixed(2)}`);
+    assert.ok(po.sr < 0.05 && po.big === 0, `zoom ${z} MSAA ${msaa}: bok ${MIN} px — migotanie ${po.sr.toFixed(3)} / >50% ${(po.big * 100).toFixed(1)}%`);
+    assert.ok(bezZaniku.sr < 0.05, `zoom ${z} MSAA ${msaa}: sam bok ${MIN} px — ${bezZaniku.sr.toFixed(3)}`);
+    // średnia jasność drobin jak w dawnym rastrze: z MSAA 4 (Wysoka, Ultra) — ±0,12 E_ideał dawnego rastra; bez MSAA dawny
+    // raster jest nieobciążony (średnio E_ideał — próba z drobinami < 1 px ma ogromny rozrzut, więc wobec ideału), a nowy
+    // bez zaniku (bok ≥ 2,5 px z zachowaniem energii) też — z zanikiem pył bez MSAA ciemniał (przegląd 2026-10-29)
+    if (msaa) assert.ok(Math.abs(po.E - dzis.E) < 0.12, `zoom ${z}: jasność ${po.E.toFixed(3)} wobec dawnej ${dzis.E.toFixed(3)}`);
+    else assert.ok(Math.abs(po.E - 1) < 0.05, `zoom ${z} bez MSAA: jasność ${po.E.toFixed(3)} E_ideał (dawny raster — średnio 1, w próbie ${dzis.E.toFixed(3)})`);
+  }
+  // wybór zaniku z liczby próbek MSAA celu sceny: 4 — zanik z SpaceGas.tune, 0 / 1 — bez; zanik bez MSAA ściemniałby pył
+  // (przegląd: 0,50 / 0,19 / 0,02 dawnej jasności przy zoomie 0,0667 / 0,05 / 0,035; tu zoom 0,05 — ~0,18 E_ideał)
+  assert.deepEqual(spaceGasDustFadeFor(4, TUNE.dustFadePx), [FLO, FHI]);
+  assert.equal(spaceGasDustFadeFor(0, TUNE.dustFadePx), null);
+  assert.equal(spaceGasDustFadeFor(1, TUNE.dustFadePx), null);
+  assert.ok(migotanie(0.05 * 1.25, MIN, false, [FLO, FHI]).E < 0.5, 'bez MSAA zanik ściemniałby pył');
+  assert.ok(migotanie(0.1 * 1.25, 2, true).sr > 0.1, 'bok 2 px — wciąż migotanie > 10% (próg 2,5 px nie jest przypadkowy)');
+  // przy zbliżeniu (0,341: drobiny 2,47–5,5 px) bok rośnie najwyżej o 1,2%, jasność × energia — obraz bez zmian
+  for (const s of [5.8, 9, 13]) {
+    const r = spaceGasDustScreenCpu(s * 0.341 * 1.25, MIN, FLO, FHI);
+    assert.ok(r.grow < 1.013 && Math.abs(r.keep * r.grow * r.grow - 1) < 1e-9, `${s} j.`);
+  }
+  // wpięcie: kamera z góry — px bufora na j. = zoom · pxScale, zanik z próbek MSAA celu sceny (Core3D.msaaSamples), kamera
+  // 3D i A/B 0 — wyłączone (dawny wzór)
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { g, frame, dust } = await gasZPrawdziwymObrazem();
+  const cam0 = Core3D.activeCam1, ps0 = Core3D.pxScale, ms0 = Core3D.msaaSamples;
+  try {
+    Core3D.activeCam1 = { zoom: 0.1 }; Core3D.pxScale = 1.25; Core3D.msaaSamples = 4;
+    frame(0.1);
+    assert.ok(Math.abs(dust.U.pxPerUnit.value - 0.125) < 1e-12 && dust.U.minPx.value === MIN);
+    assert.deepEqual([dust.U.fadeLo.value, dust.U.fadeHi.value], g.tune.dustFadePx);
+    // cel sceny bez MSAA (opcja grafiki): najmniejszy bok zostaje, zanik — nie
+    Core3D.msaaSamples = 0;
+    frame(0.1);
+    assert.deepEqual([dust.U.minPx.value, dust.U.fadeLo.value, dust.U.fadeHi.value], [MIN, -2, -1], 'bez MSAA — bez zaniku');
+    Core3D.msaaSamples = 4;
+    Core3D.activeCam1 = { zoom: 0.1, mode: 'free3d', position: {}, quaternion: {} };
+    frame(0.1);
+    assert.deepEqual([dust.U.pxPerUnit.value, dust.U.minPx.value, dust.U.fadeLo.value, dust.U.fadeHi.value], [0, 0, -2, -1], 'kamera 3D');
+    Core3D.activeCam1 = { zoom: 0.1 };
+    g.tune.dustMinPx = 0;
+    frame(0.1);
+    assert.deepEqual([dust.U.minPx.value, dust.U.fadeLo.value, dust.U.fadeHi.value], [0, -2, -1], 'A/B dustMinPx 0');
+  } finally { Core3D.activeCam1 = cam0; Core3D.pxScale = ps0; Core3D.msaaSamples = ms0; }
+  // shader wierzchołków buduje się w Node, bez pow (ujemna podstawa = NaN)
+  const b = renderer.backend.createNodeBuilder(dust.mesh, renderer);
+  b.material = dust.mesh.material; b.scene = new THREE.Scene(); b.camera = new THREE.OrthographicCamera(); b.context.material = dust.mesh.material;
+  b.build();
+  assert.ok(b.vertexShader.length > 100);
+  assert.doesNotMatch(b.vertexShader, /\bpow\(/);
+});
+
+test('drżenie: mapa gazu — odczyt B-spline w warstwie (domyślnie) i A/B: kilka próbek na teksel, mapy w proporcjach kadru: skok obrazu na stopniu drabiny przy zoomie 0,05 / 0,035 (lustro CPU, 5120 × 1440) — domyślne: o połowę mniej pikseli > 4/255 niż dawniej, warianty ≤ 0,5% / 1,2% i ≤ 20/255 (dawniej 4–10%, do 45/255); zbliżenie — jedna próbka', async () => {
+  const { spaceGasMapTaps, spaceGasMapTapOffsets } = await import('../src/3d/spaceGas/spaceGasMaps.js');
+  const { spaceGasMapSize, SPACE_GAS_TUNE: TUNE } = await import('../src/3d/spaceGas/spaceGas.js');
+  const { skokNaStopniu } = await import('../scripts/gazZoomSonda.mjs');
+  // liczba próbek z boku teksla z drabiny: zbliżenie (22,6 j.) — 1 (obraz bit w bit jak dawniej), 76 j. — 2, 152 j. — 4
+  assert.equal(spaceGasMapTaps(22.6, 4, [64, 150]), 1);
+  assert.equal(spaceGasMapTaps(76.1, 4, [64, 150]), 2);
+  assert.equal(spaceGasMapTaps(152.2, 4, [64, 150]), 4);
+  // domyślnie jedna próbka przy każdym zoomie (pomiar w grze 2026-10-30: drżenie bez zmian, 4 próbki +0,48 ms compute
+  // przy największym oddaleniu); B-spline wł.
+  assert.equal(TUNE.mapTaps, 1);
+  assert.equal(spaceGasMapTaps(215, TUNE.mapTaps, TUNE.mapTapsAt), 1, 'domyślnie mapTaps 1');
+  assert.equal(TUNE.layerCubic, true);
+  for (const n of [1, 2, 4]) {
+    const o = spaceGasMapTapOffsets(n);
+    assert.equal(o.length, n);
+    const mx = o.reduce((s, p) => s + p[0], 0) / n, my = o.reduce((s, p) => s + p[1], 0) / n;
+    assert.ok(Math.abs(mx) < 1e-12 && Math.abs(my) < 1e-12 && o.every((p) => Math.abs(p[0]) < 0.5 && Math.abs(p[1]) < 0.5), 'próbki w tekslu, średnio w środku');
+  }
+  // kernel: pętla próbek do uniformu (jeden pipeline dla 1 / 2 / 4)
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = new SpaceGasMaps(sim, scene, { w: 64, h: 36 });
+  assert.match(wgsl(maps.kGas), /for \( var sgTap : i32 = 0; sgTap < /);
+  // mapy w proporcjach kadru: 16:9 bez zmian, 32:9 — teksel kwadratowy, ta sama liczba tekseli
+  assert.deepEqual(spaceGasMapSize(768, 432, 16 / 9), [768, 432]);
+  assert.deepEqual(spaceGasMapSize(768, 432, 4 / 3), [768, 432]);
+  assert.deepEqual(spaceGasMapSize(768, 432, 0), [768, 432]);
+  const [w32, h32] = spaceGasMapSize(768, 432, 5120 / 1440);
+  assert.deepEqual([w32, h32], [1086, 306]);
+  assert.deepEqual(spaceGasMapSize(768, 432, 7), [w32, h32], 'szerzej niż 32:9 — jak 32:9');
+  // skok na stopniu drabiny w lustrze (scripts/gazZoomSonda.mjs — kadr w pauzie, najgorszy przypadek; na żywo w grze skok
+  // zbija odświeżanie macierzy w kroku, test „drżenie: warstwy i pył …”): dawniej (768 × 432, 1 próbka, dwuliniowo) →
+  // domyślne (768 × 432, 1 próbka, B-spline) i warianty A/B (4 próbki + B-spline, mapa w proporcjach kadru 1086 × 306)
+  for (const [zoom, lim] of [[0.05, 0.5], [0.035, 1.2]]) {
+    const old = skokNaStopniu({ zoom, taps: 1, cubic: false, crop: [960, 480] });
+    const dom = skokNaStopniu({ zoom, taps: TUNE.mapTaps, cubic: TUNE.layerCubic, crop: [960, 480] });
+    const war = skokNaStopniu({ zoom, taps: 4, cubic: true, mapW: w32, mapH: h32, crop: [960, 480] });
+    assert.ok(old.p4 > 3, `zoom ${zoom}: dawniej ${old.p4.toFixed(2)}% > 4/255`);
+    // (sam B-spline: 0,05 — 4,2% → 1,45% > 4/255, śr. 0,83 → 0,47; 0,035 — 9,4% → 4,0%, śr. 1,38 → 0,83)
+    assert.ok(dom.p4 < old.p4 / 2 && dom.sr < old.sr * 0.65, `zoom ${zoom}: domyślne ${dom.p4.toFixed(2)}% > 4/255, śr. ${dom.sr.toFixed(3)} (dawniej ${old.p4.toFixed(2)}%, ${old.sr.toFixed(3)})`);
+    assert.ok(war.p4 <= lim && war.maks <= 20, `zoom ${zoom}: warianty ${war.p4.toFixed(2)}% > 4/255, maks ${war.maks.toFixed(1)}`);
+  }
+  // zbliżenie: jedna próbka (obraz mapy bit w bit jak dawniej)
+  assert.equal(skokNaStopniu({ zoom: 0.341, taps: 4, crop: [64, 32] }).taps, 1);
+});
+
+test('drżenie: krok siatki obwiedni (raz na oktawę zoomu) przenika w envBlend s — stara siatka zamrożona w świecie, waga × jej zasięg; inna kotwica / scena i A/B 0 — od razu', () => {
+  const scene = new BeltGasScene();
+  const I = SPACE_GAS_IN, IN = new Float64Array(I.size);
+  const G = SPACE_GAS_ENV_RES;
+  IN[I.scene] = SPACE_GAS_SCENE.belt; IN[I.anchorX] = 5; IN[I.anchorY] = 7;
+  const krok = (cell, ver, x0, fill, dt = 0, fadeS = 0.35) => {
+    IN[I.envCell] = cell; IN[I.envVer] = ver; IN[I.envX0] = x0; IN[I.envY0] = -x0;
+    for (let k = 0; k < G * G; k++) { IN[I.envBase + k * 2] = fill; IN[I.envBase + k * 2 + 1] = 0; }
+    scene.setEnvelope(IN, I, dt, fadeS);
+  };
+  krok(704, 1, 1000, 0.5);
+  assert.equal(scene.U.envMix.value, 0, 'start — bez przenikania');
+  krok(704, 2, 1704, 0.5, 1 / 240);
+  assert.equal(scene.U.envMix.value, 0, 'przesunięcie siatki (ten sam krok) — bez przenikania');
+  krok(1408, 3, 3000, 0.25, 1 / 240);
+  assert.equal(scene.U.envMix.value, 1, 'krok × 2 — stara siatka w obrazie');
+  assert.deepEqual([scene.U.envPrev.value.x, scene.U.envPrev.value.y, scene.U.envPrev.value.z], [1704, -1704, 704], 'stara siatka na swoim miejscu');
+  assert.equal(THREE.DataUtils.fromHalfFloat(scene.envPrevData[0]), 0.5, 'dane starej siatki');
+  assert.equal(THREE.DataUtils.fromHalfFloat(scene.envData[0]), 0.25, 'nowa siatka wysłana');
+  let t = 0;
+  while (scene.U.envMix.value > 0 && t < 2) { krok(1408, 3, 3000, 0.25, 0.05); t += 0.05; }
+  assert.ok(Math.abs(t - 0.35) < 0.051, `przenikanie ${t.toFixed(2)} s`);
+  // inna kotwica (ring ↔ pas, nowa scena) — od razu
+  krok(704, 4, 1000, 0.5, 0.01);
+  assert.equal(scene.U.envMix.value, 1);
+  IN[I.anchorX] = 9e6;
+  krok(1408, 5, 1000, 0.5, 0.01);
+  assert.equal(scene.U.envMix.value, 0, 'inna kotwica — bez starej siatki');
+  // A/B: envBlend 0 — od razu (dawniej)
+  krok(704, 6, 1000, 0.5, 0.01, 0);
+  assert.equal(scene.U.envMix.value, 0);
+  // kernel mapy gazu czyta starą siatkę (tylko w przenikaniu — gałąź z uniformem)
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = new SpaceGasMaps(sim, scene, { w: 64, h: 36 });
+  const b = renderer.backend.createNodeBuilder(maps.kGas, renderer);
+  b.build();
+  const names = new Set();
+  for (const gr of b.getBindings()) for (const bd of gr.bindings) if (bd.texture) names.add(bd.texture.name);
+  assert.ok(names.has('spaceGasBeltEnv') && names.has('spaceGasBeltEnvPrev'), [...names].join(','));
+});
+
+test('drżenie: wygaszona faktura gazu → średnie kanałów (barwa nie „oddycha” przy zoomie) — przełącznik lodMean, domyślnie wył. (zmiana barwy przy oddaleniu czeka na decyzję użytkownika)', async () => {
+  const { detailCpu, SPACE_GAS_DETAIL_LOD_MEAN, SPACE_GAS_DETAIL_LOD_OLD } = await import('../src/3d/spaceGas/spaceGasBelt.js');
+  const d = new Float64Array(4), sum = [0, 0, 0, 0];
+  let seed = 3;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const N = 120000;
+  for (let i = 0; i < N; i++) {
+    detailCpu(-1.2e6 + (rnd() - 0.5) * 2e6, -1.1e6 + (rnd() - 0.5) * 2e6, 0, SPACE_GAS_DETAIL_LOD_MEAN, d);
+    for (let c = 0; c < 4; c++) sum[c] += d[c];
+  }
+  for (let c = 0; c < 4; c++) assert.ok(Math.abs(sum[c] / N - SPACE_GAS_DETAIL_LOD_MEAN[c]) < 0.01, `kanał ${c}: ${(sum[c] / N).toFixed(4)}`);
+  assert.ok(Math.abs(SPACE_GAS_DETAIL_LOD_OLD[1] - SPACE_GAS_DETAIL_LOD_MEAN[1]) > 0.05, 'dawne cele nie były średnimi');
+  const { g, frame, maps, layer } = await gasZPrawdziwymObrazem();
+  // domyślnie dawne cele (przegląd 2026-10-29: średnie zmieniają barwę gazu przy oddaleniu — siarka −13%, lód +25%,
+  // wyrzut −30% — a gaszą tylko powolny dryf barwy przy zoomie, nie drżenie; decyzja użytkownika)
+  assert.equal(g.tune.lodMean, false);
+  frame(0.05);
+  assert.deepEqual(maps.U.lodTarget.value.toArray(), [...SPACE_GAS_DETAIL_LOD_OLD]);
+  // A/B na żywo: średnie kanałów
+  g.tune.lodMean = true;
+  frame(0.05);
+  assert.deepEqual(maps.U.lodTarget.value.toArray(), [...SPACE_GAS_DETAIL_LOD_MEAN]);
+  // odczyt B-spline warstwy tylko przy tekslu > layerCubicAt (mapa testu 64 × 36: zoom 0,05 — teksel ~1,7 tys. j.)
+  assert.equal(layer.L.cubic.value, 1);
+  frame(5);                                    // teksel ~17 j. — zbliżenie: odczyt dwuliniowy (bez kosztu)
+  assert.ok(Math.max(maps.U.texel.value.x, maps.U.texel.value.y) < g.tune.layerCubicAt && layer.L.cubic.value === 0);
+  g.tune.lodMean = false;
+  g.tune.layerCubic = false;
+  frame(0.05);
+  assert.deepEqual(maps.U.lodTarget.value.toArray(), [...SPACE_GAS_DETAIL_LOD_OLD]);
+  assert.equal(layer.L.cubic.value, 0, 'A/B layerCubic');
+});
+
+test('mapy gazu: domyślnie mapa bazowa 768 × 432 przy każdym kadrze, A/B ?gazMapa=proporcje / szeroka; zanik faktury (lodTexel) z mapy bazowej — ten sam dla 768 × 432, 1086 × 306 i 1536 × 432 przy tym samym kadrze (32:9, 16:9) i w połowie podzielonego ekranu (przegląd 2026-10-30: mapa z kadru przesuwała zanik)', async () => {
+  const { SPACE_GAS_TUNE, spaceGasMapSpec, spaceGasMapMode } = await import('../src/3d/spaceGas/spaceGas.js');
+  const { SPACE_GAS_MAP_MARGIN: M } = await import('../src/3d/spaceGas/spaceGasLayout.js');
+  const A32 = 5120 / 1440;
+  // tryb z tune (false / true / 'szeroka') i z adresu strony (wygrywa)
+  assert.equal(SPACE_GAS_TUNE.mapAspect, false, 'domyślnie mapa bazowa (pomiar 2026-10-30)');
+  assert.deepEqual(spaceGasMapSpec(SPACE_GAS_TUNE, A32, ''), { mode: 'stara', w: 768, h: 432, lodW: 768, lodH: 432 });
+  assert.deepEqual(spaceGasMapSpec(SPACE_GAS_TUNE, A32, '?dev&gazMapa=proporcje'), { mode: 'proporcje', w: 1086, h: 306, lodW: 768, lodH: 432 });
+  assert.deepEqual(spaceGasMapSpec(SPACE_GAS_TUNE, A32, '?gazMapa=szeroka&renderWorker=1'), { mode: 'szeroka', w: 1536, h: 432, lodW: 768, lodH: 432 });
+  assert.deepEqual(spaceGasMapSpec({ ...SPACE_GAS_TUNE, mapAspect: true }, A32, '?gazMapa=stara').mode, 'stara', 'adres wygrywa z tune');
+  assert.equal(spaceGasMapMode(true, ''), 'proporcje');
+  assert.equal(spaceGasMapMode('szeroka', null), 'szeroka');
+  assert.equal(spaceGasMapMode(false, '?gazMapa=stara2'), 'stara');
+  assert.deepEqual(spaceGasMapSpec(SPACE_GAS_TUNE, 16 / 9, '?gazMapa=proporcje'), { mode: 'proporcje', w: 768, h: 432, lodW: 768, lodH: 432 }, '16:9 — mapa bazowa w każdym trybie');
+  // wpięcie: SpaceGas._ensure buduje mapy ze specyfikacji (rozmiar i mapa bazowa zaniku)
+  const src = readFileSync(new URL('../src/3d/spaceGas/spaceGas.js', import.meta.url), 'utf8');
+  assert.match(src, /const spec = spaceGasMapSpec\(T, Core3D\._viewCssW\(\) \/ Core3D\._viewCssH\(\), RenderWorld\.pageSearch\);\s*this\.maps = new SpaceGasMaps\(this\.sim, sc, \{ w: spec\.w, h: spec\.h, lodW: spec\.lodW, lodH: spec\.lodH \}\);/);
+  // zanik faktury: ten sam teksel zaniku przy każdym rozmiarze mapy = dawny (mapa zawsze 768 × 432)
+  const scene = new BeltGasScene();
+  const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 32 });
+  const maps = ['', '?gazMapa=proporcje', '?gazMapa=szeroka'].map((q) => new SpaceGasMaps(sim, scene, spaceGasMapSpec(SPACE_GAS_TUNE, A32, q)));
+  assert.deepEqual(maps.map((m) => [m.w, m.h]), [[768, 432], [1086, 306], [1536, 432]]);
+  const dawny = (halfW, halfH) => Math.max(halfW * M * 2 / 768, halfH * M * 2 / 432);
+  const r = {};
+  // 32:9, połowa podzielonego ekranu 32:9 (16:9 przy mapie z kadru 32:9), 16:9
+  for (const [W, H] of [[5120, 1440], [2560, 1440], [1920, 1080]]) {
+    for (const z of [0.341, 0.1, 0.0667, 0.05, 0.035]) {
+      const halfW = W / 2 / z, halfH = H / 2 / z;
+      const lod = maps.map((m) => { m.place(-1199329.3, -1104752.7, halfW, halfH, r); return m.U.lodTexel.value; });
+      assert.ok(lod.every((v) => v === lod[0]), `${W} × ${H}, zoom ${z}: ${lod.join(' / ')}`);
+      assert.equal(lod[0], dawny(halfW, halfH), `${W} × ${H}, zoom ${z}: jak dawniej (mapa 768 × 432)`);
+    }
+  }
+  // mapa bazowa: lodW × lodH = rozmiar mapy — bit w bit dawne max(needX, needY)
+  const own = new SpaceGasMaps(sim, scene, { w: 1086, h: 306 });
+  own.place(0, 0, 2560 / 0.035, 720 / 0.035, r);
+  const needOwn = Math.max(2560 / 0.035 * M * 2 / 1086, 720 / 0.035 * M * 2 / 306);
+  assert.equal(own.U.lodTexel.value, needOwn, 'bez lodW / lodH — z własnego rozmiaru (dawny wzór)');
+  // przesunięcie, które poprawka usuwa (przegląd): na 32:9 przy minZoom lod 0,819 (dawny) → 0,392 (mapa z kadru)
+  const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  assert.ok(Math.abs(ss(60, 260, dawny(2560 / 0.035, 720 / 0.035)) - 0.819) < 0.005 && Math.abs(ss(60, 260, needOwn) - 0.392) < 0.005);
+});
+
+test('wątki kerneli bez strażnika liczby: okno pola N w górę do wielokrotności 8 (N² % 64 = 0), drobiny pyłu w górę do 64 — z ostrzeżeniem raz na wartość; gra liczy okno tą samą funkcją (okno gry = okno renderu); dzisiejsze liczby bez zmian', async () => {
+  const { spaceGasKernelCount, spaceGasWindowCells, SPACE_GAS_WORKGROUP } = await import('../src/3d/spaceGas/spaceGasLayout.js');
+  const { SpaceGasDust } = await import('../src/3d/spaceGas/spaceGasDust.js');
+  const { SPACE_GAS_TUNE } = await import('../src/3d/spaceGas/spaceGas.js');
+  assert.equal(SPACE_GAS_WORKGROUP, 64);
+  const warns = [];
+  const warn0 = console.warn;
+  console.warn = (m) => { warns.push(String(m)); };
+  try {
+    // dzisiejsze liczby (okno 128 / 256 / 384 — D5, 80 tys. drobin — D2): bez zmian i bez ostrzeżeń
+    for (const n of [128, 256, 384]) assert.equal(spaceGasWindowCells(n), n);
+    assert.equal(spaceGasKernelCount(SPACE_GAS_TUNE.dustCount), SPACE_GAS_TUNE.dustCount);
+    assert.equal(SPACE_GAS_TUNE.dustCount % 64, 0);
+    assert.equal((SPACE_GAS_TUNE.windowCells ** 2) % 64, 0);
+    assert.equal(warns.length, 0);
+    // spoza wielokrotności: w górę, ostrzeżenie raz na wartość
+    assert.equal(spaceGasWindowCells(250), 256);
+    assert.equal(spaceGasWindowCells(250), 256);
+    assert.equal(spaceGasKernelCount(80001), 80064);
+    assert.equal(warns.length, 2, warns.join(' | '));
+    assert.match(warns[0], /250 → 256/);
+    for (const n of [1, 7, 9, 100, 250, 383]) {
+      const N = spaceGasWindowCells(n, 'test');
+      assert.ok(N >= n && N - n < 8 && (N * N) % 64 === 0, `${n} → ${N}`);
+    }
+    // budowa: pole i pył dostają liczby z wielokrotności (bufory, tekstury, dispatch i instancje — ta sama liczba)
+    const scene = new BeltGasScene();
+    const sim = new SpaceGasSim({ farEnv: (q, U) => scene.farEnv(q, U), N: 30 });
+    assert.equal(sim.N, 32);
+    assert.equal(sim.denTex[0].image.width, 32);
+    assert.equal(sim.buf.velA.value.count, 32 * 32);
+    for (const k of sim.kernels()) assert.equal(k.count, 32 * 32, k.name);
+    const maps = new SpaceGasMaps(sim, scene, { w: 64, h: 36 });
+    const dust = new SpaceGasDust(sim, maps, { count: 100 });
+    assert.equal(dust.count, 128);
+    assert.equal(dust.pos.value.count, 128);
+    assert.equal(dust.mesh.geometry.instanceCount, 128);
+    for (const k of dust.kernels()) assert.equal(k.count, 128, k.name);
+    assert.ok(warns.some((m) => /okno pola N: 30 → 32/.test(m)) && warns.some((m) => /drobiny: 100 → 128/.test(m)), warns.join(' | '));
+  } finally { console.warn = warn0; }
+  // gra: okno pola tą samą funkcją — okno w wejściu = okno renderu
+  const out = new Float64Array(SPACE_GAS_IN.size);
+  packSpaceGasFrame(out, createSpaceGasInputState(), { dt: 1 / 60, camX: 100000, camY: 0, halfW: 3000, halfH: 1700, field: fakeField(), sunX: 0, sunY: 0, windowCells: 250, cell: 64 });
+  assert.equal(out[SPACE_GAS_IN.active], 1);
+  assert.equal(out[SPACE_GAS_IN.windowCells], 256);
+});
+
+test('narzędzie gpu-pas-gra.mjs: „nowe” i przywrócenia po wariantach dawnych = domyślne SPACE_GAS_TUNE (próbki na teksel, B-spline, zanik drobin pyłu)', async () => {
+  const { SPACE_GAS_TUNE: T } = await import('../src/3d/spaceGas/spaceGas.js');
+  const src = readFileSync(new URL('../scripts/webgpu/gpu-pas-gra.mjs', import.meta.url), 'utf8');
+  const m = /const DRZ_GAZ_NOWE = 'Object\.assign\(S\.spaceGas\.tune, (\{[^']*\})\)';/.exec(src);
+  assert.ok(m, 'DRZ_GAZ_NOWE');
+  const nowe = Function(`return (${m[1]});`)();
+  for (const [k, v] of Object.entries(nowe)) assert.deepEqual(v, T[k], `DRZ_GAZ_NOWE.${k}`);
+  const przywr = [...src.matchAll(/wkP(?:rzywroc)?: '(S\.spaceGas\.tune\.mapTaps = \d+; S\.spaceGas\.tune\.layerCubic = \w+)'/g)].map((x) => x[1]);
+  assert.ok(przywr.length >= 4, `przywrócenia próbek / B-spline: ${przywr.length}`);
+  for (const p of przywr) assert.equal(p, `S.spaceGas.tune.mapTaps = ${T.mapTaps}; S.spaceGas.tune.layerCubic = ${T.layerCubic}`);
+  assert.match(src, new RegExp(`wkPrzywroc: drzTcKod\\(${T.mapTaps}, ${T.layerCubic}\\)`), 'warianty T…C… wracają do domyślnych');
+  assert.ok(src.includes(`S.spaceGas.tune.dustFadePx = [${T.dustFadePx.join(', ')}]`), 'jasność pyłu: przywrócenie zaniku');
 });
