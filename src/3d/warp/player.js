@@ -29,6 +29,7 @@ import { WARP_EXIT, warpArrivalSpeed, warpBrakeTime, warpBrakeBubbleFront, warpS
 import { RenderWorld } from '../../render/renderWorld.js';
 import { WARP_LENS_PHASE, WARP_LENS_EXIT_SPAN, warpLensBeta, warpLensChargeBeta, warpLensKickBeta } from '../../render/warpLensPhase.js';
 import { hyperLegacyLookOn } from './hyperLook.js';
+import { warpSWOn, newWarpSWState, warpSWKick, warpSWBrake, warpSWStarGain, warpSWWidth, addWarpSWStreak } from './warpSW.js';
 
 /** Kształt bańki względem kadłuba (demo: BUBBLE_SHAPE). */
 export const WARP_BUBBLE = Object.freeze({ radiusK: 0.62, asp: 1.35 });
@@ -153,6 +154,7 @@ export class WarpPlayerFx {
     this.push = null;     // przegródka iskier hamowania (tworzy sterownik)
     this.hull = { on: false, revealMode: 0, revealLine: 0, seamLine: 0, seamW: 0, seam: 0, seamRGB: [0, 0, 0], heat: 0, heatRGB: [0, 0, 0], rimW: 0 };
     this.ramp = { slow: WARP_EXIT.slow, coast: WARP_EXIT.coast, brake: 0.2, vArr: 16000, v0: 16000, tBrake: 1.15, tHalt: 1.35 };
+    this._sw = newWarpSWState();   // `?warpSW=1` (warpSW.js): smugi za rufą przy kopie i hamowaniu
     this.reset();
   }
 
@@ -375,6 +377,9 @@ export class WarpPlayerFx {
     // efektem lotu jest opływ (hyperFlow.js) i silniki. Dawny wygląd: `?hcStary=1`.
     const hyperCalm = this.hyper && !hyperLegacyLookOn();
     const bubbleLensOn = this.hyper ? !hyperCalm || medOn : medOn;
+    // PROTOTYP `?warpSW=1` (warpSW.js): smuga za rufą przy kopie i przy hamowaniu przylotu, mocniejszy szczyt smug gwiazd —
+    // tylko warp (nie hipercruise), tylko kamera z góry jednego gracza (game.topDown — sterownik: o.lensAllowed).
+    const swOn = !this.hyper && game.topDown !== false && warpSWOn();
 
     // --- bańka gracza w ośrodku ---
     const bub = this.bubble;
@@ -421,9 +426,11 @@ export class WarpPlayerFx {
     } else if (mode === 'warp') {
       // warp gracza — bez ząbka w klatce kopu (fromCharge); hipercruise jak dawniej (DECYZJE O3)
       st.stretch = warpStarStretch(t, this.kickT, Infinity, 1, speedFrac, WARP_EXIT.slow, !this.hyper);
+      if (swOn) st.stretch *= warpSWStarGain(t - this.kickT);
       st.warpTint = 1;
     } else {
       st.stretch = warpStarStretch(t, this.kickT, this.exitT, 1, 1, ramp.slow);
+      if (swOn) st.stretch *= warpSWStarGain(t - this.kickT);
       st.warpTint = 1 - smooth(0, ramp.slow, tx);
       st.frontOn = 1;
       st.frontS = lerp(18000, -18000, smooth(0, ramp.slow, tx));
@@ -443,6 +450,11 @@ export class WarpPlayerFx {
       const ky = this.kickMY - medium.camMY;
       frame.addWave(kx, ky, 9000 * age * sizeK, 320 * sizeK, 8 * (1 - age / 1.4) ** 2);
       if (age < 0.35) frame.addFlash(kx - c * L * 0.62, ky - sn * L * 0.62, R * 0.5, (1 - age / 0.35) ** 2, pal, false);
+      // `?warpSW=1`: smuga za rufą statku (wydłuża się w 0,06 s, gaśnie do 0,35 s)
+      if (swOn) {
+        const e = warpSWKick(age, this._sw);
+        if (e.len > 0) addWarpSWStreak(frame, sx - c * L * 0.5, sy - sn * L * 0.5, c, sn, e.len * L, warpSWWidth(L, game.width), e.k);
+      }
     }
 
     // --- wyjście: hamowanie jak przylot NPC (arrivals.js: brakeEffects) ---
@@ -478,6 +490,12 @@ export class WarpPlayerFx {
       if (tb >= 0 && tb < 1.3) {
         const ag = tb / 1.3;
         frame.addWave(sx + c * L * 0.5, sy + sn * L * 0.5, L * (0.25 + 3.2 * easeOut3(ag)), L * 0.24, 11 * (1 - ag) ** 2 * Math.min(1.2, size * 1.2));
+      }
+      // `?warpSW=1`: krótka smuga za rufą zatrzaskuje się w kadłub — w tej samej chwili co błysk, fala i żar
+      // (PRZYLOT = JEDNO ZDARZENIE)
+      if (swOn) {
+        const e = warpSWBrake(tb, ramp.brake, this._sw);
+        if (e.len > 0) addWarpSWStreak(frame, sx - c * L * 0.5, sy - sn * L * 0.5, c, sn, e.len * L, warpSWWidth(L, game.width), e.k);
       }
       // Żar przy hamowaniu (cała energia w kadłub) — impuls razem z błyskiem (WARP_ARRIVAL_ACCENT), nie osobny żar
       // wyłaniający się po nim.

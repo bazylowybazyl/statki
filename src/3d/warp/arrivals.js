@@ -16,6 +16,10 @@
 // Osie i drogi: src/game/warpDrive.js (createWarpArrival + planWarpRush / sampleWarpRush,
 // createWarpDeparture / sampleWarpDeparture) — tu tylko wygląd w języku „Nurtu”.
 //
+// PROTOTYP `?warpSW=1` (2026-10-30, warpSW.js — A/B do oceny użytkownika): przylot i wylot „jak w Gwiezdnych Wojnach” —
+// kadłub ze światła i smuga za rufą w wlocie (zatrzask przy hamowaniu), w odlocie ślad za rufą i smuga wystrzelona w punkcie
+// skoku; parametr `sw` funkcji stanu (null — wygląd domyślny bez zmian).
+//
 // W GRZE okręt jest encją rozgrywki, a OŚ przylotu / odlotu (czasy, droga, wymiary), prowadzenie okrętu w tunelu,
 // duch i `onGone` należą do gry (RW-28: src/game/warpTraffic.js — rejestr ruchu warpa w czasie gry):
 //  - `drive` (wezwania i przyloty „teraz”): gra prowadzi okręt przez wlot i hamowanie (`arrivalAxisPose`), od
@@ -33,6 +37,9 @@ import {
 } from '../../game/warpTraffic.js';
 import { newWarpSlot } from './frame.js';
 import { warpPalette, seamColor, heatColor } from './palette.js';
+import {
+  WARP_SW, newWarpSWState, warpSWArrival, warpSWDeparture, warpSWHullLight, warpSWHullGone, warpSWWidth, addWarpSWStreak
+} from './warpSW.js';
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 // [s] okres fal zwiastuna „drganie przestrzeni” (styl 'ripple' — scena „Wojna”, warpTraffic.planArrival heraldStyle)
@@ -61,6 +68,9 @@ export function dressWarpArrival(a, v = {}) {
   v.seed = ((a.x * 0.013 + a.y * 0.007) % 100 + 100) % 100;
   v.hull = newHullFx();
   v.plasmaMode = null;
+  // `?warpSW=1`: wynik obwiedni i widoczność encji (mgła wojny, maskowanie — pisze sterownik co klatkę)
+  v.sw = newWarpSWState();
+  v.swVis = 1;
   return v;
 }
 
@@ -80,12 +90,13 @@ export const arrivalFxPose = arrivalAxisPose;
 /**
  * Stan przylotu w chwili t → klatka (przegródki, błyski, fale), kadłub encji (v.hull:
  * odsłanianie, żar), plazma (v.plasmaMode; v — ubiór, domyślnie sama oś). `ship` = { x, y, angle, vx, vy, visible } — poza
- * encji w świecie (albo null przed `attach`; drive — z arrivalFxPose). camX, camY — kamera.
+ * encji w świecie (albo null przed `attach`; drive — z arrivalFxPose). camX, camY — kamera. `sw` — strojenie WARP_SW
+ * (`?warpSW=1`: kadłub ze światła, smuga za rufą; widoczność encji v.swVis) albo null (wygląd domyślny).
  * Zwraca wstrząs 0..1 (× skala wołającego).
  * AGENT: wynik nieczytany — `warpNurt.js: _updateArrivals` go pomija, wstrząsy przylotów i odlotów zgłasza gra
  * (`src/game/warpShakes.js`). Usunąć razem z porządkami C2 (docs/webgpu/WARP-SOCZEWKA.md, „Otwarte sprawy”).
  */
-export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a) {
+export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = null) {
   const s = sampleWarpArrival(a, t, v.sample);
   const L = a.hullLength;
   const pal = v.pal;
@@ -160,6 +171,16 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a) {
 
   const sx = ship.x - camX;
   const sy = ship.y - camY;
+  // `?warpSW=1`: kadłub ze światła (wlot, gaśnie po hamowaniu) i smuga za rufą wzdłuż kursu (zatrzask przy hamowaniu);
+  // encja ukryta (mgła wojny, maskowanie — v.swVis) bez smugi i światła.
+  if (sw) {
+    const e = warpSWArrival(a, t, along, v.sw || (v.sw = newWarpSWState()));
+    const vis = Number.isFinite(v.swVis) ? clamp01(v.swVis) : 1;
+    if (e.light * vis > 0.002) warpSWHullLight(hull, L, e.light * vis);
+    if (e.len > 0 && vis > 0.002) {
+      addWarpSWStreak(frame, sx - c * L * 0.5, sy - sn * L * 0.5, c, sn, e.len, warpSWWidth(L, a.hullWidth), e.k * vis);
+    }
+  }
   // Bańka okrętu w locie: rozpycha ośrodek; przy hamowaniu zapada się od dziobu.
   if (t < a.tStop + 0.35) {
     const b = v.bubbleSlot;
@@ -228,6 +249,9 @@ export function dressWarpDeparture(d, v = {}) {
   // Punkt skoku (świat) — tu kadłub znika od dziobu.
   v.mouthX = d.cx;
   v.mouthY = d.cy;
+  // `?warpSW=1`: wynik obwiedni i widoczność encji (pisze sterownik co klatkę, po zniknięciu encji zostaje ostatnia)
+  v.sw = newWarpSWState();
+  v.swVis = 1;
   return v;
 }
 
@@ -241,8 +265,12 @@ export function planWarpDepartureFx(o) {
 /** Pozycja okrętu w odlocie z osi (drive): świat, prędkość (oś: gra). */
 export const departFxPose = departAxisPose;
 
-/** Stan odlotu w chwili t → klatka, kadłub (v.hull), plazma (v — ubiór). Zwraca wstrząs (AGENT: nieczytany — jak wyżej). */
-export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d) {
+/**
+ * Stan odlotu w chwili t → klatka, kadłub (v.hull), plazma (v — ubiór). `sw` — strojenie WARP_SW (`?warpSW=1`: kadłub ze
+ * światła od nurkowania, ślad za rufą, smuga wystrzelona w punkcie skoku i zniknięcie w niej) albo null (wygląd domyślny).
+ * Zwraca wstrząs (AGENT: nieczytany — jak wyżej).
+ */
+export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = null) {
   const s = sampleWarpDeparture(d, t, v.sample);
   const pal = v.pal;
   const L = d.hullLength;
@@ -250,6 +278,8 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d) {
   hull.on = false;
   v.plasmaMode = null;
   if (s.phase === 'wait' || s.phase === 'done') return 0;
+  const swE = sw ? warpSWDeparture(d, t, s, v.sw || (v.sw = newWarpSWState())) : null;
+  const swVis = swE ? (Number.isFinite(v.swVis) ? clamp01(v.swVis) : 1) : 0;
   const build = s.build;
   v.plasmaMode = t < d.tGone ? (build > 0.55 || t >= d.tDive ? 'active' : 'charging') : null;
   // Punkt skoku przed dziobem: ośrodek zbierany, rdzeń jaśnieje.
@@ -289,10 +319,15 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d) {
   if (ti >= 0) {
     const mx = v.mouthX - camX;
     const my = v.mouthY - camY;
-    if (ti < 0.25) frame.addFlash(mx, my, L * 0.5, Math.pow(1 - ti / 0.25, 2) * 1.5, pal, false);
+    if (ti < 0.25) frame.addFlash(mx, my, L * (swE ? WARP_SW.departFlashL : 0.5), Math.pow(1 - ti / 0.25, 2) * 1.5, pal, false);
     if (ti < 1.1) {
       const age = ti / 1.1;
       frame.addWave(mx, my, L * (0.2 + 2.2 * easeOut3(age)), L * 0.18, 7 * (1 - age) ** 2);
+    }
+    // `?warpSW=1`: smuga wystrzelona do przodu z punktu skoku (kadłub znika w niej)
+    if (swE && swE.gone && swE.len > 0 && swVis > 0.002) {
+      addWarpSWStreak(frame, mx + d.dirX * swE.head, my + d.dirY * swE.head, d.dirX, d.dirY, swE.len,
+        warpSWWidth(L, d.hullWidth), swE.k * swVis);
     }
   }
   if (ship) {
@@ -311,6 +346,16 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d) {
     hull.heat = s.heat;
     heatColor(hull.heat, hull.heatRGB);
     hull.rimW = Math.max(8, L * 0.011);
+    // `?warpSW=1`: od nurkowania kadłub ze światła i ślad za rufą (rośnie z prędkością); od punktu skoku kadłub znika
+    // w smudze (wyżej); encja ukryta (mgła wojny, maskowanie) bez smugi i światła.
+    if (swE) {
+      if (swE.gone) warpSWHullGone(hull, L);
+      else if (swE.light * swVis > 0.002) warpSWHullLight(hull, L, swE.light * swVis);
+      if (!swE.gone && swE.len > 0 && swVis > 0.002) {
+        addWarpSWStreak(frame, ship.x - camX - d.dirX * L * 0.5, ship.y - camY - d.dirY * L * 0.5, d.dirX, d.dirY,
+          swE.len, warpSWWidth(L, d.hullWidth), swE.k * swVis);
+      }
+    }
     // Bańka okrętu w rozpędzie: rozpycha ośrodek (rośnie z prędkością).
     if (diving && t < d.tGone) {
       const b = v.bubbleSlot;

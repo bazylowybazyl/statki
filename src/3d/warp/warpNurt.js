@@ -15,7 +15,9 @@
 //   • FALE — przezroczysta refrakcja, źródła zniekształceń „uber” (Core3D.fxDistortion().shock);
 //   • KADŁUB — odsłanianie, szew, żar brzegu (entity.__warpHullU → materiał kadłuba, 04) i plazma
 //     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13);
-//   • BOKI KADRU w skoku gracza (warpEdgeFx.js, 2026-10-29 — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`).
+//   • BOKI KADRU w skoku gracza (warpEdgeFx.js, 2026-10-29 — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`);
+//   • PROTOTYP `?warpSW=1` (warpSW.js, 2026-10-30): przylot i wylot „jak w Gwiezdnych Wojnach” — smugi za rufą
+//     (kształt GLOW_STREAK duszków) i kadłub ze światła (szew `hullWarp`), bez nowych pipeline'ów i pól migawki.
 // Rozgrywka bez zmian: efekt tylko słucha stanu gry (automat warpa, pozycje encji, osie rekordów ruchu warpa — harmonogram,
 // prowadzenie okrętów w tunelu, duch i onGone liczy gra w czasie gry).
 //
@@ -28,7 +30,7 @@
 import { Core3D } from '../core3d.js';
 import { RenderWorld } from '../../render/renderWorld.js';
 import { WarpMedium, BUBBLE_CAP, MEDIUM_COUNT_DEFAULT } from './medium.js';
-import { GlowSprites, GLOW_ROUND, GLOW_LINE } from './sprites.js';
+import { GlowSprites, GLOW_ROUND, GLOW_LINE, GLOW_STREAK } from './sprites.js';
 import { WarpFrame, newWarpSlot, cullWarpFrameToView } from './frame.js';
 import { WarpPlayerFx } from './player.js';
 import { HyperFlow, hyperFlowEnvelope } from './hyperFlow.js';
@@ -40,6 +42,8 @@ import { WARP_STARS, WARP_STAR_CAMERA, resetWarpStars } from './stars.js';
 import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
 import { WarpEdgeFx } from './warpEdgeFx.js';
+import { WARP_SW, warpSWOn } from './warpSW.js';
+import { isEntityHiddenForRender } from '../hexShips3D.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import * as THREE from 'three/webgpu';
 
@@ -115,7 +119,8 @@ export const WarpNurt = {
   _hullTouchedPrev: new Set(),
   _lensPx: Array.from({ length: 8 }, () => ({ x: 0, y: 0, ax: 1, ay: 0, a: 1, b: 1, amp: 0, front: 3 })),
   _col: [0, 0, 0],
-  _playerGame: { state: 'idle', charge: 0, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0, hyper: false, lens: null },
+  // topDown — kamera z góry jednego gracza (`o.lensAllowed`; smugi `?warpSW=1` gracza tylko w niej)
+  _playerGame: { state: 'idle', charge: 0, speed: 0, angle: 0, x: 0, y: 0, length: 0, width: 0, palette: 'magenta', vRelX: 0, vRelY: 0, flyby: 1, cruise: 0, hyper: false, lens: null, topDown: true },
   _map: { camX: 0, camY: 0 },
   _view: { bufW: 1, bufH: 1, focal: 1, camZ: 1 },
   // Obrót kadru kamery (cam.roll — src/3d/viewRoll.js) tej klatki i pudło osi świata obróconego kadru [px].
@@ -215,6 +220,11 @@ export const WarpNurt = {
     this._roll = cameraRoll(cam);
     const frame = this.frame;
     frame.reset();
+    // Smugi (`?warpSW=1`) odcinane do kadru przy zgłoszeniu: pudło osi świata obróconego kadru wokół kamery [j.] (+10% —
+    // wstrząs kamery renderu).
+    const sv = this._viewParams(zoom);
+    const svh = rolledHalfExtents(sv.bufW * 0.5, sv.bufH * 0.5, this._roll, this._rollHalf);
+    frame.setStreakView(svh.hw * 1.1 / zoom, svh.hh * 1.1 / zoom);
 
     const player = this.player;
     const map = this._map;
@@ -254,6 +264,7 @@ export const WarpNurt = {
       g.cruise = Number(hyper.speed) || 0;
       g.hyper = true;
       g.lens = null;
+      g.topDown = o.lensAllowed !== false;
       player.advance(t, dt, g, map, med);
       // OPŁYW hipercruise'u (hyperFlow.js, 2026-10-29): otoczka wzdłuż burt i strugi dysz na warstwie DIST — siła z fazy
       // efektu i prędkości prowadzonej; tylko kamera z góry jednego gracza (jak soczewka świata).
@@ -282,6 +293,7 @@ export const WarpNurt = {
       g.hyper = false;
       // oś β soczewki świata z gry (warpLensPhase.js: rekord strony gry — off: index.html, worker: migawka)
       g.lens = o.lensPhase || null;
+      g.topDown = o.lensAllowed !== false;
       player.advance(t, dt, g, map, med);
     } else {
       player.reset();
@@ -642,7 +654,8 @@ export const WarpNurt = {
     medium.setView(this.flowX, -this.flowY, offX, offY, this.stepAcc, bufW * 0.5, bufH * 0.5, zoom, camZ, t - this.wakeT, this.frame.warpVis);
   },
 
-  // Błyski i linie blasku — scena względem kamery (mesh.position = kamera gry).
+  // Błyski, linie blasku i smugi (`?warpSW=1` — kształt GLOW_STREAK: głowa przy +kierunku, ten sam graf i rysunek) — scena
+  // względem kamery (mesh.position = kamera gry).
   _commitSprites(camX, camY, zoom) {
     const frame = this.frame;
     const glow = this.glow;
@@ -659,6 +672,14 @@ export const WarpNurt = {
       const thick = Math.max(1.6 / zoom, g.len * 0.004);
       const k = 3.2 * g.k;
       glow.add(g.x, -g.y, 9, thick, col[0] * k, col[1] * k, col[2] * k, GLOW_LINE, Math.cos(g.angle), -Math.sin(g.angle), g.len / thick, 0.5);
+    }
+    for (let i = 0; i < frame.streaks.count; i++) {
+      const s = frame.streaks.items[i];
+      // środek kwadu: głowa − kierunek · ½ długości; wydłużenie = długość / szerokość (kwad: szerokość × długość)
+      const cx = s.x - s.dirX * s.len * 0.5;
+      const cy = s.y - s.dirY * s.len * 0.5;
+      const width = Math.max(1.2 / zoom, s.width);
+      glow.add(cx, -cy, 7, width, s.r, s.g, s.b, GLOW_STREAK, s.dirX, -s.dirY, Math.max(1, s.len / width), 0.2);
     }
     glow.commit(camX, -camY);
   },
@@ -834,9 +855,22 @@ export const WarpNurt = {
     return null;
   },
 
+  // `?warpSW=1`: widoczność encji dla smug i kadłuba ze światła — mgła wojny i soczewka skoku (ten sam predykat co skóra
+  // kadłuba: hexShips3D.isEntityHiddenForRender) i maskowanie (widoczność całego okrętu z wyglądu maskowania).
+  _swVis(e) {
+    if (isEntityHiddenForRender(e)) return 0;
+    const cl = e.__cloakLook;
+    if (cl && cl.active) {
+      const vis = Number(cl.vis);
+      return vis > 0 ? (vis < 1 ? vis : 1) : 0;
+    }
+    return 1;
+  },
+
   // Wstrząsy wyrzutów zgłasza gra (warpShakes.js: stepWarpBurstShakes) — wynik `shake` osi efektu tu nieczytany.
   _updateArrivals(t, frame, camX, camY) {
     const list = this.arrivals;
+    const sw = list.length && warpSWOn() ? WARP_SW : null;
     for (let i = list.length - 1; i >= 0; i--) {
       const v = list[i];
       const fx = v.fx;
@@ -845,7 +879,8 @@ export const WarpNurt = {
         if (v.entity && v.entity.dead) v.entity = null;
         const en = v.entity;
         const pose = en ? entityPose(en, this._pose) : null;
-        warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress);
+        if (sw && en) v.dress.swVis = this._swVis(en);
+        warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress, sw);
         if (en) {
           if (t < fx.tAppear) this._hideHull(en);
           else this._applyHull(en, v.dress.hull);
@@ -855,7 +890,8 @@ export const WarpNurt = {
         const e = v.entity;
         const alive = !!(e && !e.dead);
         const pose = alive ? entityPose(e, this._pose) : null;
-        warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress);
+        if (sw && alive) v.dress.swVis = this._swVis(e);
+        warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress, sw);
         if (alive) {
           this._applyHull(e, v.dress.hull);
           e.__warpNurtMode = v.dress.plasmaMode;

@@ -951,6 +951,10 @@ let entityHiddenTest = null;
 export function setEntityHiddenTest(fn) {
   entityHiddenTest = typeof fn === 'function' ? fn : null;
 }
+/** Encja ukryta przed graczem (ten sam predykat co kadłub) — efekty przy kadłubie spoza tego modułu (smugi warpa `?warpSW=1`). */
+export function isEntityHiddenForRender(e) {
+  return !!(e && entityHiddenTest && entityHiddenTest(e));
+}
 
 function isBeamHullEntity(entity) {
   const hull = entity?.beamHull;

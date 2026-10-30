@@ -231,7 +231,9 @@ try {
   // Dziennik klatek i pauzy faz (strona — rAF).
   const stops = [
     ['01-ladowanie', "w.state === 'charging' && w.charge / w.chargeTime >= 0.6"],
-    // znacznik zegara gry skoku (warp.kickSim — działa też w trybie worker, gdzie WarpNurt strony stoi)
+    // znacznik zegara gry skoku (warp.kickSim — działa też w trybie worker, gdzie WarpNurt strony stoi); 0,1 s — szczyt
+    // przestrzału smug gwiazd i smuga kopu prototypu `?warpSW=1` (gaśnie do 0,35 s)
+    ['02a-kop-szczyt', "w.state === 'active' && (Number.isFinite(w.kickSim) ? window.SimClock.sim - w.kickSim > 0.1 : N.time - N.player.kickT > 0.1)"],
     ['02-kop', "w.state === 'active' && (Number.isFinite(w.kickSim) ? window.SimClock.sim - w.kickSim > 0.35 : N.time - N.player.kickT > 0.35)"],
     ['03-przelot', "w.state === 'active' && L.przelot && L.przelotNajblizej"],
     ['04-dolot', "w.state === 'active' && L.doKonca < 0.25"],

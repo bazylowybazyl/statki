@@ -2,9 +2,11 @@
 paths:
   - "src/3d/warp/warpEdgeFx.js"
   - "tests/warpEdgeFx.test.mjs"
+  - "src/3d/warp/warpSW.js"
+  - "tests/warpSW.test.mjs"
 ---
 
-# Warp gracza: efekty boków kadru (W1–W3)
+# Warp: efekty boków kadru (W1–W3) i prototyp przylotu / wylotu „jak w Gwiezdnych Wojnach” (`?warpSW=1`)
 
 > Reguła obszaru (wydzielona z reguły `warp` 2026-10-29 — limit rozmiaru). Claude Code wczytuje ją sam, gdy czytasz albo edytujesz plik pasujący do `paths`. Zasady przekrojowe i indeks reguł: `AGENTS.md`. Skok, soczewka świata i warp „Nurt” — reguła `warp`; kadr skoku i kadr lotu — `kamera`; warstwa DIST — `core3d`. Nową wiedzę o efektach skoku dopisuj tutaj: stan i zasady w czasie teraźniejszym, historię i pomiary — do `docs/` (`docs/PROPOZYCJA-efekty-warpa-2026-10-29.md`, `docs/WARP-kadr-lotu-2026-10-29.md`).
 
@@ -44,3 +46,21 @@ paths:
   `?renderWorker=0`). Decyzje D1–D7 (zestaw, siła haze, smugi pod / nad planetami, gęstość, kolumna, W4–W9, presety grafiki)
   — w propozycji. Test `tests/warpEdgeFx.test.mjs`; zrzuty `node scripts/webgpu/warp-ped-gra.mjs [--query warpFx=0]`, koszt
   `--koszt 1` (ABAB z `warpFx=0`).
+
+## Przylot i wylot „jak w Gwiezdnych Wojnach” — prototyp `?warpSW=1`
+
+- A/B DO OCENY (2026-10-30; user: „a przylot i wylot jak z gwiezdnych wojen? dasz radę?”; `src/3d/warp/warpSW.js`): domyślnie
+  wygląd z decyzji 2026-10-03 („BEZ portalu i BEZ smugi, normalnie widoczny statek” — `arrivals.js`). Z przełącznikiem:
+  PRZYLOT NPC — w wlocie kadłub ze światła i smuga za rufą (~7 L, ≤ droga od pojawienia się), przy hamowaniu ogon zatrzaskuje
+  się w kadłub (≤ 0,2 s), światło gaśnie 0,25 s po hamowaniu; ODLOT NPC — od nurkowania kadłub ze światła i ślad rosnący
+  z prędkością, w punkcie skoku smuga wystrzeliwuje do przodu (8 L, gaśnie w 0,35 s), błysk 1 L, kadłub znika w smudze;
+  GRACZ — smuga przy kopie (6 L, 0,35 s), szczyt smug gwiazd × 2,2 / 1,4, przy hamowaniu przylotu smuga zatrzaskuje się
+  w tej samej chwili co błysk (PRZYLOT = JEDNO ZDARZENIE, reguła `warp`); tylko warp i kamera z góry jednego gracza.
+- BEZ NOWYCH PIPELINE'ÓW I PÓL MIGAWKI: smugi = kształt `GLOW_STREAK` duszków „Nurtu” (`frame.addStreak`, pula 64, odcinanie
+  do kadru przy zgłoszeniu — pudło ustawia sterownik po `frame.reset()`), kadłub ze światła = szew `hullWarp` szerszy niż
+  kadłub w trybie −1 z linią przed dziobem (`warpSWHullLight`, bez zmiany WGSL), osie z rejestru gry (blok migawki `warp`).
+  Smuga i światło encji ukrytej się nie rysują — mgła wojny i soczewka skoku (`isEntityHiddenForRender`, ten sam predykat
+  co skóra kadłuba), maskowanie (`__cloakLook.vis`). Rozgrywka bez zmian; nowych faz nie wiąż z `__warpNurtMode`.
+- Strojenie `WARP_SW`, test `tests/warpSW.test.mjs`; zrzuty `node scripts/webgpu/zrzuty.mjs --backend webgpu --sceny
+  warp-zwiastun,warp-przylot,warp-odlot-ladowanie,warp-odlot [--query warpSW=1]`, gracz — `warp-ped-gra.mjs` (faza
+  `02a-kop-szczyt`), floty — `wojna-gra.mjs`.

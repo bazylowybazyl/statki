@@ -158,7 +158,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `tarcze` | Tarcze: pula slotów, przebicie, wygląd |
 | `maskowanie` | Maskowanie: wygląd, efekty, wizjer |
 | `warp` | Warp gracza, TRAVEL TO, wezwania wsparcia, warp „Nurt” w Core3D |
-| `warp-efekty` | Efekty boków kadru w skoku gracza (W1 haze DIST, W2 smugi, W3 zorza): przepływ równoległy do kursu, `?warpFx=` |
+| `warp-efekty` | Efekty boków kadru w skoku gracza (W1 haze DIST, W2 smugi, W3 zorza): przepływ równoległy do kursu, `?warpFx=`; prototyp przylotu i wylotu „jak w Gwiezdnych Wojnach” (`?warpSW=1`) |
 | `hipercruise` | Obraz hipercruise'u: warstwa warpa w trybie `hyper`, opływ kadłuba (DIST), plazma dysz w locie, A/B `?hcStary=1` |
 | `scena-wojna` | Scena „Wojna”: floty z warpa, bitwa w głębi (tłum nad i pod płaszczyzną, planeta w głębi), bohaterowie, ujęcia kamery |
 | `fregata-zwiadu` | Fregata zwiadu w ładowni Atlasa |

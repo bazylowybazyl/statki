@@ -75,8 +75,10 @@ class Pool {
 // usunięte w sprzątaniu S1 nowego warpa (2026-10-26) — nikt ich nie karmił od przylotów NPC bez szczelin (2026-10-03).
 // Implozja i soczewka bańki jako fale (style 'akcent' / 'soczewka') — też (jeden warp). Materiały ośrodka i mgławicy
 // mają dalej bloki szczelin (medium.js: setSeams, skyBend.js) — zmiana ich WGSL to osobna decyzja (C2); liczniki 0.
+// Smugi (`streaks`, prototyp przylotu i wylotu „jak w Gwiezdnych Wojnach” — `?warpSW=1`, warpSW.js): kształt GLOW_STREAK
+// duszków; ≥ 48 miejsc (scena „Wojna”: 45 okrętów co 0,12 s), smugi spoza kadru odcinane przy zgłoszeniu.
 export const WARP_FRAME_CAPS = Object.freeze({
-  bubbles: 16, lens: 8, waves: 24, flashes: 64, glares: 16
+  bubbles: 16, lens: 8, waves: 24, flashes: 64, glares: 16, streaks: 64
 });
 
 export class WarpFrame {
@@ -91,6 +93,10 @@ export class WarpFrame {
     // Błyski (okrągłe) i poprzeczne linie blasku.
     this.flashes = new Pool(caps.flashes, () => ({ x: 0, y: 0, size: 0, k: 0, pal: null, raw: false }));
     this.glares = new Pool(caps.glares, () => ({ x: 0, y: 0, angle: 0, len: 0, k: 0, pal: null }));
+    // Smugi (`?warpSW=1`): głowa (x, y), kierunek (jednostkowy), długość wstecz od głowy, szerokość, barwa HDR.
+    this.streaks = new Pool(caps.streaks || 64, () => ({ x: 0, y: 0, dirX: 1, dirY: 0, len: 0, width: 0, r: 0, g: 0, b: 0 }));
+    // Kadr do odcinania smug (pół-wymiary pudła osi świata wokół kamery [j.] — ustawia sterownik co klatkę po reset).
+    this.streakView = { on: false, hw: 0, hh: 0 };
     // Gwiazdy (rozciąganie płaskie, front wyjścia) — z gracza.
     this.stars = { stretch: 0, angle: 0, frontOn: 0, frontS: 0, warpTint: 0, refX: 0, refY: 0 };
     this.warpVis = 0;       // poświata rzadkich drobin w ruchu (skok gracza)
@@ -103,6 +109,8 @@ export class WarpFrame {
     this.waves.reset();
     this.flashes.reset();
     this.glares.reset();
+    this.streaks.reset();
+    this.streakView.on = false;
     const st = this.stars;
     st.stretch = 0; st.frontOn = 0; st.frontS = 0; st.warpTint = 0;
     this.warpVis = 0;
@@ -129,6 +137,40 @@ export class WarpFrame {
     const g = this.glares.add();
     if (!g) return;
     g.x = x; g.y = y; g.angle = angle; g.len = len; g.k = k; g.pal = pal;
+  }
+
+  /** Kadr odcinania smug: pół-wymiary pudła osi świata wokół kamery [j.] (≤ 0 — bez odcinania). */
+  setStreakView(hw, hh) {
+    const v = this.streakView;
+    v.on = hw > 0 && hh > 0;
+    v.hw = v.on ? hw : 0;
+    v.hh = v.on ? hh : 0;
+  }
+
+  /**
+   * Smuga (`?warpSW=1`): głowa (hx, hy) względem kamery, kierunek (dirX, dirY) — smuga ciągnie się `len` [j.] WSTECZ od
+   * głowy, szerokość [j.], barwa HDR (r, g, b). Smuga poza kadrem (pudło z setStreakView + szerokość) nie zajmuje miejsca
+   * w puli. Zwraca true, gdy dodana.
+   */
+  addStreak(hx, hy, dirX, dirY, len, width, r, g, b) {
+    if (!(len > 0) || !(width > 0)) return false;
+    if (!(r > 0.0005 || g > 0.0005 || b > 0.0005)) return false;
+    const l = Math.sqrt(dirX * dirX + dirY * dirY);
+    if (!(l > 1e-9)) return false;
+    const dx = dirX / l;
+    const dy = dirY / l;
+    const v = this.streakView;
+    if (v.on) {
+      const tx = hx - dx * len;
+      const ty = hy - dy * len;
+      const m = width;
+      if (Math.max(hx, tx) + m < -v.hw || Math.min(hx, tx) - m > v.hw
+        || Math.max(hy, ty) + m < -v.hh || Math.min(hy, ty) - m > v.hh) return false;
+    }
+    const s = this.streaks.add();
+    if (!s) return false;
+    s.x = hx; s.y = hy; s.dirX = dx; s.dirY = dy; s.len = len; s.width = width; s.r = r; s.g = g; s.b = b;
+    return true;
   }
 
   addLens(x, y, angle, a, b, amp, front) {
