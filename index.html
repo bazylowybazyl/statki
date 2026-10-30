@@ -4764,6 +4764,9 @@
         hp.maxAmmo = full;
         hp.ammo = full;
       }
+      // Nowa gra = pełne magazynki wszędzie (Supernova, torpedy): broń, która już wisi z zapisu, plan karty
+      // zostawia bez przemontowania — razem z amunicją zużytą w poprzedniej kampanii.
+      refillHardpointAmmo(Game.player.hardpoints, playerWeaponAmmo);
       syncWeaponSystems();
       saveLoadout();
     }
