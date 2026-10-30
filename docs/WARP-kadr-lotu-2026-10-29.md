@@ -85,3 +85,16 @@ Symulator (`--param hf=2.5`, kamera z kadrem lotu): limity ruchu P4 we wszystkic
 C5 „cel w kadrze od kopu do końca ślizgu + 1 s” w 14 przebiegach (cel poza kadrem 4–19 s): obraz dalekiego ciała leży nad
 górną krawędzią (punkt zbiegu poza kadrem), cel wjeżdża z góry dopiero z bliska. Tak działa płaska soczewka — decyzja
 użytkownika po obejrzeniu (domyślnie `hf` 0,8 bez zmian).
+
+## Decyzja użytkownika i stan w main (2026-10-30)
+
+Po grze: „pisząc perspektywa OK, miałem na myśli, że nowy płaski punkt zbiegu od góry jest OK, a nie przywrócenie 3D”
+oraz „haze OK”. W grze płaska soczewka jest DOMYŚLNA (`WARP_LENS_GAME_HF` 2,5 — `?warpSoczewka=gleboka` przywraca 0,8),
+haze boków 28 px z mgłą (`warpEdgeFx.js`, reguła `warp-efekty`). Symulator soczewki liczy jak gra (C5 „cel w kadrze”
+przy h_f > 1 informacyjnie).
+
+Weryfikacja przed scaleniem (main 9791d55b): `node --test` 3652 / 0, `npm test` OK; symulator — 16:9: 0 błędów, 32:9: 2
+(Kallisto przy wyjściu S1, 78 / 60 px — ten sam przypadek co przy dawnej kamerze; przy głębokiej soczewce na 32:9 było
+ich 10 — płaska soczewka poprawia szeroki kadr); gra `warp-ped-gra.mjs` (ziarno 7) — 0 pipeline'ów synchronicznych
+w trybie off i w workerze, 0 klatek z NaN; koszt efektów boków kadru (ABAB, 1600 × 900, tryb off) — mediana GPU
+0,338 / 0,324 ms z efektami wobec 0,298 / 0,310 ms bez (+0,02–0,04 ms, tylko w skoku gracza).
