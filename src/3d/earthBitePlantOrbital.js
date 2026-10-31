@@ -36,9 +36,8 @@
 // uv części ze `sweep` / `lathe` / `prism`: u — droga po obwodzie [R], v — droga po przekroju [R].
 import * as THREE from 'three/webgpu';
 import {
-  PART, finalizePart, hubHeight, plantRng, objectToFrameMatrix, ringPointObject
+  PART, finalizePart, hubHeight, plantRng, objectToFrameMatrix, ringPointObject, plantRingAxis
 } from './earthBitePlantFrame.js';
-import { earthSpinAxis } from './earthSpin.js';
 import { earthBiteFrame } from './earthBiteShape.js';
 import { EARTH_BITE } from '../data/earthBite.js';
 
@@ -66,9 +65,10 @@ export const HUB_DEFAULTS = Object.freeze({
 
 /**
  * Kierunek promienia przekaźnikowego (jednostkowy, rama elektrowni): środek odbiornika → najbliższy punkt wewnętrznej
- * krawędzi ringu (oś obrotu `axis` w układzie obiektu kuli — jak `EarthBitePlant.attachRing`).
+ * krawędzi ringu (oś obrotu `axis` w układzie obiektu kuli — jak `EarthBitePlant.attachRing`; domyślnie `L.ringAxis`
+ * albo oś gry).
  */
-export function hubRelayDir(L, b = EARTH_BITE.radiusR, axis = earthSpinAxis(), out = new THREE.Vector3()) {
+export function hubRelayDir(L, b = EARTH_BITE.radiusR, axis = plantRingAxis(L), out = new THREE.Vector3()) {
   const { C } = earthBiteFrame(EARTH_BITE);
   const H = new THREE.Vector3(C[0], C[1], C[2]).multiplyScalar(L.hubRadius);
   const T = ringPointObject(H, axis, L.ringInnerR, new THREE.Vector3());

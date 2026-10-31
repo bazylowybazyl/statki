@@ -38,9 +38,8 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   DEG, PART, finalizePart, surfacePoint, plantZ0, hubHeight, rimAngle, cylinderBetween, plantFrameMatrix,
-  objectToFrameMatrix, ringPointObject, segmentClearsSphere
+  objectToFrameMatrix, ringPointObject, segmentClearsSphere, plantRingAxis
 } from './earthBitePlantFrame.js';
-import { earthSpinAxis } from './earthSpin.js';
 import { createClimbers, createTetherGlow, CLIMBER_MAX } from './earthBitePlantClimbers.tsl.js';
 
 /** Wymiary wind (R Ziemi). Azymuty (`elevators`), odsunięcie kotwic (`anchorPad`), ring (`ringInnerR`) — w PLANT_LAYOUT. */
@@ -347,7 +346,7 @@ export function elevatorLayout(L, b) {
   const z0 = plantZ0(b);
   const M = plantFrameMatrix(b);
   const Mi = objectToFrameMatrix(b);
-  const axO = earthSpinAxis();
+  const axO = plantRingAxis(L);
   const toO = (v) => v.clone().applyMatrix4(M);
   const toF = (v) => v.clone().applyMatrix4(Mi);
   const dirF = (v) => v.clone().transformDirection(Mi);

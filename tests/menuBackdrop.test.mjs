@@ -315,34 +315,93 @@ test('Ziemia tła 2026-10-31: gryz z elektrownią KOREK w kadrze na starcie, sł
   const { earthBiteFrame } = await import('../src/3d/earthBiteShape.js');
   const { EARTH_BITE } = await import('../src/data/earthBite.js');
   const { HALO_STATION_ANGLE } = await import('../src/3d/haloRing/haloRingConfig.js');
-  const { menuBiteSpin } = await import('../src/3d/menuBackdrop3D.js');
+  const { menuBiteSpin, menuEarthAxis, menuEarthBase } = await import('../src/3d/menuBackdrop3D.js');
+  const { earthSpinQuaternion } = await import('../src/3d/earthSpin.js');
   const { C } = earthBiteFrame(EARTH_BITE);
+  const axis = menuEarthAxis();
+  const base = menuEarthBase(axis);
   const group = new THREE.Group();
   group.rotation.x = Math.PI / 2;
   const earth = new THREE.Object3D();
-  earth.rotation.y = menuBiteSpin(MENU_SHOT);
   group.add(earth);
-  group.updateMatrixWorld(true);
-  const p = new THREE.Vector3(C[0], C[1], C[2]).applyMatrix4(earth.matrixWorld);
+  const biteRing = (spin) => {
+    earthSpinQuaternion(spin, axis, base, earth.quaternion);
+    group.updateMatrixWorld(true);
+    return new THREE.Vector3(C[0], C[1], C[2]).applyMatrix4(earth.matrixWorld);
+  };
   const DEG = Math.PI / 180;
+  const spin0 = menuBiteSpin(MENU_SHOT, axis);
+  const p = biteRing(spin0);
   const want = HALO_STATION_ANGLE + (MENU_SHOT.hallAzimuthOffsetDeg + MENU_SHOT.biteAzimuthOffsetDeg) * DEG;
   const d = Math.atan2(Math.sin(Math.atan2(p.y, p.x) - want), Math.cos(Math.atan2(p.y, p.x) - want));
   assert.ok(Math.abs(d) < 1e-9, `gryz ${(Math.atan2(p.y, p.x) / DEG).toFixed(2)}° zamiast ${(want / DEG).toFixed(2)}°`);
+  // środek elektrowni celuje w środek ringu (zgłoszenie 2026-10-31): oś obrotu tła przechylona o szerokość gryzu (10°),
+  // środek gryzu na równiku obrotu — w płaszczyźnie ringu (z = 0) przy każdym kącie doby; bez gryzu oś = biegun
+  assert.ok(Math.abs(Math.acos(axis.y) / DEG - EARTH_BITE.lat) < 1e-9, 'przechył osi = szerokość gryzu');
+  assert.ok(Math.abs(axis.dot(new THREE.Vector3(C[0], C[1], C[2]))) < 1e-12);
+  for (const s of [spin0, spin0 + 0.7, spin0 + 2.5, 5]) assert.ok(Math.abs(biteRing(s).z) < 1e-9, `kąt doby ${s}`);
+  const b0 = menuEarthBase(new THREE.Vector3(0, 1, 0));
+  assert.ok(Math.abs(Math.abs(b0.w) - 1) < 1e-12, 'oś = biegun: baza tożsamościowa (dawne rotation.y = kąt doby)');
+  // elektrownia z osią ringu tła: przekaźnik odbiornik → ring wzdłuż osi gryzu (prosto w ścianę ringu, środek wstęgi),
+  // liny wind omijają Ziemię i kończą się na szynie wokół osi tła, odbiornik z iglicami przed czaszą terminala
+  const { createPlantLook } = await import('../src/3d/earthBitePlant.js');
+  const { hubRelayDir } = await import('../src/3d/earthBitePlantOrbital.js');
+  const { elevatorLayout } = await import('../src/3d/earthBitePlantElevators.js');
+  const { PLANT_LAYOUT, plantRingAxis } = await import('../src/3d/earthBitePlantFrame.js');
+  const look = createPlantLook({ ringAxis: axis.toArray(), hubRadius: 1.04 });
+  assert.ok(plantRingAxis(look).distanceTo(axis) < 1e-12 && plantRingAxis(createPlantLook()).y > 0.999999, 'gra: oś bieguna');
+  const relay = hubRelayDir(look, EARTH_BITE.radiusR);
+  assert.ok(relay.y > 0.999999, `przekaźnik wzdłuż osi gryzu: ${relay.toArray()}`);
+  const lay = elevatorLayout(look, EARTH_BITE.radiusR);
+  assert.ok(lay.bundles.length >= 6 && lay.bundles.every((bd) => bd.clearsEarth), 'liny omijają Ziemię');
+  assert.ok(lay.rail.axO.distanceTo(axis) < 1e-12);
+  assert.ok(Math.abs(lay.terminal.obj.T.dot(axis)) < 1e-9, 'koniec przekaźnika w płaszczyźnie ringu');
+  const tipR = look.hubRadius + look.hubSpireH;
+  assert.ok(lay.terminal.obj.dish.length() - look.elevTermDishR - tipR > 0.008, 'iglice odbiornika przed czaszą terminala');
+  assert.ok(tipR < PLANT_LAYOUT.ringInnerR - 0.02);
   // na prawo od środka tarczy, z dala od hali K-7 (kadr końca lotu intro z góry nad halą — bez gryzu); doba niesie go
   // ku brzegowi — na tarczy (< 75° od środka) kilka minut
   assert.ok(MENU_SHOT.biteAzimuthOffsetDeg > 0 && MENU_SHOT.biteAzimuthOffsetDeg <= 30, 'gryz w kadrze, na prawo od środka');
   assert.ok(Math.abs(MENU_SHOT.biteAzimuthOffsetDeg + MENU_SHOT.hallAzimuthOffsetDeg) >= 30, 'gryz ≥ 30° od hali K-7');
   assert.ok(MENU_SHOT.earthSpin > 0 && (75 - MENU_SHOT.biteAzimuthOffsetDeg) * DEG / MENU_SHOT.earthSpin > 240, 'kilka minut na tarczy');
   // ta sama Ziemia: stop() oddaje grze kąt doby i chmur (DirectPlanet.setSpin — tylko doba wokół osi ringu)
-  assert.match(read('src/3d/menuBackdrop3D.js'), /if \(o\) this\._gameEarth\?\.setSpin\?\.\(o\.spin, o\.cloudSpin\)/);
+  assert.match(read('src/3d/menuBackdrop3D.js'), /const sg = this\._gameSpinAtCut\(o\);\s*this\._gameEarth\?\.setSpin\?\.\(sg, sg \+ o\.cloudSpin - o\.spin\)/);
+  // kąt doby gry przy cięciu: grunt tła pod halą K-7 trafia pod halę w grze (Ziemia gry: Rx(π/2) · Ry(kąt))
+  const fake = Object.create(MenuBackdrop3D.prototype);
+  fake._q = new THREE.Quaternion();
+  fake._p = new THREE.Vector3();
+  fake.ring = null;
+  const cutObj = { earthGroup: group, earth };
+  for (const s of [spin0, spin0 + 1.3]) {
+    earthSpinQuaternion(s, axis, base, earth.quaternion);
+    const sg = fake._gameSpinAtCut(cutObj);
+    const g = new THREE.Group();
+    g.rotation.x = Math.PI / 2;
+    const ge = new THREE.Object3D();
+    ge.rotation.y = sg;
+    g.add(ge);
+    g.updateMatrixWorld(true);
+    group.updateMatrixWorld(true);
+    const hall = new THREE.Vector3(Math.cos(HALO_STATION_ANGLE), Math.sin(HALO_STATION_ANGLE), 0);
+    const ground = hall.clone().applyMatrix4(new THREE.Matrix4().copy(earth.matrixWorld).invert());   // grunt tła pod halą
+    const inGame = ground.applyMatrix4(ge.matrixWorld);
+    const dAz = Math.atan2(inGame.y, inGame.x) - HALO_STATION_ANGLE;
+    assert.ok(Math.abs(Math.atan2(Math.sin(dAz), Math.cos(dAz))) < 1e-9, 'długość pod halą zgodna');
+    assert.ok(Math.abs(inGame.z) < Math.sin(EARTH_BITE.lat * DEG) + 1e-9, 'szerokość różni się o ≤ przechył');
+  }
+  // oś tła = biegun: dokładnie kąt doby tła
+  earth.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.9);
+  const sgY = fake._gameSpinAtCut(cutObj);
+  assert.ok(Math.abs(Math.atan2(Math.sin(sgY - 0.9), Math.cos(sgY - 0.9))) < 1e-9, String(sgY));
   const planets = read('src/3d/planet3d.assets.js');
   assert.match(planets, /setSpin\(spin, cloudSpin = spin\) \{\n\s+if \(!this\._spinAxis \|\| !Number\.isFinite\(spin\)\) return;/);
   // elektrownia w gryzie: własny egzemplarz tła (dziecko kuli, oś obrotu = oś ringu), bez maski słońca gry, warstwa tła
   // (traverse po dodaniu — rozgrzewka Core3D.warmup.now obejmuje jej siatki), zwolniona w stop()
   const src = read('src/3d/menuBackdrop3D.js');
-  assert.match(src, /plant = new EarthBitePlant\(\{[\s\S]{0,200}uSunShadowRecv: \{ value: 0 \}/);
-  assert.match(src, /plant\.attachRing\(EARTH_AXIS\)/);
-  assert.match(src, /const EARTH_AXIS = new THREE\.Vector3\(0, 1, 0\)/);
+  assert.match(src, /plant = new EarthBitePlant\(\{[\s\S]{0,200}uSunShadowRecv: \{ value: 0 \}\s*\}, \{ look \}\)/);
+  assert.match(src, /ringAxis: axis\.toArray\(\)/);
+  assert.match(src, /plant\.attachRing\(axis\)/);
+  assert.match(src, /earthSpinQuaternion\(o\.spin, o\.axis, o\.base, o\.earth\.quaternion\)/);
   const at = (re) => src.search(re);
   assert.ok(at(/earth\.add\(plant\.group\)/) > 0 && at(/earth\.add\(plant\.group\)/) < at(/obj\.traverse\(\(o\) => o\.layers\.set\(MENU_BACKDROP_LAYER\)\)/));
   assert.match(src, /o\.plant\?\.dispose\(\)/);

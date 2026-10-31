@@ -28,15 +28,21 @@ import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMat
 import { PLANET_MAPS } from './planetMaps.js';
 import { earthBiteGeometry } from './earthBite3D.js';
 import { earthBiteFrame } from './earthBiteShape.js';
-import { EarthBitePlant } from './earthBitePlant.js';
+import { EarthBitePlant, createPlantLook } from './earthBitePlant.js';
+import { PLANT_LAYOUT } from './earthBitePlantFrame.js';
+import { earthSpinQuaternion } from './earthSpin.js';
 import { EARTH_BITE } from '../data/earthBite.js';
 
 const DEG = Math.PI / 180;
-// Oś obrotu Ziemi tła w układzie siatki kuli: biegun północny (oś Y sfery) = oś ringu — ring równikowy jak w grze
-// (earthSpin.js), więc przekaźnik i liny wind elektrowni są stałe względem gruntu.
-const EARTH_AXIS = new THREE.Vector3(0, 1, 0);
 // Odległość punktu słońca elektrowni od środka Ziemi [j.] — elektrownia liczy kierunek do słońca z sunPosition − świat.
 const PLANT_SUN_DIST = 1e8;
+// Odbiornik elektrowni w tle [R od środka Ziemi]: gryz leży w płaszczyźnie ringu, więc odbiornik stoi na wprost wewnętrznej
+// ściany ringu (1,106 R) — iglice nadajnika (+0,031 R) z zapasem przed czaszą terminala przekaźnika na szynie (−0,019 R);
+// w grze 1,075 R (gryz 10° nad ringiem, odbiornik nad wstęgą).
+const MENU_PLANT_HUB_R = 1.04;
+const _X = new THREE.Vector3(1, 0, 0);
+const _Z = new THREE.Vector3(0, 0, 1);
+const _qa = new THREE.Quaternion();
 
 // Ujęcie w układzie lokalnym ringu: oś Z = oś ringu, środek planety (0, 0, cz).
 // Kamera kołysze się („talerz”) pod słońcem gry stałym w układzie ringu, Ziemia
@@ -275,8 +281,11 @@ export class MenuBackdrop3D {
     this._sync();
     RenderWorld.offVisibilityChange(this._onVisibility);
     const o = this._objects;
-    // ta sama Ziemia: gra przejmuje kąt doby i chmur tła (gryz i lądy bez skoku przy cięciu menu → gra)
-    if (o) this._gameEarth?.setSpin?.(o.spin, o.cloudSpin);
+    // ta sama Ziemia: gra przejmuje kąt doby i chmur tła (lądy pod halą K-7 bez skoku przy cięciu menu → gra)
+    if (o) {
+      const sg = this._gameSpinAtCut(o);
+      this._gameEarth?.setSpin?.(sg, sg + o.cloudSpin - o.spin);
+    }
     if (o) {
       o.earthGroup.parent?.remove(o.earthGroup);
       o.sky.parent?.remove(o.sky);
@@ -352,6 +361,9 @@ export class MenuBackdrop3D {
     let pitMesh = null;
     let plant = null;
     let spin0 = 0;
+    // oś obrotu: z gryzem — przechylona tak, że gryz leży w płaszczyźnie ringu (menuEarthAxis); bez gryzu — biegun
+    const axis = pit ? menuEarthAxis() : new THREE.Vector3(0, 1, 0);
+    const base = menuEarthBase(axis);
     if (pit) {
       // wielki gryz: łata (ściany, dno, kołnierz) na kuli (geometria wspólna z grą — nie zwalniana tutaj)
       const pitM = createMenuEarthMaterial(ring, tex, { pitMode: 2, shared: earthM.uniforms, air });
@@ -363,16 +375,20 @@ export class MenuBackdrop3D {
       // (renderFrame), bez maski słońca gry; bryły ~0,5 s CPU — start tła idzie w tle, pod kurtyną
       const { C } = earthBiteFrame(EARTH_BITE);
       const t0 = performance.now();
+      // liny wind, szyna i przekaźnik z osi ringu tła (ringAxis); odbiornik niżej — stoi na wprost ściany ringu
+      const look = createPlantLook({
+        ringAxis: axis.toArray(), hubRadius: Math.min(PLANT_LAYOUT.hubRadius, MENU_PLANT_HUB_R)
+      });
       plant = new EarthBitePlant({
         sunPosition: { value: new THREE.Vector3() },
         uBite: { value: new THREE.Vector4(C[0], C[1], C[2], EARTH_BITE.radiusR) },
         uSunShadowRecv: { value: 0 }
-      });
-      plant.attachRing(EARTH_AXIS);
+      }, { look });
+      plant.attachRing(axis);
       plant.settleRelay();
       earth.add(plant.group);
       this.stats.plantMs = performance.now() - t0;
-      spin0 = menuBiteSpin(this.shot);
+      spin0 = menuBiteSpin(this.shot, axis);
     }
     const atmosphere = new THREE.Mesh(atmSphere, atmM.material);
     atmosphere.renderOrder = 6;
@@ -394,7 +410,7 @@ export class MenuBackdrop3D {
     ring.group.add(earthGroup, sky);
     return {
       earthGroup, earth, pitMesh, plant, atmosphere, sky, earthUniforms: earthM.uniforms, atmUniforms: atmM.uniforms, skyUniforms: skyM.uniforms,
-      hasNebula: !!nebulaMap, materials, geometries, spin: spin0, cloudSpin: spin0
+      hasNebula: !!nebulaMap, materials, geometries, axis, base, spin: spin0, cloudSpin: spin0
     };
   }
 
@@ -413,6 +429,16 @@ export class MenuBackdrop3D {
       warmedThisFrame = true;
     }
     return ok;
+  }
+
+  // Kąt doby Ziemi gry (doba wokół bieguna geograficznego — earthSpin.js) przy cięciu menu → gra: punkt gruntu tła pod
+  // halą K-7 portu gracza (kadr końca lotu intro) trafia w grze pod tę samą halę. Przy osi tła = biegun to dokładnie kąt
+  // doby tła; przy przechylonej osi (gryz w płaszczyźnie ringu) długość pod halą zgodna, szerokość różni się o ≤ przechył.
+  _gameSpinAtCut(o) {
+    const q = this._q.copy(o.earthGroup.quaternion).multiply(o.earth.quaternion).invert();   // siatka ← ring
+    const p = this._p.set(Math.cos(HALO_STATION_ANGLE), Math.sin(HALO_STATION_ANGLE), 0).applyQuaternion(q);
+    // Ziemia gry w układzie sceny: Rx(π/2) · Ry(kąt); układ ringu = scena obrócona o rotation.z grupy ringu
+    return HALO_STATION_ANGLE - Math.atan2(-p.z, p.x) + (this.ring?.group?.rotation?.z || 0);
   }
 
   // Słońce gry w układzie ringu ({ az, el } — ten sam obiekt co klatkę) albo null (bez słońca gry / talerz).
@@ -559,7 +585,7 @@ export class MenuBackdrop3D {
     // Ziemia: obrót i przesunięcie chmur, macierz siatka → ring
     o.spin += dt * s.earthSpin;
     o.cloudSpin += dt * s.cloudSpin;
-    o.earth.rotation.y = o.spin;
+    earthSpinQuaternion(o.spin, o.axis, o.base, o.earth.quaternion);
     const shift = ((o.cloudSpin - o.spin) / (Math.PI * 2)) % 1;
     o.earthUniforms.uCloudShift.value = shift < 0 ? shift + 1 : shift;
     o.earthGroup.updateMatrix();
@@ -672,10 +698,32 @@ function menuAzimuth(s, sway) {
 }
 
 /**
- * Kąt doby Ziemi tła na starcie [rad]: środek gryzu na azymucie kamery (bez kołysania) + biteAzimuthOffsetDeg. Azymut
- * środka gryzu w układzie ringu = atan2(−Cz, Cx) + kąt doby (siatka obrócona o π/2 wokół X, doba wokół Y).
+ * Oś obrotu Ziemi tła (układ siatki kuli): biegun północny przechylony w płaszczyźnie południka gryzu (o jego szerokość,
+ * 10°) tak, że środek gryzu leży na równiku obrotu — w płaszczyźnie ringu. Promień z korka do odbiornika i przekaźnik
+ * celują wtedy w środek wstęgi ringu (zgłoszenie 2026-10-31: „środek elektrowni w menu nie celuje w środek ringu” — przy
+ * osi gry, biegunie geograficznym, gryz leży 10° nad ringiem i z kamery z boku promień mijał wstęgę). Gra bez zmian.
  */
-export function menuBiteSpin(shot = MENU_SHOT) {
+export function menuEarthAxis(out = new THREE.Vector3()) {
   const { C } = earthBiteFrame(EARTH_BITE);
-  return menuAzimuth(shot, 0) + shot.biteAzimuthOffsetDeg * DEG - Math.atan2(-C[2], C[0]);
+  const c = new THREE.Vector3(C[0], C[1], C[2]).normalize();
+  return out.set(0, 1, 0).addScaledVector(c, -c.y).normalize();
+}
+
+/**
+ * Baza obrotu siatki Ziemi względem jej grupy (grupa obraca o π/2 wokół X: oś Y siatki → oś ringu Z): oś obrotu → oś
+ * ringu. Orientacja siatki = baza · obrót wokół osi o kąt doby (earthSpinQuaternion); przy osi Y — tożsamość (dawne
+ * rotation.y = kąt doby).
+ */
+export function menuEarthBase(axis, out = new THREE.Quaternion()) {
+  return out.setFromAxisAngle(_X, -Math.PI / 2).multiply(_qa.setFromUnitVectors(axis, _Z));
+}
+
+/**
+ * Kąt doby Ziemi tła na starcie [rad]: środek gryzu na azymucie kamery (bez kołysania) + biteAzimuthOffsetDeg. Środek
+ * gryzu leży na równiku obrotu, więc w układzie ringu jego azymut = azymut (baza ring ← siatka · C) + kąt doby.
+ */
+export function menuBiteSpin(shot = MENU_SHOT, axis = menuEarthAxis()) {
+  const { C } = earthBiteFrame(EARTH_BITE);
+  const c = new THREE.Vector3(C[0], C[1], C[2]).applyQuaternion(_qa.setFromUnitVectors(axis, _Z));
+  return menuAzimuth(shot, 0) + shot.biteAzimuthOffsetDeg * DEG - Math.atan2(c.y, c.x);
 }
