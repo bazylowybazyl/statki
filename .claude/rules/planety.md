@@ -47,7 +47,8 @@ paths:
   ring rozgrywki (kolizje, K-7, tranzyty) bez zmian. Kamera gry patrzy na biegun, tarcza obraca się jak koło, gryz (10° N)
   krąży PRZY KRAWĘDZI TARCZY — widać wcięcie w obrysie, korek na dnie jest pod powierzchnią. Kod, który ustawia gryz na
   tarczy, obraca wokół Z sceny (wzór `scripts/webgpu/korek-gra.mjs`, `planety-mapy-gra.mjs` przy `e._spinAxis`), nie
-  wokół Y. Tło menu ma własną Ziemię i obrót wokół Y (bez zmian). Dysk poświaty limbu gaśnie nad promieniem
+  wokół Y. Tło menu ma własną Ziemię i obrót wokół Y (oś Y sfery = oś ringu; własny egzemplarz elektrowni KOREK —
+  reguła `menu`, § „Ziemia tła = Ziemia gry”). Dysk poświaty limbu gaśnie nad promieniem
   przechodzącym przez kulę gryzu (`buildRingAtmosphereGraph`, punkt promienia najbliższy środkowi gryzu) — dysk leży
   w płaszczyźnie środka planety, a ściana gryzu przy limbie leży za nim (bez tego granatowy nalot we wcięciu).
 

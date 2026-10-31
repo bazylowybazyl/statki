@@ -144,7 +144,7 @@ export const StoryGame = {
   /**
    * Lot intro w TLE MENU (decyzja użytkownika 2026-09-30: menu pokazuje stronę Ziemi z K-7, kamera leci z tego ujęcia
    * prosto nad halę — ta sama Ziemia i ring, bez przejścia przez czerń). Koniec toru = kadr kamery gry z góry nad
-   * stanowiskiem C-01 (Atlas trafia tam na starcie misji), słońce tła przechodzi w słońce gry.
+   * stanowiskiem C-01 (Atlas trafia tam na starcie misji); tło menu świeci już słońcem gry (menuSun = gameSun).
    * p: { menuPose { eye, target, up, fov } (THREE), menuSun { az, el }, gameSun { az, el } (układ ringu), H }.
    * Zwraca plan dla MenuBackdrop3D.fly: { duration, sample(t, out), sun(w), cut(w) } albo null.
    */

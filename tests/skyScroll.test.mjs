@@ -63,16 +63,36 @@ test('f kamery z góry: 1080p ≈ 1712,7 px/rad (FOV 35°)', () => {
 test('prawo tempa: droga nieba liniowa do kolana, logarytm wyżej — ciągła, gładka, rosnąca; dawne prawo = sufit 14 tys.', () => {
   const k = SKY_SCROLL.knee;
   assert.equal(k, 5000);
-  for (const v of [0, 1, 300, 507, 1137, 1500, 4999, 5000]) assert.equal(skyDriveSpeed(v), v, `liniowo ${v}`);
+  // samo prawo kolana (bez członu zwykłego lotu)
+  const K = { ...SKY_SCROLL, cruiseBoost: 1 };
+  for (const v of [0, 1, 300, 507, 1137, 1500, 4999, 5000]) assert.equal(skyDriveSpeed(v, K), v, `liniowo ${v}`);
   // ciągła i gładka w kolanie (pochodna 1 z obu stron)
   const e = 1e-3;
-  assert.ok(Math.abs(skyDriveSpeed(k + e) - (k + e)) < 1e-6);
-  assert.ok(Math.abs((skyDriveSpeed(k + 2 * e) - skyDriveSpeed(k + e)) / e - 1) < 1e-3);
+  assert.ok(Math.abs(skyDriveSpeed(k + e, K) - (k + e)) < 1e-6);
+  assert.ok(Math.abs((skyDriveSpeed(k + 2 * e, K) - skyDriveSpeed(k + e, K)) / e - 1) < 1e-3);
+  // człon zwykłego lotu (2026-10-31, „lepszy efekt prędkości”): vN += (B − 1) · v · (1 − v / to)² poniżej to — przy małej
+  // prędkości × 2,5, walka 507 × 2,32, dopalacz × 2,10; od cruiseTo prawo kolana bez zmian (hipercruise, warp)
+  const B = SKY_SCROLL.cruiseBoost, to = SKY_SCROLL.cruiseTo;
+  assert.equal(B, 2.5);
+  assert.equal(to, 8000);
+  for (const v of [0, 1, 300, 507, 1137, 1500, 4999, 5000, 6500]) {
+    const r = 1 - v / to;
+    assert.ok(Math.abs(skyDriveSpeed(v) - (skyDriveSpeed(v, K) + (B - 1) * v * r * r)) < 1e-9, `zwykły lot ${v}`);
+  }
+  assert.ok(Math.abs(skyDriveSpeed(507) / 507 - 2.316) < 0.002 && Math.abs(skyDriveSpeed(1137) / 1137 - 2.104) < 0.002);
+  for (const v of [to, 8001, 20000, 175000]) assert.equal(skyDriveSpeed(v), skyDriveSpeed(v, K), `bez członu od cruiseTo: ${v}`);
+  // rosnąca w zwykłym locie (pochodna ≥ ~0,36 — przy cruiseTo gładko: człon ma tam zerową pochodną), nigdy ponad B · v
+  let prev = 0;
+  for (let v = 10; v <= 9000; v += 10) {
+    const d = skyDriveSpeed(v);
+    assert.ok(d - prev >= 0.3 * 10 && d <= B * v + 1e-9, `${v}: ${d}`);
+    prev = d;
+  }
   // rosnąca bez sufitu: hipercruise < warp, Mk I < Mk II < Mk III
   let last = -1;
   for (const v of [5000, 8000, 20000, 30000, 40000, 100000, 175000, 250000, 400000, 600000]) {
     const d = skyDriveSpeed(v);
-    assert.ok(d > last && d <= v, `${v}: ${d}`);
+    assert.ok(d > last && (d <= v || v < to), `${v}: ${d}`);
     last = d;
   }
   assert.ok(Math.abs(skyDriveSpeed(20000) - 11931.5) < 1 && Math.abs(skyDriveSpeed(175000) - 22776.7) < 1);
@@ -84,17 +104,19 @@ test('prawo tempa: droga nieba liniowa do kolana, logarytm wyżej — ciągła, 
 
 test('liczby tempa [px/s, °/s]: walka 3,3× dawniej, hipercruise ≫ walka, warp > hipercruise (dawniej równe), Mk I < II < III', () => {
   const sp = (v, zoom, tune = SKY_SCROLL) => skyScreenSpeed(v, zoom, tune);
-  // walka (1080p, zoom 0,2133): 507 j/s → 10,8 px/s (dawniej 3,24) — 3,33×
-  assert.ok(Math.abs(sp(507, ZOOM_REF) - 10.81) < 0.02, String(sp(507, ZOOM_REF)));
+  // walka (1080p, zoom 0,2133): 507 j/s → 25,1 px/s (bez członu zwykłego lotu 10,8; dawniej 3,24) — 7,7×
+  assert.ok(Math.abs(sp(507, ZOOM_REF) - 25.05) < 0.03, String(sp(507, ZOOM_REF)));
+  assert.ok(Math.abs(sp(507, ZOOM_REF, { ...SKY_SCROLL, cruiseBoost: 1 }) - 10.81) < 0.02);
   assert.ok(Math.abs(sp(507, ZOOM_REF, SKY_SCROLL_STARE) - 3.24) < 0.01);
   const ratio = sp(1137, ZOOM_REF) / sp(1137, ZOOM_REF, SKY_SCROLL_STARE);
-  assert.ok(ratio > 3 && ratio < 4, `walka ×${ratio.toFixed(2)}`);
+  assert.ok(ratio > 6.5 && ratio < 7.5, `walka ×${ratio.toFixed(2)}`);
   // hipercruise i warp w kadrze skoku (zoom 0,1173)
   const hc1 = sp(20000, ZOOM_JUMP), hc3 = sp(40000, ZOOM_JUMP);
   const w1 = sp(100000, ZOOM_JUMP), w2 = sp(175000, ZOOM_JUMP), w3 = sp(250000, ZOOM_JUMP);
   assert.ok(Math.abs(hc1 - 140.0) < 0.5 && Math.abs(hc3 - 180.6) < 0.5, `${hc1} ${hc3}`);
   assert.ok(Math.abs(w2 - 267.2) < 0.5, String(w2));
-  assert.ok(hc1 > 10 * sp(1500, ZOOM_REF) * 0.4, 'hipercruise wyraźnie szybciej niż walka');
+  // hipercruise wyraźnie szybciej niż walka (×2,2 wobec walki 1500 j/s z członem zwykłego lotu — dawniej ×4,4)
+  assert.ok(hc1 > 2 * sp(1500, ZOOM_REF), 'hipercruise wyraźnie szybciej niż walka');
   assert.ok(hc1 < hc3 && hc3 < w1 && w1 < w2 && w2 < w3, 'Mk I < Mk III hipercruise < warp Mk I < II < III');
   assert.ok(w2 / hc1 > 1.8, `warp Mk II / hipercruise Mk I ×${(w2 / hc1).toFixed(2)}`);
   // dawniej hipercruise i warp na suficie (49,3 px/s)
@@ -105,7 +127,8 @@ test('liczby tempa [px/s, °/s]: walka 3,3× dawniej, hipercruise ≫ walka, war
   assert.ok(Math.abs(deg(175000, s1080, 0.55) - deg(175000, s1440, 0.55)) < 1e-9);
   assert.ok(Math.abs(deg(175000, w1440, 0.55) / deg(175000, s1440, 0.55) - 2) < 1e-9);
   assert.ok(Math.abs(deg(175000, s1080, 0.55) - 8.94) < 0.02, `warp Mk II ${deg(175000, s1080, 0.55)} °/s`);
-  assert.ok(Math.abs(deg(507, w1080, 1) - 0.72) < 0.01);
+  // 32:9 w walce bez sufitu głębi: 0,72 °/s × człon zwykłego lotu (× 2,32)
+  assert.ok(Math.abs(deg(507, w1080, 1) - 1.668) < 0.01, String(deg(507, w1080, 1)));
 });
 
 test('W0 (stan ustalony): niebo < mid < speed GameStars we wszystkich trybach lotu, ekranach i przy ?nieboTempo', () => {
@@ -181,9 +204,10 @@ test('sufit głębi: niebo wolniej niż planety tła (z = −50 000) przy każdy
   const nowe = skyScreenSpeed(1137, zoomRef(w1440.w), SKY_SCROLL, 1, F1440);
   const stare = skyScreenSpeed(1137, zoomRef(w1440.w), SKY_SCROLL_STARE, 1, F1440);
   assert.ok(nowe > 1.8 * stare, `${nowe} vs ${stare}`);
-  // przybliżenie: tempo w px nie rośnie z zoomem (jak tarcza planety) — przy maksymalnym zoomie ~1 °/s przy dopalaczu
+  // przybliżenie: tempo w px nie rośnie z zoomem (jak tarcza planety) — przy maksymalnym zoomie ~2 °/s przy dopalaczu
+  // (~1 °/s z sufitu głębi × człon zwykłego lotu 2,10)
   const z1 = skyScreenSpeed(1137, 1, SKY_SCROLL, 1, F1080), z3 = skyScreenSpeed(1137, 3.2, SKY_SCROLL, 1, F1080);
-  assert.ok(z3 / z1 < 1.1 && z3 / F1080 / DEG < 1.1, `${z1} → ${z3}`);
+  assert.ok(z3 / z1 < 1.1 && z3 / F1080 / DEG < 2.2, `${z1} → ${z3}`);
   // mnożnik A/B mnoży całe prawo (także sufit)
   assert.ok(Math.abs(skyParallax(zoomRef(w1440.w), F1440, SKY_SCROLL, 2) / skyParallax(zoomRef(w1440.w), F1440) - 2) < 1e-12);
   assert.equal(skyParallax(ZOOM_REF, F1080, SKY_SCROLL, 2), 0.2);
@@ -446,7 +470,7 @@ test('cięcie przy teleporcie: skok położenia nie obraca nieba — droga nieba
   const s = createSkyScroll();
   for (let i = 0; i <= 120; i++) stepSkyScroll(s, 500 * i * dt, 0, 500, dt, ZOOM_REF, F1080);
   const vd = s.vDrive;
-  assert.ok(Math.abs(vd - 500) < 1e-3, String(vd));
+  assert.ok(Math.abs(vd / skyDriveSpeed(500) - 1) < 1e-5, String(vd));
   const cut = stepSkyScroll(s, 5e6, 0, 500, dt, ZOOM_REF, F1080);   // teleport (DevScene.teleport, odrodzenie)
   assert.equal(s.cuts, 1);
   assert.ok(Math.abs(cut - vd * dt * SKY_SCROLL.p * ZOOM_REF / F1080) < 1e-12, 'trzyma prędkość, bez skoku');
@@ -577,13 +601,15 @@ test('tropiciel drogi: cięcie per okręt, mieszanie dróg dwóch okrętów wag�
       skyScrollMove(sA, a[0] * 0 + b[0] * 1, a[1] * 0 + b[1] * 1, dt, ZOOM_REF, F1080, 1, tune, 1, false, 900);
       skyScrollMove(sB, a[0] * 0.5 + b[0] * 0.5, a[1] * 0.5 + b[1] * 0.5, dt, ZOOM_REF, F1080, 1, tune, 1, false, 450);
     }
-    const want = 900 * tune.p * ZOOM_REF / F1080;   // rad/s
+    // rad/s — droga nieba z prędkości zmieszanej drogi (nowe prawo: człon zwykłego lotu nie jest liniowy w v)
+    const want = skyDriveSpeed(900, tune) * tune.p * ZOOM_REF / F1080;
+    const wantB = skyDriveSpeed(450, tune) * tune.p * ZOOM_REF / F1080;
     if (tune === SKY_SCROLL_STARE) {
       assert.ok(Math.abs(sA.turned - want) / want < 1e-9, `${sA.turned} vs ${want}`);
       assert.ok(Math.abs(sB.turned - want / 2) / want < 1e-9);
     }
     assert.ok(Math.abs(sA.omega - want) / want < 1e-6, `${tune === SKY_SCROLL ? 'nowe' : 'dawne'}: ${sA.omega} vs ${want}`);
-    assert.ok(Math.abs(sB.omega - want / 2) / want < 1e-6);
+    assert.ok(Math.abs(sB.omega - wantB) / want < 1e-6);
   }
 });
 
@@ -615,8 +641,9 @@ test('macierze: widok → niebo ortonormalna, świat → niebo = transpozycja q,
 });
 
 test('holonomia: krążenie w bitwie obraca niebo wokół osi widoku powoli — w ruchu niewidoczne', () => {
-  // krąg r 20 tys. przy 507 j/s (4 min): niebo „toczy się” po drodze (kąt drogi = 2πr · p · zoom / f ≈ 90°) i wraca
-  // obrócone wokół osi widoku o ~11° (dawniej ~1°) — 0,05 °/s, poniżej progu dostrzegalności przy krążeniu
+  // krąg r 20 tys. przy 507 j/s (4 min): niebo „toczy się” po drodze (kąt drogi = 2πr · vN / v · p · zoom / f ≈ 210°
+  // z członem zwykłego lotu, bez niego ~90°) i wraca obrócone wokół osi widoku o ~56° (bez członu ~11°, dawniej ~1°) —
+  // 0,22 °/s przy przepływie nieba 0,84 °/s: obrót wokół środka kadru ginie w ruchu przy krążeniu
   const s = createSkyScroll();
   const M0 = skyViewMatrix(s, 0, new Float64Array(9));
   const r = 20000, v = 507, dt = 1 / 60;
@@ -628,8 +655,8 @@ test('holonomia: krążenie w bitwie obraca niebo wokół osi widoku powoli — 
   }
   const M1 = skyViewMatrix(s, 0, new Float64Array(9));
   const deg = mat3AngleBetween(M0, M1) / DEG;
-  assert.ok(deg < 15, `krąg r 20 tys.: ${deg.toFixed(2)}°`);
-  assert.ok(deg / T < 0.1, `${(deg / T).toFixed(3)} °/s`);
+  assert.ok(deg < 60, `krąg r 20 tys.: ${deg.toFixed(2)}°`);
+  assert.ok(deg / T < 0.25, `${(deg / T).toFixed(3)} °/s`);
 });
 
 test('bez alokacji w kroku: stan w Float64Array, krok i macierze piszą w miejscu', () => {

@@ -255,13 +255,15 @@ export class HaloRingGame {
   }
 
   // Słońce gry w układzie ringu (jak _applySun): { az, el } [rad].
-  gameSunLocal(key, sun) {
+  gameSunLocal(key, sun, out = {}) {
     const e = this.entries.find((v) => v.key === key);
     if (!e) return null;
     const sx = Number(sun?.x);
     const sy = Number(sun?.y);
     const world = Number.isFinite(sx) && Number.isFinite(sy) ? Math.atan2(-(sy - e.place.y), sx - e.place.x) : 0;
-    return { az: world - e.place.rot, el: HALO_GAME.sunElevationDeg * Math.PI / 180 };
+    out.az = world - e.place.rot;
+    out.el = HALO_GAME.sunElevationDeg * Math.PI / 180;
+    return out;
   }
 
   _setHallCut(ring, o, strength, inHall) {

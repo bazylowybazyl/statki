@@ -225,10 +225,11 @@ test('worker pomija strony: czas kroku z zegara klatek (HEAD.T_FRAME) — ten sa
 });
 
 test('fregata zwiadu przy sterach: niebo z drogi prowadzonego okrętu (RenderWorld.cameraLead), przejazd kamery bez skoku', async () => {
-  const { SKY_SCROLL, skyFocalPx } = await import('../src/3d/skyScroll.js');
+  const { SKY_SCROLL, skyFocalPx, skyDriveSpeed } = await import('../src/3d/skyScroll.js');
   const core = { pxScale: 1, composerTarget: { height: 1080 }, viewZoom: (c) => c.zoom };
   const S = await makeSky(core);
   const cam = { x: 0, y: 0, zoom: 0.2133, roll: 0 };
+  const vN = skyDriveSpeed(900);   // droga nieba okrętu 900 j/s (z członem zwykłego lotu)
   const dt = 1 / 60;
   const atlas = { x: 5e6, y: 3e6 };
   const lead = { x: atlas.x, y: atlas.y - 300, v: 0, w: 0 };
@@ -244,10 +245,10 @@ test('fregata zwiadu przy sterach: niebo z drogi prowadzonego okrętu (RenderWor
   assert.equal(S.scroll.cuts, 0, 'przejazd kamery nie jest cięciem');
   // pełna waga: tempo jak dla okrętu 900 j/s; skoki między klatkami ≤ krok pełnej wagi (bez szarpnięcia)
   // (droga nieba wygładzona 0,15 s — dochodzi do kroku pełnej wagi od dołu)
-  const step = 900 * dt * SKY_SCROLL.p * 0.2133 / skyFocalPx(1080);
+  const step = vN * dt * SKY_SCROLL.p * 0.2133 / skyFocalPx(1080);
   assert.ok(Math.abs((turnedAt[239] - turnedAt[238]) - step) / step < 1e-3);
   for (let i = 1; i < turnedAt.length; i++) assert.ok(turnedAt[i] - turnedAt[i - 1] <= step * (1 + 1e-9));
-  const want = 900 * SKY_SCROLL.p * 0.2133;
+  const want = vN * SKY_SCROLL.p * 0.2133;
   assert.ok(Math.abs(S.speedCss - want) / want < 1e-3, String(S.speedCss));
   // powrót kamery na Atlasa (w = 0): niebo stoi razem z Atlasem (straż W0 — prędkość prowadzonego okrętu 0)
   const t0 = S.scroll.turned;
@@ -323,10 +324,14 @@ test('pamięć nieba: niebo płynące ≥ progu na klatkę (warp, obrót kadru) 
   // rozpędu drogi nieba z postoju)
   const warp = fly(175000, 0.1173, 200);
   assert.ok(warp.fast >= 195 && warp.renders <= 3, JSON.stringify(warp));
-  // walka (507 j/s, zoom 0,2133): 10,8 px/s → 0,075 px/kl. przy 144 Hz — pamięć, przeliczenie co ~4 klatki
+  // walka (507 j/s, zoom 0,2133): 25,1 px/s (człon zwykłego lotu) → 0,17 px/kl. przy 144 Hz — dalej pamięć (< 0,25),
+  // przeliczenie co ~1,4 klatki; powolny lot (150 j/s → 7,8 px/s, 0,054 px/kl.) — przeliczenie co ~4–5 klatek
   const walka = fly(507, 0.2133, 200);
   assert.equal(walka.fast, 0);
-  assert.ok(walka.reused > walka.renders * 2, JSON.stringify(walka));
+  assert.ok(walka.reused > 0 && walka.renders < 200, JSON.stringify(walka));
+  const wolno = fly(150, 0.2133, 200);
+  assert.equal(wolno.fast, 0);
+  assert.ok(wolno.reused > wolno.renders * 2, JSON.stringify(wolno));
   // obrót kadru w postoju (hipercruise: obrót do kursu) — wprost
   const roll = fly(0.001, 0.2133, 60, (i) => i * 0.01);
   assert.ok(roll.fast >= 58, JSON.stringify(roll));

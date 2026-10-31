@@ -7,7 +7,10 @@
 // port WebGPU — zadanie 11). Render: Core3D.renderBackdrop — ta sama scena,
 // renderer, bloom i ACES co gra, tylko warstwa MENU_BACKDROP_LAYER (passy gry
 // jej nie widzą). Tekstury Ziemi są pożyczone od planety gry (window.EARTH) —
-// tło ich nie zwalnia.
+// tło ich nie zwalnia. Słońce = słońce gry przy ringu (haloRings.gameSunLocal —
+// stałe w układzie ringu), więc lot intro z menu nad K-7 nie zmienia oświetlenia;
+// w gryzie Ziemi stoi elektrownia KOREK (earthBitePlant.js — własny egzemplarz
+// tła, zwalniany w stop()).
 //
 //   const bd = new MenuBackdrop3D({ haloRings });
 //   bd.start();                 // DOMContentLoaded, po initHaloRings
@@ -24,12 +27,20 @@ import { HALO_HDR, HALO_STATION_ANGLE } from './haloRing/haloRingConfig.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from './menuBackdrop3D.tsl.js';
 import { PLANET_MAPS } from './planetMaps.js';
 import { earthBiteGeometry } from './earthBite3D.js';
+import { earthBiteFrame } from './earthBiteShape.js';
+import { EarthBitePlant } from './earthBitePlant.js';
+import { EARTH_BITE } from '../data/earthBite.js';
 
 const DEG = Math.PI / 180;
+// Oś obrotu Ziemi tła w układzie siatki kuli: biegun północny (oś Y sfery) = oś ringu — ring równikowy jak w grze
+// (earthSpin.js), więc przekaźnik i liny wind elektrowni są stałe względem gruntu.
+const EARTH_AXIS = new THREE.Vector3(0, 1, 0);
+// Odległość punktu słońca elektrowni od środka Ziemi [j.] — elektrownia liczy kierunek do słońca z sunPosition − świat.
+const PLANT_SUN_DIST = 1e8;
 
 // Ujęcie w układzie lokalnym ringu: oś Z = oś ringu, środek planety (0, 0, cz).
-// Słońce obraca się razem z kamerą („talerz”): oświetlenie kadru stoi, a ring
-// i planeta powoli płyną pod kamerą.
+// Kamera kołysze się („talerz”) pod słońcem gry stałym w układzie ringu, Ziemia
+// obraca się wokół osi ringu.
 export const MENU_SHOT = Object.freeze({
   distance: 196000,       // kamera od środka planety [j.]
   elevationDeg: 13,       // nad płaszczyzną ringu
@@ -38,15 +49,23 @@ export const MENU_SHOT = Object.freeze({
   hallAzimuthOffsetDeg: 22,
   swayDeg: 7,             // kołysanie „talerza” zamiast pełnego obrotu (K-7 zostaje w kadrze)
   swayPeriodSec: 90,
-  sunOffsetDeg: 50,       // azymut słońca względem kamery
-  sunElevationDeg: 27,    // słońce nad płaszczyzną ringu
+  // Słońce gry (haloRings.gameSunLocal: azymut z położenia Słońca, wysokość HALO_GAME.sunElevationDeg) — menu, lot
+  // intro i gra w tym samym świetle (dawniej słońce „talerza” szło za kamerą, a lot przesuwał je w słońce gry).
+  // false albo `?menuSlonce=talerz` — dawne słońce talerza (sunOffsetDeg / sunElevationDeg); bez słońca gry — też ono.
+  gameSun: true,
+  sunOffsetDeg: 50,       // talerz: azymut słońca względem kamery
+  sunElevationDeg: 27,    // talerz: słońce nad płaszczyzną ringu
   fovDeg: 30,
   rollDeg: -12,           // przechył horyzontu ringu
   shiftX: 0.22,           // planeta w prawo od środka kadru (ułamek szerokości)
   shiftY: 0.02,
   focusShiftX: 0.3,       // otwarty panel podmenu: planeta dalej w prawo
-  earthSpin: 0.006,       // obrót Ziemi [rad/s]
-  cloudSpin: 0.0085,
+  earthSpin: 0.004,       // obrót Ziemi [rad/s] — gryz z elektrownią zostaje na tarczy ~5 min (stop() oddaje kąt grze)
+  cloudSpin: 0.0065,
+  // Gryz Ziemi z elektrownią KOREK na starcie: azymut względem kamery (dodatni = na prawo od środka tarczy, z dala od hali
+  // K-7 — końcówka lotu intro z góry nad halą bez gryzu w kadrze); doba niesie go w prawo, ku brzegowi (dawniej gryz
+  // stał 38° w prawo i schodził za brzeg po ~2,5 min menu).
+  biteAzimuthOffsetDeg: 15,
   introSeconds: 7.5,      // najazd po gotowości
   introDistanceMul: 1.4,
   introElevationDeg: 5,
@@ -111,6 +130,10 @@ export class MenuBackdrop3D {
     this._up = new THREE.Vector3();
     this._q = new THREE.Quaternion();
     this._inv = new THREE.Matrix4();
+    this._sw = new THREE.Vector3();
+    this._gameSunOut = { az: 0, el: 0 };
+    // A/B dawnego słońca talerza: `?menuSlonce=talerz` (adres strony — działa też w workerze renderu)
+    this._sunTalerz = /[?&]menuSlonce=talerz(?:[&#]|$)/i.test(String(RenderWorld.pageSearch || ''));
     this._tick = (now) => this._frame(now);
     this._onVisibility = () => this._sync();
     this.onRendered = null;
@@ -252,9 +275,12 @@ export class MenuBackdrop3D {
     this._sync();
     RenderWorld.offVisibilityChange(this._onVisibility);
     const o = this._objects;
+    // ta sama Ziemia: gra przejmuje kąt doby i chmur tła (gryz i lądy bez skoku przy cięciu menu → gra)
+    if (o) this._gameEarth?.setSpin?.(o.spin, o.cloudSpin);
     if (o) {
       o.earthGroup.parent?.remove(o.earthGroup);
       o.sky.parent?.remove(o.sky);
+      o.plant?.dispose();
       for (const m of o.materials) m.dispose();
       for (const g of o.geometries) g.dispose();
     }
@@ -280,6 +306,7 @@ export class MenuBackdrop3D {
 
   _resolveTextures() {
     const src = typeof window !== 'undefined' ? window.EARTH : null;
+    this._gameEarth = src || null;   // Ziemia gry (DirectPlanet) — stop() oddaje jej kąt doby tła
     const u = src?.uniforms;
     const pick = (tex, path, srgb) => {
       if (tex?.isTexture) return tex;
@@ -323,6 +350,8 @@ export class MenuBackdrop3D {
     earthGroup.scale.setScalar(R);
     const earth = new THREE.Mesh(sphere, earthM.material);
     let pitMesh = null;
+    let plant = null;
+    let spin0 = 0;
     if (pit) {
       // wielki gryz: łata (ściany, dno, kołnierz) na kuli (geometria wspólna z grą — nie zwalniana tutaj)
       const pitM = createMenuEarthMaterial(ring, tex, { pitMode: 2, shared: earthM.uniforms, air });
@@ -330,6 +359,20 @@ export class MenuBackdrop3D {
       pitMesh = new THREE.Mesh(earthBiteGeometry(), pitM.material);
       pitMesh.name = 'MenuEarthBite';
       earth.add(pitMesh);
+      // elektrownia KOREK na dnie gryzu (jak w grze: dziecko kuli, układ obiektu R = 1): słońce tła w sunPosition
+      // (renderFrame), bez maski słońca gry; bryły ~0,5 s CPU — start tła idzie w tle, pod kurtyną
+      const { C } = earthBiteFrame(EARTH_BITE);
+      const t0 = performance.now();
+      plant = new EarthBitePlant({
+        sunPosition: { value: new THREE.Vector3() },
+        uBite: { value: new THREE.Vector4(C[0], C[1], C[2], EARTH_BITE.radiusR) },
+        uSunShadowRecv: { value: 0 }
+      });
+      plant.attachRing(EARTH_AXIS);
+      plant.settleRelay();
+      earth.add(plant.group);
+      this.stats.plantMs = performance.now() - t0;
+      spin0 = menuBiteSpin(this.shot);
     }
     const atmosphere = new THREE.Mesh(atmSphere, atmM.material);
     atmosphere.renderOrder = 6;
@@ -350,8 +393,8 @@ export class MenuBackdrop3D {
     for (const obj of [earthGroup, sky]) obj.traverse((o) => o.layers.set(MENU_BACKDROP_LAYER));
     ring.group.add(earthGroup, sky);
     return {
-      earthGroup, earth, pitMesh, atmosphere, sky, earthUniforms: earthM.uniforms, atmUniforms: atmM.uniforms, skyUniforms: skyM.uniforms,
-      hasNebula: !!nebulaMap, materials, geometries, spin: 0, cloudSpin: 0
+      earthGroup, earth, pitMesh, plant, atmosphere, sky, earthUniforms: earthM.uniforms, atmUniforms: atmM.uniforms, skyUniforms: skyM.uniforms,
+      hasNebula: !!nebulaMap, materials, geometries, spin: spin0, cloudSpin: spin0
     };
   }
 
@@ -372,11 +415,18 @@ export class MenuBackdrop3D {
     return ok;
   }
 
-  // Słońce i płat mgławicy w układzie nieba (kamera na azymucie 0, patrzy ku −X).
+  // Słońce gry w układzie ringu ({ az, el } — ten sam obiekt co klatkę) albo null (bez słońca gry / talerz).
+  _gameSun() {
+    if (!this.shot.gameSun || this._sunTalerz) return null;
+    const rings = this.haloRings;
+    const sun = RenderWorld.sun;
+    if (!sun || typeof rings?.gameSunLocal !== 'function') return null;
+    const v = rings.gameSunLocal(this.planetKey, sun, this._gameSunOut);
+    return v && Number.isFinite(v.az) && Number.isFinite(v.el) ? v : null;
+  }
+
+  // Płat mgławicy w układzie nieba (kamera na azymucie 0, patrzy ku −X); tarczę słońca stawia renderFrame (sunLocal).
   _skyFrame(su, s) {
-    const sOff = s.sunOffsetDeg * DEG;
-    const sEl = s.sunElevationDeg * DEG;
-    su.uSunDir.value.set(Math.cos(sOff) * Math.cos(sEl), Math.sin(sOff) * Math.cos(sEl), Math.sin(sEl));
     const yaw = Math.PI + s.nebulaYawDeg * DEG;
     const pitch = (s.nebulaPitchDeg - s.elevationDeg) * DEG;
     const c = su.uNebC.value.set(Math.cos(yaw) * Math.cos(pitch), Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch));
@@ -456,8 +506,10 @@ export class MenuBackdrop3D {
     if (this.flight) {
       this._flightFrame(dt, ring, o, L, M, cz, vw, vh);
     } else {
-      this.sunLocal.az = az + s.sunOffsetDeg * DEG;
-      this.sunLocal.el = s.sunElevationDeg * DEG;
+      // słońce gry (stałe w układzie ringu — kamera kołysze się pod nim) albo dawny talerz: słońce idzie z kamerą
+      const gs = this._gameSun();
+      this.sunLocal.az = gs ? gs.az : az + s.sunOffsetDeg * DEG;
+      this.sunLocal.el = gs ? gs.el : s.sunElevationDeg * DEG;
       ring.setSun(this.sunLocal.az, this.sunLocal.el);
 
       // kamera w układzie ringu → świat (grupa ringu leży w scenie bez rodzica)
@@ -499,6 +551,10 @@ export class MenuBackdrop3D {
       cam.updateProjectionMatrix();
       cam.updateMatrixWorld(true);
     }
+    // tarcza słońca na niebie tła: kierunek słońca ringu w układzie nieba (obróconego o azymut kamery / lotu)
+    const sa = this.sunLocal.az - az;
+    const se = this.sunLocal.el;
+    o.skyUniforms.uSunDir.value.set(Math.cos(sa) * Math.cos(se), Math.sin(sa) * Math.cos(se), Math.sin(se));
 
     // Ziemia: obrót i przesunięcie chmur, macierz siatka → ring
     o.spin += dt * s.earthSpin;
@@ -515,6 +571,12 @@ export class MenuBackdrop3D {
     o.earthUniforms.uSunObj.value.copy(ring.uniforms.uSunDir.value).transformDirection(this._inv);
     o.atmUniforms.uLocal.value.multiplyMatrices(o.earthGroup.matrix, o.atmosphere.matrix);
     o.atmUniforms.uEarthInv.value.copy(this._inv);
+    if (o.plant) {
+      // elektrownia: punkt słońca w świecie (środek Ziemi + kierunek słońca ringu × PLANT_SUN_DIST), zegar efektów
+      const sw = this._sw.copy(ring.uniforms.uSunDir.value).transformDirection(M).multiplyScalar(PLANT_SUN_DIST);
+      o.plant.uniforms.sunPosition.value.set(0, 0, cz).applyMatrix4(M).add(sw);
+      o.plant.update(dt);
+    }
 
     // lot fabuły: w końcówce (kamera prawie z góry) ring liczy jak w kamerze gry — wycięcia nad halą i górna ściana
     const fl = this.flight;
@@ -575,12 +637,10 @@ export class MenuBackdrop3D {
     f.sample(t, f.pose);
     const sun = f.sun ? f.sun(f.w) : null;
     if (sun) {
+      // słońce menu = słońce gry (MENU_SHOT.gameSun), więc tor zwykle go nie przesuwa; talerz — przejście w słońce gry
       this.sunLocal.az = sun.az;
       this.sunLocal.el = sun.el;
       ring.setSun(sun.az, sun.el);
-      // tarcza słońca na niebie tła: kierunek w układzie nieba (obróconego o skyAz)
-      const a = sun.az - f.skyAz;
-      o.skyUniforms.uSunDir.value.set(Math.cos(a) * Math.cos(sun.el), Math.sin(a) * Math.cos(sun.el), Math.sin(sun.el));
     }
     const p = f.pose;
     const cam = this.camera;
@@ -609,4 +669,13 @@ export class MenuBackdrop3D {
 // Azymut kamery menu (układ ringu): hala K-7 portu gracza + przesunięcie + kołysanie.
 function menuAzimuth(s, sway) {
   return HALO_STATION_ANGLE + (s.hallAzimuthOffsetDeg + sway) * DEG;
+}
+
+/**
+ * Kąt doby Ziemi tła na starcie [rad]: środek gryzu na azymucie kamery (bez kołysania) + biteAzimuthOffsetDeg. Azymut
+ * środka gryzu w układzie ringu = atan2(−Cz, Cx) + kąt doby (siatka obrócona o π/2 wokół X, doba wokół Y).
+ */
+export function menuBiteSpin(shot = MENU_SHOT) {
+  const { C } = earthBiteFrame(EARTH_BITE);
+  return menuAzimuth(shot, 0) + shot.biteAzimuthOffsetDeg * DEG - Math.atan2(-C[2], C[0]);
 }
