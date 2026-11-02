@@ -168,18 +168,42 @@ function cachedRgb01(value, fallback) {
   return rgb;
 }
 
-export function getEntityLightScale(entity) {
+// ── Wyniki bez alokacji w gorących pętlach klatki (2026-11-02, klatka workera pod 240 Hz) ─────────────────────
+// Pomocnicze pozycje, skale i kierunki zwracały nowy obiekt na każde wywołanie — po 3–4 na encję na klatkę w każdym
+// z budowniczych (emitery, grupy lamp, billboardy, payload z indeksem), a rekordy emiterów, grup i billboardów oraz
+// pakiety świateł zewnętrznych powstawały od nowa w każdej klatce (w bitwie ~9 tys. obiektów na klatkę). Teraz:
+// wynik do `out` (bez `out` — nowy obiekt jak dotąd: API, własne lampy z pamięci per encja), scratche modułu osobne
+// dla każdej roli (wywołania zagnieżdżone — packExternal… → worldToEntitySpritePixels — nie nadpisują sobie
+// wyników), rekordy budowniczych z puli przypiętej do tablicy `out` (konsumenci czytają je w tej samej klatce),
+// pakiety zewnętrzne z pierścienia PACK_RING (payload czytany od razu; dwa kolejne payloady nie dzielą obiektów —
+// testy porównują je po wartościach).
+const _hpScaleB = { x: 1, y: 1, uniform: 1 };   // skala hardpointów w budowniczych
+const _spScaleB = { x: 1, y: 1, uniform: 1 };   // skala sprite'a w budowniczych
+const _posB = { x: 0, y: 0 };                   // pozycja w budowniczych
+const _localB = { x: 0, y: 0 };                 // lampa w px sprite'a (billboardy)
+const _hpScaleL = { x: 1, y: 1, uniform: 1 };   // getEntityHullLengthWorld
+const _spScaleL = { x: 1, y: 1, uniform: 1 };
+const _hpScaleP = { x: 1, y: 1, uniform: 1 };   // buildShipLightShaderPayload (porównanie z pamięcią)
+const _posR = { x: 0, y: 0 };                   // roadEmittersMayReach
+const _spScaleR = { x: 1, y: 1, uniform: 1 };
+const _posC = { x: 0, y: 0 };                   // buildCombinedShipLightShaderPayload
+const _spScaleC = { x: 1, y: 1, uniform: 1 };
+const _posT = { x: 0, y: 0 };                   // worldToEntitySpritePixels
+const _spScaleT = { x: 1, y: 1, uniform: 1 };
+const _spScaleD = { x: 1, y: 1, uniform: 1 };   // worldDirToEntitySpriteDir
+const _spScaleX = { x: 1, y: 1, uniform: 1 };   // packExternal…ForTarget
+
+export function getEntityLightScale(entity, out = { x: 1, y: 1, uniform: 1 }) {
   const scaleXRaw = Number(entity?.__hardpointScaleX);
   const scaleYRaw = Number(entity?.__hardpointScaleY);
   const uniformRaw = Number(entity?.__hardpointScale);
   const uniform = Number.isFinite(uniformRaw) && uniformRaw > 0 ? uniformRaw : 1;
   const scaleX = Number.isFinite(scaleXRaw) && scaleXRaw > 0 ? scaleXRaw : uniform;
   const scaleY = Number.isFinite(scaleYRaw) && scaleYRaw > 0 ? scaleYRaw : uniform;
-  return {
-    x: scaleX,
-    y: scaleY,
-    uniform: (scaleX + scaleY) * 0.5
-  };
+  out.x = scaleX;
+  out.y = scaleY;
+  out.uniform = (scaleX + scaleY) * 0.5;
+  return out;
 }
 
 function getEntityLightSource(entity) {
@@ -403,7 +427,7 @@ function addAutoFloodMarkers(block, allowAuto = true) {
 export function getEntityHullLengthWorld(entity, block = getEntityLights(entity), options = {}) {
   const lenPx = Number(block?.hullLenPx) || 0;
   if (!(lenPx > 0)) return 0;
-  return lenPx * getEntityLightScale(entity).x * getEntitySpriteScale(entity, options).x;
+  return lenPx * getEntityLightScale(entity, _hpScaleL).x * getEntitySpriteScale(entity, options, _spScaleL).x;
 }
 
 /** Czy reflektor świeci na kadłubie tej długości (automatyczne mają progi rozmiaru). */
@@ -462,13 +486,12 @@ function directionalScale(dir, scale) {
   return Number.isFinite(len) && len > 0 ? len : (Number(scale?.uniform) || 1);
 }
 
-function getScaledLightLocal(marker, scale) {
+function getScaledLightLocal(marker, scale, out = { x: 0, y: 0 }) {
   const scaleX = Number(scale?.x) || 1;
   const scaleY = Number(scale?.y) || 1;
-  return {
-    x: (Number(marker?.x) || 0) * scaleX,
-    y: (Number(marker?.y) || 0) * scaleY
-  };
+  out.x = (Number(marker?.x) || 0) * scaleX;
+  out.y = (Number(marker?.y) || 0) * scaleY;
+  return out;
 }
 
 /**
@@ -486,32 +509,28 @@ function unitComponent(v) {
   return Math.abs(v) < 1e-12 ? 0 : v;
 }
 
-function normalizeVec2(x, y, fallbackX = 1, fallbackY = 0) {
-  const len = Math.hypot(Number(x) || 0, Number(y) || 0);
+function normalizeVec2(x, y, fallbackX = 1, fallbackY = 0, out = { x: 0, y: 0 }) {
+  const xn = Number(x) || 0;
+  const yn = Number(y) || 0;
+  const len = Math.sqrt(xn * xn + yn * yn);
   if (!Number.isFinite(len) || len <= EPSILON) {
-    return { x: fallbackX, y: fallbackY };
+    out.x = fallbackX; out.y = fallbackY;
+  } else if (SHIP_LIGHT_DIR_TUNE.exact) {
+    out.x = unitComponent(x / len); out.y = unitComponent(y / len);
+  } else {
+    out.x = round2(x / len); out.y = round2(y / len);
   }
-  if (SHIP_LIGHT_DIR_TUNE.exact) {
-    return {
-      x: unitComponent(x / len),
-      y: unitComponent(y / len)
-    };
-  }
-  return {
-    x: round2(x / len),
-    y: round2(y / len)
-  };
+  return out;
 }
 
-function getEntityPosition(entity, options = {}) {
+function getEntityPosition(entity, options = {}, out = { x: 0, y: 0 }) {
   const custom = typeof options.getPosition === 'function' ? options.getPosition(entity) : null;
   const x = Number(custom?.x);
   const y = Number(custom?.y);
-  if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
-  return {
-    x: Number.isFinite(Number(entity?.pos?.x)) ? Number(entity.pos.x) : (Number(entity?.x) || 0),
-    y: Number.isFinite(Number(entity?.pos?.y)) ? Number(entity.pos.y) : (Number(entity?.y) || 0)
-  };
+  if (Number.isFinite(x) && Number.isFinite(y)) { out.x = x; out.y = y; return out; }
+  out.x = Number.isFinite(Number(entity?.pos?.x)) ? Number(entity.pos.x) : (Number(entity?.x) || 0);
+  out.y = Number.isFinite(Number(entity?.pos?.y)) ? Number(entity.pos.y) : (Number(entity?.y) || 0);
+  return out;
 }
 
 function getEntityAngle(entity, options = {}) {
@@ -522,7 +541,7 @@ function getEntityAngle(entity, options = {}) {
   return (Number(entity?.angle) || 0) + (Number(entity?.capitalProfile?.spriteRotation) || 0);
 }
 
-function getEntitySpriteScale(entity, options = {}) {
+function getEntitySpriteScale(entity, options = {}, out = { x: 1, y: 1, uniform: 1 }) {
   const customX = typeof options.getSpriteScaleX === 'function' ? Number(options.getSpriteScaleX(entity)) : NaN;
   const customY = typeof options.getSpriteScaleY === 'function' ? Number(options.getSpriteScaleY(entity)) : NaN;
   const uniformRaw = Number(entity?.visual?.spriteScale);
@@ -535,11 +554,10 @@ function getEntitySpriteScale(entity, options = {}) {
   const y = Number.isFinite(customY) && customY > 0
     ? customY
     : (Number.isFinite(scaleYRaw) && scaleYRaw > 0 ? scaleYRaw : uniform);
-  return {
-    x,
-    y,
-    uniform: (x + y) * 0.5
-  };
+  out.x = x;
+  out.y = y;
+  out.uniform = (x + y) * 0.5;
+  return out;
 }
 
 function getEntityRadiusWorld(entity, grid, spriteScale, options = {}) {
@@ -554,10 +572,10 @@ function getEntityRadiusWorld(entity, grid, spriteScale, options = {}) {
   return Math.max(16, Math.hypot(width, height) * 0.5);
 }
 
-function worldToEntitySpritePixels(worldX, worldY, entity, grid, options = {}) {
-  const pos = getEntityPosition(entity, options);
+function worldToEntitySpritePixels(worldX, worldY, entity, grid, options = {}, out = { x: 0, y: 0 }) {
+  const pos = getEntityPosition(entity, options, _posT);
   const angle = getEntityAngle(entity, options);
-  const spriteScale = getEntitySpriteScale(entity, options);
+  const spriteScale = getEntitySpriteScale(entity, options, _spScaleT);
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   const dx = (Number(worldX) || 0) - pos.x;
@@ -570,15 +588,14 @@ function worldToEntitySpritePixels(worldX, worldY, entity, grid, options = {}) {
   const height = Math.max(1, Number(grid?.srcHeight) || 1);
   const pivotX = Number(grid?.pivot?.x) || 0;
   const pivotY = Number(grid?.pivot?.y) || 0;
-  return {
-    x: round2(localX + width * 0.5 + pivotX),
-    y: round2(localY + height * 0.5 + pivotY)
-  };
+  out.x = round2(localX + width * 0.5 + pivotX);
+  out.y = round2(localY + height * 0.5 + pivotY);
+  return out;
 }
 
-function worldDirToEntitySpriteDir(dir, entity, options = {}) {
+function worldDirToEntitySpriteDir(dir, entity, options = {}, out = { x: 0, y: 0 }) {
   const angle = getEntityAngle(entity, options);
-  const spriteScale = getEntitySpriteScale(entity, options);
+  const spriteScale = getEntitySpriteScale(entity, options, _spScaleD);
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   const worldX = Number(dir?.x) || 0;
@@ -589,7 +606,8 @@ function worldDirToEntitySpriteDir(dir, entity, options = {}) {
     localScaledX / Math.max(EPSILON, spriteScale.x),
     localScaledY / Math.max(EPSILON, spriteScale.y),
     1,
-    0
+    0,
+    out
   );
 }
 
@@ -632,7 +650,7 @@ const ownPayloadCache = new WeakMap();
 
 export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER_SHIP_LIGHTS) {
   const lights = getEntityLights(entity);
-  const scale = getEntityLightScale(entity);
+  const scale = getEntityLightScale(entity, _hpScaleP);
   const limit = clampLightLimit(maxLights);
   const floods = Array.isArray(lights?.[LIGHT_KINDS.FLOOD]) ? lights[LIGHT_KINDS.FLOOD] : [];
   const hullLen = floods.length ? getEntityHullLengthWorld(entity, lights) : 0;
@@ -716,11 +734,50 @@ function lightLineageOf(entity) {
   return key > 0 ? key : 0;
 }
 
+// Rekordy budowniczych (emitery, grupy lamp, billboardy) z puli przypiętej do tablicy `out` — konsumenci
+// (indeks świateł, siatka świateł, billboardy, payload) czytają je w tej samej klatce, a `out` buduje się od nowa
+// co klatkę. Rekordy nieużyte od końca listy oddają właściciela (encja martwego okrętu nie wisi na puli).
+const _recPools = new WeakMap();
+function recordPool(out) {
+  let pool = _recPools.get(out);
+  if (pool === undefined) { pool = []; _recPools.set(out, pool); }
+  return pool;
+}
+function releaseOwnersFrom(pool, from) {
+  for (let i = from; i < pool.length && pool[i].owner !== null; i++) pool[i].owner = null;
+}
+function emitterRecord(pool, n) {
+  let r = pool[n];
+  if (r === undefined) {
+    r = pool[n] = {
+      owner: null, ownerId: '', lineage: 0, id: '', flood: false, x: 0, y: 0, dir: { x: 1, y: 0 }, color: null,
+      radiusWorld: 0, power: 0, rangeWorld: 0, coneDeg: 0, _extOwner: undefined, _extName: undefined, _extId: '', _extIdHash: 0
+    };
+  }
+  return r;
+}
+function clusterRecord(pool, n) {
+  let r = pool[n];
+  if (r === undefined) {
+    r = pool[n] = {
+      owner: null, ownerId: '', lineage: 0, id: '', x: 0, y: 0, color: null, power: 0, count: 0, spreadWorld: 0, rangeWorld: 0,
+      pulse: 0, mean: 0, _extOwner: undefined, _extName: undefined, _extId: '', _extIdHash: 0
+    };
+  }
+  return r;
+}
+function spriteRecord(pool, n) {
+  let r = pool[n];
+  if (r === undefined) r = pool[n] = { x: 0, y: 0, phase: 0, color: null, coreWorld: 0, haloWorld: 0, intensity: 0 };
+  return r;
+}
+
 export function buildRoadLightWorldEmitters(entities, options = {}) {
   const out = Array.isArray(options.out) ? options.out : [];
   if (options.clear !== false) out.length = 0;
   const list = Array.isArray(entities) ? entities : [];
   const maxEmitters = Math.max(0, Math.floor(Number(options.maxEmitters) || 256));
+  const pool = recordPool(out);
 
   // Reflektory otoczenia (flood) wchodzą jako emitery z `flood: true` — światło
   // pola i kadłuby innych statków traktują je jak krótki, szeroki reflektor.
@@ -735,9 +792,9 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
     const cloakGain = cloakLightGain(entity);
     if (cloakGain <= 0.01) continue;
 
-    const hardpointScale = getEntityLightScale(entity);
-    const spriteScale = getEntitySpriteScale(entity, options);
-    const pos = getEntityPosition(entity, options);
+    const hardpointScale = getEntityLightScale(entity, _hpScaleB);
+    const spriteScale = getEntitySpriteScale(entity, options, _spScaleB);
+    const pos = getEntityPosition(entity, options, _posB);
     const angle = getEntityAngle(entity, options);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
@@ -761,36 +818,30 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
       if (!Number.isFinite(sdLen) || sdLen <= EPSILON) { sdx = 1; sdy = 0; }
       else if (SHIP_LIGHT_DIR_TUNE.exact) { sdx = unitComponent(sdx / sdLen); sdy = unitComponent(sdy / sdLen); }
       else { sdx = round2(sdx / sdLen); sdy = round2(sdy / sdLen); }
-      const worldDir = normalizeVec2(
-        sdx * c - sdy * s,
-        sdx * s + sdy * c,
-        1,
-        0
-      );
+      const rec = emitterRecord(pool, out.length);
+      normalizeVec2(sdx * c - sdy * s, sdx * s + sdy * c, 1, 0, rec.dir);
       const scaledLocalX = localX * spriteScale.x;
       const scaledLocalY = localY * spriteScale.y;
       const spriteDirectionalScale = directionalScale(dirLocal, spriteScale);
       const rangePx = clamp(marker?.range, 50, 4000, defaults.range) * directionalScale(dirLocal, hardpointScale);
       const radiusPx = clamp(marker?.radius, 1, 48, defaults.radius) * (Number(hardpointScale?.uniform) || 1);
 
-      out.push({
-        owner: entity,
-        ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
-        lineage,
-        id: marker?.id || roadLightId(i),
-        flood,
-        x: round2(pos.x + scaledLocalX * c - scaledLocalY * s),
-        y: round2(pos.y + scaledLocalX * s + scaledLocalY * c),
-        dir: worldDir,
-        color: cachedRgb01(marker?.color, defaults.color),
-        radiusWorld: round2(radiusPx * (Number(spriteScale?.uniform) || 1)),
-        power: round2(clamp(marker?.power, 0.05, 20, defaults.power) * cloakGain),
-        rangeWorld: round2(rangePx * spriteDirectionalScale),
-        coneDeg: round2(clamp(marker?.coneDeg, 8, 160, defaults.coneDeg))
-      });
+      rec.owner = entity;
+      rec.ownerId = entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`;
+      rec.lineage = lineage;
+      rec.id = marker?.id || roadLightId(i);
+      rec.flood = flood;
+      rec.x = round2(pos.x + scaledLocalX * c - scaledLocalY * s);
+      rec.y = round2(pos.y + scaledLocalX * s + scaledLocalY * c);
+      rec.color = cachedRgb01(marker?.color, defaults.color);
+      rec.radiusWorld = round2(radiusPx * (Number(spriteScale?.uniform) || 1));
+      rec.power = round2(clamp(marker?.power, 0.05, 20, defaults.power) * cloakGain);
+      rec.rangeWorld = round2(rangePx * spriteDirectionalScale);
+      rec.coneDeg = round2(clamp(marker?.coneDeg, 8, 160, defaults.coneDeg));
+      out.push(rec);
     }
   }
-
+  releaseOwnersFrom(pool, out.length);
   return out;
 }
 
@@ -852,6 +903,7 @@ export function buildNavLightClusters(entities, options = {}) {
   const list = Array.isArray(entities) ? entities : [];
   const maxClusters = Math.max(0, Math.floor(Number(options.maxClusters) || 256));
   const time = Number(options.time) || 0;
+  const pool = recordPool(out);
   for (let entityIndex = 0; entityIndex < list.length && out.length < maxClusters; entityIndex++) {
     const entity = list[entityIndex];
     if (!entity || entity.dead) continue;
@@ -860,9 +912,9 @@ export function buildNavLightClusters(entities, options = {}) {
     const cloakGain = cloakLightGain(entity);
     if (cloakGain <= 0.01) continue;
     const groups = getNavGroups(lights);
-    const hardpointScale = getEntityLightScale(entity);
-    const spriteScale = getEntitySpriteScale(entity, options);
-    const pos = getEntityPosition(entity, options);
+    const hardpointScale = getEntityLightScale(entity, _hpScaleB);
+    const spriteScale = getEntitySpriteScale(entity, options, _spScaleB);
+    const pos = getEntityPosition(entity, options, _posB);
     const angle = getEntityAngle(entity, options);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
@@ -881,23 +933,24 @@ export function buildNavLightClusters(entities, options = {}) {
         seq += navChaseSequence(time, phase);
       }
       seq /= Math.max(1, g.xs.length);
-      out.push({
-        owner: entity,
-        ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
-        lineage,
-        id: navLightId(gi),
-        x: pos.x + lx * c - ly * s,
-        y: pos.y + lx * s + ly * c,
-        color: g.color,
-        power: cloakGain < 1 ? g.power * cloakGain : g.power,
-        count: g.count,
-        spreadWorld: g.spreadPx * worldScale,
-        rangeWorld: g.spreadPx * worldScale + NAV_CLUSTER.reachWorld,
-        pulse: seq,
-        mean: NAV_CLUSTER.meanSequence
-      });
+      const rec = clusterRecord(pool, out.length);
+      rec.owner = entity;
+      rec.ownerId = entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`;
+      rec.lineage = lineage;
+      rec.id = navLightId(gi);
+      rec.x = pos.x + lx * c - ly * s;
+      rec.y = pos.y + lx * s + ly * c;
+      rec.color = g.color;
+      rec.power = cloakGain < 1 ? g.power * cloakGain : g.power;
+      rec.count = g.count;
+      rec.spreadWorld = g.spreadPx * worldScale;
+      rec.rangeWorld = g.spreadPx * worldScale + NAV_CLUSTER.reachWorld;
+      rec.pulse = seq;
+      rec.mean = NAV_CLUSTER.meanSequence;
+      out.push(rec);
     }
   }
+  releaseOwnersFrom(pool, out.length);
   return out;
 }
 
@@ -922,6 +975,7 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
   const minHaloWorld = Math.max(0, Number(options.minHaloWorld) || 0);
   const zoom = Number(options.zoom);
   const hasZoom = Number.isFinite(zoom) && zoom > 0;
+  const pool = recordPool(out);
 
   for (let entityIndex = 0; entityIndex < list.length && out.length < maxSprites; entityIndex++) {
     const entity = list[entityIndex];
@@ -931,9 +985,9 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
     if (!markers.length) continue;
 
     const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.beamHull;
-    const hardpointScale = getEntityLightScale(entity);
-    const spriteScale = getEntitySpriteScale(entity, options);
-    const pos = getEntityPosition(entity, options);
+    const hardpointScale = getEntityLightScale(entity, _hpScaleB);
+    const spriteScale = getEntitySpriteScale(entity, options, _spScaleB);
+    const pos = getEntityPosition(entity, options, _posB);
     const angle = getEntityAngle(entity, options);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
@@ -952,7 +1006,7 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
 
     for (let i = 0; i < markers.length && out.length < maxSprites; i++) {
       const marker = markers[i];
-      const local = getScaledLightLocal(marker, hardpointScale);
+      const local = getScaledLightLocal(marker, hardpointScale, _localB);
       const phase = Math.max(0, Math.min(1, (local.x + width * 0.5 + pivotX) / width));
       const scaledLocalX = local.x * spriteScale.x;
       const scaledLocalY = local.y * spriteScale.y;
@@ -968,15 +1022,15 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
       if (entity.__lightOcclude && entity.__lightOcclude(wx, wy)) continue;
       if (_positionLightOcclusion !== null && _positionLightOcclusion(wx, wy)) continue;
 
-      out.push({
-        x: round2(wx),
-        y: round2(wy),
-        phase: round2(phase),
-        color: cachedRgb01(marker?.color, '#ff2b2b'),
-        coreWorld: round2(coreWorld),
-        haloWorld: round2(haloWorld),
-        intensity: round2(clamp(marker?.power, 0.05, 20, 0.8) * fade * cloakVis)
-      });
+      const rec = spriteRecord(pool, out.length);
+      rec.x = round2(wx);
+      rec.y = round2(wy);
+      rec.phase = round2(phase);
+      rec.color = cachedRgb01(marker?.color, '#ff2b2b');
+      rec.coreWorld = round2(coreWorld);
+      rec.haloWorld = round2(haloWorld);
+      rec.intensity = round2(clamp(marker?.power, 0.05, 20, 0.8) * fade * cloakVis);
+      out.push(rec);
     }
   }
 
@@ -1019,8 +1073,8 @@ export function computeRoadEmitterReach(emitters, out) {
 
 export function roadEmittersMayReach(reach, entity, grid, options = {}) {
   if (!reach || reach.count === 0) return false;
-  const pos = getEntityPosition(entity, options);
-  const radius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
+  const pos = getEntityPosition(entity, options, _posR);
+  const radius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options, _spScaleR), options);
   const inflate = radius * (2 + reach.tanMax);
   return pos.x >= reach.minX - inflate && pos.x <= reach.maxX + inflate
     && pos.y >= reach.minY - inflate && pos.y <= reach.maxY + inflate;
@@ -1327,22 +1381,54 @@ function nearestEmittersIndexed(index, emitters, entity, lineage, tx, ty, R, kee
   return near;
 }
 
+// Pakiety świateł zewnętrznych payloadu z pierścienia: payload czyta je od razu (writeShipLightSlot), a dwa kolejne
+// payloady (≤ 12 pakietów każdy) nie dzielą obiektów — porównania po wartościach w testach zostają prawdziwe.
+const PACK_RING = 64;
+const _packRing = [];
+let _packAt = 0;
+function packSlot() {
+  let o = _packRing[_packAt];
+  if (o === undefined) {
+    o = _packRing[_packAt] = {
+      id: '', kind: '', external: true, pos: { x: 0, y: 0 }, color: null, radiusPx: 1, power: 0, dir: { x: 0, y: -1 },
+      rangePx: 1, coneDeg: 160, _idHash: 0
+    };
+  }
+  _packAt = (_packAt + 1) % PACK_RING;
+  return o;
+}
+
+// Id światła zewnętrznego `external:<właściciel>:<lampa>` i jego hasz FNV z pamięci na rekordzie źródła (emiter,
+// grupa lamp, światło świata) — napis i hasz po znakach szły na każdy pakiet każdego kadłuba na klatkę.
+function externalIdOf(src, fallbackName) {
+  const owner = src.ownerId || 'ship';
+  const name = src.id || fallbackName;
+  if (src._extOwner !== owner || src._extName !== name) {
+    src._extOwner = owner;
+    src._extName = name;
+    src._extId = `external:${owner}:${name}`;
+    src._extIdHash = hashMixString(FNV_OFFSET_BASIS, src._extId) >>> 0;
+  }
+  return src;
+}
+
 function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
-  const targetScale = getEntitySpriteScale(entity, options);
-  const dir = worldDirToEntitySpriteDir(emitter?.dir, entity, options);
+  const targetScale = getEntitySpriteScale(entity, options, _spScaleX);
+  const targetUniform = targetScale.uniform;
+  const o = packSlot();
+  const dir = worldDirToEntitySpriteDir(emitter?.dir, entity, options, o.dir);
   const directionalTargetScale = directionalScale(dir, targetScale);
-  return {
-    id: `external:${emitter?.ownerId || 'ship'}:${emitter?.id || 'road'}`,
-    kind: emitter?.flood ? LIGHT_KINDS.FLOOD : LIGHT_KINDS.ROAD,
-    external: true,
-    pos: worldToEntitySpritePixels(emitter?.x, emitter?.y, entity, grid, options),
-    color: emitter?.color || hexToRgb01('#ffffff'),
-    radiusPx: round2(Math.max(0.5, (Number(emitter?.radiusWorld) || 1) / Math.max(EPSILON, targetScale.uniform))),
-    power: round2(clamp(emitter?.power, 0.05, 20, 3)),
-    dir,
-    rangePx: round2(Math.max(1, (Number(emitter?.rangeWorld) || 1) / Math.max(EPSILON, directionalTargetScale))),
-    coneDeg: round2(clamp(emitter?.coneDeg, 8, 160, 40))
-  };
+  const src = externalIdOf(emitter, 'road');
+  o.id = src._extId;
+  o._idHash = src._extIdHash;
+  o.kind = emitter?.flood ? LIGHT_KINDS.FLOOD : LIGHT_KINDS.ROAD;
+  worldToEntitySpritePixels(emitter?.x, emitter?.y, entity, grid, options, o.pos);
+  o.color = emitter?.color || hexToRgb01('#ffffff');
+  o.radiusPx = round2(Math.max(0.5, (Number(emitter?.radiusWorld) || 1) / Math.max(EPSILON, targetUniform)));
+  o.power = round2(clamp(emitter?.power, 0.05, 20, 3));
+  o.rangePx = round2(Math.max(1, (Number(emitter?.rangeWorld) || 1) / Math.max(EPSILON, directionalTargetScale)));
+  o.coneDeg = round2(clamp(emitter?.coneDeg, 8, 160, 40));
+  return o;
 }
 
 // Grupa lamp pozycyjnych innego statku vs kadłub celu (koło zasięgu vs koło celu).
@@ -1357,21 +1443,23 @@ function omniLightReachDistSq(light, tx, ty, targetRadius) {
 // Rozlew grupy lamp w przestrzeni sprite'a celu: rodzaj 'omni' (typ 2 w shaderze
 // kadłuba) — bez rdzenia lampy (lampa jest na innym kadłubie), tylko poświata.
 function packExternalOmniLightForTarget(light, entity, grid, options = {}) {
-  const targetScale = getEntitySpriteScale(entity, options);
-  return {
-    id: `external:${light?.ownerId || 'ship'}:${light?.id || 'nav'}`,
-    kind: 'omni',
-    external: true,
-    pos: worldToEntitySpritePixels(light?.x, light?.y, entity, grid, options),
-    color: light?.color || hexToRgb01('#ff2b2b'),
-    radiusPx: 1,
-    // Średnia sekwencji w cyklu (stała), nie bieżący błysk — podpis payloadu
-    // nie zmienia się co klatkę.
-    power: round2(Math.max(0, (Number(light?.power) || 0) * (Number(light?.mean) || NAV_CLUSTER.meanSequence))),
-    dir: { x: 0, y: -1 },
-    rangePx: round2(Math.max(1, (Number(light?.rangeWorld) || 1) / Math.max(EPSILON, targetScale.uniform))),
-    coneDeg: 160
-  };
+  const targetUniform = getEntitySpriteScale(entity, options, _spScaleX).uniform;
+  const o = packSlot();
+  const src = externalIdOf(light, 'nav');
+  o.id = src._extId;
+  o._idHash = src._extIdHash;
+  o.kind = 'omni';
+  worldToEntitySpritePixels(light?.x, light?.y, entity, grid, options, o.pos);
+  o.color = light?.color || hexToRgb01('#ff2b2b');
+  o.radiusPx = 1;
+  // Średnia sekwencji w cyklu (stała), nie bieżący błysk — podpis payloadu
+  // nie zmienia się co klatkę.
+  o.power = round2(Math.max(0, (Number(light?.power) || 0) * (Number(light?.mean) || NAV_CLUSTER.meanSequence)));
+  o.dir.x = 0;
+  o.dir.y = -1;
+  o.rangePx = round2(Math.max(1, (Number(light?.rangeWorld) || 1) / Math.max(EPSILON, targetUniform)));
+  o.coneDeg = 160;
+  return o;
 }
 
 export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLights = [], options = {}) {
@@ -1382,10 +1470,10 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   if ((!emitters.length && !omni.length) || payload.count >= maxLights) return payload;
 
   // Cel raz na payload, nie per światło (patrz roadEmitterReachDistSq).
-  const targetPos = getEntityPosition(entity, options);
+  const targetPos = getEntityPosition(entity, options, _posC);
   const tx = targetPos.x;
   const ty = targetPos.y;
-  const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
+  const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options, _spScaleC), options);
   // Światła rodu celu (rodzic odłamu / wraku) to nie światła innego statku — patrz lightLineageOf.
   const lineage = lightLineageOf(entity);
   // Statek na pokładzie holownika i holownik (src/game/serviceTugGame.js) nie oświetlają się nawzajem: lampy leżą
@@ -1416,7 +1504,7 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
       _nearItems[i] = null;
       payload.lights.push(light);
       if (hashOmni === null) hashOmni = Math.imul((payload.signature | 0) ^ 0x4f4d4e49, FNV_PRIME);
-      hashOmni = hashMixString(hashOmni, light.id);
+      hashOmni = hashMixNumber(hashOmni, light._idHash);   // hasz id z pamięci rekordu źródła (externalIdOf)
       hashOmni = hashMixNumber(hashOmni, light.pos.x);
       hashOmni = hashMixNumber(hashOmni, light.pos.y);
       hashOmni = hashMixNumber(hashOmni, light.rangePx);
@@ -1460,7 +1548,7 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
     const light = packExternalRoadLightForTarget(_nearItems[i], entity, grid, options);
     _nearItems[i] = null;
     payload.lights.push(light);
-    hash = hashMixString(hash, light.id);
+    hash = hashMixNumber(hash, light._idHash);   // hasz id z pamięci rekordu źródła (externalIdOf)
     hash = hashMixNumber(hash, light.pos.x);
     hash = hashMixNumber(hash, light.pos.y);
     hash = hashMixNumber(hash, light.dir.x);

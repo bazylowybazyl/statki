@@ -477,7 +477,23 @@ function createEffects(slots) {
     if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), jet: createSideJetState(), slot, main: null, warp: null });
     else exhausts.push({ state: null, jet: null, slot, main: createMainExhaustState(), warp: null });
   }
-  return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0, inputRefs: createSlotInputRefs(), mounts: null };
+  return {
+    exhausts, slotKey: makeSlotKey(slots), inputHash: 0, inputRefs: createSlotInputRefs(), mounts: null,
+    // skala klasy kadłuba z pamięci (entityClassScale) — wejścia: visual (nadpisanie), rama / kadłub / typ encji
+    classScale: NaN, classScaleVisual: undefined, classScaleFrame: undefined, classScaleHull: undefined, classScaleType: undefined
+  };
+}
+
+// getEngineVfxClassScale liczy z profilu kadłuba (napis typu małymi literami, wyszukiwania) — na encję na klatkę
+// ~0,08 µs × 160 okrętów; wynik zależy tylko od visual, ramy, kadłuba i typu encji (klatka workera 2026-11-02).
+function entityClassScale(entity, fxData) {
+  const visual = entity.visual, frame = entity.shipFrame, hull = entity.activeHullId, type = entity.type;
+  if (fxData.classScale === fxData.classScale && fxData.classScaleVisual === visual && fxData.classScaleFrame === frame
+    && fxData.classScaleHull === hull && fxData.classScaleType === type) return fxData.classScale;
+  const k = getEngineVfxClassScale(entity);
+  fxData.classScale = k;
+  fxData.classScaleVisual = visual; fxData.classScaleFrame = frame; fxData.classScaleHull = hull; fxData.classScaleType = type;
+  return k;
 }
 
 // Dysze na kadłubie belkowym (hullBodies.js) leżą w pikselach sprite'a właściciela: po rozpadzie dysze odpadłej
@@ -543,7 +559,7 @@ function resolveWarpMode(entity) {
   if (hyper === 'active') return 'active';
   if (hyper === 'charging') return 'preheat';
   if (hyper === 'drop') return 'drop';
-  const player = RenderWorld.ship;
+  const player = frameCtx.playerShip;
   if (player && entity === player) {
     const w = RenderWorld.warp;
     if (w?.state === 'charging') return 'charging';
@@ -564,10 +580,11 @@ function resolveWarpMode(entity) {
 /**
  * Dopalacz silników MAIN: Shift gracza, system F w toku — szarża albo zryw silników, gracz i NPC
  * (`entity.__fSysBoost`: index.html, src/ai/npcShipSystem.js); w edytorze — Shift testu.
+ * Statek gracza z kontekstu klatki (frameCtx.playerShip — jeden odczyt fasady na klatkę, nie na okręt).
  */
 function resolveMainBoost(entity) {
   if (entity.__editorBoost === true || entity.__fSysBoost === true) return true;
-  const player = RenderWorld.ship;
+  const player = frameCtx.playerShip;
   return !!(player && entity === player && RenderWorld.boost?.state === 'active');
 }
 
@@ -619,11 +636,13 @@ const frameCtx = {
   camera: null,
   isOrtho: true,
   viewportH: 1080,
-  // odczyty window raz na klatkę (update): statek gracza i jego poza interpolowana, strojenie dysz SIDE
+  // odczyty window raz na klatkę (update): statek gracza i jego poza interpolowana, strojenie dysz SIDE,
+  // dawny wygląd hipercruise'u (?hcStary=1)
   playerShip: null,
   playerPose: null,
   tune: null,
   sideWidthMul: 1,
+  hyperLegacy: false,
   // LOD dysz SIDE (audyt FPS 2026-10-11, updateEffects): kamera z góry (piksele z zoomu — w kamerach 3D skala zależy
   // od punktu, decyduje rysownik), margines pudła rysowania [j. świata], próg modelu dyszy [px promienia wylotu]
   lod: false,
@@ -729,14 +748,16 @@ function updateEffects(entity, fxData, dt) {
   const ey = interpPose ? interpPose.y : (entity?.pos ? entity.pos.y : (entity?.y || 0));
   const angle = interpPose ? interpPose.angle : (entity?.angle || 0);
   const scale = getEntityScale(entity);
-  const classScale = getEngineVfxClassScale(entity);
+  const classScale = entityClassScale(entity, fxData);
 
   const sceneOriginY = -ey;
   const sceneAngle = -angle;
   const cA = Math.cos(sceneAngle);
   const sA = Math.sin(sceneAngle);
 
-  const speed = Math.hypot(entity.vx || entity.vel?.x || 0, entity.vy || entity.vel?.y || 0);
+  const svx = entity.vx || entity.vel?.x || 0;
+  const svy = entity.vy || entity.vel?.y || 0;
+  const speed = Math.sqrt(svx * svx + svy * svy);
   const moveGlow = Math.min(speed / 900, 0.6) * 0.8;
   const thrustMain = Math.max(
     0,
@@ -764,13 +785,13 @@ function updateEffects(entity, fxData, dt) {
   // Hipercruise (rozruch, lot, wyjście): spokojna plazma, większe gorące powietrze, strugi opływu z dysz gracza
   // (hyperLook.js, hyperFlow.js); `?hcStary=1` — dawny wygląd.
   const hyperDrive = entity.__hyperMode === 'charging' || entity.__hyperMode === 'active' || entity.__hyperMode === 'drop';
-  const hyperHaze = hyperDrive && !hyperLegacyLookOn();
+  const hyperHaze = hyperDrive && !frameCtx.hyperLegacy;
   // Silniki MAIN wyłączone / zapłon / gaszenie (src/game/engineIgnition.js — etap E2): moc strugi MAIN (z płomykiem
   // jałowym) × mnożnik stanu; rampa mocy strugi (mainExhaust3D) wygładza resztę. Encja bez stanu — 1.
   const plumeK = entity.engineIgn ? enginePlumeScale(entity) : 1;
   const plumeKick = entity.engineIgn ? engineIgnitionKick(entity) : 0;   // silnik „łapie” — rozbłysk strugi w zapłonie
   const mainBoost = resolveMainBoost(entity) && plumeK >= 1;
-  const isPlayerEntity = entity === RenderWorld.ship || entity.isPlayer === true;
+  const isPlayerEntity = entity === frameCtx.playerShip || entity.isPlayer === true;
   const isHulk = entity.isBridgeHulk === true;
   const jetGainRaw = isPlayerEntity ? Number(RenderWorld.options?.vfx?.bloomGain) : NaN;
   const jetGain = Number.isFinite(jetGainRaw) && jetGainRaw >= 0 ? jetGainRaw : 1;
@@ -1116,6 +1137,7 @@ export const EngineVfxSystem = {
     frameCtx.playerPose = frameCtx.playerShip ? (RenderWorld.playerPose || null) : null;
     frameCtx.tune = RenderWorld.vfxTune || null;
     frameCtx.sideWidthMul = Math.max(0.05, Number(frameCtx.tune?.sideW) || 1);
+    frameCtx.hyperLegacy = hyperLegacyLookOn();
     frameCtx.lod = frameCtx.isOrtho;
     frameCtx.drawMargin = Number.isFinite(drawMargin) && drawMargin > 0 ? drawMargin : 0;
     frameCtx.modelMinPx = Number(SideNozzleFrame.modelMinPx) || 0;

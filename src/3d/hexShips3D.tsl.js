@@ -62,7 +62,7 @@ import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShado
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
 import { getBeltMedium } from './asteroids/beltMedium.js';
 import { fxNoise } from './fx/noise.js';
-import { zbierzZakres } from './zakresyWysylki.js';
+import { zbierzZakres, zbierzZakresy, scalZakresy } from './zakresyWysylki.js';
 import { cloakDistOffset, hullCloakSurface } from './cloak/cloakTSL.js';
 import { CLOAK_LOOK_OFF } from '../game/cloakLook.js';
 // Oświetlenie v2 (2026-10-06): model PBR kadłubów, mapa powierzchni ze sprite'a (hullSurface.js).
@@ -231,6 +231,9 @@ export function decodeHullPatchShade(raw) {
 // stref. Materiał czyta slot od `uLightBase` (w vec4) do liczników z uniformów.
 export const HULL_LIGHT_SLOT_VEC4 = MAX_SHADER_SHIP_LIGHTS * 3 + MAX_ENGINE_ZONES;
 export const HULL_LIGHT_ZONE_OFFSET = MAX_SHADER_SHIP_LIGHTS * 3;
+// scalanie zakresów wysyłki slotów lamp (commit): zakresy oddalone o mniej niż tyle liczb (~32 KB float32, ~10 slotów)
+// idą jednym writeBuffer
+const HULL_LIGHT_RANGE_GAP = 8192;
 export const HULL_LIGHT_SLOTS = 1024;
 
 export const HullLightStore = {
@@ -242,7 +245,7 @@ export const HullLightStore = {
   _next: 0,
   _dirty: false,
   _warned: false,
-  stats: { acquired: 0, released: 0, exhausted: 0, ranges: 0 },
+  stats: { acquired: 0, released: 0, exhausted: 0, ranges: 0, rangesSent: 0 },
 
   _ensure() {
     if (this.attribute) return;
@@ -291,15 +294,20 @@ export const HullLightStore = {
   /** Zakres [startVec4, startVec4 + countVec4) slotu do wysłania na GPU. */
   markDirty(slot, startVec4, countVec4) {
     if (!(slot >= 0) || !(countVec4 > 0)) return;
-    const attr = this.attribute;
-    attr.addUpdateRange((slot * this.slotVec4 + startVec4) * 4, countVec4 * 4);
+    // zakres z puli (zbierzZakresy — stykający się z ostatnim go rozszerza), scalanie i jedna wersja w commit
+    zbierzZakresy(this.attribute, (slot * this.slotVec4 + startVec4) * 4, countVec4 * 4, true);
     this._dirty = true;
     this.stats.ranges++;
   },
 
-  /** Raz na klatkę (updateHexShips3D): jedna wersja atrybutu na wszystkie zakresy. */
+  /**
+   * Raz na klatkę (updateHexShips3D): jedna wersja atrybutu na wszystkie zakresy, zakresy slotów oddalone o mniej niż
+   * HULL_LIGHT_RANGE_GAP liczb scalone — three wysyła każdy zakres osobnym writeBuffer (w bitwie ~130 slotów lamp
+   * zmienia podpis co klatkę: ~130 wywołań na klatkę, klatka workera 2026-11-02).
+   */
   commit() {
     if (!this._dirty || !this.attribute) return;
+    this.stats.rangesSent = scalZakresy(this.attribute, HULL_LIGHT_RANGE_GAP);
     this.attribute.needsUpdate = true;
     this._dirty = false;
   }
@@ -399,6 +407,18 @@ export const HullObjectStore = {
       const u = mesh.material?.uniforms;
       if (!u) continue;
       const o = slot * stride;
+      // kadłub partii niewidoczny (poza kadrem, smuga, ukryty): sama flaga widoczności — reszty slotu nikt nie czyta
+      // (wierzchołek zwinięty), a przy powrocie w kadr pełny zapis idzie w tej samej klatce (commit co render;
+      // klatka workera 2026-11-02: ~60 ze 170 kadłubów bitwy niewidocznych, 92 liczby na kadłub)
+      if (batched && !mesh.visible) {
+        if (A[o + 53] !== 0) {
+          A[o + 53] = 0;
+          if (slot < lo) lo = slot;
+          if (slot > hi) hi = slot;
+          n++;
+        }
+        continue;
+      }
       _hullMV.multiplyMatrices(inv, mesh.matrixWorld);
       const m = _hullMV.elements;
       for (let k = 0; k < 16; k++) A[o + k] = m[k];

@@ -867,6 +867,13 @@ if (isWorker) {
     try { const ex = globalThis.__explosions; if (ex && st.gasObstBlk) ex.setObstacleInput(st.gasObstBlk.gasObstInputOf(v)); } catch (e) { modFail('przeszkody gazu', e); }
     const cam = st.cam;
     cam.x = h[H.CAM_X]; cam.y = h[H.CAM_Y]; cam.zoom = h[H.CAM_ZOOM]; cam.roll = h[H.CAM_ROLL] || 0;   // obrót kadru (hipercruise — viewRoll.js)
+    // kamera gry BEZ wstrząsu jako `RenderWorld.camera` workera (strona: window.camera; getter fasady czyta globalThis):
+    // LOD strug MAIN za kadrem (prepareMainLod liczy ruch kadru z tej kamery — bez niej worker nie ciął strug nigdy),
+    // kierunek słońca odłamków (hullDebris3D), tempo pasm olbrzymów gazowych (gasGiantAtmosphere) — jak w trybie off
+    // (2026-11-02, klatka workera pod 240 Hz)
+    const cns = st.camNs || (st.camNs = { x: 0, y: 0, zoom: 1, roll: 0 });
+    cns.x = h[H.CAMNS_X]; cns.y = h[H.CAMNS_Y]; cns.zoom = h[H.CAMNS_ZOOM]; cns.roll = h[H.CAMNS_ROLL] || 0;
+    globalThis.camera = cns;
     const c = st.cull;
     c.x = h[H.CULL_X]; c.y = h[H.CULL_Y]; c.halfW = h[H.CULL_HALF_W]; c.halfH = h[H.CULL_HALF_H];
     c.drawHalfW = h[H.CULL_DRAW_HALF_W]; c.drawHalfH = h[H.CULL_DRAW_HALF_H];

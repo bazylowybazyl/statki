@@ -276,28 +276,36 @@ export class LightGrid {
       let by0 = ly - range;
       let by1 = ly + range;
       if (L[o + 11] > -1.5) {
-        // Reflektor węższy niż półsfera: prostokąt wycinka koła (próbki łuku + wierzchołek).
+        // Reflektor węższy niż półsfera: prostokąt wycinka koła — wierzchołek, końce łuku (oś w płaszczyźnie
+        // obrócona o ±połowę kąta: cos / sin z cosinusa stożka, bez trig) i te kierunki osi układu, które leżą
+        // w wycinku (tam łuk sięga pełnego promienia). Nadzbiór dawnych 9 próbek łuku (próbki leżą na łuku),
+        // więc komórki świateł ⊇ dawnych — obraz bez zmian (klatka workera 2026-11-02: 9 × cos / sin na
+        // reflektor na klatkę, 0,09 ms w bitwie).
         const ax = L[o + 8];
         const ay = L[o + 9];
-        const al = Math.hypot(ax, ay);
-        if (al > 1e-4) {
-          const half = Math.acos(Math.max(-1, Math.min(1, L[o + 11])));
-          if (half < Math.PI * 0.5) {
-            const base = Math.atan2(ay, ax);
-            bx0 = bx1 = lx;
-            by0 = by1 = ly;
-            for (let k = 0; k <= 8; k++) {
-              const a = base - half + (2 * half) * (k / 8);
-              const px = lx + Math.cos(a) * range * 1.05;
-              const py = ly + Math.sin(a) * range * 1.05;
-              if (px < bx0) bx0 = px;
-              if (px > bx1) bx1 = px;
-              if (py < by0) by0 = py;
-              if (py > by1) by1 = py;
-            }
-            const pad = range * 0.06;
-            bx0 -= pad; bx1 += pad; by0 -= pad; by1 += pad;
-          }
+        const al = Math.sqrt(ax * ax + ay * ay);
+        const cosH = L[o + 11];
+        if (al > 1e-4 && cosH > 0) {
+          const bx = ax / al;
+          const by = ay / al;
+          const sinH = Math.sqrt(Math.max(0, 1 - cosH * cosH));
+          const rr = range * 1.05;
+          bx0 = bx1 = lx;
+          by0 = by1 = ly;
+          // końce łuku: kąt osi − połowa i + połowa
+          let px = lx + (bx * cosH + by * sinH) * rr;
+          let py = ly + (by * cosH - bx * sinH) * rr;
+          if (px < bx0) bx0 = px; if (px > bx1) bx1 = px; if (py < by0) by0 = py; if (py > by1) by1 = py;
+          px = lx + (bx * cosH - by * sinH) * rr;
+          py = ly + (by * cosH + bx * sinH) * rr;
+          if (px < bx0) bx0 = px; if (px > bx1) bx1 = px; if (py < by0) by0 = py; if (py > by1) by1 = py;
+          // kierunek osi układu w wycinku ⟺ jego cosinus z osią reflektora ≥ cosinus połowy kąta
+          if (bx >= cosH && lx + rr > bx1) bx1 = lx + rr;
+          if (-bx >= cosH && lx - rr < bx0) bx0 = lx - rr;
+          if (by >= cosH && ly + rr > by1) by1 = ly + rr;
+          if (-by >= cosH && ly - rr < by0) by0 = ly - rr;
+          const pad = range * 0.06;
+          bx0 -= pad; bx1 += pad; by0 -= pad; by1 += pad;
         }
       }
       const cx0 = Math.max(0, Math.floor((bx0 - x0) / cw));

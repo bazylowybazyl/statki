@@ -36,6 +36,10 @@ export function buildHullSkinTopology(body) {
   for (let k = 1; k < uvs.length; k += 2) uvs[k] = 1 - uvs[k];
   topo.heatNow = 0;
   topo.heatDecay = 0.35;
+  // pamięć żaru węzła na jeden zapis skóry (heatOf): węzeł wchodzi jako sąsiad do ~8 czworokątów po 3 narożniki
+  topo.heatVal = new Float32Array(topo.count);
+  topo.heatSeen = new Uint32Array(topo.count);
+  topo.heatEpoch = 0;
   return topo;
 }
 
@@ -45,6 +49,24 @@ function heatAt(s, i, now, decay) {
   if (!(peak > 0)) return 0;
   const age = now - s.heatStamp[i];
   return age > 0 ? peak * Math.exp(-age * decay) : peak;
+}
+
+// Żar węzła z pamięci jednego zapisu skóry (epoka = wywołanie writeHullSkin / writeHullSkinQuads): ten sam wynik co
+// heatAt, a exp() raz na węzeł zamiast na każde odwiedziny narożnika (klatka workera 2026-11-02).
+function heatOf(topo, s, i, now, decay) {
+  const epoch = topo.heatEpoch;
+  if (topo.heatSeen[i] === epoch) return topo.heatVal[i];
+  const h = heatAt(s, i, now, decay);
+  topo.heatSeen[i] = epoch;
+  topo.heatVal[i] = h;
+  return h;
+}
+
+// Nowa epoka pamięci żaru (zawinięcie licznika — pamięć od zera).
+function nextHeatEpoch(topo) {
+  let epoch = (topo.heatEpoch + 1) >>> 0;
+  if (epoch === 0) { topo.heatSeen.fill(0); epoch = 1; }
+  topo.heatEpoch = epoch;
 }
 
 // Trwałe odkształcenie belek węzła → ciemniejsza blacha w wgnieceniu.
@@ -84,7 +106,7 @@ function writeQuad(i, topo, half, positions, shade, heat, tear) {
   const dxn = x[i] - ox[i], dyn = y[i] - oy[i];
   const dent = nodeDent(s, e, i);
   const now = topo.heatNow, decay = topo.heatDecay;
-  const ownHeat = heatAt(s, i, now, decay);
+  const ownHeat = heatOf(topo, s, i, now, decay);
   const patch = s.patch, patched = patch ? patch[i] === 1 : false;
   for (let k = 0; k < 4; k++) {
     const sx = SPRITE_CORNERS[k][0], sy = SPRITE_CORNERS[k][1];
@@ -99,7 +121,7 @@ function writeQuad(i, topo, half, positions, shade, heat, tear) {
       const m = ea[bi] === i ? eb[bi] : ea[bi];
       if (!active[m]) { torn++; continue; }
       if (patched && patch[m] !== 1) seam = 1;
-      const hm = heatAt(s, m, now, decay);
+      const hm = heatOf(topo, s, m, now, decay);
       if (hm > cornerHeat) cornerHeat = hm;
       if (broken[bi]) { torn++; continue; }
       sumX += x[m] - ox[m]; sumY += y[m] - oy[m]; weight++;
@@ -121,6 +143,7 @@ function writeQuad(i, topo, half, positions, shade, heat, tear) {
 /** Cała skóra (tear — rozdarcie narożników, opcjonalne). Zwraca liczbę widocznych czworokątów. */
 export function writeHullSkin(body, topo, positions, shade, heat, tear = null) {
   const half = body.cellSize * 0.5;
+  nextHeatEpoch(topo);
   let visible = 0;
   for (let i = 0; i < topo.count; i++) visible += writeQuad(i, topo, half, positions, shade, heat, tear);
   return visible;
@@ -133,6 +156,7 @@ export function writeHullSkin(body, topo, positions, shade, heat, tear = null) {
 export function writeHullSkinQuads(body, topo, positions, shade, heat, list, count, out, tear = null) {
   const half = body.cellSize * 0.5, links = topo.links, stamps = topo.stamps;
   const ea = topo.beamStore.a, eb = topo.beamStore.b;
+  nextHeatEpoch(topo);
   let stamp = (topo.stamp + 1) >>> 0;
   if (stamp === 0) { stamps.fill(0); stamp = 1; }
   topo.stamp = stamp;
