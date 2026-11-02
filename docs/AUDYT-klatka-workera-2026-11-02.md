@@ -251,6 +251,12 @@ import('/src/3d/mainExhaust3D.js'); m.MainExhaust3D.offscreenLod = …; })()`. W
 wszystko 3,12 / 3,32 / 4,61 i 3,12 / 3,31 / 4,51; bez scalania 3,14 / 3,30 / 4,40 (kanapki n = 4: CPU −0,01, klatka GPU
 +0,10 ms); bez LOD strug 3,21 / 3,37 / 4,52 (n = 3: CPU +0,025, GPU −0,10 — szum pomiaru GPU co 8 klatek).
 
+Obraz: `zrzuty.mjs --backend webgpu --sceny bitwa,bitwa-blisko,wraki,wybuch,pas-pole,pas-noc --uuid osobne` — baza z worktree
+a9693758 (`--root`) kontra nowy kod: 0% pikseli > 2/255 w każdej scenie i warstwie (maks. różnica 0–1/255), pipeline'y
+synchroniczne 0 (harness w trybie `off`; w workerze dochodzi kamera gry — LOD strug i światło odłamków jak w `off`).
+Testy: `node --test "tests/*.test.mjs"` — 3693 / 3699 (2 TODO rdzeni, 3 pominięte); nowe testy `scalZakresy`,
+`HullSkinBatch.flushRanges`, strażnik macierzy nośnika w `hullSkinBatch.test.mjs`.
+
 ### 7.4 Dlaczego nie 3 ms i co dalej
 
 Tanie dźwignie z § 5 pkt 1 dały ~5%, bo klatka nie ma dominanty: w szczycie ~45% to three i API GPU (65–70 rysunków
