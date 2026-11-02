@@ -293,3 +293,96 @@ pominięcie ukrytych gałęzi w `_syncSceneMatrices` (ring Ziemi 102 obiekty, ri
 audytu renderu przez trzymacze rozgrzewki: macierz świata skompilowana w ukryciu z innym wyznacznikiem = pipeline w
 klatce; bezpieczna wersja wymaga znacznika „macierz policzona po ustawieniu” na obiekcie); porównania okien różnych
 przebiegów tej samej bitwy (seed 7) — chaos daje ±0,5 ms, rozstrzyga tylko `--wkAb`.
+
+### 7.5 Mniej rysunków i renderów (2026-11-02, sesja „klatka workera: mniej rysunków”, § 7.4 pkt 1)
+
+Zadanie: zdjąć z klatki workera koszt three per rysunek / per render bez zmiany obrazu i bez pipeline'ów synchronicznych
+(partie skór, reaktory, mgła pasa; ocena wież 3D i passu gęstości dymu rakiet). Monitor 240 Hz, maszyna bez gier i obcych
+harnessów (CPU 13–16%, GPU 1%).
+
+**Koszt rysunku (profil workera, bitwa V1, cały przebieg, 65,5 rysunku / kl.):** pod `_renderObjectDirect` 0,94 ms / kl.
+≈ 14 µs na rysunek, z tego `writeBuffer` 0,24 ms (bufory storage 0,10 — slot kadłubów, lampy; atrybuty 0,06; tablice
+uniformów 0,07 — zależy od ilości danych, nie od liczby rysunków). STAŁY narzut ≈ 10,5 µs na rysunek: wiązania
+(`_updateBindings` → `Bindings._update`, bez wysyłek) ~3,5 µs, `backend.draw` (pipeline, grupy wiązań, bufory,
+`draw`) ~1,8, węzły OBJECT ~1,3, `RenderObjects.get` (`getDynamicCacheKey`) ~0,9, własny `_renderObjectDirect` ~0,8,
+`updateAttributes` bez wysyłki ~0,6, cień odbiorcy (`updateBefore` → `updateShadow`) ~0,6, `getForRender` ~0,5. Tyle zdejmuje scalenie jednego rysunku.
+
+#### Zmiany (każda bit w bit; zrzuty niżej)
+
+1. **Mgła pasa jednym rysunkiem na pass** (`fog.js`): płaty passa (6 głębokich w tle, 2 płytkie w passie gry) w jednej
+   siatce w kolejności dawnych rysunków (najgłębszy pierwszy — mieszanie w jednym rysunku idzie w kolejności prymitywów),
+   wartości płatu w tablicy uniformów, płat = nośnik (Object3D), macierz model-widok płatu z kamery rysunku × macierz
+   świata nośnika (jak `highpModelViewMatrix`). Bitwa V1: 3 → 1 rysunek, pole pasa do 6 → 1 i 2 → 1.
+2. **Reaktory**: cień wszystkich rodzajów i plazma terran + pirate jednym rysunkiem (rekordy rodzajów po kolei we
+   wspólnym buforze z `iKind`, plazma czyta atrybuty i stałe swojego rodzaju — ta sama rura). Bitwa V1: 6 → 4.
+   Konstrukcja zostaje per rodzaj (różne modele).
+3. **Czyszczenie w passie celów pomocniczych**: warstwa DIST (co klatkę w bitwie — tarcze, bronie, cel MSAA 4 przy
+   5120 × 1440) i mapa gęstości dymu rakiet bez osobnego `renderer.clear()` (w three r183 osobny pass ze zgłoszeniem,
+   przy MSAA z rozwiązaniem całego celu; render po nim wczytywał cel z powrotem) — 2 passy GPU mniej na klatkę.
+
+#### Ocenione i niezrobione
+
+- **Partie skór 9 → 1 (tablica warstw / atlas)** — nie bit w bit: sprite'y bitwy mają różne, nieparzyste boki
+  (1942×809, 1727×911, 1840×854…), a three r183 generuje mipmapy próbką dwuliniową (`WebGPUTexturePassUtils`), więc
+  poziomy warstwy z dopełnieniem różnią się od poziomów samodzielnej tekstury (przy nieparzystym boku poziom to w środku
+  obrazu próbka punktowa, w warstwie — średnia 2 × 2); przy zoomie 0,1 rysują się poziomy 4–6, anizotropia 4 wyklucza
+  ręczne próbkowanie poziomów. Do tego tablica 9 warstw w rozmiarze największego sprite'a (2400×1792) dla sprite'a,
+  kształtu lakieru i mapy powierzchni ≈ 2,5× VRAM obecnych tekstur. Zysk ≈ 8 × 10,5 µs ≈ 0,08 ms CPU. Decyzja
+  (zmiana obrazu na poziomach mip / pamięć) — do zleceniodawcy.
+- **Rodziny wież 3D 8 → 1–2**: różne geometrie rodzin; jeden rysunek = każda instancja liczy wierzchołki największej
+  rodziny (pobieranie wierzchołków z bufora) — setki wież masowych rodzin × kilka tys. wierzchołków ≈ +2 mln wywołań
+  etapu wierzchołków na klatkę za ~7 rysunków (~0,07 ms CPU); karta przy Ultra jest droższa.
+- **Konstrukcja reaktora** (terran 18 900, pirate 10 854, Atlas 25 776 wierzchołków bez indeksu): wspólna geometria
+  = ~1,8 mln zbędnych wierzchołków na klatkę przy ~120 reaktorach w kadrze za 1 rysunek.
+- **Odłamki kadłubów** (płyta / kształtownik, ten sam materiał): dwie pule pierścieniowe — scalenie zmienia wymianę
+  najstarszych przy pełnej puli albo przegląda całą pulę płyt; −1 rysunek, odłożone.
+- **Pass gęstości dymu rakiet razem z krokiem światła**: raster gęstości → compute zmieniłby wynik (kolejność
+  sumowania); zostaje render, zdjęte tylko osobne czyszczenie (pkt 3).
+- Te same osobne `clear()` przed renderem mają jeszcze pre-pass halo planet i atlas cieni reflektorów pasa (poza bitwą
+  V1) — ten sam pomocnik (`renderCzyszczac`), gdy będą w mierzonej scenie.
+
+#### Pomiary
+
+Okno 240 Hz, 5120 × 1440 Ultra 1,25, bitwa V1 100 s, seed 7 (`profil-bitwy-flot --okno 1 … --wkZdarzenia` sonda +
+diagnostyka jak w § 7.3). Okna różnych przebiegów różnią się chaosem bitwy — liczby obok liczby rysunków.
+
+| przebieg | okno | klatek / s | cała klatka śr. | p95 kubełków maks. | `renderSingle` | rysunki / kl. |
+|---|---|---|---|---|---|---|
+| baza (ad154f31) | 5–25 s | 239 | 3,19 | 3,89 | 1,54 | 46,8 |
+| baza | 35–70 s | 181 | 3,94 | 5,75 | 2,15 | 65,2 |
+| baza | 65–95 s | 129 | 4,37 | 6,65 | 2,38 | 68,7 |
+| po: mgła + reaktory | 5–25 s | 238 | 3,17 | 4,02 | 1,54 | 45,3 |
+| po: mgła + reaktory | 35–70 s | 167 | 4,01 | 5,90 | 2,20 | 62,4 |
+| po: mgła + reaktory | 65–95 s | 163 | 3,69 | 5,19 | 2,07 | 61,5 |
+
+Rysunki w diagnostyce (`klatka-workera-diag.js`, 30–92 s): **65,5 → 61,6 na klatkę** (płaty mgły 3 → 1, reaktory 6 → 4);
+osobne passy `clear` na klatkę 2 → 0 (DIST, gęstość dymu). Liczba `render()` bez zmian (8). Zrzuty (`zrzuty.mjs --sceny
+bitwa,bitwa-blisko,wraki,wybuch,pas-pole,pas-noc --uuid osobne`, baza z drzewa ad154f31 przez `--root`, ten sam harness):
+0% pikseli > 2/255 w każdej scenie i warstwie (maks. 0–2/255), pipeline'y synchroniczne 0; rysunki scen: bitwa 55 → 52,
+pas-pole 65 → 60, pas-noc 66 → 61. Ostatni przebieg w oknie ze wszystkimi trzema zmianami pominięty (użytkownik grał na tej
+samej maszynie) — skutek czyszczenia w passie niżej z A/B.
+
+**A/B w tej samej bitwie** (`--wkAb`, przełączniki `BeltFog.splitDraws`, `REACTOR3D_TUNE.mergeKinds`,
+`CZYSZCZENIE_AB.pomocnicze`; analiza kanapek tylko z wybranych okien — skrypt w scratchpadzie sesji, wzór liczenia jak
+w `profil-bitwy-flot.mjs`):
+
+- w biegnącej bitwie (okna 4 s, n = 3–4): kanapki rozrzucone ±0,4 ms (trend bitwy między sąsiednimi oknami ≫ efekt) —
+  nie rozstrzyga;
+- **w zatrzymanej bitwie** (`--zdarzenia "35@window.__setGamePaused(true)"`, okna 2 s, stała treść klatki, worker rysuje
+  dalej): wszystko po staremu wobec nowego — **CPU klatki workera +0,017 ms (p50 kanapek, n = 10; średnia +0,023,
+  9 z 10 dodatnich)**, GPU 0,000; osobno (pauza w 40 s, n = 4): same rysunki po staremu — CPU +0,003 (p50) / −0,023
+  (średnia), w szumie; samo czyszczenie po staremu — CPU −0,005, **GPU +0,098 ms** (osobny pass clear celu DIST z MSAA).
+  Uwaga do A/B mgły: wariant „po staremu” to grupy JEDNEJ siatki (ten sam obiekt renderu — three odświeża go raz na
+  klatkę), więc jest tańszy od dawnych osobnych siatek płatów; reaktory po staremu to prawdziwe siatki rodzajów.
+- Z profilu bazy: osobne `clear()` kosztowały CPU 0,015 ms / kl. (gęstość dymu) + 0,006 (DIST, średnio na klatkę).
+
+**Wniosek:** scalenie małych rysunków (mgła, plazma, cień — mało wiązań, bez dużych wysyłek) zdejmuje mniej niż średnie
+~10,5 µs stałego narzutu — łącznie z czyszczeniem w passie ~0,02 ms CPU w pauzie, w biegnącej bitwie szacunkowo
+0,03–0,05 ms (wtedy three odświeża wiązania każdego rysunku) — i do ~0,1 ms pracy GPU. **Cel „~45 rysunków na klatkę”
+nieosiągnięty bez zmiany obrazu:** zostało 61,6, a duże pozycje (partie skór 9, rodziny wież 8) wymagają zmiany obrazu
+na poziomach mip albo dodatkowej pracy karty (wyżej). Średni koszt rysunku z profilu (~14 µs) zawyża zysk ze scalania
+małych rysunków — liczy się raczej to, co rysunek wysyła i ile ma wiązań (skóry, wieże, kadłuby w ruchu).
+
+Ranking dalszych kroków (§ 7.4) po tej sesji: pkt 1 schodzi na koniec (zostały pozycje ze zmianą obrazu — decyzja);
+pierwsze są dane per okręt na GPU (pkt 2 — wybór świateł kadłuba i pozycje dysz w kernelu: ~0,15 ms CPU i 130 zakresów
+wysyłki), dysze w rytmie fizyki (pkt 3), potem lustra i pomocnik bez GPU.
