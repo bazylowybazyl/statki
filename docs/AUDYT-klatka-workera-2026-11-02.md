@@ -338,6 +338,10 @@ uniformów 0,07 — zależy od ilości danych, nie od liczby rysunków). STAŁY 
   najstarszych przy pełnej puli albo przegląda całą pulę płyt; −1 rysunek, odłożone.
 - **Pass gęstości dymu rakiet razem z krokiem światła**: raster gęstości → compute zmieniłby wynik (kolejność
   sumowania); zostaje render, zdjęte tylko osobne czyszczenie (pkt 3).
+- **Puste `render()` w klatce** (8 na klatkę, ~35 µs każdy): w bitwie V1 żaden nie bywa pusty — tarcze (warstwa 7,
+  `layerActivity`), DIST (`distortLayerActive`), mapa cienia słońca (`passShadowScan` — tylko z rzucającymi w kadrze) i
+  gęstość dymu rakiet (`highWater` wraca do 0, gdy cały dym wygaśnie — `smoke.js`) mają już warunek zawartości, a tło,
+  ortho, FG, maska słońca i post zawsze coś rysują; nic do zdjęcia bit w bit.
 - Te same osobne `clear()` przed renderem mają jeszcze pre-pass halo planet i atlas cieni reflektorów pasa (poza bitwą
   V1) — ten sam pomocnik (`renderCzyszczac`), gdy będą w mierzonej scenie.
 
