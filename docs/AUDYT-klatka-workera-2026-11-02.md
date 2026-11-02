@@ -134,3 +134,156 @@ Narzędzie: `node scripts/profil-bitwy-flot.mjs --scena baza --okno 1 --szer 512
 
 Nie zmierzono: skala renderu 100% przy Ultra (ustawienie użytkownika według audytu renderu § 7.2) — tu 1,25 z presetu;
 CPU workera to nie zmienia, GPU jest o tyle cięższe. Takt 240 Hz w oknie — monitor stał na 120 Hz.
+
+## 7. Tańsze dźwignie (2026-11-02, sesja „klatka workera pod 240 Hz”)
+
+Zadanie: klatka workera w bitwie V1 przy 5120 × 1440 (Ultra, zoom 0,1, okno 240 Hz) śr. ≤ 3 ms i p95 ≤ 4 ms, bez zmiany
+obrazu i bez pipeline'ów synchronicznych; najpierw dźwignie z § 5 pkt 1 (lustra, LOD dysz i świateł, `getStats`, zapisy
+skór), dopiero potem dane per okręt na GPU albo pomocnik bez GPU. Monitor stał na 240 Hz (`CurrentRefreshRate 240`), maszyna
+bez gier i obcych harnessów (GPU 1%, CPU 13%). **Wynik: −0,2 ms (−6%) w porównywalnym oknie 5–25 s (3,22 → 3,01 ms),
+w szczycie ~3,3–3,9 ms zamiast 4,3 (okna szczytu różnią się między przebiegami liczbą rysunków — niżej), p95 bez zmiany
+rzędu (4,0 → 3,8 w 5–25 s; w szczycie 5–7). Cel 3 ms / 4 ms NIEOSIĄGNIĘTY tanimi dźwigniami** — klatka to długi ogon
+funkcji po 10–120 µs (żadna nie dominuje) i three / API GPU (~45%); co dalej — § 7.4.
+
+### 7.1 Skład klatki przed zmianami (diagnostyka `klatka-workera-diag.js`, headless, 30–93 s bitwy)
+
+Nowe narzędzie `scripts/webgpu/klatka-workera-diag.js` / `-odczyt.js` (`--wkZdarzenia`) liczy na klatkę: rysunki po nazwie
+obiektu i materiału, wywołania `render` po masce warstw i celu, listy `compute` po nazwach kerneli, `writeBuffer` po
+etykiecie bufora, pudła (encje w pudle rozgrzania / rysowania), LOD dysz MAIN, dysze klatki, światła siatki, wypieki
+cienia SDF, czworokąty skór kopiowane do partii, obiekty sceny i najwolniejsze klatki ze składem.
+
+- 61–65 rysunków na klatkę, każdy inny obiekt: 9 partii skór (typ kadłuba × frakcja + Atlas), 8 rodzin wież, 6 rysunków
+  reaktorów (struktura / cień / plazma × 2 frakcje), 3 płaty mgły pasa, niebo 3, rakiety 4 (+ pass gęstości dymu), tarcze
+  3, pył 2, strugi MAIN i SIDE, lampy pozycyjne, bronie, iskry, mostek, maska słońca, post. 8 `render()` na klatkę
+  (tło, znaczek głębi skał gry, ortho, FG, tarcze, DIST, gęstość dymu rakiet, mapa cienia, post) i 9–11 `compute()`
+  (44–54 kerneli: bloom + szum mgły jedną listą 13, gaz wybuchów po 22–48, bronie 1–6, rakiety 1–3, tarcze, pas, mapa ran).
+- **242 `writeBuffer` na klatkę (525 KB)**: ~130 to sloty lamp kadłubów (`HullLightStore.markDirty` → `addUpdateRange` na
+  slot; podpis payloadu zmienia się co klatkę, bo światła innych okrętów jadą względem kadłuba, a three wysyła KAŻDY
+  zakres osobnym wywołaniem), ~60 to czworokąty skór w partiach (zakres na kadłub na atrybut), reszta — bufory uniformów
+  rysunków (etykiety `bindingBuffer…`), siatka świateł, pule efektów.
+- Okręty: 167–172 w pudle rozgrzania (0 odrzuconych), 18–38 tylko w pudle rozgrzania (poza kadrem), 107–130 kadłubów ze
+  skórą (reszta smugi); dysz MAIN 300–450, SIDE 230–290 (świateł SIDE 46–64 przy limicie 64); świateł siatki 344–470
+  (2,7–3,4 tys. wpisów komórek); lampy pozycyjne 512 (limit). **LOD strug MAIN za kadrem w workerze nie działał**
+  (`MainLodStats.offBox = 0`): `prepareMainLod` czyta kamerę z `RenderWorld.camera`, a worker jej nie wystawiał
+  (`globalThis.camera` puste) — ten sam brak gasił kierunek słońca odłamków (`hullDebris3D`) i tempo pasm olbrzymów
+  gazowych z zoomu.
+- Scena workera: 812–942 obiektów (560 siatek, 495–581 widocznych, 771–891 z `matrixAutoUpdate`), `_syncSceneMatrices`
+  0,10–0,13 ms; największe poddrzewa niewidoczne (ring Ziemi 102 obiekty, ring Halo 81, bitwa w głębi, luk Atlasa) —
+  pominięcie ukrytych gałęzi odrzucone już w § 7.1 audytu renderu (trzymacze rozgrzewki).
+- Wypiek cienia SDF: 2,8–3,4 ms na wypiek (raster + EDT 256² + brzeg + wgranie warstwy), co ~100 klatek przy ostrzale —
+  klatki 6,5–9 ms; najwolniejsze klatki 9–13 ms bez wypieku (GC, rozkazy wybuchów). Przy budżecie 240 Hz liczy się
+  jednak masa: w szczycie 16% klatek 4–5 ms i 3% 5–6 ms (histogram diagnostyki), nie pojedyncze piki.
+- Rozbicie `updateHexShips3D` (profil, szczyt 35–70 s, czas łączny na klatkę): dysze `EngineVfxSystem.update` 0,38 ms
+  (`updateEffects` własny 0,12, `MainExhaust3D.push` 0,06, `resolveSlotForward` 0,04, SIDE 0,03, `getEngineVfxClassScale`
+  0,02), `updateBeamSkinMesh` 0,30 (światła payloadu 0,13: `buildCombinedShipLightShaderPayload` 0,09 — własne 0,02,
+  najbliższe emitery / grupy 0,03, pakowanie 0,02; zapis skóry 0,10), `WeaponFx.sync` 0,08, grupy lamp 0,06, emitery
+  0,05, billboardy lamp 0,05, wypieki SDF 0,04, indeks świateł 0,02. Klatka efektów (0,73 ms): wybuchy 0,16 (gaz), rakiety
+  0,24 (gęstość dymu 0,06, światło 0,04, krok 0,05, rakiety / poświaty / światła 0,06), pas 0,12 (światła statków 0,05),
+  tarcze 0,06 (compute), siatka świateł `build` 0,04–0,07, bronie 0,07. Passy sceny: `renderer.render` 1,1 ms (~65 rysunków
+  po ~13 µs + 8 renderów po ~35 µs), `HullObjectStore.commit` 0,10 (92 liczby na kadłub na klatkę, 130 kadłubów).
+
+### 7.2 Zmiany (każda bez zmiany obrazu; A/B w tej samej bitwie tam, gdzie jest przełącznik)
+
+1. **`MainExhaust3D.getStats` bez przeglądu 16 384 slotów** (`jetCount` tylko do pomiarów) — −30 µs na klatkę.
+2. **Macierz nośnika skóry kadłuba wprost** (`updateBeamSkinMesh`: cos / sin, skala, przesunięcie do `matrixWorld`;
+   `matrixAutoUpdate = false`, bez `rotation.set` → `setFromEuler` → `compose` na kadłub na klatkę) — `setFromEuler`
+   22 µs → 0; `HullObjectStore.commit` pisze dla kadłuba niewidocznego (smuga, poza kadrem — ~60 ze 170) samą flagę
+   widoczności (self 71 → ~52 µs). Kandydaci cienia SDF: test zasięgu przed siatką cienia i wymiarami, rekordy z puli.
+3. **Lustra**: listy pochodne (SEEN ⊂ RENDER, NPCS_SEEN ⊂ NPCS…) biorą gotowe lustro bez drugiego wejścia w `_entity`
+   (~5 wejść na encję na stronę → 1).
+4. **Kamera gry w workerze** (`globalThis.camera` = kamera bez wstrząsu strony, `renderPage`): LOD strug MAIN za kadrem
+   działa (diagnostyka po zmianie: 96 ze 400 dysz MAIN poza pudłem rysowania, 47 bez strug na klatkę); odłamki dostają
+   kierunek słońca, olbrzymy gazowe tempo z zoomu — obraz workera jak w `off`. A/B `MainExhaust3D.offscreenLod = false`
+   w tej samej bitwie (kanapki 4 s, n = 3): bez LOD +0,025 ms CPU klatki (p50).
+5. **Światła kadłubów bez alokacji** (`shipLightRuntime.js`: scratche pozycji / skal / kierunków, rekordy emiterów, grup
+   i billboardów z puli per tablica `out`, pakiety zewnętrzne z pierścienia, id i hasz z pamięci rekordu źródła) — ~9 tys.
+   obiektów na klatkę mniej, ale **bez mierzalnego zysku w średniej** (self budowniczych 17–24 µs przed i po; V8 alokuje
+   tanio, koszt siedzi w arytmetyce i odczytach pól); zostaje dla GC (0,02–0,05 ms na klatkę).
+6. **Siatka świateł**: pudło wycinka reflektora z końców łuku (obrót osi o ±połowę kąta z cosinusa stożka) i kierunków osi
+   układu w wycinku zamiast 9 próbek łuku z `cos` / `sin` — nadzbiór dawnych pudeł (te same komórki lub więcej, światło
+   poza zasięgiem daje 0 → obraz bit w bit); `build` 62–66 → 37–44 µs.
+7. **Skóry kadłubów**: żar narożników z pamięci na jeden zapis skóry (`heatOf`, epoka — exp() raz na węzeł zamiast na
+   każde odwiedziny narożnika, ~12 na czworokąt), partia kopiuje pozycje blokiem (`set`).
+8. **Dysze**: skala klasy kadłuba z pamięci per encja (`entityClassScale` — `resolveEntityHullProfileId` z napisem typu
+   małymi literami szedł na okręt na klatkę: 22 µs), dawny wygląd hipercruise'u i statek gracza raz na klatkę w `frameCtx`,
+   `Math.hypot` → `sqrt`.
+9. **Scalanie zakresów wysyłki** (`scalZakresy` w `zakresyWysylki.js`: po posortowaniu zakresy oddalone o < 8192 liczb
+   jednym `writeBuffer`; `HullLightStore.commit`, `HullSkinBatch.flushRanges` z `syncSkinBatches`): `writeBuffer`
+   242 → ~130 na klatkę. A/B `ZAKRESY_AB.scal = false` w tej samej bitwie (kanapki, n = 4): **CPU klatki −0,01 ms (szum),
+   klatka GPU −0,10 ms** — zysk jest po stronie procesu GPU i karty, nie wątku workera.
+
+### 7.3 Pomiary (RTX 5080, 7800X3D, okno 240 Hz 5120 × 1440, Ultra 1,25, bitwa 100 s, seed 7)
+
+Okna tej samej bitwy w różnych przebiegach różnią się intensywnością (liczba rysunków 59–69, wraki, pociski) — dlatego
+liczby „przed / po” obok liczby rysunków, a przełączniki osobno przez `--wkAb` (§ 7.2 pkt 4 i 9). Headless (bez limitu
+klatek) daje te same czasy klatki co okno (§ 2), ale inne tempo stron.
+
+| przebieg | okno | klatek / s | cała klatka śr. | p50 | p95 kubełków 5 s (maks. / śr.) | `renderSingle` | rysunki / kl. |
+|---|---|---|---|---|---|---|---|
+| baza (a9693758), okno | 5–25 s | 238 | 3,22 | 3,16 | 4,04 / 3,72 | 1,53 | 50,2 |
+| baza, okno | 35–70 s | 197 | 3,55 | 3,45 | 5,83 / 4,31 | 1,83 | 62,2 |
+| baza, okno | 65–95 s (szczyt) | 124 | 4,33 | 4,13 | 7,33 / 5,83 | 2,28 | 69,1 |
+| po zmianach, okno, przebieg A/B (¾ okien z włączonym wszystkim) | 5–25 s | 237 | 3,01 | 2,94 | 3,83 / 3,52 | 1,44 | 49,5 |
+| po zmianach, okno, przebieg A/B | 35–70 s | 150 | 3,86 | 3,64 | 6,07 / 5,09 | 2,03 | 68,9 |
+| po zmianach, okno, przebieg A/B | 65–95 s | 170 | 3,32 | 3,15 | 4,96 / 4,27 | 1,83 | 63,9 |
+| po zmianach, headless (etap 3) | 5–25 s | 263 | 2,98 | 2,91 | 3,85 / 3,45 | 1,40 | 45,8 |
+| po zmianach, headless (etap 3) | 35–70 s | 216 | 3,36 | 3,24 | 4,68 / 4,22 | 1,82 | 59,1 |
+| po zmianach, headless (etap 3) | 65–95 s | 140 | 4,32 | 4,11 | 7,76 / 6,05 | 2,38 | 67,7 |
+| **po zmianach, okno (końcowy)** | 5–25 s | 239 | **3,10** | 3,04 | 3,88 / 3,61 | 1,53 | 47,7 |
+| po zmianach, okno (końcowy) | 35–70 s | 184 | 3,64 | 3,52 | 6,08 / 4,49 | 1,95 | 61,5 |
+| po zmianach, okno (końcowy) | 65–95 s | 137 | **4,07** | 3,91 | 5,63 / 5,26 | 2,23 | 67,9 |
+| po zmianach, okno (końcowy) | 60–90 s (szczyt 30 s) | 148 | 4,14 | — | 6,09 / — | 2,25 | 68,1 |
+
+Przy tej samej liczbie rysunków: 5–25 s −0,12 ms (−4%), szczyt −0,26 ms (−6%), 35–70 s bez zmiany (szum ±0,1).
+Skład końcowy w szczycie (60–90 s, profil): `renderSingle` 2,25 (passy sceny 1,12 — `renderer.render` 1,25 ms z sondy
+dla 8 renderów i 68 rysunków; klatka efektów 0,71; macierze 0,12; post 0,11; DIST 0,07; maska 0,05), przed renderem 1,89
+(`updateHexShips3D` 1,06, lustra 0,26, modele i wieże 0,14, mostki 0,07, reaktory 0,05, tarcze 0,05, rozkazy 0,05);
+po plikach: światła kadłubów 0,30, lustra 0,23, dysze 0,20 + 0,06, `hexShips3D` 0,16, worker 0,11, modele 0,11, skóry 0,07.
+Wywołań `writeBuffer` 135 na klatkę (było 242), dysz MAIN 367 (66 poza pudłem rysowania, 24 bez strug), świateł siatki
+444 (3,5 tys. wpisów), kadłubów ze skórą 119, smug 15.
+
+A/B przełączników w TEJ SAMEJ bitwie (okno 240 Hz, 100 s, kanapki 4 s):
+`node scripts/profil-bitwy-flot.mjs --okno 1 --szer 5120 --wys 1440 --sklad 50,20,10,3 --trwanie 100 --profile 999
+--workerProf 1 --query "renderWorker=1&grafika=ultra" --zoom 0.1 --seed 7 --out <kat> --wkAb "plik:baza.js|plik:scal0.js|plik:baza.js|plik:lod0.js"
+--wkZdarzenia "0@plik:scripts/webgpu/klatka-workera-sonda.js|96@plik:scripts/webgpu/klatka-workera-odczyt.js"` — pliki
+wyrażeń: `(async () => { const z = await import('/src/3d/zakresyWysylki.js'); z.ZAKRESY_AB.scal = …; const m = await
+import('/src/3d/mainExhaust3D.js'); m.MainExhaust3D.offscreenLod = …; })()`. Warianty (cała klatka p50 / śr. / p95):
+wszystko 3,12 / 3,32 / 4,61 i 3,12 / 3,31 / 4,51; bez scalania 3,14 / 3,30 / 4,40 (kanapki n = 4: CPU −0,01, klatka GPU
++0,10 ms); bez LOD strug 3,21 / 3,37 / 4,52 (n = 3: CPU +0,025, GPU −0,10 — szum pomiaru GPU co 8 klatek).
+
+### 7.4 Dlaczego nie 3 ms i co dalej
+
+Tanie dźwignie z § 5 pkt 1 dały ~5%, bo klatka nie ma dominanty: w szczycie ~45% to three i API GPU (65–70 rysunków
+po ~13 µs, 8 renderów po ~35 µs, 10–11 list compute po ~30 µs, wysyłki), a ~1,8 ms kodu modułów rozkłada się na ~60
+funkcji po 10–120 µs (największe: `updateEffects` 0,12 własnego, lustra `_entity` + `applyEntityPage` 0,12, wieże 3D
+`syncTurrets` 0,07, światła kadłubów ~0,3 w sumie, skóry 0,07–0,17 przy ostrzale). Alokacje nie ważą (pkt 5); LOD poza
+kadrem dotyczy przy zoomie 0,1 tylko ~20% okrętów (pudło rysowania 51 × 14 km obejmuje bitwę). Ranking następnych
+kroków (szacunki z profilu końcowego):
+
+1. **Mniej rysunków i renderów** (−0,3–0,5 ms, bez zmiany obrazu, każdy to osobny projekt): partie skór przez tablicę
+   tekstur / atlas sprite'ów (9 → 1 rysunek; obrazy kadłubów różnych rozmiarów), rodziny wież 3D w jednym rysunku
+   (8 → 1–2: wspólna geometria z zakresami per rodzina), reaktory bez podziału na frakcje (6 → 3: paleta w atrybucie
+   instancji), płaty mgły pasa (3 → 1), pass gęstości dymu rakiet razem z passem światła dymu. Każdy rysunek three r183
+   to ~13 µs CPU (`Bindings._update` po wszystkich wiązaniach grupy obiektu) + praca procesu GPU.
+2. **Dane per okręt na GPU** (−0,2–0,3 ms): wybór świateł zewnętrznych kadłuba (K najbliższych emiterów i grup —
+   `buildCombinedShipLightShaderPayload`, pakowanie, zapis slotu: ~0,15 ms + 130 zakresów wysyłki) jako kernel po
+   kadłubach × światłach (170 × 450 testów) ze stabilnym remisem po indeksie jak CPU (parzystość do sprawdzenia bit w
+   bit — f32 kontra f64 na granicy zasięgu); pozycje dysz MAIN / SIDE w świecie z pozy okrętu w kernelu (dziś CPU liczy
+   je dla 370 + 270 dysz na klatkę, a potem jeszcze raz dla świateł, gorącego powietrza i poświaty na pyle).
+3. **Dysze w rytmie fizyki** (−0,15 ms): `updateEffects` (ciąg, moc, LOD, haze, światła) raz na krok fizyki (60 Hz,
+   zmiana `physicsTickId`), na każdą stronę tylko transformacja wylotów pozą renderu do wierszy właścicieli strug,
+   `EngineFrame` i źródeł gorącego powietrza — rampy mocy dają ten sam wynik dla stałego celu między krokami, flicker
+   próbkowany co krok (obraz: faza migotania strugi co 1/60 s zamiast co stronę).
+4. **Lustra**: encje poza pudłem rysowania (20–40) tylko poza i flagi (−0,03); pola poziomu B (wymiary, kody) tylko gdy
+   strona je odświeżyła (bit w `FLAGS2` z pakującego, −0,02).
+5. **p95 / p99**: wypiek cienia SDF rozłożony na dwie klatki (raster + EDT kolumn w jednej, EDT wierszy + brzeg +
+   wgranie w następnej; cień damage'u o klatkę później) — zdejmuje klatki 6,5–9 ms przy ostrzale; sortowanie 168
+   kandydatów cienia co stronę (`updateHexShips3D` własny 0,04–0,08) zamiast raz na krok fizyki.
+6. **Pomocnik bez GPU** (§ 1, ~1,0–1,2 ms do przejęcia w szczycie) — dopiero po 1–3, bo przejmuje właśnie te moduły;
+   po nich zostaje mu ~0,6–0,8 ms.
+
+Sprawdzone, odrzucone albo bez zysku w tej sesji: usuwanie alokacji świateł (pkt 5 — bez zysku w średniej);
+pominięcie ukrytych gałęzi w `_syncSceneMatrices` (ring Ziemi 102 obiekty, ring Halo 81 — ~0,04 ms; odrzucone w § 7.1
+audytu renderu przez trzymacze rozgrzewki: macierz świata skompilowana w ukryciu z innym wyznacznikiem = pipeline w
+klatce; bezpieczna wersja wymaga znacznika „macierz policzona po ustawieniu” na obiekcie); porównania okien różnych
+przebiegów tej samej bitwy (seed 7) — chaos daje ±0,5 ms, rozstrzyga tylko `--wkAb`.
