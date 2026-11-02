@@ -853,7 +853,8 @@ test('rulon całej gry: hak w wierzchołkach każdego materiału, bez passa cien
   assert.doesNotMatch(read('src/3d/warp/medium.js'), /rulonForward\(/);
   assert.match(read('src/3d/planet3d.assets.tsl.js'), /material\.rulonBend = false;/);
   const core = read('src/3d/core3d.js');
-  assert.match(core, /RULON\.pass\.value = 1;\s*renderer\.render\(this\.scene, camera\);\s*RULON\.pass\.value = 0;/);
+  // warstwa DIST: render (z czyszczeniem w passie albo dawnym — A/B) w passie rulonu
+  assert.match(core, /RULON\.pass\.value = 1;\s*if \(inPass\) renderCzyszczac\(renderer, this\.scene, camera, true, false, false\);\s*else renderer\.render\(this\.scene, camera\);\s*RULON\.pass\.value = 0;/);
 });
 
 test('rekord własny osi β (demo, recenzja etapu 2): wiek wyjścia trwa po bezczynności do zatrzymania + WARP_LENS_EXIT_SPAN (trzymanie celu), nowe ładowanie go kończy; hipercruise — bez', () => {
