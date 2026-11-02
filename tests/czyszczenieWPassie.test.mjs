@@ -217,3 +217,68 @@ test('three r183: deskryptor passa z resolveTarget z _getRenderPassDescriptor (b
   const contexts = read('node_modules/three/src/renderers/common/RenderContexts.js');
   assert.match(contexts, /renderState\.clearDepthValue = this\.renderer\.getClearDepth\(\);/, 'głębia czyszczenia passa = renderer.getClearDepth()');
 });
+
+// --- cele pomocnicze w klatce (2026-11-02, klatka workera): warstwa DIST i mapa gęstości dymu rakiet ---
+
+function fakeRenderer(log) {
+  return {
+    autoClear: false, autoClearColor: true, autoClearDepth: true, autoClearStencil: true, info: { frame: 0 },
+    getRenderTarget() { return null; }, setRenderTarget(t) { log.push(['target', t ? t.name : null]); },
+    getClearColor(c) { return c; }, getClearAlpha() { return 1; },
+    setClearColor(c, a) { log.push(['setClearColor', c, a]); },
+    clear(c, d, s) { log.push(['clear', c, d, s]); },
+    render() { log.push(['render', this.autoClear, this.autoClearColor, this.autoClearDepth, this.autoClearStencil]); }
+  };
+}
+
+test('czyszczenie w passie: warstwa DIST czyści sam kolor w passie warstwy (głębia bez czyszczenia), A/B — dawne clear', async () => {
+  const { CZYSZCZENIE_AB } = await import('../src/3d/czyszczenieWPassie.js');
+  const run = () => {
+    const log = [];
+    const c = Object.create(Core3D);
+    c.renderer = fakeRenderer(log);
+    c.scene = {};
+    c.fx = { commitDistortion() {}, distortLayerActive: true, stats: {}, post: {} };
+    c._postUniforms = { uDistLayerOn: { value: 0 } };
+    c.composerTarget = { width: 4, height: 4 };
+    c.distortionTarget = { name: 'dist' };
+    c._renderInfoBefore = {};
+    c._readRenderInfoInto = () => {};
+    c._addRenderInfoDelta = () => {};
+    c.getPassCamera = () => ({ layers: { mask: 1, set() {} } });
+    c._renderFxDistortion(false);
+    return { log, r: c.renderer };
+  };
+  const { log, r } = run();
+  assert.deepEqual(log, [['target', 'dist'], ['setClearColor', 0x000000, 0.0], ['render', true, true, false, false], ['target', null]]);
+  assert.deepEqual([r.autoClear, r.autoClearColor, r.autoClearDepth, r.autoClearStencil], [false, true, true, true]);
+  CZYSZCZENIE_AB.pomocnicze = false;
+  try {
+    assert.deepEqual(run().log.slice(1, 4), [['setClearColor', 0x000000, 0.0], ['clear', true, false, false], ['render', false, true, true, true]]);
+  } finally {
+    CZYSZCZENIE_AB.pomocnicze = true;
+  }
+});
+
+test('czyszczenie w passie: mapa gęstości dymu rakiet — z cząstkami czyszczenie w passie, bez nich sam clear', async () => {
+  const THREE = await import('three/webgpu');
+  const { SmokeSystem } = await import('../src/3d/rockets/smoke.js');
+  const { CZYSZCZENIE_AB } = await import('../src/3d/czyszczenieWPassie.js');
+  const run = (highWater) => {
+    const log = [];
+    const self = {
+      U: { dRect: { value: new THREE.Vector4() }, dStep: { value: new THREE.Vector2() }, sunDir: { value: new THREE.Vector3() } },
+      densityCam: new THREE.OrthographicCamera(), densityMesh: {}, densityRT: { name: 'gestosc' }, densityScene: {}, highWater
+    };
+    SmokeSystem.prototype.renderDensity.call(self, fakeRenderer(log), -10, -10, 10, 10, new THREE.Vector3(1, 0, 0), 240);
+    return log.filter((e) => e[0] === 'clear' || e[0] === 'render');
+  };
+  assert.deepEqual(run(50), [['render', true, true, false, false]]);
+  assert.deepEqual(run(0), [['clear', true, false, false]]);
+  CZYSZCZENIE_AB.pomocnicze = false;
+  try {
+    assert.deepEqual(run(50), [['clear', true, false, false], ['render', false, true, true, true]]);
+  } finally {
+    CZYSZCZENIE_AB.pomocnicze = true;
+  }
+});

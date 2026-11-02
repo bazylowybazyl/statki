@@ -32,6 +32,7 @@ import { HEAT_TILE_PX, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost
 import { zbierzZakres } from './zakresyWysylki.js';
 import { BloomGryCompute } from './tsl/bloomCompute.js';
 import { resizeRenderTarget } from './renderTargetResize.js';
+import { CZYSZCZENIE_AB, renderCzyszczac } from './czyszczenieWPassie.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
@@ -2269,19 +2270,7 @@ export const Core3D = {
       renderer.render(scene, camera);
       return;
     }
-    const a0 = renderer.autoClear, ac = renderer.autoClearColor, ad = renderer.autoClearDepth, as = renderer.autoClearStencil;
-    renderer.autoClear = true;
-    renderer.autoClearColor = clearColor;
-    renderer.autoClearDepth = true;
-    renderer.autoClearStencil = clearColor;
-    try {
-      renderer.render(scene, camera);
-    } finally {
-      renderer.autoClear = a0;
-      renderer.autoClearColor = ac;
-      renderer.autoClearDepth = ad;
-      renderer.autoClearStencil = as;
-    }
+    renderCzyszczac(renderer, scene, camera, clearColor, true, clearColor);
   },
 
   // ZNACZEK GŁĘBI PRZED PASSEM SCENY (2026-10-29, pole asteroid przy 5120 × 1440): obiekty rysowane tylko do GŁĘBI celu
@@ -2473,12 +2462,16 @@ export const Core3D = {
     const t0 = performance.now();
     renderer.setRenderTarget(target);
     renderer.setClearColor(0x000000, 0.0);
-    renderer.clear(true, false, false);
+    // kolor czyszczony w passie warstwy (czyszczenieWPassie.js — bez osobnego passu clear z rozwiązaniem MSAA celu),
+    // głębia jak dawniej bez czyszczenia; A/B: CZYSZCZENIE_AB.pomocnicze = false
+    const inPass = CZYSZCZENIE_AB.pomocnicze !== false;
+    if (!inPass) renderer.clear(true, false, false);
     const camera = this.getPassCamera(true);
     const prevMask = camera.layers.mask;
     camera.layers.set(FX_DISTORT_LAYER);
     RULON.pass.value = 1;
-    renderer.render(this.scene, camera);
+    if (inPass) renderCzyszczac(renderer, this.scene, camera, true, false, false);
+    else renderer.render(this.scene, camera);
     RULON.pass.value = 0;
     camera.layers.mask = prevMask;
     renderer.setRenderTarget(prevTarget);

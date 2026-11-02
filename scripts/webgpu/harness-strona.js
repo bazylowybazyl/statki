@@ -424,7 +424,12 @@
       for (const l of layers) mask |= (1 << l);
       const orig = r.__harnessRender;
       r.render = function (sceneArg, cam, ...rest) {
-        if ((cam === C.cameraOrtho || cam === C.cameraPersp) && !(cam.layers.mask & mask)) return undefined;
+        if ((cam === C.cameraOrtho || cam === C.cameraPersp) && !(cam.layers.mask & mask)) {
+          // Pominięty render, który czyścił cel W PASSIE (autoClear — passy sceny, warstwa DIST; czyszczenieWPassie.js):
+          // to samo czyszczenie osobno — inaczej w celu zostaje stara klatka (np. mapa zniekształceń sprzed izolacji).
+          if (this.autoClear === true) this.clear(this.autoClearColor, this.autoClearDepth, this.autoClearStencil);
+          return undefined;
+        }
         return orig.call(this, sceneArg, cam, ...rest);
       };
       return true;
