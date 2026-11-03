@@ -53,6 +53,19 @@ export const HALL_DUST_TUNE = {
   jetFlow: 260,         // [1/s]
   jetSourceLen: 600,    // zasięg źródła od wylotu [j.]
   minPower: 0.2,        // moc dysz, od której dmuchają (jałowe płomyki nie)
+  // DYSZE SIDE (2026-11-03, zgłoszenie użytkownika: „gazy i pyły nie reagują na silniki boczne”): każda dysza manewrowa
+  // z ciągiem (EngineFrame.side — moc strugi z automatu dyszy: impulsy PWM, od 0,8 ciągła struga) to krótki stożek
+  // z wylotu dzwonu wzdłuż wydechu, z profilem płaskim, wydatkiem gazu (jak MAIN: ∝ r² wylotu) i rozrzedzaniem pyłu.
+  // Wymiary w promieniach wylotu R (Atlas: R ≈ 15 j.). false — bez dysz SIDE (A/B).
+  sideJets: true,
+  sideMax: 24,          // strumieni SIDE na klatkę (po dyszach MAIN, przed źródłami hali)
+  sideMinPower: 0.05,
+  sideSpeed: 1700,      // prędkość gazu u wylotu przy pełnym ciągu [j/s]
+  sideLength: [16, 34], // zasięg stożka [R]: od + × moc (Atlas: ~550 j. w impulsie, 750 j. ciągłą strugą)
+  sideWidth: 1.4,       // półszerokość u nasady [R] (najmniej 1,5 komórki)
+  sideWiden: 0.22,
+  sideRate: 9,          // tempo narzucania prędkości [1/s]
+  sideSourceLen: 8,     // zasięg źródła objętości od wylotu [R]
   zBack: -26,           // wysokość warstwy pod kadłubami (scena; kadłuby −10,4…−5,3, struga MAIN −5)
   zFront: 9,            // warstwa nad kadłubami (pod efektami z = 14–15)
   fadeView: [26000, 52000], // zanik obrazu przy oddaleniu: pół przekątnej kadru [j.]
@@ -98,6 +111,58 @@ const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
+/**
+ * Dysze SIDE z ciągiem (lista płaska `EngineFrame.side`: wylot dzwonu i kierunek wydechu w scenie — y w górę = −y gry,
+ * promień wylotu R, moc) → strumienie pola gazu hali od `nj` (rekordy 12 + 4 liczb jak dysze MAIN, komórki domeny):
+ * stożek z wylotu wzdłuż wydechu, zasięg R · (sideLength[0] + sideLength[1] · moc), półszerokość u nasady
+ * max(1,5 komórki, R · sideWidth), prędkość sideSpeed · moc, wydatek gazu jak MAIN (jetFlow · moc · (R / h)² / całka
+ * profilu źródła), profil płaski (rozrzedzanie pyłu spalinami), zasłanianie przeszkodami. Dysza dalej od domeny niż
+ * zasięg stożka — pominięta. Zwraca nową liczbę strumieni (≤ max). Czyste (testy).
+ */
+export function writeHallSideJets(F, J, JD, nj, max, aff, dom, T, jetFlat) {
+  const h = dom.h;
+  const det = aff.ax * aff.by - aff.bx * aff.ay;
+  for (let i = 0; i < F.sdN && nj < max; i++) {
+    const p = F.sdP[i];
+    if (!(p >= T.sideMinPower)) continue;
+    const R = F.sdR[i];
+    const len = R * (T.sideLength[0] + T.sideLength[1] * p);
+    const dx = F.sdX[i] - aff.p0x;
+    const dy = -F.sdY[i] - aff.p0y;
+    const hx = (aff.by * dx - aff.bx * dy) / det;
+    const hz = (aff.ax * dy - aff.ay * dx) / det;
+    if (hallDomainDistance(dom, hx, hz) > len) continue;
+    const vx = F.sdDX[i];
+    const vy = -F.sdDY[i];
+    let ux = (aff.by * vx - aff.bx * vy) / det;
+    let uz = (aff.ax * vy - aff.ay * vx) / det;
+    const ul = Math.sqrt(ux * ux + uz * uz) || 1;
+    ux /= ul; uz /= ul;
+    const o = nj * 12;
+    J[o] = (hx - dom.x0) / h;
+    J[o + 1] = (hz - dom.z0) / h;
+    J[o + 2] = ux;
+    J[o + 3] = uz;
+    const w0 = Math.max(1.5, R * T.sideWidth / h);
+    J[o + 4] = len / h;
+    J[o + 5] = w0;
+    J[o + 6] = T.sideWiden;
+    J[o + 7] = T.sideSpeed * p / h;
+    J[o + 8] = T.sideRate;
+    J[o + 9] = 0; J[o + 10] = 0; J[o + 11] = 0;
+    const ls = R * T.sideSourceLen / h;
+    const area = jetSourceIntegralCpu(len / h, w0, T.sideWiden, ls, jetFlat);
+    const r = R / h;
+    const d = nj * 4;
+    JD[d] = area > 0 ? T.jetFlow * p * r * r / area : 0;
+    JD[d + 1] = ls;
+    JD[d + 2] = 1;   // profil płaski — rozrzedzanie pyłu spalinami (jetClean)
+    JD[d + 3] = 1;   // zasłanianie stożka przeszkodami
+    nj++;
+  }
+  return nj;
+}
+
 class HallDustSystem {
   constructor() {
     this.input = new Float64Array(I.size);
@@ -122,7 +187,7 @@ class HallDustSystem {
     this.smoke = null;
     this._ventAcc = new Float64Array(16);
     this.stats = {
-      active: false, hall: 0, jets: 0, sources: 0, bodies: 0, substeps: 0, dispatches: 0, sleeping: false, cpuMs: 0,
+      active: false, hall: 0, jets: 0, main: 0, side: 0, sources: 0, bodies: 0, substeps: 0, dispatches: 0, sleeping: false, cpuMs: 0,
       lights: 0, bursts: 0, venting: 0
     };
   }
@@ -221,7 +286,8 @@ class HallDustSystem {
     const JD = sim.jetsD;
     let nj = 0;
     const maxEngine = Math.max(0, sim.maxJets - HALL_GAS_MAX);
-    for (let k = 0; k < EngineFrame.count && nj < maxEngine; k++) {
+    const maxMain = Math.max(0, maxEngine - (T.sideJets ? Math.max(0, T.sideMax | 0) : 0));
+    for (let k = 0; k < EngineFrame.count && nj < maxMain; k++) {
       // Dym zapłonu / gaszenia silników (src/game/engineIgnition.js — etap E2): zimny gaz z dysz rusza kurz, zanim zapali
       // się struga (sam przepływ, bez pary — dym pokazuje gaz 3D wybuchów, bez podwójnej mgły).
       const eng = EngineFrame.entity[k];
@@ -264,6 +330,10 @@ class HallDustSystem {
       JD[d + 3] = 1;   // zasłanianie stożka przeszkodami (ściana tylna — strumień nie pompuje gazu za nią)
       nj++;
     }
+    st.main = nj;
+    // Dysze SIDE z ciągiem (EngineFrame.side: wylot dzwonu, scena) — krótkie stożki manewrowe (writeHallSideJets).
+    if (T.sideJets) nj = writeHallSideJets(EngineFrame, J, JD, nj, maxEngine, aff, dom, T, sim.tune.jetFlat);
+    st.side = nj - st.main;
     const engines = nj;
     // Czas gry z wejścia (nowa klatka gry); bez nowej klatki — symulacja stoi.
     const dt = fresh ? IN[I.dt] : 0;

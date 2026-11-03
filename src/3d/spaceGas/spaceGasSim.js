@@ -20,7 +20,8 @@
 //     kAdvect i kProject mają po 7 buforów storage (zapas jednego do limitu 8); kShift przenosi ciśnienie przez
 //     `velB.z` (kShiftCopy → prsB), więc oba kernele przesunięcia też mieszczą się w 7 buforach.
 //   • KADŁUBY = maski obrysu z żywych węzłów belek (rekord GAS_HULL_REC — jak przeszkody gazu wybuchów), nie koła; pas
-//     „pługa” wokół prostokąta maski z normalną od najbliższego punktu prostokąta.
+//     „pługa” wokół OBRYSU (pole odległości od zapalonych teksli maski z normalną — hullShellFieldCpu; do 2026-11-03
+//     od prostokąta maski: w mgle pasa okręt pchał gaz pudłem).
 //   • OLBRZYMY PASA = raster przekroju z = 0 od gry (128 × 128 na okno, tekstura R8): komórki stałe i zasłona strug.
 //   • POLE DALEKIE wstrzykiwane przez scenę (`farEnv(q, U)` → vec4 gęstości kanałów; q — punkt względem kotwicy).
 //   • OBRAZ 60 Hz → dwie pary tekstur (krok na zmianę): obraz przenika poprzedni i bieżący krok wg ułamka kroku (plan
@@ -65,6 +66,9 @@ export function createSpaceGasTune() {
     dragQuad: 0.3,        // opór szybkiego gazu poza stożkami [1/komórka]: wał zepchnięty przez strumień staje w ~1 s
     cmTau: 1.0,           // pamięć strefy ściśliwej [s]
     hullShell: 130,       // pas „pługa” wokół kadłuba [j.]
+    // pług od OBRYSU kadłuba (pole odległości od zapalonych teksli maski — hullShellFieldCpu, 2026-11-03); 0 — od
+    // prostokąta maski (dawniej: w mgle pasa okręt pchał gaz pudłem — A/B: sim.tune.plowOutline = 0 + syncTune())
+    plowOutline: 1,
     vort: 1.0,            // wzmacnianie wirów [komórki]
     soft: 0.004,          // miękki rzut [1/komórka²] — wał przed dziobem / na czole strumienia / wybuchu
     baro: 0.012,          // ciśnienie gazu κ [1/s] — kanał zamyka się dopływem w ~minutę
@@ -148,6 +152,131 @@ export function srcShapeCpu(px, py, A, B, C, out = {}) {
   return out;
 }
 
+/** Zapas ramki pola odległości od obrysu ponad pas pługa [j.] (ramka = prostokąt maski + hullShell + zapas z każdej strony). */
+export const SPACE_GAS_HULL_SHELL_PAD = 16;
+
+// Bufory robocze pola odległości (bez alokacji przy każdej przebudowie maski).
+let _sdOcc = new Uint8Array(0), _sdF = new Float64Array(0), _sdD = new Float64Array(0), _sdRow = new Float64Array(0),
+  _sdOut = new Float64Array(0), _sdV = new Int32Array(0), _sdZ = new Float64Array(0);
+const SD_INF = 1e20;
+
+// Kwadrat odległości 1D (Felzenszwalb–Huttenlocher) po n próbkach co `s` j.: f[off + q·stride] → d[off + q·stride].
+function edt1d(f, d, off, stride, n, s) {
+  if (_sdV.length < n) { _sdV = new Int32Array(n); _sdZ = new Float64Array(n + 1); _sdRow = new Float64Array(n); _sdOut = new Float64Array(n); }
+  const v = _sdV, z = _sdZ, g = _sdRow, o = _sdOut;
+  for (let q = 0; q < n; q++) g[q] = f[off + q * stride];
+  let k = 0;
+  v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    const qs = q * s;
+    let x;
+    for (;;) {
+      const p = v[k], ps = p * s;
+      x = ((g[q] + qs * qs) - (g[p] + ps * ps)) / (2 * (qs - ps));
+      if (x <= z[k]) { k--; continue; }   // z[0] = −∞ — pętla kończy się najpóźniej na k = 0
+      break;
+    }
+    k++;
+    v[k] = q; z[k] = x; z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    const qs = q * s;
+    while (z[k + 1] < qs) k++;
+    const p = v[k], dd = (q - p) * s;
+    o[q] = dd * dd + g[p];
+  }
+  for (let q = 0; q < n; q++) d[off + q * stride] = o[q];
+}
+
+/**
+ * POLE ODLEGŁOŚCI OD OBRYSU kadłuba dla „pługa” (2026-11-03, zgłoszenie użytkownika: „pył / mgła w asteroidach zamiast
+ * obrysu prawdziwego statka rysuje prostokąt — przelatując przez mgłę widzę, że hitbox statku to prostokąt”): pas pługa
+ * (gaz od strony ruchu burty dostaje jej prędkość normalną, strefa ściśliwa — wał przed dziobem i pusty ślad za rufą)
+ * liczył się od PROSTOKĄTA maski obrysu — zwężony dziób, rufa i wcięcia pchały gaz pudłem. Teraz od obrysu: odległość
+ * euklidesowa od zapalonych teksli maski (dwa przejścia 1D po siatce W × H z bokami teksli w j. — teksle maski nie są
+ * kwadratowe) i normalna na zewnątrz (gradient odległości) w osiach kadłuba.
+ * Wejście: słowa maski `words[wOff + k]` (bit k = wiersz · W + kolumna; liczby — także double z tablicy wejścia),
+ * W × H teksli, bok teksla tx / ty [j.], margines M [j.]. Ramka pola: q ∈ [−M/tx, W + M/tx] × [−M/ty, H + M/ty]
+ * (teksle maski), siatka W × H. Wyjście RGBA8 od `base` (bajty): R — odległość / M (0 w kadłubie, 255 — M i dalej),
+ * G, B — normalna na zewnątrz w osiach kadłuba ((n + 1) / 2), A — 255. Odczyt w kernelu `kAdvect` (pług), lustro odczytu:
+ * hullShellAtCpu. Koszt: ~0,1 ms na przebudowę maski (tylko przy zmianie uid / wersji obrysu albo marginesu).
+ */
+export function hullShellFieldCpu(words, wOff, W, H, tx, ty, M, out, base = 0) {
+  const n = W * H;
+  if (_sdOcc.length < n) { _sdOcc = new Uint8Array(n); _sdF = new Float64Array(n); _sdD = new Float64Array(n); }
+  const mx = M / tx, my = M / ty;
+  const su = (W + 2 * mx) / W, sv = (H + 2 * my) / H;        // bok teksla pola [teksle maski]
+  const sx = su * tx, sy = sv * ty;                          // [j.]
+  const bit = (a, b) => (words[wOff + ((b * W + a) >>> 5)] >>> ((b * W + a) & 31)) & 1;
+  // zajętość: teksel pola zawiera choć część zapalonego teksla maski (cienkie części kadłuba nie znikają)
+  let any = 0;
+  for (let j = 0; j < H; j++) {
+    const qy0 = -my + j * sv, qy1 = qy0 + sv;
+    const b0 = Math.max(0, Math.floor(qy0)), b1 = Math.min(H - 1, Math.ceil(qy1) - 1);
+    for (let i = 0; i < W; i++) {
+      const qx0 = -mx + i * su, qx1 = qx0 + su;
+      const a0 = Math.max(0, Math.floor(qx0)), a1 = Math.min(W - 1, Math.ceil(qx1) - 1);
+      let occ = 0;
+      for (let b = b0; b <= b1 && !occ; b++) for (let a = a0; a <= a1; a++) if (bit(a, b)) { occ = 1; break; }
+      _sdOcc[j * W + i] = occ;
+      _sdF[j * W + i] = occ ? 0 : SD_INF;
+      any |= occ;
+    }
+  }
+  const half = 0.5 * Math.min(sx, sy);
+  const D = _sdD;
+  if (any) {
+    for (let j = 0; j < H; j++) edt1d(_sdF, _sdF, j * W, 1, W, sx);
+    for (let i = 0; i < W; i++) edt1d(_sdF, _sdF, i, W, H, sy);
+    for (let k = 0; k < n; k++) D[k] = _sdOcc[k] ? 0 : Math.max(0, Math.sqrt(_sdF[k]) - half);
+  } else {
+    D.fill(M, 0, n);
+  }
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const k = j * W + i;
+      const d = D[k];
+      let nx = 0, ny = 0;
+      if (d > 0) {
+        const il = i > 0 ? i - 1 : i, ir = i < W - 1 ? i + 1 : i;
+        const jb = j > 0 ? j - 1 : j, jt = j < H - 1 ? j + 1 : j;
+        nx = (D[j * W + ir] - D[j * W + il]) / ((ir - il) * sx);
+        ny = (D[jt * W + i] - D[jb * W + i]) / ((jt - jb) * sy);
+        const l = Math.sqrt(nx * nx + ny * ny);
+        if (l > 1e-6) { nx /= l; ny /= l; } else { nx = 0; ny = 0; }
+      }
+      const o = base + k * 4;
+      out[o] = Math.round(Math.min(1, d / M) * 255);
+      out[o + 1] = Math.round((nx + 1) * 127.5);
+      out[o + 2] = Math.round((ny + 1) * 127.5);
+      out[o + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/**
+ * Lustro CPU odczytu pola odległości w kernelu (pług): q — punkt w tekslach maski, pole od `base` (hullShellFieldCpu),
+ * próbka dwuliniowa jak tekstura (środki teksli w +0,5, przycięcie do brzegu). Zwraca { d [j.], nx, ny } (normalna
+ * w osiach kadłuba, nieznormowana po interpolacji) albo d = Infinity poza ramką.
+ */
+export function hullShellAtCpu(data, base, W, H, tx, ty, M, qx, qy, out = {}) {
+  const mx = M / tx, my = M / ty;
+  const u = (qx + mx) / (W + 2 * mx), v = (qy + my) / (H + 2 * my);
+  out.d = Infinity; out.nx = 0; out.ny = 0;
+  if (!(u > 0 && u < 1 && v > 0 && v < 1)) return out;
+  const fx = Math.min(Math.max(u * W, 0.5), W - 0.5) - 0.5, fy = Math.min(Math.max(v * H, 0.5), H - 0.5) - 0.5;
+  const i = Math.floor(fx), j = Math.floor(fy), a = fx - i, b = fy - j;
+  const i1 = Math.min(i + 1, W - 1), j1 = Math.min(j + 1, H - 1);
+  const at = (ii, jj, c) => data[base + (jj * W + ii) * 4 + c] / 255;
+  const lerp = (c) => (at(i, j, c) * (1 - a) + at(i1, j, c) * a) * (1 - b) + (at(i, j1, c) * (1 - a) + at(i1, j1, c) * a) * b;
+  out.d = lerp(0) * M;
+  out.nx = lerp(1) * 2 - 1;
+  out.ny = lerp(2) * 2 - 1;
+  return out;
+}
+
 export class SpaceGasSim {
   /**
    * @param {object} o
@@ -191,7 +320,8 @@ export class SpaceGasSim {
       srcD: v4Array(maxSources, `${name}SrcD`),
       rock: v4Array(maxRocks, `${name}Rock`),   // x, y, promień, —
       // kadłub (rekord GAS_HULL_REC → pole): A — kotwica xy, wiersz 0 macierzy K (świat → teksle maski);
-      // B — wiersz 1 K, przesunięcie (teksle); C — prędkość kotwicy [j/s], ω [rad/s], pasmo maski; D — bok teksla xy [j.]
+      // B — wiersz 1 K, przesunięcie (teksle); C — prędkość kotwicy [j/s], ω [rad/s], pasmo maski; D — bok teksla xy [j.],
+      // zasięg [j.], margines ramki pola odległości od obrysu [j.] (pług)
       hullA: v4Array(maxHulls, `${name}HullA`),
       hullB: v4Array(maxHulls, `${name}HullB`),
       hullC: v4Array(maxHulls, `${name}HullC`),
@@ -201,7 +331,7 @@ export class SpaceGasSim {
     };
     const ST = this.ST = {};
     for (const k of ['drag', 'dragVac', 'vacRho', 'dragQuad', 'cmTau', 'hullShell', 'vort', 'soft', 'baro', 'baroFloor',
-      'turb', 'turbShear', 'restRelax', 'restMax', 'maxSpeed', 'warm', 'diff', 'capRef', 'capAdd', 'shiftPrs']) ST[k] = uniform(0);
+      'turb', 'turbShear', 'restRelax', 'restMax', 'maxSpeed', 'warm', 'diff', 'capRef', 'capAdd', 'shiftPrs', 'plowOutline']) ST[k] = uniform(0);
     this.syncTune();
 
     // maski obrysu kadłubów: pasmo 64 × 32 na slot (R8, filtr liniowy, próg 0,5)
@@ -214,6 +344,20 @@ export class SpaceGasSim {
     mt.name = `${name}HullMasks`;
     mt.needsUpdate = true;
     this.hullMaskTex = mt;
+    // pole odległości od OBRYSU (pług): pasmo 64 × 32 na slot, RGBA8 — odległość / margines, normalna na zewnątrz w osiach
+    // kadłuba (hullShellFieldCpu); ramka = prostokąt maski + margines (hullD.w) z każdej strony
+    this.hullShellData = new Uint8Array(HM.w * HM.h * maxHulls * 4);
+    const st = new THREE.DataTexture(this.hullShellData, HM.w, HM.h * maxHulls, THREE.RGBAFormat, THREE.UnsignedByteType);
+    st.minFilter = THREE.LinearFilter;
+    st.magFilter = THREE.LinearFilter;
+    st.wrapS = st.wrapT = THREE.ClampToEdgeWrapping;
+    st.generateMipmaps = false;
+    st.flipY = false;
+    st.colorSpace = THREE.NoColorSpace;
+    st.name = `${name}HullShell`;
+    st.needsUpdate = true;
+    this.hullShellTex = st;
+    this._shellM = new Float64Array(maxHulls).fill(NaN);
     // raster przekroju olbrzymów (R8, filtr liniowy, próg 0,5 — brzeg na granicy teksli)
     const RS = SPACE_GAS_RASTER;
     this.rasterData = new Uint8Array(RS * RS);
@@ -509,21 +653,42 @@ export class SpaceGasSim {
         });
       });
       // kadłuby: PŁUG — gaz przy burcie od strony ruchu dostaje składową normalną prędkości burty (tylko pchanie, bez
-      // ssania); pas wokół prostokąta maski jest ściśliwy (wał przed dziobem i na burtach, pusty ślad za rufą)
+      // ssania); pas wokół OBRYSU kadłuba jest ściśliwy (wał przed dziobem i na burtach, pusty ślad za rufą). Odległość
+      // i normalna z pola odległości od obrysu (hullShellFieldCpu → hullShellTex; ramka = prostokąt maski + margines D.w)
+      // — dawniej od prostokąta maski: gaz pchało pudło, a nie kształt okrętu (2026-11-03). Lustro odczytu: hullShellAtCpu.
       Loop({ start: 0, end: U.hullCount, type: 'int', condition: '<', name: 'sgp' }, ({ sgp }) => {
         const H = hullFrame(sgp, c.pw);
         const D = U.hullD.element(sgp).toVar();
-        // odległość od prostokąta maski: w tekslach → świat (oś teksla × bok teksla)
-        const qc = clamp(H.q, vec2(0.0), vec2(HM.w, HM.h));
-        const dq = H.q.sub(qc).toVar();
+        const Cc = U.hullC.element(sgp).toVar();
         const ex = H.A.zw.mul(D.x).toVar();          // oś x kadłuba (jednostkowa) = wiersz K × bok teksla
         const fy = H.Bh.xy.mul(D.y).toVar();
-        const dw = ex.mul(dq.x.mul(D.x)).add(fy.mul(dq.y.mul(D.y))).toVar();
-        const d = length(dw).toVar();
-        If(d.greaterThan(0.5).and(d.lessThan(ST.hullShell)), () => {
-          const Cc = U.hullC.element(sgp).toVar();
+        const d = float(1e9).toVar();                // odległość od kadłuba [j.]
+        const nw = vec2(0.0).toVar();                // normalna na zewnątrz (świat, nieznormowana)
+        If(ST.plowOutline.greaterThan(0.5), () => {
+          // od OBRYSU: pole odległości w ramce prostokąt maski + margines D.w
+          const mx = D.w.div(D.x).toVar();
+          const my = D.w.div(D.y).toVar();
+          const du = H.q.x.add(mx).div(mx.mul(2.0).add(HM.w)).toVar();
+          const dv = H.q.y.add(my).div(my.mul(2.0).add(HM.h)).toVar();
+          If(du.greaterThan(0.0).and(du.lessThan(1.0)).and(dv.greaterThan(0.0)).and(dv.lessThan(1.0)), () => {
+            const su = clamp(du.mul(HM.w), 0.5, HM.w - 0.5).mul(1 / HM.w);
+            const sv = Cc.w.mul(HM.h).add(clamp(dv.mul(HM.h), 0.5, HM.h - 0.5)).mul(1 / (HM.h * maxHulls));
+            const S = texture(this.hullShellTex, vec2(su, sv)).level(0).toVar();
+            d.assign(S.x.mul(D.w));
+            const nb = S.yz.mul(2.0).sub(1.0);       // normalna w osiach kadłuba
+            nw.assign(ex.mul(nb.x).add(fy.mul(nb.y)));
+          });
+        }).Else(() => {
+          // A/B (dawniej): od prostokąta maski — w tekslach → świat (oś teksla × bok teksla)
+          const qc = clamp(H.q, vec2(0.0), vec2(HM.w, HM.h));
+          const dq = H.q.sub(qc).toVar();
+          nw.assign(ex.mul(dq.x.mul(D.x)).add(fy.mul(dq.y.mul(D.y))));
+          d.assign(length(nw));
+        });
+        const nl = length(nw).toVar();
+        If(d.greaterThan(0.5).and(d.lessThan(ST.hullShell)).and(nl.greaterThan(1e-3)), () => {
           const ws = float(1.0).sub(d.div(ST.hullShell)).toVar();
-          const n = dw.div(d).toVar();
+          const n = nw.div(nl).toVar();
           const vb = vec2(Cc.x.sub(Cc.z.mul(H.rel.y)), Cc.y.add(Cc.z.mul(H.rel.x))).div(C);
           const vn = dot(vb, n).toVar();
           const push = max(vn.sub(dot(vel, n)), 0.0).mul(select(vn.greaterThan(0.0), ws, float(0.0)));
@@ -730,19 +895,23 @@ export class SpaceGasSim {
     U.hullA.array[n].set(F[o + R.ax] - kx, F[o + R.ay] - ky, ex / tx, ey / tx);
     U.hullB.array[n].set(fx / ty, fy / ty, -F[o + R.x0] / tx, -F[o + R.y0] / ty);
     U.hullC.array[n].set(F[o + R.vx], F[o + R.vy], F[o + R.w], n);
-    U.hullD.array[n].set(tx, ty, F[o + R.reach], 0);
-    this._syncMask(n, F, o, R);
+    // margines ramki pola odległości od obrysu (pług): pas pługa + zapas — zmiana strojenia przelicza pole
+    const M = Math.max(1, this.tune.hullShell) + SPACE_GAS_HULL_SHELL_PAD;
+    U.hullD.array[n].set(tx, ty, F[o + R.reach], M);
+    this._syncMask(n, F, o, R, tx, ty, M);
     return true;
   }
 
-  _syncMask(n, F, o, R) {
+  _syncMask(n, F, o, R, tx = F[o + R.tx] || 1, ty = F[o + R.ty] || 1, M = Math.max(1, this.tune.hullShell) + SPACE_GAS_HULL_SHELL_PAD) {
     if (!this._maskUid) { this._maskUid = new Float64Array(this.maxHulls).fill(NaN); this._maskVer = new Float64Array(this.maxHulls).fill(NaN); }
     const uid = F[o + R.uid], ver = F[o + R.ver];
-    if (this._maskUid[n] === uid && this._maskVer[n] === ver) return;
+    if (this._maskUid[n] === uid && this._maskVer[n] === ver && this._shellM[n] === M) return;
     this._maskUid[n] = uid;
     this._maskVer[n] = ver;
+    this._shellM[n] = M;
     const HM = GAS_HULL_MASK, D = this.hullMaskData, base = n * HM.w * HM.h;
     for (let k = 0; k < HM.w * HM.h; k++) D[base + k] = ((F[o + R.mask + (k >>> 5)] >>> (k & 31)) & 1) ? 255 : 0;
+    hullShellFieldCpu(F, o + R.mask, HM.w, HM.h, tx, ty, M, this.hullShellData, base * 4);
     this._maskDirty = true;
   }
 
@@ -770,7 +939,7 @@ export class SpaceGasSim {
     U.rockCount.value = this.rockN;
     U.hullCount.value = this.hullN;
     st.sources = this.srcN; st.rocks = this.rockN; st.hulls = this.hullN;
-    if (this._maskDirty) { this.hullMaskTex.needsUpdate = true; this._maskDirty = false; }
+    if (this._maskDirty) { this.hullMaskTex.needsUpdate = true; this.hullShellTex.needsUpdate = true; this._maskDirty = false; }
     U.windOff.value.x += windX * dt;
     U.windOff.value.y += windY * dt;
     U.windC.value.set(windX / C, windY / C);

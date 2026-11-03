@@ -1365,3 +1365,170 @@ test('narzędzie gpu-pas-gra.mjs: „nowe” i przywrócenia po wariantach dawny
   assert.match(src, new RegExp(`wkPrzywroc: drzTcKod\\(${T.mapTaps}, ${T.layerCubic}\\)`), 'warianty T…C… wracają do domyślnych');
   assert.ok(src.includes(`S.spaceGas.tune.dustFadePx = [${T.dustFadePx.join(', ')}]`), 'jasność pyłu: przywrócenie zaniku');
 });
+
+// --- Pług wokół OBRYSU kadłuba (2026-11-03: „przelatując przez mgłę widzę, że hitbox statku to prostokąt”) ----------
+
+const { hullShellFieldCpu, hullShellAtCpu, SPACE_GAS_HULL_SHELL_PAD } = await import('../src/3d/spaceGas/spaceGasSim.js');
+
+// Kadłub-klin w masce 64 × 32 (teksle 20 × 10 j.): śródokręcie ±14 teksli, dziób zwęża się od kolumny 40 do 1 teksla
+// na kolumnie 62 — jak okręt z ostrym dziobem. Maska z 1 tekslem pustego brzegu (hullFootprint).
+function wedgeMask() {
+  const W = GAS_HULL_MASK.w, H = GAS_HULL_MASK.h;
+  const words = new Float64Array(GAS_HULL_MASK.words);
+  const occ = [];
+  const halfAt = (i) => (i <= 40 ? 14 : 14 - 13 * (i - 40) / 22);
+  for (let j = 1; j < H - 1; j++) for (let i = 1; i < W - 1; i++) {
+    if (Math.abs(j + 0.5 - 16) <= halfAt(i)) {
+      const k = j * W + i;
+      words[k >>> 5] = ((words[k >>> 5] | (1 << (k & 31))) >>> 0);
+      occ.push([i, j]);
+    }
+  }
+  return { words, occ, W, H };
+}
+// prawdziwa odległość [j.] od punktu q (teksle maski) do sumy prostokątów zapalonych teksli
+function trueDist(occ, qx, qy, tx, ty) {
+  let best = Infinity;
+  for (const [i, j] of occ) {
+    const dx = Math.max(i - qx, 0, qx - (i + 1)) * tx, dy = Math.max(j - qy, 0, qy - (j + 1)) * ty;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < best) best = d;
+  }
+  return best;
+}
+// dawny pług: odległość od prostokąta maski
+const rectDist = (qx, qy, W, H, tx, ty) => Math.hypot(Math.max(-qx, 0, qx - W) * tx, Math.max(-qy, 0, qy - H) * ty);
+
+test('pług: pole odległości od OBRYSU kadłuba (nie od prostokąta maski) — odległość, normalna, wnętrze', () => {
+  const { words, occ, W, H } = wedgeMask();
+  const tx = 20, ty = 10, shell = 130, M = shell + SPACE_GAS_HULL_SHELL_PAD;
+  const data = new Uint8Array(W * H * 4 * 2);
+  hullShellFieldCpu(words, 0, W, H, tx, ty, M, data, W * H * 4);   // pasmo slotu 1
+  const sx = (W * tx + 2 * M) / W, sy = (H * ty + 2 * M) / H;   // bok teksla pola [j.]
+  const tol = Math.max(sx, sy) * 1.1;
+  const at = (qx, qy) => hullShellAtCpu(data, W * H * 4, W, H, tx, ty, M, qx, qy);
+  // 1. obok zwężonego dziobu, WEWNĄTRZ prostokąta maski: dawniej odległość 0 (bez pługa — gaz stał w „pudle” wokół dziobu)
+  const p1 = at(58.5, 26);
+  const d1 = trueDist(occ, 58.5, 26, tx, ty);
+  assert.equal(rectDist(58.5, 26, W, H, tx, ty), 0, 'dawniej: wnętrze prostokąta');
+  assert.ok(d1 > 50 && Math.abs(p1.d - d1) < tol, `obok dziobu: ${p1.d.toFixed(1)} vs ${d1.toFixed(1)} j.`);
+  assert.ok(p1.ny > 0.5, `normalna na zewnątrz (w bok): ${p1.nx.toFixed(2)}, ${p1.ny.toFixed(2)}`);
+  // 2. za prostokątem, obok wąskiego dziobu: dawniej 30 j. (w pasie pługa), naprawdę ~150 j. (poza pasem)
+  const r2 = rectDist(60, 35, W, H, tx, ty), d2 = trueDist(occ, 60, 35, tx, ty), p2 = at(60, 35);
+  assert.ok(r2 < 40 && d2 > shell, `prostokąt ${r2.toFixed(0)} j., obrys ${d2.toFixed(0)} j.`);
+  assert.ok(p2.d > shell - tol * 0.5, `pole: ${p2.d.toFixed(1)} j. — poza pasem pługa`);
+  // 3. przed dziobem (poza prostokątem, na osi): odległość od czubka, normalna do przodu
+  const d3 = trueDist(occ, 67, 16, tx, ty), p3 = at(67, 16);
+  assert.ok(Math.abs(p3.d - d3) < tol, `przed dziobem: ${p3.d.toFixed(1)} vs ${d3.toFixed(1)}`);
+  assert.ok(p3.nx > 0.7, `normalna wzdłuż dziobu: ${p3.nx.toFixed(2)}`);
+  // 4. burta śródokręcia: normalna w bok, odległość jak od burty
+  const p4 = at(20.5, 33);
+  assert.ok(Math.abs(p4.d - trueDist(occ, 20.5, 33, tx, ty)) < tol && p4.ny > 0.8 && Math.abs(p4.nx) < 0.3, JSON.stringify(p4));
+  // 5. wnętrze kadłuba — 0; daleko poza ramką — brak (Infinity)
+  assert.equal(at(20, 16).d, 0);
+  assert.equal(at(-40, 16).d, Infinity);
+  // 6. przegląd siatki: błąd odległości w pasie pługa ≤ teksel pola (w środkach teksli pola)
+  let worst = 0;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const qx = -M / tx + (i + 0.5) * (W + 2 * M / tx) / W, qy = -M / ty + (j + 0.5) * (H + 2 * M / ty) / H;
+    const t = trueDist(occ, qx, qy, tx, ty);
+    if (t > shell) continue;
+    const e = Math.abs(data[W * H * 4 + (j * W + i) * 4] / 255 * M - t);
+    if (e > worst) worst = e;
+  }
+  assert.ok(worst < tol, `największy błąd w pasie pługa: ${worst.toFixed(1)} j. (teksel ${sx.toFixed(1)} × ${sy.toFixed(1)})`);
+  // pusta maska — wszędzie „daleko”
+  const empty = new Uint8Array(W * H * 4);
+  hullShellFieldCpu(new Float64Array(GAS_HULL_MASK.words), 0, W, H, tx, ty, M, empty, 0);
+  assert.ok(empty.every((v, k) => (k % 4 === 0 ? v === 255 : true)));
+});
+
+test('pług: rekord kadłuba — margines ramki w hullD.w, pole odległości w paśmie slotu, przeliczenie przy zmianie hullShell', () => {
+  const sim = makeSim();
+  const R = GAS_HULL_REC;
+  const { words } = wedgeMask();
+  const F = new Float64Array(R.stride);
+  F[R.ax] = 1000; F[R.ay] = 500; F[R.ex] = 1; F[R.ey] = 0; F[R.fx] = 0; F[R.fy] = 1;
+  F[R.x0] = -640; F[R.y0] = -160; F[R.tx] = 20; F[R.ty] = 10; F[R.reach] = 700;
+  F[R.uid] = 3; F[R.ver] = 1;
+  for (let k = 0; k < GAS_HULL_MASK.words; k++) F[R.mask + k] = words[k];
+  sim.beginInputs();
+  sim.addHullRecord(F, 0, R, 900, 400);
+  sim.addHullRecord(F, 0, R, 900, 400);   // drugi slot, ta sama maska
+  const M = sim.tune.hullShell + SPACE_GAS_HULL_SHELL_PAD;
+  assert.equal(sim.U.hullD.array[1].w, M);
+  const band = GAS_HULL_MASK.w * GAS_HULL_MASK.h * 4;
+  const ref = new Uint8Array(band);
+  hullShellFieldCpu(F, R.mask, GAS_HULL_MASK.w, GAS_HULL_MASK.h, 20, 10, M, ref, 0);
+  assert.deepEqual(sim.hullShellData.subarray(band, 2 * band), ref, 'pasmo slotu 1');
+  assert.ok(sim._maskDirty);
+  sim._maskDirty = false;
+  sim.beginInputs();
+  sim.addHullRecord(F, 0, R, 900, 400);
+  assert.equal(sim._maskDirty, false, 'ta sama maska i margines — bez przebudowy');
+  sim.tune.hullShell = 200;
+  sim.beginInputs();
+  sim.addHullRecord(F, 0, R, 900, 400);
+  assert.ok(sim._maskDirty, 'inny pas pługa — nowy margines ramki');
+  assert.equal(sim.U.hullD.array[0].w, 200 + SPACE_GAS_HULL_SHELL_PAD);
+});
+
+test('pług w kernelu adwekcji: odległość z tekstury pola odległości, bez prostokąta maski (źródło)', () => {
+  const src = readFileSync(new URL('../src/3d/spaceGas/spaceGasSim.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const i0 = src.indexOf('// kadłuby: PŁUG');
+  const plow = src.slice(i0, src.indexOf('// wzmacnianie wirów', i0));
+  assert.ok(i0 > 0 && plow.length > 200);
+  assert.match(plow, /texture\(this\.hullShellTex, vec2\(su, sv\)\)\.level\(0\)/);
+  // dawny prostokąt maski tylko jako A/B (sim.tune.plowOutline = 0); domyślnie obrys
+  assert.match(plow, /If\(ST\.plowOutline\.greaterThan\(0\.5\), \(\) => \{[\s\S]*hullShellTex[\s\S]*\}\)\.Else\(\(\) => \{[\s\S]*clamp\(H\.q, vec2\(0\.0\), vec2\(HM\.w, HM\.h\)\)/);
+  assert.equal(makeSim().tune.plowOutline, 1);
+  const sim = makeSim();
+  assert.match(wgsl(sim.kAdvect), /textureSampleLevel\(/);
+});
+
+// --- Dysze SIDE w gazie przestrzeni (2026-11-03: „gazy i pyły nie reagują na silniki boczne”) ------------------------
+
+test('gaz przestrzeni: dysze SIDE z ciągiem → stożki w polu (w oknie, limit sideMax, A/B sideJets)', async () => {
+  const { SpaceGas, SPACE_GAS_TUNE } = await import('../src/3d/spaceGas/spaceGas.js');
+  const { EngineFrame } = await import('../src/3d/engineFrame.js');
+  const g = Object.create(Object.getPrototypeOf(SpaceGas));
+  const src = [];
+  const sim = { N: 256, cell: 64, addSource(...a) { src.push(a); return true; } };
+  Object.assign(g, { tune: { ...SPACE_GAS_TUNE }, sim, stats: { sideJets: 0 } });
+  const T = g.tune;
+  try {
+    EngineFrame.begin();
+    // scena: y w górę = −y gry; kotwica (1000, 2000), środek okna (względem kotwicy) (5000, −300)
+    EngineFrame.side(6000, -(2000 - 300 + 40), 0, 1, 15, 0.7, 0, 0, -1);       // w oknie, wydech „w górę” sceny
+    EngineFrame.side(6000 + 90000, -1700, 1, 0, 15, 1, 0, 0, -1);            // daleko poza oknem
+    EngineFrame.side(6200, -1700, 1, 0, 15, T.sideMinPower * 0.5, 0, 0, -1); // poniżej progu
+    g._sideJets(1000, 2000, 5000, -300);
+    assert.equal(src.length, 1);
+    assert.equal(g.stats.sideJets, 1);
+    const [x, y, dx, dy, len, w0, widen, speed, rate, vol, mode, reach] = src[0];
+    assert.equal(x, 5000);
+    assert.ok(Math.abs(y - (-260)) < 1e-9, `y gry względem kotwicy: ${y}`);
+    assert.equal(dx, 0);
+    assert.equal(dy, -1, 'kierunek: scena → gra (y w dół)');
+    const p = EngineFrame.sdP[0];
+    assert.ok(Math.abs(len - 15 * (T.sideLen[0] + T.sideLen[1] * p)) < 1e-6);
+    assert.equal(w0, Math.max(T.sideWidthMin, 15 * T.sideWidth));
+    assert.ok(Math.abs(speed - T.sideSpeed * p) < 1e-6);
+    assert.equal(widen, T.sideWiden);
+    assert.equal(rate, T.sideRate);
+    assert.equal(vol, 0);
+    assert.equal(mode, SPACE_GAS_SRC.cone);
+    assert.equal(reach, len);
+    // limit
+    src.length = 0;
+    EngineFrame.begin();
+    for (let i = 0; i < T.sideMax + 5; i++) EngineFrame.side(6000 + i * 40, -1700, 1, 0, 15, 1, 0, 0, -1);
+    g._sideJets(1000, 2000, 5000, -300);
+    assert.equal(src.length, T.sideMax);
+    // A/B
+    src.length = 0;
+    g.tune.sideJets = false;
+    g._sideJets(1000, 2000, 5000, -300);
+    assert.equal(src.length, 0);
+  } finally { EngineFrame.begin(); }
+});

@@ -6,7 +6,7 @@
 // Szew gra ↔ render (wzór pyłu hal K-7): gra pakuje WEJŚCIE (src/game/spaceGasInput.js → Float64Array SPACE_GAS_IN:
 // kotwica, kamera, kadr, obwiednia pasa, wiatr, Słońce, odgazowanie skał, dt gry) → `SpaceGas.submit(tablica)`; kadłuby
 // — wejście przeszkód gazu wybuchów (GAS_OBST_IN: obrysy z żywych węzłów belek; gra dokłada okno pola do prostokątów
-// domen) → `SpaceGas.setObstacleInput(tablica)`; dysze MAIN tej klatki z EngineFrame. Bez `window`, DOM i referencji do
+// domen) → `SpaceGas.setObstacleInput(tablica)`; dysze MAIN i SIDE tej klatki z EngineFrame. Bez `window`, DOM i referencji do
 // encji — w workerze renderu ten sam kod (bloki migawki `spaceGas` i `gasObst`).
 //
 // Klatka (krok Core3D.fx „gaz przestrzeni”): wejście → źródła i przeszkody → pole (spaceGasSim.js, kroki 1/60 s czasu
@@ -107,6 +107,20 @@ export const SPACE_GAS_TUNE = {
   jetWiden: 0.3,
   jetRate: 8,
   jetReach: 450,
+  // DYSZE SIDE (2026-11-03, zgłoszenie użytkownika: „gazy i pyły nie reagują na silniki boczne”): każda dysza manewrowa
+  // z ciągiem (EngineFrame.side — moc strugi z automatu dyszy: impulsy PWM, od 0,8 ciągła struga) to stożek z wylotu
+  // dzwonu wzdłuż wydechu z narzuconą prędkością (jak MAIN, bez wydatku objętości). Wymiary w promieniach wylotu R
+  // (Atlas: R ≈ 15 j.; komórka pola 64 j. — najmniejsza szerokość sideWidthMin). Budżet źródeł: po dyszach MAIN, najwyżej
+  // sideMax. false — bez dysz SIDE (A/B).
+  sideJets: true,
+  sideMax: 24,
+  sideMinPower: 0.05,
+  sideLen: [18, 36],      // zasięg stożka [R]: od + × moc (Atlas: ~600 j. w impulsie, 800 j. ciągłą strugą)
+  sideSpeed: 1500,        // prędkość gazu u wylotu przy pełnym ciągu [j/s]
+  sideWidth: 1.6,         // pół szerokości u nasady [R]
+  sideWidthMin: 48,       // [j.]
+  sideWiden: 0.3,
+  sideRate: 8,
   // odgazowanie lodowych skał (wejście gry): struga od Słońca
   ventLen: 1200,
   ventSpeed: 320,
@@ -208,7 +222,7 @@ class SpaceGasSystem {
     this._renderTime = NaN;
     this._clk = { tick: NaN, hz: 60, sim: 0, render: 0 };
     this.stats = { active: false, cpuMs: 0, sources: 0, vents: 0, blasts: 0, bolts: 0, hulls: 0, raster: false, substeps: 0, dispatches: 0, fade: 0,
-      dt: 0, clock: false, viewFade: 0, jetsSkipped: 0 };
+      dt: 0, clock: false, viewFade: 0, jetsSkipped: 0, sideJets: 0 };
   }
 
   _ensure() {
@@ -331,6 +345,7 @@ class SpaceGasSystem {
     // budżet źródeł (64): wybuchy pierwsze, potem dysze, odgazowanie, pociski (plan § 2 pkt 2)
     this._blasts(IN);
     this._engines(ax, ay, wx, wy);
+    this._sideJets(ax, ay, wx, wy);
     this._vents(IN);
     this._bolts(IN);
     sim.setRaster(IN, I);
@@ -419,6 +434,33 @@ class SpaceGasSystem {
       if (!sim.addSource(x, y, dx, dy, len, w0, T.jetWiden, T.jetSpeed * th, T.jetRate, 0, SPACE_GAS_SRC.cone, T.jetReach)) break;
     }
     this.stats.jetsSkipped = skipped;
+  }
+
+  // Dysze SIDE z ciągiem (EngineFrame.side: wylot dzwonu, scena — y w górę) → krótkie stożki manewrowe w polu (świat gry
+  // względem kotwicy), po dyszach MAIN; stożek, którego pudło nie dotyka okna pola, nie zabiera budżetu (jak MAIN).
+  _sideJets(ax, ay, wx, wy) {
+    const T = this.tune, sim = this.sim, st = this.stats;
+    st.sideJets = 0;
+    if (!T.sideJets) return;
+    const half = sim.N * sim.cell * 0.5 + sim.cell;
+    const cap = Math.max(0, T.sideMax | 0);
+    let n = 0;
+    for (let i = 0; i < EngineFrame.sdN && n < cap; i++) {
+      const p = EngineFrame.sdP[i];
+      if (!(p >= T.sideMinPower)) continue;
+      const R = EngineFrame.sdR[i];
+      const x = EngineFrame.sdX[i] - ax, y = -EngineFrame.sdY[i] - ay;
+      const dx = EngineFrame.sdDX[i], dy = -EngineFrame.sdDY[i];
+      const len = R * (T.sideLen[0] + T.sideLen[1] * p);
+      const w0 = Math.max(T.sideWidthMin, R * T.sideWidth);
+      const m = (w0 + len * T.sideWiden) * SPACE_GAS_CONE_REACH;
+      const ex = x + dx * len, ey = y + dy * len;
+      if (Math.min(x, ex) - m > wx + half || Math.max(x, ex) + m < wx - half ||
+        Math.min(y, ey) - m > wy + half || Math.max(y, ey) + m < wy - half) continue;
+      if (!sim.addSource(x, y, dx, dy, len, w0, T.sideWiden, T.sideSpeed * p, T.sideRate, 0, SPACE_GAS_SRC.cone, len)) break;
+      n++;
+    }
+    st.sideJets = n;
   }
 
   // Odgazowanie lodowych skał (wejście gry): struga od Słońca z wylotu po stronie dziennej, wstrzykuje lód (kanał z).

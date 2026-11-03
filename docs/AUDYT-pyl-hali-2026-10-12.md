@@ -203,3 +203,30 @@ Otwarte (do oceny użytkownika):
 - Trzecie odpalenie z rzędu prawie nic nie zdejmuje z pokładu pod strumieniem (pas jest już wymieciony, pył osiadł pod
   ścianami); w powietrzu pyłu dalej jest dużo, więc „leci”.
 - W locie flanka 24 komórki za wylotem ma dalej ~3× tła (pył zepchnięty z toru osiada w wale wzdłuż śladu).
+
+## 7. Wylot przez bramę: pamięć strumienia w komórce (2026-11-03)
+
+Zgłoszenie użytkownika: „jak wyjdę z hali, gaz w niej nagle się zakleszcza — szybko i nierealistycznie »wraca«,
+wypełniając »pustkę« po statku”. Odtworzenie: `node scripts/webgpu/hala-wylot-gra.mjs` (Atlas z C-01 przez G-01 pełnym
+ciągiem, odczyt pól z GPU w pauzie co 0,1–0,2 s; prostokąt przy bramie od środka hali: x okrętu ± 700 j., 60…1400 j.
+przed licem pola).
+
+- Przyczyna: przy t ≈ 7,8–8,0 s dysze MAIN mijają pole siłowe bramy; zasłanianie stożka (marsz po kanale A rastru,
+  pole siłowe jest przeszkodą gazu) zdejmuje cały stożek z hali w jednym kroku — razem z rozrzedzaniem pyłu spalinami
+  (`jetClean`) i źródłem objętości. Przepływ w tunelu dalej biegnie > 600 j/s i podrywa kurz z pokładu (`liftHi` 650),
+  którego nic już nie rozrzedza: pył w powietrzu przy bramie ×4 w 1,4 s, pokład pod tunelem −45% w 0,5 s. Na zrzutach
+  z kamerą nad bramą — tunel zarasta szarym, plamistym pyłem w ~0,4 s.
+- Poprawka: komórka pamięta źródło objętości i rozrzedzanie z poprzedniego kroku (`velA.zw`) i gasi je wykładniczo
+  (`srcRelease` 0,5 s, `cleanRelease` 0,9 s); bieżący stożek wygrywa — stały strumień bit w bit jak dawniej.
+
+| Prostokąt przy bramie | przed zgaśnięciem | +0,6 s | +1,4 s |
+|---|---|---|---|
+| pył w powietrzu, bez pamięci (dawniej) | 0,051 | 0,146 | 0,201 |
+| pył w powietrzu, z pamięcią | 0,042 | 0,034 | 0,040 |
+| średnie \|v\| [j/s], bez pamięci | 1153 | 577 | 219 |
+| średnie \|v\| [j/s], z pamięcią | 1171 | 557 | 220 |
+
+- Prędkość gaśnie tak samo w obu wariantach (wymuszenie stożka znika, wchodzi opór kwadratowy szybkiego frontu) —
+  „zakleszczenie” w obrazie to był przede wszystkim pył, który nagle pojawiał się w tunelu jako nieruchoma masa.
+- Dysze SIDE w hali (ten sam dzień): obrót Atlasa w miejscu na C-01 (A, 1,6 s) — w kole 1500 j. wokół kadłuba średnia
+  prędkość gazu 176 j/s (najwyżej 1253 j/s), pył w powietrzu 0,044; bez dysz SIDE w polu: 2 j/s i 0.

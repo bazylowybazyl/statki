@@ -806,6 +806,10 @@ function updateEffects(entity, fxData, dt) {
   // Modele dysz SIDE (sideNozzleFrame.js): pierwsza dysza tego okrętu na liście klatki (zdublowane markery — jedna bryła).
   const sideModels = SideNozzleFrame.enabled;
   const sideFrom = SideNozzleFrame.count;
+  // Dysze SIDE z ciągiem do listy klatki (EngineFrame.side — wiatr manewrowy w polach gazu); zdublowane markery łączą się.
+  const sideGasFrom = EngineFrame.sdN;
+  const shipSceneVX = Number(entity.vel?.x ?? entity.vx) || 0;
+  const shipSceneVY = -(Number(entity.vel?.y ?? entity.vy) || 0);
   // LOD dysz SIDE tego okrętu (audyt FPS 2026-10-11; promień wylotu ten sam dla wszystkich jego dysz SIDE, piksele
   // z zoomu kamery z góry — frameCtx.lod):
   //   sideModelsHere — model dyszy przejdzie próg rysownika (shipModels3DGame.js publikuje go w
@@ -1056,6 +1060,9 @@ function updateEffects(entity, fxData, dt) {
       jetPower = Number(state.currentThrottle) || 0;
       jetHeat = Number(state.heat) || 0;
     }
+    // wiatr manewrowy w polach gazu (hala K-7, gaz przestrzeni): wylot dzwonu, moc strugi × maskowanie (ukryty okręt
+    // nie zdradza się gazem — jak poświata MAIN), hulk bez ciągu
+    if (!isHulk) EngineFrame.side(flameX, flameY, dirX, dirY, sideNozzleR, jetPower * cloakVis, shipSceneVX, shipSceneVY, sideGasFrom);
     if (cloakVis <= 0.01) continue;
 
     // Model dyszy na listę klatki (rysuje shipModels3DGame.js). Maskowanie: znika z komórką kadłuba pod sobą

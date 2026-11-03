@@ -63,3 +63,30 @@ test('engineVfxSystem wypełnia EngineFrame: początek klatki, okręt, dysza MAI
     'moc = moc strugi po rampie × widoczność maskowania (ukryty okręt nie świeci)');
   assert.match(src, /EngineFrame\.endShip\(\);\n\}/, 'koniec okrętu po pętli dysz');
 });
+
+test('EngineFrame.side: dysze SIDE z ciągiem — lista płaska (próg mocy, NaN, zdublowany marker), czyszczona w begin', async () => {
+  const { ENGINE_FRAME_SIDE_MIN } = await import('../src/3d/engineFrame.js');
+  EngineFrame.begin();
+  assert.equal(EngineFrame.sdN, 0);
+  const from = EngineFrame.sdN;
+  assert.equal(EngineFrame.side(X0, Y0, 1, 0, 15, 0.6, 100, -50, from), 0);
+  assert.equal(EngineFrame.side(X0 + 1, Y0, 1, 0, 15, 0.9, 100, -50, from), 0, 'ten sam wylot (zdublowany marker edytora) — jedna dysza');
+  assert.ok(Math.abs(EngineFrame.sdP[0] - 0.9) < 1e-6, 'moc większa z dwóch');
+  assert.equal(EngineFrame.side(X0 + 200, Y0, -1, 0, 15, ENGINE_FRAME_SIDE_MIN * 0.5, 0, 0, from), -1, 'poniżej progu (płomyk dyżurny) — bez wpisu');
+  assert.equal(EngineFrame.side(NaN, Y0, -1, 0, 15, 1, 0, 0, from), -1);
+  assert.equal(EngineFrame.side(X0 + 200, Y0, -1, 0, 15, 1.4, 0, 0, from), 1);
+  assert.ok(Math.abs(EngineFrame.sdX[1] - (X0 + 200)) < 1e-6 && Math.abs(EngineFrame.sdY[1] - Y0) < 1e-6, 'wylot w double');
+  assert.equal(EngineFrame.sdP[1], 1, 'moc obcięta do 1');
+  assert.equal(EngineFrame.sdVX[0], 100);
+  assert.equal(EngineFrame.sdVY[0], -50);
+  assert.equal(EngineFrame.count, 0, 'dysze SIDE nie tworzą wpisu gromady MAIN');
+  EngineFrame.begin();
+  assert.equal(EngineFrame.sdN, 0, 'nowa klatka — pusta lista SIDE');
+});
+
+test('engineVfxSystem: dysza SIDE z ciągiem na listę EngineFrame.side — wylot dzwonu, moc strugi × maskowanie, bez hulka', () => {
+  const src = readFileSync(new URL('../src/3d/engineVfxSystem.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(src, /const sideGasFrom = EngineFrame\.sdN;/, 'początek dysz SIDE okrętu (zdublowane markery łączą się)');
+  assert.match(src, /if \(!isHulk\) EngineFrame\.side\(flameX, flameY, dirX, dirY, sideNozzleR, jetPower \* cloakVis, shipSceneVX, shipSceneVY, sideGasFrom\);\n\s*if \(cloakVis <= 0\.01\) continue;/,
+    'po automacie dyszy (jetPower), przed odrzuceniem dysz ukrytych');
+});
