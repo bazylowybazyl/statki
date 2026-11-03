@@ -16,8 +16,20 @@
 // Miary: maxR = maks. długość żywej belki / długość bazowa (1,2 = +20%; limit zerwania poszycia 0,20, grodzi 0,47 przy
 // globalBreakMul 0,6), peakMaxR — to samo próbkowane co 0,1 s w trakcie (stan, który widzi render), dispOver1 — węzły
 // przesunięte > 1 komórki od spoczynku, wŚrodku / insidePeak — węzły ściany bliżej niż 0,6 komórki od żywego węzła Atlasa.
+//
+// Powtarzalność (E0 planu docs/PLAN-zawalenia-budowli-3d.md): [--ziarno 12345] — rozpady (Voronoi, odłamki, kopnięcia)
+// losują przez Math.random, bez ziarna przebiegi upadku rozjeżdżały się o ±20% brył; tu Math.random dostaje LCG z ziarnem
+// (0 — dawne losowanie bez ziarna). [--prebuild 1] — szablony kratownic bazy z ekranu ładowania jak w grze
+// (prebuildPirateBaseBodies; 0 — dawne zachowanie: krok HP 0 budował bryły w kroku, 140–194 ms zamiast 37–62 ms).
+// [--pct 1] — w trybie upadek percentyle kroku co 1 s (p50 / p95 / max) i podsumowanie po HP 0 (p50 / p95 / p99 / max).
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+
+{
+  const i = process.argv.indexOf('--ziarno');
+  let s = (i >= 0 ? Number(process.argv[i + 1]) : 12345) >>> 0;
+  if (s) Math.random = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+}
 
 globalThis.window = globalThis.window || {};
 window.wrecks = window.wrecks || [];
@@ -31,7 +43,7 @@ const { createPirateBaseLayout } = await import('../src/3d/portBuildings/pirateB
 const { buildPirateBaseScene } = await import('../src/3d/portBuildings/pirateBaseScene.js');
 const { resolvePortBuildingStyle } = await import('../src/3d/portBuildings/portBuildingStyle.js');
 const { placePirateBase } = await import('../src/game/story/pirateBaseSite.js');
-const { createPirateBaseSites, PIRATE_BASE_SOLID, PIRATE_BASE_MATERIAL_OVERRIDE } = await import('../src/game/story/pirateBaseBodies.js');
+const { createPirateBaseSites, PIRATE_BASE_SOLID, PIRATE_BASE_MATERIAL_OVERRIDE, prebuildPirateBaseBodies } = await import('../src/game/story/pirateBaseBodies.js');
 // --mat disc.armor=2,tech.density=1.2 — materiały kawałków bazy w locie (A/B; tabela zamrożona — podmiana wpisu)
 for (const kv of String(process.argv.includes('--mat') ? process.argv[process.argv.indexOf('--mat') + 1] : '').split(',').filter(Boolean)) {
   const [k, v] = kv.split('=');
@@ -100,6 +112,7 @@ function hullExtent(e) {
 const L = createPirateBaseLayout();
 const style = resolvePortBuildingStyle('pirate');
 const scene = buildPirateBaseScene(L, style);
+if (arg('prebuild', '1') !== '0') prebuildPirateBaseBodies(L, scene, style?.palette || null);
 const CENTER = { x: 5e6, y: 4e6 };
 const place = placePirateBase(CENTER, 0, L);
 const HAB = place.habitat;              // toGame(0, 0); oś 0: toGame(x, z) = (O.x + x, O.y + z)
@@ -628,6 +641,10 @@ if (TRYBY.includes('upadek')) {
     const total = Math.round((HP0 + PO) / dt);
     const hp0Step = Math.round(HP0 / dt);
     let stepPeak = 0, stepSum = 0, stepN = 0, solverPeak = 0;
+    // --pct 1 — czasy kroków: okno 1 s i cały okres po HP 0 (percentyle z posortowanej kopii)
+    const PCT = !!arg('pct', '');
+    const winMs = [], postMs = [];
+    const q = (a, f) => a[Math.min(a.length - 1, Math.floor(f * (a.length - 1)))];
     const tl = [];
     let towerMinZ = Infinity, towerVmax = 0;
     const towerOf = () => fall.tower?.beamHull?.entity === fall.tower ? fall.tower.beamHull.body : null;
@@ -695,6 +712,17 @@ if (TRYBY.includes('upadek')) {
         const n = Math.max(1, winSteps);
         console.log(`      koszt ${(k * dt).toFixed(0)}s: solver ${(solvMs / n).toFixed(1)} ms, kolizje ${(colMs / n).toFixed(1)} ms (w tym teren ${(terrMs / n).toFixed(1)}), pary ${(pairsW / n).toFixed(0)}, aktywne węzły ${(aktW / n).toFixed(0)}`);
       }
+      if (PCT) {
+        winMs.push(ms);
+        if (k >= hp0Step) postMs.push(ms);
+        if (k % Math.round(1 / dt) === 0) {
+          winMs.sort((x, y) => x - y);
+          let solids = 0, nodes = 0;
+          for (const b of HullBodies._solids) if (b && !b.dead) { solids++; nodes += b.activeNodes; }
+          console.log(`      PCT ${(k * dt).toFixed(0)}s ${fall.phase}/${neck.phase}: p50 ${q(winMs, 0.5).toFixed(2)} p95 ${q(winMs, 0.95).toFixed(2)} max ${q(winMs, 1).toFixed(2)} ms, brył ${solids}, węzłów żywych ${nodes}`);
+          winMs.length = 0;
+        }
+      }
       if (k % Math.round(1 / dt) === 0) { terrMs = 0; solvMs = 0; colMs = 0; winSteps = 0; pairsW = 0; aktW = 0; }
       if (k >= hp0Step) {
         stepSum += ms; stepN++; if (ms > stepPeak) stepPeak = ms;
@@ -749,6 +777,10 @@ if (TRYBY.includes('upadek')) {
       uderzenia: events.impact.slice(0, 14), osiadania: events.settle.length, przebicia: events.breach.slice(0, 10),
       stepMs: { mean: +(stepSum / Math.max(1, stepN)).toFixed(2), peak: +stepPeak.toFixed(1), solverPeak: +solverPeak.toFixed(1) } }));
     console.log('   ', tl.join(' | '));
+    if (PCT && postMs.length) {
+      postMs.sort((x, y) => x - y);
+      console.log(`    PO HP0 ${wariant} ${hz(dt)} Hz: n=${postMs.length} p50 ${q(postMs, 0.5).toFixed(2)} p95 ${q(postMs, 0.95).toFixed(2)} p99 ${q(postMs, 0.99).toFixed(2)} max ${q(postMs, 1).toFixed(2)} ms`);
+    }
     release(ents);
   }
 }
