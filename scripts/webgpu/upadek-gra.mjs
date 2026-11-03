@@ -4,7 +4,8 @@
 //
 //   node scripts/webgpu/upadek-gra.mjs [--warianty stoi,lezy] [--kamera top,3d] [--out .tmp/upadek] [--query renderWorker=0]
 //     [--rozmiar 1600x900] [--czas 34] [--fall k=v,k2=v2] (PIRATE_FALL_TUNE w locie) [--seria 1.5] (kadr co 1,5 s od
-//     uderzenia wieży); wiersze stanu: `gaz` — domeny głębokie wg znacznika (10 uderzenia, 9 wyrwy): [liczba, bok km]
+//     uderzenia wieży); wiersze stanu: `gaz` — domeny głębokie wg znacznika (10 uderzenia, 9 wyrwy): [liczba, bok km];
+//     --bramka 0 — A/B bez bramki odłamków habitatu po HP 0 (HullBodies.debrisGate)
 //
 // stoi — HP 0 habitatu przy stojącej wieży (gracz zestrzelił resztę bez taranu szyi)
 // lezy — najpierw zerwanie szyi (window.snapPirateBaseNeck), wieża leży na dysku i zamarza, potem HP 0
@@ -12,7 +13,8 @@
 // kamera 3d — kamera 3D (Game3D 'tactical') krążąca wokół wieży (Game3D.focusEntity) od HP 0 do osiadania;
 // kamera gra — kamera statku jak u gracza (ujęcie upadku robi fabuła: lookAt nad habitat i skałę).
 // --progi 1 — przed HP 0 cztery trafienia w ćwiartki bębna (progi punktów łamią je płasko, odłamy dryfują).
-// Co 0,25 s: faza upadku, wieża (z, prędkość), sektory dysku puszczone, uderzenia, zamrożone, czas kroku fizyki i klatki;
+// Co 0,25 s: faza upadku, wieża (z, prędkość), sektory dysku puszczone, uderzenia, zamrożone, czas kroku fizyki i klatki,
+// żywe odłamki węzłów (`odlamki` — pula hullDebris3D w trybie off);
 // kadry w chwilach sekwencji; pipeline'y renderu tworzone synchronicznie w scenariuszu (ma być 0). Raport: <out>/raport.json.
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -125,7 +127,44 @@ const STATE = `(() => {
     wieza: b ? [Math.round(b.pos.x - hc.x), Math.round(-b.pos.y - hc.y), Math.round(b.pos.z), Math.round(Math.hypot(b.vel.x, b.vel.y, b.vel.z)), b.activeNodes, b.anchored ? 1 : 0] : null,
     styk: F ? +F.touchT.toFixed(2) : -1, przejscie: F ? +F.passT.toFixed(2) : -1, korek: F ? F.plugN || 0 : 0, sektory: F ? F.released : 0,
     uderzenieWiezy: F ? +F.towerImpactT.toFixed(2) : -1, uderzenieDysku: F ? +F.discImpactT.toFixed(2) : -1, uderzenia: F ? F.impacts : 0, zamrozone: F ? F.frozen : 0,
-    bryly: [free, frozen], fizykaMs: fiz, klatkaMs: kl };
+    bryly: [free, frozen], fizykaMs: fiz, klatkaMs: kl,
+    // żywe odłamki węzłów (pula hullDebris3D — tryb off: render na stronie; −1 — pula w workerze albo jeszcze bez puli):
+    // od śmierci habitatu jego ciała giną bez odłamków (HullBodies.debrisGate) — okruchy nie zostają w płaszczyźnie gry
+    odlamki: window.HullDebris3D && window.HullDebris3D.batches ? window.HullDebris3D._alive() : -1,
+    // ginące węzły od HP 0 wg źródła (narastająco; „:bez” — bramka odłamków je wyciszyła)
+    zrodla: window.__debrisTally || null,
+    // żywe odłamki wg miejsca: [w obrysie bębna (r < 1,1 km od osi habitatu), do 3 km, dalej] — tor jak w shaderze puli
+    odlamkiR: debrisRings(hc) };
+  function debrisRings(c) {
+    const P = window.HullDebris3D;
+    if (!P || !P.batches) return null;
+    const now = P.material.uniforms.uTime.value, out = [0, 0, 0];
+    for (const bt of P.batches) {
+      const a = bt.arrays;
+      for (let k = 0, i = bt.first; k < bt.alive; k++, i = (i + 1) % bt.capacity) {
+        const age = now - a.aInfo[i * 3];
+        if (age < 0 || age >= a.aInfo[i * 3 + 2]) continue;
+        const f = (1 - Math.exp(-0.6 * age)) / 0.6;
+        const x = P.originX + a.aStart[i * 3] + a.aVel[i * 3] * f, y = -(P.originY + a.aStart[i * 3 + 1] + a.aVel[i * 3 + 1] * f);
+        const r = Math.hypot(x - c.x, y - c.y);
+        out[r < 1100 ? 0 : r < 3000 ? 1 : 2]++;
+      }
+    }
+    return out;
+  }
+})()`;
+// Licznik źródeł odłamków: opakowanie bramki HullBodies.debrisGate (wynik bez zmian) — budowla bazy, wrak, kadłub.
+// --bramka 0 — A/B: bez bramki (odłamki habitatu po HP 0 jak dawniej).
+const DEBRIS_TALLY = `(() => {
+  const H = window.HullBodies, g = ${args.bramka === '0' ? 'null' : 'H.debrisGate'}, T = window.__debrisTally = {};
+  H.debrisGate = (b) => {
+    const r = g ? g(b) : false;
+    const w = b.hull && b.hull.world, e = b.hull && b.hull.entity;
+    const k = (w && w.site && w.site.structure ? w.site.structure : e && e.isWreck ? 'wrak' : 'kadlub') + (r ? ':bez' : '');
+    T[k] = (T[k] || 0) + 1;
+    return r;
+  };
+  return true;
 })()`;
 
 async function przebieg(wariant, kamera) {
@@ -199,6 +238,7 @@ async function przebieg(wariant, kamera) {
     await shot(`${tag}-01b-progi`);
   }
   // HP 0 habitatu — finał misji (storyGame._chainExplosion → upadek)
+  await ev(DEBRIS_TALLY);
   await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat; S.deps.damageStation(st, st.hp + 10); return st.hp; })()`);
   const rows = [];
   const kadry = new Set();

@@ -1246,7 +1246,7 @@
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     // Upadek habitatu na planetoidę (2026-10-19): teren skały i grawitacja ku jej środkowi w silniku belek, wieża
     // przebija dysk i spada pierwsza, dysk za nią, osiadanie na skale (src/game/story/pirateBaseFall.js).
-    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, noteBaseWreckRest, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
+    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, habitatFallMutesDebris, loadPirateRockShape, noteBaseWreckRest, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
     // Powietrze budowli bazy (2026-10-19): rozszczelnienie, dekompresja, wylot powietrza i pożary — decyzje w grze
     // (src/game/story/pirateBaseAtmosphere.js), obraz wyrw src/3d/pirateBaseVents3D.js (stan klatki — blok pirateVents).
     import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
@@ -33676,6 +33676,9 @@
       simTime: () => HullBodies.simTime, solids: null, hooks: _fallHooks, wrecks, shatter: null,
       createSolid: (e, s, o) => HullBodies.createSolid(e, s, o), releaseHull: (e) => HullBodies.release(e),
       isBaseSite: (s) => !!(s && s.structure), rnd: Math.random, tune: PIRATE_FALL_TUNE };
+    // od śmierci habitatu jego ciała giną bez odłamków — inaczej płaskie okruchy zostają w płaszczyźnie gry, gdy bryły
+    // spadają na skałę (pirateBaseFall.habitatFallMutesDebris)
+    HullBodies.debrisGate = habitatFallMutesDebris;
     function syncPirateFallCtx() {
       const c = _fallCtx;
       c.engine = HullBodies.engine;

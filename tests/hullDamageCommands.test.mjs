@@ -241,6 +241,45 @@ test('odłamki węzłów: rekord HULL_DEBRIS = dawna droga (te same losowania sk
   }
 });
 
+test('bramka odłamków (HullBodies.debrisGate): ciało za bramką ginie bez odłamków, rozdarcie mapy ran zostaje', async () => {
+  const { habitatFallMutesDebris } = await import('../src/game/story/pirateBaseFall.js');
+  window.wrecks.length = 0;
+  const { ev } = setup();
+  const debris = [];
+  const lost = [];
+  const prev = { onDebris: HullBodies.onDebris, onNodeLost: HullBodies.onNodeLost, gate: HullBodies.debrisGate };
+  HullBodies.onDebris = (...a) => { debris.push(a); ev.debris(...a); };
+  HullBodies.onNodeLost = () => { lost.push(1); };
+  const owner = { baseStructure: 'habitat', hp: 100, _destroyed3D: false };
+  const kill = (e, n) => {
+    const b = e.beamHull.body, s = b.nodeStore;
+    let k = 0;
+    for (let i = 0; i < s.count && k < n; i++) if (s.active[i]) { HullBodies.engine.destroyNode(b, i); k++; }
+    return k;
+  };
+  try {
+    HullBodies.debrisGate = habitatFallMutesDebris;
+    for (const [dead, structure, expectDebris] of [[false, 'habitat', true], [true, 'habitat', false], [true, 'piers', true]]) {
+      debris.length = 0; lost.length = 0;
+      Object.assign(owner, { baseStructure: structure, hp: dead ? 0 : 100, _destroyed3D: dead });
+      const e = ship(0, 0, 0.2);
+      e.beamHull.world = { site: { owner } };
+      const n = kill(e, 5);
+      assert.equal(n, 5);
+      assert.equal(lost.length, 5, `rozdarcia mapy ran (${structure}, martwy: ${dead})`);
+      assert.equal(debris.length, expectDebris ? 5 : 0, `odłamki (${structure}, martwy: ${dead})`);
+      HullBodies.release(e);
+    }
+    assert.equal(habitatFallMutesDebris({ hull: {} }), false, 'kadłub bez budowli');
+    assert.equal(habitatFallMutesDebris(null), false);
+  } finally {
+    HullBodies.onDebris = prev.onDebris;
+    HullBodies.onNodeLost = prev.onNodeLost;
+    HullBodies.debrisGate = prev.gate;
+    for (const w of window.wrecks.splice(0)) HullBodies.release(w);
+  }
+});
+
 test('iskry kadłubów: rekordy SPARK_BURST / SPARK_SEAM = dawne wywołania SparkSystem3D (budżet w grze)', async () => {
   const { CollisionFX } = await import('../src/vfx/collisionFx.js');
   const { setCollisionSparkSink } = await import('../src/vfx/collisionSparks.js');

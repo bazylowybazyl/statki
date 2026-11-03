@@ -1065,8 +1065,19 @@ function queuePlanarWrecks(st, ctx, tune) {
   return n;
 }
 
-// Płaski okruch habitatu, który nie dostał bryły (drobnica): rozsypuje się w odłamki (pula efektów) — nic z habitatu
-// nie zostaje dryfujące w płaszczyźnie gry.
+// Bramka odłamków (HullBodies.debrisGate) — zgłoszenie użytkownika 2026-11-03: „przy niszczeniu habitatu pokazują się
+// odłamki 2D, które zostają na płaszczyźnie gry, jak habitat leci na planetę”. Odłamek ginącego węzła (pula efektów
+// hullDebris3D) nie ma grawitacji, hamuje w ~2 s i rysuje się w passie płaszczyzny gry (kamera ortho — bez paralaksy
+// brył pod płaszczyzną), więc rozpad bębna i szybu przy HP 0, okruchy rozsypane niżej i zgniot na skale zostawiały
+// płaskie okruchy tam, skąd bryły odleciały. Od śmierci habitatu jego ciała (kawałki, odłamy, bryły upadku) giną bez
+// odłamków; pył, wyrzut i odłamki uderzeń w skałę daje pirateRockImpactFx (pass tła, perspektywa).
+export function habitatFallMutesDebris(body) {
+  const o = body?.hull?.world?.site?.owner;
+  return !!o && o.baseStructure === 'habitat' && (o._destroyed3D === true || !(o.hp > 0));
+}
+
+// Płaski okruch habitatu, który nie dostał bryły (drobnica): znika (od śmierci habitatu bez odłamków —
+// habitatFallMutesDebris) — nic z habitatu nie zostaje dryfujące w płaszczyźnie gry.
 function dissolvePlanarWreck(st, ctx, wreck) {
   const b = bodyOf(wreck);
   if (!b || b.dead || !b.planar || wreck.dead) return 0;
