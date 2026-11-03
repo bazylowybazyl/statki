@@ -68,6 +68,10 @@ export const PIRATE_BASE_SPEC = Object.freeze({
   pier: Object.freeze({ halfW: 85, deckY0: -40, deckY1: 200, gap: 60, pipeOff: 132, pipeY: 34, pipeR: 26 }),
   fuel: Object.freeze({ tankR: 300, tankY0: -520, tankY1: 820 }),
   warehouse: Object.freeze({ w: 1500, d: 950, wallTop: 560, roofY: 600, wall: 70 }),
+  // Wieżowiec na pomoście (2026-11-03, decyzja użytkownika: dwie osobne budowle — cel finału obok habitatu): w — wzdłuż
+  // pomostu, d — w poprzek (stoi okrakiem nad pokładem), wall — ściana zewnętrzna w płaszczyźnie gry; wysokości K-7:
+  // podest pod pokładem (baseY), dach (roofY ≈ 1,2 km nad płaszczyzną), zwężenie od setbackY, iglica do spireTop.
+  highrise: Object.freeze({ w: 380, d: 420, wall: 46, coreW: 120, baseY: -420, setbackY: 2000, roofY: 3000, spireTop: 3900 }),
   heights: Object.freeze({ mastTop: 620 })
 });
 
@@ -108,6 +112,13 @@ export const PIRATE_BASE_BOSS = 'H-L3';
 // (fregata sięga 337 j. od osi, pancernik 865).
 // Tor: od końca ramienia A (z rozbiegiem runUp) przez F do końca ramienia B (+ runOut), po stronie zewnętrznej.
 export const PIRATE_BASE_RAM = Object.freeze({ piers: Object.freeze([['Y-A', -1], ['Y-B', 1]]), offset: 600, runUp: 900, runOut: 300 });
+
+// Wieżowce (budowle `highrise1`, `highrise2`): pomost i miejsce wzdłuż niego (ułamek długości) — środki wolnych przęseł
+// między stanowiskami (obie strony pomostu wolne: N-P s 1176–2424, F-P s 1432–1896), poza torem taranu i trasami startów.
+export const PIRATE_BASE_HIGHRISES = Object.freeze([
+  Object.freeze({ id: 'W-1', structure: 'highrise1', pier: 'N-P', at: 0.5, label: 'wieżowiec wschodni' }),
+  Object.freeze({ id: 'W-2', structure: 'highrise2', pier: 'F-P', at: 0.64, label: 'wieżowiec zachodni' })
+]);
 
 const TAU = Math.PI * 2;
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -154,7 +165,8 @@ export function pirateBaseShipCorners(b) {
  *   piers [{ id, letter, ax… (pirateBaseSegment), halfW, pipe, chunks, label }],
  *   berths [{ id, index, pier, chunk, side, s, cls, length, beam, slot, x, z, angle, tapX, tapZ, bowX, bowZ,
  *            crew, boss, repair, supercap, out: { x, z } (kierunek wyjazdu rufą) }],
- *   tanks [{ id, chunk, x, z, r }], manifold, warehouse, fuel { nodes, edges, sluices }, lights,
+ *   tanks [{ id, chunk, x, z, r }], manifold, warehouse, highrises [{ id, chunk, structure, pier, pierChunk, s, x, z, angle,
+ *   u/n (osie pomostu), w, d, wall, coreW, baseY, setbackY, roofY, spireTop }], fuel { nodes, edges, sluices }, lights,
  *   chunks [{ id, kind, structure, group, label, box, anchors, weight, ghost }], chunkById, structures,
  *   hitSolids [{ id, chunk, poly }], ram { start, end, dir }, mouth, bounds, center, width, depth.
  */
@@ -252,6 +264,16 @@ export function createPirateBaseLayout(opts = {}) {
     annex: { x: Mp.x - 250 - W.w / 2 - 330, z: Mp.z - 120 - W.d * 0.3, w: 560, d: W.d * 0.6 }
   };
   nodes.M = { x: l.warehouse.x, z: l.warehouse.z };
+
+  // ---- wieżowce okrakiem nad pomostami (osie pudła: u — wzdłuż pomostu, n — w poprzek)
+  const HR = S.highrise;
+  l.highrises = PIRATE_BASE_HIGHRISES.map((h) => {
+    const p = l.piers.find((q) => q.id === h.pier);
+    const s = p.len * h.at;
+    return { id: h.id, chunk: h.id, structure: h.structure, pier: p.id, pierChunk: p.chunkAt(s), label: h.label, s,
+      x: p.ax + p.ux * s, z: p.az + p.uz * s, angle: p.angle, ux: p.ux, uz: p.uz, nx: p.nx, nz: p.nz,
+      w: HR.w, d: HR.d, wall: HR.wall, coreW: HR.coreW, baseY: HR.baseY, setbackY: HR.setbackY, roofY: HR.roofY, spireTop: HR.spireTop };
+  });
 
   // ---- sieć paliwowa: węzły (zbiorniki, rozgałęzienia, śluzy habitatu, zawory stanowisk) i krawędzie wzdłuż pomostów
   const fnodes = new Map();
@@ -389,16 +411,25 @@ export function createPirateBaseLayout(opts = {}) {
   add('M-1', 'warehouse', 'warehouse', 'magazyn', { x0: WH.x - WH.w / 2 - 60, x1: WH.x + WH.w / 2 + 60, y0: -300, y1: WH.roofY + 140, z0: WH.z - WH.d / 2 - 60, z1: WH.z + WH.d / 2 + 60 }, ['M-2', 'MP'], 2);
   const AX = WH.annex;
   add('M-2', 'annex', 'warehouse', 'plac kontenerów magazynu', { x0: AX.x - AX.w / 2 - 40, x1: AX.x + AX.w / 2 + 40, y0: -200, y1: 420, z0: AX.z - AX.d / 2 - 40, z1: AX.z + AX.d / 2 + 40 }, ['M-1'], 1);
+  // wieżowce (każdy osobną budowlą) — pudło z obrotem pomostu, iglica nad dachem
+  for (const h of l.highrises) {
+    const pts = boxPoly(h.x, h.z, h.w + 160, h.d + 160, h.angle);
+    add(h.chunk, 'highrise', h.structure, h.label, { x0: Math.min(...pts.map((v) => v.x)), x1: Math.max(...pts.map((v) => v.x)), y0: h.baseY, y1: h.spireTop,
+      z0: Math.min(...pts.map((v) => v.z)), z1: Math.max(...pts.map((v) => v.z)) }, [h.pierChunk], 1.6);
+  }
   l.chunks = chunks;
   l.chunkById = new Map(chunks.map((c) => [c.id, c]));
   l.structures = { habitat: [], fuel: [], warehouse: [], piers: [] };
+  for (const h of l.highrises) l.structures[h.structure] = [];
   for (const c of chunks) l.structures[c.structure].push(c.id);
 
   // ---- bryły w płaszczyźnie gry (pociski, Hexlance, radar, przeszkody gazu): bęben — wycinki pierścienia ściany
-  // i grodzi, szyb — koło, pomosty — prostokąty, zbiorniki — koła, kolektor i magazyn — prostokąty
+  // i grodzi, szyb — koło, wieżowce — prostokąty (przed pomostami: test odcinka bierze pierwszą bryłę z listy),
+  // pomosty — prostokąty, zbiorniki — koła, kolektor i magazyn — prostokąty
   const hits = [];
   for (const qd of hab.quadrants) hits.push({ id: `hit-${qd.id}`, chunk: qd.id, poly: annulusPoly(Hs.innerR - Hs.innerW, R, qd.a0, qd.a1) });
   hits.push({ id: 'hit-H-C', chunk: 'H-C', poly: circlePoly(0, 0, Hs.innerR - Hs.innerW, 16) });
+  for (const h of l.highrises) hits.push({ id: `hit-${h.chunk}`, chunk: h.chunk, poly: boxPoly(h.x, h.z, h.w, h.d, h.angle) });
   for (const p of l.piers) {
     const parts = p.chunks.length;
     for (let i = 0; i < parts; i++) {

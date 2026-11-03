@@ -1,13 +1,13 @@
 // ============================================================
 // Baza piratów (misja 1) — miejsce w grze: przejścia układ bazy ↔ gra, bryły trafień w grze (osobno na budowlę:
-// habitat, paliwo, magazyn, pomosty) i plan misji (okręty w stanowiskach z załogą i w remoncie, herszt, tor taranu,
+// habitat, dwa wieżowce, paliwo, magazyn, pomosty) i plan misji (okręty w stanowiskach z załogą i w remoncie, herszt, tor taranu,
 // zbiórka, wyjście z warpa). Czysta geometria (świat gry, y w dół).
 //
 // Układ bazy (src/3d/portBuildings/pirateBaseLayout.js): x wzdłuż osi podejścia (gracz od −x), z w poprzek → gra:
 // punkt = O + U·x + N·z, gdzie U = oś (od gracza ku bazie), N = U obrócone o +90° (w grze y w dół: w prawo od
 // kierunku lotu). Render: ramka portModuleFrame(O.x, −O.y, −axis − π/2) w scenie Core3D (place.frameAngle).
 // ============================================================
-import { createPirateBaseLayout, pointInPoly } from '../../3d/portBuildings/pirateBaseLayout.js';
+import { PIRATE_BASE_HIGHRISES, createPirateBaseLayout, pointInPoly } from '../../3d/portBuildings/pirateBaseLayout.js';
 
 export const PIRATE_BASE_TUNE = Object.freeze({
   // klucze wezwań (SUPPORT_SHIP_TEMPLATES) dla klas stanowisk; fregaty na zmianę PD / laser
@@ -28,8 +28,13 @@ export const PIRATE_BASE_TUNE = Object.freeze({
   // miały nic do roboty.
   droneBays: 4, droneSquad: 4, droneWaves: 3, droneWaveGap: 35, droneRoles: ['strike', 'multirole'],
   // Punkty budowli (habitat = finał misji; pozostałe — cele dodatkowe): punkty, osłona, progi rozpadu kawałków.
+  // Habitat (decyzje użytkownika 2026-11-03): bez progów — kawałki z PULAMI (`pieces` wg rodzaju: ćwiartka bębna, szyb)
+  // pękają od trafień w nie; punkty habitatu = maks. × ułamek etapów do zrobienia (wyłom `breachNeed` ćwiartek, wieża,
+  // wieżowce), zero — finał. Wieżowce — osobne budowle (cel finału), progi = sam wybuch w miejscu trafienia.
   hp: Object.freeze({
-    habitat: Object.freeze({ hp: 36000, shield: 4000, steps: 8 }),
+    habitat: Object.freeze({ hp: 36000, shield: 4000, steps: 0, pieces: Object.freeze({ drum: 6000, core: 6000 }), breachNeed: 1 }),
+    highrise1: Object.freeze({ hp: 8000, shield: 0, steps: 3 }),
+    highrise2: Object.freeze({ hp: 8000, shield: 0, steps: 3 }),
     fuel: Object.freeze({ hp: 7000, shield: 0, steps: 3 }),
     warehouse: Object.freeze({ hp: 9000, shield: 0, steps: 4 }),
     piers: Object.freeze({ hp: 60000, shield: 0, steps: 14 })
@@ -48,7 +53,9 @@ export const PIRATE_BASE_TUNE = Object.freeze({
   supportDistance: 5000
 });
 
-const STRUCTURES = Object.freeze(['habitat', 'fuel', 'warehouse', 'piers']);
+// Kolejność = kolejność bytów stacji: wieżowce przed pomostami (stoją okrakiem nad pokładem — pocisk sprawdza budowle po
+// kolei i trafia pierwszą z bryłą na torze).
+const STRUCTURES = Object.freeze(['habitat', ...PIRATE_BASE_HIGHRISES.map((h) => h.structure), 'fuel', 'warehouse', 'piers']);
 
 /**
  * Baza w układzie gry. center — środek obwiedni bazy w grze, axis — kierunek osi bazy (+x układu: od gracza ku bazie).

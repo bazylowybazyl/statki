@@ -23,7 +23,7 @@ test('układ bazy: kawałki w limicie grup, budowle, stanowiska z załogą i her
   assert.ok(L.chunks.length + 1 <= PB_MAX_GROUPS, `${L.chunks.length} kawałków`);
   const all = Object.values(L.structures).flat();
   assert.equal(all.length, L.chunks.length, 'każdy kawałek należy do jednej budowli');
-  assert.deepEqual(Object.keys(L.structures).sort(), ['fuel', 'habitat', 'piers', 'warehouse']);
+  assert.deepEqual(Object.keys(L.structures).sort(), ['fuel', 'habitat', 'highrise1', 'highrise2', 'piers', 'warehouse']);
   assert.equal(L.berths.length, 48);
   assert.ok(L.berths.length <= 2 * PBASE_BERTH_BITS, 'lampki stanowisk mieszczą się w dwóch kanałach');
   assert.equal(L.berths.filter((b) => b.crew && !b.boss).length, PIRATE_BASE_CREWED.length);
@@ -86,6 +86,35 @@ test('kotwice: każdy kawałek-ciało ma węzły przypięte w rastrze', () => {
     }
     assert.ok(solid > 0 && pinned > 0, `${c.id}: ${pinned} / ${solid}`);
     assert.ok(pinned < solid, `${c.id}: nie cały przypięty`);
+  }
+});
+
+test('wieżowce (2026-11-03): osobne budowle okrakiem nad pomostem, poza torem taranu i trasami wyjazdu ze stanowisk', () => {
+  assert.equal(L.highrises.length, 2);
+  const rect = (ax, az, bx, bz, half) => {
+    const l = Math.hypot(bx - ax, bz - az) || 1;
+    const nx = -(bz - az) / l * half, nz = (bx - ax) / l * half;
+    return [{ x: ax + nx, z: az + nz }, { x: bx + nx, z: bz + nz }, { x: bx - nx, z: bz - nz }, { x: ax - nx, z: az - nz }];
+  };
+  const ram = rect(L.ram.start.x, L.ram.start.z, L.ram.end.x, L.ram.end.z, 403 + 100);   // Atlas (szer. 806) + zapas
+  for (const h of L.highrises) {
+    assert.deepEqual(L.structures[h.structure], [h.chunk], `${h.structure}: jeden kawałek`);
+    const c = L.chunkById.get(h.chunk);
+    assert.equal(c.kind, 'highrise');
+    assert.ok(!c.ghost);
+    const poly = L.hitSolids.find((s) => s.chunk === h.chunk)?.poly;
+    assert.ok(poly, `${h.chunk}: bryła trafień`);
+    // środek na osi pomostu, pudło między stanowiskami (wzdłuż pomostu)
+    const p = L.piers.find((q) => q.id === h.pier);
+    assert.ok(Math.abs((h.x - p.ax) * p.nx + (h.z - p.az) * p.nz) < 1e-6, `${h.chunk} na osi pomostu`);
+    for (const b of L.berths.filter((q) => q.pier === h.pier)) assert.ok(Math.abs(b.s - h.s) >= h.w / 2 + b.beam / 2 + 20, `${h.chunk} × ${b.id}`);
+    assert.ok(!overlap(poly, ram), `${h.chunk} × tor taranu`);
+    // wyjazd rufą ze stanowiska (kierunek out, korytarz szerokości okrętu) omija wieżowiec
+    for (const b of L.berths) {
+      const a = { x: b.x, z: b.z };
+      const e = { x: b.x + b.out.x * (b.length + 2600), z: b.z + b.out.z * (b.length + 2600) };
+      assert.ok(!overlap(poly, rect(a.x, a.z, e.x, e.z, b.beam / 2), 10), `${h.chunk} × wyjazd ${b.id}`);
+    }
   }
 });
 

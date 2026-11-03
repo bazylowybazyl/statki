@@ -12,7 +12,11 @@
 //     ≥ `ramMinSpeed`) zdejmują punkty: ubytek / wszystkie węzły budowli × maks. punkty × `ramHpMul` (jak sufit
 //     punktów kadłuba okrętu — `HULL_INTEGRITY.npcExponent`, przy małym ubytku ~2,2 × udział).
 // (3) BEZPIECZNIK: budowla bez stojącego kawałka (pęknięte, schowane albo zjedzone ogniem do zera) ginie — punkty
-//     nie mogą zostać bez bryły, w którą da się trafić.
+//     nie mogą zostać bez bryły, w którą da się trafić. Budowla z `noFuse` (habitat — śmierć z etapów) go nie ma.
+// (4) PULE KAWAŁKÓW I ETAPY HABITATU (decyzje użytkownika 2026-11-03, zgłoszenie „punkty stają, ciężko zbić,
+//     nienaturalnie się ostrzeliwuje”): kawałek z pulą (ćwiartki bębna, szyb) pęka od trafień W NIEGO (taran — od
+//     zgniotu jego węzłów), nie od progu „kawałek najbliżej ostatniego trafienia”. Habitat ginie z ETAPÓW: wyłom
+//     (`breachNeed` ćwiartek), wieża (szyja zerwana — szyb pęknięty z puli albo taran) i wieżowce na pomostach.
 // ============================================================
 import { pirateBaseChunkAt, pirateBaseNearestChunk } from '../../3d/portBuildings/pirateBaseLayout.js';
 
@@ -34,6 +38,58 @@ export function baseStepChunk(layout, structure, hx, hz, isGone) {
   for (const id of ids) if (mine(layout.chunkById.get(id))) standing++;
   if (standing <= 1) return null;
   return pirateBaseChunkAt(layout, hx, hz, mine) || pirateBaseNearestChunk(layout, hx, hz, mine)?.id || null;
+}
+
+/**
+ * Pule punktów kawałków budowli `structure`: kawałki bez duchów, których rodzaj ma wpis w `byKind` ({ drum: 6000, … }).
+ * Zwraca { id: { hp, max } } (pusty obiekt — budowla bez pul).
+ */
+export function createPiecePools(layout, structure, byKind) {
+  const pools = {};
+  for (const id of layout?.structures?.[structure] || []) {
+    const c = layout.chunkById.get(id);
+    const max = c && !c.ghost ? Number(byKind?.[c.kind]) : NaN;
+    if (max > 0) pools[id] = { hp: max, max };
+  }
+  return pools;
+}
+
+/**
+ * Kawałek z pulą, który przyjmuje trafienie: `hint` (kawałek trafiony wprost — ciało, bryła), inaczej kawałek z pulą pod
+ * punktem (hx, hz) układu bazy, inaczej najbliższy stojący z niewyczerpaną pulą. Trafienie w kawałek z pustą pulą zostaje
+ * przy nim (nie przechodzi na inny). isGone(id) → kawałek pęknięty / schowany. null — budowla nie ma już czego trafić.
+ */
+export function poolPieceAt(layout, pools, hx, hz, isGone, hint = null) {
+  if (!pools) return null;
+  if (hint && pools[hint]) return hint;
+  const has = (c) => !!c && !!pools[c.id];
+  const alive = (c) => has(c) && pools[c.id].hp > 0 && !isGone(c.id);
+  if (Number.isFinite(hx) && Number.isFinite(hz)) {
+    const id = pirateBaseChunkAt(layout, hx, hz, has);
+    if (id && !isGone(id)) return id;
+  }
+  return pirateBaseNearestChunk(layout, Number(hx) || 0, Number(hz) || 0, alive)?.id || null;
+}
+
+/** Obrażenia kawałka z puli; true — pula właśnie spadła do zera (kawałek ma pęknąć). */
+export function damagePool(pools, id, dmg) {
+  const p = pools ? pools[id] : null;
+  if (!p || !(dmg > 0) || p.hp <= 0) return false;
+  p.hp = Math.max(0, p.hp - dmg);
+  return p.hp <= 0;
+}
+
+/**
+ * Etapy finału habitatu: wyłom (pęknięte ćwiartki bębna, potrzeba `breachNeed`), wieża (szyja zerwana), wieżowce
+ * (zniszczone z wszystkich). Kolejność dowolna. Zwraca { breach, breachNeed, tower, highrises, highrisesTotal, done,
+ * total, left } — `left`: ułamek etapów do zrobienia (punkty habitatu = maks. × left; 0 — habitat ginie).
+ */
+export function habitatStages({ quadrantsDown = 0, breachNeed = 1, towerDown = false, highrisesDown = 0, highrisesTotal = 0 } = {}) {
+  const breach = Math.min(Math.max(0, quadrantsDown | 0), breachNeed);
+  const highrises = Math.min(Math.max(0, highrisesDown | 0), highrisesTotal);
+  const total = breachNeed + 1 + highrisesTotal;
+  const done = breach + (towerDown ? 1 : 0) + highrises;
+  return { breach, breachNeed, tower: !!towerDown, highrises, highrisesTotal, done, total, left: total > 0 ? (total - done) / total : 0 };
 }
 
 /** Styk okrętu z kawałkiem budowli (zdarzenie zderzenia, czas symulacji silnika): otwiera okno taranu kawałka. */
@@ -70,8 +126,9 @@ function standing(p, isGone) {
 /**
  * Krok (fizyka, po HullBodies.step). sites — miejsca ciał bazy ({ owner, pieces } — pirateBaseSites()), now — czas
  * symulacji silnika (HullBodies.simTime). hooks: pieceNodes(piece) → węzły kawałka w szablonie (do sumy budowli),
- * damage(owner, hp, x, y) — obrażenia budowli z taranu, kill(owner) — bezpiecznik, isGone(id) → kawałek pęknięty
- * albo schowany w bryle bazy. Zwraca obrażenia z taranu w tym kroku (suma).
+ * damage(owner, hp, x, y) — obrażenia budowli z taranu, pieceDamage(owner, id, hp, x, y) — obrażenia kawałka z pulą
+ * (`owner.piecePools`: ubytek / węzły kawałka × jego pula × ramHpMul), kill(owner) — bezpiecznik (bez `owner.noFuse`),
+ * isGone(id) → kawałek pęknięty albo schowany w bryle bazy. Zwraca obrażenia z taranu w tym kroku (suma).
  */
 export function stepBaseIntegrity(sites, now, hooks, tune = BASE_INTEGRITY_TUNE) {
   if (!sites) return 0;
@@ -80,6 +137,7 @@ export function stepBaseIntegrity(sites, now, hooks, tune = BASE_INTEGRITY_TUNE)
     const site = sites[key];
     const owner = site?.owner;
     if (!owner || !(owner.hp > 0) || owner._destroyed3D) continue;
+    const pools = owner.piecePools || null;
     let up = 0;
     let lost = 0;
     let rx = 0;
@@ -93,13 +151,20 @@ export function stepBaseIntegrity(sites, now, hooks, tune = BASE_INTEGRITY_TUNE)
       p.__seen = alive;
       const d = seen - alive;
       if (d > 0 && now - (Number.isFinite(p.__ramT) ? p.__ramT : -Infinity) <= tune.ramWindow) {
+        const pool = pools ? pools[p.id] : null;
+        if (pool && hooks.pieceDamage) {
+          const hp = d / Math.max(1, Number(hooks.pieceNodes?.(p)) || 0) * pool.max * tune.ramHpMul;
+          hooks.pieceDamage(owner, p.id, hp, p.__ramX, p.__ramY);
+          total += hp;
+          continue;
+        }
         lost += d;
         rx = p.__ramX;
         ry = p.__ramY;
       }
     }
     if (up === 0) {
-      hooks.kill?.(owner);
+      if (!owner.noFuse) hooks.kill?.(owner);
       continue;
     }
     if (lost > 0) {

@@ -52,6 +52,8 @@ export const PIRATE_BASE_BODY_MATERIAL = Object.freeze({
   manifold: Object.freeze({ density: 2.6, armor: 6 }),
   warehouse: Object.freeze({ density: 2.2, armor: 4 }),
   annex: Object.freeze({ density: 1.4, armor: 1.5 }),
+  // wieżowiec na pomoście (2026-11-03): ściany i rdzeń jak magazyn, trochę lżejsze
+  highrise: Object.freeze({ density: 1.8, armor: 3.5 }),
   // Wieża habitatu (H-T, bryła 3D — scenariusz szyi, 2026-10-15: „bok wieży ma się rozwalić, płaszczyć”): miękka
   // względem bębna i dysku — przy uderzeniu bokiem gniecie się wieża (zgniot dzieli się ∝ 1/pancerz²: 2,5 vs 5 → wieża
   // ~80%), dysk pęka lokalnie i odpada kawałkami (wisi na trzonie), wieża zostaje na nim.
@@ -72,7 +74,7 @@ export function pirateBaseMaterial(kind) {
 const GHOST_CELL = 30;
 const GHOST_UPP = 15;
 // Podział skóry (najdłuższa krawędź trójkąta w rzucie [komórki]): bęben i pomosty gną się przy taranie — gęsto.
-const SKIN_EDGE_CELLS = Object.freeze({ drum: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4 });
+const SKIN_EDGE_CELLS = Object.freeze({ drum: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4, highrise: 3 });
 // Rzadkie fundamenty: kotwica co tyle komórek kratownicy (worldBodies.anchorComponents). Szyb habitatu (H-C) bez
 // siatki (audyt destruktora 2026-10-14, R8): trzymają go tylko kotwice osi (szyja do dysku i głowy) o skończonej
 // wytrzymałości — szarża Atlasa je zrywa.
@@ -131,6 +133,17 @@ export function pirateBasePinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) 
     case 'annex': {
       const a = layout.warehouse.annex;
       return (x, z) => Math.abs(x - a.x) <= a.w * 0.25 && Math.abs(z - a.z) <= a.d * 0.25;
+    }
+    case 'highrise': {
+      // wieżowiec stoi okrakiem na pomoście: kotwice w pasie pokładu (ściany poprzeczne nad nim) i w rdzeniu
+      const h = (layout.highrises || []).find((q) => q.chunk === chunk.id);
+      if (!h) return () => false;
+      const deck = layout.spec.pier.halfW * 0.6;
+      return (x, z) => {
+        const s = (x - h.x) * h.ux + (z - h.z) * h.uz;
+        const o = (x - h.x) * h.nx + (z - h.z) * h.nz;
+        return Math.abs(o) <= deck || (Math.abs(s) <= h.coreW / 2 && Math.abs(o) <= h.coreW / 2);
+      };
     }
     default:
       return () => false;

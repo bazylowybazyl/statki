@@ -164,7 +164,8 @@ test('pirate base obstacles: drum as one circle, other hit shapes as covering ca
   const { planPirateBase } = await import('../src/game/story/pirateBaseSite.js');
   const BW = await import('../src/game/story/pirateBaseWorld.js');
   const plan = planPirateBase({ x: 0, y: 0 }, { x: -100000, y: 0 });
-  const owners = { habitat: { id: 'habitat' }, fuel: { id: 'fuel' }, warehouse: { id: 'warehouse' }, piers: { id: 'piers' } };
+  // budowle z układu (habitat, wieżowce, paliwo, magazyn, pomosty)
+  const owners = Object.fromEntries(Object.keys(plan.dock.layout.structures).map((k) => [k, { id: k }]));
   BW.attachPirateBaseWorld(owners, plan.dock);
   try {
     const list = BW.pirateBaseObstacles();

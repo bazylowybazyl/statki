@@ -739,6 +739,102 @@ function warehouseYard(f, l) {
 }
 
 // ---------------------------------------------------------------------------
+// Wieżowce (2026-11-03, decyzja użytkownika: dwa wieżowce na pomostach — cel finału obok habitatu)
+
+// Wieżowiec okrakiem nad pomostem: podest pod pokładem, trzon z rdzeniem i słupami narożnymi (przecina płaszczyznę gry —
+// bryła trafień), powłoka z pasami okien (zasilanie habitatu; gasną od góry), zwężenie od setbackY, dach z kolcami
+// i włazami, iglica ze światłami przeszkodowymi, koguty alarmu. Część nad ~200 j. świata — FG (nad statkami, jak maszty).
+function highriseTower(f, l, h, k) {
+  const rot = -h.angle;
+  const at = (s, o) => [h.x + h.ux * s + h.nx * o, h.z + h.uz * s + h.nz * o];
+  const P = l.spec.pier;
+  const W = h.w;
+  const D = h.d;
+  const t = h.wall;
+  const fgY = 600;
+  // pudło-skorupa (cztery ściany) w zakresie y0..y1 o wymiarach w × d
+  const shell = (w, d, y0, y1, mat) => {
+    const yc = (y0 + y1) / 2;
+    const hh = y1 - y0;
+    for (const o of [-1, 1]) boxAt(f, at(0, o * (d / 2 - t / 2)), yc, w, hh, t, mat, rot);
+    for (const s of [-1, 1]) boxAt(f, at(s * (w / 2 - t / 2), 0), yc, t, hh, d - 2 * t, mat, rot);
+  };
+  // pasy okien i stropów na czterech ścianach pudła w × d (piętro co `step`)
+  const floors = (w, d, y0, y1, step, seed) => {
+    let i = 0;
+    for (let y = y0 + step * 0.5; y < y1 - step * 0.3; y += step, i++) {
+      for (const o of [-1, 1]) boxAt(f, at(0, o * (d / 2 + 3)), y - step * 0.42, w + 8, 10, 6, M.rail, rot);
+      for (const s of [-1, 1]) boxAt(f, at(s * (w / 2 + 3), 0), y - step * 0.42, 6, 10, d + 8, M.rail, rot);
+      f.fx(1.25, PB_FX.fill, 0.15 + 0.7 * (1 - (y - y0) / Math.max(1, y1 - y0)), PBASE_CH.habitat);
+      for (const o of [-1, 1]) {
+        // okna: dwa pasy na ścianie wzdłuż pomostu, przerwa przy słupie środkowym; tu i ówdzie ciemne (rozbite) okno
+        for (const s of [-1, 1]) if (pbHash1(seed * 13.7 + i * 3.1 + s + o * 0.5) > 0.12) boxAt(f, at(s * w * 0.24, o * (d / 2 + 4)), y, w * 0.4, 26, 5, M.warm, rot);
+        boxAt(f, at(o * (w / 2 + 4), 0), y, 5, 26, d * 0.7, M.warm, rot);
+      }
+      f.nofx();
+    }
+  };
+  // ---- podest pod pokładem pomostu: blok, wsporniki do kratownicy pomostu, kolce w dół
+  f.box(h.x, (h.baseY + P.deckY0) / 2, h.z, W + 120, P.deckY0 - h.baseY, D + 120, M.dark, rot);
+  for (const s of [-1, 1]) for (const o of [-1, 1]) {
+    const [x0, z0] = at(s * (W / 2 + 40), o * (D / 2 + 40));
+    const [x1, z1] = at(s * (W / 2 + 220), o * 30);
+    f.beam([x0, h.baseY + 80, z0], [x1, -238, z1], 24, M.steel);
+    f.cone(x0, h.baseY - 40, z0, 20, 160, M.rail, [s * 0.3, -1, o * 0.3]);
+  }
+  // ---- trzon w płaszczyźnie gry (BG do fgY): ściany, rdzeń, słupy narożne, wrota pomostu, pasy ostrzegawcze
+  shell(W, D, P.deckY0 - 20, fgY, M.dark);
+  boxAt(f, at(0, 0), (P.deckY0 + fgY) / 2, h.coreW, fgY - P.deckY0, h.coreW, M.steel, rot);
+  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (W / 2 - 20), o * (D / 2 - 20)), (P.deckY0 + fgY) / 2, 66, fgY - P.deckY0 + 20, 66, M.rail, rot);
+  for (const s of [-1, 1]) {
+    // wrota, którymi pomost wchodzi w wieżowiec (ciemny otwór, żółta rama)
+    boxAt(f, at(s * (W / 2 + 6), 0), P.deckY1 + 90, 10, 190, 2 * P.halfW + 30, M.black, rot);
+    boxAt(f, at(s * (W / 2 + 10), 0), P.deckY1 + 192, 12, 16, 2 * P.halfW + 50, M.yellow, rot);
+  }
+  for (const o of [-1, 1]) for (let i = 0; i < 6; i++) boxAt(f, at(-W / 2 + (i + 0.5) * (W / 6), o * (D / 2 + 5)), fgY - 40, W / 6 - 8, 24, 4, i % 2 ? M.black : M.yellow, rot);
+  // ---- wysoka część (FG): powłoka do setbackY, zwężenie do dachu, słupy narożne, piętra z oknami
+  f.set = 'fg';
+  shell(W, D, fgY, h.setbackY, M.dark);
+  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (W / 2 - 20), o * (D / 2 - 20)), (fgY + h.setbackY) / 2, 70, h.setbackY - fgY, 70, M.rail, rot);
+  floors(W, D, fgY, h.setbackY, 300, k * 5 + 1);
+  const w2 = W * 0.76;
+  const d2 = D * 0.76;
+  boxAt(f, at(0, 0), h.setbackY + 15, W + 30, 30, D + 30, M.steel, rot);
+  spikeRow(f, ...at(-W / 2, -D / 2 - 10), ...at(W / 2, -D / 2 - 10), h.setbackY + 40, 120, 120, 14, -h.nx, -h.nz, 0.5, k * 7 + 2);
+  spikeRow(f, ...at(-W / 2, D / 2 + 10), ...at(W / 2, D / 2 + 10), h.setbackY + 40, 120, 120, 14, h.nx, h.nz, 0.5, k * 7 + 3);
+  shell(w2, d2, h.setbackY + 30, h.roofY, M.dark);
+  for (const s of [-1, 1]) for (const o of [-1, 1]) boxAt(f, at(s * (w2 / 2 - 16), o * (d2 / 2 - 16)), (h.setbackY + h.roofY) / 2, 54, h.roofY - h.setbackY, 54, M.rail, rot);
+  floors(w2, d2, h.setbackY + 30, h.roofY, 300, k * 5 + 3);
+  // rury (miedź) po ścianie od strony pomostu i czerwone pasy pod dachem
+  for (const s of [-0.3, 0.3]) {
+    const [x, z] = at(s * W, -D / 2 - 14);
+    f.cyl(x, (fgY + h.setbackY) / 2, z, 14, h.setbackY - fgY, M.copper);
+  }
+  for (const o of [-1, 1]) boxAt(f, at(0, o * (d2 / 2 + 4)), h.roofY - 70, w2 + 6, 40, 6, M.red, rot);
+  // ---- dach: płyta, kolce na obrzeżu, właz, kratka, maszt z iglicą i światłami przeszkodowymi
+  boxAt(f, at(0, 0), h.roofY + 15, w2 + 40, 30, d2 + 40, M.steel, rot);
+  for (const [s0, o0, s1, o1, ox, oz] of [[-1, -1, 1, -1, -h.nx, -h.nz], [-1, 1, 1, 1, h.nx, h.nz], [-1, -1, -1, 1, -h.ux, -h.uz], [1, -1, 1, 1, h.ux, h.uz]]) {
+    spikeRow(f, ...at(s0 * (w2 / 2 + 14), o0 * (d2 / 2 + 14)), ...at(s1 * (w2 / 2 + 14), o1 * (d2 / 2 + 14)), h.roofY + 40, 110, 140, 16, ox, oz, 0.6, k * 11 + s0 + o0);
+  }
+  const [hx, hz] = at(-w2 * 0.22, d2 * 0.18);
+  hatch(f, hx, h.roofY + 30, hz, 46);
+  const [gx, gz] = at(w2 * 0.2, -d2 * 0.2);
+  grille(f, gx, h.roofY + 34, gz, 110, 70, rot);
+  const sy = (h.roofY + h.spireTop) / 2;
+  f.cyl(h.x, h.roofY + 90, h.z, 70, 120, M.dark);
+  f.cyl(h.x, sy, h.z, 22, h.spireTop - h.roofY, M.steel);
+  for (const y of [h.roofY + 260, sy, h.spireTop - 220]) f.cyl(h.x, y, h.z, 34, 16, M.rail);
+  f.fx(1.8, PB_FX.blink, pbHash1(k * 4.1 + 0.7), 0.55);
+  f.box(h.x, h.spireTop + 16, h.z, 26, 22, 26, M.red);
+  f.box(h.x, sy, h.z, 18, 14, 50, M.red);
+  f.nofx();
+  f.fx(1.7, PB_FX.alarm, pbHash1(k * 2.3 + 0.2), PBASE_CH.alarm);
+  for (const s of [-1, 1]) boxAt(f, at(s * (w2 / 2 - 30), s * (d2 / 2 - 30)), h.roofY + 50, 28, 22, 28, M.red, rot);
+  f.nofx();
+  f.set = 'bg';
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Scena bazy: { sets, plates ([]), labels ([]), lamps, groups (opisy kawałków), rig, instances }.
@@ -788,6 +884,11 @@ export function buildPirateBaseScene(l, style) {
   warehouseHall(f, l);
   f.group = G('M-2');
   warehouseYard(f, l);
+  // ---- wieżowce na pomostach (osobne budowle)
+  (l.highrises || []).forEach((h, k) => {
+    f.group = G(h.chunk);
+    highriseTower(f, l, h, k);
+  });
   // ---- maszty reflektorów (kawałek masztu) i lampy budowli
   l.lights.forEach((L, k) => {
     f.group = G(L.chunk);

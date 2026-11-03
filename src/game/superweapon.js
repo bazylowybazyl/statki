@@ -461,13 +461,15 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     const wh = window.WorldBodies.plowLance(st._worldSite, proj, prevX, prevY, proj.x, proj.y);
                     if (wh) {
                         const first = !(proj.bittenStations && proj.bittenStations.has(st));
+                        // miejsce i kawałek trafienia przed obrażeniami (pule kawałków habitatu — index.html onBasePieceDamage)
+                        st.lastHitX = wh.x;
+                        st.lastHitY = wh.y;
+                        if (first) st.lastHitChunk = wh.piece ? (wh.piece.fallOf || wh.piece.id) : null;
                         if (first) {
                             if (!proj.bittenStations) proj.bittenStations = new Set();
                             proj.bittenStations.add(st);
                             window.applyDamageToStation(st, HEXLANCE_STATION_DAMAGE);
                         }
-                        st.lastHitX = wh.x;
-                        st.lastHitY = wh.y;
                         if (RenderCommands.ready && (first || proj.cutCd <= 0)) {
                             proj.cutCd = 0.05;
                             const c = writeCarrier(st, wh.x, wh.y, false, _targetCarrier);

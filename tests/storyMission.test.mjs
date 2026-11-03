@@ -203,7 +203,7 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'course');
   assert.ok(S.site && S.site.station, 'baza postawiona');
-  assert.deepEqual(Object.keys(S.site.structures).sort(), ['fuel', 'habitat', 'piers', 'warehouse'], 'budowle bazy');
+  assert.deepEqual(Object.keys(S.site.structures).sort(), ['fuel', 'habitat', 'highrise1', 'highrise2', 'piers', 'warehouse'], 'budowle bazy');
   assert.equal(S.site.station, S.site.structures.habitat, 'cel misji = habitat');
   assert.equal(S.site.parkedList.length, 47, 'okręty w stanowiskach (bez herszta)');
   assert.equal(S.site.crewList.length, 12, 'kilkanaście z załogą');
@@ -657,7 +657,7 @@ function pointOffBase(site, d, a = 1.1) {
   return null;
 }
 
-test('zwiad fregatą z ładowni: oblot bazy (budowle n / 4), ostrzeżenie, powrót sterów; przerwanie opróżnia ładownię', async () => {
+test('zwiad fregatą z ładowni: oblot bazy (budowle n / 6), ostrzeżenie, powrót sterów; przerwanie opróżnia ładownię', async () => {
   const w = makeWorld();
   const bay = makeScoutBay();
   w.deps.scoutBay = () => bay;
@@ -677,16 +677,16 @@ test('zwiad fregatą z ładowni: oblot bazy (budowle n / 4), ostrzeżenie, powr�
   await frames(S, w, 120, view);
   assert.equal(S.ui.hint?.spec?.title, 'Zwiad', 'po przejęciu sterów — podpowiedź lotu, skanu i oznaczeń');
   assert.equal(S.phase, 'scout');
-  // habitat w zasięgu wzroku fregaty: sygnatura rozpoznana, cel — oblot (1 / 4)
+  // habitat w zasięgu wzroku fregaty: sygnatura rozpoznana, cel — oblot (1 / 6)
   w.fogSeen.add(S.site.structures.habitat);
   await frames(S, w, 3, view);
   assert.equal(S.ui.objective?.id, 'recon');
-  assert.equal(S.ui.objective.progress(), 'budowle 1 / 4');
+  assert.equal(S.ui.objective.progress(), 'budowle 1 / 6');
   bay.moveTo(pointOffBase(S.site, 4000));
   assert.ok(/ZA BLISKO/.test(S.ui.objective.progress()), 'ostrzeżenie przed zasięgiem wykrycia');
   await frames(S, w, 10, view);
   assert.ok(!S.site.alarmed, '4 km od bazy — jeszcze nie wykryta');
-  for (const k of ['fuel', 'warehouse', 'piers']) w.fogSeen.add(S.site.structures[k]);
+  for (const k of ['fuel', 'warehouse', 'piers', 'highrise1', 'highrise2']) w.fogSeen.add(S.site.structures[k]);
   await frames(S, w, 3, view);
   assert.equal(S.ui.objective?.id, 'recall', 'po oblocie — stery z powrotem na Atlasa');
   bay.recall();

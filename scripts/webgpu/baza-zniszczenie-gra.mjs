@@ -10,6 +10,8 @@
 // taran — Atlas rozpędzony W + Shift (dopalacz) w ścianę bębna od południa, kilka najazdów; punkty habitatu, węzły
 //   kawałków bębna i rdzenia przed / po.
 // magazyn — jak ostrzał, ale magazyn (2 kawałki, 4 progi).
+// etapy — finał habitatu z etapów (2026-11-03): ostrzał habitatu do wyłomu i zwalonej wieży, potem obu wieżowców
+//   (highrise1, highrise2); czy habitat padł sam, etapy i punkty po każdym kroku, pipeline'y synchroniczne.
 // szyja — scenariusz szyi habitatu (src/game/story/pirateBaseNeck.js, audyt destruktora 2026-10-14 R8): Atlas z prawej
 //   strony ekranu (kurs w lewo) w szarży F + W w szyb habitatu → zerwanie szyi, głowa spada w prawo na dysk mieszkalny;
 //   kadry zerwania / spadku / lądowania, położenie głowy, punkty habitatu, pipeline'y synchroniczne w klatkach gry.
@@ -137,6 +139,44 @@ async function ostrzal(key) {
   await startStory('shipyard');
   await sleep(2000);
   await ev(GUARD);
+  report.tryby[`ostrzal-${key}`] = await ogien(key);
+}
+
+// Etapy finału habitatu (decyzje użytkownika 2026-11-03): ostrzał habitatu do wyłomu w bębnie i zwalonej wieży (szyb przez
+// wyłom), potem obu wieżowców na pomostach — habitat ma paść sam (finał misji), bez zastoju; etapy, punkty i pipeline'y
+// synchroniczne od pierwszego strzału.
+async function etapy() {
+  await startStory('shipyard');
+  await sleep(2000);
+  await ev(GUARD);
+  const t0 = await ev('performance.now()');
+  const stages = () => ev(`(() => { const s = window.StoryGame.site.habitatStages(); const h = window.StoryGame.site.station;
+    return s ? { wylom: s.breach, wieza: s.tower, wiezowce: s.highrises, zostalo: +(s.left * 100).toFixed(0), hp: Math.round(h.hp), zniszczony: !!h._destroyed3D } : null; })()`);
+  const wynik = { start: await stages() };
+  console.log('etapy start', JSON.stringify(wynik.start));
+  wynik.habitat = await ogien('habitat', { stop: '(window.StoryGame.site.habitatStages()?.done || 0) >= 2' });
+  wynik.poHabitacie = await stages();
+  console.log('etapy po habitacie', JSON.stringify(wynik.poHabitacie));
+  await sleep(6000);   // wieża się przewraca
+  await shot('etapy-wieza');
+  for (const k of ['highrise1', 'highrise2']) {
+    wynik[k] = await ogien(k);
+    wynik[`po-${k}`] = await stages();
+    console.log('etapy po', k, JSON.stringify(wynik[`po-${k}`]));
+  }
+  wynik.final = await waitFor(cdp, 'window.StoryGame.site.buildingDestroyed()', 10000, 200);
+  await sleep(3000);
+  await shot('etapy-final');
+  await sleep(20000);
+  await shot('etapy-final-20s');
+  wynik.koniec = await stages();
+  wynik.pipeline = await ev(`(() => { const p = (window.__pipeRec ? window.__pipeRec.pipes : []).filter((x) => x.t >= ${t0}); const sync = p.filter((x) => x.sync); return { wszystkie: p.length, sync: sync.length, lista: sync.slice(0, 30).map((x) => x.nazwa) }; })()`);
+  console.log('etapy: finał', wynik.final ? 'TAK' : 'NIE', '| koniec', JSON.stringify(wynik.koniec), '| pipeline', JSON.stringify(wynik.pipeline));
+  report.tryby.etapy = wynik;
+}
+
+// Ogień w budowlę `key` (bez nowego startu misji) do jej zniszczenia, zastoju albo warunku `stop` (wyrażenie w stronie).
+async function ogien(key, { stop = null } = {}) {
   const c = await ev(`(() => {
     const l = window.StoryGame.site.dock.layout;
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
@@ -188,7 +228,10 @@ async function ostrzal(key) {
       kawalki: s.chunks.filter((q) => !q.duch).map((q) => `${q.id}:${q.stan}${q.statykaBrak ? '*' : ''}`).join(' ') });
     console.log(key, `strzały ${shots}`.padEnd(14), `${s.proc}%`.padEnd(8), przebieg[przebieg.length - 1].kawalki);
     if (s.zniszczony) break;
-    if (s.hp < lastHp - 0.5) { lastHp = s.hp; lastChange = Date.now(); }
+    if (stop && await ev(stop)) break;
+    // postęp: punkty budowli albo (habitat z pulami) suma pul kawałków
+    const pule = await ev(`(() => { const st = window.StoryGame.site.structures['${key}']; return st.piecePools ? Object.values(st.piecePools).reduce((a, p) => a + p.hp, 0) : st.hp; })()`);
+    if (pule < lastHp - 0.5) { lastHp = pule; lastChange = Date.now(); }
     stallMs = Date.now() - lastChange;
     if (stallMs > 12000) break;
   }
@@ -196,8 +239,8 @@ async function ostrzal(key) {
   await shot(`${key}-01-koniec`);
   await sleep(4000);
   await shot(`${key}-02-po-4s`);
-  report.tryby[`ostrzal-${key}`] = { bron, strzaly: shots, zastoj: !koniec.zniszczony && stallMs > 12000, koniec, przebieg };
-  console.log(key, koniec.zniszczony ? 'ZNISZCZONY' : `ZASTÓJ na ${koniec.proc}%`, 'po', shots, 'strzałach');
+  console.log(key, koniec.zniszczony ? 'ZNISZCZONY' : stallMs > 12000 ? `ZASTÓJ na ${koniec.proc}%` : `STOP na ${koniec.proc}%`, 'po', shots, 'strzałach');
+  return { bron, strzaly: shots, zastoj: !koniec.zniszczony && stallMs > 12000, koniec, przebieg };
 }
 
 const key = (code, k, vk) => ({ key: k, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
@@ -556,7 +599,8 @@ async function ostrzalWiezy() {
 try {
   for (const t of tryby) {
     if (t === 'szyja') { await szyja(); continue; }
-    if (t === 'ostrzal') await ostrzal('habitat');
+    if (t === 'etapy') await etapy();
+    else if (t === 'ostrzal') await ostrzal('habitat');
     else if (t === 'magazyn') await ostrzal('warehouse');
     else if (t === 'pomosty') await ostrzal('piers');
     else if (t === 'taran') await taran();
