@@ -1202,7 +1202,9 @@ export function createStarMaterial(u) {
   material.uniforms = u;
   material.lights = false;
   material.fog = false;
-  material.transparent = true;
+  // Nieprzezroczysty z mieszaniem addytywnym: gwiazdy na początku passa tła (renderOrder −1), POD bryłami tła (ring,
+  // hale K-7, planetoida) — przezroczysty szedł po nich wszystkich i przebijał (pułapka 41, reguła `webgpu-tsl`).
+  material.transparent = false;
   material.depthWrite = false;
   material.blending = THREE.AdditiveBlending;
   material.forceSinglePass = true;

@@ -117,6 +117,8 @@ paths:
 - Gwiazdy (`StarSystem`): WebGPU rysuje punkty zawsze po 1 px, więc to `Mesh` z `InstancedBufferGeometry` (kwadrat ×
   26 000, dane gwiazd w JEDNYM przeplecionym buforze instancji — limit 8 buforów wierzchołków) i kwadrat punktu z GL
   (bok gl_PointSize obcięty do ≥ 1 px, gl_PointCoord z rogów, t w dół). Nie wracaj do `THREE.Points` z rozmiarem.
+  Materiał NIEprzezroczysty z mieszaniem addytywnym (`renderOrder` −1: na początku passa tła, pod ringiem, halami K-7
+  i planetoidą — przezroczysty przebijał przez nie, pułapka 41 w regule `webgpu-tsl`).
   Skok (zadanie 22): smugi PŁASKIE wzdłuż kursu i front wyjścia od dziobu z `WARP_STARS` (`src/3d/warp/stars.js`, pisze
   tylko sterownik warpa — nie prędkość lotu); dawne rozciąganie i „bicz” przy wyjściu usunięte. Bez warpa gałąź punktu
   jak przed zadaniem 22. W trybie nieba-sfery warstwa deep jest zwinięta (`hideDeep`), a warstwa mid jedzie DROGĄ NIEBA

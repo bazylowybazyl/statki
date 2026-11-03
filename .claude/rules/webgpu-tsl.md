@@ -229,6 +229,15 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
   v.assign(expr)`) — przecina rekurencję i ustala miejsce obliczenia przed gałęziami (wzór `plantVar`,
   `src/3d/earthBitePlantCommon.tsl.js`). Czas budowy sprawdzaj w Node (`renderer.backend.createNodeBuilder(...).build()`).
 
+- **Pułapka r183 z gwiazd tła (2026-11-03):** (41) `material.transparent = true` przenosi siatkę do listy przezroczystych,
+  którą three rysuje PO WSZYSTKICH nieprzezroczystych tego `render()` — `renderOrder` sortuje tylko w obrębie listy.
+  Addytywne tło z ujemnym `renderOrder` (jasne gwiazdy nieba bez testu głębi, GameStars) kładło się więc na ringu, halach
+  K-7 i planetoidzie bazy piratów w passie tła. Mieszanie ≠ Normal działa i z `transparent = false`
+  (`WebGPUPipelineUtils`: `blending !== NormalBlending || transparent`) — rzecz, która ma leżeć POD bryłami passa, to
+  materiał nieprzezroczysty z mieszaniem addytywnym i `renderOrder` przed nimi (wzór: kwady jasnych gwiazd
+  `skySphere.tsl.js`, `createStarMaterial`; strażnik z prawdziwą listą renderu three w `tests/skySphere.test.mjs`).
+  Sprawdzanie w grze: kadr z gwiazdami i bez (maska warstw — widoczność nieba ustawiają moduły co klatkę), różnica na bryłach.
+
 ## Rozgrzewka pipeline'ów (`Core3D.warmup`)
 
 - **Rozgrzewka pipeline'ów (zadanie 11, `src/3d/rozgrzewka.js`, `Core3D.warmup`):** w WebGPU klucz pipeline'u to graf materiału + układ atrybutów + cel (format, próbki, głębia) + światła passa + typ kamery + stan (mieszanie, głębia, strona), więc rozgrzewa się PRAWDZIWE obiekty w PRAWDZIWYM celu. Moduł dopisuje się JEDNĄ linią (przy imporcie też — wpisy czekają na urządzenie, a funkcja `objects` woła się dopiero w chwili rozgrzewki):

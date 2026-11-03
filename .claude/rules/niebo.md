@@ -107,6 +107,11 @@ paths:
   NAJMNIEJ dawna smuga 0,22 · stretchPx ≈ 16 px — w ładowaniu skoku statek stoi, a smuga rośnie ze `stretch`:
   „zapowiedź” skoku; 1080p: 16 px, 1440p warp Mk II 18 px, 32:9 1440p 18 / 34 px) i front wyjścia; światło dokładane
   jak na pikselu: acesGryInv((gładkie + gwiazda) · jasność) − acesGryInv(gładkie · jasność).
+  GWIAZDY POD BRYŁAMI TŁA: pass tła niesie też bryły (dolna część ringu, hale K-7, planetoida bazy piratów), więc jasne
+  gwiazdy i GameStars to materiały NIEprzezroczyste z mieszaniem addytywnym (`transparent = false`) — idą na początku
+  passa wg `renderOrder` (niebo −1000 → jasne gwiazdy −998 → GameStars −1 → bryły). Z `transparent = true` three rysował
+  je po wszystkich nieprzezroczystych i przebijały przez ring, doki i planetoidę (zgłoszenie 2026-11-03; pułapka 41
+  w regule `webgpu-tsl`). Nowa warstwa gwiazd albo tła w passie tła — tak samo.
 - KAMERY 3D: sfera `Sky3D` z tą samą treścią i orientacją (`worldMat`); w trybie płaskim dawna sfera z mgławicą w rzucie
   stereograficznym.
 - Rozgrzewka: `niebo-sfera: kamera z góry`, `niebo-sfera: jasne gwiazdy`, `niebo-sfera: pamięć nieba` (faza

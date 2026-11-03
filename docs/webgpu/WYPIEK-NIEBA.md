@@ -501,6 +501,25 @@ już tylko ~2,2× szybszy od walki przy 1500 j/s (dawniej ~4,4×).
   klatce gry); `nebula.webp` (~65 MB) ładuje się dalej — tło menu pożycza teksturę płaszczyzny (strona i worker), więc
   razem ~141 MB. Paczka Electrona +11,7 MB.
 
+### Gwiazdy pod bryłami tła (2026-11-03)
+
+Zgłoszenie użytkownika: „gwiazdy tła przebijają się przez różne rzeczy — doki, ring, planetę w misji 1”. Pass tła
+(warstwa 1) niesie oprócz nieba bryły: dolną część ringu, hale K-7 i planetoidę Hidalgo pod bazą piratów. Kwady jasnych
+gwiazd (`createSkyStarQuadsMaterial`, bez testu głębi) i GameStars (`createStarMaterial`, z = −250) miały
+`transparent = true` — three r183 rysuje listę przezroczystych PO wszystkich nieprzezroczystych `render()`, a `renderOrder`
+(−998, −1) sortuje tylko w obrębie listy, więc gwiazdy kładły się na bryłach. Poprawka: oba materiały nieprzezroczyste
+z mieszaniem addytywnym (three miesza każde mieszanie ≠ Normal bez względu na `transparent`) — kolejność w passie tła:
+niebo → jasne gwiazdy → GameStars → bryły; przezroczyste rzeczy tła (powłoka powietrza ringu, poświaty, mgła) dalej leżą
+nad gwiazdami. Pułapka 41 w regule `webgpu-tsl`, strażnik z prawdziwą listą renderu three w `tests/skySphere.test.mjs`.
+
+Sonda w grze (tryb off, 1600 × 900; kadr z gwiazdami i bez — gwiazdy chowane maską warstw, bo widoczność nieba ustawiają
+moduły co klatkę; bryła = piksel niezerowy w kadrze bez nieba i gwiazd, próg 0,035 luminancji): piksele, które gwiazdy
+zmieniają na bryłach, przed → po: hala K-7 (zoom 0,35) 3 120 → 191, hala z ringiem (0,12) 2 687 → 172, baza piratów nad
+osadą (0,2) 5 455 → 0, baza z planetoidą (0,08) 6 273 → 15, cała skała (0,035) 3 694 → 1, ring przy porcie (0,2)
+882 → 767, Ziemia z ringiem (0,02) 313 → 43. Reszta leży na półprzezroczystej poświacie nad pustą przestrzenią (powłoka
+powietrza ringu, mgiełka przy hali) — tam gwiazdy prześwitują słusznie. Ciemne bryły (skała w cieniu, podłoga ringu nocą)
+maska bierze za niebo: łącznie piksele gwiazd w kadrach bazy 17–18 tys. → 0,7–7,3 tys.
+
 ### Wypiek sfery (`SkyBaker({ sphere: true })`, styl galaktyki z `sphere`)
 
 - Cel = equirect 2 : 1 (λ = (x / W − 0,5) · 2π, φ = (0,5 − y / H) · π, wiersz 0 = biegun N), `ctx.dir()`, `ctx.lonLat()`;

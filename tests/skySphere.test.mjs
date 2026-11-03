@@ -361,6 +361,57 @@ test('gwiazdy GameStars: tryb sfery zwija warstwę deep (paralaksa < 0,04) w wie
   assert.match(vs, /vec4<f32>\( 2\.0, 2\.0, 2\.0, 1\.0 \)/, 'wierzchołek poza bryłą obcinania');
 });
 
+test('gwiazdy tła na początku passa tła — nieprzezroczyste z mieszaniem addytywnym, POD bryłami tła (ring, doki K-7, planetoida)', async () => {
+  // Zgłoszenie 2026-11-03 („gwiazdy tła przebijają się przez doki, ring, planetę w misji 1”): listę przezroczystych three
+  // rysuje PO wszystkich nieprzezroczystych passa, a renderOrder sortuje tylko w obrębie listy — przezroczyste jasne gwiazdy
+  // (bez testu głębi) i GameStars kładły się na bryłach passa tła. Prawdziwa lista renderu three i kolejność z kodu gry.
+  const { readFileSync } = await import('node:fs');
+  const { default: RenderList } = await import('three/src/renderers/common/RenderList.js');
+  const { createStarMaterial, createStarGeometry, STAR_PLANET_MASK_CAP } = await import('../src/3d/planet3d.assets.tsl.js');
+  const { uniformsAdapter } = await import('../src/3d/tsl/uniformy.js');
+  const { texture, uniform, uniformArray, vec2 } = await import('three/tsl');
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const order = (src, re) => { const m = src.match(re); assert.ok(m, `renderOrder ${re}`); return Number(m[1]); };
+  const sky = read('../src/3d/sky3D.js');
+  const flatOrder = order(sky, /flat\.renderOrder = (-?\d+);/);
+  const starsOrder = order(sky, /stars\.renderOrder = (-?\d+);/);
+  const gameOrder = order(read('../src/3d/planet3d.assets.js'), /this\.mesh\.name = 'GameStars'; this\.mesh\.renderOrder = (-?\d+);/);
+  const U = createSkySphereUniforms(tex(), cacheTex());
+  const u = uniformsAdapter({
+    pointTexture: texture(tex(), vec2(0.0)), time: uniform(0), cameraOffset: uniform(new THREE.Vector2()), containerSize: uniform(220000),
+    perspectiveScale: uniform(800), globalBrightness: uniform(1), warpFactor: uniform(0), moveDir: uniform(new THREE.Vector2(0, 1)),
+    stretchStrength: uniform(20), zoomComp: uniform(1), exitWhipFactor: uniform(0), exitWhipStrength: uniform(1.75),
+    viewportSize: uniform(new THREE.Vector2(1, 1)), thinningStrength: uniform(38), baseSizeMul: uniform(1.65),
+    hideDeep: uniform(1.0),
+    planetMasks: uniformArray(Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4()), 'vec4')
+  });
+  const n = 1;
+  const starGeo = createStarGeometry({
+    starPos: new Float32Array(3), size: new Float32Array(n), brightness: new Float32Array(n), color: new Float32Array(3),
+    parallaxFactor: new Float32Array(n), layerSizeMul: new Float32Array(n), layerBrightnessMul: new Float32Array(n),
+    layerStretchMul: new Float32Array(n)
+  }, n);
+  const mesh = (geo, mat, ro) => { const m = new THREE.Mesh(geo, mat); m.renderOrder = ro; return m; };
+  const flat = mesh(new THREE.PlaneGeometry(2, 2), createSkySphereFlatMaterial(U), flatOrder);
+  const quads = mesh(createSkyStarGeometry(buildSkyStarCatalog()), createSkyStarQuadsMaterial(U), starsOrder);
+  const game = mesh(starGeo, createStarMaterial(u), gameOrder);
+  const body = mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicNodeMaterial(), 0);   // bryła tła: ring, hala K-7, skała
+  const list = new RenderList({ getNode: () => ({ setLights() {} }) }, new THREE.Scene(), new THREE.PerspectiveCamera());
+  list.begin();
+  // bryła bliżej kamery (z mniejsze) — kolejność i tak z renderOrder
+  for (const [m, z] of [[body, -1], [game, 0], [quads, 0], [flat, 0]]) list.push(m, m.geometry, m.material, 0, z, null, null);
+  list.sort();
+  assert.deepEqual(list.transparent.map((r) => r.object.material.name), [], 'gwiazdy nie w liście przezroczystych');
+  assert.deepEqual(list.opaque.map((r) => r.object), [flat, quads, game, body], 'niebo → jasne gwiazdy → GameStars → bryły');
+  for (const m of [quads.material, game.material]) {
+    assert.equal(m.blending, THREE.AdditiveBlending);
+    assert.equal(m.depthWrite, false);
+  }
+  // three r183 miesza każde mieszanie ≠ Normal także bez `transparent` (inaczej gwiazdy zastępowałyby niebo pod sobą)
+  const pu = read('../node_modules/three/src/renderers/webgpu/utils/WebGPUPipelineUtils.js');
+  assert.match(pu, /material\.blending !== NoBlending && \( material\.blending !== NormalBlending \|\| material\.transparent !== false \)/);
+});
+
 test('prawo tempa z adresu (?nieboTempo) — off ≡ worker: te same wejścia i ten sam adres dają te same macierze; stare = dawne liczby', async () => {
   const { skyScreenSpeed, skyStarStreakPx, SKY_SCROLL, SKY_SCROLL_STARE, SKY_SCROLL_BEZ_SUFITU } = await import('../src/3d/skyScroll.js');
   const { WARP_STARS } = await import('../src/3d/warp/stars.js');
