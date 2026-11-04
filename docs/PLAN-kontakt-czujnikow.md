@@ -5,7 +5,15 @@ w gałęzi prototypu). Prośba użytkownika: „osobna sesja, żeby wykorzystał
 fajnych elementów — jakichś nieznajomych morfujących kształtów / chmurek”. W Starsectorze kontakt to małe i duże
 trójkąty; w HULLFALL ma być coś własnego.
 
-Stan: **etap 1 (propozycje wyglądu — demo na Core3D) gotowy, czeka na wybór użytkownika.** Gra bez zmian.
+Stan: **KONTAKT wybrany; namiar (wachlarz / struna / błona) — druga runda propozycji.** Gra bez zmian.
+
+## 0. Decyzje użytkownika
+
+- 2026-11-04, ocena dema: „obłoki są super, a echo jest dobre na asteroidy” → nieznany KONTAKT = **OBŁOK**; **ECHO** =
+  wygląd skał / asteroid. WIR i RÓJ odpadają. Wpięcie w grę po rundzie namiaru (prototyp zasięgu nie jest jeszcze w commicie).
+- 2026-11-04, ocena wachlarzy PULS / FALA / ISKRY: odrzucone, bo brief był błędny — „kompletnie nie podobają mi się
+  wachlarze … miałem na myśli wachlarz ode mnie i OD przeciwnika, w sensie że przeciwnik też ma swój wachlarz, a nie że ja
+  mam dwa”. Układ dwóch połówek przy okręcie gracza znika.
 
 ## 1. Co obraz ma oddać
 
