@@ -113,3 +113,28 @@ test('para klaster × ciało belek bez alokacji w kroku (stan ustalony JIT): kla
   const best = await untilSteady(() => allocatedBytes(tick, 60), (x) => x <= 8192, { warm: () => { for (let k = 0; k < 300; k++) tick(); } });
   assert.ok(best <= 8192, `alokacje na 60 kroków: ${best} B`);
 });
+
+// OSTATNI w pliku: HullBodies.init przestawia silnik (konfiguracja i haki gry). Front zgniotu prowadzi wyspę co krok
+// (collapsePreStep → driveCluster), więc samo prowadzenie nie alokuje: poza, prędkości, grawitacja wył. / liczba g.
+test('HullBodies.driveCluster bez alokacji (stan ustalony JIT): front prowadzi klaster co krok', async () => {
+  globalThis.window = globalThis.window || {};
+  const { HullBodies } = await import('../src/game/hullBodies.js');
+  HullBodies.ready = false;
+  HullBodies.init();
+  const e = { name: 'front', isWreck: true };
+  assert.ok(HullBodies.createCluster(e, boxDesc(), { position: { x: 0, y: 0, z: 1000 }, gravity: { x: 0, y: 0, z: -400 } }));
+  const POS = { x: 0.5, y: -0.5, z: 1000.5 }, VEL = { x: 0.5, y: 0.5, z: -30.5 }, W = { x: 0.01, y: 0.02, z: 0.5 };
+  const OFF = { gravity: false }, G80 = { gravity: 80 };
+  let k = 0;
+  const tick = () => {
+    k++;
+    POS.z = 1000.5 - (k & 255) * 0.5;
+    HullBodies.driveCluster(e, POS, VEL, W, (k & 1) === 1 ? OFF : G80);
+  };
+  for (let i = 0; i < 2000; i++) tick();
+  assert.equal(e.beamHull.body.pos.z, POS.z);
+  // 600 wywołań: jedna liczba pakowana na wywołanie (16 B) to ~9,6 KB ponad narzut pomiaru ~2,3 KB (pomiar 2026-11-04:
+  // 2,5 KB / 600; nowy obiekt pozy na wywołanie — 60 KB)
+  const best = await untilSteady(() => allocatedBytes(tick, 600), (x) => x <= 8192, { warm: () => { for (let i = 0; i < 600; i++) tick(); } });
+  assert.ok(best <= 8192, `alokacje na 600 wywołań: ${best} B`);
+});

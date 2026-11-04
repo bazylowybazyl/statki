@@ -491,6 +491,9 @@ export const DestructorBeams3D = {
       // kratownica bryły 3D po zgniocie „dzwoniła” sekundami (cały obszar w solverze), a próg w j/s nie rośnie z komórką
       nodeDamping: Number.isFinite(opts.nodeDamping) ? opts.nodeDamping : null,
       activeThreshold: Number.isFinite(opts.activeThreshold) ? opts.activeThreshold : null,
+      // tłumienie obrotu ciała [1/s] w integrate (null = cfg.angularDamping — statki i bryły bit w bit); klaster zawalenia
+      // może mieć własne (A/B tempa przechyłu przy niskim g, D12 — globalne 0,2/s zjada ~30% przyspieszenia przy g 80)
+      angularDamping: Number.isFinite(opts.angularDamping) ? opts.angularDamping : null,
       invInertiaLocal: structure.invInertia.map(v => v / massMultiplier),
       radius: structure.radius,
       config: cfg,
@@ -776,7 +779,9 @@ export const DestructorBeams3D = {
         b.vel.x += b.gravity.x * dt; b.vel.y += b.gravity.y * dt; b.vel.z += b.gravity.z * dt;
       }
       b.vel.x *= linK; b.vel.y *= linK; b.vel.z *= linK;
-      b.angVel.x *= angK; b.angVel.y *= angK; b.angVel.z *= angK;
+      // tłumienie obrotu CIAŁA (null = cfg — statki i bryły bit w bit); klaster zawalenia z własnym (createCluster)
+      const bodyAngK = b.angularDamping === null || b.angularDamping === undefined ? angK : Math.exp(-b.angularDamping * dt);
+      b.angVel.x *= bodyAngK; b.angVel.y *= bodyAngK; b.angVel.z *= bodyAngK;
       if (b.joints !== null && b.joints !== undefined) this._solveJoints(b, dt);
       b.pos.x += b.vel.x * dt;
       b.pos.y += b.vel.y * dt;
@@ -4006,6 +4011,7 @@ export const DestructorBeams3D = {
       friction: parent.friction ?? null,
       nodeDamping: parent.nodeDamping ?? null,
       activeThreshold: parent.activeThreshold ?? null,
+      angularDamping: parent.angularDamping ?? null,
       invInertiaLocal: info.invInertia,
       radius: radius + parent.cellSize,
       config: cfg,
@@ -4099,6 +4105,7 @@ export const DestructorBeams3D = {
       friction: Number.isFinite(props.friction) ? props.friction : null,
       nodeDamping: Number.isFinite(props.nodeDamping) ? props.nodeDamping : null,
       activeThreshold: Number.isFinite(props.activeThreshold) ? props.activeThreshold : null,
+      angularDamping: Number.isFinite(props.angularDamping) ? props.angularDamping : null,
       invInertiaLocal: props.invInertiaLocal.slice(),
       radius: 0,
       config: cfg,

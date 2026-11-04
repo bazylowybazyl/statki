@@ -259,8 +259,8 @@ class RigidQuat {
 /**
  * Ciało klastra (wołane przez D.createRigidBody). opts: position (środek MASY w świecie silnika — albo origin: początek
  * układu klastra, wtedy środek masy = origin + R·com), quaternion, velocity, angularVelocity, gravity, gravityWell,
- * friction, collisionArmor, name. Pola ciała jak createBody tam, gdzie czyta je wspólny kod silnika (integrate,
- * przeguby, _applyImpulse, sen); nodeStore / beamStore — null.
+ * friction, collisionArmor, angularDamping (null = cfg), name. Pola ciała jak createBody tam, gdzie czyta je wspólny
+ * kod silnika (integrate, przeguby, _applyImpulse, sen); nodeStore / beamStore — null.
  */
 export function createRigidBody(D, desc, opts, id) {
   const rc = D.rigidConfig || createRigidConfig();
@@ -320,6 +320,9 @@ export function createRigidBody(D, desc, opts, id) {
     friction: Number.isFinite(opts.friction) ? opts.friction : rc.friction,
     nodeDamping: null,
     activeThreshold: null,
+    // tłumienie obrotu [1/s] w integrate (null = cfg.angularDamping 0,2/s); gospodarz zawalenia daje własne (A/B tempa
+    // przechyłu, D12 — przy g 80 globalne tłumienie zjada ~30% przyspieszenia przechyłu)
+    angularDamping: Number.isFinite(opts.angularDamping) ? opts.angularDamping : null,
     invInertiaLocal: invert3(mp.inertia),
     inertiaLocal: mp.inertia,
     radius: rad,
