@@ -6,6 +6,7 @@ import * as THREE from 'three/webgpu';
 import {
   createContactBlock, createContactMesh, createSpaceBackdrop, KONTAKT_STYLES, KONTAKT_MAX, KONTAKT_HDR
 } from '../dema/kontakty-czujnikow/kontaktyTSL.js';
+import { createFanBlock, createFanMeshes, FAN_STYLES, FAN_MAX, FAN_HDR } from '../dema/kontakty-czujnikow/wachlarzeTSL.js';
 
 function build(renderer, mesh) {
   const b = renderer.backend.createNodeBuilder(mesh, renderer);
@@ -41,4 +42,25 @@ test('propozycje kontaktu: WGSL w Node, bez pow, wspólny blok kontaktów', () =
   const b = build(renderer, bg.mesh);
   assert.doesNotMatch(b.fragmentShader, /\bpow\(/);
   assert.ok(bg.mesh.layers.isEnabled(1));
+});
+
+test('wachlarze: WGSL trzech wariantów (i warstwy DIST fali) w Node, bez pow, blok o stałej nazwie', () => {
+  const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
+  const renderer = new THREE.WebGPURenderer({ canvas });
+  renderer.hasFeature = () => false;
+  const block = createFanBlock();
+  assert.equal(block.array.length, FAN_HDR + 3 * FAN_MAX);
+  for (const style of FAN_STYLES) {
+    const { mesh, dist } = createFanMeshes(style, block, 10);
+    for (const m of [mesh, dist].filter(Boolean)) {
+      const t0 = performance.now();
+      const b = build(renderer, m);
+      const ms = performance.now() - t0;
+      assert.doesNotMatch(b.fragmentShader, /\bpow\(/, `${m.name}: bez pow`);
+      assert.match(b.fragmentShader, /wachlarzeCzujnikow/, `${m.name}: blok o stałej nazwie`);
+      assert.ok(ms < 2000, `${m.name}: budowa ${ms.toFixed(0)} ms`);
+    }
+    assert.equal(!!dist, style === 'fala', `${style}: warstwa DIST tylko dla fali`);
+    if (dist) assert.ok(dist.layers.isEnabled(10));
+  }
 });

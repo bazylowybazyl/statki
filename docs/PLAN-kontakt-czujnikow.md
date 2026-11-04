@@ -1,4 +1,4 @@
-# Wygląd KONTAKTU czujników — propozycje (etap 1) i plan wpięcia (etap 2)
+# Wygląd KONTAKTU czujników i WACHLARZY namierzania — propozycje (etap 1) i plan wpięcia (etap 2)
 
 2026-11-04. Wątek poboczny mechaniki zasięgu radarów (`docs/PLAN-zasieg-czujnikow.md`, reguła `zasieg-czujnikow` —
 w gałęzi prototypu). Prośba użytkownika: „osobna sesja, żeby wykorzystała zaawansowane shadery WebGPU do stworzenia
@@ -97,3 +97,41 @@ ECHO 0,107, OBŁOK 0,14, WIR 0,12, RÓJ 0,10 ms (15 kontaktów); porównanie 2 �
   kontaktach — pudła kontaktów na CPU i odrzucenie piksela poza sumą pudeł (jak pudła maski słońca), RÓJ / ECHO bez
   tekstur w pętli.
 - Rozgrzewka: gałąź postu kompiluje się z „uber” (pod kurtyną) — bez nowych pipeline'ów w grze.
+
+## 5. Wachlarze namierzania „) ) )” (rozszerzenie zakresu, 2026-11-04)
+
+Prośba (przez sesję główną mechaniki zasięgu): „każ sesji dorobić, zobaczymy, co nam nastruga” — 2–3 warianty efektu
+wachlarzy przy okręcie gracza w tym samym demie i języku wizualnym. Semantyka prototypu (`drawBearingFans`,
+`radarRangeOverlay.js`; dane `P.fans`, `sensorPicture.js`) zostaje: na grupę wrogów w jednym kierunku dwie połówki
+krótkich łuków w stronę wroga — NIEBIESKA = MÓJ zasięg względem nich (`me` = moje czujniki × ich sygnatura / odległość),
+CZERWONA = ICH zasięg względem mnie, mój ślad sygnałowy (`them`); zapalonych łuków = ułamek × 7, puste miejsca słabo,
+pełny wachlarz z grotem = sięga, cicha praca skraca czerwony, radar zgadnięty (`est`) słabiej. Łuki STOJĄ przy okręcie.
+
+Demo: tryb W (`?tryb=wachlarze`, `?wachlarz=puls|fala|iskry|dzis|porownanie`), shadery
+`dema/kontakty-czujnikow/wachlarzeTSL.js`, stanowiska `wachlarzeDemo.js`. Plansza: sześć stanowisk (Atlas w kadrze
+45 km) — DALEKO, BLISKO PROGU, SIĘGA, KILKA GRUP (4 kierunki, jeden radar zgadnięty), CICHA PRACA, PRZEJŚCIE PRZEZ PRÓG
+(ułamki falują przez 1 — rozbłyski); przy grupach podpis „TY x% · ONI y%”. Porównanie: PULS, FALA, ISKRY i dzisiejszy
+rysunek 2D, w każdej ćwiartce okręt z czterema grupami (daleko, przy progu — przechodzi przez 1, sięga, zgadnięty).
+
+1. **PULS** — łuki świecą (rdzeń HDR ~1, wąska poświata), od okrętu biegnie po zapalonych łukach miękki puls —
+   tym szybszy, im bliżej progu (bicie serca). Przejście przez 1: rozbłysk — pierścień przelatuje przez wachlarz,
+   połówka się rozjarza; potem „żar”: łuki migoczą, grot oddycha małą poświatą. Zgadnięty radar — łuki w kreskach.
+2. **FALA** — grzbiety fal (co 1,5 odstępu łuków, nie pokrywają się ze skalą) płyną od okrętu do granicy zasięgu,
+   pod nimi wyraźne łuki skali; tło NAPRAWDĘ się zgina (warstwa DIST Core3D — przesunięcie w px wzdłuż promienia,
+   aberracja barw z „uber”). Sięga: co ~1,8 s przez wachlarz i dalej przechodzi fala uderzeniowa. Zgadnięty — grzbiety
+   rwane.
+3. **ISKRY** — łuki z kropek, które płyną od okrętu (każda wędruje od łuku do następnego i odradza się; szybciej przy
+   progu), migocą; na granicy zasięgu migocący front; sięga — kropki dolatują do grota, który iskrzy. Zgadnięty —
+   połowa kropek i słabiej. Spójne z RÓJ kontaktów.
+
+Zrzuty (`.tmp/kontakty/demo/`): `60-wachlarze-porownanie`, `61-…-panele`, `62-wachlarze-puls`, `63-…-fala`,
+`64-…-iskry`, `65-…-dzis`; animacja porównania `70-wachlarze-ruch.webp` (64 klatki co 0,1 s). Koszt (orientacyjnie,
+1600 × 900, 9 grup): PULS 0,095, FALA 0,13, ISKRY 0,097 ms GPU na klatkę przy pustej 0,065. Pipeline'y sync 0.
+
+Wpięcie (po wyborze): okręt gracza jest w zasięgu wzroku, więc mgła wojny wachlarzy nie przygasza — kwad w passie gry
+(warstwa 0) z blokiem grup (≤ `fanMaxGroups` 6) w px bufora z migawki workera (`P.fans` + poza gracza i r0 z obrysu
+kadłuba), FALA dodatkowo siatka na `FX_DISTORT_LAYER`; rozbłysk z czasu przejścia przez 1 (stan widoku). Napisy
+(„ONI · TY · DO NICH”) zostają na kanwie 2D.
+
+Decyzje: (4) który wariant wachlarzy (albo połączenie, np. PULS + rozbłysk FALI przy przekroczeniu progu);
+(5) czy rozbłysk przy przejściu przez 1 ma mieć dźwięk / komunikat („WYKRYTY”).

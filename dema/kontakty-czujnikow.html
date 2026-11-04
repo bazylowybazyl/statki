@@ -48,7 +48,13 @@
 <div id="nogpu"><div>Demo wymaga przeglądarki z WebGPU.<br><span id="nogpu-detail" style="color:#7f929c"></span></div></div>
 <div id="panel">
   <h1>KONTAKT CZUJNIKÓW — PROPOZYCJE</h1>
-  <div class="sub">Shadery TSL na Core3D (dema/kontakty-czujnikow/kontaktyTSL.js), dane przykładowe: kontakt = { x, y, err, rozmiar }, miejsce przybliżone co 0,2 s jak w prototypie zasięgu radarów.</div>
+  <div class="sub">Shadery TSL na Core3D (dema/kontakty-czujnikow/kontaktyTSL.js, wachlarzeTSL.js), dane przykładowe: kontakt = { x, y, err, rozmiar }, miejsce przybliżone co 0,2 s jak w prototypie zasięgu radarów; wachlarze = ułamki zasięgu „ja → oni” / „oni → ja”.</div>
+
+  <h2>Tryb</h2>
+  <div class="btns">
+    <button id="m-kontakty" class="on">Kontakty<kbd>W</kbd></button>
+    <button id="m-wachlarze">Wachlarze ) ) )<kbd>W</kbd></button>
+  </div>
 
   <h2>Propozycja</h2>
   <div class="btns">
@@ -61,10 +67,12 @@
   </div>
   <div id="desc"></div>
 
+  <div id="scena-box">
   <h2>Scena</h2>
   <div class="btns">
     <button id="s-plansza">Plansza rozmiarów<kbd>S</kbd></button>
     <button id="s-gra">Jak w grze<kbd>S</kbd></button>
+  </div>
   </div>
 
   <h2>Widok</h2>

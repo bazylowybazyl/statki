@@ -4,8 +4,8 @@
 // pipeline'y synchroniczne, błędy konsoli. Headless Chrome — nie uruchamiać, gdy użytkownik gra.
 //
 //   node scripts/webgpu/kontakty-demo.mjs [--out .tmp/kontakty/demo] [--rozmiar 1600x900]
-//     [--tylko porownanie,echo,oblok,wir,roj,ruch,dzis] (część zrzutów — szybkie strojenie)
-//     [--film 1] (klatki porównania co 0,1 s w skali 0,5 → <out>/film/NNN.png — do złożenia animacji)
+//     [--tylko porownanie,echo,oblok,wir,roj,ruch,dzis,wachlarze] (część zrzutów — szybkie strojenie)
+//     [--film 1] (klatki porównania co 0,1 s w skali 0,5 → <out>/film/NNN.png i <out>/film-wachlarze/ — do animacji)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -108,6 +108,37 @@ try {
     await set({ truth: false });
     await set({ variant: 'dzis', clean: false });
     await gpuMedian('bez kontaktów (dziś)');
+  }
+  // WACHLARZE namierzania (tryb W): porównanie, każdy wariant na stanowiskach (daleko, próg, sięga, kilka grup, cisza,
+  // przejście), dzisiejszy rysunek 2D; film porównania (rozbłysk przy przejściu przez 1)
+  if (want('wachlarze')) {
+    await set({ mode: 'wachlarze', variant: 'porownanie', clean: true });
+    await run(240);
+    await shot('60-wachlarze-porownanie', 'Wachlarze: PULS, FALA, ISKRY, dziś — cztery grupy (daleko, przy progu, sięga, zgadnięty)');
+    await set({ clean: false });
+    await shot('61-wachlarze-porownanie-panele', 'Wachlarze: porównanie z panelem i opisem');
+    await set({ clean: true });
+    let k = 2;
+    for (const st of ['puls', 'fala', 'iskry', 'dzis']) {
+      await set({ variant: st });
+      await run(150);
+      await shot(`6${k}-wachlarze-${st}`, `Wachlarze ${st}: daleko, blisko progu, sięga, kilka grup, cicha praca, przejście`);
+      if (st !== 'dzis') await gpuMedian(`wachlarze ${st}`);
+      k++;
+    }
+    if (args.film) {
+      await set({ variant: 'porownanie', clean: true });
+      await run(60);
+      const dir = join(out, 'film-wachlarze');
+      mkdirSync(dir, { recursive: true });
+      for (let i = 0; i < 64; i++) {
+        await run(6);
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: W, height: H, scale: 0.5 } });
+        writeFileSync(join(dir, `${String(i).padStart(3, '0')}.png`), Buffer.from(data, 'base64'));
+      }
+      console.log('film wachlarzy: 64 klatki →', dir);
+    }
+    await set({ mode: 'kontakty' });
   }
   report.koniec = await ev('window.__kontakty.stats()');
   report.bledy = logs.errors().filter((l) => !/favicon|DevTools|\[vite\]/.test(l)).slice(0, 20);

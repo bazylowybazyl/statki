@@ -354,6 +354,9 @@ function rojLook(B, H, ctx) {
 
 const LOOKS = { echo: echoLook, oblok: oblokLook, wir: wirLook, roj: rojLook };
 
+// Pomocniki wspólne z wachlarzami (wachlarzeTSL.js) — ten sam język: hasze PCG, zmienne typowane stałą.
+export { tv, pcg, u01, uOf, hash2, hash3 };
+
 /**
  * Materiał kwadu pełnoekranowego jednej propozycji (graf raz na propozycję). `rect` — uniform vec4 (x0, y0, x1, y1)
  * w px bufora (y od góry): poza nim wynik 0 (porównanie 2 × 2 w demie).
