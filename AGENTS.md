@@ -160,6 +160,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `mgla-wojny` | Mgła wojny |
+| `kontakt-czujnikow` | Wygląd KONTAKTU czujników („coś tam jest”): demo 4 propozycji w TSL na Core3D (echo, obłok, wir, rój), zasady pod wpięcie w post po mgle wojny |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |
