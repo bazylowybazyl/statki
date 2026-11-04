@@ -323,6 +323,10 @@ export function createRigidBody(D, desc, opts, id) {
     // tłumienie obrotu [1/s] w integrate (null = cfg.angularDamping 0,2/s); gospodarz zawalenia daje własne (A/B tempa
     // przechyłu, D12 — przy g 80 globalne tłumienie zjada ~30% przyspieszenia przechyłu)
     angularDamping: Number.isFinite(opts.angularDamping) ? opts.angularDamping : null,
+    // mnożnik tłumienia SPOCZYNKU i TOCZENIA w styku (restDamp pary, restAngDamp terenu, rollDamp; null = 1 — bit w bit):
+    // przewracana wieża toczy się po narożniku naprawdę (0), a tłumienie dla osiadającego gruzu zabijało przewrócenie
+    // przy niskim g (D12) — gospodarz zawalenia zdejmuje je na czas przewracania (HullBodies.setClusterDamping)
+    restDamping: Number.isFinite(opts.restDamping) ? opts.restDamping : null,
     invInertiaLocal: invert3(mp.inertia),
     inertiaLocal: mp.inertia,
     radius: rad,
@@ -994,8 +998,10 @@ function resolveRigidPair(D, A, B, doDamage) {
   // leżący stos: wolny styk (osiadanie) tłumi obrót obu ciał — rozłożone podparcie gasi kołysanie
   if (doDamage && -vmin < rc.restSpeed && rc.restDamp > 0 && n >= 2) {
     const k = Math.exp(-rc.restDamp * dt * Math.min(1, n / 8));
-    if (!fa) { awx *= k; awy *= k; awz *= k; }
-    if (!fb) { bwx *= k; bwy *= k; bwz *= k; }
+    // mnożnik ciała (restDamping; null — k bez zmian, bit w bit)
+    const ra = A.restDamping, rb = B.restDamping;
+    if (!fa) { const ka = ra === null || ra === undefined ? k : Math.exp(-rc.restDamp * ra * dt * Math.min(1, n / 8)); awx *= ka; awy *= ka; awz *= ka; }
+    if (!fb) { const kb = rb === null || rb === undefined ? k : Math.exp(-rc.restDamp * rb * dt * Math.min(1, n / 8)); bwx *= kb; bwy *= kb; bwz *= kb; }
   }
   if (!fa) { A.vel.x = avx; A.vel.y = avy; A.vel.z = avz; A.angVel.x = awx; A.angVel.y = awy; A.angVel.z = awz; }
   if (!fb) { B.vel.x = bvx; B.vel.y = bvy; B.vel.z = bvz; B.angVel.x = bwx; B.angVel.y = bwy; B.angVel.z = bwz; }
@@ -1621,12 +1627,16 @@ function collideTerrainRigid(D, R, T, doDamage) {
         Jx -= tx * jt; Jy -= ty * jt; Jz -= tz * jt;
       }
     }
-    if (doDamage && approach < rc.restSpeed && T.restAngDamp > 0 && count >= 3) {
-      const k = Math.exp(-T.restAngDamp * dt * Math.min(1, count / rc.terrainRestCount));
+    // mnożnik tłumienia spoczynku / toczenia ciała (restDamping; null — wzory bez zmian, bit w bit; 0 — bez tłumienia)
+    const rdm = R.restDamping;
+    const rdOn = rdm === null || rdm === undefined || rdm > 0;
+    if (doDamage && rdOn && approach < rc.restSpeed && T.restAngDamp > 0 && count >= 3) {
+      const k = rdm === null || rdm === undefined ? Math.exp(-T.restAngDamp * dt * Math.min(1, count / rc.terrainRestCount))
+        : Math.exp(-T.restAngDamp * rdm * dt * Math.min(1, count / rc.terrainRestCount));
       wx *= k; wy *= k; wz *= k;
     }
-    if (doDamage && rc.rollDamp > 0 && count >= 2) {
-      const k = 1 - Math.exp(-rc.rollDamp * dt);
+    if (doDamage && rdOn && rc.rollDamp > 0 && count >= 2) {
+      const k = rdm === null || rdm === undefined ? 1 - Math.exp(-rc.rollDamp * dt) : 1 - Math.exp(-rc.rollDamp * rdm * dt);
       const wn = wx * nx + wy * ny + wz * nz;
       wx -= (wx - wn * nx) * k; wy -= (wy - wn * ny) * k; wz -= (wz - wn * nz) * k;
     }

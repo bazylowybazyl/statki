@@ -786,3 +786,34 @@ test('body.angularDamping: null = konfiguracja silnika, 0 — bez tłumienia obr
   assert.equal(r0.angVel.z, 0.7);
   assert.equal(r15.angVel.z, decay(Math.exp(-1.5 * dt)));
 });
+
+test('body.restDamping klastra: 0 — przewracany słup toczy się po krawędzi bez tłumienia spoczynku / toczenia; null = silnik; HullBodies.setClusterDamping', async () => {
+  const HB = await freshHullBodies();
+  HB.engine.addTerrain(flatTerrain());
+  const dt = 1 / 60;
+  // słup 120 × 120 × 600 przechylony o 20° wokół +y (środek masy 100 j. za krawędzią), podstawa tuż nad terenem, g 80
+  const a = 20 * Math.PI / 180, q = { x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) };
+  const run = (rest) => {
+    const e = { name: 'slup', isWreck: true };
+    const hull = HB.createCluster(e, columnDesc(), { origin: { x: 0, y: 0, z: 25 }, quaternion: q, gravity: { x: 0, y: 0, z: -80 }, restDamping: rest });
+    assert.equal(hull.body.restDamping, rest ?? null);
+    let steps = 0;
+    while (steps < 1800 && tiltOf(hull.body.quat) < 70 * Math.PI / 180) { HB.step(dt, [e]); steps++; }
+    HB.release(e);
+    return steps;
+  };
+  const damped = run(undefined), free = run(0);
+  assert.ok(free < damped, `kroki do 70°: tłumienie silnika ${damped}, restDamping 0 — ${free}`);
+  assert.ok(free < 1800, 'bez tłumienia słup się przewraca');
+  // API w biegu: undefined — bez zmiany, liczba / null
+  const e = { name: 'x', isWreck: true };
+  const hull = HB.createCluster(e, columnDesc(), { origin: { x: 0, y: 0, z: 2000 }, angularDamping: 0.5 });
+  assert.equal(HB.setClusterDamping(e, undefined, 0), true);
+  assert.equal(hull.body.restDamping, 0);
+  assert.equal(hull.body.angularDamping, 0.5);
+  HB.setClusterDamping(e, null, null);
+  assert.equal(hull.body.restDamping, null);
+  assert.equal(hull.body.angularDamping, null);
+  assert.equal(HB.setClusterDamping({ name: 'bez klastra' }, 0, 0), false);
+  HB.release(e);
+});

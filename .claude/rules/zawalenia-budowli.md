@@ -8,6 +8,8 @@ paths:
   - "tests/beamPlateField3D.test.mjs"
   - "scripts/struktura-sym.mjs"
   - "scripts/klastry-sym.mjs"
+  - "scripts/zawalenia-sym.mjs"
+  - "dema/zawalenia-budowli/**"
   - "docs/PLAN-zawalenia-budowli-3d.md"
 ---
 
@@ -26,7 +28,7 @@ paths:
 - Nie ma jeszcze:
   - prefraktury L2 i archetypów z wypieku offline — E3; benchmark `prefraktura.mjs` leży poza repo w `.tmp/destrukcja-2026-11-03/bench/` i w E3 przechodzi do `scripts/`;
   - obrazu (`src/3d/structures/`, blok migawki `structBlock`, rekordy `STRUCT_*`, pula gruzu) — E4;
-  - dema na szarych blokach — D20;
+  - obrazu dema na szarych blokach (D20 krok 4 — strona i obraz; gospodarz, sceny i symulacja są — § „Gospodarz zawalenia”);
   - `window.StructureTune` i strojenia egzemplarza — D20 / E5;
   - flagi `?zawalenieStare=1` — E5–E7;
   - potoku archetypów z modelu i znaczników (`buildStructureArchetype` w plan § 10 to nazwa robocza) — E3 / ogólność;
@@ -87,7 +89,9 @@ paths:
   - front ≤ 1 poziom na 1/120 s (`frontLevelsPer120`, nadmiar czasu w `F.lag`);
   - ≤ 256 żywych klastrów (`maxClusters`, osobno od `maxWrecks`). Ponad limitem `createCluster` zwraca null, a wołający oddaje masę w gruz obrazu;
   - ≤ 160 aktywnych klastrów (`clusterMaxActive`). Nadmiar wolnych podpartych zasypia od najlżejszego.
-- Budżety planowane — wchodzą z wpięciem (plan § 3.4–3.5): ≤ 4 nowe klastry na krok, ≤ 8 solverów, ≤ 2 pełne zawalenia naraz (habitat się wlicza), ≤ 2 aktywacje budowli na krok, ≤ 64 rekordy `STRUCT_*` na krok (nadmiar zbiorczo), ≤ 8 `ROCK_IMPACT` na krok. Nadmiar idzie w gruz obrazu albo zamrożenie, po masie i id.
+  - ≤ 4 narodziny klastrów na 1/120 s w gospodarzu (`COLLAPSE_TUNE.birthsPer120`; nadmiar czeka — bloki zostają u starego właściciela);
+  - jedna wyspa swobodna na krok w gospodarzu (`structureSolveIsland`, `S.islPend` ma jedno miejsce).
+- Budżety planowane — wchodzą z wpięciem (plan § 3.4–3.5): ≤ 8 solverów, ≤ 2 pełne zawalenia naraz (habitat się wlicza), ≤ 2 aktywacje budowli na krok, ≤ 64 rekordy `STRUCT_*` na krok (nadmiar zbiorczo), ≤ 8 `ROCK_IMPACT` na krok. Nadmiar idzie w gruz obrazu albo zamrożenie, po masie i id.
 - Silnik belek liczy statki i bryły BIT W BIT przy klastrach w kroku — szczegóły integracji w regule `kadluby-belki`, punkt „KLASTRY SZTYWNE i POLE PŁYTY w silniku”. Zmiana fizyki klastrów albo płyty wymaga:
   - `node scripts/klastry-sym.mjs` przed i po;
   - testów `beamRigid3D*`, `beamPlateField3D`;
@@ -127,6 +131,22 @@ paths:
   - Styk 6-DOF klaster × pole to E6.
 - Granica modelu: 3 DOF na blok, bez momentu w węźle. Zginanie niosą pary sił w pasach (wiązania osiowe), wywracanie widzi kontrola przekrojów. Znana luka: 60 / 120 Hz w szyi dysku (przy ω0 0,55 rów −20%, energia −34%; przy 0,85 −3% / −7%) — test `todo` do E6.
 
+## Gospodarz zawalenia (`src/game/structureCollapse.js`, demo D20 krok 3)
+
+- Łączy graf z klastrami tak, jak wepną to E5–E7: `createCollapseHost(A, { bodies: HullBodies, origin, yaw, ground, kappa, debrisFrac, angularDamping, gravityWell, id, seed, tune })`, krok `collapsePreStep(H, dt)` → `HullBodies.step(dt, [..., ...H.entities])` → `collapseStep(H, dt, tick)`; broń `collapseWeaponHit` (krater + fala, J z `COLLAPSE_WEAPONS` × g/400), `collapseCharge` (ładunek kondygnacji), `collapseReleaseAnchor` (D13); odczyty `collapseRecords` (pierścień rekordów `COLLAPSE_REC`, 16 słów), `collapseTimeline`, `collapseStats`, `collapseProbe`; `collapseReset`, `collapseDispose`; teren sceny `collapseGroundTerrain` / `collapseGroundZ` (jeden na kilka gospodarzy). HullBodies przychodzi z opcji — import ściągnąłby `Math.random` do domknięcia importów obszaru.
+- ŚWIAT gospodarza = świat silnika (x gry, −y gry, z); hak styku przychodzi w świecie gry — gospodarz odbija y. Klaster = układ archetypu (J_lokalny = Rᵀ·J / massUnit). g gospodarza = A.g. Strojenie: `COLLAPSE_TUNE` + `opts.tune` (zamrożone; w narzędziu `--set`).
+- KIKUT = zamrożone klastry, jeden na poziom. UZGADNIANIE po zmianie `S.topoVer` (prawdą `S.island` / `S.dead`, nie zdarzenia): narodziny w budżecie, od najcięższej wyspy; respawn z pozą i polem prędkości rodzica (pęd i moment ±1% — test); wyspa z 1 bloku → blok ginie w grafie (gruz obrazu); ≤ 2 bloki od budowli → kopnięcie z PRNG gospodarza; sufit 256 → gruz.
+- PUNKTY STYKU CIENKICH PŁYT: `buildClusterDesc` daje kule do ½ środkowej półosi, więc kafle stropu i rdzenie kondygnacji 35 j. wystawały ~13 j. w sąsiedni poziom, czyli w INNY klaster na granicy wyspa / kikut albo dziecko / rodzic (pomiar: wyspa W-1 przy narodzinach Δv 113 j/s, potem rozbita). Opis styku idzie z `_contactBoxes`: płyta rośnie w dół kondygnacji, a prostopadłościan ze środkową półosią > 2 × najmniejszej dzieli się wzdłuż niej (masa i tensor bloku bez zmian). Test: 0 przenikania kul między poziomami kikuta. Nowy archetyp — ta sama zasada.
+- IMPULSY WYSP: bufor gospodarza na blok (ocena części zakotwiczonej zeruje `S.jx`). Łata styku `contactR` 150 j. — hak podaje jeden blok na parę, a cały impuls w jednym bloku rozbijał wyspę w drobny gruz. Uderzenie = Δv > `impactDv` 60 j/s (osiadanie na luzie 2 j. przy g 400 to 40). Do grafu idzie × `impactScale` 0,5 (przy 1 wieża po upadku rozpadała się w gruz, 158 ze 178 bloków; przy 0,5 — 5–9 klastrów). Wyspy na zawiasie i we froncie nie dostają rozwiązań: róg na ziemi to podparcie, a rozwiązanie wyspy swobodnej nie zna reakcji przegubu.
+- ZAWIAS (D11): przegub + ω0 `hingeKick`, wyspa BEZ par (`noHullCollisions`) — styk z zamrożonym kikutem zakleszczał przechył, a tempo zależało od tłumienia spoczynku silnika. Kikut, w który punkty dolnych poziomów wyspy wchodzą głębiej niż `crushDepth` × promień, ginie zmiażdżony (`_crushUnder` → `structureDestroyBlock`, gruz). Przegub pęka kątem (v2 grafu, 40°) albo ZASTOJEM (przyrost < 0,5° w 1 s × √(400 / g)). Podcięcie w pasie ±70 daje zawias 86–226 j. nad pokładem, a róg wieży W-1 (rzut 380) siada na ziemi przy 13–36° (bateria sceny 1: 25,7°) — 40° osiąga tylko wieża na pomoście nad pustką. Zastój z narożnikiem na ziemi → bez frontu (front zrzucał wieżę o kondygnację w ziemię i rozbijał ją przed przewróceniem).
+- PRZEWRACANIE: wyspa zawiasu i jej przebudowy mają `restDamping` 0 (`topple`); kikut, którego dotyka, kruszy się (`crushTouch`). Wieża w równowadze chwiejnej na narożniku (niskie g — ruch spada pod próg snu silnika) dostaje pchnięcia ω (`toppleNudges`). Gdy nie ruszyła (przechył < ~20° — oparta narożnikiem stabilnie), dostaje NACISK: obciążenie styku z okna `stuckStaticEvery` idzie jako siła do grafu wyspy i narożnik się kruszy. Koniec przewracania przy `toppleEndDeg` 80° albo po `stuckStalls` zastojach. Nacisk od początku przewracania (`staticEvery` skończony) to tylko A/B do R1: wieża kruszyła się od podstawy w gruz, a 60 / 120 Hz rozjeżdżały się o 35%.
+- FRONT startuje przy ISLAND v3 = 1 (> 3 bloki, od budowli) albo po pęknięciu przegubu kątem — tylko z kikutem tuż pod wyspą: `structureStartFront` + najniższa kondygnacja wyspy w gruz (model 1-D liczy spód od jej stropu), poza kinematyczna z F.s, bez par. Koniec: FRONT_GROUND / FRONT_STOP, najniższy punkt na podłożu albo kondygnacja pod frontem nie jest już kikutem (`wyspa`).
+- Wieże sceny A/B mają tę samą fazę grafu (`id` → (id + tick) mod okres) — inaczej historia zerwań przesuwa się o krok.
+- Encja-lustro klastra to klasa z wszystkimi polami z góry (`CollapseEntity`): `syncSolidOut` pisze pozę co krok, a literał z dopisywanymi polami przechodził w tryb słownikowy.
+- Oś czasu: oderwanie (wyspa ≥ 30% budowli, zawias albo front), zawias, przegub (`kat` / `zastoj`, przechył przy pęknięciu), przechył w czasie (co 0,05 s), 40°, front (poziomy, koniec), dach na ziemi = narożnik bloku POZIOMU DACHU ≤ 60 j. nad podłożem (uskok ×0,76 — dach leżącej wieży wisi ~45 j. nad gruntem) albo cały poziom dachu w gruzie (lądowanie analityczne, `roofAsDebris`).
+- Bez alokacji: krok gospodarza (`collapsePreStep` + `collapseStep`) < 64 B na krok w stanie ustalonym JIT (resztka: dt w argumentach `stepStructure`). Liczby stanu w tablicach typowanych (`H.iv`, `H.fv`, `H.tv`, `rec.f`), podłoże w `H.gr`, wyniki pomocników w `H._t`. `HullBodies.step` w tej scenie alokuje ~3 KB na krok — to silnik, poza gospodarzem (E5).
+- Sceny dema jako dane: `dema/zawalenia-budowli/scenariusze.js` (sceny 1–3, sterownik salw i ładunków w układzie archetypu, PRNG salwy) i `symulacja.js` (scena na HullBodies). Demo, narzędzie i test liczą ten sam kod; `nadPodlozem` — pomost nad pustką.
+
 ## Klastry sztywne i pole płyty (E2)
 
 - Oderwana masa zawalenia to ciało silnika `rigid`: 6DoF w tej samej liście `bodies` co bryły (`integrate`: grawitacja, studnia z `vmax`, przeguby).
@@ -140,7 +160,8 @@ paths:
   - ROZDZIELACZ haka (`installClusterContactRouter` / `uninstallClusterContactRouter`): hak jest jeden, budowli wiele. Gospodarz ustawia encjom swoich klastrów (także zamrożonemu kikutowi) `entity.collapseHost = H` z metodą `H.onClusterContact` o tej samej sygnaturze (9 argumentów, świat gry) i instaluje rozdzielacz — idempotentnie, można przy każdym `createCluster`. Encja z gospodarzem → tylko gospodarz; reszta → hak sprzed instalacji. Nie nadpisuj `onClusterContact` wprost, gdy działa gospodarz;
   - `clusterJoint(encja, x, y, z, { breakTilt, up, breakForce, name })` — zawias wyspy (zdarzenie HINGE), świat SILNIKA (x gry, −y gry, z) jak opcje `createCluster`. `breakTilt` w RADIANACH (stopnie grafu × π / 180; wartość skończona spoza 0…π → `RangeError`), `up` normalizowane (domyślnie +z, przy studni / ringu −ĝ). Pęknięcie: silnik zdejmuje rekord z `body.joints`, `joint.broken` zostaje w rekordzie — gospodarz czyta go po kroku. Śpiący / zamrożony klaster się budzi, klaster z przegubem nie zasypia;
   - `driveCluster(encja, pos, vel, angVel, { gravity })` — jawne API ruchu klastra dla gospodarza (front zgniotu, wyspa wolna): świat silnika, `pos` = środek masy, null = bez zmiany, obrót zostaje. `gravity`: true / brak — grawitacja i studnia z chwili `createCluster`; false — bez obu (front niesie ciało); liczba g → {0, 0, −g}; wektor. Budzi, `_touchGeometry`, lustro encji od razu; bez alokacji (test w `beamRigid3DAlokacje`), `opts` — stały obiekt wołającego. Klaster jest lustrem silnika, więc reguła „gra rusza encję, nie `body.pos`” idzie przez to API, nie przez zapis ciała;
-  - tłumienie obrotu klastra `createCluster(…, { angularDamping })` → pole ciała `angularDamping` (null = `cfg.angularDamping` 0,2/s; statki i bryły mają null — bit w bit). Globalne 0,2/s zjada ~30% przyspieszenia przechyłu przy g 80 (D12) — decyzja o wartości dla klastrów po A/B w `zawalenia-sym.mjs --tlumienie` (krok 3 dema);
+  - tłumienie obrotu klastra `createCluster(…, { angularDamping })` → pole ciała `angularDamping` (null = `cfg.angularDamping` 0,2/s; statki i bryły mają null — bit w bit). Decyzja (D20 krok 3): klastry zawaleń zostają przy null — A/B `zawalenia-sym.mjs --tlumienie` zmienia czas „dach na ziemi” o 1–6% (plan § 6.2);
+  - mnożnik tłumienia SPOCZYNKU i TOCZENIA w styku `createCluster(…, { restDamping })` → pole ciała `restDamping` (null = 1: `restDamp` pary, `restAngDamp` terenu, `rollDamp` — bit w bit), w biegu `HullBodies.setClusterDamping(encja, angular, rest)` (undefined — bez zmiany). To tłumienie działa przy ≥ 2 stykach bez progu prędkości i zabijało przewracanie wieży po narożniku przy niskim g (dziesiątki sekund) — gospodarz zdejmuje je (0) na czas przewracania;
   - zapytania broni (`sweep`, `impact`, `cutSegment`, …) klaster dziś MIJAJĄ.
 - Prawo styku:
   - klaster × klaster i klaster × teren — impulsy sekwencyjne na styk;
@@ -223,6 +244,7 @@ paths:
   - test alokacji jest PIERWSZY w pliku, bo inne testy robią miejsca wywołań polimorficznymi;
   - progi czasu tylko z `WYDAJNOSC`.
 - `tests/beamRigid3D.test.mjs`: opis klastra, masa, studnia, teren, stos, pęd, BIT W BIT, taran, R11, bryła belek, zawias, hak grafu, zamrożenie, determinizm 60 / 120 Hz, budżet aktywnych, `createCluster`, sen długich klastrów, dwa tereny, garb, pchanie, utrata podpory; API gospodarza: `clusterJoint` (pęka przy 40° w radianach, stopnie → błąd, `up` normalizowane), tłumienie przy g 80 (A/B kroków do 40°), `driveCluster` (grawitacja wył. / z utworzenia / g / wektor, studnia, budzenie, lustro), rozdzielacz haka (gospodarz kontra cudzy hak, odbite y, instalacja i zdjęcie), `body.angularDamping` (null bit w bit z konfiguracją). Testy HullBodies na końcu pliku zaczynają od `HullBodies.ready = false; init()`, bo `gameConfig` innych testów zeruje haki silnika.
+- `tests/structureCollapse.test.mjs` (prawdziwy HullBodies + rozgrzewka, ~3 s): kikut bez przenikania, D11 ±x / ±y (ruina ku stronie ostrzału), sufity klastrów, nic głębiej niż 2 promienie pod podłożem, przegub 40 ± 3° na pomoście i zastój na gruncie, front κ 0,2 / 1 i kikut znika w kroku FRONT L, respawn (pęd i moment ±1%), impuls wyspy po ocenie części zakotwiczonej, D12 g 80 / g 400 w 2,0–2,6, te same zerwania przy g 400 i 80 do oderwania, spoczynek po 30 s, 60 / 120 Hz ±10%, determinizm 3×, krok gospodarza < 64 B.
 - `tests/beamRigid3DAlokacje.test.mjs` — osobny proces; ścieżki z ciałami belek w jednym procesie z innymi testami dają 37–58 KB. Próg 8192 B / 60 kroków mieści znane resztki. `driveCluster` — ostatni test pliku (przestawia silnik na konfigurację gry), 600 wywołań na pomiar, bo przy 60 jedna liczba pakowana na wywołanie ginie w narzucie pomiaru.
 - `tests/beamRigid3DRozgrzewka.test.mjs` — rozgrzewka JIT bez śladu: pola systemu przed i po, kolejne id ciała, hasz sceny kontrolnej (bez id) 2× przed i 1× po; osobny proces, bo rozgrzewka idzie raz na proces.
 - `tests/beamPlateField3D.test.mjs`.
@@ -236,6 +258,7 @@ paths:
 ## Narzędzia
 
 - `node scripts/struktura-sym.mjs --tryb podciecie|zawias|wspornik|kondygnacja|front|fala|ciezkie|dysk-szyja|dysk-upadek|prog|koszt [--dt 120,60] [--kappa …] [--gruz …] [--hold h] [--ziarno N] [--set klucz=wartość]` — graf w Node: oś czasu zdarzeń, bramki E1, koszt kroku. Wieżowiec 0,03 ms średnio, trzy grafy misji naraz max ~1 ms; bramka w Chrome — E5.
+- `node scripts/zawalenia-sym.mjs [--scena 1,2,3] [--g 400,80] [--hz 60,120] [--strona +x] [--kappa …] [--tlumienie 0|1] [--kontakt 0] [--zakleszczenie N] [--pomost -y@4] [--set klucz=wartość] [--log 1] [--json]` — sceny dema na gospodarzu i prawdziwym HullBodies: oś czasu (oderwanie, zawias, przechył w czasie, przegub, front, dach na ziemi), kawałki, koszt kroku p50 / p95 / max (fizyka / gospodarz / razem). `--zakleszczenie N` — N ziaren salwy × 4 strony; `--kontakt 0` — A/B bez tłumienia spoczynku / toczenia silnika. Zostaje na E5.
 - `node scripts/klastry-sym.mjs --tryb stos|plyta|taran|bryla [--n 100,200,256] [--powt 3] [--hz 60] [--json] [--budzet N]` — klastry w prawdziwym `HullBodies`. `--czasy 0` — bez czasów modułów, jak w grze. Zimny pierwszy krok mierz osobnym uruchomieniem z `--powt 1`.
 - Upadek habitatu i baza (reguły `kadluby-belki`, `baza-piratow`):
   - w Node: `node scripts/destrukcja-taran-sym.mjs --tryb upadek [--ziarno 12345] [--prebuild 1] [--pct 1] [--koszt 1]`;

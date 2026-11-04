@@ -715,6 +715,7 @@ export const HullBodies = {
    * węzłów i belek (się nie gniecie). opts (świat silnika: x gry, −y gry, z): position (środek masy) albo origin
    * (początek układu klastra), quaternion, velocity, angularVelocity, gravity, gravityWell (studnia skały — ta sama
    * logika z vmax co bryły), friction, collisionArmor, angularDamping (tłumienie obrotu [1/s]; null — silnik, 0,2/s),
+   * restDamping (mnożnik tłumienia spoczynku i toczenia w styku; null — 1, silnik),
    * world (rekord kawałka budowli). Encja jest LUSTREM jak wrak bryły
    * (syncSolidOut: x, y = −pos.y, z, quat, kąt, prędkości; `solid3D` — pętla wraków gry go nie całkuje; `rigidCluster`).
    * Limit żywych klastrów C.maxClusters (osobny od maxWrecks): ponad nim null. Broń, rozpad i odrost klastra — dalsze
@@ -738,7 +739,8 @@ export const HullBodies = {
       gravity: opts.gravity || null, gravityWell: opts.gravityWell || null,
       friction: Number.isFinite(opts.friction) ? opts.friction : C.clusterFriction,
       collisionArmor: opts.collisionArmor,
-      angularDamping: opts.angularDamping
+      angularDamping: opts.angularDamping,
+      restDamping: opts.restDamping
     });
     const hull = {
       entity,
@@ -883,6 +885,21 @@ export const HullBodies = {
     if (b.anchored || b.isSleeping) D.unfreezeRigid(b);
     D._touchGeometry(b);
     syncSolidOut(hull, false);
+    return true;
+  },
+
+  /**
+   * TŁUMIENIE KLASTRA w biegu (gospodarz zawalenia: przewracana wieża toczy się po narożniku bez tłumienia spoczynku
+   * i toczenia, osiadający gruz — z nim; A/B tempa D12). `angular` — tłumienie obrotu [1/s] (null — silnik 0,2/s),
+   * `rest` — mnożnik tłumienia spoczynku / toczenia w styku (null — 1); undefined — bez zmiany. Bez alokacji.
+   * Zwraca true albo false (encja bez żywego klastra).
+   */
+  setClusterDamping(entity, angular, rest) {
+    const hull = entity ? entity.beamHull : null;
+    if (!hull || hull.rigid !== true || hull.entity !== entity || !hull.body || hull.body.dead) return false;
+    const b = hull.body;
+    if (angular !== undefined) b.angularDamping = Number.isFinite(angular) ? angular : null;
+    if (rest !== undefined) b.restDamping = Number.isFinite(rest) ? rest : null;
     return true;
   },
 
