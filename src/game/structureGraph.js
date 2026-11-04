@@ -59,7 +59,10 @@
  *
  * Układ: archetyp w układzie LOKALNYM budowli (wieżowiec: x wzdłuż pomostu, y w poprzek, z świata; dysk: środek
  * habitatu, z świata). Przekształcenie świat → lokalny robi gospodarz (E5). Masa bloku w „węzłach komórki 45”
- * (objętość / 45³ × gęstość materiału, jak węzły silnika belek), siły w masa·j/s².
+ * (objętość / 45³ × gęstość materiału, jak węzły silnika belek), siły w masa·j/s²; masa silnika = × 45²
+ * (STRUCT_MASS_UNIT). GEOMETRIA BLOKU L1 (plan § 3.1, synteza dema D20 § 2a): prostopadłościany bloków (addBlockBox,
+ * CSR A.boxStart / A.boxData, structureBlockBoxes → buildClusterDesc), różne bloki bez nachodzenia (luz
+ * STRUCT_BOX_GAP). g archetypu — opcja `g` (D12; domyślnie 400 bit w bit, waveJ × g/400).
  * Bez three i DOM.
  */
 
@@ -152,6 +155,17 @@ export const STRUCT_EV = Object.freeze({
 });
 export const STRUCT_EV_STRIDE = 16;
 export const STRUCT_EV_CAP = 64;
+// Prostopadłościany bloków L1 (A.boxStart CSR po blokach, A.boxData — STRUCT_BOX_STRIDE słów): środek xyz, półosie
+// xyz, yaw (obrót wokół z archetypu), udział w masie bloku (Σ = 1 na blok).
+export const STRUCT_BOX_STRIDE = 8;
+// Luz [j.] odejmowany od każdej półosi prostopadłościanu w archetypach gry: nominalnie stykające się prostopadłościany
+// różnych bloków dzieli ≥ 2 j. (synteza dema D20 § 2a: klaster urodzony w przenikaniu dostaje wyrzut).
+export const STRUCT_BOX_GAP = 1;
+// Najmniejszy wymiar prostopadłościanu po luzie [j.] — krótsze (ramię narożnika przy gęstym obwodzie) pomijane.
+const BOX_MIN = 6;
+// Jednostka masy silnika belek: masa grafu („węzły komórki 45”) × 45² (masa węzła bryły = gęstość · komórka²,
+// hullBodies.js; synteza dema D20 § 1).
+export const STRUCT_MASS_UNIT = 45 * 45;
 
 // ── PRNG (mulberry32) — rozrzut archetypu; deterministyczny, poza sekwencją rozgrywki ──────────────────────────
 export function structureRng(seed) {
@@ -172,15 +186,17 @@ function per120(n, dt) {
 }
 
 // ── ARCHETYP: budowniczy ────────────────────────────────────────────────────────────────────────────────────────
-/** Budowniczy archetypu (tablice z zapasem; finishArchetype przycina i kalibruje). */
-export function createArchetypeBuilder(maxBlocks, maxBonds) {
+/** Budowniczy archetypu (tablice z zapasem; finishArchetype przycina i kalibruje). maxBoxes — prostopadłościany
+ *  bloków (addBlockBox; domyślnie 4 na blok). */
+export function createArchetypeBuilder(maxBlocks, maxBonds, maxBoxes = 4 * maxBlocks) {
   return {
     n: 0, e: 0, maxBlocks, maxBonds,
     x: new Float64Array(maxBlocks), y: new Float64Array(maxBlocks), z: new Float64Array(maxBlocks),
     mass: new Float64Array(maxBlocks), level: new Int16Array(maxBlocks), sector: new Int16Array(maxBlocks),
     kind: new Uint8Array(maxBlocks), anchor: new Uint8Array(maxBlocks), anchorCap: new Float64Array(maxBlocks),
     ba: new Int32Array(maxBonds), bb: new Int32Array(maxBonds), area: new Float64Array(maxBonds),
-    cls: new Uint8Array(maxBonds), storey: new Int16Array(maxBonds)
+    cls: new Uint8Array(maxBonds), storey: new Int16Array(maxBonds),
+    nBox: 0, maxBoxes, boxBlock: new Int32Array(maxBoxes), boxData: new Float64Array(maxBoxes * STRUCT_BOX_STRIDE)
   };
 }
 
@@ -203,11 +219,32 @@ export function addBond(B, a, b, area, cls = 0, storey = -1) {
 }
 
 /**
+ * Prostopadłościan bloku L1 (plan § 3.1 — geometria bloku dla klastra sztywnego, obrazu i trafień): środek (cx, cy, cz)
+ * w układzie archetypu, półosie (hx, hy, hz), obrót `yaw` [rad] wokół osi z archetypu (pion — archetypy
+ * z prostopadłościanami mają ĝ = −z), waga udziału w masie bloku `massFrac` (finishArchetype normalizuje udziały
+ * bloku do Σ = 1, więc wystarczy np. objętość). Blok może mieć kilka prostopadłościanów (narożnik w L, ściana + kafle
+ * stropu); prostopadłościany RÓŻNYCH bloków nie mogą na siebie nachodzić — klaster urodzony w przenikaniu dostaje
+ * wyrzut (luz STRUCT_BOX_GAP na każdej półosi w archetypach gry). Zwraca numer prostopadłościanu w budowniczym.
+ */
+export function addBlockBox(B, b, cx, cy, cz, hx, hy, hz, yaw = 0, massFrac = 1) {
+  const i = B.nBox++;
+  if (i >= B.maxBoxes) throw new Error('structureGraph: za dużo prostopadłościanów');
+  if (!(b >= 0 && b < B.n)) throw new Error('structureGraph: prostopadłościan bez bloku');
+  const o = i * STRUCT_BOX_STRIDE, d = B.boxData;
+  B.boxBlock[i] = b;
+  d[o] = cx; d[o + 1] = cy; d[o + 2] = cz; d[o + 3] = hx; d[o + 4] = hy; d[o + 5] = hz; d[o + 6] = yaw; d[o + 7] = massFrac;
+  return i;
+}
+
+/**
  * Archetyp z budowniczego: geometria wiązań, sztywności, poziomy, kondygnacje (CSR), kalibracja limitów (rozwiązanie
  * nienaruszonej budowli do zbieżności, każde wiązanie przy u0 z podłogami), rozrzut ±spread z PRNG ziarna.
  * opts: { name, seed, gravity: [gx, gy, gz] (kierunek), g (j/s²), levelZ (wysokości poziomów wzdłuż −ĝ; domyślnie
  * średnie bloków), groundZ, split (pękanie wysp po piętrach), splitMinLevels, chunkLevels, sliverFrac,
  * supportCapMul (nośność SUPPORT = reakcja nienaruszona × mnożnik), tune: { …STRUCT_TUNE } }.
+ * Prostopadłościany z addBlockBox → A.boxStart (Int32Array n + 1, CSR po blokach, kolejność dodania w bloku),
+ * A.boxData (Float64Array, STRUCT_BOX_STRIDE słów na prostopadłościan), A.boxCount; udziały masy znormalizowane
+ * do Σ = 1 na blok (blok bez prostopadłościanów — kotwica, archetypy testowe — ma pusty zakres).
  */
 export function finishArchetype(B, opts = {}) {
   const tune = Object.freeze({ ...STRUCT_TUNE, ...(opts.tune || {}) });
@@ -286,8 +323,59 @@ export function finishArchetype(B, opts = {}) {
   A.footR = fr || 1;
   A.nSupport = 0;
   for (let i = 0; i < n; i++) if (A.anchor[i] === STRUCT_ANCHOR.SUPPORT) A.nSupport++;
+  _boxesCsr(A, B);
   _calibrate(A, opts);
   return A;
+}
+
+// Prostopadłościany bloków: CSR po blokach (kolejność dodania w bloku), udziały masy → Σ = 1 na blok.
+function _boxesCsr(A, B) {
+  const n = A.n, nb = B.nBox | 0, W = STRUCT_BOX_STRIDE;
+  const start = new Int32Array(n + 1), data = new Float64Array(nb * W);
+  for (let i = 0; i < nb; i++) start[B.boxBlock[i] + 1]++;
+  for (let b = 0; b < n; b++) start[b + 1] += start[b];
+  const fill = start.slice(0, n);
+  for (let i = 0; i < nb; i++) {
+    const o = fill[B.boxBlock[i]]++ * W;
+    for (let w = 0; w < W; w++) data[o + w] = B.boxData[i * W + w];
+  }
+  for (let b = 0; b < n; b++) {
+    let s = 0;
+    for (let j = start[b]; j < start[b + 1]; j++) s += data[j * W + 7];
+    if (!(s > 0)) { const c = start[b + 1] - start[b]; for (let j = start[b]; j < start[b + 1]; j++) data[j * W + 7] = 1 / c; continue; }
+    for (let j = start[b]; j < start[b + 1]; j++) data[j * W + 7] /= s;
+  }
+  A.boxStart = start; A.boxData = data; A.boxCount = nb;
+}
+
+/**
+ * Prostopadłościany bloków `blocks[0..count)` jako wejście buildClusterDesc (beamRigid3D.js): [{ x, y, z (środek), hx,
+ * hy, hz (półosie), mass, id (numer bloku w grafie), q (obrót wokół z: { x, y, z, w } albo null) }] w układzie
+ * archetypu. Masa = masa bloku × udział × massUnit (domyślnie STRUCT_MASS_UNIT = 45²: masa grafu → masa silnika
+ * belek). Bloki bez prostopadłościanów (kotwice) pomija. `out` — tablica do ponownego użycia (obiekty nadpisywane,
+ * długość przycinana). Kwaternion jest zawsze nowy: opis z buildClusterDesc trzyma referencje `q` (blockQuat), więc
+ * ponowne użycie `out` nie może zmienić opisu wcześniejszego klastra. Poza krokiem (narodziny klastra).
+ */
+export function structureBlockBoxes(A, blocks, count = blocks.length, out = [], massUnit = STRUCT_MASS_UNIT) {
+  const W = STRUCT_BOX_STRIDE, st = A.boxStart, d = A.boxData;
+  let k = 0;
+  if (st) {
+    for (let t = 0; t < count; t++) {
+      const b = blocks[t];
+      for (let j = st[b]; j < st[b + 1]; j++) {
+        const o = j * W;
+        let r = out[k];
+        if (!r) { r = { x: 0, y: 0, z: 0, hx: 0, hy: 0, hz: 0, mass: 0, id: 0, q: null }; out[k] = r; }
+        r.x = d[o]; r.y = d[o + 1]; r.z = d[o + 2]; r.hx = d[o + 3]; r.hy = d[o + 4]; r.hz = d[o + 5];
+        r.mass = A.mass[b] * d[o + 7] * massUnit; r.id = b;
+        const yaw = d[o + 6];
+        r.q = yaw !== 0 ? { x: 0, y: 0, z: Math.sin(yaw * 0.5), w: Math.cos(yaw * 0.5) } : null;
+        k++;
+      }
+    }
+  }
+  out.length = k;
+  return out;
 }
 
 // Kalibracja: nienaruszona budowla do zbieżności; każde wiązanie przy u0 z podłogami grupy / poziomu / budowli.
@@ -1647,6 +1735,115 @@ export function buildCantileverArchetype({ segments = 8, len = 100, h = 80, b = 
   return finishArchetype(B, { name: 'wspornik', seed, g: 400, tune });
 }
 
+// g archetypu (D12 / D10c): przy g ≠ 400 impuls odniesienia fali skaluje się z ciężarem (waveJ × g/400) — salwa
+// J × g/400 osłabia wtedy wiązania tak samo (structureHit: waveWeaken · J / waveJ), a siła J / pulseT rośnie jak m·g
+// (synteza dema D20 § 1). Kalibracja i tak skaluje limity z ciężarem. Przy g 400 strojenie bez zmian (bit w bit).
+function _tuneForG(tune, g) {
+  if (!(g > 0) || !Number.isFinite(g)) throw new Error('structureGraph: g archetypu musi być > 0');
+  if (g === 400) return tune;
+  return { ...(tune || {}), waveJ: (tune?.waveJ ?? STRUCT_TUNE.waveJ) * g / 400 };
+}
+
+// Prostopadłościan osiowy z zakresu nominalnego [x0, x1] × [y0, y1] × [z0, z1] minus luz STRUCT_BOX_GAP na każdej
+// półosi; udział w masie bloku ∝ objętość. Pomija (−1), gdy któryś wymiar po luzie < BOX_MIN.
+function _boxAA(B, b, x0, x1, y0, y1, z0, z1) {
+  const G = STRUCT_BOX_GAP;
+  const hx = (x1 - x0) * 0.5 - G, hy = (y1 - y0) * 0.5 - G, hz = (z1 - z0) * 0.5 - G;
+  if (!(2 * hx >= BOX_MIN && 2 * hy >= BOX_MIN && 2 * hz >= BOX_MIN)) return -1;
+  return addBlockBox(B, b, (x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5, hx, hy, hz, 0, 8 * hx * hy * hz);
+}
+
+// Kawałek ściany obwodu na boku s (0: x = +hx, 1: y = +hy, 2: x = −hx, 3: y = −hy) od punktu u do v, grubość t do
+// środka obrysu. Ściany poprzeczne y = ±hy mają pełną szerokość (róg należy do nich, jak w modelu
+// pirateBaseScene.highriseTower), ściany x = ±hx leżą między nimi (|y| ≤ hy − t).
+function _wallPiece(B, b, s, ux, uy, vx, vy, hx, hy, t, z0, z1) {
+  if ((s & 1) === 0) {
+    const x0 = s === 0 ? hx - t : -hx;
+    const y0 = Math.max(Math.min(uy, vy), -hy + t), y1 = Math.min(Math.max(uy, vy), hy - t);
+    return y1 > y0 ? _boxAA(B, b, x0, x0 + t, y0, y1, z0, z1) : -1;
+  }
+  const y0 = s === 1 ? hy - t : -hy;
+  return _boxAA(B, b, Math.min(ux, vx), Math.max(ux, vx), y0, y0 + t, z0, z1);
+}
+
+// Linie siatki kafli stropu na osi o półszerokości wnętrza i z rdzeniem ±c: zakresy [−i, −c], [−c, c], [c, i]
+// dzielone na kawałki ~tile j. (rdzeń zostaje jedną komórką siatki albo jej wielokrotnością).
+function _tileLines(i, c, tile) {
+  if (!(i > c)) return [-i, i];
+  const nO = Math.max(1, Math.round((i - c) / tile)), nM = Math.max(1, Math.round(2 * c / tile)), out = [];
+  for (let k = 0; k < nO; k++) out.push(-i + (i - c) * k / nO);
+  for (let k = 0; k < nM; k++) out.push(-c + 2 * c * k / nM);
+  for (let k = 0; k <= nO; k++) out.push(c + (i - c) * k / nO);
+  return out;
+}
+
+// Prostopadłościany wieżowca (synteza dema D20 § 2a). Blok obwodu poziomu l = ściana kondygnacji POD jego stropem
+// (od stropu niżej do własnego): odcinek obwodu między połowami dróg do sąsiadów × grubość ściany, wewnątrz obrysu;
+// narożnik — dwa ramiona w L (ramię krótsze niż BOX_MIN po luzie — przy gęstym obwodzie — odpada) + kafle stropu
+// (grubość slabT, dach ×3 jak masa) przypisane najbliższemu blokowi poziomu (obwód albo rdzeń). Rdzeń — słup coreW²
+// przez całą kondygnację (kafle omijają jego komórkę). Iglica — walec r 30 jako prostopadłościan o tym samym polu.
+// Udziały masy ∝ objętość (finishArchetype normalizuje do masy bloku).
+function _highriseBoxes(B, rings, ids, core, zOf, z0, ks, roofL, hx0, hy0, wall, coreW, slabT, tile) {
+  const NL = zOf.length, c = coreW / 2, hs = 30 * Math.sqrt(Math.PI) / 2;
+  for (let l = 0; l < NL; l++) {
+    const zA = l ? zOf[l - 1] : z0, zB = zOf[l];
+    if (l > roofL) { _boxAA(B, core[l], -hs, hs, -hs, hs, zA, zB); continue; }
+    const r = rings[l], np = r.length, per1 = np / 4, hx = hx0 * ks[l], hy = hy0 * ks[l], row = ids[l];
+    for (let j = 0; j < np; j++) {
+      const p = r[j], a = r[(j + np - 1) % np], b = r[(j + 1) % np];
+      const ax = (a[0] + p[0]) * 0.5, ay = (a[1] + p[1]) * 0.5, bx = (p[0] + b[0]) * 0.5, by = (p[1] + b[1]) * 0.5;
+      const s = Math.floor(j / per1);
+      if (j % per1 === 0) {
+        _wallPiece(B, row[j], (s + 3) & 3, ax, ay, p[0], p[1], hx, hy, wall, zA, zB);
+        _wallPiece(B, row[j], s, p[0], p[1], bx, by, hx, hy, wall, zA, zB);
+      } else _wallPiece(B, row[j], s, ax, ay, bx, by, hx, hy, wall, zA, zB);
+    }
+    _boxAA(B, core[l], -c, c, -c, c, zA, zB);
+    const sT = l === roofL ? 3 * slabT : slabT;
+    const xs = _tileLines(hx - wall, c, tile), yl = _tileLines(hy - wall, c, tile);
+    for (let u = 0; u + 1 < xs.length; u++) {
+      for (let v = 0; v + 1 < yl.length; v++) {
+        const mx = (xs[u] + xs[u + 1]) * 0.5, my = (yl[v] + yl[v + 1]) * 0.5;
+        if (Math.abs(mx) < c && Math.abs(my) < c) continue;
+        let best = core[l], bd = mx * mx + my * my;
+        for (let j = 0; j < np; j++) {
+          const dx = r[j][0] - mx, dy = r[j][1] - my, dd = dx * dx + dy * dy;
+          if (dd < bd) { bd = dd; best = row[j]; }
+        }
+        _boxAA(B, best, xs[u], xs[u + 1], yl[v], yl[v + 1], zB - sT, zB);
+      }
+    }
+  }
+}
+
+// Prostopadłościany dysku (synteza dema D20 § 2a): wycinek pierścienia na warstwę — dolna: spód płyty (½T), górna:
+// wierzch (½T) z tarasami tier1 / tier2 jak masa bloku (promień środka pierścienia); obrót yaw = kąt wycinka.
+// Prostopadłościan leży w wycinku z luzem: od promienia ra + luz, połowa szerokości do odległości luzu od krawędzi
+// wycinka, narożniki zewnętrzne ≤ rb − luz — sąsiednie wycinki i pierścienie się nie przenikają. `split`
+// prostopadłościanów promieniowo na wycinek (pokrycie pola wycinka ~80% przy pierścieniu wewnętrznym, ~93% przy
+// zewnętrznym; udziały masy ∝ objętość).
+function _discBoxes(B, id, S, rings, rIn, dr, zBot, T, tierDz, split) {
+  const G = STRUCT_BOX_GAP;
+  for (let i = 0; i < rings; i++) {
+    const s = S[i], phi = Math.PI / s, tn = Math.tan(phi), cs = Math.cos(phi);
+    const zTop1 = zBot + T + tierDz(rIn + (i + 0.5) * dr), zMid = zBot + 0.5 * T;
+    for (let j = 0; j < s; j++) {
+      const a = (j + 0.5) / s * 2 * Math.PI, ca = Math.cos(a), sa = Math.sin(a);
+      for (let q = 0; q < split; q++) {
+        const ra = rIn + (i + q / split) * dr, rb = rIn + (i + (q + 1) / split) * dr;
+        const x0 = ra + G, hw = x0 * tn - G / cs, ro = rb - G;
+        const x1 = Math.sqrt(Math.max(0, ro * ro - hw * hw));
+        if (!(x1 - x0 >= BOX_MIN && 2 * hw >= BOX_MIN)) continue;
+        const xc = (x0 + x1) * 0.5, hxr = (x1 - x0) * 0.5;
+        for (let L = 0; L < 2; L++) {
+          const za = L ? zMid : zBot, zb = L ? zTop1 : zMid, hz = (zb - za) * 0.5 - G;
+          addBlockBox(B, id[L][i][j], xc * ca, xc * sa, (za + zb) * 0.5, hxr, hw, hz, a, 8 * hxr * hw * hz);
+        }
+      }
+    }
+  }
+}
+
 // Obwód prostokąta ±hx × ±hy: narożniki + `per` punktów na bok, przeciwnie do zegara od (hx, −hy).
 function _perimeter(hx, hy, per) {
   const C = [[hx, -hy], [hx, hy], [-hx, hy], [-hx, -hy]], out = [];
@@ -1664,8 +1861,11 @@ function _perimeter(hx, hy, per) {
  * na pokładzie (deckY0). Przekroje słupów ∝ ciężarowi nad kondygnacją (plan § 3.2: kalibracja per poziom).
  * Masa: ściany (wall), stropy, rdzeń — objętość / 45³ × gęstość 1,8 (materiał highrise).
  * Lokalnie: x wzdłuż pomostu (w), y w poprzek (d), z świata; środek rzutu w (0, 0).
+ * Prostopadłościany bloków (A.boxStart / A.boxData, structureBlockBoxes): _highriseBoxes — ściany, narożniki w L,
+ * rdzeń, kafle stropu ~`tile` j., iglica. `g` — przyspieszenie budowli (D12; domyślnie 400 — bit w bit z E1),
+ * przy g ≠ 400 waveJ × g/400 (_tuneForG).
  */
-export function buildHighriseArchetype({ seed = 1, tune = null, density = 1.8, slabT = 15, coreWall = 22 } = {}) {
+export function buildHighriseArchetype({ seed = 1, tune = null, density = 1.8, slabT = 15, coreWall = 22, g = 400, tile = 80 } = {}) {
   const HR = PIRATE_BASE_SPEC.highrise;
   const deckY = PIRATE_BASE_SPEC.pier.deckY0;
   const ys = [46, 116, 200, 283, 450, 600, 800, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3450, 3900];
@@ -1758,8 +1958,12 @@ export function buildHighriseArchetype({ seed = 1, tune = null, density = 1.8, s
     addBond(B, core[l - 1], core[l], Math.PI * 30 * 30 * loadF(l), STRUCT_BOND.VERT, l);
     for (const c of corners) addBond(B, c, core[l], 150, STRUCT_BOND.DIAG, l);
   }
+  // prostopadłościany bloków (geometria L1 — klaster, obraz, trafienia)
+  const ks = ys.map((y) => (y > HR.setbackY ? 0.76 : 1));
+  _highriseBoxes(B, rings, ids, core, zOf, z0, ks, roofL, hx0, hy0, HR.wall, HR.coreW, slabT, tile);
   return finishArchetype(B, {
-    name: 'wiezowiec', seed, g: 400, levelZ: zOf, groundZ: z0, split: true, splitMinLevels: 3, chunkLevels: 2, sliverFrac: 0.4, tune
+    name: 'wiezowiec', seed, g, levelZ: zOf, groundZ: z0, split: true, splitMinLevels: 3, chunkLevels: 2, sliverFrac: 0.4,
+    tune: _tuneForG(tune, g)
   });
 }
 
@@ -1769,8 +1973,10 @@ export function buildHighriseArchetype({ seed = 1, tune = null, density = 1.8, s
  * (promieniowo i obwodowo) — para sił w warstwach przenosi zginanie płyty. Kotwice SUPPORT na trzonie (r = stemR,
  * góra i spód) o skończonej nośności (reakcja nienaruszona × supportCapMul) × utrzymanie (D8). Poziom bloku =
  * numer pierścienia. Masa: płyta (thick) + tarasy tier1 / tier2 na górnej warstwie.
+ * Prostopadłościany bloków: _discBoxes — wycinek × warstwa, `boxSplit` promieniowo, obrót wokół z. `g` — jak
+ * w buildHighriseArchetype (domyślnie 400 — bit w bit z E1).
  */
-export function buildDiscArchetype({ seed = 1, tune = null, rings = 6, wedge = 300, density = 0.6, supportCapMul = 3, u0 = 0.15 } = {}) {
+export function buildDiscArchetype({ seed = 1, tune = null, rings = 6, wedge = 300, density = 0.6, supportCapMul = 3, u0 = 0.15, g = 400, boxSplit = 2 } = {}) {
   const H = PIRATE_BASE_SPEC.habitat;
   const rIn = H.stemR, rOut = H.discR, zBot = k7HeightToZ(H.discY0), zTop = k7HeightToZ(H.discY1);
   const T = zTop - zBot, dr = (rOut - rIn) / rings;
@@ -1837,7 +2043,9 @@ export function buildDiscArchetype({ seed = 1, tune = null, rings = 6, wedge = 3
       }
     }
   }
-  const A = finishArchetype(B, { name: 'dysk', seed, g: 400, split: false, supportCapMul, tune: { u0, ...(tune || {}) } });
+  const tierDz = (r) => (r <= tier1.r ? tier1.dz : 0) + (r <= tier2.r ? tier2.dz : 0);
+  _discBoxes(B, id, S, rings, rIn, dr, zBot, T, tierDz, boxSplit);
+  const A = finishArchetype(B, { name: 'dysk', seed, g, split: false, supportCapMul, tune: { u0, ...(_tuneForG(tune, g) || {}) } });
   A.disc = { rIn, rOut, zTop, zBot, rings, sectors: S, dr };
   return A;
 }

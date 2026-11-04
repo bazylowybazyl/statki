@@ -520,3 +520,300 @@ test('utrata podpory: zamrożony klaster odmarza, gdy jego podpora zginie', () =
   assert.equal(hi.anchored, false, 'odmrożony');
   assert.ok(hi.pos.z < 60, `spadł: z ${hi.pos.z.toFixed(1)}`);
 });
+
+// ============================ API KLASTRA DLA GOSPODARZA ZAWALENIA (demo D20, krok 2) ============================
+// clusterJoint (zawias HINGE), driveCluster (front zgniotu, wyspa wolna), rozdzielacz haka onClusterContact po
+// entity.collapseHost, pole body.angularDamping (null = konfiguracja silnika).
+
+// Inne testy pliku wołają D.init (gameConfig) i zerują haki silnika — HullBodies od nowa: konfiguracja i haki gry.
+async function freshHullBodies() {
+  globalThis.window = globalThis.window || {};
+  const { HullBodies } = await import('../src/game/hullBodies.js');
+  HullBodies.ready = false;
+  HullBodies.init();
+  HullBodies.engine.terrains.length = 0;
+  HullBodies.engine.plateFields.length = 0;
+  HullBodies.onClusterContact = null;
+  HullBodies._clusterContactNext = null;
+  return HullBodies;
+}
+
+// słup 3 bloków 120 × 120 × 600 (podstawa w początku układu klastra)
+const columnDesc = () => buildClusterDesc([{ x: 0, y: 0, z: 100, hx: 60, hy: 60, hz: 100, mass: 1e5, id: 0 },
+  { x: 0, y: 0, z: 300, hx: 60, hy: 60, hz: 100, mass: 1e5, id: 1 }, { x: 0, y: 0, z: 500, hx: 60, hy: 60, hz: 100, mass: 1e5, id: 2 }]);
+
+// przechył osi z ciała od +z świata [rad] — z kwaternionu (R_zz = 1 − 2(x² + y²)), bez pamięci obrotu silnika
+const tiltOf = (q) => Math.acos(Math.max(-1, Math.min(1, 1 - 2 * (q.x * q.x + q.y * q.y))));
+
+test('HullBodies.clusterJoint: zawias klastra trzyma punkt i pęka przy breakTilt w RADIANACH (40° = 0,698), stopnie to błąd', async () => {
+  const HB = await freshHullBodies();
+  const dt = 1 / 60;
+  const bt = 40 * Math.PI / 180;
+  const KICK = { x: 0, y: 0.05, z: 0 };
+  // zawias u podstawy słupa (świat silnika: x gry, −y gry, z); kopnięcie obrotu wokół +y — słup kładzie się ku +x
+  const run = (jointOpts, clusterOpts = {}) => {
+    const e = { name: 'wyspa', isWreck: true };
+    const hull = HB.createCluster(e, columnDesc(), { origin: { x: 500, y: -800, z: 0 }, gravity: { x: 0, y: 0, z: -400 }, ...clusterOpts });
+    const j = HB.clusterJoint(e, 500, -800, 0, jointOpts);
+    assert.ok(j && j.broken === false, 'rekord przegubu');
+    HB.driveCluster(e, null, null, KICK);
+    const b = hull.body;
+    // lastOk — przechył z ostatniego kroku bez pęknięcia; start — przechył pozy na początku kroku pęknięcia (przegub
+    // liczy się w integrate przed obrotem pozy, więc j.tilt to przechył z początku kroku)
+    let held = 0, steps = 0, lastOk = 0, start = 0;
+    while (!j.broken && steps < 3000) {
+      start = tiltOf(b.quat);
+      HB.step(dt, [e]);
+      steps++;
+      if (!j.broken) {
+        lastOk = j.tilt;
+        const m = HB.engine._refreshRot(b);
+        const wx = b.pos.x + m[0] * j.lx + m[1] * j.ly + m[2] * j.lz - 500;
+        const wy = b.pos.y + m[3] * j.lx + m[4] * j.ly + m[5] * j.lz + 800;
+        const wz = b.pos.z + m[6] * j.lx + m[7] * j.ly + m[8] * j.lz;
+        held = Math.max(held, Math.sqrt(wx * wx + wy * wy + wz * wz));
+      }
+    }
+    return { e, b, j, held, steps, lastOk, start };
+  };
+  const r = run({ breakTilt: bt, name: 'zawias' });
+  const deg = (a) => (a * 180 / Math.PI).toFixed(2);
+  assert.ok(r.j.broken, 'pękł');
+  assert.ok(r.held < 15, `punkt zawiasu trzymany (odchyłka ≤ ${r.held.toFixed(1)} j.)`);
+  // pęka w pierwszym kroku, w którym przechył przekroczył próg (krok wcześniej: ≤ progu)
+  assert.ok(r.lastOk <= bt && r.j.tilt > bt, `przechył przy pęknięciu ${deg(r.j.tilt)}°, krok wcześniej ${deg(r.lastOk)}°`);
+  assert.ok(r.j.tilt < bt + 0.03, `pęka przy ~40° (${deg(r.j.tilt)}°)`);
+  assert.ok(Math.abs(r.j.tilt - r.start) < 1e-9, `przechył osi z ciała od +z świata: ${deg(r.j.tilt)}° / ${deg(r.start)}°`);
+  assert.equal(r.b.joints, null, 'silnik zdjął rekord z ciała, broken zostaje w rekordzie');
+  assert.ok(r.e.x > 500, `kładzie się ku +x (x gry ${r.e.x.toFixed(1)})`);
+  // oś „w górę” normalizowana: {0, 0, 5} = domyślna +z (ten sam krok i przechył bit w bit)
+  const r5 = run({ breakTilt: bt, up: { x: 0, y: 0, z: 5 } });
+  assert.equal(r5.steps, r.steps);
+  assert.equal(r5.j.tilt, r.j.tilt);
+  // stopnie zamiast radianów: przechył nie przekracza π — przegub z 40 nie pękłby nigdy
+  const e = { name: 'x', isWreck: true };
+  HB.createCluster(e, columnDesc(), { origin: { x: 0, y: 0, z: 0 } });
+  assert.throws(() => HB.clusterJoint(e, 0, 0, 0, { breakTilt: 40 }), RangeError);
+  assert.throws(() => HB.clusterJoint(e, 0, 0, 0, { breakTilt: -0.1 }), RangeError);
+  assert.equal(HB.clusterJoint({ name: 'bez klastra' }, 0, 0, 0, { breakTilt: bt }), null);
+  // zamrożony klaster (kikut) odmarza — inaczej integrate pomija go razem z przegubem
+  HB.freezeCluster(e);
+  const jf = HB.clusterJoint(e, 0, 0, 0, {});
+  assert.ok(jf && e.beamHull.body.anchored === false && e.beamHull.body.isSleeping === false);
+  assert.equal(jf.breakTilt, Infinity);
+  HB.release(e);
+  for (const x of [r, r5]) HB.release(x.e);
+});
+
+test('body.angularDamping klastra przy g 80: bez tłumienia (0) zawias pęka wcześniej niż z tłumieniem silnika (null)', async () => {
+  const HB = await freshHullBodies();
+  const dt = 1 / 60;
+  const run = (angularDamping) => {
+    const e = { name: 'wyspa', isWreck: true };
+    const hull = HB.createCluster(e, columnDesc(), { origin: { x: 0, y: 0, z: 0 }, gravity: { x: 0, y: 0, z: -80 }, angularDamping });
+    assert.equal(hull.body.angularDamping, angularDamping ?? null);
+    const j = HB.clusterJoint(e, 0, 0, 0, { breakTilt: 40 * Math.PI / 180 });
+    HB.driveCluster(e, null, null, { x: 0, y: 0.05, z: 0 });
+    let steps = 0;
+    while (!j.broken && steps < 3000) { HB.step(dt, [e]); steps++; }
+    HB.release(e);
+    return steps;
+  };
+  const damped = run(undefined), free = run(0);
+  assert.ok(damped < 3000 && free < damped, `kroki do 40°: tłumienie silnika ${damped}, bez tłumienia ${free}`);
+});
+
+test('HullBodies.driveCluster: poza i prędkości w świecie silnika, grawitacja wył. / z utworzenia / g / wektor, budzenie, lustro', async () => {
+  const HB = await freshHullBodies();
+  const dt = 1 / 60;
+  const linK = Math.exp(-HB.engine.config.linearDamping * dt);
+  const e = { name: 'front', isWreck: true };
+  const hull = HB.createCluster(e, boxDesc(), { position: { x: 0, y: 0, z: 5000 }, gravity: { x: 0, y: 0, z: -400 } });
+  const b = hull.body;
+  const ver = b._geomVer;
+  const OFF = { gravity: false };
+  // front niesie ciało: bez grawitacji, prędkość frontu
+  assert.equal(HB.driveCluster(e, { x: 1000, y: -2000, z: 3000 }, { x: 10, y: 0, z: -50 }, { x: 0, y: 0, z: 0.5 }, OFF), true);
+  assert.deepEqual([b.pos.x, b.pos.y, b.pos.z, b.vel.x, b.vel.z, b.angVel.z], [1000, -2000, 3000, 10, -50, 0.5]);
+  assert.equal(b.gravity, null);
+  assert.notEqual(b._geomVer, ver, '_touchGeometry');
+  assert.deepEqual([e.x, e.y, e.z, e.vz, e.angVel], [1000, 2000, 3000, -50, -0.5], 'lustro encji od razu (y gry odbite)');
+  HB.step(dt, [e]);
+  assert.ok(Math.abs(b.vel.z + 50 * linK) < 1e-9, `bez grawitacji: vz ${b.vel.z}`);
+  assert.ok(Math.abs(b.pos.z - (3000 - 50 * linK * dt)) < 1e-9, `z ${b.pos.z}`);
+  // wolna: grawitacja z chwili utworzenia (opts pominięte), pozostałe pola bez zmian przy null
+  HB.driveCluster(e, null, { x: 0, y: 0, z: 0 }, null);
+  assert.equal(b.gravity, hull._gravity);
+  assert.equal(b.gravity.z, -400);
+  assert.equal(b.angVel.z, 0.5 * Math.exp(-HB.engine.config.angularDamping * dt), 'angVel null — bez zmiany');
+  HB.step(dt, [e]);
+  assert.ok(Math.abs(b.vel.z + 400 * dt * linK) < 1e-9, `g 400: vz ${b.vel.z}`);
+  // liczba g → {0, 0, −g}; wektor z utworzenia nietknięty
+  HB.driveCluster(e, null, { x: 0, y: 0, z: 0 }, null, { gravity: 80 });
+  assert.deepEqual([b.gravity.x, b.gravity.y, b.gravity.z], [0, 0, -80]);
+  assert.equal(hull._gravity.z, -400);
+  HB.step(dt, [e]);
+  assert.ok(Math.abs(b.vel.z + 80 * dt * linK) < 1e-9, `g 80: vz ${b.vel.z}`);
+  // wektor (ring — g w bok); ten sam własny obiekt (bez alokacji przy kolejnych wywołaniach)
+  const own = b.gravity;
+  HB.driveCluster(e, null, { x: 0, y: 0, z: 0 }, null, { gravity: { x: 0, y: 120, z: 0 } });
+  assert.equal(b.gravity, own);
+  assert.deepEqual([b.gravity.x, b.gravity.y, b.gravity.z], [0, 120, 0]);
+  // studnia z chwili utworzenia wraca z `true`, `false` ją zdejmuje
+  const ew = { name: 'studnia', isWreck: true };
+  const well = { x: 0, y: 0, z: -50000, g: 300, r0: 0, vmax: 0 };
+  const hw = HB.createCluster(ew, boxDesc(), { position: { x: 0, y: 0, z: 0 }, gravityWell: well });
+  HB.driveCluster(ew, null, null, null, OFF);
+  assert.equal(hw.body.gravityWell, null);
+  HB.driveCluster(ew, null, null, null, { gravity: true });
+  assert.equal(hw.body.gravityWell, well);
+  HB.release(ew);
+  // zamrożony odmarza, śpiący się budzi
+  HB.freezeCluster(e);
+  assert.equal(b.anchored, true);
+  HB.driveCluster(e, { x: 0, y: 0, z: 4000 }, null, null);
+  assert.equal(b.anchored, false);
+  assert.equal(b.isSleeping, false);
+  assert.equal(b.invMass, 1 / b.mass);
+  b.isSleeping = true;
+  HB.driveCluster(e, null, null, null);
+  assert.equal(b.isSleeping, false);
+  // encja bez żywego klastra
+  assert.equal(HB.driveCluster({ name: 'bez klastra' }, null, null, null), false);
+  HB.release(e);
+  assert.equal(HB.driveCluster(e, null, null, null), false);
+});
+
+test('rozdzielacz haka onClusterContact: encja z collapseHost → gospodarz (9 argumentów, świat gry), reszta → cudzy hak', async () => {
+  const HB = await freshHullBodies();
+  HB.engine.addTerrain(flatTerrain());
+  // surowe argumenty haka silnika (świat silnika) — do sprawdzenia odbicia y
+  const inner = HB.engine.onRigidContact;
+  const raw = new Map();
+  HB.engine.onRigidContact = (body, blk, jx, jy, jz, x, y, z) => {
+    if (!raw.has(body)) raw.set(body, []);
+    raw.get(body).push([blk, jx, jy, jz, x, y, z]);
+    inner(body, blk, jx, jy, jz, x, y, z);
+  };
+  try {
+    const foreign = [], hostCalls = [];
+    const F = (...args) => foreign.push(args);
+    HB.onClusterContact = F;
+    const H = { name: 'gospodarz', onClusterContact(...args) { hostCalls.push({ self: this, args }); } };
+    assert.equal(HB.installClusterContactRouter(), true);
+    const router = HB.onClusterContact;
+    assert.notEqual(router, F);
+    assert.equal(HB.installClusterContactRouter(), true, 'idempotentny');
+    assert.equal(HB.onClusterContact, router);
+    assert.equal(HB._clusterContactNext, F, 'cudzy hak zapamiętany, nie nadpisany');
+    // dwa klastry lądują na terenie z poślizgiem w bok (tarcie daje składową y impulsu)
+    const a = { name: 'kikut', isWreck: true, collapseHost: H };
+    const b = { name: 'obcy', isWreck: true };
+    // (teren to kula R 20 km — blisko jej szczytu, żeby oba leżały na tej samej wysokości)
+    HB.createCluster(a, boxDesc(), { position: { x: -300, y: -500, z: 120 }, velocity: { x: 0, y: 300, z: 0 }, gravity: { x: 0, y: 0, z: -400 } });
+    HB.createCluster(b, boxDesc(), { position: { x: 300, y: -500, z: 120 }, velocity: { x: 0, y: 300, z: 0 }, gravity: { x: 0, y: 0, z: -400 } });
+    for (let k = 0; k < 90; k++) HB.step(1 / 60, [a, b]);
+    assert.ok(hostCalls.length > 0 && foreign.length > 0, `gospodarz ${hostCalls.length}, cudzy ${foreign.length}`);
+    for (const c of hostCalls) {
+      assert.equal(c.self, H, 'metoda gospodarza (this = H)');
+      assert.equal(c.args.length, 9);
+      assert.equal(c.args[0], a);
+      assert.equal(c.args[1], a.beamHull);
+    }
+    for (const c of foreign) { assert.equal(c.length, 9); assert.equal(c[0], b); }
+    // te same liczby co hak silnika, z odbitym y (świat gry: y w dół)
+    const ra = raw.get(a.beamHull.body);
+    assert.equal(ra.length, hostCalls.length);
+    let slid = 0;
+    for (let i = 0; i < ra.length; i++) {
+      const [blk, jx, jy, jz, x, y, z] = ra[i];
+      const g = hostCalls[i].args;
+      assert.deepEqual(g.slice(2), [blk, jx, -jy, jz, x, -y, z]);
+      if (Math.abs(jy) > 1e-6) slid++;
+    }
+    assert.ok(slid > 0, 'impuls ma składową y (odbicie sprawdzone na niezerowej liczbie)');
+    const g0 = hostCalls[0].args;
+    assert.equal(g0[2], 7, 'blok = numer w grafie');
+    assert.ok(g0[5] > 0, 'teren pcha w górę');
+    // klaster startuje w y silnika −500 (y gry +500) i sunie ku +y silnika — punkt styku w y gry dodatni
+    assert.ok(Math.abs(g0[6] + 300) < 200 && g0[7] > 100 && g0[7] < 700, `punkt styku w świecie gry: x ${g0[6]}, y ${g0[7]}`);
+    // ktoś nadpisał hak po instalacji: kolejna instalacja dołącza go jako następny
+    const G = (...args) => foreign.push(args);
+    HB.onClusterContact = G;
+    HB.installClusterContactRouter();
+    assert.equal(HB.onClusterContact, router);
+    assert.equal(HB._clusterContactNext, G);
+    // zdjęcie: wraca hak sprzed instalacji
+    assert.equal(HB.uninstallClusterContactRouter(), true);
+    assert.equal(HB.onClusterContact, G);
+    assert.equal(HB.uninstallClusterContactRouter(), false);
+    // bez cudzego haka: styk encji bez gospodarza ginie bez błędu
+    HB.onClusterContact = null;
+    HB.installClusterContactRouter();
+    assert.equal(HB._clusterContactNext, null);
+    const n0 = hostCalls.length;
+    for (const e of [a, b]) HB.driveCluster(e, { x: e === a ? -300 : 300, y: -500, z: 120 }, { x: 0, y: 300, z: 0 }, null);
+    for (let k = 0; k < 60; k++) HB.step(1 / 60, [a, b]);
+    assert.ok(hostCalls.length > n0);
+    HB.uninstallClusterContactRouter();
+    HB.release(a); HB.release(b);
+  } finally {
+    HB.engine.onRigidContact = inner;
+    HB.onClusterContact = null;
+    HB._clusterContactNext = null;
+  }
+});
+
+test('body.angularDamping: null = konfiguracja silnika, 0 — bez tłumienia obrotu, liczba — własne (klaster i bryła belek)', () => {
+  const cfg = gameConfig();
+  const dt = 1 / 60;
+  const st = () => slab(4, 4, 30, 4);
+  const solid = beamBody(st(), { planar: false, position: { x: 0, y: 0, z: 0 } });
+  const solid0 = beamBody(st(), { planar: false, position: { x: 5000, y: 0, z: 0 }, angularDamping: 0 });
+  const r = D.createRigidBody(boxDesc(), { position: { x: 0, y: 3000, z: 0 } });
+  const r0 = D.createRigidBody(boxDesc(), { position: { x: 3000, y: 3000, z: 0 }, angularDamping: 0 });
+  const r15 = D.createRigidBody(boxDesc(), { position: { x: 6000, y: 3000, z: 0 }, angularDamping: 1.5 });
+  assert.equal(solid.angularDamping, null);
+  assert.equal(r.angularDamping, null);
+  const all = [solid, solid0, r, r0, r15];
+  for (const b of all) { b.angVel.x = 0.3; b.angVel.y = -0.2; b.angVel.z = 0.7; }
+  for (let k = 0; k < 60; k++) D.integrate(dt, all);
+  const decay = (k) => { let w = 0.7; for (let i = 0; i < 60; i++) w *= k; return w; };
+  const kCfg = Math.exp(-cfg.angularDamping * dt);
+  assert.equal(solid.angVel.z, decay(kCfg), 'bryła: tłumienie konfiguracji bit w bit');
+  assert.equal(r.angVel.z, decay(kCfg), 'klaster: tłumienie konfiguracji bit w bit');
+  assert.equal(solid0.angVel.z, 0.7);
+  assert.equal(r0.angVel.z, 0.7);
+  assert.equal(r15.angVel.z, decay(Math.exp(-1.5 * dt)));
+});
+
+test('body.restDamping klastra: 0 — przewracany słup toczy się po krawędzi bez tłumienia spoczynku / toczenia; null = silnik; HullBodies.setClusterDamping', async () => {
+  const HB = await freshHullBodies();
+  HB.engine.addTerrain(flatTerrain());
+  const dt = 1 / 60;
+  // słup 120 × 120 × 600 przechylony o 20° wokół +y (środek masy 100 j. za krawędzią), podstawa tuż nad terenem, g 80
+  const a = 20 * Math.PI / 180, q = { x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) };
+  const run = (rest) => {
+    const e = { name: 'slup', isWreck: true };
+    const hull = HB.createCluster(e, columnDesc(), { origin: { x: 0, y: 0, z: 25 }, quaternion: q, gravity: { x: 0, y: 0, z: -80 }, restDamping: rest });
+    assert.equal(hull.body.restDamping, rest ?? null);
+    let steps = 0;
+    while (steps < 1800 && tiltOf(hull.body.quat) < 70 * Math.PI / 180) { HB.step(dt, [e]); steps++; }
+    HB.release(e);
+    return steps;
+  };
+  const damped = run(undefined), free = run(0);
+  assert.ok(free < damped, `kroki do 70°: tłumienie silnika ${damped}, restDamping 0 — ${free}`);
+  assert.ok(free < 1800, 'bez tłumienia słup się przewraca');
+  // API w biegu: undefined — bez zmiany, liczba / null
+  const e = { name: 'x', isWreck: true };
+  const hull = HB.createCluster(e, columnDesc(), { origin: { x: 0, y: 0, z: 2000 }, angularDamping: 0.5 });
+  assert.equal(HB.setClusterDamping(e, undefined, 0), true);
+  assert.equal(hull.body.restDamping, 0);
+  assert.equal(hull.body.angularDamping, 0.5);
+  HB.setClusterDamping(e, null, null);
+  assert.equal(hull.body.restDamping, null);
+  assert.equal(hull.body.angularDamping, null);
+  assert.equal(HB.setClusterDamping({ name: 'bez klastra' }, 0, 0), false);
+  HB.release(e);
+});

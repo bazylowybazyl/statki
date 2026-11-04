@@ -239,6 +239,11 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
   `skySphere.tsl.js`, `createStarMaterial`; strażnik z prawdziwą listą renderu three w `tests/skySphere.test.mjs`).
   Sprawdzanie w grze: kadr z gwiazdami i bez (maska warstw — widoczność nieba ustawiają moduły co klatkę), różnica na bryłach.
 
+- **Pułapka r183 z dema zawaleń (2026-11-04):** (42) `instancedBufferAttribute(attr)` ze zwykłym `BufferAttribute` kopiuje
+  dane do WŁASNEGO `InterleavedBuffer` (`_getBufferAttribute`) — `attr.needsUpdate = true` nic potem nie wysyła i
+  instancje stoją na danych z pierwszej klatki. Atrybut instancji zmieniany w biegu → `InstancedInterleavedBuffer`
+  podany do węzła wprost i `needsUpdate` (albo zakresy) na TYM buforze (wzór `dema/zawalenia-budowli/obraz.js`).
+
 ## Rozgrzewka pipeline'ów (`Core3D.warmup`)
 
 - **Rozgrzewka pipeline'ów (zadanie 11, `src/3d/rozgrzewka.js`, `Core3D.warmup`):** w WebGPU klucz pipeline'u to graf materiału + układ atrybutów + cel (format, próbki, głębia) + światła passa + typ kamery + stan (mieszanie, głębia, strona), więc rozgrzewa się PRAWDZIWE obiekty w PRAWDZIWYM celu. Moduł dopisuje się JEDNĄ linią (przy imporcie też — wpisy czekają na urządzenie, a funkcja `objects` woła się dopiero w chwili rozgrzewki):

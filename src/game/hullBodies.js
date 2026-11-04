@@ -405,7 +405,10 @@ export const HullBodies = {
   // W GRAFIE — `id` z opisu bloków buildClusterDesc / desc.blockId; −1 — nieznany) w świecie GRY
   // (y w dół; z — wysokość): klaster × klaster, × ciało belek, × teren, × pole płyty, raz na parę i krok. Graf nośny
   // (E1, plan zawaleń § 3.3): obciążenie bloku od uderzenia, pękanie klastra po wiązaniach prefraktury. Domyślnie brak.
+  // Kilka budowli naraz → rozdzielacz po gospodarzu encji (installClusterContactRouter), nie nadpisywanie haka.
   onClusterContact: null,
+  // hak sprzed instalacji rozdzielacza (cudzy) — dostaje styki klastrów bez entity.collapseHost
+  _clusterContactNext: null,
   _clusters: [],
 
   init() {
@@ -711,7 +714,9 @@ export const HullBodies = {
    * jako ciało 6DoF silnika `rigid` — bloki z punktami styku (`desc` z buildClusterDesc), masa i tensor z bloków, bez
    * węzłów i belek (się nie gniecie). opts (świat silnika: x gry, −y gry, z): position (środek masy) albo origin
    * (początek układu klastra), quaternion, velocity, angularVelocity, gravity, gravityWell (studnia skały — ta sama
-   * logika z vmax co bryły), friction, collisionArmor, world (rekord kawałka budowli). Encja jest LUSTREM jak wrak bryły
+   * logika z vmax co bryły), friction, collisionArmor, angularDamping (tłumienie obrotu [1/s]; null — silnik, 0,2/s),
+   * restDamping (mnożnik tłumienia spoczynku i toczenia w styku; null — 1, silnik),
+   * world (rekord kawałka budowli). Encja jest LUSTREM jak wrak bryły
    * (syncSolidOut: x, y = −pos.y, z, quat, kąt, prędkości; `solid3D` — pętla wraków gry go nie całkuje; `rigidCluster`).
    * Limit żywych klastrów C.maxClusters (osobny od maxWrecks): ponad nim null. Broń, rozpad i odrost klastra — dalsze
    * etapy (§ 3.7: punkt styku → HP bloku); zapytania broni (sweep, impact, …) klaster dziś mijają.
@@ -733,7 +738,9 @@ export const HullBodies = {
       velocity: opts.velocity, angularVelocity: opts.angularVelocity,
       gravity: opts.gravity || null, gravityWell: opts.gravityWell || null,
       friction: Number.isFinite(opts.friction) ? opts.friction : C.clusterFriction,
-      collisionArmor: opts.collisionArmor
+      collisionArmor: opts.collisionArmor,
+      angularDamping: opts.angularDamping,
+      restDamping: opts.restDamping
     });
     const hull = {
       entity,
@@ -768,7 +775,11 @@ export const HullBodies = {
       shieldCells: null,
       _shieldCellsOf: null,
       _massRef: body.mass,
-      _inPx: 0, _inPy: 0, _inVx: 0, _inVy: 0, _inW: 0, _inNodes: body.activeNodes
+      _inPx: 0, _inPy: 0, _inVx: 0, _inVy: 0, _inW: 0, _inNodes: body.activeNodes,
+      // grawitacja i studnia z chwili utworzenia — driveCluster je zdejmuje (front niesie ciało) i przywraca
+      _gravity: body.gravity,
+      _gravityWell: body.gravityWell,
+      _gravityOwn: null
     };
     body.entity = entity;
     body.hull = hull;
@@ -799,6 +810,120 @@ export const HullBodies = {
     const hull = entity?.beamHull;
     if (!hull || hull.rigid !== true || hull.entity !== entity || hull.body.dead) return false;
     if (frozen) D.freezeBody(hull.body); else D.unfreezeRigid(hull.body);
+    return true;
+  },
+
+  /**
+   * PRZEGUB KLASTRA — zawias wyspy grafu (zdarzenie HINGE, plan zawaleń § 4.1 p. 6, D11): punkt (x, y, z) w ŚWIECIE
+   * SILNIKA (x gry, −y gry, z — jak opcje createCluster) trzymany w miejscu świata (D.addJoint, liczony w integrate).
+   * opts:
+   * - breakTilt [RAD] — pęka, gdy oś `up` ciała przechyli się od osi świata z chwili założenia o więcej (graf podaje
+   *   stopnie: v2 · π / 180); wartość skończona spoza 0…π to błąd (RangeError — przechył nie przekracza π, przegub
+   *   ze stopniami nie pękłby nigdy); brak — ∞;
+   * - up {x, y, z} — oś „w górę” w świecie silnika (normalizowana; domyślnie +z, przy studni / ringu −ĝ);
+   * - breakForce [masa · j/s²] — pęka przy większej sile więzu (domyślnie ∞); name.
+   * Zwraca rekord przegubu albo null (encja bez żywego klastra). Pęknięcie: silnik zdejmuje rekord z body.joints
+   * (_solveJoints), a `joint.broken` zostaje w rekordzie — gospodarz czyta go po kroku (`joint.tilt` — przechył [rad]).
+   * Śpiący albo zamrożony klaster się budzi (integrate pomija śpiące i zamrożone, więc przegub by nie działał);
+   * klaster z przegubem nie zasypia.
+   */
+  clusterJoint(entity, x, y, z, opts = {}) {
+    const hull = entity ? entity.beamHull : null;
+    if (!hull || hull.rigid !== true || hull.entity !== entity || !hull.body || hull.body.dead) return null;
+    const bt = opts.breakTilt;
+    if (Number.isFinite(bt) && !(bt >= 0 && bt <= Math.PI)) {
+      throw new RangeError(`clusterJoint: breakTilt ${bt} poza 0…π — radiany (stopnie grafu × π / 180)`);
+    }
+    let up = null;
+    if (opts.up) {
+      const ux = +opts.up.x || 0, uy = +opts.up.y || 0, uz = +opts.up.z || 0;
+      const len = Math.sqrt(ux * ux + uy * uy + uz * uz);
+      if (len > 1e-12) up = { x: ux / len, y: uy / len, z: uz / len };
+    }
+    const body = hull.body;
+    if (body.anchored || body.isSleeping) D.unfreezeRigid(body);
+    return D.addJoint(body, +x || 0, +y || 0, +z || 0, {
+      breakTilt: Number.isFinite(bt) ? bt : Infinity,
+      breakForce: Number.isFinite(opts.breakForce) ? opts.breakForce : Infinity,
+      up,
+      name: opts.name || ''
+    });
+  },
+
+  /**
+   * PROWADZENIE KLASTRA przez gospodarza zawalenia (front zgniotu: wyspa idzie za frontem kinematycznie, potem
+   * wolna; respawn wyspy). Klaster jest lustrem silnika (syncSolidOut), więc reguła „gra rusza encję, nie body.pos”
+   * wymaga tu jawnego API. Świat silnika (x gry, −y gry, z): pos — środek MASY (jak opts.position createCluster), vel,
+   * angVel — {x, y, z} albo null (bez zmiany). Obrót zostaje (przechył frontu trwa).
+   * opts.gravity: true / brak — grawitacja i studnia z chwili createCluster; false — bez grawitacji i studni (front niesie
+   * ciało); liczba g — {0, 0, −g}; {x, y, z} — ten wektor (studnia zdjęta). `opts` — stały obiekt wołającego.
+   * Śpiący albo zamrożony klaster się budzi, geometria ciała dostaje nową wersję (_touchGeometry — para bez styku nie
+   * pominie iteracji), encja-lustro od razu. Bez alokacji w kroku (poza pierwszym własnym wektorem grawitacji).
+   * Zwraca true albo false (encja bez żywego klastra).
+   */
+  driveCluster(entity, pos, vel, angVel, opts) {
+    const hull = entity ? entity.beamHull : null;
+    if (!hull || hull.rigid !== true || hull.entity !== entity) return false;
+    const b = hull.body;
+    if (!b || b.dead) return false;
+    if (pos) { b.pos.x = +pos.x || 0; b.pos.y = +pos.y || 0; b.pos.z = +pos.z || 0; }
+    if (vel) { b.vel.x = +vel.x || 0; b.vel.y = +vel.y || 0; b.vel.z = +vel.z || 0; }
+    if (angVel) { b.angVel.x = +angVel.x || 0; b.angVel.y = +angVel.y || 0; b.angVel.z = +angVel.z || 0; }
+    const g = opts === undefined || opts === null ? true : opts.gravity;
+    if (g === false || g === null) {
+      b.gravity = null; b.gravityWell = null;
+    } else if (g === true || g === undefined) {
+      b.gravity = hull._gravity; b.gravityWell = hull._gravityWell;
+    } else {
+      const num = typeof g === 'number';
+      const gx = num ? 0 : +g.x || 0, gy = num ? 0 : +g.y || 0, gz = num ? -g : +g.z || 0;
+      let own = hull._gravityOwn;
+      if (own === undefined || own === null) own = hull._gravityOwn = { x: gx, y: gy, z: gz };
+      else { own.x = gx; own.y = gy; own.z = gz; }
+      b.gravity = own; b.gravityWell = null;
+    }
+    if (b.anchored || b.isSleeping) D.unfreezeRigid(b);
+    D._touchGeometry(b);
+    syncSolidOut(hull, false);
+    return true;
+  },
+
+  /**
+   * TŁUMIENIE KLASTRA w biegu (gospodarz zawalenia: przewracana wieża toczy się po narożniku bez tłumienia spoczynku
+   * i toczenia, osiadający gruz — z nim; A/B tempa D12). `angular` — tłumienie obrotu [1/s] (null — silnik 0,2/s),
+   * `rest` — mnożnik tłumienia spoczynku / toczenia w styku (null — 1); undefined — bez zmiany. Bez alokacji.
+   * Zwraca true albo false (encja bez żywego klastra).
+   */
+  setClusterDamping(entity, angular, rest) {
+    const hull = entity ? entity.beamHull : null;
+    if (!hull || hull.rigid !== true || hull.entity !== entity || !hull.body || hull.body.dead) return false;
+    const b = hull.body;
+    if (angular !== undefined) b.angularDamping = Number.isFinite(angular) ? angular : null;
+    if (rest !== undefined) b.restDamping = Number.isFinite(rest) ? rest : null;
+    return true;
+  },
+
+  /**
+   * ROZDZIELACZ haka onClusterContact po gospodarzu zawalenia (plan zawaleń § 3.3, demo D20 § 2b): hak jest jeden, a
+   * budowli wiele. Gospodarz ustawia encjom swoich klastrów (także zamrożonego kikuta) `entity.collapseHost = H` z metodą
+   * H.onClusterContact(entity, hull, blk, jx, jy, jz, x, y, z) — ta sama sygnatura 9 argumentów w świecie GRY (y w dół,
+   * blk — numer bloku w grafie) — i woła tę funkcję (idempotentna, tania: można przy każdym createCluster). Styk encji
+   * bez collapseHost dostaje hak ustawiony PRZED instalacją (cudzy hak zostaje); hak z collapseHost — tylko gospodarz.
+   * Gdy ktoś później nadpisze onClusterContact, kolejna instalacja dołącza jego hak jako następny. Zwraca true.
+   */
+  installClusterContactRouter() {
+    const cur = this.onClusterContact;
+    if (cur === routeClusterContact) return true;
+    this._clusterContactNext = typeof cur === 'function' ? cur : null;
+    this.onClusterContact = routeClusterContact;
+    return true;
+  },
+
+  /** Zdejmuje rozdzielacz (hak sprzed instalacji wraca). false — rozdzielacza nie było albo ktoś go nadpisał. */
+  uninstallClusterContactRouter() {
+    if (this.onClusterContact !== routeClusterContact) return false;
+    this.onClusterContact = this._clusterContactNext;
+    this._clusterContactNext = null;
     return true;
   },
 
@@ -3372,6 +3497,19 @@ function onRigidContact(body, blk, jx, jy, jz, x, y, z) {
   const hull = body.hull;
   if (!hull || !hull.entity) return;
   fn(hull.entity, hull, blk, jx, -jy, jz, x, -y, z);
+}
+
+// ROZDZIELACZ haka styku klastrów (HullBodies.installClusterContactRouter): encja z gospodarzem zawalenia
+// (entity.collapseHost) → jego metoda onClusterContact, reszta → hak sprzed instalacji. Argumenty idą dalej bez zmian
+// (świat gry, y w dół). Zamrożony kikut też tu trafia (collideRR woła hak dla obu ciał pary).
+function routeClusterContact(entity, hull, blk, jx, jy, jz, x, y, z) {
+  const host = entity.collapseHost;
+  if (host !== null && host !== undefined && typeof host.onClusterContact === 'function') {
+    host.onClusterContact(entity, hull, blk, jx, jy, jz, x, y, z);
+    return;
+  }
+  const next = HullBodies._clusterContactNext;
+  if (next !== null && next !== routeClusterContact) next(entity, hull, blk, jx, jy, jz, x, y, z);
 }
 
 // Para wraków bez szybkiego styku: oba po czasie pełnych kolizji (świeży odłam rozdziela się co krok),

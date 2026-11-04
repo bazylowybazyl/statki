@@ -7,7 +7,7 @@ Oznaczenia: **[P]** pomiar, **[S]** szacunek, **[D]** dokument albo reguła. Ufn
 Przeliczanie i warunki:
 - Node → gra ×2 (GC, reszta kroku), w szczytach do ×3 [D: port silnika belek, 5 ms Node ↔ 10–17 ms w grze].
 - Klastry w prawdziwym silniku (`collideBodies` v2) kosztują ×4–6 więcej niż bryły zabawkowe benchmarku [P]. Bryły z benchmarku nie wchodzą do budżetu.
-- CPU mierzone przy obciążeniu maszyny 23–60% (inne sesje). GPU szczytu upadku tylko przy presecie Wysoka. Ultra (preset użytkownika, 5120×1440) to ~×1,5 kosztu passów [D], bez pomiaru.
+- CPU mierzone przy obciążeniu maszyny 23–60% (inne sesje). GPU szczytu upadku przy presecie Wysoka; Ultra (preset użytkownika, 5120×1440) zmierzone w E0 headless (§ 6.2).
 - Warianty eksperymentu upadku: **V0** dziś; **V1** dysk poza silnikiem belek; **V2** = V1 + H-C i bęben bez awansu; **V3** = V2 + H-T poza belkami po minięciu dysku.
 
 Prośba: wieżowiec kruszy się od strzałów, gubi odłamki i runie pod grawitacją; habitat w upadku niszczy „tarczę” w kształcie tego, co spada; bez widocznych wokseli; potem ringi i wszystkie budowle 3D.
@@ -275,10 +275,10 @@ Skąd co bierzemy:
 | 4–5 | Graf TSL na rodzinę × BG/FG; dane w `ClusterStore` / `PieceStore`; wszystko w `Core3D.warmup` (`'loading'`). |
 | 7 | SoA, pule, prealokowane stosy i wektory CG; test `untilSteady`. |
 | 8 | Budżety i kadencje przez `ticksAt120` / `stepDecay120`; testy 60 / 120 Hz. |
-| 9 | Wszystkie miejsca `Math.random` z § 2 dostają PRNG rozpadu z ziarnem; obraz używa `fxRandom`; strażnik dla `src/game/structure*.js`. |
+| 9 | Wszystkie miejsca `Math.random` z § 2 dostają PRNG rozpadu z ziarnem; obraz używa `fxRandom`; strażnik dla `src/game/structure*.js` (jest od E0b: `tests/structureZasady.test.mjs`). Etap PRNG rozpadu: do decyzji (propozycja E5, przy bramce „4 wzory → 4 kierunki”); czy obejmuje wraki statków (`shatter`, sekwencja `Math.random` gry poza obszarem) — decyzja orkiestratora, a jeśli tak — na listę użytkownika. |
 | baza piratów | Graf zgłasza zawalenie przez `pirateBaseWorld` (nowe `collapsePirateBaseChunk`: `_dockGone`, `noteBaseChunkBreak`, `markBaseBroken`, `pirateBaseObstacles`), bez `breakPiece`. |
 | przeszkody AI | Klastry w ruchu → indeks wraków; ruina → `statics`, jeden przyrost `staticsVer` na partię (`flota-ai.md:22`). |
-| broń wobec klastra | Pocisk: punkt styku → HP bloku + `STRUCT_CARVE`. Wiązka i Hexlance (`plowLance`): HP bloków po promieniu. Do tego rakiety, fala, taran. |
+| broń wobec klastra | Pocisk: punkt styku → HP bloku + `STRUCT_CARVE`. Wiązka i Hexlance (`plowLance`): HP bloków po promieniu. Do tego rakiety, fala, taran. HP bloku oderwanego klastra (D4): miejsce stanu do ustalenia w E5 (np. `S.blockHp` egzemplarza z masy bloku × punkty budowli / masa); broń wobec klastra — E5 (klastry ranią okręty od E5, D5). |
 | obszarowe | `STRUCT_CRUSH` → `RepairSwarm.blast`; w ogólności `damageTrafficActor`. |
 | presety | Pula L2, żwir, cząstki, kule kraterów w `graphicsQuality.js` + test. |
 | światła | Światła iglicy przypięte do bloku L1: jadą z klastrem albo `intensity = 0`. |
@@ -435,13 +435,13 @@ Pas i trafienia zostają bez zmian. Rozmiar elewacji na ekranie [S]:
 | etap | zakres | bramki | sesje |
 |---|---|---|---|
 | E0 | ziarno w narzędziach (`ziarno.mjs`); baza w grze: GPU szczytu przy **Ultra** + CPU workera, 120 Hz | 3/3 identyczne; tabela bazowa (`gpu-baza-gra.mjs`, `upadek-gra.mjs --query renderWorker=1`); GPU w prawdziwym oknie, przy ciszy sesji, nie nocą | 0,25–0,5 |
-| E0b | narzędzia, testy, reguły (§ 6.1), `window.StructureTune` (bez suwaków F12) | lista pękających testów | 0,5 [S] |
+| E0b | narzędzia, testy, reguły (§ 6.1) | lista pękających testów | 0,5 |
 | E1 | `structureGraph.js`: CG z fazami, kalibracja per poziom, zawias, front κ, pękanie wysp; prototyp progu dysku | wspornik ≤ 5% (moment rośnie z długością); ≤ 5% przy zerwaniach; podcięcie ±x → ±x; poziom 15 → przechył albo zgniot; 60/120 Hz ±5%, bit w bit 3×; ≤ 0,1 ms średnio; wszystkie grafy misji ≤ 1 ms najgorszy krok w Chrome | 1–2 |
 | E2 | `rigid`, dźwignie 1–4, rigid × rigid, styk H-T × pole | bit w bit `beamLocalSolverExact`, `beamNarrowphase`, `beamStore3D`; progi `destrukcjaTaran`, `pirateBaseFall`; stos 100 / 200 / 256: **p95 ≤ 1 / 2,5 / 3,5, max ≤ 6 ms Node**; para ≤ 1,5 µs; R11 | 3–4 |
 | E3 | prefraktura (gra + worker), wnętrza, wypiek offline | ≤ 1 s na archetyp; misja ≤ 3 s ściany albo tylko offline; pokrycie ≥ 99%; bit w bit gra ↔ worker; walce i torusy; priorytet skór; pamięć; czas `'loading'` | 2–3 |
 | E4 | `src/3d/structures/`, `structBlock`, rekordy, presety, rozgrzewka | 0 synchronicznych (`start-sync-gra.mjs --stres 25`); worker ≤ +0,5 / +1; kratery ≤ 0,3, żwir ≤ 0,5 ms GPU przy Ultra; GPU **w ruchu** (`--wkAb`); kodowanie, `off` ≡ worker, pauza, przepełnienie; szew +2–3 | 4–6 |
-| E5 | wieżowce: fala, nośność, kaskada, zawias, front, pomost, HP 0 poza bańką | p95 ≤ 6, max ≤ 12 ms w grze (`baza-zniszczenie-gra.mjs --tryb etapy`); GPU i worker; 4 wzory strzałów → 4 kierunki (stałe ziarno); etap raz; nagranie E1/E2, A/B g | 2 |
-| E6 | dysk: osiowe wiązania, grubość, `support`, rów, korek, atmosfera | IoU ≥ 0,7; szyja: ≤ 5% bloków, bok płaszczy się; wieża przed korkiem; v_odł / v_wieży ≤ 1,05; H-T ≤ 4 ms p95 Node, ≤ 1 tys. węzłów (`--koszt 1`); GPU | 3–4 |
+| E5 | wieżowce: fala, nośność, kaskada, zawias, front, pomost, HP 0 poza bańką; `window.StructureTune` z konsoli, bez suwaków F12 (o ile nie złoży go demo D20); HP bloków klastra i broń wobec klastra; PRNG rozpadu — propozycja, do decyzji (§ 3.7, zasada 9) | p95 ≤ 6, max ≤ 12 ms w grze (`baza-zniszczenie-gra.mjs --tryb etapy`); GPU i worker; 4 wzory strzałów → 4 kierunki (stałe ziarno); etap raz; nagranie E1/E2, A/B g | 2 |
+| E6 | dysk: osiowe wiązania, grubość, `support`, rów, korek, atmosfera | IoU ≥ 0,7; szyja: ≤ 5% bloków, bok płaszczy się; wieża przed korkiem; v_odł / v_wieży ≤ 1,05; H-T ≤ 4 ms p95 Node, ≤ 1 tys. węzłów (`node scripts/destrukcja-taran-sym.mjs --tryb upadek --koszt 1`); GPU | 3–4 |
 | E7 | H-C, bęben, H-T → klastry, lądowanie, `_chainExplosion`, ruina, wycofanie | HP 0 ≤ 8; krok ≤ 16,7; p95 ≤ 12; klatki ≤ 33 (`upadek-gra.mjs`, `przestoje-gra.mjs`); `grows` = 0; GPU ≤ dziś przy Ultra; „ostatni wieżowiec + HP 0 w jednym kroku”; po osiadaniu ≤ 0,3 ms, worker ≤ 2,7, rysunki ≤ 64; czasy fabuły z pomiaru; atrapa; `?physHz=120`; nagranie A/B | 2 |
 | poprawki | rundy po ocenie użytkownika (F2, upadek i Wojna miały co najmniej jedną) | — | 2–3 |
 | E8 | łata skały (po D1) | < 0,1 ms CPU, ≤ 0,1 ms GPU, 1 rysunek | 1–2 |
@@ -462,36 +462,59 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
 
 ### 6.1 Testy, narzędzia, reguły
 
-- **Nowe testy:**
-  - bez alokacji (`untilSteady`, `--concurrent-recompilation-delay`);
-  - budżety pod `WOLNY_ZEGAR_MS=5`;
-  - „gra nie losuje” dla `src/game/structure*.js`;
-  - archetyp gra ↔ worker;
-  - etap raz;
-  - implozja na atrapie;
-  - preset → pula;
-  - przepełnienie rekordów;
-  - pauza gruzu;
-  - pamięć = wypiek.
-- **Pękną:** `pirateBaseFall`, `pirateBaseIntegrity`, `worldBodies`, `worldBodies3D`, `hullDamageCommands`, `zegarKlatkiEfektow`, `storyMission`, `pirateBase`, `portBuildingSkinBake`.
+- **Testy obszaru:**
+  - już są (E1, E2): `structureGraph` (w tym bez alokacji — `untilSteady`, `--concurrent-recompilation-delay`), `beamRigid3D`, `beamRigid3DAlokacje` (osobny proces), `beamPlateField3D`;
+  - E0b: `structureZasady` (gra nie losuje, bez three / DOM, importy z listy i przechodnio bez three, zegar tylko w `nowMs`, `Math.hypot` tylko w budowie archetypu; zastępuje dawny test „gra nie losuje” w `structureGraph`), `structureZegar` (szpieg zegara: przy `timing` false 0 odczytów, przy zegarze przesuwanym o 10 ms na odczyt wynik bit w bit — podcięcie W-1 z wyspą swobodną, stos 24 klastrów, klaster przez płytę), `beamRigid3DRozgrzewka` (rozgrzewka w środku przebiegu bez śladu: pola systemu, haki niewołane, hasz sceny 2× bez i 1× z rozgrzewką, numeracja ciał, drugie wołanie puste); w `structureGraph` determinizm archetypu rozszerzony o `k0`, `limT`, `limS`, `anchorCap`, `u0` (W-1 i dysk, po `structureReset` egzemplarza) i test `todo` 60 / 120 Hz w szyi dysku (do E6); budżety pod `WOLNY_ZEGAR_MS=0/2/5/10`;
+  - później — „Testy później” niżej.
+- **Testy innych obszarów, które zmienią się przy wpinaniu** (etap i przyczyna; aktualizować razem z kodem, nie wyłączać):
+  - PĘKNĄ:
+    - `pirateBaseFall`: E6 — `fallKindOf(mk('disc'))` (dysk przestaje być bryłą belek); E7 — obrys `bodyFootprint` → OBB bloków klastrów, „wrak dziedziczy studnię” potrzebuje wariantu `rigid`; E8 — powierzchnia skały w wierzchołkach renderu z łatą wysokości;
+    - `pirateBaseIntegrity`: E5 — regex `breakPiece(…)) { markBaseBroken(wPiece)` → `collapsePirateBaseChunk`, `highrisesDown` i bezpiecznik z grafu; E7 — pule ćwiartek bębna (`createPiecePools`, `damagePool`) zmieniają rolę;
+    - `storyMission`: E7 — `blows ≥ 12`, `≥ 40` / `< 25` liczą harmonogram `_chainExplosion`, czasy `holdSec` i limity z pomiaru (D22); E5 — etap wieżowca raz;
+    - `pirateBase`: E3 — wnętrza (D9) a `SCENE.instances < 9000`, `PB_MAX_LAMPS`, pas ±4 `dryDockPlanarSolids`; E6 — „kotwice: każdy kawałek-ciało” dla dysku; E5 — kotwica `section` a „jeden kawałek”;
+    - `portBuildingSkinBake`: E3 / E4 — przekrój, atrybuty L2 i wnętrza zmieniają wypiek (zmiana wzorca); E6 — przypadek „sektor dysku” przenieść na H-T;
+    - `destrukcjaTaran`: E6 — „szyja habitatu … uderza bokiem” (dysk staje się polem płyty);
+    - `hullDamageCommands`: E7 — „bramka odłamków (debrisGate)” (`habitatFallMutesDebris`); etap PRNG — „HULL_DEBRIS = dawna droga” podmienia `Math.random` (po PRNG rozpadu potrzebne API ziarna);
+    - `worldBodies3D`: E4 — warianty WGSL `skin` / `skinBatch` / `skin3Batch` (przekrój jako nowa gałąź grafu skóry, § 5); etap PRNG — `withSeededRandom` / `SHATTER_SEED` przestaje sterować `shatter`; E7 — partie starych skór → L1/L2;
+    - `szewRenderu`, `snapshotPack`, `mirrorBody`, `graphicsQuality`: E4, planowo (sufit +2–3, `BODY_FLAG.RIGID`, `structBlock`, pule w presetach).
+  - WARUNKOWO:
+    - `worldBodies`: etap PRNG — progi `fragments ≥ 2/3/4`, `debris ≥ 10%` (`breakPiece` losuje `Math.random`); tylko jeśli kolejka `_queue` przejdzie na budżet liczbowy (dziś `buildBudgetMs`) — `T.buildBudgetMs = 1e6`;
+    - `beamSolidHits`: `T.buildBudgetMs = 1e6` — tylko przy tej samej zmianie budżetu;
+    - `zegarKlatkiEfektow`: regex `structural, Core3D.frameNowMs() * 0.001` w `hullDebris3D.js` — tylko jeśli pula gruzu E4 / E7 przejdzie przez `hullDebris3D.js` / `window.spawnHullDebris`; nowa pula w `src/3d/structures/` testu nie rusza — wtedy analogiczny test (pozy z `frameNowMs`, czas gruzu z `SimClock`).
+  - DO ROZSZERZENIA (nie pękną): `pirateBaseAtmosphere` — wariant klastra dla `rehomePirateBaseVents` (E6 / E7; testy wołają go na encjach z ręki, nie `promotePlanarPiece`); `pirateBaseWorld` — `collapsePirateBaseChunk` w API stanu kawałków (E5; tam też jest `collapsePirateRock`); `pirateRock` — lina windy reaguje na pęknięcie kawałka dysku (D17, E6); `pirateRockImpacts` — OBB bloków i `ROCK_DENT` (E7 / E8; test kodu 112 zostaje).
+- **Testy później:**
+  - E3: archetyp gra ↔ worker bit w bit (identyfikatory L2, L2 → L1); pamięć = świeży wypiek (hasz brył + wersja generatora); pokrycie ≥ 99%; walce i torusy;
+  - E4: preset → pula; przepełnienie `STRUCT_*` (≤ 64, zbiorczo, dekoder); pauza gruzu (`SimClock`); `off` ≡ worker (`structBlock`, `BODY_FLAG.RIGID`);
+  - E5: etap raz (baner `mission01.js` raz); 4 wzory strzałów → 4 kierunki przy stałym ziarnie (po PRNG rozpadu); broń wobec klastra (HP bloku, `STRUCT_CARVE`; stojący wieżowiec bez HP bloków); bez alokacji na ścieżce gry (`onClusterContact` → graf, `structureSolveIsland`, front; taran klaster × ciało płaskie — docisk bez zgniotu w stanie ustalonym, osobny proces — zgniot zabija węzły i rozpad alokuje z założenia, więc taran ze zgniotem stanu ustalonego nie ma); złote testy z `warmUpClusters` na ekranie ładowania; `StructureTune`, jeśli nie zrobi go D20 („klucz biegu nie zmienia kalibracji”, „łata od kroku 0 = archetyp z łatą”, klucz kalibracji → błąd, bez łaty `S.tune === A.tune`);
+  - E5 / E7: klaster nie jest zimnym wrakiem; pole `rigid` w `hullColdSnapshot`;
+  - E6: szyja na polu płyty (≤ 5% bloków, bok płaszczy się; zdjąć `todo` 60 / 120 Hz); IoU ≥ 0,7; lina windy (D17);
+  - E7: implozja na atrapie (bez terenu `_habitatImplosion`, z terenem bez `_chainExplosion`); „ostatni wieżowiec + HP 0 w jednym kroku”; `grows` = 0; kolejność upadku (D22);
+  - E8: teren = wierzchołki renderu z łatą (`ROCK_DENT`);
+  - E9: F5 bit w bit z ruinami; uśpione = 0 ms; aktywacja ≤ 2 budowle na krok.
 - **Narzędzia:**
-  - `upadek-gra.mjs` (`--fall disc*`, `--bramka`, kolumna sektorów, `odlamki`);
-  - `destrukcja-taran-sym.mjs` (ziarno, `--prebuild` domyślnie, kolumny grafu);
-  - `zniszczenia-gra.mjs --final`;
-  - `baza-zniszczenie-gra.mjs`;
-  - `scripts/struktura-sym.mjs` (graf nośny, E1) i `scripts/klastry-sym.mjs` (klastry i pole płyty, E2; tryby `stos | plyta | taran | bryla` — trybu przy ringu jeszcze nie ma, dojdzie w kroku ringów § 10);
-  - `bench\prefraktura.mjs` z walcami i torusami.
-- **Reguły do aktualizacji:** `baza-piratow`, `ciala-swiata`, `kadluby-belki`, `render-worker`, `core3d`, `wybuchy-gaz`, `flota-ai`, `fabula`, `opcje-grafiki`, `electron-wydanie`, `wraki`.
-- **Nowa reguła `zawalenia-budowli`:**
-  - `paths:` `"src/game/structure*.js"`, `"src/3d/structures/**"`, `"tests/structure*.test.mjs"`;
-  - wiersz w indeksie;
-  - do czasu jej powstania opis grafu nośnego (E1) jest w regule `ciala-swiata`, klastrów i pola płyty (E2) — w `kadluby-belki`.
-- **Hak w AGENTS.md** (31 261 / 40 000 znaków): „nowa budowla 3D → `buildStructureArchetype`; obrażenia budowli → graf przez `worldBodies` / `pirateBaseWorld`”.
-- **Dopisek w `PLAN-zniszczenia-swiata-3d.md`.**
+  - już są: `scripts/struktura-sym.mjs` (graf nośny, E1), `scripts/klastry-sym.mjs` (klastry i pole płyty, E2; tryby `stos | plyta | taran | bryla` — trybu przy ringu jeszcze nie ma, dojdzie w kroku ringów § 10), `upadek-gra.mjs` (`--fall`, `--bramka`, `odlamki`), `destrukcja-taran-sym.mjs` (`--ziarno`, `--prebuild`, `--pct`, `--koszt`), `gpu-baza-gra.mjs` (sonda GPU na klatkę, `--odmroz`), `zniszczenia-gra.mjs --final`, `baza-zniszczenie-gra.mjs`;
+  - zmiana w E6 / E7: kolumna sektorów → komórki pola, `--fall disc*` i `--bramka` znikają;
+  - nowe: kolumny grafu w `destrukcja-taran-sym` (E5); prefraktura — `.tmp/destrukcja-2026-11-03/bench/prefraktura.mjs` (poza repo, z walcami i torusami) → w E3 `scripts/prefraktura-sym.mjs`.
+- **Reguły:** `zawalenia-budowli` (od E0b; `paths:` `src/game/structure*.js`, `beamRigid3D.js`, `beamPlateField3D.js`, `tests/structure*.test.mjs`, `tests/beamRigid3D*.test.mjs`, `tests/beamPlateField3D.test.mjs`, `scripts/struktura-sym.mjs`, `scripts/klastry-sym.mjs`, ten plan; `src/3d/structures/**` dopiero z pierwszym plikiem w E4 — strażnik `agentsMd` wymaga śledzonego pliku pod każdym globem; wiersz indeksu w AGENTS.md z dopiskiem „niewpięte w grę do E5”). W E0b zaktualizowane: `ciala-swiata` (opis E1 przeniesiony, poprawka „bez dymu i wybuchów”), `kadluby-belki` (opis E2 przeniesiony, zostaje część silnikowa), `wybuchy-gaz`, `baza-piratow`. Później: `render-worker`, `core3d`, `opcje-grafiki` (E4), `electron-wydanie` (E3), `fabula` (E5 / E7), `flota-ai` (E5), `wraki` (E5 / E7).
+- **Hak w AGENTS.md — w E5** (AGENTS.md ~30 tys. / 40 000 znaków; dawne „31 261” to bajty). Tekst do sekcji „Rozgrywka”, po punkcie o `storyBaseBreak`: „Zawalenie budowli z grafem nośnym (wieżowce bazy od E5, habitat od E7, potem każda budowla z archetypem) → graf `structureGraph` przez `pirateBaseWorld` (`collapsePirateBaseChunk`), masy jako klastry `HullBodies.createCluster`, nie `breakPiece`; pętle po wrakach i ciałach (AI, celowanie, zimne wraki) rozpoznają klaster (`rigidCluster`) — reguła `zawalenia-budowli`.” Część o potoku archetypów (`buildStructureArchetype`) — dopiero, gdy funkcja powstanie (E3 / § 10).
+- **Dopisek w `PLAN-zniszczenia-swiata-3d.md`** — zrobiony w E0b (pod tabelą etapów § 7 i w nagłówku).
 
 ### 6.2 Stan etapów
 
-- **E0 (2026-11-04, część CPU — zrobione).** `scripts/destrukcja-taran-sym.mjs`: `--ziarno` (domyślnie 12345 — Math.random z LCG; 0 = dawne losowanie), `--prebuild` (domyślnie 1 — szablony z ekranu ładowania jak w grze), `--pct 1` (percentyle kroku co 1 s i po HP 0). Upadek 60 Hz: 3/3 przebiegi identyczne (stan końcowy i zdarzenia), testy `destrukcjaTaran` i `pirateBaseFall` zielone. Baza w Node po HP 0 [P, 3 przebiegi]: `stoi` p50 0,40 / p95 11,7–12,1 / p99 15,3–16,1 / max 62–63 ms (krok HP 0); `lezy` p50 1,8 / p95 14,7–14,9 / p99 23,2–23,8 / max 48–50 ms; najgorsze okno 1 s (p95): `stoi` 17,2–17,6 ms (sekunda po HP 0), `lezy` 24,0–25,0 ms (lądowanie). Część GPU (szczyt upadku przy Ultra, 120 Hz, okno gry) — za dnia, przy ciszy sesji.
+- **E0 (2026-11-04, część CPU — zrobione).** `scripts/destrukcja-taran-sym.mjs`: `--ziarno` (domyślnie 12345 — Math.random z LCG; 0 = dawne losowanie), `--prebuild` (domyślnie 1 — szablony z ekranu ładowania jak w grze), `--pct 1` (percentyle kroku co 1 s i po HP 0). Upadek 60 Hz: 3/3 przebiegi identyczne (stan końcowy i zdarzenia), testy `destrukcjaTaran` i `pirateBaseFall` zielone. Baza w Node po HP 0 [P, 3 przebiegi]: `stoi` p50 0,40 / p95 11,7–12,1 / p99 15,3–16,1 / max 62–63 ms (krok HP 0); `lezy` p50 1,8 / p95 14,7–14,9 / p99 23,2–23,8 / max 48–50 ms; najgorsze okno 1 s (p95): `stoi` 17,2–17,6 ms (sekunda po HP 0), `lezy` 24,0–25,0 ms (lądowanie).
+- **E0 (2026-11-04, część GPU — zrobione headless).** `gpu-baza-gra.mjs` (5120×1440, `grafika=ultra&limitKlatek=120`, worker, Yamato, finał „etapy” — 65 strzałów, habitat padł sam; `--slad 0`, sonda znaczników GPU w każdej klatce, `--odmroz 1`) i `upadek-gra.mjs --query renderWorker=1` (1600×900, CPU wątku gry). Headless w tle, po kolei; użytkownik pracował (CPU ~30%), obcych procesów GPU nie było. Raporty: `.tmp/zawalenia-e0/gpu-ultra-headless-2/raport.json` (powtórka, commit `ccbeae30`), `.tmp/zawalenia-e0/upadek-worker/raport.json`. GPU na klatkę, render + compute, p50 / p95 / maks. [P]:
+  - przed ostrzałem 2,18 / 2,48 / 3,06 ms; ostrzał 4,3–7,9 / 6,2–12,0 / ≤ 17,1 ms (nvidia 97–99%, kolejka GPU do 236 ms — GPU nasycone);
+  - **szczyt = lot z łańcuchem wybuchów, nie uderzenia:** ft 4,5–6,5 s — 9,85 / 18,16 / 20,88 ms (compute p50 5,62 ms, z tego `fx:wybuchy` 4,97 ms na klatkę przy 3,7 dispatchu; render 4,43 ms: ortho 1,33, bg 1,16, fg 0,76, maska słońca 0,74, post 0,52); ft 6,5–8,5 s — 10,03 / 15,49 / 20,07 ms;
+  - uderzenia (wieża ft 13,45, dysk ft 15,97; ft 12,6–20,1 s): 4,9–6,2 / 9,2–10,7 / ≤ 13,1 ms; dalej 4,30 / 5,42 → 3,40 / 4,05 ms; osiadło ft ~25,7 s (184 uderzenia, 170 gorących / 145 śpiących wraków);
+  - po osiadaniu (świat odmrożony) 2,67 / 3,08 ms, nad gruzem (zoom 0,3) 2,76 / 3,21 ms;
+  - render w upadku 2,5–4,4 ms (p50) przy 190–330 rysunkach — budżet zawaleń na GPU ograniczają gaz i wybuchy, nie rysunki brył;
+  - CPU workera p50 3,0–4,3 ms, p95 ≤ 10,2 ms; strona po upadku (ft 18–26 s) 48–55 kl./s przy GPU ~2,8 ms — wąskie gardło to wątek gry (do sprawdzenia w E3+);
+  - pipeline'y synchroniczne w oknach 0; przy starcie fazy shipyard 9 × „kompilacja w grze” 27–103 ms (modele floty, okręt 3D, rozpad stacji: fade, neptune-station.glb) — poza rozgrzewką (zasada żelazna 5, poza obszarem);
+  - CPU wątku gry w upadku (`upadek-gra`, `stoi` / `lezy`): uderzenie wieży 14,50 / 13,18 s, dysku 16,82 / 14,33 s, osiadło 24,92 / 26,10 s; najgorszy krok 21,8 / 31,4 ms (`lezy`: średnio 22,9–28,9 ms 1,3–2,1 s po uderzeniu dysku, 9–11 kroków na 0,25 s zamiast 15 — symulacja nie nadąża); klatek strony > 50 ms 4 / 24; po osiadaniu krok 0,3–0,7 ms.
+  - Bramka E7 „GPU ≤ dziś przy Ultra” mierzy względem tych liczb (szczyt p95 ~18 ms w locie z wybuchami). Nie zmierzone: GPU w prawdziwym oknie z vsync (headless — kolejka i kompozycja Chrome inne; koszt kompozycji kanwy 2D jest poza znacznikami), przy 99% zajętości czasy passów są raczej górną granicą.
+  - Znalezione poza obszarem (core3d / render-worker): `Core3D.gpuFrameMs` w workerze grupuje znaczniki po `renderer.info.frame` (takty rAF workera); przy zapchanym GPU worker tyka 22–69 razy na 2 s przy ~240 renderach, więc wartość jest sumą dziesiątek klatek (HUD 245 ms). Czyta ją PerfHUD „Obraz 3D (worker)” i rozdzielczość dynamiczna przez kanał zwrotny (`stepDynamicResolution`, `GPU_FRAME_MS`) — przy włączonej opcji skala spadłaby za mocno. Do sprawdzenia w oknie z vsync i poprawki w Core3D (np. licznik `renderSingle` zamiast `info.frame`).
+  - Pierwszy przebieg (headless bez limitu klatek, ślad Chrome w oknach) nie dał znaczników GPU w ostrzale i fazie uderzeń; najgorsze ZMIERZONE okno 9,41 ms średnio (ft 5,0–7,2) zgadza się z powtórką. Sonda liczy teraz GPU na klatkę z własnego licznika (`naKlatke`, `SONDA_GPU_OKNA`).
+- **E0b (2026-11-04 — zrobione).** Reguła `.claude/rules/zawalenia-budowli.md` (wiedza E1 z `ciala-swiata` i E2 z `kadluby-belki` przeniesiona — w starych regułach zostały odnośniki i część silnikowa), wiersz indeksu w AGENTS.md („niewpięte w grę do E5”), poprawki nieaktualnych zdań („bez dymu, ognia i wybuchów” — `ciala-swiata`, `wybuchy-gaz`; D2), punkt PRZEBUDOWA ZNISZCZEŃ w `baza-piratow`, dopisek w `PLAN-zniszczenia-swiata-3d.md`; testy `structureZasady`, `structureZegar`, `beamRigid3DRozgrzewka`, rozszerzony determinizm i `todo` szyi w `structureGraph` (§ 6.1); lista testów, które zmienią się przy wpinaniu, z etapami (§ 6.1). Bez zmian w kodzie gry. `StructureTune` przeszedł do demo D20 / E5, hak w AGENTS.md — do E5, PRNG rozpadu — do decyzji (§ 3.7).
 - **E1 (2026-11-04 — zrobione, go).** `src/game/structureGraph.js` (czysty: bez three, DOM i `Math.random`), `tests/structureGraph.test.mjs`, `scripts/struktura-sym.mjs` (tryby `podciecie, wspornik, kondygnacja, front, fala, zawias, ciezkie, dysk-szyja, dysk-upadek, prog, koszt`). Bramki [P, Node]:
   - wspornik: moment 0,0% od Σ m·g·x przy `shearK` 1e-6 (laplasjan benchmarku tracił 60–85%, ścinanie 1e-4 — do 3,8%);
   - ≤ 5% przy zerwaniach: ocena tylko przy reszcie ≤ 0,02 (ciężkie losowe uszkodzenia, 8 ziaren: błąd ≤ 0,020); niezbieżne mechanizmy pękają trybem `MECH`;
@@ -511,7 +534,47 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
   - Otwarte na E6 / E7: para klaster × bryła belek 7–9 µs na wywołanie i 23–34 µs na parę ze stykiem (bramka 1,5 µs spełnia tylko klaster × klaster); taran klaster × ciało płaskie 10–25 µs na parę; resztkowe alokacje w parze z ciałem belek (~5 KB / 60 kroków) i w płycie (~4 KB); sufit 160 aktywnych dochodzi z opóźnieniem (zimny szczyt 199); broń wobec klastra (§ 3.7), pękanie klastra po wiązaniach, CCD z obrotem; `wreckPairEvery` dla wolnych par klastrów zmienia rozgrywkę — decyzja przy E7.
   - Rozgrzewka JIT klastrów (`HullBodies.warmUpClusters`, ~110 ms raz na proces) nie idzie w `init` — gra jej jeszcze nie woła. Wpiąć na ekranie ładowania razem z pierwszym `createCluster` w grze (E5) i powtórzyć złote testy z nią (przechodziły z nią w `init`).
   - Jednostki płyty: σ silnika ≈ σ E1 × masa węzła (45); wieża 43 mln przy 900 j/s przebija płytę 360 j. przy σ ≲ 2·10⁴ — strojenie w E6.
-- **Następne (po decyzjach 11-04):** E0 — część GPU (okno dane przez użytkownika 11-04 za dnia, przy ciszy sesji); demo na szarych blokach (D20) — przed E3, do oceny okiem tempa (D12, skłania się ku wolno), przechyłu i „sztywnych klocków”; E0b (w tym reguła `zawalenia-budowli`, poprawka nieaktualnego „bez dymu i wybuchów” w regule `ciala-swiata`); E3 (prefraktura z wnętrzami — D9: docelowo wszystkie budowle).
+- **D20 krok 3 (2026-11-04 — gospodarz zawalenia, liczby tempa).** `src/game/structureCollapse.js` (gospodarz graf ↔ klastry, gotowy na E5), sceny 1–3 jako dane (`dema/zawalenia-budowli/scenariusze.js`, `symulacja.js`), `scripts/zawalenia-sym.mjs`, `tests/structureCollapse.test.mjs` (13 testów, ~3 s); w silniku pole `body.restDamping` + `HullBodies.setClusterDamping` (null bit w bit). Bateria sceny 1: krater r 110 / 0,3 + fala J 3000 × g/400 co 0,2 s z +x — oderwanie 2,33 s (120 Hz: 2,13) od startu, 0,83 s od pokazu (przewinięcie 1,5 s); 4 strony: 2,07–3,33 s. Scena 1 (W-1, bateria z +x), DACH NA ZIEMI od oderwania [P, Node] — tłumienie obrotu silnika (0,2/s) / bez:
+  - g 400: 7,63 / 7,48 s (120 Hz: 7,65 / 7,45); przegub (zastój) 25,7° po 3,3 s, 40° po 5,7 s;
+  - g 100: 15,80 / 15,07 s (120 Hz: 15,86 / 15,14);
+  - g 80: 17,83 / 16,83 s (120 Hz: 17,28 / 17,77) — g 80 / g 400 = 2,34 / 2,25 (120 Hz: 2,26 / 2,39);
+  - g 60: 20,90 / 19,90 s (120 Hz: 20,95 / 21,81).
+  - **Decyzja (orkiestrator): tłumienie obrotu klastrów zostaje silnika (null)** — wpływ 1–6%. Tempo psuło tłumienie SPOCZYNKU i TOCZENIA w styku (`restDamp` 3/s, `restAngDamp` 2/s, `rollDamp` 3/s przy ≥ 2 stykach, bez progu prędkości): przewracanie po narożniku przy g 80 trwało dziesiątki sekund albo stało. Gospodarz zdejmuje je przewracanej wieży (`restDamping` 0) do 80° przechyłu.
+  - **D12:** przy tym modelu już g 400 daje dach na ziemi 7,5–7,7 s po oderwaniu (przechył od zawiasu z małym ω0, równowaga chwiejna na narożniku, potem przewrócenie) — w paśmie „wolno 5–7 s” jest g ≥ 400; g 60–100 to 15–21 s. Do oceny okiem w demie (krok 4).
+  - **D11:** podcięcie w pasie ±70 kładzie zawias 86–226 j. nad pokładem, a róg wieży (rzut 380) siada na ziemi przy 13–36° (bateria sceny 1: 25,7°) — przegub pęka ZASTOJEM, nie kątem 40°; wieża przewraca się po narożniku (bez frontu — front zrzucał ją w ziemię). 40° ± 3° z frontem tylko na pomoście nad pustką (test). Kikut pod krawędzią kruszy reguła geometryczna (wyspa na zawiasie bez par z kikutem — styk z nim zakleszczał przechył).
+  - Front (scena 3, ładunek kondygnacji 13, g 400): κ 0,1–0,3 — 13 poziomów do ziemi, start 1,1 s, ziemia 4,68 s; κ 1 — staje po 2 poziomach. Scena 2 (W-2, działo J 1500 co 0,25 s): oderwanie 8,9 s (oderwany dach i górne piętra, potem zawias i przewrócenie).
+  - Zakleszczenie (scena 1, 4 ziarna salwy × 4 strony, `--zakleszczenie 4`): g 400 — 13/16 wież na ziemi do 20 s, g 80 — 14/16 do 34 s; ziarno 104 (głębsze podcięcie) zostawia wieżę opartą narożnikiem przy 17–24° (stabilnie — środek masy nad podparciem), mimo pchnięć i nacisku na narożnik.
+  - Uderzenie o ziemię do grafu wyspy × 0,5 (`impactScale`): przy 1 wieża rozpadała się w gruz (158 ze 178 bloków), przy 0,5 — 5–9 klastrów i ~60 bloków gruzu. Nacisk narożnika od początku przewracania (`staticEvery` 0,25) — wieża kruszyła się od podstawy, 60 / 120 Hz rozjeżdżały się o 35%; zostaje tylko dla zakleszczonych.
+  - Koszt (Node, scena 1 — dwie wieże): krok razem p50 0,11–0,16, p95 0,35–0,9, max 1–11 ms (narodziny klastrów); gospodarz bez fizyki < 64 B alokacji na krok; `HullBodies.step` w tej scenie ~3 KB na krok (silnik — do E5). Wyniki: `.tmp/zawalenia-sym/` (`tempo-v4.jsonl`, `front-v3.jsonl`, `scena2-v3.jsonl`, `zakleszczenie-g400-v2.jsonl`, `zakleszczenie-g80-v2.jsonl`).
+- **Demo D20 (2026-11-04 — kroki 1–6 zrobione, czeka na ocenę użytkownika).** `dema/zawalenia-budowli.html` (spis dem, grupa „Zniszczenia, mostki, rdzenie”): `npm run dev` → `/dema/zawalenia-budowli.html`; adres `?scena=1…5`, `?g`, `?strona`, `?kappa`, `?podpory`, `?ht=klaster`, `?t`, `?physHz=120`, `?shot=1`. Kroki: 1 — prostopadłościany bloków L1 i `g` archetypu w grafie (`951764d1`); 2 — API klastra w `HullBodies`: `clusterJoint`, `driveCluster`, rozdzielacz haka, `body.angularDamping` (`52ffdc1a`); 3 — gospodarz `structureCollapse.js`, sceny jako dane, `zawalenia-sym.mjs` (`e3e6de7b`, wpis wyżej); 4 — obraz WebGPU (TSL), sceny 1–3, panel, harness `scripts/webgpu/zawalenia-demo.mjs` (`37e43378`); 5 — wiązanie pola płyty z grafem dysku `structurePlate.js`, sceny habitatu 4–5 (`a1b316a9`, `906f6e71`); 6 — ten wpis i punkt „WPINANIE W SKRÓCIE” w regule `zawalenia-budowli`. Testy: `structureCollapse` (13), `structurePlate` (14, w tym 3 `todo`), dopisane w `structureGraph` i `beamRigid3D`; pełny zestaw: 3827 testów, 3817 zielonych, 0 porażek, 4 pominięte (progi czasu), 6 `todo` — bez zmian od kroku 5. Statki i bryły bit w bit (nowe pola silnika null; złote testy, progi `destrukcjaTaran` / `pirateBaseFall`).
+  - Co działa (sceny startują same; demo liczy ten sam kod co `zawalenia-sym.mjs` — oś czasu przeglądarki = Node we wszystkich 5 scenach) [P, 60 Hz]:
+    - 1 · A/B tempa (domyślna): dwie W-1, lewa g 400, prawa g 80 (panel 60 / 80 / 100), bateria z +x podcina obie w tych samych chwilach, przewinięcie 1,5 s pod kurtyną. Oderwanie z zawiasem 0,83 s od pokazu, przegub pęka ZASTOJEM przy 25,7°, wieża przewraca się po narożniku ku strzałom. Dach na ziemi od pokazu: g 400 — 8,47 s, g 100 — 16,6, g 80 — 18,7, g 60 — 21,7 (120 Hz: 8,28 / 16,5 / 17,9 / 21,6); pętla 25 s.
+    - 2 · ostrzał ręczny W-2 (LPM, broń Shift+1/2/3, strzałki — strona, P — pomost −y, podłoże grunt / pomost): auto-salwa działa J 1500 co 0,25 s — oderwanie 8,87 s (górne piętra frontem, potem zawias), dach 11,45 s; interakcje harnessu (torpeda, zmiana strony, salwa, pomost) bez błędów.
+    - 3 · front zgniotu (ładunek kondygnacji 13, κ 0,2): 13 poziomów do ziemi od 1,1 do 4,68 s; przy κ 1 front staje po 2 poziomach.
+    - 4 · habitat, wieża H-T (bryła belek z gry) przez dysk: HP 0 0,5 s, zegar utrzymania 2,5 s, styk 3,45 s (1027 j/s), przebicie 3,85 s, minięcie dysku 5,03 s (1111 j/s), wieża na skale 6,88 s. Otwór w kształcie talerza: IoU z pierścieniem 560–880 0,90 (669 komórek zgniotu + 127 reszt 14 bloków, 120 Hz tak samo). Pierwszy wycinek 3,93 s, wycinek na skale 10,27 s (120 Hz 9,7 s); odpada cały graf dysku (316 bloków).
+    - 5 · szyja (utrzymanie 1): korona bębna 6,83 s, dysk 6,98 s (817 j/s), spoczynek wieży 9,12 s; 0 otworów, rów 176 komórek, graf traci 5 / 316 bloków (1,6%, D7 ≤ 5%) w czasie pokazu 18 s.
+  - Koszt kroku [P] (fizyka + gospodarz + płyta, p50 / p95 / max ms; Node `zawalenia-sym.mjs` / Chrome headless z harnessu, 960 kroków na scenę):
+    - scena 1 (dwie wieże): Node 0,12–0,18 / 0,50–0,93 / 1,6–10,6 (max w pierwszym przebiegu procesu — zimny JIT i narodziny klastrów), 120 Hz 0,11–0,18 / 0,47–0,51 / 1,4–8,0; Chrome 0,30 / 0,79 / 3,4;
+    - scena 2: Node 0,01 / 0,70 / 15,3 (narodziny, pierwszy przebieg); Chrome 0,13 / 0,37 / 1,3. Scena 3: Node 0,004 / 0,20 / 3,2; Chrome 0,015 / 0,12 / 0,67;
+    - scena 4: Node 1,6 / 11,7 / 29,9 (120 Hz 0,53 / 2,7 / 23,8); Chrome 1,3 / 16,4 / 17,9 — H-T na belkach w polu płyty i rozpad całego dysku na leżącej wieży. Ponad bramką E7 (p95 ≤ 12, krok ≤ 16,7) — do budżetu E6 / E7;
+    - scena 5: Node 0,04 / 0,63 / 3,5 (120 Hz 0,08 / 2,4 / 9,1); Chrome 0,07 / 0,84 / 3,6.
+  - Obraz [P, Chrome headless 1600×900 w tle, użytkownik pracował]: demo gotowe po 2,2 s (rozgrzewka 0,8 s), 17–26 rysunków, CPU klatki 0,4–1,7 ms, pipeline'y synchroniczne po rozgrzewce 0 (sceny 1–5, interakcje sceny 2, tryb żywy sceny 1 i 4), błędów konsoli i walidacji WebGPU 0; scena 1 do 22 s — prawa wieża (g 80) z dachem na ziemi 20,17 s jak w Node. Wyniki: `.tmp/zawalenia-demo/pelny/raport.json` (+ `widoki/`, `s1-pozno/`), Node — `.tmp/zawalenia-krok6/`, wybrane kadry dla użytkownika — `.tmp/zawalenia-demo/*.png`. „Zbliż: podstawa” w scenie 4 po przebiciu celuje w pustkę (dysk odpadł) — do poprawki w rundzie 7. GPU i klatka w prawdziwym oknie z vsync niezmierzone (pył to duże przezroczyste sprite'y — przy 5120×1440 sprawdzić wypełnienie).
+  - Czego demo uczciwie NIE pokazuje (podpis przy ocenie):
+    - R1: gruz to bloki L1 (prostopadłościany kondygnacji) i kamienie obrazu, bez prefraktury E3 i wnętrz (D9) — dolna granica wyglądu; „Gruz obrazu” wł / wył (G) to A/B;
+    - bateria sceny 1 (krater r 110 / 0,3 + fala J 3000 co 0,2 s) jest mocniejsza niż broń gry — test mechaniki, nie balansu; trafienie w oderwany klaster to sam obraz (broń wobec klastra — E5);
+    - wieża stoi na gruncie, a w misji na pomoście nad pustką (opcja w scenie 2); pomost, płyty pod wieżami i okręt sceny 2 to sceneria bez fizyki (kamienie lądują na płytach, klastry przez nie przelatują; okręt stoi 450 j. w bok od linii strzału);
+    - H-T po minięciu dysku to jeden klaster z prostopadłościanów (D6 zastępczo); od styku z polem do minięcia dysku H-T nie ma par z wycinkami — przez ~1 s wieża i oderwany dysk się przenikają (obejście, E6 / E7);
+    - bez bębna, szybu H-C (D14) i atmosfery; skała 5 km pod dyskiem (w grze ~23 km) — widać kolejność lądowania, nie czasy E7; bez dźwięku (D18) i reżysera kadru (D15 — kamery z panelu);
+    - pętla pokazu (18 s w scenach 4–5, 25 s w scenie 1) ukrywa pełzanie uszkodzonego grafu dysku (R15), a ziarno salwy sceny 1 — zakleszczenie (niżej);
+    - `window.StructureTune` demo nie składa (`__zaw.tune` — zamrożone tabele do odczytu) — przechodzi do E5.
+  - Do oceny użytkownika (kamery Kino / Profil / Z góry / Śledź / Zbliż, czas ×0,25, krok):
+    - D11 — na gruncie przegub pęka zastojem przy ~25° (róg siada na ziemi), potem wieża przewraca się po narożniku bez frontu; „30–45°, potem zgniot” widać tylko na pomoście nad pustką (scena 2, „Podłoże: pomost”);
+    - D12 — scena 1: g 400 (dach 8,5 s od pokazu, 7,6 s od oderwania) kontra g 60 / 80 / 100 z panelu (16,6–21,7 s); „wolno 5–7 s” wypada przy g ≥ 400;
+    - R1 — bloki L1 jako sztywne klocki przed E3 (`impactScale` 0,5: wieża po upadku 5–9 klastrów i gruz; przy 1 rozpada się w gruz);
+    - D22 — scena 4: reszta dysku odrywa się jednym pierścieniem ~0,1 s po przebiciu, uderza w leżącą wieżę ~1,3 s po niej i rozpada się na niej; pierwszy wycinek na skale 3,4 s po wieży. Odpadanie wycinkami PO wieży wymaga prefraktury / zawiasu wycinków (E3 / E6) — albo decyzji, że tak jest dobrze. Panel „podpory” 0,25 / 0: dysk puszcza przed wieżą;
+    - D7 — scena 5: rów w kształcie wieży bez otworu; „Szyja: mocniej ×3” (R3) odrywa cały dysk; R15 (120 Hz 13% bloków, pełzanie po 40 s) — E6.
+  - Otwarte poza oceną: zakleszczenie w scenie 1 — 3/16 (g 400) i 2/16 (g 80) ziaren salwy zostawia wieżę opartą narożnikiem przy 17–24°; `HullBodies.step` w scenie z klastrami alokuje ~3 KB na krok (silnik, E5); szczyt kroku sceny 4 (wyżej); `D.rigidRRFilter` niepotrzebny (przechył bez par + reguła geometryczna).
+- **Następne:** ocena dema przez użytkownika (D11, D12, R1, D22, D7 — lista wyżej) → runda poprawek D20 (krok 7 syntezy) → E3 (prefraktura z wnętrzami — D9: docelowo wszystkie budowle). Do rozstrzygnięcia przed E5: etap i zakres PRNG rozpadu (§ 3.7, zasada 9), miejsce HP bloku klastra (D4). Opcjonalnie: GPU upadku i dema w prawdziwym oknie z vsync, gdy użytkownik nie gra.
 
 ## 7. Ryzyka
 
@@ -523,7 +586,7 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
 | R4 | przeskok H-T belki → klastry | szablon w locie; rezerwa komórka 67; zwolnione tempo to nowa mechanika (D16) |
 | R5 | zgniot H-T o krawędź płyty (szyja dziś 15,8–17,5 ms Node) | niezmierzony (w V1–V3 wieża przelatuje przez puste miejsce); E6 z polem |
 | R6 | niedeterminizm | przyczyna znana; PRNG, budżety liczbowe, wolny zegar; zmienność ≠ ziarno (±20%) |
-| R7 | GPU przy Ultra bez zapasu, niezmierzone | E0; pył cząstkami; nie gorzej niż dziś |
+| R7 | GPU przy Ultra bez zapasu (E0 headless [P]: szczyt p95 ~18 ms w locie z łańcuchem wybuchów, `fx:wybuchy` ~5 ms; uderzenia p95 9–11 ms — § 6.2) | pył cząstkami; nie gorzej niż dziś; okno z vsync — do potwierdzenia |
 | R8 | prefraktura walców, torusów i GLB (nieszczelne = skorupa) | E3, wypiek offline |
 | R9 | brak zginania w grafie | wiązania osiowe lub obrót w E1 / E6 |
 | R10 | „to dalej skrypt?” | `_chainExplosion` wycofany; zostają jawne: zegar utrzymania (D8), reguła fali |
@@ -531,6 +594,7 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
 | R12 | zbieg ostatniego wieżowca z HP 0 | bramka E7 |
 | R13 | brak drogi po porażce | go / no-go po E1, E2 |
 | R14 | kruszenie wysoko nie wynika z mechaniki | fala w konstrukcji, kalibracja; nagranie E5 |
+| R15 | szyja w polu płyty (demo D20 krok 5 [P], `zawalenia-sym.mjs --scena 5 --hz 60,120`): (1) zależy od kroku — w czasie pokazu (18 s) przy 60 Hz graf dysku traci 1,6% bloków, przy 120 Hz 13% (ponad D7 ≤ 5%), przy ×3 przechyłu cały dysk; historia impulsów płyty prawie ta sama, a uderzenie zrywa ~6× więcej wiązań (do 9 s: 505 wobec 89); (2) PEŁZANIE — po spoczynku wieży (bez styku z płytą) uszkodzony graf pęka dalej pod własnym ciężarem: przy 60 Hz wiązania 1878 → ~1000 i 44 / 316 bloków (14%, wyspa 36 bloków przy ~24 s) po 40 s | E6: luka 60 / 120 Hz grafu w szyi i zmęczenie uszkodzonego grafu (testy `todo` w `structureGraph` i `structurePlate`), ocena wiązań przy impulsie styku niezależna od kroku |
 
 ## 8. Decyzje użytkownika (od najważniejszej)
 
@@ -543,7 +607,7 @@ Wszystkie decyzje rozstrzygnięte (2026-11-03: D0, D6, D1, D11, D14; 2026-11-04:
 | D1 | „Tarcza” to dysk czy skała? | **11-03: dysk mieszkalny**; kratery w skale (E8) — opcjonalnie później |
 | D11 | Przechył i położenie się wieżowca ku stronie strzałów czy zgniot w miejscu? | **11-03: w stronę strzałów** (przechył 30–45°, potem zgniot) |
 | D14 | Wyłom bębna, magazyn, paliwo, pomosty w misji 1? | **11-03: nacisk na wieżowce i habitat, reszta też** — wyłom bębna w E7, magazyn, paliwo i pomosty zaraz po E7 (ta sama ścieżka rejestratorów brył, przed ogólnością § 10) |
-| D20 | Demo przed wpięciem w grę? | **11-04: tak** — małe demo na szarych blokach (graf E1 + klastry E2), zawalenie widać od razu po otwarciu, bez nakładek debug; przed E3, ocena okiem tempa (D12), przechyłu (D11) i „sztywnych klocków” (R1) |
+| D20 | Demo przed wpięciem w grę? | **11-04: tak** — małe demo na szarych blokach (graf E1 + klastry E2), zawalenie widać od razu po otwarciu, bez nakładek debug; przed E3, ocena okiem tempa (D12), przechyłu (D11) i „sztywnych klocków” (R1). Stan 11-04: demo gotowe (sceny 1–5), czeka na ocenę — § 6.2 |
 | D9 | Wnętrza budowli | **11-04: docelowo WSZYSTKIE budowle mają wnętrza** („gracz zacznie coś rozwalać poza misją — to co?”): stropy, słupy, szyb / rdzeń z archetypu, nie tylko wg znacznika. Kolejność: wieżowce i habitat misji 1, potem każde źródło ogólności (§ 10) dostaje wnętrze przy swoim kroku; wypiek offline (E3) trzyma koszt n^1,7–2,3 poza grą |
 | D2 | Pył przy zawaleniu | **11-04: cząstki** (bez obłoków gazu w szczycie). Ramka „uchylenie 10-05” była błędna: 10-05 to zakres jednego wdrożenia, nie zakaz |
 | D18 | Dźwięk zawaleń | **11-04: później**, teraz hak w zdarzeniach |

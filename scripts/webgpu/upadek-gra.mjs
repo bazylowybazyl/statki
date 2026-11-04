@@ -12,7 +12,9 @@
 // kamera top — z góry (RTS): zbliżenie na habitat przy przebiciu dysku, potem oddalenie nad skałę (upadek, uderzenia);
 // kamera 3d — kamera 3D (Game3D 'tactical') krążąca wokół wieży (Game3D.focusEntity) od HP 0 do osiadania;
 // kamera gra — kamera statku jak u gracza (ujęcie upadku robi fabuła: lookAt nad habitat i skałę).
-// --progi 1 — przed HP 0 cztery trafienia w ćwiartki bębna (progi punktów łamią je płasko, odłamy dryfują).
+// --progi 1 — przed HP 0 cztery trafienia w ćwiartki bębna (każde > pula ćwiartki: ćwiartka pęka, odłamy dryfują;
+//   pierwsza = etap „wyłom”, HP 75 %).
+// HP 0 = damageStation(habitat, hp + 10, true) — `direct`, jak gra po komplecie etapów i przy ogniu w rurach.
 // Co 0,25 s: faza upadku, wieża (z, prędkość), sektory dysku puszczone, uderzenia, zamrożone, czas kroku fizyki i klatki,
 // żywe odłamki węzłów (`odlamki` — pula hullDebris3D w trybie off);
 // kadry w chwilach sekwencji; pipeline'y renderu tworzone synchronicznie w scenariuszu (ma być 0). Raport: <out>/raport.json.
@@ -237,9 +239,15 @@ async function przebieg(wariant, kamera) {
     console.log(tag, 'płaskie odłamy habitatu przed HP 0:', pl);
     await shot(`${tag}-01b-progi`);
   }
-  // HP 0 habitatu — finał misji (storyGame._chainExplosion → upadek)
+  // HP 0 habitatu — finał misji (storyGame._chainExplosion → upadek). Od 2026-11-03 habitat ma pule kawałków i etapy:
+  // zwykłe trafienie (damageStation bez `direct`) zdejmuje tylko pulę kawałka pod punktem trafienia (bez lastHitX —
+  // szyb H-C: szyja zrywa się, HP 75 %, finału nie ma). Gra zabija habitat punktami WPROST — syncBaseStages po komplecie
+  // etapów i ogień w rurach (storyGame: d.damageStation(s, dmg, true)); narzędzie woła to samo API z `direct`.
   await ev(DEBRIS_TALLY);
-  await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat; S.deps.damageStation(st, st.hp + 10); return st.hp; })()`);
+  const fin = await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat; S.deps.damageStation(st, st.hp + 10, true);
+    return { hp: st.hp, zniszczony: !!st._destroyed3D }; })()`);
+  console.log(tag, 'HP 0:', JSON.stringify(fin));
+  if (fin.hp > 0) throw new Error(`habitat nie zginął (hp ${fin.hp}) — finał nie ruszy`);
   const rows = [];
   const kadry = new Set();
   const kadr = async (k) => {
