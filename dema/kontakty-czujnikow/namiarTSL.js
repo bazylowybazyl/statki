@@ -360,7 +360,7 @@ function blonaLook(B, px, noiseTex) {
       const holes = tv('f', smoothstep(0.47, 0.6, n3.x.add(float(1.0).sub(tear))));
       const rays = texture3D(noiseTex, vec3(th.div(TAU).mul(6.0), r.div(pxs).sub(t.mul(70.0)).div(620.0), t.mul(0.03))).level(0).x;
       const leak = smoothstep(0.42, 0.72, rays).mul(exp(max(F, 0.0).div(pxs.mul(30.0)).negate()))
-        .mul(float(1.0).sub(inside)).mul(tear).mul(0.7);
+        .mul(float(1.0).sub(inside)).mul(tear).mul(0.55);
       // radar zgadnięty: brzeg wybrzuszenia rwany
       const estCut = tv('f', float(1.0).sub(rag.mul(float(1.0).sub(step(0.46, n3.y)))));
       const rimI = rim.mul(rimVar).mul(heat.mul(0.9).add(0.95)).mul(holes).mul(estCut);

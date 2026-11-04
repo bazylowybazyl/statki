@@ -1,4 +1,4 @@
-# Wygląd KONTAKTU czujników i WACHLARZY namierzania — propozycje (etap 1) i plan wpięcia (etap 2)
+# Wygląd KONTAKTU czujników i NAMIARU — propozycje (etap 1) i plan wpięcia (etap 2)
 
 2026-11-04. Wątek poboczny mechaniki zasięgu radarów (`docs/PLAN-zasieg-czujnikow.md`, reguła `zasieg-czujnikow` —
 w gałęzi prototypu). Prośba użytkownika: „osobna sesja, żeby wykorzystała zaawansowane shadery WebGPU do stworzenia
@@ -106,40 +106,70 @@ ECHO 0,107, OBŁOK 0,14, WIR 0,12, RÓJ 0,10 ms (15 kontaktów); porównanie 2 �
   tekstur w pętli.
 - Rozgrzewka: gałąź postu kompiluje się z „uber” (pod kurtyną) — bez nowych pipeline'ów w grze.
 
-## 5. Wachlarze namierzania „) ) )” (rozszerzenie zakresu, 2026-11-04)
+## 5. Namiar: wachlarz, struna, błona (druga runda, 2026-11-04)
 
-Prośba (przez sesję główną mechaniki zasięgu): „każ sesji dorobić, zobaczymy, co nam nastruga” — 2–3 warianty efektu
-wachlarzy przy okręcie gracza w tym samym demie i języku wizualnym. Semantyka prototypu (`drawBearingFans`,
-`radarRangeOverlay.js`; dane `P.fans`, `sensorPicture.js`) zostaje: na grupę wrogów w jednym kierunku dwie połówki
-krótkich łuków w stronę wroga — NIEBIESKA = MÓJ zasięg względem nich (`me` = moje czujniki × ich sygnatura / odległość),
-CZERWONA = ICH zasięg względem mnie, mój ślad sygnałowy (`them`); zapalonych łuków = ułamek × 7, puste miejsca słabo,
-pełny wachlarz z grotem = sięga, cicha praca skraca czerwony, radar zgadnięty (`est`) słabiej. Łuki STOJĄ przy okręcie.
+Słowa użytkownika po odrzuceniu połówek: „ja to widzę jako taki łuk, który zaczyna wibrować, coś à la ta linia serca na
+aparacie podtrzymującym życie, tylko bardziej płynna, wibrująca — niczym struna. Tak, struna, to jest dobre porównanie:
+drgająca struna, tym mocniej, im bliżej wykrycia przez przeciwnika jesteś. Więc wachlarz (jeden!) jako propozycja + struna
++ jeszcze coś.” Pierwsza runda (dwie połówki przy okręcie gracza: PULS / FALA / ISKRY, commit `8582dd5e`) odpadła przez zły
+brief; techniki wróciły w nowym układzie (bieg jasności i rozbłysk z PULSU, refrakcja z FALI).
 
-Demo: tryb W (`?tryb=wachlarze`, `?wachlarz=puls|fala|iskry|dzis|porownanie`), shadery
-`dema/kontakty-czujnikow/wachlarzeTSL.js`, stanowiska `wachlarzeDemo.js`. Plansza: sześć stanowisk (Atlas w kadrze
-45 km) — DALEKO, BLISKO PROGU, SIĘGA, KILKA GRUP (4 kierunki, jeden radar zgadnięty), CICHA PRACA, PRZEJŚCIE PRZEZ PRÓG
-(ułamki falują przez 1 — rozbłyski); przy grupach podpis „TY x% · ONI y%”. Porównanie: PULS, FALA, ISKRY i dzisiejszy
-rysunek 2D, w każdej ćwiartce okręt z czterema grupami (daleko, przy progu — przechodzi przez 1, sięga, zgadnięty).
+Dane (te same dla trzech; grupa = bliscy siebie wrogowie w jednym miejscu, flota to jedna grupa): `d` — odległość;
+`them` = ich czujniki × MOJA sygnatura / d (≥ 1 → WYKRYLI MNIE; mój ślad: ciąg ×1,35, cicha praca ×0,5, ostrzał do +60%);
+`me` = moje czujniki × ICH sygnatura / d (≥ 1 → ja wykrywam ich); `est` = 1: ich czujniki zgadnięte z rozmiaru (kontakt
+bez identyfikacji) → czerwień słabsza albo rwana.
 
-1. **PULS** — łuki świecą (rdzeń HDR ~1, wąska poświata), od okrętu biegnie po zapalonych łukach miękki puls —
-   tym szybszy, im bliżej progu (bicie serca). Przejście przez 1: rozbłysk — pierścień przelatuje przez wachlarz,
-   połówka się rozjarza; potem „żar”: łuki migoczą, grot oddycha małą poświatą. Zgadnięty radar — łuki w kreskach.
-2. **FALA** — grzbiety fal (co 1,5 odstępu łuków, nie pokrywają się ze skalą) płyną od okrętu do granicy zasięgu,
-   pod nimi wyraźne łuki skali; tło NAPRAWDĘ się zgina (warstwa DIST Core3D — przesunięcie w px wzdłuż promienia,
-   aberracja barw z „uber”). Sięga: co ~1,8 s przez wachlarz i dalej przechodzi fala uderzeniowa. Zgadnięty — grzbiety
-   rwane.
-3. **ISKRY** — łuki z kropek, które płyną od okrętu (każda wędruje od łuku do następnego i odradza się; szybciej przy
-   progu), migocą; na granicy zasięgu migocący front; sięga — kropki dolatują do grota, który iskrzy. Zgadnięty —
-   połowa kropek i słabiej. Spójne z RÓJ kontaktów.
+Demo: tryb W (`?tryb=namiar`, `?namiar=wachlarz|struna|blona|porownanie`, `?scena=stany|przelot|grupy`, klawisz S), shadery
+`dema/kontakty-czujnikow/namiarTSL.js`, sceny i stan zdarzeń `namiarDemo.js`. Atlas (3 km) i wróg (pancernik piratów, 1,2 km)
+w JEDNYM kadrze 45 km, w realnej skali:
 
-Zrzuty (`.tmp/kontakty/demo/`): `60-wachlarze-porownanie`, `61-…-panele`, `62-wachlarze-puls`, `63-…-fala`,
-`64-…-iskry`, `65-…-dzis`; animacja porównania `70-wachlarze-ruch.webp` (64 klatki co 0,1 s). Koszt (orientacyjnie,
-1600 × 900, 9 grup): PULS 0,095, FALA 0,13, ISKRY 0,097 ms GPU na klatkę przy pustej 0,065. Pipeline'y sync 0.
+- STANY — trzy pasy: DALEKO (38 km, oni 53%, ja 45%), TUŻ PRZED PROGIEM (21,5 km, 93%, 79%), WYKRYTY (16,5 km, 121%, 103%);
+- PRZELOT — pętla 27 s: wróg się zbliża (38 → 16,5 km, próg `them` przy 7,5 s, `me` przy 8,8 s) → cicha praca (ślad ×0,5,
+  moje czujniki ×0,6: struna się zrasta, oni 61%) → ciąg (×1,35: pęka znowu, oni 164%) → normalny ślad → wróg odchodzi;
+- GRUPY — trzy grupy: pancernik z eskortą (kręci się wokół progu), kontakt bez identyfikacji (wybrany OBŁOK, `est`),
+  grupa poza kadrem (duże czujniki, już mnie widzi);
+- PORÓWNANIE — trzy propozycje w trzech pasach, ten sam przelot.
 
-Wpięcie (po wyborze): okręt gracza jest w zasięgu wzroku, więc mgła wojny wachlarzy nie przygasza — kwad w passie gry
-(warstwa 0) z blokiem grup (≤ `fanMaxGroups` 6) w px bufora z migawki workera (`P.fans` + poza gracza i r0 z obrysu
-kadłuba), FALA dodatkowo siatka na `FX_DISTORT_LAYER`; rozbłysk z czasu przejścia przez 1 (stan widoku). Napisy
-(„ONI · TY · DO NICH”) zostają na kanwie 2D.
+Wróg w STANACH i PRZELOCIE jest rysowany sprite'em dla czytelności, z `est` = 0; w grze poza zasięgiem wzroku (18 km) byłby
+OBŁOKIEM z `est` = 1 — to pokazuje scena GRUPY.
 
-Decyzje: (4) który wariant wachlarzy (albo połączenie, np. PULS + rozbłysk FALI przy przekroczeniu progu);
-(5) czy rozbłysk przy przejściu przez 1 ma mieć dźwięk / komunikat („WYKRYTY”).
+1. **WACHLARZ** — dokładnie jeden na okręt. Przy MNIE niebieski w stronę wroga (zapalonych łuków = `me` × 7), przy WROGU
+   czerwony w stronę mnie (`them` × 7), na jednej prostej, naprzeciw siebie. Łuki STOJĄ, po nich biegnie jasność (szybciej
+   przy progu), pod spodem słaby klin światła — jeden kształt, nie kreski. Przejście przez 1: pierścień leci przez wachlarz,
+   całość się rozjarza; pełna długość z grotem = sięga. `est` — czerwień w kreskach. Wróg poza kadrem: wachlarz przy
+   krawędzi ekranu na tej prostej.
+2. **STRUNA** — jeden gładki łuk przy MOIM okręcie w stronę grupy, końce to nieruchome węzły (kołki). Drganie: suma pięciu
+   harmonicznych `sin(nπs)·cos(ω_n τ)` o niewspółmiernych częstotliwościach (bez pików EKG), amplituda ∝ `them`³ (daleko
+   ~1 px i wolno, przy progu ~±20 px), wyższe harmoniczne dochodzą po kolei (od 0,3 / 0,55 / 0,72 / 0,85); τ całkuje CPU
+   (dτ = (1 + k²) dt) — struna „stroi w górę” bez skoków fazy. Trzy opóźnione próbki czasu dają ślad luminoforu (rozmycie
+   ruchu w 60 kl/s). Napięcie: błękit bieleje. **Przy them = 1 struna PĘKA**: bicz (mody struny z jednym końcem wolnym,
+   `sin((j−½)πh)`, amplituda zanika w ~0,3 s), rozbłysk, fala uderzeniowa z refrakcją tła (warstwa DIST), dwa czerwone
+   rozedrgane końce; poniżej progu (z histerezą 0,975) zrastają się w ~0,2 s. To mój wybór z brief-u („struna, która pęka”)
+   — alternatywą byłoby samo zaczerwienienie, ale nie jest „nie do przeoczenia”. Symetrycznie, słabiej (60% amplitudy
+   i jasności, 104 px długości): struna przy wrogu w stronę mnie, drga z `me`, czerwona; gdy `me` ≥ 1 — pęka na błękitno
+   (barwa końców = strona, która sięgnęła). `est` — struna rwana (komórki losowane 9 razy na sekundę) i słabsza.
+3. **BŁONA** — jedna zamknięta, organiczna błona wokół MOJEGO okrętu, język OBŁOKÓW: kłęby fBm, pasma interferencji w dół
+   ekranu, rzadki śnieg sygnału. Promień bazowy = mój ślad (cisza kurczy i przygasza, ciąg nadyma i rozjaśnia), w stronę
+   każdej grupy wybrzuszenie rosnące z `them`³ i coraz węższe; przy progu brzeg drży i czerwienieje. Wiele grup = jeden
+   kształt, zero osobnych znaczników (`me` nie jest pokazane — błona mówi tylko, co oni widzą; moje wykrycie pokazuje sam
+   kontakt). them ≥ 1: w tym miejscu dziury w brzegu i czerwone smugi uchodzące na zewnątrz, rozbłysk i fala w kształcie
+   błony, refrakcja. `est` — brzeg wybrzuszenia rwany, czerwień słabsza.
+
+Sąsiednie grupy się nie nakładają: połowa kąta wachlarza i struny najwyżej 0,47 odstępu do najbliższego kierunku (krótsza
+struna ma proporcjonalnie mniejszą amplitudę).
+
+Zrzuty (`.tmp/kontakty/namiar/`): `60-namiar-porownanie-*` (chwile przelotu), `7k-<propozycja>-stany`, `-grupy`,
+`-przelot-*`; animacje 60 kl/s z `--film-namiar 1`: `80-porownanie.webp` (pełna pętla, 3 pasy), `81-wachlarz.webp`,
+`82-struna.webp`, `83-blona.webp` (zbliżenia piksel w piksel, 8 s przez próg). Pipeline'y
+synchroniczne 0, błędy konsoli 0. Koszt (1600 × 900, scena STANY, pojedyncze próbki zegara GPU — orientacyjnie): pusta klatka
+demo 0,065 ms, WACHLARZ 0,083, STRUNA 0,114, BŁONA 0,126 ms; w 5120 × 1440 nie mierzone. Ruch struny (odczyt z klatek, wiersz
+przez środek łuku): przy ~75% zakres 12 px, skok między klatkami do 3 px; przy ~84% 20 px, do 5 px; przy ~95% 35 px, do 11 px.
+
+Wpięcie (po wyborze): WACHLARZ i STRUNA przy moim okręcie są w zasięgu wzroku — kwad w passie gry; znacznik przy wrogu poza
+wzrokiem leży pod mgłą (przygaszenie ×0,15–0,34) — trzeba go przenieść do postu po `applyFogOfWar`, jak kontakt (§ 4), albo
+rysować całość w poście. BŁONA dotyczy tylko mojego okrętu — kwad w passie gry, bez bloku wroga. Dane: blok grup z migawki
+workera (`P.fans`, poza gracza), stan zdarzeń (rozbłysk, szczelina, wiek, τ) po stronie widoku; refrakcja — siatka na
+`FX_DISTORT_LAYER` zgłaszana z kroku efektów. Napisy zostają na kanwie 2D.
+
+Decyzje: (4) która propozycja (albo połączenie, np. WACHLARZ przy wrogu + STRUNA przy mnie); (5) czy pęknięcie ma mieć dźwięk
+i komunikat („WYKRYTY”); (6) czy błona ma pokazywać też `me`.

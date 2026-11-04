@@ -47,7 +47,7 @@ function flyby(time) {
   const sig = 1 - 0.5 * ss(10.5, 11.5, T) * (1 - ss(16, 17, T)) + 0.35 * ss(16, 17, T) * (1 - ss(20.5, 21.5, T));
   // cicha praca obcina też moje czujniki (prototyp: strength.silentMul 0,6)
   const sens = 1 - 0.4 * ss(10.5, 11.5, T) * (1 - ss(16, 17, T));
-  const phase = T < 9 ? 'WRÓG SIĘ ZBLIŻA' : T < 10.5 ? 'STOI' : T < 16 ? 'CICHA PRACA · ślad ×0,5' : T < 20.5 ? 'CIĄG · ślad ×1,35' : T < 23 ? 'NORMALNY ŚLAD' : 'WRÓG ODCHODZI';
+  const phase = T < 9 ? 'WRÓG SIĘ ZBLIŻA' : T < 10.5 ? 'WRÓG BLISKO' : T < 16 ? 'CICHA PRACA' : T < 20.5 ? 'CIĄG' : T < 23 ? 'WRÓG BLISKO' : 'WRÓG ODCHODZI';
   return { d, sig, sens, phase };
 }
 
@@ -69,7 +69,7 @@ export function createNamiarDemo(core, distLayer) {
     st.views = [];
     const rowH = H / 3 / cam.zoom;
     const rowY = (i) => (i - 1) * rowH;
-    const xA = -19000;
+    const xA = -17000;
     const pairRow = (i, caption, extra = {}) => {
       const gy = rowY(i);
       const g = group(xA + 20000, gy, 20000, 17000, { dFix: extra.dFix ?? null, dir: -0.035 });
@@ -83,7 +83,7 @@ export function createNamiarDemo(core, distLayer) {
       st.views.push(pairRow(2, 'WYKRYTY — 16,5 km', { dFix: 16500 }));
     } else if (scene === 'przelot') {
       const g = group(0, 0, 20000, 17000, { dir: -0.1 });
-      st.views.push({ x: -17500, y: 2100, sig: 1, row: -1, caption: null, groups: [g], flyby: true });
+      st.views.push({ x: -16500, y: 2100, sig: 1, row: -1, caption: null, groups: [g], flyby: true });
     } else {
       // GRUPY: A (blisko, pancernik + eskorta, chodzi wokół progu), B (kontakt bez identyfikacji — OBŁOK, est),
       // C (poza kadrem, duże czujniki — już mnie widzi)
@@ -319,8 +319,8 @@ export function createNamiarDemo(core, distLayer) {
           const col = g.them >= 1 ? '255, 140, 130' : '170, 190, 205';
           const line = `ONI ${(g.them * 100).toFixed(0)}% · TY ${(g.me * 100).toFixed(0)}% · ${(g.d / 1000).toFixed(1).replace('.', ',')} km${g.est ? ' · zgadnięte' : ''}`;
           const right = e.x >= sx ? (e.x + 190 < W) : (e.x - 190 < 0);
-          const lx = e.x + (right ? 1 : -1) * (inRect ? ENEMY_LEN * cam.zoom * 0.5 + 34 : 16);
-          const ly = Math.min(rect[3] - 44, Math.max(rect[1] + 6, e.y - 14));
+          const lx = e.x + (right ? 1 : -1) * (inRect ? ENEMY_LEN * cam.zoom * 0.5 + 34 : 0);
+          const ly = Math.min(rect[3] - 44, Math.max(rect[1] + 6, inRect ? e.y - 14 : e.y + 64));
           const al = right ? 'left' : 'right';
           text(line, lx, ly, '170, 190, 205', 0.8, 10, al);
           if (status) text(status, lx, ly + 13, col, 0.95, 10, al);
