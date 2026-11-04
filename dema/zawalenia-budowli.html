@@ -43,13 +43,15 @@
 <div id="caption"></div>
 <div id="panel">
   <h1>ZAWALENIA BUDOWLI — D20</h1>
-  <div class="sub">Graf nośny + klastry sztywne silnika belek (src/game/structureCollapse.js), obraz na szarych blokach L1 — bez prefraktury E3 (gruz to dolna granica wyglądu).</div>
+  <div class="sub">Graf nośny + klastry sztywne silnika belek (src/game/structureCollapse.js), pole płyty dysku (structurePlate.js), obraz na szarych blokach L1 — bez prefraktury E3 (gruz to dolna granica wyglądu).</div>
 
   <h2>Sceny</h2>
   <div class="scenes">
     <button id="sc-1"><b>1 · A/B tempa <kbd>1</kbd></b><span>Dwie wieże W-1 3 km od siebie, lewa g 400, prawa wolniej — bateria podcina obie naraz.</span></button>
     <button id="sc-2"><b>2 · Ostrzał ręczny <kbd>2</kbd></b><span>Wieża W-2 i okręt obok: LPM strzela w kursor, strzałki zmieniają stronę, P niszczy pomost.</span></button>
     <button id="sc-3"><b>3 · Front zgniotu <kbd>3</kbd></b><span>Ładunek osłabia kondygnację 13 — góra siada pionowo i zgniata piętra do ziemi.</span></button>
+    <button id="sc-4"><b>4 · Habitat: wieża przez dysk <kbd>4</kbd></b><span>HP 0: wieża H-T z gry spada i przebija dysk otworem w kształcie talerza; dysk leci wyraźnie później.</span></button>
+    <button id="sc-5"><b>5 · Habitat: szyja <kbd>5</kbd></b><span>Habitat żyje: wieża kładzie się bokiem na koronie bębna i dysku — rów bez otworu.</span></button>
   </div>
   <div class="btns c3" style="margin-top:5px">
     <button id="zb-podstawa">Zbliż: podstawa</button>
@@ -84,6 +86,17 @@
   <h2>Front κ</h2>
   <div class="btns c4" id="k-btns"></div>
 
+  <h2>Dysk: podpory przy utrzymaniu 0</h2>
+  <div class="btns c3">
+    <button id="pod-05">0,5</button>
+    <button id="pod-025">0,25</button>
+    <button id="pod-0">0</button>
+  </div>
+  <div class="btns" style="margin-top:4px">
+    <button id="btn-mocniej">Szyja: mocniej ×3</button>
+    <button id="btn-ht">H-T: bryła belek z gry</button>
+  </div>
+
   <h2>Obraz</h2>
   <div class="btns c3">
     <button id="tg-gruz">Gruz obrazu<kbd>G</kbd></button>
@@ -111,7 +124,7 @@
     <button id="btn-petla">Pętla pokazu</button>
   </div>
 
-  <div id="keys">1–3 sceny · R od nowa · spacja pauza · . krok · C kamera · G gruz · F salwa · ⇧1/2/3 broń · strzałki strona · P pomost · W/S ciąg okrętu, A/D obrót · LPM strzał · PPM obrót kamery · ŚPM przesuw · kółko zoom</div>
+  <div id="keys">1–5 sceny · R od nowa · spacja pauza · . krok · C kamera · G gruz · F salwa · ⇧1/2/3 broń · strzałki strona · P pomost · W/S ciąg okrętu, A/D obrót · LPM strzał · PPM obrót kamery · ŚPM przesuw · kółko zoom</div>
 </div>
 <script type="module" src="./zawalenia-budowli.js"></script>
 </body>

@@ -18,7 +18,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, abs, cameraPosition, cross, dot, exp, float, floor, fract, instancedBufferAttribute, max, min, mix, normalize,
-  positionGeometry, positionWorld, sin, smoothstep, uv, varying, vec2, vec3, vec4
+  positionGeometry, positionWorld, sin, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4
 } from 'three/tsl';
 import { createPost, createSky } from '../halo_ring_demo_env.js';
 import { installPlaceholders, getPlaceholderStats } from '../../src/3d/tsl/zamiennik.js';
@@ -156,9 +156,59 @@ function beamMaterial(nA, nB, nC) {
   return m;
 }
 
+// PŁYTA (pole płyty silnika — dysk mieszkalny, korona bębna): siatka w dwóch arkuszach (wierzch, spód), wierzchołki co
+// ½ komórki; tekstura RG8 z pola (R = F.thick, G = 255 przy materiale; wysyłka przy zmianie F.version), próbkowana
+// DWULINIOWO. Kontur otworu i brzegu = G = ½ (w połowie między komórką z materiałem a otworem — gładki, bez schodków po 45 j.,
+// maskNode — także w passie cienia). Wierzch = średnia grubość komórek z materiałem (R / G — rów zostaje rowem, otwór
+// nie ściąga zbocza w dół przez całą komórkę), opada do spodu tuż przy konturze (ściana). Normalne z pochodnych
+// (flatShading). Graf RAZ na pole (własna tekstura), układ pola (o, u, v, n) w macierzy siatki.
+const PLATE_MASK = 0.5;
+function plateMaterial(tex, uCell, uScale, PM, tint) {
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0.0, flatShading: true });
+  m.name = 'ZawPlyta';
+  const g = positionGeometry;
+  const uvC = vec2(g.x.add(0.5), g.y.add(0.5)).div(PM);
+  const s = texture(tex, uvC).level(0);
+  const hA = s.r.div(max(s.g, float(0.002)));
+  const lift = smoothstep(PLATE_MASK, PLATE_MASK + 0.2, s.g);
+  m.positionNode = vec3(g.x.add(0.5).mul(uCell), g.y.add(0.5).mul(uCell), hA.mul(lift).mul(uScale).mul(float(1.0).sub(g.z)));
+  m.maskNode = texture(tex, varying(uvC, 'vZawPlUv')).g.greaterThan(PLATE_MASK);
+  m.colorNode = Fn(() => {
+    const p = positionWorld.xy.toVar();
+    const grain = vnoise2(p.mul(1 / 90)).mul(0.08).add(vnoise2(p.mul(1 / 23)).mul(0.05)).add(0.92);
+    return vec4(vec3(tint[0], tint[1], tint[2]).mul(grain), 1.0);
+  })();
+  return m;
+}
+
+// siatka płyty: wierzchołki (x, y) w jednostkach komórki co 1/SUB (0 … PM − 1), z = arkusz (0 wierzch, 1 spód)
+const PLATE_SUB = 2;
+function plateGeometry(PM) {
+  const n = (PM - 1) * PLATE_SUB + 1, nv = n * n;
+  const pos = new Float32Array(2 * nv * 3), nor = new Float32Array(2 * nv * 3);
+  const idx = new Uint32Array(2 * (n - 1) * (n - 1) * 6);
+  for (let s = 0; s < 2; s++) for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = (s * nv + j * n + i) * 3;
+    pos[k] = i / PLATE_SUB; pos[k + 1] = j / PLATE_SUB; pos[k + 2] = s;
+    nor[k + 2] = s ? -1 : 1;
+  }
+  let w = 0;
+  for (let s = 0; s < 2; s++) for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) {
+    const a = s * nv + j * n + i, b = a + 1, c = a + n + 1, d = a + n;
+    if (s === 0) { idx[w++] = a; idx[w++] = b; idx[w++] = c; idx[w++] = a; idx[w++] = c; idx[w++] = d; }
+    else { idx[w++] = a; idx[w++] = c; idx[w++] = b; idx[w++] = a; idx[w++] = d; idx[w++] = c; }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  return g;
+}
+
 // Grunt: czasza kuli sceny (R, środek) — siatka biegunowa gęstsza przy środku, normalne z kuli (horyzont jak na planetoidzie).
 function groundGeometry(ground, rMax = 60000, rings = 110, segs = 160) {
   const R = +ground.R, cx = +ground.cx || 0, cy = +ground.cy || 0, cz = +ground.cz || 0;
+  if (R < rMax) rMax = R * 0.97;   // mała skała (habitat): czasza do brzegu górnej półkuli
   const pos = [], nor = [], idx = [];
   for (let i = 0; i <= rings; i++) {
     const r = rMax * (i / rings) ** 2;
@@ -280,6 +330,44 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
   const BM = blocks.instanceMatrix.array;
   const BD = boxIb.array;
 
+  // ── płyty (pola płyty silnika: dysk mieszkalny 89², korona bębna 47²) — siatki i materiały od startu (rozgrzewka) ──
+  const plates = [96, 48].map((PM, i) => {
+    const data = new Uint8Array(PM * PM * 2);
+    const tex = new THREE.DataTexture(data, PM, PM, THREE.RGFormat, THREE.UnsignedByteType);
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    const uCell = uniform(45), uScale = uniform(255);
+    const mesh = new THREE.Mesh(plateGeometry(PM), plateMaterial(tex, uCell, uScale, PM, i === 0 ? [0.3, 0.296, 0.288] : [0.24, 0.236, 0.232]));
+    mesh.name = i === 0 ? 'plyta-dysk' : 'plyta-korona';
+    mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false; mesh.visible = false;
+    scene.add(mesh);
+    return { PM, data, tex, uCell, uScale, mesh, F: null, ver: -1, cursor: 0, Pb: null };
+  });
+
+  // ── wieża H-T (siatka brył sceny gry w układzie F wokselizacji; poza z pozy ciała / klastra) ──
+  const htMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.82, metalness: 0.05, vertexColors: true });
+  htMat.name = 'ZawHT';
+  const htMesh = new THREE.Mesh(new THREE.BufferGeometry(), htMat);
+  htMesh.name = 'H-T';
+  htMesh.castShadow = true; htMesh.receiveShadow = true; htMesh.frustumCulled = false;
+  htMesh.matrixAutoUpdate = false; htMesh.visible = false;
+  scene.add(htMesh);
+  let htSrc = null;                                   // { pose(out) → bool } — poza układu F (świat) ze sceny
+  const htPrev = { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 }, htCur = { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 };
+  let htPrevTick = -9;
+  /** Siatka H-T (raz, przed rozgrzewką): pozycje i barwy trójkątów (Float32Array, bez indeksów) w układzie F. */
+  function setHTGeometry(positions, colors) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    g.computeVertexNormals();
+    htMesh.geometry.dispose();
+    htMesh.geometry = g;
+  }
+  // lina windy (D17): odcinek od bloku-kotwicy do skały pod nim + obudowa kotwicy — dwa sloty instancji bloków
+  let rope = null;                                    // { H, block, bottom: {x, y, z} }
+
   // ── gruz obrazu ──
   const stIb = new THREE.InstancedInterleavedBuffer(new Float32Array(STONE_CAP * 4), 4);
   const nStCol = instancedBufferAttribute(stIb, 'vec4', 4, 0);
@@ -369,7 +457,26 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
   }
 
   // ── scena: gospodarze i sceneria ──
-  function setScene({ hosts, ground: gdesc, sceneryBoxes = [], seed = 1, shadow = null }) {
+  // plateFields — pola płyty sceny [{ F, Pb }] (0 — dysk, 1 — korona; Pb — wiązanie z grafem: rekordy otworów),
+  // hideStump — gospodarze, których stojącą część rysuje pole płyty (kikut bez obrazu), ht — { pose(out) } wieży H-T,
+  // ropeAnchor — lina windy { H, block, bottom: {x, y, z} } (D17)
+  let ropeSlot = -1;
+  function setScene({ hosts, ground: gdesc, sceneryBoxes = [], seed = 1, shadow = null, plateFields = [], hideStump = [], ht = null, ropeAnchor = null }) {
+    plates.forEach((p, i) => {
+      const pf = plateFields[i] || null;
+      p.F = pf ? pf.F : null; p.Pb = pf ? pf.Pb || null : null; p.ver = -1; p.cursor = p.Pb ? p.Pb.rec.head : 0;
+      p.mesh.visible = !!p.F;
+      if (p.F) {
+        const F = p.F;
+        if (F.nu > p.PM || F.nv > p.PM) throw new Error(`płyta ${F.name}: ${F.nu}×${F.nv} > ${p.PM}²`);
+        p.uCell.value = F.cell; p.uScale.value = 255 * F.unit;
+        p.mesh.matrix.set(F.ux, F.vx, F.nx, F.ox, F.uy, F.vy, F.ny, F.oy, F.uz, F.vz, F.nz, F.oz, 0, 0, 0, 1);
+        p.mesh.matrixWorldNeedsUpdate = true;
+      }
+    });
+    htSrc = ht; htPrevTick = -9;
+    htMesh.visible = !!ht;
+    rope = ropeAnchor;
     R = rng(seed);
     groundDesc = gdesc;
     const key = JSON.stringify(gdesc);
@@ -384,7 +491,7 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
       const A = H.A, nb = A.boxCount;
       const boxBlock = new Int32Array(nb);
       for (let b = 0; b < A.n; b++) for (let j = A.boxStart[b]; j < A.boxStart[b + 1]; j++) boxBlock[j] = b;
-      const s = { H, base, boxBlock, pv: new Float64Array(7 * 64), pvTick: new Int32Array(64).fill(-9), pc: new Float64Array(12 * 64), pcFrame: new Int32Array(64).fill(-1), crack: new Float32Array(A.n), minH: new Float64Array(A.n) };
+      const s = { H, base, boxBlock, pv: new Float64Array(7 * 64), pvTick: new Int32Array(64).fill(-9), pc: new Float64Array(12 * 64), pcFrame: new Int32Array(64).fill(-1), crack: new Float32Array(A.n), minH: new Float64Array(A.n), hideStump: hideStump.includes(H) };
       slots.push(s);
       // barwa i rozmiar per prostopadłościan (stałe)
       for (let j = 0; j < nb; j++) {
@@ -399,6 +506,13 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
     scenery = sceneryBoxes.map((b) => ({ hidden: false, yaw: 0, ...b }));
     sceneryCount = scenery.length;
     used = Math.min(BOX_CAP, base + sceneryCount);
+    ropeSlot = -1;
+    if (rope && used + 2 <= BOX_CAP) {
+      ropeSlot = used; used += 2;
+      // lina (ciemna) i obudowa kotwicy windy; macierze w writeBlocks
+      BD.set([1, 1, 1, 0, 0.1, 0.1, 0.105, 0], ropeSlot * 8);
+      BD.set([46, 46, 34, 0, 0.2, 0.19, 0.17, 0], (ropeSlot + 1) * 8);
+    }
     for (let i = 0; i < sceneryCount; i++) {
       const s = scenery[i], w = (sceneryBase + i) * 8;
       BD[w] = 2 * s.hx; BD[w + 1] = 2 * s.hy; BD[w + 2] = 2 * s.hz; BD[w + 3] = 0;
@@ -464,6 +578,7 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
         s.pvTick[k] = tick;
       }
     }
+    if (htSrc && htSrc.pose(htPrev)) htPrevTick = tick;
     lastSaveTick = tick;
   }
 
@@ -531,7 +646,7 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
       ensureCap(s);
       for (let j = 0; j < s.boxBlock.length; j++) {
         const b = s.boxBlock[j], slot = s.base + j, o = own[b];
-        if (o < 0 || S.dead[b] || !cls[o].alive) { BM.fill(0, slot * 16, slot * 16 + 16); continue; }
+        if (o < 0 || S.dead[b] || !cls[o].alive || (s.hideStump && cls[o].kind === 1)) { BM.fill(0, slot * 16, slot * 16 + 16); continue; }
         const r = cls[o], f = r.f, po = clusterPose(s, o, alpha), pc = s.pc;
         const bo = j * STRUCT_BOX_STRIDE;
         const dx = bd[bo] - f[0], dy = bd[bo + 1] - f[1], dz = bd[bo + 2] - f[2];
@@ -548,8 +663,76 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
       if (sc.hidden) { BM.fill(0, slot * 16, slot * 16 + 16); continue; }
       writeMatrix(BM, slot, sc.x, sc.y, sc.z, ID9, 0, sc.yaw || 0, 2 * sc.hx, 2 * sc.hy, 2 * sc.hz);
     }
+    if (ropeSlot >= 0) writeRope(alpha);
     blocks.instanceMatrix.needsUpdate = true;
     stats.blocks = nBlocks;
+  }
+
+  // lina windy (D17): wierzch bloku-kotwicy (poza klastra-właściciela — kikut albo wycinek w locie) → punkt na skale
+  const _rp = { x: 0, y: 0, z: 0 };
+  function writeRope(alpha) {
+    const w0 = ropeSlot * 16;
+    const s = slots.find((q) => q.H === rope.H);
+    const H = rope.H, b = rope.block, o = H.own[b];
+    if (!s || b < 0 || o < 0 || H.S.dead[b] || !H.cls[o].alive) { BM.fill(0, w0, w0 + 32); return; }
+    const r = H.cls[o], f = r.f, po = clusterPose(s, o, alpha), pc = s.pc, m = po + 3, A = H.A;
+    const dx = A.x[b] - f[0], dy = A.y[b] - f[1], dz = A.z[b] + 60 - f[2];
+    _rp.x = pc[po] + pc[m] * dx + pc[m + 1] * dy + pc[m + 2] * dz;
+    _rp.y = pc[po + 1] + pc[m + 3] * dx + pc[m + 4] * dy + pc[m + 5] * dz;
+    _rp.z = pc[po + 2] + pc[m + 6] * dx + pc[m + 7] * dy + pc[m + 8] * dz;
+    const bx = rope.bottom.x, by = rope.bottom.y, bz = rope.bottom.z;
+    let ux = _rp.x - bx, uy = _rp.y - by, uz = _rp.z - bz;
+    const L = Math.sqrt(ux * ux + uy * uy + uz * uz);
+    if (!(L > 1)) { BM.fill(0, w0, w0 + 32); return; }
+    ux /= L; uy /= L; uz /= L;
+    // baza prostopadła do liny
+    let ax = -uy, ay = ux, az = 0;
+    let al = Math.sqrt(ax * ax + ay * ay);
+    if (al < 1e-6) { ax = 1; ay = 0; al = 1; }
+    ax /= al; ay /= al;
+    const cx = uy * az - uz * ay, cy = uz * ax - ux * az, cz = ux * ay - uy * ax;
+    const W = 12;
+    BM[w0] = ax * W; BM[w0 + 1] = ay * W; BM[w0 + 2] = az * W; BM[w0 + 3] = 0;
+    BM[w0 + 4] = cx * W; BM[w0 + 5] = cy * W; BM[w0 + 6] = cz * W; BM[w0 + 7] = 0;
+    BM[w0 + 8] = ux * L; BM[w0 + 9] = uy * L; BM[w0 + 10] = uz * L; BM[w0 + 11] = 0;
+    BM[w0 + 12] = (bx + _rp.x) / 2; BM[w0 + 13] = (by + _rp.y) / 2; BM[w0 + 14] = (bz + _rp.z) / 2; BM[w0 + 15] = 1;
+    // obudowa kotwicy: obrót klastra, środek nad blokiem
+    writeMatrix(BM, ropeSlot + 1, _rp.x, _rp.y, _rp.z - 10, pc, m, 0, 46, 46, 34);
+  }
+
+  // płyty: tekstura grubości przy zmianie F.version (wiersze nu → PM)
+  function updatePlates() {
+    for (const p of plates) {
+      const F = p.F;
+      if (!F || F.version === p.ver) continue;
+      p.ver = F.version;
+      const d = p.data, th = F.thick, PM = p.PM;
+      d.fill(0);
+      for (let iv = 0; iv < F.nv; iv++) for (let iu = 0; iu < F.nu; iu++) {
+        const t = th[iu + iv * F.nu], o = 2 * (iu + iv * PM);
+        d[o] = t; d[o + 1] = t > 0 ? 255 : 0;
+      }
+      p.tex.needsUpdate = true;
+    }
+  }
+
+  // wieża H-T: poza układu F z interpolacją (poprzednia zapisana w savePoses)
+  function updateHT(alpha) {
+    if (!htSrc || !htSrc.pose(htCur)) { htMesh.visible = false; return; }
+    htMesh.visible = true;
+    let px = htCur.x, py = htCur.y, pz = htCur.z, qx = htCur.qx, qy = htCur.qy, qz = htCur.qz, qw = htCur.qw;
+    if (htPrevTick === lastSaveTick && alpha < 1) {
+      const a = alpha, ia = 1 - a, P = htPrev;
+      px = P.x * ia + px * a; py = P.y * ia + py * a; pz = P.z * ia + pz * a;
+      let bx = P.qx, by = P.qy, bz = P.qz, bw = P.qw;
+      if (bx * qx + by * qy + bz * qz + bw * qw < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; }
+      qx = bx * ia + qx * a; qy = by * ia + qy * a; qz = bz * ia + qz * a; qw = bw * ia + qw * a;
+      const l = Math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) || 1;
+      qx /= l; qy /= l; qz /= l; qw /= l;
+    }
+    rotInto(qx, qy, qz, qw, _m, 0);
+    htMesh.matrix.set(_m[0], _m[1], _m[2], px, _m[3], _m[4], _m[5], py, _m[6], _m[7], _m[8], pz, 0, 0, 0, 1);
+    htMesh.matrixWorldNeedsUpdate = true;
   }
 
   // ── efekty: narodziny ──
@@ -675,6 +858,26 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
           for (let i = 0; i < 4; i++) spawnDust(x + (R() - 0.5) * 60, y + (R() - 0.5) * 60, z, (R() - 0.5) * 40, (R() - 0.5) * 40, 4, 3 + R() * 2, 30, 140, 0.35);
           if (toggles.gruz) for (let i = 0; i < 4; i++) spawnStone(x, y, z, (R() - 0.5) * 60, (R() - 0.5) * 60, 20 + R() * 30, 3 + R() * 5, 1, H.pose[8]);
         }
+      }
+    }
+    // otwory pola płyty (wiązanie z grafem — structurePlate): zjedzona masa komórki leci z prędkością wieży, rozrzut na boki
+    for (const p of plates) {
+      const Pb = p.Pb;
+      if (!Pb) continue;
+      const rec = Pb.rec, buf = rec.buf, g = Pb.A.g;
+      if (rec.head - p.cursor > rec.cap) p.cursor = rec.head - rec.cap;
+      for (; p.cursor < rec.head; p.cursor++) {
+        const o = (p.cursor % rec.cap) * rec.stride;
+        const x = buf[o], y = buf[o + 1], z = buf[o + 2] + 0.5 * p.F.unit * p.F.thick0[buf[o + 7] | 0];
+        const vx = buf[o + 3], vy = buf[o + 4], vz = buf[o + 5];
+        if (toggles.gruz) {
+          const k = R() < 0.6 ? 1 : 2;
+          for (let i = 0; i < k; i++) {
+            const a = R() * 6.283, sp = 30 + R() * 140;
+            spawnStone(x + (R() - 0.5) * 40, y + (R() - 0.5) * 40, z, vx * 0.85 + Math.cos(a) * sp, vy * 0.85 + Math.sin(a) * sp, vz * 0.85 + (R() - 0.5) * 60, 8 + R() * 18, 1, g);
+          }
+        }
+        if (R() < 0.2) spawnDust(x, y, z, vx * 0.3 + (R() - 0.5) * 120, vy * 0.3 + (R() - 0.5) * 120, vz * 0.2, 4 + R() * 3, 60, 260 + R() * 140, 0.28, 1, 0.3 * g);
       }
     }
   }
@@ -819,6 +1022,8 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
     frameNo++;
     if (frameNo % 6 === 1) updateCracks();
     writeBlocks(alpha);
+    updatePlates();
+    updateHT(alpha);
     renderer.info.reset();
     drawScene(cam);
     stats.draws = renderer.info.render.drawCalls;
@@ -832,6 +1037,9 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
     const keep = { b: blocks.count, s: stones.count, d: dust.count, g: glow.count, m: beamGeo.instanceCount };
     blocks.count = Math.max(2, keep.b); stones.count = 2; dust.count = 2; glow.count = 2; beamGeo.instanceCount = 2;
     for (const o of [blocks, stones, dust, glow, beams]) o.visible = true;
+    // płyty i wieża H-T: widoczne na czas rozgrzewki (scena startowa może ich nie mieć — 4 i 5 włącza się w biegu)
+    const keepVis = [...plates.map((p) => p.mesh), htMesh].map((o) => [o, o.visible]);
+    for (const [o] of keepVis) o.visible = true;
     persp.position.set(0, -4000, 1500); persp.lookAt(0, 0, 500); persp.updateMatrixWorld();
     ortho.position.set(0, 0, 20000); ortho.lookAt(0, 0, 0); ortho.updateMatrixWorld();
     post.begin();
@@ -840,6 +1048,7 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
     for (let k = 0; k < 2; k++) for (const cam of [persp, ortho]) drawScene(cam);
     await renderer.backend.device.queue.onSubmittedWorkDone();
     blocks.count = keep.b; stones.count = keep.s; dust.count = keep.d; glow.count = keep.g; beamGeo.instanceCount = keep.m;
+    for (const [o, v] of keepVis) o.visible = v;
     stats.counting = true;
     stats.warmupMs = performance.now() - t0;
     return stats.warmupMs;
@@ -899,7 +1108,7 @@ export async function createObraz(canvas, { onError = () => {} } = {}) {
 
   return {
     renderer, scene, persp, ortho, sun, hemi, sky, post, stats, toggles, debrisCenter,
-    setScene, setSceneryBox, setShadow, savePoses, consumeRecords, updateFx, render, resize, warmup, raycastBoxes,
+    setScene, setSceneryBox, setShadow, savePoses, consumeRecords, updateFx, render, resize, warmup, raycastBoxes, setHTGeometry,
     spawnGlow, spawnBeam, spawnDust, spawnStone, groundAt,
     get view() { return { w: viewW, h: viewH }; },
     placeholders: () => getPlaceholderStats().builds,

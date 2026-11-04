@@ -12,6 +12,10 @@
 //   --pomost s@t — D13: w chwili t [s] pomost puszcza od strony s
 //   --set        nadpisania COLLAPSE_TUNE gospodarza (np. impactDv=30,stallTime=1.5)
 //   --log 1      zdarzenia osi czasu na bieżąco
+// Sceny habitatu (4 — wieża H-T przez dysk, 5 — szyja; dema/zawalenia-budowli/habitat.js, src/game/structurePlate.js):
+//   [--podpory 0.5,0.25,0] (supportHoldFloor dysku, D22) [--ht belki|klaster] [--mocniej 1,3] (scena 5, R3)
+//   Wynik: oś czasu D22 (HP 0, styk, przebicie, minięcie dysku, wieża na skale, pierwszy wycinek, wycinek na skale,
+//   opóźnienie), IoU otworu z pierścieniem 560–880, otwory, rów, utracone bloki grafu, korona (scena 5), koszt kroku.
 // Wynik: oś czasu każdej wieży (oderwanie, zawias, przechył w czasie, pęknięcie przegubu, poziomy frontu, dach na ziemi),
 // kawałki i klastry, gruz, kolejka wysp, najgłębsze wejście pod podłoże, koszt kroku p50 / p95 / max: fizyka
 // (HullBodies.step), gospodarz (collapseStep: graf + uzgadnianie + wyspy), razem. Czasy względem startu symulacji i pokazu
@@ -21,6 +25,8 @@ window.wrecks = window.wrecks || [];
 const { HullBodies } = await import('../src/game/hullBodies.js');
 const { createScenaSym } = await import('../dema/zawalenia-budowli/symulacja.js');
 const { collapseTimeline, collapseStats, collapseProbe } = await import('../src/game/structureCollapse.js');
+const { SCENY: SCENY_DEF } = await import('../dema/zawalenia-budowli/scenariusze.js');
+const { createHabitatSym } = await import('../dema/zawalenia-budowli/habitat.js');
 HullBodies.init();
 HullBodies.warmUpClusters();
 
@@ -123,6 +129,55 @@ function run(nr, o) {
   return res;
 }
 
+// sceny habitatu (4, 5): oś czasu D22 i liczby płyty
+const PODPORY = arg('podpory', null) !== null ? list('podpory').map(Number) : [null];
+const HT = arg('ht', null) !== null ? list('ht') : [null];
+const MOCNIEJ = arg('mocniej', null) !== null ? list('mocniej').map(Number) : [null];
+function runHabitat(nr, o) {
+  const sym = createHabitatSym(HullBodies, nr, { hz: o.hz, podpory: o.podpory ?? undefined, ht: o.ht ?? undefined, mocniej: o.mocniej ?? undefined });
+  const czas = CZAS ?? sym.cfg.czas;
+  const tPhys = [], tHost = [], tAll = [];
+  const steps = Math.round(czas * sym.hz);
+  let maxClusters = 0, maxAwake = 0;
+  for (let s = 0; s < steps; s++) {
+    const t0 = now();
+    sym.drive(); sym.pre();
+    const t1 = now();
+    sym.physics();
+    const t2 = now();
+    sym.post();
+    const t3 = now();
+    tPhys.push(t2 - t1); tHost.push(t3 - t2 + (t1 - t0)); tAll.push(t3 - t0);
+    if (s % 6 === 0) { const st = collapseStats(sym.host); if (st.clusters > maxClusters) maxClusters = st.clusters; if (st.awake > maxAwake) maxAwake = st.awake; }
+    if (LOG && s % sym.hz === 0) { const tl = sym.timeline(); console.log(`${sym.t.toFixed(1)} s  utrzymanie ${tl.utrzymanie} otwory ${tl.otwory} rów ${tl.row} żywe ${tl.zywe} bloki utracone ${tl.blokiUtracone}`); }
+  }
+  const res = {
+    scena: nr, hz: sym.hz, czas, ...sym.timeline(), klastryMax: maxClusters, ruchMax: maxAwake,
+    kosztMs: {
+      fizyka: { p50: +pct(tPhys, 0.5).toFixed(3), p95: +pct(tPhys, 0.95).toFixed(3), max: +Math.max(...tPhys).toFixed(2) },
+      gospodarz: { p50: +pct(tHost, 0.5).toFixed(3), p95: +pct(tHost, 0.95).toFixed(3), max: +Math.max(...tHost).toFixed(2) },
+      razem: { p50: +pct(tAll, 0.5).toFixed(3), p95: +pct(tAll, 0.95).toFixed(3), max: +Math.max(...tAll).toFixed(2), srednio: +(tAll.reduce((a, b) => a + b, 0) / tAll.length).toFixed(3) }
+    }
+  };
+  sym.dispose();
+  return res;
+}
+function showHabitat(r) {
+  if (JSON_OUT) { out(r); return; }
+  const f = (v) => (v === null || v === undefined ? '—' : v);
+  console.log(`\n## scena ${r.scena} (${r.rodzaj}), ${r.hz} Hz, H-T ${r.ht}, podpory ${r.podpory}${r.scena === 5 ? `, mocniej ×${r.mocniej}` : ''}`);
+  if (r.rodzaj === 'upadek') {
+    console.log(`  HP 0 ${f(r.hp0)} s → styk ${f(r.dotyk)} s (${f(r.vDotyk)} j/s) → przebicie ${f(r.przebicie)} s → minięcie dysku ${f(r.przejscie)} s (${f(r.vPrzejscie)} j/s)`);
+    console.log(`  D22: wieża na skale ${f(r.wiezaNaSkale)} s, pierwszy wycinek ${f(r.pierwszyWycinek)} s, wycinek na skale ${f(r.wycinekNaSkale)} s (opóźnienie ${f(r.opoznienieWycinka)} s, wycinków ${r.wycinkiNaSkale})`);
+    console.log(`  otwór: IoU z pierścieniem 560–880 ${f(r.iouPrzejscie)} (przy minięciu), otwory zgniotu ${r.otwory}, reszty bloków ${r.resztyBlokow}, zdjęte z wyspami ${r.zdjete}; bloki zabite ${r.blokiZabite}, utracone ${r.blokiUtracone}/${r.blokow}`);
+  } else {
+    console.log(`  korona ${f(r.korona)} s, dysk ${f(r.dotyk)} s (${f(r.vDotyk)} j/s), spoczynek ${f(r.spoczynek)} s; otwory ${r.otwory}, rów ${r.row}, zdjęte ${r.zdjete}; korona: otwory ${r.koronaOtwory}, rów ${r.koronaRow}`);
+    console.log(`  graf: utracone bloki ${r.blokiUtracone}/${r.blokow} (${(r.ulamekUtraconych * 100).toFixed(1)}% — D7 ≤ 5%), impuls do grafu ${r.impulsDoGrafu}`);
+  }
+  const k = r.kosztMs;
+  console.log(`  klastry max ${r.klastryMax}, w ruchu max ${r.ruchMax}; koszt ms: fizyka ${k.fizyka.p50}/${k.fizyka.p95}/${k.fizyka.max}, gospodarz+płyta ${k.gospodarz.p50}/${k.gospodarz.p95}/${k.gospodarz.max}, razem ${k.razem.p50}/${k.razem.p95}/${k.razem.max} (śr. ${k.razem.srednio})`);
+}
+
 function show(r) {
   if (JSON_OUT) { out(r); return; }
   console.log(`\n## scena ${r.scena}, ${r.hz} Hz, tłumienie ${r.tlumienie ? 'silnika' : '0'}, strona ${r.strona}, κ ${r.kappa ?? '—'} — ${r.strzaly} strzałów, spoczynek ${r.spoczynek ?? '—'} s`);
@@ -153,7 +208,17 @@ if (ZAKL > 0) {
   for (const r of rows) { if (r.przegub === 'kat') tally.kat++; else if (r.przegub === 'zastoj') tally.zastoj++; else tally.brak++; if (r.dach === null) tally.bezDachu++; }
   out({ zakleszczenie: tally, przebiegi: rows.length });
 } else {
-  for (const nr of SCENY) for (const g of GS) for (const hz of HZ) for (const tl of TLUM) for (const kappa of KAPPA) {
-    show(run(nr, { hz, g, strona: STRONA, kappa, tlumienie: tl }));
+  for (const nr of SCENY) {
+    if (SCENY_DEF[nr] && SCENY_DEF[nr].habitat) {
+      // podpory działają przy utrzymaniu < 1 (scena 4), przechył startowy — tylko w szyi (scena 5)
+      const upadek = SCENY_DEF[nr].habitat === 'upadek';
+      for (const hz of HZ) for (const podpory of upadek ? PODPORY : [null]) for (const ht of HT) for (const mocniej of upadek ? [null] : MOCNIEJ) {
+        showHabitat(runHabitat(nr, { hz, podpory, ht, mocniej }));
+      }
+      continue;
+    }
+    for (const g of GS) for (const hz of HZ) for (const tl of TLUM) for (const kappa of KAPPA) {
+      show(run(nr, { hz, g, strona: STRONA, kappa, tlumienie: tl }));
+    }
   }
 }

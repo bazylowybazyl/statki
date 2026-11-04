@@ -170,7 +170,9 @@ export function collapseGroundZ(ground, x, y) {
  * - ground — podłoże jak collapseGroundTerrain (wysokość pod frontem, dach na ziemi; teren dodaje scena);
  * - massUnit (45²), kappa / debrisFrac (front; domyślnie z A.tune), angularDamping (tłumienie obrotu klastrów [1/s];
  *   null — silnik 0,2/s; A/B tempa D12), gravityWell (studnia skały — E7), id, seed (PRNG kopnięć), name;
- * - tune — nadpisania COLLAPSE_TUNE (birthsPer120, islandIters120, impactDv, hingeKick, stall*, kick*, freezeAfter, …).
+ * - tune — nadpisania COLLAPSE_TUNE (birthsPer120, islandIters120, impactDv, hingeKick, stall*, kick*, freezeAfter, …);
+ * - stumpCollide (false — kikut bez par: stojącą część niesie pole płyty silnika, structurePlate.js), hinge / front
+ *   (false — wyspa bez przegubu zawiasu / bez frontu zgniotu: wycinki płyty dysku spadają swobodnie); domyślnie true.
  * Tworzy egzemplarz grafu i kikut (zamrożone klastry poziomów). Zwraca H; encje klastrów — H.entities (scena dokłada je
  * do listy HullBodies.step).
  */
@@ -242,6 +244,9 @@ export function createCollapseHost(A, opts = {}) {
     bMark: new Uint8Array(nI + NL), buildK: new Int32Array(nI + NL), crushCand: new Int32Array(n), crushMark: new Uint8Array(n),
     madeK: new Int32Array(nI + NL), madeNew: new Int32Array(nI + NL), madeOld: new Int32Array(nI + NL),
     onClusterContact: null,
+    // budowla z polem płyty (dysk — structurePlate.js): kikut bez par (stojącą część niesie pole płyty silnika), bez
+    // semantyki zawiasu i frontu (wycinki płyty to nie kondygnacje — wyspa spada swobodnie)
+    stumpCollide: opts.stumpCollide !== false, allowHinge: opts.hinge !== false, allowFront: opts.front !== false,
     dbg: null   // narzędzia: dbg(rodzaj, a, b, c) — uderzenia wysp, rozwiązania (null w grze)
   };
   // iv: 0 tick, 1 topoSeen, 2 reconcilePending, 3 qHead, 4 qCount, 5 nPend, 6 frontEnd (0/1 ziemia/2 stop), 7 mainRec,
@@ -359,7 +364,7 @@ function _spawn(H, key, list, nb, src, kick) {
   entity.collapseRec = rec;
   H.cls.push(rec);
   H.entities.push(entity);
-  if (stump) HB.freezeCluster(entity);
+  if (stump) { HB.freezeCluster(entity); if (!H.stumpCollide) entity.noHullCollisions = true; }
   H.st[ST_BIRTHS]++;
   if (H.entities.length > H.st[ST_MAX_CLUSTERS]) H.st[ST_MAX_CLUSTERS] = H.entities.length;
   return rec;
@@ -897,7 +902,7 @@ function _crushUnder(H, r, touch) {
 // Front zgniotu pod wyspą rekordu r (wolną); false — graf odmówił (najniższy poziom 0, inny front w toku).
 function _startFront(H, r, v0, wx, wy, wz) {
   const S = H.S, A = H.A;
-  if (r.key >= H.nI || (S.front.active && H.iv[8] >= 0)) return false;
+  if (!H.allowFront || r.key >= H.nI || (S.front.active && H.iv[8] >= 0)) return false;
   // front zgniata KIKUT pod wyspą: kondygnacja tuż pod nią musi należeć do części zakotwiczonej (inna wyspa pod spodem —
   // front przeszedłby przez nią bez oporu, model 1-D zna tylko kikut)
   let lmin0 = 1 << 30;
@@ -974,7 +979,7 @@ function _events(H, e0, e1) {
       const id = ev[o + 2] | 0, nb = ev[o + 3], mass = ev[o + 13], parent = ev[o + 14];
       if (parent === -1 && mass >= H.T.mainFrac * A.totalMass && tv[TL_DETACH] < 0) tv[TL_DETACH] = ev[o + 1];
       if (ev[o + 15] === 1 && nb > 3 && parent === -1) _pend(H, id, 2);
-    } else if (type === STRUCT_EV.HINGE) {
+    } else if (type === STRUCT_EV.HINGE && H.allowHinge) {
       const id = ev[o + 2] | 0, d = id * 8, hd = H.hingeData;
       hd[d] = ev[o + 4]; hd[d + 1] = ev[o + 5]; hd[d + 2] = ev[o + 6];
       hd[d + 3] = ev[o + 10]; hd[d + 4] = ev[o + 11]; hd[d + 5] = ev[o + 12]; hd[d + 6] = ev[o + 14];

@@ -1,7 +1,8 @@
 // Demo D20 „Zawalenia budowli na szarych blokach” (docs/PLAN-zawalenia-budowli-3d.md, synteza dema § 3–6). Serwowanie:
-// `npm run dev` → /dema/zawalenia-budowli.html. Adres: ?scena=1|2|3, ?g (prawa wieża sceny 1 / jedyna w 2–3), ?strona=+x|-x|+y|-y,
-// ?kappa, ?t (start pokazu w sekundach), ?physHz=120, ?shot=1 (bez panelu i podpisu), ?test=1 (zegar ręczny —
-// window.__zaw.runFrames, narzędzie scripts/webgpu/zawalenia-demo.mjs).
+// `npm run dev` → /dema/zawalenia-budowli.html. Adres: ?scena=1…5, ?g (prawa wieża sceny 1 / jedyna w 2–3), ?strona=+x|-x|+y|-y,
+// ?kappa, ?podpory=0.5|0.25|0 (scena 4), ?ht=klaster (sceny 4–5: H-T jako klaster zamiast bryły belek), ?t (start pokazu
+// w sekundach), ?physHz=120, ?shot=1 (bez panelu i podpisu), ?test=1 (zegar ręczny — window.__zaw.runFrames, narzędzie
+// scripts/webgpu/zawalenia-demo.mjs). Sceny 4–5 (habitat: dysk = graf + pole płyty, H-T z gry) — habitat.js.
 //
 // Cienka powłoka: fizyki dema nie ma. Scena to gospodarze zawalenia (src/game/structureCollapse.js) na prawdziwym
 // HullBodies, sterowani tym samym kodem co narzędzie Node (dema/zawalenia-budowli/symulacja.js + scenariusze.js) — liczby
@@ -15,8 +16,11 @@ import {
   COLLAPSE_TUNE, COLLAPSE_WEAPONS, collapseGroundZ, collapseLocalToWorld, collapseStats, collapseTimeline, collapseWeaponHit
 } from '../src/game/structureCollapse.js';
 import { createScenaSym } from './zawalenia-budowli/symulacja.js';
+import { createHabitatSym, HABITAT_Z } from './zawalenia-budowli/habitat.js';
 import { SCENY, SCENA_DOMYSLNA, STRONY, scenaUstaw } from './zawalenia-budowli/scenariusze.js';
 import { createObraz } from './zawalenia-budowli/obraz.js';
+import { pirateBaseData } from '../src/game/story/pirateBaseWorld.js';
+import { dryDockChunkSolids, dryDockSolidsToTriangles } from '../src/3d/portBuildings/pirateDryDockChunks.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
@@ -55,8 +59,13 @@ const S = {
   speed: 1,
   paused: false,
   loop: true,
-  cam: 'kino'
+  cam: 'kino',
+  // habitat (sceny 4–5): podpory dysku przy utrzymaniu 0 (D22), przechył szyi ×1 / ×3 (R3), H-T z belek albo klaster
+  podpory: SCENY[4].podpory,
+  mocniej: 1,
+  ht: params.get('ht') === 'klaster' ? 'klaster' : 'belki'
 };
+if (pNum('podpory') !== null) S.podpory = pNum('podpory');
 if (pNum('g') !== null) S.g[startNr] = pNum('g');
 if (STRONY[params.get('strona')] && S.strona[startNr]) S.strona[startNr] = params.get('strona');
 if (pNum('kappa') !== null) S.kappa[startNr] = pNum('kappa');
@@ -86,8 +95,10 @@ const keys = new Set();
 const P = { x: 0, y: 0, z: 0 };
 
 // ── scena ─────────────────────────────────────────────────────────────────────────────────────────────────────
+const isHab = () => !!SCENY[S.nr]?.habitat;
 function buildCfg() {
   const nr = S.nr;
+  if (SCENY[nr].habitat) return scenaUstaw(nr, { podpory: S.podpory, mocniej: S.mocniej, ht: S.ht });
   const c = scenaUstaw(nr, { g: S.g[nr], strona: S.strona[nr] || undefined, kappa: S.kappa[nr] ?? undefined });
   if (c.bateria && !S.auto) c.bateria = { ...c.bateria, auto: false };
   if (nr === 2 && S.pomost) c.wieze = c.wieze.map((w) => ({ ...w, nadPodlozem: NAD_POMOST }));
@@ -95,6 +106,19 @@ function buildCfg() {
 }
 
 function sceneInfo() {
+  if (cfg.habitat) {
+    // habitat: kolumna od masztu H-T do skały (scena 4) albo sam habitat z leżącą wieżą (scena 5, upadek ku +x)
+    const Z = HABITAT_Z, rock = sym.ground.cz + sym.ground.R;
+    const st = STRONY[cfg.strona || '+x'];
+    const f = { x: st[0], y: st[1] };
+    const up = cfg.habitat === 'upadek';
+    const top = Z.mastTop + 80, bot = up ? rock : Z.discBot - 150;
+    const e0 = up ? -2100 : -2100, e1 = up ? 2100 : 2600;
+    return {
+      habitat: true, towers: [], f, Ht: top - bot, e0, e1, cx: f.x * (e0 + e1) / 2, cy: f.y * (e0 + e1) / 2,
+      deck: bot, ground: bot, top, halfW: (e1 - e0) / 2, rock, mid: (top + bot) / 2
+    };
+  }
   const towers = sym.hosts.map((H) => {
     const A = H.A;
     return {
@@ -165,18 +189,31 @@ function startScene() {
   try {
     if (sym) sym.dispose();
     cfg = buildCfg();
-    sym = createScenaSym(HullBodies, cfg, { hz: HZ });
+    sym = cfg.habitat ? createHabitatSym(HullBodies, cfg, { hz: HZ }) : createScenaSym(HullBodies, cfg, { hz: HZ });
     info = sceneInfo();
     ship = null;
     if (S.nr === 2) placeShip(cfg.bateria.strona);
     S.pomostZniszczony = false;
     stepNo = 0; acc = 0; testTime = 0; testSteps = 0; stepMsN = 0; manual.length = 0;
     const r = Math.max(2600, info.halfW + 900);
-    sceneryCur = sceneryFor();
-    O.setScene({
-      hosts: sym.hosts, ground: cfg.podloze, sceneryBoxes: sceneryCur, seed: 7000 + S.nr,
-      shadow: { x: info.cx, y: info.cy, z: (info.deck + info.ground) / 2, r }
-    });
+    sceneryCur = cfg.habitat ? [] : sceneryFor();
+    if (cfg.habitat) {
+      // pole płyty dysku (i korony) rysuje stojącą część — kikut gospodarza bez obrazu; lina windy z bloku-kotwicy do skały
+      const hb = sym.windaBlok, A = sym.A;
+      const rx = hb >= 0 ? A.x[hb] : 0, ry = hb >= 0 ? A.y[hb] : 0;
+      O.setScene({
+        hosts: sym.hosts, ground: sym.ground, sceneryBoxes: [], seed: 7000 + S.nr,
+        shadow: { x: 0, y: 0, z: cfg.habitat === 'upadek' ? info.mid : (HABITAT_Z.discBot + HABITAT_Z.mastTop) / 2, r: cfg.habitat === 'upadek' ? 3400 : 2900 },
+        plateFields: [{ F: sym.plate.F, Pb: sym.plate.Pb }, sym.plate.crown ? { F: sym.plate.crown } : null],
+        hideStump: [sym.host], ht: { pose: sym.towerPose },
+        ropeAnchor: hb >= 0 ? { H: sym.host, block: hb, bottom: { x: rx, y: ry, z: info.rock - 2 } } : null
+      });
+    } else {
+      O.setScene({
+        hosts: sym.hosts, ground: cfg.podloze, sceneryBoxes: sceneryCur, seed: 7000 + S.nr,
+        shadow: { x: info.cx, y: info.cy, z: (info.deck + info.ground) / 2, r }
+      });
+    }
     syncShip();
     applyPreset(S.cam);
     // przewinięcie pod kurtyną (deterministycznie: kroki fizyki + efekty krokiem fizyki)
@@ -369,6 +406,36 @@ function applyPreset(mode) {
   const span = I.Ht + Math.max(0, I.deck - I.ground);
   const fitDist = Math.max(I.halfW / Math.tan(ht), (span * 0.58) / Math.tan(vt)) * 1.08;
   cam.snap = true;
+  if (I.habitat) {
+    // habitat: kolumna wieża → dysk → skała (scena 4) albo habitat z leżącą wieżą (scena 5)
+    const Z = HABITAT_Z;
+    if (mode === 'kino' || mode === 'profil' || mode === 'gora') {
+      const up = cfg.habitat === 'upadek';
+      cam.tx = I.cx; cam.ty = I.cy;
+      // scena 4: kolumna wieża → skała (środek nieco niżej — po 7 s wszystko dzieje się na skale); scena 5: dysk z koroną
+      // i leżąca wieża (kamera wyżej — dysk z góry pod kątem)
+      cam.tz = up ? I.mid - 0.06 * I.Ht : I.mid - 350;
+      cam.dist = Math.max(I.halfW / Math.tan(ht), (I.Ht * 0.56) / Math.tan(vt)) * (up ? 1.06 : 1.3);
+      cam.az = mode === 'kino' ? 0.42 : 0;
+      cam.el = mode === 'kino' ? (up ? 0.1 : 0.32) : 0.03;
+      cam.orthoH = Math.max(((I.e1 - I.e0) * 1.15) / aspect, 4600);
+      if (mode === 'gora') cam.tz = Z.discTop;
+    } else if (mode === 'sledz' || mode === 'dach') {
+      cam.dist = mode === 'sledz' ? 4200 : 2200; cam.az = 0.55; cam.el = mode === 'sledz' ? 0.18 : 0.3; cam.follow = mode;
+      cam.tx = 0; cam.ty = 0; cam.tz = mode === 'sledz' ? (Z.neckBase + Z.mastTop) / 2 : Z.headTop;
+    } else if (mode === 'podstawa') {
+      // brzeg otworu (scena 4) / rów pod talerzem leżącej wieży (scena 5) w dysku
+      const rr = cfg.habitat === 'upadek' ? 900 : 1350;
+      cam.tx = f.x * rr; cam.ty = f.y * rr; cam.tz = Z.discTop;
+      cam.dist = 2600; cam.az = 0.6; cam.el = 0.32;
+    } else if (mode === 'gruz') {
+      const c = O.debrisCenter(0, 0, 4000, _tp);
+      cam.tx = c ? c.x : 0; cam.ty = c ? c.y : 0; cam.tz = (c ? c.z : I.ground) + 80;
+      cam.dist = 3000; cam.az = 0.5; cam.el = 0.4;
+    }
+    refreshPanel();
+    return;
+  }
   if (mode === 'kino' || mode === 'profil' || mode === 'gora') {
     cam.tx = I.cx; cam.ty = I.cy; cam.tz = I.ground + span * 0.42;
     cam.dist = fitDist;
@@ -395,8 +462,21 @@ function applyPreset(mode) {
 }
 
 const _tp = { x: 0, y: 0, z: 0 };
+const _hp = { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 };
 function updateCamera(dt) {
-  if (cam.follow === 'sledz') {
+  if (info.habitat && (cam.follow === 'sledz' || cam.follow === 'dach')) {
+    // wieża H-T: środek masy (Śledź) albo głowa (Zbliż: dach) — poza układu F
+    const b = sym.towerBody();
+    if (b && !b.dead && sym.towerPose(_hp)) {
+      let x = b.pos.x, y = b.pos.y, z = b.pos.z;
+      if (cam.follow === 'dach') {
+        const q = { x: _hp.qx, y: _hp.qy, z: _hp.qz, w: _hp.qw }, h = HABITAT_Z.headTop;
+        x = _hp.x + 2 * (q.x * q.z + q.w * q.y) * h; y = _hp.y + 2 * (q.y * q.z - q.w * q.x) * h; z = _hp.z + (1 - 2 * (q.x * q.x + q.y * q.y)) * h;
+      }
+      const k = cam.snap ? 1 : 1 - Math.exp(-4 * dt);
+      cam.tx += (x - cam.tx) * k; cam.ty += (y - cam.ty) * k; cam.tz += (z - cam.tz) * k;
+    }
+  } else if (cam.follow === 'sledz') {
     // środek masy największego ruchomego klastra (bez kikuta i ruin)
     let best = null, bm = 0;
     for (const H of sym.hosts) for (const r of H.cls) {
@@ -449,7 +529,27 @@ function tiltOf(H) {
   const q = r.body.quat, c = 1 - 2 * (q.x * q.x + q.y * q.y);
   return Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI;
 }
+function captionHabitat() {
+  const sc = SCENY[S.nr], t = showTime(), tl = sym.timeline();
+  const tm = (v) => (v === null || v === undefined ? '—' : `${v.toFixed(1).replace('.', ',')} s`);
+  const run = S.paused ? ' · PAUZA' : S.speed !== 1 ? ` · ×${String(S.speed).replace('.', ',')}` : '';
+  const ht = tl.ht === 'klaster' ? 'H-T: klaster' : 'H-T: bryła belek z gry';
+  const msg = performance.now() < flashUntil ? `\n${flashMsg}` : '';
+  if (cfg.habitat === 'upadek') {
+    const st = sym.plate.Pb.fv[2];
+    $('caption').innerHTML = `<b>Scena 4 · ${sc.nazwa}</b> · ${ht} · podpory dysku przy utrzymaniu 0: ${String(cfg.podpory).replace('.', ',')} · utrzymanie ${st.toFixed(2).replace('.', ',')} · t ${t.toFixed(1).replace('.', ',')} s${run}\n`
+      + `HP 0 ${tm(tl.hp0)} · styk z dyskiem ${tm(tl.dotyk)} · przebicie ${tm(tl.przebicie)} · wieża za dyskiem ${tm(tl.przejscie)} · wieża na skale ${tm(tl.wiezaNaSkale)} · pierwszy wycinek dysku na skale ${tm(tl.wycinekNaSkale)}`
+      + `${tl.opoznienieWycinka !== null ? ` (+${tl.opoznienieWycinka.toFixed(1).replace('.', ',')} s)` : ''}\n`
+      + `otwór: ${tl.otwory} komórek, IoU z talerzem ${tl.iouPrzejscie === null ? '—' : tl.iouPrzejscie.toFixed(2).replace('.', ',')} · H-T za dyskiem = jeden klaster (D6 zastępczo) · bez bębna i szybu H-C (D14)${msg}`;
+  } else {
+    $('caption').innerHTML = `<b>Scena 5 · ${sc.nazwa}</b> · ${ht} · utrzymanie 1 · przechył startowy ×${cfg.mocniej} · t ${t.toFixed(1).replace('.', ',')} s${run}\n`
+      + `korona bębna ${tm(tl.korona)} · dysk ${tm(tl.dotyk)} · spoczynek ${tm(tl.spoczynek)} · rów ${tl.row} komórek · otwory ${tl.otwory} · graf traci ${tl.blokiUtracone} z ${tl.blokow} bloków\n`
+      + `korona bębna — pole płyty bez grafu · bez bębna i szybu H-C (D14)${msg}`;
+  }
+}
+
 function caption() {
+  if (cfg.habitat) { captionHabitat(); return; }
   const sc = SCENY[S.nr], pre = cfg.przewin || 0, t = showTime();
   const names = sym.hosts.length > 1 ? ['lewa', 'prawa'] : ['wieża'];
   const head = `<b>Scena ${S.nr} · ${sc.nazwa}</b> · ${sym.hosts.map((H, i) => `${names[i]} g ${Math.round(H.A.g)}`).join(' · ')}`
@@ -470,11 +570,17 @@ function caption() {
 const on = (id, v) => { const el = $(id); if (el) el.classList.toggle('on', !!v); };
 function refreshPanel() {
   if (!cfg) return;
-  for (const n of [1, 2, 3]) on(`sc-${n}`, S.nr === n);
+  for (const n of [1, 2, 3, 4, 5]) on(`sc-${n}`, S.nr === n);
+  // habitat: podpory dysku (scena 4), przechył szyi (scena 5), H-T z belek / klaster
+  for (const p of SCENY[4].podporyPanel) { const el = $(`pod-${String(p).replace('.', '')}`); el.disabled = S.nr !== 4; el.classList.toggle('on', S.nr === 4 && cfg.podpory === p); }
+  $('btn-mocniej').disabled = S.nr !== 5; on('btn-mocniej', S.nr === 5 && S.mocniej > 1);
+  $('btn-ht').disabled = !isHab();
+  $('btn-ht').textContent = `H-T: ${S.ht === 'klaster' ? 'klaster (zapas)' : 'bryła belek z gry'}`;
+  $('k-btns').querySelectorAll('button').forEach((b) => { b.disabled = isHab(); });
   // g
   const gb = $('g-btns');
-  const gList = S.nr === 1 ? [60, 80, 100] : [400, 100, 80, 60];
-  $('h-g').textContent = S.nr === 1 ? 'Tempo g (prawa wieża; lewa 400)' : 'Tempo g';
+  const gList = S.nr === 1 ? [60, 80, 100] : isHab() ? [] : [400, 100, 80, 60];
+  $('h-g').textContent = S.nr === 1 ? 'Tempo g (prawa wieża; lewa 400)' : isHab() ? 'Tempo g (habitat: g gry — 260 do dysku, 400)' : 'Tempo g';
   const gCur = S.g[S.nr];
   if (gb.dataset.nr !== String(S.nr)) {
     gb.dataset.nr = String(S.nr);
@@ -509,7 +615,10 @@ function refreshPanel() {
 
 function bindPanel() {
   const click = (id, fn) => $(id).addEventListener('click', (e) => { fn(e); canvas.focus(); });
-  for (const n of [1, 2, 3]) click(`sc-${n}`, () => { S.nr = n; startScene(); });
+  for (const n of [1, 2, 3, 4, 5]) click(`sc-${n}`, () => { S.nr = n; startScene(); });
+  for (const p of SCENY[4].podporyPanel) click(`pod-${String(p).replace('.', '')}`, () => { S.podpory = p; startScene(); });
+  click('btn-mocniej', () => { S.mocniej = S.mocniej > 1 ? 1 : 3; startScene(); });
+  click('btn-ht', () => { S.ht = S.ht === 'klaster' ? 'belki' : 'klaster'; startScene(); });
   click('zb-podstawa', () => applyPreset('podstawa'));
   click('zb-dach', () => applyPreset('dach'));
   click('zb-gruz', () => applyPreset('gruz'));
@@ -547,10 +656,10 @@ const SIDE_KEYS = { ArrowLeft: '-x', ArrowRight: '+x', ArrowUp: '+y', ArrowDown:
 window.addEventListener('keydown', (e) => {
   if (!sym || e.target?.tagName === 'INPUT') return;
   keys.add(e.code);
-  const d = /^Digit([1-3])$/.exec(e.code);
+  const d = /^Digit([1-5])$/.exec(e.code);
   if (d) {
     const n = Number(d[1]);
-    if (e.shiftKey) { S.bron = ['dzialo', 'torpeda', 'reaktor'][n - 1]; refreshPanel(); } else { S.nr = n; startScene(); }
+    if (e.shiftKey) { if (n <= 3) { S.bron = ['dzialo', 'torpeda', 'reaktor'][n - 1]; refreshPanel(); } } else { S.nr = n; startScene(); }
     e.preventDefault();
     return;
   }
@@ -650,6 +759,9 @@ window.__zaw = {
     if (o.auto !== undefined) S.auto = !!o.auto;
     if (o.pomost !== undefined) S.pomost = !!o.pomost;
     if (o.bron) S.bron = o.bron;
+    if (Number.isFinite(o.podpory)) S.podpory = o.podpory;
+    if (Number.isFinite(o.mocniej)) S.mocniej = o.mocniej;
+    if (o.ht === 'klaster' || o.ht === 'belki') S.ht = o.ht;
     startScene();
     if (o.kamera) applyPreset(o.kamera);
     return this.stats();
@@ -684,6 +796,8 @@ window.__zaw = {
   bridge() { destroyBridge(); return S.pomostZniszczony; },
   timeline() {
     const pre = cfg.przewin || 0;
+    // habitat: oś czasu D22 i liczby płyty (te same co scripts/zawalenia-sym.mjs --scena 4,5)
+    if (cfg.habitat) return [{ name: 'habitat', przewin: pre, habitat: sym.timeline() }];
     return sym.hosts.map((H) => ({ name: H.name, g: H.A.g, przewin: pre, ...collapseTimeline(H), tilt: undefined, tiltNow: tiltOf(H) }));
   },
   stats() {
@@ -712,6 +826,23 @@ async function boot() {
   resizeView();
   HullBodies.init();
   HullBodies.warmUpClusters();
+  // siatka H-T (sceny 4–5): bryły sceny bazy w układzie F wokselizacji (x, −z bazy, wysokość) — raz, przed rozgrzewką
+  try {
+    const d = pirateBaseData();
+    const c = d.layout.chunkById.get('H-T');
+    const cx = (c.box.x0 + c.box.x1) / 2, cz = (c.box.z0 + c.box.z1) / 2;
+    const tri = dryDockSolidsToTriangles(dryDockChunkSolids(d.layout, d.scene, ['H-T']), { palette: d.style?.palette || null, sides: 12, map: (v) => [v[0] - cx, -(v[2] - cz), v[1]] });
+    // szare bloki: barwy bryły przygaszone ku szarości bloków (tylko odcień); barwa per trójkąt → per wierzchołek
+    const nTri = tri.positions.length / 9;
+    const src = tri.colors, per = src.length === nTri * 3;
+    const col = new Float32Array(tri.positions.length);
+    for (let t = 0; t < nTri; t++) for (let v = 0; v < 3; v++) for (let k = 0; k < 3; k++) col[t * 9 + v * 3 + k] = per ? src[t * 3 + k] : src[t * 9 + v * 3 + k];
+    for (let i = 0; i < col.length; i += 3) {
+      const l = 0.3 * col[i] + 0.59 * col[i + 1] + 0.11 * col[i + 2];
+      for (let k = 0; k < 3; k++) col[i + k] = 0.3 + 0.35 * (0.75 * l + 0.25 * col[i + k]);
+    }
+    O.setHTGeometry(tri.positions, col);
+  } catch (e) { reportError(`H-T: ${e.stack || e}`); }
   bindPanel();
   startScene();
   updateCamera(0);

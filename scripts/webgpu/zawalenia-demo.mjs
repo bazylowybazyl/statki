@@ -5,7 +5,7 @@
 // zbiorczy, oś czasu przeglądarki porównana z narzędziem Node (scripts/zawalenia-sym.mjs — ten sam kod sceny), pipeline'y
 // synchroniczne po rozgrzewce (ma być 0), błędy konsoli i walidacji WebGPU, czasy kroku i klatki.
 //
-//   node scripts/webgpu/zawalenia-demo.mjs [--sceny 1,2,3] [--chwile 0,1,3,5,8,12,16] [--kamery kino,gora]
+//   node scripts/webgpu/zawalenia-demo.mjs [--sceny 1,2,3,4,5] [--chwile 0,1,3,5,8,12,16] [--kamery kino,gora]
 //        [--out .tmp/zawalenia-demo] [--rozmiar 1600x900] [--port 5410] [--node 0] [--interakcje 0] [--wymus 1]
 //   --kamery    także profil, sledz, podstawa, dach, gruz (przyciski panelu)
 //   --interakcje 0 — bez przebiegu interakcji sceny 2 (pomost, torpeda LPM, zmiana strony, salwa, zniszczenie pomostu)
@@ -21,7 +21,9 @@ import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep
 import { gryUzytkownika, obceProcesy } from './sondaGpuWorkera.mjs';
 
 const args = parseArgs();
-const SCENY = String(args.sceny || '1,2,3').split(',').map(Number).filter((n) => n >= 1 && n <= 3);
+const SCENY = String(args.sceny || '1,2,3,4,5').split(',').map(Number).filter((n) => n >= 1 && n <= 5);
+// sceny habitatu (4, 5): oś czasu D22 i liczby płyty (dema/zawalenia-budowli/habitat.js — te same w Node)
+const HAB_KEYS = ['dotyk', 'przebicie', 'przejscie', 'wiezaNaSkale', 'pierwszyWycinek', 'wycinekNaSkale', 'korona', 'spoczynek', 'otwory', 'row', 'blokiUtracone', 'iouPrzejscie'];
 const CHWILE = String(args.chwile || '0,1,3,5,8,12,16').split(',').map(Number).sort((a, b) => a - b);
 const KAMERY = String(args.kamery || 'kino,gora').split(',').filter(Boolean);
 const [W, H] = String(args.rozmiar || '1600x900').split('x').map(Number);
@@ -127,6 +129,22 @@ try {
     const tlB = await ev('window.__zaw.timeline()');
     const przewin = tlB[0]?.przewin || 0;
     const czas = przewin + CHWILE[CHWILE.length - 1];
+    if (tlB[0]?.habitat) {
+      const hb = tlB[0].habitat;
+      sc.os = [Object.fromEntries(HAB_KEYS.map((k) => [k, hb[k] ?? null]))];
+      if (args.node !== '0') {
+        const nd = nodeTimeline(nr, czas);
+        sc.node = nd ? [Object.fromEntries(HAB_KEYS.map((k) => [k, nd[k] ?? null]))] : null;
+        sc.zgodnoscZNode = !!sc.node && HAB_KEYS.every((k) => sc.os[0][k] === sc.node[0][k]);
+        if (!sc.zgodnoscZNode) fail(`scena ${nr}: oś czasu przeglądarki ≠ Node`);
+      }
+      if (st.syncPipes > 0) fail(`scena ${nr}: ${st.syncPipes} pipeline'ów synchronicznych (${st.syncNames.join(', ')})`);
+      report.syncPipes = Math.max(report.syncPipes, st.syncPipes);
+      report.sceny.push(sc);
+      console.log(`scena ${nr}: oś ${JSON.stringify(sc.os)}${sc.node ? `\n          node ${JSON.stringify(sc.node)}` : ''}\n          zgodność z Node: ${sc.zgodnoscZNode}  krok ms ${JSON.stringify(sc.krokMs)}  klatka (ściana) ${sc.klatkaMsSciana} ms`);
+      sheets.push({ nr, cells });
+      continue;
+    }
     sc.os = tlB.map((w) => ({
       wieza: w.name, g: w.g, oderwanie: r2(w.detach), zawias: r2(w.hinge), przegub: r2(w.jointBroken), przegubTryb: w.breakMode || null,
       przechyl40: r2(w.tilt40), przechylMax: Math.round(w.maxTilt * 10) / 10, frontStart: r2(w.frontStart), frontPoziomy: w.frontLevels.map((f) => f.level),
@@ -195,6 +213,20 @@ try {
       if (stP.syncPipes > 0) fail(`tryb żywy: ${stP.syncPipes} pipeline'ów synchronicznych (${stP.syncNames.join(', ')})`);
       if (!(stP.t > 0.5)) fail(`tryb żywy: czas pokazu nie płynie (t ${stP.t})`);
     } else fail('tryb żywy: demo nie wstało');
+    // habitat w trybie żywym z panelem i podpisem (oś czasu D22 w podpisie): scena 4 po ~4,5 s (przebicie dysku)
+    if (SCENY.includes(4)) {
+      await cdp.send('Page.navigate', { url: `${base}/dema/zawalenia-budowli.html?scena=4` });
+      await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
+      if (await waitFor(cdp, '!!(window.__zaw && (window.__zaw.ready || window.__zaw.error))', 300000, 300)) {
+        await sleep(4500);
+        writeFileSync(join(outDir, 'panel-s4.png'), Buffer.from(await shotB64(), 'base64'));
+        const stH = await ev('window.__zaw.stats()');
+        report.zywyHabitat = { t: stH.t, syncPipes: stH.syncPipes, bledy: stH.bledy, krokMs: stH.krokMs, klatkaCpuMs: stH.klatkaCpuMs };
+        console.log(`tryb żywy (scena 4): t pokazu ${stH.t} s, sync ${stH.syncPipes}, błędy ${stH.bledy.length}`);
+        if (stH.syncPipes > 0) fail(`tryb żywy (scena 4): ${stH.syncPipes} pipeline'ów synchronicznych (${stH.syncNames.join(', ')})`);
+        if (stH.bledy.length) fail(`tryb żywy (scena 4): błędy ${stH.bledy.length}`);
+      } else fail('tryb żywy (scena 4): demo nie wstało');
+    }
   }
 
   // arkusze: wiersz = kamera, kolumny = chwile

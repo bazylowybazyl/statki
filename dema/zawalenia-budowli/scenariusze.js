@@ -50,6 +50,42 @@ export const SCENY = Object.freeze({
     ladunek: Object.freeze({ kondygnacja: 13, co: 0.25, ile: 0.12, od: 0, do: 4 }),
     kappa: 0.2,
     kappy: Object.freeze([0.1, 0.2, 0.3, 1])
+  }),
+  // HABITAT (dema/zawalenia-budowli/habitat.js): dysk mieszkalny = graf E1 (buildDiscArchetype) + pole płyty silnika
+  // (src/game/structurePlate.js), wieża H-T = PRAWDZIWA bryła belek z gry (pirateBaseSolidOf 'H-T'; ?ht=klaster — klaster
+  // z prostopadłościanów towerPointCloud). Bez bębna i szybu H-C (D14 — ich archetypów jeszcze nie ma), skała = kula-teren
+  // `skala.pod` j. pod spodem dysku (w grze ~23 km — tu widać kolejność lądowania, nie czasy E7).
+  4: Object.freeze({
+    nr: 4, nazwa: 'Habitat: wieża przez dysk',
+    opis: 'HP 0: zegar utrzymania 2,5 s, wieża H-T spada (g 260) i przebija dysk otworem w kształcie talerza; wycinki dysku lecą wyraźnie później.',
+    habitat: 'upadek', przewin: 0, czas: 18,
+    hp0: 0.5,             // [s] HP 0 habitatu — zegar D8 rusza, wieża puszcza
+    d8: 2.5,              // [s] utrzymanie 1 → 0 (D8)
+    gFall: 260,           // [j/s²] wieża do minięcia dysku (PLATE_TUNE.gFall), potem gPassed
+    gPassed: 400,
+    kick: 300,            // [j/s] zapadnięcie wieży przy HP 0 (PIRATE_FALL_TUNE.towerKick)
+    tumble: 0.006,        // [rad/s] lekki obrót wieży przy puszczeniu (oś x)
+    passMargin: 150,      // [j.] wierzch wieży tyle pod spodem dysku = wieża minęła dysk → klaster (D6 zastępczo)
+    skala: Object.freeze({ pod: 5000, R: 12000 }),
+    podpory: 0.5,         // supportHoldFloor archetypu dysku (podpory SUPPORT przy utrzymaniu 0)
+    podporyPanel: Object.freeze([0.5, 0.25, 0]),
+    ht: 'belki',
+    // D17: kotwica liny windy na bloku pierścienia zewnętrznego (kąt [rad] w układzie dysku) — lina do skały pod nim
+    winda: Object.freeze({ kat: -1.2 })
+  }),
+  5: Object.freeze({
+    nr: 5, nazwa: 'Habitat: szyja',
+    opis: 'Habitat żyje (utrzymanie 1): wieża przewraca się na przegubie w nasadzie szyi i kładzie bokiem na koronie bębna i dysku — rów bez otworu.',
+    habitat: 'szyja', przewin: 0, czas: 18,
+    strona: '+x',         // kierunek upadku wieży (świat silnika)
+    g: 400,               // grawitacja habitatu (PIRATE_BASE_SOLID.gravity)
+    mocniej: 1,           // mnożnik przechyłu startowego (NECK_TUNE.tipSpeed) — „Mocniej ×3” sprawdza R3
+    mocniejPanel: Object.freeze([1, 3]),
+    korona: true,         // korona bębna — drugie pole płyty bez grafu (pierścień drumR − wall … drumR, floorY … rimTop)
+    skala: Object.freeze({ pod: 5000, R: 12000 }),
+    podpory: 0.5,
+    ht: 'belki',
+    winda: Object.freeze({ kat: -1.2 })
   })
 });
 
@@ -57,11 +93,20 @@ export const SCENA_DOMYSLNA = 1;
 
 /**
  * Konfiguracja sceny z nadpisaniami panelu / adresu / narzędzia: { g (prawej wieży w scenie 1, jedynej w 2–3), strona,
- * kappa, bron, ziarno (salwy) }. Zwraca nowy obiekt (wieże z g po nadpisaniu).
+ * kappa, bron, ziarno (salwy); habitat (4–5): podpory, ht ('belki' | 'klaster'), mocniej }. Zwraca nowy obiekt (wieże z g
+ * po nadpisaniu).
  */
 export function scenaUstaw(nr, nad = {}) {
   const sc = SCENY[nr];
   if (!sc) throw new RangeError(`scena ${nr}: brak`);
+  if (sc.habitat) {
+    return {
+      ...sc, wieze: [], bateria: null, kappa: null,
+      podpory: Number.isFinite(nad.podpory) ? nad.podpory : sc.podpory,
+      ht: nad.ht === 'klaster' || nad.ht === 'belki' ? nad.ht : sc.ht,
+      mocniej: Number.isFinite(nad.mocniej) ? nad.mocniej : (sc.mocniej ?? 1)
+    };
+  }
   const wieze = sc.wieze.map((w, i) => {
     const last = i === sc.wieze.length - 1;
     return { ...w, g: Number.isFinite(nad.g) && last ? nad.g : w.g };
