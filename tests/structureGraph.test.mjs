@@ -6,9 +6,13 @@
 // pasem broni, okno impulsu niezależne od zbieżności, wyspa swobodna z odciążeniem bezwładnościowym, prototyp progu
 // dysku (szyja trzyma, upadek przebija; jeden próg nie rozdziela → próg od utrzymania z oknem, D8), determinizm 3×,
 // 60 / 120 Hz ±5%, budżet zerwań (także cięcia plastra), bez alokacji w kroku, progi czasu (WYDAJNOSC).
+// Synteza dema D20 § 2a: g archetypu (g 400 bit w bit jak E1 — złote hasze; przy g 80 i salwie J × g/400 te same
+// zerwania), prostopadłościany bloków L1 (Σ mas = masa bloku, bez nachodzenia różnych bloków — SAT, w obrysie).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as SG from '../src/game/structureGraph.js';
+import { PIRATE_BASE_SPEC } from '../src/3d/portBuildings/pirateBaseLayout.js';
+import { k7HeightToZ } from '../src/3d/haloRing/haloPortK7Layout.js';
 import { allocatedBytes, untilSteady } from './helpers/alokacje.mjs';
 import { WYDAJNOSC } from './helpers/wydajnosc.mjs';
 
@@ -626,6 +630,195 @@ test('budżet: ≤ 64 zerwania na 1/120 s (60 Hz: 128), nadmiar w kolejce; rekor
     }
     assert.equal(total, HR.e, 'kolejka opróżniona');
   }
+});
+
+// ── g archetypu i prostopadłościany bloków L1 (synteza dema D20 § 2a; plan § 3.1) ──
+// FNV-1a 32 po bajtach tablic: złote hasze policzone na kodzie E1 sprzed prostopadłościanów i opcji g (commit 400a8bd7).
+function fnv32(h, arr) {
+  const u8 = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+  for (let i = 0; i < u8.length; i++) { h ^= u8[i]; h = Math.imul(h, 16777619) >>> 0; }
+  return h;
+}
+function archHash(A) {
+  let h = 2166136261;
+  for (const k of ['limC', 'limT', 'limS', 'anchorCap', 'u0x', 'u0y', 'u0z']) h = fnv32(h, A[k]);
+  return fnv32(h, new Float64Array([A.uScale, A.fScale, A.calib.err, A.totalMass])).toString(16);
+}
+// Podcięcie +x z falą (kratery + structureHit J 3000 × g/400 co 0,2 s): hasz zdarzeń wszystkich kroków i stanu.
+function undercutWave(A, g = 400, seconds = 6, hz = 120) {
+  const S = SG.createStructure(A, { id: 2 });
+  const rnd = SG.structureRng(11), every = Math.round(0.2 * hz);
+  const ev = [];
+  let h = 2166136261;
+  for (let s = 0; s < seconds * hz; s++) {
+    if (s % every === 0) {
+      const y = (rnd() * 2 - 1) * 200, z = (rnd() * 2 - 1) * 70;
+      SG.structureDamageSphere(S, 190, y, z, 110, 0.18);
+      SG.structureHit(S, 190, y, z, 3000 * g / 400, -1, 0, 0);
+    }
+    SG.stepStructure(S, 1 / hz, s);
+    h = fnv32(h, S.ev.subarray(0, S.evCount * W));
+    for (const e of stepEvents(S)) ev.push(e.slice(0, 4));   // typ, czas, a, b
+  }
+  for (const k of ['ux', 'uy', 'uz', 'health', 'strength', 'alive', 'island']) h = fnv32(h, S[k]);
+  return { hash: h.toString(16), ev, breaks: S.stats.breaks };
+}
+
+test('g archetypu: domyślne i jawne g 400 bit w bit jak E1 (limity, ciepły start u0, zdarzenia podcięcia z falą); g 80 — waveJ × g/400, limity ∝ g', () => {
+  const GOLD = { hr: '7153e376', disc: '3e4c7bf3', w2: '44d79f6', run: '9e187bad' };
+  assert.equal(archHash(HR), GOLD.hr, 'W (ziarno 5): limC / limT / limS / u0 jak E1');
+  assert.equal(archHash(SG.buildHighriseArchetype({ seed: 5, g: 400 })), GOLD.hr, 'jawne g 400');
+  assert.equal(archHash(SG.buildHighriseArchetype({ seed: 2 })), GOLD.w2, 'W (ziarno 2)');
+  assert.equal(archHash(DISC), GOLD.disc, 'dysk (ziarno 7)');
+  assert.equal(archHash(SG.buildDiscArchetype({ seed: 7, g: 400 })), GOLD.disc, 'dysk, jawne g 400');
+  const run = undercutWave(HR);
+  assert.equal(run.hash, GOLD.run, `zdarzenia i stan podcięcia z falą (${run.ev.length} rekordów, ${run.breaks} zerwań)`);
+  assert.equal(HR.tune.waveJ, SG.STRUCT_TUNE.waveJ);
+  // g 80: waveJ × g/400 (także jawnego strojenia), A.g, limity i przemieszczenia nienaruszone ∝ g (kalibracja)
+  const A80 = SG.buildHighriseArchetype({ seed: 5, g: 80 });
+  assert.equal(A80.g, 80);
+  assert.equal(A80.tune.waveJ, SG.STRUCT_TUNE.waveJ * 80 / 400);
+  assert.equal(SG.buildHighriseArchetype({ seed: 5, g: 80, tune: { waveJ: 1000 } }).tune.waveJ, 200);
+  let worst = 0;
+  for (let k = 0; k < HR.e; k++) worst = Math.max(worst, Math.abs(A80.limC[k] / HR.limC[k] - 0.2));
+  for (let i = 0; i < HR.n; i++) if (HR.u0z[i] !== 0) worst = Math.max(worst, Math.abs(A80.u0z[i] / HR.u0z[i] - 0.2));
+  assert.ok(worst < 1e-6, `limity / u0 przy g 80 = 0,2 × g 400 (odchyłka ${worst.toExponential(2)})`);
+  const D80 = SG.buildDiscArchetype({ seed: 7, g: 80 });
+  assert.equal(D80.g, 80);
+  assert.equal(D80.tune.waveJ, SG.STRUCT_TUNE.waveJ * 80 / 400);
+  assert.equal(D80.tune.u0, DISC.tune.u0, 'dysk zachowuje własne u0');
+  assert.throws(() => SG.buildHighriseArchetype({ g: 0 }));
+});
+
+test('g archetypu: salwa J × g/400 daje przy g 80 te same zerwania co przy g 400 (lista, kolejność, czasy) — A/B różni tylko tempo (D12)', () => {
+  const a = undercutWave(HR, 400), b = undercutWave(SG.buildHighriseArchetype({ seed: 5, g: 80 }), 80);
+  assert.ok(a.breaks > 50, `podcięcie zrywa (${a.breaks})`);
+  assert.ok(a.ev.some((e) => e[0] === EV.ISLAND) && a.ev.some((e) => e[0] === EV.HINGE), 'oderwanie i zawias w oknie testu');
+  assert.deepEqual(b.ev, a.ev, 'rekordy zdarzeń (typ, czas, a, b)');
+});
+
+// Prostopadłościany archetypu jako lista { b, x, y, z, hx, hy, hz, yaw, f, c, s }.
+function archBoxes(A) {
+  const out = [], BW = SG.STRUCT_BOX_STRIDE;
+  for (let b = 0; b < A.n; b++) {
+    for (let j = A.boxStart[b]; j < A.boxStart[b + 1]; j++) {
+      const d = A.boxData.subarray(j * BW, (j + 1) * BW);
+      out.push({ b, x: d[0], y: d[1], z: d[2], hx: d[3], hy: d[4], hz: d[5], yaw: d[6], f: d[7], c: Math.cos(d[6]), s: Math.sin(d[6]) });
+    }
+  }
+  return out;
+}
+
+test('prostopadłościany bloków: każdy blok z masą ma ≥ 1 (kotwice — 0), Σ mas = masa bloku, narożniki w L; structureBlockBoxes → buildClusterDesc', async () => {
+  const { buildClusterDesc, clusterMassProperties } = await import('../src/game/beamRigid3D.js');
+  for (const [name, A] of [['wieżowiec', HR], ['dysk', DISC]]) {
+    assert.equal(A.boxStart.length, A.n + 1);
+    assert.equal(A.boxData.length, A.boxCount * SG.STRUCT_BOX_STRIDE);
+    for (let b = 0; b < A.n; b++) {
+      const c = A.boxStart[b + 1] - A.boxStart[b];
+      if (A.anchor[b]) { assert.equal(c, 0, `${name}: kotwica ${b} bez prostopadłościanów`); continue; }
+      assert.ok(c >= 1, `${name}: blok ${b} bez prostopadłościanu`);
+    }
+    const all = Array.from({ length: A.n }, (_, i) => i);
+    const sum = new Float64Array(A.n);
+    for (const r of SG.structureBlockBoxes(A, all, A.n, [], 1)) {
+      assert.ok(r.hx > 0 && r.hy > 0 && r.hz > 0);
+      sum[r.id] += r.mass;
+    }
+    for (let b = 0; b < A.n; b++) if (!A.anchor[b]) assert.ok(Math.abs(sum[b] - A.mass[b]) <= 1e-9 * A.mass[b], `${name}: Σ mas bloku ${b} ${sum[b]} ≠ ${A.mass[b]}`);
+    // jednostka silnika belek (× 45²) i opis klastra całej budowli
+    const boxes = SG.structureBlockBoxes(A, all);
+    assert.equal(boxes.length, A.boxCount);
+    const desc = buildClusterDesc(boxes);
+    assert.equal(desc.blockCount, A.boxCount);
+    const mp = clusterMassProperties(desc);
+    assert.ok(Math.abs(mp.mass - A.totalMass * SG.STRUCT_MASS_UNIT) <= 1e-9 * mp.mass, `${name}: masa klastra ${mp.mass} = masa grafu × 45²`);
+  }
+  // wycinki dysku obrócone wokół z (kwaternion jednostkowy), wieżowiec osiowy; `out` ponownie użyty — przycięty, kwaterniony nowe
+  const out = SG.structureBlockBoxes(DISC, [DISC.n - 1], 1);
+  const q0 = out[0].q;
+  assert.ok(q0 && Math.abs(q0.z * q0.z + q0.w * q0.w - 1) < 1e-12 && q0.x === 0 && q0.y === 0);
+  const reused = SG.structureBlockBoxes(HR, [HR.n - 1], 1, out);
+  assert.equal(reused, out); assert.equal(out.length, HR.boxStart[HR.n] - HR.boxStart[HR.n - 1]); assert.equal(out[0].q, null);
+  assert.ok(q0.z !== 0, 'kwaternion poprzedniego wyniku nienaruszony');
+  // narożniki obwodu poziomów 8-punktowych (rzadkich): ściana w L — dwa prostopadłościany na pełną kondygnację
+  let corners = 0;
+  for (let b = 0; b < HR.n; b++) {
+    const l = HR.level[b];
+    if (HR.anchor[b] || l < 4 || l > 15) continue;
+    const hx = Math.abs(HR.x[b]), hy = Math.abs(HR.y[b]);
+    if (hx < 100 || hy < 100) continue;   // narożnik: oba |x|, |y| na obwodzie
+    const storey = HR.levelZ[l] - HR.levelZ[l - 1];
+    const walls = archBoxes(HR).filter((o) => o.b === b && 2 * o.hz > 0.8 * storey);
+    assert.equal(walls.length, 2, `narożnik ${b} (poziom ${l}): ${walls.length} ściany`);
+    corners++;
+  }
+  assert.equal(corners, 4 * 12);
+});
+
+// Separacja dwóch prostopadłościanów obróconych wokół z: największa przerwa po osiach SAT (normalne ścian w xy, oś z).
+function boxGap(a, b) {
+  let best = Math.abs(a.z - b.z) - (a.hz + b.hz);
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const rad = (o, nx, ny) => o.hx * Math.abs(nx * o.c + ny * o.s) + o.hy * Math.abs(-nx * o.s + ny * o.c);
+  for (const o of [a, b]) {
+    for (const [nx, ny] of [[o.c, o.s], [-o.s, o.c]]) {
+      const g = Math.abs(dx * nx + dy * ny) - rad(a, nx, ny) - rad(b, nx, ny);
+      if (g > best) best = g;
+    }
+  }
+  return best;
+}
+
+test('prostopadłościany RÓŻNYCH bloków nie nachodzą na siebie (SAT OBB, luz ≥ 1 j.) — wieżowiec W-1 / W-2 i dysk', () => {
+  for (const [name, A] of [['wieżowiec 5', HR], ['wieżowiec 2', SG.buildHighriseArchetype({ seed: 2 })], ['dysk', DISC]]) {
+    const bx = archBoxes(A);
+    let pairs = 0, min = Infinity;
+    for (let i = 0; i < bx.length; i++) {
+      for (let j = i + 1; j < bx.length; j++) {
+        const a = bx[i], b = bx[j];
+        if (a.b === b.b) continue;
+        pairs++;
+        const g = boxGap(a, b);
+        if (g < min) min = g;
+        assert.ok(g >= 1, `${name}: bloki ${a.b} i ${b.b} — przerwa ${g.toFixed(3)} j. (${a.x.toFixed(0)}, ${a.y.toFixed(0)}, ${a.z.toFixed(0)}) / (${b.x.toFixed(0)}, ${b.y.toFixed(0)}, ${b.z.toFixed(0)})`);
+      }
+    }
+    assert.ok(pairs > 1000 && min < 3, `${name}: ${pairs} par, najmniejsza przerwa ${min.toFixed(3)} j. (bloki przylegają z luzem)`);
+  }
+});
+
+test('prostopadłościany w obrysie: wieżowiec w ±w/2 × ±d/2 od pokładu do iglicy, dysk w pierścieniu stemR..discR od spodu do tarasów', () => {
+  const corners = (o, fn) => {
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+      fn(o.x + sx * o.hx * o.c - sy * o.hy * o.s, o.y + sx * o.hx * o.s + sy * o.hy * o.c, o.z + sz * o.hz);
+    }
+  };
+  const H = PIRATE_BASE_SPEC.highrise, eps = 1e-9;
+  for (const A of [HR, SG.buildHighriseArchetype({ seed: 2, g: 80 })]) {
+    const zTop = A.levelZ[A.nLevels - 1];
+    for (const o of archBoxes(A)) {
+      corners(o, (x, y, z) => {
+        assert.ok(Math.abs(x) <= H.w / 2 + eps && Math.abs(y) <= H.d / 2 + eps, `wieżowiec: (${x}, ${y}) poza rzutem`);
+        assert.ok(z >= A.groundZ - eps && z <= zTop + eps, `wieżowiec: z ${z} poza ${A.groundZ}..${zTop}`);
+      });
+      // blok leży w swojej kondygnacji (ściany, kafle stropu, rdzeń — od stropu niżej do własnego)
+      const l = A.level[o.b], z0 = l ? A.levelZ[l - 1] : A.groundZ;
+      assert.ok(o.z - o.hz >= z0 - eps && o.z + o.hz <= A.levelZ[l] + eps, `blok ${o.b} poza kondygnacją ${l}`);
+    }
+  }
+  const HB = PIRATE_BASE_SPEC.habitat, d = DISC.disc, zTier = k7HeightToZ(HB.tier2Y);
+  let lower = 0;
+  for (const o of archBoxes(DISC)) {
+    corners(o, (x, y, z) => {
+      const r = Math.sqrt(x * x + y * y);
+      assert.ok(r >= d.rIn - eps && r <= d.rOut + eps, `dysk: promień ${r} poza ${d.rIn}..${d.rOut}`);
+      assert.ok(z >= d.zBot - eps && z <= zTier + eps, `dysk: z ${z} poza ${d.zBot}..${zTier}`);
+    });
+    if (o.z < (d.zBot + d.zTop) / 2) lower += 4 * o.hx * o.hy;
+  }
+  const cover = lower / (Math.PI * (d.rOut * d.rOut - d.rIn * d.rIn));
+  assert.ok(cover > 0.8 && cover < 1, `dysk: warstwa dolna pokrywa ${(100 * cover).toFixed(1)}% pierścienia`);
 });
 
 // „gra nie losuje” i reszta zasad obszaru (three, DOM, importy, zegar, Math.hypot) — tests/structureZasady.test.mjs

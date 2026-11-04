@@ -102,7 +102,15 @@ paths:
 - Archetyp RAZ na rodzaj budowli: `createArchetypeBuilder` → `addBlock` / `addBond` → `finishArchetype` (kalibracja, rozrzut ±15% z ziarna). Budowa nie zależy od stanu modułu — test determinizmu buduje W-1 po innych testach i po `structureReset` egzemplarza, a limity i kalibracja wychodzą bit w bit.
   - Gotowe archetypy: `buildHighriseArchetype` (W-1 / W-2: 178 bloków, 18 poziomów z `k7HeightToZ`) i `buildDiscArchetype` (dysk mieszkalny: 316 bloków, kotwice `support`).
   - Egzemplarz `createStructure(A)`, krok `stepStructure(S, dt, tick)`, reset `structureReset`, liczniki `structureCounts`.
-  - Układ lokalny archetypu: wieżowiec — x wzdłuż pomostu; dysk — środek habitatu; z świata. Przekształcenie świat → lokalny robi gospodarz (E5). Masa bloku w „węzłach komórki 45”.
+  - Układ lokalny archetypu: wieżowiec — x wzdłuż pomostu; dysk — środek habitatu; z świata. Przekształcenie świat → lokalny robi gospodarz (E5). Masa bloku w „węzłach komórki 45”; masa silnika belek = masa grafu × 45² (`STRUCT_MASS_UNIT` 2025 — jednostka węzła bryły, D5).
+  - `g` archetypu (D12 / D10c): opcja `build…Archetype({ g })`, domyślnie 400 — bit w bit z E1 (złote hasze w teście). Kalibracja skaluje limity z ciężarem, przy g ≠ 400 `tune.waveJ` × g/400. Gospodarz skaluje J broni × g/400 — wtedy historia zerwań jest ta sama (lista, kolejność, czasy), a różni się tylko ruch.
+- PROSTOPADŁOŚCIANY BLOKÓW L1 (geometria dla klastra, obrazu i trafień; plan § 3.1):
+  - budowniczy `addBlockBox(B, blok, cx, cy, cz, hx, hy, hz, yaw, waga)`; `finishArchetype` składa CSR `A.boxStart` (n + 1) / `A.boxData` (`STRUCT_BOX_STRIDE` 8 słów: środek, półosie, yaw wokół z, udział masy), `A.boxCount`. Udziały masy bloku normalizuje do Σ = 1 (waga = objętość). Kotwice nie mają prostopadłościanów;
+  - `structureBlockBoxes(A, bloki, ile, out, massUnit = 2025)` → `[{ x, y, z, hx, hy, hz, mass, id, q }]` — wejście `buildClusterDesc`. `out` wraca do użycia, kwaternion jest zawsze nowy (opis klastra trzyma referencje `q`);
+  - wieżowiec (418 prostopadłościanów W-1): blok obwodu poziomu l to ściana kondygnacji POD jego stropem (odcinek między połowami dróg do sąsiadów, grubość `wall` do środka obrysu, ściany y = ±hy z rogami jak w modelu) i kafle stropu (~80 j.) przypisane najbliższemu blokowi; narożnik to dwa ramiona w L (przy gęstym obwodzie poziomów 0–3 krótsze ramię < 6 j. odpada). Rdzeń to słup coreW² przez kondygnację, iglica — prostopadłościan o polu walca r 30;
+  - dysk (632): wycinek × warstwa (dolna ½T; górna ½T + tarasy jak masa), 2 promieniowo na wycinek (`boxSplit`), obrót yaw. Prostopadłościan leży w wycinku z luzem, pokrycie pierścienia ~87%;
+  - ZASADA: prostopadłościany RÓŻNYCH bloków nie nachodzą na siebie — klaster urodzony w przenikaniu dostaje wyrzut. Luz `STRUCT_BOX_GAP` 1 j. odejmuje się od każdej półosi (≥ 2 j. między sąsiadami), test SAT. Nowy archetyp z prostopadłościanami trzyma tę zasadę;
+  - środek masy prostopadłościanów leży niżej niż środek masy grafu (W-1 ~41 j.), bo blok grafu stoi na stropie swojej kondygnacji. Pozę klastra liczy się z jego własnego środka masy, nie z rekordu ISLAND.
 - Obciążenia:
   - `structureDamageSphere` / `structureDamageBond` (kratery);
   - `structureHit` — FALA W KONSTRUKCJI: impuls J / `pulseT` i osłabienie wiązań nad trafieniem, malejące z wysokością. Bez fali graf zrywa się dopiero tuż przed upadkiem;
@@ -189,7 +197,7 @@ paths:
 ## Strojenie (stan dzisiejszy)
 
 - `STRUCT_TUNE` i `A.tune` są zamrożone. Archetyp liczy z nich kalibrację (`E`, `u0`, `spread`, podłogi `floor*`, `tensionFrac*`, `shearFrac`). Krok czyta resztę: `shearK` / `shearMech` w prekondycjonerze, `critMul` w kontroli przekrojów, falę, zmęczenie, zawias i front.
-- Zmiana = przebudowa archetypu: `build…Archetype({ tune })` / `finishArchetype(B, { tune })`, w narzędziu `struktura-sym.mjs --set klucz=wartość`. Nie mutuj `STRUCT_TUNE` ani `A.tune` i nie dawaj wspólnego mutowalnego obiektu na wzór `window.BaseIntegrityTune` — rozjechałby egzemplarz z kalibracją i dzieliłby stan między testami.
+- Zmiana = przebudowa archetypu: `build…Archetype({ tune, g })` / `finishArchetype(B, { tune, g })`, w narzędziu `struktura-sym.mjs --set klucz=wartość`. Nie mutuj `STRUCT_TUNE` ani `A.tune` i nie dawaj wspólnego mutowalnego obiektu na wzór `window.BaseIntegrityTune` — rozjechałby egzemplarz z kalibracją i dzieliłby stan między testami.
 - Wartości na wywołanie są już dziś:
   - `structureStartFront(S, wyspa, v0, { kappa, debrisFrac })`;
   - `structureHit(…, { radius, waveRadius, decayZ })`;
@@ -206,6 +214,8 @@ paths:
 - `tests/structureGraph.test.mjs`:
   - bramki E1: kolumna, wspornik, podcięcie ±x, D11 na W-1 / W-2 × strony × ziarna, ciężkie uszkodzenia, okno impulsu, kondygnacja 15, plaster, front κ × gruz, fala, wyspa swobodna, próg dysku;
   - determinizm 3× (z archetypem budowanym po innych testach i po `structureReset`), 60 / 120 Hz ±5% (szyja dysku — `todo` do E6), budżet zerwań i rekordów;
+  - g archetypu: złote hasze FNV limitów, ciepłego startu i zdarzeń podcięcia z falą przy g 400 (zmiana kalibracji = świadoma aktualizacja haszy); przy g 80 i J × g/400 te same zdarzenia co przy g 400;
+  - prostopadłościany: Σ mas = masa bloku, narożniki w L, opis klastra (masa × 45²), SAT bez nachodzenia różnych bloków, obrys (testy dopisane NA KOŃCU pliku);
   - test alokacji jest PIERWSZY w pliku, bo inne testy robią miejsca wywołań polimorficznymi;
   - progi czasu tylko z `WYDAJNOSC`.
 - `tests/beamRigid3D.test.mjs`: opis klastra, masa, studnia, teren, stos, pęd, BIT W BIT, taran, R11, bryła belek, zawias, hak grafu, zamrożenie, determinizm 60 / 120 Hz, budżet aktywnych, `createCluster`, sen długich klastrów, dwa tereny, garb, pchanie, utrata podpory.
