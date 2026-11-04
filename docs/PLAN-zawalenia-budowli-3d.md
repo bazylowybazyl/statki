@@ -1,6 +1,6 @@
 # Plan: kruszenie i zawalenia budowli 3D („Teardown bez wokseli”), 2026-11-03
 
-Stan: plan po weryfikacji (§ 1.4). Decyzje użytkownika 2026-11-03 (§ 8): D0 tak, D6 tak, D1 — dysk, D11 — przechył w stronę strzałów, D14 — nacisk na wieżowce i habitat, ale reszta bazy (wyłom bębna, magazyn, paliwo, pomosty) też ma się tak niszczyć. Pozostałe decyzje — rekomendacje z § 8, dopóki użytkownik nie zdecyduje inaczej. E0–E2 w toku (gałąź `claude/zawalenia-budowli`). W części o budowlach zastępuje etapy F z `PLAN-zniszczenia-swiata-3d.md`.
+Stan: plan po weryfikacji (§ 1.4). Decyzje użytkownika 2026-11-03 (§ 8): D0 tak, D6 tak, D1 — dysk, D11 — przechył w stronę strzałów, D14 — nacisk na wieżowce i habitat, ale reszta bazy (wyłom bębna, magazyn, paliwo, pomosty) też ma się tak niszczyć. Pozostałe decyzje — rekomendacje z § 8, dopóki użytkownik nie zdecyduje inaczej. E0 (część CPU), E1 i E2 zrobione 2026-11-04, obie bramki go / no-go: go (§ 6.2). W części o budowlach zastępuje etapy F z `PLAN-zniszczenia-swiata-3d.md`.
 
 Oznaczenia: **[P]** pomiar, **[S]** szacunek, **[D]** dokument albo reguła. Ufność liczb po zmianie: **wysoka** (pomiar tego mechanizmu), **średnia** (pomiar podobnego + przeliczenie), **niska** (szacunek).
 
@@ -479,19 +479,39 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
   - `destrukcja-taran-sym.mjs` (ziarno, `--prebuild` domyślnie, kolumny grafu);
   - `zniszczenia-gra.mjs --final`;
   - `baza-zniszczenie-gra.mjs`;
-  - nowy `scripts/struktura-sym.mjs` (`--tryb stos` jak `klastry-silnik.mjs`, `--tryb ring`);
+  - `scripts/struktura-sym.mjs` (graf nośny, E1) i `scripts/klastry-sym.mjs` (klastry i pole płyty, E2; `--tryb ring` — przy ringu);
   - `bench\prefraktura.mjs` z walcami i torusami.
 - **Reguły do aktualizacji:** `baza-piratow`, `ciala-swiata`, `kadluby-belki`, `render-worker`, `core3d`, `wybuchy-gaz`, `flota-ai`, `fabula`, `opcje-grafiki`, `electron-wydanie`, `wraki`.
 - **Nowa reguła `zawalenia-budowli`:**
   - `paths:` `"src/game/structure*.js"`, `"src/3d/structures/**"`, `"tests/structure*.test.mjs"`;
-  - wiersz w indeksie.
+  - wiersz w indeksie;
+  - do czasu jej powstania opis grafu nośnego (E1) jest w regule `ciala-swiata`, klastrów i pola płyty (E2) — w `kadluby-belki`.
 - **Hak w AGENTS.md** (31 261 / 40 000 znaków): „nowa budowla 3D → `buildStructureArchetype`; obrażenia budowli → graf przez `worldBodies` / `pirateBaseWorld`”.
 - **Dopisek w `PLAN-zniszczenia-swiata-3d.md`.**
 
 ### 6.2 Stan etapów
 
 - **E0 (2026-11-04, część CPU — zrobione).** `scripts/destrukcja-taran-sym.mjs`: `--ziarno` (domyślnie 12345 — Math.random z LCG; 0 = dawne losowanie), `--prebuild` (domyślnie 1 — szablony z ekranu ładowania jak w grze), `--pct 1` (percentyle kroku co 1 s i po HP 0). Upadek 60 Hz: 3/3 przebiegi identyczne (stan końcowy i zdarzenia), testy `destrukcjaTaran` i `pirateBaseFall` zielone. Baza w Node po HP 0 [P, 3 przebiegi]: `stoi` p50 0,40 / p95 11,7–12,1 / p99 15,3–16,1 / max 62–63 ms (krok HP 0); `lezy` p50 1,8 / p95 14,7–14,9 / p99 23,2–23,8 / max 48–50 ms; najgorsze okno 1 s (p95): `stoi` 17,2–17,6 ms (sekunda po HP 0), `lezy` 24,0–25,0 ms (lądowanie). Część GPU (szczyt upadku przy Ultra, 120 Hz, okno gry) — za dnia, przy ciszy sesji.
-- **E1, E2 — w toku** (gałąź `claude/zawalenia-budowli`).
+- **E1 (2026-11-04 — zrobione, go).** `src/game/structureGraph.js` (czysty: bez three, DOM i `Math.random`), `tests/structureGraph.test.mjs`, `scripts/struktura-sym.mjs` (tryby `podciecie, wspornik, kondygnacja, front, fala, zawias, ciezkie, dysk-szyja, dysk-upadek, prog, koszt`). Bramki [P, Node]:
+  - wspornik: moment 0,0% od Σ m·g·x przy `shearK` 1e-6 (laplasjan benchmarku tracił 60–85%, ścinanie 1e-4 — do 3,8%);
+  - ≤ 5% przy zerwaniach: ocena tylko przy reszcie ≤ 0,02 (ciężkie losowe uszkodzenia, 8 ziaren: błąd ≤ 0,020); niezbieżne mechanizmy pękają trybem `MECH`;
+  - podcięcie ±x → przechył ±x; D11 na 192 przebiegach (W-1, W-2, strony ±x / ±y, 8 ziaren × 3 warianty): 187 ku podciętej / 0 w inną / 5 pionowo przy 120 Hz (W-1 od −y — przełom w kondygnacjach 2–5), 190 / 0 / 2 przy 60 Hz;
+  - poziom 15: symetrycznie front do ziemi, jednostronnie zawias ku podciętej; front κ 0,1–0,3 dochodzi do ziemi (12/12 z gruzem 0,2–0,3), przy κ 1 staje po 1–3 piętrach;
+  - fala w konstrukcji: oderwanie przy 11,6 s zamiast 23,2 s (J 2000);
+  - bit w bit 3×; 60 / 120 Hz ±5% — poza dyskiem w szyi (rów −20%, energia −34%; do sprawdzenia przed E6);
+  - koszt: wieżowiec 0,03 ms średnio (max 0,39), dysk 0,10 (0,66), W-1 + W-2 + dysk naraz max 0,99–1,11 ms — Chrome nie mierzony, bramka „≤ 1 ms w Chrome” zostaje na E5.
+  - **Ustalenie: jeden próg nośności dysku nie rozdziela szyi od upadku** (upadek przebija przy σ ≤ 6, szyja trzyma od σ ≥ 160 — luka ×27) → nośność płyty od utrzymania (D8): σ = σ_free + hold · (σ_held − σ_free), σ_held 200, σ_free 4. Szyja: 0 otworów, rów 154–195 z 5416 komórek, graf traci 0–2 bloki. Upadek: wieża dochodzi do dysku ≥ 3,46 s po HP 0 (utrzymanie 0), za dyskiem 550 / 843 / 1122 j/s z 900 / 1300 / 1700; IoU 0,983 w modelu 1-DOF nic nie dowodzi (kształt z konstrukcji) — prawdziwe IoU w E6.
+  - Przyjęte przez orkiestratora, do sprawdzenia w E5 / E6: podpory dysku trzymają połowę nośności przy utrzymaniu 0 (`supportHoldFloor` 0,5 — dysk po HP 0 nie odpada sam, puszcza przeciążony wieżą i gruzem); `debrisFrac` 0,2 (przy 0,25–0,3 i κ 0,3 front staje); zapas dysku `u0` 0,15 (przy 0,5 szyja zjadała 134 z 316 bloków); duża wolna wyspa pęka 0,1–0,2 s po styku (zimny start `structureSolveIsland`: wołać co krok, aż wynik ≥ 0). Pokrętła E5: `waveJ` (~5% ciężaru), `waveVert` 0,15, przełożenie broni na J, `shearMech` 0,05.
+- **E2 (2026-11-04 — zrobione, go).** `src/game/beamRigid3D.js`, `src/game/beamPlateField3D.js`; wpięcie w `destructorBeams3D.js` tylko w `update` (rozdział par), `integrate`, `freezeBody` i `continue` dla `rigid`; `hullBodies.js`: `createCluster`, `clusterCount`, `freezeCluster`, hak `onClusterContact`, `warmUpClusters`; testy `beamRigid3D`, `beamRigid3DAlokacje` (osobny proces), `beamPlateField3D`; narzędzie `scripts/klastry-sym.mjs --tryb stos|plyta|taran|bryla`. Bramki [P, Node, mediana z 3]:
+  - stos 100 / 200 / 256 klastrów: p95 0,48 / 1,31 / 1,74, max 0,76 / 1,65 / 2,21 ms (zimny proces max 2,6 / 3,4 / 5,3) — no-go „stos 200 ponad 2,5 / 6 ms” nie zachodzi;
+  - para klaster × klaster 0,5–0,7 µs; broadphase w szczycie 400–690 par (zamiast 12–18 tys.); teren ~25 odczytów na klaster;
+  - płyta z wieżą 13 286 węzłów: p95 1,15 ms w krokach ze stykiem;
+  - R11: CCD punktów, test przez ścianę 15 j. do 9000 j/s;
+  - złote testy bit w bit (`beamLocalSolverExact`, `beamNarrowphase`, `beamStore3D`), progi `destrukcjaTaran` i `pirateBaseFall`, hasz sceny bez klastrów identyczny, pełny zestaw zielony.
+  - Otwarte na E6 / E7: para klaster × bryła belek 7–9 µs na wywołanie i 23–34 µs na parę ze stykiem (bramka 1,5 µs spełnia tylko klaster × klaster); taran klaster × ciało płaskie 10–25 µs na parę; resztkowe alokacje w parze z ciałem belek (~5 KB / 60 kroków) i w płycie (~4 KB); sufit 160 aktywnych dochodzi z opóźnieniem (zimny szczyt 199); broń wobec klastra (§ 3.7), pękanie klastra po wiązaniach, CCD z obrotem; `wreckPairEvery` dla wolnych par klastrów zmienia rozgrywkę — decyzja przy E7.
+  - Rozgrzewka JIT klastrów (`HullBodies.warmUpClusters`, ~110 ms raz na proces) nie idzie w `init` — gra jej jeszcze nie woła. Wpiąć na ekranie ładowania razem z pierwszym `createCluster` w grze (E5) i powtórzyć złote testy z nią (przechodziły z nią w `init`).
+  - Jednostki płyty: σ silnika ≈ σ E1 × masa węzła (45); wieża 43 mln przy 900 j/s przebija płytę 360 j. przy σ ≲ 2·10⁴ — strojenie w E6.
+- **Następne:** E0 — część GPU (szczyt upadku przy Ultra, za dnia, przy ciszy sesji); E0b; E3 (prefraktura).
 
 ## 7. Ryzyka
 
