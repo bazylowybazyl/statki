@@ -10,6 +10,8 @@ paths:
   - "scripts/klastry-sym.mjs"
   - "scripts/zawalenia-sym.mjs"
   - "dema/zawalenia-budowli/**"
+  - "dema/zawalenia-budowli.*"
+  - "scripts/webgpu/zawalenia-demo.mjs"
   - "docs/PLAN-zawalenia-budowli-3d.md"
 ---
 
@@ -28,7 +30,7 @@ paths:
 - Nie ma jeszcze:
   - prefraktury L2 i archetypów z wypieku offline — E3; benchmark `prefraktura.mjs` leży poza repo w `.tmp/destrukcja-2026-11-03/bench/` i w E3 przechodzi do `scripts/`;
   - obrazu (`src/3d/structures/`, blok migawki `structBlock`, rekordy `STRUCT_*`, pula gruzu) — E4;
-  - obrazu dema na szarych blokach (D20 krok 4 — strona i obraz; gospodarz, sceny i symulacja są — § „Gospodarz zawalenia”);
+  - scen 4–5 dema D20 (habitat przez dysk, szyja — krok 5 z `structurePlate`); sceny 1–3 dema są — § „Demo D20 — obraz”;
   - `window.StructureTune` i strojenia egzemplarza — D20 / E5;
   - flagi `?zawalenieStare=1` — E5–E7;
   - potoku archetypów z modelu i znaczników (`buildStructureArchetype` w plan § 10 to nazwa robocza) — E3 / ogólność;
@@ -147,6 +149,16 @@ paths:
 - Bez alokacji: krok gospodarza (`collapsePreStep` + `collapseStep`) < 64 B na krok w stanie ustalonym JIT (resztka: dt w argumentach `stepStructure`). Liczby stanu w tablicach typowanych (`H.iv`, `H.fv`, `H.tv`, `rec.f`), podłoże w `H.gr`, wyniki pomocników w `H._t`. `HullBodies.step` w tej scenie alokuje ~3 KB na krok — to silnik, poza gospodarzem (E5).
 - Sceny dema jako dane: `dema/zawalenia-budowli/scenariusze.js` (sceny 1–3, sterownik salw i ładunków w układzie archetypu, PRNG salwy) i `symulacja.js` (scena na HullBodies). Demo, narzędzie i test liczą ten sam kod; `nadPodlozem` — pomost nad pustką.
 
+## Demo D20 — obraz (`dema/zawalenia-budowli.html`, `.js`, `dema/zawalenia-budowli/obraz.js`)
+
+- Cienka powłoka nad `symulacja.js`: pętla stałego kroku 60 Hz (`?physHz=120`), interpolacja póz klastrów (poprzednia poza zapisana PRZED każdym krokiem, `savePoses`), efekty z pierścienia rekordów gospodarza (`consumeRecords` po każdym kroku). Sceny startują same, przewinięte pod kurtyną o `cfg.przewin` (kroki fizyki + efekty krokiem fizyki) — smugi i przechył widać w pierwszej klatce.
+- Obraz z niczym się nie zderza: bloki = pozy klastrów (`H.own[b]` → `H.cls[k].body`, świat bloku = pos + R·(środek − com)), martwy blok (`S.dead`) — macierz zerowa; gruz obrazu (kamienie, CPU), pył (sprite'y, opada w próżni ułamkiem g), smugi i błyski (addytywne, HDR) nie ruszają grafu ani klastrów.
+- Własny `WebGPURenderer` (dozwolony w `dema/` — strażnik jednego renderera skanuje `src/`), wyłącznie TSL; niebo i post z `dema/halo_ring_demo_env.js`. Jeden `InstancedMesh` bloków wszystkich gospodarzy + sceneria (płyty, pomost, okręt-zastępstwo) w tym samym rysunku. Rozgrzewka: pule z licznikiem ≥ 2, `compileAsyncNaCelu` każdą kamerą (perspektywa, ortho), 2 klatki pod kurtyną (cień, bloom); licznik pipeline'ów synchronicznych od końca rozgrzewki — 0 (także po zmianach scen, w trybie żywym i w interakcjach sceny 2).
+- Atrybuty instancji zmieniane w biegu: `instancedBufferAttribute(InstancedInterleavedBuffer)` i `needsUpdate` na TYM buforze. Węzeł z `BufferAttribute` kopiuje się do własnego `InterleavedBuffer` (three r183 `_getBufferAttribute`) — `needsUpdate` atrybutu nic by nie wysłał.
+- Scena z-up: `HemisphereLight` dostaje `position (0, 0, 1)` (three bierze „niebo” z +y). ACES gry ściska ciemne tony — cień na gruncie bez mocnego otoczenia wychodzi czarny.
+- Okręt sceny 2 nie ma fizyki: stoi 450 j. w bok od linii strzału (leżąca wieża nie przechodzi przez niego). LPM i salwa F idą przez `collapseWeaponHit` w następnym kroku (kolejka `manual`); trafienie w oderwany klaster to sam obraz (zapytania broni klastry mijają). Zmiana strony w scenie 2 — `sym.bateria({ strona, auto })` od chwili `sym.t` (bez nadrabiania strzałów); w scenie 1 zmiana strony, g, κ i auto-salwy restartuje scenę (A/B).
+- `window.__zaw` (`?test=1` — zegar ręczny): `ready`, `scene(n, opts)`, `runFrames(n, fps)` (kroki fizyki z `round(t · HZ)` — bez gubienia kroku na sumie 1/60), `render()`, `camera(nazwa)`, `shootWorld`, `salvo`, `side`, `bridge`, `timeline()`, `stats()` (`syncPipes`, rysunki, efekty, `krokMs`), `tune`. Narzędzia widzą renderer jako `window.__HARNESS_RENDERER__`.
+
 ## Klastry sztywne i pole płyty (E2)
 
 - Oderwana masa zawalenia to ciało silnika `rigid`: 6DoF w tej samej liście `bodies` co bryły (`integrate`: grawitacja, studnia z `vmax`, przeguby).
@@ -259,6 +271,7 @@ paths:
 
 - `node scripts/struktura-sym.mjs --tryb podciecie|zawias|wspornik|kondygnacja|front|fala|ciezkie|dysk-szyja|dysk-upadek|prog|koszt [--dt 120,60] [--kappa …] [--gruz …] [--hold h] [--ziarno N] [--set klucz=wartość]` — graf w Node: oś czasu zdarzeń, bramki E1, koszt kroku. Wieżowiec 0,03 ms średnio, trzy grafy misji naraz max ~1 ms; bramka w Chrome — E5.
 - `node scripts/zawalenia-sym.mjs [--scena 1,2,3] [--g 400,80] [--hz 60,120] [--strona +x] [--kappa …] [--tlumienie 0|1] [--kontakt 0] [--zakleszczenie N] [--pomost -y@4] [--set klucz=wartość] [--log 1] [--json]` — sceny dema na gospodarzu i prawdziwym HullBodies: oś czasu (oderwanie, zawias, przechył w czasie, przegub, front, dach na ziemi), kawałki, koszt kroku p50 / p95 / max (fizyka / gospodarz / razem). `--zakleszczenie N` — N ziaren salwy × 4 strony; `--kontakt 0` — A/B bez tłumienia spoczynku / toczenia silnika. Zostaje na E5.
+- `node scripts/webgpu/zawalenia-demo.mjs [--sceny 1,2,3] [--chwile 0,1,3,5,8,12,16] [--kamery kino,gora,profil,sledz,podstawa,dach,gruz] [--out .tmp/zawalenia-demo] [--node 0] [--interakcje 0] [--panel 0]` — demo w headless Chrome w tle: kadry scen w chwilach pokazu, arkusze `arkusz-s<n>.png`, oś czasu przeglądarki porównana z `zawalenia-sym.mjs` (ma być identyczna), interakcje sceny 2, kadr z panelem w trybie żywym, pipeline'y synchroniczne (dema i dziennika `harness-strona.js`), błędy konsoli i walidacji WebGPU. Gra użytkownika w tle → pomija (kod 0), cudzy harness → kod 2 (`--wymus 1`).
 - `node scripts/klastry-sym.mjs --tryb stos|plyta|taran|bryla [--n 100,200,256] [--powt 3] [--hz 60] [--json] [--budzet N]` — klastry w prawdziwym `HullBodies`. `--czasy 0` — bez czasów modułów, jak w grze. Zimny pierwszy krok mierz osobnym uruchomieniem z `--powt 1`.
 - Upadek habitatu i baza (reguły `kadluby-belki`, `baza-piratow`):
   - w Node: `node scripts/destrukcja-taran-sym.mjs --tryb upadek [--ziarno 12345] [--prebuild 1] [--pct 1] [--koszt 1]`;

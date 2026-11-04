@@ -26,7 +26,7 @@ export function archetypWiezy(ziarno, g) {
  */
 export function createScenaSym(HB, nr, opts = {}) {
   // nr — numer sceny albo gotowa konfiguracja (testy: kształt jak scenaUstaw)
-  const cfg = typeof nr === 'object' ? nr : scenaUstaw(nr, opts);
+  let cfg = typeof nr === 'object' ? nr : scenaUstaw(nr, opts);
   HB.init();
   const D = HB.engine;
   D.terrains.length = 0;
@@ -44,7 +44,7 @@ export function createScenaSym(HB, nr, opts = {}) {
       ground: cfg.podloze, kappa: Number.isFinite(cfg.kappa) ? cfg.kappa : undefined, angularDamping, tune: opts.tune
     });
   });
-  const driver = createScenaDriver(cfg);
+  let driver = createScenaDriver(cfg);
   const P = { x: 0, y: 0, z: 0 };
   const act = {
     hit(lx, ly, lz, dx, dy, dz, bron) {
@@ -81,6 +81,21 @@ export function createScenaSym(HB, nr, opts = {}) {
       return c;
     },
     strzaly() { return driver.strzaly(); },
+    /**
+     * Demo (scena 2): bateria w biegu — `zmiany` ({ strona, auto, bron }) od chwili sym.t, bez nadrabiania strzałów
+     * sprzed tej chwili; okno ognia tak długie jak w scenie. Ładunki kondygnacji nie przechodzą do nowego sterownika
+     * (sceny z baterią ich nie mają). Zwraca nową konfigurację baterii albo null (scena bez baterii).
+     */
+    bateria(zmiany) {
+      const b = cfg.bateria;
+      if (!b) return null;
+      const nb = { ...b, ...zmiany, od: sym.t, do: sym.t + (b.do - b.od) };
+      if (!STRONY[nb.strona]) throw new RangeError(`strona ${nb.strona}: +x, -x, +y, -y`);
+      cfg = { ...cfg, bateria: nb, ladunek: null };
+      sym.cfg = cfg;
+      driver = createScenaDriver(cfg);
+      return nb;
+    },
     dispose() {
       for (const h of hosts) collapseDispose(h);
       const i = D.terrains.indexOf(terrain);
