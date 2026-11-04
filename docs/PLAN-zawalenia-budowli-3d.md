@@ -1,6 +1,6 @@
 # Plan: kruszenie i zawalenia budowli 3D („Teardown bez wokseli”), 2026-11-03
 
-Stan: plan po weryfikacji (§ 1.4). Decyzje użytkownika 2026-11-03 (§ 8): D0 tak, D6 tak, D1 — dysk, D11 — przechył w stronę strzałów, D14 — nacisk na wieżowce i habitat, ale reszta bazy (wyłom bębna, magazyn, paliwo, pomosty) też ma się tak niszczyć. Pozostałe decyzje — rekomendacje z § 8, dopóki użytkownik nie zdecyduje inaczej. E0 (część CPU), E1 i E2 zrobione 2026-11-04, obie bramki go / no-go: go (§ 6.2). W części o budowlach zastępuje etapy F z `PLAN-zniszczenia-swiata-3d.md`.
+Stan: plan po weryfikacji (§ 1.4). Decyzje użytkownika 2026-11-03 (§ 8): D0 tak, D6 tak, D1 — dysk, D11 — przechył w stronę strzałów, D14 — nacisk na wieżowce i habitat, ale reszta bazy (wyłom bębna, magazyn, paliwo, pomosty) też ma się tak niszczyć. 2026-11-04 użytkownik rozstrzygnął WSZYSTKIE pozostałe decyzje (§ 8 — kolumna „decyzja użytkownika”); zmiany względem rekomendacji: wnętrza docelowo we wszystkich budowlach (D9), demo na szarych blokach przed E3 (D20), radar poza planem (D21), lina windy na kawałku dysku (D17), reszta habitatu dolatuje później niż wieża (D22), odbudowa portów dronami z mandatem (D10b), pełne zawalenie hal K-7 (D23), kolejność bez stacji (D10d), Mars z kolizjami budynków (D19). E0 (część CPU), E1 i E2 zrobione 2026-11-04, obie bramki go / no-go: go (§ 6.2). W części o budowlach zastępuje etapy F z `PLAN-zniszczenia-swiata-3d.md`.
 
 Oznaczenia: **[P]** pomiar, **[S]** szacunek, **[D]** dokument albo reguła. Ufność liczb po zmianie: **wysoka** (pomiar tego mechanizmu), **średnia** (pomiar podobnego + przeliczenie), **niska** (szacunek).
 
@@ -479,7 +479,7 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
   - `destrukcja-taran-sym.mjs` (ziarno, `--prebuild` domyślnie, kolumny grafu);
   - `zniszczenia-gra.mjs --final`;
   - `baza-zniszczenie-gra.mjs`;
-  - `scripts/struktura-sym.mjs` (graf nośny, E1) i `scripts/klastry-sym.mjs` (klastry i pole płyty, E2; `--tryb ring` — przy ringu);
+  - `scripts/struktura-sym.mjs` (graf nośny, E1) i `scripts/klastry-sym.mjs` (klastry i pole płyty, E2; tryby `stos | plyta | taran | bryla` — trybu przy ringu jeszcze nie ma, dojdzie w kroku ringów § 10);
   - `bench\prefraktura.mjs` z walcami i torusami.
 - **Reguły do aktualizacji:** `baza-piratow`, `ciala-swiata`, `kadluby-belki`, `render-worker`, `core3d`, `wybuchy-gaz`, `flota-ai`, `fabula`, `opcje-grafiki`, `electron-wydanie`, `wraki`.
 - **Nowa reguła `zawalenia-budowli`:**
@@ -511,7 +511,7 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
   - Otwarte na E6 / E7: para klaster × bryła belek 7–9 µs na wywołanie i 23–34 µs na parę ze stykiem (bramka 1,5 µs spełnia tylko klaster × klaster); taran klaster × ciało płaskie 10–25 µs na parę; resztkowe alokacje w parze z ciałem belek (~5 KB / 60 kroków) i w płycie (~4 KB); sufit 160 aktywnych dochodzi z opóźnieniem (zimny szczyt 199); broń wobec klastra (§ 3.7), pękanie klastra po wiązaniach, CCD z obrotem; `wreckPairEvery` dla wolnych par klastrów zmienia rozgrywkę — decyzja przy E7.
   - Rozgrzewka JIT klastrów (`HullBodies.warmUpClusters`, ~110 ms raz na proces) nie idzie w `init` — gra jej jeszcze nie woła. Wpiąć na ekranie ładowania razem z pierwszym `createCluster` w grze (E5) i powtórzyć złote testy z nią (przechodziły z nią w `init`).
   - Jednostki płyty: σ silnika ≈ σ E1 × masa węzła (45); wieża 43 mln przy 900 j/s przebija płytę 360 j. przy σ ≲ 2·10⁴ — strojenie w E6.
-- **Następne:** E0 — część GPU (szczyt upadku przy Ultra, za dnia, przy ciszy sesji); E0b; E3 (prefraktura).
+- **Następne (po decyzjach 11-04):** E0 — część GPU (okno dane przez użytkownika 11-04 za dnia, przy ciszy sesji); demo na szarych blokach (D20) — przed E3, do oceny okiem tempa (D12, skłania się ku wolno), przechyłu i „sztywnych klocków”; E0b (w tym reguła `zawalenia-budowli`, poprawka nieaktualnego „bez dymu i wybuchów” w regule `ciala-swiata`); E3 (prefraktura z wnętrzami — D9: docelowo wszystkie budowle).
 
 ## 7. Ryzyka
 
@@ -534,28 +534,40 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
 
 ## 8. Decyzje użytkownika (od najważniejszej)
 
-| # | decyzja | rekomendacja |
+Wszystkie decyzje rozstrzygnięte (2026-11-03: D0, D6, D1, D11, D14; 2026-11-04: reszta, odpowiedzi na listę 26 pytań). Kolumna „decyzja użytkownika” obowiązuje; tam, gdzie różni się od dawnej rekomendacji, opis jest dłuższy.
+
+| # | pytanie | decyzja użytkownika |
 |---|---|---|
-| D0 | Odejście od wariantu A z 2026-10-15 (belki 3D dla K-7, ringu, budynków): masy zawaleń jako klastry | **PRZYJĘTE 2026-11-03: tak** (belki: 0 wysp, 29–32 ms p95 [P]) |
-| D6 | H-T schodzi z belek po dysku | **PRZYJĘTE 2026-11-03: tak** (na belkach 18–29 ms [P]); rezerwa: komórka 67 |
-| D1 | „Tarcza” to dysk czy skała? | **PRZYJĘTE 2026-11-03: dysk mieszkalny**; kratery w skale (E8) — opcjonalnie później |
-| D4 | HP 8000 → nośność; fala jako impuls i osłabienie wiązań (F0), nie HP bloków | tak |
-| D11 | Przechył i położenie się wieżowca ku stronie strzałów czy zgniot w miejscu? | **PRZYJĘTE 2026-11-03: w stronę strzałów** (przechył 30–45°, potem zgniot) |
-| D14 | Wyłom bębna, magazyn, paliwo, pomosty w misji 1? | **PRZYJĘTE 2026-11-03: nacisk na wieżowce i habitat, reszta też** — wyłom bębna w E7, magazyn, paliwo i pomosty zaraz po E7 (ta sama ścieżka rejestratorów brył, przed ogólnością § 10) |
-| D3 | Pas ±70 podcina, wyżej kruszy fala i graf — wystarczy? | tak, bez rzutowania po kamerze |
-| D8 | Utrzymanie habitatu jako jeden zegar ~2–3 s | tak |
-| D5 | Klastry ranią okręty (Atlas, sojusznicy, piraci)? Zabite zaliczane graczowi? | ranią jak taran; gruz obrazu nie; zaliczanie do decyzji |
-| D12 | g budowli 400 (dach 2,6 s) czy 60–100 (5–7 s)? | A/B na nagraniu E5 |
-| D7 | Rów w szyi w kształcie wieży | tak |
-| D15 | Ujęcie kamery przy zawaleniu wieżowca | reżyser kadru z przewidzianego czasu |
-| D2 | Pył (uchylenie decyzji 10-05) | tak, cząstki |
-| D13 | Zniszczony pomost zrzuca wieżowiec? | tak, kotwica `section` |
-| D17 | Osada i winda: scenariusz (10-15) czy fizyka? | scenariusz w misji 1 |
-| D9 | Wnętrza budowli | możliwe wg znacznika, nie przymus |
-| D16 | Zwolnione tempo jako mechanika | nie, dopóki R4 tego nie wymaga |
-| D19 | Mars: budynki stają się przeszkodami? | przed krokiem Mars |
-| D10a–d | (a) ruiny w zapisie; (b) odbudowa po N min poza kadrem; (c) g ringu jako umowa (ring nie wiruje); (d) kolejność ogólności | (a) tak; (b) 30 min; (c) 400 × 0,29 / 1,9 j/s², bez Coriolisa; (d) § 10 |
-| D18 | Dźwięk zawaleń | później, hak w zdarzeniach |
+| D0 | Odejście od wariantu A z 2026-10-15 (belki 3D dla K-7, ringu, budynków): masy zawaleń jako klastry | **11-03: tak** (belki: 0 wysp, 29–32 ms p95 [P]) |
+| D6 | H-T schodzi z belek po dysku | **11-03: tak** (na belkach 18–29 ms [P]); rezerwa: komórka 67 |
+| D1 | „Tarcza” to dysk czy skała? | **11-03: dysk mieszkalny**; kratery w skale (E8) — opcjonalnie później |
+| D11 | Przechył i położenie się wieżowca ku stronie strzałów czy zgniot w miejscu? | **11-03: w stronę strzałów** (przechył 30–45°, potem zgniot) |
+| D14 | Wyłom bębna, magazyn, paliwo, pomosty w misji 1? | **11-03: nacisk na wieżowce i habitat, reszta też** — wyłom bębna w E7, magazyn, paliwo i pomosty zaraz po E7 (ta sama ścieżka rejestratorów brył, przed ogólnością § 10) |
+| D20 | Demo przed wpięciem w grę? | **11-04: tak** — małe demo na szarych blokach (graf E1 + klastry E2), zawalenie widać od razu po otwarciu, bez nakładek debug; przed E3, ocena okiem tempa (D12), przechyłu (D11) i „sztywnych klocków” (R1) |
+| D9 | Wnętrza budowli | **11-04: docelowo WSZYSTKIE budowle mają wnętrza** („gracz zacznie coś rozwalać poza misją — to co?”): stropy, słupy, szyb / rdzeń z archetypu, nie tylko wg znacznika. Kolejność: wieżowce i habitat misji 1, potem każde źródło ogólności (§ 10) dostaje wnętrze przy swoim kroku; wypiek offline (E3) trzyma koszt n^1,7–2,3 poza grą |
+| D2 | Pył przy zawaleniu | **11-04: cząstki** (bez obłoków gazu w szczycie). Ramka „uchylenie 10-05” była błędna: 10-05 to zakres jednego wdrożenia, nie zakaz |
+| D18 | Dźwięk zawaleń | **11-04: później**, teraz hak w zdarzeniach |
+| D3 | Pas ±70 podcina, wyżej kruszy fala i graf — wystarczy? | **11-04: tak**, bez rzutowania po kamerze |
+| D4 | HP 8000 → nośność; fala jako impuls i osłabienie wiązań (F0), nie HP bloków stojącego wieżowca | **11-04: tak** (oderwane klastry mają HP bloków wg § 3.7) |
+| D5 | Klastry ranią okręty (Atlas, sojusznicy, piraci)? | **11-04: tak, wszystkich, jak taran**; gruz obrazu nie. Dotyczy też ringów i stref stanowisk / hal (pyt. 26 — bez wyjątków) |
+| D5b | Zabici zawaleniem zaliczani graczowi? | **11-04: wrogowie zabici zawaleniem, które wywołał gracz — tak; sojusznicy nie** (zawalenie pamięta sprawcę, np. kto doprowadził budowlę do HP 0 / zerwał podpory) |
+| D13 | Zniszczony pomost odbiera wieżowcowi podparcie? | **11-04: tak**, kotwica `section` (kierunek z grafu — ku stronie bez podpory) |
+| D15 | Ujęcie kamery przy zawaleniu wieżowca | **11-04: reżyser kadru** z przewidzianego czasu |
+| D12 | g budowli 400 (dach 2,6 s) czy 60–100 (5–7 s)? | **11-04: A/B na nagraniu (demo D20 / E5), skłania się ku WOLNO (5–7 s)** |
+| D21 | Radar a klastry i ruiny (§ 3.7) | **11-04: poza tym planem** — radar jest słaby i przerabiają go inne sesje; zawalenia nie dokładają rekordów radaru (ewentualny rekord `radarFeed.collect` — po ich przebudowie) |
+| D7 | Rów w szyi w kształcie wieży | **11-04: tak** |
+| D8 | Utrzymanie habitatu jako jeden zegar ~2–3 s | **11-04: tak** (~2,5 s) |
+| D17 | Osada i winda: scenariusz (10-15) czy fizyka? | **11-04: scenariusz, ale lina windy przypięta do kawałka dysku** i reaguje, gdy ten kawałek pęknie (E6) |
+| D16 | Zwolnione tempo jako mechanika | **11-04: nie** |
+| D22 | Tempo upadku habitatu (cel E7) | **11-04: wieża jak dziś (~14 s do skały) — OK; RESZTA LECI ZA SZYBKO: wieża pierwsza, bęben, dysk i gruz dolatują wyraźnie później.** Bramka E7 „czasy fabuły” liczy kolejność i opóźnienie reszty względem wieży, nie ±10% dzisiejszych czasów reszty. Zgodne z 10-19 („w końcu wszystko spada na planetoidę” — `supportHoldFloor` 0,5 stroić w E6 tak, żeby reszta dysku w końcu spadła) |
+| D10a | Ruiny w zapisie | **11-04: tak** |
+| D10b | Odbudowa | **11-04: porty, ringi i hale odnawiają się POWOLI i WIDOCZNIE: uszkodzenie budowli przyjaznej → „mandat” (kara finansowa) + start dronów naprawczych, które naprawiają ścianę** (przykład usera: ściana hali K-7). Bazy z misji zostają ruiną (złom, plan fabuły 10-11). Nowa mechanika — E9 / krok K-7 (§ 10) |
+| D10c | g ringu jako umowa (ring nie wiruje) | **11-04: według planety**: 400 × 0,29 (Mars) / × 1,9 (Jowisz) j/s², bez Coriolisa — z poprawką o skalę D12 |
+| D23 | Hala K-7 (port domowy) | **11-04: PEŁNE ZAWALENIE** — po pęknięciu wszystkich podpór hala (i magazyny) ma się zawalić naprawdę; gracz może kiedyś być wrogiem Terra Novy i niszczyć hale i magazyny. Zniszczenie jako sojusznik → ogromna kara (D10b) |
+| D10d | Kolejność ogólności | **11-04: kolejność planu BEZ STACJI** (stacje usunięte z planu zniszczeń): reszta bazy z dokami → Jowisz → Mars → K-7 → Ziemia; Z7 wg D24 |
+| D19 | Mars: budynki stają się przeszkodami? | **11-04: tak** — budynki ringu Marsa (hale portów, kopuły i zabudowa ECUMENE) dostają kolizje gry i destrukcję |
+| D24 | Budowle Z7 (stocznia, hangar, boje) | **11-04: najpierw użytkownik dopracowuje wygląd i wpięcie, potem zniszczalność**. Wymóg usera: potok archetypów ma przyjmować NOWE budowle bez ręcznej pracy (model + znaczniki → archetyp, wypiek offline) — § 10 |
+| D16b | `wreckPairEvery` dla wolnych par klastrów | rozstrzyga orkiestrator: rezerwa, tylko gdy E7 nie zmieści się w budżecie (stos 256: p95 1,74 / max 2,21 ms Node) |
 
 ## 9. Odrzucone warianty
 
@@ -588,7 +600,7 @@ Potok `buildStructureArchetype` jest wspólny, ale **każde źródło potrzebuje
 | reszta bazy, Z7, doki | rejestratory brył, L2 z półprzestrzeni [P: 0,6–7,6 ms na budynek] | studnia | brak ciał poza bazą | 2–3 |
 | Jowisz BUDOWA | 20–64 archetypy z wypieku offline | promieniowo, w płaszczyźnie (widać z boku) | baraki w `heightAt` (`budowaPlan.js:185-198`): ruina nadpisuje `heightAt` | 2–3 |
 | Mars ECUMENE | jw. | jw. | budynków brak w kolizji (`ecumenePlan.js:232-240`) → D19 | 3–4 |
-| stacje GLB | `voxelizeTriangles` → prostopadłościany | brak: tylko rozpad | punkty życia, `Destruction3D` (`stations3D.js:157`) | 2–3 |
+| ~~stacje GLB~~ — usunięte z planu (D10d, 11-04) | — | — | punkty życia, `Destruction3D` (`stations3D.js:157`) — bez zmian | 0 |
 | hala K-7 | jw. | studnia | port domowy, najpierw decyzja | 2–3 |
 | miasto Ziemi | budynki z shadera (`haloRingCity.js:1-16`) | promieniowo | wymaga lustra JS generatora | 3–4 |
 
@@ -606,7 +618,7 @@ Potok `buildStructureArchetype` jest wspólny, ale **każde źródło potrzebuje
 - Archetypy offline, bo hipercruise mija 30 km w 0,75–1,5 s. Zachowanie przed gotowym archetypem ustala E9.
 - Ruina zajmuje 1,1–69 KB, a uśpiona kosztuje 0 ms [P].
 
-Kolejność: reszta bazy z Z7 i dokami, Jowisz, Mars (po D19), stacje, K-7, Ziemia.
+Kolejność (D10d, 11-04): reszta bazy z dokami, Jowisz, Mars (D19 = tak: budynki ringu z kolizjami), K-7 (D23: pełne zawalenie hal i magazynów; D10b: mandat + drony naprawcze), Ziemia. **Stacje GLB usunięte z planu zniszczeń.** Z7 dopiero po dopracowaniu wyglądu i wpięciu przez użytkownika (D24). Wymóg D24: nowa budowla = model + znaczniki (podpory, kotwice, wnętrze) → archetyp z wypieku offline, bez ręcznej pracy w kodzie gry poza warstwą gry danego źródła.
 
 ---
 
