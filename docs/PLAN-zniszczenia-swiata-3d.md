@@ -4,6 +4,7 @@ Stan: plan przyjęty — decyzje użytkownika w § 8; F0 zrobione i ocenione 202
 w grze, płasko, bez dymu i wybuchów) wdrożone 2026-10-05 — czekają na ocenę w grze** (§ 11a). Podstawa: przegląd dema `destruktor3d.html`
 (silnik `src/game/destructorBeams3D.js`, bronie dema `src/game/beamWeapons3D.js`), kadłubów gry
 (`docs/PORT-silnik-belek.md`), świata 3D (baza piratów, stacje, ring, K-7), stoczni Z7 i fizyki skał.
+Od 2026-11-04 kruszenie i runięcie budowli prowadzi `docs/PLAN-zawalenia-budowli-3d.md` (dopisek pod tabelą etapów, § 7).
 
 Cele użytkownika: zniszczalne (1) baza piratów, (2) stocznia, (3) ring i jego elementy — miasto, budynki,
 (4) dok K-7 („walnę rozpędzonym Atlasem w ścianę — ściana ma pęknąć”), (5) ostrzał bronią ma niszczyć świat 3D,
@@ -244,12 +245,14 @@ Te same kanały na kadłubach statków. Zmienia balans (kratery 25c ustawiał u�
 | **G** ✅ demo | Wybuchy i dym: gaz na siatce 3D (compute WebGPU, jak Niagara Fluids) podpięty pod zniszczenia w demie WebGPU destruktora; klej gry gotowy, ale wypięty — w grze silnik zniszczeń bez dymu, ognia i wybuchów (decyzja 2026-10-05) — § 12 | zrzuty `wybuchy-demo.mjs`, `destruktor3d-gaz.mjs`, `dym-gra.mjs --ab`, sondy pól, testy; **ocena użytkownika** |
 | **F1** | Silnik: `planar` per ciało, `anchored` + kotwice, materiały per ciało, pręt z podkrokami, API kanałów; Hexlance i rakiety w pętli fizyki | złote stany statków bit w bit, testy kanałów, pomiar |
 | **F2** | Baza piratów w grze: ciało 3D z fabryki, skóra TSL, kolizja ze statkami, pręt Hexlance, misja 1, kilka stacji | dym gry, zrzuty, rozgrzewka (0 pipeline'ów synchronicznych), koszt kroku |
-| **F3** | K-7: przęsła, taran, pociski w ścianach, NPC i ściany | `ring-kolizje-gra`, zrzuty taranu 500 / 1 500 / 3 000 j/s |
+| **F3** | K-7: przęsła, taran, pociski w ścianach, NPC i ściany (kruszenie i runięcie budowli — plan zawaleń, niżej) | `ring-kolizje-gra`, zrzuty taranu 500 / 1 500 / 3 000 j/s |
 | **F4** | Wszystkie bronie gry na kanałach przeciw światu; A/B na okrętach | bitwa (`profil-bitwy.mjs`), balans |
 | **F5** | Asteroidy: strzał w skałę pod kursorem, warstwa „skały w płaszczyźnie” (kolizje z kadłubami i pociskami), wciąganie skał do płaszczyzny, broń → silnik skał | `wydobycie-gra.mjs`, `asteroidy-gra.mjs` |
 | **F6** | Stocznia przy jej wpięciu w ring | — |
 | **F7** | (odłożone — decyzja 2) Miasto i budowle ringów (bliźniak JS + maska) | parzystość bliźniaka z shaderem |
 | **F8** | Gdy zabraknie CPU: fizyka belek na GPU (`dema/destruktor2d-webgpu.html`, wariant a) | `bench-belki-gpu.mjs` |
+
+**Dopisek 2026-11-04:** część o budowlach (kruszenie i runięcie baz, K-7, ringów i budynków ringu — F3, F6, F7 w zakresie zawaleń) zastępuje `docs/PLAN-zawalenia-budowli-3d.md` (D0, 2026-11-03: masy zawaleń jako klastry sztywne i graf nośny, nie belki 3D; stacje usunięte z planu zniszczeń — D10d; reguła `zawalenia-budowli`). „Bez dymu, ognia i wybuchów” z 2026-10-05 było zakresem wdrożenia F2, nie zakazem: wybuchy z gry (`GameBlasts.blast`) są w grze, pył zawaleń to cząstki (D2). Ciała płaskie i bronie przeciw światu (F1, F2, F4) zostają w tym planie.
 
 ---
 

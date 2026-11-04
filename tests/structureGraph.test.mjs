@@ -8,8 +8,6 @@
 // 60 / 120 Hz ±5%, budżet zerwań (także cięcia plastra), bez alokacji w kroku, progi czasu (WYDAJNOSC).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import * as SG from '../src/game/structureGraph.js';
 import { allocatedBytes, untilSteady } from './helpers/alokacje.mjs';
 import { WYDAJNOSC } from './helpers/wydajnosc.mjs';
@@ -572,10 +570,20 @@ test('determinizm: 3 przebiegi bit w bit (zdarzenia, stan wiązań, przemieszcze
     assert.ok(Buffer.from(runs[r].S.alive.buffer).equals(Buffer.from(runs[0].S.alive.buffer)));
     assert.ok(Buffer.from(runs[r].S.ux.buffer).equals(Buffer.from(runs[0].S.ux.buffer)));
   }
-  // archetyp z tym samym ziarnem — te same limity; inne ziarno — inny rozrzut
-  const a = SG.buildHighriseArchetype({ seed: 5 }), b = SG.buildHighriseArchetype({ seed: 6 });
-  assert.ok(Buffer.from(a.limC.buffer).equals(Buffer.from(HR.limC.buffer)));
-  assert.ok(!Buffer.from(b.limC.buffer).equals(Buffer.from(HR.limC.buffer)));
+  // archetyp z tym samym ziarnem — ta sama kalibracja (sztywności, limity ściskania / rozciągania / ścinania, nośność
+  // podpór, przemieszczenia wyjściowe), choć HR i DISC zbudowano przy imporcie, a ten po innych testach i po
+  // structureReset egzemplarza (budowa nie zależy od stanu modułu); inne ziarno — inny rozrzut
+  const same = (x, y) => x.length === y.length && Buffer.from(x.buffer, x.byteOffset, x.byteLength).equals(Buffer.from(y.buffer, y.byteOffset, y.byteLength));
+  SG.structureReset(runs[0].S);
+  assert.ok(same(runs[0].S.ux, HR.u0x) && same(runs[0].S.uz, HR.u0z), 'reset: przemieszczenia wyjściowe archetypu');
+  assert.ok(runs[0].S.health.every((h) => h === 1) && runs[0].S.alive.every((v) => v === 1) && runs[0].S.evCount === 0, 'reset: wiązania całe');
+  const a = SG.buildHighriseArchetype({ seed: 5 }), d = SG.buildDiscArchetype({ seed: 7 }), b = SG.buildHighriseArchetype({ seed: 6 });
+  for (const k of ['k0', 'limC', 'limT', 'limS', 'anchorCap', 'u0x', 'u0y', 'u0z']) {
+    assert.ok(same(a[k], HR[k]), `W-1 (ziarno 5): ${k} bit w bit`);
+    assert.ok(same(d[k], DISC[k]), `dysk (ziarno 7): ${k} bit w bit`);
+  }
+  assert.ok(DISC.anchorCap.some((c) => c > 0), 'dysk ma podpory o skończonej nośności (anchorCap liczony z reakcji)');
+  assert.ok(!same(b.limC, HR.limC));
 });
 
 test('60 vs 120 Hz: czasy zdarzeń ±5% (oderwanie przy podcięciu, front do ziemi)', () => {
@@ -585,6 +593,19 @@ test('60 vs 120 Hz: czasy zdarzeń ±5% (oderwanie przy podcięciu, front do zie
   const ta = c.ground.t - c.frontStart, tb = d.ground.t - d.frontStart;
   assert.ok(Math.abs(c.frontStart - d.frontStart) <= 0.05 * c.frontStart, `start frontu ${c.frontStart} / ${d.frontStart}`);
   assert.ok(Math.abs(ta - tb) <= 0.05 * ta, `front do ziemi ${ta.toFixed(3)} / ${tb.toFixed(3)} s`);
+});
+
+// Znana luka prototypu 1-DOF (plan § 6.2, E1): w szyi dysku 60 Hz daje płytszy rów i mniej energii zgniotu niż 120 Hz.
+// Zdjąć `todo` w E6, gdy szyję liczy styk 6-DOF klaster × pole płyty silnika (beamPlateField3D.js).
+// Pomiar 2026-11-04 (60 wobec 120 Hz): ω0 0,55 — rów −20,1%, energia −34,0%; ω0 0,85 — rów −3,1%, energia −7,2%.
+test('60 vs 120 Hz w szyi dysku: rów i energia zgniotu ±5% (ω0 0,55 i 0,85)', { todo: 'E6 — prototyp 1-DOF: przy ω0 0,55 rów −20%, energia −34% przy 60 Hz' }, () => {
+  const cloud = SG.towerPointCloud();
+  for (const omega0 of [0.55, 0.85]) {
+    const a = SG.plateImpactScenario('szyja', { hz: 120, omega0, cloud, disc: DISC });
+    const b = SG.plateImpactScenario('szyja', { hz: 60, omega0, cloud, disc: DISC });
+    assert.ok(Math.abs(a.disc.trench - b.disc.trench) <= 0.05 * a.disc.trench, `ω0 ${omega0}: rów ${a.disc.trench} / ${b.disc.trench} komórek`);
+    assert.ok(Math.abs(a.energyDisc - b.energyDisc) <= 0.05 * a.energyDisc, `ω0 ${omega0}: energia ${a.energyDisc.toExponential(3)} / ${b.energyDisc.toExponential(3)}`);
+  }
 });
 
 test('budżet: ≤ 64 zerwania na 1/120 s (60 Hz: 128), nadmiar w kolejce; rekordy zdarzeń ≤ STRUCT_EV_CAP, nadmiar zbiorczo', () => {
@@ -607,10 +628,7 @@ test('budżet: ≤ 64 zerwania na 1/120 s (60 Hz: 128), nadmiar w kolejce; rekor
   }
 });
 
-test('gra nie losuje: src/game/structure*.js bez Math.random (rozrzut z PRNG ziarna archetypu)', () => {
-  const src = readFileSync(fileURLToPath(new URL('../src/game/structureGraph.js', import.meta.url)), 'utf8');
-  assert.ok(!/Math\.random/.test(src.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')));
-});
+// „gra nie losuje” i reszta zasad obszaru (three, DOM, importy, zegar, Math.hypot) — tests/structureZasady.test.mjs
 
 // ── progi czasu ściany (HULLFALL_TESTY_WYDAJNOSC=1) ──
 test('WYDAJNOŚĆ: wieżowiec pod ostrzałem ≤ 0,1 ms średnio na krok; najgorszy krok ≤ 1 ms dla grafów misji', WYDAJNOSC, () => {
