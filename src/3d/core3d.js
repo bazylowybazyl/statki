@@ -38,6 +38,7 @@ import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
 import { syncSky3D } from './sky3D.js';
 import { setBillboard3DCamera } from './tsl/billboard3D.js';
 import { installRulonGlobal, RULON, rulonActive, rulonInverse } from './warp/rulon.js';
+import { createZegarGpuKlatki } from './zegarGpuKlatki.js';
 import { packFogView } from './fog/fogOfWarView.js';
 import { FOG_CACHE_MIN_ZOOM, FogNoiseCache } from './fog/fogOfWarPost.js';
 import { ZBIERACZ, ZGLOSZENIE_POWOD, wyslijZgloszenia, zainstalujZbieranieZgloszen } from './zbieraczZgloszen.js';
@@ -685,21 +686,27 @@ export const Core3D = {
   // jedyny pomiar, który rozstrzyga CPU vs GPU. WebGPU: znaczniki czasu
   // (trackTimestamp, cecha timestamp-query) rozwiązywane asynchronicznie —
   // najwyżej jedno zapytanie w locie na typ (render / compute), bez narastania
-  // Promise (SPIKE 8); wynik = ms GPU ostatniej rozwiązanej klatki.
+  // Promise (SPIKE 8). Wynik = ms GPU NA JEDNĄ KLATKĘ Core3D (render() — podzielony ekran: para
+  // renderów — albo renderBackdrop()): średnia z pełnych klatek rozliczonych w ostatnim wyniku
+  // (src/3d/zegarGpuKlatki.js — znacznik dostaje numer klatki Core3D przy przydziale, nie
+  // renderer.info.frame: w workerze takt rAF three obejmował dziesiątki renderów — 2026-11-04).
   gpuFrameMs: 0,
   gpuComputeMs: 0,
   gpuFrameSamples: 0,
   gpuComputeSamples: 0,
-  // Co którą klatkę rAF mierzyć czas GPU (znaczniki czasu kosztują CPU na każdy pass — zadanie 23);
+  // Co którą klatkę Core3D mierzyć czas GPU (znaczniki czasu kosztują CPU na każdy pass — zadanie 23);
   // 1 = każda klatka (narzędzia pomiaru: koszt-klatki.mjs).
   gpuTimerSampleEvery: 4,
   _gpuTimerPending: { render: false, compute: false },
-  _gpuTimerFrame: -1,
+  // Numer klatki Core3D, dla której brama znaczników już rozstrzygnęła (zegar GPU: _gpuClock.fid).
   _gpuTimerGateFrame: -1,
+  _gpuSplitHalf: 0,
+  _gpuClock: null,
   _gpuTimestampFeature: false,
   _onGpuRenderTimestamp: null,
   _onGpuComputeTimestamp: null,
-  _onGpuTimestampError: null,
+  _onGpuRenderTimestampError: null,
+  _onGpuComputeTimestampError: null,
   perfToggles: { bloom: true, heatHaze: true, fxDistortion: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
   shadowShaftsQuality: 'medium',
   _shaftCfg: resolveShadowShaftsQuality('medium'),
@@ -1050,10 +1057,8 @@ export const Core3D = {
     // Handlery zegara GPU i pomiaru bloomu przypięte raz (bez domknięć per klatka).
     this._onGpuRenderTimestamp = (ms) => this._handleGpuTimestamp('render', ms);
     this._onGpuComputeTimestamp = (ms) => this._handleGpuTimestamp('compute', ms);
-    this._onGpuTimestampError = () => {
-      this._gpuTimerPending.render = false;
-      this._gpuTimerPending.compute = false;
-    };
+    this._onGpuRenderTimestampError = () => this._handleGpuTimestamp('render', NaN);
+    this._onGpuComputeTimestampError = () => this._handleGpuTimestamp('compute', NaN);
     this._onBloomRenderBegin = () => this._bloomRenderBegin();
     this._onBloomRenderEnd = () => this._bloomRenderEnd();
 
@@ -1231,6 +1236,7 @@ export const Core3D = {
     this._coalesceUniformUploads(renderer);
     this._dedupeInterleavedUploads(renderer);
     this._uniqueComputeListTimestamps(renderer);
+    this._installGpuFrameClock(renderer);
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
   },
@@ -1320,6 +1326,24 @@ export const Core3D = {
       if (id === undefined) { id = next++; ids.set(ctx, id); }
       const info = this.renderer.info;
       this.get(ctx).timestampUID = 'c:' + info.compute.frameCalls + ':L' + id + ':f' + info.frame;
+    };
+  },
+
+  // Zegar GPU na klatkę Core3D (src/3d/zegarGpuKlatki.js): każdy przydział pary zapytań czasu (pass renderu,
+  // wywołanie compute) dostaje numer bieżącej klatki Core3D — three r183 wiąże znaczniki z renderer.info.frame
+  // (takt rAF pętli three), który w workerze renderu nie ma związku z renderami.
+  _installGpuFrameClock(renderer) {
+    const backend = renderer?.backend;
+    if (!this._gpuClock) this._gpuClock = createZegarGpuKlatki();
+    if (!backend || typeof backend.initTimestampQuery !== 'function' || backend.__core3dGpuFrameClock) return;
+    const clock = this._gpuClock;
+    const orig = backend.initTimestampQuery;
+    backend.__core3dGpuFrameClock = true;
+    backend.initTimestampQuery = function (type, uid, descriptor) {
+      orig.call(this, type, uid, descriptor);
+      if (!this.trackTimestamp) return; // three nic nie przydzieliło (brama: klatka bez znaczników)
+      const w = descriptor && descriptor.timestampWrites;
+      clock.noteQuery(type, w ? w.beginningOfPassWriteIndex : null);
     };
   },
 
@@ -1734,87 +1758,116 @@ export const Core3D = {
     return this._gpuTimestampFeature === true;
   },
 
-  // Zegar GPU: po klatce (koniec render / renderBackdrop) rozwiązanie zapytań —
-  // najwyżej jedno w locie na typ, nowe dopiero po rozwiązaniu poprzedniego.
-  // Zapytania kumulują się do rozwiązania (pula 2048 = 1024 rendery), więc
-  // rozwiązujemy stale; wynik three = suma ms GPU OSTATNIEJ klatki w paczce
-  // (passy Core3D + rendery modułów w tej klatce, np. pieczenie map ringu).
-  // Podzielony ekran to dwa renderSingle w klatce — pytamy po drugim, żeby
-  // ostatnia klatka paczki była pełna.
+  // Zegar GPU — granica klatki Core3D (koniec render(); podzielony ekran: koniec DRUGIEGO renderu pary).
+  // Licznik połówek zamiast renderer.info.frame: w workerze renderu takt rAF three nie ma związku z
+  // renderami (render na wiadomość strony), więc „ta sama klatka rAF” obejmowała dziesiątki obrazów.
   _gpuTimerAfterRender() {
-    const renderer = this.renderer;
-    if (!renderer) return;
-    const frame = renderer.info.frame;
-    const firstOfFrame = frame !== this._gpuTimerFrame;
-    this._gpuTimerFrame = frame;
-    const split = !!RenderWorld.splitScreenMode;
-    if (!split || !firstOfFrame) this._gpuTimerPoll();
+    if (!this.renderer) return;
+    if (RenderWorld.splitScreenMode && this._gpuSplitHalf === 0) { this._gpuSplitHalf = 1; return; }
+    this._gpuSplitHalf = 0;
+    this._gpuTimerFrameEnd();
   },
 
-  // Wynik zapytania: ms ostatniej klatki paczki. Pula three trzyma ms KAŻDEGO
-  // renderu w mapie `timestamps` (klucz = uid z numerem klatki) i nigdy jej nie
-  // czyści — przy rozwiązywaniu co klatkę rosłaby bez końca (~700 wpisów/s),
-  // a gra używa tylko sumy klatki: czyścimy po każdym wyniku.
+  // Koniec klatki Core3D: nowy numer klatki zegara (src/3d/zegarGpuKlatki.js), zlecenia rozwiązania zapytań
+  // (najwyżej jedno w locie na typ; rozliczają klatki zakończone przed zgłoszeniem) i brama znaczników NASTĘPNEJ
+  // klatki od razu — rendery modułów do własnych celów przed jej render() (pieczenie map ringu, wypieki) są w niej.
+  _gpuTimerFrameEnd() {
+    const clock = this._gpuClock;
+    if (!clock || !this.renderer) return;
+    clock.frameEnd();
+    const backend = this.renderer.backend;
+    if (!backend || this._gpuTimestampFeature !== true) return;
+    // Backend.resolveTimestampsAsync three nic nie robi przy trackTimestamp = false, pula compute przy własnej
+    // fladze false też nie zabiera zapytań — zlecenie z flagami włączonymi, brama niżej rozstrzyga od nowa.
+    backend.trackTimestamp = true;
+    const compute = backend.timestampQueryPool?.compute;
+    if (compute) compute.trackTimestamp = true;
+    this._gpuTimerPollType('render');
+    this._gpuTimerPollType('compute');
+    this._gpuTimerFrameBegin();
+  },
+
+  // Wynik zlecenia: znaczniki z mapy `timestamps` puli three (uid → ms) rozliczone na klatki Core3D; gdy klatki
+  // pełne doszły do rozliczenia — średnie ms GPU na klatkę do gpuFrameMs / gpuComputeMs i liczniki próbek
+  // (odbiorca — rozdzielczość dynamiczna — bierze tylko NOWE wyniki). Wartość `ms` od three (suma ostatniego
+  // info.frame paczki) nie jest używana. Pula three nigdy nie czyści `timestamps` — czyścimy po każdym wyniku.
   _handleGpuTimestamp(type, ms) {
     this._gpuTimerPending[type] = false;
-    if (Number.isFinite(ms) && ms > 0) {
-      // Liczniki próbek: odbiorca (rozdzielczość dynamiczna) bierze tylko NOWE wyniki.
+    const pool = this.renderer?.backend?.timestampQueryPool?.[type];
+    const clock = this._gpuClock;
+    if (clock) {
+      clock.onResult(type, pool ? pool.timestamps : null);
+      this._publishGpuClock(clock);
+    } else if (Number.isFinite(ms) && ms > 0) {
       if (type === 'render') { this.gpuFrameMs = ms; this.gpuFrameSamples++; }
       else { this.gpuComputeMs = ms; this.gpuComputeSamples++; }
     }
-    this.renderer?.backend?.timestampQueryPool?.[type]?.timestamps?.clear?.();
+    pool?.timestamps?.clear?.();
   },
 
-  // Brama znaczników czasu na granicy klatki rAF (start render / renderBackdrop).
-  // Pula three ma 2048 zapytań (2 na pass), a wynik zlecenia przychodzi po kilku–
-  // kilkudziesięciu klatkach (harness headless: ~70 klatek, ~200 ms); klatka to dziś
-  // ~25 passów (sceny, 12 bloomu, post), więc pula się przepełniała — three ostrzegało
-  // „Maximum number of queries exceeded”, a passy po przepełnieniu dostawały indeks
-  // null → pisały znaczniki do slotów 0/1 (psuły pierwszy pomiar paczki). Gdy w puli
-  // brak miejsca na całą klatkę: bez wiszącego zlecenia — nowe od razu (zeruje pulę
-  // synchronicznie), z wiszącym — ta klatka bez znaczników (backend.trackTimestamp =
-  // false: initTimestampQuery nic nie dopisuje do passów), wynik zlecenia odblokowuje.
-  // Zmierzone klatki zostają pełne; PerfHUD dostaje wynik rzadziej.
-  // Zadanie 23: miejsce sprawdzane też przy KAŻDYM kolejnym renderze tej samej klatki rAF (dema i
-  // narzędzia renderują wiele razy na klatkę — brama raz na klatkę przepuszczała całą serię i pula się
-  // przepełniała) i w puli compute (osobny znacznik puli — compute nie gasi znaczników renderu).
-  _gpuTimerGate() {
-    const renderer = this.renderer;
-    const backend = renderer?.backend;
-    if (!backend || this._gpuTimestampFeature !== true) return;
-    const frame = renderer.info.frame;
-    const firstOfFrame = frame !== this._gpuTimerGateFrame;
+  _publishGpuClock(clock) {
+    if (clock.renderN > 0) { this.gpuFrameMs = clock.renderMs; this.gpuFrameSamples++; }
+    if (clock.computeN > 0) { this.gpuComputeMs = clock.computeMs; this.gpuComputeSamples++; }
+  },
+
+  // Brama znaczników czasu na początku klatki Core3D (decyzja zapada na końcu poprzedniej — _gpuTimerFrameEnd;
+  // przy starcie render() tylko pierwsza klatka i narzędzia, które zerują _gpuTimerGateFrame). Pula three ma 2048
+  // zapytań (2 na pass), a wynik zlecenia przychodzi po kilku–kilkudziesięciu klatkach (harness headless: ~70 klatek,
+  // ~200 ms); klatka to dziś ~25 passów (sceny, post) + compute (bloom, efekty), więc pula się przepełniała — three
+  // ostrzegało „Maximum number of queries exceeded”, a passy po przepełnieniu dostawały indeks null → pisały znaczniki
+  // do slotów 0/1 (psuły pierwszy pomiar paczki). Gdy w puli brak miejsca na całą klatkę: bez wiszącego zlecenia —
+  // nowe od razu (zeruje pulę synchronicznie), z wiszącym — ta klatka bez znaczników (backend.trackTimestamp = false:
+  // initTimestampQuery nic nie dopisuje do passów), wynik zlecenia odblokowuje. Zmierzone klatki zostają pełne;
+  // PerfHUD dostaje wynik rzadziej. Zadanie 23: znaczniki co N-tą klatkę (gpuTimerSampleEvery) — para zapytań na
+  // pass kosztowała ~5 µs CPU na pass (~0,13 ms klatki przy Ziemi, 25 passów z bloomem), a wynik i tak przychodzi
+  // z opóźnieniem. Pula compute ma własny znacznik puli — compute nie gasi znaczników renderu.
+  _gpuTimerFrameBegin() {
+    const backend = this.renderer?.backend;
+    const clock = this._gpuClock;
+    if (!backend || !clock || this._gpuTimestampFeature !== true) return;
+    this._gpuTimerGateFrame = clock.fid;
+    const every = Math.max(1, this.gpuTimerSampleEvery | 0);
+    if (every > 1 && (clock.fid % every) !== 0) {
+      backend.trackTimestamp = false;
+      clock.setSampled(false);
+      return;
+    }
+    backend.trackTimestamp = true;
     const pools = backend.timestampQueryPool;
-    if (firstOfFrame) {
-      this._gpuTimerGateFrame = frame;
-      // Zadanie 23: znaczniki co N-tą klatkę (gpuTimerSampleEvery) — para zapytań na pass kosztowała
-      // ~5 µs CPU na pass (~0,13 ms klatki przy Ziemi, 25 passów z bloomem), a wynik i tak przychodzi
-      // z opóźnieniem kilku–kilkudziesięciu klatek (PerfHUD, harness). Klatka bez próbki: bez znaczników.
-      const every = Math.max(1, this.gpuTimerSampleEvery | 0);
-      if (every > 1 && (frame % every) !== 0) {
-        backend.trackTimestamp = false;
-        return;
+    const pending = this._gpuTimerPending;
+    const compute = pools?.compute;
+    if (compute) {
+      compute.trackTimestamp = true;
+      if (compute.maxQueries - compute.currentQueryIndex < GPU_TIMER_FRAME_COMPUTE_QUERIES) {
+        if (!pending.compute) this._gpuTimerPollType('compute');
+        else { compute.trackTimestamp = false; clock.notePartial('compute'); }
       }
-      backend.trackTimestamp = true;
-      const compute = pools?.compute;
-      if (compute) {
-        compute.trackTimestamp = true;
-        if (compute.maxQueries - compute.currentQueryIndex < GPU_TIMER_FRAME_COMPUTE_QUERIES) {
-          if (!this._gpuTimerPending.compute) this._gpuTimerPollType('compute');
-          else compute.trackTimestamp = false;
-        }
-      }
-    } else if (backend.trackTimestamp !== true) {
-      return; // ta klatka już bez znaczników
     }
     const pool = pools?.render;
-    if (!pool || !(pool.maxQueries > 0)) return;
-    const need = firstOfFrame ? GPU_TIMER_FRAME_QUERIES : GPU_TIMER_RENDER_QUERIES;
-    if (pool.maxQueries - pool.currentQueryIndex >= need) return;
-    if (!this._gpuTimerPending.render) this._gpuTimerPollType('render');
-    else backend.trackTimestamp = false;
+    if (pool && pool.maxQueries > 0 && pool.maxQueries - pool.currentQueryIndex < GPU_TIMER_FRAME_QUERIES) {
+      if (!pending.render) this._gpuTimerPollType('render');
+      else { backend.trackTimestamp = false; clock.setSampled(false); return; }
+    }
+    clock.setSampled(true);
   },
 
+  // Start render() / renderBackdrop(). Pierwszy render klatki bez rozstrzygniętej bramy — rozstrzyga ją; kolejny
+  // render tej samej klatki (podzielony ekran) — miejsce w puli na jeden pełny render (zadanie 23: dema i narzędzia
+  // renderują seriami); bez miejsca i ze zleceniem w locie reszta klatki bez znaczników (klatka niepełna).
+  _gpuTimerGate() {
+    const backend = this.renderer?.backend;
+    const clock = this._gpuClock;
+    if (!backend || !clock || this._gpuTimestampFeature !== true) return;
+    if (this._gpuTimerGateFrame !== clock.fid) { this._gpuTimerFrameBegin(); return; }
+    if (backend.trackTimestamp !== true) return; // ta klatka bez znaczników
+    const pool = backend.timestampQueryPool?.render;
+    if (!pool || !(pool.maxQueries > 0)) return;
+    if (pool.maxQueries - pool.currentQueryIndex >= GPU_TIMER_RENDER_QUERIES) return;
+    if (!this._gpuTimerPending.render) this._gpuTimerPollType('render');
+    else { backend.trackTimestamp = false; clock.notePartial(); }
+  },
+
+  // Rozwiązanie zapytań obu pul (narzędzia) — przy włączonych znacznikach backendu.
   _gpuTimerPoll() {
     const backend = this.renderer?.backend;
     if (!backend || backend.trackTimestamp !== true) return;
@@ -1822,17 +1875,28 @@ export const Core3D = {
     this._gpuTimerPollType('compute');
   },
 
-  // Jedno zlecenie w locie na typ puli (render / compute); zlecenie zeruje pulę synchronicznie.
+  // Jedno zlecenie w locie na typ puli (render / compute); zlecenie zeruje pulę synchronicznie (three r183 kopiuje
+  // mapę uid → przesunięcie w tym samym wywołaniu) — zegar robi migawkę tuż przed nim. Pusta pula: rozliczenie od
+  // razu, bez zlecenia GPU i bez Promise (klatki bez znaczników też muszą dojść do rozliczenia).
   _gpuTimerPollType(type) {
     const renderer = this.renderer;
     const pool = renderer?.backend?.timestampQueryPool?.[type];
     const pending = this._gpuTimerPending;
     if (!pool || pending[type]) return;
+    const clock = this._gpuClock;
+    if (clock && pool.currentQueryIndex === 0) {
+      clock.beforeResolve(type, pool);
+      clock.onResult(type, null);
+      this._publishGpuClock(clock);
+      return;
+    }
     pending[type] = true;
+    if (clock) clock.beforeResolve(type, pool);
     renderer.resolveTimestampsAsync(type).then(
       type === 'render' ? this._onGpuRenderTimestamp : this._onGpuComputeTimestamp,
-      this._onGpuTimestampError
+      type === 'render' ? this._onGpuRenderTimestampError : this._onGpuComputeTimestampError
     );
+    if (clock) clock.afterResolveCall(type, pool);
   },
 
   // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu —
@@ -2454,7 +2518,9 @@ export const Core3D = {
     perf.renderTotalMs = performance.now() - tRenderTotal0;
     perf.composerMs = 0;
     this._publishRendererInfo();
-    this._gpuTimerPoll();
+    // Tło menu: każdy render to klatka zegara GPU.
+    this._gpuSplitHalf = 0;
+    this._gpuTimerFrameEnd();
     wyslijZgloszenia(ZGLOSZENIE_POWOD.KADR);
   },
 
