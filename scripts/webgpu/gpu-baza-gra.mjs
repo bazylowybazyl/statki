@@ -17,11 +17,24 @@
 //                serii, więc pierwsze sekundy upadku są w ostatnim oknie ostrzal-N (kolumna `upadek`, `ft`).
 //                --prog P (domyślnie 0): koniec ostrzału przy HP ≤ P % (etapy: 75 / 50 / 25 / 0); --strzalyMaks
 //                i zastój (brak postępu pul i etapów przez 8 serii) też kończą ostrzał;
-//   upadek-N   — HP 0 (finał misji) → okna co 2 s do osiadania (≤ 60 s). Habitat żywy po ostrzale (--prog > 0, limit
+//   upadek-N   — HP 0 (finał misji) → okna co 2 s jedno za drugim do osiadania (≤ 60 s; bez pauz i śladu w trakcie —
+//                kolumny ft, uderzenie wieży / dysku, uderzeń, zamrożonych brył). Habitat żywy po ostrzale (--prog > 0, limit
 //                strzałów, zastój) — finał JAWNIE tym samym API, którym gra zabija habitat poza pulami (syncBaseStages
 //                po komplecie etapów, ogień w rurach): S.deps.damageStation(habitat, hp + 10, true) — `direct`, bez pul
 //                kawałków (bez `true` trafienie idzie do puli kawałka pod punktem trafienia i finału nie ma);
+//   osiadle-N  — po osiadaniu okna 2 s do pojawienia się podsumowania misji (≤ 20 s);
 //   po         — kamera fabuły po upadku; nad-gruzem — Atlas nad środkiem bazy, kamera statku (--zoomGruz).
+// ZAMROŻENIE PO UPADKU (2026-11-04): misja 1 po osiadaniu (habitatFallDone) i ogniu w rurach mówi „yardVictory”, czeka
+//   3 s czasu gry i pokazuje podsumowanie (`api.ui.summary` → StoryGame._freeze 'summary'): pętla gry idzie gałęzią pauzy
+//   (`PAUSED || StoryGame.worldFrozen` — bez kroków fizyki, __frameId stoi), worker rysuje stojący świat. Gracz zamyka
+//   podsumowanie przyciskiem — wtedy rusza misja 2 (naprawa, po ~8 s fale piratów). Narzędzie (--odmroz 1, domyślnie)
+//   odmraża JAWNIE: usuwa powód 'summary' z StoryGame._freeze i chowa panel — świat żyje (gruz, wraki, gaz), a skrypt
+//   misji dalej czeka na podsumowanie (bez fal misji 2). --odmroz 0 — okna po i nad-gruzem w zamrożonym świecie (jak dawniej).
+// Sonda GPU (2026-11-04): czas GPU NA KLATKĘ (p50 / p95 / maks. render, compute, suma) z własnego licznika klatek sondy
+//   (sondaGpuWorkera.mjs), każda klatka ze znacznikami (--sondaKazdaKlatka 0 — brama Core3D jak w grze); każde okno
+//   i przerwa między oknami (seria-N — strzały, zrzut-…, po:<okno>) ma znacznik, więc pomiar GPU nie ma dziur. Tabela
+//   na końcu logu, w raporcie `gpuOkna`. Przed startem: gry użytkownika (LoL, RuneScape) — bez pomiaru (--mimoGry 1
+//   pomija), cudze harnessy — w raporcie `obce` (start, po ostrzale, po upadku, koniec).
 // --slad s: ślad Chrome (zajętość CrGpuMain / workera / strony, najdroższe zdarzenia procesu GPU) w oknach: pierwsze
 //   trafienia, środek ostrzału, upadek (4 s po HP 0) i nad gruzem.
 // --abWorker 'nazwa@kod|…': w PAUZIE nad gruzem warianty — kod w workerze (globalThis.__C3 = Core3D, __ST = stan
@@ -45,7 +58,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
-import { SONDA_INSTALUJ, SONDA_CZYTAJ, startNvidiaSmi, stanMaszyny, sladWatkow } from './sondaGpuWorkera.mjs';
+import { sondaInstaluj, sondaOkno, SONDA_CZYTAJ, SONDA_GPU_OKNA, startNvidiaSmi, stanMaszyny, sladWatkow, gryUzytkownika, obceProcesy } from './sondaGpuWorkera.mjs';
 import { startVramBallast } from './balastVram.mjs';
 import { OKNO_FLAGI, startEkran, oknoNaEkran, portDebugowania, WIDOCZNOSC } from './oknoPomiaru.mjs';
 
@@ -72,12 +85,27 @@ const BALAST_GB = Number(args.balastGb || 0);
 // --walka S: po upadku walka nad gruzem — grupa piratów obok Atlasa, Atlas strzela sam (postawa „free”), okna 3 s
 const WALKA = Number(args.walka || 0);
 const RYTM = String(args.rytm || '0') === '1';
+const KAZDA_KLATKA = String(args.sondaKazdaKlatka ?? '1') !== '0';
+const ODMROZ = String(args.odmroz ?? '1') !== '0';
 let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
 
-const report = { args, rozmiar: [W, H], maszynaStart: await stanMaszyny(), okna: [], slady: {}, ab: [], wkLogi: [], strona: [], bledy: [] };
+const report = { args, rozmiar: [W, H], maszynaStart: await stanMaszyny(), okna: [], gpuOkna: {}, obce: [], slady: {}, ab: [], wkLogi: [], strona: [], bledy: [] };
 console.log('maszyna:', JSON.stringify(report.maszynaStart));
+// gra użytkownika na tej maszynie = pomiar GPU bez sensu (i przeszkadza graczowi)
+report.gry = await gryUzytkownika();
+if (report.gry.length && args.mimoGry !== '1') {
+  console.error('GRA UŻYTKOWNIKA DZIAŁA:', report.gry.join(', '), '— pomiar pominięty (--mimoGry 1 wymusza)');
+  writeJson(join(out, 'raport.json'), { ...report, pominiety: 'gra użytkownika' });
+  process.exit(3);
+}
+const noteObce = async (kiedy) => {
+  const o = await obceProcesy().catch(() => []);
+  report.obce.push({ kiedy, s: +((Date.now() - tStart) / 1000).toFixed(1), n: o.length, procesy: o.slice(0, 4) });
+  if (o.length) console.log(`OBCE HARNESSY (${kiedy}): ${o.length} — ${o.slice(0, 2).map((x) => x.cmd.slice(0, 100)).join(' | ')}`);
+};
+await noteObce('start');
 const smi = startNvidiaSmi(500);
 const { server, base } = await startVite(Number(args.port || 5393));
 // --okno 1: widoczne okno na cały ekran, z vsync jak u gracza (headless biegnie bez limitu klatek)
@@ -178,10 +206,16 @@ const PAGE_STATE = `(() => {
   for (const w of window.wrecks || []) { if (!w || w.dead) continue; if (w._wreckSleeping) sleep++; else hot++; if (w.worldDebris) wd++; }
   const F = window.PirateBaseFall && window.PirateBaseFall.state();
   const S = window.StoryGame, st = S && S.site && S.site.structures && S.site.structures.habitat;
+  const num = (v, d = 2) => (Number.isFinite(v) ? +v.toFixed(d) : -1);
   return { t: performance.now(), f: window.__frameId | 0, composed: H ? H.composed : -1, age: H && H.pacer ? H.pacer.age : -1,
     cpu: H ? +(H.stats[6] || 0).toFixed(2) : -1, gpu: H ? +(H.stats[0] || 0).toFixed(2) : -1, gpuC: H ? +(H.stats[1] || 0).toFixed(2) : -1,
     fxMs: H ? +(H.stats[11] || 0).toFixed(2) : -1, domeny: H ? H.domainCount | 0 : -1, raf, hot, sleep, wd,
-    upadek: F ? F.phase : '-', ft: F ? +F.t.toFixed(1) : 0, hp: st ? +(100 * st.hp / st.maxHp).toFixed(1) : null };
+    upadek: F ? F.phase : '-', ft: F ? +F.t.toFixed(1) : 0, hp: st ? +(100 * st.hp / st.maxHp).toFixed(1) : null,
+    // upadek: czas uderzenia wieży / dysku w skałę (ft, −1 — jeszcze nie), uderzenia, bryły zamrożone na skale
+    wu: F ? num(F.towerImpactT) : -1, du: F ? num(F.discImpactT) : -1, ud: F ? F.impacts | 0 : 0, zbr: F ? F.frozen | 0 : 0,
+    // zamrożenie świata przez fabułę (sceny, kino, podsumowanie) — pętla jak w pauzie, __frameId stoi
+    zam: !!(S && S.worldFrozen), powody: S && S._freeze ? [...S._freeze] : [], podsum: !!(S && S.ui && S.ui.summary),
+    pauza: typeof window.__isGamePaused === 'function' ? !!window.__isGamePaused() : null };
 })()`;
 
 const WK_FRAMES = `(() => {
@@ -287,6 +321,7 @@ function rytmStat(d) {
 // Pauza, ~1,2 s klatek (lista rozrzutu wysłana), odczyt bufora pola z GPU i porównanie z kopią CPU, wznowienie.
 async function poleGpu(label) {
   if (!wk.sid) return null;
+  await tagGpu(`pole-gpu-${label}`);
   await ev('(window.__setGamePaused(true), true)').catch(() => {});
   await sleep(1200);
   const r = await wkEval(WK_POLE_GPU).catch((e) => ({ blad: e.message }));
@@ -296,12 +331,47 @@ async function poleGpu(label) {
   return r;
 }
 
+// Znacznik okna sondy GPU (klatki workera od tej chwili liczą się do `nazwa`) — także przerwy między oknami.
+const tagGpu = (nazwa) => (wk.sid ? wkEval(sondaOkno(nazwa)).catch(() => null) : Promise.resolve(null));
+
+// Statystyki GPU na klatkę okien sondy: dopisuje do wierszy raportu okna gotowe (rozliczona ostatnia klatka), wypisuje
+// nowe; `czekaj` — ms czekania, aż wszystkie okna będą gotowe (koniec przebiegu).
+const gpuWypisane = new Set();
+const fmtQ = (q) => (q ? `${q.p50}/${q.p95}/${q.maks}` : '-');
+async function zbierzGpu(czekaj = 0) {
+  if (!wk.sid) return null;
+  const t0 = Date.now();
+  let g = null;
+  for (;;) {
+    g = await wkEval(SONDA_GPU_OKNA).catch((e) => ({ blad: e.message }));
+    if (!g || g.blad || !g.okna) return g;
+    if (!(czekaj > 0) || Object.values(g.okna).every((o) => o.gotowe) || Date.now() - t0 > czekaj) break;
+    await sleep(300);
+  }
+  report.gpuSonda = { fid: g.fid, rozliczone: g.rozliczone, kluczeCzekaja: g.kluczeCzekaja, bezKlucza: g.bezKlucza, infoFrame: g.infoFrame, info0: g.info0, blad: g.blad };
+  for (const [name, o] of Object.entries(g.okna)) {
+    report.gpuOkna[name] = o;
+    const row = report.okna.find((r) => r.okno === name);
+    if (row && o.gotowe) row.gpu = o;
+    if (o.gotowe && !gpuWypisane.has(name)) {
+      gpuWypisane.add(name);
+      console.log(`   GPU/klatkę ${name}: klatek ${o.klatek} (pełne ${o.pelne}, częściowe ${o.czesciowe}, bez ${o.bezZnacznikow})`
+        + `  render p50/p95/maks ${fmtQ(o.render)}  compute ${fmtQ(o.compute)}  suma ${fmtQ(o.suma)} ms`
+        + `  | ${o.etykietyRender.slice(0, 4).map((w) => `${w[0]} ${w[1]}`).join(', ')} | ${o.etykietyCompute.slice(0, 3).map((w) => `${w[0]} ${w[1]}`).join(', ')}`);
+    }
+  }
+  return g;
+}
+
 async function okno(label, sekundy, { slad = false } = {}) {
+  const g0 = await tagGpu(label);
   const p0 = await ev(PAGE_STATE);
   if (wk.sid) { await wkEval(WK_FRAMES).catch(() => null); await wkEval(SONDA_CZYTAJ).catch(() => null); await wkEval(WK_POLE).catch(() => null); }
   if (RYTM) await ev(RYTM_CZYTAJ).catch(() => null);
   const t0 = Date.now();
   await sleep(sekundy * 1000);
+  // przerwa do następnego okna (odczyty, zrzuty) — osobny znacznik sondy, bez dziury w pomiarze GPU
+  const g1 = await tagGpu(`po:${label}`);
   const rytm = RYTM ? rytmStat(await ev(RYTM_CZYTAJ, 60000).catch(() => null)) : null;
   const p1 = await ev(PAGE_STATE);
   const wf = wk.sid ? await wkEval(WK_FRAMES).catch((e) => ({ err: e.message })) : null;
@@ -316,7 +386,12 @@ async function okno(label, sekundy, { slad = false } = {}) {
   }
   const dt = Math.max(1e-3, (p1.t - p0.t) / 1000);
   const row = {
-    okno: label, s: +((Date.now() - tStart) / 1000).toFixed(1), dt: +dt.toFixed(2), hp: p1.hp, upadek: p1.upadek, ft: p1.ft,
+    okno: label, s: +((Date.now() - tStart) / 1000).toFixed(1), dt: +dt.toFixed(2), hp: p1.hp, upadek: p1.upadek, ftOd: p0.ft, ft: p1.ft,
+    uderzenieWiezy: p1.wu, uderzenieDysku: p1.du, uderzen: p1.ud, zamrozoneBryly: p1.zbr,
+    zamrozony: p0.zam || p1.zam, powodyZamrozenia: [...new Set([...p0.powody, ...p1.powody])], podsumowanie: p1.podsum, pauza: p1.pauza,
+    // klatki sondy (renderSingle workera), numery info.frame three i takty rAF workera w oknie
+    klatkiSondy: g0 && g1 ? g1.fid - g0.fid : null, infoFrame: g0 && g1 ? [g0.infoFrame, g1.infoFrame] : null,
+    taktyWorkera: g0 && g1 ? g1.takty - g0.takty : null,
     zlozeniaS: +((p1.composed - p0.composed) / dt).toFixed(1), klatkiStronyS: +((p1.f - p0.f) / dt).toFixed(1),
     workerKlatkiS: wf && !wf.err ? +(wf.n / dt).toFixed(1) : null, workerMs: wf, wiek: p1.age,
     hudWorker: { cpu: p1.cpu, gpuRender: p1.gpu, gpuCompute: p1.gpuC, fxMs: p1.fxMs }, domeny: p1.domeny,
@@ -329,8 +404,13 @@ async function okno(label, sekundy, { slad = false } = {}) {
       + ` dispatche ${ps('flushes')} × ${pole.flushes ? (pole.flushCells / pole.flushes).toFixed(0) : 0} kom., przepełnienia ${pole.overflow}`);
   }
   const so = sonda && !sonda.err ? sonda : null;
-  console.log(`${label.padEnd(12)} obraz ${String(row.zlozeniaS).padStart(6)}/s  wk ${String(row.workerKlatkiS).padStart(6)}/s  cpuWk p50 ${wf?.p50 ?? '-'}`
-    + `  gpuR ${so ? so.gpuRender.msNaKlatke : '-'}  gpuC ${so ? so.gpuCompute.msNaKlatke : '-'}  kolejka śr ${so ? so.sr.lat : '-'} p95 ${so ? so.p95.lat : '-'} maks ${so ? so.latMax : '-'}`
+  const nk = so && so.naKlatke;
+  console.log(`${label.padEnd(12)} ft ${row.ftOd}→${row.ft} ${row.upadek}${row.zamrozony ? ` ZAMROŻONY[${row.powodyZamrozenia}]` : ''}`
+    + `  klatki sondy ${row.klatkiSondy} info.frame ${row.infoFrame ? row.infoFrame.join('→') : '-'} takty rAF wk ${row.taktyWorkera}`
+    + `  uderzenia ${row.uderzen} (wieża ${row.uderzenieWiezy}, dysk ${row.uderzenieDysku}) zamrożone ${row.zamrozoneBryly}`);
+  console.log(`${''.padEnd(12)} obraz ${String(row.zlozeniaS).padStart(6)}/s  wk ${String(row.workerKlatkiS).padStart(6)}/s  strona ${row.klatkiStronyS}/s  cpuWk p50 ${wf?.p50 ?? '-'}`
+    + `  gpuR ${so ? so.gpuRender.msNaKlatke : '-'}  gpuC ${so ? so.gpuCompute.msNaKlatke : '-'}`
+    + `  (rozliczone od odczytu: ${nk ? `${nk.pelne}/${nk.klatek} pełnych, suma p50/p95/maks ${fmtQ(nk.suma)}` : '-'})  kolejka śr ${so ? so.sr.lat : '-'} p95 ${so ? so.p95.lat : '-'} maks ${so ? so.latMax : '-'}`
     + `  wysyłki ${so ? ((so.sr.wbB + so.sr.wtB + so.sr.ceB) / 1024).toFixed(0) + ' KB' : '-'}  nowe ${so ? ((so.sr.nbB + so.sr.ntB) / 1024).toFixed(0) + ' KB' : '-'}`
     + `  pamięć ${so ? so.pamiecMB.bufory + '+' + so.pamiecMB.tekstury + ' MB' : '-'}  disp ${so ? so.sr.disp : '-'}  rys ${so ? so.sr.draws : '-'}`
     + `  pipe s/a ${so ? so.suma.psync + '/' + so.suma.pasync : '-'}  domeny ${row.domeny}  hp ${row.hp}  GPU% ${row.nvidia ? row.nvidia.zajetosc : '-'} ${row.nvidia ? row.nvidia.pamiecMB + ' MB' : ''}`);
@@ -346,6 +426,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
       + ` | wzgl. kadłubów: efekty stary ${f(rytm.efektyStaryWzgKadlubow)}, pociski NPC (krok) ${f(rytm.pociskiNpcWzgKadlubow)}`);
   }
   if (sl && !sl.blad) console.log('   ślad: zajętość', JSON.stringify(sl.zajetosc), 'top GPU:', sl.topGpuMain.slice(0, 5).map((r) => `${r[0]} ${r[1]}ms/${r[2]}`).join(' | '));
+  await zbierzGpu();
   return row;
 }
 
@@ -440,8 +521,10 @@ try {
   await ev(`(window.RenderWorkerHost.dev({ eval: 'globalThis.__C3 = Core3D; globalThis.__ST = st;' }), true)`);
   // operacja dev idzie z najbliższą stroną (import three w workerze) — sonda, gdy Core3D workera jest już w globalu
   let inst = '';
-  for (let i = 0; i < 20 && inst !== 'ok' && inst !== 'już'; i++) { await sleep(500); inst = await wkEval(SONDA_INSTALUJ).catch((e) => e.message); }
-  console.log('sonda:', inst);
+  const instKod = sondaInstaluj({ kazdaKlatka: KAZDA_KLATKA });
+  for (let i = 0; i < 20 && inst !== 'ok' && inst !== 'już'; i++) { await sleep(500); inst = await wkEval(instKod).catch((e) => e.message); }
+  console.log('sonda:', inst, KAZDA_KLATKA ? '(znaczniki GPU w każdej klatce)' : '(brama znaczników Core3D jak w grze)');
+  report.sondaKazdaKlatka = KAZDA_KLATKA;
   await ev(GUARD);
   if (RYTM) console.log('rytm:', await ev(RYTM_INSTALL));
   // Atlas 3,5 km na południe od habitatu (jak ostrzał w baza-zniszczenie-gra.mjs), mgła wojny wyłączona
@@ -474,6 +557,7 @@ try {
   console.log('etapy start:', JSON.stringify(etapy0));
   report.etapy = [{ n: 0, strzaly: 0, ...etapy0 }];
   for (;;) {
+    await tagGpu(`seria-${n + 1}`);
     const seria = await ev(SERIA, 30000);
     strzaly += seria.n;
     n++;
@@ -486,7 +570,7 @@ try {
     row.cele = seria.cele;
     report.etapy.push({ n, strzaly, cele: seria.cele, ...e });
     console.log(`   etapy: ${e.etapy} | pule ${e.pule} | hp ${e.hp}${e.zniszczony ? ' | HABITAT ZNISZCZONY (finał z etapów)' : ''} | cele ${JSON.stringify(seria.cele)}`);
-    if (n === 1) await screenshotPng(cdp, join(out, '02-pierwsze-trafienia.png'));
+    if (n === 1) { await tagGpu('zrzut-pierwsze-trafienia'); await screenshotPng(cdp, join(out, '02-pierwsze-trafienia.png')); }
     const miara = e.pule - (e.zrobione || 0) * 1e6;
     if (miara < postep - 0.5) { postep = miara; bezPostepu = 0; } else bezPostepu++;
     // HP po oknie (etap „wieża” — szyja pęka i wieża pada w trakcie okna)
@@ -495,6 +579,7 @@ try {
       break;
     }
   }
+  await tagGpu('zrzut-ostrzal-koniec');
   await screenshotPng(cdp, join(out, '03-ostrzal-koniec.png'));
   console.log('strzały:', strzaly, '| koniec ostrzału:', report.koniecOstrzalu);
   report.strzaly = strzaly;
@@ -512,13 +597,16 @@ try {
     S.deps.damageStation(st, st.hp + 10, true);
     return st._destroyed3D || !(st.hp > 0) ? 'jawny (damageStation direct)' : 'BEZ FINAŁU hp ' + Math.round(st.hp); })()`);
   console.log('finał:', report.final);
+  await noteObce('po ostrzale');
+  // okna upadku jedno za drugim do osiadania — bez pauz (pole GPU po osiadaniu) i śladu w trakcie (--slad tylko w przed,
+  // ostrzale i nad gruzem); zrzut po uderzeniu dysku ma własny znacznik sondy
   const tFall = Date.now();
-  let i = 0;
+  let i = 0, zrzutUpadku = false;
   while (Date.now() - tFall < 60000) {
     i++;
-    const r = await okno(`upadek-${i}`, 2, { slad: i === 2 });
-    if (i === 3) { await screenshotPng(cdp, join(out, '04-upadek.png')); await poleGpu('upadek-3'); }
-    if (r.upadek === 'settled') break;
+    const r = await okno(`upadek-${i}`, 2);
+    if (!zrzutUpadku && r.uderzenieDysku >= 0) { zrzutUpadku = true; await tagGpu('zrzut-upadek'); await screenshotPng(cdp, join(out, '04-upadek.png')); }
+    if (r.upadek === 'settled' || r.zamrozony) break;
     if (args.profil === '1' && Date.now() - tFall > 40000) break;
   }
   if (args.profil === '1') {
@@ -526,13 +614,46 @@ try {
     writeFileSync(join(out, 'worker-upadek.cpuprofile'), JSON.stringify(profile));
     console.log('profil workera:', join(out, 'worker-upadek.cpuprofile'));
   }
+  // osiadłe w żywym świecie — do podsumowania misji (zamrożenie świata: StoryGame._freeze 'summary')
+  for (let k = 1; k <= 10; k++) {
+    const st = await ev(PAGE_STATE);
+    if (st.zam || st.podsum) { report.zamrozenie = { po_s: +((Date.now() - tFall) / 1000).toFixed(1), ft: st.ft, powody: st.powody, podsumowanie: st.podsum }; break; }
+    await okno(`osiadle-${k}`, 2);
+  }
+  if (!report.zamrozenie) {
+    // podsumowanie jeszcze nie przyszło — czekamy najwyżej 15 s (ogień w rurach, 3 s czasu gry po „yardVictory”)
+    await tagGpu('czekanie-podsumowania');
+    const tW = Date.now();
+    while (Date.now() - tW < 15000) {
+      const st = await ev(PAGE_STATE);
+      if (st.zam || st.podsum) { report.zamrozenie = { po_s: +((Date.now() - tFall) / 1000).toFixed(1), ft: st.ft, powody: st.powody, podsumowanie: st.podsum }; break; }
+      await sleep(250);
+    }
+  }
+  console.log('zamrożenie świata po upadku:', JSON.stringify(report.zamrozenie || 'brak w 15 s'));
+  await noteObce('po upadku');
+  if (ODMROZ && report.zamrozenie) {
+    // jawne odmrożenie: bez powodu 'summary' pętla gry wraca do kroków fizyki; skrypt misji dalej czeka na zamknięcie
+    // podsumowania (misja 2 nie rusza); panel schowany jak po zamknięciu
+    report.odmrozenie = await ev(`(() => { const S = window.StoryGame, f0 = window.__frameId | 0;
+      const usuniete = S._freeze.delete('summary');
+      const w = document.querySelector('.st-summary-wrap'); if (w) w.style.display = 'none';
+      return { usuniete, powodyPo: [...S._freeze], zamrozony: !!S.worldFrozen, frameId: f0 }; })()`);
+    await sleep(500);
+    report.odmrozenie.frameIdPo500ms = await ev('window.__frameId | 0');
+    console.log('odmrożenie:', JSON.stringify(report.odmrozenie));
+  }
+  await poleGpu('po-osiadaniu');
+  await tagGpu('zrzut-po-upadku');
   await screenshotPng(cdp, join(out, '05-po-upadku.png'));
   await okno('po', CZAS_PO);
   // Atlas nad środkiem bazy, kamera statku (gracz lata nad gruzem)
   await ev(`(() => { const S = window.StoryGame, d = S.site.dock; const p = d.toGame(0, 0); S.deps.placePlayer(p.x, p.y + 600, 0); window.ship.vel.x = 0; window.ship.vel.y = 0;
     const c = window.camera; if (c.mode === 'rts' && c.exitRtsMode) c.exitRtsMode(); c.manualZoom = true; c.zoom = c.targetZoom = c.zoomBase = ${ZOOM_GRUZ}; return true; })()`).catch((e) => console.log('przelot:', e.message));
+  await tagGpu('przelot');
   await sleep(2500);
   await okno('nad-gruzem', 8, { slad: true });
+  await tagGpu('zrzut-nad-gruzem');
   await screenshotPng(cdp, join(out, '06-nad-gruzem.png'));
   await poleGpu('nad-gruzem');
 
@@ -582,6 +703,21 @@ try {
   report.bledy.push(String(err?.stack || err));
 } finally {
   clearTimeout(watchdog);
+  // GPU na klatkę wszystkich okien sondy (z przerwami) — czekamy na rozliczenie ostatnich klatek (opóźnienie kolejki)
+  try {
+    await tagGpu('koniec');
+    await sleep(800);
+    await zbierzGpu(6000);
+    await noteObce('koniec');
+    console.log('\nGPU ms na klatkę (klatki pełne; p50 / p95 / maks.) — okno: klatek (pełne) | render | compute | suma | top etykiety');
+    for (const [name, o] of Object.entries(report.gpuOkna)) {
+      const row = report.okna.find((r) => r.okno === name);
+      console.log(`  ${name.padEnd(26)} ${String(o.klatek).padStart(5)} (${String(o.pelne).padStart(5)})${o.gotowe ? '' : ' NIEGOTOWE'}`
+        + ` | ${fmtQ(o.render).padEnd(20)} | ${fmtQ(o.compute).padEnd(20)} | ${fmtQ(o.suma).padEnd(20)}`
+        + `${row ? ` | ft ${row.ftOd}→${row.ft} ${row.upadek}${row.zamrozony ? ' ZAMR' : ''}` : ''}`
+        + ` | ${o.etykietyRender.slice(0, 3).map((w) => `${w[0]} ${w[1]}`).join(', ')}; ${o.etykietyCompute.slice(0, 2).map((w) => `${w[0]} ${w[1]}`).join(', ')}`);
+    }
+  } catch (e) { report.bledy.push('zbierzGpu: ' + String(e?.message || e)); }
   if (balast) { report.balastKoniec = await balast.stan().catch(() => null); }
   const other = report.wkLogi.filter((l) => /warn|error|exception|pipeline sync|kompilacja w grze/.test(l.type + ' ' + l.text));
   for (const l of other.slice(0, 20)) console.log('  wk', l.type, l.s, l.text.slice(0, 220));

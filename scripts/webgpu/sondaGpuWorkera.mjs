@@ -12,9 +12,47 @@
 // Instalacja: wkEval(SONDA_INSTALUJ) w sesji CDP workera (globalThis.__C3 = Core3D — operacja dev strony, jak w
 // baza-po-upadku-gra.mjs). Odczyt z wyzerowaniem: wkEval(SONDA_CZYTAJ). Do tego: ślad Chrome (zajętość CrGpuMain,
 // workera, strony; najdroższe zdarzenia procesu GPU) i próbki nvidia-smi.
-import { spawn } from 'node:child_process';
+//
+// CZAS GPU NA KLATKĘ (2026-11-04, pomiar E0 zawaleń budowli). three r183 przypisuje znacznik do klatki po
+// `renderer.info.frame` (uid 'r:<nr renderu>:<kontekst>:f<info.frame>'), a info.frame liczy TAKTY pętli rAF three
+// (Animation.start), nie rendery. Worker rysuje z wiadomości strony (tryb 'msg'), a jego rAF w headless bywa rzadki —
+// jeden numer info.frame obejmował 100–226 renderSingle: znaczniki trafiały do 1–6 „klatek”, a dzielenie przez ich
+// liczbę dawało SUMY setek klatek (gpuR 509 ms). Do tego brama Core3D (`_gpuTimerGate`) decyduje o znacznikach RAZ
+// na info.frame: co `gpuTimerSampleEvery` (4) takt, a po zapchaniu puli wyłącza je do końca taktu — przy rzadkim takcie
+// całe okna 2–6 s były bez znaczników („brak znaczników” w przed, ostrzale, upadek-2). Sonda wiąże więc każdy znacznik
+// z WŁASNYM numerem klatki (koniec renderSingle) przez klucz (rodzaj, nr wywołania, info.frame) z chwili wywołania,
+// rozlicza klatkę, gdy wróciło rozwiązanie zapytań zgłoszone po niej (render i compute), i daje ms GPU NA KLATKĘ:
+// p50 / p95 / maks. renderu, compute i sumy — tylko z klatek PEŁNYCH (każde wywołanie ze znacznikiem). Opcja
+// `kazdaKlatka` (sondaInstaluj) traktuje każdy renderSingle jak nowy takt bramy i mierzy każdą klatkę
+// (gpuTimerSampleEvery = 1) — zmienia zachowanie Core3D tylko na czas pomiaru (para zapytań na pass ~5 µs CPU).
+// Okna narzędzia: sondaOkno(nazwa) oznacza klatki od tej chwili; SONDA_GPU_OKNA — statystyki wszystkich okien (znaczniki
+// wracają z opóźnieniem kolejki GPU, więc okno jest „gotowe”, gdy rozliczono jego ostatnią klatkę).
+import { spawn, execFile } from 'node:child_process';
 
-export const SONDA_INSTALUJ = `(() => {
+// Statystyki klatek z płaskiej tablicy rekordów po 7 liczb: ms render, ms compute, wywołania render / compute,
+// znaczniki render / compute, czy brama znaczników była włączona. Pełna klatka: każde wywołanie ma znacznik.
+const STAT_KLATEK = `(a) => {
+    const R = [], Cc = [], S = [];
+    let n = 0, pelne = 0, czesc = 0, bez = 0;
+    for (let i = 0; i < a.length; i += 7) {
+      n++;
+      const nr = a[i + 2], nc = a[i + 3], mr = a[i + 4], mc = a[i + 5];
+      if (mr + mc === 0) { bez++; continue; }
+      if (nr > 0 && mr === nr && mc === nc) { pelne++; R.push(a[i]); Cc.push(a[i + 1]); S.push(a[i] + a[i + 1]); } else czesc++;
+    }
+    const q = (x) => {
+      if (!x.length) return null;
+      x.sort((u, v) => u - v);
+      const p = (f) => +x[Math.min(x.length - 1, Math.floor(f * x.length))].toFixed(3);
+      return { p50: p(0.5), p95: p(0.95), maks: +x[x.length - 1].toFixed(3), sr: +(x.reduce((s, v) => s + v, 0) / x.length).toFixed(3) };
+    };
+    return { klatek: n, pelne, czesciowe: czesc, bezZnacznikow: bez, render: q(R), compute: q(Cc), suma: q(S) };
+  }`;
+
+/** Kod instalacji sondy; `kazdaKlatka` — znaczniki czasu GPU w każdym renderSingle (brama Core3D bez taktu rAF). */
+export function sondaInstaluj({ kazdaKlatka = false } = {}) {
+  return `(() => {
+  const KAZDA = ${kazdaKlatka ? 'true' : 'false'};
   const C = globalThis.__C3;
   if (!C || !C.renderer || !C.renderer.backend || !C.renderer.backend.device) return 'brak Core3D w workerze';
   if (globalThis.__gpuProbe) return 'już';
@@ -23,8 +61,37 @@ export const SONDA_INSTALUJ = `(() => {
     nbN: 0, nbB: 0, ntN: 0, ntB: 0, dbB: 0, dtB: 0, psync: 0, psyncMs: 0, pasync: 0, csync: 0, csyncMs: 0, casync: 0, sm: 0,
     cpuRender: 0, lat: -1, t: 0 });
   const P = globalThis.__gpuProbe = { cur: fresh(), frames: [], live: { buf: 0, tex: 0, bufN: 0, texN: 0 }, wbBy: new Map(), wtBy: new Map(),
-    gpu: { render: new Map(), compute: new Map() }, tsFrames: { render: new Set(), compute: new Set() },
-    labels: new Map(), curLabel: '', err: null, latPending: 0, latMax: 0 };
+    gpu: { render: new Map(), compute: new Map() }, tsFids: { render: new Set(), compute: new Set() },
+    curLabel: '', err: null, latPending: 0, latMax: 0 };
+  // --- klatki sondy: pierścień rekordów (ms render / compute, wywołania, znaczniki, brama, okno) ---
+  const N = 16384, M = N - 1;
+  const ring = { r: new Float64Array(N), c: new Float64Array(N), nr: new Int32Array(N), nc: new Int32Array(N),
+    mr: new Int32Array(N), mc: new Int32Array(N), tr: new Uint8Array(N), win: new Array(N).fill('') };
+  P.fid = 0; P.win = 'start'; P.ring = ring; P.kazdaKlatka = KAZDA;
+  P.uid = new Map();            // klucz znacznika (rodzaj + nr wywołania + 'f' + info.frame) → { lab, fid, win }
+  P.okna = new Map();           // okno narzędzia → { fr: rekordy rozliczonych klatek, labR / labC, maxFid }
+  P.pend = { render: -1, compute: -1 }; P.settled = { render: 0, compute: 0 }; P.nextSettle = 0;
+  P.sinceRead = []; P.bezKlucza = 0;
+  P.info0 = r.info.frame;
+  ring.win[0] = P.win;
+  const oknoOf = (name) => {
+    let W = P.okna.get(name);
+    if (!W) { W = { fr: [], labR: new Map(), labC: new Map(), maxFid: -1 }; P.okna.set(name, W); }
+    return W;
+  };
+  // klatka f rozliczona, gdy wróciło rozwiązanie zapytań zgłoszone po jej końcu (oba typy; puli jeszcze nie ma — bez czekania)
+  P.settle = () => {
+    const pools = be.timestampQueryPool || {};
+    const lim = Math.min(pools.render ? P.settled.render : Infinity, pools.compute ? P.settled.compute : Infinity, P.fid);
+    while (P.nextSettle < lim) {
+      const f = P.nextSettle++;
+      if (P.fid - f >= N) continue;
+      const j = f & M;
+      const W = oknoOf(ring.win[j]);
+      W.fr.push(ring.r[j], ring.c[j], ring.nr[j], ring.nc[j], ring.mr[j], ring.mc[j], ring.tr[j]);
+      P.sinceRead.push(ring.r[j], ring.c[j], ring.nr[j], ring.nc[j], ring.mr[j], ring.mc[j], ring.tr[j]);
+    }
+  };
   const sizes = new WeakMap();
   const bpe = (d) => (d && d.BYTES_PER_ELEMENT) || 1;
   const wrapI = (obj, name, mk) => { const f = obj[name]; if (typeof f === 'function') obj[name] = mk(f); };
@@ -125,9 +192,9 @@ export const SONDA_INSTALUJ = `(() => {
     return 'mod:?';
   };
   const note = (kind, idx) => {
-    const fr = r.info.frame;
-    let L = P.labels.get(fr);
-    if (!L) { L = { r: [], c: [] }; P.labels.set(fr, L); if (P.labels.size > 400) P.labels.delete(P.labels.keys().next().value); }
+    const j = P.fid & M;
+    if (ring.nr[j] + ring.nc[j] === 0) ring.win[j] = P.win;
+    if (kind === 'r') ring.nr[j]++; else ring.nc[j]++;
     let lab = P.curLabel;
     if (!lab) lab = stackLabel();
     else if (lab === 'dist' || lab === 'post' || lab.startsWith('pass:') || lab.startsWith('fx:')) {
@@ -135,38 +202,64 @@ export const SONDA_INSTALUJ = `(() => {
       const rt = kind === 'r' && r.getRenderTarget && r.getRenderTarget();
       if (kind === 'r' && rt && rt !== C.composerTarget && lab.startsWith('pass:')) lab = lab + '>' + stackLabel();
     }
-    (kind === 'r' ? L.r : L.c)[idx] = lab;
+    // uid three powstaje w tym wywołaniu z info.frame tej chwili i licznikiem wywołań po inkrementacji (idx)
+    P.uid.set(kind + idx + 'f' + r.info.frame, { lab, fid: P.fid, win: ring.win[j] });
+    if (P.uid.size > 200000) P.uid.delete(P.uid.keys().next().value);
   };
   wrapI(r, 'render', (f) => function () { note('r', (r.info.render.frameCalls | 0) + 1); return f.apply(this, arguments); });
   wrapI(r, 'compute', (f) => function () { note('c', (r.info.compute.frameCalls | 0) + 1); return f.apply(this, arguments); });
+  // zgłoszenie rozwiązania zapytań: klatki < P.fid są w nim całe (zgłoszenie po końcu renderu klatki)
+  if (typeof r.resolveTimestampsAsync === 'function') {
+    const rta = r.resolveTimestampsAsync;
+    r.resolveTimestampsAsync = function (type) {
+      if (type === 'render' || type === 'compute') P.pend[type] = P.fid;
+      return rta.apply(this, arguments);
+    };
+  }
+  const addLab = (map, lab, dur) => {
+    const x = map.get(lab);
+    if (x) { x.n++; x.ms += dur; if (dur > x.max) x.max = dur; } else map.set(lab, { n: 1, ms: dur, max: dur });
+  };
   if (typeof C._handleGpuTimestamp === 'function') {
     const h = C._handleGpuTimestamp;
+    const reUid = /^(r|c):(\\d+):([^:]*):f(\\d+)$/;
     C._handleGpuTimestamp = function (type) {
       try {
         const pool = be.timestampQueryPool && be.timestampQueryPool[type];
         const ts = pool && pool.timestamps;
-        const g = type === 'render' ? P.gpu.render : P.gpu.compute, fs = type === 'render' ? P.tsFrames.render : P.tsFrames.compute;
+        const g = type === 'render' ? P.gpu.render : P.gpu.compute, fs = type === 'render' ? P.tsFids.render : P.tsFids.compute;
         if (ts) for (const [uid, dur] of ts) {
           // uid three: 'r:<render w klatce>:<kontekst>:f<klatka>'; listy compute (łata Core3D
           // _uniqueComputeListTimestamps): 'c:<compute w klatce>:L<lista>:f<klatka>'
-          const m = /^(r|c):(\\d+):([^:]*):f(\\d+)$/.exec(uid);
+          const m = reUid.exec(uid);
           if (!m) continue;
-          const fr = +m[4], idx = +m[2];
-          const L = P.labels.get(fr);
-          const lab = (L && (m[1] === 'r' ? L.r[idx] : L.c[idx])) || ('?' + m[1] + idx);
-          const e = g.get(lab) || { n: 0, ms: 0, max: 0 };
-          e.n++; e.ms += dur; if (dur > e.max) e.max = dur;
-          g.set(lab, e);
-          fs.add(fr);
+          const key = m[1] + m[2] + 'f' + m[4];
+          const e = P.uid.get(key);
+          if (!e) { P.bezKlucza++; continue; }
+          P.uid.delete(key);
+          const isR = m[1] === 'r';
+          if (P.fid - e.fid < N) {
+            const j = e.fid & M;
+            if (isR) { ring.r[j] += dur; ring.mr[j]++; } else { ring.c[j] += dur; ring.mc[j]++; }
+          }
+          addLab(g, e.lab, dur);
+          fs.add(e.fid);
+          const W = oknoOf(e.win);
+          addLab(isR ? W.labR : W.labC, e.lab, dur);
         }
+        if (P.pend[type] >= 0) { if (P.pend[type] > P.settled[type]) P.settled[type] = P.pend[type]; P.pend[type] = -1; }
+        P.settle();
       } catch (e) { P.err = String(e); }
       return h.apply(this, arguments);
     };
   }
-  // --- granica klatki: koniec renderSingle (drugi widok podzielonego ekranu — ta sama klatka sondy) ---
+  // --- granica klatki: koniec renderSingle (drugi widok podzielonego ekranu — następna klatka sondy) ---
   const rs = C.renderSingle;
   C.renderSingle = function () {
     wrapSteps();
+    // kazdaKlatka: brama znaczników Core3D liczy renderSingle jak nowy takt (miejsce w puli na całą klatkę, bez
+    // „co 4. takt”) — inaczej przy rzadkim takcie rAF workera całe okna szły bez znaczników
+    if (P.kazdaKlatka) { C._gpuTimerGateFrame = NaN; if (C.gpuTimerSampleEvery !== 1) C.gpuTimerSampleEvery = 1; }
     const t0 = performance.now();
     const out = rs.apply(this, arguments);
     const c = P.cur;
@@ -178,16 +271,65 @@ export const SONDA_INSTALUJ = `(() => {
     P.frames.push(c);
     if (P.frames.length > 6000) P.frames.splice(0, 1000);
     P.cur = fresh();
+    // rekord klatki sondy: okno, brama znaczników na końcu klatki; następna klatka od zera
+    const j = P.fid & M;
+    if (ring.nr[j] + ring.nc[j] === 0) ring.win[j] = P.win;
+    ring.tr[j] = be.trackTimestamp === true ? 1 : 0;
+    const W = oknoOf(ring.win[j]);
+    if (P.fid > W.maxFid) W.maxFid = P.fid;
+    P.fid++;
+    const k = P.fid & M;
+    ring.r[k] = 0; ring.c[k] = 0; ring.nr[k] = 0; ring.nc[k] = 0; ring.mr[k] = 0; ring.mc[k] = 0; ring.tr[k] = 0; ring.win[k] = P.win;
     return out;
   };
   return 'ok';
 })()`;
+}
+
+export const SONDA_INSTALUJ = sondaInstaluj();
+
+/** Znacznik okna narzędzia: klatki od tej chwili liczą się do `nazwa`. Zwraca numer klatki sondy, info.frame i takty rAF workera. */
+export function sondaOkno(nazwa) {
+  return `(() => {
+  const P = globalThis.__gpuProbe, C = globalThis.__C3;
+  if (P) P.win = ${JSON.stringify(String(nazwa))};
+  return { fid: P ? P.fid : -1, infoFrame: C && C.renderer ? C.renderer.info.frame : -1, takty: globalThis.__ST ? globalThis.__ST.ticks | 0 : -1 };
+})()`;
+}
+
+// Statystyki GPU na klatkę wszystkich okien (sondaOkno) od instalacji: klatki pełne / częściowe / bez znaczników,
+// p50 / p95 / maks. / śr. renderu, compute i sumy z klatek pełnych, etykiety (ms na klatkę ze znacznikiem renderu,
+// maks. pojedynczego wywołania, wywołań na klatkę); `gotowe` — rozliczona ostatnia klatka okna.
+export const SONDA_GPU_OKNA = `(() => {
+  const P = globalThis.__gpuProbe, C = globalThis.__C3;
+  if (!P || !P.okna) return null;
+  P.settle();
+  const statKlatek = ${STAT_KLATEK};
+  const okna = {};
+  for (const [name, W] of P.okna) {
+    const st = statKlatek(W.fr);
+    let nMeas = 0;
+    for (let i = 0; i < W.fr.length; i += 7) if (W.fr[i + 4] > 0) nMeas++;
+    const rows = (map) => [...map.entries()].map(([k, e]) => [k, +(e.ms / Math.max(1, nMeas)).toFixed(3), +e.max.toFixed(2), +(e.n / Math.max(1, nMeas)).toFixed(2)])
+      .sort((a, b) => b[1] - a[1]).slice(0, 25);
+    okna[name] = { ...st, zeZnacznikiemRenderu: nMeas, gotowe: P.nextSettle > W.maxFid, maxFid: W.maxFid,
+      etykietyRender: rows(W.labR), etykietyCompute: rows(W.labC) };
+  }
+  return { okna, fid: P.fid, rozliczone: P.nextSettle, kluczeCzekaja: P.uid.size, bezKlucza: P.bezKlucza,
+    infoFrame: C && C.renderer ? C.renderer.info.frame : -1, info0: P.info0, blad: P.err };
+})()`;
 
 // Odczyt z wyzerowaniem: średnie i p95 rekordów klatek od ostatniego odczytu (bez ostatnich, których opóźnienie kolejki
-// jeszcze nie wróciło), pamięć gry, czas GPU wg etykiet (ms na klatkę ze znacznikami), pipeline'y sync workera (st.pipeSync).
+// jeszcze nie wróciło), pamięć gry, czas GPU wg etykiet (ms na klatkę sondy ze znacznikami — od 2026-11-04 mianownik to
+// klatki sondy, nie numery info.frame), `naKlatke` — p50 / p95 / maks. GPU klatek rozliczonych od ostatniego odczytu
+// (pełnych), pipeline'y sync workera (st.pipeSync).
 export const SONDA_CZYTAJ = `(() => {
   const P = globalThis.__gpuProbe;
   if (!P) return null;
+  if (P.settle) P.settle();
+  const statKlatek = ${STAT_KLATEK};
+  const naKlatke = P.sinceRead ? statKlatek(P.sinceRead) : null;
+  if (P.sinceRead) P.sinceRead = [];
   let done = P.frames.length;
   while (done > 0 && P.frames[done - 1].lat < 0 && P.frames.length - done < 30) done--;
   const fr = P.frames.splice(0, done);
@@ -215,7 +357,7 @@ export const SONDA_CZYTAJ = `(() => {
     wysylkiBuforow: topBy(P.wbBy), wysylkiTekstur: topBy(P.wtBy),
     latMax: +P.latMax.toFixed(1), latOczekuje: P.latPending,
     pamiecMB: { bufory: +(P.live.buf / 1048576).toFixed(1), tekstury: +(P.live.tex / 1048576).toFixed(1), buforyN: P.live.bufN, teksturyN: P.live.texN },
-    gpuRender: gpuOf(P.gpu.render, P.tsFrames.render), gpuCompute: gpuOf(P.gpu.compute, P.tsFrames.compute),
+    gpuRender: gpuOf(P.gpu.render, P.tsFids.render), gpuCompute: gpuOf(P.gpu.compute, P.tsFids.compute), naKlatke,
     pipeSyncRazem: globalThis.__ST ? globalThis.__ST.pipeSync | 0 : null, blad: P.err };
   P.latMax = 0;
   return out;
@@ -259,6 +401,38 @@ export async function stanMaszyny() {
   });
   const gpu = await run('nvidia-smi', ['--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits']);
   return { gpu };
+}
+
+const powershell = (cmd) => new Promise((ok) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd],
+  { maxBuffer: 64 << 20, windowsHide: true, timeout: 30000 }, (err, stdout) => ok(String(stdout || ''))));
+
+/** Gry użytkownika na tej maszynie (LoL, RuneScape…) — pomiar GPU przy grze pomijać (pamięć: perf-measurement-coordination). */
+export async function gryUzytkownika() {
+  const out = await powershell(`Get-Process | Where-Object { $_.ProcessName -match 'League|RuneScape|Dragonwilds|RSDragon|Jagex|osclient' } | ForEach-Object { $_.ProcessName }`);
+  return [...new Set(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))];
+}
+
+/**
+ * Cudze harnessy (wzór limit-klatek-gra.mjs): node ze skryptem scripts/….mjs i przeglądarki z portem debugowania — poza
+ * tym procesem i jego potomkami (nasz Chrome i jego renderery). Wynik z cudzym harnessem w trakcie okna — do odrzucenia.
+ */
+export async function obceProcesy() {
+  const out = await powershell(`Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='chrome.exe' OR Name='electron.exe'" | ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)|$($_.CommandLine)" }`);
+  const all = [], parent = new Map();
+  for (const line of out.split(/\r?\n/)) {
+    const p = line.split('|');
+    if (p.length < 4) continue;
+    const pid = Number(p[0]), ppid = Number(p[1]);
+    parent.set(pid, ppid);
+    all.push({ pid, name: p[2].toLowerCase(), c: p.slice(3).join('|') });
+  }
+  const mine = (pid) => { for (let i = 0; i < 4 && pid; i++) { if (pid === process.pid) return true; pid = parent.get(pid); } return false; };
+  const rows = [];
+  for (const { pid, name, c } of all) {
+    if (!c || mine(pid)) continue;
+    if (name === 'node.exe' ? /scripts[\\/][^"'\s]*\.mjs/i.test(c) : /--remote-debugging-port=\d+/.test(c)) rows.push({ pid, cmd: c.slice(0, 160) });
+  }
+  return rows;
 }
 
 /**
