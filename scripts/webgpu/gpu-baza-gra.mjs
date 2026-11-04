@@ -9,9 +9,18 @@
 // Okna (każde: złożenia obrazu / s, klatki workera / s, CPU workera p50 / p95, sonda GPU workera — wysyłki, zasoby,
 // dispatche, opóźnienie kolejki GPU, GPU render / compute wg etykiet; nvidia-smi: zajętość, pamięć, moc):
 //   przed      — habitat cały, kamera nad habitatem (--zoom);
-//   ostrzal-N  — serie 20 strzałów bronią gry (fireWeaponCore, jak baza-zniszczenie-gra.mjs) w stojące kawałki
-//                habitatu, po każdej okno 2 s; do HP ≤ --prog % (albo --strzalyMaks); pierwsze okno = pierwsze trafienia;
-//   upadek-N   — HP 0 (finał misji) → okna co 2 s do osiadania (≤ 60 s);
+//   ostrzal-N  — serie 20 strzałów bronią gry (fireWeaponCore, jak baza-zniszczenie-gra.mjs) po ETAPACH finału habitatu
+//                (od 2026-11-03 punkty habitatu = maks. × etapy do zrobienia, src/game/story/pirateBaseIntegrity.js —
+//                habitatStages): wyłom (ćwiartka bębna od strony Atlasa, H-S), wieża (szyb H-C przez wyłom — szyja
+//                zrywa się, wieża pada), wieżowce (highrise1, highrise2); po każdej serii okno 2 s; pierwsze okno =
+//                pierwsze trafienia. Komplet etapów = habitat ginie SAM (syncBaseStages w grze) = finał misji — w trakcie
+//                serii, więc pierwsze sekundy upadku są w ostatnim oknie ostrzal-N (kolumna `upadek`, `ft`).
+//                --prog P (domyślnie 0): koniec ostrzału przy HP ≤ P % (etapy: 75 / 50 / 25 / 0); --strzalyMaks
+//                i zastój (brak postępu pul i etapów przez 8 serii) też kończą ostrzał;
+//   upadek-N   — HP 0 (finał misji) → okna co 2 s do osiadania (≤ 60 s). Habitat żywy po ostrzale (--prog > 0, limit
+//                strzałów, zastój) — finał JAWNIE tym samym API, którym gra zabija habitat poza pulami (syncBaseStages
+//                po komplecie etapów, ogień w rurach): S.deps.damageStation(habitat, hp + 10, true) — `direct`, bez pul
+//                kawałków (bez `true` trafienie idzie do puli kawałka pod punktem trafienia i finału nie ma);
 //   po         — kamera fabuły po upadku; nad-gruzem — Atlas nad środkiem bazy, kamera statku (--zoomGruz).
 // --slad s: ślad Chrome (zajętość CrGpuMain / workera / strony, najdroższe zdarzenia procesu GPU) w oknach: pierwsze
 //   trafienia, środek ostrzału, upadek (4 s po HP 0) i nad gruzem.
@@ -28,12 +37,17 @@
 // Pole skóry 3D (2026-10-29): w każdym oknie liczniki pola z workera (przeglądy, pominięcia, komórki, rozrzut /
 //   zakresy), a w pauzie po upadek-3 i po nad-gruzem — bufor pola z GPU porównany z kopią CPU (`poleGpu` w raporcie).
 //   A/B wysyłki: --query "…&poleRozrzut=0&polePomin=0" (zakres slotu i przegląd w każdej klatce — jak przed).
+// --okno 1: okno na cały ekran z vsync. Zasłonięte okno albo zgaszony ekran = strona 'hidden', rAF stoi, gra wisi na
+//   ekranie ładowania (2026-11-04: „faza shipyard nie ruszyła” ×3) — dlatego flagi Chrome bez zasłaniania okien, ekran
+//   trzymany włączony i okno stawiane na wierzch przed każdym startem fazy (scripts/webgpu/oknoPomiaru.mjs, wzór
+//   gpu-pas-gra.mjs); strona wciąż niewidoczna → błąd z diagnozą zamiast 3 × 2 min czekania.
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 import { SONDA_INSTALUJ, SONDA_CZYTAJ, startNvidiaSmi, stanMaszyny, sladWatkow } from './sondaGpuWorkera.mjs';
 import { startVramBallast } from './balastVram.mjs';
+import { OKNO_FLAGI, startEkran, oknoNaEkran, portDebugowania, WIDOCZNOSC } from './oknoPomiaru.mjs';
 
 const args = parseArgs();
 const [W, H] = String(args.rozmiar || '5120x1440').split('x').map(Number);
@@ -44,7 +58,7 @@ const ZOOM = Number(args.zoom || 0.14);
 const ZOOM_GRUZ = Number(args.zoomGruz || 0.3);
 const BRON = String(args.bron || 'special_yamato_cannon');
 const STRZALY_MAKS = Number(args.strzalyMaks || 400);
-const PROG = Number(args.prog || 30);
+const PROG = Number(args.prog || 0);
 const SLAD = Number(args.slad ?? 3);
 const CZAS_PO = Number(args.czasPo || 8);
 const AB = String(args.abWorker || '').split('|').filter(Boolean).map((v) => {
@@ -68,9 +82,11 @@ const smi = startNvidiaSmi(500);
 const { server, base } = await startVite(Number(args.port || 5393));
 // --okno 1: widoczne okno na cały ekran, z vsync jak u gracza (headless biegnie bez limitu klatek)
 const OKNO = args.okno === '1';
+const ekran = OKNO ? startEkran() : null;
 const chrome = await startChrome({ width: W, height: H, renderMode: 'worker', headless: OKNO ? false : undefined,
-  extraArgs: OKNO ? ['--window-position=0,0', '--start-fullscreen'] : [] });
+  extraArgs: OKNO ? ['--window-position=0,0', '--start-fullscreen', ...OKNO_FLAGI] : [] });
 const { cdp } = chrome;
+const mojPort = portDebugowania(cdp);
 const ev = (e, t = 120000) => evaluate(cdp, e, t);
 
 // --- sesja workera renderu (Target.setAutoAttach, flatten — wzór baza-po-upadku-gra.mjs) ---
@@ -113,14 +129,30 @@ async function startStory(phase) {
   }
 }
 async function startStoryOnce(phase) {
+  if (OKNO) { report.oknoPrzegladarki = await oknoNaEkran(mojPort, W, H).catch((e) => String(e)); console.log('okno przeglądarki:', report.oknoPrzegladarki); }
   await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1&story=${phase}${query}` });
   if (!await waitFor(cdp, '!!(window.ship && window.StoryGame && window.HullBodies)', 240000, 400)) throw new Error('gra nie wstała');
+  // okno: strona ukryta (zasłonięte okno, zgaszony ekran) = rAF stoi i start gry wisi pod ekranem ładowania
+  const wid = await ev(WIDOCZNOSC).catch((e) => ({ blad: e.message }));
+  if (OKNO || wid.stan !== 'visible') console.log('widoczność strony:', JSON.stringify(wid));
+  if (OKNO && wid.stan !== 'visible') {
+    report.oknoPrzegladarki2 = await oknoNaEkran(mojPort, W, H).catch((e) => String(e));
+    await sleep(2000);
+    const wid2 = await ev(WIDOCZNOSC).catch((e) => ({ blad: e.message }));
+    console.log('widoczność strony (po ponownym ustawieniu okna):', JSON.stringify(wid2), report.oknoPrzegladarki2);
+    if (wid2.stan !== 'visible') throw new Error(`strona niewidoczna (${JSON.stringify(wid2)}) — ekran zgaszony albo okno zasłonięte, pomiar okna z vsync niemożliwy`);
+  }
   await sleep(2500);
   await ev(`(() => { localStorage.setItem('sc_story_campaign', '1'); localStorage.setItem('sc_story_tutorial', '0'); return true; })()`);
   await ev(`(() => { document.getElementById('btn-new-game')?.click(); return true; })()`);
   await sleep(700);
   await ev(`(() => { document.querySelector('[data-story-campaign="1"]')?.click(); document.getElementById('btn-mode-single')?.click(); return true; })()`);
-  if (!await waitFor(cdp, `window.StoryGame.active && window.StoryGame.phase === '${phase}' && !!window.StoryGame.site?.station`, 120000, 400)) throw new Error(`faza ${phase} nie ruszyła`);
+  if (!await waitFor(cdp, `window.StoryGame.active && window.StoryGame.phase === '${phase}' && !!window.StoryGame.site?.station`, 120000, 400)) {
+    // diagnoza: widoczność i rAF strony, kroki startu gry (startGame: window.__startSteps), napis ekranu ładowania
+    const diag = await ev(`(async () => { const w = await ${WIDOCZNOSC}; const L = document.getElementById('loading');
+      return { ...w, kroki: window.__startSteps || null, ladowanie: L && !L.classList.contains('hidden') ? (L.innerText || '').trim().slice(0, 80) : null, faza: window.StoryGame?.phase || null, aktywna: !!window.StoryGame?.active }; })()`).catch((e) => ({ blad: e.message }));
+    throw new Error(`faza ${phase} nie ruszyła ${JSON.stringify(diag)}`);
+  }
 }
 
 const GUARD = `(() => {
@@ -317,10 +349,16 @@ async function okno(label, sekundy, { slad = false } = {}) {
   return row;
 }
 
-// Seria 20 strzałów w 2 s w stojące kawałki habitatu (lufa 1,6 km od celu, kierunki na zmianę) — jak gracz
+// Seria 20 strzałów w 2 s (lufa 1,6 km za celem, kierunki na zmianę) — jak gracz, po etapach finału habitatu
+// (cel misji: „wyłom w bębnie, szyb pod wieżą (zwal ją), wieżowce na pomostach”); cel wybierany przy każdym strzale:
+//   wyłom   — stojąca ćwiartka bębna (najpierw H-S, od strony Atlasa), środek pierścienia ćwiartki, lufa na jej osi;
+//   wieża   — szyb H-C (środek habitatu) przez wyłom: lufa w kącie pękniętej ćwiartki (tor promienisty — przez lukę);
+//   wieżowce — pierwszy stojący wieżowiec (highrise1, highrise2), środek bryły, cztery kierunki;
+// habitat bez etapów (gra sprzed 2026-11-03) — stojące kawałki habitatu na zmianę, jak dawniej.
 const SERIA = `new Promise((res) => {
-  const S = window.StoryGame, d = S.site.dock, l = d.layout, st = S.site.structures.habitat;
-  const gone = st._dockGone || new Set();
+  const S = window.StoryGame, site = S.site, d = site.dock, l = d.layout, st = site.structures.habitat, Hb = l.habitat;
+  const pools = st.piecePools || null, gone = st._dockGone || new Set();
+  const broken = (id) => (pools && pools[id] ? pools[id].hp <= 0 : false) || gone.has(id);
   const W = window.WorldBodies, ws = st._worldSite ? W.site(st._worldSite) : null;
   const stoi = l.structures.habitat.filter((id) => {
     const c = l.chunkById.get(id);
@@ -329,20 +367,52 @@ const SERIA = `new Promise((res) => {
     return !(p && p.state === 'lost') && (!gone.has(id) || (p && p.state === 'live'));
   });
   const ids = stoi.length ? stoi : l.structures.habitat;
+  const quads = [...Hb.quadrants].sort((a, b) => (b.id === 'H-S') - (a.id === 'H-S'));
+  const ringR = (Hb.innerR - Hb.innerW + Hb.drumR) / 2;
   let k = 0;
-  const tick = () => {
+  const aim = () => {
+    const s = site.habitatStages ? site.habitatStages() : null;
+    const jit = ((k % 5) - 2) * 0.12;
+    if (s && s.breach < s.breachNeed) {
+      const q = quads.find((qd) => !broken(qd.id)) || quads[0], c = (q.a0 + q.a1) / 2;
+      return { tx: Math.cos(c) * ringR, tz: Math.sin(c) * ringR, a: c + jit, cel: q.id };
+    }
+    if (s && !s.tower) {
+      const q = quads.find((qd) => broken(qd.id)) || quads[0], c = (q.a0 + q.a1) / 2;
+      return { tx: 0, tz: 0, a: c + jit, cel: 'H-C' };
+    }
+    const hr = s ? (l.highrises || []).find((h) => !site.structureDestroyed(h.structure)) : null;
+    if (hr) {
+      const c = l.chunkById.get(hr.chunk);
+      return { tx: (c.box.x0 + c.box.x1) / 2, tz: (c.box.z0 + c.box.z1) / 2, a: (k % 4) * Math.PI / 2 + 0.3, cel: hr.structure };
+    }
     const c = l.chunkById.get(ids[k % ids.length]);
-    const tx = (c.box.x0 + c.box.x1) / 2, tz = (c.box.z0 + c.box.z1) / 2;
-    const a = (k % 4) * Math.PI / 2 + 0.3;
-    const mx = tx + Math.cos(a) * 1600, mz = tz + Math.sin(a) * 1600;
-    const p = d.toGame(mx, mz), t = d.toGame(tx, tz);
+    return { tx: (c.box.x0 + c.box.x1) / 2, tz: (c.box.z0 + c.box.z1) / 2, a: (k % 4) * Math.PI / 2 + 0.3, cel: c.id };
+  };
+  const cele = {};
+  const tick = () => {
+    // habitat padł (komplet etapów) — koniec serii, bez strzałów w spadający habitat
+    if (st._destroyed3D || !(st.hp > 0)) { clearInterval(h); res({ n: k, cele }); return; }
+    const t0 = aim();
+    cele[t0.cel] = (cele[t0.cel] || 0) + 1;
+    const mx = t0.tx + Math.cos(t0.a) * 1600, mz = t0.tz + Math.sin(t0.a) * 1600;
+    const p = d.toGame(mx, mz), t = d.toGame(t0.tx, t0.tz);
     const dx = t.x - p.x, dy = t.y - p.y, len = Math.hypot(dx, dy) || 1;
     try { window.fireWeaponCore(window.ship, null, '${BRON}', { pos: { x: p.x, y: p.y }, dir: { x: dx / len, y: dy / len }, baseVel: { x: 0, y: 0 } }); } catch (e) { console.error('[gpu-baza] strzał', e); }
-    if (++k >= 20) { clearInterval(h); res(k); }
+    if (++k >= 20) { clearInterval(h); res({ n: k, cele }); }
   };
   const h = setInterval(tick, 100);
   tick();
 })`;
+// Etapy finału i postęp ostrzału (suma pul kawałków habitatu + punkty wieżowców) — zastój = brak zmiany
+const ETAPY = `(() => {
+  const site = window.StoryGame.site, st = site.structures.habitat, s = site.habitatStages ? site.habitatStages() : null;
+  let pule = st.piecePools ? Object.values(st.piecePools).reduce((a, p) => a + p.hp, 0) : st.hp;
+  for (const h of site.dock.layout.highrises || []) { const q = site.structures[h.structure]; if (q) pule += Math.max(0, q.hp || 0); }
+  return { etapy: s ? \`wyłom \${s.breach}/\${s.breachNeed} wieża \${s.tower ? 1 : 0} wieżowce \${s.highrises}/\${s.highrisesTotal}\` : null,
+    zrobione: s ? s.done : null, wszystkie: s ? s.total : null, pule: Math.round(pule), hp: Math.round(st.hp),
+    proc: +(100 * st.hp / Math.max(1, st.maxHp)).toFixed(1), zniszczony: !!st._destroyed3D || !(st.hp > 0) };
+})()`;
 
 const camHub = (zoom) => ev(`(() => {
   const S = window.StoryGame, d = S.site.dock, l = d.layout, c = window.camera;
@@ -356,7 +426,7 @@ const camHub = (zoom) => ev(`(() => {
 })()`);
 
 function finish(code = 0) {
-  try { smi.stop(); report.nvidia = smi.samples.length; writeJson(join(out, 'raport.json'), report); } catch (e) { console.error(e); }
+  try { smi.stop(); ekran?.stop(); report.nvidia = smi.samples.length; writeJson(join(out, 'raport.json'), report); } catch (e) { console.error(e); }
   if (balast) { const b = balast; balast = null; b.stop().catch(() => {}); }
   Promise.resolve(chrome.close?.()).finally(() => Promise.resolve(server.close?.()).finally(() => process.exit(code)));
 }
@@ -398,20 +468,35 @@ try {
     await okno('przed-balast', 6, { slad: true });
   }
 
-  // ostrzał seriami do HP ≤ PROG %
-  let strzaly = 0, n = 0, sladSrodek = false;
+  // ostrzał seriami po etapach finału — do śmierci habitatu (komplet etapów), HP ≤ PROG %, limitu strzałów albo zastoju
+  let strzaly = 0, n = 0, sladSrodek = false, postep = Infinity, bezPostepu = 0;
+  const etapy0 = await ev(ETAPY);
+  console.log('etapy start:', JSON.stringify(etapy0));
+  report.etapy = [{ n: 0, strzaly: 0, ...etapy0 }];
   for (;;) {
-    strzaly += await ev(SERIA, 30000);
+    const seria = await ev(SERIA, 30000);
+    strzaly += seria.n;
     n++;
     const hp = (await ev(PAGE_STATE)).hp;
     const sladTu = n === 1 || (!sladSrodek && hp !== null && hp < 65);
     if (n > 1 && sladTu) sladSrodek = true;
-    await okno(`ostrzal-${n}`, 2, { slad: sladTu });
+    const row = await okno(`ostrzal-${n}`, 2, { slad: sladTu });
+    const e = await ev(ETAPY);
+    row.etapy = e.etapy;
+    row.cele = seria.cele;
+    report.etapy.push({ n, strzaly, cele: seria.cele, ...e });
+    console.log(`   etapy: ${e.etapy} | pule ${e.pule} | hp ${e.hp}${e.zniszczony ? ' | HABITAT ZNISZCZONY (finał z etapów)' : ''} | cele ${JSON.stringify(seria.cele)}`);
     if (n === 1) await screenshotPng(cdp, join(out, '02-pierwsze-trafienia.png'));
-    if (hp === null || hp <= PROG || strzaly >= STRZALY_MAKS) break;
+    const miara = e.pule - (e.zrobione || 0) * 1e6;
+    if (miara < postep - 0.5) { postep = miara; bezPostepu = 0; } else bezPostepu++;
+    // HP po oknie (etap „wieża” — szyja pęka i wieża pada w trakcie okna)
+    if (e.zniszczony || e.proc <= PROG || strzaly >= STRZALY_MAKS || bezPostepu >= 8) {
+      report.koniecOstrzalu = e.zniszczony ? 'etapy (habitat padł sam)' : e.proc <= PROG ? `HP ≤ ${PROG} %` : strzaly >= STRZALY_MAKS ? 'limit strzałów' : 'zastój';
+      break;
+    }
   }
   await screenshotPng(cdp, join(out, '03-ostrzal-koniec.png'));
-  console.log('strzały:', strzaly);
+  console.log('strzały:', strzaly, '| koniec ostrzału:', report.koniecOstrzalu);
   report.strzaly = strzaly;
 
   // --profil 1: profil CPU workera (Profiler CDP, 250 µs) od HP 0 przez upadek (najwyżej 40 s)
@@ -420,8 +505,13 @@ try {
     await wkSend('Profiler.setSamplingInterval', { interval: 250 });
     await wkSend('Profiler.start');
   }
-  // HP 0 habitatu — finał misji (storyGame._chainExplosion → upadek), okna co 2 s do osiadania
-  await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat; S.deps.damageStation(st, st.hp + 10); return st.hp; })()`);
+  // HP 0 habitatu — finał misji (storyGame._chainExplosion → upadek), okna co 2 s do osiadania. Habitat żywy (ostrzał
+  // przerwany przed kompletem etapów) — finał jawnie: damageStation z `direct` (jak syncBaseStages i ogień w rurach).
+  report.final = await ev(`(() => { const S = window.StoryGame, st = S.site.structures.habitat;
+    if (st._destroyed3D || !(st.hp > 0)) return 'etapy';
+    S.deps.damageStation(st, st.hp + 10, true);
+    return st._destroyed3D || !(st.hp > 0) ? 'jawny (damageStation direct)' : 'BEZ FINAŁU hp ' + Math.round(st.hp); })()`);
+  console.log('finał:', report.final);
   const tFall = Date.now();
   let i = 0;
   while (Date.now() - tFall < 60000) {
