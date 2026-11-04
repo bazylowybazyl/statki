@@ -16,7 +16,7 @@
 // haki pola płyty → graf) → post (collapseStep → plateStep → minięcie dysku / spoczynek wieży → oś czasu).
 import { buildDiscArchetype, towerPointCloud, STRUCT_MASS_UNIT, STRUCT_TUNE } from '../../src/game/structureGraph.js';
 import {
-  createCollapseHost, collapsePreStep, collapseStep, collapseGroundTerrain, collapseStats, collapseDispose
+  createCollapseHost, collapsePreStep, collapseStep, collapseGroundTerrain, collapseDispose
 } from '../../src/game/structureCollapse.js';
 import {
   createPlateBinding, discPlateOptions, annulusPlateOptions, plateStep, plateSetHold, plateStats, plateHoleIoU
@@ -220,15 +220,22 @@ export function createHabitatSym(HB, nr, opts = {}) {
     hp0: upadek ? cfg.hp0 : -1, dotyk: -1, przebicie: -1, przejscie: -1, wiezaNaSkale: -1, pierwszyWycinek: -1, wycinekNaSkale: -1,
     korona: -1, spoczynek: -1, iouPrzejscie: null, vPrzejscie: null, vDotyk: null, wycinkiNaSkale: 0
   };
-  const stumpBirths = collapseStats(host).births;
+  // narodziny klastrów gospodarza = długość H.cls (każde narodziny dopisują rekord) — bez collapseStats (nowy obiekt) w kroku
+  const stumpBirths = host.cls.length;
   const contact0 = { plate: 0, crown: 0 };
+  // znacznik „wycinek już na skale” po numerze rekordu klastra (rec.k), nie pole dopisane do encji (CollapseEntity ma
+  // wszystkie pola z góry — dopisane przełączałoby ją w tryb słownikowy)
+  let naSkale = new Uint8Array(512);
   terrain.onContact = (R, info) => {
     void info;
     const e = R.entity;
     if (!e) return;
     if (e === tw.entity) { if (TL.wiezaNaSkale < 0) TL.wiezaNaSkale = sym.t; return; }
-    if (e.collapseHost === host && !e.__naSkale) {
-      e.__naSkale = true;
+    const rec = e.collapseHost === host ? e.collapseRec : null;
+    if (rec === null) return;
+    if (rec.k >= naSkale.length) { const nb = new Uint8Array(Math.max(rec.k + 1, naSkale.length * 2)); nb.set(naSkale); naSkale = nb; }
+    if (!naSkale[rec.k]) {
+      naSkale[rec.k] = 1;
       TL.wycinkiNaSkale++;
       if (TL.wycinekNaSkale < 0) TL.wycinekNaSkale = sym.t;
     }
@@ -236,7 +243,7 @@ export function createHabitatSym(HB, nr, opts = {}) {
 
   const entities = [];
   const Vk = { x: 0, y: 0, z: 0 }, Wk = { x: 0, y: 0, z: 0 }, GF = { gravity: 0 };
-  const P = { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 };
+  const P = { x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1 }, PQ = { x: 0, y: 0, z: 0, w: 1 };
   const towerSpeed = () => { const b = towerBody(); return b ? Math.sqrt(b.vel.x * b.vel.x + b.vel.y * b.vel.y + b.vel.z * b.vel.z) : 0; };
 
   const sym = {
@@ -281,10 +288,11 @@ export function createHabitatSym(HB, nr, opts = {}) {
       contact0.plate += F.stats.contacts;
       if (crown) { if (TL.korona < 0 && crown.stats.contacts > 0) TL.korona = t; contact0.crown += crown.stats.contacts; }
       if (TL.przebicie < 0 && Pb.iv[2] > 0) TL.przebicie = t;
-      if (TL.pierwszyWycinek < 0 && collapseStats(host).births > stumpBirths) TL.pierwszyWycinek = t;
+      if (TL.pierwszyWycinek < 0 && host.cls.length > stumpBirths) TL.pierwszyWycinek = t;
       // minięcie dysku (scena 4): wierzch wieży pod spodem dysku → klaster (D6), g po minięciu, pary włączone
       if (upadek && tw.released && !tw.passed && towerPose(P)) {
-        rot({ x: P.qx, y: P.qy, z: P.qz, w: P.qw }, m);
+        PQ.x = P.qx; PQ.y = P.qy; PQ.z = P.qz; PQ.w = P.qw;
+        rot(PQ, m);
         const topZ = P.z + m[8] * Z.mastTop;
         if (topZ < Z.discBot - cfg.passMargin) {
           tw.passed = true;

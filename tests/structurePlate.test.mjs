@@ -5,9 +5,11 @@
 // Pokrycie: mapowanie utrzymania (F.hold = okno smoothstep plateSigma E1 przy liniowej nośności silnika), wiązanie komórek
 // z blokami (górna warstwa + bliźniak dolnej), impuls styku do grafu (−n·j / 45² po blokach komórek styku), zabijanie bloków
 // otworami (≥ 60%, z bliźniakiem) i zdejmowanie komórek bloków spoza części zakotwiczonej, bilans pędu pola z ciałem w każdym
-// kroku, UPADEK (scena 4: utrzymanie 0 przy dojściu wieży — otwór w kształcie talerza, IoU z pierścieniem 560–880 ≥ 0,7;
+// kroku, przegląd otworów w tych samych chwilach przy 60 i 120 Hz (odstęp przez ticksAt120), UPADEK (scena 4: utrzymanie 0
+// przy dojściu wieży — otwór w kształcie talerza, IoU z pierścieniem 560–880 ≥ 0,7; ten sam otwór przy 60 i 120 Hz;
 // D22 — wieża pierwsza na skale, wycinki dysku wyraźnie później i nie przed stykiem wieży), SZYJA (scena 5: utrzymanie 1 —
-// rów bez otworu, graf traci ≤ 5% bloków — D7), haki bez alokacji. Testy nie mierzą czasu ściany.
+// rów bez otworu, graf traci ≤ 5% bloków w czasie pokazu — D7), haki bez alokacji. `todo`: pierwsza wyspa dysku po minięciu
+// wieży (synteza § 2g — wymaga prefraktury, D22), szyja przy 120 Hz i po 40 s (R15 / E6). Testy nie mierzą czasu ściany.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { untilSteady, allocatedBytes } from './helpers/alokacje.mjs';
@@ -136,6 +138,41 @@ test('otwory: blok z ≥ 60% komórek-otworów ginie razem z bliźniakiem, reszt
   assert.equal(SP.plateStats(Pb).detached, n);
 });
 
+test('przegląd otworów co 4 kroki 1/120 s: blok ginie w tej samej chwili przy 60 i 120 Hz (ODSTĘP przez ticksAt120, zasada 8)', () => {
+  // otwory ≥ 60% bloku pierścienia 2 powstają w chwili t0 (siatka 1/60 s, przed krokiem); blok ginie w pierwszym przeglądzie
+  // ≥ t0 — przegląd co 1/30 s przy każdym kroku (odstęp to liczba kroków, nie budżet na krok: per-budżet dawał przy 60 Hz
+  // przegląd co 8 kroków = 133 ms zamiast 33 ms)
+  const t0 = [0, 1 / 60, 3 / 60, 6 / 60, 15 / 60, 25 / 60];
+  const killAt = (hz) => {
+    const { A, S, F, Pb } = bound();
+    const dt = 1 / hz;
+    const blocks = [];
+    for (let k = 0; k < A.n && blocks.length < t0.length; k++) if (!A.anchor[k] && A.level[k] === 2 && Pb.blockCells[k] > 0) blocks.push(k);
+    assert.equal(blocks.length, t0.length);
+    const out = new Array(t0.length).fill(-1);
+    for (let k = 0; k < hz; k++) {
+      for (let i = 0; i < t0.length; i++) {
+        if (Math.round(t0[i] * hz) !== k) continue;
+        const mine = [];
+        for (let c = 0; c < Pb.N; c++) if (Pb.cellUp[c] === blocks[i]) mine.push(c);
+        for (let q = 0; q < Math.ceil(0.6 * mine.length); q++) {
+          F.thick[mine[q]] = 0; F.alive--;
+          SP.plateOnCellLost(Pb, F, mine[q], 0, 0, 0, 0, 0, -100, 1);
+        }
+      }
+      SP.plateStep(Pb, dt, k);
+      for (let i = 0; i < t0.length; i++) if (out[i] < 0 && S.dead[blocks[i]]) out[i] = k * dt;
+    }
+    return out;
+  };
+  const a = killAt(60), b = killAt(120);
+  for (let i = 0; i < t0.length; i++) {
+    assert.ok(a[i] >= 0 && b[i] >= 0, `blok ${i} nie zginął (60 Hz ${a[i]}, 120 Hz ${b[i]})`);
+    assert.ok(Math.abs(a[i] - b[i]) < 1e-9, `t0 ${t0[i]}: 60 Hz ${a[i]} s, 120 Hz ${b[i]} s`);
+    assert.ok(a[i] - t0[i] < 1 / 30 + 1e-9, `t0 ${t0[i]}: przegląd po ${a[i] - t0[i]} s (> 1/30 s)`);
+  }
+});
+
 test('bilans pędu: klaster przez płytę dysku przy utrzymaniu 0 — Δp ciała − m·g·dt = stats.j − stats.p w każdym kroku, impuls do grafu', () => {
   HullBodies.init();
   const D = HullBodies.engine;
@@ -171,11 +208,11 @@ test('bilans pędu: klaster przez płytę dysku przy utrzymaniu 0 — Δp ciała
   D.removePlateField(F);
 });
 
-// Scena 4 raz (prawdziwa bryła belek H-T z gry) — wynik dzielony przez testy upadku i D22.
-let upadek = null;
-function scenaUpadek() {
-  if (upadek) return upadek;
-  const sym = createHabitatSym(HullBodies, 4, {});
+// Scena 4 raz na częstotliwość kroku (prawdziwa bryła belek H-T z gry) — wynik dzielony przez testy upadku, D22 i 60 / 120 Hz.
+const upadki = new Map();
+function scenaUpadek(hz = 60) {
+  if (upadki.has(hz)) return upadki.get(hz);
+  const sym = createHabitatSym(HullBodies, 4, { hz });
   const steps = Math.round(12 * sym.hz);
   let holdAtTouch = null, passedAt = -1, iouAt = null;
   for (let k = 0; k < steps; k++) {
@@ -184,9 +221,10 @@ function scenaUpadek() {
     if (holdAtTouch === null && tl.dotyk !== null) holdAtTouch = sym.plate.F.hold;
     if (passedAt < 0 && tl.przejscie !== null) { passedAt = sym.t; iouAt = tl.iouPrzejscie; }
   }
-  upadek = { tl: sym.timeline(), holdAtTouch, passedAt, iouAt, stats: SP.plateStats(sym.plate.Pb) };
+  const u = { tl: sym.timeline(), holdAtTouch, passedAt, iouAt, stats: SP.plateStats(sym.plate.Pb) };
   sym.dispose();
-  return upadek;
+  upadki.set(hz, u);
+  return u;
 }
 
 test('UPADEK (scena 4, utrzymanie 0 przy dojściu wieży): wieża H-T przebija dysk otworem w kształcie talerza — IoU z pierścieniem 560–880 ≥ 0,7', () => {
@@ -207,16 +245,58 @@ test('D22 (scena 4): wieża pierwsza na skale, wycinki dysku wyraźnie później
   assert.ok(tl.wycinekNaSkale - tl.wiezaNaSkale >= 2, `wycinek na skale ${tl.wycinekNaSkale} s, wieża ${tl.wiezaNaSkale} s`);
 });
 
-test('SZYJA (scena 5, utrzymanie 1): wieża kładzie się bokiem na koronie i dysku — rów bez otworu, graf traci ≤ 5% bloków (D7)', () => {
-  const sym = createHabitatSym(HullBodies, 5, {});
-  for (let k = 0; k < Math.round(11 * sym.hz); k++) sym.step();
+// AGENT: synteza dema § 2g chce pierwszej wyspy dysku PO minięciu dysku przez wieżę. Dziś talerz H-T (r 480…~1000) nakrywa
+// cały pierścień 0 grafu (jedyne połączenie z podporami), więc reszta dysku odrywa się JEDNĄ wyspą ~0,1 s po przebiciu
+// (3,9 s), zanim wieża minie dysk (5,0 s), i spada od spoczynku jednym pierścieniem. Odpadanie wycinkami kolejno od otworu
+// wymaga prefraktury / linii załomu (plan § 4.2 p. 5, E3 / E6) albo zawiasu wycinków — decyzja użytkownika (D22).
+test.todo('D22 wg syntezy § 2g (scena 4): pierwsza wyspa dysku rodzi się PO minięciu dysku przez wieżę', () => {
+  const tl = scenaUpadek().tl;
+  assert.ok(tl.przejscie !== null && tl.pierwszyWycinek >= tl.przejscie, `pierwszy wycinek ${tl.pierwszyWycinek} s, minięcie dysku ${tl.przejscie} s`);
+});
+
+test('UPADEK 60 / 120 Hz (scena 4): ten sam otwór — IoU ±0,02, otwory zgniotu i reszty bloków zabitych ±10%, te same bloki zabite; D22 przy obu', () => {
+  const a = scenaUpadek(60), b = scenaUpadek(120);
+  assert.ok(Math.abs(a.iouAt - b.iouAt) <= 0.02, `IoU 60 Hz ${a.iouAt}, 120 Hz ${b.iouAt}`);
+  assert.equal(a.stats.killedBlocks, b.stats.killedBlocks, 'bloki zabite otworami');
+  // przegląd otworów w tych samych chwilach (ticksAt120): reszty zabitych bloków zdążają zejść z pola przed oderwaniem
+  // reszty dysku przy obu częstotliwościach (przegląd co 8 kroków przy 60 Hz dawał 0 reszt wobec ~120 przy 120 Hz)
+  const near = (x, y) => Math.abs(x - y) <= 0.1 * Math.max(x, y);
+  assert.ok(near(a.stats.holes, b.stats.holes), `otwory zgniotu 60 Hz ${a.stats.holes}, 120 Hz ${b.stats.holes}`);
+  assert.ok(near(a.stats.killedCells, b.stats.killedCells), `reszty bloków 60 Hz ${a.stats.killedCells}, 120 Hz ${b.stats.killedCells}`);
+  assert.ok(b.tl.wycinekNaSkale - b.tl.wiezaNaSkale >= 2, `120 Hz: wycinek na skale ${b.tl.wycinekNaSkale} s, wieża ${b.tl.wiezaNaSkale} s`);
+});
+
+// Scena 5 przez `czas` s (18 — pętla pokazu dema; graf dysku pęka dalej PO spoczynku wieży, więc krótszy przebieg zaniża straty).
+function scenaSzyja(hz, czas) {
+  const sym = createHabitatSym(HullBodies, 5, { hz });
+  for (let k = 0; k < Math.round((czas ?? sym.cfg.czas) * sym.hz); k++) sym.step();
   const tl = sym.timeline();
   sym.dispose();
+  return tl;
+}
+
+test('SZYJA (scena 5, utrzymanie 1, czas pokazu 18 s): wieża kładzie się bokiem na koronie i dysku — rów bez otworu, graf traci ≤ 5% bloków (D7)', () => {
+  const tl = scenaSzyja(60);
   assert.ok(tl.korona !== null && tl.dotyk !== null, `uderzenie: korona ${tl.korona}, dysk ${tl.dotyk}`);
   assert.equal(tl.otwory, 0, 'bez otworów zgniotu');
   assert.ok(tl.row > 0, 'rów w kształcie boku wieży');
   assert.ok(tl.ulamekUtraconych <= 0.05, `utracone bloki ${tl.blokiUtracone} / ${tl.blokow}`);
   assert.equal(tl.koronaOtwory, 0);
+});
+
+// AGENT: ryzyko R15 planu (E6). (1) Krok: przy 120 Hz uderzenie zrywa ~6× więcej wiązań dysku (do 9 s: 505 wobec 89 przy
+// 60 Hz) przy prawie tej samej historii impulsów płyty, a graf traci 13% bloków w czasie pokazu (×3 przechyłu — cały dysk);
+// luka 60 / 120 Hz grafu — test `todo` w structureGraph. (2) Pełzanie: po spoczynku wieży (bez styku z płytą) uszkodzony graf
+// pęka dalej pod własnym ciężarem — przy 60 Hz wiązania 1878 → ~1000 i 44 / 316 bloków (14%, wyspa 36 bloków przy ~24 s) po
+// 40 s. Oba do zamknięcia w E6 (zmęczenie uszkodzonego grafu, ocena wiązań niezależna od kroku).
+test.todo('SZYJA 120 Hz (scena 5, R15 / E6): graf traci ≤ 5% bloków (D7) także przy kroku 1/120 s', () => {
+  const tl = scenaSzyja(120);
+  assert.ok(tl.ulamekUtraconych <= 0.05, `120 Hz: utracone bloki ${tl.blokiUtracone} / ${tl.blokow}`);
+});
+
+test.todo('SZYJA po 40 s (scena 5, R15 / E6): uszkodzony graf dysku nie pęka dalej po spoczynku wieży (≤ 5% bloków)', () => {
+  const tl = scenaSzyja(60, 40);
+  assert.ok(tl.ulamekUtraconych <= 0.05, `po 40 s: utracone bloki ${tl.blokiUtracone} / ${tl.blokow}`);
 });
 
 test('haki i krok wiązania bez alokacji (styk, utrata komórki, krok bez zmian topologii)', async () => {

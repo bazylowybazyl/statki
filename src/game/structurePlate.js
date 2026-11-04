@@ -27,6 +27,7 @@
  */
 
 import { structureAddImpulse, structureDestroyBlock, structureSetHold, plateSigma, PLATE_TUNE, STRUCT_MASS_UNIT } from './structureGraph.js';
+import { ticksAt120 } from './stepDecay.js';
 import { PIRATE_BASE_SPEC } from '../3d/portBuildings/pirateBaseLayout.js';
 import { k7HeightToZ } from '../3d/haloRing/haloPortK7Layout.js';
 
@@ -44,12 +45,6 @@ export const PLATE_REC_STRIDE = 8;
 /** Znaczniki komórek (Pb.hole): 0 — materiał, 1 — otwór zgniotu (onCellLost), 2 — reszta bloku zabitego otworami,
  *  3 — blok poza częścią zakotwiczoną (wyspa / zniszczony). */
 export const PLATE_HOLE = Object.freeze({ NONE: 0, CRUSH: 1, KILLED: 2, DETACHED: 3 });
-
-// Budżet „na 1/120 s” → na krok dt (60 Hz: ×2 mniej kroków między przeglądami). Przy kroku 1/120 s dokładnie wejście.
-function per120(n, dt) {
-  if (dt === 1 / 120) return n;
-  return Math.max(1, Math.round(n * dt * 120));
-}
 
 // ── opisy pól ───────────────────────────────────────────────────────────────────────────────────────────────────
 /**
@@ -371,7 +366,8 @@ export function plateSync(Pb) {
 export function plateStep(Pb, dt, tick, H = null) {
   const iv = Pb.iv;
   iv[7]++;
-  if (iv[6] && (tick % per120(Pb.T.killEvery120, dt)) === 0) plateKillBlocks(Pb);
+  // ODSTĘP między przeglądami (nie budżet na krok): ticksAt120 — 60 Hz co 2 kroki, 120 Hz co 4 (te same chwile w czasie)
+  if (iv[6] && (tick % ticksAt120(Pb.T.killEvery120, dt)) === 0) plateKillBlocks(Pb);
   if (Pb.S.topoVer !== iv[0]) plateSync(Pb);
   if (H !== null) {
     const cls = H.cls;

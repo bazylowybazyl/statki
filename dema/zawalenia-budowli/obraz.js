@@ -18,7 +18,8 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, abs, cameraPosition, cross, dot, exp, float, floor, fract, instancedBufferAttribute, max, min, mix, normalize,
-  positionGeometry, positionWorld, sin, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4
+  positionGeometry, positionWorld, sin, smoothstep, texture, transformNormalToView, uniform, uv, varying, vec2, vec3, vec4,
+  clamp, normalFlat, sqrt, step
 } from 'three/tsl';
 import { createPost, createSky } from '../halo_ring_demo_env.js';
 import { installPlaceholders, getPlaceholderStats } from '../../src/3d/tsl/zamiennik.js';
@@ -158,21 +159,80 @@ function beamMaterial(nA, nB, nC) {
 
 // PŁYTA (pole płyty silnika — dysk mieszkalny, korona bębna): siatka w dwóch arkuszach (wierzch, spód), wierzchołki co
 // ½ komórki; tekstura RG8 z pola (R = F.thick, G = 255 przy materiale; wysyłka przy zmianie F.version), próbkowana
-// DWULINIOWO. Kontur otworu i brzegu = G = ½ (w połowie między komórką z materiałem a otworem — gładki, bez schodków po 45 j.,
-// maskNode — także w passie cienia). Wierzch = średnia grubość komórek z materiałem (R / G — rów zostaje rowem, otwór
-// nie ściąga zbocza w dół przez całą komórkę), opada do spodu tuż przy konturze (ściana). Normalne z pochodnych
-// (flatShading). Graf RAZ na pole (własna tekstura), układ pola (o, u, v, n) w macierzy siatki.
-const PLATE_MASK = 0.5;
+// DWULINIOWO. Kontur otworu i brzegu = Gs = ½, gdzie Gs — G rozmyte 4 próbkami dwuliniowymi w (±½, ±½) komórki (wagi
+// 1-2-1 na 3×3 komórki): samo G dwuliniowe ma kontur — schodki po 45 j. ze ściętymi narożnikami, z boku widać je jako
+// panele ściany (maskNode — także w passie cienia). Wierzch = średnia grubość komórek z materiałem z rozmytych Rs / Gs (rów
+// zostaje rowem, otwór nie ściąga zbocza w dół, tarasy i rów — łagodne rampy zamiast schodków po 45 j.). ŚCIANA PIONOWA:
+// wierzchołek poza konturem (Gs < ½) z niezerowym gradientem Gs przesuwa się wzdłuż gradientu NA kontur (≤ 10 próbek co ⅛
+// komórki, interpolacja liniowa między ostatnią poniżej a pierwszą powyżej ½) z wysokością 0 w obu arkuszach, wierzchołek
+// wewnątrz w odległości ≤ ½ komórki — też na kontur (pełna wysokość); ściana = trójkąty wierzchu między oboma rzędami na
+// konturze. Bez przesunięcia (siatka co ½ komórki + maska) dolna krawędź ściany szła tam, gdzie maska przecinała skos
+// trójkąta: „zęby” i pionowe prążki z kamery z boku. Normalne: wierzch — gładkie z gradientu pola wysokości (różnice ±¼
+// komórki w etapie wierzchołków → varying; tarasy bez ząbków), ściana (stroma: |n · góra| < 0,35) — płaskie z pochodnych
+// (normalFlat). Graf RAZ na pole (własna tekstura), układ pola (o, u, v, n) w macierzy siatki.
+const PLATE_MASK = 0.5, PLATE_SNAP_STEP = 0.125, PLATE_SNAP_N = 10;
 function plateMaterial(tex, uCell, uScale, PM, tint) {
-  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0.0, flatShading: true });
+  // DoubleSide: przesunięte wierzchołki składają trójkąty siatki przy konturze (zawinięcie zmienia się w plamy odwrócone) —
+  // z FrontSide te trójkąty ściany znikały (szczeliny na wylot); normalne nie zależą od strony (normalNode bez odwracania)
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0.0, side: THREE.DoubleSide });
   m.name = 'ZawPlyta';
-  const g = positionGeometry;
-  const uvC = vec2(g.x.add(0.5), g.y.add(0.5)).div(PM);
-  const s = texture(tex, uvC).level(0);
-  const hA = s.r.div(max(s.g, float(0.002)));
-  const lift = smoothstep(PLATE_MASK, PLATE_MASK + 0.2, s.g);
-  m.positionNode = vec3(g.x.add(0.5).mul(uCell), g.y.add(0.5).mul(uCell), hA.mul(lift).mul(uScale).mul(float(1.0).sub(g.z)));
-  m.maskNode = texture(tex, varying(uvC, 'vZawPlUv')).g.greaterThan(PLATE_MASK);
+  const g = positionGeometry, inv = 1 / PM;
+  const uvAt = (p) => p.add(0.5).mul(inv);           // p — punkt siatki w komórkach (środek komórki i = i)
+  // RG rozmyte: średnia 4 próbek dwuliniowych w (±½, ±½) komórki
+  const rgBlur = (q) => {
+    let s = null;
+    for (const [ox, oy] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
+      const t = texture(tex, q.add(vec2(ox * inv, oy * inv))).level(0).rg;
+      s = s ? s.add(t) : t;
+    }
+    return s.mul(0.25);
+  };
+  const matAt = (p) => rgBlur(uvAt(p)).y;
+  const p0 = vec2(g.x, g.y);
+  // gradient G (na komórkę) i kierunek ku materiałowi
+  const gx = matAt(p0.add(vec2(0.25, 0))).sub(matAt(p0.sub(vec2(0.25, 0)))).mul(2.0);
+  const gy = matAt(p0.add(vec2(0, 0.25))).sub(matAt(p0.sub(vec2(0, 0.25)))).mul(2.0);
+  const gl = sqrt(gx.mul(gx).add(gy.mul(gy)));
+  const dir = vec2(gx, gy).div(max(gl, float(1e-4)));
+  const m0 = matAt(p0);
+  // wierzchołek poza konturem idzie ku materiałowi (+gradient), wewnątrz — ku otworowi (−gradient, ≤ ½ komórki): oba rzędy
+  // przy konturze leżą NA nim (wierzch pełnej wysokości, poza — 0), więc ściana między nimi jest pionowa i ciągła
+  const outside = float(1).sub(step(PLATE_MASK, m0));
+  const sgn = outside.mul(2.0).sub(1.0);
+  const dirS = dir.mul(sgn);
+  // pierwsze przejście G przez ½ wzdłuż dirS (od najdalszej próbki do najbliższej — wygrywa najbliższa), bez gałęzi
+  const smp = [m0];
+  for (let k = 1; k <= PLATE_SNAP_N; k++) smp.push(matAt(p0.add(dirS.mul(k * PLATE_SNAP_STEP))));
+  let tSnap = float(-1);
+  for (let k = PLATE_SNAP_N; k >= 1; k--) {
+    const a = smp[k - 1], b = smp[k], d = b.sub(a);
+    const frac = clamp(float(PLATE_MASK).sub(a).mul(d).div(max(d.mul(d), float(1e-8))), 0.0, 1.0);
+    const cand = frac.add(k - 1).mul(PLATE_SNAP_STEP);
+    tSnap = mix(tSnap, cand, step(0.0, b.sub(PLATE_MASK).mul(sgn)));
+  }
+  // wewnątrz tylko do ½ komórki (głębiej — zwykły wierzch)
+  const reach = mix(step(tSnap, 0.55), float(1), outside);
+  const move = step(0.0, tSnap).mul(step(1e-3, gl)).mul(reach);
+  const p = p0.add(dirS.mul(tSnap.mul(move)));
+  const uvS = uvAt(p);
+  // wysokość wierzchu w punkcie uv (j. świata): średnia grubość komórek z materiałem z rozmytych Rs / Gs (tarasy i rów —
+  // łagodne rampy ~1,5 komórki zamiast schodków po 45 j.; na konturze G dwuliniowe bywa 0, Gs — nie)
+  const hAt = (q) => {
+    const b = rgBlur(q);
+    return b.x.div(max(b.y, float(0.002))).mul(uScale);
+  };
+  const top = hAt(uvS).mul(float(1).sub(outside));
+  m.positionNode = vec3(p.x.add(0.5).mul(uCell), p.y.add(0.5).mul(uCell), top.mul(float(1.0).sub(g.z)));
+  const du = 0.25 * inv;
+  const dzx = hAt(uvS.add(vec2(du, 0))).sub(hAt(uvS.sub(vec2(du, 0)))).div(uCell.mul(0.5));
+  const dzy = hAt(uvS.add(vec2(0, du))).sub(hAt(uvS.sub(vec2(0, du)))).div(uCell.mul(0.5));
+  const nLocal = mix(normalize(vec3(dzx.negate(), dzy.negate(), 1.0)), vec3(0, 0, -1), g.z);
+  const nSmooth = transformNormalToView(varying(nLocal, 'vZawPlN')).normalize();
+  const upView = transformNormalToView(vec3(0, 0, 1)).normalize();
+  const wall = float(1).sub(step(0.35, abs(dot(normalFlat, upView))));
+  m.normalNode = normalize(mix(nSmooth, normalFlat, wall));
+  // próg maski z luzem: wierzchołki ściany leżą NA konturze (G ≈ ½ z dokładnością interpolacji), cięciwa między nimi — tuż obok
+  m.maskNode = rgBlur(varying(uvS, 'vZawPlUv')).y.greaterThan(PLATE_MASK - 0.03);
   m.colorNode = Fn(() => {
     const p = positionWorld.xy.toVar();
     const grain = vnoise2(p.mul(1 / 90)).mul(0.08).add(vnoise2(p.mul(1 / 23)).mul(0.05)).add(0.92);

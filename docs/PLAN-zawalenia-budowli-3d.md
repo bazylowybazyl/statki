@@ -566,6 +566,7 @@ Zapas na wypadek „no-go”: H-T z komórką 67, niższy sufit klastrów, czę�
 | R12 | zbieg ostatniego wieżowca z HP 0 | bramka E7 |
 | R13 | brak drogi po porażce | go / no-go po E1, E2 |
 | R14 | kruszenie wysoko nie wynika z mechaniki | fala w konstrukcji, kalibracja; nagranie E5 |
+| R15 | szyja w polu płyty (demo D20 krok 5 [P], `zawalenia-sym.mjs --scena 5 --hz 60,120`): (1) zależy od kroku — w czasie pokazu (18 s) przy 60 Hz graf dysku traci 1,6% bloków, przy 120 Hz 13% (ponad D7 ≤ 5%), przy ×3 przechyłu cały dysk; historia impulsów płyty prawie ta sama, a uderzenie zrywa ~6× więcej wiązań (do 9 s: 505 wobec 89); (2) PEŁZANIE — po spoczynku wieży (bez styku z płytą) uszkodzony graf pęka dalej pod własnym ciężarem: przy 60 Hz wiązania 1878 → ~1000 i 44 / 316 bloków (14%, wyspa 36 bloków przy ~24 s) po 40 s | E6: luka 60 / 120 Hz grafu w szyi i zmęczenie uszkodzonego grafu (testy `todo` w `structureGraph` i `structurePlate`), ocena wiązań przy impulsie styku niezależna od kroku |
 
 ## 8. Decyzje użytkownika (od najważniejszej)
 
