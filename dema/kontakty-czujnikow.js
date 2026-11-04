@@ -8,15 +8,15 @@
 //
 // Serwowanie: `npm run dev` → /dema/kontakty-czujnikow.html
 //   ?wariant=0..4|porownanie   ?scena=plansza|gra   ?podpisy=0   ?daleko=1   ?clean=1 (bez paneli)
-//   ?tryb=wachlarze (klawisz W): WACHLARZE namierzania „) ) )” przy okręcie gracza — 1 PULS, 2 FALA, 3 ISKRY,
-//     0 dziś (rysunek 2D prototypu), 5 porównanie; ?wachlarz=puls|fala|iskry|dzis|porownanie
+//   ?tryb=namiar (klawisz W): NAMIAR „kto kogo widzi” — Atlas i wróg w jednym kadrze: 1 WACHLARZ, 2 STRUNA, 3 BŁONA,
+//     5 porównanie; ?namiar=wachlarz|struna|blona|porownanie; ?scena=stany|przelot|grupy (klawisz S)
 //   ?test=1 (klatki tylko z __kontakty.runFrames — zrzuty: scripts/webgpu/kontakty-demo.mjs)
 import { Core3D } from '../src/3d/core3d.js';
 import {
   createContactBlock, createContactMesh, createSpaceBackdrop, KONTAKT_STYLES, KONTAKT_MAX, KONTAKT_HDR,
   KONTAKT_NOISE_TILE, wrap01
 } from './kontakty-czujnikow/kontaktyTSL.js';
-import { createFanDemo } from './kontakty-czujnikow/wachlarzeDemo.js';
+import { createNamiarDemo, NAMIAR_SCENES } from './kontakty-czujnikow/namiarDemo.js';
 import { FX_DISTORT_LAYER } from '../src/3d/fx/fxFrame.js';
 
 const params = new URLSearchParams(location.search);
@@ -51,16 +51,14 @@ const DESC = {
   porownanie: 'Wszystkie cztery naraz: w każdej ćwiartce cztery rozmiary (MAŁY → OGROMNY), flota pięciu i para, która się zbliża i rozchodzi.'
 };
 
-// WACHLARZE namierzania (tryb W): semantyka z prototypu — niebieska połówka = MÓJ zasięg względem grupy, czerwona = ICH
-// zasięg względem mnie (mój ślad sygnałowy), zapalonych łuków = ułamek × 7, grot = sięga; zmienia się tylko wygląd.
-const FAN_VARIANTS = ['dzis', 'puls', 'fala', 'iskry', null, 'porownanie'];
-const FAN_TITLES = { dzis: 'DZIŚ (prototyp)', puls: '1 · PULS', fala: '2 · FALA', iskry: '3 · ISKRY', porownanie: 'PORÓWNANIE 2 × 2' };
-const FAN_DESC = {
-  dzis: 'Dzisiejsze wachlarze prototypu (rysunek 2D): łuki ) ) ) — niebieska połówka = MÓJ zasięg względem grupy, czerwona = ICH zasięg względem mnie; zapalonych łuków = ułamek × 7, grot = sięga.',
-  puls: '<b>Puls.</b> Łuki świecą z poświatą, a od okrętu biegnie po nich puls — tym szybszy, im bliżej progu (jak bicie serca). Przy przekroczeniu 1 rozbłysk: pierścień przelatuje przez wachlarz, łuki się żarzą i migoczą, grot oddycha poświatą. Radar zgadnięty — czerwień w kreskach.',
-  fala: '<b>Fala.</b> Grzbiety fal płyną od okrętu do granicy zasięgu i NAPRAWDĘ zginają tło (refrakcja z aberracją barw — warstwa DIST Core3D). Po przekroczeniu 1 przez wachlarz co chwilę przechodzi fala uderzeniowa. Radar zgadnięty — grzbiety rwane.',
-  iskry: '<b>Iskry.</b> Strumień iskier płynie od okrętu do granicy zasięgu (jak RÓJ kontaktów), pod spodem cienkie łuki skali, na granicy migocący front. Po przekroczeniu 1 iskry dolatują do grota, który iskrzy. Radar zgadnięty — iskier mniej i słabsze.',
-  porownanie: 'Trzy warianty i dzisiejszy rysunek naraz: przy okręcie cztery grupy — daleko, przy progu (przechodzi przez 1 — rozbłysk), sięga, radar zgadnięty.'
+// NAMIAR (tryb W): dane na grupę — them (≥ 1: wykryli mnie), me (≥ 1: ja wykrywam ich), est (ich czujniki zgadnięte).
+const NAM_VARIANTS = [null, 'wachlarz', 'struna', 'blona', null, 'porownanie'];
+const NAM_TITLES = { wachlarz: '1 · WACHLARZ', struna: '2 · STRUNA', blona: '3 · BŁONA', porownanie: 'PORÓWNANIE' };
+const NAM_DESC = {
+  wachlarz: '<b>Wachlarz — jeden na okręt.</b> Przy mnie niebieski w stronę wroga (długość = mój zasięg względem nich), przy wrogu czerwony w stronę mnie (długość = ich zasięg względem mnie). Oba na jednej prostej, naprzeciw siebie; łuki stoją, biegnie po nich tylko jasność. Pełna długość z grotem = sięga. Wróg poza kadrem — wachlarz przy krawędzi ekranu.',
+  struna: '<b>Struna.</b> Gładki łuk przy moim okręcie w stronę grupy, końce nieruchome jak węzły. Daleko prawie prosty i spokojny; im bliżej wykrycia, tym mocniej drga, dochodzą wyższe harmoniczne, napięcie bieleje. Przy them = 1 struna PĘKA: bicz, rozbłysk, fala uderzeniowa, dwa czerwone rozedrgane końce; poniżej progu zrasta się. Słabsza struna przy wrogu drga z mojego zasięgu.',
+  blona: '<b>Błona.</b> Jedna zamknięta, organiczna błona wokół mojego okrętu (język obłoków). Promień = mój ślad sygnałowy (ciąg nadyma, cisza kurczy), w stronę każdej grupy wybrzuszenie rosnące z ich zasięgu. Wiele grup = jeden kształt, zero osobnych znaczników. Przy them ≥ 1 błona w tym miejscu czerwienieje i pęka.',
+  porownanie: 'Trzy propozycje w trzech pasach, ten sam przelot: wróg się zbliża, przekracza próg, potem cicha praca (×0,5), ciąg (×1,35), wróg odchodzi. Pętla 27 s.'
 };
 
 // Model miejsca kontaktu jak w prototypie (sensorDetection.js: contactErrFrac 0,07, contactJitterSec 2,5; wzrok 18 km
@@ -73,8 +71,9 @@ const IDENT_R = 18000;
 const DETECT_R = 58500;
 
 const S = {
-  mode: params.get('tryb') === 'wachlarze' ? 'wachlarze' : 'kontakty',
-  fanVariant: Math.max(0, FAN_VARIANTS.indexOf(params.get('wachlarz') || 'puls')),
+  mode: params.get('tryb') === 'namiar' ? 'namiar' : 'kontakty',
+  namVariant: Math.max(1, NAM_VARIANTS.indexOf(params.get('namiar') || 'struna')),
+  namScene: NAMIAR_SCENES.includes(params.get('scena')) ? params.get('scena') : 'przelot',
   variant: Math.max(0, VARIANTS.indexOf(params.get('wariant') || 'echo')),
   scene: params.get('scena') === 'gra' ? 'gra' : 'plansza',
   time: Number(params.get('t')) || 0,
@@ -98,7 +97,7 @@ const atlasImg = new Image();
 atlasImg.src = '../assets/capital_ship_rect_v1.png';
 let blocks = null;   // blok kontaktów na propozycję (porównanie: każda ćwiartka tylko swoje kontakty)
 let meshes = null;
-let fans = null;     // tryb wachlarzy (wachlarzeDemo.js)
+let namiar = null;   // tryb namiaru (namiarDemo.js)
 let backdrop = null;
 
 // ---------------------------------------------------------------------------
@@ -215,11 +214,21 @@ function scenePorownanie() {
 
 function setScene() {
   nextId = 1;
-  if (S.mode === 'wachlarze') {
-    fans.setScene(S.fanVariant === 5, quadCenter);
-    S.contacts = []; S.captions = []; S.observer = null; S.vision = 0; S.quads = S.fanVariant === 5;
+  if (S.mode === 'namiar') {
+    S.contacts = []; S.captions = []; S.observer = null; S.vision = 0; S.quads = false;
     S.offX = 0; S.offY = 0;
     applyZoom();
+    S.cam.x = 0; S.cam.y = 0;
+    // kontakt bez identyfikacji w scenie GRUPY: wybrany OBŁOK
+    const makeContact = (cls, x, y) => {
+      const c = contact(cls, 1500, drift(x, y, 350, 1.3));
+      c.move(S.time, c);
+      c.born = S.time - 1.2;
+      refreshShown(c, true);
+      S.contacts.push(c);
+      return c;
+    };
+    namiar.setScene(S.namScene, S.namVariant === 5, S.cam, W, H, makeContact);
     return;
   }
   const sc = S.variant === 5 ? scenePorownanie() : (S.scene === 'gra' ? sceneGra() : scenePlansza());
@@ -272,19 +281,19 @@ function applyZoom() {
 }
 
 function setVariant(v) {
-  const fanMode = S.mode === 'wachlarze';
-  if (fanMode && !FAN_VARIANTS[v]) return;
-  const wasCmp = (fanMode ? S.fanVariant : S.variant) === 5;
-  if (fanMode) S.fanVariant = v; else S.variant = v;
+  const nam = S.mode === 'namiar';
+  if (nam && !NAM_VARIANTS[v]) return;
+  const wasCmp = (nam ? S.namVariant : S.variant) === 5;
+  if (nam) S.namVariant = v; else S.variant = v;
   if ((v === 5) !== wasCmp) setScene();
   syncPanel();
 }
 
-// Przyciski i opis panelu wg trybu (kontakty / wachlarze).
+// Przyciski i opis panelu wg trybu (kontakty / namiar).
 function syncPanel() {
-  const fanMode = S.mode === 'wachlarze';
-  const v = fanMode ? S.fanVariant : S.variant;
-  const names = fanMode ? ['Dziś (prototyp)', '1 · PULS', '2 · FALA', '3 · ISKRY', '', 'Porównanie 2 × 2']
+  const nam = S.mode === 'namiar';
+  const v = nam ? S.namVariant : S.variant;
+  const names = nam ? ['', '1 · WACHLARZ', '2 · STRUNA', '3 · BŁONA', '', 'Porównanie (przelot)']
     : ['Dziś (prototyp)', '1 · ECHO', '2 · OBŁOK', '3 · WIR', '4 · RÓJ', 'Porównanie 2 × 2'];
   for (let i = 0; i <= 5; i++) {
     const b = $(`v${i}`);
@@ -293,32 +302,49 @@ function syncPanel() {
     b.style.display = names[i] ? '' : 'none';
     b.classList.toggle('on', i === v);
   }
-  $('desc').innerHTML = fanMode ? FAN_DESC[FAN_VARIANTS[v]] : DESC[VARIANTS[v]];
-  $('m-kontakty').classList.toggle('on', !fanMode);
-  $('m-wachlarze').classList.toggle('on', fanMode);
-  $('scena-box').style.display = fanMode ? 'none' : '';
+  $('desc').innerHTML = nam ? NAM_DESC[NAM_VARIANTS[v]] : DESC[VARIANTS[v]];
+  $('m-kontakty').classList.toggle('on', !nam);
+  $('m-namiar').classList.toggle('on', nam);
+  $('scena-box').style.display = nam ? 'none' : '';
+  $('scena-namiar').style.display = nam ? '' : 'none';
   $('s-plansza').classList.toggle('on', S.scene === 'plansza' && v !== 5);
   $('s-gra').classList.toggle('on', S.scene === 'gra' && v !== 5);
+  for (const n of NAMIAR_SCENES) $(`s-${n}`).classList.toggle('on', S.namScene === n && v !== 5);
 }
 
 function setMode(mode) {
-  S.mode = mode === 'wachlarze' ? 'wachlarze' : 'kontakty';
+  S.mode = mode === 'namiar' ? 'namiar' : 'kontakty';
   setScene();
   syncPanel();
 }
 
 function setSceneName(name) {
-  if (S.mode === 'wachlarze') return;
+  if (S.mode === 'namiar') {
+    S.namScene = name;
+    if (S.namVariant === 5) S.namVariant = 2;
+    setScene();
+    syncPanel();
+    return;
+  }
   S.scene = name;
   if (S.variant === 5) S.variant = 1;
   setScene();
   setVariant(S.variant);
 }
 
+function cycleScene() {
+  if (S.mode === 'namiar') {
+    setSceneName(NAMIAR_SCENES[(NAMIAR_SCENES.indexOf(S.namScene) + 1) % NAMIAR_SCENES.length]);
+  } else {
+    setSceneName(S.scene === 'gra' ? 'plansza' : 'gra');
+  }
+}
+
 function syncMeshes() {
-  const fanMode = S.mode === 'wachlarze';
-  fans.sync(FAN_VARIANTS[S.fanVariant], S.cam, W, H, fanMode);
-  const v = fanMode ? null : VARIANTS[S.variant];
+  const nam = S.mode === 'namiar';
+  namiar.sync(NAM_VARIANTS[S.namVariant], S.cam, W, H, nam);
+  // w namiarze kontakt bez identyfikacji (scena GRUPY) — wybrany wygląd OBŁOK
+  const v = nam ? (S.contacts.length ? 'oblok' : null) : VARIANTS[S.variant];
   const pr = Core3D.pixelRatio || 1;
   const bw = Core3D.composerTarget?.width || W * pr;
   const bh = Core3D.composerTarget?.height || H * pr;
@@ -365,7 +391,7 @@ function packBlock(A, quad) {
 
 // Soczewka wiru: refrakcja „uber” (implozja — obraz wsysany ku środkowi) na kontakt, co klatkę.
 function pushLens() {
-  if (S.mode === 'wachlarze') return;
+  if (S.mode === 'namiar') return;
   const v = VARIANTS[S.variant];
   if (v !== 'wir' && v !== 'porownanie') return;
   const dist = Core3D.fxDistortion?.();
@@ -387,14 +413,13 @@ function frame(dt) {
   const t0 = performance.now();
   if (!S.paused) S.time += dt;
   stepContacts(S.paused ? 0 : dt);
-  if (S.mode === 'wachlarze') fans.step(S.time);
+  if (S.mode === 'namiar') namiar.step(S.time, S.paused ? 0 : dt);
   const cam = S.cam;
   cam.x = S.offX; cam.y = S.offY;
   syncMeshes();
   const cmp = VARIANTS[S.variant] === 'porownanie';
   for (let i = 0; i < meshes.length; i++) {
-    if (S.mode === 'wachlarze') break;
-    if (meshes[i].visible) packBlock(blocks[i].array, cmp ? QUAD_STYLE.indexOf(KONTAKT_STYLES[i]) : -1);
+    if (meshes[i].visible) packBlock(blocks[i].array, cmp && S.mode !== 'namiar' ? QUAD_STYLE.indexOf(KONTAKT_STYLES[i]) : -1);
   }
   Core3D.beginPlanetLayerFrame?.();
   pushLens();
@@ -471,22 +496,8 @@ function drawToday(cam) {
 function drawOverlay(cam) {
   ctx.clearRect(0, 0, W, H);
   const clean = document.body.classList.contains('clean');
-  if (S.mode === 'wachlarze') {
-    const fv = FAN_VARIANTS[S.fanVariant];
-    fans.drawOverlay(ctx, cam, W, H, fv, atlasImg, text, S.labels);
-    if (fv === 'porownanie') {
-      ctx.strokeStyle = 'rgba(160, 190, 210, 0.25)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H);
-      ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2);
-      ctx.stroke();
-      const qs = ['puls', 'fala', 'iskry', 'dzis'];
-      for (let q = 0; q < 4; q++) {
-        const x = (q % 2) * W / 2 + 14, y = (q < 2 ? 0 : 1) * H / 2 + (q < 2 && !clean ? 64 : 12);
-        text(FAN_TITLES[qs[q]], x, y, '255, 207, 106', 0.95, 14, 'left');
-      }
-    }
+  if (S.mode === 'namiar') {
+    namiar.drawOverlay(ctx, cam, W, H, NAM_VARIANTS[S.namVariant], atlasImg, text, S.labels);
     return;
   }
   if (S.observer && !S.quads) drawAtlas(cam, S.observer.x, S.observer.y);
@@ -563,11 +574,11 @@ let hudN = 0;
 function updateHud() {
   if (++hudN % 6) return;
   const info = Core3D.lastFrameRenderInfo?.total || Core3D.renderer?.info?.render || {};
-  const fanMode = S.mode === 'wachlarze';
-  const v = fanMode ? FAN_VARIANTS[S.fanVariant] : VARIANTS[S.variant];
+  const nam = S.mode === 'namiar';
+  const v = nam ? NAM_VARIANTS[S.namVariant] : VARIANTS[S.variant];
   const lines = [];
   lines.push(`<b>${(1000 / Math.max(1, S.frameMs)).toFixed(0)} FPS</b> · CPU ${S.cpuMs.toFixed(2)} ms · GPU ${(Number(Core3D.gpuFrameMs) || 0).toFixed(2)} ms · draw ${info.drawCalls ?? info.calls ?? 0}${S.paused ? ' · <span class="warn">PAUZA</span>' : ''}`);
-  lines.push(fanMode ? `<b>WACHLARZE · ${FAN_TITLES[v]}</b> · stanowiska ${fans.st.stations.length} · kadr ${(W / S.cam.zoom / 1000).toFixed(0)} km`
+  lines.push(nam ? `<b>NAMIAR · ${NAM_TITLES[v]}</b> · scena ${v === 'porownanie' ? 'przelot' : S.namScene} · kadr ${(W / S.cam.zoom / 1000).toFixed(0)} km`
     : `<b>${TITLES[v]}</b> · scena ${v === 'porownanie' ? 'porównanie' : S.scene} · kontakty ${S.contacts.length} · kadr ${(W / S.cam.zoom / 1000).toFixed(0)} km`);
   lines.push(`pipeline'y synchr. w klatkach: <b>${S.syncPipes}</b>${S.syncNames.length ? ` (${S.syncNames.slice(0, 2).join(', ')})` : ''}`);
   $('hud').innerHTML = lines.join('\n');
@@ -579,8 +590,8 @@ function updateHud() {
 const ACTIONS = {
   0: () => setVariant(0), 1: () => setVariant(1), 2: () => setVariant(2), 3: () => setVariant(3), 4: () => setVariant(4),
   5: () => setVariant(5),
-  s: () => setSceneName(S.scene === 'gra' ? 'plansza' : 'gra'),
-  w: () => setMode(S.mode === 'wachlarze' ? 'kontakty' : 'wachlarze'),
+  s: () => cycleScene(),
+  w: () => setMode(S.mode === 'namiar' ? 'kontakty' : 'namiar'),
   l: () => { S.labels = !S.labels; $('b-labels').classList.toggle('on', S.labels); },
   t: () => { S.truth = !S.truth; $('b-truth').classList.toggle('on', S.truth); },
   ' ': () => { S.paused = !S.paused; $('b-pause').classList.toggle('on', S.paused); },
@@ -593,7 +604,8 @@ function bindInput() {
   $('s-plansza').addEventListener('click', () => setSceneName('plansza'));
   $('s-gra').addEventListener('click', () => setSceneName('gra'));
   $('m-kontakty').addEventListener('click', () => setMode('kontakty'));
-  $('m-wachlarze').addEventListener('click', () => setMode('wachlarze'));
+  $('m-namiar').addEventListener('click', () => setMode('namiar'));
+  for (const n of NAMIAR_SCENES) $(`s-${n}`).addEventListener('click', () => setSceneName(n));
   const map = { 'b-labels': 'l', 'b-truth': 't', 'b-pause': ' ', 'b-far': 'z', 'b-clean': 'h' };
   for (const [id, k] of Object.entries(map)) $(id).addEventListener('click', () => ACTIONS[k]());
   canvas2d.addEventListener('mousedown', (e) => {
@@ -658,16 +670,19 @@ window.__kontakty = {
   set(o = {}) {
     if (o.mode && o.mode !== S.mode) {
       S.mode = o.mode;
-      if (o.mode === 'wachlarze' && o.variant !== undefined) {
-        S.fanVariant = typeof o.variant === 'number' ? o.variant : FAN_VARIANTS.indexOf(o.variant);
+      if (o.mode === 'namiar' && o.variant !== undefined) {
+        S.namVariant = typeof o.variant === 'number' ? o.variant : NAM_VARIANTS.indexOf(o.variant);
       }
+      if (o.mode === 'namiar' && o.scene) S.namScene = o.scene;
       setScene();
       syncPanel();
-    } else if (S.mode === 'wachlarze' && o.variant !== undefined) {
-      const v = typeof o.variant === 'number' ? o.variant : FAN_VARIANTS.indexOf(o.variant);
-      setVariant(v);
+    } else if (S.mode === 'namiar') {
+      if (o.scene) S.namScene = o.scene;
+      if (o.variant !== undefined) S.namVariant = typeof o.variant === 'number' ? o.variant : NAM_VARIANTS.indexOf(o.variant);
+      if (o.scene || o.variant !== undefined) { setScene(); syncPanel(); }
     }
-    if (S.mode === 'wachlarze') {
+    if (o.time !== undefined) { S.time = o.time; if (S.mode === 'namiar') setScene(); }
+    if (S.mode === 'namiar') {
       if (o.labels !== undefined) { S.labels = !!o.labels; $('b-labels').classList.toggle('on', S.labels); }
       if (o.clean !== undefined) document.body.classList.toggle('clean', !!o.clean);
       return true;
@@ -693,7 +708,8 @@ window.__kontakty = {
   },
   stats() {
     return {
-      tryb: S.mode, wachlarz: FAN_VARIANTS[S.fanVariant], distLive: fans?.distLive ?? false,
+      tryb: S.mode, namiar: NAM_VARIANTS[S.namVariant], scenaNamiaru: S.namScene, distLive: namiar?.distLive ?? false,
+      grupy: S.mode === 'namiar' ? namiar.st.views.flatMap((w) => w.groups.map((g) => ({ them: +g.them.toFixed(3), me: +g.me.toFixed(3), gap: +g.gapThem.toFixed(2), wiek: +g.ageThem.toFixed(2) }))) : null,
       wariant: VARIANTS[S.variant], scena: S.variant === 5 ? 'porownanie' : S.scene, czas: +S.time.toFixed(2),
       kontakty: S.contacts.length, zoom: +S.cam.zoom.toFixed(5), syncPipes: S.syncPipes, syncNames: S.syncNames.slice(),
       gpuMs: +(Number(Core3D.gpuFrameMs) || 0).toFixed(3),
@@ -719,14 +735,13 @@ window.__kontakty = {
       Core3D.scene.add(m);
       return m;
     });
-    fans = createFanDemo(Core3D, FX_DISTORT_LAYER);
-    for (const m of fans.meshes) Core3D.scene.add(m);
-    if (fans.dist) Core3D.scene.add(fans.dist);
+    namiar = createNamiarDemo(Core3D, FX_DISTORT_LAYER);
+    for (const m of [...namiar.meshes, ...namiar.dists]) Core3D.scene.add(m);
     // warstwę DIST zgłasza się z kroku efektów (flagę kasuje start klatki efektów — wzór hullCloak.js)
-    Core3D.addFxStep({ name: 'wachlarze: fala (demo)', update() { if (fans.distLive) Core3D.setDistortLayerActive(true); } });
+    Core3D.addFxStep({ name: 'namiar: fala pęknięcia (demo)', update() { if (namiar.distLive) Core3D.setDistortLayerActive(true); } });
     Core3D.warmup.add({ name: 'kontakty czujników (4 propozycje, tło)', objects: () => [backdrop.mesh, ...meshes] });
-    Core3D.warmup.add({ name: 'wachlarze czujników (3 warianty)', objects: () => fans.warmupObjects() });
-    if (fans.dist) Core3D.warmup.add({ name: 'wachlarze: fala (warstwa DIST)', objects: () => [fans.dist], layer: FX_DISTORT_LAYER });
+    Core3D.warmup.add({ name: 'namiar czujników (3 propozycje)', objects: () => namiar.warmupObjects() });
+    Core3D.warmup.add({ name: 'namiar: fala pęknięcia (warstwa DIST)', objects: () => namiar.dists.slice(), layer: FX_DISTORT_LAYER });
     await Core3D.warmup.flush?.({ timeoutMs: 8000 });
     hookPipelines();
     bindInput();

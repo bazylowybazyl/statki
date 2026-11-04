@@ -4,8 +4,10 @@
 // pipeline'y synchroniczne, błędy konsoli. Headless Chrome — nie uruchamiać, gdy użytkownik gra.
 //
 //   node scripts/webgpu/kontakty-demo.mjs [--out .tmp/kontakty/demo] [--rozmiar 1600x900]
-//     [--tylko porownanie,echo,oblok,wir,roj,ruch,dzis,wachlarze] (część zrzutów — szybkie strojenie)
-//     [--film 1] (klatki porównania co 0,1 s w skali 0,5 → <out>/film/NNN.png i <out>/film-wachlarze/ — do animacji)
+//     [--tylko porownanie,echo,oblok,wir,roj,ruch,dzis,namiar,namiar-szybko] (część zrzutów — szybkie strojenie)
+//     [--film 1] (klatki porównania kontaktów co 0,1 s w skali 0,5 → <out>/film/NNN.png — do animacji)
+//     [--film-namiar 1] (klatki 60 kl/s: <out>/film-namiar/ — porównanie, pełna pętla 27 s w skali 0,75;
+//        <out>/film-<propozycja>/ — zbliżenie przy Atlasie, skala 1, przelot przez próg; czas: kilka minut)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
@@ -109,34 +111,68 @@ try {
     await set({ variant: 'dzis', clean: false });
     await gpuMedian('bez kontaktów (dziś)');
   }
-  // WACHLARZE namierzania (tryb W): porównanie, każdy wariant na stanowiskach (daleko, próg, sięga, kilka grup, cisza,
-  // przejście), dzisiejszy rysunek 2D; film porównania (rozbłysk przy przejściu przez 1)
-  if (want('wachlarze')) {
-    await set({ mode: 'wachlarze', variant: 'porownanie', clean: true });
-    await run(240);
-    await shot('60-wachlarze-porownanie', 'Wachlarze: PULS, FALA, ISKRY, dziś — cztery grupy (daleko, przy progu, sięga, zgadnięty)');
-    await set({ clean: false });
-    await shot('61-wachlarze-porownanie-panele', 'Wachlarze: porównanie z panelem i opisem');
-    await set({ clean: true });
-    let k = 2;
-    for (const st of ['puls', 'fala', 'iskry', 'dzis']) {
-      await set({ variant: st });
+  // NAMIAR (tryb W): porównanie trzech propozycji w chwilach przelotu, każda osobno: stany, przelot, grupy
+  if (want('namiar') || want('namiar-szybko')) {
+    const quick = !want('namiar');
+    const MOMENTS = [[3, 'daleko'], [7.3, 'przed-progiem'], [7.62, 'pekniecie'], [10.2, 'wykryty'], [14, 'cicha'], [19.5, 'ciag']];
+    await set({ mode: 'namiar', variant: 'porownanie', clean: true, time: 0, labels: true });
+    let now = 0;
+    for (const [tm, name] of MOMENTS) {
+      await run(Math.round((tm - now) * 60));
+      now = tm;
+      await shot(`60-namiar-porownanie-${name}`, `Porównanie, t = ${tm} s: ${name}`, 1);
+    }
+    let k = 1;
+    for (const st of ['wachlarz', 'struna', 'blona']) {
+      await set({ variant: st, scene: 'stany', time: 0, clean: true });
+      await run(120);
+      await shot(`7${k}-${st}-stany`, `${st}: daleko, tuż przed progiem, wykryty`);
+      if (!quick) await gpuMedian(`namiar ${st} stany`);
+      await set({ scene: 'grupy', time: 0 });
       await run(150);
-      await shot(`6${k}-wachlarze-${st}`, `Wachlarze ${st}: daleko, blisko progu, sięga, kilka grup, cicha praca, przejście`);
-      if (st !== 'dzis') await gpuMedian(`wachlarze ${st}`);
+      await shot(`7${k}-${st}-grupy`, `${st}: 3 grupy — blisko, kontakt bez identyfikacji (OBŁOK, est), poza kadrem`);
+      if (!quick) {
+        await set({ scene: 'przelot', time: 0 });
+        now = 0;
+        for (const [tm, name] of MOMENTS) {
+          await run(Math.round((tm - now) * 60));
+          now = tm;
+          await shot(`7${k}-${st}-przelot-${name}`, `${st}, przelot, t = ${tm} s: ${name}`, 1);
+        }
+      }
       k++;
     }
-    if (args.film) {
-      await set({ variant: 'porownanie', clean: true });
-      await run(60);
-      const dir = join(out, 'film-wachlarze');
+    await set({ mode: 'kontakty' });
+  }
+  if (args['film-namiar']) {
+    const fn = String(args['film-namiar']);    // 1 — wszystko; albo porownanie | wachlarz | struna | blona
+    // porównanie: pełna pętla 27 s, 60 kl/s, skala 0,75
+    if (fn === '1' || fn === 'porownanie') {
+      await set({ mode: 'namiar', variant: 'porownanie', clean: true, time: 0, labels: true });
+      const dir = join(out, 'film-namiar');
       mkdirSync(dir, { recursive: true });
-      for (let i = 0; i < 64; i++) {
-        await run(6);
-        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: W, height: H, scale: 0.5 } });
-        writeFileSync(join(dir, `${String(i).padStart(3, '0')}.png`), Buffer.from(data, 'base64'));
+      const clipC = { x: 0, y: 0, width: W, height: H, scale: 0.75 };
+      for (let i = 0; i < 27 * 60; i++) {
+        await run(1);
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: clipC });
+        writeFileSync(join(dir, `${String(i).padStart(4, '0')}.png`), Buffer.from(data, 'base64'));
+        if (i % 240 === 0) console.log('film-namiar', i);
       }
-      console.log('film wachlarzy: 64 klatki →', dir);
+    }
+    // zbliżenie przy Atlasie (piksel w piksel), przelot przez próg: 4,5–12,5 s (rozbieg 0,1 s od początku pętli do startu)
+    const clipZ = { x: 0, y: 300, width: 680, height: 382, scale: 1 };
+    for (const st of ['wachlarz', 'struna', 'blona']) {
+      if (fn !== '1' && fn !== st) continue;
+      await set({ mode: 'namiar', variant: st, scene: 'przelot', time: 0, clean: true });
+      await run(Math.round(4.5 * 60));
+      const dz = join(out, `film-${st}`);
+      mkdirSync(dz, { recursive: true });
+      for (let i = 0; i < 8 * 60; i++) {
+        await run(1);
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip: clipZ });
+        writeFileSync(join(dz, `${String(i).padStart(4, '0')}.png`), Buffer.from(data, 'base64'));
+      }
+      console.log('film', st);
     }
     await set({ mode: 'kontakty' });
   }

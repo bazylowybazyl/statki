@@ -1,12 +1,14 @@
 // Demo wyglądu KONTAKTU czujników (dema/kontakty-czujnikow.html): WGSL czterech propozycji i tła buduje się w Node,
-// bez pow (ujemna podstawa = NaN), jeden blok kontaktów o stałej nazwie, graf raz na propozycję.
+// bez pow (ujemna podstawa = NaN), jeden blok kontaktów o stałej nazwie, graf raz na propozycję; to samo dla namiaru.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
 import {
   createContactBlock, createContactMesh, createSpaceBackdrop, KONTAKT_STYLES, KONTAKT_MAX, KONTAKT_HDR
 } from '../dema/kontakty-czujnikow/kontaktyTSL.js';
-import { createFanBlock, createFanMeshes, FAN_STYLES, FAN_MAX, FAN_HDR } from '../dema/kontakty-czujnikow/wachlarzeTSL.js';
+import {
+  createNamiarBlock, createNamiarMeshes, NAMIAR_STYLES, NAMIAR_MARKS, NAMIAR_MARK_BASE, NAMIAR_MARK_VEC
+} from '../dema/kontakty-czujnikow/namiarTSL.js';
 
 function build(renderer, mesh) {
   const b = renderer.backend.createNodeBuilder(mesh, renderer);
@@ -44,23 +46,23 @@ test('propozycje kontaktu: WGSL w Node, bez pow, wspólny blok kontaktów', () =
   assert.ok(bg.mesh.layers.isEnabled(1));
 });
 
-test('wachlarze: WGSL trzech wariantów (i warstwy DIST fali) w Node, bez pow, blok o stałej nazwie', () => {
+test('namiar: WGSL trzech propozycji (i warstwy DIST fali pęknięcia) w Node, bez pow, blok o stałej nazwie', () => {
   const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
   const renderer = new THREE.WebGPURenderer({ canvas });
   renderer.hasFeature = () => false;
-  const block = createFanBlock();
-  assert.equal(block.array.length, FAN_HDR + 3 * FAN_MAX);
-  for (const style of FAN_STYLES) {
-    const { mesh, dist } = createFanMeshes(style, block, 10);
+  const block = createNamiarBlock();
+  assert.equal(block.array.length, NAMIAR_MARK_BASE + NAMIAR_MARK_VEC * NAMIAR_MARKS);
+  for (const style of NAMIAR_STYLES) {
+    const { mesh, dist } = createNamiarMeshes(style, block, 10);
     for (const m of [mesh, dist].filter(Boolean)) {
       const t0 = performance.now();
       const b = build(renderer, m);
       const ms = performance.now() - t0;
       assert.doesNotMatch(b.fragmentShader, /\bpow\(/, `${m.name}: bez pow`);
-      assert.match(b.fragmentShader, /wachlarzeCzujnikow/, `${m.name}: blok o stałej nazwie`);
+      assert.match(b.fragmentShader, /namiarCzujnikow/, `${m.name}: blok o stałej nazwie`);
       assert.ok(ms < 2000, `${m.name}: budowa ${ms.toFixed(0)} ms`);
     }
-    assert.equal(!!dist, style === 'fala', `${style}: warstwa DIST tylko dla fali`);
+    assert.equal(!!dist, style !== 'wachlarz', `${style}: warstwa DIST tylko przy pękaniu`);
     if (dist) assert.ok(dist.layers.isEnabled(10));
   }
 });
