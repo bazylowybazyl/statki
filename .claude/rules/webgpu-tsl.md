@@ -56,8 +56,9 @@ Port renderu z WebGL na WebGPU jest zakończony (zadania 01–24, 2026-09-28). H
   celu przez `compileAsyncNaCelu` (pułapka 30). three r183 wkłada pipeline z `compileAsync` do cache, zanim GPU go odda —
   zwykły rysunek tego klucza wołał `setPipeline(undefined)`; Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki
   rysunek czeka klatkę, dwie) i loguje połknięte błędy `createRenderPipelineAsync`. `renderer.info`: draw calle w
-  `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`) co `gpuTimerSampleEvery` klatek,
-  jedno zapytanie w locie → `Core3D.gpuFrameMs`; mapę `timestamps` puli three czyści Core3D (three tego nie robi).
+  `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`) co `gpuTimerSampleEvery` klatek Core3D,
+  jedno zapytanie w locie na typ → `Core3D.gpuFrameMs` / `gpuComputeMs` = ms na JEDNĄ klatkę (rozliczenie
+  `src/3d/zegarGpuKlatki.js` — reguła `core3d`, „Zegar GPU na klatkę”); mapę `timestamps` puli three czyści Core3D (three tego nie robi).
 
 - **Weryfikacja:** harness zrzutów `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/<katalog> --baza
   .tmp/webgpu/baseline/webgl/p1` (sceny deterministyczne; błędy konsoli z walidacją WebGPU, draw calle per pass, HDR, spis
