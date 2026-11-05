@@ -217,7 +217,7 @@ Koszt całej klatki (zdarzenia, krok, obraz, rysunek), S1 przy t = 4,75–5,5, 5
 
 Kod: § 5.5. Trzy przyciski przed starymi scenami, start strony to S5, ziarno 21, `?ziarno=7`. Budowa bajt w bajt z `scena5.mjs` (ziarna 21 i 7, wszystkie tablice i plan, `tests/wokseleS5.test.mjs`), S1, S3, S4 bez zmian bajtowych. W solverze doszło tylko `puscKotwiceF` (`uKotwice = 0` po zdarzeniach klatki), bez nowych kerneli i buforów.
 
-**Wszystkie progi K1–K6 zaliczone za pierwszym biegiem na ziarnach 21 i 7, S5 i S5 próżnia, bez strojenia planu.** Kopy jednoklatkowe w f32 nie przesunęły progów (obawa z propozycji). Tabela: § 8, zapis: `.tmp/woksele-demo/S5/S5-liczby.txt`. Zrzuty S5 i S5 próżnia przy t = 1, 2, 4, 6, 8, 12 oraz S5 planeta przy t = 6, 10: `.tmp/woksele-demo/S5/zrzuty/`. Obok klatek filmu przy t = 2 i t = 8 (S5 i próżnia) ten sam układ kawałków, widać gładszy wieniec. Ruchu nikt jeszcze nie ocenił. Przejście 15 przycisków z resetem i żywą pętlą, interakcje: 0 nowych pipeline'ów, 0 synchronicznych po rozgrzewce.
+**K1, K2, K3, K5, K6 zaliczone we wszystkich biegach na ziarnach 21 i 7, K4 na ziarnie 7 w 6 biegach z 6, ale na ziarnie 21 tylko w 5 z 8: mediana po masie 73,6–90 przy progu 80, kod jak w filmie, J = 210.** Pierwszy bieg trafił 74,4, stąd wcześniejszy zapis „wszystko za pierwszym biegiem”; ujawniły to powtórki na tym samym kodzie, nie zmiana w P4 (ta w solverze pisze tylko `wZar`). Trzy iteracje strojenia nie dały parametrów do wdrożenia, plan bez zmian, decyzja czeka: § 8, „Rozrzut K4”. Kopy jednoklatkowe w f32 nie przesunęły pozostałych progów (obawa z propozycji). Tabela: § 8, zapis: `.tmp/woksele-demo/S5/S5-liczby.txt`, powtórki i strojenie: `.tmp/woksele-demo/S5-weryf/`. Zrzuty S5 i S5 próżnia przy t = 1, 2, 4, 6, 8, 12 oraz S5 planeta przy t = 6, 10: `.tmp/woksele-demo/S5/zrzuty/`, po P4, z pyłem i błyskiem: `.tmp/woksele-demo/S5/zrzuty-po-P4/`. Obok klatek filmu przy t = 2 i t = 8 (S5 i próżnia) ten sam układ kawałków, widać gładszy wieniec. Ruchu nikt jeszcze nie ocenił. Przejście 15 przycisków z resetem i żywą pętlą, interakcje: 0 nowych pipeline'ów, 0 synchronicznych po rozgrzewce.
 
 Koszt, tylko orientacja: S5 planeta od t = 6, 1920 × 1080, znaczniki GPU 1,64 ms (compute 0,44, rysunek 1,20), ściana 3,5 ms. Bieg szedł w czasie startu meczu użytkownika, a znaczniki są niepewne jak w § 1.9.
 
@@ -755,7 +755,7 @@ Kod: `scena.js` (`S5`, `S5_OPCJE`, `S5_NAKLADKA`), `budowa.js` (`wypieczSzwy`, `
 
 d to odległość od śladu wieży (odcinek 1100 j.). Pozycje z chciwego pokrycia szwów (promień 240 j.) poza torem wieży. Najwyżej 4 starty na klatkę, kopy bez korekcji momentu (`zerujL: false`). Dwa akty, bo kop przed oderwaniem sekcji idzie w kotwicę i nic nie rozdziela, a po oderwaniu sekcje spadają razem (swobodny spadek nie obciąża): płyty rozdziela dopiero eksplozja w locie.
 
-**Znana słabość, czeka na ocenę użytkownika, nie ruszana.** Przy g z boku do około t = 8 widać głównie jedną spękaną płytę, bo swobodny spadek nie rozdziela kawałków: po wiązaniach największy kawałek ma przy t = 7 już 0,118 dysku (ziarno 21), a płyty lecą jeszcze razem. Zmieniają to (z budowy planu, bez pomiaru; próba: `--testy s5 --ziarna 21 --miejsca g --opcje '{"grupyOpozn":1.2}'`, wiersz „przebieg” ma medianę prędkości po masie): `grupyOpozn` (2,4 s, drugi akt eksplozji: później = sekcje dłużej trzymają się razem), `J` i `Jmala` (210, 90: rozjazd płyt w locie, kosztem K4 i pyłu), `rPabs` (340: zasięg kopu), `tauSzew` (1 klatka), `kotwicaOpozn` i `vFront` (kolejność padania wsporników, więc czy dysk spada całością, czy po kawałku).
+**Znana słabość, czeka na ocenę użytkownika, nie ruszana.** Przy g z boku do około t = 8 widać głównie jedną spękaną płytę, bo swobodny spadek nie rozdziela kawałków: po wiązaniach największy kawałek ma przy t = 7 już 0,118 dysku (ziarno 21), a płyty lecą jeszcze razem. Pomiar jednej dźwigni (§ 8, „Rozrzut K4”): J 140 i Jmala 60 podnoszą największy kawałek przy t = 7 z 0,118 do około 0,3, więc słabość rośnie, gdy J maleje. Zmieniają to (pozostałe z budowy planu, bez pomiaru; próba: `--testy s5 --ziarna 21 --miejsca g --opcje '{"grupyOpozn":1.2}'`, wiersz „przebieg” ma medianę prędkości po masie): `grupyOpozn` (2,4 s, drugi akt eksplozji: później = sekcje dłużej trzymają się razem), `J` i `Jmala` (210, 90: rozjazd płyt w locie, kosztem K4 i pyłu), `rPabs` (340: zasięg kopu), `tauSzew` (1 klatka), `kotwicaOpozn` i `vFront` (kolejność padania wsporników, więc czy dysk spada całością, czy po kawałku).
 
 **Kamery.** Pole widzenia 32. S5 i S5 planeta: az 32, el 15, cel (0, 0, −650), odl 7200, cień środek (0, 0, −900). S5 próżnia: az 32, el 20, cel = środek masy, odl 7600; kamera i cień jadą stałą prędkością ze środkiem masy z chwili t = 0, orbita użytkownika zostaje. Dalsze kamery filmu: `blisko` (32, 30, (0, 0, −200), 3500), `gora` (20, 89, (0, 0, 0), 4400); w próżni `blisko` (32, 24, (0, 0, 100), 5400), `gora` (20, 89, (0, 0, 0), 7200).
 
@@ -938,6 +938,26 @@ GPU (RTX 5080, ten sam plan i te same bajty budowy, kolumny jak wyżej, K4 do t 
 | 21 | 25,7° / 1,86 / 2,48 | 0,049 / 0,64 / 0,283 | 3,83 / 3,9 / 4 (0,104) | 0,079 / 2,38 / 74,4 / 116,1 / 86,1 / 288,1 / 0,114 | 0,801 / 33 / 0,22 |
 
 GPU: 0 NaN, 0 asymetrii masek, 0 błędów GPU. K6: 38 eksplozji, 2 na klatkę, 3 pchnięcia równocześnie, 0 pominiętych. S5 planeta na GPU (ziarna 7, 21): największy 0,05 / 0,048, 64+ 0,649 / 0,59, 1–7 0,283 / 0,311, kotwice puszczają w klatce 280 / 273.
+
+**Rozrzut K4: tabela wyżej to po jednym biegu.** Bieg GPU nie jest powtarzalny: ten sam kod i to samo ziarno dają inne cyfry (przyczyny nie badałem). Próżnia, J = 210:
+
+| Ziarno | Biegi | Mediana po masie | Ponad 80 | Mediana po węzłach | Największy | Maks 8+ |
+|---|---|---|---|---|---|---|
+| 21 | 8 | 73,6 / 74,4 / 74,4 / 78,9 / 79 / 80,8 / 87,2 / 90 | 3 | 86,1–90,1 (Node 88,3) | 0,102–0,114 | 285,9–288,6 |
+| 7 | 6 | 65,3–67,8 | 0 | 66,8–68,2 (Node 67,1) | 0,135 | 310,6–315,1 |
+
+Mediana po masie to prędkość jednego kawałka, w którym suma mas przekracza połowę. Przy płytach po około 11% masy przeskakuje między sąsiednimi płytami, stąd dwa skupienia na ziarnie 21: 74–81 i 87–90. Mediana po węzłach jest stabilna i pokazuje, że ziarno 21 leży koło 88 j./s także w Node; wynik 77,2 w tabeli Node to niższa płyta, nie zapas.
+
+Strojenie, trzy iteracje (limit zadania), `--opcje`, 6 biegów ziarna 21 i 2 ziarna 7:
+
+| Opcje | Ziarno 21: mediana po masie (ponad 80) | po węzłach | Ziarno 7: mediana, największy, liczba 64+ | Przy g: największy przy t = 7, ziarno 21 | Wniosek |
+|---|---|---|---|---|---|
+| bez zmian | 73,6–90 (3 z 8) | 86,1–90,1 | 65,3–67,8; 0,135; 33–35 | 0,118 | kod dziś |
+| J 185, Jmala 80 | 73,5–89 (3 z 6) | 82,2–84,6 | 62,2–63,8; 0,135; 32–33 | 0,118–0,18 | górne skupienie zostaje |
+| `wiezaJ` 50 | 72–87,1 (2 z 6) | 85,9–89,1 | 65,5–65,7; 0,135; 34 | 0,118 | bez wpływu |
+| J 140, Jmala 60 | 72–75,7 (0 z 6) | 76–80 | 53,2–54,9; 0,229–0,315; 26–27 | 0,286–0,329 | K4 przechodzi, nie wdrożone |
+
+J 140 przechodzi K4 kosztem tego, na co czeka ocena użytkownika: przy g na ziarnie 21 największa płyta przy t = 7 rośnie z 0,118 do około 0,3, czyli dłużej widać jedną płytę (§ 5.5), a próżnia na ziarnie 7 podchodzi do progu 0,35. J = 210 to parametr ocenionego filmu. Pozostałe progi przy J 140: K2 i K3 zaliczone. **Do rozstrzygnięcia:** zostawić J = 210 i uznać K4 ziarna 21 za przekroczony o najwyżej 12,5% na mierze skokowej (albo liczyć próg na medianie po węzłach), czy zejść z J i pogodzić się z dłuższą płytą. S1–S4 nietknięte.
 
 Node: 0 NaN, 0 błędów maski, 0 błędów L. Kontrola w próżni bez styku i bez eksplozji, ziarno 7, 6 s: 0 zerwanych wiązań. S5 planeta w Node (ziarna 7, 1, 21): największy 0,05 / 0,041 / 0,048, 64+ 0,661 / 0,537 / 0,589, 1–7 0,267 / 0,346 / 0,316. Zapasy, które chaos może przesunąć: drobnica 1–7 przy g do 0,308, mediana K4 po masie do 77,2, `64+` w próżni 28 przy celu 28 na ziarnie 42.
 

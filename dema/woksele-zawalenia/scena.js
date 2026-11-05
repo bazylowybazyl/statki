@@ -782,6 +782,7 @@ export const S5_OPCJE = Object.freeze({
   // Kotwice
   wsporniki: 8, wspornikDl: 130, // kotwica nie na całym obwodzie, tylko krótkie łuki
   // Eksplozje: 8 na wspornikach + grupy (kula główna i 2 małe wzdłuż szwu) + 3 w wieży
+  // AGENT: J = 210 to wartość z ocenionego filmu. K4 na ziarnie 21 przekracza 80 w 3 biegach z 8 (mediana po masie skacze między płytami, bieg GPU nie jest powtarzalny). J 140 przechodzi K4, ale przy g największa płyta przy t = 7 rośnie z 0,118 do około 0,3: nie zmieniać bez decyzji użytkownika, SPEC § 8 „Rozrzut K4”.
   grupy: 9, grupyWczesne: 3, grupyOpozn: 2.4, rGl: [55, 70], rMaly: [32, 45], rdzen: 0.2, rdzenSam: 0.4,
   J: 210, rPabs: 340, Jmala: 90, rPmala: 220, tau: 0.3, tauSzew: 0.016, dzP: 120, rPok: 240,
   krokRysy: 0.9, tempoRysy: [0.05, 0.28],
