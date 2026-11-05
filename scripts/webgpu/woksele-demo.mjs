@@ -265,6 +265,8 @@ try {
         await czekajNaCisze(`przycisk ${q + 1} z ${ile}`);
         const nazwa = await ev(`document.querySelectorAll("#panelSceny button")[${q}].textContent`);
         const wylaczony = await ev(`document.querySelectorAll("#panelSceny button")[${q}].disabled`);
+        // AGENT: przycisk miasta bez pojemności przeładowuje stronę (pokaz.js, przeladujMiasto), a ta pętla zakłada jedną stronę. Tę drogę sprawdza --przyciskiMiasta.
+        if (String(nazwa).startsWith('Miasto') && !args.maxWez) continue;
         const pipePrzed = await ev('window.__harness.pipes.list.length');
         await ev(`document.querySelectorAll("#panelSceny button")[${q}].click()`);
         const weszla = await waitFor(cdp, `document.querySelectorAll("#panelSceny button")[${q}].classList.contains("wl")`, 60000, 50);
