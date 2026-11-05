@@ -205,6 +205,14 @@ Dodane poza filmem: wieniec dysku dociągnięty do promienia z normalną promien
 
 **Czego nie ma:** pyłu i przyczyny (P4). Strzału myszą, klawiszy scen, kamer na panelu i przełącznika Miejsce (P5). Punktu K1: wiersze § 7 nie przeszły przez agenta bez kontekstu, a ruch oceniony jest tylko liczbą wyżej, oczami nikt go nie widział. Gwiazd w próżni i ciemnej płyty pod dyskiem nie ma, bo nie ma ich w filmie. Przejście na „sam” bez kurczenia przez 0,15 s: rama przechodzi ciągle, ale podmiana kształtu jest skokowa. Prawdziwe okno Chrome nie było uruchamiane, tylko headless.
 
+### 1.10 Domknięcie zszycia P2 i P3: pokaz ze zdarzeniami
+
+Strona `dema/woksele-zawalenia.html` liczy i rysuje sceny ze zdarzeniami solvera. Panel ma 12 scen: S1, S2, S3, S4 próżnia, S4 przy g = 400, Krater, Odporność, Kolumna, Narożnik, Krater r = 90 w próżni, S3 poza środkiem, S3 ośmiokąt. Przejście wszystkich przycisków z resetem i żywą pętlą rAF: 0 nowych wpisów w dzienniku pipeline'ów, 0 synchronicznych po rozgrzewce. Zrzuty 1920 × 1080: `.tmp/woksele-demo/pokaz1/`, narzędzie `woksele-demo.mjs --zrzut 1 --plan "S1:0,3,5,6;…" --przyciski 1`.
+
+Koszt całej klatki (zdarzenia, krok, obraz, rysunek), S1 przy t = 4,75–5,5, 5120 × 1440, MSAA 4, RTX 5080, trzy biegi: GPU 1,44–1,47 ms ze znaczników (compute 0,43–0,45, rysunek 1,01), ściana 2,3–3,8 ms na klatkę z CPU i kolejką. Tylko orientacja: krok w każdej klatce, znaczniki niepewne jak w § 1.9, dokładny pomiar to P6.
+
+**Czego nie ma:** tego, co w § 1.9. Start strony to S1, a § 5.2 mówi o scenie 2: decyzja należy do P5. S3 poza środkiem nie ma gruzu na pokładzie, bo otwór w obrazie jest liczony od środka dysku.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
