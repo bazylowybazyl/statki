@@ -1,7 +1,7 @@
 // Obraz dema wiązanych wokseli (docs/SPEC-woksele-zawalenia.md § 4, pakiet P3): kObraz, kGruz, materiał przez positionNode, cień, okluzja, ton.
 // Wzorzec wyglądu: film z renderera programowego (.tmp/woksele-proto/proby4/obraz4.mjs + rys4.mjs, opcje mat2, normalSciany, zlom, tonZiarna, svRozerw), a nie opis w spec.
 // Oświetlenie z rys4.mjs w jednostkach three: Lambert, słońce (1,05; 1; 0,92) · π, półkula (0,35; 0,375; 0,425) · π / (0,07; 0,075; 0,085) · π, ekspozycja 1,25, ACES Narkowicza, gamma 2,2.
-// Na razie bez pyłu (§ 4.6) i przyczyny (§ 4.8): to P4. Miejsce na pył: drugi rysunek po `meshGruz`, w tym samym celu HDR.
+// Pył, błysk i kłąb (§ 4.6, § 4.8, P4): pyl.js, własny cel około 720 wierszy, składa je kwad wyjścia. Żar na węzłach: bufor wZar z kKrater, emisja z wierzchołka.
 //
 // Układ id instancji (§ 4): id < n to slot 0 (blok) węzła id; id ≥ n: i = (id − n) / 6, s = 1 + (id − n) % 6: 1–5 odłamki, 6 pręt. Slot nieaktywny zapada się do punktu.
 import * as THREE from 'three/webgpu';
@@ -12,6 +12,7 @@ import {
 } from 'three/tsl';
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
 import { STRONA } from './budowa.js';
+import { createWokselePyl } from './pyl.js';
 
 export const L_ODLAMKI = 5;
 export const WZORY = 64;
@@ -90,7 +91,10 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const wCzastkiW = storage(aCzastki, 'vec4', 2 * CAP_G).setName('wokCzastki');
   const wCzastkiR = storage(aCzastki, 'vec4', 2 * CAP_G).setName('wokCzastki').toReadOnly();
   const wLiczA = storage(aLicz, 'uint', 1).setName('wokLiczObraz').toAtomic();
+  const wZarR = storage(A.zar, 'float', MAX).setName('wokZar').toReadOnly();
 
+  const uKlatka = uniform(0).setName('uObrKlatka'); // numer następnej klatki fizyki: wiek żaru i błysku
+  const uZarMoc = uniform(0.7).setName('uZarMoc');
   const uTau = uniform(0).setName('uTau');
   const uDx = uniform(20).setName('uObrDx');
   const uLimD = uniform(4 / 60).setName('uLimD');
@@ -301,6 +305,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const vN = varyingProperty('vec3', 'vWokN');
   const vK = varyingProperty('vec3', 'vWokK');
   const vP = varyingProperty('vec3', 'vWokP');
+  const vE = varyingProperty('vec3', 'vWokE');
 
   // ── Wierzchołek, § 4.2 ── Najpierw odczyt d, maski i flag, reszta w gałęzi aktywnego slotu. Zmienne przypisane przed rozgałęzieniem (pułapka 39), varyingi na końcu.
   const budujPozycje = ({ varyingi, prety }) => Fn(() => {
@@ -455,9 +460,27 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       });
     });
     if (varyingi) {
+      // Żar (§ 4.8, obraz5.mjs): 1 s gaśnięcia od pomarańczu do ciemnej czerwieni, emisja > 1 tylko przez 0,3 s, rozrzut z hasza: żarzą się krawędzie i odłamki, a nie jednolita łata.
+      const eE = v3(vec3(0));
+      const zf = fv(wZarR.element(i));
+      If(zf.greaterThan(0), () => {
+        const wz = fv(uKlatka.sub(zf).div(60).add(uTau));
+        If(wz.lessThan(1), () => {
+          const qz = fv(float(1).sub(wz));
+          const zolty = fv(max(float(1).sub(wz.div(0.3)), 0));
+          const mocZ = fv(float(0.45).mul(qz).mul(qz).div(0.49));
+          If(wz.lessThan(0.3), () => { mocZ.assign(zolty.mul(1.1).add(0.45)); });
+          const hZ = haszT(i.add(uint(2024)));
+          const rz = fv(czesc(hZ, 3, 255).mul(0.75).add(0.25));
+          If(hZ.bitAnd(uint(7)).equal(uint(0)), () => { rz.assign(1.5); });
+          const m = fv(uZarMoc.mul(mocZ).mul(rz));
+          eE.assign(vec3(m, m.mul(qz.mul(0.32).add(0.1).add(zolty.mul(0.2))), m.mul(zolty.mul(0.09).add(0.01))));
+        });
+      });
       vN.assign(cameraViewMatrix.mul(vec4(Nw, 0)).xyz);
       vK.assign(Kol);
       vP.assign(P0);
+      vE.assign(eE);
     }
     return P;
   })();
@@ -504,6 +527,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const uNear = uniform(camera.near).setName('uObrNear');
   const uFar = uniform(camera.far).setName('uObrFar');
   const liniowa = (d) => uNear.mul(uFar).div(uFar.sub(d.mul(uFar.sub(uNear))));
+  const pyl = createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp: uAoFp });
+  Object.assign(kernele, pyl.kernele);
+  listaObrazu.push(...pyl.lista);
   let aoN = null;
   let aoTex = null;
   const rtSsao = new THREE.RenderTarget(2, 2, { depthBuffer: false, format: THREE.RedFormat, type: THREE.UnsignedByteType });
@@ -561,6 +587,26 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   // Film: otoczenie × a, słońce × (0,5 + 0,5·a). Stąd barwa × (0,5 + 0,5·a), a w aoNode reszta dla otoczenia.
   mat.colorNode = barwaZP0().mul(aoM.mul(0.5).add(0.5));
   mat.aoNode = aoM.div(aoM.mul(0.5).add(0.5));
+  // Żar z wierzchołka + światło błysku na bryłach: najwyżej 4 najmocniejsze błyski, numery slotów i moc liczy CPU raz na klatkę, pozycje z wBlysk (nosiciel jedzie, CPU go nie zna). Bez błysku koszt to 4 porównania uniformów.
+  // AGENT: poświata mała (2 r zamiast 3,5 r z obraz5.mjs) i nieokrągła: z góry dwa błyski na płaskim pokładzie wyglądały przez 0,1 s jak lampy, a duże światło przez okna jak plama (SPEC-S5-propozycja.md § 4, uwaga ze strojenia).
+  const swiatla = Array.from({ length: 4 }, (_, k) => ({ s: uniform(0).setName(`uSwS${k}`), i: uniform(0).setName(`uSwI${k}`), r: uniform(1).setName(`uSwR${k}`) }));
+  const wBlyskF = storage(A.blysk, 'vec4', 3 * solver.blyski).setName('wokBlysk').toReadOnly();
+  mat.emissiveNode = Fn(() => {
+    const e = v3(vE);
+    const pw = v3(positionWorld);
+    for (const { s, i: moc, r } of swiatla) {
+      If(moc.greaterThan(0), () => {
+        const s3 = uv_(uint(3).mul(uint(s)));
+        const a = v4(wBlyskF.element(s3));
+        const o = v3(pw.sub(a.xyz).div(r));
+        const q = fv(float(1).sub(dot(o, o).mul(sin(o.x.mul(4.3).add(a.w)).mul(sin(o.y.mul(3.7).sub(a.w))).mul(0.55).add(sin(o.z.mul(5.1).add(a.w.mul(2))).mul(0.3)).add(1))));
+        If(q.greaterThan(0).and(wBlyskF.element(s3.add(uint(1))).w.greaterThan(0)), () => {
+          e.addAssign(vec3(1, 0.5, 0.16).mul(moc.mul(0.14).mul(q).mul(q)));
+        });
+      });
+    }
+    return e;
+  })();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'WokBryly';
   mesh.frustumCulled = false;
@@ -669,7 +715,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const matWyj = new THREE.NodeMaterial();
   matWyj.name = 'WokWyjscie';
   matWyj.fragmentNode = Fn(() => {
-    const v = v3(texture(rtHdr.texture, uv()).rgb.mul(1.25));
+    // Skład pyłu: (kolor · a, a) po kolei to to samo co mieszanie cząstka po cząstce w rys4.mjs, a błysk ma a = 0, więc dodaje się bez ściemniania tła.
+    const pk = v4(texture(pyl.rt.texture, uv()));
+    const v = v3(texture(rtHdr.texture, uv()).rgb.mul(float(1).sub(pk.a.mul(pyl.uSklad))).add(pk.rgb.mul(pyl.uSklad)).mul(1.25));
     const c = v3(clamp(v.mul(v.mul(2.51).add(0.03)).div(v.mul(v.mul(2.43).add(0.59)).add(0.14)), 0, 1));
     return vec4(pow(c, vec3(1 / 2.2)), 1);
   })();
@@ -695,6 +743,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     rtSsao.texture.needsUpdate = true;
     rtHdr.setSize(w, h);
     rtGleb.setSize(hw, hh);
+    pyl.ustawRozmiar(renderer, hw, hh);
     rtHdr.texture.needsUpdate = true;
     rtGleb.texture.needsUpdate = true;
     rtGleb.depthTexture.needsUpdate = true;
@@ -702,7 +751,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
-  function wczytaj(w, { rDysk = 0, poklad = null } = {}) {
+  function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null } = {}) {
+    pyl.wczytaj(w, opcjePylu);
+    uKlatka.value = 0;
     uPokladZ.value = poklad ? poklad.z : -1e30;
     uOtworR2.value = poklad ? poklad.rOtwor * poklad.rOtwor : 0;
     uDyskR2.value = poklad ? rDysk * rDysk : 0;
@@ -761,9 +812,13 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   ustawCien([0, 0, 500], 1700);
 
   /** Obraz po kroku fizyki. Pierwszy krok po wgraniu migawki: bez limitu wzrostu d, żeby stan pojawił się od razu. */
-  function krok(renderer) { renderer.compute(listaObrazu); }
+  function krok(renderer) {
+    uKlatka.value = solver.fKlatka;
+    renderer.compute(listaObrazu);
+  }
   function krokBezLimitu(renderer) {
     const l = uLimD.value;
+    uKlatka.value = solver.fKlatka;
     uLimD.value = 1;
     renderer.compute(listaObrazu);
     uLimD.value = l;
@@ -800,6 +855,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     try {
       await cel(rtGleb, sceneGleb, camera);
       await cel(rtSsao, kwadSsao, kwadSsao.camera);
+      await cel(pyl.rt, pyl.scena, camera);
       await cel(rtHdr, scene, camera);
       if (aoN?._material) {
         const kwad = new THREE.QuadMesh(aoN._material);
@@ -828,9 +884,37 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     sun.shadow.autoUpdate = true;
   }
 
+  /** Cztery najmocniejsze błyski tej chwili do uniformów światła brył. Tabela z solvera, bo moc i czas zna CPU. Bez alokacji. */
+  let swiatlaZapalone = false;
+  function ustawSwiatla(tau) {
+    if (!solver.blyskiCzynne() && !swiatlaZapalone) return;
+    const t = solver.blyskiCpu;
+    const f = solver.fKlatka;
+    let zaj = 0;
+    for (let s = 0; s < solver.blyski; s++) {
+      const b = 4 * s;
+      if (t[b + 1] <= 0) continue;
+      const wiek = (f - t[b]) / 60 + tau;
+      if (wiek > 0.25) { t[b + 1] = 0; continue; }
+      const I = t[b + 1] * Math.min(1, (wiek + 1 / 60) * 20) * Math.exp(-Math.max(0, wiek - 2 / 60) / t[b + 2]);
+      // Wstawianie do czwórki po mocy malejąco.
+      let k = Math.min(zaj, 3);
+      if (zaj === 4 && I <= swiatla[3].i.value) continue;
+      while (k > 0 && swiatla[k - 1].i.value < I) {
+        swiatla[k].i.value = swiatla[k - 1].i.value; swiatla[k].s.value = swiatla[k - 1].s.value; swiatla[k].r.value = swiatla[k - 1].r.value;
+        k--;
+      }
+      swiatla[k].i.value = I; swiatla[k].s.value = s; swiatla[k].r.value = 2 * t[b + 3];
+      if (zaj < 4) zaj++;
+    }
+    for (let k = zaj; k < 4; k++) swiatla[k].i.value = 0;
+    swiatlaZapalone = zaj > 0;
+  }
+
   /** Klatka: głębia, scena (GTAO i mapa cienia idą w updateBefore), wyjście na kanwę. Bez alokacji. */
   function rysuj(renderer, cam, tau) {
     uTau.value = tau;
+    ustawSwiatla(tau);
     const clearC = renderer.getClearColor(_kolor), clearA = renderer.getClearAlpha();
     renderer.setRenderTarget(rtGleb);
     renderer.render(sceneGleb, cam);
@@ -838,6 +922,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       renderer.setRenderTarget(rtSsao);
       kwadSsao.render(renderer);
     }
+    pyl.rysuj(renderer, cam);
     renderer.setRenderTarget(rtHdr);
     renderer.setClearColor(TLO, 1);
     renderer.clear();
@@ -848,8 +933,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   }
 
   return {
-    kernele, listaObrazu, scene, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, aoN, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki },
-    uniformy: { uTau, uDx, uLimD, uDt },
+    kernele, listaObrazu, scene, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki },
+    uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
     wczytaj, pelnyObraz, ustawCien, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
     get n() { return n; },
   };

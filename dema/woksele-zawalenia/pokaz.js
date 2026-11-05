@@ -3,6 +3,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createWokseleObraz } from './obraz.js';
+import { OPCJE_PYLU } from './pyl.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -11,7 +12,12 @@ const DROGA_MIGAWEK = '/.tmp/woksele-demo/migawki/';
 
 // Kamery startowe jak w filmie (bieg-film.sh, § 4.7): az, el, cel, odl. Cień: środek i zakres z rys4.mjs.
 const K_WIEZA = { az: 32, el: 8, cel: [0, 0, 620], odl: 3300 };
+// S5 (§ 5.5): kamery jak w filmie. Zakres cienia w Node 7000 to cała szerokość mapy, tu połowa. zaSrodkiem: kamera i cień jadą stałą prędkością ze środkiem masy z chwili t = 0, cel kamery względem niego.
+const K_S5 = { az: 32, el: 15, cel: [0, 0, -650], odl: 7200 };
 const SCENY = {
+  S5: { nazwa: 'S5 pochylona wieża', kamera: K_S5, cien: [[0, 0, -900], 3500], pomin: 0 },
+  S5v: { nazwa: 'S5 próżnia', kamera: { az: 32, el: 20, cel: [0, 0, 0], odl: 7600 }, cien: [[0, 0, 0], 3500], pomin: 0, zaSrodkiem: true },
+  S5p: { nazwa: 'S5 planeta', kamera: K_S5, cien: [[0, 0, -900], 3500], pomin: 0 },
   S1: { nazwa: 'S1 podcięcie', kamera: K_WIEZA, cien: [[0, 0, 500], 1700], pomin: STANIE_POMIJANE },
   S2: { nazwa: 'S2 własny ciężar', kamera: K_WIEZA, cien: [[0, 0, 500], 1700], pomin: STANIE_POMIJANE },
   S3: { nazwa: 'S3 przebicie dysku', kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300], pomin: 0 },
@@ -61,7 +67,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   sterowanie.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   sterowanie.zoomToCursor = true;
 
-  const stan = { scena: null, krok: 0, pauza: false, tempo: 1, akum: 0, kroczyc: true, msKlatki: 0, ostatnia: 0, licznik: false, pierwszyKrok: false };
+  const stan = { scena: null, krok: 0, pauza: false, tempo: 1, akum: 0, kroczyc: true, msKlatki: 0, ostatnia: 0, licznik: false, pierwszyKrok: false, jedzie: false, c0x: 0, c0y: 0, c0z: 0, vcx: 0, vcy: 0, vcz: 0, ocx: 0, ocy: 0, ocz: 0 };
 
   function krokSceny() {
     if (stan.krok >= stan.pelnyOd) { obraz.pelnyObraz(true); stan.pelnyOd = Infinity; }
@@ -71,6 +77,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   }
 
   // Budowa raz na scenę w wątku roboczym (§ 2.3), reset to tylko wgranie buforów. Sceny budują się w tle po starcie, więc przełączenie ich nie czeka.
+  const ziarnoAdresu = adres.has('ziarno') ? Number(adres.get('ziarno')) : undefined;
   const watek = new Worker(new URL('./budowa.worker.js', import.meta.url), { type: 'module' });
   const wypieki = new Map();
   const czekajace = new Map();
@@ -86,7 +93,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id });
+      watek.postMessage({ id, ziarno: ziarnoAdresu });
     }
     return czekajace.get(id).obietnica;
   }
@@ -104,16 +111,48 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     const { w, g, zdarzeniaOd, rDysk, poklad } = wypieki.get(id);
     solver.wczytaj(w);
     solver.ustawPlan(g);
-    obraz.wczytaj(w, { rDysk, poklad });
+    obraz.wczytaj(w, { rDysk, poklad, pyl: OPCJE_PYLU[id] });
     obraz.ustawCien(opis.cien[0], opis.cien[1]);
     stan.scena = id;
     stan.krok = 0;
     stan.akum = 0;
     stan.pelnyOd = Number.isFinite(zdarzeniaOd) ? Math.max(0, Math.floor(zdarzeniaOd * 60) - 1) : 0;
     if (pomin) for (let k = 0; k < opis.pomin; k++) krokSceny();
-    if (kamera) ustawKamere(camera, sterowanie, opis.kamera);
+    stan.jedzie = false;
+    if (opis.zaSrodkiem) {
+      // Środek masy i jego prędkość z chwili t = 0, raz na wejście w scenę.
+      let sx = 0, sy = 0, sz = 0, vx = 0, vy = 0, vz = 0;
+      const v0 = w.vel0;
+      for (let i = 0; i < w.n; i++) {
+        sx += w.pos[3 * i]; sy += w.pos[3 * i + 1]; sz += w.pos[3 * i + 2];
+        if (v0) { vx += v0[3 * i]; vy += v0[3 * i + 1]; vz += v0[3 * i + 2]; }
+      }
+      stan.jedzie = true;
+      stan.c0x = sx / w.n; stan.c0y = sy / w.n; stan.c0z = sz / w.n;
+      stan.vcx = vx / w.n; stan.vcy = vy / w.n; stan.vcz = vz / w.n;
+      if (kamera) { stan.ocx = 0; stan.ocy = 0; stan.ocz = 0; }
+    }
+    if (kamera) {
+      const k = opis.kamera;
+      ustawKamere(camera, sterowanie, opis.zaSrodkiem ? { ...k, cel: [k.cel[0] + stan.c0x, k.cel[1] + stan.c0y, k.cel[2] + stan.c0z] } : k);
+    }
     zaznacz();
     return w;
+  }
+
+  /** Kamera i cień za środkiem masy (S5 próżnia): przesunięcie względem poprzedniej klatki, więc orbita i przybliżenie użytkownika zostają. Reset wraca na początek toru. Bez alokacji. */
+  const srodekCienia = [0, 0, 0];
+  function sledzSrodek() {
+    if (!stan.jedzie) return;
+    const t = stan.krok * H + stan.akum;
+    const ox = stan.vcx * t, oy = stan.vcy * t, oz = stan.vcz * t;
+    const dx = ox - stan.ocx, dy = oy - stan.ocy, dz = oz - stan.ocz;
+    stan.ocx = ox; stan.ocy = oy; stan.ocz = oz;
+    camera.position.x += dx; camera.position.y += dy; camera.position.z += dz;
+    sterowanie.target.x += dx; sterowanie.target.y += dy; sterowanie.target.z += dz;
+    const c = SCENY[stan.scena].cien;
+    srodekCienia[0] = c[0][0] + stan.c0x + ox; srodekCienia[1] = c[0][1] + stan.c0y + oy; srodekCienia[2] = c[0][2] + stan.c0z + oz;
+    obraz.ustawCien(srodekCienia, c[1]);
   }
 
   /** Migawka Node (S1_t3.50), dopóki pakiet P2 nie ma zdarzeń: stan z chwili t, dalej swobodny bieg. */
@@ -184,7 +223,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
 
   // ── Start ── Rozgrzewka przed pierwszą klatką, potem efekt od razu.
   const mig = adres.get('migawka');
-  const start = adres.get('scena') || (solver.kernele.kCzas ? 'S1' : 'S3');
+  const start = adres.get('scena') || (solver.kernele.kCzas ? 'S5' : 'S3');
   const scenaStartu = mig ? mig.split('_')[0] : start;
   await wypiek(scenaStartu);
   ustawScene(scenaStartu, { pomin: false });
@@ -207,6 +246,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       while (stan.akum >= H && k < maksKrokow) { krokSceny(); stan.akum -= H; k++; }
       if (stan.akum >= H) stan.akum = H * 0.999; // reszta przepada
     }
+    sledzSrodek();
     sterowanie.update();
     if (stan.rysowac !== false) obraz.rysuj(renderer, camera, stan.akum);
     stan.msKlatki = dtMs;
@@ -336,6 +376,49 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         const m = probek >> 1;
         stan.rysowac = true;
         return { scianaMs, computeGpuMs: comp[m], renderGpuMs: rys[m], gpuMs: comp[m] + rys[m], kroki: [krok0, stan.krok], w: renderer.domElement.width, h: renderer.domElement.height, rysunki: renderer.info.render.drawCalls };
+      },
+      /** Harness: koszt pyłu na zamrożonej klatce (P4): sam pass pyłu ze znaczników, cała klatka rysunku ze znaczników i ze ściany, włączony i wyłączony. Bez kroków. */
+      async kosztPylu(probek = 15, sciana = 48) {
+        stan.kroczyc = false;
+        stan.rysowac = false;
+        await new Promise((ok) => setTimeout(ok, 300));
+        await device.queue.onSubmittedWorkDone();
+        const backend = renderer.backend;
+        const mediana = (l) => { l.sort((a, b) => a - b); return l[l.length >> 1]; };
+        const raz = async (wl) => {
+          obraz.pyl.wlacz(wl);
+          const rys = [];
+          for (let k = 0; k < probek; k++) {
+            backend.trackTimestamp = true;
+            obraz.rysuj(renderer, camera, 0);
+            rys.push(await renderer.resolveTimestampsAsync('render'));
+            backend.trackTimestamp = false;
+            backend.timestampQueryPool?.render?.timestamps?.clear?.();
+            await device.queue.onSubmittedWorkDone();
+          }
+          const t0 = performance.now();
+          for (let k = 0; k < sciana; k++) {
+            obraz.rysuj(renderer, camera, 0);
+            if ((k + 1) % 8 === 0) await device.queue.onSubmittedWorkDone();
+          }
+          await device.queue.onSubmittedWorkDone();
+          return { rysunekGpuMs: mediana(rys), scianaMs: (performance.now() - t0) / sciana };
+        };
+        const wl1 = await raz(true);
+        const wyl = await raz(false);
+        const wl2 = await raz(true);
+        const samPass = [];
+        for (let k = 0; k < probek; k++) {
+          backend.trackTimestamp = true;
+          obraz.pyl.rysuj(renderer, camera);
+          renderer.setRenderTarget(null);
+          samPass.push(await renderer.resolveTimestampsAsync('render'));
+          backend.trackTimestamp = false;
+          backend.timestampQueryPool?.render?.timestamps?.clear?.();
+          await device.queue.onSubmittedWorkDone();
+        }
+        stan.rysowac = true;
+        return { wl1, wyl, wl2, samPassMs: mediana(samPass), w: renderer.domElement.width, h: renderer.domElement.height, cel: [obraz.pyl.rt.width, obraz.pyl.rt.height] };
       },
       bezZegara(b = true) { stan.kroczyc = !b; },
     },

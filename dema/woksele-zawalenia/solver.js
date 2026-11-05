@@ -26,6 +26,9 @@ const LICZ_N = 20, L_CEL = 2, L_P = 3, L_M = 6, L_S = 7, L_L = 10, L_I = 13, L_Q
 export const BLAST_N = 24;    // rzędów pchnięcia na klatkę. Scena pochylonej wieży: główne kule po tau 0,3 s, reszta jedna klatka
 export const KRATER_N = 4;    // kraterów na klatkę, reszta czeka do następnej
 export const SLOTY_K = 32;    // środki kraterów policzone na GPU (nosiciel, strzał), pierścień
+export const BLYSKI = 64;     // pierścień rekordów błysku (§ 4.8), obraz: pyl.js
+// Moc, obcięcie promienia ognia i liczba cząstek kłębu wg rodzaju eksplozji (propozycja S5 § 4). Krater bez rodzaju i strzał jak kula główna.
+const BLYSK_RODZ = { glowna: { moc: 3.2, rMax: 1e9, klab: 40 }, wieza: { moc: 3.2, rMax: 110, klab: 40 }, wspornik: { moc: 2.4, rMax: 70, klab: 0 }, mala: { moc: 1.8, rMax: 1e9, klab: 10 } };
 /** Bit flagi węzła: rozerwanie z kCzas zostawia wiązania wewnątrz ziarna (S = 3 zamiast 2). */
 export const BIT_ZOSTAW = 1 << 16;
 /** Bit flagi węzła: reszta kuli krateru rozrywa go przez S = 3. Bez bitu węzeł poza rS zostaje nietknięty (scena z szwami). */
@@ -69,6 +72,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const wLiczW = storage(aLicz, 'uint', LICZ_N).setName('wokLicz');
   const wBlastK = instancedArray(SLOTY_K, 'vec4').setName('wokBlastK');
   const wBlastKR = storage(wBlastK.value, 'vec4', SLOTY_K).setName('wokBlastK').toReadOnly();
+  // Przyczyna w obrazie (§ 4.8, pakiet P4): rekordy błysku z kKraterCel, chwila żaru węzła z kKrater. Fizyka ich nie czyta. Reszta w pyl.js i obraz.js.
+  const wBlysk = instancedArray(3 * BLYSKI, 'vec4').setName('wokBlysk');
+  const wZar = instancedArray(MAX, 'float').setName('wokZar');
   const wStanR = storage(wStan.value, 'vec4', 4 * MAX).setName('wokStan').toReadOnly();
   const wWiazR = storage(wWiaz.value, 'vec4', 36 * MAX).setName('wokWiaz').toReadOnly();
 
@@ -605,10 +611,12 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     const w0 = v4(uKrater.element(b));
     const w1 = v4(uKrater.element(b.add(uint(1))));
     const c = v3(w0.xyz);
+    const vn = v3(vec3(0));
     const wazny = fv(1);
     If(w1.w.greaterThanEqual(0), () => {
       const pn = v4(wWezR.element(uint(3).mul(uint(w1.w))));
       c.assign(pn.xyz);
+      vn.assign(wWezR.element(uint(3).mul(uint(w1.w)).add(uint(1))).xyz);
       If(pn.w.lessThan(0), () => { wazny.assign(0); }); // martwy nosiciel: pominięcie
     }).ElseIf(w1.w.lessThan(-1.5), () => {
       const T = uv(wLiczR.element(uint(L_CEL)));
@@ -616,6 +624,13 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       c.assign(uCelO.add(uCelDir.mul(float(T).div(8))));
     });
     wBlastK.element(uint(w1.z)).assign(vec4(c, wazny));
+    // Rekord błysku (§ 4.8): w2 = (usuwa stojące, slot + BLYSKI · liczba cząstek kłębu, moc, r ognia). Pudło i martwy nosiciel: moc 0.
+    const w2 = v4(uKrater.element(b.add(uint(2))));
+    const sl = uv(uint(w2.y));
+    const s3 = uv(uint(3).mul(sl.mod(uint(BLYSKI))));
+    wBlysk.element(s3).assign(vec4(c, uT));
+    wBlysk.element(s3.add(uint(1))).assign(vec4(vn, w2.z.mul(wazny)));
+    wBlysk.element(s3.add(uint(2))).assign(vec4(w2.w, uT.mul(7).add(float(sl.mod(uint(BLYSKI)))), float(sl.div(uint(BLYSKI))), 1));
   })().compute(KRATER_N).setName('wokKraterCel');
 
   const kKrater = Fn(() => {
@@ -653,6 +668,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       usunWezel(i, i3, p);
     }).ElseIf(znak.greaterThan(0), () => {
       wStan.element(i).x.assign(znak);
+      wZar.element(i).assign(uT); // żar (§ 4.8): numer klatki + 1, tylko obraz
     });
   })().compute(MAX).setName('wokKrater');
 
@@ -791,7 +807,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
 
   const atrybuty = {
     wez: wWez.value, stan: wStan.value, maska: wMaska.value, wiaz: wWiaz.value, lista: wLista.value, ijk: aIjk, tab: aTab, komLicz: aKomLicz, komSloty: wKomSloty.value,
-    czasU: wCzasU.value, licz: aLicz, blastK: wBlastK.value,
+    czasU: wCzasU.value, licz: aLicz, blastK: wBlastK.value, blysk: wBlysk.value, zar: wZar.value,
   };
   const wiazF = atrybuty.wiaz.array;
   const wiazU = new Uint32Array(wiazF.buffer, wiazF.byteOffset, wiazF.length);
@@ -808,6 +824,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   let fKlatka = 0;
   let qKrater = 0;
   let slotNast = 0;
+  let blyskNast = 0;
+  let koniecBlyskow = -1;
+  const blyskiCpu = new Float32Array(4 * BLYSKI); // klatka + 1, moc, tau zaniku, r: światło na bryłach w obraz.js, pozycja zostaje na GPU
   let ileK = 0;
   let strzalCzeka = null;
   const pchK = Array.from({ length: BLAST_N }, () => ({ rP: 0, J: 0, tau: 0, t0: 0, slot: 0, dz: 0 }));
@@ -815,7 +834,8 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const DT = 1 / 60;
 
   function resetPlanu() {
-    plan = null; fKlatka = 0; qKrater = 0; slotNast = 0; ileK = 0; strzalCzeka = null;
+    plan = null; fKlatka = 0; qKrater = 0; slotNast = 0; blyskNast = 0; ileK = 0; strzalCzeka = null;
+    blyskiCpu.fill(0); koniecBlyskow = -1;
     liczniki.pominietePchniecia = 0; liczniki.pominieteKratery = 0; liczniki.wykonaneKratery = 0; liczniki.pchnieteKlatki = 0;
     uBlastN.value = 0; uKraterN.value = 0; uT.value = 0;
   }
@@ -850,7 +870,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       atrybuty.stan.needsUpdate = true;
     }
     atrybuty.czasU.needsUpdate = true;
-    plan = { klatki, pchniecia: pg.pchniecia ?? [], kratery: pg.kratery ?? [], zerujL: pg.zerujL !== false, swobodnyG: pg.swobodnyG ?? 0, skalaG: pg.skalaG ?? null };
+    plan = { klatki, pchniecia: pg.pchniecia ?? [], kratery: pg.kratery ?? [], zerujL: pg.zerujL !== false, swobodnyG: pg.swobodnyG ?? 0, skalaG: pg.skalaG ?? null, puscKotwiceF: pg.puscKotwiceF ?? -1 };
     return plan;
   }
 
@@ -871,7 +891,13 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     const r2 = e.r * e.r;
     daneKrater[b].set(e.x ?? 0, e.y ?? 0, e.z ?? 0, r2);
     daneKrater[b + 1].set(e.rdzen * e.rdzen * r2, (e.rS ?? 1) * (e.rS ?? 1) * r2, slot, e.nos ?? -1);
-    daneKrater[b + 2].set(e.usunStojace ? 1 : 0, 0, 0, 0);
+    const bl = BLYSK_RODZ[e.rodz] ?? BLYSK_RODZ.glowna;
+    const rB = Math.min(e.r, bl.rMax);
+    daneKrater[b + 2].set(e.usunStojace ? 1 : 0, blyskNast + BLYSKI * bl.klab, bl.moc, rB);
+    const qb = 4 * blyskNast;
+    blyskiCpu[qb] = f + 1; blyskiCpu[qb + 1] = bl.moc; blyskiCpu[qb + 2] = bl.klab >= 20 ? 0.075 : 0.05; blyskiCpu[qb + 3] = rB;
+    koniecBlyskow = f + 16;
+    blyskNast = (blyskNast + 1) % BLYSKI;
     liczniki.wykonaneKratery++;
     if (e.J > 0) {
       if (ileK < BLAST_N) {
@@ -944,6 +970,8 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       liczniki.pchnieteKlatki++;
       renderer.compute(zerujL ? listaWb : listaWbBezL);
     }
+    // Kotwice puszczają po zdarzeniach tej klatki (S5 planeta, jak m.odkotwicz w scena5): F0 tej sceny jest zerem z budowy, więc zostaje samo uKotwice. Wraca przy wczytaj.
+    if (p && f === p.puscKotwiceF) uKotwice.value = 0;
   }
 
   /** Uniformy sceny (§ 10.4). skG i sFr z migawki albo z budowy. Te same liczby, które WzorzecCpu liczy na początku przebiegu F. */
@@ -1032,6 +1060,8 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     atrybuty.czasU.array.fill(1e30);
     atrybuty.licz.array.fill(0);
     atrybuty.blastK.array.fill(0);
+    atrybuty.blysk.array.fill(0);
+    atrybuty.zar.array.fill(0);
     for (const k of Object.values(atrybuty)) k.needsUpdate = true;
     for (const k of Object.values(kernele)) if (!STALA_LICZBA.has(k)) k.setCount(n);
     resetPlanu();
@@ -1145,7 +1175,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   }
 
   return {
-    maxNodes: MAX, kernele, sekwencja, listaKroku, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
+    maxNodes: MAX, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, sekwencja, listaKroku, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
     wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     get wypiek() { return wypiek; },
     get fKlatka() { return fKlatka; },

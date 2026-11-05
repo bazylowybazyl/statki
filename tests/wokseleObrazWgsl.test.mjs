@@ -34,3 +34,73 @@ test('kObraz: osłona uN i limit wzrostu dObraz są w kodzie, bez literału NaN 
   assert.match(kod, /uLimD/);
   assert.doesNotMatch(kod, /Infinity|NaN/);
 });
+
+// ── P4: pył, błysk, żar ──
+/** Wszystkie zmienne przypisane przed użyciem: nazwa nodeVar z pierwszego odczytu nie może poprzedzać pierwszego zapisu (pułapka 39). */
+function nieprzypisane(kod) {
+  const zle = [];
+  for (const nazwa of new Set([...kod.matchAll(/var (nodeVar\d+)\b/g)].map((m) => m[1]))) {
+    const zapis = kod.search(new RegExp(`\b${nazwa}\s*(\.[xyzw]+\s*)?=[^=]`));
+    const odczyt = kod.search(new RegExp(`(?<!var )\b${nazwa}\b(?!\s*(\.[xyzw]+\s*)?=[^=])`));
+    if (odczyt >= 0 && (zapis < 0 || odczyt < zapis)) zle.push(nazwa);
+  }
+  return zle;
+}
+
+test('kernele pyłu i przyczyny: najwyżej 8 buforów storage (§ 2.2), kKrater i kKraterCel także po zapisach żaru i błysku', () => {
+  for (const nazwa of ['kPylEmisja', 'kPrzyczyna', 'kPylKrok']) {
+    const kod = wgsl(obraz.kernele[nazwa]);
+    const ile = (kod.match(/var<storage/g) || []).length;
+    assert.ok(ile <= 8, `${nazwa} ma ${ile} buforów storage`);
+    assert.doesNotMatch(kod, /Infinity|NaN/);
+    assert.deepEqual(nieprzypisane(kod), [], nazwa);
+  }
+  const krater = wgsl(solver.kernele.kKrater);
+  assert.ok((krater.match(/var<storage/g) || []).length <= 8);
+  assert.match(krater, /wokZar/);
+  const cel = wgsl(solver.kernele.kKraterCel);
+  assert.ok((cel.match(/var<storage/g) || []).length <= 8);
+  assert.match(cel, /wokBlysk/);
+});
+
+test('kPylEmisja: warunek kontaktu i dysku zależy od uniformów, nie od gałęzi w budowie, a próżnia nie potrzebuje drugiego pipeline\'u', () => {
+  const kod = wgsl(obraz.kernele.kPylEmisja);
+  assert.match(kod, /uPylKont/);
+  assert.match(kod, /uPylDysk/);
+  assert.match(kod, /uPylPod/);
+  assert.match(kod, /var<storage, read> \w*[wW]okLista/);
+  assert.match(kod, /atomicAdd/);
+});
+
+test('materiał pyłu: jeden pipeline z mieszaniem (1, 1 − a), cel bez głębi, wierzchołek bez nieprzypisanych zmiennych, czyta bufory tylko do odczytu', () => {
+  const m = obraz.pyl.mesh.material;
+  assert.equal(m.blending, THREE.CustomBlending);
+  assert.equal(m.blendSrc, THREE.OneFactor);
+  assert.equal(m.blendDst, THREE.OneMinusSrcAlphaFactor);
+  assert.equal(m.depthWrite, false);
+  assert.equal(m.depthTest, false);
+  assert.equal(obraz.pyl.rt.depthBuffer, false);
+  assert.equal(obraz.pyl.rt.samples, 0);
+  const b = renderer.backend.createNodeBuilder(obraz.pyl.mesh, renderer);
+  b.scene = obraz.pyl.scena;
+  b.camera = camera;
+  b.material = m;
+  b.build();
+  assert.ok((b.vertexShader.match(/var<storage/g) || []).length <= 8);
+  assert.doesNotMatch(b.vertexShader, /var<storage, read_write>/);
+  assert.deepEqual(nieprzypisane(b.vertexShader), [], 'wierzchołek');
+  assert.deepEqual(nieprzypisane(b.fragmentShader), [], 'fragment');
+  assert.match(b.vertexShader, /uPylSufit/);
+});
+
+test('materiał brył czyta żar tylko do odczytu', () => {
+  const b = renderer.backend.createNodeBuilder(obraz.mesh, renderer);
+  b.scene = obraz.scene;
+  b.camera = camera;
+  b.material = obraz.mesh.material;
+  b.lightsNode = renderer.lighting.getNode(obraz.scene);
+  b.build();
+  assert.match(b.vertexShader, /var<storage, read> \w*[wW]okZar/);
+  assert.match(b.fragmentShader, /vWokE/);
+  assert.ok((b.vertexShader.match(/var<storage/g) || []).length <= 8);
+});

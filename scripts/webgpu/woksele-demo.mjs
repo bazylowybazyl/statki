@@ -131,6 +131,7 @@ try {
     zapytanie.set('scena', sceny[0]);
     if (args.ao) zapytanie.set('ao', String(args.ao));
     if (args.migawka) zapytanie.set('migawka', String(args.migawka));
+    if (args.ziarno) zapytanie.set('ziarno', String(args.ziarno));
     const adapter = await otworz(zapytanie.toString());
     console.log('adapter', JSON.stringify(adapter));
     const pipeStart = await ev('window.__harness.pipes.list.length');
@@ -159,6 +160,11 @@ try {
           console.log('koszt klatki', scena, JSON.stringify(k.at(-1)));
         }
         pomiary[scena] = { ...pomiary[scena], koszt: k };
+      }
+      if (args.kosztPylu) {
+        // P4: pył włączony i wyłączony na tej samej zamrożonej klatce: chwila ostatnia z --chwile, kamera z --kam, 5120 × 1440 z --rozmiar.
+        pomiary[scena] = { ...pomiary[scena], kosztPylu: await ev('window.__wok.pokaz.kosztPylu()') };
+        console.log('koszt pyłu', scena, JSON.stringify(pomiary[scena].kosztPylu));
       }
       if (args.pomiar) {
         pomiary[scena] = await ev('window.__wok.pokaz.zmierzKlatki(60, true)');
@@ -248,7 +254,7 @@ try {
       await klawisz('KeyP', 'p');
       await ev('[...document.querySelectorAll("#panelTempo button")][2].click()');
       wyn.tempo = (await stanS()).tempo;
-      await ev('[...document.querySelectorAll("#panelSceny button")][1].click()');
+      await ev('[...document.querySelectorAll("#panelSceny button")].find((b) => b.textContent.startsWith("S2")).click()');
       await sleep(4000);
       wyn.scena = (await stanS()).scena;
       await ev('[...document.querySelectorAll("#panelTempo button")][0].click()');
@@ -509,6 +515,53 @@ try {
       if (!q.zaliczony) porazka(`wiele kraterów ${id}`);
     }
     raport.testy.kratery = r;
+    zapiszRaport();
+  }
+
+  if (TESTY.includes('s5')) {
+    // S5 na GPU (§ 5.5): --testy s5 [--ziarna 21,7] [--miejsca g,proznia,planeta] [--opcje '{"J":250}']: liczby K1–K6 z tabeli § 8 propozycji, progi wprost. Bieg jest krótki, 840 kroków poniżej sekundy.
+    const ziarna = String(args.ziarna || '21,7').split(',').map(Number);
+    const miejsca = String(args.miejsca || 'g,proznia,planeta').split(',');
+    const opcje = args.opcje ? JSON.parse(String(args.opcje)) : {};
+    const wy = [];
+    const linie = [`adapter ${JSON.stringify(adapter)}`, `opcje ${JSON.stringify(opcje)}`];
+    const pisz = (l) => { linie.push(l); console.log(l); };
+    for (const ziarno of ziarna) for (const miejsce of miejsca) {
+      await czekajNaCisze(`S5 ${miejsce} ziarno ${ziarno}`);
+      const t0 = Date.now();
+      const r = await ev(`window.__wok.test.s5(${JSON.stringify({ miejsce, ziarno, opcje })})`);
+      wy.push(r);
+      const { K1: k1, K2: k2, K3: k3, K4: k4, K5: k5, K6: k6, K7: k7 } = r;
+      const ot = k1.otwor ?? {};
+      const zapas = [];
+      const ok1 = k1.thStyk >= 20 && (ot.stosunek ?? 0) >= 1.5;
+      pisz(`== S5 ${miejsce} ziarno ${ziarno}: ${r.n} węzłów, t = ${r.t}, ${f(r.msNaKrok, 3)} ms/krok z kolejką, ${r.odczytow} odczytów, ${((Date.now() - t0) / 1000).toFixed(1)} s razem`);
+      pisz(`K1 ${ok1 ? 'OK ' : 'NIE'} kąt ${k1.th0}° → ${k1.thStyk}° przy styku t = ${k1.tStyk}; otwór przy przejściu szczytu t = ${f(ot.t, 2)}: oś ${f(ot.stosunek, 2)}, dł ${f(ot.dl, 0)}, szer ${f(ot.szer, 0)}; przed 1. eksplozją ${f(k1.otworPrzed?.stosunek, 2)}; t = 3,6: ${f(k1.otwor36?.stosunek, 2)}`);
+      if (!ok1) zapas.push('K1');
+      if (miejsce !== 'proznia') {
+        const ok2 = k2.najw <= 0.2 && k2.b64 >= 0.4 && k2.b1_7 <= 0.35 && k2.kotwice <= 0.03;
+        pisz(`K2 ${ok2 ? 'OK ' : 'NIE'} t = ${r.t}: największy ${k2.najw}, 64+ ${k2.b64} (${k2.ile64} szt.), 8–63 ${k2.b8_63}, 1–7 ${k2.b1_7}, usunięte ${k2.usuniete}, kotwice ${k2.kotwice}; czystość ${k2.czystosc}`);
+        if (!ok2) zapas.push('K2');
+        const ok3 = k3.pod500 >= 0.9 && k3.przyGruncie >= 0.8 && k3.tWiezaGrunt > 0 && (k3.tDuzyGrunt < 0 || k3.tWiezaGrunt <= k3.tDuzyGrunt);
+        pisz(`K3 ${ok3 ? 'OK ' : 'NIE'} pod 500 ${k3.pod500}, przy gruncie ${k3.przyGruncie}, wieża przy gruncie ${k3.wiezaPrzyGruncie}; wieża t = ${k3.tWiezaGrunt}, 1. węzeł dysku t = ${k3.tDyskGrunt}, 64+ t = ${k3.tDuzyGrunt} (${k3.rozDuzy}), 512+ t = ${k3.tDuzy512} (${k3.roz512}), wieża wtedy na gruncie ${k3.wiezaPrzy512}`);
+        if (!ok3) zapas.push('K3');
+      } else {
+        const ok4 = k4.maxDPnaN <= 0.5 && k4.medKawalekMasa >= 5 && k4.medKawalekMasa <= 80 && k4.maxKawalek8 <= 400 && k2.najw <= 0.35;
+        pisz(`K4 ${ok4 ? 'OK ' : 'NIE'} t ≥ 10: ΔP/N maks ${k4.maxDPnaN} (koniec ${k4.dPnaN}), środek masy ${k4.maxOdchCom}, mediana po masie ${k4.medKawalekMasa}, bez wag ${k4.medKawalekBezwag}, po węzłach ${k4.medWezel}, maks 8+ ${k4.maxKawalek8}, największy ${k2.najw}, 64+ ${k2.b64} (${k2.ile64} szt.), 1–7 ${k2.b1_7}; czystość ${k2.czystosc}, odcinek wieży ${f(k7.drabina.rozpietosc, 2)}`);
+        if (!ok4) zapas.push('K4');
+      }
+      const ok5 = k5.nan === 0 && k5.bledyGpu === 0;
+      pisz(`K5 ${ok5 ? 'OK ' : 'NIE'} NaN ${k5.nan}, asymetrie ${k5.asym}, błędy GPU ${k5.bledyGpu}`);
+      if (!ok5) zapas.push('K5');
+      const ok6 = k6.eksplozjePlan <= 40 && k6.maxNaKlatke <= 4 && k6.pominietePchniecia === 0;
+      pisz(`K6 ${ok6 ? 'OK ' : 'NIE'} plan ${k6.eksplozjePlan}, wykonane ${k6.wykonane}, na klatkę ${k6.maxNaKlatke}, pchnięć równocześnie ${k6.maxRownoczesnie}, pominięte pchnięcia ${k6.pominietePchniecia}, t ${k6.tPierwsza}..${k6.tOstatnia}${k6.puscKotwiceF >= 0 ? `, kotwice puszczają f = ${k6.puscKotwiceF}` : ''}`);
+      if (!ok6) zapas.push('K6');
+      pisz(`przebieg: ${r.hist.map((h) => `t=${h.t}: ${h.najw}/${h.b64}/${h.b1_7}/${h.ile64}/${h.pod500}`).join('  ')} (największy/64+/1–7/ile 64+/pod 500)`);
+      if (zapas.length && !args.bezProgow) porazka(`S5 ${miejsce} ziarno ${ziarno}: ${zapas.join(', ')}`);
+    }
+    const plikS5 = resolve(repo, String(args.plikS5 || join(wyDir, 'S5-liczby.txt')));
+    writeFileSync(plikS5, linie.join('\n') + '\n');
+    raport.testy.s5 = wy;
     zapiszRaport();
   }
 
