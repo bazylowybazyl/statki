@@ -126,7 +126,7 @@ try {
     const pomiary = {};
     for (const scena of sceny) {
       await czekajNaCisze(`zrzut ${scena}`);
-      await ev(`(window.__wok.pokaz.ustawScene(${JSON.stringify(scena)}, { pomin: false, kamera: ${args.kam ? 'false' : 'true'} }), null)`);
+      await ev(`window.__wok.pokaz.wejdz(${JSON.stringify(scena)}, { pomin: false, kamera: ${args.kam ? 'false' : 'true'} }).then(() => null)`);
       for (const t of chwile) {
         await ev(`window.__wok.pokaz.doChwili(${t})`);
         const plik = join(PNG, `${et}${scena}_t${t.toFixed(2)}.png`);
@@ -137,10 +137,15 @@ try {
         pomiary[scena] = await ev('window.__wok.pokaz.zmierzKlatki(60, true)');
         console.log('klatka z krokiem', scena, JSON.stringify(pomiary[scena]));
         console.log('  diag', JSON.stringify(await ev('window.__wok.pokaz.diag()')));
+        await ev('window.__wok.pokaz.bezZegara(false)');
+        const k0 = await ev('({ k: window.__wok.pokaz.stan.klatek, f: window.__wok.pokaz.stan.krok, t: performance.now() })');
+        await sleep(3000);
+        const k1 = await ev('({ k: window.__wok.pokaz.stan.klatek, f: window.__wok.pokaz.stan.krok, t: performance.now() })');
+        console.log(`  pętla na żywo: ${((k1.k - k0.k) * 1000 / (k1.t - k0.t)).toFixed(1)} kl/s rAF, ${((k1.f - k0.f) * 1000 / (k1.t - k0.t)).toFixed(1)} kroków/s`);
       }
     }
     const nowe = await ev(`window.__harness.pipes.list.slice(${pipeStart}).map((p) => ({ nazwa: p.nazwa, sync: !!p.sync, budowa: !!p.budowa }))`);
-    console.log(`po rozgrzewce nowe wpisy dziennika: ${nowe.length}, synchroniczne: ${nowe.filter((p) => p.sync).length} ${JSON.stringify(nowe.filter((p) => p.sync).map((p) => p.nazwa).slice(0, 16))}`);
+    console.log(`po rozgrzewce nowe wpisy dziennika: ${nowe.length}, synchroniczne: ${nowe.filter((p) => p.sync).length} ${JSON.stringify(nowe.map((p) => p.nazwa).slice(0, 16))}`);
     raport.testy.zrzut = { sceny, chwile, pomiary, syncRozgrzewka: syncStart.length, nowe: nowe.length, syncNowe: nowe.filter((p) => p.sync).length };
     if (nowe.some((p) => p.sync)) porazka(`pipeline'y synchroniczne po rozgrzewce: ${nowe.filter((p) => p.sync).length}`);
     throw Object.assign(new Error('koniec zrzutów'), { zrzutyKoniec: true });

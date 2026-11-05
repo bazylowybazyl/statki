@@ -313,7 +313,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
           const off = v3(C.mul(zak).mul(uDx));
           const nL = v3(nf);
           // Wieniec dysku (§ 4.2): rogi przy brzegu dociągnięte do promienia R, ściany boczne z normalną promieniową. Rogi liczone z pozycji, więc sąsiednie bloki dzielą ten sam punkt.
-          If(fl.shiftRight(uint(2)).bitAnd(uint(7)).equal(uint(KD_DYSK)), () => {
+          If(uRDysk.lessThan(1e8), () => {
             const pr = vec2(0).toVar();
             pr.assign(d0.xy.add(off.xy));
             const rr = fv(max(length(pr), 1));
@@ -432,11 +432,35 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     return P;
   })();
 
-  // Jasność z ciągłej pozycji początkowej (§ 4.2, obraz4.mjs:330), w fragmencie: bez mozaiki co 20 j. Wklejane.
-  const barwaZP0 = (K, p) => {
-    const nz = sin(p.x.mul(0.013).add(sin(p.y.mul(0.011)).mul(1.3))).mul(sin(p.z.mul(0.017).add(0.7))).mul(0.5).add(0.5);
-    return K.mul(nz.mul(0.16).add(0.92));
+  // Szum wartości 3D z hasza, na liczbach całkowitych, bez sin (stabilny także dla pozycji około 1000 j.). Wklejane, tylko w Fn.
+  const szum3 = (p) => {
+    const i = vec3(0).toVar();
+    i.assign(p.floor());
+    const f = vec3(0).toVar();
+    f.assign(p.sub(i));
+    const u = vec3(0).toVar();
+    u.assign(f.mul(f).mul(f.mul(-2).add(3)));
+    const baza = uv_(uint(i.x.add(4096)).mul(uint(73856093)).bitXor(uint(i.y.add(4096)).mul(uint(19349663))).bitXor(uint(i.z.add(4096)).mul(uint(83492791))));
+    const rog = (a, b, c) => {
+      const h = uv_(baza.add(uint(a * 73856093 + b * 19349663 + c * 83492791 >>> 0)).mul(uint(0x5bd1e995)));
+      return float(h.bitXor(h.shiftRight(uint(15))).bitAnd(uint(1023))).div(1023);
+    };
+    const x00 = fv(mix(rog(0, 0, 0), rog(1, 0, 0), u.x));
+    const x10 = fv(mix(rog(0, 1, 0), rog(1, 1, 0), u.x));
+    const x01 = fv(mix(rog(0, 0, 1), rog(1, 0, 1), u.x));
+    const x11 = fv(mix(rog(0, 1, 1), rog(1, 1, 1), u.x));
+    return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
   };
+
+  // Jasność z ciągłej pozycji początkowej (§ 4.2, obraz4.mjs:330), w fragmencie: bez mozaiki co 20 j. Do tego plamy i drobne ziarno betonu z tej samej pozycji: z bliska płyta inaczej jest plastikowa.
+  // AGENT: rysy z izolinii szumu (warunek pokazu § 4.2) wyszły jak robaki na całym pokładzie i dawały kreski na szwach bloków, patrz .tmp/woksele-demo/P3/f_S3_t3.00.png. Rysy to przebieg do osobnej próby, nie izolinia.
+  const barwaZP0 = Fn(() => {
+    const p = v3(vP);
+    const nz = fv(sin(p.x.mul(0.013).add(sin(p.y.mul(0.011)).mul(1.3))).mul(sin(p.z.mul(0.017).add(0.7))).mul(0.5).add(0.5));
+    const plamy = fv(szum3(p.mul(0.045)));
+    const drobne = fv(szum3(p.mul(0.34)));
+    return vK.mul(nz.mul(0.16).add(0.92)).mul(plamy.sub(0.5).mul(0.16).add(1)).mul(drobne.sub(0.5).mul(0.08).add(1));
+  });
 
   // ── Okluzja ── Przebieg głębi około 720 wierszy (najwyżej 2560 szerokości), tylko bryły, jak w rysunku wzorcowym: grunt nie zaciemnia i nie jest zaciemniany.
   // Domyślnie okluzja jak w filmie (rys4.mjs:201–221): 16 próbek w dwóch promieniach, promień z 14 j. w px, okno głębi 2–60 j. Bez szumu, więc bez odszumiania. ?ao=gtao: GTAONode z § 4.3.
@@ -505,7 +529,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   mat.normalNode = normalize(vN);
   const aoM = aoCzytaj().toVar('wokAo');
   // Film: otoczenie × a, słońce × (0,5 + 0,5·a). Stąd barwa × (0,5 + 0,5·a), a w aoNode reszta dla otoczenia.
-  mat.colorNode = barwaZP0(vK, vP).mul(aoM.mul(0.5).add(0.5));
+  mat.colorNode = barwaZP0().mul(aoM.mul(0.5).add(0.5));
   mat.aoNode = aoM.div(aoM.mul(0.5).add(0.5));
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'WokBryly';
@@ -645,9 +669,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
-  function wczytaj(w, plan = null) {
+  function wczytaj(w, { rDysk = 0 } = {}) {
     n = w.n;
-    uRDysk.value = plan?.scena?.meta?.dysk?.R ?? 900;
+    uRDysk.value = rDysk > 0 ? rDysk : 1e9;
     const dane = aDane.array, rama = aRama.array;
     const m0 = w.flagi;
     for (let i = 0; i < n; i++) {
