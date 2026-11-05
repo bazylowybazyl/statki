@@ -9,7 +9,8 @@
 //     z wyników w oknie ÷ liczba render() ze znacznikami w oknie (stan backend.trackTimestamp po bramie);
 //   - próbki Core3D.gpuFrameMs / gpuComputeMs (nowe wyniki — liczniki gpuFrameSamples / gpuComputeSamples);
 //   - rendery i takty rAF three (info.frame) w oknie — ile renderów obejmował jeden numer klatki three.
-// Strona: próbki czasu GPU, które widzi rozdzielczość dynamiczna (window.Core3D.gpuFrameSamples / gpuFrameMs).
+// Strona: próbki czasu GPU, które widzi rozdzielczość dynamiczna — tryb worker: kanał zwrotny RET (Core3D strony nie ma
+// urządzenia, jego liczniki stoją na 0), tryb off: window.Core3D.
 // Okno z cudzym harnessem albo grą usera — w raporcie `obce` (wynik do odrzucenia).
 //
 //   node scripts/webgpu/zegar-gpu-gra.mjs [--rozmiar 5120x1440] [--tryb worker|off] [--okna 4] [--czas 6]
@@ -84,7 +85,7 @@ const CZYTAJ = `(() => {
 })()`;
 const STRONA = `(() => { const C = window.Core3D, h = window.RenderWorkerHost;
   if (h && h.readStats) h.readStats();
-  return { gpuFrameSamples: C ? C.gpuFrameSamples : null, gpuFrameMs: C ? +(+C.gpuFrameMs).toFixed(2) : null, noDevice: !!(C && C.noDevice),
+  return { gpuFrameSamples: h ? h.stats[2] : (C ? C.gpuFrameSamples : null), gpuFrameMs: h ? +(+h.stats[0]).toFixed(2) : (C ? +(+C.gpuFrameMs).toFixed(2) : null), noDevice: !!(C && C.noDevice),
     zlozenia: h ? h.composed : null, gpuWorkera: h ? +(+h.stats[0]).toFixed(2) : null, frameId: window.__frameId | 0,
     wojna: !!(window.WarScene && window.WarScene.active) }; })()`;
 
