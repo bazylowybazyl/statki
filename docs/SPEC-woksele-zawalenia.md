@@ -213,6 +213,16 @@ Koszt całej klatki (zdarzenia, krok, obraz, rysunek), S1 przy t = 4,75–5,5, 5
 
 **Czego nie ma:** tego, co w § 1.9. Start strony to S1, a § 5.2 mówi o scenie 2: decyzja należy do P5. S3 poza środkiem nie ma gruzu na pokładzie, bo otwór w obrazie jest liczony od środka dysku.
 
+### 1.11 Domknięcie S5: pochylona wieża na GPU
+
+Kod: § 5.5. Trzy przyciski przed starymi scenami, start strony to S5, ziarno 21, `?ziarno=7`. Budowa bajt w bajt z `scena5.mjs` (ziarna 21 i 7, wszystkie tablice i plan, `tests/wokseleS5.test.mjs`), S1, S3, S4 bez zmian bajtowych. W solverze doszło tylko `puscKotwiceF` (`uKotwice = 0` po zdarzeniach klatki), bez nowych kerneli i buforów.
+
+**Wszystkie progi K1–K6 zaliczone za pierwszym biegiem na ziarnach 21 i 7, S5 i S5 próżnia, bez strojenia planu.** Kopy jednoklatkowe w f32 nie przesunęły progów (obawa z propozycji). Tabela: § 8, zapis: `.tmp/woksele-demo/S5/S5-liczby.txt`. Zrzuty S5 i S5 próżnia przy t = 1, 2, 4, 6, 8, 12 oraz S5 planeta przy t = 6, 10: `.tmp/woksele-demo/S5/zrzuty/`. Obok klatek filmu przy t = 2 i t = 8 (S5 i próżnia) ten sam układ kawałków, widać gładszy wieniec. Ruchu nikt jeszcze nie ocenił. Przejście 15 przycisków z resetem i żywą pętlą, interakcje: 0 nowych pipeline'ów, 0 synchronicznych po rozgrzewce.
+
+Koszt, tylko orientacja: S5 planeta od t = 6, 1920 × 1080, znaczniki GPU 1,64 ms (compute 0,44, rysunek 1,20), ściana 3,5 ms. Bieg szedł w czasie startu meczu użytkownika, a znaczniki są niepewne jak w § 1.9.
+
+**Czego nie ma:** pomiaru parametrów znanej słabości (§ 5.5). Pierwsza klatka strony czeka na CG wieży S5, około 8 s w Node przy zajętej maszynie; to raz na stronę, S5 próżnia i planeta biorą statykę z pamięci. Kamer `blisko` i `gora` nie ma na panelu (P5). Wzorca CPU S5 w teście zgodności nie ma: zgodność to bajty budowy i liczby K1–K6.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
@@ -716,7 +726,7 @@ Kod: `scena.js` (`S5`, `S5_OPCJE`, `S5_NAKLADKA`), `budowa.js` (`wypieczSzwy`, `
 
 d to odległość od śladu wieży (odcinek 1100 j.). Pozycje z chciwego pokrycia szwów (promień 240 j.) poza torem wieży. Najwyżej 4 starty na klatkę, kopy bez korekcji momentu (`zerujL: false`). Dwa akty, bo kop przed oderwaniem sekcji idzie w kotwicę i nic nie rozdziela, a po oderwaniu sekcje spadają razem (swobodny spadek nie obciąża): płyty rozdziela dopiero eksplozja w locie.
 
-**Znana słabość, czeka na ocenę użytkownika, nie ruszana.** Przy g z boku do około t = 8 widać głównie jedną spękaną płytę, bo swobodny spadek nie rozdziela kawałków. Zmieniają to: `grupyOpozn` (2,4 s, drugi akt eksplozji: później = sekcje dłużej trzymają się razem), `J` i `Jmala` (210, 90: rozjazd płyt w locie, kosztem K4 i pyłu), `rPabs` (340: zasięg kopu), `tauSzew` (1 klatka), `kotwicaOpozn` i `vFront` (kolejność padania wsporników, więc czy dysk spada całością, czy po kawałku).
+**Znana słabość, czeka na ocenę użytkownika, nie ruszana.** Przy g z boku do około t = 8 widać głównie jedną spękaną płytę, bo swobodny spadek nie rozdziela kawałków: po wiązaniach największy kawałek ma przy t = 7 już 0,118 dysku (ziarno 21), a płyty lecą jeszcze razem. Zmieniają to (z budowy planu, bez pomiaru; próba: `--testy s5 --ziarna 21 --miejsca g --opcje '{"grupyOpozn":1.2}'`, wiersz „przebieg” ma medianę prędkości po masie): `grupyOpozn` (2,4 s, drugi akt eksplozji: później = sekcje dłużej trzymają się razem), `J` i `Jmala` (210, 90: rozjazd płyt w locie, kosztem K4 i pyłu), `rPabs` (340: zasięg kopu), `tauSzew` (1 klatka), `kotwicaOpozn` i `vFront` (kolejność padania wsporników, więc czy dysk spada całością, czy po kawałku).
 
 **Kamery.** Pole widzenia 32. S5 i S5 planeta: az 32, el 15, cel (0, 0, −650), odl 7200, cień środek (0, 0, −900). S5 próżnia: az 32, el 20, cel = środek masy, odl 7600; kamera i cień jadą stałą prędkością ze środkiem masy z chwili t = 0, orbita użytkownika zostaje. Dalsze kamery filmu: `blisko` (32, 30, (0, 0, −200), 3500), `gora` (20, 89, (0, 0, 0), 4400); w próżni `blisko` (32, 24, (0, 0, 100), 5400), `gora` (20, 89, (0, 0, 0), 7200).
 

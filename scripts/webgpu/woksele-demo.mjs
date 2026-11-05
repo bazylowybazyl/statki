@@ -184,6 +184,8 @@ try {
       const ile = await ev('document.querySelectorAll("#panelSceny button").length');
       const wyn = [];
       for (let q = 0; q < ile; q++) {
+        // AGENT: sprawdzenie gry przed każdym przyciskiem, a nie tylko przed sceną. 2026-11-05 bieg zaczął się między meczami i przejście przycisków z żywą pętlą rAF szło 3 min w czasie startu następnego meczu.
+        await czekajNaCisze(`przycisk ${q + 1} z ${ile}`);
         const nazwa = await ev(`document.querySelectorAll("#panelSceny button")[${q}].textContent`);
         const wylaczony = await ev(`document.querySelectorAll("#panelSceny button")[${q}].disabled`);
         const pipePrzed = await ev('window.__harness.pipes.list.length');
@@ -207,6 +209,7 @@ try {
       if (wyn.some((w) => w.wylaczony || !w.weszla || w.krokPoResecie >= w.krokPrzedResetem + 60 || w.nowePipeline)) porazka(`przyciski scen: ${JSON.stringify(wyn)}`);
     }
     if (args.interakcje) {
+      await czekajNaCisze('interakcje');
       // Mysz i klawisze przez CDP, jak u użytkownika: orbita, przybliżenie, przesuw, spacja, R, P, przyciski panelu, zmiana rozmiaru okna.
       const poz = () => ev('window.__wok.camera.position.toArray()');
       const stanS = () => ev('(() => { const s = window.__wok.pokaz.stan; return { krok: s.krok, pauza: s.pauza, tempo: s.tempo, scena: s.scena }; })()');
