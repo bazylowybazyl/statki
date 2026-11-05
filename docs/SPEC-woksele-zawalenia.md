@@ -2,9 +2,9 @@
 
 > **Kopia specyfikacji dema.** Kopia robocza do końca dema to `.tmp/woksele-proto/SPEC-demo-gpu.md` w worktree dema; ten plik zostanie z nią zsynchronizowany na końcu dema, więc do tej chwili może być starszy. Wskazane niżej dowody i prototypy (`proby4/`, `spec-proby/`, `krytyk-*/`, `wspolne/`, logi, kadry) leżą lokalnie w `.tmp/woksele-proto/`, wyniki pakietów dema w `.tmp/woksele-demo/`; `.tmp/` nie idzie do repo. Kod dema: `dema/woksele-zawalenia/`, `scripts/woksele-sym.mjs`, `tests/wokseleBudowa.test.mjs`, `tests/helpers/wokseleBiegi.mjs`.
 
-Stan: 2026-11-05, po uwagach czterech krytyków i po pakiecie P0 (§ 1.6). Kod odniesienia: `proby4/model-spec4.mjs` (generowany: `A-kratownica-jawna/model.mjs` → `lataj.mjs` → `model-spec.mjs` → `lataj2.mjs` → `model-spec2.mjs` → `lataj3.mjs` → `spec-proby/model-spec3.mjs` → `proby4/lataj4.mjs`). **Numery linii w § 2 dotyczą `spec-proby/model-spec3.mjs`**: wersja 4 to te same linie plus łamanie granic przez falę (przed 889), ziarna dachu (przy 571) i `nKomStale` (przy 722). Parametry: `proby4/parametry-spec4.json`. Sceny grawitacyjne i metryki: `spec-proby/scenyG.mjs`. Reguły obrazu: `proby4/obraz4.mjs` + `rys4.mjs`, opcje końcowe w `proby4/bieg-fin11.sh`. Dziennik prób: `spec-proby/PROBY-rano.md`, próby grawitacji: § 10, próby po krytykach: § 1.5.
+Stan: 2026-11-05, po uwagach czterech krytyków i po pakietach P0 (§ 1.6) i P1 (§ 1.7). Kod odniesienia: `proby4/model-spec4.mjs` (generowany: `A-kratownica-jawna/model.mjs` → `lataj.mjs` → `model-spec.mjs` → `lataj2.mjs` → `model-spec2.mjs` → `lataj3.mjs` → `spec-proby/model-spec3.mjs` → `proby4/lataj4.mjs`). **Numery linii w § 2 dotyczą `spec-proby/model-spec3.mjs`**: wersja 4 to te same linie plus łamanie granic przez falę (przed 889), ziarna dachu (przy 571) i `nKomStale` (przy 722). Parametry: `proby4/parametry-spec4.json`. Sceny grawitacyjne i metryki: `spec-proby/scenyG.mjs`. Reguły obrazu: `proby4/obraz4.mjs` + `rys4.mjs`, opcje końcowe w `proby4/bieg-fin11.sh`. Dziennik prób: `spec-proby/PROBY-rano.md`, próby grawitacji: § 10, próby po krytykach: § 1.5.
 
-Ścieżki względne liczą się od `.tmp/woksele-proto/`, wyniki pakietów dema (`.tmp/woksele-demo/`) mają ścieżki pełne. Liczby są oznaczone: **zm.** (zmierzone w Node, z podaniem logu) albo **szac.** (szacunek). Żadnego kernela GPU jeszcze nie uruchomiono, wszystkie kadry pochodzą z programowego rasteryzatora w Node.
+Ścieżki względne liczą się od `.tmp/woksele-proto/`, wyniki pakietów dema (`.tmp/woksele-demo/`) mają ścieżki pełne. Liczby są oznaczone: **zm.** (zmierzone w Node, z podaniem logu) albo **szac.** (szacunek). Kernele fizyki działają na GPU od P1 (§ 1.7), obrazu na GPU jeszcze nie ma: wszystkie kadry pochodzą z programowego rasteryzatora w Node.
 
 ## 0. W skrócie
 
@@ -12,7 +12,7 @@ Stan: 2026-11-05, po uwagach czterech krytyków i po pakiecie P0 (§ 1.6). Kod o
 - Obraz: węzeł to jeden blok, dopóki jest cały, a po uszkodzeniu L = 5 nierównych odłamków z tablicy wzorów (podział k-d) z szumem wierzchołków, do tego pręty, drobny gruz i pył. Beton i ciemna blacha zamiast jednej barwy, ton kawałka od ziarna.
 - Pięć mechanizmów fizyki ponad model A: ziarna materiału, fala rozluźnienia, która **łamie granice ziaren nad frontem**, plastyczne zginanie bez stanu, waga dysku od szkody, kruszenie dysku od kontaktu. Dają płyty, słupy i ściany w hałdzie, górę kruszoną jeszcze przed frontem i dach, który nie ląduje jako taca. Kosztem odporności na największy strzał (§ 1.2).
 - Grawitacja jest właściwością miejsca, nie modelu (§ 10). Ten sam kod i ten sam materiał: przy g = 400 wieża się miażdży, w próżni przepołowiona wieża rozlatuje się na dwie całe połowy, które się obracają. Fala milczy bez ramy odniesienia, więc w próżni nic z tych zmian nie działa.
-- **Nic z tego nie działało na GPU.** Budowa WGSL w Node to wszystko, co wiadomo o kernelach; Z4 nie jest zmierzone, a kadry pochodzą z rasteryzatora Node.
+- **Na GPU działa tylko fizyka bez zdarzeń (P1, § 1.7).** Jeden podkrok zgadza się z migawkami Node, W1 stoi, zm. fizyka 0,29–0,44 ms/krok. Zdarzeń, obrazu i całej klatki na GPU nie ma: Z4 nie jest zmierzone, a kadry pochodzą z rasteryzatora Node.
 
 Kadry odniesienia: `proby4/fin11/S1_arkusz.png`, `S2_arkusz.png`, `S3_arkusz.png`, `S4_arkusz.png`, `S4g_arkusz.png`, strzał: `proby4/fin11k/S1_arkusz.png`.
 
@@ -130,6 +130,35 @@ Kod: `dema/woksele-zawalenia/{scena,budowa,wzorzec-cpu,metryki}.js`, `scripts/wo
 - **Migawka a budowa i dalszy bieg, zm. `popr-P0/log-spr-migawek.txt`.** Nagłówek ma `budowa`: n, gProj, `capEtyk`, `nKom`, K i skrót FNV-1a po Ft, L, F0, masce (`budowaMigawki`, bez `node:crypto`, więc też na stronie). `wgraj` rzuca błąd przy innej budowie albo braku opisu; test GPU woła `sprawdzBudowe` z nagłówka. Zm. S3 przy gProj 400 w budowie przy 260 (to samo n i ziarno): „gProj = 400, a scena ma 260”. Test porównuje klon po `wgraj` + kLista + kF z tym samym przebiegiem na oryginale, a nie klon z klonem, w każdym z 10 biegów, więc brak dowolnego pola na liście wywraca go (`M1`, `M2`, `M6`–`M12`). Pola A i etykieta tylko na żywych węzłach: martwy zostaje przy wartości z bufora, który akurat jest z przodu.
 - **Otwarte z wiersza P0: ocena sekwencji S1 przez agenta bez kontekstu.** Pliki są w `sekwencja-S1/` (30 klatek, arkusz), oceny dalej nie ma. Pakiet poprawek nie mógł jej wykonać, bo agent z tym kontekstem nie jest już agentem bez kontekstu. Do zlecenia przed startem P1, pytanie o migotanie, wynik tutaj.
 
+### 1.7 Domknięcie P1: solver na GPU
+
+Kod: `dema/woksele-zawalenia/{solver,glowny,testGpu,wzorzecF32}.js`, `dema/woksele-zawalenia.html`, `scripts/webgpu/woksele-demo.mjs`, `tests/wokseleWgsl.test.mjs`. Liczby z 2026-11-05, RTX 5080 (Blackwell, D3D12, sterownik 32.0.16.1714), headless Chrome z `--enable-webgpu-developer-features`, w tle, bez procesów obcych. Logi: `.tmp/woksele-demo/P1/log-koniec.txt`, `podkrok.txt`, `mutacje.txt`, `W1.json`, `raport.json`, `.tmp/woksele-demo/G1.txt`.
+
+- **Karta, zm. `P1/log-sonda-karty.txt`.** Chrome na Windows ignoruje `powerPreference`: `high-performance` i `low-power` dają ten sam adapter, domyślnie NVIDIA. `--force_low_power_gpu` daje naprawdę AMD Radeon (rdna-2). Harness czyta `device.adapterInfo` urządzenia renderera zaraz po `init`, zapisuje przy każdym wyniku i odmawia: `P1/log-proba-amd.txt`, kod 4 na AMD. Czekanie na grę w toku sprawdzone atrapą procesu `G1R-Win64-Shipping`: `P1/log-proba-gra.txt`.
+- **Test jednego podkroku, zm. `P1/podkrok.txt`, 7 migawek × 3 przebiegi.** Maski 0 różnic, S, A, D 0 różnych, NaN 0, asymetrii masek 0 w każdym z 21 przebiegów. Względem Node f64 |Δa| maks. 2,92 (S1 t = 3,5), 1,00 (S1 t = 5), 1,54, 1,59, 2,18 (S3), 3,69 (S4). Wynik f64 zalicza wprost 18 z 21. Zostały 3 przebiegi S2 t = 3: jedno wiązanie, patrz niżej. Względem Node w f32 zalicza 21 z 21, |Δa| maks. 0,25. Etykieta: `liczEtyk` włączone w scenach z `capEtyk > 0` (S1, S2, S3), 0 różnych; to domyka pytanie z § 1.6. S4 ma 14 942 różnych etykiet (60 000 w Node, 0 na GPU), bez skutku i poza zaliczeniem, § 1.6.
+- **Błąd w specyfikacji, poprawiony: migawka w f64 nie jest osiągalna dla żadnego kernela f32.** § 8 opierał progi na próbie f32 kontra f64 tylko przy S1 (`krytyk-wiernosc/krok1.mjs`). W S2 t = 3 wiązanie 4744–4762 ma w f64 |ft|/lim = 1,0000023 (5505,508 przy limicie 5505,495), więc Node robi wypiek. W f32 `r` wychodzi 28,3768349 zamiast 28,3768357, siła 5505,484 i wypieku nie ma. Skutek: L i F0 w 2 wpisach, |Δa| 22,27 w 2 węzłach. Nie wynika to z portu: `wzorzecF32.js` (każde działanie przez `Math.fround`, kolejność kernela, bez GPU) daje względem f64 te same 2 wpisy i te same 22,27. Tego się nie usunie bez arytmetyki podwójnej precyzji w kernelu, a fizycznie nic nie znaczy. Progi § 8 bez zmian, doszedł wzorzec rozstrzygający, § 8. Każda inna różnica dalej oblewa.
+- **Błąd three r183, nowa pułapka.** `UniformsGroup.updateVector4` porównuje `a[offset + 4]` zamiast `a[offset + 3]`, więc zmiana samego `w` przepada, gdy następne pole bufora równa się nowemu `w`. `uniform(new Vector4())` ma domyślnie w = 1, a `set(0, 0, 0, 0)` nie dochodziło do GPU: każdy węzeł dostawał odśrodkową i Coriolisa przy ω = 1 oraz siłę 1 ku zeru, |Δa| do 756. Maski, S, A, L, D były zgodne, więc złapało to tylko porównanie przyspieszeń. Stąd § 10.4 bez uniformów vec4. Do reguły `webgpu-tsl` przy P8, § 9.
+- **Słowo sąsiada.** Bity 24–31 to teraz klasa + 1, § 2.2. Klasa 0 (strop) dawała denormal f32, a sąsiad jedzie przez odczyt f32 i `bitcast`. Zapobiegawczo, bez pomiaru, czy sterownik by to spłaszczył.
+- **Mutacje, zm. `P1/mutacje.txt`.** 10 mutacji z § 8 na GPU przez uniformy i dane, ten sam kernel: każda wykryta we wszystkich migawkach, w których wykrywa ją Node. Liczby różnic jak w nagłówkach migawek, np. bez fali A 5308 / 5308, bez `falaPeka` maski 32 / 32 i 55 / 55, bez pary |Δa| p99 597 / 597. Dodatkowo „wykryte tylko na GPU” 2 razy: to ta sama para wpisów S2 t = 3 przy mutacjach, które w S2 t = 3 nic nie zmieniają w Node.
+- **Źródła grawitacji, zm. `P1/log-koniec.txt`.** Gałęzie [G], których migawki P0 nie ruszają: obrót, punkt, rampa skali 0,5 na gruncie z kotwicami. Stan z `WzorzecCpu` liczonego na stronie, ten sam jeden podkrok, te same progi: maski, S, A, L, D 0 różnych, |Δa| maks. 3,33 / 2,99 / 0,30. Kernel nie zna tu innej ścieżki niż S4, różnią się tylko uniformy.
+- **W1, zm. `P1/W1.json`.** 60 s, 3600 kroków w 1,6 s ściany: przemieszczenie przy końcu 0,0108 j. (Node f32 z § 8 też 0,0108), 0 zerwań, 0 NaN, asymetrie 0, maks. D i S równe 0. R5 w tej części zamknięte.
+- **kI, zm. `P1/log-koniec.txt`.** |v| = 5000 przycięte do 4000,00, droga 5,000 j. na podkrok, kotwica i martwy węzeł stoją. Limit z § 1.6 jest więc pilnowany osobno.
+- **Pipeline'y.** Dziennik po rozgrzewce 10 wpisów (5 kerneli i 5 budów), po wszystkich przebiegach na tej samej stronie 0 nowych.
+- **Punkt G1, zm. `.tmp/woksele-demo/G1.txt`.** ms/krok (8 podkroków, lista co 4, 22 dispatche w jednym passie), średnia z 60 kroków:
+
+  | Stan | Fizyka, lista | kF / kI / kLista (`?profil=1`, tylko proporcje) | Kontakty |
+  |---|---|---|---|
+  | S3 cały | 0,354 | 0,192 / 0,030 / 0,206 | 8856 |
+  | S3 t = 0,8 | 0,359 | 0,199 / 0,029 / 0,206 | 12 700 |
+  | S3 t = 2,95 | 0,414 | 0,207 / 0,027 / 0,225 | 32 862 |
+  | S1 cały | 0,293 | 0,164 / 0,025 / 0,145 | 0 |
+  | S1 t = 3,5 | 0,391 | 0,212 / 0,025 / 0,189 | 54 856 |
+  | S1 t = 5 | 0,437 | 0,220 / 0,025 / 0,216 | 92 106 |
+
+  Warunek porażki 1 nie zachodzi: S3 najwyżej 0,414 wobec progu 8 ms. To około 5–10 razy poniżej szacunku z § 6.1, a kontrola ścianą to potwierdza: W1 liczy 0,446 ms/krok razem z kodowaniem, kolejką i odczytami. Lista nie jest problemem, a R6 w części „kF przy 15 tys.” zamknięte: kF 0,11–0,38 ns na wizytę wiązania. Kroki idą bez zdarzeń. Nie zmierzone: `kObraz`, rysunek, pył, cała klatka, więc Z4 dalej otwarte, a kolejne pakiety mogą to przesunąć tylko o swoje kernele.
+- **kWstaw to wyścig.** Przy przepełnionej komórce GPU odrzuca inne wstawienia niż Node. Zm. S2 t = 3: 6 odrzuconych w Node, lista różna w 1–7 węzłach, S3 t = 0,8: 2 odrzucone, różna w 5–7 (w `P1/log-bieg2.txt` też 13), a siła bez zmian w tych przebiegach, bo odrzucone węzły nie były w styku. Inny przebieg albo sterownik może odrzucić węzeł w styku i wtedy |Δa| przejdzie próg, wiersz „odrzucone wstawienia” w § 8 sprawdzi to w P2.
+- **Niezrobione w P1, zgodnie z § 12.** Zdarzenia, licznik `wLicz`, `grupaTab`, obraz, `budowa.worker.js` (na razie budowa na stronie), `kZerujPelne` (reset i tak wgrywa bufor z CPU). `tests/wokseleWgsl.test.mjs` nie sprawdza `round`, bo żaden kernel P1 go nie wymaga: wiersz o `kWybuchSuma` przyjdzie w P2. Kolejność gałęzi kF pilnuje test GPU, nie test WGSL (zm. `P1/log-mutacje-testu.txt`: 14 z 15 mutacji solvera łapie test WGSL, a przestawienia gałęzi nie).
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
@@ -177,7 +206,7 @@ Wszystko w lokalnym układzie budowli (środek podstawy w zerze, z w górę). `M
 | `wWez` | vec4 × 3n | [3i]: xyz, w = promień kontaktu rk (**w < 0 = węzeł martwy**); [3i+1]: prędkość; [3i+2]: przyspieszenie | I, kKrater, kCzas, reset; F tylko [3i+2] | F, I, kLista, kObraz, kWybuch*, wierzchołek |
 | `wStan` | vec4 × 4n | [i]: S, A, etyk, 0; [n+i]: to samo, nowe; [2n+2i]: bMax², rozlewW, szokW, iN0; [2n+2i+1]: kUd, aLos, jasność koloru, flagi (`u32(x)`: bit 0 stoi, 1 nośny przez kotwicę, 2–4 kind, 5–10 m0 = sześć bitów początkowych osiowych, 11–15 grupa budowli) | F [n+i], I kopia do [i], budowa | F, I, kObraz, wierzchołek |
 | `wMaska` | u32 × 2n | [i]: bity 0–17 żywe wiązania; [n+i]: nowe | F, I, kCzysc, kCzas | F, I, kLista, kObraz, wierzchołek |
-| `wWiaz` | vec4 × 36n | [36i+2d]: L, D, F0, R0 (własne kopie); [36i+2d+1]: Ft, Fc, sąsiad jako bity f32 (`floatBitsToUint`: 0–23 sąsiad, 24–31 klasa), wolne | F, budowa | F, kObraz (tylko d < 6) |
+| `wWiaz` | vec4 × 36n | [36i+2d]: L, D, F0, R0 (własne kopie); [36i+2d+1]: Ft, Fc, sąsiad jako bity f32 (`floatBitsToUint`: 0–23 sąsiad, 24–31 klasa + 1, żeby słowo nigdy nie było denormalem, § 1.7), wolne | F, budowa | F, kObraz (tylko d < 6) |
 | `wLista` | u32 × 33n | [33i]: liczba kontaktów, potem do 32 sąsiadów | kLista | F, kObraz (licznik, § 4.3 dopiero przy okluzji z kontaktów) |
 | `wIjk` | u32 × n | i 10 bitów, j 10, k 10, grupa 2 | budowa | kLista |
 | `wKomLicz` | u32 × nKom | licznik komórki; **trzy węzły na jednym atrybucie**: atomowy w `kWstaw`, `toReadOnly()` w `kLista`, zwykły w `kZerujPo` (wzór `hullDamageMap.tsl.js:105–106`, zm. budowa: atomic 0 poza `kWstaw`) | kZerujPo, kWstaw | kLista |
@@ -255,7 +284,7 @@ Czyta wyłącznie stan sprzed przebiegu, pisze tylko swoje: `wWiaz[36i+2d]`, `wW
     mI = wMaska[i]; mNowa = mI; eMin = 65535; szI = S[i]; szSas = 0; aSas = 0; svx..sn = 0
 
 dla d = 0..17, jeśli bit d w mI:                                   (linie 869–960)
-    w2 = wWiaz[36i+2d+1]; nb = floatBitsToUint(w2.z); j = nb & 0xFFFFFF; kl = nb >> 24
+    w2 = wWiaz[36i+2d+1]; nb = floatBitsToUint(w2.z); j = nb & 0xFFFFFF; kl = (nb >> 24) − 1
     pj = wWez[3j]
     dX = pj.xyz − xi; r = max(długość, 1e−4); n = dX / r           (GPU: r ≥ 1e−4, CPU bez ochrony)
     Lb = L; f = K·(r − Lb); dmg = D; kap = 1 − dmg; f0b = F0·uSkF0  [G: sprężenie jedzie z grawitacją, § 10.5]
@@ -407,7 +436,7 @@ const kF = Fn(() => {   // sąsiad: floatBitsToUint(wWiaz.element(36*i+2*d+1).z)
     const ox = uint(18).mul(i).add(d).toVar();                // numer wiązania; rekordy po dwa vec4
     const nb = floatBitsToUint(wWiaz.element(ox.mul(2).add(1)).z).toVar();
     const j = nb.bitAnd(uint(0xffffff)).toVar();
-    const kl = nb.shiftRight(uint(24)).toVar();
+    const kl = nb.shiftRight(uint(24)).sub(uint(1)).toVar();
     // ... wg § 2.5
   });
   // ...
@@ -590,7 +619,7 @@ Prawa krawędź, chowany `H`, bez debugów na obrazie. Zawartość: nazwy sześc
 
 ### 6.1 Budżet czasu, RTX 5080, 5120 × 1440
 
-Nic z tego nie jest zmierzone na GPU. Jednostki zm. w Node (`krytyk-gpu/koszt.mjs`, `koszt-S2.json`, `log-Rst.txt`): 65–68 ms na klatkę przy wieży, hałda 62 ms, S3 około 79 ms. Liczniki na klatkę: stoi 1,47 mln wizyt wiązań, 0,56 mln linii osiowych, 1,86 mln kandydatów listy; hałda 0,63 mln wizyt wiązań, 0,77 mln wpisów listy, 2,7 mln kandydatów. Kotwica 60× z `FIZYKA-BELEK-GPU.md:84–87` dotyczy 386 tys. węzłów dopracowanego GS na rekordzie 16 B; przy 24,6 tys. jest tam 48–80×, przy 6,2 tys. 7–11×. Górna granica fizyki jest więc nieznana do pierwszego pomiaru, a kryterium to **ns na wizytę wiązania i ns na kandydata**, nie ms.
+Fizyka zmierzona na GPU w P1, zm. 0,29–0,44 ms/krok, około 5–10 razy poniżej tabeli (§ 1.7, `.tmp/woksele-demo/G1.txt`); reszta tabeli nadal bez pomiaru. Szacunki zostają, żeby było widać, jak się rozminęły. Jednostki zm. w Node (`krytyk-gpu/koszt.mjs`, `koszt-S2.json`, `log-Rst.txt`): 65–68 ms na klatkę przy wieży, hałda 62 ms, S3 około 79 ms. Liczniki na klatkę: stoi 1,47 mln wizyt wiązań, 0,56 mln linii osiowych, 1,86 mln kandydatów listy; hałda 0,63 mln wizyt wiązań, 0,77 mln wpisów listy, 2,7 mln kandydatów. Kotwica 60× z `FIZYKA-BELEK-GPU.md:84–87` dotyczy 386 tys. węzłów dopracowanego GS na rekordzie 16 B; przy 24,6 tys. jest tam 48–80×, przy 6,2 tys. 7–11×. Górna granica fizyki jest więc nieznana do pierwszego pomiaru, a kryterium to **ns na wizytę wiązania i ns na kandydata**, nie ms.
 
 | Część | Szac. | Próg „stop i analiza” |
 |---|---|---|
@@ -619,8 +648,8 @@ Dźwignie, gdy za drogo, w tej kolejności: cień 2048 co drugą klatkę bez gru
 | R2 | Ruch jest gorszy niż kadry: drżenie płyt, teleporty odłamków, wibrujący gruz | Krótkie sekwencje PNG co 1/60 s z `__wok`, oglądane klatka po klatce, § 7 |
 | R3 | Dysk jest ostry na sprężeniu (końcowo 0,5% → 2,62 przy kontaktSzok 1,0 i gProj = 400, § 1.6; 2,33 przy gProj = 260). Do S3 doszła jeszcze jedna zależność: bez `kontaktSzok` otwór spadał do 1,59, bo pocisk kruszy się wcześniej. Zm. bez rytmu: 0,5% → otwór 1,51; 0,7% → 1,84; 0,85% → 4,52; 1% → 12,4. Z rytmem 4: 0,6% → 1,81; 0,7% → 3,72. Po lepkości z kotwicą (§ 10): 0,6% → 4,05, 0,5% → 1,74; po gProj = 400: 0,5% → 2,41. Każda zmiana modelu przesuwa ten próg, więc f32 na GPU też może | Test zgodności S3 przy 0,4, 0,5, 0,6%. Rezerwa: 0,4% (niesprawdzona) |
 | R4 | Stały rytm listy na końcowych parametrach zmieni wynik | ZAMKNIĘTE: sprawdzone w Node (§ 2.4), końcowe parametry mają rytm 4 |
-| R5 | f32 na GPU zmieni W1 albo wysadzi symetrię kopii | Odczyt `wWez`, `wMaska` w `?test=1`, W1 przez 60 s |
-| R6 | Kod rozbieżny (18 bitów, sieć) jest droższy niż płaski solver belek, na którym oparto kotwicę 60× | Pierwszy pomiar: kF przy 15 tys. Tu może paść cały budżet |
+| R5 | f32 na GPU zmieni W1 albo wysadzi symetrię kopii | Odczyt `wWez`, `wMaska` w `?test=1`, W1 przez 60 s. Zm. P1: W1 0,0108 j., 0 zerwań, 0 asymetrii, § 1.7. Dalszy bieg z rozjazdem dopiero w progach chaotycznych, P2 |
+| R6 | Kod rozbieżny (18 bitów, sieć) jest droższy niż płaski solver belek, na którym oparto kotwicę 60× | ZAMKNIĘTE dla fizyki: zm. kF przy 15 tys. 0,16–0,22 ms/krok, § 1.7 |
 | R7 | Płaski obraz bez SSAO | § 4.3 |
 | R8 | Plastyczne zginanie bez stanu zawraca: płyta odgina się z powrotem, bo nie ma trwałego ugięcia. Na kadrach niewidoczne, w ruchu może wyglądać jak guma | Kadr co 1/60 s. Rezerwa: bit przegubu w masce (bity 18–23 są wolne) |
 | R9 | Fala łamie granice i jest regułą, nie wynikiem mechaniki (§ 1.3). Strzał r = 90 przy J = 600 nisko zwykle kładzie wieżę (16/32), bo wystarczy ruch ponad 60 j./s wokół. Na małym strzale nie (32/32) | Mapa `mapa5.mjs` po każdej zmianie fali. Dźwignia: próg prędkości `fala.v` |
@@ -682,7 +711,7 @@ Zrobione: rytm co 4 podkroki to parametr końcowy (`log4-R1.txt`, `R2`, `R3`, §
 
 ### Narzędzie
 
-`scripts/webgpu/woksele-demo.mjs`, wzór `scripts/webgpu/zawalenia-demo.mjs`: `parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, repo` z `wspolne.mjs`, `gryUzytkownika, obceProcesy` z `sondaGpuWorkera.mjs`, `harness-strona.js` wstrzyknięty przez CDP. Chrome headless, więc okno nie wychodzi na wierzch (`startChrome` domyślnie `--headless=new`). Gdy gra użytkownika działa: pomija przebieg, kod 0, jak wzór. A/B po kolei, nigdy dwa harnessy naraz. Wyjście: `.tmp/woksele-demo/`.
+`scripts/webgpu/woksele-demo.mjs`, wzór `scripts/webgpu/zawalenia-demo.mjs`: `parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, repo` z `wspolne.mjs`, `gryUzytkownika, obceProcesy` z `sondaGpuWorkera.mjs`, `harness-strona.js` wstrzyknięty przez CDP. Chrome headless, więc okno nie wychodzi na wierzch (`startChrome` domyślnie `--headless=new`). Gra w toku (League of Legends, czyli sam mecz, RuneScape, Dragonwilds, RSDragon, osclient, G1R-Win64-Shipping): harness czeka co 30 s, najwyżej 30 min, potem kod 3, i sprawdza przed każdą sceną. Własny test, bo `gryUzytkownika()` łapie sam otwarty klient League i nie łapie Gothic 1 Remake. Karta: `device.adapterInfo` przy każdym wyniku, na AMD albo rasteryzatorze odmowa, kod 4. A/B po kolei, nigdy dwa harnessy naraz. Wyjście: `.tmp/woksele-demo/`.
 
 API strony w `?test=1`: `window.__wok = { gotowe, ustawScene(id), krok(n), kamera(nazwa), pyl(wl), strzel(o, dir, r), wgraj(stan), odczyt() → { poz, mask, stan }, czasy() → { fizyka, lista, obraz, klatka, pylAB }, ziarnoBudowy() }`. Zegar ręczny: kroki tylko przez `krok(n)`, bez czekania na rAF przy zatrzymanym zegarze (AGENTS). Test dziennika: po rozgrzewce dziennik pipeline'ów nie jest pusty, a synchronicznych 0.
 
@@ -706,6 +735,8 @@ Goły `WebGPURenderer` gubi czasy: tablica nie ma `isComputeNode` ani `id`, wię
 Referencja: `dema/woksele-zawalenia/wzorzec-cpu.js` (kopia `proby4/model-spec4.mjs` bez gałęzi wyłączonych), `scripts/woksele-sym.mjs` liczy te same sceny w Node i zapisuje migawki oraz metryki. GPU: `__wok.odczyt()` w tych samych chwilach (`getArrayBufferAsync` tylko w teście, `?test=1`), metryki na CPU z tego samego kodu (`metryki.js`: `ObserwatorSceny`, `analizaPolowek`, `taca`, `porownajPodkrok`). Wyniki Node: `.tmp/woksele-demo/migawki/` (`metryki-*.json`, `linie-*.txt`, `tabela-8.txt`), opis migawek: § 1.6.
 
 **Krok obowiązkowy przed progami: jeden podkrok z migawki.** `__wok.wgraj(stan)` z migawki Node (S1 t = 3,5 i t = 5, S3 po kontakcie, S4 t = 3, S2 t = 3), jeden przebieg kLista + kF i porównanie węzeł po węźle: maski 0 różnic, S, A, L, D do 1e−3, |Δa| do 5, NaN w żadnym polu (§ 1.6). Zm. f32 kontra f64: |Δa| maks. 2,94 (t = 3,5), 1,51 (t = 5), maski różne 0, S, A, L, D różne 0, a każda mutacja wykryta: fala A różne 10 762, para |Δa| p99 281, lepkość p99 132, zlomB 42 maski, wypiek 90° F0 w 10 wiązaniach, kontakt S w 2 węzłach, szok S w 26, rozlew S w 5406, kruszenie L w 5036 (`krytyk-wiernosc/krok1.mjs`; czego sterownik doda przez FMA, nie sprawdzone). Progi chaotyczne niżej przepuszczają brak fali, `zlomB`, `kontaktSzok` i pary (zm. `krytyk-wiernosc/log-M*.txt`), więc są ostatnią kontrolą, a nie dowodem wierności. Ten sam test dla `falaPeka`: maski z mutacją wyłączenia muszą się różnić (zm. na kodzie końcowym przy S1 t = 3,5, S2 t = 3, S3 t = 0,8; przy S1 t = 5 nie, § 1.6).
+
+**Zaokrąglenie przy progu, poprawka P1 (§ 1.7).** Liczby progów bez zmian, ale wynik f64 nie jest osiągalny dla żadnego kernela f32, gdy siła leży o ułamek ulp od progu. Dlatego harness liczy trzy porównania tymi samymi progami: GPU − Node f64, GPU − Node f32 (`wzorzecF32.js`: każde działanie przez `Math.fround`, kolejność kernela) i Node f32 − f64. Różnica względem f64 nie oblewa wyłącznie wtedy, gdy spełnione są naraz: GPU − Node f32 zalicza, Node f32 − f64 nie zalicza, a każde wiązanie z różnicą L lub D ma w Node f32 tę samą wartość co na GPU. Każda inna różnica oblewa, a liczba przebiegów zaliczonych wprost względem f64 zostaje w wyniku.
 
 Progi chaotyczne, z obserwowanego rozrzutu (ziarno 7 / 21, `proby4/log-R7.txt`, `log-R21.txt`, `log-Q21.txt`, `logG4-*.txt`; wiersze S3 przy gProj = 400 z `.tmp/woksele-demo/migawki/linie-S3.txt`, `linie-S3z21.txt`, § 1.6):
 
@@ -762,6 +793,7 @@ Pakiety, punkty oceny i warunek porażki: § 12.
   - (39) `select` zagnieżdżone poza `Fn`: pozycję wierzchołka liczyć w `Fn`, węzły wspólne przez zmienne;
   - (40) `.toVar()` o typie ze stałej (`vec3(0).toVar()` + `assign`) przy wielokrotnym użyciu;
   - (42) dotyczy atrybutów `instancedBufferAttribute` ze zwykłym `BufferAttribute`: tu bez atrybutów instancji, dane w storage, więc pułapka odpada, dopóki nikt ich nie doda;
+  - nowa, zm. P1: `UniformsGroup.updateVector4` porównuje `a[offset + 4]` zamiast `a[offset + 3]`, a `new Vector4()` ma w = 1: bez uniformów vec4 (§ 1.7, § 10.4). Do reguły `webgpu-tsl` przy P8;
   - pułapka uuid (`src/3d/tsl/uuidWezlow.js`): import zaraz po `three/webgpu`, gdy harness resetuje ziarno;
   - `pow` z ujemną podstawą to NaN: nie używać, potęgi przez mnożenie;
   - `discard` nie kończy wykonania: nieistotne, tu nie ma ciężkich pętli w fragmencie;
@@ -842,13 +874,13 @@ Kolejne źródło to nowy człon w `gNaWezle` i uniform, bez dotykania kerneli. 
 ```js
 const gNaWezle = Fn(([x, v]) => {
   const g = uGStala.toVar();                               // brak: 0
-  If(uGPunkt.w.greaterThan(0), () => {                     // c.xyz, g; r0 > 0: g·(r0/r)², r0 = 0: stała, jak gravityWell w grze
-    const e = uGPunkt.xyz.sub(x).toVar();
+  If(uGPunktG.greaterThan(0), () => {                      // r0 > 0: g·(r0/r)², r0 = 0: stała, jak gravityWell w grze
+    const e = uGPunktC.sub(x).toVar();
     const r2 = dot(e, e).add(1e-6).toVar();
-    const a = select(uGPunktR0.greaterThan(0), uGPunkt.w.mul(uGPunktR0).mul(uGPunktR0).div(r2), uGPunkt.w).toVar();
+    const a = select(uGPunktR0.greaterThan(0), uGPunktG.mul(uGPunktR0).mul(uGPunktR0).div(r2), uGPunktG).toVar();
     g.addAssign(e.mul(a.div(sqrt(r2))));
   });
-  If(uGObrot.w.notEqual(0), () => { /* odśrodkowa + Coriolis, model-spec3 _gWezla */ });
+  If(uGObrotOm.notEqual(0), () => { /* odśrodkowa + Coriolis, model-spec3 _gWezla */ });
   return g.mul(uSkG);
 });
 ```
@@ -856,8 +888,8 @@ const gNaWezle = Fn(([x, v]) => {
 | Uniform | Znaczenie | Brak źródła, bez kotwic | Stały 400, grunt, kotwice |
 |---|---|---|---|
 | `uGStala` vec3 | stały wektor | 0 | (0, 0, −400) |
-| `uGPunkt` vec4, `uGPunktR0` | środek i siła, r0 | w = 0 | w = 0 |
-| `uGObrot` vec4, `uGOs` vec3 | punkt osi i ω, oś. Obrót jest w Node, ale nietestowany | w = 0 | w = 0 |
+| `uGPunktC` vec3, `uGPunktG`, `uGPunktR0` | środek, siła, r0. Osobno, bez vec4: błąd three, § 1.7 | G = 0 | G = 0 |
+| `uGObrotP` vec3, `uGObrotOm`, `uGOs` vec3 | punkt osi, ω, oś. Obrót jest w Node, ale nietestowany | ω = 0 | ω = 0 |
 | `uSkG` | skala siły w biegu, § 10.5 | 1 | 1 |
 | `uSkF0` | skala sprężenia, razem z `uSkG`; 0 bez kotwic | 0 | 1 |
 | `uKotwice` | `stoi = bit flagi · uKotwice`: ta sama budowa z kotwicami i bez | 0 | 1 |
@@ -994,7 +1026,7 @@ Od najbardziej ryzykownego. Każdy pakiet kończy się commitem, a bez zaliczone
 | **P7 Poprawki po K3** | jw. | Lista bez „nie” w [!] albo zapisana jawnie niemożliwa | Ta sama lista, ten sam agent, nowy kontekst | P8 |
 | **P8 Pokaz użytkownikowi** | Reguła obszaru, wpis w planie, zrzuty | Demo, krótka lista, co zostało nierozwiązane, liczby Z4 | Tylko ocena użytkownika | — |
 
-**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu.
+**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu. P1 zrobione 2026-11-05, § 1.7: punkt G1 przeszedł (S3 najwyżej 0,414 ms/krok wobec progu 8 ms).
 
 **Punkty oceny:** K1 po P3, K2 po P4, K3 po P5. Żaden kadr nie idzie do użytkownika przed K3.
 
