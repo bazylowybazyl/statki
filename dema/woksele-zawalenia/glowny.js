@@ -176,6 +176,11 @@ async function start() {
     const { createTestGpu } = await import('./testGpu.js');
     wok.test = createTestGpu({ renderer, solver, wypiekSceny, wok, device });
   }
+  // AGENT: tryby ?test=1 i ?profil=1 zostają bez obrazu: narzędzie P1 mierzy nimi fizykę bez kanwy i bez pętli rAF.
+  if (!TEST && !PROFIL) {
+    const { startPokaz } = await import('./pokaz.js');
+    await startPokaz({ renderer, solver, wypiekSceny, wok, device, adres: parametryAdresu });
+  }
   wok.gotowe = true;
 }
 
