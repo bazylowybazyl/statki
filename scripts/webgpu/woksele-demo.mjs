@@ -118,7 +118,7 @@ try {
     console.log('adapter', JSON.stringify(adapter));
     const pipeStart = await ev('window.__harness.pipes.list.length');
     const syncStart = await ev(`window.__harness.pipes.list.filter((p) => p.sync).map((p) => p.nazwa)`);
-    console.log(`pipeline'y po rozgrzewce: ${pipeStart}, synchroniczne w rozgrzewce: ${syncStart.length} ${JSON.stringify(syncStart.slice(0, 12))}`);
+    console.log(`pipeline'y po rozgrzewce: ${pipeStart}, synchroniczne w rozgrzewce: ${syncStart.length}, w tym rysunków: ${JSON.stringify(syncStart.filter((n) => !String(n).startsWith('compute:')))}`);
     if (!args.panel) await ev('window.__wok.pokaz.panel(false)');
     if (args.kam) await ev(`window.__wok.pokaz.kamera(${JSON.stringify((() => { const k = String(args.kam).split(',').map(Number); return { az: k[0], el: k[1], cel: [k[2], k[3], k[4]], odl: k[5] }; })())})`);
     const chwile = String(args.chwile || '0,3,5,6').split(',').map(Number);
@@ -143,6 +143,67 @@ try {
         const k1 = await ev('({ k: window.__wok.pokaz.stan.klatek, f: window.__wok.pokaz.stan.krok, t: performance.now() })');
         console.log(`  pętla na żywo: ${((k1.k - k0.k) * 1000 / (k1.t - k0.t)).toFixed(1)} kl/s rAF, ${((k1.f - k0.f) * 1000 / (k1.t - k0.t)).toFixed(1)} kroków/s`);
       }
+    }
+    if (args.interakcje) {
+      // Mysz i klawisze przez CDP, jak u użytkownika: orbita, przybliżenie, przesuw, spacja, R, P, przyciski panelu, zmiana rozmiaru okna.
+      const poz = () => ev('window.__wok.camera.position.toArray()');
+      const stanS = () => ev('(() => { const s = window.__wok.pokaz.stan; return { krok: s.krok, pauza: s.pauza, tempo: s.tempo, scena: s.scena }; })()');
+      const mysz = async (type, x, y, button = 'left', o = {}) => cdp.send('Input.dispatchMouseEvent', { type, x, y, button, buttons: button === 'left' ? 1 : button === 'right' ? 2 : 0, clickCount: 1, ...o });
+      const klawisz = async (code, key) => {
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', code, key, windowsVirtualKeyCode: key === ' ' ? 32 : key.toUpperCase().charCodeAt(0) });
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', code, key, windowsVirtualKeyCode: key === ' ' ? 32 : key.toUpperCase().charCodeAt(0) });
+      };
+      const wyn = {};
+      await ev('window.__wok.pokaz.panel(true)');
+      await ev('window.__wok.pokaz.bezZegara(false)');
+      const p0 = await poz();
+      await mysz('mouseMoved', 300, 300, 'none');
+      await mysz('mousePressed', 300, 300);
+      for (let q = 1; q <= 10; q++) { await mysz('mouseMoved', 300 + 12 * q, 300, 'left'); await sleep(20); }
+      await mysz('mouseReleased', 420, 300);
+      await sleep(400);
+      const p1 = await poz();
+      wyn.orbita = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 400, y: 300, deltaX: 0, deltaY: -300 });
+      await sleep(400);
+      const p2 = await poz();
+      wyn.przyblizenie = Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]);
+      await mysz('mousePressed', 300, 300, 'right');
+      for (let q = 1; q <= 10; q++) { await mysz('mouseMoved', 300, 300 + 8 * q, 'right'); await sleep(20); }
+      await mysz('mouseReleased', 300, 380, 'right');
+      await sleep(400);
+      const p3 = await poz();
+      wyn.przesuw = Math.hypot(p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]);
+      const s0 = await stanS();
+      await klawisz('Space', ' ');
+      await sleep(100);
+      const s1 = await stanS();
+      await sleep(300);
+      const s2 = await stanS();
+      wyn.pauza = s1.pauza === true && s2.krok === s1.krok;
+      await klawisz('Space', ' ');
+      await klawisz('KeyR', 'r');
+      await sleep(100);
+      const s3 = await stanS();
+      wyn.reset = s3.krok < s0.krok + 90;
+      await klawisz('KeyP', 'p');
+      await sleep(600);
+      wyn.licznik = await ev('document.getElementById("licznik").textContent');
+      await klawisz('KeyP', 'p');
+      await ev('[...document.querySelectorAll("#panelTempo button")][2].click()');
+      wyn.tempo = (await stanS()).tempo;
+      await ev('[...document.querySelectorAll("#panelSceny button")][1].click()');
+      await sleep(4000);
+      wyn.scena = (await stanS()).scena;
+      await ev('[...document.querySelectorAll("#panelTempo button")][0].click()');
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 600, deviceScaleFactor: 1, mobile: false });
+      await sleep(800);
+      await screenshotPng(cdp, join(PNG, `${et}po_zmianie_rozmiaru.png`));
+      wyn.kanwa = await ev('[document.getElementById("kanwa").width, document.getElementById("kanwa").height]');
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+      console.log('interakcje', JSON.stringify(wyn));
+      raport.testy.interakcje = wyn;
+      if (!(wyn.orbita > 1 && wyn.przyblizenie > 1 && wyn.przesuw > 1 && wyn.pauza && wyn.reset && wyn.tempo === 0.25 && wyn.scena === 'S2' && wyn.kanwa[0] === 1280)) porazka(`interakcje: ${JSON.stringify(wyn)}`);
     }
     const nowe = await ev(`window.__harness.pipes.list.slice(${pipeStart}).map((p) => ({ nazwa: p.nazwa, sync: !!p.sync, budowa: !!p.budowa }))`);
     console.log(`po rozgrzewce nowe wpisy dziennika: ${nowe.length}, synchroniczne: ${nowe.filter((p) => p.sync).length} ${JSON.stringify(nowe.map((p) => p.nazwa).slice(0, 16))}`);

@@ -8,7 +8,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, If, Return, Loop, Continue, instanceIndex, storage, uniform, uint, float, vec2, vec3, vec4,
   countOneBits, floatBitsToUint, sqrt, max, min, dot, length, cross, normalize, clamp, smoothstep, sin, cos, abs, step, fract, fwidth, mix, pow,
-  atomicAdd, positionGeometry, normalGeometry, varyingProperty, cameraViewMatrix, screenUV, texture, uv, output, positionView, positionWorld,
+  atomicAdd, positionGeometry, normalGeometry, varyingProperty, cameraViewMatrix, screenUV, texture, uv, output, positionView, positionWorld, getShadowMaterial,
 } from 'three/tsl';
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
 import { STRONA } from './budowa.js';
@@ -96,6 +96,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const uLimD = uniform(4 / 60).setName('uLimD');
   const uDt = uniform(1 / 60).setName('uObrDt');
   const uRDysk = uniform(0).setName('uRDysk');
+  const uPokladZ = uniform(-1e30).setName('uPokladZ');
+  const uOtworR2 = uniform(0).setName('uOtworR2');
+  const uDyskR2 = uniform(0).setName('uDyskR2');
 
   const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
   const uv_ = (e) => { const v = uint(0).toVar(); v.assign(e); return v; };
@@ -214,6 +217,24 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       });
     });
 
+    // Brzeg otworu dysku (§ 4.5): węzeł przy pierwszej utracie wiązania wyrzuca 1–3 kawałki w górę i na zewnątrz, 40–120 j./s. Cel: pas gruzu szerszy niż pas kruszenia.
+    If(kd.equal(uint(KD_DYSK)).and(lost.greaterThan(0)).and(bity.bitAnd(uint(32)).equal(uint(0))), () => {
+      bity.assign(bity.bitOr(uint(32)));
+      const h3 = haszT(i.add(uint(4242)));
+      const ile = uv_(min(h3.bitAnd(uint(3)).add(uint(1)), uint(3)));
+      const rd = v3(vec3(xi.x, xi.y, 0));
+      rd.assign(rd.div(max(length(rd), 1)));
+      Loop({ start: uint(0), end: ile, type: 'uint', condition: '<', name: 'kd2' }, ({ kd2 }) => {
+        const hk = haszT(h3.add(kd2));
+        const sila = fv(float(40).add(czesc(hk, 2, 255).mul(80)));
+        const q = uv_(atomicAdd(wLiczA.element(uint(0)), uint(1)).mod(uint(CAP_G)));
+        const poz = v3(xi.add(vec3(u1(hk, 4).mul(8), u1(hk, 14).mul(8), uDx.mul(0.6))));
+        const v = v3(vi.add(rd.mul(sila.mul(float(0.4).add(czesc(hk, 10, 63).mul(0.8))))).add(vec3(u1(hk, 16).mul(25), u1(hk, 20).mul(25), sila.mul(float(0.5).add(czesc(hk, 24, 63).mul(0.5))))));
+        wCzastkiW.element(uint(2).mul(q)).assign(vec4(poz, float(2.5).add(czesc(hk, 26, 31).mul(5.5))));
+        wCzastkiW.element(uint(2).mul(q).add(uint(1))).assign(vec4(v, float(i)));
+      });
+    });
+
     wRamaW.element(i3).assign(vec4(F[0], dN));
     wRamaW.element(i3.add(uint(1))).assign(vec4(F[1], lost));
     wRamaW.element(i3.add(uint(2))).assign(vec4(F[2], float(bity)));
@@ -230,6 +251,12 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     const zG = fv(uGruntZ.add(2));
     If(x.z.lessThan(zG), () => {
       x.z.assign(zG);
+      v.assign(vec3(v.x.mul(0.75), v.y.mul(0.75), 0));
+    });
+    // Płaszczyzna pokładu (§ 4.5): gruz leży na dysku poza kołem otworu, reszta leci przez otwór. Bez kontaktu z bryłami.
+    const r2 = fv(dot(x.xy, x.xy));
+    If(a.z.greaterThanEqual(uPokladZ).and(x.z.lessThan(uPokladZ)).and(r2.lessThan(uDyskR2)).and(r2.greaterThan(uOtworR2)), () => {
+      x.z.assign(uPokladZ);
       v.assign(vec3(v.x.mul(0.75), v.y.mul(0.75), 0));
     });
     wCzastkiW.element(q2).assign(vec4(x, a.w));
@@ -324,7 +351,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
             });
           });
           P.assign(x.add(naRame(Fx, Fy, Fz, off)));
-          Nw.assign(naRame(Fx, Fy, Fz, nL));
+          // Normalna z osi w płaszczyźnie ściany, nie z osi prostopadłej: ta na powierzchni jest różnicą jednostronną i jej szum daje kratkę na nienaruszonym pokładzie (§ 7).
+          Nw.assign(cross(Fy, Fz).mul(nL.x).add(cross(Fz, Fx).mul(nL.y)).add(cross(Fx, Fy).mul(nL.z)));
           const ton = fv(float(1).add(d0.w.sub(1).mul(min(f1.w.mul(3), 1))));
           Kol.assign(d1.xyz.mul(ton));
           P0.assign(d0.xyz.add(off));
@@ -586,7 +614,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     const px = fv(vPG.x);
     const py = fv(vPG.y);
     const lin = fv(max(siatkaOs(px, 100, 1), siatkaOs(py, 100, 1)));
-    return vec3(0.17, 0.1734, 0.1802).mul(0.96 / 1.087).mul(lin.mul(0.12).add(1));
+    return vec3(0.17, 0.1734, 0.1802).mul(0.96 / 1.087).mul(lin.mul(0.08).add(1));
   })();
   matGrunt.outputNode = Fn(() => {
     const zan = fv(clamp(positionView.z.negate().sub(500).div(6000), 0, 1));
@@ -607,6 +635,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   sun.shadow.normalBias = 2.0;
   sun.shadow.camera.near = 50;
   sun.shadow.camera.far = 16000;
+  // Własny węzeł cienia, żeby rozgrzewka znała cel mapy (rozgrzej niżej). Domyślny three robi to samo, tylko niedostępny.
+  const wezelCienia = new THREE.ShadowNode(sun);
+  sun.shadow.shadowNode = wezelCienia;
   scene.add(sun, sun.target);
   const hemi = new THREE.HemisphereLight(
     new THREE.Color().setRGB(0.35, 0.375, 0.425, THREE.LinearSRGBColorSpace),
@@ -669,7 +700,10 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
-  function wczytaj(w, { rDysk = 0 } = {}) {
+  function wczytaj(w, { rDysk = 0, poklad = null } = {}) {
+    uPokladZ.value = poklad ? poklad.z : -1e30;
+    uOtworR2.value = poklad ? poklad.rOtwor * poklad.rOtwor : 0;
+    uDyskR2.value = poklad ? rDysk * rDysk : 0;
     n = w.n;
     uRDysk.value = rDysk > 0 ? rDysk : 1e9;
     const dane = aDane.array, rama = aRama.array;
@@ -753,7 +787,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
         renderer.setRenderTarget(null);
       }
     };
-    // Mapa cienia three tworzy leniwie przy pierwszym rysunku odbiorcy, więc rozgrzewka passa cienia idzie po przebudowie węzłów cienia, niżej.
+    // AGENT: compileAsync woła też updateBefore węzła cienia, a to rysuje mapę synchronicznie. Przy autoUpdate = false cel powstaje, a rysunku nie ma; pass cienia kompiluje się osobno, wzór Core3D.prewarmShadowPass (pułapki 20, 32).
+    sun.shadow.autoUpdate = false;
+    sun.shadow.needsUpdate = false;
     // AGENT: compileAsync woła updateBefore węzłów materiału (pułapka 31). GTAO renderowałby wtedy swój kwad synchronicznie, więc na czas kompilacji updateBefore jest wyłączone metodą, nie typem: typ zostaje w stanie budowy.
     const ubAo = aoN ? aoN.updateBefore : null;
     if (aoN) aoN.updateBefore = () => {};
@@ -769,6 +805,23 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       if (aoN) aoN.updateBefore = ubAo;
     }
     await cel(null, wyj, wyj.camera);
+    const mapa = wezelCienia.shadowMap;
+    if (mapa && renderer._renderContexts?.get) {
+      const scenaCien = new THREE.Scene();
+      scenaCien.overrideMaterial = getShadowMaterial(sun);
+      scenaCien.children.push(mesh);
+      const konteksty = renderer._renderContexts;
+      const get = konteksty.get;
+      konteksty.get = function (rt, mrt) { delete konteksty.get; return get.call(this, rt, mrt, 1); }; // mapa cienia rysuje się zagnieżdżona w passie sceny, głębokość 1, pułapka 32
+      try {
+        await cel(mapa, scenaCien, sun.shadow.camera);
+      } finally {
+        delete konteksty.get;
+        scenaCien.children.length = 0;
+        scenaCien.overrideMaterial = null;
+      }
+    }
+    sun.shadow.autoUpdate = true;
   }
 
   /** Klatka: głębia, scena (GTAO i mapa cienia idą w updateBefore), wyjście na kanwę. Bez alokacji. */

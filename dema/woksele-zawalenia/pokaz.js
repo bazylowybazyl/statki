@@ -95,10 +95,10 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   function ustawScene(id, { kamera = true, pomin = true } = {}) {
     const opis = SCENY[id];
     if (!opis) throw new Error(`Nieznana scena ${id}`);
-    const { w, g, zdarzeniaOd, rDysk } = wypieki.get(id);
+    const { w, g, zdarzeniaOd, rDysk, poklad } = wypieki.get(id);
     solver.wczytaj(w);
     solver.ustawPlan(g);
-    obraz.wczytaj(w, { rDysk });
+    obraz.wczytaj(w, { rDysk, poklad });
     obraz.ustawCien(opis.cien[0], opis.cien[1]);
     stan.scena = id;
     stan.krok = 0;
@@ -214,6 +214,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   }
   requestAnimationFrame(petla);
   for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id)) wypiek(id);
+  renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
   Object.assign(wok, {
     obraz,
