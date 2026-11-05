@@ -665,6 +665,14 @@ Po wejściu rusza scena 2, z najlepszym zaliczonym kadrem: co nie widać od razu
 
 Klawisze `1`–`6`, `R` reset sceny, `G` grawitacja w biegu (§ 5.4). Scena nie zapętla się sama. Kolejność na panelu i klawisze bez zmian, tylko start od 2.
 
+Sceny S5 (§ 5.5): pierwsze na panelu, **domyślny start strony to „S5 pochylona wieża”, ziarno 21 jak w filmie** (`?ziarno=7` zmienia ziarno wszystkich trzech). Słowa użytkownika: wieża „pochyla się, dużą częścią przebija i dysk niszczy na kawałki”; dysk pod habitatem „też jest budowlą, ma się niszczyć, walić, spadać na planetę lub przy braku grawitacji dryfować”; „może losowe eksplozje, żeby rozwalić na kawałki”.
+
+| Przycisk | Miejsce | Przebieg (Node, § 8) |
+|---|---|---|
+| S5 pochylona wieża | g = 260, grunt z = −2500, 8 wsporników (kotwice) | Styk t = 0,55 pod kątem 25,7°, rozcięcie, wieża na gruncie t ≈ 3,7–3,9. Wsporniki padają t ≈ 2,6–4,7, dysk zaczyna spadać około t = 5, płyty rozrywają kolejne eksplozje w locie do t ≈ 6–7, lądowanie i kruszenie t ≈ 9–10 |
+| S5 próżnia | g = 0, bez gruntu, `uKotwice = 0` | Ta sama budowa, ten sam plan, ten sam materiał (te same Ft, Fc, klasy co do bitu poza kotwicami, które nie stoją). Płyty rozjeżdżają się i obracają, całość jedzie ze środkiem masy, kamera też |
+| S5 planeta | źródło punktowe `{ punkt: { c: [0, 0, −14000], g: 260, r0: 14000 } }`, grunt z = −2500 | Wszystkie kotwice puszczają (`uKotwice = 0`) po ostatniej kuli wspornika. Dysk spada na „planetę”. To przypadek z misji piratów |
+
 ### 5.3 Interakcje
 
 LPM strzał (krater i pchnięcie J = 300, tau = 0,3, rP = 160, § 2.8, także w próżni; bez pchnięcia w próżni nic by się nie ruszyło), prawy przycisk orbita, rolka zoom, `Spacja` pauza, `.` krok. Tempo przez licznik kroków: 1×, ½×, ¼× (bez zmiany dt fizyki). Zegar stały: 1/60 s na krok, najwyżej 2 kroki na klatkę, **a gdy ostatnia klatka przekroczyła próg (szac. 14 ms), 1 krok**, reszta przepada (spowolnienie zamiast spirali: drugi krok przy S3 to szac. 16,6 ms). Krok liczony z całkowitego licznika, nie z sumy.
@@ -672,6 +680,45 @@ LPM strzał (krater i pchnięcie J = 300, tau = 0,3, rP = 160, § 2.8, także w 
 ### 5.4 Panel
 
 Prawa krawędź, chowany `H`, bez debugów na obrazie. Zawartość: nazwy sześciu scen z jednym zdaniem, reset, tempo (3 przyciski), kamery (Kino, Bliska, Zbliżenie, Z góry), pył wł./wył., rozmiar strzału (r = 40, 60, 90), **Miejsce: Próżnia / g = 400** (reset sceny, działa na scenach 1, 2, 5, 6: próżnia = bez gruntu i kotwic. Na scenach 1 i 2 w próżni idzie plan S4 na ich wysokości, 14% i 65% h, zm. `logG-U14.txt`, `U65`, a w przypadku g = 400 ich własny plan bez pchnięć. Budowy nie liczy się od nowa: zmieniają się uniformy z § 10.4 i `uKotwice`, bufory wracają jak przy każdym resecie), **G: grawitacja w biegu** (rampa `skG` przez 3 s, § 10.5, przy stojącej wieży bez ruchu, w czasie zawalenia z odbiciem do 15 j./s), jedna linia na dole: `fizyka x,x ms/krok · obraz x,x ms · kPyl x,x ms · klatka x,x ms` (rysunek pyłu nie ma osobnego znacznika, § 8). Bez suwaków. Trzecie źródło (planetoida g = 40, punkt) jako przycisk tylko, jeśli starczy czasu: kod i dane je znają, § 10.4.
+
+### 5.5 Scena S5: dane budowy i plan eksplozji
+
+Kod: `scena.js` (`S5`, `S5_OPCJE`, `S5_NAKLADKA`), `budowa.js` (`wypieczSzwy`, `zbudujPlan`), `scenyPokazu.js`, `pokaz.js` (przyciski, kamery). Wzorzec: `proby5/final/scena5.mjs`, bajt w bajt, ta sama kolejność PRNG, strażnik `tests/wokseleS5.test.mjs` (ziarna 21 i 7: wszystkie tablice wypieku i plan).
+
+**Geometria.** Wieża 300 × 300 × 1100 (6600 węzłów), obrót 25° wokół z, pochylenie 18° w kierunku 25°, ω = 14°/s, v = 300 j./s w dół + 90 j./s w stronę pochylenia, najniższy róg 200 j. nad pokładem, 300 j. przed środkiem dysku wzdłuż pochylenia, 130 j. w bok. `gProjDir` wzdłuż osi wieży, `gProj` 400. Dysk R = 900, grubość 80, 17 382 węzły. Razem 23 982, MAX 26 000 z § 2.2.
+
+**Kotwice.** 8 łuków po 130 j. (około 300 węzłów), reszta obwodu to zwykły wieniec. Próżnia to ta sama budowa z `uKotwice = 0` (§ 10.4), a nie przebudowa bez kotwic: wytrzymałości zależą od etykiety odległości od kotwicy.
+
+**Sekcje.** 17 komórek Voronoi z punktów Mitchella (5 kandydatów) i wagą addytywną do 70 j., na współrzędnych zakrzywionych szumem trzech skal (330, 95, 30 j.; 110, 40, 12 j.). Podsekcje: 2–4 w sekcji, Voronoi na własnym zakrzywieniu (190, 47 j.; 70, 18 j.).
+
+**Wypiek po `zbuduj`, przed pierwszym krokiem.** PRNG losowany dla każdego wiązania przed jakimkolwiek `continue`:
+
+| Wiązanie | Ft, Fc | Klasa | Zerwane przy budowie |
+|---|---|---|---|
+| szew między sekcjami | × 0,15 / × 0,25 | 4 | 50% |
+| szew w wieńcu (r > R − 45), 85% par sekcji | jw. | 4 | 100% |
+| szew mocny (40% par podsekcji, najwyżej 2 na sekcję) | × 1,2 | 4 | 0 |
+| pod-szew | × 0,12 × wnętrze | 4 | 50% |
+| wnętrze sekcji | × {2,4; 2,8; 3,2} losowo na sekcję | 10 | 0 |
+| pas 0–1 skoku przy szwie i pod-szwie | jw. | z modelu (ziarna 4 × 4) | 0 |
+| pas ±120 j. wzdłuż toru wieży, 1200 j. | × 0,7 | 4 | 0 |
+
+`iN0` i bity początkowe `m0` we flagach przeliczone po cięciu, więc cięcie budowlane nie liczy się jako szkoda. Bit `pas` na węzeł (`BIT_PAS`): ma choć jedno wiązanie klasy < 6. Klasa dysku tej sceny inna niż w S3: `rozlew` 0,7, `zlom` 0,25, `szok` 0,05, `kontaktSzok` 0,05, `dyskSprezenie` 0 (`S5_NAKLADKA`, budowa przez `parametry`), S3 zachowuje swoje. `dT`, `dC` i reszta parametrów bez zmian, więc solver zostaje na `PARAMETRY`.
+
+**Plan: 38 eksplozji policzonych przy budowie**, ten sam w każdym miejscu. Każda to krater (§ 1.8): węzeł-nosiciel, promień r, ułamek rdzenia, ułamek strefy S = 2, pchnięcie (rP, J, tau, przesunięcie środka dz). Kula rozrywa S = 3 tylko węzły z bitem `pas`, węzeł stojący w kuli idzie do usunięcia.
+
+| Rodzaj | Ile | r (j.) | rdzeń / S = 2 | rP (j.) | J (j./s) | tau | Czas |
+|---|---|---|---|---|---|---|---|
+| wspornik | 8 | 104 (cały łuk kotwicy na całej wysokości) | 0,2 / – | 306–374 | 168–252 | 0,3 s | 1,5 + d / 320 ± 0,4 + 0,2 |
+| główna | 9 | 55–70 | 0,2 / 0,4 | 306–374 | 168–252 | 1 klatka | 3 najbliższe toru jak wyżej bez 0,2; 6 pozostałych + 2,4 s |
+| mała | 18 | 32–45 | 0,2 / – | 220 | 90 | 1 klatka | główna + 0,05–0,28 s, wzdłuż szwu po obu stronach kuli głównej |
+| wieża | 3 | 215–235 | 0,07 / 0,25 | 300 | 80 | 0,3 s | styk + 1,5–3 s, nosiciel przy osi w ułamkach wysokości 0,25 / 0,5 / 0,75 ± 0,08 |
+
+d to odległość od śladu wieży (odcinek 1100 j.). Pozycje z chciwego pokrycia szwów (promień 240 j.) poza torem wieży. Najwyżej 4 starty na klatkę, kopy bez korekcji momentu (`zerujL: false`). Dwa akty, bo kop przed oderwaniem sekcji idzie w kotwicę i nic nie rozdziela, a po oderwaniu sekcje spadają razem (swobodny spadek nie obciąża): płyty rozdziela dopiero eksplozja w locie.
+
+**Znana słabość, czeka na ocenę użytkownika, nie ruszana.** Przy g z boku do około t = 8 widać głównie jedną spękaną płytę, bo swobodny spadek nie rozdziela kawałków. Zmieniają to: `grupyOpozn` (2,4 s, drugi akt eksplozji: później = sekcje dłużej trzymają się razem), `J` i `Jmala` (210, 90: rozjazd płyt w locie, kosztem K4 i pyłu), `rPabs` (340: zasięg kopu), `tauSzew` (1 klatka), `kotwicaOpozn` i `vFront` (kolejność padania wsporników, więc czy dysk spada całością, czy po kawałku).
+
+**Kamery.** Pole widzenia 32. S5 i S5 planeta: az 32, el 15, cel (0, 0, −650), odl 7200, cień środek (0, 0, −900). S5 próżnia: az 32, el 20, cel = środek masy, odl 7600; kamera i cień jadą stałą prędkością ze środkiem masy z chwili t = 0, orbita użytkownika zostaje. Dalsze kamery filmu: `blisko` (32, 30, (0, 0, −200), 3500), `gora` (20, 89, (0, 0, 0), 4400); w próżni `blisko` (32, 24, (0, 0, 100), 5400), `gora` (20, 89, (0, 0, 0), 7200).
 
 ## 6. Ryzyka i budżet
 
@@ -829,6 +876,22 @@ Progi chaotyczne, z obserwowanego rozrzutu (ziarno 7 / 21, `proby4/log-R7.txt`, 
 | Odrzucone wstawienia do komórki (z pozycji co 15 klatek, licznika w `wLicz` nie ma) | zm. S2 142, S4 778 przy S = 16 (`tabela-8.txt`) | ≤ 3 × Node. Przepełnienia listy M = 32: zm. 0, M = 20: 283 bez skutku, więc wiersza nie ma |
 
 Rozjazd w kierunku „sztywniej” albo „sucho” to błąd portu, nie wariant: szukać w kolejności gałęzi § 2.11. Kolejny krok portu nie startuje, dopóki ten test nie przechodzi. Test równoważności łapie każdą pozostałą zależność od prędkości bezwzględnej.
+
+### Tabela S5 (K1–K6)
+
+Progi: K1 kąt ≥ 20° przy styku i oś otworu ≥ 1,5. K2 przy g, t = 12: największy ≤ 20% dysku, 64+ ≥ 40%, drobnica 1–7 ≤ 35%, resztka na kotwicach ≤ 3%. K3 ≥ 90% dysku 500 j. pod płaszczyzną, wieża na gruncie przed pierwszym dużym kawałkiem. K4 w próżni: ΔP/N ≤ 0,5 j./s, mediana po masie 5–80 j./s, największy ≤ 35%, brak 8+ ponad 400 j./s. K5 0 NaN. K6 najwyżej 40 eksplozji, 4 na klatkę. GPU: `node scripts/webgpu/woksele-demo.mjs --testy s5 --ziarna 21,7`.
+
+Node (`bieg.mjs` + `ocena.mjs`, parametry domyślne `scena5.mjs`):
+
+| Ziarno | Styk: kąt / oś otworu przy przejściu szczytu / t = 3,6 | K2 t = 12: największy / 64+ / 1–7 | K3: wieża / 64+ / 512+ (udział wieży na gruncie) | K4 t ≥ 10: ΔP/N / środek masy / mediana po masie / bez wag / po węzłach / maks 8+ / największy | Próżnia: czystość / liczba 64+ / odcinek wieży |
+|---|---|---|---|---|---|
+| 1 | 25,7° / 2,28 / 1,89 | 0,041 / 0,576 / 0,308 | 3,72 / 3,93 / 4,17 (0,272) | 0,036 / 2,9 / 63,3 / 90,9 / 79,6 / 234,1 / 0,134 | 0,843 / 32 / 0,18 |
+| 7 | 25,7° / 2,00 / 2,37 | 0,052 / 0,68 / 0,25 | 3,75 / 4,03 / 4,77 (0,957) | 0,074 / 2,55 / 66,2 / 77,6 / 67,1 / 316,2 / 0,135 | 0,85 / 33 / 0,20 |
+| 21 | 25,7° / 1,86 / 2,46 | 0,048 / 0,631 / 0,275 | 3,87 / 3,93 / 4,03 (0,13) | 0,082 / 2,36 / 77,2 / 99,6 / 88,3 / 286,3 / 0,114 | 0,793 / 33 / 0,22 |
+| 42 | 25,7° / 2,22 / 2,33 | 0,038 / 0,649 / 0,263 | 3,67 / 4,3 / 4,3 (0,377) | 0,116 / 1,98 / 64,9 / 86,1 / 74,9 / 264 / 0,171 | 0,759 / 28 / 0,18 |
+| 3 | 25,7° / 2,17 / 2,59 | 0,042 / 0,637 / 0,279 | 3,68 / 3,9 / 7,33 (0,992) | 0,069 / 2,42 / 70,3 / 99,1 / 74 / 342,5 / 0,138 | 0,827 / 30 / 0,24 |
+
+Node: 0 NaN, 0 błędów maski, 0 błędów L. Kontrola w próżni bez styku i bez eksplozji, ziarno 7, 6 s: 0 zerwanych wiązań. S5 planeta w Node (ziarna 7, 1, 21): największy 0,05 / 0,041 / 0,048, 64+ 0,661 / 0,537 / 0,589, 1–7 0,267 / 0,346 / 0,316. Zapasy, które chaos może przesunąć: drobnica 1–7 przy g do 0,308, mediana K4 po masie do 77,2, `64+` w próżni 28 przy celu 28 na ziarnie 42.
 
 ### Kolejność pracy nad demem
 
