@@ -252,6 +252,26 @@ Cel 4 ms spełniony: w najgorszym kadrze ściana rośnie o około 1 ms. Znacznik
 
 **Sprawdzenie końcowe, po wznowieniu:** przejście panelu przerwało wyłączenie komputera po 10 przyciskach z 15, stąd w `P4/koniec/` są zrzuty bez raportu, więc dla tych 10 nie ma zapisanego wyniku `nowePipeline`. Ostatnie 5 (`--przyciskiOd 10`, `P4/koniec2/`): porażki 0, nowych pipeline'ów 0, 46 s, wentylator 0%. Testy WGSL: `wokseleObrazWgsl` 6 z 6, `wokseleWgsl` 96 z 96. Wobec filmu: pył S1 t = 5, S2 t = 3, S3 t = 2 i S4 t = 3 ma to samo miejsce i kształt; pióropusz S1 t = 5 jest trochę rzadszy, a w S3 t = 2 wokół wyrwy w pokładzie jest mniej drobnych plamek gruzu.
 
+### 1.13 Domknięcie zszycia P4 i S5: strona na żywo
+
+Strona ma 15 scen i startuje na S5. Pył, błysk i żar działają na S5, S5 próżnia i S5 planeta. Zszycie nie wymagało zmian w kodzie dema; narzędzie dostało tylko `--kosztStany`. Uruchomienie: `node node_modules/vite/bin/vite.js --port 5181 --strictPort` w katalogu worktree, adres `http://localhost:5181/dema/woksele-zawalenia.html`.
+
+Zrzuty 1280 × 720: `.tmp/woksele-demo/pokaz2/` (S5 t = 2, 4, 6, 8; próżnia t = 3, 6, 10; planeta t = 6, 10; S1 t = 5). Żaden nie jest pusty ani rozjechany z fizyką. Obok filmu przy S5 t = 2, 6, 8 i próżni t = 3, 6, 10 układ kawałków, ognia i pyłu jest ten sam; żar ma mniej poświaty (poświata 2 r, § 1.12). S5 planeta nie ma klipu w filmie, więc oceniono ją tylko po obrazie.
+
+Przejście 15 przycisków z resetem i interakcje (mysz, klawisze, tempo, zmiana rozmiaru): porażki 0, nowe pipeline'y 0, synchroniczne po rozgrzewce 0. Testy `wokseleWgsl`, `wokseleObrazWgsl`, `wokseleBudowa`: 140 z 140.
+
+**Koszt całej klatki, tylko orientacja:** 1280 × 720, RTX 5080, headless, krok w każdej klatce, około 2 s czasu sceny od podanej chwili, pył włączony / wyłączony (kernele pyłu liczą w obu stanach). Jeden bieg, `--kosztStany`, raport: `.tmp/woksele-demo/pokaz2/koszt/raport.json`.
+
+| Stan | GPU razem, znaczniki | Compute | Rysunek | Ściana na klatkę |
+|---|---|---|---|---|
+| S1 t = 5 | 1,31 / 1,25 ms | 0,43 / 0,43 ms | 0,88 / 0,81 ms | 1,72 / 1,59 ms |
+| S5 t = 4 | 1,54 / 1,52 ms | 0,38 / 0,38 ms | 1,16 / 1,14 ms | 2,03 / 1,99 ms |
+| S5 próżnia t = 8 | 1,48 / 1,46 ms | 0,33 / 0,33 ms | 1,14 / 1,13 ms | 1,82 / 1,89 ms |
+
+W próżni ściana z pyłem wyszła niższa niż bez niego, więc różnice rzędu 0,1 ms mieszczą się w szumie tego biegu. Znaczniki są niepewne jak w § 1.9.
+
+**Czego nie ma:** pomiaru przy 5120 × 1440 (P6, za dnia), oceny w ruchu i w prawdziwym oknie Chrome, decyzji o K4 (§ 1.11), kamer `blisko` i `gora` oraz strzału myszą na panelu (P5).
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx

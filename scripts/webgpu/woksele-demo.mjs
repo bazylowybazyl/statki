@@ -162,6 +162,19 @@ try {
         }
         pomiary[scena] = { ...pomiary[scena], koszt: k };
       }
+      if (args.kosztStany) {
+        // Cała klatka z krokiem, pył włączony i wyłączony, od tej samej chwili (pierwsza z --chwile albo --plan): 60 klatek ściany i 60 ze znacznikami, czyli około 2 s czasu sceny na stan. Wyłączenie zdejmuje rysunek i skład, kernele pyłu liczą dalej. Orientacja, nie tabela: 5120 × 1440 to pomiar dzienny.
+        const t = (plan ? plan.get(scena) : chwile)[0];
+        const stany = {};
+        for (const [klucz, wl] of [['zPylem', true], ['bezPylu', false]]) {
+          await ev(`window.__wok.obraz.pyl.wlacz(${wl}); true`);
+          await ev(`window.__wok.pokaz.doChwili(${t})`);
+          stany[klucz] = await ev('window.__wok.pokaz.kosztKlatki(60, 60)');
+          console.log('koszt stanu', scena, `t = ${t}`, klucz, JSON.stringify(stany[klucz]));
+        }
+        await ev('window.__wok.obraz.pyl.wlacz(true); true');
+        pomiary[scena] = { ...pomiary[scena], kosztStany: { t, ...stany } };
+      }
       if (args.kosztPylu) {
         // P4: pył włączony i wyłączony na tej samej zamrożonej klatce: chwila ostatnia z --chwile, kamera z --kam, 5120 × 1440 z --rozmiar.
         pomiary[scena] = { ...pomiary[scena], kosztPylu: await ev('window.__wok.pokaz.kosztPylu()') };
