@@ -175,6 +175,8 @@ async function start() {
   if (TEST) {
     const { createTestGpu } = await import('./testGpu.js');
     wok.test = createTestGpu({ renderer, solver, wypiekSceny, wok, device });
+    const { createTestS5 } = await import('./testS5.js');
+    wok.test.s5 = createTestS5({ renderer, solver, wok }).s5;
   }
   // AGENT: tryby ?test=1 i ?profil=1 zostają bez obrazu: narzędzie P1 mierzy nimi fizykę bez kanwy i bez pętli rAF.
   if (!TEST && !PROFIL) {

@@ -3,7 +3,7 @@
 // Port części konstrukcyjnej `model-spec4.mjs` bez gałęzi wyłączonych przez parametry końcowe (§ 2.1).
 // Liczy się w double i zapisuje do tablic Float32 tak samo jak prototyp: wynik jest IDENTYCZNY BAJTOWO
 // (kolejność losowania i działań ma znaczenie, strażnik tests/wokseleBudowa.test.mjs), a o przechyle wieży decyduje budowa (§ 1.2).
-import { prng, czyGrunt } from './scena.js';
+import { prng, czyGrunt, szum2, planGpu } from './scena.js';
 
 // Pary (d, d ^ 1) są przeciwne. Pierwsze 6 to osie.
 export const KIER = Object.freeze([
@@ -621,4 +621,106 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
     wa, wb, wd, mW,
     par,
   };
+}
+
+/**
+ * Wypiek sceny z szwami (S5, § 5.5): po zbuduj, przed pierwszym krokiem. Osłabienie szwów (Ft, Fc), klasy wiązań, cięcie przy budowie, bit pasa. Kernele tego nie znają: to dane w wWiaz i we flagach.
+ * Klasa wiązania: szew, pod-szew, pas i tor = klasa bazowa (eksplozja S = 3 tnie), wnętrze sekcji = klasa + 6 (przeżywa).
+ * PRNG losowany dla każdego wiązania przed jakimkolwiek continue: wzór szwów nie może zależeć od rodzaju węzła ani od miejsca.
+ */
+export function wypieczSzwy(w, dane) {
+  const { nW, nD, seg, pod, wewnSek, o, u, pX, pY } = dane;
+  const los = prng((o.ziarno >>> 0) * 15485863 + 3);
+  const szN = szum2(los);
+  const n = w.n;
+  const nbr = w.nbr, Ft = w.Ft, Fc = w.Fc, kW = w.klasaW, P0 = w.pos, maska = w.maska;
+  const pas = new Int8Array(n).fill(100);
+  let wSz = 0, wCiete = 0, wWew = 0, wPod = 0, wTorN = 0, wMoc = 0;
+  const podW = (i) => (i >= nW && i < nW + nD ? pod[i - nW] : -1);
+  for (let i = nW; i < nW + nD; i++) for (let d = 0; d < ND; d++) { const j = nbr[STRONA * i + d]; if (j >= 0 && podW(j) !== podW(i)) { pas[i] = 0; break; } }
+  for (let h = 0; h < o.pas; h++) for (let i = nW; i < nW + nD; i++) { if (pas[i] !== h) continue; for (let d = 0; d < ND; d++) { const j = nbr[STRONA * i + d]; if (j >= 0 && pas[j] > h + 1) pas[j] = h + 1; } }
+  const wPas = new Float32Array(n);
+  for (let i = nW; i < nW + nD; i++) wPas[i] = o.pas * (0.5 + 0.5 * szN(P0[3 * i] / 120, P0[3 * i + 1] / 120));
+  const Rw2 = (o.R - o.szerWieniec) ** 2;
+  const wWiencu = (i) => P0[3 * i] ** 2 + P0[3 * i + 1] ** 2 > Rw2;
+  const paryMoc = new Map(), paryWien = new Map(), mocSek = new Uint8Array(o.nSekcji);
+  const losPary = (mapa, a, b, p) => {
+    const k = a < b ? a * 4096 + b : b * 4096 + a;
+    let v = mapa.get(k);
+    if (v === undefined) { v = los() < p; mapa.set(k, v); }
+    return v;
+  };
+  const tnij = (i, d, j) => {
+    maska[i] &= ~(1 << d);
+    maska[j] &= ~(1 << (d ^ 1));
+    wCiete++;
+  };
+  for (let i = nW; i < nW + nD; i++) {
+    for (let d = 0; d < ND; d++) {
+      const ox = STRONA * i + d;
+      const j = nbr[ox];
+      if (j <= i) continue;
+      const oy = STRONA * j + (d ^ 1);
+      const r1 = los();
+      if (kW[ox] === 5 || kW[ox] === 11) continue; // wiązanie kotwicy zostaje mocne
+      const mx = 0.5 * (P0[3 * i] + P0[3 * j]) - pX, my = 0.5 * (P0[3 * i + 1] + P0[3 * j + 1]) - pY;
+      const sT = mx * u[0] + my * u[1], pT = Math.abs(-mx * u[1] + my * u[0]);
+      const wTor = sT > -o.pasTor && sT < o.dlTor && pT < o.pasTor;
+      const sa = seg[i - nW], sb = seg[j - nW], pa = pod[i - nW], pb = pod[j - nW];
+      if (sa !== sb) {
+        kW[ox] = kW[oy] = 4;
+        wSz++;
+        const wien = wWiencu(i) && wWiencu(j);
+        // Los pary zawsze, żeby kolejność PRNG nie zależała od tego, czy węzeł leży w wieńcu.
+        const cWien = losPary(paryWien, sa, sb, o.wieniecCiete);
+        // Mocny szew: najwyżej mocNaSekcje na sekcję, bez łańcuchów: kawałek przechodzi przez granicę sekcji, ale nie zlepia połowy dysku.
+        const kMoc = pa < pb ? pa * 4096 + pb : pb * 4096 + pa;
+        let moc = paryMoc.get(kMoc);
+        if (moc === undefined) { const rM = los(); moc = rM < o.szewMocUlamek && mocSek[sa] < o.mocNaSekcje && mocSek[sb] < o.mocNaSekcje; if (moc) { mocSek[sa]++; mocSek[sb]++; } paryMoc.set(kMoc, moc); }
+        if (wien && cWien) { Ft[ox] *= o.szewF; Ft[oy] = Ft[ox]; Fc[ox] *= o.szewC; Fc[oy] = Fc[ox]; tnij(i, d, j); }
+        else if (moc) { Ft[ox] *= o.szewMocF; Ft[oy] = Ft[ox]; Fc[ox] *= o.szewMocF; Fc[oy] = Fc[ox]; wMoc++; }
+        else {
+          Ft[ox] *= o.szewF; Ft[oy] = Ft[ox];
+          Fc[ox] *= o.szewC; Fc[oy] = Fc[ox];
+          if (r1 < o.szewCiete) tnij(i, d, j);
+        }
+      } else if (pa !== pb) {
+        const f = (wTor ? o.torF : wewnSek[sa]) * o.podF;
+        Ft[ox] *= f; Ft[oy] = Ft[ox]; Fc[ox] *= f; Fc[oy] = Fc[ox];
+        kW[ox] = kW[oy] = 4;
+        wPod++;
+        if (r1 < o.podCiete) tnij(i, d, j);
+      } else if (wTor) {
+        if (o.torF !== 1) { Ft[ox] *= o.torF; Ft[oy] = Ft[ox]; Fc[ox] *= o.torF; Fc[oy] = Fc[ox]; }
+        kW[ox] = kW[oy] = 4;
+        wTorN++;
+      } else {
+        const f = wewnSek[sa];
+        Ft[ox] *= f; Ft[oy] = Ft[ox]; Fc[ox] *= f; Fc[oy] = Fc[ox];
+        if (pas[i] > wPas[i] && pas[j] > wPas[j]) { kW[ox] = kW[oy] = 10; wWew++; }
+      }
+    }
+  }
+  // Cięcie przy budowie nie liczy się jako szkoda: iN0 i bity początkowe w flagach (obraz) po cięciu.
+  if (wCiete) for (let i = nW; i < nW + nD; i++) w.iN0[i] = 1 / Math.max(1, popcnt(maska[i] & 0x3ffff));
+  for (let i = nW; i < nW + nD; i++) w.flagi[i] = ((w.flagi[i] & ~(63 << 5)) | ((maska[i] & 63) << 5)) >>> 0;
+  // Bit „pas”: węzeł ma choć jedno wiązanie, które eksplozja S = 3 może przeciąć. Tylko takie węzły rozrywa reszta kuli (inaczej okrągła łata szkody bez żadnego pęknięcia).
+  const bitPas = new Uint8Array(n);
+  for (let i = 0; i < n; i++) for (let d = 0; d < ND; d++) { if (nbr[STRONA * i + d] >= 0 && kW[STRONA * i + d] < 6) { bitPas[i] = 1; break; } }
+  // Jedno miejsce to jedne dane: próżnia to ta sama budowa bez kotwic (§ 10.4). F0 wieży swobodnej i dysku jest zerem z budowy, zostaje samo uKotwice = 0 (solver czyta je z nieruchomy).
+  if (dane.prozn) { w.nieruchomy.fill(0); w.kotwiceWiezy = false; }
+  if (!dane.kotwiceWsp.length) w.capEtyk = 0;
+  w.bitPas = bitPas;
+  return { wSz, wCiete, wWew, wPod, wTor: wTorN, wMoc };
+}
+
+/** Budowa planu sceny: wypiek (z nakładką parametrów i szwami, jeśli je ma) i plan GPU. Wspólne dla wątku budowy, strony testowej i testów w Node. */
+export function zbudujPlan(plan, opcje = {}) {
+  const w = zbuduj(plan.scena, plan.nakladka ? parametry(plan.nakladka) : PARAMETRY, opcje);
+  const g = planGpu(plan);
+  if (plan.dane) {
+    w.szwy = wypieczSzwy(w, plan.dane);
+    g.bitPas = w.bitPas;
+  }
+  return { w, g };
 }

@@ -236,6 +236,17 @@ export function dysk(o = {}) {
   return scena;
 }
 
+/** Przesunięcie sceny w miejscu. */
+export function przesun(scena, dx, dy, dz) {
+  const p = scena.pos;
+  for (let i = 0; i < scena.n; i++) {
+    p[3 * i] += dx;
+    p[3 * i + 1] += dy;
+    p[3 * i + 2] += dz;
+  }
+  return scena;
+}
+
 /** Obrót w miejscu o `stopnie` wokół osi `os` przez punkt `punkt` (ijk bez zmian). */
 export function obroc(scena, os, stopnie, punkt = [0, 0, 0]) {
   const dl = Math.sqrt(os[0] * os[0] + os[1] * os[1] + os[2] * os[2]);
@@ -743,6 +754,377 @@ export function krater(o) {
       }
       if (f / FPS < tau) m.pchniecia(grupa, true);
       return f === 0 ? lU.length : 0;
+    },
+  };
+}
+
+// ── S5: pochylona wieża i dysk z sekcji (§ 5.5). Port `proby5/final/scena5.mjs`: kolejność losowań ta sama, strażnik bajt w bajt w tests/wokseleBudowa.test.mjs. ──
+
+/** Opcje końcowe sceny S5 (§ 5.5), jak w filmie. Klasy dysku tej sceny w S5_NAKLADKA, S3 zachowuje swoje. */
+export const S5_OPCJE = Object.freeze({
+  // Wieża
+  w: 300, d: 300, h: 1100, obrotZ: 25, kolCo: 4,
+  tilt0: 18, omega: 14, lean: 25, // stopnie, stopnie/s, kierunek pochylenia w płaszczyźnie
+  v0z: 300, v0u: 90, gap: 200,
+  styk: [-300, 130], // punkt pod najniższym rogiem: [wzdłuż lean, w poprzek]
+  // Dysk
+  R: 900, grubosc: 80, krokZeber: 20, krokObw: 150, poklad: 20,
+  // Sekcje: komórki Voronoi (punkty Mitchella) na zakrzywionych współrzędnych; w każdej 2-4 podsekcje
+  nSekcji: 17, kandydatow: 5, voroWaga: 70,
+  warpA: 110, warpB: 40, warpC: 12, warpS1: 330, warpS2: 95, warpS3: 30,
+  pod: [2, 4], podF: 0.12, podCiete: 0.5, // pod-szew: Ft i Fc × podF względem wnętrza sekcji
+  wewnTab: [2.4, 2.8, 3.2], // mnożnik Ft, Fc wnętrza, losowany na sekcję
+  szewF: 0.15, szewC: 0.25, szewCiete: 0.5, // mnożnik Ft, Fc w szwie, ułamek wiązań zerwanych przy budowie
+  szewMocUlamek: 0.4, szewMocF: 1.2, mocNaSekcje: 2, // ułamek par podsekcji, gdzie szew jest mocny: kawałki przechodzą przez granice sekcji
+  wieniecCiete: 0.85, szerWieniec: 45, // ułamek szwów, które w wieńcu są przecięte w całości
+  pas: 1, // szerokość pasa kruszenia wzdłuż szwu w skokach
+  pasTor: 120, dlTor: 1200, torF: 0.7, // pas wzdłuż toru wieży: wnętrze bez wzmocnienia i klasa cięta
+  // Kotwice
+  wsporniki: 8, wspornikDl: 130, // kotwica nie na całym obwodzie, tylko krótkie łuki
+  // Eksplozje: 8 na wspornikach + grupy (kula główna i 2 małe wzdłuż szwu) + 3 w wieży
+  grupy: 9, grupyWczesne: 3, grupyOpozn: 2.4, rGl: [55, 70], rMaly: [32, 45], rdzen: 0.2, rdzenSam: 0.4,
+  J: 210, rPabs: 340, Jmala: 90, rPmala: 220, tau: 0.3, tauSzew: 0.016, dzP: 120, rPok: 240,
+  krokRysy: 0.9, tempoRysy: [0.05, 0.28],
+  wiezaKule: 3, wiezaR: [215, 235], wiezaRP: 300, wiezaJ: 80, wiezaT: [1.5, 3], wiezaRdzen: 0.07, wiezaSam: 0.25, tStykOrient: 0.55,
+  tB0: 1.5, vFront: 320, jitter: 0.4, kotwicaOpozn: 0.2, dlSladu: 1100, // start (s), prędkość łańcucha (j./s), rozrzut (s), opóźnienie wsporników (s), długość śladu (j.)
+  g: 260, gProj: 400, gruntZ: -2500,
+  ziarno: 21,
+});
+
+/** Nakładka parametrów budowy S5 (§ 5.5), dla `parametry` z budowa.js. Reszta jak PARAMETRY, także dT i dC dysku: te czyta solver z własnego `par`. */
+export const S5_NAKLADKA = Object.freeze({ dyskSprezenie: 0, klasy: Object.freeze({ dysk: Object.freeze({ rozlew: 0.7, zlom: 0.25, szok: 0.05, kontaktSzok: 0.05 }) }) });
+
+/** Szum wartości 2D na siatce N × N, losowany raz przy tworzeniu. Współdzielony przez sekcje i wypiek szwów. */
+export function szum2(los, N = 64) {
+  const t = new Float32Array(N * N);
+  for (let q = 0; q < t.length; q++) t[q] = 2 * los() - 1;
+  const gl = (x) => x * x * (3 - 2 * x);
+  return (x, y) => {
+    const X = x + 1000, Y = y + 1000, a = Math.floor(X), b = Math.floor(Y), fx = gl(X - a), fy = gl(Y - b);
+    const v = (i, j) => t[((b + j) & (N - 1)) * N + ((a + i) & (N - 1))];
+    return (v(0, 0) * (1 - fx) + v(1, 0) * fx) * (1 - fy) + (v(0, 1) * (1 - fx) + v(1, 1) * fx) * fy;
+  };
+}
+
+// Sekcje węzła: komórki Voronoi na zakrzywionych współrzędnych, punkty Mitchella, w każdej sekcji 2-4 podsekcje z własnym zakrzywieniem. Wszystko z PRNG.
+function sekcjeS5(ds, o, los) {
+  const n1 = szum2(los), n2 = szum2(los), n3 = szum2(los), n4 = szum2(los), n5 = szum2(los), n6 = szum2(los), n7 = szum2(los), n8 = szum2(los);
+  const X = new Float32Array(ds.n), Y = new Float32Array(ds.n);
+  for (let i = 0; i < ds.n; i++) {
+    const x = ds.pos[3 * i], y = ds.pos[3 * i + 1];
+    X[i] = x + o.warpA * n1(x / o.warpS1, y / o.warpS1) + o.warpB * n3(x / o.warpS2, y / o.warpS2) + o.warpC * n5(x / o.warpS3, y / o.warpS3);
+    Y[i] = y + o.warpA * n2(x / o.warpS1, y / o.warpS1) + o.warpB * n4(x / o.warpS2, y / o.warpS2) + o.warpC * n6(x / o.warpS3, y / o.warpS3);
+  }
+  const punkty = [];
+  for (let k = 0; k < o.nSekcji; k++) {
+    let bx = 0, by = 0, naj = -1;
+    for (let c = 0; c < o.kandydatow; c++) {
+      const fi = los() * 2 * Math.PI, rr = (o.R + 40) * Math.sqrt(los());
+      const x = rr * Math.cos(fi), y = rr * Math.sin(fi);
+      let d = 1e18;
+      for (const q of punkty) d = Math.min(d, (q[0] - x) ** 2 + (q[1] - y) ** 2);
+      if (d > naj) { naj = d; bx = x; by = y; }
+    }
+    punkty.push([bx, by, o.voroWaga * los()]);
+  }
+  const seg = new Int32Array(ds.n);
+  for (let i = 0; i < ds.n; i++) {
+    let best = Infinity, s = 0;
+    for (let k = 0; k < punkty.length; k++) {
+      const d = Math.sqrt((X[i] - punkty[k][0]) ** 2 + (Y[i] - punkty[k][1]) ** 2) - punkty[k][2];
+      if (d < best) { best = d; s = k; }
+    }
+    seg[i] = s;
+  }
+  // Podsekcje: osobne zakrzywienie, punkty Mitchella z węzłów sekcji.
+  const X2 = new Float32Array(ds.n), Y2 = new Float32Array(ds.n);
+  for (let i = 0; i < ds.n; i++) {
+    const x = ds.pos[3 * i], y = ds.pos[3 * i + 1];
+    X2[i] = x + 70 * n7(x / 190, y / 190) + 18 * n5(x / 47, y / 47);
+    Y2[i] = y + 70 * n8(x / 190, y / 190) + 18 * n6(x / 47, y / 47);
+  }
+  const wezly = Array.from({ length: o.nSekcji }, () => []);
+  for (let i = 0; i < ds.n; i++) wezly[seg[i]].push(i);
+  const pod = new Int32Array(ds.n);
+  const wewnSek = new Float32Array(o.nSekcji);
+  let nPod = 0;
+  for (let k = 0; k < o.nSekcji; k++) {
+    const lista = wezly[k];
+    wewnSek[k] = o.wewnTab[Math.floor(los() * o.wewnTab.length) % o.wewnTab.length];
+    const ile = o.pod[0] + Math.floor(los() * (o.pod[1] - o.pod[0] + 1));
+    const pk = [];
+    for (let q = 0; q < ile && lista.length; q++) {
+      let bx = 0, by = 0, naj = -1;
+      for (let c = 0; c < o.kandydatow; c++) {
+        const i = lista[Math.floor(los() * lista.length) % lista.length];
+        let d = 1e18;
+        for (const w of pk) d = Math.min(d, (w[0] - X2[i]) ** 2 + (w[1] - Y2[i]) ** 2);
+        if (d > naj) { naj = d; bx = X2[i]; by = Y2[i]; }
+      }
+      pk.push([bx, by]);
+    }
+    for (const i of lista) {
+      let best = Infinity, s = 0;
+      for (let w = 0; w < pk.length; w++) { const d = (X2[i] - pk[w][0]) ** 2 + (Y2[i] - pk[w][1]) ** 2; if (d < best) { best = d; s = w; } }
+      pod[i] = nPod + s;
+    }
+    nPod += pk.length;
+  }
+  return { seg, nSeg: o.nSekcji, pod, nPod, wewnSek };
+}
+
+// Plan: 8 kul na wspornikach, grupy wzdłuż szwów (kula główna z kopem w jednej klatce i 2 małe, spacer w obie strony), 3 kule w wieży.
+// Czas z odległości od śladu wieży. Bez odczytu stanu: środek bierze się z pozycji węzła-nosiciela w chwili wybuchu.
+function planEksplozjiS5(sc, dane, o) {
+  const los = prng((o.ziarno >>> 0) * 104729 + 5);
+  const { nW, nD, pod, u, pX, pY } = dane;
+  const siatka = new Map();
+  const klucz = (i, j, k) => (k + 16) * 16777216 + (j + 2048) * 4096 + (i + 2048);
+  for (let q = 0; q < nD; q++) { const i = nW + q; siatka.set(klucz(sc.ijk[3 * i], sc.ijk[3 * i + 1], sc.ijk[3 * i + 2]), q); }
+  const szwy = [];
+  for (let q = 0; q < nD; q++) {
+    const i = nW + q;
+    const a = sc.ijk[3 * i], b = sc.ijk[3 * i + 1], c = sc.ijk[3 * i + 2];
+    let jest = false;
+    for (const [da, db] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const w = siatka.get(klucz(a + da, b + db, c));
+      if (w !== undefined && pod[w] !== pod[q]) { jest = true; break; }
+    }
+    if (jest) szwy.push(q);
+  }
+  dane.szwowe = szwy.length;
+  const wTorze = (x, y, zapas) => {
+    const X = x - pX, Y = y - pY, s = X * u[0] + Y * u[1], p = Math.abs(-X * u[1] + Y * u[0]);
+    return s > -zapas && s < o.dlTor + zapas && p < o.pasTor + zapas;
+  };
+  const Rp2 = o.rPok * o.rPok;
+  const pok = new Uint8Array(szwy.length);
+  const plan = [];
+  // Nosiciel: węzeł najbliżej połowy grubości dysku w promieniu 50 j. (żebro), a jeśli żebra nie ma, najbliższy; kula obejmuje wtedy oba pokłady.
+  const nosiciel = (x, y) => {
+    let best = Infinity, nos = -1;
+    for (let q = 0; q < nD; q++) {
+      const i = nW + q;
+      const d2 = (sc.pos[3 * i] - x) ** 2 + (sc.pos[3 * i + 1] - y) ** 2;
+      if (d2 > 2500) continue;
+      const w = 4 * Math.abs(sc.pos[3 * i + 2]) + Math.sqrt(d2);
+      if (w < best) { best = w; nos = i; }
+    }
+    if (nos >= 0) return nos;
+    for (let q = 0; q < nD; q++) {
+      const i = nW + q;
+      const d2 = (sc.pos[3 * i] - x) ** 2 + (sc.pos[3 * i + 1] - y) ** 2 + sc.pos[3 * i + 2] ** 2;
+      if (d2 < best) { best = d2; nos = i; }
+    }
+    return nos;
+  };
+  const dodaj = (x, y, rodz) => {
+    const nos = nosiciel(x, y);
+    const b = { nos, rodz, x: sc.pos[3 * nos], y: sc.pos[3 * nos + 1], z: sc.pos[3 * nos + 2] };
+    plan.push(b);
+    for (let s = 0; s < szwy.length; s++) {
+      if (pok[s]) continue;
+      const i = nW + szwy[s];
+      if ((sc.pos[3 * i] - x) ** 2 + (sc.pos[3 * i + 1] - y) ** 2 < Rp2) pok[s] = 1;
+    }
+    return b;
+  };
+  const rozstaw = (a) => a[0] + (a[1] - a[0]) * los();
+  const czasBaza = (b, opozn) => {
+    const X = b.x - pX, Y = b.y - pY;
+    let s = X * u[0] + Y * u[1];
+    s = s < 0 ? 0 : s > o.dlSladu ? o.dlSladu : s;
+    const d = Math.sqrt((X - s * u[0]) ** 2 + (Y - s * u[1]) ** 2);
+    const t = o.tB0 + d / o.vFront + o.jitter * (2 * los() - 1) + opozn;
+    return t < o.tB0 ? o.tB0 : t;
+  };
+  // Wsporniki: kula obejmuje cały łuk kotwicy na całej wysokości, inaczej zostaje węzeł nieruchomy i trzyma sekcję.
+  for (const a of dane.wsporniki) {
+    const b = dodaj((o.R - 15) * Math.cos(a), (o.R - 15) * Math.sin(a), 'wspornik');
+    b.t = czasBaza(b, o.kotwicaOpozn);
+    b.r = Math.max(rozstaw(o.rGl), Math.sqrt((0.5 * o.wspornikDl) ** 2 + (0.5 * o.grubosc) ** 2 + 400) + 25);
+    b.rdzen = o.rdzen; b.rdzenSam = 0;
+    b.J = o.J * (0.8 + 0.4 * los()); b.rP = o.rPabs * (0.9 + 0.2 * los()); b.tau = o.tau;
+    b.dz = (los() < 0.7 ? -1 : 1) * o.dzP * (0.4 + 0.6 * los());
+  }
+  // Grupy: kula główna tam, gdzie najwięcej niepokrytych szwów poza torem wieży; dwie małe wzdłuż szwu w przeciwne strony.
+  for (let g = 0; g < o.grupy; g++) {
+    let bestS = -1, bestN = -1;
+    for (let c = 0; c < szwy.length; c += 7) {
+      if (pok[c]) continue;
+      const ic = nW + szwy[c], xc = sc.pos[3 * ic], yc = sc.pos[3 * ic + 1];
+      if (wTorze(xc, yc, 60)) continue;
+      let ile = 0;
+      for (let s = 0; s < szwy.length; s += 3) {
+        if (pok[s]) continue;
+        const i = nW + szwy[s];
+        if ((sc.pos[3 * i] - xc) ** 2 + (sc.pos[3 * i + 1] - yc) ** 2 < Rp2) ile++;
+      }
+      // Lekka losowość: bez niej plan jest zawsze ten sam dla podobnych układów.
+      const w = ile * (0.85 + 0.3 * los());
+      if (w > bestN) { bestN = w; bestS = c; }
+    }
+    if (bestS < 0) break;
+    const ic = nW + szwy[bestS], x0 = sc.pos[3 * ic], y0 = sc.pos[3 * ic + 1];
+    const gl = dodaj(x0, y0, 'glowna');
+    gl.t = czasBaza(gl, 0);
+    gl.grupa = g;
+    gl.r = rozstaw(o.rGl);
+    gl.rdzen = o.rdzen; gl.rdzenSam = o.rdzenSam;
+    gl.J = o.J * (0.8 + 0.4 * los()); gl.rP = o.rPabs * (0.9 + 0.2 * los()); gl.tau = o.tauSzew;
+    gl.dz = (los() < 0.7 ? -1 : 1) * o.dzP * (0.4 + 0.6 * los());
+    let kx = 0, ky = 0;
+    for (let m = 0; m < 2; m++) {
+      const r = rozstaw(o.rMaly);
+      const kr = o.krokRysy * (gl.r + r);
+      let best = -Infinity, sW = -1;
+      for (let s = 0; s < szwy.length; s++) {
+        const i = nW + szwy[s];
+        const dx = sc.pos[3 * i] - gl.x, dy = sc.pos[3 * i + 1] - gl.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 0.7 * kr || d > 1.3 * kr) continue;
+        // Druga mała idzie w przeciwną stronę niż pierwsza: rozdarcie wydłużone, nie plama.
+        const zgod = m === 0 ? 0 : -(dx * kx + dy * ky) / d;
+        const w = zgod + 0.5 * los();
+        if (w > best) { best = w; sW = i; }
+      }
+      if (sW < 0) continue;
+      const mX = sc.pos[3 * sW], mY = sc.pos[3 * sW + 1];
+      if (m === 0) { const dx = mX - gl.x, dy = mY - gl.y, d = Math.sqrt(dx * dx + dy * dy) + 1e-6; kx = dx / d; ky = dy / d; }
+      const b = dodaj(mX, mY, 'mala');
+      b.t = gl.t + rozstaw(o.tempoRysy);
+      b.grupa = g;
+      b.r = r; b.rdzen = o.rdzen; b.rdzenSam = 0;
+      // Mała kula też kopie, lokalnie, w jednej klatce: bez tego w locie płyty rozchodzą się tylko po kopach kul głównych.
+      b.J = o.Jmala; b.rP = o.rPmala; b.tau = o.tauSzew; b.dz = (los() < 0.5 ? -1 : 1) * o.dzP * (0.4 + 0.6 * los());
+    }
+  }
+  // Dwa akty: pierwsze grupy tną przy wieży, reszta dopiero, gdy jej rejon traci wsporniki. Kop zanim sekcja się oderwie idzie w kotwicę i nic nie rozdziela,
+  // a po oderwaniu spada całość naraz (swobodny spadek nie obciąża), więc rozdzielić płyty może już tylko eksplozja w locie.
+  {
+    const gl = plan.filter((b) => b.rodz === 'glowna').sort((a, b) => a.t - b.t);
+    const pozne = new Set(gl.slice(o.grupyWczesne).map((b) => b.grupa));
+    for (const b of plan) if (b.grupa !== undefined && pozne.has(b.grupa)) b.t += o.grupyOpozn;
+  }
+  let pokr = 0;
+  for (let s = 0; s < szwy.length; s++) pokr += pok[s];
+  dane.pokrycieSzwow = pokr / Math.max(1, szwy.length);
+  // Wieża: bez tego w próżni zostaje biała drabina. Nosiciel w ustalonym ułamku wysokości; martwy nosiciel = pominięcie.
+  const nz = sc.meta.wieza.nz;
+  for (let k = 0; k < o.wiezaKule; k++) {
+    const fz = (k + 1) / (o.wiezaKule + 1) + 0.08 * (2 * los() - 1);
+    // Nosiciel przy osi wieży: kula ma przeciąć cały przekrój, a nie zrobić dziurę w fasadzie.
+    const nx = sc.meta.wieza.nx, ny = sc.meta.wieza.ny;
+    let nos = 0, bestO = Infinity;
+    for (let i = 0; i < nW; i++) {
+      if (Math.abs(sc.ijk[3 * i + 2] / nz - fz) >= 0.025) continue;
+      const w = (sc.ijk[3 * i] - (nx - 1) / 2) ** 2 + (sc.ijk[3 * i + 1] - (ny - 1) / 2) ** 2;
+      if (w < bestO) { bestO = w; nos = i; }
+    }
+    plan.push({
+      nos, rodz: 'wieza', x: sc.pos[3 * nos], y: sc.pos[3 * nos + 1], z: sc.pos[3 * nos + 2],
+      t: o.tStykOrient + o.wiezaT[0] + ((k + los()) / o.wiezaKule) * (o.wiezaT[1] - o.wiezaT[0]),
+      r: rozstaw(o.wiezaR), rdzen: o.wiezaRdzen, rdzenSam: o.wiezaSam, J: o.wiezaJ, rP: o.wiezaRP, tau: o.tau, dz: 0,
+    });
+  }
+  plan.sort((a, b) => a.t - b.t);
+  // Najwyżej 4 starty na klatkę 60 Hz
+  const nap = new Map();
+  for (const b of plan) {
+    let f = Math.round(b.t * 60);
+    while ((nap.get(f) ?? 0) >= 4) f++;
+    nap.set(f, (nap.get(f) ?? 0) + 1);
+    b.f = f; b.t = f / 60;
+  }
+  return plan;
+}
+
+/**
+ * S5: pochylona wieża przebija dysk, dysk jest budowlą z 17 sekcji rozrywaną planem 38 eksplozji (§ 5.5). Te same dane budowy w każdym miejscu, różni się tylko miejsce:
+ * miejsce 'g' (g, grunt), 'proznia' (g = 0, bez gruntu, uKotwice = 0 przez nieruchomy = 0 w wypieku), 'planeta' (źródło punktowe, kotwice puszczają po ostatniej kuli wspornika).
+ * Plan GPU: gpu.kratery, gpu.puscKotwiceF; bit pasa dopisuje wypiek szwów (zbudujPlan w budowa.js).
+ */
+export function S5(oo = {}) {
+  const o = { ...S5_OPCJE, ...oo };
+  const miejsce = o.miejsce ?? 'g';
+  const prozn = miejsce === 'proznia';
+  const planeta = miejsce === 'planeta';
+  const los = prng((o.ziarno >>> 0) * 7919 + 13);
+  const dx = 20;
+  // Dysk: kotwice tylko w krótkich łukach (wsporniki), reszta obwodu to zwykły wieniec.
+  const ds = dysk({ dx, R: o.R, grubosc: o.grubosc, zSrodek: 0, krokZeberStopnie: o.krokZeber, krokObwodowy: o.krokObw, gruboscPokladu: o.poklad });
+  const { seg, nSeg, pod, nPod, wewnSek } = sekcjeS5(ds, o, los);
+  const wsporniki = [];
+  {
+    const a0 = los();
+    for (let q = 0; q < o.wsporniki; q++) wsporniki.push(((q + 0.5 * (los() - 0.5)) / o.wsporniki + a0) * 2 * Math.PI);
+  }
+  const dlA = (0.5 * o.wspornikDl) / o.R;
+  const kotwiceWsp = [];
+  for (let i = 0; i < ds.n; i++) {
+    if (ds.kind[i] !== KIND.KOTWICA) continue;
+    const f = Math.atan2(ds.pos[3 * i + 1], ds.pos[3 * i]);
+    let bl = 9;
+    for (const w of wsporniki) { let q = f - w; q -= Math.round(q / (2 * Math.PI)) * 2 * Math.PI; if (Math.abs(q) < bl) bl = Math.abs(q); }
+    // Ta sama budowa przy g i w próżni (§ 10.4): w próżni kotwice puszcza wypiek, wytrzymałości zostają.
+    if (bl <= dlA) kotwiceWsp.push(i);
+    else ds.kind[i] = KIND.DYSK;
+  }
+  // Wieża: pionowa → obrót wokół z → pochylenie wokół w przez środek masy → najniższy róg nad punktem styku.
+  const kw = wieza({ dx, w: o.w, d: o.d, h: o.h, z0: 0, kolumny: { co: o.kolCo, dol: 2, gora: 2 } });
+  obroc(kw, [0, 0, 1], o.obrotZ, [0, 0, 0]);
+  const fi = (o.lean * Math.PI) / 180;
+  const u = [Math.cos(fi), Math.sin(fi), 0];
+  const wOs = [-u[1], u[0], 0]; // z × u
+  obroc(kw, wOs, o.tilt0, [0, 0, kw.meta.h / 2]);
+  const th = (o.tilt0 * Math.PI) / 180;
+  const os = [u[0] * Math.sin(th), u[1] * Math.sin(th), Math.cos(th)];
+  let zMin = Infinity, iMin = 0;
+  for (let i = 0; i < kw.n; i++) if (kw.pos[3 * i + 2] < zMin) { zMin = kw.pos[3 * i + 2]; iMin = i; }
+  const pX = o.styk[0] * u[0] - o.styk[1] * u[1], pY = o.styk[0] * u[1] + o.styk[1] * u[0];
+  przesun(kw, pX - kw.pos[3 * iMin], pY - kw.pos[3 * iMin + 1], ds.meta.zGora + o.gap - zMin);
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < kw.n; i++) { cx += kw.pos[3 * i]; cy += kw.pos[3 * i + 1]; cz += kw.pos[3 * i + 2]; }
+  cx /= kw.n; cy /= kw.n; cz /= kw.n;
+  const om = (o.omega * Math.PI) / 180;
+  const v0 = new Float32Array(3 * kw.n);
+  for (let i = 0; i < kw.n; i++) {
+    const X = kw.pos[3 * i] - cx, Y = kw.pos[3 * i + 1] - cy, Z = kw.pos[3 * i + 2] - cz;
+    v0[3 * i] = o.v0u * u[0] + om * (wOs[1] * Z - wOs[2] * Y);
+    v0[3 * i + 1] = o.v0u * u[1] + om * (wOs[2] * X - wOs[0] * Z);
+    v0[3 * i + 2] = -o.v0z + om * (wOs[0] * Y - wOs[1] * X);
+  }
+  kw.vel0 = v0;
+  const sc = polacz([kw, ds], ['wieza', 'dysk']);
+  sc.g = prozn ? 0 : o.g;
+  sc.gProj = o.gProj;
+  sc.gProjDir = [-os[0], -os[1], -os[2]]; // wieża projektowana jako pionowa: droga obciążenia wzdłuż własnej osi
+  sc.gruntZ = prozn ? BRAK_GRUNTU : o.gruntZ;
+  sc.kotwice = false;
+  sc.kluczStatyki = `S5:${o.w}x${o.d}x${o.h}:${o.obrotZ}:${o.lean}:${o.tilt0}`; // statyka wieży nie zależy od miejsca ani ziarna
+  if (planeta) { sc.zrodlo = o.zrodlo ?? { punkt: { c: [0, 0, -14000], g: 260, r0: 14000 } }; sc.g = 0; }
+  const nW = kw.n, nD = ds.n;
+  const dane = { nW, nD, seg, nSeg, pod, nPod, wewnSek, wsporniki, kotwiceWsp: kotwiceWsp.map((i) => i + nW), o, u, wOs, pX, pY, iMin, prozn };
+  const wybuchy = planEksplozjiS5(sc, dane, o);
+  dane.plan = wybuchy;
+  let fOstWsp = -1;
+  for (const b of wybuchy) if (b.rodz === 'wspornik') fOstWsp = b.f;
+  return {
+    id: 'S5',
+    opis: `Pochylona wieża, dysk z ${nSeg} sekcji, ${wybuchy.length} eksplozji, ${prozn ? 'próżnia' : planeta ? 'planeta' : `g = ${o.g}, grunt z = ${o.gruntZ}`}, ziarno ${o.ziarno}`,
+    scena: sc,
+    g: sc.g,
+    T: prozn ? 14 : 12,
+    zdarzeniaOd: Infinity, // wieża jedzie od pierwszej klatki, więc pełny obraz od początku
+    zdarzenia: () => 0, // tylko GPU: wzorcem jest scena5.mjs, bajt w bajt przy budowie, liczby K1–K6 w tabeli § 8
+    nakladka: { ...S5_NAKLADKA, ziarno: o.ziarno },
+    dane,
+    wybuchy,
+    miejsce,
+    gpu: {
+      zerujL: false, // kopy o zerowym pędzie, bez korekcji momentu
+      kratery: wybuchy.map((b) => ({ f: b.f, nos: b.nos, r: b.r, rdzen: b.rdzen, rS: b.rdzenSam ?? 0, J: b.J, tau: b.tau, rP: b.rP, dz: b.dz ?? 0, usunStojace: true, rodz: b.rodz })),
+      puscKotwiceF: planeta ? fOstWsp : -1,
     },
   };
 }
