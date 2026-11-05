@@ -28,10 +28,12 @@ const porazka = (t) => { raport.porazki.push(t); console.log('PORAŻKA', t); };
 
 // ── Gra w toku ── Własny test, nie gryUzytkownika(): tamten łapie sam klient League i nie łapie Gothic 1 Remake.
 const GRY = /^(League of Legends|RuneScape.*|.*Dragonwilds.*|RSDragon.*|osclient.*|G1R-Win64-Shipping)$/i;
+// AGENT: nieudane odpytanie to „gra jest”, nie „gry nie ma”. Pod obciążeniem PowerShell na BelowNormal potrafi przekroczyć 30 s: 2026-11-05 pusty wynik po limicie puścił przebiegi GPU w czasie meczu użytkownika.
 const powershell = (cmd) => new Promise((ok) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd],
-  { maxBuffer: 16 << 20, windowsHide: true, timeout: 30000 }, (err, stdout) => ok(String(stdout || ''))));
+  { maxBuffer: 16 << 20, windowsHide: true, timeout: 60000 }, (err, stdout) => ok(err ? null : String(stdout || ''))));
 async function graWToku() {
   const out = await powershell("Get-Process | ForEach-Object { $_.ProcessName } | Sort-Object -Unique");
+  if (out === null) return ['odpytanie listy procesów nieudane, traktuję jak grę'];
   return out.split(/\r?\n/).map((s) => s.trim()).filter((s) => s && GRY.test(s));
 }
 async function czekajNaCisze(gdzie) {
