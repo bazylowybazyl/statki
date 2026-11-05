@@ -349,16 +349,19 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
   const kotwiceWiezy = scena.kotwice ?? !scena.vel0;
   // Rama odniesienia: istnieje, gdy w scenie jest coś nieruchomego. Bez niej prędkość bezwzględna nic nie znaczy (§ 10.3).
   const rama = czyGrunt(scena.gruntZ) || kotwiceWiezy || scena.meta.grupy.some((q) => q.nazwa === 'dysk');
-  const skala = 20 / dx; // 1 przy dx = 20
-  // AGENT: par.cZDx (metoda E planu LOD, docs/PLAN-zawalenia-lod-miasto.md): c ∝ dx, więc K i podkroki jak przy dx = 20. Bez niego c stałe, a podkroki rosną z 1/dx (§ 2.1).
-  const cEf = par.cZDx ? (par.c * dx) / 20 : par.c;
-  const podkrokiEf = par.cZDx ? par.podkroki : Math.max(1, Math.round(par.podkroki * skala));
+  // AGENT: par.skalaBud (plan LOD § 5): budynek to model wieży z kalibracji w skali s. Długości materiału (ziarno, plama, mięknięcie, próg zginania, rozlew) idą za budynkiem, prędkości progowe z √s, tempa z 1/√s (Froude, ustawUniformy w solver.js).
+  const skalaBud = par.skalaBud ?? 1;
+  const skala = (20 * skalaBud) / dx; // 1 przy dx = 20 i budynku jak wieża
+  // AGENT: par.cZDx (metoda E planu LOD, docs/PLAN-zawalenia-lod-miasto.md): c ∝ dx, więc K i podkroki jak przy dx = 20. par.cFroude: c ∝ √s, podkroki ze stabilności przy c, dx. Bez nich c stałe, a podkroki rosną z 1/dx (§ 2.1).
+  const cEf = par.cFroude ? par.c * Math.sqrt(skalaBud) : par.cZDx ? (par.c * dx) / 20 : par.c;
+  const pkZStab = (par.podkroki * 20 * cEf) / par.c / dx; // h·√(12K) = 1,25, § 2.1
+  const podkrokiEf = par.cZDx ? par.podkroki : Math.max(1, par.cFroude ? Math.ceil(pkZStab - 0.1) : Math.round(pkZStab));
   const sM = gProj > 0 ? gProj / 400 : 1; // skala materiału
   const K = (cEf / dx) ** 2 / 3 * sM;
-  const K0 = (par.c / dx) ** 2 / 3 * sM;
+  const K0 = (par.c * Math.sqrt(skalaBud) / dx) ** 2 / 3 * sM;
   const h = 1 / 60 / podkrokiEf;
   // Lista kontaktów co tyle podkroków. Naddatek listy to 0,5 dx, więc odstęp w czasie rośnie z dx (przy dx = 20 co 1/120 s), najwyżej raz na krok, co najmniej co podkrok.
-  const rytmEf = Math.min(podkrokiEf, Math.max(1, Math.round((par.rytmListy / par.podkroki) * (dx / 20) * podkrokiEf)));
+  const rytmEf = Math.min(podkrokiEf, Math.max(1, Math.round((par.rytmListy / par.podkroki) * (dx / (20 * Math.sqrt(skalaBud))) * podkrokiEf)));
   const kC = par.kKontakt * K;
   const cC = 2 * par.zetaKontakt * Math.sqrt(kC * 0.5);
 
@@ -610,7 +613,7 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
 
   return {
     // Liczby sceny i stałe wiązania (§ 2.1)
-    n, dx, skala, podkrokiEf, rytmEf, cEf, h, K, sM, sFr: Math.sqrt(zr.gMod / 400),
+    n, dx, skala, skalaBud, podkrokiEf, rytmEf, cEf, h, K, sM, sFr: Math.sqrt(zr.gMod / 400),
     cB: 2 * par.zeta * Math.sqrt(K),
     kB: par.beta * K,
     kC, cC, cT: par.cTarcie * cC,

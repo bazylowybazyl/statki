@@ -2,7 +2,7 @@
 // Scena S1 przy danym dx i materiale, liczby z tych samych metryk co tabela § 8 (ObserwatorSceny), czasy ze znaczników. Kratka kawałków także w jednostkach gry: kosze metryk liczą węzły, a węzeł przy dx = 80 waży 64 razy tyle co przy dx = 20.
 import { S1Lod, stanieLod, planGpu } from './scena.js';
 import { popcnt, zbudujPlan } from './budowa.js';
-import { ObserwatorSceny, pietraStropow, taca } from './metryki.js';
+import { ObserwatorSceny, pietraStropow, taca, wysokoscDachu } from './metryki.js';
 
 const liczNaN = (t) => { let c = 0; for (let i = 0; i < t.length; i++) if (t[i] !== t[i]) c++; return c; };
 
@@ -37,9 +37,9 @@ export function createTestLod({ renderer, solver, wok }) {
     const dx = o.dx ?? 20;
     const t0 = performance.now();
     const plan = S1Lod(o);
+    if (plan.scena.n > solver.maxNodes) return { dx, mat: o.mat ?? 'staly', n: plan.scena.n, poza: `${plan.scena.n} węzłów, MAX ${solver.maxNodes}` };
     const { w, g } = zbudujPlan(plan, {});
     const msBudowy = performance.now() - t0;
-    if (w.n > solver.maxNodes) return { dx, mat: o.mat ?? 'staly', n: w.n, poza: `${w.n} węzłów, MAX ${solver.maxNodes}` };
     if (o.T) plan.T = o.T;
     solver.wczytaj(w);
     solver.ustawPlan(g);
@@ -66,7 +66,13 @@ export function createTestLod({ renderer, solver, wok }) {
         fG += q;
       }
     };
-    const czyCzytac = (f) => f === N || f % 15 === 0 || (f + 1) % 15 === 0 || f === fW1 || f === fW1 - 1;
+    const s = w.skalaBud ?? 1;
+    // Przy budynku w skali s wszystko idzie √s razy szybciej, więc gęstszy odczyt. dachF: dach / wysokość w chwili t* = (t − 2) / √s, czyli w czasie wieży z kalibracji.
+    const co = s < 0.6 ? 5 : 15;
+    const czyCzytac = (f) => f === N || f % co === 0 || f % 15 === 0 || (f + 1) % 15 === 0 || f === fW1 || f === fW1 - 1;
+    const dachF = [];
+    const hBud = plan.scena.meta.h;
+    const wszyscy = Int32Array.from({ length: n }, (_, i) => i);
     for (let f = 0; f <= N; f++) {
       if (!czyCzytac(f)) continue;
       await dokroku(f);
@@ -76,6 +82,7 @@ export function createTestLod({ renderer, solver, wok }) {
       odczytow++;
       stan.pos = r.pos; stan.vel = r.vel; stan.aktywny = r.aktywny; stan.maskaW = r.maskaW;
       ob.klatka(f, stan);
+      dachF.push([(f / 60 - 2) / Math.sqrt(s), wysokoscDachu(r.pos, n, { maska: r.aktywny, podzbior: wszyscy }) / hBud]);
       ostatnie = r;
       if (f % 15 === 0) { nan += liczNaN(r.pos) + liczNaN(r.vel); asym += asymetrie(w, r.maskaW); }
       if (f === fW1) { let b = 0; for (let i = 0; i < n; i++) b += popcnt(r.maskaW[i]); zerwanePrzed = bity0 - b; }
@@ -92,6 +99,12 @@ export function createTestLod({ renderer, solver, wok }) {
       const q = e.wieza.przechyl;
       if (q.reszta < progReszty && q.sztywnyStopnie > przechylStaly) { przechylStaly = q.sztywnyStopnie; tStaly = e.t; }
     }
+    const dachGw = (ts) => {
+      if (ts > dachF.at(-1)[0]) return null;
+      for (let q = 1; q < dachF.length; q++) if (dachF[q][0] >= ts) { const [a, b] = dachF[q - 1], [c, e] = dachF[q]; return b + ((e - b) * (ts - a)) / (c - a); }
+      return null;
+    };
+    const dachNorm = [0.5, 1, 2, 3, 4, 5].map(dachGw);
     const koncowe = p.koniec.wieza.wyspy;
     const taca5 = pp ? taca(stan, pp) : null;
     const maxMasa = koncowe.masa.reduce((s, v) => s + v, 0) || 1;
@@ -101,7 +114,8 @@ export function createTestLod({ renderer, solver, wok }) {
     return {
       dx, mat: o.mat ?? 'staly', etykieta: o.etykieta ?? null, n, c: w.cEf, K: w.K, podkroki: w.podkrokiEf, rytm: w.rytmEf, h: w.h, stabilnosc: w.h * Math.sqrt(12 * w.K),
       meta: { nx: plan.scena.meta.nx, ny: plan.scena.meta.ny, nz: plan.scena.meta.nz, w: plan.scena.meta.w, d: plan.scena.meta.d, h: plan.scena.meta.h, pietroCo: plan.scena.meta.pietroCo, gruboscStropu: plan.scena.meta.gruboscStropu, liczby: plan.scena.meta.liczby },
-      T: plan.T, N, msBudowy, odczytow, dach, przechylT,
+      kalibracja: { iter: w.info.grupy.wieza.iter, residuum: w.info.grupy.wieza.residuum, maxU: w.info.grupy.wieza.maxUgiecieLiniowe, maxF0: w.info.grupy.wieza.maxF0, odk: w.info.grupy.wieza.odkMax },
+      T: plan.T, N, msBudowy, odczytow, dach, przechylT, dachNorm, skalaBud: s,
       przechylSpojny: p.historia.maxPrzechylSpojny, tPrzechylu: p.historia.tMaxPrzechylSpojny, przechylMax: p.historia.maxPrzechyl, przechylStaly, tStaly,
       W1przed: { przem: p.W1.maxPrzemieszczenie, vRms: p.W1.vRms, opad: p.W1.opadDachu, zerwaneBity: zerwanePrzed },
       masa: koncowe.masa.map((v) => (100 * v) / maxMasa), masaWezly: koncowe.masa, najwiekszy: koncowe.najwieksza, wysp: koncowe.liczbaWysp, bokKawalka: bok, zywych: zywychT5, usuniete: n - zywychT5,
@@ -131,8 +145,8 @@ export function createTestLod({ renderer, solver, wok }) {
   /** W1 przy dx: stanie sekund, bez zdarzeń. */
   async function w1(o = {}) {
     const plan = stanieLod({ ...o, T: o.sekund ?? 60 });
+    if (plan.scena.n > solver.maxNodes) return { dx: o.dx, poza: `${plan.scena.n} węzłów` };
     const { w, g } = zbudujPlan(plan, {});
-    if (w.n > solver.maxNodes) return { dx: o.dx, poza: `${w.n} węzłów` };
     solver.wczytaj(w);
     solver.ustawPlan({ ...g, czasy: null });
     const sek = o.sekund ?? 60;

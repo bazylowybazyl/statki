@@ -369,8 +369,43 @@ function planUsuwania(id, opis, scena, g, T, lista) {
   };
 }
 
+/**
+ * Budynek miasta (miasto.js, plan LOD): kostka nx × ny × nz bez minimum 5 komórek. wydmuszka: ściany, dach i strop co stropCo j. Ściany jako kolumna, stropy jako strop. Meta jak w wieży, bo te same metryki i plany.
+ * AGENT: strop i dach wydmuszki grube na dwie warstwy (gruboscStropu, domyślnie 2). Jedna warstwa to mechanizm: wiązania centralne nie przeniosą ciężaru prostopadle do płyty, kalibracja nie ma rozwiązania i budynek sam traci wiązania (dysk ma z tego powodu bezG, wieża minimum 2).
+ */
+export function budynekKostka(o = {}) {
+  const dx = o.dx ?? 20, w = o.w ?? 33.6, d = o.d ?? 42.5, h = o.h ?? 154, z0 = o.z0 ?? 0;
+  const nx = Math.max(1, Math.round(w / dx)), ny = Math.max(1, Math.round(d / dx)), nz = Math.max(2, Math.round(h / dx));
+  const grub = o.gruboscStropu ?? 2;
+  const co = Math.max(grub + 1, Math.round((o.stropCo ?? 30) / dx));
+  const klasa = (i, j, k) => {
+    const sciana = i === 0 || j === 0 || i === nx - 1 || j === ny - 1;
+    const pelna = k >= nz - grub || k % co < grub;
+    if (sciana) return KIND.KOLUMNA;
+    if (!o.wydmuszka) return pelna ? KIND.STROP : KIND.KOLUMNA;
+    return pelna ? KIND.STROP : -1;
+  };
+  let n = 0;
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (klasa(i, j, k) >= 0) n++;
+  const scena = zScene(n, dx, (pos, kind, ijk) => {
+    let q = 0;
+    for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const c = klasa(i, j, k);
+      if (c < 0) continue;
+      pos[3 * q] = (i - (nx - 1) / 2) * dx;
+      pos[3 * q + 1] = (j - (ny - 1) / 2) * dx;
+      pos[3 * q + 2] = z0 + (k + 0.5) * dx;
+      ijk[3 * q] = i; ijk[3 * q + 1] = j; ijk[3 * q + 2] = k;
+      kind[q] = c;
+      q++;
+    }
+  }, { typ: 'wieza', dx, nx, ny, nz, w: nx * dx, d: ny * dx, h: nz * dx, z0, pietroCo: co, gruboscStropu: 1, liczbaKondygnacji: 0, kondygnacje: [], rdzen: null, kolumnyX: [], kolumnyY: [], grupy: [{ nazwa: 'wieza', start: 0, n }] });
+  scena.meta.liczby = zliczKindy(scena.kind);
+  return scena;
+}
+
 function wiezaNaGruncie(dx, o) {
-  const sc = wieza({ dx, w: 380, d: 420, h: 1340, ...o });
+  const sc = o?.kostka ? budynekKostka({ dx, ...o }) : wieza({ dx, w: 380, d: 420, h: 1340, ...o });
   sc.g = 400;
   sc.gruntZ = 0;
   sc.vel0 = null;
@@ -385,9 +420,11 @@ export function S1(o = {}) {
   const h = sc.meta.h;
   const szer = sc.meta.w;
   const xMax = szer / 2;
-  const glebokosc = 0.6 * szer;
-  const zOd = sc.meta.z0 + 0.1 * h;
-  const zDo = sc.meta.z0 + 0.18 * h;
+  const glebokosc = (o.ulamekCiecia ?? 0.6) * szer;
+  // o.kCiecia: warstwy ijk zamiast 10–18% wysokości (niski budynek przy grubym dx nie ma warstwy w tym pasie). o.tempoCiecia: mnożnik czasu ostrzału, front przebiega budynek w skali s szybciej.
+  const zOd = o.kCiecia ? sc.meta.z0 + o.kCiecia[0] * dx : sc.meta.z0 + 0.1 * h;
+  const zDo = o.kCiecia ? sc.meta.z0 + (o.kCiecia[1] + 1) * dx : sc.meta.z0 + 0.18 * h;
+  const tC = o.tempoCiecia ?? 1;
   // Nierówny front ostrzału: szum na grubych komórkach (j, k), do tego drobny na woksel.
   const los = prng(o.ziarno ?? 1);
   const nj = sc.meta.ny >> 1;
@@ -403,7 +440,7 @@ export function S1(o = {}) {
     const gl = xMax - (x + dx / 2); // głębokość liczona od lica +x
     if (gl >= glebokosc) continue;
     const s = szum[(sc.ijk[3 * i + 2] >> 1) * (nj + 1) + (sc.ijk[3 * i + 1] >> 1)];
-    const t = 2 + 1.7 * (gl / glebokosc) + 0.25 * s + 0.05 * los();
+    const t = 2 + tC * (1.7 * (gl / glebokosc) + 0.25 * s + 0.05 * los());
     ind.push(i);
     cz.push(Math.min(4, t));
   }
@@ -415,8 +452,17 @@ export function S1(o = {}) {
  * o.wieza: wymiary i układ budynku, o.nakladka: parametry próby. Bez opcji to zwykłe S1.
  */
 export function S1Lod({ mat = 'staly', nakladka = null, ...o } = {}) {
+  const s = nakladka?.skalaBud ?? 1;
+  if (o.tempoCiecia === undefined) o.tempoCiecia = Math.sqrt(s);
+  if (o.wieza?.kostka) {
+    // Kostka miasta: co najmniej jedna warstwa w cięciu, przy dwóch kolumnach ostrzał zabiera jedną, nie obie.
+    const dx = o.dx ?? 20, nz = Math.max(2, Math.round((o.wieza.h ?? 154) / dx)), nx = Math.max(1, Math.round((o.wieza.w ?? 33.6) / dx));
+    const k0 = Math.max(nz > 3 ? 1 : 0, Math.round(0.1 * nz));
+    o.kCiecia = [k0, Math.max(k0, Math.round(0.18 * nz) - 1)];
+    if (nx <= 2) o.ulamekCiecia = 0.4;
+  }
   const plan = S1(o);
-  const nk = { ...(mat === 'dx' ? { cZDx: true } : {}), ...(nakladka ?? {}) };
+  const nk = { ...(mat === 'dx' ? { cZDx: true } : mat === 'froude' ? { cFroude: true } : {}), ...(nakladka ?? {}) };
   if (Object.keys(nk).length) plan.nakladka = nk;
   return plan;
 }
@@ -424,7 +470,7 @@ export function S1Lod({ mat = 'staly', nakladka = null, ...o } = {}) {
 /** Stanie (W1) przy tym samym dx, materiale i budynku co S1Lod. */
 export function stanieLod({ mat = 'staly', nakladka = null, ...o } = {}) {
   const plan = stanie(o);
-  const nk = { ...(mat === 'dx' ? { cZDx: true } : {}), ...(nakladka ?? {}) };
+  const nk = { ...(mat === 'dx' ? { cZDx: true } : mat === 'froude' ? { cFroude: true } : {}), ...(nakladka ?? {}) };
   if (Object.keys(nk).length) plan.nakladka = nk;
   return plan;
 }

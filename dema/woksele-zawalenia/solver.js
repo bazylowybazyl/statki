@@ -990,6 +990,8 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   /** Uniformy sceny (§ 10.4). skG i sFr z migawki albo z budowy. Te same liczby, które WzorzecCpu liczy na początku przebiegu F. */
   function ustawUniformy(w, skG = 1, sFr = w.sFr) {
     const sM = w.sM;
+    // Budynek w skali s (par.skalaBud, plan LOD): prędkości progowe z √s, tempa z 1/√s. Przy s = 1 oba są jedynką.
+    const pV = Math.sqrt(w.skalaBud ?? 1), pR = 1 / pV;
     uN.value = w.n;
     uH.value = w.h;
     uK.value = w.K;
@@ -1013,14 +1015,14 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     uGruntZ.value = w.gruntZ;
     uDxP.value = 0.5 * w.dx;
     uCap.value = w.capEtyk;
-    uLepL.value = par.lepL * sFr;
-    uLepV2.value = (par.lepV * sFr) * (par.lepV * sFr);
-    uGruzP.value = par.gruzPara * sFr;
-    uGruzV2.value = (par.gruzV * sFr) * (par.gruzV * sFr);
-    uFalaV2.value = w.rama ? par.fala.v * par.fala.v * sFr * sFr : 1e30;
-    uFalaTempoH.value = Math.min(1, par.fala.tempo * w.h) * sFr; // AGENT: h po skali (§ 2.1). Czoło fali biegnie więc tempo · dx j./s. Próba z tempo · skala (stałe 180 j./s) pogorszyła dach przy dx = 40 i 80, plan LOD § 5.
-    uSzokProg.value = par.szokTempo * w.dx * Math.sqrt(sM);
-    uKontaktV.value = par.kontaktSzokV * Math.sqrt(sM);
+    uLepL.value = par.lepL * sFr * pR;
+    uLepV2.value = (par.lepV * sFr * pV) * (par.lepV * sFr * pV);
+    uGruzP.value = par.gruzPara * sFr * pR;
+    uGruzV2.value = (par.gruzV * sFr * pV) * (par.gruzV * sFr * pV);
+    uFalaV2.value = w.rama ? par.fala.v * par.fala.v * sFr * sFr * pV * pV : 1e30;
+    uFalaTempoH.value = Math.min(1, par.fala.tempo * pR * w.h) * sFr; // AGENT: h po skali (§ 2.1). Czoło fali biegnie więc tempo · dx j./s. Próba z tempo · skala (stałe 180 j./s) pogorszyła dach przy dx = 40 i 80, plan LOD § 5.
+    uSzokProg.value = par.szokTempo * w.dx * Math.sqrt(sM) * pR;
+    uKontaktV.value = par.kontaktSzokV * Math.sqrt(sM) * pV;
     uIKom.value = w.iKom;
     uZasieg2.value = w.zasieg * w.zasieg;
     uPekaProg.value = par.falaPeka.prog;

@@ -1,5 +1,5 @@
 // Plany scen strony na żywo, wspólne dla strony i wątku budowy. Bez three i DOM.
-import { S1, S2, S3, S4, S5, krater, kolumna1, naroznik, odpornosc } from './scena.js';
+import { S1Lod, S1, S2, S3, S4, S5, krater, kolumna1, naroznik, odpornosc } from './scena.js';
 
 /** Krater jak w filmie (bieg-film.sh: c = (190, 0, 600), r = 60), wybuch po sekundzie stania. */
 function planKratera() {
@@ -53,7 +53,8 @@ export const PLANY_POKAZU = {
   S5: (ziarno) => S5({ miejsce: 'g', ...(ziarno === undefined ? {} : { ziarno }) }),
   S5v: (ziarno) => S5({ miejsce: 'proznia', ...(ziarno === undefined ? {} : { ziarno }) }),
   S5p: (ziarno) => S5({ miejsce: 'planeta', ...(ziarno === undefined ? {} : { ziarno }) }),
-  S1: () => S1(),
+  // lod: opcje S1Lod z adresu (?lodS1=…), próba 1 planu LOD. Bez nich zwykłe S1.
+  S1: (ziarno, lod) => (lod ? S1Lod(lod) : S1()),
   S2: () => S2(),
   S3: () => S3(),
   S4: () => S4(),
