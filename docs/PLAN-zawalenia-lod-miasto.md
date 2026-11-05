@@ -70,6 +70,101 @@ Tier wybiera się w chwili trafienia i nie zmienia się w trakcie walenia. Zoom 
 
 Poza zakresem tej nocy: wpięcie w grę, lustro generatora dla całego ringu, kolizje budynków z okrętami, odnawianie miasta.
 
+### Wynik próby 1: grubszy woksel i mały budynek
+
+GPU, RTX 5080, g = 400, scena S1, 2026-11-05. Narzędzie: `node scripts/webgpu/woksele-demo.mjs --testy lod --lody dx:materiał[:budynek],… [--lodW1 30] [--lodS 0.1] --out .tmp/woksele-demo/LOD`. Zrzuty i liczby: `.tmp/woksele-demo/LOD/` (`arkusz-S1.png`, `arkusz-rama.png`, `arkusz-miasto.png`, `arkusz-atlas.png`, `lod-liczby-*.txt`). Bez powtórek: rozrzut samego wyścigu w kWstaw przy dx = 20 to dach t = 5 w 592–603, t = 6 w 214–229.
+
+**Dla następnego agenta (budynek miasta 33,6 × 42,5 × 17–290):**
+- **Układ: `ukladMiasta(dx)` z `scena.js`, czyli rama z oknami, dwuwarstwowe stropy, rdzeń przy dx ≤ 8, podany do `wieza()`.** Nie zamknięta wydmuszka ani lita kostka, liczby niżej. Budynek poniżej 5 warstw (h / dx < 5) to kostka: niska się nie przewraca, a rama wyszłaby za wysoka.
+- **Materiał: `MATERIAL_MIASTA` z `scena.js`, `{ cFroude: true, skalaBud: 0.1 }`, nakładka parametrów `zbuduj`.** Jeden na scenę, bo K i h to uniformy. c = 1897 j./s, podkroki wychodzą same ze stabilności. Jedna wartość dobrze niesie wszystkie wysokości 37–290.
+- **dx: 10 przy Atlasie, 5 z bliska, 20 tylko przy dalekim kadrze.** dx = 10 przy domyślnym zoomie Atlasa to węzeł 5,7 px, budynek 88 px, rama z oknami jest czytelna i wali się jak wieża. Przy dx = 20 budynek to 2 × 2 × 8 bloków bez okien, fizyka zostaje dobra, ale budynek poniżej 100 j. nie mieści ramy.
+
+| Kamera | dx | Podkroki | Rytm listy | Węzły h = 37 / 70 / 154 / 290 | Dzielnica 480 budynków, węzły | ms na krok, szac. |
+|---|---|---|---|---|---|---|
+| Atlas daleko (× 0,3) | 20 | 3 | 3 | 8 / 16 / 32 / 60 | 8188 | 0,13 |
+| Atlas domyślny | 10 | 5 | 4 | 48 / 73 / 150 / 285 | 40 374 | 0,50 |
+| Limit gry | 5 | 11 | 4 | 308 / 548 / 1156 / 2176 | 282 590 | 5,6 |
+
+Szacunek z pomiarów tej próby: 9,5 µs na dispatch plus 1,7 ns na węzeł i podkrok. Same węzły dzielnicy to `budynkiDzielnicy` z ziarnem 1 bez uskoków, a uskoków rama nie sprawdzała. **§ 3 zaniżał węzły przy dx = 5:** średni budynek ma 589, nie około 300, więc 130 budynków z limitu gry to około 77 tys. węzłów przy 11 podkrokach, szac. 1,7 ms, nie 1 ms. dx = 10 to 40 tys. przy 5 podkrokach: tyle, ile miał kosztować ostrzał 500 budynków przy dx = 20. Dzielnica przy dx = 10 wymaga `?maxWez` ponad 40 tys.
+
+**Wieża S1: ten sam budynek, inne dx.** Układ w jednostkach gry, więc przy dx = 40 i 80 ściany i stropy wychodzą grubsze.
+
+| dx, c | Węzły | Podkroki | Dach t = 3…7 | Przechył | Masa %, 1 / 2–7 / 8–63 / 64–511 / 512+ | Kawałek | ms na krok, stoi / wali |
+|---|---|---|---|---|---|---|---|
+| **20, 6000** | 14 942 | 8 | 1295, 1046, 603, 220, 178 | 4,8° | 12 / 11 / 60 / 12 / 6 | 64 j. | 0,285 / 0,382 |
+| 10, 6000 | 122 672 | 16 | 1302, 1238, 992, 546, 210 | 6,9° | 12 / 7 / 11 / 53 / 16 | 61 j. | 3,769 / 3,271 |
+| **40, 6000** | 2832 | 4 | 1253, 1045, 572, 290, 241 | 10,2° | 13 / 27 / 52 / 8 / 0 | 86 j. | 0,115 / 0,163 |
+| 40, 12 000 (c ∝ dx) | 2832 | 8 | 1258, 1156, 820, 390, 247 | 16,2° | 21 / 30 / 42 / 7 / 0 | 77 j. | 0,183 / 0,245 |
+| **80, 6000** | 368 | 2 | 1319, 1147, 717, 332, 263 | 5,7° | 32 / 58 / 11 / 0 / 0 | 101 j. | 0,069 / 0,082 |
+| 80, 24 000 (c ∝ dx) | 368 | 8 | 1319, 1302, 1134, 833, 503 | 12,6° | 53 / 37 / 10 / 0 / 0 | 80 j. | 0,153 / 0,195 |
+
+Przechył to kąt górnych 30% przy reszcie dopasowania poniżej 30 j. Metryka `maxPrzechylSpojny` ma próg 1,5 dx, czyli przy dx = 80 aż 120 j., i liczy rozbitą górę jako całą (tam 16,6°). Kawałek to mediana po masie, bok sześcianu z węzłów. Wszędzie NaN 0, asymetrie 0, przed cięciem przemieszczenie 0,000 j. i 0 zerwanych wiązań. W1 przez 30 s stoi przy dx = 20, 40 i 80 w obu materiałach (0 zerwanych, dx = 20: 0,0103 j., reszta 0,0000 j.), dx = 10 bez W1. Po biegach wszystkich dx i materiałów 0 nowych pipeline'ów. S1 przy dx = 20 bez zmian, testy `wokseleBudowa`, `wokseleWgsl`, `wokseleObrazWgsl` zaliczone.
+
+**Dla dx > 20 c = 6000: taniej i bliżej wieży.** Na zrzutach (`arkusz-S1.png`) dx = 40 i 80 walą się jak dx = 20, tylko większymi blokami. c ∝ dx przy dx > 20 nic nie daje: K zostaje, więc 8 podkroków, a góra trzyma się dłużej. Dziewięć megabudowli miasta: dx = 40, c = 6000, 2832 węzły i około 0,16 ms, jeśli liczą się osobną sceną. Przy wspólnym K z dzielnicą to osobna próba.
+
+**Wzory, które się rozjechały:**
+1. **Ziarna liczone w komórkach, poprawione raz w `budujZiarna`.** § 2.1 to zapowiadał, kod nie. Przy dx = 40 ziarno miało 280 j., strop był prawie cały wnętrzem ziarna (× 6) i góra zostawała sztywną płytą. Dach przed poprawką: dx = 40 1256, 1136, 766, 402, 262 i 18,4°; dx = 80 1319, 1281, 1033, 719, 553. To największy błąd.
+2. **Podłoga wytrzymałości przy c ∝ dx, poprawiona raz w `zbuduj`.** `eMin·K·dx` to odkształcenie, a ma być siła względem ciężaru. Przed poprawką przy dx = 80 wieża stała po cięciu (dach t = 7 1313, 100% w jednym kawałku).
+3. **Tempo fali: bez zmian.** Solver ma `tempo·h` z h po skali, więc pułapka z § 2.1 dotyczy tylko Node (`wzorzec-cpu.js` i tak liczy tylko dx = 20). Czoło biegnie jednak tempo · dx j./s, czyli 90, 180, 360, 720 j./s. Próba ze stałymi 180 j./s (`--lodNakladka '{"falaZaDx":true}'`) pogorszyła dach t = 5 przy dx = 40 z 572 na 647 i przy dx = 80 z 717 na 797 (wieża 603), a przy dx = 10 poprawiła t = 5, 6 tylko z 992, 546 na 973, 464. Zostaje `tempo·h`.
+4. **Długości mięknięcia stałe w jednostkach gry: dobre dla tego samego budynku** (energia pękania na pole bez zmian, kawałek przy dx = 10 ma 61 j., przy dx = 20 ma 64 j.), **złe dla mniejszego budynku:** 1–3 j. przy dx = 5 to 20–60% odkształcenia zamiast 5–15%. Tak samo ziarna: 140 j. w budynku 154 j. to jeden blok. Stąd skala budynku niżej.
+5. **Nie wyjaśnione: dx = 10 rusza później.** Dach t = 4 to 1238 zamiast 1046, potem to samo tempo. Fala tego nie tłumaczy (pkt 3). Bez znaczenia dla miasta, bo wieży przy dx = 10 nikt nie policzy (3,3 ms).
+
+**Mały budynek: żaden z dwóch wariantów z zadania nie wystarcza, bo długości też muszą iść za budynkiem.** Budynek to model wieży w skali s = h / 1340 przy tym samym g, więc obowiązuje podobieństwo Froude'a: c ∝ √s, a nie c ∝ dx ani c stałe. `par.skalaBud = s` skaluje długości materiału (`skala = 20·s / dx`: ziarno, plama, mięknięcie, zginanie, rozlew), progi prędkości przez √s, tempa przez 1 / √s (`ustawUniformy`), `par.cFroude` daje c = 6000·√s i podkroki ze stabilności. Przy s = 1 nic się nie zmienia. Sprawdzenie na tych samych komórkach, dach / wysokość w czasie t* = (t − 2) / √s, cięcie √s razy szybsze:
+
+| Budynek | c, podkroki | Dach / h przy t* = 0,5; 1; 2; 3; 4; 5 | Przechył | Masa % |
+|---|---|---|---|---|
+| Wieża dx = 20 | 6000, 8 | 0,98 0,97 0,78 0,44 0,17 0,13 | 4,8° | 12 / 11 / 59 / 13 / 5 |
+| s = 0,5, dx = 10 | 4243, 11 | 0,98 0,97 0,78 0,44 0,16 0,13 | 5,0° | 13 / 11 / 60 / 12 / 5 |
+| s = 0,125, dx = 2,5 | 2121, 23 | 0,98 0,96 0,77 0,43 0,16 0,14 | 4,1° | 13 / 11 / 60 / 11 / 5 |
+| Wieża dx = 80 | 6000, 2 | 0,97 0,97 0,84 0,53 0,24 0,20 | 5,7° | 31 / 58 / 11 / 0 / 0 |
+| s = 0,1, dx = 8, ten sam 5 × 5 × 17 | 1897, 6 | 0,97 0,97 0,84 0,52 0,24 0,20 | 5,8° | 32 / 57 / 11 / 0 / 0 |
+
+Bez skali budynku te same komórki rozjeżdżają się: s = 0,25 i c = 6000 przewraca się (26,8°, potem 103°), c ∝ dx przy dx = 2,5 spada w mniej niż sekundę, 73% masy w dużych blokach.
+
+**Układ budynku miasta, h = 154, s = h / 1340.** Zrzuty: `arkusz-miasto.png`, `arkusz-rama.png`.
+
+| Układ | dx | Węzły | Podkroki | Dach / h przy t* = 0,5; 1; 2; 3; 4; 5 | Przechył, maks |
+|---|---|---|---|---|---|
+| Lita kostka | 5 | 1953 | 11 | 0,95 0,95 0,86 0,68 0,49 0,30 | 74,7°, 113° |
+| Lita kostka | 10 | 180 | 6 | 0,97 0,96 0,82 0,69 0,59 0,43 | 11,9°, 110° |
+| Wydmuszka, strop 2 warstwy | 5 | 1288 | 11 | 0,98 0,93 0,68 0,36 0,21 0,19 | 10,8°, 94° |
+| Wydmuszka, strop 1 warstwa | 5 | 1078 | 11 | **W1 nie stoi:** 280 zerwanych wiązań, 1,39 j. | |
+| **Rama** | 5 | 1156 | 11 | 0,92 0,95 0,80 0,38 0,22 0,19 | 3,4°, 14° |
+| **Rama** | 7 | 516 | 8 | 0,98 0,98 0,84 0,46 0,21 0,18 | 3,9°, 26° |
+| **Rama** | 10 | 150 | 6 | 0,97 0,96 0,81 0,40 0,22 0,19 | 3,4°, 9° |
+| **Rama** | 20 | 32 | 3 | 0,93 0,90 0,77 0,54 0,27 0,26 | 1,1°, 18° |
+
+Zamknięta rura jest sztywna na ścinanie i po podcięciu góra kładzie się w całości, a rama ma ten sam tryb gięcia co wieża. **Uwaga dla `miasto.js`:** `dlaKazdegoWezla` z `wydmuszka` ma strop jednowarstwowy, a jedna warstwa to mechanizm (wiązania centralne nie niosą prostopadle do płyty): budynek sam się rozpada. W W1 przy wydmuszce ze stropem 2 warstwy zerwań nie ma.
+
+**Materiał na ramie h = 154.** Tu c ∝ dx jest blisko, bo przy dx = 7 to prawie to samo c. c = 6000 spóźnia się o około 1 w t*, przewraca bardziej i kosztuje 2–3 razy więcej podkroków.
+
+| dx | Froude s = 0,115 | c ∝ dx | c = 6000 |
+|---|---|---|---|
+| 10 | pk 6: 0,81 0,40 0,22 (3,4°) | pk 8: 0,88 0,54 0,23 (2,5°) | pk 16: 0,91 0,64 0,33 (2,6°, maks 51°) |
+| 7 | pk 8: 0,84 0,46 0,21 (3,9°) | pk 8: 0,84 0,47 0,21 (4,5°) | pk 23: 0,92 0,70 0,38 (11,2°, maks 58°) |
+| 5 | pk 11: 0,80 0,38 0,22 (3,4°) | pk 8: 0,75 0,27 0,20 (2,3°) | pk 32: 0,90 0,64 0,31 (4,4°) |
+
+Dach / h przy t* = 2, 3, 4. Wieża: 0,78 0,44 0,17.
+
+**Jeden materiał na dzielnicę, `MATERIAL_MIASTA`, c = 1897:**
+
+| dx, podkroki | h | Dach / h przy t* = 0,5; 1; 2; 3; 4; 5 | Przechył |
+|---|---|---|---|
+| 10, 5 | 37, kostka 3 × 4 × 4 | 0,88 0,87 0,77 0,63 0,54 0,52 | 15,2° |
+| 20, 3 | 37, kostka 2 × 2 × 2 | 0,75 0,70 0,66 0,65 0,65 0,65 | 0°, prawie się nie wali: to tier 0 |
+| 10, 5 | 70 | 0,92 0,89 0,64 0,42 0,38 0,37 | 2,7° |
+| 10, 5 | 154 | 0,97 0,96 0,79 0,40 0,22 0,18 | 1,5° |
+| 10, 5 | 290 | 0,95 0,95 0,85 0,62 0,25 0,11 | 0,4° |
+| 5, 11 | 37 | 0,93 0,93 0,82 0,58 0,46 0,45 | 1,4° |
+| 5, 11 | 154 | 0,92 0,94 0,82 0,43 0,19 0,17 | 2,1° |
+| 5, 11 | 290 | 0,96 0,96 0,86 0,62 0,25 0,12 | 0,1° |
+| 20, 3 | 154 | 0,94 0,90 0,75 0,50 0,31 0,22 | 0,9° |
+| 20, 3 | 290 | 0,97 0,95 0,81 0,55 0,21 0,17 | 1,6° |
+
+Niskie budynki kończą wyżej, bo hałda ma 2–3 węzły. Budynek 154 j. wali się w około 1 s od cięcia, co odpowiada pytaniu o tempo z § 6.
+
+**Czego nie sprawdzono:** salwy z góry i kratera (tylko podcięcie z boku), uskoków, kontaktu między budynkami, ramy przy dx = 2,5, wspólnego K z megabudowlą. Zrzuty małych budynków są bez pyłu: `OPCJE_PYLU` ma rozmiary wieży, więc dzielnica potrzebuje własnych. Rytm listy (`rytmEf`: 0,5 klatki × dx / (20·√s)) to wzór bez osobnego pomiaru: we wszystkich biegach 0 NaN.
+
 ## 5a. Wynik: obraz z LOD (metoda G)
 
 **Co jest.** Parametr sceny `lod: { sloty, cien }` w `SCENY` (`pokaz.js`), w biegu `obraz.ustawLod`, do oglądania `?sloty=1|2|7&cienSloty=0|1|2|7` przy każdej scenie. `sloty`: 7 jak dotąd (blok, 5 odłamków, pręt), 2 (uszkodzony węzeł to komórka przecięta raz na dwa kawałki), 1 (uszkodzony węzeł to jeden kawałek, kurczy się z d). `cien`: osobno dla mapy cienia, 0 to `castShadow = false`. Uniform i `instanceCount`, bez nowego pipeline'u, zm. 0 nowych wpisów dziennika po rozgrzewce przy przełączaniu w biegu. Scena bez `cien` w `SCENY` dostaje kamerę cienia z rozmiaru węzłów (`ustawCienZSceny`), a stare sceny mają swoje stałe. Pył w `OPCJE_PYLU`: `kwady` (sufit pierścienia), `emisja`, `rozmiar`, `sufitPx`, `lodDuze`. Przy wielu budynkach `pod: 0, grunt: 0`: te dwa pchają pył od osi z = 0, czyli jedną wieżę, a dzielnicę zwiałyby w jedną stronę. Rozlew od środka własnego budynku jeszcze nie istnieje.

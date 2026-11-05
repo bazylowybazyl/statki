@@ -1020,7 +1020,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     uGruzP.value = par.gruzPara * sFr * pR;
     uGruzV2.value = (par.gruzV * sFr * pV) * (par.gruzV * sFr * pV);
     uFalaV2.value = w.rama ? par.fala.v * par.fala.v * sFr * sFr * pV * pV : 1e30;
-    uFalaTempoH.value = Math.min(1, par.fala.tempo * pR * w.h) * sFr; // AGENT: h po skali (§ 2.1). Czoło fali biegnie więc tempo · dx j./s. Próba z tempo · skala (stałe 180 j./s) pogorszyła dach przy dx = 40 i 80, plan LOD § 5.
+    uFalaTempoH.value = Math.min(1, par.fala.tempo * pR * (w.par?.falaZaDx ? w.skala : 1) * w.h) * sFr; // AGENT: h po skali (§ 2.1). Czoło fali biegnie więc tempo · dx j./s. Próba z tempo · skala (stałe 180 j./s) pogorszyła dach przy dx = 40 i 80, plan LOD § 5.
     uSzokProg.value = par.szokTempo * w.dx * Math.sqrt(sM) * pR;
     uKontaktV.value = par.kontaktSzokV * Math.sqrt(sM) * pV;
     uIKom.value = w.iKom;

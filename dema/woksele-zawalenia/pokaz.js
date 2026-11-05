@@ -82,6 +82,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const ziarnoAdresu = adres.has('ziarno') ? Number(adres.get('ziarno')) : undefined;
   // ?sloty=1|2|7&cienSloty=0|1|2|7: LOD obrazu dla każdej sceny, do oglądania i pomiaru. Bez tego wartość ze sceny, a domyślnie 7 jak dotąd.
   const lodAdresu = adres.has('sloty') || adres.has('cienSloty') ? { sloty: Number(adres.get('sloty') ?? 7), cien: Number(adres.get('cienSloty') ?? adres.get('sloty') ?? 7) } : null;
+  // ?lodS1={"dx":40,"mat":"staly"}: S1 przy innym dx (próba 1 planu LOD). Tylko do zrzutów: bez budowy pozostałych scen w tle, cień z rozmiaru sceny.
+  const lodS1Adresu = adres.has('lodS1') ? JSON.parse(adres.get('lodS1')) : null;
   const watek = new Worker(new URL('./budowa.worker.js', import.meta.url), { type: 'module' });
   const wypieki = new Map();
   const czekajace = new Map();
@@ -97,7 +99,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu });
     }
     return czekajace.get(id).obietnica;
   }
@@ -116,7 +118,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     solver.wczytaj(w);
     solver.ustawPlan(g);
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? opis.lod }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
-    if (opis.cien) obraz.ustawCien(opis.cien[0], opis.cien[1]);
+    if (opis.cien && !lodS1Adresu) obraz.ustawCien(opis.cien[0], opis.cien[1]);
     else obraz.ustawCienZSceny(w, opis.cienZapas);
     stan.scena = id;
     stan.krok = 0;
@@ -269,7 +271,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     }
   }
   requestAnimationFrame(petla);
-  for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta) wypiek(id);
+  if (!lodS1Adresu) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta) wypiek(id);
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
   Object.assign(wok, {

@@ -65,8 +65,9 @@ export function wieza(o = {}) {
   const rdz = { ulamek: 0.3, grubosc: komorek(20), ...o.rdzen };
   const gf = fas.grubosc;
 
-  const nx = Math.max(5, Math.round(w / dx));
-  const ny = Math.max(5, Math.round(d / dx));
+  // o.minN, o.bezRdzenia: mały budynek miasta przy grubym dx (3 × 4 komórki nie mieszczą rdzenia), plan LOD § 5.
+  const nx = Math.max(o.minN ?? 5, Math.round(w / dx));
+  const ny = Math.max(o.minN ?? 5, Math.round(d / dx));
   const nz = Math.max(pietroCo + gruboscStropu, Math.round(h / dx));
 
   const mStrop = Math.floor((nz - gruboscStropu) / pietroCo); // numer stropu-dachu
@@ -114,7 +115,7 @@ export function wieza(o = {}) {
       const y0 = Math.max(gf, py - lo);
       const y1 = Math.min(ny - 1 - gf, py + hi);
       // Kolumna przecinająca rdzeń (z marginesem 1 komórki) znika: rdzeń sam niesie.
-      if (x1 >= rx0 - 1 && x0 <= rx1 + 1 && y1 >= ry0 - 1 && y0 <= ry1 + 1) continue;
+      if (!o.bezRdzenia && x1 >= rx0 - 1 && x0 <= rx1 + 1 && y1 >= ry0 - 1 && y0 <= ry1 + 1) continue;
       for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) m[j * nx + i] = 1;
     }
     maskiKolumn.set(th, m);
@@ -128,7 +129,7 @@ export function wieza(o = {}) {
     if (k >= kDachu) return obw ? KIND.FASADA : -1; // attyka
     const kp = k % pietroCo;
     const poziomStropu = kp < gruboscStropu;
-    const wObrysieRdzenia = i >= rx0 && i <= rx1 && j >= ry0 && j <= ry1;
+    const wObrysieRdzenia = !o.bezRdzenia && i >= rx0 && i <= rx1 && j >= ry0 && j <= ry1;
     if (wObrysieRdzenia) {
       const sciana = i < rx0 + gr || i > rx1 - gr || j < ry0 + gr || j > ry1 - gr;
       return sciana ? KIND.RDZEN : -1; // wnętrze szybu puste także na poziomie stropu
@@ -447,15 +448,28 @@ export function S1(o = {}) {
   return planUsuwania('S1', 'Wieża podcięta: ostrzał z +x, 2–4 s', sc, 400, o.T ?? 9, listaCzasowa(ind, cz));
 }
 
+/** Materiał dzielnicy (plan LOD, wynik próby 1): jeden na scenę, bo K i h to uniformy. Nakładka parametrów zbuduj: c = 6000·√0,1 = 1897 j./s, podkroki ze stabilności (dx = 20: 3, 10: 5, 5: 11, 2,5: 21). */
+export const MATERIAL_MIASTA = Object.freeze({ cFroude: true, skalaBud: 0.1 });
+
+/**
+ * Układ budynku miasta w komórkach, opcje wieza(): rama z oknami, stropy dwuwarstwowe, rdzeń, gdy rzut go mieści (dx ≤ 8). Plan LOD, wynik próby 1.
+ * AGENT: nie lita kostka ani zamknięta wydmuszka: zamknięta rura jest sztywna na ścinanie i po podcięciu górna część przewraca się w całości (kostka dx = 5: 75°, wydmuszka: 11°, rama: 3°, wieża S1: 5°).
+ * Przy dx = 20 najniższy budynek ma 5 warstw, czyli 100 j., więc budynki poniżej około 100 j. przy dx = 20 to tier 0 albo kostka 2 × 2 × 2.
+ */
+export function ukladMiasta(dx) {
+  return { gruboscStropu: 2, pietroCo: Math.max(3, Math.round(25 / dx)), kolumny: { co: 3, dol: 2, gora: 2 }, fasada: { co: 3, grubosc: 1 }, rdzen: { grubosc: 1 }, ...(dx > 8 ? { minN: 1, bezRdzenia: true } : {}) };
+}
+
 /**
  * Próba LOD (docs/PLAN-zawalenia-lod-miasto.md § 5): S1 przy danym dx. mat 'staly': c = 6000 i podkroki z § 2.1, mat 'dx': c ∝ dx, K i podkroki jak przy dx = 20 (metoda E).
  * o.wieza: wymiary i układ budynku, o.nakladka: parametry próby. Bez opcji to zwykłe S1.
  */
 export function S1Lod({ mat = 'staly', nakladka = null, ...o } = {}) {
   const s = nakladka?.skalaBud ?? 1;
+  if (o.wieza?.miasto) o.wieza = { ...ukladMiasta(o.dx ?? 20), ...o.wieza };
   if (o.tempoCiecia === undefined) o.tempoCiecia = Math.sqrt(s);
-  if (o.wieza?.kostka) {
-    // Kostka miasta: co najmniej jedna warstwa w cięciu, przy dwóch kolumnach ostrzał zabiera jedną, nie obie.
+  if (o.wieza?.kostka || o.wieza?.miasto) {
+    // Budynek miasta: co najmniej jedna warstwa w cięciu, przy dwóch kolumnach ostrzał zabiera jedną, nie obie.
     const dx = o.dx ?? 20, nz = Math.max(2, Math.round((o.wieza.h ?? 154) / dx)), nx = Math.max(1, Math.round((o.wieza.w ?? 33.6) / dx));
     const k0 = Math.max(nz > 3 ? 1 : 0, Math.round(0.1 * nz));
     o.kCiecia = [k0, Math.max(k0, Math.round(0.18 * nz) - 1)];

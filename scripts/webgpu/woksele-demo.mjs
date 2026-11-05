@@ -134,6 +134,8 @@ try {
     if (args.ao) zapytanie.set('ao', String(args.ao));
     if (args.migawka) zapytanie.set('migawka', String(args.migawka).split(',')[0]);
     if (args.ziarno) zapytanie.set('ziarno', String(args.ziarno));
+    // Próba LOD: --lodS1 '{"dx":40,"mat":"staly"}' to opcje S1Lod dla sceny S1 na stronie.
+    if (args.lodS1) zapytanie.set('lodS1', String(args.lodS1));
     if (args.pyl) zapytanie.set('pyl', String(args.pyl));
     if (args.maxWez) zapytanie.set('maxWez', String(args.maxWez));
     if (args.sloty) zapytanie.set('sloty', String(args.sloty));
@@ -145,6 +147,7 @@ try {
     const syncStart = await ev(`window.__harness.pipes.list.filter((p) => p.sync).map((p) => p.nazwa)`);
     console.log(`pipeline'y po rozgrzewce: ${pipeStart}, synchroniczne w rozgrzewce: ${syncStart.length}, w tym rysunków: ${JSON.stringify(syncStart.filter((n) => !String(n).startsWith('compute:')))}`);
     if (!args.panel) await ev('window.__wok.pokaz.panel(false)');
+    if (args.bezPylu) await ev('window.__wok.obraz.pyl.wlacz(false); true');
     if (args.kam) await ev(`window.__wok.pokaz.kamera(${JSON.stringify((() => { const k = String(args.kam).split(',').map(Number); return { az: k[0], el: k[1], cel: [k[2], k[3], k[4]], odl: k[5] }; })())})`);
     const chwile = String(args.chwile || '0,3,5,6').split(',').map(Number);
     const et = args.etykieta ? `${args.etykieta}_` : '';
@@ -324,7 +327,7 @@ try {
     if (nowe.some((p) => p.sync)) porazka(`pipeline'y synchroniczne po rozgrzewce: ${nowe.filter((p) => p.sync).length}`);
     throw Object.assign(new Error('koniec zrzutów'), { zrzutyKoniec: true });
   }
-  const adapter = await otworz('test=1');
+  const adapter = await otworz(`test=1${args.maxWez ? `&maxWez=${args.maxWez}` : ''}`);
   console.log('adapter', JSON.stringify(adapter));
 
   // (d) Dziennik pipeline'ów po rozgrzewce: niepusty, a od tej chwili nic nowego.
@@ -577,6 +580,19 @@ try {
       pol: { w: 190, d: 210, h: 670, ...UKL },
       cwierc: { w: 95, d: 105, h: 335, ...UKL },
       osma: { w: 47.5, d: 52.5, h: 167.5, ...UKL },
+      // Te same komórki co wieża, s = skala budynku: Froude ma dać ten sam przebieg √s razy szybciej.
+      polF: { w: 190, d: 210, h: 670, s: 0.5, ...UKL },
+      osmaF: { w: 47.5, d: 52.5, h: 167.5, s: 0.125, ...UKL },
+      // Budynki miasta (haloRingCity.js, miasto.js): kostka i wydmuszka, s z wysokości.
+      k37: { kostka: true, w: 33.6, d: 42.5, h: 37, s: 37 / 1340 },
+      k154: { kostka: true, w: 33.6, d: 42.5, h: 154, s: 154 / 1340 },
+      k290: { kostka: true, w: 33.6, d: 42.5, h: 290, s: 290 / 1340 },
+      w154: { kostka: true, wydmuszka: true, w: 33.6, d: 42.5, h: 154, s: 154 / 1340 },
+      w290: { kostka: true, wydmuszka: true, w: 33.6, d: 42.5, h: 290, s: 290 / 1340 },
+      w37: { kostka: true, wydmuszka: true, w: 33.6, d: 42.5, h: 37, s: 37 / 1340 },
+      w70: { kostka: true, wydmuszka: true, w: 33.6, d: 42.5, h: 70, s: 70 / 1340 },
+      // Te same kostki bez skali budynku: ziarna i długości jak w wieży.
+      k154b: { kostka: true, w: 33.6, d: 42.5, h: 154 },
       ...(args.lodBudynki ? JSON.parse(String(args.lodBudynki)) : {}),
     };
     const nakladka = args.lodNakladka ? JSON.parse(String(args.lodNakladka)) : null;
@@ -588,14 +604,22 @@ try {
       const [dxS, mat, bud] = pozycja.split(':');
       const dx = Number(dxS);
       await czekajNaCisze(`LOD ${pozycja}`);
-      const op = { dx, mat, ...(bud ? { wieza: BUDYNKI[bud] } : {}), ...(nakladka ? { nakladka } : {}) };
+      // r<h>: budynek miasta w układzie ukladMiasta (scena.js), s z wysokości albo jedno na scenę z --lodS.
+      if (bud?.startsWith('r')) {
+        const hb = Number(bud.slice(1));
+        BUDYNKI[bud] = { miasto: true, w: 33.6, d: 42.5, h: hb, s: (args.lodS ? Number(args.lodS) : hb / 1340) };
+      }
+      if (bud && !BUDYNKI[bud]) throw new Error(`Nieznany budynek ${bud}: bez tego poszłaby pełna wieża przy tym dx`);
+      const bd = bud ? BUDYNKI[bud] : null;
+      const nak = { ...(nakladka ?? {}), ...(bd?.s ? { skalaBud: bd.s } : {}) };
+      const op = { dx, mat, ...(bd ? { wieza: bd } : {}), ...(Object.keys(nak).length ? { nakladka: nak } : {}) };
       const r = await ev(`window.__wok.test.lod.s1(${JSON.stringify(op)})`);
       r.pozycja = pozycja;
       wy.push(r);
       if (r.poza) { pisz(`${pozycja}: poza zakresem, ${r.poza}`); continue; }
       const d = (t) => (r.dach[t] ?? NaN).toFixed(0);
       const q = (x, c = 1) => (x === null || x === undefined ? 'b.d.' : Number(x).toFixed(c));
-      pisz(`${pozycja} | ${r.n}, ${r.meta.nx}×${r.meta.ny}×${r.meta.nz} (${q(r.meta.w, 0)}×${q(r.meta.d, 0)}×${q(r.meta.h, 0)}), c ${q(r.c, 0)}, K ${q(r.K, 0)}, pk ${r.podkroki}, rytm ${r.rytm}, stab ${q(r.stabilnosc, 2)} | ${[0, 3, 4, 5, 6, 7, 9].map(d).join(' ')} | prz30 ${q(r.przechylStaly)}°@${q(r.tStaly, 2)}, 1,5dx ${q(r.przechylSpojny)}°, maks ${q(r.przechylMax)}° | ${r.masa.map((v) => q(v, 0)).join('/')} (najw. ${r.najwiekszy}, wysp ${r.wysp}) | ${q(r.bokKawalka, 0)} j. | przem ${q(r.W1przed.przem, 3)}, opad ${q(r.W1przed.opad, 3)}, bity ${r.W1przed.zerwaneBity} | NaN ${r.nan}, asym ${r.asym}, GPU ${r.bledyGpu} | ${q(r.msStoi, 3)}, ${q(r.msWali, 3)} | ${q(r.nsNaWezelKrok, 0)} | budowa ${q(r.msBudowy / 1000, 1)} s`);
+      pisz(`${pozycja} | ${r.n}, ${r.meta.nx}×${r.meta.ny}×${r.meta.nz} (${q(r.meta.w, 0)}×${q(r.meta.d, 0)}×${q(r.meta.h, 0)}), c ${q(r.c, 0)}, K ${q(r.K, 0)}, pk ${r.podkroki}, rytm ${r.rytm}, stab ${q(r.stabilnosc, 2)} | ${[0, 3, 4, 5, 6, 7, 9].map(d).join(' ')} | d/h t* .5,1,2,3,4,5: ${r.dachNorm.map((v) => q(v, 2)).join(' ')} | prz30 ${q(r.przechylStaly)}°@${q(r.tStaly, 2)}, 1,5dx ${q(r.przechylSpojny)}°, maks ${q(r.przechylMax)}° | ${r.masa.map((v) => q(v, 0)).join('/')} (najw. ${r.najwiekszy}, wysp ${r.wysp}) | ${q(r.bokKawalka, 0)} j. | przem ${q(r.W1przed.przem, 3)}, opad ${q(r.W1przed.opad, 3)}, bity ${r.W1przed.zerwaneBity} | NaN ${r.nan}, asym ${r.asym}, GPU ${r.bledyGpu} | ${q(r.msStoi, 3)}, ${q(r.msWali, 3)} | ${q(r.nsNaWezelKrok, 0)} | budowa ${q(r.msBudowy / 1000, 1)} s, CG ${r.kalibracja.iter}, uMax ${q(r.kalibracja.maxU, 2)}, odk ${q(r.kalibracja.odk, 3)}`);
       writeFileSync(join(wyDir, `lod-${pozycja.replaceAll(':', '_')}${args.plikLod ? `-${args.plikLod}` : ''}.json`), JSON.stringify({ adapter, ...r }, null, 1) + '\n');
       if (args.lodW1) {
         const s = await ev(`window.__wok.test.lod.w1(${JSON.stringify({ ...op, sekund: Number(args.lodW1) })})`);

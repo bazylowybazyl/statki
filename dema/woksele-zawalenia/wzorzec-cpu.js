@@ -91,6 +91,7 @@ export class WzorzecCpu {
 
   /** Jeden krok fizyki 1/60 s: lista co `rytmListy` podkroków, F, I (§ 2.4). */
   krok() {
+    // AGENT: wzorzec liczy tylko dx = 20 bez skali budynku. Przy innym dx albo par.skalaBud GPU ma rytmEf i progi z √s (ustawUniformy w solver.js), tu ich nie ma.
     const rytm = this.par.rytmListy;
     for (let s = 0; s < this.podkrokiEf; s++) {
       if (s % rytm === 0) this._przebudujListe();
