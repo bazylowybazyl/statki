@@ -18,6 +18,12 @@ const SCENY = {
   S4: { nazwa: 'S4 próżnia', kamera: { az: 32, el: 8, cel: [0, 0, 650], odl: 6200 }, cien: [[0, 0, 650], 3500], pomin: STANIE_POMIJANE },
   S4grunt: { nazwa: 'S4 przy g = 400', kamera: K_WIEZA, cien: [[0, 0, 650], 3500], pomin: STANIE_POMIJANE },
   krater: { nazwa: 'Krater', kamera: { az: 60, el: 6, cel: [190, 0, 600], odl: 750 }, cien: [[0, 0, 500], 1700], pomin: 0 },
+  odpornosc: { nazwa: 'Odporność', kamera: K_WIEZA, cien: [[0, 0, 500], 1700], pomin: STANIE_POMIJANE },
+  kolumna: { nazwa: 'Kolumna', kamera: K_WIEZA, cien: [[0, 0, 500], 1700], pomin: STANIE_POMIJANE },
+  naroznik: { nazwa: 'Narożnik', kamera: K_WIEZA, cien: [[0, 0, 500], 1700], pomin: STANIE_POMIJANE },
+  krater90: { nazwa: 'Krater r = 90, próżnia', kamera: { az: 60, el: 6, cel: [190, 0, 650], odl: 1500 }, cien: [[0, 0, 650], 3500], pomin: 0 },
+  S3poza: { nazwa: 'S3 poza środkiem', kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300], pomin: 0 },
+  S3osm: { nazwa: 'S3 ośmiokąt', kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300], pomin: 0 },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 
@@ -296,6 +302,40 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         t.sort((a, b) => a - b);
         c.sort((a, b) => a - b);
         return { n, p50: t[n >> 1], p95: t[Math.floor(n * 0.95)], maks: t[n - 1], cpuP50: c[n >> 1], w: renderer.domElement.width, h: renderer.domElement.height, rysunki: renderer.info.render.drawCalls };
+      },
+      /** Harness: koszt całej klatki (zdarzenia, krok, obraz, rysunek). Ściana z n klatek w porcjach po 8, żeby czekanie na GPU nie dodawało swojej podłogi około 3 ms do każdej. GPU z sumy znaczników jednej klatki, compute i render osobno. */
+      async kosztKlatki(n = 32, probek = 15) {
+        stan.kroczyc = false;
+        stan.rysowac = false;
+        await new Promise((ok) => setTimeout(ok, 300));
+        await device.queue.onSubmittedWorkDone();
+        const krok0 = stan.krok;
+        const t0 = performance.now();
+        for (let k = 0; k < n; k++) {
+          krokSceny();
+          obraz.rysuj(renderer, camera, 0);
+          if ((k + 1) % 8 === 0) await device.queue.onSubmittedWorkDone();
+        }
+        await device.queue.onSubmittedWorkDone();
+        const scianaMs = (performance.now() - t0) / n;
+        const backend = renderer.backend;
+        const comp = [], rys = [];
+        for (let k = 0; k < probek; k++) {
+          backend.trackTimestamp = true;
+          krokSceny();
+          obraz.rysuj(renderer, camera, 0);
+          comp.push(await renderer.resolveTimestampsAsync('compute'));
+          rys.push(await renderer.resolveTimestampsAsync('render'));
+          backend.trackTimestamp = false;
+          backend.timestampQueryPool?.compute?.timestamps?.clear?.();
+          backend.timestampQueryPool?.render?.timestamps?.clear?.();
+          await device.queue.onSubmittedWorkDone();
+        }
+        comp.sort((a, b) => a - b);
+        rys.sort((a, b) => a - b);
+        const m = probek >> 1;
+        stan.rysowac = true;
+        return { scianaMs, computeGpuMs: comp[m], renderGpuMs: rys[m], gpuMs: comp[m] + rys[m], kroki: [krok0, stan.krok], w: renderer.domElement.width, h: renderer.domElement.height, rysunki: renderer.info.render.drawCalls };
       },
       bezZegara(b = true) { stan.kroczyc = !b; },
     },

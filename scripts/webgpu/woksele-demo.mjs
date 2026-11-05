@@ -110,7 +110,9 @@ try {
     // P3: zrzuty strony na żywo. --zrzut S1 --chwile 0,3,5,6 [--migawka S1_t3.50] [--kam az,el,cx,cy,cz,odl] [--etykieta nazwa]. Bez testów P1.
     const PNG = resolve(repo, args.out || '.tmp/woksele-demo/P3');
     mkdirSync(PNG, { recursive: true });
-    const sceny = String(args.zrzut === true ? 'S1' : args.zrzut).split(',');
+    // --plan "S1:0,3,5,6;S2:3,5": każda scena z własnymi chwilami (wtedy --zrzut 1 i bez --chwile).
+    const plan = args.plan ? new Map(String(args.plan).split(';').map((w) => { const [s, c] = w.split(':'); return [s, c.split(',').map(Number)]; })) : null;
+    const sceny = plan ? [...plan.keys()] : String(args.zrzut === true ? 'S1' : args.zrzut).split(',');
     const zapytanie = new URLSearchParams();
     zapytanie.set('scena', sceny[0]);
     if (args.ao) zapytanie.set('ao', String(args.ao));
@@ -128,11 +130,21 @@ try {
     for (const scena of sceny) {
       await czekajNaCisze(`zrzut ${scena}`);
       await ev(`window.__wok.pokaz.wejdz(${JSON.stringify(scena)}, { pomin: false, kamera: ${args.kam ? 'false' : 'true'} }).then(() => null)`);
-      for (const t of chwile) {
+      for (const t of plan ? plan.get(scena) : chwile) {
         await ev(`window.__wok.pokaz.doChwili(${t})`);
         const plik = join(PNG, `${et}${scena}_t${t.toFixed(2)}.png`);
         await screenshotPng(cdp, plik);
         console.log('zrzut', plik);
+      }
+      if (args.koszt) {
+        // Jedna liczba kosztu klatki: po każdej chwili z --chwile n klatek od tego miejsca, Number(--koszt) przebiegów od nowa.
+        const k = [];
+        for (let q = 0; q < Number(args.koszt); q++) {
+          await ev(`window.__wok.pokaz.doChwili(${(plan ? plan.get(scena) : chwile)[0]})`);
+          k.push(await ev('window.__wok.pokaz.kosztKlatki(32, 15)'));
+          console.log('koszt klatki', scena, JSON.stringify(k.at(-1)));
+        }
+        pomiary[scena] = { ...pomiary[scena], koszt: k };
       }
       if (args.pomiar) {
         pomiary[scena] = await ev('window.__wok.pokaz.zmierzKlatki(60, true)');
@@ -144,6 +156,35 @@ try {
         const k1 = await ev('({ k: window.__wok.pokaz.stan.klatek, f: window.__wok.pokaz.stan.krok, t: performance.now() })');
         console.log(`  pętla na żywo: ${((k1.k - k0.k) * 1000 / (k1.t - k0.t)).toFixed(1)} kl/s rAF, ${((k1.f - k0.f) * 1000 / (k1.t - k0.t)).toFixed(1)} kroków/s`);
       }
+    }
+    if (args.przyciski) {
+      // Każdy przycisk sceny w panelu, potem Reset: scena wchodzi, kroki idą, zdarzenia działają, dziennik pipeline'ów nie rośnie.
+      await ev('window.__wok.pokaz.panel(true)');
+      await ev('window.__wok.pokaz.bezZegara(false)');
+      const ile = await ev('document.querySelectorAll("#panelSceny button").length');
+      const wyn = [];
+      for (let q = 0; q < ile; q++) {
+        const nazwa = await ev(`document.querySelectorAll("#panelSceny button")[${q}].textContent`);
+        const wylaczony = await ev(`document.querySelectorAll("#panelSceny button")[${q}].disabled`);
+        const pipePrzed = await ev('window.__harness.pipes.list.length');
+        await ev(`document.querySelectorAll("#panelSceny button")[${q}].click()`);
+        const weszla = await waitFor(cdp, `document.querySelectorAll("#panelSceny button")[${q}].classList.contains("wl")`, 60000, 50);
+        await sleep(1500);
+        const k0 = await ev('window.__wok.pokaz.stan.krok');
+        await ev('[...document.querySelectorAll("#panelSter button")][0].click()');
+        await sleep(600);
+        const k1 = await ev('window.__wok.pokaz.stan.krok');
+        // Żywa pętla rAF po resecie: scena biegnie sama, zrzut z panelem. Sprawdza, że obraz idzie ze zdarzeniami także bez kroków harnessu.
+        await sleep(4000);
+        const id = await ev('window.__wok.pokaz.stan.scena');
+        await screenshotPng(cdp, join(PNG, `zywo_${id}.png`));
+        const k2 = await ev('window.__wok.pokaz.stan.krok');
+        const pipePo = await ev('window.__harness.pipes.list.length');
+        wyn.push({ nazwa, id, wylaczony, weszla: !!weszla, krokPrzedResetem: k0, krokPoResecie: k1, krokZrzutu: k2, nowePipeline: pipePo - pipePrzed });
+      }
+      console.log('przyciski', JSON.stringify(wyn));
+      raport.testy.przyciski = wyn;
+      if (wyn.some((w) => w.wylaczony || !w.weszla || w.krokPoResecie >= w.krokPrzedResetem + 60 || w.nowePipeline)) porazka(`przyciski scen: ${JSON.stringify(wyn)}`);
     }
     if (args.interakcje) {
       // Mysz i klawisze przez CDP, jak u użytkownika: orbita, przybliżenie, przesuw, spacja, R, P, przyciski panelu, zmiana rozmiaru okna.
