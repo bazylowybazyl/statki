@@ -888,7 +888,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
 
   /** Cztery najmocniejsze błyski tej chwili do uniformów światła brył. Tabela z solvera, bo moc i czas zna CPU. Bez alokacji. */
   let swiatlaZapalone = false;
+  let swiatlaWl = true;
   function ustawSwiatla(tau) {
+    if (!swiatlaWl) { for (let k = 0; k < 4; k++) swiatla[k].i.value = 0; swiatlaZapalone = false; return; }
     if (!solver.blyskiCzynne() && !swiatlaZapalone) return;
     const t = solver.blyskiCpu;
     const f = solver.fKlatka;
@@ -938,6 +940,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     kernele, listaObrazu, scene, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
     wczytaj, pelnyObraz, ustawCien, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
+    /** Pomiar: światło błysku na bryłach wł./wył. na tej samej klatce. */
+    swiatlaWlacz(b) { swiatlaWl = b; },
     get n() { return n; },
   };
 }

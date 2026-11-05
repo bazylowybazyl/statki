@@ -574,6 +574,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       });
     });
     wMaska.element(ni).assign(mN);
+    // Żar (§ 4.8): numer klatki + 1, tylko obraz. Jak w Node: węzeł, któremu eksplozja naprawdę zabrała wiązanie, stąd tu, nie w kKrater. S = 3 w strefie pasa nie tnie wnętrza ziarna, a luźny gruz nie ma czego tracić:
+    // zapis przy samym znaku S dawał równą żółtą łatę na całą kulę zamiast kratki po granicach ziaren (.tmp/woksele-demo/P4/c/S5v_t3.00.png kontra film/klatki/S5v_cala/k00180.jpg). Klatka kCzas bez krateru nie żarzy.
+    If(uKraterN.greaterThan(uint(0)).and(sI.greaterThan(1)).and(mN.notEqual(mI)), () => { wZar.element(i).assign(uT); });
   })().compute(MAX).setName('wokCzysc');
 
   const kCzyscS = Fn(() => {
@@ -668,8 +671,6 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       usunWezel(i, i3, p);
     }).ElseIf(znak.greaterThan(0), () => {
       wStan.element(i).x.assign(znak);
-      // Żar (§ 4.8): numer klatki + 1, tylko obraz. Tylko węzeł, który ma jeszcze wiązania: luźny gruz w kuli nic nie traci, a bez tego cały obłok wokół kuli świeci równą żółtą łatą (.tmp/woksele-demo/P4/b/S5_t3.00.png).
-      If(uv(wMaska.element(i)).bitAnd(uint(0x3ffff)).notEqual(uint(0)), () => { wZar.element(i).assign(uT); });
     });
   })().compute(MAX).setName('wokKrater');
 

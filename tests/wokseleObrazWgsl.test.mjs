@@ -47,7 +47,7 @@ function nieprzypisane(kod) {
   return zle;
 }
 
-test('kernele pyłu i przyczyny: najwyżej 8 buforów storage (§ 2.2), kKrater i kKraterCel także po zapisach żaru i błysku', () => {
+test('kernele pyłu i przyczyny: najwyżej 8 buforów storage (§ 2.2), kCzysc, kKrater i kKraterCel także po zapisach żaru i błysku', () => {
   for (const nazwa of ['kPylEmisja', 'kPrzyczyna', 'kPylKrok']) {
     const kod = wgsl(obraz.kernele[nazwa]);
     const ile = (kod.match(/var<storage/g) || []).length;
@@ -57,7 +57,9 @@ test('kernele pyłu i przyczyny: najwyżej 8 buforów storage (§ 2.2), kKrater 
   }
   const krater = wgsl(solver.kernele.kKrater);
   assert.ok((krater.match(/var<storage/g) || []).length <= 8);
-  assert.match(krater, /wokZar/);
+  const czysc = wgsl(solver.kernele.kCzysc);
+  assert.ok((czysc.match(/var<storage/g) || []).length <= 8);
+  assert.match(czysc, /wokZar/);
   const cel = wgsl(solver.kernele.kKraterCel);
   assert.ok((cel.match(/var<storage/g) || []).length <= 8);
   assert.match(cel, /wokBlysk/);

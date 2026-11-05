@@ -407,6 +407,9 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         const wl1 = await raz(true);
         const wyl = await raz(false);
         const wl2 = await raz(true);
+        obraz.swiatlaWlacz(false);
+        const bezSwiatla = await raz(true);
+        obraz.swiatlaWlacz(true);
         const samPass = [];
         for (let k = 0; k < probek; k++) {
           backend.trackTimestamp = true;
@@ -418,7 +421,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
           await device.queue.onSubmittedWorkDone();
         }
         stan.rysowac = true;
-        return { wl1, wyl, wl2, samPassMs: mediana(samPass), w: renderer.domElement.width, h: renderer.domElement.height, cel: [obraz.pyl.rt.width, obraz.pyl.rt.height] };
+        return { wl1, wyl, wl2, bezSwiatla, samPassMs: mediana(samPass), w: renderer.domElement.width, h: renderer.domElement.height, cel: [obraz.pyl.rt.width, obraz.pyl.rt.height] };
       },
       bezZegara(b = true) { stan.kroczyc = !b; },
     },
