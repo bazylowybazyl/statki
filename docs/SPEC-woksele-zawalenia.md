@@ -223,6 +223,31 @@ Koszt, tylko orientacja: S5 planeta od t = 6, 1920 × 1080, znaczniki GPU 1,64 m
 
 **Czego nie ma:** pomiaru parametrów znanej słabości (§ 5.5). Pierwsza klatka strony czeka na CG wieży S5, około 8 s w Node przy zajętej maszynie; to raz na stronę, S5 próżnia i planeta biorą statykę z pamięci. Kamer `blisko` i `gora` nie ma na panelu (P5). Wzorca CPU S5 w teście zgodności nie ma: zgodność to bajty budowy i liczby K1–K6.
 
+### 1.12 Domknięcie P4: pył, błysk, żar
+
+Kod: `dema/woksele-zawalenia/pyl.js` (kPylEmisja, kPrzyczyna, kPylKrok, kwady), `solver.js` (rekord błysku w `kKraterCel`, żar w `kCzysc`), `obraz.js` (skład w kwadzie wyjścia, żar i światło w materiale brył), `tests/wokseleObrazWgsl.test.mjs`, opcja `--kosztPylu`. Zrzuty: `.tmp/woksele-demo/P4/`.
+
+**Pył i błysk są jednym rysunkiem w celu około 720 wierszy** (przy 5120 × 1440: 2560 × 720), HDR, bez głębi, miękkość z tekstury przebiegu głębi jak w `rys4.mjs`, mieszanie (1, 1 − a): pył pisze (kolor · a, a), ogień (kolor, 0), więc addytywnie. Składa je kwad wyjścia przed tonem. Bez nowego renderera i bez bloomu. Reguła emisji, ruch, promień i alfa jak w filmie, próżnia i wyjątek S5 przez uniformy (`OPCJE_PYLU`). Drobny gruz z P3 został, rekordy gruzu z § 4.8 nie weszły, tak jak w propozycji S5.
+
+**LOD i sufit:** kwad powyżej 34–58 px celu (około 68–116 px przy 1440 wierszach) oraz poniżej 3–6 px rysuje co czwarty, alfa × 4, płynnie; sufit promienia 150 px celu; przy kamerze zanik między 1,5 a 3 promieniami. Kadr pyłu zgadza się z filmem także przy LOD: S1 Bliska t = 5 i t = 8 (`P4/b/blisko_S1_t8.00.png` obok `film/klatki/S1_blisko/k00480.jpg`).
+
+**Liczby, zm., RTX 5080, headless, 5120 × 1440, MSAA 4, zamrożona klatka, pył włączony / wyłączony:**
+
+| Kadr | Rysunek GPU, znaczniki | Ściana na klatkę, porcje po 8 | Sam pass pyłu, znaczniki |
+|---|---|---|---|
+| S1 Bliska t = 5 | 1,19–1,50 / 1,44 ms | 4,09–4,24 / 4,31 ms | 0,06 ms |
+| S1 Zbliżenie t = 9,5 (najgorszy z P0) | 1,79–1,81 / 1,63 ms | 6,82–6,91 / 5,84 ms | 0,18 ms |
+
+Cel 4 ms spełniony: w najgorszym kadrze ściana rośnie o około 1 ms. Znaczniki passa (0,18 ms) są niepewne jak w § 1.9, wiążąca jest górna granica ze ściany; rozdzielczości pyłu nie trzeba było obniżać poniżej 720 wierszy. Światło błysku na bryłach: 1,14–1,15 ms przy jednym błysku wobec 1,13 ms bez, krater z bliska, czyli znikome; gałąź z uniformem, bez błysku 4 porównania. Pipeline'y: 58 po rozgrzewce, 21 synchronicznych, wszystkie compute, rysunków 0, po przejściu scen nowych 0. Regresja P2 (`--testy sceny,strzal,kratery,pipeline`): porażek 0.
+
+**Różnice wobec propozycji S5 § 4:**
+- Żar nie przy samym znaku S w `kKrater`, tylko w `kCzysc`, przy rzeczywistej utracie wiązania, jak w Node. Znak S = 3 w strefie pasa nie tnie wnętrza ziarna, więc zapis przy znaku dawał równą żółtą łatę na całą kulę (`P4/c/S5v_t3.00.png`) zamiast kratki po granicach ziaren (`P4/d/S5v_t3.00.png`, film `S5v_cala/k00180.jpg`).
+- Poświata 2 r zamiast 3,5 r, z nieregularnym obrysem, na uwagę o lampach. Dlatego z góry mniej jest brunatnego światła wokół kuli niż w filmie (`P4/d/gora_S5_t2.20.png`, film `S5_gora/k00132.jpg`).
+- Bez testu środka („kula za dyskiem: moc × 0,22”): zostaje test na piksel.
+- Moc żaru 0,7 tylko w S5; krater 0,35, bo 0,7 z 750 j. to jaskrawopomarańczowe kartki. To strojenie po jednym kadrze: decyzja należy do oceny w ruchu.
+
+**Czego nie ma:** błysku w S1, S2, S4, bo nie ma w nich kraterów (film też go tam nie ma). Tryb niski pyłu (połowa puli, § 4.6) i przełącznik pyłu na panelu: P5, P6. Nikt nie oglądał tego w ruchu ani w prawdziwym oknie Chrome; punkt K2 nie przeszedł przez agenta bez kontekstu. Strzał myszą dostaje błysk i kłąb z tych samych rekordów, ale pokaz nie ma jeszcze strzału (P5), więc nie widziałem go na obrazie.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
@@ -1168,7 +1193,7 @@ Od najbardziej ryzykownego. Każdy pakiet kończy się commitem, a bez zaliczone
 | **P7 Poprawki po K3** | jw. | Lista bez „nie” w [!] albo zapisana jawnie niemożliwa | Ta sama lista, ten sam agent, nowy kontekst | P8 |
 | **P8 Pokaz użytkownikowi** | Reguła obszaru, wpis w planie, zrzuty | Demo, krótka lista, co zostało nierozwiązane, liczby Z4 | Tylko ocena użytkownika | — |
 
-**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu. P1 zrobione 2026-11-05, § 1.7: punkt G1 przeszedł (S3 najwyżej 0,414 ms/krok wobec progu 8 ms). P2 zrobione 2026-11-05, § 1.8: warunek porażki 2 nie zachodzi. P3 zrobione 2026-11-05, § 1.9, bez punktu K1: strona na żywo, wzorcem film.
+**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu. P1 zrobione 2026-11-05, § 1.7: punkt G1 przeszedł (S3 najwyżej 0,414 ms/krok wobec progu 8 ms). P2 zrobione 2026-11-05, § 1.8: warunek porażki 2 nie zachodzi. P3 zrobione 2026-11-05, § 1.9, bez punktu K1: strona na żywo, wzorcem film. P4 zrobione 2026-11-05, § 1.12, bez punktu K2.
 
 **Punkty oceny:** K1 po P3, K2 po P4, K3 po P5. Żaden kadr nie idzie do użytkownika przed K3.
 

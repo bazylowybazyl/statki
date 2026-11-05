@@ -755,7 +755,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null } = {}) {
     pyl.wczytaj(w, opcjePylu);
     uKlatka.value = 0;
-    uZarMoc.value = opcjePylu?.zar ?? 0.5;
+    uZarMoc.value = opcjePylu?.zar ?? 0.35;
     uPokladZ.value = poklad ? poklad.z : -1e30;
     uOtworR2.value = poklad ? poklad.rOtwor * poklad.rOtwor : 0;
     uDyskR2.value = poklad ? rDysk * rDysk : 0;
