@@ -217,11 +217,13 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       });
     });
 
-    // Brzeg otworu dysku (§ 4.5): węzeł przy pierwszej utracie wiązania wyrzuca 1–3 kawałki w górę i na zewnątrz, 40–120 j./s. Cel: pas gruzu szerszy niż pas kruszenia.
+    // Brzeg otworu dysku (§ 4.5): węzeł pokładu przy pierwszej utracie wiązania wyrzuca 1–3 kawałki w górę i na zewnątrz, 40–120 j./s. Cel: pas gruzu szerszy niż pas kruszenia.
+    // AGENT: tylko górna warstwa, co czwarty węzeł i blisko otworu: z każdego węzła dysku pod dyskiem sypał się deszcz równych kostek (.tmp/woksele-demo/P3/j_S3_t3.00.png).
     If(kd.equal(uint(KD_DYSK)).and(lost.greaterThan(0)).and(bity.bitAnd(uint(32)).equal(uint(0))), () => {
       bity.assign(bity.bitOr(uint(32)));
       const h3 = haszT(i.add(uint(4242)));
       const ile = uv_(min(h3.bitAnd(uint(3)).add(uint(1)), uint(3)));
+      If(xi.z.lessThan(uPokladZ.sub(30)).or(h3.shiftRight(uint(4)).bitAnd(uint(3)).notEqual(uint(0))).or(dot(xi.xy, xi.xy).greaterThan(uOtworR2.mul(9))), () => { ile.assign(uint(0)); });
       const rd = v3(vec3(xi.x, xi.y, 0));
       rd.assign(rd.div(max(length(rd), 1)));
       Loop({ start: uint(0), end: ile, type: 'uint', condition: '<', name: 'kd2' }, ({ kd2 }) => {
@@ -715,7 +717,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       const b = 8 * i;
       dane[b] = w.pos[3 * i]; dane[b + 1] = w.pos[3 * i + 1]; dane[b + 2] = w.pos[3 * i + 2];
       dane[b + 3] = zi >= 0 ? 0.7 + (0.55 * (hz & 255)) / 255 : 1;
-      dane[b + 4] = PAL[kd][0]; dane[b + 5] = PAL[kd][1]; dane[b + 6] = PAL[kd][2]; dane[b + 7] = m0[i];
+      // Wieniec dysku jest kotwicą, ale ciemna kotwica rysowałaby na pokładzie zygzak po komórkach.
+      const kb = rDysk > 0 && kd === 5 ? 4 : kd;
+      dane[b + 4] = PAL[kb][0]; dane[b + 5] = PAL[kb][1]; dane[b + 6] = PAL[kb][2]; dane[b + 7] = m0[i];
       const q = 12 * i;
       rama[q] = 1; rama[q + 1] = 0; rama[q + 2] = 0; rama[q + 3] = 0;
       rama[q + 4] = 0; rama[q + 5] = 1; rama[q + 6] = 0; rama[q + 7] = 0;
