@@ -4,6 +4,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createWokseleObraz } from './obraz.js';
 import { OPCJE_PYLU } from './pyl.js';
+import { DX_MIASTA, POJEMNOSC_MIASTA } from './scenaMiasta.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -32,8 +33,19 @@ const SCENY = {
   S3osm: { nazwa: 'S3 ośmiokąt', kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300], pomin: 0 },
   // Pomiar LOD obrazu: cztery wieże S1, około 60 tys. węzłów, wymaga ?maxWez=61000. Bez `cien`: kamera cienia z rozmiaru sceny. ukryta: bez przycisku i bez budowy w tle (bez ?maxWez solver jej nie pomieści).
   LOD60: { nazwa: 'LOD 60 tys. węzłów', kamera: { az: 32, el: 14, cel: [0, 0, 500], odl: 5200 }, pomin: 0, lod: { sloty: 2, cien: 1 }, ukryta: true },
+  // Miasto (plan LOD § 5): kamera i LOD z przycisku kamery, cień z rozmiaru sceny. Pojemność z POJEMNOSC_MIASTA, strona bez niej przeładowuje się przy wejściu.
+  M1: { nazwa: 'Miasto: ostrzał z góry', miasto: true, pomin: 0 },
+  M2: { nazwa: 'Miasto: wszystko naraz', miasto: true, pomin: 0 },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
+// Kamery miasta: skala w px na j., więc budynek ma na ekranie tyle pikseli, co w grze przy tym zoomie, a mniejsze okno pokazuje tylko wycinek kadru. Plan LOD § 1: Atlas 0,569 (kadr 9000 j. przy 5120 px), limit gry 3,2 (1600 j.), mały statek 7,88 (650 j.).
+// Kierunek jak w grze: góra budynku leży w płaszczyźnie gry, więc kamera patrzy w poprzek ringu (wzdłuż y dzielnicy) i widzi fasady. Niskie el zamiast przesunięcia kadru, cel bliskich kamer z planu sceny. LOD: tier 1 i tier 2 z § 4.
+const KAM_MIASTA = {
+  atlas: { nazwa: 'Atlas', pxNaJ: 0.569, az: 10, el: 17, cel: [0, -60, 30], lod: { sloty: 2, cien: 1 } },
+  bliska: { nazwa: 'Atlas z bliska', pxNaJ: 3.2, az: 22, el: 12, zCelu: true, lod: { sloty: 7, cien: 2 } },
+  maly: { nazwa: 'Mały statek', pxNaJ: 7.88, az: 28, el: 8, zCelu: true, lod: { sloty: 7, cien: 7 } },
+};
+const CIEN_MIASTA = { bias: -2.5 / 16000, normalBias: 0.7 }; // stałe wieży (9,6 j. głębi, 2 j. wzdłuż normalnej) to jedna czwarta budynku
 
 function ustawKamere(camera, sterowanie, k) {
   const a = (k.az * Math.PI) / 180, e = (k.el * Math.PI) / 180;
@@ -84,6 +96,10 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const lodAdresu = adres.has('sloty') || adres.has('cienSloty') ? { sloty: Number(adres.get('sloty') ?? 7), cien: Number(adres.get('cienSloty') ?? adres.get('sloty') ?? 7) } : null;
   // ?lodS1={"dx":40,"mat":"staly"}: S1 przy innym dx (próba 1 planu LOD). Tylko do zrzutów: bez budowy pozostałych scen w tle, cień z rozmiaru sceny.
   const lodS1Adresu = adres.has('lodS1') ? JSON.parse(adres.get('lodS1')) : null;
+  // ?miasto={"dx":10}: opcje dzielnicy (scenaMiasta.js). Przyciski gęstości i wejście w miasto przeładowują stronę z ?maxWez i ?nKom: bufory solvera powstają raz, przy starcie.
+  const miastoAdresu = adres.has('miasto') ? JSON.parse(adres.get('miasto')) : {};
+  const dxMiasta = miastoAdresu.dx ?? DX_MIASTA;
+  const miastoSieMiesci = solver.maxNodes >= (POJEMNOSC_MIASTA[dxMiasta]?.maxWez ?? 0);
   const watek = new Worker(new URL('./budowa.worker.js', import.meta.url), { type: 'module' });
   const wypieki = new Map();
   const czekajace = new Map();
@@ -99,7 +115,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: miastoAdresu });
     }
     return czekajace.get(id).obietnica;
   }
@@ -110,16 +126,29 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     if (stan.celScena === id) ustawScene(id, opcje);
   }
 
+  /** Kamera miasta z przycisku: skala w px na j. z wysokości okna, LOD obrazu tieru. Reset jej nie rusza. */
+  function kameraMiasta(nazwa) {
+    const k = KAM_MIASTA[nazwa];
+    if (!k) throw new Error(`Nieznana kamera ${nazwa}`);
+    stan.kamMiasta = nazwa;
+    const odl = window.innerHeight / (2 * k.pxNaJ * Math.tan((camera.fov * Math.PI) / 360));
+    ustawKamere(camera, sterowanie, { az: k.az, el: k.el, cel: k.zCelu ? (stan.miasto?.celBliska ?? [0, 0, 60]) : k.cel, odl });
+    if (!lodAdresu) obraz.ustawLod(k.lod);
+    zaznacz();
+  }
+
   /** Scena przez reset: wgranie buforów, bez nowych pipeline'ów. Kamera tylko przy zmianie sceny, R zostawia ją tam, gdzie jest. */
   function ustawScene(id, { kamera = true, pomin = true } = {}) {
     const opis = SCENY[id];
     if (!opis) throw new Error(`Nieznana scena ${id}`);
-    const { w, g, zdarzeniaOd, rDysk, poklad } = wypieki.get(id);
+    const { w, g, zdarzeniaOd, rDysk, poklad, miasto } = wypieki.get(id);
     solver.wczytaj(w);
     solver.ustawPlan(g);
-    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? opis.lod }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod) }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
     if (opis.cien && !lodS1Adresu) obraz.ustawCien(opis.cien[0], opis.cien[1]);
     else obraz.ustawCienZSceny(w, opis.cienZapas);
+    stan.miasto = miasto;
+    if (opis.miasto) { obraz.sun.shadow.bias = CIEN_MIASTA.bias; obraz.sun.shadow.normalBias = CIEN_MIASTA.normalBias; }
     stan.scena = id;
     stan.krok = 0;
     stan.akum = 0;
@@ -139,10 +168,13 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       stan.vcx = vx / w.n; stan.vcy = vy / w.n; stan.vcz = vz / w.n;
       if (kamera) { stan.ocx = 0; stan.ocy = 0; stan.ocz = 0; }
     }
-    if (kamera) {
+    if (kamera && opis.miasto) kameraMiasta(stan.kamMiasta);
+    else if (kamera) {
       const k = opis.kamera;
       ustawKamere(camera, sterowanie, opis.zaSrodkiem ? { ...k, cel: [k.cel[0] + stan.c0x, k.cel[1] + stan.c0y, k.cel[2] + stan.c0z] } : k);
     }
+    panelKamer.hidden = !opis.miasto;
+    panelGestosci.hidden = !opis.miasto;
     zaznacz();
     return w;
   }
@@ -200,17 +232,34 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const gr1 = document.getElementById('panelSceny');
   const gr2 = document.getElementById('panelTempo');
   const gr3 = document.getElementById('panelSter');
+  /** Miasto na stronie bez pojemności albo inna gęstość: przeładowanie z parametrami, bo bufory solvera powstają raz, przy starcie. */
+  function przeladujMiasto(id, dx) {
+    const p = POJEMNOSC_MIASTA[dx];
+    const q = new URLSearchParams(location.search);
+    q.set('scena', id);
+    q.set('maxWez', String(p.maxWez));
+    q.set('nKom', String(p.nKom));
+    q.set('miasto', JSON.stringify({ ...miastoAdresu, dx }));
+    location.search = q.toString();
+  }
   for (const id of Object.keys(SCENY)) {
     if (SCENY[id].ukryta) continue;
-    const b = dodaj(gr1, SCENY[id].nazwa, () => { wejdz(id); }, `s:${id}`);
+    const akcja = SCENY[id].miasto ? () => { if (miastoSieMiesci) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
+    const b = dodaj(gr1, SCENY[id].nazwa, akcja, `s:${id}`);
     b.disabled = !zdarzeniaDostepne(id);
   }
   for (const [t, opis] of TEMPA) dodaj(gr2, opis, () => { stan.tempo = t; zaznacz(); }, `t:${t}`);
   dodaj(gr3, 'Reset (R)', () => ustawScene(stan.scena, { kamera: false }));
   const bPauza = dodaj(gr3, 'Pauza (spacja)', () => { stan.pauza = !stan.pauza; zaznacz(); });
+  const nowaGrupa = (id) => { const d = document.createElement('div'); d.className = 'grupa'; d.id = id; d.hidden = true; panel.insertBefore(d, gr2); return d; };
+  const panelKamer = nowaGrupa('panelKamery');
+  const panelGestosci = nowaGrupa('panelGestosc');
+  for (const n of Object.keys(KAM_MIASTA)) dodaj(panelKamer, KAM_MIASTA[n].nazwa, () => kameraMiasta(n), `k:${n}`);
+  for (const dx of Object.keys(POJEMNOSC_MIASTA).map(Number).sort((a, b) => b - a)) dodaj(panelGestosci, `dx ${dx}`, () => { if (dx !== dxMiasta) przeladujMiasto(stan.scena, dx); }, `d:${dx}`);
+  stan.kamMiasta = 'atlas';
   function zaznacz() {
     for (const [k, b] of przyciski) {
-      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}`;
+      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}`;
       b.classList.toggle('wl', wl);
     }
     bPauza.classList.toggle('wl', stan.pauza);
@@ -271,7 +320,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     }
   }
   requestAnimationFrame(petla);
-  if (!lodS1Adresu) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta) wypiek(id);
+  // Budowa w tle: pod harnessem miasta tylko scena z adresu (dx = 5 to około minuta CPU na scenę), a miasto tylko na stronie, która je pomieści.
+  if (!lodS1Adresu && !(window.__harness && adres.has('miasto'))) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta && (!SCENY[id].miasto || miastoSieMiesci)) wypiek(id);
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
   Object.assign(wok, {
@@ -300,6 +350,36 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         return { krok: stan.krok };
       },
       kamera(k) { ustawKamere(camera, sterowanie, k); },
+      kameraMiasta,
+      /** Harness: klatka po zmianie kamery albo LOD, przy zatrzymanym zegarze. */
+      async przerysuj() {
+        stan.wymusKlatke = true;
+        await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+        await device.queue.onSubmittedWorkDone();
+      },
+      /**
+       * Harness: ile budynków stoi. Wysokość środka masy węzłów budynku względem początkowej (usunięte liczą się jak na ziemi): stoi ≥ 0,9, leży < 0,55, reszta to częściowo.
+       * Osobno trafione i nietrafione, a do tego węzły żywe, NaN i pominięte zdarzenia solvera.
+       */
+      async statMiasta() {
+        const m = stan.miasto;
+        if (!m) return null;
+        const r = await solver.odczytLekki(renderer);
+        const p0 = solver.wypiek.pos;
+        const wy = { t: { stoi: 0, czesc: 0, lezy: 0 }, n: { stoi: 0, czesc: 0, lezy: 0 }, zywych: 0, nan: 0, krok: stan.krok, liczniki: { ...solver.liczniki } };
+        for (let q = 0; q < m.budynki.length; q++) {
+          const b = m.budynki[q];
+          let z = 0, z0 = 0;
+          for (let i = b.start; i < b.start + b.n; i++) {
+            z0 += p0[3 * i + 2];
+            if (r.pos[3 * i + 2] !== r.pos[3 * i + 2]) wy.nan++;
+            if (r.aktywny[i]) { z += r.pos[3 * i + 2]; wy.zywych++; }
+          }
+          const u = z / Math.max(1e-6, z0);
+          wy[m.trafione[q] ? 't' : 'n'][u >= 0.9 ? 'stoi' : u < 0.55 ? 'lezy' : 'czesc']++;
+        }
+        return wy;
+      },
       panel(wid) { panel.hidden = !wid; },
       /** Harness: czas pełnej klatki w ściśle zamkniętej pętli (krok, obraz, rysunek, czekanie na GPU), n klatek od stanu bieżącego. */
       async diag() {

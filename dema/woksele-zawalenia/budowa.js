@@ -243,6 +243,48 @@ function rozwiazStatyke(s, wezly, zamrozone, ladunek) {
   return { u, NX, NY, NZ, KL, iter: it, residuum: Math.sqrt(rr / r0) };
 }
 
+/**
+ * Statyka dzielnicy (scenaMiasta.js): meta.budynki to rozłączne bryły, więc CG po budynku, a nie na całej scenie, gdzie liczba iteracji idzie za najwyższym, a koszt iteracji za wszystkimi.
+ * Budynki o tym samym kluczu mają tę samą siatkę i kolejność węzłów, więc jeden CG na klucz. Grawitacja równoległa do projektowej, jak w wieży z kotwicami: F0 = skala · f0.
+ */
+function statykaBudynkow(s, scena, gP, dP, skalaF0, f0, F0, nieruchomy, info) {
+  const { nbr, pos, K, kind, par } = s;
+  const { ijk } = scena;
+  const pamiec = new Map();
+  let maxF = 0, maxU = 0, maxIter = 0, maxRes = 0;
+  for (const b of scena.meta.budynki) {
+    const nb = b.n, st0 = b.start;
+    let st = pamiec.get(b.klucz);
+    if (!st) {
+      const lNbr = new Int32Array(STRONA * nb);
+      for (let q = 0; q < STRONA * nb; q++) { const v = nbr[STRONA * st0 + q]; lNbr[q] = v < 0 ? -1 : v - st0; }
+      const zam = new Uint8Array(nb);
+      const wezly = new Int32Array(nb);
+      for (let i = 0; i < nb; i++) { wezly[i] = i; if (ijk[3 * (st0 + i) + 2] === 0) zam[i] = 1; }
+      st = rozwiazStatyke({ n: nb, nbr: lNbr, pos: pos.subarray(3 * st0, 3 * (st0 + nb)), K, kind: kind.subarray(st0, st0 + nb), par }, wezly, zam, (i, w) => { w[0] = gP * dP[0]; w[1] = gP * dP[1]; w[2] = gP * dP[2]; });
+      pamiec.set(b.klucz, st);
+      maxIter = Math.max(maxIter, st.iter);
+      maxRes = Math.max(maxRes, st.residuum);
+    }
+    for (let i = 0; i < nb; i++) {
+      const ux = st.u[3 * i], uy = st.u[3 * i + 1], uz = st.u[3 * i + 2];
+      maxU = Math.max(maxU, Math.sqrt(ux * ux + uy * uy + uz * uz));
+      if (ijk[3 * (st0 + i) + 2] === 0) nieruchomy[st0 + i] = 1;
+      for (let d = 0; d < ND; d++) {
+        const lo = STRONA * i + d;
+        const ox = STRONA * (st0 + i) + d;
+        const j = nbr[ox] - st0;
+        if (j < 0) continue;
+        const f = st.KL[lo] * (st.NX[lo] * (st.u[3 * j] - ux) + st.NY[lo] * (st.u[3 * j + 1] - uy) + st.NZ[lo] * (st.u[3 * j + 2] - uz));
+        f0[ox] = f;
+        F0[ox] = f * skalaF0;
+        maxF = Math.max(maxF, Math.abs(f));
+      }
+    }
+  }
+  info.grupy.wieza = { iter: maxIter, residuum: maxRes, maxUgiecieLiniowe: maxU, maxF0: maxF, odkMax: maxF / (K * s.dx), statyk: pamiec.size };
+}
+
 function budujSasiadow(s) {
   const { n, nbr, R0, L, maska, scena } = s;
   const { ijk, grupa, pos } = scena;
@@ -422,7 +464,9 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
   const gw = grupy.find((x) => x.nazwa === 'wieza');
   const wWiezy = gw ? Array.from({ length: gw.n }, (_, q) => gw.start + q) : [];
   const swobodna = !!gw && !kotwiceWiezy;
-  if (gw) {
+  if (gw && scena.meta.budynki) {
+    statykaBudynkow(s, scena, gProj, gProjDir, zr.gMod / gProj, f0, F0, nieruchomy, info);
+  } else if (gw) {
     const zam = new Uint8Array(n);
     for (const i of wWiezy) if (ijk[3 * i + 2] === 0) zam[i] = 1;
     const gP = gProj, dP = gProjDir;

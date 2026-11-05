@@ -869,11 +869,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     const c = sun.shadow.camera;
     c.left = -zakres; c.right = zakres; c.top = zakres; c.bottom = -zakres;
     const far = Math.max(16000, odl + 2 * zakres);
-    if (c.far !== far) {
-      c.far = far;
-      // Bias w jednostkach świata ma zostać: 9,6 j. głębi przy far = 16000. Normalny rośnie z rozmiarem teksla.
-      sun.shadow.bias = far === 16000 ? -0.0006 : -9.6 / far;
-    }
+    if (c.far !== far) c.far = far;
+    // Bias w jednostkach świata ma zostać: 9,6 j. głębi przy far = 16000. Normalny rośnie z rozmiarem teksla. Przypisanie zawsze: miasto ustawia własny (pokaz.js), a powrót do starej sceny ma go zdjąć także przy tym samym far.
+    sun.shadow.bias = far === 16000 ? -0.0006 : -9.6 / far;
     sun.shadow.normalBias = 2.0 * Math.max(1, zakres / 3500);
     c.updateProjectionMatrix();
     sun.target.updateMatrixWorld();

@@ -138,6 +138,9 @@ try {
     if (args.lodS1) zapytanie.set('lodS1', String(args.lodS1));
     if (args.pyl) zapytanie.set('pyl', String(args.pyl));
     if (args.maxWez) zapytanie.set('maxWez', String(args.maxWez));
+    // Miasto (plan LOD § 5): --zrzut M1 --miasto '{"dx":10}' --maxWez 64000 [--nKom 524288] --kamery atlas,bliska [--kosztMiasta 1].
+    if (args.miasto) zapytanie.set('miasto', String(args.miasto));
+    if (args.nKom) zapytanie.set('nKom', String(args.nKom));
     if (args.sloty) zapytanie.set('sloty', String(args.sloty));
     if (args.cienSloty !== undefined) zapytanie.set('cienSloty', String(args.cienSloty));
     if (!args.pomiar) zapytanie.set('maksKl', '60');
@@ -165,6 +168,29 @@ try {
       }
       for (const t of plan ? plan.get(scena) : chwile) {
         await ev(`window.__wok.pokaz.doChwili(${t})`);
+        if (args.kamery) {
+          // Miasto: ten sam stan z każdej kamery, stan budynków, a przy --kosztMiasta koszt rysunku tego kadru (wszystkie passy, z cieniem) i koszt kroku z tej chwili.
+          console.log(`stan ${scena} t = ${t}`, JSON.stringify(await ev('window.__wok.pokaz.statMiasta()')));
+          for (const kam of String(args.kamery).split(',')) {
+            await ev(`window.__wok.pokaz.kameraMiasta(${JSON.stringify(kam)}); true`);
+            await ev('window.__wok.pokaz.przerysuj()');
+            await screenshotPng(cdp, join(PNG, `${et}${scena}_${kam}_t${t.toFixed(2)}.png`));
+            if (args.kosztMiasta) {
+              const l = await ev('(() => { const q = window.__wok.obraz.lod; return [q.sloty, q.cien]; })()');
+              const wyn = await ev(`window.__wok.pokaz.kosztLod(${JSON.stringify([l])}, 5)`);
+              const r = wyn.wy[0];
+              console.log(`rysunek ${scena} t = ${t} ${kam}:`, wierszLod(r));
+              ((pomiary[scena] ??= {}).rysunek ??= []).push({ t, kam, ...r });
+            }
+          }
+          if (args.kosztMiasta) {
+            const k = await ev('window.__wok.pokaz.kosztKlatki(4, 8)');
+            console.log(`krok ${scena} t = ${t}: compute ${f(k.computeGpuMs, 2)} ms GPU (krok, kernele obrazu, pył), ściana ${f(k.scianaMs, 2)} ms, kroki ${JSON.stringify(k.kroki)}`);
+            ((pomiary[scena] ??= {}).krok ??= []).push({ t, ...k });
+          }
+          await ev('window.__wok.pokaz.bezZegara(true); true');
+          continue;
+        }
         const plik = join(PNG, `${et}${scena}_t${t.toFixed(2)}.png`);
         await screenshotPng(cdp, plik);
         console.log('zrzut', plik);
@@ -327,7 +353,7 @@ try {
     if (nowe.some((p) => p.sync)) porazka(`pipeline'y synchroniczne po rozgrzewce: ${nowe.filter((p) => p.sync).length}`);
     throw Object.assign(new Error('koniec zrzutów'), { zrzutyKoniec: true });
   }
-  const adapter = await otworz(`test=1${args.maxWez ? `&maxWez=${args.maxWez}` : ''}`);
+  const adapter = await otworz(`test=1${args.maxWez ? `&maxWez=${args.maxWez}` : ''}${args.nKom ? `&nKom=${args.nKom}` : ''}`);
   console.log('adapter', JSON.stringify(adapter));
 
   // (d) Dziennik pipeline'ów po rozgrzewce: niepusty, a od tej chwili nic nowego.
@@ -569,6 +595,16 @@ try {
       if (!q.zaliczony) porazka(`wiele kraterów ${id}`);
     }
     raport.testy.kratery = r;
+    zapiszRaport();
+  }
+
+  if (TESTY.includes('miastoW1')) {
+    // W1 dzielnicy: --testy miastoW1 --miasto '{"dx":10}' --maxWez 64000 [--nKom 524288] [--lodW1 5]. Dryf, zerwania, ścisk siatki kontaktów.
+    await czekajNaCisze('W1 miasta');
+    const r = await ev(`window.__wok.test.lod.miastoW1(${JSON.stringify({ ...JSON.parse(String(args.miasto || '{}')), sekund: Number(args.lodW1 || 5) })})`);
+    console.log('W1 miasta', JSON.stringify(r));
+    raport.testy.miastoW1 = r;
+    if (!r.zaliczony) porazka(`W1 miasta: ${JSON.stringify(r)}`);
     zapiszRaport();
   }
 

@@ -50,7 +50,10 @@ function opisAdaptera(device) {
 }
 
 async function start() {
-  const renderer = new THREE.WebGPURenderer({ powerPreference: 'high-performance', antialias: false, trackTimestamp: true });
+  // AGENT: ?maxWez ponad około 230 tys. przekracza domyślne 128 MB na wiązanie storage (wiązania wWiaz: 576 B na węzeł): tylko wtedy prośba o większy limit, przy reszcie urządzenie jak dotąd.
+  const maxWezAdresu = Number(parametryAdresu.get('maxWez')) || 26000;
+  const limity = maxWezAdresu > 220000 ? { maxStorageBufferBindingSize: 2 ** 30, maxBufferSize: 2 ** 30 } : undefined;
+  const renderer = new THREE.WebGPURenderer({ powerPreference: 'high-performance', antialias: false, trackTimestamp: true, ...(limity ? { requiredLimits: limity } : {}) });
   await renderer.init();
   if (!renderer.backend.isWebGPUBackend) throw new Error('Demo wymaga WebGPU (three przeszedł na zapasowy backend WebGL2).');
   const backend = renderer.backend;
@@ -72,8 +75,9 @@ async function start() {
     if (!backend.pipelineUtils.__harnessHook) throw new Error('Hak dziennika pipeline\'ów harnessu się nie założył');
   }
 
-  // ?maxWez=N: pojemność buforów na scenę większą niż dzisiejsze (pomiar LOD, miasto). Domyślnie 26000: bufory i kernele jak dotąd.
-  const solver = createWokseleSolver({ maxNodes: Number(parametryAdresu.get('maxWez')) || 26000, par: PARAMETRY });
+  // ?maxWez=N: pojemność buforów na scenę większą niż dzisiejsze (pomiar LOD, miasto). Domyślnie 26000: bufory i kernele jak dotąd. ?nKom=2^k: komórki siatki kontaktów, miasto przy dx = 5 ma więcej zajętych komórek niż domyślne 65 536.
+  const nKomAdresu = Number(parametryAdresu.get('nKom')) || 0;
+  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: nKomAdresu ? { ...PARAMETRY, nKom: nKomAdresu } : PARAMETRY });
   await solver.rozgrzej(renderer);
 
   const pamiecStatyki = new Map();

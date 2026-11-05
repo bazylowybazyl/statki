@@ -1,6 +1,7 @@
 // Próba 1 planu LOD (docs/PLAN-zawalenia-lod-miasto.md § 5): czy grubszy woksel zachowuje się tak samo. Tylko ?test=1.
 // Scena S1 przy danym dx i materiale, liczby z tych samych metryk co tabela § 8 (ObserwatorSceny), czasy ze znaczników. Kratka kawałków także w jednostkach gry: kosze metryk liczą węzły, a węzeł przy dx = 80 waży 64 razy tyle co przy dx = 20.
 import { S1Lod, stanieLod, planGpu } from './scena.js';
+import { planStanieMiasta } from './scenaMiasta.js';
 import { popcnt, zbudujPlan } from './budowa.js';
 import { ObserwatorSceny, pietraStropow, taca, wysokoscDachu } from './metryki.js';
 
@@ -167,5 +168,54 @@ export function createTestLod({ renderer, solver, wok }) {
     return { dx: o.dx, mat: o.mat ?? 'staly', n: w.n, sekund: sek, msSciany: performance.now() - tP, maxPrzem: Math.sqrt(mx), vMax: Math.sqrt(vm), zerwaneBity: bity0 - bity, wezlyZInnaMaska: zmask, sMax, nan, zaliczony: Math.sqrt(mx) <= 0.5 && bity0 === bity && nan === 0 };
   }
 
-  return { s1, w1 };
+  /** W1 dzielnicy (plan LOD § 5, próba 2): stoi sekund, bez zdarzeń. Budowa i wczytanie jak w pokazie, odczyt raz na końcu. */
+  async function miastoW1(o = {}) {
+    const t0 = performance.now();
+    const plan = planStanieMiasta(o);
+    if (plan.scena.n > solver.maxNodes) return { dx: o.dx, n: plan.scena.n, poza: `${plan.scena.n} węzłów, MAX ${solver.maxNodes}` };
+    const { w, g } = zbudujPlan(plan, {});
+    const msBudowy = performance.now() - t0;
+    solver.wczytaj(w);
+    solver.ustawPlan({ ...g, czasy: null });
+    const sek = o.sekund ?? 5;
+    const tP = performance.now();
+    await wok.krok(60 * sek);
+    const msSciany = performance.now() - tP;
+    const r = await solver.odczyt(renderer);
+    let mx = 0, vm = 0, bity = 0, bity0 = 0, zmask = 0, sMax = 0;
+    const budynki = plan.miasto.budynki;
+    let zerwaneBudynki = 0;
+    for (const b of budynki) {
+      let zm = 0;
+      for (let i = b.start; i < b.start + b.n; i++) {
+        const a = r.poz[3 * i] - w.pos[3 * i], c = r.poz[3 * i + 1] - w.pos[3 * i + 1], e = r.poz[3 * i + 2] - w.pos[3 * i + 2];
+        mx = Math.max(mx, a * a + c * c + e * e);
+        vm = Math.max(vm, r.vel[3 * i] ** 2 + r.vel[3 * i + 1] ** 2 + r.vel[3 * i + 2] ** 2);
+        bity += popcnt(r.maskaW[i]);
+        bity0 += popcnt(w.maska[i]);
+        if (r.maskaW[i] !== w.maska[i]) { zmask++; zm++; }
+        sMax = Math.max(sMax, r.szkoda[i]);
+      }
+      if (zm) zerwaneBudynki++;
+    }
+    const nan = liczNaN(r.poz) + liczNaN(r.vel) + liczNaN(r.acc);
+    // Ścisk siatki kontaktów: tyle zajętych komórek i tyle węzłów ponad 23 w komórce po haszu (§ 2.7).
+    const kom = new Map();
+    const iKom = w.iKom, mk = solver.atrybuty.komLicz.count - 1;
+    for (let i = 0; i < w.n; i++) {
+      const a = Math.floor(r.poz[3 * i] * iKom), c = Math.floor(r.poz[3 * i + 1] * iKom), e = Math.floor(r.poz[3 * i + 2] * iKom);
+      const h = ((Math.imul(a, 73856093) ^ Math.imul(c, 19349663) ^ Math.imul(e, 83492791)) >>> 0) & mk;
+      kom.set(h, (kom.get(h) ?? 0) + 1);
+    }
+    let maxKom = 0, ponad = 0;
+    for (const v of kom.values()) { if (v > maxKom) maxKom = v; if (v > 23) ponad += v - 23; }
+    return {
+      dx: o.dx, n: w.n, budynkow: budynki.length, statyk: w.info.grupy.wieza.statyk, iterMax: w.info.grupy.wieza.iter, msBudowy, sekund: sek, msSciany, podkroki: w.podkrokiEf, rytm: w.rytmEf, c: w.cEf,
+      maxPrzem: Math.sqrt(mx), vMax: Math.sqrt(vm), zerwaneBity: bity0 - bity, wezlyZInnaMaska: zmask, zerwaneBudynki, sMax, nan,
+      siatka: { zajete: kom.size, nKom: mk + 1, maxWKomorce: maxKom, ponad23: ponad },
+      zaliczony: Math.sqrt(mx) <= 0.5 && bity0 === bity && nan === 0,
+    };
+  }
+
+  return { s1, w1, miastoW1 };
 }
