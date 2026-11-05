@@ -8,6 +8,27 @@ import { ND, STRONA, N0X, N0Y, N0Z, PARAMETRY, gWezla, popcnt } from './budowa.j
 /** Pola stanu w migawce (§ 8): to, co zmienia się w biegu. Reszta wynika z budowy sceny o tym samym ziarnie. */
 export const POLA_MIGAWKI = Object.freeze(['pos', 'vel', 'acc', 'L', 'D', 'F0', 'maskaW', 'szkoda', 'A', 'etyk', 'aktywny', 'nieruchomy']);
 
+/**
+ * Opis budowy do nagłówka migawki: liczby, które odróżniają wypieki o tym samym n i ziarnie, i skrót FNV-1a po słowach Ft, L, F0 i maski.
+ * Bez node:crypto, bo z tego samego korzysta strona testu GPU.
+ */
+export function budowaMigawki(w) {
+  let h = 0x811c9dc5;
+  for (const t of [w.Ft, w.L, w.F0, w.maska]) {
+    const slowa = new Uint32Array(t.buffer, t.byteOffset, t.byteLength >>> 2);
+    for (let i = 0; i < slowa.length; i++) h = Math.imul(h ^ slowa[i], 16777619);
+  }
+  return { n: w.n, gProj: w.gProj, capEtyk: w.capEtyk, nKom: w.nKom, K: w.K, skrot: (h >>> 0).toString(16).padStart(8, '0') };
+}
+
+/** Rzuca błąd, gdy migawka pochodzi z innej budowy niż `w` albo nie ma jej opisu. */
+export function sprawdzBudowe(budowa, w) {
+  const tu = budowaMigawki(w);
+  for (const k of Object.keys(tu)) {
+    if (budowa?.[k] !== tu[k]) throw new Error(`Migawka z innej budowy: ${k} = ${budowa?.[k]}, a scena ma ${tu[k]}`);
+  }
+}
+
 export class WzorzecCpu {
   constructor(w, par = w.par ?? PARAMETRY) {
     this.w = w;
@@ -669,15 +690,19 @@ export class WzorzecCpu {
     return { bledyMaski, bledyL, maksL };
   }
 
-  /** Migawka stanu dla testu jednego podkroku (§ 8): kopie tablic z POLA_MIGAWKI. */
+  /** Migawka stanu dla testu jednego podkroku (§ 8): kopie tablic z POLA_MIGAWKI i opis budowy, z której pochodzi. */
   migawka() {
-    const m = { skG: this.skG, sFr: this.sFr, kotwiceWiezy: this.kotwiceWiezy };
+    const m = { skG: this.skG, sFr: this.sFr, kotwiceWiezy: this.kotwiceWiezy, budowa: budowaMigawki(this.w) };
     for (const k of POLA_MIGAWKI) m[k] = this[k].slice();
     return m;
   }
 
-  /** Wgranie migawki: stan jak w chwili jej zrobienia, liczniki bez zmian. Bufory drugie równe pierwszym: przebieg F i tak je nadpisuje. */
+  /**
+   * Wgranie migawki: stan jak w chwili jej zrobienia, liczniki bez zmian. Bufory drugie równe pierwszym: przebieg F i tak je nadpisuje.
+   * Migawka innej budowy rzuca błąd: S3 przy gProj 400 i 260 ma to samo n i to samo ziarno, a inne K (§ 1.6).
+   */
   wgraj(m) {
+    sprawdzBudowe(m.budowa, this.w);
     for (const k of POLA_MIGAWKI) this[k].set(m[k]);
     this.maskaW2.set(this.maskaW);
     this.szkoda2.set(this.szkoda);

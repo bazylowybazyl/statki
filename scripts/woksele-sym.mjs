@@ -37,7 +37,8 @@ const ZADANIA = {
   S1: { rodzaj: 'proba', plan: () => S1(), et: 'R7', naz: 'S1', migawki: [3.5, 5], taca: [3.5, 4, 4.5, 5, 5.5, 6, 7] },
   S2: { rodzaj: 'proba', plan: () => S2(), et: 'R7', naz: 'S2f', migawki: [3], taca: [4.5, 5] },
   // Demo: gProj = 400 (§ 10.3, kadry fin11). Wiersze S3 w proby4/log-R7.txt policzono przy gProj = g = 260 i nKom = 131 072: zadania *R7, tylko do zgodności (§ 1.2).
-  S3: { rodzaj: 'proba', plan: () => S3(), et: 'P0', naz: 'S3rot30', migawki: [0.8] },
+  // f = 26 (t = 0,43): pierwsze uderzenie, tu test jednego podkroku widzi szkodę od kontaktu na węzłach dysku; t = 2,95: ta sama szkoda w gruzie wieży (§ 1.6).
+  S3: { rodzaj: 'proba', plan: () => S3(), et: 'P0', naz: 'S3rot30', migawki: [26 / 60, 0.8, 2.95] },
   S3poza: { rodzaj: 'proba', plan: () => S3({ wariant: 'poza' }), et: 'P0', naz: 'S3poza' },
   S3osm: { rodzaj: 'proba', plan: () => S3({ wariant: 'osm' }), et: 'P0', naz: 'S3osm' },
   S3z21: { rodzaj: 'proba', plan: () => S3(), par: parametry({ ziarno: 21 }), et: 'P0z21', naz: 'S3rot30' },
@@ -83,6 +84,7 @@ function zapiszMigawke(id, t, f, m, wypiek) {
   const meta = {
     scena: id, t, f, n: m.n, ziarno: m.par.ziarno,
     skG: przed.skG, sFr: przed.sFr, kotwiceWiezy: przed.kotwiceWiezy,
+    budowa: przed.budowa, // gProj, capEtyk, nKom, K, skrót: wgraj sprawdza je z budową sceny
     opis: 'przed: stan przed zdarzeniami klatki f; po: jeden przebieg kLista + kF z tego stanu (bez całkowania)',
   };
   const { naglowek, bajty } = pakujMigawke(meta, { przed, po });
@@ -92,7 +94,7 @@ function zapiszMigawke(id, t, f, m, wypiek) {
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   const wczyt = rozpakujMigawke(JSON.parse(JSON.stringify(naglowek)), ab);
   const klon = new WzorzecCpu(wypiek, m.par);
-  klon.wgraj({ ...wczyt.przed, skG: wczyt.skG, sFr: wczyt.sFr, kotwiceWiezy: wczyt.kotwiceWiezy });
+  klon.wgraj({ ...wczyt.przed, skG: wczyt.skG, sFr: wczyt.sFr, kotwiceWiezy: wczyt.kotwiceWiezy, budowa: wczyt.budowa });
   klon.podkrokPorownania();
   const wynik = klon.stanPoPodkroku();
   const sprawdz = porownajPodkrok(wczyt.po, wynik, przed.aktywny, przed.nieruchomy, { prog: 0, progA: 0 });

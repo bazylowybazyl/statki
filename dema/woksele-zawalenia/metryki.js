@@ -735,35 +735,50 @@ export function analizaPolowek(stan, pos0, zc, pasmoStrefy) {
   return { N, P: [Px, Py, Pz], L: [Lx, Ly, Lz], Ek, kosze, com: [cx, cy, cz], gora: polowa(1), dol: polowa(-1), zerw: stan.zerwanych };
 }
 
+/** NaN po dowolnej stronie to nieskończoność: `NaN > prog` jest fałszem, więc kernel liczący NaN przeszedłby próg po cichu (§ 2.9, § 9). */
+function bezNaN(q) {
+  return q === q ? q : Infinity;
+}
+
 /**
  * Test jednego podkroku (§ 8): wzór (Node) kontra wynik (GPU albo mutacja), węzeł po węźle. Progi: maski 0 różnic, S, A, L, D do 1e−3, |Δa| do 5.
  * Tablice jak w WzorzecCpu.stanPoPodkroku; aktywny i nieruchomy z migawki „przed”. Stojące nie mają przyspieszenia.
+ * NaN w dowolnym porównywanym polu, także w F0, oblewa test (licznik `nan`). Etykieta do zaliczenia tylko z `liczEtyk`: bez kotwic Node jej nie liczy (§ 1.6).
  */
-export function porownajPodkrok(wzor, wynik, aktywny, nieruchomy, { prog = 1e-3, progA = 5 } = {}) {
+export function porownajPodkrok(wzor, wynik, aktywny, nieruchomy, { prog = 1e-3, progA = 5, liczEtyk = false } = {}) {
   const n = aktywny.length;
   const da = new Float64Array(n);
-  let maski = 0, s = 0, a = 0, l = 0, d = 0, f0 = 0, etyk = 0, sMax = 0, daMax = 0, m = 0, ponadA = 0;
+  let maski = 0, s = 0, a = 0, l = 0, d = 0, f0 = 0, etyk = 0, sMax = 0, daMax = 0, m = 0, ponadA = 0, nan = 0;
   for (let i = 0; i < n; i++) {
     if (!aktywny[i]) continue;
     if (wzor.maskaW[i] !== wynik.maskaW[i]) maski++;
-    const ds = Math.abs(wzor.szkoda[i] - wynik.szkoda[i]);
+    const ds = bezNaN(Math.abs(wzor.szkoda[i] - wynik.szkoda[i]));
     if (ds > prog) s++;
     if (ds > sMax) sMax = ds;
-    if (Math.abs(wzor.A[i] - wynik.A[i]) > prog) a++;
+    if (ds === Infinity) nan++;
+    const dA = bezNaN(Math.abs(wzor.A[i] - wynik.A[i]));
+    if (dA > prog) a++;
+    if (dA === Infinity) nan++;
     if (wzor.etyk[i] !== wynik.etyk[i]) etyk++;
     for (let q = 18 * i; q < 18 * i + 18; q++) {
-      if (Math.abs(wzor.L[q] - wynik.L[q]) > prog) l++;
-      if (Math.abs(wzor.D[q] - wynik.D[q]) > prog) d++;
-      if (Math.abs(wzor.F0[q] - wynik.F0[q]) > 1) f0++;
+      const dL = bezNaN(Math.abs(wzor.L[q] - wynik.L[q])), dD = bezNaN(Math.abs(wzor.D[q] - wynik.D[q])), dF = bezNaN(Math.abs(wzor.F0[q] - wynik.F0[q]));
+      if (dL > prog) l++;
+      if (dD > prog) d++;
+      if (dF > 1) f0++;
+      if (dL === Infinity || dD === Infinity || dF === Infinity) nan++;
     }
     if (nieruchomy[i]) continue;
     const ax = wzor.acc[3 * i] - wynik.acc[3 * i], ay = wzor.acc[3 * i + 1] - wynik.acc[3 * i + 1], az = wzor.acc[3 * i + 2] - wynik.acc[3 * i + 2];
-    const q = Math.sqrt(ax * ax + ay * ay + az * az);
+    const q = bezNaN(Math.sqrt(ax * ax + ay * ay + az * az));
     da[m++] = q;
     if (q > daMax) daMax = q;
     if (q > progA) ponadA++;
+    if (q === Infinity) nan++;
   }
   const po = da.subarray(0, m).sort();
   const pr = (x) => (m ? po[Math.min(m - 1, Math.floor(x * m))] : 0);
-  return { maski, s, sMax, a, l, d, f0, etyk, daMax, daP50: pr(0.5), daP99: pr(0.99), ponadA, zaliczony: maski === 0 && s === 0 && a === 0 && l === 0 && d === 0 && daMax <= progA };
+  return {
+    maski, s, sMax, a, l, d, f0, etyk, daMax, daP50: pr(0.5), daP99: pr(0.99), ponadA, nan,
+    zaliczony: maski === 0 && s === 0 && a === 0 && l === 0 && d === 0 && daMax <= progA && nan === 0 && (!liczEtyk || etyk === 0),
+  };
 }
