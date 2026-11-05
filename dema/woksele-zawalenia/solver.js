@@ -668,7 +668,8 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       usunWezel(i, i3, p);
     }).ElseIf(znak.greaterThan(0), () => {
       wStan.element(i).x.assign(znak);
-      wZar.element(i).assign(uT); // żar (§ 4.8): numer klatki + 1, tylko obraz
+      // Żar (§ 4.8): numer klatki + 1, tylko obraz. Tylko węzeł, który ma jeszcze wiązania: luźny gruz w kuli nic nie traci, a bez tego cały obłok wokół kuli świeci równą żółtą łatą (.tmp/woksele-demo/P4/b/S5_t3.00.png).
+      If(uv(wMaska.element(i)).bitAnd(uint(0x3ffff)).notEqual(uint(0)), () => { wZar.element(i).assign(uT); });
     });
   })().compute(MAX).setName('wokKrater');
 

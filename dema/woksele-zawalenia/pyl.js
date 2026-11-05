@@ -23,9 +23,10 @@ const SUFIT_BLYSK_PX = 220;
 const OPCJE_FILMU = { kont: 5, pod: 90, grunt: 70, alfa: 0.7, dysk: 0.25, dziedz: 0.6, zycie: [6, 6] };
 export const OPCJE_PYLU = {
   // AGENT: S5 i S5v to wyjątek od filmu: przy 0,6 i 6 s chmura wisiała na wysokości dysku po jego odejściu i gasła równo (proby5/final/SPEC-S5-propozycja.md § 4). Scena wchodzi tu pod swoim id.
-  S5: { dziedz: 0.85, zycie: [1.5, 3.5] },
-  S5v: { dziedz: 0.85, zycie: [1.5, 3.5] },
-  S5p: { dziedz: 0.85, zycie: [1.5, 3.5], powietrze: true }, // planeta z pola punktowego: gruntu w płaszczyźnie nie ma, a powietrze jest
+  // zar: moc żaru. S5 oglądamy z 3500–7200 j., 0,7 jak w filmie. Reszta to zbliżenia z krateru: 0,7 z 750 j. to jaskrawopomarańczowe kartki (.tmp/woksele-demo/P4/b/krater_t1.40.png).
+  S5: { dziedz: 0.85, zycie: [1.5, 3.5], zar: 0.7 },
+  S5v: { dziedz: 0.85, zycie: [1.5, 3.5], zar: 0.7 },
+  S5p: { dziedz: 0.85, zycie: [1.5, 3.5], zar: 0.7, powietrze: true }, // planeta z pola punktowego: gruntu w płaszczyźnie nie ma, a powietrze jest
 };
 
 export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp }) {

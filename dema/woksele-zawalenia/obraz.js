@@ -599,7 +599,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
         const s3 = uv_(uint(3).mul(uint(s)));
         const a = v4(wBlyskF.element(s3));
         const o = v3(pw.sub(a.xyz).div(r));
-        const q = fv(float(1).sub(dot(o, o).mul(sin(o.x.mul(4.3).add(a.w)).mul(sin(o.y.mul(3.7).sub(a.w))).mul(0.55).add(sin(o.z.mul(5.1).add(a.w.mul(2))).mul(0.3)).add(1))));
+        // Mnożnik obrysu 0,55–1,65: przy niższym dolina sinusów sięgała daleko i zapalała pojedyncze plamy na kolumnach (.tmp/woksele-demo/P4/b/krater_t1.05.png).
+        const q = fv(float(1).sub(dot(o, o).mul(sin(o.x.mul(4.3).add(a.w)).mul(sin(o.y.mul(3.7).sub(a.w))).mul(0.35).add(sin(o.z.mul(5.1).add(a.w.mul(2))).mul(0.2)).add(1.1))));
         If(q.greaterThan(0).and(wBlyskF.element(s3.add(uint(1))).w.greaterThan(0)), () => {
           e.addAssign(vec3(1, 0.5, 0.16).mul(moc.mul(0.14).mul(q).mul(q)));
         });
@@ -754,6 +755,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null } = {}) {
     pyl.wczytaj(w, opcjePylu);
     uKlatka.value = 0;
+    uZarMoc.value = opcjePylu?.zar ?? 0.5;
     uPokladZ.value = poklad ? poklad.z : -1e30;
     uOtworR2.value = poklad ? poklad.rOtwor * poklad.rOtwor : 0;
     uDyskR2.value = poklad ? rDysk * rDysk : 0;
