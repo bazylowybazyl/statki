@@ -379,7 +379,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
               const e = v3(e0.add(b0.mul(d.mul(0.5).mul(u1(hN, 5)))));
               P.assign(x.add(e.mul(C.x.mul(rl))).add(b0.mul(C.y.mul(th))).add(c0.mul(C.z.mul(th))));
               Nw.assign(normalize(e).mul(nf.x).add(b0.mul(nf.y)).add(c0.mul(nf.z)));
-              Kol.assign(vec3(0.2, 0.15, 0.12));
+              Kol.assign(vec3(0.085, 0.06, 0.048)); // ciemniej niż w spec (0,2; 0,15; 0,12): na Zbliżeniu tamta barwa świeci łososiowo, zm. .tmp/woksele-demo/P3/zb_S1_t7.00.png
               P0.assign(wDaneR.element(uint(2).mul(i)).xyz);
             });
           });

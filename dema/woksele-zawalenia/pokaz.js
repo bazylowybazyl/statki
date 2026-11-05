@@ -261,6 +261,24 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         obraz.sun.shadow.autoUpdate = false;
         wy.bezOdswCienia = await wok.pokaz.zmierzKlatki(10, false, true);
         obraz.sun.shadow.autoUpdate = au;
+        // Znaczniki czasu: kObraz + kGruz i wszystkie passy rysunku z zegara GPU, bez podłogi około 3 ms z onSubmittedWorkDone.
+        const pr = [];
+        for (let k = 0; k < 7; k++) pr.push(await wok.zmierzListe(obraz.listaObrazu));
+        pr.sort((a, b) => a - b);
+        wy.kObrazKGruzMs = pr[3];
+        const backend = renderer.backend;
+        const rys = [];
+        for (let k = 0; k < 7; k++) {
+          backend.trackTimestamp = true;
+          obraz.rysuj(renderer, camera, 0);
+          const ms = await renderer.resolveTimestampsAsync('render');
+          backend.trackTimestamp = false;
+          backend.timestampQueryPool?.render?.timestamps?.clear?.();
+          rys.push(ms);
+          await device.queue.onSubmittedWorkDone();
+        }
+        rys.sort((a, b) => a - b);
+        wy.rysunekGpuMs = rys[3];
         stan.rysowac = true;
         return wy;
       },

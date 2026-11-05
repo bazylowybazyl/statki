@@ -72,7 +72,8 @@ const f = (x, d = 3) => (x === null || x === undefined || !Number.isFinite(x) ? 
 
 await czekajNaCisze('start');
 raport.obce = await obceProcesy().catch(() => []);
-const { server, base } = await startVite(Number(args.port || 5420));
+// --base: cudzy serwer (test komendy dla użytkownika), bez własnego Vite.
+const { server, base } = args.base ? { server: { close: async () => {} }, base: String(args.base) } : await startVite(Number(args.port || 5420));
 // --enable-webgpu-developer-features: bez niej znaczniki czasu są kwantowane do 100 µs (§ 8, pkt 3). Flaga tylko tu, nie w wspolne.mjs.
 const [szerOkna, wysOkna] = String(args.rozmiar || (args.zrzut ? '960x720' : '640x360')).split('x').map(Number);
 const chrome = await startChrome({ width: szerOkna, height: wysOkna, extraArgs: ['--enable-webgpu-developer-features', ...String(args.chrome || '').split(',').filter(Boolean)] });

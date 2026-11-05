@@ -188,6 +188,23 @@ Wszystkie wiersze tabeli § 8 zaliczone, także W1 (0,0108 j., 0 zerwań, NaN i 
 - **Poprawki sprawdzianu P1.** F0 w `zaliczony` z regułą f32. `krokZWzorcem`: 8 kroków, 0 masek na S1 t = 3,5, S3 t = 2,95, S4 t = 3, lista różna tylko na granicy zasięgu (poza nią 0). Bez progu S2 t = 3: 2 maski po 8 krokach, ta sama para przy progu f32 co w § 1.7. S = 24, § 2.7: podkrok 6 migawek, lista 0 różnic, 5 zalicza wprost, 1 przez regułę f32.
 - **Czego brakuje.** Licznik odrzuconych wstawień w `wLicz`: tabela liczy z pozycji co 15 klatek (S1–S4 0; S4 przy g = 400: 3, czyli maks. 23 w komórce to nie jest twardy sufit). `kPrzyczyna`, emisja pyłu, głowice pierścieni: P4. `?profil=1` woła kernele z pominięciem `krok`, więc bez zdarzeń: P6 (`zdarzeniaKlatki`, `nastawKlatke`). `scripts/woksele-sym.mjs` przy S = 24: `--zgodnosc` i migawki wymagają `parametry({ slotyKomorki: 16 })`, jeśli mają zgadzać się z logami `proby4`; dziś liczą przy 24, a pliki w `.tmp/woksele-demo/migawki/` są z S = 16.
 
+### 1.9 Domknięcie P3: obraz bez pyłu i strona na żywo
+
+Kod: `dema/woksele-zawalenia/{obraz,pokaz,scenyPokazu,budowa.worker}.js`, `dema/woksele-zawalenia.html`, `tests/wokseleObrazWgsl.test.mjs`, opcje `--zrzut`, `--chwile`, `--kam`, `--rozmiar`, `--pomiar`, `--interakcje`, `--base` w `scripts/webgpu/woksele-demo.mjs`. Zrzuty: `.tmp/woksele-demo/P3/`. Tryby `?test=1` i `?profil=1` bez obrazu, jak w P1 (zm. `P3/log3.txt`: W1 i pipeline'y bez zmian).
+
+**Wzorcem był film, nie ten rozdział.** S1 Bliska t = 3,5 wychodzi prawie kropka w kropkę jak `film/klatki/S1_blisko/k00210.jpg`. Różnice wobec § 4 z powodu filmu:
+- `MeshLambertNodeMaterial` zamiast Standard z metalem: wzór `rys4.mjs` to Lambert plus półkula, a bez mapy otoczenia metal jest czarny. Słońce (1,05; 1; 0,92) · π, półkula (0,35; 0,375; 0,425) · π i (0,07; 0,075; 0,085) · π, ekspozycja 1,25, ACES Narkowicza, gamma 2,2.
+- **Okluzja domyślnie jak w filmie, nie GTAO:** 16 próbek w dwóch promieniach, 14 j. w px, okno głębi 2–60 j., obiekt z głębi około 720 wierszy (najwyżej 2560 szerokości). GTAO działa pod `?ao=gtao`, z rozgrzewką, ale szczeliny wychodzą jaśniejsze (`P3/gtao_S1_t5.00.png` kontra `c_S1_t5.00.png`). Decyzja należy do oceny użytkownika.
+- W cieniu sloty bloków i wszystkie odłamki, bez prętów (spec: tylko slot 1), bo film rzuca cień każdą bryłą. Koszt niewidoczny w pomiarze niżej.
+- Pręt ciemniejszy niż w spec: barwa (0,2; 0,15; 0,12) na Zbliżeniu świeci łososiowo.
+- Rysy z izolinii szumu odrzucone: robaki na całym pokładzie (`P3/f_S3_t3.00.png`). Zostały plamy i drobne ziarno w fragmencie z pozycji początkowej.
+
+Dodane poza filmem: wieniec dysku dociągnięty do promienia z normalną promieniową, normalna bloku z osi w płaszczyźnie ściany (znika kratka na nienaruszonym pokładzie), wieniec w barwie pokładu (ciemna kotwica rysowała zygzak), kawałki z brzegu otworu dysku z płaszczyzną pokładu w `kGruz`, 4% zakładki na dysku. Budowa scen w wątku roboczym, sceny budują się w tle po starcie.
+
+**Liczby, zm.:** RTX 5080, headless, 5120 × 1440, MSAA 4, S1 i S3 przy t = 4,5. Pętla zamknięta bez rAF: rysunek 3,5–3,7 ms, a samo czekanie `onSubmittedWorkDone` ma podłogę około 3 ms, więc klatka mieści się poniżej 4 ms; to górna granica, nie czas GPU. Znaczniki czasu dają 0,0075 ms na `kObraz` + `kGruz` i 1,0–1,3 ms na rysunek, ale nie są pewne: pula three przy kilku kontekstach zostawia wpis ostatniego, dokładny pomiar to P6. W pętli rAF bez VSync 460–550 kl/s i 60,2 / 59,8 kroku/s; kolejka GPU rośnie wtedy do około 430 ms opóźnienia, więc liczba klatek na sekundę nic nie mówi o koszcie i liczyć trzeba tylko w takcie. Pipeline'y: 18 synchronicznych przed pierwszą klatką, wszystkie compute (three nie ma ich wersji w tle), rysunków 0; po przejściu sześciu scen, resetach, zmianie rozmiaru okna nowych wpisów 0. Hałda przy t = 8 między dwiema klatkami: 1,16% pikseli zmienia się o ponad 8/255, film 0,91%. Interakcje przez CDP (`P3/log-koniec.txt`): orbita, przybliżenie, przesuw, spacja, R, P, tempo, scena, zmiana okna zaliczone.
+
+**Czego nie ma:** pyłu i przyczyny (P4). Strzału myszą, klawiszy scen, kamer na panelu i przełącznika Miejsce (P5). Punktu K1: wiersze § 7 nie przeszły przez agenta bez kontekstu, a ruch oceniony jest tylko liczbą wyżej, oczami nikt go nie widział. Gwiazd w próżni i ciemnej płyty pod dyskiem nie ma, bo nie ma ich w filmie. Przejście na „sam” bez kurczenia przez 0,15 s: rama przechodzi ciągle, ale podmiana kształtu jest skokowa. Prawdziwe okno Chrome nie było uruchamiane, tylko headless.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
@@ -617,7 +634,8 @@ Koszt: `kPrzyczyna` przesuwa i wygasza pierścień, tylko 64 elementy, szac. pon
 | `dema/woksele-zawalenia/scena.js` | port `wspolne/scena.mjs` i planu S4 ze `spec-proby/scenyG.mjs`, bez three, do testów w Node |
 | `dema/woksele-zawalenia/budowa.js`, `budowa.worker.js` | § 2.3 |
 | `dema/woksele-zawalenia/solver.js` | `createWokseleSolver({ maxNodes })`: bufory i kernele, `wczytaj(wypiek)`, `krok(renderer)`, `strzal(o, dir, r)`, `kernele` do rozgrzewki. **Żadnych celów renderu, kanw ani DOM.** Bierze `renderer` z parametru |
-| `dema/woksele-zawalenia/obraz.js` | geometria instancji, materiał, kernele `kObraz`, `kGruz` |
+| `dema/woksele-zawalenia/obraz.js` | geometria instancji, materiał, kernele `kObraz`, `kGruz`, cele, okluzja, wyjście |
+| `dema/woksele-zawalenia/pokaz.js`, `scenyPokazu.js` | strona na żywo: pętla, kamera orbitalna, panel; plany scen wspólne ze stroną i wątkiem budowy |
 | `dema/woksele-zawalenia/pyl.js` | pula, kernel, materiał |
 | `dema/woksele-zawalenia/glowny.js` | WebGPURenderer, `window.__HARNESS_RENDERER__ = renderer` (bez tego dziennik pipeline'ów harnessu jest pusty i „0 synchronicznych” to fałszywe zero; wzór `dema/zawalenia-budowli/obraz.js:321`), owinięcie `backend.updateTimeStampUID` (§ 8), kamera, pętla, panel, `window.__wok` |
 | `dema/index.html` | wpis w grupie „Zniszczenia, mostki, rdzenie” obok `zawalenia-budowli.html` |
@@ -1060,7 +1078,7 @@ Od najbardziej ryzykownego. Każdy pakiet kończy się commitem, a bez zaliczone
 | **P7 Poprawki po K3** | jw. | Lista bez „nie” w [!] albo zapisana jawnie niemożliwa | Ta sama lista, ten sam agent, nowy kontekst | P8 |
 | **P8 Pokaz użytkownikowi** | Reguła obszaru, wpis w planie, zrzuty | Demo, krótka lista, co zostało nierozwiązane, liczby Z4 | Tylko ocena użytkownika | — |
 
-**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu. P1 zrobione 2026-11-05, § 1.7: punkt G1 przeszedł (S3 najwyżej 0,414 ms/krok wobec progu 8 ms). P2 zrobione 2026-11-05, § 1.8: warunek porażki 2 nie zachodzi.
+**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu. P1 zrobione 2026-11-05, § 1.7: punkt G1 przeszedł (S3 najwyżej 0,414 ms/krok wobec progu 8 ms). P2 zrobione 2026-11-05, § 1.8: warunek porażki 2 nie zachodzi. P3 zrobione 2026-11-05, § 1.9, bez punktu K1: strona na żywo, wzorcem film.
 
 **Punkty oceny:** K1 po P3, K2 po P4, K3 po P5. Żaden kadr nie idzie do użytkownika przed K3.
 
