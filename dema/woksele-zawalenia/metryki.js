@@ -743,6 +743,7 @@ function bezNaN(q) {
 /**
  * Test jednego podkroku (§ 8): wzór (Node) kontra wynik (GPU albo mutacja), węzeł po węźle. Progi: maski 0 różnic, S, A, L, D do 1e−3, |Δa| do 5.
  * Tablice jak w WzorzecCpu.stanPoPodkroku; aktywny i nieruchomy z migawki „przed”. Stojące nie mają przyspieszenia.
+ * F0 do 1 (siła, nie długość): wypiek różni wiązanie o całe F0. Reguła f32 z § 8 obejmuje F0 tak samo jak L i D.
  * NaN w dowolnym porównywanym polu, także w F0, oblewa test (licznik `nan`). Etykieta do zaliczenia tylko z `liczEtyk`: bez kotwic Node jej nie liczy (§ 1.6).
  */
 export function porownajPodkrok(wzor, wynik, aktywny, nieruchomy, { prog = 1e-3, progA = 5, liczEtyk = false } = {}) {
@@ -779,6 +780,6 @@ export function porownajPodkrok(wzor, wynik, aktywny, nieruchomy, { prog = 1e-3,
   const pr = (x) => (m ? po[Math.min(m - 1, Math.floor(x * m))] : 0);
   return {
     maski, s, sMax, a, l, d, f0, etyk, daMax, daP50: pr(0.5), daP99: pr(0.99), ponadA, nan,
-    zaliczony: maski === 0 && s === 0 && a === 0 && l === 0 && d === 0 && daMax <= progA && nan === 0 && (!liczEtyk || etyk === 0),
+    zaliczony: maski === 0 && s === 0 && a === 0 && l === 0 && d === 0 && f0 === 0 && daMax <= progA && nan === 0 && (!liczEtyk || etyk === 0),
   };
 }

@@ -1,13 +1,13 @@
-// Solver GPU dema wiązanych wokseli (docs/SPEC-woksele-zawalenia.md § 2): bufory § 2.2 i kernele kF, kI, kWstaw, kLista, kZerujPo.
-// Pakiet P1: bez obrazu i bez zdarzeń (kCzas, kCzysc, kWybuch* dochodzą w P2). Moduł bez window i DOM, bez celów renderu: renderer przychodzi z parametru.
+// Solver GPU dema wiązanych wokseli (docs/SPEC-woksele-zawalenia.md § 2): bufory § 2.2, kernele kF, kI, kWstaw, kLista, kZerujPo oraz zdarzenia i pęd § 2.8 (P2).
+// Bez obrazu (P3). Moduł bez window i DOM, bez celów renderu: renderer przychodzi z parametru.
 // Wzorzec: wzorzec-cpu.js. Test jednego podkroku (§ 8) porównuje wynik kLista + kF z migawką z Node węzeł po węźle, więc kolejność sprawdzeń przy wiązaniu nie może się zmienić.
 //
 // Czyta wyłącznie stan sprzed przebiegu, pisze tylko swoje kopie: symetria zerwań wynika z tego, że oba końce liczą to samo z tych samych danych.
 // Układ danych § 2.2. Wszystko w lokalnym układzie budowli, rozmiary po `uN`, nie po MAX (kernele mają `setCount(n)` liczbą, § 2.2).
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, Loop, Continue, Return, instanceIndex, instancedArray, storage, uniform, uint, int, float, vec3, vec4,
-  countOneBits, floatBitsToUint, sqrt, max, min, floor, dot, length, cross, select, atomicAdd,
+  Fn, If, Loop, Continue, Return, instanceIndex, instancedArray, storage, uniform, uniformArray, uint, int, float, vec3, vec4,
+  countOneBits, floatBitsToUint, sqrt, max, min, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad,
 } from 'three/tsl';
 import { ND, STRONA, N0X, N0Y, N0Z, KLASA_NAZWY, PARAMETRY } from './budowa.js';
 
@@ -20,6 +20,17 @@ export const klasaZeSlowa = (s) => (s >>> 24) - 1;
 export const slowoIjk = (i, j, k, grupa) => ((i & 1023) | ((j & 1023) << 10) | ((k & 1023) << 20) | ((grupa & 3) << 30)) >>> 0;
 
 const REK_KLASA = 18, REK_LUT = 30, ILE_TAB = 57;
+
+// Zdarzenia § 2.8. wLicz: [0, 1] głowice pierścieni (P4), [2] cel strzału, [3..5] suma kopów, [6] liczba trafionych, [7..9] suma pozycji, [10..12] moment, [13..18] tensor, [19] największe |q|.
+const LICZ_N = 20, L_CEL = 2, L_P = 3, L_M = 6, L_S = 7, L_L = 10, L_I = 13, L_QMAX = 19;
+export const BLAST_N = 24;    // rzędów pchnięcia na klatkę. Scena pochylonej wieży: główne kule po tau 0,3 s, reszta jedna klatka
+export const KRATER_N = 4;    // kraterów na klatkę, reszta czeka do następnej
+export const SLOTY_K = 32;    // środki kraterów policzone na GPU (nosiciel, strzał), pierścień
+/** Bit flagi węzła: rozerwanie z kCzas zostawia wiązania wewnątrz ziarna (S = 3 zamiast 2). */
+export const BIT_ZOSTAW = 1 << 16;
+/** Bit flagi węzła: reszta kuli krateru rozrywa go przez S = 3. Bez bitu węzeł poza rS zostaje nietknięty (scena z szwami). */
+export const BIT_PAS = 1 << 17;
+const POMIJANY_CEL = 0xffffffff;
 
 export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) {
   const MAX = maxNodes;
@@ -50,6 +61,16 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const wKomLiczA = storage(aKomLicz, 'uint', N_KOM).setName('wokKomLicz').toAtomic();
   const wKomLiczR = storage(aKomLicz, 'uint', N_KOM).setName('wokKomLicz').toReadOnly();
   const wKomLiczW = storage(aKomLicz, 'uint', N_KOM).setName('wokKomLicz');
+  // Zdarzenia § 2.8: czas zdarzenia węzła, liczniki sum (trzy węzły na jednym atrybucie, jak licznik komórek), środki kraterów z GPU.
+  const wCzasU = instancedArray(MAX, 'float').setName('wokCzasU');
+  const aLicz = new THREE.StorageInstancedBufferAttribute(new Uint32Array(LICZ_N), 1);
+  const wLiczA = storage(aLicz, 'uint', LICZ_N).setName('wokLicz').toAtomic();
+  const wLiczR = storage(aLicz, 'uint', LICZ_N).setName('wokLicz').toReadOnly();
+  const wLiczW = storage(aLicz, 'uint', LICZ_N).setName('wokLicz');
+  const wBlastK = instancedArray(SLOTY_K, 'vec4').setName('wokBlastK');
+  const wBlastKR = storage(wBlastK.value, 'vec4', SLOTY_K).setName('wokBlastK').toReadOnly();
+  const wStanR = storage(wStan.value, 'vec4', 4 * MAX).setName('wokStan').toReadOnly();
+  const wWiazR = storage(wWiaz.value, 'vec4', 36 * MAX).setName('wokWiaz').toReadOnly();
 
   // ── Uniformy § 10.4 i § 2.1 ── Zmiana sceny to zmiana wartości, bez nowych pipeline'ów (zasada 4).
   const uN = uniform(0, 'uint').setName('uN');
@@ -90,6 +111,22 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const uPekaProg = uniform(par.falaPeka.prog).setName('uPekaProg');
   const uPekaZakres = uniform(par.falaPeka.zakres).setName('uPekaZakres');
   const uZlomB2 = uniform(par.zlomB * par.zlomB).setName('uZlomB2');
+  // Zdarzenia § 2.8. Czas w KLATKACH, nie w sekundach: w f32 przy t = 14 s sekundy gubią przydział do klatki, a Node liczy klatkami.
+  const uT = uniform(0).setName('uT');
+  const uBrakCzasu = uniform(1e30).setName('uBrakCzasu'); // literał 1e30 daje w WGSL 1e+30.0
+  const uCelO = uniform(new THREE.Vector3()).setName('uCelO');
+  const uCelDir = uniform(new THREE.Vector3(1, 0, 0)).setName('uCelDir');
+  const uCelProg2 = uniform(0).setName('uCelProg2');
+  const uKraterN = uniform(0, 'uint').setName('uKraterN');
+  const uBlastN = uniform(0, 'uint').setName('uBlastN');
+  const uZerujL = uniform(1, 'uint').setName('uZerujL');
+  // AGENT: tablice uniformów vec4 nie mają błędu z § 1.7 (idą przez Float32Array, nie przez updateVector4). Rzędy pisze CPU raz na klatkę, kernele czytają pierwsze uKraterN / uBlastN.
+  // uKrater, 3 × rząd: c.xyz + r²; rdzeń², rS², slot wBlastK, nosiciel (≥ 0 węzeł, −1 punkt z rzędu, −2 strzał); usuwa stojące, 0, 0, 0.
+  const daneKrater = Array.from({ length: 3 * KRATER_N }, () => new THREE.Vector4());
+  const uKrater = uniformArray(daneKrater, 'vec4').setName('uKrater');
+  // uBlast, 2 × rząd: c.xyz + rP; Jk, slot wBlastK (−1: środek z rzędu), dz do środka ze slotu, 0.
+  const daneBlast = Array.from({ length: 2 * BLAST_N }, () => new THREE.Vector4());
+  const uBlast = uniformArray(daneBlast, 'vec4').setName('uBlast');
 
   // Zmienna o typie ze stałej, przypisana w miejscu (pułapka 40): budowa grafu bez wykładniczego pytania o typ.
   const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
@@ -475,7 +512,266 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     wLista.element(lb).assign(l);
   })().compute(MAX).setName('wokLista');
 
-  const kernele = { kF, kI, kWstaw, kLista, kZerujPo };
+  // ── Zdarzenia, § 2.8 ── Cudzych zapisów nie ma: kCzas i kKrater oznaczają w S, kCzysc czyści własne bity każdego węzła, kCzyscS sprowadza S do ≤ 1.
+  const flagiWezla = (wS, i) => uv(uint(wS.element(uN.mul(uint(2)).add(uint(2).mul(i)).add(uint(1))).w));
+
+  /** Usunięcie: węzeł martwy, prędkość 0, S = 1, własne maski 0 (§ 2.8, jak `usun`). */
+  const usunWezel = (i, i3, p) => {
+    wWez.element(i3).assign(vec4(p.xyz, -1));
+    wWez.element(i3.add(uint(1))).assign(vec4(0));
+    wMaska.element(i).assign(uint(0));
+    wMaska.element(uN.add(i)).assign(uint(0));
+    wStan.element(i).x.assign(1);
+  };
+
+  const kCzas = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const t = fv(wCzasU.element(i));
+    If(t.abs().greaterThan(uT), () => { Return(); }); // brak zdarzenia: 1e30
+    wCzasU.element(i).assign(uBrakCzasu);
+    const i3 = uv(uint(3).mul(i));
+    const p = v4(wWez.element(i3));
+    If(p.w.lessThan(0), () => { Return(); });
+    If(t.greaterThan(0), () => {
+      usunWezel(i, i3, p);
+    }).Else(() => {
+      const zostaw = uv(flagiWezla(wStan, i).bitAnd(uint(BIT_ZOSTAW)));
+      const znak = fv(2);
+      If(zostaw.notEqual(uint(0)), () => { znak.assign(3); });
+      wStan.element(i).x.assign(znak);
+    });
+  })().compute(MAX).setName('wokCzas');
+
+  const kCzysc = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const ni = uv(uN.add(i));
+    const wI = fv(wWezR.element(uint(3).mul(i)).w);
+    If(wI.lessThan(0), () => { wMaska.element(ni).assign(uint(0)); Return(); });
+    const mI = uv(wMaska.element(i));
+    const mN = uv(mI);
+    const sI = fv(wStanR.element(i).x);
+    const baza = uv(uint(36).mul(i));
+    Loop({ start: uint(0), end: uint(ND), type: 'uint', condition: '<', name: 'd' }, ({ d }) => {
+      const bit = uv(uint(1).shiftLeft(d));
+      If(mI.bitAnd(bit).equal(uint(0)), () => { Continue(); });
+      const nb = uv(floatBitsToUint(wWiazR.element(baza.add(uint(2).mul(d)).add(uint(1))).z));
+      const j = uv(nb.bitAnd(uint(0xffffff)));
+      const kl = uv(nb.shiftRight(uint(24)).sub(uint(1)));
+      const sJ = fv(wStanR.element(j).x);
+      const wJ = fv(wWezR.element(uint(3).mul(j)).w);
+      const miedzyZiarnami = uv(uint(0));
+      If(kl.lessThan(uint(6)), () => { miedzyZiarnami.assign(uint(1)); });
+      If(wJ.lessThan(0).or(sJ.equal(2)).or(sI.equal(2)).or(miedzyZiarnami.notEqual(uint(0)).and(sJ.equal(3).or(sI.equal(3)))), () => {
+        mN.assign(mN.bitAnd(bit.bitNot()));
+      });
+    });
+    wMaska.element(ni).assign(mN);
+  })().compute(MAX).setName('wokCzysc');
+
+  const kCzyscS = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    wMaska.element(i).assign(wMaska.element(uN.add(i)));
+    const s = fv(wStan.element(i).x);
+    If(s.greaterThan(1), () => { wStan.element(i).x.assign(1); });
+  })().compute(MAX).setName('wokCzyscS');
+
+  // ── Strzał i kratery ── kZerujCel, kCel: promień do najbliższego żywego węzła. kKraterCel: środek każdego rzędu do wBlastK, z flagą w .w, PRZED kKrater:
+  // nosiciel leży w swojej kuli i ginie w kKrater, więc jego w < 0 nie może być czytane w tym samym przebiegu.
+  const kZerujCel = Fn(() => {
+    If(instanceIndex.greaterThanEqual(uint(1)), () => { Return(); });
+    wLiczW.element(uint(L_CEL)).assign(uint(POMIJANY_CEL));
+  })().compute(1).setName('wokZerujCel');
+
+  const kCel = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const p = v4(wWezR.element(uint(3).mul(i)));
+    If(p.w.lessThan(0), () => { Return(); });
+    const e = v3(p.xyz.sub(uCelO));
+    const t = fv(dot(e, uCelDir));
+    If(t.lessThanEqual(0), () => { Return(); });
+    If(dot(e, e).sub(t.mul(t)).lessThan(uCelProg2), () => {
+      atomicMin(wLiczA.element(uint(L_CEL)), uint(t.mul(8)));
+    });
+  })().compute(MAX).setName('wokCel');
+
+  const kKraterCel = Fn(() => {
+    const r = instanceIndex;
+    If(r.greaterThanEqual(uKraterN), () => { Return(); });
+    const b = uv(uint(3).mul(r));
+    const w0 = v4(uKrater.element(b));
+    const w1 = v4(uKrater.element(b.add(uint(1))));
+    const c = v3(w0.xyz);
+    const wazny = fv(1);
+    If(w1.w.greaterThanEqual(0), () => {
+      const pn = v4(wWezR.element(uint(3).mul(uint(w1.w))));
+      c.assign(pn.xyz);
+      If(pn.w.lessThan(0), () => { wazny.assign(0); }); // martwy nosiciel: pominięcie
+    }).ElseIf(w1.w.lessThan(-1.5), () => {
+      const T = uv(wLiczR.element(uint(L_CEL)));
+      If(T.equal(uint(POMIJANY_CEL)), () => { wazny.assign(0); });
+      c.assign(uCelO.add(uCelDir.mul(float(T).div(8))));
+    });
+    wBlastK.element(uint(w1.z)).assign(vec4(c, wazny));
+  })().compute(KRATER_N).setName('wokKraterCel');
+
+  const kKrater = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const i3 = uv(uint(3).mul(i));
+    const p = v4(wWez.element(i3));
+    If(p.w.lessThan(0), () => { Return(); });
+    const fl = uv(flagiWezla(wStan, i));
+    const stoi = uv(fl.bitAnd(uint(1)).mul(uKotwice));
+    const pas = uv(fl.bitAnd(uint(BIT_PAS)));
+    const usun = uv(uint(0));
+    const znak = fv(0);
+    Loop({ start: uint(0), end: uKraterN, type: 'uint', condition: '<', name: 'kr' }, ({ kr }) => {
+      const b = uv(uint(3).mul(kr));
+      const w0 = v4(uKrater.element(b));
+      const w1 = v4(uKrater.element(b.add(uint(1))));
+      const w2 = v4(uKrater.element(b.add(uint(2))));
+      const ck = v4(wBlastKR.element(uint(w1.z)));
+      If(ck.w.lessThanEqual(0), () => { Continue(); });
+      const e = v3(p.xyz.sub(ck.xyz));
+      const q2 = fv(dot(e, e));
+      If(q2.greaterThanEqual(w0.w), () => { Continue(); });
+      If(q2.lessThan(w1.x), () => {
+        usun.assign(uint(1));
+      }).ElseIf(stoi.notEqual(uint(0)).and(w2.x.greaterThan(0)), () => {
+        usun.assign(uint(1));
+      }).ElseIf(q2.lessThan(w1.y), () => {
+        znak.assign(2);
+      }).ElseIf(pas.notEqual(uint(0)).and(znak.lessThan(2)), () => {
+        znak.assign(3);
+      });
+    });
+    If(usun.notEqual(uint(0)), () => {
+      usunWezel(i, i3, p);
+    }).ElseIf(znak.greaterThan(0), () => {
+      wStan.element(i).x.assign(znak);
+    });
+  })().compute(MAX).setName('wokKrater');
+
+  // ── Pchnięcie, § 2.8 ── Stały przecinek z zaokrągleniem: suma atomowa, odjęta średnia zbioru, ten sam q we wszystkich trzech przebiegach.
+  // AGENT: q leży między przebiegami w wWez[3i+2] (w = 1: trafiony). kF i tak nadpisze to pole przed kI, a kolejny kernel nie liczy dv drugi raz, więc sterownik nie może dać innego zaokrąglenia.
+  const sumaA = (k) => float(int(uv(atomicLoad(wLiczA.element(uint(k))))));
+  const sumaR = (k) => float(int(uv(wLiczR.element(uint(k)))));
+
+  const kZerujWybuch = Fn(() => {
+    const k = instanceIndex;
+    If(k.greaterThanEqual(uint(LICZ_N)), () => { Return(); });
+    If(k.lessThan(uint(L_P)), () => { Return(); }); // głowice i cel zostają: dlatego kernel, nie zapis z CPU
+    wLiczW.element(k).assign(uint(0));
+  })().compute(LICZ_N).setName('wokZerujWybuch');
+
+  const kWybuchSuma = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const i3 = uv(uint(3).mul(i));
+    const p = v4(wWez.element(i3));
+    If(p.w.lessThan(0), () => { Return(); });
+    If(flagiWezla(wStanR, i).bitAnd(uint(1)).mul(uKotwice).notEqual(uint(0)), () => { Return(); });
+    const dv = v3(vec3(0));
+    const traf = uv(uint(0));
+    Loop({ start: uint(0), end: uBlastN, type: 'uint', condition: '<', name: 'bl' }, ({ bl }) => {
+      const r0 = v4(uBlast.element(uint(2).mul(bl)));
+      const r1 = v4(uBlast.element(uint(2).mul(bl).add(uint(1))));
+      const c = v3(r0.xyz);
+      If(r1.y.greaterThanEqual(0), () => {
+        const ck = v4(wBlastKR.element(uint(r1.y)));
+        If(ck.w.lessThanEqual(0), () => { Continue(); });
+        c.assign(ck.xyz.add(vec3(0, 0, r1.z)));
+      });
+      const e = v3(p.xyz.sub(c));
+      const r2 = fv(dot(e, e));
+      If(r2.greaterThanEqual(r0.w.mul(r0.w)), () => { Continue(); });
+      const r = fv(sqrt(r2).add(1e-6));
+      dv.addAssign(e.mul(r1.x.mul(float(1).sub(r.div(r0.w))).div(r)));
+      traf.assign(uint(1));
+    });
+    If(traf.equal(uint(0)), () => { Return(); });
+    const qx = iv(int(round(dv.x.mul(64))));
+    const qy = iv(int(round(dv.y.mul(64))));
+    const qz = iv(int(round(dv.z.mul(64))));
+    atomicAdd(wLiczA.element(uint(L_P)), uint(qx));
+    atomicAdd(wLiczA.element(uint(L_P + 1)), uint(qy));
+    atomicAdd(wLiczA.element(uint(L_P + 2)), uint(qz));
+    atomicAdd(wLiczA.element(uint(L_M)), uint(1));
+    atomicAdd(wLiczA.element(uint(L_S)), uint(int(round(p.x))));
+    atomicAdd(wLiczA.element(uint(L_S + 1)), uint(int(round(p.y))));
+    atomicAdd(wLiczA.element(uint(L_S + 2)), uint(int(round(p.z))));
+    atomicMax(wLiczA.element(uint(L_QMAX)), uint(round(length(dv).mul(64))));
+    wWez.element(i3.add(uint(2))).assign(vec4(float(qx), float(qy), float(qz), 1));
+  })().compute(MAX).setName('wokWybuchSuma');
+
+  const kWybuchMoment = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const i3 = uv(uint(3).mul(i));
+    const p = v4(wWezR.element(i3));
+    If(p.w.lessThan(0), () => { Return(); });
+    const q4 = v4(wWezR.element(i3.add(uint(2))));
+    If(q4.w.lessThanEqual(0), () => { Return(); });
+    const iM = fv(float(1).div(sumaA(L_M)));
+    const e = v3(p.xyz.sub(vec3(sumaA(L_S), sumaA(L_S + 1), sumaA(L_S + 2)).mul(iM)));
+    const dv = v3(q4.xyz.div(64).sub(vec3(sumaA(L_P), sumaA(L_P + 1), sumaA(L_P + 2)).mul(iM).div(64)));
+    const L = v3(cross(e, dv).mul(16));
+    atomicAdd(wLiczA.element(uint(L_L)), uint(int(round(L.x))));
+    atomicAdd(wLiczA.element(uint(L_L + 1)), uint(int(round(L.y))));
+    atomicAdd(wLiczA.element(uint(L_L + 2)), uint(int(round(L.z))));
+    const xx = fv(e.x.mul(e.x)), yy = fv(e.y.mul(e.y)), zz = fv(e.z.mul(e.z));
+    atomicAdd(wLiczA.element(uint(L_I)), uint(int(round(yy.add(zz).div(16)))));
+    atomicAdd(wLiczA.element(uint(L_I + 1)), uint(int(round(xx.add(zz).div(16)))));
+    atomicAdd(wLiczA.element(uint(L_I + 2)), uint(int(round(xx.add(yy).div(16)))));
+    atomicAdd(wLiczA.element(uint(L_I + 3)), uint(int(round(e.x.mul(e.y).negate().div(16)))));
+    atomicAdd(wLiczA.element(uint(L_I + 4)), uint(int(round(e.x.mul(e.z).negate().div(16)))));
+    atomicAdd(wLiczA.element(uint(L_I + 5)), uint(int(round(e.y.mul(e.z).negate().div(16)))));
+  })().compute(MAX).setName('wokWybuchMoment');
+
+  const kWybuch = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const i3 = uv(uint(3).mul(i));
+    const p = v4(wWez.element(i3));
+    If(p.w.lessThan(0), () => { Return(); });
+    const q4 = v4(wWez.element(i3.add(uint(2))));
+    If(q4.w.lessThanEqual(0), () => { Return(); });
+    const m = fv(sumaR(L_M));
+    const iM = fv(float(1).div(m));
+    const dv = v3(q4.xyz.div(64).sub(vec3(sumaR(L_P), sumaR(L_P + 1), sumaR(L_P + 2)).mul(iM).div(64)));
+    If(uZerujL.notEqual(uint(0)).and(m.greaterThanEqual(64)), () => {
+      const e = v3(p.xyz.sub(vec3(sumaR(L_S), sumaR(L_S + 1), sumaR(L_S + 2)).mul(iM)));
+      // Tensor w jednostkach 1/16, moment w 16: ω = I⁻¹·L, razem dzielnik 256.
+      const Ixx = fv(sumaR(L_I)), Iyy = fv(sumaR(L_I + 1)), Izz = fv(sumaR(L_I + 2)), Ixy = fv(sumaR(L_I + 3)), Ixz = fv(sumaR(L_I + 4)), Iyz = fv(sumaR(L_I + 5));
+      const A = fv(Iyy.mul(Izz).sub(Iyz.mul(Iyz)));
+      const B = fv(Ixz.mul(Iyz).sub(Ixy.mul(Izz)));
+      const C = fv(Ixy.mul(Iyz).sub(Ixz.mul(Iyy)));
+      const det = fv(Ixx.mul(A).add(Ixy.mul(B)).add(Ixz.mul(C)));
+      const sl = fv(Ixx.add(Iyy).add(Izz).div(3));
+      If(det.abs().greaterThan(sl.mul(sl).mul(sl).mul(1e-3)), () => {
+        const Lx = fv(sumaR(L_L)), Ly = fv(sumaR(L_L + 1)), Lz = fv(sumaR(L_L + 2));
+        const E = fv(Ixx.mul(Izz).sub(Ixz.mul(Ixz)));
+        const F = fv(Ixy.mul(Ixz).sub(Ixx.mul(Iyz)));
+        const H = fv(Ixx.mul(Iyy).sub(Ixy.mul(Ixy)));
+        const w = v3(vec3(A.mul(Lx).add(B.mul(Ly)).add(C.mul(Lz)), B.mul(Lx).add(E.mul(Ly)).add(F.mul(Lz)), C.mul(Lx).add(F.mul(Ly)).add(H.mul(Lz))).div(det).div(256));
+        const u = v3(cross(w, e));
+        // Bez obcięcia pięć węzłów w linii dostaje 10 303 j./s (§ 2.8).
+        const uMax = fv(float(wLiczR.element(uint(L_QMAX))).div(64));
+        const ul = fv(length(u));
+        If(ul.greaterThan(uMax), () => { u.mulAssign(uMax.div(ul)); });
+        dv.subAssign(u);
+      });
+    });
+    wWez.element(i3.add(uint(1))).assign(vec4(wWez.element(i3.add(uint(1))).xyz.add(dv), 0));
+  })().compute(MAX).setName('wokWybuch');
+
+  const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch };
+  // Kernele o stałej liczbie wywołań: nie po węzłach, więc wczytanie sceny nie zmienia im liczby.
+  const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch]);
 
   // ── Listy § 2.4, zbudowane raz ── Na krok: lista kontaktów co RYTM podkroków, reszta F + I.
   const sekwencja = [];
@@ -487,8 +783,16 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const listaSiatki = [kWstaw, kLista, kZerujPo];
   const listaPodkroku = [kWstaw, kLista, kZerujPo, kF];
   const listaCalkowania = [kI];
+  const listaZd = [kCzas, kCzysc, kCzyscS];
+  const listaZdKrater = [kCzas, kKraterCel, kKrater, kCzysc, kCzyscS];
+  const listaZdStrzal = [kCzas, kZerujCel, kCel, kKraterCel, kKrater, kCzysc, kCzyscS];
+  const listaWb = [kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch];
+  const listaWbBezL = [kZerujWybuch, kWybuchSuma, kWybuch];
 
-  const atrybuty = { wez: wWez.value, stan: wStan.value, maska: wMaska.value, wiaz: wWiaz.value, lista: wLista.value, ijk: aIjk, tab: aTab, komLicz: aKomLicz, komSloty: wKomSloty.value };
+  const atrybuty = {
+    wez: wWez.value, stan: wStan.value, maska: wMaska.value, wiaz: wWiaz.value, lista: wLista.value, ijk: aIjk, tab: aTab, komLicz: aKomLicz, komSloty: wKomSloty.value,
+    czasU: wCzasU.value, licz: aLicz, blastK: wBlastK.value,
+  };
   const wiazF = atrybuty.wiaz.array;
   const wiazU = new Uint32Array(wiazF.buffer, wiazF.byteOffset, wiazF.length);
   let wypiek = null;
@@ -496,7 +800,151 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const uniformy = {
     uN, uH, uK, uCB, uKB, uKC, uCC, uCT, uCosWyp, uGStala, uGPunktC, uGPunktG, uGPunktR0, uGObrotP, uGObrotOm, uGOs, uSkG, uSkF0, uKotwice, uGruntZ, uDxP, uCap, uLepL, uLepV2,
     uGruzP, uGruzV2, uFalaV2, uFalaTempoH, uSzokProg, uKontaktV, uIKom, uZasieg2, uPekaProg, uPekaZakres, uZlomB2,
+    uT, uBrakCzasu, uCelO, uCelDir, uCelProg2, uKraterN, uBlastN, uZerujL,
   };
+
+  // ── Plan zdarzeń ── Bez pętli po węzłach w kroku: kCzas czyta czasy z bufora, tu tylko numer klatki i rzędy uniformów (najwyżej BLAST_N + KRATER_N zapisów).
+  let plan = null;
+  let fKlatka = 0;
+  let qKrater = 0;
+  let slotNast = 0;
+  let ileK = 0;
+  let strzalCzeka = null;
+  const pchK = Array.from({ length: BLAST_N }, () => ({ rP: 0, J: 0, tau: 0, t0: 0, slot: 0, dz: 0 }));
+  const liczniki = { pominietePchniecia: 0, pominieteKratery: 0, wykonaneKratery: 0, pchnieteKlatki: 0 };
+  const DT = 1 / 60;
+
+  function resetPlanu() {
+    plan = null; fKlatka = 0; qKrater = 0; slotNast = 0; ileK = 0; strzalCzeka = null;
+    liczniki.pominietePchniecia = 0; liczniki.pominieteKratery = 0; liczniki.wykonaneKratery = 0; liczniki.pchnieteKlatki = 0;
+    uBlastN.value = 0; uKraterN.value = 0; uT.value = 0;
+  }
+
+  /**
+   * Plan zdarzeń sceny (§ 2.8, wynik planGpu z scena.js): czasy węzłów do wCzasU, pchnięcia znane z budowy, kratery o własnych czasach, środkach, promieniach i pchnięciach.
+   * Klatka zdarzenia węzła jak w Node: f z (f/60 − 1e−9, (f + 1)/60 − 1e−9]. W buforze ±(f + 0,5): znak to rodzaj, połowa odsuwa od progu w f32.
+   */
+  function ustawPlan(pg) {
+    if (!wypiek) throw new Error('ustawPlan przed wczytaj');
+    resetPlanu();
+    const n = wypiek.n;
+    const czasU = atrybuty.czasU.array, stan = atrybuty.stan.array;
+    czasU.fill(1e30);
+    const c = pg.czasy;
+    let maxF = 0;
+    const fz = c ? new Int32Array(c.indeksy.length) : null;
+    if (c) for (let q = 0; q < c.indeksy.length; q++) { fz[q] = Math.max(0, Math.ceil((c.t[q] + 1e-9) * 60) - 1); if (fz[q] > maxF) maxF = fz[q]; }
+    const klatki = new Uint8Array(maxF + 1);
+    if (c) {
+      for (let q = 0; q < c.indeksy.length; q++) {
+        const i = c.indeksy[q];
+        czasU[i] = (c.rozerwij[q] ? -1 : 1) * (fz[q] + 0.5);
+        klatki[fz[q]] = 1;
+        if (c.rozerwij[q] && c.zostawZiarna) stan[4 * (2 * n + 2 * i) + 7] = (wypiek.flagi[i] | BIT_ZOSTAW) >>> 0;
+      }
+      atrybuty.stan.needsUpdate = true;
+    }
+    // Węzły, które reszta kuli krateru rozrywa przez S = 3 (scena z szwami). Dane budowy sceny, bez nowego bufora.
+    if (pg.bitPas) {
+      for (let i = 0; i < n; i++) if (pg.bitPas[i]) { const q = 4 * (2 * n + 2 * i) + 7; stan[q] = (stan[q] | BIT_PAS) >>> 0; }
+      atrybuty.stan.needsUpdate = true;
+    }
+    atrybuty.czasU.needsUpdate = true;
+    plan = { klatki, pchniecia: pg.pchniecia ?? [], kratery: pg.kratery ?? [], zerujL: pg.zerujL !== false, swobodnyG: pg.swobodnyG ?? 0, skalaG: pg.skalaG ?? null };
+    return plan;
+  }
+
+  /** Strzał myszą (§ 2.8, § 5.3): wykona się przed krokiem następnej klatki. Pudło: kKraterCel gasi slot, więc pchnięcie go pomija. */
+  function strzel({ o, dir, r = 60, J = 300, tau = 0.3, rP = 160, rdzen = 0.4 }) {
+    const d = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    uCelO.value.set(o[0], o[1], o[2]);
+    uCelDir.value.set(dir[0] / d, dir[1] / d, dir[2] / d);
+    const dx = wypiek.dx;
+    uCelProg2.value = 0.49 * dx * dx;
+    strzalCzeka = { nos: -2, x: 0, y: 0, z: 0, r, rdzen, rS: 1, J, tau, rP, dz: 0, usunStojace: false };
+  }
+
+  function wpiszKrater(k, e, f) {
+    const b = 3 * k;
+    const slot = slotNast;
+    slotNast = (slotNast + 1) % SLOTY_K;
+    const r2 = e.r * e.r;
+    daneKrater[b].set(e.x ?? 0, e.y ?? 0, e.z ?? 0, r2);
+    daneKrater[b + 1].set(e.rdzen * e.rdzen * r2, (e.rS ?? 1) * (e.rS ?? 1) * r2, slot, e.nos ?? -1);
+    daneKrater[b + 2].set(e.usunStojace ? 1 : 0, 0, 0, 0);
+    liczniki.wykonaneKratery++;
+    if (e.J > 0) {
+      if (ileK < BLAST_N) {
+        const w = pchK[ileK++];
+        w.rP = e.rP; w.J = e.J; w.tau = Math.max(e.tau, DT); w.t0 = f * DT; w.slot = slot; w.dz = e.dz ?? 0;
+      } else liczniki.pominietePchniecia++;
+    }
+  }
+
+  /** Listy LZd i LWb klatki (§ 2.4). Bez planu i strzału nic nie robi: krok jak w P1. Woła ją krok(); w ?profil=1 trzeba ją wołać ręcznie przed kernelami. */
+  function zdarzeniaKlatki(renderer) {
+    const f = fKlatka;
+    const p = plan;
+    const strzal = strzalCzeka;
+    if (!p && !strzal && ileK === 0) return;
+    if (p?.skalaG) {
+      const [a, b, s0, s1] = p.skalaG;
+      const u = Math.min(1, Math.max(0, (f * DT - a) / (b - a)));
+      const s = s0 + (s1 - s0) * u;
+      ustawUniformy(wypiek, s, Math.sqrt((wypiek.zr.gMod * s) / 400));
+    }
+    let nK = 0;
+    if (p) {
+      while (qKrater < p.kratery.length && p.kratery[qKrater].f <= f && nK < KRATER_N) wpiszKrater(nK++, p.kratery[qKrater++], f);
+    }
+    if (strzal) {
+      if (nK === KRATER_N) nK--; // strzał gracza ważniejszy niż rząd planu, ten przepada
+      wpiszKrater(nK++, strzal, f);
+      strzalCzeka = null;
+    }
+    const czas = p !== null && f < p.klatki.length && p.klatki[f] === 1;
+    if (czas || nK > 0) {
+      uT.value = f + 1;
+      uKraterN.value = nK;
+      renderer.compute(strzal ? listaZdStrzal : nK > 0 ? listaZdKrater : listaZd);
+    }
+    let nb = 0;
+    const t0 = f * DT, t1 = t0 + DT;
+    if (p && p.pchniecia.length) {
+      const h = wypiek.h;
+      const dzSw = p.swobodnyG ? -p.swobodnyG * (0.5 * t0 * t0 + 0.5 * t0 * h) : 0;
+      for (let q = 0; q < p.pchniecia.length; q++) {
+        const e = p.pchniecia[q];
+        const a = Math.max(t0, e.t0), c = Math.min(t1, e.t0 + e.tau);
+        if (c <= a) continue;
+        if (nb === BLAST_N) { liczniki.pominietePchniecia++; continue; }
+        daneBlast[2 * nb].set(e.x, e.y, e.z + dzSw, e.rP);
+        daneBlast[2 * nb + 1].set((e.J * (c - a)) / e.tau, -1, 0, 0);
+        nb++;
+      }
+    }
+    for (let q = ileK - 1; q >= 0; q--) {
+      const e = pchK[q];
+      const c = Math.min(t1, e.t0 + e.tau);
+      if (c <= t0 + 1e-9) {
+        const ost = pchK[--ileK];
+        pchK[ileK] = e;
+        pchK[q] = ost;
+        continue;
+      }
+      if (nb === BLAST_N) { liczniki.pominietePchniecia++; continue; }
+      daneBlast[2 * nb].set(0, 0, 0, e.rP);
+      daneBlast[2 * nb + 1].set((e.J * (c - t0)) / e.tau, e.slot, e.dz, 0);
+      nb++;
+    }
+    if (nb > 0) {
+      const zerujL = p ? p.zerujL : true;
+      uBlastN.value = nb;
+      uZerujL.value = zerujL ? 1 : 0;
+      liczniki.pchnieteKlatki++;
+      renderer.compute(zerujL ? listaWb : listaWbBezL);
+    }
+  }
 
   /** Uniformy sceny (§ 10.4). skG i sFr z migawki albo z budowy. Te same liczby, które WzorzecCpu liczy na początku przebiegu F. */
   function ustawUniformy(w, skG = 1, sFr = w.sFr) {
@@ -581,8 +1029,12 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     for (let q = 0; q < 27; q++) { const b = 4 * (REK_LUT + q); tab[b] = w.lutKier[q]; tab[b + 1] = 0; tab[b + 2] = 0; tab[b + 3] = 0; }
     atrybuty.lista.array.fill(0);
     atrybuty.komLicz.array.fill(0);
+    atrybuty.czasU.array.fill(1e30);
+    atrybuty.licz.array.fill(0);
+    atrybuty.blastK.array.fill(0);
     for (const k of Object.values(atrybuty)) k.needsUpdate = true;
-    for (const k of Object.values(kernele)) k.setCount(n);
+    for (const k of Object.values(kernele)) if (!STALA_LICZBA.has(k)) k.setCount(n);
+    resetPlanu();
     ustawUniformy(w);
   }
 
@@ -616,11 +1068,19 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     atrybuty.wiaz.needsUpdate = true;
     atrybuty.lista.needsUpdate = true;
     atrybuty.komLicz.needsUpdate = true;
+    resetPlanu();
     ustawUniformy(w, m.skG ?? 1, m.sFr ?? w.sFr);
   }
 
-  /** Jeden krok fizyki 1/60 s: 22 dispatche w jednym compute passie (§ 2.4). Bez alokacji po stronie dema. */
-  function krok(renderer) { renderer.compute(listaKroku); }
+  /**
+   * Jeden krok fizyki 1/60 s: zdarzenia klatki, potem 22 dispatche w jednym compute passie (§ 2.4). Bez alokacji po stronie dema.
+   * AGENT: ?profil=1 w glowny.js woła kernele z `sekwencja` wprost, z pominięciem tej funkcji: tam nie ma zdarzeń ani licznika klatek. Pomiar P6 ze zdarzeniami: zdarzeniaKlatki + nastawKlatke.
+   */
+  function krok(renderer) {
+    zdarzeniaKlatki(renderer);
+    renderer.compute(listaKroku);
+    fKlatka++;
+  }
 
   /** Jeden przebieg kLista + kF bez całkowania: to, co porównuje test § 8. Wynik: odczyt(renderer). */
   function podkrokPorownania(renderer) { renderer.compute(listaPodkroku); }
@@ -669,9 +1129,27 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     };
   }
 
+  /** Odczyt do metryk sceny, w teście (§ 8): tylko pozycje, prędkości i maski. Wiązania zostają na GPU, więc odczyt co klatkę nie wstrzymuje biegu. */
+  async function odczytLekki(renderer) {
+    const n = wypiek.n;
+    const [bWez, bMaska] = await Promise.all([renderer.getArrayBufferAsync(atrybuty.wez), renderer.getArrayBufferAsync(atrybuty.maska)]);
+    const wez = new Float32Array(bWez), maska = new Uint32Array(bMaska);
+    const pos = new Float32Array(3 * n), vel = new Float32Array(3 * n), aktywny = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const b = 12 * i;
+      pos[3 * i] = wez[b]; pos[3 * i + 1] = wez[b + 1]; pos[3 * i + 2] = wez[b + 2];
+      aktywny[i] = wez[b + 3] < 0 ? 0 : 1;
+      vel[3 * i] = wez[b + 4]; vel[3 * i + 1] = wez[b + 5]; vel[3 * i + 2] = wez[b + 6];
+    }
+    return { n, pos, vel, aktywny, maskaW: maska.slice(0, n) };
+  }
+
   return {
-    maxNodes: MAX, kernele, sekwencja, listaKroku, listaSiatki, listaPodkroku, atrybuty, uniformy,
-    wczytaj, wgraj, ustawUniformy, krok, podkrokPorownania, calkuj, rozgrzej, odczyt,
+    maxNodes: MAX, kernele, sekwencja, listaKroku, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
+    wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     get wypiek() { return wypiek; },
+    get fKlatka() { return fKlatka; },
+    /** Numer klatki, gdy kroki idą poza krok(): zegar sceny, ?profil=1. */
+    nastawKlatke(f) { fKlatka = f; },
   };
 }

@@ -3,8 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
-import { createWokseleSolver, slowoSasiada, sasiadZeSlowa, klasaZeSlowa, slowoIjk } from '../dema/woksele-zawalenia/solver.js';
-import { wieza } from '../dema/woksele-zawalenia/scena.js';
+import { createWokseleSolver, slowoSasiada, sasiadZeSlowa, klasaZeSlowa, slowoIjk, KRATER_N, BIT_ZOSTAW } from '../dema/woksele-zawalenia/solver.js';
+import { wieza, S1, S3, S4, krater, planGpu } from '../dema/woksele-zawalenia/scena.js';
 import { WzorzecCpu } from '../dema/woksele-zawalenia/wzorzec-cpu.js';
 import { WzorzecF32 } from '../dema/woksele-zawalenia/wzorzecF32.js';
 import { zbuduj, PARAMETRY, STRONA } from '../dema/woksele-zawalenia/budowa.js';
@@ -42,10 +42,21 @@ const DOSTEP = {
   kWstaw: { wokWez: 'read', wokKomLicz: 'read_write', wokKomSloty: 'read_write' },
   kLista: { wokWez: 'read', wokMaska: 'read', wokLista: 'read_write', wokIjk: 'read', wokKomLicz: 'read', wokKomSloty: 'read', wokTab: 'read' },
   kZerujPo: { wokWez: 'read', wokKomLicz: 'read_write' },
+  kCzas: { wokCzasU: 'read_write', wokWez: 'read_write', wokMaska: 'read_write', wokStan: 'read_write' },
+  kCzysc: { wokWez: 'read', wokMaska: 'read_write', wokStan: 'read', wokWiaz: 'read' },
+  kCzyscS: { wokMaska: 'read_write', wokStan: 'read_write' },
+  kZerujCel: { wokLicz: 'read_write' },
+  kCel: { wokWez: 'read', wokLicz: 'read_write' },
+  kKraterCel: { wokWez: 'read', wokLicz: 'read', wokBlastK: 'read_write' },
+  kKrater: { wokWez: 'read_write', wokStan: 'read_write', wokBlastK: 'read', wokMaska: 'read_write' },
+  kZerujWybuch: { wokLicz: 'read_write' },
+  kWybuchSuma: { wokWez: 'read_write', wokStan: 'read', wokBlastK: 'read', wokLicz: 'read_write' },
+  kWybuchMoment: { wokWez: 'read', wokLicz: 'read_write' },
+  kWybuch: { wokWez: 'read_write', wokLicz: 'read' },
 };
 
-test('kernele P1: dokładnie te z § 12', () => {
-  assert.deepEqual(NAZWY.sort(), ['kF', 'kI', 'kLista', 'kWstaw', 'kZerujPo']);
+test('kernele P1 i P2: dokładnie te z § 12', () => {
+  assert.deepEqual(NAZWY.slice().sort(), Object.keys(DOSTEP).sort());
 });
 
 for (const nazwa of Object.keys(DOSTEP)) {
@@ -72,10 +83,21 @@ for (const nazwa of Object.keys(DOSTEP)) {
   });
 }
 
-test('atomiki tylko w kWstaw (§ 9), a kWstaw dodaje do licznika komórki przez atomicAdd', () => {
-  for (const nazwa of NAZWY) assert.equal(maAtomik(WGSL[nazwa]), nazwa === 'kWstaw', `${nazwa}: atomik`);
+test('atomiki tylko w kWstaw, kCel, kWybuchSuma i kWybuchMoment (§ 2.4)', () => {
+  const Z_ATOMIKIEM = new Set(['kWstaw', 'kCel', 'kWybuchSuma', 'kWybuchMoment']);
+  for (const nazwa of NAZWY) assert.equal(maAtomik(WGSL[nazwa]), Z_ATOMIKIEM.has(nazwa), `${nazwa}: atomik`);
   assert.match(WGSL.kWstaw, /atomicAdd\(/);
-  for (const nazwa of NAZWY) if (nazwa !== 'kWstaw') assert.doesNotMatch(WGSL[nazwa], /atomic(Add|Load|Store|Min)\(/, nazwa);
+  assert.match(WGSL.kCel, /atomicMin\(/);
+  assert.match(WGSL.kWybuchSuma, /atomicAdd\(/);
+  assert.match(WGSL.kWybuchSuma, /atomicMax\(/);
+  assert.match(WGSL.kWybuchMoment, /atomicLoad\(/);
+  for (const nazwa of NAZWY) if (!Z_ATOMIKIEM.has(nazwa)) assert.doesNotMatch(WGSL[nazwa], /atomic(Add|Load|Store|Min|Max)\(/, nazwa);
+});
+
+test('kZerujWybuch i kZerujCel piszą licznik zwykłym przypisaniem, nie przez zapis z CPU, a kZerujWybuch omija głowice i cel', () => {
+  assert.match(WGSL.kZerujWybuch, /wokLicz\.value\[[^;]+\]\s*=\s*0u\s*;/);
+  assert.match(WGSL.kZerujCel, /wokLicz\.value\[[^;]+\]\s*=\s*4294967295u\s*;/);
+  assert.match(WGSL.kZerujWybuch, /instanceIndex\s*<\s*3u/);
 });
 
 test('kLista czyta licznik komórki bez atomików, kZerujPo pisze go zwykłym przypisaniem', () => {
@@ -83,11 +105,24 @@ test('kLista czyta licznik komórki bez atomików, kZerujPo pisze go zwykłym pr
   assert.match(WGSL.kZerujPo, /wokKomLicz\.value\[[^;]+\]\s*=\s*0u\s*;/);
 });
 
-test('round: żaden kernel P1 nie zamienia f32 na liczby stałoprzecinkowe; floor tylko przy komórce siatki', () => {
-  // § 2.8 wymaga round w kWybuchSuma i kWybuchMoment: przyjdą w P2 razem ze swoim testem. Tu pilnujemy, że kernele P1 nie mają obcinania sum.
-  for (const nazwa of NAZWY) assert.doesNotMatch(WGSL[nazwa], /round\(/, nazwa);
+test('round: stały przecinek tylko w sumach pchnięcia i przez round, bez obcinania; floor tylko przy komórce siatki', () => {
+  // § 2.8: |P|/N obcinanie 0,1221 j./s, round 0,0007. Każde i32 z f32 w kWybuchSuma i kWybuchMoment idzie przez round.
+  const ROUND = new Set(['kWybuchSuma', 'kWybuchMoment']);
+  for (const nazwa of NAZWY) assert.equal(/round\(/.test(WGSL[nazwa]), ROUND.has(nazwa), nazwa);
+  // W kWybuchSuma każde i32 to wejście do sumy. W kWybuchMoment i32 czyta też sumy z licznika (u32 → i32), więc tam tylko to, co idzie do atomicAdd.
+  for (const m of WGSL.kWybuchSuma.matchAll(/\bi32\(\s*([^()\s]+)/g)) assert.equal(m[1], 'round', `kWybuchSuma: i32 bez round: ${m[0]}`);
+  for (const m of WGSL.kWybuchMoment.matchAll(/atomicAdd\([^,]+,\s*u32\(\s*i32\(\s*([^()\s]+)/g)) assert.equal(m[1], 'round', `kWybuchMoment: suma bez round: ${m[0]}`);
   for (const nazwa of ['kWstaw', 'kLista', 'kZerujPo']) assert.match(WGSL[nazwa], /i32\(\s*floor\(/, nazwa);
-  for (const nazwa of ['kF', 'kI']) assert.doesNotMatch(WGSL[nazwa], /floor\(/, nazwa);
+  for (const nazwa of ['kF', 'kI', 'kCzas', 'kCzysc', 'kCzyscS', 'kCel', 'kKrater', 'kWybuch']) assert.doesNotMatch(WGSL[nazwa], /floor\(/, nazwa);
+});
+
+test('tablice uniformów uKrater i uBlast mają stałe nazwy, a uniformów vec4 poza tablicami nie ma (§ 1.7)', () => {
+  assert.match(WGSL.kKrater, /var<uniform> uKrater/);
+  assert.match(WGSL.kWybuchSuma, /var<uniform> uBlast/);
+  for (const nazwa of NAZWY) {
+    const obj = WGSL[nazwa].match(/struct objectStruct \{([^}]*)\}/);
+    if (obj) assert.doesNotMatch(obj[1], /vec4<f32>/, `${nazwa}: uniform vec4`);
+  }
 });
 
 test('kF: sąsiad jako bity f32 przez bitcast, nie przez konwersję wartości', () => {
@@ -198,7 +233,8 @@ test('wczytanie budowy: wiązania, klasy i tablice stałe wracają z buforów', 
     assert.equal(ijk.array[i], slowoIjk(w.ijk[3 * i], w.ijk[3 * i + 1], w.ijk[3 * i + 2], w.grupa[i]));
   }
   for (let q = 0; q < 27; q++) assert.equal(tab.array[4 * (30 + q)], w.lutKier[q]);
-  for (const k of Object.values(s.kernele)) assert.equal(k.getCount(), n);
+  for (const [nazwa, k] of Object.entries(s.kernele)) assert.equal(k.getCount(), { kZerujCel: 1, kKraterCel: KRATER_N, kZerujWybuch: 20 }[nazwa] ?? n, nazwa);
+  assert.equal(s.atrybuty.czasU.array[0], Math.fround(1e30));
   assert.equal(s.uniformy.uN.value, n);
   assert.equal(s.uniformy.uCap.value, w.capEtyk);
 });
@@ -251,4 +287,46 @@ test('lista kroku: 22 dispatche, lista kontaktów co 4 podkroki (§ 2.4)', () =>
   assert.equal(nazwy.filter((x) => x === 'kI').length, 8);
   assert.equal(nazwy.filter((x) => x === 'kLista').length, 2);
   assert.equal(nazwy.lastIndexOf('kWstaw'), 11);
+});
+
+test('plan zdarzeń: klatka węzła jak w Node, znak to rodzaj, bit ziaren w fladze, rezet przy wczytaniu', () => {
+
+  const sc = wieza({ w: 100, d: 100, h: 180, pietroCo: 3, kolumnyCo: 2, rdzenW: 40, rdzenD: 40 });
+  sc.g = 400; sc.gruntZ = 0; sc.vel0 = null;
+  const w = zbuduj(sc, PARAMETRY);
+  const s = createWokseleSolver({ maxNodes: Math.max(w.n, 8) });
+  s.wczytaj(w);
+  const pg = {
+    czasy: { indeksy: Int32Array.from([3, 5, 7]), t: Float64Array.from([2, 2.01, 2 + 1 / 60]), rozerwij: Uint8Array.from([0, 1, 1]), zostawZiarna: true },
+    pchniecia: [], kratery: [],
+  };
+  const p = s.ustawPlan(pg);
+  const c = s.atrybuty.czasU.array;
+  assert.equal(c[3], 120.5, 't = 2 należy do klatki 120, jak w planUsuwania');
+  assert.equal(c[5], -120.5, 'rozerwanie: znak ujemny');
+  assert.equal(c[7], -121.5, 't = 2 + 1/60 należy do klatki 121');
+  assert.equal(p.klatki[120], 1);
+  assert.equal(p.klatki[119], 0);
+  const flaga = (i) => s.atrybuty.stan.array[4 * (2 * w.n + 2 * i) + 7];
+  assert.equal(flaga(5), (w.flagi[5] | BIT_ZOSTAW) >>> 0);
+  assert.equal(flaga(3), w.flagi[3], 'usunięcie nie dostaje bitu');
+  s.wczytaj(w);
+  assert.equal(c[3], Math.fround(1e30));
+  assert.equal(flaga(5), w.flagi[5]);
+
+});
+
+test('plany pełnych scen niosą dane dla solvera: S4 pchnięcia i korekcję momentu, krater rząd, S3 nic', () => {
+  const p4 = planGpu(S4());
+  assert.equal(p4.pchniecia.length, 12);
+  assert.equal(p4.zerujL, true);
+  assert.equal(p4.swobodnyG, 0);
+  assert.equal(p4.pchniecia[0].rP, 320);
+  assert.equal(planGpu(S4({ g: 400 })).swobodnyG, 400);
+  assert.equal(planGpu(S4({ g: 400, grunt: true, kotwice: true })).swobodnyG, 0);
+  const k = planGpu(krater({ c: [190, 0, 650], r: 60, J: 300, rP: 160, proznia: true }));
+  assert.equal(k.kratery.length, 1);
+  assert.equal(k.kratery[0].rdzen, 0.4);
+  assert.equal(planGpu(S3()).czasy.indeksy.length, 0);
+  assert.ok(planGpu(S1()).czasy.indeksy.length > 0);
 });

@@ -600,6 +600,12 @@ export function S4(oW = {}) {
     blasty,
     kond,
     opcje: o,
+    gpu: {
+      pchniecia: blasty.map((q) => ({ x: q.x, y: q.y, z: q.z, t0: q.t0, rP, J, tau })),
+      zerujL,
+      swobodnyG: !o.grunt && !o.kotwice ? g : 0,
+      skalaG: o.skalaG ?? null,
+    },
     zdarzenia(f, m) {
       const t0 = f / FPS, t1 = t0 + 1 / FPS;
       let nr = 0;
@@ -729,6 +735,7 @@ export function krater(o) {
     usuniete: lU.length,
     rozerwane: lR.length,
     c: o.c,
+    gpu: { kratery: [{ f: 0, nos: -1, x: cx, y: cy, z: cz, r, rdzen: rdz, rS: 1, J, tau, rP, usunStojace: false }], zerujL: true },
     zdarzenia(f, m) {
       if (f === 0) {
         m.usun(lU);
@@ -738,4 +745,14 @@ export function krater(o) {
       return f === 0 ? lU.length : 0;
     },
   };
+}
+
+/**
+ * Plan zdarzeń dla solvera GPU (§ 2.8), same dane: `solver.ustawPlan(planGpu(plan))`.
+ * czasy: indeksy, czasy, rodzaj na węzeł (kCzas). pchniecia: { x, y, z, t0, rP, J, tau }, środek znany z budowy.
+ * kratery: { f, nos (węzeł-nosiciel) | nos: −1 z x, y, z, r, rdzen, rS, J, tau, rP, dz, usunStojace }, posortowane po f; środek i pchnięcie na GPU, więc plan z wieloma eksplozjami nie potrzebuje nowych buforów.
+ * zerujL: korekcja momentu pchnięcia. swobodnyG: środki pchnięć jadą za spadającą wieżą.
+ */
+export function planGpu(plan) {
+  return { czasy: plan.czasy ?? null, pchniecia: [], kratery: [], zerujL: true, swobodnyG: 0, skalaG: null, ...plan.gpu };
 }

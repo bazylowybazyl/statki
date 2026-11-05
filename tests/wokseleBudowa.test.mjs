@@ -134,7 +134,7 @@ const WZOR_PARAMETROW = {
   muGrunt: 0.7,
   skorKontakt: 0.5,
   slotyListy: 32,
-  slotyKomorki: 16,
+  slotyKomorki: 24, // jedyna różnica wobec parametry-spec4.json (tam 16): § 2.7, wyścig kWstaw. Skróty biegów liczą się przy 16, tests/helpers/wokseleBiegi.mjs
   nKom: 65536,
   rytmListy: 4,
   vMax: 4000,
@@ -318,12 +318,13 @@ test('porownajPodkrok: progi § 8 po obu stronach', () => {
   assert.deepEqual([m.s, m.a, m.l, m.d, m.ponadA], [0, 0, 0, 0, 0]);
 });
 
-test('porownajPodkrok: stojące bez przyspieszenia, martwe poza porównaniem, F0 i etykieta poza zaliczeniem', () => {
+test('porownajPodkrok: stojące bez przyspieszenia, martwe poza porównaniem, F0 oblewa, etykieta poza zaliczeniem', () => {
   assert.equal(porownajZmiane((w) => { w.acc[3 * 2] = 1000; }).zaliczony, true, 'stojący');
   assert.equal(porownajZmiane((w) => { w.szkoda[3] = 1; w.maskaW[3] = 0; w.acc[3 * 3] = 1000; w.L[18 * 3] = 1; }).zaliczony, true, 'martwy');
   const f0 = porownajZmiane((w) => { w.F0[18] = 1000; });
-  assert.equal(f0.zaliczony, true);
+  assert.equal(f0.zaliczony, false);
   assert.equal(f0.f0, 1);
+  assert.equal(porownajZmiane((w) => { w.F0[18] += 0.5; }).zaliczony, true, 'F0 do 1 w progu');
   const zmienEtyk = (w) => { w.etyk[1] = 7; };
   const e = porownajZmiane(zmienEtyk);
   assert.equal(e.zaliczony, true, 'bez kotwic Node nie liczy etykiety (§ 1.6)');
@@ -366,7 +367,7 @@ test('parametry końcowe z § 2.1 i nakładka ziarna', () => {
   assert.equal(w.kB, 3000);
   assert.equal(w.kC, 24000);
   assert.equal(w.M, 32);
-  assert.equal(w.S, 16);
+  assert.equal(w.S, 24);
   assert.equal(w.nKom, 65536);
   assert.equal(w.capEtyk, 109);
   const inna = zbuduj(S1().scena, parametry({ ziarno: 21 }), { pamiecStatyki });

@@ -41,7 +41,7 @@ export const PARAMETRY = Object.freeze({
   muGrunt: 0.7,
   skorKontakt: 0.5,     // naddatek listy (w dx)
   slotyListy: 32,       // M
-  slotyKomorki: 16,     // S
+  slotyKomorki: 24,     // S: maks. 23 w komórce, § 2.7. model-spec4 liczył przy 16 i to wchodzi tylko przez tests/helpers/wokseleBiegi.mjs
   nKom: 65536,          // § 2.7: przy każdej scenie
   rytmListy: 4,         // lista co tyle podkroków
   vMax: 4000,

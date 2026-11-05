@@ -1,9 +1,10 @@
 // Test GPU z Node na stronie dema, ?test=1 (docs/SPEC-woksele-zawalenia.md § 8): jeden podkrok z migawek P0, mutacje, W1, vMax, punkt G1.
 // Wzorcem jest zawsze migawka z Node albo WzorzecCpu liczony tutaj: nigdy GPU z GPU. Moduł bez DOM, migawki przez fetch z własnego Vite.
 import { rozpakujMigawke, sprawdzBudowe, WzorzecCpu } from './wzorzec-cpu.js';
-import { porownajPodkrok } from './metryki.js';
-import { popcnt } from './budowa.js';
+import { porownajPodkrok, ObserwatorSceny, analizaPolowek, pietraStropow, taca } from './metryki.js';
+import { popcnt, zbuduj, PARAMETRY } from './budowa.js';
 import { WzorzecF32 } from './wzorzecF32.js';
+import { S1, S2, S3, S4, krater, planGpu } from './scena.js';
 
 const KATALOG = '/.tmp/woksele-demo/migawki/';
 
@@ -91,16 +92,32 @@ function przepelnioneKomorki(w, pos, aktywny) {
   return odrzucone;
 }
 
-/** Wiązania, na których f64 i GPU poszły inną gałęzią, a co na nich mówi wzorzec f32: f32 = GPU to zaokrąglenie przy progu, f32 = f64 to błąd kernela. */
+/** Wiązania, na których f64 i GPU poszły inną gałęzią, a co na nich mówi wzorzec f32: f32 = GPU to zaokrąglenie przy progu, f32 = f64 to błąd kernela. F0 tą samą regułą co L i D, próg 1 jak w porownajPodkrok. */
 function flipy(w, f64, f32, gpu) {
   const wy = [];
   for (let q = 0; q < 18 * w.n; q++) {
     const dg = Math.abs(f64.L[q] - gpu.L[q]);
-    if (!(dg > 1e-3) && !(Math.abs(f64.D[q] - gpu.D[q]) > 1e-3)) continue;
-    wy.push({ i: q / 18 | 0, d: q % 18, Lf64: f64.L[q], Lf32: f32.L[q], Lgpu: gpu.L[q], F0f64: f64.F0[q], F0f32: f32.F0[q], F0gpu: gpu.F0[q], f32JakGpu: Math.abs(f32.L[q] - gpu.L[q]) <= 1e-3 && Math.abs(f32.D[q] - gpu.D[q]) <= 1e-3 });
+    if (!(dg > 1e-3) && !(Math.abs(f64.D[q] - gpu.D[q]) > 1e-3) && !(Math.abs(f64.F0[q] - gpu.F0[q]) > 1)) continue;
+    wy.push({ i: q / 18 | 0, d: q % 18, Lf64: f64.L[q], Lf32: f32.L[q], Lgpu: gpu.L[q], F0f64: f64.F0[q], F0f32: f32.F0[q], F0gpu: gpu.F0[q], f32JakGpu: Math.abs(f32.L[q] - gpu.L[q]) <= 1e-3 && Math.abs(f32.D[q] - gpu.D[q]) <= 1e-3 && Math.abs(f32.F0[q] - gpu.F0[q]) <= 1 });
   }
   return wy;
 }
+
+const stanS = (st, n, i) => st[4 * (n + i)];
+
+/** Sceny pełne, § 12 P2. Stan startowy z budowy, plan przez solver.ustawPlan, bez CPU po węzłach w kroku. */
+const PLANY_PELNE = {
+  S1: () => S1(),
+  S2: () => S2(),
+  S3: () => S3(),
+  S4: () => S4(),
+  S4g: () => S4({ g: 400, grunt: true, kotwice: true, T: 9 }), // § 5.2 scena 6
+  S4sw: () => S4({ g: 400, T: 6 }),
+  rampa: () => S4({ g: 400, grunt: true, kotwice: true, bezCiecia: true, J: 0, skalaG: [1, 2, 1, 0], T: 6 }),
+  krater60p: () => krater({ c: [190, 0, 650], r: 60, J: 300, rP: 160, proznia: true, T: 10 }),
+  krater90p: () => krater({ c: [190, 0, 650], r: 90, J: 600, rP: 240, proznia: true, T: 10 }),
+  krater60g: () => krater({ c: [190, 0, 650], r: 60, J: 300, rP: 160, T: 10 }),
+};
 
 /** Najgorsze węzły różnicy przyspieszenia i pierwsze różne maski: wejście do szukania gałęzi § 2.11. */
 function diagnoza(w, wzor, wynik, przed) {
@@ -161,12 +178,18 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     const wynik = { maskaW: o.maskaW, szkoda: o.szkoda, A: o.A, etyk: o.etyk, L: o.L, D: o.D, F0: o.F0, acc: o.acc, lLicz: o.lLicz, lista: o.lista };
     // Etykieta liczona tylko w scenach z kotwicami: § 1.6, bez kotwic Node jej nie liczy, a wzór GPU daje 0.
     const liczEtyk = !mutacja && w.capEtyk > 0;
-    const wy = porownajPodkrok(m.po, wynik, m.przed.aktywny, m.przed.nieruchomy, { liczEtyk });
+    // AGENT: wzorzec „po” liczony tutaj, nie z pliku: migawki P0 policzono przy S = 16, a solver ma S = 24 (§ 2.7). Stan „przed” z pliku jest dobry, to tylko punkt na trajektorii.
+    const c64 = new WzorzecCpu(w);
+    c64.wgraj(stanMigawki(m));
+    c64.podkrokPorownania();
+    const po = c64.stanPoPodkroku();
+    const wy = porownajPodkrok(po, wynik, m.przed.aktywny, m.przed.nieruchomy, { liczEtyk });
     wy.liczEtyk = liczEtyk;
     wy.nanStan = liczNaN(o.poz) + liczNaN(o.vel) + liczNaN(o.acc) + liczNaN(o.szkoda) + liczNaN(o.A) + liczNaN(o.L) + liczNaN(o.D) + liczNaN(o.F0);
     wy.asymetrie = asymetrieMasek(w, o.maskaW);
-    wy.listaRozne = roznicaList(m.po, wynik, w.n, w.M);
+    wy.listaRozne = roznicaList(po, wynik, w.n, w.M);
     wy.przepelnioneKomorki = przepelnioneKomorki(w, m.przed.pos, m.przed.aktywny);
+    wy.listaOk = wy.listaRozne.wezlow === 0 || wy.przepelnioneKomorki > 0;
     if (mutacja) wy.mutacjaNode = m.mutacje?.[mutacja] ?? null;
     else {
       // Ten sam podkrok w Node w arytmetyce f32 (§ 8): te same progi, inny wzorzec. Odróżnia zaokrąglenie przy progu od błędu kernela.
@@ -175,12 +198,12 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
       c32.podkrokPorownania();
       const w32 = c32.stanPoPodkroku();
       wy.wzgledemF32 = porownajPodkrok(w32, wynik, m.przed.aktywny, m.przed.nieruchomy, { liczEtyk });
-      wy.f32WzgledemF64 = porownajPodkrok(m.po, w32, m.przed.aktywny, m.przed.nieruchomy, { liczEtyk });
-      wy.flipy = flipy(w, m.po, w32, wynik);
+      wy.f32WzgledemF64 = porownajPodkrok(po, w32, m.przed.aktywny, m.przed.nieruchomy, { liczEtyk });
+      wy.flipy = flipy(w, po, w32, wynik);
     }
-    if (diag) wy.diagnoza = diagnoza(w, m.po, wynik, m.przed);
+    if (diag) wy.diagnoza = diagnoza(w, po, wynik, m.przed);
     delete wy.listaRozne.przyklady;
-    if (diag) wy.listaPrzyklady = roznicaList(m.po, wynik, w.n, w.M).przyklady;
+    if (diag) wy.listaPrzyklady = roznicaList(po, wynik, w.n, w.M).przyklady;
     wy.bledyGpu = wok.bledy().length;
     return wy;
   }
@@ -226,28 +249,259 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     return wy;
   }
 
-  /** Ten sam krok GPU i WzorzecCpu z tej samej migawki, tylko do oglądania: liczba rozjechanych masek po k podkrokach całych (F + I). Progu nie ma. */
-  async function krokZWzorcem(nazwa, krokow = 1) {
+  /**
+   * Ten sam krok GPU i WzorzecCpu z tej samej migawki (§ 8, sprawdzian P1): po `krokow` krokach 0 różnych masek względem Node f64, licząc też Node f32 jako drugi wzorzec,
+   * bo zaokrąglenie przy progu daje różnicę z f64 bez błędu kernela (§ 1.7). Lista różna tylko przy przepełnionej komórce, a w P2 komórek pełnych nie ma (S = 24).
+   */
+  async function krokZWzorcem(nazwa, krokow = 8) {
     const m = await wczytajMigawke(nazwa);
     const w = wypiekSceny(m.scena);
     solver.wczytaj(w);
     solver.wgraj(stanMigawki(m));
     const cpu = new WzorzecCpu(w);
     cpu.wgraj(stanMigawki(m));
+    const c32 = new WzorzecF32(w);
+    c32.wgraj(stanMigawki(m));
     await wok.krok(krokow);
-    for (let k = 0; k < krokow; k++) cpu.krok();
+    for (let k = 0; k < krokow; k++) { cpu.krok(); c32.krok(); }
     const o = await solver.odczyt(renderer);
-    let maski = 0, dxMax = 0, dvMax = 0, dSMax = 0;
+    let maski = 0, maskiF32 = 0, maskiF32F64 = 0, dxMax = 0, dvMax = 0, dSMax = 0;
     for (let i = 0; i < w.n; i++) {
       if (!cpu.aktywny[i]) continue;
       if (cpu.maskaW[i] !== o.maskaW[i]) maski++;
+      if (c32.maskaW[i] !== o.maskaW[i]) maskiF32++;
+      if (c32.maskaW[i] !== cpu.maskaW[i]) maskiF32F64++;
       for (let c = 0; c < 3; c++) {
         dxMax = Math.max(dxMax, Math.abs(cpu.pos[3 * i + c] - o.poz[3 * i + c]));
         dvMax = Math.max(dvMax, Math.abs(cpu.vel[3 * i + c] - o.vel[3 * i + c]));
       }
       dSMax = Math.max(dSMax, Math.abs(cpu.szkoda[i] - o.szkoda[i]));
     }
-    return { krokow, maski, dxMax, dvMax, dSMax, asymetrie: asymetrieMasek(w, o.maskaW), asymetrieNode: asymetrieMasek(w, cpu.maskaW), nan: liczNaN(o.poz) + liczNaN(o.vel) };
+    const stanCpu = { lLicz: cpu.lLicz, lista: cpu.lista };
+    const lista = roznicaList(stanCpu, { lLicz: o.lLicz, lista: o.lista }, w.n, w.M);
+    delete lista.przyklady;
+    const przepelnione = przepelnioneKomorki(w, cpu.pos, cpu.aktywny);
+    // Po kilku krokach pozycje f32 i f64 różnią się o dxMax, więc para na granicy zasięgu listy może wejść tylko po jednej stronie. To nie błąd kernela: zaliczenie liczy pary dalej od granicy niż to przesunięcie.
+    let listaPozaGranica = 0;
+    const zapas = 2 * dxMax + 1;
+    const a = new Set();
+    for (let i = 0; i < w.n; i++) {
+      a.clear();
+      for (let c = 0; c < cpu.lLicz[i]; c++) a.add(cpu.lista[w.M * i + c]);
+      let wspolne = 0;
+      for (let c = 0; c < o.lLicz[i]; c++) {
+        const j = o.lista[w.M * i + c];
+        if (a.has(j)) { wspolne++; continue; }
+        const d = Math.sqrt((o.poz[3 * i] - o.poz[3 * j]) ** 2 + (o.poz[3 * i + 1] - o.poz[3 * j + 1]) ** 2 + (o.poz[3 * i + 2] - o.poz[3 * j + 2]) ** 2);
+        if (Math.abs(d - w.zasieg) > zapas) listaPozaGranica++;
+      }
+      if (wspolne < a.size) {
+        const bG = new Set();
+        for (let c = 0; c < o.lLicz[i]; c++) bG.add(o.lista[w.M * i + c]);
+        for (const j of a) {
+          if (bG.has(j)) continue;
+          const d = Math.sqrt((cpu.pos[3 * i] - cpu.pos[3 * j]) ** 2 + (cpu.pos[3 * i + 1] - cpu.pos[3 * j + 1]) ** 2 + (cpu.pos[3 * i + 2] - cpu.pos[3 * j + 2]) ** 2);
+          if (Math.abs(d - w.zasieg) > zapas) listaPozaGranica++;
+        }
+      }
+    }
+    return {
+      krokow, maski, maskiF32, maskiF32F64, dxMax, dvMax, dSMax, lista, listaPozaGranica, przepelnione, maxKomorka: cpu.maxKomorka, odrzuconeNode: cpu.przepelnieniaKomorek,
+      asymetrie: asymetrieMasek(w, o.maskaW), asymetrieNode: asymetrieMasek(w, cpu.maskaW), nan: liczNaN(o.poz) + liczNaN(o.vel),
+      zaliczony: maski === 0 && (listaPozaGranica === 0 || przepelnione > 0),
+    };
+  }
+
+  /**
+   * Scena od początku biegu na GPU, § 12 P2: stan z budowy, plan zdarzeń w solverze, metryki z tych samych funkcji co w Node (scripts/woksele-sym.mjs).
+   * Odczyt co 15 klatek i klatkę wcześniej (prędkość średnia), S3 co klatkę (śledzenie przebicia). Sama lekka część bufora: reszta stanu tylko na końcu.
+   */
+  const pamiecStatykiP2 = new Map();
+  const wypiekiP2 = new Map();
+  const zrzutyP2 = new Map();
+  function wypiekPelny(id) {
+    const f = PLANY_PELNE[id];
+    if (!f) throw new Error(`Nieznana scena pełna ${id}`);
+    const plan = f();
+    let w = wypiekiP2.get(id);
+    if (!w) { w = zbuduj(plan.scena, PARAMETRY, { pamiecStatyki: pamiecStatykiP2 }); wypiekiP2.set(id, w); }
+    return { plan, w };
+  }
+
+  async function scenaPelna(id, { T = null, tace = [] } = {}) {
+    const { plan, w } = wypiekPelny(id);
+    if (T) plan.T = T;
+    solver.wczytaj(w);
+    solver.ustawPlan(planGpu(plan));
+    const n = w.n;
+    const N = Math.round(plan.T * 60);
+    const ob = new ObserwatorSceny(plan);
+    const pp = tace.length ? pietraStropow(plan.scena) : null;
+    const mapaTac = new Map(tace.map((t) => [Math.round(t * 60), t]));
+    const stan = { n, pos: null, vel: null, aktywny: null, maskaW: null, wa: w.wa, wb: w.wb, wd: w.wd, mW: w.mW, nbr: w.nbr, iN0: w.iN0, zerwanych: 0 };
+    const pos0 = plan.scena.pos;
+    const jestPolowa = plan.zc !== undefined;
+    const czyscOd = jestPolowa ? plan.tS : Infinity;
+    const zo = plan.zdarzeniaOd;
+    const fW1 = Number.isFinite(zo) ? Math.max(0, Math.ceil(zo * 60) - 1) : -1;
+    const o4 = plan.opcje ?? {};
+    const chwile = {};
+    const tacePo = {};
+    let maxDryf = 0, msKroki = 0, odczytow = 0, wpisyAsym = 0, nanLicz = 0, fG = 0, maxOdrzucone = 0, sumaOdrzucone = 0;
+    const czyCzytac = (f) => f === N || f % 15 === 0 || (f + 1) % 15 === 0 || f === fW1 || f === fW1 - 1 || mapaTac.has(f) || plan.s3;
+    for (let f = 0; f <= N; f++) {
+      if (!czyCzytac(f)) continue;
+      if (f > fG) {
+        const t0 = performance.now();
+        await wok.krok(f - fG);
+        msKroki += performance.now() - t0;
+        fG = f;
+      }
+      // AGENT: przed pierwszym compute bufor GPU ma jeszcze poprzednią scenę: needsUpdate wysyła dopiero compute, więc f = 0 ze stanu budowy.
+      const o = f === 0
+        ? { pos: w.pos, vel: w.vel0 ?? new Float32Array(3 * n), aktywny: new Uint8Array(n).fill(1), maskaW: w.maska }
+        : await solver.odczytLekki(renderer);
+      odczytow++;
+      stan.pos = o.pos; stan.vel = o.vel; stan.aktywny = o.aktywny; stan.maskaW = o.maskaW;
+      ob.klatka(f, stan);
+      const t = f / 60;
+      if (mapaTac.has(f)) tacePo[mapaTac.get(f)] = taca(stan, pp);
+      if (f % 15 === 0) {
+        nanLicz += liczNaN(o.pos) + liczNaN(o.vel);
+        wpisyAsym += asymetrieMasek(w, o.maskaW);
+        const odrz = przepelnioneKomorki(w, o.pos, o.aktywny);
+        sumaOdrzucone += odrz;
+        if (odrz > maxOdrzucone) maxOdrzucone = odrz;
+      }
+      if (jestPolowa) {
+        if (t < czyscOd - 1e-9) {
+          const dzS = o4.grunt || o4.kotwice ? 0 : 0.5 * (o4.g ?? 0) * t * t;
+          let q = 0;
+          for (let i = 0; i < n; i++) {
+            const dX = o.pos[3 * i] - pos0[3 * i], dY = o.pos[3 * i + 1] - pos0[3 * i + 1], dZ = o.pos[3 * i + 2] - pos0[3 * i + 2] + dzS;
+            const r = dX * dX + dY * dY + dZ * dZ;
+            if (r > q) q = r;
+          }
+          if (q > maxDryf) maxDryf = q;
+        }
+        if (f % 30 === 0 && (t >= plan.tS - 0.01 || f === 0)) {
+          const a = analizaPolowek(stan, pos0, plan.zc, 120);
+          chwile[t] = { P: a.P, L: a.L, N: a.N, kosze: a.kosze, gora: { v: a.gora.v, w: a.gora.w, kat: a.gora.kat, ulamek: a.gora.ulamek, ulOderwPoza: a.gora.ulOderwPoza, lWlasny: a.gora.lWlasny }, dol: { v: a.dol.v, w: a.dol.w, kat: a.dol.kat, ulamek: a.dol.ulamek, ulOderwPoza: a.dol.ulOderwPoza, lWlasny: a.dol.lWlasny } };
+        }
+      }
+      if (f === 360) zrzutyP2.set(id, o.pos);
+    }
+    const p = ob.koniec(stan);
+    const pelny = await solver.odczyt(renderer);
+    let sPonad = 0, vMaxKoniec = 0;
+    for (let i = 0; i < n; i++) {
+      if (!pelny.aktywny[i]) continue;
+      if (stanS(pelny.stan, 0, i) > 1.001) sPonad++;
+      const v2 = pelny.vel[3 * i] ** 2 + pelny.vel[3 * i + 1] ** 2 + pelny.vel[3 * i + 2] ** 2;
+      if (v2 > vMaxKoniec) vMaxKoniec = v2;
+    }
+    const dach = {}, przechylT = {};
+    for (const e of ob.wpisy) { dach[e.t] = e.wieza.dach; przechylT[e.t] = e.wieza.przechyl.sztywnyStopnie; }
+    let calosc = null;
+    if (plan.id === 'krater') {
+      const a = analizaPolowek(stan, pos0, -1e9, 0);
+      calosc = { ulamek: a.gora.ulamek, oderwane: a.gora.n - a.gora.najw, v: a.gora.v, w: a.gora.w, P: Math.sqrt(a.P[0] ** 2 + a.P[1] ** 2 + a.P[2] ** 2) / a.N, usuniete: n - a.N, planowo: plan.usuniete };
+    }
+    return {
+      id, n, N, msKroki, msNaKrok: msKroki / N, odczytow, dach, przechylT, tace: tacePo, chwile, calosc, dryf: Math.sqrt(maxDryf), sPonad, vmaxKoniec: Math.sqrt(vMaxKoniec),
+      nan: nanLicz + liczNaN(pelny.poz) + liczNaN(pelny.vel) + liczNaN(pelny.acc) + liczNaN(pelny.szkoda) + liczNaN(pelny.A) + liczNaN(pelny.L) + liczNaN(pelny.D) + liczNaN(pelny.F0),
+      asymetrie: asymetrieMasek(w, pelny.maskaW) + wpisyAsym, odrzucone: { suma: sumaOdrzucone, maks: maxOdrzucone }, liczniki: { ...solver.liczniki }, bledyGpu: wok.bledy().length,
+      podsumowanie: { historia: p.historia, W1: p.W1, S3: p.S3, koniec: { wieza: { dach: p.koniec.wieza.dach, wyspy: p.koniec.wieza.wyspy, ruch: p.koniec.wieza.ruch, przechyl: p.koniec.wieza.przechyl }, dysk: p.koniec.dysk ? { otworDoPrzekroju: p.koniec.dysk.otworDoPrzekroju, udzialRuszonych: p.koniec.dysk.udzialRuszonych, wyspy: p.koniec.dysk.wyspy } : null, aktywnych: p.koniec.aktywnych } },
+    };
+  }
+
+  /** Jedna liczba ściany: cała scena bez odczytów, razem z czekaniem na kolejkę. To nie pomiar kroku (P6), tylko kontrola, że zdarzenia niczego nie popsuły. */
+  async function sciana(id = 'S3') {
+    const { plan, w } = wypiekPelny(id);
+    solver.wczytaj(w);
+    solver.ustawPlan(planGpu(plan));
+    const N = Math.round(plan.T * 60);
+    const t0 = performance.now();
+    await wok.krok(N);
+    const ms = performance.now() - t0;
+    return { id, N, ms, msNaKrok: ms / N };
+  }
+
+  /** Równoważność § 8: S4 przy g = 400 bez gruntu i kotwic względem próżni, po odjęciu spadku (Euler półjawny). Wymaga wcześniejszych scenaPelna('S4') i scenaPelna('S4sw'). */
+  function rownowaznosc() {
+    const a = zrzutyP2.get('S4'), b = zrzutyP2.get('S4sw');
+    if (!a || !b) return null;
+    const t = 6, h = 1 / 480, dz = -400 * (0.5 * t * t + 0.5 * t * h);
+    const n = a.length / 3, d = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const ex = b[3 * i] - a[3 * i], ey = b[3 * i + 1] - a[3 * i + 1], ez = b[3 * i + 2] - dz - a[3 * i + 2];
+      d[i] = Math.sqrt(ex * ex + ey * ey + ez * ez);
+    }
+    d.sort();
+    return { mediana: d[Math.floor(0.5 * n)], p99: d[Math.floor(0.99 * n)] };
+  }
+
+  /** Strzał w próżni (§ 12 P2): ruch zaczyna się przy trafionym, pudło nic nie rusza, a strzał w czasie planu pchnięć daje kop. Wieża bez cięcia i bez pchnięć albo S4 w trakcie planu. */
+  async function strzal() {
+    const wy = {};
+    const pomiar = async (solverW, o, c) => {
+      const s = await solver.odczytLekki(renderer);
+      let zywe = 0, Px = 0, Py = 0, Pz = 0, blisko = 0, nb = 0, daleko = 0, nd = 0;
+      for (let i = 0; i < solverW.n; i++) {
+        if (!s.aktywny[i]) continue;
+        zywe++;
+        const vx = s.vel[3 * i], vy = s.vel[3 * i + 1], vz = s.vel[3 * i + 2];
+        Px += vx; Py += vy; Pz += vz;
+        const v = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (c) {
+          const d = Math.sqrt((s.pos[3 * i] - c[0]) ** 2 + (s.pos[3 * i + 1] - c[1]) ** 2 + (s.pos[3 * i + 2] - c[2]) ** 2);
+          if (d < 160) { if (v > blisko) blisko = v; nb++; } else if (d > 500) { if (v > daleko) daleko = v; nd++; }
+        }
+      }
+      return { zywe, P: Math.sqrt(Px * Px + Py * Py + Pz * Pz) / zywe, vBlisko: blisko, nBlisko: nb, vDaleko: daleko, nDaleko: nd };
+    };
+    {
+      const plan = S4({ bezCiecia: true, J: 0, T: 4 });
+      const w = zbuduj(plan.scena, PARAMETRY, { pamiecStatyki: pamiecStatykiP2 });
+      solver.wczytaj(w);
+      solver.ustawPlan(planGpu(plan));
+      await wok.krok(30);
+      const c = [190, 0, 650];
+      wy.przed = await pomiar(w, null, c);
+      // Pudło: promień obok wieży. Nic się nie zmienia, slot zgaszony.
+      solver.strzel({ o: [1000, 2000, 650], dir: [-1, 0, 0], r: 60, J: 300, tau: 0.3, rP: 160 });
+      await wok.krok(2);
+      wy.pudlo = await pomiar(w, null, c);
+      solver.strzel({ o: [1000, 0, 650], dir: [-1, 0, 0], r: 60, J: 300, tau: 0.3, rP: 160 });
+      await wok.krok(1);
+      wy.klatka1 = await pomiar(w, null, c);
+      await wok.krok(30);
+      wy.klatka31 = await pomiar(w, null, c);
+      await wok.krok(240);
+      wy.koniec = await pomiar(w, null, c);
+      const a = analizaPolowek({ n: w.n, ...await solver.odczytLekki(renderer), nbr: w.nbr, iN0: w.iN0, zerwanych: 0 }, plan.scena.pos, -1e9, 0);
+      wy.kawalek = a.gora.ulamek;
+      wy.vKawalka = a.gora.v;
+      wy.obrotKawalka = a.gora.w;
+    }
+    {
+      // Strzał w czasie planu pchnięć: ten sam S4 z pchnięciami planu i bez strzału daje mniejszą prędkość przy miejscu trafienia. Ta sama klatka, po kolei.
+      const c = [190, 0, 1100];
+      const bieg = async (zeStrzalem) => {
+        const plan = S4({ T: 4 });
+        const w = wypiekPelny('S4').w;
+        solver.wczytaj(w);
+        solver.ustawPlan(planGpu(plan));
+        await wok.krok(150);
+        if (zeStrzalem) solver.strzel({ o: [1000, 0, 1100], dir: [-1, 0, 0], r: 60, J: 300, tau: 0.3, rP: 160 });
+        await wok.krok(6);
+        return { ...(await pomiar(w, null, c)), fK: solver.fKlatka };
+      };
+      wy.planBez = await bieg(false);
+      wy.planZeStrzalem = await bieg(true);
+    }
+    wy.bledyGpu = wok.bledy().length;
+    return wy;
   }
 
   /** kI: limit vMax 4000 (§ 1.6: w krótkich biegach nie działa, więc osobno) i zapis pozycji. Stany: kotwica stoi, martwy się nie rusza, kopia stanu w [i]. */
@@ -365,5 +619,5 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     return { kF1: m1, kF4: m4, stosunek: m4 / m1, zaliczony: m1 > 0 && m4 > 0 && m4 / m1 > 1.5 };
   }
 
-  return { podkrok, mutacje, zrodla, krokZWzorcem, vmax, w1, g1, dwieListy, MUTACJE: Object.keys(MUTACJE) };
+  return { podkrok, mutacje, zrodla, krokZWzorcem, vmax, w1, g1, dwieListy, scenaPelna, sciana, rownowaznosc, strzal, MUTACJE: Object.keys(MUTACJE) };
 }

@@ -4,9 +4,12 @@
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { S1, S2, S3, S4 } from '../../dema/woksele-zawalenia/scena.js';
-import { zbuduj, popcnt, PARAMETRY } from '../../dema/woksele-zawalenia/budowa.js';
+import { zbuduj, popcnt, parametry } from '../../dema/woksele-zawalenia/budowa.js';
 import { WzorzecCpu, pakujMigawke, rozpakujMigawke } from '../../dema/woksele-zawalenia/wzorzec-cpu.js';
 import { porownajPodkrok } from '../../dema/woksele-zawalenia/metryki.js';
+
+// Skróty wzorca policzył model-spec4 przy S = 16, a demo ma S = 24 (§ 2.7): liczba slotów komórki przechodzi do wzorca jawnie, reszta parametrów bez zmian.
+const PARAMETRY_SPEC4 = parametry({ slotyKomorki: 16 });
 
 const ZR_OBROT = Object.freeze({ obrot: { p: [0, 0, -3000], os: [1, 0.2, 0], om: 0.3 } });
 const ZR_PUNKT = Object.freeze({ punkt: { c: [300, 0, -6000], g: 300, r0: 2000 } });
@@ -125,7 +128,7 @@ const pamiecStatyki = new Map();
 function liczBieg(nazwa) {
   const d = BIEGI[nazwa];
   const plan = SCENY[d.scena](d.opcje);
-  const w = zbuduj(plan.scena, PARAMETRY, { pamiecStatyki });
+  const w = zbuduj(plan.scena, PARAMETRY_SPEC4, { pamiecStatyki });
   const a = new WzorzecCpu(w);
   const budowa = skrotyBudowy(w);
   const b = d.czysc ? new PrzezPrzebieg(w) : null;
