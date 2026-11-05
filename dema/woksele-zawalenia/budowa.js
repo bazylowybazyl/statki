@@ -317,8 +317,10 @@ function budujZiarna(s) {
     // Płyta dachu: dwie najwyższe warstwy stropu wieży jako samodzielnej sceny. W S3 (meta.wieza) pocisk nie ma ziaren dachu, jak w prototypie.
     if (zp.dach && kind[i] === 0 && scena.meta.wieza === undefined && ijk[3 * i + 2] >= scena.meta.nz - 2) skl = zp.dach;
     if (!skl) continue;
+    // Bok ziarna w komórkach przy dx = 20: poza tym dx mnożony przez skalę, żeby kawałek miał ten sam rozmiar w jednostkach gry (§ 2.1). Bez tego przy dx = 40 ziarno ma 280 j., strop jest prawie cały wnętrzem ziarna (× 6) i górna masa zostaje sztywną płytą, która się przewraca.
+    const skZ = s.skalaZiarna;
     const [sx, sy, sz] = skl;
-    const X = ijk[3 * i] / sx, Y = ijk[3 * i + 1] / sy, Z = ijk[3 * i + 2] / sz;
+    const X = ijk[3 * i] / (sx * skZ), Y = ijk[3 * i + 1] / (sy * skZ), Z = ijk[3 * i + 2] / (sz * skZ);
     const a0 = Math.floor(X), b0 = Math.floor(Y), c0 = Math.floor(Z);
     let best = Infinity, id = -1;
     for (let dc = -1; dc <= 1; dc++) for (let db = -1; db <= 1; db++) for (let da = -1; da <= 1; da++) {
@@ -348,15 +350,20 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
   // Rama odniesienia: istnieje, gdy w scenie jest coś nieruchomego. Bez niej prędkość bezwzględna nic nie znaczy (§ 10.3).
   const rama = czyGrunt(scena.gruntZ) || kotwiceWiezy || scena.meta.grupy.some((q) => q.nazwa === 'dysk');
   const skala = 20 / dx; // 1 przy dx = 20
-  const podkrokiEf = Math.max(1, Math.round(par.podkroki * skala));
+  // AGENT: par.cZDx (metoda E planu LOD, docs/PLAN-zawalenia-lod-miasto.md): c ∝ dx, więc K i podkroki jak przy dx = 20. Bez niego c stałe, a podkroki rosną z 1/dx (§ 2.1).
+  const cEf = par.cZDx ? (par.c * dx) / 20 : par.c;
+  const podkrokiEf = par.cZDx ? par.podkroki : Math.max(1, Math.round(par.podkroki * skala));
   const sM = gProj > 0 ? gProj / 400 : 1; // skala materiału
-  const K = (par.c / dx) ** 2 / 3 * sM;
+  const K = (cEf / dx) ** 2 / 3 * sM;
+  const K0 = (par.c / dx) ** 2 / 3 * sM;
   const h = 1 / 60 / podkrokiEf;
+  // Lista kontaktów co tyle podkroków. Naddatek listy to 0,5 dx, więc odstęp w czasie rośnie z dx (przy dx = 20 co 1/120 s), najwyżej raz na krok, co najmniej co podkrok.
+  const rytmEf = Math.min(podkrokiEf, Math.max(1, Math.round((par.rytmListy / par.podkroki) * (dx / 20) * podkrokiEf)));
   const kC = par.kKontakt * K;
   const cC = 2 * par.zetaKontakt * Math.sqrt(kC * 0.5);
 
   const s = {
-    n, dx, scena, par, K,
+    n, dx, scena, par, K, skalaZiarna: skala,
     pos: scena.pos,
     kind: scena.kind,
     nbr: new Int32Array(STRONA * n).fill(-1),
@@ -506,7 +513,8 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
       const kl = klasaPary(kind[i], kind[j]);
       const c = par.klasy[KLASA_NAZWY[kl]];
       const f = f0[ox];
-      const baza = Math.max(Math.abs(f), c.eMin * K * dx * (kl <= 3 ? sM : 1));
+      // Podłoga wytrzymałości to siła, nie odkształcenie: przy c ∝ dx liczona z K materiału c = par.c, inaczej przy dx = 80 wieża ma podłogę × 16 względem ciężaru i stoi po cięciu (plan LOD § 5).
+      const baza = Math.max(Math.abs(f), c.eMin * K0 * dx * (kl <= 3 ? sM : 1));
       const mxB = 0.5 * (pos[3 * i] + pos[3 * j]), myB = 0.5 * (pos[3 * i + 1] + pos[3 * j + 1]), mzB = 0.5 * (pos[3 * i + 2] + pos[3 * j + 2]);
       const pl = 1 + par.plama.sila * (2 * szumW(mxB, myB, mzB) - 1);
       const sk = (1 + c.rozrzut * (2 * los() - 1)) * pl;
@@ -602,7 +610,7 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
 
   return {
     // Liczby sceny i stałe wiązania (§ 2.1)
-    n, dx, skala, podkrokiEf, h, K, sM, sFr: Math.sqrt(zr.gMod / 400),
+    n, dx, skala, podkrokiEf, rytmEf, cEf, h, K, sM, sFr: Math.sqrt(zr.gMod / 400),
     cB: 2 * par.zeta * Math.sqrt(K),
     kB: par.beta * K,
     kC, cC, cT: par.cTarcie * cC,

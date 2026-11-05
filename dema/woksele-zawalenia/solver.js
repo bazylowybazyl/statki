@@ -792,12 +792,23 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch]);
 
   // ── Listy § 2.4, zbudowane raz ── Na krok: lista kontaktów co RYTM podkroków, reszta F + I.
-  const sekwencja = [];
-  for (let s = 0; s < PODKROKI; s++) {
-    if (s % RYTM === 0) sekwencja.push(['kWstaw', kWstaw], ['kLista', kLista], ['kZerujPo', kZerujPo]);
-    sekwencja.push(['kF', kF], ['kI', kI]);
-  }
-  const listaKroku = sekwencja.map((e) => e[1]);
+  // AGENT: lista zależy tylko od podkroków i rytmu sceny (dx, materiał), a kernele są te same: nowa kombinacja to tablica w JS, bez nowego pipeline'u. Wczytanie sceny wybiera listę.
+  const listyKroku = new Map();
+  const listaNa = (podkroki, rytm) => {
+    const klucz = podkroki * 1024 + rytm;
+    let l = listyKroku.get(klucz);
+    if (!l) {
+      const sek = [];
+      for (let s = 0; s < podkroki; s++) {
+        if (s % rytm === 0) sek.push(['kWstaw', kWstaw], ['kLista', kLista], ['kZerujPo', kZerujPo]);
+        sek.push(['kF', kF], ['kI', kI]);
+      }
+      l = { sekwencja: sek, lista: sek.map((e) => e[1]) };
+      listyKroku.set(klucz, l);
+    }
+    return l;
+  };
+  let { sekwencja, lista: listaKroku } = listaNa(PODKROKI, RYTM);
   const listaSiatki = [kWstaw, kLista, kZerujPo];
   const listaPodkroku = [kWstaw, kLista, kZerujPo, kF];
   const listaCalkowania = [kI];
@@ -1007,7 +1018,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     uGruzP.value = par.gruzPara * sFr;
     uGruzV2.value = (par.gruzV * sFr) * (par.gruzV * sFr);
     uFalaV2.value = w.rama ? par.fala.v * par.fala.v * sFr * sFr : 1e30;
-    uFalaTempoH.value = Math.min(1, par.fala.tempo * w.h) * sFr;
+    uFalaTempoH.value = Math.min(1, par.fala.tempo * w.h) * sFr; // AGENT: h po skali (§ 2.1). Czoło fali biegnie więc tempo · dx j./s. Próba z tempo · skala (stałe 180 j./s) pogorszyła dach przy dx = 40 i 80, plan LOD § 5.
     uSzokProg.value = par.szokTempo * w.dx * Math.sqrt(sM);
     uKontaktV.value = par.kontaktSzokV * Math.sqrt(sM);
     uIKom.value = w.iKom;
@@ -1021,7 +1032,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   function wczytaj(w) {
     const n = w.n;
     if (n > MAX) throw new Error(`Scena ma ${n} węzłów, a solver ${MAX}`);
-    if (w.podkrokiEf !== PODKROKI) throw new Error(`Scena ma ${w.podkrokiEf} podkroków, a lista kroku ${PODKROKI}: lista jest budowana raz na solver`);
+    ({ sekwencja, lista: listaKroku } = listaNa(w.podkrokiEf, w.rytmEf ?? RYTM));
     wypiek = w;
     const wez = atrybuty.wez.array, stan = atrybuty.stan.array, maska = atrybuty.maska.array;
     const vel0 = w.vel0;
@@ -1177,7 +1188,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   }
 
   return {
-    maxNodes: MAX, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, sekwencja, listaKroku, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
+    maxNodes: MAX, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
     wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     get wypiek() { return wypiek; },
     get fKlatka() { return fKlatka; },

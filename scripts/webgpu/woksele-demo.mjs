@@ -172,7 +172,7 @@ try {
             await screenshotPng(cdp, join(PNG, `${et}${scena}_sl${k}_t${t.toFixed(2)}.png`));
           }
           const wyn = await ev('window.__wok.pokaz.kosztLod()');
-          console.log(`koszt LOD ${scena} t = ${t}, ${wyn.n} węzłów, ${wyn.w} × ${wyn.h}, krok ${wyn.krok}`);
+          console.log(`koszt LOD ${scena} t = ${t}, ${wyn.n} węzłów, ${wyn.w} × ${wyn.h}, krok ${wyn.krok}, kernele obrazu ${f(wyn.kerneleObrazuMs, 2)} ms`);
           for (const r of wyn.wy) console.log(wierszLod(r));
           (pomiary[scena] ??= {}).kosztLod = [...(pomiary[scena].kosztLod ?? []), { t, ...wyn }];
         }
@@ -565,6 +565,46 @@ try {
       if (!q.zaliczony) porazka(`wiele kraterów ${id}`);
     }
     raport.testy.kratery = r;
+    zapiszRaport();
+  }
+
+  if (TESTY.includes('lod')) {
+    // Próba 1 planu LOD: --testy lod --lody dx:materiał[:budynek],… [--lodW1 60] [--lodNakladka '{"…":…}'] [--plikLod nazwa.txt]. Budynek z tabeli niżej, bez niego wieża S1.
+    // Odniesienie dx = 20 z pomiaru przy tej samej stronie, bez zmian w scenach. Strona testu nie ma pętli rAF, a kroki małych scen są krótkie, więc GPU pracuje ułamek czasu ściany.
+    const UKL = { gruboscStropu: 2, pietroCo: 5, kolumny: { co: 6, dol: 4, gora: 2 }, fasada: { co: 3, grubosc: 1 }, rdzen: { grubosc: 1 } }; // układ wieży przy dx = 20 w komórkach
+    const BUDYNKI = {
+      pol: { w: 190, d: 210, h: 670, ...UKL },
+      cwierc: { w: 95, d: 105, h: 335, ...UKL },
+      osma: { w: 47.5, d: 52.5, h: 167.5, ...UKL },
+      ...(args.lodBudynki ? JSON.parse(String(args.lodBudynki)) : {}),
+    };
+    const nakladka = args.lodNakladka ? JSON.parse(String(args.lodNakladka)) : null;
+    const lista = String(args.lody || '20:staly,40:staly,40:dx,80:staly,80:dx').split(',').filter(Boolean);
+    const linie = [`adapter ${JSON.stringify(adapter)}`, `nakładka ${JSON.stringify(nakladka)}`, 'dx mat budynek | n, nx×ny×nz, c, K, podkroki, rytm, h√(12K) | dach t = 3…7 | przechył spójny, maks | masa % 1 / 2–7 / 8–63 / 64–511 / 512+ | bok kawałka j. | przed cięciem | NaN, asym | ms na krok stoi, wali | ns na węzeł i krok'];
+    const wy = [];
+    const pisz = (l) => { linie.push(l); console.log(l); };
+    for (const pozycja of lista) {
+      const [dxS, mat, bud] = pozycja.split(':');
+      const dx = Number(dxS);
+      await czekajNaCisze(`LOD ${pozycja}`);
+      const op = { dx, mat, ...(bud ? { wieza: BUDYNKI[bud] } : {}), ...(nakladka ? { nakladka } : {}) };
+      const r = await ev(`window.__wok.test.lod.s1(${JSON.stringify(op)})`);
+      r.pozycja = pozycja;
+      wy.push(r);
+      if (r.poza) { pisz(`${pozycja}: poza zakresem, ${r.poza}`); continue; }
+      const d = (t) => (r.dach[t] ?? NaN).toFixed(0);
+      const q = (x, c = 1) => (x === null || x === undefined ? 'b.d.' : Number(x).toFixed(c));
+      pisz(`${pozycja} | ${r.n}, ${r.meta.nx}×${r.meta.ny}×${r.meta.nz} (${q(r.meta.w, 0)}×${q(r.meta.d, 0)}×${q(r.meta.h, 0)}), c ${q(r.c, 0)}, K ${q(r.K, 0)}, pk ${r.podkroki}, rytm ${r.rytm}, stab ${q(r.stabilnosc, 2)} | ${[0, 3, 4, 5, 6, 7, 9].map(d).join(' ')} | prz30 ${q(r.przechylStaly)}°@${q(r.tStaly, 2)}, 1,5dx ${q(r.przechylSpojny)}°, maks ${q(r.przechylMax)}° | ${r.masa.map((v) => q(v, 0)).join('/')} (najw. ${r.najwiekszy}, wysp ${r.wysp}) | ${q(r.bokKawalka, 0)} j. | przem ${q(r.W1przed.przem, 3)}, opad ${q(r.W1przed.opad, 3)}, bity ${r.W1przed.zerwaneBity} | NaN ${r.nan}, asym ${r.asym}, GPU ${r.bledyGpu} | ${q(r.msStoi, 3)}, ${q(r.msWali, 3)} | ${q(r.nsNaWezelKrok, 0)} | budowa ${q(r.msBudowy / 1000, 1)} s`);
+      writeFileSync(join(wyDir, `lod-${pozycja.replaceAll(':', '_')}${args.plikLod ? `-${args.plikLod}` : ''}.json`), JSON.stringify({ adapter, ...r }, null, 1) + '\n');
+      if (args.lodW1) {
+        const s = await ev(`window.__wok.test.lod.w1(${JSON.stringify({ ...op, sekund: Number(args.lodW1) })})`);
+        s.pozycja = pozycja;
+        r.W1 = s;
+        pisz(`   W1 ${s.zaliczony ? 'stoi' : 'NIE'}, ${s.sekund} s: przemieszczenie ${q(s.maxPrzem, 4)} j., vMax ${q(s.vMax, 4)}, zerwane bity ${s.zerwaneBity}, inne maski ${s.wezlyZInnaMaska}, S maks ${q(s.sMax, 4)}, NaN ${s.nan}, ${q(s.msSciany / 1000, 1)} s ściany`);
+      }
+    }
+    writeFileSync(join(wyDir, `lod-liczby${args.plikLod ? `-${args.plikLod}` : ''}.txt`), linie.join('\n') + '\n');
+    raport.testy.lod = wy;
     zapiszRaport();
   }
 

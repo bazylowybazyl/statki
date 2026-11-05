@@ -411,6 +411,25 @@ export function S1(o = {}) {
 }
 
 /**
+ * Próba LOD (docs/PLAN-zawalenia-lod-miasto.md § 5): S1 przy danym dx. mat 'staly': c = 6000 i podkroki z § 2.1, mat 'dx': c ∝ dx, K i podkroki jak przy dx = 20 (metoda E).
+ * o.wieza: wymiary i układ budynku, o.nakladka: parametry próby. Bez opcji to zwykłe S1.
+ */
+export function S1Lod({ mat = 'staly', nakladka = null, ...o } = {}) {
+  const plan = S1(o);
+  const nk = { ...(mat === 'dx' ? { cZDx: true } : {}), ...(nakladka ?? {}) };
+  if (Object.keys(nk).length) plan.nakladka = nk;
+  return plan;
+}
+
+/** Stanie (W1) przy tym samym dx, materiale i budynku co S1Lod. */
+export function stanieLod({ mat = 'staly', nakladka = null, ...o } = {}) {
+  const plan = stanie(o);
+  const nk = { ...(mat === 'dx' ? { cZDx: true } : {}), ...(nakladka ?? {}) };
+  if (Object.keys(nk).length) plan.nakladka = nk;
+  return plan;
+}
+
+/**
  * S2 „własny ciężar”: t = 2 s, kondygnacja na 65% h, front od środka 0,3 s: 80% węzłów nośnych znika, 20% zostaje gruzem (§ 5.2).
  * front: { tau, rozerw }, czyli szerokość frontu w sekundach i część węzłów rozrywanych zamiast usuwanych.
  */
