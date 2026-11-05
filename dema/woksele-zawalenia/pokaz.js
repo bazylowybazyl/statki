@@ -234,8 +234,12 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   else if (!adres.has('bezPominiecia')) for (let k = 0; k < SCENY[stan.scena].pomin; k++) krokSceny();
 
   let srednia = 0, klatek = 0, tLicznika = 0;
+  // AGENT: ?maksKl=N: sufit klatek pętli rAF. Harness podaje 60: bez niego headless z --disable-frame-rate-limit rysuje około 600 kl/s także w bezruchu, GPU 99%, a komputer stoi tam, gdzie ktoś śpi.
+  const minMsKlatki = Number(adres.get('maksKl')) > 0 ? 1000 / Number(adres.get('maksKl')) : 0;
   function petla(teraz) {
     requestAnimationFrame(petla);
+    if (minMsKlatki && !stan.wymusKlatke && stan.ostatnia && teraz - stan.ostatnia < minMsKlatki - 0.5) return;
+    stan.wymusKlatke = false;
     stan.klatek = (stan.klatek | 0) + 1;
     const dtMs = stan.ostatnia ? teraz - stan.ostatnia : 16.7;
     stan.ostatnia = teraz;
@@ -282,6 +286,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         }
         stan.akum = 0;
         await device.queue.onSubmittedWorkDone();
+        stan.wymusKlatke = true; // pierwszy rAF ma narysować stan po krokach także przy ?maksKl
         await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
         await device.queue.onSubmittedWorkDone();
         return { krok: stan.krok };

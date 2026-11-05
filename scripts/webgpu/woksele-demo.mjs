@@ -132,6 +132,7 @@ try {
     if (args.ao) zapytanie.set('ao', String(args.ao));
     if (args.migawka) zapytanie.set('migawka', String(args.migawka));
     if (args.ziarno) zapytanie.set('ziarno', String(args.ziarno));
+    if (!args.pomiar) zapytanie.set('maksKl', '60');
     const adapter = await otworz(zapytanie.toString());
     console.log('adapter', JSON.stringify(adapter));
     const pipeStart = await ev('window.__harness.pipes.list.length');
