@@ -78,6 +78,7 @@ function czemuZlaKarta(a) {
 }
 
 const f = (x, d = 3) => (x === null || x === undefined || !Number.isFinite(x) ? 'b.d.' : x.toFixed(d));
+const wierszLod = (r) => `  sloty ${r.sloty}, cień ${r.cienSloty}: razem ${f(r.razem, 2)} ms GPU = rysunek ${f(r.hdr, 2)} + cień ${f(r.cien, 2)} + głębia ${f(r.gleb, 2)} + okluzja ${f(r.ssao, 2)} + pył ${f(r.pyl, 2)} + wyjście ${f(r.wyj, 2)}; wierzchołków ${f(r.wierzcholkiMln, 1)} mln na klatkę`;
 
 await czekajNaCisze('start');
 raport.obce = await obceProcesy().catch(() => []);
@@ -97,7 +98,8 @@ uspijStrone = async () => {
 
 let kod = 0;
 async function otworz(zapytanie) {
-  await cdp.send('Page.navigate', { url: `${base}/dema/woksele-zawalenia.html?${zapytanie}` });
+  // --strona: inna kopia strony (np. HEAD wypakowany do .tmp, do porównania „bit w bit” bez ruszania drzewa).
+  await cdp.send('Page.navigate', { url: `${base}${args.strona || '/dema/woksele-zawalenia.html'}?${zapytanie}` });
   // Zegar harnessu od razu prawdziwy: demo ma własny zegar ręczny, a tryb „frozen” wstrzymałby performance.now.
   await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
   if (!await waitFor(cdp, '!!(window.__wok && (window.__wok.adapter || window.__wok.blad))', 120000, 100)) throw new Error('strona nie wstała (limit 120 s)');
@@ -130,8 +132,12 @@ try {
     const zapytanie = new URLSearchParams();
     zapytanie.set('scena', sceny[0]);
     if (args.ao) zapytanie.set('ao', String(args.ao));
-    if (args.migawka) zapytanie.set('migawka', String(args.migawka));
+    if (args.migawka) zapytanie.set('migawka', String(args.migawka).split(',')[0]);
     if (args.ziarno) zapytanie.set('ziarno', String(args.ziarno));
+    if (args.pyl) zapytanie.set('pyl', String(args.pyl));
+    if (args.maxWez) zapytanie.set('maxWez', String(args.maxWez));
+    if (args.sloty) zapytanie.set('sloty', String(args.sloty));
+    if (args.cienSloty !== undefined) zapytanie.set('cienSloty', String(args.cienSloty));
     if (!args.pomiar) zapytanie.set('maksKl', '60');
     const adapter = await otworz(zapytanie.toString());
     console.log('adapter', JSON.stringify(adapter));
@@ -146,11 +152,37 @@ try {
     for (const scena of sceny) {
       await czekajNaCisze(`zrzut ${scena}`);
       await ev(`window.__wok.pokaz.wejdz(${JSON.stringify(scena)}, { pomin: false, kamera: ${args.kam ? 'false' : 'true'} }).then(() => null)`);
+      // AGENT: wejdz() resetuje scenę, więc migawkę z adresu trzeba wgrać po nim. Klatka z migawki bez kroków to jedyny zrzut powtarzalny co do piksela (kWstaw to wyścig na atomiku): tak sprawdza się „bit w bit”.
+      const migawkaSceny = args.migawka ? String(args.migawka).split(',').find((m) => m.startsWith(`${scena}_`)) : null;
+      if (migawkaSceny) {
+        // Zegar stoi od razu: inaczej pętla rAF zdąży zrobić krok i doChwili zresetuje scenę, a zrzut idzie z fizyki, nie z migawki.
+        await ev('window.__wok.pokaz.bezZegara(true); true');
+        await ev(`window.__wok.pokaz.wgrajMigawke(${JSON.stringify(migawkaSceny)}).then(() => null)`);
+      }
       for (const t of plan ? plan.get(scena) : chwile) {
         await ev(`window.__wok.pokaz.doChwili(${t})`);
         const plik = join(PNG, `${et}${scena}_t${t.toFixed(2)}.png`);
         await screenshotPng(cdp, plik);
         console.log('zrzut', plik);
+        if (args.kosztLod) {
+          // LOD obrazu (plan LOD, metoda G): ten sam stan przy 7, 2 i 1 slocie, potem koszt wariantów na zamrożonej klatce. --kosztLod szczyt: dodatkowo każdy węzeł uszkodzony, górna granica.
+          for (const k of [7, 2, 1]) {
+            await ev(`window.__wok.obraz.ustawLod({ sloty: ${k}, cien: ${k} }); true`);
+            await ev(`window.__wok.pokaz.doChwili(${t})`);
+            await screenshotPng(cdp, join(PNG, `${et}${scena}_sl${k}_t${t.toFixed(2)}.png`));
+          }
+          const wyn = await ev('window.__wok.pokaz.kosztLod()');
+          console.log(`koszt LOD ${scena} t = ${t}, ${wyn.n} węzłów, ${wyn.w} × ${wyn.h}, krok ${wyn.krok}`);
+          for (const r of wyn.wy) console.log(wierszLod(r));
+          (pomiary[scena] ??= {}).kosztLod = [...(pomiary[scena].kosztLod ?? []), { t, ...wyn }];
+        }
+      }
+      if (args.kosztLod === 'szczyt') {
+        await ev('window.__wok.pokaz.uszkodzWszystko(); true');
+        const wyn = await ev('window.__wok.pokaz.kosztLod()');
+        console.log(`koszt LOD ${scena}, każdy węzeł uszkodzony, ${wyn.n} węzłów, ${wyn.w} × ${wyn.h}`);
+        for (const r of wyn.wy) console.log(wierszLod(r));
+        (pomiary[scena] ??= {}).kosztLodSzczyt = wyn;
       }
       if (args.koszt) {
         // Jedna liczba kosztu klatki: po każdej chwili z --chwile n klatek od tego miejsca, Number(--koszt) przebiegów od nowa.

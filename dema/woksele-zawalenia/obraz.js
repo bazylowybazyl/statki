@@ -103,6 +103,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const uPokladZ = uniform(-1e30).setName('uPokladZ');
   const uOtworR2 = uniform(0).setName('uOtworR2');
   const uDyskR2 = uniform(0).setName('uDyskR2');
+  // LOD obrazu (docs/PLAN-zawalenia-lod-miasto.md, metoda G). Sloty na węzeł z parametru sceny: 7 (blok, 5 odłamków, pręt), 2 (dwa kawałki po uszkodzeniu), 1 (sam blok, po uszkodzeniu kurczący się kawałek). Osobno dla rysunku i głębi oraz dla mapy cienia, bez nowego pipeline'u.
+  const uSloty = uniform(7, 'uint').setName('uObrSloty');
+  const uSlotyCien = uniform(7, 'uint').setName('uObrSlotyCien');
 
   const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
   const uv_ = (e) => { const v = uint(0).toVar(); v.assign(e); return v; };
@@ -308,14 +311,16 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const vE = varyingProperty('vec3', 'vWokE');
 
   // ── Wierzchołek, § 4.2 ── Najpierw odczyt d, maski i flag, reszta w gałęzi aktywnego slotu. Zmienne przypisane przed rozgałęzieniem (pułapka 39), varyingi na końcu.
-  const budujPozycje = ({ varyingi, prety }) => Fn(() => {
+  // uK: sloty na węzeł tego przebiegu. Układ id z § 4 przy każdym K: id < n to slot 0 węzła id, dalej i = (id − n) / (K − 1), s = 1 + (id − n) % (K − 1). Przy K = 7 to SLOTY = 6 jak dotąd.
+  const budujPozycje = ({ varyingi, prety, uK = uSloty }) => Fn(() => {
     const id = uv_(instanceIndex);
     const i = uv_(id);
     const s = uv_(uint(0));
     If(id.greaterThanEqual(uN), () => {
       const r = uv_(id.sub(uN));
-      i.assign(r.div(uint(SLOTY)));
-      s.assign(uint(1).add(r.sub(i.mul(uint(SLOTY)))));
+      const kPoza = uv_(max(uK, uint(2)).sub(uint(1))); // przy K = 1 tu nie wchodzi: instancji jest n
+      i.assign(r.div(kPoza));
+      s.assign(uint(1).add(r.sub(i.mul(kPoza))));
     });
     const C = v3(positionGeometry);
     const nf = v3(normalGeometry);
@@ -333,6 +338,64 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       const mA = uv_(mI.bitAnd(uint(63)));
       const x = v3(pw.xyz.add(wWezR.element(i3.add(uint(1))).xyz.mul(uTau)));
       const Fx = v3(f0.xyz);
+
+      // Wspólny koniec kawałka: środek z rozjazdem, obrót, szum rogów, a w rysunku normalna ściany z przekątnych (§ 4.2, nie normalFlat: każdy trójkąt inną dałby „złożoną kartkę”) i barwa. O0 i h w komórkach, hl: hasz kawałka.
+      const zlozKawalek = (O0, h, rozj, katK, hl, Fy, Fz, f1, d0, d1) => {
+        const O = v3(O0.mul(uDx).mul(rozj).add(vec3(u1(hl, 0), u1(hl, 10), u1(hl, 20)).mul(d.mul(uDx).mul(0.08))));
+        const os = v3(normalize(vec3(u1(hl, 1), u1(hl, 11), u1(hl, 21).add(1e-3))));
+        const c = fv(cos(katK));
+        const sn = fv(sin(katK));
+        const obroc = (w) => w.mul(c).add(cross(os, w).mul(sn)).add(os.mul(dot(os, w).mul(float(1).sub(c))));
+        const sc2 = fv(uDx.mul(float(1).sub(d.mul(0.1))));
+        const jit = fv(d.mul(0.4));
+        const rog = (k) => k.add(szumRogu(hl, k, jit)).mul(h).mul(sc2);
+        const q = v3(obroc(rog(C)));
+        P.assign(x.add(naRame(Fx, Fy, Fz, O.add(q))));
+        if (varyingi) {
+          const t = v3(abs(nf.zxy));
+          const b = v3(abs(nf.yzx));
+          const r0 = v3(rog(nf.sub(t).sub(b)));
+          const r1 = v3(rog(nf.add(t).sub(b)));
+          const r2 = v3(rog(nf.add(t).add(b)));
+          const r3 = v3(rog(nf.sub(t).add(b)));
+          const n = v3(cross(r2.sub(r0), r3.sub(r1)).mul(nf.x.add(nf.y).add(nf.z)));
+          Nw.assign(naRame(Fx, Fy, Fz, obroc(n)));
+          const pylM = fv(d.mul(0.15));
+          const lq = fv(min(f1.w.mul(3), 1));
+          const tonZ = fv(float(1).add(d0.w.sub(1).mul(lq)));
+          const r = fv(tonZ.mul(float(0.94).add(czesc(hl, 3, 63).mul(0.12))).mul(float(1).sub(d.mul(0.14))));
+          Kol.assign(mix(d1.xyz, vec3(PYLK[0], PYLK[1], PYLK[2]), pylM).mul(r));
+          P0.assign(d0.xyz.add(O).add(rog(C)));
+        }
+      };
+
+      // LOD (K < 7): uszkodzony węzeł to kawałek zamiast pięciu odłamków z wzoru. K = 1: cała komórka. K = 2: komórka przecięta raz, w osi i miejscu z hasza węzła.
+      // Przy d = 0 kawałki dają dokładnie blok z zakładką, więc wejście w uszkodzenie nie skacze. Dalej kurczą się z d (materiał poszedł w pył i do puli gruzu), rozjeżdżają i obracają.
+      const kawalekLod = (nr) => {
+        const f1 = v4(wRamaR.element(i3.add(uint(1))));
+        const Fy = v3(f1.xyz);
+        const Fz = v3(wRamaR.element(i3.add(uint(2))).xyz);
+        const d0 = v4(wDaneR.element(uint(2).mul(i)));
+        const d1 = v4(wDaneR.element(uint(2).mul(i).add(uint(1))));
+        const hN = haszT(i);
+        const hl = haszT(uint(L_ODLAMKI).mul(i).add(uint(nr)).add(uint(991)));
+        const h = v3(vec3(ZAKLADKA));
+        const O0 = v3(vec3(0));
+        If(uK.greaterThan(uint(1)), () => {
+          const t5 = uv_(hN.shiftRight(uint(5)));
+          const osC = uv_(t5.sub(t5.div(uint(3)).mul(uint(3))));
+          const fr = fv(float(0.35).add(czesc(hN, 8, 255).mul(0.3)));
+          const pol = fv(nr === 0 ? fr.mul(0.5) : float(1).sub(fr).mul(0.5));
+          const sr = fv(nr === 0 ? fr.sub(1).mul(0.5) : fr.mul(0.5));
+          If(osC.equal(uint(0)), () => { h.x.assign(pol.add(0.01)); O0.x.assign(sr); })
+            .ElseIf(osC.equal(uint(1)), () => { h.y.assign(pol.add(0.01)); O0.y.assign(sr); })
+            .Else(() => { h.z.assign(pol.add(0.01)); O0.z.assign(sr); });
+        });
+        h.mulAssign(float(1).sub(d.mul(vec3(float(0.1).add(czesc(hl, 2, 63).mul(0.2)), float(0.1).add(czesc(hl, 8, 63).mul(0.2)), float(0.1).add(czesc(hl, 14, 63).mul(0.2))))));
+        const rozj = fv(float(1).add(d.mul(0.5)));
+        const katK = fv(d.mul(float(0.12).add(czesc(hl, 20, 255).mul(0.55))));
+        zlozKawalek(O0, h, rozj, katK, hl, Fy, Fz, f1, d0, d1);
+      };
 
       If(s.equal(uint(0)), () => {
         If(d.lessThanEqual(FAZA_D).and(mA.notEqual(uint(63))), () => {
@@ -363,7 +426,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
           const ton = fv(float(1).add(d0.w.sub(1).mul(min(f1.w.mul(3), 1))));
           Kol.assign(d1.xyz.mul(ton));
           P0.assign(d0.xyz.add(off));
-        });
+        }).ElseIf(d.greaterThan(FAZA_D).and(uK.lessThan(uint(7))), () => { kawalekLod(0); });
       }).ElseIf(s.equal(uint(6)), () => {
         if (prety) {
           // Pręt, § 4.2: tylko węzeł z wiązaniami, kolumna z, strop i dysk x albo y.
@@ -389,6 +452,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
             });
           });
         }
+      }).ElseIf(uK.lessThan(uint(7)), () => {
+        If(d.greaterThan(FAZA_D), () => { kawalekLod(1); });
       }).Else(() => {
         If(d.greaterThan(FAZA_D), () => {
           const l = uv_(s.sub(uint(1)));
@@ -428,33 +493,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
               h.assign(vec3(float(0.32).add(czesc(hl, 2, 31).mul(0.2)), float(0.32).add(czesc(hl, 7, 31).mul(0.2)), float(0.28).add(czesc(hl, 12, 31).mul(0.2))).mul(skB));
               rozj.assign(0);
             }).ElseIf(typS.greaterThanEqual(uint(8)).and(samB), () => { rozj.assign(1.7); });
-            const O = v3(w1.xyz.mul(uDx).mul(rozj).add(vec3(u1(hl, 0), u1(hl, 10), u1(hl, 20)).mul(d.mul(uDx).mul(0.08))));
-            const os = v3(normalize(vec3(u1(hl, 1), u1(hl, 11), u1(hl, 21).add(1e-3))));
-            const c = fv(cos(katK));
-            const sn = fv(sin(katK));
-            const obroc = (w) => w.mul(c).add(cross(os, w).mul(sn)).add(os.mul(dot(os, w).mul(float(1).sub(c))));
-            const sc2 = fv(uDx.mul(float(1).sub(d.mul(0.1))));
-            const jit = fv(d.mul(0.4));
-            const rog = (k) => k.add(szumRogu(hl, k, jit)).mul(h).mul(sc2);
-            const q = v3(obroc(rog(C)));
-            P.assign(x.add(naRame(Fx, Fy, Fz, O.add(q))));
-            if (varyingi) {
-              // Normalna ściany z przekątnych (§ 4.2), nie normalFlat: każdy trójkąt inną dałby „złożoną kartkę”.
-              const t = v3(abs(nf.zxy));
-              const b = v3(abs(nf.yzx));
-              const r0 = v3(rog(nf.sub(t).sub(b)));
-              const r1 = v3(rog(nf.add(t).sub(b)));
-              const r2 = v3(rog(nf.add(t).add(b)));
-              const r3 = v3(rog(nf.sub(t).add(b)));
-              const n = v3(cross(r2.sub(r0), r3.sub(r1)).mul(nf.x.add(nf.y).add(nf.z)));
-              Nw.assign(naRame(Fx, Fy, Fz, obroc(n)));
-              const pylM = fv(d.mul(0.15));
-              const lq = fv(min(f1.w.mul(3), 1));
-              const tonZ = fv(float(1).add(d0.w.sub(1).mul(lq)));
-              const r = fv(tonZ.mul(float(0.94).add(czesc(hl, 3, 63).mul(0.12))).mul(float(1).sub(d.mul(0.14))));
-              Kol.assign(mix(d1.xyz, vec3(PYLK[0], PYLK[1], PYLK[2]), pylM).mul(r));
-              P0.assign(d0.xyz.add(O).add(rog(C)));
-            }
+            zlozKawalek(w1.xyz, h, rozj, katK, hl, Fy, Fz, f1, d0, d1);
           });
         });
       });
@@ -581,7 +620,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   mat.name = 'WokBryly';
   mat.map = null;
   mat.positionNode = budujPozycje({ varyingi: true, prety: true });
-  mat.castShadowPositionNode = budujPozycje({ varyingi: false, prety: false });
+  mat.castShadowPositionNode = budujPozycje({ varyingi: false, prety: false, uK: uSlotyCien });
   mat.normalNode = normalize(vN);
   const aoM = aoCzytaj().toVar('wokAo');
   // Film: otoczenie × a, słońce × (0,5 + 0,5·a). Stąd barwa × (0,5 + 0,5·a), a w aoNode reszta dla otoczenia.
@@ -613,6 +652,10 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   mesh.frustumCulled = false;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  // Pass cienia ma własny licznik instancji: three woła te haki tuż wokół rysunku w mapie cienia, a licznik czyta przy rysunku (RenderObject.getDrawParameters). Bez nowego pipeline'u.
+  let instRysunek = 2, instCien = 2;
+  mesh.onBeforeShadow = () => { geo.instanceCount = instCien; };
+  mesh.onAfterShadow = () => { geo.instanceCount = instRysunek; };
 
   // ── Gruz, § 4.5 ── Osobny rysunek, bez cienia. Kąt zależy od drogi, więc staje razem z bryłą.
   const vKG = varyingProperty('vec3', 'vWokGK');
@@ -728,6 +771,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
 
   let szer = 2, wys = 2;
   let n = 0;
+  let slotyWez = 7, slotyCien = 7, jestPelny = false;
 
   /** Rozmiar celów. AO i głębia: połowa, najwyżej 2560 szerokości, żeby koszt nie rósł z pikselami bez limitu (§ 6.1). */
   function ustawRozmiar(renderer, w, h) {
@@ -752,8 +796,10 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
-  function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null } = {}) {
+  function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null, lod = null } = {}) {
     pyl.wczytaj(w, opcjePylu);
+    slotyWez = lod?.sloty ?? 7;
+    slotyCien = lod?.cien ?? slotyWez;
     uKlatka.value = 0;
     uZarMoc.value = opcjePylu?.zar ?? 0.35;
     uPokladZ.value = poklad ? poklad.z : -1e30;
@@ -796,22 +842,63 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
 
   /** Stojąca wieża rysuje tylko sloty bloków: n wywołań zamiast 7n, bez nowego rysunku i pipeline'u (§ 4). */
   function pelnyObraz(pelny) {
-    const c = (pelny ? 7 : 1) * Math.max(n, 2);
-    geo.instanceCount = c;
-    geoGleb.instanceCount = c;
+    jestPelny = pelny;
+    uSloty.value = slotyWez;
+    // Mapa cienia najwyżej tyle slotów, co rysunek. 0: bryły w ogóle nie rzucają cienia, pass cienia je pomija (castShadow nie wchodzi do klucza pipeline'u).
+    const kCien = Math.min(slotyCien, slotyWez);
+    uSlotyCien.value = Math.max(1, kCien);
+    mesh.castShadow = kCien > 0;
+    const m = Math.max(n, 2);
+    instRysunek = (pelny ? slotyWez : 1) * m;
+    instCien = (pelny ? Math.max(1, kCien) : 1) * m;
+    geo.instanceCount = instRysunek;
+    geoGleb.instanceCount = instRysunek;
   }
 
-  /** Cień: środek i zakres na scenę (§ 4.3). Zmiana wartości, bez nowego pipeline'u. */
-  function ustawCien(srodek, zakres) {
+  /** LOD obrazu w biegu (metoda G planu): { sloty: 1 | 2 | 7, cien: 0 | 1 | 2 | 7 }. Zmiana wartości i liczników, bez nowego pipeline'u. */
+  function ustawLod({ sloty = slotyWez, cien = slotyCien } = {}) {
+    slotyWez = sloty;
+    slotyCien = cien;
+    pelnyObraz(jestPelny);
+  }
+
+  /** Cień: środek i zakres na scenę (§ 4.3). Zmiana wartości, bez nowego pipeline'u. Przy odl = 7000 i zakresie do 3500 mapa jest dokładnie ta sama co dotąd (S1–S5). */
+  function ustawCien(srodek, zakres, odl = 7000) {
     sun.target.position.set(srodek[0], srodek[1], srodek[2]);
-    sun.position.set(srodek[0], srodek[1], srodek[2]).addScaledVector(SLONCE, 7000);
+    sun.position.set(srodek[0], srodek[1], srodek[2]).addScaledVector(SLONCE, odl);
     const c = sun.shadow.camera;
     c.left = -zakres; c.right = zakres; c.top = zakres; c.bottom = -zakres;
+    const far = Math.max(16000, odl + 2 * zakres);
+    if (c.far !== far) {
+      c.far = far;
+      // Bias w jednostkach świata ma zostać: 9,6 j. głębi przy far = 16000. Normalny rośnie z rozmiarem teksla.
+      sun.shadow.bias = far === 16000 ? -0.0006 : -9.6 / far;
+    }
+    sun.shadow.normalBias = 2.0 * Math.max(1, zakres / 3500);
     c.updateProjectionMatrix();
     sun.target.updateMatrixWorld();
     sun.updateMatrixWorld();
   }
   ustawCien([0, 0, 500], 1700);
+
+  /** Kamera cienia z rozmiaru sceny: kula wokół węzłów (z zapasem na hałdę, domyślnie × 1,25), a nie stała z tabeli. Liczone raz, przy wejściu w scenę. Stare sceny mają własne stałe i tego nie wołają. */
+  function ustawCienZSceny(w, zapas = 1.25) {
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    const p = w.pos;
+    for (let i = 0; i < w.n; i++) {
+      const x = p[3 * i], y = p[3 * i + 1], z = p[3 * i + 2];
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      if (z < z0) z0 = z;
+      if (z > z1) z1 = z;
+    }
+    const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    const R = Math.max(300, 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz) * zapas);
+    ustawCien([0.5 * (x0 + x1), 0.5 * (y0 + y1), 0.5 * (z0 + z1)], R, Math.max(7000, 2 * R));
+    return R;
+  }
 
   /** Obraz po kroku fizyki. Pierwszy krok po wgraniu migawki: bez limitu wzrostu d, żeby stan pojawił się od razu. */
   function krok(renderer) {
@@ -939,7 +1026,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   return {
     kernele, listaObrazu, scene, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
-    wczytaj, pelnyObraz, ustawCien, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
+    wczytaj, pelnyObraz, ustawLod, ustawCien, ustawCienZSceny, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
+    get lod() { return { sloty: slotyWez, cien: slotyCien, instRysunek, instCien }; },
     /** Pomiar: światło błysku na bryłach wł./wył. na tej samej klatce. */
     swiatlaWlacz(b) { swiatlaWl = b; },
     get n() { return n; },

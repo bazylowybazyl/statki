@@ -106,3 +106,54 @@ test('materiał brył czyta żar tylko do odczytu', () => {
   assert.match(b.fragmentShader, /vWokE/);
   assert.ok((b.vertexShader.match(/var<storage/g) || []).length <= 8);
 });
+
+// ── LOD obrazu, plan LOD, metoda G ──
+test('LOD: sloty i cień to uniformy jednego grafu, wierzchołek bez nieprzypisanych zmiennych', () => {
+  const b = renderer.backend.createNodeBuilder(obraz.mesh, renderer);
+  b.scene = obraz.scene;
+  b.camera = camera;
+  b.material = obraz.mesh.material;
+  b.lightsNode = renderer.lighting.getNode(obraz.scene);
+  b.build();
+  assert.match(b.vertexShader, /uObrSloty/);
+  assert.deepEqual(nieprzypisane(b.vertexShader), [], 'wierzchołek');
+  assert.equal(obraz.mesh.material.positionNode === obraz.mesh.material.castShadowPositionNode, false);
+});
+
+test('LOD: liczniki instancji rysunku i cienia, haki passa cienia, cień 0 wyłącza rzucanie, powrót do 7', () => {
+  const g = obraz.mesh.geometry;
+  obraz.pelnyObraz(true); // n = 0 w tym teście, więc m = 2
+  assert.equal(g.instanceCount, 14);
+  obraz.ustawLod({ sloty: 2, cien: 1 });
+  assert.equal(g.instanceCount, 4);
+  assert.equal(obraz.mesh.castShadow, true);
+  obraz.mesh.onBeforeShadow();
+  assert.equal(g.instanceCount, 2);
+  obraz.mesh.onAfterShadow();
+  assert.equal(g.instanceCount, 4);
+  obraz.ustawLod({ sloty: 1, cien: 0 });
+  assert.equal(g.instanceCount, 2);
+  assert.equal(obraz.mesh.castShadow, false);
+  obraz.ustawLod({ sloty: 7, cien: 7 });
+  assert.equal(g.instanceCount, 14);
+  assert.equal(obraz.mesh.castShadow, true);
+  obraz.pelnyObraz(false);
+  assert.equal(g.instanceCount, 2);
+});
+
+test('kamera cienia: stałe S1–S5 bez zmian, duża scena z rozmiaru', () => {
+  const c = obraz.sun.shadow.camera;
+  obraz.ustawCien([0, 0, 500], 1700);
+  assert.equal(c.far, 16000);
+  assert.equal(obraz.sun.shadow.bias, -0.0006);
+  assert.equal(obraz.sun.shadow.normalBias, 2);
+  const pos = new Float32Array(6);
+  pos.set([-20000, -15000, 0, 20000, 15000, 300]);
+  const R = obraz.ustawCienZSceny({ n: 2, pos });
+  assert.ok(R > 30000 && c.right === R && c.far >= 2 * R + 2 * R);
+  assert.ok(obraz.sun.shadow.normalBias > 2);
+  assert.ok(obraz.sun.position.distanceTo(obraz.sun.target.position) >= 2 * R - 1);
+  obraz.ustawCien([0, 0, 500], 1700);
+  assert.equal(c.far, 16000);
+  assert.equal(obraz.sun.shadow.bias, -0.0006);
+});

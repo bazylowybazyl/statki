@@ -30,6 +30,8 @@ const SCENY = {
   krater90: { nazwa: 'Krater r = 90, próżnia', kamera: { az: 60, el: 6, cel: [190, 0, 650], odl: 1500 }, cien: [[0, 0, 650], 3500], pomin: 0 },
   S3poza: { nazwa: 'S3 poza środkiem', kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300], pomin: 0 },
   S3osm: { nazwa: 'S3 ośmiokąt', kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300], pomin: 0 },
+  // Pomiar LOD obrazu: cztery wieże S1, około 60 tys. węzłów, wymaga ?maxWez=61000. Bez `cien`: kamera cienia z rozmiaru sceny. ukryta: bez przycisku i bez budowy w tle (bez ?maxWez solver jej nie pomieści).
+  LOD60: { nazwa: 'LOD 60 tys. węzłów', kamera: { az: 32, el: 14, cel: [0, 0, 500], odl: 5200 }, pomin: 0, lod: { sloty: 2, cien: 1 }, ukryta: true },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 
@@ -78,6 +80,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
 
   // Budowa raz na scenę w wątku roboczym (§ 2.3), reset to tylko wgranie buforów. Sceny budują się w tle po starcie, więc przełączenie ich nie czeka.
   const ziarnoAdresu = adres.has('ziarno') ? Number(adres.get('ziarno')) : undefined;
+  // ?sloty=1|2|7&cienSloty=0|1|2|7: LOD obrazu dla każdej sceny, do oglądania i pomiaru. Bez tego wartość ze sceny, a domyślnie 7 jak dotąd.
+  const lodAdresu = adres.has('sloty') || adres.has('cienSloty') ? { sloty: Number(adres.get('sloty') ?? 7), cien: Number(adres.get('cienSloty') ?? adres.get('sloty') ?? 7) } : null;
   const watek = new Worker(new URL('./budowa.worker.js', import.meta.url), { type: 'module' });
   const wypieki = new Map();
   const czekajace = new Map();
@@ -111,8 +115,9 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     const { w, g, zdarzeniaOd, rDysk, poklad } = wypieki.get(id);
     solver.wczytaj(w);
     solver.ustawPlan(g);
-    obraz.wczytaj(w, { rDysk, poklad, pyl: OPCJE_PYLU[id] });
-    obraz.ustawCien(opis.cien[0], opis.cien[1]);
+    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? opis.lod }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    if (opis.cien) obraz.ustawCien(opis.cien[0], opis.cien[1]);
+    else obraz.ustawCienZSceny(w, opis.cienZapas);
     stan.scena = id;
     stan.krok = 0;
     stan.akum = 0;
@@ -194,6 +199,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const gr2 = document.getElementById('panelTempo');
   const gr3 = document.getElementById('panelSter');
   for (const id of Object.keys(SCENY)) {
+    if (SCENY[id].ukryta) continue;
     const b = dodaj(gr1, SCENY[id].nazwa, () => { wejdz(id); }, `s:${id}`);
     b.disabled = !zdarzeniaDostepne(id);
   }
@@ -263,7 +269,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     }
   }
   requestAnimationFrame(petla);
-  for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id)) wypiek(id);
+  for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta) wypiek(id);
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
   Object.assign(wok, {
@@ -427,6 +433,56 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         }
         stan.rysowac = true;
         return { wl1, wyl, wl2, bezSwiatla, samPassMs: mediana(samPass), w: renderer.domElement.width, h: renderer.domElement.height, cel: [obraz.pyl.rt.width, obraz.pyl.rt.height] };
+      },
+      /** Harness, LOD obrazu (metoda G planu): koszt GPU każdego passa ze znaczników, na zamrożonej klatce, warianty [sloty, cień]. Bez kroków, najwyżej 60 kl/s. */
+      async kosztLod(warianty = [[7, 7], [2, 2], [2, 1], [2, 0], [1, 1], [1, 0]], probek = 15) {
+        stan.kroczyc = false;
+        const rysowal = stan.rysowac;
+        stan.rysowac = false;
+        await new Promise((ok) => setTimeout(ok, 300));
+        await device.queue.onSubmittedWorkDone();
+        const backend = renderer.backend;
+        const mediana = (l) => { l.sort((a, b) => a - b); return l[l.length >> 1]; };
+        // AGENT: mapa cienia odświeża się najwyżej raz na klatkę rAF (ShadowNode.updateBefore po frameId), więc pętla bez czekania na rAF mierzy głównie klatki BEZ passa cienia, a mediana nie widzi go wcale. Także dlatego rysunekGpuMs z diag i renderGpuMs z kosztKlatki są zaniżone o cień.
+        const zmierz = async () => {
+          const pasy = { gleb: [], ssao: [], pyl: [], hdr: [], cien: [], wyj: [], razem: [] };
+          for (let k = 0; k < probek; k++) {
+            await new Promise((ok) => requestAnimationFrame(ok));
+            backend.trackTimestamp = true;
+            obraz.rysuj(renderer, camera, 0);
+            await renderer.resolveTimestampsAsync('render');
+            backend.trackTimestamp = false;
+            // Kolejność w mapie to kolejność otwierania passów. Pass cienia otwiera się w środku rysunku sceny, zaraz po nim.
+            const t = [...backend.timestampQueryPool.render.timestamps.values()];
+            backend.timestampQueryPool.render.timestamps.clear();
+            pasy.gleb.push(t[0]); pasy.ssao.push(t[1]); pasy.pyl.push(t[2]); pasy.hdr.push(t[3]);
+            pasy.cien.push(t.length > 5 ? t[4] : 0);
+            pasy.wyj.push(t[t.length - 1]);
+            pasy.razem.push(t.reduce((a, b) => a + b, 0));
+            await device.queue.onSubmittedWorkDone();
+          }
+          for (const q in pasy) pasy[q] = mediana(pasy[q]);
+          return pasy;
+        };
+        const { sloty: s0, cien: c0 } = obraz.lod;
+        const wy = [];
+        for (const [sloty, cien] of warianty) {
+          obraz.ustawLod({ sloty, cien });
+          const p = await zmierz();
+          const l = obraz.lod;
+          wy.push({ sloty, cienSloty: cien, instRysunek: l.instRysunek, instCien: l.instCien, wierzcholkiMln: (24 * (2 * l.instRysunek + (cien > 0 ? l.instCien : 0))) / 1e6, ...p });
+        }
+        obraz.ustawLod({ sloty: s0, cien: c0 });
+        stan.rysowac = rysowal;
+        return { n: obraz.n, krok: stan.krok, w: renderer.domElement.width, h: renderer.domElement.height, wy };
+      },
+      /** Harness, górna granica kosztu obrazu: każdy węzeł uszkodzony (d = 1), wszystkie sloty czynne. Ramy i bity wracają do stanu początkowego, więc potem tylko pomiar albo reset, bez kroków. */
+      uszkodzWszystko() {
+        const r = obraz.atrybuty.rama;
+        for (let i = 0; i < obraz.n; i++) r.array[12 * i + 3] = 1;
+        r.needsUpdate = true;
+        obraz.pelnyObraz(true);
+        stan.pelnyOd = Infinity;
       },
       bezZegara(b = true) { stan.kroczyc = !b; },
     },

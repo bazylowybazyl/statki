@@ -27,6 +27,9 @@ export const OPCJE_PYLU = {
   S5: { dziedz: 0.85, zycie: [1.5, 3.5], zar: 0.7 },
   S5v: { dziedz: 0.85, zycie: [1.5, 3.5], zar: 0.7 },
   S5p: { dziedz: 0.85, zycie: [1.5, 3.5], zar: 0.7, powietrze: true }, // planeta z pola punktowego: gruntu w płaszczyźnie nie ma, a powietrze jest
+  // Wiele ognisk (plan LOD, metoda G). kwady: sufit pierścienia (do CAP_P), emisja: ułamek węzłów, które w ogóle emitują, rozmiar: mnożnik promienia kwadu, sufitPx: sufit promienia w px celu, lodDuze: próg „co czwarty”.
+  // AGENT: pod i grunt pchają pył promieniowo od początku układu (x, y) = 0, czyli od osi jednej wieży. W scenie z wieloma budynkami całą chmurę pchałyby w jedną stronę, stąd 0. Rozlew od środka własnego budynku to osobna praca.
+  LOD60: { kwady: 6000, emisja: 0.35, rozmiar: 1.5, sufitPx: 90, lodDuze: [24, 42], pod: 0, grunt: 0 },
 };
 
 export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp }) {
@@ -70,8 +73,11 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
   const uSufit = uniform(SUFIT_PX).setName('uPylSufit');
   const uSufitB = uniform(SUFIT_BLYSK_PX).setName('uBlyskSufit');
   const uSklad = uniform(1).setName('uPylSklad');
+  // Sufit kwadów i rzadsza emisja z parametru sceny (plan LOD, metoda G): pierścień krótszy niż CAP_P, a gęstość ognisk nie mnoży przerysu. Przy kwady = CAP_P i emisja = 1 to dokładnie to samo co dotąd.
+  const uKapP = uniform(CAP_P, 'uint').setName('uPylKap');
+  const uEmisja = uniform(1).setName('uPylEmisja');
 
-  const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
+  const fv =(e) => { const v = float(0).toVar(); v.assign(e); return v; };
   const uv_ = (e) => { const v = uint(0).toVar(); v.assign(e); return v; };
   const v3 = (e) => { const v = vec3(0).toVar(); v.assign(e); return v; };
   const v4 = (e) => { const v = vec4(0).toVar(); v.assign(e); return v; };
@@ -103,6 +109,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
     const t3 = uv_(h.shiftRight(uint(3)));
     If(t3.sub(t3.div(uint(3)).mul(uint(3))).notEqual(uint(0)), () => { Return(); });
     const hq = haszT(h);
+    If(float(haszT(hq.add(uint(77))).bitAnd(uint(1023))).div(1023).greaterThan(uEmisja), () => { Return(); });
     const vi = v3(wWezR.element(i3.add(uint(1))).xyz);
     const dz = fv(select(uPow.greaterThan(0), uDziedz, float(1)));
     const v = v3(vi.mul(dz).add(vec3(u1(hq, 3).mul(30), u1(hq, 13).mul(30), 0)));
@@ -113,7 +120,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
       const pr = fv(uPod.mul(uu).div(rr));
       v.assign(vec3(v.x.add(pr.mul(p.x)), v.y.add(pr.mul(p.y)), u1(hq, 23).mul(6)));
     });
-    const q = uv_(atomicAdd(wLiczA.element(uint(0)), uint(1)).mod(uint(CAP_P)));
+    const q = uv_(atomicAdd(wLiczA.element(uint(0)), uint(1)).mod(uKapP));
     const q3 = uv_(uint(3).mul(q));
     wPylW.element(q3).assign(vec4(p.xyz.add(vec3(u1(hq, 0), u1(hq, 10), u1(hq, 20)).mul(10)), 0));
     wPylW.element(q3.add(uint(1))).assign(vec4(v, bajt(hq, 7).mul(18).add(16)));
@@ -140,7 +147,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
       const az = fv(u1(hq, 20).mul(0.7));
       const li = fv(float(1).div(sqrt(ax.mul(ax).add(ay.mul(ay)).add(az.mul(az))).add(1e-3)));
       const os = v3(vec3(ax, ay, az).mul(li));
-      const q = uv_(atomicAdd(wLiczA.element(uint(0)), uint(1)).mod(uint(CAP_P)));
+      const q = uv_(atomicAdd(wLiczA.element(uint(0)), uint(1)).mod(uKapP));
       const q3 = uv_(uint(3).mul(q));
       wPylW.element(q3).assign(vec4(a.xyz.add(os.mul(c.x.mul(0.5))), 0));
       wPylW.element(q3.add(uint(1))).assign(vec4(b.xyz.mul(dz).add(os.mul(uKlV.mul(bajt(hq, 5)))), uKlR0.add(uKlRd.mul(bajt(hq, 13)))));
@@ -218,7 +225,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
     const Faz = vec2(0).toVar();
     Faz.assign(vec2(0));
     const Rodz = fv(0);
-    If(id.lessThan(uint(CAP_P)), () => {
+    If(id.lessThan(uKapP), () => {
       const q3 = uv_(uint(3).mul(id));
       const b = v4(wPylR.element(q3.add(uint(1))));
       If(b.w.greaterThan(0), () => {
@@ -231,7 +238,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
         Kol.assign(vec3(0.62, 0.58, 0.52).mul(c.y));
       });
     }).Else(() => {
-      const r = uv_(id.sub(uint(CAP_P)));
+      const r = uv_(id.sub(uKapP));
       const s = uv_(r.div(uint(KW_BLYSK)));
       const k = uv_(r.sub(s.mul(uint(KW_BLYSK))));
       const s3 = uv_(uint(3).mul(s));
@@ -339,8 +346,17 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
     uDziedz.value = o.dziedz;
     uZ0.value = o.zycie[0];
     uZd.value = o.zycie[1] - o.zycie[0];
-    uR0.value = pow ? 1 : 0.5;
-    uRt.value = pow ? 38 : 9;
+    const rozm = o.rozmiar ?? 1;
+    uR0.value = (pow ? 1 : 0.5) * rozm;
+    uRt.value = (pow ? 38 : 9) * rozm;
+    const kwady = Math.min(o.kwady ?? CAP_P, CAP_P);
+    uKapP.value = kwady;
+    uEmisja.value = o.emisja ?? 1;
+    uSufit.value = o.sufitPx ?? SUFIT_PX;
+    uLodA.value = o.lodDuze?.[0] ?? LOD_DUZE[0];
+    uLodB.value = o.lodDuze?.[1] ?? LOD_DUZE[1];
+    geo.instanceCount = kwady + KW_BLYSK * BLYSKI;
+    kPylKrok.setCount(kwady);
     uKlA.value = pow ? 1.25 : 2.2;
     uKlJ.value = pow ? 0.3 : 0.26;
     uKlZ0.value = pow ? 1.2 : 0.7;

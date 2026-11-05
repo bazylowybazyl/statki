@@ -72,7 +72,8 @@ async function start() {
     if (!backend.pipelineUtils.__harnessHook) throw new Error('Hak dziennika pipeline\'ów harnessu się nie założył');
   }
 
-  const solver = createWokseleSolver({ maxNodes: 26000, par: PARAMETRY });
+  // ?maxWez=N: pojemność buforów na scenę większą niż dzisiejsze (pomiar LOD, miasto). Domyślnie 26000: bufory i kernele jak dotąd.
+  const solver = createWokseleSolver({ maxNodes: Number(parametryAdresu.get('maxWez')) || 26000, par: PARAMETRY });
   await solver.rozgrzej(renderer);
 
   const pamiecStatyki = new Map();

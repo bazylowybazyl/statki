@@ -15,7 +15,40 @@ function planKratera90() {
   return p;
 }
 
+/**
+ * Pomiar LOD obrazu (plan LOD, metoda G): cztery wieże S1 w kwadracie, około 60 tys. węzłów, jedna grupa i jedna siatka ijk (przerwa szersza niż zasięg wiązania).
+ * Każda podcięta jak S1, co 0,4 s następna. Uniform uN i bufory solvera muszą to pomieścić: ?maxWez=61000.
+ */
+function planCzteryWieze() {
+  const p = S1();
+  const s0 = p.scena;
+  const ile = 4, N = s0.n, m = p.czasy.indeksy.length;
+  const krok = Math.round(1000 / s0.dx);
+  const pos = new Float32Array(3 * N * ile), kind = new Uint8Array(N * ile), ijk = new Int32Array(3 * N * ile);
+  const indeksy = new Int32Array(m * ile), t = new Float64Array(m * ile);
+  for (let q = 0; q < ile; q++) {
+    const ax = q & 1, ay = q >> 1;
+    for (let i = 0; i < N; i++) {
+      const b = 3 * (q * N + i);
+      pos[b] = s0.pos[3 * i] + (ax - 0.5) * krok * s0.dx;
+      pos[b + 1] = s0.pos[3 * i + 1] + (ay - 0.5) * krok * s0.dx;
+      pos[b + 2] = s0.pos[3 * i + 2];
+      ijk[b] = s0.ijk[3 * i] + ax * krok;
+      ijk[b + 1] = s0.ijk[3 * i + 1] + ay * krok;
+      ijk[b + 2] = s0.ijk[3 * i + 2];
+      kind[q * N + i] = s0.kind[i];
+    }
+    for (let c = 0; c < m; c++) {
+      indeksy[q * m + c] = q * N + p.czasy.indeksy[c];
+      t[q * m + c] = p.czasy.t[c] + 0.4 * q;
+    }
+  }
+  const scena = { ...s0, n: N * ile, pos, kind, ijk, grupa: new Uint8Array(N * ile), vel0: null, kluczStatyki: undefined, meta: { ...s0.meta, grupy: [{ nazwa: 'wieza', start: 0, n: N * ile }] } };
+  return { ...p, id: 'LOD60', scena, czasy: { indeksy, t, rozerwij: new Uint8Array(m * ile), zostawZiarna: false } };
+}
+
 export const PLANY_POKAZU = {
+  LOD60: planCzteryWieze,
   // Ziarno z adresu strony (?ziarno=7), domyślnie 21 jak w filmie. Pozostałe sceny argumentu nie czytają.
   S5: (ziarno) => S5({ miejsce: 'g', ...(ziarno === undefined ? {} : { ziarno }) }),
   S5v: (ziarno) => S5({ miejsce: 'proznia', ...(ziarno === undefined ? {} : { ziarno }) }),
