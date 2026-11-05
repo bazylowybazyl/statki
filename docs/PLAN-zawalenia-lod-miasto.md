@@ -165,6 +165,62 @@ Niskie budynki kończą wyżej, bo hałda ma 2–3 węzły. Budynek 154 j. wali 
 
 **Czego nie sprawdzono:** salwy z góry i kratera (tylko podcięcie z boku), uskoków, kontaktu między budynkami, ramy przy dx = 2,5, wspólnego K z megabudowlą. Zrzuty małych budynków są bez pyłu: `OPCJE_PYLU` ma rozmiary wieży, więc dzielnica potrzebuje własnych. Rytm listy (`rytmEf`: 0,5 klatki × dx / (20·√s)) to wzór bez osobnego pomiaru: we wszystkich biegach 0 NaN.
 
+### Wynik prób 2–4: miasto na stronie dema (M1, M2)
+
+GPU, RTX 5080, 1280 × 720, MSAA 4, sufit 60 kl/s, 2026-11-06, tryb nocny, wentylator najwyżej 31%. Zrzuty i liczby: `.tmp/woksele-demo/LOD/miasto/ab/` (`arkusz-M1-atlas.png`, `arkusz-M1-bliska.png`, `arkusz-M2-atlas.png`, `arkusz-M2-bliska.png`, `liczby-*.txt`). Narzędzie: `node scripts/webgpu/woksele-demo.mjs --zrzut M1,M2 --miasto '{"dx":10}' --maxWez 64000 --chwile 2,4,8 --kamery atlas,bliska,maly --kosztMiasta 1 --rozmiar 1280x720 --out .tmp/woksele-demo/LOD/miasto/ab`; W1: `--testy miastoW1 --miasto '{"dx":10}' --maxWez 64000 --lodW1 5`.
+
+**Jak obejrzeć.** Strona domyślna dalej startuje od S5. Przycisk „Miasto: ostrzał z góry” albo „Miasto: wszystko naraz” przeładowuje ją z `?scena=M1&maxWez=64000&nKom=65536&miasto={"dx":10}`, bo bufory solvera powstają raz. Na panelu dochodzą wtedy kamery „Atlas”, „Atlas z bliska”, „Mały statek” i gęstość „dx 20 / 10 / 5” (też przez przeładowanie, przy dx = 5 strona buduje scenę około minuty).
+
+**Co jest (`scenaMiasta.js`).** `dzielnica(o)`: 480 budynków z `budynkiDzielnicy`, z uskokami, grunt z = 0, g = 400, węzły k = 0 na kotwicach. Budynek od 5 warstw w górę to `wieza()` z `ukladMiasta(dx)`, niższy to kostka, uskok stoi na stropie dachu tak samo. `MATERIAL_MIASTA` plus `kontaktSzok` 0,2. Siatka ijk jest wirtualna: każdy budynek ma własne pole, między polami co najmniej 2 komórki, więc wiązania i rozpoznawanie pary na liście nie widzą sąsiada przez ulicę. Statyka liczy się po budynku i raz na siatkę (`statykaBudynkow`): dx = 10 to 164 rozwiązania i 1,1 s budowy, dx = 5 to 206 i około 56 s, bo najwyższy budynek ma 6583 iteracji CG. Strona: `?maxWez`, `?nKom`, a ponad 220 tys. węzłów prośba o większe wiązanie storage (`glowny.js`). Bez nowych pipeline'ów: po rozgrzewce 0 nowych wpisów dziennika w każdym biegu, także przy przełączaniu M1 → M2 i kamer. S1–S5 mają domyślne bufory.
+
+**M1.** Stoi 1,16 s, potem 20 salw po 6 pocisków idzie pasem do t = 7,6: start w głębi, środek przy przedniej krawędzi, koniec znów w głębi. Pocisk to przebijająca głowica: mały krater na dachu (r = 13), po 3 klatkach główny w 0,2 wysokości (r = 28, czyli cały przekrój), bo krater na samym dachu budynku nie przewróci. Budynek poniżej 60 j. dostaje jeden krater. Razem 120 trafień w 98 budynków (pozostałe to drugi pocisk w ruinę, a pocisk na martwy nosiciel przepada). **M2.** Każdy z 480 budynków: krater przy podstawie, losowo w t = 1–4 s, najwyżej 4 na klatkę z kolejki solvera, co czwarty z pełnym kłębem.
+
+**W1 dzielnicy, 5 s (0 zerwanych wiązań, 0 NaN):**
+
+| dx | Węzły | Rozwiązań CG | Budowa na stronie | Przemieszczenie maks., j. | v maks., j./s | Zajęte komórki kontaktów / nKom, maks. w komórce |
+|---|---|---|---|---|---|---|
+| 20 | 9 166 | 105 | 0,07 s | 0,0000 | 0,00002 | 4 679 / 65 536, 8 |
+| 10 | 48 070 | 164 | 1,1 s | 0,00004 | 0,0004 | 18 737 / 65 536, 14 |
+| 5 | 329 936 | 206 | 64 s | 0,004 | 0,014 | 122 655 / 524 288, 19 |
+
+**A/B gęstości.** ms GPU na klatkę: compute to krok fizyki plus kernele obrazu i pyłu, rysunek to wszystkie passy z cieniem na zamrożonej klatce (`kosztLod`). Sloty i cień: Atlas (2, 1), z bliska (7, 2), mały statek (7, 7).
+
+| dx | Węzły | Podkroki, rytm | Compute | Rysunek, Atlas | Rysunek, z bliska | Rysunek, mały statek |
+|---|---|---|---|---|---|---|
+| 20 | 9 166 | 3, 3 | 0,16–0,52 | 0,38 (do 1,6) | 0,62 (do 3,0) | 0,73 (do 3,1) |
+| **10** | **48 070** | **5, 4** | **0,45–0,53 (do 1,5)** | **0,96–1,06** | **2,47–2,81 (do 3,3)** | **3,11–3,45 (do 3,9)** |
+| 5 | 329 936 | 11, 4 | 4,70–5,20 | 5,68–6,02 | 16,4–17,4 | 21,3–22,4 |
+
+Wartości „do” pojawiają się głównie przy pierwszym pomiarze w scenie, a ten sam stan w innym biegu daje wartość bez nawiasu (dx = 10, M1, t = 2: 1,51, 1,49, 1,28 i 0,42 ms). Najpewniej to zegar karty przy małym obciążeniu, a nie kratery: przy dx = 5 M2 z kraterem w każdej klatce (t = 2) to 4,70 ms, a bez nich (t = 8) 5,20 ms. Osobnym pomiarem tego nie sprawdzono. Poza tym koszt nie zależy od tego, czy miasto stoi, czy leży. 5120 × 1440 przechodzi na dzień, ale tu wierzchołki dominują nad pikselami (§ 5a). Przy dx = 5 cała dzielnica to za dużo, a tak gęsto liczy się tylko to, co w kadrze: 130 budynków z limitu gry to około 89 tys. węzłów, szac. 1,3 ms compute i 4,5 ms rysunku przy (7, 2) albo 1,6 ms przy (2, 1).
+
+**Ile stoi przy t = 8** (środek masy budynku względem początkowego: stoi ≥ 0,9, leży < 0,55):
+
+| dx | M1 trafione: stoi / częściowo / leży | M1 nietrafione | M2 |
+|---|---|---|---|
+| 20 | 0 / 0 / 98 | 303 / 41 / 38 | 0 / 23 / 457 |
+| 10 | 0 / 0 / 98 | 323 / 14 / 45 | 0 / 0 / 480 |
+| 5 | 0 / 0 / 98 | 340 / 8 / 34 | 0 / 0 / 480 |
+
+**Wygląd (ocena z arkuszy, nie oceniał tego człowiek).**
+- **Kamera Atlasa (0,569 px / j., budynek 21–88 px, a wycinek 1280 × 720 ma tę samą skalę co 5120 × 1440):** przy dx = 10 to wygląda jak zawalenie budynków. Wieże składają się w dół, góra zostaje chwilę w powietrzu i rozsypuje się w hałdę, między nimi błyski i pył, nad M2 kurz stoi jak po wyburzeniu. Stojące budynki czytają się jako ramy z oknami. dx = 5 ma bogatsze fasady, ale zawalenie wygląda z tej odległości tak samo. dx = 20 przy tej skali jeszcze się wali, ale budynek to dwa słupy bloków bez okien, a przy M2 zostaje 23 częściowo stojących pniaków.
+- **Z bliska (3,2 px / j., budynek 118–493 px):** przy dx = 10 to już **sypiące się kostki**: węzeł ma 32 px, fasada to sztaple bloków, hałda to równe sześciany. Przy dx = 5 budynek ma słupy, okna i stropy, a góra spada całymi płytami, więc w trakcie walenia wygląda to jak budynek. Sama hałda to dalej drobne równe kostki, a nie gruz.
+- **Mały statek (7,88 px / j.):** dx = 10 to wielkie kostki, dx = 5 trzyma tylko w ruchu. Tu potrzeba dx = 2,5 albo odłamków drobniejszych niż węzeł, czego ta próba nie ma.
+
+**Wybór:** dx = 10 przy Atlasie (cała dzielnica: 0,5 ms compute i 1 ms rysunku), dx = 5 z bliska, tylko dla budynków w kadrze. dx = 20 tylko jako zapas dla tieru poniżej około 30 px. Tak samo mówiła próba 1, a próba 2–4 dodaje, że tiery trzeba przełączać zanim węzeł urośnie ponad około 16 px.
+
+**Domino w środku dzielnicy.** Wieże stoją 13–16 j. od siebie przy wysokości do 480 j. (uskok dokłada do 70% korpusu), więc nietrafione padają od gruzu jeszcze długo po ostatniej salwie. Przy dx = 10 nietrafione leżące przy t = 8, 12, 24:
+
+| Wariant | t = 8 | t = 12 | t = 24 |
+|---|---|---|---|
+| Kop rP = 48, `kontaktSzok` 0,5 | 72 | | |
+| Kop rP = 35, `kontaktSzok` 0,5 | 56 | 98 | 161 |
+| Kop rP = 35, `kontaktSzok` 0 | 35 | 50 | 98 |
+| Kop rP = 35, `kontaktSzok` 0,2, `eMin` × 4 | 29 | 50 | 95 |
+
+Zostało rP = 35 i 0,2. To nie jest utrata stabilności: W1 stoi, a padają wieże przy hałdzie, której boczny nacisk i uderzenia są większe niż wytrzymałość liczona z ciężaru własnego budynku. Podłoga wytrzymałości nic tu nie zmienia. Pełne zatrzymanie domina wymagałoby zamrożenia osiadłej hałdy (metoda H, sama zdejmuje też jej koszt) albo wytrzymałości bocznej, której kalibracja nie zna.
+
+**Czego nie sprawdzono:** tierów w jednej scenie (każda scena ma jedno dx), dx = 2,5, 5120 × 1440 i pełnego pomiaru kosztu z rysunkiem i krokiem w jednej klatce. Pył i kłąb (`OPCJE_PYLU.M1`, `M2`) mają jeden zestaw na wszystkie dx, a zrzuty pyłu oceniał tylko agent. Domino rozstrzyga użytkownik (§ 6).
+
 ## 5a. Wynik: obraz z LOD (metoda G)
 
 **Co jest.** Parametr sceny `lod: { sloty, cien }` w `SCENY` (`pokaz.js`), w biegu `obraz.ustawLod`, do oglądania `?sloty=1|2|7&cienSloty=0|1|2|7` przy każdej scenie. `sloty`: 7 jak dotąd (blok, 5 odłamków, pręt), 2 (uszkodzony węzeł to komórka przecięta raz na dwa kawałki), 1 (uszkodzony węzeł to jeden kawałek, kurczy się z d). `cien`: osobno dla mapy cienia, 0 to `castShadow = false`. Uniform i `instanceCount`, bez nowego pipeline'u, zm. 0 nowych wpisów dziennika po rozgrzewce przy przełączaniu w biegu. Scena bez `cien` w `SCENY` dostaje kamerę cienia z rozmiaru węzłów (`ustawCienZSceny`), a stare sceny mają swoje stałe. Pył w `OPCJE_PYLU`: `kwady` (sufit pierścienia), `emisja`, `rozmiar`, `sufitPx`, `lodDuze`. Przy wielu budynkach `pod: 0, grunt: 0`: te dwa pchają pył od osi z = 0, czyli jedną wieżę, a dzielnicę zwiałyby w jedną stronę. Rozlew od środka własnego budynku jeszcze nie istnieje.
@@ -193,3 +249,4 @@ Przy t = 5,5 i 7 slotach: rysunek 1,48, cień 1,53, głębia 1,18, pył 0,03. Pr
 - Czy zawalenie może kosztować kilka ms przez kilka sekund (bez tego demo zostaje demem).
 - Tempo: budynek 37 j. spada przy g = 400 w około 0,4 s, szkło w około 0,9 s. Czy ma być szybko jak na tę skalę, czy spowolnione mniejszym g na ringu.
 - Czy trwałe zniszczenie miasta ma się zapisywać, a jeśli tak, to czy odnawia się powoli jak porty (D10b).
+- Domino w gęstym śródmieściu (§ 5, wynik prób 2–4): nietrafione wieże padają od gruzu jeszcze długo po ostrzale, przy t = 24 s około 95 z 382. Czy to zostaje jako zachowanie, czy osiadła hałda ma je zatrzymać.

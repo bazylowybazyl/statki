@@ -39,7 +39,7 @@ test('pojemność z POJEMNOSC_MIASTA mieści dzielnicę przy każdym dx, a nKom 
   for (const dx of Object.keys(POJEMNOSC_MIASTA).map(Number)) {
     const p = POJEMNOSC_MIASTA[dx];
     assert.equal(p.nKom & (p.nKom - 1), 0);
-    if (dx >= 10) assert.ok(dzielnica({ dx }).n <= p.maxWez, `dx = ${dx}`);
+    assert.ok(dzielnica({ dx }).n <= p.maxWez, `dx = ${dx}`);
   }
 });
 

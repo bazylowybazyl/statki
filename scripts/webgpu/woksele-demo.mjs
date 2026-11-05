@@ -289,7 +289,8 @@ try {
       // Droga użytkownika: strona bez parametrów miasta, przycisk sceny (przeładowanie z ?maxWez), kamery, orbita, gęstość (przeładowanie), powrót do S1. --zrzut S1 --chwile 0 --przyciskiMiasta 1 --panel 1.
       await czekajNaCisze('przyciski miasta');
       const klik = (sel, tekst) => ev(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((q) => q.textContent.startsWith(${JSON.stringify(tekst)})); if (!b) return false; b.click(); return true; })()`);
-      const poPrzeladowaniu = async () => { await sleep(300); await waitFor(cdp, '!!(window.__wok && window.__wok.gotowe && window.__wok.pokaz)', 120000, 100); await sleep(1000); };
+      // AGENT: po przeładowaniu harness wstrzykuje się od nowa z zamrożonym zegarem: rAF dostaje stały czas i scena nie krokuje, a rysuje. Zegar od razu prawdziwy, jak w otworz().
+      const poPrzeladowaniu = async () => { await sleep(300); await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real") && window.__wok && window.__wok.gotowe && window.__wok.pokaz)', 120000, 20); await sleep(1000); };
       const stanP = () => ev('(() => { const s = window.__wok.pokaz.stan, c = window.__wok.camera.position; return { scena: s.scena, krok: s.krok, kam: s.kamMiasta, n: window.__wok.obraz.lod, adres: location.search, poz: [c.x, c.y, c.z], kamery: !document.getElementById("panelKamery").hidden, maxWez: new URLSearchParams(location.search).get("maxWez") }; })()');
       const wyn = {};
       wyn.klik = await klik('#panelSceny button', 'Miasto: ostrzał');
@@ -324,7 +325,7 @@ try {
       wyn.s1 = await stanP();
       console.log('przyciski miasta', JSON.stringify(wyn));
       raport.testy.przyciskiMiasta = wyn;
-      if (!(wyn.poWejsciu.scena === 'M1' && wyn.poWejsciu.kamery && wyn.maly.kam === 'maly' && wyn.bliska.kam === 'bliska' && wyn.orbita > 1 && wyn.poM2.scena === 'M2' && wyn.dx20.scena === 'M2' && wyn.s1.scena === 'S1' && !wyn.s1.kamery)) porazka(`przyciski miasta: ${JSON.stringify(wyn)}`);
+      if (!(wyn.poWejsciu.scena === 'M1' && wyn.poWejsciu.kamery && wyn.maly.kam === 'maly' && wyn.maly.krok > wyn.poWejsciu.krok + 60 && wyn.bliska.kam === 'bliska' && wyn.orbita > 1 && wyn.poM2.scena === 'M2' && wyn.poM2.krok > 60 && wyn.dx20.scena === 'M2' && wyn.s1.scena === 'S1' && !wyn.s1.kamery)) porazka(`przyciski miasta: ${JSON.stringify(wyn)}`);
     }
     if (args.interakcje) {
       await czekajNaCisze('interakcje');

@@ -108,7 +108,7 @@ function nosiciel(sc, b, x, y, z) {
 }
 
 const R_KRATERU = 28; // pół przekątnej rzutu to 27 j.: kula przy osi tnie cały przekrój
-// AGENT: w gęstym środku dzielnicy wieże stoją 13–16 j. od siebie przy wysokości do 480 j., więc to domino: nietrafione padają od gruzu jeszcze długo po ostatniej salwie (plan LOD § 5b). kontaktSzok 0,5 daje przy t = 24 s 161 z 382 nietrafionych, 0,2 około 95, a podłoga wytrzymałości (eMin × 4) nic nie zmienia.
+// AGENT: w gęstym środku dzielnicy wieże stoją 13–16 j. od siebie przy wysokości do 480 j., więc to domino: nietrafione padają od gruzu jeszcze długo po ostatniej salwie (plan LOD § 5, wynik prób 2–4). kontaktSzok 0,5 daje przy t = 24 s 161 z 382 nietrafionych, 0,2 około 95, a podłoga wytrzymałości (eMin × 4) nic nie zmienia.
 const KLASY_MIASTA = Object.freeze({ strop: { kontaktSzok: 0.2 }, kolumna: { kontaktSzok: 0.2 }, fasada: { kontaktSzok: 0.2 }, rdzen: { kontaktSzok: 0.2 } });
 const krater = (o) => ({ rdzen: 0.4, rS: 1, tau: 0.03, dz: 0, usunStojace: true, ...o });
 
