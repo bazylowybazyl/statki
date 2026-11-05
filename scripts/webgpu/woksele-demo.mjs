@@ -285,6 +285,47 @@ try {
       raport.testy.przyciski = wyn;
       if (wyn.some((w) => w.wylaczony || !w.weszla || w.krokPoResecie >= w.krokPrzedResetem + 60 || w.nowePipeline)) porazka(`przyciski scen: ${JSON.stringify(wyn)}`);
     }
+    if (args.przyciskiMiasta) {
+      // Droga użytkownika: strona bez parametrów miasta, przycisk sceny (przeładowanie z ?maxWez), kamery, orbita, gęstość (przeładowanie), powrót do S1. --zrzut S1 --chwile 0 --przyciskiMiasta 1 --panel 1.
+      await czekajNaCisze('przyciski miasta');
+      const klik = (sel, tekst) => ev(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((q) => q.textContent.startsWith(${JSON.stringify(tekst)})); if (!b) return false; b.click(); return true; })()`);
+      const poPrzeladowaniu = async () => { await sleep(300); await waitFor(cdp, '!!(window.__wok && window.__wok.gotowe && window.__wok.pokaz)', 120000, 100); await sleep(1000); };
+      const stanP = () => ev('(() => { const s = window.__wok.pokaz.stan, c = window.__wok.camera.position; return { scena: s.scena, krok: s.krok, kam: s.kamMiasta, n: window.__wok.obraz.lod, adres: location.search, poz: [c.x, c.y, c.z], kamery: !document.getElementById("panelKamery").hidden, maxWez: new URLSearchParams(location.search).get("maxWez") }; })()');
+      const wyn = {};
+      wyn.klik = await klik('#panelSceny button', 'Miasto: ostrzał');
+      await poPrzeladowaniu();
+      wyn.poWejsciu = await stanP();
+      await sleep(3000);
+      await screenshotPng(cdp, join(PNG, `${et}zywo_miasto_atlas.png`));
+      await klik('#panelKamery button', 'Mały statek');
+      await sleep(400);
+      wyn.maly = await stanP();
+      await klik('#panelKamery button', 'Atlas z bliska');
+      await sleep(400);
+      wyn.bliska = await stanP();
+      await screenshotPng(cdp, join(PNG, `${et}zywo_miasto_bliska.png`));
+      await klik('#panelKamery button', 'Atlas');
+      const p0 = await stanP();
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 300, y: 300, button: 'none' });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 300, y: 300, button: 'left', buttons: 1, clickCount: 1 });
+      for (let q = 1; q <= 10; q++) { await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 300 + 12 * q, y: 300, button: 'left', buttons: 1 }); await sleep(20); }
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 420, y: 300, button: 'left', buttons: 1, clickCount: 1 });
+      await sleep(300);
+      const p1 = await stanP();
+      wyn.orbita = Math.hypot(p1.poz[0] - p0.poz[0], p1.poz[1] - p0.poz[1], p1.poz[2] - p0.poz[2]);
+      wyn.m2 = await klik('#panelSceny button', 'Miasto: wszystko');
+      await sleep(4000);
+      wyn.poM2 = await stanP();
+      await klik('#panelGestosc button', 'dx 20');
+      await poPrzeladowaniu();
+      wyn.dx20 = await stanP();
+      await klik('#panelSceny button', 'S1');
+      await sleep(4000);
+      wyn.s1 = await stanP();
+      console.log('przyciski miasta', JSON.stringify(wyn));
+      raport.testy.przyciskiMiasta = wyn;
+      if (!(wyn.poWejsciu.scena === 'M1' && wyn.poWejsciu.kamery && wyn.maly.kam === 'maly' && wyn.bliska.kam === 'bliska' && wyn.orbita > 1 && wyn.poM2.scena === 'M2' && wyn.dx20.scena === 'M2' && wyn.s1.scena === 'S1' && !wyn.s1.kamery)) porazka(`przyciski miasta: ${JSON.stringify(wyn)}`);
+    }
     if (args.interakcje) {
       await czekajNaCisze('interakcje');
       // Mysz i klawisze przez CDP, jak u użytkownika: orbita, przybliżenie, przesuw, spacja, R, P, przyciski panelu, zmiana rozmiaru okna.

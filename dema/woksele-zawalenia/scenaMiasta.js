@@ -108,21 +108,30 @@ function nosiciel(sc, b, x, y, z) {
 }
 
 const R_KRATERU = 28; // pół przekątnej rzutu to 27 j.: kula przy osi tnie cały przekrój
+// AGENT: w gęstym środku dzielnicy wieże stoją 13–16 j. od siebie przy wysokości do 480 j., więc to domino: nietrafione padają od gruzu jeszcze długo po ostatniej salwie (plan LOD § 5b). kontaktSzok 0,5 daje przy t = 24 s 161 z 382 nietrafionych, 0,2 około 95, a podłoga wytrzymałości (eMin × 4) nic nie zmienia.
+const KLASY_MIASTA = Object.freeze({ strop: { kontaktSzok: 0.2 }, kolumna: { kontaktSzok: 0.2 }, fasada: { kontaktSzok: 0.2 }, rdzen: { kontaktSzok: 0.2 } });
 const krater = (o) => ({ rdzen: 0.4, rS: 1, tau: 0.03, dz: 0, usunStojace: true, ...o });
 
+/** Mnożnik barwy budynku w obrazie: szkło chłodniejsze i ciemniejsze, ogród cieplejszy, każdy budynek trochę inny. Sam wygląd, fizyka tego nie czyta. */
+function tonBudynku(b) {
+  const h = prng(Math.round(Math.abs(b.x) * 7 + Math.abs(b.y) * 131) + 17)();
+  const j = 0.82 + 0.34 * h;
+  return b.szklo ? [0.8 * j, 0.88 * j, 1.0 * j] : [1.03 * j, 1.0 * j, 0.94 * j];
+}
+
 /** Wynik planu wspólny dla M1, M2. kratery po f; trafione: bajt na budynek. */
-function planMiasta(id, opis, sc, kratery, trafione, T, cel) {
+function planMiasta(id, opis, sc, kratery, trafione, T, cel, nakladka) {
   kratery.sort((a, b) => a.f - b.f);
   const f0 = kratery.length ? kratery[0].f : 0;
   return {
     id, opis, scena: sc, g: 400, T,
     zdarzeniaOd: f0 / 60,
     zdarzenia: () => 0, // tylko GPU
-    nakladka: MATERIAL_MIASTA,
+    nakladka: { ...MATERIAL_MIASTA, klasy: KLASY_MIASTA, ...nakladka },
     // zerujL false jak w S5: wiele kraterów naraz w różnych miejscach, a jeden wspólny środek masy pchnięcia nic tu nie znaczy.
     gpu: { zerujL: false, kratery, puscKotwiceF: -1 },
     miasto: {
-      budynki: sc.meta.budynki.map((b) => ({ start: b.start, n: b.n, h: b.h, x: b.x, y: b.y })),
+      budynki: sc.meta.budynki.map((b) => ({ start: b.start, n: b.n, h: b.h, x: b.x, y: b.y, ton: tonBudynku(b) })),
       trafione,
       celBliska: cel,
       trafien: kratery.filter((k) => k.rodz !== 'dach').length,
@@ -145,6 +154,7 @@ export function planM1(o = {}) {
   const szerY = o.szerPasa ?? 170, rozrzutX = 130;
   const trafione = new Uint8Array(B.length);
   const kratery = [];
+  const rPs = o.rPSkala ?? 0.72; // zasięg pchnięcia: przy 48 j. kop sięga fasady sąsiada przez ulicę, a przy 35 j. kończy się w ulicy
   // Pas zaczyna się w głębi, w środku czasu przechodzi przy przedniej krawędzi (kamery patrzą od −y), kończy znów w głębi: bliska kamera ma trafienie bez budynków w kadrze.
   const yPasa = (u) => sc.meta.y0 + 0.36 * (sc.meta.y1 - sc.meta.y0) + 0.3 * (sc.meta.y1 - sc.meta.y0) * Math.cos(2 * Math.PI * u);
   let cel = null, celOdl = Infinity;
@@ -169,16 +179,16 @@ export function planM1(o = {}) {
       if (h >= 60) {
         kratery.push(krater({ f, nos: nosiciel(sc, b, b.x + ox, b.y + oy, h), r: 13, rdzen: 0.5, J: 60, rP: 30, rodz: 'dach' }));
         const zG = Math.max(0.2 * h, 1.5 * sc.dx);
-        kratery.push(krater({ f: f + 3, nos: nosiciel(sc, b, b.x + ox, b.y + oy, zG), r: R_KRATERU, J: 160, rP: 48, rodz: 'glowna' }));
+        kratery.push(krater({ f: f + 3, nos: nosiciel(sc, b, b.x + ox, b.y + oy, zG), r: R_KRATERU, J: 160, rP: 48 * rPs, rodz: 'glowna' }));
       } else {
-        kratery.push(krater({ f, nos: nosiciel(sc, b, b.x + ox, b.y + oy, 0.4 * h), r: 0.22 * h + 14, J: 120, rP: 42, rodz: 'glowna' }));
+        kratery.push(krater({ f, nos: nosiciel(sc, b, b.x + ox, b.y + oy, 0.4 * h), r: 0.22 * h + 14, J: 120, rP: 42 * rPs, rodz: 'glowna' }));
       }
       // Zbliżenie: trafiony tuż przed t = 4, żeby przy t = 2 stał, przy 4 walił się, a przy 8 leżał. Wybór: jak najbliżej przedniej krawędzi, nie za niski.
       const odl = Math.abs(f / 60 - 3.7) * 400 + (b.y - sc.meta.y0) + (h < 60 ? 2000 : 0);
       if (odl < celOdl) { celOdl = odl; cel = [b.x, b.y, Math.min(70, 0.4 * h)]; }
     }
   }
-  return planMiasta('M1', `Miasto: ostrzał z góry, dx = ${sc.dx}, ${sc.n} węzłów, ${B.length} budynków`, sc, kratery, trafione, o.T ?? 10, cel);
+  return planMiasta('M1', `Miasto: ostrzał z góry, dx = ${sc.dx}, ${sc.n} węzłów, ${B.length} budynków`, sc, kratery, trafione, o.T ?? 10, cel, o.nakladka);
 }
 
 /** M2 „Miasto: wszystko naraz”: każdy budynek dostaje krater przy podstawie w ciągu 3 s. Najgorszy przypadek kosztu. */
@@ -196,12 +206,12 @@ export function planM2(o = {}) {
     const z = niski ? 0.4 * h : Math.max(0.12 * h, 1.5 * sc.dx);
     const r = niski ? 0.22 * h + 14 : R_KRATERU;
     // Co czwarty pełny błysk z kłębem, reszta mały: pierścień pyłu ma sufit, a 480 kłębów po 40 cząstek go przepełnia.
-    kratery.push(krater({ f, nos: nosiciel(sc, q, q.x + (2 * los() - 1) * 5, q.y + (2 * los() - 1) * 6, z), r, J: 140, rP: 44, rodz: b % 4 === 0 ? 'glowna' : 'mala' }));
+    kratery.push(krater({ f, nos: nosiciel(sc, q, q.x + (2 * los() - 1) * 5, q.y + (2 * los() - 1) * 6, z), r, J: 140, rP: 44 * (o.rPSkala ?? 0.72), rodz: b % 4 === 0 ? 'glowna' : 'mala' }));
     // Zbliżenie: przedni rząd, blisko środka, nie za niski, trafiony około t = 3.
     const w = (q.y - sc.meta.y0) * 2 + 0.25 * Math.abs(q.x) + Math.abs(f / 60 - 3) * 60 + (h < 60 ? 2000 : 0);
     if (w < celH) { celH = w; cel = [q.x, q.y, Math.min(70, 0.4 * h)]; }
   }
-  return planMiasta('M2', `Miasto: wszystko naraz, dx = ${sc.dx}, ${sc.n} węzłów, ${B.length} budynków`, sc, kratery, trafione, o.T ?? 10, cel);
+  return planMiasta('M2', `Miasto: wszystko naraz, dx = ${sc.dx}, ${sc.n} węzłów, ${B.length} budynków`, sc, kratery, trafione, o.T ?? 10, cel, o.nakladka);
 }
 
 /** Stanie dzielnicy (W1): bez zdarzeń. */

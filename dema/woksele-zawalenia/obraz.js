@@ -796,7 +796,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
-  function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null, lod = null } = {}) {
+  function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null, lod = null, budynki = null } = {}) {
     pyl.wczytaj(w, opcjePylu);
     slotyWez = lod?.sloty ?? 7;
     slotyCien = lod?.cien ?? slotyWez;
@@ -823,6 +823,13 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
       rama[q] = 1; rama[q + 1] = 0; rama[q + 2] = 0; rama[q + 3] = 0;
       rama[q + 4] = 0; rama[q + 5] = 1; rama[q + 6] = 0; rama[q + 7] = 0;
       rama[q + 8] = 0; rama[q + 9] = 0; rama[q + 10] = 1; rama[q + 11] = 0;
+    }
+    // Miasto: mnożnik barwy na budynek (scenaMiasta.js), dane wczytania, bez nowego pipeline'u. Pozostałe sceny nie mają tej listy.
+    if (budynki) {
+      for (const b of budynki) {
+        const t = b.ton;
+        for (let i = b.start; i < b.start + b.n; i++) { const q = 8 * i; dane[q + 4] *= t[0]; dane[q + 5] *= t[1]; dane[q + 6] *= t[2]; }
+      }
     }
     aDane.needsUpdate = true;
     aRama.needsUpdate = true;

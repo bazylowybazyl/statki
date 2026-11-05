@@ -144,7 +144,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     const { w, g, zdarzeniaOd, rDysk, poklad, miasto } = wypieki.get(id);
     solver.wczytaj(w);
     solver.ustawPlan(g);
-    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod) }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
     if (opis.cien && !lodS1Adresu) obraz.ustawCien(opis.cien[0], opis.cien[1]);
     else obraz.ustawCienZSceny(w, opis.cienZapas);
     stan.miasto = miasto;
