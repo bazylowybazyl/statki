@@ -141,6 +141,21 @@ test('LOD: liczniki instancji rysunku i cienia, haki passa cienia, cień 0 wył�
   assert.equal(g.instanceCount, 2);
 });
 
+test('pył: sufit kwadów przez uniform i licznik, błyski zawsze za pierścieniem, domyślnie pełna pula', () => {
+  const { uniformy } = obraz.pyl;
+  const g = obraz.pyl.mesh.geometry;
+  const pelna = g.instanceCount;
+  obraz.pyl.wczytaj({ n: 0, gruntZ: 0 }, { kwady: 6000, rozmiar: 1.5, sufitPx: 90, lodDuze: [24, 42] });
+  assert.equal(g.instanceCount, pelna - (16000 - 6000));
+  assert.equal(uniformy.uRt.value, 38 * 1.5);
+  assert.equal(uniformy.uSufit.value, 90);
+  assert.equal(uniformy.uLodA.value, 24);
+  obraz.pyl.wczytaj({ n: 0, gruntZ: 0 });
+  assert.equal(g.instanceCount, pelna);
+  assert.equal(uniformy.uRt.value, 38);
+  assert.equal(uniformy.uSufit.value, 150);
+});
+
 test('kamera cienia: stałe S1–S5 bez zmian, duża scena z rozmiaru', () => {
   const c = obraz.sun.shadow.camera;
   obraz.ustawCien([0, 0, 500], 1700);

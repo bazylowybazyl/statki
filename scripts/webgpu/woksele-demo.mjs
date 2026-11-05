@@ -153,6 +153,7 @@ try {
       await czekajNaCisze(`zrzut ${scena}`);
       await ev(`window.__wok.pokaz.wejdz(${JSON.stringify(scena)}, { pomin: false, kamera: ${args.kam ? 'false' : 'true'} }).then(() => null)`);
       // AGENT: wejdz() resetuje scenę, więc migawkę z adresu trzeba wgrać po nim. Klatka z migawki bez kroków to jedyny zrzut powtarzalny co do piksela (kWstaw to wyścig na atomiku): tak sprawdza się „bit w bit”.
+      if (args.evPrzed) await ev(String(args.evPrzed)); // --evPrzed "js": dowolne ustawienie po wejściu w scenę, np. kamera cienia do próby
       const migawkaSceny = args.migawka ? String(args.migawka).split(',').find((m) => m.startsWith(`${scena}_`)) : null;
       if (migawkaSceny) {
         // Zegar stoi od razu: inaczej pętla rAF zdąży zrobić krok i doChwili zresetuje scenę, a zrzut idzie z fizyki, nie z migawki.

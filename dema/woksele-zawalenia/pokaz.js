@@ -473,8 +473,11 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
           wy.push({ sloty, cienSloty: cien, instRysunek: l.instRysunek, instCien: l.instCien, wierzcholkiMln: (24 * (2 * l.instRysunek + (cien > 0 ? l.instCien : 0))) / 1e6, ...p });
         }
         obraz.ustawLod({ sloty: s0, cien: c0 });
+        // Kernele obrazu (kObraz, kGruz, pył) nie zależą od slotów. Na końcu, bo ruszają stan.
+        const komp = [];
+        for (let k = 0; k < 7; k++) komp.push(await wok.zmierzListe(obraz.listaObrazu));
         stan.rysowac = rysowal;
-        return { n: obraz.n, krok: stan.krok, w: renderer.domElement.width, h: renderer.domElement.height, wy };
+        return { n: obraz.n, krok: stan.krok, w: renderer.domElement.width, h: renderer.domElement.height, kerneleObrazuMs: mediana(komp), wy };
       },
       /** Harness, górna granica kosztu obrazu: każdy węzeł uszkodzony (d = 1), wszystkie sloty czynne. Ramy i bity wracają do stanu początkowego, więc potem tylko pomiar albo reset, bez kroków. */
       uszkodzWszystko() {
