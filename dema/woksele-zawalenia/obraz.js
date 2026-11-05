@@ -95,6 +95,7 @@ export function createWokseleObraz({ solver, camera }) {
   const uDx = uniform(20).setName('uObrDx');
   const uLimD = uniform(4 / 60).setName('uLimD');
   const uDt = uniform(1 / 60).setName('uObrDt');
+  const uRDysk = uniform(0).setName('uRDysk');
 
   const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
   const uv_ = (e) => { const v = uint(0).toVar(); v.assign(e); return v; };
@@ -310,8 +311,20 @@ export function createWokseleObraz({ solver, camera }) {
           const zak = fv(ZAKLADKA);
           If(fl.shiftRight(uint(2)).bitAnd(uint(7)).equal(uint(KD_DYSK)), () => { zak.assign(ZAKLADKA_DYSK); });
           const off = v3(C.mul(zak).mul(uDx));
+          const nL = v3(nf);
+          // Wieniec dysku (§ 4.2): rogi przy brzegu dociągnięte do promienia R, ściany boczne z normalną promieniową. Rogi liczone z pozycji, więc sąsiednie bloki dzielą ten sam punkt.
+          If(fl.shiftRight(uint(2)).bitAnd(uint(7)).equal(uint(KD_DYSK)), () => {
+            const pr = vec2(0).toVar();
+            pr.assign(d0.xy.add(off.xy));
+            const rr = fv(max(length(pr), 1));
+            If(rr.greaterThan(uRDysk.sub(uDx.mul(0.5))), () => {
+              const skK = fv(uRDysk.div(rr).sub(1));
+              off.assign(vec3(off.x.add(pr.x.mul(skK)), off.y.add(pr.y.mul(skK)), off.z));
+              If(abs(nf.z).lessThan(0.5), () => { nL.assign(vec3(pr.div(rr), 0)); });
+            });
+          });
           P.assign(x.add(naRame(Fx, Fy, Fz, off)));
-          Nw.assign(naRame(Fx, Fy, Fz, nf));
+          Nw.assign(naRame(Fx, Fy, Fz, nL));
           const ton = fv(float(1).add(d0.w.sub(1).mul(min(f1.w.mul(3), 1))));
           Kol.assign(d1.xyz.mul(ton));
           P0.assign(d0.xyz.add(off));
@@ -595,8 +608,9 @@ export function createWokseleObraz({ solver, camera }) {
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
-  function wczytaj(w) {
+  function wczytaj(w, plan = null) {
     n = w.n;
+    uRDysk.value = plan?.scena?.meta?.dysk?.R ?? 900;
     const dane = aDane.array, rama = aRama.array;
     const m0 = w.flagi;
     for (let i = 0; i < n; i++) {

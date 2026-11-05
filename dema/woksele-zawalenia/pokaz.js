@@ -3,21 +3,30 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createWokseleObraz } from './obraz.js';
+import { S1, S2, S3, S4, krater, planGpu } from './scena.js';
+import { zbuduj, PARAMETRY } from './budowa.js';
 
 const H = 1 / 60;
+const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
 const PROG_DRUGIEGO_KROKU_MS = 14;
 const DROGA_MIGAWEK = '/.tmp/woksele-demo/migawki/';
 
 // Kamery startowe jak w filmie (bieg-film.sh, § 4.7): az, el, cel, odl. Cień: środek i zakres z rys4.mjs.
 const K_WIEZA = { az: 32, el: 8, cel: [0, 0, 620], odl: 3300 };
 const SCENY = {
-  S1: { nazwa: 'S1 podcięcie', kamera: K_WIEZA, cien: [[0, 0, 500], 1700] },
-  S2: { nazwa: 'S2 własny ciężar', kamera: K_WIEZA, cien: [[0, 0, 500], 1700] },
-  S3: { nazwa: 'S3 przebicie dysku', kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300] },
-  S4: { nazwa: 'S4 próżnia', kamera: { az: 32, el: 8, cel: [0, 0, 650], odl: 6200 }, cien: [[0, 0, 650], 3500] },
-  S4grunt: { nazwa: 'S4 przy g = 400', kamera: K_WIEZA, cien: [[0, 0, 650], 3500] },
-  krater: { nazwa: 'Krater', kamera: K_WIEZA, cien: [[0, 0, 500], 1700] },
+  S1: { nazwa: 'S1 podcięcie', plan: () => S1(), kamera: K_WIEZA, cien: [[0, 0, 500], 1700], pomin: STANIE_POMIJANE },
+  S2: { nazwa: 'S2 własny ciężar', plan: () => S2(), kamera: K_WIEZA, cien: [[0, 0, 500], 1700], pomin: STANIE_POMIJANE },
+  S3: { nazwa: 'S3 przebicie dysku', plan: () => S3(), kamera: { az: 35, el: 22, cel: [0, 0, -250], odl: 3400 }, cien: [[0, 0, -300], 2300], pomin: 0 },
+  S4: { nazwa: 'S4 próżnia', plan: () => S4(), kamera: { az: 32, el: 8, cel: [0, 0, 650], odl: 6200 }, cien: [[0, 0, 650], 3500], pomin: STANIE_POMIJANE },
+  S4grunt: { nazwa: 'S4 przy g = 400', plan: () => S4({ g: 400, grunt: true, kotwice: true, T: 9 }), kamera: K_WIEZA, cien: [[0, 0, 650], 3500], pomin: STANIE_POMIJANE },
+  krater: { nazwa: 'Krater', plan: () => planKratera(), kamera: { az: 60, el: 6, cel: [190, 0, 600], odl: 750 }, cien: [[0, 0, 500], 1700], pomin: 0 },
 };
+/** Krater jak w filmie (bieg-film.sh: c = (190, 0, 600), r = 60), wybuch po sekundzie stania. */
+function planKratera() {
+  const p = krater({ c: [190, 0, 600], r: 60, J: 300, rP: 160, T: 10 });
+  if (p.gpu?.kratery?.[0]) p.gpu.kratery[0].f = 60;
+  return p;
+}
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 
 function ustawKamere(camera, sterowanie, k) {
@@ -31,7 +40,7 @@ function ustawKamere(camera, sterowanie, k) {
   camera.updateMatrixWorld();
 }
 
-export async function startPokaz({ renderer, solver, wypiekSceny, wok, device, adres }) {
+export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const kanwa = renderer.domElement;
   kanwa.id = 'kanwa';
   document.body.appendChild(kanwa);
@@ -62,17 +71,32 @@ export async function startPokaz({ renderer, solver, wypiekSceny, wok, device, a
     stan.krok++;
   }
 
+  // Budowa raz na scenę, reset to tylko wgranie buforów. AGENT: budowa jeszcze na stronie (około 2 s przy pierwszym wejściu w scenę), budowa.worker.js z § 2.3 nie powstał.
+  const pamiecStatyki = new Map();
+  const wypieki = new Map();
+  function wypiek(id) {
+    let e = wypieki.get(id);
+    if (!e) {
+      const plan = SCENY[id].plan();
+      e = { plan, w: zbuduj(plan.scena, PARAMETRY, { pamiecStatyki }), g: planGpu(plan) };
+      wypieki.set(id, e);
+    }
+    return e;
+  }
+
   /** Scena przez reset: wgranie buforów, bez nowych pipeline'ów. Kamera tylko przy zmianie sceny, R zostawia ją tam, gdzie jest. */
-  function ustawScene(id, { kamera = true } = {}) {
+  function ustawScene(id, { kamera = true, pomin = true } = {}) {
     const opis = SCENY[id];
     if (!opis) throw new Error(`Nieznana scena ${id}`);
-    const w = wypiekSceny(id);
+    const { plan, w, g } = wypiek(id);
     solver.wczytaj(w);
-    obraz.wczytaj(w);
+    solver.ustawPlan(g);
+    obraz.wczytaj(w, plan);
     obraz.ustawCien(opis.cien[0], opis.cien[1]);
     stan.scena = id;
     stan.krok = 0;
     stan.akum = 0;
+    if (pomin) for (let k = 0; k < opis.pomin; k++) krokSceny();
     if (kamera) ustawKamere(camera, sterowanie, opis.kamera);
     zaznacz();
     return w;
@@ -115,7 +139,7 @@ export async function startPokaz({ renderer, solver, wypiekSceny, wok, device, a
   const gr3 = document.getElementById('panelSter');
   for (const id of Object.keys(SCENY)) {
     const b = dodaj(gr1, SCENY[id].nazwa, () => { ustawScene(id); }, `s:${id}`);
-    b.disabled = !(id === 'S1' || id === 'S2' || id === 'S3' || id === 'S4' || id === 'S4grunt') || !zdarzeniaDostepne(id);
+    b.disabled = !zdarzeniaDostepne(id);
   }
   for (const [t, opis] of TEMPA) dodaj(gr2, opis, () => { stan.tempo = t; zaznacz(); }, `t:${t}`);
   dodaj(gr3, 'Reset (R)', () => ustawScene(stan.scena, { kamera: false }));
@@ -127,7 +151,7 @@ export async function startPokaz({ renderer, solver, wypiekSceny, wok, device, a
     }
     bPauza.classList.toggle('wl', stan.pauza);
   }
-  /** Sceny ze zdarzeniami czekają na pakiet P2: S3 nie ma zdarzeń, reszta potrzebuje kCzas. */
+  /** Sceny ze zdarzeniami potrzebują kerneli pakietu P2, S3 zdarzeń nie ma. */
   function zdarzeniaDostepne(id) { return id === 'S3' || !!solver.kernele.kCzas; }
   panel.hidden = false;
 
@@ -144,10 +168,12 @@ export async function startPokaz({ renderer, solver, wypiekSceny, wok, device, a
   // ── Start ── Rozgrzewka przed pierwszą klatką, potem efekt od razu.
   const mig = adres.get('migawka');
   const start = adres.get('scena') || (solver.kernele.kCzas ? 'S1' : 'S3');
-  ustawScene(mig ? mig.split('_')[0] : start);
+  ustawScene(mig ? mig.split('_')[0] : start, { pomin: false });
   zmienRozmiar();
   await obraz.rozgrzej(renderer);
+  // Rozgrzewka szła na scenie bez kroków, pomijane kroki stania idą już po niej. Harness liczy czas sceny od zera.
   if (mig) await wgrajMigawke(mig);
+  else if (!adres.has('bezPominiecia')) for (let k = 0; k < SCENY[stan.scena].pomin; k++) krokSceny();
 
   let srednia = 0, klatek = 0, tLicznika = 0;
   function petla(teraz) {
@@ -185,6 +211,7 @@ export async function startPokaz({ renderer, solver, wypiekSceny, wok, device, a
       async doChwili(t) {
         stan.kroczyc = false;
         const cel = Math.round(t * 60);
+        if (stan.krok > cel) ustawScene(stan.scena, { kamera: false, pomin: false });
         let n = 0;
         while (stan.krok < cel) {
           krokSceny();
