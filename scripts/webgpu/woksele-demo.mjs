@@ -36,16 +36,25 @@ async function graWToku() {
   if (out === null) return ['odpytanie listy procesów nieudane, traktuję jak grę'];
   return out.split(/\r?\n/).map((s) => s.trim()).filter((s) => s && GRY.test(s));
 }
+// AGENT: podczas czekania na koniec gry strona nie rysuje. Pętla rAF pokaz.js przy --disable-frame-rate-limit daje około 600 kl/s na RTX 5080 także w bezruchu: 2026-11-05 szło tak 3,5 min w czasie meczu użytkownika.
+let uspijStrone = null;
+let zamknijPrzyPrzerwaniu = null;
 async function czekajNaCisze(gdzie) {
   const t0 = Date.now();
+  let obudz = null;
   for (;;) {
     const gry = await graWToku();
-    if (!gry.length) return;
+    if (!gry.length) {
+      if (obudz) await obudz();
+      return;
+    }
+    if (!obudz && uspijStrone) obudz = await uspijStrone();
     const min = (Date.now() - t0) / 60000;
     if (min >= 30) {
       raport.koniec = `gra użytkownika działa ponad 30 min (${gry.join(', ')}), przed: ${gdzie}`;
       zapiszRaport();
       console.error(`PRZERWANE: ${raport.koniec}. Nic nie zmierzone po tym miejscu, uruchom ponownie po grze.`);
+      if (zamknijPrzyPrzerwaniu) await zamknijPrzyPrzerwaniu();
       process.exit(3);
     }
     console.log(`gra w toku (${gry.join(', ')}), czekam przed: ${gdzie} (${min.toFixed(1)} min)`);
@@ -80,6 +89,11 @@ const chrome = await startChrome({ width: szerOkna, height: wysOkna, extraArgs: 
 const logi = await attachLogs(chrome);
 const { cdp } = chrome;
 const ev = (e, t = 1800000) => evaluate(cdp, e, t);
+zamknijPrzyPrzerwaniu = async () => { await chrome.close().catch(() => {}); await server.close().catch(() => {}); };
+uspijStrone = async () => {
+  const stary = await ev(`(() => { const s = window.__wok?.pokaz?.stan; if (!s) return null; const o = { rysowac: s.rysowac !== false, kroczyc: s.kroczyc !== false }; s.rysowac = false; s.kroczyc = false; return o; })()`).catch(() => null);
+  return async () => { if (stary) await ev(`Object.assign(window.__wok.pokaz.stan, ${JSON.stringify(stary)}); true`).catch(() => {}); };
+};
 
 let kod = 0;
 async function otworz(zapytanie) {
