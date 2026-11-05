@@ -184,7 +184,8 @@ try {
       await ev('window.__wok.pokaz.bezZegara(false)');
       const ile = await ev('document.querySelectorAll("#panelSceny button").length');
       const wyn = [];
-      for (let q = 0; q < ile; q++) {
+      // --przyciskiOd n: przejście od n-tego przycisku. Nocą seria GPU ma najwyżej 60 s, a cały panel to około 2 min.
+      for (let q = Number(args.przyciskiOd || 0); q < ile; q++) {
         // AGENT: sprawdzenie gry przed każdym przyciskiem, a nie tylko przed sceną. 2026-11-05 bieg zaczął się między meczami i przejście przycisków z żywą pętlą rAF szło 3 min w czasie startu następnego meczu.
         await czekajNaCisze(`przycisk ${q + 1} z ${ile}`);
         const nazwa = await ev(`document.querySelectorAll("#panelSceny button")[${q}].textContent`);

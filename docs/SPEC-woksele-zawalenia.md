@@ -248,6 +248,10 @@ Cel 4 ms spełniony: w najgorszym kadrze ściana rośnie o około 1 ms. Znacznik
 
 **Czego nie ma:** błysku w S1, S2, S4, bo nie ma w nich kraterów (film też go tam nie ma). Tryb niski pyłu (połowa puli, § 4.6) i przełącznik pyłu na panelu: P5, P6. Nikt nie oglądał tego w ruchu ani w prawdziwym oknie Chrome; punkt K2 nie przeszedł przez agenta bez kontekstu. Strzał myszą dostaje błysk i kłąb z tych samych rekordów, ale pokaz nie ma jeszcze strzału (P5), więc nie widziałem go na obrazie.
 
+**Do zrobienia za dnia:** powtórzyć tabelę S1 przy 5120 × 1440. Pomiar jest z 22:04, sprzed commitów żaru (`aee6580b`, `cfedfcc2`), a jego raport nadpisał późniejszy pomiar światła, więc liczby S1 zostały tylko w tej tabeli. S1 nie ma kraterów, więc wynik nie powinien się zmienić, ale tego nie sprawdzono.
+
+**Sprawdzenie końcowe, po wznowieniu:** przejście panelu przerwało wyłączenie komputera po 10 przyciskach z 15, stąd w `P4/koniec/` są zrzuty bez raportu, więc dla tych 10 nie ma zapisanego wyniku `nowePipeline`. Ostatnie 5 (`--przyciskiOd 10`, `P4/koniec2/`): porażki 0, nowych pipeline'ów 0, 46 s, wentylator 0%. Testy WGSL: `wokseleObrazWgsl` 6 z 6, `wokseleWgsl` 96 z 96. Wobec filmu: pył S1 t = 5, S2 t = 3, S3 t = 2 i S4 t = 3 ma to samo miejsce i kształt; pióropusz S1 t = 5 jest trochę rzadszy, a w S3 t = 2 wokół wyrwy w pokładzie jest mniej drobnych plamek gruzu.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
