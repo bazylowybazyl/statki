@@ -15,7 +15,7 @@ import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep
 import { obceProcesy } from './sondaGpuWorkera.mjs';
 
 const args = parseArgs();
-const TESTY = String(args.testy || 'podkrok,mutacje,zrodla,vmax,wzorzec,sceny,strzal,w1,pipeline,g1').split(',').filter(Boolean);
+const TESTY = String(args.testy || 'podkrok,mutacje,zrodla,vmax,wzorzec,sceny,strzal,kratery,w1,pipeline,g1').split(',').filter(Boolean);
 const MIGAWKI = String(args.migawki || 'S1_t3.50,S1_t5.00,S2_t3.00,S3_t0.43,S3_t0.80,S3_t2.95,S4_t3.00').split(',').filter(Boolean);
 const wyDir = resolve(repo, args.out || '.tmp/woksele-demo/P1');
 const plikG1 = resolve(repo, args.g1 || '.tmp/woksele-demo/G1.txt');
@@ -136,6 +136,7 @@ try {
       if (args.pomiar) {
         pomiary[scena] = await ev('window.__wok.pokaz.zmierzKlatki(60, true)');
         console.log('klatka z krokiem', scena, JSON.stringify(pomiary[scena]));
+        console.log('  diag', JSON.stringify(await ev('window.__wok.pokaz.diag()')));
       }
     }
     const nowe = await ev(`window.__harness.pipes.list.slice(${pipeStart}).map((p) => ({ nazwa: p.nazwa, sync: !!p.sync, budowa: !!p.budowa }))`);
@@ -330,7 +331,18 @@ try {
       const c = wy[id]?.calosc;
       if (c) wiersz(`Krater w próżni ${id}`, nod, `kawałek ${(c.ulamek * 100).toFixed(1)}%, oderwane ${c.oderwane}, usunięte ${c.usuniete} (plan ${c.planowo}), v ${Math.hypot(...c.v).toFixed(3)}, ${c.w.toFixed(2)}°/s, |P|/N ${c.P.toFixed(4)}`, 'kawałek ≥ 98%, |P|/N ≤ 0,05', c.ulamek >= 0.98 && c.P <= 0.05);
     }
-    if (wy.krater60g) wiersz('Krater r = 60 przy g = 400: dach przy t = 10', 'stoi', wy.krater60g.dach[10]?.toFixed(0), '≥ 1290', wy.krater60g.dach[10] >= 1290);
+    const stojace = ['krater60g', 'k60a', 'k60b', 'k60c', 'k60d', 'k60e'].filter((id) => wy[id]);
+    if (stojace.length) {
+      const dachyK = stojace.map((id) => wy[id].dach[10]);
+      wiersz(`Krater r = 60 przy g = 400, ${stojace.length} miejsc: dach przy t = 10`, 'stoi', dachyK.map((q) => q.toFixed(0)).join(', '), '≥ 1290', dachyK.every((q) => q >= 1290));
+    }
+    for (const [id, nazwa] of [['kolumna1', 'Kolumna'], ['naroznik', 'Narożnik']]) {
+      if (wy[id]) wiersz(`${nazwa}: dach przy t = 14`, '1309–1310', wy[id].dach[14].toFixed(0), '≥ 1290', wy[id].dach[14] >= 1290);
+    }
+    if (wy.odpornosc) wiersz('Odporność: kolumna + 2 kratery, dach przy t = 14', '1308, 0,5°', `${wy.odpornosc.dach[14].toFixed(0)}, ${wy.odpornosc.podsumowanie.historia.maxPrzechyl.toFixed(1)}°`, '≥ 1290', wy.odpornosc.dach[14] >= 1290);
+    for (const [id, vN, oN] of [['S3poza', 'b.d.', '2,77'], ['S3osm', 'b.d.', '2,05']]) {
+      if (wy[id]) { const o = wy[id].podsumowanie.koniec.dysk.otworDoPrzekroju; wiersz(`${id}: v / swobodna, otwór`, `${vN}, ${oN}`, `${wy[id].podsumowanie.S3.stosunekV.toFixed(2)}, ${o.toFixed(2)}`, '1,2–4', o >= 1.2 && o <= 4); }
+    }
     for (const [id, r] of Object.entries(wy)) if (r.nan || r.asymetrie) wiersz(`NaN, asymetrie ${id}`, '0, 0', `${r.nan}, ${r.asymetrie}`, '0, 0', false);
     const szer = Math.max(...row.map((w) => w.nazwa.length));
     const linie = [`adapter ${JSON.stringify(adapter)}`, `format: zaliczone | wielkość | Node | GPU | próg`, ...row.map((w) => `${w.ok.padEnd(5)} ${w.nazwa.padEnd(szer)} | ${w.node} | ${w.gpu} | ${w.prog}`)];
@@ -363,6 +375,18 @@ try {
     if (!ok) porazka('strzał w próżni');
     raport.testy.strzal = r;
     writeFileSync(join(wyDir, 'strzal.json'), JSON.stringify({ adapter, ...r }, null, 1) + '\n');
+    zapiszRaport();
+  }
+
+  if (TESTY.includes('kratery')) {
+    await czekajNaCisze('wiele kraterów');
+    const r = await ev('window.__wok.test.wieleKraterow()');
+    for (const id of ['S4', 'S4g']) {
+      const q = r[id];
+      console.log(`${q.zaliczony ? 'OK ' : 'ŹLE'} wiele kraterów ${id}, ${q.klatek} klatek, wykonane rzędy ${q.wykonane}: usunięte GPU ${q.usunieteGpu}, różne żywe ${q.aktRozne}, różne maski ${q.maski} z ${q.zywe}, |Δv| p99 ${f(q.dvP99, 3)} maks ${f(q.dvMax, 2)}, dx maks ${f(q.dxMax, 3)}, vMax ${f(q.vMax, 1)}, |P|/N GPU ${f(q.P, 4)} Node ${f(q.PNode, 4)}, NaN ${q.nan}, asym ${q.asym}`);
+      if (!q.zaliczony) porazka(`wiele kraterów ${id}`);
+    }
+    raport.testy.kratery = r;
     zapiszRaport();
   }
 

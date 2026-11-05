@@ -4,7 +4,7 @@ import { rozpakujMigawke, sprawdzBudowe, WzorzecCpu } from './wzorzec-cpu.js';
 import { porownajPodkrok, ObserwatorSceny, analizaPolowek, pietraStropow, taca } from './metryki.js';
 import { popcnt, zbuduj, PARAMETRY } from './budowa.js';
 import { WzorzecF32 } from './wzorzecF32.js';
-import { S1, S2, S3, S4, krater, planGpu } from './scena.js';
+import { S1, S2, S3, S4, krater, kolumna1, naroznik, odpornosc, planGpu } from './scena.js';
 
 const KATALOG = '/.tmp/woksele-demo/migawki/';
 
@@ -117,6 +117,17 @@ const PLANY_PELNE = {
   krater60p: () => krater({ c: [190, 0, 650], r: 60, J: 300, rP: 160, proznia: true, T: 10 }),
   krater90p: () => krater({ c: [190, 0, 650], r: 90, J: 600, rP: 240, proznia: true, T: 10 }),
   krater60g: () => krater({ c: [190, 0, 650], r: 60, J: 300, rP: 160, T: 10 }),
+  // Odporność, § 8: te same sześć miejsc co krater60 w scripts/woksele-sym.mjs. Warianty S3 z § 1.2.
+  k60a: () => krater({ c: [190, 0, 300], r: 60, J: 300, rP: 160, T: 10 }),
+  k60b: () => krater({ c: [-190, 0, 650], r: 60, J: 300, rP: 160, T: 10 }),
+  k60c: () => krater({ c: [190, 210, 150], r: 60, J: 300, rP: 160, T: 10 }),
+  k60d: () => krater({ c: [0, -210, 1000], r: 60, J: 300, rP: 160, T: 10 }),
+  k60e: () => krater({ c: [-190, -210, 300], r: 60, J: 300, rP: 160, T: 10 }),
+  kolumna1: () => kolumna1(),
+  naroznik: () => naroznik(),
+  odpornosc: () => odpornosc(),
+  S3poza: () => S3({ wariant: 'poza' }),
+  S3osm: () => S3({ wariant: 'osm' }),
 };
 
 /** Najgorsze węzły różnicy przyspieszenia i pierwsze różne maski: wejście do szukania gałęzi § 2.11. */
@@ -415,6 +426,105 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     };
   }
 
+  /**
+   * Plan z wieloma kraterami o różnych czasach, środkach, promieniach i pchnięciach (§ 2.8), na wzór sceny z szwami: nosiciel, S = 3 przez bit pasa, bez korekcji momentu, przepełnienie 4 na klatkę,
+   * martwy nosiciel, usuwanie stojących. Wzorzec: WzorzecCpu z tą samą logiką zdarzeń co proby5/final/scena5.mjs, 14 klatek, ta sama wieża w próżni i przy g = 400.
+   */
+  async function wieleKraterow() {
+    const wyniki = {};
+    for (const [id, stojace] of [['S4', false], ['S4g', true]]) {
+      const { w } = wypiekPelny(id);
+      const n = w.n;
+      const blisko = (x, y, z) => {
+        let best = Infinity, q = -1;
+        for (let i = 0; i < n; i++) {
+          const d = (w.pos[3 * i] - x) ** 2 + (w.pos[3 * i + 1] - y) ** 2 + (w.pos[3 * i + 2] - z) ** 2;
+          if (d < best) { best = d; q = i; }
+        }
+        return q;
+      };
+      const wiersz = (f, x, y, z, r, rdzen, rS, J, tau, rP, dz) => ({ f, nos: blisko(x, y, z), r, rdzen, rS, J, tau, rP, dz, usunStojace: true });
+      const kratery = [
+        wiersz(0, 190, 0, 400, 70, 0.2, 0.4, 210, 0.3, 340, 120),
+        wiersz(0, -190, 0, 800, 55, 0.2, 0.4, 90, 0.016, 220, 0),
+        wiersz(2, 0, 210, 1000, 45, 0.3, 0.4, 90, 0.016, 220, 0),
+        // Martwy nosiciel: ten sam węzeł co rząd wyżej, trzy klatki później. Pominięcie.
+        wiersz(5, 0, 210, 1000, 90, 0.3, 0.4, 400, 0.3, 300, 0),
+        // Pięć w jednej klatce: czwórka teraz, piąty w następnej.
+        wiersz(7, 190, 210, 150, 40, 0.3, 0.5, 60, 0.016, 200, 0),
+        wiersz(7, -190, -210, 300, 40, 0.3, 0.5, 60, 0.016, 200, 0),
+        wiersz(7, 190, -210, 650, 40, 0.3, 0.5, 60, 0.016, 200, 0),
+        wiersz(7, -190, 210, 1000, 40, 0.3, 0.5, 60, 0.016, 200, 0),
+        wiersz(7, 0, 0, 1200, 60, 0.3, 0.5, 120, 0.1, 240, 40),
+      ];
+      if (stojace) kratery.push(wiersz(9, 100, 100, 10, 50, 0.3, 0.5, 60, 0.016, 200, 0)); // kotwice w kuli idą razem z rdzeniem
+      const bitPas = new Uint8Array(n);
+      for (let i = 0; i < n; i++) bitPas[i] = (i * 2654435761) >>> 31; // bit z indeksu, bez Math.random
+      solver.wczytaj(w);
+      solver.ustawPlan({ czasy: null, pchniecia: [], kratery, zerujL: false, swobodnyG: 0, skalaG: null, bitPas });
+      const m = new WzorzecCpu(w);
+      const dt = 1 / 60;
+      let q = 0;
+      const akt = [];
+      const KLATEK = 14;
+      for (let f = 0; f < KLATEK; f++) {
+        const t = f * dt;
+        let ile = 0;
+        while (q < kratery.length && kratery[q].f <= f && ile < 4) {
+          const b = kratery[q++];
+          ile++;
+          if (!m.aktywny[b.nos]) continue;
+          const cx = m.pos[3 * b.nos], cy = m.pos[3 * b.nos + 1], cz = m.pos[3 * b.nos + 2];
+          const us = [], sam = [], rd = [];
+          const r2 = b.r * b.r, rd2 = (b.rdzen * b.r) ** 2, rS2 = (b.rS * b.r) ** 2;
+          for (let i = 0; i < n; i++) {
+            if (!m.aktywny[i]) continue;
+            const d2 = (m.pos[3 * i] - cx) ** 2 + (m.pos[3 * i + 1] - cy) ** 2 + (m.pos[3 * i + 2] - cz) ** 2;
+            if (d2 >= r2) continue;
+            if (m.nieruchomy[i] || d2 < rd2) us.push(i);
+            else if (d2 < rS2) sam.push(i);
+            else if (bitPas[i]) rd.push(i);
+          }
+          m.usun(Int32Array.from(us));
+          m.rozerwij(Int32Array.from(sam), false);
+          m.rozerwij(Int32Array.from(rd), true);
+          akt.push({ x: cx, y: cy, z: cz + b.dz, rP: b.rP, Jk: (b.J * dt) / Math.max(b.tau, dt), koniec: t + Math.max(b.tau, dt) });
+        }
+        for (let c = akt.length - 1; c >= 0; c--) if (t >= akt[c].koniec - 1e-9) akt.splice(c, 1);
+        if (akt.length) m.pchniecia(akt, false);
+        m.krok();
+      }
+      await wok.krok(KLATEK);
+      const o = await solver.odczyt(renderer);
+      let aktRozne = 0, maski = 0, zywe = 0, usuniete = 0, dv = 0, dvP = 0, dx = 0, Px = 0, Py = 0, Pz = 0, PxN = 0, PyN = 0, PzN = 0, vMax = 0;
+      const rv = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        if (o.aktywny[i] !== m.aktywny[i]) aktRozne++;
+        if (!o.aktywny[i]) usuniete++;
+        if (!o.aktywny[i] || !m.aktywny[i]) continue;
+        if (o.maskaW[i] !== m.maskaW[i]) maski++;
+        const ex = o.vel[3 * i] - m.vel[3 * i], ey = o.vel[3 * i + 1] - m.vel[3 * i + 1], ez = o.vel[3 * i + 2] - m.vel[3 * i + 2];
+        const de = Math.sqrt(ex * ex + ey * ey + ez * ez);
+        rv[zywe++] = de;
+        if (de > dv) dv = de;
+        const v = Math.sqrt(o.vel[3 * i] ** 2 + o.vel[3 * i + 1] ** 2 + o.vel[3 * i + 2] ** 2);
+        if (v > vMax) vMax = v;
+        Px += o.vel[3 * i]; Py += o.vel[3 * i + 1]; Pz += o.vel[3 * i + 2];
+        PxN += m.vel[3 * i]; PyN += m.vel[3 * i + 1]; PzN += m.vel[3 * i + 2];
+        for (let c = 0; c < 3; c++) dx = Math.max(dx, Math.abs(o.poz[3 * i + c] - m.pos[3 * i + c]));
+      }
+      const ps = rv.subarray(0, zywe).sort();
+      dvP = ps[Math.floor(0.99 * zywe)];
+      wyniki[id] = {
+        klatek: KLATEK, usunieteGpu: usuniete, aktRozne, maski, zywe, dvMax: dv, dvP99: dvP, dxMax: dx, vMax, wykonane: solver.liczniki.wykonaneKratery, pominieteP: solver.liczniki.pominietePchniecia,
+        P: Math.sqrt(Px * Px + Py * Py + Pz * Pz) / zywe, PNode: Math.sqrt(PxN * PxN + PyN * PyN + PzN * PzN) / zywe, nan: liczNaN(o.poz) + liczNaN(o.vel), asym: asymetrieMasek(w, o.maskaW),
+        zaliczony: aktRozne === 0 && maski <= 0.002 * n && dvP < 5 && liczNaN(o.vel) === 0 && asymetrieMasek(w, o.maskaW) === 0,
+      };
+    }
+    wyniki.bledyGpu = wok.bledy().length;
+    return wyniki;
+  }
+
   /** Jedna liczba ściany: cała scena bez odczytów, razem z czekaniem na kolejkę. To nie pomiar kroku (P6), tylko kontrola, że zdarzenia niczego nie popsuły. */
   async function sciana(id = 'S3') {
     const { plan, w } = wypiekPelny(id);
@@ -619,5 +729,5 @@ export function createTestGpu({ renderer, solver, wypiekSceny, wok }) {
     return { kF1: m1, kF4: m4, stosunek: m4 / m1, zaliczony: m1 > 0 && m4 > 0 && m4 / m1 > 1.5 };
   }
 
-  return { podkrok, mutacje, zrodla, krokZWzorcem, vmax, w1, g1, dwieListy, scenaPelna, sciana, rownowaznosc, strzal, MUTACJE: Object.keys(MUTACJE) };
+  return { podkrok, mutacje, zrodla, krokZWzorcem, vmax, w1, g1, dwieListy, scenaPelna, sciana, rownowaznosc, strzal, wieleKraterow, MUTACJE: Object.keys(MUTACJE) };
 }

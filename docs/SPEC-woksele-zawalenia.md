@@ -2,7 +2,7 @@
 
 > **Kopia specyfikacji dema.** Kopia robocza do końca dema to `.tmp/woksele-proto/SPEC-demo-gpu.md` w worktree dema; ten plik zostanie z nią zsynchronizowany na końcu dema, więc do tej chwili może być starszy. Wskazane niżej dowody i prototypy (`proby4/`, `spec-proby/`, `krytyk-*/`, `wspolne/`, logi, kadry) leżą lokalnie w `.tmp/woksele-proto/`, wyniki pakietów dema w `.tmp/woksele-demo/`; `.tmp/` nie idzie do repo. Kod dema: `dema/woksele-zawalenia/`, `scripts/woksele-sym.mjs`, `tests/wokseleBudowa.test.mjs`, `tests/helpers/wokseleBiegi.mjs`.
 
-Stan: 2026-11-05, po uwagach czterech krytyków i po pakietach P0 (§ 1.6) i P1 (§ 1.7). Kod odniesienia: `proby4/model-spec4.mjs` (generowany: `A-kratownica-jawna/model.mjs` → `lataj.mjs` → `model-spec.mjs` → `lataj2.mjs` → `model-spec2.mjs` → `lataj3.mjs` → `spec-proby/model-spec3.mjs` → `proby4/lataj4.mjs`). **Numery linii w § 2 dotyczą `spec-proby/model-spec3.mjs`**: wersja 4 to te same linie plus łamanie granic przez falę (przed 889), ziarna dachu (przy 571) i `nKomStale` (przy 722). Parametry: `proby4/parametry-spec4.json`. Sceny grawitacyjne i metryki: `spec-proby/scenyG.mjs`. Reguły obrazu: `proby4/obraz4.mjs` + `rys4.mjs`, opcje końcowe w `proby4/bieg-fin11.sh`. Dziennik prób: `spec-proby/PROBY-rano.md`, próby grawitacji: § 10, próby po krytykach: § 1.5.
+Stan: 2026-11-05, po uwagach czterech krytyków i po pakietach P0 (§ 1.6), P1 (§ 1.7) i P2 (§ 1.8). Kod odniesienia: `proby4/model-spec4.mjs` (generowany: `A-kratownica-jawna/model.mjs` → `lataj.mjs` → `model-spec.mjs` → `lataj2.mjs` → `model-spec2.mjs` → `lataj3.mjs` → `spec-proby/model-spec3.mjs` → `proby4/lataj4.mjs`). **Numery linii w § 2 dotyczą `spec-proby/model-spec3.mjs`**: wersja 4 to te same linie plus łamanie granic przez falę (przed 889), ziarna dachu (przy 571) i `nKomStale` (przy 722). Parametry: `proby4/parametry-spec4.json`. Sceny grawitacyjne i metryki: `spec-proby/scenyG.mjs`. Reguły obrazu: `proby4/obraz4.mjs` + `rys4.mjs`, opcje końcowe w `proby4/bieg-fin11.sh`. Dziennik prób: `spec-proby/PROBY-rano.md`, próby grawitacji: § 10, próby po krytykach: § 1.5.
 
 Ścieżki względne liczą się od `.tmp/woksele-proto/`, wyniki pakietów dema (`.tmp/woksele-demo/`) mają ścieżki pełne. Liczby są oznaczone: **zm.** (zmierzone w Node, z podaniem logu) albo **szac.** (szacunek). Kernele fizyki działają na GPU od P1 (§ 1.7), obrazu na GPU jeszcze nie ma: wszystkie kadry pochodzą z programowego rasteryzatora w Node.
 
@@ -12,7 +12,7 @@ Stan: 2026-11-05, po uwagach czterech krytyków i po pakietach P0 (§ 1.6) i P1 
 - Obraz: węzeł to jeden blok, dopóki jest cały, a po uszkodzeniu L = 5 nierównych odłamków z tablicy wzorów (podział k-d) z szumem wierzchołków, do tego pręty, drobny gruz i pył. Beton i ciemna blacha zamiast jednej barwy, ton kawałka od ziarna.
 - Pięć mechanizmów fizyki ponad model A: ziarna materiału, fala rozluźnienia, która **łamie granice ziaren nad frontem**, plastyczne zginanie bez stanu, waga dysku od szkody, kruszenie dysku od kontaktu. Dają płyty, słupy i ściany w hałdzie, górę kruszoną jeszcze przed frontem i dach, który nie ląduje jako taca. Kosztem odporności na największy strzał (§ 1.2).
 - Grawitacja jest właściwością miejsca, nie modelu (§ 10). Ten sam kod i ten sam materiał: przy g = 400 wieża się miażdży, w próżni przepołowiona wieża rozlatuje się na dwie całe połowy, które się obracają. Fala milczy bez ramy odniesienia, więc w próżni nic z tych zmian nie działa.
-- **Na GPU działa tylko fizyka bez zdarzeń (P1, § 1.7).** Jeden podkrok zgadza się z migawkami Node, W1 stoi, zm. fizyka 0,29–0,44 ms/krok. Zdarzeń, obrazu i całej klatki na GPU nie ma: Z4 nie jest zmierzone, a kadry pochodzą z rasteryzatora Node.
+- **Na GPU działa fizyka ze zdarzeniami (P1, § 1.7, P2, § 1.8).** Jeden podkrok zgadza się z migawkami Node, W1 stoi, zm. fizyka 0,29–0,44 ms/krok, a pełne S1, S2, S3, S4 i S4 przy g = 400 od budowy przechodzą progi § 8. Z4 nie jest zmierzone.
 
 Kadry odniesienia: `proby4/fin11/S1_arkusz.png`, `S2_arkusz.png`, `S3_arkusz.png`, `S4_arkusz.png`, `S4g_arkusz.png`, strzał: `proby4/fin11k/S1_arkusz.png`.
 
@@ -159,6 +159,35 @@ Kod: `dema/woksele-zawalenia/{solver,glowny,testGpu,wzorzecF32}.js`, `dema/wokse
 - **kWstaw to wyścig.** Przy przepełnionej komórce GPU odrzuca inne wstawienia niż Node. Zm. S2 t = 3: 6 odrzuconych w Node, lista różna w 1–7 węzłach, S3 t = 0,8: 2 odrzucone, różna w 5–7 (w `P1/log-bieg2.txt` też 13), a siła bez zmian w tych przebiegach, bo odrzucone węzły nie były w styku. Inny przebieg albo sterownik może odrzucić węzeł w styku i wtedy |Δa| przejdzie próg, wiersz „odrzucone wstawienia” w § 8 sprawdzi to w P2.
 - **Niezrobione w P1, zgodnie z § 12.** Zdarzenia, licznik `wLicz`, `grupaTab`, obraz, `budowa.worker.js` (na razie budowa na stronie), `kZerujPelne` (reset i tak wgrywa bufor z CPU). `tests/wokseleWgsl.test.mjs` nie sprawdza `round`, bo żaden kernel P1 go nie wymaga: wiersz o `kWybuchSuma` przyjdzie w P2. Kolejność gałęzi kF pilnuje test GPU, nie test WGSL (zm. `P1/log-mutacje-testu.txt`: 14 z 15 mutacji solvera łapie test WGSL, a przestawienia gałęzi nie).
 
+### 1.8 Domknięcie P2: zdarzenia i pęd na GPU
+
+Kod: `solver.js` (kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch, `ustawPlan`, `strzel`), `scena.js` (`planGpu`), `testGpu.js`. Liczby z 2026-11-05, RTX 5080, stan z budowy, nie z migawki. Tabela: `.tmp/woksele-demo/P2/tabela-P2.txt`, `P2/dodatki/tabela-P2.txt`, dziennik: `P2/log-koncowy.txt`. Polecenie: `node scripts/webgpu/woksele-demo.mjs --testy sceny,strzal,kratery`. Całość liczy się w minutę.
+
+| Wielkość | Node | GPU | Próg § 8 |
+|---|---|---|---|
+| S1 dach, t = 3…7 | 1295, 1047, 582, 217, 174 | 1295, 1047, 601, 222, 181 | ± 80 |
+| S1 przechył spójny | 4,2° | 4,3° (inne biegi tej samej sceny: 4,3 i 4,6°) | ≤ 8° |
+| S1 masa 8–63, pojedyncze | 58%, 12% | 56,2%, 11,6% | ≥ 45%, ≤ 20% |
+| S2 dach, t = 3…6, przechył | 1216, 1029, 545, 234, 2,8° | 1217, 1029, 564, 250, 2,5° | ± 80, ± 130, ≤ 8° |
+| S3 v / swobodna, otwór | 0,87, 2,62 | 0,87, 2,61 (inne biegi: 2,60 i 2,67) | ≥ 0,8, 1,2–4 |
+| S3 poza środkiem, ośmiokąt: otwór | 2,77, 2,05 | 2,77, 2,06 | 1,2–4 |
+| S4 v góry, dołu | +37,5, −34,1 | +37,5, −34,2 | § 8 |
+| S4 obrót góry, dołu | 4,8, 3,3°/s | 4,8, 3,3°/s | 2–7°/s |
+| S4 największe kawałki | 92,6%, 99,5% | 92,6%, 99,5% | ≥ 85% |
+| S4 \|P\|/N, \|L\| do połowy | 0,0000, 0,2% | 0,0001 j./s, 0,21% | ≤ 0,05, ≤ 2% |
+| S4 przy g = 400 (S6): masa 8–63, przechył góry t = 5,5 | 53,6%, 10,6° | 53,7%, 10,0° | ≥ 40%, ≤ 14° |
+| Równoważność, mediana | 0,25 j. | 0,21 j. | ≤ 2 j. |
+| Krater w próżni r = 60, 90: największy kawałek | 99,7–99,9%, 98,5–99,7% | 99,8%, 99,2% | |
+| Krater r = 60 przy g = 400, 6 miejsc; kolumna; narożnik: dach | stoi, 1309–1310 | 1307–1310; 1309; 1310 | ≥ 1290 |
+| Rampa g 400 → 0, v_max | 0,07 j./s | 0,05 j./s | ≤ 1 |
+
+Wszystkie wiersze tabeli § 8 zaliczone, także W1 (0,0108 j., 0 zerwań, NaN i asymetrii 0 we wszystkich scenach), a odrzucone wstawienia tylko z próbki co 15 klatek. **Warunek porażki 2 nie zachodzi**, poprawek fizyki nie było: wynik wyszedł za pierwszym biegiem. Ściana S3 bez odczytów: 192 ms na 300 kroków, 0,64 ms/krok z kolejką (drugi bieg przy pracy innej sesji na tym samym GPU: 1,44), więc zdarzenia nic nie zepsuły. Pipeline'y po rozgrzewce: 32 wpisy, nowe 0, synchroniczne 0.
+
+- **Strzał, zm. `P2/strzal.json`.** Pudło: nic się nie zmienia, slot zgaszony. Trafienie: pierwsza klatka v 14,4 j./s przy miejscu trafienia, daleko 0,000. Po 5 s największy kawałek 99,6%, reszta budynku stoi, |P|/N 0,0000, co zgadza się z decyzją § 12 o strzale w próżni. Strzał w czasie planu pchnięć S4: v przy trafieniu 88 j./s wobec 21 j./s bez strzału, |P|/N 0,0035.
+- **Wiele kraterów, zm. `P2/kratery/raport.json`.** Plan na wzór sceny z szwami: nosiciel, S = 3 przez bit pasa, bez korekcji momentu, martwy nosiciel, 5 rzędów na klatkę, usuwanie kotwic w kuli. Wzorcem `WzorzecCpu` z logiką zdarzeń z `proby5/final/scena5.mjs`, 14 klatek: 0 różnych żywych, 0 różnych masek w próżni i przy g = 400, |Δv| p99 0,053 i 0,066 j./s. Nowa scena wchodzi przez dane `kratery`, `bitPas`, bez nowych buforów. Różnica wobec Node, celowa: dwa kratery w tej samej klatce, gdy nosiciel drugiego ginie w pierwszym: Node pomija drugi, GPU go wykonuje.
+- **Poprawki sprawdzianu P1.** F0 w `zaliczony` z regułą f32. `krokZWzorcem`: 8 kroków, 0 masek na S1 t = 3,5, S3 t = 2,95, S4 t = 3, lista różna tylko na granicy zasięgu (poza nią 0). Bez progu S2 t = 3: 2 maski po 8 krokach, ta sama para przy progu f32 co w § 1.7. S = 24, § 2.7: podkrok 6 migawek, lista 0 różnic, 5 zalicza wprost, 1 przez regułę f32.
+- **Czego brakuje.** Licznik odrzuconych wstawień w `wLicz`: tabela liczy z pozycji co 15 klatek (S1–S4 0; S4 przy g = 400: 3, czyli maks. 23 w komórce to nie jest twardy sufit). `kPrzyczyna`, emisja pyłu, głowice pierścieni: P4. `?profil=1` woła kernele z pominięciem `krok`, więc bez zdarzeń: P6 (`zdarzeniaKlatki`, `nastawKlatke`). `scripts/woksele-sym.mjs` przy S = 24: `--zgodnosc` i migawki wymagają `parametry({ slotyKomorki: 16 })`, jeśli mają zgadzać się z logami `proby4`; dziś liczą przy 24, a pliki w `.tmp/woksele-demo/migawki/` są z S = 16.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
@@ -180,7 +209,7 @@ Kod: `dema/woksele-zawalenia/{solver,glowny,testGpu,wzorzecF32}.js`, `dema/wokse
 | Rozlew | `rozlew^(1/skala)` | bez zmian | 207 |
 | Stabilność | `h·√(12K) = 1,25 < 2` | zapas skromny, podkroków nie wolno zmniejszać | |
 
-Parametry bez klas: `c 6000, podkroki 8, zeta 0,1, beta 0,1, zlomGiecia 0,25, zlomB 2,5, kKontakt 0,8, rKontakt 0,9, rJitter 0,1, zetaKontakt 0,35, mu 0,9, cTarcie 1, muGrunt 0,7, skorKontakt 0,5, M = 32, S = 16, vMax 4000, rozcHard 0,5, sciskHard 0,45, szokTempo 1,5, szokWsp 0,5, zapasMin 2,2, zapasDyskPrez 1,25, obwodSlabszy 0,35, dyskRosnieZR 0, dyskSprezenie 0,005, rytmListy 4, kotwicaWzmocnienie 3, kotwicaZasieg 6, plama {4, 0,5}, katWypieku 12°, gruzPara 27 (1/s na kontakt), gruzV 30, lepL 10, lepV 25, lepKotwica, falaRama, froude, froudeProj, kontaktSzokV 120, wagaS 1,5, wagaProg 0,4, fala {v 60, tempo 9, aMax 0,6, prog 0,5, oslab 0,999}, falaPeka {prog 0,25, zakres 0,5}, ziarno 7`. Wyłączone gałęzie, których NIE przenosić: `odprysk`, `sfGrad`, `alfaWezla`, `bK`, `zetaT`, `zetaB`, `slabeZlacze`, `fala.kop`, `sprezenieMartwe = false`, stare zakleszczenie `gruzLambda` (−λ·v, zastąpione parą).
+Parametry bez klas: `c 6000, podkroki 8, zeta 0,1, beta 0,1, zlomGiecia 0,25, zlomB 2,5, kKontakt 0,8, rKontakt 0,9, rJitter 0,1, zetaKontakt 0,35, mu 0,9, cTarcie 1, muGrunt 0,7, skorKontakt 0,5, M = 32, S = 24 (§ 2.7), vMax 4000, rozcHard 0,5, sciskHard 0,45, szokTempo 1,5, szokWsp 0,5, zapasMin 2,2, zapasDyskPrez 1,25, obwodSlabszy 0,35, dyskRosnieZR 0, dyskSprezenie 0,005, rytmListy 4, kotwicaWzmocnienie 3, kotwicaZasieg 6, plama {4, 0,5}, katWypieku 12°, gruzPara 27 (1/s na kontakt), gruzV 30, lepL 10, lepV 25, lepKotwica, falaRama, froude, froudeProj, kontaktSzokV 120, wagaS 1,5, wagaProg 0,4, fala {v 60, tempo 9, aMax 0,6, prog 0,5, oslab 0,999}, falaPeka {prog 0,25, zakres 0,5}, ziarno 7`. Wyłączone gałęzie, których NIE przenosić: `odprysk`, `sfGrad`, `alfaWezla`, `bK`, `zetaT`, `zetaB`, `slabeZlacze`, `fala.kop`, `sprezenieMartwe = false`, stare zakleszczenie `gruzLambda` (−λ·v, zastąpione parą).
 
 Klasy (nie wszystkie pola są w JSON: reszta to `DOMYSLNE`, linie 28–79):
 
@@ -210,14 +239,15 @@ Wszystko w lokalnym układzie budowli (środek podstawy w zerze, z w górę). `M
 | `wLista` | u32 × 33n | [33i]: liczba kontaktów, potem do 32 sąsiadów | kLista | F, kObraz (licznik, § 4.3 dopiero przy okluzji z kontaktów) |
 | `wIjk` | u32 × n | i 10 bitów, j 10, k 10, grupa 2 | budowa | kLista |
 | `wKomLicz` | u32 × nKom | licznik komórki; **trzy węzły na jednym atrybucie**: atomowy w `kWstaw`, `toReadOnly()` w `kLista`, zwykły w `kZerujPo` (wzór `hullDamageMap.tsl.js:105–106`, zm. budowa: atomic 0 poza `kWstaw`) | kZerujPo, kWstaw | kLista |
-| `wKomSloty` | u32 × 16·nKom | węzły komórki | kWstaw | kLista |
+| `wKomSloty` | u32 × 24·nKom | węzły komórki, § 2.7 | kWstaw | kLista |
 | `wTab` | vec4 × 57 | 18 × (n0(d), 0); 12 × (iT, iC, krusz, 0); 27 × LUT kierunku (−1 albo d) | budowa | F, kLista |
-| `wCzasU` | f32 × n | czas zdarzenia: t > 0 usunięcie, t < 0 rozerwanie w chwili \|t\|; bit rodzaju rozerwania w `wStan` (§ 2.8); **1e30 = brak** (literał `Infinity` daje w WGSL `Infinity.0`, zm. `spec-proby/tsl-proby2.mjs`) | budowa, kCzas | kCzas |
-| `uBlast` | uniformArray vec4 × 24 | sloty 0–11 z planu sceny: c.xyz + rP; Jk, 0, 0, 0. Uniform, więc bez kasowania cudzych danych | CPU | kWybuch* |
-| `wBlastK` | vec4 × 4 | sloty 12–15 strzału: c.xyz + rP. Slot z `uSlotK`, kop z `uJkK` (vec4, CPU odlicza klatki tau i pisze 0 po końcu) | kKrater | kWybuch* |
+| `wCzasU` | f32 × n | klatka zdarzenia: ±(f + 0,5), plus usunięcie, minus rozerwanie; bit 16 flagi w `wStan`: rozerwanie zostawia ziarna (§ 2.8); **1e30 = brak** (literał `Infinity` daje w WGSL `Infinity.0`, zm. `spec-proby/tsl-proby2.mjs`) | budowa, kCzas | kCzas |
+| `uKrater` | uniformArray vec4 × 3·4 | do 4 kraterów na klatkę: c.xyz + r²; rdzeń², rS², slot `wBlastK`, nosiciel (≥ 0 węzeł, −1 punkt z rzędu, −2 strzał); usuwa stojące, 0, 0, 0 | CPU | kKraterCel, kKrater |
+| `uBlast` | uniformArray vec4 × 2·24 | do 24 pchnięć w klatce, zbite od zera (`uBlastN`): c.xyz + rP; Jk, slot `wBlastK` (−1: środek z rzędu), dz, 0. Uniform, więc bez kasowania cudzych danych | CPU | kWybuchSuma |
+| `wBlastK` | vec4 × 32 | środki policzone na GPU, pierścień: c.xyz, w > 0 ważny (martwy nosiciel albo pudło gasi slot) | kKraterCel | kKrater, kWybuchSuma |
 | `wRamaWzory` | vec4 × (3n + 2·6·64·L) | [3i]: F0.xyz + d, F1.xyz + φ, F2.xyz + bity emisji (0–5), ao (6–11), dObraz (12–21). Potem wzory: środek.xyz + hX; hY, hZ, objętość, 0 | kObraz, budowa | wierzchołek, kObraz |
 | `wCzastki` | vec4 × 2·(CAP_G + CAP_P) | gruz i pył, pierścienie, § 4.5–4.6 | kObraz, kKrater, kCzas, kGruz, kPyl | wierzchołek |
-| `wLicz` | atomic u32 × 19 | [0, 1] głowice pierścieni, [2] cel strzału; [3..5] suma kopów, [6] liczba trafionych, [7..9] suma pozycji, [10..12] moment, [13..18] tensor | kObraz, kKrater, kCzas, kWybuch*, kZerujWybuch | jw. |
+| `wLicz` | atomic u32 × 20 | [0, 1] głowice pierścieni, [2] cel strzału; [3..5] suma kopów, [6] liczba trafionych, [7..9] suma pozycji, [10..12] moment, [13..18] tensor, [19] największe \|q\| zbioru | kObraz, kCel, kWybuch*, kZerujWybuch | jw. |
 | `grupaTab` | vec4 × 8 | grupa budowli: bit uśpienia, K, skala F0, cap. W demie jeden wpis, § 6.3 | CPU | w grze: F, I, kLista, kObraz |
 
 `toReadOnly()` na wszystkim, co kernel tylko czyta: `wTab`, `wIjk`, `wKomSloty` (w kLista), a w kObraz i wierzchołku także `wWez`, `wStan`, `wMaska`. Bez tego WGSL dostaje `read_write` (zm. `tsl-wgsl/kF.wgsl`).
@@ -256,8 +286,8 @@ Przesunięcia ponad 15 tys. węzłów albo budynek większy niż 1500 j.: CG 3�
 Listy `renderer.compute` zbudowane raz, bez alokacji w kodzie dema (three alokuje deskryptor pass i encoder na wywołanie, `WebGPUBackend.js:1346–1360`, więc najwyżej 3 listy na krok poza trybem `?profil=1`):
 
 ```
-LZd  kCzas, [kZerujCel, kCel, kKrater: tylko w klatce strzału], kCzysc, kCzyscS      zdarzenia, § 2.8
-LWb  kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch                                tylko w klatkach z aktywnym pchnięciem
+LZd  kCzas, [kZerujCel, kCel: strzał], [kKraterCel, kKrater: krater], kCzysc, kCzyscS  zdarzenia, § 2.8
+LWb  kZerujWybuch, kWybuchSuma, [kWybuchMoment: zerujL], kWybuch                       tylko w klatkach z aktywnym pchnięciem
 LF   s = 0: kWstaw, kLista, kZerujPo, kF, kI
      s = 1..3: kF, kI
      s = 4: kWstaw, kLista, kZerujPo, kF, kI
@@ -369,7 +399,7 @@ Symetria zerwań: oba końce wiązania liczą to samo z tych samych danych, stą
 Linie 752–811. Trzy kernele:
 
 - `kZerujPo` (n): dla żywego `a,b,c = floor(x·iKom)`, `h` jak w `kWstaw`, zapis 0 zwykłym węzłem. Pełne zerowanie (nKom wywołań, bez osłony `uN`) tylko przy resecie.
-- `kWstaw` (n): dla żywego: `a,b,c = floor(x·iKom)`; `h = (a·73856093 ^ b·19349663 ^ c·83492791) & (nKom−1)`; `q = atomicAdd(wKomLicz[h], 1)`; jeśli `q < 16`: `wKomSloty[h·16+q] = i`. Mnożenia na `i32` / `u32` z zawijaniem (`bitcast` z ujemnych). Zm.: 117–135 pominiętych wstawień na miliony, maks. 23 w komórce.
+- `kWstaw` (n): dla żywego: `a,b,c = floor(x·iKom)`; `h = (a·73856093 ^ b·19349663 ^ c·83492791) & (nKom−1)`; `q = atomicAdd(wKomLicz[h], 1)`; jeśli `q < S`: `wKomSloty[h·S+q] = i`. Mnożenia na `i32` / `u32` z zawijaniem (`bitcast` z ujemnych). Zm.: maks. 23 w komórce. **S = 24, jedno miejsce: `PARAMETRY.slotyKomorki`, GPU i wzorzec Node.** To kolejność na atomiku jest wyścigiem: przy S = 16 GPU odrzuca inne wstawienia niż Node (117–135 odrzuconych na miliony, zm.) i rozjeżdża się z Node ponad poziom zaokrągleń, a od S = 20 zgadza się z Node (zm. `.tmp/woksele-demo/spr-P1/wyscig-sloty.txt`). Wzorzec `model-spec4` liczył przy 16: skróty bit w bit dostają `slotyKomorki: 16` jawnie (`tests/helpers/wokseleBiegi.mjs`), a wynik „po” w teście jednego podkroku liczy się na stronie przy S = 24 z migawki „przed”, § 8. Pamięć +2,1 MB.
 - `kLista` (n): dla żywego, 27 komórek; `ile = min(wKomLicz[h].toVar(), 16)` (`toReadOnly`, nie atomik), kandydat j ≠ i, **najpierw** `|Δx|² < zasięg²`, potem `floor(x_j·iKom)` równe (a+da, b+db, c+dc) (zm. odrzuca około 80% kandydatów przed trzema floor), jeśli ta sama grupa i `ijk` różnią się najwyżej o 1 i `lut[...] ≥ 0` i bit żywy w `wMaska[i]`: pomiń; jeśli `l < 32`: zapis. Zm. maks. 27 kontaktów na węzeł, 0 przepełnień, do 100 tys. par w gruzie. Kandydaci 1,86–2,7 mln na klatkę, więc kLista nie jest pomijalna wobec kF (stosunek L/F zm. 0,41 stoi, 0,93–0,95 hałda, `krytyk-gpu/koszt-S2.json`).
 
 Martwe węzły nie wchodzą do siatki. Węzeł, który umarł, wypada z wiązań w `kCzysc`, a z kontaktów przez `pj.w < 0`.
@@ -378,14 +408,16 @@ Martwe węzły nie wchodzą do siatki. Węzeł, który umarł, wypada z wiązań
 
 Usuwanie węzłów na GPU, bez CPU w pętli. Cudzych zapisów nie ma, a pseudokod F nie zna zdarzeń: w klatce zdarzenia idą osobne przebiegi. Oznaczenia w polu S: **2 = rozerwany, traci wszystkie wiązania; 3 = rozerwany, zostawia wiązania wewnątrz ziarna**.
 
-- `kCzas` (n): `t = wCzasU[i]`; dla `0 < t ≤ uT`: usunięcie: `wWez[3i].w = −1`, prędkość 0, `S = 1`, zapis jak w `usun`. Dla `−uT ≤ t < 0`: rozerwanie: węzeł żyje i niesie pęd, `S = 2` albo `3` wg uniformu sceny. `wCzasU[i] = 1e30` po wykonaniu. Emisja przyczyny: § 4.8. To scenariusz S1, S2, S4. Jeden `uT` na klatkę.
+- `kCzas` (n): `t = wCzasU[i]`; dla `0 < t ≤ uT`: usunięcie: `wWez[3i].w = −1`, prędkość 0, `S = 1`, zapis jak w `usun`. Dla `−uT ≤ t < 0`: rozerwanie: węzeł żyje i niesie pęd, `S = 2` albo `3` wg bitu 16 flagi. `wCzasU[i] = 1e30` po wykonaniu. Emisja przyczyny: § 4.8. To scenariusz S1, S2, S4. Jeden `uT` na klatkę: `uT = f + 1`, czas w klatkach, a nie w sekundach, bo przy t = 14 s sekundy f32 gubią przydział do klatki. Dispatch tylko w klatkach z planu (tablica policzona raz w `ustawPlan`), bez CPU po węzłach w kroku.
+- Plan sceny: `solver.ustawPlan(planGpu(plan))`, potem `solver.krok`. Dane: `czasy` (węzły do `wCzasU`), `pchniecia` (środek z budowy, własne t0, tau, rP, J), `kratery` (posortowane po f, środek z węzła-nosiciela, punktu albo promienia strzału, własne r, rdzeń, rS, J, tau, rP, dz), `zerujL`, `bitPas` (bit 17: reszta kuli krateru rozrywa węzeł przez S = 3). CPU pisze raz na klatkę najwyżej rzędy `uKrater` i `uBlast`. Wiele eksplozji o różnych czasach wchodzi bez nowych buforów: ponad 4 na klatkę czeka do następnej, ponad 24 pchnięcia naraz przepadają i liczy to `solver.liczniki`.
 - Strzał myszą w tej samej liście, bez czyszczenia sum:
   - `kZerujCel`, `kCel` (n): dla żywego `t = (x − o)·dir`, `d² = |x − o|² − t²`; jeśli `d² < (0,7·dx)²` i `t > 0`: `atomicMin(wLicz[2], u32(t·8))`.
-  - `kKrater` (n): `T = atomicLoad(wLicz[2]).toVar()`; brak trafienia: nic. `c = o + dir·T/8`. Dla `|x − c| < 0,4·r`: usunięcie jak w `kCzas`. Dla `0,4·r ≤ |x − c| < r`: rozerwanie `S = 2`, węzeł zostaje gruzem (`krytyk-oczy/krater2`, `fin11k`). **Bez powłoki w S**: powłoka 0,4 kładła wieżę (`krytyk-wiernosc/wyniki-mapa.txt`). Obraz brzegu: bit obrazu w `wRamaWzory`. Slot `wBlastK[uSlotK] = vec4(c, rP)`. `uJkK` pisze CPU przez `tau`, potem 0. Emisja pyłu: 3 cząstki na usunięty węzeł.
+  - `kKraterCel` (4 wywołania, tylko `uKraterN`): środek rzędu do `wBlastK[slot]`. Strzał: `c = o + dir·T/8`, brak trafienia gasi slot. Nosiciel: pozycja węzła, martwy gasi slot. Osobny kernel przed `kKrater`, bo nosiciel leży w swojej kuli i ginie w `kKrater`, więc jego `w < 0` nie może być czytane w tym samym przebiegu.
+  - `kKrater` (n): po rzędach z żywym slotem: `|x − c| < rdzeń`: usunięcie jak w `kCzas`. `rdzeń ≤ |x − c| < rS`: rozerwanie `S = 2`, węzeł zostaje gruzem (`krytyk-oczy/krater2`, `fin11k`). Dalej do `r`: `S = 3`, tylko z bitem 17. Strzał: rdzeń 0,4 r, rS = r. **Bez powłoki w S**: powłoka 0,4 kładła wieżę (`krytyk-wiernosc/wyniki-mapa.txt`). Obraz brzegu: bit obrazu w `wRamaWzory`. CPU pisze rząd `uBlast` ze slotem przez `tau`. Emisja pyłu: 3 cząstki na usunięty węzeł (P4).
 - `kCzysc` (n, tylko w klatce zdarzenia): dla żywego i dla każdego bitu d w `wMaska[i]`: wyczyść, gdy `wWez[3j].w < 0` albo `S[j] = 2` albo `S[i] = 2` albo (`S[j] = 3` lub `S[i] = 3`) i `kl < 6`. Zapis do `wMaska[n+i]`, kopia do `[i]` w następnym dispatchu razem z S.
 - `kCzyscS` (n): `wMaska[i] = wMaska[n+i]`, `S = min(S, 1)`. Zm.: `krytyk-wiernosc/zdrowie2.mjs`, S4 t = 4 i S2 t = 3: bit w bit z Node, pozycje różne 0, także przy powtórzeniu (`proby4/log-zdrowie2.txt`). Poprzednia wersja ze znacznikiem S = 2 wewnątrz F dawała inny wynik: 37% więcej poszarpanych węzłów przy S4, a progi § 8 tego nie widziały.
-- Pchnięcie, w klatkach z aktywnym slotem (Node: `pchniecia`, linia 651, wynik w § 10.6). Kop rozłożony na `tau`: `Jk = J/(tau·60)` na klatkę, bo natychmiastowy rozrywa to, co miał pchać. Przed sumami `kZerujWybuch` zeruje `wLicz[3..18]` (nie przez zapis z CPU, który skasowałby głowice):
-  - `kWybuchSuma` (n): dla żywego i nie `stoi`: `dv = Σ_b Jk_b·(1 − r/rP_b)·r̂` po 16 slotach, trafiony przy `r < rP` któregoś. Stały przecinek z **zaokrągleniem**: `q = i32(round(dv·64))`, `atomicAdd(wLicz[3..5], u32(q))`, liczba trafionych, `round(x)` do sumy pozycji.
+- Pchnięcie, w klatkach z aktywnym slotem (Node: `pchniecia`, linia 651, wynik w § 10.6). Kop rozłożony na `tau`: `Jk = J/(tau·60)` na klatkę, bo natychmiastowy rozrywa to, co miał pchać. Przed sumami `kZerujWybuch` zeruje `wLicz[3..19]` (nie przez zapis z CPU, który skasowałby głowice):
+  - `kWybuchSuma` (n): dla żywego i nie `stoi`: `dv = Σ_b Jk_b·(1 − r/rP_b)·r̂` po `uBlastN` rzędach, trafiony przy `r < rP` któregoś. Stały przecinek z **zaokrągleniem**: `q = i32(round(dv·64))`, `atomicAdd(wLicz[3..5], u32(q))`, liczba trafionych, `round(x)` do sumy pozycji, `atomicMax(wLicz[19], |dv|·64)`. `q` zostaje w `wWez[3i+2]` (w = 1: trafiony), więc kolejne kernele nie liczą `dv` drugi raz, a `kF` nadpisze to pole przed `kI`.
   - `kWybuchMoment` (n): ten sam zbiór, względem środka s: `L = Σ (x − s) × (q/64 − P/m)`, zapis `round(L·16)`, tensor `round(r²/16)`. Zm. zapasy w i32 (`krytyk-wiernosc/log-Fx4.txt`, m = 7197): dv × 64 533 712, pozycja 5 026 335, L × 16 2 080 070, tensor 22,7 mln.
   - `kWybuch` (n): `ω = I⁻¹·L`; `v += q/64 − P/m − ω × (x − s)`, **to samo q**, nie surowe dv. Dla `m < 64`: `ω = 0`. Osłona `|det| > 1e−3·(tr I / 3)³`, wynik `|ω × (x − s)|` obcięty do największego `|dv|` zbioru (zm. bez tego: 5 węzłów w linii 10 303 j./s, `krytyk-wiernosc/tensor.mjs`).
   - Zm. S4: |P|/N obcinanie 0,1221 j./s, round 0,0007, round z dv po kwantyzacji 0,0001 (`log-Fx1`, `Fx3`, `Fx4`).
@@ -736,7 +768,9 @@ Referencja: `dema/woksele-zawalenia/wzorzec-cpu.js` (kopia `proby4/model-spec4.m
 
 **Krok obowiązkowy przed progami: jeden podkrok z migawki.** `__wok.wgraj(stan)` z migawki Node (S1 t = 3,5 i t = 5, S3 po kontakcie, S4 t = 3, S2 t = 3), jeden przebieg kLista + kF i porównanie węzeł po węźle: maski 0 różnic, S, A, L, D do 1e−3, |Δa| do 5, NaN w żadnym polu (§ 1.6). Zm. f32 kontra f64: |Δa| maks. 2,94 (t = 3,5), 1,51 (t = 5), maski różne 0, S, A, L, D różne 0, a każda mutacja wykryta: fala A różne 10 762, para |Δa| p99 281, lepkość p99 132, zlomB 42 maski, wypiek 90° F0 w 10 wiązaniach, kontakt S w 2 węzłach, szok S w 26, rozlew S w 5406, kruszenie L w 5036 (`krytyk-wiernosc/krok1.mjs`; czego sterownik doda przez FMA, nie sprawdzone). Progi chaotyczne niżej przepuszczają brak fali, `zlomB`, `kontaktSzok` i pary (zm. `krytyk-wiernosc/log-M*.txt`), więc są ostatnią kontrolą, a nie dowodem wierności. Ten sam test dla `falaPeka`: maski z mutacją wyłączenia muszą się różnić (zm. na kodzie końcowym przy S1 t = 3,5, S2 t = 3, S3 t = 0,8; przy S1 t = 5 nie, § 1.6).
 
-**Zaokrąglenie przy progu, poprawka P1 (§ 1.7).** Liczby progów bez zmian, ale wynik f64 nie jest osiągalny dla żadnego kernela f32, gdy siła leży o ułamek ulp od progu. Dlatego harness liczy trzy porównania tymi samymi progami: GPU − Node f64, GPU − Node f32 (`wzorzecF32.js`: każde działanie przez `Math.fround`, kolejność kernela) i Node f32 − f64. Różnica względem f64 nie oblewa wyłącznie wtedy, gdy spełnione są naraz: GPU − Node f32 zalicza, Node f32 − f64 nie zalicza, a każde wiązanie z różnicą L lub D ma w Node f32 tę samą wartość co na GPU. Każda inna różnica oblewa, a liczba przebiegów zaliczonych wprost względem f64 zostaje w wyniku.
+**Zaokrąglenie przy progu, poprawka P1 (§ 1.7).** Liczby progów bez zmian, ale wynik f64 nie jest osiągalny dla żadnego kernela f32, gdy siła leży o ułamek ulp od progu. Dlatego harness liczy trzy porównania tymi samymi progami: GPU − Node f64, GPU − Node f32 (`wzorzecF32.js`: każde działanie przez `Math.fround`, kolejność kernela) i Node f32 − f64. Różnica względem f64 nie oblewa wyłącznie wtedy, gdy spełnione są naraz: GPU − Node f32 zalicza, Node f32 − f64 nie zalicza, a każde wiązanie z różnicą L lub D ma w Node f32 tę samą wartość co na GPU. Każda inna różnica oblewa, a liczba przebiegów zaliczonych wprost względem f64 zostaje w wyniku. Reguła obejmuje też F0 (do 1, siła), bo od P2 F0 wchodzi do zaliczenia. Lista kontaktów bez przepełnionej komórki ma być identyczna.
+
+**Poprawka P2 (§ 1.8).** Wynik „po” liczy `WzorzecCpu` na stronie przy S = 24 z migawki „przed”: migawki P0 policzono przy S = 16, a stan „przed” to tylko punkt na trajektorii. `krokZWzorcem`: 8 całych kroków z migawek S1 t = 3,5, S3 t = 2,95, S4 t = 3: 0 różnych masek, a lista różna tylko na granicy zasięgu (pozycje f32 i f64 różnią się już o `dxMax`) albo przy przepełnionej komórce.
 
 Progi chaotyczne, z obserwowanego rozrzutu (ziarno 7 / 21, `proby4/log-R7.txt`, `log-R21.txt`, `log-Q21.txt`, `logG4-*.txt`; wiersze S3 przy gProj = 400 z `.tmp/woksele-demo/migawki/linie-S3.txt`, `linie-S3z21.txt`, § 1.6):
 
@@ -766,7 +800,7 @@ Progi chaotyczne, z obserwowanego rozrzutu (ziarno 7 / 21, `proby4/log-R7.txt`, 
 | Równoważność: swobodny spadek g = 400 względem próżni | te same prędkości co do 0,1 j./s, największe kawałki 92,6% i 99,5% (`logG4-sw.txt`), mediana odchyłki węzła 0,25 j. (`log7-G8c.txt`) | ≤ 2 j. (S4 przy `g: 400`, bez gruntu i kotwic, odjąć spadek) |
 | Rampa g 400 → 0, stojąca wieża, koniec v_max | 0,07 j./s | ≤ 1 j./s |
 | NaN, symetria masek | 0 / 0 | 0 |
-| Odrzucone wstawienia do komórki (licznik w `wLicz`) | zm. S2 142, S4 778 (`tabela-8.txt`) | ≤ 3 × Node. Przepełnienia listy M = 32: zm. 0, M = 20: 283 bez skutku, więc wiersza nie ma |
+| Odrzucone wstawienia do komórki (z pozycji co 15 klatek, licznika w `wLicz` nie ma) | zm. S2 142, S4 778 przy S = 16 (`tabela-8.txt`) | ≤ 3 × Node. Przepełnienia listy M = 32: zm. 0, M = 20: 283 bez skutku, więc wiersza nie ma |
 
 Rozjazd w kierunku „sztywniej” albo „sucho” to błąd portu, nie wariant: szukać w kolejności gałęzi § 2.11. Kolejny krok portu nie startuje, dopóki ten test nie przechodzi. Test równoważności łapie każdą pozostałą zależność od prędkości bezwzględnej.
 
@@ -1026,7 +1060,7 @@ Od najbardziej ryzykownego. Każdy pakiet kończy się commitem, a bez zaliczone
 | **P7 Poprawki po K3** | jw. | Lista bez „nie” w [!] albo zapisana jawnie niemożliwa | Ta sama lista, ten sam agent, nowy kontekst | P8 |
 | **P8 Pokaz użytkownikowi** | Reguła obszaru, wpis w planie, zrzuty | Demo, krótka lista, co zostało nierozwiązane, liczby Z4 | Tylko ocena użytkownika | — |
 
-**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu. P1 zrobione 2026-11-05, § 1.7: punkt G1 przeszedł (S3 najwyżej 0,414 ms/krok wobec progu 8 ms).
+**Stan:** P0 zrobione 2026-11-05, poprawki po sprawdzianie tego samego dnia, § 1.6; z wiersza P0 została tylko ocena sekwencji przez agenta bez kontekstu. P1 zrobione 2026-11-05, § 1.7: punkt G1 przeszedł (S3 najwyżej 0,414 ms/krok wobec progu 8 ms). P2 zrobione 2026-11-05, § 1.8: warunek porażki 2 nie zachodzi.
 
 **Punkty oceny:** K1 po P3, K2 po P4, K3 po P5. Żaden kadr nie idzie do użytkownika przed K3.
 
