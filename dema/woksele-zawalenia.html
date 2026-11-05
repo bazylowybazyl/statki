@@ -8,14 +8,14 @@
 <style>
   html, body { margin: 0; height: 100%; background: #05070a; color: #aeb6bd; font: 12px/1.4 "Segoe UI", system-ui, sans-serif; overflow: hidden; }
   #kanwa { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh; }
-  #panel { position: fixed; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 8px; background: rgba(8, 11, 15, 0.55); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 4px; user-select: none; }
+  #panel { position: fixed; z-index: 2; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 8px; background: rgba(8, 11, 15, 0.55); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 4px; user-select: none; }
   #panel[hidden] { display: none; }
   #panel .grupa { display: flex; flex-wrap: wrap; gap: 4px; max-width: 216px; }
   #panel button { font: inherit; color: #c8d0d6; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 3px; padding: 3px 7px; cursor: pointer; }
   #panel button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
   #panel button:disabled { color: #566068; cursor: default; }
   #panel button.wl { background: rgba(196, 180, 150, 0.28); border-color: rgba(196, 180, 150, 0.5); color: #efe9de; }
-  #licznik { position: fixed; left: 10px; bottom: 8px; color: #8d979f; font-variant-numeric: tabular-nums; }
+  #licznik { position: fixed; z-index: 2; left: 10px; bottom: 8px; color: #8d979f; font-variant-numeric: tabular-nums; }
   #licznik[hidden] { display: none; }
 </style>
 </head>

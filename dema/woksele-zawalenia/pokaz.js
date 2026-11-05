@@ -54,7 +54,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 20, 700000);
   camera.up.set(0, 0, 1);
 
-  const obraz = createWokseleObraz({ solver, camera });
+  const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film' });
   const sterowanie = new OrbitControls(camera, kanwa);
   sterowanie.enableDamping = true;
   sterowanie.dampingFactor = 0.12;
@@ -66,6 +66,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const stan = { scena: null, krok: 0, pauza: false, tempo: 1, akum: 0, kroczyc: true, msKlatki: 0, ostatnia: 0, licznik: false, pierwszyKrok: false };
 
   function krokSceny() {
+    if (stan.krok >= stan.pelnyOd) { obraz.pelnyObraz(true); stan.pelnyOd = Infinity; }
     solver.krok(renderer);
     if (stan.pierwszyKrok) { obraz.krokBezLimitu(renderer); stan.pierwszyKrok = false; } else obraz.krok(renderer);
     stan.krok++;
@@ -96,6 +97,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     stan.scena = id;
     stan.krok = 0;
     stan.akum = 0;
+    stan.pelnyOd = Number.isFinite(plan.zdarzeniaOd) ? Math.max(0, Math.floor(plan.zdarzeniaOd * 60) - 1) : 0;
     if (pomin) for (let k = 0; k < opis.pomin; k++) krokSceny();
     if (kamera) ustawKamere(camera, sterowanie, opis.kamera);
     zaznacz();
@@ -111,6 +113,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     ustawScene(nazwa.split('_')[0]);
     solver.wgraj({ ...m.przed, skG: m.skG, sFr: m.sFr, kotwiceWiezy: m.kotwiceWiezy, budowa: m.budowa });
     obraz.krokBezLimitu(renderer);
+    obraz.pelnyObraz(true);
+    stan.pelnyOd = Infinity;
     stan.krok = Math.round(Number(nazwa.split('_t')[1]) * 60);
   }
 
@@ -188,7 +192,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       if (stan.akum >= H) stan.akum = H * 0.999; // reszta przepada
     }
     sterowanie.update();
-    obraz.rysuj(renderer, camera, stan.akum);
+    if (stan.rysowac !== false) obraz.rysuj(renderer, camera, stan.akum);
     stan.msKlatki = dtMs;
     if (stan.licznik) {
       srednia += dtMs; klatek++;
@@ -224,6 +228,44 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
         return { krok: stan.krok };
       },
       kamera(k) { ustawKamere(camera, sterowanie, k); },
+      panel(wid) { panel.hidden = !wid; },
+      /** Harness: czas pełnej klatki w ściśle zamkniętej pętli (krok, obraz, rysunek, czekanie na GPU), n klatek od stanu bieżącego. */
+      async diag() {
+        stan.kroczyc = false;
+        stan.rysowac = false;
+        const czekaj = () => new Promise((ok) => setTimeout(ok, 400));
+        await czekaj();
+        await device.queue.onSubmittedWorkDone();
+        const wy = {};
+        wy.pusto = await wok.pokaz.zmierzKlatki(10, false, false);
+        wy.krok = await wok.pokaz.zmierzKlatki(10, true, false);
+        wy.rysunek = await wok.pokaz.zmierzKlatki(10, false, true);
+        const sc = obraz.mesh.geometry.instanceCount;
+        obraz.mesh.geometry.instanceCount = 2;
+        wy.bezBrylGlownych = await wok.pokaz.zmierzKlatki(10, false, true);
+        obraz.mesh.geometry.instanceCount = sc;
+        const au = obraz.sun.shadow.autoUpdate;
+        obraz.sun.shadow.autoUpdate = false;
+        wy.bezOdswCienia = await wok.pokaz.zmierzKlatki(10, false, true);
+        obraz.sun.shadow.autoUpdate = au;
+        stan.rysowac = true;
+        return wy;
+      },
+      async zmierzKlatki(n = 60, zKrokiem = true, rysunek = true) {
+        stan.kroczyc = false;
+        const t = [], c = [];
+        for (let k = 0; k < n; k++) {
+          const t0 = performance.now();
+          if (zKrokiem) krokSceny();
+          if (rysunek) obraz.rysuj(renderer, camera, 0);
+          c.push(performance.now() - t0);
+          await device.queue.onSubmittedWorkDone();
+          t.push(performance.now() - t0);
+        }
+        t.sort((a, b) => a - b);
+        c.sort((a, b) => a - b);
+        return { n, p50: t[n >> 1], p95: t[Math.floor(n * 0.95)], maks: t[n - 1], cpuP50: c[n >> 1], w: renderer.domElement.width, h: renderer.domElement.height, rysunki: renderer.info.render.drawCalls };
+      },
       bezZegara(b = true) { stan.kroczyc = !b; },
     },
   });

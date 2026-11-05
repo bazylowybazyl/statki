@@ -66,7 +66,7 @@ function zapiszWzory(wy, baza) {
   }
 }
 
-export function createWokseleObraz({ solver, camera }) {
+export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const MAX = solver.maxNodes;
   const A = solver.atrybuty;
   const { uN, uGStala, uSkG, uGruntZ } = solver.uniformy;
@@ -438,22 +438,54 @@ export function createWokseleObraz({ solver, camera }) {
     return K.mul(nz.mul(0.16).add(0.92));
   };
 
-  // ── Okluzja ── Przebieg głębi w połowie rozdzielczości (najwyżej 2560 szerokości), tylko bryły, jak w rysunku wzorcowym: grunt nie zaciemnia i nie jest zaciemniany.
+  // ── Okluzja ── Przebieg głębi około 720 wierszy (najwyżej 2560 szerokości), tylko bryły, jak w rysunku wzorcowym: grunt nie zaciemnia i nie jest zaciemniany.
+  // Domyślnie okluzja jak w filmie (rys4.mjs:201–221): 16 próbek w dwóch promieniach, promień z 14 j. w px, okno głębi 2–60 j. Bez szumu, więc bez odszumiania. ?ao=gtao: GTAONode z § 4.3.
   const rtGleb = new THREE.RenderTarget(2, 2, { depthBuffer: true, format: THREE.RedFormat, type: THREE.UnsignedByteType, depthTexture: new THREE.DepthTexture(2, 2) });
   rtGleb.texture.generateMipmaps = false;
   const glebNode = texture(rtGleb.depthTexture, vec2(0));
-  const aoN = gtao(glebNode, null, camera);
-  aoN.resolutionScale = 0.5;
-  aoN.radius.value = 26;
-  aoN.thickness.value = 70;
-  aoN.distanceExponent.value = 1.3;
-  aoN.scale.value = 1.25;
-  aoN.samples.value = 16;
-  const aoTex = aoN.getTextureNode();
+  const uAoTexel = uniform(new THREE.Vector2(1 / 960, 1 / 540)).setName('uAoTexel');
+  const uAoFp = uniform(1).setName('uAoFp');
+  const uAoMin = uniform(2).setName('uAoMin');
+  const uAoMax = uniform(24).setName('uAoMax');
+  const uNear = uniform(camera.near).setName('uObrNear');
+  const uFar = uniform(camera.far).setName('uObrFar');
+  const liniowa = (d) => uNear.mul(uFar).div(uFar.sub(d.mul(uFar.sub(uNear))));
+  let aoN = null;
+  let aoTex = null;
+  const rtSsao = new THREE.RenderTarget(2, 2, { depthBuffer: false, format: THREE.RedFormat, type: THREE.UnsignedByteType });
+  rtSsao.texture.generateMipmaps = false;
+  const matSsao = new THREE.NodeMaterial();
+  matSsao.name = 'WokSsao';
+  matSsao.fragmentNode = Fn(() => {
+    const u = vec2(0).toVar();
+    u.assign(uv());
+    const zc = fv(liniowa(glebNode.sample(u).x));
+    const rp = fv(clamp(uAoFp.mul(14).div(zc), uAoMin, uAoMax));
+    const okl = fv(0);
+    const K = 0.7071;
+    for (const [px, py] of [[1, 0], [K, K], [0, 1], [-K, K], [-1, 0], [-K, -K], [0, -1], [K, -K]]) for (const sk of [0.45, 1]) {
+      const s = vec2(0).toVar();
+      s.assign(u.add(vec2(px * sk, py * sk).mul(rp).mul(uAoTexel)));
+      const dz = fv(zc.sub(liniowa(glebNode.sample(s).x)));
+      okl.addAssign(step(2, dz).mul(step(dz, 60)));
+    }
+    const a = fv(float(1).sub(min(okl.div(11), 1).mul(0.6)));
+    return vec4(a, a, a, 1);
+  })();
+  const kwadSsao = new THREE.QuadMesh(matSsao);
+  if (aoTryb === 'gtao') {
+    aoN = gtao(glebNode, null, camera);
+    aoN.resolutionScale = 0.5;
+    aoN.radius.value = 26;
+    aoN.thickness.value = 70;
+    aoN.distanceExponent.value = 1.3;
+    aoN.scale.value = 1.25;
+    aoN.samples.value = 16;
+    aoTex = aoN.getTextureNode();
+  }
 
   // Sześć próbek krzyżem wygładza wzór szumu GTAO (kwadrat magiczny 5 × 5) bez osobnego przebiegu. Rozmiar tekstury AO w uniformie: zmiana okna nie zmienia grafu.
-  const uAoTexel = uniform(new THREE.Vector2(1 / 960, 1 / 540)).setName('uAoTexel');
-  const aoCzytaj = Fn(() => {
+  const aoCzytaj = aoTryb !== 'gtao' ? Fn(() => texture(rtSsao.texture, screenUV).r) : Fn(() => {
     const u = vec2(screenUV).toVar();
     const a = float(0).toVar();
     a.addAssign(texture(aoTex, u).r.mul(2));
@@ -595,16 +627,21 @@ export function createWokseleObraz({ solver, camera }) {
   function ustawRozmiar(renderer, w, h) {
     if (w === szer && h === wys) return;
     szer = w; wys = h;
-    const skala = Math.min(0.5, 2560 / w);
+    const skala = Math.min(1, 720 / h, 2560 / w);
     const hw = Math.max(2, Math.round(w * skala)), hh = Math.max(2, Math.round(h * skala));
-    aoN.resolutionScale = skala;
+    if (aoN) aoN.resolutionScale = skala;
     uAoTexel.value.set(1 / hw, 1 / hh);
+    uAoFp.value = (hh / 2) / Math.tan((camera.fov * Math.PI) / 360);
+    uAoMin.value = (2 * hh) / 720;
+    uAoMax.value = (24 * hh) / 720;
+    rtSsao.setSize(hw, hh);
+    rtSsao.texture.needsUpdate = true;
     rtHdr.setSize(w, h);
     rtGleb.setSize(hw, hh);
     rtHdr.texture.needsUpdate = true;
     rtGleb.texture.needsUpdate = true;
     rtGleb.depthTexture.needsUpdate = true;
-    if (renderer.initRenderTarget) { renderer.initRenderTarget(rtHdr); renderer.initRenderTarget(rtGleb); }
+    if (renderer.initRenderTarget) { renderer.initRenderTarget(rtHdr); renderer.initRenderTarget(rtGleb); renderer.initRenderTarget(rtSsao); }
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
@@ -634,13 +671,19 @@ export function createWokseleObraz({ solver, camera }) {
     aLicz.needsUpdate = true;
     kObraz.setCount(n);
     uDx.value = w.dx;
-    geo.instanceCount = 7 * n;
-    geoGleb.instanceCount = 7 * n;
+    pelnyObraz(false);
     const maGrunt = w.gruntZ > -1e20;
     grunt.visible = maGrunt;
     grunt.position.z = maGrunt ? w.gruntZ : 0;
     grunt.updateMatrixWorld();
     uGruntWid.value = maGrunt ? 1 : 0;
+  }
+
+  /** Stojąca wieża rysuje tylko sloty bloków: n wywołań zamiast 7n, bez nowego rysunku i pipeline'u (§ 4). */
+  function pelnyObraz(pelny) {
+    const c = (pelny ? 7 : 1) * Math.max(n, 2);
+    geo.instanceCount = c;
+    geoGleb.instanceCount = c;
   }
 
   /** Cień: środek i zakres na scenę (§ 4.3). Zmiana wartości, bez nowego pipeline'u. */
@@ -688,17 +731,18 @@ export function createWokseleObraz({ solver, camera }) {
     };
     // Mapa cienia three tworzy leniwie przy pierwszym rysunku odbiorcy, więc rozgrzewka passa cienia idzie po przebudowie węzłów cienia, niżej.
     // AGENT: compileAsync woła updateBefore węzłów materiału (pułapka 31). GTAO renderowałby wtedy swój kwad synchronicznie, więc na czas kompilacji updateBefore jest wyłączone metodą, nie typem: typ zostaje w stanie budowy.
-    const ubAo = aoN.updateBefore;
-    aoN.updateBefore = () => {};
+    const ubAo = aoN ? aoN.updateBefore : null;
+    if (aoN) aoN.updateBefore = () => {};
     try {
       await cel(rtGleb, sceneGleb, camera);
+      await cel(rtSsao, kwadSsao, kwadSsao.camera);
       await cel(rtHdr, scene, camera);
-      if (aoN._material) {
+      if (aoN?._material) {
         const kwad = new THREE.QuadMesh(aoN._material);
         await cel(aoN._aoRenderTarget, kwad, kwad.camera);
       }
     } finally {
-      aoN.updateBefore = ubAo;
+      if (aoN) aoN.updateBefore = ubAo;
     }
     await cel(null, wyj, wyj.camera);
   }
@@ -709,6 +753,10 @@ export function createWokseleObraz({ solver, camera }) {
     const clearC = renderer.getClearColor(_kolor), clearA = renderer.getClearAlpha();
     renderer.setRenderTarget(rtGleb);
     renderer.render(sceneGleb, cam);
+    if (!aoN) {
+      renderer.setRenderTarget(rtSsao);
+      kwadSsao.render(renderer);
+    }
     renderer.setRenderTarget(rtHdr);
     renderer.setClearColor(TLO, 1);
     renderer.clear();
@@ -721,7 +769,7 @@ export function createWokseleObraz({ solver, camera }) {
   return {
     kernele, listaObrazu, scene, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, aoN, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki },
     uniformy: { uTau, uDx, uLimD, uDt },
-    wczytaj, ustawCien, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
+    wczytaj, pelnyObraz, ustawCien, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
     get n() { return n; },
   };
 }
