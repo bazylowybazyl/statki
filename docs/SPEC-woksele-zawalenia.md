@@ -891,6 +891,15 @@ Node (`bieg.mjs` + `ocena.mjs`, parametry domyślne `scena5.mjs`):
 | 42 | 25,7° / 2,22 / 2,33 | 0,038 / 0,649 / 0,263 | 3,67 / 4,3 / 4,3 (0,377) | 0,116 / 1,98 / 64,9 / 86,1 / 74,9 / 264 / 0,171 | 0,759 / 28 / 0,18 |
 | 3 | 25,7° / 2,17 / 2,59 | 0,042 / 0,637 / 0,279 | 3,68 / 3,9 / 7,33 (0,992) | 0,069 / 2,42 / 70,3 / 99,1 / 74 / 342,5 / 0,138 | 0,827 / 30 / 0,24 |
 
+GPU (RTX 5080, ten sam plan i te same bajty budowy, kolumny jak wyżej, K4 do t = 14):
+
+| Ziarno | Styk: kąt / oś otworu przy przejściu szczytu / t = 3,6 | K2 t = 12: największy / 64+ / 1–7 | K3: wieża / 64+ / 512+ (udział wieży na gruncie) | K4 t ≥ 10: ΔP/N / środek masy / mediana po masie / bez wag / po węzłach / maks 8+ / największy | Próżnia: czystość / liczba 64+ / odcinek wieży |
+|---|---|---|---|---|---|
+| 7 | 25,7° / 1,98 / 2,37 | 0,051 / 0,669 / 0,254 | 3,75 / 4,03 / 4,77 (0,956) | 0,077 / 2,53 / 67,8 / 80,4 / 68,2 / 312,9 / 0,135 | 0,858 / 35 / 0,20 |
+| 21 | 25,7° / 1,86 / 2,48 | 0,049 / 0,64 / 0,283 | 3,83 / 3,9 / 4 (0,104) | 0,079 / 2,38 / 74,4 / 116,1 / 86,1 / 288,1 / 0,114 | 0,801 / 33 / 0,22 |
+
+GPU: 0 NaN, 0 asymetrii masek, 0 błędów GPU. K6: 38 eksplozji, 2 na klatkę, 3 pchnięcia równocześnie, 0 pominiętych. S5 planeta na GPU (ziarna 7, 21): największy 0,05 / 0,048, 64+ 0,649 / 0,59, 1–7 0,283 / 0,311, kotwice puszczają w klatce 280 / 273.
+
 Node: 0 NaN, 0 błędów maski, 0 błędów L. Kontrola w próżni bez styku i bez eksplozji, ziarno 7, 6 s: 0 zerwanych wiązań. S5 planeta w Node (ziarna 7, 1, 21): największy 0,05 / 0,041 / 0,048, 64+ 0,661 / 0,537 / 0,589, 1–7 0,267 / 0,346 / 0,316. Zapasy, które chaos może przesunąć: drobnica 1–7 przy g do 0,308, mediana K4 po masie do 77,2, `64+` w próżni 28 przy celu 28 na ziarnie 42.
 
 ### Kolejność pracy nad demem

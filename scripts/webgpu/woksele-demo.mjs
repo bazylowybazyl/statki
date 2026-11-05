@@ -556,7 +556,7 @@ try {
       const ok6 = k6.eksplozjePlan <= 40 && k6.maxNaKlatke <= 4 && k6.pominietePchniecia === 0;
       pisz(`K6 ${ok6 ? 'OK ' : 'NIE'} plan ${k6.eksplozjePlan}, wykonane ${k6.wykonane}, na klatkę ${k6.maxNaKlatke}, pchnięć równocześnie ${k6.maxRownoczesnie}, pominięte pchnięcia ${k6.pominietePchniecia}, t ${k6.tPierwsza}..${k6.tOstatnia}${k6.puscKotwiceF >= 0 ? `, kotwice puszczają f = ${k6.puscKotwiceF}` : ''}`);
       if (!ok6) zapas.push('K6');
-      pisz(`przebieg: ${r.hist.map((h) => `t=${h.t}: ${h.najw}/${h.b64}/${h.b1_7}/${h.ile64}/${h.pod500}`).join('  ')} (największy/64+/1–7/ile 64+/pod 500)`);
+      pisz(`przebieg: ${r.hist.map((h) => `t=${h.t}: ${h.najw}/${h.b64}/${h.b1_7}/${h.ile64}/${h.pod500}/${h.medMasa}`).join('  ')} (największy/64+/1–7/ile 64+/pod 500/mediana prędkości po masie)`);
       if (zapas.length && !args.bezProgow) porazka(`S5 ${miejsce} ziarno ${ziarno}: ${zapas.join(', ')}`);
     }
     const plikS5 = resolve(repo, String(args.plikS5 || join(wyDir, 'S5-liczby.txt')));

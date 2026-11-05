@@ -270,9 +270,10 @@ export function createTestS5({ renderer, solver, wok }) {
           let c = 0, nad = 0;
           for (let i = nW; i < nW + nD; i++) if (m.aktywny[i]) { c++; if (m.pos[3 * i + 2] < pos0[3 * i + 2] - 500) nad++; }
           const os = osWiezy(m, dane);
-          hist.push({ t, th: os ? +os.kat.toFixed(1) : null, najw: r3(ka.najw / nD), b64: r3(ka.b64 / nD), b1_7: r3(ka.b1_7 / nD), ile64: ka.ile64, kot: r3(ka.kot / nD), pod500: c ? r3(nad / c) : 0 });
+          const pr = predkosci(m, dane, ka);
+          // medMasa w locie to miara rozjazdu płyt: czy dysk jest już kawałkami, czy jedną spękaną płytą (§ 5.5, znana słabość).
+          hist.push({ t, th: os ? +os.kat.toFixed(1) : null, najw: r3(ka.najw / nD), b64: r3(ka.b64 / nD), b1_7: r3(ka.b1_7 / nD), ile64: ka.ile64, kot: r3(ka.kot / nD), pod500: c ? r3(nad / c) : 0, medMasa: +pr.medMasa.toFixed(1) });
           if (t >= 10 - 1e-9) {
-            const pr = predkosci(m, dane, ka);
             predT.push({ t, ...pr });
             for (const q of Object.keys(pr)) if (pr[q] > maxPred[q]) maxPred[q] = pr[q];
           }
