@@ -152,8 +152,7 @@ paths:
   (w dowolnym atlasie) i wolna domena podstawowa; WYBUCHY MAJĄ PIERWSZEŃSTWO — nie scalają się z domeną efektu, bez wolnej ją
   przejmują (emitery gasną), efekt nigdy nie zabiera domeny wybuchowi.
 
-- DOMENY GŁĘBOKIE (2026-10-19 — uderzenia w planetoidę pod bazą piratów, § „Baza piratów”; też wylot powietrza z dysku
-  mieszkalnego): domena pod płaszczyzną gry w passie TŁA (warstwa 1, kamera perspektywy jak skała — w passie ortho głęboki obłok
+- DOMENY GŁĘBOKIE (wylot powietrza z dysku mieszkalnego bazy piratów, § „Baza piratów”): domena pod płaszczyzną gry w passie TŁA (warstwa 1, kamera perspektywy jak skała — w passie ortho głęboki obłok
   stałby w złym miejscu): `ExplosionFx.deepDomain(x, y, z, R, opts)` (świat gry; `up`, `upShift`, `ground` — KULA-przeszkoda
   { x, y, z, r }, `carrier`, `life`, `fadeTime`, `baseDecay` ≥ −0,4, `tint`, `fire`, `tag`, `ambient`, `tier` albo progi
   `fineMinPx` / `coarseMaxPx`, `domainScale`, `minPx`, `reserve`, `inView`) → indeks globalny; emitery `director.jet / puff /
@@ -167,9 +166,9 @@ paths:
   w płaszczyźnie nie scala się z domeną głęboką (`_fitSlot`), prostokąty domen dla kadłubów jej nie mają, budżet marszu liczy ją
   z rzutem perspektywy. Koszt GPU mierz jako `Core3D.gpuFrameMs` + `Core3D.gpuComputeMs` (sam render nie obejmuje symulacji gazu).
   PUDŁO JEST PŁASKIE (wysokość = NZ / N ≈ 0,375 szerokości; obraz i symulacja gaszą gaz za ~0,9 elipsoidy wpisanej w pudło):
-  źródło wzdłuż osi z (pióropusz z uderzenia w szczyt skały) bez dopasowania wbija się w sufit — gorący słup ucięty płasko
+  źródło wzdłuż osi z bez dopasowania wbija się w sufit — gorący słup ucięty płasko
   i ciemna płyta dymu pod sufitem w kamerach 3D (2026-10-19). Prędkość strumienia dopasuj do miejsca w elipsoidzie
-  (`RockImpactFx._fitAlong / _fitSpeed`: zasięg ≈ len + v · (czas + 0,6 s) ≤ 0,8 drogi do brzegu), środek domeny trzymaj
+  (`fitAlong` w `pirateBaseVents3D.js`: zasięg ≈ len + v · (czas + 0,6 s) ≤ 0,8 drogi do brzegu), środek domeny trzymaj
   blisko punktu źródła w pionie (`upShift` małe — elipsoida najszersza w połowie wysokości), a gęstemu dymowi daj `ambient`
   (bez niego rdzeń obłoku pod słońcem z boku jest czarny).
 

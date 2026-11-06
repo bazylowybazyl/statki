@@ -242,7 +242,7 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
 - **Pułapka r183 z dema zawaleń (2026-11-04):** (42) `instancedBufferAttribute(attr)` ze zwykłym `BufferAttribute` kopiuje
   dane do WŁASNEGO `InterleavedBuffer` (`_getBufferAttribute`) — `attr.needsUpdate = true` nic potem nie wysyła i
   instancje stoją na danych z pierwszej klatki. Atrybut instancji zmieniany w biegu → `InstancedInterleavedBuffer`
-  podany do węzła wprost i `needsUpdate` (albo zakresy) na TYM buforze (wzór `dema/zawalenia-budowli/obraz.js`).
+  podany do węzła wprost i `needsUpdate` (albo zakresy) na TYM buforze.
 
 ## Rozgrzewka pipeline'ów (`Core3D.warmup`)
 

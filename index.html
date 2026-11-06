@@ -1026,15 +1026,6 @@
     const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
     window.GameBlasts = GameBlasts;
     installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
-    // Uderzenia w planetoidę pod bazą piratów (upadek bazy, 2026-10-19): kontrakt fizyki src/game/story/pirateRockImpacts.js
-    // (rockImpact / rockScrape / rockSettle → rekord ROCK_IMPACT), obraz z dekodera src/3d/pirateRockImpactFx.js — cząstki
-    // w passie tła i głębokie domeny gazu wybuchów (ExplosionFx.deepDomain). Dev: window.PirateRockImpacts (test, demo).
-    import { installPirateRockImpacts, stepPirateRockImpacts, PirateRockImpacts, rockImpact, rockScrape, rockSettle, resetPirateRockImpacts, deepBlast as pirateDeepBlast } from "./src/game/story/pirateRockImpacts.js";
-    import { pirateBasePlace } from "./src/game/story/pirateBaseWorld.js";
-    import { installRockImpactCommands } from "./src/3d/pirateRockImpactFx.js";
-    installPirateRockImpacts(RenderCommands.writer, { clock: () => SimClock.sim, place: () => pirateBasePlace() });
-    window.PirateRockImpacts = PirateRockImpacts;
-    installRockImpactCommands(RenderCommands.reader, () => shipBlastFactory?.system || null);
     // RW-22: obraz rdzenia reaktora — fasada env.fx ReactorGame pisze rekordy RX_* (src/game/reactorFxEvents.js: pęknięcia
     // i rzazy liczy gra, strumienie i kule przez id), dekoder renderu woła reżysera (src/3d/reactorBlast/reactorCommands.js).
     import { createReactorFxEvents } from "./src/game/reactorFxEvents.js";
@@ -1246,10 +1237,10 @@
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     // Upadek habitatu na planetoidę (2026-10-19): teren skały i grawitacja ku jej środkowi w silniku belek, wieża
     // przebija dysk i spada pierwsza, dysk za nią, osiadanie na skale (src/game/story/pirateBaseFall.js).
-    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, habitatFallMutesDebris, loadPirateRockShape, noteBaseWreckRest, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
+    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, stepRockDebris } from "./src/game/story/pirateBaseFall.js";
     // Powietrze budowli bazy (2026-10-19): rozszczelnienie, dekompresja, wylot powietrza i pożary — decyzje w grze
     // (src/game/story/pirateBaseAtmosphere.js), obraz wyrw src/3d/pirateBaseVents3D.js (stan klatki — blok pirateVents).
-    import { attachPirateBaseAtmosphere, detachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
+    import { attachPirateBaseAtmosphere, detachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach } from "./src/game/story/pirateBaseAtmosphere.js";
     import { createPirateVentsBlock } from "./src/render/blocks/pirateVentsBlock.js";
     import { createPirateBaseVents3D } from "./src/3d/pirateBaseVents3D.js";
     // Bitwa w głębi sceny „Wojna” (2026-10-19): tłum okrętów nad i pod płaszczyzną gry, planeta w głębi, bohaterowie —
@@ -25656,7 +25647,7 @@
               if (wh) {
                 st.lastHitX = wh.x;
                 st.lastHitY = wh.y;
-                st.lastHitChunk = wh.piece ? (wh.piece.fallOf || wh.piece.id) : null;   // pula kawałka (habitat)
+                st.lastHitChunk = wh.piece ? wh.piece.id : null;   // pula kawałka (habitat)
                 if (b.worldHitStation !== st) { b.worldHitStation = st; applyDamageToStation(st, b.damage || 0); atmoBulletHit(st, wh.x, wh.y, b, wh.entity); }
                 writeImpactHit(_impactHit, wh.entity, wh.x, wh.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'station');
                 spawnBulletImpactEffect(b, wh.x, wh.y, 1.0, _impactHit);
@@ -28097,7 +28088,7 @@
       stepPirateBaseIntegrity();
       // Szyja habitatu (src/game/story/pirateBaseNeck.js): taran zrywa kotwice szybu → głowa spada na dysk.
       stepPirateBaseNeck(dt);
-      // Upadek habitatu na planetoidę (src/game/story/pirateBaseFall.js): sekwencja po HP 0, grawitacja skały dla
+      // Planetoida pod bazą (src/game/story/pirateBaseFall.js) i zegar upadku po HP 0: grawitacja skały dla
       // odłamów, osiadanie na skale → zamrożenie.
       stepPirateBaseFall(dt);
       // Powietrze budowli bazy (src/game/story/pirateBaseAtmosphere.js): wypływ z wyrw, pożary, wyrwy jadą z ciałami.
@@ -28121,8 +28112,6 @@
         else runIntegrityPass(dynamicDestructibles);
       }
       PerfHUD.addTiming('hardpointTime', performance.now() - tPhysSection0);
-      // Uderzenia w planetoidę: zaplanowane zdarzenia testów / demo (PirateRockImpacts.demo) — bez nich nic.
-      stepPirateRockImpacts();
 
       tPhysSection0 = performance.now();
       hudUpdateNav(dt);
@@ -33446,7 +33435,7 @@
       attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
-      // Planetoida pod bazą jako teren silnika belek (odłamy i habitat spadają na skałę — pirateBaseFall.js).
+      // Planetoida pod bazą jako teren silnika belek (odłamy sprzed HP 0 spadają na skałę — pirateBaseFall.js).
       attachPirateBaseFall(place);
       // Powietrze budowli (moduły ciśnieniowe z układu): dekompresja i pożary przy wyrwach.
       attachPirateBaseAtmosphere(place);
@@ -33578,12 +33567,6 @@
       // Powietrze: pęknięcie modułu ciśnieniowego (dekompresja — wyrwa po stronie punktu, grodzie do sąsiadów puszczają);
       // wyrwa przy ciele kawałka, odłamy rozpadu przejmują ją (HullBodies.onWreckSpawned), bez ciała — dryfuje ze statyką.
       noteBaseChunkBreak(id, at, { entity: wPiece?.entity || null, drift: speed, dir: opts.dir || 'out', power });
-      // UPADEK habitatu (HP 0 — storyGame._chainExplosion, opts.fall): kawałek płaski z bryłą upadku (bęben, szyb) staje
-      // się bryłą 3D (uszkodzenia zostają), rozpada się i spada na planetoidę zamiast dryfować w płaszczyźnie
-      if (opts.fall && wPiece?.fall3d) {
-        const ol = Math.hypot(ox, oy) || 1;
-        if (promotePirateBasePiece(wPiece, { x: at.x, y: at.y, power, speed, outX: ox / ol, outY: oy / ol })) { markBaseBroken(wPiece); return true; }
-      }
       // pęknięty kawałek: jego ubytek węzłów to nie taran, nie liczy się też jako stojący (pirateBaseIntegrity.js)
       if (wPiece && worldBodies.breakPiece(wPiece, at.x, at.y, { power, speed, outX: ox, outY: oy })) { markBaseBroken(wPiece); return true; }
       return breakPirateBaseChunk(id, { speed, spin: 0.12, life: 45, dir: place.dirToHub(ox, oy) });
@@ -33595,8 +33578,7 @@
       const p = entity ? worldBodies.pieceOf(entity) : null;
       return p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:') ? p : null;
     }
-    // moduł powietrza kawałka: bryła upadku (`H-C~3d` — pirateBaseFall.js) należy do modułu swojego kawałka płaskiego
-    function atmoModuleId(p) { return p ? (p.fallOf || p.id) : null; }
+    function atmoModuleId(p) { return p ? p.id : null; }
     function atmoNodeLost(entity, hull, x, y, z) {
       const p = pirateBasePieceOf(entity);
       if (p) noteBaseNodeLost(atmoModuleId(p), entity, x, y, z, Number(hull?.body?.cellSize) || 15);
@@ -33626,8 +33608,6 @@
         const p = wreck?.beamHull?.world;
         if (p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:')) {
           rehomePirateBaseVents(wreck, parent, atmoModuleId(p));
-          // upadek habitatu: poza spoczynkowa kawałka płaskiego — jego odłamy sprzed HP 0 też spadną (pirateBaseFall.js)
-          noteBaseWreckRest(wreck, parentBody);
         }
       };
     }
@@ -33740,51 +33720,32 @@
       Object.assign(_neckCtx, { layout: place.layout, habitat: place.habitat, simTime: HullBodies.simTime });
       return snapNeck(hs.neck, hs, _neckCtx, dirX, dirY, speed);
     };
-    // UPADEK HABITATU NA PLANETOIDĘ (src/game/story/pirateBaseFall.js; prośba użytkownika 2026-10-19: „jak HP habitatu
-    // spadnie do 0, góra przebije się przez dół i jako pierwsza spadnie na planetoidę, za nią dół pociągnięty przez
-    // wieżę; w końcu wszystkie elementy spadają na planetoidę”). Teren skały (mapa kształtu — ta sama co siatka skały)
-    // i grawitacja ku jej środkowi w silniku belek od podpięcia bazy: odłamy brył (szyja, dysk) lądują na skale zamiast
-    // znikać pod dnem. HP 0 habitatu (storyGame._chainExplosion → deps.habitatFall): wieża przebija dysk (korek pod nią
-    // rozpada się na odłamy) i spada pierwsza, sektory dysku puszczają za nią, wszystko osiada i zamarza (koszt 0).
-    // Zdarzenia: uderzenie / szorowanie / osiadanie na skale (efekt uderzeń), przebicie modułu (rozszczelnienie).
+    // UPADEK HABITATU NA PLANETOIDĘ: teren skały (mapa kształtu — ta sama co siatka skały) i grawitacja ku jej środkowi
+    // w silniku belek od podpięcia bazy: odłamy brył sprzed HP 0 (szyja, dysk) lądują na skale zamiast znikać pod dnem
+    // (src/game/story/pirateBaseFall.js). HP 0 habitatu (storyGame._chainExplosion → deps.habitatFall): obraz upadku rysują
+    // woksele, a gra idzie zegarem niżej.
     let _rockShape = null, _rockShapeP = null;
     let _baseFall = createFallState();
     let _baseFallPlace = null;
     const _fallHooks = {
-      onImpact: (ev) => { rockImpact(ev); pirateFallImpactFx('impact', ev); pirateFallAtmoImpact(ev); },
-      onScrape: (ev) => { rockScrape(ev); },
-      onSettle: (ev) => { rockSettle(ev); },
-      onBreach: (ev) => pirateFallBreachFx(ev),
-      // bryła 3D zastępuje ciało płaskie kawałka / odłamu: wyrwy powietrza przechodzą na nią (jadą z nią na skałę)
-      onPromote: (solid, old, piece) => rehomePirateBaseVents(solid, old, atmoModuleId(piece)),
       onFallStart: () => {
         pushZoneMessage('HABITAT RUNĄŁ — WIEŻA PRZEBIJA DYSK I SPADA NA PLANETOIDĘ', 4.5);
         camera.addShake(20, 1.2);
       }
     };
-    const _fallCtx = { engine: null, worldBodies, site: null, layout: null, place: null, neck: null, terrain: null,
-      simTime: () => HullBodies.simTime, solids: null, hooks: _fallHooks, wrecks, shatter: null,
-      createSolid: (e, s, o) => HullBodies.createSolid(e, s, o), releaseHull: (e) => HullBodies.release(e),
-      isBaseSite: (s) => !!(s && s.structure), rnd: Math.random, tune: PIRATE_FALL_TUNE };
-    // od śmierci habitatu jego ciała giną bez odłamków — inaczej płaskie okruchy zostają w płaszczyźnie gry, gdy bryły
-    // spadają na skałę (pirateBaseFall.habitatFallMutesDebris)
-    HullBodies.debrisGate = habitatFallMutesDebris;
+    const _fallCtx = { engine: null, place: null, terrain: null, simTime: () => HullBodies.simTime, solids: null,
+      isBaseSite: (s) => !!(s && s.structure), tune: PIRATE_FALL_TUNE };
     function syncPirateFallCtx() {
       const c = _fallCtx;
       c.engine = HullBodies.engine;
       c.solids = HullBodies._solids;
-      c.shatter = (w, x, y, z, o) => HullBodies.shatterSolid(w, x, y, z, o);
-      c.site = pirateBaseSites()?.habitat || null;
       c.place = StoryGame.site?.dock || _baseFallPlace;
-      c.layout = c.place?.layout || null;
-      c.neck = c.site?.neck || null;
       return c;
     }
     function attachPirateBaseFall(place) {
       HullBodies.init();
       detachPirateRockTerrain(_baseFall, HullBodies.engine);
       _baseFall = createFallState();
-      resetPirateRockImpacts();
       _baseFallPlace = place;
       const build = () => {
         if (_baseFallPlace !== place || _baseFall.phase !== 'idle') return;
@@ -33807,20 +33768,17 @@
         return;
       }
       if (_baseFall.voxFall) { stepVoxBaseFall(dt); return; }
-      stepHabitatFall(_baseFall, syncPirateFallCtx(), dt);
+      stepRockDebris(_baseFall, syncPirateFallCtx(), dt);
     }
     /** HP 0 habitatu (storyGame._chainExplosion): upadek na planetoidę. true — ruszył (bez terenu / habitatu — false). */
     function startPirateBaseFall() {
       if (!_baseFall.terrain) return false;
       const _neck = pirateBaseSites()?.habitat?.neck;
       pirateBaseVoxEvent('voxFall', Number(_neck?.fallX) || 0, Number(_neck?.fallY) || 0);
-      if (VOX_OBRAZ) return startVoxBaseFall();
-      return startHabitatFall(_baseFall, syncPirateFallCtx());
+      return startVoxBaseFall();
     }
     // UPADEK NA WOKSELACH (2026-11-06): obraz upadku rysują woksele (src/3d/woksele/wGrze.js), a uderzenia w skałę liczą z własnych węzłów. Fizyka starych, niewidocznych brył była więc samym kosztem: strona gry traciła na niej klatki (pomiar: plan LOD § 5e).
     // Przy HP 0 stare ciała bazy znikają od razu, a kawałki bez ciał przestają trafiać dopiero po puszczeniu kotwic wokseli. Misja i ujęcie kamery idą tym samym stanem upadku, czasy z zegara (gra nie czyta niczego z wokseli: zasada 1).
-    // A/B: ?woksele=0 — stary obraz i stara fizyka upadku.
-    const VOX_OBRAZ = !/[?&]woksele=0\b/.test(location.search);
     // Czasy z fali puszczania kotwic w src/3d/woksele/wGrze.js (start 3 s, 1500 j./s) i spadku ~11,5 s: gra ich nie czyta z wokseli.
     const VOX_FALL_T = { kotwice: 9, wieza: 13, dysk: 17, koniec: 28 };
     function startVoxBaseFall() {
@@ -33868,11 +33826,6 @@
       }
       if (F.t >= VOX_FALL_T.koniec) F.phase = 'settled';
     }
-    /** Kawałek płaski habitatu (bęben, szyb) → bryła 3D spadająca na skałę (pirateBaseFall.promotePlanarPiece). */
-    function promotePirateBasePiece(piece, o) {
-      if (!_baseFall.terrain) return 0;
-      return promotePlanarPiece(_baseFall, syncPirateFallCtx(), piece, o);
-    }
     /** Promise: upadek skończony (wszystko osiadło) albo po `maxSec` s czasu gry. */
     function pirateBaseFallDone(maxSec = 30) {
       return new Promise((resolve) => {
@@ -33883,70 +33836,6 @@
         };
         poll();
       });
-    }
-    // Uderzenie w skałę: obraz pyłu, wyrzutu i kłębów — rekord ROCK_IMPACT (rockImpact / rockScrape / rockSettle,
-    // src/game/story/pirateRockImpacts.js); tu wstrząs kamery od dużych brył i komunikat.
-    function pirateFallImpactFx(type, ev) {
-      if (type === 'impact' && (ev.kind === 'tower' || ev.kind === 'disc')) {
-        camera.addShake(ev.kind === 'tower' ? 26 : 14, ev.kind === 'tower' ? 1.4 : 0.8);
-        if (ev.kind === 'tower' && !_baseFall.towerSaid) {
-          _baseFall.towerSaid = true;
-          pushZoneMessage('WIEŻA HABITATU UDERZYŁA W PLANETOIDĘ', 3.5);
-        }
-      }
-    }
-    // Moduł powietrza bryły upadku (sektor dysku, wieża, odłam bębna / szybu — pirateBaseAtmosphere.js) albo null.
-    function pirateFallModuleOf(body) {
-      const p = body?.hull?.world || body?.entity?.worldPiece || null;
-      return p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:') ? atmoModuleId(p) : null;
-    }
-    // Uderzenie dużej bryły w skałę rozrywa moduł przy skale (wylot resztek powietrza) i zapala go (tarcie, zwarcia).
-    function pirateFallAtmoImpact(ev) {
-      if (!ev || ev.kind === 'debris' || !(ev.speed >= 220) || !(ev.size >= 250)) return;
-      const module = pirateFallModuleOf(ev.body);
-      if (!module) return;
-      const entity = ev.body?.entity || null;
-      const size = Math.max(60, Math.min(240, ev.size * 0.2));
-      pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity, kind: 'break' });
-      pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity });
-    }
-    // Przebicie dysku przez wieżę i oderwanie sektorów (pirateBaseFall.js — onBreach): rozszczelnienie modułu (wylot
-    // powietrza, grodzie puszczają) i zapłon. Korek (cause 'plug') — wyrwy daje zgniot węzłów (atmoNodeLost).
-    function pirateFallBreachFx(ev) {
-      if (!ev) return;
-      if (ev.cause === 'plug') {
-        // wieża rozbija korek dysku: wybuch w głębi (pod płaszczyzną gry, ~800 j.) w kierunku jej ruchu; korek stoi
-        // (nośnik 0 — obłok zostaje przy dziurze, wieża wylatuje z niego w dół)
-        const F = _baseFall;
-        pirateDeepBlast({ id: 'pbase-plug', kind: 'disc', x: ev.x, y: ev.y, z: Number.isFinite(F.discMinZ) ? F.discMinZ + 180 : ev.z,
-          size: 760, nx: F.downX, ny: -F.downY, nz: F.downZ, vx: 0, vy: 0, vz: 0 });
-        camera.addShake(24, 0.9);
-        return;
-      }
-      const module = ev.module;
-      if (!module) return;
-      if (ev.cause === 'release') {
-        // sektor odrywa się od trzonu: pęka jego wewnętrzna krawędź (od strony dziury po wieży), powietrze ku osi i w dół
-        const F = _baseFall;
-        const hx = F.holeX, hy = -F.holeY;
-        let dx = ev.x - hx, dy = ev.y - hy;
-        const dl = Math.hypot(dx, dy) || 1;
-        dx /= dl; dy /= dl;
-        const r = Math.min(dl, 900);
-        const z = Number.isFinite(F.discMinZ) ? F.discMinZ + 160 : ev.z;
-        pirateBaseBreach({ module, x: hx + dx * r, y: hy + dy * r, z, nx: -dx * 0.8, ny: -dy * 0.8, nz: -0.6, size: 200,
-          entity: ev.entity || null, kind: 'break' });
-        // pęknięcie mocowania sektora przy trzonie: mały wybuch w głębi, jedzie z sektorem
-        const sb = ev.entity?.beamHull?.body;
-        pirateDeepBlast({ id: `pbase-rel-${module}`, kind: 'disc', x: hx + dx * r, y: hy + dy * r, z, size: 320,
-          nx: -dx, ny: -dy, nz: -0.4, vx: sb ? sb.vel.x : 0, vy: sb ? -sb.vel.y : 0, vz: sb ? sb.vel.z : 0 });
-        camera.addShake(8, 0.4);
-        return;
-      }
-      // wieża w sektorze (cause 'tower'): wyrwa w punkcie styku, zapłon od tarcia i zwarć
-      const size = Math.max(80, Math.min(220, Number(ev.size) || 200));
-      pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity: ev.entity || null, kind: 'break' });
-      pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity: ev.entity || null });
     }
     // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): habitat i RZUT miejsca lądowania (prosta habitat → środek
     // skały do przecięcia z kulą skały, ~24 km pod płaszczyzną — pirateRockLayout.js, skala świata) symetrycznie wokół
@@ -34296,7 +34185,7 @@
       baseStages: () => pirateBaseStages(),
       // Planetoida pod bazą (2026-10-15): rozpad habitatu zrywa windę kosmiczną, osada na skale wybucha po kolei.
       rockCollapse: () => collapsePirateRock(),
-      // Upadek habitatu na planetoidę (2026-10-19): wieża przebija dysk, dysk za nią (src/game/story/pirateBaseFall.js).
+      // Upadek habitatu na planetoidę: obraz na wokselach, zegar w bloku UPADEK (startVoxBaseFall).
       habitatFall: () => startPirateBaseFall(),
       habitatFallLook: () => pirateBaseFallLook(),
       habitatFallDone: (maxSec) => pirateBaseFallDone(maxSec),

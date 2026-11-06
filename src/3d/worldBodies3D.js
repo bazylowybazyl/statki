@@ -740,16 +740,6 @@ function queueBakes() {
       p.__skinQueued = true;
       _bakeQueue.push(p);
     }
-    // BRYŁY UPADKU kawałków płaskich (bęben, szyb — src/game/story/pirateBaseFall.js, promotePlanarPiece): skóra 3D
-    // z szablonu, gdy budowla jest blisko rozpadu (allLive) — przy HP 0 ciało płaskie zamienia się w bryłę bez wypieku
-    // w klatce (a przy nagłej śmierci statyka kawałka czeka na wypiek — setHold).
-    if (site.allLive && site.fallPieces) {
-      for (const f of site.fallPieces) {
-        if (f.__skinQueued || (f.__skin && f.__skin.key === solidKeyOf(f))) continue;
-        f.__skinQueued = true;
-        _bakeQueue.push(f);
-      }
-    }
   }
   scheduleBake();
 }

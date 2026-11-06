@@ -125,8 +125,6 @@ if (isWorker) {
       import('../3d/warp/warpNurt.js'), import('../3d/warp/warpTrafficCommands.js'), import('./blocks/warpBlock.js'),
       import('./warpWorldMirror.js')
     ]);
-    // uderzenia w planetoidę pod bazą piratów (rekord ROCK_IMPACT — cel: obraz planetoidy z pirateBaseGame.js)
-    const rockImpactMod = await import('../3d/pirateRockImpactFx.js');
     const [ringWorldMod, ringGameMod, ringBlockMod] = await Promise.all([
       import('../game/haloRingWorld.js'), import('../3d/haloRing/haloRingGame.js'), import('./blocks/ringBlock.js')
     ]);
@@ -181,7 +179,7 @@ if (isWorker) {
     st.w3Station = null;
     st.bayPose = { x: 0, y: 0, angle: 0 };
     st.repairSync = { swarm: st.repairMirror, dt: 0, zoom: 1, time: 0, poseOf: (e) => st.playerPoseOf(e), hidden: (e) => !!(e && e.__mirror === true && e.fogHidden) };
-    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock, warpWorld, rockImpactMod };
+    st.mods = { core, hex, models, shields, stations, mirror, layoutMod, tb, retMod: ret, cloak, cmdMod, wfxCmd, dmgCmd, blastCmd, clock, bridge3d, bridgeFx, cloakLook, rktBlock, rktCmd, viewBlock, ringWorldMod, ringGameMod, ringBlockMod, warpMod, warpCmd, warpBlock, warpWorld };
     st.warpMirror = warpBlock.createWarpMirror();
     // warp gracza i dopalacz z WORLD (warpWorldMirror.js — pełny kształt GameState.warp: rampa, ślizg, kurs, ciało celu
     // i startu z list ciał workera): RenderWorld.warp / .boost workera (plazma WARP i dopalacza gracza, lakier) i klatka
@@ -367,7 +365,6 @@ if (isWorker) {
     wfxCmd.installWeaponFxCommands(st.cmd);
     dmgCmd.installHullDamageCommands(st.cmd);
     blastCmd.installExplosionCommands(st.cmd, () => st.blastFactory || null);
-    st.mods.rockImpactMod.installRockImpactCommands(st.cmd, () => (st.blastFactory && st.blastFactory.system) || null);
     st.mods.warpCmd.installWarpTrafficCommands(st.cmd, st.mods.warpMod.WarpNurt, (slot) => st.warpMirror.recordAt(slot));
     st.hazMods.cmd.installReactorCommands(st.cmd, () => st.reactorFx || null, (id) => st.hazards.byId.get(id) || null);
     st.repairMods.drones.installRepairFxCommands(st.cmd, (id) => st.repairMirror._rigs.get(id) || null);
@@ -479,8 +476,6 @@ if (isWorker) {
         p.site = site; p.state = 'static'; p.entity = null; p.touched = false; p.lost = false;
         rep.byRef.set(site.structure + '|' + p.id, p);
       }
-      // bryły upadku kawałków płaskich (bęben, szyb habitatu — odłamy 3D z worldRef `<id>~3d`)
-      for (const f of site.fallPieces || []) rep.byRef.set(site.structure + '|' + f.id, f);
     }
     st.pbg.pirateBase3DEvent('bodies', sitesObj);
     st.wbMods.w3d.setWorldBodiesSource(rep);

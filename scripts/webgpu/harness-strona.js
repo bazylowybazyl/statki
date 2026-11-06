@@ -138,7 +138,7 @@
   // kolejki) albo w tle z compileAsync; compute zawsze synchronicznie. Nazwa = typ:nazwa materiału @
   // obiekt — co kompilowało się w przestoju (frameStats → `pipeline`, `lista[].pipeline`). Hak na
   // backend.pipelineUtils po powstaniu urządzenia (na tagu WebGL pola nie ma — dziennik pusty). Dema z własnym
-  // WebGPURenderer (bez Core3D) wystawiają go jako window.__HARNESS_RENDERER__ (np. dema/zawalenia-budowli/obraz.js).
+  // WebGPURenderer (bez Core3D) wystawiają go jako window.__HARNESS_RENDERER__.
   const PIPE_MAX = 16384;
   const pipes = { list: [], n: 0 };
   const pipeName = (m, o) => `${m?.type || '?'}${m?.name ? ':' + m.name : ''} @ ${o?.type || '?'}${o?.name ? ':' + o.name : (o?.parent?.name ? ' w ' + o.parent.name : '')}`;
