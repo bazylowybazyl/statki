@@ -111,14 +111,37 @@ test('przy jednakowej masie mocne poszycie ustępuje słabemu, niezależnie od k
   for (let i = 0; i < 2; i++) assert.ok(Math.abs(armored[i] - reverse[i]) < 1e-8, 'zamiana A/B nie zmienia ochrony');
 });
 
+// Szarża gracza jak w index.html („Szarża (F)”, lot gracza): ciąg po dziobie od prędkości po kontakcie, znoszenie bokiem
+// gaśnie (2,2/s), po szarży hamulec do limitu, puszczony ster gasi obrót (Atlas 12°/s²). Gra nie trzyma prędkości na osi
+// taranu: kontakt z okrętami stojącymi po jednej stronie toru odchyla kadłub, a ciąg i gaszenie znoszenia prowadzą go dalej.
+const ATLAS_TURN_BRAKE = (12 * Math.PI) / 180;
+function chargeControl(atlas, sys, t, dt) {
+  const fx = Math.cos(atlas.angle), fy = Math.sin(atlas.angle);
+  if (t < sys.duration) {
+    const along = atlas.vx * fx + atlas.vy * fy;
+    if (along < sys.speed) {
+      const dv = Math.min(sys.accel * dt, sys.speed - along);
+      atlas.vx += fx * dv; atlas.vy += fy * dv;
+    }
+    const lateral = -atlas.vx * fy + atlas.vy * fx;
+    const settle = lateral * (1 - Math.exp(-2.2 * dt));
+    atlas.vx += fy * settle; atlas.vy -= fx * settle;
+  } else {
+    const sp = Math.hypot(atlas.vx, atlas.vy);
+    const next = Math.max(500, sp - sys.brake * dt);
+    if (sp > 1) { atlas.vx *= next / sp; atlas.vy *= next / sp; }
+  }
+  const w = ATLAS_TURN_BRAKE * dt;
+  atlas.angVel = Math.abs(atlas.angVel) <= w ? 0 : atlas.angVel - Math.sign(atlas.angVel) * w;
+}
+
 // Prawdziwe sprite'y i rząd z misji 1, szarża z tabeli systemów. Same kadłuby:
 // bez ostrzału, tarcz i skryptowego zabijania celów — rezultat daje fizyka.
 function ramShipyard(neutral) {
   const site = planPirateBase({ x: 0, y: 0 }, { x: -10000, y: 0 });
   const ux = Math.cos(site.ramAngle), uy = Math.sin(site.ramAngle);
   const atlas = ship('atlas', site.rowStart.x - ux * 1000, site.rowStart.y - uy * 1000, site.ramAngle, neutral);
-  let v = 500;
-  atlas.vx = ux * v; atlas.vy = uy * v;
+  atlas.vx = ux * 500; atlas.vy = uy * 500;
   const row = site.parked.filter(p => site.ramBerths.includes(p.berth));
   const targets = row.map(p => ship(p.key.includes('battleship') ? 'pirate_battleship'
     : p.key.includes('destroyer') ? 'pirate_destroyer' : 'pirate_frigate', p.x, p.y, p.angle, neutral));
@@ -127,8 +150,7 @@ function ramShipyard(neutral) {
   let contacts = 0;
   try {
     for (let i = 0; i < 1200; i++) {
-      v = i * dt < sys.duration ? Math.min(sys.speed, v + sys.accel * dt) : Math.max(500, v - sys.brake * dt);
-      atlas.vx = ux * v; atlas.vy = uy * v;
+      chargeControl(atlas, sys, i * dt, dt);
       step(entities, dt);
       contacts += HullBodies.perf.lastContacts;
       for (const e of targets) {

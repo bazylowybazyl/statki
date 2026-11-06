@@ -133,8 +133,8 @@ test('taran pomostu: pancerny kadłub przechodzi (pancerz pary z ciałem zakotwi
   assert.ok(v > 300, `kadłub przeszedł przez pomost: ${Math.round(v)} j/s`);
   assert.ok(mp.touched, 'pomost ruszony');
   assert.ok(mp.alive < mp.baseNodes, `pomost pęknięty: ${mp.alive} z ${mp.baseNodes}`);
-  // pomosty daleko od toru nietknięte
-  for (const id of ['YA-1', 'YB-1', 'PP']) assert.equal(pieceOf(site, id).alive, pieceOf(site, id).baseNodes, `${id} nietknięty`);
+  // sąsiedzi MP w węźle N stoją: DG i PS zaczynają się tam, gdzie kończy się MP, ale nie leżą na torze kadłuba
+  for (const id of ['DG', 'PS']) assert.equal(pieceOf(site, id).alive, pieceOf(site, id).baseNodes, `${id} nietknięty`);
   HullBodies.release(ship);
 });
 

@@ -10,6 +10,7 @@ import { chunkPlanarSolids, chunkSolids } from '../src/3d/portBuildings/building
 import { planFuelChain } from '../src/game/story/pirateBaseFuel.js';
 import { placePirateBase, planPirateBase } from '../src/game/story/pirateBaseSite.js';
 import { pirateBaseChunkRaster, pirateBasePinTest } from '../src/game/story/pirateBaseBodies.js';
+import { dryDockSegmentHit } from '../src/game/story/shipyardLayout.js';
 
 const L = createPirateBaseLayout();
 const SCENE = buildPirateBaseScene(L, resolvePortBuildingStyle('pirate'));
@@ -18,6 +19,57 @@ const SCENE = buildPirateBaseScene(L, resolvePortBuildingStyle('pirate'));
 const axes = (p) => p.map((a, i) => { const b = p[(i + 1) % p.length]; const ex = b.x - a.x; const ez = b.z - a.z; const l = Math.hypot(ex, ez) || 1; return { x: -ez / l, z: ex / l }; });
 const proj = (p, ax) => { let mn = Infinity; let mx = -Infinity; for (const v of p) { const d = v.x * ax.x + v.z * ax.z; if (d < mn) mn = d; if (d > mx) mx = d; } return [mn, mx]; };
 const overlap = (A, B, pad = 0) => { for (const ax of [...axes(A), ...axes(B)]) { const [a0, a1] = proj(A, ax); const [b0, b1] = proj(B, ax); if (a1 + pad < b0 || b1 + pad < a0) return false; } return true; };
+
+test('dryDockSegmentHit: najbliższa bryła mimo kolejności, skip, punkt na licu, start w bryle, pudło', () => {
+  const box = (chunk, x0, y0, x1, y1) => ({ chunk, x0, y0, x1, y1, pts: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }] });
+  const far = box('daleko', 300, -50, 400, 50);
+  const near = box('blisko', 100, -50, 200, 50);
+  // dalsza bryła pierwsza na liście: wygrywa i tak najbliższe wejście
+  const hit = dryDockSegmentHit([far, near], 0, 0, 500, 0);
+  assert.equal(hit.chunk, 'blisko');
+  assert.ok(Math.abs(hit.x - 100) < 1e-9 && Math.abs(hit.y) < 1e-9, 'punkt wejścia na licu');
+  assert.ok(Math.abs(hit.t - 0.2) < 1e-9);
+  // kawałka już nie ma: pocisk leci do następnego
+  const next = dryDockSegmentHit([far, near], 0, 0, 500, 0, {}, new Set(['blisko']));
+  assert.equal(next.chunk, 'daleko');
+  assert.ok(Math.abs(next.x - 300) < 1e-9);
+  // start w bryle: trafienie w t = 0, także gdy dalej leży druga bryła
+  const inside = dryDockSegmentHit([far, near], 150, 0, 500, 0);
+  assert.equal(inside.chunk, 'blisko');
+  assert.equal(inside.t, 0);
+  assert.equal(inside.x, 150);
+  // pudła: obok brył, odcinek za krótki, wynik w podanym obiekcie
+  assert.equal(dryDockSegmentHit([far, near], 0, 60, 500, 60), null);
+  assert.equal(dryDockSegmentHit([far, near], 0, 0, 90, 0), null);
+  const out = {};
+  assert.equal(dryDockSegmentHit([near], 0, 0, 500, 0, out), out);
+});
+
+test('dryDockSegmentHit: wycinek pierścienia bazy trafia wielokąt, nie obwiednię', () => {
+  const place = placePirateBase({ x: 0, y: 0 }, 0);
+  for (const qd of L.habitat.quadrants) {
+    const sh = place.hitShapes.find((h) => h.chunk === qd.id);
+    assert.ok(sh && sh.pts.length > 4, `${qd.id}: wielokąt`);
+    const hub = (x, z) => place.toGame(x, z, {});
+    const c = hub(0, 0);
+    let rMin = Infinity;
+    for (const p of sh.pts) rMin = Math.min(rMin, Math.hypot(p.x - c.x, p.y - c.y));
+    // we wcięciu: na osi wycinka, tuż przed wewnętrznym łukiem. W obwiedni, poza wielokątem.
+    const a = (qd.a0 + qd.a1) / 2;
+    const r = rMin * 0.9;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const m = hub(r * ca, r * sa);
+    assert.ok(m.x > sh.x0 && m.x < sh.x1 && m.y > sh.y0 && m.y < sh.y1, `${qd.id}: punkt w obwiedni`);
+    const p0 = hub(r * ca - sa * 30, r * sa + ca * 30);
+    const p1 = hub(r * ca + sa * 30, r * sa - ca * 30);
+    assert.equal(dryDockSegmentHit([sh], p0.x, p0.y, p1.x, p1.y), null, `${qd.id}: odcinek we wcięciu`);
+    // kontrola: ten sam punkt, odcinek na zewnątrz, wchodzi w wycinek na wewnętrznym łuku
+    const o = hub(rMin * 1.5 * ca, rMin * 1.5 * sa);
+    const hit = dryDockSegmentHit([sh], m.x, m.y, o.x, o.y);
+    assert.equal(hit?.chunk, qd.id, `${qd.id}: odcinek na zewnątrz`);
+    assert.ok(Math.abs(Math.hypot(hit.x - c.x, hit.y - c.y) - rMin) < rMin * 0.02, `${qd.id}: wejście na łuku`);
+  }
+});
 
 test('układ bazy: kawałki w limicie grup, budowle, stanowiska z załogą i herszt', () => {
   assert.ok(L.chunks.length + 1 <= PB_MAX_GROUPS, `${L.chunks.length} kawałków`);
