@@ -221,6 +221,42 @@ Zostało rP = 35 i 0,2. To nie jest utrata stabilności: W1 stoi, a padają wie�
 
 **Czego nie sprawdzono:** tierów w jednej scenie (każda scena ma jedno dx), dx = 2,5, 5120 × 1440 i pełnego pomiaru kosztu z rysunkiem i krokiem w jednej klatce. Pył i kłąb (`OPCJE_PYLU.M1`, `M2`) mają jeden zestaw na wszystkie dx, a zrzuty pyłu oceniał tylko agent. Domino rozstrzyga użytkownik (§ 6).
 
+### Wynik próby 5: tier 0, tysiące budynków bez solvera (scena M3)
+
+GPU, RTX 5080, 1280 × 720, MSAA 4, sufit 60 kl/s, 2026-11-06, tryb nocny, wentylator 0%. Zrzuty i liczby: `.tmp/woksele-demo/LOD/dalekie/` (`arkusz-M3-atlas.png`, `arkusz-M3-daleko.png`, `AB-tiery-t12.png`, `koniec2/`, `koniecSam/`, `liczby.txt`). Narzędzie: `node scripts/webgpu/woksele-demo.mjs --zrzut M3 --miasto '{"dx":10}' --maxWez 64000 --nKom 65536 --chwile 2,6,8,10,12,16 --kamery atlas,daleko --kosztMiasta 1 --kosztDalekie 1 --rozmiar 1280x720 --out …`. Wszystko w tierze 0: `--miasto '{"dx":10,"xSolver":40,"ySolver":40}'`. Droga z panelu: `--zrzut S1 --chwile 0 --przyciskM3 1 --panel 1`.
+
+**Jak obejrzeć.** Przycisk „Miasto: tysiące” albo `?scena=M3&maxWez=64000&nKom=65536&miasto={"dx":10}`. Kamera „Atlas daleko” (0,171 px / j., reżyser × 0,3) pokazuje całe miasto. Moduł `miastoDalekie.js` ładuje się tylko na tej stronie, więc S1–S5 mają te same pipeline'y co dotąd. Stare sceny dostały tylko pusty hak na cień i dodatkowy przycisk kamery przy M1 i M2.
+
+**Co jest.** `planM3` (`scenaMiasta.js`): 4842 budynki z tej samej reguły, 1854 w pasie, 15 s od lewej do prawej. Pas jest jedną funkcją dla obu tierów. Prostokąt w środku kadru (354 budynki, z tego 276 trafionych, 38 977 węzłów przy dx = 10, kratery w t = 7–9,7) idzie przez solver jak M1, a pozostałe 4488 to 7088 instancji (korpus i uskok osobno) w jednym rysunku: `Mesh` z `InstancedBufferGeometry`, bufor storage z chwilą zniszczenia, 205 wierzchołków na pudło. Budynek solvera ma w buforze instancję z rodzajem „gaśnie”, wszystkie wierzchołki w jednym punkcie, a tier wybiera się raz, w planie. 0 nowych pipeline'ów po rozgrzewce, także przy przełączaniu M3 → M1 → M3 (`--przyciskM3`), a test Node sprawdza WGSL i plan (`tests/wokseleMiastoDalekie.test.mjs`).
+
+**Zawalenie (metoda B).** Bez fizyki, ale kształt z pomiaru solvera: dach / h przy t* = t / √(h / 1340) to 0,96; 0,79; 0,42; 0,20 przy t* = 1, 2, 3, 4, a `u = smoothstep(1; 4,2; t*)` trzyma tę krzywą w granicach 0,03. Wysokość Z ≤ H·u idzie do kopca (Z' = Hm·Z / H), powyżej sztywna góra spada o (H − Hm)·u, a obie gałęzie spotykają się przy Z = H·u, więc nic się nie rozrywa. Kopiec Hm = 14 + 0,085·H jak hałda przy dx = 10. Do tego pochylenie 2–11°, zniesienie, szum na wierzchołkach wspólny dla ścian, podstawa do 2,3 razy szersza. Budynek 154 j. wali się w około 1,7 s, 290 j. w około 2,3 s. Fasada: ten sam wzór co rama solvera przy tym dx (dwie warstwy stropu, pas fasady z dziurą między słupkami), a budynek poniżej 5 warstw to kostka bez okien, jak w `wezlyBudynku`. Kopiec i rozsypująca się góra: barwa i normalna z komórek świata 6,5 j., bez geometrii. Kernel emisji pisze do istniejących pul: dwa rekordy błysku z kłębem (ten sam pierścień 64 co kratery), cztery fale po 4 cząstki pyłu i 3 kawałki gruzu.
+
+**Koszt.** ms GPU na klatkę, mediana z 5, wszystkie passy (rysunek, cień, głębia). Partia: 1,45 mln wierzchołków na przebieg, 4,35 mln na klatkę.
+
+| Stan | Atlas, z partią | Atlas, bez partii | Daleko, z partią | Daleko, bez partii |
+|---|---|---|---|---|
+| t = 2, wszystko stoi | 1,02–1,04 | 0,53 | 1,10 | 0,52 |
+| t = 6 | 1,06 | 0,54–0,56 | 1,08 | 0,55 |
+| t = 12 | 1,37–1,38 | 0,89 | 1,32–1,34 | 0,78–0,79 |
+| t = 16 | 1,30 | 0,80 | 1,33–1,34 | 0,81 |
+
+- **Sama partia 5000 budynków: około 0,5 ms** (rysunek +0,2, cień +0,2, głębia +0,1), czyli 0,115 ms na milion wierzchołków, zgodnie z § 5a, i nie zależy to od tego, czy miasto stoi, czy leży.
+- **Kernel emisji: 0,005–0,022 ms.** Compute z solverem 38 977 węzłów: 0,39–0,50 ms, tyle co M1 przy tym dx.
+- **Wszystko w tierze 0, 4842 budynki, 0 węzłów:** rysunek 0,69–0,80 ms, compute 0,01–0,07 ms.
+- Część prób daje 2,4–3,2 ms rysunku i do 1,4 ms compute, a ten sam stan w innym biegu wartość normalną. Pasuje do zegara karty przy małym obciążeniu jak w próbach 2–4: `wyjście`, stały kwad pełnoekranowy, rośnie wtedy z 0,01 do 0,09 ms. Osobnym pomiarem tego nie sprawdzono.
+- **Szacunek dla całego ringu:** 110–180 tys. budynków w tej partii to około 15 ms, więc nie tak. W grze `haloRingCity` ma już swoje sloty, a 205 wierzchołków potrzebuje tylko to, co się wali: stojące po 24 wierzchołki w osobnym rysunku to około 8 razy mniej. To kolejny krok, nie ta próba.
+
+**Czy z kamery Atlasa da się odróżnić tiery (ocena ze zrzutów, nie oceniał tego człowiek, sam ruch niesprawdzony):**
+- **Stoją (t = 2, 6): nie.** Przy 1:1 granicy prostokąta nie widać, po powiększeniu × 4 tylko tyle, że dziury solvera mają głębię.
+- **Walą się (t = 8, 10): tak, jak się patrzy.** W solverze wieża rozsypuje się na bloki, a ogień jest silniejszy, bo dochodzą światła błysków i żar na węzłach. W shaderze to postrzępiona bryła z drobnym wzorem. Przy budynku 88 px widać różnicę, przy 26 px (Atlas daleko) już nie.
+- **Pył (t = 10, 12): największa różnica.** Pióropusz solvera jest gęstszy i trzyma się 3–5 s, a tier 0 ma tylko kilkanaście cząstek na budynek.
+- **Gruz (t = 16): prawie nie.** Pierwsza wersja była za jasna i prostokąt solvera dało się obrysować. Po przyciemnieniu barwy i komórkach 6,5 j. granicy praktycznie nie widać.
+- **Domino jest tylko w solverze.** Przy t = 16 z 78 nietrafionych w prostokącie stoi 40, a nietrafione instancje stoją wszystkie. `AB-tiery-t12.png` pokazuje ten sam stan z solverem i bez: sam tier 0 w środku kadru też czyta się jak zawalenie, ale kopce są wyższe i jaśniejsze, a dywan gruzu rzadszy.
+
+**Wniosek:** tier 0 działa i dla kamery Atlasa wystarcza, a pół milisekundy to cena tej próby, nie górna granica. Szew między tierami przy tej odległości jest do przyjęcia, bo najbardziej widać go w pyle i ogniu, a to dwa parametry do strojenia.
+
+**Czego nie sprawdzono:** obrazu w ruchu, 5120 × 1440, kamery bliskiej dla tieru 0 (przy 3,2 px / j. ma być już tier 1), zmiany tieru w biegu (bufor ma rodzaj „gaśnie”, ale węzły powstają tylko w planie), kolizji gruzu solvera ze stojącymi instancjami (przelatuje), ceny cienia przy 1,8 j. na teksel w całym mieście poza tymi kadrami.
+
 ## 5a. Wynik: obraz z LOD (metoda G)
 
 **Co jest.** Parametr sceny `lod: { sloty, cien }` w `SCENY` (`pokaz.js`), w biegu `obraz.ustawLod`, do oglądania `?sloty=1|2|7&cienSloty=0|1|2|7` przy każdej scenie. `sloty`: 7 jak dotąd (blok, 5 odłamków, pręt), 2 (uszkodzony węzeł to komórka przecięta raz na dwa kawałki), 1 (uszkodzony węzeł to jeden kawałek, kurczy się z d). `cien`: osobno dla mapy cienia, 0 to `castShadow = false`. Uniform i `instanceCount`, bez nowego pipeline'u, zm. 0 nowych wpisów dziennika po rozgrzewce przy przełączaniu w biegu. Scena bez `cien` w `SCENY` dostaje kamerę cienia z rozmiaru węzłów (`ustawCienZSceny`), a stare sceny mają swoje stałe. Pył w `OPCJE_PYLU`: `kwady` (sufit pierścienia), `emisja`, `rozmiar`, `sufitPx`, `lodDuze`. Przy wielu budynkach `pod: 0, grunt: 0`: te dwa pchają pył od osi z = 0, czyli jedną wieżę, a dzielnicę zwiałyby w jedną stronę. Rozlew od środka własnego budynku jeszcze nie istnieje.

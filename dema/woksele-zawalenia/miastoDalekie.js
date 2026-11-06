@@ -19,7 +19,8 @@ const SIATKA = 4, WARSTWY = 8; // podział jednego pudła: wierzchołków 205, t
 const REK = INST_DALEKIE / 4;
 const CAP_G = 40000; // pierścień gruzu, obraz.js
 const ILE_KLAB = 8;
-const ILE_PYL = 3; // cząstek na jedną z czterech fal pyłu
+const ILE_KLAB_PELNY = 24; // co czwarty budynek, jak rodzaj „glowna” w M2: pełny kłąb i dłuższy błysk (próg 20 w pyl.js)
+const ILE_PYL = 4; // cząstek na jedną z czterech fal pyłu
 const ILE_GRUZ = 3; // kawałków na falę
 const MIN_SK = 0.12;
 
@@ -126,10 +127,10 @@ export function createMiastoDalekie({ solver, obraz, pojemnosc = 12000 }) {
         const rz = fv(zRig.add(n.z.mul(ampG)));
         // Kopiec: wysokość w kopuły, szum, podstawa szersza niż budynek. Środek rozrzutu to środek budynku, także dla uskoku.
         const rPrz = fv(max(abs(g.x), abs(g.y)));
-        const kop = fv(float(1).sub(rPrz.mul(rPrz).mul(0.7)).mul(czesc(hv, 2).mul(0.75).add(0.55)));
+        const kop = fv(float(1).sub(rPrz.mul(rPrz).mul(0.5)).mul(czesc(hv, 2).mul(0.75).add(0.55)));
         const kz = fv(max(Hm.mul(Z).div(H).mul(kop).add(n.z.mul(Hm.mul(0.1)).mul(g.z)), 0.3));
         const wzgl = fv(clamp01(kz.div(max(Hm.mul(u), 1))));
-        const roz = fv(float(1).add(u.mul(float(1).sub(wzgl)).mul(czesc(h1, 12).mul(0.5).add(0.6))));
+        const roz = fv(float(1).add(u.mul(float(1).sub(wzgl)).mul(czesc(h1, 12).mul(0.5).add(0.8))));
         const bx = fv(A.x.sub(C.x));
         const by = fv(A.y.sub(C.y));
         const kx = fv(bx.add(P.x.sub(bx).mul(roz)).add(n.x.mul(A.z).mul(0.22).mul(u)));
@@ -186,15 +187,15 @@ export function createMiastoDalekie({ solver, obraz, pojemnosc = 12000 }) {
     const kostka = v3(mix(vec3(0.2, 0.19, 0.17), vec3(0.17, 0.162, 0.148), bok));
     const czysta = v3(mix(kostka, mix(rama, ramaSr, fade), dl.z).mul(vTon));
     // Gruz: kawałki z komórek świata, z ciemnymi szczelinami jak między blokami hałdy.
-    const hc = cegielka(positionWorld, 8);
+    const hc = cegielka(positionWorld, 6.5);
     const jasn = fv(czesc(hc, 3));
-    const gruz = v3(vec3(0.2, 0.19, 0.175).mul(vTon).mul(smoothstep(0.06, 0.3, jasn).mul(0.8).add(0.3)).mul(czesc(hc, 11).mul(0.45).add(0.8)));
+    const gruz = v3(vec3(0.14, 0.133, 0.123).mul(vTon).mul(smoothstep(0.1, 0.42, jasn).mul(0.85).add(0.2)).mul(czesc(hc, 11).mul(0.45).add(0.8)));
     return mix(czysta, gruz, min(vKr.mul(1.5), 1));
   });
   // Normalna kopca rozmyta z komórek świata: z daleka czyta się jak drobne kostki, bez geometrii.
   const normalna = Fn(() => {
-    const hc = cegielka(positionWorld, 8);
-    const jit = v3(vec3(u1(hc, 0), u1(hc, 10), u1(hc, 20)).mul(vKr.mul(0.95)));
+    const hc = cegielka(positionWorld, 6.5);
+    const jit = v3(vec3(u1(hc, 0), u1(hc, 10), u1(hc, 20)).mul(vKr.mul(1.1)));
     return normalize(normalFlat.add(jit));
   });
 
@@ -259,12 +260,19 @@ export function createMiastoDalekie({ solver, obraz, pojemnosc = 12000 }) {
     const ts = fv(wiek.div(sk));
     const Hm = wysKopca(H, h1);
     If(wiek.lessThan(uDt), () => {
-      const nr = uv_(atomicAdd(wLiczB.element(uint(0)), uint(1)).mod(uint(BLYSKI)));
-      const s3 = uv_(uint(3).mul(nr));
+      // Dwa rekordy, jak dwa kratery budynku w M1: głowica na dachu i główny w 0,2 wysokości. Co czwarty budynek ma pełny kłąb. Czoło pasa przechodzi jedno miejsce naraz, więc pierścień 64 rekordów starcza (133 budynki / s · 2 · 0,25 s życia, a stare i tak gasną).
       const hb = haszT(hq.add(uint(5)));
+      const pelny = hb.bitAnd(uint(3)).equal(uint(0));
+      const nr = uv_(atomicAdd(wLiczB.element(uint(0)), uint(2)).mod(uint(BLYSKI)));
+      const s3 = uv_(uint(3).mul(nr));
       wBlysk.element(s3).assign(vec4(a.x, a.y, H.mul(0.2).add(5), uKlatka));
-      wBlysk.element(s3.add(uint(1))).assign(vec4(0, 0, 0, float(1.8).add(czesc(hb, 0).mul(1.4))));
-      wBlysk.element(s3.add(uint(2))).assign(vec4(float(14).add(H.mul(0.05)), uKlatka.mul(7).add(float(nr)), float(ILE_KLAB), 1));
+      wBlysk.element(s3.add(uint(1))).assign(vec4(0, 0, 0, pelny.select(float(3.2), float(1.8))));
+      wBlysk.element(s3.add(uint(2))).assign(vec4(float(20).add(H.mul(0.06)), uKlatka.mul(7).add(float(nr)), pelny.select(float(ILE_KLAB_PELNY), float(ILE_KLAB)), 1));
+      const nr2 = uv_(nr.add(uint(1)).mod(uint(BLYSKI)));
+      const s4 = uv_(uint(3).mul(nr2));
+      wBlysk.element(s4).assign(vec4(a.x, a.y, H, uKlatka));
+      wBlysk.element(s4.add(uint(1))).assign(vec4(0, 0, 0, 1.8));
+      wBlysk.element(s4.add(uint(2))).assign(vec4(13, uKlatka.mul(7).add(float(nr2)), 0, 1));
     });
     Loop({ start: uint(0), end: uint(4), type: 'uint', condition: '<', name: 'fala' }, ({ fala }) => {
       const ti = fv(float(fala).mul(0.75).add(1.4));
@@ -281,7 +289,7 @@ export function createMiastoDalekie({ solver, obraz, pojemnosc = 12000 }) {
           const q3 = uv_(uint(3).mul(q));
           wPyl.element(q3).assign(vec4(a.x.add(cx.mul(a.z)), a.y.add(sy.mul(a.w)), zF.add(czesc(hp, 8).mul(6)), 0));
           wPyl.element(q3.add(uint(1))).assign(vec4(cx.mul(czesc(hp, 16).mul(30).add(14)), sy.mul(czesc(hp, 16).mul(30).add(14)), czesc(hp, 24).mul(14).add(4), czesc(hp, 4).mul(20).add(24)));
-          wPyl.element(q3.add(uint(2))).assign(vec4(0.9, 0.42, uZ0.add(uZd.mul(czesc(hp, 12))), 0));
+          wPyl.element(q3.add(uint(2))).assign(vec4(1.1, 0.42, uZ0.add(uZd.mul(czesc(hp, 12))), 0));
         });
         Loop({ start: uint(0), end: uint(ILE_GRUZ), type: 'uint', condition: '<', name: 'kg' }, ({ kg }) => {
           const hg = haszT(hf.add(kg.mul(uint(211))).add(uint(3)));
@@ -314,6 +322,8 @@ export function createMiastoDalekie({ solver, obraz, pojemnosc = 12000 }) {
       if (!d) return;
       aInst.array.set(d.inst.subarray(0, liczba * INST_DALEKIE));
       aInst.needsUpdate = true;
+      // Gruz bierze barwę z wDane węzła 0. Scena bez węzłów (A/B: wszystko w tierze 0) nie ma go wypełnionego.
+      if (obraz.n === 0) { obraz.atrybuty.dane.array.set([0.2, 0.19, 0.17], 4); obraz.atrybuty.dane.needsUpdate = true; }
       uDxSiatki.value = d.dx;
       uPietroCo.value = d.pietroCo;
       aLiczB.array[0] = 0;
