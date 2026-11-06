@@ -507,6 +507,24 @@ GPU S p50 / p95, ms, 5120 × 1440, Ultra, `limitKlatek=120`, worker, po jednym b
 
 Światło gruzu przy skale (`vNaSkale`) dołożyło około 0,4 ms w oknie `przed` (3,07 w `k6`, 3,48–3,52 w `k7`, `k8`), także po przeniesieniu z fragmentu na wierzchołek. Da się je wyłączyć do pierwszego zdarzenia uniformem, jeśli stojąca baza będzie za droga. Fizyka na stronie w upadku ≤ 0,2 ms na krok.
 
+**Po próbie użytkownika (scalenie do main, `ab78bf2b`).** Ocena: „powiedziałbym, że jest płynnie”, a przerwy z punktu niżej nie były widoczne w oknie. Uwagi i przyczyny znalezione w kodzie:
+
+- Gruz za mało maleje w locie: w ujęciu upadku kamera stoi ~21 km nad płaszczyzną, więc na skale 24 km niżej zostawało ~0,45 rozmiaru. `PIRATE_ROCK_SPEC.scale` 2 → 3: szczyt skały 40 km pod płaszczyzną, ~0,34, lot wieży ~17 s zamiast ~13 s.
+- Drobny gruz skacze: kontakt z sufitem wypychania i pasem gaszenia odskoku (reguła, „LĄDOWANIE”). Węzły przy brzegu siatki w szczycie: 33–51 (`GRA/t15`, `t16`).
+- Brak kraterów po wieżowcu: odczyt uderzeń ruszał dopiero przy HP 0. Teraz od pierwszego zdarzenia, a próg spadł do 8 węzłów w kubełku i 20 w bryle (95–127 kraterów w misji).
+- Efekty obok miejsca upadku: gruz lądował na kuli o średnim promieniu, a bryła skały odchodzi od niej do ±1600 j. Teraz kontakt, licznik uderzeń, pył i miejsce krateru czytają ten sam kształt.
+
+Nie sprawdzone w grze: krater po wieżowcu przed HP 0 (w teście z narzędzia gruz doleciał już po HP 0).
+
+**Kształty inne niż sześciany (pytanie użytkownika: prawdziwe koło habitatu, ukosy K-7, nie wokselizować wszystkiego).** Analiza czytając kod, bez uruchamiania, trzy drogi i sceptyk (przebieg `wf_f5b9e420-758`). Wniosek:
+
+- Najpierw dociąganie rogów bloków do prawdziwego obrysu. Jest już w `obraz.js` (`uRDysk`), wyłączone przez R = 1e9, działa w rysunku, głębi i cieniu, szac. poniżej 0,02 ms. Schodek 40 j. staje się cięciwami 40 j., które przy R = 1000 odstają od łuku o 0,2 j. Trzeba podnieść próg z 0,5 dx do ~0,75 dx i dodać tabelę kształtów (numer w wolnych bitach flag 18–23). Działa tylko przy d ≤ 1e-3: uszkodzony blok wraca do kostki.
+- Potem, jeśli będzie trzeba: stara siatka do pierwszego trafienia w całości (`aktywuj()`), kilka linii. Oddaje ~1,1–1,5 ms w spoczynku, ale przeskok przy pierwszym trafieniu widać.
+- K-7, ring i doki nie mają dziś punktów ani trafień, więc nie potrzebują węzłów: zostają siatką. Ich zawalenie to osobna praca, najpierw w warstwie gry.
+- Odłożone: wycinanie fragmentu po wypieku (dziurawi skorupę, brak ściany z boku) i prawdziwa siatka na węzłach (800–1200 linii, a przełom i tak zostaje kostką).
+
+Tego nie da się obiecać: koła po uszkodzeniu, zawalenia bez węzłów, prawdziwych fasad i podcięć pod nawisem.
+
 **Otwarte: przerwy między klatkami strony w 5120 × 1440.** W oknach upadek 2–4 (około 3–8 s po HP 0) rAF strony ma przerwy 100–290 ms, co około 0,5 s, a procesor graficzny pracuje na 99 % (`k3`, `k4`, `k7`, `k8`). W 720p ich nie ma (`t11`–`t14`), w `k-stary` i `k-nowy` też nie. Sprawdzone:
 
 - To nie JS strony: `long-animation-frame` pokazuje 0 ms blokady i brak skryptów, cała przerwa przypada przed `renderStart`.

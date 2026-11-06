@@ -127,6 +127,7 @@ function startVoxels(basePlace) {
     const ok = await vox.start({ place: basePlace, base, skala: rock ? {
       center: rock.layout.center, R: rock.layout.R,
       promien: (x, y, z, half) => rock.surfaceRadiusNear(x, y, z, half),
+      promienW: (x, y, z) => rock.surfaceRadiusAt(x, y, z),
       lata: (x, y, z, half) => rock.setCraterPatch(x, y, z, half),
       krater: (x, y, z, r, k) => rock.addCrater(x, y, z, r, k),
       koniecPaczki: () => rock.flushCraters(),

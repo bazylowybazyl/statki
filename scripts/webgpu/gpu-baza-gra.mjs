@@ -587,6 +587,8 @@ try {
   await sleep(4000);
   await okno('przed', 6, { slad: true });
   await screenshotPng(cdp, join(out, '01-przed.png'));
+  // --tylkoPrzed 1: sam kadr i koszt stojącej bazy, bez ostrzału i upadku (porównanie obrazu).
+  if (Number(args.tylkoPrzed) > 0) { await zbierzGpu(6000).catch(() => {}); writeJson(join(out, 'raport.json'), report); finish(0); await new Promise(() => {}); }
   // --seria S: kadr co S s od pierwszej serii do końca (seria-000.png…), do oglądania ruchu. Zaburza czasy, więc nie do pomiarów.
   if (Number(args.seria) > 0) {
     let nr = 0, busy = false;

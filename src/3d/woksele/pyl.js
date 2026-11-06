@@ -194,6 +194,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
   let kPylSkala = null;
   if (wGrze) {
     const { uGinieC, uKulaR } = solver.uniformy;
+    const { promienSkalyNa } = solver;
     kPylSkala = Fn(() => {
       const i = instanceIndex;
       If(i.greaterThanEqual(uN), () => { Return(); });
@@ -202,13 +203,15 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
       If(p.w.lessThan(0), () => { Return(); });
       const e = v3(p.xyz.sub(uGinieC));
       const dl = fv(sqrt(dot(e, e)));
-      If(dl.greaterThanEqual(uKulaR.add(50)), () => { Return(); });
+      If(dl.greaterThanEqual(uKulaR.add(2000)), () => { Return(); });
+      If(dl.greaterThanEqual(promienSkalyNa(p.xyz).add(50)), () => { Return(); });
       const bity = uv_(uint(wRamaW.element(i3.add(uint(2))).w));
       If(bity.bitAnd(uint(BIT_SKALA)).notEqual(uint(0)), () => { Return(); });
       wRamaW.element(i3.add(uint(2))).w.assign(float(bity.bitOr(uint(BIT_SKALA))));
       const h = haszT(i.add(uint(90210)));
       const t = uv_(h.shiftRight(uint(3)));
-      If(t.sub(t.div(uint(9)).mul(uint(9))).notEqual(uint(0)), () => { Return(); });
+      // Co trzeci, bo ~70 % węzłów paruje w uderzeniu (solver.js, KULA_PAR_256) i tu już nie dochodzi.
+      If(t.sub(t.div(uint(3)).mul(uint(3))).notEqual(uint(0)), () => { Return(); });
       const hq = haszT(h);
       const n = v3(e.div(max(dl, 1)));
       const los = v3(vec3(u1(hq, 0), u1(hq, 10), u1(hq, 20)));

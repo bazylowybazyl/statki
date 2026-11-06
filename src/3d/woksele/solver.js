@@ -7,7 +7,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Continue, Return, instanceIndex, instancedArray, storage, uniform, uniformArray, uint, int, float, vec3, vec4,
-  countOneBits, floatBitsToUint, sqrt, max, min, clamp, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad,
+  countOneBits, floatBitsToUint, sqrt, max, min, clamp, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad, texture,
 } from 'three/tsl';
 import { ND, STRONA, N0X, N0Y, N0Z, KLASA_NAZWY, PARAMETRY } from './budowa.js';
 
@@ -35,6 +35,14 @@ export const BIT_ZOSTAW = 1 << 16;
 export const BIT_PAS = 1 << 17;
 const POMIJANY_CEL = 0xffffffff;
 export const GINIE_BOK = 64;  // kubełki węzłów, które doleciały do skały w grze: siatka GINIE_BOK² w rzucie XY
+/** Bok mapy kształtu skały w tekselach. */
+export const WYS_BOK = 64;
+const KULA_POD_J = 2000; // mapa kształtu sięga ±1600 j. od promienia średniego
+const KULA_PAR_V = 600; // [j./s] szybszy węzeł przy skale może wyparować: po pierwszym kroku kontaktu z uderzenia 4000 j./s zostaje ~1200, a leżący gruz ma ułamek tego
+const KULA_PAR_256 = 180; // ile węzłów na 256 paruje przy uderzeniu (~70 %), stałe po numerze węzła
+const KULA_V_WYJ = 30; // [j./s] najszybciej, jak sprężyna kontaktu wypycha węzeł ze skały
+const KULA_PAS_J = 200; // pas nad skałą, w którym odskok gaśnie
+const KULA_PAS_TLUM = 12; // [1/s] tempo gaszenia w pasie: zabiera do 2400 j./s na drodze pasa
 
 export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) {
   const MAX = maxNodes;
@@ -106,7 +114,16 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const uGinieC = uniform(new THREE.Vector3()).setName('uGinieC');
   const uGinieR2 = uniform(0).setName('uGinieR2');
   const uKulaR = uniform(0).setName('uKulaR');
-  const uLiczR2 = uniform(0).setName('uLiczR2');
+  // Gra: kształt skały pod bazą, r − uKulaR [j.] po rzucie XY węzłów (ustawWysokosciSkaly). Bryła skały odchodzi od kuli do ±1600 j., więc gruz na samej kuli chował się pod wzgórzem albo wisiał nad doliną, a efekty wypadały obok niego.
+  const wysDane = new Uint16Array(WYS_BOK * WYS_BOK);
+  const wysTex = new THREE.DataTexture(wysDane, WYS_BOK, WYS_BOK, THREE.RedFormat, THREE.HalfFloatType);
+  wysTex.minFilter = THREE.LinearFilter;
+  wysTex.magFilter = THREE.LinearFilter;
+  wysTex.generateMipmaps = false;
+  wysTex.needsUpdate = true;
+  const uWysMin = uniform(new THREE.Vector2()).setName('uWysMin');
+  const uWysOdw = uniform(0).setName('uWysOdw');
+  const promienSkalyNa = (p) => uKulaR.add(texture(wysTex, p.xy.sub(uWysMin).mul(uWysOdw)).level(0).r);
   const uGinieMin = uniform(new THREE.Vector2()).setName('uGinieMin');
   const uGinieKom = uniform(1000).setName('uGinieKom');
   const aGinie = new THREE.StorageInstancedBufferAttribute(new Uint32Array(GINIE_BOK * GINIE_BOK), 1);
@@ -437,22 +454,28 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     If(uKulaR.greaterThan(0), () => {
       const eK = v3(xi.sub(uGinieC));
       const dK = fv(length(eK));
-      const penK = fv(uKulaR.add(uDxP).sub(dK));
-      If(penK.greaterThan(0), () => {
+      // Tanie odcięcie: nad najwyższym wzgórzem i pasem tłumienia nie ma czego czytać z mapy kształtu.
+      If(dK.lessThan(uKulaR.add(float(KULA_POD_J + KULA_PAS_J))), () => {
+        const wysK = fv(dK.sub(promienSkalyNa(xi)).sub(uDxP));
         const nK = v3(eK.div(max(dK, 1)));
         const vnK = fv(dot(vi, nK));
-        // Uderzenie prawie nieelastyczne: składowa ku skale gaśnie w kilka podkroków. Sama sprężyna z tłumieniem przy 4000 j./s odbijała węzły na pół planety (GRA/t6).
-        If(vnK.lessThan(0), () => { a.subAssign(nK.mul(vnK).mul(float(0.7).div(uH))); });
-        const FgK = fv(uKC.mul(penK).sub(uCC.mul(vnK)));
-        If(FgK.greaterThan(0), () => {
-          a.addAssign(nK.mul(FgK));
-          If(dot(vi, vi).lessThan(uGruzV2), () => { a.subAssign(vi.mul(uGruzP)); });
-          const vtK = v3(vi.sub(nK.mul(vnK)));
-          const vtlK = fv(length(vtK));
-          If(vtlK.greaterThan(1e-3), () => {
-            a.subAssign(vtK.mul(min(FgK.mul(par.muGrunt), uCT.mul(vtlK)).div(vtlK)));
+        If(wysK.lessThan(0), () => {
+          // Uderzenie prawie nieelastyczne: składowa ku skale gaśnie w kilka podkroków. Sama sprężyna z tłumieniem przy 4000 j./s odbijała węzły na pół planety (GRA/t6).
+          If(vnK.lessThan(0), () => { a.subAssign(nK.mul(vnK).mul(float(0.7).div(uH))); });
+          const FgK = fv(uKC.mul(wysK.negate()).sub(uCC.mul(vnK)));
+          If(FgK.greaterThan(0), () => {
+            // Sprężyna tylko powoli wypycha z głębi: pełna oddawała węzłowi po uderzeniu ~500 j./s i drobny gruz skakał po skale jak piłeczki.
+            If(vnK.lessThan(float(KULA_V_WYJ)), () => { a.addAssign(nK.mul(FgK)); });
+            If(dot(vi, vi).lessThan(uGruzV2), () => { a.subAssign(vi.mul(uGruzP)); });
+            const vtK = v3(vi.sub(nK.mul(vnK)));
+            const vtlK = fv(length(vtK));
+            If(vtlK.greaterThan(1e-3), () => {
+              a.subAssign(vtK.mul(min(FgK.mul(par.muGrunt), uCT.mul(vtlK)).div(vtlK)));
+            });
           });
         });
+        // Pas tuż nad skałą gasi odskok, także ten od wiązań małej grudki. Tylko ruch od skały i tylko przy niej: wielka kupa dalej się rozbija, bo jej góra i odłamki lecą ponad pasem, a rozrzut na boki zostaje.
+        If(wysK.lessThan(float(KULA_PAS_J)).and(vnK.greaterThan(0)), () => { a.subAssign(nK.mul(vnK).mul(float(KULA_PAS_TLUM))); });
       });
     });
 
@@ -480,7 +503,14 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     const xN = v3(p.xyz.add(v.mul(uH)));
     // Gra: bezpiecznik kontaktu ze skałą (kF, uKulaR): węzeł wbity głęboko pod powierzchnię ginie, zamiast wracać z ogromną siłą. Demo: R² = 0, warunek nigdy nie zachodzi.
     const doSkaly = v3(xN.sub(uGinieC));
-    If(dot(doSkaly, doSkaly).lessThan(uGinieR2), () => {
+    const d2Sk = fv(dot(doSkaly, doSkaly));
+    const paruje = fv(0);
+    // Gra: przy 4 km/s większość gruzu paruje w uderzeniu. Reszta leży, ale nie zakrywa kraterów, które sama zrobiła. Wielka bryła i tak się rozbija, bo jej góra uderza później.
+    const rGoryK = fv(uKulaR.add(float(KULA_POD_J)));
+    If(uKulaR.greaterThan(0).and(d2Sk.lessThan(rGoryK.mul(rGoryK))).and(dot(v, v).greaterThan(float(KULA_PAR_V * KULA_PAR_V))), () => {
+      If(i.mul(uint(2654435761)).shiftRight(uint(24)).lessThan(uint(KULA_PAR_256)).and(sqrt(d2Sk).lessThan(promienSkalyNa(xN))), () => { paruje.assign(1); });
+    });
+    If(d2Sk.lessThan(uGinieR2).or(paruje.greaterThan(0.5)), () => {
       wWez.element(i3).assign(vec4(xN, -1));
       wWez.element(i3.add(uint(1))).assign(vec4(0));
       wMaska.element(i).assign(uint(0));
@@ -843,7 +873,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     If(i.greaterThanEqual(uN), () => { Return(); });
     const p = v4(wWezR.element(uint(3).mul(i)));
     const e = v3(p.xyz.sub(uGinieC));
-    If(dot(e, e).greaterThanEqual(uLiczR2), () => { Return(); });
+    const dl = fv(length(e));
+    If(dl.greaterThanEqual(uKulaR.add(float(KULA_POD_J))), () => { Return(); });
+    If(dl.greaterThanEqual(promienSkalyNa(p.xyz).add(float(60))), () => { Return(); });
     // Poza siatką nie liczy się wcale: przycięcie do brzegu robiło z węzłów, które tam zabłądziły, proste rzędy kraterów.
     const fx = fv(floor(p.x.sub(uGinieMin.x).div(uGinieKom)));
     const fy = fv(floor(p.y.sub(uGinieMin.y).div(uGinieKom)));
@@ -1011,11 +1043,19 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     uGPunktR0.value = 0;
     uGMiesz.value.set(zPola, zakresPola > 0 ? 1 / zakresPola : 0);
     uKulaR.value = R;
-    const Rg = Math.max(0, R - 250), Rl = R + 60;
+    // Bezpiecznik pod najgłębszą doliną: wyżej zabijałby węzły leżące na skale.
+    const Rg = Math.max(0, R - KULA_POD_J);
     uGinieR2.value = Rg * Rg;
-    uLiczR2.value = Rl * Rl;
     uGinieMin.value.set(x0, y0);
     uGinieKom.value = kom;
+  }
+
+  /** Kształt skały: WYS_BOK² wartości r − R [j.] w środkach tekseli, x0, y0 róg, bok długość boku [j.]. */
+  function ustawWysokosciSkaly(dane, x0, y0, bok) {
+    for (let i = 0; i < wysDane.length; i++) wysDane[i] = THREE.DataUtils.toHalfFloat(dane[i]);
+    wysTex.needsUpdate = true;
+    uWysMin.value.set(x0, y0);
+    uWysOdw.value = 1 / bok;
   }
 
   /** Liczniki kubełków z GPU: Uint32Array GINIE_BOK², węzły na skale od wczytaj. Przelicza i czyta bez czekania klatki. */
@@ -1321,7 +1361,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
 
   return {
     maxNodes: MAX, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
-    wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, ustawGinie, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
+    wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     get wypiek() { return wypiek; },
     get strzalCzeka() { return strzalCzeka !== null; },
     get fKlatka() { return fKlatka; },

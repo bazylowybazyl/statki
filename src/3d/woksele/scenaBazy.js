@@ -237,6 +237,9 @@ function budujDysk(b, Hs, o) {
   return c;
 }
 
+/** Części habitatu zbudowane z kół wokół jego osi: bloki przy tych kołach dociąga obraz (uKola w obraz.js). */
+const CZESCI_KOL = new Set(['H-C + H-T', 'H-E, S, W, N', 'trzon', 'dysk D-1…8']);
+
 /**
  * Składa części w scenę: pola ijk na półce, grupa „wieza” z meta.budynki i grupa „dysk”.
  * Pozycja węzła to środek komórki świata, więc bez lewej ani prawej strony: część z nx parzystym nie ma przesunięcia o pół komórki względem sąsiadów.
@@ -245,7 +248,7 @@ function zloz(b, czDysk, l) {
   const { dx, czesci } = b;
   let n = 0;
   for (const c of czesci) n += c.I.length;
-  const pos = new Float32Array(3 * n), kind = new Uint8Array(n), ijk = new Int32Array(3 * n), grupa = new Uint8Array(n);
+  const pos = new Float32Array(3 * n), kind = new Uint8Array(n), ijk = new Int32Array(3 * n), grupa = new Uint8Array(n), kola = new Uint8Array(n);
   const zakresy = [];
   const zapisane = czesci.filter((c) => c !== czDysk);
   let oi = 0, oj = 0, wiersz = 0, q = 0;
@@ -255,7 +258,7 @@ function zloz(b, czDysk, l) {
     for (let e = 0; e < c.I.length; e++, q++) {
       pos[3 * q] = c.I[e] * dx; pos[3 * q + 1] = c.J[e] * dx; pos[3 * q + 2] = (c.K[e] + 0.5) * dx;
       ijk[3 * q] = c.I[e] - a0 + ax; ijk[3 * q + 1] = c.J[e] - b0 + ay; ijk[3 * q + 2] = c.K[e] - k0;
-      kind[q] = c.R[e]; grupa[q] = g;
+      kind[q] = c.R[e]; grupa[q] = g; kola[q] = CZESCI_KOL.has(c.nazwa) ? 1 : 0;
     }
     c.start = start; c.n = q - start;
     return { nx: Math.max(...c.I) - a0 + 1, ny: Math.max(...c.J) - b0 + 1, nk: Math.max(...c.K) - k0 + 1 };
@@ -273,7 +276,7 @@ function zloz(b, czDysk, l) {
   const mD = zapisz(czDysk, 1, 0, 0);
   if (oj + wiersz >= 1024) throw new Error('scenaB1: siatka ijk ponad 10 bitów (slowoIjk w solver.js)');
   return {
-    n, dx, pos, kind, ijk, grupa, vel0: null, g: G, gruntZ: GRUNT_Z, kotwice: true,
+    n, dx, pos, kind, ijk, grupa, kola, vel0: null, g: G, gruntZ: GRUNT_Z, kotwice: true,
     meta: {
       typ: 'baza', dx, budynki: zakresy, wieza: { baza: true },
       // AGENT: R = 1e9 to brak dociągania rogów do koła w obrazie (uRDysk w obraz.js): to działa na KAŻDY węzeł dalej od osi niż R, więc przy prawdziwym promieniu pomosty i zbiorniki poleciałyby do koła. Promień dysku jest w c.dysk i w o.R wypieku szwów.

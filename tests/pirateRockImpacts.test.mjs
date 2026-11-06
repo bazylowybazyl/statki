@@ -422,7 +422,7 @@ test('ślady uderzeń na skale: lustro reguły (lód na dnie i w promieniach, ci
   assert.ok(Math.abs(A[0].w - 600 / RL.R) < 1e-9, 'promień kątowy');
   assert.ok(Math.abs(B[0].w - Math.cos(A[0].w * 2.7)) < 1e-9, 'próg zasięgu pętli');
   // bliski ślad — scalenie (bez nowego wpisu, większy)
-  const q = new THREE.Vector3(1, 0.01, 0).normalize().applyMatrix4(r.mesh.matrixWorld);
+  const q = new THREE.Vector3(1, 0.4 * 600 / RL.R, 0).normalize().applyMatrix4(r.mesh.matrixWorld);
   r.addScar(q.x, q.y, q.z, 500, 0.8);
   assert.equal(r._scarCount, 1);
   assert.ok(A[0].w > 600 / RL.R);

@@ -33821,8 +33821,8 @@
     // Przy HP 0 stare ciała bazy znikają od razu, a kawałki bez ciał przestają trafiać dopiero po puszczeniu kotwic wokseli. Misja i ujęcie kamery idą tym samym stanem upadku, czasy z zegara (gra nie czyta niczego z wokseli: zasada 1).
     // A/B: ?woksele=0 — stary obraz i stara fizyka upadku.
     const VOX_OBRAZ = !/[?&]woksele=0\b/.test(location.search);
-    // Czasy z fali puszczania kotwic w src/3d/woksele/wGrze.js (start 3 s, 1500 j./s) i spadku ~11,5 s: gra ich nie czyta z wokseli.
-    const VOX_FALL_T = { kotwice: 9, wieza: 13, dysk: 17, koniec: 28 };
+    // Czasy z fali puszczania kotwic w src/3d/woksele/wGrze.js (start 3 s, 1500 j./s) i spadku ~15,5 s (40 km, sufit prędkości 4000 j./s): gra ich nie czyta z wokseli.
+    const VOX_FALL_T = { kotwice: 9, wieza: 17, dysk: 21, koniec: 32 };
     function startVoxBaseFall() {
       const F = _baseFall;
       F.phase = 'falling';

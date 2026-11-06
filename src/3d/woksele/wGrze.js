@@ -9,7 +9,7 @@
 // Rysunek: ta sama siatka w passie tła (węzły pod uCiecieZ, kadłuby przykrywają je) i w passie FG (węzły nad nim), jak bryły starej bazy. Znak w userData obiektu, jeden pipeline.
 import * as THREE from 'three/webgpu';
 import { texture, screenUV, vec4, positionGeometry } from 'three/tsl';
-import { createWokseleSolver, GINIE_BOK } from './solver.js';
+import { WYS_BOK, createWokseleSolver, GINIE_BOK } from './solver.js';
 import { createWokseleObraz } from './obraz.js';
 import { OPCJE_PYLU } from './pyl.js';
 import { PARAMETRY } from './budowa.js';
@@ -34,16 +34,17 @@ const SLABE_PROG = 15;
 const UDERZENIA_CO_S = 0.25; // odczyt kubełków z GPU
 const KUBELEK_J = 250;
 // Krater na bryłę, nie na kubełek: sąsiednie kubełki z jednego odczytu to jedna bryła, która właśnie uderzyła. Promień rośnie z jej rozmiarem, więc wieża zostawia wielki krater, a sypki gruz sam pył. Krater na kubełek dawał tysiące równych dołków (GRA/t10).
-const PLAMA_KUBELEK_MIN = 16; // tyle węzłów w kubełku w jednym odczycie, żeby należał do bryły: sypki gruz jest rzadszy
-const PLAMA_MIN = 60; // tyle węzłów w bryle, żeby został krater: przy tych progach misja daje ~150 kraterów (GRA/t11), przy 12 i 30 limit kończył się w 19. s, zanim spadły pomosty
+const PLAMA_KUBELEK_MIN = 8; // tyle węzłów w kubełku w jednym odczycie, żeby należał do bryły: sypki gruz jest rzadszy
+const PLAMA_MIN = 20; // tyle węzłów w bryle, żeby został krater: także odłam wieżowca. Przy tych progach cały upadek daje ~150 kraterów (log GRA/t14)
 const KRATER_J = 48; // r = KRATER_J · ∛węzłów: bok bryły przy komórce 40 j., razy 1,2
 const KRATER_R_MAX = 1500;
-const KRATEROW_MAX = 240;
+const KRATEROW_MAX = 300;
 const KRATER_WZROST = 1.2; // uderzenie w istniejący krater dosypuje masę, a stempel idzie dopiero, gdy promień urósł o tyle
 const FALA_START_S = 3; // kotwice zaczynają puszczać tyle po HP 0, od habitatu na zewnątrz
 const FALA_J_S = 1500;
-const ZGAS_PO_S = 38; // po tylu sekundach od upadku ruiny leżą: solver stoi, a siatki rysują je dalej w ostatniej pozie
+const ZGAS_PO_S = 44; // po tylu sekundach od upadku ruiny leżą: solver stoi, a siatki rysują je dalej w ostatniej pozie
 const LATA_KRATEROW = 9000; // połowa boku mapy kraterów [j.]
+const WYS_POL_J = 12000; // połowa boku mapy kształtu skały [j.]: dalej kształt z brzegu mapy
 
 function wypiekB1(dx) {
   return new Promise((ok, nie) => {
@@ -67,7 +68,7 @@ export function createWokseleGry({ Core3D }) {
     proba: 0, gotowe: false, aktywny: false, ukryty: false, soczewka: false, slonce: false,
     px: 0, py: 0, os: 0, cOs: 1, sOs: 0, krok: 0, akum: 0, przepadlo: 0, klatek: 0, klatekZn: 0, trafien: 0, kraterow: 0, kadr: true, obrazWKadrze: false,
     srodekX: 0, srodekY: 0, zasieg: 0, skoraCzeka: null, cullingWypieku: null, szyjaCieta: false, upadekT: -1, zgaszony: false,
-    skalaOk: false, skalaC: [0, 0, 0], skalaR: 0, odczytT: 0, czytam: false, uderzen: 0, krateryN: 0, kubX0: 0, kubY0: 0, glebRuin: 0,
+    skalaOk: false, skalaC: [0, 0, 0], skalaR: 0, odczytT: 0, czytam: false, uderzen: 0, krateryN: 0, kubX0: 0, kubY0: 0, glebRuin: 0, zegarKrok: 0, wysX0: 0, wysY0: 0,
   };
   const hity = [];
   const slabe = new Map();
@@ -75,6 +76,7 @@ export function createWokseleGry({ Core3D }) {
   const plamaZn = new Uint8Array(GINIE_BOK * GINIE_BOK), plamaStos = new Int32Array(GINIE_BOK * GINIE_BOK);
   const krateryPam = new Float32Array(4 * KRATEROW_MAX); // x, y układu węzłów, promień, węzły
   let zNajnizej = null; // najniższy węzeł wypieku: wyżej budowla stoi w polu, w którym ją wypieczono
+  const wysCpu = new Float32Array(WYS_BOK * WYS_BOK); // r − R skały, kopia mapy kształtu z solvera: miejsce kraterów
   let zbudowane = null;
   let s = null;
 
@@ -168,6 +170,8 @@ export function createWokseleGry({ Core3D }) {
     const zaladuj = () => {
       solver.wczytaj(w);
       obraz.wczytaj(w, { rDysk, poklad, pyl: OPCJE_PYLU.B1, lod: LOD, budynki: miasto?.budynki ?? null });
+      const Hk = l.habitat;
+      obraz.ustawKola([Hk.neckR, Hk.coreR, Hk.headR, Hk.ringR0, Hk.innerR - Hk.innerW, Hk.innerR, Hk.ringR1, Hk.drumR - Hk.wall, Hk.drumR, Hk.tier2R, Hk.tier1R, Hk.discR]);
       solver.ustawPlan({ ...g, kratery: [], puscKotwiceF: -1 });
       obraz.uAoMoc.value = 0;
       ginieStare.fill(0);
@@ -223,8 +227,6 @@ export function createWokseleGry({ Core3D }) {
     try {
       const nowe = await s.solver.odczytGinie(s.renderer);
       if (proba !== stan.proba || !stan.gotowe) return;
-      // Pierwszy odczyt po HP 0 to baza: gruz, który doleciał do skały w trakcie walki, nie dostaje zaległych uderzeń.
-      if (stan.ginieBaza) { stan.ginieBaza = false; ginieStare.set(nowe); return; }
       const stare = ginieStare, zn = plamaZn, stos = plamaStos, B = GINIE_BOK;
       for (let q = 0; q < nowe.length; q++) zn[q] = nowe[q] - stare[q] >= PLAMA_KUBELEK_MIN ? 1 : 0;
       const plamy = [];
@@ -285,12 +287,38 @@ export function createWokseleGry({ Core3D }) {
   }
 
   function stemplujKrater(lx, ly, r, n) {
-    const C = stan.skalaC, R = stan.skalaR;
+    const C = stan.skalaC, R = promienLok(lx, ly);
     const dd = (lx - C[0]) ** 2 + (ly - C[1]) ** 2;
     if (dd >= R * R) return;
     const lz = C[2] + Math.sqrt(R * R - dd);
     const [sx, sy] = naScene(lx, ly);
     if (stan.skala.krater(sx, sy, lz, r, Math.min(1, 0.45 + n / 400))) stan.uderzen++;
+  }
+
+  /** Promień skały pod punktem układu węzłów, dwuliniowo z mapy kształtu. Kierunek krateru liczony z kuli przy zboczu wypadał do kilkuset jednostek obok miejsca, w które spadł gruz. */
+  function promienLok(lx, ly) {
+    const N = WYS_BOK, k = N / (2 * WYS_POL_J);
+    const fx = Math.max(0, Math.min(N - 1, (lx - stan.wysX0) * k - 0.5)), fy = Math.max(0, Math.min(N - 1, (ly - stan.wysY0) * k - 0.5));
+    const x0 = Math.min(N - 2, Math.floor(fx)), y0 = Math.min(N - 2, Math.floor(fy)), tx = fx - x0, ty = fy - y0;
+    const a = wysCpu[y0 * N + x0] * (1 - tx) + wysCpu[y0 * N + x0 + 1] * tx;
+    const b = wysCpu[(y0 + 1) * N + x0] * (1 - tx) + wysCpu[(y0 + 1) * N + x0 + 1] * tx;
+    return stan.skalaR + a * (1 - ty) + b * ty;
+  }
+
+  /** Mapa kształtu skały pod bazą: tę samą bryłę, którą widać, dostają kontakt, pył i kratery. */
+  function zbudujKsztaltSkaly() {
+    const N = WYS_BOK, bok = 2 * WYS_POL_J, C = stan.skalaC, R = stan.skalaR;
+    const x0 = stan.kubX0 + 0.5 * GINIE_BOK * KUBELEK_J - WYS_POL_J, y0 = stan.kubY0 + 0.5 * GINIE_BOK * KUBELEK_J - WYS_POL_J;
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const lx = x0 + ((i + 0.5) * bok) / N, ly = y0 + ((j + 0.5) * bok) / N;
+      const dd = (lx - C[0]) ** 2 + (ly - C[1]) ** 2;
+      const lz = C[2] + Math.sqrt(Math.max(0, R * R - dd));
+      const [sx, sy] = naScene(lx, ly);
+      wysCpu[j * N + i] = stan.skala.promienW(sx, sy, lz) - R;
+    }
+    stan.wysX0 = x0;
+    stan.wysY0 = y0;
+    s.solver.ustawWysokosciSkaly(wysCpu, x0, y0, bok);
   }
 
   /** Punkt układu węzłów w XY sceny. */
@@ -358,6 +386,7 @@ export function createWokseleGry({ Core3D }) {
     stan.krok++;
     // Zegar upadku idzie z krokami solvera: fala kotwic, odczyt uderzeń i zamrożenie ruin nie mogą wyprzedzić tego, co naprawdę spadło.
     if (stan.upadekT >= 0) stan.upadekT += H;
+    stan.zegarKrok += H;
   }
 
   function krokFx() {
@@ -394,8 +423,9 @@ export function createWokseleGry({ Core3D }) {
       s.solver.puscKolo(renderer, 0, 0, Rf);
       if (Rf > 1.6 * s.skoraUklad.bok) stan.falaKoniec = true;
     }
-    if (stan.upadekT >= 0 && stan.upadekT - stan.odczytT >= UDERZENIA_CO_S) {
-      stan.odczytT = stan.upadekT;
+    // Odczyt od pierwszego zdarzenia, nie od HP 0: gruz zniszczonego wieżowca też spada na skałę i zostawia krater.
+    if (stan.zegarKrok - stan.odczytT >= UDERZENIA_CO_S) {
+      stan.odczytT = stan.zegarKrok;
       czytajUderzenia();
     }
     if (!blisko) return;
@@ -436,6 +466,7 @@ export function createWokseleGry({ Core3D }) {
       const R = stan.skala.promien(sx, sy, z, LATA_KRATEROW);
       const p = ustawSkale(R);
       stan.skala.lata(p[0], p[1], p[2], LATA_KRATEROW);
+      zbudujKsztaltSkaly();
     }
     s.obraz.pelnyObraz(true);
     s.obraz.uAoMoc.value = 1;
@@ -457,7 +488,7 @@ export function createWokseleGry({ Core3D }) {
       stan.upadekT = -1;
       stan.zgaszony = false;
       stan.odczytT = 0;
-      stan.ginieBaza = false;
+      stan.zegarKrok = 0;
       stan.falaKoniec = false;
       stan.uderzen = 0;
       stan.krateryN = 0;
@@ -598,8 +629,6 @@ export function createWokseleGry({ Core3D }) {
           stan.kraterow += lista.length;
           s.solver.dodajKratery(lista);
           stan.upadekT = 0;
-          stan.ginieBaza = true;
-          stan.odczytT = -UDERZENIA_CO_S; // baza od razu, nie po 0,25 s
         }
       }
     },

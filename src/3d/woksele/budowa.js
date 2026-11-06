@@ -12,6 +12,8 @@ export const KIER = Object.freeze([
   [1, 0, 1], [-1, 0, -1], [1, 0, -1], [-1, 0, 1],
   [0, 1, 1], [0, -1, -1], [0, 1, -1], [0, -1, 1],
 ]);
+/** Numer bitu flagi węzła: część o kształcie kół wokół osi habitatu, rogi jej bloków dociąga obraz. */
+export const BIT_KOLO = 18;
 export const ND = KIER.length;
 export const STRONA = 18;
 export const N0X = new Float64Array(ND);
@@ -649,10 +651,10 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
     }
   }
 
-  // Flagi węzła (§ 2.2): bit 0 stoi, 1 nośny przez kotwicę, 2–4 kind, 5–10 m0 = sześć bitów początkowych osiowych, 11–15 grupa.
+  // Flagi węzła (§ 2.2): bit 0 stoi, 1 nośny przez kotwicę, 2–4 kind, 5–10 m0 = sześć bitów początkowych osiowych, 11–15 grupa, 16–17 kratery (solver.js), BIT_KOLO obraz.
   const flagi = new Uint32Array(n);
   for (let i = 0; i < n; i++) {
-    flagi[i] = (nieruchomy[i] ? 1 : 0) | (bezG[i] ? 2 : 0) | (kind[i] << 2) | ((maska[i] & 63) << 5) | (scena.grupa[i] << 11);
+    flagi[i] = (nieruchomy[i] ? 1 : 0) | (bezG[i] ? 2 : 0) | (kind[i] << 2) | ((maska[i] & 63) << 5) | (scena.grupa[i] << 11) | ((scena.kola && scena.kola[i] ? 1 : 0) << BIT_KOLO);
   }
 
   return {
