@@ -294,6 +294,24 @@ Próby, liczby i metody są w `docs/PLAN-zawalenia-lod-miasto.md`: wyniki w § 5
 
 **Czego nie ma:** węzłów na żądanie i zmiany tieru w biegu, sufitu węzłów, zamrażania hałdy, tieru drobnego w jednej scenie z grubym, kolizji gruzu solvera z instancjami tieru 0, lustra generatora dla całego ringu, 5120 × 1440 i oceny człowieka.
 
+### 1.15 Benchmark misji 1: scena B1 i pomiar w grze
+
+Liczby, sprostowania i rozrzuty są w `docs/PLAN-zawalenia-lod-miasto.md`: scena w § 5c, gra w § 5d, decyzje użytkownika w § 6. Stan 2026-11-06, tryb nocny, RTX 5080, 1280 × 720, ms GPU na klatkę. Strona dalej startuje od S5. Kod gry jest bez zmian: `git diff 8762dfb3 -- index.html src/` jest pusty.
+
+**Scena B1 „Baza piratów”.** Prawdziwy układ misji 1 z `createPirateBaseLayout` i `k7HeightToZ`: W-1, W-2, H-C + H-T, bęben, trzon, 8 pomostów, 3 zbiorniki, kolektor, magazyn, dysk z 8 sektorami. dx = 40: 83 730 węzłów, c = 6000, g = 400, 4 podkroki, 138 kraterów, `puscKotwiceF` przy t = 21,5. dx = 80: 15 689 węzłów. Sekwencja: salwy w wieżowce, wyłom w H-S, nacięcie szyi, wieża pada przez wyłom, głowa przebija dysk, sektory, ogień w rurach, reszta spada. Wejście: przycisk „Baza piratów” (przeładowanie z `?scena=B1&maxWez=86000&nKom=131072`). Bez DOM: `scenaB1({ dx })`, potem `zbudujPlan(plan)`. Plik: `scenaBazy.js`, test: `tests/wokseleBaza.test.mjs`.
+
+**Koszt na stronie dema.** dx = 40: compute 0,39–0,68, rysunek z kamery Atlas (2, 1) 1,01–1,49, z bliska (7, 2) 0,92–3,96, razem z kamery Atlas około 2 ms. W1 przez 5 s: 0 zerwań, 0 NaN, największe przemieszczenie 6,2 j. w N-P i F-P, bez sprawdzonej przyczyny.
+
+**Pomiar w grze.** `dema/woksele-zawalenia/wGrze.js` przez `scripts/webgpu/gpu-baza-gra.mjs --woksele 1`, tryb gracza (worker), bieg po kolei a1, b1, a2, b2, potem c1. Krok `Core3D.addFxStep` 60 Hz, bryły i gruz w passie FG, obraz (2, 1). Dołożone do działającej misji: około 2,4 ms przy p50 (1,89–2,82 po oknach). Rozrzut a1 ↔ a2 to najwyżej 0,65 ms, więc sama suma jest realna, ale różnice między oknami, podział compute i p95 są w granicach rozrzutu (§ 5d). Szczyt wokseli na prawdziwym upadku (c1, jeden bieg): 9,18 / 9,47 i 8,93 / 12,17, tyle samo co b1 i b2. Pipeline'y synchroniczne po rozgrzewce: 0, a w rozgrzewce raz 30–34 ms na bryły. Pamięć: około +90 MB. Compute starego silnika zniszczeń to setne ms, więc zamiana w GPU przy 720p kosztu nie spłaci.
+
+**Domknięcie.** Testy wokseli i strażniki (10 plików): 174 z 174. Seria `--zrzut B1 --przyciski 1 --przyciskiOd 0 --przyciskiDo 1 --interakcjeSceny B1,S5`, 31 s, 1280 × 720, BelowNormal: przycisk S5 ze strony bazy wchodzi i resetuje się, interakcje na B1 i S5 działają, 0 porażek, 0 nowych pipeline'ów, wentylator 0%. Wejście przyciskiem ze strony bez pojemności sprawdziła wcześniej seria `--przyciskB1`.
+
+**Czego nie ma w scenie:** statków, dna bębna, placu M-2, iglic wieżowców, rur, kratownicy, anten, osady, windy i planetoidy jako kuli (grunt to płaszczyzna z = −3400, bo tak liczy kernel).
+
+**Czego nie ma w grze:** trafień wokseli przez ostrzał (sekwencja idzie z planu), kolizji z okrętami i starą bazą, wariantu zamiany (stara baza zostaje w kadrze, więc to koszt dołożony), `sunVisibility` i haków ośrodka pasa w materiale, światła błysku na bryłach (`emissiveNode` czyta `positionWorld`), gruntu z prawdziwej skały.
+
+**Czego nie zmierzono:** 5120 × 1440 (polecenie w § 5d, tylko za dnia), CPU wątku gry po zamianie, rozbicia passów na skóry, powtórzenia c1, obrazu w ruchu i oceny człowieka.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
