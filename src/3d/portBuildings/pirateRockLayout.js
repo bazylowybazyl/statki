@@ -22,7 +22,7 @@
 // PODOBIEŃSTWEM względem punktu widzenia `eyeH` nad osią habitatu (x = z = 0). Z tego punktu skała i osada wyglądają
 // jak w projekcie (ten sam rzut), ale są `scale` razy dalej i większe — spadające kawałki bazy (rozmiar prawdziwy)
 // lecą ~3× dłuższą drogą (skala 2: 8 → ~23 km), maleją w perspektywie i lądują ~`scale` razy mniejsze względem skały
-// (fizyka upadku: pirateBaseFall.js — grawitacja po przejściu wieży przez dysk i sufit prędkości). Mapy tekstur skały
+// (teren i studnia silnika belek: pirateBaseFall.js). Mapy tekstur skały
 // zostają (kąty na kuli bez zmian: e / R, n / R), głowica kotwicy pod dyskiem — bez skali (należy do habitatu).
 // Pola świata daje createPirateRockLayout (R, foot, center, stationTop, plateau, cableR, budowle: e, n, r);
 // PIRATE_ROCK_SPEC trzyma projekt.
@@ -90,7 +90,7 @@ export const PIRATE_ROCK_SPEC = Object.freeze({
   segments: 16,              // odcinki liny (grupy renderu)
   climbers: 2,               // kabiny windy
   plateau: PIRATE_ROCK_SITE.plateau,   // [j. po powierzchni] promień wyrównanego tarasu (mapa kształtu: d = 0)
-  gravity: 400,              // [j/s²] ku środkowi skały: łuki odłamków uderzeń (pirateRockImpactFx.js); lina — × skala długości
+  gravity: 400,              // [j/s²] ku środkowi skały: lina — × skala długości
   cableR: 34                 // [j.] promień wiązki liny przy stacji dolnej (kolizja z powierzchnią; świat × scale)
 });
 

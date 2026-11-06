@@ -1,13 +1,11 @@
 ---
 paths:
   - "src/game/story/pirateBase*.js"
-  - "src/game/story/pirateRock*.js"
   - "src/3d/portBuildings/pirateBase*.js"
   - "src/3d/portBuildings/pirateRock*.js"
   - "src/3d/pirateBase*.js"
   - "src/3d/pirateRock*.js"
   - "src/render/blocks/pirateVentsBlock.js"
-  - "src/render/rockImpactRecord.js"
   - "tests/pirate*.test.mjs"
 ---
 
