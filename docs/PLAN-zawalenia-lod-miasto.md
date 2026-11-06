@@ -371,6 +371,57 @@ dx = 80, 15 689 węzłów: compute 0,17–0,50, rysunek przy (2, 1) 0,35–0,45.
 
 **Czego nie sprawdzono:** obrazu w ruchu, 5120 × 1440, ziaren innych niż 21, W1 przy dx = 80 (sam bieg sekwencji przeszedł bez NaN), przebiegu w prawdziwej grze ze statkami i ostrzałem. Test przycisków miasta raz nie przeszedł, gdy harness szedł z priorytetem BelowNormal: S1 budowało się dłużej niż 4 s stałego czekania przy powrocie, a powtórka bez tego priorytetu dała 0 porażek. Stare sceny nie były porównywane pikselami, zmiany w nich to tylko widoczność przycisków kamer.
 
+## 5d. Benchmark misji 1: w grze
+
+Pomiar B1 z § 5c w prawdziwej misji 1: `scripts/webgpu/gpu-baza-gra.mjs --woksele 1`, 2026-11-06, RTX 5080, 1280 × 720, `limitKlatek=60`, tryb gracza (render w workerze), preset grafiki bez nadpisania, headless, tryb nocny. Bieg po kolei: a1, b1, a2, b2 (A = gra, B = gra + woksele), dodatkowo c1 (B z sygnałem 18 s później). Liczby i zrzuty: `.tmp/woksele-demo/BAZA/gra/<bieg>/` (`raport.json`, `log.txt`, `01-przed.png`, `03-ostrzal-koniec.png`, `04-upadek.png`, `06-nad-gruzem.png`).
+
+**Co to mierzy.** Kod gry bez zmian. Moduł `dema/woksele-zawalenia/wGrze.js` ładuje harness po starcie misji operacją dev, w workerze. To wariant A z zadania: 83 730 węzłów (dx = 40), bryły i gruz w passie FG Core3D (warstwa 2, perspektywa, światła, cień słońca i post gry), obraz (2, 1), krok `Core3D.addFxStep` 60 Hz, najwyżej 2 kroki na klatkę, a głębia, AO i pył w celach własnych z tego samego kroku. Skład pyłu to kwad w FG. Stara baza zostaje w kadrze i wszystko liczy się dalej, więc to **koszt dołożony do starego silnika, górna granica, nie zamiana**. Ostrzał gry nie trafia wokseli: sekwencja B1 idzie z planu, od sygnału w chwili pierwszej serii.
+
+**Tabela, ms GPU na klatkę, średnia z dwóch biegów, rozrzut to różnica S p50 między powtórzeniami.** R to render, C compute, S suma, wszystko z klatek pełnych. CPU to klatka workera p50. Każde okno ma 95–125 klatek, `przed` i `nad-gruzem` około 400.
+
+| Okno | A: R | A: C | A: S p50 / p95 | A: CPU | B: R | B: C | B: S p50 / p95 | B: CPU | B − A, S p50 | Rozrzut a1 ↔ a2 | Rozrzut b1 ↔ b2 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| przed | 0,35 | 0,06 | 0,41 / 2,19 | 1,51 | 1,61 | 0,58 | 2,30 / 2,61 | 1,77 | **1,89** | 0,00 | 0,02 |
+| ostrzał 1 (pierwsze) | 1,79 | 2,43 | 4,22 / 5,72 | 2,54 | 3,61 | 3,06 | 6,77 / 8,50 | 3,20 | **2,56** | 0,17 | 0,14 |
+| ostrzał 3 (środek) | 1,88 | 3,77 | 5,66 / 7,86 | 3,01 | 3,43 | 4,59 | 7,97 / 8,93 | 3,56 | **2,31** | 0,61 | 0,24 |
+| ostrzał 4 (ostatnie) | 1,58 | 4,12 | 5,71 / 6,20 | 3,76 | 3,38 | 4,92 | 8,29 / 8,80 | 4,03 | **2,58** | 0,07 | 0,19 |
+| upadek 1 (szczyt p50) | 1,67 | 5,21 | 6,91 / 7,20 | 4,46 | 3,51 | 5,86 | 9,41 / 9,73 | 4,69 | **2,50** | 0,41 | 0,40 |
+| upadek 2 (szczyt p95) | 1,35 | 4,99 | 6,49 / 10,01 | 3,22 | 3,33 | 5,85 | 9,31 / 12,86 | 3,46 | **2,82** | 0,65 | 0,79 |
+| osiadłe 1 | 0,72 | 0,30 | 1,02 / 1,23 | 2,50 | 2,49 | 1,09 | 3,51 / 4,14 | 2,75 | **2,49** | 0,45 | 0,24 |
+| nad gruzem | 0,62 | 0,06 | 0,69 / 3,51 | 2,25 | 2,45 | 0,56 | 3,08 / 3,60 | 2,43 | **2,39** | 0,04 | 0,15 |
+
+Pipeline'y synchroniczne po rozgrzewce: **0 render, 0 compute** we wszystkich pięciu biegach (sonda, okno po oknie), a w B także lista `syncPipeline` z nazwami jest pusta. Węzły: 83 730. Kraterów wykonanych 138 z 138, pominiętych 0. Rozgrzewka: moduł gotowy 4,6 s po sygnale (bieg b0), budowa w osobnym wątku. Wszystkie biegi: finał z etapów po 65–69 strzałach (limit 120 nie zadziałał), `obce` 0, błędów 0.
+
+**Co robi różnicę (etykiety sondy, ms na klatkę):**
+
+| Okno | `fx:woksele-fizyka` (C) | `fx:woksele-cele` (R) | Cień słońca (R) | `pass:fg` A → B (R) |
+|---|---|---|---|---|
+| przed, same bloki | 0,59 | 0,30 | 0,32 | 0,03 → 0,71 |
+| ostrzał 1 | 0,61 | 0,58 | 0,34 | 0,79 → 1,66 |
+| ostrzał 3 | 0,48 | 0,59 | 0,31 | 0,77 → 1,46 |
+| upadek 1 | 0,46 | 0,61 | 0,30 | 0,57 → 1,39 |
+| upadek 2 | 0,54 | 0,59 | 0,31 | 0,39 → 1,28 |
+| nad gruzem | 0,56 | 0,59 | 0,37 | 0,02 → 0,87 |
+
+`fx:woksele-cele` 0,30 → 0,6 to przejście z bloków na (2, 1). Razem około 2,4 ms, a compute rośnie o około 0,65–0,85 ms w oknach z pracą, więcej niż sama fizyka, bo `fx:wybuchy` w B jest o 0,1–0,3 ms wyżej (na tych samych wybuchach gry, różnica mieści się w rozrzucie). Demo dało około 2 ms (§ 5c), gra daje 2,3–2,8 ms przy p50. **Koszt jest prawie płaski: od sygnału do osiadłego gruzu 2,3–2,8 ms przy p50.**
+
+**Szczyt na szczycie (bieg c1, sygnał 18 s po pierwszej serii).** W a i b szczyt wokseli (t = 14–25) wypadał w ostrzale 2–3, a nie w prawdziwym upadku. W c1 t = 17,6–23,7 pokrywa okna upadek 1–4: S 9,18 / 9,47, 8,93 / 12,17, 8,48 / 12,02, 8,16 / 11,59. To tyle samo co b1 i b2, więc **nałożenie szczytów niczego nie dokłada**. Jeden bieg, bez powtórzenia.
+
+**Co odpadłoby po zamianie, GPU w 720p.** Compute starego silnika zniszczeń prawie nic nie kosztuje: `fx:pole skóry 3D (rozrzut)` 0,001–0,003 ms, `fx:hullDamageMap` 0,006–0,016 ms. Największy compute to `fx:wybuchy` (2,2 ms w ostrzale, 5,1–5,6 w upadku): to gaz wybuchów, nie silnik zniszczeń, i bez osobnej decyzji zostaje. Render: sonda nie dzieli passów na moduły, więc skór nie da się odczytać wprost. Górna granica tego, co mogą być skóry w A: `pass:bg` 0,20–0,52 ms, `pass:ortho` 0,08–0,88 ms, `pass:fg` 0,02–0,79 ms, a w tym są jeszcze niebo, skała, okręty i efekty. Stojąca baza to razem R 0,35 ms przy p50, osiadły gruz 0,72 ms. **W GPU przy 720p zamiana odzyskałaby najwyżej ułamek tych liczb, więc w tej rozdzielczości nie spłaci 2,4 ms wokseli.** Czego stąd nie widać: CPU wątku gry (fizyka belek i budowli, nie ta sonda), wysyłek skór (`hullSkin3DScatterVal` 31–36 KB na klatkę) i wzrostu liczby rysunków (40 → 222–260 przy gruzie w A, woksele dokładają 6–9) przy 5120 × 1440. Tu nie zmierzono, co odpadnie na CPU.
+
+**Pamięć.** Wokselowe bufory i cele: +90 MB buforów i +3,7 MB tekstur wg sondy (`przed`), +90–110 MB wg `nvidia-smi`. Moc szczytowa 181–186 W w A, 201–214 W w B.
+
+**Co można wnioskować o 5120 × 1440, a czego nie.** Tabela E0 (2,2 ms przed, 7–8 ms ostrzał, 9,9 / 18,2 ms upadek) jest z 5120 × 1440, `grafika=ultra&limitKlatek=120`, i **nie porównuje się wprost** z tymi liczbami. Compute nie zależy od rozdzielczości, więc +0,65–0,85 ms przechodzi 1:1 i to można powiedzieć już teraz. Render zależy: większość `pass:fg` i cienia to wierzchołki (§ 5c: około 0,15 ms na milion), a cele własne mają sufit 720 wierszy i 2560 szerokości, więc nie rosną 8 razy, ale kwad składu pyłu i cieniowanie brył rosną z pikselami, a 5120 × 1440 to 8 razy więcej pikseli. Szacunek, nie pomiar: dołożone R około 2–5 ms. Tego też nie wolno dodać do E0: stary silnik sam zmienia się z rozdzielczością, a w E0 p95 upadku to 18,2 ms. Rozstrzyga pomiar dzienny.
+
+**Co wynik jest wart, a czego nie:**
+- Prawda: pełen silnik i pełny obraz (2, 1) wokseli na tym samym urządzeniu, w tym samym workerze, passach i poście, z prawdziwą walką, wybuchami i upadkiem, kosztuje około 2,4 ms GPU w 720p przy 60 kl/s i 0 pipeline'ów synchronicznych.
+- Nieprawda: woksele nie są tu grą. Ostrzał ich nie trafia, nie kolidują z okrętami i starą bazą, sekwencja jest z planu. Fizyka B1 jest płaska kosztowo (§ 5c), ale prawdziwe kratery z pocisków mogą mieć inny rytm: `KRATER_N`, `BLAST_N` i pierścień slotów nie są tu sprawdzone pod ogniem.
+- Obraz wobec dema: światło błysku na bryłach nie działa (`emissiveNode` czyta `positionWorld`, przy 5–10 mln j. to nie trafia w dane lokalne; koszt zostaje, obrazu nie ma), a grunt solvera z = −3400 jest niewidzialny, więc gruz leży na nim, a nie na skale gry. Materiał nie ma `sunVisibility` ani haków ośrodka pasa.
+- W kadrze widać obie bazy naraz. Woksele zasłaniają starą, gaz wybuchów gry kładzie się na wokselach. Ocena ze zrzutów, nikt tego nie oglądał w ruchu.
+- Okna upadku różnią się między biegami, bo upadek jest chaotyczny: czas do osiadania ft 21,3 / 32 w A i 20,9 / 26,6 w B. Okna z 50 kl/s workera i bimodalny compute (p95 8–10 ms w upadku 2–4) są i w A, i w B, więc to nie woksele.
+
+**Pomiar dzienny, 5120 × 1440 (nie wolno go puszczać nocą):** `node scripts/webgpu/gpu-baza-gra.mjs --rozmiar 5120x1440 --query grafika=ultra --strzalyMaks 120 --slad 0 --out .tmp/woksele-demo/BAZA/gra-5120/a1`, potem to samo z `--woksele 1` do `b1`, potem `a2`, `b2`. Bez `limitKlatek` headless biegnie bez sufitu klatek, a GPU na 99%. Do wprost porównania z E0 zamiast tego `--query "grafika=ultra&limitKlatek=120"`.
+
 ## 6. Decyzje do użytkownika po pokazie
 
 - **Ocena na żywo M1, M2, M3 z kamery Atlasa.** Żaden człowiek tego nie oglądał w ruchu. Od tego zależy wybór dx = 10 przy Atlasie, wygląd tieru 0 i czy szew w pyle i ogniu trzeba stroić.

@@ -91,6 +91,7 @@ const RYTM = String(args.rytm || '0') === '1';
 const KAZDA_KLATKA = String(args.sondaKazdaKlatka ?? '1') !== '0';
 const ODMROZ = String(args.odmroz ?? '1') !== '0';
 const WOKSELE = String(args.woksele ?? '0') === '1';
+const WOK_OPOZNIJ = Number(args.wokOpoznij || 0);
 let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
@@ -593,7 +594,8 @@ try {
   report.etapy = [{ n: 0, strzaly: 0, ...etapy0 }];
   for (;;) {
     await tagGpu(`seria-${n + 1}`);
-    if (WOKSELE && n === 0) await wkEval('globalThis.__wokGra.sekwencja()');
+    // --wokOpoznij S: sygnał S sekund po pierwszej serii (szczyt B1, t = 14–25, na prawdziwy upadek)
+    if (WOKSELE && n === 0) { if (WOK_OPOZNIJ > 0) setTimeout(() => wkEval('globalThis.__wokGra.sekwencja()').catch(() => {}), WOK_OPOZNIJ * 1000); else await wkEval('globalThis.__wokGra.sekwencja()'); }
     const seria = await ev(SERIA, 30000);
     strzaly += seria.n;
     n++;
