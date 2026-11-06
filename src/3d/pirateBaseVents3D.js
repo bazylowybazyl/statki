@@ -624,6 +624,7 @@ export class PirateBaseVents3D {
       if (typeof fx.deepDomain !== 'function') { this.stats.noSlot++; return false; }
       const rs = pirateRockSite();
       const ground = rs && rs.at && rs.rock?.layout?.center ? this._ground(rs) : null;
+      if (ground && rs.sun) fx.setDeepSun?.(rs.sun.x, rs.sun.y);
       slot = fx.deepDomain(cx, cy, cz, D / 5.4, {
         carrier: [cvx, cvy, cvz], life: L.gasLinger, fadeTime: L.gasFade, baseDecay: L.gasDecay, tint: L.steamTint, fire: 0,
         tag: VENT_TAG, priority: 0, domainScale: 5.4, reserve: L.gasReserve, ground, ambient: L.gasAmbient

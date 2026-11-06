@@ -281,7 +281,7 @@ function collapsePirateRockSite() {
   return rockSite.collapse();
 }
 /** Skała i osada (albo null) — dev, zrzuty, narzędzia. */
-export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt } : null; }
+export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt, sun: _rockSun } : null; }
 
 function detachPirateBase3D() {
   stopVoxels();
@@ -321,6 +321,8 @@ export function pirateBase3D() { return base; }
 
 const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, tech: 1, drumQ: [1, 1, 1, 1], daylight: 0.3, lampPower: undefined };
 const _rockState = { sun: null, at: null, daylight: 0.3 };
+// Kierunek do Słońca od środka skały (scena: x gry, −y gry) dla cienia kuli w gazie domen głębokich (pirateBaseVents3D.js).
+const _rockSun = { x: 1, y: 0 };
 const _sunOpts = { sun: null, at: null };
 const _voxState = { ukryty: false, soczewka: false, obrazWKadrze: false, moc: 1, slonce: false, sunDx: 0, sunDy: 0 };
 
@@ -358,6 +360,7 @@ export function updatePirateBase3D(dt, state = {}) {
   // planetoida: teren (zawsze), osada i lina — czas gry także we mgle (kabiny jeżdżą)
   if (rock && rock.root.parent) {
     rock.update(state.sun);
+    if (state.sun) { _rockSun.x = Number(state.sun.x) - rockAt.x; _rockSun.y = -(Number(state.sun.y) - rockAt.y); }
     _rockState.sun = state.sun || null;
     _rockState.at = rockAt;
     _rockState.daylight = state.daylight ?? 0.3;
