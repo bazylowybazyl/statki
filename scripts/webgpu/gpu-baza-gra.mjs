@@ -54,6 +54,9 @@
 //   ekranie ładowania (2026-11-04: „faza shipyard nie ruszyła” ×3) — dlatego flagi Chrome bez zasłaniania okien, ekran
 //   trzymany włączony i okno stawiane na wierzch przed każdym startem fazy (scripts/webgpu/oknoPomiaru.mjs, wzór
 //   gpu-pas-gra.mjs); strona wciąż niewidoczna → błąd z diagnozą zamiast 3 × 2 min czekania.
+// --woksele 1 (2026-11-06, plan LOD § 5d): w workerze moduł dema/woksele-zawalenia/wGrze.js (operacja dev, poza grafem gry) — wiązane woksele sceny B1
+//   w tym samym miejscu co stara baza, sekwencja B1 rusza z pierwszą serią strzałów. Koszt DOŁOŻONY do starego silnika, nie zamiana. Raport: `woksele`
+//   (węzły, kroki, liczniki), `syncPipeline` (materiał @ obiekt każdego pipeline'u utworzonego synchronicznie po rozgrzewce; ma być pusto).
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -87,6 +90,7 @@ const WALKA = Number(args.walka || 0);
 const RYTM = String(args.rytm || '0') === '1';
 const KAZDA_KLATKA = String(args.sondaKazdaKlatka ?? '1') !== '0';
 const ODMROZ = String(args.odmroz ?? '1') !== '0';
+const WOKSELE = String(args.woksele ?? '0') === '1';
 let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
@@ -150,6 +154,35 @@ await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   const raf = (t) => { if (R.last) { const d = t - R.last; R.n++; if (d > R.max) R.max = d; if (d > 50) R.slow++; } R.last = t; requestAnimationFrame(raf); };
   requestAnimationFrame(raf);
 })();` });
+
+// Moduł wokseli w workerze: dane bazy ze strony, import przez operację dev (THREE i Core3D workera), czekanie na rozgrzewkę.
+async function startWoksele() {
+  const r = await ev(`(() => { const d = window.StoryGame.site.dock, o = d.toGame(0, 0); return { px: o.x, py: o.y, os: d.headingToGame(0) }; })()`);
+  const kod = `globalThis.__wokStan = { etap: 'import' };
+    try {
+      const m = await import('/dema/woksele-zawalenia/wGrze.js');
+      globalThis.__wokStan = { etap: 'start' };
+      globalThis.__wokGra = await m.start({ Core3D, THREE, px: ${r.px}, py: ${r.py}, os: ${r.os} });
+      globalThis.__wokStan = { etap: 'gotowe' };
+    } catch (e) { globalThis.__wokStan = { etap: 'blad', blad: String(e && e.stack || e) }; }`;
+  await ev(`(window.RenderWorkerHost.dev({ eval: ${JSON.stringify(kod)} }), true)`);
+  const t0 = Date.now();
+  let st = null;
+  while (Date.now() - t0 < 150000) {
+    st = await wkEval('globalThis.__wokStan || null').catch(() => null);
+    if (st && (st.etap === 'gotowe' || st.etap === 'blad')) break;
+    await sleep(500);
+  }
+  console.log('woksele:', JSON.stringify(st), `po ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  if (!st || st.etap !== 'gotowe') throw new Error(`woksele nie wstały: ${JSON.stringify(st)}`);
+  // od tej chwili każdy pipeline synchroniczny z nazwą (materiał @ obiekt; compute: nazwa kernela)
+  await wkEval(`(() => { const b = globalThis.__C3.renderer.backend, L = globalThis.__wokSync = [];
+    const fR = b.createRenderPipeline; b.createRenderPipeline = function (ro, pr) { if (!pr && L.length < 200) L.push((ro.material?.name || ro.material?.type) + ' @ ' + (ro.object?.name || ro.object?.type)); return fR.apply(this, arguments); };
+    const fC = b.createComputePipeline; b.createComputePipeline = function (pl) { if (L.length < 200) L.push('compute: ' + (pl?.computeProgram?.name || pl?.cacheKey || '?')); return fC.apply(this, arguments); };
+    return true; })()`);
+  report.woksele = { rama: r, start: await wkEval('globalThis.__wokGra.stan()') };
+  console.log('woksele stan:', JSON.stringify(report.woksele.start));
+}
 
 async function startStory(phase) {
   for (let i = 0; ; i++) {
@@ -398,6 +431,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
     wraki: { gorace: p1.hot, spiace: p1.sleep, odlamy: p1.wd }, raf: p1.raf, nvidia: smi.okno(t0), sonda, rytm, pole, slad: sl ? true : undefined
   };
   report.okna.push(row);
+  if (WOKSELE && wk.sid) row.woksele = await wkEval('globalThis.__wokGra ? globalThis.__wokGra.stan() : null').catch(() => null);
   if (pole && !pole.err) {
     const ps = (k) => (pole[k] / dt).toFixed(0);
     console.log(`   pole skóry /s: przeglądy ${ps('scans')}, pominięte ${ps('skips')}, komórki ${ps('cells')} (rozrzut ${ps('scattered')}, zakresy ${ps('rangeCells')}),`
@@ -540,6 +574,7 @@ try {
   })()`);
   await waitFor(cdp, `(() => { const hs = window.WorldBodies.sites.find((q) => q.structure === 'habitat'); return !!hs && hs.pieces.filter((p) => p.state === 'live').length >= 6; })()`, 60000, 300);
   console.log('kamera:', JSON.stringify(await camHub(ZOOM)));
+  if (WOKSELE) await startWoksele();
   await sleep(4000);
   await okno('przed', 6, { slad: true });
   await screenshotPng(cdp, join(out, '01-przed.png'));
@@ -558,6 +593,7 @@ try {
   report.etapy = [{ n: 0, strzaly: 0, ...etapy0 }];
   for (;;) {
     await tagGpu(`seria-${n + 1}`);
+    if (WOKSELE && n === 0) await wkEval('globalThis.__wokGra.sekwencja()');
     const seria = await ev(SERIA, 30000);
     strzaly += seria.n;
     n++;
@@ -719,6 +755,11 @@ try {
     }
   } catch (e) { report.bledy.push('zbierzGpu: ' + String(e?.message || e)); }
   if (balast) { report.balastKoniec = await balast.stan().catch(() => null); }
+  if (WOKSELE) {
+    if (report.woksele) report.woksele.koniec = await wkEval('globalThis.__wokGra.stan()').catch((e) => String(e));
+    report.syncPipeline = await wkEval('globalThis.__wokSync || null').catch((e) => String(e));
+    console.log('woksele koniec:', JSON.stringify(report.woksele?.koniec), '| pipeline synchroniczne po rozgrzewce:', JSON.stringify(report.syncPipeline));
+  }
   const other = report.wkLogi.filter((l) => /warn|error|exception|pipeline sync|kompilacja w grze/.test(l.type + ' ' + l.text));
   for (const l of other.slice(0, 20)) console.log('  wk', l.type, l.s, l.text.slice(0, 220));
   console.log('raport:', join(out, 'raport.json'));

@@ -67,7 +67,8 @@ function zapiszWzory(wy, baza) {
   }
 }
 
-export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
+// AGENT: wGrze (dema/woksele-zawalenia/wGrze.js, pomiar w misji 1): siatki rysuje pass FG gry, więc normalne dostają obrót bazy, a cel HDR i kwad wyjścia nie są potrzebne. Bez tej opcji graf i cele jak dotąd.
+export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = false }) {
   const MAX = solver.maxNodes;
   const A = solver.atrybuty;
   const { uN, uGStala, uSkG, uGruntZ } = solver.uniformy;
@@ -107,6 +108,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const uSloty = uniform(7, 'uint').setName('uObrSloty');
   const uSlotyCien = uniform(7, 'uint').setName('uObrSlotyCien');
 
+  const uObrC = uniform(1).setName('uObrObrotC');
+  const uObrS = uniform(0).setName('uObrObrotS');
+  const doSceny = wGrze ? (w) => vec3(w.x.mul(uObrC).add(w.y.mul(uObrS)), w.y.mul(uObrC).sub(w.x.mul(uObrS)), w.z) : (w) => w;
   const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
   const uv_ = (e) => { const v = uint(0).toVar(); v.assign(e); return v; };
   const v3 = (e) => { const v = vec3(0).toVar(); v.assign(e); return v; };
@@ -516,7 +520,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
           eE.assign(vec3(m, m.mul(qz.mul(0.32).add(0.1).add(zolty.mul(0.2))), m.mul(zolty.mul(0.09).add(0.01))));
         });
       });
-      vN.assign(cameraViewMatrix.mul(vec4(Nw, 0)).xyz);
+      vN.assign(cameraViewMatrix.mul(vec4(doSceny(Nw), 0)).xyz);
       vK.assign(Kol);
       vP.assign(P0);
       vE.assign(eE);
@@ -681,7 +685,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     If(a.w.greaterThan(0), () => { P.assign(x.add(obroc(C.mul(sk).mul(a.w)))); });
     const d1 = v4(wDaneR.element(uint(2).mul(uint(b.w)).add(uint(1))));
     vKG.assign(d1.xyz.mul(float(0.75).add(czesc(hq, 26, 31).mul(0.4))));
-    vNG.assign(cameraViewMatrix.mul(vec4(obroc(nf), 0)).xyz);
+    vNG.assign(cameraViewMatrix.mul(vec4(doSceny(obroc(nf)), 0)).xyz);
     return P;
   })();
   matGruz.normalNode = normalize(vNG);
@@ -787,13 +791,13 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     uAoMax.value = (24 * hh) / 720;
     rtSsao.setSize(hw, hh);
     rtSsao.texture.needsUpdate = true;
-    rtHdr.setSize(w, h);
+    if (!wGrze) rtHdr.setSize(w, h);
     rtGleb.setSize(hw, hh);
     pyl.ustawRozmiar(renderer, hw, hh);
-    rtHdr.texture.needsUpdate = true;
+    if (!wGrze) rtHdr.texture.needsUpdate = true;
     rtGleb.texture.needsUpdate = true;
     rtGleb.depthTexture.needsUpdate = true;
-    if (renderer.initRenderTarget) { renderer.initRenderTarget(rtHdr); renderer.initRenderTarget(rtGleb); renderer.initRenderTarget(rtSsao); }
+    if (renderer.initRenderTarget) { if (!wGrze) renderer.initRenderTarget(rtHdr); renderer.initRenderTarget(rtGleb); renderer.initRenderTarget(rtSsao); }
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
@@ -1029,7 +1033,28 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     wyj.render(renderer);
   }
 
+  /** Pomiar w grze: tylko cele własne (głębia, AO, pył), przed passami Core3D. Siatki brył i gruzu rysuje pass FG. Stan renderera wraca. Bez alokacji. */
+  function rysujCele(renderer, cam, tau) {
+    uTau.value = tau;
+    ustawSwiatla(tau);
+    const rt0 = renderer.getRenderTarget(), clearC = renderer.getClearColor(_kolor), clearA = renderer.getClearAlpha(), ac = renderer.autoClear;
+    renderer.autoClear = true;
+    renderer.setRenderTarget(rtGleb);
+    renderer.render(sceneGleb, cam);
+    if (!aoN) {
+      renderer.setRenderTarget(rtSsao);
+      kwadSsao.render(renderer);
+    }
+    pyl.rysuj(renderer, cam);
+    renderer.setRenderTarget(rt0);
+    renderer.setClearColor(clearC, clearA);
+    renderer.autoClear = ac;
+  }
+  /** Pomiar w grze: obrót siatek bazy wokół z (macierz świata), ten sam w normalnych. */
+  function ustawObrotNormalnych(kat) { uObrC.value = Math.cos(kat); uObrS.value = -Math.sin(kat); }
+
   return {
+    rysujCele, ustawObrotNormalnych, kwadSsao,
     kernele, listaObrazu, scene, sceneGleb, cienieDodatkowe, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, rtSsao, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki, liczGruzu: aLicz },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
     wczytaj, pelnyObraz, ustawLod, ustawCien, ustawCienZSceny, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
