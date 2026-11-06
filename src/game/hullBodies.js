@@ -386,10 +386,6 @@ export const HullBodies = {
   // i kształtownika robi odbiorca (render — strumień efektów; RW-22: rekord HULL_DEBRIS). Bez haka — dawna droga:
   // losowanie tutaj i window.spawnHullDebris.
   onDebris: null,
-  // (body) → true: ginący węzeł ciała nie daje odłamka (rany — onNodeLost / onSolidNodeLost — zostają). Odłamki nie
-  // mają grawitacji i rysują się w passie płaszczyzny gry, więc przy upadku habitatu na planetoidę zostawały w niej,
-  // gdy bryły spadały (pirateBaseFall.habitatFallMutesDebris). Domyślnie brak.
-  debrisGate: null,
   // (islandEntity, parentEntity) — wyspa ciała ŚWIATA, która przy rozpadzie dalej trzyma się kotwicy: osobna encja
   // budowli (isWorldPiece, stoi), nie wrak. Gra (worldBodies.js) dopisuje ją do swojego kawałka. Domyślnie brak.
   onWorldIsland: null,
@@ -3326,7 +3322,6 @@ function onNodeDebris(body, i, wx, wy, wz, vx, vy, vz) {
     if (HullBodies._weaponDepth === 0 && typeof HullBodies.onSolidNodeLost === 'function' && hull.entity) {
       HullBodies.onSolidNodeLost(hull.entity, hull, s.ix[i], s.iy[i], s.iz[i], wx, -wy, wz);
     }
-    if (HullBodies.debrisGate !== null && HullBodies.debrisGate(body)) return;
     if (typeof HullBodies.onDebris === 'function') {
       HullBodies.onDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], body.cellSize, 1, 1, wz, vz);
       return;
@@ -3341,7 +3336,6 @@ function onNodeDebris(body, i, wx, wy, wz, vx, vy, vz) {
     writeSpriteUv(hull, i, s.x[i], s.y[i], _lostUv);
     HullBodies.onNodeLost(hull.entity, hull, _lostUv.u, _lostUv.v, wx, -wy);
   }
-  if (HullBodies.debrisGate !== null && HullBodies.debrisGate(body)) return;
   if (typeof HullBodies.onDebris === 'function') {
     HullBodies.onDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], body.cellSize, s.beamCount[i] > s.localBeamCount[i] ? 1 : 0, 0, 0, 0);
     return;

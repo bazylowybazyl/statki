@@ -54,8 +54,8 @@
 //   ekranie ładowania (2026-11-04: „faza shipyard nie ruszyła” ×3) — dlatego flagi Chrome bez zasłaniania okien, ekran
 //   trzymany włączony i okno stawiane na wierzch przed każdym startem fazy (scripts/webgpu/oknoPomiaru.mjs, wzór
 //   gpu-pas-gra.mjs); strona wciąż niewidoczna → błąd z diagnozą zamiast 3 × 2 min czekania.
-// --woksele 1 (2026-11-06, plan LOD § 5e): obraz bazy na wiązanych wokselach, jak u gracza (src/3d/woksele/wGrze.js, klej w pirateBaseGame.js): stara baza schowana, trafienia i rozpady idą zdarzeniami z gry.
-//   Domyślnie (--woksele 0) adres dostaje ?woksele=0: stary obraz, baza pomiarów A/B. Raport: `woksele` (węzły, kroki, liczniki), `syncPipeline` (materiał @ obiekt każdego pipeline'u utworzonego synchronicznie po rozgrzewce; ma być pusto).
+// Obraz bazy na wiązanych wokselach, jak u gracza (src/3d/woksele/wGrze.js, klej w pirateBaseGame.js; plan LOD § 5e): stara baza schowana, trafienia i rozpady idą zdarzeniami z gry. Woksele, które nie wstaną, to błąd przebiegu.
+//   Raport: `woksele` (węzły, kroki, liczniki), `syncPipeline` (materiał @ obiekt każdego pipeline'u utworzonego synchronicznie po rozgrzewce; ma być pusto).
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -68,7 +68,7 @@ const args = parseArgs();
 const [W, H] = String(args.rozmiar || '5120x1440').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/gpu-baza');
 mkdirSync(out, { recursive: true });
-const query = (args.query ? `&${args.query}` : '') + (String(args.woksele ?? '0') === '1' ? '' : '&woksele=0');
+const query = (args.query ? `&${args.query}` : '');
 const ZOOM = Number(args.zoom || 0.14);
 const ZOOM_GRUZ = Number(args.zoomGruz || 0.3);
 const BRON = String(args.bron || 'special_yamato_cannon');
@@ -89,7 +89,6 @@ const WALKA = Number(args.walka || 0);
 const RYTM = String(args.rytm || '0') === '1';
 const KAZDA_KLATKA = String(args.sondaKazdaKlatka ?? '1') !== '0';
 const ODMROZ = String(args.odmroz ?? '1') !== '0';
-const WOKSELE = String(args.woksele ?? '0') === '1';
 let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
@@ -238,7 +237,7 @@ const PAGE_STATE = `(() => {
     fxMs: H ? +(H.stats[11] || 0).toFixed(2) : -1, domeny: H ? H.domainCount | 0 : -1, raf, hot, sleep, wd,
     upadek: F ? F.phase : '-', ft: F ? +F.t.toFixed(1) : 0, hp: st ? +(100 * st.hp / st.maxHp).toFixed(1) : null,
     // upadek: czas uderzenia wieży / dysku w skałę (ft, −1 — jeszcze nie), uderzenia, bryły zamrożone na skale
-    wu: F ? num(F.towerImpactT) : -1, du: F ? num(F.discImpactT) : -1, ud: F ? F.impacts | 0 : 0, zbr: F ? F.frozen | 0 : 0,
+    wu: F ? num(F.towerImpactT) : -1, du: F ? num(F.discImpactT) : -1, zbr: F ? F.frozen | 0 : 0,
     // zamrożenie świata przez fabułę (sceny, kino, podsumowanie) — pętla jak w pauzie, __frameId stoi
     zam: !!(S && S.worldFrozen), powody: S && S._freeze ? [...S._freeze] : [], podsum: !!(S && S.ui && S.ui.summary),
     pauza: typeof window.__isGamePaused === 'function' ? !!window.__isGamePaused() : null };
@@ -429,7 +428,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
   const row = {
     fizStrona,
     okno: label, s: +((Date.now() - tStart) / 1000).toFixed(1), dt: +dt.toFixed(2), hp: p1.hp, upadek: p1.upadek, ftOd: p0.ft, ft: p1.ft,
-    uderzenieWiezy: p1.wu, uderzenieDysku: p1.du, uderzen: p1.ud, zamrozoneBryly: p1.zbr,
+    uderzenieWiezy: p1.wu, uderzenieDysku: p1.du, zamrozoneBryly: p1.zbr,
     zamrozony: p0.zam || p1.zam, powodyZamrozenia: [...new Set([...p0.powody, ...p1.powody])], podsumowanie: p1.podsum, pauza: p1.pauza,
     // klatki sondy (renderSingle workera), numery info.frame three i takty rAF workera w oknie
     klatkiSondy: g0 && g1 ? g1.fid - g0.fid : null, infoFrame: g0 && g1 ? [g0.infoFrame, g1.infoFrame] : null,
@@ -440,7 +439,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
     wraki: { gorace: p1.hot, spiace: p1.sleep, odlamy: p1.wd }, raf: p1.raf, nvidia: smi.okno(t0), sonda, rytm, pole, slad: sl ? true : undefined
   };
   report.okna.push(row);
-  if (WOKSELE && wk.sid) row.woksele = await wkEval('globalThis.__wokGra ? globalThis.__wokGra.stan() : null').catch(() => null);
+  if (wk.sid) row.woksele = await wkEval('globalThis.__wokGra ? globalThis.__wokGra.stan() : null').catch(() => null);
   if (pole && !pole.err) {
     const ps = (k) => (pole[k] / dt).toFixed(0);
     console.log(`   pole skóry /s: przeglądy ${ps('scans')}, pominięte ${ps('skips')}, komórki ${ps('cells')} (rozrzut ${ps('scattered')}, zakresy ${ps('rangeCells')}),`
@@ -583,7 +582,7 @@ try {
   })()`);
   await waitFor(cdp, `(() => { const hs = window.WorldBodies.sites.find((q) => q.structure === 'habitat'); return !!hs && hs.pieces.filter((p) => p.state === 'live').length >= 6; })()`, 60000, 300);
   console.log('kamera:', JSON.stringify(await camHub(ZOOM)));
-  if (WOKSELE) await startWoksele();
+  await startWoksele();
   await sleep(4000);
   await okno('przed', 6, { slad: true });
   await screenshotPng(cdp, join(out, '01-przed.png'));
@@ -776,14 +775,12 @@ try {
     }
   } catch (e) { report.bledy.push('zbierzGpu: ' + String(e?.message || e)); }
   if (balast) { report.balastKoniec = await balast.stan().catch(() => null); }
-  if (WOKSELE) {
-    if (report.woksele) report.woksele.koniec = await wkEval('globalThis.__wokGra.stan()').catch((e) => String(e));
-    report.syncPipeline = await wkEval('globalThis.__wokSync || null').catch((e) => String(e));
-    console.log('woksele koniec:', JSON.stringify(report.woksele?.koniec), '| pipeline synchroniczne po rozgrzewce:', JSON.stringify(report.syncPipeline));
-  }
-  if (WOKSELE && args.wkKoniec) writeJson(join(out, 'wk-koniec.json'), await wkEval(readFileSync(String(args.wkKoniec), 'utf8')).catch((e) => String(e)));
+  if (report.woksele) report.woksele.koniec = await wkEval('globalThis.__wokGra.stan()').catch((e) => String(e));
+  report.syncPipeline = await wkEval('globalThis.__wokSync || null').catch((e) => String(e));
+  console.log('woksele koniec:', JSON.stringify(report.woksele?.koniec), '| pipeline synchroniczne po rozgrzewce:', JSON.stringify(report.syncPipeline));
+  if (args.wkKoniec) writeJson(join(out, 'wk-koniec.json'), await wkEval(readFileSync(String(args.wkKoniec), 'utf8')).catch((e) => String(e)));
   // --sonda 1: „co to świeci?” na końcu misji. Każda grupa widocznych siatek sceny (po nazwie materiału) gaśnie osobno na jeden kadr: sonda-NNN.png, spis w sonda.json, wzór porównania: różnica z sonda-baza.png.
-  if (WOKSELE && Number(args.sonda) > 0) {
+  if (Number(args.sonda) > 0) {
     try {
       const grupy = await wkEval(`(() => { const g = new Map(); globalThis.__C3.scene.traverse((o) => { if (!o.isMesh && !o.isSprite && !o.isPoints && !o.isLine) return; for (let p = o; p; p = p.parent) if (!p.visible) return; const k = o.material?.name || o.material?.type || '?'; if (!g.has(k)) g.set(k, []); g.get(k).push(o); }); globalThis.__sonda = [...g.entries()]; return globalThis.__sonda.map(([k, l]) => ({ k, n: l.length, warstwy: l[0].layers.mask, nazwa: l[0].name || l[0].parent?.name || '', x: l[0].matrixWorld.elements[12], y: l[0].matrixWorld.elements[13], z: l[0].matrixWorld.elements[14], ile: l[0].count ?? l[0].geometry?.instanceCount ?? 0 })); })()`);
       writeJson(join(out, 'sonda.json'), grupy);
