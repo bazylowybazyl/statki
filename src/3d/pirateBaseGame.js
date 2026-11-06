@@ -29,6 +29,7 @@ import { createPirateRockLayout } from './portBuildings/pirateRockLayout.js';
 import { RockImpactFx, setRockImpactHost } from './pirateRockImpactFx.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 import { WARP_WORLD_LENS, warpLensExtraBody, setWarpLensExtra, lensImageToWorld, lensPivotElements } from './warp/worldLens.js';
+import { RenderWorld } from '../render/renderWorld.js';
 
 const LAYER_BG = 1;
 const LAYER_FG = 2;
@@ -75,6 +76,7 @@ function applyPirateBaseLens() {
   const on = !!(a && a.on && a.real < 0.999);
   if (!on && !_lensOn) return;
   const roots = lensRoots();
+  if (vox?.gotowe && vox.root.parent) roots.push(vox.root);
   if (on) {
     if (!_lensOn) {
       _lensFrames.clear();
@@ -106,6 +108,43 @@ let prebuilt = null;
 let base = null;
 let place = null;
 let fogHidden = false;
+
+// WIĄZANE WOKSELE (2026-11-06): obraz bazy misji 1, gdy tylko wstaną. Stara bryła i skóry ciał są wtedy schowane, a rozgrywka (punkty, kolizje, etapy, upadek) dalej liczy się na nich. A/B: ?woksele=0.
+const VOX_WYL = /[?&]woksele=0\b/.test(RenderWorld.pageSearch || '');
+let vox = null;
+let voxActive = false;
+let voxStart = 0;
+const voxZalegle = [];
+function startVoxels(basePlace) {
+  if (VOX_WYL) return;
+  const id = ++voxStart;
+  voxActive = false;
+  voxZalegle.length = 0;
+  (async () => {
+    const m = await import('./woksele/wGrze.js');
+    if (id !== voxStart) return;
+    if (!vox) vox = m.createWokseleGry({ Core3D });
+    const ok = await vox.start({ place: basePlace, base, skala: rock ? {
+      center: rock.layout.center, R: rock.layout.R,
+      promien: (x, y, z, half) => rock.surfaceRadiusNear(x, y, z, half),
+      lata: (x, y, z, half) => rock.setCraterPatch(x, y, z, half),
+      krater: (x, y, z, r, k) => rock.addCrater(x, y, z, r, k),
+      koniecPaczki: () => rock.flushCraters(),
+    } : null });
+    if (!ok || id !== voxStart || !place) return;
+    voxActive = true;
+    base.root.visible = false;
+    // Zdarzenia sprzed gotowości (skok dev, gra zaczyna z rozbitą bazą): bez nich woksele pokazałyby całą bazę nad ruinami.
+    for (const [t, a, b, c] of voxZalegle) vox.zdarzenie(t, a, b, c);
+    voxZalegle.length = 0;
+  })().catch((e) => console.error('[woksele] nie wstały, zostaje stary obraz bazy', e));
+}
+function stopVoxels() {
+  voxStart++;
+  voxActive = false;
+  voxZalegle.length = 0;
+  vox?.stop();
+}
 
 function build() {
   const d = new PirateBase3D({ layout: createPirateBaseLayout(), frame: portModuleFrame(0, 0, 0), name: 'Baza piratów' });
@@ -209,6 +248,10 @@ export function pirateBase3DEvent(type, a, b, c) {
   else if (type === 'hide') { if (base) base.hideChunk(a); }
   else if (type === 'rockCollapse') collapsePirateRockSite();
   else if (type === 'detach') detachPirateBase3D();
+  else if (type === 'voxHit' || type === 'voxBreak' || type === 'voxNeck' || type === 'voxFall') {
+    if (vox?.gotowe) vox.zdarzenie(type, a, b, c);
+    else if (type !== 'voxHit' && !VOX_WYL) voxZalegle.push([type, a, b, c]);
+  }
 }
 
 /** Podpina bryłę bazy w miejscu z planu misji (ramka). */
@@ -226,6 +269,7 @@ function attachPirateBase3D(owners, basePlace) {
   base.root.visible = true;
   fogHidden = false;
   attachPirateRock(basePlace);
+  startVoxels(basePlace);
   return base;
 }
 
@@ -257,6 +301,7 @@ function collapsePirateRockSite() {
 export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt, impact: rockImpact } : null; }
 
 function detachPirateBase3D() {
+  stopVoxels();
   if (_lensOn) {
     for (const [r, f] of _lensFrames) { r.matrix.copy(f); r.matrixWorldNeedsUpdate = true; }
     _lensFrames.clear();
@@ -279,7 +324,7 @@ function attachPirateBaseBodies3D(sites) {
       building: base,
       root: base.root,
       layers: { bg: LAYER_BG, fg: LAYER_FG },
-      hidden: () => fogHidden || _lensOn,
+      hidden: () => fogHidden || _lensOn || voxActive,
       setSkinned: (piece, on) => base.setChunkSkinned(piece.id, on),
       // statyka kawałka straconego trzymana, dopóki skóra odłamów się piecze (wypiek w workerze — worldBodies3D)
       setHold: (piece, on) => base.setChunkHold(piece.id, on),
@@ -295,6 +340,7 @@ export function pirateBase3D() { return base; }
 const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, tech: 1, drumQ: [1, 1, 1, 1], daylight: 0.3, lampPower: undefined };
 const _rockState = { sun: null, at: null, daylight: 0.3 };
 const _sunOpts = { sun: null, at: null };
+const _voxState = { ukryty: false, soczewka: false, obrazWKadrze: false, moc: 1, slonce: false, sunDx: 0, sunDy: 0 };
 
 /**
  * Klatka (render(), po stacjach). state: { hidden (mgła wojny: żadna budowla niewidoczna — gra), habitatDead, alarm,
@@ -306,8 +352,26 @@ export function updatePirateBase3D(dt, state = {}) {
   const hidden = !!state.hidden;
   if (hidden !== fogHidden) {
     fogHidden = hidden;
-    base.root.visible = !hidden;
+    base.root.visible = !hidden && !voxActive;
     if (rockSite) { rockSite.root.visible = !hidden; rockSite.fx.root.visible = !hidden; }
+  }
+  // Słońce przed wypiekiem skóry wokseli: wypiek może przyjść, gdy baza jest jeszcze we mgle.
+  if (state.sun && place) {
+    _sunOpts.sun = state.sun;
+    _sunOpts.at = place.habitat;
+    base.setSun(_sunOpts);
+  }
+  if (vox) {
+    _voxState.ukryty = hidden;
+    _voxState.soczewka = _lensOn;
+    _voxState.obrazWKadrze = _lensOn && !!_lensRec?.anchor?.vis;
+    _voxState.moc = state.habitat ?? 1;
+    _voxState.slonce = !!(state.sun && place);
+    if (state.sun && rock) {
+      _voxState.sunDx = Number(state.sun.x) - rock.center.x;
+      _voxState.sunDy = -(Number(state.sun.y) - rock.center.y);
+    }
+    vox.klatka(dt, _voxState);
   }
   // planetoida: teren (zawsze), osada i lina — czas gry także we mgle (kabiny jeżdżą)
   if (rock && rock.root.parent) {
@@ -323,11 +387,6 @@ export function updatePirateBase3D(dt, state = {}) {
     }
   }
   if (hidden) return;
-  if (state.sun && place) {
-    _sunOpts.sun = state.sun;
-    _sunOpts.at = place.habitat;
-    base.setSun(_sunOpts);
-  }
   _state.alarm = !!state.alarm;
   _state.berths = state.berths || null;
   _state.bays = state.bays ? 1 : 0;

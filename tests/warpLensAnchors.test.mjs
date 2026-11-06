@@ -542,7 +542,7 @@ test('stacje, komety, olbrzymy, Hidalgo (E1, E3): kotwica ciała / rekord, warst
   const pb = read('src/3d/pirateBaseGame.js');
   assert.match(pb, /setWarpLensExtra\(_lensRec, rockAt\.x, rockAt\.y, R, cz\);/, 'Hidalgo jak małe ciało z głębokością');
   assert.match(pb, /lensImageToWorld\(WARP_WORLD_LENS, o\.x, o\.y, cz, false, _lensWorld\);/);
-  assert.match(pb, /hidden: \(\) => fogHidden \|\| _lensOn,/);
+  assert.match(pb, /hidden: \(\) => fogHidden \|\| _lensOn \|\| voxActive,/);
   // macierz soczewki: punkt sceny p → A + s · (p − C), wyznacznik > 0
   const el = lensPivotElements(10, 20, -500, 0.25, 100, 200, 0, new Array(16));
   const m = new THREE.Matrix4().fromArray(el);

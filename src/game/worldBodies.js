@@ -221,6 +221,9 @@ export class WorldBodies {
     const site = this.sites[i];
     for (const p of site.pieces) this._releasePiece(p, true);
     this.sites.splice(i, 1);
+    // step() wychodzi przy pustej liście miejsc, więc listy ciał i stats.live trzeba przebudować tu: inaczej wybuch rakiety dalej znajdował zwolnione encje (detonate) i ranił budowlę, której nie ma.
+    this._collectBodies();
+    this._collectSolidBodies();
   }
 
   site(id) { return this.sites.find((s) => s.id === id) || null; }

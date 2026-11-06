@@ -54,8 +54,10 @@
 //   ekranie ładowania (2026-11-04: „faza shipyard nie ruszyła” ×3) — dlatego flagi Chrome bez zasłaniania okien, ekran
 //   trzymany włączony i okno stawiane na wierzch przed każdym startem fazy (scripts/webgpu/oknoPomiaru.mjs, wzór
 //   gpu-pas-gra.mjs); strona wciąż niewidoczna → błąd z diagnozą zamiast 3 × 2 min czekania.
+// --woksele 1 (2026-11-06, plan LOD § 5e): obraz bazy na wiązanych wokselach, jak u gracza (src/3d/woksele/wGrze.js, klej w pirateBaseGame.js): stara baza schowana, trafienia i rozpady idą zdarzeniami z gry.
+//   Domyślnie (--woksele 0) adres dostaje ?woksele=0: stary obraz, baza pomiarów A/B. Raport: `woksele` (węzły, kroki, liczniki), `syncPipeline` (materiał @ obiekt każdego pipeline'u utworzonego synchronicznie po rozgrzewce; ma być pusto).
 // Raport: <out>/raport.json (+ zrzuty PNG). Pomiar tylko przy wolnej maszynie (stan nvidia-smi w raporcie).
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, waitFor, evaluate, screenshotPng, sleep, repo, writeJson } from './wspolne.mjs';
 import { sondaInstaluj, sondaOkno, SONDA_CZYTAJ, SONDA_GPU_OKNA, startNvidiaSmi, stanMaszyny, sladWatkow, gryUzytkownika, obceProcesy } from './sondaGpuWorkera.mjs';
@@ -66,7 +68,7 @@ const args = parseArgs();
 const [W, H] = String(args.rozmiar || '5120x1440').split('x').map(Number);
 const out = resolve(repo, args.out || '.tmp/gpu-baza');
 mkdirSync(out, { recursive: true });
-const query = args.query ? `&${args.query}` : '';
+const query = (args.query ? `&${args.query}` : '') + (String(args.woksele ?? '0') === '1' ? '' : '&woksele=0');
 const ZOOM = Number(args.zoom || 0.14);
 const ZOOM_GRUZ = Number(args.zoomGruz || 0.3);
 const BRON = String(args.bron || 'special_yamato_cannon');
@@ -87,6 +89,7 @@ const WALKA = Number(args.walka || 0);
 const RYTM = String(args.rytm || '0') === '1';
 const KAZDA_KLATKA = String(args.sondaKazdaKlatka ?? '1') !== '0';
 const ODMROZ = String(args.odmroz ?? '1') !== '0';
+const WOKSELE = String(args.woksele ?? '0') === '1';
 let balast = null;
 const tStart = Date.now();
 const watchdog = setTimeout(() => { console.error('STRAŻNIK: przebieg > 14 min — koniec'); finish(2); }, 14 * 60 * 1000);
@@ -150,6 +153,29 @@ await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   const raf = (t) => { if (R.last) { const d = t - R.last; R.n++; if (d > R.max) R.max = d; if (d > 50) R.slow++; } R.last = t; requestAnimationFrame(raf); };
   requestAnimationFrame(raf);
 })();` });
+
+// Woksele wstają same przy attach bazy (pirateBaseGame.js): czekanie, aż stara baza zostanie schowana.
+async function startWoksele() {
+  const t0 = Date.now();
+  let st = null;
+  while (Date.now() - t0 < 150000) {
+    st = await wkEval('globalThis.__wokGra ? globalThis.__wokGra.stan() : null').catch(() => null);
+    if (st && st.gotowe) break;
+    await sleep(500);
+  }
+  console.log('woksele:', JSON.stringify(st), `po ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  if (!st || !st.gotowe) throw new Error(`woksele nie wstały: ${JSON.stringify(st)}`);
+  const r = await ev(`(() => { const d = window.StoryGame.site.dock, o = d.toGame(0, 0); return { px: o.x, py: o.y, os: d.headingToGame(0) }; })()`);
+  // od tej chwili każdy pipeline synchroniczny z nazwą (materiał @ obiekt; compute: nazwa kernela)
+  await wkEval(`(() => { const b = globalThis.__C3.renderer.backend, L = globalThis.__wokSync = [];
+    const fR = b.createRenderPipeline; b.createRenderPipeline = function (ro, pr) { if (!pr && L.length < 200) L.push((ro.material?.name || ro.material?.type) + ' @ ' + (ro.object?.name || ro.object?.type)); return fR.apply(this, arguments); };
+    const fC = b.createComputePipeline; b.createComputePipeline = function (pl) { if (L.length < 200) L.push('compute: ' + (pl?.computeProgram?.name || pl?.cacheKey || '?')); return fC.apply(this, arguments); };
+    return true; })()`);
+  report.woksele = { rama: r, start: await wkEval('globalThis.__wokGra.stan()') };
+  // --wkStart <plik>: wyrażenie JS w workerze, gdy woksele wstały (np. nasłuch danych). --wkKoniec <plik>: na końcu misji, wynik w wk-koniec.json.
+  if (args.wkStart) await wkEval(readFileSync(String(args.wkStart), 'utf8'));
+  console.log('woksele stan:', JSON.stringify(report.woksele.start));
+}
 
 async function startStory(phase) {
   for (let i = 0; ; i++) {
@@ -385,7 +411,23 @@ async function okno(label, sekundy, { slad = false } = {}) {
     report.slady[label] = sl;
   }
   const dt = Math.max(1e-3, (p1.t - p0.t) / 1000);
+  // Czas HullBodies.step na stronie gry od poprzedniego okna: [średnia ms, maks ms, kroków].
+  const fizStrona = await ev(`(() => {
+    const HB = window.HullBodies;
+    if (!window.__fizStrony && HB && HB.step) {
+      const R = window.__fizStrony = { n: 0, sum: 0, max: 0 };
+      const step = HB.step;
+      HB.step = function (...a) { const t = performance.now(); const r = step.apply(this, a); const ms = performance.now() - t; R.n++; R.sum += ms; if (ms > R.max) R.max = ms; return r; };
+      return null;
+    }
+    const R = window.__fizStrony;
+    if (!R) return null;
+    const w = [+(R.sum / Math.max(1, R.n)).toFixed(2), +R.max.toFixed(1), R.n];
+    R.n = 0; R.sum = 0; R.max = 0;
+    return w;
+  })()`).catch(() => null);
   const row = {
+    fizStrona,
     okno: label, s: +((Date.now() - tStart) / 1000).toFixed(1), dt: +dt.toFixed(2), hp: p1.hp, upadek: p1.upadek, ftOd: p0.ft, ft: p1.ft,
     uderzenieWiezy: p1.wu, uderzenieDysku: p1.du, uderzen: p1.ud, zamrozoneBryly: p1.zbr,
     zamrozony: p0.zam || p1.zam, powodyZamrozenia: [...new Set([...p0.powody, ...p1.powody])], podsumowanie: p1.podsum, pauza: p1.pauza,
@@ -398,6 +440,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
     wraki: { gorace: p1.hot, spiace: p1.sleep, odlamy: p1.wd }, raf: p1.raf, nvidia: smi.okno(t0), sonda, rytm, pole, slad: sl ? true : undefined
   };
   report.okna.push(row);
+  if (WOKSELE && wk.sid) row.woksele = await wkEval('globalThis.__wokGra ? globalThis.__wokGra.stan() : null').catch(() => null);
   if (pole && !pole.err) {
     const ps = (k) => (pole[k] / dt).toFixed(0);
     console.log(`   pole skóry /s: przeglądy ${ps('scans')}, pominięte ${ps('skips')}, komórki ${ps('cells')} (rozrzut ${ps('scattered')}, zakresy ${ps('rangeCells')}),`
@@ -540,9 +583,19 @@ try {
   })()`);
   await waitFor(cdp, `(() => { const hs = window.WorldBodies.sites.find((q) => q.structure === 'habitat'); return !!hs && hs.pieces.filter((p) => p.state === 'live').length >= 6; })()`, 60000, 300);
   console.log('kamera:', JSON.stringify(await camHub(ZOOM)));
+  if (WOKSELE) await startWoksele();
   await sleep(4000);
   await okno('przed', 6, { slad: true });
   await screenshotPng(cdp, join(out, '01-przed.png'));
+  // --seria S: kadr co S s od pierwszej serii do końca (seria-000.png…), do oglądania ruchu. Zaburza czasy, więc nie do pomiarów.
+  if (Number(args.seria) > 0) {
+    let nr = 0, busy = false;
+    setInterval(() => {
+      if (busy) return;
+      busy = true;
+      screenshotPng(cdp, join(out, `seria-${String(nr++).padStart(3, '0')}.png`)).catch(() => {}).finally(() => { busy = false; });
+    }, Number(args.seria) * 1000);
+  }
   if (BALAST_GB > 0) {
     balast = await startVramBallast({ gb: BALAST_GB });
     report.balast = { info: balast.info, gb: BALAST_GB };
@@ -600,11 +653,14 @@ try {
   await noteObce('po ostrzale');
   // okna upadku jedno za drugim do osiadania — bez pauz (pole GPU po osiadaniu) i śladu w trakcie (--slad tylko w przed,
   // ostrzale i nad gruzem); zrzut po uderzeniu dysku ma własny znacznik sondy
+  // --stronaStart <plik>: wyrażenie JS na stronie gry w chwili HP 0, --stronaKoniec <plik>: po oknach upadku, wynik w strona-koniec.json. Na zacięcia strony: long-animation-frame.
+  if (args.stronaStart) await ev(readFileSync(String(args.stronaStart), 'utf8'));
   const tFall = Date.now();
   let i = 0, zrzutUpadku = false;
   while (Date.now() - tFall < 60000) {
     i++;
-    const r = await okno(`upadek-${i}`, 2);
+    // --sladUpadek 1: ślad Chrome po trzech pierwszych oknach upadku, na zacięcia strony w chwili uderzeń (zaburza czasy tych okien).
+    const r = await okno(`upadek-${i}`, 2, { slad: Number(args.sladUpadek) > 0 && i <= 3 });
     if (!zrzutUpadku && r.uderzenieDysku >= 0) { zrzutUpadku = true; await tagGpu('zrzut-upadek'); await screenshotPng(cdp, join(out, '04-upadek.png')); }
     if (r.upadek === 'settled' || r.zamrozony) break;
     if (args.profil === '1' && Date.now() - tFall > 40000) break;
@@ -614,6 +670,7 @@ try {
     writeFileSync(join(out, 'worker-upadek.cpuprofile'), JSON.stringify(profile));
     console.log('profil workera:', join(out, 'worker-upadek.cpuprofile'));
   }
+  if (args.stronaKoniec) writeJson(join(out, 'strona-koniec.json'), await ev(readFileSync(String(args.stronaKoniec), 'utf8'), 60000).catch((e) => String(e)));
   // osiadłe w żywym świecie — do podsumowania misji (zamrożenie świata: StoryGame._freeze 'summary')
   for (let k = 1; k <= 10; k++) {
     const st = await ev(PAGE_STATE);
@@ -719,7 +776,28 @@ try {
     }
   } catch (e) { report.bledy.push('zbierzGpu: ' + String(e?.message || e)); }
   if (balast) { report.balastKoniec = await balast.stan().catch(() => null); }
-  const other = report.wkLogi.filter((l) => /warn|error|exception|pipeline sync|kompilacja w grze/.test(l.type + ' ' + l.text));
+  if (WOKSELE) {
+    if (report.woksele) report.woksele.koniec = await wkEval('globalThis.__wokGra.stan()').catch((e) => String(e));
+    report.syncPipeline = await wkEval('globalThis.__wokSync || null').catch((e) => String(e));
+    console.log('woksele koniec:', JSON.stringify(report.woksele?.koniec), '| pipeline synchroniczne po rozgrzewce:', JSON.stringify(report.syncPipeline));
+  }
+  if (WOKSELE && args.wkKoniec) writeJson(join(out, 'wk-koniec.json'), await wkEval(readFileSync(String(args.wkKoniec), 'utf8')).catch((e) => String(e)));
+  // --sonda 1: „co to świeci?” na końcu misji. Każda grupa widocznych siatek sceny (po nazwie materiału) gaśnie osobno na jeden kadr: sonda-NNN.png, spis w sonda.json, wzór porównania: różnica z sonda-baza.png.
+  if (WOKSELE && Number(args.sonda) > 0) {
+    try {
+      const grupy = await wkEval(`(() => { const g = new Map(); globalThis.__C3.scene.traverse((o) => { if (!o.isMesh && !o.isSprite && !o.isPoints && !o.isLine) return; for (let p = o; p; p = p.parent) if (!p.visible) return; const k = o.material?.name || o.material?.type || '?'; if (!g.has(k)) g.set(k, []); g.get(k).push(o); }); globalThis.__sonda = [...g.entries()]; return globalThis.__sonda.map(([k, l]) => ({ k, n: l.length, warstwy: l[0].layers.mask, nazwa: l[0].name || l[0].parent?.name || '', x: l[0].matrixWorld.elements[12], y: l[0].matrixWorld.elements[13], z: l[0].matrixWorld.elements[14], ile: l[0].count ?? l[0].geometry?.instanceCount ?? 0 })); })()`);
+      writeJson(join(out, 'sonda.json'), grupy);
+      await screenshotPng(cdp, join(out, 'sonda-baza.png'));
+      for (let i = 0; i < grupy.length; i++) {
+        await wkEval(`(() => { for (const o of globalThis.__sonda[${i}][1]) { o.__maska = o.layers.mask; o.layers.mask = 0; } return true; })()`);
+        await sleep(400);
+        await screenshotPng(cdp, join(out, `sonda-${String(i).padStart(3, '0')}.png`));
+        await wkEval(`(() => { for (const o of globalThis.__sonda[${i}][1]) o.layers.mask = o.__maska; return true; })()`);
+      }
+      console.log('sonda:', grupy.length, 'grup');
+    } catch (e) { report.bledy.push('sonda: ' + String(e?.message || e)); }
+  }
+  const other =report.wkLogi.filter((l) => /warn|error|exception|pipeline sync|kompilacja w grze/.test(l.type + ' ' + l.text));
   for (const l of other.slice(0, 20)) console.log('  wk', l.type, l.s, l.text.slice(0, 220));
   console.log('raport:', join(out, 'raport.json'));
   finish(0);
