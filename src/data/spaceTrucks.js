@@ -189,8 +189,11 @@ export const TRUCK_SPRITE_BOUNDS = Object.freeze({
   cargo_hopper: CARGO_BOUNDS
 });
 
-/** Atlas: px na j. świata (skala 1), rozmiar, margines komórek (mipmapy nie mieszają sąsiadów). */
-export const TRUCK_ATLAS = Object.freeze({ size: Object.freeze([2048, 1024]), pxPerUnit: 12, pad: 16, urls: Object.freeze(asset) });
+/**
+ * Atlas: px na j. świata (skala 1), rozmiar, margines komórek. Margines 64 px: partia próbkuje poziom mipmapy nie wyższy niż
+ * `maxLod` (5,5) — przy zoomie 0,035 nie miesza sąsiednich komórek.
+ */
+export const TRUCK_ATLAS = Object.freeze({ size: Object.freeze([2048, 1152]), pxPerUnit: 12, pad: 64, maxLod: 5.5, urls: Object.freeze(asset) });
 
 /** Komórki atlasu w pikselach: nazwa → { x, y, w, h } (półkami, kolejność jak TRUCK_SPRITE_BOUNDS). */
 export const TRUCK_ATLAS_CELLS = (() => {

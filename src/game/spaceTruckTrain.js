@@ -127,9 +127,10 @@ export function stepTruckTrain(train, x, y, angle, dt) {
   const maxBend = train.maxBend;
   const maxSeg = train.maxSeg;
   const maxSegs = TRUCK_TRAIN_TUNE.maxSegs;
-  let lx = x;
-  let ly = y;
-  let la = angle;
+  // „+” — typ liczbowy zmiennej pętli: argument bez typu zmusza kompilator do pakowania lx, ly, la na każdym przegubie (48 B).
+  let lx = +x;
+  let ly = +y;
+  let la = +angle;
   let along = train.hitchHead;
   for (let i = 1; i < n; i++) {
     const hx = lx + Math.cos(la) * along;
