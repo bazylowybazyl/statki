@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js';
 import { buildBeamStructure } from '../src/game/beamBody3D.js';
 import { DestructorBeams3D as D, createBeamConfig } from '../src/game/destructorBeams3D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 
 const CS = 0.5;
 const BOX = buildBeamStructure(voxelizeTriangles(makeBoxTriangles(4, 2, 3, 0.05, 0.05, 0.05), null, { cellSize: CS, shellLayers: 0 }),

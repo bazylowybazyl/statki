@@ -1,8 +1,6 @@
 // Geometria odłamków metalu z dema belek: pogięta płyta poszycia ('plate') i kształtownik
-// o otwartym przekroju C ('strut'). Bez materiału i bez shadera — dzielą ją pula odłamków
-// kadłubów gry (hullDebris3D.js, TSL) i pula dem destruktora (beamDebris3D.js, GLSL na
-// własnym WebGLRenderer destruktor2d/3d.html). Wydzielona z beamDebris3D.js w zadaniu 24 portu
-// WebGPU, żeby gra nie ładowała GLSL puli dem.
+// o otwartym przekroju C ('strut'). Bez materiału i bez shadera — używa jej pula odłamków
+// kadłubów gry (hullDebris3D.js, TSL).
 import * as THREE from 'three';
 
 // Built once. Closed meshes have a painted face, a darker back and exposed

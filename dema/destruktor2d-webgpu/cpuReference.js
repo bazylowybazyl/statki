@@ -1,8 +1,8 @@
 // Ta sama scena na silniku CPU (DestructorBeams3D) — odniesienie dla pomiarów i porównań GPU.
-// Budowa sceny 1:1 jak destruktor2d.html (pozycje, gęstość, podkroki), bez renderu.
+// Budowa sceny 1:1 jak w tym demie (pozycje, gęstość, podkroki), bez renderu.
 import { DestructorBeams3D as D, createBeamConfig } from '../../src/game/destructorBeams3D.js';
 import { buildSpriteBeamStructure } from '../../src/game/beamSprite2D.js';
-import { cloneBeamStructure } from '../../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../../src/game/beamStructureClone.js';
 import { setPlanarHeading } from '../../src/game/beamFlightControls2D.js';
 
 const ATLAS_MASS = 800000;

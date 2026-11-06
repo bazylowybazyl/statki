@@ -25,8 +25,7 @@ Port renderu z WebGL na WebGPU jest zakończony (zadania 01–24, 2026-09-28). H
 - **Moduły poza grą** — ruch v2 (Z4 `shipProxyBatch3D`, Z5 `cargoContainers3D` / `cargoDrones3D`, Z7 `portBuildings/*`) są
   na TSL od 2026-10-03 (demo `dema/budowle-portowe.html` na Core3D, `dema/kontenery.html` na `WebGPURenderer` jak demo
   ringu — od 2026-10-04; bez wpisów w `Core3D.warmup` — dopisać przy integracji);
-  dema destruktora (`beamShips3D`, pula `beamDebris3D`, własny `WebGLRenderer`) mają jeszcze GLSL / WebGL i przejdą na
-  WebGPU przy swojej integracji (notatki `AGENT:` w plikach). ShaderMaterial na Core3D rysuje się **magentowym zamiennikiem**
+  ShaderMaterial na Core3D rysuje się **magentowym zamiennikiem**
   (`src/3d/tsl/zamiennik.js` — bezpiecznik w biegu: ostrzeżenie raz na nazwę, harness liczy `spis.zamienniki`; w grze 0).
 
 - **Tylko WebGPU:** przed rendererem `navigator.gpu.requestAdapter()`; bez adaptera renderer nie powstaje, `Core3D.ready` →

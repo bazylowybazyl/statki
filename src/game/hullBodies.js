@@ -3,7 +3,7 @@
  *
  * Zastępuje heksowy destruktor (destructor.js) dla statków, NPC i ich wraków.
  * Kadłub powstaje z tego samego obrazu co dawniej initHexBody (sprite w rozmiarze
- * renderu), komórka = 15 px jak w demie destruktor2d.html. Rozgrywka zostaje w 2D gry:
+ * renderu), komórka = 15 px jak w demie dema/destruktor2d-webgpu.html. Rozgrywka zostaje w 2D gry:
  *  - gra całkuje ruch encji (x, y, angle, vx, vy, angVel) jak dotąd,
  *  - przed krokiem silnika ciało dostaje pozę i prędkość encji (syncIn),
  *  - silnik liczy kontakty, zgniot, rozpady i zwraca poprawkę ruchu (syncOut).
@@ -51,13 +51,13 @@ export const HULL_BODY_CONFIG = {
 
   // --- masa zderzeń ---
   // Ciało w silniku ma masę z POWIERZCHNI kadłuba przy jednej gęstości dla wszystkich (jak
-  // destruktor2d.html: Atlas 1800×806 px = 672 400 j.² = 800 tys.). Zderzenie kadłubów zależy
+  // demo destruktora 2D: Atlas 1800×806 px = 672 400 j.² = 800 tys.). Zderzenie kadłubów zależy
   // tylko od stosunków mas, a szablony gry dawały kapitałom 4–5× mniej masy na j.² niż fregatom
   // i niszczycielom (mały okręt „odbijał” Atlasa jak ciężki). Masa ENCJI zostaje masą gry
   // (ciąg dysz, separacja AI, holowanie, asteroidy) w swojej skali.
   massPerArea: 1.19,
 
-  // --- silnik (strojenie z dema destruktor2d.html) ---
+  // --- silnik (strojenie z dema destruktora 2D) ---
   crushStrength: 300000,
   // Prawo kontaktu v2 (destructorBeams3D createBeamConfig — contactV2; audyt docs/AUDYT-destruktor-3d-2026-10-14.md).
   contactV2: true,
