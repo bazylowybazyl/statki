@@ -1,6 +1,6 @@
 // src/3d/explosions/explosionRecipes.js
 //
-// RECEPTURY WYBUCHÓW (dane, bez three i bez DOM) — wybuchy WebGPU gry (explosionFx.js): suchy dok piratów
+// RECEPTURY WYBUCHÓW (dane, bez three i bez DOM) — wybuchy WebGPU gry (explosionFx.js): baza piratów
 // (progi punktów, łańcuch rozpadu misji 1), rozpad stacji (Destruction3D), śmierć gracza bez rdzenia,
 // skrypty (`window.makeReactorBlow({ x, y, size, profile })`). Zastępują dawny wybuch reaktora
 // src/effects3d/reactorblow.js (port overlaya WebGL) — użytkownik 2026-10-07: „tragiczne, do usunięcia”.
@@ -49,7 +49,7 @@ export const EXPLOSION_PROFILES = Object.freeze({
   // Fregata / korweta (dawne tiery kadłuba).
   escort: Object.freeze({ fire: 1.3, gas: true, power: 0.8, lobes: [3, 4], trails: [3, 5], jets: [1, 2], sparks: 300, embers: 700, chunks: 12, smoke: 0.8, flash: 0.85, light: 0.85, shock: 0.6, haze: 0.8, secondaries: [0, 1], afterburn: 0, life: 0.85 }),
   cruiser: Object.freeze({ fire: 1.4, gas: true, power: 0.9, lobes: [4, 5], trails: [4, 7], jets: [2, 3], sparks: 460, embers: 1100, chunks: 18, smoke: 0.95, flash: 0.95, light: 0.95, shock: 0.8, haze: 0.9, secondaries: [1, 2], afterburn: 1.0, life: 0.95 }),
-  // Domyślny: wybuch okrętu liniowego / dużej konstrukcji (kawałek suchego doku, śmierć gracza bez rdzenia).
+  // Domyślny: wybuch okrętu liniowego / dużej konstrukcji (kawałek bazy, śmierć gracza bez rdzenia).
   capital: Object.freeze({ fire: 1.6, gas: true, power: 1.0, lobes: [4, 7], trails: [6, 9], jets: [2, 4], sparks: 640, embers: 1600, chunks: 26, smoke: 1.0, flash: 1.0, light: 1.0, shock: 1.0, haze: 1.0, secondaries: [1, 2], afterburn: 1.6, life: 1.0 }),
   // Rozpad stacji: wybuchy łańcuchowe przy oderwanych fragmentach, cięcie skorupy, finał.
   chain: Object.freeze({ fire: 1.15, gas: true, power: 0.8, lobes: [3, 5], trails: [3, 6], jets: [1, 3], sparks: 340, embers: 800, chunks: 12, smoke: 0.8, flash: 0.85, light: 0.85, shock: 0.6, haze: 0.8, secondaries: [0, 1], afterburn: 0, life: 0.85 }),

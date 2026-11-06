@@ -33,7 +33,7 @@
 //   5. rzut      — v −= ∇p (sąsiad stały bez spadku przez ścianę), w komórce stałej prędkość przeszkody, flaga
 //                  do velA.w; kopia skalarów do tekstur startowych następnego kroku.
 // PRZESZKODY (F2 audytu 2026-10-08, etap C 2026-10-09): pryzmaty przez całą wysokość domeny (gra z góry — bryły
-// w płaszczyźnie gry). STATYKA (budowle: ściany hal K-7, kawałki suchego doku) — raster CPU w oknie MS × MS teksli
+// w płaszczyźnie gry). STATYKA (budowle: ściany hal K-7, kawałki bazy piratów) — raster CPU w oknie MS × MS teksli
 // ZAKOTWICZONYM W ŚWIECIE (teksel = komórka domeny), liczony przy zajęciu domeny i po zmianie budowli; domena
 // jadąca z nośnikiem próbkuje go z przesunięciem (ściana stoi w świecie, w układzie domeny ma prędkość −nośnik),
 // okno wyprzedza nośnik, nowe okno przed jego brzegiem. Bryły rastrowane zachowawczo (+0,75 komórki: cienka brama

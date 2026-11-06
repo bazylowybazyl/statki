@@ -1,6 +1,6 @@
 // Render CIAŁ ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md § 6; logika: src/game/worldBodies.js): kawałek budowli, który
 // stał się ciałem silnika belek (płaskie, zakotwiczone — obrażenia liczy warstwa 2D), rysuje SKÓRA — bryły kawałka
-// wypieczone do układu ciała (dostawca miejsca, np. suchy dok: portBuildingSkin3D.js) jadą po polu przesunięć
+// wypieczone do układu ciała (dostawca miejsca, np. baza piratów: portBuildingSkin3D.js) jadą po polu przesunięć
 // węzłów (hullSkin3D, slot na ciało) na CAŁEJ wysokości, martwe komórki znikają z poszarpanym brzegiem, rany z mapy
 // ran rodu. Cieniowanie = cieniowanie brył budowli (wariant „skin” grafu), w tych samych passach (BG pod statkami,
 // FG nad nimi, kamera perspektywy) — przejście statyka → ciało nie zmienia obrazu.

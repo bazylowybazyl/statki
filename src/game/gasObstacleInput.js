@@ -6,7 +6,7 @@
 // (GAS_OBST_IN), reżyser wybuchów (src/3d/explosions/explosionFx.js → src/3d/gas/gasGrid.js) czyta tylko tę tablicę.
 //
 //   STATYKA (budowle w płaszczyźnie gry): pudła — ściany i bryły hal K-7 przy kamerze (k7SolidList: te same co kolizje
-//     i pył hal; POLA SIŁOWE w otworach bram — k7ForceFieldList: gaz hali nie wylatuje, z zewnątrz nie wchodzi) i bryły trafień budowli misji (suchy dok, baza piratów — `hitShapes`; wielokąty inne niż czworokąty:
+//     i pył hal; POLA SIŁOWE w otworach bram — k7ForceFieldList: gaz hali nie wylatuje, z zewnątrz nie wchodzi) i bryły trafień budowli misji (baza piratów — `hitShapes`; wielokąty inne niż czworokąty:
 //     wycinki pierścienia bębna, koła szybu i zbiorników — kilka pudeł, putGasObstaclePoly) bez kawałków, których
 //     nie ma na miejscu; kawałek RUSZONY (ciało silnika belek z ranami, wyrwami — taran bramy) — obrys jego ciał
 //     (maska z żywych węzłów, src/game/hullFootprint.js). Blok statyki przepisywany tylko przy zmianie (wersja rośnie
@@ -79,7 +79,7 @@ export function putGasObstacleBox(out, n, cx, cy, ux, uy, hw, hd) {
   return n + 1;
 }
 
-/** Pudło z czworokąta (boxPoly: rogi kolejno; hitShapes suchego doku) — świat gry. */
+/** Pudło z czworokąta (boxPoly: rogi kolejno; hitShapes budowli) — świat gry. */
 export function putGasObstacleQuad(out, n, pts) {
   if (!pts || pts.length < 4) return n;
   const p0 = pts[0], p1 = pts[1], p3 = pts[3];
@@ -107,7 +107,7 @@ function putQuadInFrame(out, n, ux, uy, ax, ay, bx, by, cx, cy, dx, dy) {
 }
 
 /**
- * Bryła trafień (świat gry) jako pudła statyki. Czworokąt (boxPoly: hale, pomosty, magazyny suchego doku i bazy) — jedno
+ * Bryła trafień (świat gry) jako pudła statyki. Czworokąt (boxPoly: hale, pomosty, magazyny bazy) — jedno
  * pudło jak dotąd. Wielokąt o parzystej liczbie rogów (≥ 6) z DWÓCH ŁAŃCUCHÓW — wycinek pierścienia (annulusPoly: łuk
  * zewnętrzny, powrót łukiem wewnętrznym — ćwiartki bębna habitatu bazy piratów) albo wielokąt wypukły (circlePoly: szyb,
  * zbiorniki) — łańcuch A = pierwsza połowa rogów, B = druga połowa odwrócona; czworoboki (A_k, A_k+1, B_k+1, B_k) dzielone
@@ -272,7 +272,7 @@ export function createGasObstacleState() {
  * Wejście klatki. `o`:
  *   dt [s] — czas gry (obrysy ruszonych kawałków co STATIC_FOOT_EVERY s), camX / camY / viewHalf — kadr (hale K-7 przy
  *   kamerze), rings — HaloRingGame.entries (kolider: registry.halls, place),
- *   dock — suchy dok: { shapes: [{ chunk, pts }] (hitShapes), status(chunk) → 0 brak / 1 bryła / 2 obrys ciał,
+ *   dock — budowla misji: { shapes: [{ chunk, pts }] (hitShapes), status(chunk) → 0 brak / 1 bryła / 2 obrys ciał,
  *          feet(chunk, cb(entity)) — ciała ruszonego kawałka } albo null,
  *   domains (Float64Array prostokątów x0, y0, x1, y1 świata gry — ExplosionFx.domainRects), nDomains,
  *   hulls — listy kandydatów (encje albo tablice encji: gracz, P2, NPC widoczni we mgle, wraki), skip(e) → true =

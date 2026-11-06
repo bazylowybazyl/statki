@@ -6,7 +6,7 @@ import { createPirateBaseLayout, pirateBaseShipCorners, pirateBaseChunkAt, PIRAT
 import { buildPirateBaseScene, PBASE_BERTH_BITS } from '../src/3d/portBuildings/pirateBaseScene.js';
 import { PB_MAX_GROUPS, PB_MAX_LAMPS } from '../src/3d/portBuildings/portBuildingScene.js';
 import { resolvePortBuildingStyle } from '../src/3d/portBuildings/portBuildingStyle.js';
-import { dryDockPlanarSolids, dryDockChunkSolids } from '../src/3d/portBuildings/pirateDryDockChunks.js';
+import { chunkPlanarSolids, chunkSolids } from '../src/3d/portBuildings/buildingChunkSolids.js';
 import { planFuelChain } from '../src/game/story/pirateBaseFuel.js';
 import { placePirateBase, planPirateBase } from '../src/game/story/pirateBaseSite.js';
 import { pirateBaseChunkRaster, pirateBasePinTest } from '../src/game/story/pirateBaseBodies.js';
@@ -61,7 +61,7 @@ test('bryły: bez NaN, każdy kawałek ma bryły (ciała: w płaszczyźnie gry; 
   assert.ok(SCENE.lamps.length <= PB_MAX_LAMPS);
   assert.ok(SCENE.instances < 9000, `${SCENE.instances} brył`);
   for (const c of L.chunks) {
-    const n = c.ghost ? dryDockChunkSolids(L, SCENE, [c.id]).length : dryDockPlanarSolids(L, SCENE, [c.id], { band: 4 }).length;
+    const n = c.ghost ? chunkSolids(L, SCENE, [c.id]).length : chunkPlanarSolids(L, SCENE, [c.id], { band: 4 }).length;
     assert.ok(n > 0, `${c.id}: ${n}`);
   }
 });

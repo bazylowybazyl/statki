@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { HULL_RENDER_PROFILES, getHullRenderSize } from '../src/data/ships.js';
 import { HULL_COLLISION_ARMOR, getHullCollisionArmor } from '../src/data/hullArmor.js';
-import { planShipyard } from '../src/game/story/shipyardLayout.js';
+import { planPirateBase } from '../src/game/story/pirateBaseSite.js';
 import { SHIP_SYSTEMS } from '../src/data/shipSystems.js';
 import { readPng } from '../scripts/webgpu/png.mjs';
 import { resizeBox } from './helpers/reactorHulls.mjs';
@@ -114,18 +114,21 @@ test('przy jednakowej masie mocne poszycie ustępuje słabemu, niezależnie od k
 // Prawdziwe sprite'y i rząd z misji 1, szarża z tabeli systemów. Same kadłuby:
 // bez ostrzału, tarcz i skryptowego zabijania celów — rezultat daje fizyka.
 function ramShipyard(neutral) {
-  const site = planShipyard({ x: 0, y: 0 }, { x: -10000, y: 0 });
-  const atlas = ship('atlas', site.rowStart.x - 1000, site.rowStart.y, 0, neutral);
-  atlas.vx = 500;
-  const targets = site.parked.map(p => ship(p.key.includes('battleship') ? 'pirate_battleship'
+  const site = planPirateBase({ x: 0, y: 0 }, { x: -10000, y: 0 });
+  const ux = Math.cos(site.ramAngle), uy = Math.sin(site.ramAngle);
+  const atlas = ship('atlas', site.rowStart.x - ux * 1000, site.rowStart.y - uy * 1000, site.ramAngle, neutral);
+  let v = 500;
+  atlas.vx = ux * v; atlas.vy = uy * v;
+  const row = site.parked.filter(p => site.ramBerths.includes(p.berth));
+  const targets = row.map(p => ship(p.key.includes('battleship') ? 'pirate_battleship'
     : p.key.includes('destroyer') ? 'pirate_destroyer' : 'pirate_frigate', p.x, p.y, p.angle, neutral));
   const entities = [atlas, ...targets];
   const dt = 1 / 120, sys = SHIP_SYSTEMS.atlas;
   let contacts = 0;
   try {
     for (let i = 0; i < 1200; i++) {
-      atlas.vx = i * dt < sys.duration ? Math.min(sys.speed, atlas.vx + sys.accel * dt)
-        : Math.max(500, atlas.vx - sys.brake * dt);
+      v = i * dt < sys.duration ? Math.min(sys.speed, v + sys.accel * dt) : Math.max(500, v - sys.brake * dt);
+      atlas.vx = ux * v; atlas.vy = uy * v;
       step(entities, dt);
       contacts += HullBodies.perf.lastContacts;
       for (const e of targets) {

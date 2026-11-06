@@ -1,11 +1,10 @@
-// Kawałki suchego doku jako bryły silnika zniszczeń (docs/PLAN-zniszczenia-swiata-3d.md § 4.3, F2): z danych
-// instancji sceny (pirateDryDockScene.js — te same bryły, które rysuje render) wybiera bryły kawałków (grupy)
-// i oddaje trójkąty do wokselizacji (voxelizeTriangles → buildBeamStructure), listę brył do modelu Three
-// (demo destruktor3d.html) albo rzut z góry do płaskiej kratownicy (destruktor2d.html).
+// Kawałki budowli jako bryły silnika zniszczeń (docs/PLAN-zniszczenia-swiata-3d.md § 4.3, F2): z danych instancji
+// sceny (te same bryły, które rysuje render) wybiera bryły kawałków (grupy) i oddaje trójkąty do wokselizacji
+// (voxelizeTriangles → buildBeamStructure) albo rzut z góry do płaskiej kratownicy (pirateBaseBodies.js).
 // Czysta matematyka, bez Three — działa w node (testy) i w workerze.
 //
 // Układ: x wzdłuż trzonu, y — wysokość ŚWIATA (z gry; nad płaszczyzną już ściśnięta ×0,42 jak w renderze),
-// z w poprzek trzonu (+z parking). Pominięte: światła (materiały emisyjne 14–19 — w ciele zostałyby kropkami
+// z w poprzek. Pominięte: światła (materiały emisyjne 14–19 — w ciele zostałyby kropkami
 // węzłów) i torusy (pierścienie dekoracyjne, cieńsze od komórki). Kolce (stożki) — ostrosłupy.
 import { PB_STRIDE } from './portBuildingScene.js';
 
@@ -29,7 +28,7 @@ function qrot(q, v, out) {
  * Bryły kawałków: [{ kind: 'box' | 'cyl' | 'cone', chunk, mat, center: [x, y, z], size: [sx, sy, sz], vs, q }]
  * w układzie budowli (kawałki na miejscu — macierze grup tożsame).
  */
-export function dryDockChunkSolids(layout, scene, chunkIds, { emissive = false } = {}) {
+export function chunkSolids(layout, scene, chunkIds, { emissive = false } = {}) {
   const wanted = new Map();
   for (const id of chunkIds) {
     const c = layout.chunkById.get(id);
@@ -83,7 +82,7 @@ function cornersOf(s) {
  * Trójkąty brył (Float32Array po 9 liczb) i barwy na trójkąt (paleta stylu, liniowo → sRGB do wokselizacji).
  * opts: { sides (walce i stożki, 8), map(p) — przekształcenie punktu (np. obrót do układu dema), palette }.
  */
-export function dryDockSolidsToTriangles(solids, opts = {}) {
+export function solidsToTriangles(solids, opts = {}) {
   const sides = Math.max(3, opts.sides | 0 || 8);
   const map = typeof opts.map === 'function' ? opts.map : null;
   const pal = opts.palette || null;
@@ -148,7 +147,7 @@ function colorOf(pal, mat) {
 }
 
 /** Obwiednia brył: { x0, x1, y0, y1, z0, z1 } (narożniki pudeł, walców i stożków). */
-export function dryDockSolidsBounds(solids) {
+export function solidsBounds(solids) {
   const b = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, z0: Infinity, z1: -Infinity };
   const p = [0, 0, 0];
   for (const s of solids) {
@@ -161,10 +160,6 @@ export function dryDockSolidsBounds(solids) {
   }
   return b;
 }
-
-// Moduł do prób w destruktorze: koniec parkingu od strony wjazdu — odcinek trzonu strefy wjazdu, rama z pylonami,
-// brama taranowa (cienka), sekcja ogrodzenia z bramami pierwszych stanowisk. Atlas taranuje bramę G-W wzdłuż +x.
-export const DRYDOCK_TEST_MODULE = Object.freeze(['S-1', 'Q-W', 'G-W', 'P-1', 'B-01', 'B-02', 'B-03']);
 
 // Wypukła otoczka punktów 2D (monotoniczny łańcuch) — rzut bryły na płaszczyznę (x, z).
 function hull2(pts) {
@@ -195,9 +190,9 @@ function hull2(pts) {
  * Obraz: x układu w prawo, +z układu w GÓRĘ (wiersz 0 = największe z). opts: { unitsPerPx (4), palette }.
  * Wynik: { width, height, data, unitsPerPx, x0, z1, worldW, worldH }.
  */
-export function dryDockTopRaster(solids, opts = {}) {
+export function chunkTopRaster(solids, opts = {}) {
   const upp = Math.max(0.5, Number(opts.unitsPerPx) || 4);
-  const b = dryDockSolidsBounds(solids);
+  const b = solidsBounds(solids);
   const W = Math.max(1, Math.ceil((b.x1 - b.x0) / upp));
   const H = Math.max(1, Math.ceil((b.z1 - b.z0) / upp));
   const data = new Uint8ClampedArray(W * H * 4);
@@ -251,12 +246,12 @@ export function dryDockTopRaster(solids, opts = {}) {
 }
 
 /**
- * Bryły modułu do płaskiej kratownicy: tylko te, które przecinają płaszczyznę gry (wysokość świata 0 ± `band`)
- * — trzon, nabrzeże, ogrodzenie, bramy, pylony; bez rękawów, kołysek i szponów pod płaszczyzną, bez dachu.
+ * Bryły do płaskiej kratownicy: tylko te, które przecinają płaszczyznę gry (wysokość świata 0 ± `band`);
+ * bez rękawów i kołysek pod płaszczyzną, bez dachu.
  */
-export function dryDockPlanarSolids(layout, scene, chunkIds, { band = 25 } = {}) {
+export function chunkPlanarSolids(layout, scene, chunkIds, { band = 25 } = {}) {
   const p = [0, 0, 0];
-  return dryDockChunkSolids(layout, scene, chunkIds).filter((s) => {
+  return chunkSolids(layout, scene, chunkIds).filter((s) => {
     if (layout.chunkById.get(s.chunk)?.kind === 'roof') return false;
     let y0 = Infinity;
     let y1 = -Infinity;

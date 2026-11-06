@@ -1,4 +1,4 @@
-// Skóra CIAŁA ŚWIATA z brył budowli Z7 (PortBuilding3D — suchy dok piratów; docs/PLAN-zniszczenia-swiata-3d.md § 6):
+// Skóra CIAŁA ŚWIATA z brył budowli Z7 (PortBuilding3D — baza piratów; docs/PLAN-zniszczenia-swiata-3d.md § 6):
 // instancje grupy kawałka (zestawy bg / fg — dach w fg, wszystkie rodzaje brył, także lampy) wypieczone do układu CIAŁA —
 // środek rastra ciała = 0, x — oś budowli, y — −z układu (obraz ciała w górę), z — wysokość świata — z atrybutami
 // wariantu „skin” grafu budowli (portBuildings3D.tsl.js): aPbA (położenie w bryle — płyty, materiał), aPbN (normalna

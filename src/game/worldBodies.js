@@ -6,8 +6,8 @@
  * F0 „jest ten feel”, stacje w grze ZAKOTWICZONE, obrażenia liczy warstwa 2D (ciała płaskie, bryła 3D jedzie po
  * kratownicy — worldBodies3D.js), w grze BEZ dymu, ognia i wybuchów (2026-10-05).
  *
- * Budowla = MIEJSCE (site) z listą KAWAŁKÓW (piece). Kawałek opisuje gospodarz (np. suchy dok —
- * src/game/story/pirateDryDockBodies.js):
+ * Budowla = MIEJSCE (site) z listą KAWAŁKÓW (piece). Kawałek opisuje gospodarz (np. baza piratów —
+ * src/game/story/pirateBaseBodies.js):
  *   { id, kind, weight, bounds: { x0, y0, x1, y1 } (świat gry — bańka), material: { density, armor },
  *     build() → { image (RGBA), upp (j. na piksel), x, y (środek obrazu w grze), angle (kurs osi x obrazu) } | null,
  *     pins(sx, sy) → bool — kotwica (układ obrazu od środka: x w prawo, y w GÓRĘ obrazu, j. świata),

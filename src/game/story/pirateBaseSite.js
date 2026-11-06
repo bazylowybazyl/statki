@@ -98,8 +98,6 @@ export function placePirateBase(center, axis, layout = createPirateBaseLayout())
     u: { x: ux, y: uy }, n: { x: nx, y: ny },
     toGame, toHub, headingToGame,
     hitShapes, shapesOf,
-    // zgodność z suchym dokiem: taran statyczny i hala (bazy to ciała świata w bańce gracza — taran zwykłym zderzeniem)
-    ramShapes: [], hallArea: null,
     habitat,
     dirToHub(dx, dy, out = {}) {
       out.x = dx * ux + dy * uy;
@@ -107,7 +105,6 @@ export function placePirateBase(center, axis, layout = createPirateBaseLayout())
       return out;
     },
     radius: Math.hypot(l.width, l.depth) / 2,
-    inHall: () => false,
     /** Odległość punktu gry od obwiedni bazy (0 w środku). */
     distance(gx, gy) {
       const h = toHub(gx, gy, _hub);

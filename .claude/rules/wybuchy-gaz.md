@@ -28,7 +28,7 @@ paths:
 ## Wybuchy WebGPU (`src/3d/explosions/`, gaz `src/3d/gas/`; 2026-10-07, etapy A–E2 i D audytu `docs/AUDYT-wybuchy-gaz-2026-10-08.md` — 2026-10-09)
 
 - Wejście z GRY (RW-22): `GameBlasts.blast(o, drony)` (`src/game/explosionEvents.js` — rekord `EXPLOSION`, dekoder `src/3d/explosions/explosionCommands.js` woła fabrykę bez opakowania; `drony = true` — gra zmiata drony naprawcze w zasięgu, jak dawne `withRepairDroneBlast`), opcje jak niżej; render (rozpad stacji — Destruction3D) i konsola wołają dalej fabrykę: `window.makeReactorBlow({ x, y, size, profile, vx?, vy?, axisX?, axisY?, jetVelTau?, tint?, gasOnly?, hostKey? })` (świat gry,
-  `size` — Atlas ≈ 280): progi punktów i łańcuch rozpadu suchego doku, rozpad stacji (`Destruction3D.init({ reactorFactory })`),
+  `size` — Atlas ≈ 280): progi punktów i rozpad bazy piratów, rozpad stacji (`Destruction3D.init({ reactorFactory })`),
   skrypty. Fabryka `createExplosionFactory(Core3D, { rocketFx, weaponFx })` przy starcie efektów w `index.html`, reżyser
   `window.__explosions`. ŚMIERĆ OKRĘTU bez detonacji rdzenia (pula HP NPC, gracz bez rdzenia) = wybuch z MIEJSCA ZBIORNIKA
   PALIWA (`src/data/fuelTanks.js` — Atlas, Bellator, Iron Skull, reszta z automatu: głęboko w części rufowej, poza komorą
@@ -106,8 +106,8 @@ paths:
   2 wodór; przejście liniowe między sąsiednimi), lustro `gasFirePaletteCpu`, blask `gasFireGlow`.
 
 - PRZESZKODY (`src/game/gasObstacleInput.js` → `GAS_OBST_IN` → `__explosions.setObstacleInput`, szew gra ↔ render jak pył hal):
-  statyka — pudła hal K-7 (`k7SolidList`, hale w kadrze i przy domenach) i bryły trafień budowli misji — baza piratów,
-  suchy dok (czworokąt = pudło; wycinek pierścienia bębna i koła szybu / zbiorników = kilka pudeł z pasów między
+  statyka — pudła hal K-7 (`k7SolidList`, hale w kadrze i przy domenach) i bryły trafień budowli misji — baza piratów
+  (czworokąt = pudło; wycinek pierścienia bębna i koła szybu / zbiorników = kilka pudeł z pasów między
   łańcuchami rogów, `putGasObstaclePoly`, nadmiar ≤ 5% bryły; kawałek ruszony — obrysy jego
   ciał), raster R8 w oknie 2N × 2N ZAKOTWICZONYM W ŚWIECIE (róg na siatce h, wyprzedzenie wzdłuż nośnika, bryła + 0,75 komórki);
   kadłuby — obrys z żywych węzłów belek (`hullFootprint`) z prędkością ciała + ω × r (do 64 rekordów i 32 pasm masek na siatkę,
