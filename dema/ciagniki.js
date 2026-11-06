@@ -225,10 +225,10 @@ class Track {
   }
 }
 
-const ROW_TRACK = new Track((t) => [1900 * Math.cos(t) + 420 * Math.cos(3 * t), 950 * Math.sin(t) + 360 * Math.sin(2 * t)]);
-const TIGHT_TRACK = new Track((t) => [440 * Math.cos(t) + 150 * Math.cos(3 * t), 270 * Math.sin(t) + 110 * Math.sin(2 * t)]);
-const SCALE_TRACK = new Track((t) => [1500 * Math.cos(t), 620 * Math.sin(t)]);
-const FAR_TRACK = new Track((t) => [6200 * Math.cos(t) + 900 * Math.cos(3 * t), 3000 * Math.sin(t) + 700 * Math.sin(2 * t)]);
+const ROW_TRACK = new Track((t) => [1900 * Math.cos(t) + 300 * Math.cos(3 * t), 1000 * Math.sin(t) + 340 * Math.cos(2 * t)]);
+const TIGHT_TRACK = new Track((t) => [480 * Math.cos(t) + 50 * Math.cos(3 * t), 300 * Math.sin(t) + 100 * Math.cos(2 * t)]);
+const SCALE_TRACK = new Track((t) => [1300 * Math.cos(t) - 100, 600 * Math.sin(t)]);
+const FAR_TRACK = new Track((t) => [6200 * Math.cos(t) + 900 * Math.cos(3 * t), 3000 * Math.sin(t) + 700 * Math.cos(2 * t)]);
 
 // ---------------------------------------------------------------------------
 // Stan
@@ -308,7 +308,7 @@ const VIEWS = [
     }
   },
   {
-    key: 2, name: 'Ciasne łuki', sub: 'promienie 60–600 j., przeguby blisko ogranicznika', zoom: 1.05, follow: false, center: [40, 0], apply() {
+    key: 2, name: 'Ciasne łuki', sub: 'łuki do R ~75 j., przeguby blisko ogranicznika', zoom: 1.05, follow: false, center: [40, 0], apply() {
       const L = TIGHT_TRACK.length;
       addRig('heavy', 5, { track: TIGHT_TRACK, s: L * 0.1, cruise: 140, look: look(2, ['standard', 'tank', 'standard', 'hopper', 'hazmat']) });
       addRig('standard', 4, { track: TIGHT_TRACK, s: L * 0.42, cruise: 140, look: look(0, ['standard', 'standard', 'standard', 'standard'], 1) });
@@ -316,9 +316,9 @@ const VIEWS = [
     }
   },
   {
-    key: 3, name: 'Skala: prom, kuter, frachtowce', sub: 'prawdziwe sprite\'y ruchu, zestawy krążą wokół', zoom: 0.56, follow: false, center: [80, 0], apply() {
+    key: 3, name: 'Skala: prom, kuter, frachtowce', sub: 'prawdziwe sprite\'y ruchu, zestawy krążą wokół', zoom: 0.47, follow: false, center: [-100, 0], apply() {
       for (const [id, hull, x, y, angle, label] of [
-        ['fr', 'heavy_freighter', -280, 0, 0, 'Ciężki frachtowiec 1800 j.'],
+        ['fr', 'heavy_freighter', -320, 0, 0, 'Ciężki frachtowiec 1800 j.'],
         ['kont', 'container_ship', 780, -300, 0, 'Kontenerowiec 312 j.'],
         ['kuter', 'police_cutter', 780, 0, 0, 'Kuter policji 180 j.'],
         ['prom', 'inter_station_shuttle', 780, 240, 0, 'Prom 120 j.']

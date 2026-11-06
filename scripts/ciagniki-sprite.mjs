@@ -271,6 +271,8 @@ class Sheet {
     // Otoczenie (wnęki) i krawędzie: rozmycie wysokości pudełkiem ~1,2 j.
     const blur = boxBlur(this.H, w, h, Math.round(1.2 * s));
     const blurTight = boxBlur(this.H, w, h, Math.round(0.35 * s));
+    // Ciemny kontur sylwetki (jak ciemne kontury sprite'ów ruchu): rozmycie pokrycia ~0,5 j.
+    const blurA = boxBlur(this.A, w, h, Math.round(0.5 * s));
     const wn = Math.floor(w / SS);
     const hn = Math.floor(h / SS);
     const out = {
@@ -300,8 +302,9 @@ class Sheet {
         const cav = clamp01(1 - 0.34 * Math.max(0, blur[i] - ht));
         // Wypukłe krawędzie jaśniejsze (przetarcie farby), lekki brud smugami wzdłuż kadłuba.
         const edge = clamp01((ht - blurTight[i]) * 5);
-        const dirt = 0.92 + 0.14 * fbm(x * 0.32, y * 0.9, 3);
-        const k = cav * dirt * (1 + 0.5 * edge);
+        const dirt = 0.8 + 0.3 * fbm(x * 0.32, y * 0.9, 3) + 0.05 * (hash2(px >> 3, py >> 3, 11) - 0.5);
+        const rim = 0.5 + 0.5 * smooth(0.6, 0.98, blurA[i]);
+        const k = cav * dirt * rim * (1 + 0.5 * edge);
         const ox = px >> 1;
         const oy = py >> 1;
         const j = oy * wn + ox;

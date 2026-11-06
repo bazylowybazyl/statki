@@ -25,7 +25,6 @@ import {
   texture, uniform, uv, varying, vec2, vec3, vec4
 } from 'three/tsl';
 import { loadImageBitmap } from './canvas2d.js';
-import { truckTrainPose } from '../game/spaceTruckTrain.js';
 import {
   TRUCK_ATLAS, TRUCK_ATLAS_CELLS, TRUCK_CARGO, TRUCK_HAZMAT_PAINT, TRUCK_HOPPER_LOADS, TRUCK_LIGHT_KINDS, TRUCK_LIVERIES,
   TRUCK_SPRITE_BOUNDS, TRUCK_TANK_SHELLS, TRUCK_TRACTORS, TRUCK_TRAILER, truckHexLinear, truckRigLength
@@ -56,6 +55,12 @@ export const SPACE_TRUCKS_TUNE = Object.freeze({
   beamMinPpu: 0.3,
   /** Poniżej tego zoomu lampki dachu i środkowe markery wypadają (i tak zlewają się w jeden punkt). */
   detailMinPpu: 0.12,
+  /** Z daleka lampy i płomienie ciszej (bloom sumuje je w kulę), od `farLightPpu` w dół aż do mnożnika `farLightMin`. */
+  farLightPpu: 0.45,
+  farLightMin: 0.3,
+  /** Najmniejsza szerokość naczepy [px]: z daleka zestaw to pas barwnych odcinków, nie niknąca kreska (sufit: ×3). */
+  minWidthPx: 2.4,
+  trailerWidth: 18,
   /** Tylne lampy pozostałych naczep przygaszone: pełną moc ma koniec zestawu. */
   innerTail: 0.3,
   /** Barwa słońca, otoczenie, podbicie otoczenia przy dalekim zoomie (farba linii czytelna z daleka). */
@@ -81,6 +86,17 @@ export const SPACE_TRUCKS_SHARED = {
   uAmbient: shared(T.ambient),
   uTime: shared(0)
 };
+
+/** Poza części w chwili klatki (jak truckTrainPose z src/game/spaceTruckTrain.js — bez importu gry: szew renderu). */
+function trainPose(train, i, alpha, out) {
+  const k = alpha >= 1 ? 1 : (alpha <= 0 ? 0 : alpha);
+  out.x = train.px[i] + (train.x[i] - train.px[i]) * k;
+  out.y = train.py[i] + (train.y[i] - train.py[i]) * k;
+  let da = train.a[i] - train.pa[i];
+  da -= Math.PI * 2 * Math.round(da / (Math.PI * 2));
+  out.a = train.pa[i] + da * k;
+  return out;
+}
 
 const SPRITE_STRIDE = 20;
 const EMIT_STRIDE = 12;
@@ -366,7 +382,8 @@ export class SpaceTrucks3D {
     this.ready = loadTextures
       ? loadAtlas().then(() => { this.textured = true; return this; })
       : Promise.resolve(this);
-    this._pose = { x: 0, y: 0, a: 0 };
+    this._pose = { x: 0.5, y: 0.5, a: 0.5 };
+    this._la = new Float64Array(10);
     this._nextId = 1;
   }
 
@@ -461,6 +478,7 @@ export class SpaceTrucks3D {
     let drawn = 0;
     const pose = this._pose;
     const list = this.rigs;
+    const farLight = T.farLightMin + (1 - T.farLightMin) * Math.min(1, ppu / T.farLightPpu);
     for (let r = 0; r < list.length; r++) {
       const rig = list[r];
       if (!rig.visible) continue;
@@ -469,6 +487,7 @@ export class SpaceTrucks3D {
       drawn++;
       const scale = tr.scale;
       const winK = rig.lights ? rig.windows : 0;
+      const widen = Math.min(3, Math.max(1, T.minWidthPx / (T.trailerWidth * scale * ppu)));
       // Sprite'y: wg listy (część pociągu → poza z interpolacją).
       let lastPart = -1;
       let c = 1;
@@ -480,7 +499,7 @@ export class SpaceTrucks3D {
         const o = k * CELL_REC;
         const part = cells[o];
         if (part !== lastPart) {
-          truckTrainPose(tr, part, alpha, pose);
+          trainPose(tr, part, alpha, pose);
           c = Math.cos(pose.a);
           s = Math.sin(pose.a);
           wx = pose.x;
@@ -495,7 +514,7 @@ export class SpaceTrucks3D {
         sb[p + 2] = c;
         sb[p + 3] = s;
         sb[p + 4] = cells[o + 3];
-        sb[p + 5] = cells[o + 4];
+        sb[p + 5] = cells[o + 4] * widen;
         sb[p + 6] = scale;
         sb[p + 7] = 1;
         sb[p + 8] = cells[o + 5];
@@ -513,7 +532,7 @@ export class SpaceTrucks3D {
         sn++;
       }
       // Dysze i światła ciągnika.
-      truckTrainPose(tr, 0, alpha, pose);
+      trainPose(tr, 0, alpha, pose);
       c = Math.cos(pose.a);
       s = Math.sin(pose.a);
       wx = pose.x;
@@ -525,12 +544,12 @@ export class SpaceTrucks3D {
         const ny = noz[i][1] * scale;
         const d = noz[i][2] * scale;
         const len = d * (T.flameIdle + T.flameFull * thr);
-        const wid = d * 1.15;
+        const wid = d * 1.15 * widen;
         // Kwad wzdłuż kursu do tyłu: środek = wylot − kurs · (długość / 2).
         const px = wx + (nx - len * 0.5) * c - ny * s;
         const py = wy + (nx - len * 0.5) * s + ny * c;
         const q = en * EMIT_STRIDE;
-        const pw = T.flamePower * (0.5 + 0.8 * thr);
+        const pw = T.flamePower * (0.5 + 0.8 * thr) * farLight;
         eb[q] = px - ox;
         eb[q + 1] = -py - oy;
         eb[q + 2] = -c;
@@ -546,13 +565,16 @@ export class SpaceTrucks3D {
         en++;
       }
       if (rig.lights) {
-        en = this._pushLights(eb, en, eCap, TRACTOR_LIGHTS[tr.tractorId], wx, wy, c, s, scale, ppu, ox, oy, rig, time, true, false);
+        // Liczby przez tablicę: argumenty double przy wywołaniu nie wchodzącym w kod zoptymalizowany to alokacje na część.
+        const la = this._la;
+        la[4] = scale; la[5] = ppu; la[6] = ox; la[7] = oy; la[8] = time; la[9] = farLight;
+        la[0] = wx; la[1] = wy; la[2] = c; la[3] = s;
+        en = this._pushLights(eb, en, eCap, TRACTOR_LIGHTS[tr.tractorId], la, rig, true, false);
         const parts = tr.count;
         for (let i = 1; i < parts; i++) {
-          truckTrainPose(tr, i, alpha, pose);
-          const ci = Math.cos(pose.a);
-          const si = Math.sin(pose.a);
-          en = this._pushLights(eb, en, eCap, TRAILER_LIGHTS, pose.x, pose.y, ci, si, scale, ppu, ox, oy, rig, time, false, i === parts - 1);
+          trainPose(tr, i, alpha, pose);
+          la[0] = pose.x; la[1] = pose.y; la[2] = Math.cos(pose.a); la[3] = Math.sin(pose.a);
+          en = this._pushLights(eb, en, eCap, TRAILER_LIGHTS, la, rig, false, i === parts - 1);
         }
       }
     }
@@ -581,7 +603,17 @@ export class SpaceTrucks3D {
     st.ms = performance.now() - t0;
   }
 
-  _pushLights(eb, en, eCap, rec, wx, wy, c, s, scale, ppu, ox, oy, rig, time, isTractor, isLast) {
+  _pushLights(eb, en, eCap, rec, la, rig, isTractor, isLast) {
+    const wx = la[0];
+    const wy = la[1];
+    const c = la[2];
+    const s = la[3];
+    const scale = la[4];
+    const ppu = la[5];
+    const ox = la[6];
+    const oy = la[7];
+    const time = la[8];
+    const farLight = la[9];
     const detail = ppu >= T.detailMinPpu;
     const n = rec.length / 3;
     for (let i = 0; i < n && en < eCap; i++) {
@@ -589,7 +621,7 @@ export class SpaceTrucks3D {
       const ly = rec[i * 3 + 1] * scale;
       const kindId = rec[i * 3 + 2];
       const kind = KIND_LIST[kindId];
-      let power = kind.power;
+      let power = kind.power * farLight;
       let cr = kind.color[0];
       let cg = kind.color[1];
       let cb = kind.color[2];

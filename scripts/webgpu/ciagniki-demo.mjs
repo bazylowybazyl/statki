@@ -6,7 +6,7 @@
 // (A/B: naczepa = kontener 1 × 1). Raport: raport.json (statystyki partii, błędy konsoli).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo } from './wspolne.mjs';
+import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, screenshotPng, repo } from './wspolne.mjs';
 
 const args = parseArgs();
 const [W, H] = (args.rozmiar || '1600x900').split('x').map(Number);
@@ -63,9 +63,10 @@ try {
   }
   if (want('skala')) {
     await ev('window.__ciagniki.view(3)');
-    for (let k = 0; k < 60; k++) {
+    // Proxy ruchu: obrazy i mapy powierzchni wczytują się w tle (czas ściany, nie klatki).
+    for (let k = 0; k < 24; k++) {
       await ev('window.__ciagniki.frames(2)');
-      if (!(await ev('window.__ciagniki.stats().waiting'))) break;
+      await sleep(500);
     }
     await shot('skala', 120);
   }
