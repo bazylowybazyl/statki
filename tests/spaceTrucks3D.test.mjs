@@ -34,10 +34,10 @@ function placed(id, n, x = VIEW.x, y = VIEW.y, a = 0) {
   return placeTruckTrain(createTruckTrain(id, n), x, y, a);
 }
 
-test('moduł nie zna Core3D ani gry: importy tylko three, dane i canvas2d', () => {
+test('moduł nie zna Core3D ani gry: importy tylko three, dane i pomocniki bez stanu', () => {
   const src = readFileSync(new URL('../src/3d/spaceTrucks3D.js', import.meta.url), 'utf8');
   const imports = [...src.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ['../data/spaceTrucks.js', './canvas2d.js', 'three/tsl', 'three/webgpu'].sort());
+  assert.deepEqual(imports.sort(), ['../data/spaceTrucks.js', './canvas2d.js', './zakresyWysylki.js', 'three/tsl', 'three/webgpu'].sort());
   assert.ok(!/window\.|document\.|Math\.random/.test(src), 'bez window, DOM i Math.random');
 });
 

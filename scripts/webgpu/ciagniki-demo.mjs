@@ -3,7 +3,7 @@
 //   node scripts/webgpu/ciagniki-demo.mjs [--out .tmp/ciagniki/zrzuty] [--tylko start,galeria,...] [--rozmiar 1600x900] [--goly 1]
 //
 // Etapy: start (domyślny widok, 1 s i 8 s), zoomy (0,1 / 0,3 / 1 / 3,2), luki (ciasne łuki), skala, daleko, galeria, kontener
-// (A/B: naczepa = kontener 1 × 1). Raport: raport.json (statystyki partii, błędy konsoli).
+// (A/B: naczepa = kontener 1 × 1), panel (prawdziwy rAF z panelem). Raport: raport.json (statystyki partii, błędy konsoli).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, screenshotPng, repo } from './wspolne.mjs';
@@ -93,6 +93,15 @@ try {
       await shot(`kontener-zoom-${z}`, 20);
     }
     await ev('window.__ciagniki.scale("module")');
+  }
+  if (want('panel') && !args.goly) {
+    // Jak u użytkownika: rAF, panel widoczny, zoom z przycisku, kamera za zestawem.
+    await cdp.send('Page.navigate', { url: `${base}/dema/ciagniki.html` });
+    await waitFor(cdp, 'window.__ciagniki && window.__ciagniki.ready', 180000);
+    await sleep(3500);
+    await screenshotPng(cdp, join(out, `${String(nr++).padStart(2, '0')}-panel.png`));
+    report.panel = await ev('window.__ciagniki.stats()');
+    console.log('panel', JSON.stringify(report.panel.trucks));
   }
   report.bledy = logs.errors();
   report.logi = logs.all().filter((l) => !l.startsWith('[log:')).slice(-40);

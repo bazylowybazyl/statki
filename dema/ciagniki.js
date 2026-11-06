@@ -240,6 +240,7 @@ const state = {
   scaleKey: params.get('skala') === 'kontener' ? 'container' : 'module',
   cam: { x: P0.x, y: P0.y, zoom: 1.4 },
   follow: true,
+  focus: null,
   overlay: false,
   lights: true,
   time: 0,
@@ -388,6 +389,7 @@ function applyView(i) {
   state.cam.zoom = Number(params.get('zoom')) && !state._zoomUsed ? Number(params.get('zoom')) : v.zoom;
   state._zoomUsed = true;
   state.follow = !!v.follow;
+  state.focus = null;
   if (!state.follow) {
     // Panel z prawej: środek kadru lekko w prawo od środka sceny.
     state.cam.x = P0.x + (v.center?.[0] || 0) + 136 / state.cam.zoom;
@@ -436,8 +438,7 @@ function followCamera(k) {
   let x = 0;
   let y = 0;
   let w = 0;
-  for (const e of entries) {
-    if (!e.train) continue;
+  for (const e of state.focus ? [state.focus] : entries) {
     const mid = e.train.count >> 1;
     x += e.train.x[mid];
     y += e.train.y[mid];
@@ -477,7 +478,18 @@ function setZoom(z) {
   const cx = state.cam.x - 136 / state.cam.zoom;
   state.cam.zoom = Math.max(0.035, Math.min(3.2, z));
   state.cam.x = cx + 136 / state.cam.zoom;
+  // Przybliżenie w widoku bez śledzenia: gdy w kadrze nie ma żadnego zestawu, kamera jedzie za pierwszym na torze.
+  if (!state.follow && entries.length && !rigInView()) {
+    state.focus = entries.find((e) => e.track) || entries[0];
+    state.follow = true;
+    followCamera(1);
+  }
   syncUi();
+}
+function rigInView() {
+  const hw = W * 0.5 / state.cam.zoom;
+  const hh = H * 0.5 / state.cam.zoom;
+  return entries.some((e) => Math.abs(e.train.x[0] - state.cam.x) < hw && Math.abs(e.train.y[0] - state.cam.y) < hh);
 }
 const scaleButtons = [
   ['module', 'Moduł 2 × 2 (32 × 16 j.)'],

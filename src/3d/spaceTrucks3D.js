@@ -25,6 +25,7 @@ import {
   texture, uniform, uv, varying, vec2, vec3, vec4
 } from 'three/tsl';
 import { loadImageBitmap } from './canvas2d.js';
+import { zbierzZakres } from './zakresyWysylki.js';
 import {
   TRUCK_ATLAS, TRUCK_ATLAS_CELLS, TRUCK_CARGO, TRUCK_HAZMAT_PAINT, TRUCK_HOPPER_LOADS, TRUCK_LIGHT_KINDS, TRUCK_LIVERIES,
   TRUCK_SPRITE_BOUNDS, TRUCK_TANK_SHELLS, TRUCK_TRACTORS, TRUCK_TRAILER, truckHexLinear, truckRigLength
@@ -582,12 +583,9 @@ export class SpaceTrucks3D {
     const eg = this.emitMesh.geometry;
     sg.instanceCount = sn;
     eg.instanceCount = en;
-    const sbuf = this.spriteBuffer;
-    const ebuf = this.emitBuffer;
-    sbuf.clearUpdateRanges();
-    ebuf.clearUpdateRanges();
-    if (sn) { sbuf.addUpdateRange(0, sn * SPRITE_STRIDE); sbuf.needsUpdate = true; }
-    if (en) { ebuf.addUpdateRange(0, en * EMIT_STRIDE); ebuf.needsUpdate = true; }
+    // Zakresy, nie DynamicDrawUsage: bufor z przeplotem bez zakresu idzie w całości, osobno na każdy atrybut.
+    zbierzZakres(this.spriteBuffer, 0, sn * SPRITE_STRIDE);
+    zbierzZakres(this.emitBuffer, 0, en * EMIT_STRIDE);
     const vis = this.textured && (sn > 0 || en > 0);
     this.spriteMesh.visible = vis && sn > 0;
     this.emitMesh.visible = vis && en > 0;

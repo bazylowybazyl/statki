@@ -5,6 +5,11 @@ katalogu pod nazwą z linii „Output”. Każdy `*.prompt.md`: tytuł, Output, 
 angielsku — kopiować cały akapit od „Use case:” (najdłuższy ma 3 349 znaków, mieści się w limicie
 4000). Obrazy wymienione w notatkach jako referencje dołączać do generatora.
 
+## Ciągniki kosmiczne (`trucks/`)
+
+Podkatalog `trucks/` nie pochodzi z generatora: rysuje go `node scripts/ciagniki-sprite.mjs` z liczb `src/data/spaceTrucks.js`
+(atlas + normalne + maski malowania i pojedyncze płótna). Opis: `docs/PROPOZYCJA-ciagniki.md`, reguła `ciagniki`.
+
 ## Konwencje (wszystkie sprite'y)
 
 - PNG z prawdziwą alfą (nie namalowana szachownica), rzut ściśle z góry, ortograficzny; dziób w +X

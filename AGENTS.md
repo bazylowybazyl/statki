@@ -171,6 +171,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `drony-naprawcze` | Rój dronów naprawczych (R) |
 | `roj-przeladunkowy` | Rój dronów przeładunkowych (demo) |
 | `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
+| `ciagniki` | Ciągniki kosmiczne (demo, niewpięte): małe ciężarówki z 1–5 naczepami, kinematyka przegubów, malarz sprite'ów, partia TSL bez Core3D |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
