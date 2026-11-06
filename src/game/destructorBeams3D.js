@@ -25,11 +25,6 @@ import { beamSolverScratch, refreshBeamMounts, prepareBeamConstraints, projectBe
 import { updateBeamBounds, extendBeamBounds, beamBoundsOverlap, worldBeamBounds } from './beamBounds3D.js';
 import { beamConnectivityScratch, findBeamBridgesStore } from './beamConnectivity3D.js';
 import { activeRegion, activateNode, activateNeighbors, markSkinDirty, resetActiveRegion } from './beamActiveRegion3D.js';
-// Klastry sztywne i pole płyty (docs/PLAN-zawalenia-budowli-3d.md § 3.3, § 3.5, E2): osobne moduły, wpięte tylko w update()
-// (rozdział par), integrate (sen klastra), freezeBody i `continue` dla rigid w solverze, rozpadach i naprawie.
-import { createRigidConfig, createRigidBody, rigidCollide, rigidAfterStep, freezeRigid, unfreezeRigid, wakeRigidAround,
-  rigidWarmUpScene, RIGID_PERF } from './beamRigid3D.js';
-import { createPlateField, plateFieldPass, PLATE_PERF } from './beamPlateField3D.js';
 
 export function createBeamConfig(cellSize = 1) {
   const cs = Math.max(1e-6, Number(cellSize) || 1);
@@ -343,17 +338,6 @@ export const DestructorBeams3D = {
   // TEREN STATYCZNY (addTerrain — planetoida pod bazą piratów): powierzchnie gwiaździste wokół środka, z którymi
   // zderzają się ciała 3D (bryły i ich odłamy). Pusta lista = krok bit w bit jak dawniej.
   terrains: [],
-  // KLASTRY SZTYWNE (beamRigid3D.js — ciała `rigid` w liście bodies) i POLA PŁYT (beamPlateField3D.js — addPlateField).
-  // Bez klastrów i pól krok liczy się bit w bit jak dawniej. Haki: onRigidContact(ciało, blok, jx, jy, jz, x, y, z) —
-  // impuls styku klastra (graf nośny E1), onRigidPair(R, B, info) — styk klastra z ciałem belek (gra), rigidPairFilter
-  // (R, B) → false = para klaster × ciało belek bez kolizji (gra: warstwy, duchy, warp). Klaster × klaster — zawsze.
-  rigidConfig: createRigidConfig(),
-  rigidPerf: RIGID_PERF,
-  plateFields: [],
-  platePerf: PLATE_PERF,
-  onRigidContact: null,
-  onRigidPair: null,
-  rigidPairFilter: null,
   clock: () => nowMs() * 0.001,   // sekundy znaczników żaru (baza czasu renderera)
   // Zasięg ostatniego krateru (applyImpact w trybie krateru): najdalszy węzeł zabity przez krater
   // od punktu trafienia [j.]; 0 = krater nikogo nie zabił (mapa ran gry: lej tylko w dziurze).
@@ -491,9 +475,6 @@ export const DestructorBeams3D = {
       // kratownica bryły 3D po zgniocie „dzwoniła” sekundami (cały obszar w solverze), a próg w j/s nie rośnie z komórką
       nodeDamping: Number.isFinite(opts.nodeDamping) ? opts.nodeDamping : null,
       activeThreshold: Number.isFinite(opts.activeThreshold) ? opts.activeThreshold : null,
-      // tłumienie obrotu ciała [1/s] w integrate (null = cfg.angularDamping — statki i bryły bit w bit); klaster zawalenia
-      // może mieć własne (A/B tempa przechyłu przy niskim g, D12 — globalne 0,2/s zjada ~30% przyspieszenia przy g 80)
-      angularDamping: Number.isFinite(opts.angularDamping) ? opts.angularDamping : null,
       invInertiaLocal: structure.invInertia.map(v => v / massMultiplier),
       radius: structure.radius,
       config: cfg,
@@ -543,66 +524,6 @@ export const DestructorBeams3D = {
     return body;
   },
 
-  /**
-   * KLASTER SZTYWNY (beamRigid3D.js — opis z buildClusterDesc: bloki, punkty styku) jako ciało silnika `rigid`:
-   * opts — position (środek masy) albo origin (początek układu klastra), quaternion, velocity, angularVelocity,
-   * gravity, gravityWell, friction, collisionArmor, name. Ciało idzie do tej samej listy bodies co bryły (integrate).
-   */
-  createRigidBody(desc, opts = {}) {
-    return createRigidBody(this, desc, opts, NEXT_BODY_ID++);
-  },
-
-  /** POLE PŁYTY (beamPlateField3D.js — opis opcji przy createPlateField): statyczny obiekt jak teren. Zwraca pole. */
-  addPlateField(opts) {
-    const field = opts && opts.thick !== undefined && opts.stats ? opts : createPlateField(opts);
-    if (this.plateFields.indexOf(field) < 0) this.plateFields.push(field);
-    return field;
-  },
-
-  removePlateField(field) {
-    const i = this.plateFields.indexOf(field);
-    if (i >= 0) this.plateFields.splice(i, 1);
-  },
-
-  _rigidWarmedUp: false,
-
-  /**
-   * Rozgrzewka JIT ścieżek klastrów i pól płyt — raz na proces (HullBodies.warmUpClusters; dema i testy silnika jej nie wołają).
-   * Scena w beamRigid3D.rigidWarmUpScene; stan systemu (listy, haki, liczniki, znaczniki, numeracja ciał) wraca.
-   */
-  warmUpRigid() {
-    if (this._rigidWarmedUp) return;
-    this._rigidWarmedUp = true;
-    const saved = { splitQueue: this.splitQueue, terrains: this.terrains, plateFields: this.plateFields,
-      pairFilter: this.pairFilter, onContact: this.onContact, onWreck: this.onWreck, onNodeDebris: this.onNodeDebris,
-      onDebris: this.onDebris, onRigidContact: this.onRigidContact, onRigidPair: this.onRigidPair, rigidPairFilter: this.rigidPairFilter,
-      tick: this._tick, island: this._islandStamp, contact: this._contactStamp, region: this._regionStamp, front: this._frontGen,
-      perf: { ...this.perf }, rigidPerf: { ...RIGID_PERF }, platePerf: { ...PLATE_PERF }, nextId: NEXT_BODY_ID,
-      lastCraterReach: this.lastCraterReach };
-    try {
-      this.splitQueue = []; this.terrains = []; this.plateFields = [];
-      this.pairFilter = null; this.onContact = null; this.onWreck = null; this.onNodeDebris = null; this.onDebris = null;
-      this.onRigidContact = null; this.onRigidPair = null; this.rigidPairFilter = null;
-      rigidWarmUpScene(this, buildBeamStructure);
-    } finally {
-      this.splitQueue = saved.splitQueue; this.terrains = saved.terrains; this.plateFields = saved.plateFields;
-      this.pairFilter = saved.pairFilter; this.onContact = saved.onContact; this.onWreck = saved.onWreck;
-      this.onNodeDebris = saved.onNodeDebris; this.onDebris = saved.onDebris;
-      this.onRigidContact = saved.onRigidContact; this.onRigidPair = saved.onRigidPair; this.rigidPairFilter = saved.rigidPairFilter;
-      this._tick = saved.tick; this._islandStamp = saved.island; this._contactStamp = saved.contact;
-      this._regionStamp = saved.region; this._frontGen = saved.front;
-      Object.assign(this.perf, saved.perf); Object.assign(RIGID_PERF, saved.rigidPerf); Object.assign(PLATE_PERF, saved.platePerf);
-      NEXT_BODY_ID = saved.nextId;
-      this.lastCraterReach = saved.lastCraterReach;
-    }
-  },
-
-  /** Odmrożenie / obudzenie klastra (wstrząs, uderzenie, utrata podpory). */
-  unfreezeRigid(body) { unfreezeRigid(body); },
-
-  /** Budzi śpiące klastry z obrysem w kuli (x, y, z, r) z listy `bodies` (np. po zniknięciu podpory). */
-  wakeRigidAround(bodies, x, y, z, r) { return wakeRigidAround(bodies, x, y, z, r); },
-
   /** Solver lokalny: węzeł trafiony, zgniatany albo przesunięty z zewnątrz musi wejść w obszar. */
   activate(body, node) {
     activateNode(body, node);
@@ -624,8 +545,6 @@ export const DestructorBeams3D = {
    */
   freezeBody(body, pinEvery = 3) {
     if (!body || body.dead || body.static) return 0;
-    // klaster sztywny: bez kotwic i belek — nieruchoma podpora (beamRigid3D.freezeRigid), zwraca liczbę punktów
-    if (body.rigid === true) return freezeRigid(body);
     const s = body.nodeStore, e = body.beamStore, g = Math.max(1, pinEvery | 0);
     const active = s.active;
     let pins = 0;
@@ -747,8 +666,6 @@ export const DestructorBeams3D = {
     const angK = Math.exp(-cfg.angularDamping * dt);
     for (const b of bodies) {
       if (!b || b.dead || b.static || b.anchored) continue;
-      // śpiący klaster stoi (koszt 0 — beamRigid3D, sen); budzi go styk albo sąsiad
-      if (b.rigid === true && b.isSleeping) continue;
       const planar = !!b.planar;
       if (planar) {
         // Odrzut odłamu (_spawnWreck) i szum numeryczny nie wyprowadzą kadłuba z płaszczyzny.
@@ -779,9 +696,7 @@ export const DestructorBeams3D = {
         b.vel.x += b.gravity.x * dt; b.vel.y += b.gravity.y * dt; b.vel.z += b.gravity.z * dt;
       }
       b.vel.x *= linK; b.vel.y *= linK; b.vel.z *= linK;
-      // tłumienie obrotu CIAŁA (null = cfg — statki i bryły bit w bit); klaster zawalenia z własnym (createCluster)
-      const bodyAngK = b.angularDamping === null || b.angularDamping === undefined ? angK : Math.exp(-b.angularDamping * dt);
-      b.angVel.x *= bodyAngK; b.angVel.y *= bodyAngK; b.angVel.z *= bodyAngK;
+      b.angVel.x *= angK; b.angVel.y *= angK; b.angVel.z *= angK;
       if (b.joints !== null && b.joints !== undefined) this._solveJoints(b, dt);
       b.pos.x += b.vel.x * dt;
       b.pos.y += b.vel.y * dt;
@@ -921,7 +836,6 @@ export const DestructorBeams3D = {
 
     for (const body of bodies) {
       if (!body || body.dead || body.static) continue;
-      if (body.rigid === true) continue;           // klaster sztywny: bez węzłów i belek (beamRigid3D)
       if (body.isSleeping && (body.wakeHold | 0) <= 0) continue;
       // tłumienie ciała (bryły 3D) — null = cfg.nodeDamping
       const bodyDamp = body.nodeDamping === null || body.nodeDamping === undefined ? damp : Math.exp(-body.nodeDamping * dt * 60);
@@ -1043,7 +957,6 @@ export const DestructorBeams3D = {
    */
   _solveLocal(body, dt, iterations, damp, plasticRate, stepScaleSq) {
     this._localSolved = 0;
-    if (body.rigid === true) return 0;             // klaster sztywny (solveSoftBody go pomija — tu na wszelki wypadek)
     const cfg = this.config;
     const region = activeRegion(body);
     const list = region.list;
@@ -1373,10 +1286,7 @@ export const DestructorBeams3D = {
     this.perf.broadphasePairs = this.perf.aabbRejected = this.perf.narrowphasePairs = 0;
     const cfg = this.config;
 
-    // Klastry sztywne (beamRigid3D) — rozdział par TYLKO tutaj: _broadphase ich nie widzi (pary ciał belek i ich kolejność
-    // bez zmian), liczą się po pętli par w każdej iteracji; bez klastrów w kroku — krok bit w bit jak dawniej.
-    let rigidN = 0;
-    for (const b of bodies) if (b && !b.dead) { this._refreshRot(b); if (b.rigid === true) rigidN++; }
+    for (const b of bodies) if (b && !b.dead) this._refreshRot(b);
     // Kontakt jest ostatnim ograniczeniem pozycji. Solver belek nie może
     // na końcu kroku wciągnąć właśnie odgiętego dziobu z powrotem w przeszkodę.
     this.solveSoftBody(dt, bodies);
@@ -1436,14 +1346,9 @@ export const DestructorBeams3D = {
         if (this.collideBodies(A, B, pairDt, it === 0) === 0) { quietA[p] = A._geomVer; quietB[p] = B._geomVer; }
         else quietA[p] = -1;
       }
-      // klastry: klaster × klaster, klaster × ciało belek, klaster × teren (normalna raz na ciało)
-      if (rigidN > 0) rigidCollide(this, bodies, dt, it);
       // teren statyczny po parach — ostatnie ograniczenie iteracji (stos brył na skale: para, potem grunt)
       if (this.terrains.length > 0) this._terrainPass(bodies, dt, it === 0);
-      // pola płyt (dysk mieszkalny — E6): statyczne jak teren, reakcja na całe ciało
-      if (this.plateFields.length > 0) plateFieldPass(this, bodies, dt, it === 0);
     }
-    if (rigidN > 0) rigidAfterStep(this, dt);
     const tAfterCol = nowMs();
 
     const tAfterSolve = nowMs();
@@ -1497,11 +1402,10 @@ export const DestructorBeams3D = {
     const inv = 1 / cell;
     // Same ciała płaskie (gra bez brył 3D): jedna warstwa z, jak dawniej (bit w bit). Z ciałem 3D w liście — prawdziwe
     // zakresy z: ciało płaskie swoim słupem (colZ0..colZ1 nad węzłami), ciało 3D sferą.
-    // Klastry sztywne (rigid) tej siatki nie widzą — mają własną (beamRigid3D, bok 2–4 × promień klastra).
     let any3D = false;
     for (let i = 0; i < count; i++) {
       const b = bodies[i];
-      if (b && !b.dead && !b.planar && b.rigid !== true) { any3D = true; break; }
+      if (b && !b.dead && !b.planar) { any3D = true; break; }
     }
     head.fill(-1);
     big.fill(0, 0, count);
@@ -1510,7 +1414,7 @@ export const DestructorBeams3D = {
     for (let i = 0; i < count; i++) {
       const b = bodies[i], o = i * 6;
       range[o] = 1; range[o + 1] = 0;          // pusty zakres: ciało poza siatką
-      if (!b || b.dead || b.activeNodes <= 0 || b.rigid === true) continue;
+      if (!b || b.dead || b.activeNodes <= 0) continue;
       const speed = Math.sqrt(b.vel.x * b.vel.x + b.vel.y * b.vel.y + b.vel.z * b.vel.z);
       const r = b.radius + speed * dt * 2 + cfg.cellSize * 3;
       const x0 = Math.floor((b.pos.x - r) * inv), x1 = Math.floor((b.pos.x + r) * inv);
@@ -1569,7 +1473,7 @@ export const DestructorBeams3D = {
         for (let j = 0; j < count; j++) {
           if (j === i || (big[j] && j < i)) continue;
           const B = bodies[j];
-          if (!B || B.dead || B.activeNodes <= 0 || B.rigid === true || ((A.static || A.anchored) && (B.static || B.anchored))) continue;
+          if (!B || B.dead || B.activeNodes <= 0 || ((A.static || A.anchored) && (B.static || B.anchored))) continue;
           this._bpPush(i < j ? i * stride + j : j * stride + i);
         }
       }
@@ -2235,7 +2139,7 @@ export const DestructorBeams3D = {
       const T = terrains[t];
       for (let k = 0; k < bodies.length; k++) {
         const b = bodies[k];
-        if (!b || b.dead || b.planar || b.static || b.anchored || b.activeNodes <= 0 || b.rigid === true) continue;
+        if (!b || b.dead || b.planar || b.static || b.anchored || b.activeNodes <= 0) continue;
         // druga iteracja — tylko ciała, które w pierwszej dotykały terenu (reszta jest nad nim)
         if (!doDamage && b._terrTick !== this._tick) continue;
         this._collideTerrain(b, T, dt, doDamage);
@@ -3104,7 +3008,7 @@ export const DestructorBeams3D = {
   applyImpact(body, wx, wy, wz, damage = 0, worldVel = null, opts = null) {
     const cfg = this.config;
     this.lastCraterReach = 0;
-    if (!body || body.dead || body.static || body.rigid === true) return false;   // klaster: broń — E5 / E7 (§ 3.7)
+    if (!body || body.dead || body.static) return false;
     const m = this._refreshRot(body);
     const l = matVecT(m, wx - body.pos.x, wy - body.pos.y, wz - body.pos.z, this._s1);
     const radius = Math.max(cfg.cellSize, opts?.radius || cfg.impactRadius);
@@ -3688,7 +3592,7 @@ export const DestructorBeams3D = {
     let wreckCount = 0;
     for (const body of bodies) if (body?.isWreck && !body.dead) wreckCount++;
     for (const body of queued) {
-      if (!body || body.dead || body.static || body.noSplit || body.rigid === true || !body.structureDirty) continue;
+      if (!body || body.dead || body.static || body.noSplit || !body.structureDirty) continue;
       if (processed >= Math.max(1, cfg.splitMaxPerTick | 0)) {
         this.splitQueue.push(body);
         continue;
@@ -4011,7 +3915,6 @@ export const DestructorBeams3D = {
       friction: parent.friction ?? null,
       nodeDamping: parent.nodeDamping ?? null,
       activeThreshold: parent.activeThreshold ?? null,
-      angularDamping: parent.angularDamping ?? null,
       invInertiaLocal: info.invInertia,
       radius: radius + parent.cellSize,
       config: cfg,
@@ -4105,7 +4008,6 @@ export const DestructorBeams3D = {
       friction: Number.isFinite(props.friction) ? props.friction : null,
       nodeDamping: Number.isFinite(props.nodeDamping) ? props.nodeDamping : null,
       activeThreshold: Number.isFinite(props.activeThreshold) ? props.activeThreshold : null,
-      angularDamping: Number.isFinite(props.angularDamping) ? props.angularDamping : null,
       invInertiaLocal: props.invInertiaLocal.slice(),
       radius: 0,
       config: cfg,
@@ -4201,7 +4103,7 @@ export const DestructorBeams3D = {
     let any = false;
     const local = !!this.config?.localSolver;
     for (const body of bodies) {
-      if (!body || body.dead || body.rigid === true) continue;
+      if (!body || body.dead) continue;
       const s = body.nodeStore, e = body.beamStore, active = s.active;
       let changed = false;
       let liveBeams = 0;
