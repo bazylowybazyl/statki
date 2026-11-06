@@ -320,6 +320,26 @@ try {
       raport.testy.przyciskM3 = wyn;
       if (!(wyn.poWejsciu.scena === 'M3' && wyn.poWejsciu.partia && wyn.poWejsciu.liczba > 5000 && wyn.m1.scena === 'M1' && !wyn.m1.partia && wyn.m3.scena === 'M3' && wyn.m3.partia && wyn.m3.krok > 60)) porazka(`przycisk M3: ${JSON.stringify(wyn)}`);
     }
+    if (args.przyciskB1) {
+      // Droga użytkownika do bazy piratów: strona bez parametrów startuje od sceny z adresu, przycisk przeładowuje z ?scena=B1&maxWez&nKom, kamery bazy widoczne, a kamer miasta nie ma. --zrzut S1 --chwile 0 --przyciskB1 1 --panel 1.
+      await czekajNaCisze('przycisk B1');
+      const klik = (sel, tekst) => ev(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((q) => q.textContent.startsWith(${JSON.stringify(tekst)})); if (!b) return false; b.click(); return true; })()`);
+      const stanB = () => ev('(() => { const s = window.__wok.pokaz.stan; const pk = document.getElementById("panelKamery"); return { scena: s.scena, krok: s.krok, kam: s.kamMiasta, lod: window.__wok.obraz.lod.sloty, adres: location.search, n: window.__wok.obraz.n, kamery: [...pk.querySelectorAll("button")].filter((b) => getComputedStyle(b).display !== "none").map((b) => b.textContent), widoczne: getComputedStyle(pk).display !== "none", gestosc: getComputedStyle(document.getElementById("panelGestosc")).display !== "none" }; })()');
+      const wyn = {};
+      wyn.klik = await klik('#panelSceny button', 'Baza piratów');
+      await sleep(300);
+      await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real") && window.__wok && window.__wok.gotowe && window.__wok.pokaz)', 120000, 20);
+      await sleep(4000);
+      wyn.poWejsciu = await stanB();
+      await screenshotPng(cdp, join(PNG, `${et}zywo_b1.png`));
+      await klik('#panelKamery button', 'Z bliska');
+      await sleep(1000);
+      wyn.bliska = await stanB();
+      await screenshotPng(cdp, join(PNG, `${et}zywo_b1_bliska.png`));
+      console.log('przycisk B1', JSON.stringify(wyn));
+      raport.testy.przyciskB1 = wyn;
+      if (!(wyn.klik && wyn.poWejsciu.scena === 'B1' && wyn.poWejsciu.krok > 60 && wyn.poWejsciu.widoczne && !wyn.poWejsciu.gestosc && wyn.poWejsciu.kamery.includes('Atlas') && !wyn.poWejsciu.kamery.includes('Mały statek') && wyn.bliska.kam === 'bBliska' && wyn.bliska.lod === 7)) porazka(`przycisk B1: ${JSON.stringify(wyn)}`);
+    }
     if (args.przyciskiMiasta) {
       // Droga użytkownika: strona bez parametrów miasta, przycisk sceny (przeładowanie z ?maxWez), kamery, orbita, gęstość (przeładowanie), powrót do S1. --zrzut S1 --chwile 0 --przyciskiMiasta 1 --panel 1.
       await czekajNaCisze('przyciski miasta');

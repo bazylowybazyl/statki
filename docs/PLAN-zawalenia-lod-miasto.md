@@ -314,6 +314,63 @@ Wszystko RTX 5080, 1280 × 720, MSAA 4, ms GPU na klatkę, szczegóły i rozrzut
 
 **Na dzień:** `--pomiar` i 5120 × 1440 dla M1 i M3, ocena na żywo w ruchu, rozdzielenie ceny kraterów od zegara karty (compute 1,33–2,47 ms przy t = 8).
 
+## 5c. Benchmark misji 1: scena B1
+
+GPU, RTX 5080, 1280 × 720, MSAA 4, sufit 60 kl/s, 2026-11-06, tryb nocny, wentylator 0% we wszystkich biegach, serie 7–23 s. Zrzuty i liczby: `.tmp/woksele-demo/BAZA/` (`arkusz-B1-cala.png`, `arkusz-B1-atlas.png`, `arkusz-B1-dx80.png`, `koszt40.txt`, `szczyt40.txt`, `koszt80.txt`, `bok1`–`bok4`). Narzędzie: `node scripts/webgpu/woksele-demo.mjs --zrzut B1 --maxWez 86000 --nKom 131072 --chwile 0,4,8,12,16,20,26 --kamery bCala,bAtlas [--kosztMiasta 1] --rozmiar 1280x720 --out …`. W1: `--baza '{"dx":40,"stoi":true}' --chwile 5`. dx = 80: `--baza '{"dx":80}' --maxWez 26000 --nKom 65536`. Droga z panelu: `--zrzut S1 --chwile 0 --przyciskB1 1 --panel 1`.
+
+**Jak obejrzeć.** Przycisk „Baza piratów” przeładowuje stronę z `?scena=B1&maxWez=86000&nKom=131072`. Strona domyślna dalej startuje od S5. Kamery: „Atlas” (0,14 px / j., w oknie 5120 px to cała baza, a w 1280 px wycinek wokół habitatu), „Cała baza” (0,085 px / j., dla okna 1280 × 720, poza zadaniem, bo inaczej arkusz nie obejmuje całości), „Z bliska” (0,5 px / j., W-1, sloty 7).
+
+**Wywołanie bez strony.** `scenaB1({ dx })` z `dema/woksele-zawalenia/scenaBazy.js` zwraca plan, a `zbudujPlan(plan)` z `budowa.js` daje `{ w, g }` dla `solver.wczytaj(w)` i `solver.ustawPlan(g)`. Bez DOM, bez `pokaz.js`, moduł importuje prawdziwe `createPirateBaseLayout` i `k7HeightToZ`. Części z zakresami węzłów: `plan.miasto.budynki`, kolejka zdarzeń: `plan.gpu.kratery`, `plan.gpu.puscKotwiceF`. Budowa w Node: 2,4 s przy dx = 40 (18 rozwiązań CG, najwięcej 653 iteracji), 0,2 s przy dx = 80.
+
+**Układ.** X = x, Y = −z, Z = `k7HeightToZ(h)`, więc wysokości nad płaszczyzną gry są jak w grze (× 0,42): dach wieżowców 1211 j., głowa 1782 j., maszt 2303 j. Wszystkie części leżą na jednej siatce świata i żadne dwie nie dzielą komórki. Pole ijk jest wirtualne jak w dzielnicy, więc między częściami nie ma wiązań, a statyka liczy się po części. Część wisi na swojej dolnej warstwie, dysk na ośmiu łukach kotwicy przy trzonie, jak S5. c = 6000, g = 400, dx = 40: 4 podkroki, rytm listy 4.
+
+| Część | dx = 40 | dx = 80 |
+|---|---|---|
+| W-1, W-2 (rama `wieza()`), każda | 3 772 | 464 |
+| H-C + H-T (szyb, szyja, głowa, maszt), z tego szyb 994 / 178 | 10 109 | 1 560 |
+| Bęben (ściana, pierścień, grodzie) | 7 568 | 1 668 |
+| Trzon pod bębnem | 1 376 | 272 |
+| Pomosty: Y-A, Y-B, N-P, F-P | 2 650, 2 625, 2 275, 1 725 | 318, 312, 416, 317 |
+| Pomosty: D-G, M-P, P-S, P-P | 1 090, 1 035, 975, 1 360 | 162, 156, 147, 201 |
+| Zbiorniki P-1, P-2, P-3 | 2 228, 2 208, 2 208 | 468, 456, 456 |
+| Kolektor P-M, magazyn M-1 | 966, 4 840 | 170, 1 104 |
+| Dysk z tierami, 8 sektorów | 30 948 | 6 578 |
+| **Razem** | **83 730** | **15 689** |
+
+**W1, 5 s, dx = 40:** 0 zerwanych wiązań, 0 NaN, po rozgrzewce 0 nowych wpisów dziennika. Największe przemieszczenie 6,2 j., tylko w N-P i F-P, wszystkie pozostałe części 0. Przyczyny nie sprawdzono bezpośrednio. Najpewniej to komórki podestu uwięzione między słupami wieżowca, które nie mają wiązania do dolnej warstwy i osiadają na najbliższym stropie, bo przed dołożeniem podestu reszta sceny miała 3,5 · 10⁻⁶ j.
+
+**Sekwencja, 138 kraterów:** t = 1–4 salwy w dół W-1, t = 4–7 W-2, t = 7–10 wyłom w H-S (9 kul po łuku ściany, 5 po pierścieniu), t = 10 nacięcie nasady szyi od strony wyłomu, t = 14 przecięcie zawiasu i szybu, t = 15–20 dysk puszcza sektorami od strony uderzenia, t = 17–21,5 ogień w rurach (zbiorniki, magazyn, co 620 j. wzdłuż pomostów), t = 21,5 `puscKotwiceF` i reszta spada. Czas szyi różni się od zadania (10–12): przecięcie zawiasu wcześniej niż przy uderzeniu głowy kosztowałoby prowadzenie upadku, tego wariantu nie mierzono.
+
+**Koszt, ms GPU na klatkę, dx = 40.** Compute to krok fizyki z kernelami obrazu i pyłu, 12 kolejnych klatek od tej chwili. Rysunek to wszystkie passy z cieniem na zamrożonej klatce.
+
+| Chwila | Compute | Rysunek, Atlas (2, 1) | Rysunek, Cała baza (2, 1) | Rysunek, Z bliska (7, 2) |
+|---|---|---|---|---|
+| t = 0, stoi | 0,68 | 1,01 | | 0,92 |
+| t = 3,5, ostrzał W-1 | 0,54 | 1,45 | | 3,93 |
+| t = 8, wyłom | 0,55 | 1,46 | | 3,92 |
+| t = 14, uderzenie głowy | 0,50 | 1,47 | | 3,93 |
+| t = 15 | 0,50 | 1,49 | 1,46 | |
+| t = 18, sektory i ogień | 0,45 | 1,48 | | 3,95 |
+| t = 19 | 0,44 | 1,45 | 1,49 | |
+| t = 22, wszystko spada | 0,39 | 1,46 | 1,50 | |
+| t = 24 | 0,39 | 1,48 | | 3,96 |
+| t = 25,5, lądowanie pomostów | 0,47 | 1,49 | 1,53 | |
+
+Rysunek przy (2, 1) to 10 mln wierzchołków na klatkę, a t = 0 ma 6 mln, bo stojąca scena rysuje tylko bloki. Przy (7, 2) 32 mln. To samo co w § 5a: około 0,15 ms na milion, szacunek 3,4 ms dla 150 tys. węzłów przy (2, 1) skaluje się zgodnie. **Całość z kamery Atlasa: około 2 ms GPU (0,4–0,7 + 1,5).** t = 0 ma najwyższy compute przy braku jakichkolwiek kraterów, więc to raczej zegar karty przy małym obciążeniu z § 5 niż praca, ale osobno tego nie sprawdzono. Koszt nie rośnie w szczycie upadku.
+
+dx = 80, 15 689 węzłów: compute 0,17–0,50, rysunek przy (2, 1) 0,35–0,45. Compute nie spada proporcjonalnie, bo przy kraterach i pyle (0,46–0,50 przy t = 8–18, 0,17–0,18 poza nimi) koszt kerneli zdarzeń i obrazu przestaje zależeć od liczby węzłów. Wniosek: przy tej scenie dx = 40 nie jest za drogie, a dx = 80 oszczędza około 1,4 ms, głównie w rysunku.
+
+**Wygląd (ocena z arkuszy, nie oceniał tego człowiek, ruchu nie oglądano).** Baza czyta się jako baza: bęben z grodziami, trzon, schodkowy dysk, głowa na szyi, dwa wieżowce na pomostach, poprzeczka T, skos, magazyn, zbiorniki. Upadek czyta się jako upadek: wieżowce składają się na podest, część gruzu spływa na planetoidę, szyja przez wyłom kładzie się ku kamerze, głowa przebija dysk i ląduje z sektorem na podłodze, sektory odpadają, wybucha paliwo, reszta spada w jednej chwili. Przy dx = 80 to te same zdarzenia, tylko dużymi blokami. Z kamery z bliska rama wieżowca wali się tak, jak S1.
+
+**Co nie wyszło od razu (przydatne przy grze):**
+1. **Kratery nie przechylą wieży kopem:** pchnięcie krateru ma zerowy pęd. Przechył wziął się dopiero z nacięcia po stronie upadku, nad płytą na szybie. Trzy wcześniejsze próby: krater w płytę, dół szyi wpada w pusty szyb, a głowa spada pionowo (`bok1`–`bok3`).
+2. **Wytrzymałość z ciężaru własnego nie wystarcza nośnym częściom pod obciążeniem przypadkowym.** Bez zapasu szyja kruszy się po nacięciu, głowa zsuwa się po szyi, a podest nie zatrzymuje gruzu. `plan.poWypieku` (hak w `zbudujPlan`) daje szyi i środkowi głowy × 8, podestowi × 30, bez wyprowadzenia z fizyki. W grze jest to samo pytanie, co przegub z `pirateBaseNeck.js`: jawny zawias kontra zapas w budowie.
+3. **`uRDysk` w obrazie dociąga do koła każdy węzeł dalej od osi niż R,** nie tylko dysk. Stąd `meta.dysk.R = 1e9` w B1. Dopóki scena ma dysk i coś poza nim, trzeba o tym pamiętać.
+
+**Czego w scenie nie ma:** statków, dna bębna, placu kontenerów M-2, iglic i zwężenia wieżowców, rur, kratownicy, anten, osady i windy z planetoidy. Planetoida to płaska podłoga na z = −3400 ze stałym g = 400, a nie kula 32 km ze studnią, bo w kernelu grunt jest płaszczyzną. Zrzuty pokazują ją jako ciemne tło, więc gruz bez cienia wygląda, jakby wisiał.
+
+**Czego nie sprawdzono:** obrazu w ruchu, 5120 × 1440, ziaren innych niż 21, W1 przy dx = 80 (sam bieg sekwencji przeszedł bez NaN), przebiegu w prawdziwej grze ze statkami i ostrzałem. Test przycisków miasta raz nie przeszedł, gdy harness szedł z priorytetem BelowNormal: S1 budowało się dłużej niż 4 s stałego czekania przy powrocie, a powtórka bez tego priorytetu dała 0 porażek. Stare sceny nie były porównywane pikselami, zmiany w nich to tylko widoczność przycisków kamer.
+
 ## 6. Decyzje do użytkownika po pokazie
 
 - **Ocena na żywo M1, M2, M3 z kamery Atlasa.** Żaden człowiek tego nie oglądał w ruchu. Od tego zależy wybór dx = 10 przy Atlasie, wygląd tieru 0 i czy szew w pyle i ogniu trzeba stroić.
