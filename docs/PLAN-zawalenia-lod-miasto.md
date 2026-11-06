@@ -280,9 +280,47 @@ Przy t = 5,5 i 7 slotach: rysunek 1,48, cień 1,53, głębia 1,18, pył 0,03. Pr
 
 **Sprostowanie liczb sprzed tej pracy.** `rysunekGpuMs` z `diag` i `renderGpuMs` z `kosztKlatki` (§ 1.9–1.13 spec) idą w pętli szybszej niż rAF, a mapa cienia odświeża się najwyżej raz na klatkę rAF. Mediana tych pomiarów nie zawiera więc passa cienia, a dla S1 to około 0,4 ms. `kosztLod` czeka na rAF przed każdą próbą.
 
+## 5b. Zestawienie nocy: co potwierdzone liczbami
+
+Wszystko RTX 5080, 1280 × 720, MSAA 4, ms GPU na klatkę, szczegóły i rozrzut w § 5 i § 5a. 5120 × 1440 nie mierzono, a oceny wyglądu są agenta, nie człowieka.
+
+| Scena | Budynki | Węzły | Compute | Rysunek, Atlas (2, 1) | Rysunek, z bliska (7, 2) |
+|---|---|---|---|---|---|
+| M1, M2, dx = 20 | 480 | 9 166 | 0,16–0,52 | 0,38 | 0,62 |
+| **M1, M2, dx = 10** | 480 | 48 070 | 0,45–0,53 | 0,96–1,06 | 2,47–2,81 |
+| M1, M2, dx = 5 | 480 | 329 936 | 4,70–5,20 | 5,68–6,02 | 16,4–17,4 |
+| **M3, dx = 10** | 4842: 354 w solverze, 4488 w partii | 38 977 | 0,39–0,50, przy kraterach 1,33–2,47 | 1,02–1,38 | nie dotyczy |
+| M3, sam tier 0 | 4842 | 0 | 0,01–0,07 | 0,69–0,80 | nie dotyczy |
+
+**Metody z § 3:**
+
+| Metoda | Stan | Liczby |
+|---|---|---|
+| A. Węzły na żądanie | **Szacunek, niezbudowana** | Węzły stoją od startu sceny. Puli, alokatora ani siatki haszowanej nie ma, a tier wybiera się raz, w planie. M3 pokazuje tylko, że 354 budynki solvera kosztują tyle co M1 |
+| B. Zawalenie w shaderze | **Potwierdzona, ale nie „około 0 ms”** | 4488 budynków w jednej partii: 0,5 ms rysunku, kernel emisji 0,005–0,022 ms. Cały ring tą partią: szac. 15 ms, więc stojące budynki potrzebują tańszej siatki |
+| C. Sufit i kolejka | **Tylko część** | Kolejka kraterów: najwyżej 4 na klatkę (M2, 480 kraterów w t = 1–4 s). Budżetu węzłów i przelewu do tieru 0 nie ma |
+| D. Grubsze woksele | **Potwierdzona** | dx 20 → 10: 5,2 razy więcej węzłów. dx 10 → 5: 6,9 razy, a compute około 10 razy, bo podkroki nie są stałe (3, 5, 11). Próba 1: dach wieży przy dx = 40 i 80 z c = 6000 blisko dx = 20. Gęstości z zoomu w biegu nie ma, dx zmienia przeładowanie strony |
+| E. c ∝ dx | **Obalona w tej postaci** | Przy dx > 20 nic nie daje, a dla małego budynku działa c ∝ √s, czyli `MATERIAL_MIASTA` z c = 1897 (próba 1). Dach / h przy s = 0,5 i 0,125 zgadza się z wieżą do 0,01 |
+| F. Wydmuszki | **Zysk mniejszy, inny układ** | Zamknięta rura kładzie się w całości (10,8°, maks 94°). Rama przy h = 154: 1156 węzłów wobec 1953 kostki przy dx = 5 (1,7 razy), 150 wobec 180 przy dx = 10 (1,2 razy), nie 2–3 razy |
+| G. Obraz z LOD | **Potwierdzona** | 60 tys. węzłów, t = 5,5: 4,34 ms przy 7 slotach, 1,36 przy (2, 1), 1,00 przy (1, 1), 0 nowych pipeline'ów. 150 tys. węzłów: szac. |
+| H. Gruz na stałe | **Tylko w tierze 0** | Kopiec z shadera kosztuje tyle co stojący budynek. Hałda solvera liczy się dalej, compute nie spada, gdy miasto leży. Zamrożenie hałdy jest niesprawdzone, a miałoby też zatrzymać domino |
+| I. Filmy wypalone | Nie próbowana | Z kamery Atlasa wystarcza B, więc rezerwa bez zmian |
+| J. Rzadszy krok dla dalekich | Nie próbowana | Sam rytm listy za dx (3, 4) to co innego |
+| K. Inny solver | Nie teraz | Bez zmian |
+
+**Tiery z § 4:** tier 0 i tier 1 stoją w jednej scenie (M3) i z kamery Atlasa szew jest do przyjęcia. Tier 2 (dx = 5 lub drobniej) ma tylko osobną stronę z całą dzielnicą, więc 130 budynków z limitu gry to dalej szac.: 89 tys. węzłów, 1,3 ms compute, 4,5 ms rysunku przy (7, 2). Mały statek przy 7,88 px / j. nie ma dobrego rozwiązania: dx = 10 to wielkie kostki, dx = 5 trzyma tylko w ruchu, dx = 2,5 niesprawdzone.
+
+**Domknięcie:** przyciski, interakcje i drogi z panelu na 18 scenach bez porażek, 0 nowych pipeline'ów, S1 i S5 na tle `pokaz2` w szumie dwóch biegów tego samego kodu (spec § 1.14). Tryb nocny: serie do 65 s, wentylator 0% w tym domknięciu.
+
+**Na dzień:** `--pomiar` i 5120 × 1440 dla M1 i M3, ocena na żywo w ruchu, rozdzielenie ceny kraterów od zegara karty (compute 1,33–2,47 ms przy t = 8).
+
 ## 6. Decyzje do użytkownika po pokazie
 
+- **Ocena na żywo M1, M2, M3 z kamery Atlasa.** Żaden człowiek tego nie oglądał w ruchu. Od tego zależy wybór dx = 10 przy Atlasie, wygląd tieru 0 i czy szew w pyle i ogniu trzeba stroić.
 - Czy zawalenie może kosztować kilka ms przez kilka sekund (bez tego demo zostaje demem).
 - Tempo: budynek 37 j. spada przy g = 400 w około 0,4 s, szkło w około 0,9 s. Czy ma być szybko jak na tę skalę, czy spowolnione mniejszym g na ringu.
 - Czy trwałe zniszczenie miasta ma się zapisywać, a jeśli tak, to czy odnawia się powoli jak porty (D10b).
 - Domino w gęstym śródmieściu (§ 5, wynik prób 2–4): nietrafione wieże padają od gruzu jeszcze długo po ostrzale, przy t = 24 s około 95 z 382. Czy to zostaje jako zachowanie, czy osiadła hałda ma je zatrzymać.
+- Domino jest tylko w solverze, a gruz solvera przelatuje przez stojące instancje tieru 0 (§ 5, wynik próby 5). Czy granica tierów może się tak różnić, skoro z kamery Atlasa widać to słabo.
+- Czy mały statek ma kiedyś oglądać miasto z 7,88 px / j. Jeśli tak, potrzeba dx = 2,5 albo odłamków drobniejszych niż węzeł, a to osobna praca. Decyzja o `?malaSkala` i tak czeka.
+- Kolejny krok po tej próbie: węzły na żądanie i sufit (metody A i C, nadal w demie) czy lustro generatora całego ringu. Pierwsze sprawdza koszt przy tierach przełączanych w biegu, drugie dotyka już gry.

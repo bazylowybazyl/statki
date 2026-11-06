@@ -272,6 +272,28 @@ W próżni ściana z pyłem wyszła niższa niż bez niego, więc różnice rzę
 
 **Czego nie ma:** pomiaru przy 5120 × 1440 (P6, za dnia), oceny w ruchu i w prawdziwym oknie Chrome, decyzji o K4 (§ 1.11), kamer `blisko` i `gora` oraz strzału myszą na panelu (P5).
 
+### 1.14 Domknięcie LOD: miasto na stronie (M1, M2, M3)
+
+Próby, liczby i metody są w `docs/PLAN-zawalenia-lod-miasto.md`: wyniki w § 5 i § 5a, zestawienie w § 5b, decyzje użytkownika w § 6. Stan 2026-11-06, tryb nocny, RTX 5080, 1280 × 720, ms GPU na klatkę. Strona dalej startuje od S5, a demo nie jest wpięte w grę.
+
+| Przycisk | Co się dzieje | Węzły przy dx = 10 |
+|---|---|---|
+| Miasto: ostrzał z góry (M1) | 480 budynków, z uskokami, grunt z = 0, g = 400. Stoi 1,16 s, potem 20 salw po 6 pocisków idzie pasem do t = 7,6, trafia 98 budynków | 48 070 |
+| Miasto: wszystko naraz (M2) | Ta sama dzielnica, krater przy podstawie każdego budynku, losowo w t = 1–4 s, najwyżej 4 na klatkę | 48 070 |
+| Miasto: tysiące (M3) | 4842 budynki, pas ostrzału w t = 1–15. 354 w środku kadru idą przez solver, 4488 to 7088 instancji w jednym rysunku z zawaleniem w shaderze | 38 977 |
+
+**Model.** Budynek od 5 warstw to rama z `ukladMiasta(dx)`, niższy to kostka. Materiał `MATERIAL_MIASTA`: `{ cFroude: true, skalaBud: 0.1 }`, c = 1897, długości idą za budynkiem (`par.skalaBud`, wynik próby 1), plus `kontaktSzok` 0,2. Siatka ijk jest wirtualna, więc sąsiad przez ulicę nie łączy się wiązaniem. Statyka liczy się po budynku i raz na siatkę. Pojemność idzie przez `?maxWez` i `?nKom`, więc przycisk miasta przeładowuje stronę, a S1–S5 mają domyślne bufory. Moduł tieru 0 ładuje się tylko przy `?scena=M3`, bez nowych pipeline'ów w starych scenach. Panel miasta: kamery „Atlas”, „Atlas daleko” (M3), „Atlas z bliska”, „Mały statek”, gęstość dx 20 / 10 / 5 (przeładowanie).
+
+**Koszt.** Dzielnica przy dx = 10: compute 0,45–0,53, rysunek 0,96–1,06 z kamery Atlasa (2 sloty, cień 1) i 2,47–2,81 z bliska (7, 2). dx = 5: compute 4,70–5,20, rysunek 5,68–6,02 i 16,4–17,4, więc tak gęsto liczy się tylko to, co w kadrze. M3: compute 0,39–0,50, przy kraterach do 2,47, rysunek 1,02–1,38, z tego sama partia około 0,5. Sam tier 0, 4842 budynki bez węzłów: rysunek 0,69–0,80. W1 dzielnicy przez 5 s przy dx = 20, 10, 5: 0 zerwanych wiązań, 0 NaN.
+
+**Wygląd (ocena agenta ze zrzutów, nie człowieka, bez ruchu).** Z kamery Atlasa dx = 10 czyta się jak zawalenie budynków, a stojące mają ramy z oknami. Z bliska przy dx = 10 to sypiące się kostki, dx = 5 trzyma w trakcie walenia. Mały statek potrzebuje dx = 2,5 albo odłamków drobniejszych niż węzeł, czego nie ma. Tier 0 odróżnia się głównie pyłem i ogniem, a domino jest tylko w solverze.
+
+**Pliki.** `scenaMiasta.js` (`dzielnica`, `planM1`, `planM2`, `planM3`), `miasto.js` (reguła budynków z `haloRingCity.js`), `miastoDalekie.js` (tier 0). Testy: `tests/wokseleMiasto.test.mjs`, `tests/wokseleScenaMiasta.test.mjs`, `tests/wokseleMiastoDalekie.test.mjs`. Harness: `--zrzut M1,M2,M3`, `--miasto`, `--maxWez`, `--nKom`, `--kamery`, `--kosztMiasta`, `--kosztDalekie`, `--przyciskiMiasta`, `--przyciskM3`, `--testy miastoW1`, `--testy lod`.
+
+**Domknięcie, 18 scen, zrzuty `.tmp/woksele-demo/LOD/koniec/`.** Przyciski z resetem, seriami do 65 s: porażki 0, nowe pipeline'y 0, synchroniczne po rozgrzewce 0. Interakcje `--interakcjeSceny` na każdej scenie (orbita, przybliżenie, przesuw, pauza, R, tempo, a potem czy scena krokuje) i pełne `--interakcje` ze zmianą rozmiaru: porażki 0. Drogi `--przyciskM3` i `--przyciskiMiasta` od strony bez parametrów: porażki 0. Stare sceny na tle `.tmp/woksele-demo/pokaz2/`: S1 t = 5 ma 11,95% pikseli różnych o ponad 2 / 255, S5 t = 4 ma 6,71%, a dwa biegi sprzed LOD między sobą 12,41% i 6,86%. Układ ten sam, różni się chaotyczny gruz (wyścig w `kWstaw`, plan § 5, próba 1). Znaleziony błąd: `#panel .grupa { display: flex }` przebijało atrybut `hidden`, więc kamery i gęstość miasta stały na panelu starych scen. Poprawka w `woksele-zawalenia.html`, a harness czyta teraz `getComputedStyle`, bo `.hidden` tego nie pokazywało. Testy Node: `wokseleWgsl`, `wokseleObrazWgsl`, `wokseleBudowa`, `wokseleS5`, `wokseleMiasto`, `wokseleScenaMiasta`, `wokseleMiastoDalekie`: 169 z 169.
+
+**Czego nie ma:** węzłów na żądanie i zmiany tieru w biegu, sufitu węzłów, zamrażania hałdy, tieru drobnego w jednej scenie z grubym, kolizji gruzu solvera z instancjami tieru 0, lustra generatora dla całego ringu, 5120 × 1440 i oceny człowieka.
+
 ## 2. Algorytm do TSL compute
 
 ### 2.1 Stałe i wzory przy danym dx
@@ -704,6 +726,7 @@ Koszt: `kPrzyczyna` przesuwa i wygasza pierścień, tylko 64 elementy, szac. pon
 | `dema/woksele-zawalenia/obraz.js` | geometria instancji, materiał, kernele `kObraz`, `kGruz`, cele, okluzja, wyjście |
 | `dema/woksele-zawalenia/pokaz.js`, `scenyPokazu.js` | strona na żywo: pętla, kamera orbitalna, panel; plany scen wspólne ze stroną i wątkiem budowy |
 | `dema/woksele-zawalenia/pyl.js` | pula, kernel, materiał |
+| `dema/woksele-zawalenia/scenaMiasta.js`, `miasto.js`, `miastoDalekie.js` | sceny M1–M3: dzielnica i plany, reguła budynków w lustrze JS, tier 0 (§ 1.14) |
 | `dema/woksele-zawalenia/glowny.js` | WebGPURenderer, `window.__HARNESS_RENDERER__ = renderer` (bez tego dziennik pipeline'ów harnessu jest pusty i „0 synchronicznych” to fałszywe zero; wzór `dema/zawalenia-budowli/obraz.js:321`), owinięcie `backend.updateTimeStampUID` (§ 8), kamera, pętla, panel, `window.__wok` |
 | `dema/index.html` | wpis w grupie „Zniszczenia, mostki, rdzenie” obok `zawalenia-budowli.html` |
 
