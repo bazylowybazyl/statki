@@ -33,6 +33,8 @@ export const OPCJE_PYLU = {
   // Dzielnica (plan LOD § 5): budynek jest około 10 razy mniejszy niż wieża, więc kwady i kłąb mniejsze, a żar jak z daleka w S5. klab, klabV: mnożniki rozmiaru i prędkości kłębu przy kuli.
   M1: { kwady: 10000, emisja: 0.6, rozmiar: 0.42, sufitPx: 90, lodDuze: [24, 42], pod: 0, grunt: 0, kont: 3, zar: 0.7, zycie: [4.5, 7], klab: 0.55, klabV: 0.45 },
   M2: { kwady: 14000, emisja: 0.45, rozmiar: 0.42, sufitPx: 90, lodDuze: [24, 42], pod: 0, grunt: 0, kont: 3, zar: 0.7, zycie: [4.5, 7], klab: 0.55, klabV: 0.45 },
+  // Miasto dalekie: wspólny pierścień solvera (około 300 budynków) i tieru 0 (miastoDalekie.js, kilkanaście cząstek na budynek).
+  M3: { kwady: 16000, emisja: 0.45, rozmiar: 0.42, sufitPx: 90, lodDuze: [24, 42], pod: 0, grunt: 0, kont: 3, zar: 0.7, zycie: [4.5, 7], klab: 0.55, klabV: 0.45 },
 };
 
 export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp }) {
@@ -392,7 +394,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
 
   return {
     kernele, lista, scena, mesh, rt, uSklad, aPyl, aLicz, uBlysk,
-    uniformy: { uPow, uDrag, uWypor, uKont, uPod, uGruntA, uAlfa, uDysk, uDziedz, uZ0, uZd, uR0, uRt, uLodA, uLodB, uLodM, uSufit, uSufitB },
+    uniformy: { uPow, uDrag, uWypor, uKont, uPod, uGruntA, uAlfa, uDysk, uDziedz, uZ0, uZd, uR0, uRt, uLodA, uLodB, uLodM, uSufit, uSufitB, uKapP },
     wczytaj, ustawRozmiar, rysuj,
     /** Pomiar: pył włączony i wyłączony na tej samej klatce. Wyłączenie zdejmuje rysunek i skład, kernele liczą dalej. */
     wlacz(b) { wlaczony = b; uSklad.value = b ? 1 : 0; },

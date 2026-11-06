@@ -768,6 +768,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   const wyj = new THREE.QuadMesh(matWyj);
 
   const TLO = new THREE.Color().setRGB(0.018, 0.022, 0.032, THREE.LinearSRGBColorSpace);
+  const cienieDodatkowe = []; // siatki spoza obrazu rzucające cień, do rozgrzewki passa cienia (miastoDalekie.js)
 
   let szer = 2, wys = 2;
   let n = 0;
@@ -963,7 +964,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
     if (mapa && renderer._renderContexts?.get) {
       const scenaCien = new THREE.Scene();
       scenaCien.overrideMaterial = getShadowMaterial(sun);
-      scenaCien.children.push(mesh);
+      scenaCien.children.push(mesh, ...cienieDodatkowe);
       const konteksty = renderer._renderContexts;
       const get = konteksty.get;
       konteksty.get = function (rt, mrt) { delete konteksty.get; return get.call(this, rt, mrt, 1); }; // mapa cienia rysuje się zagnieżdżona w passie sceny, głębokość 1, pułapka 32
@@ -1029,7 +1030,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film' }) {
   }
 
   return {
-    kernele, listaObrazu, scene, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki },
+    kernele, listaObrazu, scene, sceneGleb, cienieDodatkowe, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, rtSsao, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki, liczGruzu: aLicz },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
     wczytaj, pelnyObraz, ustawLod, ustawCien, ustawCienZSceny, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
     get lod() { return { sloty: slotyWez, cien: slotyCien, instRysunek, instCien }; },

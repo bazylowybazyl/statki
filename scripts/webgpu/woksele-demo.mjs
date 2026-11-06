@@ -181,11 +181,19 @@ try {
               const r = wyn.wy[0];
               console.log(`rysunek ${scena} t = ${t} ${kam}:`, wierszLod(r));
               ((pomiary[scena] ??= {}).rysunek ??= []).push({ t, kam, ...r });
+              if (args.kosztDalekie) {
+                // Tier 0 (miastoDalekie.js): ten sam kadr bez partii, różnica to rysunek instancji we wszystkich passach.
+                await ev('window.__wok.dalekie.pokaz(false); true');
+                const bez = (await ev(`window.__wok.pokaz.kosztLod(${JSON.stringify([l])}, 5)`)).wy[0];
+                await ev('window.__wok.dalekie.pokaz(true); true');
+                console.log(`  bez partii ${kam}: ${wierszLod(bez)} (partia: ${await ev('window.__wok.dalekie.liczba')} instancji, ${f((await ev('window.__wok.dalekie.wierzcholki')) / 1e6, 2)} mln wierzchołków na przebieg)`);
+              }
             }
           }
           if (args.kosztMiasta) {
             const k = await ev('window.__wok.pokaz.kosztKlatki(4, 8)');
             console.log(`krok ${scena} t = ${t}: compute ${f(k.computeGpuMs, 2)} ms GPU (krok, kernele obrazu, pył), ściana ${f(k.scianaMs, 2)} ms, kroki ${JSON.stringify(k.kroki)}`);
+            if (args.kosztDalekie) console.log(`  sam kernel emisji tieru 0: ${f(await ev('(async () => { const w = window.__wok, l = [w.dalekie.kEmisja], q = []; for (let i = 0; i < 7; i++) q.push(await w.zmierzListe(l)); q.sort((a, b) => a - b); return q[3]; })()'), 3)} ms GPU`);
             ((pomiary[scena] ??= {}).krok ??= []).push({ t, ...k });
           }
           await ev('window.__wok.pokaz.bezZegara(true); true');
@@ -286,6 +294,28 @@ try {
       console.log('przyciski', JSON.stringify(wyn));
       raport.testy.przyciski = wyn;
       if (wyn.some((w) => w.wylaczony || !w.weszla || w.krokPoResecie >= w.krokPrzedResetem + 60 || w.nowePipeline)) porazka(`przyciski scen: ${JSON.stringify(wyn)}`);
+    }
+    if (args.przyciskM3) {
+      // Droga użytkownika do miasta dalekiego: strona bez parametrów, przycisk (przeładowanie z ?scena=M3), partia widoczna, M1 ją chowa, powrót ją pokazuje. --zrzut S1 --chwile 0 --przyciskM3 1 --panel 1.
+      await czekajNaCisze('przycisk M3');
+      const klik = (sel, tekst) => ev(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((q) => q.textContent.startsWith(${JSON.stringify(tekst)})); if (!b) return false; b.click(); return true; })()`);
+      const poPrzeladowaniu = async () => { await sleep(300); await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real") && window.__wok && window.__wok.gotowe && window.__wok.pokaz)', 120000, 20); await sleep(1000); };
+      const stanM = () => ev('(() => { const w = window.__wok, s = w.pokaz.stan; return { scena: s.scena, krok: s.krok, adres: location.search, partia: w.dalekie ? w.dalekie.mesh.visible : null, liczba: w.dalekie ? w.dalekie.liczba : 0 }; })()');
+      const wyn = {};
+      wyn.klik = await klik('#panelSceny button', 'Miasto: tysiące');
+      await poPrzeladowaniu();
+      wyn.poWejsciu = await stanM();
+      await sleep(3000);
+      await screenshotPng(cdp, join(PNG, `${et}zywo_m3.png`));
+      await klik('#panelSceny button', 'Miasto: ostrzał');
+      await sleep(3000);
+      wyn.m1 = await stanM();
+      await klik('#panelSceny button', 'Miasto: tysiące');
+      await sleep(3000);
+      wyn.m3 = await stanM();
+      console.log('przycisk M3', JSON.stringify(wyn));
+      raport.testy.przyciskM3 = wyn;
+      if (!(wyn.poWejsciu.scena === 'M3' && wyn.poWejsciu.partia && wyn.poWejsciu.liczba > 5000 && wyn.m1.scena === 'M1' && !wyn.m1.partia && wyn.m3.scena === 'M3' && wyn.m3.partia && wyn.m3.krok > 60)) porazka(`przycisk M3: ${JSON.stringify(wyn)}`);
     }
     if (args.przyciskiMiasta) {
       // Droga użytkownika: strona bez parametrów miasta, przycisk sceny (przeładowanie z ?maxWez), kamery, orbita, gęstość (przeładowanie), powrót do S1. --zrzut S1 --chwile 0 --przyciskiMiasta 1 --panel 1.

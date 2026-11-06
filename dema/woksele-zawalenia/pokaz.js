@@ -36,12 +36,15 @@ const SCENY = {
   // Miasto (plan LOD § 5): kamera i LOD z przycisku kamery, cień z rozmiaru sceny. Pojemność z POJEMNOSC_MIASTA, strona bez niej przeładowuje się przy wejściu.
   M1: { nazwa: 'Miasto: ostrzał z góry', miasto: true, pomin: 0 },
   M2: { nazwa: 'Miasto: wszystko naraz', miasto: true, pomin: 0 },
+  // Tysiące budynków, tier 0 (miastoDalekie.js). Cień ma objąć całe miasto, a nie same węzły solvera. Moduł obrazu powstaje tylko na stronie z ?scena=M3 albo ?dalekie, reszta stron go nie ładuje.
+  M3: { nazwa: 'Miasto: tysiące', miasto: true, pomin: 0, dalekie: true, cien: [[0, 900, 100], 3700] },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Kamery miasta: skala w px na j., więc budynek ma na ekranie tyle pikseli, co w grze przy tym zoomie, a mniejsze okno pokazuje tylko wycinek kadru. Plan LOD § 1: Atlas 0,569 (kadr 9000 j. przy 5120 px), limit gry 3,2 (1600 j.), mały statek 7,88 (650 j.).
 // Kierunek jak w grze: góra budynku leży w płaszczyźnie gry, więc kamera patrzy w poprzek ringu (wzdłuż y dzielnicy) i widzi fasady. Niskie el zamiast przesunięcia kadru, cel bliskich kamer z planu sceny. LOD: tier 1 i tier 2 z § 4.
 const KAM_MIASTA = {
   atlas: { nazwa: 'Atlas', pxNaJ: 0.569, az: 10, el: 17, cel: [0, -60, 30], lod: { sloty: 2, cien: 1 } },
+  daleko: { nazwa: 'Atlas daleko', pxNaJ: 0.171, az: 10, el: 24, cel: [0, 500, 60], lod: { sloty: 2, cien: 1 } }, // reżyser × 0,3, plan LOD § 1
   bliska: { nazwa: 'Atlas z bliska', pxNaJ: 3.2, az: 22, el: 12, zCelu: true, lod: { sloty: 7, cien: 2 } },
   maly: { nazwa: 'Mały statek', pxNaJ: 7.88, az: 28, el: 8, zCelu: true, lod: { sloty: 7, cien: 7 } },
 };
@@ -73,6 +76,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   camera.up.set(0, 0, 1);
 
   const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film' });
+  // AGENT: miasto dalekie tylko na stronie, która je pokazuje: nowy materiał i kernel, a stare sceny mają zostać bez zmian co do pipeline'u.
+  const dalekie = adres.get('scena') === 'M3' ? (await import('./miastoDalekie.js')).createMiastoDalekie({ solver, obraz }) : null;
   const sterowanie = new OrbitControls(camera, kanwa);
   sterowanie.enableDamping = true;
   sterowanie.dampingFactor = 0.12;
@@ -86,6 +91,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   function krokSceny() {
     if (stan.krok >= stan.pelnyOd) { obraz.pelnyObraz(true); stan.pelnyOd = Infinity; }
     solver.krok(renderer);
+    dalekie?.krok(stan.krok + 1);
     if (stan.pierwszyKrok) { obraz.krokBezLimitu(renderer); stan.pierwszyKrok = false; } else obraz.krok(renderer);
     stan.krok++;
   }
@@ -145,6 +151,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     solver.wczytaj(w);
     solver.ustawPlan(g);
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    dalekie?.wczytaj(miasto?.dalekie ?? null);
     if (opis.cien && !lodS1Adresu) obraz.ustawCien(opis.cien[0], opis.cien[1]);
     else obraz.ustawCienZSceny(w, opis.cienZapas);
     stan.miasto = miasto;
@@ -244,7 +251,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   }
   for (const id of Object.keys(SCENY)) {
     if (SCENY[id].ukryta) continue;
-    const akcja = SCENY[id].miasto ? () => { if (miastoSieMiesci) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
+    const akcja = SCENY[id].miasto ? () => { if (miastoSieMiesci && (dalekie || !SCENY[id].dalekie)) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
     const b = dodaj(gr1, SCENY[id].nazwa, akcja, `s:${id}`);
     b.disabled = !zdarzeniaDostepne(id);
   }
@@ -327,6 +334,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   Object.assign(wok, {
     obraz,
     camera,
+    dalekie,
     pokaz: {
       stan,
       ustawScene,

@@ -60,7 +60,7 @@ function wezlyBudynku(b, dx) {
  */
 export function dzielnica(o = {}) {
   const dx = o.dx ?? DX_MIASTA;
-  const budynki = budynkiDzielnicy({ kwartalyU: o.kwartalyU ?? 11, kwartalyV: o.kwartalyV ?? 10, ziarno: o.ziarno ?? 1, promienSzkla: o.promienSzkla ?? 0.7 });
+  const budynki = o.budynki ?? budynkiDzielnicy({ kwartalyU: o.kwartalyU ?? 11, kwartalyV: o.kwartalyV ?? 10, ziarno: o.ziarno ?? 1, promienSzkla: o.promienSzkla ?? 0.7 }); // o.budynki: gotowa lista, wycinek większego miasta (M3)
   const lista = budynki.map((b) => wezlyBudynku(b, dx));
   let n = 0, mxX = 1, mxY = 1, mxK = 1;
   for (const l of lista) { n += l.I.length; mxX = Math.max(mxX, l.nx); mxY = Math.max(mxY, l.ny); mxK = Math.max(mxK, l.nk); }
@@ -212,6 +212,93 @@ export function planM2(o = {}) {
     if (w < celH) { celH = w; cel = [q.x, q.y, Math.min(70, 0.4 * h)]; }
   }
   return planMiasta('M2', `Miasto: wszystko naraz, dx = ${sc.dx}, ${sc.n} węzłów, ${B.length} budynków`, sc, kratery, trafione, o.T ?? 10, cel, o.nakladka);
+}
+
+/** Rekordów na instancję w `miasto.dalekie.inst` (miastoDalekie.js): cx, cy, pół w, pół d; z0, h, H, tZniszczenia; ox, oy, ziarno, rodzaj; ton r, g, b, rama (1) albo kostka (0) jak w wezlyBudynku. */
+export const INST_DALEKIE = 16;
+export const T_NIGDY = 1e9;
+/** Rodzaj instancji miasta dalekiego: korpus, uskok na dachu, gaszona (budynek liczy solver). */
+export const RODZ_DAL = Object.freeze({ KORPUS: 0, USKOK: 1, GASNIE: -1 });
+
+/**
+ * M3 „Miasto: tysiące” (plan LOD § 4, tier 0): około 5000 budynków z tej samej reguły co dzielnica. Prostokąt w środku kadru idzie przez solver jak w M1 (około 300 budynków), a reszta to instancje z zawaleniem w shaderze (miastoDalekie.js).
+ * Pas ostrzału jest jedną funkcją dla obu tierów: budynek dostaje chwilę z pozycji na pasie, a dopiero potem wiadomo, czy tę chwilę dostanie jako krater solvera, czy jako wpis w buforze instancji.
+ * AGENT: tier wybiera się raz, tutaj. Budynek solvera ma instancję z rodzajem GASNIE (lustro bez obrazu), więc A/B i przyszła zmiana tieru to zmiana jednego pola, a nie drugi bufor.
+ */
+export function planM3(o = {}) {
+  const dx = o.dx ?? DX_MIASTA;
+  const wszystkie = budynkiDzielnicy({ kwartalyU: o.kwartalyU ?? 40, kwartalyV: o.kwartalyV ?? 27, ziarno: o.ziarno ?? 1, promienSzkla: o.promienSzkla ?? 0.5 });
+  // Kamery patrzą od −y: miasto zaczyna się tuż przed kadrem Atlasa, a głębia idzie w +y, inaczej najbliższe rzędy stałyby pod kamerą i zasłaniały wszystko (w grze perspektywa ma sufit, plan LOD § 1).
+  const przesY = o.przesY ?? 900;
+  for (const b of wszystkie) b.y += przesY;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const b of wszystkie) { x0 = Math.min(x0, b.x); x1 = Math.max(x1, b.x); y0 = Math.min(y0, b.y); y1 = Math.max(y1, b.y); }
+  const Ly = y1 - y0;
+  const yMid = o.yPasa ?? 60; // środek pasa w połowie drogi: tam, gdzie patrzy kamera Atlasa
+  const A = 0.2 * Ly;
+  const yPasa = (u) => yMid + A + A * Math.cos(2 * Math.PI * u);
+  const tA = o.tA ?? 1, tB = o.tB ?? 15;
+  const W = (o.szerPasa ?? 0.235) * Ly, trafia = o.trafia ?? 0.85;
+  const xS = o.xSolver ?? 400, wS = o.ySolver ?? 800;
+  const los = prng(o.ziarnoPlanu ?? 17);
+  const czasy = new Float64Array(wszystkie.length);
+  const solverowe = [];
+  let tierZero = 0, trafZero = 0;
+  for (let q = 0; q < wszystkie.length; q++) {
+    const b = wszystkie[q];
+    const u = (b.x - x0) / (x1 - x0);
+    const r1 = los(), r2 = los(), r3 = los();
+    const wPasie = Math.abs(b.y - yPasa(u)) < W * (0.85 + 0.3 * r1) && r2 < trafia;
+    czasy[q] = wPasie ? tA + (tB - tA) * u + 0.6 * r3 : T_NIGDY;
+    if (Math.abs(b.x) < xS && Math.abs(b.y - yMid) < wS) solverowe.push(q);
+    else { tierZero++; if (wPasie) trafZero++; }
+  }
+  const czySolver = new Uint8Array(wszystkie.length);
+  for (const q of solverowe) czySolver[q] = 1;
+  const sc = dzielnica({ ...o, dx, budynki: solverowe.map((q) => wszystkie[q]) });
+  const B = sc.meta.budynki;
+  const trafione = new Uint8Array(B.length);
+  const kratery = [];
+  const rPs = o.rPSkala ?? 0.72;
+  let cel = null, celOdl = Infinity;
+  for (let s = 0; s < solverowe.length; s++) {
+    const t = czasy[solverowe[s]];
+    if (t >= T_NIGDY) continue;
+    trafione[s] = 1;
+    const b = B[s], h = b.h, f = Math.round(60 * t);
+    const ox = (2 * los() - 1) * 5, oy = (2 * los() - 1) * 6;
+    // Rodzaj „mala” jak w M2: 140 budynków na sekundę z pełnym kłębem przepełniłoby pierścień pyłu, co czwarty dostaje pełny.
+    const rodz = s % 4 === 0 ? 'glowna' : 'mala';
+    if (h >= 60) {
+      kratery.push(krater({ f, nos: nosiciel(sc, b, b.x + ox, b.y + oy, h), r: 13, rdzen: 0.5, J: 60, rP: 30, rodz: 'mala' }));
+      kratery.push(krater({ f: f + 3, nos: nosiciel(sc, b, b.x + ox, b.y + oy, Math.max(0.2 * h, 1.5 * sc.dx)), r: R_KRATERU, J: 160, rP: 48 * rPs, rodz }));
+    } else {
+      kratery.push(krater({ f, nos: nosiciel(sc, b, b.x + ox, b.y + oy, 0.4 * h), r: 0.22 * h + 14, J: 120, rP: 42 * rPs, rodz }));
+    }
+    const odl = Math.abs(t - 8) * 300 + (b.y - y0) * 0.2 + (h < 60 ? 2000 : 0);
+    if (odl < celOdl) { celOdl = odl; cel = [b.x, b.y, Math.min(70, 0.4 * h)]; }
+  }
+  // Bufor instancji. Rozmiary z siatki solvera przy tym dx (siatkaBudynku), nie z reguły: inaczej stojący sąsiedzi obu tierów różnią się o 2–3 j. na budynek.
+  const dane = [];
+  for (let q = 0; q < wszystkie.length; q++) {
+    const b = wszystkie[q];
+    const m = siatkaBudynku(b, dx);
+    const hK = m.nz * dx;
+    const u = m.uskok;
+    const H = hK + (u ? u.nz * dx : 0);
+    const ziarno = (q * 2654435 + 12345) % 16777213; // f32 trzyma liczby całkowite do 2^24, a shader robi z tego uint
+    const ton = tonBudynku(b);
+    const rodzaj = czySolver[q] ? RODZ_DAL.GASNIE : RODZ_DAL.KORPUS;
+    dane.push(b.x, b.y, 0.5 * m.nx * dx, 0.5 * m.ny * dx, 0, hK, H, czasy[q], 0, 0, ziarno, rodzaj, ton[0], ton[1], ton[2], m.nz >= WARSTWY_RAMY ? 1 : 0);
+    if (u) {
+      const ox = (0.5 * (u.i0 + u.i1) - 0.5 * (m.nx - 1)) * dx, oy = (0.5 * (u.j0 + u.j1) - 0.5 * (m.ny - 1)) * dx;
+      dane.push(b.x + ox, b.y + oy, 0.5 * (u.i1 - u.i0 + 1) * dx, 0.5 * (u.j1 - u.j0 + 1) * dx, hK, u.nz * dx, H, czasy[q], ox, oy, ziarno, czySolver[q] ? RODZ_DAL.GASNIE : RODZ_DAL.USKOK, ton[0], ton[1], ton[2], u.nz >= WARSTWY_RAMY ? 1 : 0);
+    }
+  }
+  const plan = planMiasta('M3', `Miasto: tysiące, ${wszystkie.length} budynków, solver ${B.length} przy dx = ${sc.dx}, ${sc.n} węzłów`, sc, kratery, trafione, o.T ?? 22, cel, o.nakladka);
+  plan.miasto.trafien = trafione.reduce((a, b) => a + b, 0);
+  plan.miasto.dalekie = { inst: new Float32Array(dane), n: dane.length / INST_DALEKIE, budynkow: wszystkie.length, tierZero, trafZero, dx, pietroCo: ukladMiasta(dx).pietroCo };
+  return plan;
 }
 
 /** Stanie dzielnicy (W1): bez zdarzeń. */
