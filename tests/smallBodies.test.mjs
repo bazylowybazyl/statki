@@ -207,3 +207,26 @@ test('kształt bryły: dekodowanie 16 bitów RG, bieguny w jednym punkcie, szew 
     assert.ok(Math.hypot(nrm.getX(a) - nrm.getX(b), nrm.getY(a) - nrm.getY(b), nrm.getZ(a) - nrm.getZ(b)) < 1e-6, 'szew: normalna');
   }
 });
+
+test('smallBodyShapeAtDir: promień w kierunku = promień wierzchołka siatki po przesunięciu', async () => {
+  const THREE = await import('three/webgpu');
+  const { displaceSmallBodyGeometry, smallBodyShapeAtDir, SMALL_BODY_SEGMENTS } = await import('../src/3d/smallBodyShape.js');
+  const w = 64, h = 32, d = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) d[j * w + i] = 0.03 * Math.sin((i / w) * Math.PI * 6) * Math.cos((j / h) * Math.PI * 4);
+  const shape = { w, h, d, poleN: 0, poleS: 0 };
+  const seg = SMALL_BODY_SEGMENTS;
+  const geo = new THREE.SphereGeometry(1, seg.w, seg.h);
+  const przed = geo.attributes.position.array.slice();
+  displaceSmallBodyGeometry(geo, shape, seg);
+  const po = geo.attributes.position;
+  let n = 0;
+  for (let iy = 8; iy < seg.h - 8; iy += 7) for (let ix = 0; ix < seg.w; ix += 11) {
+    const i = iy * (seg.w + 1) + ix;
+    const x = przed[3 * i], y = przed[3 * i + 1], z = przed[3 * i + 2];
+    const r = Math.hypot(po.getX(i), po.getY(i), po.getZ(i));
+    const l = Math.hypot(x, y, z);
+    assert.ok(Math.abs(1 + smallBodyShapeAtDir(shape, x / l, y / l, z / l) - r) < 1e-4, `wierzchołek ${ix}, ${iy}`);
+    n++;
+  }
+  assert.ok(n > 100);
+});

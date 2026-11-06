@@ -33779,8 +33779,8 @@
     }
     // UPADEK NA WOKSELACH (2026-11-06): obraz upadku rysują woksele (src/3d/woksele/wGrze.js), a uderzenia w skałę liczą z własnych węzłów. Fizyka starych, niewidocznych brył była więc samym kosztem: strona gry traciła na niej klatki (pomiar: plan LOD § 5e).
     // Przy HP 0 stare ciała bazy znikają od razu, a kawałki bez ciał przestają trafiać dopiero po puszczeniu kotwic wokseli. Misja i ujęcie kamery idą tym samym stanem upadku, czasy z zegara (gra nie czyta niczego z wokseli: zasada 1).
-    // Czasy z fali puszczania kotwic w src/3d/woksele/wGrze.js (start 3 s, 1500 j./s) i spadku ~11,5 s: gra ich nie czyta z wokseli.
-    const VOX_FALL_T = { kotwice: 9, wieza: 13, dysk: 17, koniec: 28 };
+    // Czasy z fali puszczania kotwic w src/3d/woksele/wGrze.js (start 3 s, 1500 j./s) i spadku ~15,5 s (40 km, sufit prędkości 4000 j./s): gra ich nie czyta z wokseli.
+    const VOX_FALL_T = { kotwice: 9, wieza: 17, dysk: 21, koniec: 32 };
     function startVoxBaseFall() {
       const F = _baseFall;
       F.phase = 'falling';

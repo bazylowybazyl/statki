@@ -74,10 +74,10 @@ export const PIRATE_ROCK_SITE = Object.freeze(
 export const PIRATE_ROCK_SPEC = Object.freeze({
   id: 'hidalgo',
   label: 'Hidalgo',
-  // skala świata względem projektu i punkt widzenia podobieństwa (opis SKALA wyżej) — 2: szczyt skały 24 km pod
-  // płaszczyzną, promień 32 km, środek 56 km pod płaszczyzną i 11 km w bok od osi habitatu (2,5: lot wieży 17 s
-  // i uderzenie z 3,7 km/s — za długo i za ciężko dla silnika belek przy 60 Hz)
-  scale: 2,
+  // skala świata względem projektu i punkt widzenia podobieństwa (opis SKALA wyżej) — 3: szczyt skały 40 km pod
+  // płaszczyzną, promień 48 km, środek 88 km pod płaszczyzną i 16,5 km w bok od osi habitatu. Gruz w locie maleje
+  // z głębokością (prośba użytkownika 2026-11-06 „pomniejszyłbym go mocniej”): w ujęciu upadku do ~0,34, przy 2 do ~0,45.
+  scale: 3,
   eyeH: 8000,                // [j.] wysokość punktu widzenia nad płaszczyzną gry (kamera z góry projektu)
   // dalej PROJEKT (świat — createPirateRockLayout)
   radius: PIRATE_ROCK_SITE.radius,

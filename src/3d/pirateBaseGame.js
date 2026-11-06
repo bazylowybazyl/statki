@@ -108,6 +108,7 @@ let place = null;
 let fogHidden = false;
 
 // WIĄZANE WOKSELE (2026-11-06): obraz bazy misji 1, gdy tylko wstaną. Stara bryła i skóry ciał są wtedy schowane, a rozgrywka (punkty, kolizje, etapy, upadek) dalej liczy się na nich. A/B: ?woksele=0.
+// AGENT: ?woksele=0 to sam obraz zapasowy, do diagnostyki (decyzja użytkownika 2026-11-06). Usunąć, gdy przestanie być potrzebny.
 const VOX_WYL = /[?&]woksele=0\b/.test(RenderWorld.pageSearch || '');
 let vox = null;
 let voxActive = false;
@@ -125,6 +126,7 @@ function startVoxels(basePlace) {
     const ok = await vox.start({ place: basePlace, base, skala: rock ? {
       center: rock.layout.center, R: rock.layout.R,
       promien: (x, y, z, half) => rock.surfaceRadiusNear(x, y, z, half),
+      promienW: (x, y, z) => rock.surfaceRadiusAt(x, y, z),
       lata: (x, y, z, half) => rock.setCraterPatch(x, y, z, half),
       krater: (x, y, z, r, k) => rock.addCrater(x, y, z, r, k),
       koniecPaczki: () => rock.flushCraters(),

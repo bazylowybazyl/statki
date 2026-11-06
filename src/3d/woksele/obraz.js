@@ -11,7 +11,7 @@ import {
   atomicAdd, positionGeometry, normalGeometry, varyingProperty, cameraViewMatrix, screenUV, texture, uv, output, positionView, positionWorld, getShadowMaterial,
 } from 'three/tsl';
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
-import { STRONA } from './budowa.js';
+import { BIT_KOLO, STRONA } from './budowa.js';
 import { createWokselePyl } from './pyl.js';
 import { applySunShadowToBuiltinMaterial, sunFill, sunVisibility } from '../sunShadowMask.js';
 
@@ -107,6 +107,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const uLimD = uniform(4 / 60).setName('uLimD');
   const uDt = uniform(1 / 60).setName('uObrDt');
   const uRDysk = uniform(0).setName('uRDysk');
+  // Gra: promienie kół habitatu (ustawKola). Bez koła uniform = 0, odległość od zera nie trafi w pas dociągania.
+  const uKola = [0, 1, 2].map((k) => uniform(new THREE.Vector4()).setName(`uWokKola${k}`));
+  const uKolaMoc = uniform(1).setName('uWokKolaMoc');
   const uPokladZ = uniform(-1e30).setName('uPokladZ');
   const uOtworR2 = uniform(0).setName('uOtworR2');
   const uDyskR2 = uniform(0).setName('uDyskR2');
@@ -477,6 +480,26 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
               If(abs(nf.z).lessThan(0.5), () => { nL.assign(vec3(pr.div(rr), 0)); });
             });
           });
+          if (wGrze) {
+            // Prawdziwe koło: rogi bloków habitatu blisko jego koła trafiają dokładnie w to koło, ściana dostaje normalną promieniową. Rogi liczone z pozycji, więc sąsiednie bloki dzielą punkt. Tylko nienaruszony blok (ta gałąź, d ≤ FAZA_D): uszkodzony wraca do kostki. Pas 0,8 dx: najdalszy róg komórki ze środkiem przy kole leży o 0,51 · √2 dx.
+            If(uKolaMoc.greaterThan(0.5).and(fl.shiftRight(uint(BIT_KOLO)).bitAnd(uint(1)).equal(uint(1))), () => {
+              const pr = vec2(0).toVar();
+              pr.assign(d0.xy.add(off.xy));
+              const rr = fv(max(length(pr), 1));
+              const cel = fv(0);
+              for (const u of uKola) for (const os of ['x', 'y', 'z', 'w']) {
+                If(abs(rr.sub(u[os])).lessThan(uDx.mul(0.8)), () => { cel.assign(u[os]); });
+              }
+              If(cel.greaterThan(0), () => {
+                const skK = fv(cel.div(rr).sub(1));
+                off.assign(vec3(off.x.add(pr.x.mul(skK)), off.y.add(pr.y.mul(skK)), off.z));
+                If(abs(nf.z).lessThan(0.5), () => {
+                  const zn = fv(step(0, dot(nf.xy, pr)).mul(2).sub(1));
+                  nL.assign(vec3(pr.mul(zn).div(rr), 0));
+                });
+              });
+            });
+          }
           P.assign(x.add(naRame(Fx, Fy, Fz, off)));
           // Normalna z osi w płaszczyźnie ściany, nie z osi prostopadłej: ta na powierzchni jest różnicą jednostronną i jej szum daje kratkę na nienaruszonym pokładzie (§ 7).
           Nw.assign(cross(Fy, Fz).mul(nL.x).add(cross(Fz, Fx).mul(nL.y)).add(cross(Fx, Fy).mul(nL.z)));
@@ -1223,6 +1246,10 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     renderer.autoClear = ac;
   }
   /** W grze: obrót siatek bazy wokół z (macierz świata), ten sam w normalnych. */
+  /** Promienie kół habitatu [j.], najwyżej 12. */
+  function ustawKola(promienie) {
+    uKola.forEach((u, k) => u.value.set(promienie[4 * k] ?? 0, promienie[4 * k + 1] ?? 0, promienie[4 * k + 2] ?? 0, promienie[4 * k + 3] ?? 0));
+  }
   function ustawObrotNormalnych(kat) { uObrC.value = Math.cos(kat); uObrS.value = -Math.sin(kat); }
   /** Kierunek do słońca przy skale, w układzie węzłów (jednostkowy, w płaszczyźnie gry). */
   function ustawSlonceSkaly(x, y) { uSkalaSlonce.value.set(x, y, 0); }
@@ -1237,7 +1264,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   }
 
   return {
-    rysujCele, ustawObrotNormalnych, ustawSlonceSkaly, ustawSkore, kwadSsao, rtSkora, rtSkoraCien, uSkoraMoc, uAoMoc, uCiecieZ,
+    rysujCele, ustawObrotNormalnych, ustawSlonceSkaly, ustawKola, uKolaMoc, ustawSkore, kwadSsao, rtSkora, rtSkoraCien, uSkoraMoc, uAoMoc, uCiecieZ,
     kernele, listaObrazu, scene, sceneGleb, cienieDodatkowe, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, rtSsao, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki, liczGruzu: aLicz },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
     wczytaj, pelnyObraz, ustawLod, ustawCien, ustawCienZSceny, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,

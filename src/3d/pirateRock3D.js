@@ -21,7 +21,7 @@ import { loadTexture } from './canvas2d.js';
 import { Core3D } from './core3d.js';
 import { createMoonSurfaceMaterial, setMoonSunDirection, setMoonSunLight } from './moonSurface.tsl.js';
 import { SMALL_BODY_MAPS } from './planetMaps.js';
-import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape } from './smallBodyShape.js';
+import { SMALL_BODY_SEGMENTS, displaceSmallBodyGeometry, loadSmallBodyShape, smallBodyShapeAtDir } from './smallBodyShape.js';
 import { portHubMatrixElements } from './portBuildings/portModuleTraffic.js';
 
 const _inv = new THREE.Matrix4();
@@ -323,6 +323,13 @@ export class PirateRock3D {
       _v.set(Number(sun.x) - this.center.x, -(Number(sun.y) - this.center.y), 0).transformDirection(_inv);
       this._kr.sun.value.set(_v.dot(this._kr.t1.value), _v.dot(this._kr.t2.value));
     }
+  }
+
+  /** Promień skały [j.] w kierunku punktu sceny, z tej samej mapy co siatka. Bez mapy R. */
+  surfaceRadiusAt(x, y, z) {
+    if (!this.shape) return this.layout.R;
+    _v.set(x, y, z).applyMatrix4(this._naKule).normalize();
+    return this.layout.R * (1 + smallBodyShapeAtDir(this.shape, _v.x, _v.y, _v.z));
   }
 
   /** Promień skały pod punktem bazy [j.]: średnia z wierzchołków siatki kuli w stożku, po wczytaniu mapy kształtu. Bez niej R. */
