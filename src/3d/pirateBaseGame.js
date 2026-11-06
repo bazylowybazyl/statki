@@ -108,6 +108,7 @@ let place = null;
 let fogHidden = false;
 
 // WIĄZANE WOKSELE (2026-11-06): obraz bazy misji 1, gdy tylko wstaną. Stara bryła i skóry ciał są wtedy schowane, a rozgrywka (punkty, kolizje, etapy, upadek) dalej liczy się na nich. A/B: ?woksele=0.
+// AGENT: ?woksele=0 to sam obraz zapasowy, do diagnostyki (decyzja użytkownika 2026-11-06). Usunąć, gdy przestanie być potrzebny.
 const VOX_WYL = /[?&]woksele=0\b/.test(RenderWorld.pageSearch || '');
 let vox = null;
 let voxActive = false;

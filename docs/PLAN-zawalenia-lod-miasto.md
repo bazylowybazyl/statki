@@ -525,6 +525,8 @@ Nie sprawdzone w grze: krater po wieżowcu przed HP 0 (w teście z narzędzia gr
 
 Tego nie da się obiecać: koła po uszkodzeniu, zawalenia bez węzłów, prawdziwych fasad i podcięć pod nawisem.
 
+Próba na habitacie (ten sam dzień, `GRA/kolaZ-*`, 5120 × 1440, zoom 0,5, porównanie `GRA/kolaZ-prawo.png`): rogi bloków czterech części habitatu trafiają w 12 promieni z układu (`uKola`, `BIT_KOLO`), pas 0,8 dx. Zewnętrzny brzeg bębna z poszarpanego staje się czystym kołem. Koszt stojącej bazy: 2,99 ms z dociąganiem, 2,96 ms bez, po jednym biegu, różnica w granicach szumu; stara baza 2,04 ms. Zostaje: wewnętrzne krawędzie w bębnie częściowo schodkowe, a kolce starej bazy nie mają węzłów, więc w wypieku zostawiają klinowe wcięcia na okrągłych hangarach (widoczne z dociąganiem i bez). Zbiorniki i skośne pomosty jeszcze bez kształtów.
+
 **Otwarte: przerwy między klatkami strony w 5120 × 1440.** W oknach upadek 2–4 (około 3–8 s po HP 0) rAF strony ma przerwy 100–290 ms, co około 0,5 s, a procesor graficzny pracuje na 99 % (`k3`, `k4`, `k7`, `k8`). W 720p ich nie ma (`t11`–`t14`), w `k-stary` i `k-nowy` też nie. Sprawdzone:
 
 - To nie JS strony: `long-animation-frame` pokazuje 0 ms blokady i brak skryptów, cała przerwa przypada przed `renderStart`.
