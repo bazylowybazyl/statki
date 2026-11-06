@@ -59,6 +59,8 @@ for (const kv of String(process.argv.includes('--solid') ? process.argv[process.
 
 const arg = (n, f) => { const i = process.argv.indexOf('--' + n); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : f; };
 const TRYBY = String(arg('tryb', 'kotwice,czolo,pchanie,musniecie,wycof,statek')).split(',');
+const ZNANE_TRYBY = ['kotwice', 'czolo', 'pchanie', 'musniecie', 'wycof', 'statek', 'szyja'];
+for (const t of TRYBY) if (!ZNANE_TRYBY.includes(t)) throw new Error(`nieznany tryb: ${t} (znane: ${ZNANE_TRYBY.join(', ')})`);
 const DTS = String(arg('dt', '60,120')).split(',').map((h) => 1 / Number(h));
 const SPEEDS = String(arg('v', '900,1500,3000')).split(',').map(Number);
 const CZAS = Number(arg('czas', 3));

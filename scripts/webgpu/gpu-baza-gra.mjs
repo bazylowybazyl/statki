@@ -18,7 +18,7 @@
 //                --prog P (domyślnie 0): koniec ostrzału przy HP ≤ P % (etapy: 75 / 50 / 25 / 0); --strzalyMaks
 //                i zastój (brak postępu pul i etapów przez 8 serii) też kończą ostrzał;
 //   upadek-N   — HP 0 (finał misji) → okna co 2 s jedno za drugim do osiadania (≤ 60 s; bez pauz i śladu w trakcie —
-//                kolumny ft, uderzenie wieży / dysku, uderzeń, zamrożonych brył). Habitat żywy po ostrzale (--prog > 0, limit
+//                kolumny ft, uderzenie wieży / dysku, zamrożonych brył). Habitat żywy po ostrzale (--prog > 0, limit
 //                strzałów, zastój) — finał JAWNIE tym samym API, którym gra zabija habitat poza pulami (syncBaseStages
 //                po komplecie etapów, ogień w rurach): S.deps.damageStation(habitat, hp + 10, true) — `direct`, bez pul
 //                kawałków (bez `true` trafienie idzie do puli kawałka pod punktem trafienia i finału nie ma);
@@ -236,7 +236,7 @@ const PAGE_STATE = `(() => {
     cpu: H ? +(H.stats[6] || 0).toFixed(2) : -1, gpu: H ? +(H.stats[0] || 0).toFixed(2) : -1, gpuC: H ? +(H.stats[1] || 0).toFixed(2) : -1,
     fxMs: H ? +(H.stats[11] || 0).toFixed(2) : -1, domeny: H ? H.domainCount | 0 : -1, raf, hot, sleep, wd,
     upadek: F ? F.phase : '-', ft: F ? +F.t.toFixed(1) : 0, hp: st ? +(100 * st.hp / st.maxHp).toFixed(1) : null,
-    // upadek: czas uderzenia wieży / dysku w skałę (ft, −1 — jeszcze nie), uderzenia, bryły zamrożone na skale
+    // upadek: czas uderzenia wieży / dysku w skałę (ft, −1 — jeszcze nie), bryły zamrożone na skale
     wu: F ? num(F.towerImpactT) : -1, du: F ? num(F.discImpactT) : -1, zbr: F ? F.frozen | 0 : 0,
     // zamrożenie świata przez fabułę (sceny, kino, podsumowanie) — pętla jak w pauzie, __frameId stoi
     zam: !!(S && S.worldFrozen), powody: S && S._freeze ? [...S._freeze] : [], podsum: !!(S && S.ui && S.ui.summary),
@@ -449,7 +449,7 @@ async function okno(label, sekundy, { slad = false } = {}) {
   const nk = so && so.naKlatke;
   console.log(`${label.padEnd(12)} ft ${row.ftOd}→${row.ft} ${row.upadek}${row.zamrozony ? ` ZAMROŻONY[${row.powodyZamrozenia}]` : ''}`
     + `  klatki sondy ${row.klatkiSondy} info.frame ${row.infoFrame ? row.infoFrame.join('→') : '-'} takty rAF wk ${row.taktyWorkera}`
-    + `  uderzenia ${row.uderzen} (wieża ${row.uderzenieWiezy}, dysk ${row.uderzenieDysku}) zamrożone ${row.zamrozoneBryly}`);
+    + `  (wieża ${row.uderzenieWiezy}, dysk ${row.uderzenieDysku}) zamrożone ${row.zamrozoneBryly}`);
   console.log(`${''.padEnd(12)} obraz ${String(row.zlozeniaS).padStart(6)}/s  wk ${String(row.workerKlatkiS).padStart(6)}/s  strona ${row.klatkiStronyS}/s  cpuWk p50 ${wf?.p50 ?? '-'}`
     + `  gpuR ${so ? so.gpuRender.msNaKlatke : '-'}  gpuC ${so ? so.gpuCompute.msNaKlatke : '-'}`
     + `  (rozliczone od odczytu: ${nk ? `${nk.pelne}/${nk.klatek} pełnych, suma p50/p95/maks ${fmtQ(nk.suma)}` : '-'})  kolejka śr ${so ? so.sr.lat : '-'} p95 ${so ? so.p95.lat : '-'} maks ${so ? so.latMax : '-'}`
