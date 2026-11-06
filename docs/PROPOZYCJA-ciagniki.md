@@ -69,7 +69,7 @@ Kontrakt ten sam co E12: **sam obraz**. Świat ruchu liczy tony, a rampa i nacze
 | D2 | Rozmiar naczepy | moduł 2 × 2 (32 × 16 j.) | przy zoomie 0,1 widać kolor i liczbę naczep; to chwyt drona L; `?skala=kontener` do porównania |
 | D3 | Odbiór towaru | A: rampa za portalem | rój i stoły bez zmian, mniejsze ryzyko |
 | D4 | Trafienia i kolizje | osobne prostokąty czoła i naczep, zniszczona naczepa odpada | truck simulator: urwana naczepa to ciekawa scena; koszt mały |
-| D5 | Awans do NPC | bez awansu na belkach, zestaw zostaje partią; wybuch i wrak z małej puli | 2–3 komórki belek nic nie dają, a przegubów silnik belek nie ma |
+| D5 | Awans do NPC | bez awansu na belkach, zestaw zostaje partią; wybuch i wrak z małej puli | ciągnik to 2–4 komórki siatki 15 j. wzdłuż, naczepa 2 × 1: za mało na kratery i cięcie. Silnik belek ma przeguby tylko „ciało ↔ stały punkt świata” (`addJoint`), więc zestaw i tak prowadziłaby kinematyka, jak pociąg megafrachtowca |
 | D6 | Liczba naczep | lekki do 2, szosowy do 4, ciężki do 5 (`trailersMax`) | zróżnicowana sylwetka; limit tylko w danych, kinematyka przyjmie każdą liczbę |
 | D7 | Tempo | ciężarówki jeżdżą dziś w demie 140–210 j./s (hipercruise nie) | zgodne z klasami `van` / `hauler` przy przelocie; w hipercruisie pociąg wyglądałby jak kreska, do ustalenia przy autostradzie |
 | D8 | Linie przewozowe | siedem fikcyjnych, bez logo; z frakcjami powiązać później | na razie sam kolor, nazwy można zmienić bez PNG |
