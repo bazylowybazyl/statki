@@ -88,8 +88,7 @@ export function gasGridLightCpu(lights, slot, L, trans = 1) {
 }
 
 /**
- * LUSTRO CPU cienia kuli-przeszkody domeny głębokiej (GasVolume._groundLit; ta sama reguła w cząstkach uderzeń —
- * src/3d/pirateRockImpactFx.js): rel — punkt względem środka kuli [3], sun — kierunek do słońca (jednostkowy) [3], r —
+ * LUSTRO CPU cienia kuli-przeszkody domeny głębokiej (GasVolume._groundLit): rel — punkt względem środka kuli [3], sun — kierunek do słońca (jednostkowy) [3], r —
  * promień kuli, w — półszerokość półcienia [j.]. 1 — oświetlony, 0 — w cieniu kuli.
  */
 export function gasGroundLitCpu(rel, sun, r, w) {

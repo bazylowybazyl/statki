@@ -464,7 +464,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
                         // miejsce i kawałek trafienia przed obrażeniami (pule kawałków habitatu — index.html onBasePieceDamage)
                         st.lastHitX = wh.x;
                         st.lastHitY = wh.y;
-                        if (first) st.lastHitChunk = wh.piece ? (wh.piece.fallOf || wh.piece.id) : null;
+                        if (first) st.lastHitChunk = wh.piece ? wh.piece.id : null;
                         if (first) {
                             if (!proj.bittenStations) proj.bittenStations = new Set();
                             proj.bittenStations.add(st);

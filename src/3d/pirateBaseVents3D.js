@@ -624,6 +624,7 @@ export class PirateBaseVents3D {
       if (typeof fx.deepDomain !== 'function') { this.stats.noSlot++; return false; }
       const rs = pirateRockSite();
       const ground = rs && rs.at && rs.rock?.layout?.center ? this._ground(rs) : null;
+      if (ground && rs.sun) fx.setDeepSun?.(rs.sun.x, rs.sun.y);
       slot = fx.deepDomain(cx, cy, cz, D / 5.4, {
         carrier: [cvx, cvy, cvz], life: L.gasLinger, fadeTime: L.gasFade, baseDecay: L.gasDecay, tint: L.steamTint, fire: 0,
         tag: VENT_TAG, priority: 0, domainScale: 5.4, reserve: L.gasReserve, ground, ambient: L.gasAmbient
@@ -672,7 +673,7 @@ export class PirateBaseVents3D {
 }
 
 // Droga od punktu (X, Y, Z sceny) wzdłuż kierunku jednostkowego (dx, dy, dz) do elipsoidy wpisanej w pudło domeny,
-// ściśniętej do f (obraz i symulacja gaszą gaz za ~0,9 — wzór RockImpactFx._fitAlong); punkt poza nią — 0.
+// ściśniętej do f (obraz i symulacja gaszą gaz za ~0,9); punkt poza nią — 0.
 function fitAlong(s, X, Y, Z, dx, dy, dz, f) {
   const ax = s.h * s.n * 0.5, az = s.h * s.nz * 0.5;
   if (!(ax > 0) || !(az > 0)) return 0;
