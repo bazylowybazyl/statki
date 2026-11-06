@@ -3,6 +3,7 @@ import {
   LIGHT_KINDS,
   normalizeLightsBlock
 } from '../ui/shipLightEditorModel.js';
+import { navBlinkCode, navBlinkValue, navPhaseOf } from '../data/shipNavLights.js';
 // Maskowanie (2026-10-04): lampy gasną z komórką kadłuba pod sobą, reflektory i rozlew lamp z resztą okrętu.
 import { cloakLightGain, entityCloakVisAt } from './cloakLook.js';
 // Rozpad kadłuba belkowego (2026-10-05): lampa gaśnie, gdy komórka pod nią nie jest już żywym węzłem ciała
@@ -15,15 +16,13 @@ import {
   refreshHullMountSet
 } from './hullMounts.js';
 
-// 64, nie 32: Atlas ma 42 lampy pozycyjne + 2 reflektory + 5 reflektorów
-// otoczenia; przy 32 reflektory wypadały z shadera kadłuba (lampy pozycyjne
-// szły pierwsze). Tablice 3 × 64 vec4 mieszczą się w limicie fragmentu
-// (ANGLE/D3D11: 1024 vec4).
+// Na kadłub: lampy z edytora (sześć nawigacyjnych + reflektory) i światła innych statków.
 export const MAX_SHADER_SHIP_LIGHTS = 64;
 export const MAX_EXTERNAL_ROAD_SHADER_LIGHTS = 8;
-// Grupy lamp pozycyjnych innych statków w payloadzie kadłuba (rozlew czerwieni).
+// Lampy pozycyjne innych statków w payloadzie kadłuba (rozlew błysku).
 export const MAX_EXTERNAL_OMNI_SHADER_LIGHTS = 4;
-export const MAX_NAV_LIGHT_SPRITES = 512;
+// Sześć lamp na okręt: 170 okrętów w kadrze. 1024 — do tylu macierzy three trzyma instancje w buforze uniformów.
+export const MAX_NAV_LIGHT_SPRITES = 1024;
 
 // Zasłanianie lamp pozycyjnych (billboardy FG) obrazem NAD okrętem, który nie zna głębi — dla wszystkich okrętów
 // (nadproże bramy hali K-7 nad okrętem w bramie — src/game/k7GateLintels.js): (x, y) świata gry → true = zasłonięta.
@@ -50,12 +49,13 @@ export const AUTO_FLOOD = Object.freeze({
   rangeFrac: 0.6
 });
 
-// Grupy lamp pozycyjnych (do 4 na statek: burta × połowa długości) — jedno
-// światło zamiast kilkudziesięciu lamp przy oświetlaniu skał i innych statków.
+// Lampy pozycyjne jako światła na skałach i innych statkach (buildNavLightClusters): do `maxLamps` lamp każda świeci
+// sama (światła nawigacyjne — sześć); kadłub z większą liczbą (lampy dołożone w edytorze) — grupy burta × połowa długości.
 export const NAV_CLUSTER = Object.freeze({
-  maxGroups: 4,
-  reachWorld: 260,       // zasięg rozlewu poza rozrzutem grupy [j. świata]
-  meanSequence: 0.44     // średnia mnożnika sekwencji w cyklu (rest + błysk)
+  maxLamps: 6,
+  reachWorld: 260,       // najmniejszy zasięg rozlewu [j. świata]
+  reachPerLength: 0.3,   // zasięg rozlewu jako ułamek długości kadłuba (duży okręt sięga sąsiada w szyku)
+  powerMul: 0.5          // moc błysku na cudzym kadłubie i skałach względem mocy lampy (jasny kadłub nie traci barwy)
 });
 const EPSILON = 1e-6;
 const LIGHT_KIND_LIST = Object.values(LIGHT_KINDS);
@@ -85,21 +85,6 @@ function hashMixString(hash, value) {
 
 // Znacznik sekcji świateł zewnętrznych w podpisie (dawne 'external' w join).
 const HASH_EXTERNAL_SECTION = 0x45585452;
-
-// Wspólne parametry sekwencji świateł pozycyjnych ("pas startowy").
-// Z tych wartości korzystają DWA shadery: pętla lamp w kadłubie (hexShips3D)
-// i billboardy blasku (shipLights3D) — muszą pulsować w idealnej synchronizacji,
-// więc stałe wolno zmieniać wyłącznie tutaj. Faza świateł rośnie w stronę
-// dziobu (+X sprite'a), a chase = fract(t*speed + phase*gain) przesuwa aktywny
-// błysk od dziobu ku rufie (dziób w prawo => "od prawej do lewej").
-export const NAV_LIGHT_CHASE = Object.freeze({
-  speed: 0.42,      // pełne przebiegi sekwencji na sekundę
-  phaseGain: 0.95,  // jaka część cyklu rozciąga się wzdłuż kadłuba
-  attack: 0.10,     // narastanie błysku (fraction cyklu)
-  hold: 0.18,       // początek wygaszania
-  release: 0.42,    // koniec wygaszania
-  rest: 0.25        // poświata lampy pomiędzy błyskami (mnożnik)
-});
 
 // Literał GLSL z gwarantowaną kropką dziesiętną (1 -> "1.0000").
 export function glslFloat(value, fallback = 0) {
@@ -232,9 +217,8 @@ export function getEntityLights(entity) {
   let block = normalizedLightsCache.get(source);
   if (block === undefined) {
     block = normalizeLightsBlock(source);
-    // `autoFlood: false` — źródło celowo bez reflektorów otoczenia (hulk po
-    // utracie dowodzenia): bez tego zgaszone lampy dostałyby automatyczne.
-    addAutoFloodMarkers(block, source.autoFlood !== false);
+    // Reflektory otoczenia mają kadłuby w danych (SHIP_FLOOD_LIGHTS); generator z obrysu lamp tylko na życzenie źródła.
+    addAutoFloodMarkers(block, source.autoFlood === true);
     normalizedLightsCache.set(source, block);
   }
   // Kadłub belkowy: bez lamp, których komórka nie jest już żywym węzłem ciała encji (liveLightsBlock).
@@ -611,7 +595,7 @@ function worldDirToEntitySpriteDir(dir, entity, options = {}, out = { x: 0, y: 0
   );
 }
 
-function packLight(marker, kind, grid, scale) {
+function packLight(marker, kind, grid, scale, navPhase = 0) {
   const width = Math.max(1, Number(grid?.srcWidth) || 1);
   const height = Math.max(1, Number(grid?.srcHeight) || 1);
   const pivotX = Number(grid?.pivot?.x) || 0;
@@ -636,7 +620,9 @@ function packLight(marker, kind, grid, scale) {
     power: round2(clamp(marker?.power, 0.05, 20, defaults.power)),
     dir,
     rangePx: round2(clamp(marker?.range, 50, 4000, defaults.range ?? 800) * rangeScale),
-    coneDeg: round2(clamp(marker?.coneDeg, 8, 160, defaults.coneDeg ?? 40))
+    coneDeg: round2(clamp(marker?.coneDeg, 8, 160, defaults.coneDeg ?? 40)),
+    // Kod migania (lampa pozycyjna; reflektor świeci stale): ten sam, który dostaje billboard lampy.
+    blink: kind === LIGHT_KINDS.POSITION ? navBlinkCode(marker?.blink || 0, navPhase + (marker?.lag || 0)) : -1
   };
 }
 
@@ -660,13 +646,14 @@ export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER
   const pivotX = Number(grid?.pivot?.x) || 0;
   const pivotY = Number(grid?.pivot?.y) || 0;
   const cacheable = entity !== null && typeof entity === 'object';
+  const navPhase = navPhaseOf(entity);
   let cached = cacheable ? ownPayloadCache.get(entity) : undefined;
   if (cached === undefined || cached.block !== lights || cached.scaleX !== scale.x || cached.scaleY !== scale.y ||
       cached.limit !== limit || cached.hullLen !== hullLen || cached.srcW !== srcW || cached.srcH !== srcH ||
-      cached.pivotX !== pivotX || cached.pivotY !== pivotY) {
-    const own = packOwnShipLights(lights, scale, limit, hullLen, grid);
+      cached.pivotX !== pivotX || cached.pivotY !== pivotY || cached.navPhase !== navPhase) {
+    const own = packOwnShipLights(lights, scale, limit, hullLen, grid, navPhase);
     cached = {
-      block: lights, scaleX: scale.x, scaleY: scale.y, limit, hullLen, srcW, srcH, pivotX, pivotY,
+      block: lights, scaleX: scale.x, scaleY: scale.y, limit, hullLen, srcW, srcH, pivotX, pivotY, navPhase,
       lights: own.lights, signature: own.signature
     };
     if (cacheable) ownPayloadCache.set(entity, cached);
@@ -678,18 +665,17 @@ export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER
   };
 }
 
-function packOwnShipLights(lights, scale, limit, hullLen, grid) {
+function packOwnShipLights(lights, scale, limit, hullLen, grid, navPhase) {
   const out = [];
   const pushKind = (kind) => {
     const markers = Array.isArray(lights?.[kind]) ? lights[kind] : [];
     for (let i = 0; i < markers.length && out.length < limit; i++) {
       if (kind === LIGHT_KINDS.FLOOD && !floodLightAllowed(markers[i], hullLen)) continue;
-      out.push(packLight(markers[i], kind, grid, scale));
+      out.push(packLight(markers[i], kind, grid, scale, navPhase));
     }
   };
 
-  // Kierunkowe najpierw: przy nadmiarze lamp wypada kolejna lampa pozycyjna,
-  // a nie reflektor (dawniej Atlas tracił w shaderze oba reflektory dziobu).
+  // Kierunkowe najpierw: przy nadmiarze lamp wypada kolejna lampa pozycyjna, a nie reflektor.
   pushKind(LIGHT_KINDS.ROAD);
   pushKind(LIGHT_KINDS.FLOOD);
   pushKind(LIGHT_KINDS.POSITION);
@@ -717,6 +703,7 @@ function packOwnShipLights(lights, scale, limit, hullLen, grid) {
     hash = hashMixNumber(hash, light.dir.y);
     hash = hashMixNumber(hash, light.rangePx);
     hash = hashMixNumber(hash, light.coneDeg);
+    hash = hashMixNumber(hash, light.blink);
   }
 
   return {
@@ -761,14 +748,14 @@ function clusterRecord(pool, n) {
   if (r === undefined) {
     r = pool[n] = {
       owner: null, ownerId: '', lineage: 0, id: '', x: 0, y: 0, color: null, power: 0, count: 0, spreadWorld: 0, rangeWorld: 0,
-      pulse: 0, mean: 0, _extOwner: undefined, _extName: undefined, _extId: '', _extIdHash: 0
+      pulse: 0, blink: -1, mean: 1, _extOwner: undefined, _extName: undefined, _extId: '', _extIdHash: 0
     };
   }
   return r;
 }
 function spriteRecord(pool, n) {
   let r = pool[n];
-  if (r === undefined) r = pool[n] = { x: 0, y: 0, phase: 0, color: null, coreWorld: 0, haloWorld: 0, intensity: 0 };
+  if (r === undefined) r = pool[n] = { x: 0, y: 0, blink: 0, color: null, coreWorld: 0, haloWorld: 0, intensity: 0 };
   return r;
 }
 
@@ -845,13 +832,21 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
   return out;
 }
 
-// Grupy lamp pozycyjnych bloku (px sprite'a): burta × połowa długości, do
-// NAV_CLUSTER.maxGroups. Cache w bloku (blok jest per źródło, tylko do odczytu).
+// Światła lamp pozycyjnych bloku (px sprite'a): do NAV_CLUSTER.maxLamps każda lampa osobno (czerwień z lewej burty, zieleń
+// z prawej), przy większej liczbie grupy burta × połowa długości z rytmem pierwszej lampy. Cache w bloku (blok jest per
+// źródło, tylko do odczytu).
 function getNavGroups(block) {
   if (block.__navGroups) return block.__navGroups;
   const markers = Array.isArray(block?.[LIGHT_KINDS.POSITION]) ? block[LIGHT_KINDS.POSITION] : [];
   const groups = [];
-  if (markers.length) {
+  if (markers.length <= NAV_CLUSTER.maxLamps) {
+    for (const m of markers) {
+      groups.push({
+        x: m.x, y: m.y, spreadPx: 0, count: 1, power: clamp(m.power, 0.05, 20, 0.8),
+        color: hexToRgb01(m.color, '#ff2b2b'), blink: m.blink || 0, lag: m.lag || 0
+      });
+    }
+  } else {
     let xMin = Infinity;
     let xMax = -Infinity;
     for (const m of markers) { if (m.x < xMin) xMin = m.x; if (m.x > xMax) xMax = m.x; }
@@ -873,7 +868,7 @@ function getNavGroups(block) {
       groups.push({
         x: cx, y: cy, spreadPx: spread, count: b.length, power,
         color: { r: r / power, g: g / power, b: bl / power },
-        xs: Float64Array.from(b, (m) => m.x)
+        blink: b[0].blink || 0, lag: b[0].lag || 0
       });
     }
   }
@@ -881,21 +876,10 @@ function getNavGroups(block) {
   return groups;
 }
 
-// Mnożnik sekwencji „pasa startowego” lampy o fazie `phase` w chwili t — ta
-// sama formuła co pętla lamp kadłuba i billboardy (NAV_LIGHT_CHASE).
-export function navChaseSequence(t, phase) {
-  const C = NAV_LIGHT_CHASE;
-  const chase = ((t * C.speed + phase * C.phaseGain) % 1 + 1) % 1;
-  const pulse = smoothstep01(0, C.attack, chase) * (1 - smoothstep01(C.hold, C.release, chase));
-  return C.rest + (1 - C.rest) * pulse;
-}
-
 /**
- * Grupy lamp pozycyjnych jako światła w świecie (rozlew czerwieni na skały
- * i inne kadłuby). Jedno światło na grupę zamiast kilkudziesięciu lamp.
- * `pulse` = średnia sekwencji lamp grupy w chwili options.time (błysk biegnie
- * po skałach razem z billboardami); `mean` = średnia w cyklu (stała — do
- * payloadu kadłubów, żeby podpis nie zmieniał się co klatkę).
+ * Lampy pozycyjne jako światła w świecie (rozlew błysku — czerwień z lewej burty, zieleń z prawej — na skały i inne
+ * kadłuby). Między błyskami nie oświetlają. `pulse` = jasność błysku w chwili options.time (skały, gaz: siatka świateł
+ * co klatkę); `blink` = kod migania — kadłuby liczą błysk w shaderze, więc podpis lamp nie zmienia się co klatkę.
  */
 export function buildNavLightClusters(entities, options = {}) {
   const out = Array.isArray(options.out) ? options.out : [];
@@ -918,21 +902,14 @@ export function buildNavLightClusters(entities, options = {}) {
     const angle = getEntityAngle(entity, options);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
-    const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.beamHull;
-    const width = Math.max(1, Number(grid?.srcWidth) || (lights.hullLenPx * hardpointScale.x * 1.1) || 1);
-    const pivotX = Number(grid?.pivot?.x) || 0;
     const worldScale = (Number(hardpointScale.uniform) || 1) * (Number(spriteScale.uniform) || 1);
     const lineage = lightLineageOf(entity);
+    const navPhase = navPhaseOf(entity);
+    const reach = Math.max(NAV_CLUSTER.reachWorld, (Number(lights.hullLenPx) || 0) * worldScale * NAV_CLUSTER.reachPerLength);
     for (let gi = 0; gi < groups.length && out.length < maxClusters; gi++) {
       const g = groups[gi];
       const lx = g.x * hardpointScale.x * spriteScale.x;
       const ly = g.y * hardpointScale.y * spriteScale.y;
-      let seq = 0;
-      for (let k = 0; k < g.xs.length; k++) {
-        const phase = Math.max(0, Math.min(1, (g.xs[k] * hardpointScale.x + width * 0.5 + pivotX) / width));
-        seq += navChaseSequence(time, phase);
-      }
-      seq /= Math.max(1, g.xs.length);
       const rec = clusterRecord(pool, out.length);
       rec.owner = entity;
       rec.ownerId = entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`;
@@ -941,12 +918,13 @@ export function buildNavLightClusters(entities, options = {}) {
       rec.x = pos.x + lx * c - ly * s;
       rec.y = pos.y + lx * s + ly * c;
       rec.color = g.color;
-      rec.power = cloakGain < 1 ? g.power * cloakGain : g.power;
+      rec.power = g.power * NAV_CLUSTER.powerMul * (cloakGain < 1 ? cloakGain : 1);
       rec.count = g.count;
       rec.spreadWorld = g.spreadPx * worldScale;
-      rec.rangeWorld = g.spreadPx * worldScale + NAV_CLUSTER.reachWorld;
-      rec.pulse = seq;
-      rec.mean = NAV_CLUSTER.meanSequence;
+      rec.rangeWorld = g.spreadPx * worldScale + reach;
+      rec.blink = navBlinkCode(g.blink, navPhase + g.lag);
+      rec.pulse = navBlinkValue(time, rec.blink);
+      rec.mean = 1;
       out.push(rec);
     }
   }
@@ -963,9 +941,8 @@ function smoothstep01(edge0, edge1, value) {
 
 // Światła pozycyjne jako sprite'y w koordach świata — źródło danych dla
 // addytywnych billboardów blasku (shipLights3D, warstwa FG po shadow-passie).
-// phase liczymy IDENTYCZNIE jak pętla lamp w shaderze kadłuba
-// (sprite-px X / szerokość sprite'a), żeby błysk billboardu i rozświetlenie
-// kadłuba były tym samym momentem sekwencji.
+// `blink` to ten sam kod migania co w slocie lampy na kadłubie: błysk billboardu
+// i rozświetlenie blachy są tą samą chwilą.
 export function buildPositionLightWorldSprites(entities, options = {}) {
   const out = Array.isArray(options.out) ? options.out : [];
   if (options.clear !== false) out.length = 0;
@@ -991,11 +968,10 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
     const angle = getEntityAngle(entity, options);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
-    const width = Math.max(1, Number(grid?.srcWidth) || 1);
-    const pivotX = Number(grid?.pivot?.x) || 0;
+    const navPhase = navPhaseOf(entity);
 
     // Daleki zoom: statek ma pojedyncze piksele — wygaszamy lampy zamiast
-    // malować czerwoną plamę większą od kadłuba.
+    // malować plamę większą od kadłuba.
     let fade = 1;
     if (hasZoom) {
       const radiusWorld = getEntityRadiusWorld(entity, grid, spriteScale, options);
@@ -1007,7 +983,6 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
     for (let i = 0; i < markers.length && out.length < maxSprites; i++) {
       const marker = markers[i];
       const local = getScaledLightLocal(marker, hardpointScale, _localB);
-      const phase = Math.max(0, Math.min(1, (local.x + width * 0.5 + pivotX) / width));
       const scaledLocalX = local.x * spriteScale.x;
       const scaledLocalY = local.y * spriteScale.y;
       const radiusPx = clamp(marker?.radius, 1, 48, 4) * (Number(hardpointScale?.uniform) || 1);
@@ -1025,7 +1000,7 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
       const rec = spriteRecord(pool, out.length);
       rec.x = round2(wx);
       rec.y = round2(wy);
-      rec.phase = round2(phase);
+      rec.blink = navBlinkCode(marker?.blink || 0, navPhase + (marker?.lag || 0));
       rec.color = cachedRgb01(marker?.color, '#ff2b2b');
       rec.coreWorld = round2(coreWorld);
       rec.haloWorld = round2(haloWorld);
@@ -1391,7 +1366,7 @@ function packSlot() {
   if (o === undefined) {
     o = _packRing[_packAt] = {
       id: '', kind: '', external: true, pos: { x: 0, y: 0 }, color: null, radiusPx: 1, power: 0, dir: { x: 0, y: -1 },
-      rangePx: 1, coneDeg: 160, _idHash: 0
+      rangePx: 1, coneDeg: 160, blink: -1, _idHash: 0
     };
   }
   _packAt = (_packAt + 1) % PACK_RING;
@@ -1422,6 +1397,7 @@ function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
   o.id = src._extId;
   o._idHash = src._extIdHash;
   o.kind = emitter?.flood ? LIGHT_KINDS.FLOOD : LIGHT_KINDS.ROAD;
+  o.blink = -1;
   worldToEntitySpritePixels(emitter?.x, emitter?.y, entity, grid, options, o.pos);
   o.color = emitter?.color || hexToRgb01('#ffffff');
   o.radiusPx = round2(Math.max(0.5, (Number(emitter?.radiusWorld) || 1) / Math.max(EPSILON, targetUniform)));
@@ -1431,7 +1407,7 @@ function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
   return o;
 }
 
-// Grupa lamp pozycyjnych innego statku vs kadłub celu (koło zasięgu vs koło celu).
+// Lampa pozycyjna innego statku vs kadłub celu (koło zasięgu vs koło celu).
 function omniLightReachDistSq(light, tx, ty, targetRadius) {
   const reach = Math.max(1, Number(light.rangeWorld) || 1) + targetRadius;
   const dx = tx - (Number(light.x) || 0);
@@ -1440,8 +1416,8 @@ function omniLightReachDistSq(light, tx, ty, targetRadius) {
   return distSq <= reach * reach ? distSq : -1;
 }
 
-// Rozlew grupy lamp w przestrzeni sprite'a celu: rodzaj 'omni' (typ 2 w shaderze
-// kadłuba) — bez rdzenia lampy (lampa jest na innym kadłubie), tylko poświata.
+// Rozlew lampy w przestrzeni sprite'a celu: rodzaj 'omni' (typ 2 w shaderze kadłuba) — bez rdzenia lampy (lampa jest na
+// innym kadłubie), tylko poświata; błysk liczy shader z kodu migania (`blink`, światła świata bez kodu świecą stale).
 function packExternalOmniLightForTarget(light, entity, grid, options = {}) {
   const targetUniform = getEntitySpriteScale(entity, options, _spScaleX).uniform;
   const o = packSlot();
@@ -1452,9 +1428,8 @@ function packExternalOmniLightForTarget(light, entity, grid, options = {}) {
   worldToEntitySpritePixels(light?.x, light?.y, entity, grid, options, o.pos);
   o.color = light?.color || hexToRgb01('#ff2b2b');
   o.radiusPx = 1;
-  // Średnia sekwencji w cyklu (stała), nie bieżący błysk — podpis payloadu
-  // nie zmienia się co klatkę.
-  o.power = round2(Math.max(0, (Number(light?.power) || 0) * (Number(light?.mean) || NAV_CLUSTER.meanSequence)));
+  o.power = round2(Math.max(0, (Number(light?.power) || 0) * (Number(light?.mean) || 1)));
+  o.blink = Number.isFinite(light?.blink) ? light.blink : -1;
   o.dir.x = 0;
   o.dir.y = -1;
   o.rangePx = round2(Math.max(1, (Number(light?.rangeWorld) || 1) / Math.max(EPSILON, targetUniform)));
@@ -1482,7 +1457,7 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   // Indeks przestrzenny klatki (buildExternalLightIndex) — tylko dla tych samych list; bez niego cała lista.
   const index = externalIndexFor(options, emitters, omni);
 
-  // Rozlew czerwieni z grup lamp innych statków (przed reflektorami — to one
+  // Rozlew błysku lamp innych statków (przed reflektorami — to one
   // mają osobny, mały budżet MAX_EXTERNAL_OMNI_SHADER_LIGHTS).
   let hashOmni = null;
   if (omni.length) {
@@ -1509,6 +1484,7 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
       hashOmni = hashMixNumber(hashOmni, light.pos.y);
       hashOmni = hashMixNumber(hashOmni, light.rangePx);
       hashOmni = hashMixNumber(hashOmni, light.power);
+      hashOmni = hashMixNumber(hashOmni, light.blink);
     }
     if (hashOmni !== null) {
       payload.count = payload.lights.length;

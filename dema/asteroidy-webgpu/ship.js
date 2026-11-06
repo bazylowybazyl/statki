@@ -17,7 +17,8 @@ import {
 } from 'three/tsl';
 import { getHullRenderSize } from '../../src/data/ships.js';
 import { buildEntityEngineFx } from '../../src/data/engineFx.js';
-import { navChaseSequence, buildPositionLightWorldSprites } from '../../src/game/shipLightRuntime.js';
+import { buildPositionLightWorldSprites } from '../../src/game/shipLightRuntime.js';
+import { NAV_LIGHT_LOOK, navBlinkValue } from '../../src/data/shipNavLights.js';
 import { SurfaceLightingModel } from './surfaceLighting.js';
 import { GLOW_ROUND, GLOW_STREAK } from './glowSprites.js';
 
@@ -226,7 +227,7 @@ export class DemoHull {
     this._navOpts.time = time;
     buildPositionLightWorldSprites([this.entity], this._navOpts);
     for (const l of this._navSprites) {
-      const seq = navChaseSequence(time, l.phase);
+      const seq = Math.max(navBlinkValue(time, l.blink), NAV_LIGHT_LOOK.idle);
       const col = l.color;
       const k = 3.0 * seq * l.intensity;
       glow.add(l.x - ox, -(l.y - oy), 6, Math.max(12, l.coreWorld * 7), col.r * k, col.g * k, col.b * k, GLOW_ROUND);

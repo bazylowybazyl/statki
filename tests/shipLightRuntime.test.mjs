@@ -1,13 +1,12 @@
 import test from 'node:test';
+import { navBlinkCode, navPhaseFromId } from '../src/data/shipNavLights.js';
 import assert from 'node:assert/strict';
 
 import {
   MAX_SHADER_SHIP_LIGHTS,
   NAV_CLUSTER,
-  NAV_LIGHT_CHASE,
   buildCombinedShipLightShaderPayload,
   buildNavLightClusters,
-  navChaseSequence,
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
@@ -166,8 +165,7 @@ test('atlas default lights fit in one shader payload', () => {
   );
 
   // Wszystkie lampy z edytora + reflektory otoczenia dużego okrętu (rufa +
-  // 2 × 2 burty) mieszczą się — nic nie wypada (przy limicie 32 i 42 lampach
-  // pozycyjnych wypadały oba reflektory dziobu).
+  // 2 × 2 burty) mieszczą się — nic nie wypada.
   const { position, road } = ATLAS_EDITOR_DEFAULTS.lights;
   const floods = payload.lights.filter((l) => l.kind === 'flood');
   assert.equal(floods.length, 5);
@@ -182,7 +180,7 @@ test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości k
   for (let i = 0; i <= 10; i++) {
     outline.push({ x: -500 + i * 100, y: -100 }, { x: -500 + i * 100, y: 100 });
   }
-  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }] };
+  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }], autoFlood: true };
   const block = getEntityLights({ editorLights: lights });
   assert.equal(block.flood.length, 7, 'rufa + para środkowa + dwie pary (filtr per encja)');
   const rear = block.flood.find((f) => f.id === 'auto_flood_rear');
@@ -200,7 +198,7 @@ test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości k
   assert.deepEqual(kinds(0.4), ['auto_flood_mid_l', 'auto_flood_mid_r', 'auto_flood_rear']);
   assert.deepEqual(kinds(1), ['auto_flood_pair0_l', 'auto_flood_pair0_r', 'auto_flood_pair1_l', 'auto_flood_pair1_r', 'auto_flood_rear']);
   // Własny reflektor w bok = kadłub ma już swoje — bez generowanych.
-  const own = getEntityLights({ editorLights: { position: outline, road: [{ id: 'side', x: 0, y: 100, deg: 180 }] } });
+  const own = getEntityLights({ editorLights: { position: outline, road: [{ id: 'side', x: 0, y: 100, deg: 180 }], autoFlood: true } });
   assert.equal(own.flood.length, 0);
   // Emitery: reflektory otoczenia jako krótkie reflektory z flagą flood.
   const emitters = buildRoadLightWorldEmitters([{ id: 's', x: 0, y: 0, angle: 0, editorLights: lights }]);
@@ -208,12 +206,12 @@ test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości k
   assert.equal(emitters.filter((e) => !e.flood).length, 1);
 });
 
-test('reflektory z obrysu: generator dla edytora = blok gry, autoFlood:false gasi', () => {
+test('reflektory z obrysu: generator dla edytora = blok gry, bez autoFlood: true nie ma', () => {
   const outline = [];
   for (let i = 0; i <= 10; i++) {
     outline.push({ x: -500 + i * 100, y: -100 }, { x: -500 + i * 100, y: 100 });
   }
-  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }] };
+  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }], autoFlood: true };
   // Edytor liczy podgląd z tego samego generatora co gra (bez mutacji bloku).
   const plain = normalizeLightsBlock(lights);
   const { hullLenPx, markers } = computeAutoFloodMarkers(plain);
@@ -224,8 +222,8 @@ test('reflektory z obrysu: generator dla edytora = blok gry, autoFlood:false gas
   assert.deepEqual(markers.filter((m) => floodLightAllowed(m, 400)).map((m) => m.id).sort(),
     ['auto_flood_mid_l', 'auto_flood_mid_r', 'auto_flood_rear']);
   assert.ok(floodLightAllowed({ id: 'own' }, 0), 'własny reflektor świeci na każdym kadłubie');
-  // Hulk po utracie dowodzenia: lampy bez reflektorów, ale bez automatycznych.
-  const dark = getEntityLights({ editorLights: { position: outline, road: [], flood: [], autoFlood: false } });
+  // Lampy bez flagi: bez automatycznych reflektorów (hulk po utracie dowodzenia, każdy kadłub z danych).
+  const dark = getEntityLights({ editorLights: { position: outline, road: [], flood: [] } });
   assert.equal(dark.flood.length, 0);
   assert.equal(dark.hullLenPx, 1000);
   // Własne reflektory z edytora przechodzą bez zmian i wyłączają generator.
@@ -234,20 +232,20 @@ test('reflektory z obrysu: generator dla edytora = blok gry, autoFlood:false gas
   assert.equal(computeAutoFloodMarkers(own).markers.length, 0);
 });
 
-test('grupy lamp pozycyjnych: do 4 na statek, sekwencja w [rest, 1], rozlew na inny kadłub', () => {
+test('lampy pozycyjne jako światła: sześć na statek, błysk w [0, 1], rozlew na inny kadłub', () => {
   const source = { id: 'atlas', x: 0, y: 0, angle: 0, radius: 900, editorLights: ATLAS_EDITOR_DEFAULTS.lights };
   const clusters = buildNavLightClusters([source], { time: 1.3 });
-  assert.equal(clusters.length, 4);
+  assert.equal(clusters.length, NAV_CLUSTER.maxLamps);
   assert.equal(clusters.reduce((s, c) => s + c.count, 0), ATLAS_EDITOR_DEFAULTS.lights.position.length);
   for (const c of clusters) {
-    assert.ok(c.pulse >= NAV_LIGHT_CHASE.rest - 1e-9 && c.pulse <= 1 + 1e-9);
+    assert.ok(c.pulse >= 0 && c.pulse <= 1);
     assert.ok(c.rangeWorld > c.spreadWorld);
+    assert.ok(c.blink >= 0, 'kod migania lampy');
   }
-  // Średnia sekwencji w cyklu zgadza się ze stałą payloadu kadłubów.
-  let mean = 0;
-  for (let k = 0; k < 2000; k++) mean += navChaseSequence(k / 2000 / NAV_LIGHT_CHASE.speed, 0.3);
-  assert.ok(Math.abs(mean / 2000 - NAV_CLUSTER.meanSequence) < 0.03, `średnia sekwencji ${mean / 2000}`);
-  // Eskorta obok: dostaje rozlew czerwieni (typ 'omni'), własnych grup nie.
+  // Kadłub z większą liczbą lamp (dołożone w edytorze): grupy burta × połowa długości.
+  const many = Array.from({ length: 12 }, (_, i) => ({ x: -500 + i * 90, y: i % 2 ? 60 : -60 }));
+  assert.equal(buildNavLightClusters([{ id: 'x', x: 0, y: 0, angle: 0, editorLights: { position: many, road: [] } }], { time: 0 }).length, 4);
+  // Eskorta obok: dostaje rozlew lamp (typ 'omni'), własnych nie.
   const target = { id: 'escort', x: 0, y: 1300, angle: 0, radius: 500, editorLights: { position: [], road: [] } };
   const grid = { srcWidth: 1000, srcHeight: 400 };
   const lit = buildCombinedShipLightShaderPayload(target, grid, [], { externalOmniLights: clusters });
@@ -357,9 +355,8 @@ test('position lights are exported as world-space sprites with hull-shader phase
   assert.equal(sprites.length, 1);
   const sprite = sprites[0];
   assert.deepEqual({ x: sprite.x, y: sprite.y }, { x: 110, y: 240 });
-  // phase = (local.x*scaleX + srcWidth/2 + pivotX) / srcWidth — dokładnie jak
-  // localPhase w pętli lamp shadera kadłuba.
-  assert.equal(sprite.phase, 0.95);
+  // Ten sam kod migania, który lampa ma w slocie kadłuba (wzór 0, faza okrętu z id).
+  assert.equal(sprite.blink, navBlinkCode(0, navPhaseFromId('ship')));
   assert.equal(sprite.coreWorld, 6);
   assert.equal(sprite.haloWorld, 96);
   assert.equal(sprite.intensity, 2);
@@ -398,29 +395,6 @@ test('position light sprites are capped by maxSprites', () => {
   const sprites = buildPositionLightWorldSprites([entity], { maxSprites: 8 });
 
   assert.equal(sprites.length, 8);
-});
-
-test('nav light chase sequence runs from bow to stern', () => {
-  // Dziób = wyższa faza (większe X sprite'a). Błysk aktywuje się, gdy
-  // fract(t*speed + phase*gain) wchodzi w okno ataku — dziób musi błysnąć
-  // wcześniej niż rufa ("od prawej do lewej" przy dziobie w prawo).
-  // Zbocze narastające: światło mogło jeszcze dogasać z poprzedniego cyklu
-  // w t=0, więc szukamy pierwszego WEJŚCIA w okno błysku, nie samego stanu.
-  const firstFlashStart = (phase) => {
-    let wasFlashing = true;
-    for (let t = 0; t < 2 / NAV_LIGHT_CHASE.speed; t += 0.005) {
-      const chase = (t * NAV_LIGHT_CHASE.speed + phase * NAV_LIGHT_CHASE.phaseGain) % 1;
-      const flashing = chase < NAV_LIGHT_CHASE.attack;
-      if (flashing && !wasFlashing) return t;
-      wasFlashing = flashing;
-    }
-    return Infinity;
-  };
-
-  const bow = firstFlashStart(0.9);
-  const mid = firstFlashStart(0.5);
-  const stern = firstFlashStart(0.1);
-  assert.ok(bow < mid && mid < stern, `expected bow (${bow}) < mid (${mid}) < stern (${stern})`);
 });
 
 test('glslFloat always emits a float literal', () => {

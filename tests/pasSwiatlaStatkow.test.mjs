@@ -8,6 +8,7 @@
 // w index.html (akumulator, α = 0,25 / 0,5 / 0,75 / 0). Pomiar w grze: scripts/webgpu/gpu-pas-gra.mjs --drzenie.
 // node --test tests/pasSwiatlaStatkow.test.mjs
 import test from 'node:test';
+import { NAV_BLINK_PATTERNS, navBlinkCode, navPhaseOf } from '../src/data/shipNavLights.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -70,6 +71,10 @@ function hullFrame(g, pose) {
 // (window.__interpShipPose / HEAD.INTERP). Zwraca rozpiętość (maks − min po klatkach) położenia każdego światła
 // w układzie kadłuba (pozy renderu) — największą po światłach; pierwsze klatki (przed pierwszym krokiem) pominięte.
 function fly(belt, ship, v, omega, frames = 96, skip = 8) {
+  // Lampy pozycyjne świecą w siatce tylko w błysku: chwila błysku tego okrętu stoi przez cały lot (rozpiętość po wszystkich światłach).
+  const code = navBlinkCode(0, navPhaseOf(ship));
+  belt.navClock = 'belt';
+  belt.time = (2 + 0.025 - (code - Math.floor(code))) * NAV_BLINK_PATTERNS[0].period;
   let x = ship.pos.x; let y = ship.pos.y; let a = ship.angle;
   let px = x; let py = y; let pa = a; let acc = 0;
   const pose = { x, y, angle: a };

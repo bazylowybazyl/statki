@@ -1614,6 +1614,7 @@
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { migratePirateSpriteLayout } from "./src/data/pirateSpriteMigration.js";
+    import { restyleNavLights } from "./src/data/shipNavLights.js";
     import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
     import { buildEntityEngineFx, resolveEngineFx } from "./src/data/engineFx.js";
     import {
@@ -34900,6 +34901,11 @@
           window.splitScreenMode = true;
           if (mainMenuEl) mainMenuEl.classList.add('hidden');
           return startSplitScreenGame(p1, p2);
+        },
+        // Styl świateł nawigacyjnych encji z konsoli (src/data/shipNavLights.js): DevScene.navStyl('warning').
+        navStyl(name = 'warning', e = ship) {
+          e.editorLights = restyleNavLights(e.editorLights, name);
+          return e.editorLights;
         }
       });
     }

@@ -378,7 +378,7 @@ const SHIP_LIGHT_EMITTER_OPTIONS = {
   out: null
 };
 
-// Grupy lamp pozycyjnych (rozlew czerwieni na inne kadłuby) i payload kadłuba
+// Lampy pozycyjne jako światła (rozlew błysku na inne kadłuby) i payload kadłuba
 // z nimi — `externalOmniLights` ustawiane co klatkę na state.navLightClusters.
 const NAV_CLUSTER_OPTIONS = {
   ...SHIP_LIGHT_TRANSFORM_OPTIONS,
@@ -636,7 +636,9 @@ function writeShipLightSlot(slot, lights, count) {
     // Własny reflektor otoczenia świeci NA ZEWNĄTRZ: stożek na własnym
     // pancerzu malował białe kliny na płetwach (zostaje lampa: rdzeń + poświata).
     const ownFlood = light.kind === 'flood' && !light.external;
-    arr[o + 8] = Number(light.dir?.x) || 0;
+    // Lampa pozycyjna i jej rozlew nie mają kierunku: w tym miejscu kod migania (navBlinkCode, shader: navBlinkNode).
+    const blinking = light.kind === 'position' || light.kind === 'omni';
+    arr[o + 8] = blinking ? (Number.isFinite(light.blink) ? light.blink : -1) : (Number(light.dir?.x) || 0);
     arr[o + 9] = Number(light.dir?.y) || -1;
     arr[o + 10] = ownFlood ? 0 : (Number(light.rangePx) || 0);
     arr[o + 11] = Math.cos(coneRad);
@@ -1503,8 +1505,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   SHIP_LIGHT_EMITTER_OPTIONS.out = state.roadLightEmitters;
   buildRoadLightWorldEmitters(visibleHex, SHIP_LIGHT_EMITTER_OPTIONS);
   computeRoadEmitterReach(state.roadLightEmitters, state.roadLightReach);
-  // Grupy lamp pozycyjnych: rozlew czerwieni na sąsiednie kadłuby (typ 2
-  // w pętli lamp). Tylko przy dwóch+ kadłubach — własnych lamp kadłub ma swoje.
+  // Lampy pozycyjne: rozlew błysku na sąsiednie kadłuby (typ 2 w pętli lamp).
+  // Tylko przy dwóch+ kadłubach — własnych lamp kadłub ma swoje.
   NAV_CLUSTER_OPTIONS.out = state.navLightClusters;
   NAV_CLUSTER_OPTIONS.time = now * 0.001;
   if (visibleHex.length > 1) buildNavLightClusters(visibleHex, NAV_CLUSTER_OPTIONS);
