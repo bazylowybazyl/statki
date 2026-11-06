@@ -39,20 +39,20 @@ export const SPACE_TRUCKS_TUNE = Object.freeze({
   z: 1.5,
   renderOrder: 12,
   /** Płomień: długość = średnica × (idle + throttle · full), moc HDR, barwa plazmy. */
-  flameIdle: 1.6,
-  flameFull: 7.5,
-  flamePower: 5.5,
+  flameIdle: 2.6,
+  flameFull: 10,
+  flamePower: 2.6,
   flameColor: Object.freeze([0.3, 0.62, 1.0]),
   /** Stożek reflektora [j., skala 1] i moc (subtelny: to nie mgła), znika przy dalekim zoomie. */
-  coneLength: 42,
-  coneWidth: 21,
-  conePower: 0.13,
-  coneMinPpu: 0.14,
+  coneLength: 34,
+  coneWidth: 13,
+  conePower: 0.045,
+  coneMinPpu: 0.3,
   /** Sygnalizator: błyski na sekundę, ramiona obrotowe. */
   beaconHz: 1.15,
-  beamLength: 16,
-  beamWidth: 5,
-  beamPower: 0.5,
+  beamLength: 11,
+  beamWidth: 3.2,
+  beamPower: 0.28,
   beamMinPpu: 0.3,
   /** Poniżej tego zoomu lampki dachu i środkowe markery wypadają (i tak zlewają się w jeden punkt). */
   detailMinPpu: 0.12,
@@ -60,15 +60,15 @@ export const SPACE_TRUCKS_TUNE = Object.freeze({
   innerTail: 0.3,
   /** Barwa słońca, otoczenie, podbicie otoczenia przy dalekim zoomie (farba linii czytelna z daleka). */
   sunColor: Object.freeze([1.0, 0.97, 0.92]),
-  sunPower: 1.5,
-  ambient: 0.34,
-  farAmbient: 0.5,
+  sunPower: 0.92,
+  ambient: 0.2,
+  farAmbient: 0.42,
   farPpu: 0.5,
   /** Słońce nad płaszczyzną [°]: wyżej niż dla kadłubów gry (jak łup: kontenery z bliska czytelne). */
   sunElevation: 42,
   /** Blask okien i lamp zgaszonych w sprite'cie [liniowe] (kanał B maski). */
   windowColor: Object.freeze([1.0, 0.74, 0.45]),
-  windowPower: 2.2
+  windowPower: 1.4
 });
 
 const T = SPACE_TRUCKS_TUNE;
@@ -224,20 +224,20 @@ function getEmitMaterial() {
     const isCone = step(1.5, kind);
     const fade = clamp(float(1).sub(r2), 0, 1);
     // Lampa: rdzeń + poświata do krawędzi kwadu.
-    const lamp = exp(r2.mul(-26)).mul(1.6).add(exp(r2.mul(-5.5)).mul(0.42)).mul(fade);
+    const lamp = exp(r2.mul(-30)).add(exp(r2.mul(-7)).mul(0.14)).mul(fade);
     // Płomień: u = 0 przy dyszy, zwęża się ku końcowi; biały rdzeń, migotanie.
     const rest = clamp(float(1).sub(u), 0, 1);
-    const wid = sqrt(rest).mul(min(u.mul(14).add(0.45), 1)).mul(0.92).add(0.02);
+    const wid = sqrt(rest).mul(min(u.mul(10).add(0.55), 1)).mul(0.7).add(0.02);
     const q = lat.div(wid);
     const flick = sin(U.uTime.mul(41).add(seed.mul(17)).add(u.mul(9))).mul(0.1).add(sin(U.uTime.mul(97).add(seed.mul(31))).mul(0.06)).add(0.92);
     const body = exp(q.mul(q).mul(-3.2)).mul(rest).mul(rest).mul(flick);
-    const coreF = exp(q.mul(q).mul(-20)).mul(rest).mul(rest).mul(rest).mul(rest).mul(2.6);
+    const coreF = exp(q.mul(q).mul(-14)).mul(rest).mul(rest).mul(rest).mul(rest).mul(0.9);
     const flame = body.add(coreF);
     // Stożek: od reflektora, miękkie brzegi.
     const spread = u.mul(0.88).add(0.12);
     const cone = smoothstep(1, 0.2, lat.div(spread)).mul(rest).mul(rest).mul(smoothstep(0, 0.1, u));
     const f = lamp.mul(isLamp).add(flame.mul(isFlame)).add(cone.mul(isCone));
-    const white = coreF.mul(isFlame).mul(2.4);
+    const white = coreF.mul(isFlame).mul(1.1);
     const rgb = vColor.mul(f).add(white);
     return vec4(rgb, min(max(max(rgb.x, rgb.y), rgb.z), 1));
   })();
@@ -525,7 +525,7 @@ export class SpaceTrucks3D {
         const ny = noz[i][1] * scale;
         const d = noz[i][2] * scale;
         const len = d * (T.flameIdle + T.flameFull * thr);
-        const wid = d * 1.25;
+        const wid = d * 1.15;
         // Kwad wzdłuż kursu do tyłu: środek = wylot − kurs · (długość / 2).
         const px = wx + (nx - len * 0.5) * c - ny * s;
         const py = wy + (nx - len * 0.5) * s + ny * c;

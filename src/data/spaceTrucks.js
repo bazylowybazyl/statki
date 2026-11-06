@@ -38,13 +38,13 @@ export const TRUCK_TRAILER_TONNES = 30;
  * sygnalizator (obrotowy błysk), side — lampki pozycyjne burt ciągnika (czerwona −y, zielona +y).
  */
 export const TRUCK_LIGHT_KINDS = Object.freeze({
-  head: Object.freeze({ color: [1.0, 0.93, 0.78], power: 4.2, radius: 1.5, minPx: 1.8 }),
-  tail: Object.freeze({ color: [1.0, 0.09, 0.05], power: 3.4, radius: 1.3, minPx: 1.6 }),
-  marker: Object.freeze({ color: [1.0, 0.52, 0.1], power: 2.4, radius: 0.85, minPx: 0.9 }),
-  roof: Object.freeze({ color: [1.0, 0.6, 0.16], power: 2.8, radius: 0.62, minPx: 0 }),
-  beacon: Object.freeze({ color: [1.0, 0.42, 0.04], power: 9.0, radius: 2.4, minPx: 2.6 }),
-  portSide: Object.freeze({ color: [1.0, 0.08, 0.06], power: 2.6, radius: 0.9, minPx: 1.0 }),
-  starSide: Object.freeze({ color: [0.1, 1.0, 0.32], power: 2.6, radius: 0.9, minPx: 1.0 })
+  head: Object.freeze({ color: [1.0, 0.93, 0.78], power: 3.0, radius: 1.0, minPx: 1.3 }),
+  tail: Object.freeze({ color: [1.0, 0.09, 0.05], power: 2.6, radius: 0.85, minPx: 1.2 }),
+  marker: Object.freeze({ color: [1.0, 0.52, 0.1], power: 1.9, radius: 0.5, minPx: 0.7 }),
+  roof: Object.freeze({ color: [1.0, 0.6, 0.16], power: 2.0, radius: 0.42, minPx: 0 }),
+  beacon: Object.freeze({ color: [1.0, 0.42, 0.04], power: 6.0, radius: 1.5, minPx: 2.0 }),
+  portSide: Object.freeze({ color: [1.0, 0.08, 0.06], power: 2.0, radius: 0.55, minPx: 0.8 }),
+  starSide: Object.freeze({ color: [0.1, 1.0, 0.32], power: 2.0, radius: 0.55, minPx: 0.8 })
 });
 
 const pts = (list) => Object.freeze(list.map((p) => Object.freeze(p)));
