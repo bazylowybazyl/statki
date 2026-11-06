@@ -149,7 +149,6 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |
 | `kreator-kadlubow` | Kreator kadłubów (demo, niewpięty): format projektu, klocki i strażnik „bez czitowania”, kompozytor TSL, sieć systemów (kable i rury), przyjazny edytor „Stocznia” (przeciągnij i upuść), budowa w workerze z pamięcią etapów, warstwa barw (palety nacji, pędzel), statki cywilne (rola, ładunek, presety frachtowców) |
 | `ciala-swiata` | Budowle na silniku belek: kawałki, kotwice, broń, rozpad, skóry |
-| `zawalenia-budowli` | Zawalenia budowli („Teardown bez wokseli”): graf nośny (fala w konstrukcji, zawias, front), klastry sztywne `rigid`, pole płyty dysku, decyzje użytkownika D0–D24, etapy E0–E10, narzędzia i testy (niewpięte w grę do E5) |
 | `woksele-zawalen` | Wiązane woksele na GPU (`src/3d/woksele/`): solver, obraz, demo; w misji 1 obraz bazy piratów (skóra z wypieku, zdarzenia trafień), rozgrywka bez zmian |
 | `wybuchy-gaz` | Wybuchy WebGPU i gaz 3D: domeny, przeszkody, zbiorniki paliwa, dym zgniotu |
 | `flota-ai` | Szyk floty, formacje, omijanie przeszkód, rozkazy RTS, AI poza krokiem fizyki |
