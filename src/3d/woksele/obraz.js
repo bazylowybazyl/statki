@@ -13,6 +13,7 @@ import {
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
 import { STRONA } from './budowa.js';
 import { createWokselePyl } from './pyl.js';
+import { applySunShadowToBuiltinMaterial, sunFill, sunVisibility } from '../sunShadowMask.js';
 
 export const L_ODLAMKI = 5;
 export const WZORY = 64;
@@ -23,10 +24,15 @@ const ZAKLADKA = 0.51;
 const ZAKLADKA_DYSK = 0.52; // § 4.2: cztery rogi na pokładzie zostawiają kropki przy 2%
 const FAZA_D = 1e-3;
 const KD_DYSK = 4;
+const ROZMIAR_SKORY = 4096;
 
 // Paleta z obraz4.mjs (mat2): strop, kolumna, fasada, rdzeń, dysk, kotwica. Różnice mniejsze niż szum.
 const PAL = [[0.2, 0.19, 0.17], [0.17, 0.162, 0.148], [0.105, 0.108, 0.112], [0.14, 0.135, 0.125], [0.17, 0.165, 0.15], [0.09, 0.09, 0.085]];
+// Gra: te same rodzaje w barwach bazy piratów (ciemne żelazo z rdzą, styl PIRATE_PORT_STYLE), liniowo. Prośba użytkownika 2026-11-06: „budowla piratów jest brązowa, to środek też w tych klimatach”.
+const PAL_PIRACI = [[0.2, 0.135, 0.095], [0.165, 0.105, 0.07], [0.115, 0.082, 0.065], [0.15, 0.078, 0.048], [0.175, 0.118, 0.082], [0.085, 0.062, 0.05]];
 const PYLK = [0.2, 0.19, 0.175];
+// Barwy pomieszczeń w tonach palety piratów (rdza, brąz, ciemne żelazo, jasna płyta, minia), przygaszone: pełne barwy z palety dawały czerwono-białe konfetti (.tmp/woksele-demo/GRA/t4/seria-010.png).
+const POKOJ = [[0.15, 0.078, 0.042], [0.105, 0.062, 0.038], [0.05, 0.032, 0.025], [0.135, 0.105, 0.08], [0.135, 0.045, 0.03]];
 const OSI = [[0.25, 0.25, 0.5], [0.45, 0.45, 0.1], [0.45, 0.3, 0.25], [0.33, 0.33, 0.34], [0.25, 0.25, 0.5], [0.33, 0.33, 0.34]];
 
 /** Hasz z obraz4.mjs. Bez Math.random: wzory i ton zależą tylko od numerów. */
@@ -67,11 +73,11 @@ function zapiszWzory(wy, baza) {
   }
 }
 
-// AGENT: wGrze (dema/woksele-zawalenia/wGrze.js, pomiar w misji 1): siatki rysuje pass FG gry, więc normalne dostają obrót bazy, a cel HDR i kwad wyjścia nie są potrzebne. Bez tej opcji graf i cele jak dotąd.
+// AGENT: wGrze (src/3d/woksele/wGrze.js, pomiar w misji 1): siatki rysuje pass FG gry, więc normalne dostają obrót bazy, a cel HDR i kwad wyjścia nie są potrzebne. Bez tej opcji graf i cele jak dotąd.
 export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = false }) {
   const MAX = solver.maxNodes;
   const A = solver.atrybuty;
-  const { uN, uGStala, uSkG, uGruntZ } = solver.uniformy;
+  const { uN, uGStala, uSkG, uGruntZ, uGinieC, uGinieR2, uKulaR } = solver.uniformy;
 
   // ── Bufory ── wRama [3i]: F0 + d, F1 + lost, F2 + bity odłamków, które poszły do puli gruzu. wDane [2i]: pozycja początkowa + ton ziarna, [2i + 1]: barwa + flagi, od BAZA_WZ wzory.
   const BAZA_WZ = 2 * MAX;
@@ -111,6 +117,29 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const uObrC = uniform(1).setName('uObrObrotC');
   const uObrS = uniform(0).setName('uObrObrotS');
   const doSceny = wGrze ? (w) => vec3(w.x.mul(uObrC).add(w.y.mul(uObrS)), w.y.mul(uObrC).sub(w.x.mul(uObrS)), w.z) : (w) => w;
+
+  // ── Gra: przekrój wysokości i skóra z wypieku ── Ta sama siatka rysuje się w passie tła (znak −1: węzły pod uCiecieZ, pod kadłubami) i w passie FG (znak +1: nad nim), jak bryły starej bazy. Znak w userData obiektu, jeden pipeline.
+  const uZnakZ = uniform(1).setName('uWokZnakZ').onObjectUpdate(({ object }) => object?.userData?.znakZ ?? 1);
+  const uCiecieZ = uniform(150).setName('uWokCiecieZ');
+  // Skóra: obraz starej bazy z góry (kolor HDR i głębia) w układzie węzłów. Górna ściana przy powierzchni bierze kolor z wypieku, wnętrza i przełomy zostają betonem. uSkora = 0: bez wypieku.
+  const rtSkora = wGrze ? new THREE.RenderTarget(ROZMIAR_SKORY, ROZMIAR_SKORY, { depthBuffer: true, type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(ROZMIAR_SKORY, ROZMIAR_SKORY, THREE.FloatType) }) : null;
+  // Ten sam widok ze zgaszonym słońcem: lampy i okna świecą, reszta w świetle otoczenia. Maska słońca miesza oba, tak samo jak materiał starej bazy (człon słońca × vis). Mniejszy, bo w cieniu detal i tak ginie.
+  const rtSkoraCien = wGrze ? new THREE.RenderTarget(ROZMIAR_SKORY / 2, ROZMIAR_SKORY / 2, { depthBuffer: true, type: THREE.HalfFloatType, depthTexture: new THREE.DepthTexture(ROZMIAR_SKORY / 2, ROZMIAR_SKORY / 2, THREE.FloatType) }) : null;
+  for (const rt of [rtSkora, rtSkoraCien]) {
+    if (!rt) continue;
+    rt.texture.generateMipmaps = true;
+    rt.texture.minFilter = THREE.LinearMipmapLinearFilter;
+    rt.texture.magFilter = THREE.LinearFilter;
+  }
+  const uSkora = uniform(0).setName('uWokSkora');
+  const uSkoraMin = uniform(new THREE.Vector2(0, 0)).setName('uWokSkoraMin');
+  const uSkoraOdw = uniform(new THREE.Vector2(1, 1)).setName('uWokSkoraOdw');
+  const uSkoraGora = uniform(0).setName('uWokSkoraGora');
+  const uSkoraZakres = uniform(1).setName('uWokSkoraZakres');
+  const uSkoraMoc = uniform(1).setName('uWokSkoraMoc');
+  const uAoMoc = uniform(1).setName('uWokAoMoc');
+  const uBetonSwiatlo = uniform(1.1).setName('uWokBetonSwiatlo');
+  const uSkalaSlonce = uniform(new THREE.Vector3(0, 0, 1)).setName('uWokSkalaSlonce');
   const fv = (e) => { const v = float(0).toVar(); v.assign(e); return v; };
   const uv_ = (e) => { const v = uint(0).toVar(); v.assign(e); return v; };
   const v3 = (e) => { const v = vec3(0).toVar(); v.assign(e); return v; };
@@ -266,6 +295,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
       x.z.assign(zG);
       v.assign(vec3(v.x.mul(0.75), v.y.mul(0.75), 0));
     });
+    // Gra: gruz doleciał do skały i znika, bez czarnych kropek na planetoidzie (a.w = 0: slot zapada się w punkt, kernel go pomija). Demo: R² = 0.
+    const doSkaly = v3(x.sub(uGinieC));
+    If(dot(doSkaly, doSkaly).lessThan(uGinieR2), () => { a.w.assign(0); });
     // Płaszczyzna pokładu (§ 4.5): gruz leży na dysku poza kołem otworu, reszta leci przez otwór. Bez kontaktu z bryłami.
     const r2 = fv(dot(x.xy, x.xy));
     If(a.z.greaterThanEqual(uPokladZ).and(x.z.lessThan(uPokladZ)).and(r2.lessThan(uDyskR2)).and(r2.greaterThan(uOtworR2)), () => {
@@ -313,6 +345,11 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const vK = varyingProperty('vec3', 'vWokK');
   const vP = varyingProperty('vec3', 'vWokP');
   const vE = varyingProperty('vec3', 'vWokE');
+  const vS = varyingProperty('vec4', 'vWokS'); // gra: górna ściana w spoczynku, z normalnej dziś, d, przełom (ściana, która w spoczynku miała sąsiada: wnętrze materiału)
+  const vNf = varyingProperty('vec3', 'vWokNf'); // gra: normalna ściany w układzie komórki, w spoczynku
+  const vFas = varyingProperty('float', 'vWokFas'); // gra: węzeł fasady (wieżowce): okna na ścianach
+  const vPL = varyingProperty('vec3', 'vWokPL'); // gra: pozycja w układzie węzłów (światła błysku; positionWorld przy 5–10 mln j. nie trafia w dane lokalne)
+  const vNaSkale = varyingProperty('float', 'vWokNaSkale'); // gra: mnożnik światła gruzu przy skale
 
   // ── Wierzchołek, § 4.2 ── Najpierw odczyt d, maski i flag, reszta w gałęzi aktywnego slotu. Zmienne przypisane przed rozgałęzieniem (pułapka 39), varyingi na końcu.
   // uK: sloty na węzeł tego przebiegu. Układ id z § 4 przy każdym K: id < n to slot 0 węzła id, dalej i = (id − n) / (K − 1), s = 1 + (id − n) % (K − 1). Przy K = 7 to SLOTY = 6 jak dotąd.
@@ -334,10 +371,19 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     const Nw = v3(vec3(0, 0, 1));
     const Kol = v3(vec3(0));
     const P0 = v3(vec3(0));
+    const Dd = fv(0);
+    const Przelom = fv(1); // kawałki i pręty: zawsze świeży przełom; cały blok niżej pyta o wiązanie ściany w spoczynku
+    const Fasada = fv(0);
+    const naPassie = wGrze && varyingi ? pw.z.sub(uCiecieZ).mul(uZnakZ).greaterThanEqual(0) : pw.w.greaterThanEqual(0);
 
-    If(pw.w.greaterThanEqual(0), () => {
+    If(pw.w.greaterThanEqual(0).and(naPassie), () => {
       const f0 = v4(wRamaR.element(i3));
       const d = fv(f0.w);
+      Dd.assign(d);
+      if (wGrze && varyingi) {
+        const kdF = fv(float(flagi(i).shiftRight(uint(2)).bitAnd(uint(7))));
+        Fasada.assign(step(1.5, kdF).mul(step(kdF, 2.5)));
+      }
       const mI = uv_(wMaskaR.element(i));
       const mA = uv_(mI.bitAnd(uint(63)));
       const x = v3(pw.xyz.add(wWezR.element(i3.add(uint(1))).xyz.mul(uTau)));
@@ -409,6 +455,13 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
           const d0 = v4(wDaneR.element(uint(2).mul(i)));
           const d1 = v4(wDaneR.element(uint(2).mul(i).add(uint(1))));
           const fl = uv_(uint(d1.w));
+          if (wGrze && varyingi) {
+            // Maska wiązań w spoczynku: bit 2a to +a, bit 2a + 1 to −a (jak bp, bm w kObraz). Ściana z sąsiadem w spoczynku odsłania wnętrze materiału, bez sąsiada to poszycie.
+            const m0F = uv_(fl.shiftRight(uint(5)).bitAnd(uint(63)));
+            const osF = uv_(uint(step(0.5, abs(nf.y))).add(uint(step(0.5, abs(nf.z))).mul(uint(2))));
+            const ujem = uv_(uint(step(nf.x.add(nf.y).add(nf.z), 0)));
+            Przelom.assign(float(m0F.shiftRight(osF.mul(uint(2)).add(ujem)).bitAnd(uint(1))));
+          }
           const zak = fv(ZAKLADKA);
           If(fl.shiftRight(uint(2)).bitAnd(uint(7)).equal(uint(KD_DYSK)), () => { zak.assign(ZAKLADKA_DYSK); });
           const off = v3(C.mul(zak).mul(uDx));
@@ -524,6 +577,17 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
       vK.assign(Kol);
       vP.assign(P0);
       vE.assign(eE);
+      if (wGrze) {
+        vS.assign(vec4(step(0.5, nf.z), Nw.z.div(max(length(Nw), 1e-4)), Dd, Przelom));
+        vNf.assign(nf);
+        vFas.assign(Fasada);
+        vPL.assign(P);
+        // Gruz na skale ma światło skały pod sobą: po nocnej stronie kuli gaśnie razem z nią, a w locie zostaje światło bazy. Bez tego hałda świeciła na czarnej skale. Na wierzchołku, bo we fragmencie kosztowało +0,44 ms przy 5120 × 1440.
+        const eS = v3(P.sub(uGinieC));
+        const lS = fv(length(eS));
+        const tS = fv(float(1).sub(smoothstep(300, 6000, lS.sub(uKulaR))));
+        vNaSkale.assign(mix(float(1), clamp(dot(eS.div(lS.add(1e-3)), uSkalaSlonce).mul(1.6).add(0.08), 0.03, 0.85), tS));
+      }
     }
     return P;
   })();
@@ -570,7 +634,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const uNear = uniform(camera.near).setName('uObrNear');
   const uFar = uniform(camera.far).setName('uObrFar');
   const liniowa = (d) => uNear.mul(uFar).div(uFar.sub(d.mul(uFar.sub(uNear))));
-  const pyl = createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp: uAoFp });
+  const pyl = createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp: uAoFp, wGrze });
   Object.assign(kernele, pyl.kernele);
   listaObrazu.push(...pyl.lista);
   let aoN = null;
@@ -623,12 +687,96 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const mat = new THREE.MeshLambertNodeMaterial();
   mat.name = 'WokBryly';
   mat.map = null;
+  if (wGrze) applySunShadowToBuiltinMaterial(mat); // słońce bezpośrednie czyta maskę: cień okrętu kładzie się też na ścianach i przełomach
   mat.positionNode = budujPozycje({ varyingi: true, prety: true });
   mat.castShadowPositionNode = budujPozycje({ varyingi: false, prety: false, uK: uSlotyCien });
   mat.normalNode = normalize(vN);
-  const aoM = aoCzytaj().toVar('wokAo');
+  const aoM = wGrze ? mix(float(1), aoCzytaj(), uAoMoc).toVar('wokAo') : aoCzytaj().toVar('wokAo');
+  // Skóra z wypieku (gra). Próbki poza gałęziami (pułapka 15): rgb · a to emisja, a daje wagę betonu w colorNode.
+  const skoraKol = rtSkora ? texture(rtSkora.texture, vec2(0)) : null;
+  const skoraKolCien = rtSkoraCien ? texture(rtSkoraCien.texture, vec2(0)) : null;
+  const skoraGleb = rtSkora ? texture(rtSkora.depthTexture, vec2(0)) : null;
+  const visM = rtSkora ? sunVisibility().toVar('wokVis') : null;
+  const skoraFn = rtSkora ? Fn(() => {
+    const p = v3(vP);
+    const u = vec2(0).toVar();
+    u.assign(vec2(p.x.sub(uSkoraMin.x).mul(uSkoraOdw.x), float(1).sub(p.y.sub(uSkoraMin.y).mul(uSkoraOdw.y))));
+    const kS = v4(skoraKol.sample(u));
+    const kC = v4(skoraKolCien.sample(u));
+    const k = v4(vec4(mix(kC.rgb, kS.rgb, visM), kS.a));
+    const gl = fv(skoraGleb.sample(u).x);
+    const zPow = fv(uSkoraGora.sub(gl.mul(uSkoraZakres)));
+    // Ściana górna, która w spoczynku leżała przy powierzchni z wypieku. Niżej (wnętrza, dysk pod bębnem, pokład pod wieżowcem) wypiek pokazuje co innego niż ta ściana: beton.
+    // AGENT: próg szeroki, bo bryły starej bazy wystają ponad siatkę węzłów (korona i zwężenie wieżowca, dachy hangarów): przy 50–100 j. dach W-1 wychodził czarny (.tmp/woksele-demo/GRA/t1/01-przed.png).
+    const przyPow = fv(float(1).sub(smoothstep(300, 500, zPow.sub(p.z))));
+    const a = fv(k.a.mul(vS.x).mul(przyPow).mul(float(1).sub(vS.w)).mul(uSkora));
+    // Przechył kawałka: światło z wypieku jest światłem górnej ściany, obrócona dostaje mniej. Uszkodzony traci lampy i okna.
+    const nz = fv(clamp(vS.y, 0, 1));
+    const sufit = fv(mix(float(60), float(0.55), smoothstep(0, 0.12, vS.z)).mul(uSkoraMoc));
+    const rgb = v3(min(k.rgb, vec3(sufit)).mul(nz.mul(0.8).add(0.2)).mul(float(1).sub(vS.z.mul(0.45))));
+    return vec4(rgb, a);
+  })().toVar('wokSkora') : null;
+
+  // Wnętrza (gra, prośba użytkownika 2026-11-06: „żeby przy rozpadzie wyglądało, że faktycznie coś tam w środku było”). Rysunek z pozycji początkowej, bez geometrii: pomieszczenia 164 × 164 × 62 j., każde z własną barwą z palety piratów,
+  // grodzie, płyty podłóg, rury na ścianach, lampy w części pomieszczeń. Pattern siedzi w materiale jak w przekroju, więc odłam po obu stronach pęknięcia pokazuje dalszy ciąg tego samego pokoju. Poszycie (ściana bez sąsiada w spoczynku): barwa bazy z mipmapy wypieku i szwy płyt.
+  // AGENT: bez gałęzi, same maski: pochodne (fwidth) i próbka mipmapy przed całą resztą (pułapki 15, 29). Rgb: albedo, a: moc lampy.
+  const WN_R = [164, 164, 62]; // bok wyraźnie większy niż komórka 40 j.: inaczej każda kostka ma inną barwę i wychodzi mozaika, a nie pomieszczenia
+  const wnetrzeFn = rtSkora ? Fn(() => {
+    const p = v3(vP);
+    const sz = fv(fwidth(p.x).add(fwidth(p.y)).add(fwidth(p.z)));
+    const zan = fv(clamp(float(1).sub(sz.div(18)), 0, 1)); // z daleka linie zlewają się w szum: gasną, a barwy pomieszczeń zostają
+    const u = vec2(0).toVar();
+    u.assign(vec2(p.x.sub(uSkoraMin.x).mul(uSkoraOdw.x), float(1).sub(p.y.sub(uSkoraMin.y).mul(uSkoraOdw.y))));
+    const kN = v4(skoraKol.sample(u).level(5));
+    const f3 = v3(p.div(vec3(WN_R[0], WN_R[1], WN_R[2])));
+    const id = v3(f3.floor());
+    const f = v3(f3.sub(id));
+    const h = uv_(haszT(uint(id.x.add(4096)).mul(uint(73856093)).bitXor(uint(id.y.add(4096)).mul(uint(19349663))).bitXor(uint(id.z.add(4096)).mul(uint(83492791)))));
+    const b0 = fv(czesc(h, 0, 1)), b1 = fv(czesc(h, 1, 1)), b2 = fv(czesc(h, 2, 1)), b3 = fv(czesc(h, 3, 1)), b4 = fv(czesc(h, 4, 1)), b5 = fv(czesc(h, 5, 1));
+    const c = (q) => vec3(POKOJ[q][0], POKOJ[q][1], POKOJ[q][2]);
+    const pokoj = v3(mix(mix(c(0), c(1), b0), mix(c(2), c(3), b0), b1));
+    pokoj.assign(mix(pokoj, c(4), b2.mul(b3).mul(b4))); // co ósmy: minia
+    pokoj.mulAssign(czesc(h, 8, 255).mul(0.35).add(0.85));
+    const gora = fv(step(0.5, abs(vNf.z)));
+    // Odległość do grodzi w j.: najbliższa ściana pomieszczenia.
+    const gx = fv(min(f.x, float(1).sub(f.x)).mul(WN_R[0])), gy = fv(min(f.y, float(1).sub(f.y)).mul(WN_R[1])), gz = fv(min(f.z, float(1).sub(f.z)).mul(WN_R[2]));
+    const grodz = fv(float(1).sub(smoothstep(2, 5, min(min(gx, gy), gz))));
+    // Szwy płyt: w podłodze po x, y, na ścianie po obwodzie i wysokości.
+    const q2 = vec2(0).toVar();
+    q2.assign(mix(vec2(p.x.add(p.y), p.z), p.xy, gora));
+    const qa = vec2(0).toVar();
+    qa.assign(abs(fract(q2.div(21)).sub(0.5)).mul(21));
+    const szew = fv(float(1).sub(smoothstep(0.6, 1.6, min(qa.x, qa.y))));
+    // Rury: ściana, dwa pasy pod sufitem w połowie pomieszczeń.
+    const rura = fv(smoothstep(0.2, 0.22, f.z).mul(float(1).sub(smoothstep(0.27, 0.29, f.z))).add(smoothstep(0.34, 0.355, f.z).mul(float(1).sub(smoothstep(0.385, 0.4, f.z)))).mul(b4).mul(float(1).sub(gora)));
+    const kolRury = v3(mix(vec3(0.5, 0.17, 0.035), vec3(0.2, 0.2, 0.19), b5));
+    pokoj.assign(mix(pokoj, kolRury, rura.mul(zan)));
+    pokoj.mulAssign(float(1).sub(szew.mul(0.45).mul(zan)));
+    pokoj.mulAssign(float(1).sub(grodz.mul(0.8).mul(zan)));
+    // Lampy w co drugim pomieszczeniu: pas pod sufitem na ścianie, kropka na środku podłogi z góry.
+    const pas = fv(smoothstep(0.8, 0.82, f.z).mul(float(1).sub(smoothstep(0.87, 0.89, f.z))).mul(float(1).sub(gora)));
+    const dx = v3(vec3(f.x.sub(0.5), f.y.sub(0.5), 0));
+    const kropka = fv(float(1).sub(smoothstep(0.05, 0.1, length(dx))).mul(gora));
+    const lampa = fv(pas.add(kropka).mul(b5).mul(zan));
+    // Poszycie albo pomieszczenie: pomieszczenie na przełomie, na kawałku po rozpadzie i na górnej ścianie bez wypieku.
+    const dmg = fv(smoothstep(0, 0.05, vS.z));
+    const m = fv(max(max(vS.w, dmg), vS.x.mul(float(1).sub(skoraFn.a))));
+    const poszycie = v3(mix(barwaZP0(), min(kN.rgb, vec3(0.42)), kN.a.mul(0.35)));
+    poszycie.mulAssign(float(1).sub(szew.mul(0.3).mul(zan)));
+    // Okna na ścianach wieżowców: wypiek z góry ich nie widzi, a z kamery gry przy brzegu kadru to właśnie ściana jest widoczna (w starej bazie pasy okien M.warm, piętro co ~50 j. po ścisku wysokości). Co któreś okno ciemne, jak w highriseTower.
+    const pietroF = fv(p.z.div(50));
+    const pietro = fv(pietroF.floor());
+    const wz = fv(pietroF.sub(pietro));
+    const pasO = fv(smoothstep(0.42, 0.46, wz).mul(float(1).sub(smoothstep(0.62, 0.66, wz))));
+    const pPoz = fv(fract(p.x.add(p.y).div(190)));
+    const przerwa = fv(smoothstep(0.08, 0.11, pPoz).mul(float(1).sub(smoothstep(0.89, 0.92, pPoz))));
+    const ciemne = fv(step(0.12, czesc(haszT(uint(pietro.add(4096))), 0, 255)));
+    const okna = fv(vFas.mul(float(1).sub(gora)).mul(float(1).sub(m)).mul(pasO).mul(przerwa).mul(ciemne).mul(zan));
+    return vec4(mix(poszycie, mix(pokoj, min(kN.rgb, vec3(0.3)), kN.a.mul(0.3)), m), lampa.mul(m).add(okna.mul(1.6)));
+  })().toVar('wokWnetrze') : null;
+
   // Film: otoczenie × a, słońce × (0,5 + 0,5·a). Stąd barwa × (0,5 + 0,5·a), a w aoNode reszta dla otoczenia.
-  mat.colorNode = barwaZP0().mul(aoM.mul(0.5).add(0.5));
+  mat.colorNode = wGrze ? wnetrzeFn.rgb.mul(aoM.mul(0.5).add(0.5)).mul(float(1).sub(skoraFn.a)).mul(vNaSkale) : barwaZP0().mul(aoM.mul(0.5).add(0.5));
   mat.aoNode = aoM.div(aoM.mul(0.5).add(0.5));
   // Żar z wierzchołka + światło błysku na bryłach: najwyżej 4 najmocniejsze błyski, numery slotów i moc liczy CPU raz na klatkę, pozycje z wBlysk (nosiciel jedzie, CPU go nie zna). Bez błysku koszt to 4 porównania uniformów.
   // AGENT: poświata mała (2 r zamiast 3,5 r z obraz5.mjs) i nieokrągła: z góry dwa błyski na płaskim pokładzie wyglądały przez 0,1 s jak lampy, a duże światło przez okna jak plama (SPEC-S5-propozycja.md § 4, uwaga ze strojenia).
@@ -636,7 +784,16 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const wBlyskF = storage(A.blysk, 'vec4', 3 * solver.blyski).setName('wokBlysk').toReadOnly();
   mat.emissiveNode = Fn(() => {
     const e = v3(vE);
-    const pw = v3(positionWorld);
+    const pw = v3(wGrze ? vPL : positionWorld);
+    if (wGrze) {
+      e.addAssign(skoraFn.rgb.mul(skoraFn.a).mul(aoM).mul(vNaSkale));
+      // Światło od góry: słońce gry leży prawie w płaszczyźnie, więc z kamery z góry gruz i wnętrza dostają samo otoczenie i wychodzą czarne (zrzut t1). Odbite od góry, jak uniesione słońce starej bazy.
+      const zGory = fv(clamp(vS.y, 0, 1).mul(0.9).add(0.35));
+      e.addAssign(wnetrzeFn.rgb.mul(float(1).sub(skoraFn.a)).mul(zGory).mul(aoM).mul(uBetonSwiatlo).mul(sunFill(visM)).mul(vNaSkale));
+      // Lampy wnętrz gasną z uszkodzeniem i zasilaniem bazy, jak okna skóry.
+      const lampaMoc = fv(wnetrzeFn.a.mul(float(1).sub(smoothstep(0, 0.3, vS.z))).mul(uSkoraMoc).mul(float(1).sub(skoraFn.a)));
+      e.addAssign(vec3(1.5, 0.78, 0.28).mul(lampaMoc));
+    }
     for (const { s, i: moc, r } of swiatla) {
       If(moc.greaterThan(0), () => {
         const s3 = uv_(uint(3).mul(uint(s)));
@@ -682,14 +839,28 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     const s = fv(sin(kat));
     const obroc = (w) => w.mul(c).add(cross(os, w).mul(s)).add(os.mul(dot(os, w).mul(float(1).sub(c))));
     const P = v3(a.xyz);
-    If(a.w.greaterThan(0), () => { P.assign(x.add(obroc(C.mul(sk).mul(a.w)))); });
+    const naPassieG = wGrze ? x.z.sub(uCiecieZ).mul(uZnakZ).greaterThanEqual(0) : a.w.greaterThan(0);
+    If(a.w.greaterThan(0).and(naPassieG), () => { P.assign(x.add(obroc(C.mul(sk).mul(a.w)))); });
     const d1 = v4(wDaneR.element(uint(2).mul(uint(b.w)).add(uint(1))));
-    vKG.assign(d1.xyz.mul(float(0.75).add(czesc(hq, 26, 31).mul(0.4))));
+    const kolG = v3(d1.xyz);
+    if (wGrze) {
+      // Gruz w barwie miejsca, z którego odpadł: mały poziom mipmapy, bez lamp (rgb ściśnięte), bez wypieku zostaje beton.
+      const d0G = v4(wDaneR.element(uint(2).mul(uint(b.w))));
+      const uG = vec2(0).toVar();
+      uG.assign(vec2(d0G.x.sub(uSkoraMin.x).mul(uSkoraOdw.x), float(1).sub(d0G.y.sub(uSkoraMin.y).mul(uSkoraOdw.y))));
+      const kG = v4(skoraKol.sample(uG).level(3));
+      kolG.assign(mix(kolG, min(kG.rgb, vec3(0.3)), kG.a.mul(uSkora).mul(0.45)));
+    }
+    vKG.assign(kolG.mul(float(0.75).add(czesc(hq, 26, 31).mul(0.4))));
     vNG.assign(cameraViewMatrix.mul(vec4(doSceny(obroc(nf)), 0)).xyz);
     return P;
   })();
   matGruz.normalNode = normalize(vNG);
   matGruz.colorNode = vKG;
+  if (wGrze) {
+    applySunShadowToBuiltinMaterial(matGruz);
+    matGruz.emissiveNode = vKG.mul(0.55).mul(uBetonSwiatlo).mul(sunFill(sunVisibility())); // jak beton brył: bez tego z góry czarne kropki
+  }
   const meshGruz = new THREE.Mesh(geoGruz, matGruz);
   meshGruz.name = 'WokGruz';
   meshGruz.frustumCulled = false;
@@ -823,7 +994,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
       dane[b + 3] = zi >= 0 ? 0.7 + (0.55 * (hz & 255)) / 255 : 1;
       // Wieniec dysku jest kotwicą, ale ciemna kotwica rysowałaby na pokładzie zygzak po komórkach.
       const kb = rDysk > 0 && kd === 5 ? 4 : kd;
-      dane[b + 4] = PAL[kb][0]; dane[b + 5] = PAL[kb][1]; dane[b + 6] = PAL[kb][2]; dane[b + 7] = m0[i];
+      const pal = wGrze ? PAL_PIRACI : PAL;
+      dane[b + 4] = pal[kb][0]; dane[b + 5] = pal[kb][1]; dane[b + 6] = pal[kb][2]; dane[b + 7] = m0[i];
       const q = 12 * i;
       rama[q] = 1; rama[q + 1] = 0; rama[q + 2] = 0; rama[q + 3] = 0;
       rama[q + 4] = 0; rama[q + 5] = 1; rama[q + 6] = 0; rama[q + 7] = 0;
@@ -1050,11 +1222,22 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     renderer.setClearColor(clearC, clearA);
     renderer.autoClear = ac;
   }
-  /** Pomiar w grze: obrót siatek bazy wokół z (macierz świata), ten sam w normalnych. */
+  /** W grze: obrót siatek bazy wokół z (macierz świata), ten sam w normalnych. */
   function ustawObrotNormalnych(kat) { uObrC.value = Math.cos(kat); uObrS.value = -Math.sin(kat); }
+  /** Kierunek do słońca przy skale, w układzie węzłów (jednostkowy, w płaszczyźnie gry). */
+  function ustawSlonceSkaly(x, y) { uSkalaSlonce.value.set(x, y, 0); }
+
+  /** W grze: układ wypieku skóry. x0, y0, w, h: prostokąt w układzie węzłów, gora: z bliskiej płaszczyzny kamery wypieku, zakres: far − near. */
+  function ustawSkore({ x0, y0, w, h, gora, zakres, wl = 1 }) {
+    uSkoraMin.value.set(x0, y0);
+    uSkoraOdw.value.set(1 / w, 1 / h);
+    uSkoraGora.value = gora;
+    uSkoraZakres.value = zakres;
+    uSkora.value = wl;
+  }
 
   return {
-    rysujCele, ustawObrotNormalnych, kwadSsao,
+    rysujCele, ustawObrotNormalnych, ustawSlonceSkaly, ustawSkore, kwadSsao, rtSkora, rtSkoraCien, uSkoraMoc, uAoMoc, uCiecieZ,
     kernele, listaObrazu, scene, sceneGleb, cienieDodatkowe, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, rtSsao, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki, liczGruzu: aLicz },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
     wczytaj, pelnyObraz, ustawLod, ustawCien, ustawCienZSceny, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,

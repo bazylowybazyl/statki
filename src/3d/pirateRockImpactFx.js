@@ -1328,9 +1328,21 @@ function zbierzZakresPool(p) {
 // Dekoder rekordu ROCK_IMPACT i cel (obraz planetoidy — pirateBaseGame.js rejestruje swoją instancję).
 
 let _host = null;
+let _gas = null;
 /** Cel zdarzeń uderzeń (RockImpactFx planetoidy) — null: zdarzenia przepadają (baza bez skały w scenie). */
 export function setRockImpactHost(host) { _host = host || null; }
 export function rockImpactHost() { return _host; }
+
+/**
+ * Uderzenie z modułu renderu, bez rekordu z gry (wiązane woksele, src/3d/woksele/wGrze.js: węzły doleciały do skały na GPU). Ten sam cel co dekoder.
+ * ev jak rekord ROCK_IMPACT (gra: x, y; z sceny; fn = 0: bez obrysu). Zwraca true, gdy obraz coś narysował.
+ */
+export function rockImpactEvent(type, ev) {
+  const h = _host;
+  if (!h) return false;
+  if (_gas && !h.getGas) h.getGas = _gas;
+  return h.onEvent(type | 0, ev);
+}
 
 const _ev = { type: 0, id: 0, kind: 'other', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 1, speed: 0, slide: 0, mass: 0, size: 0, energy: 0, vx: 0, vy: 0, vz: 0,
   fx: 0, fy: 0, fz: 0, ux: 1, uy: 0, uz: 0, fn: 0, fr: new Float64Array(ROCK_FOOT_BINS) };
@@ -1343,6 +1355,7 @@ export const rockImpactCommandStats = { n: 0, ok: 0 };
 export function installRockImpactCommands(reader, getExplosionFx = null) {
   const R = ROCK_IMPACT_REC;
   const gas = typeof getExplosionFx === 'function' ? getExplosionFx : null;
+  _gas = gas;
   reader.on(ROCK_IMPACT_CODE, (rd, d, o) => {
     rockImpactCommandStats.n++;
     const h = _host;

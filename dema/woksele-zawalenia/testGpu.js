@@ -2,9 +2,9 @@
 // Wzorcem jest zawsze migawka z Node albo WzorzecCpu liczony tutaj: nigdy GPU z GPU. Moduł bez DOM, migawki przez fetch z własnego Vite.
 import { rozpakujMigawke, sprawdzBudowe, WzorzecCpu } from './wzorzec-cpu.js';
 import { porownajPodkrok, ObserwatorSceny, analizaPolowek, pietraStropow, taca } from './metryki.js';
-import { popcnt, zbuduj, PARAMETRY } from './budowa.js';
+import { popcnt, zbuduj, PARAMETRY } from '../../src/3d/woksele/budowa.js';
 import { WzorzecF32 } from './wzorzecF32.js';
-import { S1, S2, S3, S4, krater, kolumna1, naroznik, odpornosc, planGpu } from './scena.js';
+import { S1, S2, S3, S4, krater, kolumna1, naroznik, odpornosc, planGpu } from '../../src/3d/woksele/scena.js';
 
 const KATALOG = '/.tmp/woksele-demo/migawki/';
 

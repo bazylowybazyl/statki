@@ -3,7 +3,7 @@
 // (scripts/woksele-sym.mjs --zgodnosc), a solver GPU porównuje się z nim węzeł po węźle z migawek (§ 8).
 // Moduł czysty: bez three, DOM i window. Oba końce wiązania liczą to samo z tych samych danych z poprzedniego przebiegu,
 // więc zerwanie jest symetryczne bez zapisu do cudzego węzła. Kolejność sprawdzeń przy wiązaniu ma znaczenie (§ 2.5): nie zmieniać.
-import { ND, STRONA, N0X, N0Y, N0Z, PARAMETRY, gWezla, popcnt } from './budowa.js';
+import { ND, STRONA, N0X, N0Y, N0Z, PARAMETRY, gWezla, popcnt } from '../../src/3d/woksele/budowa.js';
 
 /** Pola stanu w migawce (§ 8): to, co zmienia się w biegu. Reszta wynika z budowy sceny o tym samym ziarnie. */
 export const POLA_MIGAWKI = Object.freeze(['pos', 'vel', 'acc', 'L', 'D', 'F0', 'maskaW', 'szkoda', 'A', 'etyk', 'aktywny', 'nieruchomy']);

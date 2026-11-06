@@ -12,8 +12,8 @@ import {
   Fn, If, Return, Loop, instanceIndex, storage, uniform, uint, float, vec3, vec4, sqrt, max, min, abs, floor, round, fract, normalize, smoothstep, step, mix, fwidth, cos, sin,
   atomicAdd, positionGeometry, normalGeometry, varyingProperty, positionWorld, normalFlat, screenUV, texture,
 } from 'three/tsl';
-import { BLYSKI } from './solver.js';
-import { INST_DALEKIE } from './scenaMiasta.js';
+import { BLYSKI } from '../../src/3d/woksele/solver.js';
+import { INST_DALEKIE } from '../../src/3d/woksele/scenaMiasta.js';
 
 const SIATKA = 4, WARSTWY = 8; // podział jednego pudła: wierzchołków 205, trójkątów 288
 const REK = INST_DALEKIE / 4;

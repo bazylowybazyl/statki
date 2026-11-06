@@ -7,8 +7,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { S1, S3, S4, wieza, dysk } from '../dema/woksele-zawalenia/scena.js';
-import { zbuduj, parametry, PARAMETRY } from '../dema/woksele-zawalenia/budowa.js';
+import { S1, S3, S4, wieza, dysk } from '../src/3d/woksele/scena.js';
+import { zbuduj, parametry, PARAMETRY } from '../src/3d/woksele/budowa.js';
 import { WzorzecCpu } from '../dema/woksele-zawalenia/wzorzec-cpu.js';
 import { porownajPodkrok, analizaPolowek } from '../dema/woksele-zawalenia/metryki.js';
 import { BIEGI, POLA_STANU, skrot, uruchomBiegi } from './helpers/wokseleBiegi.mjs';
@@ -375,8 +375,8 @@ test('parametry końcowe z § 2.1 i nakładka ziarna', () => {
 });
 
 test('moduły dema bez window, DOM, three, Math.random i Math.hypot (§ 9)', () => {
-  for (const plik of ['scena', 'budowa', 'wzorzec-cpu', 'metryki']) {
-    const kod = readFileSync(new URL(`../dema/woksele-zawalenia/${plik}.js`, import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+  for (const plik of ['../src/3d/woksele/scena', '../src/3d/woksele/budowa', '../dema/woksele-zawalenia/wzorzec-cpu', '../dema/woksele-zawalenia/metryki']) {
+    const kod = readFileSync(new URL(`${plik}.js`, import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
     for (const zakazane of [/\bwindow\b/, /\bdocument\b/, /from\s+['"]three/, /Math\.random/, /Math\.hypot/, /\bglobalThis\b/]) {
       assert.ok(!zakazane.test(kod), `${plik}.js: ${zakazane}`);
     }

@@ -7,7 +7,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Continue, Return, instanceIndex, instancedArray, storage, uniform, uniformArray, uint, int, float, vec3, vec4,
-  countOneBits, floatBitsToUint, sqrt, max, min, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad,
+  countOneBits, floatBitsToUint, sqrt, max, min, clamp, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad,
 } from 'three/tsl';
 import { ND, STRONA, N0X, N0Y, N0Z, KLASA_NAZWY, PARAMETRY } from './budowa.js';
 
@@ -34,6 +34,7 @@ export const BIT_ZOSTAW = 1 << 16;
 /** Bit flagi węzła: reszta kuli krateru rozrywa go przez S = 3. Bez bitu węzeł poza rS zostaje nietknięty (scena z szwami). */
 export const BIT_PAS = 1 << 17;
 const POMIJANY_CEL = 0xffffffff;
+export const GINIE_BOK = 64;  // kubełki węzłów, które doleciały do skały w grze: siatka GINIE_BOK² w rzucie XY
 
 export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) {
   const MAX = maxNodes;
@@ -94,6 +95,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const uGPunktC = uniform(new THREE.Vector3()).setName('uGPunktC');
   const uGPunktG = uniform(0).setName('uGPunktG');
   const uGPunktR0 = uniform(0).setName('uGPunktR0');
+  const uGMiesz = uniform(new THREE.Vector2()).setName('uGMiesz'); // gra: pod z = x pole stałe przechodzi w punkt na drodze 1 / y. y = 0: suma obu, jak w scenach dema
   const uGObrotP = uniform(new THREE.Vector3()).setName('uGObrotP');
   const uGObrotOm = uniform(0).setName('uGObrotOm');
   const uGOs = uniform(new THREE.Vector3(0, 0, 1)).setName('uGOs');
@@ -101,6 +103,15 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const uSkF0 = uniform(1).setName('uSkF0');
   const uKotwice = uniform(1, 'uint').setName('uKotwice');
   const uGruntZ = uniform(-1e30).setName('uGruntZ');
+  const uGinieC = uniform(new THREE.Vector3()).setName('uGinieC');
+  const uGinieR2 = uniform(0).setName('uGinieR2');
+  const uKulaR = uniform(0).setName('uKulaR');
+  const uLiczR2 = uniform(0).setName('uLiczR2');
+  const uGinieMin = uniform(new THREE.Vector2()).setName('uGinieMin');
+  const uGinieKom = uniform(1000).setName('uGinieKom');
+  const aGinie = new THREE.StorageInstancedBufferAttribute(new Uint32Array(GINIE_BOK * GINIE_BOK), 1);
+  const wGinieW = storage(aGinie, 'uint', GINIE_BOK * GINIE_BOK).setName('wokGinie');
+  const wGinieA = storage(aGinie, 'uint', GINIE_BOK * GINIE_BOK).setName('wokGinie').toAtomic();
   const uDxP = uniform(10).setName('uDxP');
   const uCap = uniform(0).setName('uCap');
   const uLepL = uniform(0).setName('uLepL');
@@ -151,7 +162,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       const e = v3(uGPunktC.sub(x));
       const r2 = fv(dot(e, e).add(1e-6));
       const a = fv(select(uGPunktR0.greaterThan(0), uGPunktG.mul(uGPunktR0).mul(uGPunktR0).div(r2), uGPunktG));
-      g.addAssign(e.mul(a.div(sqrt(r2))));
+      const t = fv(clamp(uGMiesz.x.sub(x.z).mul(uGMiesz.y), 0, 1));
+      const w = fv(select(uGMiesz.y.greaterThan(0), t, float(1)));
+      g.assign(g.mul(float(1).sub(t)).add(e.mul(a.mul(w).div(sqrt(r2)))));
     });
     If(uGObrotOm.notEqual(0), () => {
       const e = v3(x.sub(uGObrotP));
@@ -420,6 +433,29 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       });
     });
 
+    // Gra: skała pod bazą jak grunt, tylko kula: siła wzdłuż normalnej, tłumienie, tarcie styczne. Demo: uKulaR = 0, warunek odpada.
+    If(uKulaR.greaterThan(0), () => {
+      const eK = v3(xi.sub(uGinieC));
+      const dK = fv(length(eK));
+      const penK = fv(uKulaR.add(uDxP).sub(dK));
+      If(penK.greaterThan(0), () => {
+        const nK = v3(eK.div(max(dK, 1)));
+        const vnK = fv(dot(vi, nK));
+        // Uderzenie prawie nieelastyczne: składowa ku skale gaśnie w kilka podkroków. Sama sprężyna z tłumieniem przy 4000 j./s odbijała węzły na pół planety (GRA/t6).
+        If(vnK.lessThan(0), () => { a.subAssign(nK.mul(vnK).mul(float(0.7).div(uH))); });
+        const FgK = fv(uKC.mul(penK).sub(uCC.mul(vnK)));
+        If(FgK.greaterThan(0), () => {
+          a.addAssign(nK.mul(FgK));
+          If(dot(vi, vi).lessThan(uGruzV2), () => { a.subAssign(vi.mul(uGruzP)); });
+          const vtK = v3(vi.sub(nK.mul(vnK)));
+          const vtlK = fv(length(vtK));
+          If(vtlK.greaterThan(1e-3), () => {
+            a.subAssign(vtK.mul(min(FgK.mul(par.muGrunt), uCT.mul(vtlK)).div(vtlK)));
+          });
+        });
+      });
+    });
+
     // Lepkość spoczynkowa [G]: tylko z żywą drogą do kotwicy, etykieta sprzed przebiegu.
     If(eI.lessThan(uCap).and(dot(vi, vi).lessThan(uLepV2)), () => { a.subAssign(vi.mul(uLepL)); });
 
@@ -441,8 +477,18 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     const v = v3(wWez.element(i3.add(uint(1))).xyz.add(wWez.element(i3.add(uint(2))).xyz.mul(uH)));
     const v2 = fv(dot(v, v));
     If(v2.greaterThan(vMax2), () => { v.mulAssign(sqrt(float(vMax2).div(v2))); });
+    const xN = v3(p.xyz.add(v.mul(uH)));
+    // Gra: bezpiecznik kontaktu ze skałą (kF, uKulaR): węzeł wbity głęboko pod powierzchnię ginie, zamiast wracać z ogromną siłą. Demo: R² = 0, warunek nigdy nie zachodzi.
+    const doSkaly = v3(xN.sub(uGinieC));
+    If(dot(doSkaly, doSkaly).lessThan(uGinieR2), () => {
+      wWez.element(i3).assign(vec4(xN, -1));
+      wWez.element(i3.add(uint(1))).assign(vec4(0));
+      wMaska.element(i).assign(uint(0));
+      wMaska.element(ni).assign(uint(0));
+      Return();
+    });
     wWez.element(i3.add(uint(1))).assign(vec4(v, 0));
-    wWez.element(i3).assign(vec4(p.xyz.add(v.mul(uH)), p.w));
+    wWez.element(i3).assign(vec4(xN, p.w));
   })().compute(MAX).setName('wokI');
 
   // ── Lista kontaktów, § 2.7 ──
@@ -787,9 +833,45 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     wWez.element(i3.add(uint(1))).assign(vec4(wWez.element(i3.add(uint(1))).xyz.add(dv), 0));
   })().compute(MAX).setName('wokWybuch');
 
-  const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch };
+  // Gra: węzły przy powierzchni skały (leżące i martwe w niej), po kubełkach rzutu XY. Liczone od zera przy każdym odczycie (co 0,25 s, tylko po HP 0), poza krokiem: bez atomika i bufora w kF. Węzły z kraterów giną daleko od kuli, więc się nie liczą.
+  const kGinieZeruj = Fn(() => {
+    If(instanceIndex.greaterThanEqual(uint(GINIE_BOK * GINIE_BOK)), () => { Return(); });
+    wGinieW.element(instanceIndex).assign(uint(0));
+  })().compute(GINIE_BOK * GINIE_BOK).setName('wokGinieZeruj');
+  const kGinieLicz = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const p = v4(wWezR.element(uint(3).mul(i)));
+    const e = v3(p.xyz.sub(uGinieC));
+    If(dot(e, e).greaterThanEqual(uLiczR2), () => { Return(); });
+    // Poza siatką nie liczy się wcale: przycięcie do brzegu robiło z węzłów, które tam zabłądziły, proste rzędy kraterów.
+    const fx = fv(floor(p.x.sub(uGinieMin.x).div(uGinieKom)));
+    const fy = fv(floor(p.y.sub(uGinieMin.y).div(uGinieKom)));
+    If(fx.lessThan(0).or(fy.lessThan(0)).or(fx.greaterThanEqual(float(GINIE_BOK))).or(fy.greaterThanEqual(float(GINIE_BOK))), () => { Return(); });
+    const kx = uv(uint(fx));
+    const ky = uv(uint(fy));
+    atomicAdd(wGinieA.element(ky.mul(uint(GINIE_BOK)).add(kx)), uint(1));
+  })().compute(MAX).setName('wokGinieLicz');
+  const listaGinie = [kGinieZeruj, kGinieLicz];
+
+  // Gra: kotwice puszczają falą od punktu (upadek bazy): węzeł w kole traci bit kotwicy. Baza uderza wtedy w skałę po kolei, od środka na zewnątrz, a nie całym obrysem naraz.
+  const uPuscC = uniform(new THREE.Vector2()).setName('uPuscC');
+  const uPuscR2 = uniform(0).setName('uPuscR2');
+  const kPusc = Fn(() => {
+    const i = instanceIndex;
+    If(i.greaterThanEqual(uN), () => { Return(); });
+    const fl = uv(flagiWezla(wStan, i));
+    If(fl.bitAnd(uint(1)).equal(uint(0)), () => { Return(); });
+    const p = v4(wWezR.element(uint(3).mul(i)));
+    const dx = fv(p.x.sub(uPuscC.x));
+    const dy = fv(p.y.sub(uPuscC.y));
+    If(dx.mul(dx).add(dy.mul(dy)).greaterThanEqual(uPuscR2), () => { Return(); });
+    wStan.element(uN.mul(uint(2)).add(uint(2).mul(i)).add(uint(1))).w.assign(float(fl.sub(uint(1))));
+  })().compute(MAX).setName('wokPusc');
+
+  const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch, kGinieZeruj, kGinieLicz, kPusc };
   // Kernele o stałej liczbie wywołań: nie po węzłach, więc wczytanie sceny nie zmienia im liczby.
-  const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch]);
+  const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch, kGinieZeruj]);
 
   // ── Listy § 2.4, zbudowane raz ── Na krok: lista kontaktów co RYTM podkroków, reszta F + I.
   // AGENT: lista zależy tylko od podkroków i rytmu sceny (dx, materiał), a kernele są te same: nowa kombinacja to tablica w JS, bez nowego pipeline'u. Wczytanie sceny wybiera listę.
@@ -827,7 +909,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   let wypiek = null;
 
   const uniformy = {
-    uN, uH, uK, uCB, uKB, uKC, uCC, uCT, uCosWyp, uGStala, uGPunktC, uGPunktG, uGPunktR0, uGObrotP, uGObrotOm, uGOs, uSkG, uSkF0, uKotwice, uGruntZ, uDxP, uCap, uLepL, uLepV2,
+    uN, uH, uK, uCB, uKB, uKC, uCC, uCT, uCosWyp, uGStala, uGPunktC, uGPunktG, uGPunktR0, uGObrotP, uGObrotOm, uGOs, uSkG, uSkF0, uKotwice, uGruntZ, uGinieC, uGinieR2, uKulaR, uDxP, uCap, uLepL, uLepV2,
     uGruzP, uGruzV2, uFalaV2, uFalaTempoH, uSzokProg, uKontaktV, uIKom, uZasieg2, uPekaProg, uPekaZakres, uZlomB2,
     uT, uBrakCzasu, uCelO, uCelDir, uCelProg2, uKraterN, uBlastN, uZerujL,
   };
@@ -888,13 +970,58 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   }
 
   /** Strzał myszą (§ 2.8, § 5.3): wykona się przed krokiem następnej klatki. Pudło: kKraterCel gasi slot, więc pchnięcie go pomija. */
-  function strzel({ o, dir, r = 60, J = 300, tau = 0.3, rP = 160, rdzen = 0.4 }) {
+  function strzel({ o, dir, r = 60, J = 300, tau = 0.3, rP = 160, rdzen = 0.4, rodz = undefined }) {
     const d = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
     uCelO.value.set(o[0], o[1], o[2]);
     uCelDir.value.set(dir[0] / d, dir[1] / d, dir[2] / d);
     const dx = wypiek.dx;
     uCelProg2.value = 0.49 * dx * dx;
-    strzalCzeka = { nos: -2, x: 0, y: 0, z: 0, r, rdzen, rS: 1, J, tau, rP, dz: 0, usunStojace: false };
+    strzalCzeka = { nos: -2, x: 0, y: 0, z: 0, r, rdzen, rS: 1, J, tau, rP, dz: 0, usunStojace: false, rodz };
+  }
+
+  /**
+   * Kratery zlecone w biegu (gra: rozpad kawałka bazy, szyja, upadek). `e.f` względem bieżącej klatki. Plan musi być ustawiony; alokacje tylko tu, na zdarzenie, nie w kroku.
+   * AGENT: zdarzeniaKlatki czyta p.kratery rosnąco po f od qKrater, więc wstawienie przycina zużyte i sortuje resztę.
+   */
+  function dodajKratery(lista) {
+    if (!plan) throw new Error('dodajKratery bez planu');
+    const reszta = plan.kratery.slice(qKrater);
+    for (const e of lista) reszta.push({ ...e, f: fKlatka + (e.f | 0) });
+    reszta.sort((a, b) => a.f - b.f);
+    plan.kratery = reszta;
+    qKrater = 0;
+  }
+
+  /** Kotwice w kole (x, y, R) puszczają od tej chwili (upadek w grze, fala od habitatu). Woła się raz na klatkę w czasie fali. */
+  function puscKolo(renderer, x, y, R) {
+    uPuscC.value.set(x, y);
+    uPuscR2.value = R * R;
+    renderer.compute(kPusc);
+  }
+
+  /**
+   * Gra: skała pod bazą. c, R: kula kontaktu, x0, y0, kom: siatka kubełków liczących węzły przy powierzchni (róg, bok kubełka). Bezpiecznik: węzeł 250 j. pod powierzchnią ginie.
+   * Pod zPola grawitacja przechodzi ze stałej w ku środkowi skały na drodze zakresPola. Stała −z na kuli zsuwała gruz z każdego zbocza powyżej kąta tarcia (35°), a nad zPola budowla stoi w polu, w którym ją wypieczono.
+   * AGENT: odczyt rzadko i bez czekania klatki (odczytGinie): sam obraz uderzeń, gra o tym nie wie.
+   */
+  function ustawGinie({ c, R, x0, y0, kom, zPola = 0, zakresPola = 0 }) {
+    uGinieC.value.set(c[0], c[1], c[2]);
+    uGPunktC.value.set(c[0], c[1], c[2]);
+    uGPunktG.value = zakresPola > 0 ? uGStala.value.length() : 0;
+    uGPunktR0.value = 0;
+    uGMiesz.value.set(zPola, zakresPola > 0 ? 1 / zakresPola : 0);
+    uKulaR.value = R;
+    const Rg = Math.max(0, R - 250), Rl = R + 60;
+    uGinieR2.value = Rg * Rg;
+    uLiczR2.value = Rl * Rl;
+    uGinieMin.value.set(x0, y0);
+    uGinieKom.value = kom;
+  }
+
+  /** Liczniki kubełków z GPU: Uint32Array GINIE_BOK², węzły na skale od wczytaj. Przelicza i czyta bez czekania klatki. */
+  async function odczytGinie(renderer) {
+    renderer.compute(listaGinie);
+    return new Uint32Array(await renderer.getArrayBufferAsync(aGinie));
   }
 
   function wpiszKrater(k, e, f) {
@@ -1006,6 +1133,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     uGPunktC.value.set(pkt ? pkt.cx : 0, pkt ? pkt.cy : 0, pkt ? pkt.cz : 0);
     uGPunktG.value = pkt ? pkt.g : 0;
     uGPunktR0.value = pkt ? pkt.r0 : 0;
+    uGMiesz.value.set(0, 0);
     uGObrotP.value.set(obr ? obr.px : 0, obr ? obr.py : 0, obr ? obr.pz : 0);
     uGObrotOm.value = obr ? obr.om : 0;
     uGOs.value.set(obr ? obr.ox : 0, obr ? obr.oy : 0, obr ? obr.oz : 1);
@@ -1077,6 +1205,8 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     atrybuty.blastK.array.fill(0);
     atrybuty.blysk.array.fill(0);
     atrybuty.zar.array.fill(0);
+    aGinie.array.fill(0);
+    aGinie.needsUpdate = true;
     for (const k of Object.values(atrybuty)) k.needsUpdate = true;
     for (const k of Object.values(kernele)) if (!STALA_LICZBA.has(k)) k.setCount(n);
     resetPlanu();
@@ -1191,8 +1321,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
 
   return {
     maxNodes: MAX, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
-    wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
+    wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, ustawGinie, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
     get wypiek() { return wypiek; },
+    get strzalCzeka() { return strzalCzeka !== null; },
     get fKlatka() { return fKlatka; },
     /** Numer klatki, gdy kroki idą poza krok(): zegar sceny, ?profil=1. */
     nastawKlatke(f) { fKlatka = f; },

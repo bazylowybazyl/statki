@@ -1,11 +1,11 @@
-// Lustro miasta-ogrodu ringu w JS (dema/woksele-zawalenia/miasto.js): rozkłady z reguły, węzły w rzucie, odstępy sąsiadów, zgodność z kodem ringu.
+// Lustro miasta-ogrodu ringu w JS (src/3d/woksele/miasto.js): rozkłady z reguły, węzły w rzucie, odstępy sąsiadów, zgodność z kodem ringu.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   MIASTO, RZUT_W, RZUT_D, DZIALKA_U, DZIALKA_V, haloHash12, budynkiDzielnicy, rozmiarDzielnicy,
   siatkaBudynku, dlaKazdegoWezla, wezlyBudynku, wezlyDzielnicy, węzłyBudynku, węzłyDzielnicy,
-} from '../dema/woksele-zawalenia/miasto.js';
+} from '../src/3d/woksele/miasto.js';
 import { createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
 
 const DXY = [5, 10, 20, 40];

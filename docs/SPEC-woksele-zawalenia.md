@@ -225,7 +225,7 @@ Koszt, tylko orientacja: S5 planeta od t = 6, 1920 × 1080, znaczniki GPU 1,64 m
 
 ### 1.12 Domknięcie P4: pył, błysk, żar
 
-Kod: `dema/woksele-zawalenia/pyl.js` (kPylEmisja, kPrzyczyna, kPylKrok, kwady), `solver.js` (rekord błysku w `kKraterCel`, żar w `kCzysc`), `obraz.js` (skład w kwadzie wyjścia, żar i światło w materiale brył), `tests/wokseleObrazWgsl.test.mjs`, opcja `--kosztPylu`. Zrzuty: `.tmp/woksele-demo/P4/`.
+Kod: `src/3d/woksele/pyl.js` (kPylEmisja, kPrzyczyna, kPylKrok, kwady), `solver.js` (rekord błysku w `kKraterCel`, żar w `kCzysc`), `obraz.js` (skład w kwadzie wyjścia, żar i światło w materiale brył), `tests/wokseleObrazWgsl.test.mjs`, opcja `--kosztPylu`. Zrzuty: `.tmp/woksele-demo/P4/`.
 
 **Pył i błysk są jednym rysunkiem w celu około 720 wierszy** (przy 5120 × 1440: 2560 × 720), HDR, bez głębi, miękkość z tekstury przebiegu głębi jak w `rys4.mjs`, mieszanie (1, 1 − a): pył pisze (kolor · a, a), ogień (kolor, 0), więc addytywnie. Składa je kwad wyjścia przed tonem. Bez nowego renderera i bez bloomu. Reguła emisji, ruch, promień i alfa jak w filmie, próżnia i wyjątek S5 przez uniformy (`OPCJE_PYLU`). Drobny gruz z P3 został, rekordy gruzu z § 4.8 nie weszły, tak jak w propozycji S5.
 
@@ -302,7 +302,7 @@ Liczby, sprostowania i rozrzuty są w `docs/PLAN-zawalenia-lod-miasto.md`: scena
 
 **Koszt na stronie dema.** dx = 40: compute 0,39–0,68, rysunek z kamery Atlas (2, 1) 1,01–1,49, z bliska (7, 2) 0,92–3,96, razem z kamery Atlas około 2 ms. W1 przez 5 s: 0 zerwań, 0 NaN, największe przemieszczenie 6,2 j. w N-P i F-P, bez sprawdzonej przyczyny.
 
-**Pomiar w grze.** `dema/woksele-zawalenia/wGrze.js` przez `scripts/webgpu/gpu-baza-gra.mjs --woksele 1`, tryb gracza (worker), bieg po kolei a1, b1, a2, b2, potem c1. Krok `Core3D.addFxStep` 60 Hz, bryły i gruz w passie FG, obraz (2, 1). Dołożone do działającej misji: około 2,4 ms przy p50 (1,89–2,82 po oknach). Rozrzut a1 ↔ a2 to najwyżej 0,65 ms, więc sama suma jest realna, ale różnice między oknami, podział compute i p95 są w granicach rozrzutu (§ 5d). Szczyt wokseli na prawdziwym upadku (c1, jeden bieg): 9,18 / 9,47 i 8,93 / 12,17, tyle samo co b1 i b2. Pipeline'y synchroniczne po rozgrzewce: 0, a w rozgrzewce raz 30–34 ms na bryły. Pamięć: około +90 MB. Compute starego silnika zniszczeń to setne ms, więc zamiana w GPU przy 720p kosztu nie spłaci.
+**Pomiar w grze.** `src/3d/woksele/wGrze.js` przez `scripts/webgpu/gpu-baza-gra.mjs --woksele 1`, tryb gracza (worker), bieg po kolei a1, b1, a2, b2, potem c1. Krok `Core3D.addFxStep` 60 Hz, bryły i gruz w passie FG, obraz (2, 1). Dołożone do działającej misji: około 2,4 ms przy p50 (1,89–2,82 po oknach). Rozrzut a1 ↔ a2 to najwyżej 0,65 ms, więc sama suma jest realna, ale różnice między oknami, podział compute i p95 są w granicach rozrzutu (§ 5d). Szczyt wokseli na prawdziwym upadku (c1, jeden bieg): 9,18 / 9,47 i 8,93 / 12,17, tyle samo co b1 i b2. Pipeline'y synchroniczne po rozgrzewce: 0, a w rozgrzewce raz 30–34 ms na bryły. Pamięć: około +90 MB. Compute starego silnika zniszczeń to setne ms, więc zamiana w GPU przy 720p kosztu nie spłaci.
 
 **Domknięcie.** Testy wokseli i strażniki (10 plików): 174 z 174. Seria `--zrzut B1 --przyciski 1 --przyciskiOd 0 --przyciskiDo 1 --interakcjeSceny B1,S5`, 31 s, 1280 × 720, BelowNormal: przycisk S5 ze strony bazy wchodzi i resetuje się, interakcje na B1 i S5 działają, 0 porażek, 0 nowych pipeline'ów, wentylator 0%. Wejście przyciskiem ze strony bez pojemności sprawdziła wcześniej seria `--przyciskB1`.
 
@@ -388,7 +388,7 @@ Różnice wobec Node, celowe:
 
 ### 2.3 Budowa (CPU, wątek roboczy, raz na scenę)
 
-Pliki: `dema/woksele-zawalenia/budowa.js` (bez three i DOM, testowalny w Node) wołany z `budowa.worker.js`. Zm. czas: 2,3 s dla wieży bez obciążenia PC, 3,3 s przy obciążeniu, S3 1,3–2,6 s; to prawie w całości CG (`msInit`, `*_podsumowanie.json`). 1770 iteracji wieży, 5157 pocisku. Kroki:
+Pliki: `src/3d/woksele/budowa.js` (bez three i DOM, testowalny w Node) wołany z `budowa.worker.js`. Zm. czas: 2,3 s dla wieży bez obciążenia PC, 3,3 s przy obciążeniu, S3 1,3–2,6 s; to prawie w całości CG (`msInit`, `*_podsumowanie.json`). 1770 iteracji wieży, 5157 pocisku. Kroki:
 
 1. Geometria: port `wspolne/scena.mjs` (`wieza`, `dysk`, `polacz`, `obroc`).
 2. Sąsiedzi: 18 kierunków, pary (d, d^1) przeciwne, pierwsze 6 osiowe, tylko w grupie. Linie 233–267. `iN0 = 1/popcnt(maska)`.
@@ -738,13 +738,13 @@ Koszt: `kPrzyczyna` przesuwa i wygasza pierścień, tylko 64 elementy, szac. pon
 | Plik | Zawartość |
 |---|---|
 | `dema/woksele-zawalenia.html` | kanwa i panel, wzór stylu z `dema/zawalenia-budowli.html` |
-| `dema/woksele-zawalenia/scena.js` | port `wspolne/scena.mjs` i planu S4 ze `spec-proby/scenyG.mjs`, bez three, do testów w Node |
-| `dema/woksele-zawalenia/budowa.js`, `budowa.worker.js` | § 2.3 |
-| `dema/woksele-zawalenia/solver.js` | `createWokseleSolver({ maxNodes })`: bufory i kernele, `wczytaj(wypiek)`, `krok(renderer)`, `strzal(o, dir, r)`, `kernele` do rozgrzewki. **Żadnych celów renderu, kanw ani DOM.** Bierze `renderer` z parametru |
-| `dema/woksele-zawalenia/obraz.js` | geometria instancji, materiał, kernele `kObraz`, `kGruz`, cele, okluzja, wyjście |
+| `src/3d/woksele/scena.js` | port `wspolne/scena.mjs` i planu S4 ze `spec-proby/scenyG.mjs`, bez three, do testów w Node |
+| `src/3d/woksele/budowa.js`, `budowa.worker.js` | § 2.3 |
+| `src/3d/woksele/solver.js` | `createWokseleSolver({ maxNodes })`: bufory i kernele, `wczytaj(wypiek)`, `krok(renderer)`, `strzal(o, dir, r)`, `kernele` do rozgrzewki. **Żadnych celów renderu, kanw ani DOM.** Bierze `renderer` z parametru |
+| `src/3d/woksele/obraz.js` | geometria instancji, materiał, kernele `kObraz`, `kGruz`, cele, okluzja, wyjście |
 | `dema/woksele-zawalenia/pokaz.js`, `scenyPokazu.js` | strona na żywo: pętla, kamera orbitalna, panel; plany scen wspólne ze stroną i wątkiem budowy |
-| `dema/woksele-zawalenia/pyl.js` | pula, kernel, materiał |
-| `dema/woksele-zawalenia/scenaMiasta.js`, `miasto.js`, `miastoDalekie.js` | sceny M1–M3: dzielnica i plany, reguła budynków w lustrze JS, tier 0 (§ 1.14) |
+| `src/3d/woksele/pyl.js` | pula, kernel, materiał |
+| `src/3d/woksele/scenaMiasta.js`, `miasto.js`, `miastoDalekie.js` | sceny M1–M3: dzielnica i plany, reguła budynków w lustrze JS, tier 0 (§ 1.14) |
 | `dema/woksele-zawalenia/glowny.js` | WebGPURenderer, `window.__HARNESS_RENDERER__ = renderer` (bez tego dziennik pipeline'ów harnessu jest pusty i „0 synchronicznych” to fałszywe zero; wzór `dema/zawalenia-budowli/obraz.js:321`), owinięcie `backend.updateTimeStampUID` (§ 8), kamera, pętla, panel, `window.__wok` |
 | `dema/index.html` | wpis w grupie „Zniszczenia, mostki, rdzenie” obok `zawalenia-budowli.html` |
 
@@ -1269,7 +1269,7 @@ Od najbardziej ryzykownego. Każdy pakiet kończy się commitem, a bez zaliczone
 | Pakiet | Pliki | Co ma działać na końcu | Jak sprawdzić bez użytkownika | Blokuje |
 |---|---|---|---|---|
 | **P0 Node: domknięcie** | `dema/woksele-zawalenia/{scena,budowa,wzorzec-cpu,metryki}.js`, `scripts/woksele-sym.mjs`, `tests/wokseleBudowa.test.mjs`, `tests/helpers/wokseleBiegi.mjs` | Port `model-spec4` bez gałęzi wyłączonych, budowa z tą samą kolejnością losowania, migawki do testu jednego podkroku, 30 klatek S1 t = 5 w PNG. Powtórzone r = 60 i 90 w próżni, nowy koszt pyłu (`krytyk-gpu/koszt.mjs`) przy regule kontaktowej | `node --test`: budowa bajt w bajt, stan po krótkich biegach bit w bit z `model-spec4`. Całe wyniki z `proby4/log-R7.txt` z dokładnością do bitu: `woksele-sym.mjs --zgodnosc`, wymaga `.tmp/`. Sekwencję ocenia agent bez kontekstu, odpowiedź o migotaniu | Wszystko |
-| **P1 Solver sam** | `dema/woksele-zawalenia/solver.js`, `dema/woksele-zawalenia.html` (pusta strona), `glowny.js` (renderer, uid znaczników), `scripts/webgpu/woksele-demo.mjs`, `tests/wokseleWgsl.test.mjs` | Bufory § 2.2, kF, kI, kWstaw, kLista, kZerujPo, wczytanie z Node. Bez obrazu, bez zdarzeń. Odczyt przez `__wok.odczyt()` | WGSL w Node: ≤ 8 storage, `read`, atomiki, `round`. W Chrome: test jednego podkroku z migawek S1, S2, S3, S4; W1 60 s; pipeline'y 0; `?profil=1` daje **pierwszy czas kF i kLista**: R6 | P2. **Punkt G1: warunek porażki 1** |
+| **P1 Solver sam** | `src/3d/woksele/solver.js`, `dema/woksele-zawalenia.html` (pusta strona), `glowny.js` (renderer, uid znaczników), `scripts/webgpu/woksele-demo.mjs`, `tests/wokseleWgsl.test.mjs` | Bufory § 2.2, kF, kI, kWstaw, kLista, kZerujPo, wczytanie z Node. Bez obrazu, bez zdarzeń. Odczyt przez `__wok.odczyt()` | WGSL w Node: ≤ 8 storage, `read`, atomiki, `round`. W Chrome: test jednego podkroku z migawek S1, S2, S3, S4; W1 60 s; pipeline'y 0; `?profil=1` daje **pierwszy czas kF i kLista**: R6 | P2. **Punkt G1: warunek porażki 1** |
 | **P2 Zdarzenia i pęd** | `solver.js`: kCzas, kCzysc, kCzyscS, kCel, kKrater, kWybuch*, kZerujWybuch | Pełne S1, S2, S3, S4, S6 bez obrazu | Tabela § 8, S4 |P|/N, moment, równoważność, `strzel` w próżni: ruch zaczyna się przy trafionym, strzał w czasie planu pchnięć daje kop | P3. **Warunek porażki 2** |
 | **P3 Obraz bez pyłu** | `obraz.js`: kObraz, kGruz, materiał, `castShadowPositionNode`, GTAO, MSAA, światła § 4.3 | Bryły, ton, rysy, pręty, kamery. Zrzuty obok `fin11` | Harness `--sceny 1,2,3,5 --kamery …`, p5, p50, ciemne wg § 7 | **K1**: agent ocenia wiersze bez pyłu. Nie zaliczone: tylko poprawki obrazu, fizyki nie ruszać, chyba że wiersz mówi o fizyce |
 | **P4 Pył, gruz, przyczyna** | `pyl.js`, `kPrzyczyna`, LOD, sufit, przy kamerze | Pełny obraz | Wiersze pyłu i przyczyny. Bloom tylko, jeśli K2 odrzuci błysk | **K2**: wiersze [!] pyłu, S2 t = 2,0–2,3, S3 t = 1,5–2, strzał |

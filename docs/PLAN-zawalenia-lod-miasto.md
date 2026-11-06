@@ -320,7 +320,7 @@ GPU, RTX 5080, 1280 × 720, MSAA 4, sufit 60 kl/s, 2026-11-06, tryb nocny. Wenty
 
 **Jak obejrzeć.** Przycisk „Baza piratów” przeładowuje stronę z `?scena=B1&maxWez=86000&nKom=131072`. Strona domyślna dalej startuje od S5. Kamery: „Atlas” (0,14 px / j., w oknie 5120 px to cała baza, a w 1280 px wycinek wokół habitatu), „Cała baza” (0,085 px / j., dla okna 1280 × 720, poza zadaniem, bo inaczej arkusz nie obejmuje całości), „Z bliska” (0,5 px / j., W-1, sloty 7).
 
-**Wywołanie bez strony.** `scenaB1({ dx })` z `dema/woksele-zawalenia/scenaBazy.js` zwraca plan, a `zbudujPlan(plan)` z `budowa.js` daje `{ w, g }` dla `solver.wczytaj(w)` i `solver.ustawPlan(g)`. Bez DOM, bez `pokaz.js`, moduł importuje prawdziwe `createPirateBaseLayout` i `k7HeightToZ`. Części z zakresami węzłów: `plan.miasto.budynki`, kolejka zdarzeń: `plan.gpu.kratery`, `plan.gpu.puscKotwiceF`. Budowa w Node: 2,4 s przy dx = 40 (18 rozwiązań CG, najwięcej 653 iteracji), 0,2 s przy dx = 80.
+**Wywołanie bez strony.** `scenaB1({ dx })` z `src/3d/woksele/scenaBazy.js` zwraca plan, a `zbudujPlan(plan)` z `budowa.js` daje `{ w, g }` dla `solver.wczytaj(w)` i `solver.ustawPlan(g)`. Bez DOM, bez `pokaz.js`, moduł importuje prawdziwe `createPirateBaseLayout` i `k7HeightToZ`. Części z zakresami węzłów: `plan.miasto.budynki`, kolejka zdarzeń: `plan.gpu.kratery`, `plan.gpu.puscKotwiceF`. Budowa w Node: 2,4 s przy dx = 40 (18 rozwiązań CG, najwięcej 653 iteracji), 0,2 s przy dx = 80.
 
 **Układ.** X = x, Y = −z, Z = `k7HeightToZ(h)`, więc wysokości nad płaszczyzną gry są jak w grze (× 0,42): dach wieżowców 1211 j., głowa 1782 j., maszt 2303 j. To wartości nominalne, bez pokrycia w logu. Najwyższy węzeł przy dx = 40 odczytany z `zbudujPlan`: wieżowce 1180 j., H-C + H-T 2300 j. Wszystkie części leżą na jednej siatce świata i żadne dwie nie dzielą komórki. Pole ijk jest wirtualne jak w dzielnicy, więc między częściami nie ma wiązań, a statyka liczy się po części. Część wisi na swojej dolnej warstwie, dysk na ośmiu łukach kotwicy przy trzonie, jak S5. c = 6000, g = 400, dx = 40: 4 podkroki, rytm listy 4.
 
@@ -375,7 +375,7 @@ dx = 80, 15 689 węzłów: compute 0,17–0,50, rysunek przy (2, 1) z kamery Ca�
 
 Pomiar B1 z § 5c w prawdziwej misji 1: `scripts/webgpu/gpu-baza-gra.mjs --woksele 1`, 2026-11-06, RTX 5080, 1280 × 720, `limitKlatek=60`, tryb gracza (render w workerze), preset grafiki bez nadpisania, headless, tryb nocny. Bieg po kolei: a1, b1, a2, b2 (A = gra, B = gra + woksele), dodatkowo c1 (B z sygnałem 18 s później). Liczby i zrzuty: `.tmp/woksele-demo/BAZA/gra/<bieg>/` (`raport.json`, `log.txt`, `01-przed.png`, `03-ostrzal-koniec.png`, `04-upadek.png`, `06-nad-gruzem.png`).
 
-**Co to mierzy.** Kod gry bez zmian. Moduł `dema/woksele-zawalenia/wGrze.js` ładuje harness po starcie misji operacją dev, w workerze. To wariant A z zadania: 83 730 węzłów (dx = 40), bryły i gruz w passie FG Core3D (warstwa 2, perspektywa, światła, cień słońca i post gry), obraz (2, 1), krok `Core3D.addFxStep` 60 Hz, najwyżej 2 kroki na klatkę, a głębia, AO i pył w celach własnych z tego samego kroku. Skład pyłu to kwad w FG. Stara baza zostaje w kadrze i wszystko liczy się dalej, więc to **koszt dołożony do starego silnika, górna granica, nie zamiana**. Ostrzał gry nie trafia wokseli: sekwencja B1 idzie z planu, od sygnału w chwili pierwszej serii.
+**Co to mierzy.** Kod gry bez zmian. Moduł `src/3d/woksele/wGrze.js` ładuje harness po starcie misji operacją dev, w workerze. To wariant A z zadania: 83 730 węzłów (dx = 40), bryły i gruz w passie FG Core3D (warstwa 2, perspektywa, światła, cień słońca i post gry), obraz (2, 1), krok `Core3D.addFxStep` 60 Hz, najwyżej 2 kroki na klatkę, a głębia, AO i pył w celach własnych z tego samego kroku. Skład pyłu to kwad w FG. Stara baza zostaje w kadrze i wszystko liczy się dalej, więc to **koszt dołożony do starego silnika, górna granica, nie zamiana**. Ostrzał gry nie trafia wokseli: sekwencja B1 idzie z planu, od sygnału w chwili pierwszej serii.
 
 **Tabela, ms GPU na klatkę, średnia z dwóch biegów, rozrzut to różnica S p50 między powtórzeniami.** R to render, C compute, S suma, wszystko z klatek pełnych. CPU to klatka workera p50. Każde okno ma 96–122 klatki, `przed` 361–362, `nad-gruzem` 402–409.
 
@@ -433,6 +433,87 @@ Kolumny `Cień słońca` nie wolno dodawać do `pass:fg`: cień to etykieta `pas
 - Okna upadku różnią się między biegami, bo upadek jest chaotyczny: czas do osiadania ft 21,3 / 32 w A i 20,9 / 26,6 w B. Okna z 50 kl/s workera i bimodalny compute (p95 8–10 ms w upadku 2–4) są i w A, i w B, więc to nie woksele.
 
 **Pomiar dzienny, 5120 × 1440 (nie wolno go puszczać nocą):** `node scripts/webgpu/gpu-baza-gra.mjs --rozmiar 5120x1440 --query grafika=ultra --strzalyMaks 120 --slad 0 --out .tmp/woksele-demo/BAZA/gra-5120/a1`, potem to samo z `--woksele 1` do `b1`, potem `a2`, `b2`. Bez `limitKlatek` headless biegnie bez sufitu klatek, a GPU na 99%. Do wprost porównania z E0 zamiast tego `--query "grafika=ultra&limitKlatek=120"`.
+
+## 5e. Wpięcie w grę: obraz bazy misji 1 (2026-11-06)
+
+Decyzja użytkownika: „wgrajmy silnik do gry”, na domyślnej kamerze z góry, bez przełącznika w adresie, z teksturami starej bazy. W gałęzi `claude/woksele-wiazane`, `main` bez zmian. Stan i zasady: reguła `woksele-zawalen`.
+
+Zrobione: moduły silnika w `src/3d/woksele/`, klej w `src/3d/pirateBaseGame.js`, skóra z wypieku starej bazy, przekrój tło / FG (Atlas nad gruzem), kratery ze zdarzeń gry, węzły i gruz giną na skale, pełna rozgrywka dalej na silniku belek.
+
+Pomiar: 1280 × 720, `limitKlatek=60`, worker, jeden bieg `GRA/t1` (kadry z t2). Sama suma GPU klatki, nie koszt dołożony.
+
+| Okno | S p50 ms | S p95 ms |
+|---|---:|---:|
+| przed (baza stoi) | 1,19 | 1,35 |
+| ostrzał 1 | 6,69 | 8,13 |
+| ostrzał 4 | 9,86 | 10,53 |
+| upadek 2 | 9,32 | 13,28 |
+| po | 3,01 | 3,55 |
+| nad gruzem | 2,94 | 3,40 |
+
+Dla porównania bieg z § 5d (stara baza + woksele dołożone) miał 2,30 przed ostrzałem, a sama stara baza 0,41. Tu nie ma A/B z tej samej chwili: pomiar A/B przy 5120 × 1440 wciąż do zrobienia (`--woksele 0` / `1`, § 5d), a w oknach ostrzału i upadku większość to gaz wybuchów (`fx:wybuchy` 4–7 ms). W t2 po poprawkach 0 pipeline'ów synchronicznych.
+
+Znane braki: kolizje dalej stare (Atlas może uderzyć w schowaną bryłę tam, gdzie woksele już spadły), brak usypiania gruzu, po zawaleniu pomost i dysk drgają, ściany boczne bez wypieku (poszycie i okna fasad z shadera), moc okien tylko z zasilania habitatu.
+
+**Po próbie użytkownika (ten sam dzień).** Uwagi: środek szary (ma być w klimacie budowli albo z prostymi wnętrzami), spadek całej bazy zostaje, a przy upadku spadki do ~20 kl/s, podejrzany stary dym na planecie. Zrobione: wnętrza z shadera i paleta piratów, drugi wypiek skóry ze zgaszonym słońcem, upadek na wokselach (stare ciała i ich wraki znikają przy HP 0, a dym i ślady powstają tam, gdzie węzły wpadają w kulę skały), do tego poprawki z przeglądu.
+
+Czas `HullBodies.step` na stronie gry, ms na krok, 720p (`GRA/f-stary`, `GRA/f-nowy`, po jednym biegu, `--woksele 0 / 1`, pole `fizStrona`):
+
+| Okno | Stary upadek: średnia / maks | Woksele: średnia / maks |
+|---|---:|---:|
+| upadek-1 | 3,42 / 9,5 | 0,08 / 0,1 |
+| upadek-2 | 4,36 / 7,0 | 0,07 / 0,1 |
+| upadek-6 | 6,48 / 16,0 | 0,01 / 0 |
+| upadek-7 | 8,33 / 15,8 | 0,01 / 0 |
+| upadek-8 (lądowanie, 226 gorących wraków) | 13,51 / 24,7 | 0,01 / 0,1 |
+
+GPU S p50 / p95, ms, 5120 × 1440, Ultra, `limitKlatek=120`, worker (`GRA/k-stary`, `GRA/k-nowy`, po jednym biegu; upadek jest chaotyczny, a gaz zmienia S o kilka ms między biegami tego samego kodu, § 5d):
+
+| Okno | Stara baza | Woksele |
+|---|---:|---:|
+| przed | 2,01 / 2,18 | 3,13 / 3,20 |
+| ostrzał 1 | 7,36 / 10,47 | 9,19 / 11,85 |
+| ostrzał 3 | 6,88 / 10,38 | 9,05 / 12,21 |
+| upadek 1 | 10,03 / 15,09 | 16,45 / 17,37 |
+| upadek 2 | 12,22 / 12,81 | 9,75 / 15,87 |
+| upadek 3 | 7,87 / 9,80 | 7,79 / 10,98 |
+| po | 2,56 / 2,84 | 2,35 / 4,27 |
+| nad gruzem | 3,03 / 3,59 | 2,33 / 2,96 |
+
+Rozbicie przy 5120 × 1440: `fx:wybuchy` 2,6 ms w ostrzale, 8,7 ms w oknie upadek 1 nowego biegu, 4,9–6,0 ms w starym; sam `fx:woksele` około 1 ms (cele 0,65, kernele 0,3–0,8). Stojąca baza dokłada 1,1 ms: dwa passy rysują te same węzły. Klatka CPU workera spada: p50 przy upadku 1,4–2,6 ms wobec 2,8–4,5 ms.
+
+AGENT: `klatkiStronyS` z tego narzędzia nie jest czasem klatki gry. Okna z 32 kl/s i `raf max` około 30 ms są w obu wariantach, to odkładanie rAF przez headless bez taktu (pamięć `headless-takt-raf`). O przestojach strony mówi `fizStrona` i `raf.slow`, nie to pole.
+
+**Nowe lądowanie (ten sam dzień).** Uwaga użytkownika: resztki dymu i iskry na planecie są niepotrzebne, a trzeba napisać nowy upadek, pył i kratery. Zrobione: kula kontaktu, fala kotwic od habitatu, pył regolitu z węzłów, mapa kraterów, zamrożenie ruin po 38 s, a do tego wyniki przeglądu (grawitacja ku skale, zegar upadku z kroków solvera, upadek liczony także poza kadrem, kadr z głębokością ruin, kratery poza soczewką). Woksele nie karmią już `RockImpactFx`. Stan i zasady: reguła `woksele-zawalen`.
+
+Trzy błędy widoczne w kadrach, wszystkie znalezione sondami, nie zgadywaniem:
+
+- Dwie jasne kule i biała smuga po HP 0 to para i ogień wyrw (`--sonda 1`, gaszenie grup materiałów, `GRA/t9`). Worker podawał obrazowi wyrw czas 0, gdy wyrw nie było, więc odpięcie powietrza zamrażało cząstki na stałe.
+- Kratery na kubełek: ~3500 stempli równej wielkości, wygląd folii bąbelkowej (`GRA/t10`). Po zmianie na krater na bryłę: 53–70 kraterów o promieniu 190–900 j. (`GRA/t13`, `k7`).
+- Proste łańcuchy kraterów wzięte w `GRA/t12` za ślad pomostów to był błąd. Przegląd pokazał, że gruz zsuwał się ze skały (stała −z na kuli, kąt tarcia 35°), a `kGinieLicz` przycinał go do brzegu siatki. Węzły na brzegu siatki w szczycie: 29 tys. przed zmianą pola (`GRA/t11`, liczone przez przegląd z logu `GRA/t12`), około 430 po niej (`GRA/t13`, `GRA/t14`).
+
+GPU S p50 / p95, ms, 5120 × 1440, Ultra, `limitKlatek=120`, worker, po jednym biegu (`GRA/k-stary`, `GRA/k8`). `k8` to ostateczny kod. Wybuchy zmieniają szczyt o kilka ms między biegami tego samego kodu: `upadek 1` wyszło 11,8, 11,0 i 11,9 w `k3`, `k4` i `k7`, a 17,7 w `k8`.
+
+| Okno | Stara baza | Nowe lądowanie |
+|---|---:|---:|
+| przed | 2,01 / 2,18 | 3,48 / 3,78 |
+| ostrzał 1 | 7,36 / 10,47 | 10,91 / 13,80 |
+| upadek 1 | 10,03 / 15,09 | 17,73 / 19,05 |
+| upadek 2 | 12,22 / 12,81 | 11,13 / 16,85 |
+| upadek 3 | 7,87 / 9,80 | 9,19 / 13,61 |
+| upadek 6 | 5,03 / 6,85 | 5,18 / 5,99 |
+| po | 2,56 / 2,84 | 4,88 / 5,84 |
+| nad gruzem | 3,03 / 3,59 | 3,16 / 3,74 |
+
+Światło gruzu przy skale (`vNaSkale`) dołożyło około 0,4 ms w oknie `przed` (3,07 w `k6`, 3,48–3,52 w `k7`, `k8`), także po przeniesieniu z fragmentu na wierzchołek. Da się je wyłączyć do pierwszego zdarzenia uniformem, jeśli stojąca baza będzie za droga. Fizyka na stronie w upadku ≤ 0,2 ms na krok.
+
+**Otwarte: przerwy między klatkami strony w 5120 × 1440.** W oknach upadek 2–4 (około 3–8 s po HP 0) rAF strony ma przerwy 100–290 ms, co około 0,5 s, a procesor graficzny pracuje na 99 % (`k3`, `k4`, `k7`, `k8`). W 720p ich nie ma (`t11`–`t14`), w `k-stary` i `k-nowy` też nie. Sprawdzone:
+
+- To nie JS strony: `long-animation-frame` pokazuje 0 ms blokady i brak skryptów, cała przerwa przypada przed `renderStart`.
+- To nie odczyt uderzeń: bez `odczytGinie` przerwy są takie same, do 241 ms (`k9`).
+- W śladzie Chrome (`k5`) w tych sekundach rośnie rastrowanie warstw strony: `DoRasterCHROMIUM` 6600 na 3 s wobec 613 przed ostrzałem, najdłuższe zadanie procesu GPU 47 ms. W samym `k5` przerw nie było, bo ślad przestawia czasy.
+
+Hipoteza, niepotwierdzona: GPU nasycone klatkami workera (`S` ≈ 10 ms przy około 100 kl/s) głodzi kompozytor, który przerysowuje HUD w bardzo szerokich kafelkach. `k-stary` nie nasycał GPU, bo worker był wolniejszy (`S` 12 ms przy 46 kl/s). Pomiar jest bez okna, więc nie wiadomo, czy gracz to widzi. Następny krok, jeśli widać: limit klatek w kolejce GPU po stronie workera (reguła `render-worker`) i test przy tym samym oknie.
 
 ## 6. Decyzje do użytkownika po pokazie
 

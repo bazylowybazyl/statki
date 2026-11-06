@@ -3,11 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
-import { createWokseleSolver, slowoSasiada, sasiadZeSlowa, klasaZeSlowa, slowoIjk, KRATER_N, BIT_ZOSTAW } from '../dema/woksele-zawalenia/solver.js';
-import { wieza, S1, S3, S4, krater, planGpu } from '../dema/woksele-zawalenia/scena.js';
+import { createWokseleSolver, slowoSasiada, sasiadZeSlowa, klasaZeSlowa, slowoIjk, KRATER_N, GINIE_BOK, BIT_ZOSTAW } from '../src/3d/woksele/solver.js';
+import { wieza, S1, S3, S4, krater, planGpu } from '../src/3d/woksele/scena.js';
 import { WzorzecCpu } from '../dema/woksele-zawalenia/wzorzec-cpu.js';
 import { WzorzecF32 } from '../dema/woksele-zawalenia/wzorzecF32.js';
-import { zbuduj, PARAMETRY, STRONA } from '../dema/woksele-zawalenia/budowa.js';
+import { zbuduj, PARAMETRY, STRONA } from '../src/3d/woksele/budowa.js';
 
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
 const renderer = new THREE.WebGPURenderer({ canvas });
@@ -53,6 +53,10 @@ const DOSTEP = {
   kWybuchSuma: { wokWez: 'read_write', wokStan: 'read', wokBlastK: 'read', wokLicz: 'read_write' },
   kWybuchMoment: { wokWez: 'read', wokLicz: 'read_write' },
   kWybuch: { wokWez: 'read_write', wokLicz: 'read' },
+  // Gra: węzły na skale po kubełkach, poza krokiem (solver.odczytGinie, tylko po HP 0).
+  kGinieZeruj: { wokGinie: 'read_write' },
+  kGinieLicz: { wokWez: 'read', wokGinie: 'read_write' },
+  kPusc: { wokStan: 'read_write', wokWez: 'read' }, // gra: fala puszczania kotwic przy upadku
 };
 
 test('kernele P1 i P2: dokładnie te z § 12', () => {
@@ -83,8 +87,8 @@ for (const nazwa of Object.keys(DOSTEP)) {
   });
 }
 
-test('atomiki tylko w kWstaw, kCel, kWybuchSuma i kWybuchMoment (§ 2.4)', () => {
-  const Z_ATOMIKIEM = new Set(['kWstaw', 'kCel', 'kWybuchSuma', 'kWybuchMoment']);
+test('atomiki tylko w kWstaw, kCel, kWybuchSuma, kWybuchMoment i kGinieLicz (§ 2.4; kGinieLicz poza krokiem, nie w kI)', () => {
+  const Z_ATOMIKIEM = new Set(['kWstaw', 'kCel', 'kWybuchSuma', 'kWybuchMoment', 'kGinieLicz']);
   for (const nazwa of NAZWY) assert.equal(maAtomik(WGSL[nazwa]), Z_ATOMIKIEM.has(nazwa), `${nazwa}: atomik`);
   assert.match(WGSL.kWstaw, /atomicAdd\(/);
   assert.match(WGSL.kCel, /atomicMin\(/);
@@ -233,7 +237,7 @@ test('wczytanie budowy: wiązania, klasy i tablice stałe wracają z buforów', 
     assert.equal(ijk.array[i], slowoIjk(w.ijk[3 * i], w.ijk[3 * i + 1], w.ijk[3 * i + 2], w.grupa[i]));
   }
   for (let q = 0; q < 27; q++) assert.equal(tab.array[4 * (30 + q)], w.lutKier[q]);
-  for (const [nazwa, k] of Object.entries(s.kernele)) assert.equal(k.getCount(), { kZerujCel: 1, kKraterCel: KRATER_N, kZerujWybuch: 20 }[nazwa] ?? n, nazwa);
+  for (const [nazwa, k] of Object.entries(s.kernele)) assert.equal(k.getCount(), { kZerujCel: 1, kKraterCel: KRATER_N, kZerujWybuch: 20, kGinieZeruj: GINIE_BOK * GINIE_BOK }[nazwa] ?? n, nazwa);
   assert.equal(s.atrybuty.czasU.array[0], Math.fround(1e30));
   assert.equal(s.uniformy.uN.value, n);
   assert.equal(s.uniformy.uCap.value, w.capEtyk);

@@ -988,7 +988,8 @@ if (isWorker) {
     try { if (st.destruction) st.destruction.update(h[H.VFX_TIME], h[H.FRAME_DT]); } catch (e) { modFail('rozpad stacji', e); }
     try { if (st.pbg && v.blocks.pirateBase && v.blocks.pirateBase.f64) {
       const pm = st.pbMods.blk.applyPirateBaseBlock(v.blocks.pirateBase, st.pbMirror);
-      if (pm.present) st.pbg.updatePirateBase3D(pm.dt, pm.state);
+      // Czas gry od ostatniej PRZETWORZONEJ strony, nie dt jednej strony: worker pomija strony, a woksele liczą tym zegarem symulację (zawalenie szłoby w zwolnionym tempie względem gry).
+      if (pm.present) st.pbg.updatePirateBase3D(st.mods.warpWorld.warpFxDt(st.pbClock || (st.pbClock = { prev: NaN }), pm.clock, pm.dt), pm.state);
     } } catch (e) { modFail('baza piratów', e); }
     try { if (st.bay) {
       const pl = rm.player, bm = st.bayMsg, bp = st.bayPose;
@@ -1043,7 +1044,7 @@ if (isWorker) {
     // wyrwy bazy piratów (po kadłubach — bank Fx3D ma początek układu tej klatki)
     try { if (st.vents && v.blocks.pirateVents && v.blocks.pirateVents.f64) {
       const vm = st.ventsBlk.applyPirateVentsBlock(v.blocks.pirateVents, st.ventsMirror);
-      st.vents.update(vm, vm.has ? vm.dt : 0);
+      st.vents.update(vm, vm.dt);
     } } catch (e) { modFail('wyrwy bazy', e); }
     try { if (st.warBd && v.blocks.warBackdrop && v.blocks.warBackdrop.f64) {
       st.warBd.update(st.warBdBlk.applyWarBackdropBlock(v.blocks.warBackdrop, st.warBdMirror), cam);

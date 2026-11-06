@@ -2,10 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
-import { createWokseleSolver } from '../dema/woksele-zawalenia/solver.js';
-import { createWokseleObraz } from '../dema/woksele-zawalenia/obraz.js';
+import { createWokseleSolver } from '../src/3d/woksele/solver.js';
+import { createWokseleObraz } from '../src/3d/woksele/obraz.js';
 import { createMiastoDalekie } from '../dema/woksele-zawalenia/miastoDalekie.js';
-import { planM3, INST_DALEKIE, RODZ_DAL, T_NIGDY, POJEMNOSC_MIASTA } from '../dema/woksele-zawalenia/scenaMiasta.js';
+import { planM3, INST_DALEKIE, RODZ_DAL, T_NIGDY, POJEMNOSC_MIASTA } from '../src/3d/woksele/scenaMiasta.js';
 
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
 const renderer = new THREE.WebGPURenderer({ canvas });

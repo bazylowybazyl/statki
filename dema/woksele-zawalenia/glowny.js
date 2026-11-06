@@ -1,9 +1,9 @@
 // Strona dema wiązanych wokseli (docs/SPEC-woksele-zawalenia.md § 5.1, § 8). Pakiet P1: renderer, rozgrzewka kerneli, znaczniki czasu, API window.__wok. Bez obrazu.
 // ?test=1 dokłada window.__wok.test (test GPU z Node, testGpu.js). ?profil=1: każdy kernel własnym renderer.compute, czasy kF, kI, kLista osobno, wynik tylko do proporcji (§ 8).
 import * as THREE from 'three/webgpu';
-import { createWokseleSolver } from './solver.js';
-import { S1, S2, S3, S4, stanie } from './scena.js';
-import { zbuduj, PARAMETRY } from './budowa.js';
+import { createWokseleSolver } from '../../src/3d/woksele/solver.js';
+import { S1, S2, S3, S4, stanie } from '../../src/3d/woksele/scena.js';
+import { zbuduj, PARAMETRY } from '../../src/3d/woksele/budowa.js';
 
 const parametryAdresu = new URLSearchParams(location.search);
 const TEST = parametryAdresu.get('test') === '1';

@@ -1,8 +1,8 @@
 // Próba 1 planu LOD (docs/PLAN-zawalenia-lod-miasto.md § 5): czy grubszy woksel zachowuje się tak samo. Tylko ?test=1.
 // Scena S1 przy danym dx i materiale, liczby z tych samych metryk co tabela § 8 (ObserwatorSceny), czasy ze znaczników. Kratka kawałków także w jednostkach gry: kosze metryk liczą węzły, a węzeł przy dx = 80 waży 64 razy tyle co przy dx = 20.
-import { S1Lod, stanieLod, planGpu } from './scena.js';
-import { planStanieMiasta } from './scenaMiasta.js';
-import { popcnt, zbudujPlan } from './budowa.js';
+import { S1Lod, stanieLod, planGpu } from '../../src/3d/woksele/scena.js';
+import { planStanieMiasta } from '../../src/3d/woksele/scenaMiasta.js';
+import { popcnt, zbudujPlan } from '../../src/3d/woksele/budowa.js';
 import { ObserwatorSceny, pietraStropow, taca, wysokoscDachu } from './metryki.js';
 
 const liczNaN = (t) => { let c = 0; for (let i = 0; i < t.length; i++) if (t[i] !== t[i]) c++; return c; };

@@ -271,6 +271,17 @@ test('stan klatki → blok migawki → lustro: te same liczby; sufit wyrw', () =
   for (let i = 0; i < f.n * VENT_REC.STRIDE; i++) assert.equal(mir.rec[i], f.rec[i]);
 });
 
+test('blok wyrw bez wyrw: czas klatki idzie dalej, żeby żywe cząstki dogasły (po HP 0 zamarzały w miejscu)', () => {
+  const blk = createPirateVentsBlock();
+  const B = { f64: new Float64Array(blk.f64) };
+  blk.pack(B, { pirateVents: { has: false, n: 0, time: 12.5, dt: DT, rec: new Float64Array(0) } });
+  const mir = applyPirateVentsBlock(B, createPirateVentsFrame());
+  assert.equal(mir.has, false);
+  assert.equal(mir.n, 0);
+  assert.equal(mir.dt, DT);
+  assert.equal(mir.time, 12.5);
+});
+
 test('światła wnętrza: rozszczelniona ćwiartka miga, bez powietrza gaśnie; reszta świeci', () => {
   fresh();
   const qi = mod('H-S').qi;

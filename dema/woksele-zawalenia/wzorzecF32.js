@@ -3,7 +3,7 @@
 // Ten wzorzec odróżnia taki przypadek od błędu portu: GPU ma się z nim zgadzać na tych samych progach. Lista kontaktów zostaje z WzorzecCpu (f64), bo komórki i zasięg nie decydują o sile.
 // opcje.f32 = false: te same działania bez zaokrąglania, tylko do sprawdzenia, że to ten sam algorytm co WzorzecCpu (tests/wokseleWgsl.test.mjs).
 import { WzorzecCpu } from './wzorzec-cpu.js';
-import { N0X, N0Y, N0Z, popcnt, gWezla } from './budowa.js';
+import { N0X, N0Y, N0Z, popcnt, gWezla } from '../../src/3d/woksele/budowa.js';
 
 const TOZSAMOSC = (x) => x;
 

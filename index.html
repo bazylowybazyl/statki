@@ -1237,7 +1237,7 @@
     import { pirateBase3D, pirateBase3DEvent, pirateRockSite, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
     // Baza piratów po stronie gry (RW-24): stan kawałków, `_dockGone`, ciała świata, decyzje break / ram, środek planetoidy;
     // obraz dostaje zdarzenia (onPirateBaseEvent → pirateBase3DEvent).
-    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseObstacles, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
+    import { attachPirateBaseWorld, attachPirateBaseBodies, detachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseVoxEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseObstacles, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
     // Ciała ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F1/F2): budowle jako płaskie, zakotwiczone ciała silnika belek
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
@@ -1249,7 +1249,7 @@
     import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, habitatFallMutesDebris, loadPirateRockShape, noteBaseWreckRest, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
     // Powietrze budowli bazy (2026-10-19): rozszczelnienie, dekompresja, wylot powietrza i pożary — decyzje w grze
     // (src/game/story/pirateBaseAtmosphere.js), obraz wyrw src/3d/pirateBaseVents3D.js (stan klatki — blok pirateVents).
-    import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
+    import { attachPirateBaseAtmosphere, detachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
     import { createPirateVentsBlock } from "./src/render/blocks/pirateVentsBlock.js";
     import { createPirateBaseVents3D } from "./src/3d/pirateBaseVents3D.js";
     // Bitwa w głębi sceny „Wojna” (2026-10-19): tłum okrętów nad i pod płaszczyzną gry, planeta w głębi, bohaterowie —
@@ -24751,6 +24751,8 @@
       let dmg = amount || 0;
       if (dmg <= 0) return 0;
       if (station._destroyed3D) return 0;       // already dead, no more damage
+      // Baza piratów: każde trafienie (pocisk, wiązka, taran) to krater w wiązanych wokselach, sam obraz.
+      if (!direct && station.baseStructure && Number.isFinite(station.lastHitX)) pirateBaseVoxEvent('voxHit', station.lastHitX, station.lastHitY, dmg);
       // Budowla z pulami kawałków (habitat bazy piratów — onBasePieceDamage): trafienie zdejmuje punkty kawałka.
       if (!direct && station.pieceDamage) return station.pieceDamage(station, dmg);
       if (isEntityShieldBlocking(station)) {
@@ -30183,6 +30185,7 @@
     }
 
     let _warpFxClock = 0;
+    let _pirateBaseClock = 0;
     function packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, shakePxX, shakePxY, cloakFrame = null) {
       const f = _snapFrame;
       f.frameId = renderFrameId;
@@ -30254,6 +30257,8 @@
       // baza piratów misji 1: stan klatki obrazu (ten sam, który dostaje updatePirateBase3D) i dt gry
       f.pirateBase = storyBaseFrameState();
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
+      _pirateBaseClock += Math.max(0, Math.min(0.1, Number(f.pirateBaseDt) || 0));
+      f.pirateBaseClock = _pirateBaseClock;
       // wyrwy bazy (dekompresja, pożary): pozy wyrw dosunięte do czasu renderu, dt gry klatki
       f.pirateVents = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // bitwa w głębi sceny „Wojna”: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu)
@@ -33558,6 +33563,9 @@
       // z kawałka nic nie zostało na miejscu (np. głowa habitatu spadła po zerwaniu szyi — pirateBaseNeck.js): finał
       // rozpadu nie łamie go drugi raz i nie animuje schowanej bryły
       if (wPiece?.lost) return true;
+      pirateBaseVoxEvent('voxBreak', id);
+      // Upadek na wokselach: ciał już nie ma, a kawałek tylko dostaje kratery w obrazie (bez wyrw powietrza i dryfu w miejscu, z którego baza spada).
+      if (_baseFall.voxFall) return true;
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       const at = opts.at || p;
       const hc = place.habitat;
@@ -33690,6 +33698,7 @@
         camera.addShake(26, 0.9);
         noteCameraCombat('taran');
         if (StoryGame.site) StoryGame.site.neckSnapped = true;
+        pirateBaseVoxEvent('voxNeck', st.fallX, st.fallY);
         pushZoneMessage('SZYJA HABITATU ZERWANA — WIEŻA SIĘ PRZEWRACA', 3.5);
         if (owner?.stageGoal) syncBaseStages();
         else if (owner && owner.hp > 0) _baseIntegrityHooks.damage(owner, (Number(owner.maxHp) || 0) * NECK_TUNE.hpFrac, hc.x, hc.y);
@@ -33797,12 +33806,67 @@
         detachPirateRockTerrain(_baseFall, HullBodies.engine);
         return;
       }
+      if (_baseFall.voxFall) { stepVoxBaseFall(dt); return; }
       stepHabitatFall(_baseFall, syncPirateFallCtx(), dt);
     }
     /** HP 0 habitatu (storyGame._chainExplosion): upadek na planetoidę. true — ruszył (bez terenu / habitatu — false). */
     function startPirateBaseFall() {
       if (!_baseFall.terrain) return false;
+      const _neck = pirateBaseSites()?.habitat?.neck;
+      pirateBaseVoxEvent('voxFall', Number(_neck?.fallX) || 0, Number(_neck?.fallY) || 0);
+      if (VOX_OBRAZ) return startVoxBaseFall();
       return startHabitatFall(_baseFall, syncPirateFallCtx());
+    }
+    // UPADEK NA WOKSELACH (2026-11-06): obraz upadku rysują woksele (src/3d/woksele/wGrze.js), a uderzenia w skałę liczą z własnych węzłów. Fizyka starych, niewidocznych brył była więc samym kosztem: strona gry traciła na niej klatki (pomiar: plan LOD § 5e).
+    // Przy HP 0 stare ciała bazy znikają od razu, a kawałki bez ciał przestają trafiać dopiero po puszczeniu kotwic wokseli. Misja i ujęcie kamery idą tym samym stanem upadku, czasy z zegara (gra nie czyta niczego z wokseli: zasada 1).
+    // A/B: ?woksele=0 — stary obraz i stara fizyka upadku.
+    const VOX_OBRAZ = !/[?&]woksele=0\b/.test(location.search);
+    // Czasy z fali puszczania kotwic w src/3d/woksele/wGrze.js (start 3 s, 1500 j./s) i spadku ~11,5 s: gra ich nie czyta z wokseli.
+    const VOX_FALL_T = { kotwice: 9, wieza: 13, dysk: 17, koniec: 28 };
+    function startVoxBaseFall() {
+      const F = _baseFall;
+      F.phase = 'falling';
+      F.t = 0;
+      F.voxFall = true;
+      _fallHooks.onFallStart();
+      for (let i = wrecks.length - 1; i >= 0; i--) {
+        const w = wrecks[i];
+        if (!pirateBasePieceOf(w)) continue;
+        if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
+        if (salvageState.cutting === w) stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
+        TowSystem.detachBody(w, 'wreck-despawn');
+        recycleWreckEntity(w);
+        wrecks.splice(i, 1);
+      }
+      detachPirateBaseBodies();
+      // Wyrwy powietrza jechały ze starymi ciałami: bez nich para stałaby w miejscu, z którego baza spada.
+      detachPirateBaseAtmosphere();
+      const l = (StoryGame.site?.dock || _baseFallPlace)?.layout;
+      for (const c of l?.chunks || []) if (c.structure === 'habitat') hidePirateBaseChunk(c.id);
+      return true;
+    }
+    function stepVoxBaseFall(dt) {
+      const F = _baseFall;
+      if (F.phase !== 'falling') return;
+      F.t += dt;
+      if (!F.voxHidden && F.t >= VOX_FALL_T.kotwice) {
+        F.voxHidden = true;
+        const l = (StoryGame.site?.dock || _baseFallPlace)?.layout;
+        for (const c of l?.chunks || []) hidePirateBaseChunk(c.id);
+        // Cała baza spadła: budowla bez ani jednej bryły nie może zostać żywa (radar, TRAVEL TO, cel wież). Bezpiecznik pirateBaseIntegrity tu nie zadziała, bo ciał już nie ma.
+        for (const st of Object.values(StoryGame.site?.structures || {})) if (st && st.hp > 0 && !st._destroyed3D) _baseIntegrityHooks.kill(st);
+      }
+      if (!F.towerSaid && F.t >= VOX_FALL_T.wieza) {
+        F.towerSaid = true;
+        F.towerImpactT = F.t;
+        camera.addShake(26, 1.4);
+        pushZoneMessage('WIEŻA HABITATU UDERZYŁA W PLANETOIDĘ', 3.5);
+      }
+      if (F.discImpactT < 0 && F.t >= VOX_FALL_T.dysk) {
+        F.discImpactT = F.t;
+        camera.addShake(14, 0.8);
+      }
+      if (F.t >= VOX_FALL_T.koniec) F.phase = 'settled';
     }
     /** Kawałek płaski habitatu (bęben, szyb) → bryła 3D spadająca na skałę (pirateBaseFall.promotePlanarPiece). */
     function promotePirateBasePiece(piece, o) {

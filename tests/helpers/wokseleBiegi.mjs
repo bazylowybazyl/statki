@@ -3,8 +3,8 @@
 // BIEGI to dane: `.tmp/woksele-demo/skroty-biegi-spec4.mjs` czyta z nich te same okna i liczy skróty w proby4/model-spec4.mjs, a nie w porcie.
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
-import { S1, S2, S3, S4 } from '../../dema/woksele-zawalenia/scena.js';
-import { zbuduj, popcnt, parametry } from '../../dema/woksele-zawalenia/budowa.js';
+import { S1, S2, S3, S4 } from '../../src/3d/woksele/scena.js';
+import { zbuduj, popcnt, parametry } from '../../src/3d/woksele/budowa.js';
 import { WzorzecCpu, pakujMigawke, rozpakujMigawke } from '../../dema/woksele-zawalenia/wzorzec-cpu.js';
 import { porownajPodkrok } from '../../dema/woksele-zawalenia/metryki.js';
 

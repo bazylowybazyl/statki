@@ -17,8 +17,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { S1, S2, S3, S4, kolumna1, naroznik, stanie, odpornosc, krater, czyGrunt, MIEJSCA_KRATEROW } from '../dema/woksele-zawalenia/scena.js';
-import { zbuduj, parametry, PARAMETRY } from '../dema/woksele-zawalenia/budowa.js';
+import { S1, S2, S3, S4, kolumna1, naroznik, stanie, odpornosc, krater, czyGrunt, MIEJSCA_KRATEROW } from '../src/3d/woksele/scena.js';
+import { zbuduj, parametry, PARAMETRY } from '../src/3d/woksele/budowa.js';
 import { WzorzecCpu, pakujMigawke, rozpakujMigawke } from '../dema/woksele-zawalenia/wzorzec-cpu.js';
 import { ObserwatorSceny, analizaPolowek, pietraStropow, taca, porownajPodkrok, zastapLiczby } from '../dema/woksele-zawalenia/metryki.js';
 

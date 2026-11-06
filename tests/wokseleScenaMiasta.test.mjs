@@ -1,8 +1,8 @@
-// Sceny miasta dema wiązanych wokseli (dema/woksele-zawalenia/scenaMiasta.js, plan LOD § 5). Budowa przy dx = 20 trwa ułamek sekundy, bez GPU.
+// Sceny miasta dema wiązanych wokseli (src/3d/woksele/scenaMiasta.js, plan LOD § 5). Budowa przy dx = 20 trwa ułamek sekundy, bez GPU.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dzielnica, planM1, planM2, planStanieMiasta, POJEMNOSC_MIASTA } from '../dema/woksele-zawalenia/scenaMiasta.js';
-import { zbudujPlan, STRONA, ND } from '../dema/woksele-zawalenia/budowa.js';
+import { dzielnica, planM1, planM2, planStanieMiasta, POJEMNOSC_MIASTA } from '../src/3d/woksele/scenaMiasta.js';
+import { zbudujPlan, STRONA, ND } from '../src/3d/woksele/budowa.js';
 
 test('dzielnica: każdy węzeł ma wiązania i należy do jednego budynku, między budynkami nie ma wiązań', () => {
   const plan = planStanieMiasta({ dx: 20 });

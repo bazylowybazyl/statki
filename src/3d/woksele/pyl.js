@@ -12,6 +12,7 @@ export const KW_BLYSK = 3; // kwady na rekord błysku: 2–3 plamy ognia z tego 
 const ZYCIE_BLYSK = 0.25;
 const KD_DYSK = 4;
 const BIT_PYL = 64; // w wRama [3i + 2].w: węzeł już raz emitował pył
+const BIT_SKALA = 128; // gra, w wRama [3i + 2].w: węzeł już raz uderzył w skałę
 
 // LOD i sufit (§ 4.6, R20): w pikselach celu pyłu, a ten ma około 720 wierszy niezależnie od okna. Kwad duży rysuje co czwarty z alfą × 4, tak samo pył daleki i mikry, a przy kamerze gaśnie.
 const LOD_DUZE = [34, 58];
@@ -39,7 +40,7 @@ export const OPCJE_PYLU = {
   B1: { kwady: 14000, emisja: 0.4, rozmiar: 1.7, sufitPx: 110, lodDuze: [24, 42], pod: 0, grunt: 0, kont: 3, zar: 0.7, zycie: [2.5, 5], klab: 1.6, klabV: 1.1 },
 };
 
-export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp }) {
+export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp, wGrze = false }) {
   const { uN, uGruntZ } = solver.uniformy;
   const BLYSKI = solver.blyski;
   const REK_LISTY = A.lista.count / MAX;
@@ -187,8 +188,42 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
     wPylW.element(q3.add(uint(1))).assign(vec4(v, r0));
   })().compute(CAP_P).setName('wokPylKrok');
 
+  // ── kPylSkala (gra) ── Węzeł pierwszy raz przy powierzchni skały: pył rozchodzi się po skale, nisko, na boki od miejsca uderzenia. Co piąty węzeł, cząstka szeroka i długo żyje, w barwie regolitu. Bit jak w emisji: raz na węzeł.
   const kernele = { kPylEmisja, kPrzyczyna, kPylKrok };
   const lista = [kPylEmisja, kPrzyczyna, kPylKrok];
+  let kPylSkala = null;
+  if (wGrze) {
+    const { uGinieC, uKulaR } = solver.uniformy;
+    kPylSkala = Fn(() => {
+      const i = instanceIndex;
+      If(i.greaterThanEqual(uN), () => { Return(); });
+      const i3 = uv_(uint(3).mul(i));
+      const p = v4(wWezR.element(i3));
+      If(p.w.lessThan(0), () => { Return(); });
+      const e = v3(p.xyz.sub(uGinieC));
+      const dl = fv(sqrt(dot(e, e)));
+      If(dl.greaterThanEqual(uKulaR.add(50)), () => { Return(); });
+      const bity = uv_(uint(wRamaW.element(i3.add(uint(2))).w));
+      If(bity.bitAnd(uint(BIT_SKALA)).notEqual(uint(0)), () => { Return(); });
+      wRamaW.element(i3.add(uint(2))).w.assign(float(bity.bitOr(uint(BIT_SKALA))));
+      const h = haszT(i.add(uint(90210)));
+      const t = uv_(h.shiftRight(uint(3)));
+      If(t.sub(t.div(uint(9)).mul(uint(9))).notEqual(uint(0)), () => { Return(); });
+      const hq = haszT(h);
+      const n = v3(e.div(max(dl, 1)));
+      const los = v3(vec3(u1(hq, 0), u1(hq, 10), u1(hq, 20)));
+      const st = v3(los.sub(n.mul(dot(los, n))));
+      const tn = v3(st.div(max(sqrt(dot(st, st)), 0.05)));
+      const v = v3(tn.mul(bajt(hq, 3).mul(900).add(260)).add(n.mul(bajt(hq, 11).mul(150).add(20))));
+      const q = uv_(atomicAdd(wLiczA.element(uint(0)), uint(1)).mod(uKapP));
+      const q3 = uv_(uint(3).mul(q));
+      wPylW.element(q3).assign(vec4(p.xyz.add(n.mul(40)), 0));
+      wPylW.element(q3.add(uint(1))).assign(vec4(v, bajt(hq, 19).mul(210).add(90)));
+      wPylW.element(q3.add(uint(2))).assign(vec4(1, 0.3, float(4).add(bajt(hq, 25).mul(5)), 1));
+    })().compute(MAX).setName('wokPylSkala');
+    kernele.kPylSkala = kPylSkala;
+    lista.push(kPylSkala);
+  }
 
   // ── Rysunek ── Kwady w płaszczyźnie widoku. Bez testu głębi sprzętowego: cel nie ma głębi, miękkość jak w rys4.mjs z tekstury przebiegu głębi tych samych rozmiarów.
   const plaski = new THREE.PlaneGeometry(2, 2);
@@ -242,7 +277,8 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
         W.assign(a.xyz.add(b.xyz.mul(uTau)));
         R.assign(b.w.mul(uR0).add(uRt.mul(sqrt(wiek))));
         Al.assign(c.x.mul(uAlfa).mul(0.075).mul(min(wiek.mul(4), 1)).mul(max(float(1).sub(wiek.div(c.z)), 0)));
-        Kol.assign(vec3(0.62, 0.58, 0.52).mul(c.y));
+        // c.w: 0 pył konstrukcji, 1 regolit skały (kPylSkala). Przy 0 dokładnie dawna barwa.
+        Kol.assign(vec3(0.62, 0.58, 0.52).add(vec3(0.02, -0.2, -0.3).mul(c.w)).mul(c.y));
       });
     }).Else(() => {
       const r = uv_(id.sub(uKapP));
@@ -376,6 +412,7 @@ export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, 
     aLicz.array[0] = 0;
     aLicz.needsUpdate = true;
     kPylEmisja.setCount(w.n);
+    kPylSkala?.setCount(w.n);
   }
 
   function ustawRozmiar(renderer, hw, hh) {

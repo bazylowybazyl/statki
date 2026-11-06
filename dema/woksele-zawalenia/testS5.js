@@ -1,7 +1,7 @@
 // Liczby K1–K6 sceny S5 na GPU (docs/SPEC-woksele-zawalenia.md § 5.5), tylko ?test=1. Miary to port `Miary` z proby5/final/scena5.mjs bez zmian w definicjach.
 // Odczyt co 15 klatek, gęściej tylko tam, gdzie miara potrzebuje chwili: pierwszy styk, przejście szczytu wieży przez dysk, pierwszy dotyk gruntu.
-import { S5 } from './scena.js';
-import { zbudujPlan } from './budowa.js';
+import { S5 } from '../../src/3d/woksele/scena.js';
+import { zbudujPlan } from '../../src/3d/woksele/budowa.js';
 
 const FPS = 60;
 

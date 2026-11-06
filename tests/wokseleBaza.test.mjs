@@ -1,9 +1,9 @@
-// Scena B1 „Baza piratów” dema wiązanych wokseli (dema/woksele-zawalenia/scenaBazy.js, plan LOD § 5c). Bez GPU. Wypisuje tabelę węzłów na część i na dx.
+// Scena B1 „Baza piratów” dema wiązanych wokseli (src/3d/woksele/scenaBazy.js, plan LOD § 5c). Bez GPU. Wypisuje tabelę węzłów na część i na dx.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scenaB1, POJEMNOSC_BAZY } from '../dema/woksele-zawalenia/scenaBazy.js';
-import { zbudujPlan, STRONA, ND } from '../dema/woksele-zawalenia/budowa.js';
-import { KIND } from '../dema/woksele-zawalenia/scena.js';
+import { scenaB1, POJEMNOSC_BAZY } from '../src/3d/woksele/scenaBazy.js';
+import { zbudujPlan, STRONA, ND } from '../src/3d/woksele/budowa.js';
+import { KIND } from '../src/3d/woksele/scena.js';
 
 const plany = { 40: scenaB1({ dx: 40 }), 80: scenaB1({ dx: 80 }) };
 

@@ -2,8 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
-import { createWokseleSolver } from '../dema/woksele-zawalenia/solver.js';
-import { createWokseleObraz } from '../dema/woksele-zawalenia/obraz.js';
+import { createWokseleSolver } from '../src/3d/woksele/solver.js';
+import { createWokseleObraz } from '../src/3d/woksele/obraz.js';
 
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
 const renderer = new THREE.WebGPURenderer({ canvas });

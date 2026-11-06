@@ -7,14 +7,14 @@
 // AGENT: wszystkie części leżą na jednej siatce świata (komórka dx), a żadne dwie nie dzielą komórki (Map `zajete`), więc w chwili zero nic się nie przenika. Sąsiednie części dzielą tylko ścianę komórki: odległość dx jest większa niż suma promieni kontaktu (2 · 0,5 · dx · 0,9 · 1,1).
 // AGENT: ijk węzła to siatka WIRTUALNA jak w dzielnicy (scenaMiasta.js): każda część ma własne pole, między polami 3 puste komórki, więc wiązań między częściami nie ma, a statyka liczy się po części (statykaBudynkow). Część wisi na swojej dolnej warstwie (k = 0), to są jej kotwice. Dysk to osobna grupa z wypiekiem szwów jak S5.
 import { wieza, KIND, prng, szum2, S5_OPCJE, S5_NAKLADKA } from './scena.js';
-import { createPirateBaseLayout } from '../../src/3d/portBuildings/pirateBaseLayout.js';
-import { k7HeightToZ } from '../../src/3d/haloRing/haloPortK7Layout.js';
+import { createPirateBaseLayout } from '../portBuildings/pirateBaseLayout.js';
+import { k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { STRONA, ND } from './budowa.js';
 
 export const DX_BAZY = 40;
 /** Pojemność solvera na dx: ?maxWez i ?nKom strony. Węzły z testu tests/wokseleBaza.test.mjs. */
 export const POJEMNOSC_BAZY = Object.freeze({
-  40: { maxWez: 86000, nKom: 131072 },
+  40: { maxWez: 90000, nKom: 131072 },
   80: { maxWez: 26000, nKom: 65536 },
 });
 
@@ -189,6 +189,16 @@ function budujMagazyn(b, l) {
   const c = b.nowa('M-1', TON.magazyn);
   c.skrzynia = { x: W.x, y: -W.z, z0, z1 };
   b.wypelnij(c, W.x - W.w / 2, W.x + W.w / 2, -W.z - W.d / 2, -W.z + W.d / 2, z0, z1, skrzynia(W.x, -W.z, W.w, W.d, z0, z1, Math.max(W.wall, 2 * dx), 2 * dx));
+  // Plac kontenerów M-2 (warehouseYard w pirateBaseScene.js): płyta i rząd stosów. Wysokości stosów równe, bo barwę i tak daje wypiek skóry.
+  const A = W.annex;
+  const cA = b.nowa('M-2', TON.magazyn);
+  const zP0 = k7HeightToZ(-110), zP1 = k7HeightToZ(-50), zSt = k7HeightToZ(200);
+  b.wypelnij(cA, A.x - A.w / 2, A.x + A.w / 2, -A.z - A.d / 2, -A.z + A.d / 2, zP0, zP1, () => KIND.STROP);
+  for (let x = A.x - A.w / 2 + 90; x < A.x + A.w / 2 - 60; x += 130) {
+    for (let z = A.z - A.d / 2 + 110; z < A.z + A.d / 2 - 80; z += 230) {
+      b.wypelnij(cA, x - 55, x + 55, -z - 100, -z + 100, zP1, zSt, () => KIND.KOLUMNA);
+    }
+  }
 }
 
 /**
@@ -462,6 +472,8 @@ const OPCJE_B1 = Object.freeze({
 export function scenaB1(oo = {}) {
   const o = { ...OPCJE_B1, ...oo, czasy: { ...OPCJE_B1.czasy, ...oo.czasy } };
   const dx = o.dx ?? DX_BAZY;
+  // W grze (wGrze.js): bez planu krater po kraterze (kratery zleca misja) i z gruntem na poziomie skały pod bazą.
+  if (o.wGrze) o.stoi = true;
   const l = createPirateBaseLayout({ id: 'B1' });
   const Hs = l.habitat;
   const b = createBudowa(dx);
@@ -476,6 +488,7 @@ export function scenaB1(oo = {}) {
   budujMagazyn(b, l);
   const czDysk = budujDysk(b, Hs, o);
   const sc = zloz(b, czDysk, l);
+  if (Number.isFinite(o.gruntZ)) sc.gruntZ = o.gruntZ;
   const cz = new Map(b.czesci.map((c) => [c.nazwa, c]));
   const nD = czDysk.n, nW = czDysk.start;
   const { seg, nSeg, pod, nPod, wewnSek } = sektoryDysku(sc, nW, nD, o, Hs.discSectors, los);

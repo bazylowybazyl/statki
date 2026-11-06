@@ -3,7 +3,7 @@
 // Wołane co 0,25 s czasu sceny albo rzadziej, więc mogą alokować krótkie bufory: nie są w pętli symulacji.
 //
 // Stan (WzorzecCpu albo odczyt GPU + wypiek): { n, pos, vel, aktywny, maskaW, szkoda, nbr, iN0, wa, wb, wd, mW }.
-import { indeksyGrupy } from './scena.js';
+import { indeksyGrupy } from '../../src/3d/woksele/scena.js';
 
 function kosz(s) {
   return s < 2 ? 0 : s < 8 ? 1 : s < 64 ? 2 : s < 512 ? 3 : 4;

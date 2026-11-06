@@ -6,9 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { S5 } from '../dema/woksele-zawalenia/scena.js';
-import { zbudujPlan } from '../dema/woksele-zawalenia/budowa.js';
-import { PLANY_POKAZU } from '../dema/woksele-zawalenia/scenyPokazu.js';
+import { S5 } from '../src/3d/woksele/scena.js';
+import { zbudujPlan } from '../src/3d/woksele/budowa.js';
+import { PLANY_POKAZU } from '../src/3d/woksele/scenyPokazu.js';
 
 const WZOR = {
   21: {

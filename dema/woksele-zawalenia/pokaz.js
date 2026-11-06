@@ -2,10 +2,10 @@
 // Zegar stały 1/60 s na krok, najwyżej 2 kroki na klatkę, po przekroczeniu progu 1 krok, reszta przepada: spowolnienie zamiast spirali. Numer kroku z licznika całkowitego.
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createWokseleObraz } from './obraz.js';
-import { OPCJE_PYLU } from './pyl.js';
-import { DX_MIASTA, POJEMNOSC_MIASTA } from './scenaMiasta.js';
-import { DX_BAZY, POJEMNOSC_BAZY } from './scenaBazy.js';
+import { createWokseleObraz } from '../../src/3d/woksele/obraz.js';
+import { OPCJE_PYLU } from '../../src/3d/woksele/pyl.js';
+import { DX_MIASTA, POJEMNOSC_MIASTA } from '../../src/3d/woksele/scenaMiasta.js';
+import { DX_BAZY, POJEMNOSC_BAZY } from '../../src/3d/woksele/scenaBazy.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -117,7 +117,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const bazaAdresu = adres.has('baza') ? JSON.parse(adres.get('baza')) : {};
   const dxBazy = bazaAdresu.dx ?? DX_BAZY;
   const bazaSieMiesci = solver.maxNodes >= POJEMNOSC_BAZY[dxBazy].maxWez;
-  const watek = new Worker(new URL('./budowa.worker.js', import.meta.url), { type: 'module' });
+  const watek = new Worker(new URL('../../src/3d/woksele/budowa.worker.js', import.meta.url), { type: 'module' });
   const wypieki = new Map();
   const czekajace = new Map();
   watek.onmessage = ({ data }) => {
