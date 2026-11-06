@@ -144,7 +144,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `komety` | Komety |
 | `ruch-v2` | Ruch v2 — jedyna ekonomia gry: rynki (`addMarket`), API rynku, kursy i zlecenia, most i worker, rozgrzewka świata, zapis ekonomii, napędy ruchu, pola górnicze i wyrwy, towary i receptury, obsada (workforce), bramka bilansu |
 | `ruch-banka` | Statki ruchu v2 w grze: bańka przy portach i w studniach planet, zapas floty i postój, stanowiska, trafienia, taran, awans do NPC, kadłuby ruchu, proxy 3D |
-| `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, upadek, powietrze, uderzenia |
+| `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, teren skały, powietrze |
 | `fabula` | Fabuła: reżyser misji, intro w K-7, kampania |
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |
 | `kreator-kadlubow` | Kreator kadłubów (demo, niewpięty): format projektu, klocki i strażnik „bez czitowania”, kompozytor TSL, sieć systemów (kable i rury), przyjazny edytor „Stocznia” (przeciągnij i upuść), budowa w workerze z pamięcią etapów, warstwa barw (palety nacji, pędzel), statki cywilne (rola, ładunek, presety frachtowców) |
