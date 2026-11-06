@@ -390,7 +390,11 @@ Pomiar B1 z § 5c w prawdziwej misji 1: `scripts/webgpu/gpu-baza-gra.mjs --wokse
 | osiadłe 1 | 0,72 | 0,30 | 1,02 / 1,23 | 2,50 | 2,49 | 1,09 | 3,51 / 4,14 | 2,75 | **2,49** | 0,45 | 0,24 |
 | nad gruzem | 0,62 | 0,06 | 0,69 / 3,51 | 2,25 | 2,45 | 0,56 | 3,08 / 3,60 | 2,43 | **2,39** | 0,04 | 0,15 |
 
-**Czy baza a1 ↔ a2 pozwala mówić o różnicy b − a? O sumie tak, o szczegółach nie.** Bez statystyki, po dwa biegi. Rozrzut S p50 w A to najwyżej 0,65 ms, w B najwyżej 0,79 ms, a różnica 1,89–2,82 ms. Także w najgorszym ułożeniu, gorszy bieg B minus lepszy bieg A, zostaje 1,88–2,45 ms, więc **dodatni koszt około 2,4 ms jest realny w każdym oknie**. Czego z tej bazy nie wolno odczytać:
+**Czy baza a1 ↔ a2 pozwala mówić o różnicy b − a? O sumie tak, o szczegółach nie.** Bez statystyki, po dwa biegi. W ośmiu oknach tabeli rozrzut S p50 w A to najwyżej 0,65 ms, w B najwyżej 0,79 ms, a różnica 1,89–2,82 ms. Także w najgorszym ułożeniu, gorszy bieg B minus lepszy bieg A, zostaje tam 1,88–2,45 ms.
+
+**Sprostowanie: to wybór okien, więc „w każdym oknie” było za mocne.** Przeliczenie z surowych `raport.json` potwierdza tabelę co do setnych, ale raport ma 27 okien z co najmniej 60 pełnymi klatkami w każdym biegu i dwa z nich, poza tabelą, mają rozrzut A znacznie większy: ostrzał 2 (S p50 6,24 w a1 i 1,07 w a2, `fx:wybuchy` 3,24 i 0,37) oraz seria 3 (2,62 i 6,69, `fx:wybuchy` 1,52 i 2,90). Upadek 2 leży na granicy 0,65 ms. W ostrzale 2 B − A wychodzi −0,08 ms, a to nic nie znaczy, bo decyduje o tym, czy gaz wybuchów wpadł w okno biegu A. Po tych 27 oknach B − A to najmniej −0,08, mediana 2,49, najwięcej 3,30 ms. Wniosek „około 2,4–2,5 ms” zostaje jako typowy koszt, ale tylko tam, gdzie gaz gry nie przykrywa różnicy; gaz sam zmienia S o kilka ms między biegami tego samego kodu.
+
+Czego z tej bazy nie wolno odczytać:
 - Różnic między oknami. Rozpiętość 2,31–2,82 ms mieści się w rozrzucie, więc „płasko” znaczy tylko: zmiany nie widać przy rozdzielczości około ± 0,7 ms.
 - Podziału na compute przy samej sumie. Compute B − A to 0,64–0,85 ms, a rozrzut compute 0,54 ms w A i 0,57 ms w B (głównie `fx:wybuchy`, np. upadek 1: 4,84 w a1 i 5,40 w a2). Pewne jest 0,46–0,61 ms z etykiety `fx:woksele-fizyka`. Render B − A (1,26–1,98 ms przy rozrzucie najwyżej 0,22 w A i 0,39 w B) jest pewny.
 - P95. Różnica p95 skacze od 0,09 do 2,91 ms, a rozrzut p95 w A sięga 1,14 ms (ostrzał 3: 8,44 i 7,29). `przed` i `nad gruzem` mają w A p95 2,2–3,6 przy p50 0,4–0,7, więc tam p95 nie mówi nic o wokselach.
@@ -424,6 +428,8 @@ Kolumny `Cień słońca` nie wolno dodawać do `pass:fg`: cień to etykieta `pas
 - Nieprawda: woksele nie są tu grą. Ostrzał ich nie trafia, nie kolidują z okrętami i starą bazą, sekwencja jest z planu. Fizyka B1 jest płaska kosztowo (§ 5c), ale prawdziwe kratery z pocisków mogą mieć inny rytm: `KRATER_N`, `BLAST_N` i pierścień slotów nie są tu sprawdzone pod ogniem.
 - Obraz wobec dema: światło błysku na bryłach nie działa (`emissiveNode` czyta `positionWorld`, przy 5–10 mln j. to nie trafia w dane lokalne; koszt zostaje, obrazu nie ma), a grunt solvera z = −3400 jest niewidzialny, więc gruz leży na nim, a nie na skale gry. Materiał nie ma `sunVisibility` ani haków ośrodka pasa.
 - W kadrze widać obie bazy naraz. Woksele zasłaniają starą, gaz wybuchów gry kładzie się na wokselach. Ocena ze zrzutów, nikt tego nie oglądał w ruchu.
+- **Gruz przykrywa Atlasa.** W `06-nad-gruzem.png` narzędzie stawia Atlasa nad środkiem bazy z kamerą statku: w a1 i a2 stoi na środku kadru, w b1 i b2 widać tam tylko hałdę i czerwone lampy okrętu. Bryły idą w passie FG, czyli po kadłubach, mimo że leżą pod płaszczyzną gry. To wniosek z czterech zrzutów, nie z osobnej próby; kosztu nie zmienia (kadłub i tak się rysuje), ale przy podłączeniu do gry bryły muszą iść przed kadłubami.
+- **Z kamery gry wygląda to dziś znacznie gorzej niż w demie z ukosa.** Hałda zakrywa Marsa i większość kadru, kostki dx = 40 na zoomie statku to wielkie ciemne bloki, a stojący dysk z góry ma schodkowy brzeg i szachownicę w miejscu starej bazy (`b0/01-przed.png`). Ciemności nie rozdzielono: materiał nie ma `sunVisibility`, a słońce gry świeci inaczej niż własne słońce dema. Ten bieg odpowiada na pytanie o koszt, nie o wygląd.
 - Okna upadku różnią się między biegami, bo upadek jest chaotyczny: czas do osiadania ft 21,3 / 32 w A i 20,9 / 26,6 w B. Okna z 50 kl/s workera i bimodalny compute (p95 8–10 ms w upadku 2–4) są i w A, i w B, więc to nie woksele.
 
 **Pomiar dzienny, 5120 × 1440 (nie wolno go puszczać nocą):** `node scripts/webgpu/gpu-baza-gra.mjs --rozmiar 5120x1440 --query grafika=ultra --strzalyMaks 120 --slad 0 --out .tmp/woksele-demo/BAZA/gra-5120/a1`, potem to samo z `--woksele 1` do `b1`, potem `a2`, `b2`. Bez `limitKlatek` headless biegnie bez sufitu klatek, a GPU na 99%. Do wprost porównania z E0 zamiast tego `--query "grafika=ultra&limitKlatek=120"`.
@@ -437,6 +443,7 @@ Nowe po benchmarku misji 1 (§ 5c, § 5d):
 - **Zamiana czy dokładka.** Czy woksele mają docelowo zastąpić bazę na belkach i skórach, skoro w GPU w 720p zamiana nie spłaci kosztu, a zysk na CPU wątku gry jest jeszcze niezmierzony.
 - **Następny krok w grze.** Czy najpierw podłączyć prawdziwe kratery z pocisków do wokseli (ostrzał dziś ich nie trafia), czy najpierw zmierzyć wariant zamiany bez starej bazy.
 - **Szyja.** Czy wieża ma padać z jawnego przegubu jak w grze (`pirateBaseNeck.js`), czy z zapasu wytrzymałości w budowie, jak dziś w B1 (§ 5c, punkt 2).
+- **Kamera gry.** Demo pokazuje upadek z ukosa, a gra z góry, skąd gruz to dziś ciemna hałda na cały kadr (§ 5d). Czy stroić obraz pod kamerę gry (drobniejszy woksel przy statku, światło, sprzątanie gruzu), czy upadek ma mieć własne ujęcie z boku.
 
 Wcześniejsze:
 
