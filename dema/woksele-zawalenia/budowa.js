@@ -777,5 +777,6 @@ export function zbudujPlan(plan, opcje = {}) {
     w.szwy = wypieczSzwy(w, plan.dane);
     g.bitPas = w.bitPas;
   }
+  if (plan.poWypieku) plan.poWypieku(w); // B1: mocna szyja, która ma się obracać, a nie kruszyć (scenaBazy.js)
   return { w, g };
 }

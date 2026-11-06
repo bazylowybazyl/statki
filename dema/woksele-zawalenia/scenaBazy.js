@@ -9,6 +9,7 @@
 import { wieza, KIND, prng, szum2, S5_OPCJE, S5_NAKLADKA } from './scena.js';
 import { createPirateBaseLayout } from '../../src/3d/portBuildings/pirateBaseLayout.js';
 import { k7HeightToZ } from '../../src/3d/haloRing/haloPortK7Layout.js';
+import { STRONA, ND } from './budowa.js';
 
 export const DX_BAZY = 40;
 /** Pojemność solvera na dx: ?maxWez i ?nKom strony. Węzły z testu tests/wokseleBaza.test.mjs. */
@@ -68,7 +69,8 @@ function budujWiezowce(b, l) {
     const a0 = Math.round(h.x / dx - (g.meta.nx - 1) / 2), b0 = Math.round(-h.z / dx - (g.meta.ny - 1) / 2), k0 = Math.floor(zB / dx);
     for (let q = 0; q < g.n; q++) b.dodaj(c, a0 + g.ijk[3 * q], b0 + g.ijk[3 * q + 1], k0 + g.ijk[3 * q + 2], g.kind[q]);
     c.wiezowiec = { x: a0 * dx + 0.5 * (g.meta.nx - 1) * dx, y: b0 * dx + 0.5 * (g.meta.ny - 1) * dx, w: g.meta.nx * dx, d: g.meta.ny * dx, zB, zD };
-    c.dziura = { x: c.wiezowiec.x, y: c.wiezowiec.y, pw: 0.5 * c.wiezowiec.w + 2 * dx, pd: 0.5 * c.wiezowiec.d + 2 * dx };
+    // Podest: pomost rozszerzony do rzutu wieżowca (bez komórek zajętych przez budynek), na nim składa się góra. Bez tego gruz przelatuje ramę na wylot aż na planetoidę (pierwszy bieg: W-1 przy t = 10 ma średnio 3000 j. niżej).
+    c.podest = { x: c.wiezowiec.x, y: c.wiezowiec.y, pw: 0.5 * c.wiezowiec.w + dx, pd: 0.5 * c.wiezowiec.d + dx };
   }
 }
 
@@ -94,6 +96,7 @@ function budujWieze(b, Hs) {
     if (z <= zR1) {
       if (r > Hs.ringR1) return -1;
       if (z < zR0 + plyta || z > zR1 - plyta || r > Hs.ringR1 - plyta) return KIND.STROP;
+      if (r <= Hs.neckR && r > Hs.neckR - scSzyi) return KIND.RDZEN; // szyja przechodzi przez talerz do górnego pokładu: inaczej przebija dolny pokład i głowa zsuwa się po niej
       const f = Math.atan2(y, x), dF = f - Math.round(f / kat) * kat;
       return r * Math.abs(Math.sin(dF)) < polZebra ? KIND.KOLUMNA : -1;
     }
@@ -139,20 +142,21 @@ function budujTrzon(b, Hs) {
   b.wypelnij(c, -Hs.stemR, Hs.stemR, -Hs.stemR, Hs.stemR, zD, zF, rura(0, 0, Hs.stemR, sc, zD, zF, 0, KIND.RDZEN, KIND.STROP));
 }
 
-function budujPomosty(b, l, dziury) {
-  const dx = b.dx, Ps = l.spec.pier, Hs = l.habitat;
+function budujPomosty(b, l, podesty) {
+  const Ps = l.spec.pier, Hs = l.habitat;
   const z0 = k7HeightToZ(Ps.deckY0), z1 = k7HeightToZ(Ps.deckY1);
   for (const p of l.piers) {
     const c = b.nowa(p.id, TON.pomost);
     c.pomost = p;
     const xs = [p.ax, p.bx], ys = [-p.az, -p.bz];
-    b.wypelnij(c, Math.min(...xs) - p.halfW, Math.max(...xs) + p.halfW, Math.min(...ys) - p.halfW, Math.max(...ys) + p.halfW, z0, z1, (x, y) => {
+    const mg = Math.max(p.halfW, ...podesty.map((d) => d.pd));
+    b.wypelnij(c, Math.min(...xs) - mg, Math.max(...xs) + mg, Math.min(...ys) - mg, Math.max(...ys) + mg, z0, z1, (x, y) => {
       const bz = -y, ex = x - p.ax, ez = bz - p.az;
       const s = ex * p.ux + ez * p.uz, q = Math.abs(ex * p.nx + ez * p.nz);
-      if (s < 0 || s > p.len || q > p.halfW) return -1;
       if (x * x + y * y < Hs.drumR * Hs.drumR) return -1;
-      for (const d of dziury) if (Math.abs(x - d.x) < d.pw && Math.abs(y - d.y) < d.pd) return -1;
-      return KIND.STROP;
+      if (s >= 0 && s <= p.len && q <= p.halfW) return KIND.STROP;
+      if (p.id === 'N-P' || p.id === 'F-P') for (const d of podesty) if (s >= 0 && s <= p.len && Math.abs(x - d.x) <= d.pw && Math.abs(y - d.y) <= d.pd) return KIND.STROP;
+      return -1;
     });
   }
 }
@@ -327,7 +331,7 @@ function nosiciel(sc, c, x, y, z) {
 
 /**
  * Sekwencja jak w misji, same dane. Liczby czasu w T. Kraterem steruje się tylko z planu: środek jedzie z węzłem, martwy nosiciel to pominięcie.
- * AGENT: pchnięcie krateru ma zerowy pęd (odjęta średnia zbioru), więc wieży nie da się przechylić kopem. Przechył bierze się z geometrii: dwa kratery wycinają stronę −y nasady szyi (ku wyłomowi), a strona +y zostaje zawiasem w ścisku. Góra opada w tę szczelinę i obraca się, jak przy podcięciu drzewa.
+ * AGENT: pchnięcie krateru ma zerowy pęd (odjęta średnia zbioru), więc wieży nie da się przechylić kopem. Przechył bierze się z geometrii: dwa kratery wycinają stronę −y nasady szyi (ku wyłomowi) i wieża pada ku nacięciu jak drzewo, a strona +y zostaje zawiasem. Kratery nie mogą ruszać płyty na szybie: bez niej dół szyi wysuwa się i wpada w pusty szyb, a głowa spada pionowo (zrzuty bok1–bok3, t = 10–13).
  */
 function planSekwencji(sc, cz, l, o, los) {
   const dx = sc.dx, Hs = l.habitat;
@@ -368,17 +372,17 @@ function planSekwencji(sc, cz, l, o, los) {
     if (s % 2 === 0) kr.push(krater({ f: F(t + 0.3), nos: nosiciel(sc, beb, Hs.innerR * Math.cos(a), -Hs.innerR * Math.sin(a), zBM), r: 0.5 * (zBG - zBS) + 20, rdzen: 0.6, J: 100, rP: 240, rodz: 'mala' }));
   }
 
-  // Szyb i nasada szyi: najpierw strona −y (ku wyłomowi), zawias zostaje po stronie +y, potem jest przecinany.
+  // Nasada szyi: najpierw strona −y (ku wyłomowi), zawias po stronie +y trzyma, a przy uderzeniu głowy pada, razem z szybem.
   const wz = cz.get('H-C + H-T');
   const zCore = wz.zSzyb[1], zN = zCore + 2 * dx;
   const [tS0, tS1] = T.szyb;
   const rN = Hs.neckR;
   const ciecia = [
-    [tS0, 0, -0.9 * rN, zN + 40, 1.25 * rN, 1],
-    [tS0 + 0.3, 0, -0.9 * rN, zN + 240, 1.25 * rN, 1],
-    [tS0 + 0.6, 0, -Hs.coreR, zCore - 90, 1.0 * Hs.coreR, 0.8],
-    [tS1, 0, 0.9 * rN, zN + 40, 1.3 * rN, 0.9],
-    [tS1, 0, 0.8 * Hs.coreR, zCore - 90, 1.0 * Hs.coreR, 0.8],
+    [tS0, 0, -0.9 * rN, zN + 130, 1.05 * rN, 1],
+    [tS0 + 0.3, 0, -0.9 * rN, zN + 330, 1.05 * rN, 1],
+    [tS1, 0, 0.9 * rN, zN + 130, 1.3 * rN, 1],
+    [tS1, 0, -0.8 * Hs.coreR, zCore - 150, 1.0 * Hs.coreR, 0.8],
+    [tS1 + 0.2, 0, 0.8 * Hs.coreR, zCore - 150, 1.0 * Hs.coreR, 0.8],
   ];
   for (const [t, x, y, z, r, rdz] of ciecia) kr.push(krater({ f: F(t), nos: nosiciel(sc, wz, x, y, z), r, rdzen: rdz, J: 60, rP: 1.3 * r, rodz: 'glowna' }));
 
@@ -444,7 +448,10 @@ const OPCJE_B1 = Object.freeze({
   pomostCo: 620, Jmala: 90,
   ziarno: 21,
   // Plan chwil: w grze misja idzie wolniej, a tu kadr ma się czytać (plan § 5c).
-  czasy: Object.freeze({ w1: [1, 4], w2: [4, 7], wylom: [7, 10], szyb: [10, 12], sektory: [15, 20], paliwo: [17, 21.5], puszcza: 21.5 }),
+  // szyb: nacięcie od strony wyłomu w pierwszej liczbie, a zawias przecięty w drugiej, kiedy głowa uderza.
+  czasy: Object.freeze({ w1: [1, 4], w2: [4, 7], wylom: [7, 10], szyb: [10, 14], sektory: [15, 20], paliwo: [17, 21.5], puszcza: 21.5 }),
+  mocSzyi: 8,
+  mocPodestu: 30,
   T: 30,
 });
 
@@ -460,11 +467,11 @@ export function scenaB1(oo = {}) {
   const b = createBudowa(dx);
   const los = prng((o.ziarno >>> 0) * 6151 + 29);
   budujWiezowce(b, l);
-  const dziury = b.czesci.map((c) => c.dziura);
+  const podesty = b.czesci.map((c) => c.podest);
   budujWieze(b, Hs);
   budujBeben(b, l);
   budujTrzon(b, Hs);
-  budujPomosty(b, l, dziury);
+  budujPomosty(b, l, podesty);
   budujPaliwo(b, l);
   budujMagazyn(b, l);
   const czDysk = budujDysk(b, Hs, o);
@@ -482,7 +489,39 @@ export function scenaB1(oo = {}) {
   let wSzyb = 0;
   for (let q = 0; q < wz.K.length; q++) if ((wz.K[q] + 0.5) * dx <= wz.zSzyb[1]) wSzyb++;
   const w1 = cz.get('W-1').wiezowiec;
+  // AGENT: szyja to drąg: wytrzymałość liczona z ciężaru głowy kruszy ją po nacięciu i głowa spada pionowo (pierwszy bieg). W grze zawias jest jawny (engine.addJoint, pirateBaseNeck.js), a tu szyja i szyb dostają zapas, a krater dalej usuwa węzły, więc nacięcie i przecięcie działają. Głowa zostaje zwykła i rozbija się przy uderzeniu.
+  const mocS = o.mocSzyi, nzH = wz.start + wz.n, rP2 = Hs.ringR0 * Hs.ringR0;
+  // Bez zapasu zostaje tylko zewnętrzny pierścień talerza: on rozbija się przy uderzeniu.
+  const mocny = (w, i) => w.pos[3 * i] ** 2 + w.pos[3 * i + 1] ** 2 < rP2;
+  const poWypieku = (w) => {
+    // Podest wieżowca: pomost liczy się tylko na własny ciężar, a ma przyjąć gruz. Bez tego góra przebija go i spada na planetoidę zamiast składać się na pomost.
+    for (const c of [cz.get('N-P'), cz.get('F-P')]) for (let i = c.start; i < c.start + c.n; i++) {
+      const naPodescie = (q) => podesty.some((d) => Math.abs(w.pos[3 * q] - d.x) <= d.pw && Math.abs(w.pos[3 * q + 1] - d.y) <= d.pd);
+      if (!naPodescie(i)) continue;
+      for (let d = 0; d < ND; d++) {
+        const ox = STRONA * i + d, j = w.nbr[ox];
+        if (j <= i) continue;
+        const oy = STRONA * j + (d ^ 1);
+        w.Ft[ox] *= o.mocPodestu; w.Ft[oy] = w.Ft[ox];
+        w.Fc[ox] *= o.mocPodestu; w.Fc[oy] = w.Fc[ox];
+        if (w.klasaW[ox] < 6) w.klasaW[ox] = w.klasaW[oy] = w.klasaW[ox] + 6;
+      }
+    }
+    for (let i = wz.start; i < nzH; i++) {
+      if (!mocny(w, i)) continue;
+      w.bMax2W[i] *= mocS * mocS;
+      for (let d = 0; d < ND; d++) {
+        const ox = STRONA * i + d, j = w.nbr[ox];
+        if (j <= i || !mocny(w, j)) continue;
+        const oy = STRONA * j + (d ^ 1);
+        w.Ft[ox] *= mocS; w.Ft[oy] = w.Ft[ox];
+        w.Fc[ox] *= mocS; w.Fc[oy] = w.Fc[ox];
+        if (w.klasaW[ox] < 6) w.klasaW[ox] = w.klasaW[oy] = w.klasaW[ox] + 6;
+      }
+    }
+  };
   return {
+    poWypieku,
     id: 'B1',
     opis: `Baza piratów, dx = ${dx}, ${sc.n} węzłów, ${b.czesci.length} części, ${pl.kratery.length} kraterów`,
     scena: sc,

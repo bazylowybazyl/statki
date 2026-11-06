@@ -52,6 +52,7 @@ const KAM_MIASTA = {
   maly: { nazwa: 'Mały statek', pxNaJ: 7.88, az: 28, el: 8, zCelu: true, lod: { sloty: 7, cien: 7 } },
   // Baza piratów: Atlas 0,14 px / j. wg gry (cała baza w 5120 px, a mniejsze okno pokazuje wycinek wokół habitatu), z bliska W-1.
   bAtlas: { nazwa: 'Atlas', pxNaJ: 0.14, az: 12, el: 24, cel: [1700, 0, -500], lod: { sloty: 2, cien: 1 }, baza: true },
+  bCala: { nazwa: 'Cała baza', pxNaJ: 0.085, az: 12, el: 24, cel: [1700, 0, -900], lod: { sloty: 2, cien: 1 }, baza: true }, // okno 1280 × 720: cała baza i podłoga, węzeł 3,4 px
   bBliska: { nazwa: 'Z bliska', pxNaJ: 0.5, az: 28, el: 10, zCelu: true, lod: { sloty: 7, cien: 2 }, baza: true },
 };
 const CIEN_MIASTA = { bias: -2.5 / 16000, normalBias: 0.7 }; // stałe wieży (9,6 j. głębi, 2 j. wzdłuż normalnej) to jedna czwarta budynku
