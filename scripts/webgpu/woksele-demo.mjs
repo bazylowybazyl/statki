@@ -267,8 +267,9 @@ try {
       await ev('window.__wok.pokaz.bezZegara(false)');
       const ile = await ev('document.querySelectorAll("#panelSceny button").length');
       const wyn = [];
-      // --przyciskiOd n: przejście od n-tego przycisku. Nocą seria GPU ma najwyżej 60 s, a cały panel to około 2 min.
-      for (let q = Number(args.przyciskiOd || 0); q < ile; q++) {
+      // --przyciskiOd n, --przyciskiDo m: przycisku od n do m − 1. Nocą seria GPU ma najwyżej 60 s, a cały panel to około 2 min. Miasto (15–17) na stronie z pojemnością: --zrzut M3 --chwile 0 --maxWez 64000 --nKom 65536 --miasto '{"dx":10}'.
+      const doQ = Math.min(ile, Number(args.przyciskiDo ?? ile));
+      for (let q = Number(args.przyciskiOd || 0); q < doQ; q++) {
         // AGENT: sprawdzenie gry przed każdym przyciskiem, a nie tylko przed sceną. 2026-11-05 bieg zaczął się między meczami i przejście przycisków z żywą pętlą rAF szło 3 min w czasie startu następnego meczu.
         await czekajNaCisze(`przycisk ${q + 1} z ${ile}`);
         const nazwa = await ev(`document.querySelectorAll("#panelSceny button")[${q}].textContent`);
@@ -323,7 +324,8 @@ try {
       const klik = (sel, tekst) => ev(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((q) => q.textContent.startsWith(${JSON.stringify(tekst)})); if (!b) return false; b.click(); return true; })()`);
       // AGENT: po przeładowaniu harness wstrzykuje się od nowa z zamrożonym zegarem: rAF dostaje stały czas i scena nie krokuje, a rysuje. Zegar od razu prawdziwy, jak w otworz().
       const poPrzeladowaniu = async () => { await sleep(300); await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real") && window.__wok && window.__wok.gotowe && window.__wok.pokaz)', 120000, 20); await sleep(1000); };
-      const stanP = () => ev('(() => { const s = window.__wok.pokaz.stan, c = window.__wok.camera.position; return { scena: s.scena, krok: s.krok, kam: s.kamMiasta, n: window.__wok.obraz.lod, adres: location.search, poz: [c.x, c.y, c.z], kamery: !document.getElementById("panelKamery").hidden, maxWez: new URLSearchParams(location.search).get("maxWez") }; })()');
+      // AGENT: widoczność z getComputedStyle, nie z .hidden: reguła `#panel .grupa { display: flex }` przebijała atrybut hidden, kamery miasta stały na panelu starych scen, a ten test tego nie widział.
+      const stanP = () => ev('(() => { const s = window.__wok.pokaz.stan, c = window.__wok.camera.position; return { scena: s.scena, krok: s.krok, kam: s.kamMiasta, n: window.__wok.obraz.lod, adres: location.search, poz: [c.x, c.y, c.z], kamery: getComputedStyle(document.getElementById("panelKamery")).display !== "none", maxWez: new URLSearchParams(location.search).get("maxWez") }; })()');
       const wyn = {};
       wyn.klik = await klik('#panelSceny button', 'Miasto: ostrzał');
       await poPrzeladowaniu();
@@ -359,7 +361,7 @@ try {
       raport.testy.przyciskiMiasta = wyn;
       if (!(wyn.poWejsciu.scena === 'M1' && wyn.poWejsciu.kamery && wyn.maly.kam === 'maly' && wyn.maly.krok > wyn.poWejsciu.krok + 60 && wyn.bliska.kam === 'bliska' && wyn.orbita > 1 && wyn.poM2.scena === 'M2' && wyn.poM2.krok > 60 && wyn.dx20.scena === 'M2' && wyn.s1.scena === 'S1' && !wyn.s1.kamery)) porazka(`przyciski miasta: ${JSON.stringify(wyn)}`);
     }
-    if (args.interakcje) {
+    if (args.interakcje || args.interakcjeSceny) {
       await czekajNaCisze('interakcje');
       // Mysz i klawisze przez CDP, jak u użytkownika: orbita, przybliżenie, przesuw, spacja, R, P, przyciski panelu, zmiana rozmiaru okna.
       const poz = () => ev('window.__wok.camera.position.toArray()');
@@ -369,6 +371,63 @@ try {
         await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', code, key, windowsVirtualKeyCode: key === ' ' ? 32 : key.toUpperCase().charCodeAt(0) });
         await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', code, key, windowsVirtualKeyCode: key === ' ' ? 32 : key.toUpperCase().charCodeAt(0) });
       };
+      const zaklocenie = (pa, pb) => Math.hypot(pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]);
+      if (args.interakcjeSceny) {
+        // --interakcjeSceny S1,S2,…: skrócone interakcje na każdej scenie osobno (około 3 s na scenę, bez zmiany rozmiaru i przejścia do S2). Orbita, przybliżenie, przesuw, pauza, R, tempo, a na końcu czy scena dalej krokuje.
+        await ev('window.__wok.pokaz.panel(true)');
+        await ev('window.__wok.pokaz.bezZegara(false)');
+        const wynS = [];
+        for (const id of String(args.interakcjeSceny).split(',')) {
+          await czekajNaCisze(`interakcje ${id}`);
+          await ev(`window.__wok.pokaz.wejdz(${JSON.stringify(id)}).then(() => null)`);
+          const pipePrzed = await ev('window.__harness.pipes.list.length');
+          await sleep(300);
+          const w = { id };
+          const a0 = await poz();
+          await mysz('mouseMoved', 300, 300, 'none');
+          await mysz('mousePressed', 300, 300);
+          for (let q = 1; q <= 6; q++) { await mysz('mouseMoved', 300 + 15 * q, 300, 'left'); await sleep(16); }
+          await mysz('mouseReleased', 390, 300);
+          await sleep(120);
+          const a1 = await poz();
+          w.orbita = zaklocenie(a0, a1);
+          await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 400, y: 300, deltaX: 0, deltaY: -300 });
+          await sleep(120);
+          const a2 = await poz();
+          w.przyblizenie = zaklocenie(a1, a2);
+          await mysz('mousePressed', 300, 300, 'right');
+          for (let q = 1; q <= 6; q++) { await mysz('mouseMoved', 300, 300 + 12 * q, 'right'); await sleep(16); }
+          await mysz('mouseReleased', 300, 372, 'right');
+          await sleep(120);
+          w.przesuw = zaklocenie(a2, await poz());
+          await klawisz('Space', ' ');
+          await sleep(60);
+          const q1 = await stanS();
+          await sleep(200);
+          const q2 = await stanS();
+          w.pauza = q1.pauza === true && q2.krok === q1.krok;
+          await klawisz('Space', ' ');
+          await sleep(200);
+          const q3 = await stanS();
+          await klawisz('KeyR', 'r');
+          await sleep(60);
+          const q4 = await stanS();
+          w.reset = q4.krok < q3.krok; // R wraca do kroku „pomin” sceny, a od wejścia minęła ponad sekunda
+          await ev('[...document.querySelectorAll("#panelTempo button")][2].click()');
+          w.tempo = (await stanS()).tempo;
+          await ev('[...document.querySelectorAll("#panelTempo button")][0].click()');
+          await sleep(500);
+          const q5 = await stanS();
+          w.krokPoResecie = q5.krok - q4.krok;
+          w.scena = q5.scena;
+          w.nowePipeline = (await ev('window.__harness.pipes.list.length')) - pipePrzed;
+          wynS.push(w);
+          console.log('interakcje sceny', JSON.stringify(w));
+          if (!(w.orbita > 1 && w.przyblizenie > 1 && w.przesuw > 1 && w.pauza && w.reset && w.tempo === 0.25 && w.krokPoResecie > 0 && w.scena === id && !w.nowePipeline)) porazka(`interakcje ${id}: ${JSON.stringify(w)}`);
+        }
+        raport.testy.interakcjeSceny = wynS;
+      }
+      if (args.interakcje) {
       const wyn = {};
       await ev('window.__wok.pokaz.panel(true)');
       await ev('window.__wok.pokaz.bezZegara(false)');
@@ -420,6 +479,7 @@ try {
       console.log('interakcje', JSON.stringify(wyn));
       raport.testy.interakcje = wyn;
       if (!(wyn.orbita > 1 && wyn.przyblizenie > 1 && wyn.przesuw > 1 && wyn.pauza && wyn.reset && wyn.tempo === 0.25 && wyn.scena === 'S2' && wyn.kanwa[0] === 1280)) porazka(`interakcje: ${JSON.stringify(wyn)}`);
+      }
     }
     const nowe = await ev(`window.__harness.pipes.list.slice(${pipeStart}).map((p) => ({ nazwa: p.nazwa, sync: !!p.sync, budowa: !!p.budowa }))`);
     console.log(`po rozgrzewce nowe wpisy dziennika: ${nowe.length}, synchroniczne: ${nowe.filter((p) => p.sync).length} ${JSON.stringify(nowe.map((p) => p.nazwa).slice(0, 16))}`);
