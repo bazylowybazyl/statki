@@ -35,6 +35,8 @@ export const OPCJE_PYLU = {
   M2: { kwady: 14000, emisja: 0.45, rozmiar: 0.42, sufitPx: 90, lodDuze: [24, 42], pod: 0, grunt: 0, kont: 3, zar: 0.7, zycie: [4.5, 7], klab: 0.55, klabV: 0.45 },
   // Miasto dalekie: wspólny pierścień solvera (około 300 budynków) i tieru 0 (miastoDalekie.js, kilkanaście cząstek na budynek).
   M3: { kwady: 16000, emisja: 0.45, rozmiar: 0.42, sufitPx: 90, lodDuze: [24, 42], pod: 0, grunt: 0, kont: 3, zar: 0.7, zycie: [4.5, 7], klab: 0.55, klabV: 0.45 },
+  // Baza piratów (plan LOD § 5c): rozmiary wieży przy dx = 40, kadr około 9000 j., wiele ognisk, próżnia z podłogą planetoidy.
+  B1: { kwady: 14000, emisja: 0.4, rozmiar: 1.7, sufitPx: 110, lodDuze: [24, 42], pod: 0, grunt: 0, kont: 3, zar: 0.7, zycie: [2.5, 5], klab: 1.6, klabV: 1.1 },
 };
 
 export function createWokselePyl({ solver, A, MAX, wWezR, wRamaW, wDaneR, uTau, uDt, uKlatka, glebNode, liniowa, uFp }) {

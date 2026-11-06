@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createWokseleObraz } from './obraz.js';
 import { OPCJE_PYLU } from './pyl.js';
 import { DX_MIASTA, POJEMNOSC_MIASTA } from './scenaMiasta.js';
+import { DX_BAZY, POJEMNOSC_BAZY } from './scenaBazy.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -38,6 +39,8 @@ const SCENY = {
   M2: { nazwa: 'Miasto: wszystko naraz', miasto: true, pomin: 0 },
   // Tysiące budynków, tier 0 (miastoDalekie.js). Cień ma objąć całe miasto, a nie same węzły solvera. Moduł obrazu powstaje tylko na stronie z ?scena=M3 albo ?dalekie, reszta stron go nie ładuje.
   M3: { nazwa: 'Miasto: tysiące', miasto: true, pomin: 0, dalekie: true, cien: [[0, 900, 100], 3700] },
+  // Baza piratów (plan LOD § 5c): kamery przez KAM_MIASTA z polem baza, pojemność z POJEMNOSC_BAZY, kamera cienia z rozmiaru sceny.
+  B1: { nazwa: 'Baza piratów', miasto: true, baza: true, pomin: 0, cienZapas: 1.05 },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Kamery miasta: skala w px na j., więc budynek ma na ekranie tyle pikseli, co w grze przy tym zoomie, a mniejsze okno pokazuje tylko wycinek kadru. Plan LOD § 1: Atlas 0,569 (kadr 9000 j. przy 5120 px), limit gry 3,2 (1600 j.), mały statek 7,88 (650 j.).
@@ -47,6 +50,9 @@ const KAM_MIASTA = {
   daleko: { nazwa: 'Atlas daleko', pxNaJ: 0.171, az: 10, el: 24, cel: [0, 500, 60], lod: { sloty: 2, cien: 1 } }, // reżyser × 0,3, plan LOD § 1
   bliska: { nazwa: 'Atlas z bliska', pxNaJ: 3.2, az: 22, el: 12, zCelu: true, lod: { sloty: 7, cien: 2 } },
   maly: { nazwa: 'Mały statek', pxNaJ: 7.88, az: 28, el: 8, zCelu: true, lod: { sloty: 7, cien: 7 } },
+  // Baza piratów: Atlas 0,14 px / j. wg gry (cała baza w 5120 px, a mniejsze okno pokazuje wycinek wokół habitatu), z bliska W-1.
+  bAtlas: { nazwa: 'Atlas', pxNaJ: 0.14, az: 12, el: 24, cel: [1700, 0, -500], lod: { sloty: 2, cien: 1 }, baza: true },
+  bBliska: { nazwa: 'Z bliska', pxNaJ: 0.5, az: 28, el: 10, zCelu: true, lod: { sloty: 7, cien: 2 }, baza: true },
 };
 const CIEN_MIASTA = { bias: -2.5 / 16000, normalBias: 0.7 }; // stałe wieży (9,6 j. głębi, 2 j. wzdłuż normalnej) to jedna czwarta budynku
 
@@ -106,6 +112,10 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const miastoAdresu = adres.has('miasto') ? JSON.parse(adres.get('miasto')) : {};
   const dxMiasta = miastoAdresu.dx ?? DX_MIASTA;
   const miastoSieMiesci = solver.maxNodes >= (POJEMNOSC_MIASTA[dxMiasta]?.maxWez ?? 0);
+  // ?baza={"dx":80}: opcje sceny B1 (scenaBazy.js), wchodzą do wątku budowy tym samym polem co opcje miasta.
+  const bazaAdresu = adres.has('baza') ? JSON.parse(adres.get('baza')) : {};
+  const dxBazy = bazaAdresu.dx ?? DX_BAZY;
+  const bazaSieMiesci = solver.maxNodes >= POJEMNOSC_BAZY[dxBazy].maxWez;
   const watek = new Worker(new URL('./budowa.worker.js', import.meta.url), { type: 'module' });
   const wypieki = new Map();
   const czekajace = new Map();
@@ -121,7 +131,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: miastoAdresu });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? bazaAdresu : miastoAdresu });
     }
     return czekajace.get(id).obietnica;
   }
@@ -148,6 +158,9 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     const opis = SCENY[id];
     if (!opis) throw new Error(`Nieznana scena ${id}`);
     const { w, g, zdarzeniaOd, rDysk, poklad, miasto } = wypieki.get(id);
+    // Kamery baza / miasto to osobne zestawy na jednym panelu.
+    if (opis.miasto && !!KAM_MIASTA[stan.kamMiasta].baza !== !!opis.baza) stan.kamMiasta = opis.baza ? 'bAtlas' : 'atlas';
+    for (const n of Object.keys(KAM_MIASTA)) przyciski.get(`k:${n}`).style.display = !!KAM_MIASTA[n].baza === !!opis.baza ? '' : 'none';
     solver.wczytaj(w);
     solver.ustawPlan(g);
     obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
@@ -181,7 +194,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       ustawKamere(camera, sterowanie, opis.zaSrodkiem ? { ...k, cel: [k.cel[0] + stan.c0x, k.cel[1] + stan.c0y, k.cel[2] + stan.c0z] } : k);
     }
     panelKamer.hidden = !opis.miasto;
-    panelGestosci.hidden = !opis.miasto;
+    panelGestosci.hidden = !opis.miasto || !!opis.baza;
     zaznacz();
     return w;
   }
@@ -249,9 +262,18 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     q.set('miasto', JSON.stringify({ ...miastoAdresu, dx }));
     location.search = q.toString();
   }
+  /** Baza piratów na stronie bez pojemności: to samo przeładowanie co miasto, przycisk od razu daje ?scena=B1&maxWez=…&nKom=…. */
+  function przeladujBaze() {
+    const p = POJEMNOSC_BAZY[dxBazy];
+    const q = new URLSearchParams(location.search);
+    q.set('scena', 'B1');
+    q.set('maxWez', String(p.maxWez));
+    q.set('nKom', String(p.nKom));
+    location.search = q.toString();
+  }
   for (const id of Object.keys(SCENY)) {
     if (SCENY[id].ukryta) continue;
-    const akcja = SCENY[id].miasto ? () => { if (miastoSieMiesci && (dalekie || !SCENY[id].dalekie)) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
+    const akcja = SCENY[id].baza ? () => { if (bazaSieMiesci) wejdz(id); else przeladujBaze(); } : SCENY[id].miasto ?() => { if (miastoSieMiesci && (dalekie || !SCENY[id].dalekie)) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
     const b = dodaj(gr1, SCENY[id].nazwa, akcja, `s:${id}`);
     b.disabled = !zdarzeniaDostepne(id);
   }
@@ -328,7 +350,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   }
   requestAnimationFrame(petla);
   // Budowa w tle: pod harnessem miasta tylko scena z adresu (dx = 5 to około minuta CPU na scenę), a miasto tylko na stronie, która je pomieści.
-  if (!lodS1Adresu && !(window.__harness && adres.has('miasto'))) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta && (!SCENY[id].miasto || miastoSieMiesci)) wypiek(id);
+  if (!lodS1Adresu && !(window.__harness && (adres.has('miasto') || adres.get('scena') === 'B1'))) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta && (SCENY[id].baza ? bazaSieMiesci : !SCENY[id].miasto || miastoSieMiesci)) wypiek(id);
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
   Object.assign(wok, {
@@ -372,6 +394,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       async statMiasta() {
         const m = stan.miasto;
         if (!m) return null;
+        if (m.baza) return wok.pokaz.statBazy();
         const r = await solver.odczytLekki(renderer);
         const p0 = solver.wypiek.pos;
         const wy = { t: { stoi: 0, czesc: 0, lezy: 0 }, n: { stoi: 0, czesc: 0, lezy: 0 }, zywych: 0, nan: 0, krok: stan.krok, liczniki: { ...solver.liczniki } };
@@ -386,6 +409,30 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
           const u = z / Math.max(1e-6, z0);
           wy[m.trafione[q] ? 't' : 'n'][u >= 0.9 ? 'stoi' : u < 0.55 ? 'lezy' : 'czesc']++;
         }
+        return wy;
+      },
+      /** Harness, B1: na część węzły żywe, średnie z i zmiana względem startu, największe przemieszczenie; do tego zerwane bity, NaN i pominięte zdarzenia (W1: 0 zerwanych, 0 NaN). */
+      async statBazy() {
+        const w = solver.wypiek;
+        const r = await solver.odczyt(renderer);
+        const wy = { krok: stan.krok, nan: 0, zerwaneBity: 0, wezlyZInnaMaska: 0, maxPrzem: 0, vMax: 0, liczniki: { ...solver.liczniki }, czesci: [] };
+        const pc = (x) => { let c = 0; for (x &= 0x3ffff; x; x &= x - 1) c++; return c; };
+        for (const b of stan.miasto.budynki) {
+          let z = 0, z0 = 0, ile = 0, mx = 0;
+          for (let i = b.start; i < b.start + b.n; i++) {
+            const a = r.poz[3 * i] - w.pos[3 * i], c = r.poz[3 * i + 1] - w.pos[3 * i + 1], e = r.poz[3 * i + 2] - w.pos[3 * i + 2];
+            if (a !== a || c !== c || e !== e) { wy.nan++; continue; }
+            if (r.maskaW[i] !== w.maska[i]) { wy.wezlyZInnaMaska++; wy.zerwaneBity += pc(w.maska[i]) - pc(r.maskaW[i]); }
+            if (r.aktywny && !r.aktywny[i]) continue;
+            ile++; z += r.poz[3 * i + 2]; z0 += w.pos[3 * i + 2];
+            mx = Math.max(mx, a * a + c * c + e * e);
+            wy.vMax = Math.max(wy.vMax, r.vel[3 * i] ** 2 + r.vel[3 * i + 1] ** 2 + r.vel[3 * i + 2] ** 2);
+          }
+          wy.maxPrzem = Math.max(wy.maxPrzem, mx);
+          wy.czesci.push(`${b.nazwa}: ${ile}/${b.n} dz ${ile ? Math.round((z - z0) / ile) : 0} maks ${Math.round(Math.sqrt(mx))}`);
+        }
+        wy.maxPrzem = Math.sqrt(wy.maxPrzem);
+        wy.vMax = Math.sqrt(wy.vMax);
         return wy;
       },
       panel(wid) { panel.hidden = !wid; },

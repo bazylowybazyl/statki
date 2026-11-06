@@ -140,6 +140,8 @@ try {
     if (args.maxWez) zapytanie.set('maxWez', String(args.maxWez));
     // Miasto (plan LOD § 5): --zrzut M1 --miasto '{"dx":10}' --maxWez 64000 [--nKom 524288] --kamery atlas,bliska [--kosztMiasta 1].
     if (args.miasto) zapytanie.set('miasto', String(args.miasto));
+    // Baza piratów (plan LOD § 5c): --zrzut B1 --baza '{"dx":40}' --maxWez 86000 --nKom 131072 --kamery bAtlas,bBliska [--kosztMiasta 1]. W1: --baza '{"dx":40,"stoi":true}' --chwile 5.
+    if (args.baza) zapytanie.set('baza', String(args.baza));
     if (args.nKom) zapytanie.set('nKom', String(args.nKom));
     if (args.sloty) zapytanie.set('sloty', String(args.sloty));
     if (args.cienSloty !== undefined) zapytanie.set('cienSloty', String(args.cienSloty));
@@ -275,7 +277,7 @@ try {
         const nazwa = await ev(`document.querySelectorAll("#panelSceny button")[${q}].textContent`);
         const wylaczony = await ev(`document.querySelectorAll("#panelSceny button")[${q}].disabled`);
         // AGENT: przycisk miasta bez pojemności przeładowuje stronę (pokaz.js, przeladujMiasto), a ta pętla zakłada jedną stronę. Tę drogę sprawdza --przyciskiMiasta.
-        if (String(nazwa).startsWith('Miasto') && !args.maxWez) continue;
+        if ((String(nazwa).startsWith('Miasto') || nazwa === 'Baza piratów') && !args.maxWez) continue;
         const pipePrzed = await ev('window.__harness.pipes.list.length');
         await ev(`document.querySelectorAll("#panelSceny button")[${q}].click()`);
         const weszla = await waitFor(cdp, `document.querySelectorAll("#panelSceny button")[${q}].classList.contains("wl")`, 60000, 50);
