@@ -72,13 +72,15 @@ paths:
 - Receptury (`explosionRecipes.js`, czyste): profile (`fighter` … `final`, domyślny `capital`) jako mnożniki `size` — kula ognia,
   kłęby, strumienie, płonące odłamki, iskry, żar, odłamki konstrukcji, dym, błysk, światło, fala, gorące powietrze, wtórne, ogniska.
 
+- WYBUCH POD BUDOWLĄ (profil `baza`, reguła `baza-piratow`, „WYBUCHY BAZY”): budowla jest celem, nie tłem wybuchu. Trzy pola profilu, poza nim bez zmian: `decay` — stały zanik dymu `baseDecay` domeny; `under` — cały marsz domeny w warstwie tylnej (passie ortho), przy każdej kamerze, a front ma pusty przedział (`GasSlot.under` → flaga `slotK.y`, `tc = 0`), więc wieża w FG leży nad dymem, a bryły tła pod nim; `thin` — mnożnik gęstości obrazu 1 − `thin` (`GasSlot.thin` → `slotK.z`), sama symulacja bez zmian. Domena `under` scala się tylko z taką samą (`_fitSlot`), wyrwy powietrza też są `under`.
+
 - Obraz (`explosionFx.js`, krok `Core3D.addFxStep` „wybuchy”): kula ognia i dym z GAZU (siatka 3D w compute: MacCormack skalarów
   i prędkości — v̂ w `velC`, spalanie z rozprężaniem, kurczenie przy stygnięciu, rzut Jacobi), STRUMIENIE z miejsca wybuchu
   (`GasExplosions.jet` — narzucenie prędkości źródeł gaśnie po 0,06 s z τ 0,15 s, strumień dalej żyje własną dynamiką), płonące
   odłamki („pająk”), żar porywany gazem (`gasEmbers.js`), błysk, iskry gry, odłamki konstrukcji (WeaponFx DEBRIS), jedno światło na
   wybuch w siatce, FALA jako sama refrakcja i gorące powietrze (`Core3D.fxDistortion()`), wtórne. Źródła, żar, łby odłamków i błysk
   jadą z nośnikiem domeny (`director.tune.followCarrier`, `slotVel` żaru). Warstwy: gaz za płaszczyzną gry — pass ortho przed
-  kadłubami; przed nią, żar, błyski, łby — pass FG (warstwa 2) po bryłach FG.
+  kadłubami; przed nią, żar, błyski, łby — pass FG (warstwa 2) po bryłach FG. Gaz to obraz 2,5D bez głębi: marsz przez płaskie pudło, `depthTest` wyłączony, więc to pass, a nie głębia, decyduje, co leży nad czym.
 
 - Gaz w próżni (`tuneGasForSpace`): bez wyporu, wiry 1 i turbulencja 10 (przy MacCormacku dawne 3,5 / 35 dawały energię rosnącą po
   wygaśnięciu źródeł), opór 0,23 + 0,03·|v| w środku ZOSTAJE (bez niego 15 iteracji Jacobiego nie domyka rzutu), gąbka 3/s przy

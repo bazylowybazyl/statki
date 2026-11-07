@@ -3,7 +3,7 @@
 //
 //   misja 1 „Cicha baza” (src/game/story/missions/mission01.js) — dok K-7 → rozpoznanie → taran rzędu →
 //     drony, zegar startów (okręty z załogą odchodzą od pomostów po kolei) → supercapital herszta → habitat bazy
-//     piratów (rozpad, ogień w rurach); kończy się w polu, nad gruzami bazy (podsumowanie misji 1);
+//     piratów (rozpad i upadek, ogień w rurach tylko po wysadzeniu zbiorników); kończy się w polu, nad gruzami bazy;
 //   misja 2 „Odwet” (src/game/story/missions/mission02.js) — naprawa w polu → trzy fale piratów (w trzeciej
 //     okręt herszta), posiłki z Ziemi w drugiej → powrót do K-7.
 //

@@ -9,7 +9,7 @@
 // Sceny (misja 1 — skok dev ?story=shipyard, Atlas nieśmiertelny, wieże na auto wstrzymane):
 //   final  — Atlas 4,5 km na południe od habitatu; okno „spokoj”; „progi”: punkty habitatu do 36% w jednym ciosie
 //            (progi → storyBaseBreak → breakPiece: kawałki pękają, skóry odłamów); bez czekania na wypiek w tle — jak
-//            gracz, który dobija budowlę; „rozpad”: śmierć habitatu (_chainExplosion: implozja, reakcja w rurach);
+//            gracz, który dobija budowlę; „rozpad”: śmierć habitatu (_chainExplosion: implozja, bez ognia w rurach);
 //            „po”: 4 s później.
 //   szyja  — szarża F + W w szyb habitatu z prawej (scenariusz szyi, src/game/story/pirateBaseNeck.js): okna wg fazy
 //            szyi (szyja:attached / toppling / falling / landed), potem OSTRZAŁ leżącej wieży (Yamato, Mjolnir —

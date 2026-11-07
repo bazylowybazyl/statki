@@ -960,8 +960,9 @@ export const StoryGame = {
   },
 
   // Zniszczony habitat (finał misji): bęben pęka ćwiartkami, szyb, część techniczna i dysk mieszkalny „implodują”
-  // (kawałki-duchy pękają ku środkowi), okna gasną od środka; sieć paliwowa zapala się od habitatu (_fuelChain 'H' —
-  // bez śluz pełna reakcja). Promise — koniec rozpadu habitatu (reakcja w rurach biegnie dalej).
+  // (kawałki-duchy pękają ku środkowi), okna gasną od środka. Sieci paliwowej NIE zapala: reakcja łańcuchowa to nagroda
+  // za domyślenie się, że zbiorniki paliwa na wierzchu można wysadzić (decyzja użytkownika 2026-11-06), a tu dawała
+  // ~140 wybuchów z zegara w każdej grze. Promise — koniec rozpadu habitatu (reakcja z P, jeśli biegnie, też).
   _chainExplosion(site, opts = {}) {
     return new Promise((resolve) => {
       const d = this.deps;
@@ -980,7 +981,7 @@ export const StoryGame = {
       const hc = place.habitat;
       site.power.habitat = 0;
       site.power.disc = 0;
-      at(0, () => { d.reactorBlow?.({ x: hc.x, y: hc.y, size: 640 }); d.shake?.(34, 0.9); });
+      at(0, () => { d.reactorBlow?.({ x: hc.x, y: hc.y, size: 400 }); d.shake?.(34, 0.9); });
       // UPADEK NA PLANETOIDĘ: obraz na wokselach, stan i zegar w grze (deps.habitatFall; reguła woksele-zawalen). Bez
       // terenu skały — dawna implozja.
       const falling = typeof d.habitatFall === 'function';
@@ -995,20 +996,19 @@ export const StoryGame = {
       H.quadrants.forEach((q, i) => {
         const a = (q.a0 + q.a1) / 2;
         const p = place.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
-        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out' }); d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
+        // Przy upadku bez wybuchu: pęknięcie ćwiartki pokazują woksele, a dym tylko zakrywałby początek upadku.
+        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out' }); if (!fallStarted) d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
       });
       // winda kosmiczna spod dysku mieszkalnego puszcza: lina i głowica spadają na planetoidę, osada wybucha po kolei
       // (scenariusz — src/3d/portBuildings/pirateRockSite3D.js; prośba użytkownika 2026-10-15)
       at(1.5, () => d.rockCollapse?.());
-      // koniec: rozpad habitatu, upadek na planetoidę i ogień w rurach (od środka i — gdy biegnie — od zbiorników)
-      let fuelDone = Promise.resolve();
-      at(0.6, () => { fuelDone = this._fuelChain(site, 'H'); });
+      // koniec: rozpad habitatu, upadek na planetoidę i ogień w rurach, gdy biegnie od zbiorników
       // opts.waitFuel = false (misja pominięta skokiem dev) — bez czekania na ogień w rurach i upadek
       this._after(tLast + 1.5, () => {
         if (opts.waitFuel === false) { resolve(); return; }
-        // upadek z ~24 km (skała w skali świata — pirateRockLayout.js): wieża na skale ~14 s, osiadanie ~25 s, najwyżej 40 s
+        // upadek idzie zegarem (VOX_FALL_T w index.html): wieża na skale 17 s, koniec 32 s, najwyżej 40 s
         const fallDone = fallStarted && typeof d.habitatFallDone === 'function' ? d.habitatFallDone(40) : null;
-        Promise.all([fuelDone, site.chain.pending || null, fallDone]).then(resolve);
+        Promise.all([site.chain.pending || null, fallDone]).then(resolve);
       });
     });
   },
@@ -1076,7 +1076,7 @@ export const StoryGame = {
         switch (ev.kind) {
           case 'tank':
             site.power.fuel = 0;
-            d.reactorBlow?.({ x: p.x, y: p.y, size: 900 });
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 900, profile: 'capital' });
             d.shake?.(40, 1.0);
             hit(st.fuel, p.x, p.y, 1e9);
             for (const id of l.structures.fuel) d.baseBreak?.(id, { power: 2.6, speed: 160, dir: 'out', from: p });

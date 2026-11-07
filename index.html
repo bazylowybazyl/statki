@@ -33466,14 +33466,14 @@
       const c = id ? l.chunkById.get(id) : null;
       if (!c || !storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } })) {
         if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-        GameBlasts.blast({ x: hx, y: hy, size: 300 }, true);
+        GameBlasts.blast({ x: hx, y: hy, size: 300, profile: 'baza' }, true);
         noteBaseBlast(hx, hy, 300);
         camera.addShake(8, 0.4);
         return;
       }
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360 }, true);
+      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360, profile: c.kind === 'tank' ? 'capital' : 'baza' }, true);
       // wybuch przy pęknięciu — zapłon powietrza modułu (zwarcia i ogień w wylatującym tlenie)
       noteBaseBlast(p.x, p.y, c.kind === 'drum' || c.kind === 'tank' ? 520 : 360);
       camera.addShake(12, 0.5);
@@ -33497,9 +33497,11 @@
       if (!damagePool(st.piecePools, id, dmg) || pirateBaseChunkDown(id)) return dmg;
       const c = l.chunkById.get(id);
       const size = c.kind === 'drum' ? 520 : 400;
+      // Szyb: wybuch 560 przyjdzie zaraz z zerwania szyi w tym samym punkcie (onSnap). Bez niego, gdy szyję zerwał wcześniej taran.
+      const czekaSzyja = c.kind === 'core' && (pirateBaseSites()?.habitat?.neck?.phase ?? 'attached') === 'attached';
       storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } });
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
-      GameBlasts.blast({ x: p.x, y: p.y, size }, true);
+      if (!czekaSzyja) GameBlasts.blast({ x: p.x, y: p.y, size, profile: 'baza' }, true);
       noteBaseBlast(p.x, p.y, size);
       camera.addShake(12, 0.5);
       if (c.kind === 'drum') pushZoneMessage('WYŁOM W BĘBNIE HABITATU — SZYB ODSŁONIĘTY', 3);
@@ -33580,6 +33582,7 @@
     }
     function atmoModuleId(p) { return p ? p.id : null; }
     function atmoNodeLost(entity, hull, x, y, z) {
+      if (!PirateBaseAtmosphere.tune.followBodies && entity?.isWreck) return; // odpryski schowanych ciał nie rodzą wyrw
       const p = pirateBasePieceOf(entity);
       if (p) noteBaseNodeLost(atmoModuleId(p), entity, x, y, z, Number(hull?.body?.cellSize) || 15);
     }
@@ -33594,7 +33597,7 @@
       noteBaseCrater(id, entity?.isWorldPiece ? entity : null, x, y, 0, 6 + Math.sqrt(dmg) * 1.1 + (Number(b?.explodeRadius) || 0) * 0.3);
     }
     function atmoImpact(entity, r) {
-      if (!r) return;
+      if (!r || (!PirateBaseAtmosphere.tune.followBodies && entity?.isWreck)) return;
       const p = pirateBasePieceOf(entity);
       if (!p) return;
       const cs = Number(entity.beamHull?.body?.cellSize) || 15;
@@ -33612,6 +33615,7 @@
       };
     }
     window.PirateBaseAtmosphere = PirateBaseAtmosphere;
+    PirateBaseAtmosphere.tune.followBodies = /[?&]woksele=0\b/.test(location.search); // przy wokselach ciała są schowane, więc wyrwa stoi tam, gdzie powstała
 
     // Taran ciał bazy (kawałki w bańce gracza): zwykłe zderzenie kadłubów w HullBodies.step. Styk okrętu spoza piratów
     // (gracz, sojusznicy — nie wraki ani odłamy bazy) otwiera okno taranu kawałka: węzły zgniecione w nim zdejmują
@@ -33674,7 +33678,7 @@
       onSnap(st) {
         const owner = pirateBaseSites()?.habitat?.owner;
         const hc = _neckCtx.habitat;
-        GameBlasts.blast({ x: hc.x, y: hc.y, size: 560 }, true);
+        GameBlasts.blast({ x: hc.x, y: hc.y, size: 560, profile: 'baza' }, true);
         camera.addShake(26, 0.9);
         noteCameraCombat('taran');
         if (StoryGame.site) StoryGame.site.neckSnapped = true;
@@ -33687,7 +33691,7 @@
         noteBaseBlast(hc.x, hc.y, 560);
       },
       onImpact(st) {
-        GameBlasts.blast({ x: st.impactX, y: st.impactY, size: 620 }, true);
+        // Bez wybuchu: miejsce to schowana stara bryła wieży, a jej upadek rysują woksele.
         camera.addShake(32, 1.1);
         // powietrze: bok wieży gniecie się o koronę bębna / dysk — wyrwa w wieży (z bryłą) i zapłon
         pirateBaseBreach({ module: 'H-T', x: st.impactX, y: st.impactY, z: st.impactZ, size: 180, entity: st.tower, kind: 'break' });
@@ -34229,7 +34233,7 @@
       warpOut: (list, origin) => storyWarpOutUnits(list, origin),
       returnWing: () => returnSupportWingToEarth(),
       // wybuch w module bazy (rozpad habitatu, ogień w rurach) — zapłon powietrza modułu (pirateBaseAtmosphere.js)
-      reactorBlow: (o) => { if (o) noteBaseBlast(o.x, o.y, o.size); return GameBlasts.blast(o, true); },
+      reactorBlow: (o) => { if (o) noteBaseBlast(o.x, o.y, o.size); return GameBlasts.blast(o && !o.profile ? { ...o, profile: 'baza' } : o, true); },
       addCredits: (n) => { if (window.DevEconomy?.addCredits) window.DevEconomy.addCredits(n); else PLAYER.credits += n; },
       changeReputation: (f, d, reason) => changePlayerReputation(f, d, reason),
       factionLabel: (f) => FACTIONS[normalizeFaction(f)]?.name || f,

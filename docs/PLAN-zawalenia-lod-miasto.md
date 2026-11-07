@@ -535,6 +535,25 @@ Próba na habitacie (ten sam dzień, `GRA/kolaZ-*`, 5120 × 1440, zoom 0,5, por�
 
 Hipoteza, niepotwierdzona: GPU nasycone klatkami workera (`S` ≈ 10 ms przy około 100 kl/s) głodzi kompozytor, który przerysowuje HUD w bardzo szerokich kafelkach. `k-stary` nie nasycał GPU, bo worker był wolniejszy (`S` 12 ms przy 46 kl/s). Pomiar jest bez okna, więc nie wiadomo, czy gracz to widzi. Następny krok, jeśli widać: limit klatek w kolejce GPU po stronie workera (reguła `render-worker`) i test przy tym samym oknie.
 
+## 5f. Wybuchy misji 1 po próbie użytkownika (2026-11-06)
+
+Zgłoszenie: wybuchy wyglądają na oskryptowane i jest ich za dużo, dym zakrywa habitat, a powinna być widoczna wieża, reakcja łańcuchowa miała być nagrodą za wysadzenie zbiorników, wokół rozwalonego habitatu lata białe powietrze.
+
+Przyczyny (przegląd kodu, potwierdzony drugim czytaniem):
+
+- `_chainExplosion` zapalał rury z habitatu (`_fuelChain 'H'`) po 0,6 s. Około 140 wybuchów w 10 s po HP 0 (85 w rurach, 35 okrętów, 13 kroków pomostów, 5 habitatu, 2 magazynu) i około 195 wtórnych, do tego 13 na osadzie.
+- Dym nie jest 2D: to gaz 3D rysowany w płaskim pudle bez testu głębi. Część nad płaszczyzną gry idzie w passie FG po wokselach FG, więc kładzie się też na wieży. Kula `capital` ma promień 1,6 · size, a przy 640 przykrywa cały bęben.
+- Białe powietrze to wyrwa przyczepiona do niewidocznych starych ciał świata: leciała z nimi i przeskakiwała na odłamy (`rehome`). Świecące źródło to jej żar. Nie jest to pozostałość po odpięciu: widać ją tylko przed HP 0, w ruchu kawałków.
+
+Wyniki (1280 × 720, ta sama droga: Yamato po etapach, 0 błędów konsoli, 0 pipeline'ów synchronicznych, podsumowanie po ~33 s od HP 0):
+
+| Droga | wybuchy w całym przebiegu | z gazem | wtórne | obraz |
+|---|---|---|---|---|
+| finał bez zbiorników | 24 | 11 | 0 | bęben i wieża widoczne we wszystkich kadrach, w `t17` przykryte szarą chmurą |
+| wysadzone zbiorniki (`--zbiorniki 1`) | 191 | 105 | 42 | baner, 35 okrętów, magazyn, habitat pada od ognia po kilku sekundach |
+
+Bez zbiorników gazu bazy nie widać już po około 4 s upadku. Do oceny użytkownika: upadek bez wybuchów może być teraz zbyt cichy, a dym `baza` zbyt rzadki. Niebieski obłok na kadrach to trafienia plazmy Yamato, której używa narzędzie (`--bron`), a nie gaz bazy.
+
 ## 6. Decyzje do użytkownika po pokazie
 
 Nowe po benchmarku misji 1 (§ 5c, § 5d):
