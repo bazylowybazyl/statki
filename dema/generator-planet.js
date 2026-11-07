@@ -32,7 +32,8 @@ if (params.get('test') === '1') document.body.classList.add('test');
 const canvas = $('gpu');
 const over = $('over');
 const octx = over.getContext('2d');
-const renderer = new THREE.WebGPURenderer({ canvas, antialias: false });
+// trackTimestamp — czas GPU wypieku ze znaczników czasu (?gpu=0 — bez)
+const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, trackTimestamp: params.get('gpu') !== '0' });
 const DPR = Math.max(0.5, Math.min(2, Number(params.get('dpr')) || window.devicePixelRatio || 1));
 renderer.setPixelRatio(DPR);
 renderer.setSize(innerWidth, innerHeight, false);
@@ -107,6 +108,7 @@ const S = {
   tiles: [],            // { spec, baked, body, x, y }
   close: null,          // { spec, baked, body }
   busy: 0,
+  paused: false,
   gen: 0,
   stats: { compileMs: 0, gridMs: 0, gridGpu: 0, closeMs: 0, compiled: false }
 };
@@ -173,13 +175,17 @@ async function buildGrid() {
       S.stats.compiled = true;
     }
     const t0 = performance.now();
-    let gpu = 0;
-    for (let i = 0; i < entries.length; i++) {
-      if (gen !== S.gen) return;
-      const e = entries[i];
-      const spec = describePlanet(e);
-      const baked = await baker.bake(spec, { size: S.gridRes });
-      gpu += baked.ms.total;
+    const specs = entries.map((e) => describePlanet(e));
+    // wypiek całej siatki jak układu (jeden odczyt prób); klatki stoją na czas wypieku (czas GPU — tylko wypiek)
+    S.paused = true;
+    let res;
+    try { res = await baker.bakeSystem(specs, { size: S.gridRes }); } finally { S.paused = false; }
+    S.stats.gridWall = performance.now() - t0;
+    S.stats.gridGpu = res[0]?.ms.gpu ?? null;
+    if (gen !== S.gen) { for (const b of res) b.dispose(); return; }
+    for (let i = 0; i < res.length; i++) {
+      const spec = specs[i];
+      const baked = res[i];
       const body = createGenPlanetBody(spec, baked, { segments: 128 });
       const col = i % COLS;
       const row = Math.floor(i / COLS);
@@ -191,7 +197,6 @@ async function buildGrid() {
       body.group.visible = S.view === 'grid';
     }
     S.stats.gridMs = performance.now() - t0;
-    S.stats.gridGpu = gpu;
     baker.releaseScratch();
   } finally {
     S.busy--;
@@ -207,7 +212,9 @@ async function openClose(type, seed) {
     await ensureCompiled([type]);
     const spec = describePlanet({ type, seed });
     const t0 = performance.now();
-    const baked = await baker.bake(spec, { size: S.closeRes });
+    S.paused = true;
+    let baked;
+    try { baked = await baker.bake(spec, { size: S.closeRes }); } finally { S.paused = false; }
     S.stats.closeMs = performance.now() - t0;
     S.stats.closeBake = baked.ms;
     baker.releaseScratch();
@@ -327,11 +334,12 @@ function updateInfo() {
 function updateStat() {
   const tilesBytes = S.tiles.reduce((s, t) => s + t.baked.bytes, 0);
   const lines = [];
+  const gpu = (ms) => (ms == null ? '' : ` · GPU ${ms.toFixed(1)} ms`);
   if (S.stats.compiled) lines.push(`kompilacja przejść ${S.stats.compileMs.toFixed(0)} ms`);
-  if (S.tiles.length) lines.push(`siatka: ${S.tiles.length} planet ${S.gridRes} px · ${S.stats.gridGpu.toFixed(0)} ms · ${fmtMB(tilesBytes)}`);
+  if (S.tiles.length) lines.push(`siatka: ${S.tiles.length} planet ${S.gridRes} px · ${S.stats.gridWall.toFixed(0)} ms${gpu(S.stats.gridGpu)} · ${fmtMB(tilesBytes)}`);
   if (S.close) {
     const b = S.close.baked;
-    lines.push(`zbliżenie: ${S.close.baked.size} px · ${b.ms.total.toFixed(0)} ms (próba ${(b.ms.probe || 0).toFixed(0)}) · ${fmtMB(b.bytes)}`);
+    lines.push(`zbliżenie: ${b.size} px · ${b.ms.total.toFixed(0)} ms${gpu(b.ms.gpu)} · ${fmtMB(b.bytes)}`);
   }
   if (S.busy) lines.push('wypiek…');
   $('stat').textContent = lines.join('\n');
@@ -430,7 +438,7 @@ function frame(now) {
     if (b.clouds) b.clouds.visible = S.cloudsOn;
     if (b.atm) b.atm.visible = S.haloOn;
   }
-  pipes[S.view === 'grid' ? 'grid' : 'close'].render();
+  if (!S.paused) pipes[S.view === 'grid' ? 'grid' : 'close'].render();
   drawLabels(cam);
   if ((now | 0) % 20 === 0) updateStat();
   requestAnimationFrame(frame);
@@ -455,8 +463,44 @@ function drawLabels(cam) {
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// Płaska mapa wypieku jako PNG (data URL) — narzędzia zrzutów: which = day | normal | spec | night | clouds; wiersz 0
+// celu = biegun S (v = 0), obraz odwrócony do „północ u góry”.
+async function mapPng(which = 'day', tile = -1, maxW = 1024) {
+  const b = tile < 0 ? S.close?.baked : S.tiles[tile]?.baked;
+  const rt = b?.rt?.[which];
+  if (!rt) return null;
+  const w = rt.width;
+  const h = rt.height;
+  const px = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, w, h);
+  const red = which === 'spec';
+  const stride = red ? 1 : 4;
+  const rowBytes = px.length / h;
+  const k = Math.max(1, Math.ceil(w / maxW));
+  const W = Math.floor(w / k);
+  const H = Math.floor(h / k);
+  const cv = new OffscreenCanvas(W, H);
+  const cx = cv.getContext('2d');
+  const img = cx.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    const sy = (h - 1 - y * k) * rowBytes;
+    for (let x = 0; x < W; x++) {
+      const si = sy + x * k * stride;
+      const di = (y * W + x) * 4;
+      if (red) { img.data[di] = img.data[di + 1] = img.data[di + 2] = px[si]; }
+      else { img.data[di] = px[si]; img.data[di + 1] = px[si + 1]; img.data[di + 2] = px[si + 2]; }
+      img.data[di + 3] = 255;
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  const blob = await cv.convertToBlob({ type: 'image/png' });
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s2 = '';
+  for (let i = 0; i < buf.length; i += 0x8000) s2 += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return btoa(s2);
+}
+
 window.__gen = {
-  S, baker, renderer,
+  S, baker, renderer, mapPng,
   ready: () => S.busy === 0 && (S.view === 'close' ? !!S.close : S.tiles.length === COLS * ROWS),
   buildGrid, openClose, setView, describePlanet, plannedBytes,
   types: PLANET_GEN_TYPES

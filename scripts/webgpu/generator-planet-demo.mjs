@@ -5,7 +5,7 @@
 //        [--mieszane 1] [--ziarno 7] [--zblizenia terran:123,gas:5] [--roz 2048] [--pora 90] [--port 5431]
 //        [--szer 1600 --wys 900] [--zblizenie-kadr 3.2,0.6,0.15]   (odległość, azymut, wysokość kamery)
 // Wynik: PNG + wyniki.json (czasy kompilacji i wypieku, pamięć, błędy konsoli).
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, repo, writeJson } from './wspolne.mjs';
 
@@ -34,11 +34,11 @@ try {
   const shot = async (name) => {
     await settle();
     const f = await screenshotPng(cdp, join(out, `${name}.png`));
-    const st = await ev(`(() => { const S = window.__gen.S; return { compileMs: S.stats.compileMs, gridMs: S.stats.gridMs, gridGpu: S.stats.gridGpu,
+    const st = await ev(`(() => { const S = window.__gen.S; return { compileMs: S.stats.compileMs, gridMs: S.stats.gridMs, gridWall: S.stats.gridWall, gridGpu: S.stats.gridGpu,
       tiles: S.tiles.map((t) => ({ type: t.spec.type, seed: t.spec.seed, ms: t.baked.ms, bytes: t.baked.bytes, style: t.spec.look.style || t.spec.look.palette || '' })),
       close: S.close ? { type: S.close.spec.type, seed: S.close.spec.seed, size: S.close.baked.size, ms: S.close.baked.ms, bytes: S.close.baked.bytes, levels: S.close.baked.levels } : null }; })()`);
     report.zrzuty.push({ name, plik: f, ...st });
-    console.log(name, st.close ? `${st.close.type}:${st.close.seed} ${st.close.ms.total.toFixed(0)} ms` : `${st.tiles.length} planet, ${st.gridGpu?.toFixed(0)} ms`);
+    console.log(name, st.close ? `${st.close.type}:${st.close.seed} ${st.close.ms.total.toFixed(0)} ms, GPU ${st.close.ms.gpu?.toFixed(1)} ms` : `${st.tiles.length} planet, ${st.gridWall?.toFixed(0)} ms, GPU ${st.gridGpu?.toFixed(1)} ms, kompilacja ${st.compileMs?.toFixed(0)} ms`);
   };
   const gridList = args.mieszane ? ['mieszane', ...types] : (types.length ? types : ['mieszane']);
   for (let i = 0; i < gridList.length; i++) {
@@ -53,6 +53,12 @@ try {
     await ev(`(async () => { const G = window.__gen; G.S.dist = ${kadr[0]}; G.S.az = ${kadr[1]}; G.S.el = ${kadr[2]}; await G.openClose('${t}', ${Number(s) >>> 0}); return 1; })()`);
     await waitFor(cdp, 'window.__gen.ready()', 600000, 300);
     await shot(`zblizenie-${t}-${s}`);
+    if (args.mapy) {
+      for (const m of ['day', 'normal', 'spec', 'night', 'clouds']) {
+        const b64 = await ev(`window.__gen.mapPng('${m}', -1, 2048)`);
+        if (b64) writeFileSync(join(out, `mapa-${t}-${s}-${m}.png`), Buffer.from(b64, 'base64'));
+      }
+    }
   }
   report.bledy = logs.errors().slice(0, 60);
   report.dziennik = logs.all().filter((l) => /planetGen|warn/i.test(l)).slice(0, 40);

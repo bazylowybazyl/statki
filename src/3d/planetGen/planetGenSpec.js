@@ -62,7 +62,7 @@ function lookTerran(rng) {
     plateFreq: plateFreq(rng.int(10, 26)),
     contFreq: rng.range(0.9, 1.7),
     contWarp: rng.range(0.25, 0.65),
-    coast: rng.range(0.35, 0.75),          // fraktalność wybrzeży (udział drobnych oktaw kształtu)
+    coast: rng.range(0.6, 1.0),            // fraktalność wybrzeży (udział drobnych oktaw kształtu)
     islands: rng.range(0.0, 1.0),          // archipelagi na szelfach
     mountainKm: rng.range(3.0, 8.5),
     mountainFreq: rng.range(2.0, 3.4),
@@ -71,12 +71,12 @@ function lookTerran(rng) {
     oceanKm: rng.range(3.6, 6.2),
     ridgeKm: rng.range(0.8, 2.2),          // grzbiety śródoceaniczne
     temp,
-    wet: rng.range(0.35, 1.0),             // wilgotność (lasy ↔ stepy)
+    wet: rng.range(0.45, 1.1),             // wilgotność (lasy ↔ stepy)
     axisTilt: rng.range(0, 1),             // rozmycie pasów klimatu (nachylenie osi)
     vegetation: veg,
     palette: {
       rain: v[0], forest: v[1], taiga: v[2], steppe: v[3], tundra: v[4],
-      desert: jitter(rng, srgb(rng.pick(['#b8996a', '#c2a172', '#a87e55', '#b88e62'])), 0.08),
+      desert: jitter(rng, srgb(rng.pick(['#c8a874', '#d0b07a', '#bf9a66', '#c9a26e'])), 0.08),
       desertRed: jitter(rng, srgb(rng.pick(['#9a5a36', '#a86a40', '#8c5a3e'])), 0.08),
       rock: jitter(rng, srgb(rng.pick(['#5e5650', '#625a4e', '#56524e'])), 0.08),
       snow: srgb('#e8edf2'),
@@ -432,7 +432,11 @@ function atmosphereFor(type, look, rng) {
   let ringAtm = { height: 1000, day: [0.26, 0.5, 1.0], sunset: [1.0, 0.38, 0.12], gain: 0.8 };
   switch (type) {
     case 'terran': case 'ocean':
-      haze = { strength: rng.range(0.75, 1.05), ...blue };
+      // słabiej niż Ziemia gry (1,0 na suchym lądzie): nad ciemną wodą pełna mgiełka daje jaskrawy błękit i szeroki
+      // pomarańczowy pas zachodu
+      // barwa i współczynniki mniej zróżnicowane niż domyślny błękit (0,05 / 0,10 / 0,22): ekstynkcja zabiera
+      // błękit z jasnego lądu, a rozpraszanie go dokłada — przy dużej różnicy suchy ląd wychodzi fioletowy
+      haze = { strength: rng.range(0.4, 0.55), color: [0.66, 0.78, 0.98], beta: [0.05, 0.075, 0.12] };
       halo = { color: [0.3, 0.6, 1.0], sunset: [1.2, 0.4, 0.1], power: 9.0, coef: 0.47 };
       ringAtm = { height: rng.range(1000, 1500), day: [0.26, 0.5, 1.0], sunset: [1.0, 0.38, 0.12], gain: 0.95 };
       break;
@@ -497,10 +501,10 @@ function cloudsFor(type, look, rng) {
   // style: 0 — ziemskie (pasy klimatu, cyklony), 1 — pokład (toksyczna), 2 — pył / mgła cienka
   switch (type) {
     case 'terran':
-      return { style: 0, opacity: round(rng.range(0.55, 0.75), 3), cover: round(rng.range(0.35, 0.62), 3),
-        cyclones: rng.int(1, 5), stretch: round(rng.range(1.6, 2.4), 3), tint: [1, 1, 1], sizeMul: 1 };
+      return { style: 0, opacity: round(rng.range(0.55, 0.75), 3), cover: round(rng.range(0.26, 0.48), 3),
+        cyclones: rng.int(2, 6), stretch: round(rng.range(1.6, 2.4), 3), tint: [1, 1, 1], sizeMul: 1 };
     case 'ocean':
-      return { style: 0, opacity: round(rng.range(0.6, 0.8), 3), cover: round(rng.range(0.5, 0.72), 3),
+      return { style: 0, opacity: round(rng.range(0.6, 0.8), 3), cover: round(rng.range(0.36, 0.56), 3),
         cyclones: rng.int(3, 8), stretch: round(rng.range(1.5, 2.2), 3), tint: [1, 1, 1], sizeMul: 1 };
     case 'desert':
       return rng.chance(0.55) ? { style: 2, opacity: round(rng.range(0.25, 0.45), 3), cover: round(rng.range(0.08, 0.22), 3),

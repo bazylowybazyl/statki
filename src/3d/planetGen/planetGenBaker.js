@@ -72,7 +72,7 @@ export class PlanetGenBaker {
     this.renderer = renderer;
     this.quad = new THREE.QuadMesh();
     this.field = makeTarget(64, 32, { float32: true, mips: false, name: 'planetGenField' });
-    this.probe = makeTarget(PROBE_W, PROBE_H, { float32: true, mips: false, name: 'planetGenProbe' });
+    this._probes = [];
     this._graphs = new Map();
     this._compiled = new Set();
     this.stats = { bakes: 0, compiles: 0, lastMs: 0 };
@@ -142,90 +142,120 @@ export class PlanetGenBaker {
     resizeRenderTarget(this.field, w, h, this.renderer);
   }
 
+  _probeTarget(i) {
+    while (this._probes.length <= i) this._probes.push(makeTarget(PROBE_W, PROBE_H, { float32: true, mips: false, name: `planetGenProbe${this._probes.length}` }));
+    return this._probes[i];
+  }
+
+  /** Wypiek jednej planety (bakeSystem z jedną planetą). */
+  async bake(specOrDesc, opts = {}) {
+    return (await this.bakeSystem([specOrDesc], opts))[0];
+  }
+
   /**
-   * Wypiek map planety. `specOrDesc` — opis (describePlanet) albo { type, seed, … }. `size` — szerokość map
-   * w pełnej rozdzielczości (wysokość = size / 2). Wynik: { spec, size, maps: { day, normal?, spec?, night?, clouds? }
-   * (tekstury celów), levels, gas? (dane silnika atmosfery), bytes, ms: { probe, total }, dispose() }.
+   * Wypiek map UKŁADU (lista opisów albo { type, seed, … }): (1) próby pól wszystkich planet z powierzchnią naraz
+   * i JEDEN odczyt (opóźnienie odczytu GPU → CPU płaci się raz na układ, nie na planetę), (2) wszystkie przejścia
+   * pełnej rozdzielczości bez czekania, (3) jedno czekanie na koniec pracy GPU. `size` — szerokość map (wysokość
+   * size / 2), `sizes` — per planeta. Czas GPU (`gpuMs` wyniku całego układu) — ze znaczników czasu, gdy renderer
+   * ma `trackTimestamp` (liczy wszystkie przejścia renderu od poprzedniego odczytu — rysunki klatek w tym czasie też).
+   * Wynik: tablica { spec, size, maps: { day, normal?, spec?, night?, clouds? }, levels, gas?, bytes, ms, dispose() }.
    */
-  async bake(specOrDesc, { size = 2048 } = {}) {
-    const spec = specOrDesc.look ? specOrDesc : describePlanet(specOrDesc);
+  async bakeSystem(list, { size = 2048, sizes = null } = {}) {
     const r = this.renderer;
     const t0 = performance.now();
-    const W = size;
-    const H = size / 2;
-    const texKm = 2 * Math.PI * spec.rKm / W;
-    const ctx = { size: W, rKm: spec.rKm, texKm };
-    const plan = plannedMaps(spec);
-    const out = { spec, size: W, maps: {}, targets: [], levels: null, gas: null, bytes: plannedBytes(spec, W), ms: {} };
-    const prev = r.getRenderTarget();
-    const common = (w, h, extra = {}) => ({
-      uSeed: [...spec.seedOffset, spec.seedInt], uRes: [w, h, 1 / w, 1 / h], uGeo: [spec.rKm, texKm, 0, 0], ...extra
+    const timed = !!r.backend?.trackTimestamp;
+    if (timed) await r.resolveTimestampsAsync('render');
+    const items = list.map((d, i) => {
+      const spec = d.look ? d : describePlanet(d);
+      const W = (sizes && sizes[i]) || size;
+      const texKm = 2 * Math.PI * spec.rKm / W;
+      const ctx = { size: W, rKm: spec.rKm, texKm };
+      const out = { spec, size: W, maps: {}, targets: [], rt: {}, levels: null, gas: null, bytes: plannedBytes(spec, W), ms: {} };
+      out.dispose = () => { for (const t of out.targets) t.dispose(); out.targets.length = 0; if (out.gas) out.gas.dispose(); };
+      const tu = spec.kind === 'gas' ? null : SOLID_TYPES[spec.type].uniformsFor(spec, ctx);
+      return { spec, W, H: W / 2, texKm, ctx, out, tu };
     });
+    const common = (it, w, h, extra = {}) => ({
+      uSeed: [...it.spec.seedOffset, it.spec.seedInt], uRes: [w, h, 1 / w, 1 / h], uGeo: [it.spec.rKm, it.texKm, 0, 0], ...extra
+    });
+    const prev = r.getRenderTarget();
     try {
-      if (spec.kind === 'gas') {
-        const day = makeTarget(W, H, { srgb: true, name: `planetGen:${spec.type}:${spec.seed}:day` });
-        out.targets.push(day);
-        const gv = gasBakeUniforms(spec, ctx);
-        gv.arrays(this.graph('gas'));
-        this._draw('gas', day, { ...common(W, H), ...gv.values });
-        out.maps.day = day.texture;
-        out.gas = gv.engine;
-        // tekstura profilu wiatru na GPU od razu (węzeł tekstury per obiekt nie wgrywa jej sam — pusty sampler w grupie)
-        r.initTexture(gv.engine.windTexture());
-      } else {
-        const T = SOLID_TYPES[spec.type];
-        const tu = T.uniformsFor(spec, ctx);
-        const oct = [tu.octaves.x, tu.octaves.y, tu.octaves.z, tu.octaves.w];
-        // (1) próba: kwantyle wysokości
-        this._draw(`field:${spec.type}`, this.probe, { ...common(PROBE_W, PROBE_H), uOct: oct, ...tu.field });
-        const px = await r.readRenderTargetPixelsAsync(this.probe, 0, 0, PROBE_W, PROBE_H);
-        const hs = new Float32Array(PROBE_W * PROBE_H);
-        const ws = new Float32Array(PROBE_W * PROBE_H);
-        const rowF = px.length / (PROBE_W * PROBE_H) >= 4 ? 4 : 4;
-        for (let y = 0; y < PROBE_H; y++) {
-          const lat = ((y + 0.5) / PROBE_H - 0.5) * Math.PI;
-          const w = Math.cos(lat);
-          for (let x = 0; x < PROBE_W; x++) {
-            const i = y * PROBE_W + x;
-            hs[i] = px[i * rowF];
-            ws[i] = w;
-          }
+      // (1) próby (kanał w pola) — wszystkie naraz, jeden odczyt
+      const solids = items.filter((it) => it.tu);
+      const reads = solids.map((it, k) => {
+        const oct = [it.tu.octaves.x, it.tu.octaves.y, it.tu.octaves.z, it.tu.octaves.w];
+        it.oct = oct;
+        const rt = this._probeTarget(k);
+        this._draw(`field:${it.spec.type}`, rt, { ...common(it, PROBE_W, PROBE_H), uOct: oct, uLevels: [0, 1, 0, 0], ...it.tu.field });
+        return r.readRenderTargetPixelsAsync(rt, 0, 0, PROBE_W, PROBE_H);
+      });
+      const pixels = await Promise.all(reads);
+      const tProbe = performance.now() - t0;
+      const ws = new Float32Array(PROBE_W * PROBE_H);
+      for (let y = 0; y < PROBE_H; y++) ws.fill(Math.cos(((y + 0.5) / PROBE_H - 0.5) * Math.PI), y * PROBE_W, (y + 1) * PROBE_W);
+      const vs = new Float32Array(PROBE_W * PROBE_H);
+      solids.forEach((it, k) => {
+        const px = pixels[k];
+        for (let i = 0; i < vs.length; i++) vs[i] = px[i * 4 + 3];
+        const pq = it.tu.probeQ.map((q) => Math.min(0.999, Math.max(1e-4, q)));
+        const qs = weightedQuantiles(vs, ws, [...pq, 0.01, 0.99, 0, 1]);
+        it.uQ = qs.slice(0, 4);
+        it.uQ2 = qs.slice(4, 8);
+        it.out.levels = { uQ: it.uQ, uQ2: it.uQ2, sea: it.tu.water ? 0 : null };
+        it.out.ms.probe = tProbe;
+      });
+      // (2) przejścia pełnej rozdzielczości
+      for (const it of items) {
+        const { spec, W, H, out } = it;
+        const name = (m) => `planetGen:${spec.type}:${spec.seed}:${m}`;
+        if (spec.kind === 'gas') {
+          const day = makeTarget(W, H, { srgb: true, name: name('day') });
+          out.targets.push(day);
+          const gv = gasBakeUniforms(spec, it.ctx);
+          gv.arrays(this.graph('gas'));
+          this._draw('gas', day, { ...common(it, W, H), ...gv.values });
+          out.maps.day = day.texture;
+          out.rt.day = day;
+          out.gas = gv.engine;
+          // tekstura profilu wiatru na GPU od razu (węzeł tekstury per obiekt jej nie wgrywa — pusty sampler w grupie)
+          r.initTexture(gv.engine.windTexture());
+          continue;
         }
-        const water = spec.look.water || 0;
-        const [sea, q01, q10, q50, q90, q99, qMin, qMax] = weightedQuantiles(hs, ws, [Math.max(water, 1e-6), 0.01, 0.1, 0.5, 0.9, 0.99, 0, 1]);
-        const seaLevel = water > 0 ? sea : qMin - 1e3;
-        out.levels = { sea: seaLevel, q01, q10, q50, q90, q99, min: qMin, max: qMax };
-        out.ms.probe = performance.now() - t0;
-        const levels = { uLevels: [seaLevel, q10, q50, q90], uLevels2: [q01, q99, qMin, qMax], uOct: oct };
-        // (2) pole
+        const tu = it.tu;
+        const plan = plannedMaps(spec);
+        const levels = { uLevels: [tu.water ? 0 : -1e3, tu.landTop || 3, 0, 0], uQ: it.uQ, uQ2: it.uQ2, uOct: it.oct };
         this._ensureField(W, H);
-        this._draw(`field:${spec.type}`, this.field, { ...common(W, H), ...levels, ...tu.field });
-        // (3) mapy
-        const day = makeTarget(W, H, { srgb: true, name: `planetGen:${spec.type}:${spec.seed}:day` });
+        this._draw(`field:${spec.type}`, this.field, { ...common(it, W, H), ...levels, ...tu.field });
+        const day = makeTarget(W, H, { srgb: true, name: name('day') });
         out.targets.push(day);
-        this._draw(`day:${spec.type}`, day, { ...common(W, H), ...levels, ...tu.color });
+        this._draw(`day:${spec.type}`, day, { ...common(it, W, H), ...levels, ...tu.color });
         out.maps.day = day.texture;
-        const normal = makeTarget(W, H, { name: `planetGen:${spec.type}:${spec.seed}:normal` });
+        out.rt.day = day;
+        const normal = makeTarget(W, H, { name: name('normal') });
         out.targets.push(normal);
-        this._draw('normal', normal, { ...common(W, H), ...levels, uNorm: [tu.norm[0], water > 0 ? 1 : 0, 0, 0] });
+        this._draw('normal', normal, { ...common(it, W, H), ...levels, uNorm: [tu.norm[0], tu.water ? 1 : 0, tu.norm[2] ?? 0.6, 0] });
         out.maps.normal = normal.texture;
+        out.rt.normal = normal;
         if (plan.spec) {
-          const t = makeTarget(W / 2, H / 2, { red: true, name: `planetGen:${spec.type}:${spec.seed}:spec` });
+          const t = makeTarget(W / 2, H / 2, { red: true, name: name('spec') });
           out.targets.push(t);
-          this._draw('spec', t, { ...common(W / 2, H / 2), ...levels, uSpec: tu.spec || [water > 0 ? 1 : 0, 0, 0, 0] });
+          this._draw('spec', t, { ...common(it, W / 2, H / 2), ...levels, uSpec: tu.spec || [0, 0, 0, 0] });
           out.maps.spec = t.texture;
+          out.rt.spec = t;
         }
         if (plan.night) {
-          const t = makeTarget(W / 2, H / 2, { srgb: true, name: `planetGen:${spec.type}:${spec.seed}:night` });
+          const t = makeTarget(W / 2, H / 2, { srgb: true, name: name('night') });
           out.targets.push(t);
-          this._draw('night', t, { ...common(W / 2, H / 2), ...levels, ...nightUniforms(spec, tu) });
+          this._draw('night', t, { ...common(it, W / 2, H / 2), ...levels, ...nightUniforms(spec, tu) });
           out.maps.night = t.texture;
+          out.rt.night = t;
         }
         if (plan.clouds) {
-          const t = makeTarget(W, H, { srgb: true, name: `planetGen:${spec.type}:${spec.seed}:clouds` });
+          const t = makeTarget(W, H, { srgb: true, name: name('clouds') });
           out.targets.push(t);
-          this._draw('clouds', t, { ...common(W, H), ...levels, ...cloudUniforms(spec, ctx) });
+          this._draw('clouds', t, { ...common(it, W, H), ...levels, ...cloudUniforms(spec, it.ctx) });
           out.maps.clouds = t.texture;
+          out.rt.clouds = t;
         }
       }
     } finally {
@@ -233,11 +263,13 @@ export class PlanetGenBaker {
     }
     const device = r.backend?.device;
     if (device?.queue?.onSubmittedWorkDone) await device.queue.onSubmittedWorkDone();
-    out.ms.total = performance.now() - t0;
-    this.stats.bakes++;
-    this.stats.lastMs = out.ms.total;
-    out.dispose = () => { for (const t of out.targets) t.dispose(); out.targets.length = 0; };
-    return out;
+    const total = performance.now() - t0;
+    const gpuMs = timed ? await r.resolveTimestampsAsync('render') : null;
+    this.stats.bakes += items.length;
+    this.stats.lastMs = total;
+    this.stats.lastGpuMs = gpuMs;
+    for (const it of items) { it.out.ms.total = total; it.out.ms.system = items.length; it.out.ms.gpu = gpuMs; }
+    return items.map((it) => it.out);
   }
 
   /** Zwalnia cel pola (wspólny dla planet — po wypieku układu). */
@@ -247,7 +279,7 @@ export class PlanetGenBaker {
 
   dispose() {
     this.field.dispose();
-    this.probe.dispose();
+    for (const p of this._probes) p.dispose();
     for (const g of this._graphs.values()) g.material.dispose();
     this._graphs.clear();
   }
@@ -270,14 +302,16 @@ function cloudUniforms(spec, ctx) {
   const rng = rngFor(spec.seed, `${spec.type}:cyklony`);
   const out = {
     uCloud: [c.cover, c.stretch, Math.min(CLOUD_CYCLONES, c.cyclones), c.style],
-    uCloud2: [c.sizeMul * Math.sqrt(6371 / spec.rKm) ** 0.35, c.style === 0 ? 0.11 : 0.2, spec.look.bands ?? 0.6, (spec.look.swirl ?? 0.5) * 0.9],
+    uCloud2: [c.sizeMul * Math.sqrt(6371 / spec.rKm) ** 0.35, c.style === 0 ? 0.15 : 0.2, spec.look.bands ?? 0.6, (spec.look.swirl ?? 0.5) * 0.9],
     uTint: c.tint,
     uOct: [0, 0, 0, Math.max(3, Math.min(8, Math.floor(Math.log2(ctx.size / 64)) + 2))]
   };
   for (let i = 0; i < CLOUD_CYCLONES; i++) {
     const hemi = rng.next() < 0.5 ? 1 : -1;
-    const d = rng.dirInLat(12 * hemi, 38 * hemi);
-    out[`uCyc${i}`] = [...d, rng.range(0.06, 0.14)];
+    // co trzeci tropikalny (12–28°, mały z okiem), reszta pozatropikalne (35–62°, duże, luźne — fronty)
+    const tropical = i % 3 === 2;
+    const d = tropical ? rng.dirInLat(12 * hemi, 28 * hemi) : rng.dirInLat(35 * hemi, 62 * hemi);
+    out[`uCyc${i}`] = [...d, tropical ? rng.range(0.05, 0.09) : rng.range(0.16, 0.28)];
   }
   return out;
 }

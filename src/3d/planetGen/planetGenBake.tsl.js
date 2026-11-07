@@ -48,8 +48,9 @@ export const COMMON_DEFS = Object.freeze({
   uRes: 'vec4',      // W, H, 1/W, 1/H
   uGeo: 'vec4',      // R [km], teksel równika [km], —, —
   uOct: 'vec4',      // liczby oktaw: x — kształt, y — detal, z — grzbiety, w — chmury
-  uLevels: 'vec4',   // poziom morza [km], q10, q50, q90 [km]
-  uLevels2: 'vec4'   // q01, q99, min, max [km]
+  uLevels: 'vec4',   // x — poziom morza [km] (0 — planety z wodą; bez wody −1e3), y — typowy szczyt lądu [km], z / w — wolne
+  uQ: 'vec4',        // kwantyle kanału próby (pole .w) w ułamkach rodzaju (probeQ — np. udział oceanu, wydm, mórz)
+  uQ2: 'vec4'        // q01, q99, min, max kanału próby
 });
 
 // ── Współrzędne piksela mapy ───────────────────────────────────────────────────────────────────────────────────────
@@ -106,7 +107,11 @@ export function buildNormalGraph(F) {
     const R = U.uGeo.x;
     const dE = hE.sub(hW).div(R.mul(4 * PI).mul(cosLat).mul(U.uRes.z));
     const dN = hN.sub(hS).div(R.mul(2 * PI).mul(U.uRes.w));
-    const n = normalize(vec3(dE.mul(U.uNorm.x).negate(), dN.mul(U.uNorm.x).negate(), 1.0)).toVar();
+    // nachylenie przycięte (uNorm.z — największe |∇h|·przesadzenie): bez tego stoki kraterów i gór świecą daleko za
+    // terminatorem (graf gry liczy światło z normalnej mapy bez samocienia)
+    const g = vec2(dE, dN).mul(U.uNorm.x).toVar();
+    g.mulAssign(min(float(1.0), U.uNorm.z.div(max(length(g), 1e-6))));
+    const n = normalize(vec3(g.x.negate(), g.y.negate(), 1.0)).toVar();
     // tafla wody (miękko przy brzegu)
     const sea = U.uLevels.x;
     const dry = select01(U.uNorm.y, smoothstep(sea.sub(0.04), sea.add(0.02), hC));
@@ -115,6 +120,7 @@ export function buildNormalGraph(F) {
   })();
   return { U, material: bakeMaterial('PlanetGenNormal', node) };
 }
+const inv01 = (lo, hi, x) => float(1.0).sub(smoothstep(lo, hi, x));
 // 1 gdy flaga < 0,5 (bez wody), inaczej wartość
 function select01(flag, v) { return mix(float(1.0), v, step(0.5, flag)); }
 
@@ -169,7 +175,7 @@ export function buildNightGraph(F) {
       const land = smoothstep(sea.sub(0.02), sea.add(0.06), h);
       const onSea = float(1.0).sub(land).mul(U.uCiv.w);
       // wysokość względna nad morzem: niziny chętniej (q90 — wysokie góry puste)
-      const relH = h.sub(sea).div(max(U.uLevels.w.sub(sea), 0.1));
+      const relH = h.sub(sea).div(max(U.uLevels.y, 0.1));
       const low = float(1.0).sub(smoothstep(0.25, 0.75, relH));
       // klimat: umiarkowane szerokości (uCiv.z — pas, w stopniach od równika: najlepiej do niego)
       const absLat = abs(C.lat).mul(180 / PI);
@@ -238,44 +244,54 @@ export function buildCloudGraph() {
     const q = vec3(C.dir).toVar();
     const spiral = float(0.0).toVar();
     const eye = float(1.0).toVar();
-    // cyklony: obrót kierunku wokół osi cyklonu o kąt rosnący ku środkowi (półkula — zwrot)
+    // cyklony: obrót kierunku wokół osi cyklonu o kąt rosnący ku środkowi (półkula — zwrot). Pozatropikalne (duże,
+    // luźne, bez oka — chmury frontu w kształt przecinka) i tropikalne (małe, ciasne, z okiem): promień w uCyc.w
     for (let i = 0; i < CLOUD_CYCLONES; i++) {
       const cy = U[`uCyc${i}`];
       If(float(i).lessThan(U.uCloud.z), () => {
         const axis = normalize(cy.xyz);
         const cd = dot(C.dir, axis);
-        const d = sqrt(max(float(1.0).sub(cd.mul(cd)), 0.0)).toVar();   // odległość kątowa (sinus) od środka
+        const d = sqrt(max(float(1.0).sub(cd.mul(cd)), 0.0)).toVar();
         const rad = cy.w;
-        If(cd.greaterThan(0.0).and(d.lessThan(rad.mul(1.8))), () => {
-          const t = float(1.0).sub(smoothstep(0.0, rad.mul(1.8), d));
-          const turn = t.mul(t).mul(5.5).mul(mix(float(-1.0), float(1.0), step(0.0, axis.y)));
+        If(cd.greaterThan(0.0).and(d.lessThan(rad.mul(2.0))), () => {
+          const t = inv01(0.0, rad.mul(2.0), d);
+          const tropical = inv01(0.1, 0.13, rad);
+          const turn = t.mul(t).mul(mix(3.2, 6.0, tropical)).mul(mix(float(-1.0), float(1.0), step(0.0, axis.y)));
           const ca = cos(turn);
           const sa = sin(turn);
           q.assign(q.mul(ca).add(cross(axis, q).mul(sa)).add(axis.mul(dot(axis, q)).mul(float(1.0).sub(ca))));
-          spiral.assign(max(spiral, t));
-          eye.mulAssign(smoothstep(rad.mul(0.05), rad.mul(0.14), d));
+          spiral.assign(max(spiral, t.mul(mix(0.6, 1.0, tropical))));
+          eye.mulAssign(mix(float(1.0), smoothstep(rad.mul(0.04), rad.mul(0.12), d), tropical));
         });
       });
     }
     const qs = vec3(q.x, q.y.mul(U.uCloud.y), q.z).add(U.uSeed.xyz.mul(1.37)).toVar();
-    const warp = pgWarp(qs.mul(1.6).mul(sc), 3, 0.55).toVar();
-    const base = pgFbm(qs.mul(2.4).mul(sc).add(warp), U.uOct.w).toVar();
-    const fine = pgFbm(qs.mul(11.0).mul(sc).add(warp.mul(2.0)), int(U.uOct.w).sub(2)).toVar();
+    // odkształcenie dwupoziomowe — wiry i smugi frontów zamiast plam
+    const warp = pgWarp(qs.mul(1.5).mul(sc), 4, 0.6).toVar();
+    const warp2 = pgWarp(qs.add(warp).mul(3.0).mul(sc).add(vec3(1.3, 4.1, -2.2)), 3, 0.12).toVar();
+    const qw = qs.add(warp).add(warp2.mul(0.6)).toVar();
+    const base = pgFbm(qw.mul(2.5).mul(sc), U.uOct.w).toVar();
+    const fine = pgFbm(qw.mul(12.0).mul(sc), int(U.uOct.w).sub(2)).toVar();
     const out = float(0.0).toVar();
     If(style.lessThan(0.5), () => {
-      // profil pokrycia z szerokości (Ziemia: zbieżność 0–8°, sucho 15–32°, sztormy 40–65°, polarna umiarkowana)
-      const itcz = exp(absLatD.div(7.0).pow2().negate()).mul(0.22);
-      const sub = exp(absLatD.sub(24.0).div(9.0).pow2().negate()).mul(-0.3);
-      const storm = exp(absLatD.sub(54.0).div(12.0).pow2().negate()).mul(0.22);
-      const cover = U.uCloud.x.add(itcz).add(sub).add(storm).add(spiral.mul(0.35));
-      const dens = base.mul(0.5).add(0.5).add(cover.sub(0.5)).sub(fine.mul(0.16)).toVar();
+      // profil pokrycia z szerokości (zbieżność 0–8°, sucho 15–32°, sztormy 40–65°, polarna umiarkowana), granice
+      // pasów przesunięte szumem
+      const aL = absLatD.add(base.mul(9.0));
+      const itcz = exp(aL.div(7.0).pow2().negate()).mul(0.12);
+      const sub = exp(aL.sub(24.0).div(9.0).pow2().negate()).mul(-0.26);
+      const storm = exp(aL.sub(54.0).div(13.0).pow2().negate()).mul(0.2);
+      const cover = U.uCloud.x.add(itcz).add(sub).add(storm).add(spiral.mul(0.32));
+      const dens = base.mul(0.5).add(0.5).add(cover.sub(0.5)).add(fine.mul(0.07)).toVar();
       const edge = U.uCloud2.y;
       out.assign(smoothstep(float(0.5).sub(edge), float(0.5).add(edge), dens));
-      // pasma spiral (ramiona) w cyklonie
-      out.assign(max(out, spiral.mul(spiral).mul(smoothstep(0.3, 0.75, fine.mul(0.5).add(0.55))).mul(0.8)));
+      // pola cumulusów (komórki) tam, gdzie gęstość tuż pod progiem — podzwrotniki nad oceanem
+      const cc = pgCells(qw.mul(34.0).mul(sc), 0.95).toVar();
+      const puff = inv01(0.2, 0.75, cc.x).mul(cc.z.mul(0.6).add(0.4)).mul(smoothstep(-0.1, 0.4, fine));
+      out.assign(max(out, puff.mul(smoothstep(0.3, 0.48, dens)).mul(0.45)));
       out.mulAssign(eye);
-      // cienkie pierzaste smugi (cirrus) na krawędziach
-      out.assign(max(out, smoothstep(0.62, 0.9, base.mul(0.5).add(0.5).add(cover.sub(0.5))).mul(0.25)));
+      // cienkie pierzaste smugi (cirrus) — rozciągnięte mocniej strefowo
+      const ci = pgFbm(vec3(qw.x, qw.y.mul(2.5), qw.z).mul(7.0).mul(sc), 4);
+      out.assign(max(out, smoothstep(0.25, 0.75, ci).mul(smoothstep(0.3, 0.5, dens)).mul(0.3)));
     }).ElseIf(style.lessThan(1.5), () => {
       // pokład: ścinanie strefowe (kształt „Y”: długość przesunięta z |φ|), pasma, kołnierz polarny
       const lon = fract(C.u.add(abs(C.lat).mul(U.uCloud2.w)));

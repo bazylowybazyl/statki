@@ -117,12 +117,40 @@ export const pgCells = /*@__PURE__*/ Fn(([p, jitter]) => {
   return vec4(sqrt(f1), sqrt(f2), pgU1(pgRehash(h1)), pgU1(pgRehash(h2)));
 }).setLayout({ name: 'pgCells', type: 'vec4', inputs: [{ name: 'p', type: 'vec3' }, { name: 'jitter', type: 'float' }] });
 
+// ── Komórki GŁADKIE: vec4(F1, F2, średnia wartości komórek ważona e^(−k·d²), —) — wartość przypisana komórce bez
+// skoku na krawędzi (zwykłe „hasz najbliższej” skacze tam, gdzie zmienia się druga najbliższa — kanciaste lądy).
+export const pgCellsSmooth = /*@__PURE__*/ Fn(([p, jitter, sharp]) => {
+  const ip = ivec3(floor(p)).toVar();
+  const fp = fract(p).toVar();
+  const f1 = float(9.0).toVar();
+  const f2 = float(9.0).toVar();
+  const sw = float(0.0).toVar();
+  const sv = float(0.0).toVar();
+  Loop(
+    { start: -1, end: 1, condition: '<=', name: 'sz' },
+    { start: -1, end: 1, condition: '<=', name: 'sy' },
+    { start: -1, end: 1, condition: '<=', name: 'sx' },
+    ({ sx, sy, sz }) => {
+      const c = ivec3(sx, sy, sz).toVar();
+      const h = pgHashU(ip.add(c)).toVar();
+      const o = pgU3(h).sub(0.5).mul(jitter).add(0.5);
+      const d = vec3(c).add(o).sub(fp).toVar();
+      const dd = dot(d, d).toVar();
+      const w = exp(dd.mul(sharp).negate());
+      sw.addAssign(w);
+      sv.addAssign(w.mul(pgU1(pgRehash(h))));
+      If(dd.lessThan(f1), () => { f2.assign(f1); f1.assign(dd); }).ElseIf(dd.lessThan(f2), () => { f2.assign(dd); });
+    }
+  );
+  return vec4(sqrt(f1), sqrt(f2), sv.div(max(sw, 1e-6)), 0.0);
+}).setLayout({ name: 'pgCellsSmooth', type: 'vec4', inputs: [{ name: 'p', type: 'vec3' }, { name: 'jitter', type: 'float' }, { name: 'sharp', type: 'float' }] });
+
 // ── Oktawa kraterów: komórki 3 × 3 × 3 kraty (krater w komórce z prawdopodobieństwem `dens`), profil prosty
 // (misa paraboliczna, wał, wyrzut) albo złożony (płaskie dno, górka centralna — `complex`), wiek z haszu
 // (stare — płytsze i rozmyte). Wynik vec4: x — wysokość [w promieniach komórki], y — jasność świeżego wyrzutu
-// (0…1), z — promienie świeżych kraterów (0…1), w — maska dna (0…1, dno starych basenów pod lawę).
+// (0…1), z — promienie świeżych kraterów (0…1, tylko gdy `rays` > 0,5), w — maska dna dużych kraterów.
 // `pDir` — kierunek punktu na kuli (oś do kąta promieni), `seedI` — ziarno oktawy (liczba całkowita w float).
-export const pgCraterOctave = /*@__PURE__*/ Fn(([p, pDir, dens, rMin, rMax, seedI, complex, fresh]) => {
+export const pgCraterOctave = /*@__PURE__*/ Fn(([p, pDir, dens, rMin, rMax, seedI, complex, fresh, rays]) => {
   const ip = ivec3(floor(p)).toVar();
   const fp = fract(p).toVar();
   const hs = float(0.0).toVar();
@@ -150,6 +178,7 @@ export const pgCraterOctave = /*@__PURE__*/ Fn(([p, pDir, dens, rMin, rMax, seed
         const dv = vec3(c).add(o).sub(fp).toVar();
         const r = length(dv).div(rad).toVar();
         If(r.lessThan(3.2), () => {
+          const fade = float(1.0).sub(smoothstep(2.2, 3.1, r)).toVar();
           // misa (głębokość 0,42 promienia — d/D ≈ 0,2), wał gaussowski, wyrzut za wałem
           const bowl = r.mul(r).sub(1.0).mul(0.42).mul(float(1.0).sub(step01(r))).toVar();
           const floorLvl = mix(-0.42, -0.2, complex);
@@ -160,17 +189,22 @@ export const pgCraterOctave = /*@__PURE__*/ Fn(([p, pDir, dens, rMin, rMax, seed
           const ejecta = exp(out.mul(-2.6)).mul(0.03).mul(step01(r));
           const peak = exp(r.mul(r).mul(-28.0)).mul(0.16).mul(complex);
           const wear = mix(1.0, 0.18, sqrt(age));       // stare kratery zatarte
-          hs.addAssign(bowl.add(rim).add(ejecta).add(peak).mul(rad).mul(wear));
+          hs.addAssign(bowl.add(rim).add(ejecta.mul(fade)).add(peak).mul(rad).mul(wear));
           fl.assign(max(fl, float(1.0).sub(smoothstep(0.55, 0.95, r)).mul(smoothstep(0.5, 0.9, rad.div(max(rMax, 1e-4))))));
-          // świeże: jasny wyrzut i promienie
-          const isFresh = float(1.0).sub(smoothstep(fresh.mul(0.6), fresh, age));
+          // świeże: jasny wyrzut (miękka aureola), promienie tylko dużych i najmłodszych
+          const isFresh = float(1.0).sub(smoothstep(fresh.mul(0.5), fresh, age)).toVar();
           If(isFresh.greaterThan(0.001), () => {
-            ej.assign(max(ej, isFresh.mul(exp(out.mul(-1.4))).mul(smoothstep(0.0, 0.85, r).mul(0.5).add(0.5))));
-            const ang = atan(dot(dv, t2), dot(dv, t1));
-            const k = float(7.0).add(floor(s.mul(9.0)));
-            const sp = sin(ang.mul(k).add(age.mul(40.0))).mul(sin(ang.mul(k.mul(1.7).add(3.0)).add(s.mul(23.0))));
-            const streak = smoothstep(0.35, 0.95, sp).mul(exp(out.mul(-0.55))).mul(step01(r));
-            ray.assign(max(ray, streak.mul(isFresh).mul(smoothstep(0.35, 0.9, rad.div(max(rMax, 1e-4))))));
+            ej.assign(max(ej, isFresh.mul(exp(out.mul(-1.8))).mul(smoothstep(0.0, 0.9, r).mul(0.6).add(0.4)).mul(fade)));
+            If(rays.greaterThan(0.5).and(age.lessThan(fresh.mul(0.35))), () => {
+              const ang = atan(dot(dv, t2), dot(dv, t1));
+              const ph = s.mul(41.0);
+              // nieregularne promienie: suma sinusów o niewspółmiernych częstościach kąta, przerywane wzdłuż promienia
+              const n = sin(ang.mul(5.0).add(ph)).mul(0.45).add(sin(ang.mul(11.3).add(ph.mul(1.7))).mul(0.35))
+                .add(sin(ang.mul(23.7).add(ph.mul(2.3))).mul(0.2));
+              const breakup = sin(r.mul(2.3).add(ang.mul(3.1)).add(ph)).mul(0.35).add(0.65);
+              const streak = smoothstep(0.42, 0.85, n).mul(breakup).mul(exp(out.mul(-0.7))).mul(step01(r)).mul(fade);
+              ray.assign(max(ray, streak.mul(isFresh).mul(smoothstep(0.45, 0.95, rad.div(max(rMax, 1e-4))))));
+            });
           });
         });
       });
@@ -180,7 +214,8 @@ export const pgCraterOctave = /*@__PURE__*/ Fn(([p, pDir, dens, rMin, rMax, seed
 }).setLayout({
   name: 'pgCraterOctave', type: 'vec4', inputs: [
     { name: 'p', type: 'vec3' }, { name: 'pDir', type: 'vec3' }, { name: 'dens', type: 'float' }, { name: 'rMin', type: 'float' },
-    { name: 'rMax', type: 'float' }, { name: 'seedI', type: 'float' }, { name: 'complex', type: 'float' }, { name: 'fresh', type: 'float' }
+    { name: 'rMax', type: 'float' }, { name: 'seedI', type: 'float' }, { name: 'complex', type: 'float' }, { name: 'fresh', type: 'float' },
+    { name: 'rays', type: 'float' }
   ]
 });
 // 0 wewnątrz (r < 1), 1 na zewnątrz — miękko (bez pochodnych, w pętli dozwolone)
