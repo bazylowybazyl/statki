@@ -109,6 +109,7 @@ const S = {
   close: null,          // { spec, baked, body }
   busy: 0,
   paused: false,
+  frameNo: 0,
   gen: 0,
   stats: { compileMs: 0, gridMs: 0, gridGpu: 0, closeMs: 0, compiled: false }
 };
@@ -438,7 +439,11 @@ function frame(now) {
     if (b.clouds) b.clouds.visible = S.cloudsOn;
     if (b.atm) b.atm.visible = S.haloOn;
   }
-  if (!S.paused) pipes[S.view === 'grid' ? 'grid' : 'close'].render();
+  if (!S.paused) {
+    pipes[S.view === 'grid' ? 'grid' : 'close'].render();
+    // znaczniki czasu klatek odczytywane na bieżąco (pula znaczników ma limit — wypiek mierzy potem tylko siebie)
+    if (renderer.backend.trackTimestamp && (++S.frameNo % 20 === 0)) renderer.resolveTimestampsAsync('render');
+  }
   drawLabels(cam);
   if ((now | 0) % 20 === 0) updateStat();
   requestAnimationFrame(frame);

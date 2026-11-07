@@ -235,9 +235,9 @@ function lookVolcanic(rng) {
 function lookBarren(rng) {
   const style = rng.weighted([['księżyc', 0.35], ['merkury', 0.3], ['kallisto', 0.2], ['ciemna', 0.15]]);
   const P = {
-    księżyc: ['#8c8a86', '#3e3e40', '#c8c6c0'],
-    merkury: ['#7a7064', '#5e5850', '#b0a898'],
-    kallisto: ['#4a4440', '#3a3634', '#c0bcb2'],
+    księżyc: ['#76746e', '#4e4d4e', '#a8a6a0'],
+    merkury: ['#6e665c', '#5a544c', '#9c9488'],
+    kallisto: ['#4a4440', '#3a3634', '#9c988e'],
     ciemna: ['#3a3634', '#2a2826', '#7a746a']
   }[style];
   return {
@@ -382,8 +382,8 @@ function lookGas(rng, ice) {
   if (!ice && rng.chance(palName === 'saturn' ? 0.2 : 0.55)) {
     const r = rng.pick(zoneRows.length ? zoneRows : rows);
     const lat = (r.lo + r.hi) / 2;
-    const b = Math.max(2.2, Math.min(7, (r.hi - r.lo) * 0.42));
-    addV({ id: 'wielka plama', u: rng.range(0, 360), lat, a: b * rng.range(1.35, 1.7), b, sense: lat < 0 ? 1 : -1,
+    const b = Math.max(3.5, Math.min(8, (r.hi - r.lo) * 0.55));
+    addV({ id: 'wielka plama', u: rng.range(0, 360), lat, a: b * rng.range(1.7, 2.2), b, sense: lat < 0 ? 1 : -1,
       periodDays: rng.range(4, 7), core: 0.3, drift: null, rigid: true, color: 'accent', big: 1 });
   }
   for (let i = 0; i < nV * 3 && vortices.length < nV + (vortices.length && vortices[0].big ? 1 : 0); i++) {
@@ -397,7 +397,7 @@ function lookGas(rng, ice) {
     const inBelt = rng.chance(0.35) && beltRows.length;
     const r = inBelt ? rng.pick(beltRows) : rng.pick(zoneRows.length ? zoneRows : rows);
     const lat = (r.lo + r.hi) / 2;
-    const b = Math.max(0.8, Math.min(2.4, (r.hi - r.lo) * rng.range(0.18, 0.3)));
+    const b = Math.max(1.2, Math.min(3.2, (r.hi - r.lo) * rng.range(0.22, 0.36)));
     addV({ id: `owal ${i}`, u: rng.range(0, 360), lat, a: b * rng.range(1.4, 2.0), b,
       sense: (lat < 0 ? 1 : -1) * (inBelt ? -1 : 1), periodDays: rng.range(1.8, 3.2), core: 0.5, drift: null, rigid: true,
       color: inBelt ? 'belt' : 'storm', big: 0 });
@@ -457,7 +457,7 @@ function atmosphereFor(type, look, rng) {
       break;
     case 'volcanic':
       haze = look.style === 'siarka' ? { strength: 0.0, ...tan }
-        : { strength: rng.range(0.15, 0.4), color: look.style === 'lawa' ? [0.9, 0.62, 0.42] : [0.66, 0.64, 0.62], beta: [0.09, 0.09, 0.09] };
+        : { strength: look.style === 'lawa' ? rng.range(0.04, 0.14) : rng.range(0.15, 0.35), color: look.style === 'lawa' ? [0.7, 0.6, 0.55] : [0.66, 0.64, 0.62], beta: [0.09, 0.09, 0.09] };
       halo = { color: look.style === 'lawa' ? [0.9, 0.45, 0.2] : [0.7, 0.66, 0.6], sunset: [1.2, 0.5, 0.2], power: 9.5, coef: 0.38 };
       ringAtm = { height: 700, day: [0.8, 0.55, 0.35], sunset: [1.0, 0.4, 0.15], gain: 0.4 };
       break;

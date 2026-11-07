@@ -57,7 +57,7 @@ function craterSum(U, C, ps, mare = null, fromK = 2, onAfterBig = null) {
   return { h, ej, ray, fl };
 }
 /** Rekordy oktaw kraterów: gęstość (0…1), pierwsza częstość, próg złożonych [km], świeżość, promienie do oktawy. */
-function craterRecords(ctx, { density = 1, f0 = 5, rMax = 0.42, complexKm = 18, sizeMin = 2.4, fresh = 0.08, mareDamp = 0.3, raysTo = 2, falloff = 1 }) {
+function craterRecords(ctx, { density = 1, f0 = 5, rMax = 0.42, complexKm = 18, sizeMin = 4.5, fresh = 0.08, mareDamp = 0.3, raysTo = 2, falloff = 1 }) {
   const out = {};
   for (let k = 0; k < CRATER_OCTAVES; k++) {
     const f = f0 * Math.pow(2, k);
@@ -85,7 +85,7 @@ function emptySlots(prefix, cap = SLOT_CAP) {
 const angDist = (a, b) => acos(clamp(dot(a, b), -1.0, 1.0));
 
 // Basen uderzeniowy: a = (kierunek, promień kątowy [rad]), b = (głębokość [km], wypełnienie 0…1, pierścienie, —)
-function basinProfile(dir, a, b, wob) {
+function basinProfile(dir, a, b, wob, edgeN = float(0.0)) {
   const r = angDist(dir, normalize(a.xyz)).div(max(a.w, 1e-4)).add(wob).toVar();
   const bowl = inv(0.5, 1.0, r).mul(-1.0);
   const rr = r.sub(1.0).div(0.13);
@@ -95,7 +95,8 @@ function basinProfile(dir, a, b, wob) {
   const out = max(r.sub(1.0), 0.0);
   const ejecta = exp(out.mul(-2.0)).mul(0.09).mul(smoothstep(0.95, 1.05, r));
   const h = bowl.add(rim).add(ring2).add(ejecta).mul(b.x).mul(inv(2.4, 3.0, r));
-  const mare = inv(0.55, 0.95, r).mul(b.y);
+  // lawa wylewa się nierówno: brzeg morza z szumu (zatoki, języki poza wał)
+  const mare = inv(0.5, 0.95, r.add(edgeN.mul(0.45))).mul(b.y);
   return { h, mare, r };
 }
 // Wulkan tarczowy: a = (kierunek, promień podstawy [rad]), b = (wysokość [km], kaldera, —, —)
@@ -308,7 +309,7 @@ function earthUniforms(spec, ctx) {
   return {
     field, color, probeQ: [L.water, 0.1, 0.5, 0.9], water: true, landTop: L.mountainKm * 0.6,
     octaves: { x: pgOctavesFor(ctx.size, 1.4 * 2.7, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6.5, 2.0, 3, 8), z: pgOctavesFor(ctx.size, L.mountainFreq, 2.07, 3, 9), w: 6 },
-    norm: [1.4, 1, 0.55], spec: [1, 0, 0, 0],
+    norm: [1.4, 1, 0.4], spec: [1, 0, 0, 0],
     civ: { landOnly: 1, latDeg: 48, sea: ocean ? 0.6 : 0, habW: 0, freq: 26, gain: 1 }
   };
 }
@@ -370,7 +371,8 @@ function desertColor(F) {
     const n1 = pgFbm(ps.mul(3.0), 5).toVar();
     const n2 = pgFbm(ps.mul(18.0), 4).toVar();
     // skała: warstwy (barwa zmienia się z wysokością — pasma osadów na stokach mes i gór)
-    const strata = sin(h.mul(5.5).add(n1.mul(2.0))).mul(0.5).add(0.5);
+    // warstwy osadów widać tylko na stokach (na płaskim — warstwice jak na mapie)
+    const strata = sin(h.mul(5.5).add(n1.mul(2.0))).mul(0.5).add(0.5).mul(smoothstep(0.1, 0.3, sl.s));
     const rock = mix(U.uRock, U.uRock.mul(vec3(1.22, 1.12, 1.0)), strata.mul(0.6)).mul(float(1.0).add(n2.mul(0.15))).toVar();
     // równiny: żwir i pył (między skałą a piaskiem), piasek w morzach wydm (grzbiety jaśniejsze)
     const plain = mix(U.uSandDark, U.uRock, smoothstep(-0.2, 0.4, n1)).mul(float(1.0).add(n2.mul(0.1)));
@@ -403,7 +405,7 @@ function desertUniforms(spec, ctx) {
       uD1: [L.plateFreq, L.contFreq, L.contWarp, L.mesa],
       uD2: [L.mountainKm, L.mountainFreq, L.border, L.hillKm],
       uD3: [L.duneFreq, L.duneTurn, 0, L.water > 0 ? 1 : 0],
-      ...craterRecords(ctx, { density: L.craters, f0: 5, fresh: 0.02, raysTo: 0, falloff: 0.8 })
+      ...craterRecords(ctx, { density: L.craters * 0.5, f0: 5, fresh: 0.02, raysTo: 0, falloff: 0.7 })
     },
     color: {
       uDk: [0.6, L.wadi, 86 - (L.erg * 6), 0],
@@ -411,7 +413,7 @@ function desertUniforms(spec, ctx) {
     },
     probeQ: [L.erg, saltFrac, 0.5, 0.9], water: false, landTop: L.mountainKm * 0.6,
     octaves: { x: pgOctavesFor(ctx.size, 2.7 * L.contFreq, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6, 2.0, 3, 8), z: pgOctavesFor(ctx.size, L.mountainFreq, 2.07, 3, 9), w: 6 },
-    norm: [1.5, 0, 0.55], spec: [0, 0, L.water > 0 ? 0.9 : 0, 0],
+    norm: [1.4, 0, 0.35], spec: [0, 0, L.water > 0 ? 0.9 : 0, 0],
     civ: { landOnly: 1, latDeg: 40, sea: 0, habW: 0, freq: 24, gain: 0.9 }
   };
 }
@@ -534,7 +536,7 @@ function rockyUniforms(spec, ctx) {
     color: { uRc: [0.35 - L.darkFrac * 0.9, L.capDeg, 0, 0], uDust: P.dust, uBasalt: P.basalt, uBright: P.bright, uDark: P.dark, uIce: P.ice },
     probeQ: [0.3, 0.1, 0.5, 0.9], water: false, landTop: 6,
     octaves: { x: pgOctavesFor(ctx.size, 2.0, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 5.5, 2.0, 3, 8), z: pgOctavesFor(ctx.size, 3.1, 2.07, 3, 8), w: 6 },
-    norm: [1.4, 0, 0.6], spec: [0, 0, 0, 0],
+    norm: [1.3, 0, 0.35], spec: [0, 0, 0, 0],
     civ: { landOnly: 0, latDeg: 45, sea: 0, habW: 0, freq: 30, gain: 0.8 }
   };
 }
@@ -567,28 +569,35 @@ function iceField() {
       const gr = sin(dot(q, ax).mul(160.0).add(pgFbm(q.mul(20.0), 2).mul(2.0))).mul(0.5).add(0.5);
       h.addAssign(light.mul(gr.mul(0.25)).mul(smoothstep(0.0, 0.06, cell.y.sub(cell.x))));
     });
-    // LINIE: odcinki kół wielkich z haszu (normalna, środek, długość, szerokość, wiek) — podwójny grzbiet z ciemnym
-    // pasem obrzeży; lekko pofalowane (odkształcona dziedzina)
+    // LINIE: łuki kół MAŁYCH (promień kątowy 25–85° — krzywizna jak cykloidy i pasma Europy) z haszu: środek
+    // koła, promień, środek łuku, długość, szerokość, wiek — ciemne rdzawe obrzeże z jaśniejszym grzbietem w środku
+    // (grzbiet w rzeźbie); szerokość i jasność zmieniają się wzdłuż łuku
     const lin = float(0.0).toVar();
-    const dirW = normalize(C.dir.add(wq.mul(0.025))).toVar();
+    const dirW = normalize(C.dir.add(wq.mul(0.02))).toVar();
     const count = int(U.uI3.y);
     Loop({ start: int(0), end: count, type: 'int', condition: '<', name: 'li' }, ({ li }) => {
       const hh = pgHashU(ivec3(li, int(U.uSeed.w), int(91))).toVar();
-      const n = normalize(pgU3(hh).mul(2.0).sub(1.0)).toVar();
+      const ctr = normalize(pgU3(hh).mul(2.0).sub(1.0)).toVar();
       const g = pgRehash(hh).toVar();
-      const s = normalize(cross(n, pgU3(g).mul(2.0).sub(1.0)));
       const g2 = pgRehash(g).toVar();
-      const len = mix(0.35, 1.7, pgU1(g2));
-      const wid = mix(0.003, 0.011, pgU3(g2).y);
+      const g3 = pgRehash(g2).toVar();
+      const R = mix(0.45, 1.5, pgU1(g)).toVar();
+      const wid = mix(0.0025, 0.009, pgU3(g2).y).toVar();
       const age = pgU3(g2).z;
-      const dist = abs(dot(dirW, n));
+      const rho = angDist(dirW, ctr).toVar();
+      const dist = abs(rho.sub(R));
       If(dist.lessThan(wid.mul(4.0)), () => {
-        const t2 = cross(n, s);
-        const ang = atan(dot(dirW, t2), dot(dirW, s));
-        const env = inv(len.mul(0.7), len, abs(ang));
-        const band = exp(dist.div(wid.mul(1.6)).pow2().negate());
-        lin.assign(max(lin, band.mul(env).mul(mix(1.0, 0.35, age))));
-        h.addAssign(exp(dist.div(wid.mul(0.35)).pow2().negate()).mul(env).mul(0.18));
+        const ref = normalize(cross(ctr, pgU3(g3).mul(2.0).sub(1.0)));
+        const ref2 = cross(ctr, ref);
+        const ang = atan(dot(dirW, ref2), dot(dirW, ref));
+        const len = mix(0.4, 2.6, pgU3(g2).x);
+        const a0 = pgU1(g3).mul(6.2831);
+        const da = abs(fract(ang.sub(a0).div(6.2831).add(0.5)).sub(0.5)).mul(6.2831);
+        const env = inv(len.mul(0.6), len, da).mul(sin(ang.mul(7.0).add(a0)).mul(0.25).add(0.75));
+        const ww = wid.mul(sin(ang.mul(3.0).add(a0.mul(2.0))).mul(0.3).add(1.0));
+        const band = exp(dist.div(ww.mul(1.5)).pow2().negate());
+        lin.assign(max(lin, band.mul(env).mul(mix(1.0, 0.3, age))));
+        h.addAssign(exp(dist.div(ww.mul(0.35)).pow2().negate()).mul(env).mul(0.15));
       });
     });
     lin.mulAssign(U.uI1.x);
@@ -633,9 +642,10 @@ function iceColor(F) {
     // teren chaosu: plamy rdzawe z jasnymi blokami
     If(U.uIc.y.greaterThan(0.01), () => {
       const region = smoothstep(0.55, 0.75, pgFbm(q.mul(2.6).add(9.0), 4).mul(0.5).add(0.5).add(U.uIc.y.mul(0.35)));
-      const blocks = pgCells(q.mul(70.0), 0.9).toVar();
-      const blk = step(0.55, blocks.z).mul(inv(0.25, 0.5, blocks.x));
-      const chaos = mix(U.uLin.mul(1.15), U.uIceC.mul(0.92), blk);
+      // bloki: komórki różnej jasności (płyty skorupy) w rdzawej macierzy, szwy ciemne
+      const blocks = pgCells(q.mul(55.0), 0.9).toVar();
+      const blk = smoothstep(0.02, 0.09, blocks.y.sub(blocks.x)).mul(blocks.z.mul(0.6).add(0.4));
+      const chaos = mix(U.uLin.mul(0.9), mix(U.uLin.mul(1.3), U.uIceC.mul(0.85), blocks.z), blk);
       col.assign(mix(col, chaos, region));
     });
     // linie: ciemne rdzawe obrzeża, jaśniejszy środek
@@ -667,7 +677,7 @@ function iceUniforms(spec, ctx) {
       uIceC: P.ice, uIceBlue: P.iceBlue, uLin: P.lineae, uDarkT: P.dark, uRockC: P.rock, uFrost: P.frost },
     probeQ: [1 - L.rock, L.seas, 0.5, 0.9], water: false, landTop: 3,
     octaves: { x: pgOctavesFor(ctx.size, 1.6, 2.03, 3, 9), y: 4, z: pgOctavesFor(ctx.size, 3.2, 2.07, 3, 8), w: 6 },
-    norm: [1.2, 0, 0.45], spec: [0, 0.22, 0, 0],
+    norm: [1.1, 0, 0.3], spec: [0, 0.22, 0, 0],
     civ: { landOnly: 0, latDeg: 60, sea: 0, habW: 0, freq: 30, gain: 0.8 }
   };
 }
@@ -690,9 +700,9 @@ function volcanicField() {
     // góry: pojedyncze bloki (Io) / pasma
     h.addAssign(pgRidged(q.mul(3.0), U.uOct.z, 2.07, 0.55, 1.0, 2.0).mul(U.uV2.x).mul(smoothstep(0.25, 0.6, pgFbm(q.mul(1.5).add(6.0), 3))));
     // kaldery (paterae): nieregularne zagłębienia w komórkach, część z jeziorem lawy, wokół potoki i pierścienie opadu
-    const pc = pgCells(q.mul(9.0), 0.85).toVar();
-    const has = step(float(1.0).sub(U.uV1.x.mul(0.45)), pc.z).toVar();
-    const pr = pc.x.div(mix(0.18, 0.34, pc.w)).toVar();
+    const pc = pgCells(q.mul(7.0), 0.85).toVar();
+    const has = step(float(1.0).sub(U.uV1.x.mul(0.6)), pc.z).toVar();
+    const pr = pc.x.div(mix(0.16, 0.42, pc.w)).toVar();
     const pit = inv(0.75, 1.0, pr).mul(has);
     h.subAssign(pit.mul(0.6));
     const active = step(0.55, fract(pc.z.mul(37.7))).mul(has);
@@ -712,22 +722,26 @@ function volcanicField() {
     If(style.greaterThan(0.5).and(style.lessThan(1.5)), () => {
       const cr1 = pgCells(q.mul(14.0).add(wq.mul(2.0)), 0.9).toVar();
       const cr2 = pgCells(q.mul(38.0).add(wq.mul(4.0)), 0.9).toVar();
-      const seam = inv(0.0, 0.045, cr1.y.sub(cr1.x)).max(inv(0.0, 0.03, cr2.y.sub(cr2.x)).mul(0.6));
-      const hot = pgFbm(q.mul(3.0).add(2.0), 3).mul(0.5).add(0.5);
-      lava.assign(max(lava, seam.mul(smoothstep(0.3, 0.7, hot)).mul(U.uV1.z)));
-      const sea = inv(U.uQ.x.sub(0.03), U.uQ.x.add(0.03), c);
+      // szwy cienkie (pikselowe przy 2048 — z daleka gasną do średniej, nocą siatka żaru), jasność plamami
+      const seam = inv(0.0, 0.016, cr1.y.sub(cr1.x)).max(inv(0.0, 0.012, cr2.y.sub(cr2.x)).mul(0.55));
+      const hot = pgFbm(q.mul(3.0).add(2.0), 4).mul(0.5).add(0.5);
+      lava.assign(max(lava, seam.mul(smoothstep(0.35, 0.75, hot)).mul(U.uV1.z).mul(0.8)));
+      const sea = inv(U.uQ.x.sub(0.015), U.uQ.x.add(0.015), c);
       lava.assign(max(lava, sea));
       h.assign(mix(h, U.uQ.x.mul(1.2).sub(0.1), sea));
     });
     // popiół: stożki wulkanów z żarem na szczycie i kanałami lawy
     If(style.greaterThan(1.5), () => {
-      const vc = pgCells(q.mul(5.0), 0.8).toVar();
-      const vh = step(0.62, vc.z);
-      const vr = vc.x.div(0.45);
-      h.addAssign(exp(vr.mul(-3.5)).mul(vh).mul(3.0));
+      const vc = pgCells(q.mul(4.0), 0.8).toVar();
+      const vh = step(0.55, vc.z);
+      const vr = vc.x.div(0.5).toVar();
+      h.addAssign(exp(vr.mul(-3.5)).mul(vh).mul(3.5));
+      // potoki: ciemne jęzory spływające od szczytu (szum kąta wokół komórki), kanały z żarem
+      const flowN = pgFbm(q.mul(18.0).add(vec3(vc.z.mul(40.0), 0.0, 0.0)), 4).mul(0.5).add(0.5);
+      const flowsA = smoothstep(0.5, 0.65, flowN).mul(inv(0.15, 1.3, vr)).mul(vh);
       const chan = smoothstep(0.88, 0.97, pgRidged(q.mul(26.0), 2, 2.0, 0.5, 1.0, 2.0)).mul(inv(0.2, 0.7, vr)).mul(vh);
-      lava.assign(max(lava, inv(0.0, 0.1, vr).mul(vh).max(chan.mul(0.7)).mul(U.uV1.z.add(0.3)).min(1.0)));
-      dep.assign(max(dep, inv(0.1, 1.0, vr).mul(vh).mul(0.6)));
+      lava.assign(max(lava, inv(0.0, 0.08, vr).mul(vh).max(chan.mul(0.7)).mul(U.uV1.z.add(0.3)).min(1.0)));
+      dep.assign(max(dep, max(flowsA, inv(0.05, 0.4, vr).mul(vh).mul(0.8))));
     });
     const cr = craterSum(U, C, ps);
     h.addAssign(cr.h);
@@ -759,8 +773,9 @@ function volcanicColor(F) {
     col.mulAssign(float(1.0).add(smoothstep(0.1, 0.4, sl.s).mul(mix(-0.25, 0.15, step(style, 0.5)))));
     // lawa: świeża ciemnieje do czerni w skorupie, gorąca — pomarańcz (dzień); żar nocy — mapa nocy
     const lv = f.y;
+    // lawa za dnia: świeża skorupa czarna, gorąca tylko w szwach i jeziorach — ciemna czerwień (żar widać nocą)
     col.assign(mix(col, U.uDarkV, smoothstep(0.05, 0.4, lv).mul(0.85)));
-    col.assign(mix(col, U.uLava.mul(0.55), smoothstep(0.55, 1.0, lv).mul(0.8)));
+    col.assign(mix(col, U.uLava.mul(vec3(0.35, 0.12, 0.05)), smoothstep(0.6, 1.0, lv).mul(0.7)));
     return vec4(max(col, vec3(0.0)), 1.0);
   })();
   return { U, material: bakeMaterial('PlanetGenDay_volcanic', node) };
@@ -773,9 +788,9 @@ function volcanicUniforms(spec, ctx) {
     field: { uV1: [L.paterae, L.flows, L.lava, L.plumes], uV2: [L.mountainKm, L.craters, style, 0],
       ...craterRecords(ctx, { density: L.craters, f0: 5, fresh: 0.03, raysTo: 0, falloff: 0.9 }) },
     color: { uVc: [style, 0, 0, 0], uBase: P.base, uSecond: P.second, uBrightV: P.bright, uDarkV: P.dark, uRed: P.red, uLava: P.lava },
-    probeQ: [style === 1 ? L.lava * 0.25 : 0.02, 0.1, 0.5, 0.9], water: false, landTop: 4,
+    probeQ: [style === 1 ? L.lava * 0.025 : 0.02, 0.1, 0.5, 0.9], water: false, landTop: 4,
     octaves: { x: pgOctavesFor(ctx.size, 1.8, 2.03, 3, 9), y: pgOctavesFor(ctx.size, 6, 2.0, 3, 8), z: pgOctavesFor(ctx.size, 3, 2.07, 3, 8), w: 6 },
-    norm: [1.3, 0, 0.5], spec: [0, 0, style === 1 ? 0.8 : 0.3, 0],
+    norm: [1.2, 0, 0.35], spec: [0, 0, style === 1 ? 0.8 : 0.3, 0],
     lavaColor: P.lava,
     civ: { landOnly: 0, latDeg: 50, sea: 0, habW: 0, freq: 30, gain: 0.7 }
   };
@@ -798,11 +813,12 @@ function barrenField() {
     const mare = float(0.0).toVar();
     const fill = float(-1e9).toVar();
     const wob = pgFbm(ps.mul(6.0), 3).mul(0.06);
+    const mEdge = pgFbm(ps.mul(11.0).add(w.mul(2.0)), 4);
     for (let i = 0; i < SLOT_CAP; i++) {
       const a = U[`uBasin${i}`];
       const b = U[`uBasin${i}b`];
       If(a.w.greaterThan(0.0), () => {
-        const Pb = basinProfile(C.dir, a, b, wob);
+        const Pb = basinProfile(C.dir, a, b, wob, mEdge);
         h.addAssign(Pb.h);
         mare.assign(max(mare, Pb.mare));
         fill.assign(max(fill, mix(fill, b.x.mul(-0.55), step(0.01, Pb.mare))));
@@ -870,7 +886,7 @@ function barrenUniforms(spec, ctx) {
     field, color: { uHigh: P.high, uMare: P.mare, uFresh: P.fresh, uBarC: [1.0, 0.25, 0, 0] },
     probeQ: [L.maria * 0.22, 0.1, 0.5, 0.9], water: false, landTop: 3,
     octaves: { x: pgOctavesFor(ctx.size, 1.8, 2.03, 3, 9), y: 4, z: 3, w: 6 },
-    norm: [1.25, 0, 0.5], spec: [0, 0, 0, 0],
+    norm: [1.1, 0, 0.3], spec: [0, 0, 0, 0],
     civ: { landOnly: 0, latDeg: 70, sea: 0, habW: 0, freq: 34, gain: 0.7 }
   };
 }

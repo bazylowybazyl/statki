@@ -11,9 +11,9 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, float, int, vec2, vec3, vec4, uniformArray,
-  abs, atan, clamp, cos, dot, exp, floor, fract, length, max, min, mix, sin, smoothstep, sqrt, step
+  abs, asin, atan, clamp, cos, cross, dot, exp, floor, fract, length, max, min, mix, normalize, sin, smoothstep, sqrt, step
 } from 'three/tsl';
-import { pgNoise, pgFbm, pgWarp, pgCells } from './planetGenNoise.tsl.js';
+import { pgNoise, pgNoised, pgFbm, pgWarp, pgCells } from './planetGenNoise.tsl.js';
 import { bakeUniforms, bakeCoords, bakeMaterial, COMMON_DEFS } from './planetGenBake.tsl.js';
 import { createGenGasEngine } from './planetGenGas.js';
 
@@ -39,42 +39,60 @@ function buildGasGraph() {
     const ps = C.dir.add(U.uSeed.xyz).toVar();
     const latD = C.lat.mul(180 / PI).toVar();
     const ice = U.uGas2.y;
-    // brzegi pasów falują (turbulencja) — przesunięcie szerokości szumem niesionym wzdłuż równoleżnika
-    const q = vec3(C.dir.x, C.dir.y.mul(3.0), C.dir.z).add(U.uSeed.xyz).toVar();
-    const wv = pgWarp(q.mul(2.2), 3, 0.5).toVar();
-    const edgeN = pgFbm(q.mul(vec3(5.0, 9.0, 5.0)).add(wv), 5).toVar();
-    const latW = latD.add(edgeN.mul(U.uGas.y).mul(1.6)).toVar();
-    // pas pod pikselem + sąsiad (przenikanie na brzegu)
-    const col = vec3(0.0).toVar();
-    const turb = float(0.0).toVar();
-    const kind = float(0.0).toVar();
-    const edgeDist = float(90.0).toVar();
-    Loop(GAS_ROW_CAP, ({ i }) => {
-      const A = rowsA.element(i);
-      If(latW.greaterThanEqual(A.x).and(latW.lessThan(A.y)), () => {
-        col.assign(rowsC.element(i).xyz);
-        turb.assign(A.z);
-        kind.assign(A.w);
-        edgeDist.assign(min(latW.sub(A.x), A.y.sub(latW)));
+    // Profil pasów: barwa i turbulencja w szerokości φ — wagi pasów miękkie na granicach (±0,7°), suma ważona.
+    const profile = (lat) => {
+      const c = vec3(0.0).toVar();
+      const t = float(0.0).toVar();
+      const ws = float(0.0).toVar();
+      Loop(GAS_ROW_CAP, ({ i }) => {
+        const A = rowsA.element(i);
+        const w = smoothstep(A.x.sub(1.1), A.x.add(1.1), lat).mul(float(1.0).sub(smoothstep(A.y.sub(1.1), A.y.add(1.1), lat)));
+        c.addAssign(rowsC.element(i).xyz.mul(w));
+        t.addAssign(A.z.mul(w));
+        ws.addAssign(w);
       });
-    });
-    // przenikanie na granicy (± ~0,6°) z sąsiadem: barwa sąsiednia z pasa przesuniętego o próbkę
-    const blendW = smoothstep(0.0, 0.9, edgeDist);
-    const latN = latW.add(mix(float(-1.2), float(1.2), step(0.0, latW.sub(latD))));
-    const colN = col.toVar();
-    Loop(GAS_ROW_CAP, ({ i }) => {
-      const A = rowsA.element(i);
-      If(latN.greaterThanEqual(A.x).and(latN.lessThan(A.y)), () => { colN.assign(rowsC.element(i).xyz); });
-    });
-    col.assign(mix(mix(col, colN, 0.5), col, blendW));
-    // włókna wzdłuż równoleżników: szum mocno rozciągnięty strefowo, odkształcony
-    const fil = pgFbm(vec3(C.dir.x, C.dir.y.mul(26.0), C.dir.z).mul(2.0).add(U.uSeed.xyz).add(wv.mul(1.6)), 6).toVar();
-    const fil2 = pgFbm(vec3(C.dir.x, C.dir.y.mul(10.0), C.dir.z).mul(6.0).add(U.uSeed.xyz.mul(1.3)).add(wv.mul(2.4)), 5).toVar();
+      return { c: c.div(max(ws, 1e-4)), t: t.div(max(ws, 1e-4)) };
+    };
+    // TURBULENCJA: barwa z profilu w szerokości ZABURZONEJ polem rozciągniętym strefowo (dziedzina odkształcona
+    // dwa razy) — smugi i zawirowania jak rozmazana farba; amplituda z turbulencji pasa pod pikselem
+    const q = vec3(C.dir.x, C.dir.y.mul(4.0), C.dir.z).add(U.uSeed.xyz).toVar();
+    const wv = pgWarp(q.mul(1.8), 4, 0.55).toVar();
+    const wv2 = pgWarp(vec3(C.dir.x, C.dir.y.mul(9.0), C.dir.z).mul(4.0).add(U.uSeed.xyz.mul(1.7)).add(wv), 3, 0.35).toVar();
+    const turb0 = profile(latD).t.toVar();
+    const tf = pgFbm(vec3(C.dir.x, C.dir.y.mul(7.0), C.dir.z).mul(3.0).add(wv.mul(1.2)).add(wv2), 6).toVar();
+    const tf2 = pgFbm(vec3(C.dir.x, C.dir.y.mul(14.0), C.dir.z).mul(7.0).add(wv2.mul(2.0)), 5).toVar();
+    // ADWEKCJA polem wirowym (rot szumu z pochodnymi, dwie skale na przemian): kierunek piksela cofany kilka kroków
+    // wzdłuż pola — wiry i marmurkowe zawinięcia barwy pasów; krok z turbulencji pasa, składowa N–S słabsza (dżety)
+    const pos = vec3(C.dir).toVar();
+    const stepK = mix(0.018, 0.06, turb0).mul(U.uGas.y).toVar();
+    for (let it = 0; it < 8; it++) {
+      const F = it % 2 === 0 ? 4.0 : 11.0;
+      const o1 = vec3(1.7 + it, -2.3, 0.9 * it);
+      const o2 = vec3(-4.1, 3.3 + it, 2.2);
+      const n1 = pgNoised(pos.mul(vec3(F, F * 1.6, F)).add(U.uSeed.xyz).add(o1)).yzw;
+      const n2 = pgNoised(pos.mul(vec3(F, F * 1.6, F)).add(U.uSeed.xyz).add(o2)).yzw;
+      const curl = cross(n1, n2).mul(vec3(1.0, 0.45, 1.0));
+      pos.assign(normalize(pos.add(curl.mul(stepK).mul(it % 2 === 0 ? 1.0 : 0.45))));
+    }
+    const latAdv = asin(clamp(pos.y, -1.0, 1.0)).mul(180 / PI).toVar();
+    const amp = mix(1.0, 5.0, turb0).mul(U.uGas.y).toVar();
+    // fale Kelvina–Helmholtza na brzegach (łuki, „szewrony”) — przesunięcie z długości, odkształcone
+    const wave = sin(C.u.mul(2 * PI * 17.0).add(wv.x.mul(7.0)).add(latD.mul(0.35))).mul(0.6).mul(amp).mul(0.25);
+    const latT = latAdv.add(tf.mul(amp)).add(tf2.mul(amp).mul(0.5)).add(wave).toVar();
+    const P = profile(latT);
+    const col = vec3(P.c).toVar();
+    const turb = P.t.toVar();
+    // podpasma: drobny profil jasności w zaburzonej szerokości (cienkie pasemka — też rozmazane)
+    const s1 = U.uSeed.x;
+    const sub = sin(latT.mul(1.9).add(s1)).mul(0.5).add(sin(latT.mul(4.3).add(s1.mul(1.7))).mul(0.3)).add(sin(latT.mul(9.7).add(s1.mul(2.3))).mul(0.2));
+    col.mulAssign(float(1.0).add(sub.mul(0.08).mul(U.uGas.x.add(0.3))));
+    // włókna: drobny szum mocno rozciągnięty strefowo
+    const fil = pgFbm(vec3(C.dir.x, C.dir.y.mul(26.0), C.dir.z).mul(2.5).add(U.uSeed.xyz).add(wv2.mul(1.6)), 5).toVar();
     const k = U.uGas2.z.mul(turb.mul(0.6).add(0.4));
-    col.mulAssign(float(1.0).add(fil.mul(0.18).mul(k)).add(fil2.mul(0.12).mul(k).mul(U.uGas.x.add(0.3))));
-    // ciemne / jasne smugi w pasach (pasy turbulentne bardziej plamiste)
+    col.mulAssign(float(1.0).add(fil.mul(0.12).mul(k)));
+    // plamy w pasach turbulentnych: ciemniejsze / akcent
     const blot = pgFbm(ps.mul(vec3(7.0, 14.0, 7.0)).add(wv.mul(3.0)), 5).toVar();
-    col.assign(mix(col, mix(U.uBelt, U.uAccent, smoothstep(0.1, 0.5, blot)), smoothstep(0.15, 0.6, blot).mul(turb).mul(0.35).mul(U.uGas.x)));
+    col.assign(mix(col, mix(U.uBelt, U.uAccent, smoothstep(0.1, 0.5, blot)), smoothstep(0.2, 0.65, blot).mul(turb).mul(0.25).mul(U.uGas.x)));
     // girlandy (festony) na skraju strefy równikowej: ciemne łuki ciągnięte z pasa w strefę
     If(U.uGas.z.greaterThan(0.01), () => {
       const nearEq = exp(abs(latD).sub(8.0).div(3.0).pow2().negate());
@@ -86,17 +104,19 @@ function buildGasGraph() {
     // jasne chmury konwekcji (drobne białe kłęby) w pasach
     If(U.uGas.w.greaterThan(0.01), () => {
       const cc = pgCells(vec3(C.dir.x, C.dir.y.mul(1.6), C.dir.z).mul(38.0).add(U.uSeed.xyz.mul(2.0)), 0.9).toVar();
-      const has = step(float(1.0).sub(U.uGas.w.mul(0.12).mul(turb.add(0.3))), cc.z);
+      // lodowe olbrzymy: rzadkie, wydłużone smugi metanu; gazowe — kłęby w pasach turbulentnych
+      const has = step(float(1.0).sub(U.uGas.w.mul(mix(0.1, 0.025, ice)).mul(turb.add(0.3))), cc.z);
       const puff = exp(cc.x.mul(cc.x).mul(-18.0)).mul(has);
       col.assign(mix(col, U.uStorm, puff.mul(0.8)));
     });
     // mgła polarna: barwa bieguna, gromada małych cyklonów (komórki w kole), gaśnie ku pasom
-    const polar = smoothstep(58.0, 78.0, abs(latD)).toVar();
+    const polar = smoothstep(52.0, 84.0, abs(latD).add(tf.mul(5.0))).toVar();
     If(polar.greaterThan(0.001), () => {
-      const pc = pgCells(ps.mul(26.0), 0.8).toVar();
-      const ring = smoothstep(0.08, 0.0, abs(pc.x.sub(0.28))).mul(0.5).add(exp(pc.x.mul(pc.x).mul(-30.0)).mul(0.4));
-      const pcol = mix(U.uPole, U.uStorm, ring.mul(0.45).mul(float(1.0).sub(ice.mul(0.7)))).mul(float(1.0).add(blot.mul(0.12)));
-      col.assign(mix(col, pcol, polar.mul(U.uGas2.x)));
+      // mgła polarna: plamista (bez pierścieni), gromada drobnych cyklonów jako miękkie jaśniejsze plamki
+      const mott = pgFbm(ps.mul(9.0).add(wv.mul(2.0)), 5).toVar();
+      // mgła polarna przykrywa pasy częściowo — ich struktura prześwituje (bez linii granicy czapy)
+      const pcol = U.uPole.mul(float(1.0).add(mott.mul(0.2))).mul(mix(vec3(1.0), col.div(max(dot(col, vec3(0.333)), 1e-3)), 0.25));
+      col.assign(mix(col, pcol, polar.mul(polar).mul(U.uGas2.x).mul(0.85)));
     });
     // WIRY w miejscach rekordów silnika (u, φ w stopniach; a — półoś w u [°], b — w φ [°])
     Loop(GAS_VORTEX_BAKE_CAP, ({ i }) => {

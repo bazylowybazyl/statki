@@ -176,7 +176,11 @@ export const pgCraterOctave = /*@__PURE__*/ Fn(([p, pDir, dens, rMin, rMax, seed
         const rad = mix(rMin, rMax, s.mul(s).mul(s)).toVar();     // rozkład potęgowy: dużo małych, mało dużych
         const age = fract(s.mul(17.31).add(pgU3(h).x.mul(3.7))).toVar();
         const dv = vec3(c).add(o).sub(fp).toVar();
-        const r = length(dv).div(rad).toVar();
+        // obrys lekko nieregularny (kratery nie są idealnymi okręgami): promień falujący z kierunkiem
+        const du = dv.div(rad);
+        const wob = sin(dot(du, vec3(3.1, 2.3, 2.7)).add(s.mul(29.0))).mul(0.045)
+          .add(sin(dot(du, vec3(-1.7, 4.3, 1.9)).add(age.mul(31.0))).mul(0.035));
+        const r = length(dv).div(rad).mul(float(1.0).add(wob)).toVar();
         If(r.lessThan(3.2), () => {
           const fade = float(1.0).sub(smoothstep(2.2, 3.1, r)).toVar();
           // misa (głębokość 0,42 promienia — d/D ≈ 0,2), wał gaussowski, wyrzut za wałem
