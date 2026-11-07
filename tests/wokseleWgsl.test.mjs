@@ -57,6 +57,7 @@ const DOSTEP = {
   kGinieZeruj: { wokGinie: 'read_write' },
   kGinieLicz: { wokWez: 'read', wokGinie: 'read_write' },
   kPusc: { wokStan: 'read_write', wokWez: 'read' }, // gra: fala puszczania kotwic przy upadku
+  kPuscCzesc: { wokStan: 'read_write', wokWez: 'read_write', wokWiaz: 'read_write', wokMaska: 'read_write' }, // gra: cała część naraz, bez sprężenia, z obrotem startowym; cięcie płaszczyzną i kikut w miejscu
 };
 
 test('kernele P1 i P2: dokładnie te z § 12', () => {

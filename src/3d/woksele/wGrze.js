@@ -41,10 +41,16 @@ const KRATER_R_MAX = 1500;
 const KRATEROW_MAX = 300;
 const KRATER_WZROST = 1.2; // uderzenie w istniejący krater dosypuje masę, a stempel idzie dopiero, gdy promień urósł o tyle
 const FALA_START_S = 3; // kotwice zaczynają puszczać tyle po HP 0, od habitatu na zewnątrz
-const FALA_J_S = 1500;
+const FALA_J_S = 1500; // części puszczają całe, po kolei według odległości ich środka od osi habitatu (kPuscCzesc): węzeł po węźle bryła pękała w locie
 const ZGAS_PO_S = 44; // po tylu sekundach od upadku ruiny leżą: solver stoi, a siatki rysują je dalej w ostatniej pozie
-const LATA_KRATEROW = 9000; // połowa boku mapy kraterów [j.]
-const WYS_POL_J = 12000; // połowa boku mapy kształtu skały [j.]: dalej kształt z brzegu mapy
+const LATA_KRATEROW = 14000; // połowa boku mapy kraterów [j.]: pole rozbieżne rozrzuca gruz szerzej niż pole ku środkowi skały
+const WYS_POL_J = 16000; // połowa boku mapy kształtu skały [j.]: dalej kształt z brzegu mapy
+// Pole rozbieżne (uwaga użytkownika 2026-11-07: „wszystko leci w centrum”, odłamki z lewej mają lądować na lewej części planety): linie spadku wychodzą z punktu ROZB_L nad bazą,
+// na prostej środek skały → środek bazy, więc środek bazy ląduje tam, gdzie dotąd, a jej boki wachlarzem dalej. Ku środkowi skały dopiero w pasie ROZB_PAS_J nad nią (gruz nie zsuwa się ze zboczy).
+// Bez tego 78 % ściągania to perspektywa ujęcia (zostaje: daje pomniejszanie), a 22 % pole ku środkowi skały (badanie z 2026-11-07, plan LOD § 5g).
+const ROZB_L = 20000;
+const ROZB_PAS_J = 6000;
+const WIEZA_OM = 0.3; // [rad/s] obrót startowy wieży przy zerwaniu szyi, ku stronie upadku: bez przegubu wieża wsuwała się w szyb zamiast się przechylić
 
 function wypiekB1(dx) {
   return new Promise((ok, nie) => {
@@ -167,8 +173,20 @@ export function createWokseleGry({ Core3D }) {
     renderer.initRenderTarget?.(obraz.rtSkora);
     renderer.initRenderTarget?.(obraz.rtSkoraCien);
 
+    // Części bazy (zakresy węzłów z wypieku) z czasem puszczenia: od osi habitatu na zewnątrz, cała część naraz.
+    const czesci = (miasto?.budynki || []).map((c) => {
+      let sx = 0, sy = 0;
+      for (let i = c.start; i < c.start + c.n; i++) { sx += w.pos[3 * i]; sy += w.pos[3 * i + 1]; }
+      const r = c.n ? Math.sqrt((sx / c.n) ** 2 + (sy / c.n) ** 2) : 0;
+      return { od: c.start, n: c.n, nazwa: c.nazwa, t: FALA_START_S + r / FALA_J_S };
+    }).sort((a, b) => a.t - b.t);
+
     const zaladuj = () => {
       solver.wczytaj(w);
+      solver.uniformy.uFalaWzgl.value = 1;
+      // Stojąca konstrukcja albo stoi, albo pęka: ruch połączony z kotwicami wolniejszy niż próg fali łamiącej jest tłumiony (lepkość), szybszy łamie. Bez tego zgięta konstrukcja sprężynowała i kołysała się jak galareta.
+      const uU = solver.uniformy;
+      if (uU.uFalaV2.value < 1e29) uU.uLepV2.value = Math.max(uU.uLepV2.value, uU.uFalaV2.value);
       obraz.wczytaj(w, { rDysk, poklad, pyl: OPCJE_PYLU.B1, lod: LOD, budynki: miasto?.budynki ?? null });
       const Hk = l.habitat;
       obraz.ustawKola([Hk.neckR, Hk.coreR, Hk.headR, Hk.ringR0, Hk.innerR - Hk.innerW, Hk.innerR, Hk.ringR1, Hk.drumR - Hk.wall, Hk.drumR, Hk.tier2R, Hk.tier1R, Hk.discR]);
@@ -197,7 +215,7 @@ export function createWokseleGry({ Core3D }) {
       try { return compileAsyncNaCelu(renderer, co, kam); } finally { renderer.setRenderTarget(prev); }
     };
 
-    s = { renderer, solver, obraz, w, g, grupy, kamLok, cp, zaladuj, ustawKamere, naCelu, meshFg, gruzFg, meshTlo, gruzTlo, kwadPyl, kamSkora, skoraUklad };
+    s = { renderer, solver, obraz, w, g, grupy, czesci, kamLok, cp, zaladuj, ustawKamere, naCelu, meshFg, gruzFg, meshTlo, gruzTlo, kwadPyl, kamSkora, skoraUklad };
 
     let obWarm = null;
     Core3D.addFxStep({
@@ -417,11 +435,20 @@ export function createWokseleGry({ Core3D }) {
     }
     if (k === KROKOW_NA_KLATKE) stan.klatekZn++;
     if (stan.akum >= H) { stan.przepadlo++; stan.akum = H * 0.999; }
-    // Fala puszczania kotwic od habitatu (0, 0 układu węzłów): środek uderza pierwszy, końce pomostów kilka sekund później. Koniec fali, gdy objęła całą bazę.
+    // Wieża przy zerwaniu szyi: cała naraz, bez sprężenia, z obrotem ku stronie upadku (zdarzenie voxNeck).
+    if (stan.wiezaPusc) {
+      s.solver.puscCzesc(renderer, stan.wiezaPusc);
+      stan.wiezaPusc = null;
+    }
+    // Fala puszczania kotwic od habitatu: środek uderza pierwszy, końce pomostów kilka sekund później, każda część w całości.
     if (stan.upadekT >= FALA_START_S && !stan.falaKoniec) {
-      const Rf = FALA_J_S * (stan.upadekT - FALA_START_S);
-      s.solver.puscKolo(renderer, 0, 0, Rf);
-      if (Rf > 1.6 * s.skoraUklad.bok) stan.falaKoniec = true;
+      const cz = s.czesci;
+      while (stan.puscIdx < cz.length && cz[stan.puscIdx].t <= stan.upadekT) s.solver.puscCzesc(renderer, cz[stan.puscIdx++]);
+      if (stan.puscIdx >= cz.length) {
+        // Węzły spoza tabeli części (gdyby jakieś były) puszcza jeszcze stara fala, raz.
+        s.solver.puscKolo(renderer, 0, 0, 1e7);
+        stan.falaKoniec = true;
+      }
     }
     // Odczyt od pierwszego zdarzenia, nie od HP 0: gruz zniszczonego wieżowca też spada na skałę i zostawia krater.
     if (stan.zegarKrok - stan.odczytT >= UDERZENIA_CO_S) {
@@ -450,7 +477,10 @@ export function createWokseleGry({ Core3D }) {
       for (let i = 0; i < s.w.n; i++) if (p[3 * i + 2] < m) m = p[3 * i + 2];
       zNajnizej = m;
     }
-    s.solver.ustawGinie({ c: C, R, x0: stan.kubX0, y0: stan.kubY0, kom: KUBELEK_J, zPola: zNajnizej - 200, zakresPola: POLE_ZAKRES_J });
+    // Punkt rozbieżności pola: na prostej środek skały → środek bazy, ROZB_L nad bazą. Środek bazy spada więc dokładnie tam, gdzie siatka kubełków.
+    const kx = bx - C[0], ky = by - C[1], kz = -C[2], kd = Math.sqrt(kx * kx + ky * ky + kz * kz) || 1;
+    const rozbF = [bx + (kx / kd) * ROZB_L, by + (ky / kd) * ROZB_L, (kz / kd) * ROZB_L];
+    s.solver.ustawGinie({ c: C, R, x0: stan.kubX0, y0: stan.kubY0, kom: KUBELEK_J, zPola: zNajnizej - 200, zakresPola: POLE_ZAKRES_J, rozbF, rozbPas: ROZB_PAS_J });
     const dMax = Math.sqrt((cx - C[0]) ** 2 + (cy - C[1]) ** 2) + stan.zasieg;
     stan.glebRuin = Math.max(0, -(C[2] + Math.sqrt(Math.max(0, R * R - dMax * dMax))));
     const [sx, sy] = naScene(cx, cy);
@@ -490,6 +520,8 @@ export function createWokseleGry({ Core3D }) {
       stan.odczytT = 0;
       stan.zegarKrok = 0;
       stan.falaKoniec = false;
+      stan.puscIdx = 0;
+      stan.wiezaPusc = null;
       stan.uderzen = 0;
       stan.krateryN = 0;
       hity.length = 0;
@@ -605,6 +637,8 @@ export function createWokseleGry({ Core3D }) {
         return;
       }
       if (typ === 'voxBreak') {
+        // W locie nic się nie tnie (uwaga użytkownika 2026-11-07: „sam fakt, że leci, nie powinien sprawiać, że się rozczłonkowuje”): bryła rozbija się dopiero, gdy w coś uderzy. Kratery ćwiartek bębna przy HP 0 rozbijały go, zanim ruszył.
+        if (stan.upadekT >= 0) return;
         const lista = s.grupy.kawalek(String(a));
         if (!lista.length) return;
         aktywuj();
@@ -617,11 +651,18 @@ export function createWokseleGry({ Core3D }) {
         const dl = Math.sqrt(fx0 * fx0 + fy0 * fy0);
         const f = dl > 1e-6 ? naLokalny(fx0 / dl, -fy0 / dl) : { x: 0, y: -1 };
         aktywuj();
-        if (typ === 'voxNeck' || !stan.szyjaCieta) {
+        // Szyja tylko przy zerwaniu w grze, przed HP 0. Przy upadku wieża zostaje na szybie i spada razem z habitatem.
+        if (typ === 'voxNeck' && !stan.szyjaCieta && stan.upadekT < 0) {
           stan.szyjaCieta = true;
-          const lista = s.grupy.szyja(f.x, f.y);
+          // Szyja i wierzch szybu: w grze szyb pęka w tej samej chwili (index.html, onSnap), więc w obrazie też nie zostaje kikut, o który statek by się zatrzymał.
+          // Kikut sprężynował pod przewracającą się wieżą, a w grze trzymał statek na kotwicach (uwagi użytkownika 2026-11-07).
+          const lista = [...s.grupy.szyja(), ...s.grupy.kikut()];
           stan.kraterow += lista.length;
           s.solver.dodajKratery(lista);
+          const wz = s.czesci.find((c) => c.nazwa === 'H-C + H-T');
+          const z = s.grupy.szyjaZ, rN = s.grupy.szyjaR;
+          // Oś obrotu na zewnętrznej krawędzi szyi po drugiej stronie upadku: góra wieży rusza ku stronie upadku. Cięcie płaszczyzną z: bez resztek wiązań do szybu.
+          if (wz) stan.wiezaPusc = { od: wz.od, n: wz.n, zMin: z, piv: [-f.x * rN, -f.y * rN, z], om: [-f.y * WIEZA_OM, f.x * WIEZA_OM, 0] };
         }
         if (typ === 'voxFall' && stan.upadekT < 0) {
           // Cała baza spada (decyzja użytkownika 2026-11-06: „nie podobało mi się, że coś zostaje”): kotwice puszczają wszędzie.

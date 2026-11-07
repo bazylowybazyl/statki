@@ -554,6 +554,23 @@ Wyniki (1280 × 720, ta sama droga: Yamato po etapach, 0 błędów konsoli, 0 pi
 
 Bez zbiorników gazu bazy nie widać już po około 4 s upadku. Do oceny użytkownika: upadek bez wybuchów może być teraz zbyt cichy, a dym `baza` zbyt rzadki. Niebieski obłok na kadrach to trafienia plazmy Yamato, której używa narzędzie (`--bron`), a nie gaz bazy.
 
+## 5g. Upadek po drugiej próbie użytkownika (2026-11-07)
+
+Uwagi: „wszystko leci w centrum”, odłamki z lewej mają lądować na lewej części planety; „jak coś spada, to się od razu wokselizuje”, wieża ma się niszczyć dopiero, gdy w coś uderzy.
+
+Przyczyny (badanie z repliką kerneli w Node, zgodną co do bitu z wzorcem CPU na W-1):
+
+- Zbieganie na ekranie: perspektywa ujęcia upadku ×0,33 (78 % w skali logarytmicznej) i pole ku środkowi skały ×0,73 (22 %). Odłamki mają małą prędkość boczną (mediana 27 j./s, p99 342 j./s), więc o miejscu lądowania przesądza miejsce startu, a nie kierunek lotu.
+- Rozpad w locie: fala łamiąca granice ziaren była bramkowana prędkością bezwzględną > 60 j./s, czyli każdym spadkiem po 0,15 s. Do tego kotwice puszczane węzeł po węźle ze sprężeniem (−24,5 % wiązań W-1 bez fali), kratery ćwiartek bębna przy HP 0, nacięcie szyi z zawiasem, który nie trzymał głowy, i gradient pola po wysokości (bęben i trzon 14–30 % wiązań w locie).
+
+Zmiany: fala od prędkości względnej sąsiadów, całe części puszczane naraz bez sprężenia, bez kraterów w locie, szyja jednym cięciem z obrotem wieży, pole rozbieżne z punktu 20 km nad bazą (przy skale ku jej środkowi), większa siatka kubełków i łata kraterów, ten sam kierunek dla gruzu obrazu. Wynik (1280 × 720, ta sama droga co § 5f): bęben spada jako pierścień, pomosty i magazyn jako całe bryły, wieża przechyla się w całości i rozbija przy uderzeniu w bęben, gruz ląduje w kilku plamach zamiast jednej; 0 błędów, 0 pipeline'ów synchronicznych, podsumowanie po 32,6 s, 144 kratery. Nie zrobione: skóra z wypieku na kawałkach i próg przejścia bloku w kawałek (obraz pęknięć), gradient pola po wysokości, krok `VOX_FALL_T.wieza` po zmianie czasu lotu.
+
+Po próbie w grze (ten sam dzień): kikut wieży wracał do pionu i kołysał się „jak galareta”. Fala od prędkości względnej przestała łamiać zginającą się stojącą konstrukcję, a solver nie ma trwałego zgięcia, więc sprężynowanie, dotąd przykryte kruszeniem, wyszło na wierzch. Zmiany: fala bezwzględna dla konstrukcji połączonej z kotwicami (względna tylko w bryle oderwanej), cięcie szyi płaszczyzną w `kPuscCzesc` (bez resztek wiązań), kikut jako kotwica do upadku, lepkość stojących konstrukcji aż do progu fali. Druga próba użytkownika: „trochę lepiej”, kikut dalej wracał.
+
+Trzecia próba: kikut stał, ale statek nie mógł staranować wieży i utykał nad szybem na „węźle, na którego destrukcja nie działa”, a wcześniej trafiał w „niewidzialną ścianę”. Badanie (symulacja Node silnika belek, scenariusz szyi, 3000 j/s): wieża z belek po zerwaniu przewracała się po swojemu i zamarzała w bębnie na 496 kotwicach (niewidoczna, w pasie statku 2365 węzłów, 86 kotwic), odłamy bębna i szybu też były niewidoczne i kolizyjne, a styk z kotwicą przy dociskaniu wolniej niż 40 j/s jest sprężysty (kotwica × 28 we froncie). Atlas tracił od niewidocznej wieży 853 węzły. Bez wraków bazy statek dalej stawał na kotwicach pierścienia szyi w szybie H-C. Zmiany: odłamy ciał bazy schodzą z silnika po kroku powstania (przy wokselach), szyb pęka razem z zerwaniem szyi, a w wokselach wierzch szybu wyrywają kratery; uderzenie wieży zegarem. Krok fizyki po zerwaniu w Node: 4,96 → 0,37 ms. Czeka na ocenę w grze.
+
+Czwarta próba: „trzeba na dwa razy” — pierwsza szarża F utknęła w środku, druga przebiła. Symulacja Node (szarża jak w grze: 5 s, 1100 j./s² do 3000, pule bębna i szybu, odłamy znikają po kroku): ściana bębna H-E pęka z puli po 2,65 s, ale zjada rozpęd (1668 → 60 j./s), statek dochodzi do szybu i dociska go z 30–60 j./s. Kotwic szybu 96 → 93 (próg zerwania ≤ 91), pula szybu 6000 → 4375, więc szyja stoi do drugiej szarży (pęka po ~2 s docisku). Zmiana: szarża dociśnięta do szybu (styk gracza z H-C przy aktywnej szarży) zrywa szyję przy każdej prędkości, z kierunkiem z dziobu. Wynik z czterech stron (0°, 45°, 120°, 200°): szyja pęka przy pierwszej szarży po 1,95–2,18 s. Zostaje: po przejściu przez oś statek staje na przeciwległej ćwiartce bębna, a szarża ruszona z miejsca przy ścianie jej nie przebija (styk wolniejszy niż 40 j./s jest sprężysty). Statek wycofuje się przez wyłom.
+
 ## 6. Decyzje do użytkownika po pokazie
 
 Nowe po benchmarku misji 1 (§ 5c, § 5d):

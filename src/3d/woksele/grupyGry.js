@@ -80,18 +80,30 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     return lista;
   }
 
-  /** Szyja: najpierw nacięcie od strony upadku (fx, fy, jednostkowy w układzie węzłów), zawias po drugiej stronie puszcza po uderzeniu głowy. Pęd krateru jest zerowy, więc wieża przechyla się przez geometrię nacięcia. */
-  function szyja(fx, fy) {
+  const szyjaZ = k7HeightToZ(Hs.coreTop) + 2 * dx + 130;
+
+  /** Szyja: jedno cięcie przez cały pierścień i kratownicę na wysokości szyjaZ. Obrót ku stronie upadku nadaje wieży wGrze (kPuscCzesc), więc wieża leci w całości i rozbija się dopiero, gdy w coś uderzy.
+   *  Dawne nacięcie z zawiasem po drugiej stronie nie trzymało głowy: szyja wsuwała się w szyb, a sprężenie rozrywało głowę w locie (badanie 2026-11-07). fx, fy zostają w sygnaturze dla zgodności. */
+  function szyja() {
     const lista = [];
-    const zCore = k7HeightToZ(Hs.coreTop), zN = zCore + 2 * dx, rN = Hs.neckR;
-    const ciecia = [
-      [0, 0.9 * rN, zN + 130, 1.05 * rN, 1],
-      [0.3, 0.9 * rN, zN + 330, 1.05 * rN, 1],
-      [4, -0.9 * rN, zN + 130, 1.3 * rN, 1],
-      [4, 0.8 * Hs.coreR, zCore - 150, Hs.coreR, 0.8],
-      [4.2, -0.8 * Hs.coreR, zCore - 150, Hs.coreR, 0.8],
-    ];
-    for (const [t, s, z, r, rdz] of ciecia) dodaj(lista, t, s * fx, s * fy, z, { r, rdzen: rdz, J: 60, rP: 1.3 * r, rodz: 'glowna' });
+    const rN = Hs.neckR, r = 0.8 * rN;
+    for (let k = 0; k < 4; k++) {
+      const a = (k * TAU) / 4;
+      dodaj(lista, 0, rN * Math.cos(a), rN * Math.sin(a), szyjaZ, { r, rdzen: 1, J: 0, rP: 1.3 * r, rodz: 'glowna' });
+    }
+    // Kratownica w osi, jeśli ma węzły (nosiciel krateru to najbliższy węzeł: przy pustej rurze cięcie w osi wypadłoby na ścianie).
+    dodaj(lista, 0, 0, 0, szyjaZ, { r, rdzen: 1, J: 0, rP: 1.3 * r, rodz: 'glowna' }, 0.5 * rN);
+    return lista;
+  }
+
+  /** Wierzch szybu wyrwany przy zerwaniu szyi: cztery kule na ścianie szybu, ponad pasem gry. W grze szyb pęka w tej samej chwili (index.html, onSnap), więc obraz i kolizje się zgadzają. */
+  function kikut() {
+    const lista = [];
+    const zCore = k7HeightToZ(Hs.coreTop), rS = 0.8 * Hs.coreR;
+    for (let k = 0; k < 4; k++) {
+      const a = (k * TAU) / 4 + TAU / 8;
+      dodaj(lista, 0.3 + 0.1 * k, rS * Math.cos(a), rS * Math.sin(a), zCore - 150, { r: Hs.coreR, rdzen: 0.8, J: 60, rP: 1.3 * Hs.coreR, rodz: 'glowna' });
+    }
     return lista;
   }
 
@@ -154,5 +166,5 @@ export function createGrupyGry({ w, l, dx, ziarno = 77 }) {
     return { lista };
   }
 
-  return { szukaj, kawalek, szyja, upadek };
+  return { szukaj, kawalek, szyja, kikut, upadek, szyjaZ, szyjaR: Hs.neckR };
 }

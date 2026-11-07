@@ -28088,6 +28088,8 @@
       stepPirateBaseIntegrity();
       // Szyja habitatu (src/game/story/pirateBaseNeck.js): taran zrywa kotwice szybu → głowa spada na dysk.
       stepPirateBaseNeck(dt);
+      // Woksele: niewidoczne odłamy bazy z tego kroku (taran, pęknięcia, wieża z belek) schodzą z silnika.
+      drainVoxBaseDrop();
       // Planetoida pod bazą (src/game/story/pirateBaseFall.js) i zegar upadku po HP 0: grawitacja skały dla
       // odłamów, osiadanie na skale → zamrożenie.
       stepPirateBaseFall(dt);
@@ -33604,6 +33606,26 @@
       const rad = Math.max(Number(r.crater) || 0, Number(r.radius) || 0, cs * Math.sqrt(Math.max(1, Number(r.killed) || 0)) * 0.6);
       noteBaseCrater(atmoModuleId(p), entity, r.x, r.y, r.solid ? r.z : NaN, rad);
     }
+    // Woksele jako obraz bazy (domyślnie; ?woksele=0 — stary obraz z ciał): stare ciała są wtedy niewidoczne, więc ich ODŁAMY i przewrócona wieża z belek
+    // nie mogą zostać w kolizjach. Uwaga użytkownika 2026-11-07: „niewidzialna ściana mnie blokowała”, „utknąłem na węźle, na którego destrukcja nie działa”
+    // (zamrożona wieża z belek leżała w bębnie na 496 kotwicach, odłamy łykały też pociski). Odłam znika po kroku, w którym powstał: hak woła się w środku
+    // HullBodies.step / detachPiece, więc tu tylko kolejka. Punkty i etapy liczą się z kawałków, nie z odłamów.
+    const VOX_OBRAZ_BAZY = !/[?&]woksele=0\b/.test(location.search);
+    const _voxBaseDrop = [];
+    function dropPirateBaseWreck(w) {
+      if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
+      if (salvageState.cutting === w) stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
+      TowSystem.detachBody(w, 'wreck-despawn');
+      // recycleWreck odmawia przy ładunku w manifeście: ciało i tak musi zejść z silnika, inaczej zostałoby niewidzialną ścianą poza listą wraków
+      if (!recycleWreckEntity(w) && w.beamHull) HullBodies.release(w);
+      const i = wrecks.indexOf(w);
+      if (i >= 0) wrecks.splice(i, 1);
+    }
+    function drainVoxBaseDrop() {
+      if (!_voxBaseDrop.length) return;
+      for (const w of _voxBaseDrop) if (w?.beamHull) dropPirateBaseWreck(w);
+      _voxBaseDrop.length = 0;
+    }
     {
       const prevSpawned = HullBodies.onWreckSpawned;
       HullBodies.onWreckSpawned = (wreck, parent, parentBody) => {
@@ -33611,11 +33633,12 @@
         const p = wreck?.beamHull?.world;
         if (p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:')) {
           rehomePirateBaseVents(wreck, parent, atmoModuleId(p));
+          if (VOX_OBRAZ_BAZY && !_baseFall.voxFall) _voxBaseDrop.push(wreck);
         }
       };
     }
     window.PirateBaseAtmosphere = PirateBaseAtmosphere;
-    PirateBaseAtmosphere.tune.followBodies = /[?&]woksele=0\b/.test(location.search); // przy wokselach ciała są schowane, więc wyrwa stoi tam, gdzie powstała
+    PirateBaseAtmosphere.tune.followBodies = !VOX_OBRAZ_BAZY; // przy wokselach ciała są schowane, więc wyrwa stoi tam, gdzie powstała
 
     // Taran ciał bazy (kawałki w bańce gracza): zwykłe zderzenie kadłubów w HullBodies.step. Styk okrętu spoza piratów
     // (gracz, sojusznicy — nie wraki ani odłamy bazy) otwiera okno taranu kawałka: węzły zgniecione w nim zdejmują
@@ -33633,7 +33656,8 @@
       if (!site?.structures || !owner || !Object.values(site.structures).includes(owner)) return;
       // szyja habitatu: prędkość i miejsce taranu (kierunek przewrócenia głowy po zerwaniu szyi)
       const neck = pirateBaseSites()?.habitat?.neck;
-      if (neck) noteNeckRam(neck, piece, other, Number(ev.simTime) || HullBodies.simTime, ev.x, ev.y);
+      // szarża F gracza dociśnięta do szybu zrywa szyję także przy małej prędkości styku (pirateBaseNeck.js, „trzeba na dwa razy”)
+      if (neck) noteNeckRam(neck, piece, other, Number(ev.simTime) || HullBodies.simTime, ev.x, ev.y, other === ship && playerRamBurnActive());
       if (!(Number(ev.impactSpeed) >= BASE_INTEGRITY_TUNE.ramMinSpeed)) return;
       noteBaseRam(piece, Number(ev.simTime) || HullBodies.simTime, ev.x, ev.y);
       if (other !== ship) return;
@@ -33689,6 +33713,9 @@
         // powietrze: rura szyi pęka — wylot z kikuta u spodu wieży (z bryłą) i u szczytu szybu; zwarcia w rurze
         noteBaseNeckSnap(st.tower);
         noteBaseBlast(hc.x, hc.y, 560);
+        // Woksele: wieża wyrywa wierzch szybu (kratery w obrazie, wGrze voxNeck), więc szyb pęka też w grze, a jego odłamy znikają jak reszta
+        // (drainVoxBaseDrop). Inaczej zostawał kikut na kotwicach pierścienia szyi: statek pchany ciągiem stał na nim bez końca.
+        if (VOX_OBRAZ_BAZY) storyBaseBreak('H-C', { power: 2.2, speed: 70 });
       },
       onImpact(st) {
         // Bez wybuchu: miejsce to schowana stara bryła wieży, a jej upadek rysują woksele.
@@ -33713,8 +33740,28 @@
       c.habitat = place.habitat;
       c.simTime = HullBodies.simTime;
       c.lastHitX = hs.owner?.lastHitX; c.lastHitY = hs.owner?.lastHitY;
+      if (VOX_OBRAZ_BAZY && st.phase !== 'attached') {
+        // Woksele: wieży z belek już nie ma (drainVoxBaseDrop), jej upadek rysuje obraz. Uderzenie o koronę bębna i spoczynek idą zegarem od zerwania (gra nie czyta wokseli).
+        if (!(dt > 0)) return;
+        st.t += dt;
+        st.tower = null;
+        if (st.impactT < 0 && st.t >= VOX_NECK_T.uderzenie) {
+          st.impactT = st.t;
+          const R = Number(place.layout.habitat?.drumR) || 1000;
+          st.impactX = place.habitat.x + st.fallX * R; st.impactY = place.habitat.y + st.fallY * R; st.impactZ = 150;
+          c.onImpact(st);
+        }
+        if (st.t >= VOX_NECK_T.spoczynek) {
+          st.phase = 'landed';
+          st.landT = st.t; st.landX = st.impactX; st.landY = st.impactY;
+          c.onLand(st);
+        }
+        return;
+      }
       stepNeck(st, hs, c, dt);
     }
+    // Woksele: wieża z obrotem 0,3 rad/s uderza w bęben ~2–2,5 s po zerwaniu (kadry z gry 2026-11-07), leży po ~4,5 s.
+    const VOX_NECK_T = { uderzenie: 2.4, spoczynek: 4.5 };
     // Dev / skrypty: zerwij szyję teraz (kierunek taranu w grze, prędkość taranującego).
     window.snapPirateBaseNeck = (dirX = -1, dirY = 0, speed = 3000) => {
       const hs = pirateBaseSites()?.habitat;
@@ -33793,12 +33840,7 @@
       _fallHooks.onFallStart();
       for (let i = wrecks.length - 1; i >= 0; i--) {
         const w = wrecks[i];
-        if (!pirateBasePieceOf(w)) continue;
-        if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
-        if (salvageState.cutting === w) stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
-        TowSystem.detachBody(w, 'wreck-despawn');
-        recycleWreckEntity(w);
-        wrecks.splice(i, 1);
+        if (pirateBasePieceOf(w)) dropPirateBaseWreck(w);
       }
       detachPirateBaseBodies();
       // Wyrwy powietrza jechały ze starymi ciałami: bez nich para stałaby w miejscu, z którego baza spada.
