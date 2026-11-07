@@ -10,7 +10,7 @@
        uklad hardpointow z edytora (hpEditor.v1) przezywal kazde odswiezenie i wygrywal z nowym
        ukladem z src/data/hardpointEditorDefaults.js. Stad byl potrzebny tryb incognito.
        Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=economy | ?reset=game | ?reset=dev
-       Z konsoli: resetGameSave()  /  resetGameSave('hp') — potem F5. -->
+       Z konsoli: resetGameSave()  /  resetGameSave('hp') — zapisy zamknięte do F5, potem F5. -->
   <script>
     (function () {
       const SAVE_KEYS = {
@@ -75,7 +75,9 @@
       }
 
       window.__SAVE_LOCKED = false;
-      window.resetGameSave = resetGameSave;
+      // Z konsoli w trakcie gry: zapisy zamknięte do przeładowania — inaczej `beforeunload` (loadout, economy, game)
+      // wpisałby klucze z powrotem ze stanu w pamięci przy F5. `?reset` w adresie woła resetGameSave bez blokady.
+      window.resetGameSave = (scope) => { window.__SAVE_LOCKED = true; return resetGameSave(scope); };
       window.hardResetGameSave = hardResetGameSave;
       window.GAME_SAVE_KEYS = ALL_KEYS;
 
@@ -1075,8 +1077,7 @@
       PLAYER_SAVE_KEY, PLAYER_SAVE_VERSION, buildPlayerSave, parsePlayerSave, campaignCheckpoint,
       describePlayerSave
     } from "./src/game/playerSave.js";
-    import { MISSION01_PHASES } from "./src/game/story/missions/mission01.js";
-    import { MISSION02_PHASES } from "./src/game/story/missions/mission02.js";
+    import { CAMPAIGN_RESUME } from "./src/game/story/campaign.js";
     import { rankIndexForExp } from "./src/game/story/progression.js";
     // WYPOSAŻENIE — karty konfiguracji, automat refitu, moduły, ekran (docs/PLAN-fitowanie.md).
     import { FIT_PRESETS, FIT_PRESET_IDS, FIT_KIT_STOCK, FIT_KIT_PARTS, FIT_START_PRESET } from "./src/data/fitPresets.js";
@@ -16513,16 +16514,13 @@
     // górnicze, reputacja, doświadczenie i kampania (faza, stan między misjami) — obok `loadout` (fit, kadłuby) i `economy`
     // (rynki, ziarno świata). Autozapis co ECONOMY_AUTOSAVE_MS (tickPlayerSave w pętli) i przy wyjściu ze strony.
     // „Nowa gra” kasuje zapis (jak ekonomię); „Wczytaj” w menu (loadGameFromSave) wczytuje ekonomię i gracza przed
-    // startem. Kampania wznawia od POCZĄTKU bieżącej misji (campaignCheckpoint): misja 1 — dok K-7, misja 2 — skok przez
-    // misję 1 (świat jak po niej, wynik misji 1 z zapisu, bez drugiej nagrody — StoryGame `restore`). Podzielony ekran
-    // nie zapisuje. Kadłub (rany belek), NPC i wraki nie są zapisywane — po wczytaniu kadłub jest cały.
+    // startem. Kampania wznawia od ostatniego punktu wznowienia (campaignCheckpoint, CAMPAIGN_RESUME w story/campaign.js:
+    // dok K-7, misja 2, zasadzka, powrót), zapis po nagrodzie misji — od następnego punktu; skok przez wcześniejsze fazy
+    // bez nagród (StoryGame `restore`), wynik misji 1 z zapisu. Podzielony ekran nie zapisuje (a jego „Nowa gra” kasuje
+    // zapis jak ekonomię). Kadłub (rany belek), NPC i wraki nie są zapisywane — po wczytaniu kadłub jest cały.
     // `systemId` = układ tej strony (CURRENT_SYSTEM, src/data/starSystems.js): przy starcie strony układ z zapisu wybiera,
     // który układ zbudować; zapis z innego układu niż zbudowany (`?uklad=`) nie wczytuje się.
     // ============================================================
-    const PLAYER_SAVE_MISSIONS = Object.freeze([
-      Object.freeze({ phases: MISSION01_PHASES }),
-      Object.freeze({ phases: MISSION02_PHASES })
-    ]);
     // Ostatnie miejsce w zwykłym locie — tam Atlas staje po wczytaniu (obiekt stały, pisany w miejscu).
     const playerSaveSpot = { x: NaN, y: NaN, angle: 0 };
     let playerSaveAt = -Infinity;
@@ -16630,8 +16628,9 @@
       playerSaveSpot.x = NaN;
       playerSaveSpot.y = NaN;
       playTimeSec = loaded ? Math.max(0, Number(loaded.playTimeSec) || 0) : 0;
-      // Podzielony ekran nie zapisuje gracza i nie kasuje zapisu gry jednoosobowej.
-      if (!loaded && !splitScreenMode) {
+      // „Nowa gra” w każdym trybie kasuje zapis — jak ekonomię (beginEconomySession), żeby gracz i świat ruchu nie
+      // rozjechały się po F5; podzielony ekran sam nie zapisuje (writePlayerSave).
+      if (!loaded) {
         try { localStorage.removeItem(PLAYER_SAVE_KEY); } catch { /* prywatne okno */ }
       }
     }
@@ -34534,15 +34533,21 @@
 
     // Fabuła: kampania tylko w grze jednoosobowej (podzielony ekran ustawia false przed startGame).
     let startGameCampaign = true;
-    async function startGame() {
+    // Start w toku (żeton): drugi klik — „Wczytaj” czeka na worker ekonomii, „Nowa gra” w tym czasie — nie odpala drugiego
+    // startGame (podwójne initNPCs / initFleet / pętla gry). `gameStarted` ustawia się dopiero po wczytaniu dźwięków.
+    let gameLaunching = null;
+    async function startGame(opts = {}) {
       if (gameStarted) return;
       // Tylko WebGPU: bez adaptera gra nie startuje (komunikat w menu).
       if (Core3D.gpuUnsupported || rwHost?.failed) { showWebGpuRequired(); return; }
+      // Żeton startu (żeton z „Wczytaj” zwalnia przy nieudanym starcie loadGameFromSave).
+      if (gameLaunching && gameLaunching !== opts.launch) return;
+      gameLaunching = gameLaunching || 'new';
       // Zapis gracza („Wczytaj” w menu — loadGameFromSave, blok „ZAPIS GRACZA”): stan gracza i punkt wznowienia
       // kampanii; bez wczytania stary zapis gracza znika (nowa gra).
       const loadedSave = pendingPlayerSave;
       pendingPlayerSave = null;
-      const loadCheckpoint = loadedSave ? campaignCheckpoint(loadedSave.campaign, PLAYER_SAVE_MISSIONS) : null;
+      const loadCheckpoint = loadedSave ? campaignCheckpoint(loadedSave.campaign, CAMPAIGN_RESUME) : null;
       beginPlayerSaveSession(loadedSave);
       // Gospodarka: nowa gra od zera (stary zapis znika), chyba że zapis wczytano przed startem.
       beginEconomySession();
@@ -34812,26 +34817,45 @@
         tag.textContent = save ? '▸' : (gameStarted ? 'po F5' : 'brak zapisu');
       }
       loadGameButton.dataset.hint = save
-        ? `Zapis: ${describePlayerSave(save, { missions: PLAYER_SAVE_MISSIONS })}`
+        ? `Zapis: ${describePlayerSave(save, { resume: CAMPAIGN_RESUME })}`
         : (gameStarted ? 'Wczytanie zapisu — z menu głównego po przeładowaniu strony (F5)' : 'Brak zapisu gry');
     }
 
     /** Wczytanie zapisu z menu: ekonomia na świat ruchu, gracz w startGame (pendingPlayerSave). */
     async function loadGameFromSave() {
-      if (gameStarted) return false;
+      if (gameStarted || gameLaunching) return false;
       const { save, reason } = readPlayerSave();
       if (!save) {
         console.info(`[zapis] brak zapisu gracza do wczytania (${reason})`);
         refreshLoadGameButton();
         return false;
       }
-      try { await loadEconomyIntoWorld(); } catch (error) { console.warn('[zapis] ekonomia z zapisu', error); }
+      // Żeton startu od razu (synchronicznie) — kolejne kliki czekają na ten start.
+      const launch = { load: true };
+      gameLaunching = launch;
+      if (loadGameButton) loadGameButton.disabled = true;
+      // Ekonomia z zapisu na świat ruchu (odpowiedź workera; bez odpowiedzi w 10 s gra rusza dalej — zapis nałoży się,
+      // gdy worker odpowie, a start nie wisi bez końca).
+      try {
+        await Promise.race([loadEconomyIntoWorld(), new Promise(resolve => setTimeout(resolve, 10000))]);
+      } catch (error) {
+        console.warn('[zapis] ekonomia z zapisu', error);
+      }
       pendingPlayerSave = save;
       splitScreenMode = false;
       window.splitScreenMode = false;
       setMenuView('home');
-      await startGame();
-      return true;
+      try {
+        await startGame({ launch });
+      } finally {
+        // start się nie udał (np. brak WebGPU) — żeton i zapis w oczekiwaniu zwolnione, „Nowa gra” go nie podejmie
+        if (!gameStarted) {
+          if (gameLaunching === launch) gameLaunching = null;
+          pendingPlayerSave = null;
+          refreshLoadGameButton();
+        }
+      }
+      return gameStarted;
     }
     window.loadGameFromSave = loadGameFromSave;
     if (loadGameButton) loadGameButton.addEventListener('click', () => { loadGameFromSave(); });

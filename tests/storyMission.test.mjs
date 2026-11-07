@@ -9,6 +9,7 @@ import { ViewState3D } from '../src/game/view3D.js';
 import { engageCloak, stepCloak } from '../src/game/cloak.js';
 import { MISSION01 } from '../src/game/story/missions/mission01.js';
 import { MISSION02 } from '../src/game/story/missions/mission02.js';
+import { CAMPAIGN_RESUME } from '../src/game/story/campaign.js';
 import { PIRATE_BASE_TUNE } from '../src/game/story/pirateBaseSite.js';
 import { ENGINE_OFF, ENGINE_IGNITION, engineStateOf, stepEngineIgnition } from '../src/game/engineIgnition.js';
 
@@ -20,7 +21,7 @@ function makeWorld() {
   const earth = { id: 'earth', x: sun.x + 25 * AU, y: sun.y, r: 600 };
   const ship = { pos: { x: earth.x + 50000, y: earth.y }, vel: { x: 0, y: 0 }, angle: 0, angVel: 0, w: 1800, h: 800, x: 0, y: 0 };
   const w = {
-    AU, sun, earth, ship, npcs: [], stations: [], credits: 0, rep: [], journal: [], completed: [], phases: [],
+    AU, sun, earth, ship, npcs: [], stations: [], credits: 0, creditPhases: [], rep: [], journal: [], completed: [], phases: [],
     warpedOut: 0, blows: 0, courses: [], course: null,
     // mgła wojny (atrapa SensorSystem): co strona gracza widzi, sygnatury masy
     fogSeen: new Set(), masses: new Map(),
@@ -85,7 +86,8 @@ function makeWorld() {
     warpOut: (list) => { for (const n of list) { n.warpedOut = true; n.dead = true; w.warpedOut++; } },
     returnWing: () => { w.wingReturned = true; },
     reactorBlow: () => { w.blows++; },
-    addCredits: (n) => { w.credits += n; },
+    // faza przy każdej wypłacie — strażnik CAMPAIGN_RESUME.rewardPhases (wznowienie z zapisu bez drugiej nagrody)
+    addCredits: (n) => { w.credits += n; w.creditPhases.push(StoryGame.phase); },
     changeReputation: (f, d) => w.rep.push([f, d]),
     factionLabel: (f) => f,
     addMission: (e) => w.journal.push(e),
@@ -449,7 +451,10 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.equal(S.lock, null);
   assert.equal(S.cine.mode, null);
   assert.equal(S.runner.result, 'complete');
+  assert.equal(S.completed, true, 'rozdział ukończony — zapis gracza: dalej gra swobodna');
   assert.equal(w.course, null, 'po zakończeniu misji stary kurs nie wraca');
+  // wypłaty nagród tylko w fazach z CAMPAIGN_RESUME.rewardPhases — tam zapis gracza przesuwa wznowienie za nagrodę
+  assert.deepEqual([...new Set(w.creditPhases)], [...CAMPAIGN_RESUME.rewardPhases]);
   S.abort('test');
   assert.equal(S.ui.targets.size, 0);
 });
@@ -758,6 +763,16 @@ test('zapis gracza: wznowienie od misji 2 — wynik misji 1 z zapisu, bez drugie
   await flush();
   await frames(S, w2, 30 * 9, view);
   assert.ok(w2.credits > 0, 'skok dev: nagroda misji 1');
+  S.abort('test');
+  // zapis po nagrodzie misji 2 (faza victory → punkt „ambush”): obie misje pominięte bez wypłat
+  const w3 = makeWorld();
+  S.init(w3.deps);
+  S.beginNewGame({ tutorial: false, startPhase: 'ambush', restore: { campaign: { m1, bossEscaped: true } } });
+  await flush();
+  await frames(S, w3, 30 * 9, view);
+  assert.equal(S.phase, 'ambush');
+  assert.equal(w3.credits, 0, 'nagrody misji 1 i 2 są już w zapisie');
+  assert.equal(S.campaign.bossEscaped, true);
   S.abort('test');
 });
 

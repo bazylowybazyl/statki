@@ -6,9 +6,9 @@ import {
 } from '../src/game/playerSave.js';
 import { MISSION01_PHASES } from '../src/game/story/missions/mission01.js';
 import { MISSION02_PHASES } from '../src/game/story/missions/mission02.js';
-import { CAMPAIGN_PHASES } from '../src/game/story/campaign.js';
+import { CAMPAIGN_PHASES, CAMPAIGN_RESUME } from '../src/game/story/campaign.js';
 
-const MISSIONS = [{ phases: MISSION01_PHASES }, { phases: MISSION02_PHASES }];
+const R = CAMPAIGN_RESUME;
 
 function sample(over = {}) {
   return buildPlayerSave({
@@ -71,23 +71,35 @@ test('odczyt odsiewa nieznane towary ładowni', () => {
   assert.deepEqual(save.player.cargo, { steel: 12.5 });
 });
 
-test('punkt wznowienia kampanii: misja 1 od początku, misja 2 od pierwszej fazy, ukończona = gra swobodna', () => {
-  assert.deepEqual(campaignCheckpoint(null, MISSIONS), { mode: 'free' });
-  assert.deepEqual(campaignCheckpoint({ active: false, phase: 'scout' }, MISSIONS), { mode: 'free' });
-  for (const phase of MISSION01_PHASES) {
-    assert.deepEqual(campaignCheckpoint({ active: true, phase }, MISSIONS), { mode: 'campaign', startPhase: null }, phase);
+test('punkt wznowienia kampanii: ostatni punkt przed fazą zapisu, po nagrodzie — następny punkt, ukończona = gra swobodna', () => {
+  const at = (phase, extra = {}) => campaignCheckpoint({ active: true, phase, ...extra }, R);
+  assert.deepEqual(campaignCheckpoint(null, R), { mode: 'free' });
+  assert.deepEqual(campaignCheckpoint({ active: false, phase: 'scout' }, R), { mode: 'free' });
+  const want = {
+    intro: null, briefing: null, undock: null, course: null, scout: null, approach: null, ram: null, defences: null,
+    shipyard: null,
+    aftermath: 'repair',        // nagroda misji 1 wypłacona — dalej od misji 2
+    repair: 'repair', counter: 'repair', counter2: 'repair', counter3: 'repair',
+    victory: 'ambush',          // nagroda misji 2 wypłacona — dalej od zasadzki
+    ambush: 'ambush', return: 'return'
+  };
+  assert.deepEqual(Object.keys(want), CAMPAIGN_PHASES.filter(p => p !== 'done'), 'tabela obejmuje wszystkie fazy');
+  for (const [phase, startPhase] of Object.entries(want)) {
+    assert.deepEqual(at(phase), { mode: 'campaign', startPhase }, phase);
   }
-  for (const phase of MISSION02_PHASES.filter(p => p !== 'done')) {
-    assert.deepEqual(campaignCheckpoint({ active: true, phase }, MISSIONS), { mode: 'campaign', startPhase: MISSION02_PHASES[0] }, phase);
-  }
-  assert.deepEqual(campaignCheckpoint({ active: true, phase: 'done' }, MISSIONS), { mode: 'free' });
-  assert.deepEqual(campaignCheckpoint({ active: true, phase: 'scout', done: true }, MISSIONS), { mode: 'free' });
-  assert.deepEqual(campaignCheckpoint({ active: true, phase: null }, MISSIONS), { mode: 'campaign', startPhase: null });
+  assert.deepEqual(at('done'), { mode: 'free' });
+  assert.deepEqual(at('scout', { done: true }), { mode: 'free' });
+  assert.deepEqual(at(null), { mode: 'campaign', startPhase: null });
+  assert.deepEqual(at('nieznana'), { mode: 'campaign', startPhase: null });
+  // nagroda bez punktu po niej → gra swobodna (nie powtarzamy wypłaty)
+  assert.deepEqual(campaignCheckpoint({ active: true, phase: 'b' }, { phases: ['a', 'b'], checkpoints: ['a'], rewardPhases: ['b'] }), { mode: 'free' });
 });
 
-test('pierwsza faza misji 2 to faza kampanii, do której gra umie skoczyć (skok przez misję 1)', () => {
-  assert.ok(CAMPAIGN_PHASES.includes(MISSION02_PHASES[0]));
-  assert.ok(CAMPAIGN_PHASES.indexOf(MISSION02_PHASES[0]) > CAMPAIGN_PHASES.indexOf(MISSION01_PHASES.at(-1)));
+test('punkty wznowienia to fazy kampanii, do których gra umie skoczyć; nagrody w fazach kampanii', () => {
+  for (const p of [...R.checkpoints, ...R.rewardPhases]) assert.ok(CAMPAIGN_PHASES.includes(p), p);
+  assert.equal(R.checkpoints[0], CAMPAIGN_PHASES[0], 'pierwszy punkt = zwykły start');
+  assert.equal(R.checkpoints[1], MISSION02_PHASES[0], 'drugi punkt = początek misji 2');
+  assert.deepEqual(R.missions.map(m => [...m]), [[...MISSION01_PHASES], [...MISSION02_PHASES]]);
 });
 
 test('pomocniki map liczb', () => {
@@ -97,9 +109,13 @@ test('pomocniki map liczb', () => {
 });
 
 test('opis zapisu do menu', () => {
-  const free = describePlayerSave(sample(), { missions: MISSIONS });
+  const free = describePlayerSave(sample(), { resume: R });
   assert.match(free, /Gra swobodna$/);
-  const m2 = describePlayerSave(sample({ campaign: { active: true, phase: 'counter' } }), { missions: MISSIONS });
+  const m2 = describePlayerSave(sample({ campaign: { active: true, phase: 'counter' } }), { resume: R });
   assert.match(m2, /Kampania, misja 2$/);
+  const after1 = describePlayerSave(sample({ campaign: { active: true, phase: 'aftermath' } }), { resume: R });
+  assert.match(after1, /Kampania, misja 2$/, 'po nagrodzie misji 1 gra ruszy od misji 2');
+  const m1 = describePlayerSave(sample({ campaign: { active: true, phase: 'scout' } }), { resume: R });
+  assert.match(m1, /Kampania, misja 1$/);
   assert.equal(describePlayerSave(null), '');
 });

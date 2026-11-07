@@ -13,8 +13,10 @@
 //  - `player` — pozycja i kurs (ostatnie miejsce w zwykłym locie, nie w skoku: warp przelatuje przez wszystko),
 //    kredyty, ładownia, ładunki górnicze, reputacja, doświadczenie (`progress`);
 //  - `campaign` — kampania: faza w chwili zapisu i stan między misjami (`m1`, `bossEscaped`). Stanu W ŚRODKU misji
-//    (baza piratów, fale, herszt) nie da się wiernie odtworzyć, więc wczytanie wznawia od POCZĄTKU bieżącej misji
-//    (`campaignCheckpoint`), a po ukończeniu kampanii — gra swobodna w zapisanym miejscu.
+//    (baza piratów, fale, herszt) nie da się wiernie odtworzyć, więc wczytanie wznawia od ostatniego punktu wznowienia
+//    (`campaignCheckpoint`, `CAMPAIGN_RESUME` w story/campaign.js: początek misji 1, misji 2, zasadzka, powrót), a zapis
+//    po nagrodzie misji — od następnego punktu (bez drugiej nagrody); po ukończeniu kampanii — gra swobodna w zapisanym
+//    miejscu. Kredyty zarobione w trakcie powtarzanego odcinka (zestrzelenia, łup) mogą przyjść drugi raz.
 // Kadłub (uszkodzenia belek), NPC i wraki nie są zapisywane — po wczytaniu kadłub jest cały.
 // Bez DOM i three (testy node: tests/playerSave.test.mjs).
 
@@ -52,28 +54,45 @@ export function readAmounts(raw, isKnown = () => true) {
 }
 
 /**
- * Punkt wznowienia kampanii dla fazy z zapisu. `missions` — misje kampanii po kolei: `[{ phases: [...] }, …]`
- * (pierwsza faza misji = jej początek). Wynik:
- *  - `{ mode: 'campaign', startPhase: null }` — misja 1 od początku (zwykły start kampanii: dok K-7, intro);
- *  - `{ mode: 'campaign', startPhase: '<pierwsza faza misji N>' }` — misja N > 1 od początku (skok przez wcześniejsze
- *    misje jak po nich);
- *  - `{ mode: 'free' }` — kampania ukończona (faza 'done' albo `done`) albo brak kampanii w zapisie.
+ * Punkt wznowienia kampanii dla fazy z zapisu. `resume` — opis kampanii (`CAMPAIGN_RESUME` z
+ * `src/game/story/campaign.js`): `phases` (wszystkie fazy po kolei), `checkpoints` (fazy, od których kampania umie ruszyć;
+ * pierwsza = zwykły start), `rewardPhases` (fazy, w których skrypt wypłaca nagrodę misji). Wynik:
+ *  - `{ mode: 'campaign', startPhase: null }` — od zwykłego startu kampanii (dok K-7, intro);
+ *  - `{ mode: 'campaign', startPhase: '<punkt>' }` — skok do punktu (wcześniejsze fazy „pominięte”, bez nagród);
+ *  - `{ mode: 'free' }` — kampania ukończona (faza 'done', `done`), nieaktywna albo brak punktu po nagrodzie.
+ * Punkt = ostatni `checkpoint` nie później niż faza zapisu; gdy między nim a fazą zapisu (włącznie) leży faza z nagrodą,
+ * wznowienie idzie od pierwszego punktu PO tej nagrodzie — nagroda jest już w zapisanych kredytach, reputacji i EXP.
  */
-export function campaignCheckpoint(campaign, missions) {
+export function campaignCheckpoint(campaign, resume) {
   if (!campaign || typeof campaign !== 'object') return { mode: 'free' };
-  if (campaign.done) return { mode: 'free' };
+  if (campaign.done || !campaign.active) return { mode: 'free' };
   const phase = typeof campaign.phase === 'string' ? campaign.phase : null;
   if (phase === 'done') return { mode: 'free' };
-  if (!campaign.active) return { mode: 'free' };
-  const list = Array.isArray(missions) ? missions : [];
-  for (let i = 0; i < list.length; i++) {
-    const phases = Array.isArray(list[i]?.phases) ? list[i].phases : [];
-    if (phase && phases.includes(phase)) {
-      return { mode: 'campaign', startPhase: i === 0 ? null : (phases[0] || null) };
-    }
+  const phases = Array.isArray(resume?.phases) ? resume.phases : [];
+  const checkpoints = (Array.isArray(resume?.checkpoints) ? resume.checkpoints : [])
+    .map(p => phases.indexOf(p)).filter(i => i >= 0).sort((a, b) => a - b);
+  const rewards = (Array.isArray(resume?.rewardPhases) ? resume.rewardPhases : [])
+    .map(p => phases.indexOf(p)).filter(i => i >= 0);
+  const at = phase ? phases.indexOf(phase) : -1;
+  if (!checkpoints.length || at < 0) return { mode: 'campaign', startPhase: null };
+  let cp = checkpoints[0];
+  for (const i of checkpoints) if (i <= at) cp = i;
+  // ostatnia nagroda wypłacona między punktem a fazą zapisu → pierwszy punkt po niej
+  let paid = -1;
+  for (const r of rewards) if (r >= cp && r <= at && r > paid) paid = r;
+  if (paid >= 0) {
+    const next = checkpoints.find(i => i > paid);
+    if (next === undefined) return { mode: 'free' };
+    cp = next;
   }
-  // Kampania w toku bez rozpoznanej fazy (np. zapis tuż po starcie, przed pierwszą fazą) — od początku.
-  return { mode: 'campaign', startPhase: null };
+  return { mode: 'campaign', startPhase: cp === checkpoints[0] ? null : phases[cp] };
+}
+
+/** Numer misji (od 1) dla fazy kampanii — `resume.missions`: listy faz misji po kolei; 0 — nieznana. */
+export function campaignMissionNumber(phase, resume) {
+  const missions = Array.isArray(resume?.missions) ? resume.missions : [];
+  const idx = missions.findIndex(list => Array.isArray(list) && list.includes(phase));
+  return idx + 1;
 }
 
 /**
@@ -173,7 +192,7 @@ export function parsePlayerSave(raw, opts = {}) {
   };
 }
 
-/** Krótki opis zapisu do menu: „7 lis 2026, 14:05 · Gra swobodna” / „· Kampania, misja 2”. */
+/** Krótki opis zapisu do menu: „7 lis, 14:05 · Gra swobodna” / „· Kampania, misja 2”. `opts.resume` — CAMPAIGN_RESUME. */
 export function describePlayerSave(save, opts = {}) {
   if (!save) return '';
   const parts = [];
@@ -185,11 +204,11 @@ export function describePlayerSave(save, opts = {}) {
       }));
     } catch { /* bez daty */ }
   }
-  const cp = campaignCheckpoint(save.campaign, opts.missions);
+  const cp = campaignCheckpoint(save.campaign, opts.resume);
   if (cp.mode === 'campaign') {
-    const list = Array.isArray(opts.missions) ? opts.missions : [];
-    const idx = Math.max(0, list.findIndex(m => Array.isArray(m?.phases) && m.phases.includes(save.campaign?.phase)));
-    parts.push(`Kampania, misja ${idx + 1}`);
+    // misja, od której gra ruszy (punkt wznowienia), nie ta z chwili zapisu
+    const from = cp.startPhase || opts.resume?.phases?.[0];
+    parts.push(`Kampania, misja ${Math.max(1, campaignMissionNumber(from, opts.resume))}`);
   } else {
     parts.push('Gra swobodna');
   }

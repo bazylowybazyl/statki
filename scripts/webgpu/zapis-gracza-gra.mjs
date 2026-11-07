@@ -76,7 +76,8 @@ try {
   const btn = await ev('(() => { const b = document.getElementById("btn-load-game"); return { disabled: b.disabled, hint: b.dataset.hint, tag: b.querySelector(".mm-go, .mm-tag")?.textContent }; })()');
   check('z zapisem „Wczytaj” włączony', btn.disabled === false, btn);
 
-  await ev('document.getElementById("btn-load-game").click()');
+  // dwa kliknięcia naraz (start czeka na worker ekonomii) — jeden start gry (żeton gameLaunching)
+  await ev('(() => { const b = document.getElementById("btn-load-game"); b.click(); b.click(); document.getElementById("btn-mode-single").click(); })()');
   await waitFor(cdp, gameRunning(30), 240000);
   const got = await ev('window.PlayerSave.player()');
   const dist = Math.hypot(got.x - placed.x, got.y - placed.y);

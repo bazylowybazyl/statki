@@ -41,7 +41,7 @@ test('stacje planet: szablony GLB na ekranie ładowania — warstwa FG, wypiek r
   assert.match(prepScene, /if \(m\.afterFrame\) \{[\s\S]*warmStationTemplates3D\(st\.rm\.stations/, 'po klatce zero — lustra stacji już są');
   // index.html: przed flush() rejestru na ekranie ładowania
   const html = read('index.html');
-  const start = html.slice(html.indexOf('async function startGame() {'), html.indexOf('if (newGameButton) {'));
+  const start = html.slice(html.indexOf('async function startGame('), html.indexOf('if (newGameButton) {'));
   const at = start.indexOf('await prepareStations3D(stations);');
   assert.ok(at > 0 && at < start.indexOf('await Core3D.warmup?.flush('), 'stacje przed flush()');
   // przed pasem asteroid: rejestr kompiluje stacje w wolnych chwilach, gdy strona czeka na pipeline'y pasa
