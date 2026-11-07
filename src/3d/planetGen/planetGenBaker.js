@@ -304,6 +304,7 @@ function cloudUniforms(spec, ctx) {
     uCloud: [c.cover, c.stretch, Math.min(CLOUD_CYCLONES, c.cyclones), c.style],
     uCloud2: [c.sizeMul * Math.sqrt(6371 / spec.rKm) ** 0.35, c.style === 0 ? 0.15 : 0.2, spec.look.bands ?? 0.6, (spec.look.swirl ?? 0.5) * 0.9],
     uTint: c.tint,
+    uTint2: c.tint2 || c.tint,
     uOct: [0, 0, 0, Math.max(3, Math.min(8, Math.floor(Math.log2(ctx.size / 64)) + 2))]
   };
   for (let i = 0; i < CLOUD_CYCLONES; i++) {

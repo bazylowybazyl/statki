@@ -231,6 +231,7 @@ export const CLOUD_DEFS = Object.freeze({
   uCloud: 'vec4',    // x — pokrycie (0…1), y — rozciągnięcie strefowe, z — liczba cyklonów, w — styl
   uCloud2: 'vec4',   // x — skala (×), y — ostrość brzegu, z — kontrast pokładu, w — skręt „Y”
   uTint: 'vec3',
+  uTint2: 'vec3',    // barwa ciemnych smug pokładu (styl 1)
   uCyc0: 'vec4', uCyc1: 'vec4', uCyc2: 'vec4', uCyc3: 'vec4', uCyc4: 'vec4', uCyc5: 'vec4', uCyc6: 'vec4', uCyc7: 'vec4'
 });
 export const CLOUD_CYCLONES = 8;
@@ -273,6 +274,7 @@ export function buildCloudGraph() {
     const base = pgFbm(qw.mul(2.5).mul(sc), U.uOct.w).toVar();
     const fine = pgFbm(qw.mul(12.0).mul(sc), int(U.uOct.w).sub(2)).toVar();
     const out = float(0.0).toVar();
+    const tintMix = float(0.0).toVar();
     If(style.lessThan(0.5), () => {
       // profil pokrycia z szerokości (zbieżność 0–8°, sucho 15–32°, sztormy 40–65°, polarna umiarkowana), granice
       // pasów przesunięte szumem
@@ -299,15 +301,17 @@ export function buildCloudGraph() {
       const streak = pgFbm(sh.mul(vec3(1.5, 3.0, 1.5)).mul(sc).add(warp.mul(0.6)), U.uOct.w);
       const bandsN = sin(C.lat.mul(9.0).add(base.mul(1.4))).mul(0.5).add(0.5);
       const collar = exp(absLatD.sub(68.0).div(6.0).pow2().negate());
-      const v = float(0.86).add(streak.mul(0.18).mul(U.uCloud2.z)).add(bandsN.mul(0.07).mul(U.uCloud2.z))
-        .add(collar.mul(0.08)).sub(fine.mul(0.05));
+      // jasność pokładu wysoka i równa, smugi i pasma — barwą (uTint2 w smugach), nie dziurami
+      const dark = clamp(streak.mul(1.4).mul(U.uCloud2.z).add(bandsN.sub(0.5).mul(0.5).mul(U.uCloud2.z)).add(fine.mul(0.3)), -1.0, 1.0).toVar();
+      const v = float(0.9).add(dark.mul(0.08)).add(collar.mul(0.06));
       out.assign(clamp(v.mul(U.uCloud.x.add(0.06)), 0.0, 1.0));
+      tintMix.assign(smoothstep(-0.05, 0.6, dark.negate()));
     }).Else(() => {
       // pył / mgła cienka: smugi strefowe
       const d = base.mul(0.5).add(0.5).add(U.uCloud.x.sub(0.5)).add(fine.mul(0.1));
       out.assign(smoothstep(0.42, 0.78, d).mul(0.75));
     });
-    return vec4(U.uTint.mul(out), 1.0);
+    return vec4(mix(U.uTint, U.uTint2, tintMix).mul(out), 1.0);
   })();
   return { U, material: bakeMaterial('PlanetGenClouds', node) };
 }

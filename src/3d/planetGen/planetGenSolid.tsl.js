@@ -200,11 +200,16 @@ function earthField(type) {
             const jitter = fract(sin(k.mul(12.9898).add(b.w)).mul(43758.5453)).sub(0.5).mul(step_.mul(0.6));
             const da = ang.sub(k.mul(step_)).sub(jitter);
             const dd = sqrt(da.mul(da).add(perp.mul(perp)));
-            const rad = mix(0.022, 0.006, tk).toVar();
+            // wielkość i obecność wyspy z haszu (bez równego „sznura korali”)
+            const hk = fract(sin(k.mul(78.233).add(b.w.mul(1.37))).mul(43758.5453));
+            const rad = mix(0.022, 0.006, tk).mul(hk.mul(0.9).add(0.45)).mul(step(0.28, hk)).add(1e-5).toVar();
             const rr = dd.div(rad);
+            // profil wyspy tylko w jej obrysie (poza nim −∞ — dno oceanu zostaje głębokie)
             const cone = exp(rr.mul(rr).negate()).mul(mix(1.6, -0.08, tk));
             const ring = exp(rr.sub(1.0).div(0.25).pow2().negate()).mul(0.14).mul(smoothstep(0.5, 0.8, tk));
-            h.assign(max(h, max(cone, ring.sub(0.1)).sub(mix(0.0, 0.05, tk))));
+            const isl = max(cone, ring.sub(0.1)).sub(mix(0.0, 0.05, tk));
+            const foot = float(1.0).sub(smoothstep(1.3, 2.0, rr));
+            h.assign(max(h, mix(float(-1e3), isl, foot)));
           });
         });
       }
@@ -671,7 +676,7 @@ function iceUniforms(spec, ctx) {
     field: {
       uI1: [L.lineae, L.chaos, L.grooves, L.darkTerrain], uI2: [L.stripes, L.stripeLat, L.rock, L.seas],
       uI3: [L.mountainKm, Math.round(LINEAE_CAP * L.lineae), 0, 0],
-      ...craterRecords(ctx, { density: L.craters, f0: 5, fresh: 0.12, raysTo: 2, falloff: 0.95 })
+      ...craterRecords(ctx, { density: L.craters, f0: 8, fresh: 0.12, raysTo: 1, falloff: 0.95 })
     },
     color: { uIc: [0, L.chaos, L.grooves, L.darkTerrain], uIc2: [L.rock, L.seas, 0, 0],
       uIceC: P.ice, uIceBlue: P.iceBlue, uLin: P.lineae, uDarkT: P.dark, uRockC: P.rock, uFrost: P.frost },

@@ -264,7 +264,7 @@ function lookToxic(rng) {
   }[style];
   return {
     style,
-    bands: rng.range(0.2, 0.8),            // pasma chmur
+    bands: rng.range(0.45, 1.0),           // pasma chmur (kontrast smug pokładu)
     swirl: rng.range(0.3, 1.0),            // kształt „Y” i kołnierze polarne
     cover: rng.range(0.88, 0.98),
     surfaceKm: rng.range(1.5, 4.5),
@@ -518,9 +518,12 @@ function cloudsFor(type, look, rng) {
     case 'volcanic':
       return look.style !== 'siarka' ? { style: 2, opacity: round(rng.range(0.25, 0.45), 3), cover: round(rng.range(0.08, 0.2), 3),
         cyclones: 0, stretch: 1.6, tint: look.style === 'lawa' ? [0.62, 0.58, 0.56] : [0.7, 0.68, 0.66], sizeMul: 0.8 } : null;
-    case 'toxic':
+    case 'toxic': {
+      // barwa pokładu z palety podrodzaju (maska = luminancja, barwa = chroma — graf chmur gry), smugi ciemniejsze
+      const norm = (c) => { const m = Math.max(...c); return c.map((v) => round(Math.min(1.4, v / m), 3)); };
       return { style: 1, opacity: round(rng.range(0.82, 0.96), 3), cover: look.cover, cyclones: 2, stretch: round(rng.range(2.2, 3.2), 3),
-        tint: [1, 1, 1], sizeMul: 1 };
+        tint: norm(look.palette.cloud), tint2: norm(look.palette.cloudDark).map((v) => round(v * 0.85, 3)), sizeMul: 1 };
+    }
     default: return null;
   }
 }
