@@ -24,11 +24,13 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
 | `src/game/sector/sectorFlight.js` | lot statku w strefie (`stepShip`), `SECTOR_FLIGHT` (prędkości, paliwo, czujniki, skan) |
 | `src/game/sector/sectorExploration.js` | mgła eksploracji (4 poziomy), zapis i odczyt |
 | `src/game/sector/sectorFleets.js` | floty między układami: konwoje, patrole, piraci; krok stały 10 Hz, zdarzenia, migawka |
+| `src/game/sector/sectorRegistry.js` | opis układu z sektora → wpis rejestru `STAR_SYSTEMS` (`systemRegistryEntry`, `sectorRegistryEntries`, `localBodyId`) — § „Opis układu → wpis rejestru” |
 | `dema/mapa-gwiezdna.html` + `.js` | demo: lot, kamera od lotu do całego sektora, nakładka 2D (etykiety, punkty skoku, floty, trasa), HUD |
 | `dema/mapa-gwiezdna-obraz.js` | warstwy GPU (three r183 WebGPU, TSL): tło z wypieku galaktyki + gwiazdy ekranowe, mgławice z wypieków, mgiełka rozgrywki, burze, gwiazdy układów, szlaki, post (bloom gry, ACES gry) |
 | `scripts/webgpu/mapa-gwiezdna-demo.mjs` | zrzuty dema w headless Chrome (CDP) → `.tmp/mapa-gwiezdna/` + `raport.json` |
 | `scripts/mapa-gwiezdna-liczby.mjs` | liczby sektora dla ziaren (odległości, czasy lotu, paliwo, koszt kroku flot) |
 | `tests/sector.test.mjs` | determinizm, unikalne id, odstępy, rozkład, rdzeń i szlaki, ciała, strefa, punkty skoku, lot, eksploracja, floty |
+| `tests/sectorRegistry.test.mjs` | wpis rejestru: pola jak `SOL_SYSTEM`, `buildSystemMap` na planetach wpisu, orbity za studnią, `globalBodyId` = id sektora, bez przypadkowego ringu, `resolveStarSystemId` |
 
 ## Model
 
@@ -47,7 +49,8 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
   Fomalhaut; Konsorcjum Zewnętrzne — 61 Cygni, Epsilon Indi, Wega), proceduralne — frakcja najbliższej siedziby.
   POGRANICZE: reszta (~133), bez właściciela; 7 kryjówek piratów 26–60 ly od Słońca (odstęp ≥ 13 ly).
 - Id: nazwani — po nazwie (`alfa-centauri`), proceduralni — katalog `hf-NNNN` numerowany od Słońca (bliżej = mniejszy
-  numer, nazwa własna z sylab po skanie); planety `<id>:<n>` (Słońce: `sol:earth`), pasy `<id>:pas<n>`, mgławice
+  numer, nazwa własna z sylab po skanie); planety `<id>:p<n>` (= `globalBodyId(id, 'p<n>')`; Słońce: `sol:earth`),
+  pasy `<id>:pas<n>`, mgławice
   `mg-<n>`, burze `burza-<n>`, bramy `brama:<id>` — unikalne w całym sektorze (test dla 4 ziaren).
 - Zawartość układu z ziarna (sektor, id układu) — nie zależy od liczby układów ani kolejności generacji. Rodzaj planety
   z temperatury orbity τ = orbitAU / (25 · hz gwiazdy) (τ ≈ 1 Ziemia, 2 Jowisz, 4,8 Neptun); orbity w AU MAPY do 122,
@@ -112,11 +115,42 @@ Stan: moduł danych `src/game/sector/` + demo `dema/mapa-gwiezdna.html` do oceny
   — start, cały sektor, rdzeń, mgławica (cała, w środku, w komórce burzy), punkt skoku i komunikat skoku, pogranicze
   przed i po skanie, pościg piratów, najbliższy zoom; 0 błędów konsoli.
 
+## Opis układu → wpis rejestru (`src/game/sector/sectorRegistry.js`, 2026-11-08)
+
+Rejestr układów gry (`STAR_SYSTEMS`, `src/data/starSystems.js`, reguła `uklady-gwiezdne`): jeden układ na stronę, id ciał
+w grze LOKALNE ('earth'), globalny id na mapie = `globalBodyId(idUkładu, idLokalny)` = `<idUkładu>:<idLokalny>`.
+
+- `systemRegistryEntry(sector, id, { handmade })` — funkcja CZYSTA (ten sam sektor i id → ten sam zamrożony wpis):
+  - `id`, `name` (nazwa układu), `label` — nazwa WIELKIMI literami (≤ 14 znaków, dłuższa — katalog albo pierwsze słowo:
+    'TAU CETI', 'ALFA CENTAURI');
+  - `star`: `{ id: 'sun', spectral, r, color: { core, mid, rim } }` — widmo prawdziwe u nazwanych ('G2V', 'A1V'…), u
+    proceduralnych klasa + podklasa z ziarna ('K3V', 'K5III', 'DA2', 'PSR'), `r` = tarcza klasy (G = 200 tys. jak
+    Słońce, O 300 tys., M 130 tys., olbrzym 380 tys., biały karzeł 60 tys.), barwy tarczy klasy (G = barwy Słońca gry);
+  - `planets`: format `systemMap.js` — `{ id: 'p<n>', name: '<układ> b|c|d…', baseR, orbitAU, type, seed }`; `type` z listy
+    wspólnej z generatorem planet (obejmuje dawne 'rocky' / 'terran' / 'gas'), `seed` dla generatora; nazwy bez
+    'earth' / 'mars' / 'jupiter' (gra dopasowuje po nich ring „Halo” — `normalizeRingPlanetKey`, test); pierwsza
+    orbita za studnią gwiazdy w skali Słońca (`minOrbitAu`: tarcza × 1,1 + 60 tys. j., AU mapy = 42 253,5 j.);
+  - `moons: []`, `home: null`, `handmade: false`;
+  - dodatki (gra może pominąć): `companion` (gwiazda towarzysząca: `{ id: 'sun-b', r, color }`), `belts`
+    (`{ id: 'pas<n>', kind: 'asteroid' | 'ice', innerAU, outerAU }`), `sector` (`seed`, `version`, położenie, strefa,
+    frakcja, katalog, mgławica, kryjówka piratów, brama).
+- Słońce: wpis ręczny podaje wołający (`{ handmade: { sol: SOL_SYSTEM } }`); bez niego `systemRegistryEntry(…, 'sol')` →
+  null. Moduł nie importuje `starSystems.js` — rejestr może budować się z sektora bez cyklu importów.
+- `sectorRegistryEntries(sector, { handmade })` — cały sektor jako { id: wpis } (kolejność układów sektora);
+  `localBodyId('hf-0042:p3')` → 'p3'.
+- Sprawdzone testem (`tests/sectorRegistry.test.mjs`): `buildSystemMap(140, { planets, sunRadius: star.r })` na każdym
+  wpisie — orbity rosną, każda planeta za studnią gwiazdy (`sunWellRadius`) i w świecie 12 mln j.;
+  `globalBodyId(wpis.id, planeta.id)` = id planety w sektorze; `resolveStarSystemId('?uklad=Tau-Ceti', …, wpisy)` wybiera
+  układ.
+- Do decyzji przy wpięciu: skala świata układu proceduralnego — gra liczy AU z najdalszego pasa (`getOuterAsteroidEdgeAU`
+  czyta pasy Słońca); propozycja: układ proceduralny w skali Słońca (`auInWorldUnits` = 42 253,5) i pasy z `belts`
+  wpisu. Księżyce — generator sektora ich nie robi (propozycja: księżyce olbrzymów z ziarna planety, kolejny krok).
+
 ## Wpięcie w grę (propozycja)
 
-1. **Tabela układów** (`src/data/starSystems.js`, orkiestrator): układy = `generateSector({ seed })` ze stałym ziarnem
-   kampanii; Słońce = `sol` (świat jak dziś), reszta — świat z opisu (`planets` przez generator planet `src/3d/planetGen/`,
-   `belts`, gwiazda: klasa → promień tarczy `sunRadius`, barwa).
+1. **Tabela układów** (`src/data/starSystems.js`, orkiestrator): `STAR_SYSTEMS` = `sectorRegistryEntries(generateSector({
+   seed }), { handmade: { sol: SOL_SYSTEM } })` ze stałym ziarnem kampanii (§ wyżej); świat z opisu — planety przez
+   generator planet `src/3d/planetGen/` (`type`, `seed`), pasy z `belts`, gwiazda: `star.r`, `star.color`.
 2. **Strefa jako tryb strony**: `?strefa=1` (albo `location.kind = 'zone'` w zapisie) ładuje lekką scenę strefy zamiast
    świata układu (bez planet, ringów, stacji, pasa) — obraz jak w demie, przez `Core3D` (warstwy dema → moduł
    `src/3d/sector/` z rozgrzewką; reguła `webgpu-tsl`). Wypieki (~3 s) — cache WebP jak `sky-equirect.webp` albo

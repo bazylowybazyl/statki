@@ -4,8 +4,8 @@
 // podaje opis, z którego gra po wejściu do układu (przeładowanie strony z id układu) zbuduje
 // planety generatorem planet (`src/3d/planetGen/`, sesja „Generator planet”) i pasy.
 //
-// Opis planety: `{ id, type, seed, orbitAU, r }` — `id` unikalne w CAŁYM sektorze (`<idUkładu>:<n>`,
-// Słońce: `sol:earth`), `type` z listy wspólnej z generatorem planet (`PLANET_TYPES`), `seed` — u32 dla
+// Opis planety: `{ id, type, seed, orbitAU, r }` — `id` unikalne w CAŁYM sektorze = `globalBodyId(idUkładu,
+// idLokalny)` z `src/data/starSystems.js` (`<idUkładu>:p<n>`, Słońce: `sol:earth`; w grze id jest LOKALNE — `p<n>`), `type` z listy wspólnej z generatorem planet (`PLANET_TYPES`), `seed` — u32 dla
 // generatora, `orbitAU` — orbita w AU MAPY (jak `SYSTEM_MAP_PLANETS`: Ziemia 25, Neptun 120; świat układu
 // mieści do 140 + 2 AU mapy), `r` — promień planety w świecie [j.] (jak `baseR`). Pas: `{ id, kind, innerAU,
 // outerAU }` (`kind` 'asteroid' | 'ice').
@@ -13,7 +13,7 @@
 // Rodzaj planety z TEMPERATURY ORBITY τ = orbitAU / (25 · hz gwiazdy): τ ≈ 1 — strefa życia (Ziemia),
 // τ ≈ 2 — Jowisz, τ ≈ 4,8 — Neptun. Moduł czysty; jedyny import danych to tabela Układu Słonecznego.
 
-import { SYSTEM_MAP_PLANETS } from '../../data/systemMap.js';
+import { SYSTEM_MAP_PLANETS, SYSTEM_MAP_CONSTANTS, computeWorldUnitsPerAu } from '../../data/systemMap.js';
 import { STAR_CLASSES } from './sectorStars.js';
 import { SectorRng, hashU32 } from './sectorRandom.js';
 
@@ -32,6 +32,15 @@ export const PLANET_TYPE_LABELS = Object.freeze({
 export const HZ_ORBIT_AU = 25;
 /** Najdalsza orbita planety [AU mapy] (Neptun 120; Kuiper Słońca 125–140, brzeg świata 142). */
 export const MAX_ORBIT_AU = 122;
+/** j. świata na AU mapy w Układzie Słonecznym (12 mln / (2 · (140 + 2)) = 42 253,5) — skala odniesienia. */
+export const SOL_AU_UNITS = computeWorldUnitsPerAu(140);
+/** Odstęp pierwszej orbity od studni gwiazdy [j.] (Merkury: 338 tys. przy studni Słońca 220 tys.). */
+const WELL_CLEARANCE = 60_000;
+
+/** Najbliższa orbita planety [AU mapy] — za studnią gwiazdy (tarcza × `sunWellMul` + zapas) w skali Słońca. */
+export function minOrbitAu(sunRadius) {
+  return (sunRadius * SYSTEM_MAP_CONSTANTS.sunWellMul + WELL_CLEARANCE) / SOL_AU_UNITS;
+}
 
 /** Układ Słoneczny — rodzaje z listy generatora planet (`systemMap.js` ma dawne 'rocky' / 'gas'). */
 const SOL_TYPES = Object.freeze({
@@ -98,12 +107,14 @@ export function generateSystemBodies(sectorSeed, sys) {
   let a = binary ? rng.range(13, 18) : rng.range(6, 11);
   // Olbrzym (KIII) spalił wnętrze układu: orbity od ~20 AU.
   if (sys.star === 'KIII') a = rng.range(20, 28);
+  // Gorące gwiazdy (O, B, A) mają duże tarcze — pierwsza orbita za studnią gwiazdy.
+  a = Math.max(a, minOrbitAu(cls.sunRadius) + rng.range(0, 2));
   for (let i = 0; i < count && a <= MAX_ORBIT_AU; i++) {
     const tau = a / (HZ_ORBIT_AU * hz);
     const type = rng.weighted(typeWeights(tau, cls.life, neutron));
     const [r0, r1] = RADIUS_RANGE[type];
     planets.push(Object.freeze({
-      id: `${sys.id}:${i + 1}`,
+      id: `${sys.id}:p${i + 1}`,
       type,
       seed: hashU32(sectorSeed, sys.id, i + 1, type),
       orbitAU: Math.round(a * 100) / 100,

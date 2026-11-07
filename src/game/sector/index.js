@@ -14,3 +14,4 @@ export * from './sectorZone.js';
 export * from './sectorFlight.js';
 export * from './sectorExploration.js';
 export * from './sectorFleets.js';
+export * from './sectorRegistry.js';

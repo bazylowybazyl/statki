@@ -4,7 +4,7 @@ paths:
   - "dema/mapa-gwiezdna*"
   - "scripts/webgpu/mapa-gwiezdna-*.mjs"
   - "scripts/mapa-gwiezdna-*.mjs"
-  - "tests/sector.test.mjs"
+  - "tests/sector*.test.mjs"
   - "docs/PLAN-mapa-gwiezdna.md"
 ---
 
@@ -28,7 +28,7 @@ paths:
   Nigdy `Math.random` (sekwencja rozgrywki) ani `fxRandom` (obraz). Ciała układu z ziarna (sektor, id układu) — nie z
   indeksu. Zmiana, która zmienia mapę przy tym samym ziarnie → `SECTOR_VERSION` + 1 (zapis gracza ją sprawdza).
 - ID unikalne w całym sektorze: układy `sol`, nazwani po nazwie (`alfa-centauri`), proceduralni `hf-NNNN` (katalog
-  numerowany od Słońca), planety `<idUkładu>:<n>` (Słońce: `sol:<id z systemMap>`), pasy `<idUkładu>:pas<n>`, mgławice
+  numerowany od Słońca), planety `<idUkładu>:p<n>` (Słońce: `sol:<id z systemMap>`), pasy `<idUkładu>:pas<n>`, mgławice
   `mg-<n>`, burze `burza-<n>`, bramy `brama:<idUkładu>`.
 - Rodzaje planet z listy WSPÓLNEJ z generatorem planet (`PLANET_TYPES`: terran, ocean, desert, rocky, ice, volcanic,
   barren, toxic, gas, ice_giant); opis planety `{ id, type, seed, orbitAU, r }` — orbity w AU MAPY (jak
@@ -46,6 +46,12 @@ paths:
   `rng` rekordu floty → ten sam sektor i te same wejścia gracza = te same floty. Rekord floty = liczby i napisy (migawka =
   JSON); nowe pole stanu floty → inicjalizacja w `createFleets` (kształt obiektu stały, migawka je niesie). Krok bez
   alokacji poza zdarzeniami (`pushEvent`, rzadkie); gorące funkcje strefy (`zoneAt`, `nebulaDensityAt`) piszą do `out`.
+- WPIS REJESTRU UKŁADÓW (`STAR_SYSTEMS`, `src/data/starSystems.js`, reguła `uklady-gwiezdne`) z opisu sektora:
+  `systemRegistryEntry` / `sectorRegistryEntries` (`sectorRegistry.js`, funkcje czyste). Id planet w sektorze =
+  `globalBodyId(idUkładu, idLokalny)` (lokalny `p<n>`, pas `pas<n>`), w grze id lokalne. Nazwy planet bez 'earth' / 'mars' /
+  'jupiter' (dopasowanie ringu „Halo” po fragmencie nazwy). Moduł sektora NIE importuje `starSystems.js` (cykl) —
+  Słońce (`SOL_SYSTEM`, ręczne) podaje wołający w `handmade`. Nowe pole wpisu → test `tests/sectorRegistry.test.mjs`
+  (pola jak `SOL_SYSTEM`, `buildSystemMap` na planetach wpisu, orbity za studnią gwiazdy — `minOrbitAu`).
 - Mgła eksploracji to dane zapisu gracza (`serializeExploration` z ziarnem i wersją sektora; inny sektor → stan
   startowy). Obraz i UI nie pokazują nic ponad poziom (`HIDDEN` — ani gwiazdy, `SEEN` — katalog i klasa, `SCANNED` —
   nazwa i planety, `VISITED` — właściciel, kryjówka, brama).
@@ -62,7 +68,8 @@ paths:
 
 ## Jak sprawdzić
 
-- `node --test tests/sector.test.mjs` (+ `tests/demaIndex.test.mjs` przy nowym demie).
+- `node --test tests/sector.test.mjs tests/sectorRegistry.test.mjs tests/starSystems.test.mjs` (+ `tests/demaIndex.test.mjs`
+  przy nowym demie).
 - Liczby: `node scripts/mapa-gwiezdna-liczby.mjs [--seed N]` (odległości, czasy lotu, paliwo, koszt kroku flot).
 - Obraz: `node scripts/webgpu/mapa-gwiezdna-demo.mjs --out .tmp/mapa-gwiezdna/<katalog>` (headless, ?test=1,
   `__mapa.runFrames`) — zrzuty scen + `raport.json` (wypieki, statystyki, błędy konsoli — ma być 0).

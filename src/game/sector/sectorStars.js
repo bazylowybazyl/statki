@@ -8,19 +8,21 @@
 // do zakresu, w którym orbity mieszczą się w świecie 0–140 AU mapy). `sunRadius` — promień tarczy
 // gwiazdy w świecie układu [j.] (Słońce gry: 200 tys., `SYSTEM_MAP_CONSTANTS.sunRadius`). `mapSize` —
 // względny rozmiar kropki na mapie. `color` — barwa sRGB (UI i obraz), `life` — czy w strefie życia
-// mogą być planety ziemskie i oceaniczne. Moduł czysty.
+// mogą być planety ziemskie i oceaniczne, `lum` — klasa jasności do widma (V karzeł, III olbrzym), `disk` — barwy
+// tarczy w formacie rejestru układów (`star.color` { core, mid, rim } — `src/data/starSystems.js`). Moduł czysty.
 
 export const STAR_CLASSES = Object.freeze({
-  O: Object.freeze({ id: 'O', label: 'błękitny olbrzym O', color: '#9db4ff', hz: 3.2, sunRadius: 300_000, mapSize: 1.6, weight: 0.012, planets: [0, 3], life: false }),
-  B: Object.freeze({ id: 'B', label: 'gwiazda B', color: '#aabfff', hz: 2.6, sunRadius: 260_000, mapSize: 1.4, weight: 0.04, planets: [1, 4], life: false }),
-  A: Object.freeze({ id: 'A', label: 'gwiazda A', color: '#cad7ff', hz: 1.7, sunRadius: 230_000, mapSize: 1.2, weight: 0.07, planets: [2, 6], life: true }),
-  F: Object.freeze({ id: 'F', label: 'gwiazda F', color: '#f8f7ff', hz: 1.25, sunRadius: 210_000, mapSize: 1.08, weight: 0.10, planets: [3, 8], life: true }),
-  G: Object.freeze({ id: 'G', label: 'żółty karzeł G', color: '#fff1d8', hz: 1.0, sunRadius: 200_000, mapSize: 1.0, weight: 0.15, planets: [3, 9], life: true }),
-  K: Object.freeze({ id: 'K', label: 'pomarańczowy karzeł K', color: '#ffcf96', hz: 0.72, sunRadius: 170_000, mapSize: 0.9, weight: 0.22, planets: [2, 7], life: true }),
-  M: Object.freeze({ id: 'M', label: 'czerwony karzeł M', color: '#ff9c5c', hz: 0.45, sunRadius: 130_000, mapSize: 0.75, weight: 0.30, planets: [1, 5], life: true }),
-  KIII: Object.freeze({ id: 'KIII', label: 'czerwony olbrzym', color: '#ff7f45', hz: 2.2, sunRadius: 380_000, mapSize: 1.5, weight: 0.05, planets: [1, 4], life: false }),
-  D: Object.freeze({ id: 'D', label: 'biały karzeł', color: '#e2eaff', hz: 0.25, sunRadius: 60_000, mapSize: 0.6, weight: 0.045, planets: [0, 3], life: false }),
-  N: Object.freeze({ id: 'N', label: 'gwiazda neutronowa', color: '#b8e4ff', hz: 0.2, sunRadius: 25_000, mapSize: 0.55, weight: 0.012, planets: [0, 2], life: false })
+  O: Object.freeze({ id: 'O', label: 'błękitny olbrzym O', color: '#9db4ff', hz: 3.2, sunRadius: 300_000, mapSize: 1.6, weight: 0.012, planets: [0, 3], life: false, lum: 'V', disk: Object.freeze({ core: '#e6eeff', mid: '#9db4ff', rim: '#5b7cff' }) }),
+  B: Object.freeze({ id: 'B', label: 'gwiazda B', color: '#aabfff', hz: 2.6, sunRadius: 260_000, mapSize: 1.4, weight: 0.04, planets: [1, 4], life: false, lum: 'V', disk: Object.freeze({ core: '#eef3ff', mid: '#aabfff', rim: '#6f8cff' }) }),
+  A: Object.freeze({ id: 'A', label: 'gwiazda A', color: '#cad7ff', hz: 1.7, sunRadius: 230_000, mapSize: 1.2, weight: 0.07, planets: [2, 6], life: true, lum: 'V', disk: Object.freeze({ core: '#f6f8ff', mid: '#cad7ff', rim: '#93aaf0' }) }),
+  F: Object.freeze({ id: 'F', label: 'gwiazda F', color: '#f8f7ff', hz: 1.25, sunRadius: 210_000, mapSize: 1.08, weight: 0.10, planets: [3, 8], life: true, lum: 'V', disk: Object.freeze({ core: '#fffdf2', mid: '#fbf0d2', rim: '#ecc98a' }) }),
+  // G: barwy tarczy jak Słońce gry (SOL_SYSTEM.star.color w src/data/starSystems.js).
+  G: Object.freeze({ id: 'G', label: 'żółty karzeł G', color: '#fff1d8', hz: 1.0, sunRadius: 200_000, mapSize: 1.0, weight: 0.15, planets: [3, 9], life: true, lum: 'V', disk: Object.freeze({ core: '#ffe88a', mid: '#ffbe3b', rim: '#ff8c1a' }) }),
+  K: Object.freeze({ id: 'K', label: 'pomarańczowy karzeł K', color: '#ffcf96', hz: 0.72, sunRadius: 170_000, mapSize: 0.9, weight: 0.22, planets: [2, 7], life: true, lum: 'V', disk: Object.freeze({ core: '#ffe2b0', mid: '#ffb366', rim: '#ff7a26' }) }),
+  M: Object.freeze({ id: 'M', label: 'czerwony karzeł M', color: '#ff9c5c', hz: 0.45, sunRadius: 130_000, mapSize: 0.75, weight: 0.30, planets: [1, 5], life: true, lum: 'V', disk: Object.freeze({ core: '#ffc69a', mid: '#ff8a45', rim: '#e6501a' }) }),
+  KIII: Object.freeze({ id: 'KIII', label: 'czerwony olbrzym', color: '#ff7f45', hz: 2.2, sunRadius: 380_000, mapSize: 1.5, weight: 0.05, planets: [1, 4], life: false, lum: 'III', disk: Object.freeze({ core: '#ffb880', mid: '#ff7a3a', rim: '#d9401a' }) }),
+  D: Object.freeze({ id: 'D', label: 'biały karzeł', color: '#e2eaff', hz: 0.25, sunRadius: 60_000, mapSize: 0.6, weight: 0.045, planets: [0, 3], life: false, lum: '', disk: Object.freeze({ core: '#ffffff', mid: '#e2eaff', rim: '#a8c0ff' }) }),
+  N: Object.freeze({ id: 'N', label: 'gwiazda neutronowa', color: '#b8e4ff', hz: 0.2, sunRadius: 25_000, mapSize: 0.55, weight: 0.012, planets: [0, 2], life: false, lum: '', disk: Object.freeze({ core: '#ffffff', mid: '#b8e4ff', rim: '#6ab8ff' }) })
 });
 
 export const STAR_CLASS_IDS = Object.freeze(Object.keys(STAR_CLASSES));
@@ -56,4 +58,16 @@ export function starColorRgb(classId) {
   const hex = (STAR_CLASSES[classId] || STAR_CLASSES.G).color;
   const n = parseInt(hex.slice(1), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+/**
+ * Widmo gwiazdy (napis jak `SOL_SYSTEM.star.spectral` 'G2V'): klasa + podklasa 0–9 z `sub` + klasa jasności;
+ * biały karzeł 'DA<n>', gwiazda neutronowa 'PSR'.
+ */
+export function spectralFor(classId, sub) {
+  const d = Math.max(0, Math.min(9, Math.floor(sub))) | 0;
+  if (classId === 'D') return `DA${d}`;
+  if (classId === 'N') return 'PSR';
+  if (classId === 'KIII') return `K${d}III`;
+  return `${classId}${d}${(STAR_CLASSES[classId] || STAR_CLASSES.G).lum}`;
 }

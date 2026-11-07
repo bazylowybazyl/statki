@@ -13,11 +13,11 @@
 // Rozkład gwiazd nie jest równy: gęstość = tło + RAMIONA (pasma wzdłuż krzywych) + GROMADY − PUSTKI,
 // losowanie z odrzuceniem i najmniejszym odstępem (`minSpacing`). Id układów: nazwane — po nazwie
 // (`alfa-centauri`), proceduralne — katalog `hf-NNNN` numerowany od Słońca (bliżej = mniejszy numer);
-// planety `<idUkładu>:<n>`, pasy `<idUkładu>:pas<n>`, mgławice `mg-<n>`, burze `burza-<n>` — unikalne
+// planety `<idUkładu>:p<n>` (= globalBodyId), pasy `<idUkładu>:pas<n>`, mgławice `mg-<n>`, burze `burza-<n>` — unikalne
 // w całym sektorze. Moduł czysty (bez three i DOM), testy: `tests/sector.test.mjs`.
 
 import { FACTION } from '../../data/factions.js';
-import { STAR_CLASSES, BINARY_CHANCE, pickStarClass, pickCompanionClass } from './sectorStars.js';
+import { STAR_CLASSES, BINARY_CHANCE, pickStarClass, pickCompanionClass, spectralFor } from './sectorStars.js';
 import { generateSystemBodies, solBodies } from './sectorBodies.js';
 import { SectorRng, hashU32 } from './sectorRandom.js';
 
@@ -49,23 +49,24 @@ export const SECTOR_DEFAULTS = Object.freeze({
  * Prawdziwi sąsiedzi Słońca — rdzeń stały. `d` — odległość [ly] (prawdziwa; Altair, Wega i Fomalhaut
  * przysunięte do ~17–20 ly, żeby rdzeń był zwarty — prawdziwe 16,7 / 25 / 25,1), `deg` — kierunek rzutu na
  * mapę (y w dół), `star` / `companion` — klasy (Alfa Centauri A+B, Syriusz A+B, Procjon A+B, 61 Cygni
- * A+B), `faction` — właściciel (siedziby frakcji w strefie), `gate` — brama warp.
+ * A+B), `spectral` — prawdziwe widmo gwiazdy głównej, `faction` — właściciel (siedziby frakcji w strefie),
+ * `gate` — brama warp.
  */
 export const NAMED_CORE = Object.freeze([
-  { id: 'alfa-centauri', name: 'Alfa Centauri', d: 4.37, deg: 200, star: 'G', companion: 'K', faction: FACTION.TERRA_NOVA, gate: true },
-  { id: 'barnard', name: 'Gwiazda Barnarda', d: 5.96, deg: 95, star: 'M', faction: FACTION.TERRA_NOVA },
-  { id: 'wolf-359', name: 'Wolf 359', d: 7.86, deg: 20, star: 'M', faction: FACTION.MARS, gate: true },
-  { id: 'lalande', name: 'Lalande 21185', d: 8.31, deg: 300, star: 'M', faction: FACTION.MARS },
-  { id: 'syriusz', name: 'Syriusz', d: 8.6, deg: 150, star: 'A', companion: 'D', faction: FACTION.INNER_CONSORTIUM, gate: true },
-  { id: 'epsilon-eridani', name: 'Epsilon Eridani', d: 10.5, deg: 250, star: 'K', faction: FACTION.BELT_UNION, gate: true },
-  { id: 'procjon', name: 'Procjon', d: 11.46, deg: 55, star: 'F', companion: 'D', faction: FACTION.INNER_CONSORTIUM },
-  { id: '61-cygni', name: '61 Cygni', d: 11.4, deg: 330, star: 'K', companion: 'K', faction: FACTION.OUTER_CONSORTIUM, gate: true },
-  { id: 'tau-ceti', name: 'Tau Ceti', d: 11.9, deg: 178, star: 'G', faction: FACTION.BELT_UNION },
-  { id: 'epsilon-indi', name: 'Epsilon Indi', d: 11.87, deg: 222, star: 'K', faction: FACTION.OUTER_CONSORTIUM },
-  { id: 'kapteyn', name: 'Gwiazda Kapteyna', d: 12.8, deg: 118, star: 'M', faction: FACTION.MARS },
-  { id: 'altair', name: 'Altair', d: 16.7, deg: 8, star: 'A', faction: FACTION.INNER_CONSORTIUM },
-  { id: 'wega', name: 'Wega', d: 19.5, deg: 345, star: 'A', faction: FACTION.OUTER_CONSORTIUM, gate: true },
-  { id: 'fomalhaut', name: 'Fomalhaut', d: 19.8, deg: 160, star: 'A', faction: FACTION.BELT_UNION }
+  { id: 'alfa-centauri', spectral: 'G2V', name: 'Alfa Centauri', d: 4.37, deg: 200, star: 'G', companion: 'K', faction: FACTION.TERRA_NOVA, gate: true },
+  { id: 'barnard', spectral: 'M4V', name: 'Gwiazda Barnarda', d: 5.96, deg: 95, star: 'M', faction: FACTION.TERRA_NOVA },
+  { id: 'wolf-359', spectral: 'M6V', name: 'Wolf 359', d: 7.86, deg: 20, star: 'M', faction: FACTION.MARS, gate: true },
+  { id: 'lalande', spectral: 'M2V', name: 'Lalande 21185', d: 8.31, deg: 300, star: 'M', faction: FACTION.MARS },
+  { id: 'syriusz', spectral: 'A1V', name: 'Syriusz', d: 8.6, deg: 150, star: 'A', companion: 'D', faction: FACTION.INNER_CONSORTIUM, gate: true },
+  { id: 'epsilon-eridani', spectral: 'K2V', name: 'Epsilon Eridani', d: 10.5, deg: 250, star: 'K', faction: FACTION.BELT_UNION, gate: true },
+  { id: 'procjon', spectral: 'F5V', name: 'Procjon', d: 11.46, deg: 55, star: 'F', companion: 'D', faction: FACTION.INNER_CONSORTIUM },
+  { id: '61-cygni', spectral: 'K5V', name: '61 Cygni', d: 11.4, deg: 330, star: 'K', companion: 'K', faction: FACTION.OUTER_CONSORTIUM, gate: true },
+  { id: 'tau-ceti', spectral: 'G8V', name: 'Tau Ceti', d: 11.9, deg: 178, star: 'G', faction: FACTION.BELT_UNION },
+  { id: 'epsilon-indi', spectral: 'K5V', name: 'Epsilon Indi', d: 11.87, deg: 222, star: 'K', faction: FACTION.OUTER_CONSORTIUM },
+  { id: 'kapteyn', spectral: 'M1V', name: 'Gwiazda Kapteyna', d: 12.8, deg: 118, star: 'M', faction: FACTION.MARS },
+  { id: 'altair', spectral: 'A7V', name: 'Altair', d: 16.7, deg: 8, star: 'A', faction: FACTION.INNER_CONSORTIUM },
+  { id: 'wega', spectral: 'A0V', name: 'Wega', d: 19.5, deg: 345, star: 'A', faction: FACTION.OUTER_CONSORTIUM, gate: true },
+  { id: 'fomalhaut', spectral: 'A3V', name: 'Fomalhaut', d: 19.8, deg: 160, star: 'A', faction: FACTION.BELT_UNION }
 ].map((s) => Object.freeze(s)));
 
 /** Frakcje handlowe rdzenia (piraci — pogranicze). */
@@ -208,10 +209,10 @@ export function generateSector(opts = {}) {
 
   // ── 1. rdzeń stały: Słońce i nazwani sąsiedzi ─────────────────────────────────────────────────
   const raw = [];
-  raw.push({ id: 'sol', name: 'Układ Słoneczny', x: 0, y: 0, star: 'G', companion: null, named: true, faction: FACTION.TERRA_NOVA, gate: true });
+  raw.push({ id: 'sol', name: 'Układ Słoneczny', x: 0, y: 0, star: 'G', spectral: 'G2V', companion: null, named: true, faction: FACTION.TERRA_NOVA, gate: true });
   for (const n of NAMED_CORE) {
     const a = n.deg * Math.PI / 180;
-    raw.push({ id: n.id, name: n.name, x: round3(n.d * Math.cos(a)), y: round3(n.d * Math.sin(a)), star: n.star, companion: n.companion || null, named: true, faction: n.faction, gate: !!n.gate });
+    raw.push({ id: n.id, name: n.name, x: round3(n.d * Math.cos(a)), y: round3(n.d * Math.sin(a)), star: n.star, spectral: n.spectral, companion: n.companion || null, named: true, faction: n.faction, gate: !!n.gate });
   }
   for (const s of raw) grid.add(s.x, s.y);
 
@@ -362,6 +363,8 @@ export function generateSector(opts = {}) {
       y: s.y,
       star: s.star,
       starLabel: cls.label,
+      // Widmo: nazwani — prawdziwe, reszta — klasa + podklasa z ziarna układu.
+      spectral: s.spectral || spectralFor(s.star, hashU32(seed, s.id, 'widmo') % 10),
       companion: s.companion,
       zone: s.zone,
       faction: s.faction || null,
