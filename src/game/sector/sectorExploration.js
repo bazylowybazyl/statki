@@ -7,7 +7,7 @@
 //   2 ZESKANOWANY — nazwa, planety (rodzaje), pasy — po `scanTime` s w zasięgu skanu;
 //   3 ODWIEDZONY — wszystko (właściciel, kryjówka piratów, brama), po wejściu w studnię układu
 //                (`ZONE.jumpRadius`) albo do układu.
-// Rdzeń zamieszkany jest znany od startu (3) — mapy rdzenia; pogranicze startuje od 1 (w mgławicy ≥ 0,45 — 0).
+// Rdzeń zamieszkany jest znany od startu (3) — mapy rdzenia; pogranicze startuje od 1 (w mgławicy ≥ 0,55 — 0).
 // Stan to dane ZAPISU GRACZA (`serializeExploration` — tablica poziomów w kolejności układów + wersja
 // i ziarno sektora). Moduł czysty; `updateExploration` bez alokacji poza zdarzeniami (rzadkie).
 
@@ -18,7 +18,7 @@ export const EXPLORE = Object.freeze({ HIDDEN: 0, SEEN: 1, SCANNED: 2, VISITED: 
 export const EXPLORE_LABELS = Object.freeze(['ukryty', 'gwiazda', 'zeskanowany', 'odwiedzony']);
 
 /** Próg gęstości mgławicy przy gwieździe, od którego układ pogranicza startuje ukryty. */
-export const HIDDEN_NEBULA_DENSITY = 0.45;
+export const HIDDEN_NEBULA_DENSITY = 0.55;
 
 export function createExploration(sector) {
   const n = sector.systems.length;
