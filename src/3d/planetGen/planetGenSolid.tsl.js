@@ -57,12 +57,13 @@ function craterSum(U, C, ps, mare = null, fromK = 2, onAfterBig = null) {
   return { h, ej, ray, fl };
 }
 /** Rekordy oktaw kraterów: gęstość (0…1), pierwsza częstość, próg złożonych [km], świeżość, promienie do oktawy. */
-function craterRecords(ctx, { density = 1, f0 = 5, rMax = 0.42, complexKm = 18, sizeMin = 4.5, fresh = 0.08, mareDamp = 0.3, raysTo = 2, falloff = 1 }) {
+function craterRecords(ctx, { density = 1, f0 = 5, rMax = 0.42, complexKm = 18, sizeMin = 8, fresh = 0.08, mareDamp = 0.3, raysTo = 2, falloff = 1 }) {
   const out = {};
   for (let k = 0; k < CRATER_OCTAVES; k++) {
     const f = f0 * Math.pow(2, k);
     const cellKm = ctx.rKm / f;
     const diamKm = 2 * rMax * cellKm;
+    // średnica < sizeMin tekseli — oktawa wyłączona (różnice centralne normalnych na kraterze 4–5 tekseli dają romby)
     const on = diamKm >= sizeMin * ctx.texKm;
     const dens = on ? Math.min(0.95, density * (0.3 + 0.13 * k) * Math.pow(falloff, k)) : 0;
     const complex = Math.min(1, Math.max(0, (rMax * cellKm - complexKm) / (complexKm * 2)));
@@ -108,22 +109,25 @@ function volcanoProfile(dir, a, b) {
   return { h, r, flank: inv(0.0, 1.3, r) };
 }
 
-/** Pochylenie |∇h| [km/km] z sąsiednich tekseli pola. */
+/**
+ * Pochylenie |∇h| [km/km] z sąsiednich tekseli pola — operator Sobela 3 × 3 (izotropowy: krzyż ±1 teksel dawał na
+ * małych kraterach odpowiedź w kształcie rombu).
+ */
 function slopeAt(F, U, C) {
-  const hE = fieldAt(F, U, C.ix.add(1), C.iy).x;
-  const hW = fieldAt(F, U, C.ix.sub(1), C.iy).x;
-  const hN = fieldAt(F, U, C.ix, C.iy.add(1)).x;
-  const hS = fieldAt(F, U, C.ix, C.iy.sub(1)).x;
+  const h = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
+  const gx = h(1, -1).add(h(1, 0).mul(2.0)).add(h(1, 1)).sub(h(-1, -1)).sub(h(-1, 0).mul(2.0)).sub(h(-1, 1)).mul(0.125);
+  const gy = h(-1, 1).add(h(0, 1).mul(2.0)).add(h(1, 1)).sub(h(-1, -1)).sub(h(0, -1).mul(2.0)).sub(h(1, -1)).mul(0.125);
   const cosLat = max(cos(C.lat), U.uRes.w.mul(PI));
-  const dE = hE.sub(hW).div(U.uGeo.x.mul(4 * PI).mul(cosLat).mul(U.uRes.z));
-  const dN = hN.sub(hS).div(U.uGeo.x.mul(2 * PI).mul(U.uRes.w));
+  const dE = gx.div(U.uGeo.x.mul(2 * PI).mul(cosLat).mul(U.uRes.z));
+  const dN = gy.div(U.uGeo.x.mul(PI).mul(U.uRes.w));
   return { s: sqrt(dE.mul(dE).add(dN.mul(dN))), dE, dN };
 }
-/** Krzywizna (laplasjan wysokości [km] na teksel) — doliny < 0, grzbiety > 0. */
+/** Krzywizna (laplasjan 3 × 3 izotropowy, krok 2 teksele) [km] — doliny < 0, grzbiety > 0. */
 function curvatureAt(F, U, C, hC) {
-  const sum = fieldAt(F, U, C.ix.add(2), C.iy).x.add(fieldAt(F, U, C.ix.sub(2), C.iy).x)
-    .add(fieldAt(F, U, C.ix, C.iy.add(2)).x).add(fieldAt(F, U, C.ix, C.iy.sub(2)).x);
-  return sum.mul(0.25).sub(hC);
+  const h = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
+  const axis = h(2, 0).add(h(-2, 0)).add(h(0, 2)).add(h(0, -2));
+  const diag = h(2, 2).add(h(-2, 2)).add(h(2, -2)).add(h(-2, -2));
+  return axis.mul(2.0).add(diag).div(12.0).sub(hC);
 }
 
 // Kontynenty: kształt z fbm na PODWÓJNIE odkształconej dziedzinie (wybrzeża fraktalne, zatoki, półwyspy), płyty —
@@ -258,7 +262,7 @@ function earthColor(type) {
       land.assign(mix(land, forestC.mul(float(1.0).add(nP.mul(0.2))), smoothstep(0.36, 0.6, M.add(nP.mul(0.08))).mul(smoothstep(0.16, 0.3, T))));
       land.assign(mix(land, U.uTundra.mul(float(1.0).add(nP.mul(0.15))), inv(0.13, 0.3, T)));
       // doliny wilgotniejsze (ciemniej), grzbiety suche (jaśniej) — krzywizna z pola
-      land.mulAssign(float(1.0).add(clamp(curv.mul(-8.0), -0.15, 0.15)));
+      land.mulAssign(float(1.0).add(clamp(curv.mul(-4.0), -0.1, 0.1)));
       const rocky = max(smoothstep(0.14, 0.4, sl.s), smoothstep(0.25, 0.65, f.z).mul(smoothstep(0.5, 2.2, h))).toVar();
       land.assign(mix(land, U.uRock.mul(float(1.0).add(nF.mul(0.22))), rocky.mul(0.8)));
       const snowLine = float(0.5).add(max(T, 0.0).mul(5.8));
@@ -389,7 +393,7 @@ function desertColor(F) {
     const streak = pgFbm(vec3(C.dir.x, C.dir.y.mul(8.0), C.dir.z).mul(9.0).add(U.uSeed.xyz), 4);
     col.mulAssign(float(1.0).add(streak.mul(0.08)));
     // suche koryta: doliny (krzywizna) ciemniejsze
-    col.mulAssign(float(1.0).sub(smoothstep(0.004, 0.03, curv.negate()).mul(0.18).mul(U.uDk.y)));
+    col.mulAssign(float(1.0).sub(smoothstep(0.012, 0.08, curv.negate()).mul(0.15).mul(U.uDk.y)));
     // sól i solanka
     const salt = smoothstep(0.02, 0.4, f.y.add(inv(U.uQ.y.sub(0.01), U.uQ.y.add(0.03), f.w).mul(0.8)));
     col.assign(mix(col, U.uSalt.mul(float(1.0).add(n2.mul(0.08))), clamp(salt, 0.0, 1.0)));
@@ -493,7 +497,8 @@ function rockyColor(F) {
     const streak = pgFbm(vec3(C.dir.x, C.dir.y.mul(6.0), C.dir.z).mul(11.0).add(wq), 4);
     col.mulAssign(float(1.0).add(streak.mul(0.1)).add(n3.mul(0.06)));
     // doliny i dna kraterów — ciemny piasek; stoki — jaśniejsza skała; zbocza wulkanów — bazalt
-    col.assign(mix(col, U.uDark, smoothstep(0.004, 0.03, curv.negate()).mul(0.35)));
+    // dna dolin i kraterów — ciemny piasek (miękko: ostry próg krzywizny rysował 1-tekselowe schodkowe obwódki)
+    col.assign(mix(col, U.uDark, smoothstep(0.015, 0.09, curv.negate()).mul(0.25)));
     col.assign(mix(col, U.uBright.mul(0.85), smoothstep(0.15, 0.4, sl.s).mul(0.35)));
     col.assign(mix(col, U.uBasalt.mul(0.9), f.z.mul(0.5)));
     // czapy polarne: lód z ciemnymi rowami spiralnymi (osady warstwowe)

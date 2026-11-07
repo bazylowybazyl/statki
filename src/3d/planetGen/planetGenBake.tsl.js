@@ -99,14 +99,14 @@ export function buildNormalGraph(F) {
   const node = Fn(() => {
     const C = bakeCoords(U);
     const hC = fieldAt(F, U, C.ix, C.iy).x;
-    const hE = fieldAt(F, U, C.ix.add(1), C.iy).x;
-    const hW = fieldAt(F, U, C.ix.sub(1), C.iy).x;
-    const hN = fieldAt(F, U, C.ix, C.iy.add(1)).x;
-    const hS = fieldAt(F, U, C.ix, C.iy.sub(1)).x;
+    // Sobel 3 × 3 (izotropowy — krzyż ±1 teksel rysował małe kratery jako romby)
+    const hh = (dx, dy) => fieldAt(F, U, C.ix.add(dx), C.iy.add(dy)).x;
+    const gx = hh(1, -1).add(hh(1, 0).mul(2.0)).add(hh(1, 1)).sub(hh(-1, -1)).sub(hh(-1, 0).mul(2.0)).sub(hh(-1, 1)).mul(0.125);
+    const gy = hh(-1, 1).add(hh(0, 1).mul(2.0)).add(hh(1, 1)).sub(hh(-1, -1)).sub(hh(0, -1).mul(2.0)).sub(hh(1, -1)).mul(0.125);
     const cosLat = max(cos(C.lat), U.uRes.w.mul(PI)).toVar();
     const R = U.uGeo.x;
-    const dE = hE.sub(hW).div(R.mul(4 * PI).mul(cosLat).mul(U.uRes.z));
-    const dN = hN.sub(hS).div(R.mul(2 * PI).mul(U.uRes.w));
+    const dE = gx.div(R.mul(2 * PI).mul(cosLat).mul(U.uRes.z));
+    const dN = gy.div(R.mul(PI).mul(U.uRes.w));
     // nachylenie przycięte (uNorm.z — największe |∇h|·przesadzenie): bez tego stoki kraterów i gór świecą daleko za
     // terminatorem (graf gry liczy światło z normalnej mapy bez samocienia)
     const g = vec2(dE, dN).mul(U.uNorm.x).toVar();
