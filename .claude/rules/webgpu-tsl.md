@@ -243,6 +243,11 @@ Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołuj
   instancje stoją na danych z pierwszej klatki. Atrybut instancji zmieniany w biegu → `InstancedInterleavedBuffer`
   podany do węzła wprost i `needsUpdate` (albo zakresy) na TYM buforze.
 
+- **Pułapka r183 z mapy gwiezdnej (2026-11-07):** (43) `AdditiveBlending` bez `premultipliedAlpha` to w WebGPU
+  (SrcAlpha, One) (`WebGPUPipelineUtils`) — `fragmentNode` materiału addytywnego zwracający `vec4(rgb, 0)` NIE dokłada
+  nic, bez błędu (gwiazdy i mgławice `dema/mapa-gwiezdna-obraz.js` nie rysowały się wcale). Addytywny emiter zwraca
+  alfę 1 (albo alfę = siłę), czynniki (One, One) — `premultipliedAlpha: true` / `blendAddytywnePremul` (pułapka 13).
+
 ## Rozgrzewka pipeline'ów (`Core3D.warmup`)
 
 - **Rozgrzewka pipeline'ów (zadanie 11, `src/3d/rozgrzewka.js`, `Core3D.warmup`):** w WebGPU klucz pipeline'u to graf materiału + układ atrybutów + cel (format, próbki, głębia) + światła passa + typ kamery + stan (mieszanie, głębia, strona), więc rozgrzewa się PRAWDZIWE obiekty w PRAWDZIWYM celu. Moduł dopisuje się JEDNĄ linią (przy imporcie też — wpisy czekają na urządzenie, a funkcja `objects` woła się dopiero w chwili rozgrzewki):
