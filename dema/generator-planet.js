@@ -312,6 +312,7 @@ function describeLook(spec) {
   const bits = [];
   if (L.style) bits.push(L.style);
   if (L.palette && typeof L.palette === 'string') bits.push(L.palette);
+  if (spec.type === 'ocean') bits.push(`woda: ${L.tint}`);
   if (L.water > 0) bits.push(`ocean ${(L.water * 100).toFixed(0)}%`);
   if (L.vegetation && spec.type === 'terran') bits.push(`roślinność: ${L.vegetation}`);
   if (spec.type === 'terran' || spec.type === 'ocean') bits.push(L.temp < -0.1 ? 'zimna' : (L.temp > 0.1 ? 'gorąca' : 'umiarkowana'));
@@ -382,17 +383,25 @@ addEventListener('keydown', (e) => {
   if (e.key === 'd' || e.key === 'D') { S.doba = S.doba > 0 ? 0 : 0.15; $('s-doba').value = S.doba; $('o-doba').textContent = S.doba.toFixed(2); }
 });
 
+// Siatka w obszarze bez panelu (panel po prawej): środek kadru przesunięty w lewo o pół szerokości panelu.
+function panelWidth() {
+  const p = document.getElementById('panel');
+  if (!p || document.body.classList.contains('test') || document.body.classList.contains('hide') || innerWidth < 720) return 0;
+  return p.offsetWidth + 20;
+}
 function gridFrame() {
   const W = innerWidth;
   const H = innerHeight;
+  const pw = panelWidth();
   const needW = COLS * SPACING + 0.2;
   const needH = ROWS * SPACING + 0.5;
-  const s = Math.max(needW / W, needH / H);
-  return { halfW: W * s / 2, halfH: H * s / 2, s };
+  const s = Math.max(needW / Math.max(W - pw, 200), needH / H);
+  const cx = (W - pw) / 2;                 // środek siatki na ekranie [px]
+  return { left: -cx * s, right: (W - cx) * s, halfH: H * s / 2, s, cx };
 }
 function pickTile(cx, cy) {
   const f = gridFrame();
-  const x = (cx - innerWidth / 2) * f.s;
+  const x = (cx - f.cx) * f.s;
   const y = -(cy - innerHeight / 2) * f.s;
   for (const t of S.tiles) {
     const p = t.body.group.position;
@@ -409,15 +418,13 @@ function frame(now) {
   last = now;
   const W = innerWidth;
   const H = innerHeight;
-  if (canvas.width !== Math.round(W * DPR) || canvas.height !== Math.round(H * DPR)) {
-    renderer.setSize(W, H, false);
-    over.width = W * DPR; over.height = H * DPR;
-  }
+  if (canvas.width !== Math.round(W * DPR) || canvas.height !== Math.round(H * DPR)) renderer.setSize(W, H, false);
+  if (over.width !== Math.round(W * DPR) || over.height !== Math.round(H * DPR)) { over.width = Math.round(W * DPR); over.height = Math.round(H * DPR); }
   const bodies = S.view === 'grid' ? S.tiles.map((t) => t.body) : (S.close ? [S.close.body] : []);
   let cam;
   if (S.view === 'grid') {
     const f = gridFrame();
-    gridCam.left = -f.halfW; gridCam.right = f.halfW; gridCam.top = f.halfH; gridCam.bottom = -f.halfH;
+    gridCam.left = f.left; gridCam.right = f.right; gridCam.top = f.halfH; gridCam.bottom = -f.halfH;
     gridCam.updateProjectionMatrix();
     cam = gridCam;
     // słońce w płaszczyźnie gry (XY), z boku: kąt `pora` od kierunku widoku (+Z)
@@ -449,6 +456,16 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+// Podrodzaj do podpisu: styl, paleta olbrzyma, barwa wody, roślinność.
+function subLabel(spec) {
+  const L = spec.look;
+  if (L.style) return L.style;
+  if (typeof L.palette === 'string') return L.palette;
+  if (spec.type === 'ocean') return `woda: ${L.tint}`;
+  if (L.vegetation) return `roślinność: ${L.vegetation}`;
+  return '';
+}
+
 function drawLabels(cam) {
   octx.setTransform(DPR, 0, 0, DPR, 0, 0);
   octx.clearRect(0, 0, innerWidth, innerHeight);
@@ -458,12 +475,12 @@ function drawLabels(cam) {
   octx.textAlign = 'center';
   for (const t of S.tiles) {
     const p = t.body.group.position;
-    const x = innerWidth / 2 + p.x / f.s;
+    const x = f.cx + p.x / f.s;
     const y = innerHeight / 2 - (p.y - 1.18) / f.s;
     octx.fillStyle = '#8f9cb0';
     octx.fillText(`${PLANET_GEN_TYPE[t.spec.type].name}`, x, y);
     octx.fillStyle = '#5c6878';
-    octx.fillText(`${t.spec.look.style || t.spec.look.palette || t.spec.look.vegetation || ''} · ${t.spec.seed}`, x, y + 13);
+    octx.fillText(`${subLabel(t.spec)} · ${t.spec.seed}`, x, y + 13);
   }
 }
 
