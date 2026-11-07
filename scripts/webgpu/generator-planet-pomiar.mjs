@@ -5,6 +5,7 @@
 //
 //   node scripts/webgpu/generator-planet-pomiar.mjs [--out .tmp/generator-planet/pomiar] [--roz 1024,2048,4096]
 //        [--powt 3] [--uklad terran,rocky,desert,gas,gas,ice_giant,ice,barren] [--port 5441]
+//        [--razem 1]   (kompilacja przejść WSZYSTKICH rodzajów jednym wywołaniem — równolegle w tle, jak ekran ładowania)
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, repo, writeJson } from './wspolne.mjs';
@@ -36,7 +37,12 @@ try {
     const timed = !!r.backend.trackTimestamp;
     const types = ${JSON.stringify(TYPES)};
     const out = { timed, compile: {}, bake: {}, system: null };
-    // kompilacja na zimno (rodzaj po rodzaju; przejścia wspólne liczą się przy pierwszym rodzaju z powierzchnią)
+    // kompilacja na zimno: wszystkie naraz (--razem) albo rodzaj po rodzaju (przejścia wspólne przy pierwszym)
+    if (${args.razem ? 'true' : 'false'}) {
+      const t0 = performance.now();
+      await B.compile(types);
+      out.compileAll = performance.now() - t0;
+    }
     for (const t of types) {
       const t0 = performance.now();
       await B.compile([t]);
@@ -84,6 +90,7 @@ try {
 }
 const mb = (b) => (b / 1048576).toFixed(1);
 console.log(`czas GPU ze znaczników: ${result.timed ? 'tak' : 'NIE'}`);
+if (result.compileAll != null) console.log(`kompilacja wszystkich przejść naraz (na zimno): ${result.compileAll.toFixed(0)} ms`);
 console.log('rodzaj        kompil. ms | ' + sizes.map((s) => `${s}: GPU ms / ściana ms / MB`).join(' | '));
 for (const t of TYPES) {
   const row = sizes.map((s) => { const b = result.bake[t][s]; return `${b.gpuMs?.toFixed(1) ?? '—'} / ${b.wallMs.toFixed(0)} / ${mb(b.bytes)}`; });

@@ -1,6 +1,6 @@
 // src/3d/planetGen/planetGenSpec.js
 //
-// OPIS PLANETY Z ZIARNA (moduł czysty, bez three): `describePlanet({ type, seed, r, ...nadpisania })` daje pełny
+// OPIS PLANETY Z ZIARNA (bez GPU; three tylko pośrednio — `profileMinima` z gasGiantAtmosphere.js): `describePlanet({ type, seed, r, ...nadpisania })` daje pełny
 // zestaw parametrów — wygląd rodzaju (`look`: ukształtowanie, klimat, paleta, podrodzaj), strojenie materiału gry
 // (`surface`: jasność, połysk, bloom — jak DirectPlanet.init), mgiełkę (`haze` — uHazeStrength / Color / Beta grafu
 // powierzchni), poświatę (`halo` — powłoka planet tła, `ringAtm` — dysk limbu planet przy ringu), chmury, światła
