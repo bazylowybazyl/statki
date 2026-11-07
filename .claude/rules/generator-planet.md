@@ -59,6 +59,9 @@ paths:
 - Odczyt GPU → CPU (`readRenderTargetPixelsAsync`, `onSubmittedWorkDone`) czeka na takt urządzenia: przy rysowanych
   klatkach w headless ~200 ms na odczyt — stąd jedna próba na UKŁAD. Czas GPU mierzy `generator-planet-pomiar.mjs`
   (klatki wstrzymane, znaczniki czasu); czas w rogu dema przy siatce jest orientacyjny.
+- Pochodne pola (normalne, nachylenie, krzywizna w barwach) — operatory izotropowe (Sobel 3 × 3, laplasjan 3 × 3):
+  krzyż ±1 / ±2 teksele daje na kraterach kilku tekseli odpowiedź w kształcie rombu, a ostry próg krzywizny —
+  1-tekselowe schodkowe obwódki. Najmniejsza oktawa kraterów ma średnicę ≥ 8 tekseli (`craterRecords`).
 - Stałe krawędzie `smoothstep` rosnąco (pułapka 6 — pilnuje test); odwrócone przez `inv(lo, hi, x)`.
 - Funkcje z `setLayout` płaskie (pułapka 35): `pgCraterOctave` nie woła szumu z layoutem — nieregularność obrysu
   z sinusów kierunku.
