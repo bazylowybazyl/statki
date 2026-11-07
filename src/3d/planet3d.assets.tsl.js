@@ -852,6 +852,22 @@ const BUILDERS = {
   sunCorona: buildSunCoronaGraph
 };
 const GRAPHS = {};
+// Rodzaje dopisane z zewnątrz (registerPlanetFlowKind) — nazwy materiałów poza zamrożonym PLANET_MATERIAL_NAMES.
+const EXTRA_MATERIAL_NAMES = {};
+
+/**
+ * Dopisuje rodzaj grafu POWIERZCHNI z barwą dnia z przepływu (jak 'jupiter' / 'saturn': graf 'surface' 1:1, tylko
+ * próbka mapy dnia z `color`) — dla gazowych olbrzymów generatora planet (src/3d/planetGen/planetGenGas.js: jeden
+ * graf 'genGas' dla wszystkich planet generatora, dane planety per obiekt). Rodzaje gry i ich WGSL bez zmian; graf
+ * budowany przy pierwszym materiale rodzaju. Drugie wywołanie z tym samym rodzajem nic nie robi.
+ */
+export function registerPlanetFlowKind(kind, { keys, color, name }) {
+  if (BUILDERS[kind]) return;
+  BUILDERS[kind] = () => buildSurfaceGraph({ keys, color });
+  EXTRA_MATERIAL_NAMES[kind] = name || `PlanetSurface_${kind}`;
+  PLANET_TSL_STATS.materials[kind] = 0;
+  PLANET_TSL_STATS.builds[kind] = 0;
+}
 
 /** Graf rodzaju ('surface' | 'jupiter' | 'saturn' | 'clouds' | 'atmosphere' | 'ringAtmosphere' | 'sun' | 'sunCorona') — budowany raz. */
 export function getPlanetGraph(kind) {
@@ -886,7 +902,7 @@ export class PlanetBodyNodeMaterial extends THREE.NodeMaterial {
     const graph = getPlanetGraph(kind);
     this.isPlanetBodyNodeMaterial = true;
     this.planetKind = kind;
-    this.name = PLANET_MATERIAL_NAMES[kind];
+    this.name = PLANET_MATERIAL_NAMES[kind] ?? EXTRA_MATERIAL_NAMES[kind];
     this.uniforms = uniforms;
     this.lights = false;
     this.fog = false;
