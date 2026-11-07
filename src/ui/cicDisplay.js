@@ -1671,7 +1671,8 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const sunLabelSize = Math.round(8 + blend * 4);
   ctx.font = blend > 0.5 ? `bold ${sunLabelSize}px monospace` : `${sunLabelSize}px monospace`;
   ctx.textAlign = 'center';
-  ctx.fillText('SOL', sunScr.x, sunScr.y + sunScreenR + 12 + blend * 4);
+  // podpis gwiazdy układu (src/data/starSystems.js — `label`; strona wpisuje go do SUN)
+  ctx.fillText(SUN.label || 'SOL', sunScr.x, sunScr.y + sunScreenR + 12 + blend * 4);
   ctx.restore();
 
   // === PLANET ORBITS & PLANETS ===

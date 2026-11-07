@@ -94,6 +94,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Mózgi NPC liczą się też w klatkach bez kroku fizyki — mózg pisze tylko ZAMIARY (intencja lotu, cel, wieże); mózg całkujący ruch sam musi zostać w kroku (`aiOffStepEligible`).
 - Logika nie czyta klawiszy ani padów wprost: akcje (`Input.*`, rejestr `GameActions`); nowa akcja = wpis w `INPUT_ACTIONS` + układy + `GameActions`.
 - Nowy rodzaj obiektu na radarze → rekord w `radarFeed.collect` (nie rysunek w kokpicie).
+- Logika zakładająca konkretne ciało Układu Słonecznego (Ziemia jako dom, start, POWRÓT, ring po id) → przez układ strony `CURRENT_SYSTEM` / `SYSTEM_HOME` (`src/data/starSystems.js`, reguła `uklady-gwiezdne`); treść ręczna (fabuła, ekonomia z tabel, ringi) tylko przy `CURRENT_SYSTEM.handmade`; id ciał zostają lokalne dla układu.
 - Ruch statku przy Ziemi, Marsie i Jowiszu (spawn, teleport, autopilot) omija płytę ringu — przelot tylko tranzytami, a na Jowiszu (ring w budowie) także przerwami; kod zakładający pełny pierścień albo 4 tranzyty doliczy przerwy z `layout.construction` (reguła `ring-halo`); przy porcie bez ringu — bryły budowli doku (`PortDocks.constrainShip` / `freeSpot` / `pushCruiseObstacles`, reguła `doki-portow`).
 - Kawałek bazy piratów łamie się przez `storyBaseBreak` / `pirateBaseWorld`; konfiguracja pola pasa idzie przez `beltWorld`, nie `asteroidBelt.field`.
 - Nowa budowla w płaszczyźnie gry, w którą mogą wlecieć okręty → przeszkody lotu AI: kapsuły w `statics` indeksu (`rebuildWreckIndex` w takcie AI, `capsuleFromPolygon`; wzór `pirateBaseObstacles`) — mózgi i rozkazy RTS objeżdżają je trasą (`src/ai/staticRoutes.js`); nowy lot NPC sterowany wprost `setFlightArrive` nikogo nie omija — przez `capitalArriveTo` (reguła `flota-ai`).
@@ -134,6 +135,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–42), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
 | `core3d` | Core3D: klatka i passy, post i bloom, efekty GPU (`Core3D.fx`), maska słońca i cień kadłubów, wydajność renderu |
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
+| `uklady-gwiezdne` | Układy gwiezdne: rejestr `starSystems.js`, jeden układ na stronę (inny = przeładowanie), dom gracza, treść ręczna tylko w Sol, założenia Sol do zdjęcia |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
 | `niebo` | Wypiekacz nieba, tło kosmosu |
 | `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz w budowie — archetyp BUDOWA): świat ringów, kolizje, render |

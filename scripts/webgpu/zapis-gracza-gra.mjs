@@ -35,7 +35,8 @@ const check = (name, cond, detail) => {
 // Gra swobodna (bez kampanii) — zapis pozycji dotyczy gry swobodnej; kampania wznawia od początku misji.
 await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('sc_story_campaign', '0'); } catch (e) {}" });
 
-const menuReady = '!!window.PlayerSave && !!document.getElementById("btn-mode-single") && !!document.getElementById("btn-load-game")';
+// Menu gotowe na NOWEJ stronie: moduł gry wykonany (PlayerSave, ziarno świata), bez znacznika starej strony.
+const menuReady = '!window.__zapisStaraStrona && document.readyState === "complete" && !!window.PlayerSave && Number.isFinite(window.WORLD_SEED) && !!document.getElementById("btn-load-game")';
 const gameRunning = (n) => `(window.__frameId | 0) > ${n}`;
 
 try {
@@ -44,9 +45,12 @@ try {
   const seed1 = await ev('window.WORLD_SEED');
   check('bez zapisu „Wczytaj” wyłączony', await ev('document.getElementById("btn-load-game").disabled === true'));
 
+  // Stary zapis podłożony przed „Nową grą” — start gry ma go skasować (autozapis może już wpisać nowy, ze świeżą datą).
+  await ev(`localStorage.setItem('game', JSON.stringify({ version: 1, savedAt: 1, worldSeed: window.WORLD_SEED, systemId: 'sol', player: { x: 1, y: 1, credits: 5 } }))`);
   await ev('document.getElementById("btn-mode-single").click()');
   await waitFor(cdp, gameRunning(30), 240000);
-  check('nowa gra: zapis gracza pusty (Nowa gra kasuje)', await ev('localStorage.getItem("game") === null'));
+  const afterNew = await ev('JSON.parse(localStorage.getItem("game") || "null")');
+  check('nowa gra kasuje stary zapis gracza', !afterNew || afterNew.savedAt > 1, afterNew ? { savedAt: afterNew.savedAt, credits: afterNew.player?.credits } : null);
 
   // Stan do zapisu: kredyty, ładownia, EXP, miejsce 3 tys. j. od startu, kurs.
   const want = await ev(`(() => {
@@ -62,10 +66,13 @@ try {
   const placed = await ev('window.PlayerSave.player()');
 
   // Przeładowanie strony (beforeunload też zapisuje) → menu → „Wczytaj”.
+  await ev('window.__zapisStaraStrona = true');
   await cdp.send('Page.reload', { ignoreCache: false });
   await waitFor(cdp, menuReady, 180000);
   const seed2 = await ev('window.WORLD_SEED');
   check('ziarno świata przeżywa F5', seed2 === seed1, { seed1, seed2 });
+  const readBack = await ev('(() => { const r = window.PlayerSave.read(); return { ok: !!r.save, reason: r.reason, system: window.CURRENT_SYSTEM_ID, credits: r.save?.player?.credits }; })()');
+  check('zapis czytelny po F5', readBack.ok, readBack);
   const btn = await ev('(() => { const b = document.getElementById("btn-load-game"); return { disabled: b.disabled, hint: b.dataset.hint, tag: b.querySelector(".mm-go, .mm-tag")?.textContent }; })()');
   check('z zapisem „Wczytaj” włączony', btn.disabled === false, btn);
 

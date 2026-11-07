@@ -18,9 +18,11 @@
 // Kadłub (uszkodzenia belek), NPC i wraki nie są zapisywane — po wczytaniu kadłub jest cały.
 // Bez DOM i three (testy node: tests/playerSave.test.mjs).
 
+import { DEFAULT_STAR_SYSTEM_ID } from '../data/starSystems.js';
+
 export const PLAYER_SAVE_KEY = 'game';
 export const PLAYER_SAVE_VERSION = 1;
-export const DEFAULT_SYSTEM_ID = 'sol';
+export const DEFAULT_SYSTEM_ID = DEFAULT_STAR_SYSTEM_ID;
 
 function finite(value, fallback = 0) {
   const n = Number(value);
@@ -123,7 +125,8 @@ export function buildPlayerSave(input = {}) {
 
 /**
  * Zapis z localStorage (obiekt albo tekst JSON) → `{ save, reason }`. `save` = null, gdy: brak, śmieci, inna wersja,
- * inne ziarno świata niż `opts.worldSeed` (zapis z innego układu planet — pozycja trafiłaby w inne miejsce),
+ * inne ziarno świata niż `opts.worldSeed` (zapis z innego układu planet — pozycja trafiłaby w inne miejsce), inny
+ * układ gwiezdny niż `opts.systemId` (strona zbudowała inny układ),
  * pozycja poza światem (`opts.bounds`: { w, h }). `reason` — powód odrzucenia do dziennika.
  */
 export function parsePlayerSave(raw, opts = {}) {
@@ -136,6 +139,10 @@ export function parsePlayerSave(raw, opts = {}) {
   if (data.version !== PLAYER_SAVE_VERSION) return { save: null, reason: `wersja ${data.version}` };
   if (opts.worldSeed !== undefined && (data.worldSeed >>> 0) !== (opts.worldSeed >>> 0)) {
     return { save: null, reason: `inne ziarno świata (${data.worldSeed})` };
+  }
+  // Strona zbudowała inny układ gwiezdny (np. `?uklad=`) — pozycja z zapisu leży w innym układzie.
+  if (opts.systemId !== undefined && String(data.systemId || DEFAULT_SYSTEM_ID) !== String(opts.systemId)) {
+    return { save: null, reason: `inny układ (${data.systemId})` };
   }
   const p = data.player;
   if (!p || typeof p !== 'object' || !Number.isFinite(Number(p.x)) || !Number.isFinite(Number(p.y))) {

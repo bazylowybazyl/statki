@@ -887,6 +887,7 @@
     import { formatLocalDistance, formatVelocity, resolveWorldUnitsPerAu } from './src/config/units.js';
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
     import { buildSystemMap, SYSTEM_MAP_CONSTANTS, normalizeWorldSeed, resolveWorldSeed, systemMapAngleForSeed, sunWellRadius } from './src/data/systemMap.js';
+    import { getStarSystem, resolveStarSystemId, systemHome } from './src/data/starSystems.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -1071,7 +1072,7 @@
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import { assignHardpointEntries, restoreWeaponStock, serializeWeaponStock } from "./src/game/loadoutSave.js";
     import {
-      PLAYER_SAVE_KEY, PLAYER_SAVE_VERSION, DEFAULT_SYSTEM_ID, buildPlayerSave, parsePlayerSave, campaignCheckpoint,
+      PLAYER_SAVE_KEY, PLAYER_SAVE_VERSION, buildPlayerSave, parsePlayerSave, campaignCheckpoint,
       describePlayerSave
     } from "./src/game/playerSave.js";
     import { MISSION01_PHASES } from "./src/game/story/missions/mission01.js";
@@ -7156,16 +7157,29 @@
 
 
 
+    // =============== Układ gwiezdny (src/data/starSystems.js) ===============
+    // Strona buduje JEDEN układ przy starcie: `?uklad=<id>`, potem układ z zapisu gracza (`game`, playerSave.js), potem
+    // Układ Słoneczny. Inny układ = przeładowanie strony. Ciała mają id lokalne dla układu ('earth') — drugi układ nigdy
+    // nie jest załadowany obok.
+    const CURRENT_SYSTEM_INFO = (() => {
+      let savedSystemId = null;
+      try { savedSystemId = JSON.parse(localStorage.getItem(PLAYER_SAVE_KEY) || 'null')?.systemId ?? null; } catch { savedSystemId = null; }
+      return resolveStarSystemId(location.search, savedSystemId);
+    })();
+    const CURRENT_SYSTEM = getStarSystem(CURRENT_SYSTEM_INFO.id);
+    // Dom gracza w układzie (start gry swobodnej, POWRÓT, port wezwań, holownik) — null w układzie bez domu.
+    const SYSTEM_HOME = systemHome(CURRENT_SYSTEM);
+    window.CURRENT_SYSTEM_ID = CURRENT_SYSTEM.id;
+    if (CURRENT_SYSTEM_INFO.rejected) console.warn(`[układ] nieznany układ „${CURRENT_SYSTEM_INFO.rejected}” — buduję ${CURRENT_SYSTEM.id}`);
+
     // =============== Słońce, planety i stacje ===============
-    // r — promień tarczy (SYSTEM_MAP_CONSTANTS.sunRadius, 200 tys. j.): ten sam dla obrazu (DirectSun — kula w płaszczyźnie
-    // gry), radaru, CIC i studni (sunWellRadius — strefa 'sun', studnie skoku, przeszkoda tras).
+    // r — promień tarczy (gwiazda układu: SOL — SYSTEM_MAP_CONSTANTS.sunRadius, 200 tys. j.): ten sam dla obrazu (DirectSun —
+    // kula w płaszczyźnie gry), radaru, CIC i studni (sunWellRadius — strefa 'sun', studnie skoku, przeszkoda tras).
     const SUN = {
-      x: WORLD.w / 2, y: WORLD.h / 2, r: SYSTEM_MAP_CONSTANTS.sunRadius,
-      color: {
-        core: '#ffe88a',   // jasno-żółty rdzeń
-        mid: '#ffbe3b',   // pomarańcz-żółć
-        rim: '#ff8c1a'    // ciepła krawędź tarczy
-      },
+      x: WORLD.w / 2, y: WORLD.h / 2, r: CURRENT_SYSTEM.star.r,
+      // podpis gwiazdy na radarze i w CIC
+      label: CURRENT_SYSTEM.label,
+      color: { ...CURRENT_SYSTEM.star.color },
       corona: {
         rays: 72,           // ile "igieł"
         jitter: 0.35,       // nieregularność
@@ -7226,6 +7240,7 @@
       // tutaj wpisana, a wszystko poza grą przepisywało jej liczby ręcznie, więc
       // każda zmiana skali po cichu unieważniała dokumentację i pomiary.
       const { auInWorldUnits, planets } = buildSystemMap(getOuterAsteroidEdgeAU(), {
+        planets: CURRENT_SYSTEM.planets,
         planetScale: PLANET_SCALE,
         sunRadius: SUN.r,
         // kąty z ziarna świata (T3) — nie losowe przy każdym starcie
@@ -7348,7 +7363,7 @@
         features.push({
           id: 'sun',
           type: 'sun',
-          label: 'SOL',
+          label: SUN.label || 'SOL',
           entity: sun,
           // tarcza słońca (DirectSun rysuje kulę o promieniu SUN.r w płaszczyźnie gry)
           radius: Math.max(100, Number(sun.r) || 0),
@@ -8099,7 +8114,8 @@
     }
 
     if (!hasSavedShipPosition) {
-      const earthStation = stations.find(st => st.id === 'earth');
+      // stacja domu gracza w układzie (SOL: Ziemia) — bez domu Atlas zostaje przy gwieździe (alignWorldToCenter)
+      const earthStation = SYSTEM_HOME ? stations.find(st => st.id === SYSTEM_HOME.stationId) : null;
       if (earthStation) {
         // Spawn player just beyond Earth's gravity well boundary (not inside the orbit).
         // Player needs to fly IN to approach Earth — wchodzisz do systemu, nie rodzisz się w dokach.
@@ -9174,7 +9190,8 @@
     // obraca się dziobami do Ziemi, ładuje skok i znika w szczelinach — wypada z gry bez wraku,
     // łupu i wybuchu.
     function getSupportWarpHome() {
-      const earth = planets.find(p => p?.id === 'earth');
+      // planeta domu gracza w układzie (SOL: Ziemia); bez domu — wsparcie bez portu macierzystego
+      const earth = SYSTEM_HOME ? planets.find(p => p?.id === SYSTEM_HOME.planetId) : null;
       return earth && Number.isFinite(earth.x) && Number.isFinite(earth.y) ? earth : null;
     }
 
@@ -16499,8 +16516,8 @@
     // startem. Kampania wznawia od POCZĄTKU bieżącej misji (campaignCheckpoint): misja 1 — dok K-7, misja 2 — skok przez
     // misję 1 (świat jak po niej, wynik misji 1 z zapisu, bez drugiej nagrody — StoryGame `restore`). Podzielony ekran
     // nie zapisuje. Kadłub (rany belek), NPC i wraki nie są zapisywane — po wczytaniu kadłub jest cały.
-    // AGENT: `systemId` = DEFAULT_SYSTEM_ID ('sol'), dopóki gra ma jeden układ — pod wiele układów zapis wie, który
-    // układ zbudować po przeładowaniu strony.
+    // `systemId` = układ tej strony (CURRENT_SYSTEM, src/data/starSystems.js): przy starcie strony układ z zapisu wybiera,
+    // który układ zbudować; zapis z innego układu niż zbudowany (`?uklad=`) nie wczytuje się.
     // ============================================================
     const PLAYER_SAVE_MISSIONS = Object.freeze([
       Object.freeze({ phases: MISSION01_PHASES }),
@@ -16536,7 +16553,7 @@
       const story = StoryGame.active || StoryGame.completed;
       return buildPlayerSave({
         worldSeed: WORLD_SEED,
-        systemId: DEFAULT_SYSTEM_ID,
+        systemId: CURRENT_SYSTEM.id,
         savedAt: Date.now(),
         playTimeSec,
         player: {
@@ -16603,7 +16620,7 @@
     function readPlayerSave() {
       let raw = null;
       try { raw = localStorage.getItem(PLAYER_SAVE_KEY); } catch { return { save: null, reason: 'brak dostępu' }; }
-      return parsePlayerSave(raw, { worldSeed: WORLD_SEED, bounds: { w: WORLD.w, h: WORLD.h } });
+      return parsePlayerSave(raw, { worldSeed: WORLD_SEED, systemId: CURRENT_SYSTEM.id, bounds: { w: WORLD.w, h: WORLD.h } });
     }
 
     /** Start gry: bez wczytanego zapisu stary zapis gracza znika (jak ekonomia — „Nowa gra” od zera). */
@@ -34530,7 +34547,9 @@
       // Gospodarka: nowa gra od zera (stary zapis znika), chyba że zapis wczytano przed startem.
       beginEconomySession();
       // Kampania (dok K-7, intro, misja 1 — src/game/story/) albo swobodna gra; z zapisu — jak w zapisie.
-      const storyCampaign = loadCheckpoint ? loadCheckpoint.mode === 'campaign' : (startGameCampaign && StoryOptions.campaign);
+      // Fabuła istnieje tylko w układzie z treścią ręczną (src/data/starSystems.js — `handmade`: Układ Słoneczny).
+      const storyCampaign = !!CURRENT_SYSTEM.handmade
+        && (loadCheckpoint ? loadCheckpoint.mode === 'campaign' : (startGameCampaign && StoryOptions.campaign));
       // Faza startu kampanii: początek misji z zapisu albo skok dev (?story=faza).
       const storyStartPhase = loadCheckpoint?.mode === 'campaign' ? loadCheckpoint.startPhase : StoryOptions.devStartPhase();
       // Gracz z zapisu PRZED przygotowaniem sceny workera (ringi przy statku) i skrzydłem (initFleet — przy Atlasie).
