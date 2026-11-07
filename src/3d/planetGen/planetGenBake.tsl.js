@@ -193,17 +193,23 @@ export function buildNightGraph(F) {
       // regiony zaludnienia (duże plamy — nie wszędzie, gdzie można)
       const region = smoothstep(-0.15, 0.45, pgFbm(ps.mul(2.6), 4)).toVar();
       const pop = hab.mul(region).mul(civ).toVar();
-      // metropolie: komórki ~1/28 rad, jasny rdzeń, przedmieścia z drobnych komórek
-      const cBig = pgCells(ps.mul(U.uCiv2.y), 0.9).toVar();
-      const bigHas = step(float(1.0).sub(pop.mul(1.6)), cBig.z);
-      const core = exp(cBig.x.mul(cBig.x).mul(-55.0)).mul(bigHas).mul(cBig.w.mul(0.6).add(0.4));
+      // METROPOLIE: obszar zabudowy (zasięg gaussowski, promień z haszu, brzeg postrzępiony) wypełniony drobnym
+      // ziarnem świateł — nie pojedyncza plamka; jaśniej w środku
+      const jit = pgFbm(ps.mul(U.uCiv2.y.mul(1.5)), 3).mul(0.12);
+      const cBig = pgCells(ps.mul(U.uCiv2.y).add(jit), 0.9).toVar();
+      const bigHas = step(float(1.0).sub(pop.mul(1.5)), cBig.z);
+      const rad = mix(0.12, 0.42, cBig.w).mul(pop.mul(0.6).add(0.6));
+      const urban = exp(cBig.x.div(rad).pow2().negate()).mul(bigHas).toVar();
+      const grain = pgCells(ps.mul(U.uCiv2.y.mul(9.0)), 1.0).toVar();
+      const dots = exp(grain.x.mul(grain.x).mul(-26.0)).mul(grain.z.mul(0.7).add(0.3));
+      const metro = urban.mul(dots.mul(0.75).add(urban.mul(0.45)));
+      // MIASTECZKA: rzadkie punkty w zaludnionych regionach, gęściej przy brzegu
       const cSmall = pgCells(ps.mul(U.uCiv2.y.mul(4.3)), 0.95).toVar();
-      const smallHas = step(float(1.0).sub(pop.mul(1.2).add(core.mul(0.8))), cSmall.z);
-      const town = exp(cSmall.x.mul(cSmall.x).mul(-70.0)).mul(smallHas).mul(cSmall.w.mul(0.7).add(0.3));
-      const cTiny = pgCells(ps.mul(U.uCiv2.y.mul(13.0)), 1.0).toVar();
-      const tinyHas = step(float(1.0).sub(pop.mul(0.9).add(core.mul(1.2)).add(town.mul(0.5))), cTiny.z);
-      const spark = exp(cTiny.x.mul(cTiny.x).mul(-60.0)).mul(tinyHas);
-      const L = core.mul(0.9).add(town.mul(0.55)).add(spark.mul(0.35)).mul(U.uCiv2.z).toVar();
+      const smallHas = step(float(1.0).sub(pop.mul(0.55).mul(coastF.mul(0.8).add(0.4))), cSmall.z);
+      const town = exp(cSmall.x.mul(cSmall.x).mul(-40.0)).mul(smallHas).mul(cSmall.w.mul(0.5).add(0.2));
+      // łuna gęstych regionów (wsie, drogi — rozmyte, bez linii)
+      const rural = smoothstep(0.35, 1.0, pop).mul(0.05).mul(pgFbm(ps.mul(40.0), 3).mul(0.5).add(0.5));
+      const L = metro.add(town.mul(0.5)).add(rural).mul(U.uCiv2.z).toVar();
       // barwa: sód (ciepła) ↔ LED (chłodniejsza) z haszu metropolii
       const warm = vec3(1.0, 0.62, 0.26);
       const cold = vec3(0.86, 0.86, 0.95);
