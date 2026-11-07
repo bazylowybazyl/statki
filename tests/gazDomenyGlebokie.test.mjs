@@ -128,6 +128,30 @@ test('GasVolume: instancje domen głębokich tylko w bryłach tła (kamera w pud
   assert.equal(vol.deepMeshes.out.geo.instanceCount, 1);
 });
 
+test('GasVolume: domena under — flaga i rzadszy obraz w slotK, czyszczone przy ponownym użyciu slotu, marsz buduje się z flagą', () => {
+  const g = new GasGrid({ N: 16, NZ: 8, slots: 3, jacobi: 5, noise3D: noiseTex(), rng: rng(11), maxHulls: 8, hullBands: 3 });
+  const vol = new GasVolume({ grid: g, noise3D: noiseTex(), curl3D: noiseTex() });
+  const M = vol.createMeshes({});
+  g.acquire(0, 0, 0, 30, { size: 128, now: 0, reuse: false });
+  g.acquire(3000, 0, 40, 30, { size: 128, now: 0, reuse: false, under: true, thin: 0.5 });
+  g.simulate({ compute() {} }, 1 / 60);
+  assert.equal(vol.updateMeshes(0, 0, 0), 2);
+  const zwykla = g.slots.find((s) => s.active && !s.under);
+  const pod = g.slots.find((s) => s.active && s.under);
+  const k = vol.U.slotK.array;
+  assert.deepEqual([k[zwykla.index].y, k[zwykla.index].z], [0, 0], 'zwykła domena: podział na płaszczyźnie gry');
+  // flaga, nie wysokość: warstwa nie może zależeć od tego, czy kamera 3D jest nad pudłem
+  assert.deepEqual([k[pod.index].y, k[pod.index].z], [1, 0.5], 'under: flaga i thin');
+  pod.active = false;
+  g.acquire(3000, 0, 40, 30, { size: 128, now: 0, reuse: false });
+  vol.updateMeshes(0, 0, 0);
+  for (const s of g.slots) if (s.active) assert.deepEqual([k[s.index].y, k[s.index].z], [0, 0], 'slot użyty ponownie bez under');
+  for (const m of [M.back, M.front]) {
+    const b = buildMesh(m);
+    assert.ok((b.fragmentShader.match(/var<uniform>/g) || []).length <= 12, 'bufory uniformów marszu');
+  }
+});
+
 function fakeCore() {
   const cameraOrtho = new THREE.OrthographicCamera(-800, 800, 450, -450, 1, 400000);
   cameraOrtho.position.set(0, 0, 150000);

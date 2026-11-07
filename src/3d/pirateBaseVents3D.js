@@ -633,11 +633,11 @@ export class PirateBaseVents3D {
     } else {
       if (typeof fx._freeIn === 'function' && fx._freeIn(0) < 0) { this.stats.noSlot++; return false; }
       // nad płaszczyzną (głowa wieży, szczyt szybu) statyka bazy — pryzmaty przez całą wysokość domeny — blokowałaby
-      // strumień: domena bez rastra statyki (GasSlot.noStatics)
+      // strumień: domena bez rastra statyki (GasSlot.noStatics). Bez tego gaz ze szczytu szybu (z = 220, w górę) odbijał się od niewidocznych ścian starych brył i krążył.
       const A = {
         size: D, life: L.gasLinger, carrier: [cvx, -cvy, cvz], tint: L.steamTint, now: g.time, reuse: false, tag: VENT_TAG,
-        priority: 0, host, fire: 0, fadeTime: L.gasFade, baseDecay: L.gasDecay, tier: 0, k: 1, noStatics: z > 260, noHulls: false,
-        ambient: L.gasAmbient
+        priority: 0, host, fire: 0, fadeTime: L.gasFade, baseDecay: L.gasDecay, tier: 0, k: 1, noStatics: z > 260 || (z > 150 && nz > 0.5), noHulls: false,
+        ambient: L.gasAmbient, under: true
       };
       slot = g.acquire(cx, -cy, cz, r, A);
     }

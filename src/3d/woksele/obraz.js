@@ -86,6 +86,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const aDane = new THREE.StorageInstancedBufferAttribute(new Float32Array(4 * (BAZA_WZ + ILE_WZ)), 4);
   const aCzastki = new THREE.StorageInstancedBufferAttribute(new Float32Array(4 * 2 * CAP_G), 4);
   const aLicz = new THREE.StorageInstancedBufferAttribute(new Uint32Array(1), 1);
+  // Gra: obrót drobin gruzu (kąt, prędkość kątowa), osobny bufor — układ wokCzastki czyta też dalekie miasto dema. Uwaga użytkownika 2026-11-07: gruz w locie
+  // „wiruje jak szalony”, bo kąt z drogi rósł z prędkością spadku (2–3 tys. j./s pod koniec lotu na skałę: 50–100 rad/s).
+  const aKatG = wGrze ? new THREE.StorageInstancedBufferAttribute(new Float32Array(2 * CAP_G), 2) : null;
   zapiszWzory(aDane.array, 4 * BAZA_WZ);
 
   const wWezR = storage(A.wez, 'vec4', 3 * MAX).setName('wokWez').toReadOnly();
@@ -98,6 +101,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const wCzastkiW = storage(aCzastki, 'vec4', 2 * CAP_G).setName('wokCzastki');
   const wCzastkiR = storage(aCzastki, 'vec4', 2 * CAP_G).setName('wokCzastki').toReadOnly();
   const wLiczA = storage(aLicz, 'uint', 1).setName('wokLiczObraz').toAtomic();
+  const wKatGW = wGrze ? storage(aKatG, 'vec2', CAP_G).setName('wokKatGruzu') : null;
+  const wKatGR = wGrze ? storage(aKatG, 'vec2', CAP_G).setName('wokKatGruzu').toReadOnly() : null;
   const wZarR = storage(A.zar, 'float', MAX).setName('wokZar').toReadOnly();
 
   const uKlatka = uniform(0).setName('uObrKlatka'); // numer następnej klatki fizyki: wiek żaru i błysku
@@ -210,6 +215,8 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
       const h = haszT(i.add(uint(12345)));
       const os = v3(normalize(vec3(u1(h, 0), u1(h, 10), u1(h, 20).add(1e-3))));
       const ka = fv(length(vi).mul(uDt).div(uDx.mul(0.9)));
+      // Gra: toczenie (v / r) tylko do 0,5–2 rad/s z hasza węzła. W locie blok koziołkuje spokojnie, zamiast kręcić się z prędkością spadku (75 rad/s przy 2700 j./s).
+      if (wGrze) ka.assign(min(ka, float(0.5).add(czesc(haszT(i.add(uint(6789))), 4, 255).mul(1.5)).mul(uDt)));
       const c = fv(cos(ka));
       const s = fv(sin(ka));
       const obroc = (w) => w.mul(c).add(cross(os, w).mul(s)).add(os.mul(dot(os, w).mul(float(1).sub(c))));
@@ -285,13 +292,14 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     wRamaW.element(i3.add(uint(2))).assign(vec4(F[2], float(bity)));
   })().compute(MAX).setName('wokObraz');
 
-  // ── kGruz, § 4.5 ── Balistyka w polu sceny, grunt z tłumieniem 0,75, bez kontaktu z hałdą. Stałe pole wystarcza w scenach dema: gałęzi punktu i obrotu tu nie ma (AGENT: planetoida z § 10.4 doda je przez uGPunktG).
+  // ── kGruz, § 4.5 ── Balistyka w polu sceny (to samo pole co węzły: solver.gPole), grunt z tłumieniem 0,75, bez kontaktu z hałdą.
   const kGruz = Fn(() => {
     const q2 = uv_(uint(2).mul(instanceIndex));
     const a = v4(wCzastkiW.element(q2));
     If(a.w.lessThanEqual(0), () => { Return(); });
     const b = v4(wCzastkiW.element(q2.add(uint(1))));
-    const v = v3(b.xyz.add(uGStala.mul(uSkG).mul(uDt)));
+    // To samo pole co węzły (w grze rozbieżne, przy skale ku jej środkowi): inaczej gruz spadał prosto w dół, a węzły obok niego wachlarzem.
+    const v = v3(b.xyz.add(solver.gPole(a.xyz, b.xyz).mul(uDt)));
     const x = v3(a.xyz.add(v.mul(uDt)));
     const zG = fv(uGruntZ.add(2));
     If(x.z.lessThan(zG), () => {
@@ -309,6 +317,15 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     });
     wCzastkiW.element(q2).assign(vec4(x, a.w));
     wCzastkiW.element(q2.add(uint(1))).assign(vec4(v, b.w));
+    if (wGrze) {
+      // Obrót: w locie stała prędkość z hasza slotu 0,8–3 rad/s, przy toczeniu po pokładzie v / r, więc drobina staje razem z obrotem. Kąt zawinięty do 2π.
+      const q = instanceIndex;
+      const kat0 = fv(wKatGW.element(q).x);
+      const omH = fv(float(0.8).add(czesc(haszT(q.add(uint(31337))), 4, 255).mul(2.2)));
+      const om = fv(min(omH, length(v).div(max(a.w, 0.5))));
+      const TAU = 2 * Math.PI;
+      wKatGW.element(q).assign(vec2(fract(kat0.add(om.mul(uDt)).div(TAU)).mul(TAU), om));
+    }
   })().compute(CAP_G).setName('wokGruz');
 
   const kernele = { kObraz, kGruz };
@@ -856,7 +873,9 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     const nf = v3(normalGeometry);
     const x = v3(a.xyz.add(b.xyz.mul(uTau)));
     const sk = v3(vec3(float(0.7).add(czesc(hq, 2, 63).mul(0.6)), float(0.7).add(czesc(hq, 8, 63).mul(0.6)), float(0.5).add(czesc(hq, 14, 63).mul(0.6))));
-    const kat = fv(x.x.add(x.y).add(x.z).mul(0.02).mul(float(1).add(u1(hq, 20))));
+    // Demo: kąt z drogi. Gra: kąt z kGruz (stała prędkość w locie, v / r przy toczeniu) i dalej o ω · τ do chwili klatki.
+    const kat = wGrze ? fv(wKatGR.element(q).x.add(wKatGR.element(q).y.mul(uTau)))
+      : fv(x.x.add(x.y).add(x.z).mul(0.02).mul(float(1).add(u1(hq, 20))));
     const os = v3(normalize(vec3(u1(hq, 1), u1(hq, 11), u1(hq, 21).add(1e-3))));
     const c = fv(cos(kat));
     const s = fv(sin(kat));
@@ -1035,6 +1054,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
     aRama.needsUpdate = true;
     aCzastki.array.fill(0);
     aCzastki.needsUpdate = true;
+    if (aKatG) { aKatG.array.fill(0); aKatG.needsUpdate = true; }
     aLicz.array[0] = 0;
     aLicz.needsUpdate = true;
     kObraz.setCount(n);

@@ -8,8 +8,9 @@
 //   prog    — próg punktów habitatu: trafienie w ćwiartkę bębna H-W (lastHit + applyDamageToStation 1/8 punktów) →
 //             kawałek odpada jako ciało i wybucha (onBaseDamageStep → storyBaseBreak + window.makeReactorBlow 520),
 //   lancuch — rozpad habitatu misji bez zabijania budowli (StoryGame._chainExplosion: ćwiartki bębna, szyb, część
-//             techniczna i 8 sektorów dysku w ~4 s) i REAKCJA ŁAŃCUCHOWA w rurach od habitatu (_fuelChain 'H': front
-//             ognia przez pomosty, okręty przy zaworach, zbiorniki, magazyn — do ~12 s); na końcu zbliżenie na habitat,
+//             techniczna i 8 sektorów dysku w ~4 s) i REAKCJA ŁAŃCUCHOWA od zbiorników wołana wprost, bo habitat rur nie
+//             zapala (_fuelChain 'P': front ognia przez pomosty, okręty przy zaworach, magazyn — do ~12 s); na końcu
+//             zbliżenie na habitat,
 //   stacja  — rozpad stacji planety (Wenus: applyDamageToStation do zera → Destruction3D → reactorFactory),
 //   pustka  — śmierć gracza bez rdzenia (triggerReactorBlow3D, size 282) w pustej przestrzeni,
 //   dysze   — wybuch za rufą Atlasa na pełnym ciągu (dopalacz): światła dysz w dymie (etap B — siatka świateł w gazie),
@@ -203,7 +204,7 @@ try {
     await camAt(g.x, g.y, 0.085);
     // Rozpad habitatu misji bez zabijania budowli (śmierć habitatu uruchamia sceny fabuły — świat stoi na czas dialogu);
     // waitFuel false — obietnica nie czeka na ogień w rurach (harmonogram biegnie dalej zegarem gry).
-    await ev(`(() => { const S = window.StoryGame; S._chainExplosion(S.site, { waitFuel: false }); return { frozen: !!S.worldFrozen }; })()`);
+    await ev(`(() => { const S = window.StoryGame; S._chainExplosion(S.site, { waitFuel: false }); S._fuelChain(S.site, 'P'); return { frozen: !!S.worldFrozen }; })()`);
     const rows = [];
     let tNow = 0;
     for (const at of [0.5, 1.4, 2.2, 3.0, 4.2, 5.5, 8, 12]) {
