@@ -733,6 +733,34 @@ test('skok dev ?story=scout: Atlas w punkcie wyjścia z warpa, sygnatura masy; p
   assert.equal(w.masses.size, 0, 'reset fabuły zdejmuje sygnatury misji');
 });
 
+test('zapis gracza: wznowienie od misji 2 — wynik misji 1 z zapisu, bez drugiej nagrody za pominiętą misję 1', async () => {
+  const w = makeWorld();
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  const exp0 = S.progress.exp;
+  const m1 = { stopped: 5, launched: 7, total: 12, boss: 'escaped', chain: 0, warehouse: false, fuelChain: false };
+  S.beginNewGame({ tutorial: false, startPhase: 'repair', restore: { campaign: { m1, bossEscaped: true } } });
+  await flush();
+  await frames(S, w, 30 * 9, view);
+  assert.ok(['repair', 'counter'].includes(S.phase), `misja 2 od początku (faza ${S.phase})`);
+  assert.equal(w.credits, 0, 'nagroda misji 1 jest już w zapisanych kredytach');
+  assert.equal(w.rep.length, 0, 'reputacja misji 1 też');
+  assert.equal(S.progress.exp, exp0, 'i EXP');
+  assert.deepEqual(S.campaign.m1, m1, 'wynik misji 1 z zapisu');
+  assert.equal(S.campaign.bossEscaped, true);
+  assert.equal(S.completed, false);
+  S.abort('test');
+  // ten sam skok bez zapisu (dev ?story=repair) liczy nagrodę pominiętej misji jak dawniej
+  const w2 = makeWorld();
+  S.init(w2.deps);
+  S.beginNewGame({ tutorial: false, startPhase: 'repair' });
+  await flush();
+  await frames(S, w2, 30 * 9, view);
+  assert.ok(w2.credits > 0, 'skok dev: nagroda misji 1');
+  S.abort('test');
+});
+
 test('przerwanie i nowa misja usuwają poprzednie cele bojowe', async () => {
   const w = makeWorld(), S = StoryGame;
   S.init(w.deps);

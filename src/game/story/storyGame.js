@@ -76,7 +76,12 @@ export const StoryGame = {
   active: false,          // kampania w toku
   tutorial: true,
   mission: null,
-  startPhase: null,       // skok dev (?story=faza)
+  startPhase: null,       // skok dev (?story=faza) albo początek misji z zapisu gracza
+  completed: false,       // rozdział ukończony (runCampaign → 'complete') — zapis gracza: dalej gra swobodna
+  // Wznowienie z zapisu gracza (src/game/playerSave.js, beginNewGame opts.restore): { campaign: { m1, bossEscaped } } —
+  // misje przed `startPhase` przechodzą w trybie „pominięte” bez nagród (są już w zapisanych kredytach i EXP), a stan
+  // między misjami wraca z zapisu w chwili wejścia w `startPhase`.
+  _restore: null,
   time: 0,                // czas rzeczywisty UI
 
   // --- kino ---
@@ -175,12 +180,15 @@ export const StoryGame = {
     this.introFromMenu = !!opts.introFromMenu;
     this.tutorial = opts.tutorial !== false;
     this.startPhase = STORY_PHASES.includes(opts.startPhase) ? opts.startPhase : null;
+    this._restore = opts.restore && this.startPhase ? opts.restore : null;
     this.cine.pendingStart = opts.menuPose || null;
     this.mission = MISSION01;
     const ship = this.deps.ship();
     if (ship && !ship.cloak) ship.cloak = createCloak();
     this.runner.start(runCampaign, this._api()).then((result) => {
-      if (result === 'complete') this.deps.log?.('Rozdział 1 ukończony.', 'mission');
+      if (result !== 'complete') return;
+      this.completed = true;
+      this.deps.log?.('Rozdział 1 ukończony.', 'mission');
     });
     return true;
   },
@@ -218,6 +226,8 @@ export const StoryGame = {
     this.phase = null;
     // Stan kampanii między misjami (np. wynik pojedynku z supercapitalem herszta w misji 1 → misja 2).
     this.campaign = { m1: null, bossEscaped: false };
+    this.completed = false;
+    this._restore = null;
     for (const id of this._fogMassIds) this.deps?.clearMassSignature?.(id);
     this._fogMassIds.clear();
     // Fregata zwiadu dana przez kampanię (api.scout.grant) — poza kampanią ładownia pusta (dev ?zwiad zostaje).
@@ -1597,6 +1607,11 @@ export const StoryGame = {
 
       rewards: {
         grant(r) {
+          // Wznowienie z zapisu: nagrody pomijanych misji są już w zapisanych kredytach, reputacji i EXP.
+          if (self._restoreSkipping()) {
+            const rp = rankProgress(self.progress);
+            return { credits: 0, rep: [], exp: 0, totalExp: self.progress.exp, rank: rp.name, nextRank: rp.next, rankFrac: rp.frac, promoted: [] };
+          }
           const credits = Math.max(0, Math.round(Number(r.credits) || 0));
           if (credits) d.addCredits?.(credits);
           const rep = [];
@@ -1630,7 +1645,20 @@ export const StoryGame = {
 
   _onPhase(name) {
     this.phase = name;
+    // Wznowienie z zapisu: wejście w misję, od której gra wraca — stan między misjami z zapisu (nadpisuje wynik
+    // pominiętej misji 1, który policzyła jej ścieżka „pominięte”).
+    if (this._restore && name === this.startPhase) {
+      const c = this._restore.campaign;
+      if (c) Object.assign(this.campaign, { m1: c.m1 ? { ...c.m1 } : this.campaign.m1, bossEscaped: !!c.bossEscaped });
+      this._restore = null;
+    }
     this.deps.onPhase?.(name);
+  },
+
+  /** Wznowienie z zapisu, a faza bieżąca leży przed `startPhase` (misja pomijana). */
+  _restoreSkipping() {
+    if (!this._restore || !this.startPhase) return false;
+    return STORY_PHASES.indexOf(this.phase) < STORY_PHASES.indexOf(this.startPhase);
   }
 };
 

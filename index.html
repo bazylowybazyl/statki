@@ -9,7 +9,7 @@
        Ctrl+F5 czysci tylko cache HTTP, a "usuwanie ciastek" nie rusza localStorage, wiec stary
        uklad hardpointow z edytora (hpEditor.v1) przezywal kazde odswiezenie i wygrywal z nowym
        ukladem z src/data/hardpointEditorDefaults.js. Stad byl potrzebny tryb incognito.
-       Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=economy | ?reset=dev
+       Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=economy | ?reset=game | ?reset=dev
        Z konsoli: resetGameSave()  /  resetGameSave('hp') — potem F5. -->
   <script>
     (function () {
@@ -18,6 +18,8 @@
         ship: ['hpEditor.v1', 'loadout', 'engineVfxTune.v1'],
         // Ekonomia (E7): magazyny rynków, wyrwy pasa, flota frakcji, stacje gracza.
         economy: ['economy'],
+        // Zapis gracza (src/game/playerSave.js): pozycja, kredyty, ładownia, reputacja, doświadczenie, kampania.
+        game: ['game'],
         // Panele deweloperskie, layouty HUD i ustawienia grafiki.
         dev: [
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
@@ -25,7 +27,7 @@
           'sc_camera_frame', 'sc_gfx', 'sc_gfx_auto', 'sc_space_dust'
         ]
       };
-      const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.economy, ...SAVE_KEYS.dev];
+      const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.economy, ...SAVE_KEYS.game, ...SAVE_KEYS.dev];
 
       function keysForScope(scope) {
         switch (String(scope || 'all').trim().toLowerCase()) {
@@ -41,6 +43,8 @@
           case 'panele': return SAVE_KEYS.dev;
           case 'economy':
           case 'ekonomia': return SAVE_KEYS.economy;
+          case 'game':
+          case 'gracz': return SAVE_KEYS.game;
           default: return ALL_KEYS;
         }
       }
@@ -166,8 +170,8 @@
           <button id="btn-new-game" class="menu-btn-styled mm-item primary" data-hint="Jeden dowódca albo co-op na podzielonym ekranie">
             <span class="mm-idx"></span><span class="mm-label">Nowa gra</span><span class="mm-go">&#9656;</span>
           </button>
-          <button id="btn-load-game" class="menu-btn-styled mm-item" disabled data-hint="Zapis stanu gry — wkrótce">
-            <span class="mm-idx"></span><span class="mm-label">Wczytaj</span><span class="mm-tag">wkrótce</span>
+          <button id="btn-load-game" class="menu-btn-styled mm-item" disabled data-hint="Brak zapisu gry">
+            <span class="mm-idx"></span><span class="mm-label">Wczytaj</span><span class="mm-tag">brak zapisu</span>
           </button>
           <button id="btn-options" class="menu-btn-styled mm-item" data-hint="Jakość grafiki, dźwięk, kamera">
             <span class="mm-idx"></span><span class="mm-label">Opcje</span><span class="mm-go">&#9656;</span>
@@ -882,7 +886,7 @@
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { formatLocalDistance, formatVelocity, resolveWorldUnitsPerAu } from './src/config/units.js';
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
-    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, resolveWorldSeed, systemMapAngleForSeed, sunWellRadius } from './src/data/systemMap.js';
+    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, normalizeWorldSeed, resolveWorldSeed, systemMapAngleForSeed, sunWellRadius } from './src/data/systemMap.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -1066,6 +1070,13 @@
     import { buildWreckFields } from "./src/game/wreckFields.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import { assignHardpointEntries, restoreWeaponStock, serializeWeaponStock } from "./src/game/loadoutSave.js";
+    import {
+      PLAYER_SAVE_KEY, PLAYER_SAVE_VERSION, DEFAULT_SYSTEM_ID, buildPlayerSave, parsePlayerSave, campaignCheckpoint,
+      describePlayerSave
+    } from "./src/game/playerSave.js";
+    import { MISSION01_PHASES } from "./src/game/story/missions/mission01.js";
+    import { MISSION02_PHASES } from "./src/game/story/missions/mission02.js";
+    import { rankIndexForExp } from "./src/game/story/progression.js";
     // WYPOSAŻENIE — karty konfiguracji, automat refitu, moduły, ekran (docs/PLAN-fitowanie.md).
     import { FIT_PRESETS, FIT_PRESET_IDS, FIT_KIT_STOCK, FIT_KIT_PARTS, FIT_START_PRESET } from "./src/data/fitPresets.js";
     import {
@@ -1558,6 +1569,7 @@
       areFactionsHostile,
       applyReputationChange,
       canDockWithFaction,
+      clampReputation,
       createInitialReputation,
       getDefaultStationFaction,
       getFactionColor,
@@ -7195,7 +7207,14 @@
     const WORLD_SEED_INFO = (() => {
       let raw = null;
       try { raw = localStorage.getItem('economy'); } catch { raw = null; }
-      return resolveWorldSeed(location.search, raw, WORLD_SEED_SAVE_VERSION);
+      const info = resolveWorldSeed(location.search, raw, WORLD_SEED_SAVE_VERSION);
+      if (info.source !== 'new' || new URLSearchParams(location.search).get('ziarno')) return info;
+      // Bez zapisu ekonomii (inna wersja — świat ruchu od zera) ziarno niesie zapis gracza (`game`, playerSave.js):
+      // zapisana pozycja Atlasa ma trafić w ten sam układ planet.
+      let game = null;
+      try { game = JSON.parse(localStorage.getItem(PLAYER_SAVE_KEY) || 'null'); } catch { game = null; }
+      const seed = game && game.version === PLAYER_SAVE_VERSION ? normalizeWorldSeed(game.worldSeed) : null;
+      return seed === null ? info : { seed, source: 'save' };
     })();
     const WORLD_SEED = WORLD_SEED_INFO.seed;
     window.WORLD_SEED = WORLD_SEED;
@@ -16469,6 +16488,173 @@
       try { localStorage.removeItem(ECONOMY_SAVE_KEY); } catch { /* prywatne okno */ }
       economySaveCache = null;
       return 'new';
+    }
+
+    // ============================================================
+    // ZAPIS GRACZA (2026-11-07) — src/game/playerSave.js, klucz `game` (tests/playerSave.test.mjs)
+    // Pozycja i kurs (ostatnie miejsce w zwykłym locie — nie w skoku ani hipercruisie), kredyty, ładownia, ładunki
+    // górnicze, reputacja, doświadczenie i kampania (faza, stan między misjami) — obok `loadout` (fit, kadłuby) i `economy`
+    // (rynki, ziarno świata). Autozapis co ECONOMY_AUTOSAVE_MS (tickPlayerSave w pętli) i przy wyjściu ze strony.
+    // „Nowa gra” kasuje zapis (jak ekonomię); „Wczytaj” w menu (loadGameFromSave) wczytuje ekonomię i gracza przed
+    // startem. Kampania wznawia od POCZĄTKU bieżącej misji (campaignCheckpoint): misja 1 — dok K-7, misja 2 — skok przez
+    // misję 1 (świat jak po niej, wynik misji 1 z zapisu, bez drugiej nagrody — StoryGame `restore`). Podzielony ekran
+    // nie zapisuje. Kadłub (rany belek), NPC i wraki nie są zapisywane — po wczytaniu kadłub jest cały.
+    // AGENT: `systemId` = DEFAULT_SYSTEM_ID ('sol'), dopóki gra ma jeden układ — pod wiele układów zapis wie, który
+    // układ zbudować po przeładowaniu strony.
+    // ============================================================
+    const PLAYER_SAVE_MISSIONS = Object.freeze([
+      Object.freeze({ phases: MISSION01_PHASES }),
+      Object.freeze({ phases: MISSION02_PHASES })
+    ]);
+    // Ostatnie miejsce w zwykłym locie — tam Atlas staje po wczytaniu (obiekt stały, pisany w miejscu).
+    const playerSaveSpot = { x: NaN, y: NaN, angle: 0 };
+    let playerSaveAt = -Infinity;
+    let playTimeSec = 0;
+    /** Zapis wczytany w menu („Wczytaj”) — startGame odtwarza z niego gracza raz. */
+    let pendingPlayerSave = null;
+    /** Gra trwa (nowa albo z zapisu) — w menu, przed startem, nic się nie zapisuje. */
+    let playerSaveSession = false;
+
+    function playerInStableFlight() {
+      if (!ship || ship.destroyed || !ship.pos) return false;
+      if (warp.state !== 'idle' || warp.exitRamp?.active) return false;
+      const hc = window.hypercruise;
+      if (hc && hypercruiseDriving(hc)) return false;
+      if (StoryGame.cinematic) return false;
+      return Number.isFinite(ship.pos.x) && Number.isFinite(ship.pos.y);
+    }
+
+    function trackPlayerSaveSpot() {
+      if (!playerInStableFlight()) return;
+      playerSaveSpot.x = ship.pos.x;
+      playerSaveSpot.y = ship.pos.y;
+      playerSaveSpot.angle = Number(ship.angle) || 0;
+    }
+
+    function buildCurrentPlayerSave() {
+      const spot = Number.isFinite(playerSaveSpot.x) ? playerSaveSpot : { x: ship.pos.x, y: ship.pos.y, angle: ship.angle };
+      const story = StoryGame.active || StoryGame.completed;
+      return buildPlayerSave({
+        worldSeed: WORLD_SEED,
+        systemId: DEFAULT_SYSTEM_ID,
+        savedAt: Date.now(),
+        playTimeSec,
+        player: {
+          x: spot.x, y: spot.y, angle: spot.angle,
+          credits: PLAYER.credits,
+          cargo: PLAYER.cargo,
+          miningCharges: PLAYER.miningCharges,
+          reputation: PLAYER.reputation,
+          progress: PLAYER.progress,
+          hullId: PLAYER.activeHullId
+        },
+        campaign: story ? {
+          active: !!StoryGame.active,
+          phase: StoryGame.phase,
+          done: !!StoryGame.completed,
+          m1: StoryGame.campaign?.m1 || null,
+          bossEscaped: !!StoryGame.campaign?.bossEscaped
+        } : null
+      });
+    }
+
+    function writePlayerSave() {
+      if (window.__SAVE_LOCKED || !playerSaveSession || !gameStarted || splitScreenMode) return false;
+      try {
+        localStorage.setItem(PLAYER_SAVE_KEY, JSON.stringify(buildCurrentPlayerSave()));
+        return true;
+      } catch (error) {
+        console.warn('[zapis] zapis gracza się nie udał', error);
+        return false;
+      }
+    }
+
+    /** Z pętli (czas strony): miejsce w zwykłym locie co klatkę, zapis co ECONOMY_AUTOSAVE_MS. */
+    function tickPlayerSave(nowMs, gameDt) {
+      if (!gameStarted || !playerSaveSession) return;
+      if (gameDt > 0) playTimeSec += gameDt;
+      trackPlayerSaveSpot();
+      if (nowMs - playerSaveAt < ECONOMY_AUTOSAVE_MS) return;
+      playerSaveAt = nowMs;
+      writePlayerSave();
+    }
+
+    // Przy zamknięciu w trakcie ładowania strony część stałych gry może być jeszcze w TDZ — wtedy bez zapisu.
+    window.addEventListener('beforeunload', () => { try { writePlayerSave(); } catch { /* strona w trakcie startu */ } });
+
+    // Konsola i narzędzia (harness CDP): zapis bez czekania na autozapis, odczyt, stan gracza.
+    window.PlayerSave = {
+      write: () => writePlayerSave(),
+      read: () => readPlayerSave(),
+      snapshot: () => buildCurrentPlayerSave(),
+      player: () => ({
+        credits: PLAYER.credits, cargo: { ...PLAYER.cargo }, reputation: { ...PLAYER.reputation },
+        exp: PLAYER.progress?.exp ?? 0, x: ship.pos.x, y: ship.pos.y, angle: ship.angle
+      }),
+      set(patch = {}) {
+        if (Number.isFinite(patch.credits)) PLAYER.credits = patch.credits;
+        if (patch.cargo) Object.assign(PLAYER.cargo, patch.cargo);
+        if (Number.isFinite(patch.exp) && PLAYER.progress) PLAYER.progress.exp = patch.exp;
+        return this.player();
+      }
+    };
+
+    /** Zapis z localStorage → { save, reason } (inne ziarno świata, wersja, pozycja poza światem — save = null). */
+    function readPlayerSave() {
+      let raw = null;
+      try { raw = localStorage.getItem(PLAYER_SAVE_KEY); } catch { return { save: null, reason: 'brak dostępu' }; }
+      return parsePlayerSave(raw, { worldSeed: WORLD_SEED, bounds: { w: WORLD.w, h: WORLD.h } });
+    }
+
+    /** Start gry: bez wczytanego zapisu stary zapis gracza znika (jak ekonomia — „Nowa gra” od zera). */
+    function beginPlayerSaveSession(loaded) {
+      playerSaveSession = true;
+      playerSaveAt = performance.now();
+      playerSaveSpot.x = NaN;
+      playerSaveSpot.y = NaN;
+      playTimeSec = loaded ? Math.max(0, Number(loaded.playTimeSec) || 0) : 0;
+      // Podzielony ekran nie zapisuje gracza i nie kasuje zapisu gry jednoosobowej.
+      if (!loaded && !splitScreenMode) {
+        try { localStorage.removeItem(PLAYER_SAVE_KEY); } catch { /* prywatne okno */ }
+      }
+    }
+
+    /**
+     * Stan gracza z zapisu: kredyty, ładownia, ładunki górnicze, reputacja, doświadczenie; `place` — pozycja i kurs
+     * (gra swobodna; w kampanii miejsce ustawia misja). Przed initNPCs / initFleet — skrzydło startuje przy Atlasie.
+     */
+    function applyPlayerSave(save, { place = false } = {}) {
+      const p = save.player;
+      PLAYER.credits = p.credits;
+      for (const key of Object.keys(PLAYER.cargo)) delete PLAYER.cargo[key];
+      Object.assign(PLAYER.cargo, p.cargo);
+      if (PLAYER.miningCharges) {
+        for (const id of Object.keys(PLAYER.miningCharges)) PLAYER.miningCharges[id] = Math.floor(Number(p.miningCharges[id]) || 0);
+      }
+      for (const [faction, value] of Object.entries(p.reputation || {})) {
+        if (!Object.prototype.hasOwnProperty.call(PLAYER.reputation, faction)) continue;
+        const n = Number(value);
+        if (Number.isFinite(n)) PLAYER.reputation[faction] = clampReputation(n);
+      }
+      if (!PLAYER.progress) PLAYER.progress = { exp: 0, rank: 0, missionsDone: [] };
+      PLAYER.progress.exp = p.progress.exp;
+      PLAYER.progress.rank = rankIndexForExp(p.progress.exp);
+      PLAYER.progress.missionsDone = [...p.progress.missionsDone];
+      refreshFactionHostility();
+      if (place) {
+        ship.pos.x = p.x; ship.pos.y = p.y;
+        ship.x = p.x; ship.y = p.y;
+        ship.vel.x = 0; ship.vel.y = 0;
+        ship.angle = p.angle; ship.angVel = 0;
+        // Doki portów bez ringu (E14): miejsce w bryle doku wypycha kadłub (jak teleport dev).
+        syncPortDocks();
+        portDocks.constrainShip(ship);
+        camera.x = camera.targetX = ship.pos.x;
+        camera.y = camera.targetY = ship.pos.y;
+        playerSaveSpot.x = ship.pos.x;
+        playerSaveSpot.y = ship.pos.y;
+        playerSaveSpot.angle = p.angle;
+      }
     }
 
     // ============================================================
@@ -29803,6 +29989,8 @@
         stepTrafficPromotion(steps * PHYS_DT);
         PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
+      // Zapis gracza (blok „ZAPIS GRACZA”): miejsce w zwykłym locie, czas gry, autozapis.
+      tickPlayerSave(performance.now(), steps * PHYS_DT);
 
       const mWorld = screenToWorld(mouse.x, mouse.y);
       // Okno „armed" trwa 5 s i gaśnie samo. Bez komunikatu przepalony ładunek
@@ -34333,10 +34521,20 @@
       if (gameStarted) return;
       // Tylko WebGPU: bez adaptera gra nie startuje (komunikat w menu).
       if (Core3D.gpuUnsupported || rwHost?.failed) { showWebGpuRequired(); return; }
+      // Zapis gracza („Wczytaj” w menu — loadGameFromSave, blok „ZAPIS GRACZA”): stan gracza i punkt wznowienia
+      // kampanii; bez wczytania stary zapis gracza znika (nowa gra).
+      const loadedSave = pendingPlayerSave;
+      pendingPlayerSave = null;
+      const loadCheckpoint = loadedSave ? campaignCheckpoint(loadedSave.campaign, PLAYER_SAVE_MISSIONS) : null;
+      beginPlayerSaveSession(loadedSave);
       // Gospodarka: nowa gra od zera (stary zapis znika), chyba że zapis wczytano przed startem.
       beginEconomySession();
-      // Kampania (dok K-7, intro, misja 1 — src/game/story/) albo swobodna gra.
-      const storyCampaign = startGameCampaign && StoryOptions.campaign;
+      // Kampania (dok K-7, intro, misja 1 — src/game/story/) albo swobodna gra; z zapisu — jak w zapisie.
+      const storyCampaign = loadCheckpoint ? loadCheckpoint.mode === 'campaign' : (startGameCampaign && StoryOptions.campaign);
+      // Faza startu kampanii: początek misji z zapisu albo skok dev (?story=faza).
+      const storyStartPhase = loadCheckpoint?.mode === 'campaign' ? loadCheckpoint.startPhase : StoryOptions.devStartPhase();
+      // Gracz z zapisu PRZED przygotowaniem sceny workera (ringi przy statku) i skrzydłem (initFleet — przy Atlasie).
+      if (loadedSave) applyPlayerSave(loadedSave, { place: !storyCampaign });
 
       // Tło menu: najazd kamery na Ziemię, menu zjeżdża; render tła trwa pod
       // ekranem ładowania aż do stopMenuBackdrop() przed pierwszą klatką gry.
@@ -34348,7 +34546,7 @@
       const rwPrepare = rwHost ? rwHost.prepare(ship.pos.x, ship.pos.y) : null;
       // Kampania z lotem intro w tle menu: kamera tła NIE dojeżdża do Ziemi (tylko planeta na środek kadru) — tor intro
       // leci jednym najazdem z tej pozy prosto na dok K-7 (dawniej: dojazd tu + tor „do Ziemi, odjazd, dok”).
-      const storyFlightPlanned = storyCampaign && !!menuBackdrop && !StoryOptions.devStartPhase();
+      const storyFlightPlanned = storyCampaign && !!menuBackdrop && !storyStartPhase;
       if (menuBackdrop) {
         menuLaunching = true;
         menuBackdrop.launch({ dolly: !storyFlightPlanned });
@@ -34375,6 +34573,7 @@
       // --- AUDIO END ---
 
       gameStarted = true;
+      refreshLoadGameButton();
 
       // Initialize P1 weapon controller
       p1WeaponCtrl = new WeaponController({
@@ -34514,7 +34713,7 @@
       // raziło (ring upieczony w menu = gra gotowa po ~1,5 s).
       // Fabuła: lot kamery intro w TLE MENU (menu pokazuje stronę Ziemi z K-7) — ta sama Ziemia i ring, bez czerni;
       // gra zaczyna w ostatnim kadrze lotu (z góry nad zamkniętym dachem K-7). Skok dev (?story=faza) — bez lotu.
-      const storyDevPhase = StoryOptions.devStartPhase();
+      const storyDevPhase = storyStartPhase;
       const storyFlight = storyCampaign && !!menuBackdrop && !storyDevPhase;
       const fadeThroughBlack = !!menuBackdrop && !storyFlight;
       if (fadeThroughBlack) {
@@ -34532,9 +34731,15 @@
       stopMenuBackdrop();
       // Kampania: Atlas w doku K-7, intro (po locie w menu — od razu otwarcie dachu; świat stoi).
       if (storyCampaign) {
-        equipCampaignLoadout();
-        grantCampaignRepairCargo();
-        StoryGame.beginNewGame({ tutorial: StoryOptions.tutorial, menuPose: storyMenuPose, introFromMenu: storyFlight, startPhase: storyDevPhase });
+        // Z zapisu: fit i ładownia jak w zapisie (bez kompletu startowego i ładunku naprawczego kampanii).
+        if (!loadedSave) {
+          equipCampaignLoadout();
+          grantCampaignRepairCargo();
+        }
+        StoryGame.beginNewGame({
+          tutorial: StoryOptions.tutorial, menuPose: storyMenuPose, introFromMenu: storyFlight, startPhase: storyDevPhase,
+          restore: loadedSave ? { campaign: loadedSave.campaign } : null
+        });
       }
       requestAnimationFrame(loop);
       await firstFramePromise;
@@ -34575,6 +34780,43 @@
         setMenuView('gamemode');
       });
     }
+
+    // „Wczytaj” (zapis gracza — blok „ZAPIS GRACZA”): aktywny w menu głównym, gdy jest zapis z tego układu planet
+    // (ziarno świata); w trakcie gry (menu pauzy) wyłączony — wczytanie po przeładowaniu strony (F5).
+    function refreshLoadGameButton() {
+      if (!loadGameButton) return;
+      const save = gameStarted ? null : readPlayerSave().save;
+      loadGameButton.disabled = !save;
+      const tag = loadGameButton.querySelector('.mm-tag, .mm-go');
+      if (tag) {
+        tag.className = save ? 'mm-go' : 'mm-tag';
+        tag.textContent = save ? '▸' : (gameStarted ? 'po F5' : 'brak zapisu');
+      }
+      loadGameButton.dataset.hint = save
+        ? `Zapis: ${describePlayerSave(save, { missions: PLAYER_SAVE_MISSIONS })}`
+        : (gameStarted ? 'Wczytanie zapisu — z menu głównego po przeładowaniu strony (F5)' : 'Brak zapisu gry');
+    }
+
+    /** Wczytanie zapisu z menu: ekonomia na świat ruchu, gracz w startGame (pendingPlayerSave). */
+    async function loadGameFromSave() {
+      if (gameStarted) return false;
+      const { save, reason } = readPlayerSave();
+      if (!save) {
+        console.info(`[zapis] brak zapisu gracza do wczytania (${reason})`);
+        refreshLoadGameButton();
+        return false;
+      }
+      try { await loadEconomyIntoWorld(); } catch (error) { console.warn('[zapis] ekonomia z zapisu', error); }
+      pendingPlayerSave = save;
+      splitScreenMode = false;
+      window.splitScreenMode = false;
+      setMenuView('home');
+      await startGame();
+      return true;
+    }
+    window.loadGameFromSave = loadGameFromSave;
+    if (loadGameButton) loadGameButton.addEventListener('click', () => { loadGameFromSave(); });
+    refreshLoadGameButton();
 
     // ============== SPLIT SCREEN / GAME MODE LOGIC ==============
 

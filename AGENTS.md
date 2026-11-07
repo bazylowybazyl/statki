@@ -98,6 +98,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Kawałek bazy piratów łamie się przez `storyBaseBreak` / `pirateBaseWorld`; konfiguracja pola pasa idzie przez `beltWorld`, nie `asteroidBelt.field`.
 - Nowa budowla w płaszczyźnie gry, w którą mogą wlecieć okręty → przeszkody lotu AI: kapsuły w `statics` indeksu (`rebuildWreckIndex` w takcie AI, `capsuleFromPolygon`; wzór `pirateBaseObstacles`) — mózgi i rozkazy RTS objeżdżają je trasą (`src/ai/staticRoutes.js`); nowy lot NPC sterowany wprost `setFlightArrive` nikogo nie omija — przez `capitalArriveTo` (reguła `flota-ai`).
 - Stała efektu objęta presetem grafiki → zmiana tabeli w `src/game/graphicsQuality.js`.
+- Stan gracza, który ma przeżyć F5 (kredyty, ładownia, postęp, miejsce, stan kampanii między misjami) → zapis gracza `src/game/playerSave.js` (`buildPlayerSave` + `parsePlayerSave` + `applyPlayerSave` w bloku „ZAPIS GRACZA”, reguła `statek-gracza`); ścieżka, która daje graczowi nagrodę w pominiętej misji, respektuje wznowienie z zapisu (`StoryGame._restoreSkipping`).
 - Ekonomia jest jedna — ruch v2 w workerze (reguła `ruch-v2`); gra nie trzyma magazynów stacji. Zmiana zapasu stacji z gry (handel, rozbiórka, zakup w porcie, łup) → `adjustStationStock` (most `trafficV2.stockDelta`); odczyt magazynu, ceny i oferty → `getTradeEconomy` / `getTradeOffer` (kopia rynku z mostu); w świecie ruchu zapas tylko przez `takeStock` / `putStock`, popyt konsumenta spoza receptur → `declareDemand` (API rynku, `marketBook.js`); nowy rynek → `addMarket` / `TrafficBridge.addMarket`; stan ekonomii, który ma przeżyć F5 → `economySave.js` (eksport, wczytanie, `ECONOMY_SAVE_VERSION`).
 
 ## Częste zadania
@@ -155,7 +156,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `mysliwce` | Myśliwce: pilot, role, bomby, eskadry gracza |
 | `bron-gracza` | Zasięgi broni, kierowanie ogniem, celownik, tryby okrętu pod ŚPM |
 | `systemy-f` | Systemy F i modyfikatory okrętu |
-| `statek-gracza` | Statek gracza: lot, zapis wyposażenia, WYPOSAŻENIE |
+| `statek-gracza` | Statek gracza: lot, zapis wyposażenia, zapis gracza (pozycja, kredyty, ładownia, kampania — klucz `game`), WYPOSAŻENIE |
 | `pociski` | Pociski, kolizje, nośnik prędkości, przebicia, IFF, ładowanie broni |
 | `efekty-broni` | Efekty broni (WeaponFx), receptury, wygląd pocisków |
 | `rakiety` | Rakiety i torpedy, salwy, Supernowa, obrona punktowa |
