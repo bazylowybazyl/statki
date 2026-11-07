@@ -42,7 +42,7 @@ test('nowa gra: gospodarka od zera, zapis tylko po wyborze przed startem', async
   const init = sliceFunction(src, 'function initTrafficV2()');
   assert.ok(!/restore:/.test(init) && !init.includes('loadEconomySave'), 'initTrafficV2 nie wczytuje zapisu');
   // startGame: kasowanie przed pierwszym autozapisem, po sprawdzeniu WebGPU (bez gry zapis zostaje).
-  const start = sliceFunction(src, 'async function startGame()');
+  const start = sliceFunction(src, 'async function startGame(opts = {}) {');
   const at = start.indexOf('beginEconomySession();');
   assert.ok(at > start.indexOf('showWebGpuRequired()') && at < start.indexOf('gameStarted = true;'), 'startGame woła beginEconomySession');
 

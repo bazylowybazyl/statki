@@ -13,6 +13,9 @@ paths:
   - "src/game/fitStats.js"
   - "src/ui/station/fittingPanel.js"
   - "assets/css/station-fitting.css"
+  - "src/game/playerSave.js"
+  - "tests/playerSave.test.mjs"
+  - "scripts/webgpu/zapis-gracza-gra.mjs"
 ---
 
 # Statek gracza: lot, zapis wyposażenia, WYPOSAŻENIE (karty, moduły, refit)
@@ -24,6 +27,16 @@ paths:
 - **`src/game/shipEntity.js`** — konfiguracja i geometria statku gracza (fizyka wejścia, offsety, thrusters, hardpointy).
 
 - **`src/data/fitPresets.js`, `src/data/shipModules.js`, `src/game/fitPlanner.js`, `src/game/fitStats.js`, `src/ui/station/fittingPanel.js`** — WYPOSAŻENIE okrętu gracza w stacji (karty konfiguracji, moduły, automat refitu, refit ręczny). Opis: § „WYPOSAŻENIE” niżej, plan `docs/PLAN-fitowanie.md`.
+
+## Zapis gracza (klucz `game`, `src/game/playerSave.js`)
+
+- Trzy klucze zapisu gry: `loadout` (kadłuby, fit, magazyn broni — `saveLoadout` przy wyjściu), `economy` (rynki, pas, floty, ziarno świata — reguła `ruch-v2`) i `game` — STAN GRACZA: pozycja i kurs, kredyty, ładownia, ładunki górnicze, reputacja, doświadczenie (`PLAYER.progress`), kampania (faza, `m1`, `bossEscaped`, `done`), `systemId` (dziś zawsze `'sol'` — pod wiele układów: przejście między układami = przeładowanie strony z układem z zapisu), `worldSeed`, `playTimeSec`. Czyste pomocniki: `buildPlayerSave` / `parsePlayerSave` (odrzuca inną wersję, inne ziarno świata, pozycję poza `WORLD`) / `campaignCheckpoint` / `describePlayerSave`; klej w `index.html`, blok „ZAPIS GRACZA” (za zapisem ekonomii).
+- Pozycja = ostatnie miejsce w ZWYKŁYM locie (`playerInStableFlight`: nie w skoku, rampie wyjścia, hipercruisie, kinie fabuły, po śmierci) — warp przelatuje przez wszystko, więc miejsce ze skoku mogłoby być w bryle. Po wczytaniu: prędkość 0, `portDocks.constrainShip` (jak teleport dev), kamera na Atlasie, PRZED `rwHost.prepare` i `initFleet` (skrzydło startuje przy Atlasie).
+- Autozapis co `ECONOMY_AUTOSAVE_MS` (`tickPlayerSave` w pętli, po bloku ruchu v2) i przy `beforeunload`; nic się nie zapisuje przed startem gry (menu) ani w podzielonym ekranie. „Nowa gra” w każdym trybie kasuje zapis (jak ekonomię, decyzja 2026-10-22 — gracz i świat ruchu nie rozjeżdżają się po F5). „Wczytaj” w menu głównym (`loadGameFromSave`): aktywny, gdy `readPlayerSave()` daje zapis; żeton startu `gameLaunching` ustawiany synchronicznie (drugi klik ani „Nowa gra” w trakcie wczytywania nie odpalą drugiego `startGame`), ekonomia z zapisu (`loadEconomyIntoWorld`, najwyżej 10 s czekania na worker), potem `startGame({ launch })` bierze `pendingPlayerSave`. W menu pauzy wyłączony („po F5”). `resetGameSave()` z konsoli zamyka zapisy do przeładowania (inaczej `beforeunload` wpisze klucze z powrotem).
+- Ziarno świata: bez zapisu ekonomii (np. inna `ECONOMY_SAVE_VERSION` — świat ruchu od zera) ziarno kątów planet bierze się z zapisu gracza (`WORLD_SEED_INFO`), żeby zapisana pozycja trafiła w ten sam układ planet.
+- Kampania wznawia od ostatniego PUNKTU WZNOWIENIA (`campaignCheckpoint` + `CAMPAIGN_RESUME` w `src/game/story/campaign.js`: `intro` — zwykły start w doku K-7, `repair` — misja 2, `ambush`, `return`); zapis zrobiony w fazie z nagrodą misji albo po niej (`rewardPhases`: `aftermath`, `victory`) wznawia od NASTĘPNEGO punktu — nagroda jest już w zapisanych kredytach, reputacji i EXP. Skok do punktu = `StoryGame.beginNewGame({ startPhase, restore })`: fazy przed punktem „pominięte” BEZ nagród (`_restoreSkipping`), stan między misjami z zapisu przy wejściu w punkt (`_onPhase`). Nowa nagroda w skrypcie misji = faza w `rewardPhases` (strażnik: test całej kampanii w `tests/storyMission.test.mjs` zbiera fazy wypłat). Kredyty z powtarzanego odcinka (zestrzelenia, łup) mogą przyjść drugi raz — znane ograniczenie. Z zapisu bez kompletu startowego i ładunku naprawczego kampanii (`equipCampaignLoadout`, `grantCampaignRepairCargo`). Ukończona kampania (`StoryGame.completed`, faza `done`) = gra swobodna w zapisanym miejscu.
+- NIE zapisywane: uszkodzenia kadłuba (belki), NPC, wraki, stan w środku misji. Nowy stan gracza, który ma przeżyć F5 → pole w `buildPlayerSave` + `parsePlayerSave` + `applyPlayerSave` + test.
+- Sprawdzenie: `node --test tests/playerSave.test.mjs`, test wznowienia w `tests/storyMission.test.mjs` („zapis gracza: wznowienie od misji 2”), prawdziwa gra `node scripts/webgpu/zapis-gracza-gra.mjs` (nowa gra → zmiana stanu → zapis → F5 → „Wczytaj” → porównanie). Konsola: `PlayerSave.write()`, `.read()`, `.snapshot()`, `.player()`, `.set({ credits, cargo, exp })`; `?reset=game` czyści zapis.
 
 ## Statek gracza
 

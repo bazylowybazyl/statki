@@ -89,6 +89,8 @@
  * z jednego licznika.
  */
 
+import { SOL_SYSTEM } from '../../data/starSystems.js';
+
 export const TRAFFIC_PROTOCOL_VERSION = 1;
 
 /**
@@ -110,9 +112,9 @@ export const TRAFFIC_WARMUP_FALLBACK_SECONDS = 0;
  * i oba „skakały”) — C-01 hali K-7 nr 0 Ziemi (`earth:K7-1`), gdzie fabuła stawia gracza na starcie misji 1
  * (`_dockPlace('C-01')`) i dokąd wraca (`dockReturn`); holownik serwisowy też tam wiezie. Gra wysyła je w `init`:
  * dyspozytor trzyma je dla gracza od budowy świata (jak `berth-hold`, ale stale), a zapas floty zapełnia jego halę
- * jako pierwszą (`placeFleetStock`, `homeDocks`).
+ * jako pierwszą (`placeFleetStock`, `homeDocks`). Źródło: dom gracza Układu Słonecznego (`src/data/starSystems.js`).
  */
-export const PLAYER_HOME_BERTHS = Object.freeze(['earth:K7-1:C-01']);
+export const PLAYER_HOME_BERTHS = SOL_SYSTEM.home.berthIds;
 
 export const TRAFFIC_MSG = Object.freeze({
   INIT: 'init',
