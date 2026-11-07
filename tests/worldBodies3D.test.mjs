@@ -10,15 +10,15 @@ import * as THREE from 'three/webgpu';
 globalThis.window = globalThis.window || {};
 window.wrecks = window.wrecks || [];
 await import('../src/3d/core3d.js');
-const { PirateDryDock3D } = await import('../src/3d/portBuildings/pirateDryDock3D.js');
-const { createPirateDryDockLayout } = await import('../src/3d/portBuildings/pirateDryDockLayout.js');
+const { PirateBase3D } = await import('../src/3d/portBuildings/pirateBase3D.js');
+const { createPirateBaseLayout } = await import('../src/3d/portBuildings/pirateBaseLayout.js');
 const { portModuleFrame } = await import('../src/3d/portBuildings/portModuleTraffic.js');
 const { PB_STRIDE } = await import('../src/3d/portBuildings/portBuildingScene.js');
 const { bakeBuildingChunkSkin, buildingSkinWarmGeometry } = await import('../src/3d/portBuildings/portBuildingSkin3D.js');
 const { hullSkinLattice } = await import('../src/3d/ships3d/hullSkin3D.js');
 const { HullBodies } = await import('../src/game/hullBodies.js');
 const { WORLD_BODY_TUNE } = await import('../src/game/worldBodies.js');
-const { dryDockChunkRaster } = await import('../src/game/story/pirateDryDockBodies.js');
+const { pirateBaseChunkRaster } = await import('../src/game/story/pirateBaseBodies.js');
 
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
 const renderer = new THREE.WebGPURenderer({ canvas });
@@ -46,7 +46,7 @@ function vertexBuffers(geometry) {
 // bloki 10 × 10 komórek) dawał 1–6 odłamów i warunki „odłamy ≥ 3” padały w ~15% rozbić — niezależnie od obciążenia.
 // Ziarno TYLKO na czas rozpadu: ten sam strumień zużywają uuid obiektów three.js, a ich liczba zależy od budżetów ms
 // renderu w poprzednich testach. LCG jak withSeededRandom w tests/helpers/beamShotHarness.mjs (tamten moduł ciągnie
-// index.html); ziarno 1: H-W1 — 6 odłamów, Q-W — 5.
+// index.html); ziarno 1: pomost YA-1 — 6 odłamów, wieżowiec W-1 — 7.
 function withSeededRandom(seed, fn) {
   const saved = Math.random;
   let s = seed >>> 0;
@@ -55,14 +55,14 @@ function withSeededRandom(seed, fn) {
 }
 const SHATTER_SEED = 1;
 
-const layout = createPirateDryDockLayout();
-const dock = new PirateDryDock3D({ layout, frame: portModuleFrame(0, 0, 0), name: 'test' });
+const layout = createPirateBaseLayout();
+const base = new PirateBase3D({ layout, frame: portModuleFrame(0, 0, 0), name: 'test' });
 
 test('wariant „skin”: graf budowli buduje się w BG i FG, w limitach WebGPU, jeden program na oba zestawy', () => {
   const geo = buildingSkinWarmGeometry();
   assert.ok(vertexBuffers(geo) <= 8, `bufory wierzchołków: ${vertexBuffers(geo)}`);
-  const bg = buildWGSL(dock.skinMaterial('bg'), geo);
-  const fg = buildWGSL(dock.skinMaterial('fg'), geo);
+  const bg = buildWGSL(base.skinMaterial('bg'), geo);
+  const fg = buildWGSL(base.skinMaterial('fg'), geo);
   for (const w of [bg, fg]) {
     assert.ok(uniformBuffers(w.vertex) <= 12, `uniformy wierzchołków: ${uniformBuffers(w.vertex)}`);
     assert.ok(uniformBuffers(w.fragment) <= 12, `uniformy fragmentów: ${uniformBuffers(w.fragment)}`);
@@ -71,23 +71,23 @@ test('wariant „skin”: graf budowli buduje się w BG i FG, w limitach WebGPU,
   }
   assert.equal(bg.vertex, fg.vertex, 'ten sam graf — ten sam program wierzchołków');
   assert.equal(bg.fragment, fg.fragment, 'ten sam graf — ten sam program fragmentów');
-  assert.equal(dock.skinMaterial('fg'), dock.skinMaterial('fg'), 'materiał raz na zestaw');
+  assert.equal(base.skinMaterial('fg'), base.skinMaterial('fg'), 'materiał raz na zestaw');
 });
 
 test('wypiek: wszystkie bryły grupy kawałka (pudła, walce, stożki, lampy), komórki właściciela w kratownicy, podział wg rodzaju', () => {
-  const r = dryDockChunkRaster(layout, dock.scene, 'Q-W');
-  assert.ok(r, 'raster pylonu');
+  const r = pirateBaseChunkRaster(layout, base.scene, 'W-1');
+  assert.ok(r, 'raster wieżowca');
   // ciało jak w worldBodies._buildPiece (kotwica środka obrazu — z prawdziwego kadłuba)
   const e = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, radius: 0, mass: 0, visual: { spriteScale: r.upp, spriteScaleX: r.upp, spriteScaleY: r.upp, spriteRotation: 0 } };
   const hull = HullBodies.createHull(e, r.image, { cellPx: WORLD_BODY_TUNE.cellSize / r.upp, anchored: true });
   const structure = HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
   const lat = hullSkinLattice(structure, hull.anchorDX, hull.anchorDY);
   HullBodies.release(e);
-  const group = layout.chunkById.get('Q-W').group;
+  const group = layout.chunkById.get('W-1').group;
   // bryły grupy w scenie: stożki (kolce) i lampy (materiał świecący) też mają być w skórze
   let cones = 0, lamps = 0;
   for (const set of ['bg', 'fg']) {
-    const S = dock.scene.sets[set];
+    const S = base.scene.sets[set];
     for (const kind of Object.keys(S)) {
       const a = S[kind];
       for (let i = 0; i < a.length; i += PB_STRIDE) {
@@ -99,8 +99,8 @@ test('wypiek: wszystkie bryły grupy kawałka (pudła, walce, stożki, lampy), k
     }
   }
   assert.ok(cones > 0 && lamps > 0, `kolce ${cones}, lampy ${lamps}`);
-  const fine = bakeBuildingChunkSkin(dock, group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 2 });
-  const coarse = bakeBuildingChunkSkin(dock, group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 6 });
+  const fine = bakeBuildingChunkSkin(base, group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 2 });
+  const coarse = bakeBuildingChunkSkin(base, group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 6 });
   assert.ok(fine.fg && fine.triangles > 0, 'zestaw FG');
   assert.ok(coarse.triangles < fine.triangles, `rzadszy podział: ${coarse.triangles} < ${fine.triangles}`);
   // materiał świecący w atrybucie aPbA.w (lampy dotarły do skóry), właściciel w obrębie kratownicy
@@ -118,7 +118,7 @@ test('wypiek: wszystkie bryły grupy kawałka (pudła, walce, stożki, lampy), k
 
 test('odłam rysuje PODZBIÓR trójkątów skóry kawałka (indeks na wspólnych atrybutach), bez dziur', async () => {
   const { fragmentSkinSubset } = await import('../src/3d/worldBodies3D.js');
-  const r = dryDockChunkRaster(layout, dock.scene, 'H-W1');
+  const r = pirateBaseChunkRaster(layout, base.scene, 'YA-1');
   const entity = () => ({ x: 0, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, radius: 0, mass: 0, visual: { spriteScale: r.upp, spriteScaleX: r.upp, spriteScaleY: r.upp, spriteRotation: 0 } });
   const structure = HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
   const triCount = (g) => (g ? (g.index ? g.index.count : g.attributes.position.count) / 3 : 0);
@@ -131,7 +131,7 @@ test('odłam rysuje PODZBIÓR trójkątów skóry kawałka (indeks na wspólnych
     const hull = HullBodies.createHull(e, r.image, { cellPx: WORLD_BODY_TUNE.cellSize / r.upp });
     if (!lat) {
       lat = hullSkinLattice(structure, hull.anchorDX, hull.anchorDY);
-      const skin = bakeBuildingChunkSkin(dock, layout.chunkById.get('H-W1').group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 4 });
+      const skin = bakeBuildingChunkSkin(base, layout.chunkById.get('YA-1').group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 4 });
       geo = triCount(skin.fg) >= triCount(skin.bg) ? skin.fg : skin.bg;
       // skóra kawałka z indeksem (wypiek 2026-10-15: wierzchołki wspólne trójkątów podziału); trójkąt t = wierzchołki I[3t..3t+2]
       I = geo.index ? geo.index.array : null;
@@ -238,9 +238,9 @@ test('partia skór: wariant grafu w limitach WebGPU, slot z instance_index, flag
   // partia rysuje na atrybutach skóry kawałka (z indeksem) — ten sam układ co odłam bez partii
   const geo = buildingSkinWarmGeometry(true);
   const storageBuffers = (wgsl) => (wgsl.match(/var<storage/g) || []).length;
-  const flat = buildWGSL(dock.skinBatchMaterial('bg', false, 0), geo);
-  const pod = buildWGSL(dock.skinBatchMaterial('bg', true, 0), geo);
-  const nad = buildWGSL(dock.skinBatchMaterial('fg', true, 1), geo);
+  const flat = buildWGSL(base.skinBatchMaterial('bg', false, 0), geo);
+  const pod = buildWGSL(base.skinBatchMaterial('bg', true, 0), geo);
+  const nad = buildWGSL(base.skinBatchMaterial('fg', true, 1), geo);
   for (const w of [flat, pod, nad]) {
     assert.ok(uniformBuffers(w.vertex) <= 12 && uniformBuffers(w.fragment) <= 12, 'uniformy na etap');
     assert.ok(storageBuffers(w.vertex) <= 8 && storageBuffers(w.fragment) <= 8, 'bufory storage na etap');
@@ -259,23 +259,23 @@ test('partia skór: wariant grafu w limitach WebGPU, slot z instance_index, flag
   assert.equal(pod.vertex, nad.vertex, 'połówki bryły i zestawy — jeden program wierzchołków');
   assert.equal(pod.fragment, nad.fragment, 'połówki bryły i zestawy — jeden program fragmentów');
   // ścieżka bez partii (siatka egzemplarza) bez bufora partii i bez instance_index
-  const own = buildWGSL(dock.skinMaterial('bg'), geo);
+  const own = buildWGSL(base.skinMaterial('bg'), geo);
   assert.doesNotMatch(own.vertex + own.fragment, /worldSkinStore|instance_index/);
-  assert.equal(dock.skinBatchMaterial('fg', true, 1), dock.skinBatchMaterial('fg', true, 1), 'materiał raz na połówkę');
-  assert.deepEqual(dock.skinBatchMaterial('fg', true, 1).uniforms.uSkinFlag.value.toArray(), [0, 0, 0, 1]);
-  assert.deepEqual(dock.skinBatchMaterial('bg', true, 0).uniforms.uSkinClip.value.toArray(), [-1, 0]);
-  assert.deepEqual(dock.skinBatchMaterial('fg', false, 0).uniforms.uSkinClip.value.toArray(), [0, 0]);
+  assert.equal(base.skinBatchMaterial('fg', true, 1), base.skinBatchMaterial('fg', true, 1), 'materiał raz na połówkę');
+  assert.deepEqual(base.skinBatchMaterial('fg', true, 1).uniforms.uSkinFlag.value.toArray(), [0, 0, 0, 1]);
+  assert.deepEqual(base.skinBatchMaterial('bg', true, 0).uniforms.uSkinClip.value.toArray(), [-1, 0]);
+  assert.deepEqual(base.skinBatchMaterial('fg', false, 0).uniforms.uSkinClip.value.toArray(), [0, 0]);
 });
 
-// Kawałek doku po rozpadzie: skóra (wypiek w wątku testu), odłamy shatter — wspólne dla testów partii.
-function shatteredPiece(chunkId = 'H-W1') {
-  const r = dryDockChunkRaster(layout, dock.scene, chunkId);
+// Kawałek bazy po rozpadzie: skóra (wypiek w wątku testu), odłamy shatter — wspólne dla testów partii.
+function shatteredPiece(chunkId = 'YA-1') {
+  const r = pirateBaseChunkRaster(layout, base.scene, chunkId);
   const e = { x: 0, y: 0, vx: 0, vy: 0, angle: 0.3, angVel: 0, radius: 0, mass: 0, visual: { spriteScale: r.upp, spriteScaleX: r.upp, spriteScaleY: r.upp, spriteRotation: 0 } };
   const hull = HullBodies.createHull(e, r.image, { cellPx: WORLD_BODY_TUNE.cellSize / r.upp });
   const structure = HullBodies.structureFor(r.image, r.upp, WORLD_BODY_TUNE.cellSize / r.upp);
   const lat = hullSkinLattice(structure, hull.anchorDX, hull.anchorDY);
   const group = layout.chunkById.get(chunkId).group;
-  const skin = bakeBuildingChunkSkin(dock, group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 4 });
+  const skin = bakeBuildingChunkSkin(base, group, { cx: r.cx, cz: r.cz, lattice: lat, maxEdgeCells: 4 });
   window.wrecks.length = 0;
   const res = withSeededRandom(SHATTER_SEED, () => HullBodies.shatter(e, 0, 0, 0.5, { cells: 6, crackDebris: 0.3, debrisFrac: 0.05, debrisSpeed: [60, 120], cuts: 0, chords: 0, minFragmentNodes: 20 }));
   const frags = [res.wreck, ...window.wrecks.filter((w) => w !== res.wreck)].filter((w) => w?.beamHull?.body?.activeNodes > 0);
@@ -287,7 +287,7 @@ function shatteredPiece(chunkId = 'H-W1') {
 function lostPieceSource(W3, chunkId, state = { hidden: false }) {
   const { r, lat, skin, group, frags } = shatteredPiece(chunkId);
   const prov = {
-    building: dock, root: dock.root, layers: { bg: 1, fg: 2 }, hidden: () => state.hidden,
+    building: base, root: base.root, layers: { bg: 1, fg: 2 }, hidden: () => state.hidden,
     setSkinned() {}, setHold() {}, groupOf: () => group, rasterCenter: () => ({ x: r.cx, z: r.cz })
   };
   const site = { render: prov, pieces: [] };
@@ -326,7 +326,7 @@ test('partia skór: odłam = indeks podzbioru na atrybutach skóry kawałka + re
   requireFrags(null, frags, 3);
   const tris = (g) => (g ? g.index.count / 3 : 0);
   const geo = tris(skin.fg) >= tris(skin.bg) ? skin.fg : skin.bg;
-  const halves = [{ material: dock.skinBatchMaterial('bg', true, 0), layer: 1 }, { material: dock.skinBatchMaterial('bg', true, 1), layer: 2 }];
+  const halves = [{ material: base.skinBatchMaterial('bg', true, 0), layer: 1 }, { material: base.skinBatchMaterial('bg', true, 1), layer: 2 }];
   const batch = new WorldSkinBatch({ source: geo, set: 'bg', solid: true, halves });
   // siatki połówek na WSPÓLNYCH atrybutach skóry kawałka, wspólny indeks i rekordy, osobne listy rysunków
   for (const p of batch.parts) {
@@ -381,7 +381,7 @@ test('partia skór w klatce: odłamy w partii, rysunki i macierz model-widok z h
   const { Core3D } = await import('../src/3d/core3d.js');
   const { WorldSkinStore, WORLD_SKIN_SLOT_VEC4, WS, SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
-  const { skin, frags } = lostPieceSource(W3, 'Q-W');
+  const { skin, frags } = lostPieceSource(W3, 'W-1');
   requireFrags(W3, frags, 2);
   const sets = ['bg', 'fg'].filter((s) => skin[s]);
   try {
@@ -461,7 +461,7 @@ test('partia skór w workerze: odłam bez stanu węzłów lustra czeka na węzł
   const { Core3D } = await import('../src/3d/core3d.js');
   const { SKIN_BATCH_STATS } = await import('../src/3d/worldSkinBatch.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
-  const { frags } = lostPieceSource(W3, 'Q-W');
+  const { frags } = lostPieceSource(W3, 'W-1');
   requireFrags(W3, frags, 3);
   // frags[0] — lustro w workerze, którego węzły jeszcze nie doszły (ciało spoza pudła rozgrzania: topologia i
   // `activeNodes`, `active` puste); frags[1] — ciało gry bez komórek w kratownicy (bez flagi lustra): własne siatki jak dotąd
@@ -510,7 +510,7 @@ test('worker: odłam bez stanu węzłów lustra jest schowany i czeka na węzły
   const W3 = await import('../src/3d/worldBodies3D.js');
   const { Core3D } = await import('../src/3d/core3d.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
-  const { skin, frags } = lostPieceSource(W3, 'Q-W');
+  const { skin, frags } = lostPieceSource(W3, 'W-1');
   requireFrags(W3, frags, 3);
   const sets = ['bg', 'fg'].filter((s) => skin[s]);
   // frags[0] — lustro w workerze, którego węzły jeszcze nie doszły (ciało spoza pudła rozgrzania: topologia
@@ -562,7 +562,7 @@ test('ukryty dostawca (soczewka skoku, mgła) utrzymuje egzemplarze dłużej ni�
   const { Core3D } = await import('../src/3d/core3d.js');
   if (!Core3D.scene) Core3D.scene = new THREE.Scene();
   const state = { hidden: false };
-  const { frags } = lostPieceSource(W3, 'Q-W', state);
+  const { frags } = lostPieceSource(W3, 'W-1', state);
   const S = W3.WORLD_SKIN_STATS, O = W3.WORLD_SKIN_OPTIONS;
   try {
     // wszystkie rysowane, kolejka podzbiorów do końca (stan, nie stała liczba klatek — budżet SUBSET_MS na klatkę)

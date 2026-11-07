@@ -97,7 +97,7 @@ export default defineConfig({
     include: ['three', 'three/webgpu', 'three/tsl'],
     // Bez `entries` Vite skanuje KAŻDY *.html w katalogu (dema, dist-electron, kopie repo w statki/ —
     // 241 plików): skan trwał > 60 s, a żądania gry czekały na jego koniec. Gra + dema wystarczą.
-    entries: ['index.html', 'destruktor*.html', 'ruch-v2.html', 'dema/**/*.html'],
+    entries: ['index.html', 'ruch-v2.html', 'dema/**/*.html'],
   },
   server: {
     // Robocze śmieci (zrzuty .tmp ~64 tys. plików, kopie repo, buildy) — bez obserwatora plików. Ścieżki WZGLĘDEM

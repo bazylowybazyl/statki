@@ -5,7 +5,7 @@ import { buildSpriteBeamStructure } from '../src/game/beamSprite2D.js';
 import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js';
 import { buildBeamStructure } from '../src/game/beamBody3D.js';
 import { DestructorBeams3D as D, createBeamConfig } from '../src/game/destructorBeams3D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 import { setPlanarHeading } from '../src/game/beamFlightControls2D.js';
 
 // Płyta 2D ze sprite'a z wcięciem (jak w taranach dema) — przy 1500 j./s pęka na kilka wraków.

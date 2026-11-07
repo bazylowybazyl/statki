@@ -133,8 +133,7 @@ test('rozdarcia: sąsiednie węzły tej klatki łączą się; limit na klatkę',
 });
 
 test('WGSL skóry 3D (Node): pole ran 3D i stygnięcie zamiast mapy sprite\'a, w limitach WebGPU; skóra płaska bez zmian', async () => {
-  const { PirateDryDock3D } = await import('../src/3d/portBuildings/pirateDryDock3D.js');
-  const { createPirateDryDockLayout } = await import('../src/3d/portBuildings/pirateDryDockLayout.js');
+  const { PirateBase3D } = await import('../src/3d/portBuildings/pirateBase3D.js');
   const { portModuleFrame } = await import('../src/3d/portBuildings/portModuleTraffic.js');
   const { buildingSkinWarmGeometry } = await import('../src/3d/portBuildings/portBuildingSkin3D.js');
   const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
@@ -147,10 +146,10 @@ test('WGSL skóry 3D (Node): pole ran 3D i stygnięcie zamiast mapy sprite\'a, w
     b.build();
     return { vertex: b.vertexShader, fragment: b.fragmentShader };
   };
-  const dock = new PirateDryDock3D({ layout: createPirateDryDockLayout(), frame: portModuleFrame(0, 0, 0), name: 'test' });
+  const base = new PirateBase3D({ frame: portModuleFrame(0, 0, 0), name: 'test' });
   const geo = buildingSkinWarmGeometry();
-  const flat = build(dock.skinMaterial('bg'), geo);
-  const solid = build(dock.skinMaterial('bg', true), geo);
+  const flat = build(base.skinMaterial('bg'), geo);
+  const solid = build(base.skinMaterial('bg', true), geo);
   const ub = (w) => (w.match(/var<uniform>/g) || []).length;
   const sb = (w) => (w.match(/var<storage/g) || []).length;
   for (const w of [flat, solid]) {

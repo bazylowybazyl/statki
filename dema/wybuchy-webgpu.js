@@ -3,9 +3,9 @@
 // Demo WYBUCHÓW WebGPU w warunkach gry (plan docs/PLAN-zniszczenia-swiata-3d.md § 12): ten sam moduł co gra —
 // src/3d/explosions/explosionFx.js (kula ognia i dym z gazu na siatce 3D w compute, żar porywany przez gaz,
 // błysk, iskry i odłamki gry, smugi dymu płonących odłamków, światła w siatce Core3D, fala jako sama refrakcja,
-// gorące powietrze, wybuchy wtórne) na prawdziwym Core3D (passy, bloom i ACES gry). Tło: suchy dok piratów z misji 1
-// (te same bryły co w grze) i okręty na parkingu — skala i kontekst wybuchów, które gra pokazuje najczęściej
-// (progi punktów i łańcuch rozpadu doku).
+// gorące powietrze, wybuchy wtórne) na prawdziwym Core3D (passy, bloom i ACES gry). Tło: baza piratów z misji 1
+// (te same bryły co w grze) i okręty przy pomostach — skala i kontekst wybuchów, które gra pokazuje najczęściej
+// (progi punktów i rozpad bazy).
 //
 // Serwowanie: `npm run dev` → /dema/wybuchy-webgpu.html (?shot=1 — bez paneli, do zrzutów).
 // Harness: node scripts/webgpu/wybuchy-demo.mjs (zrzuty, ruch dymu, koszt). Konsola: window.__demo.
@@ -17,9 +17,8 @@ import { Fx3D } from '../src/3d/fxParticles3D.js';
 import { ShipProxyBatch3D } from '../src/3d/shipProxyBatch3D.js';
 import { trafficHullRenderSize } from '../src/data/trafficHulls.js';
 import { portHeadingToGame, portHubToGame, portModuleFrame } from '../src/3d/portBuildings/portModuleTraffic.js';
-import { PirateDryDock3D } from '../src/3d/portBuildings/pirateDryDock3D.js';
-import { createPirateDryDockLayout, dryDockShipPose, planDryDockChain } from '../src/3d/portBuildings/pirateDryDockLayout.js';
-import { SHIPYARD_TUNE } from '../src/game/story/shipyardLayout.js';
+import { PirateBase3D } from '../src/3d/portBuildings/pirateBase3D.js';
+import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
 import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { createRocketFx } from '../src/3d/rockets/rocketFx.js';
 import { initRocketSystem3D } from '../src/game/rockets/rocketSim.js';
@@ -61,7 +60,7 @@ addEventListener('resize', () => {
   resizeHexShips3D(W, H);
 });
 
-// Dok daleko od zera (precyzja float32 jak w grze — obrzeża układu to 5–10 mln j.).
+// Baza daleko od zera (precyzja float32 jak w grze — obrzeża układu to 5–10 mln j.).
 const P0 = Object.freeze({ x: 8_640_000, y: -3_910_000 });
 window.SUN = { x: P0.x - 2_400_000, y: P0.y + 1_300_000, r: 2600 };
 // Kamera gry (wstrząs wybuchów — camera.addShake jak w index.html).
@@ -98,28 +97,26 @@ window.camera = {
 })();
 
 const host = new THREE.Group();
-host.name = 'Suchy dok (tło wybuchów)';
+host.name = 'Baza piratów (tło wybuchów)';
 host.position.set(P0.x, -P0.y, 0);
 Core3D.scene.add(host);
 const LAYER_BG = 1;
 const LAYER_FG = 2;
 const FRAME = portModuleFrame(0, 0, 0);
-const layout = createPirateDryDockLayout({ id: 'PD-1' });
+const layout = createPirateBaseLayout();
 const hubToGame = (x, z, out = {}) => portHubToGame(FRAME, P0, x, z, out);
 const headingToGame = (h) => portHeadingToGame(FRAME, h);
-const dock = new PirateDryDock3D({ layout, frame: FRAME, name: 'Suchy dok PD-1' });
-host.add(dock.root);
-dock.setLayers(LAYER_BG, LAYER_FG);
+const base = new PirateBase3D({ layout, frame: FRAME, name: 'Baza piratów (tło)' });
+host.add(base.root);
+base.setLayers(LAYER_BG, LAYER_FG);
 
-// Galeria: pusta przestrzeń obok parkingu, okręty dookoła (skala i światło).
+// Galeria: pusta przestrzeń obok bazy, okręty dookoła (skala i światło).
 const GAL = hubToGame(0, layout.bounds.z1 + 4200);
-const HULL_OF = (key) => (String(key).includes('battleship') ? 'pirate_battleship' : String(key).includes('destroyer') ? 'pirate_destroyer' : 'pirate_frigate');
+// Supercapitale (zatoka herszta) bez kadłuba ruchu — tu jak pancerniki.
+const HULL_OF = (cls) => (cls === 'destroyer' ? 'pirate_destroyer' : cls === 'frigate' ? 'pirate_frigate' : 'pirate_battleship');
 const parked = layout.berths.map((b, i) => {
-  const hullId = HULL_OF(SHIPYARD_TUNE.parked[i] ?? 'destroyer');
-  const size = trafficHullRenderSize(hullId);
-  const pose = dryDockShipPose(b, size.w);
-  const g = hubToGame(pose.x, pose.z);
-  return { id: `p${i}`, hullId, x: g.x, y: g.y, angle: headingToGame(pose.angle), berth: i, alive: true };
+  const g = hubToGame(b.x, b.z);
+  return { id: `p${i}`, hullId: HULL_OF(b.cls), x: g.x, y: g.y, angle: headingToGame(b.angle), berth: i, alive: true };
 });
 const galleryShips = [
   { id: 'g0', hullId: 'pirate_destroyer', x: GAL.x - 1500, y: GAL.y - 700, angle: 0.3 },
@@ -127,7 +124,7 @@ const galleryShips = [
   { id: 'g2', hullId: 'pirate_battleship', x: GAL.x + 300, y: GAL.y - 1800, angle: -0.4 }
 ];
 
-// Przeszkody gazu (etap C, src/game/gasObstacleInput.js): bryły trafień doku (bez odpadłych kawałków), ściany próbne
+// Przeszkody gazu (etap C, src/game/gasObstacleInput.js): bryły trafień bazy (bez odpadłych kawałków), ściany próbne
 // (sonda, harness: window.__demo.walls) i kadłuby: okręty demo (obrys z wymiarów sprite'a — bez silnika belek) i kadłuby
 // próbne (window.__demo.testHulls — encje { x, y, angle, w, h, vx, vy, angVel }).
 const obstIn = createGasObstacleInput();
@@ -137,7 +134,7 @@ const _gp = { x: 0, y: 0 };
 const dockShapes = layout.hitSolids.map((h) => ({ chunk: h.chunk, pts: h.poly.map((p) => { const g = hubToGame(p.x, p.z, _gp); return { x: g.x, y: g.y }; }) }));
 const dockObst = {
   shapes: dockShapes,
-  status: (id) => { const s = dock._chunkById?.get(id); return s && (s.broken || s.hidden) ? 0 : 1; },
+  status: (id) => { const s = base._chunkById?.get(id); return s && (s.broken || s.hidden) ? 0 : 1; },
   feet: () => {}
 };
 const shipEntity = (s) => {
@@ -177,7 +174,7 @@ const KINDS = [
   ['fighter', 'Drobny', 'impulsy rozpadu stacji', 40],
   ['escort', 'Fregata', 'mały okręt', 160],
   ['cruiser', 'Niszczyciel', 'średni okręt', 220],
-  ['capital', 'Okręt liniowy', 'domyślny — kawałek doku, Atlas', 300],
+  ['capital', 'Okręt liniowy', 'domyślny — kawałek bazy, Atlas', 300],
   ['chain', 'Łańcuch stacji', 'oderwany fragment', 200],
   ['cut', 'Cięcie skorupy', 'pęknięcie stacji', 260],
   ['final', 'Finał stacji', 'stacja ginie', 320]
@@ -185,8 +182,8 @@ const KINDS = [
 
 const SCENES = [
   ['showcase', 'Pokaz', 'fregata → okręt → finał', () => showcase()],
-  ['threshold', 'Próg punktów doku', 'kawałek odpada z wybuchem', () => threshold()],
-  ['chain', 'Łańcuch rozpadu', '~15 wybuchów w ~4 s + finał', () => chain()],
+  ['threshold', 'Próg punktów bazy', 'kawałek odpada z wybuchem', () => threshold()],
+  ['chain', 'Łańcuch rozpadu', 'wybuchy od habitatu na zewnątrz + finał', () => chain()],
   ['atlas', 'Śmierć Atlasa', 'bez rdzenia (size 282)', () => { setView('blisko'); boom('capital', GAL.x, GAL.y, 282); }],
   ['station', 'Rozpad stacji', 'finał + wtórne jak Destruction3D', () => stationFinal()]
 ];
@@ -206,34 +203,35 @@ function chunkGame(id) {
 
 function threshold() {
   setView('dok-blisko');
-  const ids = ['S-2', 'R-2', 'P-2'].filter((id) => layout.chunkById.has(id));
+  const ids = ['H-E', 'YA-1', 'FP'].filter((id) => layout.chunkById.has(id));
   ids.forEach((id, i) => schedule(0.2 + i * 1.6, () => {
     const c = layout.chunkById.get(id);
-    dock.breakChunk(id, { speed: 70, spin: 0.08, life: 45 });
+    base.breakChunk(id, { speed: 70, spin: 0.08, life: 45 });
     const p = chunkGame(id);
-    boom('capital', p.x, p.y, c.kind === 'spine' ? 520 : 380);
+    boom('capital', p.x, p.y, c.kind === 'drum' ? 520 : 380);
     window.camera.addShake(12, 0.5);
   }));
 }
 
-function chain(start = 'R-2') {
+// Kolejność łańcucha: od habitatu na zewnątrz, czas z odległości kawałka i rozrzut z numeru grupy (bez Math.random).
+const CHAIN_BLAST = { drum: 320, core: 320, pier: 250, tank: 220, manifold: 220, warehouse: 250, annex: 150, highrise: 220 };
+function chain() {
   setView('dok');
-  dock.resetChunks();
-  const plan = planDryDockChain(layout, start);
+  base.resetChunks();
   let tLast = 0;
-  for (const ch of plan) {
-    tLast = Math.max(tLast, ch.t);
-    schedule(0.3 + ch.t, () => {
-      const c = layout.chunkById.get(ch.id);
-      dock.breakChunk(ch.id, { speed: c.kind === 'spine' ? 55 : 95, spin: c.kind === 'spine' ? 0.05 : 0.14, life: 40 });
-      const p = chunkGame(ch.id);
-      if (ch.size > 0) boom('capital', p.x, p.y, ch.size);
-      if (c.kind === 'spine') for (const s of parked) if (s.alive && layout.berths[s.berth].segment === ch.id) s.alive = false;
+  for (const c of layout.chunks) {
+    const p = hubToGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
+    const h = Math.sin((c.group + 1) * 78.233) * 43758.5453;
+    const t = Math.hypot((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2) / 1800 + (h - Math.floor(h)) * 0.3;
+    tLast = Math.max(tLast, t);
+    schedule(0.3 + t, () => {
+      base.breakChunk(c.id, { speed: c.kind === 'drum' ? 55 : 95, spin: c.kind === 'drum' ? 0.05 : 0.14, life: 40 });
+      const size = CHAIN_BLAST[c.kind] || 0;
+      if (size > 0) boom('capital', p.x, p.y, size);
     });
   }
-  const hc = layout.hall.center;
   schedule(0.3 + tLast + 0.8, () => {
-    const p = hubToGame(hc.x, hc.z + 600);
+    const p = hubToGame(0, 0);
     boom('capital', p.x, p.y, 520);
     window.camera.addShake(30, 0.9);
   });
@@ -258,8 +256,8 @@ cine.persp.up.set(0, 0, 1);
 const VIEWS = {
   blisko: { label: 'Blisko', apply: () => setGame(GAL.x, GAL.y, 0.3) },
   srednio: { label: 'Średnio', apply: () => setGame(GAL.x, GAL.y, 0.14) },
-  'dok-blisko': { label: 'Dok — trzon', apply: () => { const p = hubToGame(0, layout.parking.laneZ - 800); setGame(p.x, p.y, 0.14); } },
-  dok: { label: 'Cały dok', apply: () => { const p = hubToGame(0, (layout.bounds.z0 + layout.bounds.z1) / 2 + 300); setGame(p.x, p.y, 0.095); } },
+  'dok-blisko': { label: 'Baza — habitat', apply: () => { const p = hubToGame(0, 0); setGame(p.x, p.y, 0.14); } },
+  dok: { label: 'Cała baza', apply: () => { const p = hubToGame((layout.bounds.x0 + layout.bounds.x1) / 2, (layout.bounds.z0 + layout.bounds.z1) / 2); setGame(p.x, p.y, 0.07); } },
   kino: { label: 'Kamera 3D', apply: () => setCine(GAL.x, GAL.y, 4200, -0.7, 0.62) }
 };
 function setGame(x, y, zoom) {
@@ -359,7 +357,7 @@ function setSpeed(s) {
 function clearAll() {
   queue.length = 0;
   ex?.clear();
-  dock.resetChunks();
+  base.resetChunks();
   for (const s of parked) s.alive = true;
 }
 
@@ -427,8 +425,8 @@ function render(simDt) {
     const a = shake.mag * (shake.t / Math.max(1e-3, shake.dur));
     cam = { x: cam0.x + Math.sin(state.T * 71) * a / cam0.zoom * 0.5, y: cam0.y + Math.cos(state.T * 57) * a / cam0.zoom * 0.5, zoom: cam0.zoom };
   }
-  dock.setSun({ sun: window.SUN, at: P0 });
-  dock.update(simDt, { alarm: false, roofFade: 0, launch: [0, 0, 0], gates: [0, 0, 0], berths: parked.map((p) => (p.alive ? 1 : 0)), daylight: 0.25 });
+  base.setSun({ sun: window.SUN, at: P0 });
+  base.update(simDt, { alarm: false, berths: parked.map((p) => (p.alive ? 1 : 0)), daylight: 0.25 });
   if (ex) {
     // kadłuby próbne ruszają się z czasem sceny (sonda: przelot kadłuba przez obłok)
     for (const e of testHulls) { e.x += (e.vx || 0) * simDt; e.y += (e.vy || 0) * simDt; e.angle += (e.angVel || 0) * simDt; }
@@ -440,7 +438,7 @@ function render(simDt) {
     });
     ex.setObstacleInput(demoObst.on ? obstIn : null);
   }
-  dock.pushGridLights(Core3D.fx?.lights, hubToGame);
+  base.pushGridLights(Core3D.fx?.lights, hubToGame);
   ShipProxyBatch3D.begin(cam);
   for (const p of parked) if (p.alive) ShipProxyBatch3D.push(p.id, p.hullId, p.x, p.y, p.angle);
   for (const s of galleryShips) ShipProxyBatch3D.push(s.id, s.hullId, s.x, s.y, s.angle);
@@ -504,8 +502,8 @@ window.__demo = {
   setSpeed: (s) => setSpeed(s),
   clear: () => clearAll(),
   stats: () => ({ ...ex.stats, grid: { ...ex.grid.stats }, embers: ex.embers.stats.alive, flashes: ex.flashes.count, frags: ex.fN, errors: errors.slice() }),
-  proxiesReady: () => ShipProxyBatch3D.stats.waitingImage === 0 && dock.hulls.every((h) => h.mesh.visible),
-  dock, layout, hubToGame,
+  proxiesReady: () => ShipProxyBatch3D.stats.waitingImage === 0,
+  base, layout, hubToGame,
   // Przeszkody gazu: obst.on (wejście przeszkód), obst.ships (okręty demo jako kadłuby); ściany próbne (świat gry:
   // { cx, cy, ux, uy, hw, hd }) — walls(lista) podmienia, kadłuby próbne — testHulls (tablica encji).
   obst: null,

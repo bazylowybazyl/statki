@@ -8,16 +8,15 @@
 // 2 Atlasy, 4 lotniskowce, 10 pancerników, 20 niszczycieli, 30 fregat, 6 frachtowców.
 // Scenariusze: lot bez styku, ostrzał (300 trafień laserem/s + 20 rakiet/s w losowe
 // kadłuby), 3 tarany pancerników przy reszcie floty. Mierzy fizykę na krok 120 Hz
-// i przepisanie skóry sprite'ów na klatkę (emulacja BeamShips3D, klatka co 2 kroki).
+// i przepisanie skóry sprite'ów na klatkę (klatka co 2 kroki).
 import { readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { buildSpriteBeamStructure } from '../src/game/beamSprite2D.js';
 import { DestructorBeams3D as D, createBeamConfig } from '../src/game/destructorBeams3D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 import { setPlanarHeading } from '../src/game/beamFlightControls2D.js';
-import { BeamWeapons3D } from '../src/game/beamWeapons3D.js';
 import { buildSpriteSkinTopology, writeSpriteSkinGeometry, writeSpriteSkinQuads } from '../src/3d/beamSpriteSkin2D.js';
 import { getHullRenderSize } from '../src/data/ships.js';
 
@@ -125,7 +124,7 @@ function makeFleet(local, ramPairs = 0) {
   return { bodies, rnd };
 }
 
-// Emulacja BeamShips3D._updateSpriteSkin (bez three): przyrostowo z listy regionu albo całość.
+// Przepisanie skóry (bez three): przyrostowo z listy regionu albo całość.
 function skinFrame(bodies, state, range) {
   for (const body of bodies) {
     if (body.dead || !body.meshDirty) continue;
@@ -149,11 +148,35 @@ function skinFrame(bodies, state, range) {
   }
 }
 
+// Fala ciśnienia rakiety: dawka rozłożona na BLAST_S (krzywa smoothstep), obecna lista ciał — także odłamy.
+const BLAST_S = 0.22;
+const blastProgress = (age) => { const t = Math.min(1, Math.max(0, age / BLAST_S)); return t * t * (3 - 2 * t); };
+const blastImpact = { radius: 0, breakRadius: 0, damageFraction: 1, breakProgress: 1, impulseTime: 0.12 };
+const blastImpulse = { x: 0, y: 0, z: 0 };
+function updateBlasts(blasts, dt, bodies) {
+  for (const blast of blasts) {
+    if (!blast.active) continue;
+    const before = blastProgress(blast.age);
+    blast.age = Math.min(BLAST_S, blast.age + dt);
+    const after = blastProgress(blast.age);
+    blastImpact.damageFraction = after - before;
+    blastImpact.breakProgress = after;
+    blastImpact.radius = blast.radius; blastImpact.breakRadius = blast.radius * 0.7;
+    blastImpulse.x = blast.vx; blastImpulse.y = blast.vy; blastImpulse.z = 0;
+    for (const body of bodies) {
+      if (body.dead || body.static) continue;
+      if (Math.hypot(body.pos.x - blast.x, body.pos.y - blast.y, body.pos.z) > body.radius + blast.radius) continue;
+      D.applyImpact(body, blast.x, blast.y, 0, blast.damage, blastImpulse, blastImpact);
+    }
+    if (blast.age >= BLAST_S) blast.active = false;
+  }
+}
+
 function run(local, scenario) {
   const { bodies, rnd } = makeFleet(local, scenario === 'ram' ? 3 : 0);
   const steps = scenario === 'ram' ? 360 : 600, warm = 60;
   const hits = scenario === 'fire' ? 300 : 0, missiles = scenario === 'fire' ? 20 : 0;
-  const weapons = new BeamWeapons3D(D, 16);
+  const blasts = Array.from({ length: 32 }, () => ({ active: false, age: 0, x: 0, y: 0, vx: 0, vy: 0, damage: 0, radius: 0 }));
   const opts = { radius: CS * 1.15, breakRadius: CS * 1.15 * 0.45, damageFraction: 1, breakProgress: 1, impulseTime: 0 };
   const vel = { x: 0, y: 0, z: 0 };
   const skin = new Map(), range = { min: 0, max: -1 };
@@ -182,12 +205,12 @@ function run(local, scenario) {
       D.applyImpact(t.b, t.x, t.y, 0, 135, vel, opts);
     }
     for (; missileAcc >= 1; missileAcc--) {
-      const t = target(), blast = weapons.blasts.find((x) => !x.active);
+      const t = target(), blast = blasts.find((x) => !x.active);
       if (!t || !blast) continue;
-      Object.assign(blast, { active: true, owner: null, age: 0, x: t.x, y: t.y, z: 0,
-        vx: t.b.pos.x - t.x, vy: t.b.pos.y - t.y, vz: 0, damage: 900, radius: CS * 3 });
+      Object.assign(blast, { active: true, age: 0, x: t.x, y: t.y,
+        vx: t.b.pos.x - t.x, vy: t.b.pos.y - t.y, damage: 900, radius: CS * 3 });
     }
-    weapons.updateBlasts(1 / 120, bodies);
+    updateBlasts(blasts, 1 / 120, bodies);
     D.update(1 / 120, bodies);
     const ms = performance.now() - t0;
     for (let j = bodies.length - 1; j >= 0; j--) if (bodies[j].dead || bodies[j].activeNodes <= 0) bodies.splice(j, 1);

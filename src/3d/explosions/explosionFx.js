@@ -3,7 +3,7 @@
 // WYBUCHY WebGPU gry — reżyser jako KROK klatki efektów Core3D (`Core3D.addFxStep`). Zastępuje dawny wybuch
 // reaktora src/effects3d/reactorblow.js (port overlaya WebGL: płaskie cząstki, kolce i błysk wybielający kadr —
 // użytkownik 2026-10-07: „tragiczne, do usunięcia”). Wejście jak dawniej: `window.makeReactorBlow({ x, y, size,
-// profile })` (świat gry) — próg punktów i łańcuch rozpadu suchego doku (misja 1), rozpad stacji (Destruction3D,
+// profile })` (świat gry) — próg punktów i rozpad bazy piratów (misja 1), rozpad stacji (Destruction3D,
 // `reactorFactory`), śmierć gracza bez rdzenia (`triggerReactorBlow3D`), skrypty; śmierć okrętu bez detonacji rdzenia —
 // z miejsca ZBIORNIKA PALIWA ze strumieniami wzdłuż osi kadłuba (src/game/fuelTank.js, opcje spawn: axisX / axisY,
 // jetVelTau) i gaz detonacji rdzenia w barwie frakcji (gasOnly, tint).
@@ -210,7 +210,7 @@ export const EXPLOSION_TUNE = {
   flashGain: 1,
   ambientSky: 1,      // otoczenie dymu × jasność strefy nieba (skyRegion)
   // PRZESZKODY (F2, etap C 2026-10-09; wejście src/game/gasObstacleInput.js): statyka — ściany i bryły hal K-7, kawałki
-  // suchego doku (gaz opływa, wylewa się bramami); kadłuby — obrys z żywych węzłów belek z prędkością ciała (kadłub
+  // bazy piratów (gaz opływa, wylewa się bramami); kadłuby — obrys z żywych węzłów belek z prędkością ciała (kadłub
   // rozcina dym). false = przeszkód nie ma (dawny gaz; zmiana działa od następnego kroku symulacji).
   obstacles: true,
   hullObstacles: true,
