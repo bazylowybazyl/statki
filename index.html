@@ -1288,6 +1288,7 @@
     import { RenderMirror } from "./src/render/renderMirror.js";
     import { resolveRenderMode, renderWorkerCaps } from "./src/render/renderBridge.js";
     import { createRenderWorkerHost } from "./src/render/renderWorkerHost.js";
+    import { RET_F64 } from "./src/render/returnLayout.js";
     import { createRocketBlock } from "./src/render/blocks/rocketBlock.js";
     import { createViewBlock } from "./src/render/blocks/viewBlock.js";
     import { createRepairBlock } from "./src/render/blocks/repairBlock.js";
@@ -1375,7 +1376,7 @@
     import { FrameLimiter } from "./src/render/frameLimiter.js";
     import { createFrameWake, frameWakeStrategyFromQuery } from "./src/render/frameWake.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
-    import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
+    import { createDynResState, createDynResClock, dynResSample, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
     import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
     // RW-23: zdarzenia lotu rakiet — rekordy RKT_* (adapter gry → dekoder renderu, reżyser efektów rakiet).
@@ -35946,23 +35947,22 @@
     // → sterownik → Core3D.setRenderScale tylko przy zmianie stopnia (sam resize celów, bez nowych pipeline'ów).
     // Konsola: DynamicResTune (strojenie, targetFps > 0 — nadpisuje opcję), GraphicsQuality.dynamic (stan).
     const dynRes = createDynResState();
-    let dynResRenderSeen = -1, dynResComputeSeen = -1, dynResComputeAt = -1e9;
+    const dynResClock = createDynResClock();
     window.DynamicResTune = DYN_RES_TUNE;
     function dynResScale() {
       return dynRes.target > 0 && dynRes.base === gfxSettings.renderScale && dynRes.scale > 0 ? dynRes.scale : gfxSettings.renderScale;
     }
     function stepDynamicResolution(nowMs) {
       const t = (Number(nowMs) || 0) / 1000;
-      // tryb worker: próbki czasu GPU z kanału zwrotnego workera (Core3D strony nie ma urządzenia — dawniej sterownik
-      // nie dostawał próbek, a nowa skala nie docierała do workera)
+      // tryb worker: próbki czasu GPU z kanału zwrotnego workera (retWriteGpuClock) — Core3D strony nie ma urządzenia,
+      // jego liczniki stoją na 0; skala idzie do workera rekordem obrazu (setGfx)
       let fS = Core3D.gpuFrameSamples, cS = Core3D.gpuComputeSamples, fMs = Core3D.gpuFrameMs, cMs = Core3D.gpuComputeMs;
-      if (rwHost) { rwHost.readStats(); const st = rwHost.stats; fMs = st[0]; cMs = st[1]; fS = st[2]; cS = st[3]; }
-      let sample = null;
-      if (cS !== dynResComputeSeen) { dynResComputeSeen = cS; dynResComputeAt = t; }
-      if (fS !== dynResRenderSeen) {
-        dynResRenderSeen = fS;
-        sample = fMs + (t - dynResComputeAt < 0.5 ? cMs : 0);
+      if (rwHost) {
+        rwHost.readStats();
+        const st = rwHost.stats;
+        fMs = st[RET_F64.GPU_FRAME_MS]; cMs = st[RET_F64.GPU_COMPUTE_MS]; fS = st[RET_F64.GPU_FRAME_SAMPLES]; cS = st[RET_F64.GPU_COMPUTE_SAMPLES];
       }
+      const sample = dynResSample(dynResClock, t, fS, cS, fMs, cMs);
       // budżet czasu GPU z docelowych FPS, a przy niższym limicie klatek — z limitu (gra rysuje tyle klatek, ile limit)
       const scale = stepDynRes(dynRes, t, gfxSettings.renderScale, gfxDynamicBudgetFps(gfxSettings.dynamicRes, gfxSettings.frameLimit), sample);
       if (dynRes.changed && Core3D.renderScale !== scale) {
@@ -35975,7 +35975,7 @@
       const target = gfxDynamicTargetFps(gfxSettings.dynamicRes);
       const budget = gfxDynamicBudgetFps(gfxSettings.dynamicRes, gfxSettings.frameLimit);
       const on = dynRes.target > 0 || target > 0;
-      const noTimer = Core3D.gpuReady && !Core3D.gpuTimerSupported;
+      const noTimer = rwHost ? rwHost.gpuReady() && !rwHost.gpuTimerSupported() : Core3D.gpuReady && !Core3D.gpuTimerSupported;
       document.querySelectorAll('[data-gfx-dyn-now]').forEach(el => {
         el.hidden = !on;
         el.textContent = noTimer

@@ -278,6 +278,8 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   /** Ostatnio odebrana przez worker strona (reguła pakowania węzłów: zmiany od tej strony). */
   host.lastConsumed = () => Atomics.load(ret.i32, RET_I32.LAST_CONSUMED);
   host.gpuReady = () => retHasFlag(ret, RET_FLAG.GPU_READY);
+  // znaczniki czasu GPU w workerze (Core3D strony nie ma urządzenia) — notka rozdzielczości dynamicznej, PerfHUD
+  host.gpuTimerSupported = () => retHasFlag(ret, RET_FLAG.GPU_TIMER);
 
   /** Po publikacji strony k (packer.finish): opisy, topologie, słownik i nowe zasoby tej strony. */
   host.postFrame = () => {

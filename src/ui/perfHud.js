@@ -1538,9 +1538,11 @@ export const PerfHUD = {
         // Czas GPU ze znacznikow czasu WebGPU (timestamp-query, Core3D._gpuTimerPoll).
         // Jesli ta liczba dobija do czasu klatki, waskim gardlem jest karta
         // i ciecie draw calli nic nie da.
-        const gpuMs = Number(window.Core3D?.gpuFrameMs);
+        // Tryb worker: Core3D strony nie ma urzadzenia — czas i cecha z kanalu zwrotnego workera.
+        const rw = window.RenderWorkerHost;
+        const gpuMs = Number(rw ? rw.stats[0] : window.Core3D?.gpuFrameMs);
         if (!Number.isFinite(gpuMs) || gpuMs <= 0) {
-          e.gpuFrame.textContent = window.Core3D?.gpuTimerSupported ? 'czekam...' : 'brak znacznikow';
+          e.gpuFrame.textContent = (rw ? rw.gpuTimerSupported() : window.Core3D?.gpuTimerSupported) ? 'czekam...' : 'brak znacznikow';
           e.gpuFrame.style.color = '';
         } else {
           const frameMs = Number(d.frameP50) || 0;
