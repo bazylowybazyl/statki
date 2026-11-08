@@ -79,7 +79,25 @@ export const WORKFORCE_FULL_RATIO = 0.95;
 export const POPULATION_CENTERS = Object.freeze({
   earth: Object.freeze({ ring: 15.6 }),
   mars: Object.freeze({ ring: 11.2, green: 7.5 }),
-  jupiter: Object.freeze({ ring: 14.0 })
+  jupiter: Object.freeze({ ring: 14.0 }),
+  // Pierwsza baza w asteroidzie (W6, D4): habitat Ceres pokrywa obsadę stolicy Unii Pasa (~59 tys. osób/h wobec
+  // ~50 tys./h rotacji) i odciąża Marsa — dotąd jedyne źródło Unii (~72 tys. osób/h eksportu, PROPOZYCJA § 2.3).
+  ceres: Object.freeze({ habitat: 5.5 })
+});
+
+/**
+ * BUDYNEK `habitat` (W6, PROPOZYCJA § 2.3) — moduł mieszkalny bez linii receptur: `addMarketBuilding(id, 'habitat')`
+ * (stacja gracza: wpis `'habitat'` na liście budynków) dokłada rynkowi źródło ludności `HABITAT_RATE` na cykl
+ * (skala 1, ≈ 21,6 tys. osób/h w świecie ×60) i sam potrzebuje obsady jak magazyn (serwis). Liczy się poza solverem
+ * mocy (jak `population`), więc przemysł rynku zostaje bez zmian. Interfejsu budowy stacji gracza nie ma
+ * (decyzja użytkownika: przyjdzie z fabułą) — budynek to dane i hak `DevEconomy.addStationBuilding`.
+ */
+export const HABITAT_ROLE = 'habitat';
+export const HABITAT_RATE = 2.0;
+export const WORKFORCE_PER_HABITAT = 3;
+export const HABITAT_BUILDING = Object.freeze({
+  label: 'Habitat',
+  cost: Object.freeze({ steel: 50, hull_plate: 12, polymer: 20, coolant: 6 })
 });
 
 /**
@@ -101,3 +119,10 @@ export const POPULATION_SOURCE_LABEL = Object.freeze({
   green: 'Strefy zielone',
   habitat: 'Habitat'
 });
+
+/**
+ * Progi obsady w UI (W5, PROPOZYCJA § 6.3): karta „Kadry” i warstwa HANDEL w CIC barwią port
+ * poniżej `WORKFORCE_UI_WARN_RATIO` na bursztynowo, poniżej `WORKFORCE_UI_ALERT_RATIO` na czerwono.
+ */
+export const WORKFORCE_UI_WARN_RATIO = 0.8;
+export const WORKFORCE_UI_ALERT_RATIO = 0.5;

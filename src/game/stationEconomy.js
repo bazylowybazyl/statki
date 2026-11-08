@@ -18,7 +18,9 @@ import {
   RECIPES, RESOURCES, RESOURCE_KEYS, PLANET_YIELD, rollPlanetYield, getResourceMass
 } from '../data/resources.js';
 import { normalizeFaction, isDerelict, getFaction, getFactionPriceMultiplier } from '../data/factions.js';
-import { WORKFORCE_CONTRACT_SECONDS, WORKFORCE_MIN_RATIO, WORKFORCE_FULL_RATIO } from '../data/workforce.js';
+import {
+  WORKFORCE_CONTRACT_SECONDS, WORKFORCE_MIN_RATIO, WORKFORCE_FULL_RATIO, HABITAT_ROLE, HABITAT_BUILDING
+} from '../data/workforce.js';
 
 // ============================================================
 // Profile przemysłowe
@@ -683,6 +685,7 @@ export function addStationBuilding(station, roleId, size = null) {
 
 /** Czy stację stać na postawienie budynku i ile to kosztuje. */
 export function buildingCost(roleId) {
+  if (roleId === HABITAT_ROLE) return HABITAT_BUILDING.cost;
   return INDUSTRY_ARCHETYPES[roleId]?.cost || null;
 }
 

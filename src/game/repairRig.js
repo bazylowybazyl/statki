@@ -98,7 +98,9 @@ function makeDrone(index) {
  * @param {object} [o.tune] strojenie (domyślnie REPAIR_TUNE = window.RepairTune — czytane co krok)
  * @param {object} [o.dock] dok: { along, side, z } (× długość / szerokość kadłuba; z w j.)
  * @param {object} [o.env] haki gry: cellBlocked(cel, x, y, r), healPoints(cel, punkty) → przyrost, sockets(cel, out),
- *   restoreSocket(cel, klucz) → bool, onCellRegrown(cel, ix, iy, x, y), onDroneLost(rig, dron), friendly(nosiciel)
+ *   restoreSocket(cel, klucz) → bool, onCellRegrown(cel, ix, iy, x, y), onDroneLost(rig, dron), friendly(nosiciel),
+ *   workRate() → tempo pracy dronów przy komórce (1 = pełne; gracz: załoga okrętu, workforce W6 — D11: niepełna
+ *   załoga wolniej prostuje i spawa, lot dronów bez zmian)
  */
 export class RepairRig {
   constructor({ carrier = null, cargo = null, drones = 0, tune = null, dock = null, env = null } = {}) {
@@ -114,6 +116,7 @@ export class RepairRig {
     this.recalling = false;     // powrót (drugie R, koniec pracy, brak materiału)
     this.material = 0;          // zapas komórek po rozpakowaniu jednostki ładowni
     this.time = 0;
+    this._workRate = 1;          // tempo pracy przy komórce (env.workRate — załoga nosiciela)
     this.friendly = true;       // strona nosiciela (trafienia: bez ognia własnej strony)
     this._planT = 0;
     this._noMaterial = false;
@@ -318,6 +321,8 @@ export class RepairRig {
     }
     if (this.target !== this.carrier && !HullBodies.hasHull(this.target)) this.setTarget(this.carrier);
     if (typeof this.env.friendly === 'function') this.friendly = !!this.env.friendly(this.carrier);
+    const rate = typeof this.env.workRate === 'function' ? Number(this.env.workRate()) : 1;
+    this._workRate = rate > 0.05 ? rate : 0.05;
     if (this.launched && !this.recalling) {
       this._planT -= dt;
       if (this._planT <= 0) {
@@ -639,16 +644,18 @@ export class RepairRig {
     if (d.state !== DRONE_STATE.DOCKED && d.state !== DRONE_STATE.DEAD) this._updateWorld(d);
   }
 
-  _work1(d, dt) {
+  _work1(d, dtFrame) {
     const T = this.tune;
     const e = this.target;
+    // Tempo pracy przy komórce (załoga nosiciela — env.workRate); ruch drona idzie czasem klatki.
+    const dt = dtFrame * (this._workRate || 1);
     this._goalForJob(d, _goal);
     // Przyklejony do komórki: pozycja = cel (układ kadłuba stoi), bez prędkości.
     d.lx = _goal.x; d.ly = _goal.y; d.lz = _goal.z;
     d.vx = 0; d.vy = 0; d.vz = 0;
     d.yaw = _goal.yaw;
     d.thrust = 0.12;
-    d.arm = Math.min(1, d.arm + dt * 3);
+    d.arm = Math.min(1, d.arm + dtFrame * 3);
     d.jobT += dt;
     if (d.job === REPAIR_JOB.STRAIGHTEN) {
       d.plate = 0;
