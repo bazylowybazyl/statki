@@ -4,8 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  createScrapperState, dispatchScrappers, tickScrappers, reportGameWrecks, forgetGameWrecks,
-  collectSalvageTaken, gameWreckSalvage, assessWreck
+  createScrapperState, dispatchScrappers, tickScrappers, reportGameWrecks, forgetGameWrecks, holdGameWrecks,
+  collectSalvageTaken, gameWreckSalvage, assessWreck, SCRAPPER_MODEL
 } from '../src/game/traffic/scrapperFleets.js';
 import { createWarState, settleGarrisonLosses, salvageManifest } from '../src/game/traffic/warDispatcher.js';
 import {
@@ -18,8 +18,9 @@ import { ACTOR_PHASE } from '../src/game/traffic/materializedFlight.js';
 
 const STATION = { id: 'earth', x: 0, y: 0, factionId: 'terra_nova' };
 
-function setup() {
-  const scrappers = createScrapperState();
+function setup(config = { gameWreckDelay: 0 }) {
+  // Pierwszeństwo gracza (5 min) wyłączone w testach przepływu — osobny test niżej.
+  const scrappers = createScrapperState({ config: config || {} });
   const war = createWarState();
   const registry = createCourseRegistry();
   const econ = { resources: {}, capacity: {} };
@@ -210,11 +211,12 @@ import {
 } from '../src/game/trafficSalvage.js';
 
 function gameEnv() {
-  const sent = { reports: [], gone: [] };
+  const sent = { reports: [], gone: [], hold: [] };
   const bridge = {
     actorWorks: new Map(),
     reportWrecks: (l) => sent.reports.push(...l),
-    wrecksGone: (g) => sent.gone.push(...g)
+    wrecksGone: (g) => sent.gone.push(...g),
+    wrecksHold: (g, on) => sent.hold.push(...g.map((gid) => [gid, on]))
   };
   const removed = [];
   const ropes = [];
@@ -245,7 +247,7 @@ test('klasa wraku gry: okręt — klasa i hol, odłam i cywil — sam złom', ()
   assert.deepEqual(civ, { classId: 'cruiser', scale: 0.5, towable: false });
 });
 
-test('zgłoszenie po uspokojeniu, tylko w bańce gracza; zabrany przez gracza → wreck-gone', () => {
+test('zgłoszenie po uspokojeniu, tylko w bańce gracza; praca gracza przy wraku → wreck-hold, zniknięcie → wreck-gone', () => {
   const { ts, tb, sent } = gameEnv();
   const near = { x: 1000, y: 0, radius: 200, nodes: 50 };
   const far = { x: 90000, y: 0, radius: 200, nodes: 50 };
@@ -256,9 +258,17 @@ test('zgłoszenie po uspokojeniu, tylko w bańce gracza; zabrany przez gracza �
   stepTrafficSalvage(ts, tb, 12.5, 1 / 60, 0, 0);
   assert.equal(sent.reports.length, 1);
   assert.equal(sent.reports[0].classId, 'frigate');
+  const gid = sent.reports[0].gid;
   near.playerTow = true;
   stepTrafficSalvage(ts, tb, 13, 1 / 60, 0, 0);
-  assert.deepEqual(sent.gone, [sent.reports[0].gid]);
+  assert.deepEqual(sent.hold, [[gid, true]], 'gracz holuje — złomiarze czekają');
+  assert.deepEqual(sent.gone, []);
+  near.playerTow = false;
+  stepTrafficSalvage(ts, tb, 14, 1 / 60, 0, 0);
+  assert.deepEqual(sent.hold, [[gid, true], [gid, false]], 'gracz zostawił wrak');
+  near.dead = true;
+  stepTrafficSalvage(ts, tb, 15, 1 / 60, 0, 0);
+  assert.deepEqual(sent.gone, [gid]);
 });
 
 test('cięcie: węzły schodzą do końca postoju, po salvage-taken reszta wraku znika (z odłamami)', () => {
@@ -387,4 +397,39 @@ test('odłam z rozpadu ciała zgłoszonego wraku (rodzic = martwy statek) należ
   stepTrafficSalvage(ts, tb, 8, 1 / 60, 0, 0);
   assert.equal(sent.reports.length, 1, 'bez drugiego zgłoszenia');
   assert.ok(ts.reported.get(gid).extras.includes(piece));
+});
+
+test('pierwszeństwo gracza: złomiarz nie leci po wrak gry przed 5 min od zgłoszenia', () => {
+  const env = setup(null);
+  assert.equal(SCRAPPER_MODEL.gameWreckDelay, 300);
+  env.registry.clock = 1000;
+  reportGameWrecks(env.scrappers, env.war, [{ gid: 1, x: 20000, y: 0, classId: 'cruiser' }], { now: 1000 });
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  assert.equal(env.scrappers.active.length, 0, 'tuż po zgłoszeniu — nikt');
+  env.registry.clock = 1299;
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  assert.equal(env.scrappers.active.length, 0, 'po 299 s — nikt');
+  env.registry.clock = 1300;
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  assert.equal(env.scrappers.active.length, 1, 'po 5 min — holownik');
+});
+
+test('gracz pracuje przy wraku (wreck-hold): złomiarze czekają, holownik w drodze wraca pusty, wrak zostaje', () => {
+  const env = setup();
+  reportGameWrecks(env.scrappers, env.war, [{ gid: 5, x: 20000, y: 0, classId: 'cruiser' }]);
+  holdGameWrecks(env.scrappers, env.war, [5], true);
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  assert.equal(env.scrappers.active.length, 0, 'wstrzymany — nikt');
+  holdGameWrecks(env.scrappers, env.war, [5], false);
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  const job = env.scrappers.active[0];
+  assert.ok(job, 'zwolniony — holownik');
+  // gracz zabiera się za wrak, gdy holownik już leci
+  holdGameWrecks(env.scrappers, env.war, [5], true);
+  assert.equal(job.empty, true);
+  assert.ok(stepUntil(env, () => !env.scrappers.active.includes(job)));
+  assert.equal(env.econ.resources.scrap || 0, 0, 'bez złomu');
+  assert.equal(collectSalvageTaken(env.scrappers, env.registry), null, 'bez salvage-taken');
+  const w = env.war.gameWrecks.get(5);
+  assert.ok(w && !w.claimed && env.war.wrecks.includes(w), 'wrak w rejestrze, wolny');
 });

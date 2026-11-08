@@ -17854,6 +17854,9 @@
       // Statek, z którego jest wrak: przy śmierci — sam rodzic; odłam wraku — właściciel wraku-rodzica.
       const src = parent && !parent.isWreck ? parent : (wreck.owner || parent);
       if (!src || src === ship || src === player2Ship || src.isPlayer || src.playerOwned) return null;
+      // Okręty fabuły (znaczniki StoryGame: __storyTag / __storyKey, okręt flagowy, wieże) i strażnicy misji najemniczej.
+      if (src.__storyTag || src.__storyKey || src.__storyFlagship || src.__storyTurret) return null;
+      if (mercMission?.guards?.includes(src)) return null;
       const spec = classifyGameWreck({
         kind: getUnitKind(src), type: src.type, radius: Number(src.radius) || radius,
         mass: wreck.mass, mass0: src.mass, piece: !!parentBody || !!parent?.isWreck

@@ -6,7 +6,7 @@
 //   node scripts/webgpu/zlomiarze-gra.mjs [--query renderWorker=1] [--out .tmp/zlomiarze] [--port 5481]
 //        [--rozgrzewka 1800] [--etapy gornik,ciecie,hol,koszt] [--postoj 120] [--film 1]
 //
-// `--postoj N` — postój złomiarza przy wraku [s] (wiadomość `config.scrappers` do workera: cięcie i zaczepienie w kadrze
+// `--opoznienie N` — pierwszeństwo gracza do wraku gry [s] (gra: 300; domyślnie w narzędziu 20). `--postoj N` — postój złomiarza przy wraku [s] (wiadomość `config.scrappers` do workera: cięcie i zaczepienie w kadrze
 // filmu; gospodarka tego przebiegu — tylko narzędzia). Wynik: <out>/raport.json, zrzuty <out>/*.png, film <out>/*.gif.
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -20,6 +20,8 @@ const query = `&${args.query || 'renderWorker=1'}`;
 const WARM = Number(args.rozgrzewka || 1800);
 const STAGES = new Set(String(args.etapy || 'gornik,ciecie,hol,koszt').split(','));
 const DWELL = Number(args.postoj || 120);
+// Pierwszeństwo gracza do wraków gry (gra: 300 s) — w narzędziu krótsze, żeby złomiarz wyleciał w kadrze filmu.
+const DELAY = Number(args.opoznienie ?? 20);
 const FILM = args.film !== '0';
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 
@@ -262,7 +264,7 @@ try {
   await ev('(() => { window.setFogOfWar?.(false); return true; })()');
   console.log('tryb', report.tryb);
   // Krótszy postój złomiarzy (cięcie i zaczepienie w kadrze filmu).
-  await ev(`(() => { window.TrafficV2._send({ type: 'config', scrappers: { cutSeconds: ${DWELL}, hookSeconds: ${DWELL} } }); return true; })()`);
+  await ev(`(() => { window.TrafficV2._send({ type: 'config', scrappers: { cutSeconds: ${DWELL}, hookSeconds: ${DWELL}, gameWreckDelay: ${DELAY} } }); return true; })()`);
 
   const tw0 = Date.now();
   await ev(`(async () => { for (let i = 0; i < ${Math.ceil(WARM / 5)}; i++) { window.TrafficV2.advance(5); if (i % 40 === 39) await new Promise((r) => setTimeout(r, 0)); } return true; })()`, 600000);

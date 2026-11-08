@@ -234,6 +234,8 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
   // 2. Wraki, których już nie ma albo które zabrał gracz. Wrak na haku złomiarza (po `salvage-taken`) i wrak zdjęty
   //    przez grę z dala od gracza (despawn > `farDespawn`) — bez `wreck-gone`: złomiarz kończy pracę w rekordzie.
   let gone = null;
+  let holdOn = null;
+  let holdOff = null;
   const far2 = T.farDespawn * T.farDespawn;
   for (const [gid, rec] of ts.reported) {
     let w = rec.wreck;
@@ -243,8 +245,15 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       w = rec.wreck;
       lost = false;
     }
-    const player = !lost && H.playerBusy && H.playerBusy(w);
-    if (!lost && !player) {
+    if (!lost) {
+      // Gracz ma pierwszeństwo: tnie, holuje albo zbiera łup — złomiarze czekają (`wreck-hold`), wrak zostaje w rejestrze.
+      const busy = !!(H.playerBusy && H.playerBusy(w));
+      if (busy !== !!rec.playerHold) {
+        rec.playerHold = busy;
+        if (busy) (holdOn || (holdOn = [])).push(gid);
+        else (holdOff || (holdOff = [])).push(gid);
+        note(ts, busy ? 'gracz-pracuje' : 'gracz-zostawil', gid);
+      }
       rec.lastX = wreckX(w);
       rec.lastY = wreckY(w);
       continue;
@@ -252,11 +261,13 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
     ts.reported.delete(gid);
     const hooked = ts.taken.delete(gid);
     const far = (rec.lastX - px) ** 2 + (rec.lastY - py) ** 2 > far2;
-    note(ts, player ? 'gracz-zabral' : hooked ? 'zniknal-na-haku' : far ? 'zniknal-daleko' : 'zniknal', gid);
-    if (lost && (hooked || far)) continue;
+    note(ts, hooked ? 'zniknal-na-haku' : far ? 'zniknal-daleko' : rec.playerHold ? 'gracz-zabral' : 'zniknal', gid);
+    if (hooked || far) continue;
     (gone || (gone = [])).push(gid);
     ts.stats.gone++;
   }
+  if (holdOn && ts.bridge?.wrecksHold) ts.bridge.wrecksHold(holdOn, true);
+  if (holdOff && ts.bridge?.wrecksHold) ts.bridge.wrecksHold(holdOff, false);
   if (gone && ts.bridge?.wrecksGone) ts.bridge.wrecksGone(gone);
   // 3. Praca złomiarzy w bańce.
   const works = ts.bridge?.actorWorks;
@@ -265,6 +276,15 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       if (rec.kind === 'mine' || rec.gid == null) continue;
       const entry = ts.reported.get(rec.gid);
       if (!entry) continue;
+      // Gracz pracuje przy wraku: złomiarz nie tnie i nie ciągnie (worker odeśle go pustego).
+      if (entry.playerHold) {
+        const held = ts.jobs.get(rec.id);
+        if (held) {
+          if (held.rope) { H.detachRope?.(held.rope); held.rope = null; }
+          held.active = false;
+        }
+        continue;
+      }
       const a = tb?.byId?.get(rec.id);
       if (!a || !a.alive) continue;
       let job = ts.jobs.get(rec.id);
@@ -309,6 +329,8 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
   }
   // Koniec pracy bez holu w bańce (cięcie; hol poza kadrem) — wrak znika od razu.
   for (const [gid, mode] of ts.taken) {
+    // Koniec pracy zgłoszony tuż przed tym, jak gracz zajął wrak — wrak zostaje graczowi.
+    if (ts.reported.get(gid)?.playerHold) { ts.taken.delete(gid); continue; }
     let roped = false;
     for (const job of ts.jobs.values()) if (job.gid === gid && job.rope) { roped = true; break; }
     if (roped) continue;

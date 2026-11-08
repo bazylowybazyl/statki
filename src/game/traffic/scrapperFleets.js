@@ -62,7 +62,13 @@ export const SCRAPPER_MODEL = Object.freeze({
   /** Wrak gry bez lotu po niego przez tyle sekund świata wypada z rejestru (gra trzyma go dalej jako łup gracza). */
   gameWreckTtl: 3600,
   /** Najwyżej tyle wraków gry naraz w rejestrze — kolejne zgłoszenia przepadają. */
-  maxGameWrecks: 64
+  maxGameWrecks: 64,
+  /**
+   * Gracz ma pierwszeństwo (decyzja orkiestratora 2026-11-08): złomiarz nie leci po wrak gry wcześniej niż tyle
+   * sekund czasu gry od zgłoszenia (wrak zgłasza się 2 s po powstaniu) — gracz zdąży go pociąć, zabrać na hol albo
+   * zebrać łup.
+   */
+  gameWreckDelay: 300
 });
 
 export function createScrapperState(options = {}) {
@@ -142,6 +148,8 @@ export function assessWreck(wreck, station, config = SCRAPPER_MODEL) {
  */
 export function dispatchScrappers(scrappers, options = {}) {
   const { war, stations, registry } = options;
+  // Zegar świata (pierwszeństwo gracza do wraków gry — `readyAt`); bez rejestru — bez czekania (testy jednostkowe).
+  const clock = Number.isFinite(options.now) ? options.now : (Number.isFinite(registry?.clock) ? registry.clock : Infinity);
   if (!war?.wrecks?.length || !stations?.length) return [];
   const config = scrappers.config;
   const events = [];
@@ -153,6 +161,8 @@ export function dispatchScrappers(scrappers, options = {}) {
 
   for (const wreck of war.wrecks) {
     if (wreck.claimed || wreck.gone) continue;
+    // Wrak gry: gracz przy nim pracuje (`held`) albo jeszcze trwa jego pierwszeństwo (`readyAt`).
+    if (wreck.game != null && (wreck.held || clock < (wreck.readyAt || 0))) continue;
     // Wrak gry (E24) ma holowniki rezerwy stacji ponad zwykły limit.
     const cap = config.maxActivePerStation + (wreck.game != null ? config.gameReserve : 0);
 
@@ -257,6 +267,13 @@ export function tickScrappers(scrappers, dt, options = {}) {
       continue;
     }
 
+    // Gracz zajął wrak gry, gdy holownik był już w drodze albo przy nim (`wreck-hold`): holownik wraca pusty,
+    // a wrak zostaje w rejestrze dla następnego (gdy gracz go zostawi).
+    if (job.empty) {
+      if (wreck) wreck.claimed = false;
+      events.push({ type: 'salvage-empty', stationId: job.stationId, wreckId: job.wreckId });
+      continue;
+    }
     if (wreckIndex >= 0) dropWreckAt(war, wreckIndex);
     // Kurs zamknął się w tym kroku, zanim bańka zgłosiła koniec pracy — gra dowie się w `collectSalvageTaken`.
     if (job.gid != null && !job.taken) {
@@ -336,7 +353,7 @@ export function gameWreckSalvage(classId, scale = 1, towable = true) {
   return { cut, tow: towable ? scaledManifest(salvageManifest(classId, 'tow'), k) : null };
 }
 
-function gameWreckRecord(war, spec, x, y, now) {
+function gameWreckRecord(war, spec, x, y, now, delay = SCRAPPER_MODEL.gameWreckDelay) {
   const classId = String(spec.classId || 'frigate');
   const salvage = gameWreckSalvage(classId, spec.scale, spec.towable !== false);
   return {
@@ -350,7 +367,9 @@ function gameWreckRecord(war, spec, x, y, now) {
     claimed: false,
     game: spec.gid,
     salvage,
-    reportedAt: Number(now) || 0
+    reportedAt: Number(now) || 0,
+    /** Pierwszeństwo gracza: złomiarz nie leci po wrak przed tym czasem świata. */
+    readyAt: (Number(now) || 0) + Math.max(0, Number(delay) || 0)
   };
 }
 
@@ -372,18 +391,19 @@ export function reportGameWrecks(scrappers, war, list, options = {}) {
     if (gid == null || !Number.isFinite(x) || !Number.isFinite(y) || war.gameWrecks.has(gid)) continue;
     const source = spec.source ? String(spec.source) : null;
     if (source) {
+      const readyAt = (Number(options.now) || 0) + config.gameWreckDelay;
       const linked = war.wrecks.find(w => w.source === source && w.game == null);
       if (linked) {
-        bindGameWreck(war, linked, { gid, x, y }, scrappers);
+        bindGameWreck(war, linked, { gid, x, y, r: spec.r, readyAt }, scrappers);
         continue;
       }
       if (typeof options.isLossSource === 'function' && options.isLossSource(source)) {
-        war.gameWreckLinks.set(source, { gid, x, y, classId: spec.classId, at: Number(options.now) || 0 });
+        war.gameWreckLinks.set(source, { gid, x, y, r: spec.r, classId: spec.classId, at: Number(options.now) || 0, readyAt });
         continue;
       }
     }
     if (war.gameWrecks.size >= config.maxGameWrecks) continue;
-    const wreck = gameWreckRecord(war, { ...spec, gid }, x, y, options.now);
+    const wreck = gameWreckRecord(war, { ...spec, gid }, x, y, options.now, config.gameWreckDelay);
     war.wrecks.unshift(wreck);
     war.gameWrecks.set(gid, wreck);
     if (scrappers) scrappers.stats.gameReported++;
@@ -402,8 +422,34 @@ export function bindGameWreck(war, wreck, link, scrappers = null) {
   wreck.game = link.gid;
   wreck.x = link.x;
   wreck.y = link.y;
+  wreck.r = Math.max(0, Number(link.r) || 0);
+  wreck.readyAt = Number(link.readyAt) || 0;
   war.gameWrecks.set(link.gid, wreck);
   if (scrappers) scrappers.stats.gameLinked++;
+}
+
+/**
+ * Gracz pracuje przy wraku gry (`wreck-hold`: tnie go, holuje albo zbiera łup) — `on`: złomiarze go pomijają, a holownik,
+ * który już leci albo stoi przy nim, wraca pusty (`job.empty`: bez złomu, bez `salvage-taken`; wrak zostaje w rejestrze);
+ * `on: false` — gracz go zostawił, wrak wraca do puli.
+ */
+export function holdGameWrecks(scrappers, war, gids, on = true) {
+  if (!war?.gameWrecks || !Array.isArray(gids)) return 0;
+  let n = 0;
+  for (const gid of gids) {
+    const wreck = war.gameWrecks.get(gid);
+    if (!wreck) continue;
+    wreck.held = !!on;
+    n++;
+    if (!on || !wreck.claimed) continue;
+    for (const job of scrappers?.active || []) {
+      if (job.wreckId !== wreck.id || job.empty) continue;
+      job.empty = true;
+      job.taken = true;
+      if (scrappers) scrappers.stats.gameYielded = (scrappers.stats.gameYielded || 0) + 1;
+    }
+  }
+  return n;
 }
 
 /** Wrak gry przepadł albo zabrał go gracz (`wreck-gone`): bez holownika — z rejestru, z holownikiem — wraca pusty. */
@@ -443,7 +489,7 @@ function expireGameWrecks(scrappers, war, now) {
     if (!(now - link.at > 60)) continue;
     war.gameWreckLinks.delete(source);
     if (war.gameWrecks.has(link.gid) || war.gameWrecks.size >= config.maxGameWrecks) continue;
-    const wreck = gameWreckRecord(war, { gid: link.gid, classId: link.classId }, link.x, link.y, now);
+    const wreck = gameWreckRecord(war, { gid: link.gid, classId: link.classId, r: link.r }, link.x, link.y, link.at, config.gameWreckDelay);
     war.wrecks.unshift(wreck);
     war.gameWrecks.set(link.gid, wreck);
     scrappers.stats.gameReported++;

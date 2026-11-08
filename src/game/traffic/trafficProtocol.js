@@ -411,7 +411,10 @@ export const BELT_MSG = Object.freeze({
  *       wraki gry w bańce gracza do rejestru złomiarzy (`war.wrecks`): klasa okrętu wojennego (`WARSHIP_CLASSES`),
  *       `scale` — ułamek kadłuba klasy (0–1), `towable: false` — sam złom (odłam, cywil); `source` — 'course:N'
  *       albo 'entity:N' (okręt garnizonu / zapasu floty: wrak wiąże się ze stratą zapasu, bez drugiego wraku);
- *   wreck-gone { gids: [gid] }   wrak gry przepadł albo zabrał go gracz — złomiarz w drodze wraca pusty.
+ *   wreck-gone { gids: [gid] }   wrak gry przepadł — złomiarz w drodze wraca pusty, wpis wypada z rejestru;
+ *   wreck-hold { gids: [gid], on } gracz pracuje przy wraku (tnie, holuje, zbiera łup) — złomiarze go pomijają, holownik
+ *       w drodze albo przy wraku wraca pusty (wrak zostaje w rejestrze); `on: false` — gracz go zostawił.
+ *   Pierwszeństwo gracza: złomiarz nie leci po wrak gry wcześniej niż `gameWreckDelay` (300 s) po zgłoszeniu.
  * WORKER → GRA
  *   salvage-taken { taken: [{ gid, mode, course }] }   złomiarz skończył cięcie albo zaczepił wrak (koniec postoju):
  *       gra usuwa wrak (`removeWreckFromWorld`), a przy holu w bańce — dopiero gdy holownik zniknie z bańki.
@@ -419,6 +422,7 @@ export const BELT_MSG = Object.freeze({
 export const SALVAGE_MSG = Object.freeze({
   WRECK_REPORT: 'wreck-report',
   WRECK_GONE: 'wreck-gone',
+  WRECK_HOLD: 'wreck-hold',
   TAKEN: 'salvage-taken'
 });
 

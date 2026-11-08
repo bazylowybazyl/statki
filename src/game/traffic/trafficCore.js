@@ -41,7 +41,7 @@ import {
   COURSE_KIND_SHIFT, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD, courseNumber, TRAFFIC_WARMUP_SECONDS
 } from './trafficProtocol.js';
 import { BELT_MSG, SALVAGE_MSG } from './trafficProtocol.js';
-import { reportGameWrecks, forgetGameWrecks, collectSalvageTaken } from './scrapperFleets.js';
+import { reportGameWrecks, forgetGameWrecks, holdGameWrecks, collectSalvageTaken } from './scrapperFleets.js';
 import { recordPlayerMining, setPlayerBerthHolds, setPlayerHomeBerths, openDirectorMarket } from './trafficDirector.js';
 import { takeHoleUpdates } from './miningFields.js';
 import { exportEconomyState, restoreEconomyState, restoreStationEconomy } from './economySave.js';
@@ -189,6 +189,7 @@ export function createTrafficCore(post, options = {}) {
         case BELT_MSG.MINED: return beltMined(message);
         case SALVAGE_MSG.WRECK_REPORT: return wreckReport(message);
         case SALVAGE_MSG.WRECK_GONE: return wreckGone(message);
+        case SALVAGE_MSG.WRECK_HOLD: return wreckHold(message);
         default: return undefined;
       }
     } catch (error) {
@@ -325,6 +326,13 @@ export function createTrafficCore(post, options = {}) {
       // Kurs garnizonu zniszczony w grze: stratę rozliczy `tickGarrison` w następnym kroku świata.
       isLossSource: (key) => key.startsWith('course:') && !!visits?.some(v => `course:${v.courseId}` === key)
     });
+  }
+
+  /** Gracz pracuje przy wraku gry (`wreck-hold`) — złomiarze go pomijają, holownik w drodze wraca pusty. */
+  function wreckHold(message) {
+    const world = core.world;
+    if (!world?.war || !Array.isArray(message.gids)) return;
+    holdGameWrecks(world.scrappers, world.war, message.gids, message.on !== false);
   }
 
   function wreckGone(message) {
@@ -803,7 +811,7 @@ export function createTrafficCore(post, options = {}) {
     const sc = message.scrappers;
     const cfg = core.world?.scrappers?.config;
     if (sc && cfg) {
-      for (const key of ['cutSeconds', 'hookSeconds', 'gameReserve']) if (Number.isFinite(sc[key]) && sc[key] >= 0) cfg[key] = sc[key];
+      for (const key of ['cutSeconds', 'hookSeconds', 'gameReserve', 'gameWreckDelay']) if (Number.isFinite(sc[key]) && sc[key] >= 0) cfg[key] = sc[key];
     }
   }
 
