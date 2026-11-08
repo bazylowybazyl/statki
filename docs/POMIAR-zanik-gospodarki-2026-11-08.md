@@ -98,6 +98,22 @@ Inne hipotezy sprawdzone tą samą sondą:
 | obsada | 76% → 100% | 73% → 100% | 68% → 100% |
 | ładowność floty | 24% → 99% | 25% → 100% | 25% → 100% |
 
+### Wariant długi 12 h po poprawce (`--godziny 12`, ziarna 7 / 11 / 23)
+
+| godz. | kursy | ładowność, tys. t | kapitał, mln CR | obsada |
+|---|---|---|---|---|
+| 2 | 812 / 821 / 824 | 2706 / 2706 / 2706 | 75,5 / 72,6 / 75,2 | 1,00 / 1,00 / 1,00 |
+| 4 | 1243 / 1237 / 1210 | 2706 / 2706 / 2706 | 68,9 / 64,6 / 69,7 | 1,00 / 1,00 / 1,00 |
+| 6 | 1410 / 1385 / 1383 | 2706 / 2706 / 2706 | 66,0 / 61,7 / 66,2 | 1,00 / 1,00 / 1,00 |
+| 8 | 1582 / 1476 / 1507 | 2706 / 2706 / 2706 | 61,7 / 55,8 / 61,8 | 1,00 / 1,00 / 1,00 |
+| 10 | 1624 / 1603 / 1593 | 2672 / 2706 / 2705 | 64,2 / 59,6 / 62,7 | 1,00 / 1,00 / 1,00 |
+| 12 | 1557 / 1594 / 1602 | 2650 / 2675 / 2638 | 69,3 / 66,6 / 70,4 | 1,00 / 1,00 / 1,00 |
+
+Baza w 12. h (sonda): kursy 178 / 230 / 203, ładowność 554 / 560 / 570 tys. t, kapitał 39,9 / 40,9 / 40,2 mln CR,
+obsada 0,38 / 0,39 / 0,42. Próg „długi bieg” (stal do wglądu, commit 58f0ffdf): zaliczony na 3 ziarnach — kursy
+135–138%, dostawy 136–140%, obsada 100%, ładowność 98–99%, stal 58–60%. Cały bieg 12 h nie przechodzi na kolejce
+(Wenus średnio 8,2 / 11,0 / 10,9, Ziemia 5,8 / 5,5 / 3,9) i głodzie w kryjówkach (O₂ 280 min, stal 133 min).
+
 Bieg 20 h (sonda, ziarno 7, po): kursy 1600–2070, dostawy 10–11 tys./h, ładowność 2,56 mln t (−5%), obsada 1,00,
 kapitał 60 → 119 mln CR (od ~10 h rośnie o ~5 mln CR/h).
 
@@ -109,7 +125,7 @@ kapitał 60 → 119 mln CR (od ~10 h rośnie o ~5 mln CR/h).
 | najdłuższy głód | 6,5 → 6,4 min | 6,3 → 6,2 min | 6,3 → 5,9 min |
 | stocznie bez pochylni | 0 → 0 min | 0 → 0 | 0 → 0 |
 | kolejka na redzie (najwyższa) | 0,92 → 1,32 (Io) | 0,84 → 1,17 (Wenus) | 0,79 → 1,95 (Wenus) |
-| tick przy szczycie | 12,2 → 10,9 ms | 12,8 → 12,6 ms | 11,8 → 11,5 ms |
+| tick przy szczycie (w ciszy, start przy 0 obcych procesach node) | 11,4 → 12,0 ms | 10,7 → 12,0 ms | 11,4 → 14,4 ms |
 | obsada (najniższa średnia) | 1 → 1 | 1 → 1 | 1 → 0,999 |
 
 Kolejka rośnie, bo w porcie zostają duże statki (w bazie po 4 h ubywa ~27% megafrachtowców). Wenus ma 6 stanowisk
