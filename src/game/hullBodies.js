@@ -3,7 +3,7 @@
  *
  * Zastępuje heksowy destruktor (destructor.js) dla statków, NPC i ich wraków.
  * Kadłub powstaje z tego samego obrazu co dawniej initHexBody (sprite w rozmiarze
- * renderu), komórka = 15 px jak w demie destruktor2d.html. Rozgrywka zostaje w 2D gry:
+ * renderu), komórka = 15 px jak w demie dema/destruktor2d-webgpu.html. Rozgrywka zostaje w 2D gry:
  *  - gra całkuje ruch encji (x, y, angle, vx, vy, angVel) jak dotąd,
  *  - przed krokiem silnika ciało dostaje pozę i prędkość encji (syncIn),
  *  - silnik liczy kontakty, zgniot, rozpady i zwraca poprawkę ruchu (syncOut).
@@ -51,13 +51,13 @@ export const HULL_BODY_CONFIG = {
 
   // --- masa zderzeń ---
   // Ciało w silniku ma masę z POWIERZCHNI kadłuba przy jednej gęstości dla wszystkich (jak
-  // destruktor2d.html: Atlas 1800×806 px = 672 400 j.² = 800 tys.). Zderzenie kadłubów zależy
+  // demo destruktora 2D: Atlas 1800×806 px = 672 400 j.² = 800 tys.). Zderzenie kadłubów zależy
   // tylko od stosunków mas, a szablony gry dawały kapitałom 4–5× mniej masy na j.² niż fregatom
   // i niszczycielom (mały okręt „odbijał” Atlasa jak ciężki). Masa ENCJI zostaje masą gry
   // (ciąg dysz, separacja AI, holowanie, asteroidy) w swojej skali.
   massPerArea: 1.19,
 
-  // --- silnik (strojenie z dema destruktor2d.html) ---
+  // --- silnik (strojenie z dema destruktora 2D) ---
   crushStrength: 300000,
   // Prawo kontaktu v2 (destructorBeams3D createBeamConfig — contactV2; audyt docs/AUDYT-destruktor-3d-2026-10-14.md).
   contactV2: true,
@@ -137,6 +137,11 @@ export const HULL_BODY_CONFIG = {
   cutEdgeSpread: 0.35,
   cutEdgeCells: 2.5,
   cutEdgeWindow: 0.5,       // [s] czasu symulacji
+  // Najmniej, co odłam przy brzegu rzazu dostaje (kierunek i zwrot z pędu brzegu): duża połowa kadłuba (pancernik,
+  // lotniskowiec) z samego pędu brzegu odjeżdżała od reszty 10–20 j/s i obracała się 1–3°/s — wyglądała na
+  // przyspawaną. Małe odłamy mają więcej z pędu brzegu (próg ich nie zmienia).
+  cutEdgeMinDv: 60,         // [j/s] zmiana prędkości odłamu względem rodzica
+  cutEdgeMinDw: 0.12,       // [rad/s] ≈ 7°/s obrotu własnego
   probeReachCells: 0.8,     // sonda punktowa (podparcie gniazd broni i rdzeni)
 
   // --- zapytania powierzchni (tylko odczyt: surfaceNormal, traceThrough, spriteUvAt) ---
@@ -900,6 +905,27 @@ export const HullBodies = {
   },
 
   /**
+   * Rozpad POZA krokiem (shatter, detonacja rdzenia): ciało dzieli się na wyspy od razu (encje wraków z haka onWreck),
+   * a encja kadłuba dostaje pozę, prędkość, pivot i promień z ciała jak po kroku. Przebudowa ciała po rozpadzie
+   * przesuwa jego początek do nowego środka masy (_rebuildBody); bez syncOut encja wraku (kotwica = środek masy)
+   * zostawała w starym środku masy z nieaktualnym pivotem, a następny syncIn cofał ciało o to przesunięcie.
+   */
+  splitNow(entity) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity) return;
+    const body = hull.body;
+    if (!body || body.dead) return;
+    const planar = !hull.solid3D;
+    if (planar) syncIn(hull);
+    const queued = D.splitQueue;
+    D.splitQueue = [body];
+    body.structureDirty = true;
+    D.processSplits([body]);
+    for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
+    if (planar && !body.dead) syncOut(hull);
+  },
+
+  /**
    * Rzaz (Hexlance): niszczy żywe węzły w pasie o półszerokości `halfWidth` wokół odcinka
    * (świat gry). Zwraca liczbę zniszczonych węzłów; pierwszy punkt wejścia w `hullSweepResult`,
    * węzeł i uv wejścia w `hullImpactResult` (kind 'cut'). `opts.push` — rzaz pocisku z pędem
@@ -1285,14 +1311,7 @@ export const HullBodies = {
     // 3) Rozpad od razu (nie czekamy na krok): powstają encje wraków.
     const wrecks = typeof window !== 'undefined' && Array.isArray(window.wrecks) ? window.wrecks : null;
     const before = wrecks ? wrecks.length : 0;
-    if (!body.dead) {
-      const queued = D.splitQueue;
-      D.splitQueue = [body];
-      body.structureDirty = true;
-      const tmp = [body];
-      D.processSplits(tmp);
-      for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
-    }
+    this.splitNow(wreck);
 
     // 4) Pchnięcie od wybuchu: promieniście + stycznie + obrót (jak dawny rozpad heksów).
     const kick = typeof opts?.kick === 'function' ? (w) => { if (w && !w.dead) opts.kick(w, worldX, worldY); } : (w) => {
@@ -2898,6 +2917,8 @@ function cutLocalBand(body, x0, y0, x1, y1, halfWidth, push = false) {
   }
   if (cut.mass > 0) { cut.x /= cut.mass; cut.y /= cut.mass; }
   if (killed > 0) {
+    // Wręgi i grodzie nad szczeliną (końce poza pasem) też pękają — inaczej trzymają odciętą część przy kadłubie.
+    D.breakBeamsAcross(body, x0, y0, x1, y1);
     D.wake(body, D.config.wakeHoldFrames);
     if (!body.noSplit && D.splitQueue.indexOf(body) === -1) D.splitQueue.push(body);
   }
@@ -3115,10 +3136,14 @@ function applyCutEdgeImpulse(parentHull, wb) {
   }
   if (px === 0 && py === 0) return;
   const m = D._refreshRot(wb);
-  wb.vel.x += (m[0] * px + m[1] * py) / wb.mass;
-  wb.vel.y += (m[3] * px + m[4] * py) / wb.mass;
+  let dvx = (m[0] * px + m[1] * py) / wb.mass, dvy = (m[3] * px + m[4] * py) / wb.mass;
+  const dv = Math.sqrt(dvx * dvx + dvy * dvy);
+  if (dv > 1e-9 && dv < C.cutEdgeMinDv) { dvx *= C.cutEdgeMinDv / dv; dvy *= C.cutEdgeMinDv / dv; }
+  wb.vel.x += dvx;
+  wb.vel.y += dvy;
   const inv = wb.invInertiaLocal;
-  const dw = (inv && inv.length > 8 ? Number(inv[8]) || 0 : 0) * tq;
+  let dw = (inv && inv.length > 8 ? Number(inv[8]) || 0 : 0) * tq;
+  if (Math.abs(dw) < C.cutEdgeMinDw) dw = tq < 0 ? -C.cutEdgeMinDw : C.cutEdgeMinDw;
   wb.angVel.z += dw > C.cutPushMaxDw * 2 ? C.cutPushMaxDw * 2 : dw < -C.cutPushMaxDw * 2 ? -C.cutPushMaxDw * 2 : dw;
 }
 

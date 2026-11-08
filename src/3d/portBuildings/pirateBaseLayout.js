@@ -34,7 +34,7 @@
 // techniczna, maszty, dach magazynu.
 
 export const PIRATE_BASE_SHIP = Object.freeze({
-  // długość × szerokość okrętu klasy w grze (sprite × 0,6; shipyardLayout.parkedLengthOf) i szerokość stanowiska
+  // długość × szerokość okrętu klasy w grze (sprite × 0,6) i szerokość stanowiska
   frigate: Object.freeze({ length: 192, beam: 144, slot: 170 }),
   destroyer: Object.freeze({ length: 360, beam: 204, slot: 250 }),
   battleship: Object.freeze({ length: 720, beam: 264, slot: 440 }),

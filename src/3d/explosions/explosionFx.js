@@ -3,7 +3,7 @@
 // WYBUCHY WebGPU gry — reżyser jako KROK klatki efektów Core3D (`Core3D.addFxStep`). Zastępuje dawny wybuch
 // reaktora src/effects3d/reactorblow.js (port overlaya WebGL: płaskie cząstki, kolce i błysk wybielający kadr —
 // użytkownik 2026-10-07: „tragiczne, do usunięcia”). Wejście jak dawniej: `window.makeReactorBlow({ x, y, size,
-// profile })` (świat gry) — próg punktów i łańcuch rozpadu suchego doku (misja 1), rozpad stacji (Destruction3D,
+// profile })` (świat gry) — próg punktów i rozpad bazy piratów (misja 1), rozpad stacji (Destruction3D,
 // `reactorFactory`), śmierć gracza bez rdzenia (`triggerReactorBlow3D`), skrypty; śmierć okrętu bez detonacji rdzenia —
 // z miejsca ZBIORNIKA PALIWA ze strumieniami wzdłuż osi kadłuba (src/game/fuelTank.js, opcje spawn: axisX / axisY,
 // jetVelTau) i gaz detonacji rdzenia w barwie frakcji (gasOnly, tint).
@@ -210,7 +210,7 @@ export const EXPLOSION_TUNE = {
   flashGain: 1,
   ambientSky: 1,      // otoczenie dymu × jasność strefy nieba (skyRegion)
   // PRZESZKODY (F2, etap C 2026-10-09; wejście src/game/gasObstacleInput.js): statyka — ściany i bryły hal K-7, kawałki
-  // suchego doku (gaz opływa, wylewa się bramami); kadłuby — obrys z żywych węzłów belek z prędkością ciała (kadłub
+  // bazy piratów (gaz opływa, wylewa się bramami); kadłuby — obrys z żywych węzłów belek z prędkością ciała (kadłub
   // rozcina dym). false = przeszkód nie ma (dawny gaz; zmiana działa od następnego kroku symulacji).
   obstacles: true,
   hullObstacles: true,
@@ -521,6 +521,7 @@ export class ExplosionFx {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !(size > 0)) return false;
     const t0 = performance.now();
     const prof = explosionProfile(profile);
+    this._optProf = prof; // decay, under, thin nowej domeny (_slotFor) i to, czy można ją scalić (_fitSlot)
     // Opcje tego wybuchu (bez alokacji: pola reżysera na czas _spawn; wtórne z kolejki ich nie dziedziczą):
     //   axisX, axisY — oś strumieni gazu w świecie gry (rozerwany zbiornik paliwa: gaz bije z rury wzdłuż osi
     //                  kadłuba — src/game/fuelTank.js); bez osi — strumienie w losowych kierunkach;
@@ -742,6 +743,8 @@ export class ExplosionFx {
       if (isEffectTag(s.tag)) continue;
       // Domena głęboka (pass tła — skała pod bazą, dysk mieszkalny) leży pod płaszczyzną gry — wybuch w płaszczyźnie jej nie scala.
       if (s.deep) continue;
+      // Dym pod FG i dym zwykły nie dzielą domeny: okręt ginący przy bazie wpadłby pod wieżę, a wybuch bazy dostałby front.
+      if (!!s.under !== !!this._optProf?.under) continue;
       // Pełna lista gospodarzy (16 rodów) — nowy wybuch z nowym gospodarzem nie scala się (wrak-gospodarz stałby się
       // przeszkodą własnego gazu); idzie do nowej domeny albo cząstkami (przegląd etapu C pkt 4).
       if (!s.canHost(this._optHost)) continue;
@@ -847,6 +850,9 @@ export class ExplosionFx {
     A.tint = this._optTint;
     A.host = this._optHost;
     A.now = now;
+    A.baseDecay = this._optProf?.decay || 0;
+    A.under = !!this._optProf?.under;
+    A.thin = this._optProf?.thin || 0;
     const slot = g.acquire(sx, sy, 0, R, A);
     if (slot >= 0 && g.grids[A.tier] === this.fine) this.stats.fineGas++;
     if (slot >= 0 && g.grids[A.tier] === this.coarse) this.stats.coarseGas++;

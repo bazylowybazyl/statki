@@ -8,6 +8,7 @@ import {
 import { drawWreckFieldMarkers } from './wreckFieldMarkers.js';
 import { CicBeltLayer, CIC_BELT_TUNE, CIC_BELT_PALETTES, describeCicBeltAt } from './cicBeltLayer.js';
 import { createCicTradeLayer } from './cicTradeLayer.js';
+import { createCicCoverageLayer } from './cicCoverageLayer.js';
 
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
@@ -326,7 +327,8 @@ export function getCicEntitySpriteRotation(entity) {
 
 // Połowy boków prostokąta ekranu (osiowego) opisanego na obróconym kadłubie — ramka zaznaczenia
 // jednostek (src/ui/commandOverlay.js). 0 / 0, gdy kadłub nie ma wymiarów.
-export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0 }) {
+/** Półwymiary ramki kadłuba na ekranie [px]; roll — obrót kadru (kąt ekranu = kąt świata − roll; CIC: 0). */
+export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0 }, roll = 0) {
   const metrics = getEntityHullMetrics(entity, zoom);
   const w = metrics.drawW;
   const h = metrics.drawH;
@@ -335,7 +337,7 @@ export function getCicEntityScreenHalfExtents(entity, zoom, out = { hx: 0, hy: 0
     out.hy = 0;
     return out;
   }
-  const angle = readSignedNumber(entity?.angle, 0) + getEntitySpriteRotation(entity);
+  const angle = readSignedNumber(entity?.angle, 0) + getEntitySpriteRotation(entity) - (Number(roll) || 0);
   const c = Math.abs(Math.cos(angle));
   const s = Math.abs(Math.sin(angle));
   out.hx = (w * c + h * s) * 0.5;
@@ -728,11 +730,33 @@ if (typeof window !== 'undefined') window.CicBeltTune = CIC_BELT_TUNE;
 let cicBeltLayerFailed = false;
 // Komputer handlowy (E7, src/ui/cicTradeLayer.js) — warstwa „HANDEL”; dane z ruchu v2 przez `setTradeSource`.
 const cicTradeLayer = createCicTradeLayer();
+// Mgła wojny w warstwie handlu: port ukryty jak znacznik stacji (`SensorSystem.hides`, drawStationMarkers).
+cicTradeLayer.setHiddenTest(portId => {
+  const list = window.stations;
+  if (!Array.isArray(list) || !window.SensorSystem?.hides) return false;
+  for (const st of list) if (st && st.id === portId) return !!window.SensorSystem.hides(st);
+  return false;
+});
 let cicTradeLayerFailed = false;
 function cicTradeLayerFail(e) {
   if (!cicTradeLayerFailed) console.error('[CIC] warstwa handlu:', e);
   cicTradeLayerFailed = true;
 }
+// Zasięgi radarów (prototyp ?radarZasiegi, src/ui/cicCoverageLayer.js) — warstwa „ZASIĘGI”; obraz czujników z gry
+// przez `setCoverageSource`. Rzut mapy bez alokacji: pola widoku ustawia draw() co klatkę.
+const cicCoverageLayer = createCicCoverageLayer();
+let cicCoverageLayerFailed = false;
+function cicCoverageLayerFail(e) {
+  if (!cicCoverageLayerFailed) console.error('[CIC] warstwa zasięgów:', e);
+  cicCoverageLayerFailed = true;
+}
+const CIC_COV_VIEW = {
+  W: 0, H: 0, ox: 0, oy: 0, cx: 0, cy: 0, zoom: 1, roll: 0, player: null,
+  project(x, y, out) { out.x = this.cx + (x - this.ox) * this.zoom; out.y = this.cy + (y - this.oy) * this.zoom; return out; },
+  // poza bieżąca — warstwa woła tylko dla bytu zidentyfikowanego w zasięgu wzroku (mgła wojny nietknięta)
+  poseOf(e, out) { out.x = finiteNumber(e.pos?.x ?? e.x, 0); out.y = finiteNumber(e.pos?.y ?? e.y, 0); out.angle = finiteNumber(e.angle, 0); return true; },
+  hullHalf(e, out) { return getCicEntityScreenHalfExtents(e, this.zoom, out); }
+};
 
 function cicBeltLayerFail(e) {
   if (cicBeltLayerFailed) return;
@@ -791,6 +815,14 @@ export const CICDisplay = {
   /** Źródło danych: `() => Promise<summary>` (most ruchu v2 — `requestTradeSummary`). */
   setTradeSource(fn) { cicTradeLayer.setSource(fn); },
   tradeStats() { return cicTradeLayer.stats(); },
+
+  /** Zasięgi radarów (warstwa „ZASIĘGI”, klawisz Z w CIC; prototyp ?radarZasiegi): strefy radarów wroga i własne. */
+  toggleCoverage() { return cicCoverageLayer.toggle(); },
+  get coverageEnabled() { return cicCoverageLayer.enabled; },
+  get coverageAvailable() { return cicCoverageLayer.hasSource; },
+  /** Źródło: `() => obraz czujników` (src/game/sensorPicture.js) albo null. */
+  setCoverageSource(fn) { cicCoverageLayer.setSource(fn); },
+  coverageStats() { return cicCoverageLayer.stats(); },
 
   /** Jump to system view (V key) — sets target zoom to system level */
   toggleSystemView() {
@@ -1183,6 +1215,14 @@ export const CICDisplay = {
       cicTradeLayer.draw(ctx, W, H, toScreen);
     } catch (e) { cicTradeLayerFail(e); }
 
+    // === ZASIĘGI RADARÓW (prototyp — src/ui/cicCoverageLayer.js; [Z]) ===
+    if (cicCoverageLayer.enabled) {
+      try {
+        CIC_COV_VIEW.player = ship; CIC_COV_VIEW.W = W; CIC_COV_VIEW.H = H; CIC_COV_VIEW.ox = shipX; CIC_COV_VIEW.oy = shipY; CIC_COV_VIEW.cx = cx; CIC_COV_VIEW.cy = cy; CIC_COV_VIEW.zoom = cicZoom;
+        cicCoverageLayer.draw(ctx, W, H, CIC_COV_VIEW, performance.now() / 1000);
+      } catch (e) { cicCoverageLayerFail(e); }
+    }
+
     // === RANGE RINGS (from ship center) ===
     const shipScr = toScreen(ship.pos.x, ship.pos.y);
     ctx.strokeStyle = CIC_CONFIG.colors.rangeRing;
@@ -1203,10 +1243,10 @@ export const CICDisplay = {
     }
     ctx.setLineDash([]);
 
-    // === SENSOR RANGES ===
+    // === SENSOR RANGES === (przy warstwie ZASIĘGI jej obrys własnych czujników zastępuje okręgi)
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
-    for (const src of SensorSystem.getSensorSources()) {
+    for (const src of (cicCoverageLayer.enabled ? [] : SensorSystem.getSensorSources())) {
       const sp = toScreen(src.x, src.y);
       const sr = src.range * cicZoom;
       switch (src.type) {
@@ -1581,6 +1621,9 @@ export const CICDisplay = {
     if (cicTradeLayer.enabled) {
       try { panelBottom = cicTradeLayer.drawPanel(ctx, W, panelBottom + 10, CIC_PANEL_W); } catch (e) { cicTradeLayerFail(e); }
     }
+    if (cicCoverageLayer.enabled) {
+      try { panelBottom = cicCoverageLayer.drawPanel(ctx, W, panelBottom + 10, CIC_PANEL_W); } catch (e) { cicCoverageLayerFail(e); }
+    }
 
     // Dane zaznaczonego celu — pod panelem (dawniej w prawym dolnym rogu, pod podpowiedziami kokpitu)
     const _panelTarget = cicSelectedContacts[0]?.entity || null;
@@ -1671,7 +1714,8 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const sunLabelSize = Math.round(8 + blend * 4);
   ctx.font = blend > 0.5 ? `bold ${sunLabelSize}px monospace` : `${sunLabelSize}px monospace`;
   ctx.textAlign = 'center';
-  ctx.fillText('SOL', sunScr.x, sunScr.y + sunScreenR + 12 + blend * 4);
+  // podpis gwiazdy układu (src/data/starSystems.js — `label`; strona wpisuje go do SUN)
+  ctx.fillText(SUN.label || 'SOL', sunScr.x, sunScr.y + sunScreenR + 12 + blend * 4);
   ctx.restore();
 
   // === PLANET ORBITS & PLANETS ===

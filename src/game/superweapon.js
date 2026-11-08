@@ -487,7 +487,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     }
                 }
                 if (proj.bittenStations && proj.bittenStations.has(st)) continue;
-                // Suchy dok piratów (misja 1): pręt przebija bryły trzonu i ścian hali (shipyardLayout.placeDryDock) —
+                // Budowla z bryłami trafień (baza piratów, misja 1): pręt przebija bryły —
                 // wejście w pierwszą bryłę na torze tego kroku, nie okrąg wokół środka 8-kilometrowej budowli.
                 if (st.hitShapes) {
                     const dh = dryDockSegmentHit(st.hitShapes, prevX, prevY, prevX + moveX, prevY + moveY, _dockHit, st._dockGone)

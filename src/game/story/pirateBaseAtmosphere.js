@@ -41,6 +41,8 @@ import { createPirateVentsFrame, VENT_KIND, VENT_MAX, VENT_REC } from '../../ren
 
 export const ATMO_TUNE = {
   enabled: true,
+  // Wyrwa jedzie z ciałem silnika belek. Przy wokselach te ciała są schowane, więc para latała po kadrze bez widocznej bryły: gra ustawia false (index.html) i wyrwa stoi tam, gdzie powstała.
+  followBodies: true,
   gamma: 1.4,
   // Wypływ: c [j/s] w τ = V / (A·cd·c). Rozerwana ćwiartka bębna (wyrwa r ≈ 240 j.) — τ ≈ 1,6 s: połowa ciśnienia
   // w ~0,8 s, koniec (ρ < endRho) po ~9 s; wieża przez szyję (r 150 j.) i magazyn — ściśnięte do tauMax.
@@ -410,7 +412,7 @@ export function breach(o = {}) {
   } else if (!Number.isFinite(nz)) nz = 0;
   const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
   nx /= nl; ny /= nl; nz /= nl;
-  const ent = o.entity || null;
+  const ent = T.followBodies ? (o.entity || null) : null;
   // Łączenie z bliską wyrwą tego samego modułu, rodzaju i ciała.
   for (let i = 0; i < S.vents.length; i++) {
     const v = S.vents[i];
@@ -465,6 +467,7 @@ export function breach(o = {}) {
     const sp = Number(o.drift) || 0;
     v.vx = nx * sp; v.vy = ny * sp; v.vz = 0;
   }
+  if (!T.followBodies) { v.vx = 0; v.vy = 0; v.vz = 0; }
   if (isMain) {
     m.breached = true;
     if (kind === 'break') m.broken = true;
@@ -686,7 +689,7 @@ export function noteBaseNeckSnap(tower) {
  * brzeg obwiedni ciała) — wyrwa leci dalej z kawałkiem, w którym jest. pieceId — id kawałka odłamu (hull.world.id).
  */
 export function rehomePirateBaseVents(wreck, parent, pieceId = null) {
-  if (!S.place || !wreck || !S.vents.length) return 0;
+  if (!ATMO_TUNE.followBodies || !S.place || !wreck || !S.vents.length) return 0;
   const b = bodyOf(wreck);
   if (!b) return 0;
   const solid = isSolidEntity(wreck);

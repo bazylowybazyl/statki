@@ -20,6 +20,7 @@ import { WarpFrame, WARP_FRAME_CAPS, newWarpSlot } from '../src/3d/warp/frame.js
 import { WarpPlayerFx, warpStarStretch } from '../src/3d/warp/player.js';
 import { setHyperLegacyLook } from '../src/3d/warp/hyperLook.js';
 import { GLOW_STREAK } from '../src/3d/warp/sprites.js';
+import { setWarpSparks } from '../src/3d/warp/sparkRecipes.js';
 import { sampleWarpRush, sampleWarpDeparture } from '../src/game/warpDrive.js';
 import { planWarpArrivalAxis, arrivalAxisPose, planWarpDepartureAxis, departAxisPose } from '../src/game/warpTraffic.js';
 
@@ -495,7 +496,7 @@ async function nurtDriver() {
   // wszystko, co zdradza okręt w klatce: błyski, blask, fale, przegródki ośrodka, smugi, duszki
   const tell = () => {
     const f = WarpNurt.frame;
-    return f.flashes.count + f.glares.count + f.waves.count + f.bubbles.length + f.streaks.count + WarpNurt.glow.count;
+    return f.flashes.count + f.glares.count + f.waves.count + f.bubbles.length + f.streaks.count + f.sparks.count + WarpNurt.glow.count;
   };
   return { WarpNurt, setEntityHiddenTest, streaks, tell };
 }
@@ -530,11 +531,17 @@ test('sterownik: smuga przylotu NPC w duszkach (kształt GLOW_STREAK — ten sam
     WarpNurt.update(o);
     assert.ok(near(WarpNurt._visual(901).dress.swVis, 0.4, 1e-12), 'częściowe maskowanie — widoczność 0,4');
     npc.__cloakLook = undefined;
-    // domyślny wygląd: widoczna — zwiastun (punkt zbierania) i bańka okrętu; ukryta / zamaskowana — nic
+    // dawny wygląd przylotu (`?warpSW=0`): widoczna — zwiastun i drobiny okrętu (sparkRecipes.js — bez przegródek ośrodka;
+    // dawne przegródki tylko `?warpDrobiny=0`); ukryta / zamaskowana — nic
     setWarpSW(false);
     WarpNurt.update(o);
     assert.equal(streaks(), 0, 'bez przełącznika — bez smug');
-    assert.ok(WarpNurt.frame.flashes.count >= 1 && WarpNurt.frame.bubbles.length >= 1, 'domyślny wygląd — błysk zwiastuna i bańka');
+    assert.ok(WarpNurt.frame.flashes.count >= 1 && WarpNurt.frame.sparks.count >= 1, 'domyślny wygląd — błysk zwiastuna i drobiny');
+    assert.equal(WarpNurt.frame.bubbles.length, 0, 'drobiny — ośrodek bez przegródek');
+    setWarpSparks(false);
+    WarpNurt.update(o);
+    assert.ok(WarpNurt.frame.bubbles.length >= 1 && WarpNurt.frame.sparks.count === 0, '`?warpDrobiny=0` — bańka ośrodka');
+    setWarpSparks(null);
     assert.equal(WarpNurt._visual(901).dress.swVis, 1);
     setEntityHiddenTest((e) => e === npc);
     WarpNurt.update(o);
@@ -549,9 +556,10 @@ test('sterownik: smuga przylotu NPC w duszkach (kształt GLOW_STREAK — ten sam
     WarpNurt.warpBegin(903, 'arrival', b, null);
     setEntityHiddenTest(() => true);
     WarpNurt.update({ ...o, trafficTime: (b.t0 + b.tAppear) * 0.5 });
-    assert.ok(WarpNurt.frame.flashes.count >= 1 && WarpNurt.frame.bubbles.length >= 1, 'zwiastun planu przed attach');
+    assert.ok(WarpNurt.frame.flashes.count >= 1 && WarpNurt.frame.sparks.count >= 1, 'zwiastun planu przed attach');
   } finally {
     setWarpSW(null);
+    setWarpSparks(null);
     setEntityHiddenTest(null);
     WarpNurt.warpEnd(901);
     WarpNurt.warpEnd(903);

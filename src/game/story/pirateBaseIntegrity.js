@@ -23,8 +23,25 @@ import { pirateBaseChunkAt, pirateBaseNearestChunk } from '../../3d/portBuilding
 export const BASE_INTEGRITY_TUNE = {
   ramWindow: 0.5,     // s — węzły stracone tyle po ostatnim styku okrętu liczą się jako taran
   ramMinSpeed: 40,    // j/s — prędkość względna styku, od której liczy się taran (docisk bez ruchu — nie)
-  ramHpMul: 2.2       // mnożnik udziału zgniecionych węzłów w punktach budowli
+  ramHpMul: 2.2,      // mnożnik udziału zgniecionych węzłów w punktach budowli
+  // Szarża F gracza przy bazie (prośba użytkownika 2026-11-08: „Atlas musi mieć większą siłę taranowania w tej misji” —
+  // przebijał pierwszą ścianę bębna i wieżę, a stawał na drugiej ścianie): masa Atlasa w stykach silnika belek × chargeRamMass
+  // (body.rammingMassMult — ciąg, lot i masa gry bez zmian), w pasie chargeRamPad od obwiedni bazy. Symulacja Node (rozbieg
+  // 1,5 km, 4 kierunki): × 1 staje w 3 na 4, × 2 przechodzi na wylot (wyjście 2350–3000 j/s), × 3 prawie nie zwalnia.
+  chargeRamMass: 2,
+  chargeRamPad: 1500  // [j.]
 };
+
+/**
+ * Mnożnik masy taranu gracza w tym kroku: chargeRamMass w szarży F (`charging`) najwyżej chargeRamPad od obwiedni bazy
+ * (`place.distance` — 0 w środku), inaczej 1. place — miejsce bazy z placePirateBase (null — misja bez bazy).
+ */
+export function chargeRamMassAt(place, x, y, charging, tune = BASE_INTEGRITY_TUNE) {
+  if (!charging || !place || typeof place.distance !== 'function') return 1;
+  const mul = Number(tune.chargeRamMass);
+  if (!(mul > 1)) return 1;
+  return place.distance(x, y) <= (Number(tune.chargeRamPad) || 0) ? mul : 1;
+}
 
 /**
  * Kawałek budowli `structure` do pęknięcia przy progu punktów: pod punktem (hx, hz) układu bazy, inaczej najbliższy

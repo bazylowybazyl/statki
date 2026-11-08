@@ -4,7 +4,7 @@
 // węzłów, które dzielą ten narożnik I wciąż są połączone z węzłem całą belką.
 // W nietkniętej płycie sąsiednie komórki liczą narożnik z tego samego zbioru
 // węzłów, więc skóra jest ciągła; zerwana belka rozdziela zbiory i szew się
-// otwiera. To ta sama zasada co FFD skóry GLB (tekstura linków w beamShips3D),
+// otwiera. To ta sama zasada co FFD skóry GLB (tekstura linków),
 // tylko na CPU — komórek kadłuba 2D jest kilka tysięcy. Moduł nie importuje three.
 
 // Kolejność narożników czworokąta: (−,−), (+,−), (+,+), (−,+) — trójkąty 0-1-2, 0-2-3.

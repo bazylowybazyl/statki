@@ -916,13 +916,11 @@ export function applyCommandLossVisuals(entity, nowSec, opts = {}) {
   mask += roadOn ? 'R' : 'r';
   if (mask === st.navMask) return;
   st.navMask = mask;
-  // Reflektory otoczenia gasną z drogowymi; `autoFlood: false`, bo lista bez
-  // reflektorów dostałaby w shipLightRuntime automatyczne z obrysu lamp.
+  // Reflektory otoczenia gasną z drogowymi.
   entity.editorLights = {
     position: lit,
     road: roadOn ? orig.road : [],
-    flood: roadOn && orig.flood ? orig.flood : [],
-    autoFlood: roadOn
+    flood: roadOn && orig.flood ? orig.flood : []
   };
 }
 

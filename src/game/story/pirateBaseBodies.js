@@ -1,18 +1,18 @@
 /**
- * Baza piratów jako CIAŁA ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F2, jak dawny suchy dok): kawałki bazy
+ * Baza piratów jako CIAŁA ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F2): kawałki bazy
  * (pirateBaseLayout.chunks) w bańce gracza stają się PŁASKIMI, ZAKOTWICZONYMI ciałami silnika belek
  * (src/game/worldBodies.js). Osobne MIEJSCE na budowlę (habitat, paliwo, magazyn, pomosty) — trafienia liczą punkty
  * swojej budowli (byt stacji ma `_worldSite`). Taran = zderzenie kadłubów: bęben habitatu to „rura” (ściana, grodzie,
  * pierścień) — gnie się i pęka pod Atlasem; pomosty pękają między rzadkimi kotwicami.
  *
- * Kawałek = raster z góry brył przecinających płaszczyznę gry (pirateDryDockChunks.js — wspólne narzędzia brył
- * budowli Z7, wiersze odwrócone jak w doku), kotwice wg rodzaju, materiał. Część techniczna nad bębnem i dysk
+ * Kawałek = raster z góry brył przecinających płaszczyznę gry (buildingChunkSolids.js — narzędzia brył
+ * budowli Z7, wiersze odwrócone), kotwice wg rodzaju, materiał. Część techniczna nad bębnem i dysk
  * mieszkalny pod nim to DUCHY (raster wszystkich brył, rzadka kratownica, ciałem dopiero w rozpadzie — implozja).
  * Układ bazy: x wzdłuż osi, z w poprzek; gra: toGame(x, z) (pirateBaseSite.placePirateBase), kurs ciała = place.axis.
  * Bez three i DOM.
  */
 
-import { dryDockChunkSolids, dryDockPlanarSolids, dryDockTopRaster, dryDockSolidsToTriangles, dryDockSolidsBounds } from '../../3d/portBuildings/pirateDryDockChunks.js';
+import { chunkSolids, chunkPlanarSolids, chunkTopRaster, solidsToTriangles, solidsBounds } from '../../3d/portBuildings/buildingChunkSolids.js';
 import { WORLD_BODY_TUNE } from '../worldBodies.js';
 import { HullBodies } from '../hullBodies.js';
 import { voxelizeTriangles, bridgeVoxelComponents } from '../voxelBody3D.js';
@@ -142,11 +142,11 @@ export function pirateBasePinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) 
   }
 }
 
-/** Raster kawałka do ciała (jak dryDockChunkRaster): bryły w płaszczyźnie gry z góry (duch: wszystkie), wiersze odwrócone. */
+/** Raster kawałka do ciała: bryły w płaszczyźnie gry z góry (duch: wszystkie), wiersze odwrócone. */
 export function pirateBaseChunkRaster(layout, scene, chunkId, { upp = WORLD_BODY_TUNE.rasterUpp, palette = null, band = PLANE_BAND, all = false } = {}) {
-  const solids = all ? dryDockChunkSolids(layout, scene, [chunkId]) : dryDockPlanarSolids(layout, scene, [chunkId], { band });
+  const solids = all ? chunkSolids(layout, scene, [chunkId]) : chunkPlanarSolids(layout, scene, [chunkId], { band });
   if (!solids.length) return null;
-  const r = dryDockTopRaster(solids, { unitsPerPx: upp, palette });
+  const r = chunkTopRaster(solids, { unitsPerPx: upp, palette });
   const W = r.width, Hh = r.height, src = r.data;
   const data = new Uint8ClampedArray(W * Hh * 4);
   for (let row = 0; row < Hh; row++) data.set(src.subarray((Hh - 1 - row) * W * 4, (Hh - row) * W * 4), row * W * 4);
@@ -187,11 +187,11 @@ export function pirateBaseSolidOf(layout, scene, chunkId, palette = null) {
   const cfg = c && PIRATE_BASE_SOLID[c.kind];
   let out = false;
   if (cfg) {
-    const solids = dryDockChunkSolids(layout, scene, [chunkId]);
+    const solids = chunkSolids(layout, scene, [chunkId]);
     if (solids.length) {
-      const bounds = dryDockSolidsBounds(solids);
+      const bounds = solidsBounds(solids);
       const cx = (c.box.x0 + c.box.x1) / 2, cz = (c.box.z0 + c.box.z1) / 2;
-      const tri = dryDockSolidsToTriangles(solids, { palette, sides: 12, map: (v) => [v[0] - cx, -(v[2] - cz), v[1]] });
+      const tri = solidsToTriangles(solids, { palette, sides: 12, map: (v) => [v[0] - cx, -(v[2] - cz), v[1]] });
       const vox = voxelizeTriangles(tri.positions, tri.colors, {
         cellSize: cfg.cell, interiorMode: cfg.interior, shellLayers: cfg.shellLayers, ribStep: cfg.ribStep, maxCells: 400000
       });
@@ -237,14 +237,14 @@ function planarColumn(layout, scene, c) {
   if (!m) _columns.set(layout, m = new Map());
   if (m.has(c.id)) return m.get(c.id);
   let col = null;
-  const solids = dryDockPlanarSolids(layout, scene, [c.id], { band: PLANE_BAND });
+  const solids = chunkPlanarSolids(layout, scene, [c.id], { band: PLANE_BAND });
   if (solids.length) {
-    const b = dryDockSolidsBounds(solids);
+    const b = solidsBounds(solids);
     col = { z0: Math.min(0, b.y0), z1: Math.max(0, b.y1) };
     if (c.kind === 'core') {
       const tech = layout.chunks.find((k) => k.kind === 'tech');
-      const ts = tech ? dryDockChunkSolids(layout, scene, [tech.id]) : [];
-      if (ts.length) col.z1 = Math.max(0, Math.min(col.z1, dryDockSolidsBounds(ts).y0 - CORE_COLUMN_GAP));
+      const ts = tech ? chunkSolids(layout, scene, [tech.id]) : [];
+      if (ts.length) col.z1 = Math.max(0, Math.min(col.z1, solidsBounds(ts).y0 - CORE_COLUMN_GAP));
     }
   }
   m.set(c.id, col);

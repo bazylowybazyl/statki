@@ -66,10 +66,11 @@ import {
   BRIDGE_LAYOUT_PROPOSALS,
   bridgeHash01,
   bridgeWaveDelay,
+  normalizeBridgeList,
   sampleNavLight,
   sampleWindowLight
 } from '../game/shipBridge.js';
-import { resolveBridgeHullKey } from '../game/shipBridgeRuntime.js';
+import { resolveBridgeHullKey, resolveBridgeLayout, resolveBridgeVariant } from '../game/shipBridgeRuntime.js';
 import { HULL_BODY_CONFIG } from '../game/hullBodies.js';
 import {
   beamImageToLattice,
@@ -87,6 +88,7 @@ import {
 } from './bridge3DShapes.js';
 import { bridgeHullFxScale, spawnBridgeRoomFlash } from './bridgeFx3D.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
+import { RoofCover } from './roofCover.js';
 import {
   B3_DAMAGE_W,
   B3_KIND_SLOT,
@@ -319,7 +321,9 @@ function cellOfModel(cm, x, y, out) {
  * obrażeń przydziela wołający.
  */
 export function createBeamBridgeRecordCore(host, st, bridgeIndex, kind, row) {
-  const hull = bridgeBeamHull(host);
+  // host null — mostek proxy statku ruchu (E17b): bez kadłuba na belkach, komórki pod modelem nietknięte
+  const pristine = !host;
+  const hull = pristine ? null : bridgeBeamHull(host);
   const bridge = st.bridges[bridgeIndex];
   const def = bridge.def;
   const model = kind.model;
@@ -343,7 +347,7 @@ export function createBeamBridgeRecordCore(host, st, bridgeIndex, kind, row) {
   const existed = new Uint8Array(n);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
-      if (bridgeCellNode(hull, c0 + i, r0 + j) >= 0) existed[i + j * w] = 1;
+      if (pristine || bridgeCellNode(hull, c0 + i, r0 + j) >= 0) existed[i + j * w] = 1;
     }
   }
   const E = kind.emit;
@@ -367,7 +371,7 @@ export function createBeamBridgeRecordCore(host, st, bridgeIndex, kind, row) {
   const b = model.bounds;
   const reach = b.zMax / Math.tan(Math.max(5, BRIDGE3D_TUNE.shadowElevDeg) * DEG);
   return {
-    kind, host, st, bridge, bridgeIndex, def,
+    kind, host, st, bridge, bridgeIndex, def, pristine,
     lineage: st.lineage,
     hullKey: st.hullKey || null,
     map, cellMap: cm,
@@ -551,6 +555,53 @@ export function beamBridgeInstanceBasis(rec, host, pose, out = {}) {
   out.wy = _bo.y;
   out.ox = _bo.x;
   out.oy = -_bo.y;
+  return out;
+}
+
+const _proxyPose = { x: 0, y: 0, angle: 0 };
+
+/**
+ * Stan mostków proxy kadłuba ruchu `hullId` (E17b) — jak attachEntityBridges u NPC po awansie (klucz i wariant z
+ * fałszywej encji { type: id, shipFrame: id }, strefy znormalizowane), w układzie obrazu renderu w×h (1 px = 1 j.),
+ * bez kadłuba na belkach. null — kadłub bez mostków.
+ */
+export function proxyBridgeState(hullId, w, h, pngW, pngH) {
+  const fake = { type: hullId, shipFrame: hullId };
+  const key = resolveBridgeHullKey(fake);
+  const list = key ? resolveBridgeLayout(key, resolveBridgeVariant(fake)) : null;
+  const defs = list ? normalizeBridgeList(list) : [];
+  if (!defs.length || !(w > 0 && h > 0 && pngW > 0 && pngH > 0)) return null;
+  return {
+    srcW: w, srcH: h, spriteScale: 1, anchorDX: w * 0.5, anchorDY: h * 0.5,
+    cellSize: HULL_BODY_CONFIG.cellPx || 15, scaleX: w / pngW, scaleY: h / pngH,
+    hullKey: key, lineage: null, commandLost: false, commandLostAt: -1, vent: null, windows: null, defs,
+    bridges: defs.map((def, index) => ({ def, id: def.id, index, dead: false, deadAt: -1, vent: null }))
+  };
+}
+
+/**
+ * Baza instancji mostka proxy (E17b) — lustro beamBridgeInstanceBasis dla kadłuba bez siatki belek: obraz renderu
+ * (1 px = 1 j., środek = środek sprite'a) obrócony o kąt pozy (y w dół: x' = c·dx − s·dy, y' = s·dx + c·dy).
+ */
+export function proxyBridgeBasis(rec, pose, out = {}) {
+  const map = rec.map;
+  const c = Math.cos(pose.angle);
+  const s = Math.sin(pose.angle);
+  const dx = map.zgx - rec.srcW * 0.5;
+  const dy = map.zgy - rec.srcH * 0.5;
+  const wx = pose.x + c * dx - s * dy;
+  const wy = pose.y + s * dx + c * dy;
+  out.sgx = 1;
+  out.sgy = 1;
+  out.ax = c * map.m00 - s * map.m10;
+  out.ay = -(s * map.m00 + c * map.m10);
+  out.bx = c * map.m01 - s * map.m11;
+  out.by = -(s * map.m01 + c * map.m11);
+  out.sz = 1;
+  out.wx = wx;
+  out.wy = wy;
+  out.ox = wx;
+  out.oy = -wy;
   return out;
 }
 
@@ -763,6 +814,10 @@ export const Bridge3D = {
   uniforms: null,
   _frame: 0,
   _disabled: false,
+  // Mostki proxy statków ruchu v2 (E17b): szablon rekordów na kadłub (id → rekordy | null) i klatka update, do której
+  // dopisano proxy (raz na update).
+  _proxyTemplates: new Map(),
+  _proxyFrame: -1,
   stats: { records: 0, visible: 0, instances: new Array(KIND_COUNT).fill(0), receivers: 0, emitters: 0, drawCalls: 0, cpuMs: 0, rowsUsed: 0, rowUploads: 0, flashes: 0 },
 
   /** Podpina moduł do sceny (w grze: Core3D.scene). Bez własnego renderera. */
@@ -1369,6 +1424,12 @@ export const Bridge3D = {
       }
     }
     if (fade <= 0.002) return;
+    this._drawInstance(rec, host, pose, B, fade, zonePx, zoomAt, ctx);
+  },
+
+  // Instancja modelu, cień na kadłubie i emitery rekordu w bazie B (beamBridgeInstanceBasis / proxyBridgeBasis).
+  _drawInstance(rec, host, pose, B, fade, zonePx, zoomAt, ctx) {
+    const T = BRIDGE3D_TUNE;
     const lod = zonePx < T.lodPx ? 1 : 0;
 
     let ax = B.ax; let ay = B.ay; let bx = B.bx; let by = B.by;
@@ -1412,7 +1473,9 @@ export const Bridge3D = {
 
     // Emitery: okna (gasną z komórką pod sobą i wg osi czasu), lampy, listwy.
     // Okna i lampy (warstwa FG — nad passem ortho, bez głębi): mostek pod płaszczyzną kadłubów (fregata w luku) ich nie ma.
-    const winFade = liftH < 0 ? 0 : smooth01(T.winMinPx, T.winFullPx, 2.0 * sgx * zoomAt) * fade;
+    // Mostek proxy pod zamkniętym dachem hali K-7 / zatoki (gracza w niej nie ma): bryłę zasłania dach, okien FG — nie.
+    const roofed = rec.pristine && RoofCover.covers(B.wx, B.wy);
+    const winFade = liftH < 0 || roofed ? 0 : smooth01(T.winMinPx, T.winFullPx, 2.0 * B.sgx * zoomAt) * fade;
     this._emit(rec, host, ctx, winFade, ax, ay, bx, by, sz, ox, oy);
   },
 
@@ -1440,11 +1503,12 @@ export const Bridge3D = {
     const zMode = ctx.free ? 1 : 0;
     const beforeLoss = !st.commandLost && rec.powerLostAt < 0;
     prepareEmitterDelays(rec);
-    const beamHull = bridgeBeamHull(host);
+    const pristine = rec.pristine === true;
+    const beamHull = pristine ? null : bridgeBeamHull(host);
     const ns = beamHull ? beamHull.body.nodeStore : null;
     for (let i = 0; i < E.count; i++) {
-      // Węzeł komórki pod oknem (−1 = wybita albo poza gospodarzem).
-      const node = bridgeCellNode(beamHull, rec.emCellX[i], rec.emCellY[i]);
+      // Węzeł komórki pod oknem (−1 = wybita albo poza gospodarzem); mostek proxy — komórki nietknięte.
+      const node = pristine ? 0 : bridgeCellNode(beamHull, rec.emCellX[i], rec.emCellY[i]);
       if (node < 0) {
         // Pomieszczenie wybite: krótki błysk w chwili śmierci komórki pod oknem.
         if (rec.emWas[i] && beforeLoss && ctx.flashes < MAX_ROOM_FLASHES_PER_FRAME && winFade > 0.05 && E.type[i] === BRIDGE3D_EMIT.WINDOW) {
@@ -1458,7 +1522,7 @@ export const Bridge3D = {
       }
       rec.emWas[i] = 1;
       if (winFade <= 0.001 || Em.count >= Em.capacity || !T.drawEmitters) continue;
-      const hpFrac = ns.maxHp[node] > 0 ? ns.hp[node] / ns.maxHp[node] : 1;
+      const hpFrac = pristine ? 1 : (ns.maxHp[node] > 0 ? ns.hp[node] / ns.maxHp[node] : 1);
       let I = bridgeEmitterLight(rec, i, ctx.now, hpFrac) * winFade;
       if (I <= 0.003) continue;
       // Zasłonięte przez obraz nad okrętem (fregata zwiadu nad Atlasem — emitterOcclusion z gry).
@@ -1539,6 +1603,122 @@ export const Bridge3D = {
    * wystarczy pierwszy rodzaj), cień na kadłubie (pass ortho) i okna (FG). Bez tego pierwszy mostek
    * w kadrze kompilowałby pipeline'y synchronicznie w swojej klatce.
    */
+  /**
+   * MOSTKI PROXY STATKÓW RUCHU v2 (E17b): proxy bańki (ShipProxyBatch3D) nie mają kadłuba na belkach ani stanu
+   * mostków — model stoi w strefie z BRIDGE_LAYOUT_PROPOSALS tak jak u NPC po awansie (ten sam klucz kadłuba i wariant:
+   * resolveBridgeHullKey / resolveBridgeVariant fałszywej encji { type: id, shipFrame: id }), komórki pod modelem
+   * nietknięte (stały blok bufora obrażeń na kadłub), okna świecą spokojnie, stan bez utraty dowodzenia. Proxy rysuje
+   * się w klatce PO Bridge3D.update (strona i worker), więc moduł proxy dopisuje instancje na końcu swojej klatki
+   * (ShipProxyBatch3D.end) do partii tej klatki — raz na update, ten sam kadr, LOD i próg rozmiaru co u NPC.
+   * `views[i]`: { hullId, x, y, angle, w, h, pngW, pngH } (obraz kadłuba w j. świata = rozmiar renderu).
+   */
+  drawProxyBridges(views, count) {
+    const ctx = this._ctx;
+    if (!this.ready || !ctx || this._disabled || !BRIDGE3D_TUNE.enabled || this._proxyFrame === this._frame) return;
+    this._proxyFrame = this._frame;
+    const kinds = this.kinds;
+    const Rv = this.receiver;
+    const Em = this.emitters;
+    const before = Rv.count + Em.count;
+    let modelsBefore = 0;
+    for (let k = 0; k < kinds.length; k++) modelsBefore += kinds[k].count;
+    const T = BRIDGE3D_TUNE;
+    const pose = _proxyPose;
+    for (let i = 0; i < count; i++) {
+      const v = views[i];
+      const recs = this._proxyTemplate(v);
+      if (!recs) continue;
+      pose.x = v.x; pose.y = v.y; pose.angle = v.angle;
+      for (let j = 0; j < recs.length; j++) {
+        const rec = recs[j];
+        const B = proxyBridgeBasis(rec, pose, _basis);
+        const cull = ctx.cull;
+        if (cull) {
+          const r = rec.radiusGrid + 96 / ctx.zoom;
+          if (Math.abs(B.wx - cull.x) > cull.drawHalfW + r || Math.abs(B.wy - cull.y) > cull.drawHalfH + r) continue;
+        }
+        let zoomAt = ctx.zoom;
+        if (ctx.free) zoomAt = ctx.pxAtUnit / Math.max(1, Math.hypot(_camP.x - B.ox, _camP.y - B.oy, _camP.z));
+        const zonePx = rec.map.zoneW * zoomAt;
+        const fade = smooth01(T.minPx, T.fullPx, zonePx);
+        if (fade <= 0.002) continue;
+        this._drawInstance(rec, v, pose, B, fade, zonePx, zoomAt, ctx);
+      }
+    }
+    let models = 0;
+    for (let k = 0; k < kinds.length; k++) models += kinds[k].count;
+    if (models === modelsBefore && Rv.count + Em.count === before) return;
+    // Wysyłka jak na końcu update (instancje encji + proxy).
+    let draws = 0;
+    for (let k = 0; k < kinds.length; k++) {
+      const K = kinds[k];
+      K.geometry.instanceCount = K.count;
+      K.mesh.visible = K.count > 0;
+      this.stats.instances[K.index] = K.count;
+      if (!K.count) continue;
+      draws++;
+      commitAttr(K.inst, K.count);
+    }
+    Rv.geometry.instanceCount = Rv.count;
+    Rv.mesh.visible = Rv.count > 0;
+    if (Rv.count) { draws++; commitAttr(Rv.inst, Rv.count); }
+    Em.mesh.count = Em.count;
+    Em.mesh.visible = Em.count > 0;
+    if (Em.count) {
+      draws++;
+      commitAttr(Em.mesh.instanceMatrix, Em.count);
+      commitAttr(Em.attrs.params, Em.count);
+      commitAttr(Em.attrs.color, Em.count);
+      commitAttr(Em.attrs.shape, Em.count);
+    }
+    const S = this.stats;
+    S.visible = models;
+    S.receivers = Rv.count;
+    S.emitters = Em.count;
+    S.drawCalls = draws;
+    S.proxies = models - modelsBefore;
+    S.rowsUsed = this.damage.rowsUsed;
+  },
+
+  // Rekordy mostków kadłuba ruchu dla proxy (raz na kadłub): fałszywy stan mostków w układzie obrazu renderu
+  // (1 px = 1 j.), blok bufora obrażeń wypełniony żywymi komórkami z pełnym HP. null — kadłub bez mostka / modelu.
+  _proxyTemplate(v) {
+    let recs = this._proxyTemplates.get(v.hullId);
+    if (recs !== undefined) return recs;
+    recs = null;
+    const st = proxyBridgeState(v.hullId, v.w, v.h, v.pngW, v.pngH);
+    if (st) {
+      const key = st.hullKey;
+      const defs = st.defs;
+      const made = [];
+      for (let b = 0; b < defs.length; b++) {
+        const kindName = resolveBridgeModelKind(key, defs[b]);
+        const K = kindName ? this.kinds[BRIDGE3D_KINDS[kindName].index] : null;
+        if (!K) break;
+        const rec = createBeamBridgeRecordCore(null, st, b, K, -1);
+        if (rec.rowCount > DAMAGE_MAX_ROWS) break;
+        rec.row = this._allocRows(rec.rowCount);
+        if (rec.row < 0) break;
+        // nietknięte komórki: R = 255 (żywa, pełne HP), żar, sąsiedzi i cięcie 0
+        const data = this.damage.data;
+        const base = rec.row * DAMAGE_W * 4;
+        for (let k = 0; k < rec.cellCount; k++) {
+          const o = base + k * 4;
+          data[o] = 255; data[o + 1] = 0; data[o + 2] = 0; data[o + 3] = 0;
+        }
+        this._markRows(rec);
+        rec.alive.fill(1);
+        rec.winColor = hexToLinear(rec.def.windowColor || BRIDGE_LAYOUT_PROPOSALS[key]?.windowColor || DEFAULT_WINDOW_HEX);
+        made.push(rec);
+      }
+      // wszystko albo nic (jak _adopt): bez modelu dla któregoś mostka — proxy bez mostków
+      if (made.length === defs.length) recs = made;
+      else for (const r of made) this._freeRows(r);
+    }
+    this._proxyTemplates.set(v.hullId, recs);
+    return recs;
+  },
+
   warmupMeshes() {
     if (!this.ready) return [];
     const out = [];
@@ -1562,6 +1742,8 @@ export const Bridge3D = {
   dispose() {
     for (const rec of this.records.slice()) this._retire(rec);
     this.records.length = 0;
+    this._proxyTemplates.clear();
+    this._proxyFrame = -1;
     const scene = this.scene;
     for (const K of this.kinds) {
       if (scene && K.mesh) scene.remove(K.mesh);

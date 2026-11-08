@@ -436,7 +436,7 @@ test('Ziemia tła 2026-10-31: gryz z elektrownią KOREK w kadrze na starcie, sł
 test('index.html: tło po initHaloRings, rozgrzewka na ekranie ładowania, ring wraca do gry przed jej pierwszą klatką', () => {
   const html = read('index.html');
   assert.match(html, /initHaloRings\(\);\s*applyHaloRingDevSpawn\(\);\s*startMenuBackdrop\(\);/);
-  const start = html.slice(html.indexOf('async function startGame()'));
+  const start = html.slice(html.indexOf('async function startGame('));
   const stopAt = start.indexOf('stopMenuBackdrop();');
   const loopAt = start.indexOf('requestAnimationFrame(loop);');
   const flushAt = start.indexOf('await Core3D.warmup?.flush(');

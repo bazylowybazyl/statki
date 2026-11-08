@@ -6,7 +6,7 @@
 // w stronie). Poza jest już w czasie klatki, więc worker rysuje z alpha = 1.
 //
 // Rejestracja (strona gry): `packer.addBlock(createTrafficBlock())`, w klatce `frame.traffic = { list, count }`
-// (rekordy renderu: courseId, hullId, x, y, angle, vx, vy, speed, throttle, mode). Strona renderu:
+// (rekordy renderu: courseId, hullId, x, y, angle, vx, vy, speed, throttle, mode, pirate). Strona renderu:
 // `applyTrafficBlock(view.blocks.traffic, out)` → tablica rekordów dla `ShipProxyBatch3D.update`.
 // Czysty moduł (bez three, DOM i `window`).
 import { TRAFFIC_HULLS } from '../../data/trafficHulls.js';
@@ -20,7 +20,9 @@ export const TRAFFIC_BLOCK = Object.freeze({
   SHIP: Object.freeze({ ID: 0, HULL: 1, X: 2, Y: 3, ANGLE: 4, VX: 5, VY: 6, SPEED: 7, THROTTLE: 8, FLAGS: 9, STRIDE: 10 }),
   /** Bańka ruchu trzyma najwyżej 400 encji (`FLIGHT_DEFAULTS.maxActors`). */
   CAP: 512,
-  FLAG_WARP: 1
+  FLAG_WARP: 1,
+  /** Statek piracki (frakcja albo kadłub — jak `isPirate` NPC po awansie): barwa plazmy rdzenia proxy (E17b). */
+  FLAG_PIRATE: 2
 });
 
 const S = TRAFFIC_BLOCK.SHIP;
@@ -43,7 +45,7 @@ export function packTrafficBlock(F, list, count) {
     F[o + S.VY] = r.vy;
     F[o + S.SPEED] = r.speed;
     F[o + S.THROTTLE] = r.throttle;
-    F[o + S.FLAGS] = r.mode === 'warp' ? TRAFFIC_BLOCK.FLAG_WARP : 0;
+    F[o + S.FLAGS] = (r.mode === 'warp' ? TRAFFIC_BLOCK.FLAG_WARP : 0) | (r.pirate === true ? TRAFFIC_BLOCK.FLAG_PIRATE : 0);
     o += S.STRIDE;
     k++;
   }
@@ -76,7 +78,7 @@ export function applyTrafficBlock(blk, out) {
     let r = out[i];
     if (!r) {
       r = { courseId: 0, hullId: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
-        vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+        vx: 0, vy: 0, speed: 0, throttle: 0, mode: null, pirate: false };
       out[i] = r;
     }
     r.courseId = F[o + S.ID];
@@ -89,6 +91,7 @@ export function applyTrafficBlock(blk, out) {
     r.speed = F[o + S.SPEED];
     r.throttle = F[o + S.THROTTLE];
     r.mode = (F[o + S.FLAGS] & TRAFFIC_BLOCK.FLAG_WARP) ? 'warp' : null;
+    r.pirate = (F[o + S.FLAGS] & TRAFFIC_BLOCK.FLAG_PIRATE) !== 0;
   }
   out.length = n;
   return out;

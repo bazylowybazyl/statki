@@ -14,6 +14,7 @@
 // gniazda wież, dysze MAIN gondol, lampy pozycyjne (dziób biały, burty czerwona / zielona, rufa biała).
 
 import { RESOURCES } from '../../data/resources.js';
+import { NAV_LIGHT_DEFAULT_STYLE, NAV_LIGHT_STYLES } from '../../data/shipNavLights.js';
 import { REPAIR_TUNE } from '../../data/repairDrones.js';
 import { isCivilRole } from '../../data/shipClasses.js';
 import { HD_MODULES, hullDesignMountOf } from './hullDesignSchema.js';
@@ -157,15 +158,24 @@ export function hullDesignMounts(field) {
     }
     return 0;
   };
-  const mid = (b.minX + b.maxX) * 0.5;
+  // Światła nawigacyjne jak w grze (src/data/shipNavLights.js): para dziobowa, para na najszerszym miejscu, para rufowa.
+  const len = b.maxX - b.minX;
+  let wideX = (b.minX + b.maxX) * 0.5;
+  let wideW = -1;
+  for (let k = 0; k <= 32; k++) {
+    const x = b.minX + len * (0.15 + 0.7 * k / 32);
+    const w = edgeY(1, x) - edgeY(-1, x);
+    if (w > wideW) { wideW = w; wideX = x; }
+  }
   // Promień lampy w jd (jak w sprite'ach: ~4 px sprite'a ≈ 4 jd) — fregata nie dostaje lampy wielkości lotniskowca.
   const D = field.expanded.design.detail || 0.6;
   const lr = (k) => Math.max(0.3, 4 * D * k);
-  const position = [
-    { id: 'hd_bow', x: edgeX(1) - cx, y: -cy, color: '#ffffff', power: 0.8, radius: lr(1), sequenceGroup: 'edge' },
-    { id: 'hd_port', x: mid - cx, y: edgeY(-1, mid) - cy, color: '#ff2b2b', power: 0.8, radius: lr(1), sequenceGroup: 'edge' },
-    { id: 'hd_stbd', x: mid - cx, y: edgeY(1, mid) - cy, color: '#2bff6a', power: 0.8, radius: lr(1), sequenceGroup: 'edge' },
-    { id: 'hd_stern', x: edgeX(-1) - cx, y: -cy, color: '#ffffff', power: 0.6, radius: lr(0.9), sequenceGroup: 'edge' }
-  ];
-  return { hardpoints, mainThrusters, sideThrusters, cores, fuelTanks, cargoBays, cargoTanks, lights: { position, road: [], flood: [] } };
+  const style = NAV_LIGHT_STYLES[NAV_LIGHT_DEFAULT_STYLE];
+  const position = [];
+  const stations = [['bow', edgeX(1) - len * 0.04], ['wide', wideX], ['stern', edgeX(-1) + len * 0.04]];
+  for (const [name, x] of stations) {
+    const lamp = (side, dir, color, lag) => ({ id: `hd_${name}_${side}`, x: x - cx, y: edgeY(dir, x) - cy, color, power: style.power, radius: lr(1), sequenceGroup: 'edge', blink: style.pattern, lag });
+    position.push(lamp('l', -1, style.port, 0), lamp('r', 1, style.starboard, style.sideLag));
+  }
+  return { hardpoints, mainThrusters, sideThrusters, cores, fuelTanks, cargoBays, cargoTanks, lights: { position, road: [], flood: [], autoFlood: true } };
 }

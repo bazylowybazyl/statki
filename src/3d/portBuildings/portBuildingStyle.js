@@ -63,7 +63,7 @@ function asTriple(v, fallback) {
   return fallback.slice();
 }
 
-// Piraci „Iron Skull” (suchy dok misji 1, pirateDryDockScene.js) — jak sprite'y okrętów piratów
+// Piraci „Iron Skull” (baza misji 1, pirateBaseScene.js) — jak sprite'y okrętów piratów
 // (src/assets/ships/pirate*.png): ciemne żelazo z nitami przeżarte rdzą (brąz, pomarańcz rdzy), czerwone ukośne
 // pasy farby, napisy, okrągłe włazy w ośmiokątnych ramach, kratki, kolce (bez czaszek — decyzja użytkownika
 // 2026-10-05). Kody K7_MAT:
@@ -72,7 +72,7 @@ function asTriple(v, fallback) {
 // Emisja: listwy bursztynowe (ogień), sodowe reflektory, biel, czerwień przeszkodowa, zieleń sygnałów.
 export const PIRATE_PORT_STYLE = Object.freeze({
   key: 'pirate',
-  name: 'SUCHY DOK PIRATÓW',
+  name: 'BAZA PIRATÓW',
   k7Palette: [0x6e5a4e, 0x2c2522, 0x8e7e70, 0x9c3128, 0x9a5430, 0x6a4632, 0x55483f, 0x7a7068,
     0x141110, 0x3a2a24, 0x8a5636, 0x2a1a16, 0x962c26, 0xd8ccb0],
   k7Emit: [[1.38, 0.62, 0.16], [1.34, 0.80, 0.36], [1.40, 1.30, 1.16], [1.40, 0.08, 0.05], [0.42, 1.18, 0.55]],

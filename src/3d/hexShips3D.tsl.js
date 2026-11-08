@@ -56,7 +56,9 @@ import {
   abs, clamp, cos, sin, dFdx, dFdy, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
   renderGroup
 } from 'three/tsl';
-import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
+import { MAX_SHADER_SHIP_LIGHTS } from '../game/shipLightRuntime.js';
+import { NAV_LIGHT_LOOK } from '../data/shipNavLights.js';
+import { navBlinkNode } from './tsl/navBlink.js';
 import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
@@ -604,7 +606,7 @@ function hullDamageLacquer(ctx, weight) {
 // wiązki) jako DODATKOWE światła poszycia (× albedo z osmaleniem, normalna ctx.worldNormal,
 // punkt z pozycji widoku — dokładny przy 5–10 mln j.). Lampy statku (payload) zostają w pętli wyżej.
 function hullEffectLights(ctx) {
-  if (!ctx.damage) return vec3(0.0);
+  if (!ctx.effectLights) return vec3(0.0);
   // Oświetlenie v2: ten sam BRDF co słońce i zanik skupiony do jądra (błysk lufy nie bieli całego
   // kadłuba); klasyczny — model dema broni (Lambert z zawinięciem, Blinn–Phong). Jednolity warunek.
   const out = vec3(0.0).toVar();
@@ -734,6 +736,8 @@ function hullFragmentNode(opts) {
     }
 
     const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true, P, patchK };
+    // Światła efektów z siatki (błyski, trafienia, światła pola i LAMPY HALI K-7): skóra z mapą ran i proxy statków ruchu.
+    ctx.effectLights = opts.effectLights === undefined ? ctx.damage : opts.effectLights === true;
     hullDamageSurface(ctx);
 
     const out = vec3(0.0).toVar();
@@ -905,8 +909,8 @@ function hullFragmentNode(opts) {
       });
 
       // --- LAMPY STATKU (payload shipLightRuntime, slot w HullLightStore) ---
-      // Typ w barwie.a: 0 lampa pozycyjna, 1 reflektor dziobu, 2 rozlew grupy lamp
-      // innego statku (bez rdzenia), 3 reflektor otoczenia.
+      // Typ w barwie.a: 0 lampa pozycyjna, 1 reflektor dziobu, 2 rozlew lampy innego
+      // statku (bez rdzenia), 3 reflektor otoczenia. Typ 0 i 2 mają w lightExtra.x kod migania.
       Loop({ start: int(0), end: int(P.uShipLightCount), type: 'int', condition: '<' }, ({ i }) => {
         const k = base.add(i.mul(3)).toVar();
         const lightData = lights.element(k).toVar();
@@ -920,30 +924,30 @@ function hullFragmentNode(opts) {
         const lampColor = lightColor.xyz;
         const lightType = lightColor.w.toVar();
 
-        // Typ 2: grupa lamp pozycyjnych INNEGO statku — sama poświata na pancerzu
-        // (× albedo — błysk wydobywa detal kadłuba z mroku). v2: światło nad środkiem grupy (N·L, GGX).
+        // Błysk świateł nawigacyjnych: ta sama chwila co billboard lampy (shipLights3D); między błyskami nie oświetlają.
+        // Przypisane przed gałęzią typu 2 (pułapka 29: zmienna powstaje w miejscu pierwszego użycia).
+        const blink = float(0.0).toVar();
+        blink.assign(navBlinkNode(uTime, lightExtra.x, P.uNavPhase));
+
+        // Typ 2: lampa pozycyjna INNEGO statku albo światło świata — sama poświata na pancerzu
+        // (× albedo — błysk wydobywa detal kadłuba z mroku). v2: światło nad lampą (N·L, GGX).
         If(lightType.greaterThan(1.5).and(lightType.lessThan(2.5)), () => {
           If(pbr, () => {
             const spread = max(1.0, lightExtra.z).toVar();
             const fo = hullLampFalloff(toFrag, spread.mul(0.45), spread.mul(0.6), spread);
-            const E = lampColor.mul(power).mul(fo.att).mul(HL.uLamp.x).toVar();
+            const E = lampColor.mul(power).mul(blink).mul(fo.att).mul(HL.uLamp.x).toVar();
             finalColor.addAssign(armorRgb.mul(E).mul(max(dot(localNormal, fo.dir), 0.0))
               .add(E.mul(hullGgx(localNormal, fo.dir, surfRough)).mul(HL.uMat.y)));
           }).Else(() => {
             const xr = clamp(distPx.div(max(1.0, lightExtra.z)), 0.0, 1.0);
             const spill = float(1.0).sub(xr.mul(xr));
-            finalColor.addAssign(lampColor.mul(power).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
+            finalColor.addAssign(lampColor.mul(power).mul(blink).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
           });
           Continue();
         });
 
-        // Sekwencja „pasa startowego”: ta sama formuła co billboardy blasku
-        // (shipLights3D), stałe z NAV_LIGHT_CHASE, przebieg od dziobu ku rufie (+).
-        const localPhase = clamp(lightData.x.div(max(1.0, spriteSize.x)), 0.0, 1.0);
-        const chase = fract(uTime.mul(NAV_LIGHT_CHASE.speed).add(localPhase.mul(NAV_LIGHT_CHASE.phaseGain))).toVar();
-        const chasePulse = smoothstep(0.0, NAV_LIGHT_CHASE.attack, chase)
-          .mul(float(1.0).sub(smoothstep(NAV_LIGHT_CHASE.hold, NAV_LIGHT_CHASE.release, chase)));
-        const sequenceMul = select(lightType.greaterThan(0.5), float(1.0), mix(float(NAV_LIGHT_CHASE.rest), float(1.35), chasePulse));
+        // Lampa pozycyjna świeci na własną blachę tylko w błysku, reflektor stale.
+        const sequenceMul = select(lightType.greaterThan(0.5), float(1.0), blink.mul(NAV_LIGHT_LOOK.hullGain));
 
         const core = smoothRev(radiusPx, 0.0, distPx);
         // Lampa pozycyjna rozlewa się szerzej niż reflektor: 9 promieni zamiast 7.
@@ -1033,12 +1037,13 @@ function hullFragmentNode(opts) {
 /**
  * Fragment pełnego kadłuba dla PROXY statków ruchu v2 (E17, shipProxyBatch3D.tsl.js): ten sam graf co skóra belek
  * (oświetlenie v2 z mapą powierzchni, lakier, glow, lampy statku i strefy dysz z HullLightStore, maska słońca, ośrodek
- * pasa) — bez mapy ran, świateł efektów z siatki, maskowania, warpa i żaru (to ma dopiero NPC po awansie).
+ * pasa, światła efektów z siatki — błyski, światła pola i lampy hali K-7, E17b) — bez mapy ran, maskowania, warpa
+ * i żaru (to ma dopiero NPC po awansie).
  * `perObject` — węzły wartości z instancji (klucze jak objectStoreNodesFor + uRotCS), tekstury per obiekt z
  * `material.uniforms` (uSprite, uSurfaceMap, uShapeMap, uNormalMap). Zmieniając fragment kadłuba, zmieniasz i proxy.
  */
 export function hullProxyFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard = null }) {
-  return hullFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false });
+  return hullFragmentNode({ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false, effectLights: true });
 }
 
 // Fragment warstwy DIST maskowania: RG — przesunięcie tła w px bufora (osie sceny), B / A — maska ekranu

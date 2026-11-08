@@ -550,6 +550,81 @@
       text-align: right;
     }
 
+    /* KADRY (workforce, W5): obsada portu — nagłówek z paskiem, tabela liczb, oferta kontraktów. */
+    .crew-headline {
+      margin-top: 6px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #dfe7ff;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .crew-headline.is-warn { color: #fbbf24; }
+    .crew-headline.is-alert { color: #f87171; }
+
+    .crew-bar {
+      height: 6px;
+      margin: 6px 0 8px;
+      border-radius: 3px;
+      background: rgba(70, 94, 140, 0.35);
+      overflow: hidden;
+    }
+
+    .crew-bar-fill {
+      height: 100%;
+      width: 0;
+      background: #4ade80;
+    }
+
+    .crew-bar-fill.is-warn { background: #fbbf24; }
+    .crew-bar-fill.is-alert { background: #f87171; }
+
+    .crew-stats {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .crew-stats td {
+      padding: 3px 4px;
+      font-size: 12px;
+      color: #dfe7ff;
+    }
+
+    .crew-stats tr+tr td {
+      border-top: 1px solid rgba(70, 94, 140, 0.24);
+    }
+
+    .crew-stats tr.hidden {
+      display: none;
+    }
+
+    .crew-stat-label {
+      color: #9fb4e6;
+      white-space: nowrap;
+      padding-right: 12px;
+    }
+
+    .crew-stat-value {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .crew-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .crew-actions button {
+      padding: 3px 9px;
+      font-size: 11px;
+    }
+
+    .crew-actions button.hidden {
+      display: none;
+    }
+
     .trade-market-actions button {
       margin-left: 6px;
       padding: 3px 9px;

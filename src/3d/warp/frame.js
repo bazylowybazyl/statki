@@ -10,6 +10,8 @@
 // (przylot NPC: rel = pozycja − kamera), czy w przestrzeni widocznej warpa (kop przy
 // skoku gracza: rel = punkt ośrodka − kamera ośrodka). Na GPU idą małe liczby.
 
+import { newSparkRecord } from './sparkRecipes.js';
+
 /** Nowa przegródka ośrodka (bańka / nić zwiastuna / punkt zbierania / pchnięcie). */
 export function newWarpSlot() {
   return {
@@ -77,8 +79,9 @@ class Pool {
 // mają dalej bloki szczelin (medium.js: setSeams, skyBend.js) — zmiana ich WGSL to osobna decyzja (C2); liczniki 0.
 // Smugi (`streaks`, prototyp przylotu i wylotu „jak w Gwiezdnych Wojnach” — `?warpSW=1`, warpSW.js): kształt GLOW_STREAK
 // duszków; ≥ 48 miejsc (scena „Wojna”: 45 okrętów co 0,12 s), smugi spoza kadru odcinane przy zgłoszeniu.
+// Drobiny przylotu i odlotu NPC (`sparks` — rekordy emisji, sparkRecipes.js / sparks.js): do 3 rekordów na okręt.
 export const WARP_FRAME_CAPS = Object.freeze({
-  bubbles: 16, lens: 8, waves: 24, flashes: 64, glares: 16, streaks: 64
+  bubbles: 16, lens: 8, waves: 24, flashes: 64, glares: 16, streaks: 64, sparks: 128
 });
 
 export class WarpFrame {
@@ -95,6 +98,8 @@ export class WarpFrame {
     this.glares = new Pool(caps.glares, () => ({ x: 0, y: 0, angle: 0, len: 0, k: 0, pal: null }));
     // Smugi (`?warpSW=1`): głowa (x, y), kierunek (jednostkowy), długość wstecz od głowy, szerokość, barwa HDR.
     this.streaks = new Pool(caps.streaks || 64, () => ({ x: 0, y: 0, dirX: 1, dirY: 0, len: 0, width: 0, r: 0, g: 0, b: 0 }));
+    // Drobiny przylotu i odlotu NPC: rekordy emisji (tor każdej drobiny ze wzoru — sparks.js); pełna pula — rekord pominięty.
+    this.sparks = new Pool(caps.sparks || 128, newSparkRecord);
     // Kadr do odcinania smug (pół-wymiary pudła osi świata wokół kamery [j.] — ustawia sterownik co klatkę po reset).
     this.streakView = { on: false, hw: 0, hh: 0 };
     // Gwiazdy (rozciąganie płaskie, front wyjścia) — z gracza.
@@ -110,6 +115,7 @@ export class WarpFrame {
     this.flashes.reset();
     this.glares.reset();
     this.streaks.reset();
+    this.sparks.reset();
     this.streakView.on = false;
     const st = this.stars;
     st.stretch = 0; st.frontOn = 0; st.frontS = 0; st.warpTint = 0;
@@ -171,6 +177,11 @@ export class WarpFrame {
     if (!s) return false;
     s.x = hx; s.y = hy; s.dirX = dx; s.dirY = dy; s.len = len; s.width = width; s.r = r; s.g = g; s.b = b;
     return true;
+  }
+
+  /** Rekord emisji drobin (sparkRecipes.js wypełnia pola) albo null — pula pełna. */
+  addSparks() {
+    return this.sparks.add();
   }
 
   addLens(x, y, angle, a, b, amp, front) {

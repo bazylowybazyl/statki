@@ -1310,7 +1310,7 @@ function takeKeptWeapon(prev, hp, def) {
   return null;
 }
 
-function initAutonomousWeapons(npc) {
+export function initAutonomousWeapons(npc) {
   if (npc.autoWeapons !== undefined && npc._weaponsInit) return;
 
   npc._weaponsInit = true;

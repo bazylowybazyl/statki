@@ -254,11 +254,12 @@ export async function mission01(ctx) {
   }
 
   // Wątki niezależne od faz (od wejścia do bazy): zbiorniki paliwa → reakcja łańcuchowa (bez podpowiedzi — gracz sam
-  // musi się domyślić), magazyn → premia; habitat → finał (rozpad i ogień w rurach od środka).
+  // musi się domyślić, i tylko to zapala rury), magazyn → premia; habitat → finał (rozpad, sam nie zapala rur).
+  // Po HP 0 habitatu gra sama kończy budowle (puszczenie kotwic, index.html): to już nie zasługa gracza, stąd osłony na site.chain.habitat.
   let chainKills = 0;
   ctx.spawn(async (sub) => {
     await sub.until(() => site.structureDestroyed('fuel') || site.chain.fuel || site.chain.burnt.has('P'));
-    if (site.chain.fuel || site.chain.burnt.has('P')) return;
+    if (site.chain.fuel || site.chain.burnt.has('P') || site.chain.habitat) return;
     api.ui.banner('REAKCJA ŁAŃCUCHOWA', 3);
     api.say(D.chainReaction, 'radio');
     chainKills = await api.site.fuelChain(site, 'P');
@@ -267,6 +268,7 @@ export async function mission01(ctx) {
   let warehouseDown = false;
   ctx.spawn(async (sub) => {
     await sub.until(() => site.structureDestroyed('warehouse'));
+    if (site.chain.habitat && !site.chain.fuel) return;
     warehouseDown = true;
     api.site.collapse?.(site, 'warehouse');
     api.ui.banner('MAGAZYN ZNISZCZONY', 2.4);
@@ -281,6 +283,7 @@ export async function mission01(ctx) {
   for (const [i, h] of highrises.entries()) {
     ctx.spawn(async (sub) => {
       await sub.until(() => site.structureDestroyed(h.structure));
+      if (site.chain.habitat) return;
       api.site.collapse?.(site, h.structure);
       api.ui.target(`highrise-${i}`, null);
       const left = highrises.filter((q) => !site.structureDestroyed(q.structure)).length;
@@ -292,7 +295,7 @@ export async function mission01(ctx) {
     await sub.until(() => site.buildingDestroyed());
     api.ui.target('yard', null);
     highrises.forEach((h, i) => api.ui.target(`highrise-${i}`, null));
-    // podsumowanie po ogniu w rurach (okręty w stanowiskach liczą się do reakcji); misja pominięta — bez czekania
+    // podsumowanie po upadku i ogniu w rurach, jeśli biegnie od zbiorników; misja pominięta — bez czekania
     await api.site.chainExplosion(site, { waitFuel: run('aftermath') });
     api.say(D.shipyardDown, 'radio');
     api.journal.step(6);
@@ -588,7 +591,8 @@ export async function mission01(ctx) {
       ['Supercapital herszta', bossText, bossResult === 'escaped' ? 'neg' : bossDown ? 'pos' : '']
     ];
     if (site.chain.fuel || chainKills > 0) stats.push(['Reakcja łańcuchowa', `${chainKills} okrętów`, 'pos']);
-    stats.push(['Magazyn piratów', warehouseDown ? 'zniszczony' : 'cały', warehouseDown ? 'pos' : '']);
+    // wiersz tylko za zasługę gracza: po HP 0 habitatu magazyn pada z bazą (puszczenie kotwic) i nie jest już „cały”
+    if (warehouseDown) stats.push(['Magazyn piratów', 'zniszczony', 'pos']);
     await api.ui.summary({ title: 'MISJA WYKONANA', subtitle: M.title, reward, stats });
   }
   api.journal.complete();

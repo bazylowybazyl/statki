@@ -5,6 +5,7 @@
 //
 //   node scripts/webgpu/gpu-baza-gra.mjs [--okno 1] [--rozmiar 5120x1440] [--out .tmp/gpu-baza] [--zoom 0.14] [--bron special_yamato_cannon]
 //        [--strzalyMaks 400] [--prog 30] [--slad 3] [--czasPo 8] [--abWorker 'nazwa@kod|…'] [--abPowt 2] [--query …]
+//        [--zbiorniki 1 — bez ostrzału habitatu: wysadzone zbiorniki, reakcja w rurach, okna reakcja-N]
 //
 // Okna (każde: złożenia obrazu / s, klatki workera / s, CPU workera p50 / p95, sonda GPU workera — wysyłki, zasoby,
 // dispatche, opóźnienie kolejki GPU, GPU render / compute wg etykiet; nvidia-smi: zajętość, pamięć, moc):
@@ -20,11 +21,11 @@
 //   upadek-N   — HP 0 (finał misji) → okna co 2 s jedno za drugim do osiadania (≤ 60 s; bez pauz i śladu w trakcie —
 //                kolumny ft, uderzenie wieży / dysku, zamrożonych brył). Habitat żywy po ostrzale (--prog > 0, limit
 //                strzałów, zastój) — finał JAWNIE tym samym API, którym gra zabija habitat poza pulami (syncBaseStages
-//                po komplecie etapów, ogień w rurach): S.deps.damageStation(habitat, hp + 10, true) — `direct`, bez pul
+//                po komplecie etapów, ogień w rurach od zbiorników): S.deps.damageStation(habitat, hp + 10, true) — `direct`, bez pul
 //                kawałków (bez `true` trafienie idzie do puli kawałka pod punktem trafienia i finału nie ma);
 //   osiadle-N  — po osiadaniu okna 2 s do pojawienia się podsumowania misji (≤ 20 s);
 //   po         — kamera fabuły po upadku; nad-gruzem — Atlas nad środkiem bazy, kamera statku (--zoomGruz).
-// ZAMROŻENIE PO UPADKU (2026-11-04): misja 1 po osiadaniu (habitatFallDone) i ogniu w rurach mówi „yardVictory”, czeka
+// ZAMROŻENIE PO UPADKU (2026-11-04): misja 1 po osiadaniu (habitatFallDone) i ogniu w rurach, gdy biegnie, mówi „yardVictory”, czeka
 //   3 s czasu gry i pokazuje podsumowanie (`api.ui.summary` → StoryGame._freeze 'summary'): pętla gry idzie gałęzią pauzy
 //   (`PAUSED || StoryGame.worldFrozen` — bez kroków fizyki, __frameId stoi), worker rysuje stojący świat. Gracz zamyka
 //   podsumowanie przyciskiem — wtedy rusza misja 2 (naprawa, po ~8 s fale piratów). Narzędzie (--odmroz 1, domyślnie)
@@ -610,7 +611,22 @@ try {
   const etapy0 = await ev(ETAPY);
   console.log('etapy start:', JSON.stringify(etapy0));
   report.etapy = [{ n: 0, strzaly: 0, ...etapy0 }];
-  for (;;) {
+  // --przedOstrzalem <plik>: wyrażenie JS na stronie gry przed pierwszą serią (np. kamera 3D: Game3D.setCamera('tactical')).
+  if (args.przedOstrzalem) console.log('przed ostrzałem:', JSON.stringify(await ev(readFileSync(String(args.przedOstrzalem), 'utf8'))));
+  // --zbiorniki 1: zamiast ostrzału habitatu wysadzone zbiorniki paliwa (nagroda misji: reakcja w rurach, habitat pada od ognia).
+  const ZBIORNIKI = Number(args.zbiorniki) > 0;
+  if (ZBIORNIKI) {
+    report.zbiorniki = await ev(`(() => { const S = window.StoryGame, st = S.site.structures.fuel; S.deps.damageStation(st, st.hp + 10, true); return { hp: st.hp }; })()`);
+    report.koniecOstrzalu = 'zbiorniki';
+    for (let k = 1; k <= 20; k++) {
+      await okno(`reakcja-${k}`, 2);
+      const e = await ev(ETAPY);
+      const c = await ev(`(() => { const c = window.StoryGame.site.chain; return { fuel: !!c.fuel, habitat: !!c.habitat, wypalone: c.burnt.size }; })()`);
+      console.log(`   reakcja-${k}: hp ${e.hp} | ${JSON.stringify(c)}`);
+      if (e.zniszczony) break;
+    }
+  }
+  while (!ZBIORNIKI) {
     await tagGpu(`seria-${n + 1}`);
     const seria = await ev(SERIA, 30000);
     strzaly += seria.n;
@@ -679,7 +695,7 @@ try {
     await okno(`osiadle-${k}`, 2);
   }
   if (!report.zamrozenie) {
-    // podsumowanie jeszcze nie przyszło — czekamy najwyżej 15 s (ogień w rurach, 3 s czasu gry po „yardVictory”)
+    // podsumowanie jeszcze nie przyszło — czekamy najwyżej 15 s (3 s czasu gry po „yardVictory”)
     await tagGpu('czekanie-podsumowania');
     const tW = Date.now();
     while (Date.now() - tW < 15000) {

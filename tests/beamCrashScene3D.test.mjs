@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { DestructorBeams3D as D, createBeamConfig } from '../src/game/destructorBeams3D.js';
 import {
   createCrashBodies, buildFallbackStationTris, DEFAULT_CRASH_SPEED,
-  CRASH_BREAK_MULTIPLIER, STATION_MASS_RATIO, createCrashFleet, launchCrashPairs, STRESS_PAIR_COUNT
-} from '../src/game/beamCrashScene3D.js';
-import { loadStationTriangles, buildCrashStructures } from './helpers/beamCrashScene.mjs';
+  CRASH_BREAK_MULTIPLIER, STATION_MASS_RATIO, createCrashFleet, launchCrashPairs, STRESS_PAIR_COUNT,
+  loadStationTriangles, buildCrashStructures
+} from './helpers/beamCrashScene.mjs';
 import { voxelizeTriangles, packKey } from '../src/game/voxelBody3D.js';
 
 const stationTriangles = await loadStationTriangles();

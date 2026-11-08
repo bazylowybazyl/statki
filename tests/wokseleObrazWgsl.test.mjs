@@ -172,3 +172,27 @@ test('kamera cienia: stałe S1–S5 bez zmian, duża scena z rozmiaru', () => {
   assert.equal(c.far, 16000);
   assert.equal(obraz.sun.shadow.bias, -0.0006);
 });
+
+// ── Gra: obrót gruzu (uwaga użytkownika 2026-11-07: gruz w locie „wiruje jak szalony”) ──
+test('gra: kGruz liczy obrót drobin w osobnym buforze, materiał gruzu czyta go tylko do odczytu; demo bez bufora obrotu', () => {
+  const g = createWokseleObraz({ solver: createWokseleSolver(), camera, wGrze: true });
+  const kod = wgsl(g.kernele.kGruz);
+  assert.match(kod, /var<storage, read_write> \w*[wW]okKatGruzu/);
+  assert.ok((kod.match(/var<storage/g) || []).length <= 8);
+  assert.doesNotMatch(kod, /Infinity|NaN/);
+  assert.deepEqual(nieprzypisane(kod), [], 'kGruz');
+  const ob = wgsl(g.kernele.kObraz);
+  assert.ok((ob.match(/var<storage/g) || []).length <= 8, 'kObraz w grze');
+  assert.deepEqual(nieprzypisane(ob), [], 'kObraz');
+  assert.doesNotMatch(wgsl(obraz.kernele.kGruz), /[wW]okKatGruzu/, 'demo bez bufora obrotu');
+  const b = renderer.backend.createNodeBuilder(g.meshGruz, renderer);
+  b.scene = g.scene;
+  b.camera = camera;
+  b.material = g.meshGruz.material;
+  b.lightsNode = renderer.lighting.getNode(g.scene);
+  b.build();
+  assert.match(b.vertexShader, /var<storage, read> \w*[wW]okKatGruzu/);
+  assert.doesNotMatch(b.vertexShader, /var<storage, read_write>/);
+  assert.ok((b.vertexShader.match(/var<storage/g) || []).length <= 8);
+  assert.deepEqual(nieprzypisane(b.vertexShader), [], 'wierzchołek gruzu');
+});

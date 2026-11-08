@@ -1,5 +1,5 @@
 // Baza piratów (misja 1, szkic użytkownika z 2026-10-11) jako DANE instancji — bez Three (testy node czytają je wprost).
-// Ten sam rejestrator i shader co budowle portowe Z7 i dawny suchy dok (portBuildingScene.js / portBuildings3D.js):
+// Ten sam rejestrator i shader co budowle portowe Z7 (portBuildingScene.js / portBuildings3D.js):
 // zestawy BG (pod statkami) i FG (maszty, część techniczna habitatu — nad statkami), kanały efektów, lampy.
 //
 // Wygląd jak sprite'y piratów „Iron Skull” (PIRATE_PORT_STYLE): ciemne żelazo z rdzą, czerwone pasy, kolce, włazy
@@ -7,7 +7,7 @@
 // podłoża: każda bryła należy do kawałka, który może się rozpaść (napis zostałby w próżni).
 //
 // KAWAŁKI = GRUPY RENDERU (layout.chunks): każda bryła kawałka jest nagrana w grupie `chunk.group` (macierz grupy
-// przesuwa / chowa kawałek, ciało świata rysuje skóra — jak w suchym doku). Wysokości jak w K-7 (y nad pokładem;
+// przesuwa / chowa kawałek, ciało świata rysuje skóra). Wysokości jak w K-7 (y nad pokładem;
 // płaszczyzna gry y = 116 = z świata 0; nad nią ×0,42), materiały = kody K7_MAT, emisja w paśmie HDR 0,9–1,8.
 import { k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { PB_FX, PB_MAT, PB_MAX_GROUPS, PB_MAX_LAMPS, PortRecorder, pbHash1 } from './portBuildingScene.js';

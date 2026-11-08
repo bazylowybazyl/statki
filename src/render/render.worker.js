@@ -252,10 +252,11 @@ if (isWorker) {
     // rusza od razu i idzie na GPU równolegle z resztą init; wiadomości, które jeszcze nie przyszły, obsłuży onmessage
     for (let i = 0; i < early.length;) {
       const q = early[i];
-      if (q.type === 'planets' || q.type === 'menu' || q.type === 'belt' || q.type === 'beltOp' || q.type === 'beltOcc' || q.type === 'beltGiant') { early.splice(i, 1); handle(q); } else i++;
+      if (q.type === 'gfx' || q.type === 'planets' || q.type === 'menu' || q.type === 'belt' || q.type === 'beltOp' || q.type === 'beltOcc' || q.type === 'beltGiant') { early.splice(i, 1); handle(q);} else i++;
     }
     await new Promise((r) => setTimeout(r, 0));
-    ret.retSetFlag(st.ret, ret.RET_FLAG.GPU_READY | ret.RET_FLAG.READY);
+    // GPU_TIMER: czy rozdzielczość dynamiczna strony może liczyć na próbki (bez znaczników czasu skala stoi, opcje mówią dlaczego)
+    ret.retSetFlag(st.ret, ret.RET_FLAG.GPU_READY | ret.RET_FLAG.READY | (Core3D.gpuTimerSupported ? ret.RET_FLAG.GPU_TIMER : 0));
     // dziennik pipeline'ów tworzonych SYNCHRONICZNIE w klatkach workera (przestój GPU — to, czego rozgrzewka nie objęła);
     // pierwsze 60 do konsoli workera (render-worker-gra.mjs zbiera logi workera), liczba w st.pipeSync
     try {
@@ -1109,12 +1110,8 @@ if (isWorker) {
     f[R.CPU_UPDATE_MS] = t1 - t0;
     f[R.CPU_RENDER_MS] = t2 - t1;
     f[R.CPU_FRAME_MS] = performance.now() - t0;
-    if (Number.isFinite(Core3D.gpuFrameMs)) f[R.GPU_FRAME_MS] = Core3D.gpuFrameMs;
-    if (Number.isFinite(Core3D.gpuComputeMs)) f[R.GPU_COMPUTE_MS] = Core3D.gpuComputeMs;
-    // liczniki wyników znaczników (nowa próbka = zmiana) i skala renderu — rozdzielczość dynamiczna strony
-    f[R.GPU_FRAME_SAMPLES] = Core3D.gpuFrameSamples | 0;
-    f[R.GPU_COMPUTE_SAMPLES] = Core3D.gpuComputeSamples | 0;
-    f[R.PIXEL_RATIO] = Number(Core3D.renderScale) || 0;
+    // ms, liczniki wyników znaczników (nowa próbka = zmiana) i skala renderu — rozdzielczość dynamiczna strony
+    retMod.retWriteGpuClock(st.ret, Core3D);
     // Opóźnienie kolejki GPU (PerfHUD „kolejka”): od końca zgłoszeń tej klatki do wykonania wszystkiego na GPU — co 8.
     // klatkę, jedno zapytanie w locie. Znaczniki czasu widzą tylko passy i listy compute; ta liczba łapie każdą pracę GPU
     // (wysyłki, kopie, kompilacje, presentację) — przy zapchanej karcie rośnie ponad okres klatki.
@@ -1307,8 +1304,9 @@ if (isWorker) {
     // planety (ringi) i tło menu od razu, gdy moduły są już wczytane — menu nie czeka na resztę init (RW-41c)
     if (!st.live && st.mods && (m.type === 'planets' || m.type === 'menu')) { handle(m); return; }
     // pas (bank skał) i przygotowanie sceny przy „Start” — po gotowym GPU, nie po całym init (efekty idą w porcjach
-    // po gotowości tła menu; kliknięcie w trakcie nie czeka na nie z pieczeniem pasa)
-    if (!st.live && st.tGpu && (m.type === 'belt' || m.type === 'beltOp' || m.type === 'beltOcc' || m.type === 'beltGiant' ||
+    // po gotowości tła menu; kliknięcie w trakcie nie czeka na nie z pieczeniem pasa). Opcje grafiki też: tło menu rysuje
+    // się już z presetu gracza (po całym init byłby to pełny bloom i domyślne smugi przez cały start), a zmiana w menu działa od razu.
+    if (!st.live && st.tGpu && (m.type === 'gfx' || m.type === 'belt' || m.type === 'beltOp' || m.type === 'beltOcc' || m.type === 'beltGiant' ||
       (m.type === 'prepare' && !m.afterFrame))) { handle(m); return; }
     if (!st.live) { early.push(m); return; }
     handle(m);

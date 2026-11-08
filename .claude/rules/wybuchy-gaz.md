@@ -23,12 +23,12 @@ paths:
 
 - **Wybuchy na gazie — W GRZE od 2026-10-07** (§ „Wybuchy WebGPU”: kula ognia, strumienie gazu, dym, który się rozchodzi i znika — progi i łańcuch rozpadu doku, rozpad stacji, śmierć bez rdzenia). **Dym i ogniska WRAKÓW — dalej NIE w grze** (2026-10-05, § 12 planu zniszczeń — decyzja dotyczyła zakresu wdrożenia F2, nie zakazu: wybuchy progów i rozpadu są w grze, pył zawaleń to cząstki — D2 planu zawaleń, 2026-11-04): gotowy klej `src/3d/gas/gasSmokeGame.js` (`createGasSmokeGame(Core3D)` → `window.GasSmoke`: krok `Core3D.addFxStep`, płaskie domeny 48 × 48 × 24, obłok POD płaszczyzną gry — A/B: gęsty dym nad nią chował wrak; zdarzenia `shipWrecked` / `shipDetonated` / `stationDestroyed` / `stationHit`, kurz z `CollisionFX`) jest wypięty z `index.html`; wpięcie i lekcje strojenia — plan § 12. Testy `tests/gasSmokeGame.test.mjs`, `tests/gasGrid.test.mjs`; `scripts/webgpu/dym-gra.mjs` działa dopiero po ponownym wpięciu.
 
-- Wybuchy i dym zniszczeń — warsztat (2026-10-05, § 12 planu zniszczeń; dema WebGPU): gaz na siatce 3D w compute jak Niagara Fluids (`src/3d/gas/`: `gasGrid.js` — domeny w atlasie `Storage3DTexture`, dane w komórkach domeny, MacCormack, spalanie paliwa, rozprężanie, Jacobi; `gasVolume.js` — marsz promienia z emisją Kirchhoffa i samocieniem; `gasExplosions.js` — przepisy wybuchów budowli; `destructionGasFx.js` — zdarzenia silnika belek i broni fizycznych → efekty; `PhysicalWeapons3D.detonate` — front ciśnienia bez pocisku), renderer ciał belkowych w TSL (`beamShips3D.webgpu.js`). Demo `destruktor3d-webgpu.html` (GENEROWANE z `destruktor3d.html`: `python scripts/destruktor3d-webgpu-gen.py`) na kleju dem `gasSceneFx.js`; `dema/wybuchy-webgpu.html` od 2026-10-07 pokazuje wybuchy GRY na Core3D (§ „Wybuchy WebGPU”). Gra wpina gaz przez `Core3D.addFxStep` i siatkę świateł (`src/3d/explosions/`), nie przez klej dem.
+- Wybuchy i dym zniszczeń — warsztat (2026-10-05, § 12 planu zniszczeń; dema WebGPU): gaz na siatce 3D w compute jak Niagara Fluids (`src/3d/gas/`: `gasGrid.js` — domeny w atlasie `Storage3DTexture`, dane w komórkach domeny, MacCormack, spalanie paliwa, rozprężanie, Jacobi; `gasVolume.js` — marsz promienia z emisją Kirchhoffa i samocieniem; `gasExplosions.js` — przepisy wybuchów budowli); `dema/wybuchy-webgpu.html` od 2026-10-07 pokazuje wybuchy GRY na Core3D (§ „Wybuchy WebGPU”). Gra wpina gaz przez `Core3D.addFxStep` i siatkę świateł (`src/3d/explosions/`).
 
 ## Wybuchy WebGPU (`src/3d/explosions/`, gaz `src/3d/gas/`; 2026-10-07, etapy A–E2 i D audytu `docs/AUDYT-wybuchy-gaz-2026-10-08.md` — 2026-10-09)
 
 - Wejście z GRY (RW-22): `GameBlasts.blast(o, drony)` (`src/game/explosionEvents.js` — rekord `EXPLOSION`, dekoder `src/3d/explosions/explosionCommands.js` woła fabrykę bez opakowania; `drony = true` — gra zmiata drony naprawcze w zasięgu, jak dawne `withRepairDroneBlast`), opcje jak niżej; render (rozpad stacji — Destruction3D) i konsola wołają dalej fabrykę: `window.makeReactorBlow({ x, y, size, profile, vx?, vy?, axisX?, axisY?, jetVelTau?, tint?, gasOnly?, hostKey? })` (świat gry,
-  `size` — Atlas ≈ 280): progi punktów i łańcuch rozpadu suchego doku, rozpad stacji (`Destruction3D.init({ reactorFactory })`),
+  `size` — Atlas ≈ 280): progi punktów i rozpad bazy piratów, rozpad stacji (`Destruction3D.init({ reactorFactory })`),
   skrypty. Fabryka `createExplosionFactory(Core3D, { rocketFx, weaponFx })` przy starcie efektów w `index.html`, reżyser
   `window.__explosions`. ŚMIERĆ OKRĘTU bez detonacji rdzenia (pula HP NPC, gracz bez rdzenia) = wybuch z MIEJSCA ZBIORNIKA
   PALIWA (`src/data/fuelTanks.js` — Atlas, Bellator, Iron Skull, reszta z automatu: głęboko w części rufowej, poza komorą
@@ -72,13 +72,15 @@ paths:
 - Receptury (`explosionRecipes.js`, czyste): profile (`fighter` … `final`, domyślny `capital`) jako mnożniki `size` — kula ognia,
   kłęby, strumienie, płonące odłamki, iskry, żar, odłamki konstrukcji, dym, błysk, światło, fala, gorące powietrze, wtórne, ogniska.
 
+- WYBUCH POD BUDOWLĄ (profil `baza`, reguła `baza-piratow`, „WYBUCHY BAZY”): budowla jest celem, nie tłem wybuchu. Trzy pola profilu, poza nim bez zmian: `decay` — stały zanik dymu `baseDecay` domeny; `under` — cały marsz domeny w warstwie tylnej (passie ortho), przy każdej kamerze, a front ma pusty przedział (`GasSlot.under` → flaga `slotK.y`, `tc = 0`), więc wieża w FG leży nad dymem, a bryły tła pod nim; `thin` — mnożnik gęstości obrazu 1 − `thin` (`GasSlot.thin` → `slotK.z`), sama symulacja bez zmian. Domena `under` scala się tylko z taką samą (`_fitSlot`), wyrwy powietrza też są `under`.
+
 - Obraz (`explosionFx.js`, krok `Core3D.addFxStep` „wybuchy”): kula ognia i dym z GAZU (siatka 3D w compute: MacCormack skalarów
   i prędkości — v̂ w `velC`, spalanie z rozprężaniem, kurczenie przy stygnięciu, rzut Jacobi), STRUMIENIE z miejsca wybuchu
   (`GasExplosions.jet` — narzucenie prędkości źródeł gaśnie po 0,06 s z τ 0,15 s, strumień dalej żyje własną dynamiką), płonące
   odłamki („pająk”), żar porywany gazem (`gasEmbers.js`), błysk, iskry gry, odłamki konstrukcji (WeaponFx DEBRIS), jedno światło na
   wybuch w siatce, FALA jako sama refrakcja i gorące powietrze (`Core3D.fxDistortion()`), wtórne. Źródła, żar, łby odłamków i błysk
   jadą z nośnikiem domeny (`director.tune.followCarrier`, `slotVel` żaru). Warstwy: gaz za płaszczyzną gry — pass ortho przed
-  kadłubami; przed nią, żar, błyski, łby — pass FG (warstwa 2) po bryłach FG.
+  kadłubami; przed nią, żar, błyski, łby — pass FG (warstwa 2) po bryłach FG. Gaz to obraz 2,5D bez głębi: marsz przez płaskie pudło, `depthTest` wyłączony, więc to pass, a nie głębia, decyduje, co leży nad czym.
 
 - Gaz w próżni (`tuneGasForSpace`): bez wyporu, wiry 1 i turbulencja 10 (przy MacCormacku dawne 3,5 / 35 dawały energię rosnącą po
   wygaśnięciu źródeł), opór 0,23 + 0,03·|v| w środku ZOSTAJE (bez niego 15 iteracji Jacobiego nie domyka rzutu), gąbka 3/s przy
@@ -106,8 +108,8 @@ paths:
   2 wodór; przejście liniowe między sąsiednimi), lustro `gasFirePaletteCpu`, blask `gasFireGlow`.
 
 - PRZESZKODY (`src/game/gasObstacleInput.js` → `GAS_OBST_IN` → `__explosions.setObstacleInput`, szew gra ↔ render jak pył hal):
-  statyka — pudła hal K-7 (`k7SolidList`, hale w kadrze i przy domenach) i bryły trafień budowli misji — baza piratów,
-  suchy dok (czworokąt = pudło; wycinek pierścienia bębna i koła szybu / zbiorników = kilka pudeł z pasów między
+  statyka — pudła hal K-7 (`k7SolidList`, hale w kadrze i przy domenach) i bryły trafień budowli misji — baza piratów
+  (czworokąt = pudło; wycinek pierścienia bębna i koła szybu / zbiorników = kilka pudeł z pasów między
   łańcuchami rogów, `putGasObstaclePoly`, nadmiar ≤ 5% bryły; kawałek ruszony — obrysy jego
   ciał), raster R8 w oknie 2N × 2N ZAKOTWICZONYM W ŚWIECIE (róg na siatce h, wyprzedzenie wzdłuż nośnika, bryła + 0,75 komórki);
   kadłuby — obrys z żywych węzłów belek (`hullFootprint`) z prędkością ciała + ω × r (do 64 rekordów i 32 pasm masek na siatkę,

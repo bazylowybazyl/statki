@@ -146,6 +146,17 @@ try {
   if (SCENES.has('port')) {
     await screenshotPng(cdp, join(out, '01-port.png'));
     report.sceny.port = { zoom: 0.045 };
+    // Okludery cienia SDF w passie shadow shafts (tryb off — Core3D strony): z proxy i bez (E17b — cień proxy).
+    if (report.tryb === 'off') {
+      const shafts = '(window.Core3D && window.Core3D.shaftHullCount) | 0';
+      report.sceny.port.okludery = await ev(shafts);
+      await ev('(window.TrafficBubble.hideRender = true, true)');
+      await step(3);
+      report.sceny.port.okluderyBezProxy = await ev(shafts);
+      await ev('(window.TrafficBubble.hideRender = false, true)');
+      await step(3);
+      console.log('okludery cienia (port):', report.sceny.port.okludery, 'bez proxy:', report.sceny.port.okluderyBezProxy);
+    }
   }
   if (SCENES.has('hala')) {
     const t = await findTarget('zapas', spot.k7.x, spot.k7.y);

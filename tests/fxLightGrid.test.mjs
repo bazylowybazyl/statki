@@ -268,7 +268,8 @@ test('addShipLights: lampy edytora — reflektory, reflektory otoczenia i grupy 
       position: [{ x: -200, y: -60 }, { x: -150, y: 60 }, { x: 200, y: -60 }, { x: 250, y: 60 }]
     }
   };
-  addShipLights(g, ship, 700, { owner: 9, time: 0.4 });
+  // Chwila błysku świateł nawigacyjnych (okręt bez id: faza 0).
+  addShipLights(g, ship, 700, { owner: 9, time: 0.05 });
   const L = g.lights;
   let spots = 0; let omni = 0; let owned = 0;
   for (let i = 0; i < g.count; i++) {
@@ -279,6 +280,11 @@ test('addShipLights: lampy edytora — reflektory, reflektory otoczenia i grupy 
   assert.ok(spots >= 3, `reflektory: ${spots}`);
   assert.ok(omni >= 2, `dookólne (światło + lampy): ${omni}`);
   assert.equal(owned, g.count - 1, 'wszystko poza światłem dookoła ma właściciela');
+  // Między błyskami lampy nie świecą w siatce: o 4 światła mniej, ta sama reszta.
+  const dark = new LightGrid();
+  dark.begin(0, 0);
+  addShipLights(dark, ship, 700, { owner: 9, time: 1 });
+  assert.equal(dark.count, g.count - 4, 'bez błysku bez światła lamp');
 });
 
 // Poza świateł (2026-10-29, „snopy front i pomocnicze drżą”): pas podaje graczowi pozę renderu (kadłub), nie pozę kroku.

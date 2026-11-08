@@ -33,7 +33,7 @@
 //   5. rzut      — v −= ∇p (sąsiad stały bez spadku przez ścianę), w komórce stałej prędkość przeszkody, flaga
 //                  do velA.w; kopia skalarów do tekstur startowych następnego kroku.
 // PRZESZKODY (F2 audytu 2026-10-08, etap C 2026-10-09): pryzmaty przez całą wysokość domeny (gra z góry — bryły
-// w płaszczyźnie gry). STATYKA (budowle: ściany hal K-7, kawałki suchego doku) — raster CPU w oknie MS × MS teksli
+// w płaszczyźnie gry). STATYKA (budowle: ściany hal K-7, kawałki bazy piratów) — raster CPU w oknie MS × MS teksli
 // ZAKOTWICZONYM W ŚWIECIE (teksel = komórka domeny), liczony przy zajęciu domeny i po zmianie budowli; domena
 // jadąca z nośnikiem próbkuje go z przesunięciem (ściana stoi w świecie, w układzie domeny ma prędkość −nośnik),
 // okno wyprzedza nośnik, nowe okno przed jego brzegiem. Bryły rastrowane zachowawczo (+0,75 komórki: cienka brama
@@ -407,6 +407,8 @@ class GasSlot {
     this.tint = [1, 1, 1];                   // barwa dymu domeny (para / sadza)
     this.fire = 0;                           // paleta ognia domeny: 0 — ciało czarne, 1 — plazma Yamato, 2 — wodór (gasCommon GAS_FIRE_ROWS)
     this.baseDecay = 0;                      // stały zanik dodatkowy dymu [1/s] (krótki dym wylotu działa — etap E1)
+    this.under = false;                      // cała objętość w warstwie tylnej (pass ortho), nic w FG: dym nie przykrywa rzeczy nad płaszczyzną gry
+    this.thin = 0;                           // o tyle rzadszy obraz domeny (0 — bez zmian); sama gęstość w marszu, symulacja bez zmian
     this.ambient = 0;                        // otoczenie domeny (światło wnętrza hali K-7 — dym zapłonu, etap E2; obraz gry)
     // SKALA KOMÓRKI domeny (etap D 2026-10-09): k = (komórki na promień kuli) / (komórki na promień przy strojeniu —
     // 96 / 5,4 ≈ 17,8). Parametry w jednostkach komórek (sufit prędkości, siły, częstotliwości szumu, krok samocienia,
@@ -1252,6 +1254,8 @@ export class GasGrid {
     // Stały zanik dodatkowy może być UJEMNY (do −0,4/s: pył uderzeń w skałę trzyma się dłużej niż dym wybuchów — suma z
     // zanikiem globalnym tune.smokeDecay 0,545/s zostaje dodatnia).
     s.baseDecay = Math.max(-0.4, Number(opts.baseDecay) || 0);
+    s.under = !!opts.under;
+    s.thin = Math.max(0, Math.min(0.95, Number(opts.thin) || 0));
     // Domena głęboka (pass tła) i kula-przeszkoda (scena: środek, promień; brak — gr = 0); bez przeszkód gry (statyka,
     // kadłuby) — opcje ogólne, domena głęboka zawsze bez nich.
     s.deep = !!opts.deep;

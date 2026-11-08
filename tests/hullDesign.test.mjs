@@ -255,7 +255,7 @@ test('flota TN z klocków (bez obrysu sprite\'a), kompozytor czyta pola ośmiok�
 test('mocowania: lampy na krawędzi, dysze MAIN gondol za rufą gondoli', () => {
   const f = buildHullField(hullDesignPreset('atlas2'));
   const m = hullDesignMounts(f);
-  assert.equal(m.lights.position.length, 4);
+  assert.equal(m.lights.position.length, 6);
   const { cx, cy } = f.image;
   for (const l of m.lights.position) {
     const d = sampleHullField(f, 0, l.x + cx, l.y + cy);

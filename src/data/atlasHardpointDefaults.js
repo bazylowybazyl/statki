@@ -1,3 +1,5 @@
+import { withShipNavLights } from './shipNavLights.js';
+
 export const ATLAS_EDITOR_DEFAULTS = {
   "label": "Atlas",
   "frontAxis": "+X",
@@ -466,54 +468,10 @@ export const ATLAS_EDITOR_DEFAULTS = {
       }
     ]
   },
-  "lights": {
-    "position": [
-      { "id": "m_wmwoiyp", "x": 1675.3, "y": -138.4, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_2i0kqnw", "x": 1675.3, "y": 138.4, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_82gv781", "x": 1447.11, "y": -208.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_ttpa8pb", "x": 1447.11, "y": 208.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_88me45z", "x": 1254.04, "y": -237.82, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_k0nhqs8", "x": 1254.04, "y": 237.82, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_nnw3m1l", "x": 1074.62, "y": -253.42, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_sx8t6ka", "x": 1074.62, "y": 253.42, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_v3529br", "x": 809.37, "y": -290.46, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_vnadezn", "x": 809.37, "y": 290.46, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_0gdcevi", "x": 663.09, "y": -370.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_sq61has", "x": 663.09, "y": 370.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_ofw970y", "x": 425.16, "y": -313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_8jdx1kv", "x": 425.16, "y": 313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_3fnvqao", "x": 251.59, "y": -220.28, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_7wbh7cb", "x": 251.59, "y": 220.28, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_a5l9296", "x": 91.66, "y": -382.07, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_190d1tk", "x": 91.66, "y": 382.07, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_vlln3df", "x": -35.1, "y": -391.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_m7vmqyb", "x": -35.1, "y": 391.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_bu12kkh", "x": -230.13, "y": -467.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_cdobdz5", "x": -230.13, "y": 467.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_kf7twde", "x": -378.36, "y": -372.33, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_clyc39d", "x": -378.36, "y": 372.33, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_hft3bxq", "x": -505.12, "y": -475.64, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_1suvgpg", "x": -505.12, "y": 475.64, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_sfo9rzq", "x": -692.36, "y": -578.96, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_0msxcow", "x": -692.36, "y": 578.96, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_4kllt8d", "x": -840.58, "y": -582.85, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_757dtfd", "x": -840.58, "y": 582.85, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_9e2hg75", "x": -1023.91, "y": -586.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_oxphrss", "x": -1023.91, "y": 586.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_j1dfxyf", "x": -1183.82, "y": -502.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_zr5vizg", "x": -1183.82, "y": 502.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_jc7qacw", "x": -1314.49, "y": -313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_n858bwv", "x": -1314.49, "y": 313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_4zt7rym", "x": -1425.67, "y": -409.37, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_z0xm4rd", "x": -1425.67, "y": 409.37, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_rqbhxde", "x": -1499.78, "y": -323.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_kq01949", "x": -1499.78, "y": 323.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_4f0zgth", "x": -1646.06, "y": -152.05, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_onpt963", "x": -1646.06, "y": 152.05, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" }
-    ],
+  "lights": withShipNavLights('atlas', {
     "road": [
       { "id": "m_ic8ahjt", "x": 1748.35, "y": -59.42, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 },
       { "id": "m_5wddzqz", "x": 1748.35, "y": 59.42, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 }
     ]
-  }
+  })
 };

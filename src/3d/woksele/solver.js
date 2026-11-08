@@ -7,7 +7,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Continue, Return, instanceIndex, instancedArray, storage, uniform, uniformArray, uint, int, float, vec3, vec4,
-  countOneBits, floatBitsToUint, sqrt, max, min, clamp, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad, texture,
+  countOneBits, floatBitsToUint, sqrt, max, min, clamp, floor, round, dot, length, cross, select, atomicAdd, atomicMin, atomicMax, atomicLoad, texture, normalize, mix,
 } from 'three/tsl';
 import { ND, STRONA, N0X, N0Y, N0Z, KLASA_NAZWY, PARAMETRY } from './budowa.js';
 
@@ -38,7 +38,7 @@ export const BIT_ZOSTAW = 1 << 16;
 /** Bit flagi węzła: reszta kuli krateru rozrywa go przez S = 3. Bez bitu węzeł poza rS zostaje nietknięty (scena z szwami). */
 export const BIT_PAS = 1 << 17;
 const POMIJANY_CEL = 0xffffffff;
-export const GINIE_BOK = 64;  // kubełki węzłów, które doleciały do skały w grze: siatka GINIE_BOK² w rzucie XY
+export const GINIE_BOK = 104;  // kubełki węzłów, które doleciały do skały w grze: siatka GINIE_BOK² w rzucie XY
 /** Bok mapy kształtu skały w tekselach. */
 export const WYS_BOK = 64;
 const KULA_POD_J = 2000; // mapa kształtu sięga ±1600 j. od promienia średniego
@@ -111,6 +111,18 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
   const uGPunktG = uniform(0).setName('uGPunktG');
   const uGPunktR0 = uniform(0).setName('uGPunktR0');
   const uGMiesz = uniform(new THREE.Vector2()).setName('uGMiesz'); // gra: pod z = x pole stałe przechodzi w punkt na drodze 1 / y. y = 0: suma obu, jak w scenach dema
+  // Gra: pole rozbieżne z punktu uGRozbF wysoko nad bazą (na prostej środek skały → środek bazy). Lewa część bazy ląduje na lewej części skały, prawa na prawej; ku środkowi skały dopiero w pasie uGRozbPas nad nią. 0: samo pole ku środkowi, jak w demie.
+  const uGRozbF = uniform(new THREE.Vector3()).setName('uGRozbF');
+  const uGRozbPas = uniform(0).setName('uGRozbPas');
+  // Gra: fala łamiąca w bryle oderwanej od kotwic ruszana prędkością WZGLĘDNĄ sąsiadów, nie prędkością lotu. Wspólny spadek bryły nic nie łamie, uderzenie tak. Stojąca konstrukcja: jak w demie. 0: prędkość bezwzględna wszędzie, jak w demie i we wzorcu CPU.
+  const uFalaWzgl = uniform(0).setName('uFalaWzgl');
+  // kPuscCzesc: zakres węzłów jednej części, próg wysokości, obrót startowy wokół punktu.
+  const uPcOd = uniform(0, 'uint').setName('uPcOd');
+  const uPcDo = uniform(0, 'uint').setName('uPcDo');
+  const uPcZMin = uniform(-1e30).setName('uPcZMin');
+  const uPcPiv = uniform(new THREE.Vector3()).setName('uPcPiv');
+  const uPcOm = uniform(new THREE.Vector3()).setName('uPcOm');
+  const uPcKotw = uniform(0).setName('uPcKotw');
   const uGObrotP = uniform(new THREE.Vector3()).setName('uGObrotP');
   const uGObrotOm = uniform(0).setName('uGObrotOm');
   const uGOs = uniform(new THREE.Vector3(0, 0, 1)).setName('uGOs');
@@ -188,7 +200,13 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
       const a = fv(select(uGPunktR0.greaterThan(0), uGPunktG.mul(uGPunktR0).mul(uGPunktR0).div(r2), uGPunktG));
       const t = fv(clamp(uGMiesz.x.sub(x.z).mul(uGMiesz.y), 0, 1));
       const w = fv(select(uGMiesz.y.greaterThan(0), t, float(1)));
-      g.assign(g.mul(float(1).sub(t)).add(e.mul(a.mul(w).div(sqrt(r2)))));
+      const r = fv(sqrt(r2));
+      const kier = v3(e.div(r));
+      If(uGRozbPas.greaterThan(0), () => {
+        const s = fv(clamp(uKulaR.add(uGRozbPas).sub(r).div(uGRozbPas), 0, 1));
+        kier.assign(normalize(mix(normalize(x.sub(uGRozbF)), kier, s)));
+      });
+      g.assign(g.mul(float(1).sub(t)).add(kier.mul(a.mul(w))));
     });
     If(uGObrotOm.notEqual(0), () => {
       const e = v3(x.sub(uGObrotP));
@@ -393,7 +411,10 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     // Fala, bez dysku. Próg z ramy: 1e30 bez ramy (§ 10.3).
     const aN = fv(aI);
     If(nosny.equal(uint(0)), () => {
-      If(dot(vi, vi).greaterThan(uFalaV2), () => {
+      // Względna tylko w bryle oderwanej od kotwic (etykieta = cap: wieża w locie, spadające części). Stojąca konstrukcja liczy ruch względem kotwic, czyli bezwzględny:
+      // kikut szybu popchnięty przez przewracającą się wieżę łamie się wtedy, a nie kołysze jak galareta (uwaga użytkownika 2026-11-07).
+      const v2Fali = fv(select(uFalaWzgl.greaterThan(0.5).and(eI.greaterThanEqual(uCap)), dot(sv, sv).div(max(sn.mul(sn), 1)), dot(vi, vi)));
+      If(v2Fali.greaterThan(uFalaV2), () => {
         const cel = fv(select(szI.greaterThan(par.fala.prog), float(1), aSas.mul(par.fala.oslab)));
         If(cel.greaterThan(aN), () => { aN.addAssign(cel.sub(aN).mul(uFalaTempoH)); });
       });
@@ -917,7 +938,52 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     wStan.element(uN.mul(uint(2)).add(uint(2).mul(i)).add(uint(1))).w.assign(float(fl.sub(uint(1))));
   })().compute(MAX).setName('wokPusc');
 
-  const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch, kGinieZeruj, kGinieLicz, kPusc };
+  // Gra: cała część naraz (węzły [uPcOd, uPcDo) nad uPcZMin) traci kotwice i sprężenie, bez wypieku, z obrotem startowym ω × (x − p).
+  // Kotwice puszczane węzeł po węźle zostawiały sprężenie na 0,47 s (etykieta szła do cap), a dolna warstwa brała całą reakcję: bryła pękała w locie, zanim w coś uderzyła.
+  // Z uPcZMin w środku bryły to także CIĘCIE: wiązania do węzłów tej części po drugiej stronie płaszczyzny znikają (obie kopie maski, każdy koniec czyści swoją, z tych samych pozycji, więc symetrycznie).
+  // Kratery szyi zostawiały pojedyncze wiązania, a wieża na nich wracała do pionu jak na sprężynie. uPcKotw = 1: węzły pod cięciem stają w miejscu (kotwica) do puszczenia całej części przy upadku: kikut się nie kołysze.
+  const kPuscCzesc = Fn(() => {
+    const i = instanceIndex;
+    If(i.lessThan(uPcOd).or(i.greaterThanEqual(uPcDo)).or(i.greaterThanEqual(uN)), () => { Return(); });
+    const i3 = uv(uint(3).mul(i));
+    const p = v4(wWez.element(i3));
+    If(p.w.lessThan(0), () => { Return(); });
+    const pod = uv(select(p.z.lessThan(uPcZMin), uint(1), uint(0)));
+    const bazaW = uv(uint(36).mul(i));
+    const m = uv(wMaska.element(i));
+    Loop({ start: uint(0), end: uint(ND), type: 'uint', condition: '<', name: 'd' }, ({ d }) => {
+      const bit = uv(uint(1).shiftLeft(d));
+      If(m.bitAnd(bit).equal(uint(0)), () => { Continue(); });
+      const j = uv(floatBitsToUint(wWiaz.element(bazaW.add(uint(2).mul(d)).add(uint(1))).z).bitAnd(uint(0xffffff)));
+      If(j.lessThan(uPcOd).or(j.greaterThanEqual(uPcDo)), () => { Continue(); });
+      const podJ = uv(select(wWez.element(uint(3).mul(j)).z.lessThan(uPcZMin), uint(1), uint(0)));
+      If(podJ.notEqual(pod), () => { m.assign(m.bitAnd(bit.bitNot())); });
+    });
+    wMaska.element(i).assign(m);
+    wMaska.element(uN.add(i)).assign(m);
+    const fl = uv(flagiWezla(wStan, i));
+    const iFl = uv(uN.mul(uint(2)).add(uint(2).mul(i)).add(uint(1)));
+    If(pod.notEqual(uint(0)), () => {
+      If(uPcKotw.greaterThan(0.5).and(fl.bitAnd(uint(1)).equal(uint(0))), () => {
+        wStan.element(iFl).w.assign(float(fl.add(uint(1))));
+        wWez.element(i3.add(uint(1))).assign(vec4(0, 0, 0, wWez.element(i3.add(uint(1))).w));
+      });
+      Return();
+    });
+    If(fl.bitAnd(uint(1)).notEqual(uint(0)), () => {
+      wStan.element(iFl).w.assign(float(fl.sub(uint(1))));
+    });
+    wStan.element(i).z.assign(uCap);
+    wStan.element(uN.add(i)).z.assign(uCap);
+    const baza = uv(uint(36).mul(i));
+    Loop({ start: uint(0), end: uint(ND), type: 'uint', condition: '<', name: 'd' }, ({ d }) => {
+      wWiaz.element(baza.add(uint(2).mul(d))).z.assign(0);
+    });
+    const vv = v4(wWez.element(i3.add(uint(1))));
+    wWez.element(i3.add(uint(1))).assign(vec4(vv.xyz.add(cross(uPcOm, p.xyz.sub(uPcPiv))), vv.w));
+  })().compute(MAX).setName('wokPuscCzesc');
+
+  const kernele = { kF, kI, kWstaw, kLista, kZerujPo, kCzas, kCzysc, kCzyscS, kZerujCel, kCel, kKraterCel, kKrater, kZerujWybuch, kWybuchSuma, kWybuchMoment, kWybuch, kGinieZeruj, kGinieLicz, kPusc, kPuscCzesc };
   // Kernele o stałej liczbie wywołań: nie po węzłach, więc wczytanie sceny nie zmienia im liczby.
   const STALA_LICZBA = new Set([kZerujCel, kKraterCel, kZerujWybuch, kGinieZeruj]);
 
@@ -958,7 +1024,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
 
   const uniformy = {
     uN, uH, uK, uCB, uKB, uKC, uCC, uCT, uCosWyp, uGStala, uGPunktC, uGPunktG, uGPunktR0, uGObrotP, uGObrotOm, uGOs, uSkG, uSkF0, uKotwice, uGruntZ, uGinieC, uGinieR2, uKulaR, uDxP, uCap, uLepL, uLepV2,
-    uGruzP, uGruzV2, uFalaV2, uFalaTempoH, uSzokProg, uKontaktV, uIKom, uZasieg2, uPekaProg, uPekaZakres, uZlomB2,
+    uGruzP, uGruzV2, uFalaV2, uFalaTempoH, uSzokProg, uKontaktV, uIKom, uZasieg2, uPekaProg, uPekaZakres, uZlomB2, uFalaWzgl, uGRozbF, uGRozbPas,
     uT, uBrakCzasu, uCelO, uCelDir, uCelProg2, uKraterN, uBlastN, uZerujL,
   };
 
@@ -1047,12 +1113,25 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     renderer.compute(kPusc);
   }
 
+  /** Cała część naraz: węzły [od, od + n) nad zMin tracą kotwice i sprężenie (bez wypieku) i dostają obrót om (rad/s, wektor) wokół piv. Wiązania przez płaszczyznę zMin znikają; kotw: węzły pod nią stają w miejscu. */
+  function puscCzesc(renderer, { od, n, zMin = -1e30, piv = null, om = null, kotw = false }) {
+    uPcKotw.value = kotw ? 1 : 0;
+    uPcOd.value = od;
+    uPcDo.value = od + n;
+    uPcZMin.value = zMin;
+    uPcPiv.value.set(piv?.[0] ?? 0, piv?.[1] ?? 0, piv?.[2] ?? 0);
+    uPcOm.value.set(om?.[0] ?? 0, om?.[1] ?? 0, om?.[2] ?? 0);
+    renderer.compute(kPuscCzesc);
+  }
+
   /**
    * Gra: skała pod bazą. c, R: kula kontaktu, x0, y0, kom: siatka kubełków liczących węzły przy powierzchni (róg, bok kubełka). Bezpiecznik: węzeł 250 j. pod powierzchnią ginie.
    * Pod zPola grawitacja przechodzi ze stałej w ku środkowi skały na drodze zakresPola. Stała −z na kuli zsuwała gruz z każdego zbocza powyżej kąta tarcia (35°), a nad zPola budowla stoi w polu, w którym ją wypieczono.
    * AGENT: odczyt rzadko i bez czekania klatki (odczytGinie): sam obraz uderzeń, gra o tym nie wie.
    */
-  function ustawGinie({ c, R, x0, y0, kom, zPola = 0, zakresPola = 0 }) {
+  function ustawGinie({ c, R, x0, y0, kom, zPola = 0, zakresPola = 0, rozbF = null, rozbPas = 0 }) {
+    if (rozbF) uGRozbF.value.set(rozbF[0], rozbF[1], rozbF[2]);
+    uGRozbPas.value = rozbF ? rozbPas : 0;
     uGinieC.value.set(c[0], c[1], c[2]);
     uGPunktC.value.set(c[0], c[1], c[2]);
     uGPunktG.value = zakresPola > 0 ? uGStala.value.length() : 0;
@@ -1390,7 +1469,8 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
 
   return {
     maxNodes: MAX, blyski: BLYSKI, blyskiCpu, blyskiCzynne: () => fKlatka <= koniecBlyskow, kernele, get sekwencja() { return sekwencja; }, get listaKroku() { return listaKroku; }, listaSiatki, listaPodkroku, atrybuty, uniformy, liczniki,
-    wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
+    wczytaj, wgraj, ustawUniformy, ustawPlan, strzel, dodajKratery, puscKolo, puscCzesc, ustawGinie, ustawWysokosciSkaly, promienSkalyNa, odczytGinie, zdarzeniaKlatki, krok, podkrokPorownania, calkuj, rozgrzej, odczyt, odczytLekki,
+    gPole: gNaWezle, // pole grawitacji w punkcie, dla gruzu obrazu (wklejane, woła się tylko w Fn)
     get wypiek() { return wypiek; },
     get strzalCzeka() { return strzalCzeka !== null; },
     get fKlatka() { return fKlatka; },

@@ -15,6 +15,7 @@
 // (DynamicResTune.targetFps 10000 — skala schodzi do dna drabiny, potem 2 — wraca), skala i bufor co krok,
 // pipeline'y synchroniczne (ma być 0).
 // Wynik: <out>/<scena>-<preset>.png, <out>/raport.json.
+// Tylko tryb `off` (czyta Core3D strony). Tryb worker: scripts/webgpu/dyn-res-worker-gra.mjs.
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs, startChrome, attachLogs, waitFor, evaluate, screenshotPng, osobneLosowanieUuid, repo } from './wspolne.mjs';

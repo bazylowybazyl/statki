@@ -12,7 +12,7 @@ import {
   createCompany, addShip, createFleetRegistry, registerCompany,
   findParkedShip, findDeadheadCandidates, shouldDeadhead, expectedIdleSeconds,
   assignShipToCourse, releaseShipAt, loseShip, maintainFleet,
-  billFreight, billCost, billDeadhead, summarizeCompanies, hullForVanClass
+  billFreight, billCost, billDeadhead, summarizeCompanies, hullForVanClass, hullRiskCost
 } from '../../src/game/traffic/transportCompanies.js';
 
 function makeRegistry() {
@@ -197,6 +197,37 @@ export function run() {
   loseShip(indeks, odkupujacy, zastepca);
   const kolejny = odkup();
   t.check('numer straconej jednostki nie wraca', !wydane.has(kolejny?.id), `(${kolejny?.id})`);
+
+  // ----------------------------------------------------------
+  t.section('Odkup straconej klasy (ładowność floty nie topnieje)');
+
+  // Regresja: każdą stratę zastępował najtańszy van, a piraci najchętniej biorą
+  // duże ładunki — po 12 h gry przy ×60 we flocie zostały same vany, ładowność
+  // spadła z 2,7 do 0,55 mln t i zgasły promy z obsadą (docs/POMIAR-zanik-gospodarki-2026-11-08.md).
+  const armator = createCompany({
+    id: 'armator', policy: COMPANY_POLICY.AGGRESSIVE, capital: 1_000_000, homeStationId: 'earth'
+  });
+  const flotaArmatora = createFleetRegistry();
+  addShip(armator, { vanClassId: 'mega', stationId: 'earth' });
+  addShip(armator, { vanClassId: 'van', stationId: 'earth' });
+  registerCompany(flotaArmatora, armator);
+  loseShip(flotaArmatora, armator, armator.ships[0]);
+  const zamiennik = maintainFleet(armator, { targetShips: 0, stationId: 'earth' });
+  t.equal('stracony megafrachtowiec wraca jako megafrachtowiec', zamiennik?.vanClassId, 'mega');
+  t.equal('za cenę swojej klasy', armator.capital, 1_000_000 - SHIP_PRICE.mega);
+  t.equal('strata odkupiona raz', maintainFleet(armator, { targetShips: 0 }), null);
+
+  armator.capital = SHIP_PRICE.mega * 2;
+  loseShip(flotaArmatora, armator, zamiennik);
+  t.equal('bez zapasu na megafrachtowiec firma odkłada — nie bierze vana w jego miejsce',
+    maintainFleet(armator, { targetShips: 10, stationId: 'earth' }), null);
+  t.equal('a strata czeka na odkup', armator.toReplace.mega, 1);
+  armator.capital = SHIP_PRICE.mega * 3;
+  t.equal('po uzbieraniu kupuje stratę', maintainFleet(armator, { targetShips: 10 })?.vanClassId, 'mega');
+
+  t.equal('ryzyko kadłuba = szansa przechwytu × cena klasy', hullRiskCost('mega', 0.1), SHIP_PRICE.mega * 0.1);
+  t.equal('klasa spoza cennika nie ma ryzyka kadłuba', hullRiskCost('raider', 0.5), 0);
+  t.equal('szansa przycięta do 1', hullRiskCost('van', 3), SHIP_PRICE.van);
 
   // ----------------------------------------------------------
   t.section('Podsumowanie');

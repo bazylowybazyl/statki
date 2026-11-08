@@ -291,7 +291,7 @@ function buildGraphs(haloU) {
     }).ElseIf(inRange(mode, 7.5, 8.5), () => {
       r.assign(pbChan(par).greaterThanEqual(0.5).select(float(0.08).add(float(0.92).mul(exp(fract(t.mul(1.2).sub(ph)).negate().mul(7.0)))), float(0.12)));
     }).ElseIf(inRange(mode, 8.5, 9.5), () => {
-      // alarm: obrotowy kogut tylko przy kanale ≥ 0,5 (suchy dok piratów)
+      // alarm: obrotowy kogut tylko przy kanale ≥ 0,5 (baza piratów)
       r.assign(pbChan(par).greaterThanEqual(0.5).select(float(0.1).add(float(0.9).mul(exp(fract(t.mul(1.6).add(ph)).negate().mul(6.0)))), float(0.03)));
     });
     return r;
@@ -414,7 +414,7 @@ function buildGraphs(haloU) {
     vi.mat.assign(iB.w);
     vi.fx.assign(iD);
     const clip = cameraProjectionMatrix.mul(modelViewMatrix.mul(gp)).toVar();
-    // grupa ukryta: macierz z elements[15] = 0 (kawałek suchego doku zniszczony albo zastąpiony ciałem
+    // grupa ukryta: macierz z elements[15] = 0 (kawałek budowli zniszczony albo zastąpiony ciałem
     // silnika zniszczeń — maska statyki, docs/PLAN-zniszczenia-swiata-3d.md § 6)
     If(c3.w.lessThan(0.5), () => { clip.assign(vec4(2.0, 2.0, 2.0, 1.0)); });
     // tryb show (7): bryła widoczna tylko z flagą kanału (blok na suwnicy)

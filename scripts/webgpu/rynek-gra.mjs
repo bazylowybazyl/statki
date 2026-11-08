@@ -2,7 +2,11 @@
 // portu (ile ma, ile sprzeda, ile skupi i za ile) z mostu, kupno i sprzedaż przyciskami terminalu zmieniają zapas
 // kopii od razu i zostają po kroku workera; stacja gracza jako rynek (hak konsoli `DevEconomy.foundStation`),
 // komputer handlowy w CIC (warstwa „HANDEL”), zapis ekonomii → F5 → wczytanie przed startem (magazyny, wyrwy, stacja
-// gracza) → F5 → „Nowa gra” bez wczytania (gospodarka od zera, stary zapis skasowany).
+// gracza) → F5 → „Nowa gra” bez wczytania (gospodarka od zera, stary zapis skasowany). Karta „Kadry” (workforce W5):
+// obsada źródła i rynku pracy, oferta kontraktów, ludzie w drodze; w CIC trasy ludzi i obsada portów; po F5 obsada
+// z zapisu. Gracz (W6): kabiny pasażerskie (WYPOSAŻENIE), kontrakt wzięty w źródle i oddany w rynku pracy przyciskami
+// karty KADRY, zdrada (`PlayerCrew.betray`) → werbunek odmówiony w porcie dawnej frakcji, przyjęty na Marsie,
+// przeładowanie wież z załogi; załoga i kabiny w zapisie gracza po F5.
 // Zrzuty terminali i CIC, pipeline'y synchroniczne (strona i worker renderu — ma być 0) i błędy.
 //
 //   node scripts/webgpu/rynek-gra.mjs [--out .tmp/rynek] [--stacja earth] [--query renderWorker=1] [--bez-f5 1]
@@ -62,14 +66,39 @@ const rowState = (key, id = stationId) => `(() => {
   };
 })()`;
 
+// Karta „Kadry” (W5): DOM karty i widok obsady z mostu dla jednej stacji.
+const crewState = (id) => `(() => {
+  const pane = document.getElementById('tab-crew');
+  const f = (name) => pane?.querySelector('[data-field="' + name + '"]')?.textContent || null;
+  const offer = (side) => {
+    const row = pane?.querySelector('tr[data-crew-offer="' + side + '"]');
+    return row ? [row.querySelector('[data-field="units"]')?.textContent, row.querySelector('[data-field="price"]')?.textContent] : null;
+  };
+  const v = window.TrafficV2?.getWorkforce?.(${JSON.stringify(id)});
+  return {
+    widoczna: !!pane && !pane.classList.contains('hidden'), naglowek: f('headline'), wydajnosc: f('efficiency'),
+    rotacja: f('rotation'), kwatery: f('quarters'), wDrodze: f('inbound'), zrodla: f('sources'),
+    wystawia: offer('sell'), przyjmuje: offer('buy'), uwaga: f('note'),
+    most: v ? { need: Math.round(v.need), stored: Math.round(v.stored), ratio: +v.ratio.toFixed(3), efficiency: v.efficiency,
+      inbound: Math.round(v.inbound), outbound: Math.round(v.outbound), returning: Math.round(v.returning) } : null
+  };
+})()`;
+const openCrew = (id) => `(() => {
+  const st = (window.stations || []).find((s) => s.id === ${JSON.stringify(id)});
+  if (!st) return false;
+  window.openStationUI(st, 'crew');
+  return true;
+})()`;
+
 /**
  * Start (i restart po F5): menu → gra swobodna → ruch v2 gotowy z rynkiem. `wczytaj` — zapis ekonomii na świat
  * ruchu w menu, przed „Nową grą” (`DevEconomy.loadEconomy`; bez tego nowa gra kasuje zapis). Zwraca początek
  * dziennika klatek.
  */
-async function startGame({ wczytaj = false } = {}) {
+async function startGame({ wczytaj = false, przedStartem = null } = {}) {
   if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
   await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready) || !!window.RenderWorkerHost', 240000, 500);
+  if (przedStartem) await przedStartem();
   if (wczytaj) {
     result.przywrocono = await ev('window.DevEconomy.loadEconomy()');
     console.log('przywrócono', JSON.stringify(result.przywrocono));
@@ -158,6 +187,76 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
   console.log('handel', JSON.stringify(result.handel));
   await shot(`terminal-${stationId}`);
 
+  // 2b. Karta „Kadry” (W5): źródło (stacja z handlu) i rynek pracy (pierwszy port bez ludności).
+  result.kadry = {};
+  if (await ev(openCrew(stationId))) {
+    await ev('window.__harness.step(10)');
+    result.kadry[stationId] = await ev(crewState(stationId));
+    await shot(`terminal-kadry-${stationId}`);
+  }
+  const laborId = await ev(`(() => {
+    const ids = (window.stations || []).map((s) => s.id).filter((id) => {
+      const v = window.TrafficV2?.getWorkforce?.(id);
+      return v && v.need > 0 && !v.source && id !== ${JSON.stringify(stationId)};
+    });
+    return ids.includes('luna') ? 'luna' : (ids[0] || null);
+  })()`);
+  if (laborId && await ev(openCrew(laborId))) {
+    await ev('window.__harness.step(10)');
+    result.kadry[laborId] = await ev(crewState(laborId));
+    await shot(`terminal-kadry-${laborId}`);
+  }
+  console.log('kadry', JSON.stringify(result.kadry));
+  await ev('(() => { window.closeStationUI?.(); return true; })()');
+
+  // 2c. Gracz (W6): kabiny, kontrakt w źródle → oddanie w rynku pracy (przyciski karty), zdrada i werbunek.
+  const crewCard = `(() => {
+    const pane = document.getElementById('tab-crew');
+    const f = (name) => pane?.querySelector('[data-field="' + name + '"]')?.textContent || null;
+    const btn = (act) => { const b = pane?.querySelector('button[data-crew-act="' + act + '"]'); return b ? (b.classList.contains('hidden') ? 'ukryty' : (b.disabled ? 'wył.' : 'wł.')) : null; };
+    return { zaloga: f('shipCrew'), skutek: f('shipEffects'), kabiny: f('shipCabins'), wygasa: f('shipExpiry'), uwaga: f('shipNote'),
+      wez: btn('take'), oddaj: btn('deliver'), werbuj: btn('recruit'), stan: window.PlayerCrew.state(),
+      kredyty: window.DevEconomy.getCredits() };
+  })()`;
+  const click = (act) => `(() => { const b = document.querySelector('#tab-crew button[data-crew-act="${act}"]'); if (!b || b.disabled) return false; b.click(); return true; })()`;
+  result.gracz = {};
+  result.gracz.kabiny = await ev('(() => { const r = window.PlayerCrew.setCabins(true); return { komunikat: r?.message || null, stan: window.PlayerCrew.state() }; })()');
+  if (await ev(openCrew(stationId))) {
+    await ev('window.__harness.step(5)');
+    result.gracz.przedKontraktem = await ev(crewCard);
+    const wfBefore = await ev(`window.TrafficV2.getEconomy(${JSON.stringify(stationId)}).resources.workforce`);
+    result.gracz.wzieto = await ev(click('take'));
+    result.gracz.poKontrakcie = await ev(crewCard);
+    result.gracz.zrodloUbylo = Math.round(wfBefore - await ev(`window.TrafficV2.getEconomy(${JSON.stringify(stationId)}).resources.workforce`));
+    await shot(`terminal-kadry-gracz-${stationId}`);
+  }
+  if (laborId && await ev(openCrew(laborId))) {
+    await ev('window.__harness.step(5)');
+    const wfBefore = await ev(`window.TrafficV2.getEconomy(${JSON.stringify(laborId)}).resources.workforce`);
+    result.gracz.przedOddaniem = await ev(crewCard);
+    result.gracz.oddano = await ev(click('deliver'));
+    result.gracz.poOddaniu = await ev(crewCard);
+    result.gracz.rynekPrzybylo = Math.round(await ev(`window.TrafficV2.getEconomy(${JSON.stringify(laborId)}).resources.workforce`) - wfBefore);
+  }
+  // Ludzie na kontrakcie zostają w kabinach do zapisu (F5) — drugi kontrakt w źródle.
+  if (await ev(openCrew(stationId))) {
+    await ev('window.__harness.step(5)');
+    await ev(click('take'));
+    result.gracz.zdrada = await ev('window.PlayerCrew.betray()');
+    await ev('window.__harness.step(5)');
+    result.gracz.poZdradzieZiemia = await ev(crewCard);
+  }
+  if (await ev(openCrew('mars'))) {
+    await ev('window.__harness.step(5)');
+    result.gracz.marsPrzed = await ev(crewCard);
+    result.gracz.zwerbowano = await ev(click('recruit'));
+    result.gracz.marsPo = await ev(crewCard);
+    await shot('terminal-kadry-gracz-mars');
+  }
+  result.gracz.zapis = await ev('(() => { const s = window.PlayerSave.snapshot(); return s.player.crew; })()');
+  await ev('(() => { window.closeStationUI?.(); return true; })()');
+  console.log('gracz', JSON.stringify(result.gracz));
+
   // 3. Stacja gracza jako rynek (hak konsoli): encja w grze, rynek w świecie ruchu, budynek, terminal.
   const playerId = await ev(`(() => { window.closeStationUI?.(); return window.DevEconomy.foundStation({ name: 'Przyczółek E7', buildings: ['foundry'] }).id; })()`);
   for (let i = 0; i < 30 && !await ev(`window.TrafficV2.hasStation(${JSON.stringify(playerId)})`); i++) await ev('window.__harness.step(10)');
@@ -200,18 +299,24 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
       }
       return true; })()`);
     await waitWorldTick();
+    await ev('window.PlayerSave.write()');
     result.zapis = await ev(`(async () => {
       const ok = await window.DevEconomy.saveEconomy();
       const s = window.DevEconomy.economySave();
       return { ok, rynki: Object.keys(s?.world?.stations || {}).length, pas: s?.world?.mining?.length || 0,
         floty: Object.keys(s?.world?.fleets || {}).length, stacjeGracza: s?.playerStations?.length || 0,
         ziemia: s?.world?.stations?.earth?.stock?.[${JSON.stringify(key)}] ?? null,
+        obsadaZapis: Object.fromEntries(['earth', 'luna', 'venus'].map((id) => [id, Math.round(s?.world?.stations?.[id]?.stock?.workforce ?? -1)])),
         gracz: Object.keys(s?.world?.stations?.[${JSON.stringify(playerId)}]?.stock || {}).length,
         wyrwy: window.TrafficV2.beltHoles.size, rozmiarKB: Math.round(JSON.stringify(s).length / 1024) };
     })()`);
     console.log('zapis', JSON.stringify(result.zapis));
     await cdp.send('Page.reload', { ignoreCache: false });
-    const begLog2 = await startGame({ wczytaj: true });
+    // Zapis gracza po F5 (W6): załoga i ludzie w kabinach — odczyt w menu, zanim „Nowa gra” go skasuje.
+    const begLog2 = await startGame({ wczytaj: true, przedStartem: async () => {
+      result.graczPoF5 = await ev('(() => { const r = window.PlayerSave.read(); return r.save ? r.save.player.crew : { brak: r.reason }; })()');
+      console.log('gracz po F5', JSON.stringify(result.graczPoF5));
+    } });
     await waitWorldTick(10);
     result.wczytanie = await ev(`(() => {
       const econ = window.TrafficV2.getEconomy('earth');
@@ -219,9 +324,20 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
         encja: !!(window.stations || []).find((s) => s.id === ${JSON.stringify(playerId)}),
         rynekGracza: window.TrafficV2.hasStation(${JSON.stringify(playerId)}),
         ziemia: econ ? econ.resources[${JSON.stringify(key)}] : null,
+        obsada: Object.fromEntries(['earth', 'luna', 'venus'].map((id) => [id, Math.round(window.TrafficV2.getEconomy(id)?.resources?.workforce ?? -1)])),
         wyrwy: window.TrafficV2.beltHoles.size,
         zapisPas: (() => { try { const z = JSON.parse(localStorage.getItem('economy')); return [z?.world?.mining?.length ?? null, z?.world?.miningCell ?? null]; } catch { return null; } })() };
     })()`);
+    // Obsada po F5 z zapisu (W5): karta „Kadry” i widok z mostu.
+    result.kadryPoF5 = {};
+    for (const id of [stationId, laborId].filter(Boolean)) {
+      if (!await ev(openCrew(id))) continue;
+      await ev('window.__harness.step(10)');
+      result.kadryPoF5[id] = await ev(crewState(id));
+    }
+    await shot(`terminal-kadry-po-f5`);
+    await ev('(() => { window.closeStationUI?.(); return true; })()');
+    console.log('kadry po F5', JSON.stringify(result.kadryPoF5));
     result.dziennikRuchu = logs.all().filter((l) => l.includes('[ruch v2]')).slice(-6);
     console.log('dziennik ruchu', JSON.stringify(result.dziennikRuchu));
     console.log('wczytanie', JSON.stringify(result.wczytanie));

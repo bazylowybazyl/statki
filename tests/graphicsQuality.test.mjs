@@ -232,8 +232,7 @@ test('render w workerze: rekord obrazu z presetu (gfxRenderRecord) dochodzi do w
   for (const re of [/setRenderScale/, /bloomQualityScale/, /setPerfToggles/, /setShadowShaftsQuality/, /EXPLOSION_TUNE/, /muzzlePerFrame/,
     /impactPerFrame/, /setMediumCount/, /SIDE_JET_TUNE\.maxLights/, /HullLacquer\.setEnabled/, /HullLighting\.setModel/, /HALL_DUST_TUNE\.enabled/]) assert.match(fn, re);
   assert.equal(G.gfxRenderRecord(G.gfxWithPreset(null, 'low')).hallDust, false, 'Niska: pył hal wył. (symulacja w workerze)');
-  assert.match(wk, /f\[R\.GPU_FRAME_SAMPLES\] = /, 'worker pisze liczniki próbek GPU (rozdzielczość dynamiczna strony)');
-  assert.match(wk, /f\[R\.GPU_COMPUTE_SAMPLES\] = /);
+  assert.match(wk, /retMod\.retWriteGpuClock\(st\.ret, Core3D\)/, 'worker pisze liczniki próbek GPU (rozdzielczość dynamiczna strony; test ścieżki: dynResWorker.test.mjs)');
 });
 
 test('limit klatek: preferencja poza presetami (domyślnie bez limitu), zapis, ?limitKlatek= bez zapisu (2026-10-29)', () => {

@@ -1,6 +1,6 @@
 /**
  * worldChannels — broń przeciw CIAŁOM ŚWIATA w grze (docs/PLAN-zniszczenia-swiata-3d.md § 3, F1): zniszczenie
- * PRZEZ SOLVER silnika belek, jak w demie F0 (beamPhysicalWeapons3D.js — „jest ten feel”, ocena 2026-10-05).
+ * PRZEZ SOLVER silnika belek, jak w dawnym demie F0 („jest ten feel”, ocena 2026-10-05; demo usunięte 2026-11-06).
  * Broń nie kasuje węzłów i nie przesuwa ich pozycji — oddaje konstrukcji:
  *  - PĘD — „orka”: węzły na torze pocisku po kolei, z każdym zderzenie niesprężyste z węzłem i jego NIECKĄ
  *    (pierścienie sąsiadów po całych belkach); pocisk traci dokładnie tyle pędu, ile oddał (hamuje, utyka,

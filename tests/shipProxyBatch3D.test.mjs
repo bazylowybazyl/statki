@@ -31,8 +31,10 @@ test('materiał proxy: fragment = fragment pełnego kadłuba (E17 — oświetlen
   assert.match(proxy, /import \{ hullProxyFragmentNode \} from '\.\/hexShips3D\.tsl\.js'/);
   assert.match(proxy, /fragmentNode = hullProxyFragmentNode\(/);
   assert.doesNotMatch(proxy, /dayDiffuse|sunVisibility\(\)|isGlowing/);
-  // Wariant proxy fragmentu kadłuba: bez mapy ran, żaru i jasności blachy.
-  assert.match(hull, /export function hullProxyFragmentNode\(.*\) \{ return hullFragmentNode\(\{ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false \}\); \}/);
+  // Wariant proxy fragmentu kadłuba: bez mapy ran, żaru i jasności blachy; światła efektów z siatki (lampy hali K-7) — tak (E17b).
+  assert.match(hull, /export function hullProxyFragmentNode\(.*\) \{ return hullFragmentNode\(\{ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false, effectLights: true \}\); \}/);
+  assert.match(hull, /function hullEffectLights\(ctx\) \{ if \(!ctx\.effectLights\) return vec3\(0\.0\);/);
+  assert.match(proxy, /uGridOwner: float\(0\.0\)/);
 });
 
 // Atrapa Core3D bez WebGL: scena three, rozmiar widoku, obrazek {width, height}.
@@ -122,7 +124,8 @@ test('wygląd rodzaju (E17): lampy w slocie HullLightStore z bramką promienia, 
   const freighter = actor({ id: 'haul-00051', hull: 'container_ship', x: near.x + 1200, y: near.y });
   ShipProxyBatch3D.update([destroyer, freighter], 1, near);
   const D = dataOf(meshOf('terrandestroyer.png'));
-  assert.ok(D[14] > 20, `niszczyciel: lampy statku na blasze (24 pozycyjne + reflektory), jest ${D[14]}`);
+  assert.equal(D[14], 8, 'niszczyciel: lampy statku na blasze (6 nawigacyjnych + reflektor daleki i otoczenia)');
+  assert.ok(D[19] >= 0 && D[19] < 1, 'faza migania okrętu w instancji');
   assert.equal(D[16] % HullLightStore.slotVec4, 0, 'slot lamp rodzaju w vec4');
   const lamps = HullLightStore.array();
   const base = HullLightStore.slotFloatOffset(D[16] / HullLightStore.slotVec4);
@@ -131,7 +134,7 @@ test('wygląd rodzaju (E17): lampy w slocie HullLightStore z bramką promienia, 
   assert.equal(D[18], 1, 'waga lakieru');
   assert.ok(D[15] > 0.99, 'duży na ekranie — pełny odblask lakieru');
   const F = dataOf(meshOf('container_ship.png'));
-  assert.equal(F[14], 6, 'cywil: 6 lamp pozycyjnych z src/data/trafficHullLights.js, bez reflektorów otoczenia');
+  assert.equal(F[14], 6, 'cywil: 6 świateł nawigacyjnych z src/data/shipNavLights.js, bez reflektorów otoczenia');
   assert.ok(F[17] > 0, 'cywil ma strefy dysz MAIN / SIDE');
   assert.equal(ShipProxyBatch3D.stats.lights, 2, 'widoki lamp pozycyjnych (billboardy) — niszczyciel i frachtowiec');
 

@@ -7,7 +7,21 @@ import { readFileSync } from 'node:fs';
 
 import { createPirateBaseLayout } from '../src/3d/portBuildings/pirateBaseLayout.js';
 import { PIRATE_BASE_TUNE } from '../src/game/story/pirateBaseSite.js';
-import { BASE_INTEGRITY_TUNE, baseStepChunk, createPiecePools, damagePool, habitatStages, markBaseBroken, noteBaseRam, poolPieceAt, stepBaseIntegrity } from '../src/game/story/pirateBaseIntegrity.js';
+import { BASE_INTEGRITY_TUNE, baseStepChunk, chargeRamMassAt, createPiecePools, damagePool, habitatStages, markBaseBroken, noteBaseRam, poolPieceAt, stepBaseIntegrity } from '../src/game/story/pirateBaseIntegrity.js';
+import { placePirateBase } from '../src/game/story/pirateBaseSite.js';
+
+// Prośba użytkownika 2026-11-08: „Atlas musi mieć większą siłę taranowania w tej misji” — stawał na drugiej ścianie bębna.
+test('siła taranu szarży: mnożnik masy tylko w szarży i przy bazie', () => {
+  const place = placePirateBase({ x: 5e6, y: 4e6 }, 0);
+  const h = place.habitat;
+  assert.ok(BASE_INTEGRITY_TUNE.chargeRamMass > 1);
+  assert.equal(chargeRamMassAt(place, h.x, h.y, true), BASE_INTEGRITY_TUNE.chargeRamMass, 'szarża w habitacie');
+  assert.equal(chargeRamMassAt(place, h.x, h.y, false), 1, 'bez szarży');
+  assert.equal(chargeRamMassAt(null, h.x, h.y, true), 1, 'misja bez bazy');
+  const far = place.radius + BASE_INTEGRITY_TUNE.chargeRamPad + 5000;
+  assert.equal(chargeRamMassAt(place, h.x + far * place.u.x, h.y + far * place.u.y, true), 1, 'daleko od bazy');
+  assert.equal(chargeRamMassAt(place, h.x, h.y, true, { chargeRamMass: 1, chargeRamPad: 1500 }), 1, 'wyłączone strojeniem');
+});
 
 const L = createPirateBaseLayout();
 const center = (c) => ({ x: (c.box.x0 + c.box.x1) / 2, z: (c.box.z0 + c.box.z1) / 2 });

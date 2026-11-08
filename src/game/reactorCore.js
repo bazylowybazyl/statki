@@ -40,6 +40,7 @@
 
 import { HullBodies, hullImpactResult, hullSpriteRotation } from './hullBodies.js';
 import { activateNode } from './beamActiveRegion3D.js';
+import { reactorModelParams } from '../data/reactorCores.js';
 import {
   CORE_STATE, CORE_STATE_RANK, CORE_STATE_LABEL, coreStateRank, CORE_KILL_MODE, CORE_PROBE_CONFIG,
   CORE_DEFAULTS, resolveCoreClassId, getCoreClassProfile, normalizeCoreMarker, computeCoreBlast,
@@ -258,22 +259,9 @@ export function reactorCoreFrame(core, out = {}, pose = null) {
   return out;
 }
 
-/**
- * Parametry modelu 3D rdzenia z markera (obraz — reactor3D.js; rozgrywka ich nie czyta): housingR — promień
- * obrysu obudowy [j. świata] (`hr` markera w px PNG × `pxToWorld`; bez niego model w skali komory), housing —
- * false: wnętrze bez obudowy, kind — rodzaj modelu (terran / pirate / atlas; bez niego z gospodarza), tier —
- * poziom rdzenia (R1–R6, etap 2 kreatora). null — wszystko domyślne.
- */
-export function reactorModelParams(marker, pxToWorld) {
-  const hr = finite(marker?.hr, 0);
-  const out = {
-    housingR: hr > 0 ? hr * finite(pxToWorld, 1) : 0,
-    housing: marker?.housing !== false,
-    kind: marker?.model || null,
-    tier: marker?.tier || null
-  };
-  return out.housingR > 0 || !out.housing || out.kind || out.tier ? out : null;
-}
+// Parametry modelu 3D rdzenia z markera — `reactorModelParams` w src/data/reactorCores.js (E17b: czyta je też
+// render proxy statków ruchu), tu re-eksport.
+export { reactorModelParams };
 
 /** Pozycja spoczynkowa komórki komory k w świecie gry (u bieżącego gospodarza). */
 export function reactorCellWorld(core, k, out = {}) {
@@ -1011,13 +999,8 @@ export function applyReactorDetonation(core, variantId, blast, ctx = {}) {
   res.vaporized = vaporized;
 
   // 3) Rozpad od razu (encje wraków powstają w haku onWreck → window.wrecks).
-  if (!body.dead && body.activeNodes > 0) {
-    const queued = D.splitQueue;
-    D.splitQueue = [body];
-    body.structureDirty = true;
-    D.processSplits([body]);
-    for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
-  }
+  // HullBodies.splitNow: encja wraku dostaje pozę i pivot przebudowanego ciała (nowy środek masy) od razu.
+  if (!body.dead && body.activeNodes > 0) HullBodies.splitNow(wreck);
   const frags = res.fragments;
   if (reactorHull(wreck)) frags.push(wreck);
   if (wrecks) for (let i = after; i < wrecks.length; i++) if (wrecks[i] && !wrecks[i].dead) frags.push(wrecks[i]);
