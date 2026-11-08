@@ -2,8 +2,14 @@
 // Mapa gwiezdna — OBRAZ (dema/mapa-gwiezdna.html): warstwy GPU strefy międzygwiezdnej, three r183 WebGPU + TSL.
 //
 //   1. TŁO — wypiek stylu „galaktyka” (src/3d/skybake/, nastawa `gra`, bez gwiazd) na pełnoekranowym
-//      czworokącie z małą paralaksą + gwiazdy w ROZDZIELCZOŚCI EKRANU (skyStarField z src/3d/skyStars.tsl.js
-//      — jak niebo gry: tekstura niesie gładkie warstwy, gwiazdy liczone na piksel).
+//      czworokącie + gwiazdy w ROZDZIELCZOŚCI EKRANU (skyStarField z src/3d/skyStars.tsl.js — jak niebo gry).
+//      PARALAKSA W MODELU PERSPEKTYWY: warstwa na głębokości k ma skalę s = z / (1 + k·z) px na jednostkę
+//      (z = px na ly mapy) — przesuwa się o s/z ruchu mapy i przy oddalaniu kurczy wolniej niż mapa; środek
+//      ekranu zawsze nad `cam` warstwy (zoom bez skoków). Na tle: wypiek (k = 0,05 — ~10% ruchu przy locie),
+//      trzy warstwy drobnych gwiazd (`PARALLAX_LAYERS`, 20–65% ruchu; gasną, gdy komórka robi się za mała)
+//      i OŚRODEK MIĘDZYGWIEZDNY — słabe włókna pyłu przypięte do mapy (1:1), wolno płynące (obraz, bez
+//      wpływu na grę; mgławice rozgrywki to osobna warstwa). 6. PYŁ PRZED KAMERĄ — drobiny w warstwie 1,35 ×
+//      szybszej niż mapa, rozciągnięte w smugi z prędkości kamery; gęstsze w mgławicy i burzy (`dust`).
 //   2. MGŁAWICE — MGIEŁKA ROZGRYWKI: gęstość mgławicy liczona w shaderze tym samym szumem co rozgrywka
 //      (port 1:1 `nebulaDensityAt` / `fbm2` z src/game/sector/ — hasz u32 lowbias32) — słaba poświata
 //      pokazuje, gdzie mgławica naprawdę spowalnia i zasłania; nad nią obraz: każda mgławica sektora (elipsa z danych rozgrywki, src/game/sector/) to duszek z wypieku
@@ -20,7 +26,7 @@
 // ============================================================
 import * as THREE from 'three/webgpu';
 import {
-  Fn, atan, attribute, clamp, cos, dot, exp, float, floor, int, length, max, mix, pass, positionGeometry, screenUV, sin, smoothstep,
+  Fn, abs, atan, attribute, clamp, cos, dot, exp, float, floor, int, length, max, mix, pass, positionGeometry, screenUV, sin, smoothstep,
   texture, uint, uniform, varyingProperty, vec2, vec3, vec4, nodeObject
 } from 'three/tsl';
 import { SkyBaker } from '../src/3d/skybake/skyBaker.js';
@@ -57,6 +63,16 @@ const SPRITE_COMPOSITION = Object.freeze({ srodekX: 0, srodekY: 0, kat: 0, wydlu
 /** Duszek sięga 1,3 × półosi elipsy (miękki brzeg poza elipsą rozgrywki). */
 const SPRITE_EXTENT = 1.3;
 const FLASH_CAP = 24;
+/** Wypiek tła: głębokość k, uv tekstury na ly (pod środkiem ekranu), dolna granica skali [px/ly]. */
+const BG_PARALLAX = Object.freeze({ k: 0.05, uvPerLy: 0.0036, sMin: 10 });
+/** Warstwy gwiazd paralaksy: głębokość k, komórka [jedn. warstwy], zajętość, jasność, promień [px CSS]. */
+export const PARALLAX_LAYERS = Object.freeze([
+  Object.freeze({ k: 0.02, cell: 1.6, occ: 0.42, gain: 0.32, r: 0.75, salt: 11 }),
+  Object.freeze({ k: 0.008, cell: 1.25, occ: 0.34, gain: 0.48, r: 0.85, salt: 23 }),
+  Object.freeze({ k: 0.003, cell: 1.05, occ: 0.24, gain: 0.7, r: 0.95, salt: 37 })
+]);
+/** Pył przed kamerą: krotność ruchu mapy, komórka [jedn.], zajętość, ekspozycja smugi [s]. */
+export const MOTES = Object.freeze({ m: 1.35, cell: 0.42, occ: 0.34, exposure: 0.15, gain: 0.22 });
 /** Rozmiar gwiazdy układu [px CSS] = clamp(px na ly × k, min, max) × rozmiar klasy (nakładka liczy to samo). */
 export const STAR_SIZE = Object.freeze({ k: 0.075, min: 2.6, max: 20 });
 
@@ -67,6 +83,45 @@ function makeCopyTarget(w, h) {
   rt.texture.generateMipmaps = false;
   return rt;
 }
+
+// lowbias32 — jak mix32 (sectorRandom.js); mnożenie u32 zawija mod 2^32 jak Math.imul.
+const mix32 = (x) => {
+  const h = x.toVar();
+  h.assign(h.bitXor(h.shiftRight(uint(16))));
+  h.assign(h.mul(uint(0x7feb352d)));
+  h.assign(h.bitXor(h.shiftRight(uint(15))));
+  h.assign(h.mul(uint(0x846ca68b)));
+  h.assign(h.bitXor(h.shiftRight(uint(16))));
+  return h;
+};
+const cellHash = (cx, cy, seed) => float(mix32(uint(cx).mul(uint(0x8da6b343)).bitXor(uint(cy).mul(uint(0xd8163841))).bitXor(seed))).mul(1.0 / 4294967296.0);
+const valueNoise = (x, y, seed) => {
+  const ix = int(floor(x)).toVar();
+  const iy = int(floor(y)).toVar();
+  const fx = x.sub(floor(x));
+  const fy = y.sub(floor(y));
+  const ux = fx.mul(fx).mul(float(3.0).sub(fx.mul(2.0)));
+  const uy = fy.mul(fy).mul(float(3.0).sub(fy.mul(2.0)));
+  const a = cellHash(ix, iy, seed);
+  const b = cellHash(ix.add(1), iy, seed);
+  const c = cellHash(ix, iy.add(1), seed);
+  const d = cellHash(ix.add(1), iy.add(1), seed);
+  return a.add(b.sub(a).mul(ux)).add(c.sub(a).mul(uy)).add(a.sub(b).sub(c).add(d).mul(ux).mul(uy));
+};
+/** fbm obrazu (nie rozgrywki): `oct` oktaw, ziarno JS (liczba). */
+const fbmImg = (p, seed, oct) => {
+  const sum = float(0.0).toVar();
+  let amp = 0.5;
+  let norm = 0;
+  let f = 1;
+  for (let o = 0; o < oct; o++) {
+    sum.addAssign(valueNoise(p.x.mul(f), p.y.mul(f), uint((seed + Math.imul(o, 0x9e3779b9)) >>> 0)).mul(amp));
+    norm += amp;
+    amp *= 0.5;
+    f *= 2.03;
+  }
+  return sum.div(norm);
+};
 
 /** Geometria instancjonowana z kwadu ±1. */
 function quadInstanced(count, attrs) {
@@ -94,16 +149,21 @@ export class StarMapImage {
       pxPerLy: uniform(100),
       dpr: uniform(1),
       time: uniform(0),
-      bgCenter: uniform(new THREE.Vector2(0.5, 0.5)),
-      bgViewH: uniform(0.3),
-      aspect: uniform(16 / 9),
+      cam: uniform(new THREE.Vector2(0, 0)),
+      camVel: uniform(new THREE.Vector2(0, 0)),
+      screenW: uniform(1920),
       screenH: uniform(1080),
+      ismGain: uniform(1.0),
+      layersGain: uniform(1.0),
+      dust: uniform(1.0),
       bgGain: uniform(0.42),
       nebGain: uniform(1.0),
       hazeGain: uniform(0.04),
       selected: uniform(-1)
     };
     this.bakes = { bg: false, nebulae: 0, total: NEBULA_VARIANTS.length + 1, ms: {} };
+    /** Mnożniki warstw (A/B w harnessie: ośrodek, gwiazdy paralaksy, pył). */
+    this.mul = { ism: 1, layers: 1, dust: 1 };
     this._buildBackground();
     this._buildNebulae();
     this._buildHaze();
@@ -111,6 +171,7 @@ export class StarMapImage {
     this._buildLanes();
     this._buildStars();
     this._buildFlashes();
+    this._buildMotes();
     this._buildPipeline();
   }
 
@@ -128,16 +189,64 @@ export class StarMapImage {
     mat.depthTest = false;
     mat.depthWrite = false;
     mat.vertexNode = vec4(positionGeometry.xy, 0.0, 1.0);
+    const seed = this.sector.seed >>> 0;
     mat.fragmentNode = Fn(() => {
-      // Okno tekstury 1,6 : 1 (uv), y od góry jak cel wypieku.
-      const win = vec2(U.bgViewH.mul(U.aspect).div(1.6), U.bgViewH);
-      const uvB = U.bgCenter.add(screenUV.sub(0.5).mul(win)).toVar();
+      // Piksel [px CSS] od środka ekranu, y w dół (jak gra); punkt mapy pod pikselem [ly].
+      const pix = screenUV.sub(0.5).mul(vec2(U.screenW, U.screenH)).toVar();
+      const w = U.cam.add(pix.div(U.pxPerLy)).toVar();
+      // Wypiek: warstwa głęboka (perspektywa), tekstura 1,6 : 1, y od góry jak cel wypieku.
+      const sBg = max(U.pxPerLy.div(U.pxPerLy.mul(BG_PARALLAX.k).add(1.0)), BG_PARALLAX.sMin).toVar();
+      const asp = vec2(1.0 / 1.6, 1.0);
+      const uvB = vec2(0.5).add(U.cam.add(pix.div(sBg)).mul(BG_PARALLAX.uvPerLy).mul(asp)).toVar();
       const smooth = acesGry(texture(tex, uvB).rgb).mul(U.bgGain).toVar();
       // Gwiazdy w pikselach ekranu: komórki w tekselach tła 5120 × 3200 (jak tekstura tła gry).
       const p = uvB.mul(vec2(5120.0, 3200.0));
-      const pxT = U.bgViewH.mul(3200.0).div(U.screenH.mul(U.dpr));
+      const pxT = float(BG_PARALLAX.uvPerLy * 3200.0).div(sBg.mul(U.dpr));
       const stars = skyStarField(p, pxT, smooth, uint(7));
-      return vec4(acesGryInv(smooth.add(stars)), 1.0);
+      // Warstwy gwiazd paralaksy (jedna gwiazda na komórkę, w środkowych 70% komórki).
+      const lay = vec3(0.0).toVar();
+      for (const L of PARALLAX_LAYERS) {
+        const s = U.pxPerLy.div(U.pxPerLy.mul(L.k).add(1.0)).toVar();
+        const g = U.cam.add(pix.div(s)).div(L.cell).toVar();
+        const ci = floor(g).toVar();
+        const f = g.sub(ci);
+        const sx = int(ci.x);
+        const sy = int(ci.y);
+        const h0 = cellHash(sx, sy, uint((seed * 31 + L.salt) >>> 0));
+        const h1 = cellHash(sx, sy, uint((seed * 31 + L.salt + 1) >>> 0));
+        const h2 = cellHash(sx, sy, uint((seed * 31 + L.salt + 2) >>> 0));
+        const h3 = cellHash(sx, sy, uint((seed * 31 + L.salt + 3) >>> 0));
+        const d = length(f.sub(vec2(h1, h2).mul(0.7).add(0.15))).mul(s.mul(L.cell)).div(L.r);
+        const cellPx = s.mul(L.cell);
+        const on = float(1.0).sub(smoothstep(L.occ * 0.9, L.occ, h0)).mul(smoothstep(16.0, 34.0, cellPx));
+        const tw = sin(U.time.mul(h3.mul(2.5).add(1.2)).add(h3.mul(40.0))).mul(0.12).add(0.88);
+        const b = exp(d.mul(d).negate()).mul(h3.mul(h3).mul(h3).mul(0.8).add(0.2)).mul(on).mul(tw).mul(L.gain);
+        lay.addAssign(mix(vec3(0.72, 0.82, 1.0), vec3(1.0, 0.84, 0.66), h2).mul(b));
+      }
+      // Ośrodek międzygwiezdny, przypięty do mapy (1:1) i wolno płynący: włókna ~3 ly (grzbiety fbm z
+      // przesunięciem dziedziny) + drobne ~0,7 ly (to one niosą wrażenie ruchu w locie) w masce skali sektora.
+      const t = U.time;
+      const pm = w.mul(0.32).toVar();
+      const warp = vec2(
+        fbmImg(pm.mul(0.7).add(vec2(t.mul(0.02), 0.0)), (seed ^ 0x51a3) >>> 0, 2),
+        fbmImg(pm.mul(0.7).add(vec2(5.2, 1.3)).sub(vec2(0.0, t.mul(0.016))), (seed ^ 0x2b91) >>> 0, 2)
+      ).toVar();
+      const n = fbmImg(pm.add(warp.mul(1.4)).add(vec2(t.mul(0.012), t.mul(-0.006))), (seed ^ 0x7c15) >>> 0, 3);
+      const ridge = float(1.0).sub(abs(n.mul(2.0).sub(1.0)));
+      const r2 = ridge.mul(ridge);
+      const r4 = r2.mul(r2).toVar();
+      const fn = fbmImg(w.mul(1.5).add(warp.mul(0.6)).add(vec2(t.mul(-0.04), t.mul(0.025))), (seed ^ 0x3c77) >>> 0, 2);
+      const fr = float(1.0).sub(abs(fn.mul(2.0).sub(1.0)));
+      const fine = fr.mul(fr).mul(fr);
+      const big = fbmImg(w.mul(0.035), (seed ^ 0x1d07) >>> 0, 2);
+      const hue = fbmImg(w.mul(0.05).add(vec2(9.1, 3.3)), (seed ^ 0x6e41) >>> 0, 1);
+      // Barwa chłodna (turkus → indygo) — mgławice rozgrywki są czerwono-fioletowe, ośrodek ma się z nimi nie mylić.
+      const ismCol = mix(vec3(0.03, 0.08, 0.115), vec3(0.06, 0.055, 0.12), smoothstep(0.35, 0.65, hue));
+      // Drobne włókna tylko z bliska (przy oddaleniu — szum poniżej kilkunastu px).
+      const fineK = smoothstep(25.0, 70.0, U.pxPerLy).mul(fine);
+      const dens = r4.mul(fineK.mul(0.6).add(0.4)).add(fineK.mul(0.16)).add(n.mul(0.06));
+      const ism = ismCol.mul(dens).mul(smoothstep(0.25, 0.7, big).mul(0.8).add(0.2)).mul(U.ismGain);
+      return vec4(acesGryInv(smooth.add(stars).add(lay.mul(U.layersGain)).add(ism)), 1.0);
     })();
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
     mesh.frustumCulled = false;
@@ -267,30 +376,6 @@ export class StarMapImage {
       vW.assign(vec2(gx, gy));
       return vec3(gx, gy.negate(), 0.0);
     })();
-    // lowbias32 — jak mix32 (sectorRandom.js); mnożenie u32 zawija mod 2^32 jak Math.imul.
-    const mix32 = (x) => {
-      const h = x.toVar();
-      h.assign(h.bitXor(h.shiftRight(uint(16))));
-      h.assign(h.mul(uint(0x7feb352d)));
-      h.assign(h.bitXor(h.shiftRight(uint(15))));
-      h.assign(h.mul(uint(0x846ca68b)));
-      h.assign(h.bitXor(h.shiftRight(uint(16))));
-      return h;
-    };
-    const cellHash = (cx, cy, seed) => float(mix32(uint(cx).mul(uint(0x8da6b343)).bitXor(uint(cy).mul(uint(0xd8163841))).bitXor(seed))).mul(1.0 / 4294967296.0);
-    const valueNoise = (x, y, seed) => {
-      const ix = int(floor(x)).toVar();
-      const iy = int(floor(y)).toVar();
-      const fx = x.sub(floor(x));
-      const fy = y.sub(floor(y));
-      const ux = fx.mul(fx).mul(float(3.0).sub(fx.mul(2.0)));
-      const uy = fy.mul(fy).mul(float(3.0).sub(fy.mul(2.0)));
-      const a = cellHash(ix, iy, seed);
-      const b = cellHash(ix.add(1), iy, seed);
-      const c = cellHash(ix, iy.add(1), seed);
-      const d = cellHash(ix.add(1), iy.add(1), seed);
-      return a.add(b.sub(a).mul(ux)).add(c.sub(a).mul(uy)).add(a.sub(b).sub(c).add(d).mul(ux).mul(uy));
-    };
     mat.fragmentNode = Fn(() => {
       const seed = uint(vB.z).mul(uint(65536)).add(uint(vB.w)).toVar();
       // r elipsy (kwad = 1,3 × półosie), szum fbm2(x·k + 17,3, y·k − 5,1, ziarno, 3 oktawy).
@@ -522,6 +607,51 @@ export class StarMapImage {
     return this.boltEvents;
   }
 
+  // ── 6. pył przed kamerą ─────────────────────────────────────────────────────────────────────────
+  _buildMotes() {
+    const U = this.U;
+    const M = MOTES;
+    const seed = this.sector.seed >>> 0;
+    const mat = new THREE.NodeMaterial();
+    mat.name = 'MapaGwiezdna:pyl';
+    mat.transparent = true;
+    mat.depthWrite = false;
+    mat.depthTest = false;
+    mat.forceSinglePass = true;
+    mat.blending = THREE.AdditiveBlending;
+    mat.vertexNode = vec4(positionGeometry.xy, 0.0, 1.0);
+    mat.fragmentNode = Fn(() => {
+      const pix = screenUV.sub(0.5).mul(vec2(U.screenW, U.screenH)).toVar();
+      const s = U.pxPerLy.mul(M.m).toVar();
+      const g = U.cam.add(pix.div(s)).div(M.cell).toVar();
+      const ci = floor(g).toVar();
+      const sx = int(ci.x);
+      const sy = int(ci.y);
+      const h0 = cellHash(sx, sy, uint((seed * 17 + 101) >>> 0));
+      const h1 = cellHash(sx, sy, uint((seed * 17 + 102) >>> 0));
+      const h2 = cellHash(sx, sy, uint((seed * 17 + 103) >>> 0));
+      const h3 = cellHash(sx, sy, uint((seed * 17 + 104) >>> 0));
+      const cellPx = s.mul(M.cell);
+      // Piksel względem drobiny [px]; smuga za drobiną wzdłuż ruchu kamery (drobina jedzie w −v na ekranie).
+      const d = g.sub(ci).sub(vec2(h1, h2).mul(0.6).add(0.2)).mul(cellPx).toVar();
+      const seg = U.camVel.mul(s).mul(M.exposure).mul(h2.mul(0.7).add(0.65)).toVar();
+      const ss = max(dot(seg, seg), 1e-4);
+      const k = clamp(dot(d, seg).div(ss), 0.0, 1.0);
+      const dist = length(d.sub(seg.mul(k)));
+      const r = h3.mul(0.9).add(0.7);
+      const segLen = length(seg);
+      const on = float(1.0).sub(smoothstep(M.occ * 0.9, M.occ, h0)).mul(smoothstep(30.0, 70.0, cellPx));
+      const q = dist.div(r);
+      const b = exp(q.mul(q).negate()).mul(r.div(r.add(segLen.mul(0.12)))).mul(on).mul(h3.mul(0.6).add(0.4));
+      return vec4(vec3(0.62, 0.72, 0.9).mul(b).mul(M.gain).mul(U.dust), 1.0);
+    })();
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 100;
+    this.scene.add(mesh);
+    this.motes = mesh;
+  }
+
   // ── post ────────────────────────────────────────────────────────────────────────────────────────
   _buildPipeline() {
     const pipeline = new THREE.RenderPipeline(this.renderer);
@@ -562,10 +692,11 @@ export class StarMapImage {
   }
 
   /**
-   * Kadr: środek (x, y) [ly, osie gry], px CSS na ly, rozmiar okna CSS, DPR, czas. Tło: okno tekstury
-   * z małą paralaksą (cały sektor przesuwa tło o ~1/4 tekstury), lekkie powiększenie przy zbliżeniu.
+   * Kadr: środek (x, y) [ly, osie gry], px CSS na ly, rozmiar okna CSS, DPR, czas, prędkość kamery [ly/s]
+   * (smugi pyłu), gęstość pyłu (1 — czysta przestrzeń; mgławica, burza — więcej). Paralaksa tła — w shaderze
+   * z `cam` i `pxPerLy` (model perspektywy).
    */
-  setView(cx, cy, pxPerLy, w, h, dpr, t) {
+  setView(cx, cy, pxPerLy, w, h, dpr, t, vx = 0, vy = 0, dust = 1) {
     const U = this.U;
     const cam = this.camera;
     const hw = w / 2 / pxPerLy;
@@ -580,13 +711,14 @@ export class StarMapImage {
     U.pxPerLy.value = pxPerLy;
     U.dpr.value = dpr;
     U.time.value = t;
-    U.aspect.value = w / h;
+    U.screenW.value = w;
     U.screenH.value = h;
-    const B = this.sector.bounds;
-    const sx = (cx - (B.x0 + B.x1) / 2) / (B.x1 - B.x0);
-    const sy = (cy - (B.y0 + B.y1) / 2) / (B.y1 - B.y0);
-    U.bgCenter.value.set(0.5 + sx * 0.4, 0.5 + sy * 0.32);
-    U.bgViewH.value = 0.34 / Math.pow(Math.max(1, pxPerLy / 12), 0.06);
+    U.cam.value.set(cx, cy);
+    U.camVel.value.set(vx, vy);
+    U.dust.value = dust * this.mul.dust;
+    U.layersGain.value = this.mul.layers;
+    // Ośrodek: pełny w locie, przygaszony na mapie sektora (czytelność).
+    U.ismGain.value = (0.25 + 0.75 * Math.min(1, Math.max(0, (pxPerLy - 15) / 80))) * this.mul.ism;
     // Szlaki: wyraźne na mapie sektora, przygaszone z bliska (lot).
     this.lanes.material.opacity = 0.6 - 0.42 * Math.min(1, Math.max(0, (pxPerLy - 20) / 120));
     return { x: cx, y: cy, halfW: hw, halfH: hh };

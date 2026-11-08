@@ -1,20 +1,23 @@
 // ============================================================
 // Mapa gwiezdna — demo (dema/mapa-gwiezdna.html): lot Atlasa po strefie międzygwiezdnej.
-// Dane i zasady: src/game/sector/ (moduł czysty), obraz GPU: ./mapa-gwiezdna-obraz.js, nakładka 2D
-// (etykiety, punkty skoku, floty, statek, trasa) i HUD (paliwo, strefa, karta układu, dziennik) — tutaj.
+// Dane i zasady: src/game/sector/ (moduł czysty), obraz GPU: ./mapa-gwiezdna-obraz.js (tło z paralaksą,
+// mgławice, gwiazdy, pył) i ./mapa-gwiezdna-floty.js (sylwetki statków w szyku, ogony, dysze), nakładka 2D
+// (etykiety, punkty skoku, kółka flot, trasa) i HUD (paliwo, strefa, karta układu, dziennik) — tutaj.
+// Kamera: sprężyna z wyprzedzeniem wzdłuż prędkości, lekkie oddalenie przy szybkim locie, drżenie w burzy.
 // Losowość obrazu (pioruny burz) — fxRandom; dane sektora — z ziarna (?seed=).
 // ============================================================
 import * as THREE from 'three/webgpu';
 import {
   generateSector, sectorSummary, createFleets, stepFleets, advanceFleets, createShip, stepShip,
   createExploration, updateExploration, nearestSystem, jumpPointAt, jumpPointPosition, zoneExitFromWorld,
-  worldEntryFromJump, fleetVisibleToPlayer, timeForDistance, fuelForDistance,
+  worldEntryFromJump, fleetVisibleToPlayer, timeForDistance, fuelForDistance, turnRateAt,
   SECTOR_FLIGHT, ZONE, EXPLORE, EXPLORE_LABELS, FLEET_MODE, FLEET_TICK, JUMP_CORNERS,
   PLANET_TYPE_LABELS, STAR_CLASSES, starColorRgb
 } from '../src/game/sector/index.js';
 import { FACTIONS } from '../src/data/factions.js';
 import { fxRandom } from '../src/3d/fx/fxRandom.js';
 import { StarMapImage, STAR_SIZE } from './mapa-gwiezdna-obraz.js';
+import { FleetImage } from './mapa-gwiezdna-floty.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -66,6 +69,7 @@ const exit0 = zoneExitFromWorld(sector, 'sol', 5.9e6, -5.9e6);
 const ship = createShip(exit0.x, exit0.y, exit0.heading);
 const image = new StarMapImage(renderer, sector);
 image.setExploration(exp);
+const fleetImage = new FleetImage(image.scene, fleets, image.U);
 
 const B = sector.bounds;
 const S = {
@@ -104,6 +108,7 @@ addEventListener('keydown', (e) => {
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) S.autopilot = null;
   if (e.code === 'KeyM') toggleSectorView();
   if (e.code === 'KeyE') tryJump();
+  if (e.code === 'KeyF') toggleEscort();
   if (e.code === 'Escape') { S.selected = -1; S.autopilot = null; }
 });
 addEventListener('keyup', (e) => S.keys.delete(e.code));
@@ -126,6 +131,11 @@ addEventListener('mousedown', (e) => {
   }
 });
 addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
+
+function toggleEscort() {
+  fleetImage.escort = !fleetImage.escort;
+  addLog(fleetImage.escort ? 'Eskorta: Atlas + 2 niszczyciele + 5 fregat (podgląd floty gracza)' : 'Eskorta odesłana — Atlas sam');
+}
 
 function toggleSectorView() {
   S.sectorView = !S.sectorView;
@@ -171,6 +181,33 @@ function addLog(text, cls = '') {
 
 // ── widok ─────────────────────────────────────────────────────────────────────────────────────────
 const view = { x: 0, y: 0, z: 190 };
+/**
+ * Kamera lotu: sprężyna krytycznie tłumiona (ω) za punktem przed statkiem (prędkość × `lead`, najwyżej
+ * `leadMax` kadru), mnożnik zoomu z prędkości i nurtu, drżenie w burzy [px]. Prędkość kamery → smugi pyłu.
+ */
+const CAMERA = Object.freeze({ omega: 2.6, lead: 2.5, leadMax: 0.22, zoomSpeed: 0.1, zoomBurn: 0.07, zoomRate: 1.2, shakePx: 2.5 });
+const cam = { x: 0, y: 0, vx: 0, vy: 0, zoomMul: 1, velX: 0, velY: 0, prevX: 0, prevY: 0, init: false };
+function updateCamera(dt) {
+  const C = CAMERA;
+  let lx = ship.vx * C.lead;
+  let ly = ship.vy * C.lead;
+  const maxL = C.leadMax * Math.min(innerWidth, innerHeight) / Math.max(1, view.z);
+  const ll = Math.sqrt(lx * lx + ly * ly);
+  if (ll > maxL) { lx *= maxL / ll; ly *= maxL / ll; }
+  const tx = ship.x + lx;
+  const ty = ship.y + ly;
+  if (!cam.init) {
+    Object.assign(cam, { x: tx, y: ty, vx: 0, vy: 0, init: true });
+  } else if (dt > 0) {
+    const w = C.omega;
+    cam.vx += (w * w * (tx - cam.x) - 2 * w * cam.vx) * dt;
+    cam.vy += (w * w * (ty - cam.y) - 2 * w * cam.vy) * dt;
+    cam.x += cam.vx * dt;
+    cam.y += cam.vy * dt;
+  }
+  const zm = 1 - C.zoomSpeed * Math.min(1, ship.speed / SECTOR_FLIGHT.cruise) - (ship.burn ? C.zoomBurn : 0);
+  cam.zoomMul += (zm - cam.zoomMul) * (1 - Math.exp(-C.zoomRate * dt));
+}
 function screenToWorld(px, py) {
   return { x: view.x + (px - innerWidth / 2) / view.z, y: view.y + (py - innerHeight / 2) / view.z };
 }
@@ -219,10 +256,12 @@ function readInput() {
     const d = Math.sqrt(dx * dx + dy * dy);
     let diff = Math.atan2(dy, dx) - ship.heading;
     diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    input.turn = Math.max(-1, Math.min(1, diff * 3));
+    // Regulator z tłumieniem: obrót ma bezwładność (sectorFlight.js) — samo P kołysałoby kursem.
+    const wMax = Math.max(0.05, turnRateAt(ship.speed));
+    input.turn = Math.max(-1, Math.min(1, (1.2 * diff - 0.45 * ship.omega) / wMax));
     const brakeDist = (ship.speed * ship.speed) / (2 * SECTOR_FLIGHT.brake) + 0.03;
     if (d < brakeDist) input.thrust = -1;
-    else input.thrust = Math.abs(diff) < 0.45 ? 1 : 0;
+    else input.thrust = Math.abs(diff) < 0.8 ? 1 : 0;
     input.burn = input.burn || (ap.burn && d > 2);
     if (d < 0.05 && ship.speed < 0.02) S.autopilot = null;
   }
@@ -275,6 +314,7 @@ function step(dt) {
   // Zoom: płynnie w logarytmie.
   const lz = Math.log(S.zoom);
   S.zoom = Math.exp(lz + (Math.log(S.zoomTarget) - lz) * (1 - Math.exp(-7 * dt)));
+  updateCamera(dt);
 }
 
 // ── nakładka 2D ───────────────────────────────────────────────────────────────────────────────────
@@ -289,6 +329,7 @@ addEventListener('resize', resizeHud);
 
 const P = { x: 0, y: 0 };
 const P2 = { x: 0, y: 0 };
+const RC = { x: 0, y: 0, vis: 0, radius: 0, color: '' };
 const smooth01 = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 function factionColor(id) { return FACTIONS[id]?.color || '#94a3b8'; }
@@ -467,38 +508,25 @@ function drawOverlay(dt, bolts) {
       g.stroke();
     }
   });
-  // Floty.
-  for (const f of fleets.fleets) {
-    if (!fleetVisibleToPlayer(f, sector, ship, ship.zone.sensorMul) || !inView(f.x, f.y)) continue;
-    toScreen(f.x, f.y, P);
-    const col = f.kind === 'pirate' ? '#ff5f52' : factionColor(f.faction);
-    const sz = f.kind === 'trade' ? 4.5 : 6;
-    g.save();
-    g.translate(P.x, P.y);
-    g.rotate(f.heading);
-    g.fillStyle = col;
-    g.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+  // Floty: sylwetki, ogony i dysze rysuje GPU (mapa-gwiezdna-floty.js); tu kółko floty, pościg i nazwa.
+  fleets.fleets.forEach((f, r) => {
+    const c = fleetImage.rowCircle(r, RC);
+    if (c.vis < 0.02 || !inView(c.x, c.y, c.radius + 40)) return;
+    toScreen(c.x, c.y, P);
+    const hunting = f.mode === FLEET_MODE.HUNT;
+    g.globalAlpha = c.vis * (hunting ? 0.75 : 0.14 + 0.18 * smooth01(20, 90, z));
+    g.strokeStyle = c.color;
+    g.lineWidth = hunting ? 1.4 : 1;
     g.beginPath();
-    if (f.kind === 'trade') {
-      g.moveTo(sz * 1.3, 0);
-      g.lineTo(0, sz);
-      g.lineTo(-sz * 1.1, 0);
-      g.lineTo(0, -sz);
-    } else {
-      g.moveTo(sz * 1.6, 0);
-      g.lineTo(-sz, sz);
-      g.lineTo(-sz * 0.4, 0);
-      g.lineTo(-sz, -sz);
-    }
-    g.closePath();
-    g.fill();
+    g.arc(P.x, P.y, c.radius, 0, Math.PI * 2);
     g.stroke();
-    g.restore();
-    if (f.mode === FLEET_MODE.HUNT) {
+    g.lineWidth = 1;
+    g.globalAlpha = 1;
+    if (hunting) {
       const tgt = f.target === -2 ? ship : fleets.fleets[f.target];
       if (tgt) {
         toScreen(tgt.x, tgt.y, P2);
-        g.strokeStyle = 'rgba(255, 110, 90, 0.5)';
+        g.strokeStyle = `rgba(255, 110, 90, ${0.5 * c.vis})`;
         g.setLineDash([4, 4]);
         g.beginPath();
         g.moveTo(P.x, P.y);
@@ -509,12 +537,12 @@ function drawOverlay(dt, bolts) {
     }
     if (z >= 80) {
       g.font = '10px system-ui, sans-serif';
-      g.fillStyle = f.kind === 'pirate' ? 'rgba(255, 140, 125, 0.9)' : 'rgba(190, 205, 225, 0.75)';
+      g.fillStyle = f.kind === 'pirate' ? `rgba(255, 140, 125, ${0.9 * c.vis})` : `rgba(190, 205, 225, ${0.75 * c.vis})`;
       g.textAlign = 'center';
-      g.fillText(`${f.name}${f.mode === FLEET_MODE.HUNT ? ' — pościg' : ''}`, P.x, P.y - 10);
+      g.fillText(`${f.name}${hunting ? ' — pościg' : ''}`, P.x, P.y - c.radius - 5);
       g.textAlign = 'left';
     }
-  }
+  });
   // Trasa do wybranego układu.
   if (S.selected >= 0) {
     const s = S0[S.selected];
@@ -544,38 +572,10 @@ function drawOverlay(dt, bolts) {
     g.arc(P.x, P.y, sens, 0, Math.PI * 2);
     g.stroke();
   }
-  g.strokeStyle = 'rgba(140, 230, 255, 0.55)';
-  g.beginPath();
-  g.moveTo(P.x, P.y);
-  g.lineTo(P.x + ship.vx * z * 4, P.y + ship.vy * z * 4);
-  g.stroke();
-  g.save();
-  g.translate(P.x, P.y);
-  g.rotate(ship.heading);
-  g.shadowColor = 'rgba(120, 220, 255, 0.9)';
-  g.shadowBlur = 10;
-  g.fillStyle = ship.burn ? '#ffe6a8' : '#e8f7ff';
-  g.beginPath();
-  g.moveTo(11, 0);
-  g.lineTo(-7, 6.5);
-  g.lineTo(-3.5, 0);
-  g.lineTo(-7, -6.5);
-  g.closePath();
-  g.fill();
-  if (ship.burn) {
-    g.fillStyle = 'rgba(255, 170, 80, 0.85)';
-    g.beginPath();
-    g.moveTo(-4, 0);
-    g.lineTo(-13 - fxRandom.next() * 4, 2.5);
-    g.lineTo(-13 - fxRandom.next() * 4, -2.5);
-    g.closePath();
-    g.fill();
-  }
-  g.restore();
   g.font = '600 11px system-ui, sans-serif';
   g.fillStyle = 'rgba(200, 240, 255, 0.9)';
   g.textAlign = 'center';
-  g.fillText('ATLAS', P.x, P.y + 22);
+  g.fillText(fleetImage.escort ? 'ATLAS + ESKORTA' : 'ATLAS', P.x, P.y + fleetImage.rowCircle(fleetImage.playerRow, RC).radius + 12);
   g.textAlign = 'left';
 }
 
@@ -615,7 +615,8 @@ function updateHud() {
     <div class="lbl">Atlas — strefa międzygwiezdna</div>
     <div class="row"><span>Paliwo</span><span>${fmt(ship.fuel, 0)} / ${F.fuelMax} · zasięg ${fmt(rangeLy, 0)} ly</span></div>
     <div class="bar ${fuelPct < 0.25 ? 'low' : ''}"><i style="width:${(fuelPct * 100).toFixed(1)}%"></i></div>
-    <div class="row"><span>Prędkość</span><span>${fmt(ship.speed, 2)} ly/s${ship.burn ? ' <span class="warn">NURT</span>' : ''}${ship.fuel <= 0 ? ' <span class="danger">DRYF</span>' : ''}</span></div>
+    <div class="row"><span>Prędkość</span><span>${fmt(ship.speed, 2)} ly/s · napęd ${Math.round(ship.drive * 100)}%${ship.burn ? ' <span class="warn">NURT</span>' : ''}${ship.fuel <= 0 ? ' <span class="danger">DRYF</span>' : ''}</span></div>
+    <div class="row"><span>Flota</span><span>${fleetImage.escort ? 'Atlas + 7 eskorty' : 'Atlas (sam)'} <span class="muted">· F</span></span></div>
     <div class="row"><span>Położenie</span><span>${fmt(ship.x, 1)} · ${fmt(-ship.y, 1)} ly</span></div>
     <div class="row"><span>Strefa</span><span style="text-align:right">${zoneTxt}</span></div>
     ${ns ? `<div class="row"><span>Najbliżej</span><span>${displayName(nearKnown.index)} · ${fmt(nearKnown.dist, 1)} ly</span></div>` : ''}
@@ -662,18 +663,36 @@ function updateHud() {
 }
 
 // ── klatka ────────────────────────────────────────────────────────────────────────────────────────
-function frame(dt) {
-  // Kamera: z bliska za statkiem, przy oddaleniu do środka sektora.
+function frame(dt, draw = true) {
+  // Kamera: z bliska — sprężyna lotu (wyprzedzenie, zoom z prędkości, drżenie w burzy), przy oddaleniu
+  // do środka sektora.
+  if (!cam.init) updateCamera(0);
   const fz = fitZoom();
   const w = smooth01(fz * 1.0, fz * 2.6, S.zoom);
   const cxS = (B.x0 + B.x1) / 2;
   const cyS = (B.y0 + B.y1) / 2;
-  view.x = cxS + (ship.x - cxS) * w;
-  view.y = cyS + (ship.y - cyS) * w;
-  view.z = S.zoom;
-  const v = image.setView(view.x, view.y, view.z, innerWidth, innerHeight, DPR, S.t);
+  view.z = S.zoom * (1 + (cam.zoomMul - 1) * w);
+  const storm = ship.zone.storm;
+  const sh = storm > 0.02 ? (CAMERA.shakePx * storm * w) / view.z : 0;
+  const shx = sh * (Math.sin(S.t * 27.1) * 0.6 + Math.sin(S.t * 13.7 + 1.3) * 0.4);
+  const shy = sh * (Math.sin(S.t * 23.3 + 0.7) * 0.6 + Math.sin(S.t * 11.9 + 2.1) * 0.4);
+  view.x = cxS + (cam.x - cxS) * w + shx;
+  view.y = cyS + (cam.y - cyS) * w + shy;
+  if (dt > 0) {
+    const k = 1 - Math.exp(-dt * 8);
+    const vx = Math.max(-1, Math.min(1, (view.x - cam.prevX) / dt));
+    const vy = Math.max(-1, Math.min(1, (view.y - cam.prevY) / dt));
+    cam.velX += (vx - cam.velX) * k;
+    cam.velY += (vy - cam.velY) * k;
+  }
+  cam.prevX = view.x;
+  cam.prevY = view.y;
+  const dust = 1 + 2.2 * ship.zone.nebula + 3 * storm;
+  const v = image.setView(view.x, view.y, view.z, innerWidth, innerHeight, DPR, S.t, cam.velX, cam.velY, dust);
   image.U.selected.value = S.selected;
+  fleetImage.update(dt, S.t, ship, sector, view.z);
   const bolts = image.updateFlashes(dt, S.t, v);
+  if (!draw) return;
   image.render();
   drawOverlay(dt, bolts);
   updateHud();
@@ -703,12 +722,20 @@ Object.assign(window.__mapa, {
   exp,
   S,
   summary,
-  /** n klatek z krokiem 1/fps (sym + obraz). */
+  /**
+   * n klatek z krokiem 1/fps: symulacja i stan obrazu (kamera, historia ogonów) w każdej, RYSUNEK tylko ostatniej —
+   * w nowej klatce rAF. AGENT: pass sceny three (`PassNode`, updateBefore FRAME) renderuje się RAZ na klatkę rAF
+   * (frameId rośnie w pętli animacji renderera) — kilka `render()` w jednym zadaniu JS dawało obraz GPU z pierwszej
+   * klatki serii pod nakładką 2D z ostatniej.
+   */
   async runFrames(n = 1, fps = 60) {
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < n - 1; i++) {
       step(1 / fps);
-      frame(1 / fps);
+      frame(1 / fps, false);
     }
+    step(1 / fps);
+    await new Promise((r) => requestAnimationFrame(() => r()));
+    frame(1 / fps);
     await new Promise((r) => requestAnimationFrame(() => r()));
     return this.stats();
   },
@@ -718,7 +745,13 @@ Object.assign(window.__mapa, {
   }),
   teleport(x, y, heading = ship.heading) {
     ship.x = x; ship.y = y; ship.vx = 0; ship.vy = 0; ship.heading = heading;
+    cam.init = false;
   },
+  escort(on = true) { fleetImage.escort = !!on; },
+  fleetImage,
+  image,
+  renderer,
+  waitShips: () => fleetImage.loading.then(() => fleetImage.loaded),
   teleportTo(id, dx = 0, dy = 0) {
     const s = sector.byId.get(id);
     this.teleport(s.x + dx, s.y + dy);
@@ -739,6 +772,9 @@ Object.assign(window.__mapa, {
       jump: S.jump ? { id: S0[S.jump.index].id, corner: JUMP_CORNERS[S.jump.corner].key } : null,
       fleetsVisible: vis,
       fleets: fleets.fleets.length,
+      ships: fleetImage.ships.length,
+      shipsLoaded: fleetImage.loaded,
+      camera: { x: Math.round(view.x * 100) / 100, y: Math.round(view.y * 100) / 100, z: Math.round(view.z * 10) / 10 },
       fleetTickMs: Math.round(S.fleetMs * 1000) / 1000,
       fleetTick: FLEET_TICK,
       events: fleets.events.length,
