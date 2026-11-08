@@ -79,7 +79,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Ścieżka, która pokazuje albo celuje we wroga → `SensorSystem.hides(byt)` (mgła wojny); celowanie w gracza i wybór celów AI → `isCloakHidden` (maskowanie).
 - Obrażenia i zapytania kadłubów tylko przez `HullBodies` (`sweep`, `impact`, `probe`, `cutSegment`), budowli przez `worldBodies`; gra rusza encję, nie węzły ani `body.pos`. Kod piszący węzły wprost w magazynie → `body._hashTick = -1`.
 - Nowy wrak → `convertToWreck` / `shatter` / hak `onWreck`; usuwanie → `recycleWreckEntity` i `coldWrecks` (`coldWreckSystem.forget`); nowe odwołanie do wraku (cel, lina, rozkaz) → `markColdWreckReferences`; nowe pole stanu węzła albo belki → do migawki zimnych wraków (`src/game/hullColdSnapshot.js`).
-- Śmierć okrętu → wybuch z miejsca zbiornika paliwa (`fuelTankBlast`), nie ze środka; hulki mostka (`isBridgeHulk`) — nowe ścieżki śmierci, AI i celowania je respektują.
+- Śmierć okrętu → wybuch z miejsca zbiornika paliwa (`fuelTankBlast`), nie ze środka; hulki mostka (`isBridgeHulk`) — nowe ścieżki śmierci, AI i celowania je respektują. Nowa ścieżka ŚMIERCI okrętu (nie despawn, warp, powrót do bańki) → też `launchShipEscapePods(encja)` przed zamianą we wrak (kapsuły ratunkowe; piratów, myśliwce i gracza odfiltrowuje sama — reguła `kapsuly-ratunkowe`).
 - Nowe źródło pocisków w `bullets` → `serial: nextProjectileSerial()`, `mech` (`hasHullMechanics`), `pen: null`, znaczniki nośnika (`ivx / ivy`, `clock` z `projectileClockOf(strzelec)`, `bornSim`) — wzór `fireWeaponCore`. Efekt z nośnikiem → `ActiveCarrier.set(writeCarrier(…))` … `clear()`. Test pocisku przeciw celowi w pętli kandydatów → odcinek w ruchu względnym (`segX0`).
 - Broń i obrażenia myśliwców → filtr IFF z `src/game/friendlyFire.js`; jednostka gracza poza frakcjami → `playerOwned = true`.
 - Obrażenia od broni gracza → `applyDamageToNPC(…, byPlayer)` (znacznik trafienia); obrażenia gracza od pocisku NPC → stempel `__fcHitPlayerAt` strzelca; obrażenia zatrzymywane przez tarczę → test przebicia `isShieldBreachedAt`; obrażenia obszarowe → też `RepairSwarm.blast` (drony naprawcze).
@@ -182,6 +182,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
+| `kapsuly-ratunkowe` | Kapsuły ratunkowe: wyrzut po śmierci statku (bez pirackich), lot do stacji (objazd ringu i doków), obraz, radar, rozliczenie bez obrazu w workerze ruchu |
 | `mgla-wojny` | Mgła wojny |
 | `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany OBŁOK, ECHO = skały) i NAMIARU „kto kogo widzi” (wachlarz, struna, błona): demo propozycji w TSL na Core3D, zasady pod wpięcie |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |

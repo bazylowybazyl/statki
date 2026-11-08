@@ -1,0 +1,49 @@
+---
+paths:
+  - "src/game/escapePods.js"
+  - "src/game/escapePodRoutes.js"
+  - "src/game/traffic/escapePodTransit.js"
+  - "src/game/traffic/dockDetour.js"
+  - "src/render/blocks/escapePodBlock.js"
+  - "src/3d/escapePods/escapePods3D.js"
+  - "src/3d/escapePods/escapePods.tsl.js"
+  - "tests/escapePods.test.mjs"
+  - "tests/escapePodRender.test.mjs"
+  - "tests/escapePodTransit.test.mjs"
+  - "scripts/webgpu/kapsuly-gra.mjs"
+---
+
+# Kapsuły ratunkowe: wyrzut po śmierci statku, lot do stacji, dolot, rozliczenie bez obrazu
+
+> Reguła obszaru (E22, 2026-11-08). Zasady przekrojowe i indeks reguł: `AGENTS.md`. Plan ekonomii: `docs/PLAN-ekonomia-rynki.md` (E22). Statki ruchu w bańce — reguła `ruch-banka`, ring — `ring-halo`, doki bez ringu — `doki-portow`, obsada i promy — `ruch-v2` § „Workforce”.
+
+## Stan
+
+- DECYZJA UŻYTKOWNIKA (2026-11-08): kapsuły mają statki, poza pirackimi. Statek najpierw „umiera” (wrak, wybuch zbiornika), potem odpala kapsuły, które lecą do stacji i tam znikają.
+- ROZGRYWKA 2D (`src/game/escapePods.js`, czysta): pula SoA `POD_TUNE.cap` 192 (x / y `Float64Array`, punkty trasy w slocie, usuwanie zamianą z ostatnią). Stany: `PENDING` (w kadłubie — jedzie z pędem wraku), `COAST` (dryf po wyrzucie, 1,3 s), `FLY` (silnik: 170 j./s², 900 j./s, prędkość zadana ku punktowi trasy z hamowaniem v = √(v₁² + 2 a d) przed wolniejszym punktem i celem). Wyrzut po 1,4–2,2 s od śmierci (z ziarna statku), kolejne co 0,22 s; miejsce na burcie (na przemian lewa / prawa, rozłożone wzdłuż osi), 100% pędu kadłuba + impuls 150–230 j./s od burty. Dolot (≤ 45 j. od ostatniego punktu) — kapsuła znika, `onArrive`. Losowość z ziarna (`podHash01`), bez `Math.random`; stałe na sekundę (60 / 120 Hz — ten sam przebieg).
+- LICZBA z długości kadłuba (`countByLength`): < 260 j. → 1, < 420 → 2, < 700 → 3, < 1100 → 4, < 2000 → 6, < 3500 → 8, dalej 12 (prom 1, fregata 2, kontenerowiec 3, pancernik 4, lotniskowiec 6, ciężki frachtowiec 8, megafrachtowiec 12).
+- KTO (`escapePodsAllowed`): bez kapsuł — piraci (`isPirate`, frakcja `pirates`, kadłub albo typ z `pirate` — jak `isPirate` awansowanego NPC), myśliwce i drony (pilot ma fotel, dron bez załogi), Atlas gracza i drugi gracz (śmierć gracza kończy grę — wariant domyślny). Hulk mostka: kapsuły przy UTRACIE DOWODZENIA (`onBridgeCommandLost` — załoga opuszcza okręt), przy wraku (`finishBridgeKill`) drugi raz już nie (`entity.__escapePods`).
+- HAKI ŚMIERCI (`launchShipEscapePods` w bloku „KAPSUŁY RATUNKOWE” w `index.html`, raz na encję): `applyDamageToNPC` (punkty życia 0 — PRZED zamianą we wrak: obrys z ciała belek), detonacja reaktora (`beforeHostDetonate`), utrata mostka. Statek ruchu w bańce bez awansu — `launchTrafficEscapePods` z `onTrafficActorDestroyed` (poza, ruch, obrys i frakcja z bufora); awansowany NPC — przez `applyDamageToNPC`. Nowa ścieżka ŚMIERCI okrętu → `launchShipEscapePods(encja)` (nie „dead” przy despawnie, warpie, powrocie do bańki).
+- CEL (`pickEscapePodStation`, `src/game/escapePodRoutes.js`): najbliższa stacja frakcji statku, bez takiej — najbliższa niepiracka zamieszkana (opuszczone, zniszczone i pirackie odpadają). Indeks celu w puli = stały numer id stacji (`podStationTarget` — lista `stations` rośnie w biegu).
+- TRASA (`routeEscapePod`) liczona w chwili wyrzutu: port z budowlą doku bez ringu (`PortDocks.docks`) — stanowisko o najbliższym lejku, objazd dysków doków do lejka, dalej ścieżka wejścia stanowiska (`inbound`, płaska [u, v, rola] × n) — korytarzem, nie przez bryły; port ringu (`ready.bubblePorts`) — najbliższe stanowisko ZATOKI (hala K-7 ma dach i bramy z boku), router ringu wchodzi w strefę portu lejkiem i promieniowo; reszta — punkt stacji. Każdy wolny odcinek przez `routeAroundDiscs` (`src/game/traffic/dockDetour.js` — TEN SAM kod co `routeAround` bańki ruchu: objazd dysków doków + `routeRing`, płyta tylko tranzytami i przerwami ringu w budowie). Za długa trasa (> 48 punktów) — pierwszy punkt i ostatnie.
+- ROZLICZENIE BEZ OBRAZU: kapsuła dalej niż `abstractDist` 40 tys. j. od gracza albo dłużej niż `ttl` 900 s w obrazie → lista `transit` (dolot po czasie: pozostała trasa / 900 j./s), `onArrive` z x / y = NaN. Pełna pula: najstarsza kapsuła w locie przechodzi w rozliczenie.
+- PĘD: 100% prędkości kadłuba także w hipercruise'ie (statek ruchu > 2500 j./s) — kapsuły odlatują z jego pędem, hamują 170 j./s² i zwykle od razu wychodzą poza 40 tys. j. od gracza (rozliczenie bez obrazu).
+- DUCHY: kapsuły nie są encjami `npcs` — AI, celowanie gracza i pociski ich nie widzą (wariant domyślny), bez zderzeń.
+- WORKER RUCHU (`src/game/traffic/escapePodTransit.js`, krok `stepPodTransit` w `stepTrafficWorld`): statki zniszczone POZA bańką gracza (przechwyt — `reason: 'pirate'`, zniszczona stacja — `'station-destroyed'`) z rekordu `director.wrecks` (frakcja kursu w rekordzie) → kapsuły bez obrazu do stacji frakcji tą samą funkcją wyboru, dolot po czasie z odległości (× 1,15 na objazdy). Wraki od gracza (`'player'`) pomija — tam kapsuły lecą w obrazie gry. Dziś tylko liczy (`requestSnapshot().escapePods`) — symulacja identyczna liczba w liczbę.
+
+## Obraz (K2)
+
+- GRA składa ramkę klatki (`escapePodRenderFrame` w `index.html` → `fillEscapePodRenderFrame`): pozy w chwili klatki renderu (x − vx · (1 − α) · krok), tylko kapsuły poza kadłubem, widoczne (mgła wojny — `SensorSystem.pointVisible`) i poza kropkami soczewki skoku (`lensDotAt`). Render niczego o mgle nie wie.
+- SZEW: blok migawki `pods` (`src/render/blocks/escapePodBlock.js`, faza begin, `createEscapePodFrame` — ten sam kształt po obu stronach; `POD_RENDER_FLAG.ENGINE` = `POD_BLOCK.ENGINE`, test). Tryb `off` — ta sama ramka do `sharedEscapePods3D().update` obok łupu; worker — `render.worker.js` po łupie (`modFail('kapsuły ratunkowe')`).
+- OBRAZ (`src/3d/escapePods/`): bryła obrotowa (ośmiokąt: dysza, pierścień rufy, biały kadłub, pomarańczowy pas, okno, stożek dziobu; 20 × 8 × 7 j., 8 j. nad płaszczyzną gry), partia `EscapePodBodies` (Mesh + InstancedBufferGeometry, przepleciony bufor — jeden rysunek), światło jak drony przeładunku (`cargoShade`, słońce kadłubów `setCargoSun` tej klatki), dysza żarzy się przy ciągu pod progiem bloomu. Lampa ratunkowa (czerwony błysk HDR × 6 co 1,1 s, faza z numeru kapsuły, ≥ 3,2 px) i płomień (3 obłoki za dyszą, moc × (0,35 + 0,65 · ciąg), migotanie `fxRandom`) — billboardy `CargoLights` (drugi rysunek). Względem początku przy kamerze (`sceneOriginNearCamera`, `mesh.position`). Rozgrzewka: wpisy `kapsuły ratunkowe` i `(kamery 3D)` przy imporcie modułu (faza `'after'`), rysunek dopiero po wpisie (`warm`).
+
+## Zasady
+
+- Krok puli tylko w `physicsStep` (`stepEscapePodsGame` po łupie — pauza i sceny stoją); bez alokacji w kroku (test).
+- Wymiary kapsuły: `POD_TUNE.length / width` (gra, radar) = `POD_3D_TUNE.length / width` (obraz) — test.
+- Zmiana `routeAround` bańki → `dockDetour.js` (wspólny z kapsułami); test kapsuł „ring Ziemi — płyta tylko tranzytem” i „dok — żaden odcinek przez bryły”.
+
+## Jak sprawdzać
+
+- `node --test tests/escapePods.test.mjs` (dopuszczenie, liczba, wyrzut z pędem, dolot, rozliczenie bez obrazu, determinizm i 60 / 120 Hz, pełna pula, trasa przez ring Ziemi i do doków, bez alokacji), `node --test tests/escapePodRender.test.mjs` (blok bit w bit, moduł na atrapie Core3D, bryła, WGSL w Node), `node --test tests/escapePodTransit.test.mjs` (wraki → kapsuły bez obrazu, świat ruchu z ziarnem 7).
+- W grze: `node scripts/webgpu/kapsuly-gra.mjs [--query renderWorker=1] [--etapy smierc,pirat,ruch] [--kadlub freighter-large]` — okręt Terra Novy 6 tys. j. przed graczem ginie przy Ziemi (kamera fabularna `PortCargo.look`), wyrzut, zbliżenie (kapsuła zatrzymana na zrzut), lot za kapsułami do zatoki ringu (`wPlycie` — próbki w płycie, ma być 0), pirat bez kapsuł; zrzuty i `raport.json` w `.tmp/kapsuly`, pipeline'y synchroniczne workera i strony (ma być 0). Konsola: `EscapePods` (`count`, `transit`, `stats`, `pool`, `stationId(cel)`, `devLaunch(długość, odległość, frakcja)` z `?dev`).

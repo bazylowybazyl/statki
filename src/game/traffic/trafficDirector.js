@@ -1685,7 +1685,9 @@ function strikeCourse(director, course, options = {}) {
     orderId: orderId || null,
     courseId: course.id,
     clock: registry.clock,
-    reason
+    reason,
+    // Kapsuły ratunkowe bez obrazu (E22, `escapePodTransit.js`): cel — stacja frakcji, piraci bez kapsuł.
+    factionId: course.factionId ?? null
   });
 }
 

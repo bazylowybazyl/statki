@@ -35,6 +35,7 @@ import { buildCarriers, TONS_PER_SHIP_HOUR } from './carrierRoster.js';
 import { createShipyardRegistry, tickShipyards } from './shipyards.js';
 import { createAgentRegistry, buildMerchants } from './agentFleets.js';
 import { createMiningFields, miningFieldSpecs } from './miningFields.js';
+import { createPodTransit, scanWrecksForPods, settlePodTransit } from './escapePodTransit.js';
 import {
   addMarket, destroyMarketStation, smallBodyMarketPlacement, worldCapacityFromGame, workforceWorldCapacity
 } from './markets.js';
@@ -306,8 +307,21 @@ export function stepTrafficWorld(world, dt = world.config.step) {
   const warEvents = tickWar(world.war, dt, options.war);
   const piracyEvents = tickPiracy(world.piracy, dt, options.piracy);
   const scrapEvents = tickScrappers(world.scrappers, dt, options.scrappers);
+  stepPodTransit(world);
   world.steps++;
   return { events, yardEvents, warEvents, piracyEvents, scrapEvents };
+}
+
+/**
+ * Kapsuły ratunkowe bez obrazu (E22, `escapePodTransit.js`): statki zniszczone poza bańką gracza (przechwyt,
+ * zniszczona stacja) → kapsuły do stacji frakcji, dolot po czasie. Dziś tylko liczy — symulacja bez zmian.
+ */
+function stepPodTransit(world) {
+  const director = world.director;
+  const transit = world.podTransit || (world.podTransit = createPodTransit());
+  const now = director.registry.clock;
+  scanWrecksForPods(transit, director.wrecks, world.stations, now);
+  settlePodTransit(transit, now, null);
 }
 
 /**

@@ -4,7 +4,7 @@
 // teleportowany obok — inaczej kapsuły dalej niż 40 tys. j. przechodzą w rozliczenie bez obrazu).
 //
 //   node scripts/webgpu/kapsuly-gra.mjs [--query renderWorker=1] [--out .tmp/kapsuly] [--port 5467]
-//        [--kadlub freighter-large] [--etapy smierc,pirat,ruch]
+//        [--kadlub freighter-large] [--etapy smierc,pirat,ruch]  (ruch — statek ruchu v2 w bańce bez awansu)
 //
 // Wynik: <out>/raport.json, zrzuty <out>/*.png (śmierć, wyrzut, silniki, lot, dolot), pipeline'y synchroniczne
 // workera i strony (ma być 0), błędy.
@@ -93,9 +93,9 @@ const SPAWN = (key, faction, dist, mode = 'dummy') => `(() => {
 // Kamera fabularna nad okrętem / kapsułą `i` (−1 — środek kapsuł w locie), kadr `h` j. wysokości.
 const LOOK_NPC = (h) => `(() => { const n = window.__podNpc; return n ? window.PortCargo.look(n.x, n.y, ${h}) : false; })()`;
 // `ahead` [s] — punkt kapsuły przewidziany wprzód (kadr stoi, kapsuła leci).
-const LOOK_POD = (i, h, ahead = 0) => `(() => { const p = window.EscapePods.pool; let cx = 0, cy = 0, n = 0;
+const LOOK_POD = (i, h, ahead = 0, offX = 0, offY = 0) => `(() => { const p = window.EscapePods.pool; let cx = 0, cy = 0, n = 0;
   for (let k = 0; k < p.count; k++) { if (p.state[k] === 0 || (${i} >= 0 && k !== ${i})) continue; cx += p.x[k] + p.vx[k] * ${ahead}; cy += p.y[k] + p.vy[k] * ${ahead}; n++; }
-  if (!n) return false; return window.PortCargo.look(cx / n, cy / n, ${h}); })()`;
+  if (!n) return false; return window.PortCargo.look(cx / n + ${offX}, cy / n + ${offY}, ${h}); })()`;
 const KILL = `(() => { const npc = window.__podNpc; if (!npc) return null;
   const hull = !!npc.beamHull; window.applyDamageToNPC(npc, 1e7, 'default', {}, false);
   return { dead: !!npc.dead, belki: hull, kapsul: window.EscapePods.count, statki: window.EscapePods.stats.ships }; })()`;
@@ -155,14 +155,17 @@ try {
     const frozen = await ev(`(() => { const p = window.EscapePods.pool; if (!p.count) return null;
       const s = { vx: p.vx[0], vy: p.vy[0], st: p.state[0], t: p.timer[0] };
       p.vx[0] = 0; p.vy[0] = 0; p.state[0] = 1; p.timer[0] = 1e6; window.__podFreeze = s; return s; })()`);
-    for (const [h, name] of [[90, '04-kapsula-zblizenie'], [260, '04a-kapsula-kadr-260']]) {
-      await ev(LOOK_POD(0, h));
+    // Kamera fabularna: kadr najmniej 1000 j. (startStoryCameraLook), sama ustawia zoom; punkt kadru obok kapsuły
+    // (pod środkiem kadru stoi celownik).
+    for (const [h, name] of [[1000, '04-kapsula-zblizenie'], [1600, '04a-kapsula-kadr']]) {
+      await ev(LOOK_POD(0, h, 0, 160, 90));
       await waitGame(1.2);
       await screenshotPng(cdp, join(out, `${name}.png`));
     }
     if (frozen) await ev(`(() => { const p = window.EscapePods.pool, s = window.__podFreeze;
       p.vx[0] = s.vx; p.vy[0] = s.vy; p.state[0] = 2; p.timer[0] = 0; return true; })()`);
     await ev(LOOK_POD(-1, 2000, 1));
+    await ev(ZOOM(0.45));
     await waitGame(1);
     await screenshotPng(cdp, join(out, '04b-kapsuly-kadr.png'));
     // Lot: gracz jedzie z boku kapsuł (5 tys. j. — poza kadrem), kamera nad nimi; zrzut co ~10 s, aż znikną.
@@ -192,6 +195,48 @@ try {
     report.etapy.smierc = st;
     console.log('śmierć:', JSON.stringify({ kill: st.kill, wyrzut: { kapsul: st.wyrzut.kapsul, wLocie: st.wyrzut.wLocie, cel: st.wyrzut.cel, punktow: st.wyrzut.punktow },
       silniki: { wLocie: st.silniki.wLocie, punktow: st.silniki.punktow }, czas: rows.length * 2, wPlycie: maxSlab, stats: st.koniec.stats }));
+  }
+
+  if (STAGES.has('ruch')) {
+    // Statek ruchu v2 w bańce (bez awansu — zabity od razu): najbliższy w locie albo na redzie, niepiracki.
+    const pick = await ev(`(() => {
+      const tb = window.TrafficBubble, s = window.ship;
+      // Wolny (< 600 j./s — statek w hipercruise'ie oddaje kapsułom swój pęd i znika z kadru), niepiracki, nie w hali.
+      const ok = (a) => a.alive && a.factionId !== 'pirates' && !/pirate|smuggler/.test(a.hullId) && !(a.flags & 64)
+        && a.phase !== 'docked' && Math.hypot(a.vx, a.vy) < 600;
+      const list = tb.list.filter(ok).sort((a, b) => Math.hypot(a.cx - s.pos.x, a.cy - s.pos.y) - Math.hypot(b.cx - s.pos.x, b.cy - s.pos.y));
+      const a = list[0];
+      if (!a) return null;
+      window.DevScene.teleport(a.cx + 5000, a.cy, Math.PI);
+      window.PortCargo.look(a.cx, a.cy, 2400);
+      return { id: a.id, hull: a.hullId, klasa: a.unitClass, frakcja: a.factionId, faza: a.phase, dl: Math.round(a.length) };
+    })()`);
+    const st = { cel: pick };
+    if (pick) {
+      await waitGame(1);
+      await screenshotPng(cdp, join(out, '10-ruch-przed.png'));
+      st.kill = await ev(`window.EscapePods.devKillTraffic(${pick.id})`);
+      await waitGame(2.6);
+      st.wyrzut = await ev(POD_STATE);
+      await screenshotPng(cdp, join(out, '11-ruch-wyrzut.png'));
+      const rows = [];
+      for (let t = 0; t < 200; t += 2) {
+        await ev(FOLLOW(5000));
+        await ev(LOOK_POD(-1, 3200));
+        await waitGame(2);
+        const s2 = await ev(POD_STATE);
+        rows.push({ t: t + 2, kapsul: s2.kapsul, pozostalo: s2.pozostalo, wPlycie: s2.wPlycie });
+        if (t === 10) await screenshotPng(cdp, join(out, '12-ruch-lot.png'));
+        if (!s2.kapsul) break;
+      }
+      st.przebieg = rows;
+      st.maxWPlycie = Math.max(0, ...rows.map((r) => r.wPlycie));
+      st.koniec = await ev(POD_STATE);
+      await ev('window.PortCargo.lookEnd()');
+    }
+    report.etapy.ruch = st;
+    console.log('ruch:', JSON.stringify({ cel: st.cel, kill: st.kill, wyrzut: st.wyrzut && { kapsul: st.wyrzut.kapsul, cel: st.wyrzut.cel },
+      czas: (st.przebieg || []).length * 2, wPlycie: st.maxWPlycie, stats: st.koniec?.stats }));
   }
 
   if (STAGES.has('pirat')) {

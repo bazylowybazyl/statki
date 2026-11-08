@@ -757,6 +757,8 @@ export function createTrafficCore(post, options = {}) {
         agents: summarizeAgents(world.agents),
         log: world.director.log.slice(-30),
         core: { ...core.stats, hulls: core.hulls.length, trackedCourses: core.courseIds.size },
+        // Kapsuły ratunkowe bez obrazu (E22): statki z kapsułami, w drodze, doloty.
+        escapePods: world.podTransit ? { ...world.podTransit.stats, pending: world.podTransit.pending.length } : null,
         warmup: { ...warmupInfo(), steps: core.warmup.steps }
       } : null
     });

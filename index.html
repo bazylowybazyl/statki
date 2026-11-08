@@ -17123,6 +17123,8 @@
       triggerReactorBlow3D(x, y, Math.max(120, a.length * 0.45), { vx: a.vx, vy: a.vy });
       // Kontenery-łup: 55% ładunku z manifestu encji w przestrzeń (wybuch w miejscu trafienia).
       spillTrafficCargo(trafficV2?.actorManifests?.get(a.id), a.id, a.cx, a.cy, a.vx, a.vy, a.ca, a.length, a.width, x, y);
+      // Kapsuły ratunkowe (E22 K3): załoga statku ruchu (bez pirackich) po chwili w kapsułach do stacji frakcji.
+      launchTrafficEscapePods(a);
       if (cause === 'player') registerTrafficKill(a);
     }
 
@@ -17836,6 +17838,31 @@
       }, _podEnv);
     }
 
+    /**
+     * Kapsuły statku ruchu zniszczonego w bańce BEZ awansu (`onTrafficActorDestroyed`): poza i ruch encji, obrys
+     * z bufora, frakcja z bufora; piraci (frakcja albo kadłub rajdera / przemytnika — jak `isPirate` awansowanego NPC)
+     * bez kapsuł. Awansowany NPC ma kapsuły z `applyDamageToNPC`. Prom (klasa `crew-*`) — rodzaj FERRY (ludzie: K4).
+     */
+    function launchTrafficEscapePods(a) {
+      if (!a) return 0;
+      const def = trafficNpcDef(a.hullId);
+      const info = _podInfo;
+      info.isPirate = a.factionId === FACTION.PIRATES || !!def?.pirate;
+      info.factionId = a.factionId || null;
+      info.hull = a.hullId || '';
+      info.type = def?.type || '';
+      info.fighter = false;
+      info.drone = false;
+      if (!escapePodsAllowed(info)) return 0;
+      const target = podStationTarget(pickEscapePodStation(stations, a.cx, a.cy, info.factionId));
+      const ferry = String(a.unitClass || '').startsWith('crew-');
+      const seed = (Math.imul(a.id | 0, 0x9e3779b1) ^ Math.floor(gameTime * 1000)) | 0;
+      return launchEscapePods(escapePods, {
+        x: a.cx, y: a.cy, vx: a.vx, vy: a.vy, angle: a.ca, length: a.length, width: a.width, seed, target,
+        people: 0, kind: ferry ? POD_KIND.FERRY : POD_KIND.CREW, course: a.id | 0
+      }, _podEnv);
+    }
+
     /** Krok fizyki: wyrzut, lot, dolot, rozliczenia bez obrazu (pauza stoi — krok tylko w `physicsStep`). */
     function stepEscapePodsGame(dt) {
       if (escapePods.count === 0 && escapePods.transit.count === 0) return;
@@ -17865,6 +17892,14 @@
       /** Cel kapsuły `target` (indeks puli) → id stacji. */
       stationId: (target) => (target >= 0 ? _podStationIds[target] ?? null : null),
       launch: (e) => launchShipEscapePods(e),
+      // Narzędzia (?dev): encja bańki ruchu `id` zniszczona od razu (bez awansu) — kapsuły z `onTrafficActorDestroyed`.
+      devKillTraffic(id) {
+        if (!_portCargoQuery.has('dev') || !trafficBubble) return null;
+        const a = trafficBubble.byId.get(id);
+        if (!a || !a.alive) return null;
+        damageTrafficActor(trafficBubble, a, Math.max(1, a.hp) * 10 + 1e6, a.cx, a.cy, 'player');
+        return { alive: a.alive, kapsul: escapePods.count };
+      },
       // Narzędzia (?dev): kapsuły statku-widma `dist` j. przed graczem — `EscapePods.devLaunch(1040, 3000)`.
       devLaunch(length = 1040, dist = 3000, factionId = 'terra_nova') {
         if (!_portCargoQuery.has('dev') || !ship) return 0;
