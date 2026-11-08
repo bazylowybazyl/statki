@@ -20,6 +20,9 @@ export const klasaZeSlowa = (s) => (s >>> 24) - 1;
 export const slowoIjk = (i, j, k, grupa) => ((i & 1023) | ((j & 1023) << 10) | ((k & 1023) << 20) | ((grupa & 3) << 30)) >>> 0;
 
 const REK_KLASA = 18, REK_LUT = 30, ILE_TAB = 57;
+/** Klasy wiązań ciągliwych (zbrojenie, src/3d/woksele/kawalki.js): klasa betonu + 12, rząd tabeli ILE_TAB + (klasa − 12). Tylko w solverze z `ciagliwe`. */
+export const KLASA_CIAGLA = 12;
+const REK_CIAGL = ILE_TAB;
 
 // Zdarzenia § 2.8. wLicz: [0, 1] głowice pierścieni (P4), [2] cel strzału, [3..5] suma kopów, [6] liczba trafionych, [7..9] suma pozycji, [10..12] moment, [13..18] tensor, [19] największe |q|.
 const LICZ_N = 20, L_CEL = 2, L_P = 3, L_M = 6, L_S = 7, L_L = 10, L_I = 13, L_QMAX = 19;
@@ -44,8 +47,11 @@ const KULA_V_WYJ = 30; // [j./s] najszybciej, jak sprężyna kontaktu wypycha w�
 const KULA_PAS_J = 200; // pas nad skałą, w którym odskok gaśnie
 const KULA_PAS_TLUM = 12; // [1/s] tempo gaszenia w pasie: zabiera do 2400 j./s na drodze pasa
 
-export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) {
+// AGENT: `ciagliwe` (demo kawałków ze zbrojeniem) dokłada wiązanie ciągliwe: klasa ≥ 12 ma własny rząd tabeli (iT, iC, krusz, twardy limit rozciągania w .w)
+// i linie zginania przez nie nie pękają. Bez flagi graf kerneli jest ten sam co dotąd, a wypiek bez klas ≥ 12 liczy się bit w bit tak samo także z flagą.
+export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliwe = false } = {}) {
   const MAX = maxNodes;
+  const ILE_T = ciagliwe ? ILE_TAB + 6 : ILE_TAB;
   const N_KOM = par.nKom;
   const M = par.slotyListy;
   const S = par.slotyKomorki;
@@ -61,14 +67,14 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
   const wLista = instancedArray(REK * MAX, 'uint').setName('wokLista');
   const wKomSloty = instancedArray(S * N_KOM, 'uint').setName('wokKomSloty');
   const aIjk = new THREE.StorageInstancedBufferAttribute(new Uint32Array(MAX), 1);
-  const aTab = new THREE.StorageInstancedBufferAttribute(new Float32Array(4 * ILE_TAB), 4);
+  const aTab = new THREE.StorageInstancedBufferAttribute(new Float32Array(4 * ILE_T), 4);
   const aKomLicz = new THREE.StorageInstancedBufferAttribute(new Uint32Array(N_KOM), 1);
   const wWezR = storage(wWez.value, 'vec4', 3 * MAX).setName('wokWez').toReadOnly();
   const wMaskaR = storage(wMaska.value, 'uint', 2 * MAX).setName('wokMaska').toReadOnly();
   const wListaR = storage(wLista.value, 'uint', REK * MAX).setName('wokLista').toReadOnly();
   const wKomSlotyR = storage(wKomSloty.value, 'uint', S * N_KOM).setName('wokKomSloty').toReadOnly();
   const wIjkR = storage(aIjk, 'uint', MAX).setName('wokIjk').toReadOnly();
-  const wTabR = storage(aTab, 'vec4', ILE_TAB).setName('wokTab').toReadOnly();
+  const wTabR = storage(aTab, 'vec4', ILE_T).setName('wokTab').toReadOnly();
   // Trzy węzły na jednym atrybucie licznika komórek: atomowy w kWstaw, czytany w kLista, zwykły zapis w kZerujPo (§ 2.2).
   const wKomLiczA = storage(aKomLicz, 'uint', N_KOM).setName('wokKomLicz').toAtomic();
   const wKomLiczR = storage(aKomLicz, 'uint', N_KOM).setName('wokKomLicz').toReadOnly();
@@ -269,7 +275,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
           });
         });
       });
-      const tk = v4(wTabR.element(uint(REK_KLASA).add(kl))); // iT, iC, krusz
+      const tk = v4(wTabR.element(ciagliwe ? select(kl.lessThan(uint(KLASA_CIAGLA)), uint(REK_KLASA).add(kl), uint(REK_CIAGL - KLASA_CIAGLA).add(kl)) : uint(REK_KLASA).add(kl))); // iT, iC, krusz (, twardy limit wiązania ciągliwego)
       If(tk.z.greaterThan(0), () => {
         kap.mulAssign(max(float(1).sub(tk.z.mul(max(szI, szJ))), 0.03));
       });
@@ -304,7 +310,7 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
           f.assign(lim);
           If(dN.greaterThanEqual(1), () => { mNowa.assign(mNowa.bitAnd(bit.bitNot())); Continue(); });
         });
-        If(r.greaterThan(R0.mul(1 + par.rozcHard)), () => { mNowa.assign(mNowa.bitAnd(bit.bitNot())); Continue(); });
+        If(r.greaterThan(R0.mul(ciagliwe ? select(kl.greaterThanEqual(uint(KLASA_CIAGLA)), tk.w, float(1 + par.rozcHard)) : 1 + par.rozcHard)), () => { mNowa.assign(mNowa.bitAnd(bit.bitNot())); Continue(); });
       }).Else(() => {
         const lim = fv(w2.y.mul(kap));
         If(f.negate().greaterThan(lim), () => {
@@ -331,35 +337,44 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
     Loop({ start: uint(0), end: uint(6), type: 'uint', condition: '<', name: 'dg' }, ({ dg }) => {
       const bit = uv(uint(1).shiftLeft(dg));
       If(mI.bitAnd(bit).equal(uint(0)), () => { Continue(); });
-      const j = uv(floatBitsToUint(wWiaz.element(baza.add(uint(2).mul(dg)).add(uint(1))).z).bitAnd(uint(0xffffff)));
+      const slI = ciagliwe ? uv(floatBitsToUint(wWiaz.element(baza.add(uint(2).mul(dg)).add(uint(1))).z)) : null;
+      const j = ciagliwe ? uv(slI.bitAnd(uint(0xffffff))) : uv(floatBitsToUint(wWiaz.element(baza.add(uint(2).mul(dg)).add(uint(1))).z).bitAnd(uint(0xffffff)));
       const xj = v3(wWez.element(uint(3).mul(j)).xyz);
+      // Linia przez wiązanie ciągliwe (pręt) nie pęka od zginania: ponad granicą plastyczną bez siły. Klasa obu wiązań linii, więc trzy węzły liczą to samo.
+      const ciagI = ciagliwe ? uv(select(slI.shiftRight(uint(24)).greaterThan(uint(KLASA_CIAGLA)), uint(1), uint(0))) : null;
       const mJ = uv(wMaska.element(j));
       const dp = uv(dg.bitXor(uint(1)));
       // Bit sąsiada jest już pod ręką: wiązanie osiowe żyje tylko przy obu bitach (§ 2.5, zabezpieczenie symetrii; w Node nigdy nie działa).
       If(mJ.bitAnd(uint(1).shiftLeft(dp)).equal(uint(0)), () => { mNowa.assign(mNowa.bitAnd(bit.bitNot())); });
       // i jest końcem, środek w j, drugi koniec jj.
       If(mJ.bitAnd(bit).notEqual(uint(0)), () => {
-        const jj = uv(floatBitsToUint(wWiaz.element(uint(36).mul(j).add(uint(2).mul(dg)).add(uint(1))).z).bitAnd(uint(0xffffff)));
+        const slJ = ciagliwe ? uv(floatBitsToUint(wWiaz.element(uint(36).mul(j).add(uint(2).mul(dg)).add(uint(1))).z)) : null;
+        const jj = ciagliwe ? uv(slJ.bitAnd(uint(0xffffff))) : uv(floatBitsToUint(wWiaz.element(uint(36).mul(j).add(uint(2).mul(dg)).add(uint(1))).z).bitAnd(uint(0xffffff)));
         const b = v3(xi.add(wWez.element(uint(3).mul(jj)).xyz).sub(xj.mul(2)));
         const b2 = fv(dot(b, b));
         const bMj = fv(wStan.element(uN.mul(uint(2)).add(uint(2).mul(j))).x);
         If(b2.greaterThan(bMj).and(b2.lessThanEqual(bMj.mul(uZlomB2))), () => {
           a.subAssign(b.mul(uKB.mul(sqrt(bMj.div(b2)))));
         }).ElseIf(b2.greaterThan(bMj), () => {
-          mNowa.assign(mNowa.bitAnd(bit.bitNot()));
+          if (ciagliwe) {
+            If(ciagI.add(select(slJ.shiftRight(uint(24)).greaterThan(uint(KLASA_CIAGLA)), uint(1), uint(0))).equal(uint(0)), () => { mNowa.assign(mNowa.bitAnd(bit.bitNot())); });
+          } else mNowa.assign(mNowa.bitAnd(bit.bitNot()));
         }).Else(() => {
           a.subAssign(b.mul(uKB));
         });
       });
       // i jest środkiem: raz na oś (d parzyste), drugi koniec w d ^ 1.
       If(dg.bitAnd(uint(1)).equal(uint(0)).and(mI.bitAnd(uint(1).shiftLeft(dp)).notEqual(uint(0))), () => {
-        const k = uv(floatBitsToUint(wWiaz.element(baza.add(uint(2).mul(dp)).add(uint(1))).z).bitAnd(uint(0xffffff)));
+        const slK = ciagliwe ? uv(floatBitsToUint(wWiaz.element(baza.add(uint(2).mul(dp)).add(uint(1))).z)) : null;
+        const k = ciagliwe ? uv(slK.bitAnd(uint(0xffffff))) : uv(floatBitsToUint(wWiaz.element(baza.add(uint(2).mul(dp)).add(uint(1))).z).bitAnd(uint(0xffffff)));
         const b = v3(xj.add(wWez.element(uint(3).mul(k)).xyz).sub(xi.mul(2)));
         const b2 = fv(dot(b, b));
         If(b2.greaterThan(bMi).and(b2.lessThanEqual(bMi.mul(uZlomB2))), () => {
           a.addAssign(b.mul(kB2.mul(sqrt(bMi.div(b2)))));
         }).ElseIf(b2.greaterThan(bMi), () => {
-          mNowa.assign(mNowa.bitAnd(bit.bitNot()).bitAnd(uint(1).shiftLeft(dp).bitNot()));
+          if (ciagliwe) {
+            If(ciagI.add(select(slK.shiftRight(uint(24)).greaterThan(uint(KLASA_CIAGLA)), uint(1), uint(0))).equal(uint(0)), () => { mNowa.assign(mNowa.bitAnd(bit.bitNot()).bitAnd(uint(1).shiftLeft(dp).bitNot())); });
+          } else mNowa.assign(mNowa.bitAnd(bit.bitNot()).bitAnd(uint(1).shiftLeft(dp).bitNot()));
         }).Else(() => {
           a.addAssign(b.mul(kB2));
         });
@@ -1238,6 +1253,17 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY } = {}) 
       tab[b + 3] = 0;
     }
     for (let q = 0; q < 27; q++) { const b = 4 * (REK_LUT + q); tab[b] = w.lutKier[q]; tab[b + 1] = 0; tab[b + 2] = 0; tab[b + 3] = 0; }
+    if (ciagliwe) {
+      // Klasy 12–17 (pręty): z wypieku ze zbrojeniem (kawalki.js, wybierzZbrojenie), bez niego kopia betonu (rzędy nieużywane).
+      const cg = w.ciagl;
+      for (let k = 0; k < 6; k++) {
+        const b = 4 * (REK_CIAGL + k), z = 4 * (REK_KLASA + k);
+        tab[b] = cg ? cg.iT[k] : tab[z];
+        tab[b + 1] = cg ? cg.iC[k] : tab[z + 1];
+        tab[b + 2] = cg ? cg.krusz : tab[z + 2];
+        tab[b + 3] = cg ? cg.twardy : 1 + par.rozcHard;
+      }
+    }
     atrybuty.lista.array.fill(0);
     atrybuty.komLicz.array.fill(0);
     atrybuty.czasU.array.fill(1e30);

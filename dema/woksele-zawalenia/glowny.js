@@ -8,6 +8,8 @@ import { zbuduj, PARAMETRY } from '../../src/3d/woksele/budowa.js';
 const parametryAdresu = new URLSearchParams(location.search);
 const TEST = parametryAdresu.get('test') === '1';
 const PROFIL = parametryAdresu.get('profil') === '1';
+// ?kawalki=1: demo A/B obrazu (kawałki z prefraktury i zbrojenie, src/3d/woksele/kawalki.js). Solver dostaje wiązanie ciągliwe (bez prętów w wypieku liczy bit w bit jak dotąd), obraz drugą siatkę.
+const KAWALKI = parametryAdresu.get('kawalki') === '1';
 
 const wok = { gotowe: false, blad: null, profil: PROFIL };
 window.__wok = wok;
@@ -77,7 +79,7 @@ async function start() {
 
   // ?maxWez=N: pojemność buforów na scenę większą niż dzisiejsze (pomiar LOD, miasto). Domyślnie 26000: bufory i kernele jak dotąd. ?nKom=2^k: komórki siatki kontaktów, miasto przy dx = 5 ma więcej zajętych komórek niż domyślne 65 536.
   const nKomAdresu = Number(parametryAdresu.get('nKom')) || 0;
-  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: nKomAdresu ? { ...PARAMETRY, nKom: nKomAdresu } : PARAMETRY });
+  const solver = createWokseleSolver({ maxNodes: maxWezAdresu, par: nKomAdresu ? { ...PARAMETRY, nKom: nKomAdresu } : PARAMETRY, ciagliwe: KAWALKI });
   await solver.rozgrzej(renderer);
 
   const pamiecStatyki = new Map();

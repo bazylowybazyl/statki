@@ -13,6 +13,7 @@ import {
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
 import { BIT_KOLO, STRONA } from './budowa.js';
 import { createWokselePyl } from './pyl.js';
+import { createKawalkiObraz } from './kawalkiObraz.js';
 import { applySunShadowToBuiltinMaterial, sunFill, sunVisibility } from '../sunShadowMask.js';
 
 export const L_ODLAMKI = 5;
@@ -74,7 +75,8 @@ function zapiszWzory(wy, baza) {
 }
 
 // AGENT: wGrze (src/3d/woksele/wGrze.js, pomiar w misji 1): siatki rysuje pass FG gry, więc normalne dostają obrót bazy, a cel HDR i kwad wyjścia nie są potrzebne. Bez tej opcji graf i cele jak dotąd.
-export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = false }) {
+// AGENT: kawalki (demo A/B kawałków i zbrojenia, kawalkiObraz.js): druga siatka brył z prefraktury, kernele dopasowania sztywnego i druty. Bez tej opcji graf i sceny jak dotąd.
+export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = false, kawalki = false }) {
   const MAX = solver.maxNodes;
   const A = solver.atrybuty;
   const { uN, uGStala, uSkG, uGruntZ, uGinieC, uGinieR2, uKulaR } = solver.uniformy;
@@ -968,6 +970,29 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   const TLO = new THREE.Color().setRGB(0.018, 0.022, 0.032, THREE.LinearSRGBColorSpace);
   const cienieDodatkowe = []; // siatki spoza obrazu rzucające cień, do rozgrzewki passa cienia (miastoDalekie.js)
 
+  // Kawałki (demo): te same varyingi i węzły barwy co bryły, więc światło, okluzja i żar są wspólne. Tryb obrazu przełącza widoczność siatek, bez nowych pipeline'ów.
+  const kaw = kawalki ? createKawalkiObraz({ MAX, uN, uTau, uDx, uKlatka, uZarMoc, wWezR, wMaskaR, wRamaR, wDaneR, wZarR, haszT, czesc, u1, naRame, fv, uv_, v3, v4, vK, vP, vE, mat, aoM }) : null;
+  if (kaw) {
+    scene.add(kaw.mesh, kaw.meshDruty);
+    sceneGleb.add(kaw.meshGleb, kaw.meshDrutyGleb);
+    cienieDodatkowe.push(kaw.mesh, kaw.meshDruty);
+    Object.assign(kernele, kaw.kernele);
+    listaObrazu.push(...kaw.lista);
+  }
+  let trybObrazu = 0;
+  /** Tryb obrazu (demo kawałków): 0 bryły wokseli, 1 kawałki, 2 kawałki z drutami. Sama widoczność siatek. */
+  function ustawTryb(t) {
+    trybObrazu = kaw ? t : 0;
+    const k = trybObrazu > 0;
+    mesh.visible = !k;
+    meshGleb.visible = !k;
+    if (!kaw) return;
+    kaw.mesh.visible = k;
+    kaw.meshGleb.visible = k;
+    kaw.meshDruty.visible = trybObrazu === 2;
+    kaw.meshDrutyGleb.visible = trybObrazu === 2;
+  }
+
   let szer = 2, wys = 2;
   let n = 0;
   let slotyWez = 7, slotyCien = 7, jestPelny = false;
@@ -1266,6 +1291,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   return {
     rysujCele, ustawObrotNormalnych, ustawSlonceSkaly, ustawKola, uKolaMoc, ustawSkore, kwadSsao, rtSkora, rtSkoraCien, uSkoraMoc, uAoMoc, uCiecieZ,
     kernele, listaObrazu, scene, sceneGleb, cienieDodatkowe, sun, hemi, grunt, mesh, meshGruz, rtHdr, rtGleb, rtSsao, aoN, pyl, atrybuty: { rama: aRama, dane: aDane, czastki: aCzastki, liczGruzu: aLicz },
+    kawalki: kaw, ustawTryb, get tryb() { return trybObrazu; },
     uniformy: { uTau, uDx, uLimD, uDt, uKlatka, uZarMoc },
     wczytaj, pelnyObraz, ustawLod, ustawCien, ustawCienZSceny, ustawRozmiar, krok, krokBezLimitu, rozgrzej, rozgrzejKernele, rysuj,
     get lod() { return { sloty: slotyWez, cien: slotyCien, instRysunek, instCien }; },

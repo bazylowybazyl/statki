@@ -349,6 +349,8 @@ export class WzorzecCpu {
     const wagaS = p.wagaS, wagaProg = p.wagaProg;
     const zlomB2 = p.zlomB * p.zlomB;
     const rozcHard = p.rozcHard, sciskHard = p.sciskHard;
+    // Wiązanie ciągliwe (pręt zbrojenia, klasa ≥ 12, src/3d/woksele/kawalki.js): własny twardy limit rozciągania, linie zginania przez nie nie pękają. Wypiek bez prętów nie ma takich klas.
+    const twardyC = this.w.ciagl ? this.w.ciagl.twardy : 1 + rozcHard;
     const mu = p.mu, muG = p.muGrunt;
     const iK = 1 / K;
     const zG = gruntZ + 0.5 * dx;
@@ -437,7 +439,7 @@ export class WzorzecCpu {
             plast++;
             if (dN >= 1) { mNowa &= ~bit; zerwanych++; continue; }
           }
-          if (r > R0[ox] * (1 + rozcHard)) { mNowa &= ~bit; zerwanych++; continue; }
+          if (r > R0[ox] * (klasaW[ox] >= 12 ? twardyC : 1 + rozcHard)) { mNowa &= ~bit; zerwanych++; continue; }
         } else {
           const lim = Fc[ox] * kap;
           if (-f > lim) {
@@ -476,7 +478,7 @@ export class WzorzecCpu {
             const sk = Math.sqrt(bMax2W[j] / b2);
             ax -= kB * sk * bx; ay -= kB * sk * by; az -= kB * sk * bz;
           } else if (b2 > bMax2W[j]) {
-            if (mNowa & (1 << d)) { mNowa &= ~(1 << d); zerwanych++; zGiecie++; }
+            if ((mNowa & (1 << d)) && klasaW[baza + d] < 12 && klasaW[STRONA * j + d] < 12) { mNowa &= ~(1 << d); zerwanych++; zGiecie++; }
           } else {
             ax -= kB * bx; ay -= kB * by; az -= kB * bz;
           }
@@ -492,8 +494,10 @@ export class WzorzecCpu {
             const w = 2 * kB * sk;
             ax += w * bx; ay += w * by; az += w * bz;
           } else if (b2 > bMax2W[i]) {
-            if (mNowa & (1 << d)) { mNowa &= ~(1 << d); zerwanych++; zGiecie++; }
-            if (mNowa & (1 << (d ^ 1))) { mNowa &= ~(1 << (d ^ 1)); zerwanych++; zGiecie++; }
+            if (klasaW[baza + d] < 12 && klasaW[baza + (d ^ 1)] < 12) {
+              if (mNowa & (1 << d)) { mNowa &= ~(1 << d); zerwanych++; zGiecie++; }
+              if (mNowa & (1 << (d ^ 1))) { mNowa &= ~(1 << (d ^ 1)); zerwanych++; zGiecie++; }
+            }
           } else {
             const w = 2 * kB;
             ax += w * bx; ay += w * by; az += w * bz;
