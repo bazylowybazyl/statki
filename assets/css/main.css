@@ -546,12 +546,22 @@
     }
 
     /* Komputer handlowy w karcie „Handel” (E23a): najechanie na towar — kupcy poza tym portem. */
+    .station-card-aero.trade-market-card {
+      position: relative;
+    }
+
+    /* Okienko przy wierszu pod kursorem (top ustawia najechanie), nie łapie myszy — wiersze pod nim dalej reagują. */
     .trade-partners-tip {
-      margin-top: 8px;
+      position: absolute;
+      right: 14px;
+      z-index: 5;
+      width: min(560px, calc(100% - 28px));
+      pointer-events: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+      background: rgba(10, 18, 36, 0.96);
       padding: 7px 9px;
       border: 1px solid rgba(96, 165, 250, 0.28);
       border-radius: 8px;
-      background: rgba(10, 18, 36, 0.72);
       font-size: 12px;
       font-variant-numeric: tabular-nums;
     }

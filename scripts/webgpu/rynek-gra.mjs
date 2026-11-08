@@ -2,7 +2,9 @@
 // portu (ile ma, ile sprzeda, ile skupi i za ile) z mostu, kupno i sprzedaż przyciskami terminalu zmieniają zapas
 // kopii od razu i zostają po kroku workera; stacja gracza jako rynek (hak konsoli `DevEconomy.foundStation`),
 // komputer handlowy w CIC (warstwa „HANDEL”), zapis ekonomii → F5 → wczytanie przed startem (magazyny, wyrwy, stacja
-// gracza) → F5 → „Nowa gra” bez wczytania (gospodarka od zera, stary zapis skasowany).
+// gracza) → F5 → „Nowa gra” bez wczytania (gospodarka od zera, stary zapis skasowany). Komputer handlowy E23a: lód
+// w ładowni → karta „Ładownia” w tablecie → najechanie na lód → kupcy (cena jak w terminalu kupca), podpowiedź
+// „lepiej zapłacą” w karcie „Handel”, sekcja „Kupcy towaru” w CIC HANDEL.
 // Zrzuty terminali i CIC, pipeline'y synchroniczne (strona i worker renderu — ma być 0) i błędy.
 //
 //   node scripts/webgpu/rynek-gra.mjs [--out .tmp/rynek] [--stacja earth] [--query renderWorker=1] [--bez-f5 1]
@@ -158,6 +160,53 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
   console.log('handel', JSON.stringify(result.handel));
   await shot(`terminal-${stationId}`);
 
+  // 2b. Komputer handlowy (E23a): lód w ładowni → tablet „Ładownia” → najechanie na lód → lista kupców.
+  await ev(`(() => { window.closeStationUI?.(); window.PortCargo.devCargo({ ice: 400 }); window.cockpitUI.toggleCargoView(true); return true; })()`);
+  await ev('window.__harness.step(10)');
+  await ev(`(() => { const card = window.cockpitUI.shadow.querySelector('[data-cargo-key="ice"]');
+    card?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); return !!card; })()`);
+  const kupcyDom = `(() => {
+    const root = window.cockpitUI.shadow;
+    const rows = [...root.querySelectorAll('#cargoDetail tr.cargo-buyer')].map((tr) => ({
+      id: tr.dataset.stationId, tekst: [...tr.children].map((td) => td.textContent).join(' | ') }));
+    return { rows, liczy: !!root.querySelector('#cargoDetail .cargo-wait'),
+      towar: root.querySelector('#cargoDetail .mission-detail-title')?.textContent || null,
+      lista: [...root.querySelectorAll('#cargoList [data-cargo-key]')].map((c) => c.dataset.cargoKey) };
+  })()`;
+  let kupcy = await ev(kupcyDom);
+  for (let i = 0; i < 20 && !kupcy.rows.length; i++) { await ev('window.__harness.step(10)'); kupcy = await ev(kupcyDom); }
+  result.komputer = { ...kupcy, zapytanie: await ev(`(() => { const r = window.queryTradePartners('ice', 'buy', { amount: 400 });
+    return { pending: r.pending, wiersze: r.rows.map((w) => ({ id: w.stationId, cena: w.price, weźmie: w.take, s: Math.round(w.seconds), tryb: w.mode })),
+      pominiete: r.skipped }; })()`) };
+  await shot('tablet-ladownia-lod');
+  // Cena u najlepszego kupca = cena skupu w jego terminalu (ta sama kopia rynku).
+  const top = result.komputer.zapytanie.wiersze[0];
+  if (top) {
+    await ev(`(() => { window.cockpitUI.toggleCargoView(false); const st = (window.stations || []).find((s) => s.id === ${JSON.stringify(top.id)});
+      if (st) window.openStationUI(st, 'trade'); return !!st; })()`);
+    await ev('window.__harness.step(10)');
+    result.komputer.terminalKupca = await ev(`(() => {
+      const t = document.querySelector('.trade-market-table tr[data-market-key="ice"] [data-field="buy"]')?.textContent || null;
+      const m = t && t.match(/×\\s*([\\d\\s\\u00a0]+)\\s*CR/);
+      return { skup: t, cena: m ? Number(m[1].replace(/[\\s\\u00a0]/g, '')) : null };
+    })()`);
+    result.komputer.zgodnyZTerminalem = result.komputer.terminalKupca.cena === top.cena;
+  }
+  // Podpowiedź w karcie „Handel” portu startowego: najechanie na lód w ładowni — kto zapłaci lepiej.
+  await ev(`(() => { window.closeStationUI?.(); const st = (window.stations || []).find((s) => s.id === ${JSON.stringify(stationId)});
+    window.openStationUI(st, 'trade'); return true; })()`);
+  await ev('window.__harness.step(10)');
+  result.komputer.podpowiedz = await ev(`(() => {
+    const row = document.querySelector('.trade-market-table tr[data-market-key="ice"]');
+    row?.dispatchEvent(new MouseEvent('mouseenter'));
+    const tip = document.querySelector('.trade-partners-tip');
+    return { widoczna: !!tip && !tip.hidden, tekst: tip?.textContent?.slice(0, 400) || null,
+      wiersze: tip ? tip.querySelectorAll('.trade-partners-row').length : 0 };
+  })()`);
+  await shot(`terminal-podpowiedz-${stationId}`);
+  await ev(`(() => { window.closeStationUI?.(); return true; })()`);
+  console.log('komputer handlowy', JSON.stringify(result.komputer));
+
   // 3. Stacja gracza jako rynek (hak konsoli): encja w grze, rynek w świecie ruchu, budynek, terminal.
   const playerId = await ev(`(() => { window.closeStationUI?.(); return window.DevEconomy.foundStation({ name: 'Przyczółek E7', buildings: ['foundry'] }).id; })()`);
   for (let i = 0; i < 30 && !await ev(`window.TrafficV2.hasStation(${JSON.stringify(playerId)})`); i++) await ev('window.__harness.step(10)');
@@ -180,6 +229,7 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
   await ev(`(() => { window.closeStationUI?.(); const C = window.CICDisplay; C.open(); const sun = window.SUN || { x: 0, y: 0 };
     C.setView({ zoom: 0.00009, panX: sun.x - window.ship.pos.x, panY: sun.y - window.ship.pos.y }); C.toggleTrade(); return true; })()`);
   for (let i = 0; i < 20 && !(await ev('window.CICDisplay.tradeStats().routes')); i++) await ev('window.__harness.step(30)');
+  await ev(`window.CICDisplay.selectTradePartnerKey('ice')`);
   await ev('window.__harness.step(20)');
   result.cic = await ev('window.CICDisplay.tradeStats()');
   await shot('cic-handel');

@@ -87,6 +87,12 @@ export function travelEstimate(distance, drives = DEFAULT_DRIVES, out = { second
 const _travel = { seconds: 0, mode: 'hypercruise' };
 const _pos = { x: 0, y: 0 };
 
+/** Nazwa rynku z tabeli workera bywa id („saturn”) — w kartach wielką literą jak w CIC. */
+function displayName(name) {
+  const text = String(name || '?');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function finite(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -200,7 +206,7 @@ export function findTradePartners(view, resourceId, side = 'buy', filters = {}) 
     if (!canDock) result.skipped.hostile++;
     result.rows.push({
       stationId: id,
-      name: String(entry.name || id),
+      name: displayName(entry.name || id),
       factionId,
       standing: standing ? { id: standing.id, label: standing.label, color: standing.color } : null,
       canDock,

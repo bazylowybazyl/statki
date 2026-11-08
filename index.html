@@ -15596,6 +15596,9 @@
         row.addEventListener('mouseenter', () => {
           tradeTipState.key = key;
           renderTradePartnerTip(stationOverlayDom.panels.trade, stationUI.station);
+          // Okienko pod wierszem (tabela ma ~60 wierszy — na dole karty nie byłoby go widać).
+          const tip = card.querySelector('.trade-partners-tip');
+          if (tip) tip.style.top = `${Math.round(row.getBoundingClientRect().bottom - card.getBoundingClientRect().top + 2)}px`;
         });
 
         table.appendChild(row);
