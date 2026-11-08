@@ -166,6 +166,9 @@ if (isWorker) {
     // kontenery-łup (K2): blok `loot` → paczki, lampki i wiązka (import rejestruje rozgrzewkę)
     st.lootMods = { blk: await import('./blocks/lootBlock.js'), shared: (await import('../3d/cargo/lootContainers3D.js')).sharedLootContainers3D };
     st.lootFrame = st.lootMods.blk.createLootFrame();
+    // kapsuły ratunkowe (E22): blok `pods` → kadłubki, lampy, płomienie (import rejestruje rozgrzewkę)
+    st.podMods = { blk: await import('./blocks/escapePodBlock.js'), shared: (await import('../3d/escapePods/escapePods3D.js')).sharedEscapePods3D };
+    st.podFrame = st.podMods.blk.createEscapePodFrame();
     st.wbReplica = { sites: [], sitesByKey: [], focus: [], byRef: new Map(), _ents: [], renderEntities() { return this._ents; } };
     // rdzenie: strugi i kule (blok `hazards`, rekordy RX_*) i model reaktora w wyrwie
     st.hazMods = { blk: await import('./blocks/hazardBlock.js'), cmd: await import('../3d/reactorBlast/reactorCommands.js'),
@@ -1017,6 +1020,14 @@ if (isWorker) {
         st.lootMods.shared().update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
       }
     } catch (e) { modFail('kontenery-łup', e); }
+    // kapsuły ratunkowe (E22): kapsuły z zniszczonych statków w locie do stacji
+    try {
+      const pblk = v.blocks.pods;
+      if (pblk && pblk.f64 && st.podMods) {
+        const fr = st.podMods.blk.applyEscapePodBlock(pblk, st.podFrame);
+        st.podMods.shared().update(fr, cam, st.sun, h[H.VFX_TIME], st.Core3D.width || 1920, st.Core3D.height || 1080);
+      }
+    } catch (e) { modFail('kapsuły ratunkowe', e); }
     // statki ruchu v2 (E6): proxy przed kadłubami — dysze proxy wchodzą do listy kadłubów (EngineVfxSystem)
     let hexList = rm.lists[L.RENDER];
     try {

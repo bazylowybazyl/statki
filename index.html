@@ -1187,7 +1187,8 @@
       LOOT_GEAR, lootGearById, lootGearOptionsFor, lootGearFits, mountedLootGear, lootGearParams
     } from "./src/data/lootGear.js";
     import {
-      createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute, escapePodsAllowed, POD_KIND
+      createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute, escapePodsAllowed, POD_KIND,
+      fillEscapePodRenderFrame
     } from "./src/game/escapePods.js";
     import {
       createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
@@ -1202,6 +1203,8 @@
     import { sharedPortCargo3D } from "./src/3d/cargo/portCargo3D.js";
     import { createLootBlock, createLootFrame } from "./src/render/blocks/lootBlock.js";
     import { sharedLootContainers3D } from "./src/3d/cargo/lootContainers3D.js";
+    import { createEscapePodBlock, createEscapePodFrame } from "./src/render/blocks/escapePodBlock.js";
+    import { sharedEscapePods3D } from "./src/3d/escapePods/escapePods3D.js";
     import { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT } from "./src/data/markets.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
@@ -17842,6 +17845,17 @@
       stepEscapePods(escapePods, dt, env);
     }
 
+    // Obraz (K2): ramka klatki dla bloku `pods` (worker) albo rysunku na stronie (off) — pozy w chwili klatki renderu,
+    // tylko kapsuły poza kadłubem, widoczne (mgła wojny) i poza kropkami soczewki skoku. Render niczego o mgle nie wie.
+    const _podRender = createEscapePodFrame();
+    const _podVisible = (x, y) => SensorSystem.pointVisible(x, y, 0);
+    const _podLensHidden = (x, y) => lensDotAt(x, y);
+    function escapePodRenderFrame(alpha) {
+      // Pauza i zamrożony świat fabuły: stan fizyki stoi — poza bez cofania o krok (jak paczki łupu).
+      const lag = (PAUSED || StoryGame.worldFrozen) ? 0 : (1 - alpha) * PHYS_DT;
+      return fillEscapePodRenderFrame(escapePods, _podRender, lag, _podVisible, _lensDotsActive ? _podLensHidden : null);
+    }
+
     window.EscapePods = {
       get count() { return escapePods.count; },
       get transit() { return escapePods.transit.count; },
@@ -30713,6 +30727,7 @@
       if (RW_WORKER) renderSnapshot.addBlock(createCargoOpsBlock());
       // kontenery-łup (K2): paczki, lampki i wiązka (src/3d/cargo/lootContainers3D.js w workerze)
       if (RW_WORKER) renderSnapshot.addBlock(createLootBlock());
+      if (RW_WORKER) renderSnapshot.addBlock(createEscapePodBlock());
       // RW-40b: strumienie i kule plazmy rdzeni (rekordy RX_* niosą id — worker rozwiązuje je lustrami)
       if (RW_WORKER) renderSnapshot.addBlock(createHazardBlock(ReactorFxEvents));
       // RW-40b: ciała świata budowli (stan kawałków; encje kawałków w liście WORLD_BODIES) — skóry worldBodies3D w workerze
@@ -30907,6 +30922,7 @@
       f.portDocks = RW_WORKER ? _portDockRender : null;
       f.cargoOps = RW_WORKER && PORT_CARGO_ON ? _portCargoFrame : null;
       f.loot = RW_WORKER ? _lootRender : null;
+      f.pods = RW_WORKER ? _podRender : null;
       f.worldBodies = RW_WORKER ? worldBodies : null;
       f.worldPieces = RW_WORKER ? worldBodies.renderEntities() : null;
       renderSnapshot.begin(f);
@@ -32085,6 +32101,8 @@
       const portCargoFrame = portCargoRenderFrame(cam, frameDt);
       // Kontenery-łup (K2): paczki w chwili klatki — blok `loot` (worker) albo rysunek tutaj (off).
       lootRenderFrame(alpha);
+      // Kapsuły ratunkowe (E22): kapsuły w chwili klatki — blok `pods` (worker) albo rysunek tutaj (off).
+      escapePodRenderFrame(alpha);
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
@@ -32177,6 +32195,8 @@
           if (portCargoFrame) sharedPortCargo3D().update(portCargoFrame, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           // Kontenery-łup (K2): paczki, lampki i wiązka (worker — z bloku `loot`).
           sharedLootContainers3D().update(_lootRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
+          // Kapsuły ratunkowe (E22): kadłubki, lampy i płomienie (worker — z bloku `pods`).
+          sharedEscapePods3D().update(_podRender, cam, (typeof SUN !== 'undefined' && SUN) ? SUN : null, vfxTime, W, H);
           ShipProxyBatch3D.drawList(cam, _trafficRender.list, _trafficRender.count, renderEntities);
           // Doki portów bez ringu (E14): budowle krzyż / okrąg / koło (worker — z bloku `portDocks`).
           updatePortDocks3D(_portDockRender.list, _portDockRender.count, PAUSED ? 0 : frameDt);

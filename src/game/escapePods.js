@@ -47,8 +47,8 @@ export const POD_TUNE = Object.freeze({
   // Rozliczenia bez obrazu naraz (pełna lista → dolot od razu).
   transitCap: 512,
   // Wymiary kapsuły [j.] (obraz, radar).
-  length: 16,
-  width: 7
+  length: 20,
+  width: 8
 });
 
 /** Stan kapsuły: w kadłubie (czeka na wyrzut), dryf po wyrzucie, lot z silnikiem. */
