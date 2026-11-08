@@ -92,6 +92,7 @@ try {
   const zap = new URLSearchParams({ kawalki: '1', scena: SCENY[0], maksKl: '60', tryb: '1' });
   if (args.kawOp) zap.set('kawOp', String(args.kawOp));
   if (args.zbrojenie) zap.set('zbrojenie', String(args.zbrojenie));
+  if (args.kruchosc) zap.set('kruchosc', String(args.kruchosc)); // przełącznik kruchości betonu (kawalki.js, KRUCHOSC)
   const start = await otworz(zap.toString());
   console.log('adapter', JSON.stringify(raport.adapter));
   for (const sc of SCENY) {

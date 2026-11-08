@@ -464,6 +464,9 @@ const OPCJE_B1 = Object.freeze({
   // szyb: nacięcie od strony wyłomu w pierwszej liczbie, a zawias przecięty w drugiej, kiedy głowa uderza.
   czasy: Object.freeze({ w1: [1, 4], w2: [4, 7], wylom: [7, 10], szyb: [10, 14], sektory: [15, 20], paliwo: [17, 21.5], puszcza: 21.5 }),
   mocSzyi: 8,
+  // Mnożnik granicy gięcia szyi i szybu (rdzeń w promieniu pierścienia). Domyślnie jak siła (8): szyja nie pęka od zginania nigdy i gnie się jak guma
+  // (zgłoszenie użytkownika 2026-11-08). Demo B1R ma 1: siła zostaje, zgięta szyja pęka. Gra (wGrze) bez zmian, dopóki użytkownik nie zdecyduje.
+  giecieSzyi: 8,
   mocPodestu: 30,
   T: 30,
 });
@@ -525,7 +528,7 @@ export function scenaB1(oo = {}) {
     }
     for (let i = wz.start; i < nzH; i++) {
       if (!mocny(w, i)) continue;
-      w.bMax2W[i] *= mocS * mocS;
+      w.bMax2W[i] *= o.giecieSzyi * o.giecieSzyi;
       for (let d = 0; d < ND; d++) {
         const ox = STRONA * i + d, j = w.nbr[ox];
         if (j <= i || !mocny(w, j)) continue;

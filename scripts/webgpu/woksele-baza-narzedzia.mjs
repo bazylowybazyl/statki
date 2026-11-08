@@ -3,6 +3,8 @@
 // upadek jak przy HP 0. Kadry z góry jak w misji 1 i z bliska, stan kawałków, pipeline'y synchroniczne po rozgrzewce (ma być 0), błędy konsoli.
 //
 //   node scripts/webgpu/woksele-baza-narzedzia.mjs [--out .tmp/woksele-demo/KAW/baza] [--rozmiar 1280x720] [--port 5432] [--zbrojenie 1]
+//        [--kruchosc 0|1|2] [--baza '{"giecieSzyi":8}'] [--scenariusz szyja]
+// --scenariusz szyja: dwa kratery z boku u podstawy szyi (z ≈ 300), głowa przechyla się. Kadry z boku: czy szyja gnie się jak guma, czy pęka (zgłoszenie 2026-11-08).
 import os from 'node:os';
 os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -42,7 +44,7 @@ const Z_GORY = { az: 0, el: 88, cel: [1200, 200, 0], odl: 9800 };
 
 try {
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
-  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}`;
+  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}${args.kruchosc ? `&kruchosc=${args.kruchosc}` : ''}${args.baza ? `&baza=${encodeURIComponent(String(args.baza))}` : ''}`;
   await cdp.send('Page.navigate', { url: `${base}/dema/woksele-zawalenia.html?${zap}` });
   await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
   if (!await waitFor(cdp, '!!(window.__wok && (window.__wok.gotowe || window.__wok.blad))', 600000, 200)) throw new Error('strona nie wstała');
@@ -70,6 +72,27 @@ try {
     zapisz();
   };
   const N = 'window.__wok.pokaz.narzedzia';
+  if (args.scenariusz === 'szyja') {
+    // Kamera po skosie (+x, −y): wieżowce W-1 i W-2 stoją na osi x, więc z boku zasłaniały szyję.
+    const BOK = { az: 45, el: 8, cel: [0, 0, 900], odl: 4800 };
+    const kadrBok = async (nazwa, t) => {
+      await ev(`window.__wok.pokaz.kamera(${JSON.stringify(BOK)}); true`);
+      await ev('window.__wok.pokaz.przerysuj()');
+      const plik = `${nazwa}_t${t.toFixed(1)}_bok.png`;
+      await screenshotPng(cdp, join(wyDir, plik));
+      raport.kadry.push(plik);
+      const st = await ev('window.__wok.pokaz.statKawalki()');
+      console.log(`${nazwa} t = ${t}: pękło L0 ${st?.peklo?.[0]}/${st?.K0}, węzły na poziomach ${st?.wezly?.join(' / ')}`);
+    };
+    await ev('window.__wok.pokaz.doChwili(0.5)');
+    await kadrBok('s0', 0.5);
+    // Kratery z boku (+y) u podstawy szyi, dwa na różnych wysokościach. Od +x stoi W-2 i promień trafiał w niego.
+    for (const [z, x] of [[330, 40], [450, -40]]) {
+      await ev(`${N}.stan.rKratera = 130; ${N}.uzyj('krater', { o: [${x}, 4000, ${z}], dir: [0, -1, 0] }); true`);
+      await ev(`window.__wok.pokaz.doChwili(window.__wok.pokaz.stan.krok / 60 + 2 / 60)`);
+    }
+    for (const t of [2, 4, 6, 9]) { await ev(`window.__wok.pokaz.doChwili(${t})`); await kadrBok('s', t); }
+  } else {
   await ev('window.__wok.pokaz.doChwili(1)');
   await kadr('01-przed', 1);
   // Działo: seria w W-1 i habitat, jak gracz w misji 1.
@@ -90,6 +113,7 @@ try {
   await kadr('06-upadek', 14);
   await ev('window.__wok.pokaz.doChwili(22)');
   await kadr('07-ruiny', 22);
+  }
   const nowe = await ev(`window.__harness.pipes.list.slice(${pipeStart}).map((p) => ({ nazwa: p.nazwa, sync: !!p.sync }))`);
   raport.pipeline = { poRozgrzewce: nowe.length, synchroniczne: nowe.filter((p) => p.sync).length, nazwy: nowe.filter((p) => p.sync).map((p) => p.nazwa).slice(0, 20) };
   console.log(`pipeline'y po rozgrzewce: ${nowe.length}, synchroniczne ${raport.pipeline.synchroniczne}`);

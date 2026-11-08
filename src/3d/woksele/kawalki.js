@@ -27,6 +27,23 @@ export const OPCJE_KAWALKOW = Object.freeze({
   czescDo: 14,
   ziarno: 4242,
 });
+/**
+ * Kruchość betonu (przełącznik dema, zgłoszenie użytkownika 2026-11-08: „materiały za elastyczne”). Zginanie w solverze jest plastyczne bez osłabienia:
+ * linia trzech węzłów trzyma stałą siłę od granicy gięcia do zlomB razy tej granicy, a we wnętrzu ziarna granica jest zlomWewn razy większa. Przy dx = 40
+ * to około 30° sprężyście i 70° do pęknięcia na jednym złączu, więc długi element wygina się w łuk. Poziomy: 0 dziś, 1 kruchy, 2 bardzo kruchy.
+ */
+export const KRUCHOSC = Object.freeze([
+  null,
+  Object.freeze({ kruchoscGiecia: 0.4, zlomB: 1.5, zlomWewn: 1.5 }),
+  Object.freeze({ kruchoscGiecia: 0.2, zlomB: 1.2, zlomWewn: 1 }),
+]);
+/** Nakładka parametrów wypieku z poziomem kruchości (budowa.js: parametry). Poziom 0 albo brak: nakładka bez zmian. */
+export function nakladkaKruchosci(nakladka, poziom) {
+  const k = KRUCHOSC[poziom | 0];
+  if (!k) return nakladka;
+  return { ...(nakladka ?? {}), kruchoscGiecia: k.kruchoscGiecia, zlomB: k.zlomB, ziarna: { ...PARAMETRY.ziarna, ...(nakladka?.ziarna ?? {}), zlomWewn: k.zlomWewn } };
+}
+
 /** Domyślne zbrojenie: ułamek linii prętów, ciągliwość (ile razy dalej od betonu rozciąga się pręt), mnożnik siły zerwania na rozciąganie. */
 export const OPCJE_ZBROJENIA = Object.freeze({ gestosc: 0.4, ciagl: 4, sila: 3 });
 

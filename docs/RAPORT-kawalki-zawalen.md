@@ -23,6 +23,25 @@ Różnice wobec gry: w grze baza ma skórę z wypieku starego modelu (lampy, okn
 
 Sprawdzone bez okna (`node scripts/webgpu/woksele-baza-narzedzia.mjs`): działo, ciężkie działo, taran, upadek, w trybach Woksele i Kawałki, 0 pipeline'ów synchronicznych, bez błędów konsoli.
 
+### Gumowa szyja i kruchość betonu (drugi przegląd)
+
+Zgłoszenie: szyja habitatu wygięła się w łuk bez pękania. Przyczyny:
+- Zginanie w solverze jest plastyczne bez osłabienia. Przy dx = 40 jedno złącze trzech wokseli gnie się sprężyście o około 30° i pęka dopiero przy około 70°, a we wnętrzu ziarna (wiązania ×6 mocniejsze) granica jest jeszcze 3 razy dalej. Długi element wygina się więc w łuk, bo każde złącze bierze tylko trochę.
+- Rdzeń szyi i szybu w scenie bazy ma ×8 siły i ×8 granicy gięcia (pod zaplanowany upadek w grze: głowa ma się przewrócić, a nie skruszyć). Tej szyi nie da się złamać zginaniem.
+
+Porównanie na scenariuszu „szyja” (dwa kratery z boku u podstawy szyi, `node scripts/webgpu/woksele-baza-narzedzia.mjs --scenariusz szyja`, arkusz `.tmp/woksele-demo/KAW/arkusz_szyja.png`):
+
+| Wariant | Szyja |
+|---|---|
+| jak w grze (`giecieSzyi` 8) | zwija się w rurę |
+| `giecieSzyi` 1 (demo bazy, domyślnie) | prawie to samo: zwija się dalej, bo zwykły beton też gnie się bez granic |
+| beton kruchy (`?kruchosc=1`) | pęka po około 2 s, zostają wygięte odcinki |
+| beton bardzo kruchy (`?kruchosc=2`) | łamie się u podstawy, głowa spada i się rozbija |
+
+Ten sam przełącznik na wieżowcu S1 (`arkusz_s1_kruchosc_*.png`): wieża miażdży się we wszystkich wariantach. Przy „bardzo kruchym” hałda to prawie sam drobny żwir (94 % węzłów w bryłkach, dziś 70 %), czyli wraca „kupa jednakowych kształtów”. „Kruchy” jest pośrodku.
+
+W demie przełącznik „Beton: dziś / Kruchy / Bardzo kruchy” przeładowuje stronę (wypiek od nowa). Gra zostaje bez zmian, dopóki nie wybierzesz.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.
@@ -77,7 +96,8 @@ Pamięć: siatka kawałków S1 to 339 tys. trójkątów (9 MB), S5 540 tys. (15 
 1. **Czy ten obraz w ogóle idzie dalej** (obejrzeć demo z bliska i z góry).
 2. **Gęstość kawałków.** Dziś: kawałek z ziarna fizyki (płyta 7 × 7 wokseli stropu, odcinek słupa 6 wokseli), części poziomu 1 po 4–14 węzłów. Większe kawałki = mniej szczegółu w zgniocie, mniejsze = bliżej dzisiejszych kostek.
 3. **Ile zbrojenia:** (a) bez prętów w fizyce, druty tylko jako kikuty w obrazie, ruch jak dziś; (b) obecne pręty (40 % linii, ×4 rozciąganie, ×3 siła): ruch trochę inny, kikuty z przełomów; (c) mocne pręty (siła ×10): kawałki wiszą na drutach, stropy schodzą całymi płytami, ruch wyraźnie inny niż dziś. Dla (c) przebieg: `--zbrojenie '{"gestosc":0.5,"ciagl":6,"sila":10}'`.
-4. **Czy wpiąć w misję 1.** Z góry różnica jest mała, z bliska duża. Wpięcie to osobna praca: skóra z wypieku i wnętrza na kawałkach, przekrój wysokości, koła habitatu, LOD.
+4. **Kruchość betonu:** dziś, kruchy czy bardzo kruchy (szyja i hałda wyżej). Możliwe też osobne ustawienie: bardzo kruchy tylko dla smukłych elementów (szyja, słupy), reszta jak dziś.
+5. **Czy wpiąć w misję 1.** Z góry różnica jest mała, z bliska duża. Wpięcie to osobna praca: skóra z wypieku i wnętrza na kawałkach, przekrój wysokości, koła habitatu, LOD.
 
 ## Pliki
 

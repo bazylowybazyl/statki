@@ -1211,7 +1211,9 @@ export function createWokseleSolver({ maxNodes = 26000, par = PARAMETRY, ciagliw
     uZasieg2.value = w.zasieg * w.zasieg;
     uPekaProg.value = par.falaPeka.prog;
     uPekaZakres.value = par.falaPeka.zakres;
-    uZlomB2.value = par.zlomB * par.zlomB;
+    // Zakres gięcia plastycznego z wypieku sceny (przełącznik kruchości dema), domyślnie ten sam co solvera. Wzorzec CPU też czyta par wypieku.
+    const zlB = w.par?.zlomB ?? par.zlomB;
+    uZlomB2.value = zlB * zlB;
   }
 
   /** Wczytanie budowy (§ 2.2): cały stan początkowy, tablice stałe i uniformy. Reset sceny: to samo jeszcze raz, bez nowych pipeline'ów. */

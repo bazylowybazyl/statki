@@ -6,7 +6,7 @@ import { createWokseleObraz } from '../../src/3d/woksele/obraz.js';
 import { OPCJE_PYLU } from '../../src/3d/woksele/pyl.js';
 import { DX_MIASTA, POJEMNOSC_MIASTA } from '../../src/3d/woksele/scenaMiasta.js';
 import { DX_BAZY, POJEMNOSC_BAZY } from '../../src/3d/woksele/scenaBazy.js';
-import { wypiekZeZbrojeniem, statystykaKawalkow } from '../../src/3d/woksele/kawalki.js';
+import { wypiekZeZbrojeniem, statystykaKawalkow, KRUCHOSC } from '../../src/3d/woksele/kawalki.js';
 import { createNarzedzia, NARZEDZIA } from './narzedzia.js';
 
 const H = 1 / 60;
@@ -96,6 +96,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   // ?kawOp={...}: opcje prefraktury (OPCJE_KAWALKOW), ?zbrojenie={"gestosc":0.4,"ciagl":4,"sila":3}: pręty (OPCJE_ZBROJENIA). Idą do wątku budowy.
   // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
   const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa }) : null;
+  // ?kruchosc=1|2: beton kruchszy w wypieku (granice gięcia, kawalki.js KRUCHOSC). Zmiana przeładowuje stronę, bo wypiek idzie od nowa.
+  const KRUCH = KAWALKI ? Math.max(0, Math.min(KRUCHOSC.length - 1, Number(adres.get('kruchosc')) || 0)) : 0;
   const opcjeKawalkow = KAWALKI ? { kawalki: adres.has('kawOp') ? JSON.parse(adres.get('kawOp')) : {}, zbrojenie: adres.has('zbrojenie') ? JSON.parse(adres.get('zbrojenie')) : {} } : null;
   // AGENT: miasto dalekie tylko na stronie, która je pokazuje: nowy materiał i kernel, a stare sceny mają zostać bez zmian co do pipeline'u.
   const dalekie = adres.get('scena') === 'M3' ? (await import('./miastoDalekie.js')).createMiastoDalekie({ solver, obraz }) : null;
@@ -147,7 +149,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? bazaAdresu : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}) });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? bazaAdresu : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}), ...(KRUCH ? { kruchosc: KRUCH } : {}) });
     }
     return czekajace.get(id).obietnica;
   }
@@ -324,6 +326,20 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     for (const [t, opis] of TRYBY) dodaj(panelObrazu, opis, () => ustawTrybObrazu(t), `o:${t}`);
     panelObrazu.hidden = false;
   }
+  // Beton: przełącznik kruchości (przeładowanie z ?kruchosc, scena zostaje).
+  const panelBetonu = nowaGrupa('panelBeton');
+  if (KAWALKI) {
+    for (const [k, opis] of [[0, 'Beton: dziś'], [1, 'Kruchy'], [2, 'Bardzo kruchy']]) {
+      dodaj(panelBetonu, opis, () => {
+        if (k === KRUCH) return;
+        const q = new URLSearchParams(location.search);
+        q.set('kruchosc', String(k));
+        q.set('scena', stan.scena);
+        location.search = q.toString();
+      }, `b:${k}`);
+    }
+    panelBetonu.hidden = false;
+  }
   // Narzędzia: klik w kadr bez przeciągania używa wybranego (klawisze 1–5), F trzymane strzela seriami w kursor, U: upadek jak przy HP 0 (tylko baza).
   const panelNarzedzi = nowaGrupa('panelNarzedzia');
   const ustawNarzedzie = (n) => { narz?.ustaw(n); zaznacz(); };
@@ -338,7 +354,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   stan.kamMiasta = 'atlas';
   function zaznacz() {
     for (const [k, b] of przyciski) {
-      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}`;
+      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}` || k === `b:${KRUCH}`;
       b.classList.toggle('wl', wl);
     }
     bPauza.classList.toggle('wl', stan.pauza);

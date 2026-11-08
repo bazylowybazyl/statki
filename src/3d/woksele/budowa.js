@@ -436,7 +436,8 @@ export function zbuduj(scena, par = PARAMETRY, opcje = {}) {
     szokW[i] = kl.szok ?? par.szokWsp;
     kUd[i] = kl.kontaktSzok ?? 0;
     // Próg to krzywizna: b = κ·dx², więc przy stałej krzywiźnie granicznej b_max ~ dx² (przy dx = 20 bez zmian).
-    bMax2W[i] = (((kl.zlom ?? par.zlomGiecia) * dx * sM) / skala) ** 2;
+    // par.kruchoscGiecia (demo kawałków, przełącznik kruchości): mnożnik granicy gięcia wszystkich klas. Bez niego 1, a wynik bajt w bajt jak dotąd.
+    bMax2W[i] = (((kl.zlom ?? par.zlomGiecia) * (par.kruchoscGiecia ?? 1) * dx * sM) / skala) ** 2;
   }
   const kruszTab = new Float32Array(2 * KLASA_NAZWY.length);
   for (let q = 0; q < KLASA_NAZWY.length; q++) {

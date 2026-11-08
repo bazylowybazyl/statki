@@ -58,7 +58,8 @@ export const PLANY_POKAZU = {
   // Baza piratów (plan LOD § 5c): opcje z adresu (?baza={"dx":80}), strona podaje je tym samym polem.
   B1: (ziarno, lod, baza) => scenaB1(baza ?? {}),
   // Ta sama baza bez skryptu zniszczeń: niszczy użytkownik narzędziami dema (dema/woksele-zawalenia/narzedzia.js), jak gracz w misji 1.
-  B1R: (ziarno, lod, baza) => scenaB1({ ...(baza ?? {}), stoi: true }),
+  // Szyja bez dodatkowej granicy gięcia (giecieSzyi: 1, siła ×8 zostaje): zgięta pęka, zamiast wyginać się jak guma. ?baza={"giecieSzyi":8}: jak w grze.
+  B1R: (ziarno, lod, baza) => scenaB1({ giecieSzyi: 1, ...(baza ?? {}), stoi: true }),
   // Ziarno z adresu strony (?ziarno=7), domyślnie 21 jak w filmie. Pozostałe sceny argumentu nie czytają.
   S5: (ziarno) => S5({ miejsce: 'g', ...(ziarno === undefined ? {} : { ziarno }) }),
   S5v: (ziarno) => S5({ miejsce: 'proznia', ...(ziarno === undefined ? {} : { ziarno }) }),

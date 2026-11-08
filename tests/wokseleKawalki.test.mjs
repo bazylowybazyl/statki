@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three/webgpu';
 import { zbudujPlan, STRONA, ND } from '../src/3d/woksele/budowa.js';
 import { S1 } from '../src/3d/woksele/scena.js';
-import { zbudujKawalki, wybierzZbrojenie, wypiekZeZbrojeniem, BRAK } from '../src/3d/woksele/kawalki.js';
+import { zbudujKawalki, wybierzZbrojenie, wypiekZeZbrojeniem, nakladkaKruchosci, KRUCHOSC, BRAK } from '../src/3d/woksele/kawalki.js';
+import { zbuduj, parametry } from '../src/3d/woksele/budowa.js';
 import { createWokseleSolver } from '../src/3d/woksele/solver.js';
 import { createWokseleObraz } from '../src/3d/woksele/obraz.js';
 import { WzorzecCpu } from '../dema/woksele-zawalenia/wzorzec-cpu.js';
@@ -120,6 +121,24 @@ test('wzorzec CPU: wypiek bez prętów liczy bit w bit tak samo, pręt rozciągn
   m._przebiegF(); // po przebiegu bufory masek się zamieniają: wynik w maskaW
   assert.equal((m.maskaW[i] >>> d) & 1, 1, 'pręt przy 2 R0 zostaje');
   assert.equal((m.maskaW[ib] >>> db) & 1, 0, 'beton przy 2 R0 pęka');
+});
+
+test('kruchość: poziom 0 to ta sama nakładka, wyższe poziomy zwężają granice gięcia (szyja, zgłoszenie 2026-11-08), a wypiek bez nich bajt w bajt', () => {
+  assert.equal(nakladkaKruchosci(undefined, 0), undefined);
+  const n2 = nakladkaKruchosci({ ziarno: 7 }, 2);
+  assert.equal(n2.ziarno, 7);
+  assert.equal(n2.zlomB, KRUCHOSC[2].zlomB);
+  assert.equal(n2.ziarna.zlomWewn, KRUCHOSC[2].zlomWewn);
+  assert.equal(n2.ziarna.wewn, w.par.ziarna.wewn, 'reszta ziaren bez zmian');
+  const plan = S1();
+  const wk = zbuduj(plan.scena, parametry(n2));
+  assert.equal(wk.n, w.n);
+  let mniej = 0;
+  for (let i = 0; i < w.n; i++) { assert.ok(wk.bMax2W[i] <= w.bMax2W[i]); if (wk.bMax2W[i] < w.bMax2W[i]) mniej++; }
+  assert.ok(mniej > 0.9 * w.n, `węższa granica gięcia u ${mniej} z ${w.n}`);
+  assert.equal(wk.par.zlomB, KRUCHOSC[2].zlomB);
+  // Bez nakładki: mnożnik 1 nie zmienia granicy ani bitu.
+  assert.deepEqual(zbuduj(plan.scena).bMax2W, w.bMax2W);
 });
 
 // ── Obraz w WGSL z Node ──
