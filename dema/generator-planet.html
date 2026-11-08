@@ -9,8 +9,9 @@
 <link rel="icon" href="data:,">
 <!--
   Demo GENERATORA PLANET (src/3d/planetGen/, opis docs/OPIS-generator-planet.md): planety z ziarna wypiekane na GPU
-  (mapy dnia, normalnych, połysku, nocy i chmur — te same role co PLANET_MAPS gry) i pokazane na MATERIAŁACH GRY
-  (planet3d.assets.tsl.js; olbrzymy — wspólny silnik żywej atmosfery), post jak w grze (bloom → ACES → sRGB).
+  (mapy dnia, rzeźby, połysku, nocy i chmur) i pokazane na materiałach generatora nad grafami GRY (planet3d.assets.tsl.js
+  z hakami: rzeźba z cieniem terenu, detal ponad mapę, morze, chmury, ruiny; olbrzymy — wspólny silnik żywej
+  atmosfery z czapami polarnymi i cieniem pierścieni), post jak w grze (bloom → ACES → sRGB).
   Od razu po otwarciu: siatka 15 losowych planet (widok gry — z góry, słońce z boku). Klik w planetę — zbliżenie
   z obrotem. Serwowanie: `npm run dev` → /dema/generator-planet.html
   Parametry: ?rodzaj=terran|ocean|desert|rocky|ice|volcanic|barren|toxic|gas|ice_giant|mieszane, ?ziarno=N (siatka
