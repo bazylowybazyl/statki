@@ -54,5 +54,9 @@ reguła `wraki`. Tu rozpoznanie, decyzje i pomiary.
   w Pasie Kuipera (4 rekordy w ramce, 24 próbki): GPU 1,22 / 0,78 ms wobec 0,73 / 0,74 ms (pierwsza próbka
   z wyskokiem), CPU klatki workera 2,49 / 2,60 wobec 2,41 / 2,46 ms — ~+0,1 ms CPU i ~+0,04 ms GPU (drony i lasery
   w partiach pasa, światła siatki najwyżej 6 + 6).
+- Odłamy: w pierwszych przebiegach odłamy z cięcia zgłaszały się jako nowe wraki (encja rodzica w haku to jeszcze
+  martwy statek) — wiązanie po ciele (`parentBody`). Pozostałe dodatkowe zgłoszenia w przebiegach przy Ziemi to wraki
+  frachtowców zestrzelonych przez automatyczne baterie Atlasa w harnessie (rozpad frachtowca kapitałowego na ~20
+  odłamów); próg drobnicy 120 j. odcina odłamy, których cięcie się nie opłaca.
 - Narzędzie `snapshot.work` w pierwszej wersji ucinało listę na 80 kursach — przy ~63 górnikach kurs złomiarza po
   wrak gry był poza listą (przebieg „final”: „brak kursu złomiarza”); limit 600.
