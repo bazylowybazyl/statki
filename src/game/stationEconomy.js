@@ -445,6 +445,21 @@ export function composeIndustry(capacity, archetypeIds, size = 1, externalDemand
  * frakcja, przyczółek w pasie. Deklarujesz `{ capacity, roles, size }`,
  * a proporcje linii i udział w utrzymaniu układu wyliczają się same.
  */
+/**
+ * Wsady bez stałego źródła w układzie — linia, która z nich robi towar, nie liczy się do podaży
+ * planu (`buildIndustryMap`). Złom bierze się tylko z wraków (wojna, piractwo, gracz). Ruda uranu
+ * też nie ma linii ani złoża planety, ale ma stałe źródło — wyprawy górnicze do Kuipera.
+ */
+const UNPLANNED_INPUTS = Object.freeze(new Set(['scrap']));
+
+/** Czy wyjście receptury liczy się do podaży planu (bez wsadu z `UNPLANNED_INPUTS`). */
+export function isPlannedSupplyLine(recipe) {
+  for (const [res, need] of Object.entries(recipe?.in || {})) {
+    if (need > 0 && UNPLANNED_INPUTS.has(res)) return false;
+  }
+  return true;
+}
+
 export function buildIndustryMap(spec) {
   const entries = Object.entries(spec);
   // Popyt zewnętrzny NARASTA między przebiegami. Liczony od zera znika, gdy
@@ -481,6 +496,11 @@ export function buildIndustryMap(spec) {
         const recipe = RECIPES[recipeId];
         const batches = lineWeight(industry, recipeId) * (ECONOMY_CYCLE_SECONDS / recipe.seconds);
         for (const [res, need] of Object.entries(recipe.in)) bump(demand, res, need * batches);
+        // Linia na wsadzie bez stałego źródła (złom — tylko z wraków) nie jest podażą planu:
+        // przetop złomu na Marsie liczył się jako największe źródło stali (pokrycie 1,06),
+        // a bez złomu stoi — w biegu stal miała 0,93 i schodziła o ~12 tys./h przy ×60
+        // (docs/POMIAR-zanik-gospodarki-2026-11-08.md). Złom z wraków jest premią ponad plan.
+        if (!isPlannedSupplyLine(recipe)) continue;
         for (const [res, out] of Object.entries(recipe.out)) {
           bump(supply, res, out * batches);
           if (out > 0) bump(producers, res, 1);

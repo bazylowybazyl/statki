@@ -72,8 +72,9 @@ export function run() {
   t.check('dwie huty i stocznia', counted.foundry === 2 && counted.shipworks === 1, JSON.stringify(counted));
   const ownNeed = stationWorkforceNeed(own, { civilBerths: 26, stores: 4 });
   t.close('obsada: 2 × 40 + 80 + port + magazyny', ownNeed.total, 2 * 40 + 80 + 26 * 0.2 + 4 * 3, 1e-9);
-  t.check('linie stacji świata dają ekwiwalenty roli (Ziemia: huta ~9,2)',
-    Math.abs(industryBuildings(STATION_INDUSTRY.earth).foundry - 9.24) < 0.05);
+  // 9,24 → 9,55 (2026-11-08): przetop złomu poza podażą planu, huty z rudy pokrywają całą stal.
+  t.check('linie stacji świata dają ekwiwalenty roli (Ziemia: huta ~9,5)',
+    Math.abs(industryBuildings(STATION_INDUSTRY.earth).foundry - 9.55) < 0.05);
 
   t.section('4. Źródła i bilans (PROPOZYCJA § 2.2)');
   t.close('Mars: ring + strefy zielone', populationRate(POPULATION_CENTERS.mars), 18.7, 1e-9);
