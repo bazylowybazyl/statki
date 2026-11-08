@@ -17,7 +17,10 @@ import {
   createGenGasEngine, createGenGasSurfaceMaterial, GenGasAtmosphere
 } from '../src/3d/planetGen/planetGenGas.js';
 import { bakeRingProfile, RING_PROFILE_TEXELS } from '../src/3d/planetGen/planetGenRing.js';
-import { planetSurfaceUniforms } from '../src/3d/planetGen/planetGenBody.js';
+import { planetSurfaceUniforms, ruinUniforms } from '../src/3d/planetGen/planetGenBody.js';
+import { createGenSolidSurfaceMaterial, GEN_SOLID_UNIFORM_KEYS } from '../src/3d/planetGen/planetGenSurface.tsl.js';
+import { RUIN_CAP } from '../src/3d/planetGen/planetGenRuins.tsl.js';
+import { createPlanetSurfaceMaterial } from '../src/3d/planet3d.assets.tsl.js';
 import { PLANET_GRAPH_KEYS, PLANET_TSL_STATS, PLANET_MATERIAL_NAMES } from '../src/3d/planet3d.assets.tsl.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -110,20 +113,22 @@ test('opis: zakresy, podrodzaje, mgiełka nad jasnym suchym gruntem bez błękit
   }
 });
 
-test('plan map i pamięć: olbrzym — sam dzień; martwa — bez nocy i chmur; układ 8 planet @1024 < 50 MB', () => {
+test('plan map i pamięć: olbrzym — sam dzień; martwa — bez nocy i chmur; układ 8 planet @1024 < 60 MB', () => {
   const gas = describePlanet({ type: 'gas', seed: 1 });
-  assert.deepEqual(plannedMaps(gas), { day: true, normal: false, spec: false, night: false, clouds: false });
+  assert.deepEqual(plannedMaps(gas), { day: true, relief: false, spec: false, night: false, clouds: false });
   const barren = describePlanet({ type: 'barren', seed: 1, night: { cities: 0 } });
   const pb = plannedMaps(barren);
   assert.equal(pb.clouds, false);
   assert.equal(pb.night, false);
   assert.equal(pb.spec, false);
   const terran = describePlanet({ type: 'terran', seed: 3, night: { cities: 0.5 } });
-  assert.equal(plannedMaps(terran).spec, true);
-  assert.ok(plannedBytes(terran, 2048) < 40 * 1048576);
+  // morze liczy shader — bez mapy połysku; rzeźba RGBA16F
+  assert.equal(plannedMaps(terran).spec, false);
+  assert.equal(plannedMaps(terran).relief, true);
+  assert.ok(plannedBytes(terran, 2048) < 50 * 1048576);
   const system = ['terran', 'rocky', 'desert', 'gas', 'gas', 'ice_giant', 'ice', 'barren'].map((type, i) => describePlanet({ type, seed: 50 + i }));
   const sum = system.reduce((s, x) => s + plannedBytes(x, 1024), 0);
-  assert.ok(sum < 50 * 1048576, `układ @1024: ${(sum / 1048576).toFixed(1)} MB`);
+  assert.ok(sum < 60 * 1048576, `układ @1024: ${(sum / 1048576).toFixed(1)} MB`);
 });
 
 test('kwantyle ważone polem (próba kanału w)', () => {
@@ -149,7 +154,7 @@ test('losowanie z ziarna: strumienie niezależne, zakresy', () => {
 
 test('grafy wypieku: WGSL wszystkich przejść buduje się, graf raz na klucz', () => {
   const baker = new PlanetGenBaker(renderer);
-  const keys = [...Object.keys(SOLID_TYPES).flatMap((t) => [`field:${t}`, `day:${t}`]), 'normal', 'spec', 'night', 'clouds', 'gas'];
+  const keys = [...Object.keys(SOLID_TYPES).flatMap((t) => [`field:${t}`, `day:${t}`]), 'relief', 'spec', 'night', 'clouds', 'gas'];
   for (const k of keys) {
     const g = baker.graph(k);
     assert.equal(baker.graph(k), g, `${k}: drugi raz ten sam graf`);
@@ -226,4 +231,50 @@ test('barwy opisu: sRGB → liniowe', () => {
   const [r, g, b] = srgb('#ffffff');
   assert.ok(Math.abs(r - 1) < 1e-9 && Math.abs(g - 1) < 1e-9 && Math.abs(b - 1) < 1e-9);
   assert.ok(Math.abs(srgb('#808080')[0] - 0.2158) < 1e-3);
+});
+
+test('materiał powierzchni generatora (genSolid): WGSL z rzeźbą, cieniem, morzem i ruinami; graf gry bez haka', () => {
+  const spec = describePlanet({ type: 'terran', seed: 3 });
+  const U = planetSurfaceUniforms(spec, { day: new THREE.Texture() }, { size: 2048 });
+  for (const k of Object.keys(GEN_SOLID_UNIFORM_KEYS)) assert.ok(U[k], `brak uniformu ${k}`);
+  const wgsl = buildMesh(createGenSolidSurfaceMaterial(U));
+  assert.match(wgsl, /fn pgNoised/);
+  assert.match(wgsl, /textureSampleLevel/);   // promień cienia po mipmapach rzeźby
+  assert.doesNotMatch(wgsl, /NaN/);
+  // graf powierzchni gry (Ziemia, Mars…) — hak generatora go nie dotyka
+  const game = buildMesh(createPlanetSurfaceMaterial(Object.fromEntries(PLANET_GRAPH_KEYS.surface.map((k) => [k, { value: k.endsWith('Texture') ? null : (k === 'sunPosition' ? new THREE.Vector3() : 0) }]))));
+  assert.doesNotMatch(game, /pgNoised/);
+  // uniformy: przesadzenie i amplituda detalu z opisu, teksel z rozmiaru mapy
+  assert.equal(U.uGsGeo.value.x, spec.rKm);
+  assert.ok(Math.abs(U.uGsGeo.value.y - Math.PI / 1024) < 1e-9);
+  assert.equal(U.uGsSea.value.x, 1);
+  assert.equal(planetSurfaceUniforms(describePlanet({ type: 'rocky', seed: 3 }), { day: null }, { size: 2048 }).uGsSea.value.x, 0);
+});
+
+test('ruiny: z ziarna (część planet bez ruin), nadpisanie z danych gry, puste miejsca z promieniem 0', () => {
+  let none = 0;
+  let some = 0;
+  for (let s = 1; s <= 200; s++) {
+    const r = describePlanet({ type: 'rocky', seed: s }).ruins;
+    if (r.length === 0) none++; else some++;
+    for (const x of r) {
+      assert.ok(x.value > 0 && x.value <= 1 && x.radius > 0.005 && x.radius < 0.05);
+      assert.ok(Math.abs(Math.hypot(...x.dir) - 1) < 1e-5);
+    }
+  }
+  assert.ok(none > 20 && some > 100, `bez ruin ${none}, z ruinami ${some}`);
+  assert.deepEqual(describePlanet({ type: 'terran', seed: 9 }).ruins, describePlanet({ type: 'terran', seed: 9 }).ruins);
+  assert.equal(describePlanet({ type: 'terran', seed: 9, ruins: false }).ruins.length, 0);
+  assert.equal(describePlanet({ type: 'terran', seed: 9, ruins: 3 }).ruins.length, 3);
+  const given = describePlanet({ type: 'ice', seed: 2, ruins: [{ lat: 10, lon: 20, value: 0.4 }] }).ruins;
+  assert.equal(given.length, 1);
+  assert.equal(given[0].value, 0.4);
+  // olbrzymy — ruiny unoszące się
+  const g = describePlanet({ type: 'gas', seed: 4, ruins: 2 }).ruins;
+  assert.ok(g.every((x) => x.kind === 1));
+  // puste miejsca: promień 0 (Vector4() ma w = 1 — „ruina” na całą planetę)
+  const u = ruinUniforms([{ dir: [0, 1, 0], radius: 0.02, value: 1, seed: 1, kind: 0 }]);
+  assert.equal(Object.keys(u).length, RUIN_CAP * 2);
+  assert.equal(u.uRuin0.value.w, 0.02);
+  for (let i = 1; i < RUIN_CAP; i++) assert.equal(u[`uRuin${i * 2}`].value.w, 0, `miejsce ${i}`);
 });

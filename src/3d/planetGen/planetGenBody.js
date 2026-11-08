@@ -1,15 +1,18 @@
 // src/3d/planetGen/planetGenBody.js
 //
-// Ciało planety z generatora na MATERIAŁACH GRY: powierzchnia (graf 'surface' — dzień, noc, połysk, normalne,
-// mgiełka, pas zachodu; olbrzymy — graf 'genGas' na wspólnym silniku żywej atmosfery), chmury (graf 'clouds'),
+// Ciało planety z generatora na MATERIAŁACH GRY: powierzchnia (graf 'genSolid' — graf powierzchni gry z hakiem
+// generatora: rzeźba z cieniem terenu, detal ponad mapę, morze w shaderze, ruiny — planetGenSurface.tsl.js; olbrzymy —
+// graf 'genGas' na wspólnym silniku żywej atmosfery), chmury (graf 'clouds'),
 // poświata limbu (powłoka planet tła — graf 'atmosphere', albo dysk planet przy ringu — 'ringAtmosphere').
 // Kształt `uniforms` = DirectPlanet.init (planet3d.assets.js) — to samo, co wpięcie w grze ustawi z opisu planety
 // (`planetSurfaceUniforms`, `planetCloudUniforms`, `planetHaloUniforms`); tu też składanie siatek dla dema.
 import * as THREE from 'three/webgpu';
 import {
-  createPlanetSurfaceMaterial, createPlanetCloudMaterial, createPlanetAtmosphereMaterial, createRingAtmosphereMaterial
+  createPlanetCloudMaterial, createPlanetAtmosphereMaterial, createRingAtmosphereMaterial
 } from '../planet3d.assets.tsl.js';
 import { createGenGasSurfaceMaterial, GenGasAtmosphere } from './planetGenGas.js';
+import { createGenSolidSurfaceMaterial } from './planetGenSurface.tsl.js';
+import { RUIN_CAP } from './planetGenRuins.tsl.js';
 import { createGenRingMesh } from './planetGenRing.js';
 
 // Strojenie poświaty planet tła jak w grze (HALO_DEFAULTS w planet3d.assets.js).
@@ -29,20 +32,52 @@ export const GEN_BLACK_NIGHT = solidTexture([0, 0, 0, 255], THREE.SRGBColorSpace
 export const GEN_NO_SPEC = solidTexture([0, 0, 0, 255], THREE.NoColorSpace);
 export const GEN_FLAT_NORMAL = solidTexture([128, 128, 255, 255], THREE.NoColorSpace);
 
+/** Uniformy rekordów ruin `uRuin0…` (2 × RUIN_CAP Vector4 — planetGenRuins.tsl.js). */
+export function ruinUniforms(ruins) {
+  const out = {};
+  // AGENT: Vector4() ma w = 1 — puste miejsce MUSI mieć promień 0 (inaczej „ruina” na całą planetę)
+  for (let k = 0; k < RUIN_CAP * 2; k++) out[`uRuin${k}`] = { value: new THREE.Vector4(0, 0, 0, 0) };
+  (ruins || []).slice(0, RUIN_CAP).forEach((r, i) => {
+    out[`uRuin${i * 2}`].value.set(r.dir[0], r.dir[1], r.dir[2], r.radius);
+    out[`uRuin${i * 2 + 1}`].value.set(r.value, r.seed, r.kind || 0, 0);
+  });
+  return out;
+}
+
 /**
- * `material.uniforms` powierzchni z opisu i map (jak DirectPlanet). Mapa normalnych grafu gry działa tylko przy
- * `hasNightTexture = 1` — planeta bez świateł dostaje czarną noc 1 × 1, żeby rzeźba była widoczna.
+ * `material.uniforms` powierzchni z opisu i map (kształt DirectPlanet + klucze generatora). `size` — szerokość map
+ * (domyślnie z mapy rzeźby). Planety z powierzchnią: rzeźba, detal, morze, ruiny (GEN_SOLID_UNIFORM_KEYS); olbrzymy:
+ * ruiny (unoszące się). Zmiana wartości ruin w biegu: `uniforms['uRuin' + (2i + 1)].value.x` (albo `setRuinValue` ciała).
  */
-export function planetSurfaceUniforms(spec, maps, { ringAnchored = false } = {}) {
+export function planetSurfaceUniforms(spec, maps, { ringAnchored = false, size = 0 } = {}) {
   const s = spec.surface;
   const hz = spec.haze;
   const gas = spec.kind === 'gas';
+  const W = size || maps.relief?.image?.width || maps.day?.image?.width || 2048;
+  const texKm = 2 * Math.PI * spec.rKm / W;
+  const rl = spec.relief || { normal: 0, shadow: 0, pen: 0.01, detail: 0, detailAlbedo: 0 };
+  const pal = spec.look.palette || {};
+  const sea = spec.type === 'terran' || spec.type === 'ocean';
+  const extra = {
+    reliefTexture: { value: maps.relief || null },
+    // R, kąt teksela, częstość pierwszej oktawy detalu (fala ~3 teksele), amplituda detalu [km]
+    uGsGeo: { value: new THREE.Vector4(spec.rKm, Math.PI / (W / 2), W / (6 * Math.PI), rl.detail * texKm * 0.03) },
+    uGsShade: { value: new THREE.Vector4(rl.normal, rl.shadow, rl.pen, rl.detailAlbedo) },
+    uGsSea: { value: new THREE.Vector4(sea ? 1 : 0, 0, 0, 0) },
+    uGsShallow: { value: new THREE.Vector3(...(pal.shallow || [0.1, 0.3, 0.35])) },
+    uGsOcean: { value: new THREE.Vector3(...(pal.ocean || [0.02, 0.08, 0.16])) },
+    uGsDeep: { value: new THREE.Vector3(...(pal.deep || [0.01, 0.03, 0.08])) },
+    uGsSeed: { value: new THREE.Vector4(...spec.seedOffset.map((v) => v * 0.37), spec.seedInt) },
+    uGsMisc: { value: new THREE.Vector4(0, 1, 0, 0) },
+    ...ruinUniforms(spec.ruins)
+  };
   return {
+    ...extra,
     uPlanetBloom: { value: s.bloom }, dayTexture: { value: maps.day },
     nightTexture: { value: gas ? null : (maps.night || GEN_BLACK_NIGHT) },
     specularTexture: { value: maps.spec || GEN_NO_SPEC }, normalTexture: { value: maps.normal || GEN_FLAT_NORMAL },
     sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, hasNightTexture: { value: gas ? 0.0 : 1.0 },
-    uBrightness: { value: s.bright }, uSpecular: { value: maps.spec ? s.specular : 0.0 }, uSunIntensity: { value: s.sunInt },
+    uBrightness: { value: s.bright }, uSpecular: { value: (maps.spec || sea) ? s.specular : 0.0 }, uSunIntensity: { value: s.sunInt },
     uHazeStrength: { value: hz.strength }, uHazeColor: { value: new THREE.Vector3(...hz.color) }, uHazeBeta: { value: new THREE.Vector3(...hz.beta) },
     uRingShadowStrength: { value: 0.0 }, uRingShadowRadius: { value: 0.0 }, uRingShadowReach: { value: 1.0 }, uRingShadowCenter: { value: new THREE.Vector2() },
     uSunShadowRecv: { value: ringAnchored ? 1.0 : 0.0 }, uPitMode: { value: 0.0 }, uBite: { value: new THREE.Vector4(9, 0, 0, 0) }
@@ -107,7 +142,7 @@ export function createGenPlanetBody(spec, baked, { segments = 160, halo = true }
     atmosphere = new GenGasAtmosphere(baked.gas, { uniforms: U, isRingAnchored: false, group: { scale: { x: 60000 } } }, null);
     material = createGenGasSurfaceMaterial(U);
   } else {
-    material = createPlanetSurfaceMaterial(U);
+    material = createGenSolidSurfaceMaterial(U);
   }
   const mesh = new THREE.Mesh(geo, material);
   group.add(mesh);
@@ -137,8 +172,14 @@ export function createGenPlanetBody(spec, baked, { segments = 160, halo = true }
       _sun.copy(dir).normalize().multiplyScalar(1e4).add(group.position);
       U.sunPosition.value.copy(_sun);
     },
+    /** Wartość ruin `i` (0 — przeszukane, gasną; 1 — pełne). */
+    setRuinValue(i, value) {
+      const r = U[`uRuin${i * 2 + 1}`];
+      if (r) r.value.x = Math.min(1, Math.max(0, value));
+    },
     /** Krok czasu (doba, chmury, atmosfera olbrzyma): dt [s], `rate` — tempo atmosfery. */
     step(dt, { spin = 0, cloudSpin = 0, rate = 1 } = {}) {
+      U.uGsMisc.value.x = (U.uGsMisc.value.x + dt) % 4096;
       mesh.rotation.y += spin * dt;
       if (clouds) clouds.rotation.y += (spin + cloudSpin) * dt;
       if (atmosphere) atmosphere.sync(dt * rate, dt);

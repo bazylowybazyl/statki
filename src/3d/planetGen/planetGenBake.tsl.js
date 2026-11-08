@@ -48,7 +48,7 @@ export const COMMON_DEFS = Object.freeze({
   uRes: 'vec4',      // W, H, 1/W, 1/H
   uGeo: 'vec4',      // R [km], teksel równika [km], —, —
   uOct: 'vec4',      // liczby oktaw: x — kształt, y — detal, z — grzbiety, w — chmury
-  uLevels: 'vec4',   // x — poziom morza [km] (0 — planety z wodą; bez wody −1e3), y — typowy szczyt lądu [km], z / w — wolne
+  uLevels: 'vec4',   // x — poziom morza [km] (0 — planety z wodą; bez wody −1e3), y — typowy szczyt lądu [km], z — 1: z wodą, w — wolne
   uQ: 'vec4',        // kwantyle kanału próby (pole .w) w ułamkach rodzaju (probeQ — np. udział oceanu, wydm, mórz)
   uQ2: 'vec4'        // q01, q99, min, max kanału próby
 });
@@ -90,12 +90,16 @@ export function bakeMaterial(name, fragmentNode) {
   return m;
 }
 
-// ── NORMALNE (wspólne) ─────────────────────────────────────────────────────────────────────────────────────────────
-// Nachylenie z różnic centralnych wysokości [km] na prawdziwych odległościach (teksel na wschód 2πR cos φ / W, na
-// północ πR / H) × przesadzenie rzeźby `uNorm.x`; pod poziomem morza płasko (tafla), `uNorm.y` = 1 — z wodą.
-export const NORMAL_DEFS = Object.freeze({ ...COMMON_DEFS, uNorm: 'vec4' });
-export function buildNormalGraph(F) {
-  const U = bakeUniforms(NORMAL_DEFS);
+// ── RZEŹBA (wspólna; RGBA16F) ─────────────────────────────────────────────────────────────────────────────────────
+// Mapa rzeźby dla materiału powierzchni generatora (planetGenSurface.tsl.js): x — wysokość [km] (planety z wodą:
+// 0 = poziom morza), y / z — nachylenie dh/d(wschód), dh/d(północ) [km/km] z operatora Sobela 3 × 3 na prawdziwych
+// odległościach (teksel na wschód 2πR cos φ / W, na północ πR / H), w — szorstkość 0…1 (siła detalu dokładanego
+// w shaderze ponad rozdzielczość mapy). Bez przesadzenia i bez przycinania: materiał przesadza rzeźbę sam i liczy cień
+// terenu, a połówki (nie 8 bitów) nie dają schodków na łagodnych stokach. Mipmapy średniej nachylenia = nachylenie
+// średniej wysokości. uRel: x — szorstkość bazowa, y — przyrost z nachyleniem, z — przyrost przy brzegu (planety z wodą).
+export const RELIEF_DEFS = Object.freeze({ ...COMMON_DEFS, uRel: 'vec4' });
+export function buildReliefGraph(F) {
+  const U = bakeUniforms(RELIEF_DEFS);
   const node = Fn(() => {
     const C = bakeCoords(U);
     const hC = fieldAt(F, U, C.ix, C.iy).x;
@@ -106,23 +110,16 @@ export function buildNormalGraph(F) {
     const cosLat = max(cos(C.lat), U.uRes.w.mul(PI)).toVar();
     const R = U.uGeo.x;
     const dE = gx.div(R.mul(2 * PI).mul(cosLat).mul(U.uRes.z));
-    const dN = gy.div(R.mul(PI).mul(U.uRes.w));
-    // nachylenie przycięte (uNorm.z — największe |∇h|·przesadzenie): bez tego stoki kraterów i gór świecą daleko za
-    // terminatorem (graf gry liczy światło z normalnej mapy bez samocienia)
-    const g = vec2(dE, dN).mul(U.uNorm.x).toVar();
-    g.mulAssign(min(float(1.0), U.uNorm.z.div(max(length(g), 1e-6))));
-    const n = normalize(vec3(g.x.negate(), g.y.negate(), 1.0)).toVar();
-    // tafla wody (miękko przy brzegu)
-    const sea = U.uLevels.x;
-    const dry = select01(U.uNorm.y, smoothstep(sea.sub(0.04), sea.add(0.02), hC));
-    n.assign(normalize(mix(vec3(0, 0, 1), n, dry)));
-    return vec4(n.mul(0.5).add(0.5), 1.0);
+    // wiersz y rośnie ku POŁUDNIOWI (v = 0 u góry = biegun N) — północ to −y
+    const dN = gy.div(R.mul(PI).mul(U.uRes.w)).negate();
+    const slope = length(vec2(dE, dN));
+    const coast = exp(hC.mul(hC).mul(-12.0)).mul(step(0.5, U.uLevels.z));
+    const rough = clamp(U.uRel.x.add(slope.mul(U.uRel.y)).add(coast.mul(U.uRel.z)), 0.0, 1.0);
+    return vec4(hC, dE, dN, rough);
   })();
-  return { U, material: bakeMaterial('PlanetGenNormal', node) };
+  return { U, material: bakeMaterial('PlanetGenRelief', node) };
 }
 const inv01 = (lo, hi, x) => float(1.0).sub(smoothstep(lo, hi, x));
-// 1 gdy flaga < 0,5 (bez wody), inaczej wartość
-function select01(flag, v) { return mix(float(1.0), v, step(0.5, flag)); }
 
 // ── POŁYSK (wspólny, pół rozdzielczości) ──────────────────────────────────────────────────────────────────────────
 // R = maska połysku grafu gry (woda: smoothstep(0,08; 0,82; R) → połysk i ostrość odblasku). uSpec: x — woda,

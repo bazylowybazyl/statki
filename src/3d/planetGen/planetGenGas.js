@@ -18,6 +18,7 @@ import {
 } from '../gasGiantAtmosphere.js';
 import { createGasGiantFlowDayColor } from '../gasGiantAtmosphere.tsl.js';
 import { registerPlanetFlowKind, PlanetBodyNodeMaterial } from '../planet3d.assets.tsl.js';
+import { PerObjectUniformArrayNode, genObjectTexture, tinyTexture } from './planetGenNodes.js';
 
 export const GEN_GAS_RADIUS = 70e6;   // [m] — wspólny promień modelu obrazu
 export const GEN_GAS_BAND_CAP = 48;
@@ -47,44 +48,9 @@ export const GEN_GAS_ATM_TUNE = {
   zoomLag: 0.4
 };
 
-// ── Węzły per obiekt ──────────────────────────────────────────────────────────────────────────────────────────────
-class PerObjectUniformArrayNode extends THREE.UniformArrayNode {
-  static get type() { return 'PerObjectUniformArrayNode'; }
-  constructor(key, cap) {
-    super(Array.from({ length: cap }, () => new THREE.Vector4()), 'vec4');
-    this.objectKey = key;
-    this.updateType = THREE.NodeUpdateType.OBJECT;
-    this._fallback = this.array;
-  }
-  update(frame) {
-    const v = frame?.material?.uniforms?.[this.objectKey]?.value;
-    this.array = (Array.isArray(v) && v.length === this._fallback.length) ? v : this._fallback;
-    super.update(frame);
-  }
-}
-
-class GenGasObjectTextureNode extends THREE.TextureNode {
-  static get type() { return 'GenGasObjectTextureNode'; }
-  get updateType() { return THREE.NodeUpdateType.OBJECT; }
-  set updateType(_v) { /* stałe OBJECT */ }
-  update(frame) {
-    const value = frame.material?.uniforms?.[this.objectKey]?.value;
-    this.value = (value && value.isTexture === true) ? value : this.objectFallback;
-  }
-  clone() {
-    const node = super.clone();
-    node.objectKey = this.objectKey;
-    node.objectFallback = this.objectFallback;
-    return node;
-  }
-}
+// ── Węzły per obiekt (planetGenNodes.js) ──────────────────────────────────────────────────────────────────────────
 function windFallback() {
-  const t = new THREE.DataTexture(new Uint16Array([0, 0, 0, 15360]), 1, 1, THREE.RGBAFormat, THREE.HalfFloatType);
-  t.minFilter = THREE.LinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  t.generateMipmaps = false;
-  t.needsUpdate = true;
-  return t;
+  return tinyTexture(new Uint16Array([0, 0, 0, 15360]), THREE.HalfFloatType);
 }
 
 // ── Model grafu (jeden dla wszystkich planet generatora) ─────────────────────────────────────────────────────────
@@ -99,11 +65,7 @@ class GenGasGraphModel extends GasGiantModel {
   }
   windTexture() {
     if (!this._windTex) {
-      const fb = windFallback();
-      const n = new GenGasObjectTextureNode(fb, null);
-      n.objectKey = GEN_GAS_DATA_KEYS.wind;
-      n.objectFallback = fb;
-      this._windTex = n;
+      this._windTex = genObjectTexture(GEN_GAS_DATA_KEYS.wind, windFallback());
     }
     return this._windTex;
   }

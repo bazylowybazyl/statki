@@ -54,7 +54,7 @@ try {
     await waitFor(cdp, 'window.__gen.ready()', 600000, 300);
     await shot(`zblizenie-${t}-${s}`);
     if (args.mapy) {
-      for (const m of ['day', 'normal', 'spec', 'night', 'clouds']) {
+      for (const m of ['day', 'relief', 'spec', 'night', 'clouds']) {
         const b64 = await ev(`window.__gen.mapPng('${m}', -1, 2048)`);
         if (b64) writeFileSync(join(out, `mapa-${t}-${s}-${m}.png`), Buffer.from(b64, 'base64'));
       }
