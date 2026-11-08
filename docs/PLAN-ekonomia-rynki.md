@@ -564,3 +564,9 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Poprawka: odkup tej samej klasy, ryzyko kadłuba 0,4 we frachcie, do 4 zakupów na cykl. Wariant długi bramki: `--godziny N`.
   - Na gałęzi bramka 4 h zaliczona. Po scaleniu z main (W5–W6) NIE: ziarno 7 ma kolejkę Wenus 2,02 > 2, reszta zalicza.
   - Do main nie weszło. Sesja poprawia przepustowość portów (Wenus, Ziemia w biegu 12 h), potem bilans stali (huty sprzedają nadwyżkę dopiero od 70% magazynu; stal po 10 h ~60% stanu z 2–4 h).
+- 2026-11-08 koniec zaniku gospodarki w `main` (d75a6050).
+  - Flota: odkup tej samej klasy, ryzyko kadłuba we frachcie, do 4 zakupów na cykl.
+  - Stal: plan liczył przetop złomu na Marsie jako największe źródło stali (waga 2,90), a złomu brak. Wsad bez stałego źródła (`UNPLANNED_INPUTS`) nie wchodzi już do podaży planu, a pokrycie stali samymi hutami z rudy wzrosło z 0,927 do 1,052.
+  - Bramka 4 h razem z W5–W6 zaliczona: przechwyty 14,6–15,4%, kolejka ≤ 1,52, tick ≤ 11 ms. Wariant długi 12 h (na gałęzi): stal 106%, kursy 133–141%, obsada 100%, ładowność 98–100%. `npm test` 1961.
+  - Notatka: `docs/POMIAR-zanik-gospodarki-2026-11-08.md`.
+  - Zostaje: kolejki w biegu 12 h (Wenus 8–9, Ziemia do 9,5; ruch po 7. h +40%) — sesja robi przepustowość portów — i głód kryjówek (O₂, stal; tak samo w bazie).
