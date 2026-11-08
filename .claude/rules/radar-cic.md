@@ -4,6 +4,7 @@ paths:
   - "src/ui/cicDisplay.js"
   - "src/ui/cicBeltLayer.js"
   - "src/ui/cicTradeLayer.js"
+  - "src/ui/cicCoverageLayer.js"
   - "dema/radar-taktyczny.html"
 ---
 
@@ -50,6 +51,10 @@ paths:
 - Warstwa „HANDEL” (`src/ui/cicTradeLayer.js`, w `CICDisplay.draw` po podpisach pasów, panel pod panelem informacyjnym): w CIC klawisz H (akcja `cic.trade`, kontekst `cic`, w `KEYDOWN_ORDER` przed zwiadem i dronem — H poza CIC zostaje ich). Pokazuje AGREGAT z warstwy rekordów ruchu v2, nie statki: trasy z ładunkiem w powietrzu (grubość ~√ton, barwa = kategoria głównego towaru, grot przy odbiorcy, podpis „towar · tony · kursy” dla 8 największych), przy portach stemple ▼ najtańszy zakup / ▲ najlepszy skup (cena z oferty portu — ta sama co w terminalu stacji), panel „KOMPUTER HANDLOWY” (kursy, tony w drodze, najgęstsze trasy, OKAZJE dla ładowni 380 j. z `findTradeOpportunities`, urobek pasa w drodze).
 - Dane NA ŻĄDANIE: `CICDisplay.setTradeSource(fn)` (w grze `trafficV2.requestTradeSummary()` → `trade-summary` w workerze, `summarizeTrade` z `src/game/traffic/tradeSummary.js`), co `CIC_TRADE_TUNE.refreshMs` (2 s czasu rzeczywistego) i tylko przy włączonej warstwie — worker nie liczy agregatu co tick. Bez ruchu v2 (`?trafficV2=0`) warstwa jest pusta.
 - Rysunek jak reszta CIC: ≤ 40 linii, napisy ze stempli (`maxStamps`), panel pieczony przy nowych danych; cały blok w `try/catch` (błąd raz do konsoli — wyjątek w CIC zatrzymuje pętlę gry). Stan `CICDisplay.tradeStats()`, przełącznik `CICDisplay.toggleTrade()`. Test `tests/graczNaRynku.test.mjs`, harness `node scripts/webgpu/rynek-gra.mjs --query renderWorker=1` (zrzuty `cic-handel*.png`).
+
+## Mapa CIC: zasięgi radarów (prototyp ?radarZasiegi, 2026-11-04)
+
+- Warstwa „ZASIĘGI” (`src/ui/cicCoverageLayer.js`, klawisz Z — akcja `cic.coverage`, w `KEYDOWN_ORDER` przed `wpn.fighters`, bramka `CICDisplay.coverageAvailable`): strefy znanych radarów wroga (suma kół — jeden kontur 1 px na skupisko, podpis na szczycie), ocena obustronna gracz ↔ wróg (ten sam wygląd co w świecie), własne czujniki; panel pod panelem handlu. Dane: obraz czujników z gry przez `CICDisplay.setCoverageSource` — tylko z flagą prototypu; bez źródła warstwa milczy. Opis obszaru: reguła `zasieg-czujnikow`.
 
 ## Mapa CIC: TRAVEL TO przyciąga do celu (DECYZJE-2 T1, 2026-10-26)
 

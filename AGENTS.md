@@ -104,7 +104,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 ## Częste zadania
 
-- Nowy kadłub: `HULL_RENDER_PROFILES` (`src/data/ships.js`), `HULL_SPRITE_PATHS_BY_ID` i `getNpcHullRenderProfileId` (`index.html`), gniazda w `src/data/hardpointEditorDefaults.js` (kadłub gracza spoza kluczy edytora — `EDITOR_HULL_KEY_BY_PLAYER_ID`, strażnik `tests/playerEditorKey.test.mjs`), dysze MAIN w `ENGINE_FX_DEFAULTS` (`src/data/engineFx.js`), mostek wg `docs/BRIEF-mostek-nowego-kadluba.md` (flota TN — strefa = obrys modelu poziomu klasy w miejscu gniazda `bridge` v 2 presetu kreatora, `src/data/bridgeLevels.js`), rdzeń reaktora — marker w `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`: komora `r`, obudowa nad kadłubem `hr`, poza wieżami i mostkami; kadłub z presetem kreatora — miejsce z presetu, reguła `mostki-reaktor`), obrys 3D (`node scripts/webgpu/obrysy-floty.mjs`).
+- Nowy kadłub: `HULL_RENDER_PROFILES` (`src/data/ships.js`), `HULL_SPRITE_PATHS_BY_ID` i `getNpcHullRenderProfileId` (`index.html`), gniazda w `src/data/hardpointEditorDefaults.js` (kadłub gracza spoza kluczy edytora — `EDITOR_HULL_KEY_BY_PLAYER_ID`, strażnik `tests/playerEditorKey.test.mjs`), dysze MAIN w `ENGINE_FX_DEFAULTS` (`src/data/engineFx.js`), mostek wg `docs/BRIEF-mostek-nowego-kadluba.md` (flota TN — strefa = obrys modelu poziomu klasy w miejscu gniazda `bridge` v 2 presetu kreatora, `src/data/bridgeLevels.js`), światła nawigacyjne (`node scripts/lampy-nawigacyjne.mjs --zapisz`, reguła `swiatla-nawigacyjne`), rdzeń reaktora — marker w `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`: komora `r`, obudowa nad kadłubem `hr`, poza wieżami i mostkami; kadłub z presetem kreatora — miejsce z presetu, reguła `mostki-reaktor`), obrys 3D (`node scripts/webgpu/obrysy-floty.mjs`).
 - Nowa broń: `MASTER_WEAPONS` (`src/data/weapons.js`: `recoil`, `shake`, zasięg w paśmie swojej roli — reguła `bron-gracza`), `WEAPON_FX` (`src/3d/weapons/weaponFxTable.js`), klucz wieżyczki (`FX_PROFILE` w `src/vfx/turret2D.js`), rodzina 3D (`FAMILIES` w `src/3d/ships3d/weapons/weapons3D.js`).
 - Nowa misja: skrypt w `src/game/story/missions/` + kwestie w `src/data/story/`; gry dotyka tylko przez `api` z `src/game/story/storyGame.js` (reguła `fabula`).
 - Nowy typ skały pasa, nowy system F, nowa rola myśliwca, nowa formacja: lista kontrolna w regule obszaru (`pas-asteroid`, `systemy-f`, `mysliwce`, `flota-ai`).
@@ -175,12 +175,14 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `silniki` | Silniki MAIN / WARP / SIDE, zapłon i gaszenie |
 | `drony-naprawcze` | Rój dronów naprawczych (R) |
 | `roj-przeladunkowy` | Rój dronów przeładunkowych (demo) |
+| `autostrada` | Autostrada wokół Ziemi (demo, niewpięte): sieć węzłów, ruch IDM i sygnalizacja K-7, Atlas na czerwonym, style wyglądu pasów, ślady z historii pozycji |
 | `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `mgla-wojny` | Mgła wojny |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
+| `zasieg-czujnikow` | Zasięg czujników (radarów) jak w Starsectorze: czujniki × sygnatura × osłona, KONTAKT / IDENTYFIKACJA, suma stref radarów, obraz czujników z gry, prototyp `?radarZasiegi` (ocena obustronna: wachlarz / struna / błona, warstwa ZASIĘGI w CIC, scena), demo 2D propozycji |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |
 | `menu` | Menu główne i jego tło 3D |
@@ -188,5 +190,6 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `stacje` | Stacje i obiekty świata 3D, rozpad stacji, siatka infrastruktury stacji (edytor) |
 | `modele-3d` | Modele 3D statków i broni, bronie z Blendera, kamery 3D |
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |
+| `swiatla-nawigacyjne` | Światła nawigacyjne: sześć lamp na każdym kadłubie, „blink blink” czerwono-zielone, oświetlanie tylko w błysku, style (żółte ostrzegawcze), migracja zapisu edytora |
 | `wejscie` | Warstwa wejścia, pad, skróty klawiszowe |
 | `electron-wydanie` | Electron, paczka i wydanie |

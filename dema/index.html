@@ -100,6 +100,7 @@ const GROUPS = [
     ['render-worker-proto.html', 'Render w workerze — prototyp RW-02'],
   ]],
   ['Ringi, porty i budowle', [
+    ['autostrada.html', 'Autostrada wokół Ziemi — style pasów, węzły, sygnalizacja, Atlas na czerwonym'],
     ['hangar-ring.html', 'Dok K-7 — wcięcie pierścienia'],
     ['orbital_ring_demo.html', 'ECUMENE / Orbital Ring'],
     ['orbital_ring_demo_2.html', 'Orbital Ring — habitat'],
@@ -150,6 +151,7 @@ const GROUPS = [
     ['prototyp kokpit.html', 'Kokpit v2 — prototyp'],
     ['radar.html', 'CIC — radar'],
     ['radar-taktyczny.html', 'Radar taktyczny kokpitu — H-UP, ślady, teren, skan'],
+    ['radar-zasiegi.html', 'Zasięg radarów — 5 propozycji map (w grze: ?radarZasiegi=scena)'],
     ['fitowanie-koncept.html', 'Wyposażenie — karty konfiguracji i refit ręczny (makieta)'],
     ['targeting-system-prototype.html', 'System celowania'],
     ['celownik/celownik.html', 'Celownik — namierzanie'],
@@ -175,7 +177,8 @@ for (const [title, demos] of GROUPS) {
     a.className = 'demo';
     a.href = new URL(file.split('/').map(encodeURIComponent).join('/'), base).href;
     a.dataset.q = (name + ' ' + file).toLowerCase();
-    const gpu = /webgpu/i.test(file) || file === 'halo_ring_demo.html' || file === 'kontenery.html' || file === 'mapa-gwiezdna.html';
+    const gpu = /webgpu/i.test(file) || file === 'halo_ring_demo.html' || file === 'kontenery.html' || file === 'mapa-gwiezdna.html'
+      || file === 'autostrada.html';
     a.innerHTML = `<div class="name"></div><div class="file"></div>`;
     a.firstChild.textContent = name;
     if (gpu) a.firstChild.insertAdjacentHTML('beforeend', '<span class="tag">WebGPU</span>');

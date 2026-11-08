@@ -940,7 +940,7 @@
       npcCollidesWithWorld,
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
-    import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
+    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange } from "./src/ai/fleetAwareness.js";
     import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
     import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
@@ -1445,7 +1445,11 @@
     import { createSparkEvents } from "./src/game/sparkEvents.js";
     const GameSparks = createSparkEvents(RenderCommands.writer);
     setCollisionSparkSink(GameSparks);
-    import { SensorSystem } from "./src/game/sensorSystem.js";
+    import { SensorSystem, getEntitySizeModifier } from "./src/game/sensorSystem.js";
+    // Zasięg radarów — prototyp ?radarZasiegi (docs/PLAN-zasieg-czujnikow.md): obraz czujników, fale w świecie, scena.
+    import { createSensorPicture, updateSensorPicture, noteSensorPictureFire, noteSensorPicturePing, sensorStateOf } from "./src/game/sensorPicture.js";
+    import { DETECTION_TUNE, SENSOR_DRIVE } from "./src/game/sensorDetection.js";
+    import { createRadarRangeOverlay, nextRadarLook, RADAR_LOOK_LABELS, setRadarLook } from "./src/ui/radarRangeOverlay.js";
     import { loadFogOption, saveFogOption, formatMassEstimate } from "./src/game/fogOfWar.js";
     import { createFogHud } from "./src/ui/fogHud.js";
     window.SensorSystem = SensorSystem;
@@ -1549,7 +1553,8 @@
       getHullRenderSize,
       getWeaponTierForHull,
       HULL_RENDER_PROFILES,
-      HULL_RENDER_WORLD_SCALE
+      HULL_RENDER_WORLD_SCALE,
+      SHIP_SENSOR_PROFILES
     } from "./src/data/ships.js";
     import {
       PLAYER_HULL_MARKET,
@@ -1628,6 +1633,7 @@
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { migratePirateSpriteLayout } from "./src/data/pirateSpriteMigration.js";
+    import { restyleNavLights } from "./src/data/shipNavLights.js";
     import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
     import { buildEntityEngineFx, resolveEngineFx } from "./src/data/engineFx.js";
     import {
@@ -12700,10 +12706,237 @@
       };
     }
 
+    // ============================================================
+    // ZASIĘG RADARÓW — PROTOTYP (?radarZasiegi, 2026-11-04; docs/PLAN-zasieg-czujnikow.md, reguła zasieg-czujnikow).
+    // Obraz czujników (src/game/sensorPicture.js) liczony z gry ~5 Hz: czujniki × sygnatura × osłona, wiedza strony
+    // gracza o radarach wroga (identyfikacja = mgła wojny), strefy dla UI. Rysunek: fale i znaczniki w świecie
+    // (src/ui/radarRangeOverlay.js), warstwa ZASIĘGI w CIC ([Z]). Rozgrywki NIE zmienia — AI i mgła liczą jak dotąd.
+    // Scena: ?radarZasiegi=scena (start gry swobodnej) albo DevScene.radar() / RadarZasiegi.scena() z konsoli.
+    // ============================================================
+    const RADAR_RANGE_QUERY = new URLSearchParams(location.search);
+    const RADAR_RANGE_PROTO = RADAR_RANGE_QUERY.has('radarZasiegi');
+    // Cicha praca gracza — w prototypie tylko z konsoli (RadarZasiegi.cisza()); decyzja o umiejętności: plan § 5.
+    let radarRangeSilent = false;
+    const radarRangeAdapters = {
+      alive(e) {
+        return !!e && !e.dead && !e.destroyed && !e.removed && !e.warpedOut && !e.isWreck && !e._destroyed3D
+          && e.isCollidable !== false;
+      },
+      sideOf(e) {
+        if (e === ship || e.friendly === true || e.playerOwned === true) return 'friendly';
+        if (e.isPirate === true || isEntityHostileToPlayer(e)) return 'pirate';
+        return null;
+      },
+      isStation(e) { return !!e.isStation; },
+      posOf(e, out) {
+        out.x = Number(e.pos?.x ?? e.x) || 0;
+        out.y = Number(e.pos?.y ?? e.y) || 0;
+        return out;
+      },
+      passiveOf(e) { return resolveAwarenessSensorRange(e); },
+      activeOf(e, passive) { return (e.sensors || e.sensorProfile) ? resolveShipSensors(e).activeRange : passive * 1.2; },
+      baseSigOf(e) { return getEntitySizeModifier(e); },
+      visionOf(e) { return SensorSystem.visionRangeOf(e); },
+      // Osłona przy celu: gęste pole pasa asteroid (pole gry — sampleMacro), obrzeże pola.
+      coverAt(x, y) {
+        const C = DETECTION_TUNE.cover;
+        const f = beltWorld?.field;
+        if (!f || typeof f.sampleMacro !== 'function') return C.open;
+        const m = f.sampleMacro(x, y);
+        const dense = (Number(m?.cluster) || 0) * (Number(m?.hole ?? 1) || 0);
+        if (dense > 0.35) return C.belt;
+        if ((Number(m?.weight) || 0) > 0.3 || (Number(m?.rim) || 0) > 0.3) return C.beltRim;
+        return C.open;
+      },
+      identified(e) { return !SensorSystem.hides(e); },
+      cloaked(e) { return isCloakHidden(e); },
+      writeState(e, s, isPlayer) {
+        s.thrust = clamp(Number(e.thrusterInput?.main) || 0, 0, 1) * engineThrustScale(e) * mainEngineFraction(e);
+        if (isPlayer) {
+          s.drive = (warp.state !== 'idle' || warp.exitRamp?.active) ? SENSOR_DRIVE.warp
+            : (hyperLook.state === 'active' || ship.__hyperMode === 'active') ? SENSOR_DRIVE.hyper
+              : boost.state === 'active' ? SENSOR_DRIVE.boost : SENSOR_DRIVE.combat;
+          s.silent = radarRangeSilent;
+        } else {
+          s.drive = SENSOR_DRIVE.combat;
+        }
+      }
+    };
+    const sensorPicture = RADAR_RANGE_PROTO ? createSensorPicture(radarRangeAdapters) : null;
+    const radarRangeOverlay = RADAR_RANGE_PROTO ? createRadarRangeOverlay() : null;
+    // Wygląd oceny obustronnej: ?radarWyglad=wachlarz|struna|blona, klawisz ], RadarZasiegi.wyglad(nazwa).
+    if (RADAR_RANGE_PROTO && RADAR_RANGE_QUERY.has('radarWyglad')) setRadarLook(RADAR_RANGE_QUERY.get('radarWyglad'));
+    const _rrWorld = { player: null, npcs: null, stations: null, extraSources: () => SensorSystem.getSensorSources() };
+    let _rrLastPing = 0;
+    if (sensorPicture) {
+      // Strzał zdradza strzelca (ciepło ostrzału — szyna strzałów gry; `d` jest wielokrotnego użytku, nie trzymać).
+      WeaponShotBus.on((d) => { if (d.shooter) noteSensorPictureFire(sensorPicture, d.shooter); });
+      CICDisplay.setCoverageSource(() => sensorPicture);
+    }
+    // Krok obrazu w kroku informacji klatki (po czujnikach i CIC); przebudowa co ~0,2 s czasu logiki.
+    function stepRadarRangePicture(dt) {
+      if (!sensorPicture || !gameStarted) return;
+      if (radarPingSerial !== _rrLastPing) {
+        _rrLastPing = radarPingSerial;
+        noteSensorPicturePing(sensorPicture, ship);
+      }
+      _rrWorld.player = ship;
+      _rrWorld.npcs = npcs;
+      _rrWorld.stations = stations;
+      updateSensorPicture(sensorPicture, dt, _rrWorld);
+    }
+    // Widok nakładki (bez alokacji na klatkę): rzut kamery tej klatki, poza renderu bytów, wymiary kadłuba w px.
+    const radarRangeView = {
+      W: 0, H: 0, zoom: 1, roll: 0, time: 0, alpha: 1, bottomInset: 0, vpX: 0, vpY: 0, vpW: 0, vpH: 0, cam: null, player: null, playerDestroyed: false, lastMs: 0,
+      project(x, y, out) { return worldToScreenInto(x, y, this.cam, out); },
+      screenAngle(a) { return screenAngleFor(a, this.cam); },
+      poseOf(e, out) {
+        const p = bridgeRenderPose(e);
+        if (p) { out.x = p.x; out.y = p.y; out.angle = p.angle; return true; }
+        out.x = Number(e.pos?.x ?? e.x) || 0;
+        out.y = Number(e.pos?.y ?? e.y) || 0;
+        out.angle = Number(e.angle) || 0;
+        return true;
+      },
+      hullHalf(e, out) {
+        getCicEntityScreenHalfExtents(e, this.zoom, out, this.roll);
+        if (!(out.hx > 0 && out.hy > 0)) out.hx = out.hy = Math.max(3, (Number(e.radius) || 20) * this.zoom);
+        return out;
+      }
+    };
+    // Zegar fal: czas KLATKI renderu (staje w pauzie i przy zamrożonym świecie) — zegar logiki (scanOverlayClock) rośnie
+    // tylko w klatkach z krokiem fizyki, przy 240 Hz fale szarpałyby co 4. klatkę.
+    let _rrRenderTime = 0;
+    let _rrRenderTimeFrame = -1;
+    function drawRadarRangeOverlay(cam, frameDt) {
+      if (!radarRangeOverlay || !sensorPicture) return;
+      const v = radarRangeView;
+      const t0 = performance.now();
+      // raz na klatkę (podzielony ekran woła nakładkę dwa razy)
+      if (_rrRenderTimeFrame !== window.__frameId) {
+        _rrRenderTimeFrame = window.__frameId;
+        if (!PAUSED && !StoryGame.worldFrozen) _rrRenderTime += Math.min(0.1, Math.max(0, Number(frameDt) || 0));
+      }
+      v.W = W; v.H = H; v.cam = cam; v.zoom = cam.zoom; v.roll = cameraRoll(cam);
+      v.bottomInset = Math.round(118 * (window.cockpitUI?.scale || 1)); // nad paskiem broni i kopułą (jak znaczniki kontaktów)
+      // prostokąt kadru (podzielony ekran); bufor getViewportForCamera jest wspólny — pola kopiowane od razu
+      const vp = getViewportForCamera(cam);
+      v.vpX = vp.x; v.vpY = vp.y; v.vpW = vp.w; v.vpH = vp.h;
+      v.time = _rrRenderTime;
+      v.alpha = _hudLensAlpha;
+      v.player = ship;
+      v.playerDestroyed = !!ship?.destroyed;
+      radarRangeOverlay.draw(ctx, sensorPicture, v);
+      v.lastMs = performance.now() - t0;
+    }
+
+    // Scena „zasięg radarów”: Atlas w pustej przestrzeni z eskortą; w kadrze czata piratów (2 fregaty, odsłonięta jak po
+    // zwiadzie — jej fale nie sięgają Atlasa), dalej radar Corvus i flota (KONTAKT — miejsce przybliżone, moc zgadnięta).
+    // Piraci uśpieni (bez walki — storySleepNpc). Kamera floty (G — powrót do lotu) między Atlasem a czatą, oddalona.
+    const RadarRangeScene = { active: false, spot: null, ids: [] };
+    function startRadarScene(opts = {}) {
+      if (WarScene.active) stopWarScene({ clear: false });
+      for (const n of npcs.slice()) if (n && !n.dead && n.mission && !n.isStation) dematerializeSupportUnit(n);
+      supportCallIns.clear();
+      warpTraffic.clear();
+      let spot;
+      if (Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
+        spot = { x: opts.x, y: opts.y };
+      } else {
+        const bodies = [...planets, ...(window.smallBodies || [])]
+          .filter((b) => b && Number.isFinite(b.x) && Number.isFinite(b.y))
+          .map((b) => ({ x: b.x, y: b.y, r: (Number(b.r) || 0) + 400000 }));
+        const s = pickDeepSpot(SUN, bodies, WAR_SCENE_DEFAULTS.deepRadius);
+        spot = { x: s.x, y: s.y };
+      }
+      if (warp.state !== 'idle') { warp.state = 'idle'; exitWarp({ abrupt: true }); }
+      warp.exitRamp = null;
+      stopPlayerWarpSlide();
+      if (typeof cancelTravel === 'function') cancelTravel(null);
+      ship.pos.x = spot.x; ship.pos.y = spot.y; ship.vel.x = 0; ship.vel.y = 0; ship.angle = 0; ship.angVel = 0;
+      const mk = (key, mode, dx, dy, ang) => {
+        const r = spawnCallInShip(key, { mode, spawnPos: { x: spot.x + dx, y: spot.y + dy }, spawnAngle: ang, exitK: 0 });
+        return (Array.isArray(r) ? r : [r]).filter(Boolean);
+      };
+      const west = Math.PI;
+      const escort = [...mk('frigate_pd', 'friendly', -2600, -2200, 0), ...mk('frigate_pd', 'friendly', -2600, 2200, 0)];
+      const czata = [...mk('frigate_pd', 'pirate', 30000, -2600, west), ...mk('frigate_laser', 'pirate', 31800, 2400, west)];
+      const corvus = mk('frigate_pd', 'pirate', 56000, -27000, west);
+      for (const n of corvus) { n.sensors = { ...SHIP_SENSOR_PROFILES.frigate_radar }; n.displayName = 'Corvus'; }
+      const fleet = [
+        ...mk('pirate_battleship', 'pirate', 88000, 15000, west),
+        ...mk('destroyer', 'pirate', 85000, 11000, west), ...mk('destroyer', 'pirate', 85000, 19000, west),
+        ...mk('frigate_pd', 'pirate', 83000, 8000, west), ...mk('frigate_pd', 'pirate', 83000, 22000, west)
+      ];
+      const pirates = [...czata, ...corvus, ...fleet];
+      for (const n of pirates) storySleepNpc(n);
+      // czata „po zwiadzie” — odsłonięta w mgle wojny (identyfikacja: prawdziwa moc radaru, symbole w świecie)
+      SensorSystem.revealArea('radarZasiegi-czata', spot.x + 30900, spot.y, 7500, Infinity);
+      RadarRangeScene.active = true;
+      RadarRangeScene.spot = spot;
+      RadarRangeScene.ids = pirates.concat(escort);
+      // kadr: najdalszy zoom gry; widok floty między Atlasem a czatą (kadr = statek: opts.kadr === 'statek')
+      camera.transition = null;
+      const spanW = Number(opts.viewWidth) || 46000;
+      camera.manualZoom = true;
+      camera.zoom = camera.targetZoom = camera.zoomBase = clamp(W / spanW, camera.minZoom, camera.maxZoom);
+      camera.zoomVel = 0;
+      camera.zoomImpulseLog = 0;
+      if (opts.kadr === 'statek') {
+        if (camera.mode === 'rts') setPlayerRtsMode(false);
+        camera.mode = 'ship';
+        camera.x = camera.targetX = spot.x; camera.y = camera.targetY = spot.y;
+      } else {
+        if (camera.mode !== 'rts') setPlayerRtsMode(true);
+        camera.x = camera.targetX = spot.x + 15500; camera.y = camera.targetY = spot.y;
+      }
+      prevCameraState.x = camera.x;
+      prevCameraState.y = camera.y;
+      if (sensorPicture) updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true);
+      return { x: Math.round(spot.x), y: Math.round(spot.y), escort: escort.length, czata: czata.length, corvus: corvus.length, fleet: fleet.length };
+    }
+    function stopRadarScene() {
+      SensorSystem.clearArea('radarZasiegi-czata');
+      for (const n of RadarRangeScene.ids) if (n && !n.dead) dematerializeSupportUnit(n);
+      RadarRangeScene.ids = [];
+      RadarRangeScene.active = false;
+      if (camera.mode === 'rts') setPlayerRtsMode(false);
+    }
+    if (RADAR_RANGE_PROTO) {
+      window.RadarZasiegi = {
+        picture: sensorPicture,
+        overlay: radarRangeOverlay,
+        view: radarRangeView,
+        scena(opts) { return startRadarScene(opts); },
+        stop() { stopRadarScene(); },
+        /** Przebudowa obrazu teraz (narzędzia, pomiar kosztu). */
+        przebuduj() { updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true); },
+        /** Cicha praca gracza (prototyp): sygnatura × 0,5, czujniki × 0,6. Bez argumentu — przełącza. */
+        cisza(on = !radarRangeSilent) { radarRangeSilent = !!on; return radarRangeSilent; },
+        /** Wygląd oceny obustronnej: 'wachlarz' | 'struna' | 'blona'; bez argumentu — następny. */
+        wyglad(nazwa) { return nazwa === undefined ? nextRadarLook() : setRadarLook(nazwa); },
+        stan() {
+          const P = sensorPicture;
+          if (!P?.ready) return null;
+          const pl = P.player;
+          return {
+            sygnatura: +pl.sigEff.toFixed(3), czujniki: Math.round(pl.strength), wykrytyZnane: pl.detectedKnown,
+            wykrytyPrawda: pl.detectedTrue, krawedz: Math.round(pl.edge.dist), wSrodku: pl.edge.inside,
+            radaryWroga: P.enemy.n, skupiska: P.enemy.clusterN, wlasne: P.own.n, wiedza: P.knowList.length,
+            kontakty: P.knowList.filter((k) => k.level === 1 && !k.ident).length,
+            zidentyfikowane: P.knowList.filter((k) => k.level === 2).length, ms: +radarRangeView.lastMs.toFixed(3)
+          };
+        }
+      };
+    }
+
     // Harness zrzutów portu WebGPU (scripts/webgpu/zrzuty.mjs) — tylko z ?dev, rozgrywki nie
     // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
     if (new URLSearchParams(location.search).has('dev')) {
       window.DevScene = Object.assign(window.DevScene || {}, {
+        // Zasięg radarów (prototyp ?radarZasiegi): Atlas, eskorta, czata piratów w kadrze, Corvus i flota poza wzrokiem.
+        radar(opts = {}) { return startRadarScene(opts); },
+        radarStop() { stopRadarScene(); },
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
         // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
@@ -19952,6 +20185,23 @@
         run() {
           const on = CICDisplay.toggleTrade();
           pushZoneMessage(on ? 'CIC: KOMPUTER HANDLOWY' : 'CIC: HANDEL UKRYTY', 1.5);
+          return GA_HALT;
+        }
+      },
+      // CIC otwarty, prototyp zasięgu radarów (?radarZasiegi): Z — warstwa „ZASIĘGI”; bez prototypu Z zostaje myśliwców.
+      'cic.coverage': {
+        gate: () => CICDisplay.active && CICDisplay.coverageAvailable,
+        run() {
+          const on = CICDisplay.toggleCoverage();
+          pushZoneMessage(on ? 'CIC: ZASIĘGI RADARÓW' : 'CIC: ZASIĘGI UKRYTE', 1.5);
+          return GA_HALT;
+        }
+      },
+      // Prototyp zasięgu radarów: ] — następny wygląd oceny obustronnej (wachlarz / struna / błona).
+      'radar.look': {
+        gate: () => RADAR_RANGE_PROTO && gameStarted,
+        run() {
+          pushZoneMessage(`ZASIĘG RADARÓW: ${RADAR_LOOK_LABELS[nextRadarLook()]}`, 1.5);
           return GA_HALT;
         }
       },
@@ -27293,6 +27543,8 @@
 
       // === CIC UPDATE ===
       CICDisplay.update(frameLogicDt, ship, npcs, stations, SensorSystem);
+      // Zasięg radarów — prototyp ?radarZasiegi (obraz czujników ~5 Hz; bez prototypu nic nie robi).
+      stepRadarRangePicture(frameLogicDt);
     } // koniec stepFrameInfo (skan/sensory/CIC)
 
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1, brainTick = -1, aiMaintDone = false, frameInfoDeferred = false) {
@@ -32340,6 +32592,12 @@
           scanOverlayView.cam = cam;
           scanOverlay.draw(ctx, scanOverlayView);
         }
+        // Zasięg radarów — prototyp ?radarZasiegi (src/ui/radarRangeOverlay.js): fale radarów i znaczniki w świecie;
+        // nad światem i zaznaczeniem, pod znacznikami krawędzi, celownikiem i CIC. Kamery 3D — pominięte.
+        if (radarRangeOverlay && gameStarted && !CICDisplay.active && !isMainMenuVisible() && !StoryGame.hudHidden
+          && !StoryGame.letterbox && !stationUI.open && _hudLensAlpha > 0.01 && !isView3DCamera(cam)) {
+          drawRadarRangeOverlay(cam, frameDt);
+        }
 
         // Stary hover-ring został usunięty; cele pokazują ramki celów priorytetowych i wroga przy kursorze
         // (blok „Celownik gracza”). Stacja nadal sygnalizuje klik kursorem.
@@ -34844,6 +35102,10 @@
         for (const key of Object.keys(warOpts)) if (warOpts[key] === undefined) delete warOpts[key];
         setTimeout(() => { try { startWarScene(warOpts); } catch (err) { console.error('[Wojna] start sceny:', err); } }, 1000);
       }
+      // Zasięg radarów (prototyp): ?radarZasiegi=scena — scena sekundę po wejściu do gry swobodnej.
+      if (RADAR_RANGE_QUERY.get('radarZasiegi') === 'scena' && !storyCampaign) {
+        setTimeout(() => { try { startRadarScene(); } catch (err) { console.error('[Zasięg radarów] start sceny:', err); } }, 1000);
+      }
     }
     if (newGameButton) {
       newGameButton.addEventListener('click', () => {
@@ -35231,6 +35493,11 @@
           window.splitScreenMode = true;
           if (mainMenuEl) mainMenuEl.classList.add('hidden');
           return startSplitScreenGame(p1, p2);
+        },
+        // Styl świateł nawigacyjnych encji z konsoli (src/data/shipNavLights.js): DevScene.navStyl('warning').
+        navStyl(name = 'warning', e = ship) {
+          e.editorLights = restyleNavLights(e.editorLights, name);
+          return e.editorLights;
         }
       });
     }

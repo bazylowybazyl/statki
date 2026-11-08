@@ -790,6 +790,8 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
     buildNavLightClusters(_one, _navOptions);
     for (let i = 0; i < _clusters.length; i++) {
       const c = _clusters[i];
+      // Lampa świeci tylko w błysku: poza nim bez światła w siatce.
+      if (!(c.pulse > 0.004)) continue;
       const intensity = nv.intensity * c.power * c.pulse * k;
       grid.add(c.x - ox, -(c.y - oy), nv.z, Math.max(nv.minRange, c.rangeWorld * nv.rangeMul),
         c.color.r * intensity, c.color.g * intensity, c.color.b * intensity, nv.scatter,
