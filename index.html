@@ -2184,6 +2184,19 @@
         this.masterGain.gain.value = vol;
         this.masterGain.connect(this.ctx.destination);
 
+        // Kontekst utworzony bez gestu gracza (nowa gra z menu pauzy startuje sama po przeładowaniu strony) przeglądarka
+        // zostawia w stanie „suspended” — wznowienie przy pierwszym kliknięciu albo klawiszu.
+        if (this.ctx.state === 'suspended') {
+          const ctx = this.ctx;
+          const events = ['pointerdown', 'keydown'];
+          const off = () => { for (const t of events) window.removeEventListener(t, resume, true); };
+          const resume = () => {
+            if (ctx.state !== 'suspended') { off(); return; }
+            ctx.resume().then(() => { if (ctx.state !== 'suspended') off(); }, () => { });
+          };
+          for (const t of events) window.addEventListener(t, resume, true);
+        }
+
         this.isInit = true;
         console.log("[AudioSys] Zainicjowano.");
       },
@@ -34928,6 +34941,8 @@
 
       if (continueButton) continueButton.classList.remove('hidden');
       if (optionsButton) optionsButton.disabled = false;
+      // w menu pauzy „Nowa gra” zaczyna od nowa przez przeładowanie strony (blok „NOWA GRA W TRAKCIE GRY”)
+      if (newGameButton) newGameButton.dataset.hint = 'Porzuca bieżącą grę i zaczyna nową (przeładowanie)';
 
       // Menu zjeżdża z ekranu (is-launching, ~0,6 s) — dopiero potem je chowamy.
       const launchWaitMs = 620 - (performance.now() - launchT0);
@@ -35473,14 +35488,57 @@
       setMenuView('gamemode');
     });
 
+    // ============== NOWA GRA W TRAKCIE GRY (menu pauzy) ==============
+    // `startGame` przy trwającej grze wychodzi od razu, a świata nie da się wyzerować w miejscu (NPC, wraki, fabuła,
+    // ekonomia w workerze ruchu, scena workera renderu) — dlatego „Nowa gra → tryb” w menu pauzy przeładowuje stronę
+    // (jak F5: `beforeunload` zapisuje fit, gracza i ekonomię) z jednorazowym znacznikiem w sessionStorage, a po
+    // przeładowaniu, gdy tło menu jest gotowe, gra sama klika wybrany tryb. Opcje panelu (kampania, samouczek, mgła
+    // wojny, statki 2D / 3D) są w localStorage, więc przechodzą przez przeładowanie; stary zapis kasuje sam start
+    // („Nowa gra” w każdym trybie — beginPlayerSaveSession / beginEconomySession w startGame).
+    const NEW_GAME_RELAUNCH_KEY = 'hullfall.newGameRelaunch';
+    const NEW_GAME_RELAUNCH_MAX_AGE_MS = 120000;
+    let newGameRelaunching = false;
+    function relaunchForNewGame(mode) {
+      if (newGameRelaunching) return;
+      newGameRelaunching = true;
+      try { sessionStorage.setItem(NEW_GAME_RELAUNCH_KEY, JSON.stringify({ mode, at: Date.now() })); } catch { }
+      fadeScreen(true, 260).then(() => location.reload());
+    }
+    /** Znacznik z poprzedniej strony: 'single' | 'split' albo null (zdejmowany przy odczycie — działa raz). */
+    function takeNewGameRelaunch() {
+      let req = null;
+      try {
+        req = JSON.parse(sessionStorage.getItem(NEW_GAME_RELAUNCH_KEY) || 'null');
+        sessionStorage.removeItem(NEW_GAME_RELAUNCH_KEY);
+      } catch { req = null; }
+      if (!req || (req.mode !== 'single' && req.mode !== 'split')) return null;
+      // stary znacznik (przeładowanie przerwane, karta odtworzona później) — bez samoczynnego startu
+      return Date.now() - Number(req.at) < NEW_GAME_RELAUNCH_MAX_AGE_MS ? req.mode : null;
+    }
+    const newGameRelaunchMode = takeNewGameRelaunch();
+    if (newGameRelaunchMode) {
+      const launchMode = () => {
+        if (gameStarted || gameLaunching) return;
+        document.getElementById(newGameRelaunchMode === 'split' ? 'btn-mode-split' : 'btn-mode-single')?.click();
+      };
+      // Jak klik gracza w menu: po starcie tła i zejściu kurtyny (~0,8 s). Słuchacz DOMContentLoaded zarejestrowany PO
+      // tym, który woła startMenuBackdrop() (blok tuż za initNPCs), więc `menuBackdrop` już jest; bez tła 3D — od razu.
+      const launchSoon = () => setTimeout(launchMode, 800);
+      const whenMenuReady = () => { if (menuBackdrop) menuBackdrop.onReady(launchSoon); else launchSoon(); };
+      if (document.readyState === 'complete') whenMenuReady();
+      else window.addEventListener('DOMContentLoaded', whenMenuReady, { once: true });
+    }
+
     // ============== GAME MODE BUTTON HANDLERS ==============
     document.getElementById('btn-mode-single')?.addEventListener('click', () => {
+      if (gameStarted) { relaunchForNewGame('single'); return; }
       splitScreenMode = false;
       window.splitScreenMode = false;
       setMenuView('home');
       startGame();
     });
     document.getElementById('btn-mode-split')?.addEventListener('click', () => {
+      if (gameStarted) { relaunchForNewGame('split'); return; }
       splitScreenMode = true;
       window.splitScreenMode = true;
       if (mainMenuEl) mainMenuEl.classList.add('hidden');
