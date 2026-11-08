@@ -45,7 +45,8 @@ const STATION_TABS = Object.freeze([
   { id: 'trade', label: 'HANDEL' },
   { id: 'cantina', label: 'KANTYNA' },
   { id: 'mechanic', label: 'WYPOSAŻENIE' },
-  { id: 'infrastructure', label: 'INFRASTRUKTURA' }
+  { id: 'infrastructure', label: 'INFRASTRUKTURA' },
+  { id: 'crew', label: 'KADRY' }
 ]);
 
 // Postawy skrzydła. Trzeci przycisk, POWRÓT, to jednorazowy rozkaz (skok tunelem na Ziemię —

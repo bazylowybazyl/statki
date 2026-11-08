@@ -20,6 +20,11 @@ import {
   industryBuildings, stationWorkforceNeed, populationRate, rotationPerCycle,
   workforceCapacity, workforceRatio, workforceEfficiency, workforceShipmentWorthIt
 } from '../../src/game/workforce.js';
+import { createTrafficCore } from '../../src/game/traffic/trafficCore.js';
+import { TRAFFIC_MSG, CREW_STRIDE, CREW_FIELD, MARKET_STRIDE, MARKET_FIELD } from '../../src/game/traffic/trafficProtocol.js';
+import { summarizeTrade, crewContractOffer, passengerFlow } from '../../src/game/traffic/tradeSummary.js';
+import { TrafficBridge } from '../../src/game/trafficBridge.js';
+import { describeWorkforce, perHourWorld } from '../../src/game/workforce.js';
 import { createSuite, runIfMain } from './harness.mjs';
 
 // Magazyn 180 osób (doc § 1.3 liczył 200 — stąd Luna 2469 i Fobos 1032 zamiast 2549 i 1112).
@@ -189,6 +194,78 @@ export function run() {
     return sum;
   };
   t.close('kopalnia przy obsadzie 0,6: 60% urobku', ore(60) / ore(100), 0.6, 1e-9);
+
+  t.section('10. Dane dla karty „Kadry” i CIC (W5)');
+  t.close('podaż ringu Ziemi: 168 tys. osób/h', perHourWorld(15.6, 60), 168480, 1e-6);
+  const offer = { sell: 50, buy: 10, wanted: true };
+  crewContractOffer({ workforce: { need: 100, rate: 0 } }, offer);
+  t.check('rynek pracy nie wydaje zatrudnionych (sprzedaż 0, skup bez zmian)', offer.sell === 0 && offer.buy === 10);
+  const fromSource = crewContractOffer({ workforce: { need: 100, rate: 3 } }, { sell: 50, buy: 0, wanted: true });
+  t.check('źródło wystawia kontrakty', fromSource.sell === 50);
+  const flow = { from: '', to: '', people: 0, returning: false };
+  t.check('kurs z ludźmi: od nadawcy do odbiorcy',
+    passengerFlow({ originId: 'earth', destinationId: 'venus', payload: { passengers: true, orderId: 'o1', units: 512 } }, flow)
+    && flow.from === 'earth' && flow.to === 'venus' && flow.people === 512 && !flow.returning);
+  t.check('powrót po kontrakcie: do domu, bez zlecenia',
+    passengerFlow({ originId: 'venus', destinationId: 'earth', payload: { passengers: true, returning: 300 } }, flow)
+    && flow.to === 'earth' && flow.people === 300 && flow.returning);
+  t.check('kurs z towarem to nie kurs z ludźmi', !passengerFlow({ payload: { resourceId: 'steel', units: 9 } }, flow));
+
+  // Rdzeń jak w workerze (bez wątku): tabela stacji z obsadą, bufor obsady w ticku, oferta w buforze rynku.
+  const inbox = [];
+  const core = createTrafficCore(message => inbox.push(message));
+  core.handle({ type: TRAFFIC_MSG.INIT, seed: 7, economyScale: 60, capacityMultiplier: 4, piracyPressure: 1, bubble: false });
+  const lastOf = type => { for (let i = inbox.length - 1; i >= 0; i--) if (inbox[i].type === type) return inbox[i]; return null; };
+  for (let i = 0; i < 360; i++) core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 5 });
+  const ready = lastOf(TRAFFIC_MSG.READY);
+  const tick = lastOf(TRAFFIC_MSG.TICK);
+  const table = ready?.stations || [];
+  const earthRow = table.find(e => e.id === 'earth');
+  const marsRow = table.find(e => e.id === 'mars');
+  t.close('tabela stacji: potrzeba Ziemi w osobach świata', earthRow?.workforce?.need, 68253, 68253 * 0.015);
+  t.close('tabela stacji: podaż Ziemi na godzinę', earthRow?.workforce?.perHour, 168480, 1);
+  t.check('Mars: dwa źródła (ring i strefy zielone)', marsRow?.workforce?.sources?.ring > 0 && marsRow?.workforce?.sources?.green > 0);
+  t.check('opuszczony Neptun bez obsady w tabeli', table.find(e => e.id === 'neptune')?.workforce === null);
+  t.check('tick niesie bufor obsady', tick?.crew instanceof Float64Array && tick.crew.length === table.length * CREW_STRIDE);
+  const crewAt = (id, field) => tick.crew[table.findIndex(e => e.id === id) * CREW_STRIDE + field];
+  let inboundAll = 0;
+  let outboundAll = 0;
+  for (let i = 0; i < table.length; i++) {
+    inboundAll += tick.crew[i * CREW_STRIDE + CREW_FIELD.INBOUND];
+    outboundAll += tick.crew[i * CREW_STRIDE + CREW_FIELD.OUTBOUND];
+  }
+  t.check(`ludzie w drodze: do portów = z portów (${Math.round(inboundAll)})`, inboundAll > 0 && Math.abs(inboundAll - outboundAll) < 1e-6);
+  t.check('wydajność zakładów Ziemi z ostatniego cyklu', crewAt('earth', CREW_FIELD.EFFICIENCY) > 0 && crewAt('earth', CREW_FIELD.EFFICIENCY) <= 1);
+  const resources = ready.resources;
+  const wfIndex = resources.indexOf('workforce');
+  const marketAt = (id, field) => tick.market[(table.findIndex(e => e.id === id) * resources.length + wfIndex) * MARKET_STRIDE + field];
+  t.check(`źródło (Ziemia) wystawia kontrakty: ${Math.round(marketAt('earth', MARKET_FIELD.SELL))} osób`, marketAt('earth', MARKET_FIELD.SELL) > 0);
+  t.check('rynek pracy (Wenus) nie wydaje ludzi', marketAt('venus', MARKET_FIELD.SELL) === 0);
+  t.check('rynek pracy przyjmuje kontrakty (skup ≥ 0)', marketAt('venus', MARKET_FIELD.BUY) >= 0);
+  t.check('kontrakt ma cenę (ask Ziemi > 0)', marketAt('earth', MARKET_FIELD.ASK) > 0);
+
+  const summary = summarizeTrade(core.world);
+  t.check(`komputer handlowy: ludzie w drodze (${summary.crew.people} os., ${summary.crew.courses} kursów)`,
+    summary.crew.courses > 0 && Math.abs(summary.crew.people - inboundAll) < 1e-6);
+  t.check('trasy pasażerskie osobno od towaru', summary.crew.routes.length > 0
+    && !summary.routes.some(route => route.main === 'workforce'));
+  const earthPort = summary.ports.find(port => port.id === 'earth');
+  t.check('port Ziemi: obsada i oferta kontraktów', earthPort?.crew?.need > 0 && earthPort.crew.source && earthPort.crew.ratio > 0.9);
+  t.check('kontrakty nie leżą między towarami portu', !summary.ports.some(port =>
+    port.buy.some(b => b.id === 'workforce') || port.sell.some(b => b.id === 'workforce')));
+
+  // Most: kopia rynku + bufor obsady → widok karty.
+  const bridge = new TrafficBridge({ useWorker: false });
+  bridge._onReady(ready);
+  bridge._onTick(tick);
+  const view = bridge.getWorkforce('earth');
+  t.close('most: ludzie na miejscu = zapas rynku', view?.stored, core.world.economies.get('earth').resources.workforce, 1e-6);
+  t.check('most: obsada Ziemi pełna, wydajność 1', view?.ratio > 0.95 && view.efficiency === 1);
+  t.close('most: rotacja na godzinę przy pełnej obsadzie', view?.rotationPerHour, view?.need * 3600 / WORKFORCE_CONTRACT_SECONDS, 1e-6);
+  t.check('most: źródła Ziemi — ring', view?.sources?.length === 1 && view.sources[0].id === 'ring');
+  const plain = describeWorkforce({ workforce: { need: 1000, perHour: 0, sources: {} } }, { resources: { workforce: 500 }, capacity: { workforce: 2000 } });
+  t.check('połowa obsady bez bufora: wydajność z krzywej (0,5)', plain.ratio === 0.5 && plain.efficiency === 0.5);
+  t.check('stacja spoza świata: brak widoku', bridge.getWorkforce('nie-ma') === null);
 
   return t.results;
 }

@@ -19,7 +19,7 @@
 
 import { RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor, PLANET_YIELD } from '../../data/resources.js';
 import { WORKFORCE_RESTOCK_FLOOR, WORKFORCE_SOURCE_SEED_FILL } from '../../data/workforce.js';
-import { stationWorkforceNeed, populationRate, workforceCapacity } from '../workforce.js';
+import { stationWorkforceNeed, populationRate, workforceCapacity, stationPopulation, perHourWorld } from '../workforce.js';
 import { FACTION } from '../../data/factions.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../../data/asteroidTypes.js';
 import { SYSTEM_MAP_PLANET_BY_ID, computeWorldUnitsPerAu } from '../../data/systemMap.js';
@@ -596,8 +596,25 @@ export function describeMarket(world, station) {
     derelict: !station.factionId,
     parentId: node?.parentId || null,
     hasPort: world.docks.has(station.id),
-    kind: world.markets.get(station.id)?.kind || null
+    kind: world.markets.get(station.id)?.kind || null,
+    workforce: describeStationWorkforce(world, station)
   };
+}
+
+/**
+ * Obsada rynku dla gry (W5, osoby świata): potrzeba N, podaż źródła na godzinę i jej rozbicie po
+ * źródłach (`POPULATION_SOURCE_LABEL`). `null` — rynek bez potrzeby i bez ludności (opuszczony).
+ * Zapas, kwatery i oferta kontraktów idą buforem rynku, ludzie w drodze — buforem obsady (`CREW_FIELD`).
+ */
+function describeStationWorkforce(world, station) {
+  const wf = station.workforce;
+  if (!wf || (!(wf.need > 0) && !(wf.rate > 0))) return null;
+  const scale = world.config.economyScale;
+  const sources = {};
+  for (const [id, perCycle] of Object.entries(stationPopulation(world.markets.get(station.id), Boolean(station.factionId)))) {
+    sources[id] = perHourWorld(perCycle, scale);
+  }
+  return { need: wf.need * scale, perHour: perHourWorld(wf.rate, scale), sources };
 }
 
 export { MARKET_KIND, MARKET_POSITION, DOCK_LAYOUT };

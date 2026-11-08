@@ -101,3 +101,10 @@ export const POPULATION_SOURCE_LABEL = Object.freeze({
   green: 'Strefy zielone',
   habitat: 'Habitat'
 });
+
+/**
+ * Progi obsady w UI (W5, PROPOZYCJA § 6.3): karta „Kadry” i warstwa HANDEL w CIC barwią port
+ * poniżej `WORKFORCE_UI_WARN_RATIO` na bursztynowo, poniżej `WORKFORCE_UI_ALERT_RATIO` na czerwono.
+ */
+export const WORKFORCE_UI_WARN_RATIO = 0.8;
+export const WORKFORCE_UI_ALERT_RATIO = 0.5;

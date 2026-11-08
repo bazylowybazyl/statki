@@ -131,6 +131,7 @@
         </div>
         <div class="station-content" id="station-content-area">
           <div id="tab-trade" class="station-tab hidden"></div>
+          <div id="tab-crew" class="station-tab hidden"></div>
           <div id="tab-cantina" class="station-tab hidden"></div>
           <div id="tab-hangar" class="station-tab hidden"></div>
           <div id="tab-mechanic-html" class="station-tab hidden"></div>
@@ -1600,6 +1601,11 @@
       getResourceValue,
       getBagMass
     } from "./src/data/resources.js";
+    // Obsada (workforce, E16 W5): progi barw karty „Kadry” i etykiety źródeł; widok liczy most (`getWorkforce`).
+    import {
+      WORKFORCE_UI_WARN_RATIO, WORKFORCE_UI_ALERT_RATIO, WORKFORCE_MIN_RATIO, WORKFORCE_CONTRACT_SECONDS,
+      POPULATION_SOURCE_LABEL
+    } from "./src/data/workforce.js";
     import {
       FIGHTER_LAUNCH,
       orderHangarTubes,
@@ -13646,6 +13652,8 @@
       { id: 'cantina', label: 'CANTINA', key: '3' },
       { id: 'mechanic', label: 'WYPOSAŻENIE', key: '4' },
       { id: 'infrastructure', label: 'INFRASTRUCTURE', key: '5' },
+      // Kadry (workforce, E16 W5): obsada portu i kontrakty rotacyjne — osobno od towarów karty „Handel”.
+      { id: 'crew', label: 'KADRY', key: '6' },
     ];
     const STATION_TERMINAL_TAB_IDS = STATION_TERMINAL_TABS.map(tab => tab.id);
     const STATION_TERMINAL_TAB_SET = new Set(STATION_TERMINAL_TAB_IDS);
@@ -15001,7 +15009,8 @@
       cantina: 'Kantyna',
       hangar: 'Hangar',
       mechanic: 'Wyposażenie',
-      infrastructure: 'Infrastruktura'
+      infrastructure: 'Infrastruktura',
+      crew: 'Kadry'
     };
     const STATION_TAB_CONFIG = STATION_TERMINAL_TABS.map(tab => ({
       id: tab.id,
@@ -15042,6 +15051,7 @@
       credits: document.getElementById('station-credits'),
       panels: {
         trade: document.getElementById('tab-trade'),
+        crew: document.getElementById('tab-crew'),
         cantina: document.getElementById('tab-cantina'),
         hangar: document.getElementById('tab-hangar'),
         mechanic: document.getElementById('tab-mechanic-html'),
@@ -15393,6 +15403,192 @@
       }
       card.appendChild(table);
       return card;
+    }
+
+    // ============================================================
+    // KADRY (workforce, E16 W5 — docs/PROPOZYCJA-workforce.md § 6.3)
+    // Obsada portu z mostu (`TrafficV2.getWorkforce`: potrzeba N, ludzie na miejscu, wydajność, rotacja,
+    // ludzie w drodze, źródła) i oferta kontraktów rotacyjnych — ta sama oferta portu co towar (bufor rynku,
+    // towar `workforce`: źródło wystawia kontrakty, rynek pracy je przyjmuje; cena z reputacją gracza).
+    // Ludzie nie leżą na liście towarów karty „Handel”. UI mówi o kontraktach, nigdy o „kupnie ludzi”.
+    // ============================================================
+
+    function crewRatioClass(ratio) {
+      if (!(ratio < WORKFORCE_UI_WARN_RATIO)) return '';
+      return ratio < WORKFORCE_UI_ALERT_RATIO ? 'is-alert' : 'is-warn';
+    }
+
+    function formatCrewPercent(value) {
+      return `${Math.round(Math.max(0, Number(value) || 0) * 100)}%`;
+    }
+
+    function buildCrewRow(table, label, field) {
+      const row = document.createElement('tr');
+      const head = document.createElement('td');
+      head.className = 'crew-stat-label';
+      head.textContent = label;
+      const cell = document.createElement('td');
+      cell.className = 'crew-stat-value';
+      cell.dataset.field = field;
+      row.append(head, cell);
+      table.appendChild(row);
+      return row;
+    }
+
+    function buildCrewCardShell(title, badge, description, className) {
+      const card = document.createElement('div');
+      card.className = `station-card-aero ${className}`;
+      const header = document.createElement('div');
+      header.className = 'card-header';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'card-title';
+      titleEl.textContent = title;
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'card-badge';
+      badgeEl.textContent = badge;
+      header.append(titleEl, badgeEl);
+      card.appendChild(header);
+      const desc = document.createElement('p');
+      desc.className = 'card-desc';
+      desc.textContent = description;
+      card.appendChild(desc);
+      return card;
+    }
+
+    function buildCrewPanel() {
+      const pane = stationOverlayDom.panels.crew;
+      if (!pane) return;
+      pane.innerHTML = '';
+
+      const staff = buildCrewCardShell('Obsada portu', 'Kadry',
+        `Zakłady, kopalnie, port i magazyny obsadzają ludzie na kontraktach rotacyjnych `
+        + `(${Math.round(WORKFORCE_CONTRACT_SECONDS / 60)} min). Przy niepełnej obsadzie produkcja spada, `
+        + `poniżej ${Math.round(WORKFORCE_MIN_RATIO * 100)}% obsady zakłady stoją.`, 'crew-card');
+      const headline = document.createElement('div');
+      headline.className = 'crew-headline';
+      headline.dataset.field = 'headline';
+      staff.appendChild(headline);
+      const bar = document.createElement('div');
+      bar.className = 'crew-bar';
+      const fill = document.createElement('div');
+      fill.className = 'crew-bar-fill';
+      fill.dataset.field = 'bar';
+      bar.appendChild(fill);
+      staff.appendChild(bar);
+      const stats = document.createElement('table');
+      stats.className = 'crew-stats';
+      buildCrewRow(stats, 'Wydajność zakładów', 'efficiency');
+      buildCrewRow(stats, 'Rotacja kontraktów', 'rotation');
+      buildCrewRow(stats, 'Kwatery', 'quarters');
+      buildCrewRow(stats, 'W drodze do portu', 'inbound');
+      buildCrewRow(stats, 'Czekają na prom do domu', 'leaving').dataset.row = 'leaving';
+      buildCrewRow(stats, 'Ośrodek ludności', 'sources').dataset.row = 'source';
+      buildCrewRow(stats, 'Wysłani z portu, w drodze', 'outbound').dataset.row = 'source';
+      buildCrewRow(stats, 'Wracają po kontrakcie', 'returning').dataset.row = 'source';
+      buildCrewRow(stats, 'Zakładnicy', 'hostages').dataset.row = 'hostages';
+      staff.appendChild(stats);
+      pane.appendChild(staff);
+
+      const contracts = buildCrewCardShell('Kontrakty rotacyjne', 'Rynek',
+        'Ośrodek ludności wystawia kontrakty, port z brakami obsady je przyjmuje — ta sama oferta, '
+        + 'z której korzystają przewoźnicy. Cena za osobę: niedobór, frakcja, reputacja.', 'crew-contracts-card');
+      const table = document.createElement('table');
+      table.className = 'trade-market-table crew-offer-table';
+      const head = document.createElement('tr');
+      for (const label of ['Oferta', 'Osób', 'Cena za osobę']) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        head.appendChild(th);
+      }
+      table.appendChild(head);
+      for (const [side, label] of [['sell', 'Port wystawia kontrakty'], ['buy', 'Port przyjmuje kontrakty']]) {
+        const row = document.createElement('tr');
+        row.dataset.crewOffer = side;
+        const labelCell = document.createElement('td');
+        labelCell.className = 'trade-resource-label';
+        labelCell.textContent = label;
+        const units = document.createElement('td');
+        units.className = 'trade-market-stock';
+        units.dataset.field = 'units';
+        const price = document.createElement('td');
+        price.className = 'trade-market-price';
+        price.dataset.field = 'price';
+        row.append(labelCell, units, price);
+        table.appendChild(row);
+      }
+      contracts.appendChild(table);
+      const note = document.createElement('div');
+      note.className = 'card-desc crew-offer-note';
+      note.dataset.field = 'note';
+      contracts.appendChild(note);
+      pane.appendChild(contracts);
+    }
+
+    function updateCrewCards(station) {
+      const pane = stationOverlayDom.panels.crew;
+      if (!pane) return;
+      const view = station ? (trafficV2?.getWorkforce?.(station.id) || null) : null;
+      const set = (field, text) => {
+        const el = pane.querySelector(`[data-field="${field}"]`);
+        if (el && el.textContent !== text) el.textContent = text;
+        return el;
+      };
+      const staffed = !!view && view.need > 0;
+      const headline = set('headline', !view ? 'Rynek stacji niedostępny'
+        : (staffed ? `Obsada ${formatCrewPercent(view.ratio)}: jest ${formatTradeUnits(view.staffed)} z ${formatTradeUnits(view.need)}`
+          : 'Port nie zatrudnia obsady'));
+      const tone = staffed ? crewRatioClass(view.ratio) : '';
+      if (headline) {
+        headline.classList.toggle('is-warn', tone === 'is-warn');
+        headline.classList.toggle('is-alert', tone === 'is-alert');
+      }
+      const bar = pane.querySelector('[data-field="bar"]');
+      if (bar) {
+        bar.style.width = `${Math.round((staffed ? view.ratio : 0) * 100)}%`;
+        bar.classList.toggle('is-warn', tone === 'is-warn');
+        bar.classList.toggle('is-alert', tone === 'is-alert');
+      }
+      const dash = '—';
+      set('efficiency', staffed ? formatCrewPercent(view.efficiency)
+        + (view.efficiency <= 0 ? ' — zakłady stoją' : (view.efficiency < 1 ? ' — produkcja dławiona' : '')) : dash);
+      set('rotation', staffed ? `${formatTradeUnits(view.rotationPerHour)} os./h` : dash);
+      set('quarters', view ? `${formatTradeUnits(view.stored)} / ${formatTradeUnits(view.capacity)}` : dash);
+      set('inbound', view ? `${formatTradeUnits(view.inbound)} os.` : dash);
+      set('leaving', view ? `${formatTradeUnits(view.leaving)} os.` : dash);
+      set('sources', view?.sources?.length
+        ? view.sources.map(src => `${POPULATION_SOURCE_LABEL[src.id] || src.id} ${formatTradeUnits(src.perHour)} os./h`).join(' · ')
+        : dash);
+      set('outbound', view ? `${formatTradeUnits(view.outbound)} os.` : dash);
+      set('returning', view ? `${formatTradeUnits(view.returning)} os.` : dash);
+      set('hostages', view ? `${formatTradeUnits(view.hostages)} os.` : dash);
+      pane.querySelectorAll('tr[data-row]').forEach(row => {
+        const kind = row.dataset.row;
+        const show = kind === 'source' ? !!view?.source
+          : (kind === 'hostages' ? view?.hostages > 0 : (kind === 'leaving' ? staffed && !view?.source : true));
+        row.classList.toggle('hidden', !show);
+      });
+
+      const offer = view ? getTradeOffer(station, 'workforce') : null;
+      pane.querySelectorAll('tr[data-crew-offer]').forEach(row => {
+        const side = row.dataset.crewOffer;
+        const units = row.querySelector('[data-field="units"]');
+        const price = row.querySelector('[data-field="price"]');
+        let unitsText = dash;
+        let priceText = dash;
+        if (offer && side === 'sell') {
+          unitsText = offer.sell > 0 ? formatTradeUnits(offer.sell) : (view.source ? 'brak wolnych' : 'nie wystawia');
+          if (offer.sell > 0) priceText = `${offer.ask} CR`;
+        } else if (offer) {
+          unitsText = offer.buy > 0 ? formatTradeUnits(offer.buy) : (offer.wants ? 'obsada pełna' : 'nie przyjmuje');
+          if (offer.buy > 0) priceText = `${offer.bid} CR`;
+        }
+        if (units && units.textContent !== unitsText) units.textContent = unitsText;
+        if (price && price.textContent !== priceText) price.textContent = priceText;
+        row.classList.toggle('is-idle', !offer || !(side === 'sell' ? offer.sell > 0 : offer.buy > 0));
+      });
+      set('note', !view ? 'Świat ruchu nie zna tej stacji.'
+        : (view.source ? 'Ośrodek ludności: kontrakty dla portów, którym brakuje ludzi.'
+          : 'Port nie jest ośrodkiem ludności — kontrakty bierze się w źródłach.'));
     }
 
     function buildCantinaPanel() {
@@ -15747,6 +15943,7 @@
       if (!stationOverlayDom.root) return;
       initStationOverlayTabs();
       buildTradePanel();
+      buildCrewPanel();
       buildCantinaPanel();
       buildHangarPanel();
       buildMechanicPanel();
@@ -15919,6 +16116,7 @@
       }
       updateStationHeader(station);
       updateTradeCards(station);
+      if (tab === 'crew') updateCrewCards(station);
       updateMechanicCards();
       updateHangarCards();
     }

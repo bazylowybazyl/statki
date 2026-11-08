@@ -72,6 +72,25 @@ export function stationWorkforceNeed(industry, site = {}) {
   return parts;
 }
 
+/**
+ * Ośrodek ludności rynku po źródłach (skala 1 na cykl): `def.population` z `MarketDef`
+ * (`{ ring, green, habitat }`). Opuszczony rynek (bez właściciela) — nikt nie mieszka.
+ */
+export function stationPopulation(def, owned = true) {
+  const out = {};
+  if (!owned) return out;
+  for (const [source, value] of Object.entries(def?.population || {})) {
+    const n = Number(value);
+    if (n > 0) out[source] = n;
+  }
+  return out;
+}
+
+/** Osoby na godzinę w świecie z podaży `perCycle` (skala 1 na cykl gospodarki). */
+export function perHourWorld(perCycle, economyScale = 1) {
+  return Math.max(0, Number(perCycle) || 0) * Math.max(0, Number(economyScale) || 0) * 3600 / ECONOMY_CYCLE_SECONDS;
+}
+
 /** Podaż kontraktów ośrodka ludności na cykl (skala 1): suma źródeł `{ ring, green, habitat }`. */
 export function populationRate(population) {
   let total = 0;
@@ -121,4 +140,49 @@ export function workforceShipmentWorthIt(station, units, stored, economyScale = 
   if (!(need > 0)) return true;
   if ((Number(stored) || 0) < WORKFORCE_URGENT_RATIO * need) return true;
   return units >= Math.max(WORKFORCE_MIN_SHIPMENT, WORKFORCE_MIN_SHIPMENT_SHARE * need);
+}
+
+/**
+ * WIDOK OBSADY PORTU (W5: karta „Kadry”, CIC) w osobach świata. Czyste, z kopii mostu:
+ *   entry   wpis tabeli stacji (`describeMarket`): `workforce { need, perHour, sources }` — świat
+ *   mirror  kopia rynku: `resources.workforce` (ludzie na miejscu), `capacity.workforce` (kwatery),
+ *           `crew` z bufora obsady (`CREW_FIELD`: w drodze, powroty, czekający, wydajność, zakładnicy)
+ * `ratio` — obsada zapas / N (przycięta do 1; rynek bez potrzeby — 1), `efficiency` — wydajność
+ * zakładów z ostatniego cyklu (bez niej — z krzywej D3), `rotationPerHour` — ilu ludziom kończy się
+ * kontrakt w godzinę przy tej obsadzie. `null`, gdy brak wpisu albo kopii.
+ */
+export function describeWorkforce(entry, mirror) {
+  if (!entry || !mirror) return null;
+  const wf = entry.workforce || null;
+  const need = Math.max(0, Number(wf?.need) || 0);
+  const stored = Math.max(0, Number(mirror.resources?.workforce) || 0);
+  const ratio = workforceRatio(stored, need);
+  const crew = mirror.crew || null;
+  const efficiency = need > 0
+    ? (Number.isFinite(crew?.efficiency) ? Math.max(0, Math.min(1, crew.efficiency)) : workforceEfficiency(ratio))
+    : 1;
+  const sources = [];
+  for (const [id, perHour] of Object.entries(wf?.sources || {})) {
+    if (Number(perHour) > 0) sources.push({ id, perHour: Number(perHour) });
+  }
+  // Ośrodek ludności obsadza się na miejscu (tranzyt ringu, PROPOZYCJA § 2.1): jego ludzie po kontrakcie
+  // są już w domu, więc nie czekają na prom — licznik `workforceLeaving` źródła to sama rotacja.
+  const source = sources.length > 0;
+  return {
+    need,
+    stored,
+    capacity: Math.max(0, Number(mirror.capacity?.workforce) || 0),
+    ratio,
+    staffed: Math.min(stored, need),
+    efficiency,
+    rotationPerHour: need > 0 ? Math.min(stored, need) * 3600 / WORKFORCE_CONTRACT_SECONDS : 0,
+    perHour: Math.max(0, Number(wf?.perHour) || 0),
+    sources,
+    inbound: Math.max(0, Number(crew?.inbound) || 0),
+    outbound: Math.max(0, Number(crew?.outbound) || 0),
+    returning: Math.max(0, Number(crew?.returning) || 0),
+    leaving: source ? 0 : Math.max(0, Number(crew?.leaving) || 0),
+    source,
+    hostages: Math.max(0, Number(crew?.hostages) || 0)
+  };
 }

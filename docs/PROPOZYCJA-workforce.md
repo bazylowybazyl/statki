@@ -393,6 +393,7 @@ Decyzje D1–D14 przyjęte 2026-10-23. Kroki W0–W4 są w kodzie, każdy przesz
 | W2: promy `crew-*`, powroty | `0a56a71a` | obsada ≥ 0,996; ok. 470 kursów z ludźmi na godzinę (projekt: 420) |
 | W3: skutek niedoboru | `103364d2` | obsada ≥ 0,996, kolejki ≤ 1,6 |
 | W4: porwania z okupem | `2d41f58a` | przechwyty 13,7–14,1%, obsada 1,0, ok. 420 porwań na bieg |
+| W5: karta „Kadry”, CIC, oferta kontraktów | gałąź `claude/workforce-w5-w7-d90cdd` | bez zmiany zachowania: symulacja ziarna 7 identyczna liczba w liczbę |
 
 ### 10.1 Odstępstwa od projektu
 
@@ -418,7 +419,14 @@ Decyzje D1–D14 przyjęte 2026-10-23. Kroki W0–W4 są w kodzie, każdy przesz
   Wolniej niż w § 3.2, bo tam blokada startowała od obsady 1,0 bez zapasu w kwaterach.
 - **Porwania:** przewoźnicy płacili wszystkie okupy, więc kryjówki pustoszeją (obsada ~0,01). Dziś obsada kryjówki niczego nie dławi.
 
+### 10.2a W5 (2026-11-08)
+
+- **Karta „Kadry”** w terminalu stacji (zakładka 6): „Obsada N%: jest X z N”, wydajność zakładów, rotacja na godzinę, kwatery, ludzie w drodze do portu, czekający na prom do domu; przy źródle — ośrodki ludności, wysłani i wracający; w kryjówce — zakładnicy. Oferta kontraktów: „Port wystawia kontrakty” (tylko źródło) i „Port przyjmuje kontrakty”, cena za osobę z reputacją gracza. Przewóz przez gracza — W6.
+- **Dane:** potrzeba N i podaż źródeł w tabeli rynków (`describeMarket` → `workforce`), ludzie w drodze, powroty, wydajność i zakładnicy w nowym buforze `tick.crew` (`CREW_FIELD`), oferta kontraktów w buforze rynku na towarze `workforce` — ta sama księga co towar, więc komputer handlowy może ją później pokazać obok cen towarów.
+- **Odstępstwo:** rynek pracy nie wystawia kontraktów (`crewContractOffer`) — sama oferta portu (`portOfferFromQuote`) pozwalałaby graczowi zabrać ok. 0,1 N zatrudnionych ponad podłogę 1,2 N. Planista bez zmian.
+- **CIC, warstwa HANDEL:** trasy pasażerskie różowe (kontrakty linią ciągłą, powroty przerywaną), osobno od tras towaru; porty z obsadą < 80% w bursztynowym pierścieniu, < 50% w czerwonym; w panelu ludzie w drodze, porty z brakami, zakładnicy. Kryjówki tylko po rozpoznaniu (mgła wojny) — ta sama zasada objęła stemple ▼▲ i trasy do ukrytych portów.
+
 ### 10.3 Otwarte
 
 - Prom zestrzelony przez gracza w bańce zostawia ludzi w manifeście wraku jak towar — do rozstrzygnięcia przy kartach gracza (W5–W6).
-- W5 (karta „Kadry”, CIC), W6 (gracz, habitat, baza w asteroidzie), W7 (sprite'y promów).
+- W6 (gracz, habitat, baza w asteroidzie), W7 (sprite'y promów).

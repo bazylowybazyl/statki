@@ -2,7 +2,9 @@
 // portu (ile ma, ile sprzeda, ile skupi i za ile) z mostu, kupno i sprzedaż przyciskami terminalu zmieniają zapas
 // kopii od razu i zostają po kroku workera; stacja gracza jako rynek (hak konsoli `DevEconomy.foundStation`),
 // komputer handlowy w CIC (warstwa „HANDEL”), zapis ekonomii → F5 → wczytanie przed startem (magazyny, wyrwy, stacja
-// gracza) → F5 → „Nowa gra” bez wczytania (gospodarka od zera, stary zapis skasowany).
+// gracza) → F5 → „Nowa gra” bez wczytania (gospodarka od zera, stary zapis skasowany). Karta „Kadry” (workforce W5):
+// obsada źródła i rynku pracy, oferta kontraktów, ludzie w drodze; w CIC trasy ludzi i obsada portów; po F5 obsada
+// z zapisu.
 // Zrzuty terminali i CIC, pipeline'y synchroniczne (strona i worker renderu — ma być 0) i błędy.
 //
 //   node scripts/webgpu/rynek-gra.mjs [--out .tmp/rynek] [--stacja earth] [--query renderWorker=1] [--bez-f5 1]
@@ -60,6 +62,30 @@ const rowState = (key, id = stationId) => `(() => {
     kredyty: window.DevEconomy?.getCredits?.() ?? null,
     oczekujace: window.TrafficV2Stats?.()?.pendingStock ?? null
   };
+})()`;
+
+// Karta „Kadry” (W5): DOM karty i widok obsady z mostu dla jednej stacji.
+const crewState = (id) => `(() => {
+  const pane = document.getElementById('tab-crew');
+  const f = (name) => pane?.querySelector('[data-field="' + name + '"]')?.textContent || null;
+  const offer = (side) => {
+    const row = pane?.querySelector('tr[data-crew-offer="' + side + '"]');
+    return row ? [row.querySelector('[data-field="units"]')?.textContent, row.querySelector('[data-field="price"]')?.textContent] : null;
+  };
+  const v = window.TrafficV2?.getWorkforce?.(${JSON.stringify(id)});
+  return {
+    widoczna: !!pane && !pane.classList.contains('hidden'), naglowek: f('headline'), wydajnosc: f('efficiency'),
+    rotacja: f('rotation'), kwatery: f('quarters'), wDrodze: f('inbound'), zrodla: f('sources'),
+    wystawia: offer('sell'), przyjmuje: offer('buy'), uwaga: f('note'),
+    most: v ? { need: Math.round(v.need), stored: Math.round(v.stored), ratio: +v.ratio.toFixed(3), efficiency: v.efficiency,
+      inbound: Math.round(v.inbound), outbound: Math.round(v.outbound), returning: Math.round(v.returning) } : null
+  };
+})()`;
+const openCrew = (id) => `(() => {
+  const st = (window.stations || []).find((s) => s.id === ${JSON.stringify(id)});
+  if (!st) return false;
+  window.openStationUI(st, 'crew');
+  return true;
 })()`;
 
 /**
@@ -158,6 +184,28 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
   console.log('handel', JSON.stringify(result.handel));
   await shot(`terminal-${stationId}`);
 
+  // 2b. Karta „Kadry” (W5): źródło (stacja z handlu) i rynek pracy (pierwszy port bez ludności).
+  result.kadry = {};
+  if (await ev(openCrew(stationId))) {
+    await ev('window.__harness.step(10)');
+    result.kadry[stationId] = await ev(crewState(stationId));
+    await shot(`terminal-kadry-${stationId}`);
+  }
+  const laborId = await ev(`(() => {
+    const ids = (window.stations || []).map((s) => s.id).filter((id) => {
+      const v = window.TrafficV2?.getWorkforce?.(id);
+      return v && v.need > 0 && !v.source && id !== ${JSON.stringify(stationId)};
+    });
+    return ids.includes('luna') ? 'luna' : (ids[0] || null);
+  })()`);
+  if (laborId && await ev(openCrew(laborId))) {
+    await ev('window.__harness.step(10)');
+    result.kadry[laborId] = await ev(crewState(laborId));
+    await shot(`terminal-kadry-${laborId}`);
+  }
+  console.log('kadry', JSON.stringify(result.kadry));
+  await ev('(() => { window.closeStationUI?.(); return true; })()');
+
   // 3. Stacja gracza jako rynek (hak konsoli): encja w grze, rynek w świecie ruchu, budynek, terminal.
   const playerId = await ev(`(() => { window.closeStationUI?.(); return window.DevEconomy.foundStation({ name: 'Przyczółek E7', buildings: ['foundry'] }).id; })()`);
   for (let i = 0; i < 30 && !await ev(`window.TrafficV2.hasStation(${JSON.stringify(playerId)})`); i++) await ev('window.__harness.step(10)');
@@ -206,6 +254,7 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
       return { ok, rynki: Object.keys(s?.world?.stations || {}).length, pas: s?.world?.mining?.length || 0,
         floty: Object.keys(s?.world?.fleets || {}).length, stacjeGracza: s?.playerStations?.length || 0,
         ziemia: s?.world?.stations?.earth?.stock?.[${JSON.stringify(key)}] ?? null,
+        obsadaZapis: Object.fromEntries(['earth', 'luna', 'venus'].map((id) => [id, Math.round(s?.world?.stations?.[id]?.stock?.workforce ?? -1)])),
         gracz: Object.keys(s?.world?.stations?.[${JSON.stringify(playerId)}]?.stock || {}).length,
         wyrwy: window.TrafficV2.beltHoles.size, rozmiarKB: Math.round(JSON.stringify(s).length / 1024) };
     })()`);
@@ -219,9 +268,20 @@ window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}`
         encja: !!(window.stations || []).find((s) => s.id === ${JSON.stringify(playerId)}),
         rynekGracza: window.TrafficV2.hasStation(${JSON.stringify(playerId)}),
         ziemia: econ ? econ.resources[${JSON.stringify(key)}] : null,
+        obsada: Object.fromEntries(['earth', 'luna', 'venus'].map((id) => [id, Math.round(window.TrafficV2.getEconomy(id)?.resources?.workforce ?? -1)])),
         wyrwy: window.TrafficV2.beltHoles.size,
         zapisPas: (() => { try { const z = JSON.parse(localStorage.getItem('economy')); return [z?.world?.mining?.length ?? null, z?.world?.miningCell ?? null]; } catch { return null; } })() };
     })()`);
+    // Obsada po F5 z zapisu (W5): karta „Kadry” i widok z mostu.
+    result.kadryPoF5 = {};
+    for (const id of [stationId, laborId].filter(Boolean)) {
+      if (!await ev(openCrew(id))) continue;
+      await ev('window.__harness.step(10)');
+      result.kadryPoF5[id] = await ev(crewState(id));
+    }
+    await shot(`terminal-kadry-po-f5`);
+    await ev('(() => { window.closeStationUI?.(); return true; })()');
+    console.log('kadry po F5', JSON.stringify(result.kadryPoF5));
     result.dziennikRuchu = logs.all().filter((l) => l.includes('[ruch v2]')).slice(-6);
     console.log('dziennik ruchu', JSON.stringify(result.dziennikRuchu));
     console.log('wczytanie', JSON.stringify(result.wczytanie));
