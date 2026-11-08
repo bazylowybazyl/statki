@@ -807,6 +807,10 @@ export const CICDisplay = {
   get tradeEnabled() { return cicTradeLayer.enabled; },
   /** Źródło danych: `() => Promise<summary>` (most ruchu v2 — `requestTradeSummary`). */
   setTradeSource(fn) { cicTradeLayer.setSource(fn); },
+  /** Kupcy towaru w panelu HANDEL (E23a): `{ cargo: () => ładownia, partners: (towar, ilość) => wynik }`. */
+  setTradePartnerSource(src) { cicTradeLayer.setPartnerSource(src); },
+  /** Wybór towaru w sekcji „KUPCY TOWARU” wprost (narzędzia). */
+  selectTradePartnerKey(key) { return cicTradeLayer.selectPartnerKey(key); },
   tradeStats() { return cicTradeLayer.stats(); },
 
   /** Zasięgi radarów (warstwa „ZASIĘGI”, klawisz Z w CIC; prototyp ?radarZasiegi): strefy radarów wroga i własne. */
@@ -1041,6 +1045,8 @@ export const CICDisplay = {
     cicMouseWorld.x = shipX + (x - cx) / cicZoom;
     cicMouseWorld.y = shipY + (y - cy) / cicZoom;
     cicMouseInView = true;
+    // Komputer handlowy: kursor nad towarem w sekcji „KUPCY TOWARU” panelu HANDEL wybiera towar.
+    try { cicTradeLayer.hover(x, y); } catch (e) { cicTradeLayerFail(e); }
   },
 
   /** Handle mouse up in CIC */
