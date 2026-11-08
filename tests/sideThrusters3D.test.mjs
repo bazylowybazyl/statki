@@ -289,7 +289,8 @@ test('NPC: baza kąta dysz SIDE z kąta edytora (wydech na zewnątrz burty), bez
       assert.ok(left ? exhaustY < -0.99 : exhaustY > 0.99, `${type} ${t.mount}: wydech y ${exhaustY}`);
     }
   }
-  const src = read('src/game/npcHardpointRuntime.js');
+  // Normalizacja markerów edytora — src/data/editorEngines.js (E17b: czytają ją gra i render proxy statków ruchu).
+  const src = read('src/data/editorEngines.js');
   assert.match(src, /kind === 'side' && !Number\.isFinite\(Number\(marker\?\.deg\)\)/, 'marker bez kąta — na zewnątrz burty');
 });
 

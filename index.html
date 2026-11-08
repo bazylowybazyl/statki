@@ -1247,7 +1247,7 @@
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
     import { syncWorldBodies3D } from "./src/3d/worldBodies3D.js";
-    import { BASE_INTEGRITY_TUNE, baseStepChunk, createPiecePools, damagePool, habitatStages, markBaseBroken, noteBaseRam, poolPieceAt, stepBaseIntegrity } from "./src/game/story/pirateBaseIntegrity.js";
+    import { BASE_INTEGRITY_TUNE, baseStepChunk, chargeRamMassAt, createPiecePools, damagePool, habitatStages, markBaseBroken, noteBaseRam, poolPieceAt, stepBaseIntegrity } from "./src/game/story/pirateBaseIntegrity.js";
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     // Upadek habitatu na planetoidę (2026-10-19): teren skały i grawitacja ku jej środkowi w silniku belek, wieża
     // przebija dysk i spada pierwsza, dysk za nią, osiadanie na skale (src/game/story/pirateBaseFall.js).
@@ -2195,6 +2195,19 @@
         const vol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.master : 0.5;
         this.masterGain.gain.value = vol;
         this.masterGain.connect(this.ctx.destination);
+
+        // Kontekst utworzony bez gestu gracza (nowa gra z menu pauzy startuje sama po przeładowaniu strony) przeglądarka
+        // zostawia w stanie „suspended” — wznowienie przy pierwszym kliknięciu albo klawiszu.
+        if (this.ctx.state === 'suspended') {
+          const ctx = this.ctx;
+          const events = ['pointerdown', 'keydown'];
+          const off = () => { for (const t of events) window.removeEventListener(t, resume, true); };
+          const resume = () => {
+            if (ctx.state !== 'suspended') { off(); return; }
+            ctx.resume().then(() => { if (ctx.state !== 'suspended') off(); }, () => { });
+          };
+          for (const t of events) window.addEventListener(t, resume, true);
+        }
 
         this.isInit = true;
         console.log("[AudioSys] Zainicjowano.");
@@ -17709,7 +17722,7 @@
         let r = out.list[out.count];
         if (!r) {
           r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
-            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null, pirate: false };
           out.list[out.count] = r;
         }
         trafficActorPoseAt(a, t, r);
@@ -17721,6 +17734,8 @@
         r.speed = Math.abs(a.speed);
         r.throttle = a.throttle;
         r.mode = a.mode;
+        // jak `isPirate` NPC po awansie (spawnTrafficNpc) — barwa plazmy rdzenia proxy (E17b)
+        r.pirate = a.factionId === FACTION.PIRATES || !!trafficNpcDef(a.hullId)?.pirate;
         out.count++;
       }
       // Awansowany NPC, którego kadłub na belkach jeszcze się nie zbudował (sprite, budżet budowy w klatce) — proxy
@@ -17731,7 +17746,7 @@
           let r = out.list[out.count];
           if (!r) {
             r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
-              vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+              vx: 0, vy: 0, speed: 0, throttle: 0, mode: null, pirate: false };
             out.list[out.count] = r;
           }
           r.courseId = id;
@@ -17746,6 +17761,7 @@
           r.speed = Math.sqrt(npc.vx * npc.vx + npc.vy * npc.vy);
           r.throttle = 0;
           r.mode = null;
+          r.pirate = npc.isPirate === true;
           out.count++;
         }
       }
@@ -17757,7 +17773,7 @@
         let r = out.list[out.count];
         if (!r) {
           r = { courseId: 0, hullId: '', unitClass: '', x: 0, y: 0, angle: 0, prevX: NaN, prevY: NaN, prevAngle: NaN,
-            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null };
+            vx: 0, vy: 0, speed: 0, throttle: 0, mode: null, pirate: false };
           out.list[out.count] = r;
         }
         r.courseId = id;
@@ -17772,6 +17788,7 @@
         r.speed = 0;
         r.throttle = 0;
         r.mode = null;
+        r.pirate = g.pirate === true;
         out.count++;
       }
       _trafficGameMs += performance.now() - t0;
@@ -18011,7 +18028,7 @@
           dismissTrafficNpc(npc);
           releaseTrafficPromotion(tb, id, false);
           // Encja przyjdzie z kolejnym buforem workera ruchu — do tego czasu proxy w pozie NPC (trafficRenderFrame).
-          noteTrafficReturn(tb, id, npc.shipFrame, npc.x, npc.y, npc.angle, trafficV2.time);
+          noteTrafficReturn(tb, id, npc.shipFrame, npc.x, npc.y, npc.angle, trafficV2.time, npc.isPirate === true);
           st.stats.demoted++;
         } else if (!npc.command && npc.combatDisabled) {
           // Dotarł do punktu ucieczki: dalej, póki gracz blisko, potem stoi.
@@ -29014,6 +29031,8 @@
       worldBodies.step(dt, _worldFocus);
       // Baza piratów: kawałki nieobecne jako statyka (`_dockGone` — pęknięte, schowane, żywe ciała) po kroku ciał świata.
       syncPirateBaseGone();
+      // Misja 1: szarża F przy bazie piratów taranuje z masą × BASE_INTEGRITY_TUNE.chargeRamMass (tylko styki silnika belek).
+      syncPlayerChargeRamMass();
       // Kadłuby statków, NPC i wraków: silnik belek.
       HullBodies.step(dt, worldBodies.withEntities(allDestructibles));
       // Baza piratów (misja 1): zgniot ciał budowli taranem → punkty budowli; budowla bez stojącego kawałka ginie.
@@ -34627,6 +34646,15 @@
       kill(owner) { applyDamageToStation(owner, (Number(owner.hp) || 0) + 1, true); }
     };
     window.BaseIntegrityTune = BASE_INTEGRITY_TUNE;   // strojenie na żywo (ramHpMul, ramWindow, ramMinSpeed)
+    // Siła taranu szarży gracza przy bazie (pirateBaseIntegrity.js, chargeRamMassAt): mnożnik masy ciała Atlasa w stykach
+    // silnika belek (rammingMassMult), co krok przed HullBodies.step — ciało bywa przebudowane, poza szarżą wraca 1.
+    function syncPlayerChargeRamMass() {
+      const hull = ship?.beamHull;
+      const body = hull && hull.entity === ship ? hull.body : null;
+      if (!body) return;
+      const mul = chargeRamMassAt(StoryGame.site?.dock || null, ship.pos.x, ship.pos.y, playerRamBurnActive());
+      if (body.rammingMassMult !== mul) body.rammingMassMult = mul;
+    }
     function stepPirateBaseIntegrity() {
       const sites = pirateBaseSites();
       if (!sites || !StoryGame.site?.structures) return;
@@ -35403,6 +35431,8 @@
 
       if (continueButton) continueButton.classList.remove('hidden');
       if (optionsButton) optionsButton.disabled = false;
+      // w menu pauzy „Nowa gra” zaczyna od nowa przez przeładowanie strony (blok „NOWA GRA W TRAKCIE GRY”)
+      if (newGameButton) newGameButton.dataset.hint = 'Porzuca bieżącą grę i zaczyna nową (przeładowanie)';
 
       // Menu zjeżdża z ekranu (is-launching, ~0,6 s) — dopiero potem je chowamy.
       const launchWaitMs = 620 - (performance.now() - launchT0);
@@ -35948,14 +35978,57 @@
       setMenuView('gamemode');
     });
 
+    // ============== NOWA GRA W TRAKCIE GRY (menu pauzy) ==============
+    // `startGame` przy trwającej grze wychodzi od razu, a świata nie da się wyzerować w miejscu (NPC, wraki, fabuła,
+    // ekonomia w workerze ruchu, scena workera renderu) — dlatego „Nowa gra → tryb” w menu pauzy przeładowuje stronę
+    // (jak F5: `beforeunload` zapisuje fit, gracza i ekonomię) z jednorazowym znacznikiem w sessionStorage, a po
+    // przeładowaniu, gdy tło menu jest gotowe, gra sama klika wybrany tryb. Opcje panelu (kampania, samouczek, mgła
+    // wojny, statki 2D / 3D) są w localStorage, więc przechodzą przez przeładowanie; stary zapis kasuje sam start
+    // („Nowa gra” w każdym trybie — beginPlayerSaveSession / beginEconomySession w startGame).
+    const NEW_GAME_RELAUNCH_KEY = 'hullfall.newGameRelaunch';
+    const NEW_GAME_RELAUNCH_MAX_AGE_MS = 120000;
+    let newGameRelaunching = false;
+    function relaunchForNewGame(mode) {
+      if (newGameRelaunching) return;
+      newGameRelaunching = true;
+      try { sessionStorage.setItem(NEW_GAME_RELAUNCH_KEY, JSON.stringify({ mode, at: Date.now() })); } catch { }
+      fadeScreen(true, 260).then(() => location.reload());
+    }
+    /** Znacznik z poprzedniej strony: 'single' | 'split' albo null (zdejmowany przy odczycie — działa raz). */
+    function takeNewGameRelaunch() {
+      let req = null;
+      try {
+        req = JSON.parse(sessionStorage.getItem(NEW_GAME_RELAUNCH_KEY) || 'null');
+        sessionStorage.removeItem(NEW_GAME_RELAUNCH_KEY);
+      } catch { req = null; }
+      if (!req || (req.mode !== 'single' && req.mode !== 'split')) return null;
+      // stary znacznik (przeładowanie przerwane, karta odtworzona później) — bez samoczynnego startu
+      return Date.now() - Number(req.at) < NEW_GAME_RELAUNCH_MAX_AGE_MS ? req.mode : null;
+    }
+    const newGameRelaunchMode = takeNewGameRelaunch();
+    if (newGameRelaunchMode) {
+      const launchMode = () => {
+        if (gameStarted || gameLaunching) return;
+        document.getElementById(newGameRelaunchMode === 'split' ? 'btn-mode-split' : 'btn-mode-single')?.click();
+      };
+      // Jak klik gracza w menu: po starcie tła i zejściu kurtyny (~0,8 s). Słuchacz DOMContentLoaded zarejestrowany PO
+      // tym, który woła startMenuBackdrop() (blok tuż za initNPCs), więc `menuBackdrop` już jest; bez tła 3D — od razu.
+      const launchSoon = () => setTimeout(launchMode, 800);
+      const whenMenuReady = () => { if (menuBackdrop) menuBackdrop.onReady(launchSoon); else launchSoon(); };
+      if (document.readyState === 'complete') whenMenuReady();
+      else window.addEventListener('DOMContentLoaded', whenMenuReady, { once: true });
+    }
+
     // ============== GAME MODE BUTTON HANDLERS ==============
     document.getElementById('btn-mode-single')?.addEventListener('click', () => {
+      if (gameStarted) { relaunchForNewGame('single'); return; }
       splitScreenMode = false;
       window.splitScreenMode = false;
       setMenuView('home');
       startGame();
     });
     document.getElementById('btn-mode-split')?.addEventListener('click', () => {
+      if (gameStarted) { relaunchForNewGame('split'); return; }
       splitScreenMode = true;
       window.splitScreenMode = true;
       if (mainMenuEl) mainMenuEl.classList.add('hidden');

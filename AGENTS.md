@@ -84,6 +84,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Broń i obrażenia myśliwców → filtr IFF z `src/game/friendlyFire.js`; jednostka gracza poza frakcjami → `playerOwned = true`.
 - Obrażenia od broni gracza → `applyDamageToNPC(…, byPlayer)` (znacznik trafienia); obrażenia gracza od pocisku NPC → stempel `__fcHitPlayerAt` strzelca; obrażenia zatrzymywane przez tarczę → test przebicia `isShieldBreachedAt`; obrażenia obszarowe → też `RepairSwarm.blast` (drony naprawcze).
 - Zestrzelenie rakiety lub torpedy → tylko `killRocketThreat`.
+- Zmiana gniazd edytora albo sprite'a kadłuba ruchu v2, zestawu broni NPC (`equipNpcWeapons`), łuków gniazd albo markera rdzenia → przelicz tabele obrazu proxy (`node scripts/wieze-proxy-ruchu.mjs`, `node scripts/rdzenie-auto-ruchu.mjs`; strażniki `turretProxy`, `reactorCoreProxy` — reguła `ruch-banka`, „MODELE I CIEŃ NA PROXY”).
 - Nowa ścieżka obrażeń od gracza (wiązka, rakieta, wybuch) → też statki ruchu v2 w bańce (`damageTrafficActor`, `src/game/trafficBubble.js`); zniszczenie tylko tak — kurs i wrak z ładunkiem rozlicza worker ruchu (reguła `ruch-banka`), a ładunek z manifestu encji wypada w przestrzeń (`spillTrafficCargo`, reguła `kontenery-lup`).
 - Przylot, odlot, wezwanie NPC tunelem warpa → rejestr `warpTraffic` (nie `WarpNurt`); wyjście z warpa → `exitWarp`; przylot wroga spoza kolejki wezwań → `noteCameraDirectorCue`; sterowanie skrzydłem pomija jednostki z `__warpReturn`. Nowa ścieżka wyjścia NPC z warpa → pęd z `warpExitMomentum` (punkt przylotu = koniec ślizgu) i flaga `__warpExitSlide` (model lotu trzyma limit bojowy do końca ślizgu), nie zerowanie prędkości.
 - Kamera: wejście ustawia `camera.targetZoom` (sprężyna raz na klatkę renderu, nie w `physicsStep`); offsety kamery tylko w rigu (`src/game/cameraRig.js`); wstrząs z modułu renderu → hak `onShake` (żądanie do gry), nie `window.camera`.
@@ -166,7 +167,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `tarcze` | Tarcze: pula slotów, przebicie, wygląd |
 | `maskowanie` | Maskowanie: wygląd, efekty, wizjer |
 | `warp` | Warp gracza, TRAVEL TO, wezwania wsparcia, warp „Nurt” w Core3D |
-| `warp-efekty` | Efekty boków kadru w skoku gracza (W1 haze DIST, W2 smugi, W3 zorza): przepływ równoległy do kursu, `?warpFx=`; przylot i wylot „jak w Gwiezdnych Wojnach” (domyślnie, dawny wygląd `?warpSW=0`) |
+| `warp-efekty` | Efekty boków kadru w skoku gracza (W1 haze DIST, W2 smugi, W3 zorza): przepływ równoległy do kursu, `?warpFx=`; przylot i wylot „jak w Gwiezdnych Wojnach” (domyślnie, dawny wygląd `?warpSW=0`); niewrażliwe drobiny przylotów i odlotów NPC (bez ośrodka, `?warpDrobiny=0`) |
 | `hipercruise` | Obraz hipercruise'u: warstwa warpa w trybie `hyper`, opływ kadłuba (DIST), plazma dysz w locie, A/B `?hcStary=1` |
 | `mapa-gwiezdna` | Mapa gwiezdna — strefa międzygwiezdna między układami (jak nadprzestrzeń Starsectora; moduł `src/game/sector/` + demo, niewpięte): sektor z ziarna, punkty skoku = rogi świata, lot i paliwo, mgławice i burze, mgła eksploracji, floty kupieckie, patrole i piraci |
 | `scena-wojna` | Scena „Wojna”: floty z warpa, bitwa w głębi (tłum nad i pod płaszczyzną, planeta w głębi), bohaterowie, ujęcia kamery |

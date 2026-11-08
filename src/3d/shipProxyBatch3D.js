@@ -42,8 +42,8 @@ import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { zbierzZakres } from './zakresyWysylki.js';
 import { PROXY_SHARED, PROXY_INSTANCE_STRIDE, ShipProxyNodeMaterial, createProxyGeometry } from './shipProxyBatch3D.tsl.js';
 import {
-  acquireProxyHullLook, refreshProxyHullLook, releaseProxyHullLook, hullLacquerGlintAt, setProxyLightViews,
-  PROXY_LIGHT_SHADER_MIN_PX
+  acquireProxyHullLook, refreshProxyHullLook, releaseProxyHullLook, hullLacquerGlintAt, setProxyLightViews, setProxyNozzleSource,
+  setProxyShadowSource, PROXY_LIGHT_SHADER_MIN_PX
 } from './hexShips3D.js';
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
@@ -54,6 +54,14 @@ import { loadImageBitmap, createCanvas2D } from './canvas2d.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 import { cameraRoll, rolledHalfExtents } from './viewRoll.js';
 import { RoofCover } from './roofCover.js';
+import { buildSideThrusters } from '../data/editorEngines.js';
+import { SideNozzleFrame, SIDE_NOZZLE_RADIUS } from './sideNozzleFrame.js';
+import { getEngineVfxScaleForHullId } from './engineVfxScale.js';
+import { createFramedReactorCore, setFramedReactorCoreSource } from './reactor3D.js';
+import { Bridge3D } from './bridge3D.js';
+import { ProxyTurretFrame } from './proxyTurretFrame.js';
+import { TRAFFIC_PROXY_TURRETS } from '../data/trafficProxyTurrets.js';
+import { REACTOR_CORE_COLORS, reactorModelParams, trafficCoreMarker } from '../data/reactorCores.js';
 
 const _rollHalf = { hw: 0, hh: 0 };
 
@@ -99,7 +107,288 @@ const lightViews = [];
 const lightViewPx = new Float32Array(MAX_PICK);
 const lightViewKeys = new Float64Array(MAX_PICK);
 const lightViewKeep = new Uint8Array(MAX_PICK);
+
+// MODELE DYSZ SIDE na proxy (E17b): rekordy klatki jak SideNozzleFrame (poza dyszy w scenie, podstawa i kierunek
+// wydechu, promień wylotu; ciąg i żar 0 — dysze w spoczynku), dopisywane do listy klatki przez hexShips3D zaraz po
+// EngineVfxSystem.update (`setProxyNozzleSource`). Próg = próg rysownika (`SideNozzleFrame.modelMinPx`) — ten sam co
+// u NPC, więc awans w kadrze dysz nie dokłada. Encja rekordu = widok proxy z puli (paleta z `shipFrame`, kadr).
+const NOZZLE_CAP = 2048;
+const nzX = new Float64Array(NOZZLE_CAP);
+const nzY = new Float64Array(NOZZLE_CAP);
+const nzOX = new Float32Array(NOZZLE_CAP);
+const nzOY = new Float32Array(NOZZLE_CAP);
+const nzBX = new Float32Array(NOZZLE_CAP);
+const nzBY = new Float32Array(NOZZLE_CAP);
+const nzDX = new Float32Array(NOZZLE_CAP);
+const nzDY = new Float32Array(NOZZLE_CAP);
+const nzR = new Float32Array(NOZZLE_CAP);
+const nzEntity = new Array(NOZZLE_CAP).fill(null);
+const nzSource = new Array(NOZZLE_CAP).fill(null);
+let nzCount = 0;
+let nzOwners = 0;
+const nozzleViewPool = [];
+
+function pushProxyNozzles() {
+  const F = SideNozzleFrame;
+  if (!F.enabled) return;
+  let lastE = null;
+  let from = F.count;
+  for (let i = 0; i < nzCount; i++) {
+    const e = nzEntity[i];
+    if (e !== lastE) { lastE = e; from = F.count; }
+    // zdublowane markery jednego kadłuba — jedna bryła (jak EngineVfxSystem)
+    if (F.near(from, nzX[i], nzY[i], nzR[i] * 0.5)) continue;
+    F.push(e, nzSource[i], nzX[i], nzY[i], nzOX[i], nzOY[i], nzBX[i], nzBY[i], nzDX[i], nzDY[i], nzR[i], 0, 0);
+  }
+}
+setProxyNozzleSource(pushProxyNozzles);
+
+// Dysze SIDE proxy w tej klatce: widok z puli (indeks właściciela) i rekordy dysz — bez alokacji.
+function considerNozzles(info, x, y, angle) {
+  const side = sideThrustersFor(info);
+  if (!side || !SideNozzleFrame.enabled) return;
+  const R = info.sideR * frame.sideWidthMul;
+  if (!frame.free && R * frame.zoom < (Number(SideNozzleFrame.modelMinPx) || 0)) return;
+  if (nzCount + side.length > NOZZLE_CAP) return;
+  let view = nozzleViewPool[nzOwners];
+  if (!view) {
+    view = { x: 0, y: 0, angle: 0, radius: 0, shipFrame: '', dead: false, isTrafficProxy: true };
+    nozzleViewPool[nzOwners] = view;
+  }
+  nzOwners++;
+  view.x = x;
+  view.y = y;
+  view.angle = angle;
+  view.radius = info.radius;
+  view.shipFrame = info.hullId;
+  const cA = Math.cos(-angle);
+  const sA = Math.sin(-angle);
+  const sy = -y;
+  for (let n = 0; n < side.length; n++) {
+    const t = side[n];
+    const lx = t.offset.x;
+    const ly = -t.offset.y;
+    const k = nzCount++;
+    nzX[k] = x + lx * cA - ly * sA;
+    nzY[k] = sy + lx * sA + ly * cA;
+    nzOX[k] = t.offset.x;
+    nzOY[k] = t.offset.y;
+    // wydech (−forward.x, forward.y) i podstawa (baseDeg — na zewnątrz burty) obrócone do sceny
+    const dlx = -t.forward.x;
+    const dly = t.forward.y;
+    nzDX[k] = dlx * cA - dly * sA;
+    nzDY[k] = dlx * sA + dly * cA;
+    const bRad = (Number(t.baseDeg) || 0) * Math.PI / 180;
+    const blx = -Math.sin(bRad);
+    const bly = -Math.cos(bRad);
+    nzBX[k] = blx * cA - bly * sA;
+    nzBY[k] = blx * sA + bly * cA;
+    nzR[k] = R;
+    nzEntity[k] = view;
+    nzSource[k] = t;
+  }
+}
 setProxyLightViews(lightViews, (view) => view.__proxyGrid);
+
+// Obudowy rdzeni reaktora proxy (E17b): rdzeń z własną ramą na encję (klucz = numer kursu — stały między klatkami:
+// ziarno i fazy plazmy w rekordzie reactor3D), lista tej klatki dla modelu reaktora (setFramedReactorCoreSource —
+// sync rysuje je po rdzeniach gry, z tym samym cullingiem kadru i progiem minPx co u NPC). Barwa i rodzaj modelu
+// jak u NPC po awansie (reactorColorFor: piraci po frakcji albo kadłubie; rodzaj z markera, bez niego z kadłuba).
+const proxyCores = new Map();
+const proxyCoreList = [];
+setFramedReactorCoreSource(() => proxyCoreList);
+
+// Marker rdzenia kadłuba w j. świata od środka sprite'a (y w dół, jak NPC: reactorCoreFrame z pozą renderu).
+function coreMarkerFor(info) {
+  if (info.core !== undefined) return info.core;
+  const m = trafficCoreMarker(info.hullId);
+  const sx = info.w / info.def.png[0];
+  const sy = info.h / info.def.png[1];
+  const uniform = (sx + sy) * 0.5;
+  info.core = m ? {
+    ox: (Number(m.x) || 0) * sx,
+    oy: (Number(m.y) || 0) * sy,
+    R: (Number(m.r) || 0) * uniform,
+    // siatka belek NPC: 15 j. na komórkę (HULL_BODY_CONFIG.cellPx przy 1 px = 1 j.) — tylko maska sektorów
+    cs: 15,
+    params: reactorModelParams(m, uniform)
+  } : null;
+  if (info.core && !(info.core.R > 0)) info.core = null;
+  return info.core;
+}
+
+function considerCore(key, info, x, y, angle, opacity, pirate) {
+  if (!(opacity > 0.01)) return;
+  const cm = coreMarkerFor(info);
+  if (!cm) return;
+  let core = proxyCores.get(key);
+  if (!core || core.__hullId !== info.hullId) {
+    const p = cm.params;
+    // rodzaj modelu: z markera; rdzeń z automatu — jak resolveReactorKind u NPC (piraci po kadłubie albo frakcji)
+    const kind = p?.kind || (pirate || info.hullId.includes('pirate') ? 'pirate' : 'terran');
+    core = createFramedReactorCore({
+      uid: `proxy:${key}`,
+      model: { housingR: p?.housingR || 0, housing: p ? p.housing : true, kind, tier: p?.tier || null },
+      color: pirate ? REACTOR_CORE_COLORS.pirate : REACTOR_CORE_COLORS.terran,
+      gridR: cm.R
+    });
+    core.__hullId = info.hullId;
+    proxyCores.set(key, core);
+  }
+  core.__seen = frameNo;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const f = core.frame;
+  f.x = x + c * cm.ox - s * cm.oy;
+  f.y = y + s * cm.ox + c * cm.oy;
+  f.axX = c * cm.R; f.axY = s * cm.R;
+  f.ayX = -s * cm.R; f.ayY = c * cm.R;
+  f.R = cm.R;
+  f.cs = cm.cs;
+  proxyCoreList.push(core);
+}
+
+// Mostki proxy (E17b): widoki tej klatki dla Bridge3D.drawProxyBridges (na końcu klatki proxy — Bridge3D.update idzie
+// wcześniej); model w strefie kadłuba ruchu jak u NPC po awansie, rekord na kadłub w bridge3D.js.
+const bridgeViews = [];
+let bridgeViewCount = 0;
+
+function considerBridge(info, x, y, angle) {
+  let v = bridgeViews[bridgeViewCount];
+  if (!v) {
+    v = { hullId: '', x: 0, y: 0, angle: 0, w: 0, h: 0, pngW: 0, pngH: 0, isTrafficProxy: true };
+    bridgeViews[bridgeViewCount] = v;
+  }
+  bridgeViewCount++;
+  v.hullId = info.hullId;
+  v.x = x;
+  v.y = y;
+  v.angle = angle;
+  v.w = info.w;
+  v.h = info.h;
+  v.pngW = info.def.png[0];
+  v.pngH = info.def.png[1];
+}
+
+// Wieże okrętów ruchu (E17b): te same wieże co NPC po awansie w spoczynku (tabela src/data/trafficProxyTurrets.js —
+// liczona kodem gry), grupa na proxy (stały klucz kursu: stan wież w uchwycie), lista klatki w ProxyTurretFrame dla
+// partii wież (shipModels3DGame.js). Poniżej progu sylwetki wieży (2 px) całe proxy bez grupy.
+const turretGroups = new Map();
+const TURRET_HIDE_PX = 2.0;
+
+function turretTableFor(info, pirate) {
+  const t = info.turrets !== undefined ? info.turrets : (info.turrets = TRAFFIC_PROXY_TURRETS[info.hullId] || null);
+  if (!t) return null;
+  const rows = pirate ? t.pirate : t.terran;
+  if (!rows || !rows.length) return null;
+  return rows;
+}
+
+// Największy promień sylwetki zestawu (r × skala) — wstępny próg LOD całego proxy (tabela zamrożona: pamięć obok).
+const turretMaxR = new WeakMap();
+function turretRowsMaxR(rows) {
+  let m = turretMaxR.get(rows);
+  if (m === undefined) {
+    m = 0;
+    for (let i = 0; i < rows.length; i++) m = Math.max(m, rows[i][5] * rows[i][4]);
+    turretMaxR.set(rows, m);
+  }
+  return m;
+}
+
+function considerTurrets(key, info, x, y, angle, opacity, pirate) {
+  if (!(opacity > 0.01)) return;
+  const rows = turretTableFor(info, pirate);
+  if (!rows) return;
+  if (!frame.free && turretRowsMaxR(rows) * frame.zoom < TURRET_HIDE_PX) return;
+  let g = turretGroups.get(key);
+  if (!g || g.rows !== rows) {
+    const recs = new Array(rows.length);
+    const view = { x: 0, y: 0, angle: 0, isTrafficProxy: true };
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      recs[i] = { key: `proxy:${key}:${i}`, weaponId: r[0], spec: { r: r[5] }, scale: r[4], wx: 0, wy: 0, ang: 0,
+        recoil: 0, state: null, entity: view };
+    }
+    g = { rows, recs, view, holder: { turrets: new Map(), assets: null }, seen: 0 };
+    turretGroups.set(key, g);
+  }
+  g.seen = frameNo;
+  g.view.x = x;
+  g.view.y = y;
+  g.view.angle = angle;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const rec = g.recs[i];
+    rec.wx = x + r[1] * c - r[2] * s;
+    rec.wy = y + r[1] * s + r[2] * c;
+    rec.ang = angle + r[3];
+  }
+  const F = ProxyTurretFrame;
+  F.list[F.count++] = g;
+}
+
+// Cień SDF proxy (E17b): siatka komórek rodzaju (bok jak siatka belek NPC, 15 j.) pokrywa cały sprite, sylwetkę tnie
+// alfa sprite'a (HullShadowSdf: komórki ∩ alfa ≥ 0,5 — jak kadłub NPC, którego węzły powstały z tej alfy). Jedna
+// warstwa na rodzaj (wpis szablonu HullShadowSdf), widoki tej klatki → kolejka okluderów updateHexShips3D (od
+// największych, w zasięgu kadru + 30 tys. j. jak kadłuby — także proxy tuż poza kadrem).
+const SHADOW_CELL = 15;
+const SHADOW_MIN_SIZE = 40;
+const shadowViews = [];
+const shadowFrame = { list: shadowViews, count: 0 };
+setProxyShadowSource(() => shadowFrame);
+
+function shadowGridFor(info, kind) {
+  if (info.shadowGrid !== undefined && info.shadowGrid?.armorImage === kind.image) return info.shadowGrid;
+  const nx = Math.max(1, Math.ceil(info.w / SHADOW_CELL));
+  const ny = Math.max(1, Math.ceil(info.h / SHADOW_CELL));
+  const n = nx * ny;
+  const cellX = new Float32Array(n);
+  const cellY = new Float32Array(n);
+  const sx = info.w / nx;
+  const sy = info.h / ny;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      cellX[i + j * nx] = (i + 0.5) * sx;
+      cellY[i + j * nx] = (j + 0.5) * sy;
+    }
+  }
+  info.shadowGrid = {
+    cellX, cellY, cellActive: new Uint8Array(n).fill(1), cellCount: n,
+    cellRadius: Math.max(sx, sy) * 0.72,
+    srcWidth: info.w, srcHeight: info.h, pivot: { x: 0, y: 0 },
+    armorImage: kind.image, visualImage: kind.image, isFragment: false, activeStructuralCount: n
+  };
+  return info.shadowGrid;
+}
+
+function considerShadow(info, x, y, angle, opacity) {
+  if (!(opacity > 0.5) || frame.free) return;
+  const size = Math.max(info.w, info.h);
+  if (size < SHADOW_MIN_SIZE) return;
+  const kind = info.kind;
+  if (!kind) return;
+  const reach = Math.max(frame.halfW, frame.halfH) + 30000;
+  if (Math.abs(x - frame.camX) > reach || Math.abs(y - frame.camY) > reach) return;
+  let v = shadowViews[shadowFrame.count];
+  if (!v) {
+    v = { x: 0, y: 0, angle: 0, grid: null, size: 0 };
+    shadowViews[shadowFrame.count] = v;
+  }
+  shadowFrame.count++;
+  v.x = x;
+  v.y = y;
+  v.angle = angle;
+  v.grid = shadowGridFor(info, kind);
+  v.size = size;
+}
+
+function pruneProxyCores() {
+  for (const [key, core] of proxyCores) if (frameNo - core.__seen > IDLE_DETACH_FRAMES) proxyCores.delete(key);
+  for (const [key, g] of turretGroups) if (frameNo - g.seen > IDLE_DETACH_FRAMES) turretGroups.delete(key);
+}
 let imageResolver = null;
 let engineLayoutResolver = null;
 /** (ref encji) → { x: u0, y: v0, z: u1, w: v1 } otwartego luku w uv sprite'a albo null (E12, przeładunek). */
@@ -119,6 +408,7 @@ const frame = {
   margin: 0,
   engines: true,
   zoomPx: 1,
+  sideWidthMul: 1,
   t0: 0
 };
 
@@ -146,6 +436,11 @@ const stats = {
   nozzles: 0,
   lights: 0,
   lightsDropped: 0,
+  nozzles3D: 0,
+  cores: 0,
+  bridges: 0,
+  turretProxies: 0,
+  shadows: 0,
   cpuMs: 0,
   lastMs: 0
 };
@@ -298,20 +593,20 @@ function lightBlockFor(info) {
   return info.lights;
 }
 
-// Dysze SIDE z edytora (strefy lakieru gasną przy wylotach jak u NPC) — pozycje w px PNG × skala, od środka sprite'a.
-function sideMarkersFor(info) {
+// Dysze SIDE z edytora — te same co u NPC po awansie (buildSideThrusters: offset w j. świata od środka sprite'a,
+// kąt bazy i dyszy z gimbalem): strefy lakieru gasną przy wylotach, modele dysz (E17b) stoją w tych samych miejscach.
+// Raz na kadłub; obiekty dysz to klucze pamięci mocowań rysownika (SideNozzleFrame.source).
+function sideThrustersFor(info) {
+  if (info.side !== undefined) return info.side;
   const raw = editorEntryFor(info)?.engines?.side;
-  if (!Array.isArray(raw) || !raw.length) return null;
-  const sx = info.w / info.def.png[0];
-  const sy = info.h / info.def.png[1];
-  const out = [];
-  for (const m of raw) {
-    const x = Number(m?.x);
-    const y = Number(m?.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    out.push({ offset: { x: (x + (Number(m.offsetX) || 0)) * sx, y: (y + (Number(m.offsetY) || 0)) * sy }, forward: { x: 0, y: 0 } });
-  }
-  return out.length ? out : null;
+  const list = Array.isArray(raw) && raw.length ? buildSideThrusters(raw, info.w / info.def.png[0], info.h / info.def.png[1]) : [];
+  info.side = list.length ? list : null;
+  // Promień wylotu dyszy przy skali sprite'a 1 (bez mnożnika szerokości z tunera) — jak engineVfxSystem.js.
+  info.sideR = SIDE_NOZZLE_RADIUS * getEngineVfxScaleForHullId(info.hullId);
+  return info.side;
+}
+function sideMarkersFor(info) {
+  return sideThrustersFor(info);
 }
 
 // Wygląd rodzaju (acquireProxyHullLook): widok lamp (szablon — także dla billboardów), siatka, dysze stref lakieru.
@@ -539,6 +834,8 @@ function flushEngines(out) {
 export const ShipProxyBatch3D = {
   /** Widoki encji z dyszami MAIN tej klatki — do listy encji updateHexShips3D. */
   engineEntities: [],
+  /** Rdzenie reaktora proxy tej klatki (rdzenie z własną ramą — reactor3D czyta je przez źródło; testy, narzędzia). */
+  reactorCores: proxyCoreList,
   stats,
 
   /**
@@ -613,7 +910,15 @@ export const ShipProxyBatch3D = {
     }
     // Strojenie światła i lakieru — wspólne węzły kadłubów (HULL_SHARED, HullLighting, HullLacquer: updateHexShips3D).
     frame.zoomPx = frame.zoom * (Core3D.pixelRatio || 1);
+    // szerokość dysz SIDE z tunera efektów (jak EngineVfxSystem: VFX_TUNE.sideW)
+    frame.sideWidthMul = Math.max(0.05, Number(RenderWorld.vfxTune?.sideW) || 1);
     lightViews.length = 0;
+    nzCount = 0;
+    nzOwners = 0;
+    proxyCoreList.length = 0;
+    bridgeViewCount = 0;
+    ProxyTurretFrame.count = 0;
+    shadowFrame.count = 0;
   },
 
   /**
@@ -637,7 +942,11 @@ export const ShipProxyBatch3D = {
       const pa = actor.prevAngle;
       if (Number.isFinite(pa)) angle = pa + wrapPi(angle - pa) * t;
     }
+    // cień SDF — także proxy tuż poza kadrem (cień wpada w kadr), przed przycięciem rysunku
+    if (frame.active && Number.isFinite(x) && Number.isFinite(y)) considerShadow(info, x, y, angle, actor.proxyOpacity ?? 1);
     if (!this._draw(info, x, y, angle, actor.proxyOpacity ?? 1, actor)) return false;
+    considerCore(actor.courseId ?? actor, info, x, y, angle, actor.proxyOpacity ?? 1, actor.pirate === true);
+    considerTurrets(actor.courseId ?? actor, info, x, y, angle, actor.proxyOpacity ?? 1, actor.pirate === true);
     const vx = Number(actor.vx) || 0;
     const vy = Number(actor.vy) || 0;
     const speed = Math.abs(Number.isFinite(actor.speed) ? actor.speed : Math.hypot(vx, vy));
@@ -654,7 +963,10 @@ export const ShipProxyBatch3D = {
   push(key, hullOrClass, x, y, angle, opts = null) {
     const info = hullInfoFor(hullOrClass);
     if (!info) return false;
+    if (frame.active && Number.isFinite(x) && Number.isFinite(y)) considerShadow(info, x, y, angle || 0, opts?.opacity ?? 1);
     if (!this._draw(info, x, y, angle || 0, opts?.opacity ?? 1, opts?.ref ?? key)) return false;
+    considerCore(key, info, x, y, angle || 0, opts?.opacity ?? 1, opts?.pirate === true);
+    considerTurrets(key, info, x, y, angle || 0, opts?.opacity ?? 1, opts?.pirate === true);
     if (opts && (opts.vx || opts.vy || opts.throttle)) {
       const vx = Number(opts.vx) || 0;
       const vy = Number(opts.vy) || 0;
@@ -711,6 +1023,12 @@ export const ShipProxyBatch3D = {
     // Faza migania okrętu (slot lamp jest wspólny dla rodzaju): z kursu encji, bez alokacji napisu.
     const navPhase = navPhaseFromId(typeof ref === 'object' && ref !== null ? (ref.courseId ?? ref.id) : ref);
     M[o + 16] = look.lightBase; M[o + 17] = look.zoneCount; M[o + 18] = 1; M[o + 19] = navPhase;
+
+    // Modele dysz SIDE i mostek (E17b) — od progów rysowników jak u NPC.
+    if (opacity > 0.01) {
+      considerNozzles(info, x, y, angle);
+      considerBridge(info, x, y, angle);
+    }
 
     // Lampy pozycyjne (billboardy FG): widok z pozą instancji — kadłuby z blokiem lamp (okręty, cywile — E17). Pod
     // zamkniętym dachem hali K-7 / zatoki (zapas floty na padach) kadłub zasłania dach, billboardów FG — nie: bez nich.
@@ -775,7 +1093,14 @@ export const ShipProxyBatch3D = {
     for (let i = pickCount; i < MAX_PICK && pickRef[i] !== null; i++) pickRef[i] = null;
     flushEngines(this.engineEntities);
     trimLightViews();
+    if (bridgeViewCount > 0) Bridge3D.drawProxyBridges(bridgeViews, bridgeViewCount);
+    if ((frameNo & 255) === 0) pruneProxyCores();
     stats.lights = lightViews.length;
+    stats.nozzles3D = nzCount;
+    stats.cores = proxyCoreList.length;
+    stats.bridges = bridgeViewCount;
+    stats.turretProxies = ProxyTurretFrame.count;
+    stats.shadows = shadowFrame.count;
     stats.kinds = live;
     stats.drawCalls = drawCalls;
     const ms = performance.now() - frame.t0;
@@ -791,6 +1116,10 @@ export const ShipProxyBatch3D = {
     if (!Core3D.isInitialized) {
       this.engineEntities.length = 0;
       lightViews.length = 0;
+      nzCount = 0;
+      proxyCoreList.length = 0;
+      ProxyTurretFrame.count = 0;
+      shadowFrame.count = 0;
       return;
     }
     this.begin(camera, options);
@@ -809,6 +1138,10 @@ export const ShipProxyBatch3D = {
     if (!Core3D.isInitialized || (!(count > 0) && !stats.drawn)) {
       this.engineEntities.length = 0;
       lightViews.length = 0;
+      nzCount = 0;
+      proxyCoreList.length = 0;
+      ProxyTurretFrame.count = 0;
+      shadowFrame.count = 0;
       return;
     }
     this.begin(camera);
@@ -859,6 +1192,11 @@ export const ShipProxyBatch3D = {
     }
     lightViews.length = 0;
     lightViewPool.length = 0;
+    proxyCoreList.length = 0;
+    proxyCores.clear();
+    turretGroups.clear();
+    ProxyTurretFrame.count = 0;
+    shadowFrame.count = 0;
     kindList.length = 0;
     kinds.clear();
     hullInfos.clear();

@@ -17,7 +17,10 @@
 //     WARP z dysz (entity.__warpNurtMode → engineVfxSystem / warpPlume3D, 13);
 //   • BOKI KADRU w skoku gracza (warpEdgeFx.js, 2026-10-29 — haze DIST, drobiny pędu, zorza krawędzi; `?warpFx=`);
 //   • PRZYLOT I WYLOT „jak w Gwiezdnych Wojnach” (warpSW.js, 2026-10-30, domyślnie; dawny wygląd `?warpSW=0`) — smugi za rufą
-//     (kształt GLOW_STREAK duszków) i kadłub ze światła (szew `hullWarp`), bez nowych pipeline'ów i pól migawki.
+//     (kształt GLOW_STREAK duszków) i kadłub ze światła (szew `hullWarp`), bez nowych pipeline'ów i pól migawki;
+//   • DROBINY przylotów i odlotów NPC (sparks.js + sparkRecipes.js, 2026-11-08, domyślnie; dawne przegródki ośrodka
+//     `?warpDrobiny=0`) — własne drobiny każdego okrętu, tor ze wzoru (nic ich nie popycha), jedna siatka w passie gry;
+//     przylot NPC nie budzi wtedy ośrodka.
 // Rozgrywka bez zmian: efekt tylko słucha stanu gry (automat warpa, pozycje encji, osie rekordów ruchu warpa — harmonogram,
 // prowadzenie okrętów w tunelu, duch i onGone liczy gra w czasie gry).
 //
@@ -43,6 +46,9 @@ import { writeWarpSkyBend, clearWarpSkyBend } from './skyBend.js';
 import { entityWarpPaletteId } from './palette.js';
 import { WarpEdgeFx } from './warpEdgeFx.js';
 import { WARP_SW, warpSWOn } from './warpSW.js';
+import { WarpSparks, sparksPerRecord } from './sparks.js';
+import { warpSparksOn } from './sparkRecipes.js';
+import { WARIANT_INSTANCJI } from '../rozgrzewka.js';
 import { isEntityHiddenForRender } from '../hexShips3D.js';
 import { cameraRoll, rolledHalfExtents } from '../viewRoll.js';
 import * as THREE from 'three/webgpu';
@@ -133,13 +139,15 @@ export const WarpNurt = {
   _edgeCtx: { on: false, t: 0, dt: 0, player: null, zoom: 1, roll: 0, W: 1, H: 1, shipX: 0, shipY: 0, hullWidth: 0, palette: '' },
   // Wstrząsy skoku gracza i wyrzutów NPC zgłasza GRA (src/game/warpShakes.js — te same chwile i wartości, także
   // w workerze renderu); dawny hak `onShake` sterownika zniknął (etap W nowego warpa, 2026-10-25).
-  stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, glows: 0, waves: 0, arrivals: 0, flow: 0, lens: 0 },
+  stats: { awake: false, steps: 0, stepsTotal: 0, releases: 0, bubbles: 0, glows: 0, waves: 0, arrivals: 0, flow: 0, lens: 0, sparks: 0 },
 
   // Opcje grafiki („Szczegóły efektów”): liczba drobin ośrodka, najwyżej pojemność z init. setCount losuje
   // wszystkie drobiny od nowa, więc zmiana czeka, aż ośrodek uśnie (update) — w trakcie skoku nic nie skacze.
   _wantCount: 0,
   setMediumCount(n) {
     this._wantCount = Math.max(4096, Math.floor(Number(n) || MEDIUM_COUNT_DEFAULT));
+    // drobiny przylotów: bez stanu — od następnej klatki (ten sam preset: `warpParticles`)
+    this.sparks?.setPerRecord(sparksPerRecord(this._wantCount));
     if (!this.awake) this._applyWantCount();
     return this._wantCount;
   },
@@ -167,6 +175,11 @@ export const WarpNurt = {
     Core3D.scene.add(this.medium.mesh);
     this.glow.mesh.layers.set(0);
     Core3D.scene.add(this.glow.mesh);
+    // Drobiny przylotów i odlotów NPC (sparks.js — tor ze wzoru, bez compute): drobin na rekord z opcji grafiki.
+    this.sparks = new WarpSparks();
+    this.sparks.setPerRecord(sparksPerRecord(this._wantCount || this.count));
+    Core3D.scene.add(this.sparks.mesh);
+    Core3D.warmup?.add({ name: 'warp: drobiny przylotu', objects: () => this.sparks.warmupMeshes(), layer: 0, phase: 'loading', variant: WARIANT_INSTANCJI });
     this._fxStep = {
       name: 'warpNurt',
       warm: (ctx) => this._warm(ctx),
@@ -396,6 +409,7 @@ export const WarpNurt = {
 
     // --- rysowane w passie gry, fale, tło, gwiazdy ---
     this._commitSprites(camX, camY, zoom);
+    this._commitSparks(camX, camY, zoom, view);
     this._commitWaves(camX, camY, zoom);
     this._commitSky(o, camX, camY, zoom);
     this._commitStars(o, camX, camY, zoom, ship);
@@ -687,6 +701,17 @@ export const WarpNurt = {
     glow.commit(camX, -camY);
   },
 
+  // Drobiny przylotów i odlotów NPC (sparks.js): rekordy klatki → blok uniformów; rekord poza kadrem (zasięg od pudła osi
+  // świata obróconego kadru) nie zajmuje miejsca. Kamera gry (bez wstrząsu — jak duszki), px bufora na j. = zoom.
+  _commitSparks(camX, camY, zoom, view) {
+    const sp = this.sparks;
+    if (!sp) return;
+    const vh = rolledHalfExtents(view.bufW * 0.5, view.bufH * 0.5, this._roll, this._rollHalf);
+    const k = 1.1 / Math.max(1e-5, zoom);
+    sp.commit(this.frame, camX, camY, zoom, vh.hw * k, vh.hh * k);
+    this.stats.sparks = sp.count;
+  },
+
   _commitWaves(camX, camY, zoom) {
     const frame = this.frame;
     if (!frame.waves.count) return;
@@ -875,6 +900,8 @@ export const WarpNurt = {
   _updateArrivals(t, frame, camX, camY) {
     const list = this.arrivals;
     const sw = list.length && warpSWOn() ? WARP_SW : null;
+    // drobiny okrętów (domyślnie) albo dawne przegródki ośrodka (`?warpDrobiny=0`)
+    const sparks = list.length > 0 && warpSparksOn();
     for (let i = list.length - 1; i >= 0; i--) {
       const v = list[i];
       const fx = v.fx;
@@ -885,7 +912,7 @@ export const WarpNurt = {
         const pose = en ? entityPose(en, this._pose) : null;
         // widoczność encji (mgła wojny, soczewka, maskowanie) — każdy wygląd; przed attach zostaje 1 (zwiastun planu)
         if (en) v.dress.swVis = this._swVis(en);
-        warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress, sw);
+        warpArrivalFxState(fx, t, frame, camX, camY, pose, v.dress, sw, sparks);
         if (en) {
           if (t < fx.tAppear) this._hideHull(en);
           else this._applyHull(en, v.dress.hull);
@@ -897,7 +924,7 @@ export const WarpNurt = {
         const pose = alive ? entityPose(e, this._pose) : null;
         // widoczność encji — każdy wygląd; po zniknięciu encji zostaje ostatnia (błysk i fala w punkcie skoku)
         if (alive) v.dress.swVis = this._swVis(e);
-        warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress, sw);
+        warpDepartureFxState(fx, t, frame, camX, camY, pose, v.dress, sw, sparks);
         if (alive) {
           this._applyHull(e, v.dress.hull);
           e.__warpNurtMode = v.dress.plasmaMode;

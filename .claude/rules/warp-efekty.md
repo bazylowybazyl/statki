@@ -4,6 +4,10 @@ paths:
   - "tests/warpEdgeFx.test.mjs"
   - "src/3d/warp/warpSW.js"
   - "tests/warpSW.test.mjs"
+  - "src/3d/warp/sparks.js"
+  - "src/3d/warp/sparkRecipes.js"
+  - "src/3d/warp/arrivals.js"
+  - "tests/warpSparks.test.mjs"
 ---
 
 # Warp: efekty boków kadru (W1–W3) i przylot / wylot „jak w Gwiezdnych Wojnach”
@@ -70,3 +74,30 @@ paths:
 - Strojenie `WARP_SW`, test `tests/warpSW.test.mjs`; zrzuty `node scripts/webgpu/zrzuty.mjs --backend webgpu --sceny
   warp-zwiastun,warp-przylot,warp-odlot-ladowanie,warp-odlot [--query warpSW=0]`, gracz — `warp-ped-gra.mjs` (faza
   `02a-kop-szczyt`), floty — `wojna-gra.mjs`.
+
+## Drobiny przylotu i odlotu NPC (domyślnie)
+
+- WŁASNE DROBINY OKRĘTU, NIEWRAŻLIWE (2026-11-08; user: „niepotrzebnie można »dotykać« i wpływać na cząstki z warp”,
+  „wolałbym dać więcej cząsteczek, ale niewrażliwych”, „w misji pirackiej z 5 statków widzę efekt na jednym”;
+  `src/3d/warp/sparkRecipes.js` — receptury, `sparks.js` — `WarpSparks`): przyloty i odloty NPC NIE wzbudzają ośrodka
+  „Nurtu” (wspólny milion drobin, które popychały wszystkie bańki, nici zwiastunów i przebudowa pudła przy zoomie — przy
+  fali 13 piratów blady „deszcz” na pół kadru, przy oddaleniu niewidoczny). Każdy okręt ma swoje drobiny, a tor każdej
+  liczy shader ze wzoru (hasz indeksu + rekord emisji + wiek osi rejestru ruchu warpa): bez compute i bez stanu, więc nic
+  ich nie popycha. Barwy ośrodka, wspólne dla palet (turkus nici i snopu, pomarańczowy warkocz śladu, biel świeżego
+  pchnięcia). Przylot: nić zwiastuna (prosty spływ wzdłuż kursu do miejsca zatrzymania, zbiega do osi; spirala tylko
+  w kole zbierania; siła = zwiastun osi), ślad wlotu (narodziny za rufą w chwili przejścia, rozchodzą się na boki), snop hamowania (stożek przed dziobem +
+  koło); odlot: punkt zbierania (spirala × build), ślad rozpędu (droga ∝ t³ → narodziny w accel · (s / D)^⅓), wystrzał
+  w punkcie skoku. Ośrodek przy przylotach NPC śpi. Dawny wygląd (przegródki ośrodka) — `?warpDrobiny=0` (A/B).
+- JEDNA SIATKA w passie gry (warstwa 0), POD KADŁUBAMI: z = `SPARK_Z` (−4) z testem głębi, bez zapisu głębi — okręt, który
+  z pędem wyjścia wjeżdża w swój snop, przykrywa drobiny (jak dawny ośrodek w passie warstwy 8). Rekordy (≤ 128 — pula
+  `frame.sparks`, 9 vec4 w bloku `warpSparkSlots`) pakowane co klatkę od zera, instancje = rekordy × K; K z presetu grafiki
+  (`warpParticles` / 256 w krokach 64: 1536 / 2752 / 3904 — niski / średni / wysoki i ultra), jasność drobiny × √(2048 / K).
+  Smuga drobiny z dwóch położeń wzoru (wiek i wiek − 0,03 s), pół-szerokość ≥ 1,1 px — widać ją przy oddalonej kamerze
+  (dawny ośrodek miał drobiny w świecie i przy zoomie 0,08 znikał). Rekord poza kadrem (zasięg `reach` od pudła osi świata
+  obróconego kadru) nie zajmuje miejsca. Rozgrzewka: wpis `warp: drobiny przylotu` (warstwa 0, `WARIANT_INSTANCJI`).
+- ZASADY: mgła wojny i maskowanie — jasność rekordu × widoczność encji, ukryta — bez rekordu (test „nic w klatce”
+  w `warpSW.test.mjs` liczy też `frame.sparks`); życie drobin odlotu ≤ zapas osi po zniknięciu (close + tail = 0,65 s —
+  rekord rejestru znika w tEnd, drobiny z nim); nowa emisja — receptura w `sparkRecipes.js` (pola rekordu, `reach`) i lustro
+  CPU `sparkPositionCpu` zgodne z shaderem (wierzchołki bez rozgałęzień — oba tryby liczone, wybór maską; pułapka 39);
+  drobina nie czyta stanu innych obiektów — „niewrażliwość” to zasada, nie strojenie. Test `tests/warpSparks.test.mjs`;
+  zrzuty — sceny warpa jak wyżej (`--query warpDrobiny=0` — przed); fala piratów w grze: `?story=counter` (13 okrętów).

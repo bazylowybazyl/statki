@@ -778,6 +778,16 @@ export function setProxyLightViews(list, getGrid) {
   _proxyLightGrid = typeof getGrid === 'function' ? getGrid : null;
 }
 
+// Modele dysz SIDE proxy (E17b): `fn()` dopisuje rekordy klatki do SideNozzleFrame — po EngineVfxSystem.update.
+let _proxyNozzleSource = null;
+// Okludery cieni proxy statków ruchu (E17b): `() → { list, count }` widoków { x, y, angle, grid, size } tej klatki
+// (shipProxyBatch3D.js) — dochodzą do kolejki okluderów shadow shafts obok kadłubów (od największych, ten sam limit).
+let _proxyShadowSource = null;
+export function setProxyShadowSource(fn) { _proxyShadowSource = typeof fn === 'function' ? fn : null; }
+export function setProxyNozzleSource(fn) {
+  _proxyNozzleSource = typeof fn === 'function' ? fn : null;
+}
+
 function disposeMeshData(data) {
   if (!data) return;
   if (Core3D.scene && data.mesh) {
@@ -1618,9 +1628,24 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       const size = Math.max(w, h);
       if (size < 40) continue; // drobnica nie rzuca sensownego cienia
       let rec = cpool[nc];
-      if (!rec) rec = cpool[nc] = { entity: null, grid: null, size: 0, ex: 0, ey: 0, scaleX: 1, scaleY: 1 };
+      if (!rec) rec = cpool[nc] = { entity: null, grid: null, size: 0, ex: 0, ey: 0, scaleX: 1, scaleY: 1, proxy: null };
       rec.entity = entity; rec.grid = grid; rec.size = size; rec.ex = ex; rec.ey = ey; rec.scaleX = scaleX; rec.scaleY = scaleY;
+      rec.proxy = null;
       cands[nc++] = rec;
+    }
+    // Proxy statków ruchu (E17b): sylwetka z siatki komórek rodzaju ∩ alfa sprite'a (jak kadłub NPC po awansie), poza
+    // z proxy — rekordy z tej samej puli.
+    if (_proxyShadowSource !== null) {
+      const ps = _proxyShadowSource();
+      for (let i = 0; i < ps.count; i++) {
+        const v = ps.list[i];
+        if (Math.abs(v.x - camX) > occluderReach || Math.abs(v.y - camY) > occluderReach) continue;
+        let rec = cpool[nc];
+        if (!rec) rec = cpool[nc] = { entity: null, grid: null, size: 0, ex: 0, ey: 0, scaleX: 1, scaleY: 1, proxy: null };
+        rec.entity = null; rec.grid = v.grid; rec.size = v.size; rec.ex = v.x; rec.ey = v.y; rec.scaleX = 1; rec.scaleY = 1;
+        rec.proxy = v;
+        cands[nc++] = rec;
+      }
     }
     cands.length = nc;
     lodFrameStats.shaftCands = cands.length;
@@ -1634,6 +1659,12 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       // null = sylwetka czeka na pieczenie (budżet klatki) — cień od następnej.
       const occ = HullShadowSdf.acquire(c.grid, now);
       if (!occ) continue;
+      if (c.entity === null) {
+        packHullShaftOccluder(shaftOccluderScratch, 0, c.ex, c.ey, -c.proxy.angle, 1, 1, occ.layout, occ.layer, strength);
+        if (!Core3D.pushShaftHullSdf(shaftOccluderScratch, 0)) break;
+        pushed++;
+        continue;
+      }
       const interpPose = getInterpolatedRenderPose(c.entity);
       const px = interpPose ? interpPose.x : c.ex;
       const py = interpPose ? interpPose.y : c.ey;
@@ -1696,6 +1727,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // margines pudła rysowania [j. świata] — okręt spoza pudła ma kadłub co najmniej tyle za kadrem (LOD dysz SIDE);
   // kadr (środek i połowy boków) — LOD dysz MAIN za kadrem
   EngineVfxSystem.update(visibleVfx, cullInfo ? DRAW_BOX_MARGIN_PX / cameraZoom : Infinity, cullInfo);
+  // Modele dysz SIDE proxy statków ruchu (E17b): po liście dysz klatki NPC (EngineVfxSystem zaczyna ją od nowa).
+  if (_proxyNozzleSource !== null) _proxyNozzleSource();
   pushEngineHullLights();
 
   state.hadRenderableLastFrame = hasRenderable || visibleHex.length > 0;

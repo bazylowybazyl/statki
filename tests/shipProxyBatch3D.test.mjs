@@ -31,8 +31,10 @@ test('materiał proxy: fragment = fragment pełnego kadłuba (E17 — oświetlen
   assert.match(proxy, /import \{ hullProxyFragmentNode \} from '\.\/hexShips3D\.tsl\.js'/);
   assert.match(proxy, /fragmentNode = hullProxyFragmentNode\(/);
   assert.doesNotMatch(proxy, /dayDiffuse|sunVisibility\(\)|isGlowing/);
-  // Wariant proxy fragmentu kadłuba: bez mapy ran, żaru i jasności blachy.
-  assert.match(hull, /export function hullProxyFragmentNode\(.*\) \{ return hullFragmentNode\(\{ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false \}\); \}/);
+  // Wariant proxy fragmentu kadłuba: bez mapy ran, żaru i jasności blachy; światła efektów z siatki (lampy hali K-7) — tak (E17b).
+  assert.match(hull, /export function hullProxyFragmentNode\(.*\) \{ return hullFragmentNode\(\{ perObject, spriteUV, localWorld, lodOpacity, cutDiscard, shade: null, heat: null, damage: false, effectLights: true \}\); \}/);
+  assert.match(hull, /function hullEffectLights\(ctx\) \{ if \(!ctx\.effectLights\) return vec3\(0\.0\);/);
+  assert.match(proxy, /uGridOwner: float\(0\.0\)/);
 });
 
 // Atrapa Core3D bez WebGL: scena three, rozmiar widoku, obrazek {width, height}.
