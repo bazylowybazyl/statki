@@ -4,7 +4,7 @@
 // Vite + headless Chrome z WebGPU (CDP), gra swobodna, zegar krokowy harnessu.
 //
 //   node scripts/webgpu/zlomiarze-gra.mjs [--query renderWorker=1] [--out .tmp/zlomiarze] [--port 5481]
-//        [--rozgrzewka 1800] [--etapy gornik,ciecie,hol,koszt] [--postoj 75] [--film 1]
+//        [--rozgrzewka 1800] [--etapy gornik,ciecie,hol,koszt] [--postoj 120] [--film 1]
 //
 // `--postoj N` — postój złomiarza przy wraku [s] (wiadomość `config.scrappers` do workera: cięcie i zaczepienie w kadrze
 // filmu; gospodarka tego przebiegu — tylko narzędzia). Wynik: <out>/raport.json, zrzuty <out>/*.png, film <out>/*.gif.
@@ -19,7 +19,7 @@ mkdirSync(out, { recursive: true });
 const query = `&${args.query || 'renderWorker=1'}`;
 const WARM = Number(args.rozgrzewka || 1800);
 const STAGES = new Set(String(args.etapy || 'gornik,ciecie,hol,koszt').split(','));
-const DWELL = Number(args.postoj || 75);
+const DWELL = Number(args.postoj || 120);
 const FILM = args.film !== '0';
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 
@@ -67,7 +67,8 @@ async function waitUntil(expr, limit, every = 1) {
 }
 const ZOOM = (z) => `(() => { const c = window.camera; c.minZoom = 0.003; c.manualZoom = true;
   c.zoom = c.targetZoom = c.zoomBase = ${z}; window.DevScene?.syncCamera?.(); return true; })()`;
-const LOOK = (x, y, h) => `window.PortCargo.look(${x}, ${y}, ${h})`;
+// Kamera RTS nad punktem (wysokość kadru h j. przy 900 px) — kadr stoi, gracz zostaje, gdzie jest.
+const LOOK = (x, y, h) => `window.__harness.scene.cam(${x}, ${y}, ${(900 / h).toFixed(4)})`;
 const snapshot = () => ev(`window.TrafficV2.requestSnapshot().then((s) => ({ time: s.time, work: s.work, scrappers: s.scrappers }))`);
 // Stan pracy po stronie gry: rekordy pracy, encje, zgłoszenia, praca złomiarzy, ramka obrazu.
 const workState = () => ev(`(() => {
@@ -98,34 +99,43 @@ async function film(name, n, every, focusExpr, viewH) {
     files.push(file);
   }
   const gif = join(out, `${name}.gif`);
-  const py = `import sys, glob\nfrom PIL import Image\nfs = sorted(glob.glob(sys.argv[1] + '/*.png'))\nims = [Image.open(f).convert('RGB').resize((960, 540)) for f in fs]\nims[0].save(sys.argv[2], save_all=True, append_images=ims[1:], duration=${Math.round(every * 1000 / 60)}, loop=0, optimize=True)\n`;
+  const py = `import sys, glob\nfrom PIL import Image\nfs = sorted(glob.glob(sys.argv[1] + '/*.png'))\nims = [Image.open(f).convert('RGB').resize((800, 450)).convert('P', palette=Image.ADAPTIVE, colors=160) for f in fs]\nims[0].save(sys.argv[2], save_all=True, append_images=ims[1:], duration=${Math.round(every * 1000 / 60)}, loop=0, optimize=True)\n`;
   const pyFile = join(out, '_gif.py');
   writeFileSync(pyFile, py);
-  const r = spawnSync('python', ['-I', pyFile, dir, gif], { encoding: 'utf8' });
+  const r = spawnSync('python', [pyFile, dir, gif], { encoding: 'utf8' });
   return { klatki: files.length, gif: r.status === 0 ? gif : null, blad: r.status === 0 ? null : (r.stderr || '').slice(0, 400) };
 }
 
-/** Koszt klatki: średni czas pętli i CPU workera renderu z obrazem pracy i bez (`hideRender`), na zmianę. */
-async function costAB(label, seconds = 4) {
-  const sample = async (hide) => {
-    await ev(`(() => { window.TrafficBubble.hideRender = ${hide}; return true; })()`);
-    await waitGame(0.5);
-    const t0 = await ev('performance.now()');
-    await waitGame(seconds);
-    const t1 = await ev('performance.now()');
-    const st = await ev(`(() => { const h = window.PerfHUD; const d = h && h.display ? h.display : null;
-      const rw = window.RenderWorkerHost?.stats?.() || null;
-      return { fps: d ? d.fps : null, rw }; })()`);
-    return { ms: (t1 - t0) / (seconds * 60), ...st };
+/**
+ * Koszt klatki z obrazem pracy i bez (`TrafficSalvage.hideRender` — pusta ramka `trafficWork`, rozgrywka bez zmian),
+ * przebiegi na zmianę w tym samym kadrze: worker renderu (GPU klatki ze znaczników, CPU aktualizacji modułów, renderu
+ * i całej klatki — `RenderWorkerHost.stats`, wzór `ruch-wyglad-gra.mjs`) i koszt bańki na wątku gry (`gameMs`).
+ */
+async function costAB(label, probki = 24) {
+  const sample = () => ev(`(() => { const h = window.RenderWorkerHost; const tb = window.TrafficBubble;
+    let r = null; if (h) { if (h.readStats) h.readStats(); const s = h.stats; r = { gpu: s[0], gpuN: s[2], upd: s[4], render: s[5], frame: s[6] }; }
+    return { ...(r || {}), game: tb ? tb.stats.gameMs : null }; })()`);
+  const run = async (hide) => {
+    await ev(`(() => { window.TrafficSalvage.hideRender = ${hide}; return true; })()`);
+    await ev('window.__harness.step(90).then(() => true)');
+    const rows = [];
+    let n0 = -1;
+    for (let i = 0; i < probki; i++) {
+      await ev('window.__harness.step(15).then(() => true)');
+      const r = await sample();
+      if (r.gpuN !== n0) { r.gpuNew = true; n0 = r.gpuN; }
+      rows.push(r);
+    }
+    const avg = (k, f = () => true) => { const xs = rows.filter(f).map((r) => Number(r[k]) || 0); return xs.length ? +(xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(3) : null; };
+    return { gpuMs: avg('gpu', (r) => r.gpuNew), cpuUpdMs: avg('upd'), cpuRenderMs: avg('render'), cpuKlatkaMs: avg('frame'), grackaMs: avg('game'), probek: rows.length };
   };
-  const rows = [];
+  const out = { etykieta: label, ramka: await ev('window.TrafficSalvage.frame.count'), przebiegi: [] };
   for (let k = 0; k < 2; k++) {
-    rows.push({ obraz: true, ...(await sample(false)) });
-    rows.push({ obraz: false, ...(await sample(true)) });
+    out.przebiegi.push({ obraz: true, ...(await run(false)) });
+    out.przebiegi.push({ obraz: false, ...(await run(true)) });
   }
-  await ev('(() => { window.TrafficBubble.hideRender = false; return true; })()');
-  const avg = (on) => rows.filter((r) => r.obraz === on).reduce((s, r) => s + r.ms, 0) / 2;
-  return { etykieta: label, przebiegi: rows, msNaKrokZObrazem: avg(true), msNaKrokBez: avg(false) };
+  await ev('(() => { window.TrafficSalvage.hideRender = false; return true; })()');
+  return out;
 }
 
 // Wrak gry obok gracza: okręt wezwania (`spawnCallInShip`, wrogi) albo kadłub cywila (`spawnDevHull`) zniszczony
@@ -148,19 +158,20 @@ const MAKE_WRECK = (kind, dx, dy) => `(async () => {
 })()`;
 
 async function scrapperRun(name, kind, wantMode) {
-  // Gracz przy Ziemi, za ringiem (bańka portu), wrak 2,5 km przed dziobem.
+  // Gracz przy Ziemi, za ringiem (bańka portu), wrak 6 km od gracza (wybuch zbiornika nie sięga Atlasa).
   const at = await ev(`(() => { const earth = window.TrafficV2.getStation('earth');
     const a = ${kind === 'civil' ? 0.9 : 2.3};
     window.devTeleportTo(earth.x + Math.cos(a) * 64000, earth.y + Math.sin(a) * 64000, { angle: a + Math.PI, quiet: true });
     window.ship.vel.x = 0; window.ship.vel.y = 0; return { x: window.ship.pos.x, y: window.ship.pos.y }; })()`);
   await ev(ZOOM(0.12));
   await waitGame(2);
-  const made = await ev(MAKE_WRECK(kind, -2500, 0), 600000);
+  const made = await ev(MAKE_WRECK(kind, -6000, 0), 600000);
   console.log(name, 'wrak:', JSON.stringify(made));
   const r = { gracz: at, wrak: made };
   // Zgłoszenie (reportDelay 2 s) i holownik z portu (krok świata co 5 s).
   r.zgloszenieS = await waitUntil(`window.TrafficSalvage.stats.reported > ${made.before || 0}`, 15, 1);
-  const gid = await ev(`Math.max(...window.TrafficSalvage.reported.keys())`);
+  // Śmierć statku daje kilka wraków (wybuch zbiornika, odłamy) — śledzimy największy.
+  const gid = await ev(`[...window.TrafficSalvage.reported.values()].filter((r) => r.gid > ${made.before || 0}).sort((a, b) => (b.wreck.radius || 0) - (a.wreck.radius || 0))[0]?.gid ?? null`);
   r.gid = gid;
   r.wyslanyS = await waitUntil(`window.__zlomSnap && window.__zlomSnap.some((w) => w.gid === ${gid})`, 1, 1);
   for (let t = 0; t < 30 && r.wyslanyS < 0; t++) {
@@ -186,13 +197,15 @@ async function scrapperRun(name, kind, wantMode) {
   }
   r.przyWraku = await workState();
   console.log(name, 'przy wraku po', r.dolotS, 's:', JSON.stringify(r.przyWraku.works.filter((w) => w.gid === gid)));
-  const wr = made.wrak;
+  // Kadr nad wrakiem w jego obecnym miejscu (wybuch i lina go przesuwają).
+  const wr = await ev(`(() => { const r = window.TrafficSalvage.reported.get(${gid}); const w = r && r.wreck; return w ? { x: w.x, y: w.y, r: w.radius } : ${JSON.stringify(null)}; })()`) || made.wrak;
   if (wr) {
     await ev(LOOK(wr.x, wr.y, wantMode === 'cut' ? 2600 : 5200));
     await waitGame(2);
     await screenshotPng(cdp, join(out, `${name}-2-praca.png`));
     await waitGame(0.25);
     await screenshotPng(cdp, join(out, `${name}-2b-praca.png`));
+    if (STAGES.has('koszt')) r.koszt = await costAB(`złomiarz: ${name}`, 12);
   }
   // Film pracy: cięcie (wrak maleje) albo zaczepienie i odlot z wrakiem.
   const focus = wantMode === 'cut' ? `({ x: ${wr?.x ?? 0}, y: ${wr?.y ?? 0} })` : `(() => {
@@ -206,6 +219,17 @@ async function scrapperRun(name, kind, wantMode) {
   r.koniecS = await waitUntil(`window.TrafficSalvage.taken.has(${gid}) || !window.TrafficSalvage.reported.has(${gid})`, DWELL + 60, 2);
   r.poKoncu = await workState();
   if (wantMode === 'tow') {
+    // Próbki odlotu: holownik (poza, prędkość, faza) i wrak na linie co 0,5 s.
+    r.odlotProbki = [];
+    for (let i = 0; i < 16; i++) {
+      r.odlotProbki.push(await ev(`(() => { const w = [...window.TrafficV2.actorWorks.values()].find((x) => x.gid === ${gid});
+        const a = w && window.TrafficBubble.byId.get(w.id); const j = w && window.TrafficSalvage.jobs.get(w.id); const k = j && j.wreck;
+        return { t: Math.round(window.TrafficV2.time * 10) / 10, rec: w ? w.phase : null,
+          tug: a ? { x: Math.round(a.cx), y: Math.round(a.cy), v: Math.round(Math.hypot(a.vx, a.vy)), phase: a.phase, flags: a.flags, speed: Math.round(a.speed) } : null,
+          wrak: k ? { x: Math.round(k.x), y: Math.round(k.y), v: Math.round(Math.hypot(k.vx, k.vy)) } : null }; })()`));
+      await waitGame(0.5);
+    }
+    console.log(name, 'odlot:', JSON.stringify(r.odlotProbki.map((p) => [p.t, p.rec, p.tug && p.tug.v, p.tug && p.tug.phase, p.wrak && p.wrak.v])));
     r.filmOdlot = await film(`${name}-odlot`, 30, 45, focus, 9000);
     await screenshotPng(cdp, join(out, `${name}-3-odlot.png`));
   } else {
@@ -215,7 +239,9 @@ async function scrapperRun(name, kind, wantMode) {
   }
   r.wynik = await workState();
   r.snap = (await snapshot()).scrappers;
-  await ev('window.PortCargo.lookEnd()');
+  r.dziennik = await ev('window.TrafficSalvage.log.slice()');
+  console.log(name, 'dziennik:', JSON.stringify(r.dziennik.filter((e) => e.gid === gid)));
+  await ev('window.__harness.scene.shipCam(0.25)');
   return r;
 }
 
@@ -246,8 +272,25 @@ try {
   // 1) Górnik przy polu: wyprawa w etapie wydobycia z najdłuższą resztą postoju, gracz 2,5 km obok.
   if (STAGES.has('gornik')) {
     const g = {};
-    const s = await snapshot();
-    const mines = (s.work || []).filter((w) => w.kind === 'mine' && w.phase === 'work' && w.left > 120).sort((a, b) => b.left - a.left);
+    // Wyprawy górnicze ruszają z deficytu — świat przewija się po 5 min, aż któraś stoi w etapie wydobycia.
+    let s = await snapshot();
+    for (let k = 0; k < 36; k++) {
+      if ((s.work || []).filter((w) => w.kind === 'mine' && w.phase === 'work' && w.left > 150).length >= 3) break;
+      const c0 = await ev('window.TrafficV2.clock || 0');
+      await ev(`(async () => { for (let i = 0; i < 60; i++) window.TrafficV2.advance(5); return true; })()`);
+      await waitFor(cdp, `(window.TrafficV2.clock || 0) >= ${c0 + 290}`, 120000, 200);
+      s = await snapshot();
+      g.przewinieto = (k + 1) * 300;
+    }
+    const counts = {};
+    for (const w of s.work || []) counts[`${w.kind}:${w.phase}`] = (counts[`${w.kind}:${w.phase}`] || 0) + 1;
+    g.prace = counts;
+    g.czasSwiata = s.time;
+    console.log('prace w świecie', s.work ? s.work.length : 'brak', JSON.stringify(counts));
+    // Najbliżej Słońca (pas główny — w Pasie Kuipera kadłuby są prawie czarne), z zapasem postoju.
+    const sun = await ev('({ x: window.SUN.x, y: window.SUN.y })');
+    const sunD = (w) => Math.hypot(w.x - sun.x, w.y - sun.y);
+    const mines = (s.work || []).filter((w) => w.kind === 'mine' && w.phase === 'work' && w.left > 150).sort((a, b) => sunD(a) - sunD(b));
     g.wydobyc = mines.length;
     g.cel = mines[0] || null;
     console.log('górników w pracy', mines.length, JSON.stringify(g.cel));
@@ -263,6 +306,11 @@ try {
       if (p) {
         await ev(LOOK(p.x, p.y, 3200));
         await waitGame(1.5);
+        // Diagnostyka kadru: kamera, gracz i górnik na ekranie.
+        g.kadr = await ev(`(() => { const c = window.camera, s = window.ship, w2s = window.worldToScreen;
+          const sc = (x, y) => { const q = w2s(x, y, c); return { x: Math.round(q.x), y: Math.round(q.y) }; };
+          return { cam: { x: Math.round(c.x), y: Math.round(c.y), zoom: c.zoom, mode: c.mode }, gracz: sc(s.pos.x, s.pos.y), gornik: sc(${p.x}, ${p.y}) }; })()`);
+        console.log('kadr', JSON.stringify(g.kadr));
         await screenshotPng(cdp, join(out, 'gornik-1-kadr.png'));
         await ev(LOOK(p.x, p.y, 1600));
         await waitGame(0.6);
@@ -271,7 +319,7 @@ try {
         if (report.tryb === 'off') g.widok = await ev('(() => { const m = window.__asteroidBelt?.miningView; return m ? { ...m.stats } : null; })()');
         g.ramka = await ev('window.TrafficSalvage.frame.count');
         if (STAGES.has('koszt')) g.koszt = await costAB('górnik przy polu');
-        await ev('window.PortCargo.lookEnd()');
+        await ev('window.__harness.scene.shipCam(0.25)');
       }
     }
     report.etapy.gornik = g;
@@ -280,7 +328,6 @@ try {
   // 2) Złomiarz tnie wrak cywila (frachtowiec — sam złom), 3) holuje wrak okrętu (niszczyciel wezwania).
   if (STAGES.has('ciecie')) report.etapy.ciecie = await scrapperRun('ciecie', 'civil', 'cut');
   if (STAGES.has('hol')) report.etapy.hol = await scrapperRun('hol', 'warship', 'tow');
-  if (STAGES.has('koszt') && STAGES.has('hol')) report.etapy.kosztPort = await costAB('port Ziemi po holu');
 
   report.syncKoniec = syncWorker();
   report.syncStronaKoniec = await syncPage();

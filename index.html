@@ -17391,7 +17391,7 @@
     /** Ramka obrazu pracy w chwili klatki renderu (blok `trafficWork` / `TrafficWork3D` w off); w soczewce skoku — pusta. */
     function trafficWorkRenderFrame(alpha) {
       if (!trafficSalvage || !trafficV2 || !trafficBubble) return null;
-      if (_lensDotsActive || trafficBubble.hideRender) { trafficSalvage.frame.count = 0; return trafficSalvage.frame; }
+      if (_lensDotsActive || trafficBubble.hideRender || trafficSalvage.hideRender) { trafficSalvage.frame.count = 0; return trafficSalvage.frame; }
       const t = trafficV2.time - (1 - Math.max(0, Math.min(1, alpha))) * PHYS_DT;
       return fillTrafficWorkFrame(trafficSalvage, trafficBubble, t, trafficActorPoseAt);
     }

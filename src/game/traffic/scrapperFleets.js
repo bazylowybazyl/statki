@@ -171,6 +171,7 @@ export function dispatchScrappers(scrappers, options = {}) {
 
     const { station, ocena } = best;
     const praca = ocena.mode === 'cut' ? config.cutSeconds : config.hookSeconds;
+    const spot = workSpot(wreck, station);
     const lot = ocena.distance / config.cruiseSpeed;
     const powrot = ocena.mode === 'tow' ? lot * config.towSpeedPenalty : lot;
 
@@ -183,12 +184,12 @@ export function dispatchScrappers(scrappers, options = {}) {
       stages: [
         travelStage(station.id, wreck.id, {
           seconds: lot, distance: ocena.distance,
-          fromPos: { x: station.x, y: station.y }, toPos: { x: wreck.x, y: wreck.y }
+          fromPos: { x: station.x, y: station.y }, toPos: spot
         }),
-        dwellStage(wreck.id, praca, DWELL_REASON.SERVICE, { x: wreck.x, y: wreck.y }),
+        dwellStage(wreck.id, praca, DWELL_REASON.SERVICE, spot),
         travelStage(wreck.id, station.id, {
           seconds: powrot, distance: ocena.distance,
-          fromPos: { x: wreck.x, y: wreck.y }, toPos: { x: station.x, y: station.y }
+          fromPos: spot, toPos: { x: station.x, y: station.y }
         })
       ],
       fuelCapacity: 0
@@ -211,6 +212,21 @@ export function dispatchScrappers(scrappers, options = {}) {
     events.push({ type: 'scrapper', stationId: station.id, wreckId: wreck.id, mode: ocena.mode });
   }
   return events;
+}
+
+/**
+ * Punkt postoju złomiarza przy wraku. Wrak wojny w tle — sam wrak (bez obrazu). Wrak gry (E24) — przed wrakiem od
+ * strony stacji, promień wraku + `WORK_STANDOFF`: holownik nie staje w środku kadłuba, a dziobem patrzy na wrak
+ * (palniki, zaczep liny). Czasy kursu liczą się z odległości do wraku jak dawniej.
+ */
+const WORK_STANDOFF = 420;
+function workSpot(wreck, station) {
+  if (wreck.game == null) return { x: wreck.x, y: wreck.y };
+  const dx = (station.x || 0) - wreck.x;
+  const dy = (station.y || 0) - wreck.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const k = (Number(wreck.r) || 0) + WORK_STANDOFF;
+  return { x: wreck.x + dx / d * k, y: wreck.y + dy / d * k };
 }
 
 /**
@@ -329,6 +345,8 @@ function gameWreckRecord(war, spec, x, y, now) {
     scrap: salvage.cut.scrap,
     value: Math.max(salvage.cut.value, salvage.tow?.value || 0),
     x, y,
+    /** Promień wraku gry [j.] — złomiarz staje przed nim (`workSpot`), nie w środku. */
+    r: Math.max(0, Number(spec.r) || 0),
     claimed: false,
     game: spec.gid,
     salvage,

@@ -294,7 +294,7 @@ test('hol: lina od rufy, skraca się; po końcu pracy wrak znika z holownikiem; 
   stepTrafficSalvage(ts, tb, 4, 1 / 60, 0, 0);
   assert.equal(ropes.length, 1);
   assert.equal(ropes[0].a.towStatic, true, 'kotwica kinematyczna');
-  assert.equal(ropes[0].a.pos.x, -150, 'rufa holownika');
+  assert.equal(ropes[0].a.pos.x, 150, 'zaczep od strony wraku');
   const l0 = ropes[0].length;
   for (let i = 0; i < 120; i++) stepTrafficSalvage(ts, tb, 4 + i / 60, 1 / 60, 0, 0);
   assert.ok(ropes[0].length < l0, 'lina się skraca');
@@ -306,6 +306,7 @@ test('hol: lina od rufy, skraca się; po końcu pracy wrak znika z holownikiem; 
   stepTrafficSalvage(ts, tb, 10, 1 / 60, 0, 0);
   assert.equal(removed.length, 0, 'na linie — jeszcze jest');
   assert.equal(ropes[0].a.pos.x, 4850, 'kotwica za holownikiem');
+  assert.equal(w.vx, 2500, 'odlot: wrak jedzie ku punktowi na długości liny (sufit korekty)');
   tb.byId.delete(9);
   stepTrafficSalvage(ts, tb, 11, 1 / 60, 0, 0);
   assert.deepEqual(removed, [w], 'holownik wyszedł z bańki — wrak z nim');
@@ -336,4 +337,39 @@ test('ramka obrazu: górnik tylko w fazie station etapu wydobycia', () => {
   assert.equal(f.count, 1);
   assert.equal(f.list[0].kind, TRAFFIC_WORK_KIND.MINE);
   assert.ok(Math.abs(f.list[0].k - 0.5) < 1e-9);
+});
+
+test('złomiarz staje przed wrakiem gry od strony stacji (promień + 420 j.), przy wraku wojny — w miejscu wraku', () => {
+  const env = setup();
+  reportGameWrecks(env.scrappers, env.war, [{ gid: 'w', x: 20000, y: 0, r: 300, classId: 'cruiser' }]);
+  env.war.wrecks.push({ id: 'wrak-9', classId: 'cruiser', x: -20000, y: 0, claimed: false });
+  dispatchScrappers(env.scrappers, { war: env.war, stations: [STATION], registry: env.registry });
+  const byGid = (g) => env.registry.byId.get(env.scrappers.active.find((j) => j.gid === g).courseId);
+  const game = byGid('w');
+  assert.deepEqual([game.stages[1].pos.x, game.stages[1].pos.y], [20000 - 720, 0]);
+  assert.deepEqual([game.stages[0].toPos.x, game.stages[2].fromPos.x], [20000 - 720, 20000 - 720]);
+  const bg = byGid(null);
+  assert.deepEqual([bg.stages[1].pos.x, bg.stages[1].pos.y], [-20000, 0]);
+});
+
+test('cięcie rozdzieliło wrak: pracę przejmuje największy żywy odłam (bez wreck-gone)', () => {
+  const { ts, tb, bridge, sent } = gameEnv();
+  const w = { x: 500, y: 0, radius: 300, nodes: 80 };
+  noteTrafficWreck(ts, w, { classId: 'destroyer', scale: 1, towable: false }, 0);
+  stepTrafficSalvage(ts, tb, 3, 1 / 60, 0, 0);
+  const gid = sent.reports[0].gid;
+  assert.equal(sent.reports[0].r, 300, 'promień wraku w zgłoszeniu');
+  tb.byId.set(5, tugActor(5, 0, 0));
+  bridge.actorWorks.set(5, { id: 5, kind: 'cut', phase: 'work', x: 500, y: 0, t0: 3, dur: 100, gid });
+  stepTrafficSalvage(ts, tb, 4, 1 / 60, 0, 0);
+  const small = { x: 600, y: 0, radius: 40, nodes: 4 };
+  const big = { x: 450, y: 0, radius: 160, nodes: 30 };
+  noteTrafficWreck(ts, small, null, 4, w);
+  noteTrafficWreck(ts, big, null, 4, w);
+  w.dead = true;
+  stepTrafficSalvage(ts, tb, 5, 1 / 60, 0, 0);
+  assert.deepEqual(sent.gone, [], 'bez wreck-gone');
+  assert.equal(ts.reported.get(gid).wreck, big);
+  assert.equal(ts.jobs.get(5).wreck, big);
+  assert.ok(ts.log.some((e) => e.what === 'odlam-przejal' && e.gid === gid));
 });

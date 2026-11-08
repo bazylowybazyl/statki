@@ -38,6 +38,9 @@ export const TRAFFIC_SALVAGE_TUNE = {
    */
   cutMaxPerStep: 6,
   cutLead: 10,
+  /** Odlot z wrakiem: sprężyna do punktu na długości liny [1/s] i sufit korekty prędkości [j./s]. */
+  towSpring: 2.5,
+  towMaxCorrection: 2500,
   /** Wrak, który zniknął dalej od gracza niż tyle [j.], zdjęła gra (despawn wraków > 50 tys.) — bez `wreck-gone`. */
   farDespawn: 45000
 };
@@ -88,6 +91,11 @@ export function createTrafficSalvage(bridge, hooks = {}, options = {}) {
     taken: new Map(),
     /** Ramka obrazu (rekordy `trafficWork`). */
     frame: { list: [], count: 0 },
+    /** Narzędzia (A/B kosztu obrazu): true = pusta ramka obrazu pracy, rozgrywka bez zmian. */
+    hideRender: false,
+    /** Dziennik zdarzeń (narzędzia) i czas mostu ostatniego kroku. */
+    log: [],
+    clock: 0,
     stats: { reported: 0, gone: 0, cutNodes: 0, removed: 0, ropes: 0, towed: 0 }
   };
 }
@@ -115,7 +123,11 @@ function wreckY(w) { return Number(w?.pos?.y ?? w?.y) || 0; }
 /** Zdarzenie mostu `salvage-taken`: złomiarz skończył cięcie albo zaczepił wrak. */
 export function onTrafficSalvageTaken(ts, list) {
   if (!ts || !Array.isArray(list)) return;
-  for (const t of list) if (t && t.gid != null) ts.taken.set(t.gid, t.mode === 'cut' ? 'cut' : 'tow');
+  for (const t of list) {
+    if (!t || t.gid == null) continue;
+    ts.taken.set(t.gid, t.mode === 'cut' ? 'cut' : 'tow');
+    note(ts, `koniec-pracy:${t.mode}`, t.gid);
+  }
 }
 
 function removeReported(ts, gid, reason) {
@@ -127,7 +139,34 @@ function removeReported(ts, gid, reason) {
   for (const w of rec.extras) if (w && !w.dead && remove) remove(w);
   if (rec.wreck && !rec.wreck.dead && remove) remove(rec.wreck);
   ts.stats.removed++;
-  if (reason === 'gone') ts.stats.gone++;
+  note(ts, `usuniety:${reason}`, gid);
+}
+
+/** Dziennik zdarzeń (narzędzia, `TrafficSalvage.log`): ostatnie 64 — zgłoszenia, liny, końce, zniknięcia z przyczyną. */
+function note(ts, what, gid) {
+  const log = ts.log;
+  if (log.length >= 64) log.shift();
+  log.push({ t: Math.round(ts.clock * 10) / 10, what, gid });
+}
+
+/** Główny wrak pracy przepadł przy rozpadzie: największy żywy odłam tej pracy przejmuje jego miejsce (lina — od nowa). */
+function promoteExtra(ts, rec) {
+  let best = null;
+  for (const w of rec.extras) {
+    if (!w || w.dead || (ts.hooks.alive && !ts.hooks.alive(w))) continue;
+    if (!best || (Number(w.radius) || 0) > (Number(best.radius) || 0)) best = w;
+  }
+  if (!best) return false;
+  rec.extras.splice(rec.extras.indexOf(best), 1);
+  rec.wreck = best;
+  for (const job of ts.jobs.values()) {
+    if (job.gid !== rec.gid) continue;
+    if (job.rope && ts.hooks.detachRope) ts.hooks.detachRope(job.rope);
+    job.rope = null;
+    job.wreck = best;
+  }
+  note(ts, 'odlam-przejal', rec.gid);
+  return true;
 }
 
 function dropJob(ts, id, job) {
@@ -136,17 +175,19 @@ function dropJob(ts, id, job) {
   ts.jobs.delete(id);
 }
 
-/** Rufa holownika (punkt zaczepienia liny) — poza encji w czasie kroku (`cx`, `cy`, `ca`). */
-function sternOf(a, out) {
-  const c = Math.cos(a.ca);
-  const s = Math.sin(a.ca);
+/**
+ * Zaczep liny na holowniku: punkt obrysu od strony wraku (środek + kierunek do wraku × pół długości) — ciągły przy
+ * obrocie holownika: przy zaczepianiu (dziób do wraku) i w odlocie (wrak za rufą).
+ */
+function hitchOf(a, w, out) {
+  const dx = wreckX(w) - a.cx;
+  const dy = wreckY(w) - a.cy;
+  const d = Math.sqrt(dx * dx + dy * dy) || 1;
   const half = (Number(a.length) || 0) * 0.5;
-  out.x = a.cx - c * half;
-  out.y = a.cy - s * half;
+  out.x = a.cx + dx / d * half;
+  out.y = a.cy + dy / d * half;
   return out;
 }
-
-const _p = { x: 0, y: 0 };
 
 /**
  * Krok fizyki (po `trafficBubbleStep` — pozy encji w czasie kroku): zgłoszenia, wraki, które zniknęły, praca
@@ -156,6 +197,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
   if (!ts) return;
   const H = ts.hooks;
   const T = ts.tune;
+  ts.clock = time;
   // 1. Zgłoszenia po uspokojeniu wraku.
   if (ts.pending.length) {
     let out = null;
@@ -173,8 +215,9 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       const gid = ts.nextGid++;
       ts.gidOf.set(w, gid);
       ts.reported.set(gid, { wreck: w, gid, extras: [], lastX: x, lastY: y });
-      (out || (out = [])).push({ gid, x, y, ...p.spec });
+      (out || (out = [])).push({ gid, x, y, r: Number(w.radius) || 0, ...p.spec });
       ts.stats.reported++;
+      note(ts, 'zgloszony', gid);
     }
     if (out && ts.bridge?.reportWrecks) ts.bridge.reportWrecks(out);
   }
@@ -183,8 +226,13 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
   let gone = null;
   const far2 = T.farDespawn * T.farDespawn;
   for (const [gid, rec] of ts.reported) {
-    const w = rec.wreck;
-    const lost = !w || w.dead || (H.alive && !H.alive(w));
+    let w = rec.wreck;
+    let lost = !w || w.dead || (H.alive && !H.alive(w));
+    // Cięcie rozdzieliło wrak (rozpad na wyspy): praca przechodzi na największy żywy odłam tej samej pracy.
+    if (lost && rec.extras.length && promoteExtra(ts, rec)) {
+      w = rec.wreck;
+      lost = false;
+    }
     const player = !lost && H.playerBusy && H.playerBusy(w);
     if (!lost && !player) {
       rec.lastX = wreckX(w);
@@ -193,7 +241,9 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
     }
     ts.reported.delete(gid);
     const hooked = ts.taken.delete(gid);
-    if (lost && (hooked || (rec.lastX - px) ** 2 + (rec.lastY - py) ** 2 > far2)) continue;
+    const far = (rec.lastX - px) ** 2 + (rec.lastY - py) ** 2 > far2;
+    note(ts, player ? 'gracz-zabral' : hooked ? 'zniknal-na-haku' : far ? 'zniknal-daleko' : 'zniknal', gid);
+    if (lost && (hooked || far)) continue;
     (gone || (gone = [])).push(gid);
     ts.stats.gone++;
   }
@@ -223,7 +273,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       if (!job.active) continue;
       if (w.isCold && H.thaw && !H.thaw(w)) { job.active = false; continue; }
       if (rec.kind === 'cut') stepCut(ts, job, w, rec, time);
-      else stepTow(ts, job, w, a, dt);
+      else stepTow(ts, job, w, a, dt, rec.phase === 'haul');
     }
   }
   // 4. Koniec pracy z workera i holowniki, które zniknęły z bańki.
@@ -235,7 +285,7 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
     if (!ts.reported.has(job.gid)) { dropJob(ts, id, job); continue; }
     // Holownik zestrzelony albo awansowany do NPC: kurs w workerze przepada, wrak wraca do puli — zostaje w grze.
     const lostTug = !present && (tb?.dead?.has(id) || tb?.promoted?.has(id));
-    if (lostTug) ts.taken.delete(job.gid);
+    if (lostTug && ts.taken.delete(job.gid)) note(ts, 'holownik-stracony', job.gid);
     const taken = ts.taken.get(job.gid);
     if (job.rope && taken && (!present || !rec)) {
       // Wrak na linie po końcu pracy: znika z holownikiem (wyjście z bańki, koniec kursu) — holownik go zabrał.
@@ -258,8 +308,8 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
 
 function anchorFollow(job, a) {
   const an = job.anchor;
-  if (!an) return false;
-  sternOf(a, an.pos);
+  if (!an || !job.wreck) return false;
+  hitchOf(a, job.wreck, an.pos);
   an.vel.x = a.vx;
   an.vel.y = a.vy;
   an.angle = a.ca;
@@ -285,7 +335,7 @@ function stepCut(ts, job, w, rec, time) {
   }
 }
 
-function stepTow(ts, job, w, a, dt) {
+function stepTow(ts, job, w, a, dt, haul) {
   const H = ts.hooks;
   const T = ts.tune;
   if (!job.rope) {
@@ -306,10 +356,30 @@ function stepTow(ts, job, w, a, dt) {
     w.noWreckSleep = true;
     w._wreckSleeping = false;
     ts.stats.ropes++;
+    note(ts, 'lina', job.gid);
     return;
   }
   anchorFollow(job, a);
   if (job.rope.length > job.ropeTarget) job.rope.length = Math.max(job.ropeTarget, job.rope.length - T.reelSpeed * dt);
+  // Odlot z wrakiem: holownik w bańce leci do 1200 j./s, a sama lina (tłumienie i limit korekty) zostawiała wrak kilka
+  // km z tyłu — wrak jedzie z prędkością holownika i sprężyną do punktu na długości liny za zaczepem (gra rusza encję).
+  if (haul) towFollow(job, w, a, T);
+}
+
+function towFollow(job, w, a, T) {
+  const an = job.anchor.pos;
+  const dx = wreckX(w) - an.x;
+  const dy = wreckY(w) - an.y;
+  const d = Math.sqrt(dx * dx + dy * dy) || 1;
+  const tx = an.x + dx / d * job.ropeTarget;
+  const ty = an.y + dy / d * job.ropeTarget;
+  let cx = (tx - wreckX(w)) * T.towSpring;
+  let cy = (ty - wreckY(w)) * T.towSpring;
+  const c = Math.sqrt(cx * cx + cy * cy);
+  if (c > T.towMaxCorrection) { cx *= T.towMaxCorrection / c; cy *= T.towMaxCorrection / c; }
+  w.vx = a.vx + cx;
+  w.vy = a.vy + cy;
+  if (w.vel) { w.vel.x = w.vx; w.vel.y = w.vy; }
 }
 
 /** Wraki, których dotyka praca złomiarza (lina, cięcie) — gra stempluje je w `markColdWreckReferences`. */
