@@ -167,7 +167,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `tarcze` | Tarcze: pula slotów, przebicie, wygląd |
 | `maskowanie` | Maskowanie: wygląd, efekty, wizjer |
 | `warp` | Warp gracza, TRAVEL TO, wezwania wsparcia, warp „Nurt” w Core3D |
-| `warp-efekty` | Efekty boków kadru w skoku gracza (W1 haze DIST, W2 smugi, W3 zorza): przepływ równoległy do kursu, `?warpFx=`; przylot i wylot „jak w Gwiezdnych Wojnach” (domyślnie, dawny wygląd `?warpSW=0`) |
+| `warp-efekty` | Efekty boków kadru w skoku gracza (W1 haze DIST, W2 smugi, W3 zorza): przepływ równoległy do kursu, `?warpFx=`; przylot i wylot „jak w Gwiezdnych Wojnach” (domyślnie, dawny wygląd `?warpSW=0`); niewrażliwe drobiny przylotów i odlotów NPC (bez ośrodka, `?warpDrobiny=0`) |
 | `hipercruise` | Obraz hipercruise'u: warstwa warpa w trybie `hyper`, opływ kadłuba (DIST), plazma dysz w locie, A/B `?hcStary=1` |
 | `mapa-gwiezdna` | Mapa gwiezdna — strefa międzygwiezdna między układami (jak nadprzestrzeń Starsectora; moduł `src/game/sector/` + demo, niewpięte): sektor z ziarna, punkty skoku = rogi świata, lot i paliwo, mgławice i burze, mgła eksploracji, floty kupieckie, patrole i piraci |
 | `scena-wojna` | Scena „Wojna”: floty z warpa, bitwa w głębi (tłum nad i pod płaszczyzną, planeta w głębi), bohaterowie, ujęcia kamery |

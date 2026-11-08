@@ -40,6 +40,9 @@ import { warpPalette, seamColor, heatColor } from './palette.js';
 import {
   WARP_SW, newWarpSWState, warpSWArrival, warpSWDeparture, warpSWHullLight, warpSWWidth, addWarpSWStreak
 } from './warpSW.js';
+import {
+  sparksArrivalHerald, sparksArrivalTrail, sparksArrivalBrake, sparksDepartGather, sparksDepartWake, sparksDepartGone
+} from './sparkRecipes.js';
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 // [s] okres fal zwiastuna „drganie przestrzeni” (styl 'ripple' — scena „Wojna”, warpTraffic.planArrival heraldStyle)
@@ -71,6 +74,12 @@ export function dressWarpArrival(a, v = {}) {
   // `?warpSW=1`: wynik obwiedni i widoczność encji (mgła wojny, maskowanie — pisze sterownik co klatkę)
   v.sw = newWarpSWState();
   v.swVis = 1;
+  // Drobiny (sparkRecipes.js): ziarno rekordów, start i prędkość śladu wlotu warp-in prowadzonego przez grę (z pierwszej
+  // klatki po pojawieniu się — prędkość stała do hamowania), dziób w chwili hamowania (warp-in: z pozy encji).
+  v.sparkSeed = Math.floor(v.seed * 1000) + 1;
+  v.trailV = 0;
+  v.brakeX = NaN;
+  v.brakeY = NaN;
   return v;
 }
 
@@ -95,11 +104,14 @@ export const arrivalFxPose = arrivalAxisPose;
  * skoku, maskowanie — pisze sterownik dla żywej encji; przed `attach` zostaje 1): przy 0 bez przegródek ośrodka, błysków,
  * blasku i fal (zasada mgły wojny — nic nie zdradza ukrytego wroga), przy 0 < vis < 1 błyski i fale × vis; kadłub i plazmę
  * chowa obraz kadłuba.
+ * DROBINY (`sparks` = true — domyślnie, sparkRecipes.js; `?warpDrobiny=0` — false): zamiast przegródek ośrodka (nić,
+ * bańka, pchnięcie — ośrodek, który popychały wszystkie bańki i kamera) własne drobiny okrętu ze wzoru: nić zwiastuna,
+ * ślad wlotu, snop hamowania. Ośrodek „Nurtu” przylot NPC wtedy nie budzi.
  * Zwraca wstrząs 0..1 (× skala wołającego).
  * AGENT: wynik nieczytany — `warpNurt.js: _updateArrivals` go pomija, wstrząsy przylotów i odlotów zgłasza gra
  * (`src/game/warpShakes.js`). Usunąć razem z porządkami C2 (docs/webgpu/WARP-SOCZEWKA.md, „Otwarte sprawy”).
  */
-export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = null) {
+export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = null, sparks = false) {
   const s = sampleWarpArrival(a, t, v.sample);
   const L = a.hullLength;
   const pal = v.pal;
@@ -125,23 +137,27 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = nu
     frame.addFlash(a.sx - camX, a.sy - camY, L * (0.05 + 0.08 * s.herald), (0.25 + 0.9 * s.herald * s.herald) * vis, pal, true);
   }
   if (shown && !a.moving && heraldStyle === 'thread' && s.herald > 0.002 && t < a.tBrake + 0.6) {
-    const h = v.heraldSlot;
-    const reach = a.heraldReach || HERALD_REACH;
-    h.on = true;
-    h.x = a.sx - a.dirX * reach - camX;
-    h.y = a.sy - a.dirY * reach - camY;
-    h.angle = a.angle;
-    h.vx = 0; h.vy = 0;
-    h.R = L * 0.6;
-    h.A = 0;
-    h.heraldLen = reach;
-    h.heraldGain = s.herald * (a.pirate ? 1.2 : 1.0);
-    h.pullR = L * 0.45;
-    h.pullGain = s.herald;
-    h.excite = 1;
-    h.releaseT = Infinity;
-    h.rearT = Infinity;
-    frame.pushBubble(h);
+    if (sparks) {
+      sparksArrivalHerald(frame, a, t, s.herald * (a.pirate ? 1.2 : 1.0) * vis, camX, camY, v.sparkSeed || 1);
+    } else {
+      const h = v.heraldSlot;
+      const reach = a.heraldReach || HERALD_REACH;
+      h.on = true;
+      h.x = a.sx - a.dirX * reach - camX;
+      h.y = a.sy - a.dirY * reach - camY;
+      h.angle = a.angle;
+      h.vx = 0; h.vy = 0;
+      h.R = L * 0.6;
+      h.A = 0;
+      h.heraldLen = reach;
+      h.heraldGain = s.herald * (a.pirate ? 1.2 : 1.0);
+      h.pullR = L * 0.45;
+      h.pullGain = s.herald;
+      h.excite = 1;
+      h.releaseT = Infinity;
+      h.rearT = Infinity;
+      frame.pushBubble(h);
+    }
     const pulse = 0.85 + 0.15 * Math.sin(t * 17 + v.seed);
     const k = (0.4 + 1.4 * s.herald * s.herald) * pulse;
     frame.addFlash(a.sx - camX, a.sy - camY, L * (0.08 + 0.12 * s.herald), k * vis, pal, true);
@@ -187,8 +203,31 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = nu
     }
   }
   if (!shown) return 0;
+  if (sparks) {
+    // Drobiny: ślad wlotu (start i prędkość stałe przez wlot — warp-in prowadzony przez grę: z pierwszej klatki) i snop
+    // hamowania z dziobu. Bez przegródek ośrodka.
+    const seed = v.sparkSeed || 1;
+    let V = a.v0;
+    let dist = a.v0 * a.coast;
+    let cap = dist;
+    if (a.moving) {
+      if (!(v.trailV > 1) && speed > 1) v.trailV = speed;
+      V = v.trailV > 1 ? v.trailV : Math.max(1, Number(a.v0) || 0);
+      dist = V * 1.5;
+      cap = Number.isFinite(a.tBrake) ? V * Math.max(0, a.tBrake - a.tAppear) : Infinity;
+    }
+    sparksArrivalTrail(frame, a, t, a.x0, a.y0, V, dist, cap, vis, camX, camY, seed + 7919);
+    if (tb >= 0) {
+      if (!Number.isFinite(v.brakeX)) {
+        // drive: dziób na końcu hamowania (oś); warp-in: dziób encji w pierwszej klatce hamowania
+        v.brakeX = (a.moving ? ship.x : a.x) + c * L * 0.5;
+        v.brakeY = (a.moving ? ship.y : a.y) + sn * L * 0.5;
+      }
+      sparksArrivalBrake(frame, a, t, v.brakeX, v.brakeY, vis, camX, camY, seed + 2 * 7919);
+    }
+  }
   // Bańka okrętu w locie: rozpycha ośrodek; przy hamowaniu zapada się od dziobu.
-  if (t < a.tStop + 0.35) {
+  if (!sparks && t < a.tStop + 0.35) {
     const b = v.bubbleSlot;
     const vk = Math.min(1, speed / Math.max(1, a.v0));
     b.on = true;
@@ -208,9 +247,9 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = nu
     b.lensAmp = 18 * b.A * vk;
     frame.pushBubble(b);
   }
-  // Iskry ośrodka pchnięte przed dziób przy hamowaniu (bezwładność).
+  // Iskry ośrodka pchnięte przed dziób przy hamowaniu (bezwładność) — dawny wygląd (`?warpDrobiny=0`).
   const p = v.pushSlot;
-  p.on = tb > -0.05 && tb < 0.5;
+  p.on = !sparks && tb > -0.05 && tb < 0.5;
   if (p.on) {
     p.x = sx; p.y = sy;
     p.angle = a.angle;
@@ -258,6 +297,7 @@ export function dressWarpDeparture(d, v = {}) {
   // `?warpSW=1`: wynik obwiedni i widoczność encji (pisze sterownik co klatkę, po zniknięciu encji zostaje ostatnia)
   v.sw = newWarpSWState();
   v.swVis = 1;
+  v.sparkSeed = Math.floor(v.seed * 1000) + 3;
   return v;
 }
 
@@ -276,9 +316,11 @@ export const departFxPose = departAxisPose;
  * światła od nurkowania, ślad za rufą, smuga wystrzelona w punkcie skoku; kadłub znika od dziobu w punkcie skoku jak
  * domyślnie) albo null (wygląd domyślny). WIDOCZNOŚĆ ENCJI v.swVis (jak w przylocie; po zniknięciu encji — ostatnia): przy 0
  * bez przegródek ośrodka, błysków i fal, przy 0 < vis < 1 błyski i fale × vis.
+ * DROBINY (`sparks`, jak w przylocie): punkt skoku zbiera własne drobiny po spirali, rozpęd zostawia ślad, w punkcie skoku
+ * drobiny wystrzeliwują do przodu — bez przegródek ośrodka.
  * Zwraca wstrząs (AGENT: nieczytany — jak wyżej).
  */
-export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = null) {
+export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = null, sparks = false) {
   const s = sampleWarpDeparture(d, t, v.sample);
   const pal = v.pal;
   const L = d.hullLength;
@@ -292,24 +334,34 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = 
   const shown = vis > 0.002;
   const build = s.build;
   v.plasmaMode = t < d.tGone ? (build > 0.55 || t >= d.tDive ? 'active' : 'charging') : null;
-  // Punkt skoku przed dziobem: ośrodek zbierany, rdzeń jaśnieje.
+  // Drobiny: ślad rozpędu i wystrzał w punkcie skoku (z osi — także po zniknięciu encji, póki drobiny żyją).
+  if (sparks && shown) {
+    const seed = v.sparkSeed || 3;
+    sparksDepartWake(frame, d, t, vis, camX, camY, seed + 7919);
+    sparksDepartGone(frame, d, t, vis, camX, camY, seed + 2 * 7919);
+  }
+  // Punkt skoku przed dziobem: ośrodek zbierany (drobiny — własne, po spirali), rdzeń jaśnieje.
   if (shown && t < d.tGone) {
-    const h = v.heraldSlot;
-    h.on = true;
-    h.x = d.cx - camX;
-    h.y = d.cy - camY;
-    h.angle = d.angle;
-    h.vx = 0; h.vy = 0;
-    h.R = L * 0.6;
-    h.A = 0;
-    h.heraldLen = 0.5;
-    h.heraldGain = 0;
-    h.pullR = L * (0.35 + 0.25 * build);
-    h.pullGain = build;
-    h.excite = 1;
-    h.releaseT = Infinity;
-    h.rearT = Infinity;
-    frame.pushBubble(h);
+    if (sparks) {
+      sparksDepartGather(frame, d, t, build * vis, build, camX, camY, v.sparkSeed || 3);
+    } else {
+      const h = v.heraldSlot;
+      h.on = true;
+      h.x = d.cx - camX;
+      h.y = d.cy - camY;
+      h.angle = d.angle;
+      h.vx = 0; h.vy = 0;
+      h.R = L * 0.6;
+      h.A = 0;
+      h.heraldLen = 0.5;
+      h.heraldGain = 0;
+      h.pullR = L * (0.35 + 0.25 * build);
+      h.pullGain = build;
+      h.excite = 1;
+      h.releaseT = Infinity;
+      h.rearT = Infinity;
+      frame.pushBubble(h);
+    }
     const pulse = 0.85 + 0.15 * Math.sin(t * (8 + 22 * s.u) + v.seed);
     frame.addFlash(d.cx - camX, d.cy - camY, L * (0.08 + 0.18 * build), (0.35 + 1.6 * build * build) * pulse * vis, pal, true);
   }
@@ -366,8 +418,8 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = 
           swE.len, warpSWWidth(L, d.hullWidth), swE.k * vis);
       }
     }
-    // Bańka okrętu w rozpędzie: rozpycha ośrodek (rośnie z prędkością).
-    if (shown && diving && t < d.tGone) {
+    // Bańka okrętu w rozpędzie: rozpycha ośrodek (rośnie z prędkością) — dawny wygląd (`?warpDrobiny=0`).
+    if (!sparks && shown && diving && t < d.tGone) {
       const b = v.bubbleSlot;
       const vk = s.speed / Math.max(1, d.vEnd);
       b.on = true;
