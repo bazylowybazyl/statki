@@ -151,6 +151,8 @@ try {
     await waitGame(1.4);
     st.silniki = await ev(POD_STATE);
     await screenshotPng(cdp, join(out, '03b-silniki.png'));
+    // Radar kokpitu (K5): ślady kapsuł z ramki obrazu (mgła i maskowanie odfiltrowane).
+    st.radar = await ev('window.EscapePods.radar(20000)');
     // Zbliżenie: kapsuła 0 zatrzymana na czas zrzutu (kamera fabularna dojeżdża ~1 s), potem ruch przywrócony.
     const frozen = await ev(`(() => { const p = window.EscapePods.pool; if (!p.count) return null;
       const s = { vx: p.vx[0], vy: p.vy[0], st: p.state[0], t: p.timer[0] };
@@ -194,7 +196,7 @@ try {
     await ev('window.PortCargo.lookEnd()');
     report.etapy.smierc = st;
     console.log('śmierć:', JSON.stringify({ kill: st.kill, wyrzut: { kapsul: st.wyrzut.kapsul, wLocie: st.wyrzut.wLocie, cel: st.wyrzut.cel, punktow: st.wyrzut.punktow },
-      silniki: { wLocie: st.silniki.wLocie, punktow: st.silniki.punktow }, czas: rows.length * 2, wPlycie: maxSlab, stats: st.koniec.stats }));
+      silniki: { wLocie: st.silniki.wLocie, punktow: st.silniki.punktow }, radar: st.radar, czas: rows.length * 2, wPlycie: maxSlab, stats: st.koniec.stats }));
   }
 
   if (STAGES.has('ruch')) {

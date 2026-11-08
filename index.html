@@ -1188,7 +1188,7 @@
     } from "./src/data/lootGear.js";
     import {
       createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute, escapePodsAllowed, POD_KIND,
-      fillEscapePodRenderFrame
+      fillEscapePodRenderFrame, escapePodCloakHidden
     } from "./src/game/escapePods.js";
     import {
       createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
@@ -1662,7 +1662,7 @@
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
     import { Bridge3D } from "./src/3d/bridge3D.js";
     import { cloakLightGain, entityCloakVisAt } from "./src/game/cloakLook.js";
-    import { stepCloakLooks } from "./src/game/cloakLooks.js";
+    import { stepCloakLooks, CLOAK_LOOK_FRAME } from "./src/game/cloakLooks.js";
     import { RenderPoses } from "./src/game/renderPoses.js";
     // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
     // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
@@ -5757,6 +5757,8 @@
       env.coldWrecks = coldWrecks;
       // Kontenery-łup: ramka obrazu (tylko paczki widoczne przez mgłę wojny — D8).
       env.loot = _lootRender;
+      // Kapsuły ratunkowe (E22 K5): ramka obrazu (bez kapsuł ukrytych przez mgłę i maskowanie).
+      env.pods = _podRender;
       env.rockets = window.rocketSystem3D?.rockets || null;
       env.drones = SpotterDroneSystem.getDrones?.() || null;
       env.player2 = splitScreenMode && player2Ship && !player2Ship.destroyed ? player2Ship : null;
@@ -17875,7 +17877,9 @@
     // Obraz (K2): ramka klatki dla bloku `pods` (worker) albo rysunku na stronie (off) — pozy w chwili klatki renderu,
     // tylko kapsuły poza kadłubem, widoczne (mgła wojny) i poza kropkami soczewki skoku. Render niczego o mgle nie wie.
     const _podRender = createEscapePodFrame();
-    const _podVisible = (x, y) => SensorSystem.pointVisible(x, y, 0);
+    // Mgła wojny i maskowanie (K5): kapsuła w obrysie maskowanego kadłuba gaśnie z nim (`escapePodCloakHidden`; wygląd
+    // maskowania z poprzedniej klatki — `CLOAK_LOOK_FRAME` liczy się w `render()` po ramce kapsuł).
+    const _podVisible = (x, y) => SensorSystem.pointVisible(x, y, 0) && !escapePodCloakHidden(CLOAK_LOOK_FRAME.list, x, y);
     const _podLensHidden = (x, y) => lensDotAt(x, y);
     function escapePodRenderFrame(alpha) {
       // Pauza i zamrożony świat fabuły: stan fizyki stoi — poza bez cofania o krok (jak paczki łupu).
@@ -17892,6 +17896,14 @@
       /** Cel kapsuły `target` (indeks puli) → id stacji. */
       stationId: (target) => (target >= 0 ? _podStationIds[target] ?? null : null),
       launch: (e) => launchShipEscapePods(e),
+      // Narzędzia (?dev): ślady kapsuł na radarze (zebranie jak w kokpicie, zasięg `range` j.) — { kapsul, sladow }.
+      radar(range = 20000) {
+        if (!_portCargoQuery.has('dev')) return null;
+        const feed = refreshRadarFeed(range);
+        let n = 0;
+        for (let i = 0; i < feed.count; i++) if (feed.targets[i].kind === 'pod') n++;
+        return { kapsul: _podRender.count, sladow: n };
+      },
       // Narzędzia (?dev): encja bańki ruchu `id` zniszczona od razu (bez awansu) — kapsuły z `onTrafficActorDestroyed`.
       devKillTraffic(id) {
         if (!_portCargoQuery.has('dev') || !trafficBubble) return null;

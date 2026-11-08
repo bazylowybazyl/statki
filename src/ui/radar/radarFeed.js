@@ -331,6 +331,24 @@ export function createRadarFeed(tune = RADAR_TUNE) {
         }
       }
 
+      // ---- kapsuły ratunkowe (lecą do stacji po zniszczeniu statku; bez strony, biel kadłubka) — env.pods: ramka
+      //      obrazu kapsuł (src/render/blocks/escapePodBlock.js — createEscapePodFrame), już bez kapsuł ukrytych przez
+      //      mgłę i maskowanie; klucz śladu = stały numer kapsuły (uid), pozycja z rekordu (STATIC) ----
+      const pods = env.pods;
+      if (pods && pods.count > 0) {
+        let m = 0;
+        for (let i = 0; i < pods.count && n < tune.maxTracks && m < 32; i++) {
+          const dx = pods.x[i] - ox;
+          const dy = pods.y[i] - oy;
+          if (dx * dx + dy * dy > prSq) continue;
+          const r = rec(n++);
+          m++;
+          r.key = pods.uid[i]; r.src = RADAR_SRC.STATIC; r.kind = RADAR_KIND.POD; r.aff = 'neutral';
+          r.x = pods.x[i]; r.y = pods.y[i]; r.vx = 0; r.vy = 0; r.angle = pods.ang[i];
+          r.cls = 'EP'; r.name = 'KAPSUŁA'; r.idKnown = true; r.length = 20; r.width = 8;
+        }
+      }
+
       // ---- rakiety 3D w locie (szybkie ślady z wektorami) ----
       const rockets = env.rockets;
       if (Array.isArray(rockets)) {

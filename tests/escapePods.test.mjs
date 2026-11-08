@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   POD_TUNE, POD_STATE, POD_KIND, createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute,
-  escapePodCount, escapePodsAllowed, fillEscapePodRenderFrame, escapePodRemaining
+  escapePodCount, escapePodsAllowed, fillEscapePodRenderFrame, escapePodRemaining, escapePodCloakHidden
 } from '../src/game/escapePods.js';
 import {
   createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
@@ -319,4 +319,24 @@ test('krok bez alokacji: pełna pula w locie i rozliczenia bez obrazu', async ()
   for (let k = 0; k < 600; k++) step();
   const best = await untilSteady(() => allocatedBytes(step, 2000), (b) => b < 4096, { warm: () => { for (let k = 0; k < 200; k++) step(); } });
   assert.ok(best < 4096, `krok alokuje ${best} B / 2000 kroków`);
+});
+
+test('maskowanie: kapsuła w obrysie maskowanego kadłuba gaśnie, poza obrysem — nie (wzór maskowania jest nieograniczony)', () => {
+  // Wygląd maskowania okrętu 600 × 200 px sprite'a w skali 2 j./px (1200 × 400 j.), kurs 0, środek (X0, Y0).
+  const look = { active: true, px: X0, py: Y0, cos: 1, sin: 0, scale: 2, invScale: 0.5, spriteW: 600, spriteH: 200 };
+  const cloaked = { __cloakLook: look };
+  const hidden = () => 0;
+  const shown = () => 1;
+  assert.equal(escapePodCloakHidden([cloaked], X0 + 500, Y0 + 150, hidden), true, 'w obrysie, wzór ukrywa');
+  assert.equal(escapePodCloakHidden([cloaked], X0 + 500, Y0 + 150, shown), false, 'w obrysie, wzór odsłania');
+  assert.equal(escapePodCloakHidden([cloaked], X0 + 700, Y0, hidden), false, 'za dziobem — poza obrysem');
+  assert.equal(escapePodCloakHidden([cloaked], X0, Y0 + 260, hidden), false, 'za burtą — poza obrysem');
+  look.active = false;
+  assert.equal(escapePodCloakHidden([cloaked], X0, Y0, hidden), false, 'wygląd nieaktywny');
+  assert.equal(escapePodCloakHidden([], X0, Y0, hidden), false);
+  assert.equal(escapePodCloakHidden(null, X0, Y0, hidden), false);
+  // Obrót: kurs 90° — długość wzdłuż osi y świata.
+  Object.assign(look, { active: true, cos: 0, sin: 1 });
+  assert.equal(escapePodCloakHidden([cloaked], X0, Y0 + 550, hidden), true);
+  assert.equal(escapePodCloakHidden([cloaked], X0 + 550, Y0, hidden), false);
 });

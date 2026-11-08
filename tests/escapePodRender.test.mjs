@@ -145,3 +145,24 @@ test('WGSL partii kapsuł buduje się w Node (bryła, światła), najwyżej 8 bu
   const again = createEscapePods3D(fakeCore()).warmupMeshes();
   assert.equal(buildWGSL(meshes[0]).fragment, buildWGSL(again[0]).fragment, 'bryła: ten sam WGSL przy każdej budowie');
 });
+
+test('radar: kapsuły z ramki obrazu jako ślady „kapsuła” (bez strony, biel), poza zasięgiem malowania — nie', async () => {
+  const { createRadarFeed } = await import('../src/ui/radar/radarFeed.js');
+  const { RADAR_TUNE, RADAR_RGB } = await import('../src/ui/radar/radarConfig.js');
+  const { RADAR_KIND, RADAR_SRC } = await import('../src/ui/radar/radarTracker.js');
+  const { radarAffRgb, radarSymbolSize } = await import('../src/ui/radar/radarSymbols.js');
+  const pods = createEscapePodFrame();
+  pods.count = 2;
+  pods.x[0] = 2500; pods.y[0] = 0; pods.uid[0] = 21;
+  pods.x[1] = 900000; pods.y[1] = 0; pods.uid[1] = 22;
+  const fb = createRadarFeed(RADAR_TUNE);
+  const feed = fb.collect({ ship: { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, angle: 0 }, range: 20000, npcs: [], pods });
+  const recs = feed.targets.slice(0, feed.count).filter((r) => r.kind === RADAR_KIND.POD);
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].key, 21);
+  assert.equal(recs[0].src, RADAR_SRC.STATIC);
+  assert.equal(recs[0].aff, 'neutral');
+  assert.equal(recs[0].name, 'KAPSUŁA');
+  assert.equal(radarAffRgb('neutral', 'pod'), RADAR_RGB.pod);
+  assert.ok(radarSymbolSize('pod') < radarSymbolSize('loot'));
+});

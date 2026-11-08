@@ -13,6 +13,8 @@
 // alokacji. Losowość wyrzutu z ziarna statku (`podHash01`) — bez Math.random. Stałe na sekundę: krok 60 / 120 Hz
 // daje ten sam przebieg (dt w całkach, bez stałych „na krok”).
 
+import { cloakVisAtWorld } from './cloakLook.js';
+
 export const POD_TUNE = Object.freeze({
   // Najwięcej kapsuł w locie naraz; pełna pula → najstarsza kapsuła w locie przechodzi w rozliczenie bez obrazu.
   cap: 192,
@@ -478,6 +480,26 @@ function steer(st, i, dvMax, accel, reach2, arrive2, tune, env) {
   st.vx[i] += ex;
   st.vy[i] += ey;
   st.thrust[i] = dvMax > 0 ? Math.min(1, e / dvMax) : 0;
+  return false;
+}
+
+/**
+ * Kapsuła w (x, y) zgaszona maskowaniem: w obrysie sprite'a maskowanej encji z `entities` (lista `CLOAK_LOOK_FRAME`
+ * — encje z aktywnym wyglądem maskowania), a wzór maskowania w tym punkcie ukrywa (`visAt` < ½). Wzór
+ * (`cloakVisAtWorld`) jest nieograniczony — stąd test obrysu. Bez alokacji.
+ */
+export function escapePodCloakHidden(entities, x, y, visAt = cloakVisAtWorld) {
+  if (!entities || !entities.length) return false;
+  for (let i = 0; i < entities.length; i++) {
+    const look = entities[i]?.__cloakLook;
+    if (!look || !look.active) continue;
+    const dx = x - look.px;
+    const dy = y - look.py;
+    const lx = (dx * look.cos + dy * look.sin) * look.invScale;
+    const ly = (dy * look.cos - dx * look.sin) * look.invScale;
+    if (Math.abs(lx) > look.spriteW * 0.5 || Math.abs(ly) > look.spriteH * 0.5) continue;
+    if (visAt(look, x, y) < 0.5) return true;
+  }
   return false;
 }
 
