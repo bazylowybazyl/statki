@@ -263,7 +263,9 @@ export function createDirector(network, registry, options = {}) {
       hauls: 0, mining: 0, delivered: 0, lost: 0, lostValue: 0, stranded: 0,
       deadheads: 0, noShip: 0,
       // Workforce (E16 W2): powroty promów z ludźmi po kontrakcie.
-      passengerReturns: 0
+      passengerReturns: 0,
+      // Workforce (W6): ludzie z promów zniszczonych poza porwaniem, z powrotem w źródle (`returnFerryPassengers`).
+      passengersRescued: 0
     }
   };
 }
@@ -1702,18 +1704,35 @@ function strikeCourse(director, course, options = {}) {
  *
  * Zwraca wpis wraku (`director.wrecks`) albo `null`, gdy kurs już nie leci.
  */
+/**
+ * POWRÓT LUDZI Z PROMU (workforce W6) — prom z ludźmi zniszczony poza porwaniem (gracz, walka w bańce, zniszczona
+ * stacja): ludzie z kontraktu wracają do magazynu źródła, z którego zeszli przy nadaniu; powrót po kontrakcie nie
+ * zmienia magazynu (rotacja już zeszła). Bez kontenerów z ludźmi (manifest bańki pomija promy) i bez łupu. Zwraca,
+ * ilu wróciło. AGENT: E22 (kapsuły ratunkowe, reguła `kapsuly-ratunkowe`) przeniesie tę funkcję na dolot kapsuły —
+ * dziś powrót jest natychmiastowy.
+ */
+export function returnFerryPassengers(director, course) {
+  const payload = course?.payload;
+  if (!payload?.passengers || !payload.orderId || !(payload.units > 0)) return 0;
+  const back = putStock(director?.getEconomy?.(course.originId), 'workforce', payload.units);
+  director.stats.passengersRescued += back;
+  return back;
+}
+
 export function destroyCourse(director, courseOrId, options = {}) {
   const course = courseOrId && typeof courseOrId === 'object'
     ? courseOrId
     : getCourse(director?.registry, courseOrId);
   if (!course || course.status !== COURSE_STATUS.ACTIVE) return null;
   const reason = options.reason || 'destroyed';
+  const byPirates = options.byPirates ?? reason === 'pirate';
   strikeCourse(director, course, {
     reason,
-    byPirates: options.byPirates ?? reason === 'pirate',
+    byPirates,
     x: options.x,
     y: options.y
   });
+  if (!byPirates) returnFerryPassengers(director, course);
   note(director, `ZNISZCZONY: ${course.originId}→${course.destinationId} (${reason})`);
   return director.wrecks[director.wrecks.length - 1] || null;
 }

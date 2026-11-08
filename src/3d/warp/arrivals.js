@@ -41,7 +41,8 @@ import {
   WARP_SW, newWarpSWState, warpSWArrival, warpSWDeparture, warpSWHullLight, warpSWWidth, addWarpSWStreak
 } from './warpSW.js';
 import {
-  sparksArrivalHerald, sparksArrivalTrail, sparksArrivalBrake, sparksDepartGather, sparksDepartWake, sparksDepartGone
+  sparksArrivalHerald, sparksArrivalTrail, sparksArrivalBrake, sparksDepartGather, sparksDepartWake, sparksDepartGone,
+  warpSparkStyle
 } from './sparkRecipes.js';
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -138,7 +139,7 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = nu
   }
   if (shown && !a.moving && heraldStyle === 'thread' && s.herald > 0.002 && t < a.tBrake + 0.6) {
     if (sparks) {
-      sparksArrivalHerald(frame, a, t, s.herald * (a.pirate ? 1.2 : 1.0) * vis, camX, camY, v.sparkSeed || 1);
+      sparksArrivalHerald(frame, a, t, s.herald * (a.pirate ? 1.2 : 1.0) * vis, camX, camY, v.sparkSeed || 1, warpSparkStyle(a));
     } else {
       const h = v.heraldSlot;
       const reach = a.heraldReach || HERALD_REACH;
@@ -196,10 +197,12 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = nu
   // `?warpSW=1`: kadłub ze światła (wlot, gaśnie po hamowaniu) i smuga za rufą wzdłuż kursu (zatrzask przy hamowaniu);
   // encja ukryta (mgła wojny, maskowanie — vis) bez smugi i światła.
   if (sw) {
+    // barwa frakcji (styl drobin: Terra Nova — biel-błękit, piraci — czerwień)
+    const swRgb = warpSparkStyle(a).light;
     const e = warpSWArrival(a, t, along, v.sw || (v.sw = newWarpSWState()));
-    if (e.light * vis > 0.002) warpSWHullLight(hull, L, e.light * vis);
+    if (e.light * vis > 0.002) warpSWHullLight(hull, L, e.light * vis, swRgb);
     if (e.len > 0 && shown) {
-      addWarpSWStreak(frame, sx - c * L * 0.5, sy - sn * L * 0.5, c, sn, e.len, warpSWWidth(L, a.hullWidth), e.k * vis);
+      addWarpSWStreak(frame, sx - c * L * 0.5, sy - sn * L * 0.5, c, sn, e.len, warpSWWidth(L, a.hullWidth), e.k * vis, swRgb);
     }
   }
   if (!shown) return 0;
@@ -207,6 +210,7 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = nu
     // Drobiny: ślad wlotu (start i prędkość stałe przez wlot — warp-in prowadzony przez grę: z pierwszej klatki) i snop
     // hamowania z dziobu. Bez przegródek ośrodka.
     const seed = v.sparkSeed || 1;
+    const st = warpSparkStyle(a);
     let V = a.v0;
     let dist = a.v0 * a.coast;
     let cap = dist;
@@ -216,14 +220,14 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship, v = a, sw = nu
       dist = V * 1.5;
       cap = Number.isFinite(a.tBrake) ? V * Math.max(0, a.tBrake - a.tAppear) : Infinity;
     }
-    sparksArrivalTrail(frame, a, t, a.x0, a.y0, V, dist, cap, vis, camX, camY, seed + 7919);
+    sparksArrivalTrail(frame, a, t, a.x0, a.y0, V, dist, cap, vis, camX, camY, seed + 7919, st);
     if (tb >= 0) {
       if (!Number.isFinite(v.brakeX)) {
         // drive: dziób na końcu hamowania (oś); warp-in: dziób encji w pierwszej klatce hamowania
         v.brakeX = (a.moving ? ship.x : a.x) + c * L * 0.5;
         v.brakeY = (a.moving ? ship.y : a.y) + sn * L * 0.5;
       }
-      sparksArrivalBrake(frame, a, t, v.brakeX, v.brakeY, vis, camX, camY, seed + 2 * 7919);
+      sparksArrivalBrake(frame, a, t, v.brakeX, v.brakeY, vis, camX, camY, seed + 2 * 7919, st);
     }
   }
   // Bańka okrętu w locie: rozpycha ośrodek; przy hamowaniu zapada się od dziobu.
@@ -337,13 +341,14 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = 
   // Drobiny: ślad rozpędu i wystrzał w punkcie skoku (z osi — także po zniknięciu encji, póki drobiny żyją).
   if (sparks && shown) {
     const seed = v.sparkSeed || 3;
-    sparksDepartWake(frame, d, t, vis, camX, camY, seed + 7919);
-    sparksDepartGone(frame, d, t, vis, camX, camY, seed + 2 * 7919);
+    const st = warpSparkStyle(d);
+    sparksDepartWake(frame, d, t, vis, camX, camY, seed + 7919, st);
+    sparksDepartGone(frame, d, t, vis, camX, camY, seed + 2 * 7919, st);
   }
   // Punkt skoku przed dziobem: ośrodek zbierany (drobiny — własne, po spirali), rdzeń jaśnieje.
   if (shown && t < d.tGone) {
     if (sparks) {
-      sparksDepartGather(frame, d, t, build * vis, build, camX, camY, v.sparkSeed || 3);
+      sparksDepartGather(frame, d, t, build * vis, build, camX, camY, v.sparkSeed || 3, warpSparkStyle(d));
     } else {
       const h = v.heraldSlot;
       h.on = true;
@@ -389,7 +394,7 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = 
     // `?warpSW=1`: smuga wystrzelona do przodu z punktu skoku (kadłub wchodzi w nią, znikając od dziobu)
     if (swE && swE.gone && swE.len > 0) {
       addWarpSWStreak(frame, mx + d.dirX * swE.head, my + d.dirY * swE.head, d.dirX, d.dirY, swE.len,
-        warpSWWidth(L, d.hullWidth), swE.k * vis);
+        warpSWWidth(L, d.hullWidth), swE.k * vis, warpSparkStyle(d).light);
     }
   }
   if (ship) {
@@ -412,10 +417,10 @@ export function warpDepartureFxState(d, t, frame, camX, camY, ship, v = d, sw = 
     // odsłanianie (linia punktu skoku, szew, żar) — nie chowaj całego kadłuba: wieże, lampy i plazma dysz zostają do
     // zniknięcia encji w tGone; encja ukryta (mgła wojny, maskowanie) bez smugi i światła.
     if (swE) {
-      if (!swE.gone && swE.light * vis > 0.002) warpSWHullLight(hull, L, swE.light * vis);
+      if (!swE.gone && swE.light * vis > 0.002) warpSWHullLight(hull, L, swE.light * vis, warpSparkStyle(d).light);
       if (!swE.gone && swE.len > 0 && shown) {
         addWarpSWStreak(frame, ship.x - camX - d.dirX * L * 0.5, ship.y - camY - d.dirY * L * 0.5, d.dirX, d.dirY,
-          swE.len, warpSWWidth(L, d.hullWidth), swE.k * vis);
+          swE.len, warpSWWidth(L, d.hullWidth), swE.k * vis, warpSparkStyle(d).light);
       }
     }
     // Bańka okrętu w rozpędzie: rozpycha ośrodek (rośnie z prędkością) — dawny wygląd (`?warpDrobiny=0`).
