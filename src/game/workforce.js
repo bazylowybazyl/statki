@@ -14,7 +14,8 @@
 
 import { INDUSTRY_ARCHETYPES, ECONOMY_CYCLE_SECONDS } from './stationEconomy.js';
 import {
-  WORKFORCE_PER_BUILDING, WORKFORCE_PER_MINE_RATE, WORKFORCE_PER_CIVIL_BERTH,
+  WORKFORCE_PER_BUILDING, WORKFORCE_PER_MINE_RATE, WORKFORCE_PER_CIVIL_BERTH, WORKFORCE_PER_HABITAT, HABITAT_ROLE,
+  HABITAT_RATE,
   WORKFORCE_PER_STORE, WORKFORCE_PER_YARD_WEIGHT, WORKFORCE_CONTRACT_SECONDS,
   WORKFORCE_QUARTERS, WORKFORCE_SOURCE_HOURS, WORKFORCE_MIN_RATIO, WORKFORCE_FULL_RATIO,
   WORKFORCE_MIN_SHIPMENT, WORKFORCE_MIN_SHIPMENT_SHARE, WORKFORCE_URGENT_RATIO
@@ -30,6 +31,16 @@ function roleOfRecipe(recipeId) {
     }
   }
   return recipeRoleMap.get(recipeId) || null;
+}
+
+/** Habitaty na liście budynków rynku (`industry.buildings` z `MarketDef`, W6) — poza rolami przemysłu. */
+export function habitatCount(buildings) {
+  let n = 0;
+  for (const entry of buildings || []) {
+    const role = typeof entry === 'string' ? entry : entry?.role;
+    if (role === HABITAT_ROLE) n++;
+  }
+  return n;
 }
 
 /** Budynki-ekwiwalenty ról przemysłu: `{ rola: liczba }`. */
@@ -56,10 +67,11 @@ export function industryBuildings(industry) {
  *   civilBerths   stanowiska cywilne portu
  *   stores        magazyny (mnożnik hal świata)
  *   yardWeight    waga stoczni, gdy rynek ją ma (0 — bez stoczni)
+ *   habitats      habitaty (W6) — serwis modułów mieszkalnych
  * Rynek bez przemysłu i bez załogi (opuszczony) nie potrzebuje nikogo.
  */
 export function stationWorkforceNeed(industry, site = {}) {
-  const parts = { industry: 0, mine: 0, port: 0, stores: 0, yard: 0, total: 0 };
+  const parts = { industry: 0, mine: 0, port: 0, stores: 0, yard: 0, habitat: 0, total: 0 };
   if (!industry || (!industry.capacity && !industry.size)) return parts;
   for (const [role, count] of Object.entries(industryBuildings(industry))) {
     parts.industry += (WORKFORCE_PER_BUILDING[role] || 0) * count;
@@ -68,21 +80,25 @@ export function stationWorkforceNeed(industry, site = {}) {
   parts.port = WORKFORCE_PER_CIVIL_BERTH * Math.max(0, Number(site.civilBerths) || 0);
   parts.stores = WORKFORCE_PER_STORE * Math.max(0, Number(site.stores) || 0);
   parts.yard = WORKFORCE_PER_YARD_WEIGHT * Math.max(0, Number(site.yardWeight) || 0);
-  parts.total = parts.industry + parts.mine + parts.port + parts.stores + parts.yard;
+  parts.habitat = WORKFORCE_PER_HABITAT * Math.max(0, Number(site.habitats) || 0);
+  parts.total = parts.industry + parts.mine + parts.port + parts.stores + parts.yard + parts.habitat;
   return parts;
 }
 
 /**
  * Ośrodek ludności rynku po źródłach (skala 1 na cykl): `def.population` z `MarketDef`
- * (`{ ring, green, habitat }`). Opuszczony rynek (bez właściciela) — nikt nie mieszka.
+ * (`{ ring, green, habitat }`) plus habitaty postawione jako budynki (`habitats` × `HABITAT_RATE`, W6).
+ * Opuszczony rynek (bez właściciela) — nikt nie mieszka.
  */
-export function stationPopulation(def, owned = true) {
+export function stationPopulation(def, owned = true, habitats = 0) {
   const out = {};
   if (!owned) return out;
   for (const [source, value] of Object.entries(def?.population || {})) {
     const n = Number(value);
     if (n > 0) out[source] = n;
   }
+  const built = Math.max(0, Number(habitats) || 0) * HABITAT_RATE;
+  if (built > 0) out.habitat = (out.habitat || 0) + built;
   return out;
 }
 

@@ -25,6 +25,10 @@ import { TRAFFIC_MSG, CREW_STRIDE, CREW_FIELD, MARKET_STRIDE, MARKET_FIELD } fro
 import { summarizeTrade, crewContractOffer, passengerFlow } from '../../src/game/traffic/tradeSummary.js';
 import { TrafficBridge } from '../../src/game/trafficBridge.js';
 import { describeWorkforce, perHourWorld } from '../../src/game/workforce.js';
+import { addMarket, addMarketBuilding } from '../../src/game/traffic/markets.js';
+import { destroyCourse } from '../../src/game/traffic/trafficDirector.js';
+import { buildingCost, getStationIndustry } from '../../src/game/stationEconomy.js';
+import { HABITAT_RATE, WORKFORCE_PER_HABITAT, HABITAT_BUILDING } from '../../src/data/workforce.js';
 import { createSuite, runIfMain } from './harness.mjs';
 
 // Magazyn 180 osób (doc § 1.3 liczył 200 — stąd Luna 2469 i Fobos 1032 zamiast 2549 i 1112).
@@ -92,7 +96,9 @@ export function run() {
   let supply = 0;
   for (const population of Object.values(POPULATION_CENTERS)) supply += populationRate(population);
   const rotation = rotationPerCycle(total);
-  t.close('podaż układu na cykl', supply, 48.3, 1e-9);
+  // Ringi i strefy zielone 48,3 (PROPOZYCJA § 2.2) + habitat Ceres 5,5 (W6, D4 — pierwsza baza w asteroidzie).
+  t.close('podaż układu na cykl', supply, 48.3 + 5.5, 1e-9);
+  t.check('Ceres: habitat — pierwsza baza w asteroidzie (D4)', MARKET_DEF_BY_ID.ceres?.population?.habitat === 5.5);
   t.check(`podaż ≥ 1,25 × rotacja (${(supply / rotation).toFixed(2)}×)`, supply >= 1.25 * rotation);
 
   t.section('5. Rotacja, pojemność, obsada, wydajność');
@@ -266,6 +272,45 @@ export function run() {
   const plain = describeWorkforce({ workforce: { need: 1000, perHour: 0, sources: {} } }, { resources: { workforce: 500 }, capacity: { workforce: 2000 } });
   t.check('połowa obsady bez bufora: wydajność z krzywej (0,5)', plain.ratio === 0.5 && plain.efficiency === 0.5);
   t.check('stacja spoza świata: brak widoku', bridge.getWorkforce('nie-ma') === null);
+
+  t.section('11. Habitat i pierwsza baza w asteroidzie (W6, D4)');
+  const hab = buildTrafficWorld({ economyScale: 60, capacityMultiplier: 4, seed: 7 });
+  const ceres = hab.stations.find(st => st.id === 'ceres');
+  t.check('Ceres jest źródłem (habitat 5,5 na cykl)', ceres.workforce.rate === 5.5);
+  const ceresRow = table.find(e => e.id === 'ceres');
+  t.close('Ceres: habitat ~59 tys. osób/h w tabeli rynków', ceresRow?.workforce?.sources?.habitat, perHourWorld(5.5, 60), 1e-6);
+  t.check('Ceres pokrywa własną rotację (podaż ≥ N / T)', ceres.workforce.rate >= rotationPerCycle(ceres.workforce.need));
+  const venusHab = hab.stations.find(st => st.id === 'venus');
+  const before = { ...venusHab.workforce };
+  const capBefore = hab.economies.get('venus').capacity.workforce;
+  const lines = JSON.stringify(getStationIndustry(venusHab)?.lines);
+  t.check('addMarketBuilding(habitat) przyjmuje budynek', !!addMarketBuilding(hab, 'venus', 'habitat'));
+  t.close('habitat: źródło +2,0 na cykl', venusHab.workforce.rate - before.rate, HABITAT_RATE, 1e-9);
+  t.close('habitat: serwis jak magazyn (+3 osoby skali 1)', venusHab.workforce.need - before.need, WORKFORCE_PER_HABITAT, 1e-9);
+  t.check('habitat nie rusza linii przemysłu', JSON.stringify(getStationIndustry(venusHab)?.lines) === lines && !!lines);
+  t.check('magazyn ludzi rośnie razem z kwaterami / godziną podaży', hab.economies.get('venus').capacity.workforce >= capBefore);
+  const player = addMarket(hab, { id: 'stacja-test', kind: 'player', factionId: 'terra_nova',
+    position: { source: 'point', x: 1000, y: 1000 }, industry: { buildings: ['foundry', 'habitat'], size: 0.3 } });
+  t.check('stacja gracza z habitatem na liście budynków jest źródłem', player?.workforce?.rate === HABITAT_RATE);
+  t.check('habitat poza budynkami przemysłu stacji gracza', JSON.stringify(player?.industry?.buildings) === '["foundry"]');
+  t.check('koszt budowy habitatu (dane pod interfejs stacji)', buildingCost('habitat') === HABITAT_BUILDING.cost);
+
+  t.section("12. Prom zniszczony poza porwaniem — ludzie wracają do źródła (W6; kapsuły — E22)");
+  let ferry = null;
+  for (let i = 0; i < (40 * 60) / TRAFFIC_STEP_SECONDS && !ferry; i++) {
+    stepTrafficWorld(hab);
+    ferry = getActiveCourses(hab.registry).find(c => c.payload?.passengers && c.payload.orderId && c.payload.units > 0) || null;
+  }
+  t.check('jest prom z ludźmi na kontrakcie', !!ferry);
+  if (ferry) {
+    const src = hab.economies.get(ferry.originId);
+    const stock0 = src.resources.workforce;
+    const room = Math.max(0, src.capacity.workforce - stock0);
+    destroyCourse(hab.director, ferry, { reason: 'player' });
+    t.close(`ludzie wracają do źródła (${ferry.originId}, ${ferry.payload.units} os.)`,
+      src.resources.workforce - stock0, Math.min(ferry.payload.units, room), 1e-6);
+    t.check('licznik powrotów (stats.passengersRescued)', hab.director.stats.passengersRescued === src.resources.workforce - stock0);
+  }
 
   return t.results;
 }

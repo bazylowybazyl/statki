@@ -18,8 +18,10 @@
  */
 
 import { RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor, PLANET_YIELD } from '../../data/resources.js';
-import { WORKFORCE_RESTOCK_FLOOR, WORKFORCE_SOURCE_SEED_FILL } from '../../data/workforce.js';
-import { stationWorkforceNeed, populationRate, workforceCapacity, stationPopulation, perHourWorld } from '../workforce.js';
+import { WORKFORCE_RESTOCK_FLOOR, WORKFORCE_SOURCE_SEED_FILL, HABITAT_ROLE } from '../../data/workforce.js';
+import {
+  stationWorkforceNeed, populationRate, workforceCapacity, stationPopulation, perHourWorld, habitatCount
+} from '../workforce.js';
 import { FACTION } from '../../data/factions.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../../data/asteroidTypes.js';
 import { SYSTEM_MAP_PLANET_BY_ID, computeWorldUnitsPerAu } from '../../data/systemMap.js';
@@ -361,13 +363,16 @@ function syncStationWorkforce(world, station, def) {
   // bo kryjówka nie jest uczestnikiem rynku (`postOffers` pomija piratów).
   const hideout = Boolean(def?.hideout);
   const industry = hideout ? HIDEOUT_CREW_PROFILE : getStationIndustry(station);
+  // Habitaty (W6): budynki mieszkalne z listy rynku (`'habitat'` w `industry.buildings`) i dołożone w biegu.
+  const habitats = Math.max(0, Number(station.habitats) || 0);
   const need = owned ? stationWorkforceNeed(industry, {
     mineRate: PLANET_YIELD[station.id]?.rate || 0,
     civilBerths: civilBerthCount(world.docks.get(station.id)),
     stores: world.config.capacityMultiplier,
-    yardWeight: hasYard ? (def?.shipyardWeight || DEFAULT_SHIPYARD_WEIGHT) : 0
+    yardWeight: hasYard ? (def?.shipyardWeight || DEFAULT_SHIPYARD_WEIGHT) : 0,
+    habitats
   }).total : 0;
-  const rate = owned ? populationRate(def?.population) : 0;
+  const rate = populationRate(stationPopulation(def, owned, habitats));
   const previous = station.workforce || null;
   station.workforce = Object.freeze({ need, rate, capacity: workforceCapacity(need, rate) });
   const econ = world.economies.get(station.id);
@@ -444,6 +449,8 @@ export function addMarket(world, rawDef) {
   };
   const industry = industryOf(def);
   if (industry) station.industry = industry;
+  const habitats = habitatCount(def.industry?.buildings);
+  if (habitats > 0) station.habitats = habitats;
 
   const capacity = spec?.capacity || def.capacity;
   const econ = {
@@ -565,6 +572,13 @@ export function addMarketBuilding(world, stationId, roleId, size = null) {
   const id = String(stationId || '');
   const station = world.stations.find(entry => entry.id === id);
   if (!station) return null;
+  // Habitat (W6): moduł mieszkalny bez linii receptur — źródło ludności poza solverem mocy, przemysł bez zmian.
+  if (roleId === HABITAT_ROLE) {
+    station.habitats = (Number(station.habitats) || 0) + 1;
+    syncStationWorkforce(world, station, world.markets.get(id) || null);
+    world.marketsVersion++;
+    return station.industry || { habitats: station.habitats };
+  }
   let industry;
   if (station.industry?.buildings) {
     industry = addStationBuilding(station, roleId, size);
@@ -611,7 +625,8 @@ function describeStationWorkforce(world, station) {
   if (!wf || (!(wf.need > 0) && !(wf.rate > 0))) return null;
   const scale = world.config.economyScale;
   const sources = {};
-  for (const [id, perCycle] of Object.entries(stationPopulation(world.markets.get(station.id), Boolean(station.factionId)))) {
+  const owned = Boolean(station.factionId);
+  for (const [id, perCycle] of Object.entries(stationPopulation(world.markets.get(station.id), owned, station.habitats))) {
     sources[id] = perHourWorld(perCycle, scale);
   }
   return { need: wf.need * scale, perHour: perHourWorld(wf.rate, scale), sources };

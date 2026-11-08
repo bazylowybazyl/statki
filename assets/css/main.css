@@ -600,12 +600,29 @@
 
     .crew-stat-label {
       color: #9fb4e6;
+      white-space: nowrap;
+      padding-right: 12px;
     }
 
     .crew-stat-value {
       text-align: right;
-      white-space: nowrap;
       font-variant-numeric: tabular-nums;
+    }
+
+    .crew-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .crew-actions button {
+      padding: 3px 9px;
+      font-size: 11px;
+    }
+
+    .crew-actions button.hidden {
+      display: none;
     }
 
     .trade-market-actions button {
