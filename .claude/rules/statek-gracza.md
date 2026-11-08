@@ -15,6 +15,9 @@ paths:
   - "assets/css/station-fitting.css"
   - "src/game/playerSave.js"
   - "tests/playerSave.test.mjs"
+  - "src/game/playerCrew.js"
+  - "src/data/playerCrew.js"
+  - "tests/playerCrew.test.mjs"
   - "scripts/webgpu/zapis-gracza-gra.mjs"
 ---
 
@@ -37,6 +40,15 @@ paths:
 - Kampania wznawia od ostatniego PUNKTU WZNOWIENIA (`campaignCheckpoint` + `CAMPAIGN_RESUME` w `src/game/story/campaign.js`: `intro` — zwykły start w doku K-7, `repair` — misja 2, `ambush`, `return`); zapis zrobiony w fazie z nagrodą misji albo po niej (`rewardPhases`: `aftermath`, `victory`) wznawia od NASTĘPNEGO punktu — nagroda jest już w zapisanych kredytach, reputacji i EXP. Skok do punktu = `StoryGame.beginNewGame({ startPhase, restore })`: fazy przed punktem „pominięte” BEZ nagród (`_restoreSkipping`), stan między misjami z zapisu przy wejściu w punkt (`_onPhase`). Nowa nagroda w skrypcie misji = faza w `rewardPhases` (strażnik: test całej kampanii w `tests/storyMission.test.mjs` zbiera fazy wypłat). Kredyty z powtarzanego odcinka (zestrzelenia, łup) mogą przyjść drugi raz — znane ograniczenie. Z zapisu bez kompletu startowego i ładunku naprawczego kampanii (`equipCampaignLoadout`, `grantCampaignRepairCargo`). Ukończona kampania (`StoryGame.completed`, faza `done`) = gra swobodna w zapisanym miejscu.
 - NIE zapisywane: uszkodzenia kadłuba (belki), NPC, wraki, stan w środku misji. Nowy stan gracza, który ma przeżyć F5 → pole w `buildPlayerSave` + `parsePlayerSave` + `applyPlayerSave` + test.
 - Sprawdzenie: `node --test tests/playerSave.test.mjs`, test wznowienia w `tests/storyMission.test.mjs` („zapis gracza: wznowienie od misji 2”), prawdziwa gra `node scripts/webgpu/zapis-gracza-gra.mjs` (nowa gra → zmiana stanu → zapis → F5 → „Wczytaj” → porównanie). Konsola: `PlayerSave.write()`, `.read()`, `.snapshot()`, `.player()`, `.set({ credits, cargo, exp })`; `?reset=game` czyści zapis.
+
+## Załoga i kabiny (workforce W6, 2026-11-08; `docs/PROPOZYCJA-workforce.md` § 6, decyzje D10, D11)
+
+- Stan `PLAYER.crew = { mode, count, contracts }` (`src/game/playerCrew.js` — czysta logika, dane `src/data/playerCrew.js`; klej: blok „ZAŁOGA I KABINY GRACZA” w `index.html` przy karcie KADRY). `mode`: `'faction'` — przydział frakcji (start: oficer Terra Novy, pełny skład `PLAYER_CREW_COMPLEMENT` każdego kadłuba, bez werbunku) albo `'own'` — po ZDRADZIE (`betrayCrew`; hak konsoli `PlayerCrew.betray()`, w skrypcie misji `api.crew.betray()` / `api.crew.mode()` z `storyGame.js` — misji zdrady jeszcze nie ma; bez suwaków w panelu F12): zostaje `betrayalFloor` (25%) składu, resztę gracz werbuje. Decyzja orkiestratora 2026-11-08: stan załogi „przydział frakcji” / „własna” w zapisie gracza.
+- Werbunek (`recruitCheck` / `recruitCrew`): tylko własna załoga, tylko w ośrodku ludności (`getWorkforce(id).source`), nie u dawnej frakcji (`PLAYER_CREW_TUNE.formerFaction`), nie u piratów; ludzie schodzą z zapasu `workforce` rynku przez `adjustStationStock` (oferta kontraktów portu, cena `ask` z reputacją) — jedna ekonomia.
+- Skutek (D11) — TYLKO tempo napraw roju R (`env.workRate` rigu, reguła `drony-naprawcze`) i przeładowania wież (źródło `'crew'` modyfikatorów: `fireRate = 1 / reload`, `syncPlayerCrewModifiers` raz na klatkę); liniowo od `repairMin` 0,4 / `reloadMin` 0,7 przy pustej załodze do 1 przy pełnym składzie. Lot i celność bez zmian. Przy przydziale frakcji skutek = 1 (gra bez zmian do zdrady).
+- KABINY (D10, zatwierdzone przez orkiestratora 2026-11-08): gniazdo KABINY w refit ręcznym WYPOSAŻENIA (wzór: ZBIÓRKA — część `passenger_cabins` w `partStock`, `PLAYER.hullCabins[kadłub]`, zapis wyposażenia `hullCabins` po id kadłuba), pojemność z kadłuba `HULL_PASSENGER_CABINS` (Atlas 300 osób, fregaty bez gniazda); kabiny mają własną przestrzeń — nie zabierają ton ładowni (osobne gniazdo zamiast modułu: gracz nie wybiera między kabinami a wzmacniaczem tarcz). Cena 6000 CR (`PASSENGER_CABINS.price`) — robocza, do strojenia. Bez kabin karta KADRY nie wyda kontraktu; kabin z ludźmi nie da się zdjąć, przesiadka z ludźmi ponad kabiny nowego kadłuba — odmowa.
+- Kontrakty rotacyjne (karta KADRY, karta „Twój okręt”): wzięte w źródle (`takeCrewContracts`: oferta `sell`, cena `ask`, `boardContract`), oddane w porcie, który przyjmuje (`deliverCrewContracts`: skup `buy`, cena `bid`, najstarsze pierwsze, reputacja jak handel); kontrakt wygasa po `WORKFORCE_CONTRACT_SECONDS` czasu GRY od zaokrętowania (`tickPlayerCrew` w pętli po `tickPlayerSave` — pauza stoi): ludzie wracają do domu sami, zapłata przepada.
+- Zapis: pole `crew` w zapisie gracza (`serializePlayerCrew` / `parsePlayerCrew`; brak pola = przydział frakcji, puste kabiny; kontrakt niesie `secondsLeft`, nie czas zegara). Konsola: `PlayerCrew.state()`, `.betray()`, `.take(n)`, `.deliver()`, `.recruit(n)`, `.setCabins(on)`. Testy `tests/playerCrew.test.mjs`; w grze `node scripts/webgpu/rynek-gra.mjs --query renderWorker=1` (sekcja „gracz”).
 
 ## Statek gracza
 

@@ -15,9 +15,16 @@
  * przyjmie, odległość, czas lotu), a na mapie przy ich portach znacznik ceny. Źródło `setPartnerSource({ cargo,
  * partners })` — w grze `getTradeCargoList` / `queryTradePartners` (kopia rynku z mostu, wynik w pamięci mostu do
  * następnego bufora rynku). Ładownia i wynik sprawdzane co `partnerPollMs`, panel pieczony tylko przy zmianie.
+ *
+ * OBSADA (workforce, E16 W5): trasy pasażerskie własnym kolorem (`CREW_COLOR`; kontrakty linią ciągłą,
+ * powroty po kontrakcie przerywaną), porty z obsadą poniżej 80% w bursztynowym pierścieniu, poniżej 50%
+ * w czerwonym, w panelu ludzie w drodze; kryjówki z zakładnikami ze znacznikiem — tylko rozpoznane.
+ * Mgła wojny: port, którego strona gracza nie widzi (`setHiddenTest` — w grze `SensorSystem.hides` stacji),
+ * nie dostaje stempli, pierścieni ani tras.
  */
 
 import { RESOURCES, CATEGORY } from '../data/resources.js';
+import { WORKFORCE_UI_WARN_RATIO, WORKFORCE_UI_ALERT_RATIO } from '../data/workforce.js';
 import { describeTradePartnerRow } from '../game/tradePartners.js';
 
 export const CIC_TRADE_TUNE = {
@@ -31,8 +38,16 @@ export const CIC_TRADE_TUNE = {
   panelCargo: 6,
   panelBuyers: 5,
   partnerPollMs: 400,
+  /** Ile tras pasażerskich na mapie i ile portów z brakami obsady w panelu (W5). */
+  crewRoutes: 16,
+  panelCrewPorts: 4,
   maxStamps: 400
 };
+
+/** Kolor ludzi (trasy pasażerskie, znaczniki obsady) — inny niż wszystkie kategorie towarów. */
+export const CREW_COLOR = '#f472b6';
+const CREW_WARN_COLOR = '#fbbf24';
+const CREW_ALERT_COLOR = '#f87171';
 
 const CATEGORY_COLOR = {
   [CATEGORY.ORE]: '#d9a85c',
@@ -72,6 +87,13 @@ function portLabel(name) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** Osoby: „840 os.”, „14,8 tys. os.”. */
+export function formatPeople(people) {
+  const n = Math.max(0, Number(people) || 0);
+  if (n >= 1e4) return `${(n / 1e3).toFixed(1).replace('.', ',')} tys. os.`;
+  return `${Math.round(n)} os.`;
+}
+
 /** Tony: „840 t”, „2,4 kt”, „1,2 Mt”. */
 export function formatTons(tons) {
   const t = Math.max(0, Number(tons) || 0);
@@ -93,6 +115,8 @@ export function createCicTradeLayer(options = {}) {
   let source = typeof options.request === 'function' ? options.request : null;
   /** `{ cargo: () => [{ key, label, qty, unit, contracts }], partners: (key, qty) => wynik findTradePartners }`. */
   let partnerSource = null;
+  /** `(portId) => bool` — port ukryty mgłą wojny (gra: `SensorSystem.hides` stacji); brak = wszystko widać. */
+  let hiddenTest = typeof options.isHidden === 'function' ? options.isHidden : null;
   const state = {
     enabled: false,
     summary: null,
@@ -186,6 +210,87 @@ export function createCicTradeLayer(options = {}) {
     });
   }
 
+  function hidden(portId) {
+    if (!hiddenTest) return false;
+    try { return !!hiddenTest(portId); } catch { return false; }
+  }
+
+  /** Port do rysunku: znany z agregatu i widoczny dla strony gracza. */
+  function visiblePort(id) {
+    const port = state.portById.get(id);
+    return port && !hidden(id) ? port : null;
+  }
+
+  /** Trasy pasażerskie (W5): kontrakty linią ciągłą, powroty przerywaną; grubość ~√ludzi. */
+  function drawCrewRoutes(ctx, toScreen) {
+    const routes = state.summary?.crew?.routes || [];
+    if (!routes.length) return;
+    let maxPeople = 1;
+    for (const route of routes) maxPeople = Math.max(maxPeople, route.people || 0);
+    ctx.strokeStyle = CREW_COLOR;
+    ctx.fillStyle = CREW_COLOR;
+    for (let i = Math.min(routes.length, CIC_TRADE_TUNE.crewRoutes) - 1; i >= 0; i--) {
+      const route = routes[i];
+      const a = visiblePort(route.from);
+      const b = visiblePort(route.to);
+      if (!a || !b) continue;
+      const pa = toScreen(a.x, a.y);
+      const pb = toScreen(b.x, b.y);
+      const dx = pb.x - pa.x;
+      const dy = pb.y - pa.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (!(len > 4)) continue;
+      const width = (route.returning ? 0.8 : 1.2) + 3.5 * Math.sqrt((route.people || 0) / maxPeople);
+      ctx.globalAlpha = route.returning ? 0.4 : 0.6;
+      ctx.lineWidth = width;
+      ctx.setLineDash(route.returning ? [6, 6] : []);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+      if (route.returning) continue;
+      const ux = dx / len;
+      const uy = dy / len;
+      const tipX = pb.x - ux * Math.min(len * 0.18, 34);
+      const tipY = pb.y - uy * Math.min(len * 0.18, 34);
+      const head = 4 + width;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - ux * head - uy * head * 0.5, tipY - uy * head + ux * head * 0.5);
+      ctx.lineTo(tipX - ux * head + uy * head * 0.5, tipY - uy * head - ux * head * 0.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  /** Obsada portu (W5): pierścień przy obsadzie < 80% (bursztyn) i < 50% (czerwień); kryjówka — zakładnicy. */
+  function drawCrewMarks(ctx, W, H, toScreen) {
+    for (const port of state.summary?.ports || []) {
+      const crew = port.crew;
+      if (!crew || hidden(port.id)) continue;
+      const p = toScreen(port.x, port.y);
+      if (p.x < -60 || p.y < -30 || p.x > W + 60 || p.y > H + 30) continue;
+      if (crew.hostages > 0) {
+        const s = stamp(`⛓ ${formatPeople(crew.hostages)}`, CREW_COLOR);
+        if (s) ctx.drawImage(s.canvas, Math.round(p.x - s.w / 2), Math.round(p.y - 30));
+      }
+      if (crew.hideout || !(crew.need > 0) || !(crew.ratio < WORKFORCE_UI_WARN_RATIO)) continue;
+      const color = crew.ratio < WORKFORCE_UI_ALERT_RATIO ? CREW_ALERT_COLOR : CREW_WARN_COLOR;
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.9;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      const s = stamp(`obsada ${Math.round(crew.ratio * 100)}%`, color);
+      if (s) ctx.drawImage(s.canvas, Math.round(p.x - s.w / 2), Math.round(p.y - 30 - (crew.hostages > 0 ? 15 : 0)));
+    }
+  }
+
   /** Trasy i porty na mapie. `toScreen(wx, wy)` → `{ x, y }` (układ CIC). */
   function draw(ctx, W, H, toScreen) {
     const summary = state.summary;
@@ -198,8 +303,8 @@ export function createCicTradeLayer(options = {}) {
     ctx.lineCap = 'round';
     for (let i = routes.length - 1; i >= 0; i--) {
       const route = routes[i];
-      const a = state.portById.get(route.from);
-      const b = state.portById.get(route.to);
+      const a = visiblePort(route.from);
+      const b = visiblePort(route.to);
       if (!a || !b) continue;
       const pa = toScreen(a.x, a.y);
       const pb = toScreen(b.x, b.y);
@@ -232,11 +337,13 @@ export function createCicTradeLayer(options = {}) {
     }
     ctx.globalAlpha = 1;
 
+    drawCrewRoutes(ctx, toScreen);
+
     // Podpisy najgęstszych tras (środek odcinka).
     for (let i = 0; i < routes.length && i < CIC_TRADE_TUNE.routeLabels; i++) {
       const route = routes[i];
-      const a = state.portById.get(route.from);
-      const b = state.portById.get(route.to);
+      const a = visiblePort(route.from);
+      const b = visiblePort(route.to);
       if (!a || !b) continue;
       const pa = toScreen(a.x, a.y);
       const pb = toScreen(b.x, b.y);
@@ -249,6 +356,7 @@ export function createCicTradeLayer(options = {}) {
 
     // Porty: najtańszy zakup (▼ kupisz) i najlepszy skup (▲ sprzedasz).
     for (const port of summary.ports || []) {
+      if (hidden(port.id)) continue;
       const p = toScreen(port.x, port.y);
       if (p.x < -60 || p.y < -30 || p.x > W + 60 || p.y > H + 30) continue;
       let dy = 14;
@@ -276,6 +384,7 @@ export function createCicTradeLayer(options = {}) {
         if (s) ctx.drawImage(s.canvas, Math.round(p.x - s.w / 2), Math.round(p.y - 18 - s.h));
       }
     }
+    drawCrewMarks(ctx, W, H, toScreen);
     ctx.restore();
   }
 
@@ -319,6 +428,25 @@ export function createCicTradeLayer(options = {}) {
       if (summary.mining?.courses) {
         lines.push([`WYPRAWY GÓRNICZE ${summary.mining.courses} · urobek ${formatTons(summary.mining.tons)}`, '#94a3b8']);
       }
+      // Obsada (W5): ludzie w drodze i porty z brakami — ludzie to nie tony, osobny wiersz i kolor.
+      const crew = summary.crew;
+      if (crew) {
+        lines.push([`LUDZIE W DRODZE ${formatPeople(crew.people)} na kontraktach (${crew.courses || 0} kursów)`
+          + ` · wraca ${formatPeople(crew.returningPeople)} (${crew.returningCourses || 0})`, CREW_COLOR]);
+        const short = (summary.ports || [])
+          .filter(port => port.crew && !port.crew.hideout && port.crew.need > 0 && port.crew.ratio < WORKFORCE_UI_WARN_RATIO
+            && !hidden(port.id))
+          .sort((a, b) => a.crew.ratio - b.crew.ratio);
+        lines.push([short.length
+          ? `OBSADA < ${Math.round(WORKFORCE_UI_WARN_RATIO * 100)}%: ${short.slice(0, CIC_TRADE_TUNE.panelCrewPorts)
+            .map(port => `${portName(port.id)} ${Math.round(port.crew.ratio * 100)}%`).join(', ')}`
+          : `OBSADA PORTÓW ≥ ${Math.round(WORKFORCE_UI_WARN_RATIO * 100)}%`,
+        short.some(port => port.crew.ratio < WORKFORCE_UI_ALERT_RATIO) ? CREW_ALERT_COLOR : (short.length ? CREW_WARN_COLOR : '#94a3b8')]);
+        const held = (summary.ports || []).filter(port => port.crew?.hostages > 0 && !hidden(port.id));
+        if (held.length) {
+          lines.push([`ZAKŁADNICY ${held.map(port => `${portName(port.id)} ${formatPeople(port.crew.hostages)}`).join(', ')}`, CREW_COLOR]);
+        }
+      }
       lines.push(['', null]);
       lines.push(['NAJGĘSTSZE TRASY', '#7dd3fc']);
       for (const route of (summary.routes || []).slice(0, CIC_TRADE_TUNE.panelRoutes)) {
@@ -336,7 +464,7 @@ export function createCicTradeLayer(options = {}) {
     const cargoRows = [];
     partnerLines(lines, cargoRows);
     lines.push(['', null]);
-    lines.push(['[H] warstwa handlu  ▼ kupisz tanio  ▲ sprzedasz drogo', '#64748b']);
+    lines.push(['[H] warstwa handlu  ▼ kupisz tanio  ▲ sprzedasz drogo  ━ ludzie (kontrakty)', '#64748b']);
 
     const lineH = 15;
     const h = 16 + lines.length * lineH;
@@ -416,13 +544,22 @@ export function createCicTradeLayer(options = {}) {
     /** Wybór towaru wprost (narzędzia, pad). */
     selectPartnerKey(key) { partners.key = key || null; pollPartners(Infinity, true); return partners.key; },
     hover,
+    /** Mgła wojny: `(portId) => bool` — port ukryty (bez stempli, pierścieni obsady i tras). */
+    setHiddenTest(fn) { hiddenTest = typeof fn === 'function' ? fn : null; state.version++; },
     update,
     draw,
     drawPanel,
     stats() {
-      return { enabled: state.enabled, routes: state.summary?.routes?.length || 0, ports: state.portById.size, stamps: stamps.size, pending: state.pending,
+      const crew = state.summary?.crew || null;
+      const lowCrew = (state.summary?.ports || []).filter(port => port.crew && !port.crew.hideout && port.crew.need > 0
+        && port.crew.ratio < WORKFORCE_UI_WARN_RATIO).length;
+      return {
+        enabled: state.enabled, routes: state.summary?.routes?.length || 0, ports: state.portById.size, stamps: stamps.size,
+        pending: state.pending, crewRoutes: crew?.routes?.length || 0, crewPeople: crew?.people || 0,
+        crewReturning: crew?.returningPeople || 0, lowCrewPorts: lowCrew, hostages: crew?.hostages || 0,
         partnerKey: partners.key, partnerRows: partners.result?.rows?.length || 0, partnerPending: !!partners.result?.pending,
-        partners: (partners.result?.rows || []).map(row => ({ id: row.stationId, price: row.price, take: row.take, seconds: Math.round(row.seconds) })) };
+        partners: (partners.result?.rows || []).map(row => ({ id: row.stationId, price: row.price, take: row.take, seconds: Math.round(row.seconds) }))
+      };
     }
   };
 }

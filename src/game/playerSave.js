@@ -11,7 +11,8 @@
 //  - `worldSeed` — ziarno kątów planet; MUSI być równe ziarnu zapisu ekonomii (inaczej pozycja trafia w inny układ
 //    planet) — `parsePlayerSave` odrzuca zapis z innym ziarnem;
 //  - `player` — pozycja i kurs (ostatnie miejsce w zwykłym locie, nie w skoku: warp przelatuje przez wszystko),
-//    kredyty, ładownia, ładunki górnicze, reputacja, doświadczenie (`progress`);
+//    kredyty, ładownia, ładunki górnicze, reputacja, doświadczenie (`progress`), załoga i ludzie w kabinach na
+//    kontraktach rotacyjnych (`crew`, workforce W6 — src/game/playerCrew.js; brak pola = przydział frakcji);
 //  - `campaign` — kampania: faza w chwili zapisu i stan między misjami (`m1`, `bossEscaped`). Stanu W ŚRODKU misji
 //    (baza piratów, fale, herszt) nie da się wiernie odtworzyć, więc wczytanie wznawia od ostatniego punktu wznowienia
 //    (`campaignCheckpoint`, `CAMPAIGN_RESUME` w story/campaign.js: początek misji 1, misji 2, zasadzka, powrót), a zapis
@@ -21,6 +22,7 @@
 // Bez DOM i three (testy node: tests/playerSave.test.mjs).
 
 import { DEFAULT_STAR_SYSTEM_ID } from '../data/starSystems.js';
+import { serializePlayerCrew, parsePlayerCrew } from './playerCrew.js';
 
 export const PLAYER_SAVE_KEY = 'game';
 export const PLAYER_SAVE_VERSION = 1;
@@ -98,7 +100,7 @@ export function campaignMissionNumber(phase, resume) {
 /**
  * Zapis gracza do localStorage. `input`:
  *  - `worldSeed`, `systemId`, `savedAt` (ms), `playTimeSec`;
- *  - `player`: { x, y, angle, credits, cargo, cargoCost, miningCharges, reputation, progress, hullId };
+ *  - `player`: { x, y, angle, credits, cargo, cargoCost, miningCharges, reputation, progress, hullId, crew };
  *    `cargoCost` — średnia cena zakupu partii w ładowni [CR/szt.] (komputer handlowy E23a: zysk wobec ceny zakupu);
  *  - `campaign`: { active, phase, done, m1, bossEscaped } albo null (gra swobodna).
  */
@@ -132,7 +134,8 @@ export function buildPlayerSave(input = {}) {
         exp: Math.max(0, Math.round(finite(progress.exp))),
         missionsDone: Array.isArray(progress.missionsDone) ? progress.missionsDone.map(String) : []
       },
-      hullId: p.hullId ? String(p.hullId) : null
+      hullId: p.hullId ? String(p.hullId) : null,
+      crew: serializePlayerCrew(p.crew)
     },
     campaign: c ? {
       active: !!c.active,
@@ -188,7 +191,8 @@ export function parsePlayerSave(raw, opts = {}) {
         progress: {
           exp: Math.max(0, Math.round(finite(p.progress?.exp))),
           missionsDone: Array.isArray(p.progress?.missionsDone) ? p.progress.missionsDone.map(String) : []
-        }
+        },
+        crew: parsePlayerCrew(p.crew)
       }
     },
     reason: null

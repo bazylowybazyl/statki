@@ -23,11 +23,13 @@
  */
 
 import {
-  TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD, TRAFFIC_WARMUP_FALLBACK_SECONDS
+  TRAFFIC_MSG, COURSE_STRIDE, COURSE_FIELD, MARKET_STRIDE, MARKET_FIELD, CREW_STRIDE, CREW_FIELD,
+  TRAFFIC_WARMUP_FALLBACK_SECONDS
 } from './traffic/trafficProtocol.js';
 import { BELT_MSG } from './traffic/trafficProtocol.js';
 import { moveStock } from './traffic/marketStock.js';
 import { findTradePartners as computeTradePartners, TRADE_PARTNER_TUNE } from './tradePartners.js';
+import { describeWorkforce } from './workforce.js';
 
 /** Ile ostatnich wraków trzymać do podglądu w konsoli. */
 const RECENT_WRECK_LIMIT = 64;
@@ -42,7 +44,11 @@ function now() {
 function createMirror(resources) {
   const zeros = () => Object.fromEntries(resources.map(key => [key, 0]));
   // `sell` / `buy` — oferta portu dla kupca (E7): ile sprzeda ponad rezerwę, ile skupi do celu.
-  return { resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros(), sell: zeros(), buy: zeros() };
+  // `crew` — obsada z bufora `tick.crew` (W5, `CREW_FIELD`): ludzie w drodze, powroty, wydajność, zakładnicy.
+  return {
+    resources: zeros(), capacity: zeros(), duress: {}, bid: zeros(), ask: zeros(), sell: zeros(), buy: zeros(),
+    crew: { inbound: 0, outbound: 0, returning: 0, leaving: 0, efficiency: 1, hostages: 0 }
+  };
 }
 
 /** Te same reguły co `applyStockDelta` w workerze — wspólne `moveStock` (API rynku): 0…pojemność, 0 = bez limitu. */
@@ -530,6 +536,7 @@ export class TrafficBridge {
       this._emit('markets', this.tables.stations);
     }
     if (message.market) this._applyMarket(message.market, Number(message.stockSeq) || 0);
+    if (message.crew) this._applyCrew(message.crew);
     if (message.bubble) this._applyBubble(message.bubble);
     if (Array.isArray(message.stationFactions) && this.tables) {
       message.stationFactions.forEach((factionId, index) => {
@@ -575,6 +582,23 @@ export class TrafficBridge {
     for (const entry of this._pendingStock) applyToMirror(this.market.get(entry.stationId), entry.bag);
     this.marketBuffers++;
     this.marketSeq++;
+  }
+
+  /** Obsada portów (W5): bufor `tick.crew` w układzie tabeli `stations` → `mirror.crew`. */
+  _applyCrew(data) {
+    const tables = this.tables;
+    if (!tables || !(data instanceof Float64Array)) return;
+    tables.stations.forEach((entry, stationIndex) => {
+      const crew = this.market.get(entry.id)?.crew;
+      const offset = stationIndex * CREW_STRIDE;
+      if (!crew || offset + CREW_STRIDE > data.length) return;
+      crew.inbound = data[offset + CREW_FIELD.INBOUND];
+      crew.outbound = data[offset + CREW_FIELD.OUTBOUND];
+      crew.returning = data[offset + CREW_FIELD.RETURNING];
+      crew.leaving = data[offset + CREW_FIELD.LEAVING];
+      crew.efficiency = data[offset + CREW_FIELD.EFFICIENCY];
+      crew.hostages = data[offset + CREW_FIELD.HOSTAGES];
+    });
   }
 
   /**
@@ -673,6 +697,14 @@ export class TrafficBridge {
       this._partnerCache.set(cacheKey, result);
     }
     return result;
+  }
+
+  /**
+   * Obsada portu (W5, karta „Kadry”): `describeWorkforce` z tabeli stacji i kopii rynku — potrzeba,
+   * ludzie na miejscu, obsada, wydajność, rotacja, ludzie w drodze, źródła. `null` — stacja spoza świata.
+   */
+  getWorkforce(stationId) {
+    return describeWorkforce(this.getStation(stationId), this.getEconomy(stationId));
   }
 
   /** Opis stacji z tabeli `ready` (`id`, `name`, `factionId`, `x`, `y`, `moon`…). */

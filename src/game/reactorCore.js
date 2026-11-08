@@ -999,13 +999,8 @@ export function applyReactorDetonation(core, variantId, blast, ctx = {}) {
   res.vaporized = vaporized;
 
   // 3) Rozpad od razu (encje wraków powstają w haku onWreck → window.wrecks).
-  if (!body.dead && body.activeNodes > 0) {
-    const queued = D.splitQueue;
-    D.splitQueue = [body];
-    body.structureDirty = true;
-    D.processSplits([body]);
-    for (const b of queued) if (b !== body && D.splitQueue.indexOf(b) === -1) D.splitQueue.push(b);
-  }
+  // HullBodies.splitNow: encja wraku dostaje pozę i pivot przebudowanego ciała (nowy środek masy) od razu.
+  if (!body.dead && body.activeNodes > 0) HullBodies.splitNow(wreck);
   const frags = res.fragments;
   if (reactorHull(wreck)) frags.push(wreck);
   if (wrecks) for (let i = after; i < wrecks.length; i++) if (wrecks[i] && !wrecks[i].dead) frags.push(wrecks[i]);

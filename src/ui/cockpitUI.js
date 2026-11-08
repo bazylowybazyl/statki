@@ -46,7 +46,8 @@ const STATION_TABS = Object.freeze([
   { id: 'trade', label: 'HANDEL' },
   { id: 'cantina', label: 'KANTYNA' },
   { id: 'mechanic', label: 'WYPOSAŻENIE' },
-  { id: 'infrastructure', label: 'INFRASTRUKTURA' }
+  { id: 'infrastructure', label: 'INFRASTRUKTURA' },
+  { id: 'crew', label: 'KADRY' }
 ]);
 
 // Postawy skrzydła. Trzeci przycisk, POWRÓT, to jednorazowy rozkaz (skok tunelem na Ziemię —
@@ -2380,7 +2381,7 @@ export class CockpitUI {
     const list = bridge?.getCargoList?.() || [];
     if (!list.some(item => item.key === this.cargoKey)) this.cargoKey = list[0]?.key || null;
     const selected = list.find(item => item.key === this.cargoKey) || null;
-    const result = selected ? bridge?.tradePartners?.(selected.key, { amount: selected.qty, limit: 5 }) : null;
+    const result = selected ? bridge?.tradePartners?.(selected.key, { amount: selected.qty, limit: 5, costBasis: selected.contracts ? selected.cost : undefined }) : null;
     const credits = window.DevEconomy?.getCredits?.() ?? 0;
     this.setTabletFoot(`KREDYTY <b>${Math.round(credits).toLocaleString('pl-PL')} CR</b>`, 'KOMPUTER HANDLOWY');
     const sig = `${list.map(item => `${item.key}:${Math.round(item.qty)}`).join(',')}|${this.cargoKey}|`
@@ -2402,11 +2403,11 @@ export class CockpitUI {
       const kicker = document.createElement('span'); kicker.className = 'mission-kicker';
       const short = document.createElement('span'); short.textContent = item.short;
       const qty = document.createElement('span');
-      qty.textContent = item.contracts ? 'OFERTY RYNKU' : `${Math.round(item.qty).toLocaleString('pl-PL')} ${item.unit}`;
+      qty.textContent = item.contracts && !item.qty ? 'OFERTY RYNKU' : `${Math.round(item.qty).toLocaleString('pl-PL')} ${item.unit}`;
       kicker.append(short, qty);
       const title = document.createElement('span'); title.className = 'mission-title'; title.textContent = item.label;
       const summary = document.createElement('span'); summary.className = 'mission-summary';
-      summary.textContent = item.contracts ? 'Kto płaci za ludzi na kontraktach'
+      summary.textContent = item.contracts && !item.qty ? 'Kto płaci za ludzi na kontraktach'
         : (item.cost ? `kupione po ${Math.round(item.cost).toLocaleString('pl-PL')} CR / szt.` : 'bez ceny zakupu (urobek, łup)');
       card.append(kicker, title, summary);
       root.appendChild(card);
@@ -2425,7 +2426,7 @@ export class CockpitUI {
     eyebrow.textContent = item.contracts ? 'KOMPUTER HANDLOWY / KONTRAKTY OBSADY' : 'KOMPUTER HANDLOWY / KTO KUPI';
     const title = document.createElement('h2'); title.className = 'mission-detail-title'; title.textContent = item.label;
     const status = document.createElement('span'); status.className = 'mission-status';
-    status.textContent = item.contracts ? 'SKUP WORKFORCE · ZA OSOBĘ'
+    status.textContent = item.contracts && !item.qty ? 'SKUP WORKFORCE · ZA OSOBĘ'
       : `W ŁADOWNI ${Math.round(item.qty).toLocaleString('pl-PL')} ${item.unit}${item.cost ? ` · KUPIONE PO ${Math.round(item.cost).toLocaleString('pl-PL')} CR` : ''}`;
     head.append(eyebrow, title, status);
     const body = document.createElement('div'); body.className = 'mission-detail-body cargo-buyers';
@@ -2453,7 +2454,7 @@ export class CockpitUI {
         who.append(name, standing);
         const price = document.createElement('td'); price.className = 'cargo-num'; price.textContent = `${row.price.toLocaleString('pl-PL')} CR`;
         const take = document.createElement('td'); take.className = 'cargo-num';
-        take.textContent = item.contracts || !item.qty ? `${row.offer.toLocaleString('pl-PL')} ${item.unit}` : `${Math.round(row.take).toLocaleString('pl-PL')} z ${Math.round(item.qty).toLocaleString('pl-PL')}`;
+        take.textContent = !item.qty ? `${row.offer.toLocaleString('pl-PL')} ${item.unit}` : `${Math.round(row.take).toLocaleString('pl-PL')} z ${Math.round(item.qty).toLocaleString('pl-PL')}`;
         const profit = document.createElement('td'); profit.className = 'cargo-num cargo-profit';
         profit.textContent = item.cost ? formatTradeProfit(row.profit) : `${Math.round(row.price * row.take).toLocaleString('pl-PL')} CR`;
         const way = document.createElement('td'); way.className = 'cargo-num cargo-way';
