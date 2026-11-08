@@ -251,9 +251,12 @@ function earthColor(type) {
         .sub(max(h, 0.0).mul(0.1)).toVar();
       // wilgotność: komórki Hadleya (mokro przy równiku i ~55°, sucho ~25° i przy biegunach), wnętrza kontynentów suche,
       // granice pasów przesunięte szumem (nie równoleżniki)
-      const latW = C.lat.add(nM.mul(0.18));
-      const M = U.uK.y.mul(float(0.5).add(cos(latW.mul(6.0)).mul(0.33))).add(nM.mul(0.34)).add(nP.mul(0.12))
-        .sub(smoothstep(0.15, 0.8, d).mul(0.26)).add(0.1).toVar();
+      const latW = C.lat.add(nM.mul(0.3));
+      // pasy klimatu słabsze niż dawniej (×0,2 zamiast ×0,33) — wyraźne równoleżnikowe pasy wyglądały na malowane;
+      // wielkie plamy wilgoci z szumu niskiej częstości i suche wnętrza kontynentów (odległość od brzegu ≈ d)
+      const nMl = pgFbm(ps.mul(0.9).add(37.0).add(wq), 4).toVar();
+      const M = U.uK.y.mul(float(0.5).add(cos(latW.mul(6.0)).mul(0.2))).add(nM.mul(0.26)).add(nMl.mul(0.32)).add(nP.mul(0.12))
+        .sub(smoothstep(0.1, 0.7, d).mul(0.36)).add(0.12).toVar();
       // ląd
       const desertC = mix(U.uDesert, U.uDesertRed, smoothstep(0.0, 0.6, nV.add(nP.mul(0.5))).mul(0.6));
       const forestC = mix(mix(U.uTaiga, U.uForest, smoothstep(0.36, 0.55, T)), U.uRain, smoothstep(0.72, 0.9, T));
@@ -262,11 +265,16 @@ function earthColor(type) {
       land.assign(mix(land, forestC.mul(float(1.0).add(nP.mul(0.2))), smoothstep(0.36, 0.6, M.add(nP.mul(0.08))).mul(smoothstep(0.16, 0.3, T))));
       land.assign(mix(land, U.uTundra.mul(float(1.0).add(nP.mul(0.15))), inv(0.13, 0.3, T)));
       // doliny wilgotniejsze (ciemniej), grzbiety suche (jaśniej) — krzywizna z pola
-      land.mulAssign(float(1.0).add(clamp(curv.mul(-4.0), -0.1, 0.1)));
-      const rocky = max(smoothstep(0.14, 0.4, sl.s), smoothstep(0.25, 0.65, f.z).mul(smoothstep(0.5, 2.2, h))).toVar();
-      land.assign(mix(land, U.uRock.mul(float(1.0).add(nF.mul(0.22))), rocky.mul(0.8)));
-      const snowLine = float(0.5).add(max(T, 0.0).mul(5.8));
-      const snow = max(inv(-0.02, 0.08, T.add(nP.mul(0.08)).add(nF.mul(0.05))), smoothstep(snowLine, snowLine.add(0.8), h.add(nF.mul(0.35)))).mul(float(1.0).sub(smoothstep(0.35, 0.7, sl.s).mul(0.5)));
+      // krzywizna w barwie tylko lekko (światło i cień terenu liczy teraz materiał z mapy rzeźby — mocna krzywizna
+      // w albedo dawała „słoje drewna” na całym lądzie)
+      land.mulAssign(float(1.0).add(clamp(curv.mul(-2.5), -0.05, 0.05)));
+      const rocky = max(smoothstep(0.18, 0.5, sl.s), smoothstep(0.3, 0.7, f.z).mul(smoothstep(0.8, 2.6, h))).toVar();
+      land.assign(mix(land, U.uRock.mul(float(1.0).add(nF.mul(0.22))), rocky.mul(0.7)));
+      // śnieg gór: szeroki przedział wysokości, wzdłuż grzbietów (f.z) i płatami — nie białe „naklejki” na szczytach
+      const snowLine = float(0.6).add(max(T, 0.0).mul(5.8));
+      const snowM = smoothstep(snowLine.sub(0.6), snowLine.add(1.4), h.add(nF.mul(0.6)).add(nP.mul(0.4)))
+        .mul(mix(0.45, 1.0, smoothstep(0.15, 0.6, f.z))).mul(smoothstep(-0.25, 0.25, nF.add(nV.mul(0.5))).mul(0.5).add(0.5));
+      const snow = max(inv(-0.02, 0.08, T.add(nP.mul(0.08)).add(nF.mul(0.05))), snowM).mul(float(1.0).sub(smoothstep(0.35, 0.7, sl.s).mul(0.5)));
       land.assign(mix(land, U.uSnow, clamp(snow, 0.0, 1.0)));
       land.mulAssign(float(1.0).add(nV.mul(0.08)).add(nF.mul(0.07)));
       // MORZE liczy shader (planetGenSurface.tsl.js: brzeg z wysokości i detalu, barwa wody z głębokości), więc mapa
@@ -275,7 +283,8 @@ function earthColor(type) {
       // RGB lodu, na lądzie RGB gruntu.
       const floe = smoothstep(-0.15, 0.3, nF.add(nV.mul(0.6)));
       const iceT = T.add(nP.mul(0.09)).add(nV.mul(0.06)).add(nF.mul(0.04));
-      const seaIce = clamp(inv(-0.04, 0.05, iceT).mul(mix(0.55, 1.0, floe)).mul(mix(0.85, 1.0, smoothstep(-0.2, 0.2, nM))), 0.0, 1.0).toVar();
+      // lód morski tylko w zimnie (próg niżej niż śnieg lądu — białe jeziora w umiarkowanych szerokościach wyglądały na naklejki)
+      const seaIce = clamp(inv(-0.12, -0.02, iceT).mul(mix(0.55, 1.0, floe)).mul(mix(0.85, 1.0, smoothstep(-0.2, 0.2, nM))), 0.0, 1.0).toVar();
       const isLand = smoothstep(-0.02, 0.02, h);
       return vec4(mix(mix(land, U.uIce, seaIce), land, isLand), seaIce);
     })();

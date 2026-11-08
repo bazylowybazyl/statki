@@ -20,6 +20,9 @@ import { bakeRingProfile, RING_PROFILE_TEXELS } from '../src/3d/planetGen/planet
 import { planetSurfaceUniforms, ruinUniforms } from '../src/3d/planetGen/planetGenBody.js';
 import { createGenSolidSurfaceMaterial, GEN_SOLID_UNIFORM_KEYS } from '../src/3d/planetGen/planetGenSurface.tsl.js';
 import { RUIN_CAP } from '../src/3d/planetGen/planetGenRuins.tsl.js';
+import { createGenCloudMaterial, GEN_CLOUD_UNIFORM_KEYS } from '../src/3d/planetGen/planetGenClouds.tsl.js';
+import { planetCloudUniforms } from '../src/3d/planetGen/planetGenBody.js';
+import { createPlanetCloudMaterial } from '../src/3d/planet3d.assets.tsl.js';
 import { createPlanetSurfaceMaterial } from '../src/3d/planet3d.assets.tsl.js';
 import { PLANET_GRAPH_KEYS, PLANET_TSL_STATS, PLANET_MATERIAL_NAMES } from '../src/3d/planet3d.assets.tsl.js';
 
@@ -249,6 +252,12 @@ test('materiał powierzchni generatora (genSolid): WGSL z rzeźbą, cieniem, mor
   assert.ok(Math.abs(U.uGsGeo.value.y - Math.PI / 1024) < 1e-9);
   assert.equal(U.uGsSea.value.x, 1);
   assert.equal(planetSurfaceUniforms(describePlanet({ type: 'rocky', seed: 3 }), { day: null }, { size: 2048 }).uGsSea.value.x, 0);
+  // chmury generatora: detal z hakiem, graf chmur gry bez niego
+  const CU = planetCloudUniforms(spec, { clouds: new THREE.Texture() }, U);
+  for (const k of Object.keys(GEN_CLOUD_UNIFORM_KEYS)) assert.ok(CU[k], `brak uniformu chmur ${k}`);
+  assert.match(buildMesh(createGenCloudMaterial(CU)), /fn pgNoised/);
+  const gameClouds = buildMesh(createPlanetCloudMaterial(Object.fromEntries(PLANET_GRAPH_KEYS.clouds.map((k) => [k, { value: k.endsWith('Texture') ? null : (k === 'sunPosition' ? new THREE.Vector3() : 0) }]))));
+  assert.doesNotMatch(gameClouds, /pgNoised/);
 });
 
 test('ruiny: z ziarna (część planet bez ruin), nadpisanie z danych gry, puste miejsca z promieniem 0', () => {

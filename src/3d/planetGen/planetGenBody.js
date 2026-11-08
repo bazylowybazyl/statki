@@ -7,11 +7,10 @@
 // Kształt `uniforms` = DirectPlanet.init (planet3d.assets.js) — to samo, co wpięcie w grze ustawi z opisu planety
 // (`planetSurfaceUniforms`, `planetCloudUniforms`, `planetHaloUniforms`); tu też składanie siatek dla dema.
 import * as THREE from 'three/webgpu';
-import {
-  createPlanetCloudMaterial, createPlanetAtmosphereMaterial, createRingAtmosphereMaterial
-} from '../planet3d.assets.tsl.js';
+import { createPlanetAtmosphereMaterial, createRingAtmosphereMaterial } from '../planet3d.assets.tsl.js';
 import { createGenGasSurfaceMaterial, GenGasAtmosphere } from './planetGenGas.js';
 import { createGenSolidSurfaceMaterial } from './planetGenSurface.tsl.js';
+import { createGenCloudMaterial } from './planetGenClouds.tsl.js';
 import { RUIN_CAP } from './planetGenRuins.tsl.js';
 import { createGenRingMesh } from './planetGenRing.js';
 
@@ -84,9 +83,16 @@ export function planetSurfaceUniforms(spec, maps, { ringAnchored = false, size =
   };
 }
 
-/** `uniforms` chmur (DirectPlanet: cloudUniforms dzielą mgiełkę i cień ringu z powierzchnią). */
+/**
+ * `uniforms` chmur (DirectPlanet: cloudUniforms dzielą mgiełkę i cień ringu z powierzchnią) + detal chmur generatora
+ * (GEN_CLOUD_UNIFORM_KEYS: pierwsza oktawa ~3 teksele mapy chmur, erozja brzegów, cieniowanie kłębów).
+ */
 export function planetCloudUniforms(spec, maps, U) {
+  const W = maps.clouds?.image?.width || 2048;
+  const c = spec.clouds || {};
   return {
+    uGcDetail: { value: new THREE.Vector4(W / (3 * Math.PI), c.style === 1 ? 0.12 : 0.22, c.style === 1 ? 0.12 : 0.25, 0) },
+    uGcSeed: { value: new THREE.Vector4(...spec.seedOffset.map((v) => v * 0.53 + 11), 0) },
     cloudTexture: { value: maps.clouds }, sunPosition: U.sunPosition, uOpacity: { value: spec.clouds.opacity },
     uHazeStrength: U.uHazeStrength, uHazeColor: U.uHazeColor, uHazeBeta: U.uHazeBeta,
     uRingShadowStrength: U.uRingShadowStrength, uRingShadowRadius: U.uRingShadowRadius, uRingShadowReach: U.uRingShadowReach,
@@ -150,7 +156,7 @@ export function createGenPlanetBody(spec, baked, { segments = 160, halo = true }
   let cloudUniforms = null;
   if (maps.clouds) {
     cloudUniforms = planetCloudUniforms(spec, maps, U);
-    clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, segments, Math.round(segments / 2)), createPlanetCloudMaterial(cloudUniforms));
+    clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, segments, Math.round(segments / 2)), createGenCloudMaterial(cloudUniforms));
     group.add(clouds);
   }
   let atm = null;

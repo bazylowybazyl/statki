@@ -559,8 +559,8 @@ function surfaceFor(type, look) {
 // wysokości w cieniu terenu, pen — półcień [rad], detail — amplituda detalu ponad mapę (× teksel [km] · 0,03),
 // detailAlbedo — siła detalu w jasności, rough — szorstkość z wypieku (bazowa, przyrost z nachyleniem, przy brzegu).
 const RELIEF = {
-  terran: { normal: 5, shadow: 5, pen: 0.012, detail: 1.0, detailAlbedo: 0.12, rough: [0.25, 3.0, 0.6, 0] },
-  ocean: { normal: 5, shadow: 5, pen: 0.012, detail: 1.0, detailAlbedo: 0.12, rough: [0.3, 3.0, 0.7, 0] },
+  terran: { normal: 5, shadow: 5, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.15, 3.0, 0.6, 0] },
+  ocean: { normal: 5, shadow: 5, pen: 0.012, detail: 0.55, detailAlbedo: 0.07, rough: [0.2, 3.0, 0.7, 0] },
   desert: { normal: 4, shadow: 4.5, pen: 0.012, detail: 0.9, detailAlbedo: 0.12, rough: [0.3, 3.0, 0, 0] },
   rocky: { normal: 3.5, shadow: 4, pen: 0.01, detail: 1.0, detailAlbedo: 0.12, rough: [0.35, 2.5, 0, 0] },
   ice: { normal: 3, shadow: 3.5, pen: 0.012, detail: 0.6, detailAlbedo: 0.06, rough: [0.2, 2.5, 0, 0] },
