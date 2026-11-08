@@ -26,20 +26,26 @@ paths:
 - PRAWO TEMPA (`SKY_SCROLL`, uwaga użytkownika 2026-10-27 „za słabo płynie tło”): obraz nieba płynie z prędkością DROGI
   NIEBA vN — prędkość statku liniowo do kolana `knee` 5 tys. j/s (cała walka i dopalacz), wyżej knee · (1 + ln(v / knee))
   (hipercruise 20 / 40 tys. → 11,9 / 15,4 tys., warp 100 / 175 / 250 tys. → 20,0 / 22,8 / 24,6 tys.; bez sufitu, ciągła
-  i gładka), wygładzonej w czasie klatek (`smoothTau` 0,15 s, czas z `RenderWorld.frameClock`): tempo [px bufora/s] =
+  i gładka) + CZŁON ZWYKŁEGO LOTU (prośba użytkownika 2026-10-31: „gwiazdy niech się szybciej poruszają, żeby był lepszy
+  efekt prędkości”; `cruiseBoost` 2,5, `cruiseTo` 8 tys.): (B − 1) · v · (1 − v / cruiseTo)² poniżej cruiseTo — przy małej
+  prędkości vN = 2,5 v, walka 507 j/s × 2,32, dopalacz × 2,10, 4 tys. × 1,38, od 8 tys. zero (hipercruise i warp bez
+  zmian), rosnąca i gładka; niebo i mid jadą tą samą drogą, więc W0 się nie zmienia, a człon OMIJA sufit głębi (w walce
+  niebo płynie ~1,7× szybciej niż tarcza planety tła — świadomie; gwiazdy GameStars w zoomie bojowym to kilkanaście
+  punktów na ekran, więc ruch gwiazd w walce niesie niebo); `SKY_SCROLL_STARE` bez członu; wygładzonej w czasie klatek (`smoothTau` 0,15 s, czas z `RenderWorld.frameClock`): tempo [px bufora/s] =
   vN_wygł · p_ef · zoom, p_ef = min(p, `bgCap` · camZ / (camZ + `bgDepth`)) · mnożnik (`skyParallax`; p = 0,1, camZ = f /
   zoom). SUFIT GŁĘBI: niebo leży za planetami bez ringu (z = −50 000) — jego paralaksa ≤ 0,75 × paralaksy ich tarczy
   (strażnik w teście czyta `visualZ` z `planet3d.assets.js`); przy 16:9 w zoomie bojowym i w kadrze skoku nie działa, przy
   32:9 w walce daje p_ef 0,056 (kątowo jak 16:9), po przybliżeniu (16:9 od ×1,04 zoomu domyślnego) tempo w px przestaje
-  rosnąć z zoomem. Liczby (1080p 16:9; 1440p — × 1,33 px, te same °/s): walka 507 j/s 10,8 px/s (0,36 °/s), dopalacz
-  24 px/s, hipercruise Mk I / III 140 / 181 px/s (4,7 / 6,0 °/s), warp Mk I / II / III 234 / 267 / 288 px/s (7,8 / 8,9 /
-  9,6 °/s); 32:9 1440p: walka 16 px/s (0,40 °/s), warp Mk II 681 px/s (17,1 °/s); skok Ziemia → Jowisz obraca niebo
+  rosnąć z zoomem. Liczby (1080p 16:9; 1440p — × 1,33 px, te same °/s): walka 507 j/s 25,1 px/s (0,84 °/s; bez członu
+  zwykłego lotu 10,8), dopalacz 51 px/s, hipercruise Mk I / III 140 / 181 px/s (4,7 / 6,0 °/s), warp Mk I / II / III
+  234 / 267 / 288 px/s (7,8 / 8,9 / 9,6 °/s); 32:9 1440p: walka 37 px/s (0,93 °/s), warp Mk II 681 px/s (17,1 °/s);
+  krążenie w walce (r 20 tys., 507 j/s) obraca niebo wokół osi widoku ~0,22 °/s (holonomia); skok Ziemia → Jowisz obraca niebo
   o ~150° / ~110° / ~90° (Mk I / II / III; 32:9 Mk II ~207°), przelot nad planetą i hamowanie wyjścia widać jako
   zwolnienie nieba. KLATKA BEZ DROGI (pauza i `worldFrozen` — gra woła render z dt > 0 przy stojącej pozie) nie obraca
   nieba i nie rusza vN_wygł (`skyScrollMove`: `!(d > 0) && !hold`) — niebo i mid stoją razem ze światem; cięcie (teleport)
   biegnie wygładzoną prędkością. STRAŻ W0 (`w0Guard` 3,5): vN_wygł ≤ 3,5 · min(v ze stanu, 14 tys.) / mnożnik mid — przy
   twardym hamowaniu (koniec rampy wyjścia) niebo i mid nie wyprzedzają warstwy speed; poza tym tempo zmienia się płynnie;
-  przez nią `?nieboTempo` > 1 działa najwyżej ×3,5 w walce i ×2,15 w warpie Mk II. A/B: `?nieboTempo=stare` — dawne prawo
+  przez nią `?nieboTempo` > 1 działa najwyżej ×1,5 w walce (3,5 / człon zwykłego lotu 2,32) i ×2,15 w warpie Mk II. A/B: `?nieboTempo=stare` — dawne prawo
   dokładnie (min(v, 14 tys.) · 0,03 · zoom, bez wygładzenia, próg kątowy drobnych gwiazd, smuga 0,22 · stretchPx, dawna
   warstwa mid), `?nieboTempo=<liczba>` — mnożnik nowego tempa (0,05–10; mnoży też sufit głębi — niebo może wtedy
   wyprzedzić planety), `?nieboSufit=0` — nowe prawo bez sufitu głębi (`SKY_SCROLL_BEZ_SUFITU`); adres strony jak
@@ -49,7 +55,8 @@ paths:
   niesie DROGĄ NIEBA (uniformy `midSphere`, `cameraOffsetMid` materiału gwiazd; `StarSystem.starCamMid` —
   `advanceStarCameraMid`: ruch kamery względem okrętu prowadzącego + `scroll.driveX / driveY` nieba × `midMul`)
   z paralaksą przesuniętą na `STAR_MID_SPHERE` 0,13–0,26 (`starParallax.js`): najwolniejsza mid ≥ 1,26 × niebo (1,3 ×
-  skala ekranowa warstw GameStars camZ / (camZ + 250)), w walce 14–27 px/s przy 507 j/s (dawniej 5,9–19,5; świat 108 px/s).
+  skala ekranowa warstw GameStars camZ / (camZ + 250)), w walce 32–63 px/s przy 507 j/s (z członem zwykłego lotu; bez niego
+  14–27, dawniej 5,9–19,5; świat 108 px/s, speed 110–192).
   Speed zostaje na kamerze (sufit 14 tys. j/s w skoku; sufit kroku z przyrostu zegara stron — `starClockDt`, worker pomija
   strony): mid ≤ 0,89 × speed. Pilnuje `tests/skyScroll.test.mjs` (stan ustalony z `skyLayerSpeeds(…, f)`: tryby × ekrany ×
   mnożnik i zoom do 3,2; sufit głębi; przejścia klatka po klatce — skok, przelot, rampa wyjścia, hipercruise) i kontrola
@@ -100,6 +107,11 @@ paths:
   NAJMNIEJ dawna smuga 0,22 · stretchPx ≈ 16 px — w ładowaniu skoku statek stoi, a smuga rośnie ze `stretch`:
   „zapowiedź” skoku; 1080p: 16 px, 1440p warp Mk II 18 px, 32:9 1440p 18 / 34 px) i front wyjścia; światło dokładane
   jak na pikselu: acesGryInv((gładkie + gwiazda) · jasność) − acesGryInv(gładkie · jasność).
+  GWIAZDY POD BRYŁAMI TŁA: pass tła niesie też bryły (dolna część ringu, hale K-7, planetoida bazy piratów), więc jasne
+  gwiazdy i GameStars to materiały NIEprzezroczyste z mieszaniem addytywnym (`transparent = false`) — idą na początku
+  passa wg `renderOrder` (niebo −1000 → jasne gwiazdy −998 → GameStars −1 → bryły). Z `transparent = true` three rysował
+  je po wszystkich nieprzezroczystych i przebijały przez ring, doki i planetoidę (zgłoszenie 2026-11-03; pułapka 41
+  w regule `webgpu-tsl`). Nowa warstwa gwiazd albo tła w passie tła — tak samo.
 - KAMERY 3D: sfera `Sky3D` z tą samą treścią i orientacją (`worldMat`); w trybie płaskim dawna sfera z mgławicą w rzucie
   stereograficznym.
 - Rozgrzewka: `niebo-sfera: kamera z góry`, `niebo-sfera: jasne gwiazdy`, `niebo-sfera: pamięć nieba` (faza

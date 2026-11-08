@@ -76,7 +76,12 @@ export const StoryGame = {
   active: false,          // kampania w toku
   tutorial: true,
   mission: null,
-  startPhase: null,       // skok dev (?story=faza)
+  startPhase: null,       // skok dev (?story=faza) albo początek misji z zapisu gracza
+  completed: false,       // rozdział ukończony (runCampaign → 'complete') — zapis gracza: dalej gra swobodna
+  // Wznowienie z zapisu gracza (src/game/playerSave.js, beginNewGame opts.restore): { campaign: { m1, bossEscaped } } —
+  // misje przed `startPhase` przechodzą w trybie „pominięte” bez nagród (są już w zapisanych kredytach i EXP), a stan
+  // między misjami wraca z zapisu w chwili wejścia w `startPhase`.
+  _restore: null,
   time: 0,                // czas rzeczywisty UI
 
   // --- kino ---
@@ -144,7 +149,7 @@ export const StoryGame = {
   /**
    * Lot intro w TLE MENU (decyzja użytkownika 2026-09-30: menu pokazuje stronę Ziemi z K-7, kamera leci z tego ujęcia
    * prosto nad halę — ta sama Ziemia i ring, bez przejścia przez czerń). Koniec toru = kadr kamery gry z góry nad
-   * stanowiskiem C-01 (Atlas trafia tam na starcie misji), słońce tła przechodzi w słońce gry.
+   * stanowiskiem C-01 (Atlas trafia tam na starcie misji); tło menu świeci już słońcem gry (menuSun = gameSun).
    * p: { menuPose { eye, target, up, fov } (THREE), menuSun { az, el }, gameSun { az, el } (układ ringu), H }.
    * Zwraca plan dla MenuBackdrop3D.fly: { duration, sample(t, out), sun(w), cut(w) } albo null.
    */
@@ -175,12 +180,15 @@ export const StoryGame = {
     this.introFromMenu = !!opts.introFromMenu;
     this.tutorial = opts.tutorial !== false;
     this.startPhase = STORY_PHASES.includes(opts.startPhase) ? opts.startPhase : null;
+    this._restore = opts.restore && this.startPhase ? opts.restore : null;
     this.cine.pendingStart = opts.menuPose || null;
     this.mission = MISSION01;
     const ship = this.deps.ship();
     if (ship && !ship.cloak) ship.cloak = createCloak();
     this.runner.start(runCampaign, this._api()).then((result) => {
-      if (result === 'complete') this.deps.log?.('Rozdział 1 ukończony.', 'mission');
+      if (result !== 'complete') return;
+      this.completed = true;
+      this.deps.log?.('Rozdział 1 ukończony.', 'mission');
     });
     return true;
   },
@@ -218,6 +226,8 @@ export const StoryGame = {
     this.phase = null;
     // Stan kampanii między misjami (np. wynik pojedynku z supercapitalem herszta w misji 1 → misja 2).
     this.campaign = { m1: null, bossEscaped: false };
+    this.completed = false;
+    this._restore = null;
     for (const id of this._fogMassIds) this.deps?.clearMassSignature?.(id);
     this._fogMassIds.clear();
     // Fregata zwiadu dana przez kampanię (api.scout.grant) — poza kampanią ładownia pusta (dev ?zwiad zostaje).
@@ -792,6 +802,9 @@ export const StoryGame = {
       defendersAlive() { return site.defenderList.filter((n) => !n.dead && n.hp > 0).length; },
       defendersKilled() { return site.defenderCount() - site.defendersAlive(); },
       buildingHpFrac() { const s = site.station; return s ? clamp01((s.hp || 0) / Math.max(1, s.maxHp || 1)) : 0; },
+      // Etapy finału habitatu (gra — pirateBaseIntegrity.habitatStages: wyłom, wieża, wieżowce); null — gra ich nie liczy
+      // (atrapa testów): habitat ginie od punktów.
+      habitatStages() { return self.deps.baseStages ? self.deps.baseStages() : null; },
       buildingDestroyed() { const s = site.station; return !s || !!s._destroyed3D || s.hp <= 0; },
       structureDestroyed(k) { const s = site.structures?.[k]; return !s || !!s._destroyed3D || !(s.hp > 0); }
     };
@@ -812,6 +825,7 @@ export const StoryGame = {
     const hp = { ...T.hp };
     if (Number(opts.dockHp) > 0) hp.habitat = { ...hp.habitat, hp: opts.dockHp, shield: Number(opts.dockShield) >= 0 ? opts.dockShield : hp.habitat.shield };
     const names = { habitat: 'Habitat piratów', fuel: 'Zbiorniki paliwa', warehouse: 'Magazyn piratów', piers: 'Pomosty bazy' };
+    for (const h of l.highrises || []) names[h.structure] = h.label.charAt(0).toUpperCase() + h.label.slice(1);
     const specs = {};
     for (const k of PIRATE_BASE_STRUCTURES) {
       // środek budowli: średnia środków pudeł jej kawałków (bez duchów)
@@ -823,7 +837,7 @@ export const StoryGame = {
       }
       const g = k === 'habitat' ? place.habitat : place.toGame(sx / Math.max(1, n), sz / Math.max(1, n));
       specs[k] = { id: `PIR_BASE_${k.toUpperCase()}`, structure: k, name: names[k], x: g.x, y: g.y, r: 600,
-        hp: hp[k].hp, shield: hp[k].shield, steps: hp[k].steps, base: place };
+        hp: hp[k].hp, shield: hp[k].shield, steps: hp[k].steps, pieces: hp[k].pieces || null, breachNeed: hp[k].breachNeed || 0, base: place };
     }
     let st = d.spawnPirateBase ? d.spawnPirateBase(specs, place) : null;
     if (!st) {
@@ -956,8 +970,9 @@ export const StoryGame = {
   },
 
   // Zniszczony habitat (finał misji): bęben pęka ćwiartkami, szyb, część techniczna i dysk mieszkalny „implodują”
-  // (kawałki-duchy pękają ku środkowi), okna gasną od środka; sieć paliwowa zapala się od habitatu (_fuelChain 'H' —
-  // bez śluz pełna reakcja). Promise — koniec rozpadu habitatu (reakcja w rurach biegnie dalej).
+  // (kawałki-duchy pękają ku środkowi), okna gasną od środka. Sieci paliwowej NIE zapala: reakcja łańcuchowa to nagroda
+  // za domyślenie się, że zbiorniki paliwa na wierzchu można wysadzić (decyzja użytkownika 2026-11-06), a tu dawała
+  // ~140 wybuchów z zegara w każdej grze. Promise — koniec rozpadu habitatu (reakcja z P, jeśli biegnie, też).
   _chainExplosion(site, opts = {}) {
     return new Promise((resolve) => {
       const d = this.deps;
@@ -976,12 +991,9 @@ export const StoryGame = {
       const hc = place.habitat;
       site.power.habitat = 0;
       site.power.disc = 0;
-      at(0, () => { d.reactorBlow?.({ x: hc.x, y: hc.y, size: 640 }); d.shake?.(34, 0.9); });
-      // UPADEK NA PLANETOIDĘ (src/game/story/pirateBaseFall.js; prośba użytkownika 2026-10-19): szyb pęka pierwszy, wieża
-      // (stojąca albo leżąca na dysku po zerwaniu szyi) przebija dysk i spada pierwsza, sektory dysku puszczają za nią
-      // (wybuchy oderwania — zdarzenia upadku), wszystko osiada na skale. Bez terenu skały — dawna implozja.
-      // Bęben i szyb (ciała płaskie) przy upadku stają się bryłami 3D i spadają razem z resztą (opts.fall —
-      // storyBaseBreak → pirateBaseFall.promotePlanarPiece); szyb odlatuje od osi, robiąc wieży drogę.
+      at(0, () => { d.reactorBlow?.({ x: hc.x, y: hc.y, size: 400 }); d.shake?.(34, 0.9); });
+      // UPADEK NA PLANETOIDĘ: obraz na wokselach, stan i zegar w grze (deps.habitatFall; reguła woksele-zawalen). Bez
+      // terenu skały — dawna implozja.
       const falling = typeof d.habitatFall === 'function';
       let fallStarted = false;
       if (falling) at(0, () => {
@@ -989,25 +1001,24 @@ export const StoryGame = {
         if (!fallStarted) this._habitatImplosion(site, H, place, at);
         else if (opts.waitFuel !== false) this._habitatFallShot();
       });
-      at(falling ? 0.05 : 1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: falling ? 170 : 60, dir: 'out', fall: falling }));
+      at(falling ? 0.05 : 1.5, () => d.baseBreak?.('H-C', { power: 2.4, speed: falling ? 170 : 60, dir: 'out' }));
       if (!falling) this._habitatImplosion(site, H, place, at);
       H.quadrants.forEach((q, i) => {
         const a = (q.a0 + q.a1) / 2;
         const p = place.toGame(Math.cos(a) * H.drumR * 0.8, Math.sin(a) * H.drumR * 0.8);
-        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out', fall: falling }); d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
+        // Przy upadku bez wybuchu: pęknięcie ćwiartki pokazują woksele, a dym tylko zakrywałby początek upadku.
+        at(0.25 + i * 0.3, () => { d.baseBreak?.(q.id, { power: 2.2, speed: 110, dir: 'out' }); if (!fallStarted) d.reactorBlow?.({ x: p.x, y: p.y, size: 380 }); });
       });
       // winda kosmiczna spod dysku mieszkalnego puszcza: lina i głowica spadają na planetoidę, osada wybucha po kolei
       // (scenariusz — src/3d/portBuildings/pirateRockSite3D.js; prośba użytkownika 2026-10-15)
       at(1.5, () => d.rockCollapse?.());
-      // koniec: rozpad habitatu, upadek na planetoidę i ogień w rurach (od środka i — gdy biegnie — od zbiorników)
-      let fuelDone = Promise.resolve();
-      at(0.6, () => { fuelDone = this._fuelChain(site, 'H'); });
+      // koniec: rozpad habitatu, upadek na planetoidę i ogień w rurach, gdy biegnie od zbiorników
       // opts.waitFuel = false (misja pominięta skokiem dev) — bez czekania na ogień w rurach i upadek
       this._after(tLast + 1.5, () => {
         if (opts.waitFuel === false) { resolve(); return; }
-        // upadek z ~24 km (skała w skali świata — pirateRockLayout.js): wieża na skale ~14 s, osiadanie ~25 s, najwyżej 40 s
+        // upadek idzie zegarem (VOX_FALL_T w index.html): wieża na skale 17 s, koniec 32 s, najwyżej 40 s
         const fallDone = fallStarted && typeof d.habitatFallDone === 'function' ? d.habitatFallDone(40) : null;
-        Promise.all([fuelDone, site.chain.pending || null, fallDone]).then(resolve);
+        Promise.all([site.chain.pending || null, fallDone]).then(resolve);
       });
     });
   },
@@ -1058,11 +1069,12 @@ export const StoryGame = {
     const st = site.structures || {};
     const berthShip = new Map();
     for (const e of site.parkedList) if (e?.__berthId) berthShip.set(e.__berthId, e);
+    // obrażenia budowli WPROST (bez pul kawałków — ogień w rurach zabija habitat od razu, decyzja użytkownika 2026-11-03)
     const hit = (s, x, y, dmg) => {
       if (!s || !(s.hp > 0)) return;
       s.lastHitX = x;
       s.lastHitY = y;
-      if (d.damageStation) d.damageStation(s, dmg);
+      if (d.damageStation) d.damageStation(s, dmg, true);
       else s.hp = Math.max(0, s.hp - dmg);
     };
     let tLast = 0;
@@ -1074,7 +1086,7 @@ export const StoryGame = {
         switch (ev.kind) {
           case 'tank':
             site.power.fuel = 0;
-            d.reactorBlow?.({ x: p.x, y: p.y, size: 900 });
+            d.reactorBlow?.({ x: p.x, y: p.y, size: 900, profile: 'capital' });
             d.shake?.(40, 1.0);
             hit(st.fuel, p.x, p.y, 1e9);
             for (const id of l.structures.fuel) d.baseBreak?.(id, { power: 2.6, speed: 160, dir: 'out', from: p });
@@ -1595,6 +1607,11 @@ export const StoryGame = {
 
       rewards: {
         grant(r) {
+          // Wznowienie z zapisu: nagrody pomijanych misji są już w zapisanych kredytach, reputacji i EXP.
+          if (self._restoreSkipping()) {
+            const rp = rankProgress(self.progress);
+            return { credits: 0, rep: [], exp: 0, totalExp: self.progress.exp, rank: rp.name, nextRank: rp.next, rankFrac: rp.frac, promoted: [] };
+          }
           const credits = Math.max(0, Math.round(Number(r.credits) || 0));
           if (credits) d.addCredits?.(credits);
           const rep = [];
@@ -1628,7 +1645,20 @@ export const StoryGame = {
 
   _onPhase(name) {
     this.phase = name;
+    // Wznowienie z zapisu: wejście w misję, od której gra wraca — stan między misjami z zapisu (nadpisuje wynik
+    // pominiętej misji 1, który policzyła jej ścieżka „pominięte”).
+    if (this._restore && name === this.startPhase) {
+      const c = this._restore.campaign;
+      if (c) Object.assign(this.campaign, { m1: c.m1 ? { ...c.m1 } : this.campaign.m1, bossEscaped: !!c.bossEscaped });
+      this._restore = null;
+    }
     this.deps.onPhase?.(name);
+  },
+
+  /** Wznowienie z zapisu, a faza bieżąca leży przed `startPhase` (misja pomijana). */
+  _restoreSkipping() {
+    if (!this._restore || !this.startPhase) return false;
+    return STORY_PHASES.indexOf(this.phase) < STORY_PHASES.indexOf(this.startPhase);
   }
 };
 

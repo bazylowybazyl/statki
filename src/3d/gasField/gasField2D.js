@@ -47,7 +47,7 @@ export { probeHalfRounding };
 
 export const GAS_FIELD_2D_DEFAULTS = Object.freeze({
   jacobi: 31,       // iteracje ciśnienia (nieparzyste — wynik w prsB)
-  maxJets: 56,      // strumieni na klatkę: dysze silników (do 16) + źródła gazu hali (do 40 — z buchami złączek)
+  maxJets: 80,      // strumieni na klatkę: dysze silników (MAIN do 16, SIDE do 24 — hallDust.js) + źródła gazu hali (do 40 — z buchami złączek)
   maxBodies: 16,    // kadłubów na klatkę
   maskW: 64,        // maska obrysu kadłuba: teksle wzdłuż osi X kadłuba (hallDustLayout.HALL_DUST_MASK)
   maskH: 32,        //   i wzdłuż osi Y
@@ -91,6 +91,16 @@ export function createGasField2DTuning() {
     borderFade: 8,        // pas zaniku przy brzegu domeny [komórki]
     jetClean: 6,          // rozrzedzanie pyłu i pary w stożku dysz MAIN [1/s] × profil: strumień to spaliny z dysz, nie zapylone
                           //   powietrze — kurz poderwany pod strumieniem nie zostaje w jego rdzeniu (tunel na szerokość gromady)
+    // PAMIĘĆ STRUMIENIA W KOMÓRCE (2026-11-03, zgłoszenie użytkownika: „jak wyjdę z hali, gaz nagle się zakleszcza — szybko
+    // i nierealistycznie wraca, wypełniając pustkę po statku”): dysze przechodzą przez pole siłowe bramy i stożek znika
+    // z hali w jednym kroku — razem z nim źródło objętości (przepływ promieniowy wokół wylotów, do ~1700 j/s, ginął w
+    // rzucie od razu: gaz przy bramie „stawał”) i rozrzedzanie spalinami (tunel bez kurzu zarastał pyłem z pokładu,
+    // który szybki przepływ dalej podrywał: pył przy bramie ×4 w 1,4 s). Komórka pamięta źródło i rozrzedzanie z
+    // poprzedniego kroku (velA.zw) i gasi je wykładniczo — wartość = max(bieżąca, pamięć · exp(−dt / τ)); w stałym
+    // strumieniu bit w bit jak dawniej, po zniknięciu stożka (wylot za polem, zgaszenie silnika, impuls dyszy SIDE)
+    // przepływ wyhamowuje, a tunel zarasta w czasie τ. [s]; 0 — bez pamięci (dawniej, A/B)
+    srcRelease: 0.5,
+    cleanRelease: 0.9,
     jetFlat: 0.69         // profil PŁASKI strumienia z gromady dysz (jetD.z = 1): exp(−k·(x / w)⁴), k = ln 2 — połowa na brzegu
   };
 }
@@ -115,6 +125,15 @@ export function jetProfileCpu(along, across, len, w0, widen, flat, k = 0.69) {
 /** LUSTRO CPU wagi źródła objętości wzdłuż osi (_jetSourceAlong). */
 export function jetSourceAlongCpu(along, Ls) {
   return smoothCpu(-1, 2, along) * (1 - smoothCpu(0.5 * Ls, Ls, along));
+}
+
+/**
+ * LUSTRO CPU pamięci strumienia w komórce (kernel adwekcji): bieżąca wartość (źródło objętości albo rozrzedzanie
+ * spalinami) wobec pamięci z poprzedniego kroku zgaszonej wykładniczo z czasem τ [s] (τ ≤ 0 — bez pamięci).
+ */
+export function jetMemoryCpu(now, prev, dt, tau) {
+  // mnożnik w f32 jak na GPU (τ = 0 → exp(−dt / 1e−4) poniżej najmniejszej liczby f32 = 0)
+  return Math.max(now, prev * Math.fround(Math.exp(-dt / Math.max(tau, 1e-4))));
 }
 
 /**
@@ -285,7 +304,8 @@ export class GasField2D {
       liftLo: uniform(0), liftHi: uniform(0), liftRate: uniform(0), liftGain: uniform(0),
       settleLo: uniform(0), settleHi: uniform(0), settleRate: uniform(0), settleMin: uniform(0),
       decay: uniform(0), vacuumDecay: uniform(0), regrow: uniform(0), borderFade: uniform(0),
-      vaporDecay: uniform(0), vaporVacuum: uniform(0), jetFlat: uniform(0), jetClean: uniform(0)
+      vaporDecay: uniform(0), vaporVacuum: uniform(0), jetFlat: uniform(0), jetClean: uniform(0),
+      srcRelease: uniform(0), cleanRelease: uniform(0)
     };
     this.syncTune();
     this._buildKernels();
@@ -308,7 +328,7 @@ export class GasField2D {
     const U = this.U;
     for (const key of ['drag', 'soft', 'dragQuad', 'turbShear', 'dustDiff', 'eddyDiff', 'vorticity', 'turbulence', 'turbScale', 'warm', 'restRelax', 'restMax', 'liftLo', 'liftHi',
       'liftRate', 'liftGain', 'settleLo', 'settleHi', 'settleRate', 'settleMin', 'decay', 'vacuumDecay', 'regrow', 'borderFade',
-      'vaporDecay', 'vaporVacuum', 'jetFlat', 'jetClean']) {
+      'vaporDecay', 'vaporVacuum', 'jetFlat', 'jetClean', 'srcRelease', 'cleanRelease']) {
       U[key].value = T[key];
     }
     U.maxSpeed.value = T.maxSpeed / this.h;
@@ -553,7 +573,13 @@ export class GasField2D {
       vel.assign(select(solid, flag.yz, vel));
       const ra = this._rnd(0).toVar();
       const velW = vec2(this._sround(vel.x, ra), this._sround(vel.y, fract(ra.add(0.618034))));
-      textureStore(this.velB, c.store, vec4(velW, select(solid, float(0.0), src), select(solid, float(0.0), clean.mul(U.jetClean))));
+      // PAMIĘĆ STRUMIENIA (tune.srcRelease / cleanRelease): źródło objętości i rozrzedzanie spalinami z poprzedniego kroku
+      // (velA.zw — rzut przepisuje je z velB) gasną wykładniczo; bieżący stożek wygrywa (stały strumień bez zmian).
+      // Lustro CPU: jetMemoryCpu.
+      const mem = at(this.velA, p).zw.toVar();
+      const srcE = max(src, mem.x.mul(exp(dt.negate().div(max(U.srcRelease, 1e-4)))));
+      const cleanE = max(clean.mul(U.jetClean), mem.y.mul(exp(dt.negate().div(max(U.cleanRelease, 1e-4)))));
+      textureStore(this.velB, c.store, vec4(velW, select(solid, float(0.0), srcE), select(solid, float(0.0), cleanE)));
       textureStore(this.flagT, c.store, vec4(flag, 0.0));
       textureStore(this.denB, c.store, vec4(select(solid, float(0.0), this._sround(den.x, fract(ra.add(0.31)))), floor0,
         select(solid, float(0.0), this._sround(den.z, fract(ra.add(0.77)))), 0.0));
@@ -705,11 +731,13 @@ export class GasField2D {
       const gx = Q(1, 0, c.xi.lessThan(int(nx - 1))).sub(Q(-1, 0, c.xi.greaterThan(int(0))));
       const gy = Q(0, 1, c.yi.lessThan(int(ny - 1))).sub(Q(0, -1, c.yi.greaterThan(int(0))));
       const f = at(this.flagT, p).toVar();
-      const v = at(this.velB, p).xy.sub(vec2(gx, gy).mul(0.5)).toVar();
+      const vB = at(this.velB, p).toVar();
+      const v = vB.xy.sub(vec2(gx, gy).mul(0.5)).toVar();
       v.assign(select(f.x.greaterThan(0.5), f.yz, v));
       v.mulAssign(min(float(1.0), U.maxSpeed.div(max(length(v), 1e-3))));
       const rp = this._rnd(2).toVar();
-      textureStore(this.velA, c.store, vec4(this._sround(v.x, rp), this._sround(v.y, fract(rp.add(0.618034))), 0.0, 0.0));
+      // zw — pamięć strumienia (źródło objętości, rozrzedzanie spalinami) dla adwekcji następnego kroku
+      textureStore(this.velA, c.store, vec4(this._sround(v.x, rp), this._sround(v.y, fract(rp.add(0.618034))), vB.z, vB.w));
       textureStore(this.denA, c.store, at(this.denC, p));
       textureStore(this.restA, c.store, at(this.restB, p));
     })().compute(cells).setName('gasFieldProject');

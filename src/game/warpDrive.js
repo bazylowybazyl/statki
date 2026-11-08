@@ -168,7 +168,8 @@ export function sampleWarpArrival(a, t, out = {}) {
 
 // ── Rozpęd przylotu, odlot, wyjście gracza (demo „Nurt”, iteracja 3 — 2026-10-03) ──────────
 // User 2026-10-03: przylot i odlot „jak w Star Wars” — BEZ portalu (szczelina / tunel usunięte:
-// po wyjściu z niej okręt jeszcze kawałek leciał) i BEZ smugi („normalnie widoczny statek”).
+// po wyjściu z niej okręt jeszcze kawałek leciał) i BEZ smugi („normalnie widoczny statek”) — od 2026-10-30 obraz
+// przylotu i odlotu ma smugi i kadłub ze światła (src/3d/warp/warpSW.js, user: „ustaw domyślne”); osie poniżej bez zmian.
 // Okręt pojawia się daleko za celem, wpada z dużą prędkością i gwałtownie hamuje; odlot — kop
 // od rufy, rozpęd ∝ t³ i zniknięcie od dziobu w punkcie skoku. Wyjście Atlasa z warpa = ten sam
 // przylot (spójność): zwolnienie do prędkości wlotu, wlot, hamowanie (dema/warp-webgpu/scenes.js:

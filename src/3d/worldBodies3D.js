@@ -1,6 +1,6 @@
 // Render CIAŁ ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md § 6; logika: src/game/worldBodies.js): kawałek budowli, który
 // stał się ciałem silnika belek (płaskie, zakotwiczone — obrażenia liczy warstwa 2D), rysuje SKÓRA — bryły kawałka
-// wypieczone do układu ciała (dostawca miejsca, np. suchy dok: portBuildingSkin3D.js) jadą po polu przesunięć
+// wypieczone do układu ciała (dostawca miejsca, np. baza piratów: portBuildingSkin3D.js) jadą po polu przesunięć
 // węzłów (hullSkin3D, slot na ciało) na CAŁEJ wysokości, martwe komórki znikają z poszarpanym brzegiem, rany z mapy
 // ran rodu. Cieniowanie = cieniowanie brył budowli (wariant „skin” grafu), w tych samych passach (BG pod statkami,
 // FG nad nimi, kamera perspektywy) — przejście statyka → ciało nie zmienia obrazu.
@@ -29,7 +29,10 @@ import { RenderWorld } from '../render/renderWorld.js';
 import { Core3D } from './core3d.js';
 import { HullBodies } from '../game/hullBodies.js';
 import { worldBodies } from '../game/worldBodies.js';
-import { hullSkinLattice, hullSkinLattice3D, ensureHullSkinSlot, writeHullSkinField, releaseHullSkinSlot } from './ships3d/hullSkin3D.js';
+import {
+  hullSkinLattice, hullSkinLattice3D, ensureHullSkinSlot, writeHullSkinField, releaseHullSkinSlot,
+  HULL_SKIN_FIELD_OPTIONS, HULL_SKIN_FIELD_STATS
+} from './ships3d/hullSkin3D.js';
 import { HullDamageMap } from './hullDamageMap.js';
 import { SolidWounds } from './solidWounds.js';
 import { bakeBuildingChunkSkinSteps, requestBuildingSkinBake, buildingSkinGeometries, SKIN_BAKE_STATS } from './portBuildings/portBuildingSkin3D.js';
@@ -64,16 +67,31 @@ export const WORLD_SKIN_STATS = { shown: 0, instances: 0, triangles: 0, bakes: 0
   // powrotu do własnych siatek (narastająco)
   batchStates: [0, 0, 0, 0],
   batchOut: { noSubset: 0, skinChanged: 0, gone: 0, noSlot: 0, noMaterial: 0, noFeature: 0, empty: 0 },
-  worker: SKIN_BAKE_STATS, batch: SKIN_BATCH_STATS };
+  // pole skóry (hullSkin3D, wspólne z modelami okrętów): przeglądy i pominięcia, komórki, rozrzut / zakresy — narastająco
+  worker: SKIN_BAKE_STATS, batch: SKIN_BATCH_STATS, field: HULL_SKIN_FIELD_STATS };
 if (typeof window !== 'undefined') window.__worldSkinStats = WORLD_SKIN_STATS;
 // A/B: planeHalfCull = false — połówki brył rysowane zawsze (jak przed 2026-10-27); batch = false — odłamy własnymi
 // siatkami (rysunek na egzemplarz, zestaw i połówkę — jak przed partiami skór); batchDiag (pomiar kosztu GPU partii,
 // obraz inny): 1 — partie rysowane, flagi zerowe (same wierzchołki pominięte), 2 — partie schowane (bez skór odłamów);
 // hiddenKeep = false — ukryty dostawca (skok gracza, mgła) nie utrzymuje egzemplarzy (po 600 klatkach zwolnione, jak przed
 // 2026-10-28); noNodesHide = false — odłam bez stanu węzłów lustra rysowany (pełna geometria kawałka, każdy fragment
-// odrzucony — jak przed 2026-10-28)
+// odrzucony — jak przed 2026-10-28); pole skóry (hullSkin3D — HULL_SKIN_FIELD_OPTIONS, wspólne z modelami okrętów):
+// fieldScatter = false — wysyłka zakresem lo..hi slotu, fieldSkip = false — lustro przeglądane w każdej klatce (jak przed
+// 2026-10-29; też z adresu strony: ?poleRozrzut=0, ?polePomin=0)
 export const WORLD_SKIN_OPTIONS = { planeHalfCull: true, batch: true, batchDiag: 0, hiddenKeep: true, noNodesHide: true };
+Object.defineProperties(WORLD_SKIN_OPTIONS, {
+  fieldScatter: { enumerable: true, get: () => HULL_SKIN_FIELD_OPTIONS.scatter, set: (v) => { HULL_SKIN_FIELD_OPTIONS.scatter = !!v; } },
+  fieldSkip: { enumerable: true, get: () => HULL_SKIN_FIELD_OPTIONS.skip, set: (v) => { HULL_SKIN_FIELD_OPTIONS.skip = !!v; } }
+});
 if (typeof window !== 'undefined') window.__worldSkinOptions = WORLD_SKIN_OPTIONS;
+// przełączniki pola z adresu strony (worker: adres strony z wiadomości init) — raz, przy pierwszej klatce
+let _fieldOptsFromPage = false;
+function fieldOptionsFromPage() {
+  _fieldOptsFromPage = true;
+  const q = String(RenderWorld.pageSearch || '');
+  if (/[?&]poleRozrzut=0(?:&|$)/.test(q)) HULL_SKIN_FIELD_OPTIONS.scatter = false;
+  if (/[?&]polePomin=0(?:&|$)/.test(q)) HULL_SKIN_FIELD_OPTIONS.skip = false;
+}
 
 function providerOf(hull) {
   return hull?.world?.site?.render || null;
@@ -424,8 +442,11 @@ export function* fragmentSkinSubset3DSteps(geo, body, lat) {
 // Podzbiory odłamów w budżecie klatki: egzemplarz z kolejki dostaje generator na każdą DOSTĘPNĄ geometrię (bryła 3D
 // ma dwie siatki na zestaw — pod / nad płaszczyzną gry — podzbiór liczony raz na geometrię); krok po kroku, aż do
 // końca budżetu, następna klatka kontynuuje. Gotowy podzbiór idzie od razu do partii skóry kawałka (addToSkinBatch).
+// Co najmniej jeden krok na klatkę (jak budowa ciał w worldBodies.js): budżet sprawdzany PRZED pierwszym krokiem przy
+// zagłodzonym wątku (wywłaszczenie ≥ SUBSET_MS między odczytami zegara) nie dawał postępu w żadnej klatce.
 function runSubsets(t0) {
-  while (_subsetQueue.length && performance.now() - t0 < SUBSET_MS) {
+  let stepped = false;
+  while (_subsetQueue.length && (!stepped || performance.now() - t0 < SUBSET_MS)) {
     const inst = _subsetQueue[0];
     const hull = inst.entity?.beamHull;
     const skin = inst.piece?.__skin;
@@ -457,6 +478,7 @@ function runSubsets(t0) {
     }
     const s0 = performance.now();
     let r = w.it.next();
+    stepped = true;
     while (!r.done && performance.now() - t0 < SUBSET_MS) r = w.it.next();
     const ms = performance.now() - s0;
     if (ms > WORLD_SKIN_STATS.subsetPeakMs) WORLD_SKIN_STATS.subsetPeakMs = ms;
@@ -718,16 +740,6 @@ function queueBakes() {
       p.__skinQueued = true;
       _bakeQueue.push(p);
     }
-    // BRYŁY UPADKU kawałków płaskich (bęben, szyb — src/game/story/pirateBaseFall.js, promotePlanarPiece): skóra 3D
-    // z szablonu, gdy budowla jest blisko rozpadu (allLive) — przy HP 0 ciało płaskie zamienia się w bryłę bez wypieku
-    // w klatce (a przy nagłej śmierci statyka kawałka czeka na wypiek — setHold).
-    if (site.allLive && site.fallPieces) {
-      for (const f of site.fallPieces) {
-        if (f.__skinQueued || (f.__skin && f.__skin.key === solidKeyOf(f))) continue;
-        f.__skinQueued = true;
-        _bakeQueue.push(f);
-      }
-    }
   }
   scheduleBake();
 }
@@ -822,6 +834,7 @@ export function halfReachesPlane(mesh) {
  */
 export function syncWorldBodies3D() {
   _frame++;
+  if (!_fieldOptsFromPage) fieldOptionsFromPage();
   let shown = 0, triangles = 0, halfCulled = 0, shownMain = 0, shownFrag = 0, batched = 0, noNodes = 0, hiddenKept = 0;
   const states = WORLD_SKIN_STATS.batchStates;
   states[0] = states[1] = states[2] = states[3] = 0;

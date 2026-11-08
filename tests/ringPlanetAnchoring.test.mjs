@@ -17,8 +17,10 @@ test('ring planets render through their own orthographic pass before world and f
   assert.match(coreSource, /renderPassRingPlanets\s*=\s*makeScenePass\('ringPlanets',\s*'planets',\s*RING_PLANET_RENDER_LAYER,\s*true,\s*false\)/);
   // Runner: kamera ortho albo perspektywa passa z jego warstwą, głębia czyszczona przed passem.
   assert.match(coreSource, /const camera = this\.getPassCamera\(pass\.ortho\);\s*camera\.layers\.set\(pass\.layer\);/);
-  // Kamery 3D (free3d): wspólna głębia passów (sharedDepth) — prawdziwe przesłanianie.
-  assert.match(coreSource, /\} else if \(pass\.clearDepth && !sharedDepth\) \{[\s\S]*?renderer\.clear\(false, true, false\);/);
+  // Kamery 3D (free3d): wspólna głębia passów (sharedDepth) — prawdziwe przesłanianie. Głębia czyszczona w passie sceny
+  // (loadOp clear, 2026-10-29 — tests/czyszczenieWPassie.test.mjs) albo dawnym renderer.clear (A/B clearInPass = false).
+  assert.match(coreSource, /const clearDepth = clearColor \|\| \(pass\.clearDepth === true && !sharedDepth\);/);
+  assert.match(coreSource, /else if \(!inPass && clearDepth\) renderer\.clear\(false, true, false\);/);
 
   const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
   const ringPassIndex = scenePassList.indexOf('this.renderPassRingPlanets');

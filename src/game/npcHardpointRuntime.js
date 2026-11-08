@@ -222,20 +222,16 @@ export function createNpcHardpointRuntime({
       npc.visual.mainVisualOnly = true;
       npc.visual.engineFx = buildEntityEngineFx(editorShipId, cfg.engineFx, (hpScaleX + hpScaleY) * 0.5);
     }
-    // Lampy pozycyjne cywila (E17, src/data/trafficHullLights.js): z wpisu, bez reflektorów otoczenia (`autoFlood`);
-    // lokomotywa (układ edytora wyłączony) — lampy bez zmian. Nowy obiekt tylko przy zmianie wersji edytora (pamięć lamp
-    // po źródle).
-    if (!npc.disableEditorLayout) {
-      const L = cfg.lights && typeof cfg.lights === 'object' ? cfg.lights : null;
-      npc.editorLights = L && Array.isArray(L.position) && L.position.length
-        ? {
-            position: L.position,
-            road: Array.isArray(L.road) ? L.road : [],
-            flood: Array.isArray(L.flood) ? L.flood : [],
-            autoFlood: L.autoFlood !== false
-          }
-        : null;
-    }
+    // Światła nawigacyjne cywila (src/data/shipNavLights.js) — z wpisu, także lokomotywa megafrachtowca. Nowy obiekt tylko
+    // przy zmianie wersji edytora (pamięć lamp po źródle).
+    const L = cfg.lights && typeof cfg.lights === 'object' ? cfg.lights : null;
+    npc.editorLights = L && Array.isArray(L.position) && L.position.length
+      ? {
+          position: L.position,
+          road: Array.isArray(L.road) ? L.road : [],
+          flood: Array.isArray(L.flood) ? L.flood : []
+        }
+      : null;
     npc.__editorEngineScaleX = hpScaleX;
     npc.__editorEngineScaleY = hpScaleY;
     npc.__editorLayoutShipId = editorShipId;

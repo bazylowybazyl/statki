@@ -61,6 +61,7 @@ import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
 import { HullSkinBatch } from './hullSkinBatch.js';
 import { HullDamageMap } from './hullDamageMap.js';
+import { hullSkinFieldFxStep } from './ships3d/hullSkin3D.js';
 import { cloakHidesShadow, cloakHullHolder, syncCloakDist, renderCloakLooks } from './cloak/hullCloak.js';
 
 // Materiały kadłubów (skóra belek, partia skór, maskowanie) są w TSL:
@@ -377,7 +378,7 @@ const SHIP_LIGHT_EMITTER_OPTIONS = {
   out: null
 };
 
-// Grupy lamp pozycyjnych (rozlew czerwieni na inne kadłuby) i payload kadłuba
+// Lampy pozycyjne jako światła (rozlew błysku na inne kadłuby) i payload kadłuba
 // z nimi — `externalOmniLights` ustawiane co klatkę na state.navLightClusters.
 const NAV_CLUSTER_OPTIONS = {
   ...SHIP_LIGHT_TRANSFORM_OPTIONS,
@@ -635,7 +636,9 @@ function writeShipLightSlot(slot, lights, count) {
     // Własny reflektor otoczenia świeci NA ZEWNĄTRZ: stożek na własnym
     // pancerzu malował białe kliny na płetwach (zostaje lampa: rdzeń + poświata).
     const ownFlood = light.kind === 'flood' && !light.external;
-    arr[o + 8] = Number(light.dir?.x) || 0;
+    // Lampa pozycyjna i jej rozlew nie mają kierunku: w tym miejscu kod migania (navBlinkCode, shader: navBlinkNode).
+    const blinking = light.kind === 'position' || light.kind === 'omni';
+    arr[o + 8] = blinking ? (Number.isFinite(light.blink) ? light.blink : -1) : (Number(light.dir?.x) || 0);
     arr[o + 9] = Number(light.dir?.y) || -1;
     arr[o + 10] = ownFlood ? 0 : (Number(light.rangePx) || 0);
     arr[o + 11] = Math.cos(coneRad);
@@ -918,6 +921,8 @@ function syncSkinBatches() {
   for (const batch of _skinBatches.values()) {
     const vis = batch.anyVisible();
     if (batch.mesh.visible !== vis) batch.mesh.visible = vis;
+    // zakresy wysyłki zmienionych kadłubów partii scalone (jeden writeBuffer na kilka kadłubów, nie na kadłub)
+    batch.flushRanges();
   }
   // Maskowanie: refrakcja tła w warstwie DIST na geometrii partii z maskowanym kadłubem (hullCloak.js).
   syncCloakDist(_skinBatches.values(), Core3D.scene);
@@ -959,6 +964,10 @@ export function setBeamSkinSuppressor(fn) {
 let entityHiddenTest = null;
 export function setEntityHiddenTest(fn) {
   entityHiddenTest = typeof fn === 'function' ? fn : null;
+}
+/** Encja ukryta przed graczem (ten sam predykat co kadłub) — efekty przy kadłubie spoza tego modułu (smugi warpa `?warpSW=1`). */
+export function isEntityHiddenForRender(e) {
+  return !!(e && entityHiddenTest && entityHiddenTest(e));
 }
 
 function isBeamHullEntity(entity) {
@@ -1039,6 +1048,9 @@ function createBeamSkinMesh(entity) {
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
   mesh.castShadow = false;
+  // macierz świata pisze updateBeamSkinMesh wprost (nośnik poza sceną — nikt jej nie składa z position / rotation)
+  mesh.matrixAutoUpdate = false;
+  mesh.matrixWorldAutoUpdate = false;
   const data = {
     kind: 'beam',
     mesh,
@@ -1212,18 +1224,21 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   // __skinZ: kadłub pod innym w passie ortho (holownik serwisowy pod statkiem na pokładzie — serviceTugGame.js).
   // __renderScale: obraz okrętu mniejszy wokół jego środka (fregata zwiadu na dnie luku Atlasa — scoutBay3D.js).
   const rs = Number(entity.__renderScale);
-  if (rs > 0 && rs !== 1) {
-    mesh.position.set(ex + (originX - ex) * rs, -ey + (originY + ey) * rs, Number(entity.__skinZ) || 0);
-    mesh.rotation.set(0, 0, theta);
-    mesh.scale.set(rs, rs, rs);
-  } else {
-    mesh.position.set(originX, originY, Number(entity.__skinZ) || 0);
-    mesh.rotation.set(0, 0, theta);
-    mesh.scale.set(1, 1, 1);
-  }
+  const k = rs > 0 && rs !== 1 ? rs : 1;
+  const px = k !== 1 ? ex + (originX - ex) * k : originX;
+  const py = k !== 1 ? -ey + (originY + ey) * k : originY;
+  const pz = Number(entity.__skinZ) || 0;
+  // Macierz świata wprost: obrót o θ wokół z, skala k, przesunięcie — to, co dawało position / rotation / scale +
+  // updateMatrixWorld (Euler → kwaternion → compose na każdy kadłub na klatkę; klatka workera 2026-11-02: ~0,04 ms
+  // w bitwie). Nośnik jest poza sceną (partia), czyta go tylko HullObjectStore.commit (matrixWorld); `position`
+  // zostaje do odczytu, `rotation` już nie (kąt niesie uRotation).
+  mesh.position.set(px, py, pz);
+  const me = mesh.matrixWorld.elements;
+  me[0] = c * k; me[1] = s * k; me[2] = 0; me[3] = 0;
+  me[4] = -s * k; me[5] = c * k; me[6] = 0; me[7] = 0;
+  me[8] = 0; me[9] = 0; me[10] = k; me[11] = 0;
+  me[12] = px; me[13] = py; me[14] = pz; me[15] = 1;
   mesh.visible = data.visibleQuads > 0;
-  // nośnik poza sceną (partia) — macierz świata jak z scene.updateMatrixWorld (dziecko sceny)
-  mesh.updateMatrixWorld();
 
   if (mesh.visible) DrawCallStats.addHexBody(1, !allowsSolidArmorLod(entity));
   lodFrameStats.totalStructuralHexes += body.activeNodes;
@@ -1319,6 +1334,8 @@ export function prewarmHexShips3D({ canvas = null } = {}) {
   prewarmFx3D();
   // Mapa ran: krok klatki efektów (kernel kompiluje się na ekranie ładowania, pula powstaje na GPU).
   HullDamageMap.ensureStep();
+  // Pole skóry 3D (ciała świata, modele okrętów): wysyłka zmienionych komórek rozrzutem — kernel na ekranie ładowania.
+  Core3D.addFxStep(hullSkinFieldFxStep());
   return true;
 }
 
@@ -1498,8 +1515,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   SHIP_LIGHT_EMITTER_OPTIONS.out = state.roadLightEmitters;
   buildRoadLightWorldEmitters(visibleHex, SHIP_LIGHT_EMITTER_OPTIONS);
   computeRoadEmitterReach(state.roadLightEmitters, state.roadLightReach);
-  // Grupy lamp pozycyjnych: rozlew czerwieni na sąsiednie kadłuby (typ 2
-  // w pętli lamp). Tylko przy dwóch+ kadłubach — własnych lamp kadłub ma swoje.
+  // Lampy pozycyjne: rozlew błysku na sąsiednie kadłuby (typ 2 w pętli lamp).
+  // Tylko przy dwóch+ kadłubach — własnych lamp kadłub ma swoje.
   NAV_CLUSTER_OPTIONS.out = state.navLightClusters;
   NAV_CLUSTER_OPTIONS.time = now * 0.001;
   if (visibleHex.length > 1) buildNavLightClusters(visibleHex, NAV_CLUSTER_OPTIONS);
@@ -1584,11 +1601,16 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     const halfView = Math.max(RenderWorld.viewWidth || 1920, RenderWorld.viewHeight || 1080) * 0.5 / cameraZoom;
     const occluderReach = halfView + 30000;
     const cands = state.shaftHullCandidates || (state.shaftHullCandidates = []);
-    cands.length = 0;
+    // rekordy kandydatów z puli (bez alokacji na klatkę); zasięg sprawdzany przed siatką cienia i wymiarami
+    const cpool = state.shaftHullPool || (state.shaftHullPool = []);
+    let nc = 0;
     for (const entity of valid) {
       if (entity.isRingSegment) continue;
       if (entity.hideHexVisual === true || entity.visual?.hideHexMesh === true) continue;
       if (entity.__hiddenFromView === true) continue;   // mgła wojny: cień zdradzałby okręt
+      const ex = getEntityPosX(entity);
+      const ey = getEntityPosY(entity);
+      if (Math.abs(ex - camX) > occluderReach || Math.abs(ey - camY) > occluderReach) continue;
       if (cloakHidesShadow(entity)) continue;            // maskowanie: ukryty kadłub nie rzuca cienia
       if (!isBeamHullEntity(entity)) continue;
       const grid = beamShadowGrid(entity.beamHull);
@@ -1605,20 +1627,27 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
       }
       const size = Math.max(w, h);
       if (size < 40) continue; // drobnica nie rzuca sensownego cienia
-      const ex = getEntityPosX(entity);
-      const ey = getEntityPosY(entity);
-      if (Math.abs(ex - camX) > occluderReach || Math.abs(ey - camY) > occluderReach) continue;
-      cands.push({ entity, grid, size, ex, ey, scaleX, scaleY });
+      let rec = cpool[nc];
+      if (!rec) rec = cpool[nc] = { entity: null, grid: null, size: 0, ex: 0, ey: 0, scaleX: 1, scaleY: 1, proxy: null };
+      rec.entity = entity; rec.grid = grid; rec.size = size; rec.ex = ex; rec.ey = ey; rec.scaleX = scaleX; rec.scaleY = scaleY;
+      rec.proxy = null;
+      cands[nc++] = rec;
     }
-    // Proxy statków ruchu: sylwetka z siatki komórek rodzaju ∩ alfa sprite'a (jak kadłub NPC po awansie), poza z proxy.
+    // Proxy statków ruchu (E17b): sylwetka z siatki komórek rodzaju ∩ alfa sprite'a (jak kadłub NPC po awansie), poza
+    // z proxy — rekordy z tej samej puli.
     if (_proxyShadowSource !== null) {
       const ps = _proxyShadowSource();
       for (let i = 0; i < ps.count; i++) {
         const v = ps.list[i];
         if (Math.abs(v.x - camX) > occluderReach || Math.abs(v.y - camY) > occluderReach) continue;
-        cands.push({ entity: null, proxy: v, grid: v.grid, size: v.size, ex: v.x, ey: v.y, scaleX: 1, scaleY: 1 });
+        let rec = cpool[nc];
+        if (!rec) rec = cpool[nc] = { entity: null, grid: null, size: 0, ex: 0, ey: 0, scaleX: 1, scaleY: 1, proxy: null };
+        rec.entity = null; rec.grid = v.grid; rec.size = v.size; rec.ex = v.x; rec.ey = v.y; rec.scaleX = 1; rec.scaleY = 1;
+        rec.proxy = v;
+        cands[nc++] = rec;
       }
     }
+    cands.length = nc;
     lodFrameStats.shaftCands = cands.length;
     if (cands.length > 1) cands.sort((a, b) => b.size - a.size);
     let pushed = 0;
@@ -1651,6 +1680,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     }
     lodFrameStats.shaftHulls = pushed;
     lodFrameStats.shaftBakes = HullShadowSdf.stats.bakes;
+    // pula nie trzyma encji ani siatek martwych okrętów do następnej klatki
+    for (let i = 0; i < nc; i++) { cpool[i].entity = null; cpool[i].grid = null; }
+    cands.length = 0;
   }
 
   // Wieżyczki: rekordy klatki (Turret2D) — rysuje je partia wież 3D (shipModels3DGame.js, B3D).

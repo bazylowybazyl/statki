@@ -421,6 +421,35 @@ i warp 49,3 (1,65 °/s); skok o medianie 21 s obracał niebo o ~35°; smugi gwia
 (`niebo-gra.mjs --klip 1`): 5,9 px CSS/s przy ~430 j/s i zoomie 0,45 — zgodnie z dawnym prawem. Skały w warpie (zespół S:
 621–1402 px/s — między mid a speed) usunięte 2026-10-27.
 
+### Człon zwykłego lotu 2026-10-31
+
+Prośba użytkownika: „zwiększ prędkość poruszania gwiazd podczas lotu statkiem (zwykły lot — gwiazdy niech się szybciej
+poruszają, żeby był lepszy efekt prędkości)”. Gwiazdy widoczne w walce to gwiazdy nieba-sfery (drobne na piksel i jasne
+z katalogu): GameStars (26 000 na 220 tys.² j.) dają w zoomie bojowym ~24 punkty na kadr 1080p (14 bez schowanej deep),
+w kadrze skoku ~80 — przyspieszenie samej warstwy mid nie byłoby widać. Przy 16:9 w zoomie bojowym p 0,1 stoi już na
+suficie głębi (0,104), a przy 32:9 sufit trzyma 0,056 — samo p nie ma zapasu.
+
+Prawo: vN += (B − 1) · v · (1 − v / cruiseTo)² poniżej cruiseTo (`cruiseBoost` B = 2,5, `cruiseTo` 8 tys. j/s) — przy
+małej prędkości vN = 2,5 v, walka 507 j/s × 2,32, dopalacz 1137 × 2,10, 2,5 tys. × 1,71, 4 tys. × 1,38, kolano 5 tys.
+× 1,21, od 8 tys. bez członu (hipercruise i warp jak w tabeli wyżej). Rosnąca (najmniejsza pochodna dvN / dv 0,36 przy
+~6,2 tys.), gładka w cruiseTo. Niebo i mid jadą tą samą drogą — W0 bez zmian (`tests/skyScroll.test.mjs`, symulator
+`warp-soczewka-sym.mjs`: W0-niebo OK we wszystkich przebiegach, niebo / mid ≤ 0,793, mid / speed ≤ 0,892); mid ≤ 0,26 ·
+2,5 · v = 0,65 v < speed 1,02 v. Człon omija sufit głębi: w walce niebo płynie ~1,7× szybciej niż tarcza planety bez
+ringu (planety tła w walce rzadko są w kadrze; efekt prędkości ważniejszy).
+
+| tryb (stan ustalony) | przed | po |
+|---|---|---|
+| walka 507 j/s, 1080p 16:9 | 10,8 px/s (0,36 °/s) | 25,1 px/s (0,84 °/s) |
+| dopalacz 1137 j/s, 1080p 16:9 | 24 px/s | 51 px/s |
+| walka 507 j/s, 1440p 32:9 | 16 px/s (0,40 °/s) | 37 px/s (0,93 °/s) |
+| mid w walce 507 j/s, 1080p | 14–27 px/s | 32–63 px/s |
+| hipercruise, warp | — | bez zmian |
+
+Skutki uboczne: holonomia przy krążeniu (r 20 tys., 507 j/s, 4 min) 11° → 56° (0,22 °/s wobec przepływu 0,84 °/s);
+`?nieboTempo` > 1 w walce działa najwyżej × 1,5 (straż W0: 3,5 / 2,32); pamięć nieba w walce przy 144 Hz przelicza się
+co ~1,4 klatki (0,17 px/kl. < progu wprost 0,25) — przy 150 j/s co ~4–5 klatek. Hipercruise Mk I (140 px/s) jest
+już tylko ~2,2× szybszy od walki przy 1500 j/s (dawniej ~4,4×).
+
 ### Obraz (`src/3d/sky3D.js`: `SkySphere`, materiały `src/3d/skySphere.tsl.js`)
 
 - KAMERA Z GÓRY: czworokąt pełnoekranowy w passie tła (warstwa 1, renderOrder −1000), piksel → kierunek RZUTEM
@@ -471,6 +500,25 @@ i warp 49,3 (1,65 °/s); skok o medianie 21 s obracał niebo o ~35°; smugi gwia
 - PAMIĘĆ GPU: equirect 6144 × 3072 RGBA8 ~75 MB (wgranie w wolnej chwili z kolejki `Core3D.queueTextureUpload`, nie w
   klatce gry); `nebula.webp` (~65 MB) ładuje się dalej — tło menu pożycza teksturę płaszczyzny (strona i worker), więc
   razem ~141 MB. Paczka Electrona +11,7 MB.
+
+### Gwiazdy pod bryłami tła (2026-11-03)
+
+Zgłoszenie użytkownika: „gwiazdy tła przebijają się przez różne rzeczy — doki, ring, planetę w misji 1”. Pass tła
+(warstwa 1) niesie oprócz nieba bryły: dolną część ringu, hale K-7 i planetoidę Hidalgo pod bazą piratów. Kwady jasnych
+gwiazd (`createSkyStarQuadsMaterial`, bez testu głębi) i GameStars (`createStarMaterial`, z = −250) miały
+`transparent = true` — three r183 rysuje listę przezroczystych PO wszystkich nieprzezroczystych `render()`, a `renderOrder`
+(−998, −1) sortuje tylko w obrębie listy, więc gwiazdy kładły się na bryłach. Poprawka: oba materiały nieprzezroczyste
+z mieszaniem addytywnym (three miesza każde mieszanie ≠ Normal bez względu na `transparent`) — kolejność w passie tła:
+niebo → jasne gwiazdy → GameStars → bryły; przezroczyste rzeczy tła (powłoka powietrza ringu, poświaty, mgła) dalej leżą
+nad gwiazdami. Pułapka 41 w regule `webgpu-tsl`, strażnik z prawdziwą listą renderu three w `tests/skySphere.test.mjs`.
+
+Sonda w grze (tryb off, 1600 × 900; kadr z gwiazdami i bez — gwiazdy chowane maską warstw, bo widoczność nieba ustawiają
+moduły co klatkę; bryła = piksel niezerowy w kadrze bez nieba i gwiazd, próg 0,035 luminancji): piksele, które gwiazdy
+zmieniają na bryłach, przed → po: hala K-7 (zoom 0,35) 3 120 → 191, hala z ringiem (0,12) 2 687 → 172, baza piratów nad
+osadą (0,2) 5 455 → 0, baza z planetoidą (0,08) 6 273 → 15, cała skała (0,035) 3 694 → 1, ring przy porcie (0,2)
+882 → 767, Ziemia z ringiem (0,02) 313 → 43. Reszta leży na półprzezroczystej poświacie nad pustą przestrzenią (powłoka
+powietrza ringu, mgiełka przy hali) — tam gwiazdy prześwitują słusznie. Ciemne bryły (skała w cieniu, podłoga ringu nocą)
+maska bierze za niebo: łącznie piksele gwiazd w kadrach bazy 17–18 tys. → 0,7–7,3 tys.
 
 ### Wypiek sfery (`SkyBaker({ sphere: true })`, styl galaktyki z `sphere`)
 

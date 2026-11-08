@@ -271,6 +271,40 @@ test('stan klatki → blok migawki → lustro: te same liczby; sufit wyrw', () =
   for (let i = 0; i < f.n * VENT_REC.STRIDE; i++) assert.equal(mir.rec[i], f.rec[i]);
 });
 
+test('wyrwa przy wokselach: followBodies = false, stoi w miejscu powstania, bez dryfu i bez przenoszenia na odłamy', () => {
+  fresh();
+  const stare = ATMO_TUNE.followBodies;
+  ATMO_TUNE.followBodies = false;
+  try {
+    const w = mod('M-1');
+    const id = breach({ module: 'M-1', x: w.gx, y: w.gy, z: 0, size: 120, kind: 'break', vx: 300, vy: 300, vz: 300, drift: 500, entity: { x: w.gx, y: w.gy, hp: 1 } });
+    assert.ok(id >= 0);
+    run(2);
+    const f = pirateBaseVentFrame(0, DT);
+    assert.ok(f.n >= 1);
+    const R = VENT_REC;
+    for (let i = 0; i < f.n; i++) {
+      assert.equal(f.rec[i * R.STRIDE + R.VX], 0, 'bez dryfu');
+      assert.ok(Math.hypot(f.rec[i * R.STRIDE + R.X] - w.gx, f.rec[i * R.STRIDE + R.Y] - w.gy) < 1, 'stoi tam, gdzie powstała');
+      assert.equal(f.rec[i * R.STRIDE + R.HOST], 0, 'bez ciała');
+    }
+    assert.equal(rehomePirateBaseVents({ x: 0, y: 0 }, null, 'M-1'), 0, 'odłam nie przejmuje wyrwy');
+  } finally {
+    ATMO_TUNE.followBodies = stare;
+  }
+});
+
+test('blok wyrw bez wyrw: czas klatki idzie dalej, żeby żywe cząstki dogasły (po HP 0 zamarzały w miejscu)', () => {
+  const blk = createPirateVentsBlock();
+  const B = { f64: new Float64Array(blk.f64) };
+  blk.pack(B, { pirateVents: { has: false, n: 0, time: 12.5, dt: DT, rec: new Float64Array(0) } });
+  const mir = applyPirateVentsBlock(B, createPirateVentsFrame());
+  assert.equal(mir.has, false);
+  assert.equal(mir.n, 0);
+  assert.equal(mir.dt, DT);
+  assert.equal(mir.time, 12.5);
+});
+
 test('światła wnętrza: rozszczelniona ćwiartka miga, bez powietrza gaśnie; reszta świeci', () => {
   fresh();
   const qi = mod('H-S').qi;

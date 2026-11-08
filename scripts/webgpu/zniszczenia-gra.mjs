@@ -17,8 +17,8 @@
 //   habitatu — kawałek-ciało odpada fizycznie (onBaseDamageStep → storyBaseBreak).
 // --hexlance: faza „shipyard”, Atlas 4 km na południe od habitatu, Hexlance (4, ładowanie, 4) w bęben.
 // --final: faza „shipyard”, progi punktów habitatu do 3/8 (wszystkie kawałki habitatu ciałami, także duchy: część
-// techniczna i dysk), wypiek skór, śmierć habitatu → rozpad misji (_chainExplosion: implozja, reakcja w rurach od
-// habitatu) — kadry 30–36, czasy klatek w rozpadzie i po nim, rysunki, odłamy.
+// techniczna i dysk), wypiek skór, śmierć habitatu → rozpad misji (_chainExplosion: implozja, rur nie zapala)
+// — kadry 30–36, czasy klatek w rozpadzie i po nim, rysunki, odłamy.
 // Raport: <out>/raport.json — WorldBodies.stats, kanały broni, skóra, stan kawałków, pipeline'y synchroniczne, błędy.
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -206,7 +206,7 @@ const fireHub = (weaponId, x, z, tx, tz, n, every) => ev(`new Promise((res) => {
 
 // --final: faza „shipyard”, progi punktów habitatu do 3/8 (wszystkie kawałki habitatu ciałami, skóry pieką się w tle),
 // potem śmierć habitatu i rozpad misji (StoryGame._chainExplosion → storyBaseBreak → worldBodies.breakPiece: ćwiartki
-// bębna, szyb, część techniczna i dysk — duchy — pękają na odłamy z odłamkami; reakcja w rurach od habitatu). Kadry
+// bębna, szyb, część techniczna i dysk — duchy — pękają na odłamy z odłamkami; rur nie zapala). Kadry
 // 30–36, czasy klatek w rozpadzie i po nim, rysunki, odłamy, skóry.
 const FRAME_REC = `(() => {
   const R = window.__frames = { on: false, dt: [], draws: [], last: 0 };

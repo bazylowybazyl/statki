@@ -177,7 +177,9 @@ function lerpAngle(a, b, t) {
 /**
  * Lot intro w tle menu z DANYCH (RW-41c: ten sam plan na stronie i w workerze renderu — lot leci tam, gdzie tło menu):
  * { keys, menuSun?, gameSun? } → { duration, keys, sample(t, out), sun(w) | null, gameView(w), cut(w) }.
- * Słońce menu → gra w środku lotu (na końcu oświetlenie = gra), końcówka (kamera prawie z góry) liczy ring jak kamera
+ * Słońce: tło menu świeci słońcem gry (menuBackdrop3D.js, MENU_SHOT.gameSun), więc menuSun = gameSun i tor go nie rusza
+ * (zgłoszenie 2026-10-31: przesuwane słońce zmieniało cieniowanie w trakcie lotu); przy dawnym słońcu talerza
+ * (`?menuSlonce=talerz`) przejście menu → gra w środku lotu. Końcówka (kamera prawie z góry) liczy ring jak kamera
  * gry, wycięcie górnej ściany nad halą narasta od włączenia widoku gry.
  */
 export function menuIntroFlight({ keys, menuSun: ms = null, gameSun: gs = null }) {

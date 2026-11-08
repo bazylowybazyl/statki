@@ -48,6 +48,7 @@ import {
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
 import { buildEntityEngineFx } from '../data/engineFx.js';
+import { navPhaseFromId } from '../data/shipNavLights.js';
 import { RenderWorld } from '../render/renderWorld.js';
 import { loadImageBitmap, createCanvas2D } from './canvas2d.js';
 import { WARIANT_INSTANCJI } from './rozgrzewka.js';
@@ -86,7 +87,7 @@ const WARP_BOOST_SPEED = 1200;
 // Billboardy lamp pozycyjnych (ShipLights3D) od tego promienia kadłuba na ekranie — jak
 // buildPositionLightWorldSprites (poniżej i tak pomija); widoków nie budujemy na zapas.
 const LIGHT_VIEW_MIN_PX = 2.5;
-// Lampy proxy w puli billboardów ShipLights3D (MAX_NAV_LIGHT_SPRITES 512, wspólna z NPC — pełne kadłuby idą pierwsze):
+// Lampy proxy w puli billboardów ShipLights3D (MAX_NAV_LIGHT_SPRITES, wspólna z NPC — pełne kadłuby idą pierwsze):
 // setki cywilów przy porcie × 6 lamp to kilka razy więcej — przy nadmiarze zostają kadłuby największe na ekranie.
 const PROXY_LIGHT_SPRITE_BUDGET = 384;
 
@@ -573,7 +574,7 @@ function editorEntryFor(info) {
 
 // Blok lamp kadłuba jako widok encji (shipLightRuntime: `editorLights` + skala hardpointu px PNG → j. świata) —
 // to samo, co NPC po awansie dostaje z edytora: okręt — lampy wpisu pełnego z reflektorami otoczenia, cywil (`sideOnly`)
-// — lampy pozycyjne z src/data/trafficHullLights.js bez reflektorów (`autoFlood: false`, applySideOnlyLayout).
+// — te same światła nawigacyjne (src/data/shipNavLights.js) bez reflektorów (applySideOnlyLayout).
 // Raz na kadłub; obiekt `editorLights` wspólny dla wszystkich widoków (pamięć normalizacji lamp po źródle).
 function lightBlockFor(info) {
   if (info.lights !== undefined) return info.lights;
@@ -584,8 +585,7 @@ function lightBlockFor(info) {
     editorLights: {
       position: Array.isArray(L.position) ? L.position : [],
       road: Array.isArray(L.road) ? L.road : [],
-      flood: Array.isArray(L.flood) ? L.flood : [],
-      autoFlood: L.autoFlood !== false
+      flood: Array.isArray(L.flood) ? L.flood : []
     },
     sx: info.w / info.def.png[0],
     sy: info.h / info.def.png[1]
@@ -1020,7 +1020,9 @@ export const ShipProxyBatch3D = {
     M[o + 12] = x - origin.x; M[o + 13] = -y - origin.y;
     M[o + 14] = bodyPx >= PROXY_LIGHT_SHADER_MIN_PX ? look.lightCount : 0;
     M[o + 15] = hullLacquerGlintAt(bodyPx);
-    M[o + 16] = look.lightBase; M[o + 17] = look.zoneCount; M[o + 18] = 1; M[o + 19] = 0;
+    // Faza migania okrętu (slot lamp jest wspólny dla rodzaju): z kursu encji, bez alokacji napisu.
+    const navPhase = navPhaseFromId(typeof ref === 'object' && ref !== null ? (ref.courseId ?? ref.id) : ref);
+    M[o + 16] = look.lightBase; M[o + 17] = look.zoneCount; M[o + 18] = 1; M[o + 19] = navPhase;
 
     // Modele dysz SIDE i mostek (E17b) — od progów rysowników jak u NPC.
     if (opacity > 0.01) {
@@ -1043,6 +1045,7 @@ export const ShipProxyBatch3D = {
       view.x = x;
       view.y = y;
       view.angle = angle;
+      view.navPhase = navPhase;
       lightViews.push(view);
     }
 

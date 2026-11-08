@@ -488,3 +488,63 @@ test('szew gra ↔ render: src/3d/gasField bez window / DOM / requestIdleCallbac
   const glue = readFileSync(new URL('../src/3d/gasField/hallDust.js', import.meta.url), 'utf8');
   assert.doesNotMatch(glue, /\bnpcs\b|\.pos\.x|haloRings/);
 });
+
+// ── Pamięć strumienia w komórce i dysze SIDE (2026-11-03) ─────────────────────────────────────────────────────────
+// Zgłoszenia użytkownika: „jak wyjdę z hali, gaz nagle się zakleszcza — szybko i nierealistycznie wraca, wypełniając
+// pustkę po statku” (stożek MAIN znikał z hali w jednym kroku, gdy dysze mijały pole siłowe bramy) i „gazy i pyły nie
+// reagują na silniki boczne”.
+
+test('pamięć strumienia: stały strumień bez zmian, po zniknięciu stożka źródło i rozrzedzanie gasną w czasie τ (A/B τ = 0)', async () => {
+  const { jetMemoryCpu, createGasField2DTuning } = await import('../src/3d/gasField/gasField2D.js');
+  const T = createGasField2DTuning();
+  const dt = 1 / 60;
+  // stały strumień: bieżąca wartość wygrywa z pamięcią (bit w bit jak dawniej)
+  let m = 0;
+  for (let i = 0; i < 120; i++) m = jetMemoryCpu(3.2, m, dt, T.srcRelease);
+  assert.equal(m, 3.2);
+  // stożek znika: po τ zostaje 1/e (dawniej 0 w pierwszym kroku)
+  const after = (tau, s) => { let v = 3.2; for (let i = 0; i < Math.round(s / dt); i++) v = jetMemoryCpu(0, v, dt, tau); return v; };
+  assert.ok(Math.abs(after(T.srcRelease, T.srcRelease) / 3.2 - Math.exp(-1)) < 0.02);
+  assert.ok(after(T.cleanRelease, 0.3) / 3.2 > 0.7, 'tunel bez kurzu nie zarasta w ułamku sekundy');
+  assert.equal(jetMemoryCpu(0, 3.2, dt, 0), 0, 'A/B: τ = 0 — bez pamięci');
+  // kernel: pamięć czytana z velA.zw w adwekcji, rzut przepisuje velB.zw do velA.zw
+  const src = readFileSync(new URL('../src/3d/gasField/gasField2D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(src, /const mem = at\(this\.velA, p\)\.zw\.toVar\(\);/);
+  assert.match(src, /textureStore\(this\.velB, c\.store, vec4\(velW, select\(solid, float\(0\.0\), srcE\), select\(solid, float\(0\.0\), cleanE\)\)\);/);
+  assert.match(src, /textureStore\(this\.velA, c\.store, vec4\(this\._sround\(v\.x, rp\), this\._sround\(v\.y, fract\(rp\.add\(0\.618034\)\)\), vB\.z, vB\.w\)\);/);
+  // poza pamięcią prędkość czyta się tylko jako xy (velA.zw nie miesza się z prędkością)
+  for (const f of ['gasField2D.js', 'gasFieldLayer.js']) {
+    const code = readFileSync(new URL('../src/3d/gasField/' + f, import.meta.url), 'utf8');
+    const reads = code.match(/velA[^\n]*?\)\.(zw|z|w|xyz|xyzw)\b/g) || [];
+    assert.ok(reads.every((r) => r.includes('.zw') && f === 'gasField2D.js'), `${f}: ${reads.join(' | ')}`);
+  }
+});
+
+test('dysze SIDE w hali: rekord strumienia z wylotu dzwonu (komórki domeny, kierunek, zasięg, wydatek), poza zasięgiem pominięte', async () => {
+  const { writeHallSideJets, HALL_DUST_TUNE } = await import('../src/3d/gasField/hallDust.js');
+  const { EngineFrame } = await import('../src/3d/engineFrame.js');
+  const T = HALL_DUST_TUNE;
+  const aff = { p0x: 0, p0y: 0, ax: 1, ay: 0, bx: 0, by: 1 };   // hala (x, z) = świat gry (x, y); scena y = −y gry
+  const J = new Float32Array(8 * 12), JD = new Float32Array(8 * 4);
+  try {
+    EngineFrame.begin();
+    const hx = -810, hz = L.frontZ - 1500;
+    EngineFrame.side(hx, -hz, 1, 0, 15, 0.8, 0, 0, -1);                        // w hali, wydech +x hali
+    EngineFrame.side(hx, -(DOM.z1 + 5000), 1, 0, 15, 1, 0, 0, -1);           // daleko za bramą — poza zasięgiem
+    EngineFrame.side(hx, -hz, 0, -1, 15, T.sideMinPower * 0.5, 0, 0, -1);   // poniżej progu
+    EngineFrame.side(hx + 300, -hz, 0, 1, 15, 1, 0, 0, -1);                   // wydech −z hali (scena y w górę = −z)
+    const n = writeHallSideJets(EngineFrame, J, JD, 2, 8, aff, DOM, T, 0.69);
+    assert.equal(n, 4, 'dwie dysze w zasięgu, dopisane od miejsca 2');
+    const h = DOM.h;
+    assert.ok(Math.abs(J[24] - (hx - DOM.x0) / h) < 1e-3 && Math.abs(J[25] - (hz - DOM.z0) / h) < 1e-3, 'wylot w komórkach domeny');
+    assert.ok(Math.abs(J[26] - 1) < 1e-6 && Math.abs(J[27]) < 1e-6, 'kierunek');
+    const p = EngineFrame.sdP[0];
+    assert.ok(Math.abs(J[28] - 15 * (T.sideLength[0] + T.sideLength[1] * p) / h) < 1e-3, 'zasięg stożka');
+    assert.ok(J[29] >= 1.5, 'półszerokość ≥ 1,5 komórki');
+    assert.ok(Math.abs(J[31] - T.sideSpeed * p / h) < 1e-3, 'prędkość');
+    assert.ok(JD[8] > 0 && JD[10] === 1 && JD[11] === 1, 'wydatek gazu, profil płaski (rozrzedzanie spalinami), zasłanianie');
+    assert.ok(Math.abs(J[36 + 3] + 1) < 1e-6, 'druga dysza: wydech −z hali');
+    // limit miejsc
+    assert.equal(writeHallSideJets(EngineFrame, J, JD, 7, 8, aff, DOM, T, 0.69), 8);
+  } finally { EngineFrame.begin(); }
+});

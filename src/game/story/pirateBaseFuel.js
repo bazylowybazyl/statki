@@ -4,7 +4,7 @@
 // z własnego zbiornika paliwa, rury pękają lokalnie („tylko trochę wszerz”), rozgałęzienia i magazyn mocniej; przez
 // habitat do ramion Y. ŚLUZY habitatu (`sluices`) zatrzymują front na wejściach do habitatu w obie strony —
 // użytkownik: „realnie byłyby zabezpieczenia … ale możesz zrobić całą reakcję, zatrzymać ją można jednym patchem”
-// (domyślnie bez śluz: pełna reakcja). Habitat zniszczony zapala sieć od środka (ta sama reguła).
+// (domyślnie bez śluz: pełna reakcja). Reakcję zapalają tylko wysadzone zbiorniki: to nagroda (decyzja z 2026-11-06), habitat rur nie zapala.
 // Czysty planista: harmonogram zdarzeń w czasie; wykonanie — src/game/story/storyGame.js (_fuelChain).
 // ============================================================
 

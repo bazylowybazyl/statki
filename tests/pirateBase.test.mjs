@@ -6,10 +6,11 @@ import { createPirateBaseLayout, pirateBaseShipCorners, pirateBaseChunkAt, PIRAT
 import { buildPirateBaseScene, PBASE_BERTH_BITS } from '../src/3d/portBuildings/pirateBaseScene.js';
 import { PB_MAX_GROUPS, PB_MAX_LAMPS } from '../src/3d/portBuildings/portBuildingScene.js';
 import { resolvePortBuildingStyle } from '../src/3d/portBuildings/portBuildingStyle.js';
-import { dryDockPlanarSolids, dryDockChunkSolids } from '../src/3d/portBuildings/pirateDryDockChunks.js';
+import { chunkPlanarSolids, chunkSolids } from '../src/3d/portBuildings/buildingChunkSolids.js';
 import { planFuelChain } from '../src/game/story/pirateBaseFuel.js';
 import { placePirateBase, planPirateBase } from '../src/game/story/pirateBaseSite.js';
 import { pirateBaseChunkRaster, pirateBasePinTest } from '../src/game/story/pirateBaseBodies.js';
+import { dryDockSegmentHit } from '../src/game/story/shipyardLayout.js';
 
 const L = createPirateBaseLayout();
 const SCENE = buildPirateBaseScene(L, resolvePortBuildingStyle('pirate'));
@@ -19,11 +20,62 @@ const axes = (p) => p.map((a, i) => { const b = p[(i + 1) % p.length]; const ex 
 const proj = (p, ax) => { let mn = Infinity; let mx = -Infinity; for (const v of p) { const d = v.x * ax.x + v.z * ax.z; if (d < mn) mn = d; if (d > mx) mx = d; } return [mn, mx]; };
 const overlap = (A, B, pad = 0) => { for (const ax of [...axes(A), ...axes(B)]) { const [a0, a1] = proj(A, ax); const [b0, b1] = proj(B, ax); if (a1 + pad < b0 || b1 + pad < a0) return false; } return true; };
 
+test('dryDockSegmentHit: najbliższa bryła mimo kolejności, skip, punkt na licu, start w bryle, pudło', () => {
+  const box = (chunk, x0, y0, x1, y1) => ({ chunk, x0, y0, x1, y1, pts: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }] });
+  const far = box('daleko', 300, -50, 400, 50);
+  const near = box('blisko', 100, -50, 200, 50);
+  // dalsza bryła pierwsza na liście: wygrywa i tak najbliższe wejście
+  const hit = dryDockSegmentHit([far, near], 0, 0, 500, 0);
+  assert.equal(hit.chunk, 'blisko');
+  assert.ok(Math.abs(hit.x - 100) < 1e-9 && Math.abs(hit.y) < 1e-9, 'punkt wejścia na licu');
+  assert.ok(Math.abs(hit.t - 0.2) < 1e-9);
+  // kawałka już nie ma: pocisk leci do następnego
+  const next = dryDockSegmentHit([far, near], 0, 0, 500, 0, {}, new Set(['blisko']));
+  assert.equal(next.chunk, 'daleko');
+  assert.ok(Math.abs(next.x - 300) < 1e-9);
+  // start w bryle: trafienie w t = 0, także gdy dalej leży druga bryła
+  const inside = dryDockSegmentHit([far, near], 150, 0, 500, 0);
+  assert.equal(inside.chunk, 'blisko');
+  assert.equal(inside.t, 0);
+  assert.equal(inside.x, 150);
+  // pudła: obok brył, odcinek za krótki, wynik w podanym obiekcie
+  assert.equal(dryDockSegmentHit([far, near], 0, 60, 500, 60), null);
+  assert.equal(dryDockSegmentHit([far, near], 0, 0, 90, 0), null);
+  const out = {};
+  assert.equal(dryDockSegmentHit([near], 0, 0, 500, 0, out), out);
+});
+
+test('dryDockSegmentHit: wycinek pierścienia bazy trafia wielokąt, nie obwiednię', () => {
+  const place = placePirateBase({ x: 0, y: 0 }, 0);
+  for (const qd of L.habitat.quadrants) {
+    const sh = place.hitShapes.find((h) => h.chunk === qd.id);
+    assert.ok(sh && sh.pts.length > 4, `${qd.id}: wielokąt`);
+    const hub = (x, z) => place.toGame(x, z, {});
+    const c = hub(0, 0);
+    let rMin = Infinity;
+    for (const p of sh.pts) rMin = Math.min(rMin, Math.hypot(p.x - c.x, p.y - c.y));
+    // we wcięciu: na osi wycinka, tuż przed wewnętrznym łukiem. W obwiedni, poza wielokątem.
+    const a = (qd.a0 + qd.a1) / 2;
+    const r = rMin * 0.9;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const m = hub(r * ca, r * sa);
+    assert.ok(m.x > sh.x0 && m.x < sh.x1 && m.y > sh.y0 && m.y < sh.y1, `${qd.id}: punkt w obwiedni`);
+    const p0 = hub(r * ca - sa * 30, r * sa + ca * 30);
+    const p1 = hub(r * ca + sa * 30, r * sa - ca * 30);
+    assert.equal(dryDockSegmentHit([sh], p0.x, p0.y, p1.x, p1.y), null, `${qd.id}: odcinek we wcięciu`);
+    // kontrola: ten sam punkt, odcinek na zewnątrz, wchodzi w wycinek na wewnętrznym łuku
+    const o = hub(rMin * 1.5 * ca, rMin * 1.5 * sa);
+    const hit = dryDockSegmentHit([sh], m.x, m.y, o.x, o.y);
+    assert.equal(hit?.chunk, qd.id, `${qd.id}: odcinek na zewnątrz`);
+    assert.ok(Math.abs(Math.hypot(hit.x - c.x, hit.y - c.y) - rMin) < rMin * 0.02, `${qd.id}: wejście na łuku`);
+  }
+});
+
 test('układ bazy: kawałki w limicie grup, budowle, stanowiska z załogą i herszt', () => {
   assert.ok(L.chunks.length + 1 <= PB_MAX_GROUPS, `${L.chunks.length} kawałków`);
   const all = Object.values(L.structures).flat();
   assert.equal(all.length, L.chunks.length, 'każdy kawałek należy do jednej budowli');
-  assert.deepEqual(Object.keys(L.structures).sort(), ['fuel', 'habitat', 'piers', 'warehouse']);
+  assert.deepEqual(Object.keys(L.structures).sort(), ['fuel', 'habitat', 'highrise1', 'highrise2', 'piers', 'warehouse']);
   assert.equal(L.berths.length, 48);
   assert.ok(L.berths.length <= 2 * PBASE_BERTH_BITS, 'lampki stanowisk mieszczą się w dwóch kanałach');
   assert.equal(L.berths.filter((b) => b.crew && !b.boss).length, PIRATE_BASE_CREWED.length);
@@ -61,7 +113,7 @@ test('bryły: bez NaN, każdy kawałek ma bryły (ciała: w płaszczyźnie gry; 
   assert.ok(SCENE.lamps.length <= PB_MAX_LAMPS);
   assert.ok(SCENE.instances < 9000, `${SCENE.instances} brył`);
   for (const c of L.chunks) {
-    const n = c.ghost ? dryDockChunkSolids(L, SCENE, [c.id]).length : dryDockPlanarSolids(L, SCENE, [c.id], { band: 4 }).length;
+    const n = c.ghost ? chunkSolids(L, SCENE, [c.id]).length : chunkPlanarSolids(L, SCENE, [c.id], { band: 4 }).length;
     assert.ok(n > 0, `${c.id}: ${n}`);
   }
 });
@@ -86,6 +138,35 @@ test('kotwice: każdy kawałek-ciało ma węzły przypięte w rastrze', () => {
     }
     assert.ok(solid > 0 && pinned > 0, `${c.id}: ${pinned} / ${solid}`);
     assert.ok(pinned < solid, `${c.id}: nie cały przypięty`);
+  }
+});
+
+test('wieżowce (2026-11-03): osobne budowle okrakiem nad pomostem, poza torem taranu i trasami wyjazdu ze stanowisk', () => {
+  assert.equal(L.highrises.length, 2);
+  const rect = (ax, az, bx, bz, half) => {
+    const l = Math.hypot(bx - ax, bz - az) || 1;
+    const nx = -(bz - az) / l * half, nz = (bx - ax) / l * half;
+    return [{ x: ax + nx, z: az + nz }, { x: bx + nx, z: bz + nz }, { x: bx - nx, z: bz - nz }, { x: ax - nx, z: az - nz }];
+  };
+  const ram = rect(L.ram.start.x, L.ram.start.z, L.ram.end.x, L.ram.end.z, 403 + 100);   // Atlas (szer. 806) + zapas
+  for (const h of L.highrises) {
+    assert.deepEqual(L.structures[h.structure], [h.chunk], `${h.structure}: jeden kawałek`);
+    const c = L.chunkById.get(h.chunk);
+    assert.equal(c.kind, 'highrise');
+    assert.ok(!c.ghost);
+    const poly = L.hitSolids.find((s) => s.chunk === h.chunk)?.poly;
+    assert.ok(poly, `${h.chunk}: bryła trafień`);
+    // środek na osi pomostu, pudło między stanowiskami (wzdłuż pomostu)
+    const p = L.piers.find((q) => q.id === h.pier);
+    assert.ok(Math.abs((h.x - p.ax) * p.nx + (h.z - p.az) * p.nz) < 1e-6, `${h.chunk} na osi pomostu`);
+    for (const b of L.berths.filter((q) => q.pier === h.pier)) assert.ok(Math.abs(b.s - h.s) >= h.w / 2 + b.beam / 2 + 20, `${h.chunk} × ${b.id}`);
+    assert.ok(!overlap(poly, ram), `${h.chunk} × tor taranu`);
+    // wyjazd rufą ze stanowiska (kierunek out, korytarz szerokości okrętu) omija wieżowiec
+    for (const b of L.berths) {
+      const a = { x: b.x, z: b.z };
+      const e = { x: b.x + b.out.x * (b.length + 2600), z: b.z + b.out.z * (b.length + 2600) };
+      assert.ok(!overlap(poly, rect(a.x, a.z, e.x, e.z, b.beam / 2), 10), `${h.chunk} × wyjazd ${b.id}`);
+    }
   }
 });
 

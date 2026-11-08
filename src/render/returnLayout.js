@@ -199,6 +199,22 @@ export function retEndStats(v) {
 }
 
 /**
+ * Zegar GPU klatki z Core3D renderu (pisze render, po każdej klatce): ms, liczniki wyników znaczników i skala w użyciu —
+ * pod seqlockiem, więc gra czyta licznik zawsze razem z jego próbką. Czyta rozdzielczość dynamiczna strony
+ * (Core3D strony w trybie worker nie ma urządzenia ani próbek) i PerfHUD.
+ */
+export function retWriteGpuClock(v, core) {
+  const f = v.f64;
+  retBeginStats(v);
+  if (Number.isFinite(core.gpuFrameMs)) f[RET_F64.GPU_FRAME_MS] = core.gpuFrameMs;
+  if (Number.isFinite(core.gpuComputeMs)) f[RET_F64.GPU_COMPUTE_MS] = core.gpuComputeMs;
+  f[RET_F64.GPU_FRAME_SAMPLES] = core.gpuFrameSamples | 0;
+  f[RET_F64.GPU_COMPUTE_SAMPLES] = core.gpuComputeSamples | 0;
+  f[RET_F64.PIXEL_RATIO] = Number(core.renderScale) || 0;
+  retEndStats(v);
+}
+
+/**
  * Spójna kopia statystyk do `out` (Float64Array ≥ RET_F64.COUNT). False — render pisał przez wszystkie próby (gra
  * zostaje przy poprzedniej kopii).
  */

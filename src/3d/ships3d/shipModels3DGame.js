@@ -24,7 +24,9 @@
 import * as THREE from 'three/webgpu';
 import { loadImageBitmap } from '../canvas2d.js';
 import { RenderWorld } from '../../render/renderWorld.js';
-import { Fn, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, fract, min, uv } from 'three/tsl';
+import { Fn, float, vec3, mix, normalize, positionLocal, max, dot, exp, pow, attribute, uniform, select, uv } from 'three/tsl';
+import { navBlinkNode } from '../tsl/navBlink.js';
+import { navBlinkCode, navPhaseOf } from '../../data/shipNavLights.js';
 import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
 import { FLEET3D_PALETTES } from './ships/fleetHulls3D.js';
 import { Core3D } from '../core3d.js';
@@ -373,8 +375,8 @@ function _warmHolder(geometry, material, receiveShadow = false) {
 
 // Światła modelu (lampy pozycyjne i reflektory z danych okrętu — w 2D rysuje je shader skóry sprite'a):
 // kule HDR pod bloom. Geometria instancji RAZ na model (Mesh + InstancedBufferGeometry — nie InstancedMesh,
-// którego uuid wchodzi do klucza programu), materiał raz na grę; miganie lamp w shaderze z czasu egzemplarza,
-// stan świateł (L — reflektory, wraki) per obiekt.
+// którego uuid wchodzi do klucza programu), materiał raz na grę; miganie lamp w shaderze (navBlinkNode: ten sam
+// zegar klatki i ta sama faza okrętu co billboardy lamp), stan świateł (L — reflektory, wraki) per obiekt.
 let _lightMat = null;
 let _lightBase = null;
 function lightMaterial() {
@@ -382,17 +384,17 @@ function lightMaterial() {
   const m = new THREE.MeshBasicNodeMaterial();
   m.name = 'światła okrętu 3D';
   const iPos = attribute('iPos', 'vec3');
-  const iCol = attribute('iCol', 'vec4'); // rgb × moc, w: 1 — reflektor, 0 — lampa pozycyjna
+  const iCol = attribute('iCol', 'vec4'); // rgb × moc, w: −1 — reflektor, inaczej kod migania lampy pozycyjnej
   const uT = uniform(0).onObjectUpdate(({ object }) => Number(object?.userData?.lightT) || 0);
+  const uPhase = uniform(0).onObjectUpdate(({ object }) => Number(object?.userData?.navPhase) || 0);
   const uOn = uniform(1).onObjectUpdate(({ object }) => (object?.userData?.lightsOn === false ? 0 : 1));
   const uRoad = uniform(1).onObjectUpdate(({ object }) => (object?.userData?.roadOn === false ? 0 : 1));
-  const road = iCol.w.greaterThan(0.5);
+  const road = iCol.w.lessThan(-0.5);
   m.positionNode = positionLocal.mul(select(road, 2.4, 2.0)).add(iPos);
   m.colorNode = Fn(() => {
-    // sekwencja lamp wzdłuż kadłuba (jak dawny rig świateł dema Atlasa)
-    const ph = fract(iPos.x.div(1800).mul(1.4).add(uT.mul(0.9)));
-    const tri = min(ph, ph.oneMinus()).mul(9);
-    const nav = exp(tri.mul(tri).negate()).mul(7).add(0.25);
+    // Przypisane przed wyborem (zmienne migania powstają w miejscu pierwszego użycia — pułapka 39).
+    const nav = float(0.0).toVar();
+    nav.assign(navBlinkNode(uT, iCol.w, uPhase).mul(7).add(0.25));
     return iCol.xyz.mul(select(road, uRoad.mul(2.2), nav)).mul(uOn);
   })();
   applyModelSlabDepth(m);
@@ -419,7 +421,7 @@ function lightsGeometry(m) {
     c.set(l.color || '#ff3030');
     const p = Number(l.power) || 1;
     col[i * 4] = c.r * p; col[i * 4 + 1] = c.g * p; col[i * 4 + 2] = c.b * p;
-    col[i * 4 + 3] = l.kind === 'road' ? 1 : 0;
+    col[i * 4 + 3] = l.kind === 'road' ? -1 : navBlinkCode(l.blink || 0, l.lag || 0);
   }
   g.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3));
   g.setAttribute('iCol', new THREE.InstancedBufferAttribute(col, 4));
@@ -502,14 +504,6 @@ function createInstance(entity) {
   return inst;
 }
 
-// Faza sekwencji lamp z id encji (bez Math.random gry).
-function fxSeed(e) {
-  const s = String(e?.id ?? e?.name ?? '');
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return ((h >>> 0) % 1000) / 100;
-}
-
 function setInstanceModel(inst, id) {
   if (inst.modelId === id) return;
   if (inst.hullMesh) { inst.modelGroup.remove(inst.hullMesh); inst.hullMesh = null; }
@@ -531,7 +525,7 @@ function setInstanceModel(inst, id) {
     lm.name = 'światła okrętu 3D';
     lm.frustumCulled = false;
     lm.userData.slab = inst.slab;
-    lm.userData.lightT = fxSeed(inst.entity);
+    lm.userData.navPhase = navPhaseOf(inst.entity);
     lm.layers.set(0);
     inst.modelGroup.add(lm);
     inst.lightMesh = lm;
@@ -781,7 +775,7 @@ export function syncShipModels3D(p) {
         const lm = inst.lightMesh;
         if (lm) {
           lm.visible = !e.isWreck;
-          lm.userData.lightT += dt;
+          lm.userData.lightT = Core3D.frameNowMs() * 0.001;
           lm.userData.lightsOn = !e.lightsOff;
           lm.userData.roadOn = !e.roadLightsOff;
         }

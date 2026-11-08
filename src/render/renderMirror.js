@@ -132,16 +132,19 @@ export class RenderMirror {
     const nEnt = v.head[HEAD.N_ENT] | 0;
     if (this._seen.length < nEnt) { const a = new Int32Array(Math.max(nEnt, this._seen.length * 2)); a.set(this._seen); this._seen = a; }
     const stride = v.listStride;
+    const listData = v.listData, listCount = v.listCount, seen = this._seen, entities = this.entities;
     for (let l = 0; l < LIST.COUNT; l++) {
       const out = this.lists[l];
       out.length = 0;
       if (l === LIST.STATIONS) continue;
-      const n = v.listCount[l];
+      const n = listCount[l];
       const base = l * stride;
       for (let i = 0; i < n; i++) {
-        const s = v.listData[base + i];
+        const s = listData[base + i];
         if (s < 0) continue;
-        const m = this._entity(v, s, k);
+        // encja już uzgodniona z tej strony (listy pochodne: SEEN ⊂ RENDER, NPCS_SEEN ⊂ NPCS…) — bez drugiego
+        // wejścia w _entity (klatka workera 2026-11-02: ~5 wejść na encję na stronę, ~0,05 ms w bitwie)
+        const m = seen[s] === k ? entities[s] : this._entity(v, s, k);
         if (m) out.push(m);
       }
     }

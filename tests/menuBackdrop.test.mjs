@@ -20,7 +20,7 @@ import { HALO_QUALITY } from '../src/3d/haloRing/haloRingConfig.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
 import { HALO_RING_PLANETS } from '../src/game/haloRingPlanets.js';
 import { Core3D, MENU_BACKDROP_LAYER } from '../src/3d/core3d.js';
-import { MENU_SHOT } from '../src/3d/menuBackdrop3D.js';
+import { MENU_SHOT, MenuBackdrop3D } from '../src/3d/menuBackdrop3D.js';
 import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from '../src/3d/menuBackdrop3D.tsl.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -140,8 +140,10 @@ test('bryły ringu Ziemi: hak prewarm dostaje te obiekty, które potem trafiają
       return gate;
     }
   });
-  // do chwili, gdy host skończy rozgrzewkę: ring niegotowy, bryły poza grupą
-  for (let i = 0; i < 200 && warmCalls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+  // do chwili, gdy host skończy rozgrzewkę: ring niegotowy, bryły poza grupą. Czekamy na hak (oba wywołania idą
+  // w jednym zadaniu — prewarmParts); limit ~30 s tylko na wypadek, gdy nie przyjdzie wcale — budowa ringu na
+  // obciążonej maszynie trwa dłużej niż dawne 200 × 5 ms
+  for (let i = 0; i < 6000 && warmCalls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
   assert.ok(warmCalls.length >= 2, 'bryły + drugi stan dachu K-7');
   const main = warmCalls[0];
   assert.equal(main.attachedAtCall, 0, 'rozgrzewka PRZED podpięciem brył');
@@ -307,10 +309,134 @@ test('ujęcie menu: kamera poza ringiem i halami K-7 także po najeździe przy s
   assert.equal(MENU_SHOT.introSeconds, 7.5);
 });
 
+test('Ziemia tła 2026-10-31: gryz z elektrownią KOREK w kadrze na starcie, słońce gry — lot intro bez przesuwania słońca', async () => {
+  // gryz na starcie: azymut środka gryzu w układzie ringu (siatka obrócona o π/2 wokół X, doba wokół Y) = azymut kamery
+  // + biteAzimuthOffsetDeg, doba niesie go przez środek tarczy (wolniej niż dawniej: ~4 min na 50°)
+  const { earthBiteFrame } = await import('../src/3d/earthBiteShape.js');
+  const { EARTH_BITE } = await import('../src/data/earthBite.js');
+  const { HALO_STATION_ANGLE } = await import('../src/3d/haloRing/haloRingConfig.js');
+  const { menuBiteSpin, menuEarthAxis, menuEarthBase } = await import('../src/3d/menuBackdrop3D.js');
+  const { earthSpinQuaternion } = await import('../src/3d/earthSpin.js');
+  const { C } = earthBiteFrame(EARTH_BITE);
+  const axis = menuEarthAxis();
+  const base = menuEarthBase(axis);
+  const group = new THREE.Group();
+  group.rotation.x = Math.PI / 2;
+  const earth = new THREE.Object3D();
+  group.add(earth);
+  const biteRing = (spin) => {
+    earthSpinQuaternion(spin, axis, base, earth.quaternion);
+    group.updateMatrixWorld(true);
+    return new THREE.Vector3(C[0], C[1], C[2]).applyMatrix4(earth.matrixWorld);
+  };
+  const DEG = Math.PI / 180;
+  const spin0 = menuBiteSpin(MENU_SHOT, axis);
+  const p = biteRing(spin0);
+  const want = HALO_STATION_ANGLE + (MENU_SHOT.hallAzimuthOffsetDeg + MENU_SHOT.biteAzimuthOffsetDeg) * DEG;
+  const d = Math.atan2(Math.sin(Math.atan2(p.y, p.x) - want), Math.cos(Math.atan2(p.y, p.x) - want));
+  assert.ok(Math.abs(d) < 1e-9, `gryz ${(Math.atan2(p.y, p.x) / DEG).toFixed(2)}° zamiast ${(want / DEG).toFixed(2)}°`);
+  // środek elektrowni celuje w środek ringu (zgłoszenie 2026-10-31): oś obrotu tła przechylona o szerokość gryzu (10°),
+  // środek gryzu na równiku obrotu — w płaszczyźnie ringu (z = 0) przy każdym kącie doby; bez gryzu oś = biegun
+  assert.ok(Math.abs(Math.acos(axis.y) / DEG - EARTH_BITE.lat) < 1e-9, 'przechył osi = szerokość gryzu');
+  assert.ok(Math.abs(axis.dot(new THREE.Vector3(C[0], C[1], C[2]))) < 1e-12);
+  for (const s of [spin0, spin0 + 0.7, spin0 + 2.5, 5]) assert.ok(Math.abs(biteRing(s).z) < 1e-9, `kąt doby ${s}`);
+  const b0 = menuEarthBase(new THREE.Vector3(0, 1, 0));
+  assert.ok(Math.abs(Math.abs(b0.w) - 1) < 1e-12, 'oś = biegun: baza tożsamościowa (dawne rotation.y = kąt doby)');
+  // elektrownia z osią ringu tła: przekaźnik odbiornik → ring wzdłuż osi gryzu (prosto w ścianę ringu, środek wstęgi),
+  // liny wind omijają Ziemię i kończą się na szynie wokół osi tła, odbiornik z iglicami przed czaszą terminala
+  const { createPlantLook } = await import('../src/3d/earthBitePlant.js');
+  const { hubRelayDir } = await import('../src/3d/earthBitePlantOrbital.js');
+  const { elevatorLayout } = await import('../src/3d/earthBitePlantElevators.js');
+  const { PLANT_LAYOUT, plantRingAxis } = await import('../src/3d/earthBitePlantFrame.js');
+  const look = createPlantLook({ ringAxis: axis.toArray(), hubRadius: 1.04 });
+  assert.ok(plantRingAxis(look).distanceTo(axis) < 1e-12 && plantRingAxis(createPlantLook()).y > 0.999999, 'gra: oś bieguna');
+  const relay = hubRelayDir(look, EARTH_BITE.radiusR);
+  assert.ok(relay.y > 0.999999, `przekaźnik wzdłuż osi gryzu: ${relay.toArray()}`);
+  const lay = elevatorLayout(look, EARTH_BITE.radiusR);
+  assert.ok(lay.bundles.length >= 6 && lay.bundles.every((bd) => bd.clearsEarth), 'liny omijają Ziemię');
+  assert.ok(lay.rail.axO.distanceTo(axis) < 1e-12);
+  assert.ok(Math.abs(lay.terminal.obj.T.dot(axis)) < 1e-9, 'koniec przekaźnika w płaszczyźnie ringu');
+  const tipR = look.hubRadius + look.hubSpireH;
+  assert.ok(lay.terminal.obj.dish.length() - look.elevTermDishR - tipR > 0.008, 'iglice odbiornika przed czaszą terminala');
+  assert.ok(tipR < PLANT_LAYOUT.ringInnerR - 0.02);
+  // na prawo od środka tarczy, z dala od hali K-7 (kadr końca lotu intro z góry nad halą — bez gryzu); doba niesie go
+  // ku brzegowi — na tarczy (< 75° od środka) kilka minut
+  assert.ok(MENU_SHOT.biteAzimuthOffsetDeg > 0 && MENU_SHOT.biteAzimuthOffsetDeg <= 30, 'gryz w kadrze, na prawo od środka');
+  assert.ok(Math.abs(MENU_SHOT.biteAzimuthOffsetDeg + MENU_SHOT.hallAzimuthOffsetDeg) >= 30, 'gryz ≥ 30° od hali K-7');
+  assert.ok(MENU_SHOT.earthSpin > 0 && (75 - MENU_SHOT.biteAzimuthOffsetDeg) * DEG / MENU_SHOT.earthSpin > 240, 'kilka minut na tarczy');
+  // ta sama Ziemia: stop() oddaje grze kąt doby i chmur (DirectPlanet.setSpin — tylko doba wokół osi ringu)
+  assert.match(read('src/3d/menuBackdrop3D.js'), /const sg = this\._gameSpinAtCut\(o\);\s*this\._gameEarth\?\.setSpin\?\.\(sg, sg \+ o\.cloudSpin - o\.spin\)/);
+  // kąt doby gry przy cięciu: grunt tła pod halą K-7 trafia pod halę w grze (Ziemia gry: Rx(π/2) · Ry(kąt))
+  const fake = Object.create(MenuBackdrop3D.prototype);
+  fake._q = new THREE.Quaternion();
+  fake._p = new THREE.Vector3();
+  fake.ring = null;
+  const cutObj = { earthGroup: group, earth };
+  for (const s of [spin0, spin0 + 1.3]) {
+    earthSpinQuaternion(s, axis, base, earth.quaternion);
+    const sg = fake._gameSpinAtCut(cutObj);
+    const g = new THREE.Group();
+    g.rotation.x = Math.PI / 2;
+    const ge = new THREE.Object3D();
+    ge.rotation.y = sg;
+    g.add(ge);
+    g.updateMatrixWorld(true);
+    group.updateMatrixWorld(true);
+    const hall = new THREE.Vector3(Math.cos(HALO_STATION_ANGLE), Math.sin(HALO_STATION_ANGLE), 0);
+    const ground = hall.clone().applyMatrix4(new THREE.Matrix4().copy(earth.matrixWorld).invert());   // grunt tła pod halą
+    const inGame = ground.applyMatrix4(ge.matrixWorld);
+    const dAz = Math.atan2(inGame.y, inGame.x) - HALO_STATION_ANGLE;
+    assert.ok(Math.abs(Math.atan2(Math.sin(dAz), Math.cos(dAz))) < 1e-9, 'długość pod halą zgodna');
+    assert.ok(Math.abs(inGame.z) < Math.sin(EARTH_BITE.lat * DEG) + 1e-9, 'szerokość różni się o ≤ przechył');
+  }
+  // oś tła = biegun: dokładnie kąt doby tła
+  earth.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.9);
+  const sgY = fake._gameSpinAtCut(cutObj);
+  assert.ok(Math.abs(Math.atan2(Math.sin(sgY - 0.9), Math.cos(sgY - 0.9))) < 1e-9, String(sgY));
+  const planets = read('src/3d/planet3d.assets.js');
+  assert.match(planets, /setSpin\(spin, cloudSpin = spin\) \{\n\s+if \(!this\._spinAxis \|\| !Number\.isFinite\(spin\)\) return;/);
+  // elektrownia w gryzie: własny egzemplarz tła (dziecko kuli, oś obrotu = oś ringu), bez maski słońca gry, warstwa tła
+  // (traverse po dodaniu — rozgrzewka Core3D.warmup.now obejmuje jej siatki), zwolniona w stop()
+  const src = read('src/3d/menuBackdrop3D.js');
+  assert.match(src, /plant = new EarthBitePlant\(\{[\s\S]{0,200}uSunShadowRecv: \{ value: 0 \}\s*\}, \{ look \}\)/);
+  assert.match(src, /ringAxis: axis\.toArray\(\)/);
+  assert.match(src, /plant\.attachRing\(axis\)/);
+  assert.match(src, /earthSpinQuaternion\(o\.spin, o\.axis, o\.base, o\.earth\.quaternion\)/);
+  const at = (re) => src.search(re);
+  assert.ok(at(/earth\.add\(plant\.group\)/) > 0 && at(/earth\.add\(plant\.group\)/) < at(/obj\.traverse\(\(o\) => o\.layers\.set\(MENU_BACKDROP_LAYER\)\)/));
+  assert.match(src, /o\.plant\?\.dispose\(\)/);
+  assert.match(src, /o\.plant\.update\(dt\)/);
+  // słońce gry: menu świeci słońcem ringu z gry (gameSunLocal), talerz tylko w A/B
+  assert.equal(MENU_SHOT.gameSun, true);
+  assert.match(src, /this\.sunLocal\.az = gs \? gs\.az : az \+ s\.sunOffsetDeg \* DEG/);
+  const game = new HaloRingGame({ world: new HaloRingWorld({ planets: [EARTH] }), renderer: {}, scene: fakeScene() });
+  const out = { az: 0, el: 0 };
+  const sun = { x: EARTH.x - 4e6, y: EARTH.y + 1e6 };
+  assert.equal(game.gameSunLocal('earth', sun, out), out, 'bez alokacji w klatce tła');
+  assert.ok(Math.abs(out.el - HALO_GAME.sunElevationDeg * DEG) < 1e-12);
+  const bd = new MenuBackdrop3D({ haloRings: game });
+  globalThis.SUN = sun;
+  try {
+    assert.equal(bd._gameSun(), bd._gameSunOut);
+    assert.equal(bd._gameSun().az, out.az);
+    bd.shot.gameSun = false;
+    assert.equal(bd._gameSun(), null, 'dawny talerz');
+  } finally { delete globalThis.SUN; }
+  // lot intro z menu: menuSun = gameSun → słońce stoi przez cały tor (zgłoszenie: cieniowanie zmieniało się w locie)
+  const { menuIntroFlight } = await import('../src/game/story/introCamera.js');
+  const keys = [{ t: 0, eye: { x: 0, y: 0, z: 1 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 }, fov: 30 },
+    { t: 5, eye: { x: 1, y: 0, z: 1 }, target: { x: 0, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 }, fov: 30 }];
+  const plan = menuIntroFlight({ keys, menuSun: { az: out.az, el: out.el }, gameSun: { az: out.az, el: out.el } });
+  for (const w of [0, 0.3, 0.5, 0.75, 1]) {
+    const s = plan.sun(w);
+    assert.ok(Math.abs(s.az - out.az) < 1e-12 && Math.abs(s.el - out.el) < 1e-12, `w ${w}`);
+  }
+});
+
 test('index.html: tło po initHaloRings, rozgrzewka na ekranie ładowania, ring wraca do gry przed jej pierwszą klatką', () => {
   const html = read('index.html');
   assert.match(html, /initHaloRings\(\);\s*applyHaloRingDevSpawn\(\);\s*startMenuBackdrop\(\);/);
-  const start = html.slice(html.indexOf('async function startGame()'));
+  const start = html.slice(html.indexOf('async function startGame('));
   const stopAt = start.indexOf('stopMenuBackdrop();');
   const loopAt = start.indexOf('requestAnimationFrame(loop);');
   const flushAt = start.indexOf('await Core3D.warmup?.flush(');
@@ -345,4 +471,46 @@ test('halo Ziemi i Marsa w grze: poświata limbu z modelu atmosfery menu, gaśni
   assert.match(src, /if \(this\.isRingAnchored\) \{[^}]*createRingAtmosphere\(name, resolveRingPlanetWorldRadius\(this\.data\)\)/);
   assert.match(src, /RING_ATMOSPHERE_TUNE = Object\.freeze\(\{\s*earth: Object\.freeze\(\{ height: 1250/, 'wysokość powłoki jak w tle menu (R + 1250)');
   assert.match(src, /atmU\.uSunDir\.value\.set\(dx \/ len, dy \/ len, 0\)/, 'słońce w płaszczyźnie gry');
+});
+
+test('limit klatek tła menu (2026-10-29): zegar wirtualny harnessu omija limit jak pętla gry, po zmianie rozmiaru okna klatka od razu', () => {
+  const prevRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = () => 1;   // _frame zamawia następną klatkę — w teście woła ją pętla niżej
+  try {
+    const bd = new MenuBackdrop3D();
+    bd.running = true;
+    bd.active = true;
+    const dts = [];
+    bd.renderFrame = (dt) => { dts.push(dt); };
+    let virtual = false;
+    bd.setFrameLimit(120, true, () => virtual);
+    const V = 1000 / 240;
+    let t = 1000;
+    for (let i = 0; i < 200; i++, t += V) bd._frame(t);
+    assert.ok(dts.length >= 100 && dts.length <= 106, `co 2. klatka ekranu po rozbiegu: ${dts.length}`);
+    assert.ok(Math.abs(dts[dts.length - 1] - 2 * V / 1000) < 1e-9, 'dt klatki obejmuje pominiętą');
+    // zegar wirtualny harnessu ('frozen' — znaczniki stoją): każda klatka tła, jak pętla gry (FrameLimiter.bypass)
+    virtual = true;
+    dts.length = 0;
+    for (let i = 0; i < 10; i++) bd._frame(t);
+    assert.equal(dts.length, 10);
+    // zegar 'real': limit wraca; zmiana rozmiaru okna (strona, tryb off) — klatka zaraz po narysowanej
+    virtual = false;
+    dts.length = 0;
+    while (!dts.length) bd._frame(t += V);
+    bd._frame(t += V);
+    assert.equal(dts.length, 1, 'bez wymuszenia — w takcie limitu');
+    bd._frame(t += V);
+    assert.equal(dts.length, 2);
+    bd.forceNextFrame();
+    bd._frame(t += V);
+    assert.equal(dts.length, 3, 'forceNextFrame — klatka od razu');
+    bd._frame(t += V);
+    assert.equal(dts.length, 3, 'następna znów w takcie limitu');
+    // pełnomocnik trybu worker nie podaje ominięcia — limiter bez bypass
+    bd.setFrameLimit(120, true);
+    assert.equal(bd._limiter.bypass, null);
+  } finally {
+    globalThis.requestAnimationFrame = prevRaf;
+  }
 });

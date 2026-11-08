@@ -17,12 +17,70 @@ export const SPACE_GAS_MAX_BLASTS = 8;
 export const SPACE_GAS_MAX_BOLTS = 24;
 const BLAST = 5;  // x, y (względem kotwicy), rozmiar (size fabryki wybuchów), wiek [s], życie [s]
 const BOLT = 5;   // x, y (względem kotwicy), kierunek lotu xy (jednostkowy), prędkość [j/s]
+/** Mapy obrazu obejmują kadr × ten zapas (co najmniej — drabina teksla dokłada do 12%, spaceGasMaps.js `place`). */
+export const SPACE_GAS_MAP_MARGIN = 1.08;
+/**
+ * MIĘKKI BRZEG OKNA POLA: pas o szerokości tego ułamka boku okna, w którym obraz przechodzi w pole dalekie — waga okna
+ * map (`kw`, spaceGasMaps.js), zanik pyłu (`edgeK`, spaceGasDust.js) i przycięcie środka okna w grze (`placeGasWindow`,
+ * src/game/spaceGasInput.js: pas poza mapą kadru, gdy wnętrze okna ją obejmuje). Jedna liczba dla wszystkich trzech.
+ */
+export const SPACE_GAS_WINDOW_EDGE = 0.04;
+/** Proporcje kadru do zaniku gazu przy oddaleniu: kadr szerszy liczy się jak kadr o tej samej wysokości. */
+export const SPACE_GAS_VIEW_ASPECT = 16 / 9;
+/**
+ * Tempo kroku pola [Hz] — render (`spaceGasSim.js`: krok pola z numeru kroku fizyki) i gra (`placeGasWindow`: render
+ * przesuwa okno tylko w kroku pola, więc obraz okna stoi za kadrem do dwóch kroków drogi okrętu).
+ */
+export const SPACE_GAS_HZ = 60;
+
+/**
+ * Pół kadru do zaniku i do wyłączenia gazu przy oddaleniu — JEDNO wyliczenie dla renderu (`spaceGasViewFade`) i gry
+ * (`maxViewHalf` w `packSpaceGasFrame`): kadr szerszy niż `aspect` (szer. / wys.) liczy się jak kadr o tej samej
+ * wysokości (21:9 i 32:9 jak 16:9), kadry ≤ `aspect` i pionowe — max(pół szer., pół wys.); aspect ≤ 0 — max (dawny wzór).
+ * Dawniej gra liczyła max bez proporcji: na 5120 × 1440 gaz znikał przy zoomie < 0,0284 z zaniku ~0,875 w jednej klatce.
+ */
+export function spaceGasViewHalf(halfW, halfH, aspect = SPACE_GAS_VIEW_ASPECT) {
+  return aspect > 0 ? Math.max(Math.min(halfW, halfH * aspect), halfH) : Math.max(halfW, halfH);
+}
+
+/**
+ * WĄTKI KERNELI BEZ STRAŻNIKA LICZBY (przegląd 2026-10-29): three r183 puszcza ceil(n / 64) grup po 64 wątki
+ * (`ComputeNode`, workgroupSize [64]), a WGSL nie sprawdza `instanceIndex < n` — wątki ponad n czytałyby i pisały poza
+ * buforami storage (WebGPU przycina dostęp do bufora: cudze elementy, wyścig z ich właściwym wątkiem). Kernele pola
+ * (`spaceGasSim.js`: N² wątków) i pyłu (`spaceGasDust.js`: liczba drobin) strażnika nie mają, więc ich liczby wątków są
+ * wielokrotnością 64 z urzędu: `spaceGasKernelCount` zaokrągla liczbę w górę do 64, `spaceGasWindowCells` — bok okna
+ * pola N w górę do 8 (N² = 64 · (N / 8)²); z ostrzeżeniem raz na wartość. Gra liczy okno tą samą funkcją
+ * (`packSpaceGasFrame`) — okno pola gry = okno renderu. Kernele map mają strażnik (`texel()` w spaceGasMaps.js — W · H
+ * mapy w proporcjach kadru nie musi być wielokrotnością 64).
+ */
+export const SPACE_GAS_WORKGROUP = 64;
+const _countWarned = new Set();
+function warnCount(what, n, m) {
+  const key = `${what}:${n}`;
+  if (_countWarned.has(key)) return;
+  _countWarned.add(key);
+  console.warn(`[gaz przestrzeni] ${what}: ${n} → ${m} (kernel bez strażnika liczby wątków — grupy po ${SPACE_GAS_WORKGROUP})`);
+}
+/** Liczba wątków kernela bez strażnika (np. drobin pyłu) → w górę do wielokrotności 64 (ostrzeżenie przy zmianie). */
+export function spaceGasKernelCount(n, what = 'liczba wątków') {
+  if (!(n > 0)) return n;
+  const m = Math.ceil(n / SPACE_GAS_WORKGROUP) * SPACE_GAS_WORKGROUP;
+  if (m !== n) warnCount(what, n, m);
+  return m;
+}
+/** Bok okna pola [komórki] → w górę do wielokrotności 8 (N² wątków kerneli pola — wielokrotność 64). */
+export function spaceGasWindowCells(n, what = 'okno pola [komórki]') {
+  if (!(n > 0)) return n;
+  const m = Math.ceil(n / 8) * 8;
+  if (m !== n) warnCount(what, n, m);
+  return m;
+}
 /** Raster przekroju olbrzymów pasa (z = 0) na okno pola: bok [teksle], słowa 32-bitowe. */
 export const SPACE_GAS_RASTER = 128;
 const RASTER_WORDS = SPACE_GAS_RASTER * SPACE_GAS_RASTER / 32;
 
 const G = SPACE_GAS_ENV_RES;
-const HEADER = 32;
+const HEADER = 40;
 const ENV = HEADER;
 const JETS = ENV + G * G * 2;
 const BLASTS = JETS + SPACE_GAS_MAX_JETS * JET;
@@ -60,6 +118,20 @@ export const SPACE_GAS_IN = Object.freeze({
   rasterY0: 26,
   rasterTexel: 27,  // bok teksla [j.]
   rasterVer: 28,    // wersja rastra (zmiana = wysyłka tekstury)
+  // ZEGAR GRY (2026-10-29, zgłoszenie „gazy i mgła w polu asteroid mocno drżą”): krok pola = krok fizyki, obraz w chwili
+  // renderu kadłubów; render liczy przyrosty od ostatniej NARYSOWANEJ strony (worker pomija strony — dt jednej strony
+  // gubił ich czas). NaN — brak zegara (dt klatki jak dawniej).
+  simTime: 29,      // SimClock.sim — czas pozy fizycznej [s]
+  renderTime: 30,   // SimClock.render — czas pokazywany w tej klatce [s]
+  // OKNO POLA (2026-10-29, „przy oddaleniu nie widać wypychania, ogon szybko znika”): środek okna względem kotwicy —
+  // przy prowadzonym okręcie, przesunięty pod ślad, przycięty do kadru (src/game/spaceGasInput.js `placeGasWindow`)
+  winX: 31,
+  winY: 32,
+  // NUMER KROKU FIZYKI (index.html `physicsTickId`, liczba całkowita) i tempo fizyki (`PHYS_HZ`; ?physHz=120 — A/B):
+  // krok pola liczy się z nich, nie z ⌊simTime · 60⌋ — suma SimClock.sim (+= 1/60 co krok) dryfuje i po ~1 h 55 min
+  // dawała krok o jeden za mały na stałe (obraz przestawał przenikać). NaN — brak licznika (akumulator z dt).
+  physTick: 33,
+  physHz: 34,
   header: HEADER,
   envBase: ENV,                 // G·G par (obwiednia gazu, udział lodu)
   jetBase: JETS,

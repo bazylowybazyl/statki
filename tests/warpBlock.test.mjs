@@ -72,6 +72,17 @@ test('blok warpa: lista pól = pola osi gry (nowe pole osi wymaga wpisu w bloku)
   }
 });
 
+test('blok warpa w workerze: lustro stosowane PRZED rozkazami strony (WARP_BEGIN szuka osi nowego rekordu w lustrze)', () => {
+  // 2026-10-30 (sonda wojna-gra, `?renderWorker=1`): lustro stosowane w sekcji warpa — po st.cmd.drain — dawało recordAt =
+  // null dla rekordu z tej strony; WarpNurt.arrivals w workerze była pusta (bez zwiastunów, błysków, fal i kadłuba przylotów).
+  const src = readFileSync(new URL('../src/render/render.worker.js', import.meta.url), 'utf8');
+  const iApply = src.indexOf('applyWarpBlock(v.blocks.warp');
+  const iDrain = src.indexOf('st.cmd.drain(');
+  assert.ok(iApply > 0 && iDrain > 0, 'oba wywołania w render.worker.js');
+  assert.ok(iApply < iDrain, 'applyWarpBlock przed st.cmd.drain');
+  assert.equal(src.split('applyWarpBlock(').length - 1, 1, 'jedno zastosowanie bloku na stronę');
+});
+
 test('blok warpa: wpięcie w grze (rejestracja przy migawce, rejestr i klatka „Nurtu” w fazie begin)', () => {
   const src = readFileSync(new URL('../index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   assert.match(src, /renderSnapshot\.addBlock\(createWarpBlock\(\)\)/);

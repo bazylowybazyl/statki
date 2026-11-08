@@ -1520,7 +1520,11 @@ class RocketSystem3D {
         if (!owners || !owners.length || typeof applyStation !== "function") return;
         for (let i = 0; i < owners.length; i++) {
             const st = owners[i];
-            if (st && !st._destroyed3D && st.hp > 0) applyStation(st, dmg);
+            if (!st || st._destroyed3D || !(st.hp > 0)) continue;
+            // miejsce wybuchu = miejsce trafienia (progi i pule kawałków budowli bazy liczą kawałek pod nim)
+            st.lastHitX = ex;
+            st.lastHitY = ez;
+            applyStation(st, dmg);
         }
     }
 

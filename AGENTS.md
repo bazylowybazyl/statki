@@ -8,7 +8,7 @@ HULLFALL to gra o okrętach kapitałowych (gracz prowadzi Atlasa): rozgrywka na 
 
 - Opis obszaru (jak działa, decyzje użytkownika, pułapki, jak sprawdzić) → jego reguła w `.claude/rules/`. Nowy obszar = nowa reguła z `paths:` (każdy glob w cudzysłowie — zepsuty YAML ładuje regułę ZAWSZE) + wiersz w indeksie niżej. Do tego pliku dopisuj tylko zasadę przekrojową (dotyczy kodu poza obszarem: „nowa ścieżka X musi wołać Y”) albo zmianę indeksu.
 - Reguła opisuje STAN i ZASADY w czasie teraźniejszym. Historia („dawniej…”), wyniki pomiarów i A/B → `docs/` (audyty, plany); w regule zostaje wniosek i odnośnik.
-- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–40) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
+- Odnośnik „§ X” — także „AGENTS.md § X” / „agents.md, pułapka N” w kodzie i w `docs/` sprzed podziału (2026-10-19) — to nagłówek sekcji w jednej z reguł: `grep -rn "## X" .claude/rules`. Pułapki three r183 (1–44) są w regule `webgpu-tsl`, nośnik prędkości — w `pociski`.
 - Notatka dla kolejnych agentów w kodzie: komentarz z prefiksem `AGENT:`.
 
 ## Zasady żelazne
@@ -49,11 +49,15 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Nowe stałe światło sceny → w scenie przed pierwszą kompilacją (strona przy starcie, worker w init przed urządzeniem — jak `initWorld3D()`), gaszone `intensity = 0`; zestaw świateł jest w kluczu każdego materiału, światło dodane później przebudowuje wszystko rozgrzane (reguła `webgpu-tsl`, „Rozgrzewka pipeline'ów”).
 - Nowy materiał, siatka albo pula → rejestr rozgrzewki `Core3D.warmup.add({ name, objects, phase })` (`'loading'` — pula tworzona na ekranie ładowania, `'after'` — rzeczy, których pierwsza klatka gry nie rysuje; `shadow: true` — siatki z `castShadow`; siatki instancjonowane z `variant: WARIANT_INSTANCJI`). Każde `compileAsync` na celu przez `compileAsyncNaCelu` (`src/3d/rozgrzewka.js`).
 - Nowy efekt GPU → krok `Core3D.addFxStep({ name, spawn, lights, update, warm })` (compute raz na klatkę, przed passami); pula GPU rejestruje się w `FxPoolOrigin` z kernelem przesunięcia; światła przez `Core3D.fx.lights` / `ctx.grid`, refrakcja przez `Core3D.fxDistortion()` albo warstwę DIST. Nie własne `renderer.compute` w pętli gry, cele ani passy.
+- Pole gazu albo pyłu, które reaguje na silniki → obie listy klatki `EngineFrame` (`src/3d/engineFrame.js`): gromady MAIN i dysze SIDE z ciągiem (`side`, `sd*` — moc z automatu dyszy, impulsy); kadłub w polu gazu (komórki stałe, pas wokół kadłuba) → obrys z maski `hullFootprint`, nie prostokąt maski (pas — pole odległości od obrysu, wzór `hullShellFieldCpu` w `spaceGasSim.js`).
+- Krok `Core3D.fx`, który przestawia siatkę albo grupę (pozycja, skala, początek pul) → sam woła na niej `updateMatrixWorld()`: Core3D liczy macierze sceny RAZ na klatkę, PRZED krokami efektów (`_syncSceneMatrices`), więc bez tego rysunek tej klatki idzie z macierzą poprzedniej (reguła `core3d`, „MACIERZE PRZED KROKAMI”; wzór — gaz, reguła `gaz-przestrzeni`, „MACIERZE W KROKU”).
 - Nowe zdarzenie efektu z gry → nowy typ rekordu strumienia rozkazów (`src/render/renderCommands.js` + dekoder + test kodowania), nie wywołanie modułu renderu (`WeaponFx`, `RocketEffects`…). Wybuch z gry → `GameBlasts.blast`; mapa ran → `HullDamageEvents` (+ `setSource` / `clearSource`); strzał z wieży → odrzut liczy gra (`Turret2D.recoilForShot`).
 - Nowe pole encji czytane przez moduł renderu z luster → cały łańcuch: `snapshotLayout` (na końcu ENT), `_packEntity`, `applyEntityPage`, konstruktor `MirrorEntity`, test — inaczej obraz w workerze różni się od `off`.
 - Moduł renderu potrzebuje stanu gry → getter w `RenderWorld` (`src/render/renderWorld.js`), nie `window.<zmienna>`; kanwy i obrazy przez `src/3d/canvas2d.js`, praca w tle i klatka przez `src/3d/harmonogram.js`.
 - Rzecz rysowana przy obcym okręcie po stronie gry → poza z `bridgeRenderPose` (interpolowana), nie `npc.x / y`.
+- Światło albo efekt przypięty do statku gracza w module renderu → poza renderu `RenderWorld.playerPose` (ta sama co kadłub), nie poza encji z końca kroku fizyki — przy 240 Hz obrazu jechałaby piłą (1 − α) · v / 60 wobec kadłuba (reguła `pas-asteroid`, „POZA ŚWIATEŁ”).
 - Obiekt na warstwach planet (3), halo (5), ring-planet (6) albo tarcz (7) → zgłaszaj co klatkę (`Core3D.markPlanetLayersActive` / `setShieldLayerActive`), inaczej pass się pominie.
+- Rysunek do celu sceny (`composerTarget`) w haku passa albo odczyt jego tekstury przed postem → reguła `core3d` („Czyszczenie w passie”): cel czyści pierwszy render passa, a MSAA rozwiązuje tylko ostatni pass sceny renderu.
 - Pozycje świata (5–10 mln j.) nie trafiają do shadera we float32: duży offset w `mesh.position` (three składa `modelViewMatrix` w double), dane względem niego (`sceneOriginNearCamera`), w grafie `modelViewMatrix` — nie `positionWorld` ani ręczne `cameraViewMatrix.mul(modelWorldMatrix)`; pozycje w pulach CPU — `Float64Array`.
 - Układ gra → scena / silnik belek: `X = x`, `Y = −y`, `θ = −(kąt + obrót sprite'a)`; kotwica statku = środek sprite'a.
 - Materiał oświetlany słońcem w płaszczyźnie gry → człon słońca × `sunVisibility()`, otoczenie × `sunFill(vis)` (`src/3d/sunShadowMask.js`); powierzchnia w passie gry z zapisem głębi → hak ośrodka pasa `hullVolume`.
@@ -61,12 +65,15 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Zmiana fragmentu skóry kadłuba (`hullFragmentNode`, `hexShips3D.tsl.js`) zmienia też proxy statków ruchu (`hullProxyFragmentNode`) — nowe pole per kadłub = też pole instancji proxy (reguła `ruch-banka`, „Obraz”).
 - Nowa rzecz świata w 3D (budowla, obiekt przy ciele, encja z własnym obrazem) → w skoku gracza przez rejestr kotwic soczewki (`WARP_LENS_ANCHORS` — przypięta do ciała, `warpLensExtraBody` — z własnym miejscem; reguła `warp`, „REJESTR KOTWIC SOCZEWKI”), rysowana pod statkiem (z ≤ −400 albo tło), ukryta mgłą wojny; inaczej w skoku zostaje na prawdziwym miejscu i mija kadr w jednej klatce.
 - Animacja w module renderu (efekt, odłamki, migotanie, czas materiału) → czas klatki `Core3D.frameNowMs()` (znacznik rAF klatki strony; w workerze z migawki), nie `performance.now()` w chwili rysowania — ten idzie po fizyce i efekty szarpią co krok względem kadłubów.
+- Moduł renderu z CZASEM GRY od strony (krok symulacji, ruch cząstek, zanik) → przyrost zegara strony od ostatniej PRZETWORZONEJ strony (`SimClock` / zegar w wejściu — wzór `warpFxDt`, gaz: `SPACE_GAS_IN.renderTime`), nie dt jednej strony: worker pomija strony i ich czas przepadał; symulacja w krokach fizyki — numer kroku z całkowitego licznika (`physicsTickId` + `PHYS_HZ`, gaz: `SPACE_GAS_IN.physTick`), nie `floor` z sumy `SimClock.sim` (suma 1/60 dryfuje — po ~2 h krok o jeden za mało), obraz w chwili `SimClock.render` (reguła `gaz-przestrzeni`).
 - Emiter ma świecić → luminancja > 1 (HDR, próg bloomu ~0,9), zwykłe powierzchnie pod progiem; efekty z dem wchodzą 1:1, bez kolan i mnożników bloomu. W shaderach efektów bez `pow()` z ujemną podstawą, varyingi z clampem — NaN w buforze HalfFloat rozlewa bloom na cały ekran.
-- Wiele obiektów jednego rodzaju → partia (jeden rysunek, dane per obiekt w buforze storage ze slotem): każdy rysunek to ~15–25 µs CPU w three r183. Bufor zmieniany częściowo → zakresy przez `src/3d/zakresyWysylki.js`, nie `DynamicDrawUsage` (w WebGPU = pełna wysyłka przy każdym renderze).
+- Pętla w budżecie czasu klatki (wypiek, rozbieg, budowa porcjami — render i gra) → co najmniej jeden krok na klatkę, zegar sprawdzany PO kroku (`n === 0 || now() - t0 < budżet`; wzór `src/game/worldBodies.js`), zegar budżetu wstrzykiwany do testów — przy zagłodzonym wątku budżet minie przed pierwszym krokiem i praca stoi w każdej klatce.
+- Wiele obiektów jednego rodzaju → partia (jeden rysunek, dane per obiekt w buforze storage ze slotem): każdy rysunek to ~15–25 µs CPU w three r183. Bufor zmieniany częściowo → zakresy przez `src/3d/zakresyWysylki.js`, nie `DynamicDrawUsage` (w WebGPU = pełna wysyłka przy każdym renderze); wiele zakresów jednego bufora na klatkę → `scalZakresy` raz na klatkę po zapisach (three wysyła każdy zakres osobnym `writeBuffer`).
 - Przezroczysty `DoubleSide` → `forceSinglePass: true` (inaczej dwa rysunki i inna kolejność mieszania).
 - Pole symulacji zmieniane drobnymi przyrostami w teksturze połówkowej → zapis przez `sroundF16` (`src/3d/tsl/zapisF16.js`; zapis f32 → f16 obcina ku zeru).
 - HUD rzutuje przez `View3D` (`worldToScreen` / `screenToWorld`), nie przez `camera.zoom`; px bufora na j. świata = zoom · `Core3D.pxScale` (`Core3D.viewZoom(cam)`).
 - Nowa kanwa w panelu UI → przebij globalną regułę `main.css` `canvas:not(#c)` (absolutne, bez myszy).
+- Limit klatek (opcje grafiki, `src/render/frameLimiter.js`): `loop()` zamawia następną klatkę tylko przez `frameLimitTick` / `nextLoopFrame` (nie `requestAnimationFrame(loop)` — bez VSync pętla idzie na budziku), a nowa pętla rAF, która RYSUJE obraz poza `loop()` i tłem menu, pyta `FrameLimiter.tick` — inaczej limit jej nie obejmie (reguła `opcje-grafiki`).
 
 **Rozgrywka**
 - Ścieżka, która pokazuje albo celuje we wroga → `SensorSystem.hides(byt)` (mgła wojny); celowanie w gracza i wybór celów AI → `isCloakHidden` (maskowanie).
@@ -88,15 +95,17 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 - Mózgi NPC liczą się też w klatkach bez kroku fizyki — mózg pisze tylko ZAMIARY (intencja lotu, cel, wieże); mózg całkujący ruch sam musi zostać w kroku (`aiOffStepEligible`).
 - Logika nie czyta klawiszy ani padów wprost: akcje (`Input.*`, rejestr `GameActions`); nowa akcja = wpis w `INPUT_ACTIONS` + układy + `GameActions`.
 - Nowy rodzaj obiektu na radarze → rekord w `radarFeed.collect` (nie rysunek w kokpicie).
+- Logika zakładająca konkretne ciało Układu Słonecznego (Ziemia jako dom, start, POWRÓT, ring po id) → przez układ strony `CURRENT_SYSTEM` / `SYSTEM_HOME` (`src/data/starSystems.js`, reguła `uklady-gwiezdne`); treść ręczna (fabuła, ekonomia z tabel, ringi) tylko przy `CURRENT_SYSTEM.handmade`; id ciał zostają lokalne dla układu.
 - Ruch statku przy Ziemi, Marsie i Jowiszu (spawn, teleport, autopilot) omija płytę ringu — przelot tylko tranzytami, a na Jowiszu (ring w budowie) także przerwami; kod zakładający pełny pierścień albo 4 tranzyty doliczy przerwy z `layout.construction` (reguła `ring-halo`); przy porcie bez ringu — bryły budowli doku (`PortDocks.constrainShip` / `freeSpot` / `pushCruiseObstacles`, reguła `doki-portow`).
 - Kawałek bazy piratów łamie się przez `storyBaseBreak` / `pirateBaseWorld`; konfiguracja pola pasa idzie przez `beltWorld`, nie `asteroidBelt.field`.
 - Nowa budowla w płaszczyźnie gry, w którą mogą wlecieć okręty → przeszkody lotu AI: kapsuły w `statics` indeksu (`rebuildWreckIndex` w takcie AI, `capsuleFromPolygon`; wzór `pirateBaseObstacles`) — mózgi i rozkazy RTS objeżdżają je trasą (`src/ai/staticRoutes.js`); nowy lot NPC sterowany wprost `setFlightArrive` nikogo nie omija — przez `capitalArriveTo` (reguła `flota-ai`).
 - Stała efektu objęta presetem grafiki → zmiana tabeli w `src/game/graphicsQuality.js`.
+- Stan gracza, który ma przeżyć F5 (kredyty, ładownia, postęp, miejsce, stan kampanii między misjami) → zapis gracza `src/game/playerSave.js` (`buildPlayerSave` + `parsePlayerSave` + `applyPlayerSave` w bloku „ZAPIS GRACZA”, reguła `statek-gracza`); ścieżka, która daje graczowi nagrodę w pominiętej misji, respektuje wznowienie z zapisu (`StoryGame._restoreSkipping`).
 - Ekonomia jest jedna — ruch v2 w workerze (reguła `ruch-v2`); gra nie trzyma magazynów stacji. Zmiana zapasu stacji z gry (handel, rozbiórka, zakup w porcie, łup) → `adjustStationStock` (most `trafficV2.stockDelta`); odczyt magazynu, ceny i oferty → `getTradeEconomy` / `getTradeOffer` (kopia rynku z mostu); w świecie ruchu zapas tylko przez `takeStock` / `putStock`, popyt konsumenta spoza receptur → `declareDemand` (API rynku, `marketBook.js`); nowy rynek → `addMarket` / `TrafficBridge.addMarket`; stan ekonomii, który ma przeżyć F5 → `economySave.js` (eksport, wczytanie, `ECONOMY_SAVE_VERSION`).
 
 ## Częste zadania
 
-- Nowy kadłub: `HULL_RENDER_PROFILES` (`src/data/ships.js`), `HULL_SPRITE_PATHS_BY_ID` i `getNpcHullRenderProfileId` (`index.html`), gniazda w `src/data/hardpointEditorDefaults.js` (kadłub gracza spoza kluczy edytora — `EDITOR_HULL_KEY_BY_PLAYER_ID`, strażnik `tests/playerEditorKey.test.mjs`), dysze MAIN w `ENGINE_FX_DEFAULTS` (`src/data/engineFx.js`), mostek wg `docs/BRIEF-mostek-nowego-kadluba.md` (flota TN — strefa = obrys modelu poziomu klasy w miejscu gniazda `bridge` v 2 presetu kreatora, `src/data/bridgeLevels.js`), rdzeń reaktora — marker w `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`: komora `r`, obudowa nad kadłubem `hr`, poza wieżami i mostkami; kadłub z presetem kreatora — miejsce z presetu, reguła `mostki-reaktor`), obrys 3D (`node scripts/webgpu/obrysy-floty.mjs`).
+- Nowy kadłub: `HULL_RENDER_PROFILES` (`src/data/ships.js`), `HULL_SPRITE_PATHS_BY_ID` i `getNpcHullRenderProfileId` (`index.html`), gniazda w `src/data/hardpointEditorDefaults.js` (kadłub gracza spoza kluczy edytora — `EDITOR_HULL_KEY_BY_PLAYER_ID`, strażnik `tests/playerEditorKey.test.mjs`), dysze MAIN w `ENGINE_FX_DEFAULTS` (`src/data/engineFx.js`), mostek wg `docs/BRIEF-mostek-nowego-kadluba.md` (flota TN — strefa = obrys modelu poziomu klasy w miejscu gniazda `bridge` v 2 presetu kreatora, `src/data/bridgeLevels.js`), światła nawigacyjne (`node scripts/lampy-nawigacyjne.mjs --zapisz`, reguła `swiatla-nawigacyjne`), rdzeń reaktora — marker w `REACTOR_CORE_MARKERS` (`src/data/reactorCores.js`: komora `r`, obudowa nad kadłubem `hr`, poza wieżami i mostkami; kadłub z presetem kreatora — miejsce z presetu, reguła `mostki-reaktor`), obrys 3D (`node scripts/webgpu/obrysy-floty.mjs`).
 - Nowa broń: `MASTER_WEAPONS` (`src/data/weapons.js`: `recoil`, `shake`, zasięg w paśmie swojej roli — reguła `bron-gracza`), `WEAPON_FX` (`src/3d/weapons/weaponFxTable.js`), klucz wieżyczki (`FX_PROFILE` w `src/vfx/turret2D.js`), rodzina 3D (`FAMILIES` w `src/3d/ships3d/weapons/weapons3D.js`).
 - Nowa misja: skrypt w `src/game/story/missions/` + kwestie w `src/data/story/`; gry dotyka tylko przez `api` z `src/game/story/storyGame.js` (reguła `fabula`).
 - Nowy typ skały pasa, nowy system F, nowa rola myśliwca, nowa formacja: lista kontrolna w regule obszaru (`pas-asteroid`, `systemy-f`, `mysliwce`, `flota-ai`).
@@ -104,6 +113,7 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 ## Testy i weryfikacja
 
 - Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — samo `tests/` na Node 22 nie działa); `npm test` to osobny zestaw (`scripts/test.mjs`). WGSL buduje się w Node bez GPU (`renderer.backend.createNodeBuilder`) — testy materiałów czytają wygenerowany kod.
+- Testy nie mierzą czasu ściany (pełny zestaw idzie przy równoległych sesjach i grze użytkownika): budżet czasu — wstrzyknięty zegar albo liczba kroków, czekanie — na stan (limit awaryjny w sekundach), wątki — koniec z liczby kroków; próg wydajności — osobny test z opcją `WYDAJNOSC` (`tests/helpers/wydajnosc.mjs`, uruchamia `HULLFALL_TESTY_WYDAJNOSC=1`). Sprawdzenie: `WOLNY_ZEGAR_MS=5 node --import ./scripts/wolny-zegar.mjs --test …` — test przechodzi przy 0 / 2 / 5 / 10 ms na odczyt zegara. Test „bez alokacji” mierzy do stanu ustalonego JIT (`untilSteady` z `tests/helpers/alokacje.mjs`; sprawdzenie: `node --concurrent-recompilation-delay=200 --test …`).
 - Prawdziwa gra: narzędzia `scripts/webgpu/*-gra.mjs` (Chrome przez CDP) — zrzuty, czasy klatek, pipeline'y synchroniczne (ma być 0). Domyślnie tryb `off` (render na wątku gry — `window.__RENDER_MODE_DEFAULT`), tryb gracza: `--query renderWorker=1` albo `HULLFALL_RENDER_DEFAULT=worker`. Haki `?dev`: `window.DevScene.*`. Kroki tylko przez `__harness.step()` — czekanie na `requestAnimationFrame` przy wstrzymanym zegarze harnessu nigdy nie wraca.
 - Zrzuty i porównanie z bazą: `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/<katalog> --baza <katalog bazy>`, `scripts/webgpu/porownaj.mjs` (szczegóły: reguła `webgpu-tsl`, „Weryfikacja”). A/B dwóch wersji — przebiegi PO KOLEI, nie dwa harnessy naraz.
 - Wydajność: PerfHUD (`P`), `Core3D.gpuFrameMs` (+ `gpuComputeMs`), `scripts/profil-bitwy.mjs`, `scripts/profil-bitwy-flot.mjs`, `scripts/webgpu/koszt-klatki.mjs` (reguła `core3d`). Porównuj czasy funkcji A/B na tej samej klatce, nie sam FPS.
@@ -123,10 +133,12 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 
 | Reguła | Obszar |
 |---|---|
-| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–40), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
+| `webgpu-tsl` | Render WebGPU + TSL: zasady, pułapki three r183 / TSL / WGSL (1–44), rozgrzewka pipeline'ów, pisanie modułów 3D (ładuje się przy całym `src/3d/`, `src/vfx/`, `dema/`) |
 | `core3d` | Core3D: klatka i passy, post i bloom, efekty GPU (`Core3D.fx`), maska słońca i cień kadłubów, wydajność renderu |
 | `render-worker` | Render w workerze: szew gra ↔ render, migawka, strumień rozkazów, sloty, rytm obrazu |
+| `uklady-gwiezdne` | Układy gwiezdne: rejestr `starSystems.js`, jeden układ na stronę (inny = przeładowanie), dom gracza, treść ręczna tylko w Sol, założenia Sol do zdjęcia |
 | `planety` | Planety, słońce, księżyce, małe ciała, atmosfery Jowisza i Saturna, generator map |
+| `generator-planet` | Generator planet z ziarna (inne układy gwiezdne): rodzaje, wypiek map na GPU, materiały z hakami grafów gry (rzeźba z cieniem terenu, detal ponad mapę, morze, chmury), ruiny, olbrzymy na wspólnym silniku atmosfery (czapy polarne, cień pierścieni), demo (niewpięty) |
 | `niebo` | Wypiekacz nieba, tło kosmosu |
 | `ring-halo` | Ring „Halo” (Ziemia, Mars, Jowisz w budowie — archetyp BUDOWA): świat ringów, kolizje, render |
 | `doki-portow` | Doki portów bez ringu (krzyż, okrąg, koło z wlotem): geometria, ścieżki bańki, kolizje, model |
@@ -137,41 +149,50 @@ Obowiązują w każdym obszarze — tu najczęściej psuje się grę „obok”.
 | `komety` | Komety |
 | `ruch-v2` | Ruch v2 — jedyna ekonomia gry: rynki (`addMarket`), API rynku, kursy i zlecenia, most i worker, rozgrzewka świata, zapis ekonomii, napędy ruchu, pola górnicze i wyrwy, towary i receptury, obsada (workforce), bramka bilansu |
 | `ruch-banka` | Statki ruchu v2 w grze: bańka przy portach i w studniach planet, zapas floty i postój, stanowiska, trafienia, taran, awans do NPC, kadłuby ruchu, proxy 3D |
-| `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, upadek, powietrze, uderzenia |
+| `baza-piratow` | Baza piratów (misja 1) i planetoida Hidalgo: budowle, szyja, teren skały, powietrze |
 | `fabula` | Fabuła: reżyser misji, intro w K-7, kampania |
 | `kadluby-belki` | Kadłuby na silniku belek: trafienia, kratery, odrost, bryły 3D, mapa ran, integracja z grą |
 | `kreator-kadlubow` | Kreator kadłubów (demo, niewpięty): format projektu, klocki i strażnik „bez czitowania”, kompozytor TSL, sieć systemów (kable i rury), przyjazny edytor „Stocznia” (przeciągnij i upuść), budowa w workerze z pamięcią etapów, warstwa barw (palety nacji, pędzel), statki cywilne (rola, ładunek, presety frachtowców) |
 | `ciala-swiata` | Budowle na silniku belek: kawałki, kotwice, broń, rozpad, skóry |
+| `woksele-zawalen` | Wiązane woksele na GPU (`src/3d/woksele/`): solver, obraz, demo; w misji 1 obraz bazy piratów (skóra z wypieku, zdarzenia trafień), rozgrywka bez zmian |
 | `wybuchy-gaz` | Wybuchy WebGPU i gaz 3D: domeny, przeszkody, zbiorniki paliwa, dym zgniotu |
 | `flota-ai` | Szyk floty, formacje, omijanie przeszkód, rozkazy RTS, AI poza krokiem fizyki |
 | `mysliwce` | Myśliwce: pilot, role, bomby, eskadry gracza |
 | `bron-gracza` | Zasięgi broni, kierowanie ogniem, celownik, tryby okrętu pod ŚPM |
 | `systemy-f` | Systemy F i modyfikatory okrętu |
-| `statek-gracza` | Statek gracza: lot, zapis wyposażenia, WYPOSAŻENIE |
+| `statek-gracza` | Statek gracza: lot, zapis wyposażenia, zapis gracza (pozycja, kredyty, ładownia, kampania — klucz `game`), WYPOSAŻENIE |
 | `pociski` | Pociski, kolizje, nośnik prędkości, przebicia, IFF, ładowanie broni |
 | `efekty-broni` | Efekty broni (WeaponFx), receptury, wygląd pocisków |
 | `rakiety` | Rakiety i torpedy, salwy, Supernowa, obrona punktowa |
 | `tarcze` | Tarcze: pula slotów, przebicie, wygląd |
 | `maskowanie` | Maskowanie: wygląd, efekty, wizjer |
 | `warp` | Warp gracza, TRAVEL TO, wezwania wsparcia, warp „Nurt” w Core3D |
+| `warp-efekty` | Efekty boków kadru w skoku gracza (W1 haze DIST, W2 smugi, W3 zorza): przepływ równoległy do kursu, `?warpFx=`; przylot i wylot „jak w Gwiezdnych Wojnach” (domyślnie, dawny wygląd `?warpSW=0`) |
+| `hipercruise` | Obraz hipercruise'u: warstwa warpa w trybie `hyper`, opływ kadłuba (DIST), plazma dysz w locie, A/B `?hcStary=1` |
+| `mapa-gwiezdna` | Mapa gwiezdna — strefa międzygwiezdna między układami (jak nadprzestrzeń Starsectora; moduł `src/game/sector/` + demo, niewpięte): sektor z ziarna, punkty skoku = rogi świata, lot i paliwo, mgławice i burze, mgła eksploracji, floty kupieckie, patrole i piraci |
 | `scena-wojna` | Scena „Wojna”: floty z warpa, bitwa w głębi (tłum nad i pod płaszczyzną, planeta w głębi), bohaterowie, ujęcia kamery |
 | `fregata-zwiadu` | Fregata zwiadu w ładowni Atlasa |
 | `holownik` | Uszkodzenie silników i holownik serwisowy |
 | `silniki` | Silniki MAIN / WARP / SIDE, zapłon i gaszenie |
 | `drony-naprawcze` | Rój dronów naprawczych (R) |
 | `roj-przeladunkowy` | Rój dronów przeładunkowych (demo) |
+| `autostrada` | Autostrada wokół Ziemi (demo, niewpięte): sieć węzłów, ruch IDM i sygnalizacja K-7, Atlas na czerwonym, style wyglądu pasów, ślady z historii pozycji |
 | `przeladunek-portow` | Przeładunek w portach (E12): ładownie floty, rój przy stanowiskach, stoły i taśmociągi, luk Atlasa z ładunkiem |
+| `ciagniki` | Ciągniki kosmiczne (demo, niewpięte): małe ciężarówki z 1–5 naczepami, kinematyka przegubów, malarz sprite'ów, partia TSL bez Core3D |
 | `mostki-reaktor` | Mostki i rdzeń reaktora |
 | `wraki` | Wraki: gorące, śpiące, zimne |
 | `kontenery-lup` | Kontenery-łup: ładunek zniszczonych statków ruchu w przestrzeni, manifest encji, gniazdo ZBIÓRKA (wiązka, drony) |
 | `mgla-wojny` | Mgła wojny |
+| `kontakt-czujnikow` | Wygląd KONTAKTU czujników (wybrany OBŁOK, ECHO = skały) i NAMIARU „kto kogo widzi” (wachlarz, struna, błona): demo propozycji w TSL na Core3D, zasady pod wpięcie |
 | `radar-cic` | Radar taktyczny kokpitu, skan X, mapa CIC |
+| `zasieg-czujnikow` | Zasięg czujników (radarów) jak w Starsectorze: czujniki × sygnatura × osłona, KONTAKT / IDENTYFIKACJA, suma stref radarów, obraz czujników z gry, prototyp `?radarZasiegi` (ocena obustronna: wachlarz / struna / błona, warstwa ZASIĘGI w CIC, scena), demo 2D propozycji |
 | `kamera` | Kamera: zoom, rig, reżyser kadru, wstrząsy, kop warpa |
 | `pyl-kosmiczny` | Pył kosmiczny |
 | `menu` | Menu główne i jego tło 3D |
-| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync |
+| `opcje-grafiki` | Opcje grafiki: presety, dobór automatyczny, rozdzielczość dynamiczna, VSync, limit klatek |
 | `stacje` | Stacje i obiekty świata 3D, rozpad stacji, siatka infrastruktury stacji (edytor) |
 | `modele-3d` | Modele 3D statków i broni, bronie z Blendera, kamery 3D |
 | `oswietlenie-kadlubow` | Oświetlenie kadłubów v2 |
+| `swiatla-nawigacyjne` | Światła nawigacyjne: sześć lamp na każdym kadłubie, „blink blink” czerwono-zielone, oświetlanie tylko w błysku, style (żółte ostrzegawcze), migracja zapisu edytora |
 | `wejscie` | Warstwa wejścia, pad, skróty klawiszowe |
 | `electron-wydanie` | Electron, paczka i wydanie |

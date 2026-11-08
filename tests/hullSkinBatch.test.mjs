@@ -104,10 +104,43 @@ test('klej: nośnik kadłuba poza sceną, partia po zestawie tekstur, zapis czwo
   assert.match(src, /mesh\.userData\.hullBatched = true;/);
   assert.doesNotMatch(src.slice(src.indexOf('function createBeamSkinMesh('), src.indexOf('function rebuildBeamSkinGeometry(')), /Core3D\.scene\.add\(mesh\)/, 'nośnik nie w scenie');
   assert.match(src, /data\.batchEntry = data\.batch\.add\(data\.mesh\.material\.uniforms\.uHullSlot\.value, topo, data\.positions, data\.shade, data\.heat, data\.mesh, data\.tear\);/);
-  assert.match(src, /mesh\.updateMatrixWorld\(\);/, 'macierz świata nośnika poza sceną');
+  // macierz świata nośnika poza sceną pisana wprost (bez Eulera i kwaternionu — klatka workera 2026-11-02)
+  assert.match(src, /const me = mesh\.matrixWorld\.elements;/, 'macierz świata nośnika poza sceną');
+  assert.match(src, /me\[12\] = px; me\[13\] = py; me\[14\] = pz; me\[15\] = 1;/, 'przesunięcie w macierzy świata nośnika');
   assert.match(src, /new HullNodeMaterial\('beamBatch', \{/);
   const tsl = read('src/3d/hexShips3D.tsl.js');
   // niewidoczny kadłub partii zwinięty w wierzchołku (flaga slotu), widoczny — klip bez zmian
   assert.match(tsl, /return this\.hullVisible \? select\(this\.hullVisible\.greaterThan\(0\.5\), clip, vec4\(2\.0, 2\.0, 2\.0, 1\.0\)\) : clip;/);
   assert.match(tsl, /A\[o \+ 53\] = mesh\.visible \? 1 : 0;/);
+});
+
+// Scalanie zakresów wysyłki partii raz na klatkę (klatka workera 2026-11-02): każdy zmieniony kadłub partii dawał
+// osobny writeBuffer na atrybut (~60 wywołań na klatkę w bitwie); kadłuby oddalone o mniej niż SKIN_RANGE_GAP liczb
+// idą jednym wywołaniem.
+test('flushRanges: zakresy kadłubów partii oddalone o mniej niż 8192 liczb scalone, za dużym kadłubem osobno', () => {
+  const b = new HullSkinBatch('k', material());
+  const A = skin(2, 1), B = skin(2, 2), C = skin(2, 3), D = skin(700, 4), E = skin(2, 5);
+  const ea = b.add(1, topo(2), A.positions, A.shade, A.heat);
+  b.add(2, topo(2), B.positions, B.shade, B.heat);
+  const ec = b.add(3, topo(2), C.positions, C.shade, C.heat);
+  b.add(4, topo(700), D.positions, D.shade, D.heat);
+  const ee = b.add(5, topo(2), E.positions, E.shade, E.heat);
+  b.flushRanges();
+  assert.equal(b.aPos.updateRanges.length, 1, 'po dodaniu wpisów (stykają się) — jeden zakres');
+  for (const a of [b.aPos, b.aSh, b.aUv, b.aIdx]) a.clearUpdateRanges();
+  b.writeQuads(ea, A.positions, A.shade, A.heat, 0, 1);
+  b.writeQuads(ec, C.positions, C.shade, C.heat, 0, 1);
+  b.writeQuads(ee, E.positions, E.shade, E.heat, 0, 1);
+  assert.equal(b.aPos.updateRanges.length, 3, 'przed scaleniem: zakres na kadłub');
+  b.flushRanges();
+  // A i C dzieli kadłub B (8 wierzchołków) — razem; E za D (700 czworokątów = 8400 liczb pozycji) — osobno
+  assert.deepEqual(b.aPos.updateRanges.map((r) => [r.start, r.count]),
+    [[ea.vStart * 3, (ec.vStart + ec.vCount - ea.vStart) * 3], [ee.vStart * 3, ee.vCount * 3]]);
+  assert.deepEqual(b.aSh.updateRanges.map((r) => [r.start, r.count]),
+    [[ea.vStart * 4, (ec.vStart + ec.vCount - ea.vStart) * 4], [ee.vStart * 4, ee.vCount * 4]]);
+  // klej: scalanie raz na klatkę po wszystkich zapisach (syncSkinBatches), progi w partii i magazynie lamp
+  const hex = read('src/3d/hexShips3D.js');
+  assert.match(hex, /batch\.flushRanges\(\);/);
+  const tsl = read('src/3d/hexShips3D.tsl.js');
+  assert.match(tsl, /scalZakresy\(this\.attribute, HULL_LIGHT_RANGE_GAP\)/, 'sloty lamp: zakresy scalone w commit');
 });

@@ -60,6 +60,13 @@ export function sampleSmallBodyShape(s, u, v) {
   return a * (1 - ty) + b * ty;
 }
 
+/** Promień względny w kierunku jednostkowym układu kuli: to samo d, które displaceSmallBodyGeometry nadaje wierzchołkowi w tym kierunku (SphereGeometry: x = −cos φ sin θ, y = cos θ, z = sin φ sin θ, u = φ / 2π, v = 1 − θ / π). */
+export function smallBodyShapeAtDir(s, x, y, z) {
+  const u = Math.atan2(z, -x) / (2 * Math.PI);
+  const v = 1 - Math.acos(Math.max(-1, Math.min(1, y))) / Math.PI;
+  return sampleSmallBodyShape(s, u, v);
+}
+
 /**
  * Siatka kuli (SphereGeometry: wiersze iy = 0 … h od bieguna płn., kolumny ix = 0 … w, szew ix = 0 ≡ ix = w)
  * przesunięta wzdłuż promienia o d(u, v); bieguny — średnia skrajnego wiersza mapy (jeden punkt, bez pęknięcia),

@@ -47,7 +47,8 @@ paths:
   ring rozgrywki (kolizje, K-7, tranzyty) bez zmian. Kamera gry patrzy na biegun, tarcza obraca się jak koło, gryz (10° N)
   krąży PRZY KRAWĘDZI TARCZY — widać wcięcie w obrysie, korek na dnie jest pod powierzchnią. Kod, który ustawia gryz na
   tarczy, obraca wokół Z sceny (wzór `scripts/webgpu/korek-gra.mjs`, `planety-mapy-gra.mjs` przy `e._spinAxis`), nie
-  wokół Y. Tło menu ma własną Ziemię i obrót wokół Y (bez zmian). Dysk poświaty limbu gaśnie nad promieniem
+  wokół Y. Tło menu ma własną Ziemię z osią obrotu przechyloną o 10° (gryz w płaszczyźnie ringu — `menuEarthAxis`) i własny
+  egzemplarz elektrowni KOREK z tą osią (reguła `menu`, § „Ziemia tła = Ziemia gry”). Dysk poświaty limbu gaśnie nad promieniem
   przechodzącym przez kulę gryzu (`buildRingAtmosphereGraph`, punkt promienia najbliższy środkowi gryzu) — dysk leży
   w płaszczyźnie środka planety, a ściana gryzu przy limbie leży za nim (bez tego granatowy nalot we wcięciu).
 
@@ -62,7 +63,8 @@ paths:
   promień ma własne siatki osłon (jasność analityczna), kabiny — dodatek `extras` (jeden rysunek). Wspólne uniformy
   (`PLANT_KEYS`) dzielą z kulą `sunPosition`, `uBite`, `uSunShadowRecv`; graf każdego materiału raz na moduł; model
   światła wspólny (`plantLightContext` / `plantLighting`, węzły współdzielone przez `plantVar` — pułapka 40 w regule
-  `webgpu-tsl`). Ring w układzie Ziemi stoi, więc przekaźnik i liny są STAŁE (`attachRing(earthSpinAxis())`,
+  `webgpu-tsl`). Ring w układzie Ziemi stoi, więc przekaźnik i liny są STAŁE (`attachRing(earthSpinAxis())`; komponenty liczą oś ringu
+  przez `plantRingAxis(L)` — `L.ringAxis` z wyglądu albo oś gry; nowy kod elektrowni z osią ringu — tak samo, nie `earthSpinAxis()`;
   `PLANT_LAYOUT.ringInnerR` = `radii.min` ringu Ziemi / R — test). W grze: dziecko kuli Ziemi (`DirectPlanet._ensurePlant`),
   bryły buduje rozgrzewka ekranu ładowania (`'elektrownia KOREK (gryz Ziemi)'`, warstwa 6, faza `loading` — ~0,5 s CPU,
   menu nie czeka), zegar z doby (`plant.update`, zawinięcie co 4 096 s). Kadr gry z biegunem obrotu to w ramie gryzu
@@ -115,6 +117,8 @@ paths:
 - Gwiazdy (`StarSystem`): WebGPU rysuje punkty zawsze po 1 px, więc to `Mesh` z `InstancedBufferGeometry` (kwadrat ×
   26 000, dane gwiazd w JEDNYM przeplecionym buforze instancji — limit 8 buforów wierzchołków) i kwadrat punktu z GL
   (bok gl_PointSize obcięty do ≥ 1 px, gl_PointCoord z rogów, t w dół). Nie wracaj do `THREE.Points` z rozmiarem.
+  Materiał NIEprzezroczysty z mieszaniem addytywnym (`renderOrder` −1: na początku passa tła, pod ringiem, halami K-7
+  i planetoidą — przezroczysty przebijał przez nie, pułapka 41 w regule `webgpu-tsl`).
   Skok (zadanie 22): smugi PŁASKIE wzdłuż kursu i front wyjścia od dziobu z `WARP_STARS` (`src/3d/warp/stars.js`, pisze
   tylko sterownik warpa — nie prędkość lotu); dawne rozciąganie i „bicz” przy wyjściu usunięte. Bez warpa gałąź punktu
   jak przed zadaniem 22. W trybie nieba-sfery warstwa deep jest zwinięta (`hideDeep`), a warstwa mid jedzie DROGĄ NIEBA

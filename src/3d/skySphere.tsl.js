@@ -322,7 +322,12 @@ export function createSkyStarQuadsMaterial(U, tune = SKY_STARS_TUNE, sph = SKY_S
   })();
 
   const m = baseMaterial(SKY_SPHERE_MATERIAL_NAMES.stars);
-  m.transparent = true;
+  // NIEprzezroczysty z mieszaniem addytywnym (zgłoszenie 2026-11-03: gwiazdy tła przebijały przez doki K-7, ring i
+  // planetoidę bazy piratów): three r183 rysuje listę przezroczystych PO wszystkich nieprzezroczystych passa, a renderOrder
+  // sortuje tylko w obrębie listy — z `transparent = true` kwady bez testu głębi kładły się na bryłach passa tła. Mieszanie
+  // addytywne działa i bez `transparent` (pułapka 41, reguła `webgpu-tsl`): kolejność w passie tła niebo (−1000) → jasne
+  // gwiazdy (−998) → GameStars (−1) → bryły.
+  m.transparent = false;
   m.blending = THREE.AdditiveBlending;
   m.forceSinglePass = true;
   m.vertexNode = vertexNode;

@@ -1,13 +1,12 @@
 import test from 'node:test';
+import { navBlinkCode, navPhaseFromId } from '../src/data/shipNavLights.js';
 import assert from 'node:assert/strict';
 
 import {
   MAX_SHADER_SHIP_LIGHTS,
   NAV_CLUSTER,
-  NAV_LIGHT_CHASE,
   buildCombinedShipLightShaderPayload,
   buildNavLightClusters,
-  navChaseSequence,
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
@@ -18,7 +17,8 @@ import {
   getEntityLights,
   glslFloat,
   hexToRgb01,
-  roadEmittersMayReach
+  roadEmittersMayReach,
+  SHIP_LIGHT_DIR_TUNE
 } from '../src/game/shipLightRuntime.js';
 import { normalizeLightsBlock } from '../src/ui/shipLightEditorModel.js';
 import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
@@ -165,8 +165,7 @@ test('atlas default lights fit in one shader payload', () => {
   );
 
   // Wszystkie lampy z edytora + reflektory otoczenia dużego okrętu (rufa +
-  // 2 × 2 burty) mieszczą się — nic nie wypada (przy limicie 32 i 42 lampach
-  // pozycyjnych wypadały oba reflektory dziobu).
+  // 2 × 2 burty) mieszczą się — nic nie wypada.
   const { position, road } = ATLAS_EDITOR_DEFAULTS.lights;
   const floods = payload.lights.filter((l) => l.kind === 'flood');
   assert.equal(floods.length, 5);
@@ -181,7 +180,7 @@ test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości k
   for (let i = 0; i <= 10; i++) {
     outline.push({ x: -500 + i * 100, y: -100 }, { x: -500 + i * 100, y: 100 });
   }
-  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }] };
+  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }], autoFlood: true };
   const block = getEntityLights({ editorLights: lights });
   assert.equal(block.flood.length, 7, 'rufa + para środkowa + dwie pary (filtr per encja)');
   const rear = block.flood.find((f) => f.id === 'auto_flood_rear');
@@ -199,7 +198,7 @@ test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości k
   assert.deepEqual(kinds(0.4), ['auto_flood_mid_l', 'auto_flood_mid_r', 'auto_flood_rear']);
   assert.deepEqual(kinds(1), ['auto_flood_pair0_l', 'auto_flood_pair0_r', 'auto_flood_pair1_l', 'auto_flood_pair1_r', 'auto_flood_rear']);
   // Własny reflektor w bok = kadłub ma już swoje — bez generowanych.
-  const own = getEntityLights({ editorLights: { position: outline, road: [{ id: 'side', x: 0, y: 100, deg: 180 }] } });
+  const own = getEntityLights({ editorLights: { position: outline, road: [{ id: 'side', x: 0, y: 100, deg: 180 }], autoFlood: true } });
   assert.equal(own.flood.length, 0);
   // Emitery: reflektory otoczenia jako krótkie reflektory z flagą flood.
   const emitters = buildRoadLightWorldEmitters([{ id: 's', x: 0, y: 0, angle: 0, editorLights: lights }]);
@@ -207,12 +206,12 @@ test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości k
   assert.equal(emitters.filter((e) => !e.flood).length, 1);
 });
 
-test('reflektory z obrysu: generator dla edytora = blok gry, autoFlood:false gasi', () => {
+test('reflektory z obrysu: generator dla edytora = blok gry, bez autoFlood: true nie ma', () => {
   const outline = [];
   for (let i = 0; i <= 10; i++) {
     outline.push({ x: -500 + i * 100, y: -100 }, { x: -500 + i * 100, y: 100 });
   }
-  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }] };
+  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }], autoFlood: true };
   // Edytor liczy podgląd z tego samego generatora co gra (bez mutacji bloku).
   const plain = normalizeLightsBlock(lights);
   const { hullLenPx, markers } = computeAutoFloodMarkers(plain);
@@ -223,8 +222,8 @@ test('reflektory z obrysu: generator dla edytora = blok gry, autoFlood:false gas
   assert.deepEqual(markers.filter((m) => floodLightAllowed(m, 400)).map((m) => m.id).sort(),
     ['auto_flood_mid_l', 'auto_flood_mid_r', 'auto_flood_rear']);
   assert.ok(floodLightAllowed({ id: 'own' }, 0), 'własny reflektor świeci na każdym kadłubie');
-  // Hulk po utracie dowodzenia: lampy bez reflektorów, ale bez automatycznych.
-  const dark = getEntityLights({ editorLights: { position: outline, road: [], flood: [], autoFlood: false } });
+  // Lampy bez flagi: bez automatycznych reflektorów (hulk po utracie dowodzenia, każdy kadłub z danych).
+  const dark = getEntityLights({ editorLights: { position: outline, road: [], flood: [] } });
   assert.equal(dark.flood.length, 0);
   assert.equal(dark.hullLenPx, 1000);
   // Własne reflektory z edytora przechodzą bez zmian i wyłączają generator.
@@ -233,20 +232,20 @@ test('reflektory z obrysu: generator dla edytora = blok gry, autoFlood:false gas
   assert.equal(computeAutoFloodMarkers(own).markers.length, 0);
 });
 
-test('grupy lamp pozycyjnych: do 4 na statek, sekwencja w [rest, 1], rozlew na inny kadłub', () => {
+test('lampy pozycyjne jako światła: sześć na statek, błysk w [0, 1], rozlew na inny kadłub', () => {
   const source = { id: 'atlas', x: 0, y: 0, angle: 0, radius: 900, editorLights: ATLAS_EDITOR_DEFAULTS.lights };
   const clusters = buildNavLightClusters([source], { time: 1.3 });
-  assert.equal(clusters.length, 4);
+  assert.equal(clusters.length, NAV_CLUSTER.maxLamps);
   assert.equal(clusters.reduce((s, c) => s + c.count, 0), ATLAS_EDITOR_DEFAULTS.lights.position.length);
   for (const c of clusters) {
-    assert.ok(c.pulse >= NAV_LIGHT_CHASE.rest - 1e-9 && c.pulse <= 1 + 1e-9);
+    assert.ok(c.pulse >= 0 && c.pulse <= 1);
     assert.ok(c.rangeWorld > c.spreadWorld);
+    assert.ok(c.blink >= 0, 'kod migania lampy');
   }
-  // Średnia sekwencji w cyklu zgadza się ze stałą payloadu kadłubów.
-  let mean = 0;
-  for (let k = 0; k < 2000; k++) mean += navChaseSequence(k / 2000 / NAV_LIGHT_CHASE.speed, 0.3);
-  assert.ok(Math.abs(mean / 2000 - NAV_CLUSTER.meanSequence) < 0.03, `średnia sekwencji ${mean / 2000}`);
-  // Eskorta obok: dostaje rozlew czerwieni (typ 'omni'), własnych grup nie.
+  // Kadłub z większą liczbą lamp (dołożone w edytorze): grupy burta × połowa długości.
+  const many = Array.from({ length: 12 }, (_, i) => ({ x: -500 + i * 90, y: i % 2 ? 60 : -60 }));
+  assert.equal(buildNavLightClusters([{ id: 'x', x: 0, y: 0, angle: 0, editorLights: { position: many, road: [] } }], { time: 0 }).length, 4);
+  // Eskorta obok: dostaje rozlew lamp (typ 'omni'), własnych nie.
   const target = { id: 'escort', x: 0, y: 1300, angle: 0, radius: 500, editorLights: { position: [], road: [] } };
   const grid = { srcWidth: 1000, srcHeight: 400 };
   const lit = buildCombinedShipLightShaderPayload(target, grid, [], { externalOmniLights: clusters });
@@ -356,9 +355,8 @@ test('position lights are exported as world-space sprites with hull-shader phase
   assert.equal(sprites.length, 1);
   const sprite = sprites[0];
   assert.deepEqual({ x: sprite.x, y: sprite.y }, { x: 110, y: 240 });
-  // phase = (local.x*scaleX + srcWidth/2 + pivotX) / srcWidth — dokładnie jak
-  // localPhase w pętli lamp shadera kadłuba.
-  assert.equal(sprite.phase, 0.95);
+  // Ten sam kod migania, który lampa ma w slocie kadłuba (wzór 0, faza okrętu z id).
+  assert.equal(sprite.blink, navBlinkCode(0, navPhaseFromId('ship')));
   assert.equal(sprite.coreWorld, 6);
   assert.equal(sprite.haloWorld, 96);
   assert.equal(sprite.intensity, 2);
@@ -397,29 +395,6 @@ test('position light sprites are capped by maxSprites', () => {
   const sprites = buildPositionLightWorldSprites([entity], { maxSprites: 8 });
 
   assert.equal(sprites.length, 8);
-});
-
-test('nav light chase sequence runs from bow to stern', () => {
-  // Dziób = wyższa faza (większe X sprite'a). Błysk aktywuje się, gdy
-  // fract(t*speed + phase*gain) wchodzi w okno ataku — dziób musi błysnąć
-  // wcześniej niż rufa ("od prawej do lewej" przy dziobie w prawo).
-  // Zbocze narastające: światło mogło jeszcze dogasać z poprzedniego cyklu
-  // w t=0, więc szukamy pierwszego WEJŚCIA w okno błysku, nie samego stanu.
-  const firstFlashStart = (phase) => {
-    let wasFlashing = true;
-    for (let t = 0; t < 2 / NAV_LIGHT_CHASE.speed; t += 0.005) {
-      const chase = (t * NAV_LIGHT_CHASE.speed + phase * NAV_LIGHT_CHASE.phaseGain) % 1;
-      const flashing = chase < NAV_LIGHT_CHASE.attack;
-      if (flashing && !wasFlashing) return t;
-      wasFlashing = flashing;
-    }
-    return Infinity;
-  };
-
-  const bow = firstFlashStart(0.9);
-  const mid = firstFlashStart(0.5);
-  const stern = firstFlashStart(0.1);
-  assert.ok(bow < mid && mid < stern, `expected bow (${bow}) < mid (${mid}) < stern (${stern})`);
 });
 
 test('glslFloat always emits a float literal', () => {
@@ -539,4 +514,97 @@ test('własne lampy: wynik z cache per encja, przeliczany po zmianie skali, siat
   const relit = buildShipLightShaderPayload(entity, grid);
   assert.notEqual(relit.signature, moved.signature, 'nowe źródło lamp');
   assert.deepEqual(relit, buildShipLightShaderPayload({ editorLights: entity.editorLights, __hardpointScale: 2 }, grid));
+});
+
+// KIERUNKI REFLEKTORÓW BEZ ZAOKRĄGLENIA (2026-10-29, zgłoszenie „snopy front i pomocnicze drżą”): oś emitera w świecie
+// i kierunek światła zewnętrznego w przestrzeni sprite'a celu szły przez round2 (0,01 na składową) — przy obrocie okrętu
+// oś stała, a potem skakała o 0,3–0,8° (12–38 skoków/s przy 0,1–0,3 rad/s).
+test('oś reflektora przy obrocie: co klatkę o ω·dt, bez stania i skoków (A/B SHIP_LIGHT_DIR_TUNE.exact)', () => {
+  const HP = 0.833;
+  // Atlas (reflektory dalekie i otoczenia z obrysu — osie lokalne co 90°) + lampa ukośna na kadłubie o niejednakowej skali
+  // sprite'a (normalizacja kierunku po skali sprite'a)
+  const lights = { ...ATLAS_EDITOR_DEFAULTS.lights, road: [...ATLAS_EDITOR_DEFAULTS.lights.road, { id: 'skos', x: 900, y: 120, deg: 63, range: 800, coneDeg: 40 }] };
+  const ship = {
+    pos: { x: 1.6e6, y: 0 }, angle: 0, editorLights: lights,
+    __hardpointScale: HP, __hardpointScaleX: HP, __hardpointScaleY: HP,
+    visual: { spriteScale: 1, spriteScaleX: 1.15, spriteScaleY: 0.9 }, capitalProfile: { spriteRotation: 0 }
+  };
+  const fps = 240;
+  const wrap = (d) => Math.atan2(Math.sin(d), Math.cos(d));
+  const sweep = (omega) => {
+    const step = omega / fps;
+    let prev = null;
+    let stand = 0; let jumps = 0; let maxJump = 0; let maxDev = 0; let maxErr = 0; let n = 0;
+    for (let f = 0; f <= fps * 2; f++) {
+      ship.angle = 0.2 + step * f;
+      const em = buildRoadLightWorldEmitters([ship]);
+      const ang = em.map((e) => Math.atan2(e.dir.y, e.dir.x));
+      for (const e of em) assert.ok(Math.abs(Math.hypot(e.dir.x, e.dir.y) - 1) < 0.02);
+      // reflektor daleki dziobu (deg 90) świeci dokładnie kursem
+      maxErr = Math.max(maxErr, Math.abs(wrap(ang[0] - ship.angle)));
+      if (prev) {
+        for (let i = 0; i < ang.length; i++) {
+          const d = wrap(ang[i] - prev[i]);
+          n++;
+          maxDev = Math.max(maxDev, Math.abs(d - step));
+          if (Math.abs(d) < step * 0.5) stand++;
+          if (Math.abs(d) > step * 1.5) { jumps++; maxJump = Math.max(maxJump, Math.abs(d)); }
+        }
+      }
+      prev = ang;
+    }
+    return { stand, jumps, maxJump, maxDev, maxErr, n, lamps: prev.length };
+  };
+  const deg = Math.PI / 180;
+  const keep = SHIP_LIGHT_DIR_TUNE.exact;
+  try {
+    assert.equal(keep, true, 'domyślnie osie bez zaokrąglenia');
+    for (const omega of [0.1, 0.3]) {
+      const r = sweep(omega);
+      assert.equal(r.lamps, 8, '3 reflektory dalekie + 5 otoczenia');
+      assert.equal(r.stand, 0, `ω ${omega}: oś nie stoi`);
+      assert.equal(r.jumps, 0, `ω ${omega}: oś nie skacze`);
+      assert.ok(r.maxDev < 1e-9, `ω ${omega}: zmiana osi = ω·dt (odchyłka ${r.maxDev})`);
+      assert.ok(r.maxErr < 1e-9, `oś = kurs (błąd ${r.maxErr})`);
+    }
+    // A/B: dawne round2 — oś stoi i skacze o 0,3–0,8°, błąd wobec kursu do ~0,37°
+    SHIP_LIGHT_DIR_TUNE.exact = false;
+    const old = sweep(0.3);
+    assert.ok(old.stand > old.n * 0.3, `dawniej oś stała: ${old.stand} / ${old.n}`);
+    assert.ok(old.jumps > 50 && old.maxJump > 0.3 * deg, `dawniej skoki ${old.jumps}, największy ${(old.maxJump / deg).toFixed(3)}°`);
+    assert.ok(old.maxErr > 0.2 * deg && old.maxErr < 0.4 * deg, `dawniej błąd osi ${(old.maxErr / deg).toFixed(3)}°`);
+  } finally {
+    SHIP_LIGHT_DIR_TUNE.exact = keep;
+  }
+});
+
+test('światło zewnętrzne w przestrzeni sprite\'a celu: kierunek bez zaokrąglenia przy obrocie źródła (A/B exact)', () => {
+  const source = { id: 'zrodlo', x: 0, y: 0, angle: 0, editorLights: { road: [{ id: 'road', x: 0, y: 0, deg: 90, range: 4000, coneDeg: 40 }] } };
+  const target = { id: 'cel', x: 1500, y: 0, angle: 0.7, radius: 60, editorLights: { position: [], road: [] } };
+  const grid = { srcWidth: 120, srcHeight: 80, pivot: { x: 0, y: 0 } };
+  const step = 0.3 / 240;
+  const sweep = () => {
+    const out = [];
+    for (let f = 0; f <= 60; f++) {
+      source.angle = -0.04 + step * f;
+      const payload = buildCombinedShipLightShaderPayload(target, grid, buildRoadLightWorldEmitters([source, target]));
+      const l = payload.lights.find((x) => x.external);
+      assert.ok(l, `klatka ${f}: cel w stożku`);
+      out.push(Math.atan2(l.dir.y, l.dir.x));
+    }
+    return out;
+  };
+  const keep = SHIP_LIGHT_DIR_TUNE.exact;
+  try {
+    const a = sweep();
+    // cel bez skali sprite'a: kierunek w sprite'cie = kurs źródła − kąt celu, co klatkę o ω·dt
+    for (let i = 0; i < a.length; i++) assert.ok(Math.abs(Math.atan2(Math.sin(a[i] - (-0.04 + step * i - 0.7)), Math.cos(a[i] - (-0.04 + step * i - 0.7)))) < 1e-9);
+    SHIP_LIGHT_DIR_TUNE.exact = false;
+    const b = sweep();
+    let stand = 0;
+    for (let i = 1; i < b.length; i++) if (Math.abs(b[i] - b[i - 1]) < step * 0.5) stand++;
+    assert.ok(stand > 10, `dawniej kierunek stał: ${stand} / ${b.length - 1}`);
+  } finally {
+    SHIP_LIGHT_DIR_TUNE.exact = keep;
+  }
 });

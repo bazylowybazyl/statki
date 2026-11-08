@@ -9,8 +9,8 @@
        Ctrl+F5 czysci tylko cache HTTP, a "usuwanie ciastek" nie rusza localStorage, wiec stary
        uklad hardpointow z edytora (hpEditor.v1) przezywal kazde odswiezenie i wygrywal z nowym
        ukladem z src/data/hardpointEditorDefaults.js. Stad byl potrzebny tryb incognito.
-       Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=economy | ?reset=dev
-       Z konsoli: resetGameSave()  /  resetGameSave('hp') — potem F5. -->
+       Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=economy | ?reset=game | ?reset=dev
+       Z konsoli: resetGameSave()  /  resetGameSave('hp') — zapisy zamknięte do F5, potem F5. -->
   <script>
     (function () {
       const SAVE_KEYS = {
@@ -18,6 +18,8 @@
         ship: ['hpEditor.v1', 'loadout', 'engineVfxTune.v1'],
         // Ekonomia (E7): magazyny rynków, wyrwy pasa, flota frakcji, stacje gracza.
         economy: ['economy'],
+        // Zapis gracza (src/game/playerSave.js): pozycja, kredyty, ładownia, reputacja, doświadczenie, kampania.
+        game: ['game'],
         // Panele deweloperskie, layouty HUD i ustawienia grafiki.
         dev: [
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
@@ -25,7 +27,7 @@
           'sc_camera_frame', 'sc_gfx', 'sc_gfx_auto', 'sc_space_dust'
         ]
       };
-      const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.economy, ...SAVE_KEYS.dev];
+      const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.economy, ...SAVE_KEYS.game, ...SAVE_KEYS.dev];
 
       function keysForScope(scope) {
         switch (String(scope || 'all').trim().toLowerCase()) {
@@ -41,6 +43,8 @@
           case 'panele': return SAVE_KEYS.dev;
           case 'economy':
           case 'ekonomia': return SAVE_KEYS.economy;
+          case 'game':
+          case 'gracz': return SAVE_KEYS.game;
           default: return ALL_KEYS;
         }
       }
@@ -71,7 +75,9 @@
       }
 
       window.__SAVE_LOCKED = false;
-      window.resetGameSave = resetGameSave;
+      // Z konsoli w trakcie gry: zapisy zamknięte do przeładowania — inaczej `beforeunload` (loadout, economy, game)
+      // wpisałby klucze z powrotem ze stanu w pamięci przy F5. `?reset` w adresie woła resetGameSave bez blokady.
+      window.resetGameSave = (scope) => { window.__SAVE_LOCKED = true; return resetGameSave(scope); };
       window.hardResetGameSave = hardResetGameSave;
       window.GAME_SAVE_KEYS = ALL_KEYS;
 
@@ -166,8 +172,8 @@
           <button id="btn-new-game" class="menu-btn-styled mm-item primary" data-hint="Jeden dowódca albo co-op na podzielonym ekranie">
             <span class="mm-idx"></span><span class="mm-label">Nowa gra</span><span class="mm-go">&#9656;</span>
           </button>
-          <button id="btn-load-game" class="menu-btn-styled mm-item" disabled data-hint="Zapis stanu gry — wkrótce">
-            <span class="mm-idx"></span><span class="mm-label">Wczytaj</span><span class="mm-tag">wkrótce</span>
+          <button id="btn-load-game" class="menu-btn-styled mm-item" disabled data-hint="Brak zapisu gry">
+            <span class="mm-idx"></span><span class="mm-label">Wczytaj</span><span class="mm-tag">brak zapisu</span>
           </button>
           <button id="btn-options" class="menu-btn-styled mm-item" data-hint="Jakość grafiki, dźwięk, kamera">
             <span class="mm-idx"></span><span class="mm-label">Opcje</span><span class="mm-go">&#9656;</span>
@@ -282,6 +288,17 @@
                 <p class="mm-note">Wł. — klatki w takt odświeżania monitora: równy obraz bez rozdarć. Wył. — gra rysuje tyle klatek, ile zdąży: więcej FPS i mniejsze opóźnienie, za to karta graficzna i procesor pracują na pełnych obrotach (także w menu), a obraz może się rozdzierać. Zmiana działa od następnego uruchomienia gry.</p>
                 <p class="mm-note" data-gfx-vsync-browser hidden>W przeglądarce o VSync decyduje przeglądarka — opcja działa w grze uruchomionej z instalatora albo wersji przenośnej.</p>
                 <p class="mm-note mm-note-warn" data-gfx-vsync-pending hidden><span data-gfx-vsync-pending-text></span> <button class="menu-chip" data-gfx-reload>Uruchom ponownie</button></p>
+              </div>
+              <div class="mm-field">
+                <div class="mm-field-label">Limit klatek</div>
+                <div class="menu-chip-group" role="group" aria-label="Limit klatek">
+                  <button class="menu-chip" data-gfx-frame-limit="off">Bez limitu</button>
+                  <button class="menu-chip" data-gfx-frame-limit="240">240</button>
+                  <button class="menu-chip" data-gfx-frame-limit="144">144</button>
+                  <button class="menu-chip" data-gfx-frame-limit="120">120</button>
+                  <button class="menu-chip" data-gfx-frame-limit="60">60</button>
+                </div>
+                <p class="mm-note">Najwyżej tyle klatek na sekundę w grze i w menu. Mniej klatek to mniej pracy karty graficznej — ciszej i mniej prądu: przy monitorze 240 Hz limit 120 to około połowy pracy karty, a różnicę w płynności trudno zauważyć. Fizyka i szybkość gry bez zmian. Najrówniej, gdy częstotliwość monitora jest wielokrotnością limitu (240 Hz — 120 albo 60, 144 Hz — 144). Działa od razu. <span data-gfx-frame-limit-now hidden></span></p>
               </div>
               <div class="mm-field">
                 <div class="mm-field-label">Wygładzanie krawędzi (MSAA)</div>
@@ -763,7 +780,7 @@
     import { HullLacquer } from "./src/3d/hullLacquer.js";
     import { Destruction3D } from "./src/vfx/destruction3D.js";
     import { drawInfrastructureIcon } from './src/buildings/infrastructureView.js';
-    import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx } from './src/game/graphicsQuality.js';
+    import { loadGfxSettings, gfxPresetFromQuery, gfxWithPreset, hasSavedGfx, gfxFrameLimitFromQuery } from './src/game/graphicsQuality.js';
     import { describeGpuAdapter, pickGfxPresetAuto, gfxAutoFromQuery } from './src/game/graphicsAutoPreset.js';
     import { resolveRenderMode as resolveRenderModeBoot, renderWorkerCaps as renderWorkerCapsBoot } from './src/render/renderBridge.js';
 
@@ -785,10 +802,13 @@
     // window.__GFX_AUTO_FAKE = { vendor, architecture, … } przed wczytaniem — atrapa opisu adaptera (narzędzia).
     // VSync (gra w Electronie — electron/preload.js, window.hullfallApp): wybór z pliku ustawień startu
     // (Dokumenty\HULLFALL\uruchomienie.json — z niego main.js ustawia flagi Chromium), nie z localStorage.
+    // ?limitKlatek=240|144|120|60|0 — limit klatek tej sesji bez zapisu (narzędzia, pomiary).
     {
       const urlPreset = gfxPresetFromQuery(location.search);
       let gfx = loadGfxSettings(localStorage);
       if (urlPreset) gfx = gfxWithPreset(gfx, urlPreset);
+      const urlFrameLimit = gfxFrameLimitFromQuery(location.search);
+      if (urlFrameLimit) gfx = { ...gfx, frameLimit: urlFrameLimit };
       if (window.hullfallApp) gfx = { ...gfx, vsync: window.hullfallApp.vsyncSaved === false ? 'off' : 'on' };
       window.__gfxBoot = Object.freeze({ ...gfx, urlPreset });
       Core3D.configureQuality({ renderScale: gfx.renderScale, msaa: gfx.msaa });
@@ -868,7 +888,8 @@
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { formatLocalDistance, formatVelocity, resolveWorldUnitsPerAu } from './src/config/units.js';
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
-    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, resolveWorldSeed, systemMapAngleForSeed, sunWellRadius } from './src/data/systemMap.js';
+    import { buildSystemMap, SYSTEM_MAP_CONSTANTS, normalizeWorldSeed, resolveWorldSeed, systemMapAngleForSeed, sunWellRadius } from './src/data/systemMap.js';
+    import { getStarSystem, resolveStarSystemId, systemHome } from './src/data/starSystems.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadius, getEntityShieldRayEnter } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -919,7 +940,7 @@
       npcCollidesWithWorld,
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
-    import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
+    import { describeFleetAwareness, pickContactTarget, resolveAwarenessSensorRange } from "./src/ai/fleetAwareness.js";
     import { describeFleetFormation, getFleetPhase, setFleetStanceOverride } from "./src/ai/fleetCoordinator.js";
     import { WAR_SCENE_DEFAULTS, pickDeepSpot, planWarBackdrop, planWarScene, topCameraHeight } from "./src/game/warScene.js";
     import { DEFAULT_FLEET_FORMATION, normalizeFleetFormation } from "./src/ai/fleetFormation.js";
@@ -1012,15 +1033,6 @@
     const GameBlasts = createExplosionEvents(RenderCommands.writer, { sweepDrones: (o) => sweepRepairDronesForBlast(o) });
     window.GameBlasts = GameBlasts;
     installExplosionCommands(RenderCommands.reader, () => shipBlastFactory);
-    // Uderzenia w planetoidę pod bazą piratów (upadek bazy, 2026-10-19): kontrakt fizyki src/game/story/pirateRockImpacts.js
-    // (rockImpact / rockScrape / rockSettle → rekord ROCK_IMPACT), obraz z dekodera src/3d/pirateRockImpactFx.js — cząstki
-    // w passie tła i głębokie domeny gazu wybuchów (ExplosionFx.deepDomain). Dev: window.PirateRockImpacts (test, demo).
-    import { installPirateRockImpacts, stepPirateRockImpacts, PirateRockImpacts, rockImpact, rockScrape, rockSettle, resetPirateRockImpacts, deepBlast as pirateDeepBlast } from "./src/game/story/pirateRockImpacts.js";
-    import { pirateBasePlace } from "./src/game/story/pirateBaseWorld.js";
-    import { installRockImpactCommands } from "./src/3d/pirateRockImpactFx.js";
-    installPirateRockImpacts(RenderCommands.writer, { clock: () => SimClock.sim, place: () => pirateBasePlace() });
-    window.PirateRockImpacts = PirateRockImpacts;
-    installRockImpactCommands(RenderCommands.reader, () => shipBlastFactory?.system || null);
     // RW-22: obraz rdzenia reaktora — fasada env.fx ReactorGame pisze rekordy RX_* (src/game/reactorFxEvents.js: pęknięcia
     // i rzazy liczy gra, strumienie i kule przez id), dekoder renderu woła reżysera (src/3d/reactorBlast/reactorCommands.js).
     import { createReactorFxEvents } from "./src/game/reactorFxEvents.js";
@@ -1061,6 +1073,12 @@
     import { buildWreckFields } from "./src/game/wreckFields.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import { assignHardpointEntries, restoreWeaponStock, serializeWeaponStock } from "./src/game/loadoutSave.js";
+    import {
+      PLAYER_SAVE_KEY, PLAYER_SAVE_VERSION, buildPlayerSave, parsePlayerSave, campaignCheckpoint,
+      describePlayerSave
+    } from "./src/game/playerSave.js";
+    import { CAMPAIGN_RESUME } from "./src/game/story/campaign.js";
+    import { rankIndexForExp } from "./src/game/story/progression.js";
     // WYPOSAŻENIE — karty konfiguracji, automat refitu, moduły, ekran (docs/PLAN-fitowanie.md).
     import { FIT_PRESETS, FIT_PRESET_IDS, FIT_KIT_STOCK, FIT_KIT_PARTS, FIT_START_PRESET } from "./src/data/fitPresets.js";
     import {
@@ -1137,7 +1155,7 @@
     import { stepCameraZoom, cameraZoomBase, wheelDeltaPx, syncCameraZoomLimits, cameraZoomFloor } from "./src/game/cameraZoom.js";
     import {
       cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
-      defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
+      defaultShipZoom, warpJumpZoomRef, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
       normalizeCameraWarpKickMode, createCameraKick, addCameraKick, stepCameraKick, stepCameraRigRoll,
       normalizeCameraHyperRollMode
     } from "./src/game/cameraRig.js";
@@ -1223,19 +1241,19 @@
     import { pirateBase3D, pirateBase3DEvent, pirateRockSite, updatePirateBase3D } from "./src/3d/pirateBaseGame.js";
     // Baza piratów po stronie gry (RW-24): stan kawałków, `_dockGone`, ciała świata, decyzje break / ram, środek planetoidy;
     // obraz dostaje zdarzenia (onPirateBaseEvent → pirateBase3DEvent).
-    import { attachPirateBaseWorld, attachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseObstacles, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
+    import { attachPirateBaseWorld, attachPirateBaseBodies, detachPirateBaseBodies, breakPirateBaseChunk, collapsePirateRock, hidePirateBaseChunk, onPirateBaseEvent, pirateBaseVoxEvent, pirateBaseBrokenChunks, pirateBaseChunkGone, pirateBaseObstacles, pirateBaseSites, pirateRockAt, prebuildPirateBaseWorld, syncPirateBaseGone } from "./src/game/story/pirateBaseWorld.js";
     // Ciała ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F1/F2): budowle jako płaskie, zakotwiczone ciała silnika belek
     // (taran = zderzenie kadłubów, broń przez solver — pęd, ciśnienie, ciepło) i ich skóra 3D. Bez dymu, ognia i wybuchów.
     import { worldBodies } from "./src/game/worldBodies.js";
     import { syncWorldBodies3D } from "./src/3d/worldBodies3D.js";
-    import { BASE_INTEGRITY_TUNE, baseStepChunk, markBaseBroken, noteBaseRam, stepBaseIntegrity } from "./src/game/story/pirateBaseIntegrity.js";
+    import { BASE_INTEGRITY_TUNE, baseStepChunk, createPiecePools, damagePool, habitatStages, markBaseBroken, noteBaseRam, poolPieceAt, stepBaseIntegrity } from "./src/game/story/pirateBaseIntegrity.js";
     import { NECK_TUNE, createNeckState, noteNeckRam, snapNeck, stepNeck } from "./src/game/story/pirateBaseNeck.js";
     // Upadek habitatu na planetoidę (2026-10-19): teren skały i grawitacja ku jej środkowi w silniku belek, wieża
     // przebija dysk i spada pierwsza, dysk za nią, osiadanie na skale (src/game/story/pirateBaseFall.js).
-    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, noteBaseWreckRest, promotePlanarPiece, startHabitatFall, stepHabitatFall } from "./src/game/story/pirateBaseFall.js";
+    import { PIRATE_FALL_TUNE, attachPirateRockTerrain, createFallState, createPirateRockTerrain, detachPirateRockTerrain, loadPirateRockShape, stepRockDebris } from "./src/game/story/pirateBaseFall.js";
     // Powietrze budowli bazy (2026-10-19): rozszczelnienie, dekompresja, wylot powietrza i pożary — decyzje w grze
     // (src/game/story/pirateBaseAtmosphere.js), obraz wyrw src/3d/pirateBaseVents3D.js (stan klatki — blok pirateVents).
-    import { attachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach, ignite as pirateBaseIgnite } from "./src/game/story/pirateBaseAtmosphere.js";
+    import { attachPirateBaseAtmosphere, detachPirateBaseAtmosphere, noteBaseBlast, noteBaseChunkBreak, noteBaseCrater, noteBaseNeckSnap, noteBaseNodeLost, pirateBaseAtmoFlicker, pirateBaseVentFrame, rehomePirateBaseVents, stepPirateBaseAtmosphere, PirateBaseAtmosphere, breach as pirateBaseBreach } from "./src/game/story/pirateBaseAtmosphere.js";
     import { createPirateVentsBlock } from "./src/render/blocks/pirateVentsBlock.js";
     import { createPirateBaseVents3D } from "./src/3d/pirateBaseVents3D.js";
     // Bitwa w głębi sceny „Wojna” (2026-10-19): tłum okrętów nad i pod płaszczyzną gry, planeta w głębi, bohaterowie —
@@ -1270,6 +1288,7 @@
     import { RenderMirror } from "./src/render/renderMirror.js";
     import { resolveRenderMode, renderWorkerCaps } from "./src/render/renderBridge.js";
     import { createRenderWorkerHost } from "./src/render/renderWorkerHost.js";
+    import { RET_F64 } from "./src/render/returnLayout.js";
     import { createRocketBlock } from "./src/render/blocks/rocketBlock.js";
     import { createViewBlock } from "./src/render/blocks/viewBlock.js";
     import { createRepairBlock } from "./src/render/blocks/repairBlock.js";
@@ -1349,10 +1368,15 @@
     // Opcje grafiki (presety jakości, zapis sc_gfx) — blok „OPCJE GRAFIKI” przy opcjach menu.
     import {
       normalizeGfx, normalizeGfxValue, matchGfxPreset, saveGfxSettings, gfxWithPreset, gfxBloomScale, hasSavedGfx,
-      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord
+      gfxDynamicTargetFps, gfxRestartPending, GFX_KEYS, GFX_EXPLOSIONS, GFX_EFFECTS, GFX_AUTO_KEY, gfxRenderRecord, gfxFrameLimitFps,
+      gfxDynamicBudgetFps
     } from "./src/game/graphicsQuality.js";
+    // Limit klatek (Opcje → Grafika): które wywołania rAF pętli gry rysują klatkę, budzik bez VSync — blok
+    // „OPCJE GRAFIKI”, loop().
+    import { FrameLimiter } from "./src/render/frameLimiter.js";
+    import { createFrameWake, frameWakeStrategyFromQuery } from "./src/render/frameWake.js";
     // Rozdzielczość dynamiczna (sterownik skali renderu z czasu GPU) — blok „OPCJE GRAFIKI”.
-    import { createDynResState, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
+    import { createDynResState, createDynResClock, dynResSample, stepDynRes, DYN_RES_TUNE } from "./src/game/dynamicResolution.js";
     import { initRocketSystem3D } from "./src/game/rockets/rocketSim.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
     // RW-23: zdarzenia lotu rakiet — rekordy RKT_* (adapter gry → dekoder renderu, reżyser efektów rakiet).
@@ -1422,7 +1446,11 @@
     import { createSparkEvents } from "./src/game/sparkEvents.js";
     const GameSparks = createSparkEvents(RenderCommands.writer);
     setCollisionSparkSink(GameSparks);
-    import { SensorSystem } from "./src/game/sensorSystem.js";
+    import { SensorSystem, getEntitySizeModifier } from "./src/game/sensorSystem.js";
+    // Zasięg radarów — prototyp ?radarZasiegi (docs/PLAN-zasieg-czujnikow.md): obraz czujników, fale w świecie, scena.
+    import { createSensorPicture, updateSensorPicture, noteSensorPictureFire, noteSensorPicturePing, sensorStateOf } from "./src/game/sensorPicture.js";
+    import { DETECTION_TUNE, SENSOR_DRIVE } from "./src/game/sensorDetection.js";
+    import { createRadarRangeOverlay, nextRadarLook, RADAR_LOOK_LABELS, setRadarLook } from "./src/ui/radarRangeOverlay.js";
     import { loadFogOption, saveFogOption, formatMassEstimate } from "./src/game/fogOfWar.js";
     import { createFogHud } from "./src/ui/fogHud.js";
     window.SensorSystem = SensorSystem;
@@ -1526,7 +1554,8 @@
       getHullRenderSize,
       getWeaponTierForHull,
       HULL_RENDER_PROFILES,
-      HULL_RENDER_WORLD_SCALE
+      HULL_RENDER_WORLD_SCALE,
+      SHIP_SENSOR_PROFILES
     } from "./src/data/ships.js";
     import {
       PLAYER_HULL_MARKET,
@@ -1548,6 +1577,7 @@
       areFactionsHostile,
       applyReputationChange,
       canDockWithFaction,
+      clampReputation,
       createInitialReputation,
       getDefaultStationFaction,
       getFactionColor,
@@ -1604,6 +1634,7 @@
     import { drawWarpCourseHud } from "./src/ui/warpCourseOverlay.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { migratePirateSpriteLayout } from "./src/data/pirateSpriteMigration.js";
+    import { restyleNavLights } from "./src/data/shipNavLights.js";
     import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
     import { buildEntityEngineFx, resolveEngineFx } from "./src/data/engineFx.js";
     import {
@@ -2442,12 +2473,17 @@
 
     // Warstwa wejścia (docs/PLAN-pad.md, etap 1): JEDEN odczyt urządzeń na klatkę rAF — pumpInput woła ta pętla
     // (menu, podzielony ekran, przed startem gry) i loop() przed krokami fizyki; strażnik znacznika rAF sprawia,
-    // że pracuje tylko pierwsze wywołanie w klatce.
+    // że pracuje tylko pierwsze wywołanie w klatce. Od pierwszej klatki pętli gry (gameLoopLive) ta pętla kończy się:
+    // wejście pompuje loop() raz na RYSOWANĄ klatkę (limit klatek — blok „OPCJE GRAFIKI”), a bez VSync pętla gry śpi
+    // między klatkami bez pustych wywołań rAF.
     const Input = createInput({ read: () => (navigator.getGamepads ? navigator.getGamepads() : null) });
     window.Input = Input;
+    let gameLoopLive = false;
     function inputFrameLoop(now) {
+      if (gameLoopLive) return;
       pumpInput(now);
       requestAnimationFrame(inputFrameLoop);
+      frameLimiter.observe(now);   // okres ekranu dla notki limitu klatek w opcjach (blok „OPCJE GRAFIKI”)
     }
     requestAnimationFrame(inputFrameLoop);
 
@@ -2535,6 +2571,7 @@
       }
       menuBackdrop = backdrop;
       window.__menuBackdrop = backdrop;
+      applyFrameLimit();   // limit klatek z opcji grafiki — pętla tła (blok „OPCJE GRAFIKI”)
       backdrop.onReady(() => mainMenuEl?.classList.add('bd-ready'));
       backdrop.setFocus(MENU_WIDE_VIEWS.has(menuView) ? 1 : 0);
       syncMenuBackdrop();
@@ -4739,6 +4776,9 @@
         hp.maxAmmo = full;
         hp.ammo = full;
       }
+      // Nowa gra = pełne magazynki wszędzie (Supernova, torpedy): broń, która już wisi z zapisu, plan karty
+      // zostawia bez przemontowania — razem z amunicją zużytą w poprzedniej kampanii.
+      refillHardpointAmmo(Game.player.hardpoints, playerWeaponAmmo);
       syncWeaponSystems();
       saveLoadout();
     }
@@ -6032,6 +6072,9 @@
       // Podłoga zoomu NA EKRANIE przy członie < 0 (kadr przylotu warpa z celem — cameraZoom.js: cameraZoomFloor); NaN — limit
       // kadłuba (minZoom).
       zoomImpulseMin: NaN,
+      // Ujednolicony kadr skoku warpa gracza (kadr lotu): limit członu przejściowego jak przy podłodze K1 (cameraZoom.js:
+      // stepImpulseCap) — kadr lotu nie zależy od zoomu gracza.
+      zoomImpulseWide: false,
       zoomAnchor: { active: false, dx: 0, dy: 0 },
       manualZoom: false,
       shakeMag: 0,
@@ -6689,6 +6732,8 @@
       }
       if (resizeHexShips3D) resizeHexShips3D(W, H);
       resizeShieldSystem(innerWidth, innerHeight);
+      // limit klatek (blok „OPCJE GRAFIKI”): kanwy wyczyszczone — najbliższa klatka gry i tła menu bez limitu
+      frameLimitResized();
       if (camera.mode === 'focus' && camera.focusStation) {
         const target = computeStationFocusTarget(camera.focusStation);
         camera.focusZoom = target.zoom;
@@ -7120,16 +7165,29 @@
 
 
 
+    // =============== Układ gwiezdny (src/data/starSystems.js) ===============
+    // Strona buduje JEDEN układ przy starcie: `?uklad=<id>`, potem układ z zapisu gracza (`game`, playerSave.js), potem
+    // Układ Słoneczny. Inny układ = przeładowanie strony. Ciała mają id lokalne dla układu ('earth') — drugi układ nigdy
+    // nie jest załadowany obok.
+    const CURRENT_SYSTEM_INFO = (() => {
+      let savedSystemId = null;
+      try { savedSystemId = JSON.parse(localStorage.getItem(PLAYER_SAVE_KEY) || 'null')?.systemId ?? null; } catch { savedSystemId = null; }
+      return resolveStarSystemId(location.search, savedSystemId);
+    })();
+    const CURRENT_SYSTEM = getStarSystem(CURRENT_SYSTEM_INFO.id);
+    // Dom gracza w układzie (start gry swobodnej, POWRÓT, port wezwań, holownik) — null w układzie bez domu.
+    const SYSTEM_HOME = systemHome(CURRENT_SYSTEM);
+    window.CURRENT_SYSTEM_ID = CURRENT_SYSTEM.id;
+    if (CURRENT_SYSTEM_INFO.rejected) console.warn(`[układ] nieznany układ „${CURRENT_SYSTEM_INFO.rejected}” — buduję ${CURRENT_SYSTEM.id}`);
+
     // =============== Słońce, planety i stacje ===============
-    // r — promień tarczy (SYSTEM_MAP_CONSTANTS.sunRadius, 200 tys. j.): ten sam dla obrazu (DirectSun — kula w płaszczyźnie
-    // gry), radaru, CIC i studni (sunWellRadius — strefa 'sun', studnie skoku, przeszkoda tras).
+    // r — promień tarczy (gwiazda układu: SOL — SYSTEM_MAP_CONSTANTS.sunRadius, 200 tys. j.): ten sam dla obrazu (DirectSun —
+    // kula w płaszczyźnie gry), radaru, CIC i studni (sunWellRadius — strefa 'sun', studnie skoku, przeszkoda tras).
     const SUN = {
-      x: WORLD.w / 2, y: WORLD.h / 2, r: SYSTEM_MAP_CONSTANTS.sunRadius,
-      color: {
-        core: '#ffe88a',   // jasno-żółty rdzeń
-        mid: '#ffbe3b',   // pomarańcz-żółć
-        rim: '#ff8c1a'    // ciepła krawędź tarczy
-      },
+      x: WORLD.w / 2, y: WORLD.h / 2, r: CURRENT_SYSTEM.star.r,
+      // podpis gwiazdy na radarze i w CIC
+      label: CURRENT_SYSTEM.label,
+      color: { ...CURRENT_SYSTEM.star.color },
       corona: {
         rays: 72,           // ile "igieł"
         jitter: 0.35,       // nieregularność
@@ -7171,7 +7229,14 @@
     const WORLD_SEED_INFO = (() => {
       let raw = null;
       try { raw = localStorage.getItem('economy'); } catch { raw = null; }
-      return resolveWorldSeed(location.search, raw, WORLD_SEED_SAVE_VERSION);
+      const info = resolveWorldSeed(location.search, raw, WORLD_SEED_SAVE_VERSION);
+      if (info.source !== 'new' || new URLSearchParams(location.search).get('ziarno')) return info;
+      // Bez zapisu ekonomii (inna wersja — świat ruchu od zera) ziarno niesie zapis gracza (`game`, playerSave.js):
+      // zapisana pozycja Atlasa ma trafić w ten sam układ planet.
+      let game = null;
+      try { game = JSON.parse(localStorage.getItem(PLAYER_SAVE_KEY) || 'null'); } catch { game = null; }
+      const seed = game && game.version === PLAYER_SAVE_VERSION ? normalizeWorldSeed(game.worldSeed) : null;
+      return seed === null ? info : { seed, source: 'save' };
     })();
     const WORLD_SEED = WORLD_SEED_INFO.seed;
     window.WORLD_SEED = WORLD_SEED;
@@ -7183,6 +7248,7 @@
       // tutaj wpisana, a wszystko poza grą przepisywało jej liczby ręcznie, więc
       // każda zmiana skali po cichu unieważniała dokumentację i pomiary.
       const { auInWorldUnits, planets } = buildSystemMap(getOuterAsteroidEdgeAU(), {
+        planets: CURRENT_SYSTEM.planets,
         planetScale: PLANET_SCALE,
         sunRadius: SUN.r,
         // kąty z ziarna świata (T3) — nie losowe przy każdym starcie
@@ -7305,7 +7371,7 @@
         features.push({
           id: 'sun',
           type: 'sun',
-          label: 'SOL',
+          label: SUN.label || 'SOL',
           entity: sun,
           // tarcza słońca (DirectSun rysuje kulę o promieniu SUN.r w płaszczyźnie gry)
           radius: Math.max(100, Number(sun.r) || 0),
@@ -8056,7 +8122,8 @@
     }
 
     if (!hasSavedShipPosition) {
-      const earthStation = stations.find(st => st.id === 'earth');
+      // stacja domu gracza w układzie (SOL: Ziemia) — bez domu Atlas zostaje przy gwieździe (alignWorldToCenter)
+      const earthStation = SYSTEM_HOME ? stations.find(st => st.id === SYSTEM_HOME.stationId) : null;
       if (earthStation) {
         // Spawn player just beyond Earth's gravity well boundary (not inside the orbit).
         // Player needs to fly IN to approach Earth — wchodzisz do systemu, nie rodzisz się w dokach.
@@ -9131,7 +9198,8 @@
     // obraca się dziobami do Ziemi, ładuje skok i znika w szczelinach — wypada z gry bez wraku,
     // łupu i wybuchu.
     function getSupportWarpHome() {
-      const earth = planets.find(p => p?.id === 'earth');
+      // planeta domu gracza w układzie (SOL: Ziemia); bez domu — wsparcie bez portu macierzystego
+      const earth = SYSTEM_HOME ? planets.find(p => p?.id === SYSTEM_HOME.planetId) : null;
       return earth && Number.isFinite(earth.x) && Number.isFinite(earth.y) ? earth : null;
     }
 
@@ -12639,10 +12707,237 @@
       };
     }
 
+    // ============================================================
+    // ZASIĘG RADARÓW — PROTOTYP (?radarZasiegi, 2026-11-04; docs/PLAN-zasieg-czujnikow.md, reguła zasieg-czujnikow).
+    // Obraz czujników (src/game/sensorPicture.js) liczony z gry ~5 Hz: czujniki × sygnatura × osłona, wiedza strony
+    // gracza o radarach wroga (identyfikacja = mgła wojny), strefy dla UI. Rysunek: fale i znaczniki w świecie
+    // (src/ui/radarRangeOverlay.js), warstwa ZASIĘGI w CIC ([Z]). Rozgrywki NIE zmienia — AI i mgła liczą jak dotąd.
+    // Scena: ?radarZasiegi=scena (start gry swobodnej) albo DevScene.radar() / RadarZasiegi.scena() z konsoli.
+    // ============================================================
+    const RADAR_RANGE_QUERY = new URLSearchParams(location.search);
+    const RADAR_RANGE_PROTO = RADAR_RANGE_QUERY.has('radarZasiegi');
+    // Cicha praca gracza — w prototypie tylko z konsoli (RadarZasiegi.cisza()); decyzja o umiejętności: plan § 5.
+    let radarRangeSilent = false;
+    const radarRangeAdapters = {
+      alive(e) {
+        return !!e && !e.dead && !e.destroyed && !e.removed && !e.warpedOut && !e.isWreck && !e._destroyed3D
+          && e.isCollidable !== false;
+      },
+      sideOf(e) {
+        if (e === ship || e.friendly === true || e.playerOwned === true) return 'friendly';
+        if (e.isPirate === true || isEntityHostileToPlayer(e)) return 'pirate';
+        return null;
+      },
+      isStation(e) { return !!e.isStation; },
+      posOf(e, out) {
+        out.x = Number(e.pos?.x ?? e.x) || 0;
+        out.y = Number(e.pos?.y ?? e.y) || 0;
+        return out;
+      },
+      passiveOf(e) { return resolveAwarenessSensorRange(e); },
+      activeOf(e, passive) { return (e.sensors || e.sensorProfile) ? resolveShipSensors(e).activeRange : passive * 1.2; },
+      baseSigOf(e) { return getEntitySizeModifier(e); },
+      visionOf(e) { return SensorSystem.visionRangeOf(e); },
+      // Osłona przy celu: gęste pole pasa asteroid (pole gry — sampleMacro), obrzeże pola.
+      coverAt(x, y) {
+        const C = DETECTION_TUNE.cover;
+        const f = beltWorld?.field;
+        if (!f || typeof f.sampleMacro !== 'function') return C.open;
+        const m = f.sampleMacro(x, y);
+        const dense = (Number(m?.cluster) || 0) * (Number(m?.hole ?? 1) || 0);
+        if (dense > 0.35) return C.belt;
+        if ((Number(m?.weight) || 0) > 0.3 || (Number(m?.rim) || 0) > 0.3) return C.beltRim;
+        return C.open;
+      },
+      identified(e) { return !SensorSystem.hides(e); },
+      cloaked(e) { return isCloakHidden(e); },
+      writeState(e, s, isPlayer) {
+        s.thrust = clamp(Number(e.thrusterInput?.main) || 0, 0, 1) * engineThrustScale(e) * mainEngineFraction(e);
+        if (isPlayer) {
+          s.drive = (warp.state !== 'idle' || warp.exitRamp?.active) ? SENSOR_DRIVE.warp
+            : (hyperLook.state === 'active' || ship.__hyperMode === 'active') ? SENSOR_DRIVE.hyper
+              : boost.state === 'active' ? SENSOR_DRIVE.boost : SENSOR_DRIVE.combat;
+          s.silent = radarRangeSilent;
+        } else {
+          s.drive = SENSOR_DRIVE.combat;
+        }
+      }
+    };
+    const sensorPicture = RADAR_RANGE_PROTO ? createSensorPicture(radarRangeAdapters) : null;
+    const radarRangeOverlay = RADAR_RANGE_PROTO ? createRadarRangeOverlay() : null;
+    // Wygląd oceny obustronnej: ?radarWyglad=wachlarz|struna|blona, klawisz ], RadarZasiegi.wyglad(nazwa).
+    if (RADAR_RANGE_PROTO && RADAR_RANGE_QUERY.has('radarWyglad')) setRadarLook(RADAR_RANGE_QUERY.get('radarWyglad'));
+    const _rrWorld = { player: null, npcs: null, stations: null, extraSources: () => SensorSystem.getSensorSources() };
+    let _rrLastPing = 0;
+    if (sensorPicture) {
+      // Strzał zdradza strzelca (ciepło ostrzału — szyna strzałów gry; `d` jest wielokrotnego użytku, nie trzymać).
+      WeaponShotBus.on((d) => { if (d.shooter) noteSensorPictureFire(sensorPicture, d.shooter); });
+      CICDisplay.setCoverageSource(() => sensorPicture);
+    }
+    // Krok obrazu w kroku informacji klatki (po czujnikach i CIC); przebudowa co ~0,2 s czasu logiki.
+    function stepRadarRangePicture(dt) {
+      if (!sensorPicture || !gameStarted) return;
+      if (radarPingSerial !== _rrLastPing) {
+        _rrLastPing = radarPingSerial;
+        noteSensorPicturePing(sensorPicture, ship);
+      }
+      _rrWorld.player = ship;
+      _rrWorld.npcs = npcs;
+      _rrWorld.stations = stations;
+      updateSensorPicture(sensorPicture, dt, _rrWorld);
+    }
+    // Widok nakładki (bez alokacji na klatkę): rzut kamery tej klatki, poza renderu bytów, wymiary kadłuba w px.
+    const radarRangeView = {
+      W: 0, H: 0, zoom: 1, roll: 0, time: 0, alpha: 1, bottomInset: 0, vpX: 0, vpY: 0, vpW: 0, vpH: 0, cam: null, player: null, playerDestroyed: false, lastMs: 0,
+      project(x, y, out) { return worldToScreenInto(x, y, this.cam, out); },
+      screenAngle(a) { return screenAngleFor(a, this.cam); },
+      poseOf(e, out) {
+        const p = bridgeRenderPose(e);
+        if (p) { out.x = p.x; out.y = p.y; out.angle = p.angle; return true; }
+        out.x = Number(e.pos?.x ?? e.x) || 0;
+        out.y = Number(e.pos?.y ?? e.y) || 0;
+        out.angle = Number(e.angle) || 0;
+        return true;
+      },
+      hullHalf(e, out) {
+        getCicEntityScreenHalfExtents(e, this.zoom, out, this.roll);
+        if (!(out.hx > 0 && out.hy > 0)) out.hx = out.hy = Math.max(3, (Number(e.radius) || 20) * this.zoom);
+        return out;
+      }
+    };
+    // Zegar fal: czas KLATKI renderu (staje w pauzie i przy zamrożonym świecie) — zegar logiki (scanOverlayClock) rośnie
+    // tylko w klatkach z krokiem fizyki, przy 240 Hz fale szarpałyby co 4. klatkę.
+    let _rrRenderTime = 0;
+    let _rrRenderTimeFrame = -1;
+    function drawRadarRangeOverlay(cam, frameDt) {
+      if (!radarRangeOverlay || !sensorPicture) return;
+      const v = radarRangeView;
+      const t0 = performance.now();
+      // raz na klatkę (podzielony ekran woła nakładkę dwa razy)
+      if (_rrRenderTimeFrame !== window.__frameId) {
+        _rrRenderTimeFrame = window.__frameId;
+        if (!PAUSED && !StoryGame.worldFrozen) _rrRenderTime += Math.min(0.1, Math.max(0, Number(frameDt) || 0));
+      }
+      v.W = W; v.H = H; v.cam = cam; v.zoom = cam.zoom; v.roll = cameraRoll(cam);
+      v.bottomInset = Math.round(118 * (window.cockpitUI?.scale || 1)); // nad paskiem broni i kopułą (jak znaczniki kontaktów)
+      // prostokąt kadru (podzielony ekran); bufor getViewportForCamera jest wspólny — pola kopiowane od razu
+      const vp = getViewportForCamera(cam);
+      v.vpX = vp.x; v.vpY = vp.y; v.vpW = vp.w; v.vpH = vp.h;
+      v.time = _rrRenderTime;
+      v.alpha = _hudLensAlpha;
+      v.player = ship;
+      v.playerDestroyed = !!ship?.destroyed;
+      radarRangeOverlay.draw(ctx, sensorPicture, v);
+      v.lastMs = performance.now() - t0;
+    }
+
+    // Scena „zasięg radarów”: Atlas w pustej przestrzeni z eskortą; w kadrze czata piratów (2 fregaty, odsłonięta jak po
+    // zwiadzie — jej fale nie sięgają Atlasa), dalej radar Corvus i flota (KONTAKT — miejsce przybliżone, moc zgadnięta).
+    // Piraci uśpieni (bez walki — storySleepNpc). Kamera floty (G — powrót do lotu) między Atlasem a czatą, oddalona.
+    const RadarRangeScene = { active: false, spot: null, ids: [] };
+    function startRadarScene(opts = {}) {
+      if (WarScene.active) stopWarScene({ clear: false });
+      for (const n of npcs.slice()) if (n && !n.dead && n.mission && !n.isStation) dematerializeSupportUnit(n);
+      supportCallIns.clear();
+      warpTraffic.clear();
+      let spot;
+      if (Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
+        spot = { x: opts.x, y: opts.y };
+      } else {
+        const bodies = [...planets, ...(window.smallBodies || [])]
+          .filter((b) => b && Number.isFinite(b.x) && Number.isFinite(b.y))
+          .map((b) => ({ x: b.x, y: b.y, r: (Number(b.r) || 0) + 400000 }));
+        const s = pickDeepSpot(SUN, bodies, WAR_SCENE_DEFAULTS.deepRadius);
+        spot = { x: s.x, y: s.y };
+      }
+      if (warp.state !== 'idle') { warp.state = 'idle'; exitWarp({ abrupt: true }); }
+      warp.exitRamp = null;
+      stopPlayerWarpSlide();
+      if (typeof cancelTravel === 'function') cancelTravel(null);
+      ship.pos.x = spot.x; ship.pos.y = spot.y; ship.vel.x = 0; ship.vel.y = 0; ship.angle = 0; ship.angVel = 0;
+      const mk = (key, mode, dx, dy, ang) => {
+        const r = spawnCallInShip(key, { mode, spawnPos: { x: spot.x + dx, y: spot.y + dy }, spawnAngle: ang, exitK: 0 });
+        return (Array.isArray(r) ? r : [r]).filter(Boolean);
+      };
+      const west = Math.PI;
+      const escort = [...mk('frigate_pd', 'friendly', -2600, -2200, 0), ...mk('frigate_pd', 'friendly', -2600, 2200, 0)];
+      const czata = [...mk('frigate_pd', 'pirate', 30000, -2600, west), ...mk('frigate_laser', 'pirate', 31800, 2400, west)];
+      const corvus = mk('frigate_pd', 'pirate', 56000, -27000, west);
+      for (const n of corvus) { n.sensors = { ...SHIP_SENSOR_PROFILES.frigate_radar }; n.displayName = 'Corvus'; }
+      const fleet = [
+        ...mk('pirate_battleship', 'pirate', 88000, 15000, west),
+        ...mk('destroyer', 'pirate', 85000, 11000, west), ...mk('destroyer', 'pirate', 85000, 19000, west),
+        ...mk('frigate_pd', 'pirate', 83000, 8000, west), ...mk('frigate_pd', 'pirate', 83000, 22000, west)
+      ];
+      const pirates = [...czata, ...corvus, ...fleet];
+      for (const n of pirates) storySleepNpc(n);
+      // czata „po zwiadzie” — odsłonięta w mgle wojny (identyfikacja: prawdziwa moc radaru, symbole w świecie)
+      SensorSystem.revealArea('radarZasiegi-czata', spot.x + 30900, spot.y, 7500, Infinity);
+      RadarRangeScene.active = true;
+      RadarRangeScene.spot = spot;
+      RadarRangeScene.ids = pirates.concat(escort);
+      // kadr: najdalszy zoom gry; widok floty między Atlasem a czatą (kadr = statek: opts.kadr === 'statek')
+      camera.transition = null;
+      const spanW = Number(opts.viewWidth) || 46000;
+      camera.manualZoom = true;
+      camera.zoom = camera.targetZoom = camera.zoomBase = clamp(W / spanW, camera.minZoom, camera.maxZoom);
+      camera.zoomVel = 0;
+      camera.zoomImpulseLog = 0;
+      if (opts.kadr === 'statek') {
+        if (camera.mode === 'rts') setPlayerRtsMode(false);
+        camera.mode = 'ship';
+        camera.x = camera.targetX = spot.x; camera.y = camera.targetY = spot.y;
+      } else {
+        if (camera.mode !== 'rts') setPlayerRtsMode(true);
+        camera.x = camera.targetX = spot.x + 15500; camera.y = camera.targetY = spot.y;
+      }
+      prevCameraState.x = camera.x;
+      prevCameraState.y = camera.y;
+      if (sensorPicture) updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true);
+      return { x: Math.round(spot.x), y: Math.round(spot.y), escort: escort.length, czata: czata.length, corvus: corvus.length, fleet: fleet.length };
+    }
+    function stopRadarScene() {
+      SensorSystem.clearArea('radarZasiegi-czata');
+      for (const n of RadarRangeScene.ids) if (n && !n.dead) dematerializeSupportUnit(n);
+      RadarRangeScene.ids = [];
+      RadarRangeScene.active = false;
+      if (camera.mode === 'rts') setPlayerRtsMode(false);
+    }
+    if (RADAR_RANGE_PROTO) {
+      window.RadarZasiegi = {
+        picture: sensorPicture,
+        overlay: radarRangeOverlay,
+        view: radarRangeView,
+        scena(opts) { return startRadarScene(opts); },
+        stop() { stopRadarScene(); },
+        /** Przebudowa obrazu teraz (narzędzia, pomiar kosztu). */
+        przebuduj() { updateSensorPicture(sensorPicture, 0, Object.assign(_rrWorld, { player: ship, npcs, stations }), true); },
+        /** Cicha praca gracza (prototyp): sygnatura × 0,5, czujniki × 0,6. Bez argumentu — przełącza. */
+        cisza(on = !radarRangeSilent) { radarRangeSilent = !!on; return radarRangeSilent; },
+        /** Wygląd oceny obustronnej: 'wachlarz' | 'struna' | 'blona'; bez argumentu — następny. */
+        wyglad(nazwa) { return nazwa === undefined ? nextRadarLook() : setRadarLook(nazwa); },
+        stan() {
+          const P = sensorPicture;
+          if (!P?.ready) return null;
+          const pl = P.player;
+          return {
+            sygnatura: +pl.sigEff.toFixed(3), czujniki: Math.round(pl.strength), wykrytyZnane: pl.detectedKnown,
+            wykrytyPrawda: pl.detectedTrue, krawedz: Math.round(pl.edge.dist), wSrodku: pl.edge.inside,
+            radaryWroga: P.enemy.n, skupiska: P.enemy.clusterN, wlasne: P.own.n, wiedza: P.knowList.length,
+            kontakty: P.knowList.filter((k) => k.level === 1 && !k.ident).length,
+            zidentyfikowane: P.knowList.filter((k) => k.level === 2).length, ms: +radarRangeView.lastMs.toFixed(3)
+          };
+        }
+      };
+    }
+
     // Harness zrzutów portu WebGPU (scripts/webgpu/zrzuty.mjs) — tylko z ?dev, rozgrywki nie
     // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
     if (new URLSearchParams(location.search).has('dev')) {
       window.DevScene = Object.assign(window.DevScene || {}, {
+        // Zasięg radarów (prototyp ?radarZasiegi): Atlas, eskorta, czata piratów w kadrze, Corvus i flota poza wzrokiem.
+        radar(opts = {}) { return startRadarScene(opts); },
+        radarStop() { stopRadarScene(); },
         // misja najemnicza (stacja piracka world3d) — zwraca stację
         mercMission() { startMercenaryMission(); return mercMission?.station || null; },
         // Scena „Wojna” (src/game/warScene.js): dwie floty wychodzą z warpa z pędem naprzeciw siebie i zderzają się.
@@ -16448,6 +16743,171 @@
     }
 
     // ============================================================
+    // ZAPIS GRACZA (2026-11-07) — src/game/playerSave.js, klucz `game` (tests/playerSave.test.mjs)
+    // Pozycja i kurs (ostatnie miejsce w zwykłym locie — nie w skoku ani hipercruisie), kredyty, ładownia, ładunki
+    // górnicze, reputacja, doświadczenie i kampania (faza, stan między misjami) — obok `loadout` (fit, kadłuby) i `economy`
+    // (rynki, ziarno świata). Autozapis co ECONOMY_AUTOSAVE_MS (tickPlayerSave w pętli) i przy wyjściu ze strony.
+    // „Nowa gra” kasuje zapis (jak ekonomię); „Wczytaj” w menu (loadGameFromSave) wczytuje ekonomię i gracza przed
+    // startem. Kampania wznawia od ostatniego punktu wznowienia (campaignCheckpoint, CAMPAIGN_RESUME w story/campaign.js:
+    // dok K-7, misja 2, zasadzka, powrót), zapis po nagrodzie misji — od następnego punktu; skok przez wcześniejsze fazy
+    // bez nagród (StoryGame `restore`), wynik misji 1 z zapisu. Podzielony ekran nie zapisuje (a jego „Nowa gra” kasuje
+    // zapis jak ekonomię). Kadłub (rany belek), NPC i wraki nie są zapisywane — po wczytaniu kadłub jest cały.
+    // `systemId` = układ tej strony (CURRENT_SYSTEM, src/data/starSystems.js): przy starcie strony układ z zapisu wybiera,
+    // który układ zbudować; zapis z innego układu niż zbudowany (`?uklad=`) nie wczytuje się.
+    // ============================================================
+    // Ostatnie miejsce w zwykłym locie — tam Atlas staje po wczytaniu (obiekt stały, pisany w miejscu).
+    const playerSaveSpot = { x: NaN, y: NaN, angle: 0 };
+    let playerSaveAt = -Infinity;
+    let playTimeSec = 0;
+    /** Zapis wczytany w menu („Wczytaj”) — startGame odtwarza z niego gracza raz. */
+    let pendingPlayerSave = null;
+    /** Gra trwa (nowa albo z zapisu) — w menu, przed startem, nic się nie zapisuje. */
+    let playerSaveSession = false;
+
+    function playerInStableFlight() {
+      if (!ship || ship.destroyed || !ship.pos) return false;
+      if (warp.state !== 'idle' || warp.exitRamp?.active) return false;
+      const hc = window.hypercruise;
+      if (hc && hypercruiseDriving(hc)) return false;
+      if (StoryGame.cinematic) return false;
+      return Number.isFinite(ship.pos.x) && Number.isFinite(ship.pos.y);
+    }
+
+    function trackPlayerSaveSpot() {
+      if (!playerInStableFlight()) return;
+      playerSaveSpot.x = ship.pos.x;
+      playerSaveSpot.y = ship.pos.y;
+      playerSaveSpot.angle = Number(ship.angle) || 0;
+    }
+
+    function buildCurrentPlayerSave() {
+      const spot = Number.isFinite(playerSaveSpot.x) ? playerSaveSpot : { x: ship.pos.x, y: ship.pos.y, angle: ship.angle };
+      const story = StoryGame.active || StoryGame.completed;
+      return buildPlayerSave({
+        worldSeed: WORLD_SEED,
+        systemId: CURRENT_SYSTEM.id,
+        savedAt: Date.now(),
+        playTimeSec,
+        player: {
+          x: spot.x, y: spot.y, angle: spot.angle,
+          credits: PLAYER.credits,
+          cargo: PLAYER.cargo,
+          miningCharges: PLAYER.miningCharges,
+          reputation: PLAYER.reputation,
+          progress: PLAYER.progress,
+          hullId: PLAYER.activeHullId
+        },
+        campaign: story ? {
+          active: !!StoryGame.active,
+          phase: StoryGame.phase,
+          done: !!StoryGame.completed,
+          m1: StoryGame.campaign?.m1 || null,
+          bossEscaped: !!StoryGame.campaign?.bossEscaped
+        } : null
+      });
+    }
+
+    function writePlayerSave() {
+      if (window.__SAVE_LOCKED || !playerSaveSession || !gameStarted || splitScreenMode) return false;
+      try {
+        localStorage.setItem(PLAYER_SAVE_KEY, JSON.stringify(buildCurrentPlayerSave()));
+        return true;
+      } catch (error) {
+        console.warn('[zapis] zapis gracza się nie udał', error);
+        return false;
+      }
+    }
+
+    /** Z pętli (czas strony): miejsce w zwykłym locie co klatkę, zapis co ECONOMY_AUTOSAVE_MS. */
+    function tickPlayerSave(nowMs, gameDt) {
+      if (!gameStarted || !playerSaveSession) return;
+      if (gameDt > 0) playTimeSec += gameDt;
+      trackPlayerSaveSpot();
+      if (nowMs - playerSaveAt < ECONOMY_AUTOSAVE_MS) return;
+      playerSaveAt = nowMs;
+      writePlayerSave();
+    }
+
+    // Przy zamknięciu w trakcie ładowania strony część stałych gry może być jeszcze w TDZ — wtedy bez zapisu.
+    window.addEventListener('beforeunload', () => { try { writePlayerSave(); } catch { /* strona w trakcie startu */ } });
+
+    // Konsola i narzędzia (harness CDP): zapis bez czekania na autozapis, odczyt, stan gracza.
+    window.PlayerSave = {
+      write: () => writePlayerSave(),
+      read: () => readPlayerSave(),
+      snapshot: () => buildCurrentPlayerSave(),
+      player: () => ({
+        credits: PLAYER.credits, cargo: { ...PLAYER.cargo }, reputation: { ...PLAYER.reputation },
+        exp: PLAYER.progress?.exp ?? 0, x: ship.pos.x, y: ship.pos.y, angle: ship.angle
+      }),
+      set(patch = {}) {
+        if (Number.isFinite(patch.credits)) PLAYER.credits = patch.credits;
+        if (patch.cargo) Object.assign(PLAYER.cargo, patch.cargo);
+        if (Number.isFinite(patch.exp) && PLAYER.progress) PLAYER.progress.exp = patch.exp;
+        return this.player();
+      }
+    };
+
+    /** Zapis z localStorage → { save, reason } (inne ziarno świata, wersja, pozycja poza światem — save = null). */
+    function readPlayerSave() {
+      let raw = null;
+      try { raw = localStorage.getItem(PLAYER_SAVE_KEY); } catch { return { save: null, reason: 'brak dostępu' }; }
+      return parsePlayerSave(raw, { worldSeed: WORLD_SEED, systemId: CURRENT_SYSTEM.id, bounds: { w: WORLD.w, h: WORLD.h } });
+    }
+
+    /** Start gry: bez wczytanego zapisu stary zapis gracza znika (jak ekonomia — „Nowa gra” od zera). */
+    function beginPlayerSaveSession(loaded) {
+      playerSaveSession = true;
+      playerSaveAt = performance.now();
+      playerSaveSpot.x = NaN;
+      playerSaveSpot.y = NaN;
+      playTimeSec = loaded ? Math.max(0, Number(loaded.playTimeSec) || 0) : 0;
+      // „Nowa gra” w każdym trybie kasuje zapis — jak ekonomię (beginEconomySession), żeby gracz i świat ruchu nie
+      // rozjechały się po F5; podzielony ekran sam nie zapisuje (writePlayerSave).
+      if (!loaded) {
+        try { localStorage.removeItem(PLAYER_SAVE_KEY); } catch { /* prywatne okno */ }
+      }
+    }
+
+    /**
+     * Stan gracza z zapisu: kredyty, ładownia, ładunki górnicze, reputacja, doświadczenie; `place` — pozycja i kurs
+     * (gra swobodna; w kampanii miejsce ustawia misja). Przed initNPCs / initFleet — skrzydło startuje przy Atlasie.
+     */
+    function applyPlayerSave(save, { place = false } = {}) {
+      const p = save.player;
+      PLAYER.credits = p.credits;
+      for (const key of Object.keys(PLAYER.cargo)) delete PLAYER.cargo[key];
+      Object.assign(PLAYER.cargo, p.cargo);
+      if (PLAYER.miningCharges) {
+        for (const id of Object.keys(PLAYER.miningCharges)) PLAYER.miningCharges[id] = Math.floor(Number(p.miningCharges[id]) || 0);
+      }
+      for (const [faction, value] of Object.entries(p.reputation || {})) {
+        if (!Object.prototype.hasOwnProperty.call(PLAYER.reputation, faction)) continue;
+        const n = Number(value);
+        if (Number.isFinite(n)) PLAYER.reputation[faction] = clampReputation(n);
+      }
+      if (!PLAYER.progress) PLAYER.progress = { exp: 0, rank: 0, missionsDone: [] };
+      PLAYER.progress.exp = p.progress.exp;
+      PLAYER.progress.rank = rankIndexForExp(p.progress.exp);
+      PLAYER.progress.missionsDone = [...p.progress.missionsDone];
+      refreshFactionHostility();
+      if (place) {
+        ship.pos.x = p.x; ship.pos.y = p.y;
+        ship.x = p.x; ship.y = p.y;
+        ship.vel.x = 0; ship.vel.y = 0;
+        ship.angle = p.angle; ship.angVel = 0;
+        // Doki portów bez ringu (E14): miejsce w bryle doku wypycha kadłub (jak teleport dev).
+        syncPortDocks();
+        portDocks.constrainShip(ship);
+        camera.x = camera.targetX = ship.pos.x;
+        camera.y = camera.targetY = ship.pos.y;
+        playerSaveSpot.x = ship.pos.x;
+        playerSaveSpot.y = ship.pos.y;
+        playerSaveSpot.angle = p.angle;
+      }
+    }
+
+    // ============================================================
     // STACJA GRACZA JAKO RYNEK (E7) — pamięć „imperium gracza”, scripts/tests/playerStation.test.mjs
     // Stacja gry (dok, terminal, znacznik na kanwie — modelu 3D jeszcze nie ma) i rynek świata ruchu
     // (`kind: 'player'`) z przemysłem z budynków (`addMarketBuilding` → `composeFromBuildings`): przewoźnicy
@@ -19730,6 +20190,23 @@
         run() {
           const on = CICDisplay.toggleTrade();
           pushZoneMessage(on ? 'CIC: KOMPUTER HANDLOWY' : 'CIC: HANDEL UKRYTY', 1.5);
+          return GA_HALT;
+        }
+      },
+      // CIC otwarty, prototyp zasięgu radarów (?radarZasiegi): Z — warstwa „ZASIĘGI”; bez prototypu Z zostaje myśliwców.
+      'cic.coverage': {
+        gate: () => CICDisplay.active && CICDisplay.coverageAvailable,
+        run() {
+          const on = CICDisplay.toggleCoverage();
+          pushZoneMessage(on ? 'CIC: ZASIĘGI RADARÓW' : 'CIC: ZASIĘGI UKRYTE', 1.5);
+          return GA_HALT;
+        }
+      },
+      // Prototyp zasięgu radarów: ] — następny wygląd oceny obustronnej (wachlarz / struna / błona).
+      'radar.look': {
+        gate: () => RADAR_RANGE_PROTO && gameStarted,
+        run() {
+          pushZoneMessage(`ZASIĘG RADARÓW: ${RADAR_LOOK_LABELS[nextRadarLook()]}`, 1.5);
           return GA_HALT;
         }
       },
@@ -24717,10 +25194,15 @@
     }
     const NPC_CRUSH_DEATH_RATIO = HULL_INTEGRITY.npcCrushDeathRatio;
 
-    function applyDamageToStation(station, amount) {
+    // direct — punkty budowli wprost (ogień w rurach, finał z etapów, skrypt fabuły), z pominięciem pul kawałków.
+    function applyDamageToStation(station, amount, direct = false) {
       let dmg = amount || 0;
       if (dmg <= 0) return 0;
       if (station._destroyed3D) return 0;       // already dead, no more damage
+      // Baza piratów: każde trafienie (pocisk, wiązka, taran) to krater w wiązanych wokselach, sam obraz.
+      if (!direct && station.baseStructure && Number.isFinite(station.lastHitX)) pirateBaseVoxEvent('voxHit', station.lastHitX, station.lastHitY, dmg);
+      // Budowla z pulami kawałków (habitat bazy piratów — onBasePieceDamage): trafienie zdejmuje punkty kawałka.
+      if (!direct && station.pieceDamage) return station.pieceDamage(station, dmg);
       if (isEntityShieldBlocking(station)) {
         station.shield.regenTimer = station.shield.regenDelay;
         const absorbed = Math.min(station.shield.val, dmg);
@@ -25622,6 +26104,7 @@
               if (wh) {
                 st.lastHitX = wh.x;
                 st.lastHitY = wh.y;
+                st.lastHitChunk = wh.piece ? wh.piece.id : null;   // pula kawałka (habitat)
                 if (b.worldHitStation !== st) { b.worldHitStation = st; applyDamageToStation(st, b.damage || 0); atmoBulletHit(st, wh.x, wh.y, b, wh.entity); }
                 writeImpactHit(_impactHit, wh.entity, wh.x, wh.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'station');
                 spawnBulletImpactEffect(b, wh.x, wh.y, 1.0, _impactHit);
@@ -25636,6 +26119,7 @@
             if (!dh) continue;
             st.lastHitX = dh.x;
             st.lastHitY = dh.y;
+            st.lastHitChunk = dh.chunk || null;
             applyDamageToStation(st, b.damage || 0);
             atmoBulletHit(st, dh.x, dh.y, b, null);
             writeImpactHit(_impactHit, st, dh.x, dh.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'station');
@@ -27064,6 +27548,8 @@
 
       // === CIC UPDATE ===
       CICDisplay.update(frameLogicDt, ship, npcs, stations, SensorSystem);
+      // Zasięg radarów — prototyp ?radarZasiegi (obraz czujników ~5 Hz; bez prototypu nic nie robi).
+      stepRadarRangePicture(frameLogicDt);
     } // koniec stepFrameInfo (skan/sensory/CIC)
 
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1, brainTick = -1, aiMaintDone = false, frameInfoDeferred = false) {
@@ -28061,7 +28547,9 @@
       stepPirateBaseIntegrity();
       // Szyja habitatu (src/game/story/pirateBaseNeck.js): taran zrywa kotwice szybu → głowa spada na dysk.
       stepPirateBaseNeck(dt);
-      // Upadek habitatu na planetoidę (src/game/story/pirateBaseFall.js): sekwencja po HP 0, grawitacja skały dla
+      // Woksele: niewidoczne odłamy bazy z tego kroku (taran, pęknięcia, wieża z belek) schodzą z silnika.
+      drainVoxBaseDrop();
+      // Planetoida pod bazą (src/game/story/pirateBaseFall.js) i zegar upadku po HP 0: grawitacja skały dla
       // odłamów, osiadanie na skale → zamrożenie.
       stepPirateBaseFall(dt);
       // Powietrze budowli bazy (src/game/story/pirateBaseAtmosphere.js): wypływ z wyrw, pożary, wyrwy jadą z ciałami.
@@ -28085,8 +28573,6 @@
         else runIntegrityPass(dynamicDestructibles);
       }
       PerfHUD.addTiming('hardpointTime', performance.now() - tPhysSection0);
-      // Uderzenia w planetoidę: zaplanowane zdarzenia testów / demo (PirateRockImpacts.demo) — bez nich nic.
-      stepPirateRockImpacts();
 
       tPhysSection0 = performance.now();
       hudUpdateNav(dt);
@@ -29388,7 +29874,8 @@
     // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
     const _cameraWarpInput = {
       dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false, exitAge: -1, exitSlow: 0.7, exitHalt: 1.35,
-      rulon: true, zoomRef: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0
+      rulon: true, zoomRef: 0, zoomRefFar: 0, zoomBase: 0, arriving: false, arrivalDist: -1, arrivalDepthK: 0, viewW: 0, viewH: 0,
+      hyper: false
     };
     // OBRÓT KADRU W HIPERCRUISIE (2026-10-23, zgłoszenie użytkownika: „kamera jak w warp — odpalenie hipercruise =
     // przestawienie kamery za statkiem”; port obrotu z dema „Pęd” — cameraRig.js: stepCameraRigRoll, konwencja
@@ -29408,6 +29895,16 @@
     // Po oknie `_hyperRollAfter` wraca do −1 — zwykły lot bez śladu hipercruise'u.
     const HYPER_ROLL_AFTER = 3;
     let _hyperInsetW = 0;       // waga „cały kadłub nad HUD-em” riga w hipercruisie (render)
+    // hipercruise v2: ułamek długości kadłuba za rufą (opływ i strugi dysz), który rig trzyma nad kokpitem — własna waga,
+    // tylko hipercruise i okno po nim (w skoku warpa za rufą nie ma opływu, a inset zmieniałby kadr skoku i przylotu K1)
+    const HYPER_WAKE_INSET = 0.35;
+    let _hyperWakeW = 0;
+    function stepHyperWakeWeight(frameDt) {
+      const on = (hypercruise.state !== 'idle' || _hyperRollAfter >= 0) && !playerWarpCameraBusy();
+      _hyperWakeW += ((on ? 1 : 0) - _hyperWakeW) * (1 - Math.exp(-(Number(frameDt) || 0) * 2.5));
+      if (!on && _hyperWakeW < 1e-3) _hyperWakeW = 0;
+      return _hyperWakeW;
+    }
     const _hyperRollUrl = (() => { const m = /[?&]hcKamera=(up|right|off)(?:&|$)/.exec(location.search); return m ? m[1] : null; })();
     function cameraHyperRollMode() {
       return _hyperRollUrl || normalizeCameraHyperRollMode(OPTIONS.cameraHyperRoll);
@@ -29493,6 +29990,10 @@
       // obrót kadru tej klatki (cameraFrameRoll): kurs kopu w osiach ekranu
       const roll = cameraFrameRoll();
       w.rulon = hyperCam ? false : warpRulonEnabled(location.search);
+      // hipercruise v2 (2026-10-29, „za mocno drga”): rig daje lekkie pchnięcie zamiast kopu warpa (cameraRig.js: hyper*) —
+      // flaga ze STANU hipercruise'u, nie z hyperCam (w oknie kadru przylotu warpa hyperCam = false, a kop hipercruise'u
+      // odcinka TRAVEL TO zaraz po warpie dostawał pełną skalę warpa)
+      w.hyper = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
       w.state = hyperCam ? hyperLook.state : warp.state;
       w.charge = hyperCam ? hyperLook.charge : (warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0);
       const dir = warp.dir;
@@ -29520,11 +30021,17 @@
       // (`warp.targetBody`, warpBodyRadius jak soczewka). Hipercruise — zoom gracza × kop (bez zoomRef, decyzja 2026-10-23).
       if (hyperCam || !ship) {
         w.zoomRef = 0;
+        w.zoomRefFar = 0;
         w.arriving = false;
         w.arrivalDist = -1;
         w.arrivalDepthK = 0;
       } else {
-        w.zoomRef = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
+        // Kadr ładowania — domyślny zoom statku; KADR LOTU (2026-10-29, user: „kamera jest za blisko na statek”) dalej i ten
+        // sam ułamek wysokości kadru przy każdej proporcji — rig przechodzi do niego po kopie (cameraRig.js: warpJumpZoomRef,
+        // warpJumpFrame / warpJumpAspect / warpJumpFrameRise; rig.warpZoomRef — odniesienie tej klatki dla soczewki).
+        const hullLen = Math.max(Number(ship.w) || 0, Number(ship.h) || 0);
+        w.zoomRef = defaultShipZoom(W, hullLen, cameraRigTune, camera.minZoom, camera.maxZoom);
+        w.zoomRefFar = warpJumpZoomRef(W, H, hullLen, cameraRigTune, camera.minZoom, camera.maxZoom);
         // Dolot jak soczewka świata (warpLensPhase.js: warpPlayerArriving — ślizg albo hamowanie grawitacyjne): wyjście
         // bez rampy też zatrzaskuje kadr przylotu.
         w.arriving = warpPlayerArriving(warp);
@@ -29558,6 +30065,9 @@
       // Podłoga zoomu kadru przylotu z celem (K1 — cameraRig.js: warpZoomFloor; cameraZoom.js: cameraZoomFloor) — zoom na
       // ekranie może zejść poniżej limitu kadłuba tylko przy zatrzaśniętym kadrze przylotu.
       camera.zoomImpulseMin = cameraRig.warpZoomFloor;
+      // Ujednolicony kadr skoku (kadr lotu przy dużym zoomie gracza: ln ≈ −4,2 … −4,6) — szerszy limit członu (cameraZoom.js);
+      // hipercruise (bez zoomRef — warpZoomRef NaN) zostaje przy ±3.
+      camera.zoomImpulseWide = cameraRig.warpUnifyW > 0 && Number.isFinite(cameraRig.warpZoomRef);
       // Reżyser kadru (cameraDirector.js): jego oddalenie to drugi człon log(zoom) — tylko kamera statku; przejście
       // prowadzące zoom i inne tryby zerują go od razu (wejście w RTS przenosi je wcześniej na zoom gracza).
       if (camera.mode !== 'ship' || w.suspend) resetCameraDirector(cameraDirector);
@@ -29575,7 +30085,8 @@
       const s = _warpLensPhase;
       const hyperOn = warp.state === 'idle' && !warp.exitRamp?.active && hyperLook.state !== 'idle';
       stepWarpLensPhase(_warpLensTrack, s, warp, SimClock.render, hyperOn);
-      const zr = Number(_cameraWarpInput.zoomRef);
+      // odniesienie tej klatki z riga (kadr ładowania → kadr lotu po kopie — cameraRig.js: warpZoomRef)
+      const zr = Number.isFinite(cameraRig.warpZoomRef) ? cameraRig.warpZoomRef : Number(_cameraWarpInput.zoomRef);
       s.zoomRef = zr > 0 ? zr : NaN;
       s.zoomJump = zr > 0 ? zr * (Number(cameraRigTune.warpZoomOut) || 1) : NaN;
       s.arrivalFill = Number(cameraRigTune.warpArrivalFill) > 0 ? Number(cameraRigTune.warpArrivalFill) : NaN;
@@ -29608,16 +30119,23 @@
     }
     function loop(now) {
       const frameStartMs = performance.now();
+      gameLoopLive = true;
+      // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
+      // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki. W KAŻDYM wywołaniu rAF, także pominiętym
+      // przez limit klatek: wiek liczony w klatkach ekranu, złożenie w vsyncu gotowości bitmapy (nie dopiero w
+      // następnej narysowanej klatce — przy limicie 60 to 1–5 vsynców mniej opóźnienia, takt ten sam).
+      if (rwHost) rwHost.present();
+      // Limit klatek (blok „OPCJE GRAFIKI”, src/render/frameLimiter.js): wywołanie poza taktem limitu — bez wejścia,
+      // fizyki, migawki i rysunku (worker renderuje tylko nowe strony); `lastTime` zostaje, więc `frame` następnej
+      // narysowanej obejmuje pominięte, a akumulator fizyki 60 Hz liczy ten sam czas.
+      if (!frameLimitTick(now)) return;
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
       // Zegar klatki efektów (RenderWorld.frameNowMs → Core3D.frameNowMs; worker — HEAD.WALL migawki): znacznik rAF, nie
       // performance.now() w chwili rysowania — ten szedł po fizyce, więc klatka z krokiem 60 Hz „trwała” dla efektów
       // o czas kroku dłużej, następna krócej (cząstki, błyski, dym szarpały co 4. klatkę przy 240 Hz).
       window.__frameNowMs = now;
-      // Render w workerze: złożenie bitmapy 3D ze stałym wiekiem obrazu (src/render/framePacer.js) — na początku klatki,
-      // zanim fizyka zajmie wątek; złożenie wchodzi do commitu tej klatki.
-      if (rwHost) rwHost.present();
-      // Wejście: pady i kontekst raz na klatkę (strażnik znacznika rAF — pętla wejścia mogła to już zrobić).
+      // Wejście: pady i kontekst raz na RYSOWANĄ klatkę (pętla wejścia kończy się z pierwszą klatką tej pętli).
       pumpInput(now);
       scoutFrameInput();
       // Rozdzielczość dynamiczna (blok „OPCJE GRAFIKI”): skala renderu z czasu GPU — także w pauzie (render trwa).
@@ -29663,7 +30181,7 @@
         const frameEndMs = performance.now();
         PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
         PerfHUD.flush(frameEndMs);
-        requestAnimationFrame(loop);
+        nextLoopFrame();   // rAF; bez VSync z limitem — budzik (blok „OPCJE GRAFIKI”)
         return;
       }
       acc += frame;
@@ -29746,6 +30264,8 @@
         stepTrafficPromotion(steps * PHYS_DT);
         PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
+      // Zapis gracza (blok „ZAPIS GRACZA”): miejsce w zwykłym locie, czas gry, autozapis.
+      tickPlayerSave(performance.now(), steps * PHYS_DT);
 
       const mWorld = screenToWorld(mouse.x, mouse.y);
       // Okno „armed" trwa 5 s i gaśnie samo. Bez komunikatu przepalony ładunek
@@ -29849,7 +30369,7 @@
       PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
       if (steps === 0) aiOffStepNoteRest(frameEndMs - frameStartMs);
       PerfHUD.flush(frameEndMs);
-      requestAnimationFrame(loop);
+      nextLoopFrame();   // rAF; bez VSync z limitem — budzik (blok „OPCJE GRAFIKI”)
     }
 
     // =============== Render ===============
@@ -30117,6 +30637,7 @@
     }
 
     let _warpFxClock = 0;
+    let _pirateBaseClock = 0;
     function packRenderSnapshotBegin(alpha, frameDt, cam, camNoShake, shakePxX, shakePxY, cloakFrame = null) {
       const f = _snapFrame;
       f.frameId = renderFrameId;
@@ -30188,6 +30709,8 @@
       // baza piratów misji 1: stan klatki obrazu (ten sam, który dostaje updatePirateBase3D) i dt gry
       f.pirateBase = storyBaseFrameState();
       f.pirateBaseDt = (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt;
+      _pirateBaseClock += Math.max(0, Math.min(0.1, Number(f.pirateBaseDt) || 0));
+      f.pirateBaseClock = _pirateBaseClock;
       // wyrwy bazy (dekompresja, pożary): pozy wyrw dosunięte do czasu renderu, dt gry klatki
       f.pirateVents = pirateBaseVentFrame(SimClock.render - SimClock.sim, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // bitwa w głębi sceny „Wojna”: czas sceny w chwili renderu (krok sceny + wyprzedzenie renderu)
@@ -30492,8 +31015,14 @@
     const spaceGasIn = new Float64Array(SPACE_GAS_IN.size);
     const spaceGasState = createSpaceGasInputState();
     const _spaceGasIce = new Set(SPACE_GAS_ICY_TYPES.map((t) => ROCK_TYPE_INDEX[t]).filter((i) => i >= 0));
-    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, halfW: 0, halfH: 0, field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
+    const _spaceGasOpts = { dt: 0, camX: 0, camY: 0, camNsX: NaN, camNsY: NaN, halfW: 0, halfH: 0, simTime: NaN, renderTime: NaN,
+      physTick: NaN, physHz: 60, focusOn: false, focusX: 0, focusY: 0, focusVX: 0, focusVY: 0,
+      field: null, scene: SPACE_GAS_SCENE.belt, anchorX: NaN, anchorY: NaN, sunX: 0, sunY: 0, windowCells: 256, cell: 64, iceTypes: _spaceGasIce, time: 0, enabled: true, blasts: GameBlasts, bullets: null, giants: null };
     const _spaceGasRollHalf = { hw: 0, hh: 0 };
+    // Prowadzony okręt kamery statku (render(): Atlas albo fregata zwiadu przy sterach — poza renderu i prędkość) — okno
+    // pola gazu leży przy nim, pod śladem (spaceGasInput.js placeGasWindow); poza kamerą statku (RTS, fokus stacji,
+    // kamera fabuły, kamery 3D) — `on` false, okno przy kamerze.
+    const _spaceGasFocus = { on: false, x: 0, y: 0, vx: 0, vy: 0 };
     // Ring w budowie (Jowisz, GK-6): pole gazu ringu (src/game/ringGasField.js) — kotwica w środku planety, pas pyłu
     // i oparów budowy wokół obręczy, odgazowanie frontów. Gdy kadr nie dotyka pasa asteroid.
     let _ringGasFields = null;
@@ -30506,10 +31035,18 @@
       for (const f of _ringGasFields) if (f.rectTouchesBelt(cx - r, cy - r, cx + r, cy + r)) return f;
       return null;
     }
-    function packSpaceGas(cam, dt) {
+    function packSpaceGas(cam, camNs, dt) {
       const o = _spaceGasOpts;
       const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
       o.dt = dt; o.camX = cam.x; o.camY = cam.y;
+      // okno pola bez wstrząsu i kopu kadru (dawniej skakało ±1 komórkę w walce); prowadzony okręt kamery statku
+      o.camNsX = camNs ? camNs.x : NaN; o.camNsY = camNs ? camNs.y : NaN;
+      const fc = _spaceGasFocus;
+      o.focusOn = fc.on; o.focusX = fc.x; o.focusY = fc.y; o.focusVX = fc.vx; o.focusVY = fc.vy;
+      // zegar gry (src/game/simClock.js): obraz w chwili renderu kadłubów; krok pola = krok fizyki z CAŁKOWITEGO licznika
+      // (nie ⌊SimClock.sim · 60⌋ — suma 1/60 dryfuje: po ~1 h 55 min krok o jeden za mały, gaz skakał co krok)
+      o.simTime = SimClock.sim; o.renderTime = SimClock.render;
+      o.physTick = physicsTickId; o.physHz = PHYS_HZ;
       // obrót kadru: pudło osi świata wokół obróconego kadru
       const rh = rolledHalfExtents(W * 0.5 / zoom, H * 0.5 / zoom, cameraRoll(cam), _spaceGasRollHalf);
       o.halfW = rh.hw; o.halfH = rh.hh;
@@ -30598,8 +31135,8 @@
       // okno pola gazu przestrzeni: kadłuby w nim są przeszkodami gazu (maski obrysu jak dla domen wybuchów)
       if (spaceGasIn[SPACE_GAS_IN.active] > 0.5 && o.nDomains < 16) {
         const h = spaceGasIn[SPACE_GAS_IN.windowCells] * spaceGasIn[SPACE_GAS_IN.cell] * 0.5;
-        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.camX];
-        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.camY];
+        const sx = spaceGasIn[SPACE_GAS_IN.anchorX] + spaceGasIn[SPACE_GAS_IN.winX];
+        const sy = spaceGasIn[SPACE_GAS_IN.anchorY] + spaceGasIn[SPACE_GAS_IN.winY];
         const k = o.nDomains * 4;
         _gasDomRects[k] = sx - h; _gasDomRects[k + 1] = sy - h; _gasDomRects[k + 2] = sx + h; _gasDomRects[k + 3] = sy + h;
         o.nDomains++;
@@ -30999,6 +31536,7 @@
       // + offset riga w px ekranu: w nawigacji wyprzedza lot, w walce zagląda za
       // kursorem. Rig kroczy także w trakcie przejścia (wyjście z RTS, powrót
       // z edytora stacji) — przejście goni żywy cel, więc jego koniec nie skacze.
+      _spaceGasFocus.on = false;
       if (camera.mode === 'ship') {
         // podłoga: limit kadłuba albo — przy kadrze przylotu warpa z celem — niższa podłoga zoomu na ekranie (cameraZoomFloor)
         const zoomSafe = Math.max(cameraZoomFloor(camera) || 1e-4, camera.zoom || 1);
@@ -31051,15 +31589,25 @@
         rigIn.velY = vScr.y;
         rigIn.maxSpeed = scouting ? Math.max(100, Number(scoutSn.maxSpeed) || 400) : hullVmax;
         rigIn.mode = scouting ? 'never' : OPTIONS.cameraLook;
-        rigIn.leadGain = scouting ? cameraRigTune.scoutLead : NaN;
+        // skok warpa gracza (ładowanie, lot, rampa, ślizg): stałe wyprzedzenie warpJumpLead (0,35 = navLead) przy każdej
+        // postawie — kotwica soczewki P0 niezależna od walki (cameraRig.js; 0,22 psuło kop S10 i wyjście S8 ponad P4)
+        rigIn.leadGain = scouting ? cameraRigTune.scoutLead : (playerWarpCameraBusy() ? cameraRigTune.warpJumpLead : NaN);
         // Hipercruise (kadr za statkiem, wyprzedzenie na maksimum): nad pasami HUD zostaje CAŁY kadłub z dyszami, nie sam
         // środek — do pasów półwymiar kadłuba w pionie ekranu; waga gładka (zacisk kadru w rigu skakałby przy zmianie).
         const hcInsetW = stepHyperInsetWeight(frameDt);
+        const hcWakeW = stepHyperWakeWeight(frameDt);
         let hcHullV = 0;
+        let hcWakeTop = 0;
+        let hcWakeBottom = 0;
         if (hcInsetW > 1e-3 && !scouting) {
           const sa = interpAngle - rigRoll;
           const sk = (ship.visual?.spriteScale || 1) * 0.5 * zoomSafe;
           hcHullV = (Math.abs(Math.sin(sa)) * (Number(ship.w) || 0) + Math.abs(Math.cos(sa)) * (Number(ship.h) || 0)) * sk * hcInsetW;
+          // hipercruise v2 (2026-10-29, opływ — src/3d/warp/hyperFlow.js): nad kokpitem zostaje też kawałek kilwateru
+          // i strug dysz za rufą (HYPER_WAKE_INSET długości kadłuba; dziób w górę ekranu — rufa na dole)
+          const wake = (Number(ship.w) || 0) * sk * 2 * HYPER_WAKE_INSET * hcWakeW;
+          hcWakeBottom = Math.max(0, -Math.sin(sa)) * wake;
+          hcWakeTop = Math.max(0, Math.sin(sa)) * wake;
         }
         // Reżyser kadru: środek kadru ku bitwie (j. świata → px tej klatki) i słabsze zaglądanie za kursorem.
         stepCameraDirectorFrame(frameDt || 0, interpPos.x, interpPos.y);
@@ -31067,12 +31615,16 @@
         rigIn.biasX = bScr.x;
         rigIn.biasY = bScr.y;
         rigIn.lookScale = cameraDirector.lookScale;
-        rigIn.insetTop = _camDirInsets.top + hcHullV;
-        rigIn.insetBottom = _camDirInsets.bottom + hcHullV;
+        rigIn.insetTop = _camDirInsets.top + hcHullV + hcWakeTop;
+        rigIn.insetBottom = _camDirInsets.bottom + hcHullV + hcWakeBottom;
         stepCameraRig(cameraRig, rigIn, cameraRigTune);
         // prowadzony okręt: Atlas, przy sterach fregaty — fregata (przejazd wagą scoutCamW)
         const followX = scoutCamW > 0 ? interpPos.x + (scoutCamLast.x - interpPos.x) * scoutCamW : interpPos.x;
         const followY = scoutCamW > 0 ? interpPos.y + (scoutCamLast.y - interpPos.y) * scoutCamW : interpPos.y;
+        // okno pola gazu przestrzeni przy prowadzonym okręcie (pod śladem) — blok „GAZ PRZESTRZENI”
+        _spaceGasFocus.on = true;
+        _spaceGasFocus.x = followX; _spaceGasFocus.y = followY;
+        _spaceGasFocus.vx = vwx; _spaceGasFocus.vy = vwy;
         const offW = rollToWorld(cameraRig.offsetX / zoomSafe, cameraRig.offsetY / zoomSafe, rigRoll, _rollTmp);
         let rigX = followX + offW.x;
         let rigY = followY + offW.y;
@@ -31192,6 +31744,8 @@
       const storyCam = splitScreenMode ? null : StoryGame.cameraFrame({
         dt: frameDt || 0, W, H, camX: camBaseX, camY: camBaseY, zoom: camBaseZoom, gameCam3d: cam3d, View3D
       });
+      // kamera fabuły i kamery 3D: okno gazu przy kamerze (kadr nie jest kadrem z góry wokół okrętu)
+      if (storyCam || cam3d) _spaceGasFocus.on = false;
       if (storyCam) {
         cam = storyCam;
         camNoShake = storyCam;
@@ -31328,7 +31882,7 @@
       if (!RW_WORKER) HallDust.submit(HallDust.input);
       // Gaz w otwartej przestrzeni (blok „GAZ PRZESTRZENI” niżej): pas przy kamerze — obwiednia z pola, odgazowanie
       // lodowych skał, okno pola; przed przeszkodami (okno idzie do prostokątów domen — kadłuby w polu gazu).
-      packSpaceGas(cam, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
+      packSpaceGas(cam, camNoShake, (PAUSED || StoryGame.worldFrozen) ? 0 : frameDt);
       // Przeszkody gazu wybuchów (etap C, src/game/gasObstacleInput.js): hale K-7 i kawałki suchego doku przy kamerze
       // (statyka — przy zmianie), kadłuby przy domenach gazu (reżyser podaje ich prostokąty; bez domen — nic). Krok
       // efektów „wybuchy” czyta tylko tę tablicę.
@@ -32042,6 +32596,12 @@
           scanOverlayView.ship = ship;
           scanOverlayView.cam = cam;
           scanOverlay.draw(ctx, scanOverlayView);
+        }
+        // Zasięg radarów — prototyp ?radarZasiegi (src/ui/radarRangeOverlay.js): fale radarów i znaczniki w świecie;
+        // nad światem i zaznaczeniem, pod znacznikami krawędzi, celownikiem i CIC. Kamery 3D — pominięte.
+        if (radarRangeOverlay && gameStarted && !CICDisplay.active && !isMainMenuVisible() && !StoryGame.hudHidden
+          && !StoryGame.letterbox && !stationUI.open && _hudLensAlpha > 0.01 && !isView3DCamera(cam)) {
+          drawRadarRangeOverlay(cam, frameDt);
         }
 
         // Stary hover-ring został usunięty; cele pokazują ramki celów priorytetowych i wroga przy kursorze
@@ -33299,11 +33859,12 @@
     }
 
     // Baza piratów (misja 1 — szkic użytkownika 2026-10-11, zastępuje suchy dok; src/3d/pirateBaseGame.js, układ
-    // src/3d/portBuildings/pirateBaseLayout.js, miejsce w grze src/game/story/pirateBaseSite.js). Cztery BUDOWLE = byty
-    // stacji (habitat — finał misji, zbiorniki paliwa, magazyn, pomosty): punkty życia i BRYŁY TRAFIEŃ w płaszczyźnie gry
-    // (pociski, wiązki i Hexlance trafiają w bryłę, nie w okrąg), osobne miejsca ciał świata (kawałek w bańce gracza =
-    // ciało silnika belek: taran, broń przez solver). Co 1/steps punktów budowli kawałek pod trafieniem pęka. Bez
-    // tarczy-bańki (baza ma 15 km). Rozpad habitatu i reakcja łańcuchowa w rurach — src/game/story/storyGame.js.
+    // src/3d/portBuildings/pirateBaseLayout.js, miejsce w grze src/game/story/pirateBaseSite.js). BUDOWLE = byty stacji
+    // (habitat — finał misji, dwa wieżowce na pomostach, zbiorniki paliwa, magazyn, pomosty): punkty życia i BRYŁY
+    // TRAFIEŃ w płaszczyźnie gry (pociski, wiązki i Hexlance trafiają w bryłę, nie w okrąg), osobne miejsca ciał świata
+    // (kawałek w bańce gracza = ciało silnika belek: taran, broń przez solver). Co 1/steps punktów budowli kawałek pod
+    // trafieniem pęka; habitat — pule kawałków i etapy (onBasePieceDamage, syncBaseStages). Bez tarczy-bańki (baza ma
+    // 15 km). Rozpad habitatu i reakcja łańcuchowa w rurach — src/game/story/storyGame.js.
     function spawnStoryPirateBase(specs, place) {
       if (!place) return null;
       const out = {};
@@ -33327,6 +33888,15 @@
           damageSteps: spec.steps || 0,
           onDamageStep: onBaseDamageStep
         };
+        // Pule kawałków (habitat — decyzje użytkownika 2026-11-03): kawałek pęka od trafień w niego, punkty budowli
+        // liczy syncBaseStages z etapów (wyłom, wieża, wieżowce), bez bezpiecznika „budowla bez stojącego kawałka”.
+        if (spec.pieces) {
+          st.piecePools = createPiecePools(place.layout, key, spec.pieces);
+          st.pieceDamage = onBasePieceDamage;
+          st.breachNeed = Math.max(1, spec.breachNeed | 0);
+          st.stageGoal = true;
+          st.noFuse = true;
+        }
         stations.push(st);
         out[key] = st;
       }
@@ -33334,7 +33904,7 @@
       attachPirateBaseWorld(out, place);
       // Kawałki w bańce gracza stają się ciałami silnika belek (taran, broń przez solver; worldBodies.js).
       attachPirateBaseBodies(out, place);
-      // Planetoida pod bazą jako teren silnika belek (odłamy i habitat spadają na skałę — pirateBaseFall.js).
+      // Planetoida pod bazą jako teren silnika belek (odłamy sprzed HP 0 spadają na skałę — pirateBaseFall.js).
       attachPirateBaseFall(place);
       // Powietrze budowli (moduły ciśnieniowe z układu): dekompresja i pożary przy wyrwach.
       attachPirateBaseAtmosphere(place);
@@ -33365,17 +33935,77 @@
       const c = id ? l.chunkById.get(id) : null;
       if (!c || !storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } })) {
         if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-        GameBlasts.blast({ x: hx, y: hy, size: 300 }, true);
+        GameBlasts.blast({ x: hx, y: hy, size: 300, profile: 'baza' }, true);
         noteBaseBlast(hx, hy, 300);
         camera.addShake(8, 0.4);
         return;
       }
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       if (nearEnd) worldBodies.setAllLive(st._worldSite, true);
-      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360 }, true);
+      GameBlasts.blast({ x: p.x, y: p.y, size: c.kind === 'drum' || c.kind === 'tank' ? 520 : 360, profile: c.kind === 'tank' ? 'capital' : 'baza' }, true);
       // wybuch przy pęknięciu — zapłon powietrza modułu (zwarcia i ogień w wylatującym tlenie)
       noteBaseBlast(p.x, p.y, c.kind === 'drum' || c.kind === 'tank' ? 520 : 360);
       camera.addShake(12, 0.5);
+    }
+
+    // Trafienie budowli z pulami kawałków (habitat): punkty zdejmuje kawałek trafiony wprost (`lastHitChunk` — gałąź
+    // pocisków, taran), inaczej kawałek pod miejscem trafienia, inaczej najbliższy stojący (poolPieceAt). Pusta pula —
+    // kawałek pęka (ćwiartka = wyłom; szyb = szyja zerwana w stepPirateBaseNeck, wieża pada w stronę strzałów).
+    function onBasePieceDamage(st, dmg) {
+      const place = st.dryDock;
+      const l = place?.layout;
+      const hint = st.lastHitChunk || null;
+      st.lastHitChunk = null;
+      if (!l || !st.piecePools) return 0;
+      const hx = Number.isFinite(st.lastHitX) ? st.lastHitX : st.x;
+      const hy = Number.isFinite(st.lastHitY) ? st.lastHitY : st.y;
+      const h = place.toHub(hx, hy);
+      const id = poolPieceAt(l, st.piecePools, h.x, h.z, pirateBaseChunkDown, hint);
+      if (!id) return 0;
+      st.hitFlash = 0.18;
+      if (!damagePool(st.piecePools, id, dmg) || pirateBaseChunkDown(id)) return dmg;
+      const c = l.chunkById.get(id);
+      const size = c.kind === 'drum' ? 520 : 400;
+      // Szyb: wybuch 560 przyjdzie zaraz z zerwania szyi w tym samym punkcie (onSnap). Bez niego, gdy szyję zerwał wcześniej taran.
+      const czekaSzyja = c.kind === 'core' && (pirateBaseSites()?.habitat?.neck?.phase ?? 'attached') === 'attached';
+      storyBaseBreak(id, { power: c.kind === 'core' ? 2.2 : 1.4, speed: 70, at: { x: hx, y: hy } });
+      const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
+      if (!czekaSzyja) GameBlasts.blast({ x: p.x, y: p.y, size, profile: 'baza' }, true);
+      noteBaseBlast(p.x, p.y, size);
+      camera.addShake(12, 0.5);
+      if (c.kind === 'drum') pushZoneMessage('WYŁOM W BĘBNIE HABITATU — SZYB ODSŁONIĘTY', 3);
+      syncBaseStages();
+      return dmg;
+    }
+
+    // Etapy finału habitatu (src/game/story/pirateBaseIntegrity.js — habitatStages): wyłom (pęknięte ćwiartki bębna),
+    // wieża (szyja zerwana), wieżowce (budowle martwe). null — misja bez bazy albo habitat bez etapów.
+    function pirateBaseStages() {
+      const site = StoryGame.site;
+      const hab = site?.structures?.habitat;
+      const l = site?.dock?.layout;
+      if (!hab?.stageGoal || !l) return null;
+      let quadrantsDown = 0;
+      for (const qd of l.habitat.quadrants) if (pirateBaseChunkDown(qd.id)) quadrantsDown++;
+      const hrs = l.highrises || [];
+      let highrisesDown = 0;
+      for (const h of hrs) {
+        const s = site.structures[h.structure];
+        if (!s || s._destroyed3D || !(s.hp > 0)) highrisesDown++;
+      }
+      return habitatStages({ quadrantsDown, breachNeed: hab.breachNeed, towerDown: !!site.neckSnapped, highrisesDown, highrisesTotal: hrs.length });
+    }
+    // Punkty habitatu = maks. × ułamek etapów do zrobienia (krok fizyki i każdy etap); komplet — habitat ginie (finał misji:
+    // StoryGame._chainExplosion). Ostatni etap: wszystkie kawałki habitatu ciałami, skóry pieką się w tle — rozpad nie buduje
+    // ciał ani nie piecze skór w swoich klatkach.
+    function syncBaseStages() {
+      const hab = StoryGame.site?.structures?.habitat;
+      if (!hab?.stageGoal || hab._destroyed3D || !(hab.hp > 0)) return;
+      const s = pirateBaseStages();
+      if (!s) return;
+      const target = (Number(hab.maxHp) || 0) * s.left;
+      if (s.total - s.done <= 1 && hab._worldSite && !hab.__allLive) { hab.__allLive = true; worldBodies.setAllLive(hab._worldSite, true); }
+      if (hab.hp > target) applyDamageToStation(hab, hab.hp - target + (s.left <= 0 ? 1 : 0), true);
     }
 
     // Kawałek bazy pęka jako ciało (worldBodies.breakPiece — statyczny staje się ciałem na miejscu; duchy: dysk
@@ -33393,6 +34023,9 @@
       // z kawałka nic nie zostało na miejscu (np. głowa habitatu spadła po zerwaniu szyi — pirateBaseNeck.js): finał
       // rozpadu nie łamie go drugi raz i nie animuje schowanej bryły
       if (wPiece?.lost) return true;
+      pirateBaseVoxEvent('voxBreak', id);
+      // Upadek na wokselach: ciał już nie ma, a kawałek tylko dostaje kratery w obrazie (bez wyrw powietrza i dryfu w miejscu, z którego baza spada).
+      if (_baseFall.voxFall) return true;
       const p = place.toGame((c.box.x0 + c.box.x1) / 2, (c.box.z0 + c.box.z1) / 2);
       const at = opts.at || p;
       const hc = place.habitat;
@@ -33405,12 +34038,6 @@
       // Powietrze: pęknięcie modułu ciśnieniowego (dekompresja — wyrwa po stronie punktu, grodzie do sąsiadów puszczają);
       // wyrwa przy ciele kawałka, odłamy rozpadu przejmują ją (HullBodies.onWreckSpawned), bez ciała — dryfuje ze statyką.
       noteBaseChunkBreak(id, at, { entity: wPiece?.entity || null, drift: speed, dir: opts.dir || 'out', power });
-      // UPADEK habitatu (HP 0 — storyGame._chainExplosion, opts.fall): kawałek płaski z bryłą upadku (bęben, szyb) staje
-      // się bryłą 3D (uszkodzenia zostają), rozpada się i spada na planetoidę zamiast dryfować w płaszczyźnie
-      if (opts.fall && wPiece?.fall3d) {
-        const ol = Math.hypot(ox, oy) || 1;
-        if (promotePirateBasePiece(wPiece, { x: at.x, y: at.y, power, speed, outX: ox / ol, outY: oy / ol })) { markBaseBroken(wPiece); return true; }
-      }
       // pęknięty kawałek: jego ubytek węzłów to nie taran, nie liczy się też jako stojący (pirateBaseIntegrity.js)
       if (wPiece && worldBodies.breakPiece(wPiece, at.x, at.y, { power, speed, outX: ox, outY: oy })) { markBaseBroken(wPiece); return true; }
       return breakPirateBaseChunk(id, { speed, spin: 0.12, life: 45, dir: place.dirToHub(ox, oy) });
@@ -33422,9 +34049,9 @@
       const p = entity ? worldBodies.pieceOf(entity) : null;
       return p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:') ? p : null;
     }
-    // moduł powietrza kawałka: bryła upadku (`H-C~3d` — pirateBaseFall.js) należy do modułu swojego kawałka płaskiego
-    function atmoModuleId(p) { return p ? (p.fallOf || p.id) : null; }
+    function atmoModuleId(p) { return p ? p.id : null; }
     function atmoNodeLost(entity, hull, x, y, z) {
+      if (!PirateBaseAtmosphere.tune.followBodies && entity?.isWreck) return; // odpryski schowanych ciał nie rodzą wyrw
       const p = pirateBasePieceOf(entity);
       if (p) noteBaseNodeLost(atmoModuleId(p), entity, x, y, z, Number(hull?.body?.cellSize) || 15);
     }
@@ -33439,12 +34066,32 @@
       noteBaseCrater(id, entity?.isWorldPiece ? entity : null, x, y, 0, 6 + Math.sqrt(dmg) * 1.1 + (Number(b?.explodeRadius) || 0) * 0.3);
     }
     function atmoImpact(entity, r) {
-      if (!r) return;
+      if (!r || (!PirateBaseAtmosphere.tune.followBodies && entity?.isWreck)) return;
       const p = pirateBasePieceOf(entity);
       if (!p) return;
       const cs = Number(entity.beamHull?.body?.cellSize) || 15;
       const rad = Math.max(Number(r.crater) || 0, Number(r.radius) || 0, cs * Math.sqrt(Math.max(1, Number(r.killed) || 0)) * 0.6);
       noteBaseCrater(atmoModuleId(p), entity, r.x, r.y, r.solid ? r.z : NaN, rad);
+    }
+    // Woksele jako obraz bazy (domyślnie; ?woksele=0 — stary obraz z ciał): stare ciała są wtedy niewidoczne, więc ich ODŁAMY i przewrócona wieża z belek
+    // nie mogą zostać w kolizjach. Uwaga użytkownika 2026-11-07: „niewidzialna ściana mnie blokowała”, „utknąłem na węźle, na którego destrukcja nie działa”
+    // (zamrożona wieża z belek leżała w bębnie na 496 kotwicach, odłamy łykały też pociski). Odłam znika po kroku, w którym powstał: hak woła się w środku
+    // HullBodies.step / detachPiece, więc tu tylko kolejka. Punkty i etapy liczą się z kawałków, nie z odłamów.
+    const VOX_OBRAZ_BAZY = !/[?&]woksele=0\b/.test(location.search);
+    const _voxBaseDrop = [];
+    function dropPirateBaseWreck(w) {
+      if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
+      if (salvageState.cutting === w) stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
+      TowSystem.detachBody(w, 'wreck-despawn');
+      // recycleWreck odmawia przy ładunku w manifeście: ciało i tak musi zejść z silnika, inaczej zostałoby niewidzialną ścianą poza listą wraków
+      if (!recycleWreckEntity(w) && w.beamHull) HullBodies.release(w);
+      const i = wrecks.indexOf(w);
+      if (i >= 0) wrecks.splice(i, 1);
+    }
+    function drainVoxBaseDrop() {
+      if (!_voxBaseDrop.length) return;
+      for (const w of _voxBaseDrop) if (w?.beamHull) dropPirateBaseWreck(w);
+      _voxBaseDrop.length = 0;
     }
     {
       const prevSpawned = HullBodies.onWreckSpawned;
@@ -33453,12 +34100,12 @@
         const p = wreck?.beamHull?.world;
         if (p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:')) {
           rehomePirateBaseVents(wreck, parent, atmoModuleId(p));
-          // upadek habitatu: poza spoczynkowa kawałka płaskiego — jego odłamy sprzed HP 0 też spadną (pirateBaseFall.js)
-          noteBaseWreckRest(wreck, parentBody);
+          if (VOX_OBRAZ_BAZY && !_baseFall.voxFall) _voxBaseDrop.push(wreck);
         }
       };
     }
     window.PirateBaseAtmosphere = PirateBaseAtmosphere;
+    PirateBaseAtmosphere.tune.followBodies = !VOX_OBRAZ_BAZY; // przy wokselach ciała są schowane, więc wyrwa stoi tam, gdzie powstała
 
     // Taran ciał bazy (kawałki w bańce gracza): zwykłe zderzenie kadłubów w HullBodies.step. Styk okrętu spoza piratów
     // (gracz, sojusznicy — nie wraki ani odłamy bazy) otwiera okno taranu kawałka: węzły zgniecione w nim zdejmują
@@ -33476,7 +34123,8 @@
       if (!site?.structures || !owner || !Object.values(site.structures).includes(owner)) return;
       // szyja habitatu: prędkość i miejsce taranu (kierunek przewrócenia głowy po zerwaniu szyi)
       const neck = pirateBaseSites()?.habitat?.neck;
-      if (neck) noteNeckRam(neck, piece, other, Number(ev.simTime) || HullBodies.simTime, ev.x, ev.y);
+      // szarża F gracza dociśnięta do szybu zrywa szyję także przy małej prędkości styku (pirateBaseNeck.js, „trzeba na dwa razy”)
+      if (neck) noteNeckRam(neck, piece, other, Number(ev.simTime) || HullBodies.simTime, ev.x, ev.y, other === ship && playerRamBurnActive());
       if (!(Number(ev.impactSpeed) >= BASE_INTEGRITY_TUNE.ramMinSpeed)) return;
       noteBaseRam(piece, Number(ev.simTime) || HullBodies.simTime, ev.x, ev.y);
       if (other !== ship) return;
@@ -33495,37 +34143,49 @@
         if (Number.isFinite(x) && Number.isFinite(y)) { owner.lastHitX = x; owner.lastHitY = y; }
         applyDamageToStation(owner, hp);
       },
-      kill(owner) { applyDamageToStation(owner, (Number(owner.hp) || 0) + 1); }
+      // zgniot kawałka z pulą (habitat): punkty z jego puli (onBasePieceDamage)
+      pieceDamage(owner, id, hp, x, y) {
+        if (Number.isFinite(x) && Number.isFinite(y)) { owner.lastHitX = x; owner.lastHitY = y; }
+        owner.lastHitChunk = id;
+        applyDamageToStation(owner, hp);
+      },
+      kill(owner) { applyDamageToStation(owner, (Number(owner.hp) || 0) + 1, true); }
     };
     window.BaseIntegrityTune = BASE_INTEGRITY_TUNE;   // strojenie na żywo (ramHpMul, ramWindow, ramMinSpeed)
     function stepPirateBaseIntegrity() {
       const sites = pirateBaseSites();
       if (!sites || !StoryGame.site?.structures) return;
       stepBaseIntegrity(sites, HullBodies.simTime, _baseIntegrityHooks);
+      syncBaseStages();
     }
 
     // Szyja habitatu (src/game/story/pirateBaseNeck.js; silnik 3D 2026-10-15): taran (szarża F) przebija ścianę rury szyi
     // w szybie H-C → WIEŻA (H-T — bryła 3D) puszcza kotwice i na przegubie w nasadzie przewraca się w stronę, z której
     // przyszedł taran (grawitacja habitatu — powoli, potem szybko), uderza bokiem w koronę bębna (onImpact), przegub pęka,
-    // talerz spada na dysk mieszkalny (D-1…8 — bryły 3D) i go przebija. Zerwanie zdejmuje NECK_TUNE.hpFrac punktów
-    // habitatu (może zacząć finał).
+    // talerz spada na dysk mieszkalny (D-1…8 — bryły 3D) i go przebija. Zerwanie = etap „wieża” finału habitatu
+    // (syncBaseStages); habitat bez etapów traci NECK_TUNE.hpFrac punktów.
     const _neckCtx = {
       worldBodies, engine: HullBodies.engine, layout: null, habitat: null, simTime: 0, lastHitX: NaN, lastHitY: NaN,
       onSnap(st) {
         const owner = pirateBaseSites()?.habitat?.owner;
         const hc = _neckCtx.habitat;
-        GameBlasts.blast({ x: hc.x, y: hc.y, size: 560 }, true);
+        GameBlasts.blast({ x: hc.x, y: hc.y, size: 560, profile: 'baza' }, true);
         camera.addShake(26, 0.9);
         noteCameraCombat('taran');
         if (StoryGame.site) StoryGame.site.neckSnapped = true;
+        pirateBaseVoxEvent('voxNeck', st.fallX, st.fallY);
         pushZoneMessage('SZYJA HABITATU ZERWANA — WIEŻA SIĘ PRZEWRACA', 3.5);
-        if (owner && owner.hp > 0) _baseIntegrityHooks.damage(owner, (Number(owner.maxHp) || 0) * NECK_TUNE.hpFrac, hc.x, hc.y);
+        if (owner?.stageGoal) syncBaseStages();
+        else if (owner && owner.hp > 0) _baseIntegrityHooks.damage(owner, (Number(owner.maxHp) || 0) * NECK_TUNE.hpFrac, hc.x, hc.y);
         // powietrze: rura szyi pęka — wylot z kikuta u spodu wieży (z bryłą) i u szczytu szybu; zwarcia w rurze
         noteBaseNeckSnap(st.tower);
         noteBaseBlast(hc.x, hc.y, 560);
+        // Woksele: wieża wyrywa wierzch szybu (kratery w obrazie, wGrze voxNeck), więc szyb pęka też w grze, a jego odłamy znikają jak reszta
+        // (drainVoxBaseDrop). Inaczej zostawał kikut na kotwicach pierścienia szyi: statek pchany ciągiem stał na nim bez końca.
+        if (VOX_OBRAZ_BAZY) storyBaseBreak('H-C', { power: 2.2, speed: 70 });
       },
       onImpact(st) {
-        GameBlasts.blast({ x: st.impactX, y: st.impactY, size: 620 }, true);
+        // Bez wybuchu: miejsce to schowana stara bryła wieży, a jej upadek rysują woksele.
         camera.addShake(32, 1.1);
         // powietrze: bok wieży gniecie się o koronę bębna / dysk — wyrwa w wieży (z bryłą) i zapłon
         pirateBaseBreach({ module: 'H-T', x: st.impactX, y: st.impactY, z: st.impactZ, size: 180, entity: st.tower, kind: 'break' });
@@ -33547,8 +34207,28 @@
       c.habitat = place.habitat;
       c.simTime = HullBodies.simTime;
       c.lastHitX = hs.owner?.lastHitX; c.lastHitY = hs.owner?.lastHitY;
+      if (VOX_OBRAZ_BAZY && st.phase !== 'attached') {
+        // Woksele: wieży z belek już nie ma (drainVoxBaseDrop), jej upadek rysuje obraz. Uderzenie o koronę bębna i spoczynek idą zegarem od zerwania (gra nie czyta wokseli).
+        if (!(dt > 0)) return;
+        st.t += dt;
+        st.tower = null;
+        if (st.impactT < 0 && st.t >= VOX_NECK_T.uderzenie) {
+          st.impactT = st.t;
+          const R = Number(place.layout.habitat?.drumR) || 1000;
+          st.impactX = place.habitat.x + st.fallX * R; st.impactY = place.habitat.y + st.fallY * R; st.impactZ = 150;
+          c.onImpact(st);
+        }
+        if (st.t >= VOX_NECK_T.spoczynek) {
+          st.phase = 'landed';
+          st.landT = st.t; st.landX = st.impactX; st.landY = st.impactY;
+          c.onLand(st);
+        }
+        return;
+      }
       stepNeck(st, hs, c, dt);
     }
+    // Woksele: wieża z obrotem 0,3 rad/s uderza w bęben ~2–2,5 s po zerwaniu (kadry z gry 2026-11-07), leży po ~4,5 s.
+    const VOX_NECK_T = { uderzenie: 2.4, spoczynek: 4.5 };
     // Dev / skrypty: zerwij szyję teraz (kierunek taranu w grze, prędkość taranującego).
     window.snapPirateBaseNeck = (dirX = -1, dirY = 0, speed = 3000) => {
       const hs = pirateBaseSites()?.habitat;
@@ -33558,48 +34238,32 @@
       Object.assign(_neckCtx, { layout: place.layout, habitat: place.habitat, simTime: HullBodies.simTime });
       return snapNeck(hs.neck, hs, _neckCtx, dirX, dirY, speed);
     };
-    // UPADEK HABITATU NA PLANETOIDĘ (src/game/story/pirateBaseFall.js; prośba użytkownika 2026-10-19: „jak HP habitatu
-    // spadnie do 0, góra przebije się przez dół i jako pierwsza spadnie na planetoidę, za nią dół pociągnięty przez
-    // wieżę; w końcu wszystkie elementy spadają na planetoidę”). Teren skały (mapa kształtu — ta sama co siatka skały)
-    // i grawitacja ku jej środkowi w silniku belek od podpięcia bazy: odłamy brył (szyja, dysk) lądują na skale zamiast
-    // znikać pod dnem. HP 0 habitatu (storyGame._chainExplosion → deps.habitatFall): wieża przebija dysk (korek pod nią
-    // rozpada się na odłamy) i spada pierwsza, sektory dysku puszczają za nią, wszystko osiada i zamarza (koszt 0).
-    // Zdarzenia: uderzenie / szorowanie / osiadanie na skale (efekt uderzeń), przebicie modułu (rozszczelnienie).
+    // UPADEK HABITATU NA PLANETOIDĘ: teren skały (mapa kształtu — ta sama co siatka skały) i grawitacja ku jej środkowi
+    // w silniku belek od podpięcia bazy: odłamy brył sprzed HP 0 (szyja, dysk) lądują na skale zamiast znikać pod dnem
+    // (src/game/story/pirateBaseFall.js). HP 0 habitatu (storyGame._chainExplosion → deps.habitatFall): obraz upadku rysują
+    // woksele, a gra idzie zegarem niżej.
     let _rockShape = null, _rockShapeP = null;
     let _baseFall = createFallState();
     let _baseFallPlace = null;
     const _fallHooks = {
-      onImpact: (ev) => { rockImpact(ev); pirateFallImpactFx('impact', ev); pirateFallAtmoImpact(ev); },
-      onScrape: (ev) => { rockScrape(ev); },
-      onSettle: (ev) => { rockSettle(ev); },
-      onBreach: (ev) => pirateFallBreachFx(ev),
-      // bryła 3D zastępuje ciało płaskie kawałka / odłamu: wyrwy powietrza przechodzą na nią (jadą z nią na skałę)
-      onPromote: (solid, old, piece) => rehomePirateBaseVents(solid, old, atmoModuleId(piece)),
       onFallStart: () => {
         pushZoneMessage('HABITAT RUNĄŁ — WIEŻA PRZEBIJA DYSK I SPADA NA PLANETOIDĘ', 4.5);
         camera.addShake(20, 1.2);
       }
     };
-    const _fallCtx = { engine: null, worldBodies, site: null, layout: null, place: null, neck: null, terrain: null,
-      simTime: () => HullBodies.simTime, solids: null, hooks: _fallHooks, wrecks, shatter: null,
-      createSolid: (e, s, o) => HullBodies.createSolid(e, s, o), releaseHull: (e) => HullBodies.release(e),
-      isBaseSite: (s) => !!(s && s.structure), rnd: Math.random, tune: PIRATE_FALL_TUNE };
+    const _fallCtx = { engine: null, place: null, terrain: null, simTime: () => HullBodies.simTime, solids: null,
+      isBaseSite: (s) => !!(s && s.structure), tune: PIRATE_FALL_TUNE };
     function syncPirateFallCtx() {
       const c = _fallCtx;
       c.engine = HullBodies.engine;
       c.solids = HullBodies._solids;
-      c.shatter = (w, x, y, z, o) => HullBodies.shatterSolid(w, x, y, z, o);
-      c.site = pirateBaseSites()?.habitat || null;
       c.place = StoryGame.site?.dock || _baseFallPlace;
-      c.layout = c.place?.layout || null;
-      c.neck = c.site?.neck || null;
       return c;
     }
     function attachPirateBaseFall(place) {
       HullBodies.init();
       detachPirateRockTerrain(_baseFall, HullBodies.engine);
       _baseFall = createFallState();
-      resetPirateRockImpacts();
       _baseFallPlace = place;
       const build = () => {
         if (_baseFallPlace !== place || _baseFall.phase !== 'idle') return;
@@ -33621,17 +34285,59 @@
         detachPirateRockTerrain(_baseFall, HullBodies.engine);
         return;
       }
-      stepHabitatFall(_baseFall, syncPirateFallCtx(), dt);
+      if (_baseFall.voxFall) { stepVoxBaseFall(dt); return; }
+      stepRockDebris(_baseFall, syncPirateFallCtx(), dt);
     }
     /** HP 0 habitatu (storyGame._chainExplosion): upadek na planetoidę. true — ruszył (bez terenu / habitatu — false). */
     function startPirateBaseFall() {
       if (!_baseFall.terrain) return false;
-      return startHabitatFall(_baseFall, syncPirateFallCtx());
+      const _neck = pirateBaseSites()?.habitat?.neck;
+      pirateBaseVoxEvent('voxFall', Number(_neck?.fallX) || 0, Number(_neck?.fallY) || 0);
+      return startVoxBaseFall();
     }
-    /** Kawałek płaski habitatu (bęben, szyb) → bryła 3D spadająca na skałę (pirateBaseFall.promotePlanarPiece). */
-    function promotePirateBasePiece(piece, o) {
-      if (!_baseFall.terrain) return 0;
-      return promotePlanarPiece(_baseFall, syncPirateFallCtx(), piece, o);
+    // UPADEK NA WOKSELACH (2026-11-06): obraz upadku rysują woksele (src/3d/woksele/wGrze.js), a uderzenia w skałę liczą z własnych węzłów. Fizyka starych, niewidocznych brył była więc samym kosztem: strona gry traciła na niej klatki (pomiar: plan LOD § 5e).
+    // Przy HP 0 stare ciała bazy znikają od razu, a kawałki bez ciał przestają trafiać dopiero po puszczeniu kotwic wokseli. Misja i ujęcie kamery idą tym samym stanem upadku, czasy z zegara (gra nie czyta niczego z wokseli: zasada 1).
+    // Czasy z fali puszczania kotwic w src/3d/woksele/wGrze.js (start 3 s, 1500 j./s) i spadku ~15,5 s (40 km, sufit prędkości 4000 j./s): gra ich nie czyta z wokseli.
+    const VOX_FALL_T = { kotwice: 9, wieza: 17, dysk: 21, koniec: 32 };
+    function startVoxBaseFall() {
+      const F = _baseFall;
+      F.phase = 'falling';
+      F.t = 0;
+      F.voxFall = true;
+      _fallHooks.onFallStart();
+      for (let i = wrecks.length - 1; i >= 0; i--) {
+        const w = wrecks[i];
+        if (pirateBasePieceOf(w)) dropPirateBaseWreck(w);
+      }
+      detachPirateBaseBodies();
+      // Wyrwy powietrza jechały ze starymi ciałami: bez nich para stałaby w miejscu, z którego baza spada.
+      detachPirateBaseAtmosphere();
+      const l = (StoryGame.site?.dock || _baseFallPlace)?.layout;
+      for (const c of l?.chunks || []) if (c.structure === 'habitat') hidePirateBaseChunk(c.id);
+      return true;
+    }
+    function stepVoxBaseFall(dt) {
+      const F = _baseFall;
+      if (F.phase !== 'falling') return;
+      F.t += dt;
+      if (!F.voxHidden && F.t >= VOX_FALL_T.kotwice) {
+        F.voxHidden = true;
+        const l = (StoryGame.site?.dock || _baseFallPlace)?.layout;
+        for (const c of l?.chunks || []) hidePirateBaseChunk(c.id);
+        // Cała baza spadła: budowla bez ani jednej bryły nie może zostać żywa (radar, TRAVEL TO, cel wież). Bezpiecznik pirateBaseIntegrity tu nie zadziała, bo ciał już nie ma.
+        for (const st of Object.values(StoryGame.site?.structures || {})) if (st && st.hp > 0 && !st._destroyed3D) _baseIntegrityHooks.kill(st);
+      }
+      if (!F.towerSaid && F.t >= VOX_FALL_T.wieza) {
+        F.towerSaid = true;
+        F.towerImpactT = F.t;
+        camera.addShake(26, 1.4);
+        pushZoneMessage('WIEŻA HABITATU UDERZYŁA W PLANETOIDĘ', 3.5);
+      }
+      if (F.discImpactT < 0 && F.t >= VOX_FALL_T.dysk) {
+        F.discImpactT = F.t;
+        camera.addShake(14, 0.8);
+      }
+      if (F.t >= VOX_FALL_T.koniec) F.phase = 'settled';
     }
     /** Promise: upadek skończony (wszystko osiadło) albo po `maxSec` s czasu gry. */
     function pirateBaseFallDone(maxSec = 30) {
@@ -33643,70 +34349,6 @@
         };
         poll();
       });
-    }
-    // Uderzenie w skałę: obraz pyłu, wyrzutu i kłębów — rekord ROCK_IMPACT (rockImpact / rockScrape / rockSettle,
-    // src/game/story/pirateRockImpacts.js); tu wstrząs kamery od dużych brył i komunikat.
-    function pirateFallImpactFx(type, ev) {
-      if (type === 'impact' && (ev.kind === 'tower' || ev.kind === 'disc')) {
-        camera.addShake(ev.kind === 'tower' ? 26 : 14, ev.kind === 'tower' ? 1.4 : 0.8);
-        if (ev.kind === 'tower' && !_baseFall.towerSaid) {
-          _baseFall.towerSaid = true;
-          pushZoneMessage('WIEŻA HABITATU UDERZYŁA W PLANETOIDĘ', 3.5);
-        }
-      }
-    }
-    // Moduł powietrza bryły upadku (sektor dysku, wieża, odłam bębna / szybu — pirateBaseAtmosphere.js) albo null.
-    function pirateFallModuleOf(body) {
-      const p = body?.hull?.world || body?.entity?.worldPiece || null;
-      return p && p.site && typeof p.site.id === 'string' && p.site.id.startsWith('pbase:') ? atmoModuleId(p) : null;
-    }
-    // Uderzenie dużej bryły w skałę rozrywa moduł przy skale (wylot resztek powietrza) i zapala go (tarcie, zwarcia).
-    function pirateFallAtmoImpact(ev) {
-      if (!ev || ev.kind === 'debris' || !(ev.speed >= 220) || !(ev.size >= 250)) return;
-      const module = pirateFallModuleOf(ev.body);
-      if (!module) return;
-      const entity = ev.body?.entity || null;
-      const size = Math.max(60, Math.min(240, ev.size * 0.2));
-      pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity, kind: 'break' });
-      pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity });
-    }
-    // Przebicie dysku przez wieżę i oderwanie sektorów (pirateBaseFall.js — onBreach): rozszczelnienie modułu (wylot
-    // powietrza, grodzie puszczają) i zapłon. Korek (cause 'plug') — wyrwy daje zgniot węzłów (atmoNodeLost).
-    function pirateFallBreachFx(ev) {
-      if (!ev) return;
-      if (ev.cause === 'plug') {
-        // wieża rozbija korek dysku: wybuch w głębi (pod płaszczyzną gry, ~800 j.) w kierunku jej ruchu; korek stoi
-        // (nośnik 0 — obłok zostaje przy dziurze, wieża wylatuje z niego w dół)
-        const F = _baseFall;
-        pirateDeepBlast({ id: 'pbase-plug', kind: 'disc', x: ev.x, y: ev.y, z: Number.isFinite(F.discMinZ) ? F.discMinZ + 180 : ev.z,
-          size: 760, nx: F.downX, ny: -F.downY, nz: F.downZ, vx: 0, vy: 0, vz: 0 });
-        camera.addShake(24, 0.9);
-        return;
-      }
-      const module = ev.module;
-      if (!module) return;
-      if (ev.cause === 'release') {
-        // sektor odrywa się od trzonu: pęka jego wewnętrzna krawędź (od strony dziury po wieży), powietrze ku osi i w dół
-        const F = _baseFall;
-        const hx = F.holeX, hy = -F.holeY;
-        let dx = ev.x - hx, dy = ev.y - hy;
-        const dl = Math.hypot(dx, dy) || 1;
-        dx /= dl; dy /= dl;
-        const r = Math.min(dl, 900);
-        const z = Number.isFinite(F.discMinZ) ? F.discMinZ + 160 : ev.z;
-        pirateBaseBreach({ module, x: hx + dx * r, y: hy + dy * r, z, nx: -dx * 0.8, ny: -dy * 0.8, nz: -0.6, size: 200,
-          entity: ev.entity || null, kind: 'break' });
-        // pęknięcie mocowania sektora przy trzonie: mały wybuch w głębi, jedzie z sektorem
-        const sb = ev.entity?.beamHull?.body;
-        pirateDeepBlast({ id: `pbase-rel-${module}`, kind: 'disc', x: hx + dx * r, y: hy + dy * r, z, size: 320,
-          nx: -dx, ny: -dy, nz: -0.4, vx: sb ? sb.vel.x : 0, vy: sb ? -sb.vel.y : 0, vz: sb ? sb.vel.z : 0 });
-        camera.addShake(8, 0.4);
-        return;
-      }
-      // wieża w sektorze (cause 'tower'): wyrwa w punkcie styku, zapłon od tarcia i zwarć
-      const size = Math.max(80, Math.min(220, Number(ev.size) || 200));
-      pirateBaseBreach({ module, x: ev.x, y: ev.y, z: ev.z, nx: ev.nx, ny: ev.ny, nz: ev.nz, size, entity: ev.entity || null, kind: 'break' });
-      pirateBaseIgnite({ module, x: ev.x, y: ev.y, z: ev.z, size, entity: ev.entity || null });
     }
     // Kadr ujęcia upadku (storyGame._habitatFallShot → lookAt): habitat i RZUT miejsca lądowania (prosta habitat → środek
     // skały do przecięcia z kulą skały, ~24 km pod płaszczyzną — pirateRockLayout.js, skala świata) symetrycznie wokół
@@ -33889,7 +34531,7 @@
     function storyDestroyStation(st) {
       if (!st || st._destroyed3D) return;
       if (st.shield) st.shield.val = 0;
-      applyDamageToStation(st, Math.max(1e5, (Number(st.maxHp) || Number(st.hp) || 1000) * 2));
+      applyDamageToStation(st, Math.max(1e5, (Number(st.maxHp) || Number(st.hp) || 1000) * 2), true);
     }
 
     // Zasadzka w pasie (misja 2): piraci wyrywają Atlasa z warpa — wyjście bez rampy i hamowanie jak przy studni
@@ -33913,7 +34555,7 @@
     }
 
     // Lot intro w tle menu: ekran ładowania znika, kamera tła leci z ujęcia menu nad K-7 (plan: StoryGame.planMenuIntro),
-    // słońce tła przechodzi w słońce gry, nad halą wycięcie górnej ściany jak w grze. Kończy się kadrem gry z góry.
+    // tło świeci słońcem gry (bez zmiany cieniowania w locie), nad halą wycięcie górnej ściany jak w grze. Kończy się kadrem gry z góry.
     async function runStoryMenuFlight() {
       const bd = menuBackdrop;
       const pose = bd?.cameraPose?.();
@@ -34048,12 +34690,15 @@
       // drony z hangarów habitatu; rozpad kawałków (rozpad habitatu, reakcja łańcuchowa — storyGame).
       spawnPirateBase: (specs, place) => spawnStoryPirateBase(specs, place),
       launchDrones: (o) => storyLaunchDrones(o),
-      damageStation: (st, dmg) => applyDamageToStation(st, dmg),
+      // direct — punkty budowli wprost, z pominięciem pul kawałków (ogień w rurach zabija habitat od razu)
+      damageStation: (st, dmg, direct) => applyDamageToStation(st, dmg, !!direct),
       baseBreak: (id, o) => storyBaseBreak(id, { ...(o || {}), allLive: true }),
       baseBrokenChunks: () => pirateBaseBrokenChunks(),
+      // etapy finału habitatu (wyłom, wieża, wieżowce) — cel misji
+      baseStages: () => pirateBaseStages(),
       // Planetoida pod bazą (2026-10-15): rozpad habitatu zrywa windę kosmiczną, osada na skale wybucha po kolei.
       rockCollapse: () => collapsePirateRock(),
-      // Upadek habitatu na planetoidę (2026-10-19): wieża przebija dysk, dysk za nią (src/game/story/pirateBaseFall.js).
+      // Upadek habitatu na planetoidę: obraz na wokselach, zegar w bloku UPADEK (startVoxBaseFall).
       habitatFall: () => startPirateBaseFall(),
       habitatFallLook: () => pirateBaseFallLook(),
       habitatFallDone: (maxSec) => pirateBaseFallDone(maxSec),
@@ -34097,7 +34742,7 @@
       warpOut: (list, origin) => storyWarpOutUnits(list, origin),
       returnWing: () => returnSupportWingToEarth(),
       // wybuch w module bazy (rozpad habitatu, ogień w rurach) — zapłon powietrza modułu (pirateBaseAtmosphere.js)
-      reactorBlow: (o) => { if (o) noteBaseBlast(o.x, o.y, o.size); return GameBlasts.blast(o, true); },
+      reactorBlow: (o) => { if (o) noteBaseBlast(o.x, o.y, o.size); return GameBlasts.blast(o && !o.profile ? { ...o, profile: 'baza' } : o, true); },
       addCredits: (n) => { if (window.DevEconomy?.addCredits) window.DevEconomy.addCredits(n); else PLAYER.credits += n; },
       changeReputation: (f, d, reason) => changePlayerReputation(f, d, reason),
       factionLabel: (f) => FACTIONS[normalizeFaction(f)]?.name || f,
@@ -34197,14 +34842,32 @@
 
     // Fabuła: kampania tylko w grze jednoosobowej (podzielony ekran ustawia false przed startGame).
     let startGameCampaign = true;
-    async function startGame() {
+    // Start w toku (żeton): drugi klik — „Wczytaj” czeka na worker ekonomii, „Nowa gra” w tym czasie — nie odpala drugiego
+    // startGame (podwójne initNPCs / initFleet / pętla gry). `gameStarted` ustawia się dopiero po wczytaniu dźwięków.
+    let gameLaunching = null;
+    async function startGame(opts = {}) {
       if (gameStarted) return;
       // Tylko WebGPU: bez adaptera gra nie startuje (komunikat w menu).
       if (Core3D.gpuUnsupported || rwHost?.failed) { showWebGpuRequired(); return; }
+      // Żeton startu (żeton z „Wczytaj” zwalnia przy nieudanym starcie loadGameFromSave).
+      if (gameLaunching && gameLaunching !== opts.launch) return;
+      gameLaunching = gameLaunching || 'new';
+      // Zapis gracza („Wczytaj” w menu — loadGameFromSave, blok „ZAPIS GRACZA”): stan gracza i punkt wznowienia
+      // kampanii; bez wczytania stary zapis gracza znika (nowa gra).
+      const loadedSave = pendingPlayerSave;
+      pendingPlayerSave = null;
+      const loadCheckpoint = loadedSave ? campaignCheckpoint(loadedSave.campaign, CAMPAIGN_RESUME) : null;
+      beginPlayerSaveSession(loadedSave);
       // Gospodarka: nowa gra od zera (stary zapis znika), chyba że zapis wczytano przed startem.
       beginEconomySession();
-      // Kampania (dok K-7, intro, misja 1 — src/game/story/) albo swobodna gra.
-      const storyCampaign = startGameCampaign && StoryOptions.campaign;
+      // Kampania (dok K-7, intro, misja 1 — src/game/story/) albo swobodna gra; z zapisu — jak w zapisie.
+      // Fabuła istnieje tylko w układzie z treścią ręczną (src/data/starSystems.js — `handmade`: Układ Słoneczny).
+      const storyCampaign = !!CURRENT_SYSTEM.handmade
+        && (loadCheckpoint ? loadCheckpoint.mode === 'campaign' : (startGameCampaign && StoryOptions.campaign));
+      // Faza startu kampanii: początek misji z zapisu albo skok dev (?story=faza).
+      const storyStartPhase = loadCheckpoint?.mode === 'campaign' ? loadCheckpoint.startPhase : StoryOptions.devStartPhase();
+      // Gracz z zapisu PRZED przygotowaniem sceny workera (ringi przy statku) i skrzydłem (initFleet — przy Atlasie).
+      if (loadedSave) applyPlayerSave(loadedSave, { place: !storyCampaign });
 
       // Tło menu: najazd kamery na Ziemię, menu zjeżdża; render tła trwa pod
       // ekranem ładowania aż do stopMenuBackdrop() przed pierwszą klatką gry.
@@ -34216,7 +34879,7 @@
       const rwPrepare = rwHost ? rwHost.prepare(ship.pos.x, ship.pos.y) : null;
       // Kampania z lotem intro w tle menu: kamera tła NIE dojeżdża do Ziemi (tylko planeta na środek kadru) — tor intro
       // leci jednym najazdem z tej pozy prosto na dok K-7 (dawniej: dojazd tu + tor „do Ziemi, odjazd, dok”).
-      const storyFlightPlanned = storyCampaign && !!menuBackdrop && !StoryOptions.devStartPhase();
+      const storyFlightPlanned = storyCampaign && !!menuBackdrop && !storyStartPhase;
       if (menuBackdrop) {
         menuLaunching = true;
         menuBackdrop.launch({ dolly: !storyFlightPlanned });
@@ -34243,6 +34906,7 @@
       // --- AUDIO END ---
 
       gameStarted = true;
+      refreshLoadGameButton();
 
       // Initialize P1 weapon controller
       p1WeaponCtrl = new WeaponController({
@@ -34382,7 +35046,7 @@
       // raziło (ring upieczony w menu = gra gotowa po ~1,5 s).
       // Fabuła: lot kamery intro w TLE MENU (menu pokazuje stronę Ziemi z K-7) — ta sama Ziemia i ring, bez czerni;
       // gra zaczyna w ostatnim kadrze lotu (z góry nad zamkniętym dachem K-7). Skok dev (?story=faza) — bez lotu.
-      const storyDevPhase = StoryOptions.devStartPhase();
+      const storyDevPhase = storyStartPhase;
       const storyFlight = storyCampaign && !!menuBackdrop && !storyDevPhase;
       const fadeThroughBlack = !!menuBackdrop && !storyFlight;
       if (fadeThroughBlack) {
@@ -34400,9 +35064,15 @@
       stopMenuBackdrop();
       // Kampania: Atlas w doku K-7, intro (po locie w menu — od razu otwarcie dachu; świat stoi).
       if (storyCampaign) {
-        equipCampaignLoadout();
-        grantCampaignRepairCargo();
-        StoryGame.beginNewGame({ tutorial: StoryOptions.tutorial, menuPose: storyMenuPose, introFromMenu: storyFlight, startPhase: storyDevPhase });
+        // Z zapisu: fit i ładownia jak w zapisie (bez kompletu startowego i ładunku naprawczego kampanii).
+        if (!loadedSave) {
+          equipCampaignLoadout();
+          grantCampaignRepairCargo();
+        }
+        StoryGame.beginNewGame({
+          tutorial: StoryOptions.tutorial, menuPose: storyMenuPose, introFromMenu: storyFlight, startPhase: storyDevPhase,
+          restore: loadedSave ? { campaign: loadedSave.campaign } : null
+        });
       }
       requestAnimationFrame(loop);
       await firstFramePromise;
@@ -34437,12 +35107,72 @@
         for (const key of Object.keys(warOpts)) if (warOpts[key] === undefined) delete warOpts[key];
         setTimeout(() => { try { startWarScene(warOpts); } catch (err) { console.error('[Wojna] start sceny:', err); } }, 1000);
       }
+      // Zasięg radarów (prototyp): ?radarZasiegi=scena — scena sekundę po wejściu do gry swobodnej.
+      if (RADAR_RANGE_QUERY.get('radarZasiegi') === 'scena' && !storyCampaign) {
+        setTimeout(() => { try { startRadarScene(); } catch (err) { console.error('[Zasięg radarów] start sceny:', err); } }, 1000);
+      }
     }
     if (newGameButton) {
       newGameButton.addEventListener('click', () => {
         setMenuView('gamemode');
       });
     }
+
+    // „Wczytaj” (zapis gracza — blok „ZAPIS GRACZA”): aktywny w menu głównym, gdy jest zapis z tego układu planet
+    // (ziarno świata); w trakcie gry (menu pauzy) wyłączony — wczytanie po przeładowaniu strony (F5).
+    function refreshLoadGameButton() {
+      if (!loadGameButton) return;
+      const save = gameStarted ? null : readPlayerSave().save;
+      loadGameButton.disabled = !save;
+      const tag = loadGameButton.querySelector('.mm-tag, .mm-go');
+      if (tag) {
+        tag.className = save ? 'mm-go' : 'mm-tag';
+        tag.textContent = save ? '▸' : (gameStarted ? 'po F5' : 'brak zapisu');
+      }
+      loadGameButton.dataset.hint = save
+        ? `Zapis: ${describePlayerSave(save, { resume: CAMPAIGN_RESUME })}`
+        : (gameStarted ? 'Wczytanie zapisu — z menu głównego po przeładowaniu strony (F5)' : 'Brak zapisu gry');
+    }
+
+    /** Wczytanie zapisu z menu: ekonomia na świat ruchu, gracz w startGame (pendingPlayerSave). */
+    async function loadGameFromSave() {
+      if (gameStarted || gameLaunching) return false;
+      const { save, reason } = readPlayerSave();
+      if (!save) {
+        console.info(`[zapis] brak zapisu gracza do wczytania (${reason})`);
+        refreshLoadGameButton();
+        return false;
+      }
+      // Żeton startu od razu (synchronicznie) — kolejne kliki czekają na ten start.
+      const launch = { load: true };
+      gameLaunching = launch;
+      if (loadGameButton) loadGameButton.disabled = true;
+      // Ekonomia z zapisu na świat ruchu (odpowiedź workera; bez odpowiedzi w 10 s gra rusza dalej — zapis nałoży się,
+      // gdy worker odpowie, a start nie wisi bez końca).
+      try {
+        await Promise.race([loadEconomyIntoWorld(), new Promise(resolve => setTimeout(resolve, 10000))]);
+      } catch (error) {
+        console.warn('[zapis] ekonomia z zapisu', error);
+      }
+      pendingPlayerSave = save;
+      splitScreenMode = false;
+      window.splitScreenMode = false;
+      setMenuView('home');
+      try {
+        await startGame({ launch });
+      } finally {
+        // start się nie udał (np. brak WebGPU) — żeton i zapis w oczekiwaniu zwolnione, „Nowa gra” go nie podejmie
+        if (!gameStarted) {
+          if (gameLaunching === launch) gameLaunching = null;
+          pendingPlayerSave = null;
+          refreshLoadGameButton();
+        }
+      }
+      return gameStarted;
+    }
+    window.loadGameFromSave = loadGameFromSave;
+    if (loadGameButton) loadGameButton.addEventListener('click', () => { loadGameFromSave(); });
+    refreshLoadGameButton();
 
     // ============== SPLIT SCREEN / GAME MODE LOGIC ==============
 
@@ -34768,6 +35498,11 @@
           window.splitScreenMode = true;
           if (mainMenuEl) mainMenuEl.classList.add('hidden');
           return startSplitScreenGame(p1, p2);
+        },
+        // Styl świateł nawigacyjnych encji z konsoli (src/data/shipNavLights.js): DevScene.navStyl('warning').
+        navStyl(name = 'warning', e = ship) {
+          e.editorLights = restyleNavLights(e.editorLights, name);
+          return e.editorLights;
         }
       });
     }
@@ -35158,7 +35893,8 @@
     const GFX_CHIP_ATTR = Object.freeze({
       renderScale: 'gfxScale', msaa: 'gfxMsaa', bloom: 'gfxBloom', heatHaze: 'gfxHeat', explosions: 'gfxExplosions',
       effects: 'gfxEffects', hallDust: 'gfxHallDust', spaceGas: 'gfxSpaceGas', shadowShafts: 'shaftQ', planetQuality: 'planetQ',
-      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync'
+      lacquer: 'lacquer', hullLight: 'hullLight', spaceDust: 'spaceDust', dynamicRes: 'gfxDynRes', vsync: 'gfxVsync',
+      frameLimit: 'gfxFrameLimit'
     });
     const gfxChipSelector = (attr) => `[data-${attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}]`;
     let gfxSettings = normalizeGfx(window.__gfxBoot || null);
@@ -35215,24 +35951,24 @@
     // → sterownik → Core3D.setRenderScale tylko przy zmianie stopnia (sam resize celów, bez nowych pipeline'ów).
     // Konsola: DynamicResTune (strojenie, targetFps > 0 — nadpisuje opcję), GraphicsQuality.dynamic (stan).
     const dynRes = createDynResState();
-    let dynResRenderSeen = -1, dynResComputeSeen = -1, dynResComputeAt = -1e9;
+    const dynResClock = createDynResClock();
     window.DynamicResTune = DYN_RES_TUNE;
     function dynResScale() {
       return dynRes.target > 0 && dynRes.base === gfxSettings.renderScale && dynRes.scale > 0 ? dynRes.scale : gfxSettings.renderScale;
     }
     function stepDynamicResolution(nowMs) {
       const t = (Number(nowMs) || 0) / 1000;
-      // tryb worker: próbki czasu GPU z kanału zwrotnego workera (Core3D strony nie ma urządzenia — dawniej sterownik
-      // nie dostawał próbek, a nowa skala nie docierała do workera)
+      // tryb worker: próbki czasu GPU z kanału zwrotnego workera (retWriteGpuClock) — Core3D strony nie ma urządzenia,
+      // jego liczniki stoją na 0; skala idzie do workera rekordem obrazu (setGfx)
       let fS = Core3D.gpuFrameSamples, cS = Core3D.gpuComputeSamples, fMs = Core3D.gpuFrameMs, cMs = Core3D.gpuComputeMs;
-      if (rwHost) { rwHost.readStats(); const st = rwHost.stats; fMs = st[0]; cMs = st[1]; fS = st[2]; cS = st[3]; }
-      let sample = null;
-      if (cS !== dynResComputeSeen) { dynResComputeSeen = cS; dynResComputeAt = t; }
-      if (fS !== dynResRenderSeen) {
-        dynResRenderSeen = fS;
-        sample = fMs + (t - dynResComputeAt < 0.5 ? cMs : 0);
+      if (rwHost) {
+        rwHost.readStats();
+        const st = rwHost.stats;
+        fMs = st[RET_F64.GPU_FRAME_MS]; cMs = st[RET_F64.GPU_COMPUTE_MS]; fS = st[RET_F64.GPU_FRAME_SAMPLES]; cS = st[RET_F64.GPU_COMPUTE_SAMPLES];
       }
-      const scale = stepDynRes(dynRes, t, gfxSettings.renderScale, gfxDynamicTargetFps(gfxSettings.dynamicRes), sample);
+      const sample = dynResSample(dynResClock, t, fS, cS, fMs, cMs);
+      // budżet czasu GPU z docelowych FPS, a przy niższym limicie klatek — z limitu (gra rysuje tyle klatek, ile limit)
+      const scale = stepDynRes(dynRes, t, gfxSettings.renderScale, gfxDynamicBudgetFps(gfxSettings.dynamicRes, gfxSettings.frameLimit), sample);
       if (dynRes.changed && Core3D.renderScale !== scale) {
         Core3D.setRenderScale(scale);
         if (rwHost) rwHost.setGfx(gfxRenderRecord(gfxSettings, scale));
@@ -35240,14 +35976,85 @@
       }
     }
     function updateDynResUI() {
-      const on = dynRes.target > 0 || gfxDynamicTargetFps(gfxSettings.dynamicRes) > 0;
-      const noTimer = Core3D.gpuReady && !Core3D.gpuTimerSupported;
+      const target = gfxDynamicTargetFps(gfxSettings.dynamicRes);
+      const budget = gfxDynamicBudgetFps(gfxSettings.dynamicRes, gfxSettings.frameLimit);
+      const on = dynRes.target > 0 || target > 0;
+      const noTimer = rwHost ? rwHost.gpuReady() && !rwHost.gpuTimerSupported() : Core3D.gpuReady && !Core3D.gpuTimerSupported;
       document.querySelectorAll('[data-gfx-dyn-now]').forEach(el => {
         el.hidden = !on;
         el.textContent = noTimer
           ? 'Karta nie podaje czasu pracy GPU — rozdzielczość zostaje stała.'
-          : `Teraz: ${Math.round(dynResScale() * 100)}%.`;
+          : `Teraz: ${Math.round(dynResScale() * 100)}%.`
+            + (budget > 0 && budget < target ? ` Limit klatek ${budget} — budżet karty jak dla ${budget} FPS.` : '');
       });
+    }
+
+    // --- Limit klatek (src/render/frameLimiter.js) ---
+    // loop() woła frameLimitTick na początku każdego wywołania (po złożeniu bitmapy workera): false — klatka pominięta,
+    // następną zamawia frameLimitTick; koniec klatki narysowanej — nextLoopFrame. Z VSync: rAF w takcie ekranu, rysuje
+    // co N-ta klatka, gdy częstotliwość ekranu jest wielokrotnością limitu, inaczej akumulator czasu. Bez VSync (Electron)
+    // limit czasem i pętla BEZ rAF: budzik (src/render/frameWake.js) woła loop() w chwili należnej — rAF bez taktu (flagi
+    // Chromium) po klatce bez zmiany obrazu przychodzi dopiero po ~30 ms (docs/AUDYT-limit-klatek-2026-10-29.md). Karta
+    // w tle — rAF (gra stoi jak dawniej). Harness narzędzi z zegarem wirtualnym (window.__harness, tryb inny niż 'real')
+    // — bez limitu (FrameLimiter.bypass; tło menu strony tak samo). Tło menu: setFrameLimit (strona w trybie off,
+    // pełnomocnik → worker w trybie worker). Okres ekranu w menu zbiera pętla wejścia (observe). Konsola: FrameLimiter
+    // (tryb, okres ekranu, stats.hist — odstępy w okresach ekranu), FrameLimiter.wake (budzik bez VSync: strategia,
+    // spóźnienia budzeń, sny, dopięcia; `?budzik=worker|sen|kolejka` — A/B).
+    const frameLimiter = new FrameLimiter();
+    window.FrameLimiter = frameLimiter;
+    const harnessClockVirtual = () => { const h = window.__harness; return !!h && h.clock?.mode !== 'real'; };
+    frameLimiter.bypass = harnessClockVirtual;
+    const limitWake = frameLimiter.wake = createFrameWake({
+      onWake: () => loop(performance.now()), strategy: frameWakeStrategyFromQuery(location.search) || 'worker'
+    });
+    const limitTimeMode = () => frameLimiter.mode === 'time' && !document.hidden && !harnessClockVirtual();
+    function frameLimitTick(now) {
+      if (frameLimiter.tick(now)) return true;
+      if (limitTimeMode()) limitWake.schedule(frameLimiter.waitMs(now));
+      else requestAnimationFrame(loop);
+      return false;
+    }
+    // koniec klatki narysowanej (loop, także gałąź pauzy)
+    function nextLoopFrame() {
+      if (limitTimeMode()) limitWake.schedule(frameLimiter.waitMs(performance.now()));
+      else requestAnimationFrame(loop);
+    }
+    // Handler resize (tryb off): kanwa #c (obraz 3D i HUD) i kanwa Core3D (tło menu strony) wyczyszczone — najbliższa
+    // klatka bez limitu (resize idzie w tej samej aktualizacji obrazu co wywołania rAF, przed nimi), inaczej kanwa stoi
+    // pusta do klatki w takcie limitu (miganie przy przeciąganiu okna). Bez VSync pętla czeka na budziku — zamówienie
+    // przepada, klatka w rAF tej aktualizacji. Tryb worker: kanw obrazu i nakładek resize nie czyści — bez wymuszenia.
+    function frameLimitResized() {
+      if (rwHost) return;
+      frameLimiter.forceNext();
+      menuBackdrop?.forceNextFrame?.();
+      if (limitWake.cancel()) requestAnimationFrame(loop);
+    }
+    // VSync tego uruchomienia (Electron: flagi procesu); w przeglądarce klatki taktuje ekran
+    const frameLimitVsync = () => !(hullfallApp && hullfallApp.vsync === false);
+    function applyFrameLimit() {
+      const fps = gfxFrameLimitFps(gfxSettings.frameLimit);
+      frameLimiter.setFps(fps);
+      frameLimiter.setVsync(frameLimitVsync());
+      // wątek budzika bez VSync z góry (pierwsze klatki z limitem nie czekają na start modułu); bez limitu — zamknięty
+      if (frameLimiter.mode === 'time') limitWake.prepare();
+      else limitWake.release();
+      menuBackdrop?.setFrameLimit?.(fps, frameLimitVsync(), harnessClockVirtual);
+    }
+    // Notka w opcjach: czy częstotliwość monitora pasuje do limitu (równy takt) — z okresu rAF.
+    function updateFrameLimitUI() {
+      const lim = frameLimiter, hz = Math.round(lim.hz);
+      let text = '';
+      if (lim.fps > 0 && !frameLimitVsync()) text = 'Bez VSync limit odmierza zegar.';
+      else if (lim.fps > 0 && hz > 0) {
+        if (lim.mode === 'nth') text = `Monitor ${hz} Hz: gra rysuje co ${lim.every}. odświeżenie — równy takt.`;
+        else if (lim.mode === 'every') text = `Monitor ${hz} Hz nie jest szybszy niż limit — gra rysuje każdą klatkę.`;
+        else {
+          const even = [240, 144, 120, 60].filter((f) => f < hz * 1.03 && Math.abs(hz / f - Math.round(hz / f)) <= 0.03 * Math.round(hz / f));
+          text = `Monitor ${hz} Hz nie jest wielokrotnością ${Math.round(lim.fps)} — odstępy klatek nierówne (raz krótszy, raz dłuższy)`
+            + (even.length ? `; równy takt: ${even.join(' / ')}.` : '.');
+        }
+      }
+      document.querySelectorAll('[data-gfx-frame-limit-now]').forEach(el => { el.hidden = !text; el.textContent = text; });
     }
 
     // Gaz wybuchów i budżety efektów (na żywo). Pas asteroid powstaje na ekranie ładowania i woła to po starcie sam.
@@ -35293,6 +36100,8 @@
       applyGraphicsEffects();
       // render w workerze: te same ustawienia na Core3D i modułach efektów workera (powyższe dotyczą modułów strony)
       if (rwHost) rwHost.setGfx(gfxRenderRecord(s, scale));
+      // limit klatek: pętla gry strony i tło menu (strona albo worker)
+      applyFrameLimit();
     }
 
     function updateGraphicsUI() {
@@ -35342,6 +36151,7 @@
           + (auto.label ? ` (${auto.label}).` : '.');
       });
       updateDynResUI();
+      updateFrameLimitUI();
     }
 
     function setGraphicsSettings(next, save = true) {
@@ -35387,12 +36197,17 @@
     // Konsola / narzędzia: GraphicsQuality.set('low') albo .set({ renderScale: 0.67 }) — z zapisem;
     // .apply(…) — bez zapisu (pomiary A/B); .settings, .preset ('low' … 'ultra' | 'custom'); .auto — dobór przy
     // pierwszym uruchomieniu (co i dlaczego); .dynamic — stan rozdzielczości dynamicznej; .vsync — VSync tego
-    // uruchomienia i zapisany (Electron; w przeglądarce null).
+    // uruchomienia i zapisany (Electron; w przeglądarce null); .frameLimit — limit klatek (cel, tryb, okres ekranu).
     window.GraphicsQuality = {
       get settings() { return { ...gfxSettings }; },
       get preset() { return matchGfxPreset(gfxSettings); },
       get auto() { return gfxAutoInfo ? { ...gfxAutoInfo } : null; },
       get vsync() { return hullfallApp ? { running: hullfallApp.vsync, saved: gfxVsyncSaved, pending: gfxRestartNow().includes('vsync') } : null; },
+      get frameLimit() {
+        const l = frameLimiter;
+        return { fps: l.fps, mode: l.mode, every: l.every, hz: +l.hz.toFixed(2), vsync: l.vsync, opis: l.describe(),
+          klatki: l.stats.ticks, narysowane: l.stats.drawn, odstepyVsync: [...l.stats.hist], budzik: limitWake.strategy };
+      },
       get dynamic() {
         return { scale: dynResScale(), level: dynRes.level, levels: [...dynRes.levels], target: dynRes.target,
           emaMs: dynRes.ema > 0 ? +dynRes.ema.toFixed(2) : null, changes: dynRes.changes };

@@ -22,7 +22,7 @@
 // PODOBIEŃSTWEM względem punktu widzenia `eyeH` nad osią habitatu (x = z = 0). Z tego punktu skała i osada wyglądają
 // jak w projekcie (ten sam rzut), ale są `scale` razy dalej i większe — spadające kawałki bazy (rozmiar prawdziwy)
 // lecą ~3× dłuższą drogą (skala 2: 8 → ~23 km), maleją w perspektywie i lądują ~`scale` razy mniejsze względem skały
-// (fizyka upadku: pirateBaseFall.js — grawitacja po przejściu wieży przez dysk i sufit prędkości). Mapy tekstur skały
+// (teren i studnia silnika belek: pirateBaseFall.js). Mapy tekstur skały
 // zostają (kąty na kuli bez zmian: e / R, n / R), głowica kotwicy pod dyskiem — bez skali (należy do habitatu).
 // Pola świata daje createPirateRockLayout (R, foot, center, stationTop, plateau, cableR, budowle: e, n, r);
 // PIRATE_ROCK_SPEC trzyma projekt.
@@ -74,10 +74,10 @@ export const PIRATE_ROCK_SITE = Object.freeze(
 export const PIRATE_ROCK_SPEC = Object.freeze({
   id: 'hidalgo',
   label: 'Hidalgo',
-  // skala świata względem projektu i punkt widzenia podobieństwa (opis SKALA wyżej) — 2: szczyt skały 24 km pod
-  // płaszczyzną, promień 32 km, środek 56 km pod płaszczyzną i 11 km w bok od osi habitatu (2,5: lot wieży 17 s
-  // i uderzenie z 3,7 km/s — za długo i za ciężko dla silnika belek przy 60 Hz)
-  scale: 2,
+  // skala świata względem projektu i punkt widzenia podobieństwa (opis SKALA wyżej) — 3: szczyt skały 40 km pod
+  // płaszczyzną, promień 48 km, środek 88 km pod płaszczyzną i 16,5 km w bok od osi habitatu. Gruz w locie maleje
+  // z głębokością (prośba użytkownika 2026-11-06 „pomniejszyłbym go mocniej”): w ujęciu upadku do ~0,34, przy 2 do ~0,45.
+  scale: 3,
   eyeH: 8000,                // [j.] wysokość punktu widzenia nad płaszczyzną gry (kamera z góry projektu)
   // dalej PROJEKT (świat — createPirateRockLayout)
   radius: PIRATE_ROCK_SITE.radius,
@@ -90,7 +90,7 @@ export const PIRATE_ROCK_SPEC = Object.freeze({
   segments: 16,              // odcinki liny (grupy renderu)
   climbers: 2,               // kabiny windy
   plateau: PIRATE_ROCK_SITE.plateau,   // [j. po powierzchni] promień wyrównanego tarasu (mapa kształtu: d = 0)
-  gravity: 400,              // [j/s²] ku środkowi skały: łuki odłamków uderzeń (pirateRockImpactFx.js); lina — × skala długości
+  gravity: 400,              // [j/s²] ku środkowi skały: lina — × skala długości
   cableR: 34                 // [j.] promień wiązki liny przy stacji dolnej (kolizja z powierzchnią; świat × scale)
 });
 

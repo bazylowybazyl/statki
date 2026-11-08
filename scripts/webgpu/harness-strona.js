@@ -137,13 +137,15 @@
   // w zwykłym renderze (sync: proces GPU kompiluje shader, strona staje przy najbliższym zapisie do
   // kolejki) albo w tle z compileAsync; compute zawsze synchronicznie. Nazwa = typ:nazwa materiału @
   // obiekt — co kompilowało się w przestoju (frameStats → `pipeline`, `lista[].pipeline`). Hak na
-  // backend.pipelineUtils po powstaniu urządzenia (na tagu WebGL pola nie ma — dziennik pusty).
+  // backend.pipelineUtils po powstaniu urządzenia (na tagu WebGL pola nie ma — dziennik pusty). Dema z własnym
+  // WebGPURenderer (bez Core3D) wystawiają go jako window.__HARNESS_RENDERER__.
   const PIPE_MAX = 16384;
   const pipes = { list: [], n: 0 };
   const pipeName = (m, o) => `${m?.type || '?'}${m?.name ? ':' + m.name : ''} @ ${o?.type || '?'}${o?.name ? ':' + o.name : (o?.parent?.name ? ' w ' + o.parent.name : '')}`;
+  const hookRenderer = () => window.Core3D?.renderer || window.__HARNESS_RENDERER__ || null;
   const pipeHook = setInterval(() => {
-    if (window.Core3D?.renderer?.isWebGLRenderer) clearInterval(pipeHook); // tag WebGL: bez dziennika
-    const pu = window.Core3D?.renderer?.backend?.pipelineUtils;
+    if (hookRenderer()?.isWebGLRenderer) clearInterval(pipeHook); // tag WebGL: bez dziennika
+    const pu = hookRenderer()?.backend?.pipelineUtils;
     if (!pu || pu.__harnessHook) return;
     clearInterval(pipeHook);
     pu.__harnessHook = true;
@@ -165,7 +167,7 @@
       return compute.call(this, p, b);
     };
     // Budowy NodeBuilder (graf TSL → WGSL, CPU): w klatce (render na zimno) albo poza nią (rozgrzewka w tle).
-    const be = window.Core3D.renderer.backend;
+    const be = hookRenderer().backend;
     const createNB = be.createNodeBuilder;
     be.createNodeBuilder = function (obj, rr) {
       const b = createNB.call(this, obj, rr);
@@ -424,7 +426,12 @@
       for (const l of layers) mask |= (1 << l);
       const orig = r.__harnessRender;
       r.render = function (sceneArg, cam, ...rest) {
-        if ((cam === C.cameraOrtho || cam === C.cameraPersp) && !(cam.layers.mask & mask)) return undefined;
+        if ((cam === C.cameraOrtho || cam === C.cameraPersp) && !(cam.layers.mask & mask)) {
+          // Pominięty render, który czyścił cel W PASSIE (autoClear — passy sceny, warstwa DIST; czyszczenieWPassie.js):
+          // to samo czyszczenie osobno — inaczej w celu zostaje stara klatka (np. mapa zniekształceń sprzed izolacji).
+          if (this.autoClear === true) this.clear(this.autoClearColor, this.autoClearDepth, this.autoClearStencil);
+          return undefined;
+        }
         return orig.call(this, sceneArg, cam, ...rest);
       };
       return true;

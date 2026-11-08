@@ -9,6 +9,7 @@ import { ViewState3D } from '../src/game/view3D.js';
 import { engageCloak, stepCloak } from '../src/game/cloak.js';
 import { MISSION01 } from '../src/game/story/missions/mission01.js';
 import { MISSION02 } from '../src/game/story/missions/mission02.js';
+import { CAMPAIGN_RESUME } from '../src/game/story/campaign.js';
 import { PIRATE_BASE_TUNE } from '../src/game/story/pirateBaseSite.js';
 import { ENGINE_OFF, ENGINE_IGNITION, engineStateOf, stepEngineIgnition } from '../src/game/engineIgnition.js';
 
@@ -20,7 +21,7 @@ function makeWorld() {
   const earth = { id: 'earth', x: sun.x + 25 * AU, y: sun.y, r: 600 };
   const ship = { pos: { x: earth.x + 50000, y: earth.y }, vel: { x: 0, y: 0 }, angle: 0, angVel: 0, w: 1800, h: 800, x: 0, y: 0 };
   const w = {
-    AU, sun, earth, ship, npcs: [], stations: [], credits: 0, rep: [], journal: [], completed: [], phases: [],
+    AU, sun, earth, ship, npcs: [], stations: [], credits: 0, creditPhases: [], rep: [], journal: [], completed: [], phases: [],
     warpedOut: 0, blows: 0, courses: [], course: null,
     // mgła wojny (atrapa SensorSystem): co strona gracza widzi, sygnatury masy
     fogSeen: new Set(), masses: new Map(),
@@ -85,7 +86,8 @@ function makeWorld() {
     warpOut: (list) => { for (const n of list) { n.warpedOut = true; n.dead = true; w.warpedOut++; } },
     returnWing: () => { w.wingReturned = true; },
     reactorBlow: () => { w.blows++; },
-    addCredits: (n) => { w.credits += n; },
+    // faza przy każdej wypłacie — strażnik CAMPAIGN_RESUME.rewardPhases (wznowienie z zapisu bez drugiej nagrody)
+    addCredits: (n) => { w.credits += n; w.creditPhases.push(StoryGame.phase); },
     changeReputation: (f, d) => w.rep.push([f, d]),
     factionLabel: (f) => f,
     addMission: (e) => w.journal.push(e),
@@ -203,7 +205,7 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'course');
   assert.ok(S.site && S.site.station, 'baza postawiona');
-  assert.deepEqual(Object.keys(S.site.structures).sort(), ['fuel', 'habitat', 'piers', 'warehouse'], 'budowle bazy');
+  assert.deepEqual(Object.keys(S.site.structures).sort(), ['fuel', 'habitat', 'highrise1', 'highrise2', 'piers', 'warehouse'], 'budowle bazy');
   assert.equal(S.site.station, S.site.structures.habitat, 'cel misji = habitat');
   assert.equal(S.site.parkedList.length, 47, 'okręty w stanowiskach (bez herszta)');
   assert.equal(S.site.crewList.length, 12, 'kilkanaście z załogą');
@@ -319,12 +321,12 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.deepEqual(S.journalEntry.pos, S.site.building, 'CIC i dziennik dalej wskazują habitat');
   assert.ok(/habitat/i.test(S.ui.objective?.text || ''), S.ui.objective?.text);
   assert.equal(S.site.station.maxHp, MISSION01.dock.hp + MISSION01.dock.shield, 'habitat z punktami misji');
-  // habitat: rozpad (bęben, dysk), ogień w rurach od środka → podsumowanie misji 1 w polu
+  // habitat: rozpad (bęben, dysk), rur nie zapala (reakcja to nagroda za zbiorniki) → podsumowanie misji 1 w polu
   S.site.station.hp = 0; S.site.station._destroyed3D = true;
   await frames(S, w, 30 * 12, view);
   assert.equal(S.ui.targets.size, 0, 'po zniszczeniu budynku nie zostaje marker na wraku');
-  assert.ok(w.blows >= 12, `rozpad habitatu i ogień w rurach (${w.blows})`);
-  assert.ok(S.site.repairList.every((n) => n.dead), 'reakcja od habitatu: okręty w remoncie wybuchły w stanowiskach');
+  assert.ok(w.blows >= 5, `rozpad habitatu (${w.blows})`);
+  assert.ok(S.site.repairList.every((n) => !n.dead), 'habitat nie zapala rur: okręty w remoncie stoją dalej');
   for (let i = 0; i < 30 && !S.ui.summary; i++) await frames(S, w, 30, view);
   assert.equal(S.phase, 'aftermath');
   assert.ok(S.ui.summary, 'podsumowanie misji 1');
@@ -333,14 +335,11 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   const stopped = Number(/^(\d+) \/ 12$/.exec(stopRow[1])?.[1]);
   assert.ok(stopped >= 1, `zatrzymane przed startem: ${stopRow[1]}`);
   assert.equal(S.ui.summary.stats.find((r) => /herszta/.test(r[0]))[1], 'uciekł');
-  const chainRow = S.ui.summary.stats.find((r) => /łańcuchowa/.test(r[0]));
-  const chainN = chainRow ? Number(/^(\d+)/.exec(chainRow[1])?.[1]) : 0;
-  assert.ok(chainN >= 30, `reakcja łańcuchowa w podsumowaniu: ${chainRow?.[1]}`);
-  const wh = S.ui.summary.stats.find((r) => /Magazyn/.test(r[0]))[1] === 'zniszczony';
-  assert.ok(wh, 'ogień w rurach doszedł do magazynu');
-  assert.equal(w.credits, MISSION01.rewards.credits + stopped * P.perStopped.credits + chainN * P.perChain.credits + P.warehouse.credits,
-    'premie: zatrzymane, reakcja łańcuchowa, magazyn — bez premii za herszta');
-  assert.equal(S.progress.exp, MISSION01.rewards.exp + stopped * P.perStopped.exp + chainN * P.perChain.exp + P.warehouse.exp);
+  assert.equal(S.ui.summary.stats.find((r) => /łańcuchowa/.test(r[0])), undefined, 'bez wysadzonych zbiorników nie ma reakcji ani jej premii');
+  assert.equal(S.ui.summary.stats.find((r) => /Magazyn/.test(r[0])), undefined, 'magazyn bez zasługi gracza nie ma wiersza');
+  assert.equal(w.credits, MISSION01.rewards.credits + stopped * P.perStopped.credits,
+    'premie: tylko zatrzymane — bez herszta, reakcji i magazynu');
+  assert.equal(S.progress.exp, MISSION01.rewards.exp + stopped * P.perStopped.exp);
   assert.deepEqual(w.rep, [['terra_nova', 10], ['pirates', -12]]);
   assert.equal(S.campaign.bossEscaped, true);
   S.closeSummary();
@@ -449,12 +448,15 @@ test('kampania na atrapie gry: misja 1 (dok, rozpoznanie, taran, zegar wodowania
   assert.equal(S.lock, null);
   assert.equal(S.cine.mode, null);
   assert.equal(S.runner.result, 'complete');
+  assert.equal(S.completed, true, 'rozdział ukończony — zapis gracza: dalej gra swobodna');
   assert.equal(w.course, null, 'po zakończeniu misji stary kurs nie wraca');
+  // wypłaty nagród tylko w fazach z CAMPAIGN_RESUME.rewardPhases — tam zapis gracza przesuwa wznowienie za nagrodę
+  assert.deepEqual([...new Set(w.creditPhases)], [...CAMPAIGN_RESUME.rewardPhases]);
   S.abort('test');
   assert.equal(S.ui.targets.size, 0);
 });
 
-test('misja 1: herszt bez dowodzenia, habitat zburzony w środku bitwy — w stanowiskach giną od ognia w rurach, wystartowane nie', async () => {
+test('misja 1: herszt bez dowodzenia, habitat zburzony w środku bitwy — okręty stoją i walczą dalej, bitwa do końca', async () => {
   const w = makeWorld();
   const S = StoryGame;
   S.init(w.deps);
@@ -471,10 +473,10 @@ test('misja 1: herszt bez dowodzenia, habitat zburzony w środku bitwy — w sta
   const boss = S.site.flagship;
   const q = boss.launch.path.at(-1);
   boss.pos.x = boss.x = q.x; boss.pos.y = boss.y = q.y;
-  // habitat pada w środku bitwy: ogień w rurach zabiera to, co stoi w stanowiskach
+  // habitat pada w środku bitwy: rur nie zapala, więc nic nie ginie samo
   S.site.station.hp = 0; S.site.station._destroyed3D = true;
   await frames(S, w, 30 * 12, view);
-  assert.ok(S.site.parkedList.filter((n) => !n.launch).every((n) => n.dead), 'w stanowiskach — od ognia w rurach');
+  assert.ok(S.site.repairList.every((n) => !n.dead), 'okręty w remoncie stoją dalej');
   assert.ok(launched.every((n) => !n.dead), 'wystartowane walczą dalej');
   assert.ok(!boss.dead, 'herszt poza zatoką przeżył wybuch zbiorników');
   assert.equal(S.phase, 'defences', 'bitwa trwa, póki są wrogowie');
@@ -483,13 +485,62 @@ test('misja 1: herszt bez dowodzenia, habitat zburzony w środku bitwy — w sta
   assert.ok(boss.flee);
   boss.isBridgeHulk = true;
   await frames(S, w, 3, view);
-  for (const n of [...launched, ...S.site.droneList]) { n.dead = true; n.hp = 0; }
+  for (const n of [...S.site.crewList, ...S.site.droneList]) { n.dead = true; n.hp = 0; }
   await frames(S, w, 3, view);
   assert.equal(S.phase, 'aftermath', 'habitat już zburzony — od razu podsumowanie');
   await frames(S, w, 30 * 4, view);
   assert.equal(S.ui.summary.stats.find((r) => /herszta/.test(r[0]))[1], 'bez dowodzenia');
   assert.equal(S.campaign.bossEscaped, false);
-  assert.ok(w.credits > MISSION01.rewards.credits + MISSION01.bonus.boss.credits, 'premia za herszta i reakcję');
+  assert.ok(w.credits > MISSION01.rewards.credits + MISSION01.bonus.boss.credits, 'premia za herszta i zatrzymane');
+  S.abort('test');
+});
+
+test('misja 1: po HP 0 habitatu gra sama kończy budowle, ale to nie daje reakcji, banerów ani premii', async () => {
+  const w = makeWorld();
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  S.beginNewGame({ tutorial: false, startPhase: 'defences' });
+  await flush();
+  await frames(S, w, 2, view);
+  S.site.station.hp = 0; S.site.station._destroyed3D = true;
+  await frames(S, w, 3, view);
+  assert.equal(S.site.chain.habitat, true);
+  assert.equal(S.site.chain.fuel, false, 'habitat nie zapala rur');
+  assert.equal(S.site.chain.burnt.size, 0);
+  assert.ok(S.site.structures.fuel.hp > 0, 'zbiorniki całe');
+  // puszczenie kotwic (index.html, stepVoxBaseFall): żywe budowle giną z zegara
+  const blows0 = w.blows;
+  for (const k of Object.keys(S.site.structures)) if (k !== 'habitat') S.site.structures[k].hp = 0;
+  await frames(S, w, 30 * 2, view);
+  assert.equal(S.site.chain.fuel, false, 'zabicie paliwa po HP 0 nie zapala rur');
+  assert.equal(S.site.chain.burnt.size, 0);
+  assert.ok(w.blows - blows0 < 12, `bez reakcji w rurach (${w.blows - blows0})`);
+  assert.ok(S.site.repairList.every((n) => !n.dead), 'okręty w remoncie stoją dalej');
+  S.abort('test');
+});
+
+test('misja 1: przed HP 0 zniszczone zbiorniki w locie reakcji: habitat pada od ognia, reakcja i premia zostają', async () => {
+  const w = makeWorld();
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  S.beginNewGame({ tutorial: false, startPhase: 'defences' });
+  await flush();
+  await frames(S, w, 2, view);
+  const crew = S.site.crewList;
+  await frames(S, w, 30 * 49, view);
+  const launched = crew.filter((n) => n.launch);
+  assert.ok(launched.length >= 1, 'pierwszy start od pomostu');
+  const boss = S.site.flagship;
+  const q = boss.launch.path.at(-1);
+  boss.pos.x = boss.x = q.x; boss.pos.y = boss.y = q.y;
+  S.site.structures.fuel.hp = 0;
+  await frames(S, w, 30 * 20, view);
+  assert.ok(S.site.chain.fuel, 'reakcja z zbiorników ruszyła');
+  assert.ok(S.site.parkedList.filter((n) => !n.launch).every((n) => n.dead), 'w stanowiskach — od ognia w rurach');
+  assert.ok(launched.every((n) => !n.dead), 'wystartowane walczą dalej');
+  assert.ok(!boss.dead, 'herszt poza zatoką przeżył wybuch zbiorników');
   S.abort('test');
 });
 
@@ -657,7 +708,7 @@ function pointOffBase(site, d, a = 1.1) {
   return null;
 }
 
-test('zwiad fregatą z ładowni: oblot bazy (budowle n / 4), ostrzeżenie, powrót sterów; przerwanie opróżnia ładownię', async () => {
+test('zwiad fregatą z ładowni: oblot bazy (budowle n / 6), ostrzeżenie, powrót sterów; przerwanie opróżnia ładownię', async () => {
   const w = makeWorld();
   const bay = makeScoutBay();
   w.deps.scoutBay = () => bay;
@@ -677,16 +728,16 @@ test('zwiad fregatą z ładowni: oblot bazy (budowle n / 4), ostrzeżenie, powr�
   await frames(S, w, 120, view);
   assert.equal(S.ui.hint?.spec?.title, 'Zwiad', 'po przejęciu sterów — podpowiedź lotu, skanu i oznaczeń');
   assert.equal(S.phase, 'scout');
-  // habitat w zasięgu wzroku fregaty: sygnatura rozpoznana, cel — oblot (1 / 4)
+  // habitat w zasięgu wzroku fregaty: sygnatura rozpoznana, cel — oblot (1 / 6)
   w.fogSeen.add(S.site.structures.habitat);
   await frames(S, w, 3, view);
   assert.equal(S.ui.objective?.id, 'recon');
-  assert.equal(S.ui.objective.progress(), 'budowle 1 / 4');
+  assert.equal(S.ui.objective.progress(), 'budowle 1 / 6');
   bay.moveTo(pointOffBase(S.site, 4000));
   assert.ok(/ZA BLISKO/.test(S.ui.objective.progress()), 'ostrzeżenie przed zasięgiem wykrycia');
   await frames(S, w, 10, view);
   assert.ok(!S.site.alarmed, '4 km od bazy — jeszcze nie wykryta');
-  for (const k of ['fuel', 'warehouse', 'piers']) w.fogSeen.add(S.site.structures[k]);
+  for (const k of ['fuel', 'warehouse', 'piers', 'highrise1', 'highrise2']) w.fogSeen.add(S.site.structures[k]);
   await frames(S, w, 3, view);
   assert.equal(S.ui.objective?.id, 'recall', 'po oblocie — stery z powrotem na Atlasa');
   bay.recall();
@@ -731,6 +782,44 @@ test('skok dev ?story=scout: Atlas w punkcie wyjścia z warpa, sygnatura masy; p
   assert.ok(w.masses.has('m01-yard-mass'));
   S.abort('test');
   assert.equal(w.masses.size, 0, 'reset fabuły zdejmuje sygnatury misji');
+});
+
+test('zapis gracza: wznowienie od misji 2 — wynik misji 1 z zapisu, bez drugiej nagrody za pominiętą misję 1', async () => {
+  const w = makeWorld();
+  const S = StoryGame;
+  S.init(w.deps);
+  const view = new ViewState3D();
+  const exp0 = S.progress.exp;
+  const m1 = { stopped: 5, launched: 7, total: 12, boss: 'escaped', chain: 0, warehouse: false, fuelChain: false };
+  S.beginNewGame({ tutorial: false, startPhase: 'repair', restore: { campaign: { m1, bossEscaped: true } } });
+  await flush();
+  await frames(S, w, 30 * 9, view);
+  assert.ok(['repair', 'counter'].includes(S.phase), `misja 2 od początku (faza ${S.phase})`);
+  assert.equal(w.credits, 0, 'nagroda misji 1 jest już w zapisanych kredytach');
+  assert.equal(w.rep.length, 0, 'reputacja misji 1 też');
+  assert.equal(S.progress.exp, exp0, 'i EXP');
+  assert.deepEqual(S.campaign.m1, m1, 'wynik misji 1 z zapisu');
+  assert.equal(S.campaign.bossEscaped, true);
+  assert.equal(S.completed, false);
+  S.abort('test');
+  // ten sam skok bez zapisu (dev ?story=repair) liczy nagrodę pominiętej misji jak dawniej
+  const w2 = makeWorld();
+  S.init(w2.deps);
+  S.beginNewGame({ tutorial: false, startPhase: 'repair' });
+  await flush();
+  await frames(S, w2, 30 * 9, view);
+  assert.ok(w2.credits > 0, 'skok dev: nagroda misji 1');
+  S.abort('test');
+  // zapis po nagrodzie misji 2 (faza victory → punkt „ambush”): obie misje pominięte bez wypłat
+  const w3 = makeWorld();
+  S.init(w3.deps);
+  S.beginNewGame({ tutorial: false, startPhase: 'ambush', restore: { campaign: { m1, bossEscaped: true } } });
+  await flush();
+  await frames(S, w3, 30 * 9, view);
+  assert.equal(S.phase, 'ambush');
+  assert.equal(w3.credits, 0, 'nagrody misji 1 i 2 są już w zapisie');
+  assert.equal(S.campaign.bossEscaped, true);
+  S.abort('test');
 });
 
 test('przerwanie i nowa misja usuwają poprzednie cele bojowe', async () => {

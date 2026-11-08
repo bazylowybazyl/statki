@@ -9,8 +9,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { WarpPlumeFX, WARP_PLUME_HYPER } from '../src/3d/warpPlume3D.js';
+import { WarpPlumeFX, WARP_PLUME_HYPER, WARP_PLUME_HYPER_STARY } from '../src/3d/warpPlume3D.js';
 import { WarpPlayerFx, hyperMediumOn, warpMediumOn, setWarpMedium } from '../src/3d/warp/player.js';
+import { setHyperLegacyLook } from '../src/3d/warp/hyperLook.js';
 import { WarpFrame, newWarpSlot } from '../src/3d/warp/frame.js';
 import { createCameraRig, cameraRigTune, stepCameraRigRoll, normalizeCameraHyperRollMode } from '../src/game/cameraRig.js';
 import { cameraRoll, rollToScreen, rollToWorld, rolledHalfExtents } from '../src/render/viewRoll.js';
@@ -32,7 +33,10 @@ function run(fx, seconds, dt = DT, each = null) {
 
 // ── dysze: plazma „nie ma / jest” ─────────────────────────────────────────────────────────────────────
 
-test('rozruch (preheat): bez płomienia — żar wylotu rośnie i drży, strumień niewidoczny', () => {
+test('rozruch (preheat): bez płomienia — żar wylotu rośnie i oddycha (v2: wolno, słabo), strumień niewidoczny', () => {
+  // v2 (2026-10-29, „za mocno drga”): drżenie 0,32 przy 3–18 Hz → 0,07 przy 0,6–1,8 Hz; dawne — `?hcStary=1`
+  assert.ok(WARP_PLUME_HYPER.tremor <= 0.1 && WARP_PLUME_HYPER.tremorSlow === 1);
+  assert.ok(WARP_PLUME_HYPER_STARY.tremor === 0.32 && WARP_PLUME_HYPER_STARY.tremorSlow === 0);
   const fx = new WarpPlumeFX();
   fx.setPose(0, 0, -5, 1, 0, 30);
   fx.preheat();
@@ -47,7 +51,7 @@ test('rozruch (preheat): bez płomienia — żar wylotu rośnie i drży, strumie
   assert.ok(fx.glowHot.visible, 'żar widać w poświacie wylotu');
   assert.ok(hot[20] < hot[hot.length - 1], 'żar narasta z czasem rozruchu');
   const tail = hot.slice(-60);
-  assert.ok(Math.max(...tail) - Math.min(...tail) > 0.05, 'wylot drży');
+  assert.ok(Math.max(...tail) - Math.min(...tail) > 0.05, 'żar wylotu żyje (oddycha)');
   assert.equal(fx.finished, false, 'rozgrzana dysza nie wraca do puli');
 });
 
@@ -88,7 +92,9 @@ test('zapłon bez rozgrzania (warp) bez zmian: faza żarzenia, zwykły błysk, b
   assert.ok(maxIgn > 0.9 && maxIgn <= 1 + 1e-9, 'zwykły błysk zapłonu');
 });
 
-test('wyjście (fade): płomień dogasa i krztusi się, potem gaszenie z poświatą i powrót do puli', () => {
+test('wyjście (fade): płomień dogasa płynnie (v2 bez krztuszenia), potem gaszenie z poświatą i powrót do puli', () => {
+  assert.equal(WARP_PLUME_HYPER.sputter, 0, 'v2: bez krztuszenia');
+  assert.ok(WARP_PLUME_HYPER_STARY.sputter > 0, 'dawne krztuszenie — `?hcStary=1`');
   const fx = new WarpPlumeFX();
   fx.ignite();
   fx.setBoost(true);
@@ -143,26 +149,49 @@ function playerRig() {
   return { fx, frame, game, step };
 }
 
-test('hipercruise bez ośrodka: bez przegródek i poświaty drobin; soczewka bańki, gwiazdy i fale zostają; warp — ośrodek tylko w A/B', () => {
+test('hipercruise bez ośrodka: bez przegródek i poświaty drobin; v2 — bez soczewki bańki i fal (koła), gwiazdy zostają; warp — ośrodek tylko w A/B', () => {
   assert.equal(hyperMediumOn(''), false);
   assert.equal(hyperMediumOn('?dev=1&hcOsrodek=1'), true);
   assert.equal(hyperMediumOn('?hcOsrodek=10'), false);
   assert.equal(hyperMediumOn(''), false);
-  const r = playerRig();
+  // Hipercruise v2 (2026-10-29, user: „robi kołowe haze, nie pasuje do czegoś takiego”): soczewka bańki na tle (elipsa
+  // wokół statku przez cały lot) i fale kopu / wyjścia wyłączone; dawny wygląd — `?hcStary=1` (setHyperLegacyLook).
+  for (const legacy of [false, true]) {
+    setHyperLegacyLook(legacy);
+    try {
+      const r = playerRig();
+      let t = 0;
+      r.game.state = 'charging';
+      for (let i = 1; i <= 120; i++) { t += DT; r.game.charge = Math.min(1, i / 120); r.step(t, DT); }
+      assert.equal(r.frame.bubbles.length, 0, 'rozruch bez bańki w ośrodku');
+      assert.equal(r.frame.lens.count, legacy ? 1 : 0, `soczewka bańki na tle tylko w dawnym wyglądzie (${legacy})`);
+      assert.ok(r.frame.stars.stretch > 0.3, 'gwiazdy się wydłużają');
+      r.game.state = 'active';
+      let waves = 0;
+      let flashes = 0;
+      for (let i = 0; i < 90; i++) {
+        t += DT; r.step(t, DT);
+        waves = Math.max(waves, r.frame.waves.count);
+        flashes = Math.max(flashes, r.frame.flashes.count);
+      }
+      assert.equal(r.frame.bubbles.length, 0, 'lot bez bańki w ośrodku');
+      assert.equal(r.frame.warpVis, 0, 'bez poświaty drobin');
+      assert.equal(waves > 0, legacy, `fala kopu tylko w dawnym wyglądzie (${legacy})`);
+      assert.equal(flashes > 0, legacy, `błysk kopu tylko w dawnym wyglądzie (${legacy})`);
+      r.game.state = 'idle';
+      let heat = 0;
+      for (let i = 0; i < 120; i++) {
+        t += DT; r.step(t, DT);
+        assert.equal(r.frame.bubbles.length, 0, 'wyjście bez iskier ośrodka');
+        waves = Math.max(waves, r.frame.waves.count);
+        heat = Math.max(heat, r.fx.hull.on ? r.fx.hull.heat : 0);
+      }
+      assert.equal(heat > 0, legacy, `żar kadłuba przy wyjściu tylko w dawnym wyglądzie (${legacy})`);
+    } finally {
+      setHyperLegacyLook(null);
+    }
+  }
   let t = 0;
-  r.game.state = 'charging';
-  for (let i = 1; i <= 120; i++) { t += DT; r.game.charge = Math.min(1, i / 120); r.step(t, DT); }
-  assert.equal(r.frame.bubbles.length, 0, 'rozruch bez bańki w ośrodku');
-  assert.equal(r.frame.lens.count, 1, 'soczewka bańki na tle zostaje');
-  assert.ok(r.frame.stars.stretch > 0.3, 'gwiazdy się wydłużają');
-  r.game.state = 'active';
-  let waves = 0;
-  for (let i = 0; i < 90; i++) { t += DT; r.step(t, DT); waves = Math.max(waves, r.frame.waves.count); }
-  assert.equal(r.frame.bubbles.length, 0, 'lot bez bańki w ośrodku');
-  assert.equal(r.frame.warpVis, 0, 'bez poświaty drobin');
-  assert.ok(waves > 0, 'fala kopu zostaje');
-  r.game.state = 'idle';
-  for (let i = 0; i < 120; i++) { t += DT; r.step(t, DT); assert.equal(r.frame.bubbles.length, 0, 'wyjście bez iskier ośrodka'); }
   // warp gracza (hyper: false): ośrodek i soczewka bańki domyślnie wyłączone (DECYZJE O1), A/B ?warpOsrodek=1 — jak dawniej
   assert.equal(warpMediumOn(''), false);
   assert.equal(warpMediumOn('?dev=1&warpOsrodek=1'), true);
@@ -249,13 +278,22 @@ function hyperFingerprint() {
   return fp;
 }
 
-test('O3: efekt hipercruise\'u bez zmian (bańka, smugi gwiazd, front, fale, błyski, żar, soczewka bańki, β = 0) — odcisk jak przed etapem integracji', () => {
+// HIPERCRUISE v2 (2026-10-29, user: „za mocno drga i robi kołowe haze”): smugi gwiazd, front i przepływ jak w O3, bez fal,
+// błysków, blasku, soczewki bańki i żaru kadłuba (efektem lotu jest opływ — hyperFlow.js — i silniki).
+const HYPER_FINGERPRINT_V2 = Object.freeze({
+  ...HYPER_FINGERPRINT_BASE, waves: 0, waveAmp: 0, flashes: 0, glares: 0, lens: 0, lensAmp: 0, heat: 0
+});
+
+test('O3 → v2: efekt hipercruise\'u — smugi gwiazd, front i przepływ bez zmian, bez kół (fal, soczewki bańki), błysków i żaru; `?hcStary=1` = odcisk O3', () => {
   // ośrodek warpa w A/B i rekord osi β gry nie ruszają hipercruise'u
   for (const ab of [null, true]) {
     setWarpMedium(ab);
     try {
-      assert.deepEqual(hyperFingerprint(), HYPER_FINGERPRINT_BASE, `odcisk hipercruise'u (warpOsrodek ${ab})`);
+      assert.deepEqual(hyperFingerprint(), HYPER_FINGERPRINT_V2, `odcisk hipercruise'u v2 (warpOsrodek ${ab})`);
+      setHyperLegacyLook(true);
+      assert.deepEqual(hyperFingerprint(), HYPER_FINGERPRINT_BASE, `dawny wygląd = odcisk O3 (warpOsrodek ${ab})`);
     } finally {
+      setHyperLegacyLook(null);
       setWarpMedium(null);
     }
   }
@@ -353,8 +391,13 @@ test('po hipercruisie zwykły lot ma insety riga i obrót jak przed (okno po wyj
   assert.equal(scope._hyperInsetW, 0, "waga insetów dokładnie 0 — zwykły lot jak przed hipercruise'em");
   assert.equal(rig.roll, 0, 'kadr północą');
   // render: insety = pasy HUD + półwymiar kadłuba × waga (0 → dawne pasy), wyliczenie tylko przy wadze > 0
-  assert.match(html, /const hcInsetW = stepHyperInsetWeight\(frameDt\);\s*let hcHullV = 0;\s*if \(hcInsetW > 1e-3 && !scouting\) \{/);
-  assert.match(html, /rigIn\.insetTop = _camDirInsets\.top \+ hcHullV;\s*rigIn\.insetBottom = _camDirInsets\.bottom \+ hcHullV;/);
+  assert.match(html, /const hcInsetW = stepHyperInsetWeight\(frameDt\);\s*const hcWakeW = stepHyperWakeWeight\(frameDt\);\s*let hcHullV = 0;\s*let hcWakeTop = 0;\s*let hcWakeBottom = 0;\s*if \(hcInsetW > 1e-3 && !scouting\) \{/);
+  // kilwater tylko w hipercruisie i oknie po nim (w skoku warpa za rufą nie ma opływu — kadr skoku i przylotu K1 bez zmian)
+  assert.match(html, /const on = \(hypercruise\.state !== 'idle' \|\| _hyperRollAfter >= 0\) && !playerWarpCameraBusy\(\);/);
+  assert.match(html, /const wake = \(Number\(ship\.w\) \|\| 0\) \* sk \* 2 \* HYPER_WAKE_INSET \* hcWakeW;/);
+  // v2 (2026-10-29): nad kokpitem także kawałek kilwateru za rufą (opływ — hyperFlow.js), po stronie rufy na ekranie
+  assert.match(html, /rigIn\.insetTop = _camDirInsets\.top \+ hcHullV \+ hcWakeTop;\s*rigIn\.insetBottom = _camDirInsets\.bottom \+ hcHullV \+ hcWakeBottom;/);
+  assert.match(html, /hcWakeBottom = Math\.max\(0, -Math\.sin\(sa\)\) \* wake;\s*hcWakeTop = Math\.max\(0, Math\.sin\(sa\)\) \* wake;/);
   // obrót kamery tej klatki: 0 od razu w RTS / podzielonym ekranie / kamerze 3D (rig dogania zero w tle)
   set('spool', 'charging'); frame(240);
   assert.ok(Math.abs(scope.cameraFrameRoll()) > 0.1);

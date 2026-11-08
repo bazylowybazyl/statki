@@ -23,6 +23,8 @@ import {
   releaseMainExhaustState
 } from './mainExhaust3D.js';
 import { WarpPlume3D } from './warpPlume3D.js';
+import { HYPER_LOOK, hyperLegacyLookOn } from './warp/hyperLook.js';
+import { HyperFlow } from './warp/hyperFlow.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 // Dysze MAIN tej klatki per okręt — dla poświaty dysz na pyle kosmicznym (src/3d/dust/).
 import { EngineFrame } from './engineFrame.js';
@@ -475,7 +477,23 @@ function createEffects(slots) {
     if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), jet: createSideJetState(), slot, main: null, warp: null });
     else exhausts.push({ state: null, jet: null, slot, main: createMainExhaustState(), warp: null });
   }
-  return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0, inputRefs: createSlotInputRefs(), mounts: null };
+  return {
+    exhausts, slotKey: makeSlotKey(slots), inputHash: 0, inputRefs: createSlotInputRefs(), mounts: null,
+    // skala klasy kadłuba z pamięci (entityClassScale) — wejścia: visual (nadpisanie), rama / kadłub / typ encji
+    classScale: NaN, classScaleVisual: undefined, classScaleFrame: undefined, classScaleHull: undefined, classScaleType: undefined
+  };
+}
+
+// getEngineVfxClassScale liczy z profilu kadłuba (napis typu małymi literami, wyszukiwania) — na encję na klatkę
+// ~0,08 µs × 160 okrętów; wynik zależy tylko od visual, ramy, kadłuba i typu encji (klatka workera 2026-11-02).
+function entityClassScale(entity, fxData) {
+  const visual = entity.visual, frame = entity.shipFrame, hull = entity.activeHullId, type = entity.type;
+  if (fxData.classScale === fxData.classScale && fxData.classScaleVisual === visual && fxData.classScaleFrame === frame
+    && fxData.classScaleHull === hull && fxData.classScaleType === type) return fxData.classScale;
+  const k = getEngineVfxClassScale(entity);
+  fxData.classScale = k;
+  fxData.classScaleVisual = visual; fxData.classScaleFrame = frame; fxData.classScaleHull = hull; fxData.classScaleType = type;
+  return k;
 }
 
 // Dysze na kadłubie belkowym (hullBodies.js) leżą w pikselach sprite'a właściciela: po rozpadzie dysze odpadłej
@@ -541,7 +559,7 @@ function resolveWarpMode(entity) {
   if (hyper === 'active') return 'active';
   if (hyper === 'charging') return 'preheat';
   if (hyper === 'drop') return 'drop';
-  const player = RenderWorld.ship;
+  const player = frameCtx.playerShip;
   if (player && entity === player) {
     const w = RenderWorld.warp;
     if (w?.state === 'charging') return 'charging';
@@ -562,10 +580,11 @@ function resolveWarpMode(entity) {
 /**
  * Dopalacz silników MAIN: Shift gracza, system F w toku — szarża albo zryw silników, gracz i NPC
  * (`entity.__fSysBoost`: index.html, src/ai/npcShipSystem.js); w edytorze — Shift testu.
+ * Statek gracza z kontekstu klatki (frameCtx.playerShip — jeden odczyt fasady na klatkę, nie na okręt).
  */
 function resolveMainBoost(entity) {
   if (entity.__editorBoost === true || entity.__fSysBoost === true) return true;
-  const player = RenderWorld.ship;
+  const player = frameCtx.playerShip;
   return !!(player && entity === player && RenderWorld.boost?.state === 'active');
 }
 
@@ -574,7 +593,7 @@ function resolveMainBoost(entity) {
  * 'none' — normalna praca, 'on' — plazma pali (struga gaśnie),
  * 'fallback' — skok bez wolnej instancji (struga na dopalaczu).
  */
-function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx) {
+function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx, hyper = false) {
   let plume = item.warp;
   if (!plume) {
     // dogasanie bez palącej się plazmy — nie ma czego gasić; rozgrzewanie bez wolnej instancji — sama struga MAIN
@@ -583,6 +602,10 @@ function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx) {
     if (!plume) return mode === 'preheat' ? 'none' : 'fallback';
     item.warp = plume;
   }
+  // hipercruise (v2, 2026-10-29 — hyperLook.js): spokojny, długi strumień w locie; warp i przyloty NPC jak dawniej. Wygląd
+  // hipercruise'u trzyma się instancji do zgaśnięcia (wyjście przez przylot / hamowanie: active → idle bez 'drop' — gasnąca
+  // plazma nie przeskakuje na zwykły wygląd); reset() w puli go kasuje, ponowny zapłon warpa — zdejmuje
+  if (hyper || mode !== 'off') plume.setHyper(hyper);
   if (mode === 'off') {
     plume.shutdown();
   } else if (mode === 'preheat') {
@@ -613,11 +636,13 @@ const frameCtx = {
   camera: null,
   isOrtho: true,
   viewportH: 1080,
-  // odczyty window raz na klatkę (update): statek gracza i jego poza interpolowana, strojenie dysz SIDE
+  // odczyty window raz na klatkę (update): statek gracza i jego poza interpolowana, strojenie dysz SIDE,
+  // dawny wygląd hipercruise'u (?hcStary=1)
   playerShip: null,
   playerPose: null,
   tune: null,
   sideWidthMul: 1,
+  hyperLegacy: false,
   // LOD dysz SIDE (audyt FPS 2026-10-11, updateEffects): kamera z góry (piksele z zoomu — w kamerach 3D skala zależy
   // od punktu, decyduje rysownik), margines pudła rysowania [j. świata], próg modelu dyszy [px promienia wylotu]
   lod: false,
@@ -723,14 +748,16 @@ function updateEffects(entity, fxData, dt) {
   const ey = interpPose ? interpPose.y : (entity?.pos ? entity.pos.y : (entity?.y || 0));
   const angle = interpPose ? interpPose.angle : (entity?.angle || 0);
   const scale = getEntityScale(entity);
-  const classScale = getEngineVfxClassScale(entity);
+  const classScale = entityClassScale(entity, fxData);
 
   const sceneOriginY = -ey;
   const sceneAngle = -angle;
   const cA = Math.cos(sceneAngle);
   const sA = Math.sin(sceneAngle);
 
-  const speed = Math.hypot(entity.vx || entity.vel?.x || 0, entity.vy || entity.vel?.y || 0);
+  const svx = entity.vx || entity.vel?.x || 0;
+  const svy = entity.vy || entity.vel?.y || 0;
+  const speed = Math.sqrt(svx * svx + svy * svy);
   const moveGlow = Math.min(speed / 900, 0.6) * 0.8;
   const thrustMain = Math.max(
     0,
@@ -755,12 +782,16 @@ function updateEffects(entity, fxData, dt) {
   // Lot hipercruise'u (zgłoszenie użytkownika 2026-10-23: „żeby się nie wyginało tak mocno”): wychylenie dysz MAIN
   // przy A/D × nozzleGimbal — sam obraz (kurs prowadzi automat gry, gimbal −26° × moment obracał plazmę na boki).
   const hyperGimbalK = (entity.__hyperMode === 'active' || entity.__hyperMode === 'drop') ? HYPERCRUISE_TUNE.nozzleGimbal : 1;
+  // Hipercruise (rozruch, lot, wyjście): spokojna plazma, większe gorące powietrze, strugi opływu z dysz gracza
+  // (hyperLook.js, hyperFlow.js); `?hcStary=1` — dawny wygląd.
+  const hyperDrive = entity.__hyperMode === 'charging' || entity.__hyperMode === 'active' || entity.__hyperMode === 'drop';
+  const hyperHaze = hyperDrive && !frameCtx.hyperLegacy;
   // Silniki MAIN wyłączone / zapłon / gaszenie (src/game/engineIgnition.js — etap E2): moc strugi MAIN (z płomykiem
   // jałowym) × mnożnik stanu; rampa mocy strugi (mainExhaust3D) wygładza resztę. Encja bez stanu — 1.
   const plumeK = entity.engineIgn ? enginePlumeScale(entity) : 1;
   const plumeKick = entity.engineIgn ? engineIgnitionKick(entity) : 0;   // silnik „łapie” — rozbłysk strugi w zapłonie
   const mainBoost = resolveMainBoost(entity) && plumeK >= 1;
-  const isPlayerEntity = entity === RenderWorld.ship || entity.isPlayer === true;
+  const isPlayerEntity = entity === frameCtx.playerShip || entity.isPlayer === true;
   const isHulk = entity.isBridgeHulk === true;
   const jetGainRaw = isPlayerEntity ? Number(RenderWorld.options?.vfx?.bloomGain) : NaN;
   const jetGain = Number.isFinite(jetGainRaw) && jetGainRaw >= 0 ? jetGainRaw : 1;
@@ -775,6 +806,10 @@ function updateEffects(entity, fxData, dt) {
   // Modele dysz SIDE (sideNozzleFrame.js): pierwsza dysza tego okrętu na liście klatki (zdublowane markery — jedna bryła).
   const sideModels = SideNozzleFrame.enabled;
   const sideFrom = SideNozzleFrame.count;
+  // Dysze SIDE z ciągiem do listy klatki (EngineFrame.side — wiatr manewrowy w polach gazu); zdublowane markery łączą się.
+  const sideGasFrom = EngineFrame.sdN;
+  const shipSceneVX = Number(entity.vel?.x ?? entity.vx) || 0;
+  const shipSceneVY = -(Number(entity.vel?.y ?? entity.vy) || 0);
   // LOD dysz SIDE tego okrętu (audyt FPS 2026-10-11; promień wylotu ten sam dla wszystkich jego dysz SIDE, piksele
   // z zoomu kamery z góry — frameCtx.lod):
   //   sideModelsHere — model dyszy przejdzie próg rysownika (shipModels3DGame.js publikuje go w
@@ -894,7 +929,7 @@ function updateEffects(entity, fxData, dt) {
     if (slot.kind !== 'side') {
       const nozzleR = Math.max(0, Number(engineFx.nozzleRadius) || 0) * scale * slotScale;
       const warpUse = driveWarpPlume(item, isHulk ? 'off' : warpMode, frameCtx,
-        nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR, engineFx);
+        nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR, engineFx, hyperDrive);
       const warpOn = warpUse === 'on';
       const warpFallback = warpUse === 'fallback';
 
@@ -938,9 +973,20 @@ function updateEffects(entity, fxData, dt) {
         const hazeBoost = plume ? plume.ch.boost : (item.main.boosting ? 1 : 0);
         const hazeK = smoothstep(0.08, 0.45, hazePower) * (1 + 0.5 * hazeBoost) * (0.55 + 0.45 * cloakVis);
         if (hazeK > 0.01) {
-          Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, nozzleR * (plume ? 1 : p.widthMul), hazeK, dirX, dirY);
+          if (plume && hyperHaze) {
+            // hipercruise v2 (user: „dać go [haze] większego z silników”): stożek × radius (dłuższy i szerszy, wzór
+            // płynie szybciej), źródło cofnięte pod prąd — bez dziury za wylotem (stożek zaczyna się ~0,4 R za źródłem)
+            const H = HYPER_LOOK.haze;
+            const back = H.shift * (H.radius - 1) * nozzleR;
+            Core3D.pushHeatHazeWorld(nozzleWorldX - dirX * back, nozzleWorldY - dirY * back, -4, nozzleR * H.radius,
+              hazeK * H.strength, dirX, dirY);
+          } else {
+            Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, nozzleR * (plume ? 1 : p.widthMul), hazeK, dirX, dirY);
+          }
         }
       }
+      // opływ hipercruise'u (hyperFlow.js): struga gorącego powietrza z każdej dyszy MAIN gracza — ta sama poza renderu
+      if (hyperHaze && isPlayerEntity && nozzleR > 0) HyperFlow.nozzle(nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR * cloakVis, cloakVis);
       continue;
     }
 
@@ -1014,6 +1060,9 @@ function updateEffects(entity, fxData, dt) {
       jetPower = Number(state.currentThrottle) || 0;
       jetHeat = Number(state.heat) || 0;
     }
+    // wiatr manewrowy w polach gazu (hala K-7, gaz przestrzeni): wylot dzwonu, moc strugi × maskowanie (ukryty okręt
+    // nie zdradza się gazem — jak poświata MAIN), hulk bez ciągu
+    if (!isHulk) EngineFrame.side(flameX, flameY, dirX, dirY, sideNozzleR, jetPower * cloakVis, shipSceneVX, shipSceneVY, sideGasFrom);
     if (cloakVis <= 0.01) continue;
 
     // Model dyszy na listę klatki (rysuje shipModels3DGame.js). Maskowanie: znika z komórką kadłuba pod sobą
@@ -1095,6 +1144,7 @@ export const EngineVfxSystem = {
     frameCtx.playerPose = frameCtx.playerShip ? (RenderWorld.playerPose || null) : null;
     frameCtx.tune = RenderWorld.vfxTune || null;
     frameCtx.sideWidthMul = Math.max(0.05, Number(frameCtx.tune?.sideW) || 1);
+    frameCtx.hyperLegacy = hyperLegacyLookOn();
     frameCtx.lod = frameCtx.isOrtho;
     frameCtx.drawMargin = Number.isFinite(drawMargin) && drawMargin > 0 ? drawMargin : 0;
     frameCtx.modelMinPx = Number(SideNozzleFrame.modelMinPx) || 0;

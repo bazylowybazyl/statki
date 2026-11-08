@@ -5,7 +5,7 @@ import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js'
 import { buildBeamStructure, BEAM_TYPE } from '../src/game/beamBody3D.js';
 import { DestructorBeams3D, createBeamConfig } from '../src/game/destructorBeams3D.js';
 import { markOriginalBeamBridges } from '../src/game/beamConnectivity3D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 
 const CS = 0.5;
 

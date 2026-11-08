@@ -317,20 +317,47 @@ test('warstwy: wspólna dla świeżej floty, własna po trafieniu, nowa po zmian
   assert.equal(HullShadowSdf.stats.bakes, 1, 'nowe tablice komórek = nowe pieczenie');
   assert.notEqual(w2.layout.gw, w1Width);
 
-  // Budżet: najwyżej 2 pieczenia na klatkę.
-  const fresh = [];
-  for (let i = 0; i < 3; i++) {
-    const g = makeGrid(300 + i * 10, 120, (x, y) => Math.abs(x) < 100 && Math.abs(y) < 40);
-    g.armorImage = { width: 300 + i * 10, height: 120 };
-    fresh.push(g);
+  // Budżet klatki: najwyżej 2 pieczenia i 2,5 ms ich czasu; pierwsze pieczenie klatki idzie zawsze. Zegar budżetu
+  // podmieniony — każdy odczyt przesuwa czas o `tick` ms, pieczenie czyta go dwa razy, więc kosztuje `tick` ms
+  // (czasem ściany pierwsze pieczenie na obciążonej maszynie przekraczało budżet i drugie przepadało).
+  let shape = 0;
+  const freshGrids = (n) => Array.from({ length: n }, () => {
+    const w = 300 + 10 * shape++;
+    const g = makeGrid(w, 120, (x, y) => Math.abs(x) < 100 && Math.abs(y) < 40);
+    g.armorImage = { width: w, height: 120 };
+    return g;
+  });
+  const bakeFrame = (frameId, n) => {
+    HullShadowSdf.beginFrame(frameId);
+    return freshGrids(n).map((g) => HullShadowSdf.acquire(g, 7000));
+  };
+  const realClock = HullShadowSdf.clock;
+  let fakeNow = 0;
+  let tick = 0;
+  HullShadowSdf.clock = () => (fakeNow += tick);
+  try {
+    let got = bakeFrame(11, 3);
+    assert.ok(got[0] && got[1], 'dwa pieczenia w klatce');
+    assert.equal(got[2], null, 'trzecie pieczenie czeka na następną klatkę');
+    tick = 1;
+    got = bakeFrame(12, 3);
+    assert.ok(got[0] && got[1], 'pieczenia po 1 ms mieszczą się w budżecie');
+    assert.equal(got[2], null);
+    tick = 3;
+    got = bakeFrame(13, 2);
+    assert.ok(got[0], 'pierwsze pieczenie klatki idzie zawsze');
+    assert.equal(got[1], null, 'pieczenie 3 ms wyczerpało budżet 2,5 ms');
+    assert.equal(HullShadowSdf.stats.bakeMs, 3);
+    tick = 1000;
+    got = bakeFrame(14, 2);
+    assert.ok(got[0], 'zagłodzony wątek: dalej jedno pieczenie na klatkę');
+    assert.equal(got[1], null);
+  } finally {
+    HullShadowSdf.clock = realClock;
   }
-  HullShadowSdf.beginFrame(11);
-  const got = fresh.map((g) => HullShadowSdf.acquire(g, 7000));
-  assert.ok(got[0] && got[1]);
-  assert.equal(got[2], null, 'trzecie pieczenie czeka na następną klatkę');
 
   // LRU: zapełniamy wszystkie warstwy; nowy kształt wypiera najdawniej używaną.
-  let frame = 12;
+  let frame = 15;
   const many = [];
   for (let i = 0; i < HULL_SDF_LAYER_COUNT + 1; i++) {
     const g = makeGrid(200, 80, (x, y) => Math.abs(x) < 60 + (i % 7) && Math.abs(y) < 30);

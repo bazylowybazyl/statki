@@ -11,6 +11,7 @@ const PERF_PANEL_HTML = `
   <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
   <div class="perf-row"><span class="perf-label">Frame p50 / p95</span><span class="perf-val" id="perfFramePercentiles">--</span></div>
   <div class="perf-row"><span class="perf-label">Obraz 3D (worker)</span><span class="perf-val" id="perfWorker3D">--</span></div>
+  <div class="perf-row" title="Opcje → Grafika → Limit klatek (src/render/frameLimiter.js): cel i takt — co N-ta klatka ekranu, akumulator przy innej częstotliwości, zegar bez VSync"><span class="perf-label">Limit klatek</span><span class="perf-val" id="perfFrameLimit">--</span></div>
   <div class="perf-row"><span class="perf-label">LOD kadłubów pełne/smugi</span><span class="perf-val" id="perfHexLod">--</span></div>
   <div class="perf-row"><span class="perf-label">Culling rys./odrzuc. (cienie)</span><span class="perf-val" id="perfCulling">--</span></div>
   <div class="perf-row"><span class="perf-label">AI cadence actual/target</span><span class="perf-val" id="perfAiCadence">--</span></div>
@@ -696,6 +697,7 @@ export const PerfHUD = {
       frameMs: document.getElementById('perfFrameTime'),
       framePercentiles: document.getElementById('perfFramePercentiles'),
       worker3D: document.getElementById('perfWorker3D'),
+      frameLimit: document.getElementById('perfFrameLimit'),
       hexLod: document.getElementById('perfHexLod'),
       culling: document.getElementById('perfCulling'),
       aiCadence: document.getElementById('perfAiCadence'),
@@ -1345,6 +1347,11 @@ export const PerfHUD = {
         e.worker3D.style.color = queueMs > 50 ? '#f44' : (d.fpsReal > 0 && fps3d < d.fpsReal * 0.9) ? '#fd4' : '';
       } else e.worker3D.textContent = 'wyłączony';
     }
+    if (e.frameLimit) {
+      // limit klatek (Opcje → Grafika, src/render/frameLimiter.js): cel i takt; nagłówek wyżej — klatki narysowane
+      const lim = window.FrameLimiter;
+      e.frameLimit.textContent = lim && typeof lim.describe === 'function' ? lim.describe() : '--';
+    }
     if (e.framePercentiles) e.framePercentiles.textContent = `${d.frameP50.toFixed(1)} / ${d.frameP95.toFixed(1)} ms`;
     if (e.hexLod) {
       // Kadłuby skórą / smugą z daleka | węzły rysowanych skór / węzły wszystkich kadłubów w kadrze.
@@ -1531,9 +1538,11 @@ export const PerfHUD = {
         // Czas GPU ze znacznikow czasu WebGPU (timestamp-query, Core3D._gpuTimerPoll).
         // Jesli ta liczba dobija do czasu klatki, waskim gardlem jest karta
         // i ciecie draw calli nic nie da.
-        const gpuMs = Number(window.Core3D?.gpuFrameMs);
+        // Tryb worker: Core3D strony nie ma urzadzenia — czas i cecha z kanalu zwrotnego workera.
+        const rw = window.RenderWorkerHost;
+        const gpuMs = Number(rw ? rw.stats[0] : window.Core3D?.gpuFrameMs);
         if (!Number.isFinite(gpuMs) || gpuMs <= 0) {
-          e.gpuFrame.textContent = window.Core3D?.gpuTimerSupported ? 'czekam...' : 'brak znacznikow';
+          e.gpuFrame.textContent = (rw ? rw.gpuTimerSupported() : window.Core3D?.gpuTimerSupported) ? 'czekam...' : 'brak znacznikow';
           e.gpuFrame.style.color = '';
         } else {
           const frameMs = Number(d.frameP50) || 0;

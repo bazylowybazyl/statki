@@ -47,7 +47,6 @@ const NOTES = {
   'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: asynchronicznie, bez odwracania osi — zadanie 06)',
   'src/3d/haloRing/haloRingGLSL.js': 'GLSL ringu poza grą: budowle Z7 (COMMON, NOISE, LIGHT) i narzędzie parzystości GLSL ↔ TSL (scripts/webgpu/ring-tsl-parzystosc.mjs); gra czyta haloRingTSL.js',
   'src/3d/menuBackdrop3D.js': 'tło menu w TSL (menuBackdrop3D.tsl.js), rozgrzewka przez rejestr Core3D.warmup (zadanie 11)',
-  'src/3d/beamDebris3D.js': 'pula odłamków dem destruktora (własny WebGLRenderer) — geometria dla gry w metalDebrisGeometry.js',
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
   'src/3d/coldWreckImpostors.js': 'smugi zimnych wraków na belkach (rekord smugi z migawki liczy gra — src/game/coldWreckView.js)',
@@ -406,8 +405,7 @@ Moduły ładowane przez grę, ale poza portem (PLAN §12 p. 1; lista \`POZA_PORT
 
 ${fileTable(groups['poza portem'])}
 
-Moduły rozwijane poza grą — Z4 \`shipProxyBatch3D\`, Z5 \`cargoContainers3D\` / \`cargoDrones3D\`, Z7 \`portBuildings/*\`,
-\`beamShips3D\` / \`beamDebris3D\` dem destruktora — zostają w GLSL (na WebGPU zamienniki) i przejdą na TSL przy swojej
+Moduły rozwijane poza grą — Z4 \`shipProxyBatch3D\`, Z5 \`cargoContainers3D\` / \`cargoDrones3D\`, Z7 \`portBuildings/*\` — zostają poza grafem gry do swojej
 integracji (tabela „Poza grą” niżej). Asteroidy: stare pole, tło pasa i klej WebGL usunięte w zadaniu 21 — pas z dema
 WebGPU (\`src/3d/asteroids/\`) jest w porcie. Ścieżkę heksów w \`hexShips3D.js\` (HEX/ARMOR/DEBRIS, pula szczątków GPU)
 usunięto 2026-10-19 razem z silnikiem heksów i jego demami (\`mostki-demo\`, \`rdzen-demo\`).

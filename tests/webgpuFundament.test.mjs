@@ -153,43 +153,67 @@ test('Core3D: bez martwego splitu w jednym renderze — dwa renderSingle w drawH
   assert.equal((draw.slice(0, draw.indexOf('\n}\n')).match(/Core3D\.renderSingle\(/g) || []).length, 3, 'split: 2× renderSingle + pojedynczy widok');
 });
 
-test('zegar GPU: jedno zapytanie w locie, wynik do gpuFrameMs, mapa znaczników three czyszczona', async () => {
+test('zegar GPU: jedno zapytanie w locie, wynik zegara klatek do gpuFrameMs, mapa znaczników three czyszczona', async () => {
+  const { createZegarGpuKlatki } = await import('../src/3d/zegarGpuKlatki.js');
   let resolveNext = null;
   let calls = 0;
-  const pool = { timestamps: new Map([['r:1:3:f5', 0.1]]) };
+  // atrapa puli three r183: zlecenie kopiuje mapę uid → przesunięcie i zeruje pulę synchronicznie, wynik w `timestamps`
+  const pool = { timestamps: new Map(), queryOffsets: new Map(), currentQueryIndex: 0 };
   const renderer = {
     info: { frame: 1 },
     backend: { trackTimestamp: true, timestampQueryPool: { render: pool, compute: null } },
-    resolveTimestampsAsync(type) { calls++; assert.equal(type, 'render'); return new Promise((r) => { resolveNext = r; }); }
+    resolveTimestampsAsync(type) {
+      calls++;
+      assert.equal(type, 'render');
+      const offs = new Map(pool.queryOffsets);
+      pool.queryOffsets.clear();
+      pool.currentQueryIndex = 0;
+      return new Promise((r) => { resolveNext = (ms) => { for (const [uid] of offs) pool.timestamps.set(uid, ms); r(ms); }; });
+    }
   };
-  const core3d = Object.assign(Object.create(Core3D), { renderer, gpuFrameMs: 0, _gpuTimerPending: { render: false, compute: false }, _gpuTimerFrame: -1 });
+  const core3d = Object.assign(Object.create(Core3D), {
+    renderer, gpuFrameMs: 0, gpuFrameSamples: 0, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1,
+    _gpuSplitHalf: 0, _gpuClock: createZegarGpuKlatki(), _gpuTimestampFeature: true, gpuTimerSampleEvery: 1
+  });
   // Handlery przypina init() (raz, bez domknięć per klatka) — w teście tak samo.
   core3d._onGpuRenderTimestamp = (ms) => core3d._handleGpuTimestamp('render', ms);
-  core3d._onGpuTimestampError = () => { core3d._gpuTimerPending.render = false; };
+  core3d._onGpuRenderTimestampError = () => core3d._handleGpuTimestamp('render', NaN);
   assert.match(core, /this\._onGpuRenderTimestamp = \(ms\) => this\._handleGpuTimestamp\('render', ms\);/);
-  core3d._gpuTimerPoll();
-  core3d._gpuTimerPoll();
+  // klatka Core3D z jednym passem (przydział pary zapytań jak owinięte backend.initTimestampQuery)
+  let uid = 0;
+  const frame = () => {
+    core3d._gpuTimerGate();
+    const off = pool.currentQueryIndex;
+    pool.currentQueryIndex += 2;
+    const u = `r:${++uid}:3:f1`;
+    pool.queryOffsets.set(u, off);
+    core3d._gpuClock.noteQuery('render', off);
+    core3d._gpuTimerAfterRender();
+  };
+  frame();
+  assert.equal(calls, 1, 'koniec klatki — zlecenie');
+  frame();
   assert.equal(calls, 1, 'drugie zapytanie dopiero po rozwiązaniu pierwszego');
   resolveNext(1.25);
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(core3d.gpuFrameMs, 1.25);
+  assert.equal(core3d.gpuFrameMs, 1.25, 'ms klatki zegara (nie suma paczki three)');
+  assert.equal(core3d.gpuFrameSamples, 1);
   assert.equal(pool.timestamps.size, 0, 'mapa uid → ms nie rośnie bez końca');
-  core3d._gpuTimerPoll();
+  frame();
   assert.equal(calls, 2);
   // Bez cechy timestamp-query nic nie pytamy (three ostrzegałby co klatkę).
-  renderer.backend.trackTimestamp = false;
+  core3d._gpuTimestampFeature = false;
   resolveNext(0.5);
   await new Promise((r) => setTimeout(r, 0));
-  core3d._gpuTimerPoll();
+  frame();
   assert.equal(calls, 2);
-  // Podzielony ekran: pytanie dopiero po drugim renderSingle klatki.
-  renderer.backend.trackTimestamp = true;
+  core3d._gpuTimestampFeature = true;
+  // Podzielony ekran: klatka = para renderów, pytanie dopiero po drugim (info.frame bez znaczenia).
   window.splitScreenMode = true;
   try {
-    renderer.info.frame = 9;
-    core3d._gpuTimerAfterRender();
+    core3d._gpuTimerGate(); core3d._gpuTimerAfterRender();
     assert.equal(calls, 2, 'pierwsza połówka klatki — bez pytania');
-    core3d._gpuTimerAfterRender();
+    core3d._gpuTimerGate(); core3d._gpuTimerAfterRender();
     assert.equal(calls, 3, 'druga połówka — pytanie o pełną klatkę');
   } finally {
     window.splitScreenMode = false;
@@ -268,7 +292,7 @@ test('strona: import map three/webgpu i three/tsl, Vite prebundluje razem, komun
   assert.match(read('vite.config.js'), /optimizeDeps: \{\s*include: \['three', 'three\/webgpu', 'three\/tsl'\]/);
   assert.match(html, /note\.textContent = 'Gra wymaga przeglądarki z WebGPU';/);
   assert.match(html, /Core3D\.ready\?\.then\(\(ok\) => \{ if \(!ok\) showWebGpuRequired\(\); \}\);/);
-  const start = html.slice(html.indexOf('async function startGame() {'));
+  const start = html.slice(html.indexOf('async function startGame('));
   // RW-41c: w trybie worker urządzenie ma worker — jego brak WebGPU (rwHost.failed) też zatrzymuje start
   assert.match(start.slice(0, 300), /if \(Core3D\.gpuUnsupported \|\| rwHost\?\.failed\) \{ showWebGpuRequired\(\); return; \}/);
 });

@@ -11,7 +11,8 @@
 // Instancja = 20 liczb w JEDNYM przeplecionym buforze (InstancedInterleavedBuffer): [0..1] oś x × szerokość,
 // [2..3] (u0, v0) luku, [4..5] oś y × wysokość, [6..7] (u1, v1) luku, [8..11] (cos, sin, krycie, skóra luku),
 // [12..13] środek względem początku przy kamerze, [14] lampy w shaderze, [15] odblask lakieru, [16] slot lamp
-// i stref (HullLightStore, vec4), [17] liczba stref dysz, [18] waga lakieru. Siatka to Mesh +
+// i stref (HullLightStore, vec4), [17] liczba stref dysz, [18] waga lakieru, [19] faza migania lamp okrętu (slot lamp
+// jest wspólny dla rodzaju). Siatka to Mesh +
 // InstancedBufferGeometry, nie InstancedMesh (jego uuid wchodzi do klucza programu — NodeBuilder na każdy rodzaj).
 // Pozycja: positionNode w układzie lokalnym, resztę robi modelViewMatrix three (highPrecision — początek
 // w mesh.position, AGENTS.md: precyzja float32 przy 7 mln j.).
@@ -68,8 +69,8 @@ function buildGraph() {
   const vC = varying(vec4(lightDir, iHull.z), 'vProxyC');
   // (wymiary sprite'a w j. świata = px siatki kadłuba NPC, slot lamp, liczba stref dysz).
   const vD = varying(vec4(length(iAxisX.xy), length(iAxisY.xy), iHull.x, iHull.y), 'vProxyD');
-  // Offset fragmentu od początku siatki w kierunkach świata (lakier: obłoki zakotwiczone w świecie).
-  const vLocal = varying(local, 'vProxyLocalWorld');
+  // Offset fragmentu od początku siatki w kierunkach świata (lakier: obłoki zakotwiczone w świecie); z: faza migania lamp.
+  const vLocal = varying(vec3(local, iHull.w), 'vProxyLocalWorld');
 
   const perObject = {
     uRotCS: vA.zw,
@@ -85,6 +86,7 @@ function buildGraph() {
     uEngineZoneCount: round(vD.w),
     uLightBase: round(vD.z),
     uLacquerGlint: vB.w,
+    uNavPhase: vLocal.z,
     // światła efektów z siatki: proxy nie ma własnych świateł w siatce (właściciel 0 — nic nie pomija)
     uGridOwner: float(0.0)
   };
@@ -101,7 +103,7 @@ function buildGraph() {
   const fragmentNode = hullProxyFragmentNode({
     perObject,
     spriteUV: vA.xy,
-    localWorld: vLocal,
+    localWorld: vLocal.xy,
     lodOpacity: clamp(vB.x, 0.0, 1.0),
     cutDiscard
   });

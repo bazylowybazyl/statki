@@ -5,7 +5,7 @@ import * as THREE from 'three/webgpu';
 
 import { Core3D } from '../src/3d/core3d.js';
 import { ShipLights3D } from '../src/3d/shipLights3D.js';
-import { NAV_LIGHT_CHASE } from '../src/game/shipLightRuntime.js';
+import { NAV_BLINK_PATTERNS, NAV_LIGHT_LOOK } from '../src/data/shipNavLights.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const shipLightsSource = read('src/3d/shipLights3D.js');
@@ -52,9 +52,10 @@ test('nav light billboards render on the FG layer with additive HDR blending', (
     assert.equal(L.material.forceSinglePass, true);
     assert.equal(L.mesh.renderOrder, 52);
     // Wartości aktualizowane jak w ShaderMaterial (adapter material.uniforms).
-    L.sync([{ x: 10, y: -20, haloWorld: 30, coreWorld: 3, intensity: 2, phase: 0.4, color: { r: 1, g: 0.2, b: 0.1 } }], 3.5);
+    L.sync([{ x: 10, y: -20, haloWorld: 30, coreWorld: 3, intensity: 2, blink: 0.4, color: { r: 1, g: 0.2, b: 0.1 } }], 3.5);
     assert.equal(L.material.uniforms.uTime.value, 3.5);
     assert.equal(L.mesh.count, 1);
+    assert.equal(L.geometry.getAttribute('aParams').array[0], Math.fround(0.4), 'kod migania w instancji');
     // Zakres uploadu tylko żywych instancji (backend WebGPU respektuje zakresy atrybutów).
     assert.deepEqual(L.geometry.getAttribute('aParams').updateRanges.map((r) => [r.start, r.count]), [[0, 3]]);
     assert.notEqual(L.geometry.getAttribute('aParams').usage, THREE.DynamicDrawUsage, 'DynamicDrawUsage = pełny upload co render w WebGPU');
@@ -75,26 +76,24 @@ test('nav lights are emitters: the sun shadow mask never dims them', () => {
   assert.ok(scenePassList.trim().endsWith('this.renderPassFg'), 'FG kładzie się na wierzchu sceny');
 });
 
-test('hull shader and billboard shader share the NAV_LIGHT_CHASE sequence', () => {
-  // Obie strony biorą stałe z NAV_LIGHT_CHASE (billboardy i kadłub: węzły TSL —
-  // shipLights3D.js, hexShips3D.tsl.js) — zmiana tempa/kierunku sekwencji w jednym
-  // miejscu nie może rozjechać drugiego.
-  assert.match(shipLightsSource, /fract\(U\.uTime\.mul\(NAV_LIGHT_CHASE\.speed\)\.add\(vParams\.x\.mul\(NAV_LIGHT_CHASE\.phaseGain\)\)\)/);
-  assert.match(hullTslSource, /fract\(uTime\.mul\(NAV_LIGHT_CHASE\.speed\)\.add\(localPhase\.mul\(NAV_LIGHT_CHASE\.phaseGain\)\)\)/);
-  // Znak "+" przy fazie = przebieg od dziobu (faza 1) ku rufie (faza 0).
-  assert.doesNotMatch(hullTslSource, /NAV_LIGHT_CHASE\.speed\)\.sub\(localPhase/);
-  assert.doesNotMatch(shipLightsSource, /NAV_LIGHT_CHASE\.speed\)\.sub\(/);
-  for (const k of ['attack', 'hold', 'release', 'rest']) {
-    assert.ok(hullTslSource.includes(`NAV_LIGHT_CHASE.${k}`), k);
-    assert.ok(shipLightsSource.includes(`NAV_LIGHT_CHASE.${k}`), k);
-  }
-  // Stałe trafiają do WGSL billboardów (bez tekstu GLSL).
+test('hull shader and billboard shader share one blink function', () => {
+  // Billboard i lampy na kadłubie (też rozlew na sąsiadów) liczą błysk jedną funkcją z tego samego kodu lampy:
+  // błysk lampy i oświetlenie blachy to ta sama chwila.
+  assert.match(shipLightsSource, /navBlinkNode\(U\.uTime, vParams\.x\)/);
+  assert.match(hullTslSource, /navBlinkNode\(uTime, lightExtra\.x, P\.uNavPhase\)/);
+  // Oba rodzaje lamp w pętli kadłuba gasną między błyskami; reflektor (typ ≠ 0) nie miga.
+  assert.match(hullTslSource, /lampColor\.mul\(power\)\.mul\(blink\)\.mul\(fo\.att\)/);
+  assert.match(hullTslSource, /select\(lightType\.greaterThan\(0\.5\), float\(1\.0\), blink\.mul\(NAV_LIGHT_LOOK\.hullGain\)\)/);
+  // Stałe wzorów trafiają do WGSL billboardów (bez tekstu GLSL).
   const L = nodeLights();
   try {
     const { vertex, fragment } = buildWGSL(L.mesh);
-    for (const k of ['speed', 'phaseGain', 'attack', 'hold', 'release', 'rest']) {
-      assert.ok(fragment.includes(String(NAV_LIGHT_CHASE[k])), `${k} = ${NAV_LIGHT_CHASE[k]} w WGSL`);
+    for (const p of NAV_BLINK_PATTERNS) {
+      for (const k of ['period', 'attack', 'flash', 'release']) {
+        assert.ok(fragment.includes(String(p[k])), `${p.name}.${k} = ${p[k]} w WGSL`);
+      }
     }
+    assert.ok(fragment.includes(String(NAV_LIGHT_LOOK.idle)), 'punkt lampy między błyskami');
     // Pozycja instancji: macierz instancji three (bufor uniformów przy ≤ 1024 instancjach).
     assert.match(vertex, /mat4x4<f32>/);
     for (const stage of [vertex, fragment]) assert.ok((stage.match(/var<uniform>/g) || []).length <= 12);

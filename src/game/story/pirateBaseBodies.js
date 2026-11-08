@@ -1,18 +1,18 @@
 /**
- * Baza piratów jako CIAŁA ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F2, jak dawny suchy dok): kawałki bazy
+ * Baza piratów jako CIAŁA ŚWIATA (docs/PLAN-zniszczenia-swiata-3d.md F2): kawałki bazy
  * (pirateBaseLayout.chunks) w bańce gracza stają się PŁASKIMI, ZAKOTWICZONYMI ciałami silnika belek
  * (src/game/worldBodies.js). Osobne MIEJSCE na budowlę (habitat, paliwo, magazyn, pomosty) — trafienia liczą punkty
  * swojej budowli (byt stacji ma `_worldSite`). Taran = zderzenie kadłubów: bęben habitatu to „rura” (ściana, grodzie,
  * pierścień) — gnie się i pęka pod Atlasem; pomosty pękają między rzadkimi kotwicami.
  *
- * Kawałek = raster z góry brył przecinających płaszczyznę gry (pirateDryDockChunks.js — wspólne narzędzia brył
- * budowli Z7, wiersze odwrócone jak w doku), kotwice wg rodzaju, materiał. Część techniczna nad bębnem i dysk
+ * Kawałek = raster z góry brył przecinających płaszczyznę gry (buildingChunkSolids.js — narzędzia brył
+ * budowli Z7, wiersze odwrócone), kotwice wg rodzaju, materiał. Część techniczna nad bębnem i dysk
  * mieszkalny pod nim to DUCHY (raster wszystkich brył, rzadka kratownica, ciałem dopiero w rozpadzie — implozja).
  * Układ bazy: x wzdłuż osi, z w poprzek; gra: toGame(x, z) (pirateBaseSite.placePirateBase), kurs ciała = place.axis.
  * Bez three i DOM.
  */
 
-import { dryDockChunkSolids, dryDockPlanarSolids, dryDockTopRaster, dryDockSolidsToTriangles, dryDockSolidsBounds } from '../../3d/portBuildings/pirateDryDockChunks.js';
+import { chunkSolids, chunkPlanarSolids, chunkTopRaster, solidsToTriangles, solidsBounds } from '../../3d/portBuildings/buildingChunkSolids.js';
 import { WORLD_BODY_TUNE } from '../worldBodies.js';
 import { HullBodies } from '../hullBodies.js';
 import { voxelizeTriangles, bridgeVoxelComponents } from '../voxelBody3D.js';
@@ -29,14 +29,6 @@ export const PIRATE_BASE_SOLID = {
   disc: { cell: 45, interior: 'ribs', shellLayers: 1, ribStep: 3 },
   gravity: 400
 };
-// BRYŁY UPADKU (src/game/story/pirateBaseFall.js, 2026-10-19 — „w końcu wszystkie elementy spadają na planetoidę”):
-// bęben i szyb habitatu są w grze ciałami PŁASKIMI (taran, ostrzał w płaszczyźnie), a przy HP 0 habitatu zamieniają się
-// w bryły 3D z tych samych brył sceny (uszkodzenia z ciała płaskiego zostają: komórki bez węzła płaskiego odpadają) i
-// spadają na skałę. Szablon liczony z wyprzedzeniem (ekran ładowania — strona i worker renderu: klucz skóry 3D).
-export const PIRATE_BASE_FALL_SOLID = {
-  drum: { cell: 45, interior: 'full', shellLayers: 1, ribStep: 3 },
-  core: { cell: 45, interior: 'full', shellLayers: 1, ribStep: 3 }
-};
 // Szyb habitatu (H-C, płaski) dla brył 3D sięga najwyżej tyle pod spód wieży: podstawa przewracanej wieży schodzi pod
 // zawias (pół szyi × sin przechyłu) i nie może oprzeć się na szybie, zanim przegub pęknie.
 const CORE_COLUMN_GAP = 220;
@@ -52,6 +44,8 @@ export const PIRATE_BASE_BODY_MATERIAL = Object.freeze({
   manifold: Object.freeze({ density: 2.6, armor: 6 }),
   warehouse: Object.freeze({ density: 2.2, armor: 4 }),
   annex: Object.freeze({ density: 1.4, armor: 1.5 }),
+  // wieżowiec na pomoście (2026-11-03): ściany i rdzeń jak magazyn, trochę lżejsze
+  highrise: Object.freeze({ density: 1.8, armor: 3.5 }),
   // Wieża habitatu (H-T, bryła 3D — scenariusz szyi, 2026-10-15: „bok wieży ma się rozwalić, płaszczyć”): miękka
   // względem bębna i dysku — przy uderzeniu bokiem gniecie się wieża (zgniot dzieli się ∝ 1/pancerz²: 2,5 vs 5 → wieża
   // ~80%), dysk pęka lokalnie i odpada kawałkami (wisi na trzonie), wieża zostaje na nim.
@@ -72,7 +66,7 @@ export function pirateBaseMaterial(kind) {
 const GHOST_CELL = 30;
 const GHOST_UPP = 15;
 // Podział skóry (najdłuższa krawędź trójkąta w rzucie [komórki]): bęben i pomosty gną się przy taranie — gęsto.
-const SKIN_EDGE_CELLS = Object.freeze({ drum: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4 });
+const SKIN_EDGE_CELLS = Object.freeze({ drum: 3, core: 4, pier: 3, tank: 3, manifold: 3, warehouse: 4, annex: 3, tech: 3, disc: 4, highrise: 3 });
 // Rzadkie fundamenty: kotwica co tyle komórek kratownicy (worldBodies.anchorComponents). Szyb habitatu (H-C) bez
 // siatki (audyt destruktora 2026-10-14, R8): trzymają go tylko kotwice osi (szyja do dysku i głowy) o skończonej
 // wytrzymałości — szarża Atlasa je zrywa.
@@ -132,16 +126,27 @@ export function pirateBasePinTest(layout, chunk, cs = WORLD_BODY_TUNE.cellSize) 
       const a = layout.warehouse.annex;
       return (x, z) => Math.abs(x - a.x) <= a.w * 0.25 && Math.abs(z - a.z) <= a.d * 0.25;
     }
+    case 'highrise': {
+      // wieżowiec stoi okrakiem na pomoście: kotwice w pasie pokładu (ściany poprzeczne nad nim) i w rdzeniu
+      const h = (layout.highrises || []).find((q) => q.chunk === chunk.id);
+      if (!h) return () => false;
+      const deck = layout.spec.pier.halfW * 0.6;
+      return (x, z) => {
+        const s = (x - h.x) * h.ux + (z - h.z) * h.uz;
+        const o = (x - h.x) * h.nx + (z - h.z) * h.nz;
+        return Math.abs(o) <= deck || (Math.abs(s) <= h.coreW / 2 && Math.abs(o) <= h.coreW / 2);
+      };
+    }
     default:
       return () => false;
   }
 }
 
-/** Raster kawałka do ciała (jak dryDockChunkRaster): bryły w płaszczyźnie gry z góry (duch: wszystkie), wiersze odwrócone. */
+/** Raster kawałka do ciała: bryły w płaszczyźnie gry z góry (duch: wszystkie), wiersze odwrócone. */
 export function pirateBaseChunkRaster(layout, scene, chunkId, { upp = WORLD_BODY_TUNE.rasterUpp, palette = null, band = PLANE_BAND, all = false } = {}) {
-  const solids = all ? dryDockChunkSolids(layout, scene, [chunkId]) : dryDockPlanarSolids(layout, scene, [chunkId], { band });
+  const solids = all ? chunkSolids(layout, scene, [chunkId]) : chunkPlanarSolids(layout, scene, [chunkId], { band });
   if (!solids.length) return null;
-  const r = dryDockTopRaster(solids, { unitsPerPx: upp, palette });
+  const r = chunkTopRaster(solids, { unitsPerPx: upp, palette });
   const W = r.width, Hh = r.height, src = r.data;
   const data = new Uint8ClampedArray(W * Hh * 4);
   for (let row = 0; row < Hh; row++) data.set(src.subarray((Hh - 1 - row) * W * 4, (Hh - row) * W * 4), row * W * 4);
@@ -174,21 +179,19 @@ export function pirateBaseSolidPinTest(layout, chunk, cs, bottom = 0) {
 // Bryła 3D kawałka (raz na układ — ekran ładowania): { structure, cx, cz, solids, bounds }. Układ wokselizacji F =
 // (x − cx, −(z − cz), h) — x osi budowli, −z (jak obraz ciała płaskiego), wysokość świata; (cx, cz) — środek pudła.
 const _solids3D = new WeakMap();
-const _fallSolids3D = new WeakMap();
-export function pirateBaseSolidOf(layout, scene, chunkId, palette = null, table = PIRATE_BASE_SOLID) {
-  const cache = table === PIRATE_BASE_SOLID ? _solids3D : _fallSolids3D;
-  let m = cache.get(layout);
-  if (!m) cache.set(layout, m = new Map());
+export function pirateBaseSolidOf(layout, scene, chunkId, palette = null) {
+  let m = _solids3D.get(layout);
+  if (!m) _solids3D.set(layout, m = new Map());
   if (m.has(chunkId)) return m.get(chunkId);
   const c = layout.chunkById.get(chunkId);
-  const cfg = c && table[c.kind];
+  const cfg = c && PIRATE_BASE_SOLID[c.kind];
   let out = false;
   if (cfg) {
-    const solids = dryDockChunkSolids(layout, scene, [chunkId]);
+    const solids = chunkSolids(layout, scene, [chunkId]);
     if (solids.length) {
-      const bounds = dryDockSolidsBounds(solids);
+      const bounds = solidsBounds(solids);
       const cx = (c.box.x0 + c.box.x1) / 2, cz = (c.box.z0 + c.box.z1) / 2;
-      const tri = dryDockSolidsToTriangles(solids, { palette, sides: 12, map: (v) => [v[0] - cx, -(v[2] - cz), v[1]] });
+      const tri = solidsToTriangles(solids, { palette, sides: 12, map: (v) => [v[0] - cx, -(v[2] - cz), v[1]] });
       const vox = voxelizeTriangles(tri.positions, tri.colors, {
         cellSize: cfg.cell, interiorMode: cfg.interior, shellLayers: cfg.shellLayers, ribStep: cfg.ribStep, maxCells: 400000
       });
@@ -218,7 +221,6 @@ export function prebuildPirateBaseBodies(layout, scene, palette = null) {
   let n = 0;
   for (const c of layout.chunks) {
     if (PIRATE_BASE_SOLID[c.kind]) { if (pirateBaseSolidOf(layout, scene, c.id, palette)) n++; continue; }
-    if (PIRATE_BASE_FALL_SOLID[c.kind]) pirateBaseSolidOf(layout, scene, c.id, palette, PIRATE_BASE_FALL_SOLID);
     const r = cachedRaster(layout, scene, c.id, palette);
     if (!r) continue;
     HullBodies.structureFor(r.image, r.upp, cellOf(c) / r.upp);
@@ -235,14 +237,14 @@ function planarColumn(layout, scene, c) {
   if (!m) _columns.set(layout, m = new Map());
   if (m.has(c.id)) return m.get(c.id);
   let col = null;
-  const solids = dryDockPlanarSolids(layout, scene, [c.id], { band: PLANE_BAND });
+  const solids = chunkPlanarSolids(layout, scene, [c.id], { band: PLANE_BAND });
   if (solids.length) {
-    const b = dryDockSolidsBounds(solids);
+    const b = solidsBounds(solids);
     col = { z0: Math.min(0, b.y0), z1: Math.max(0, b.y1) };
     if (c.kind === 'core') {
       const tech = layout.chunks.find((k) => k.kind === 'tech');
-      const ts = tech ? dryDockChunkSolids(layout, scene, [tech.id]) : [];
-      if (ts.length) col.z1 = Math.max(0, Math.min(col.z1, dryDockSolidsBounds(ts).y0 - CORE_COLUMN_GAP));
+      const ts = tech ? chunkSolids(layout, scene, [tech.id]) : [];
+      if (ts.length) col.z1 = Math.max(0, Math.min(col.z1, solidsBounds(ts).y0 - CORE_COLUMN_GAP));
     }
   }
   m.set(c.id, col);
@@ -328,9 +330,7 @@ export function createPirateBaseSites(owners, base, place, hooks = {}) {
       const pinHub = pirateBasePinTest(layout, c);
       let raster = null;
       let nodes = -1;
-      const fall3d = PIRATE_BASE_FALL_SOLID[c.kind] ? fallPiece(layout, scene, place, c, palette, { x0, y0, x1, y1 }) : null;
       pieces.push({
-        fall3d,
         id: c.id, kind: c.kind, label: c.label, group: c.group, weight: c.weight, chunk: c, structure,
         bounds: { x0, y0, x1, y1 },
         material: pirateBaseMaterial(c.kind),
@@ -367,47 +367,9 @@ export function createPirateBaseSites(owners, base, place, hooks = {}) {
     sites[structure] = {
       id: `pbase:${structure}:${owner?.id || 'PB'}`,
       owner, structure, base, place, pieces,
-      // bryły upadku kawałków płaskich (poza listą kawałków — worldBodies ich nie buduje; obraz piecze ich skórę 3D)
-      fallPieces: pieces.filter((p) => p.fall3d).map((p) => p.fall3d),
       onLive: hooks.onLive || null,
       onLost: hooks.onLost || null
     };
-    for (const p of pieces) if (p.fall3d) { p.fall3d.site = sites[structure]; p.fall3d.planar = p; }
   }
   return sites;
-}
-
-// BRYŁA UPADKU kawałka płaskiego (bęben, szyb): rekord jak kawałek-bryła (solid3D, solidFrame, rasterCenter — obraz:
-// skóra 3D z grupy renderu kawałka), bez ciała w worldBodies — ciało tworzy src/game/story/pirateBaseFall.js
-// (promotePlanarPiece) przy HP 0 habitatu. id = id kawałka + '~3d' (lustro w workerze renderu: worldRef).
-function fallPiece(layout, scene, place, c, palette, bounds) {
-  const cfg = PIRATE_BASE_FALL_SOLID[c.kind];
-  const half = -place.axis * 0.5;
-  const quat = { x: 0, y: 0, z: Math.sin(half), w: Math.cos(half) };
-  const sol = () => pirateBaseSolidOf(layout, scene, c.id, palette, PIRATE_BASE_FALL_SOLID);
-  return {
-    id: `${c.id}~3d`, kind: c.kind, label: c.label, group: c.group, weight: c.weight, chunk: c,
-    bounds,
-    material: pirateBaseMaterial(c.kind),
-    ghost: false,
-    solid3D: true,
-    fallOf: c.id,
-    cellSize: cfg.cell,
-    skinEdgeCells: SKIN_EDGE_CELLS[c.kind] || 3,
-    pinGridCells: 0,
-    site: null, state: 'fall', entity: null, islands: [], lost: false, touched: true,
-    build() { return null; },
-    // poza szablonu w świecie silnika (jak solidPiece.buildSolid — ciało swobodne, bez kotwic)
-    buildSolid() {
-      const s = sol();
-      if (!s) return null;
-      const g = place.toGame(s.cx, s.cz, {});
-      return { structure: s.structure, position: { x: g.x, y: -g.y, z: 0 }, quaternion: quat };
-    },
-    pins() { return false; },
-    solidFrame() { const s = sol(); return s ? { cx: s.cx, cz: s.cz, structure: s.structure } : null; },
-    rasterCenter() { const s = sol(); return s ? { x: s.cx, z: s.cz } : null; },
-    nodeCount() { const s = sol(); return s ? s.structure.nodeStore.count : 0; },
-    available() { return true; }
-  };
 }

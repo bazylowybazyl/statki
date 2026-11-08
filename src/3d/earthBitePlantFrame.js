@@ -13,6 +13,7 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { EARTH_BITE } from '../data/earthBite.js';
 import { earthBiteFrame, earthBiteRadius, earthBiteRimAngle, earthBiteRimPsi } from './earthBiteShape.js';
+import { earthSpinAxis } from './earthSpin.js';
 import { FxRandom } from '../render/fxRandomCore.js';
 
 export const DEG = Math.PI / 180;
@@ -188,6 +189,17 @@ export function mergeParts(parts, matrix) {
   if (matrix) geo.applyMatrix4(matrix);
   geo.computeBoundingSphere();
   return geo;
+}
+
+/**
+ * Oś obrotu Ziemi = oś ringu (układ obiektu kuli), z której budują się liny wind, szyna i promień przekaźnikowy:
+ * `L.ringAxis` ([x, y, z] — tło menu: Ziemia przechylona tak, że gryz leży w płaszczyźnie ringu) albo oś gry
+ * (earthSpin.js, biegun obrotu).
+ */
+export function plantRingAxis(L, out = new THREE.Vector3()) {
+  const a = L?.ringAxis;
+  if (Array.isArray(a) && a.length === 3) return out.fromArray(a).normalize();
+  return earthSpinAxis(undefined, out);
 }
 
 /**

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { DestructorBeams3D as D, createBeamConfig } from '../src/game/destructorBeams3D.js';
 import { buildSpriteBeamStructure } from '../src/game/beamSprite2D.js';
-import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
+import { cloneBeamStructure } from '../src/game/beamStructureClone.js';
 import { buildSpriteSkinTopology } from '../src/3d/beamSpriteSkin2D.js';
 import { buildHullSkinTopology, writeHullSkin } from '../src/3d/beamHullSkin.js';
 import { measureHullExtent, planHullSdfLayout, rasterizeHullMask } from '../src/3d/hullShadowSdf.js';

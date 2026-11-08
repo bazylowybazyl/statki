@@ -8,7 +8,8 @@ import { createDialogueQueue } from '../src/game/story/dialogue.js';
 import { createProgress, grantExp, rankProgress, RANKS } from '../src/game/story/progression.js';
 import { createCloak, engageCloak, breakCloak, stepCloak, isCloakHidden, toggleCloak, cloakBlockReason } from '../src/game/cloak.js';
 import { buildDockIntroKeys, sampleKeys, keysDuration, topDownPose, blendPose } from '../src/game/story/introCamera.js';
-import { planShipyard, planFleetWave, SHIPYARD_TUNE } from '../src/game/story/shipyardLayout.js';
+import { planFleetWave, SHIPYARD_TUNE } from '../src/game/story/shipyardLayout.js';
+import { planPirateBase } from '../src/game/story/pirateBaseSite.js';
 import { k7BerthPose, k7HallCenter, k7IsOutsideHall, k7GameToHub, k7HubToGame, k7FrameFor } from '../src/game/story/k7Dock.js';
 import { MISSION01_DIALOGUE } from '../src/data/story/mission01.dialogue.js';
 import { STORY_CAST } from '../src/data/story/cast.js';
@@ -257,27 +258,23 @@ test('lot intro w tle menu: koniec = kadr gry nad C-01, słońce przechodzi w s�
   }
 });
 
-test('stocznia: rząd burta w burtę na osi, punkt zbiórki przed nim, poza czujnikami', () => {
+test('baza: punkt zbiórki na osi podejścia, poza czujnikami; front odwetu i szyk fali', () => {
   const center = { x: 2_000_000, y: 1_000_000 };
   const from = { x: 1_000_000, y: 1_000_000 };
-  const s = planShipyard(center, from);
-  assert.equal(s.parked.length, SHIPYARD_TUNE.parked.length);
-  assert.equal(s.turrets.length, SHIPYARD_TUNE.turrets);
-  // oś od gracza do stoczni (tu +x)
+  const s = planPirateBase(center, from);
+  // oś od gracza do bazy (tu +x)
   assert.ok(Math.abs(s.axis) < 1e-9);
-  // zaparkowane po kolei wzdłuż osi, bez nakładania
-  for (let i = 1; i < s.parked.length; i++) assert.ok(s.parked[i].x > s.parked[i - 1].x);
   // Punkt zbiórki poza zasięgiem wykrycia niezamaskowanego okrętu (9 km, StoryGame._detected) z zapasem,
   // ale nie dalej, niż Atlas przeleci w pół minuty (limit bojowy 500 j/s).
-  const d = Math.hypot(s.rally.x - s.rowStart.x, s.rally.y - s.rowStart.y);
-  assert.ok(d >= 12000 && d <= 16000, `zbiórka ${d} j. od rzędu`);
+  const d = Math.hypot(s.rally.x - s.mouth.x, s.rally.y - s.mouth.y);
+  assert.ok(d >= 12000 && d <= 16000, `zbiórka ${d} j. od wlotu`);
   // Front odwetu (2026-10-07: 11 km po skróceniu zasięgów broni): piraci formują szyk do ~5 km bliżej
   // niż środek frontu — poza zasięgiem swoich armat, a front w zasięgu rakiet manewrujących Atlasa
   // (salwy w nadlatujących zamiast pół minuty ciszy, pomiar scripts/webgpu/zasiegi-gra.mjs).
   const FORM_UP_AHEAD = 5000;
   assert.ok(SHIPYARD_TUNE.counterDistance - FORM_UP_AHEAD > MASTER_WEAPONS.armata_mk1.baseRange, 'szyk piratów poza zasięgiem ich armat');
   assert.ok(SHIPYARD_TUNE.counterDistance <= weaponRangeFor({ activeHullId: 'atlas' }, MASTER_WEAPONS.missile_rack, MASTER_WEAPONS.missile_rack.baseRange), 'front odwetu w zasięgu rakiet Atlasa');
-  assert.ok(s.rally.x < s.rowStart.x, 'zbiórka od strony gracza');
+  assert.ok(s.rally.x < s.mouth.x, 'zbiórka od strony gracza');
   const wave = planFleetWave({ x: 0, y: 0 }, 0, { battleship: 7, destroyer: 8, frigate: 15 });
   assert.equal(wave.length, 30);
   assert.equal(wave[wave.length - 1].key, 'battleship', 'flagowce przylatują ostatnie');
@@ -328,27 +325,6 @@ test('kampania: odwet w falach = skład z decyzji (7 / 8 / 15) + herszt, wsparci
   const A = MISSION02.ambush;
   assert.ok(A.jammer && A.flankDelay > 0 && A.devBack > A.distance && A.leaveDist > A.flankDistance);
   for (const h of [...Object.values(MISSION01_HINTS), ...Object.values(MISSION02_HINTS)]) assert.ok(h.title && h.text);
-});
-
-test('stocznia: wyjazd z parkingu rufą przez bramę stanowiska, pochylnie z wylotem bramą G-01', () => {
-  const s = planShipyard({ x: 2_000_000, y: 1_000_000 }, { x: 1_000_000, y: 1_000_000 });
-  assert.equal(s.slips.length, SHIPYARD_TUNE.slips.length);
-  for (const p of s.parked) {
-    const [p0, p1] = p.launch.path;
-    assert.ok(/^B-\d\d$/.test(p.launch.gate), p.launch.gate);
-    // cofanie: dziób zostaje w kursie stanowiska, wolno (poniżej pasma obrotu dziobu w kierunek lotu)
-    assert.equal(p0.face, p.angle);
-    assert.ok(p0.speed > 0 && p0.speed < 180);
-    // ruch od trzonu (przeciwnie do dziobu) i dalej w tę samą stronę
-    const back = (q) => -((q.x - p.x) * Math.cos(p.angle) + (q.y - p.y) * Math.sin(p.angle));
-    assert.ok(back(p0) > 0 && back(p1) > back(p0));
-  }
-  for (const q of s.slips) {
-    assert.equal(q.launch.gate, 'G-01');
-    assert.ok(q.launch.path.length >= 3);
-    const end = q.launch.path.at(-1);
-    assert.ok(s.dock.distance(end.x, end.y) > 0, 'koniec trasy poza dokiem');
-  }
 });
 
 test('zasadzka w pasie: cięciwa kursu przez pierścień, miejsce przy olbrzymie (przed bryłą) albo w najgęstszym polu, wyzwalacz z zapasem na hamowanie', () => {

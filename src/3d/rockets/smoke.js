@@ -39,6 +39,7 @@ import {
 import { SMOKE_PALETTES, SMOKE_DRAG } from './palette.js';
 import { createShiftKernel } from '../fx/gpuPoolOrigin.js';
 import { sunVisibility } from '../sunShadowMask.js';
+import { CZYSZCZENIE_AB, renderCzyszczac } from '../czyszczenieWPassie.js';
 
 export const SMOKE_CAP = 1 << 19;
 export const SPAWN_CAP = 1 << 14;
@@ -645,8 +646,13 @@ export class SmokeSystem {
     const prevAlpha = renderer.getClearAlpha();
     renderer.setRenderTarget(this.densityRT);
     renderer.setClearColor(0x000000, 0);
-    renderer.clear(true, false, false);
-    if (n > 1) renderer.render(this.densityScene, cam);
+    // z cząstkami: czyszczenie w passie mapy (czyszczenieWPassie.js — bez osobnego passu clear); bez nich sam clear
+    if (n > 1 && CZYSZCZENIE_AB.pomocnicze !== false) {
+      renderCzyszczac(renderer, this.densityScene, cam, true, false, false);
+    } else {
+      renderer.clear(true, false, false);
+      if (n > 1) renderer.render(this.densityScene, cam);
+    }
     renderer.setRenderTarget(prev);
     renderer.setClearColor(_prevClear, prevAlpha);
   }

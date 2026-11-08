@@ -26,9 +26,8 @@ import { resetWorldBodies3D } from './worldBodies3D.js';
 import { PirateRock3D } from './pirateRock3D.js';
 import { PirateRockSite3D } from './portBuildings/pirateRockSite3D.js';
 import { createPirateRockLayout } from './portBuildings/pirateRockLayout.js';
-import { RockImpactFx, setRockImpactHost } from './pirateRockImpactFx.js';
-import { WARIANT_INSTANCJI } from './rozgrzewka.js';
 import { WARP_WORLD_LENS, warpLensExtraBody, setWarpLensExtra, lensImageToWorld, lensPivotElements } from './warp/worldLens.js';
+import { RenderWorld } from '../render/renderWorld.js';
 
 const LAYER_BG = 1;
 const LAYER_FG = 2;
@@ -75,6 +74,7 @@ function applyPirateBaseLens() {
   const on = !!(a && a.on && a.real < 0.999);
   if (!on && !_lensOn) return;
   const roots = lensRoots();
+  if (vox?.gotowe && vox.root.parent) roots.push(vox.root);
   if (on) {
     if (!_lensOn) {
       _lensFrames.clear();
@@ -107,6 +107,45 @@ let base = null;
 let place = null;
 let fogHidden = false;
 
+// WIĄZANE WOKSELE (2026-11-06): obraz bazy misji 1, gdy tylko wstaną. Stara bryła i skóry ciał są wtedy schowane, a rozgrywka (punkty, kolizje, etapy, upadek) dalej liczy się na nich. A/B: ?woksele=0.
+// AGENT: ?woksele=0 to sam obraz zapasowy, do diagnostyki (decyzja użytkownika 2026-11-06). Usunąć, gdy przestanie być potrzebny.
+const VOX_WYL = /[?&]woksele=0\b/.test(RenderWorld.pageSearch || '');
+let vox = null;
+let voxActive = false;
+let voxStart = 0;
+const voxZalegle = [];
+function startVoxels(basePlace) {
+  if (VOX_WYL) return;
+  const id = ++voxStart;
+  voxActive = false;
+  voxZalegle.length = 0;
+  (async () => {
+    const m = await import('./woksele/wGrze.js');
+    if (id !== voxStart) return;
+    if (!vox) vox = m.createWokseleGry({ Core3D });
+    const ok = await vox.start({ place: basePlace, base, skala: rock ? {
+      center: rock.layout.center, R: rock.layout.R,
+      promien: (x, y, z, half) => rock.surfaceRadiusNear(x, y, z, half),
+      promienW: (x, y, z) => rock.surfaceRadiusAt(x, y, z),
+      lata: (x, y, z, half) => rock.setCraterPatch(x, y, z, half),
+      krater: (x, y, z, r, k) => rock.addCrater(x, y, z, r, k),
+      koniecPaczki: () => rock.flushCraters(),
+    } : null });
+    if (!ok || id !== voxStart || !place) return;
+    voxActive = true;
+    base.root.visible = false;
+    // Zdarzenia sprzed gotowości (skok dev, gra zaczyna z rozbitą bazą): bez nich woksele pokazałyby całą bazę nad ruinami.
+    for (const [t, a, b, c] of voxZalegle) vox.zdarzenie(t, a, b, c);
+    voxZalegle.length = 0;
+  })().catch((e) => console.error('[woksele] nie wstały, zostaje stary obraz bazy', e));
+}
+function stopVoxels() {
+  voxStart++;
+  voxActive = false;
+  voxZalegle.length = 0;
+  vox?.stop();
+}
+
 function build() {
   const d = new PirateBase3D({ layout: createPirateBaseLayout(), frame: portModuleFrame(0, 0, 0), name: 'Baza piratów' });
   d.setLayers(LAYER_BG, LAYER_FG);
@@ -127,30 +166,18 @@ Core3D.warmup?.add({ name: 'baza piratów: bryła', objects: () => ensurePrebuil
 let rock = null;
 let rockSite = null;
 let rockAt = { x: 0, y: 0 };
-// Uderzenia w skałę (upadek bazy — rekordy ROCK_IMPACT gry, src/3d/pirateRockImpactFx.js): cząstki w passie tła
-// i głębokie domeny gazu reżysera wybuchów; cel dekodera rejestrowany przy skale.
-let rockImpact = null;
 function ensureRock() {
   if (rock || !Core3D.scene) return rock;
   const layout = createPirateRockLayout();
   rock = new PirateRock3D(layout, LAYER_BG);
   rockSite = new PirateRockSite3D({ layout, frame: portModuleFrame(0, 0, 0), layer: LAYER_BG, name: 'Osada piratów na planetoidzie' });
   rockSite.root.userData.fgCategory = 'stations';
-  rockImpact = new RockImpactFx({ layer: LAYER_BG, core: Core3D });
-  rockImpact.onScar = (x, y, z, r, k) => rock.addScar(x, y, z, r, k);
-  setRockImpactHost(rockImpact);
   return rock;
 }
 Core3D.warmup?.add({
   name: 'baza piratów: planetoida, osada, winda',
   objects: () => (ensureRock() ? [rock.root, ...rockSite.warmupObjects()] : null),
   phase: 'loading'
-});
-Core3D.warmup?.add({
-  name: 'planetoida: uderzenia (pył, odłamki, błyski)',
-  objects: () => (ensureRock() ? rockImpact.warmupMeshes() : null),
-  phase: 'loading',
-  variant: WARIANT_INSTANCJI
 });
 let _skinHolders = null;
 function skinWarmHolders() {
@@ -209,6 +236,10 @@ export function pirateBase3DEvent(type, a, b, c) {
   else if (type === 'hide') { if (base) base.hideChunk(a); }
   else if (type === 'rockCollapse') collapsePirateRockSite();
   else if (type === 'detach') detachPirateBase3D();
+  else if (type === 'voxHit' || type === 'voxBreak' || type === 'voxNeck' || type === 'voxFall') {
+    if (vox?.gotowe) vox.zdarzenie(type, a, b, c);
+    else if (type !== 'voxHit' && !VOX_WYL) voxZalegle.push([type, a, b, c]);
+  }
 }
 
 /** Podpina bryłę bazy w miejscu z planu misji (ramka). */
@@ -226,6 +257,7 @@ function attachPirateBase3D(owners, basePlace) {
   base.root.visible = true;
   fogHidden = false;
   attachPirateRock(basePlace);
+  startVoxels(basePlace);
   return base;
 }
 
@@ -238,11 +270,8 @@ function attachPirateRock(basePlace) {
   rockSite.setFrame(frame);
   rockSite.reset();
   rockSite.update(0, {});
-  // uderzenia: środek skały w scenie (x gry, −y gry, h) — początek siatek cząstek
-  rockImpact.reset();
   rock.clearScars();
-  rockImpact.setRock(rockAt.x, -rockAt.y, c[1], rock.layout.R);
-  for (const r of [rock.root, rockSite.root, rockSite.fx.root, rockImpact.root]) {
+  for (const r of [rock.root, rockSite.root, rockSite.fx.root]) {
     if (r.parent !== Core3D.scene) Core3D.scene.add(r);
     r.visible = true;
   }
@@ -254,17 +283,17 @@ function collapsePirateRockSite() {
   return rockSite.collapse();
 }
 /** Skała i osada (albo null) — dev, zrzuty, narzędzia. */
-export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt, impact: rockImpact } : null; }
+export function pirateRockSite() { return rockSite ? { rock, site: rockSite, at: rockAt, sun: _rockSun } : null; }
 
 function detachPirateBase3D() {
+  stopVoxels();
   if (_lensOn) {
     for (const [r, f] of _lensFrames) { r.matrix.copy(f); r.matrixWorldNeedsUpdate = true; }
     _lensFrames.clear();
     if (base) base.setLayers(LAYER_BG, LAYER_FG);
     _lensOn = false;
   }
-  for (const r of [rock?.root, rockSite?.root, rockSite?.fx.root, rockImpact?.root]) r?.removeFromParent();
-  rockImpact?.reset();
+  for (const r of [rock?.root, rockSite?.root, rockSite?.fx.root]) r?.removeFromParent();
   if (!base) return;
   resetWorldBodies3D();
   base.root.removeFromParent();
@@ -279,7 +308,7 @@ function attachPirateBaseBodies3D(sites) {
       building: base,
       root: base.root,
       layers: { bg: LAYER_BG, fg: LAYER_FG },
-      hidden: () => fogHidden || _lensOn,
+      hidden: () => fogHidden || _lensOn || voxActive,
       setSkinned: (piece, on) => base.setChunkSkinned(piece.id, on),
       // statyka kawałka straconego trzymana, dopóki skóra odłamów się piecze (wypiek w workerze — worldBodies3D)
       setHold: (piece, on) => base.setChunkHold(piece.id, on),
@@ -294,7 +323,10 @@ export function pirateBase3D() { return base; }
 
 const _state = { alarm: false, berths: null, bays: 0, habitat: 1, disc: 1, fuel: 1, warehouse: 1, tech: 1, drumQ: [1, 1, 1, 1], daylight: 0.3, lampPower: undefined };
 const _rockState = { sun: null, at: null, daylight: 0.3 };
+// Kierunek do Słońca od środka skały (scena: x gry, −y gry) dla cienia kuli w gazie domen głębokich (pirateBaseVents3D.js).
+const _rockSun = { x: 1, y: 0 };
 const _sunOpts = { sun: null, at: null };
+const _voxState = { ukryty: false, soczewka: false, obrazWKadrze: false, moc: 1, slonce: false, sunDx: 0, sunDy: 0 };
 
 /**
  * Klatka (render(), po stacjach). state: { hidden (mgła wojny: żadna budowla niewidoczna — gra), habitatDead, alarm,
@@ -306,28 +338,37 @@ export function updatePirateBase3D(dt, state = {}) {
   const hidden = !!state.hidden;
   if (hidden !== fogHidden) {
     fogHidden = hidden;
-    base.root.visible = !hidden;
+    base.root.visible = !hidden && !voxActive;
     if (rockSite) { rockSite.root.visible = !hidden; rockSite.fx.root.visible = !hidden; }
   }
-  // planetoida: teren (zawsze), osada i lina — czas gry także we mgle (kabiny jeżdżą)
-  if (rock && rock.root.parent) {
-    rock.update(state.sun);
-    _rockState.sun = state.sun || null;
-    _rockState.at = rockAt;
-    _rockState.daylight = state.daylight ?? 0.3;
-    rockSite.update(dt, _rockState);
-    // uderzenia (teren — także we mgle wojny): czas gry, słońce skały (scena: Słońce − środek, z = 0)
-    if (rockImpact) {
-      const sun = state.sun;
-      rockImpact.update(dt, sun ? Number(sun.x) - rockAt.x : null, sun ? -(Number(sun.y) - rockAt.y) : null);
-    }
-  }
-  if (hidden) return;
+  // Słońce przed wypiekiem skóry wokseli: wypiek może przyjść, gdy baza jest jeszcze we mgle.
   if (state.sun && place) {
     _sunOpts.sun = state.sun;
     _sunOpts.at = place.habitat;
     base.setSun(_sunOpts);
   }
+  if (vox) {
+    _voxState.ukryty = hidden;
+    _voxState.soczewka = _lensOn;
+    _voxState.obrazWKadrze = _lensOn && !!_lensRec?.anchor?.vis;
+    _voxState.moc = state.habitat ?? 1;
+    _voxState.slonce = !!(state.sun && place);
+    if (state.sun && rock) {
+      _voxState.sunDx = Number(state.sun.x) - rock.center.x;
+      _voxState.sunDy = -(Number(state.sun.y) - rock.center.y);
+    }
+    vox.klatka(dt, _voxState);
+  }
+  // planetoida: teren (zawsze), osada i lina — czas gry także we mgle (kabiny jeżdżą)
+  if (rock && rock.root.parent) {
+    rock.update(state.sun);
+    if (state.sun) { _rockSun.x = Number(state.sun.x) - rockAt.x; _rockSun.y = -(Number(state.sun.y) - rockAt.y); }
+    _rockState.sun = state.sun || null;
+    _rockState.at = rockAt;
+    _rockState.daylight = state.daylight ?? 0.3;
+    rockSite.update(dt, _rockState);
+  }
+  if (hidden) return;
   _state.alarm = !!state.alarm;
   _state.berths = state.berths || null;
   _state.bays = state.bays ? 1 : 0;

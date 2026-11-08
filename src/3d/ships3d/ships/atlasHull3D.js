@@ -490,7 +490,7 @@ function finalize(B, d) {
   for (const l of L.position || []) {
     const y = -l.y;
     const z = heightAt(d.tops, l.x, y);
-    out.lights.push({ id: l.id, kind: 'position', x: l.x * S, y: y * S, z: (z + 3) * S, color: l.color, power: l.power, radius: l.radius, group: l.sequenceGroup || '' });
+    out.lights.push({ id: l.id, kind: 'position', x: l.x * S, y: y * S, z: (z + 3) * S, color: l.color, power: l.power, radius: l.radius, group: l.sequenceGroup || '', blink: l.blink || 0, lag: l.lag || 0 });
   }
   for (const l of L.road || []) {
     const y = -l.y;

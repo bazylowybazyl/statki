@@ -278,3 +278,18 @@ test('wybuchy na skale: WGSL ognia i dymu buduje się w Node, jeden bufor instan
   fx.update(0.5);
   assert.ok(Array.from(fx.fire.arr).every(Number.isFinite));
 });
+
+test('materiał skały: własny graf barwy z mapą kraterów buduje się w WGSL', async () => {
+  const { PirateRock3D } = await import('../src/3d/pirateRock3D.js');
+  const prevWarn = console.warn; console.warn = () => {};
+  const r = new PirateRock3D(createPirateRockLayout());
+  console.warn = prevWarn;
+  const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
+  const renderer = new THREE.WebGPURenderer({ canvas });
+  renderer.hasFeature = () => false;
+  const b = renderer.backend.createNodeBuilder(r.mesh, renderer);
+  b.material = r.mesh.material; b.scene = new THREE.Scene(); b.camera = new THREE.PerspectiveCamera(); b.context.material = r.mesh.material;
+  b.build();
+  assert.ok(b.fragmentShader.length > 100);
+  assert.doesNotMatch(b.fragmentShader, /pirateRockScar/);
+});

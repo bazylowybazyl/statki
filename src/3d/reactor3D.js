@@ -47,9 +47,14 @@
 // (docs/PORT-mostki.md § 8.12). Moduł nie importuje sceneOrigin.js (ten ciągnie
 // core3d.js) — testy node działają na samej scenie.
 //
-// Koszt: najwyżej 3 wywołania rysowania na rodzaj (konstrukcja, plazma, cień), tylko gdy jest widoczna
-// instancja; dane instancji w JEDNYM przeplecionym buforze na rodzaj (R3_INSTANCE_LAYOUT), wysyłka zakresem
-// bez alokacji; poza kadrem i poniżej TUNE.minPx na ekranie — bez instancji.
+// Koszt: konstrukcja — rysunek na rodzaj z widoczną instancją; CIEŃ wszystkich rodzajów i PLAZMA rodzajów o tej samej
+// rurze (terran, pirate) — po jednym rysunku (2026-11-02, klatka workera: rysunek three r183 to ~10 µs CPU): instancje
+// rodzajów po kolei (kolejność dawnych rysunków — REACTOR3D_KINDS) w jednym buforze z rodzajem w iKind, plazma czyta
+// atrybuty i stałe swojego rodzaju (createReactorPlasmaMergedMaterial). Konstrukcja zostaje per rodzaj (różne modele
+// 18,9 / 10,9 / 25,8 tys. wierzchołków — wspólna geometria liczyłaby cudze wierzchołki każdej instancji), plazma Atlasa
+// (dwa pierścienie) też. A/B: REACTOR3D_TUNE.mergeKinds = false — dawne rysunki per rodzaj. Dane instancji w JEDNYM
+// przeplecionym buforze na rodzaj (R3_INSTANCE_LAYOUT), wysyłka zakresem bez alokacji; poza kadrem i poniżej
+// TUNE.minPx na ekranie — bez instancji.
 //
 // Port WebGPU (zadanie 15): materiały w TSL (reactor3D.tsl.js), graf raz na
 // rodzaj (cień — jeden na wszystkie). Atrybuty wierzchołka modelu w jednym przeplecionym buforze.
@@ -61,7 +66,8 @@ import { CORE_FX_BANDS, coreStateBand } from './coreBands.js';
 import { REACTOR3D_HOUSING, REACTOR3D_HUB_SECTOR, REACTOR3D_KINDS, buildReactorModel, reactorHousingSector } from './reactor3DShapes.js';
 import { fxRandom } from './fx/fxRandom.js';
 import {
-  R3_INSTANCE_LAYOUT, createReactorPlasmaMaterial, createReactorShadowMaterial, createReactorStructMaterial
+  R3_INSTANCE_LAYOUT, createReactorPlasmaMaterial, createReactorPlasmaMergedMaterial, createReactorShadowMaterial,
+  createReactorStructMaterial
 } from './reactor3D.tsl.js';
 
 export const REACTOR3D_TUNE = {
@@ -91,7 +97,8 @@ export const REACTOR3D_TUNE = {
   receiverZ: -0.6,      // czworokąt cienia pod kadłubem (0) i płytą pancerza (−0,25)
   // Widoczność.
   visMin: 0.5,          // maskowanie / „Statki 3D”: poniżej — bez instancji (jak wieże 3D)
-  minPx: 2.5            // promień obrysu obudowy na ekranie [px], poniżej którego model się nie rysuje
+  minPx: 2.5,           // promień obrysu obudowy na ekranie [px], poniżej którego model się nie rysuje
+  mergeKinds: true      // cień wszystkich rodzajów i plazma terran + pirate jednym rysunkiem (false — rysunek na rodzaj, A/B)
 };
 if (typeof window !== 'undefined') window.__reactor3DTune = REACTOR3D_TUNE;
 
@@ -103,6 +110,8 @@ const PLASMA_RENDER_ORDER = 13;
 const MAX_COILS = 32;
 const L = R3_INSTANCE_LAYOUT;
 const STRIDE = L.stride;
+// Bufor instancji scalonych rysunków: rekord rodzaju (STRIDE) + iKind (rodzaj: indeks w REACTOR3D_KINDS).
+const MSTRIDE = STRIDE + 4;
 const DEG = Math.PI / 180;
 
 // Obroty plazmy na sekundę i niestabilność rury wg stanu.
@@ -243,17 +252,45 @@ function setInstanceLayout(geometry, buffer) {
 }
 
 // Zakres wysyłki bez alokacji (addUpdateRange tworzy obiekt na wywołanie — wzór commitAttr w bridge3D.js).
-function commitBuffer(buffer, count) {
+function commitBuffer(buffer, count, stride = STRIDE) {
   if (count <= 0) return;
   const ranges = buffer.updateRanges;
   if (Array.isArray(ranges)) {
     const r = buffer.__r3Range || (buffer.__r3Range = { start: 0, count: 0 });
     r.start = 0;
-    r.count = count * STRIDE;
+    r.count = count * stride;
     ranges.length = 0;
     ranges.push(r);
   }
   buffer.needsUpdate = true;
+}
+
+// Ta sama rura plazmy (topologia): indeksy, aRing i aUV identyczne — wtedy plazma rodzajów może iść jednym rysunkiem.
+function samePlasmaTube(a, b) {
+  const same = (x, y) => {
+    if (!x || !y || x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+    return true;
+  };
+  return same(a.index?.array, b.index?.array) && same(a.attributes.aRing?.array, b.attributes.aRing?.array)
+    && same(a.attributes.aUV?.array, b.attributes.aUV?.array);
+}
+
+// Geometria scalonej plazmy dwóch rodzajów (A, B) o tej samej rurze: jeden przepleciony bufor — atrybuty A pod
+// nazwami rodzaju, B: normalB, aCenterB, aTubeB (wybór w shaderze po iKind instancji).
+function mergedPlasmaGeometry(A, B, buffer) {
+  const names = [['position', A.attributes.position], ['normal', A.attributes.normal], ['aCenter', A.attributes.aCenter],
+    ['aTube', A.attributes.aTube], ['aRing', A.attributes.aRing], ['aUV', A.attributes.aUV],
+    ['normalB', B.attributes.normal], ['aCenterB', B.attributes.aCenter], ['aTubeB', B.attributes.aTube]];
+  const base = new THREE.BufferGeometry();
+  for (const [name, attr] of names) base.setAttribute(name, attr);
+  const g = new THREE.InstancedBufferGeometry();
+  g.index = A.index;
+  interleaveGeometry(base, g);
+  setInstanceLayout(g, buffer);
+  g.setAttribute('iKind', new THREE.InterleavedBufferAttribute(buffer, 4, STRIDE));
+  g.instanceCount = 0;
+  return g;
 }
 
 // Czworokąt cienia (x, y ∈ [−0,5; 0,5]) — rozciąga go shader.
@@ -338,7 +375,7 @@ export function createReactor3D(options = {}) {
       coilAng[k] = model.coils[k];
       coilCode[k] = model.coilRing[k];
     }
-    const plasmaMat = createReactorPlasmaMaterial({
+    const plasmaV = {
       coilAng: Array.from(coilAng),
       coilCode: Array.from(coilCode),
       coilCount: Math.min(MAX_COILS, model.coils.length),
@@ -349,7 +386,8 @@ export function createReactor3D(options = {}) {
       flicker: model.flicker || 0,
       coreEdge: CORE_FX_BANDS.coreEdge,
       maxCoils: MAX_COILS
-    });
+    };
+    const plasmaMat = createReactorPlasmaMaterial(plasmaV);
     const quad = receiverQuad();
     const structGeo = mkGeo(model.structure);
     const plasmaGeo = mkGeo(model.plasma);
@@ -370,11 +408,45 @@ export function createReactor3D(options = {}) {
     const housing = model.housing;
     const kd = {
       kind, model, data, buffer, structGeo, plasmaGeo, shadowGeo, quad, structMat, plasmaMat, structMesh, plasmaMesh, shadowMesh,
-      housing, n: 0
+      housing, plasmaV, n: 0, plasmaMerged: false
     };
     kinds.set(kind, kd);
     kindList.push(kd);
   }
+
+  // Scalone rysunki rodzajów (opis w nagłówku): JEDEN bufor instancji wszystkich rodzajów (rodzaje po kolei, iKind),
+  // cień — wszystkie rodzaje, plazma — pierwsze dwa rodzaje, gdy mają tę samą rurę (terran, pirate).
+  const merged = (() => {
+    const cap = REACTOR3D_CAPACITY * kindList.length;
+    const data = new Float32Array(cap * MSTRIDE);
+    const buffer = new THREE.InstancedInterleavedBuffer(data, MSTRIDE, 1);
+    const shadowGeo = new THREE.InstancedBufferGeometry();
+    shadowGeo.index = kindList[0].quad.index;
+    shadowGeo.setAttribute('position', kindList[0].quad.attributes.position);
+    setInstanceLayout(shadowGeo, buffer);
+    shadowGeo.setAttribute('iKind', new THREE.InterleavedBufferAttribute(buffer, 4, STRIDE));
+    shadowGeo.instanceCount = 0;
+    const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+    const pk = kindList.length >= 2 && samePlasmaTube(kindList[0].model.plasma, kindList[1].model.plasma) ? kindList.slice(0, 2) : [];
+    let plasmaGeo = null, plasmaMat = null, plasmaMesh = null;
+    if (pk.length === 2) {
+      plasmaGeo = mergedPlasmaGeometry(pk[0].model.plasma, pk[1].model.plasma, buffer);
+      plasmaMat = createReactorPlasmaMergedMaterial(pk.map((kd) => kd.plasmaV), pk[0].plasmaV);
+      plasmaMesh = new THREE.Mesh(plasmaGeo, plasmaMat);
+      for (const kd of pk) kd.plasmaMerged = true;
+    }
+    for (const [mesh, order, name] of [[plasmaMesh, PLASMA_RENDER_ORDER, 'plasma'], [shadowMesh, SHADOW_RENDER_ORDER, 'shadow']]) {
+      if (!mesh) continue;
+      mesh.frustumCulled = false;
+      mesh.matrixAutoUpdate = false;
+      mesh.renderOrder = order;
+      mesh.visible = false;
+      mesh.layers.set(layer);
+      mesh.name = `reactor3D:rodzaje:${name}`;
+      scene.add(mesh);
+    }
+    return { data, buffer, shadowGeo, shadowMesh, plasmaGeo, plasmaMat, plasmaMesh, plasmaKinds: pk.length, n: 0 };
+  })();
 
   // Rekord na rdzeń: rodzaj, ziarno, fazy, maska sektorów; po wyrzucie/kuli — wrak reaktora.
   const records = new Map();
@@ -651,6 +723,12 @@ export function createReactor3D(options = {}) {
       if (clock - rec.lastSeen > 30) records.delete(core);
     }
     let calls = 0;
+    const mergeOn = T.mergeKinds !== false;
+    const shadowOn = debug.shadow && T.shadow && debug.structure && !debug.xray;
+    const M = merged;
+    const D = M.data;
+    let mn = 0;
+    let mPlasma = 0;
     for (let k = 0; k < kindList.length; k++) {
       const kd = kindList[k];
       const n = kd.n;
@@ -658,19 +736,44 @@ export function createReactor3D(options = {}) {
       kd.plasmaGeo.instanceCount = n;
       kd.shadowGeo.instanceCount = n;
       kd.structMesh.visible = n > 0 && debug.structure;
-      kd.plasmaMesh.visible = n > 0 && debug.plasma;
-      kd.shadowMesh.visible = n > 0 && debug.shadow && T.shadow && debug.structure && !debug.xray;
+      kd.plasmaMesh.visible = n > 0 && debug.plasma && !(mergeOn && kd.plasmaMerged);
+      kd.shadowMesh.visible = n > 0 && shadowOn && !mergeOn;
       if (n > 0) {
         commitBuffer(kd.buffer, n);
         placeAtOrigin(kd.structMesh);
         placeAtOrigin(kd.plasmaMesh);
         placeAtOrigin(kd.shadowMesh);
+        // scalone rysunki: rekordy rodzaju po kolei w buforze wspólnym, rodzaj w iKind
+        if (mergeOn) {
+          const S = kd.data;
+          for (let i = 0; i < n; i++) {
+            const s = i * STRIDE, o = mn * MSTRIDE;
+            for (let j = 0; j < STRIDE; j++) D[o + j] = S[s + j];
+            D[o + STRIDE] = k;
+            mn++;
+          }
+        }
       }
+      if (k < M.plasmaKinds) mPlasma = mn;
       kd.structMat.uniforms.uTime.value = clock;
       kd.plasmaMat.uniforms.uTime.value = clock;
       kd.structMat.uniforms.uXray.value = debug.xray ? 1 : 0;
       calls += (kd.structMesh.visible ? 1 : 0) + (kd.plasmaMesh.visible ? 1 : 0) + (kd.shadowMesh.visible ? 1 : 0);
     }
+    M.n = mn;
+    M.shadowGeo.instanceCount = mn;
+    M.shadowMesh.visible = mn > 0 && shadowOn;
+    if (M.plasmaMesh) {
+      M.plasmaGeo.instanceCount = mPlasma;
+      M.plasmaMesh.visible = mPlasma > 0 && debug.plasma;
+      M.plasmaMat.uniforms.uTime.value = clock;
+    }
+    if (mn > 0) {
+      commitBuffer(M.buffer, mn, MSTRIDE);
+      placeAtOrigin(M.shadowMesh);
+      if (M.plasmaMesh) placeAtOrigin(M.plasmaMesh);
+    }
+    calls += (M.shadowMesh.visible ? 1 : 0) + (M.plasmaMesh && M.plasmaMesh.visible ? 1 : 0);
     stats.instances = visible;
     stats.burnt = burntN;
     stats.drawCalls = calls;
@@ -682,10 +785,12 @@ export function createReactor3D(options = {}) {
     records.clear();
   }
 
-  // Siatki do rozgrzewki (Core3D.warmup): konstrukcja, plazma i cień każdego rodzaju.
+  // Siatki do rozgrzewki (Core3D.warmup): konstrukcja, plazma i cień każdego rodzaju (A/B) i scalone rysunki rodzajów.
   function warmupMeshes() {
     const out = [];
     for (const kd of kindList) out.push(kd.structMesh, kd.plasmaMesh, kd.shadowMesh);
+    out.push(merged.shadowMesh);
+    if (merged.plasmaMesh) out.push(merged.plasmaMesh);
     return out;
   }
 
@@ -698,6 +803,13 @@ export function createReactor3D(options = {}) {
       kd.model.structure.dispose(); kd.model.plasma.dispose();
       kd.structMat.dispose(); kd.plasmaMat.dispose();
     }
+    scene.remove(merged.shadowMesh);
+    merged.shadowGeo.dispose();
+    if (merged.plasmaMesh) {
+      scene.remove(merged.plasmaMesh);
+      merged.plasmaGeo.dispose();
+      merged.plasmaMat.dispose();
+    }
     shadowMat.dispose();
     kinds.clear();
     kindList.length = 0;
@@ -708,6 +820,8 @@ export function createReactor3D(options = {}) {
     sync, detonated, rehost, reset, dispose, warmupMeshes, stats, debug, layer, origin,
     kinds: [...kinds.keys()],
     meshes: Object.fromEntries([...kinds.values()].map((kd) => [kd.kind, { structure: kd.structMesh, plasma: kd.plasmaMesh, shadow: kd.shadowMesh }])),
+    /** Scalone rysunki rodzajów: cień wszystkich, plazma pierwszych dwóch (null — inna rura); `n` — instancje bufora. */
+    merged,
     /** Dane instancji `i` rodzaju `kind`: { iBasis: [4], iPos: [4], … } (testy, narzędzia). */
     instance(kind, i = 0) {
       const kd = kinds.get(kind);

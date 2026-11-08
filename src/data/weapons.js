@@ -543,7 +543,7 @@ export const MASTER_WEAPONS = {
   },
   hexlance_siege: {
     id: 'hexlance_siege', name: 'Hexlance Siege Cannon', mountType: 'builtin', category: 'superweapon', size: 'Capital',
-    // Zasięg 15 km (2026-10-07, było 60): rząd parkingu suchego doku w misji 1 dalej przecina na wylot.
+    // Zasięg 15 km (2026-10-07, było 60): rząd okrętów przy pomoście w misji 1 dalej przecina na wylot.
     baseDamage: 9999, baseRange: 7500, baseSpeed: 12000, cooldown: 6.0, chargeTime: 1.2,
     // Jeden strzał na gniazdo (decyzja 2026-09-29 — seria 4 strzałów z 18-B wycofana); burstDelay = odstęp gniazd.
     burstCount: 1, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff',

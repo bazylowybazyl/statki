@@ -1086,6 +1086,14 @@ class DirectPlanet {
             } else this.saturnRing.rotation.set(this._ringTilt, 0, this._ringSpinZ);
         }
     }
+    // Kąt doby i chmur z zewnątrz — tło menu przy cięciu na grę (menuBackdrop3D.js stop()): to ta sama Ziemia (doba wokół
+    // osi ringu, ta sama baza), więc gryz i lądy nie przeskakują w przenikaniu ostatniej klatki lotu intro.
+    setSpin(spin, cloudSpin = spin) {
+        if (!this._spinAxis || !Number.isFinite(spin)) return;
+        const c = Number.isFinite(cloudSpin) ? cloudSpin : spin;
+        this._spinY = ((spin % TAU) + TAU) % TAU;
+        this._cloudSpinY = ((c % TAU) + TAU) % TAU;
+    }
     // Elektrownia „KOREK” na dnie gryzu: dziecko kuli (doba, soczewka), uniformy słońca / gryzu / maski słońca dzielone
     // z kulą. Ring „Halo” w układzie Ziemi jest równikowy (earthSpin.js), więc przekaźnik odbiornik → ring i liny wind
     // są stałe (attachRing). Warstwa passa ring-planet jak reszta bryły (grupa dostała ją w init przed elektrownią).

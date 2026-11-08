@@ -29,9 +29,31 @@ function cellKey(cx, cy) {
 
 export const ROCK_INSTANCE_FLOATS = FLOATS;
 
+// KOLEJKA KOSZYKÓW LOD (2026-10-29, pole asteroid przy 5120 × 1440 — sonda w scripts/webgpu/gpu-pas-gra.mjs): koszyk
+// skał NAJWIĘKSZYCH na ekranie rysuje się pierwszy (renderOrder koszyka = bazowy warstwy + (ostatni LOD − LOD) · step).
+// Skały są nieprzezroczyste z zapisem głębi (tło: kolejka przezroczysta bez mieszania), a koszt to fragmenty: duże skały
+// najpierw wypełniają głębię i test głębi odrzuca zasłonięte fragmenty mniejszych (dawniej LOD 0 — najmniejsze — szły
+// pierwsze i duże przykrywały już policzone). Obraz ten sam (kolejność nieprzezroczystych z testem głębi). Zysk zależy
+// od nakładania się skał (pomiar: docs/AUDYT-wydajnosc-baza-gpu-2026-10-28.md § 9). step < 0,1 — odstęp baz warstw tła
+// (asteroidBelt.js BELT_RENDER_ORDER). A/B: ROCK_LOD_ORDER.bigFirst = false + RockLayer.applyOrder()
+// (asteroidBelt.setRockOrder) — DAWNA KOLEJKA w całości: każdy koszyk dostaje renderOrder warstwy sprzed 2026-10-29
+// (`renderOrderOld` — skały tła 2, skały gry 1), bez odstępów koszyków i pasm.
+export const ROCK_LOD_ORDER = { bigFirst: true, step: 0.01 };
+
+/**
+ * renderOrder koszyka LOD `lod` (z `count` koszyków) przy bazowym `base` warstwy; dawna kolejka (cfg.bigFirst = false) —
+ * `oldBase` (renderOrder warstwy sprzed 2026-10-29, domyślnie `base`).
+ */
+export function rockBucketOrder(base, lod, count, cfg = ROCK_LOD_ORDER, oldBase = base) {
+  return cfg.bigFirst ? base + (count - 1 - lod) * cfg.step : oldBase;
+}
+
 class LodBuckets {
-  constructor({ bank, material, renderOrder, name, capacities = LOD_CAPACITY, maxLod = LOD_CAPACITY.length - 1, layer = 0 }) {
+  constructor({ bank, material, renderOrder, renderOrderOld, name, capacities = LOD_CAPACITY, maxLod = LOD_CAPACITY.length - 1, layer = 0 }) {
     this.material = material;
+    this.renderOrder = renderOrder ?? 0;
+    // dawna kolejka (A/B ROCK_LOD_ORDER.bigFirst = false): renderOrder warstwy sprzed 2026-10-29
+    this.renderOrderOld = renderOrderOld ?? this.renderOrder;
     this.group = new THREE.Group();
     this.group.name = name;
     this.baseGeoms = bank.ensureGeometries();
@@ -54,7 +76,7 @@ class LodBuckets {
       ig.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
       const mesh = new THREE.Mesh(ig, material);
       mesh.frustumCulled = false;
-      mesh.renderOrder = renderOrder;
+      mesh.renderOrder = rockBucketOrder(this.renderOrder, i, this.baseGeoms.length, ROCK_LOD_ORDER, this.renderOrderOld);
       mesh.visible = false;
       mesh.name = `${name}_lod${i}`;
       mesh.layers.set(layer);
@@ -62,6 +84,11 @@ class LodBuckets {
       return { index: i, capacity, count: 0, data, buffer, range, geo: ig, mesh };
     });
     this._result = { drawn: 0, tris: 0 };
+  }
+
+  /** Kolejka koszyków wg ROCK_LOD_ORDER (A/B w biegu — renderOrder nie wchodzi do klucza pipeline'u). */
+  applyOrder() {
+    for (const L of this.lods) L.mesh.renderOrder = rockBucketOrder(this.renderOrder, L.index, this.lods.length, ROCK_LOD_ORDER, this.renderOrderOld);
   }
 
   begin() {
@@ -158,8 +185,8 @@ export class RockLayer {
     this._holeVersion = this.field.holeVersion || 0;
     this._built = { x: NaN, y: NaN, zoom: NaN, version: -1, minPx: NaN };
     this.buckets = new LodBuckets({
-      bank: this.bank, material: this.material,
-      renderOrder: o.renderOrder ?? 0, name: `AsteroidBelt:rocks_${this.band.id}`, maxLod: this.maxLod, layer: o.layer ?? 0
+      bank: this.bank, material: this.material, renderOrder: o.renderOrder ?? 0, renderOrderOld: o.renderOrderOld,
+      name: `AsteroidBelt:rocks_${this.band.id}`, maxLod: this.maxLod, layer: o.layer ?? 0
     });
     this.group = this.buckets.group;
     // KSIĘŻYCE par (asteroidRotation.js, D2 2026-10-12): skały z `moon` wczytanych komórek; księżyc
@@ -169,8 +196,8 @@ export class RockLayer {
     this._moonRocks = new Set();
     this._moonState = { x: 0, y: 0, ox: 0, oy: 0, oz: 0, theta: 0 };
     this.moonBuckets = new LodBuckets({
-      bank: this.bank, material: this.material, renderOrder: o.renderOrder ?? 0, name: `AsteroidBelt:moons_${this.band.id}`,
-      capacities: [1024, 512, 256, 128, 64, 32], maxLod: this.maxLod, layer: o.layer ?? 0
+      bank: this.bank, material: this.material, renderOrder: o.renderOrder ?? 0, renderOrderOld: o.renderOrderOld,
+      name: `AsteroidBelt:moons_${this.band.id}`, capacities: [1024, 512, 256, 128, 64, 32], maxLod: this.maxLod, layer: o.layer ?? 0
     });
     this.group.add(this.moonBuckets.group);
     this.octaves = this.band.octaves.map((oct) => this._createOctave(oct, o.capacity ?? 4096));
@@ -213,6 +240,12 @@ export class RockLayer {
     this.enabled = !!v;
     this.group.visible = this.enabled;
     this.minerals?.setVisible(this.enabled);
+  }
+
+  /** Kolejka koszyków LOD skał i księżyców wg ROCK_LOD_ORDER (A/B w biegu). */
+  applyOrder() {
+    this.buckets.applyOrder();
+    this.moonBuckets.applyOrder();
   }
 
   /** Skała pola (id rekordu) znika z warstwy / wraca. */

@@ -56,13 +56,15 @@ import {
   abs, clamp, cos, sin, dFdx, dFdy, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
   renderGroup
 } from 'three/tsl';
-import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
+import { MAX_SHADER_SHIP_LIGHTS } from '../game/shipLightRuntime.js';
+import { NAV_LIGHT_LOOK } from '../data/shipNavLights.js';
+import { navBlinkNode } from './tsl/navBlink.js';
 import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
 import { getBeltMedium } from './asteroids/beltMedium.js';
 import { fxNoise } from './fx/noise.js';
-import { zbierzZakres } from './zakresyWysylki.js';
+import { zbierzZakres, zbierzZakresy, scalZakresy } from './zakresyWysylki.js';
 import { cloakDistOffset, hullCloakSurface } from './cloak/cloakTSL.js';
 import { CLOAK_LOOK_OFF } from '../game/cloakLook.js';
 // Oświetlenie v2 (2026-10-06): model PBR kadłubów, mapa powierzchni ze sprite'a (hullSurface.js).
@@ -231,6 +233,9 @@ export function decodeHullPatchShade(raw) {
 // stref. Materiał czyta slot od `uLightBase` (w vec4) do liczników z uniformów.
 export const HULL_LIGHT_SLOT_VEC4 = MAX_SHADER_SHIP_LIGHTS * 3 + MAX_ENGINE_ZONES;
 export const HULL_LIGHT_ZONE_OFFSET = MAX_SHADER_SHIP_LIGHTS * 3;
+// scalanie zakresów wysyłki slotów lamp (commit): zakresy oddalone o mniej niż tyle liczb (~32 KB float32, ~10 slotów)
+// idą jednym writeBuffer
+const HULL_LIGHT_RANGE_GAP = 8192;
 export const HULL_LIGHT_SLOTS = 1024;
 
 export const HullLightStore = {
@@ -242,7 +247,7 @@ export const HullLightStore = {
   _next: 0,
   _dirty: false,
   _warned: false,
-  stats: { acquired: 0, released: 0, exhausted: 0, ranges: 0 },
+  stats: { acquired: 0, released: 0, exhausted: 0, ranges: 0, rangesSent: 0 },
 
   _ensure() {
     if (this.attribute) return;
@@ -291,15 +296,20 @@ export const HullLightStore = {
   /** Zakres [startVec4, startVec4 + countVec4) slotu do wysłania na GPU. */
   markDirty(slot, startVec4, countVec4) {
     if (!(slot >= 0) || !(countVec4 > 0)) return;
-    const attr = this.attribute;
-    attr.addUpdateRange((slot * this.slotVec4 + startVec4) * 4, countVec4 * 4);
+    // zakres z puli (zbierzZakresy — stykający się z ostatnim go rozszerza), scalanie i jedna wersja w commit
+    zbierzZakresy(this.attribute, (slot * this.slotVec4 + startVec4) * 4, countVec4 * 4, true);
     this._dirty = true;
     this.stats.ranges++;
   },
 
-  /** Raz na klatkę (updateHexShips3D): jedna wersja atrybutu na wszystkie zakresy. */
+  /**
+   * Raz na klatkę (updateHexShips3D): jedna wersja atrybutu na wszystkie zakresy, zakresy slotów oddalone o mniej niż
+   * HULL_LIGHT_RANGE_GAP liczb scalone — three wysyła każdy zakres osobnym writeBuffer (w bitwie ~130 slotów lamp
+   * zmienia podpis co klatkę: ~130 wywołań na klatkę, klatka workera 2026-11-02).
+   */
   commit() {
     if (!this._dirty || !this.attribute) return;
+    this.stats.rangesSent = scalZakresy(this.attribute, HULL_LIGHT_RANGE_GAP);
     this.attribute.needsUpdate = true;
     this._dirty = false;
   }
@@ -399,6 +409,18 @@ export const HullObjectStore = {
       const u = mesh.material?.uniforms;
       if (!u) continue;
       const o = slot * stride;
+      // kadłub partii niewidoczny (poza kadrem, smuga, ukryty): sama flaga widoczności — reszty slotu nikt nie czyta
+      // (wierzchołek zwinięty), a przy powrocie w kadr pełny zapis idzie w tej samej klatce (commit co render;
+      // klatka workera 2026-11-02: ~60 ze 170 kadłubów bitwy niewidocznych, 92 liczby na kadłub)
+      if (batched && !mesh.visible) {
+        if (A[o + 53] !== 0) {
+          A[o + 53] = 0;
+          if (slot < lo) lo = slot;
+          if (slot > hi) hi = slot;
+          n++;
+        }
+        continue;
+      }
       _hullMV.multiplyMatrices(inv, mesh.matrixWorld);
       const m = _hullMV.elements;
       for (let k = 0; k < 16; k++) A[o + k] = m[k];
@@ -887,8 +909,8 @@ function hullFragmentNode(opts) {
       });
 
       // --- LAMPY STATKU (payload shipLightRuntime, slot w HullLightStore) ---
-      // Typ w barwie.a: 0 lampa pozycyjna, 1 reflektor dziobu, 2 rozlew grupy lamp
-      // innego statku (bez rdzenia), 3 reflektor otoczenia.
+      // Typ w barwie.a: 0 lampa pozycyjna, 1 reflektor dziobu, 2 rozlew lampy innego
+      // statku (bez rdzenia), 3 reflektor otoczenia. Typ 0 i 2 mają w lightExtra.x kod migania.
       Loop({ start: int(0), end: int(P.uShipLightCount), type: 'int', condition: '<' }, ({ i }) => {
         const k = base.add(i.mul(3)).toVar();
         const lightData = lights.element(k).toVar();
@@ -902,30 +924,30 @@ function hullFragmentNode(opts) {
         const lampColor = lightColor.xyz;
         const lightType = lightColor.w.toVar();
 
-        // Typ 2: grupa lamp pozycyjnych INNEGO statku — sama poświata na pancerzu
-        // (× albedo — błysk wydobywa detal kadłuba z mroku). v2: światło nad środkiem grupy (N·L, GGX).
+        // Błysk świateł nawigacyjnych: ta sama chwila co billboard lampy (shipLights3D); między błyskami nie oświetlają.
+        // Przypisane przed gałęzią typu 2 (pułapka 29: zmienna powstaje w miejscu pierwszego użycia).
+        const blink = float(0.0).toVar();
+        blink.assign(navBlinkNode(uTime, lightExtra.x, P.uNavPhase));
+
+        // Typ 2: lampa pozycyjna INNEGO statku albo światło świata — sama poświata na pancerzu
+        // (× albedo — błysk wydobywa detal kadłuba z mroku). v2: światło nad lampą (N·L, GGX).
         If(lightType.greaterThan(1.5).and(lightType.lessThan(2.5)), () => {
           If(pbr, () => {
             const spread = max(1.0, lightExtra.z).toVar();
             const fo = hullLampFalloff(toFrag, spread.mul(0.45), spread.mul(0.6), spread);
-            const E = lampColor.mul(power).mul(fo.att).mul(HL.uLamp.x).toVar();
+            const E = lampColor.mul(power).mul(blink).mul(fo.att).mul(HL.uLamp.x).toVar();
             finalColor.addAssign(armorRgb.mul(E).mul(max(dot(localNormal, fo.dir), 0.0))
               .add(E.mul(hullGgx(localNormal, fo.dir, surfRough)).mul(HL.uMat.y)));
           }).Else(() => {
             const xr = clamp(distPx.div(max(1.0, lightExtra.z)), 0.0, 1.0);
             const spill = float(1.0).sub(xr.mul(xr));
-            finalColor.addAssign(lampColor.mul(power).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
+            finalColor.addAssign(lampColor.mul(power).mul(blink).mul(spill.mul(spill)).mul(armorRgb.mul(0.35).add(0.02)));
           });
           Continue();
         });
 
-        // Sekwencja „pasa startowego”: ta sama formuła co billboardy blasku
-        // (shipLights3D), stałe z NAV_LIGHT_CHASE, przebieg od dziobu ku rufie (+).
-        const localPhase = clamp(lightData.x.div(max(1.0, spriteSize.x)), 0.0, 1.0);
-        const chase = fract(uTime.mul(NAV_LIGHT_CHASE.speed).add(localPhase.mul(NAV_LIGHT_CHASE.phaseGain))).toVar();
-        const chasePulse = smoothstep(0.0, NAV_LIGHT_CHASE.attack, chase)
-          .mul(float(1.0).sub(smoothstep(NAV_LIGHT_CHASE.hold, NAV_LIGHT_CHASE.release, chase)));
-        const sequenceMul = select(lightType.greaterThan(0.5), float(1.0), mix(float(NAV_LIGHT_CHASE.rest), float(1.35), chasePulse));
+        // Lampa pozycyjna świeci na własną blachę tylko w błysku, reflektor stale.
+        const sequenceMul = select(lightType.greaterThan(0.5), float(1.0), blink.mul(NAV_LIGHT_LOOK.hullGain));
 
         const core = smoothRev(radiusPx, 0.0, distPx);
         // Lampa pozycyjna rozlewa się szerzej niż reflektor: 9 promieni zamiast 7.

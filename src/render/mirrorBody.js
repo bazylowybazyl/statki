@@ -82,6 +82,9 @@ export class MirrorBody {
     // stan węzłów (pozycje, `active`) doszedł — pakujący wysyła węzły tylko ciałom w pudle rozgrzania, a `activeNodes`
     // zawsze: ciało spoza pudła ma topologię bez stanu węzłów (podzbiór skóry odłamu — worldBodies3D — czeka)
     this.nodesReceived = false;
+    // numer stanu węzłów repliki: rośnie z każdą stroną niosącą węzły i z nową topologią — moduł, który przepisuje coś
+    // z węzłów (pole skóry hullSkin3D), pomija klatki bez nowego stanu (worker rysuje częściej, niż gra liczy krok)
+    this.nodesSeq = 0;
     this.nodeStore = null;
     this.beamStore = null;
     this._region = null;
@@ -112,6 +115,7 @@ export class MirrorBody {
     this.storeVer = storeVer;
     this.hpReceived = false;
     this.nodesReceived = false;
+    this.nodesSeq++;
   }
 }
 
@@ -160,6 +164,7 @@ export function applyBodyPage(mb, v, bs) {
     s.active.set(U.subarray(u, u + n));
     s.patch.set(U.subarray(u + n, u + 2 * n));
     mb.nodesReceived = true;
+    mb.nodesSeq++;
     const m = i32[bi + BI.BEAM_N];
     if (m > 0) {
       const bo = i32[bi + BI.BEAM_F64_OFF], bu = i32[bi + BI.BEAM_U8_OFF];

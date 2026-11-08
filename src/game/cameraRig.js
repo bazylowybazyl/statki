@@ -116,7 +116,29 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   warpRollHold: 0.5,
   // Obrót kadru w skoku WARPA gracza (gra, port dema „Pęd” 2026-10-23 — input.omega): szybciej niż hipercruise, żeby kadr
   // stał już przy kopie (przy 3,2/s i kursie ~150° obrót trwał jeszcze sekundę lotu).
-  warpJumpRollOmega: 5
+  warpJumpRollOmega: 5,
+  // HIPERCRUISE v2 (2026-10-29, user: „za mocno drga” — input.hyper): kop kamery hipercruise'u jako lekkie pchnięcie,
+  // nie wyrzut z tunelu — cofnięcie × hyperKickScale (140 → ~42 px), impulsy zoomu startu i wyjścia × hyperZoomPulse
+  // (±10% → ±3%), drżenie rozruchu hyperChargeShakePx (zamiast warpChargeShakePx: 4 px przy 12 Hz przez 1–2 s).
+  hyperKickScale: 0.3,
+  hyperZoomPulse: 0.3,
+  hyperChargeShakePx: 0,
+  // KADR LOTU W SKOKU WARPA GRACZA (2026-10-29, user: „kamera jest za blisko na statek, trzeba ją oddalić, dopasować to tak,
+  // żeby było spójne”): po kopie kadr odsuwa się od kadru ładowania (input.zoomRef — domyślny zoom statku) do kadru lotu
+  // (input.zoomRefFar — warpJumpZoomRef: domyślny zoom statku × warpJumpFrame, z szerokości kadru najwyżej warpJumpAspect ×
+  // wysokość, jak soczewka świata — worldLens.js: aspectMax), smoothstep w warpJumpFrameRise s; trzyma przez wyjście
+  // i kadr przylotu. W locie statek ma ~8% wysokości kadru przy 16:9, 21:9 i 32:9 (dawniej ~20% przy 16:9, ~39% przy
+  // 32:9 — zoom z szerokości). Ładowanie zostaje w kadrze ładowania: bramka ringu planety startu i decyzje wejścia soczewki
+  // zapadają w kadrze sprawdzonym symulatorem (dalszy kadr ładowania trzymał Ziemię z ringiem poza soczewką przez 2,4 s
+  // przelotu — warp-soczewka-sym S12). 0,4 — symulator jak przy dawnej kamerze na 16:9 / 21:9 / 32:9 (0,45–0,7: wyjście
+  // przy Jowiszu S8 na 32:9 ponad P4). Hipercruise bez zmian (bez zoomRef — zoom gracza × warpZoomOut).
+  warpJumpFrame: 0.4,
+  warpJumpAspect: 16 / 9,   // 0 — z pełnej szerokości kadru (jak kadr ładowania)
+  warpJumpFrameRise: 1.5,
+  // wyprzedzenie w skoku warpa gracza (ułamek pół ekranu, zamiast mieszanki postaw navLead / combatLead — index.html:
+  // rigIn.leadGain przy playerWarpCameraBusy): kotwica soczewki P0 stała przy każdej postawie; 0,35 = navLead, z którym
+  // przechodzi symulator soczewki (0,22 — statek bliżej środka — dawało kop i wyjście ponad P4: S10 61 / 60, S8 65 / 60 px)
+  warpJumpLead: 0.35
 });
 
 // Zakresy strojenia (sanityzacja wartości z konsoli i testów).
@@ -166,7 +188,14 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   warpChargeShakePx: [0, 16],
   warpRollOmega: [0.5, 12],
   warpRollHold: [0, 3],
-  warpJumpRollOmega: [0.5, 12]
+  warpJumpRollOmega: [0.5, 12],
+  hyperKickScale: [0, 1],
+  hyperZoomPulse: [0, 1],
+  hyperChargeShakePx: [0, 16],
+  warpJumpFrame: [0.2, 1],
+  warpJumpAspect: [0, 4],
+  warpJumpFrameRise: [0.1, 6],
+  warpJumpLead: [0, 0.8]
 });
 
 // Impulsy kopu warpa (s): narastanie i zanik — stałe dema (dema/warp-webgpu/scenes.js).
@@ -263,6 +292,11 @@ export function createCameraRig() {
     warpExitPending: false,
     warpKickAge: -1,
     warpExitAge: -1,
+    // hipercruise v2 (input.hyper): zatrzask stanu (cofnięcie, drżenie rozruchu) i skala zapamiętana PER IMPULS w chwili
+    // przyjęcia zdarzenia — kop / wyjście hipercruise'u przerwanego ładowaniem warpa nie bierze skali warpa
+    warpHyper: false,
+    warpKickHyper: false,
+    warpExitHyper: false,
     warpHold: 1,
     warpRelFrom: 1,
     warpRelAge: -1,
@@ -271,6 +305,11 @@ export function createCameraRig() {
     warpUnifyW: 0,
     warpUnifyFrom: 0,
     warpUnifyRelAge: -1,
+    // Kadr lotu (input.zoomRefFar): postęp odsuwania 0…1 (rośnie tylko w locie, smoothstep → waga) i zoom odniesienia tej
+    // klatki [px CSS / j.] = zoomRef^(1 − waga) · zoomRefFar^waga (NaN — bez ujednolicenia) — czyta go soczewka świata
+    // (index.html: rekord osi β, zoomRef / zoomJump).
+    warpFarU: 0,
+    warpZoomRef: NaN,
     // Kadr przylotu: zatrzaśnięty przy wyjściu, log zoomu kadru (sprężyna) i jego prędkość.
     warpArrOn: false,
     warpArrLog: 0,
@@ -499,6 +538,9 @@ export function noteCameraRigWarp(rig, event) {
 //                     statku — defaultShipZoom) i zoom gracza; w skoku kadr = zoomRef × warpZoomOut niezależnie od
 //                     zoomu gracza (soczewka świata, kop i przejścia wyglądają zawsze jak przy zoomie domyślnym), wejście
 //                     i powrót tą samą krzywą co oddalenie. Bez nich (albo warpZoomUnify 0) — oddalenie × zoom gracza.
+//   zoomRefFar      — KADR LOTU (2026-10-29): zoom odniesienia lotu (warpJumpZoomRef); w locie odniesienie przechodzi
+//                     do niego w warpJumpFrameRise s (rig.warpFarU), trzyma przez wyjście i kadr przylotu, wraca z wagą
+//                     ujednolicenia; podłoga K1 zostaje z zoomRef. Bez niego (≤ 0) — kadr skoku z zoomRef jak dawniej.
 //   arriving        — statek po rampie wyjścia wciąż dolatuje (ślizg z pędem): ujednolicony kadr trzyma się do końca
 //                     ślizgu (powrót do zoomu gracza dopiero po nim — cel przylotu zostaje w kadrze)
 //   arrivalDist, viewW, viewH — KADR PRZYLOTU (user 2026-10-19: „przy zoomie stałym statek najpierw hamuje, a planeta
@@ -528,10 +570,14 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     rig.warpExitPending = false;
     rig.warpKickAge = -1;
     rig.warpExitAge = -1;
+    rig.warpKickHyper = false;
+    rig.warpExitHyper = false;
     rig.warpHold = 1;
     rig.warpRelAge = -1;
     rig.warpUnifyW = 0;
     rig.warpUnifyRelAge = -1;
+    rig.warpFarU = 0;
+    rig.warpZoomRef = NaN;
     rig.warpArrOn = false;
     rig.warpArrRelAge = -1;
     rig.warpStopAge = -1;
@@ -547,8 +593,15 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // pierwszy raz pokazał skok / wyjście), więc kamera i efekt idą w tym samym czasie.
   if (rig.warpKickAge >= 0) { rig.warpKickAge += dt; if (rig.warpKickAge > WARP_PULSE_END) rig.warpKickAge = -1; }
   if (rig.warpExitAge >= 0) { rig.warpExitAge += dt; if (rig.warpExitAge > WARP_PULSE_END) rig.warpExitAge = -1; }
-  if (rig.warpKickPending) { rig.warpKickPending = false; if (on) rig.warpKickAge = 0; }
-  if (rig.warpExitPending) { rig.warpExitPending = false; if (on) rig.warpExitAge = 0; }
+  if (rig.warpKickPending) {
+    rig.warpKickPending = false;
+    if (on) { rig.warpKickAge = 0; rig.warpKickHyper = input.hyper === true; }
+  }
+  if (rig.warpExitPending) {
+    rig.warpExitPending = false;
+    // wyjście: zatrzask z poprzedniej klatki (lot hipercruise'u) — ta klatka mogła już przejść w ładowanie warpa
+    if (on) { rig.warpExitAge = 0; rig.warpExitHyper = rig.warpHyper === true; }
+  }
 
   // Kurs (cofnięcie kamery idzie wzdłuż niego).
   const dx = finite(input.dirX, 0);
@@ -590,12 +643,17 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     if (u >= 1) { rig.warpHold = target; rig.warpRelAge = -1; }
   }
 
-  // Impulsy: zoom −10% przy skoku, +10% przy wyjściu; cofnięcie kamery przy skoku.
+  // Impulsy: zoom −10% przy skoku, +10% przy wyjściu; cofnięcie kamery przy skoku. Hipercruise v2 (input.hyper, zatrzask
+  // z ładowania i lotu): lekkie pchnięcie — impulsy × hyperZoomPulse, cofnięcie × hyperKickScale, drżenie rozruchu
+  // hyperChargeShakePx.
+  if (state === 'charging' || state === 'active' || input.hyper === true) rig.warpHyper = input.hyper === true;
+  const hyperK = rig.warpHyper === true;
+  const hyperPulse = clamp(finite(tune.hyperZoomPulse, 1), 0, 1);
   const kickZoom = rig.warpKickAge >= 0 ? cameraWarpPulse(rig.warpKickAge, P.kickZoomRise, P.kickZoomFall) : 0;
   const exitZoom = rig.warpExitAge >= 0 ? cameraWarpPulse(rig.warpExitAge, P.exitZoomRise, P.exitZoomFall) : 0;
   const f = rig.warpHold
-    * (1 - finite(tune.warpZoomKick, 0) * kickZoom)
-    * (1 + finite(tune.warpZoomExit, 0) * exitZoom);
+    * (1 - finite(tune.warpZoomKick, 0) * (rig.warpKickHyper ? hyperPulse : 1) * kickZoom)
+    * (1 + finite(tune.warpZoomExit, 0) * (rig.warpExitHyper ? hyperPulse : 1) * exitZoom);
   rig.warpZoomLog = f > 0 && f !== 1 ? Math.log(Math.max(1e-3, f)) : 0;
   // Ujednolicony kadr: waga wchodzi z oddaleniem (postęp warpHold 1 → warpZoomOut), trzyma przez skok i przylot do
   // zatrzymania + warpZoomUnifyHold s (zoom wraca od wlotu do zoomRef — przylot jak przy zoomie domyślnym), potem
@@ -625,10 +683,21 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
     rig.warpUnifyW = rig.warpUnifyFrom * (1 - u);
     if (u >= 1) { rig.warpUnifyW = 0; rig.warpUnifyRelAge = -1; }
   }
-  const zRef = finite(input.zoomRef, 0);
+  // Kadr lotu: odsuwanie tylko w locie (ładowanie — kadr ładowania: bramka ringu i decyzje wejścia soczewki), trzymanie
+  // przez wyjście i kadr przylotu, koniec razem z wagą ujednolicenia (nowe ładowanie przy niezerowym postępie go trzyma —
+  // bez pompowania zoomu między odcinkami TRAVEL TO).
+  const zRefCharge = finite(input.zoomRef, 0);
+  const zFar = finite(input.zoomRefFar, 0);
+  if (!(zFar > 0) || !(zRefCharge > 0) || !(rig.warpUnifyW > 0)) rig.warpFarU = 0;
+  else if (on && state === 'active') {
+    rig.warpFarU = Math.min(1, rig.warpFarU + dt / Math.max(0.05, finite(tune.warpJumpFrameRise, 1.5)));
+  }
+  const farW = smoothstep01(rig.warpFarU);
+  const zRef = farW > 0 ? zRefCharge * Math.exp(farW * Math.log(zFar / zRefCharge)) : zRefCharge;
   const zBase = finite(input.zoomBase, 0);
   const unify = clamp(finite(tune.warpZoomUnify, 0), 0, 1);
   const unifyOk = unify > 0 && zRef > 0 && zBase > 0;
+  rig.warpZoomRef = unifyOk ? zRef : NaN;
   // Kadr przylotu: zatrzask od wyjścia (rampa albo ślizg) do końca powrotu wagi ujednolicenia, nowy skok go zdejmuje.
   // Sprężyna prowadzi log zoomu, przy którym bliski brzeg PRAWDZIWEGO obrazu celu leży na `warpArrivalFill` drogi od
   // statku do krawędzi kadru przed dziobem (statek na ekranie = środek − offset riga, kurs w osiach ekranu; cel na tle —
@@ -677,13 +746,16 @@ export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   }
   // Podłoga zoomu kadru przylotu (K1): cel przy przylocie potrzebuje kadru dalszego niż limit kadłuba (Atlas 0,035 —
   // przy 1080p kadr przylotu do Marsa ~0,019); wyjątek tylko przy zatrzaśniętym kadrze przylotu (cameraZoom.js).
-  rig.warpZoomFloor = rig.warpArrOn && zRef > 0 ? zRef * clamp(finite(tune.warpArrivalFloor, 0.07), 0.001, 1) : NaN;
+  // (podłoga z kadru ładowania — bez zmian przy dalszym kadrze lotu)
+  rig.warpZoomFloor = rig.warpArrOn && zRefCharge > 0
+    ? zRefCharge * clamp(finite(tune.warpArrivalFloor, 0.07), 0.001, 1) : NaN;
   rig.warpLagPx = rig.warpKickAge >= 0
-    ? Math.max(0, finite(tune.warpKickPx, 0)) * cameraWarpPulse(rig.warpKickAge, P.lagRise, P.lagFall)
+    ? Math.max(0, finite(tune.warpKickPx, 0)) * (rig.warpKickHyper ? clamp(finite(tune.hyperKickScale, 1), 0, 1) : 1)
+      * cameraWarpPulse(rig.warpKickAge, P.lagRise, P.lagFall)
     : 0;
   // Drżenie w drugiej połowie ładowania (wstrząs kopu i wyjścia to camera.addShake — warp „Nurt”).
   rig.warpShakePx = on && state === 'charging'
-    ? Math.max(0, finite(tune.warpChargeShakePx, 0)) * smoothstep01((charge - 0.5) / 0.5)
+    ? Math.max(0, finite(hyperK ? tune.hyperChargeShakePx : tune.warpChargeShakePx, 0)) * smoothstep01((charge - 0.5) / 0.5)
     : 0;
   return rig;
 }
@@ -746,6 +818,21 @@ export function defaultShipZoom(viewW, hullLength, tune = CAMERA_RIG_DEFAULTS, m
   const len = Math.max(1, finite(hullLength, 1));
   const zoom = finite(tune.hullScreenFraction, CAMERA_RIG_DEFAULTS.hullScreenFraction) * finite(viewW, 1) / len;
   return clamp(zoom, minZoom, maxZoom);
+}
+
+// Zoom odniesienia KADRU LOTU warpa gracza [px CSS / j.] (input.zoomRefFar stepCameraRigWarp — gra, symulator soczewki,
+// demo „Pęd”): domyślny zoom statku z szerokości kadru najwyżej warpJumpAspect × wysokość, × warpJumpFrame. Kadr lotu na
+// ekranie (× warpZoomOut) nie dalej niż limit kadłuba (inaczej w locie przycina go cameraZoom.js, a zatrzask podłogi K1
+// przy wyjściu zdejmuje przycięcie skokiem w jednej klatce — okno 1280 × 720: −11%) i nie bliżej niż kadr ładowania.
+export function warpJumpZoomRef(viewW, viewH, hullLength, tune = CAMERA_RIG_DEFAULTS, minZoom = 0.035, maxZoom = 3.2) {
+  const w = Math.max(1, finite(viewW, 1));
+  const h = Math.max(0, finite(viewH, 0));
+  const am = Math.max(0, finite(tune.warpJumpAspect, CAMERA_RIG_DEFAULTS.warpJumpAspect));
+  const wEff = am > 0 && h > 0 ? Math.min(w, am * h) : w;
+  const k = clamp(finite(tune.warpJumpFrame, CAMERA_RIG_DEFAULTS.warpJumpFrame), 0.05, 1);
+  const zOut = clamp(finite(tune.warpZoomOut, 1), 0.05, 1);
+  const far = defaultShipZoom(wEff, hullLength, tune, minZoom, maxZoom) * k;
+  return Math.min(defaultShipZoom(w, hullLength, tune, minZoom, maxZoom), Math.max(far, finite(minZoom, 0.035) / zOut));
 }
 
 // Amplituda wstrząsu w px: camera.addShake (bieżące mag po wygaszaniu)

@@ -598,6 +598,9 @@ export function createDeathRaySystem(env) {
           const d = f0 + (f1 - f0) * best;
           r.stations.push(bestSt);
           const x = r.ox + r.dx * d, y = r.oy + r.dy * d;
+          // Miejsce trafienia jak w rakietach i superbroni: kawałek pod trafieniem (pule, progi) i obraz budowli biorą je stąd, bez tego liczyły poprzednie trafienie.
+          bestSt.lastHitX = x;
+          bestSt.lastHitY = y;
           if (typeof env.damageStation === 'function') env.damageStation(bestSt, r.params.stationDamage, r);
           writeHit(r, RAY_HIT.END, x, y, -r.dx, -r.dy, bestSt, d, 1);
           stats.stations++;

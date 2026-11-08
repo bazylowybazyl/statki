@@ -232,6 +232,94 @@ test('render w workerze: rekord obrazu z presetu (gfxRenderRecord) dochodzi do w
   for (const re of [/setRenderScale/, /bloomQualityScale/, /setPerfToggles/, /setShadowShaftsQuality/, /EXPLOSION_TUNE/, /muzzlePerFrame/,
     /impactPerFrame/, /setMediumCount/, /SIDE_JET_TUNE\.maxLights/, /HullLacquer\.setEnabled/, /HullLighting\.setModel/, /HALL_DUST_TUNE\.enabled/]) assert.match(fn, re);
   assert.equal(G.gfxRenderRecord(G.gfxWithPreset(null, 'low')).hallDust, false, 'Niska: pył hal wył. (symulacja w workerze)');
-  assert.match(wk, /f\[R\.GPU_FRAME_SAMPLES\] = /, 'worker pisze liczniki próbek GPU (rozdzielczość dynamiczna strony)');
-  assert.match(wk, /f\[R\.GPU_COMPUTE_SAMPLES\] = /);
+  assert.match(wk, /retMod\.retWriteGpuClock\(st\.ret, Core3D\)/, 'worker pisze liczniki próbek GPU (rozdzielczość dynamiczna strony; test ścieżki: dynResWorker.test.mjs)');
+});
+
+test('limit klatek: preferencja poza presetami (domyślnie bez limitu), zapis, ?limitKlatek= bez zapisu (2026-10-29)', () => {
+  const d = G.defaultGfx();
+  assert.equal(d.frameLimit, 'off');
+  assert.equal(G.GFX_SETTINGS.frameLimit.preset, false);
+  assert.ok(!G.GFX_SETTINGS.frameLimit.restart, 'na żywo');
+  assert.ok(!G.GFX_PRESET_KEYS.includes('frameLimit'));
+  for (const id of G.GFX_PRESET_IDS) assert.equal(G.gfxWithPreset({ ...d, frameLimit: '120' }, id).frameLimit, '120', `preset ${id} nie rusza limitu`);
+  assert.equal(G.matchGfxPreset({ ...d, frameLimit: '60' }), 'high');
+  assert.deepEqual(G.GFX_SETTINGS.frameLimit.values, ['off', '240', '144', '120', '60']);
+  assert.equal(G.normalizeGfxValue('frameLimit', 120), '120');
+  assert.equal(G.normalizeGfxValue('frameLimit', '144'), '144');
+  assert.equal(G.normalizeGfxValue('frameLimit', 100), 'off', 'spoza listy — bez limitu');
+  assert.equal(G.gfxFrameLimitFps('off'), 0);
+  assert.equal(G.gfxFrameLimitFps('120'), 120);
+  assert.equal(G.gfxFrameLimitFps(60), 60);
+  assert.equal(G.gfxFrameLimitFps('x'), 0);
+  // zapis: sc_gfx niesie limit, wczytanie go oddaje
+  const st = memStorage();
+  G.saveGfxSettings(st, { ...d, frameLimit: '120' });
+  assert.equal(JSON.parse(st.map.get('sc_gfx')).frameLimit, '120');
+  assert.equal(G.loadGfxSettings(st).frameLimit, '120');
+  assert.equal(G.loadGfxSettings(memStorage({ sc_gfx: JSON.stringify({ bloom: 'half' }) })).frameLimit, 'off', 'zapis sprzed opcji — bez limitu');
+  // adres (narzędzia): sesja bez zapisu
+  assert.equal(G.gfxFrameLimitFromQuery('?limitKlatek=120'), '120');
+  assert.equal(G.gfxFrameLimitFromQuery('?dev=1&limitKlatek=60'), '60');
+  assert.equal(G.gfxFrameLimitFromQuery('?limitKlatek=0'), 'off');
+  assert.equal(G.gfxFrameLimitFromQuery('?limitKlatek=off'), 'off');
+  assert.equal(G.gfxFrameLimitFromQuery('?dev=1'), null);
+  assert.equal(G.gfxFrameLimitFromQuery(''), null);
+});
+
+test('limit klatek w index.html: chipy, pętla gry (złożenie przed limitem, wejście po nim), tło menu, worker, PerfHUD', () => {
+  const html = src('index.html').replace(/\r\n/g, '\n');
+  for (const v of ['off', '240', '144', '120', '60']) assert.ok(html.includes(`data-gfx-frame-limit="${v}"`), `chip ${v}`);
+  assert.ok(html.includes('data-gfx-frame-limit-now'));
+  assert.match(html, /frameLimit: 'gfxFrameLimit'/);
+  // ?limitKlatek= przed __gfxBoot (sesja bez zapisu, jak ?grafika=)
+  const q = html.indexOf('const urlFrameLimit = gfxFrameLimitFromQuery(location.search);');
+  assert.ok(q > 0 && q < html.indexOf('window.__gfxBoot = Object.freeze('));
+  // pętla gry: złożenie bitmapy workera w KAŻDYM wywołaniu rAF, potem limit, potem czas klatki i wejście
+  const loop = html.slice(html.indexOf('function loop(now) {'), html.indexOf('if (PAUSED || StoryGame.worldFrozen) {', html.indexOf('function loop(now) {')));
+  const at = (s) => { const i = loop.indexOf(s); assert.ok(i >= 0, `brak w loop(): ${s}`); return i; };
+  assert.ok(at('if (rwHost) rwHost.present();') < at('if (!frameLimitTick(now)) return;'));
+  assert.ok(at('if (!frameLimitTick(now)) return;') < at('lastTime = now;'), 'lastTime tylko w klatce narysowanej (frame obejmuje pominięte)');
+  assert.ok(at('if (!frameLimitTick(now)) return;') < at('pumpInput(now);'));
+  // limiter: harness z zegarem wirtualnym bez limitu (FrameLimiter.bypass — pętla gry i tło menu strony); bez VSync —
+  // pętla na budziku bez rAF (rAF bez taktu po klatce bez zmiany obrazu przychodzi po ~30 ms), z VSync — następne
+  // wywołanie rAF; koniec klatki — nextLoopFrame
+  assert.match(html, /const harnessClockVirtual = \(\) => \{ const h = window\.__harness; return !!h && h\.clock\?\.mode !== 'real'; \};/);
+  assert.match(html, /frameLimiter\.bypass = harnessClockVirtual;/);
+  assert.match(html, /const limitWake = frameLimiter\.wake = createFrameWake\(\{\n\s+onWake: \(\) => loop\(performance\.now\(\)\), strategy: frameWakeStrategyFromQuery\(location\.search\) \|\| '\w+'/);
+  const tick = html.slice(html.indexOf('function frameLimitTick(now) {'), html.indexOf('function applyFrameLimit() {'));
+  assert.match(tick, /function frameLimitTick\(now\) \{\n\s+if \(frameLimiter\.tick\(now\)\) return true;/);
+  assert.match(tick, /if \(limitTimeMode\(\)\) limitWake\.schedule\(frameLimiter\.waitMs\(now\)\);\n\s+else requestAnimationFrame\(loop\);/);
+  assert.match(tick, /function nextLoopFrame\(\) \{\n\s+if \(limitTimeMode\(\)\) limitWake\.schedule\(frameLimiter\.waitMs\(performance\.now\(\)\)\);\n\s+else requestAnimationFrame\(loop\);/);
+  assert.match(html, /const limitTimeMode = \(\) => frameLimiter\.mode === 'time' && !document\.hidden && !harnessClockVirtual\(\);/);
+  // zmiana rozmiaru okna (tryb off): kanwy wyczyszczone — najbliższa klatka gry i tła menu bez limitu; bez VSync
+  // zamówienie budzika przepada, klatka w rAF tej aktualizacji obrazu; tryb worker bez wymuszenia
+  const resized = tick.slice(tick.indexOf('function frameLimitResized() {'));
+  assert.match(resized, /^function frameLimitResized\(\) \{\n\s+if \(rwHost\) return;\n\s+frameLimiter\.forceNext\(\);\n\s+menuBackdrop\?\.forceNextFrame\?\.\(\);\n\s+if \(limitWake\.cancel\(\)\) requestAnimationFrame\(loop\);/);
+  const onResize = html.slice(html.indexOf("window.addEventListener('resize', () => {"), html.indexOf("if (camera.mode === 'focus' && camera.focusStation) {", html.indexOf("window.addEventListener('resize', () => {")));
+  assert.ok(onResize.indexOf('W = canvas.width = innerWidth;') >= 0 && onResize.indexOf('frameLimitResized();') > onResize.indexOf('W = canvas.width = innerWidth;'));
+  const loopAll = html.slice(html.indexOf('function loop(now) {'), html.indexOf('// =============== Render ==============='));
+  assert.equal((loopAll.match(/nextLoopFrame\(\);/g) || []).length, 2, 'koniec klatki: gałąź pauzy i zwykła');
+  assert.doesNotMatch(loopAll, /requestAnimationFrame\(loop\)/, 'loop() zamawia następną klatkę przez nextLoopFrame / frameLimitTick');
+  const apply = html.slice(html.indexOf('function applyFrameLimit() {'), html.indexOf('function updateFrameLimitUI() {'));
+  assert.match(apply, /frameLimiter\.setFps\(fps\);/);
+  assert.match(apply, /frameLimiter\.setVsync\(frameLimitVsync\(\)\);/);
+  assert.match(apply, /menuBackdrop\?\.setFrameLimit\?\.\(fps, frameLimitVsync\(\), harnessClockVirtual\);/);
+  // wątek budzika bez VSync z góry przy limicie (pierwsze klatki nie czekają na start modułu), bez limitu — zamknięty
+  assert.match(apply, /if \(frameLimiter\.mode === 'time'\) limitWake\.prepare\(\);\n\s+else limitWake\.release\(\);/);
+  assert.ok(apply.indexOf('frameLimiter.setVsync(frameLimitVsync());') < apply.indexOf('limitWake.prepare()'), 'tryb limitera przed decyzją');
+  assert.match(html, /const frameLimitVsync = \(\) => !\(hullfallApp && hullfallApp\.vsync === false\);/);
+  const applyGfx = html.slice(html.indexOf('function applyGraphicsSettings()'), html.indexOf('function updateGraphicsUI()'));
+  assert.match(applyGfx, /applyFrameLimit\(\);/);
+  const startBd = html.slice(html.indexOf('function startMenuBackdrop() {'), html.indexOf('function stopMenuBackdrop() {'));
+  assert.match(startBd, /applyFrameLimit\(\);/, 'tło menu dostaje limit przy starcie');
+  // tło menu: pełnomocnik trybu worker → op frameLimit → MenuBackdrop3D.setFrameLimit; pętla tła pomija klatki
+  assert.match(src('src/render/renderWorkerHost.js'), /setFrameLimit\(fps, vsync = true\) \{ post\(\{ op: 'frameLimit'/);
+  const wk = src('src/render/render.worker.js').replace(/\r\n/g, '\n');
+  assert.match(wk, /if \(op === 'frameLimit'\) \{/);
+  assert.match(wk, /if \(st\.menuFrameLimit\) bd\.setFrameLimit\(st\.menuFrameLimit\.fps, st\.menuFrameLimit\.vsync\);/);
+  const bd = src('src/3d/menuBackdrop3D.js').replace(/\r\n/g, '\n');
+  const frame = bd.slice(bd.indexOf('  _frame(now) {'), bd.indexOf('  renderFrame(dt = 0) {'));
+  assert.ok(frame.indexOf('this._limiter.tick(now)') > 0 && frame.indexOf('this._limiter.tick(now)') < frame.indexOf('this._last = now;'),
+    'klatka tła pominięta przed _last — dt następnej obejmuje pominięte');
+  assert.match(src('src/ui/perfHud.js'), /window\.FrameLimiter/);
 });

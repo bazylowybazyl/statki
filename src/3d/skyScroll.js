@@ -10,6 +10,11 @@
 //     vN(v)  = v                          dla v ≤ knee (5000 j/s — cała walka i dopalacz)
 //            = knee · (1 + ln(v / knee))  powyżej (ciągła i gładka w kolanie): hipercruise 20 / 40 tys. → 11,9 / 15,4 tys.,
 //                                         warp 100 / 175 / 250 tys. → 20,0 / 22,8 / 24,6 tys.
+//            + (cruiseBoost − 1) · v · (1 − v / cruiseTo)²  dla v < cruiseTo — ZWYKŁY LOT (prośba użytkownika 2026-10-31:
+//                                         „gwiazdy niech się szybciej poruszają, żeby był lepszy efekt prędkości”):
+//                                         przy małej prędkości × 2,5, walka 507 j/s × 2,32, dopalacz 1137 × 2,10, 4 tys.
+//                                         × 1,38, od cruiseTo (8 tys.) zero — hipercruise i warp bez zmian; rosnąca (D' ≥
+//                                         0,25), ciągła i gładka. Niebo i warstwa mid jadą tą samą drogą (W0 bez zmian).
 //     tempo [px bufora/s] = vN_wygł · p_ef · zoom           (zoom = px bufora na j. świata, Core3D.viewZoom)
 //     p_ef                = min(p, bgCap · camZ / (camZ + bgDepth)) · mnożnik   (p 0,1; mnożnik — `?nieboTempo=<liczba>`;
 //                           camZ = f / zoom — wysokość kamery perspektywy nad płaszczyzną gry, core3d.js syncCamera)
@@ -23,9 +28,11 @@
 // skoku sufit nie działa (0,104 / 0,17 > 0,1); działa przy 32:9 w walce (p_ef 0,056 — kątowo tyle co 16:9) i po
 // przybliżeniu (16:9 od ×1,04 zoomu domyślnego): tempo nieba w px przestaje wtedy rosnąć z zoomem, jak tarcza planety
 // (dopalacz 1137 j/s: ~0,9–1 °/s przy każdym zbliżeniu; A/B bez sufitu — `?nieboSufit=0`).
-// Przy 1080p 16:9: walka 507 j/s — 10,8 px/s (0,36 °/s, 3,3× dawniej), hipercruise Mk I 140 px/s (4,7 °/s), warp Mk II
-// 267 px/s (8,9 °/s); skok Ziemia → Jowisz Mk II obraca niebo o ~110° (dawniej 23°). 32:9 1440p: walka 16 px/s
-// (0,40 °/s — sufit głębi), skok i warp ~1,9× 16:9 kątowo (zoom ∝ szerokość kadru).
+// Przy 1080p 16:9: walka 507 j/s — 25,1 px/s (0,84 °/s; bez członu zwykłego lotu 10,8), hipercruise Mk I 140 px/s
+// (4,7 °/s), warp Mk II 267 px/s (8,9 °/s); skok Ziemia → Jowisz Mk II obraca niebo o ~110° (dawniej 23°). 32:9 1440p:
+// walka 37 px/s (0,93 °/s — sufit głębi × człon zwykłego lotu), skok i warp ~1,9× 16:9 kątowo (zoom ∝ szerokość kadru).
+// Człon zwykłego lotu omija sufit głębi: w walce niebo płynie ~1,7× szybciej niż tarcza planety tła (bez ringu) —
+// świadomie (efekt prędkości ważniejszy; planety tła w walce rzadko są w kadrze).
 // Dawne prawo (min(v, 14 000) · 0,03 · zoom, bez wygładzenia) — SKY_SCROLL_STARE, A/B `?nieboTempo=stare`.
 //
 // Oś obrotu = z × kierunek ruchu w osiach SCENY (X = x gry, Y = −y gry), więc obraz nieba płynie przeciw ruchowi
@@ -42,8 +49,9 @@
 // STAR_MID_SPHERE 0,13–0,26 (starParallax.js) — niebo < mid z zapasem ≥ 1,26× (1,3 × skala z = −250) w każdym trybie
 // i przejściu, o ile kamera nie cofa się względem statku (wtedy mid dostaje ten ruch, niebo nie — wyjątek W0
 // w WYPIEK-NIEBA.md § „Niebo-sfera — prawo tempa 2026-10-27”). Warstwa speed
-// zostaje na kamerze (sufit 14 tys. j/s w skoku — warpNurt.js): mid < speed, bo vN ≤ v, a w skoku 0,26 · vN ≤ 7,5 tys.
-// < 1,02 · 14 tys. Tabela tempa: `skyLayerSpeeds`, test kolejności: tests/skyScroll.test.mjs.
+// zostaje na kamerze (sufit 14 tys. j/s w skoku — warpNurt.js): mid < speed, bo vN ≤ cruiseBoost · v (0,26 · 2,5 = 0,65
+// < 1,02), a w skoku 0,26 · vN ≤ 7,5 tys. < 1,02 · 14 tys. Tabela tempa: `skyLayerSpeeds`, test kolejności:
+// tests/skyScroll.test.mjs.
 //
 // Rzut w kamerze z góry: RÓWNOODLEGŁY (azymutalny) wokół środka kadru — piksel w odległości r od środka patrzy pod
 // kątem r / f od osi widoku. Przy 32:9 brzegi nie płyną 2,3× szybciej niż środek (rzut gnomoniczny), smugi i tempo są
@@ -56,6 +64,12 @@ export const SKY_SCROLL = Object.freeze({
   p: 0.1,               // paralaksa nieba (× droga nieba vN)
   knee: 5000,           // [j/s] kolano drogi nieba: do niego vN = v, wyżej logarytm (0 — dawny sufit vCap)
   vCap: 0,              // [j/s] sufit drogi (tylko przy knee = 0 — dawne prawo)
+  // Zwykły lot (2026-10-31, „lepszy efekt prędkości”): vN += (cruiseBoost − 1) · v · (1 − v / cruiseTo)² poniżej
+  // cruiseTo — przy małej prędkości vN = cruiseBoost · v, od cruiseTo [j/s] prawo bez zmian (hipercruise, warp).
+  // cruiseBoost ≤ ~3: rosnąca (pochodna ≥ 1 − (B − 1) / 3), mid ≤ 0,26 · B · v < speed 1,02 · v; straż W0 niżej
+  // obcina wygładzone vN do 3,5 · v przy hamowaniu. 1 — bez członu.
+  cruiseBoost: 2.5,
+  cruiseTo: 8000,
   smoothTau: 0.15,      // [s] wygładzenie vN (0 — bez: dawne prawo, kąt z drogi tej klatki)
   // Straż W0 przy hamowaniu: vN_wygł ≤ w0Guard · min(v, starCap) / mnożnik mid (v — prędkość okrętu ze STANU, nie z drogi
   // klatki). Warstwa speed jedzie z kamerą bez wygładzenia — przy twardym hamowaniu (koniec rampy wyjścia: 16,2 → 1,5 tys.
@@ -108,7 +122,8 @@ export const SKY_SCROLL = Object.freeze({
  * kamerze gwiazd (0,055–0,18).
  */
 export const SKY_SCROLL_STARE = Object.freeze({
-  ...SKY_SCROLL, p: 0.03, knee: 0, vCap: 14000, smoothTau: 0, midLayer: null, fade: 'deg', streakExposure: 0, bgCap: 0
+  ...SKY_SCROLL, p: 0.03, knee: 0, vCap: 14000, smoothTau: 0, midLayer: null, fade: 'deg', streakExposure: 0, bgCap: 0,
+  cruiseBoost: 1
 });
 
 /** Nowe prawo bez sufitu głębi (A/B `?nieboSufit=0`): p 0,1 przy każdym zoomie i kadrze (32:9 — 2× 16:9 kątowo). */
@@ -152,12 +167,23 @@ export function skyFocalPx(bufferHeight, fovDeg = SKY_SCROLL.fovDeg) {
   return (h * 0.5) / Math.tan(fovDeg * 0.5 * DEG);
 }
 
-/** Droga nieba vN [j/s] dla prędkości v [j/s]: kolano z logarytmem (knee > 0) albo dawny sufit vCap. */
+/**
+ * Droga nieba vN [j/s] dla prędkości v [j/s]: kolano z logarytmem (knee > 0) albo dawny sufit vCap, plus człon zwykłego
+ * lotu (cruiseBoost, cruiseTo — przy małej prędkości vN = cruiseBoost · v, od cruiseTo bez członu).
+ */
 export function skyDriveSpeed(v, tune = SKY_SCROLL) {
   const vv = Math.max(0, Number(v) || 0);
   const k = Number(tune.knee) || 0;
-  if (k > 0) return vv <= k ? vv : k * (1 + Math.log(vv / k));
-  return tune.vCap > 0 ? Math.min(vv, tune.vCap) : vv;
+  let d;
+  if (k > 0) d = vv <= k ? vv : k * (1 + Math.log(vv / k));
+  else d = tune.vCap > 0 ? Math.min(vv, tune.vCap) : vv;
+  const b = (Number(tune.cruiseBoost) || 1) - 1;
+  const to = Number(tune.cruiseTo) || 0;
+  if (b > 0 && to > 0 && vv < to) {
+    const r = 1 - vv / to;
+    d += b * vv * r * r;
+  }
+  return d;
 }
 
 /**

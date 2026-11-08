@@ -308,7 +308,7 @@ function skryptyIndex(root) {
 }
 
 // Symbole z modułów renderu bez stanu (bez three i bez zapisów `window`) liczą się jako „dane” wspólne — jak
-// `computeHaloRingLayout`, `dryDockChunkAt` (§ 2.1). Dodatkowo jawnie (moduły ze stanem, ale symbol czysty):
+// `computeHaloRingLayout` (§ 2.1). Dodatkowo jawnie (moduły ze stanem, ale symbol czysty):
 const DANE_JAWNE = new Set(['fxRandom', 'SHIP3D_MODELS', 'WEAPON3D_FAMILY', 'stampFamilyFor']);
 // Składowe zwracające wynik do gry / UI (§ 2.1 „zapytania zwrotne”).
 const ZAPYTANIA = [

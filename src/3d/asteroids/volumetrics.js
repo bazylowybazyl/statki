@@ -57,7 +57,20 @@ export const FLOOR_RENDER_ORDER = -50;
 // Przełącznik A/B na żywo (oba kernele zbudowane i rozgrzane raz, `compute()` wybiera): slices = false — dawny kernel
 // (wątek na kolumnę). cols / per — kolumny na grupę roboczą i plastry na wątek kernela `plastry` (inna para niż
 // domyślna buduje i kompiluje swój kernel przy pierwszym użyciu — tylko do pomiarów).
-export const VOLUME_LIGHT_TUNE = { slices: true, cols: 8, per: 2 };
+// cellLadder — DRABINA KOLUMNY (2026-10-29, zgłoszenie „gazy i mgła w polu asteroid mocno drżą”): bok kolumny froxeli
+// = 2^(j / 8) [j.] ze stopniem j z histerezą (jak teksel map gazu, src/3d/spaceGas/spaceGasMaps.js). Kolumna liczona wprost
+// (cellPx / zoom) zmieniała się przy KAŻDEJ zmianie zoomu, a siatka jest zakotwiczona w wielokrotnościach kolumny względem
+// początku pola (do 20 tys. j. od kamery) — sprężyna zoomu po ząbku kółka przesuwała fazę kolumn o pół kolumny w ~1/3
+// klatek (smugi reflektorów, cienie skał w smudze i włókna pyłu migotały do ±5 px na 5120 px). A/B: false — wprost.
+// worldAnchor — SIATKA KOLUMN W UKŁADZIE SCENY (2026-10-29, zgłoszenie „snopy front i pomocnicze drżą”): róg siatki to
+// wielokrotność kolumny w układzie sceny (double), nie względem początku pola. Początek jest lepki (Core3D.fx.origin,
+// przeskok co 20 tys. j. drogi kamery o całkowitą liczbę jednostek), a kolumna 2^(j/8) j. nie dzieli przeskoku — siatka
+// względem początku przeskakiwała w świecie o (przeskok mod kolumna): ~pół kolumny (5,3 px przy zoomie 0,45) na KAŻDYM
+// przeskoku, w hipercruisie w pasie 1–1,6 razy na sekundę (smugi reflektorów, cienie skał w smudze i włókna jednym
+// szarpnięciem). Między przeskokami bez różnicy. A/B: false — siatka względem początku pola (dawniej).
+export const VOLUME_LIGHT_TUNE = { slices: true, cols: 8, per: 2, cellLadder: true, worldAnchor: true };
+const CELL_STEPS = 8;
+const CELL_HYST = 1.03;
 // 8 kolumn × 20 wątków (po 2 plastry) = grupa 160 — najszybszy z układów 4×1, 8×2, 16×4, 32×8 w ciężkiej i lekkiej
 // klatce bitwy (pomiar: pas-swiatlo-gra.mjs --koszt; § 7.5 audytu).
 const VOLUME_SLICES_DEFAULT = Object.freeze({ cols: 8, per: 2 });
@@ -135,6 +148,8 @@ export class VolumeLight {
     };
     this.stats = { columns: 0, cellWorld: 0 };
     this._count = 0;
+    this._cellLevel = NaN;   // stopień drabiny kolumny (VOLUME_LIGHT_TUNE.cellLadder)
+    this.tune = VOLUME_LIGHT_TUNE;   // uchwyt A/B (konsola, narzędzia w workerze: belt.volume.tune)
     this.zFloor = float(FLOOR_Z);
     this._buildCompute();
     this._buildFloor(parent, layer);
@@ -362,10 +377,29 @@ export class VolumeLight {
     if (!this.enabled) { this._count = 0; return; }
     const halfW = viewW * 0.5 / zoom * 1.08;
     const halfH = viewH * 0.5 / zoom * 1.08;
-    let cell = cfg.cellPx / zoom;
-    cell = Math.max(cell, (2 * halfW) / (this.NX - 3), (2 * halfH) / (this.NY - 3));
-    const x0 = Math.floor((camX - halfW) / cell) * cell;
-    const y0 = Math.floor((camY - halfH) / cell) * cell;
+    const need = Math.max(cfg.cellPx / zoom, (2 * halfW) / (this.NX - 3), (2 * halfH) / (this.NY - 3));
+    let cell = need;
+    if (VOLUME_LIGHT_TUNE.cellLadder && need > 0) {
+      // stopień drabiny: w górę od razu (pokrycie kadru), w dół z histerezą
+      const up = Math.ceil(Math.log2(need) * CELL_STEPS - 1e-9);
+      let j = this._cellLevel;
+      if (!(j >= up)) j = up;
+      else if (need * CELL_HYST < 2 ** ((j - 1) / CELL_STEPS)) j = Math.ceil(Math.log2(need * CELL_HYST) * CELL_STEPS - 1e-9);
+      this._cellLevel = j;
+      cell = 2 ** (j / CELL_STEPS);
+    } else this._cellLevel = NaN;
+    let x0;
+    let y0;
+    if (VOLUME_LIGHT_TUNE.worldAnchor) {
+      // róg siatki w układzie sceny (double): x sceny początku = originX, y sceny = −originY (lokalne = scena − początek)
+      const sox = Number(originX) || 0;
+      const soy = -(Number(originY) || 0);
+      x0 = Math.floor((camX + sox - halfW) / cell) * cell - sox;
+      y0 = Math.floor((camY + soy - halfH) / cell) * cell - soy;
+    } else {
+      x0 = Math.floor((camX - halfW) / cell) * cell;
+      y0 = Math.floor((camY - halfH) / cell) * cell;
+    }
     const nx = Math.min(this.NX, Math.ceil((camX + halfW - x0) / cell) + 1);
     const ny = Math.min(this.NY, Math.ceil((camY + halfH - y0) / cell) + 1);
     M.origin.value.set(x0, y0);
@@ -375,8 +409,9 @@ export class VolumeLight {
     this._count = nx * ny;
     M.invTex.value.set(1 / (cell * this.NX), 1 / (cell * this.NY), 1 / (this.NZ * this.dz));
     U.density.value = cfg.density * (fade >= 0 && fade < 1 ? fade : 1);
-    // Włókna (najdrobniej ~160 j.) gasną, gdy kolumna ma > 40 j. (mocne oddalenie).
-    U.fine.value = Math.max(0, Math.min(1, (60 - cell) / 30));
+    // Włókna (najdrobniej ~160 j.) gasną, gdy kolumna ma > 40 j. (mocne oddalenie) — z kolumny wprost z kadru (ciągle,
+    // bez skoku na stopniu drabiny).
+    U.fine.value = Math.max(0, Math.min(1, (60 - need) / 30));
     U.gain.value = cfg.gain;
     U.base.value = cfg.base;
     // Faza szumu: (początek pola + dryf) / skala, mod 1 (tekstura okresowa).

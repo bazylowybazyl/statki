@@ -18,15 +18,25 @@
 // Nad mgłą idzie fizyczny pył (dust.js) w passie gry.
 // JEDNA MGŁA (2026-10-22): płytkie płaty (fg) gasną pod gazem w otwartej przestrzeni (src/3d/spaceGas/ — SpaceGasCover.belt);
 // bez gazu (opcja wył.) zostają jak dawniej. Głębokie płaty tła — bez zmian.
+//
+// JEDEN RYSUNEK NA PASS (2026-11-02, klatka workera — każdy rysunek three r183 to ~10 µs CPU): płaty passa (6 głębokich,
+// 2 płytkie) leżą w JEDNEJ siatce (`AsteroidBelt:fogBack` / `:fogFg`) — wierzchołki płatów w kolejności dawnych rysunków
+// (najgłębszy pierwszy; mieszanie w jednym rysunku idzie w kolejności prymitywów, więc wynik jak płaty po kolei), numer
+// płatu w aMacro.w, wartości płatu w tablicy uniformów (FOG_SLICE_VEC4 vec4 na płat). Płat zostaje NOŚNIKIEM
+// (`slice.mesh` — Object3D w tej samej grupie co dawna siatka: pozycja, widoczność, warstwa, macierz świata z synchronizacji
+// sceny), a macierz model-widok płatu liczy aktualizacja tablicy przy rysunku: kamera rysunku × macierz świata nośnika —
+// tak jak `highpModelViewMatrix` three (double na CPU, float32 w buforze), więc pozycje co do bitu jak dawne siatki.
+// Płat niewidoczny zwija się w wierzchołku. A/B: `BeltFog.merged = false` przed utworzeniem pasa — dawne siatki płatów.
 
 import * as THREE from 'three/webgpu';
 import {
-  Fn, float, int, uint, ivec2, uvec2, vec2, vec3, vec4, uniform, attribute, varyingProperty,
-  instanceIndex, textureStore, texture, positionGeometry,
-  If, Discard, mix, smoothstep, clamp, floor, fract, abs, exp, sin
+  Fn, float, int, uint, ivec2, uvec2, vec2, vec3, vec4, mat4, uniform, uniformArray, attribute, varying, varyingProperty,
+  instanceIndex, textureStore, texture, positionGeometry, positionLocal,
+  If, Discard, mix, smoothstep, clamp, floor, fract, abs, exp, sin, select
 } from 'three/tsl';
 import { stormIntensity } from '../../game/asteroidStorms.js';
 import { SpaceGasCover } from '../spaceGas/spaceGasState.js';
+import { zbierzZakres } from '../zakresyWysylki.js';
 
 // Z beltDust3D.js (DUST_SLICES od 1300 j., DUST_LOOK_DEFAULTS, GRID,
 // DUST_NOISE_WRAP). Płytkie płaty (fg) w passie gry — mgła na wysokości skał.
@@ -52,9 +62,51 @@ export const DUST_LOOK_DEFAULTS = Object.freeze({
 const GRID = 36;
 const DUST_NOISE_WRAP = 20;
 const NOISE_SIZE = 512;
+// Wartości płatu w tablicy uniformów scalonej siatki (vec4): 0–3 macierz model-widok (kolumny), 4 (base.xy, drift.xy),
+// 5 (scale, alpha, seed, scatter), 6 (center.xyz, widoczność).
+export const FOG_SLICE_VEC4 = 7;
+const _fogMV = new THREE.Matrix4();
 
 function wrapDustNoise(v) {
   return v - Math.floor(v / DUST_NOISE_WRAP) * DUST_NOISE_WRAP;
+}
+
+/**
+ * Tablica płatów scalonej siatki (A — Float32Array tablicy uniformów) z nośników i wartości płatów; z kamerą rysunku
+ * także macierze model-widok (kamera × macierz świata nośnika, double → float32 — jak highpModelViewMatrix three).
+ */
+export function writeFogSlices(A, slices, camera) {
+  for (let k = 0; k < slices.length; k++) {
+    const s = slices[k];
+    const S = s.S;
+    const o = k * FOG_SLICE_VEC4 * 4;
+    if (camera) {
+      _fogMV.multiplyMatrices(camera.matrixWorldInverse, s.mesh.matrixWorld);
+      const e = _fogMV.elements;
+      for (let j = 0; j < 16; j++) A[o + j] = e[j];
+    }
+    const base = S.base.value, drift = S.drift.value, c = S.center.value;
+    A[o + 16] = base.x; A[o + 17] = base.y; A[o + 18] = drift.x; A[o + 19] = drift.y;
+    A[o + 20] = S.scale.value; A[o + 21] = S.alpha.value; A[o + 22] = S.seed.value; A[o + 23] = S.scatter.value;
+    A[o + 24] = c.x; A[o + 25] = c.y; A[o + 26] = c.z; A[o + 27] = s.mesh.visible ? 1 : 0;
+  }
+}
+
+// Materiał scalonej siatki: pozycja widoku z macierzy płatu (zamiast modelViewMatrix siatki), płat niewidoczny zwinięty
+// poza bryłę obcinania (jak partie kadłubów — HullNodeMaterial).
+class BeltFogNodeMaterial extends THREE.NodeMaterial {
+  static get type() {
+    return 'BeltFogNodeMaterial';
+  }
+
+  setupPositionView(builder) {
+    return this.fogPositionView || super.setupPositionView(builder);
+  }
+
+  setupModelViewProjection(builder) {
+    const clip = super.setupModelViewProjection(builder);
+    return this.fogVisible ? select(this.fogVisible.greaterThan(0.5), clip, vec4(2.0, 2.0, 2.0, 1.0)) : clip;
+  }
 }
 
 // --- szum 2D (kafelkowany) — port NOISE2D_FRAGMENT --------------------------
@@ -168,33 +220,77 @@ export class BeltFog {
       time: uniform(0),
       lightScatter: uniform(1)
     };
-    this.slices = DUST_SLICES.map((def, i) => this._makeSlice(def, i, grid, fieldMap));
+    // Płaty: nośniki (pozycja, widoczność, warstwa — jak dawne siatki płatów) i JEDNA siatka na pass (passy: gra, tło).
+    this.slices = DUST_SLICES.map((def, i) => this._makeSlice(def, i));
     for (const s of this.slices) (s.def.fg ? this.fgGroup : this.group).add(s.mesh);
+    this.draws = [this._makeDraw(true, grid, fieldMap), this._makeDraw(false, grid, fieldMap)];
+    for (const d of this.draws) (d.fg ? this.fgGroup : this.group).add(d.mesh);
     bgParent.add(this.group);
     fgParent.add(this.fgGroup);
   }
 
-  _makeSlice(def, i, grid, fieldMap) {
-    const U = this.U;
-    const geo = new THREE.PlaneGeometry(1, 1, GRID, GRID);
-    const macroAttr = new THREE.BufferAttribute(new Float32Array((GRID + 1) * (GRID + 1) * 3), 3);
-    geo.setAttribute('aMacro', macroAttr);
+  // Nośnik płatu: Object3D w grupie passa (bez rysunku) — pozycja i macierz świata jak dawna siatka płatu; wartości
+  // płatu w obiektach { value } (narzędzia czytają `slice.S.alpha.value`, `slice.mesh.visible`).
+  _makeSlice(def, i) {
     const S = {
-      base: uniform(new THREE.Vector2()),
-      scale: uniform(def.scale),
-      drift: uniform(new THREE.Vector2()),
-      alpha: uniform(def.alpha),
-      seed: uniform(i * 1.618 + 0.3),
+      base: { value: new THREE.Vector2() },
+      scale: { value: def.scale },
+      drift: { value: new THREE.Vector2() },
+      alpha: { value: def.alpha },
+      seed: { value: i * 1.618 + 0.3 },
       // Reflektory (z ≈ +140) sięgają pyłem tylko płytkich płatów.
-      scatter: uniform(def.depth <= 3000 ? 0.9 : 0.55),
+      scatter: { value: def.depth <= 3000 ? 0.9 : 0.55 },
       // Środek płatu LOKALNIE (względem początku pola), z = −głębokość.
-      center: uniform(new THREE.Vector3())
+      center: { value: new THREE.Vector3() }
     };
+    const mesh = new THREE.Object3D();
+    mesh.name = `AsteroidBelt:fog_${i}`;
+    mesh.layers.set(def.fg ? this.fgLayer : this.bgLayer);
+    mesh.visible = false;
+    return { def, index: i, mesh, S, step: 0, gx: NaN, gy: NaN, maxFog: 0, draw: null, slot: 0, vStart: 0 };
+  }
+
+  // Scalona siatka płatów passa: wierzchołki płatów w kolejności dawnych rysunków (najgłębszy pierwszy — dawny
+  // renderOrder rósł ku płytszym), numer płatu w aMacro.w, wartości płatów w tablicy uniformów (writeFogSlices przy
+  // rysunku, z kamerą rysunku). Graf jak dawny graf płatu — wartości płatu z tablicy zamiast uniformów płatu.
+  _makeDraw(fg, grid, fieldMap) {
+    const U = this.U;
+    const slices = this.slices.filter((s) => !!s.def.fg === fg).sort((a, b) => b.index - a.index);
+    const n = slices.length;
+    const plane = new THREE.PlaneGeometry(1, 1, GRID, GRID);
+    const pv = plane.getAttribute('position').count;
+    const pIdx = plane.index.array;
+    const ni = pIdx.length;
+    const index = new Uint16Array(n * ni);
+    const mac = new Float32Array(n * pv * 4);
+    for (let k = 0; k < n; k++) {
+      const s = slices[k];
+      s.slot = k;
+      s.vStart = k * pv;
+      for (let j = 0; j < ni; j++) index[k * ni + j] = pIdx[j] + k * pv;
+      for (let v = 0; v < pv; v++) mac[(k * pv + v) * 4 + 3] = k;
+    }
+    plane.dispose();
+    const geo = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(new Float32Array(n * pv * 3), 3);
+    const macAttr = new THREE.BufferAttribute(mac, 4);
+    geo.setAttribute('position', posAttr);
+    geo.setAttribute('aMacro', macAttr);
+    geo.setIndex(new THREE.BufferAttribute(index, 1));
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e12);
+    const data = uniformArray(Array.from({ length: n * FOG_SLICE_VEC4 }, () => new THREE.Vector4()), 'vec4')
+      .setName(fg ? 'beltFogSlicesFg' : 'beltFogSlicesBg');
+    // Przy każdym rysunku (kamera TEGO rysunku — pass, widok podzielonego ekranu, rozgrzewka): wartości i macierze płatów.
+    data.onObjectUpdate(function (frame) { writeFogSlices(this.value, slices, frame ? frame.camera : null); });
+    const el = (slot, k) => data.element(slot.mul(FOG_SLICE_VEC4).add(k));
+    const aMacro = attribute('aMacro', 'vec4');
+    const slotV = int(aMacro.w);
     const vLocal = varyingProperty('vec2', 'vFogLocal');
     const vMacro = varyingProperty('vec3', 'vFogMacro');
     const vScatter = varyingProperty('vec3', 'vFogScatter');
-    const mat = new THREE.NodeMaterial();
-    mat.name = def.fg ? 'AsteroidBelt:fogFg' : 'AsteroidBelt:fogBack';
+    const vSlot = varying(aMacro.w, 'vFogSlot').setInterpolation('flat');
+    const mat = new BeltFogNodeMaterial();
+    mat.name = fg ? 'AsteroidBelt:fogFg' : 'AsteroidBelt:fogBack';
     mat.premultipliedAlpha = false;
     mat.transparent = true;
     mat.depthWrite = false;
@@ -206,33 +302,44 @@ export class BeltFog {
     mat.blendDst = THREE.OneMinusSrcAlphaFactor;
     mat.blendSrcAlpha = THREE.OneFactor;
     mat.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+    // Pozycja widoku i widoczność z WŁASNYM odczytem numeru płatu (pułapka 36: węzeł wspólny z etapem wierzchołków i
+    // pozycją widoku dawał w WGSL odczyt zmiennej przed przypisaniem).
+    const aMacroP = attribute('aMacro', 'vec4');
+    const slotP = int(aMacroP.w);
+    mat.fogPositionView = mat4(el(slotP, 0), el(slotP, 1), el(slotP, 2), el(slotP, 3)).mul(positionLocal).xyz;
+    mat.fogVisible = el(slotP, 6).w;
     mat.positionNode = Fn(() => {
       vLocal.assign(positionGeometry.xy);
-      vMacro.assign(attribute('aMacro', 'vec3'));
-      if (def.fg) {
+      vMacro.assign(aMacro.xyz);
+      if (fg) {
         // Płytkie płaty leżą w ośrodku światła wolumetrycznego (volumetrics.js)
         // — tam smugi reflektorów liczą się per froxel, z cieniem skał.
         vScatter.assign(vec3(0.0));
       } else {
         // Głębokie płaty: rozpraszanie świateł siatki w wierzchołku (błyski
         // w chmurach burzy, łuny wybuchów pod płaszczyzną).
-        const P = S.center.add(positionGeometry).toVar();
+        const P = el(slotV, 6).xyz.add(positionGeometry).toVar();
         const acc = vec3(0).toVar();
         grid.loop(P, ({ att, col, scatter }) => {
           acc.addAssign(col.mul(att).mul(scatter));
         });
-        vScatter.assign(acc.mul(S.scatter).mul(U.lightScatter));
+        vScatter.assign(acc.mul(el(slotV, 5).w).mul(U.lightScatter));
       }
       return positionGeometry;
     })();
     const noise = this.noise;
     const sample = (p) => texture(noise, p);
     mat.fragmentNode = Fn(() => {
+      // płat fragmentu: (base.xy, drift.xy), (scale, alpha, seed, scatter), (center.xyz, widoczność)
+      const sF = int(vSlot);
+      const d4 = el(sF, 4).toVar();
+      const d5 = el(sF, 5).toVar();
+      const d6 = el(sF, 6).toVar();
       const macro = vMacro.x.toVar();
       If(macro.lessThan(0.002), () => { Discard(); });
-      const p = S.base.add(vLocal.div(S.scale)).add(vec2(S.seed.mul(0.371), S.seed.mul(0.613))).toVar();
+      const p = d4.xy.add(vLocal.div(d5.x)).add(vec2(d5.z.mul(0.371), d5.z.mul(0.613))).toVar();
       const w = sample(p.mul(0.55).add(vec2(0.13, 0.71))).ba.mul(2.0).sub(1.0).toVar();
-      const q = p.add(w.mul(0.22)).add(S.drift).toVar();
+      const q = p.add(w.mul(0.22)).add(d4.zw).toVar();
       const body = sample(q).r.toVar();
       const fil = sample(q.mul(1.9).add(w.yx.mul(0.1)).add(0.37)).g.toVar();
       const fine = sample(q.mul(4.3).add(0.61)).r;
@@ -248,10 +355,10 @@ export class BeltFog {
       const litC = mix(U.rockLit, U.iceLit, vMacro.y);
       const shadeC = mix(U.rockShade, U.iceShade, vMacro.y);
       // Słońce przesłonięte przez pole: mapa transmitancji pyłu (świat → scena).
-      const muv = S.center.xy.add(vLocal).sub(fieldMap.origin).mul(fieldMap.invSize);
+      const muv = d6.xy.add(vLocal).sub(fieldMap.origin).mul(fieldMap.invSize);
       const sunT = mix(float(1.0), texture(fieldMap.texture, clamp(muv, 0.0, 1.0)).r, U.sunOcc).toVar();
       const col = mix(shadeC.mul(sunT), litC.mul(sunT), clamp(lit.add(edge.mul(0.35)), 0.0, 1.0).mul(sunT)).mul(U.bright);
-      const a = clamp(float(1.0).sub(exp(d.mul(U.density).mul(2.2).negate())), 0.0, 1.0).mul(S.alpha).toVar();
+      const a = clamp(float(1.0).sub(exp(d.mul(U.density).mul(2.2).negate())), 0.0, 1.0).mul(d5.y).toVar();
       const scat = vScatter.mul(d.mul(0.6).add(0.4));
       const breathe = sin(U.time.mul(1.9).add(body.mul(13.0)).add(fil.mul(7.0))).mul(0.45).add(0.55);
       const storm = U.stormColor.mul(vMacro.z).mul(U.stormGlow).mul(smoothstep(0.45, 0.95, d)).mul(smoothstep(0.5, 0.8, fil)).mul(breathe);
@@ -259,14 +366,16 @@ export class BeltFog {
     })();
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
-    // Najgłębszy płat najpierw (kolejka przezroczysta sortuje po renderOrder);
-    // w passie gry przed duszkami blasku (20) i pyłem (30).
-    // W passie gry przed kwadem dna ośrodka (−50) i efektami gry (≥ 0), po minerałach (−70).
-    mesh.renderOrder = def.fg ? -58 - i : 10 + (DUST_SLICES.length - 1 - i);
-    mesh.name = `AsteroidBelt:fog_${i}`;
-    mesh.layers.set(def.fg ? this.fgLayer : this.bgLayer);
+    // Kolejka jak dawny NAJGŁĘBSZY płat passa (płytsze rysowały się tuż po nim): w passie gry przed kwadem dna ośrodka
+    // (−50) i efektami gry (≥ 0), po minerałach (−70); w passie tła po zasłonie (−0,1) i skałach tła. Pozycję sortowania
+    // (z) ustawia update — pierwszy widoczny płat.
+    mesh.renderOrder = fg ? -58 - slices[0].index : 10 + (DUST_SLICES.length - 1 - slices[0].index);
+    mesh.name = fg ? 'AsteroidBelt:fogFg:płaty' : 'AsteroidBelt:fogBack:płaty';
+    mesh.layers.set(fg ? this.fgLayer : this.bgLayer);
     mesh.visible = false;
-    return { def, mesh, geo, S, step: 0, gx: NaN, gy: NaN, maxFog: 0 };
+    const draw = { fg, slices, mesh, geo, posAttr, macAttr, mat, mats: slices.map(() => mat), pv, ni, data };
+    for (const s of slices) s.draw = draw;
+    return draw;
   }
 
   setVisible(v) {
@@ -280,6 +389,29 @@ export class BeltFog {
     for (const sl of this.slices) {
       sl.mesh.visible = false;
       sl.step = 0;
+    }
+    for (const d of this.draws) d.mesh.visible = false;
+  }
+
+  // Po płatach klatki: siatka passa widoczna, gdy widać choć jeden płat; pozycja sortowania (z kolejki przezroczystej) =
+  // pierwszy widoczny płat (dawna siatka tego płatu); przy splitDraws grupa na widoczny płat (rysunek na płat).
+  _syncDraws() {
+    for (const d of this.draws) {
+      let first = null;
+      for (const s of d.slices) if (s.mesh.visible) { first = s; break; }
+      d.mesh.visible = first !== null;
+      if (first) {
+        d.mesh.position.copy(first.mesh.position);
+        d.mesh.updateMatrixWorld(true);
+      }
+      if (BeltFog.splitDraws) {
+        d.geo.clearGroups();
+        for (const s of d.slices) if (s.mesh.visible) d.geo.addGroup(s.slot * d.ni, d.ni, s.slot);
+        if (d.mesh.material !== d.mats) d.mesh.material = d.mats;
+      } else if (d.mesh.material !== d.mat) {
+        d.geo.clearGroups();
+        d.mesh.material = d.mat;
+      }
     }
   }
 
@@ -341,25 +473,27 @@ export class BeltFog {
       const gy = Math.floor(f.cam.y / step);
       if (step !== s.step || gx !== s.gx || gy !== s.gy) {
         s.step = step; s.gx = gx; s.gy = gy;
-        const pos = s.geo.getAttribute('position');
-        const mac = s.geo.getAttribute('aMacro');
+        // wierzchołki płatu w scalonej siatce passa (od s.vStart), wysyłka zakresem płatu
+        const D = s.draw;
+        const pos = D.posAttr.array;
+        const mac = D.macAttr.array;
         const half = GRID / 2;
         let maxFog = 0;
         for (let j = 0; j <= GRID; j++) {
           for (let i = 0; i <= GRID; i++) {
-            const idx = j * (GRID + 1) + i;
+            const idx = s.vStart + j * (GRID + 1) + i;
             const lx = (i - half) * step;
             const ly = (half - j) * step;
-            pos.setXYZ(idx, lx, ly, 0);
+            pos[idx * 3] = lx; pos[idx * 3 + 1] = ly; pos[idx * 3 + 2] = 0;
             const wx = (gx + 0.5) * step + lx;
             const wy = (gy + 0.5) * step - ly;
             const m = this._macro(wx, wy, step);
-            mac.setXYZ(idx, m[0], m[1], m[2]);
+            mac[idx * 4] = m[0]; mac[idx * 4 + 1] = m[1]; mac[idx * 4 + 2] = m[2];
             if (m[0] > maxFog) maxFog = m[0];
           }
         }
-        pos.needsUpdate = true;
-        mac.needsUpdate = true;
+        zbierzZakres(D.posAttr, s.vStart * 3, D.pv * 3);
+        zbierzZakres(D.macAttr, s.vStart * 4, D.pv * 4);
         s.maxFog = maxFog;
         s.S.base.value.set(
           wrapDustNoise(((gx + 0.5) * step) / def.scale),
@@ -376,5 +510,10 @@ export class BeltFog {
       s.S.alpha.value = def.alpha * (1 - cover) * fade;
       s.mesh.visible = s.maxFog > 0.002 && cover < 0.999 && fade > 0.002;
     }
+    this._syncDraws();
   }
 }
+
+// A/B w biegu (klatka workera, --wkAb): true — rysunek na widoczny płat (grupy scalonej siatki, ten sam program, dawna
+// liczba rysunków); false — jeden rysunek na pass.
+BeltFog.splitDraws = false;

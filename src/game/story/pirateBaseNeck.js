@@ -6,7 +6,7 @@
  *
  * Szyb habitatu (kawałek H-C, płaszczyzna gry) trzyma WIEŻĘ (H-T: szyja z głową — BRYŁA 3D, pirateBaseBodies.js)
  * kotwicami osi o skończonej wytrzymałości (kontakt v2 silnika belek). Gdy taran zerwie część kotwic pierścienia szyi
- * (albo przebije rurę szyi, albo szyb pęknie z progu punktów), szyja jest zerwana:
+ * (albo przebije rurę szyi, albo szarża F dociśnie okręt do szybu, albo szyb pęknie z progu punktów), szyja jest zerwana:
  *  1. kotwice wieży puszczają (worldBodies.detachPiece) — wieża jest swobodną bryłą 3D z grawitacją habitatu (−z,
  *     ku dyskowi), a resztka szyi to PRZEGUB w nasadzie (silnik: addJoint) przesunięty ku stronie upadku;
  *  2. podcięta wieża przechyla się W STRONĘ, Z KTÓREJ PRZYSZEDŁ TARAN (dół jedzie z taranem, wierzch zostaje):
@@ -74,7 +74,8 @@ export function createNeckState() {
     frozen: 0,                // kotwice wieży zamrożonej w spoczynku (0 — nie zamarzła)
     landX: 0, landY: 0,
     cx: NaN, cy: NaN, neckR: 0,  // środek habitatu (gra) i promień rury szyi — z kroku
-    ramInNeck: false          // styk taranu z szybem W rurze szyi (przebita na wylot)
+    ramInNeck: false,         // styk taranu z szybem W rurze szyi (przebita na wylot)
+    ramCharge: false          // szarża (F) gracza dociśnięta do szybu (noteNeckRam z charging)
   };
 }
 
@@ -82,13 +83,21 @@ export function createNeckState() {
  * Taran kawałka habitatu (styk okrętu spoza piratów — klej gry, CollisionFX): zapamiętuje prędkość i miejsce
  * taranującego. `piece` — kawałek worldBodies, `rammer` — encja okrętu (vx, vy w grze), x, y — punkt styku.
  */
-export function noteNeckRam(st, piece, rammer, simTime, x, y) {
+export function noteNeckRam(st, piece, rammer, simTime, x, y, charging = false) {
   if (!st || st.phase !== 'attached' || !piece || piece.structure !== 'habitat' || !rammer) return;
-  const vx = Number(rammer.vx) || 0, vy = Number(rammer.vy) || 0;
-  if (vx * vx + vy * vy < 1) return;
+  let vx = Number(rammer.vx) || 0, vy = Number(rammer.vy) || 0;
+  // Szarża (F) dociśnięta do szybu: ściana bębna zjada jej rozpęd i statek dochodzi do szybu z kilkudziesięcioma j/s, a przy
+  // takim docisku styk z kotwicami jest sprężysty — szyja nie pękała do drugiej szarży (zgłoszenie użytkownika 2026-11-07:
+  // „trzeba na dwa razy”). Silniki na pełnym ciągu pchają szyb, więc taki styk zrywa szyję; kierunek taranu z dziobu.
+  const chargeOnCore = !!charging && piece.id === 'H-C';
+  let v = Math.sqrt(vx * vx + vy * vy);
+  if (chargeOnCore) {
+    const a = Number(rammer.angle) || 0, m = Math.max(1, v);
+    vx = Math.cos(a) * m; vy = Math.sin(a) * m; v = m;
+    st.ramCharge = true;
+  } else if (v < 1) return;
   st.ramT = simTime; st.ramVx = vx; st.ramVy = vy;
   // szczyt prędkości taranu w oknie (zerwanie przychodzi, gdy taranujący już hamuje w szybie)
-  const v = Math.sqrt(vx * vx + vy * vy);
   if (v >= st.ramPeak || simTime - st.ramPeakT > NECK_TUNE.ramWindow) { st.ramPeak = v; st.ramPeakT = simTime; }
   st.ramX = Number.isFinite(x) ? x : Number(rammer.x) || 0;
   st.ramY = Number.isFinite(y) ? y : Number(rammer.y) || 0;
@@ -205,7 +214,7 @@ export function stepNeck(st, site, ctx, dt) {
     if (!core) return;
     if (ctx.habitat) { st.cx = ctx.habitat.x; st.cy = ctx.habitat.y; }
     st.neckR = ctx.layout?.habitat?.neckR ?? 150;
-    let broken = !!core.__broken || core.lost || st.ramInNeck;
+    let broken = !!core.__broken || core.lost || st.ramInNeck || st.ramCharge;
     if (!broken && core.state === 'live') {
       const pins = piecePinCount(core);
       if (st.pinsInit < 0) st.pinsInit = pins;

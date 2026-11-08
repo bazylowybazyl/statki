@@ -12,7 +12,7 @@
 //  - pas asteroid: CLUTTER — drobnica jako ziarno o gęstości z pola (AsteroidBeltField.sampleMacro,
 //    ziarno zakotwiczone w siatce świata — nie migocze przy przeliczeniu), pojedyncze skały powyżej
 //    rozdzielczości tarczy (forEachRockInRect), OLBRZYMY z przekroju SDF z = 0 (to, w co się uderza);
-//  - stacje: obrys (koło) albo prawdziwe bryły (suchy dok piratów — hitShapes, bez odpadłych kawałków).
+//  - stacje: obrys (koło) albo prawdziwe bryły (baza piratów — hitShapes, bez odpadłych kawałków).
 // Wypiek etapami (najwyżej jeden ciężki etap na klatkę) do bufora tylnego, potem zamiana — bez szarpnięć.
 
 import { RADAR_TUNE, RADAR_RGB } from './radarConfig.js';

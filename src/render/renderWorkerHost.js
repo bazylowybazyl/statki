@@ -224,6 +224,10 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
       setActive(on) { on = !!on; if (on === bd._active) return; bd._active = on; post({ op: 'active', on }); },
       setPointer(x, y) { post({ op: 'pointer', x, y }); },
       setFocus(k) { post({ op: 'focus', k }); },
+      // limit klatek z opcji grafiki — pętla tła w workerze (MenuBackdrop3D.setFrameLimit); bez ominięcia zegara
+      // harnessu (trzeci argument strony): rAF i zegar workera są prawdziwe. Zmiana rozmiaru okna nie czyści obrazu
+      // tła (kanwa obrazu 3D dostaje tylko rozmiar CSS — host.resize) — bez forceNextFrame.
+      setFrameLimit(fps, vsync = true) { post({ op: 'frameLimit', fps: Number(fps) || 0, vsync: vsync !== false }); },
       launch(o = {}) { post({ op: 'launch', dolly: o.dolly !== false }); },
       cameraPose() { return bd._pose; },
       onReady(fn) { if (typeof fn !== 'function') return; if (bd.ready) fn(); else bd._cbs.push(fn); },
@@ -274,6 +278,8 @@ export function createRenderWorkerHost({ packer, slots, commands = null, gameCan
   /** Ostatnio odebrana przez worker strona (reguła pakowania węzłów: zmiany od tej strony). */
   host.lastConsumed = () => Atomics.load(ret.i32, RET_I32.LAST_CONSUMED);
   host.gpuReady = () => retHasFlag(ret, RET_FLAG.GPU_READY);
+  // znaczniki czasu GPU w workerze (Core3D strony nie ma urządzenia) — notka rozdzielczości dynamicznej, PerfHUD
+  host.gpuTimerSupported = () => retHasFlag(ret, RET_FLAG.GPU_TIMER);
 
   /** Po publikacji strony k (packer.finish): opisy, topologie, słownik i nowe zasoby tej strony. */
   host.postFrame = () => {

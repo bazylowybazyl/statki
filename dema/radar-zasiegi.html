@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zasięg radarów — HULLFALL</title>
+<style>
+  :root { --bg: #04070c; --text: #c9d4e2; --muted: #6f7d92; --orange: #ff6600; --red: #ff4a4a; --cyan: #9fdcff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 12px/1.45 Consolas, "Courier New", monospace; letter-spacing: 0.03em; }
+  canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  #top { position: fixed; left: 14px; top: 10px; right: 14px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; pointer-events: none; }
+  #top h1 { margin: 0 10px 0 0; font-size: 14px; letter-spacing: 0.16em; color: #e8eef6; text-transform: uppercase; font-weight: 400; }
+  #tabs { display: flex; gap: 4px; pointer-events: auto; flex-wrap: wrap; }
+  #tabs button { font: inherit; color: var(--muted); background: rgba(6, 12, 20, 0.82); border: 1px solid #1d2a3a; padding: 4px 9px;
+    cursor: pointer; letter-spacing: 0.08em; }
+  #tabs button:hover { color: var(--text); border-color: #36506c; }
+  #tabs button.on { color: #ffb070; border-color: rgba(255, 102, 0, 0.7); background: rgba(40, 18, 4, 0.85); }
+  #panel { position: fixed; right: 14px; top: 52px; width: 300px; padding: 10px 12px; background: rgba(4, 8, 14, 0.84);
+    border: 1px solid #1a2636; pointer-events: none; }
+  #panel h2 { margin: 0 0 4px; font-size: 11px; color: #ffb070; letter-spacing: 0.16em; font-weight: 400; text-transform: uppercase; }
+  #panel .opis { color: var(--muted); margin: 0 0 8px; }
+  #panel table { width: 100%; border-collapse: collapse; }
+  #panel td { padding: 1px 0; vertical-align: top; }
+  #panel td:first-child { color: var(--muted); width: 112px; }
+  .hot { color: var(--red); }
+  .ok { color: #3ddc84; }
+  .warn { color: #ffd050; }
+  .dim { color: var(--muted); }
+  #help { position: fixed; left: 14px; bottom: 10px; right: 330px; color: var(--muted); pointer-events: none; }
+  kbd { padding: 0 4px; border: 1px solid #3a3a3a; border-bottom-width: 2px; border-radius: 3px; color: #c4c4c4; background: rgba(0,0,0,0.55); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="top">
+  <h1>Zasięg radarów</h1>
+  <div id="tabs"></div>
+</div>
+<div id="panel"></div>
+<div id="help">
+  <kbd>1</kbd>–<kbd>5</kbd> propozycja · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> lot · <kbd>Shift</kbd> dopalacz · <kbd>spacja</kbd> hipercruise ·
+  <kbd>C</kbd> cicha praca · <kbd>F</kbd> ostrzał · <kbd>X</kbd> impuls skanera · <kbd>H</kbd> kadłub (Atlas / fregata zwiadu) ·
+  <kbd>G</kbd> dron do kursora · <kbd>T</kbd> prawda (wszystkie radary) · <kbd>Z</kbd> kadr taktyczny / CIC · <kbd>L</kbd> śledzenie ·
+  <kbd>P</kbd> pauza · kółko — zoom · przeciąganie — przesunięcie mapy (od Atlasa — przestawienie Atlasa)
+</div>
+<script type="module" src="./radar-zasiegi.js"></script>
+</body>
+</html>
