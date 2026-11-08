@@ -7,7 +7,7 @@
 //  • poziom 1: większy kawałek poziomu 0 pocięty na 2–12 części różnej wielkości (Voronoi z wagami na węzłach kawałka);
 //  • poziom 2: każdy węzeł osobno, jako nieregularna bryłka (sześcian z przesuniętymi narożnikami), z ramą węzła jak dzisiejszy blok.
 // Kształt: opis przy zbudujKawalki. Jedna siatka narożników na wszystkich poziomach, więc kawałki różnych poziomów leżą obok siebie bez szpar i zakładek.
-import { KIER, ND, STRONA, PARAMETRY } from './budowa.js';
+import { KIER, ND, STRONA, PARAMETRY, BIT_KOLO } from './budowa.js';
 
 export const BRAK = 0xffffffff;
 export const POZIOMY = 3;
@@ -227,7 +227,7 @@ function hierarchia(w, op) {
 export function zbudujKawalki(w, opcje = {}) {
   const op = { ...OPCJE_KAWALKOW, ...opcje };
   const t0 = Date.now();
-  const { n, ijk, grupa, dx } = w;
+  const { n, ijk, grupa, dx, pos } = w;
   const H = hierarchia(w, op);
   const { k0, k1 } = H;
   // Etykiety do wygładzania i do ścian: kawałek albo „sam” (n + węzeł), żeby węzeł bez kawałka też miał granicę.
@@ -259,6 +259,15 @@ export function zbudujKawalki(w, opcje = {}) {
     g.siatka[((ijk[3 * i + 2] - g.lo[2]) * g.ny + ijk[3 * i + 1] - g.lo[1]) * g.nx + ijk[3 * i] - g.lo[0]] = i;
   }
 
+  // Początek siatki w świecie liczony z węzła, nie z grupy: w bazie (scenaBazy.js) każda część ma własne pole wirtualnej siatki ijk, a w świecie leży gdzie indziej.
+  // Narożniki i ściany łączą tylko węzły jednej części (między polami są puste komórki), więc węzeł mówi o całym swoim sąsiedztwie.
+  const poczatek = (g, i, wy) => {
+    const { os } = g.rama;
+    for (let c = 0; c < 3; c++) wy[c] = pos[3 * i + c] - dx * (os[0][c] * ijk[3 * i] + os[1][c] * ijk[3 * i + 1] + os[2][c] * ijk[3 * i + 2]);
+    return wy;
+  };
+  const o8 = [0, 0, 0], oV = [0, 0, 0];
+  const BIT_KOLA = 1 << BIT_KOLO;
   // Pozycja narożnika (leniwie, raz).
   const id8 = new Int32Array(8);
   const narozIdx = (g, a, b, c) => ((c - g.lo[2]) * g.cny + (b - g.lo[1])) * g.cnx + (a - g.lo[0]);
@@ -293,14 +302,24 @@ export function zbudujKawalki(w, opcje = {}) {
     }
     const h = h3(a, b, c, g.g * 911 + op.ziarno);
     const amp = gran === 1 ? op.drganieGranicy : gran === 2 ? op.drganieL1 : op.drganie;
-    // Narożnik wieńca dysku bez losu: ściana wieńca jest krzywa, a przesunięcie wzdłuż niej łamie czworokąty i płaskie cieniowanie daje wgniecenia.
+    // Narożnik na okręgu (wieniec dysku S3 / S5 albo koła habitatu bazy) bez losu: ściana jest krzywa, a przesunięcie wzdłuż niej łamie czworokąty i płaskie cieniowanie daje wgniecenia.
+    let iZaj = -1;
+    for (let m = 0; m < 8 && iZaj < 0; m++) if (id8[m] >= 0) iZaj = id8[m];
+    const { os } = g.rama;
+    poczatek(g, iZaj, o8);
+    const wx = o8[0] + dx * (os[0][0] * baza[0] + os[1][0] * baza[1] + os[2][0] * baza[2]);
+    const wy = o8[1] + dx * (os[0][1] * baza[0] + os[1][1] * baza[1] + os[2][1] * baza[2]);
+    const rXY = Math.sqrt(wx * wx + wy * wy);
+    let naKole = false, Rk = 0;
     const ko = op.kolo;
-    let naKole = false;
-    if (ko && g.g === ko.grupa && (id8[0] < 0 || id8[1] < 0 || id8[2] < 0 || id8[3] < 0 || id8[4] < 0 || id8[5] < 0 || id8[6] < 0 || id8[7] < 0)) {
-      const { os, o } = g.rama;
-      const wx = o[0] + dx * (os[0][0] * baza[0] + os[1][0] * baza[1] + os[2][0] * baza[2]);
-      const wy = o[1] + dx * (os[0][1] * baza[0] + os[1][1] * baza[1] + os[2][1] * baza[2]);
-      naKole = Math.sqrt(wx * wx + wy * wy) > ko.R - 0.5 * dx;
+    if (ko && g.g === ko.grupa && (id8[0] < 0 || id8[1] < 0 || id8[2] < 0 || id8[3] < 0 || id8[4] < 0 || id8[5] < 0 || id8[6] < 0 || id8[7] < 0) && rXY > ko.R - 0.5 * dx) { naKole = true; Rk = ko.R; }
+    // Koła habitatu (opcje.kola, jak ustawKola w wGrze.js): narożnik ściany zewnętrznej (przy pustej komórce) części z bitem koła w pasie ± 0,75 dx od promienia z układu
+    // idzie na ten okrąg. Tylko zewnętrzne, więc cały schodek ściany trafia w okrąg (bez zygzaka), a narożniki wnętrza ściany zostają.
+    if (!naKole && op.kola && (id8[0] < 0 || id8[1] < 0 || id8[2] < 0 || id8[3] < 0 || id8[4] < 0 || id8[5] < 0 || id8[6] < 0 || id8[7] < 0)) {
+      let kolo = false;
+      for (let m = 0; m < 8; m++) if (id8[m] >= 0 && (w.flagi[id8[m]] & BIT_KOLA)) kolo = true;
+      let naj = 0.75 * dx;
+      if (kolo) for (const R of op.kola) if (Math.abs(rXY - R) < naj) { naj = Math.abs(rXY - R); naKole = true; Rk = R; }
     }
     for (let ax = 0; ax < 3; ax++) {
       let x = 0;
@@ -313,18 +332,12 @@ export function zbudujKawalki(w, opcje = {}) {
       }
       g.nar[q + ax] = baza[ax] + x;
     }
-    // Wieniec dysku (opcje.kolo: grupa, R; jak uRDysk w obraz.js): narożnik przy pustej komórce w pasie 0,5 dx od brzegu idzie na okrąg R w rzucie XY.
-    if (naKole) {
-      const { os, o } = g.rama;
-      const wx = o[0] + dx * (os[0][0] * baza[0] + os[1][0] * baza[1] + os[2][0] * baza[2]);
-      const wy = o[1] + dx * (os[0][1] * baza[0] + os[1][1] * baza[1] + os[2][1] * baza[2]);
-      const r = Math.sqrt(wx * wx + wy * wy);
-      if (r > ko.R - 0.5 * dx && r > 1) {
-        const sk = ko.R / r - 1;
-        // Przesunięcie w świecie (wx, wy) · sk na osie siatki (rama ortonormalna).
-        const ex = wx * sk / dx, ey = wy * sk / dx;
-        for (let ax = 0; ax < 3; ax++) g.nar[q + ax] += os[ax][0] * ex + os[ax][1] * ey;
-      }
+    // Na okrąg Rk w rzucie XY (wieniec: opcje.kolo grupa, R, jak uRDysk w obraz.js; koła: opcje.kola).
+    if (naKole && rXY > 1) {
+      const sk = Rk / rXY - 1;
+      // Przesunięcie w świecie (wx, wy) · sk na osie siatki (rama ortonormalna).
+      const ex = wx * sk / dx, ey = wy * sk / dx;
+      for (let ax = 0; ax < 3; ax++) g.nar[q + ax] += os[ax][0] * ex + os[ax][1] * ey;
     }
     return q;
   };
@@ -350,7 +363,8 @@ export function zbudujKawalki(w, opcje = {}) {
     for (let v = 0; v < n; v++) {
       if (l < 2 && (l === 0 ? k0[v] : k1[v]) === BRAK) continue;
       const g = grupy.get(grupa[v]);
-      const { os, o } = g.rama;
+      const { os } = g.rama;
+      const o = poczatek(g, v, oV);
       const I = ijk[3 * v], J = ijk[3 * v + 1], Kk = ijk[3 * v + 2];
       const kaw = l === 0 ? k0[v] : l === 1 ? k1[v] : v;
       for (let k = 0; k < 6; k++) {
@@ -412,7 +426,6 @@ export function zbudujKawalki(w, opcje = {}) {
 
   const c0 = H.czlonkowie0, c1 = H.czlonkowie1;
   const K = c0.length + c1.length;
-  const pos = w.pos;
   const kawInfo = new Uint32Array(4 * K), kawRest = new Float32Array(4 * K);
   const kawCzl = new Uint32Array(c0.reduce((s, x) => s + x.length, 0) + c1.reduce((s, x) => s + x.length, 0));
   let q = 0;

@@ -10,6 +10,19 @@ Próba nowego OBRAZU zawaleń na wiązanych wokselach. Fizyka zostaje wokselowa:
 - Bez `?kawalki=1` strona jest taka jak dotąd (solver i obraz bez nowych gałęzi).
 - Kadry, koszt i arkusze bez okna: `node scripts/webgpu/woksele-kawalki.mjs` (opis w `.claude/rules/woksele-zawalen.md`, „Jak sprawdzić”).
 
+## Baza piratów z misji 1 (dopisane po pierwszym przeglądzie)
+
+Użytkownik: „ciężko mi decydować, jak nie widzę gry”. Dlatego druga strona: `dema/baza-piratow-kawalki.html`, baza z misji 1 (85 tys. węzłów, dx = 40, ta sama budowa co w grze) bez skryptu zniszczeń, w barwach piratów, z kamery z góry jak w grze. Niszczy się ją narzędziami (klik w kadr bez przeciągania, klawisze 1–5):
+
+- **Krater**: w miejscu kliknięcia, w pierwszy element na linii wzroku.
+- **Działo** i **Ciężkie działo**: jak trafienie gracza w misji 1. Pocisk leci w płaszczyźnie gry od dołu kadru, krater w pierwszym elemencie pod nią, promień jak w grze (zwykłe około 80 j., ciężkie 200 j.). F trzymane: seria w kursor.
+- **Taran (statek)**: statek wpada od dołu kadru, nurkuje przez kliknięty punkt i ryje kanał przez bazę.
+- **U albo przycisk „Upadek (HP 0)”**: jak przy zniszczeniu bazy w grze. Szyja i sektory dysku pęknięte, po 3 s kotwice puszczają falą od osi habitatu i cała baza spada (w demie na podłogę 3,4 km niżej, w grze na planetoidę).
+
+Różnice wobec gry: w grze baza ma skórę z wypieku starego modelu (lampy, okna, napisy) i wnętrza pomieszczeń, tu jest sama barwa piratów. Pod bazą jest płaska podłoga zamiast planetoidy. Tryb Woksele na tej stronie nie zaokrągla kół habitatu (w grze robi to shader gry), kawałki je zaokrąglają.
+
+Sprawdzone bez okna (`node scripts/webgpu/woksele-baza-narzedzia.mjs`): działo, ciężkie działo, taran, upadek, w trybach Woksele i Kawałki, 0 pipeline'ów synchronicznych, bez błędów konsoli.
+
 ## Jak to działa (krótko)
 
 - **Kawałki z fizyki.** Wiązania wewnątrz ziarna fizyki są sześć razy mocniejsze i się nie kruszą, więc budynek pęka głównie po granicach ziaren. Kawałek najwyższego poziomu to spójna grupa węzłów jednego ziarna: płyta stropu, odcinek słupa, płat ściany. Pękają tam, gdzie pęka fizyka.

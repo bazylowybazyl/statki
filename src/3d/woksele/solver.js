@@ -31,7 +31,8 @@ export const KRATER_N = 4;    // kraterów na klatkę, reszta czeka do następne
 export const SLOTY_K = 32;    // środki kraterów policzone na GPU (nosiciel, strzał), pierścień
 export const BLYSKI = 64;     // pierścień rekordów błysku (§ 4.8), obraz: pyl.js
 // Moc, obcięcie promienia ognia i liczba cząstek kłębu wg rodzaju eksplozji (propozycja S5 § 4). Krater bez rodzaju i strzał jak kula główna.
-const BLYSK_RODZ = { glowna: { moc: 3.2, rMax: 1e9, klab: 40 }, wieza: { moc: 3.2, rMax: 110, klab: 40 }, wspornik: { moc: 2.4, rMax: 70, klab: 0 }, mala: { moc: 1.8, rMax: 1e9, klab: 10 } };
+// taran: krater co krok na drodze statku w demie (narzedzia.js), słaby błysk i trochę kłębu zamiast wybuchu w każdej klatce.
+const BLYSK_RODZ = { glowna: { moc: 3.2, rMax: 1e9, klab: 40 }, wieza: { moc: 3.2, rMax: 110, klab: 40 }, wspornik: { moc: 2.4, rMax: 70, klab: 0 }, mala: { moc: 1.8, rMax: 1e9, klab: 10 }, taran: { moc: 0.5, rMax: 60, klab: 6 } };
 /** Bit flagi węzła: rozerwanie z kCzas zostawia wiązania wewnątrz ziarna (S = 3 zamiast 2). */
 export const BIT_ZOSTAW = 1 << 16;
 /** Bit flagi węzła: reszta kuli krateru rozrywa go przez S = 3. Bez bitu węzeł poza rS zostaje nietknięty (scena z szwami). */

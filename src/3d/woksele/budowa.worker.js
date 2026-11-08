@@ -16,7 +16,8 @@ self.onmessage = ({ data: { id, ziarno, lodS1, miasto, kawalki } }) => {
       // Dysk sceny (S3, S5): wieniec po okręgu jak w obraz.js (rDysk).
       const iDysk = plan.scena.meta?.grupy?.findIndex((q) => q.nazwa === 'dysk') ?? -1;
       const R = plan.scena.meta?.dysk?.R ?? (plan.scena.meta?.typ === 'dysk' ? plan.scena.meta.R : 0);
-      const kaw = zbudujKawalki(w, { ...(kawalki.kawalki ?? {}), ...(iDysk >= 0 && R > 0 ? { kolo: { grupa: iDysk, R } } : {}) });
+      // Baza piratów: koła habitatu z układu (plan.kola), jak w grze.
+      const kaw = zbudujKawalki(w, { ...(kawalki.kawalki ?? {}), ...(iDysk >= 0 && R > 0 && R < 1e8 ? { kolo: { grupa: iDysk, R } } : {}), ...(plan.kola ? { kola: plan.kola } : {}) });
       const zbr = wybierzZbrojenie(w, kaw, kawalki.zbrojenie ?? {});
       wynik.kaw = kaw;
       wynik.zbr = zbr;

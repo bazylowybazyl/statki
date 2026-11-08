@@ -549,6 +549,8 @@ export function scenaB1(oo = {}) {
     dane,
     gpu: { zerujL: false, kratery: pl.kratery, puscKotwiceF: pl.puscKotwiceF },
     czesci,
+    // Promienie kół habitatu jak ustawKola w wGrze.js: obraz kawałków dociąga do nich narożniki części z bitem koła (kawalki.js, opcje.kola).
+    kola: [Hs.neckR, Hs.coreR, Hs.headR, Hs.ringR0, Hs.innerR - Hs.innerW, Hs.innerR, Hs.ringR1, Hs.drumR - Hs.wall, Hs.drumR, Hs.tier2R, Hs.tier1R, Hs.discR],
     wezlySzybu: wSzyb,
     // Pola jak plan miasta: pokaz.js bierze stąd tony części, kamerę z bliska i statBazy.
     miasto: {

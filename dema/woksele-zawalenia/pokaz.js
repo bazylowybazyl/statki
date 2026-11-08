@@ -7,6 +7,7 @@ import { OPCJE_PYLU } from '../../src/3d/woksele/pyl.js';
 import { DX_MIASTA, POJEMNOSC_MIASTA } from '../../src/3d/woksele/scenaMiasta.js';
 import { DX_BAZY, POJEMNOSC_BAZY } from '../../src/3d/woksele/scenaBazy.js';
 import { wypiekZeZbrojeniem, statystykaKawalkow } from '../../src/3d/woksele/kawalki.js';
+import { createNarzedzia, NARZEDZIA } from './narzedzia.js';
 
 const H = 1 / 60;
 const STANIE_POMIJANE = 60; // § 5.2: stanie przed zdarzeniem skrócone o sekundę; stojąca wieża się nie rusza (W1), więc kroki idą od razu przy resecie
@@ -42,6 +43,8 @@ const SCENY = {
   M3: { nazwa: 'Miasto: tysiące', miasto: true, pomin: 0, dalekie: true, cien: [[0, 900, 100], 3700] },
   // Baza piratów (plan LOD § 5c): kamery przez KAM_MIASTA z polem baza, pojemność z POJEMNOSC_BAZY, kamera cienia z rozmiaru sceny.
   B1: { nazwa: 'Baza piratów', miasto: true, baza: true, pomin: 0, cienZapas: 1.05 },
+  // Baza bez skryptu: niszczy użytkownik (?kawalki=1, narzędzia). Start z kamery z góry jak w misji 1, pył jak B1.
+  B1R: { nazwa: 'Baza piratów: ręcznie', miasto: true, baza: true, pomin: 0, cienZapas: 1.05, kamStart: 'bGra', pylJak: 'B1' },
 };
 const TEMPA = [[1, '1×'], [0.5, '½×'], [0.25, '¼×'], [0.125, '⅛×']];
 // Demo kawałków (?kawalki=1): tryb obrazu. 0 i 1 to ta sama fizyka (przełączenie w biegu, ten sam stan), 2 ma pręty w fizyce, więc przełączenie do niego i z niego resetuje scenę.
@@ -57,6 +60,9 @@ const KAM_MIASTA = {
   bAtlas: { nazwa: 'Atlas', pxNaJ: 0.14, az: 12, el: 24, cel: [1700, 0, -500], lod: { sloty: 2, cien: 1 }, baza: true },
   bCala: { nazwa: 'Cała baza', pxNaJ: 0.085, az: 12, el: 24, cel: [1700, 0, -900], lod: { sloty: 2, cien: 1 }, baza: true }, // okno 1280 × 720: cała baza i podłoga, węzeł 3,4 px
   bBliska: { nazwa: 'Z bliska', pxNaJ: 0.5, az: 28, el: 10, zCelu: true, lod: { sloty: 7, cien: 2 }, baza: true },
+  // Kamera misji 1: prawie pionowo z góry (płaszczyzna gry to XY). Atlas przy oddaleniu (0,14 px/j.) i przybliżona (0,4 px/j.) nad habitatem.
+  bGra: { nazwa: 'Z góry (gra)', pxNaJ: 0.14, az: 0, el: 88, cel: [1800, 200, 0], lod: { sloty: 2, cien: 1 }, baza: true },
+  bGraBlisko: { nazwa: 'Z góry, bliżej', pxNaJ: 0.4, az: 0, el: 88, cel: [600, 0, 200], lod: { sloty: 7, cien: 2 }, baza: true },
 };
 const CIEN_MIASTA = { bias: -2.5 / 16000, normalBias: 0.7 }; // stałe wieży (9,6 j. głębi, 2 j. wzdłuż normalnej) to jedna czwarta budynku
 
@@ -88,6 +94,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   const KAWALKI = adres.get('kawalki') === '1';
   const obraz = createWokseleObraz({ solver, camera, aoTryb: adres.get('ao') || 'film', kawalki: KAWALKI });
   // ?kawOp={...}: opcje prefraktury (OPCJE_KAWALKOW), ?zbrojenie={"gestosc":0.4,"ciagl":4,"sila":3}: pręty (OPCJE_ZBROJENIA). Idą do wątku budowy.
+  // Narzędzia niszczenia (klik, działa, taran, upadek): siatki w scenie obrazu przed rozgrzewką.
+  const narz = KAWALKI ? createNarzedzia({ solver, obraz, camera, kanwa }) : null;
   const opcjeKawalkow = KAWALKI ? { kawalki: adres.has('kawOp') ? JSON.parse(adres.get('kawOp')) : {}, zbrojenie: adres.has('zbrojenie') ? JSON.parse(adres.get('zbrojenie')) : {} } : null;
   // AGENT: miasto dalekie tylko na stronie, która je pokazuje: nowy materiał i kernel, a stare sceny mają zostać bez zmian co do pipeline'u.
   const dalekie = adres.get('scena') === 'M3' ? (await import('./miastoDalekie.js')).createMiastoDalekie({ solver, obraz }) : null;
@@ -103,6 +111,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
 
   function krokSceny() {
     if (stan.krok >= stan.pelnyOd) { obraz.pelnyObraz(true); stan.pelnyOd = Infinity; }
+    narz?.krok(renderer);
     solver.krok(renderer);
     dalekie?.krok(stan.krok + 1);
     if (stan.pierwszyKrok) { obraz.krokBezLimitu(renderer); stan.pierwszyKrok = false; } else obraz.krok(renderer);
@@ -138,7 +147,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       const c = {};
       c.obietnica = new Promise((ok, nie) => { c.ok = ok; c.nie = nie; });
       czekajace.set(id, c);
-      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? bazaAdresu : miastoAdresu, ...(opcjeKawalkow && !SCENY[id]?.miasto ? { kawalki: opcjeKawalkow } : {}) });
+      watek.postMessage({ id, ziarno: ziarnoAdresu, lodS1: lodS1Adresu, miasto: SCENY[id]?.baza ? bazaAdresu : miastoAdresu, ...(opcjeKawalkow && (!SCENY[id]?.miasto || SCENY[id]?.baza) ? { kawalki: opcjeKawalkow } : {}) });
     }
     return czekajace.get(id).obietnica;
   }
@@ -169,11 +178,15 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     const trybSceny = kaw ? stan.tryb : 0;
     const w = trybSceny === 2 ? (wypieki.get(id).wZbr ??= wypiekZeZbrojeniem(w0, zbr)) : w0;
     // Kamery baza / miasto to osobne zestawy na jednym panelu.
-    if (opis.miasto && !!KAM_MIASTA[stan.kamMiasta].baza !== !!opis.baza) stan.kamMiasta = opis.baza ? 'bAtlas' : 'atlas';
+    if (opis.miasto && !!KAM_MIASTA[stan.kamMiasta].baza !== !!opis.baza) stan.kamMiasta = opis.baza ? (opis.kamStart ?? 'bAtlas') : 'atlas';
+    if (opis.kamStart && kamera) stan.kamMiasta = opis.kamStart;
+    narz?.reset();
+    const bU = przyciski.get('n:upadek');
+    if (bU) bU.style.display = opis.baza ? '' : 'none';
     for (const n of Object.keys(KAM_MIASTA)) przyciski.get(`k:${n}`).style.display = !!KAM_MIASTA[n].baza === !!opis.baza ? '' : 'none';
     solver.wczytaj(w);
     solver.ustawPlan(g);
-    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
+    obraz.wczytaj(w, { rDysk, poklad, pyl: adres.get('pyl') === 'film' ? null : OPCJE_PYLU[opis.pylJak ?? id], lod: lodAdresu ?? (opis.miasto ? KAM_MIASTA[stan.kamMiasta].lod : opis.lod), budynki: miasto?.budynki ?? null, piraci: !!opis.baza && KAWALKI }); // ?pyl=film: A/B parametrów pyłu sceny kontra opcje filmu
     if (obraz.kawalki) {
       if (kaw && stan.kawScena !== `${id}:${trybSceny === 2}`) { obraz.kawalki.wczytaj(kaw, trybSceny === 2 ? zbr : null, w.n, w.dx); stan.kawScena = `${id}:${trybSceny === 2}`; } else if (kaw) obraz.kawalki.reset();
       if (stan.rozgrzane) obraz.ustawTryb(trybSceny);
@@ -278,17 +291,17 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     location.search = q.toString();
   }
   /** Baza piratów na stronie bez pojemności: to samo przeładowanie co miasto, przycisk od razu daje ?scena=B1&maxWez=…&nKom=…. */
-  function przeladujBaze() {
+  function przeladujBaze(id = 'B1') {
     const p = POJEMNOSC_BAZY[dxBazy];
     const q = new URLSearchParams(location.search);
-    q.set('scena', 'B1');
+    q.set('scena', id);
     q.set('maxWez', String(p.maxWez));
     q.set('nKom', String(p.nKom));
     location.search = q.toString();
   }
   for (const id of Object.keys(SCENY)) {
     if (SCENY[id].ukryta) continue;
-    const akcja = SCENY[id].baza ? () => { if (bazaSieMiesci) wejdz(id); else przeladujBaze(); } : SCENY[id].miasto ?() => { if (miastoSieMiesci && (dalekie || !SCENY[id].dalekie)) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
+    const akcja = SCENY[id].baza ? () => { if (bazaSieMiesci) wejdz(id); else przeladujBaze(id); } : SCENY[id].miasto ?() => { if (miastoSieMiesci && (dalekie || !SCENY[id].dalekie)) wejdz(id); else przeladujMiasto(id, dxMiasta); } : () => { wejdz(id); };
     const b = dodaj(gr1, SCENY[id].nazwa, akcja, `s:${id}`);
     b.disabled = !zdarzeniaDostepne(id);
   }
@@ -311,13 +324,21 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     for (const [t, opis] of TRYBY) dodaj(panelObrazu, opis, () => ustawTrybObrazu(t), `o:${t}`);
     panelObrazu.hidden = false;
   }
+  // Narzędzia: klik w kadr bez przeciągania używa wybranego (klawisze 1–5), F trzymane strzela seriami w kursor, U: upadek jak przy HP 0 (tylko baza).
+  const panelNarzedzi = nowaGrupa('panelNarzedzia');
+  const ustawNarzedzie = (n) => { narz?.ustaw(n); zaznacz(); };
+  if (narz) {
+    for (const [n, opis] of NARZEDZIA) dodaj(panelNarzedzi, opis, () => ustawNarzedzie(n), `n:${n}`);
+    dodaj(panelNarzedzi, 'Upadek (HP 0)', () => narz.uzyj('upadek'), 'n:upadek');
+    panelNarzedzi.hidden = false;
+  }
   const panelGestosci = nowaGrupa('panelGestosc');
   for (const n of Object.keys(KAM_MIASTA)) dodaj(panelKamer, KAM_MIASTA[n].nazwa, () => kameraMiasta(n), `k:${n}`);
   for (const dx of Object.keys(POJEMNOSC_MIASTA).map(Number).sort((a, b) => b - a)) dodaj(panelGestosci, `dx ${dx}`, () => { if (dx !== dxMiasta) przeladujMiasto(stan.scena, dx); }, `d:${dx}`);
   stan.kamMiasta = 'atlas';
   function zaznacz() {
     for (const [k, b] of przyciski) {
-      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}`;
+      const wl = k === `s:${stan.scena}` || k === `t:${stan.tempo}` || k === `k:${stan.kamMiasta}` || k === `d:${dxMiasta}` || k === `o:${stan.tryb}` || k === `n:${narz?.narzedzie}`;
       b.classList.toggle('wl', wl);
     }
     bPauza.classList.toggle('wl', stan.pauza);
@@ -335,6 +356,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     else if (e.code === 'KeyP') { stan.licznik = !stan.licznik; licznik.hidden = !stan.licznik; }
     else if (e.code === 'KeyH') panel.hidden = !panel.hidden;
     else if (e.code === 'KeyK' && KAWALKI) ustawTrybObrazu((stan.tryb + 1) % 3);
+    else if (narz && /^Digit[1-5]$/.test(e.code)) ustawNarzedzie(NARZEDZIA[Number(e.code.slice(5)) - 1][0]);
+    else if (narz && e.code === 'KeyU' && SCENY[stan.scena]?.baza) narz.uzyj('upadek');
   });
 
   // ── Start ── Rozgrzewka przed pierwszą klatką, potem efekt od razu.
@@ -345,9 +368,10 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   ustawScene(scenaStartu, { pomin: false });
   zmienRozmiar();
   await obraz.rozgrzej(renderer);
-  // Rozgrzewka szła z widocznymi wszystkimi siatkami (bryły, kawałki, druty), dopiero teraz tryb obrazu.
+  // Rozgrzewka szła z widocznymi wszystkimi siatkami (bryły, kawałki, druty, narzędzia), dopiero teraz tryb obrazu.
   stan.rozgrzane = true;
   obraz.ustawTryb(stan.trybSceny ?? 0);
+  narz?.schowaj();
   // Rozgrzewka szła na scenie bez kroków, pomijane kroki stania idą już po niej. Harness liczy czas sceny od zera.
   if (mig) await wgrajMigawke(mig);
   else if (!adres.has('bezPominiecia')) for (let k = 0; k < SCENY[stan.scena].pomin; k++) krokSceny();
@@ -371,6 +395,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
     }
     sledzSrodek();
     sterowanie.update();
+    if (narz) { narz.serie(teraz); narz.klatka(stan.akum); }
     if (stan.rysowac !== false) obraz.rysuj(renderer, camera, stan.akum);
     stan.msKlatki = dtMs;
     if (stan.licznik) {
@@ -383,7 +408,8 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
   }
   requestAnimationFrame(petla);
   // Budowa w tle: pod harnessem miasta tylko scena z adresu (dx = 5 to około minuta CPU na scenę), a miasto tylko na stronie, która je pomieści.
-  if (!lodS1Adresu && !(window.__harness && (adres.has('miasto') || adres.get('scena') === 'B1'))) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta && (SCENY[id].baza ? bazaSieMiesci : !SCENY[id].miasto || miastoSieMiesci)) wypiek(id);
+  // Strona z bazą na starcie (B1, B1R): bez budowy pozostałych scen w tle, sama baza to 85 tys. węzłów i jej kawałki.
+  if (!lodS1Adresu && !SCENY[scenaStartu]?.baza && !(window.__harness && (adres.has('miasto') || adres.get('scena') === 'B1'))) for (const id of Object.keys(SCENY)) if (zdarzeniaDostepne(id) && !SCENY[id].ukryta && (SCENY[id].baza ? bazaSieMiesci : !SCENY[id].miasto || miastoSieMiesci)) wypiek(id);
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
   Object.assign(wok, {
@@ -415,6 +441,7 @@ export async function startPokaz({ renderer, solver, wok, device, adres }) {
       kamera(k) { ustawKamere(camera, sterowanie, k); },
       /** Harness, demo kawałków: tryb obrazu (jak przycisk) i stan kawałków z GPU. */
       tryb(t) { ustawTrybObrazu(t); return { tryb: stan.tryb, trybSceny: stan.trybSceny }; },
+      narzedzia: narz,
       async statKawalki() {
         const kw = obraz.kawalki, wy = wypieki.get(stan.scena);
         if (!kw || !wy?.kaw) return null;

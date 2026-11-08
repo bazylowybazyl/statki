@@ -1020,7 +1020,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
   }
 
   /** Dane statyczne sceny i stan obrazu od zera: bez nowych pipeline'ów. */
-  function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null, lod = null, budynki = null } = {}) {
+  function wczytaj(w, { rDysk = 0, poklad = null, pyl: opcjePylu = null, lod = null, budynki = null, piraci = false } = {}) {
     pyl.wczytaj(w, opcjePylu);
     slotyWez = lod?.sloty ?? 7;
     slotyCien = lod?.cien ?? slotyWez;
@@ -1042,7 +1042,7 @@ export function createWokseleObraz({ solver, camera, aoTryb = 'film', wGrze = fa
       dane[b + 3] = zi >= 0 ? 0.7 + (0.55 * (hz & 255)) / 255 : 1;
       // Wieniec dysku jest kotwicą, ale ciemna kotwica rysowałaby na pokładzie zygzak po komórkach.
       const kb = rDysk > 0 && kd === 5 ? 4 : kd;
-      const pal = wGrze ? PAL_PIRACI : PAL;
+      const pal = wGrze || piraci ? PAL_PIRACI : PAL; // piraci: baza w demie w barwach gry (same dane, graf bez zmian)
       dane[b + 4] = pal[kb][0]; dane[b + 5] = pal[kb][1]; dane[b + 6] = pal[kb][2]; dane[b + 7] = m0[i];
       const q = 12 * i;
       rama[q] = 1; rama[q + 1] = 0; rama[q + 2] = 0; rama[q + 3] = 0;

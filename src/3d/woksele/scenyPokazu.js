@@ -57,6 +57,8 @@ export const PLANY_POKAZU = {
   M3: (ziarno, lod, miasto) => planM3(miasto ?? {}),
   // Baza piratów (plan LOD § 5c): opcje z adresu (?baza={"dx":80}), strona podaje je tym samym polem.
   B1: (ziarno, lod, baza) => scenaB1(baza ?? {}),
+  // Ta sama baza bez skryptu zniszczeń: niszczy użytkownik narzędziami dema (dema/woksele-zawalenia/narzedzia.js), jak gracz w misji 1.
+  B1R: (ziarno, lod, baza) => scenaB1({ ...(baza ?? {}), stoi: true }),
   // Ziarno z adresu strony (?ziarno=7), domyślnie 21 jak w filmie. Pozostałe sceny argumentu nie czytają.
   S5: (ziarno) => S5({ miejsce: 'g', ...(ziarno === undefined ? {} : { ziarno }) }),
   S5v: (ziarno) => S5({ miejsce: 'proznia', ...(ziarno === undefined ? {} : { ziarno }) }),

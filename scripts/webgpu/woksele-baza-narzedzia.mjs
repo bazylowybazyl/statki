@@ -1,0 +1,109 @@
+// Sprawdzenie dema bazy piratów z narzędziami (dema/baza-piratow-kawalki.html, scena B1R, ?kawalki=1) w headless Chrome, priorytet BelowNormal.
+// Ten sam scenariusz w trybie Woksele i Kawałki (ta sama fizyka, przełączenie w zatrzymanej chwili): działo w wieżowce i habitat, ciężkie działo w W-2, taran przez habitat,
+// upadek jak przy HP 0. Kadry z góry jak w misji 1 i z bliska, stan kawałków, pipeline'y synchroniczne po rozgrzewce (ma być 0), błędy konsoli.
+//
+//   node scripts/webgpu/woksele-baza-narzedzia.mjs [--out .tmp/woksele-demo/KAW/baza] [--rozmiar 1280x720] [--port 5432] [--zbrojenie 1]
+import os from 'node:os';
+os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { execFile } from 'node:child_process';
+import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, repo, screenshotPng } from './wspolne.mjs';
+
+const args = parseArgs();
+const wyDir = resolve(repo, args.out || '.tmp/woksele-demo/KAW/baza');
+mkdirSync(wyDir, { recursive: true });
+const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
+const raport = { start: new Date().toISOString(), kadry: [], stan: [], bledy: [] };
+const zapisz = () => writeFileSync(join(wyDir, 'raport.json'), JSON.stringify(raport, null, 1) + '\n');
+
+const GRY = /^(League of Legends|LeagueClient|RuneScape.*|.*Dragonwilds.*|RSDragon.*|osclient.*|G1R-Win64-Shipping)$/i;
+const ps = () => new Promise((ok) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-Process | ForEach-Object { $_.ProcessName } | Sort-Object -Unique'], { windowsHide: true, timeout: 60000 }, (e, o) => ok(e ? null : String(o))));
+for (let t0 = Date.now(); ;) {
+  const out = await ps();
+  const gry = out === null ? ['?'] : out.split(/\r?\n/).filter((s) => GRY.test(s.trim()));
+  if (!gry.length) break;
+  if (Date.now() - t0 > 30 * 60000) { console.error('PRZERWANE: gra użytkownika ponad 30 min'); process.exit(3); }
+  console.log(`gra w toku (${gry.join(', ')}), czekam`);
+  await sleep(30000);
+}
+
+const { server, base } = await startVite(Number(args.port || 5432));
+const [W, H] = String(args.rozmiar || '1280x720').split('x').map(Number);
+const chrome = await startChrome({ width: W, height: H, extraArgs: ['--enable-webgpu-developer-features'] });
+const logi = await attachLogs(chrome);
+const { cdp } = chrome;
+const ev = (e, t = 1800000) => evaluate(cdp, e, t);
+let kod = 0;
+
+// Kamery bazy: z góry jak w misji 1 (pokaz.js, bGra) i z ukosa przy habitacie.
+const UKOS = { az: 25, el: 28, cel: [0, 0, 200], odl: 5200 };
+const Z_GORY = { az: 0, el: 88, cel: [1200, 200, 0], odl: 9800 };
+
+try {
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${0x5eed1234};\n${INJECT}` });
+  const zap = `kawalki=1&scena=B1R&maxWez=90000&nKom=131072&maksKl=60&tryb=${args.zbrojenie ? 2 : 1}`;
+  await cdp.send('Page.navigate', { url: `${base}/dema/woksele-zawalenia.html?${zap}` });
+  await waitFor(cdp, '!!(window.__harness && ((window.__harness.clock.mode = "real") === "real"))', 60000, 20);
+  if (!await waitFor(cdp, '!!(window.__wok && (window.__wok.gotowe || window.__wok.blad))', 600000, 200)) throw new Error('strona nie wstała');
+  const blad = await ev('window.__wok.blad');
+  if (blad) throw new Error(blad);
+  const adapter = await ev('window.__wok.adapter');
+  if (!/nvidia/i.test(`${adapter?.vendor} ${adapter?.description}`)) { kod = 4; throw new Error(`karta: ${JSON.stringify(adapter)}`); }
+  raport.adapter = adapter;
+  const pipeStart = await ev('window.__harness.pipes.list.length');
+  await ev('window.__wok.pokaz.panel(false); true');
+  const kadr = async (nazwa, t) => {
+    for (const [kam, k] of [['gora', Z_GORY], ['ukos', UKOS]]) {
+      await ev(`window.__wok.pokaz.kamera(${JSON.stringify(k)}); true`);
+      for (const tr of args.zbrojenie ? [2] : [0, 1]) {
+        if (!args.zbrojenie) await ev(`window.__wok.pokaz.tryb(${tr}); true`);
+        await ev('window.__wok.pokaz.przerysuj()');
+        const plik = `${nazwa}_t${t.toFixed(1)}_${kam}_${['woksele', 'kawalki', 'zbrojenie'][tr]}.png`;
+        await screenshotPng(cdp, join(wyDir, plik));
+        raport.kadry.push(plik);
+      }
+    }
+    const st = await ev('window.__wok.pokaz.statKawalki()');
+    raport.stan.push({ nazwa, t, ...st, stat: undefined });
+    console.log(`${nazwa} t = ${t}: pękło L0 ${st?.peklo?.[0]}/${st?.K0}, L1 ${st?.peklo?.[1]}/${st?.K1}, węzły na poziomach ${st?.wezly?.join(' / ')}`);
+    zapisz();
+  };
+  const N = 'window.__wok.pokaz.narzedzia';
+  await ev('window.__wok.pokaz.doChwili(1)');
+  await kadr('01-przed', 1);
+  // Działo: seria w W-1 i habitat, jak gracz w misji 1.
+  for (const [x, y] of [[-2777, 0], [-2700, 120], [-2850, -100], [-2600, -60], [-150, 200], [120, -180], [0, 350]]) await ev(`${N}.uzyj('dzialo', { x: ${x}, y: ${y} })`);
+  await ev('window.__wok.pokaz.doChwili(3)');
+  await kadr('02-dzialo', 3);
+  for (const [x, y] of [[2663, 0], [2560, 120], [2760, -110]]) await ev(`${N}.uzyj('ciezkie', { x: ${x}, y: ${y} })`);
+  await ev('window.__wok.pokaz.doChwili(5)');
+  await kadr('03-ciezkie', 5);
+  await ev(`window.__wok.pokaz.kamera(${JSON.stringify(Z_GORY)}); true`);
+  await ev(`${N}.uzyj('taran', { x: 0, y: 0 })`);
+  await ev('window.__wok.pokaz.doChwili(6)');
+  await kadr('04-taran', 6);
+  await ev('window.__wok.pokaz.doChwili(9)');
+  await kadr('05-po-taranie', 9);
+  await ev(`${N}.uzyj('upadek')`);
+  await ev('window.__wok.pokaz.doChwili(14)');
+  await kadr('06-upadek', 14);
+  await ev('window.__wok.pokaz.doChwili(22)');
+  await kadr('07-ruiny', 22);
+  const nowe = await ev(`window.__harness.pipes.list.slice(${pipeStart}).map((p) => ({ nazwa: p.nazwa, sync: !!p.sync }))`);
+  raport.pipeline = { poRozgrzewce: nowe.length, synchroniczne: nowe.filter((p) => p.sync).length, nazwy: nowe.filter((p) => p.sync).map((p) => p.nazwa).slice(0, 20) };
+  console.log(`pipeline'y po rozgrzewce: ${nowe.length}, synchroniczne ${raport.pipeline.synchroniczne}`);
+  if (raport.pipeline.synchroniczne) kod = 1;
+} catch (e) {
+  raport.bledy.push(String(e?.stack || e));
+  console.error(e);
+  if (!kod) kod = 1;
+} finally {
+  raport.logi = logi.errors().filter((l) => !/favicon/.test(l)).slice(0, 40);
+  if (raport.logi.length) { console.log('błędy konsoli:', raport.logi.slice(0, 5)); if (!kod) kod = 1; }
+  zapisz();
+  await chrome.close().catch(() => {});
+  await server.close().catch(() => {});
+}
+console.log(`raport: ${join(wyDir, 'raport.json')}`);
+process.exit(kod);
