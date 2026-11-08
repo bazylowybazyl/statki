@@ -1,5 +1,7 @@
 # PROPOZYCJA — ekonomia ruchu v2 przy wielu układach gwiezdnych (E18)
 
+> Numeracja w planie (`docs/PLAN-ekonomia-rynki.md` § 4): komputer handlowy to E23 (E22 — kapsuły ratunkowe).
+
 Spisana 2026-11-08 i uzupełniona tego samego dnia o decyzje użytkownika (§ 10.1). To PROJEKT, nie zmiana gry: kodu w `src/` nie ruszałem. Stan wyjściowy to lokalny `main` z 2026-11-08 (`3fb88830`): przebudowa ekonomii E1–E17 scalona, mapa gwiezdna i rejestr układów w `main`, do gry niewpięte. Plan ekonomii: `docs/PLAN-ekonomia-rynki.md` (§ 3.6 kierunek, § 4 zadania E18–E21, § 7 decyzje). Zasady obszarów: reguły `ruch-v2`, `uklady-gwiezdne`, `mapa-gwiezdna`; mapa i floty: `docs/PLAN-mapa-gwiezdna.md`; komputer handlowy: `docs/E7-gracz-na-rynku.md`.
 
 **Ramy od użytkownika (nie do zmiany):**
@@ -48,8 +50,8 @@ Pomiary szły w ciszy innych sesji; w tle działał tylko serwer Vite użytkowni
   - w układzie strony kopia rynku z mostu (`getTradeEconomy` / `getTradeOffer`);
   - w innych układach model w tle w workerze ruchu.
 
-  Zapytanie po 1500 rynkach trwa 95 µs na towar (cała ładownia: 0,5 ms), więc „chwila liczenia” to droga wiadomości do workera (1–2 klatki) i ewentualne opóźnienie przekaźników (D14). Część dla jednego układu da się zrobić już teraz (E22a).
-- **Decyzje (§ 10).** D1–D4 rozstrzygnął użytkownik; D5–D18 czekają, z rekomendacjami. Wdrożenie: E19 (generator i świat ruchu z rynków układu), E20 (model w tle na rynek, pełny zapis ze statkami, pliki), E21 (handel konwojów i rynek graniczny), E22 (komputer: kto ile płaci). Każde zadanie przechodzi bramkę bilansu z Układem Słonecznym liczba w liczbę.
+  Zapytanie po 1500 rynkach trwa 95 µs na towar (cała ładownia: 0,5 ms), więc „chwila liczenia” to droga wiadomości do workera (1–2 klatki) i ewentualne opóźnienie przekaźników (D14). Część dla jednego układu da się zrobić już teraz (E23a).
+- **Decyzje (§ 10).** D1–D4 rozstrzygnął użytkownik; D5–D18 czekają, z rekomendacjami. Wdrożenie: E19 (generator i świat ruchu z rynków układu), E20 (model w tle na rynek, pełny zapis ze statkami, pliki), E21 (handel konwojów i rynek graniczny), E23 (komputer: kto ile płaci). Każde zadanie przechodzi bramkę bilansu z Układem Słonecznym liczba w liczbę.
 
 ## 1. Generator rynków z opisu układu
 
@@ -445,7 +447,7 @@ API rynku wystarcza, bez kodu planisty:
   - stocznie modelu (pobór stoczni na rynkach) budują okręty w tempie: zużyte podzespoły / koszt okrętu ważony doktryną (`WARSHIP_CLASSES`). W Układzie Słonecznym to ~200–217 okrętów/h (795–867 w 4 h przy ziarnach 7, 11, 23);
   - patrol sektora po rozbiciu odradza się dopiero wtedy, gdy frakcja ma w swoich układach ~30 gotowych okrętów: zdejmuje je z floty układów frakcji, proporcjonalnie do zapasu. Bez okrętów patrol czeka, a piraci zyskują;
   - strata patrolu tworzy popyt: mnożnik poboru stoczni frakcji w modelu rośnie o udział strat z ostatniej godziny (do ×2), więc ceny podzespołów w układach frakcji rosną, a konwoje je tam wiozą.
-- **Wojna między frakcjami** wewnątrz układu proceduralnego nie istnieje, bo właściciel jest jeden; w Układzie Słonecznym zostaje bez zmian. Wojna między układami (frakcja zajmuje układ) to osobny etap, poza E19–E22.
+- **Wojna między frakcjami** wewnątrz układu proceduralnego nie istnieje, bo właściciel jest jeden; w Układzie Słonecznym zostaje bez zmian. Wojna między układami (frakcja zajmuje układ) to osobny etap, poza E19–E21 i E23.
 
 ## 8. Gracz
 
@@ -505,15 +507,15 @@ Model nie zna rezerwacji z pojedynczych kursów, więc ilość „kupi” w inny
 
 Sesja `workforce-w5-w7` wystawia kontrakty obsady przez API ofert rynku (skup `workforce`). Zapytanie „kto kupuje” dla towaru `workforce` pokaże je bez nowego kodu: rynek, ile osób, ile płaci, z modułem pasażerskim Atlasa jako „ładownią”. W modelu w tle obsada liczy się jak w świecie (podaż habitatu, rotacja), więc kontrakty innych układów też będą widoczne.
 
-### 9.7 Wdrożenie (E22)
+### 9.7 Wdrożenie (E23)
 
-- **E22a — jeden układ, już teraz** (zależy tylko od E7 i mostu, bez E19–E21):
+- **E23a — jeden układ, już teraz** (zależy tylko od E7 i mostu, bez E19–E21):
   - `TrafficBridge.findTradePartners(resourceId, side, filters)` na kopii rynku z mostu, liczone na stronie: 34 rynki Słońca, mikrosekundy, bez workera;
   - karta „Ładownia” w tablecie, podpowiedź w terminalu, panel „Kupcy towaru” w CIC;
   - średnia cena zakupu partii w ładowni (zapis gracza).
 
   Testy: wynik jak terminal (ta sama kopia), sortowanie, „ma dość” i „nie skupuje”. Gra: `scripts/webgpu/rynek-gra.mjs` rozszerzony o zapytanie z ładowni.
-- **E22b — wiele układów** (po E20, z E21 dla rynku granicznego):
+- **E23b — wiele układów** (po E20, z E21 dla rynku granicznego):
   - wiadomość workera `trade-buyers` łączy kopię mostu (układ strony) z modelem w tle (inne układy) i wiedzą gracza (świeżość D13);
   - droga z `lanePath`, opóźnienie przekaźników (D14), wskaźnik liczenia.
 
@@ -615,9 +617,9 @@ Każdy krok: commit po każdym etapie, bramka bilansu Układu Słonecznego (`nod
   - bramka 3 układów proceduralnych bez dowozu stałego (konwoje karmią import);
   - zbieżność cen: rozrzut cen sektora po 4 h ≤ ×2 wartości (dziś bez handlu ×4,6).
 
-**E22 — komputer handlowy: kto ile płaci** (§ 9.7):
-- **E22a** (jeden układ, od razu): pliki `src/game/trafficBridge.js` (`findTradePartners`), `src/ui/cockpitUI.js` (karta „Ładownia”), terminal w `index.html` (karta „Handel”), `src/ui/cicTradeLayer.js` (panel „Kupcy towaru”), zapis gracza (średnia cena zakupu). Testy: zgodność z ofertą terminalu, sortowanie i filtry. Gra: `rynek-gra.mjs`.
-- **E22b** (wiele układów, po E20): wiadomość `trade-buyers` w `trafficCore.js` / `trafficProtocol.js`, wiedza gracza (D13) w zapisie gracza, opóźnienie przekaźników (D14), droga z `lanePath`. Testy: łączenie źródeł, świeżość, czas odpowiedzi.
+**E23 — komputer handlowy: kto ile płaci** (§ 9.7):
+- **E23a** (jeden układ, od razu): pliki `src/game/trafficBridge.js` (`findTradePartners`), `src/ui/cockpitUI.js` (karta „Ładownia”), terminal w `index.html` (karta „Handel”), `src/ui/cicTradeLayer.js` (panel „Kupcy towaru”), zapis gracza (średnia cena zakupu). Testy: zgodność z ofertą terminalu, sortowanie i filtry. Gra: `rynek-gra.mjs`.
+- **E23b** (wiele układów, po E20): wiadomość `trade-buyers` w `trafficCore.js` / `trafficProtocol.js`, wiedza gracza (D13) w zapisie gracza, opóźnienie przekaźników (D14), droga z `lanePath`. Testy: łączenie źródeł, świeżość, czas odpowiedzi.
 
 ## 11. Ryzyka
 
