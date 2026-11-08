@@ -522,8 +522,12 @@
       <div class="loading-title">Ładowanie</div>
       <div class="loading-bar"><span id="loading-fill"></span></div>
       <div id="loading-progress" class="loading-progress">0%</div>
+      <!-- rozgrzewka świata ruchu v2 (D17): „Stabilizacja gospodarki” z postępem, póki trwa -->
+      <div id="loading-economy" class="loading-progress loading-economy" hidden></div>
     </div>
   </div>
+  <!-- HUD: rozgrzewka świata ruchu trwa jeszcze po starcie gry (D17) — znika po końcu -->
+  <div id="economy-warmup-hud" class="economy-warmup-hud" hidden></div>
   <!-- przejście przez czerń: tło menu → pierwsza klatka gry (fadeScreen) -->
   <div id="screen-fade" aria-hidden="true"></div>
 
@@ -16780,8 +16784,12 @@
           + `budowa świata ${Math.round(ready.buildMs)} ms`);
       }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
       bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
-      bridge.on('warmup', w => console.info(`[ruch v2] rozgrzewka świata: ${Math.round(w.seconds / 60)} min `
-        + `w ${Math.round(w.ms)} ms CPU workera, ${bridge.stats?.active ?? '?'} aktywnych kursów`));
+      bridge.on('warmup', w => {
+        console.info(`[ruch v2] rozgrzewka świata: ${Math.round(w.seconds / 60)} min `
+          + `w ${Math.round(w.ms)} ms CPU workera, ${bridge.stats?.active ?? '?'} aktywnych kursów`);
+        syncEconomyWarmupStatus();
+        if (gameStarted) window.cockpitUI?.log?.('Gospodarka ustabilizowana — rynki i ruch gotowe.', 'ok');
+      });
       // Stacje misyjne piratów postawione przed startem ruchu (wczytana kampania) — też jako rynki.
       for (const station of stations) registerTrafficV2Market(station, bridge);
       // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
@@ -16790,6 +16798,42 @@
       });
       return bridge;
     }
+
+    // ============================================================
+    // STABILIZACJA GOSPODARKI (D17, docs/PROPOZYCJA-ekonomia-ukladow.md § 10.2a)
+    // Rozgrzewka świata ruchu v2 (E15: 60 min świata, kilka s CPU workera) — gracz widzi, co się dzieje: wiersz
+    // „Stabilizacja gospodarki · N%” na ekranie ładowania, a jeśli trwa jeszcze po starcie gry — znacznik w HUD, który
+    // znika po końcu (wtedy wpis w dzienniku kokpitu). Postęp z kopii mostu (`trafficV2.warmup`: `seconds` / `total`,
+    // worker publikuje go co 250 ms); sam odczyt — gospodarka bez zmian. Sprawdzane co 250 ms, DOM tylko przy zmianie.
+    // ============================================================
+    const economyWarmupLoadingEl = document.getElementById('loading-economy');
+    const economyWarmupHudEl = document.getElementById('economy-warmup-hud');
+    let economyWarmupPct = -1;
+    let economyWarmupHud = false;
+    function syncEconomyWarmupStatus() {
+      const w = trafficV2?.warmup;
+      const active = !!(w && w.active && w.total > 0);
+      const pct = active ? Math.max(0, Math.min(99, Math.floor(100 * w.seconds / w.total))) : -1;
+      const hud = active && gameStarted && !!loadingEl?.classList.contains('hidden');
+      if (pct === economyWarmupPct && hud === economyWarmupHud) return;
+      economyWarmupPct = pct;
+      economyWarmupHud = hud;
+      const label = active ? `Stabilizacja gospodarki · ${pct}%` : '';
+      if (economyWarmupLoadingEl) {
+        economyWarmupLoadingEl.hidden = !active;
+        economyWarmupLoadingEl.textContent = label;
+      }
+      if (economyWarmupHudEl) {
+        economyWarmupHudEl.hidden = !hud;
+        economyWarmupHudEl.textContent = label;
+      }
+    }
+    setInterval(syncEconomyWarmupStatus, 250);
+    window.EconomyWarmupStatus = () => ({
+      active: economyWarmupPct >= 0, pct: economyWarmupPct, hud: economyWarmupHud,
+      loading: economyWarmupLoadingEl ? !economyWarmupLoadingEl.hidden : false,
+      warmup: trafficV2 ? { ...trafficV2.warmup } : null
+    });
 
     /** Pojemności z budynków gry → worker, gdy się zmienią (sprawdzane co 1 s gry). */
     function syncTrafficV2Capacities(dt) {
