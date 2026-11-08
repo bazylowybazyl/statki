@@ -174,6 +174,7 @@ Kierunek (szczegóły zaprojektuje E18):
 - **Wojsko (później).** Patrole frakcji w sektorze uzupełniają straty z produkcji stoczni frakcji w modelu zbiorczym, a straty patroli tworzą popyt na okręty.
 - **Gracz.** Kredyty i ładownia należą do gracza, nie do układu (zapis gracza, `src/game/playerSave.js`). Gracz handluje między układami tak jak konwoje: kupuje tanio w jednym, sprzedaje drożej w innym. Ograniczają go ładownia i paliwo w strefie.
 - **Obsada (workforce)** działa tak samo w każdym układzie. Źródła to habitaty na planetach `terran` i `ocean`, stacje mieszkalne oraz ringi tam, gdzie są.
+- **Informacja o cenach — przez komputer handlowy (decyzja 2026-11-08).** Mapa gwiezdna cen nie pokazuje. Żeby je zobaczyć, gracz podpina się do komputera, który mówi, kto ile płaci za dany towar. Przykład użytkownika: lód w ładowni, gracz najeżdża na niego i dostaje listę kupców (stacja, układ, cena). Komputer może chwilę liczyć (wskaźnik liczenia), ale musi pokazać wynik. Źródła danych: w układzie strony bufor rynku z mostu (`getTradeEconomy` / `getTradeOffer`), w innych układach model w tle. Dlatego model w tle liczy się na stację (rynek), a nie jeden wektor na układ.
 
 ## 4. Zadania
 
@@ -252,7 +253,7 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
 - wygląd wyrw i ewentualna regeneracja pasa (domyślnie brak);
 - statki ruchu widoczne w grze między falą 2 a 3 (§ 3.2);
 - zapis stanu ekonomii i wyrw (E7);
-- wiele układów (§ 3.6, rekomendacja w nawiasie): układ bez gracza liczony modelem zbiorczym w tle, czy zamrożony do następnej wizyty (w tle); ile układów trzyma pełny zapis ekonomii (3 ostatnio odwiedzone, reszta — wektor modelu zbiorczego); import i eksport w układzie gracza widoczne — konwoje wchodzą rogami świata i rozładowują się w portach — czy samo rozliczenie liczbowe przy wejściu (widoczne); ceny innych układów na mapie gwiezdnej (rdzeń na bieżąco przez sieć przekaźników, pogranicze — z ostatniej wizyty).
+- wiele układów (§ 3.6) — decyzje użytkownika 2026-11-08: układ bez gracza liczony W TLE; import i eksport w układzie gracza WIDOCZNE (konwoje wchodzą rogami świata i rozładowują się w portach); ceny NIE na mapie gwiezdnej, tylko przez komputer handlowy („kto ile za co płaci”, § 3.6). Otwarte: ile układów trzyma pełny zapis ekonomii (szczegóły świata ruchu przy powrocie) — użytkownik prosi o szersze wyjaśnienie, E18 mierzy rozmiar i czas.
 
 ## 8. Stan
 
@@ -529,3 +530,5 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Workforce W5–W7 (karta „Kadry”, gracz i habitat, sprite'y promów) nie ruszone — czekają na decyzję użytkownika.
   - „Wczytaj grę” rozwiązane poza tym planem: zapis gracza (18814aa9, `src/game/playerSave.js`, klucz `game`) z przyciskiem „Wczytaj” w menu.
   - Mapa gwiezdna i rejestr układów w `main` (demo, do gry niewpięte). Nowy rozdział § 3.6 „Wiele układów gwiezdnych”, zadania E18–E21 (§ 4), decyzje w § 7.
+- 2026-11-08 E17b w `main` (d09512d6). Sesja E17 najpierw scaliła main do gałęzi (1c2e9bf4): w regułach zostały obie wersje, cień proxy idzie przez pulę rekordów kandydatów z main, a materiał proxy ma i `uNavPhase` (światła nawigacyjne), i `uGridOwner` (światła hali). Scalenie do main bez ruszania niezacommitowanej pracy dwóch innych sesji w folderze `statki` (`index.html`: tylko hunki E17b, cudze zmiany identyczne przed i po). Na scalonym drzewie testy E17b ze strażnikami 220/220 i `npm test` 1908. Sesja E17 na tym samym drzewie: `node --test` bez nowych porażek, gra w workerze 0 sync, proxy i NPC na redzie wyglądają tak samo (mostek, obudowa rdzenia, dysze SIDE, lampy nawigacyjne, smuga cienia).
+- 2026-11-08 użytkownik: workforce W5–W7 w osobnej sesji (`workforce-w5-w7`, start z main przed E17b; przed W7 `git merge main`). Decyzje do § 3.6 i § 7: układ bez gracza w tle, import i eksport widoczne, ceny tylko przez komputer handlowy z listą kupców; pełny zapis — do wyjaśnienia. E18 (projekt, sesja `e18-projekt-ekonomii-wie`) dostała te decyzje.
