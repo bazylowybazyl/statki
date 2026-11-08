@@ -85,6 +85,48 @@ test('odcięta część odlatuje wzdłuż toru (rozpad po rzazie), zamiast wisie
   }
 });
 
+// 2026-11-08 (zgłoszenie: „odcięta część jest dalej jak przyspawana do statku”): wręgi (belki FRAME, do 19 komórek)
+// łączą przeciwległe burty przez wnętrze. Rzaz wzdłuż albo ukośnie zabijał węzły w pasie, a wręgi z końcami poza pasem
+// zostawały nad szczeliną i trzymały połowy razem — rozpad był tylko przy cięciu w poprzek (równolegle do wręgów).
+test('rzaz wzdłuż i ukośnie: wręgi nad szczeliną pękają, połowa odpada, odlatuje i obraca się', () => {
+  for (const [name, x0, y0, x1, y1] of [['wzdłuż', -600, 0, 600, 0], ['wzdłuż obok osi', -600, 60, 600, 60], ['ukośnie', -500, -290, 500, 290]]) {
+    const e = npcAt(0, 0);
+    HullBodies.createHull(e, plate(900, 300));
+    const spawned = [];
+    const prev = HullBodies.onWreckSpawned;
+    HullBodies.onWreckSpawned = (w) => { spawned.push(w); window.wrecks.push(w); };
+    try {
+      const body = e.beamHull.body;
+      const frames = () => {
+        const bs = body.beamStore, act = body.nodeStore.active;
+        let n = 0;
+        for (let i = 0; i < bs.count; i++) if (bs.type[i] === 2 && !bs.broken[i] && act[bs.a[i]] && act[bs.b[i]]) n++;
+        return n;
+      };
+      assert.ok(frames() > 10, `${name}: płyta ma wręgi (${frames()})`);
+      HullBodies.cutSegment(e, x0, y0, x1, y1, 35, { push: true });
+      // żadna żywa belka nie przecina toru rzazu (układ ciała = świat gry z odbitym y przy kącie 0)
+      const s = body.nodeStore, bs = body.beamStore;
+      const lx0 = x0, ly0 = -y0, dx = x1 - x0, dy = -(y1 - y0);
+      for (let i = 0; i < bs.count; i++) {
+        const a = bs.a[i], b = bs.b[i];
+        if (bs.broken[i] || !s.active[a] || !s.active[b]) continue;
+        const sa = (s.x[a] - lx0) * dy - (s.y[a] - ly0) * dx, sb = (s.x[b] - lx0) * dy - (s.y[b] - ly0) * dx;
+        assert.ok(sa * sb >= 0, `${name}: żywa belka typu ${bs.type[i]} nad szczeliną`);
+      }
+      for (let k = 0; k < 30 && spawned.length === 0; k++) HullBodies.step(1 / 120, [e, ...window.wrecks]);
+      assert.ok(spawned.length >= 1, `${name}: odcięta część jest wrakiem`);
+      const big = spawned.reduce((m, w) => (w.beamHull.body.activeNodes > m.beamHull.body.activeNodes ? w : m));
+      const rvx = big.vx - e.vx, rvy = big.vy - e.vy;
+      assert.ok(Math.sqrt(rvx * rvx + rvy * rvy) >= 0.8 * HULL_BODY_CONFIG.cutEdgeMinDv, `${name}: odłam odjeżdża od kadłuba (Δv = ${Math.sqrt(rvx * rvx + rvy * rvy).toFixed(1)})`);
+      assert.ok(Math.abs(big.angVel - e.angVel) >= 0.8 * HULL_BODY_CONFIG.cutEdgeMinDw, `${name}: odłam się obraca (Δω = ${(big.angVel - e.angVel).toFixed(3)})`);
+    } finally {
+      HullBodies.onWreckSpawned = prev;
+      release([e]);
+    }
+  }
+});
+
 test('bez opts.push — jak dawniej: węzły giną w miejscu, kadłub bez impulsu; rzaz z pędem bez Math.random', () => {
   const e = npcAt(0, 0);
   const f = npcAt(0, 0);
