@@ -570,3 +570,11 @@ Zmiana gospodarki, która nie przechodzi bramki, nie wchodzi do main, chyba że 
   - Bramka 4 h razem z W5–W6 zaliczona: przechwyty 14,6–15,4%, kolejka ≤ 1,52, tick ≤ 11 ms. Wariant długi 12 h (na gałęzi): stal 106%, kursy 133–141%, obsada 100%, ładowność 98–100%. `npm test` 1961.
   - Notatka: `docs/POMIAR-zanik-gospodarki-2026-11-08.md`.
   - Zostaje: kolejki w biegu 12 h (Wenus 8–9, Ziemia do 9,5; ruch po 7. h +40%) — sesja robi przepustowość portów — i głód kryjówek (O₂, stal; tak samo w bazie).
+- 2026-11-08 porty Wenus i Westy w `main` (1f6919d8): `berthMultiplier` 4, czyli koło jak na Saturnie. Kolejka w biegu 12 h przy Wenus spadła z 8–11 do ~2. Bramka 4 h zaliczona z zapasem (kolejka 0,81 / 0,73 / 0,87, Io; tick ≤ 10,9 ms); `npm test` 1961.
+  - Wygląd większych doków Wenus i Westy w grze do sprawdzenia jutro (w nocy bez harnessu GPU).
+  - Do decyzji użytkownika — Ziemia w biegu 12 h ma kolejkę 5–6. Przyczyna: 16 hal capital K-7 jest wojskowych i stoi pustych, a frachtowce heavy i mega dzielą 16 stanowisk mega. Warianty: (a) heavy na wolnych halach K-7 (zmienia „K-7 = port wojskowy”), (b) więcej cywilnych stanowisk mega w zatokach Ziemi (układ hal i obraz).
+  - Głód kryjówek w biegu 12 h (O₂, stal) taki sam jak w bazie — osobne zadanie.
+- 2026-11-08 na jutro, scalenie po przeglądzie (wszystko w commitach):
+  - E24 górnicy i złomiarze: `claude/elastic-chaplygin-bede66` @ 6876eca4; decyzje: obraz wraków wojen w tle, wolniejszy hol w bańce.
+  - E23a komputer handlowy i status „Stabilizacja gospodarki”: `claude/blissful-lehmann-95c2ef` @ 6edfa5b8.
+  - W7 i kapsuły — wg ich ostatnich commitów.
