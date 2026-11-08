@@ -295,7 +295,7 @@ export function workSiteNear(state, x, y) {
  * Przegląd miejsc pracy do narzędzi (`snapshot.work`, na żądanie): wyprawy górnicze i złomiarze z etapem ('approach',
  * 'work', 'haul'), punktem pracy, resztą postoju i wrakiem gry. Bez wpływu na świat.
  */
-export function describeWorkSites(state, limit = 80) {
+export function describeWorkSites(state, limit = 600) {
   const out = [];
   const active = state?.world?.registry?.active || [];
   for (let i = 0; i < active.length && out.length < limit; i++) {

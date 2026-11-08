@@ -126,9 +126,12 @@ class TrafficWorkView {
 
   _tow(r, ox, oy, t) {
     const L = this.look;
-    const c = Math.cos(r.angle), s = Math.sin(r.angle);
+    // Zaczep liny od strony wraku (jak `hitchOf` w grze): punkt obrysu holownika w kierunku wraku.
+    let ux = r.tx - r.x, uy = r.ty - r.y;
+    const ul = Math.sqrt(ux * ux + uy * uy) || 1;
+    ux /= ul; uy /= ul;
     const half = r.length * 0.5;
-    const ax = r.x - c * half, ay = r.y - s * half;
+    const ax = r.x + ux * half, ay = r.y + uy * half;
     const pulse = 0.55 + 0.45 * Math.sin(t * 6 + r.id * 0.37);
     this.beams.add(ax - ox, -ay - oy, 20, r.tx - ox, -r.ty - oy, 16, L.tractorWidth,
       L.tractorColor[0], L.tractorColor[1], L.tractorColor[2], L.tractorK * pulse * (r.haul ? 1.25 : 1));

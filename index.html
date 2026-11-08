@@ -17328,7 +17328,7 @@
     // GÓRNICY I ZŁOMIARZE NPC W BAŃCE (E24) — src/game/trafficSalvage.js. Worker ruchu mówi, kto pracuje (rekordy
     // `TrafficV2.actorWorks`): górnik w etapie wydobycia, złomiarz tnie albo holuje wrak. Gra: nowy wrak w bańce gracza
     // (hak `HullBodies.onWreckSpawned`) idzie do rejestru złomiarzy świata ruchu, złomiarz przy wraku zdejmuje węzły
-    // (`cutOuterNode`) albo ciągnie go liną `TowSystem` od rufy, wrak znika (`removeWreckFromWorld` — lista, zimne
+    // (`cutOuterNode`) albo ciągnie go liną `TowSystem` (zaczep od strony wraku), wrak znika (`removeWreckFromWorld` — lista, zimne
     // wraki, `recycleWreckEntity`) po końcu pracy. Obraz: blok `trafficWork` (worker) albo `TrafficWork3D` tutaj (off).
     // Kontenery-łup zniszczonego statku ruchu zostają graczowi (osobne paczki — złomiarz bierze tylko kadłub).
     // ============================================================
@@ -17362,7 +17362,7 @@
       HullBodies.onWreckSpawned = (wreck, parent, parentBody) => {
         if (typeof prevSpawned === 'function') prevSpawned(wreck, parent, parentBody);
         if (!trafficSalvage || !wreck || wreck.dead) return;
-        noteTrafficWreck(trafficSalvage, wreck, trafficWreckSpec(wreck, parent, parentBody), _trafficStepTime, parent);
+        noteTrafficWreck(trafficSalvage, wreck, trafficWreckSpec(wreck, parent, parentBody), _trafficStepTime, parent, parentBody);
       };
     }
     function trafficWreckSpec(wreck, parent, parentBody) {

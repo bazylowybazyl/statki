@@ -23,8 +23,11 @@ export const TRAFFIC_SALVAGE_TUNE = {
   reportDelay: 2,
   /** Wrak dalej od gracza w chwili zgłoszenia — bez zgłoszenia (bańka gry). */
   reportRadius: 60000,
-  /** Odłamy mniejsze niż tyle [j. promienia] — bez zgłoszenia. */
-  minRadius: 70,
+  /**
+   * Odłamy mniejsze niż tyle [j. promienia] — bez zgłoszenia: rozpad dużego statku daje kilkanaście drobnych odłamów,
+   * których cięcie się nie opłaca (zalegałyby w rejestrze do `gameWreckTtl`).
+   */
+  minRadius: 120,
   /** Złomiarz pracuje, gdy wrak jest bliżej punktu postoju (encji) niż tyle [j.]. */
   workRange: 6000,
   /** Lina holu: promień wraku + pół długości holownika + tyle [j.]; skraca się z tą prędkością [j./s]. */
@@ -100,21 +103,27 @@ export function createTrafficSalvage(bridge, hooks = {}, options = {}) {
   };
 }
 
-/** Nowy wrak gry (hak `onWreckSpawned`): `spec` z `classifyGameWreck` + { factionId, source }; null — bez zgłoszenia. */
-export function noteTrafficWreck(ts, wreck, spec, time, parent = null) {
+/**
+ * Nowy wrak gry (hak `onWreckSpawned`): `spec` z `classifyGameWreck` + { factionId, source }; null — bez zgłoszenia.
+ * Odłam z rozpadu ciała zgłoszonego wraku (`parentBody` — encja `parent` bywa jeszcze martwym statkiem) należy do
+ * tej samej pracy: bez zgłoszenia, znika razem z wrakiem.
+ */
+export function noteTrafficWreck(ts, wreck, spec, time, parent = null, parentBody = null) {
   if (!ts || !wreck) return;
   // Odłam wraku, który tnie złomiarz NPC: należy do tej samej pracy (zniknie razem z wrakiem).
-  const parentGid = parent ? ts.gidOf.get(parent) : undefined;
+  let parentGid = parent ? ts.gidOf.get(parent) : undefined;
+  if (parentGid === undefined && parentBody) parentGid = ts.gidOf.get(parentBody);
   if (parentGid !== undefined) {
     const rec = ts.reported.get(parentGid);
     if (rec) {
       rec.extras.push(wreck);
       ts.gidOf.set(wreck, parentGid);
+      if (wreck.beamHull?.body) ts.gidOf.set(wreck.beamHull.body, parentGid);
       return;
     }
   }
   if (!spec) return;
-  ts.pending.push({ wreck, at: Number(time) || 0, spec });
+  ts.pending.push({ wreck, at: Number(time) || 0, spec, from: parent ? (parent.isWreck ? 'wrak' : String(parent.type || 'statek')) : null, body: !!parentBody });
 }
 
 function wreckX(w) { return Number(w?.pos?.x ?? w?.x) || 0; }
@@ -214,10 +223,11 @@ export function stepTrafficSalvage(ts, tb, time, dt, px, py) {
       if (dx * dx + dy * dy > T.reportRadius * T.reportRadius) continue;
       const gid = ts.nextGid++;
       ts.gidOf.set(w, gid);
+      if (w.beamHull?.body) ts.gidOf.set(w.beamHull.body, gid);
       ts.reported.set(gid, { wreck: w, gid, extras: [], lastX: x, lastY: y });
       (out || (out = [])).push({ gid, x, y, r: Number(w.radius) || 0, ...p.spec });
       ts.stats.reported++;
-      note(ts, 'zgloszony', gid);
+      note(ts, `zgloszony:${Math.round(Number(w.radius) || 0)}:${p.from || '-'}${p.body ? ':cialo' : ''}`, gid);
     }
     if (out && ts.bridge?.reportWrecks) ts.bridge.reportWrecks(out);
   }

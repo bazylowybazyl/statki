@@ -33,4 +33,26 @@ reguła `wraki`. Tu rozpoznanie, decyzje i pomiary.
 ## Pomiary
 
 - Symulacja `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` przed i po kroku 1 — identyczna (poza czasem ticku).
-- Wyniki w grze, koszt klatki i bramka bilansu — sekcja niżej (uzupełnia przebieg `zlomiarze-gra.mjs`).
+
+## W grze (`node scripts/webgpu/zlomiarze-gra.mjs`, tryb worker, 1600 × 900, ziarno ruchu 7)
+
+- GÓRNIK: po 1 h świata nie było żadnej wyprawy w etapie wydobycia; po przewinięciu ~2 h — 57, wszystkie w Pasie Kuipera.
+  Gracz 2,9 km od wyprawy: bańka żyje przy miejscu pracy, 6 encji w fazie `station` z rekordami pracy, drony nad
+  skałami pola i lasery z iskrami. Kadłuby przy 130 AU są prawie czarne (słońce pasa) — widać światła nawigacyjne
+  i lasery.
+- CIĘCIE (wrak frachtowca `long_haul_freighter`, 262 węzły, 6 km od gracza przy Ziemi): zgłoszenie po 2 s, złomiarz
+  (`salvage_hauler`) z portu po 48 s, palniki z dziobu do brzegu wraku, wrak maleje od krawędzi (260 węzłów w 120 s
+  postoju — przy `--postoj 120`), po końcu pracy reszta znika. Dziennik: `zgloszony → koniec-pracy:cut → usuniety:cut`.
+- HOL (wrak niszczyciela wezwania, 99 węzłów): lina przy dolocie, zaczepianie 120 s z wiązką, odlot — wrak jedzie z
+  holownikiem (0 → 1200 j./s, wrak 1200 j./s), holownik kończy kurs na lejku ringu Ziemi ~5 km dalej i znika razem
+  z wrakiem. Dziennik: `zgloszony → lina → koniec-pracy:tow → usuniety:towed`. Bez sprężyny odlotu sama lina
+  zostawiała wrak kilka km z tyłu (pierwszy przebieg — lina rozciągnięta na całym kadrze).
+- Pipeline'y synchroniczne: worker 0 / 0, strona 0 / 0 (start i koniec każdego przebiegu); błędy strony i workera: 0.
+- Koszt klatki z obrazem pracy i bez (`TrafficSalvage.hideRender`, przebiegi na zmianę, 12 próbek): przy cięciu GPU
+  0,299 / 0,287 ms wobec 0,293 / 0,279 ms, CPU klatki workera 1,77 / 1,74 ms wobec 1,55 / 1,89 ms; przy holu CPU
+  1,81–2,69 wobec 2,14–2,39 ms — różnica w szumie pomiaru (jeden rysunek wiązek, kilka iskier na klatkę). Górnicy
+  w Pasie Kuipera (4 rekordy w ramce, 24 próbki): GPU 1,22 / 0,78 ms wobec 0,73 / 0,74 ms (pierwsza próbka
+  z wyskokiem), CPU klatki workera 2,49 / 2,60 wobec 2,41 / 2,46 ms — ~+0,1 ms CPU i ~+0,04 ms GPU (drony i lasery
+  w partiach pasa, światła siatki najwyżej 6 + 6).
+- Narzędzie `snapshot.work` w pierwszej wersji ucinało listę na 80 kursach — przy ~63 górnikach kurs złomiarza po
+  wrak gry był poza listą (przebieg „final”: „brak kursu złomiarza”); limit 600.

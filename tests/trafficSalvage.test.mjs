@@ -373,3 +373,18 @@ test('cięcie rozdzieliło wrak: pracę przejmuje największy żywy odłam (bez 
   assert.equal(ts.jobs.get(5).wreck, big);
   assert.ok(ts.log.some((e) => e.what === 'odlam-przejal' && e.gid === gid));
 });
+
+test('odłam z rozpadu ciała zgłoszonego wraku (rodzic = martwy statek) należy do tej samej pracy — bez zgłoszenia', () => {
+  const { ts, tb, sent } = gameEnv();
+  const body = {};
+  const w = { x: 500, y: 0, radius: 300, nodes: 80, beamHull: { body } };
+  noteTrafficWreck(ts, w, { classId: 'destroyer', scale: 1, towable: false }, 0);
+  stepTrafficSalvage(ts, tb, 3, 1 / 60, 0, 0);
+  const gid = sent.reports[0].gid;
+  const deadShip = { dead: true };
+  const piece = { x: 650, y: 0, radius: 120, nodes: 9, beamHull: { body: {} } };
+  noteTrafficWreck(ts, piece, { classId: 'frigate', scale: 0.2, towable: false }, 4, deadShip, body);
+  stepTrafficSalvage(ts, tb, 8, 1 / 60, 0, 0);
+  assert.equal(sent.reports.length, 1, 'bez drugiego zgłoszenia');
+  assert.ok(ts.reported.get(gid).extras.includes(piece));
+});
