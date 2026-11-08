@@ -68,6 +68,8 @@ export function planetSurfaceUniforms(spec, maps, { ringAnchored = false, size =
     uGsDeep: { value: new THREE.Vector3(...(pal.deep || [0.01, 0.03, 0.08])) },
     uGsSeed: { value: new THREE.Vector4(...spec.seedOffset.map((v) => v * 0.37), spec.seedInt) },
     uGsMisc: { value: new THREE.Vector4(0, 1, 0, 0) },
+    // cień pierścieni na tarczy olbrzyma (planetGenGas.js); tekstura profilu dopisywana przy siatce pierścieni
+    uGgRing: { value: new THREE.Vector4(0, 0, 0, 0) }, ringTexture: { value: null },
     ...ruinUniforms(spec.ruins)
   };
   return {
@@ -169,6 +171,9 @@ export function createGenPlanetBody(spec, baked, { segments = 160, halo = true }
   if (spec.kind === 'gas' && spec.look.ring) {
     ring = createGenRingMesh(spec, U.sunPosition);
     group.add(ring.mesh);
+    const rg = spec.look.ring;
+    U.uGgRing.value.set(rg.inner, rg.outer, rg.opacity, 1);
+    U.ringTexture.value = ring.texture;
   }
   const _sun = new THREE.Vector3();
   return {
@@ -177,6 +182,13 @@ export function createGenPlanetBody(spec, baked, { segments = 160, halo = true }
     setSun(dir) {
       _sun.copy(dir).normalize().multiplyScalar(1e4).add(group.position);
       U.sunPosition.value.copy(_sun);
+    },
+    /**
+     * Tekstury czytane węzłami tekstur PER OBIEKT, które nie są celami wypieku (profil pierścieni w cieniu na tarczy) —
+     * `renderer.initTexture` każdej przed pierwszym rysunkiem (inaczej pusty próbnik w grupie wiązań).
+     */
+    gpuTextures() {
+      return ring ? [ring.texture] : [];
     },
     /** Wartość ruin `i` (0 — przeszukane, gasną; 1 — pełne). */
     setRuinValue(i, value) {

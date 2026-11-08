@@ -25,6 +25,8 @@ const GAS_DEFS = {
   ...COMMON_DEFS,
   uGas: 'vec4',      // x — kontrast, y — turbulencja, z — girlandy, w — burze
   uGas2: 'vec4',     // x — mgła polarna, y — lodowy (0/1), z — włókna, w — —
+  uGasP: 'vec4',     // bieguny: x — styl N, y — styl S (0 mgła, 1 cyklony, 2 sześciokąt), z — liczba cyklonów, w — faza [°]
+  uGasP2: 'vec4',    // x — kolatitude pierścienia cyklonów [°], y — kolatitude sześciokąta [°], z / w — —
   uZone: 'vec3', uBelt: 'vec3', uAccent: 'vec3', uPole: 'vec3', uStorm: 'vec3', uDark: 'vec3'
 };
 
@@ -118,6 +120,50 @@ function buildGasGraph() {
       const pcol = U.uPole.mul(float(1.0).add(mott.mul(0.2))).mul(mix(vec3(1.0), col.div(max(dot(col, vec3(0.333)), 1e-3)), 0.25));
       col.assign(mix(col, pcol, polar.mul(polar).mul(U.uGas2.x).mul(0.85)));
     });
+    // BIEGUNY: gromada cyklonów albo sześciokąt dżetu (współrzędne azimutalne wokół bieguna w stopniach)
+    const colat = float(90.0).sub(abs(latD)).toVar();
+    const style = mix(U.uGasP.y, U.uGasP.x, step(0.0, latD)).toVar();
+    If(colat.lessThan(22.0).and(style.greaterThan(0.5)), () => {
+      const lam = C.u.mul(2 * PI).add(U.uGasP.w.mul(PI / 180)).toVar();
+      const P2 = vec2(colat.mul(cos(lam)), colat.mul(sin(lam))).toVar();
+      const tf2 = pgNoise(ps.mul(14.0)).toVar();
+      const cyc = (c, rad, sense) => {
+        const dv = P2.sub(c);
+        const d = length(dv).div(rad).toVar();
+        If(d.lessThan(1.5), () => {
+          const ang = atan(dv.y, dv.x);
+          // spirala miękka (ostre ramiona wyglądały jak stempel „@”), brzeg poszarpany szumem
+          const spiral = sin(ang.mul(2.0).add(d.mul(7.0).mul(sense)).add(tf2.mul(3.5))).mul(0.5).add(0.5);
+          const de = d.add(tf2.mul(0.18)).toVar();
+          const body = float(1.0).sub(smoothstep(0.55, 1.05, de));
+          const inner = mix(U.uPole.mul(0.86), mix(U.uPole, U.uStorm, 0.4), spiral.mul(smoothstep(0.08, 0.9, d)).mul(0.8));
+          const rim = exp(de.sub(1.0).div(0.22).pow2().negate());
+          col.assign(mix(col, inner, body.mul(0.75)));
+          col.assign(mix(col, mix(U.uPole, U.uDark, 0.3), rim.mul(0.3)));
+        });
+      };
+      If(style.lessThan(1.5), () => {
+        // gromada: cyklon centralny + pierścień N cyklonów
+        cyc(vec2(0.0, 0.0), float(4.6), float(1.0));
+        for (let k = 0; k < 9; k++) {
+          If(U.uGasP.z.greaterThan(k + 0.5), () => {
+            const a = float(k * 2 * PI).div(U.uGasP.z).add(float(k * 0.37).sin().mul(0.12));
+            const rr = U.uGasP2.x.mul(float(1.0).add(float(k * 1.7).sin().mul(0.08)));
+            cyc(vec2(rr.mul(cos(a)), rr.mul(sin(a))), float(3.3 + 0.5 * Math.sin(k * 2.3)), float(1.0));
+          });
+        }
+      }).Else(() => {
+        // sześciokąt: ciemny pas dżetu po wielokącie, wnętrze chłodniejsze, wir w środku
+        const a6 = Math.PI / 6;
+        const rHex = U.uGasP2.y.mul(Math.cos(a6)).div(cos(lam.sub(floor(lam.div(2 * a6)).mul(2 * a6)).sub(a6)));
+        // pas dżetu szeroki (~3°) i poszarpany — cienka linia wyglądała na narysowaną
+        const band = exp(colat.add(tf2.mul(1.4)).sub(rHex).div(1.9).pow2().negate());
+        const inside = float(1.0).sub(smoothstep(rHex.sub(2.5), rHex.add(1.0), colat.add(tf2.mul(1.0))));
+        col.assign(mix(col, mix(U.uPole, U.uBelt, 0.25).mul(0.95), inside.mul(0.55)));
+        col.assign(mix(col, mix(U.uPole, mix(U.uBelt, U.uDark, 0.3), 0.6), band.mul(0.6)));
+        cyc(vec2(0.0, 0.0), float(4.0), float(1.0));
+      });
+    });
     // WIRY w miejscach rekordów silnika (u, φ w stopniach; a — półoś w u [°], b — w φ [°])
     Loop(GAS_VORTEX_BAKE_CAP, ({ i }) => {
       const A = vortA.element(i);
@@ -164,6 +210,8 @@ export function gasBakeUniforms(spec, ctx, graph = null) {
   const values = {
     uGas: [L.contrast, L.turb, L.festoons, L.storms],
     uGas2: [L.polarHaze, spec.type === 'ice_giant' ? 1 : 0, spec.type === 'ice_giant' ? 0.45 : 1.0, 0],
+    uGasP: L.polar ? [L.polar.north, L.polar.south, L.polar.count, L.polar.phase] : [0, 0, 0, 0],
+    uGasP2: L.polar ? [L.polar.ringDeg, L.polar.hexDeg, 0, 0] : [8, 13, 0, 0],
     uZone: P.zone, uBelt: P.belt, uAccent: P.accent, uPole: P.pole, uStorm: P.storm, uDark: P.dark || P.belt.map((v) => v * 0.5)
   };
   const rows = L.rows.slice(0, GAS_ROW_CAP);

@@ -146,6 +146,8 @@ async function ensureCompiled(types) {
 }
 
 async function compileBody(body, cam, sp) {
+  // tekstury czytane węzłami per obiekt (profil pierścieni w cieniu na tarczy) — na GPU przed pierwszym rysunkiem
+  for (const t of body.gpuTextures()) renderer.initTexture(t);
   scene.add(body.group);
   const prev = renderer.getRenderTarget();
   try {

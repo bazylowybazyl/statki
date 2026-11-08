@@ -408,8 +408,16 @@ function lookGas(rng, ice) {
     color: (ice ? jitter(rng, srgb('#6a6a70'), 0.15) : jitter(rng, srgb(rng.pick(['#c8b49a', '#b0a08a', '#d0c4b0', '#9a8a78'])), 0.1)).map((v) => round(v)),
     gaps: rng.int(1, 4), tiltDeg: round(rng.range(-28, 28), 2), seed: rng.int(1, 1e6)
   } : null;
+  // bieguny (decyzja 5 użytkownika, 2026-11-08 — „żeby było widać, że bieguny żyją”): gromada cyklonów wokół
+  // centralnego (jak Jowisz), sześciokąt dżetu z wirem w środku (jak Saturn) albo sama mgła; obraca je silnik
+  // (czapa polarna GEN_GAS_POLES)
+  const poleStyle = () => rng.weighted([[1, 0.45], [2, 0.25], [0, 0.3]]);
+  const polar = {
+    north: poleStyle(), south: poleStyle(), count: rng.int(5, 9), phase: round(rng.range(0, 360), 2),
+    ringDeg: round(rng.range(9, 12), 3), hexDeg: round(rng.range(13, 16.5), 3)
+  };
   return {
-    palette: palName, contrast, rows, ext, cuts, vortices, ring,
+    palette: palName, contrast, rows, ext, cuts, vortices, ring, polar,
     windAt,
     storms: ice ? rng.range(0.2, 1.0) : rng.range(0.2, 0.9),   // drobne jasne chmury konwekcji
     festoons: ice ? 0 : rng.range(0.2, 1.0),                    // girlandy na skraju strefy równikowej

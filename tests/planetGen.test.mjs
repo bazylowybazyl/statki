@@ -278,9 +278,12 @@ test('ruiny: z ziarna (część planet bez ruin), nadpisanie z danych gry, puste
   const given = describePlanet({ type: 'ice', seed: 2, ruins: [{ lat: 10, lon: 20, value: 0.4 }] }).ruins;
   assert.equal(given.length, 1);
   assert.equal(given[0].value, 0.4);
-  // olbrzymy — ruiny unoszące się
+  // olbrzymy — ruiny unoszące się; bieguny z ziarna (cyklony / sześciokąt / mgła — każdy styl występuje)
   const g = describePlanet({ type: 'gas', seed: 4, ruins: 2 }).ruins;
   assert.ok(g.every((x) => x.kind === 1));
+  const styles = new Set();
+  for (let s = 1; s <= 40; s++) { const L = describePlanet({ type: 'gas', seed: s }).look.polar; styles.add(L.north); styles.add(L.south); }
+  assert.deepEqual([...styles].sort(), [0, 1, 2]);
   // puste miejsca: promień 0 (Vector4() ma w = 1 — „ruina” na całą planetę)
   const u = ruinUniforms([{ dir: [0, 1, 0], radius: 0.02, value: 1, seed: 1, kind: 0 }]);
   assert.equal(Object.keys(u).length, RUIN_CAP * 2);
