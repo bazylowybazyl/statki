@@ -4,7 +4,7 @@
 // teleportowany obok — inaczej kapsuły dalej niż 40 tys. j. przechodzą w rozliczenie bez obrazu).
 //
 //   node scripts/webgpu/kapsuly-gra.mjs [--query renderWorker=1] [--out .tmp/kapsuly] [--port 5467]
-//        [--kadlub freighter-large] [--etapy smierc,pirat,ruch]  (ruch — statek ruchu v2 w bańce bez awansu)
+//        [--kadlub freighter-large] [--etapy smierc,pirat,ruch]  (ruch — statek ruchu v2 w bańce bez awansu; prom — prom z ludźmi, K4)
 //
 // Wynik: <out>/raport.json, zrzuty <out>/*.png (śmierć, wyrzut, silniki, lot, dolot), pipeline'y synchroniczne
 // workera i strony (ma być 0), błędy.
@@ -239,6 +239,49 @@ try {
     report.etapy.ruch = st;
     console.log('ruch:', JSON.stringify({ cel: st.cel, kill: st.kill, wyrzut: st.wyrzut && { kapsul: st.wyrzut.kapsul, cel: st.wyrzut.cel },
       czas: (st.przebieg || []).length * 2, wPlycie: st.maxWPlycie, stats: st.koniec?.stats }));
+  }
+
+  if (STAGES.has('prom')) {
+    // Prom z ludźmi (K4) w bańce, bez awansu: świat odpowiada celem (port nadania) i liczbą ludzi, kapsuły lecą tam,
+    // dolot wkłada ludzi do magazynu stacji dolotu (worker: stats.passengersRescued).
+    const rescued = async () => (await ev('window.TrafficV2.requestSnapshot().then((s) => s?.director?.stats?.passengersRescued ?? null)')) ?? null;
+    const pick = await ev(`(() => {
+      const tb = window.TrafficBubble, s = window.ship;
+      const list = tb.list.filter((a) => a.alive && /^crew-/.test(a.unitClass) && a.phase !== 'docked' && Math.hypot(a.vx, a.vy) < 2500)
+        .sort((a, b) => Math.hypot(a.vx, a.vy) - Math.hypot(b.vx, b.vy));
+      const a = list[0];
+      if (!a) return { promow: tb.list.filter((x) => /^crew-/.test(x.unitClass)).length };
+      window.DevScene.teleport(a.cx + 5000, a.cy, Math.PI);
+      window.PortCargo.look(a.cx, a.cy, 2400);
+      return { id: a.id, hull: a.hullId, klasa: a.unitClass, frakcja: a.factionId, faza: a.phase, v: Math.round(Math.hypot(a.vx, a.vy)) };
+    })()`);
+    const st = { cel: pick, uratowaniPrzed: await rescued() };
+    if (pick?.id !== undefined) {
+      await waitGame(0.5);
+      st.kill = await ev(`window.EscapePods.devKillTraffic(${pick.id})`);
+      await waitGame(2.6);
+      st.wyrzut = await ev(`(() => { const p = window.EscapePods.pool, E = window.EscapePods; const out = [];
+        for (let i = 0; i < p.count; i++) if (p.course[i] === ${pick.id}) out.push({ cel: E.stationId(p.target[i]), ludzi: p.people[i], stan: p.state[i] });
+        return out; })()`);
+      await screenshotPng(cdp, join(out, '20-prom-wyrzut.png'));
+      const rows = [];
+      for (let t = 0; t < 300; t += 2) {
+        await ev(FOLLOW(5000));
+        await waitGame(2);
+        const s2 = await ev(POD_STATE);
+        rows.push({ t: t + 2, kapsul: s2.kapsul, tranzyt: s2.tranzyt, pozostalo: s2.pozostalo });
+        if (!s2.kapsul && !s2.tranzyt) break;
+      }
+      st.przebieg = rows.slice(-3);
+      st.czas = rows.length * 2;
+      st.koniec = await ev(POD_STATE);
+      await waitGame(1);
+      st.uratowaniPo = await rescued();
+      await ev('window.PortCargo.lookEnd()');
+    }
+    report.etapy.prom = st;
+    console.log('prom:', JSON.stringify({ cel: st.cel, wyrzut: st.wyrzut, czas: st.czas, uratowani: [st.uratowaniPrzed, st.uratowaniPo],
+      stats: st.koniec?.stats }));
   }
 
   if (STAGES.has('pirat')) {

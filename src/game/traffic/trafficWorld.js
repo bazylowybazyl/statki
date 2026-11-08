@@ -35,7 +35,9 @@ import { buildCarriers, TONS_PER_SHIP_HOUR } from './carrierRoster.js';
 import { createShipyardRegistry, tickShipyards } from './shipyards.js';
 import { createAgentRegistry, buildMerchants } from './agentFleets.js';
 import { createMiningFields, miningFieldSpecs } from './miningFields.js';
-import { createPodTransit, scanWrecksForPods, settlePodTransit } from './escapePodTransit.js';
+import {
+  createPodTransit, scanWrecksForPods, settlePodTransit, describeWreckPods, landFerryPassengers, purgeFerryPassengers
+} from './escapePodTransit.js';
 import {
   addMarket, destroyMarketStation, smallBodyMarketPlacement, worldCapacityFromGame, workforceWorldCapacity
 } from './markets.js';
@@ -314,14 +316,18 @@ export function stepTrafficWorld(world, dt = world.config.step) {
 
 /**
  * Kapsuły ratunkowe bez obrazu (E22, `escapePodTransit.js`): statki zniszczone poza bańką gracza (przechwyt,
- * zniszczona stacja) → kapsuły do stacji frakcji, dolot po czasie. Dziś tylko liczy — symulacja bez zmian.
+ * zniszczona stacja) → kapsuły do stacji frakcji, dolot po czasie. Prom z ludźmi (K4) leci do portu nadania, a ludzie
+ * z kontraktu wchodzą do magazynu stacji dolotu w chwili dolotu. Prom zniszczony w grze rozlicza gra (`pods-landed`).
  */
 function stepPodTransit(world) {
   const director = world.director;
   const transit = world.podTransit || (world.podTransit = createPodTransit());
   const now = director.registry.clock;
-  scanWrecksForPods(transit, director.wrecks, world.stations, now);
-  settlePodTransit(transit, now, null);
+  scanWrecksForPods(transit, director.wrecks, world.stations, now, (w) => describeWreckPods(director, w));
+  settlePodTransit(transit, now, (e) => {
+    if (e.people > 0 && e.courseId != null) landFerryPassengers(director, e.courseId, e.stationId, e.people);
+  });
+  purgeFerryPassengers(director, now);
 }
 
 /**

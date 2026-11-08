@@ -317,6 +317,11 @@ export class TrafficBridge {
   /** Encja bez kursu zniszczona w grze: strata zapasu frakcji albo statku firmy. `options`: `x`, `y`, `reason`. */
   entityLost(id, options = {}) { this._send({ type: TRAFFIC_MSG.ENTITY_LOST, id, ...options }); }
 
+  /** Kapsuły ratunkowe (E22 K4): kapsuła z ludźmi promu `course` doleciała do `stationId` (magazyn stacji dolotu). */
+  podsLanded(course, stationId, people) {
+    this._send({ type: TRAFFIC_MSG.PODS_LANDED, course, stationId: String(stationId || ''), people: Math.max(0, Math.floor(Number(people) || 0)) });
+  }
+
   destroyCourse(course, options = {}) {
     this._send({ type: TRAFFIC_MSG.DESTROYED, course, ...options });
   }
@@ -459,6 +464,8 @@ export class TrafficBridge {
           this._emit('error', message);
           break;
         case BELT_MSG.HOLES: this._onBeltHoles(message); break;
+        // Kapsuły ratunkowe (E22 K4): cel kapsuł promu zniszczonego w grze (port nadania, ludzie z kontraktu).
+        case TRAFFIC_MSG.PODS_TARGET: this._emit('pods-target', message); break;
         default: break;
       }
     } finally {

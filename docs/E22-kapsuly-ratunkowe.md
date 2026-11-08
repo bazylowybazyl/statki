@@ -18,7 +18,7 @@ Zadanie z planu ekonomii (`docs/PLAN-ekonomia-rynki.md`, E22). Decyzja użytkown
 - K1 a64309e1 — logika 2D (pula, wyrzut, lot, dolot, piraci bez kapsuł); objazd dysków doków wydzielony z `materializedFlight.js` do `dockDetour.js` (bańka bez zmian zachowania).
 - K2 82d66b51 — obraz: partia kapsuł, lampa i płomień, blok migawki `pods`.
 - K3 6bcdeea6 — statki ruchu w bańce (encja bez awansu), kapsuły bez obrazu w workerze ruchu (wraki spoza bańki).
-- K4 — promy (po wejściu W6 do main): ludzie z kontraktu wracają do magazynu stacji dolotu w chwili dolotu.
+- K4 — promy (po scaleniu main z W6, 20638dae): ludzie z kontraktu wracają kapsułami do portu nadania, do magazynu stacji dolotu w chwili dolotu (`holdFerryPassengers` / `landFerryPassengers` zamiast natychmiastowego `returnFerryPassengers` z W6; wiadomości `pods-target` i `pods-landed`).
 - K5 — radar (rodzaj `pod`), mgła wojny, maskowanie (obrys kadłuba), strojenie (kapsuła 20 × 8 j.).
 
 ## Pomiary
@@ -28,3 +28,5 @@ Zadanie z planu ekonomii (`docs/PLAN-ekonomia-rynki.md`, E22). Decyzja użytkown
 - K3, worker: `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` przed i po — wynik identyczny (0 linii różnicy poza czasem ticku); test świata ruchu (ziarno 7, 1 h): kapsuły bez obrazu z przechwytów, część już doleciała.
 - K5, gra (`kapsuly-gra.mjs --query renderWorker=1 --etapy smierc,ruch,pirat`, zrzuty `.tmp/kapsuly/k5`): frachtowiec Terra Novy → 3 kapsuły, na radarze kokpitu 3 ślady „KAPSUŁA” (`EscapePods.radar`), dolot do zatoki Z08 ringu Ziemi po 86 s, 0 próbek w płycie; prom stacyjny Konsorcjum z redy (bańka, bez awansu) → 1 kapsuła do Merkurego; pirat bez kapsuł; pipeline'y synchroniczne worker 0 / strona 0, błędy 0.
 - Kamera fabularna `PortCargo.look` ma kadr najmniej 1000 j. i sama ustawia zoom — najbliższe zbliżenie kapsuły ~20 px; do zrzutu kapsuła zatrzymana w harnessie (kamera dojeżdża ~1 s).
+- K4, gra (`kapsuly-gra.mjs --query renderWorker=1 --etapy prom,pirat`, `.tmp/kapsuly/k4`): prom `crew-small` Konsorcjum w bańce (1200 j./s), zniszczony bez awansu → 1 kapsuła; odpowiedź świata przestawiła cel na port nadania (Ziemia) z 87 osobami; dolot po 80 s; w workerze `passengersRescued` 0 → 87. Pirat bez kapsuł. Pipeline'y synchroniczne worker 0 / strona 0, błędy 0.
+- K4, symulacja: `SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60` na scaleniu main (20638dae, tymczasowy worktree) i po K4 — identyczne. Bramki 7/11/23 nie puszczałem: w symulacji promy giną tylko w przechwytach (porwania W4 — bez zmian), a stacje niszczy wyłącznie gra, więc bramka nie widzi K4.

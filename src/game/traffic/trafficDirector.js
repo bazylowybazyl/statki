@@ -71,6 +71,7 @@ import {
 import {
   pickMiningField, planExpedition, recordExtraction, tickMiningFields, noteHarvestDelivered
 } from './miningFields.js';
+import { holdFerryPassengers } from './escapePodTransit.js';
 
 /** Ile trwa załadunek i rozładunek. Wchodzi w plan jako etap, nie jako kara. */
 const LOAD_SECONDS = 90;
@@ -1704,21 +1705,6 @@ function strikeCourse(director, course, options = {}) {
  *
  * Zwraca wpis wraku (`director.wrecks`) albo `null`, gdy kurs już nie leci.
  */
-/**
- * POWRÓT LUDZI Z PROMU (workforce W6) — prom z ludźmi zniszczony poza porwaniem (gracz, walka w bańce, zniszczona
- * stacja): ludzie z kontraktu wracają do magazynu źródła, z którego zeszli przy nadaniu; powrót po kontrakcie nie
- * zmienia magazynu (rotacja już zeszła). Bez kontenerów z ludźmi (manifest bańki pomija promy) i bez łupu. Zwraca,
- * ilu wróciło. AGENT: E22 (kapsuły ratunkowe, reguła `kapsuly-ratunkowe`) przeniesie tę funkcję na dolot kapsuły —
- * dziś powrót jest natychmiastowy.
- */
-export function returnFerryPassengers(director, course) {
-  const payload = course?.payload;
-  if (!payload?.passengers || !payload.orderId || !(payload.units > 0)) return 0;
-  const back = putStock(director?.getEconomy?.(course.originId), 'workforce', payload.units);
-  director.stats.passengersRescued += back;
-  return back;
-}
-
 export function destroyCourse(director, courseOrId, options = {}) {
   const course = courseOrId && typeof courseOrId === 'object'
     ? courseOrId
@@ -1732,7 +1718,9 @@ export function destroyCourse(director, courseOrId, options = {}) {
     x: options.x,
     y: options.y
   });
-  if (!byPirates) returnFerryPassengers(director, course);
+  // Prom z ludźmi zniszczony poza porwaniem (gracz, walka w bańce, zniszczona stacja): ludzie z kontraktu wracają
+  // KAPSUŁAMI RATUNKOWYMI (E22) — do magazynu stacji dolotu w chwili dolotu (`escapePodTransit.js`), nie od razu.
+  if (!byPirates) holdFerryPassengers(director, course);
   note(director, `ZNISZCZONY: ${course.originId}→${course.destinationId} (${reason})`);
   return director.wrecks[director.wrecks.length - 1] || null;
 }

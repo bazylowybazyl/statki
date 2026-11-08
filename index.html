@@ -1189,7 +1189,7 @@
     } from "./src/data/lootGear.js";
     import {
       createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute, escapePodsAllowed, POD_KIND,
-      fillEscapePodRenderFrame, escapePodCloakHidden
+      fillEscapePodRenderFrame, escapePodCloakHidden, retargetEscapePods
     } from "./src/game/escapePods.js";
     import {
       createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
@@ -17915,6 +17915,8 @@
       npc.__trafficCargo = trafficV2?.actorManifests?.get(a.id) || null;
       // Obrys encji — kontakt miękki, dopóki kadłub na belkach się nie zbuduje (stepTrafficSoftContact).
       npc.__trafficLen = a.length;
+      // Kapsuły ratunkowe (E22 K4): prom z ludźmi — kapsuły rodzaju FERRY z numerem kursu (`launchShipEscapePods`).
+      npc.__trafficFerry = String(a.unitClass || '').startsWith('crew-');
       npc.__trafficWid = a.width;
       npc.__trafficPromotedAt = gameTime;
       npc._lastPlayerHit = gameTime;
@@ -18265,9 +18267,53 @@
       return setEscapePodRoute(escapePods, i, escapePodRouter.path, POD_PATH_STRIDE) > 0;
     }
 
-    /** Dolot kapsuły do stacji (x / y NaN — rozliczenie bez obrazu). Ludzie z promów — K4. */
+    /**
+     * Dolot kapsuły do stacji (x / y NaN — rozliczenie bez obrazu). Prom (K4): ludzie z kontraktu do magazynu STACJI
+     * DOLOTU w chwili dolotu — `pods-landed` do świata ruchu (`landFerryPassengers`).
+     */
     function onEscapePodArrived(target, people, kind, course, x, y) {
-      void target; void people; void kind; void course; void x; void y;
+      void x; void y;
+      if (kind !== POD_KIND.FERRY || !(people > 0) || course === -1 || !trafficV2) return;
+      const stationId = target >= 0 ? _podStationIds[target] : null;
+      if (stationId != null) trafficV2.podsLanded(course, stationId, people);
+    }
+
+    // PROMY (K4): świat ruchu odpowiada na zniszczenie promu z ludźmi celem kapsuł (port nadania) i liczbą ludzi
+    // (`pods-target`). Nasłuch podpięty leniwie (most powstaje po tym bloku); odpowiedź przed wyrzutem kapsuł (tryb
+    // awaryjny mostu odpowiada od razu) czeka w `_ferryPodReplies` na kapsuły swojego kursu.
+    const _ferryPodReplies = new Map();
+    let _podBridge = null;
+    function bindEscapePodBridge() {
+      if (!trafficV2 || _podBridge === trafficV2) return;
+      _podBridge = trafficV2;
+      trafficV2.on('pods-target', onFerryPodsTarget);
+    }
+    function onFerryPodsTarget(m) {
+      const course = Number(m?.course) | 0;
+      if (applyFerryPodsTarget(course, m.stationId, m.people)) return;
+      _ferryPodReplies.set(course, { stationId: m.stationId, people: m.people });
+      if (_ferryPodReplies.size > 64) _ferryPodReplies.delete(_ferryPodReplies.keys().next().value);
+    }
+    /** Cel i ludzie dla kapsuł promu `course` (zwraca false, gdy tych kapsuł jeszcze nie ma). */
+    function applyFerryPodsTarget(course, stationId, people) {
+      const p = escapePods;
+      let x = NaN;
+      let y = NaN;
+      for (let i = 0; i < p.count; i++) if (p.course[i] === course && p.kind[i] === POD_KIND.FERRY) { x = p.x[i]; y = p.y[i]; break; }
+      let inTransit = false;
+      for (let k = 0; k < p.transit.count; k++) if (p.transit.course[k] === course && p.transit.kind[k] === POD_KIND.FERRY) { inTransit = true; break; }
+      if (!Number.isFinite(x) && !inTransit) return false;
+      // Port nadania, gdy zdatny; zniszczony — najbliższa stacja (od kapsuł).
+      const target = podStationTarget(pickEscapePodStation(stations, Number.isFinite(x) ? x : 0, Number.isFinite(y) ? y : 0, null, stationId));
+      retargetEscapePods(escapePods, course, target, people, _podEnv);
+      return true;
+    }
+    /** Kapsuły promu właśnie wystrzelone — odpowiedź świata, jeśli przyszła wcześniej. */
+    function applyEarlyFerryReply(course) {
+      const r = _ferryPodReplies.get(course);
+      if (!r) return;
+      _ferryPodReplies.delete(course);
+      applyFerryPodsTarget(course, r.stationId, r.people);
     }
 
     /** Obrys kadłuba [j.]: dłuższy bok sprite'a = długość (kadłub na belkach — przed zamianą we wrak). */
@@ -18311,10 +18357,17 @@
       const y = Number(e.y) || 0;
       const target = podStationTarget(pickEscapePodStation(stations, x, y, info.factionId));
       const seed = (Math.imul(Math.floor(x), 73856093) ^ Math.imul(Math.floor(y), 19349663) ^ Math.floor(gameTime * 1000)) | 0;
-      return launchEscapePods(escapePods, {
+      // Prom z ruchu po awansie do NPC (K4): kapsuły rodzaju FERRY z numerem kursu — cel i ludzi poda świat ruchu.
+      const ferry = e.__trafficFerry === true && Number.isFinite(Number(e.trafficCourse));
+      const course = ferry ? Number(e.trafficCourse) | 0 : -1;
+      bindEscapePodBridge();
+      const n = launchEscapePods(escapePods, {
         x, y, vx: Number(e.vx) || 0, vy: Number(e.vy) || 0, angle: Number(e.angle) || 0,
-        length: _podExtent.length, width: _podExtent.width, seed, target, people: 0, kind: POD_KIND.CREW
+        length: _podExtent.length, width: _podExtent.width, seed, target, people: 0,
+        kind: ferry ? POD_KIND.FERRY : POD_KIND.CREW, course
       }, _podEnv);
+      if (ferry) applyEarlyFerryReply(course);
+      return n;
     }
 
     /**
@@ -18336,14 +18389,19 @@
       const target = podStationTarget(pickEscapePodStation(stations, a.cx, a.cy, info.factionId));
       const ferry = String(a.unitClass || '').startsWith('crew-');
       const seed = (Math.imul(a.id | 0, 0x9e3779b1) ^ Math.floor(gameTime * 1000)) | 0;
-      return launchEscapePods(escapePods, {
+      bindEscapePodBridge();
+      const n = launchEscapePods(escapePods, {
         x: a.cx, y: a.cy, vx: a.vx, vy: a.vy, angle: a.ca, length: a.length, width: a.width, seed, target,
         people: 0, kind: ferry ? POD_KIND.FERRY : POD_KIND.CREW, course: a.id | 0
       }, _podEnv);
+      // Prom (K4): cel (port nadania) i ludzie z kontraktu przychodzą ze świata ruchu (`pods-target`).
+      if (ferry) applyEarlyFerryReply(a.id | 0);
+      return n;
     }
 
     /** Krok fizyki: wyrzut, lot, dolot, rozliczenia bez obrazu (pauza stoi — krok tylko w `physicsStep`). */
     function stepEscapePodsGame(dt) {
+      bindEscapePodBridge();
       if (escapePods.count === 0 && escapePods.transit.count === 0) return;
       const env = _podEnv;
       env.hasPlayer = !!ship && !ship.destroyed;

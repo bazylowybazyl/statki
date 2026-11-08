@@ -334,6 +334,39 @@ export function setEscapePodRoute(st, i, path, stride) {
   return n;
 }
 
+/**
+ * Prom (K4): świat ruchu podał cel kapsuł kursu `course` (port nadania) i ludzi z kontraktu (`pods-target`). Kapsuły
+ * tego kursu (`POD_KIND.FERRY` — w puli i w rozliczeniu bez obrazu) dostają cel `target` i ludzi po równo (reszta
+ * w pierwszej); kapsuła już poza kadłubem dostaje nową trasę (`env.route`). Zwraca liczbę kapsuł kursu.
+ */
+export function retargetEscapePods(st, course, target, people, env = null) {
+  const c = course | 0;
+  const t = st.transit;
+  let n = 0;
+  for (let i = 0; i < st.count; i++) if (st.kind[i] === POD_KIND.FERRY && st.course[i] === c) n++;
+  for (let k = 0; k < t.count; k++) if (t.kind[k] === POD_KIND.FERRY && t.course[k] === c) n++;
+  if (!n) return 0;
+  const total = Math.max(0, Math.floor(Number(people) || 0));
+  const each = Math.floor(total / n);
+  let rest = total - each * n;
+  for (let i = 0; i < st.count; i++) {
+    if (st.kind[i] !== POD_KIND.FERRY || st.course[i] !== c) continue;
+    st.target[i] = target;
+    st.people[i] = each + rest;
+    rest = 0;
+    if (st.state[i] !== POD_STATE.PENDING && target >= 0 && env && typeof env.route === 'function') {
+      if (!env.route(i, st.x[i], st.y[i], target)) { st.wpCount[i] = 0; st.wpAt[i] = 0; st.stats.routeFails++; }
+    }
+  }
+  for (let k = 0; k < t.count; k++) {
+    if (t.kind[k] !== POD_KIND.FERRY || t.course[k] !== c) continue;
+    t.target[k] = target;
+    t.people[k] = each + rest;
+    rest = 0;
+  }
+  return n;
+}
+
 function turnToward(cur, want, maxStep) {
   let d = want - cur;
   d -= Math.PI * 2 * Math.round(d / (Math.PI * 2));

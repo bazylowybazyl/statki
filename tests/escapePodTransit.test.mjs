@@ -63,3 +63,38 @@ test('świat ruchu: przechwyty piratów dają kapsuły bez obrazu, rekord wraku 
   assert.ok(t.stats.ships > 0, `kapsuły ${JSON.stringify(t.stats)}`);
   assert.ok(t.stats.arrived > 0, 'część już doleciała');
 });
+
+test('prom w grze (K4): rdzeń ruchu odpowiada celem kapsuł (port nadania, ludzie), ludzie wchodzą w chwili dolotu', async () => {
+  const { createTrafficCore } = await import('../src/game/traffic/trafficCore.js');
+  const { TRAFFIC_MSG, courseNumber } = await import('../src/game/traffic/trafficProtocol.js');
+  const { getActiveCourses } = await import('../src/game/traffic/courseRegistry.js');
+  const inbox = [];
+  const core = createTrafficCore((m) => inbox.push(m));
+  core.handle({ type: TRAFFIC_MSG.INIT, seed: 7, economyScale: 60, capacityMultiplier: 4, piracyPressure: 1, bubble: false });
+  const world = core.world;
+  let ferry = null;
+  for (let i = 0; i < 720 && !ferry; i++) {
+    core.handle({ type: TRAFFIC_MSG.ADVANCE, dt: 5 });
+    ferry = getActiveCourses(world.registry).find((c) => c.payload?.passengers && c.payload.orderId && c.payload.units > 0) || null;
+  }
+  assert.ok(ferry, 'jest prom z ludźmi na kontrakcie');
+  const num = courseNumber(ferry.id);
+  const units = ferry.payload.units;
+  const origin = String(ferry.originId);
+  const econ = world.economies.get(origin);
+  const stock0 = econ.resources.workforce;
+  core.handle({ type: TRAFFIC_MSG.DESTROYED, course: num, reason: 'player' });
+  assert.equal(econ.resources.workforce, stock0, 'bez natychmiastowego powrotu (W6 → kapsuły)');
+  const reply = inbox.filter((m) => m.type === TRAFFIC_MSG.PODS_TARGET).pop();
+  assert.ok(reply, 'odpowiedź `pods-target`');
+  assert.equal(reply.course, num);
+  assert.equal(reply.stationId, origin, 'cel — port nadania');
+  assert.equal(reply.people, units);
+  // Dwie kapsuły z gry: część ludzi, potem reszta (z nadmiarem — rdzeń nie dokłada ponad kurs).
+  const room = Math.max(0, econ.capacity.workforce - stock0);
+  core.handle({ type: TRAFFIC_MSG.PODS_LANDED, course: num, stationId: origin, people: Math.floor(units / 3) });
+  core.handle({ type: TRAFFIC_MSG.PODS_LANDED, course: num, stationId: origin, people: units });
+  assert.ok(Math.abs(econ.resources.workforce - stock0 - Math.min(units, room)) < 1e-6, 'ludzie w magazynie stacji dolotu');
+  core.handle({ type: TRAFFIC_MSG.PODS_LANDED, course: num, stationId: origin, people: 100 });
+  assert.ok(Math.abs(econ.resources.workforce - stock0 - Math.min(units, room)) < 1e-6, 'po ostatniej kapsule nic więcej');
+});

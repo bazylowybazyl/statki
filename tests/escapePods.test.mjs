@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   POD_TUNE, POD_STATE, POD_KIND, createEscapePods, launchEscapePods, stepEscapePods, setEscapePodRoute,
-  escapePodCount, escapePodsAllowed, fillEscapePodRenderFrame, escapePodRemaining, escapePodCloakHidden
+  escapePodCount, escapePodsAllowed, fillEscapePodRenderFrame, escapePodRemaining, escapePodCloakHidden, retargetEscapePods
 } from '../src/game/escapePods.js';
 import {
   createEscapePodRouter, syncEscapePodRouter, pickEscapePodStation, routeEscapePod, POD_PATH_STRIDE
@@ -339,4 +339,37 @@ test('maskowanie: kapsuła w obrysie maskowanego kadłuba gaśnie, poza obrysem 
   Object.assign(look, { active: true, cos: 0, sin: 1 });
   assert.equal(escapePodCloakHidden([cloaked], X0, Y0 + 550, hidden), true);
   assert.equal(escapePodCloakHidden([cloaked], X0 + 550, Y0, hidden), false);
+});
+
+test('prom (K4): cel i ludzie z odpowiedzi świata trafiają do kapsuł kursu (w puli i bez obrazu), dolot niesie ludzi', () => {
+  const pods = createEscapePods();
+  const targets = [{ x: X0 + 30_000, y: Y0 }, { x: X0 - 20_000, y: Y0 + 4000 }];
+  const { env, arrivals } = straightEnv(pods, targets);
+  launchEscapePods(pods, { x: X0, y: Y0, angle: 0, length: 520, width: 160, seed: 3, target: 0, kind: POD_KIND.FERRY, course: 77 }, env);
+  launchEscapePods(pods, { x: X0, y: Y0 + 2000, angle: 0, length: 320, width: 100, seed: 4, target: 0, kind: POD_KIND.CREW, course: -1 }, env);
+  assert.equal(retargetEscapePods(pods, 77, 1, 682, env), 3, 'trzy kapsuły promu');
+  let people = 0;
+  for (let i = 0; i < pods.count; i++) {
+    if (pods.course[i] === 77) { assert.equal(pods.target[i], 1); people += pods.people[i]; } else assert.equal(pods.target[i], 0);
+  }
+  assert.equal(people, 682, 'ludzie po równo, reszta w pierwszej');
+  assert.equal(retargetEscapePods(pods, 99, 1, 10, env), 0, 'obcy kurs — nic');
+  let t = 0;
+  while (pods.count && t < 200) { stepEscapePods(pods, 1 / 60, env); t += 1 / 60; }
+  const ferry = arrivals.filter((a) => a.course === 77);
+  assert.equal(ferry.length, 3);
+  assert.equal(ferry.reduce((s, a) => s + a.people, 0), 682);
+  for (const a of ferry) {
+    assert.equal(a.target, 1, 'dolot do portu nadania');
+    assert.equal(a.kind, POD_KIND.FERRY);
+  }
+  // Rozliczenie bez obrazu: kapsuła w `transit` też dostaje cel i ludzi.
+  const far = createEscapePods();
+  const e2 = straightEnv(far, targets).env;
+  launchEscapePods(far, { x: X0 + 60_000, y: Y0, angle: 0, length: 200, width: 60, seed: 5, target: 0, kind: POD_KIND.FERRY, course: 5, delay: 0 }, e2);
+  for (let k = 0; k < 10; k++) stepEscapePods(far, 1 / 60, e2);
+  assert.equal(far.transit.count, 1);
+  retargetEscapePods(far, 5, 1, 40, e2);
+  assert.equal(far.transit.target[0], 1);
+  assert.equal(far.transit.people[0], 40);
 });

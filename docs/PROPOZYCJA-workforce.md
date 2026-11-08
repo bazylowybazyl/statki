@@ -433,7 +433,7 @@ Decyzje D1–D14 przyjęte 2026-10-23. Kroki W0–W4 są w kodzie, każdy przesz
 - **Kontrakty rotacyjne gracza:** karta KADRY → „Twój okręt”: „Weź kontrakty” w źródle (cena `ask`), „Oddaj kontrakty” w porcie, który przyjmuje (cena `bid`); kontrakt wygasa po 45 min gry od zaokrętowania, zapłata przepada. Wszystko przez `adjustStationStock` (jedna ekonomia).
 - **Załoga (D11):** przydział frakcji (pełny skład, bez werbunku) do zdrady; po zdradzie (`PlayerCrew.betray()` — misja jeszcze nie istnieje) zostaje 25% składu, werbunek w neutralnych ośrodkach ludności (Mars, Jowisz, Ceres — nie Ziemia/Terra Nova, nie piraci). Skutek tylko: tempo pracy roju R (0,4 → 1) i przeładowania wież (0,7 → 1, źródło `crew` modyfikatorów). Skład: Atlas 260, pancernik 220, lotniskowiec 320 (roboczo).
 - **Habitat (§ 2.3):** budynek `habitat` (`addMarketBuilding`, lista budynków stacji gracza) — źródło 2,0 na cykl, serwis jak magazyn, koszt w danych; bez interfejsu budowy (decyzja użytkownika). **Ceres** ma habitat 5,5 na cykl (D4) — pierwsza baza w asteroidzie.
-- **Prom zestrzelony przez gracza:** ludzie z kontraktu wracają od razu do źródła (`returnFerryPassengers`, jedna funkcja); E22 (kapsuły ratunkowe) przeniesie to na dolot kapsuły.
+- **Prom zestrzelony przez gracza:** ludzie z kontraktu wracają kapsułami ratunkowymi do portu nadania, do magazynu w chwili dolotu (E22 K4 — `holdFerryPassengers` / `landFerryPassengers`; dawniej W6 — od razu, `returnFerryPassengers`).
 - **Bramka:** z habitatem Ceres kolejka na redzie Wenus wzrosła z 0,8–0,9 do 1,4–1,85 na 3 ziarnach (próg 2). Próba z Ceres 4,6 dała 1,91 / 0,94 / 1,53 — to rozrzut przebiegu (Wenus stoi blisko progu od W0), nie nadwyżka Ceres.
 
 ### 10.3 Otwarte
