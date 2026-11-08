@@ -43,7 +43,7 @@ export const GEN_SOLID_UNIFORM_KEYS = Object.freeze({
 /** Klucz tekstury rzeźby w `material.uniforms`. */
 export const GEN_SOLID_DATA_KEYS = Object.freeze({ relief: 'reliefTexture' });
 
-export const GEN_DETAIL_OCTAVES = 6;
+export const GEN_DETAIL_OCTAVES = 5;
 /** Kroki promienia cienia [teksele] (×1,5) i poziom mipmapy próbki (odstęp kroków). */
 export const GEN_SHADOW_STEPS = Object.freeze(Array.from({ length: 12 }, (_, k) => 0.75 * Math.pow(1.5, k)));
 const SHADOW_LOD = GEN_SHADOW_STEPS.map((m) => Math.max(0, Math.log2(Math.max(1, m / 3))));
@@ -82,7 +82,7 @@ function genSolidSurface({ U, uv: vUv, local, worldPos, dayTex, specTex }) {
   const rough = rel.w;
   for (let k = 0; k < GEN_DETAIL_OCTAVES; k++) {
     const f = U.uGsGeo.z.mul(Math.pow(2, k));
-    const w = float(1.0).sub(smoothstep(0.12, 0.4, f.mul(pixL))).toVar();
+    const w = float(1.0).sub(smoothstep(0.1, 0.33, f.mul(pixL))).toVar();
     If(w.greaterThan(0.002), () => {
       const nd = pgNoised(p.mul(f).add(U.uGsSeed.xyz.add(k * 17.31)));
       const amp = U.uGsGeo.w.mul(rough).mul(Math.pow(0.56, k)).mul(w);

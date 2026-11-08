@@ -67,7 +67,7 @@ export function planetSurfaceUniforms(spec, maps, { ringAnchored = false, size =
     uGsOcean: { value: new THREE.Vector3(...(pal.ocean || [0.02, 0.08, 0.16])) },
     uGsDeep: { value: new THREE.Vector3(...(pal.deep || [0.01, 0.03, 0.08])) },
     uGsSeed: { value: new THREE.Vector4(...spec.seedOffset.map((v) => v * 0.37), spec.seedInt) },
-    uGsMisc: { value: new THREE.Vector4(0, 1, 0, 0) },
+    uGsMisc: { value: new THREE.Vector4(0, 1.5, 0, 0) },   // czas ruin [s], siła świecenia ruin
     // cień pierścieni na tarczy olbrzyma (planetGenGas.js); tekstura profilu dopisywana przy siatce pierścieni
     uGgRing: { value: new THREE.Vector4(0, 0, 0, 0) }, ringTexture: { value: null },
     ...ruinUniforms(spec.ruins)

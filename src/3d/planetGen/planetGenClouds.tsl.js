@@ -14,7 +14,7 @@ export const GEN_CLOUD_UNIFORM_KEYS = Object.freeze({
   uGcDetail: 'vec4',   // częstość pierwszej oktawy [1/promień] (fala ~3 teksele mapy), erozja brzegów, cieniowanie kłębów, —
   uGcSeed: 'vec4'      // xyz — przesunięcie dziedziny szumu
 });
-export const GEN_CLOUD_OCTAVES = 5;
+export const GEN_CLOUD_OCTAVES = 3;
 
 function genCloud({ U, local, mask, lightDir }) {
   // pochodne przed gałęziami
@@ -25,7 +25,7 @@ function genCloud({ U, local, mask, lightDir }) {
   const g = vec3(0.0).toVar();
   for (let k = 0; k < GEN_CLOUD_OCTAVES; k++) {
     const f = U.uGcDetail.x.mul(Math.pow(2, k));
-    const w = float(1.0).sub(smoothstep(0.12, 0.4, f.mul(pixL))).toVar();
+    const w = float(1.0).sub(smoothstep(0.1, 0.33, f.mul(pixL))).toVar();
     If(w.greaterThan(0.002), () => {
       const nd = pgNoised(p.mul(f).add(U.uGcSeed.xyz.add(k * 7.13)));
       const a = w.mul(Math.pow(0.62, k));

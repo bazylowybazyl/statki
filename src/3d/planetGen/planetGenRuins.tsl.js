@@ -49,9 +49,10 @@ export function ruinsShade({ p, pixL, U, time, gain, land }) {
       const pulse = float(0.82).add(sin(time.mul(b.x.mul(1.6).add(0.7)).add(b.y)).mul(0.18));
       const value = b.x;
       const far = exp(d.div(sig).pow2().negate()).mul(keep);
-      glow.assign(far.mul(0.9).mul(value).mul(pulse));
-      // z bliska (promień > ~10 px): zarys miasta
+      // z bliska (promień > ~10 px): zarys miasta; poświata „z orbity” wtedy gaśnie do mgiełki (z bliska świecą żyły
+      // murów i węzły, nie tarcza — tarcza wyglądała na hologram)
       const detail = smoothstep(10.0, 28.0, r.div(max(pixL, 1e-7))).toVar();
+      glow.assign(far.mul(mix(0.9, 0.18, detail)).mul(value).mul(pulse));
       If(detail.greaterThan(0.001).and(d.lessThan(r.mul(1.3))), () => {
         const sx = cross(vec3(0.0, 1.0, 0.0), s);
         const es = sx.div(max(length(sx), 1e-5));
@@ -59,28 +60,35 @@ export function ruinsShade({ p, pixL, U, time, gain, land }) {
         const ang = b.y.mul(2.399);
         // współrzędne przycięte (gałąź wykonana spekulatywnie daleko od ruin — bez ogromnych argumentów sin / floor)
         const q0 = clamp(vec2(dot(p.sub(s), es), dot(p.sub(s), ns)).div(r), -2.0, 2.0);
-        const q = vec2(q0.x.mul(cos(ang)).sub(q0.y.mul(sin(ang))), q0.x.mul(sin(ang)).add(q0.y.mul(cos(ang)))).toVar();
-        const rq = length(q).toVar();
+        const qr = vec2(q0.x.mul(cos(ang)).sub(q0.y.mul(sin(ang))), q0.x.mul(sin(ang)).add(q0.y.mul(cos(ang))));
+        // ulice nie są proste: dziedzina lekko wygięta (sinusy — tanio, bez szumu z layoutem)
+        const q = qr.add(vec2(sin(qr.y.mul(5.3).add(b.y)), sin(qr.x.mul(4.7).add(b.y.mul(1.3)))).mul(0.045)).toVar();
+        const rq = length(q).add(sin(atan(q.y, q.x.add(1e-6)).mul(5.0).add(b.y)).mul(0.07)).toVar();   // poszarpany obrys
         const px = min(pixL.div(r), 1.0);             // piksel w jednostkach promienia ruin
-        // siatka murów (8 komórek na promień) z wyrwami: mur komórki istnieje z haszu
-        const g = q.mul(8.0);
+        // kwartały (9 komórek na promień): mur KAŻDEGO odcinka (krawędzi komórki) istnieje z osobnego haszu —
+        // labirynt zburzonych bloków zamiast pełnej kratki
+        const g = q.mul(9.0);
         const cell = floor(g);
         const fg = abs(fract(g).sub(0.5)).toVar();    // 0 — środek komórki, 0,5 — mur
-        const pc = px.mul(8.0);
-        const w0 = float(0.46).sub(pc.mul(1.2));
-        const wall = max(smoothstep(w0, 0.49, fg.x), smoothstep(w0, 0.49, fg.y));
-        const keepCell = smoothstep(0.32, 0.4, hash2(cell, b.y));
+        const pc = px.mul(9.0);
+        const w0 = float(0.455).sub(pc.mul(1.2));
+        const segX = smoothstep(0.45, 0.5, hash2(vec2(floor(g.x.add(0.5)), cell.y), b.y));
+        const segY = smoothstep(0.45, 0.5, hash2(vec2(cell.x, floor(g.y.add(0.5))).add(77.0), b.y));
+        const wall = max(smoothstep(w0, 0.49, fg.x).mul(segX), smoothstep(w0, 0.49, fg.y).mul(segY));
+        const keepCell = smoothstep(0.2, 0.3, hash2(cell, b.y));
+        // żyły: świeci tylko część murów (mur kamienny w albedo — reszta)
+        const vein = smoothstep(0.78, 0.86, hash2(cell.add(31.0), b.y));
         // obwarowania: dwa pierścienie z przerwami
         const ringW = max(px.mul(1.5), 0.012);
         const theta = atan(q.y, q.x.add(1e-6)).div(2 * Math.PI).add(0.5);
         const gap = smoothstep(0.2, 0.35, fract(sin(floor(theta.mul(11.0)).add(floor(rq.mul(3.0)).mul(7.0)).mul(91.7).add(b.y)).mul(4375.85)));
-        const ring = max(float(1.0).sub(smoothstep(0.0, ringW, abs(rq.sub(0.48)))), float(1.0).sub(smoothstep(0.0, ringW, abs(rq.sub(0.86))))).mul(gap);
+        const ring = max(float(1.0).sub(smoothstep(0.0, ringW, abs(rq.sub(0.48)))).mul(0.6), float(1.0).sub(smoothstep(0.0, ringW, abs(rq.sub(0.86))))).mul(gap);
         // węzły (place, wieże) — jasne punkty w części komórek
         const nodeR = max(pc.mul(2.0), 0.12);
-        const node = smoothstep(0.86, 0.95, hash2(cell.add(13.0), b.y)).mul(float(1.0).sub(smoothstep(0.0, nodeR, length(fract(g).sub(0.5)))));
-        const inside = float(1.0).sub(smoothstep(0.78, 1.0, rq));
+        const node = smoothstep(0.93, 0.97, hash2(cell.add(13.0), b.y)).mul(float(1.0).sub(smoothstep(0.0, nodeR, length(fract(g).sub(0.5)))));
+        const inside = float(1.0).sub(smoothstep(0.72, 1.0, rq));
         lines.assign(max(wall.mul(keepCell), ring).mul(inside));
-        glow.addAssign(lines.mul(0.55).add(node.mul(inside).mul(2.2)).mul(detail).mul(value).mul(pulse));
+        glow.addAssign(lines.mul(vein.mul(0.7).add(0.06)).add(node.mul(inside).mul(2.6)).mul(detail).mul(value).mul(pulse));
         // gruz: ciemna plama z jaśniejszymi murami (kamień) — tylko na lądzie
         stain.assign(float(1.0).sub(smoothstep(0.55, 1.05, rq)).mul(detail).mul(land));
       });
