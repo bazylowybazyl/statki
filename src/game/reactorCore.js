@@ -40,6 +40,7 @@
 
 import { HullBodies, hullImpactResult, hullSpriteRotation } from './hullBodies.js';
 import { activateNode } from './beamActiveRegion3D.js';
+import { reactorModelParams } from '../data/reactorCores.js';
 import {
   CORE_STATE, CORE_STATE_RANK, CORE_STATE_LABEL, coreStateRank, CORE_KILL_MODE, CORE_PROBE_CONFIG,
   CORE_DEFAULTS, resolveCoreClassId, getCoreClassProfile, normalizeCoreMarker, computeCoreBlast,
@@ -258,22 +259,9 @@ export function reactorCoreFrame(core, out = {}, pose = null) {
   return out;
 }
 
-/**
- * Parametry modelu 3D rdzenia z markera (obraz — reactor3D.js; rozgrywka ich nie czyta): housingR — promień
- * obrysu obudowy [j. świata] (`hr` markera w px PNG × `pxToWorld`; bez niego model w skali komory), housing —
- * false: wnętrze bez obudowy, kind — rodzaj modelu (terran / pirate / atlas; bez niego z gospodarza), tier —
- * poziom rdzenia (R1–R6, etap 2 kreatora). null — wszystko domyślne.
- */
-export function reactorModelParams(marker, pxToWorld) {
-  const hr = finite(marker?.hr, 0);
-  const out = {
-    housingR: hr > 0 ? hr * finite(pxToWorld, 1) : 0,
-    housing: marker?.housing !== false,
-    kind: marker?.model || null,
-    tier: marker?.tier || null
-  };
-  return out.housingR > 0 || !out.housing || out.kind || out.tier ? out : null;
-}
+// Parametry modelu 3D rdzenia z markera — `reactorModelParams` w src/data/reactorCores.js (E17b: czyta je też
+// render proxy statków ruchu), tu re-eksport.
+export { reactorModelParams };
 
 /** Pozycja spoczynkowa komórki komory k w świecie gry (u bieżącego gospodarza). */
 export function reactorCellWorld(core, k, out = {}) {

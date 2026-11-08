@@ -67,3 +67,41 @@ export function reactorColorFor(entity) {
   if (entity?.isPlayer) return REACTOR_CORE_COLORS.player;
   return entity?.isPirate ? REACTOR_CORE_COLORS.pirate : REACTOR_CORE_COLORS.terran;
 }
+
+const finiteOr = (value, fallback) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+/**
+ * Parametry modelu 3D rdzenia z markera (obraz — reactor3D.js; rozgrywka ich nie czyta): housingR — promień
+ * obrysu obudowy [j. świata] (`hr` markera w px PNG × `pxToWorld`; bez niego model w skali komory), housing —
+ * false: wnętrze bez obudowy, kind — rodzaj modelu (terran / pirate / atlas; bez niego z gospodarza), tier —
+ * poziom rdzenia (R1–R6, etap 2 kreatora). null — wszystko domyślne.
+ */
+export function reactorModelParams(marker, pxToWorld) {
+  const hr = finiteOr(marker?.hr, 0);
+  const out = {
+    housingR: hr > 0 ? hr * finiteOr(pxToWorld, 1) : 0,
+    housing: marker?.housing !== false,
+    kind: marker?.model || null,
+    tier: marker?.tier || null
+  };
+  return out.housingR > 0 || !out.housing || out.kind || out.tier ? out : null;
+}
+
+// Rdzenie z AUTOMATU kadłubów ruchu v2 bez markera (E17b) — tylko OBRAZ proxy bańki: NPC po awansie dostaje komorę
+// z `autoReactorMarker` (src/game/reactorCoreGame.js), proxy stawia obudowę w tym samym miejscu i skali. Liczy
+// `node scripts/rdzenie-auto-ruchu.mjs` na prawdziwym kadłubie belkowym (nowy kadłub ruchu bez markera albo nowy
+// sprite → przeliczyć i wkleić; strażnik tests/reactorCoreProxy.test.mjs). Rozgrywka ich nie czyta.
+export const TRAFFIC_AUTO_CORE_MARKERS = Object.freeze({
+  megafreighter: Object.freeze({ x: -81.95, y: -24.1, r: 38.57 }),
+  service_tug: Object.freeze({ x: -93.51, y: 8.02, r: 21.37 }),
+  pirate_frigate: Object.freeze({ x: -448.15, y: -31.12, r: 246.46 }),
+  pirate_destroyer: Object.freeze({ x: -191.67, y: -5.11, r: 210.89 })
+});
+
+/** Marker rdzenia kadłuba ruchu `hullId` dla obrazu proxy: z tabeli (jak ReactorGame.attach) albo z automatu. */
+export function trafficCoreMarker(hullId) {
+  return REACTOR_CORE_MARKERS[hullId]?.[0] || TRAFFIC_AUTO_CORE_MARKERS[hullId] || null;
+}
